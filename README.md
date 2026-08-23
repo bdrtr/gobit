@@ -6,7 +6,7 @@ servise çıkarılabilir.
 
 Uygulama planının tamamı için: [`go-commerce-framework-plan.md`](./go-commerce-framework-plan.md)
 
-**Mevcut durum: Faz 1 — Çekirdek Altyapı ✅**
+**Mevcut durum: Faz 2 — Module Links & Query ✅**
 
 ## Hızlı başlangıç
 
@@ -115,6 +115,8 @@ güncelleyin.
 | `core/module` | `Module` sözleşmesi + `ModuleRegistry` (register → migrate → routes) |
 | `core/eventbus` | `EventBus` + InMemory (dev) ve Redis Streams (prod, consumer group + XACK) |
 | `core/http` | chi router, RequestID/RequestLogger/Recoverer/RequireAuth, `Kind`→status eşlemesi |
+| `core/link` | Module Links — modüller arası ilişki FK olmadan; kardinalite veritabanı kısıtıyla zorlanır |
+| `core/query` | Cross-module okuma — kök çek, link çöz, batch getir, birleştir; N+1 yapısal olarak yok |
 
 Event bus arka ucu `EVENT_BUS=inmemory|redis` ile seçilir. `redis` seçildiğinde
 Redis erişilemezse uygulama açılışta durur.
@@ -129,6 +131,8 @@ dokümanı kadar bağlayıcıdır; çelişki hâlinde ADR geçerlidir.
 | [0001](docs/adr/0001-modul-arasi-iletisim.md) | Modüller arası iletişim | Tüketici tarafı interface: ihtiyacı olan modül, dar interface'i **kendi paketinde** tanımlar; sağlayıcı import edilmez, container'dan isimle çözülür |
 | [0002](docs/adr/0002-di-container-el-yazmasi.md) | DI container | `samber/do` yerine el yazması: Bölüm 5.1 sözleşmesi `any` alan `Provide` istiyor, do tip parametreli olduğu için teşhis/conflict/kapatma sırası elden gidiyordu |
 | [0003](docs/adr/0003-migration-iptali.md) | Migration iptali | golang-migrate sürücüsü ctx kullanmıyor; bağlantının sahibi biz olup iptalde kapatıyoruz, böylece iptal edilen akış dönüşten sonra ilerlemiyor |
+| [0004](docs/adr/0004-query-veri-erisimi.md) | Query veri erişimi | Modüller container'a `<modül>.query` adıyla dar bir `Provider` kaydeder; çekirdek modülleri tanımadan batch okuma yapar |
+| [0005](docs/adr/0005-link-semasi-migration-disinda.md) | Link şeması | Link tabloları derleme zamanında bilinmediği için migration dosyasıyla değil, bildirim anında idempotent DDL ile kurulur |
 
 ADR 0001, planın Bölüm 2.1 ("erişim public service interface üzerinden") ile
 Bölüm 2.4 ("modüller derleme zamanında birbirine bağımlı olmaz") arasındaki
@@ -161,7 +165,7 @@ make rename-module MODULE=github.com/kullanici/repo
 |---|---|---|
 | 0 | Proje iskeleti & tooling | ✅ |
 | 1 | Çekirdek altyapı (errors, db, container, module, eventbus, http middleware) | ✅ |
-| 2 | Module Links & Query | ⬜ |
+| 2 | Module Links & Query | ✅ |
 | 3 | Workflow Engine (saga) | ⬜ |
 | 4 | Katalog (product · pricing · inventory) | ⬜ |
 | 5 | Sepet (cart · customer · region) | ⬜ |

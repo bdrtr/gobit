@@ -278,6 +278,7 @@ type PaymentProvider interface {
 ### Faz 2 — Module Links & Query
 **Yapılacaklar:** `core/link` (LinkDefinition, link tablosu oluşturma, CRUD), `core/query` (basit resolver: kök çek → link çöz → batch getir → birleştir). İki dummy modül ile uçtan uca doğrula.
 **DoD:** İki modül arasında link tanımlanıp kayıt bağlanabiliyor; `query.Graph` ile birleşik veri (kök + expand) dönüyor; testlerle kanıtlı.
+> **Tamamlandı.** Ek olarak: ters yön çözümü (`ListManyByTo`), iç içe genişletme, N+1'in yapısal engellenmesi, ve şema doğrulaması ([ADR 0004](docs/adr/0004-query-veri-erisimi.md), [ADR 0005](docs/adr/0005-link-semasi-migration-disinda.md)).
 
 ### Faz 3 — Workflow Engine
 **Yapılacaklar:** `Step`, `Workflow`, `Executor`; ardışık yürütme, ters sırada compensation, `workflow_executions` ile state persistence, retry, idempotency-key.
