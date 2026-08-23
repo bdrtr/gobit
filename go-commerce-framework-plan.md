@@ -1,0 +1,339 @@
+# Go Headless Commerce Framework — Uygulama Planı
+
+> **Bu doküman bir AI kod ajanı için yazılmıştır.** Amacı, Medusa.js'e benzer; modüler, headless,
+> Go tabanlı bir e-ticaret altyapısını **faz faz** inşa ettirmektir. Aşağıdaki fazları **sırayla**
+> uygula. Her fazın sonunda "Definition of Done" (DoD) kriterlerini sağla, testleri yaz ve commit at.
+> Bir sonraki faza geçmeden önceki fazın DoD'sini tamamla.
+
+---
+
+## 0. AI Ajanı İçin Çalışma Talimatları
+
+1. Fazları **sırayla** uygula; faz atlama. Her faz bir öncekinin üstüne kurulur.
+2. Bölüm 2'deki **Mimari Prensipleri asla ihlal etme** (özellikle modül izolasyonu ve cross-module FK yasağı).
+3. Her core bileşen ve modül için **birim + entegrasyon testi** yaz. Entegrasyon testlerinde `testcontainers-go` kullan.
+4. Her fazın sonunda `make lint`, `make test` temiz geçmeli; ardından anlamlı bir commit at.
+5. Bir kararı netleştirmen gerekirse, varsayılanı bu dokümandan al; doküman sessizse en sade, en idiomatik Go çözümünü seç ve kararı kod yorumunda belgele.
+6. Üretilen her public fonksiyon/interface için kısa godoc yorumu yaz.
+
+---
+
+## 1. Proje Özeti
+
+**Hedef:** Geliştiricilerin üstüne kendi iş akışlarını ekleyebileceği, hazır commerce modülleri sunan bir framework. Tek binary olarak çalışır (modüler monolit), ama modüller izole olduğu için herhangi biri ileride ayrı servise çıkarılabilir.
+
+**Temel yetenekler:**
+- İzole commerce modülleri (product, pricing, inventory, cart, order, payment, fulfillment, customer, promotion, tax …)
+- Modüller arası ilişki için **Module Links**
+- Birden çok modülden tek seferde okuma için **Query** katmanı
+- Modüller arası işlemleri yürüten, geri alma (saga/compensation) destekli **Workflow Engine**
+- Asenkron yan etkiler için **Event Bus**
+- Ödeme/kargo/bildirim/dosya için **Provider** soyutlaması
+- **Store API** (müşteri) + **Admin API** (yönetim)
+- Plugin sistemi (modül, subscriber, workflow, route, provider eklenebilir)
+
+**Non-goals (ilk sürümde yok):** Storefront UI, admin panel UI, GraphQL (REST ile başla), çoklu-tenant. Bunlar sonraki sürümlere bırakılır.
+
+---
+
+## 2. Mimari Prensipler (DEĞİŞMEZ KURALLAR)
+
+1. **Modül izolasyonu:** Bir modül başka bir modülün repository'sine, modeline veya tablosuna **doğrudan erişemez**. Erişim yalnızca diğer modülün **public service interface'i** üzerinden olur.
+2. **Cross-module FK yok:** Farklı modüllerin tabloları arasında foreign key **kurulmaz**. İlişki yalnızca **Module Links** ile kurulur.
+3. **Veri sahipliği:** Her veri tam olarak bir modüle aittir. O modül o verinin tek yazma yetkilisidir.
+4. **Bağımlılık yönü:** Core, modülleri tanımaz; modüller core'a bağımlıdır. Modüller birbirine derleme zamanında bağımlı olmaz (yalnızca interface paketleri paylaşılır).
+5. **İş mantığı modülde, orkestrasyon workflow'da:** Tek modüle ait kural modül servisinde; birden çok modüle dokunan akış workflow'da yazılır.
+6. **Idempotency:** Dışarıya açık state-değiştiren işlemler (ödeme, sipariş) idempotency-key ile korunur.
+7. **Açık hata tipleri:** Hatalar `core/errors` içindeki tipli hatalarla (`NotFound`, `Invalid`, `Conflict`, `Unauthorized`) döner; HTTP katmanı bunları status koda çevirir.
+
+---
+
+## 3. Teknoloji Stack'i
+
+| Alan | Seçim | Not |
+|---|---|---|
+| Dil | Go 1.22+ (en güncel stable) | `net/http` yeni routing veya `chi` |
+| HTTP router | `chi` | Hafif, idiomatic, middleware dostu |
+| Veritabanı | PostgreSQL 16+ | |
+| DB erişim | `sqlc` (önerilen) veya `ent` | sqlc: SQL-first, type-safe. ent: graph + codegen |
+| Migration | `atlas` veya `golang-migrate` | Modül başına ayrı migration klasörü |
+| DI / container | `samber/do` veya `uber/dig` | Runtime DI; module registry burada |
+| Event bus | In-memory (dev) + Redis Streams (prod) | Arayüz tek, backend pluggable |
+| Cache / kuyruk | Redis | İş kuyruğu için `hibiken/asynq` opsiyonel |
+| Workflow | Custom saga engine | İstenirse ileride Temporal'a köprü |
+| Config | `env` + `viper` veya `caarlos0/env` | 12-factor |
+| Validation | `go-playground/validator` | |
+| Auth | JWT + session; OAuth opsiyonel | |
+| Loglama | `log/slog` (stdlib) | Structured, JSON |
+| Observability | OpenTelemetry (trace + metric) | |
+| Test | stdlib `testing` + `testify` + `testcontainers-go` | |
+| Lint | `golangci-lint` | |
+
+---
+
+## 4. Dizin Yapısı
+
+```
+/cmd
+  /server                  # main: config yükle, container kur, modülleri register et, API mount et
+/internal
+  /core
+    /config                # config loader (env)
+    /errors                # tipli hatalar
+    /logger                # slog kurulumu
+    /db                    # postgres bağlantı yönetimi, migration runner
+    /container             # DI + ModuleRegistry
+    /module                # Module interface + lifecycle
+    /eventbus              # EventBus interface + inmemory/redis backend
+    /link                  # Module Links servisi
+    /query                 # cross-module query resolver
+    /workflow              # workflow engine (Step, Workflow, Executor, saga, state)
+    /provider              # provider interface'leri (payment, fulfillment, notification, file)
+    /http                  # router, middleware, response/error helper, auth middleware
+  /modules
+    /product
+      /models              # domain modelleri
+      /repository          # SADECE bu modülün tabloları
+      /service             # public interface (service.go) + impl
+      /migrations          # bu modülün migration'ları
+      /api                 # store + admin route'ları
+      module.go            # Module interface implementasyonu (register)
+    /pricing  /inventory  /cart  /order  /payment
+    /fulfillment  /customer  /promotion  /tax  /region  /auth
+  /workflows               # cross-module workflow'lar (complete_cart, create_order, …)
+/plugins
+  /payment-stripe          # örnek provider plugin
+/migrations                # global/çekirdek migration'lar (links tablosu vb.)
+/config                    # ortam config dosyaları
+/deploy                    # docker-compose, Dockerfile
+Makefile
+go.mod
+```
+
+---
+
+## 5. Çekirdek (Core) Sözleşmeleri
+
+AI bunları birebir bu imzalarla (gerekirse genişleterek) implemente etmeli.
+
+### 5.1 Module & Registry
+
+```go
+// internal/core/module/module.go
+type Module interface {
+    Name() string
+    // Register: servisleri container'a kaydeder, link tanımlarını ve event subscriber'ları bildirir.
+    Register(ctx context.Context, c *container.Container) error
+    // Migrations: bu modülün migration kaynak yolunu döner.
+    Migrations() fs.FS
+    // Routes: bu modülün store/admin route'larını router'a bağlar.
+    Routes(r chi.Router)
+}
+```
+
+```go
+// internal/core/container/container.go
+type Container struct { /* DI wrapper */ }
+
+func (c *Container) Provide(name string, ctor any) error
+func Resolve[T any](c *Container, name string) (T, error)
+
+// ModuleRegistry: tüm modülleri tutar, sırayla Register/Migrate/Routes çağırır.
+type ModuleRegistry struct { /* ... */ }
+func (m *ModuleRegistry) Add(mod module.Module)
+func (m *ModuleRegistry) Bootstrap(ctx context.Context, c *Container) error
+```
+
+### 5.2 Module Links
+
+```go
+// internal/core/link/link.go
+type LinkDefinition struct {
+    Name      string // örn. "product_price"
+    From      LinkSide // {Module: "product", Field: "product_id"}
+    To        LinkSide // {Module: "pricing", Field: "price_set_id"}
+    Cardinality Cardinality // OneToOne | OneToMany | ManyToMany
+}
+
+type LinkService interface {
+    Define(def LinkDefinition) error          // link tablosunu oluşturur/migrate eder
+    Create(ctx context.Context, name string, fromID, toID string) error
+    Delete(ctx context.Context, name string, fromID, toID string) error
+    List(ctx context.Context, name string, fromID string) ([]string, error)
+}
+```
+
+### 5.3 Query (cross-module okuma)
+
+```go
+// internal/core/query/query.go
+// Modüllerden veriyi alıp link'ler üzerinden birleştirir.
+type Query interface {
+    Graph(ctx context.Context, spec GraphSpec) ([]map[string]any, error)
+}
+// GraphSpec: kök entity, seçilecek alanlar ve link üzerinden genişletmeler (expand).
+```
+> İlk sürümde basit tut: kök modülden kayıtları çek → link'lerle ilgili ID'leri bul →
+> ilgili modüllerin servislerinden batch ile getir → birleştir. Sonra graph resolver'a evrilebilir.
+
+### 5.4 Event Bus
+
+```go
+// internal/core/eventbus/eventbus.go
+type Event struct {
+    Name string            // "order.placed"
+    Data map[string]any
+}
+type Handler func(ctx context.Context, e Event) error
+
+type EventBus interface {
+    Publish(ctx context.Context, e Event) error
+    Subscribe(eventName string, h Handler)
+}
+// Backendler: InMemoryBus (dev), RedisStreamBus (prod). Aynı interface.
+```
+
+### 5.5 Workflow Engine (saga)
+
+```go
+// internal/core/workflow/workflow.go
+type StepContext struct {
+    Input  any
+    Shared map[string]any // adımlar arası veri
+}
+
+type Step interface {
+    Name() string
+    Invoke(ctx context.Context, sc *StepContext) (output any, err error)
+    Compensate(ctx context.Context, sc *StepContext) error // Invoke'un geri alımı
+}
+
+type Workflow struct {
+    Name  string
+    Steps []Step
+}
+
+type Executor interface {
+    // Run: adımları sırayla çalıştırır. Bir adım patlarsa, o ana kadar başarılı
+    // adımların Compensate'lerini TERS sırada çalıştırır. Yürütme durumunu persist eder (retry için).
+    Run(ctx context.Context, wf Workflow, input any) (any, error)
+}
+```
+> Gereksinimler: ardışık + (opsiyonel) paralel adım, compensation ters sırada, state persistence
+> (`workflow_executions` tablosu), retry, idempotency-key desteği.
+
+### 5.6 Provider Soyutlamaları
+
+```go
+// internal/core/provider/payment.go
+type PaymentProvider interface {
+    ID() string
+    CreateSession(ctx context.Context, in CreateSessionInput) (Session, error)
+    Authorize(ctx context.Context, sessionID string) (AuthResult, error)
+    Capture(ctx context.Context, sessionID string, amount int64) error
+    Refund(ctx context.Context, sessionID string, amount int64) error
+}
+// Benzer şekilde: FulfillmentProvider, NotificationProvider, FileProvider.
+// Pluginler bu interface'leri implemente edip registry'ye kaydeder.
+```
+
+---
+
+## 6. Commerce Modülleri (sorumluluk + temel modeller)
+
+> Modeller temsilîdir; AI gerektikçe alan ekleyebilir. Her modül kendi tablolarına sahiptir.
+
+- **product** — Katalog. `Product, ProductVariant, ProductOption, ProductOptionValue, ProductCategory, ProductCollection, ProductTag, ProductImage`.
+- **pricing** — Fiyatlandırma. `PriceSet, Price, PriceList, PriceRule` (para birimi/segment kurallarıyla).
+- **inventory** — Stok. `InventoryItem, InventoryLevel, StockLocation, Reservation`.
+- **cart** — Sepet. `Cart, LineItem, ShippingMethod, CartAddress`.
+- **order** — Sipariş. `Order, OrderLineItem, OrderSummary, Return, Exchange, Claim`.
+- **payment** — Ödeme. `PaymentCollection, PaymentSession, Payment, Refund` (+ PaymentProvider'lar).
+- **fulfillment** — Kargo/teslimat. `Fulfillment, ShippingOption, ShippingProfile` (+ FulfillmentProvider'lar).
+- **customer** — Müşteri. `Customer, CustomerGroup, CustomerAddress`.
+- **promotion** — Promosyon. `Promotion, Campaign, PromotionRule, ApplicationMethod`.
+- **tax** — Vergi. `TaxRegion, TaxRate, TaxProvider`.
+- **region** — Bölge/para birimi. `Region, Currency, Country`.
+- **auth** — Kimlik. `User (admin), AuthIdentity, ApiKey (publishable/secret), SalesChannel`.
+
+**Önemli linkler:**
+`product↔pricing` (variant→price_set), `product↔inventory` (variant→inventory_item),
+`cart↔customer`, `cart↔region`, `order↔customer`, `order↔payment`, `order↔fulfillment`,
+`product↔sales_channel`.
+
+---
+
+## 7. Geliştirme Fazları (Roadmap)
+
+### Faz 0 — Proje İskeleti & Tooling
+**Yapılacaklar:** go.mod, dizin yapısı, `Makefile` (run/test/lint/migrate/up/down), `deploy/docker-compose.yml` (Postgres + Redis), config loader, `slog` kurulumu, `golangci-lint` config, basit `/health` endpoint'i, CI (lint+test).
+**DoD:** `make up` Postgres+Redis'i ayağa kaldırır; `make run` boş server'ı başlatır; `GET /health` `200` döner; `make lint && make test` temiz geçer.
+
+### Faz 1 — Çekirdek Altyapı
+**Yapılacaklar:** `core/errors`, `core/db` (bağlantı + migration runner), `core/container` + `ModuleRegistry`, `core/module` interface, `core/eventbus` (InMemory + Redis), `core/http` (router, request-id, recover, logging, error→status middleware, auth stub). Bir `dummy` modül ile registry akışını doğrula.
+**DoD:** Dummy modül register edilip servisi container'dan resolve edilebiliyor; `eventbus.Publish/Subscribe` in-memory ve Redis backend'de testle çalışıyor; migration runner dummy migration'ı uyguluyor.
+
+### Faz 2 — Module Links & Query
+**Yapılacaklar:** `core/link` (LinkDefinition, link tablosu oluşturma, CRUD), `core/query` (basit resolver: kök çek → link çöz → batch getir → birleştir). İki dummy modül ile uçtan uca doğrula.
+**DoD:** İki modül arasında link tanımlanıp kayıt bağlanabiliyor; `query.Graph` ile birleşik veri (kök + expand) dönüyor; testlerle kanıtlı.
+
+### Faz 3 — Workflow Engine
+**Yapılacaklar:** `Step`, `Workflow`, `Executor`; ardışık yürütme, ters sırada compensation, `workflow_executions` ile state persistence, retry, idempotency-key.
+**DoD:** 3 adımlı örnek workflow; ortadaki adım hata verince önceki adımların `Compensate`'leri **ters sırada** çağrılıyor (test ile doğrulanmış); başarılı koşuda state `completed` olarak persist ediliyor.
+
+### Faz 4 — Katalog Modülleri (Product · Pricing · Inventory)
+**Yapılacaklar:** Üç modülün modelleri, migration'ları, servisleri, store+admin API'leri. `product↔pricing` ve `product↔inventory` linkleri. Admin API: ürün/varyant/fiyat/stok oluşturma. Store API: ürün listeleme (fiyat + stok ile, `query` üzerinden).
+**DoD:** Admin API'den ürün + varyant + fiyat + stok seviyesi oluşturulabiliyor; Store API ürünleri fiyat ve stok bilgisiyle birlikte listeliyor; entegrasyon testi yeşil.
+
+### Faz 5 — Sepet Akışı (Cart · Customer · Region)
+**Yapılacaklar:** Cart, Customer, Region/Currency modülleri. Cart workflow'ları: `create_cart`, `add_line_item`, `update_line_item`, `calculate_totals` (fiyatı pricing'den, vergiyi tax stub'ından alır). `cart↔customer`, `cart↔region` linkleri.
+**DoD:** Sepet oluştur → ürün ekle → adet güncelle → ara toplam/indirim/vergi/genel toplam doğru hesaplanıyor; misafir ve kayıtlı müşteri senaryoları test edilmiş.
+
+### Faz 6 — Ödeme & Sipariş Tamamlama
+**Yapılacaklar:** Payment modülü + `PaymentProvider` soyutlaması + `manual/test` provider. Order modülü. `complete_cart` workflow'u (saga): `reserve_inventory → create_order → authorize/capture_payment → clear_cart`. Hata durumunda compensation: rezervasyonu geri al, ödemeyi iptal et, siparişi iptal et.
+**DoD:** Uçtan uca sepet→sipariş akışı test provider ile çalışıyor; ödeme adımı başarısızken **stok rezervasyonu ve sipariş geri alınıyor** (saga testi); `order.placed` eventi yayınlanıyor.
+
+### Faz 7 — Fulfillment · Promotion · Tax
+**Yapılacaklar:** Fulfillment modülü + `FulfillmentProvider` soyutlaması (+ manual provider), shipping option'lar. Promotion modülü (indirim kuralları, kampanya) ve cart/order toplamına uygulanması. Tax modülü gerçek hesaplama (region bazlı rate).
+**DoD:** Siparişe fulfillment oluşturulabiliyor; sepete indirim uygulanıp toplam doğru güncelleniyor; vergi region'a göre hesaplanıyor.
+
+### Faz 8 — Auth · Admin User · API Key · RBAC
+**Yapılacaklar:** Auth modülü: admin user, JWT login, publishable/secret API key, sales channel. HTTP'de gerçek auth middleware (admin route'ları korumalı, store route'ları publishable key ile).
+**DoD:** Yetkisiz istek `401`; admin login → token ile korumalı endpoint'e erişim; publishable key olmadan store API erişimi reddediliyor.
+
+### Faz 9 — Plugin Sistemi · Observability · Sertleştirme
+**Yapılacaklar:** Plugin yükleme mekanizması (modül/subscriber/route/provider register edebilen); örnek `payment-stripe` plugin iskeleti; OpenTelemetry trace+metric; rate limiting; idempotency middleware; OpenAPI/Swagger üretimi; README + mimari dokümanı.
+**DoD:** Örnek payment provider plugin'i çekirdeğe dokunmadan takılıp seçilebiliyor; trace'ler dışa aktarılıyor; OpenAPI şeması üretiliyor; temel yük testi geçiyor.
+
+---
+
+## 8. Konvansiyonlar
+
+- **Hatalar:** Servisler `core/errors` tipli hatalarını döner; HTTP katmanı map eder (`NotFound→404`, `Invalid→422`, `Conflict→409`, `Unauthorized→401`).
+- **ID'ler:** Prefix'li ULID/KSUID (örn. `prod_…`, `cart_…`, `order_…`).
+- **Para:** Tam sayı **minor unit** (kuruş/cent) olarak sakla; float kullanma. Para birimi ayrı alan.
+- **Zaman:** UTC, `created_at/updated_at/deleted_at` (soft delete `deleted_at` ile).
+- **Migration:** Modül başına ayrı klasör; geri-alınabilir (up/down). Cross-module FK yok.
+- **API:** Versiyonlu (`/store/v1`, `/admin/v1`); cursor-based pagination; tutarlı zarf (`{ data, count, offset, limit }`).
+- **Test:** Birim testleri servis seviyesinde; entegrasyon testleri gerçek Postgres/Redis ile (`testcontainers-go`); her workflow için saga (hata + compensation) testi zorunlu.
+- **Context:** Tüm servis/repository metodları `context.Context` alır.
+- **Loglama:** Yapısal (`slog`), her isteğe `request_id`, hassas veri loglanmaz.
+
+---
+
+## 9. İlk Somut Görevler (Faz 0 başlangıcı)
+
+1. `go mod init` ve Bölüm 4'teki dizin ağacını oluştur.
+2. `Makefile` hedefleri: `run, build, test, lint, migrate-up, migrate-down, up, down, gen`.
+3. `deploy/docker-compose.yml`: Postgres 16 + Redis 7.
+4. `core/config`: env'den `APP_PORT, DATABASE_URL, REDIS_URL, LOG_LEVEL` oku.
+5. `core/logger`: `slog` JSON handler, log level config'den.
+6. `cmd/server/main.go`: config yükle → logger kur → (boş) container kur → chi router → `/health` → dinle.
+7. `golangci-lint` config + GitHub Actions CI (lint + test).
+8. İlk commit: `chore: project skeleton (phase 0)`.
+
+---
+
+## 10. Sonraki Sürüm Fikirleri (şimdilik kapsam dışı)
+
+GraphQL query yüzeyi, admin panel UI, storefront SDK, çoklu-tenant, çoklu-depo gelişmiş stok, Temporal entegrasyonu, B2B (quote/şirket hesapları), arama (OpenSearch/Meilisearch entegrasyonu).

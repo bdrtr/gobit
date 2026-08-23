@@ -1,0 +1,19 @@
+# derleme çıktıları
+/bin/
+/dist/
+gobit
+
+# test / coverage
+coverage.out
+coverage.html
+*.test
+
+# yerel ortam
+.env
+.env.local
+
+# editör
+.idea/
+.vscode/
+*.swp
+.DS_Store
