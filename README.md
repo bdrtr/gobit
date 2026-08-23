@@ -6,7 +6,7 @@ servise çıkarılabilir.
 
 Uygulama planının tamamı için: [`go-commerce-framework-plan.md`](./go-commerce-framework-plan.md)
 
-**Mevcut durum: Faz 2 — Module Links & Query ✅**
+**Mevcut durum: Faz 3 — Workflow Engine ✅**
 
 ## Hızlı başlangıç
 
@@ -117,6 +117,8 @@ güncelleyin.
 | `core/http` | chi router, RequestID/RequestLogger/Recoverer/RequireAuth, `Kind`→status eşlemesi |
 | `core/link` | Module Links — modüller arası ilişki FK olmadan; kardinalite veritabanı kısıtıyla zorlanır |
 | `core/query` | Cross-module okuma — kök çek, link çöz, batch getir, birleştir; N+1 yapısal olarak yok |
+| `core/workflow` | Saga motoru — ters sırada telafi, retry, idempotency-key, panik izolasyonu |
+| `core/workflow/pgstore` | Yürütme durumunun Postgres deposu (`workflow_executions`) |
 
 Event bus arka ucu `EVENT_BUS=inmemory|redis` ile seçilir. `redis` seçildiğinde
 Redis erişilemezse uygulama açılışta durur.
@@ -166,7 +168,7 @@ make rename-module MODULE=github.com/kullanici/repo
 | 0 | Proje iskeleti & tooling | ✅ |
 | 1 | Çekirdek altyapı (errors, db, container, module, eventbus, http middleware) | ✅ |
 | 2 | Module Links & Query | ✅ |
-| 3 | Workflow Engine (saga) | ⬜ |
+| 3 | Workflow Engine (saga) | ✅ |
 | 4 | Katalog (product · pricing · inventory) | ⬜ |
 | 5 | Sepet (cart · customer · region) | ⬜ |
 | 6 | Ödeme & sipariş tamamlama | ⬜ |

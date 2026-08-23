@@ -283,6 +283,12 @@ type PaymentProvider interface {
 ### Faz 3 — Workflow Engine
 **Yapılacaklar:** `Step`, `Workflow`, `Executor`; ardışık yürütme, ters sırada compensation, `workflow_executions` ile state persistence, retry, idempotency-key.
 **DoD:** 3 adımlı örnek workflow; ortadaki adım hata verince önceki adımların `Compensate`'leri **ters sırada** çağrılıyor (test ile doğrulanmış); başarılı koşuda state `completed` olarak persist ediliyor.
+> **Tamamlandı.** Not: 3 adımlı senaryo ters sırayı KANITLAYAMAZ — ortadaki adım
+> patlayınca telafi edilecek tek adım kalır ve tek elemanlı dizinin ileri/ters
+> sırası aynıdır. Sıra iddiası `TestCompensationOrderWithFiveSteps` ile
+> kanıtlanmıştır (mutasyonla doğrulandı). Ek olarak: retry, idempotency-key,
+> panik izolasyonu, eşzamanlı bileşik adım, ve retry'lanan adımın en iyi çaba
+> telafisi.
 
 ### Faz 4 — Katalog Modülleri (Product · Pricing · Inventory)
 **Yapılacaklar:** Üç modülün modelleri, migration'ları, servisleri, store+admin API'leri. `product↔pricing` ve `product↔inventory` linkleri. Admin API: ürün/varyant/fiyat/stok oluşturma. Store API: ürün listeleme (fiyat + stok ile, `query` üzerinden).

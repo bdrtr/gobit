@@ -24,6 +24,8 @@ import (
 	corehttp "github.com/bdrtr/gobit/internal/core/http"
 	"github.com/bdrtr/gobit/internal/core/logger"
 	"github.com/bdrtr/gobit/internal/core/module"
+	"github.com/bdrtr/gobit/internal/core/workflow"
+	"github.com/bdrtr/gobit/internal/core/workflow/pgstore"
 )
 
 // Container'daki altyapı servislerinin adları. Modüller bu adlarla çözer.
@@ -31,6 +33,10 @@ const (
 	svcDB       = "core.db"
 	svcRedis    = "core.redis"
 	svcEventBus = "core.eventbus"
+	// svcWorkflow saga yürütücüsüdür; modüller arası akışlar buradan çalışır.
+	svcWorkflow = "core.workflow"
+	// svcWorkflowStore yürütme durumunun kalıcı deposudur.
+	svcWorkflowStore = "core.workflow.store"
 )
 
 // version derleme sırasında -ldflags ile doldurulur (bkz. Makefile).
@@ -80,6 +86,20 @@ func run() error {
 	defer shutdownContainer(ctx, c, cfg, log)
 
 	if err := c.Provide(svcDB, pool); err != nil {
+		return err
+	}
+
+	// Çekirdek migration'ları modül migration'larından ÖNCE uygulanır: modüller
+	// workflow motorunun şemasının hazır olduğunu varsayabilmelidir.
+	if err := db.Migrate(ctx, cfg.DatabaseURL, pgstore.Migrations(), pgstore.MigrationOwner); err != nil {
+		return err
+	}
+
+	workflowStore := pgstore.New(pool, log)
+	if err := c.Provide(svcWorkflowStore, workflowStore); err != nil {
+		return err
+	}
+	if err := c.Provide(svcWorkflow, workflow.New(workflowStore, log)); err != nil {
 		return err
 	}
 
