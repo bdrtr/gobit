@@ -135,6 +135,7 @@ dokümanı kadar bağlayıcıdır; çelişki hâlinde ADR geçerlidir.
 | [0003](docs/adr/0003-migration-iptali.md) | Migration iptali | golang-migrate sürücüsü ctx kullanmıyor; bağlantının sahibi biz olup iptalde kapatıyoruz, böylece iptal edilen akış dönüşten sonra ilerlemiyor |
 | [0004](docs/adr/0004-query-veri-erisimi.md) | Query veri erişimi | Modüller container'a `<modül>.query` adıyla dar bir `Provider` kaydeder; çekirdek modülleri tanımadan batch okuma yapar |
 | [0005](docs/adr/0005-link-semasi-migration-disinda.md) | Link şeması | Link tabloları derleme zamanında bilinmediği için migration dosyasıyla değil, bildirim anında idempotent DDL ile kurulur |
+| [0006](docs/adr/0006-workflow-modul-erisimi.md) | Workflow → modül erişimi | `internal/workflows` de modülleri import etmez; dar arayüz + container'dan adla çözüm (ADR 0001'in workflow'lara uygulanması) |
 
 ADR 0001, planın Bölüm 2.1 ("erişim public service interface üzerinden") ile
 Bölüm 2.4 ("modüller derleme zamanında birbirine bağımlı olmaz") arasındaki
@@ -170,7 +171,7 @@ make rename-module MODULE=github.com/kullanici/repo
 | 2 | Module Links & Query | ✅ |
 | 3 | Workflow Engine (saga) | ✅ |
 | 4 | Katalog (product · pricing · inventory) | ⬜ |
-| 5 | Sepet (cart · customer · region) | ⬜ |
+| 5 | Sepet (cart · customer · region) | 🚧 modüller hazır, workflow'lar sırada |
 | 6 | Ödeme & sipariş tamamlama | ⬜ |
 | 7 | Fulfillment · promotion · tax | ⬜ |
 | 8 | Auth · admin user · API key · RBAC | ⬜ |

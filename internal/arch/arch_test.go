@@ -97,6 +97,40 @@ func TestModullerBirbiriniImportEtmez(t *testing.T) {
 	}
 }
 
+// TestWorkflowlarModulleriImportEtmez ADR 0006'yı zorlar.
+//
+// internal/workflows çekirdek değildir (Prensip 2.4 onu bağlamaz) ve modül de
+// değildir (depguard kuralları internal/modules içindir), yani hiçbir mevcut
+// kural onu kısıtlamaz. Ama modülleri doğrudan import etseydi tüm modülleri
+// tanıyan tek bir düğüme dönüşür, gerçek veritabanı olmadan test edilemez ve
+// bir modülü ayrı servise çıkarmak workflow'ları derleme zamanında kırardı.
+//
+// Erişim, workflow'un KENDİ paketinde tanımladığı dar arayüz ve container'dan
+// adla çözüm üzerinden olmalıdır.
+func TestWorkflowlarModulleriImportEtmez(t *testing.T) {
+	root := filepath.Join(repoRoot, "internal", "workflows")
+	if _, err := os.Stat(root); err != nil {
+		t.Skip("henüz workflow yok")
+	}
+
+	prefix := modulePath + "/" + modulesDir + "/"
+	for _, file := range goFiles(t, root) {
+		parsed, err := parser.ParseFile(token.NewFileSet(), file, nil, parser.ImportsOnly)
+		if err != nil {
+			t.Fatalf("%s ayrıştırılamadı: %v", file, err)
+		}
+		for _, imp := range parsed.Imports {
+			path := strings.Trim(imp.Path.Value, `"`)
+			if strings.HasPrefix(path, prefix) {
+				t.Errorf("%s: workflow %q modülünü import ediyor (ADR 0006).\n"+
+					"Workflow, ihtiyaç duyduğu DAR yüzeyi kendi paketinde tanımlamalı ve "+
+					"somut servisi container'dan ADLA çözmelidir.",
+					file, strings.TrimPrefix(path, prefix))
+			}
+		}
+	}
+}
+
 // createTableRe ve referencesRe migration dosyalarındaki tablo bildirimlerini
 // ve foreign key hedeflerini yakalar.
 var (

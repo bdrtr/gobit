@@ -28,9 +28,12 @@ import (
 	"github.com/bdrtr/gobit/internal/core/query"
 	"github.com/bdrtr/gobit/internal/core/workflow"
 	"github.com/bdrtr/gobit/internal/core/workflow/pgstore"
+	"github.com/bdrtr/gobit/internal/modules/cart"
+	"github.com/bdrtr/gobit/internal/modules/customer"
 	"github.com/bdrtr/gobit/internal/modules/inventory"
 	"github.com/bdrtr/gobit/internal/modules/pricing"
 	"github.com/bdrtr/gobit/internal/modules/product"
+	"github.com/bdrtr/gobit/internal/modules/region"
 )
 
 // Container'daki altyapı servislerinin adları. Modüller bu adlarla çözer.
@@ -142,9 +145,14 @@ func run() error {
 	// Commerce modülleri. Sıra ÖNEMSİZDİR: registry tüm modülleri register
 	// ettikten SONRA migration ve route adımlarına geçer, dolayısıyla bir
 	// modülün handler'ı başka modülün servisini güvenle çözebilir.
+	// Faz 4: katalog
 	registry.Add(product.New())
 	registry.Add(pricing.New(log))
 	registry.Add(inventory.New())
+	// Faz 5: sepet akışı
+	registry.Add(region.New(log))
+	registry.Add(customer.New(log))
+	registry.Add(cart.New())
 	if err := registry.Bootstrap(ctx, c, router); err != nil {
 		return err
 	}

@@ -1,0 +1,13 @@
+# sqlc yapılandırması — modül başına AYRI dosya (bkz. diğer modüller).
+version: "2"
+sql:
+  - engine: postgresql
+    schema: migrations
+    queries: queries
+    gen:
+      go:
+        package: cartdb
+        out: repository/cartdb
+        sql_package: pgx/v5
+        emit_pointers_for_null_types: true
+        emit_empty_slices: true
