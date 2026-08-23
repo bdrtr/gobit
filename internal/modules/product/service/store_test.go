@@ -196,6 +196,28 @@ func TestListStoreProductsDegradesWhenProviderMissing(t *testing.T) {
 	assert.Nil(t, result.Items[0].Variants[0].InventoryItem, "stok alanı boş kalmalı")
 }
 
+// TestListStoreProductsPropagatesProviderNotFound KAYITLI bir sağlayıcının
+// ürettiği NotFound'un yutulmadığını doğrular.
+//
+// "Sağlayıcı kayıtlı değil" ile "sağlayıcı bulunamadı dedi" aynı SINIFTAN
+// (NotFound) hatalardır ama farklı olaylardır: ilki kurulum gerçeğidir, ikincisi
+// arızadır. Sınıfa bakan bir düşüş ikincisini de yutar ve vitrin, tek bir log
+// satırı dışında hiçbir iz bırakmadan fiyatsız 200 döner.
+func TestListStoreProductsPropagatesProviderNotFound(t *testing.T) {
+	t.Parallel()
+
+	graph := &fakeGraph{err: errors.NotFound("query_provider_failed",
+		"\"price_set\" sağlayıcısının FetchByIDs çağrısı başarısız oldu")}
+	svc := newService(t, newMemStore(), newFakeLinker(), graph)
+	ctx := context.Background()
+	seedProduct(t, svc, "tisort", "Tişört")
+
+	_, err := svc.ListStoreProducts(ctx, service.StoreListOptions{})
+	require.Error(t, err, "kayıtlı sağlayıcının hatası sessizce yutulmamalı")
+	assert.Equal(t, "product_query_failed", errors.CodeOf(err))
+	assert.True(t, errors.IsNotFound(err), "hata sınıfı korunmalı: %v", err)
+}
+
 // TestListStoreProductsPropagatesQueryFailure geçici bir Query hatasının
 // SESSİZCE YUTULMADIĞINI doğrular.
 //

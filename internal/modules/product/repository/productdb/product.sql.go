@@ -237,6 +237,48 @@ func (q *Queries) GetProductByHandle(ctx context.Context, handle string) (Produc
 	return i, err
 }
 
+const getProductForUpdate = `-- name: GetProductForUpdate :one
+SELECT id, handle, title, subtitle, description, thumbnail, status, is_giftcard, discountable, weight, length, height, width, material, origin_country, collection_id, metadata, created_at, updated_at, deleted_at FROM product
+WHERE id = $1 AND deleted_at IS NULL
+FOR UPDATE
+`
+
+// GetProductForUpdate ürünü SATIR KİLİDİYLE okur; yalnızca bir işlem içinde
+// anlamlıdır.
+//
+// Varyant yazmadan önce sahibin var olduğunu doğrulamak tek başına yetmez:
+// silme SOFT olduğu için foreign key boşluğu kapatmaz ve eşzamanlı bir silme
+// kontrol ile INSERT arasına girerse sahibi silinmiş bir varyant ortaya çıkar.
+// Kilit, silmeyi bu işlemle SIRAYA DİZER: silme önce gelirse burada satır
+// bulunamaz, sonra gelirse varyant silmenin temizliğine yetişir.
+func (q *Queries) GetProductForUpdate(ctx context.Context, id string) (Product, error) {
+	row := q.db.QueryRow(ctx, getProductForUpdate, id)
+	var i Product
+	err := row.Scan(
+		&i.ID,
+		&i.Handle,
+		&i.Title,
+		&i.Subtitle,
+		&i.Description,
+		&i.Thumbnail,
+		&i.Status,
+		&i.IsGiftcard,
+		&i.Discountable,
+		&i.Weight,
+		&i.Length,
+		&i.Height,
+		&i.Width,
+		&i.Material,
+		&i.OriginCountry,
+		&i.CollectionID,
+		&i.Metadata,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DeletedAt,
+	)
+	return i, err
+}
+
 const listImagesByProductIDs = `-- name: ListImagesByProductIDs :many
 SELECT id, product_id, url, rank, metadata, created_at, updated_at, deleted_at FROM product_image
 WHERE product_id = ANY($1::text[]) AND deleted_at IS NULL

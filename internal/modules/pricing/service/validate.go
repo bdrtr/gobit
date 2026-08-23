@@ -191,14 +191,28 @@ func clampToInt32(value int) int32 {
 	return int32(value)
 }
 
+// Hata ayrıntısındaki indeks anahtarları.
+const (
+	// detailIndex kaçıncı FİYATIN reddedildiğini bildirir.
+	detailIndex = "index"
+	// detailRuleIndex o fiyatın kaçıncı KURALININ reddedildiğini bildirir.
+	detailRuleIndex = "rule_index"
+)
+
 // withIndex bir doğrulama hatasına kaçıncı girdide oluştuğunu ekler.
 //
 // Toplu yazmada (SetPrices) hangi fiyatın reddedildiğini bilmek, hatayı
 // kullanılabilir kılan tek bilgidir.
-func withIndex(err error, index int) error {
+//
+// Anahtar çağırandan gelir çünkü indeksler İÇ İÇEDİR: bir kural hatası hem
+// fiyatın hem kuralın sırasını taşır. İki seviye aynı anahtarı kullansaydı
+// [errors.Error.WithDetails] onu EZER ve dıştaki fiyat indeksi içteki kural
+// indeksini yok ederdi; istemci "prices[0].rules[3] geçersiz" durumunda yalnızca
+// index=0 görüp hatayı fiyatın kendisinde arardı.
+func withIndex(err error, key string, index int) error {
 	var typed *errors.Error
 	if errors.As(err, &typed) && typed != nil {
-		return typed.WithDetails(map[string]any{"index": index})
+		return typed.WithDetails(map[string]any{key: index})
 	}
 	return err
 }

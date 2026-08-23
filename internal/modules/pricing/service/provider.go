@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"slices"
+	"time"
 
 	"github.com/bdrtr/gobit/internal/core/errors"
 	"github.com/bdrtr/gobit/internal/core/query"
@@ -41,6 +42,15 @@ var supportedFields = []string{fieldID, fieldCreatedAt, fieldUpdatedAt, fieldPri
 // orada hiçbir işe yaramaz — ikinci bir tur gerekirdi ki Query'nin N+1 yasağı
 // tam da bunu engellemek içindir. Fiyatlar istenmiyorsa Fields ile
 // dışarıda bırakılabilir.
+//
+// # Hangi fiyatlar döner
+//
+// YALNIZCA "şu an, herkes için" geçerli olan fiyatlar (bkz. [listablePrices]).
+// Sağlayıcı bir okuma yüzeyidir ve hesaplama bağlamı (para birimi, adet, kural
+// bağlamı) taşımaz; taşımadığı bir bağlama koşullu fiyatı dönerse tüketici
+// onları eleyemez ve vitrin, pricing'in kendisinin GEÇERSİZ saydığı bir fiyatı
+// gösterirdi. Bağlama bağlı fiyat isteyen çağıran [Service.CalculateAmount]
+// kullanır; seçim kuralı orada, tek yerdedir.
 //
 // Arayüz internal/core/query'de tanımlıdır; bu tip yalnızca imzayı karşılar ve
 // çekirdeğe hiçbir şey bildirmez (ADR 0001'in sağlayıcı tarafı).
@@ -136,17 +146,21 @@ func (p *QueryProvider) records(
 		return records, nil
 	}
 
-	var pricesBySet map[string][]models.Price
+	pricesBySet := map[string][]models.Price{}
 	if slices.Contains(fields, fieldPrices) {
 		setIDs := make([]string, 0, len(sets))
 		for _, set := range sets {
 			setIDs = append(setIDs, set.ID)
 		}
 
-		var err error
-		pricesBySet, err = p.svc.repo.ListPricesBySets(ctx, setIDs)
+		candidatesBySet, err := p.svc.repo.ListPriceCandidatesBySets(ctx, setIDs)
 		if err != nil {
 			return nil, err
+		}
+
+		at := p.svc.clock()
+		for setID, candidates := range candidatesBySet {
+			pricesBySet[setID] = listablePrices(candidates, at)
 		}
 	}
 
@@ -167,6 +181,30 @@ func (p *QueryProvider) records(
 		records = append(records, record)
 	}
 	return records, nil
+}
+
+// listablePrices adaylardan yalnızca KOŞULSUZ ve o anda geçerli olanları süzer.
+//
+// İki koşul da hesaplamadaki eleme kuralının aynısıdır (bkz. eligible):
+//
+//   - Fiyat bir listeye bağlıysa liste kullanılabilir olmalıdır. Taslak,
+//     sonlandırılmış, tarih penceresi dışındaki ya da SİLİNMİŞ bir listenin
+//     fiyatı hesapta elenirken okumada görünseydi, vitrin yayınlanmamış bir
+//     kampanyayı gösterirdi.
+//   - Fiyatın kuralı OLMAMALIDIR. Kural bir bağlama (bölge, müşteri grubu …)
+//     bakar; sağlayıcı o bağlamı taşımaz ve kuralı burada değerlendiremez.
+//     Değerlendirilemeyen bir koşulu görmezden gelmek, segment fiyatını herkese
+//     açardı — matchRule'daki gerekçenin aynısı.
+func listablePrices(candidates []models.PriceCandidate, at time.Time) []models.Price {
+	prices := make([]models.Price, 0, len(candidates))
+	for i := range candidates {
+		candidate := candidates[i]
+		if len(candidate.Price.Rules) > 0 || !listAvailable(candidate, at) {
+			continue
+		}
+		prices = append(prices, candidate.Price)
+	}
+	return prices
 }
 
 // priceRecords fiyatları alt kayıtlara çevirir.

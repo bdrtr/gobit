@@ -9,6 +9,22 @@ RETURNING *;
 SELECT * FROM price_set
 WHERE id = $1 AND deleted_at IS NULL;
 
+-- GetPriceSetForUpdate kabı okur ve satırını İŞLEM SONUNA KADAR kilitler.
+--
+-- Kilitsiz bir varlık denetimi yerine koyma (replace) semantiğini korumaz: iki
+-- eşzamanlı yazımdan ikincisinin "eski fiyatları sil" adımı READ COMMITTED
+-- altında kendi statement snapshot'ında birincinin YENİ satırlarını göremez ve
+-- onları silmez; sonuçta iki yazımın fiyatları kapta BİRLİKTE canlı kalır. Satır
+-- kilidi aynı kaba yapılan yazımları seri hâle getirir.
+--
+-- FOR UPDATE kilit alındıktan sonra WHERE koşulunu YENİDEN değerlendirir; araya
+-- giren bir silme bu yüzden "kayıt yok" olarak görünür ve fiyatlar silinmiş bir
+-- kaba yapışmaz.
+-- name: GetPriceSetForUpdate :one
+SELECT * FROM price_set
+WHERE id = $1 AND deleted_at IS NULL
+FOR UPDATE;
+
 -- name: ListPriceSets :many
 SELECT * FROM price_set
 WHERE deleted_at IS NULL

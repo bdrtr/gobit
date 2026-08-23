@@ -71,6 +71,36 @@ func TestCreateProductDerivesHandleFromTitle(t *testing.T) {
 	assert.Equal(t, "sik-tisort-mavi", product.Handle)
 }
 
+// TestCreateProductDerivedHandleStaysAddressable uzun bir başlıktan üretilen
+// handle'ın ürünü vitrinde ERİŞİLEBİLİR bıraktığını doğrular.
+//
+// Başlık 255 karaktere kadar olabilir, handle ise 128'e; üretilen slug
+// kırpılmasaydı ürün oluşur ama /store/v1/products/{handle} 422 döner ve kayıt
+// kendi adresinden hiç açılamazdı.
+func TestCreateProductDerivedHandleStaysAddressable(t *testing.T) {
+	t.Parallel()
+
+	svc := newService(t, newMemStore(), newFakeLinker(), nil)
+	ctx := context.Background()
+
+	title := strings.Repeat("uzun baslik ", 20) + "son"
+	require.Len(t, title, 243, "başlık sınırın (255) altında ama handle sınırının (128) çok üstünde olmalı")
+
+	product, err := svc.CreateProduct(ctx, service.CreateProductInput{
+		Title:  title,
+		Status: models.StatusPublished,
+	})
+	require.NoError(t, err)
+	assert.LessOrEqual(t, len(product.Handle), 128, "üretilen handle sınırın içinde kalmalı")
+	assert.NotEmpty(t, product.Handle)
+	assert.False(t, strings.HasSuffix(product.Handle, "-"), "kırpma sonda tire bırakmamalı")
+
+	// Asıl iddia: ürün kendi handle'ıyla vitrinde açılabilmeli.
+	fetched, err := svc.GetStoreProduct(ctx, product.Handle)
+	require.NoError(t, err, "üretilen handle ile ürün okunabilmeli")
+	assert.Equal(t, product.ID, fetched.ID)
+}
+
 // TestCreateProductValidations girdinin reddedildiği durumları doğrular.
 func TestCreateProductValidations(t *testing.T) {
 	t.Parallel()
@@ -256,6 +286,69 @@ func TestCreateVariantRequiresProduct(t *testing.T) {
 	_, err := svc.CreateVariant(context.Background(), "prod_yok", service.CreateVariantInput{Title: "S"})
 	require.Error(t, err)
 	assert.True(t, errors.IsNotFound(err), "bulunamadı bekleniyordu: %v", err)
+}
+
+// TestCreateOptionReturnsStoredRow oluşturulan seçeneğin SAKLANAN satır olarak
+// döndüğünü doğrular.
+//
+// Zaman damgalarını veritabanı üretir; bellekteki model dönseydi yanıt
+// "created_at":"0001-01-01T00:00:00Z" taşırdı (models.Option'da bu alanlarda
+// omitzero yoktur) ve damgaya güvenen istemci yanlış veri okurdu. Diğer tüm
+// create uçları saklanan satırı döner; bu uç sözleşmeden sapmamalı.
+func TestCreateOptionReturnsStoredRow(t *testing.T) {
+	t.Parallel()
+
+	svc := newService(t, newMemStore(), newFakeLinker(), nil)
+	ctx := context.Background()
+	product := seedProduct(t, svc, "tisort", "Tişört")
+
+	option, err := svc.CreateOption(ctx, product.ID, service.CreateOptionInput{
+		Title:  "Beden",
+		Values: []string{"S", "M"},
+	})
+	require.NoError(t, err)
+	assert.False(t, option.CreatedAt.IsZero(), "seçenek saklanan satır olarak dönmeli")
+	assert.False(t, option.UpdatedAt.IsZero(), "seçenek saklanan satır olarak dönmeli")
+
+	require.Len(t, option.Values, 2, "değerler de dönmeli")
+	for _, value := range option.Values {
+		assert.False(t, value.CreatedAt.IsZero(),
+			"%q değeri saklanan satır olarak dönmeli", value.Value)
+	}
+}
+
+// TestAddOptionValueAppendsToEnd sonradan eklenen değerin listenin SONUNA
+// gittiğini doğrular.
+//
+// Sıra doldurulmasaydı yeni değer 0 alır ve okuma sıraya göre yapıldığı için
+// "S, M, L" tanımlı bir seçeneğe eklenen "XL" başa düşerdi.
+func TestAddOptionValueAppendsToEnd(t *testing.T) {
+	t.Parallel()
+
+	svc := newService(t, newMemStore(), newFakeLinker(), nil)
+	ctx := context.Background()
+	product := seedProduct(t, svc, "tisort", "Tişört")
+
+	option, err := svc.CreateOption(ctx, product.ID, service.CreateOptionInput{
+		Title:  "Beden",
+		Values: []string{"S", "M", "L"},
+	})
+	require.NoError(t, err)
+
+	added, err := svc.AddOptionValue(ctx, option.ID, "XL")
+	require.NoError(t, err)
+	assert.Equal(t, int32(3), added.Rank, "yeni değer en büyük sıranın bir fazlasını almalı")
+
+	options, err := svc.ListOptions(ctx, product.ID)
+	require.NoError(t, err)
+	require.Len(t, options, 1)
+
+	values := make([]string, 0, len(options[0].Values))
+	for _, value := range options[0].Values {
+		values = append(values, value.Value)
+	}
+	assert.Equal(t, []string{"S", "M", "L", "XL"}, values,
+		"sonradan eklenen değer listenin sonunda olmalı")
 }
 
 // TestUpdateProductKeepsOwnHandle ürünün kendi handle'ıyla güncellenmesinin

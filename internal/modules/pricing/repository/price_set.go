@@ -8,20 +8,42 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/pricing/repository/pricingdb"
 )
 
-// CreatePriceSet verilen kimlikle boş bir price set oluşturur.
-func (r *Repo) CreatePriceSet(ctx context.Context, id string, now time.Time) (models.PriceSet, error) {
-	if err := r.ready(); err != nil {
-		return models.PriceSet{}, err
-	}
+// CreatePriceSet verilen kimlikle bir price set oluşturur ve fiyatlarını AYNI
+// İŞLEMDE yazar.
+//
+// Kap ile fiyatları tek işlemde olmak ZORUNDADIR: iki ayrı işlemde, fiyat
+// yazımını veritabanı reddettiğinde (örn. var olmayan bir fiyat listesine bağlı
+// fiyat) kap çoktan commit edilmiş olur ve çağıran hata alsa bile geride
+// fiyatsız, kimseye bağlanmamış bir kap kalırdı.
+//
+// prices boş olabilir; o durumda yalnızca kap yazılır.
+func (r *Repo) CreatePriceSet(
+	ctx context.Context,
+	id string,
+	prices []models.Price,
+	now time.Time,
+) (models.PriceSet, error) {
+	var set models.PriceSet
 
-	row, err := r.q.InsertPriceSet(ctx, pricingdb.InsertPriceSetParams{
-		ID:        id,
-		CreatedAt: fromTime(now),
+	err := r.inTx(ctx, func(q *pricingdb.Queries) error {
+		row, err := q.InsertPriceSet(ctx, pricingdb.InsertPriceSetParams{
+			ID:        id,
+			CreatedAt: fromTime(now),
+		})
+		if err != nil {
+			return wrapDB(err, "price set oluşturulamadı")
+		}
+		set = toPriceSet(row)
+
+		// Kap bu işlemde yaratıldığı için başkası ona henüz erişemez; yerine
+		// koymadaki satır kilidine burada gerek yoktur.
+		_, err = insertPrices(ctx, q, id, prices, now)
+		return err
 	})
 	if err != nil {
-		return models.PriceSet{}, wrapDB(err, "price set oluşturulamadı")
+		return models.PriceSet{}, err
 	}
-	return toPriceSet(row), nil
+	return set, nil
 }
 
 // GetPriceSet kimliğe göre price set döner; yoksa errors.NotFound.

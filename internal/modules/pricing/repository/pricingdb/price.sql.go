@@ -158,21 +158,54 @@ func (q *Queries) ListPriceCandidates(ctx context.Context, priceSetID string) ([
 	return items, nil
 }
 
-const listPricesBySet = `-- name: ListPricesBySet :many
-SELECT id, price_set_id, price_list_id, currency_code, amount, min_quantity, max_quantity, created_at, updated_at, deleted_at FROM price
-WHERE price_set_id = $1 AND deleted_at IS NULL
-ORDER BY id
+const listPriceCandidatesBySets = `-- name: ListPriceCandidatesBySets :many
+SELECT
+    p.id, p.price_set_id, p.price_list_id, p.currency_code, p.amount, p.min_quantity, p.max_quantity, p.created_at, p.updated_at, p.deleted_at,
+    pl.id        AS list_id,
+    pl.type      AS list_type,
+    pl.status    AS list_status,
+    pl.starts_at AS list_starts_at,
+    pl.ends_at   AS list_ends_at
+FROM price p
+LEFT JOIN price_list pl
+       ON pl.id = p.price_list_id AND pl.deleted_at IS NULL
+WHERE p.price_set_id = ANY($1::text[]) AND p.deleted_at IS NULL
+ORDER BY p.price_set_id, p.id
 `
 
-func (q *Queries) ListPricesBySet(ctx context.Context, priceSetID string) ([]Price, error) {
-	rows, err := q.db.Query(ctx, listPricesBySet, priceSetID)
+type ListPriceCandidatesBySetsRow struct {
+	ID           string
+	PriceSetID   string
+	PriceListID  *string
+	CurrencyCode string
+	Amount       int64
+	MinQuantity  int32
+	MaxQuantity  *int32
+	CreatedAt    pgtype.Timestamptz
+	UpdatedAt    pgtype.Timestamptz
+	DeletedAt    pgtype.Timestamptz
+	ListID       *string
+	ListType     *string
+	ListStatus   *string
+	ListStartsAt pgtype.Timestamptz
+	ListEndsAt   pgtype.Timestamptz
+}
+
+// ListPriceCandidatesBySets aynı satırları BİRDEN ÇOK kap için tek turda döner.
+//
+// Toplu olması Query katmanının N+1 yasağı içindir (ADR 0004). Tekil sürümle
+// aynı sütunları döndürür ki okuma yüzeyi ile hesaplama AYNI girdiyi görsün:
+// liste üstverisi taşınmasaydı sağlayıcı yayınlanmamış bir kampanyanın fiyatını
+// taban fiyattan ayırt edemezdi.
+func (q *Queries) ListPriceCandidatesBySets(ctx context.Context, priceSetIds []string) ([]ListPriceCandidatesBySetsRow, error) {
+	rows, err := q.db.Query(ctx, listPriceCandidatesBySets, priceSetIds)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []Price{}
+	items := []ListPriceCandidatesBySetsRow{}
 	for rows.Next() {
-		var i Price
+		var i ListPriceCandidatesBySetsRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.PriceSetID,
@@ -184,6 +217,11 @@ func (q *Queries) ListPricesBySet(ctx context.Context, priceSetID string) ([]Pri
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.DeletedAt,
+			&i.ListID,
+			&i.ListType,
+			&i.ListStatus,
+			&i.ListStartsAt,
+			&i.ListEndsAt,
 		); err != nil {
 			return nil, err
 		}
@@ -195,14 +233,14 @@ func (q *Queries) ListPricesBySet(ctx context.Context, priceSetID string) ([]Pri
 	return items, nil
 }
 
-const listPricesBySets = `-- name: ListPricesBySets :many
+const listPricesBySet = `-- name: ListPricesBySet :many
 SELECT id, price_set_id, price_list_id, currency_code, amount, min_quantity, max_quantity, created_at, updated_at, deleted_at FROM price
-WHERE price_set_id = ANY($1::text[]) AND deleted_at IS NULL
-ORDER BY price_set_id, id
+WHERE price_set_id = $1 AND deleted_at IS NULL
+ORDER BY id
 `
 
-func (q *Queries) ListPricesBySets(ctx context.Context, priceSetIds []string) ([]Price, error) {
-	rows, err := q.db.Query(ctx, listPricesBySets, priceSetIds)
+func (q *Queries) ListPricesBySet(ctx context.Context, priceSetID string) ([]Price, error) {
+	rows, err := q.db.Query(ctx, listPricesBySet, priceSetID)
 	if err != nil {
 		return nil, err
 	}

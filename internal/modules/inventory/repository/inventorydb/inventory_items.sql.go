@@ -7,9 +7,34 @@ package inventorydb
 
 import (
 	"context"
-
-	"github.com/jackc/pgx/v5/pgtype"
 )
+
+const countInventoryItems = `-- name: CountInventoryItems :one
+SELECT COUNT(*) FROM inventory_items
+WHERE deleted_at IS NULL
+  AND ($1::text IS NULL OR sku = $1::text)
+  AND ($2::boolean IS NULL
+       OR requires_shipping = $2::boolean)
+`
+
+type CountInventoryItemsParams struct {
+	Sku              *string
+	RequiresShipping *bool
+}
+
+// CountInventoryItems sayfalama zarfının toplam sayısını verir ve ListInventoryItems
+// ile AYNI filtreleri uygular; ikisi birlikte değiştirilmelidir.
+//
+// Toplam, satırlarla birlikte dönen bir pencere fonksiyonundan (COUNT(*) OVER ())
+// okunamaz: aralık dışı bir sayfada hiç satır dönmez, pencere de değerlendirilmez
+// ve toplam 0 görünürdü. Toplam, sayfanın değil FİLTRENİN sayısıdır; bu yüzden
+// sayfalamadan bağımsız, ayrı bir sorgudur.
+func (q *Queries) CountInventoryItems(ctx context.Context, arg CountInventoryItemsParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countInventoryItems, arg.Sku, arg.RequiresShipping)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
 
 const createInventoryItem = `-- name: CreateInventoryItem :one
 
@@ -109,8 +134,7 @@ func (q *Queries) GetInventoryItemsByIDs(ctx context.Context, ids []string) ([]I
 }
 
 const listInventoryItems = `-- name: ListInventoryItems :many
-SELECT id, sku, title, description, requires_shipping, created_at, updated_at, deleted_at, COUNT(*) OVER () AS total_count
-FROM inventory_items
+SELECT id, sku, title, description, requires_shipping, created_at, updated_at, deleted_at FROM inventory_items
 WHERE deleted_at IS NULL
   AND ($1::text IS NULL OR sku = $1::text)
   AND ($2::boolean IS NULL
@@ -126,19 +150,7 @@ type ListInventoryItemsParams struct {
 	RowLimit         int64
 }
 
-type ListInventoryItemsRow struct {
-	ID               string
-	Sku              string
-	Title            *string
-	Description      *string
-	RequiresShipping bool
-	CreatedAt        pgtype.Timestamptz
-	UpdatedAt        pgtype.Timestamptz
-	DeletedAt        pgtype.Timestamptz
-	TotalCount       int64
-}
-
-func (q *Queries) ListInventoryItems(ctx context.Context, arg ListInventoryItemsParams) ([]ListInventoryItemsRow, error) {
+func (q *Queries) ListInventoryItems(ctx context.Context, arg ListInventoryItemsParams) ([]InventoryItem, error) {
 	rows, err := q.db.Query(ctx, listInventoryItems,
 		arg.Sku,
 		arg.RequiresShipping,
@@ -149,9 +161,9 @@ func (q *Queries) ListInventoryItems(ctx context.Context, arg ListInventoryItems
 		return nil, err
 	}
 	defer rows.Close()
-	items := []ListInventoryItemsRow{}
+	items := []InventoryItem{}
 	for rows.Next() {
-		var i ListInventoryItemsRow
+		var i InventoryItem
 		if err := rows.Scan(
 			&i.ID,
 			&i.Sku,
@@ -161,7 +173,6 @@ func (q *Queries) ListInventoryItems(ctx context.Context, arg ListInventoryItems
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.DeletedAt,
-			&i.TotalCount,
 		); err != nil {
 			return nil, err
 		}
@@ -185,6 +196,33 @@ FOR UPDATE
 // yarışı burada kazanır, diğeri bekler ve var olan satırı görür.
 func (q *Queries) LockInventoryItem(ctx context.Context, id string) (string, error) {
 	row := q.db.QueryRow(ctx, lockInventoryItem, id)
+	var id_2 string
+	err := row.Scan(&id_2)
+	return id_2, err
+}
+
+const lockInventoryItemShared = `-- name: LockInventoryItemShared :one
+SELECT id FROM inventory_items
+WHERE id = $1 AND deleted_at IS NULL
+FOR KEY SHARE
+`
+
+// LockInventoryItemShared kalemi PAYLAŞIMLI kilitler; seviye ve rezervasyon
+// satırlarına dokunan akışlar (Reserve/Release/Confirm/Adjust) bunu KİLİT
+// SIRASININ ilk adımı olarak kullanır.
+//
+// Kilit sırası tektir ve her akışta aynıdır: önce kalem, sonra seviye. Sıranın
+// ters dönmesi kilitlenme (deadlock) demektir; rezervasyon satırının kaleme
+// verdiği foreign key zaten örtük bir FOR KEY SHARE kilidi ister, yani sıra
+// burada açıkça alınmazsa INSERT anında ters sırada alınırdı.
+//
+// Kilit PAYLAŞIMLIDIR (FOR KEY SHARE): eşzamanlı iki rezervasyon birbirini
+// beklemez — onları zaten seviye satırının FOR UPDATE kilidi seri hâle
+// getirir. Kalemi yapısal olarak değiştiren akışlar (SetInventoryLevel,
+// DeleteInventoryItem) FOR UPDATE aldığı için bu kilitle ÇAKIŞIR ve sıra
+// korunur.
+func (q *Queries) LockInventoryItemShared(ctx context.Context, id string) (string, error) {
+	row := q.db.QueryRow(ctx, lockInventoryItemShared, id)
 	var id_2 string
 	err := row.Scan(&id_2)
 	return id_2, err

@@ -208,7 +208,7 @@ func (s *Service) CreateProduct(ctx context.Context, in CreateProductInput) (mod
 		if _, err := tx.CreateProduct(ctx, product); err != nil {
 			return err
 		}
-		if err := writeOptions(ctx, tx, options); err != nil {
+		if _, err := writeOptions(ctx, tx, options); err != nil {
 			return err
 		}
 		for _, img := range images {

@@ -451,6 +451,165 @@ func TestEszamanliReserveStoguAsmaz(t *testing.T) {
 	assert.Equal(t, int64(stok), aktifRezervasyonAdedi(ctx, t, item.ID))
 }
 
+// TestReserveIleSeviyeYazmaKilitlenmez KARIŞIK akışların birbirini
+// kilitlemediğini kanıtlar: aynı kalem üzerinde Reserve ile SetInventoryLevel
+// gerçek goroutine'lerle yarıştırılır.
+//
+// Bu, tek tip yarışlardan (Reserve x N) BAŞKA bir hata sınıfıdır. İki akış aynı
+// iki satırı ters sırada kilitlerse PostgreSQL kilitlenmeyi (SQLSTATE 40P01)
+// saptar ve işlemlerden birini öldürür: müşterinin rezervasyonu, yöneticinin
+// stok güncellemesiyle çakıştığı için — hem de kilitlenme zaman aşımı kadar
+// bekledikten sonra — hata alır. Kilit sırası TEK olduğu sürece her tur temiz
+// geçer; bu yüzden testin iddiası "hiçbir çağrı hata almaz"dır.
+//
+// Stok her turda yeniden 1000'e yazıldığı ve turda yalnızca 1 adet ayrıldığı
+// için iş kuralı gereği düşecek bir çağrı YOKTUR; dolayısıyla görülen her hata
+// eşzamanlılık hatasıdır.
+func TestReserveIleSeviyeYazmaKilitlenmez(t *testing.T) {
+	ctx := context.Background()
+	svc := yeniServis(t)
+
+	const stok int64 = 1000
+	item, loc := stoklu(ctx, t, svc, stok)
+
+	const tur = 40
+	hatalar := make(chan error, 2*tur)
+	for range tur {
+		basla := make(chan struct{})
+		var wg sync.WaitGroup
+
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			<-basla
+			_, err := svc.Reserve(ctx, service.ReserveInput{
+				InventoryItemID: item.ID, LocationID: loc.ID, Quantity: 1,
+			})
+			hatalar <- err
+		}()
+		go func() {
+			defer wg.Done()
+			<-basla
+			_, err := svc.SetInventoryLevel(ctx, item.ID, loc.ID, stok)
+			hatalar <- err
+		}()
+
+		close(basla)
+		wg.Wait()
+	}
+	close(hatalar)
+
+	for err := range hatalar {
+		require.NoError(t, err, "Reserve ile SetInventoryLevel birbirini kilitlememeli")
+	}
+}
+
+// TestReserveIleKalemSilmeKilitlenmez Reserve ile DeleteInventoryItem'i aynı
+// kalem üzerinde yarıştırır ve iki şeyi birden kanıtlar: akışlar kilitlenmez ve
+// yarışı TAM OLARAK BİRİ kazanır.
+//
+// Kazanan hangisi olursa olsun sonuç tutarlıdır: rezervasyon önce yazıldıysa
+// silme "aktif rezervasyon var" diye Conflict alır, silme önce bittiyse
+// rezervasyon kalemi bulamaz. İkisinin birden başarılı olması, silinmiş bir
+// kalemin arkasında aktif rezervasyon bırakırdı.
+func TestReserveIleKalemSilmeKilitlenmez(t *testing.T) {
+	ctx := context.Background()
+	svc := yeniServis(t)
+
+	const tur = 25
+	for range tur {
+		item, loc := stoklu(ctx, t, svc, 10)
+
+		basla := make(chan struct{})
+		var hatalar [2]error
+		var wg sync.WaitGroup
+
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			<-basla
+			_, hatalar[0] = svc.Reserve(ctx, service.ReserveInput{
+				InventoryItemID: item.ID, LocationID: loc.ID, Quantity: 1,
+			})
+		}()
+		go func() {
+			defer wg.Done()
+			<-basla
+			hatalar[1] = svc.DeleteInventoryItem(ctx, item.ID)
+		}()
+
+		close(basla)
+		wg.Wait()
+
+		if hatalar[0] != nil {
+			assert.Equal(t, errors.KindNotFound, errors.KindOf(hatalar[0]),
+				"rezervasyon yalnızca kalem silinmiş olduğu için düşebilir: %v", hatalar[0])
+		}
+		if hatalar[1] != nil {
+			assert.Equal(t, errors.KindConflict, errors.KindOf(hatalar[1]),
+				"silme yalnızca aktif rezervasyon yüzünden düşebilir: %v", hatalar[1])
+			assert.Equal(t, service.CodeItemHasReservations, errors.CodeOf(hatalar[1]))
+		}
+		require.True(t, (hatalar[0] == nil) != (hatalar[1] == nil),
+			"tam olarak biri kazanmalı (rezervasyon: %v, silme: %v)", hatalar[0], hatalar[1])
+	}
+}
+
+// TestKilitlenmeConflictOlarakSiniflanir kilitlenme (40P01) hatasının tipli
+// hataya çevrildiğini doğrular.
+//
+// Kilit sırası tekleştirildiği için normal akışlarda kilitlenme oluşmaz; bu
+// test SON SAVUNMAYI sınar. İki işlem iki kalemi bilerek ters sırada kilitler.
+// Sınıflandırma olmasaydı kurban işlem errors.Internal (HTTP 500) alırdı ve
+// çağıran, isteğin yeniden denenebilir olduğunu anlayamazdı.
+func TestKilitlenmeConflictOlarakSiniflanir(t *testing.T) {
+	ctx := context.Background()
+	repo := repository.New(testPool.Pool())
+	svc := yeniServis(t)
+
+	ilkKalem := yeniKalem(ctx, t, svc)
+	ikinciKalem := yeniKalem(ctx, t, svc)
+
+	ilkKilitli, ikinciKilitli := make(chan struct{}), make(chan struct{})
+	hatalar := make(chan error, 2)
+
+	go func() {
+		hatalar <- repo.WithTx(ctx, func(ctx context.Context) error {
+			if err := repo.LockInventoryItem(ctx, ilkKalem.ID); err != nil {
+				return err
+			}
+			close(ilkKilitli)
+			<-ikinciKilitli
+			return repo.LockInventoryItem(ctx, ikinciKalem.ID)
+		})
+	}()
+	go func() {
+		hatalar <- repo.WithTx(ctx, func(ctx context.Context) error {
+			if err := repo.LockInventoryItem(ctx, ikinciKalem.ID); err != nil {
+				return err
+			}
+			close(ikinciKilitli)
+			<-ilkKilitli
+			return repo.LockInventoryItem(ctx, ilkKalem.ID)
+		})
+	}()
+
+	var kurban int
+	for range 2 {
+		err := <-hatalar
+		if err == nil {
+			continue
+		}
+		kurban++
+		assert.Equal(t, errors.KindConflict, errors.KindOf(err),
+			"kilitlenme kurbanı yeniden denenebilir bir hata almalı, aldığı: %v", err)
+		// Kod ELDE yazılır: sabiti kullanmak, sabit yanlış olsa bile geçen bir
+		// totoloji üretirdi.
+		assert.Equal(t, "inventory_concurrent_update", errors.CodeOf(err))
+	}
+	assert.Equal(t, 1, kurban, "kilitlenmede tam olarak bir işlem öldürülür")
+}
+
 // TestReserveReleaseReserveDongusu telafiden sonra adedin gerçekten yeniden
 // satılabilir olduğunu doğrular. Faz 6'daki saga başarısız olup yeniden
 // denendiğinde bu döngü yaşanır.
@@ -658,6 +817,49 @@ func TestVeritabaniKisitiSonSavunma(t *testing.T) {
 		`INSERT INTO inventory_reservations (id, inventory_item_id, location_id, quantity)
          VALUES ($1, $2, $3, 0)`, models.NewReservationID(), item.ID, loc.ID)
 	require.Error(t, err, "sıfır adetli rezervasyon reddedilmeli")
+}
+
+// TestAralikDisiSayfadaToplamKorunur listenin toplam sayısının, sayfada hiç
+// satır olmasa bile doğru kaldığını doğrular.
+//
+// Toplam sayfa satırlarından türetilirse (örn. satırla birlikte dönen bir
+// pencere fonksiyonundan okunursa) aralık dışı bir sayfa için hiç satır
+// dönmediğinden toplam 0 görünür; istemci "hiç kayıt yok" sonucuna varır.
+// Zarfın count alanı ise sayfanın değil, FİLTREYE UYAN TÜM kayıtların
+// sayısıdır. Sahte depo bu ayrımı gösteremez, çünkü orada sayım zaten
+// satırlardan bağımsızdır; ayrım yalnızca gerçek SQL'de vardır.
+func TestAralikDisiSayfadaToplamKorunur(t *testing.T) {
+	ctx := context.Background()
+	svc := yeniServis(t)
+
+	t.Run("kalem", func(t *testing.T) {
+		item := yeniKalem(ctx, t, svc)
+
+		items, toplam, err := svc.ListInventoryItems(ctx, service.ListInventoryItemsInput{
+			SKU: &item.SKU, Page: service.Page{Limit: 10},
+		})
+		require.NoError(t, err)
+		require.Len(t, items, 1)
+		require.Equal(t, int64(1), toplam)
+
+		items, toplam, err = svc.ListInventoryItems(ctx, service.ListInventoryItemsInput{
+			SKU: &item.SKU, Page: service.Page{Limit: 10, Offset: 50},
+		})
+		require.NoError(t, err)
+		assert.Empty(t, items, "aralık dışı sayfada satır olmamalı")
+		assert.Equal(t, int64(1), toplam,
+			"toplam filtreye uyan TÜM kayıtların sayısıdır; sayfadaki satır sayısı değil")
+	})
+
+	t.Run("lokasyon", func(t *testing.T) {
+		yeniLokasyon(ctx, t, svc)
+
+		locs, toplam, err := svc.ListStockLocations(ctx, service.Page{Limit: 10, Offset: 1_000_000})
+
+		require.NoError(t, err)
+		assert.Empty(t, locs, "aralık dışı sayfada satır olmamalı")
+		assert.Positive(t, toplam, "en az bir lokasyon var; toplam sayfayla birlikte sıfırlanamaz")
+	})
 }
 
 // TestQuerySaglayicisiStoklaBirlikteDoner sağlayıcının kalemi TOPLAM

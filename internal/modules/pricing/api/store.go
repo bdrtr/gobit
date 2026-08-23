@@ -15,6 +15,9 @@ import (
 // isteyen istemciler içindir.
 //
 // Yazma yüzeyi store tarafında YOKTUR: fiyat değiştirmek yönetim işidir.
+//
+// Gövde YALNIZCA gösterilebilir fiyatları taşır ve kural koşullarını İÇERMEZ;
+// yönetim yüzeyindeki karşılığı (GET /admin/v1/price-sets/{id}) ikisini de gösterir.
 func (a *API) storeGetPriceSet(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	id := pathID(r, "id")
@@ -25,7 +28,9 @@ func (a *API) storeGetPriceSet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	prices, err := a.svc.ListPrices(ctx, id)
+	// Müşteri yüzeyi SÜZGEÇLİ yolu kullanır: taslak/süresi geçmiş kampanya
+	// fiyatları ve kurala bağlı fiyatlar dışarı çıkmaz (bkz. ListStorePrices).
+	prices, err := a.svc.ListStorePrices(ctx, id)
 	if err != nil {
 		corehttp.WriteError(ctx, w, err)
 		return

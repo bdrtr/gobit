@@ -469,3 +469,46 @@ func TestCalculateAmountMatchesCalculatePrice(t *testing.T) {
 	assert.Equal(t, full.Amount, amount)
 	assert.Equal(t, int64(800), amount)
 }
+
+// TestMatchRuleWithoutValuesDoesNotMatch değersiz bir kuralın PANİK ETMEDEN
+// eşleşmez sayıldığını kanıtlar.
+//
+// Servis doğrulaması boş değer listesini reddeder, ama veritabanındaki CHECK
+// kısıtı tek başına yeterli bir kapı değildir (bkz. migration 000002) ve
+// doğrudan SQL çalıştıran bir bakım betiği böyle bir satır üretebilir. Kural
+// değeri okunamıyorsa doğru davranış, tanınmayan işleçteki gerekçenin aynısıdır:
+// kural sessizce devre dışı kalıp fiyatı herkese AÇMAMALIDIR. "nin" ve "ne"
+// dalları bu yüzden ayrıca kanıtlanır — sınır denetimi olmasa ikisi de değersiz
+// kuralı SAĞLANMIŞ sayardı.
+func TestMatchRuleWithoutValuesDoesNotMatch(t *testing.T) {
+	for _, op := range []models.RuleOperator{
+		models.OpEq, models.OpNe, models.OpIn, models.OpNin,
+		models.OpGt, models.OpGte, models.OpLt, models.OpLte,
+	} {
+		t.Run(string(op), func(t *testing.T) {
+			empty := models.PriceRule{Attribute: "k", Operator: op, Values: []string{}}
+			assert.False(t, matchRule(empty, map[string]string{"k": "10"}),
+				"değersiz kural eşleşmemeli")
+
+			nilValues := models.PriceRule{Attribute: "k", Operator: op}
+			assert.False(t, matchRule(nilValues, map[string]string{"k": "10"}),
+				"nil değerli kural eşleşmemeli")
+		})
+	}
+}
+
+// TestSelectSkipsPriceWithValuelessRule değersiz kuralı olan fiyatın seçime hiç
+// girmediğini ve hesabı düşürmediğini kanıtlar.
+//
+// Değersiz kurallı aday DAHA UCUZ ve DAHA BELİRGİNDİR; elenmezse kazanırdı.
+func TestSelectSkipsPriceWithValuelessRule(t *testing.T) {
+	broken := withRules(basePrice("price_a", "TRY", 1, 1, nil),
+		models.PriceRule{Attribute: "region_id", Operator: models.OpEq})
+	base := basePrice("price_b", "TRY", 10000, 1, nil)
+
+	got, ok := selectPrice([]models.PriceCandidate{broken, base}, "TRY", 1,
+		map[string]string{"region_id": "reg_1"}, testNow)
+
+	require.True(t, ok)
+	assert.Equal(t, "price_b", got.PriceID, "değersiz kurallı fiyat elenmeli")
+}

@@ -541,3 +541,279 @@ func upper(s string) string {
 	}
 	return string(out)
 }
+
+// TestDatabaseRejectsValuelessRule kural değerleri kısıtının GERÇEKTEN
+// kapandığını kanıtlar (migration 000002).
+//
+// 000001'deki CHECK (array_length(rule_values, 1) >= 1) boş diziyi geçiriyordu:
+// array_length('{}', 1) NULL döner ve sonucu NULL olan bir CHECK sağlanmış
+// sayılır. Değersiz bir kural, koşulu okunamaz bir fiyat demektir; kapının veri
+// düzeyinde de durması bu yüzden gerekir.
+func TestDatabaseRejectsValuelessRule(t *testing.T) {
+	ctx := context.Background()
+	svc := newService(t)
+
+	set, err := svc.CreatePriceSet(ctx, []service.PriceInput{{CurrencyCode: "TRY", Amount: 100}})
+	require.NoError(t, err)
+
+	prices, err := svc.ListPrices(ctx, set.ID)
+	require.NoError(t, err)
+	require.Len(t, prices, 1)
+
+	_, err = testPool.Pool().Exec(ctx, `
+		INSERT INTO price_rule (id, price_id, attribute, operator, rule_values, created_at, updated_at)
+		VALUES ($1, $2, 'region_id', 'eq', '{}', now(), now())`,
+		models.NewPriceRuleID(time.Now()), prices[0].ID)
+	require.Error(t, err, "veritabanı değersiz kuralı reddetmeli")
+
+	// Aynı satır tek değerle KABUL edilmelidir; kısıt her şeyi reddetmiyor.
+	_, err = testPool.Pool().Exec(ctx, `
+		INSERT INTO price_rule (id, price_id, attribute, operator, rule_values, created_at, updated_at)
+		VALUES ($1, $2, 'region_id', 'eq', '{reg_1}', now(), now())`,
+		models.NewPriceRuleID(time.Now()), prices[0].ID)
+	require.NoError(t, err)
+}
+
+// TestCreatePriceSetIsAtomic kap ile fiyatlarının TEK işlemde yazıldığını
+// kanıtlar.
+//
+// Senaryo: fiyatlardan biri var olmayan bir fiyat listesine bağlıdır ve
+// veritabanı onu foreign key ile reddeder. İki ayrı işlemde kap ÇOKTAN commit
+// edilmiş olurdu ve çağıran hata alsa bile geride fiyatsız, kimseye bağlanmamış
+// bir kap kalırdı. Servis doğrulaması bu dalı yakalayamaz: kimlik biçimi
+// geçerlidir, yalnızca kayıt yoktur.
+func TestCreatePriceSetIsAtomic(t *testing.T) {
+	ctx := context.Background()
+	svc := newService(t)
+
+	countSets := func() int64 {
+		var count int64
+		require.NoError(t, testPool.Pool().QueryRow(ctx, "SELECT count(*) FROM price_set").Scan(&count))
+		return count
+	}
+
+	before := countSets()
+
+	_, err := svc.CreatePriceSet(ctx, []service.PriceInput{
+		{CurrencyCode: "TRY", Amount: 100},
+		{CurrencyCode: "USD", Amount: 200, PriceListID: ptr("plist_OLMAYAN")},
+	})
+	require.Error(t, err, "olmayan fiyat listesine bağlı fiyat reddedilmeli")
+	assert.Equal(t, errors.KindInvalid, errors.KindOf(err))
+
+	assert.Equal(t, before, countSets(), "reddedilen yazma geride yetim bir kap BIRAKMAMALI")
+}
+
+// TestConcurrentSetPricesDoesNotMerge eşzamanlı iki yazımın "yerine koyma"
+// semantiğini bozmadığını kanıtlar.
+//
+// Senaryo, ReplacePrices'in SQL dizisinin birebir aynısını iki işlemde
+// çalıştırır. Kabın varlık denetimi KİLİTSİZ olsaydı ikinci işlemin "eski
+// fiyatları sil" adımı, READ COMMITTED altında kendi statement snapshot'ında
+// birincinin YENİ satırlarını göremez ve onları silmezdi; kapta iki yazımın
+// fiyatları birlikte canlı kalır ve iki çağıran da hatasız dönerdi. Yanlış
+// fiyat tam olarak böyle doğar.
+func TestConcurrentSetPricesDoesNotMerge(t *testing.T) {
+	ctx := context.Background()
+	svc := newService(t)
+
+	set, err := svc.CreatePriceSet(ctx, []service.PriceInput{{CurrencyCode: "TRY", Amount: 100}})
+	require.NoError(t, err)
+
+	// Birinci yazan: ReplacePrices'in adımlarını elle yürütür ve AÇIK kalır.
+	first, err := testPool.Pool().Begin(ctx)
+	require.NoError(t, err)
+	defer func() { _ = first.Rollback(ctx) }()
+
+	var lockedID string
+	require.NoError(t, first.QueryRow(ctx,
+		"SELECT id FROM price_set WHERE id = $1 AND deleted_at IS NULL FOR UPDATE",
+		set.ID).Scan(&lockedID))
+
+	_, err = first.Exec(ctx,
+		"UPDATE price SET deleted_at = now(), updated_at = now() WHERE price_set_id = $1 AND deleted_at IS NULL",
+		set.ID)
+	require.NoError(t, err)
+	_, err = first.Exec(ctx, `
+		INSERT INTO price (id, price_set_id, currency_code, amount, min_quantity, created_at, updated_at)
+		VALUES ($1, $2, 'USD', 500, 1, now(), now())`,
+		models.NewPriceID(time.Now()), set.ID)
+	require.NoError(t, err)
+
+	// İkinci yazan: gerçek yazma yolu. Birinci açıkken beklemeye girmelidir.
+	done := make(chan error, 1)
+	go func() {
+		_, setErr := svc.SetPrices(ctx, set.ID, []service.PriceInput{{CurrencyCode: "EUR", Amount: 700}})
+		done <- setErr
+	}()
+	requireLockWait(ctx, t, done)
+
+	require.NoError(t, first.Commit(ctx))
+	require.NoError(t, <-done, "birinci yazan bitince ikincisi tamamlanmalı")
+
+	prices, err := svc.ListPrices(ctx, set.ID)
+	require.NoError(t, err)
+
+	currencies := make([]string, 0, len(prices))
+	for _, price := range prices {
+		currencies = append(currencies, price.CurrencyCode)
+	}
+	assert.Equal(t, []string{"EUR"}, currencies,
+		"ikinci yazma birincinin fiyatını da silmeli; yerine koyma BİRLEŞMEYE dönüşmemeli")
+}
+
+// requireLockWait ikinci yazanın gerçekten kilit beklediğini doğrular.
+//
+// Sabit bir bekleme yerine veritabanına sorulur: bekleyen bir backend görünene
+// kadar yoklanır, bu arada işlem tamamlanırsa test hemen düşer. Böylece
+// zamanlamaya değil, gözlemlenen duruma dayanılır.
+func requireLockWait(ctx context.Context, t *testing.T, done <-chan error) {
+	t.Helper()
+
+	deadline := time.Now().Add(15 * time.Second)
+	for {
+		select {
+		case err := <-done:
+			t.Fatalf("ikinci yazma kilit beklemeden tamamlandı: %v", err)
+		default:
+		}
+
+		var waiting int
+		require.NoError(t, testPool.Pool().QueryRow(ctx, `
+			SELECT count(*) FROM pg_stat_activity
+			WHERE datname = current_database() AND wait_event_type = 'Lock'`).Scan(&waiting))
+		if waiting > 0 {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("ikinci yazma kilit beklemeye hiç girmedi")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+// TestQueryProviderHidesUnpublishedListPrices okuma yüzeyinin, hesaplamanın
+// GEÇERSİZ saydığı fiyatları sızdırmadığını kanıtlar.
+//
+// Sağlayıcı hesaplama bağlamı taşımaz; taşımadığı bir bağlama koşullu fiyatı
+// dönerse tüketici (product'ın store listelemesi) onu eleyemez ve vitrin
+// yayınlanmamış bir kampanyayı gösterir. Testin ikinci yarısı süzgecin AŞIRI
+// olmadığını da kanıtlar: liste yayına alınınca fiyat görünür.
+func TestQueryProviderHidesUnpublishedListPrices(t *testing.T) {
+	ctx := context.Background()
+	svc := newService(t)
+	provider := service.NewQueryProvider(svc)
+
+	list, err := svc.CreatePriceList(ctx, service.PriceListInput{
+		Title:  "Yayınlanmamış kampanya",
+		Type:   models.PriceListSale,
+		Status: models.PriceListDraft,
+	})
+	require.NoError(t, err)
+
+	set, err := svc.CreatePriceSet(ctx, []service.PriceInput{
+		{CurrencyCode: "TRY", Amount: 10000},
+		{CurrencyCode: "TRY", Amount: 1, PriceListID: &list.ID},
+	})
+	require.NoError(t, err)
+
+	// Hesaplama taslak kampanyayı zaten elemektedir; okuma yüzeyi de elemelidir.
+	calculated, err := svc.CalculatePrice(ctx, set.ID, service.CalculateParams{CurrencyCode: "TRY"})
+	require.NoError(t, err)
+	require.Equal(t, int64(10000), calculated.Amount)
+
+	amounts := providerAmounts(ctx, t, provider, set.ID)
+	assert.Equal(t, []int64{10000}, amounts,
+		"yayınlanmamış kampanyanın fiyatı okuma yüzeyine SIZMAMALI")
+
+	_, err = svc.UpdatePriceList(ctx, list.ID, service.PriceListInput{
+		Title:  list.Title,
+		Type:   models.PriceListSale,
+		Status: models.PriceListActive,
+	})
+	require.NoError(t, err)
+
+	amounts = providerAmounts(ctx, t, provider, set.ID)
+	assert.ElementsMatch(t, []int64{10000, 1}, amounts,
+		"yayına alınan kampanyanın fiyatı görünmeli")
+}
+
+// providerAmounts bir kabın sağlayıcı üzerinden görünen fiyat tutarlarını döner.
+func providerAmounts(
+	ctx context.Context,
+	t *testing.T,
+	provider *service.QueryProvider,
+	setID string,
+) []int64 {
+	t.Helper()
+
+	records, err := provider.FetchByIDs(ctx, []string{setID}, nil)
+	require.NoError(t, err)
+	require.Len(t, records, 1)
+
+	prices, ok := records[0]["prices"].([]map[string]any)
+	require.True(t, ok, "fiyatlar kayıtla birlikte gelmeli")
+
+	amounts := make([]int64, 0, len(prices))
+	for _, price := range prices {
+		amount, isInt := price["amount"].(int64)
+		require.True(t, isInt, "tutar tam sayı minor unit olmalı")
+		amounts = append(amounts, amount)
+	}
+	return amounts
+}
+
+// TestStorePricesHideDraftListsAndRules müşteri yüzeyinin yayınlanmamış kampanya
+// fiyatlarını ve kural koşullarını SIZDIRMADIĞINI kanıtlar.
+//
+// Regresyon: Query sağlayıcısı süzgeci uygularken GET /store/v1/price-sets/{id}
+// süzgeçsiz ListPrices yolunu kullanıyordu. Sonuç: taslak bir kampanyanın
+// fiyatı ve bir müşteri segmentine bağlı kuralın koşulu (ör. customer_group_id)
+// müşteri gövdesine çıkıyordu. İki müşteri yüzeyi artık AYNI süzgeci kullanır.
+func TestStorePricesHideDraftListsAndRules(t *testing.T) {
+	ctx := context.Background()
+	svc := newService(t)
+
+	taslak, err := svc.CreatePriceList(ctx, service.PriceListInput{
+		Title:  "Yayınlanmamış kampanya",
+		Type:   models.PriceListSale,
+		Status: models.PriceListDraft,
+	})
+	require.NoError(t, err)
+
+	set, err := svc.CreatePriceSet(ctx, []service.PriceInput{
+		{CurrencyCode: "TRY", Amount: 10000},                      // taban: görünmeli
+		{CurrencyCode: "TRY", Amount: 1, PriceListID: &taslak.ID}, // taslak: GÖRÜNMEMELİ
+		{CurrencyCode: "TRY", Amount: 2, Rules: []service.RuleInput{ // kurala bağlı: GÖRÜNMEMELİ
+			{Attribute: "customer_group_id", Operator: models.OpEq, Values: []string{"vip"}},
+		}},
+	})
+	require.NoError(t, err)
+
+	// Yönetim yüzeyi HER ŞEYİ görür: operatör taslak kampanyayı ve kuralı
+	// görebilmelidir.
+	adminPrices, err := svc.ListPrices(ctx, set.ID)
+	require.NoError(t, err)
+	assert.Len(t, adminPrices, 3, "yönetim yüzeyi tüm fiyatları görmeli")
+
+	// Müşteri yüzeyi YALNIZCA taban fiyatı görür.
+	storePrices, err := svc.ListStorePrices(ctx, set.ID)
+	require.NoError(t, err)
+	require.Len(t, storePrices, 1, "müşteriye yalnızca gösterilebilir fiyat çıkmalı: %+v", storePrices)
+	assert.Equal(t, int64(10000), storePrices[0].Amount)
+	assert.Nil(t, storePrices[0].PriceListID, "taslak kampanya fiyatı sızdı")
+	assert.Empty(t, storePrices[0].Rules, "kural koşulları müşteriye çıkmamalı")
+
+	// Kampanya yayına alınınca müşteri yüzeyinde GÖRÜNMELİ — süzgeç kalıcı
+	// olarak gizlemiyor, yalnızca yayında olmayanı eliyor.
+	_, err = svc.UpdatePriceList(ctx, taslak.ID, service.PriceListInput{
+		Title:  taslak.Title,
+		Type:   models.PriceListSale,
+		Status: models.PriceListActive,
+	})
+	require.NoError(t, err)
+
+	storePrices, err = svc.ListStorePrices(ctx, set.ID)
+	require.NoError(t, err)
+	assert.Len(t, storePrices, 2, "yayına alınan kampanya müşteriye görünmeli")
+}

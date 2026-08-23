@@ -35,9 +35,21 @@ func newMemRepo() *memRepo {
 	}
 }
 
-func (m *memRepo) CreatePriceSet(_ context.Context, id string, now time.Time) (models.PriceSet, error) {
+func (m *memRepo) CreatePriceSet(
+	ctx context.Context,
+	id string,
+	prices []models.Price,
+	now time.Time,
+) (models.PriceSet, error) {
 	set := models.PriceSet{ID: id, CreatedAt: now, UpdatedAt: now}
 	m.sets[id] = set
+
+	// Gerçek depo kabı ve fiyatlarını TEK işlemde yazar; sahte depo aynı sözü
+	// fiyat yazımı hata verdiğinde kabı geri alarak tutar.
+	if _, err := m.ReplacePrices(ctx, id, prices, now); err != nil {
+		delete(m.sets, id)
+		return models.PriceSet{}, err
+	}
 	return set, nil
 }
 
@@ -89,10 +101,17 @@ func (m *memRepo) ListPrices(_ context.Context, priceSetID string) ([]models.Pri
 	return slices.Clone(m.prices[priceSetID]), nil
 }
 
-func (m *memRepo) ListPricesBySets(_ context.Context, ids []string) (map[string][]models.Price, error) {
-	out := map[string][]models.Price{}
+func (m *memRepo) ListPriceCandidatesBySets(
+	ctx context.Context,
+	ids []string,
+) (map[string][]models.PriceCandidate, error) {
+	out := map[string][]models.PriceCandidate{}
 	for _, id := range ids {
-		out[id] = slices.Clone(m.prices[id])
+		candidates, err := m.ListPriceCandidates(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		out[id] = candidates
 	}
 	return out, nil
 }

@@ -15,11 +15,6 @@ SELECT * FROM price
 WHERE price_set_id = $1 AND deleted_at IS NULL
 ORDER BY id;
 
--- name: ListPricesBySets :many
-SELECT * FROM price
-WHERE price_set_id = ANY(@price_set_ids::text[]) AND deleted_at IS NULL
-ORDER BY price_set_id, id;
-
 -- name: SoftDeletePricesBySet :exec
 UPDATE price
 SET deleted_at = $2, updated_at = $2
@@ -46,3 +41,23 @@ LEFT JOIN price_list pl
        ON pl.id = p.price_list_id AND pl.deleted_at IS NULL
 WHERE p.price_set_id = $1 AND p.deleted_at IS NULL
 ORDER BY p.id;
+
+-- ListPriceCandidatesBySets aynı satırları BİRDEN ÇOK kap için tek turda döner.
+--
+-- Toplu olması Query katmanının N+1 yasağı içindir (ADR 0004). Tekil sürümle
+-- aynı sütunları döndürür ki okuma yüzeyi ile hesaplama AYNI girdiyi görsün:
+-- liste üstverisi taşınmasaydı sağlayıcı yayınlanmamış bir kampanyanın fiyatını
+-- taban fiyattan ayırt edemezdi.
+-- name: ListPriceCandidatesBySets :many
+SELECT
+    p.*,
+    pl.id        AS list_id,
+    pl.type      AS list_type,
+    pl.status    AS list_status,
+    pl.starts_at AS list_starts_at,
+    pl.ends_at   AS list_ends_at
+FROM price p
+LEFT JOIN price_list pl
+       ON pl.id = p.price_list_id AND pl.deleted_at IS NULL
+WHERE p.price_set_id = ANY(@price_set_ids::text[]) AND p.deleted_at IS NULL
+ORDER BY p.price_set_id, p.id;

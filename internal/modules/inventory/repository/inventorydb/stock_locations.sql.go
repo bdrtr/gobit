@@ -7,9 +7,24 @@ package inventorydb
 
 import (
 	"context"
-
-	"github.com/jackc/pgx/v5/pgtype"
 )
+
+const countStockLocations = `-- name: CountStockLocations :one
+SELECT COUNT(*) FROM stock_locations
+WHERE deleted_at IS NULL
+`
+
+// CountStockLocations sayfalama zarfının toplam sayısını verir; ListStockLocations
+// ile aynı filtreyi uygular.
+//
+// Sayım ayrı bir sorgudur: satırlarla birlikte dönen bir pencere fonksiyonu,
+// aralık dışı bir sayfada hiç satır dönmediği için toplamı 0 gösterirdi.
+func (q *Queries) CountStockLocations(ctx context.Context) (int64, error) {
+	row := q.db.QueryRow(ctx, countStockLocations)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
 
 const createStockLocation = `-- name: CreateStockLocation :one
 
@@ -85,8 +100,7 @@ func (q *Queries) GetStockLocation(ctx context.Context, id string) (StockLocatio
 }
 
 const listStockLocations = `-- name: ListStockLocations :many
-SELECT id, name, address_1, address_2, city, province, postal_code, country_code, created_at, updated_at, deleted_at, COUNT(*) OVER () AS total_count
-FROM stock_locations
+SELECT id, name, address_1, address_2, city, province, postal_code, country_code, created_at, updated_at, deleted_at FROM stock_locations
 WHERE deleted_at IS NULL
 ORDER BY created_at DESC, id DESC
 LIMIT $2::bigint OFFSET $1::bigint
@@ -97,33 +111,15 @@ type ListStockLocationsParams struct {
 	RowLimit  int64
 }
 
-type ListStockLocationsRow struct {
-	ID          string
-	Name        string
-	Address1    *string
-	Address2    *string
-	City        *string
-	Province    *string
-	PostalCode  *string
-	CountryCode *string
-	CreatedAt   pgtype.Timestamptz
-	UpdatedAt   pgtype.Timestamptz
-	DeletedAt   pgtype.Timestamptz
-	TotalCount  int64
-}
-
-// Toplam sayı, sayfalama zarfının count alanı için pencere fonksiyonuyla aynı
-// sorguda hesaplanır: pencere LIMIT'ten ÖNCE değerlendirildiği için sayfadaki
-// satır sayısını değil, filtreye uyan TÜM satırların sayısını verir.
-func (q *Queries) ListStockLocations(ctx context.Context, arg ListStockLocationsParams) ([]ListStockLocationsRow, error) {
+func (q *Queries) ListStockLocations(ctx context.Context, arg ListStockLocationsParams) ([]StockLocation, error) {
 	rows, err := q.db.Query(ctx, listStockLocations, arg.RowOffset, arg.RowLimit)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []ListStockLocationsRow{}
+	items := []StockLocation{}
 	for rows.Next() {
-		var i ListStockLocationsRow
+		var i StockLocation
 		if err := rows.Scan(
 			&i.ID,
 			&i.Name,
@@ -136,7 +132,6 @@ func (q *Queries) ListStockLocations(ctx context.Context, arg ListStockLocations
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.DeletedAt,
-			&i.TotalCount,
 		); err != nil {
 			return nil, err
 		}

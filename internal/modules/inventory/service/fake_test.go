@@ -36,6 +36,11 @@ type fakeStore struct {
 	// updateLevelCalls stok seviyesine kaç kez yazıldığını sayar; idempotent
 	// akışların stoğa İKİNCİ KEZ dokunmadığı bununla kanıtlanır.
 	updateLevelCalls int
+	// kilitler alınan kilitleri SIRASIYLA kaydeder ("item", "level",
+	// "reservation"). Kilit sırası bir eşzamanlılık sözleşmesidir ve gerçek
+	// veritabanında ihlali ancak yarış altında (kilitlenme olarak) görünür;
+	// burada sıra doğrudan okunabilir.
+	kilitler []string
 	// availableCalls toplu satılabilirlik sorgusunun çağrı sayısıdır.
 	availableCalls int
 
@@ -164,8 +169,39 @@ func (f *fakeStore) LockInventoryItem(ctx context.Context, id string) error {
 	if err := requireTx(ctx, "LockInventoryItem"); err != nil {
 		return err
 	}
+	f.kilitKaydet("item")
 	_, err := f.GetInventoryItem(ctx, id)
 	return err
+}
+
+// LockInventoryItemShared kalemi "paylaşımlı kilitler".
+//
+// Bellek içi depoda kilitler gerçek değildir; taklit edilen davranış, kilidin
+// işlem içinde alınması, kalemin VARLIĞININ doğrulanması ve kilit SIRASININ
+// kaydedilmesidir.
+func (f *fakeStore) LockInventoryItemShared(ctx context.Context, id string) error {
+	if err := requireTx(ctx, "LockInventoryItemShared"); err != nil {
+		return err
+	}
+	f.kilitKaydet("item")
+	_, err := f.GetInventoryItem(ctx, id)
+	return err
+}
+
+// kilitKaydet alınan kilidi sıraya ekler.
+func (f *fakeStore) kilitKaydet(tur string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	f.kilitler = append(f.kilitler, tur)
+}
+
+// kilitSirasi alınan kilitleri sırasıyla döner.
+func (f *fakeStore) kilitSirasi() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	return slices.Clone(f.kilitler)
 }
 
 // ListInventoryItems kalemleri filtreleyip sayfalar.
@@ -231,6 +267,7 @@ func (f *fakeStore) LockInventoryLevel(ctx context.Context, itemID, locationID s
 	if err := requireTx(ctx, "LockInventoryLevel"); err != nil {
 		return models.InventoryLevel{}, err
 	}
+	f.kilitKaydet("level")
 	return f.GetInventoryLevel(ctx, itemID, locationID)
 }
 
@@ -333,6 +370,7 @@ func (f *fakeStore) LockReservation(ctx context.Context, id string) (models.Rese
 	if err := requireTx(ctx, "LockReservation"); err != nil {
 		return models.Reservation{}, err
 	}
+	f.kilitKaydet("reservation")
 	return f.GetReservation(ctx, id)
 }
 

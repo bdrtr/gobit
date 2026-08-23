@@ -15,6 +15,12 @@
 // errors.Conflict alır. Uygulama katmanında yapılan bir kontrol bunu
 // sağlayamazdı; sınır veritabanındadır.
 //
+// Kilitler HER akışta aynı sırada alınır — önce kalem, sonra seviye (bkz.
+// [Store] "Kilit sırası"). Sıra akışa göre değişseydi, farklı iki akış aynı iki
+// satırı ters sırada isteyip birbirini kilitler ve veritabanı işlemlerden
+// birini öldürürdü: rezervasyon ile stok güncellemesi çakıştığında istek
+// yeniden denenebilir bir çakışma yerine beklenmedik bir hata alırdı.
+//
 // # Modül izolasyonu
 //
 // Bu modül başka hiçbir modülü tanımaz. Bir stok kaleminin hangi ürün
@@ -273,7 +279,10 @@ func (s *Service) ListInventoryItemsByIDs(ctx context.Context, ids []string) ([]
 //
 // Kalemin AKTİF rezervasyonu varsa errors.Conflict döner: silme, söz verilmiş
 // stoğu sessizce yok etmek anlamına gelirdi. Kontrol ve silme aynı işlemde ve
-// kalem kilidi altında yapılır; araya giren bir rezervasyon kontrolü atlatamaz.
+// kalemin DIŞLAYICI kilidi altında yapılır; araya giren bir rezervasyon
+// kontrolü atlatamaz, çünkü [Service.Reserve] de işlemine kalemi paylaşımlı
+// kilitleyerek başlar: ya silmeden önce biter ve sayımda görünür, ya da silme
+// bitene kadar bekler ve kalemi silinmiş bulur.
 func (s *Service) DeleteInventoryItem(ctx context.Context, id string) error {
 	if err := requireText("id", id); err != nil {
 		return err

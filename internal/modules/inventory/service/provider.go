@@ -75,15 +75,17 @@ func (p *QueryProvider) Entity() string {
 // Desteklenen filtreler: "sku" (string) ve "requires_shipping" (bool). Başka
 // bir filtre ya da tanınmayan bir alan errors.Invalid ile reddedilir (ADR 0004).
 //
-// Limit 0 verilirse [DefaultLimit] uygulanır: bu sağlayıcı SINIRSIZ listeleme
-// sunmaz, çünkü sınırsız bir kök sorgu tüm kalem tablosunu belleğe alırdı.
+// Limit [MaxLimit]'e KIRPILIR; bkz. [providerLimit]. Kırpma sessizdir ve hata
+// dönmez, ama sonuç sayfa boyutunun aşılamayacağı anlamına gelir: çağıran tüm
+// kayıtları aldığını varsaymamalı, [MaxLimit] kadar kayıt dönen bir yanıtı
+// "devamı olabilir" diye okumalıdır.
 func (p *QueryProvider) List(ctx context.Context, opts query.ListOptions) ([]query.Record, error) {
 	if err := validateFields(opts.Fields); err != nil {
 		return nil, err
 	}
 
 	in := ListInventoryItemsInput{
-		Page: Page{Limit: int64(opts.Limit), Offset: int64(opts.Offset)},
+		Page: Page{Limit: providerLimit(opts.Limit), Offset: int64(opts.Offset)},
 	}
 	for _, name := range slices.Sorted(maps.Keys(opts.Filters)) {
 		value := opts.Filters[name]
@@ -163,6 +165,28 @@ func (p *QueryProvider) records(ctx context.Context, items []models.InventoryIte
 		out = append(out, record)
 	}
 	return out, nil
+}
+
+// providerLimit çekirdeğin limit değerini sağlayıcının sayfa tavanına kırpar.
+//
+// Çekirdek sözleşmesinde ([query.ListOptions]) 0 "SINIRSIZ" demektir; bu
+// sağlayıcı sınırsız listeleme sunmaz, çünkü sınırsız bir kök sorgu tüm kalem
+// tablosunu belleğe alırdı. Sınırsız istek bu yüzden [MaxLimit]'e çevrilir —
+// [DefaultLimit]'e DEĞİL: çağıran açıkça "hepsini istiyorum" demiştir,
+// alabileceğinin en fazlasını almalıdır. Anlamsız bir negatif değer de aynı
+// kefeye konur: bu yolda limit bir istemci girdisi değil, başka bir modülün
+// sorgu tanımından gelen bir sayıdır ve reddedilmesi tüm okumayı düşürürdü.
+//
+// Tavanın aşılması da hata DEĞİLDİR, kırpılır. Admin API'sinde aynı sınırın
+// aşılması errors.Invalid'dir, çünkü orada sayıyı yazan istemcidir ve yazdığı
+// sayının uygulanmadığını bilmelidir; buradaki limit ise başka bir modülün
+// sorgu tanımından gelir ve tek bir sayı yüzünden hiç veri döndürmemek,
+// çağıranın hiç beklemediği bir başarısızlık olurdu.
+func providerLimit(limit int) int64 {
+	if limit <= 0 || int64(limit) > MaxLimit {
+		return MaxLimit
+	}
+	return int64(limit)
 }
 
 // validateFields istenen alanların hepsinin sunulduğunu doğrular.

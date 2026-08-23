@@ -19,6 +19,7 @@ import (
 	"github.com/bdrtr/gobit/internal/core/link"
 	"github.com/bdrtr/gobit/internal/core/query"
 	"github.com/bdrtr/gobit/internal/modules/product"
+	productmodels "github.com/bdrtr/gobit/internal/modules/product/models"
 	"github.com/bdrtr/gobit/internal/modules/product/service"
 )
 
@@ -444,6 +445,72 @@ func TestPriceSetLinkIsReplacedNotDuplicated(t *testing.T) {
 		"OneToOne bağ değiştirilmeli, ikinci bir satır eklenmemeli")
 }
 
+// TestPriceSetLinkKeepsExistingWhenTargetIsTaken çakışmayla düşen bir yeniden
+// bağlamanın varyantın MEVCUT bağını bozmadığını GERÇEK link servisiyle
+// doğrular.
+//
+// Sahte bir linker bunu kanıtlayamaz: kısıtı zorlayan şey, OneToOne'ın her iki
+// ucuna kurulan benzersiz indekstir. Test iki senaryoyu birlikte kilitler:
+//
+//   - başka bir varyanta bağlı hedefi istemek 409 döner ve HİÇBİR ŞEY değişmez
+//     (aksi hâlde varyant fiyatsız kalır ve vitrin onu öyle yayınlardı);
+//   - aynı varyantı SERBEST yeni bir hedefe taşımak çalışmaya devam eder
+//     (FROM ucu da benzersiz olduğu için eski bağın kaldırılması şarttır).
+func TestPriceSetLinkKeepsExistingWhenTargetIsTaken(t *testing.T) {
+	sys := newSystem(t)
+	ctx := context.Background()
+
+	rec := sys.request(t, http.MethodPost, "/admin/v1/products", `{
+		"handle": "`+uniqueHandle("bag-cakisma")+`",
+		"title": "Çakışan Bağ",
+		"status": "published",
+		"variants": [{"title": "Birinci"}, {"title": "İkinci"}]
+	}`)
+	require.Equal(t, http.StatusCreated, rec.Code, "gövde: %s", rec.Body.String())
+
+	created := jsonBody(t, rec)["data"].(map[string]any)
+	variants := created["variants"].([]any)
+	require.Len(t, variants, 2)
+	firstVariantID := variants[0].(map[string]any)["id"].(string)
+	secondVariantID := variants[1].(map[string]any)["id"].(string)
+
+	// Kimlikler test başına benzersiz olmalı: OneToOne'ın TO ucu link tablosunun
+	// TAMAMINDA benzersizdir, sabit bir kimlik başka bir testin bağıyla çakışırdı.
+	owned := "pset_" + uniqueHandle("sahipli")
+	held := "pset_" + uniqueHandle("mevcut")
+	free := "pset_" + uniqueHandle("serbest")
+
+	rec = sys.request(t, http.MethodPut, "/admin/v1/variants/"+firstVariantID+"/price-set",
+		`{"price_set_id": "`+owned+`"}`)
+	require.Equal(t, http.StatusOK, rec.Code, "gövde: %s", rec.Body.String())
+	rec = sys.request(t, http.MethodPut, "/admin/v1/variants/"+secondVariantID+"/price-set",
+		`{"price_set_id": "`+held+`"}`)
+	require.Equal(t, http.StatusOK, rec.Code, "gövde: %s", rec.Body.String())
+
+	// owned zaten birinci varyanta bağlı; ikinci varyant onu isteyemez.
+	rec = sys.request(t, http.MethodPut, "/admin/v1/variants/"+secondVariantID+"/price-set",
+		`{"price_set_id": "`+owned+`"}`)
+	require.Equal(t, http.StatusConflict, rec.Code, "gövde: %s", rec.Body.String())
+
+	linked, err := sys.links.List(ctx, service.LinkVariantPriceSet, secondVariantID)
+	require.NoError(t, err)
+	assert.Equal(t, []string{held}, linked,
+		"409 dönen istek varyantın mevcut fiyat bağını bozmamalı")
+
+	linked, err = sys.links.List(ctx, service.LinkVariantPriceSet, firstVariantID)
+	require.NoError(t, err)
+	assert.Equal(t, []string{owned}, linked, "hedefin asıl sahibi de etkilenmemeli")
+
+	// Serbest bir hedefe taşımak hâlâ çalışmalı.
+	rec = sys.request(t, http.MethodPut, "/admin/v1/variants/"+secondVariantID+"/price-set",
+		`{"price_set_id": "`+free+`"}`)
+	require.Equal(t, http.StatusOK, rec.Code, "gövde: %s", rec.Body.String())
+
+	linked, err = sys.links.List(ctx, service.LinkVariantPriceSet, secondVariantID)
+	require.NoError(t, err)
+	assert.Equal(t, []string{free}, linked, "serbest hedefe taşıma eski bağı değiştirmeli")
+}
+
 // TestPriceSetLinkRejectsUnknownVariant var olmayan varyanta bağ kurulmasının
 // 404 döndüğünü doğrular.
 func TestPriceSetLinkRejectsUnknownVariant(t *testing.T) {
@@ -452,4 +519,77 @@ func TestPriceSetLinkRejectsUnknownVariant(t *testing.T) {
 	rec := sys.request(t, http.MethodPut, "/admin/v1/variants/variant_yok/price-set",
 		`{"price_set_id": "pset_1"}`)
 	assert.Equal(t, http.StatusNotFound, rec.Code, "gövde: %s", rec.Body.String())
+}
+
+// TestStoreListingDegradesWithoutOtherModules product'ın TEK BAŞINA
+// dağıtıldığında vitrinin çalışmaya devam ettiğini kanıtlar.
+//
+// Faz 4'ün modülerlik garantisi budur: pricing ve inventory kayıtlı değilse
+// vitrin 500 DEĞİL, fiyatsız/stoksuz 200 döner. Bu davranış, Query'nin
+// "sağlayıcı yok" hatasını ayırt etmeye dayanır ve product o hatayı ÇEKİRDEKTEN
+// KOPYALANMIŞ bir dize sabitiyle tanır (service.codeProviderNotFound).
+//
+// Bu test iki dizeyi birbirine BAĞLAR: çekirdek sabiti yeniden adlandırırsa
+// burada düşer. Aksi hâlde çekirdekteki bir yeniden adlandırma hiçbir kapıyı
+// düşürmeden bu garantiyi sessizce kırardı.
+func TestStoreListingDegradesWithoutOtherModules(t *testing.T) {
+	ctx := context.Background()
+
+	c := container.New(nil)
+	t.Cleanup(func() { _ = c.Shutdown(context.Background()) })
+
+	links := link.New(testPool, nil)
+	require.NoError(t, c.Provide("core.db", testPool))
+	require.NoError(t, c.Provide("core.link", links))
+	require.NoError(t, c.Provide("core.query", query.New(links, c, nil)))
+	// pricing ve inventory sağlayıcıları BİLİNÇLİ olarak kaydedilmez.
+
+	mod := product.New()
+	require.NoError(t, mod.Register(ctx, c))
+
+	router := chi.NewRouter()
+	mod.Routes(router)
+
+	svc, err := container.Resolve[*service.Service](c, product.ServiceName)
+	require.NoError(t, err)
+
+	prod, err := svc.CreateProduct(ctx, service.CreateProductInput{
+		Title:  "Yalnız modül ürünü",
+		Status: productmodels.StatusPublished,
+	})
+	require.NoError(t, err)
+	_, err = svc.CreateVariant(ctx, prod.ID, service.CreateVariantInput{Title: "Tek beden"})
+	require.NoError(t, err)
+
+	req := httptest.NewRequest(http.MethodGet, "/store/v1/products", http.NoBody)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code,
+		"pricing/inventory kayıtlı değilken vitrin 500 DEĞİL 200 dönmeli: %s", rec.Body.String())
+
+	var body struct {
+		Data []map[string]any `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+
+	// Havuz testler arasında paylaşıldığı için kendi ürünümüz aranır;
+	// listenin uzunluğuna dayanmak testi komşu testlere bağımlı kılardı.
+	var mine map[string]any
+	for _, rec := range body.Data {
+		if rec["id"] == prod.ID {
+			mine = rec
+			break
+		}
+	}
+	require.NotNil(t, mine, "oluşturulan ürün vitrinde dönmeli")
+
+	variants, ok := mine["variants"].([]any)
+	require.True(t, ok, "varyantlar dönmeli: %v", mine)
+	require.Len(t, variants, 1)
+
+	variant, ok := variants[0].(map[string]any)
+	require.True(t, ok)
+	assert.NotContains(t, variant, "price_set", "sağlayıcı yokken fiyat alanı hiç olmamalı")
+	assert.NotContains(t, variant, "inventory_item", "sağlayıcı yokken stok alanı hiç olmamalı")
 }

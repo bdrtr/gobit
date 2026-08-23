@@ -95,16 +95,43 @@ func requireID(field, value string) (string, error) {
 }
 
 // resolveHandle handle'ı doğrular; boş bırakılmışsa başlıktan üretir.
+//
+// Üretilen handle da UZUNLUK SINIRINA tabidir. Başlık maxTitleLen'e (255) kadar
+// olabildiği için ondan üretilen slug maxHandleLen'i (128) rahatça aşar; aşan
+// bir handle ürünü vitrinde ERİŞİLEMEZ kılardı, çünkü /store/v1/products/{handle}
+// kimliği aynı 128 sınırıyla doğrular ve 422 döner — kayıt oluşur ama adresi hiç
+// açılmaz.
+//
+// Üretilen slug bu yüzden KIRPILIR; istemcinin AÇIKÇA verdiği handle ise
+// kırpılmaz, reddedilir. Ayrım bilinçlidir: üretim zaten bir kolaylıktır ve
+// kısaltılması istemcinin gönderdiği bir değeri değiştirmez, ama verilmiş bir
+// handle'ı sessizce kısaltmak istenen adresle kaydedilen adresi ayırırdı.
+// Kırpma sonucu başka bir ürünle çakışırsa ensureHandleFree açık bir Conflict
+// döner; sessiz bir üzerine yazma olmaz.
 func resolveHandle(handle, title string) (string, error) {
 	h := strings.TrimSpace(handle)
-	if h == "" {
-		h = slugify(title)
-		if h == "" {
-			return "", invalid("handle boş bırakıldı ve başlıktan üretilemedi (%q)", title)
-		}
-		return h, nil
+	if h != "" {
+		return validateHandle(h)
 	}
-	return validateHandle(h)
+
+	generated := truncateHandle(slugify(title))
+	if generated == "" {
+		return "", invalid("handle boş bırakıldı ve başlıktan üretilemedi (%q)", title)
+	}
+	return validateHandle(generated)
+}
+
+// truncateHandle üretilen slug'ı azami handle uzunluğuna kırpar.
+//
+// Slug yalnızca ASCII harf, rakam ve tire içerir (bkz. slugify), bu yüzden bayt
+// sınırında kırpmak bir rune'u ikiye bölemez. Kırpmadan artakalan sondaki tire
+// atılır: handle tire ile bitemez ve bitseydi validateHandle üretilmiş bir
+// değeri reddederdi.
+func truncateHandle(slug string) string {
+	if len(slug) <= maxHandleLen {
+		return slug
+	}
+	return strings.TrimRight(slug[:maxHandleLen], "-")
 }
 
 // validateHandle handle biçimini doğrular.

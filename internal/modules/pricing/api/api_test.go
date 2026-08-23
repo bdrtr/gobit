@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -377,4 +378,43 @@ func TestBodySizeLimit(t *testing.T) {
 	rec := do(t, r, http.MethodPost, "/admin/v1/price-sets", sb.String())
 
 	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code)
+}
+
+// TestUnpagedListReportsRealLimit sayfalanmamış liste zarfının limit alanının
+// GERÇEĞİ yansıttığını kanıtlar.
+//
+// Limit service.MaxLimit'e kırpılsaydı 150 kayıtlı bir yanıt "count=150,
+// limit=100" derdi; istemci sayfa boyunu 100 sanıp sayfalama döngüsüne girer ve
+// aynı kayıtları tekrar okurdu. Kayıt sayısı bu yüzden MaxLimit'in ÜSTÜNDE
+// seçilir — altında kalsaydı kırpma zaten görünmezdi.
+func TestUnpagedListReportsRealLimit(t *testing.T) {
+	r, _ := newTestRouter(t)
+
+	const priceCount = int64(service.MaxLimit) + 50
+	items := make([]string, 0, priceCount)
+	for i := range priceCount {
+		items = append(items,
+			`{"currency_code":"TRY","amount":`+strconv.FormatInt(100+i, 10)+
+				`,"min_quantity":`+strconv.FormatInt(i+1, 10)+`}`)
+	}
+	body := `{"prices":[` + strings.Join(items, ",") + `]}`
+
+	created := decodeItem(t, do(t, r, http.MethodPost, "/admin/v1/price-sets", `{}`))
+	id, ok := created["id"].(string)
+	require.True(t, ok)
+
+	rec := do(t, r, http.MethodPost, "/admin/v1/price-sets/"+id+"/prices", body)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+	data, count, offset, limit := decodeList(t, rec)
+	assert.Len(t, data, int(priceCount))
+	assert.Equal(t, priceCount, count)
+	assert.Zero(t, offset)
+	assert.Equal(t, priceCount, limit, "sayfalanmamış yanıtta limit kayıt sayısına eşit olmalı")
+
+	data, count, _, limit = decodeList(t, do(t, r, http.MethodGet,
+		"/admin/v1/price-sets/"+id+"/prices", ""))
+	assert.Len(t, data, int(priceCount))
+	assert.Equal(t, priceCount, count)
+	assert.Equal(t, priceCount, limit, "okuma yolunda da kırpılmamalı")
 }

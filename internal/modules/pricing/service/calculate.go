@@ -195,14 +195,26 @@ func eligible(
 	if price.MaxQuantity != nil && quantity > *price.MaxQuantity {
 		return false
 	}
-	if price.PriceListID != nil {
-		// Liste kimliği dolu ama üstverisi yoksa liste SİLİNMİŞTİR; fiyat
-		// sahipsiz kalır ve hesaba katılmaz.
-		if candidate.List == nil || !candidate.List.Usable(at) {
-			return false
-		}
+	if !listAvailable(candidate, at) {
+		return false
 	}
 	return matchRules(price.Rules, attributes)
+}
+
+// listAvailable adayın bağlı olduğu listenin verilen anda fiyat sunabildiğini
+// bildirir; listesiz (taban) fiyat daima uygundur.
+//
+// Liste kimliği dolu ama üstverisi yoksa liste SİLİNMİŞTİR; fiyat sahipsiz
+// kalır ve hesaba katılmaz.
+//
+// Ayrı bir fonksiyon olması bilinçlidir: aynı süzgeci [QueryProvider] de
+// uygular. Kural tek yerde kalmazsa modülün hesapladığı fiyat ile vitrine
+// gösterdiği fiyat ayrışır.
+func listAvailable(candidate models.PriceCandidate, at time.Time) bool {
+	if candidate.Price.PriceListID == nil {
+		return true
+	}
+	return candidate.List != nil && candidate.List.Usable(at)
 }
 
 // score adayın sıralama ölçütlerini türetir.
@@ -297,7 +309,18 @@ func matchRules(rules []models.PriceRule, attributes map[string]string) bool {
 // Kuralın baktığı alan bağlamda YOKSA kural eşleşmez — "ne" (eşit değil) gibi
 // olumsuz işleçlerde bile. Aksi hâlde bağlamı boş bir istek, tüm olumsuz
 // kuralları sağlayarak segment fiyatlarını herkese açardı.
+//
+// DEĞERSİZ kural da eşleşmez ve PANİK ÜRETMEZ. Böyle bir kaydı servis
+// doğrulaması üretmez, ama hesaplama veritabanından okuduğu her satıra
+// dayanıklı olmalıdır: doğrudan SQL çalıştıran bir bakım betiği ya da kısmi
+// bir geri yükleme değerleri boş bırakabilir. Gerekçe tanınmayan işleçtekiyle
+// aynıdır — okunamayan bir koşul, kuralı sessizce devre dışı bırakıp fiyatı
+// herkese AÇMAMALIDIR.
 func matchRule(rule models.PriceRule, attributes map[string]string) bool {
+	if len(rule.Values) == 0 {
+		return false
+	}
+
 	value, ok := attributes[rule.Attribute]
 	if !ok {
 		return false
@@ -327,6 +350,9 @@ func matchRule(rule models.PriceRule, attributes map[string]string) bool {
 // İki taraf da tam sayıya çevrilebilmelidir; çevrilemeyen bir bağlam değeri
 // kuralı eşleşmez yapar (hata üretmez): bağlam dışarıdan gelir ve tek bir bozuk
 // alan tüm fiyat hesabını düşürmemelidir.
+//
+// YALNIZCA matchRule'dan çağrılır ve kuralın en az bir değeri olduğu orada
+// güvence altına alınmıştır; ilk değer bu yüzden doğrudan okunur.
 func matchNumeric(rule models.PriceRule, value string) bool {
 	left, err := strconv.ParseInt(value, 10, 64)
 	if err != nil {

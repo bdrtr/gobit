@@ -3,6 +3,7 @@ package service_test
 import (
 	"context"
 	"math"
+	"slices"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -677,4 +678,56 @@ func TestConfirmReservationRezerveAdetYetmezseInternal(t *testing.T) {
 	assert.Equal(t, errors.KindInternal, errors.KindOf(err))
 	assert.Equal(t, models.ReservationActive, store.reservation(resID).Status)
 	assert.Equal(t, int64(10), store.level(itemID, locA).StockedQuantity)
+}
+
+// TestKilitSirasiKalemdenSeviyeye seviyeye dokunan HER akışın kilitleri aynı
+// sırada — önce kalem, sonra seviye — aldığını doğrular.
+//
+// Sıra bir eşzamanlılık sözleşmesidir: bir akış seviyeyi kalemden önce
+// kilitlerse, kalemi önce kilitleyen bir akışla karşılaştığında veritabanı
+// kilitlenmeyi (deadlock) saptayıp işlemlerden birini öldürür. İhlal gerçek
+// veritabanında yalnızca YARIŞ altında görünür; burada doğrudan okunur.
+func TestKilitSirasiKalemdenSeviyeye(t *testing.T) {
+	akislar := []struct {
+		ad    string
+		cagir func(ctx context.Context, svc *service.Service) error
+	}{
+		{"SetInventoryLevel", func(ctx context.Context, svc *service.Service) error {
+			_, err := svc.SetInventoryLevel(ctx, itemID, locA, 12)
+			return err
+		}},
+		{"AdjustInventory", func(ctx context.Context, svc *service.Service) error {
+			_, err := svc.AdjustInventory(ctx, itemID, locA, 1)
+			return err
+		}},
+		{"Reserve", func(ctx context.Context, svc *service.Service) error {
+			_, err := svc.Reserve(ctx, service.ReserveInput{
+				InventoryItemID: itemID, LocationID: locA, Quantity: 1,
+			})
+			return err
+		}},
+		{"ReleaseReservation", func(ctx context.Context, svc *service.Service) error {
+			return svc.ReleaseReservation(ctx, resID)
+		}},
+		{"ConfirmReservation", func(ctx context.Context, svc *service.Service) error {
+			return svc.ConfirmReservation(ctx, resID)
+		}},
+	}
+
+	for _, akis := range akislar {
+		t.Run(akis.ad, func(t *testing.T) {
+			svc, store := yeniServis(t)
+			store.seedItem(itemID, "SKU-1")
+			store.seedLevel(itemID, locA, 10, 5)
+			store.seedReservation(resID, itemID, locA, 5, models.ReservationActive)
+
+			require.NoError(t, akis.cagir(context.Background(), svc))
+
+			kilitler := store.kilitSirasi()
+			require.Contains(t, kilitler, "item", "akış kalem kilidini hiç almamış: %v", kilitler)
+			require.Contains(t, kilitler, "level", "akış seviye kilidini hiç almamış: %v", kilitler)
+			assert.Less(t, slices.Index(kilitler, "item"), slices.Index(kilitler, "level"),
+				"kalem kilidi seviye kilidinden ÖNCE alınmalı, alınan sıra: %v", kilitler)
+		})
+	}
 }

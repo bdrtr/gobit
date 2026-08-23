@@ -2,6 +2,7 @@ package service_test
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -207,4 +208,44 @@ func TestProviderQuerySozlesmesiniKarsilar(t *testing.T) {
 	_, ok := asProvider.(query.Provider)
 
 	assert.True(t, ok, "QueryProvider, query.Provider arayüzünü karşılamalı")
+}
+
+// TestListLimitTavanaKirpilir çekirdekten gelen limitin sağlayıcının sayfa
+// tavanına kırpıldığını doğrular.
+//
+// Çekirdek sözleşmesinde Limit=0 "sınırsız" demektir. Bu sağlayıcı sınırsız
+// listeleme sunmaz; sınırsız isteği varsayılan sayfa boyutuna indirseydi
+// çağıran hata almadan EKSİK veri alır ve hepsini aldığını sanırdı. Tavanı
+// aşan bir limit de reddedilmez: çekirdek yolunda hata dönmek, tek bir sayı
+// yüzünden hiç veri döndürmemek olurdu.
+func TestListLimitTavanaKirpilir(t *testing.T) {
+	provider, store := yeniSaglayici(t)
+	// Fikstür hem MaxLimit'in (100) hem DefaultLimit'in (50) üstündedir;
+	// ikisi arasındaki farkı ancak böyle bir küme gösterir.
+	const kalemSayisi = 120
+	for i := range kalemSayisi {
+		id := fmt.Sprintf("invitem_%03d", i)
+		store.seedItem(id, "SKU-"+id)
+	}
+	tavan := int(service.MaxLimit)
+
+	durumlar := []struct {
+		ad       string
+		limit    int
+		beklenen int
+	}{
+		{"sınırsız istek tavana çıkar", 0, tavan},
+		{"tavanı aşan limit kırpılır", tavan + 1, tavan},
+		{"tavanın kendisi geçerlidir", tavan, tavan},
+		{"tavanın altı aynen uygulanır", 7, 7},
+	}
+
+	for _, durum := range durumlar {
+		t.Run(durum.ad, func(t *testing.T) {
+			records, err := provider.List(context.Background(), query.ListOptions{Limit: durum.limit})
+
+			require.NoError(t, err, "sağlayıcı limiti hata değil, kırpma sebebi saymalı")
+			assert.Len(t, records, durum.beklenen)
+		})
+	}
 }

@@ -87,6 +87,24 @@ func (r *Repo) GetProduct(ctx context.Context, id string) (models.Product, error
 	return toProduct(row)
 }
 
+// GetProductForUpdate ürünü SATIR KİLİDİYLE okur; silinmiş kayıt bulunamaz
+// sayılır.
+//
+// YALNIZCA [Store.InTx] içinde anlamlıdır: kilit işlem sonunda bırakılır ve
+// işlemsiz bir çağrıda satır daha okuma biter bitmez serbest kalır.
+//
+// Varlık kontrolünü kilitle yapmanın sebebi soft delete'tir: product_variant
+// üzerindeki foreign key silinmiş bir ürünün satırını hâlâ görür, dolayısıyla
+// kontrol ile INSERT arasına giren bir silme sahibi silinmiş bir varyant
+// bırakırdı. Kilit iki işlemi sıraya dizer.
+func (r *Repo) GetProductForUpdate(ctx context.Context, id string) (models.Product, error) {
+	row, err := r.q.GetProductForUpdate(ctx, id)
+	if err != nil {
+		return models.Product{}, wrapDB(err, "ürün bulunamadı: %s", id)
+	}
+	return toProduct(row)
+}
+
 // GetProductByHandle handle'a göre ürünü döner.
 func (r *Repo) GetProductByHandle(ctx context.Context, handle string) (models.Product, error) {
 	row, err := r.q.GetProductByHandle(ctx, handle)

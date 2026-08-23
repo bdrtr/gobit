@@ -40,6 +40,35 @@ func (q *Queries) GetPriceSet(ctx context.Context, id string) (PriceSet, error) 
 	return i, err
 }
 
+const getPriceSetForUpdate = `-- name: GetPriceSetForUpdate :one
+SELECT id, created_at, updated_at, deleted_at FROM price_set
+WHERE id = $1 AND deleted_at IS NULL
+FOR UPDATE
+`
+
+// GetPriceSetForUpdate kabı okur ve satırını İŞLEM SONUNA KADAR kilitler.
+//
+// Kilitsiz bir varlık denetimi yerine koyma (replace) semantiğini korumaz: iki
+// eşzamanlı yazımdan ikincisinin "eski fiyatları sil" adımı READ COMMITTED
+// altında kendi statement snapshot'ında birincinin YENİ satırlarını göremez ve
+// onları silmez; sonuçta iki yazımın fiyatları kapta BİRLİKTE canlı kalır. Satır
+// kilidi aynı kaba yapılan yazımları seri hâle getirir.
+//
+// FOR UPDATE kilit alındıktan sonra WHERE koşulunu YENİDEN değerlendirir; araya
+// giren bir silme bu yüzden "kayıt yok" olarak görünür ve fiyatlar silinmiş bir
+// kaba yapışmaz.
+func (q *Queries) GetPriceSetForUpdate(ctx context.Context, id string) (PriceSet, error) {
+	row := q.db.QueryRow(ctx, getPriceSetForUpdate, id)
+	var i PriceSet
+	err := row.Scan(
+		&i.ID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DeletedAt,
+	)
+	return i, err
+}
+
 const getPriceSetsByIDs = `-- name: GetPriceSetsByIDs :many
 SELECT id, created_at, updated_at, deleted_at FROM price_set
 WHERE id = ANY($1::text[]) AND deleted_at IS NULL

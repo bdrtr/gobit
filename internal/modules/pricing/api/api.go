@@ -14,6 +14,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"math"
 	"net/http"
 	"strconv"
 
@@ -100,6 +101,11 @@ func writeItem(w http.ResponseWriter, r *http.Request, status int, data any) {
 // Sayfalanmayan uç noktalarda (bir kabın fiyatları, bir fiyatın kuralları)
 // zarfın sayısal alanları kayıt sayısıyla doldurulur: istemcinin zarf şekli
 // uç noktaya göre değişmez.
+//
+// Limit, dönen kayıt sayısına EŞİTTİR ve [service.MaxLimit] ile KIRPILMAZ.
+// Kırpılsaydı 250 fiyatlı bir kap için yanıt "count=250, limit=100" derdi;
+// istemci sayfa boyunu 100 sanıp sayfalama döngüsüne girer ve aynı kayıtları
+// tekrar okurdu. Burada sayfa yoktur — tek sayfa tüm kayıtlardır.
 func writeItems[T any](w http.ResponseWriter, r *http.Request, items []T) {
 	if items == nil {
 		items = []T{}
@@ -115,15 +121,17 @@ func writeItems[T any](w http.ResponseWriter, r *http.Request, items []T) {
 
 // clampCount kayıt sayısını zarfın int32 limit alanına sığdırır.
 //
-// Alt sınır da denetlenir: count bir len() sonucudur ve negatif olamaz, ama
-// denetimin varlığı int32'ye dönüşün her girdide güvenli olduğunu YEREL olarak
-// kanıtlar; çağıranın uzağındaki bir değişiklik sessizce sarma üretemez.
+// Yalnızca int32 ARALIĞINA sığdırır; sayfa boyu sınırı uygulamaz (bkz.
+// writeItems). Alt sınır da denetlenir: count bir len() sonucudur ve negatif
+// olamaz, ama denetimin varlığı int32'ye dönüşün her girdide güvenli olduğunu
+// YEREL olarak kanıtlar; çağıranın uzağındaki bir değişiklik sessizce sarma
+// üretemez.
 func clampCount(count int64) int32 {
 	if count < 0 {
 		return 0
 	}
-	if count > int64(service.MaxLimit) {
-		return service.MaxLimit
+	if count > math.MaxInt32 {
+		return math.MaxInt32
 	}
 	return int32(count)
 }

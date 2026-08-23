@@ -456,6 +456,68 @@ func TestListProductsPagesConsistently(t *testing.T) {
 	assert.Len(t, seen, total, "sayfalar bütün kümeyi kapsamalı")
 }
 
+// TestCreateVariantLosesRaceWithProductDeletion silinmekte olan bir ürüne
+// varyant eklenemediğini doğrular.
+//
+// Yarış GERÇEKTİR ve yalnızca gerçek veritabanında görülür: silme SOFT olduğu
+// için product_variant üzerindeki foreign key silinmiş ürünün satırını hâlâ
+// görür ve boşluğu kapatmaz. Kontrol işlemin DIŞINDA yapılırsa araya giren bir
+// DELETE, deleted_at'i NULL olan ama sahibi silinmiş bir varyant bırakır; bu
+// varyant admin uçlarında ve "variant.query" sağlayıcısında görünmeye devam eder.
+//
+// Sıralama uydurulmaz, KİLİTLE zorlanır: test ürünün satırını kendi işleminde
+// (henüz commit etmeden) siler, sonra CreateVariant'ı başlatır. Doğru davranışta
+// CreateVariant satır kilidinde bekler ve commit'ten sonra "bulunamadı" alır;
+// kontrol işlem dışında yapılırsa hiç beklemez, bekleme penceresi içinde
+// varyantı yazar ve yetim kayıt oluşur.
+func TestCreateVariantLosesRaceWithProductDeletion(t *testing.T) {
+	ctx := context.Background()
+	svc := newService(t, nil, nil)
+
+	created, err := svc.CreateProduct(ctx, service.CreateProductInput{
+		Handle: uniqueHandle("yaris-silme"),
+		Title:  "Silinmekte Olan",
+	})
+	require.NoError(t, err)
+
+	// Silmeyi başlat ama COMMIT ETME: ürün satırının kilidi bizde kalsın.
+	tx, err := testPool.Pool().Begin(ctx)
+	require.NoError(t, err)
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	_, err = tx.Exec(ctx,
+		`UPDATE product SET deleted_at = now(), updated_at = now() WHERE id = $1`, created.ID)
+	require.NoError(t, err)
+
+	type result struct {
+		variant models.Variant
+		err     error
+	}
+	done := make(chan result, 1)
+	go func() {
+		variant, cErr := svc.CreateVariant(ctx, created.ID, service.CreateVariantInput{Title: "Yetim"})
+		done <- result{variant: variant, err: cErr}
+	}()
+
+	// Pencere, kilitsiz bir uygulamanın kontrolü ve INSERT'i bitirmesine fazlasıyla
+	// yeter; kilitli uygulama burada bekler.
+	select {
+	case got := <-done:
+		t.Fatalf("varyant silme commit edilmeden yazıldı (yetim kayıt): %+v, err=%v", got.variant, got.err)
+	case <-time.After(time.Second):
+	}
+
+	require.NoError(t, tx.Commit(ctx))
+
+	got := <-done
+	require.Error(t, got.err, "silinmiş ürüne varyant eklenememeli")
+	assert.True(t, coreerrors.IsNotFound(got.err), "bulunamadı bekleniyordu: %v", got.err)
+
+	variants, err := svc.ListVariants(ctx, service.ListVariantsOptions{ProductID: &created.ID})
+	require.NoError(t, err)
+	assert.Empty(t, variants.Items, "silinmiş ürünün altında canlı varyant kalmamalı")
+}
+
 // ptrString dizgenin adresini döner.
 func ptrString(v string) *string { return &v }
 

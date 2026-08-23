@@ -245,9 +245,24 @@ func TestClampToInt32(t *testing.T) {
 // TestWithIndexAddsDetail toplu yazmada hangi girdinin reddedildiğinin hataya
 // eklendiğini kanıtlar.
 func TestWithIndexAddsDetail(t *testing.T) {
-	err := withIndex(errors.Invalid("x", "bozuk"), 3)
+	err := withIndex(errors.Invalid("x", "bozuk"), detailIndex, 3)
 
 	var typed *errors.Error
 	require.True(t, errors.As(err, &typed))
 	assert.Equal(t, 3, typed.Details["index"])
+}
+
+// TestWithIndexKeepsNestedLevels iç içe iki indeksin birbirini EZMEDİĞİNİ
+// kanıtlar.
+//
+// Aynı anahtar iki kez kullanılsaydı errors.WithDetails ikincisiyle birincisini
+// ezer ve dıştaki fiyat indeksi içteki kural indeksini yok ederdi.
+func TestWithIndexKeepsNestedLevels(t *testing.T) {
+	inner := withIndex(errors.Invalid("x", "bozuk"), detailRuleIndex, 3)
+	err := withIndex(inner, detailIndex, 7)
+
+	var typed *errors.Error
+	require.True(t, errors.As(err, &typed))
+	assert.Equal(t, 7, typed.Details[detailIndex])
+	assert.Equal(t, 3, typed.Details[detailRuleIndex], "kural indeksi korunmalı")
 }

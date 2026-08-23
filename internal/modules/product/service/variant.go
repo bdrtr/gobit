@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"math"
 	"slices"
 	"strings"
 
@@ -80,16 +81,24 @@ type binding struct {
 //
 // Ürün yoksa (ya da silinmişse) errors.NotFound döner: varyantın sahibi
 // olmadan yazılması, hiçbir listede görünmeyen bir kayıt üretirdi.
+//
+// Ürün kontrolü varyantla AYNI İŞLEMDE ve satır kilidiyle yapılır. İşlemin
+// dışında yapılsaydı eşzamanlı bir DeleteProduct kontrol ile INSERT arasına
+// girebilirdi: silme SOFT olduğu için product_variant üzerindeki foreign key
+// boşluğu kapatmaz ve ortaya deleted_at'i NULL olan, sahibi silinmiş bir
+// varyant çıkardı — admin uçlarında ve "variant.query" sağlayıcısında görünen,
+// ama hiçbir ürüne bağlı olmayan bir kayıt. Kilit iki isteği sıraya dizer
+// (bkz. repository.Store.GetProductForUpdate).
 func (s *Service) CreateVariant(ctx context.Context, productID string, in CreateVariantInput) (models.Variant, error) {
 	if _, err := requireID("product_id", productID); err != nil {
-		return models.Variant{}, err
-	}
-	if _, err := s.repo.GetProduct(ctx, productID); err != nil {
 		return models.Variant{}, err
 	}
 
 	var created models.Variant
 	err := s.repo.InTx(ctx, func(ctx context.Context, tx repository.Store) error {
+		if _, err := tx.GetProductForUpdate(ctx, productID); err != nil {
+			return err
+		}
 		v, err := createVariantTx(ctx, tx, productID, in, 0)
 		if err != nil {
 			return err
@@ -218,26 +227,42 @@ func (s *Service) SetVariantOptionValues(ctx context.Context, variantID string, 
 }
 
 // CreateOption ürüne seçenek (ve verilen değerlerini) ekler.
+//
+// Dönen kayıt SAKLANAN satırdır, bellekteki model değil: zaman damgaları
+// yalnızca veritabanında üretilir ve modelin sıfır damgalarını dönmek
+// yanıtta "0001-01-01T00:00:00Z" üretirdi. Diğer tüm create uçları da
+// veritabanının döndürdüğü satırı döner; bu sözleşme ortaktır.
 func (s *Service) CreateOption(ctx context.Context, productID string, in CreateOptionInput) (models.Option, error) {
 	if _, err := requireID("product_id", productID); err != nil {
 		return models.Option{}, err
 	}
-	if _, err := s.repo.GetProduct(ctx, productID); err != nil {
-		return models.Option{}, err
-	}
-
 	options, err := buildOptions(productID, []CreateOptionInput{in})
 	if err != nil {
 		return models.Option{}, err
 	}
 
+	var created models.Option
 	err = s.repo.InTx(ctx, func(ctx context.Context, tx repository.Store) error {
-		return writeOptions(ctx, tx, options)
+		// Ürünün varlığı İŞLEMİN İÇİNDE ve satır kilidiyle doğrulanır.
+		// Dışarıda doğrulanırsa araya giren bir DELETE /admin/v1/products/{id}
+		// sonrası sahibi silinmiş ama deleted_at'i NULL olan bir seçenek kalır;
+		// silme SOFT olduğu için foreign key bu boşluğu kapatmaz
+		// (bkz. CreateVariant'taki aynı desen).
+		if _, err := tx.GetProductForUpdate(ctx, productID); err != nil {
+			return err
+		}
+
+		stored, err := writeOptions(ctx, tx, options)
+		if err != nil {
+			return err
+		}
+		created = stored[0]
+		return nil
 	})
 	if err != nil {
 		return models.Option{}, err
 	}
-	return options[0], nil
+	return created, nil
 }
 
 // ListOptions ürünün seçeneklerini değerleriyle birlikte döner.
@@ -254,6 +279,11 @@ func (s *Service) ListOptions(ctx context.Context, productID string) ([]models.O
 }
 
 // AddOptionValue mevcut bir seçeneğe değer ekler.
+//
+// Yeni değer listenin SONUNA konur: sırası, seçeneğin mevcut en büyük sırasının
+// bir fazlasıdır. Sıra doldurulmasaydı sıfır değer (0) yazılırdı ve okuma
+// sıraya göre yapıldığı için "S(0), M(1), L(2)" tanımlı bir seçeneğe eklenen
+// "XL" listenin sonuna değil BAŞINA düşerdi: "S, XL, M, L".
 func (s *Service) AddOptionValue(ctx context.Context, optionID, value string) (models.OptionValue, error) {
 	if _, err := requireID("option_id", optionID); err != nil {
 		return models.OptionValue{}, err
@@ -266,12 +296,34 @@ func (s *Service) AddOptionValue(ctx context.Context, optionID, value string) (m
 	if err != nil {
 		return models.OptionValue{}, err
 	}
+	existing, err := s.repo.ListOptionValuesByOptionIDs(ctx, []string{option.ID})
+	if err != nil {
+		return models.OptionValue{}, err
+	}
 
 	return s.repo.CreateOptionValue(ctx, models.OptionValue{
 		ID:       newID(prefixOptionValue),
 		OptionID: option.ID,
 		Value:    clean,
+		Rank:     nextRank(existing),
 	})
+}
+
+// nextRank verilen değerlerin ARDINA eklenecek sırayı üretir.
+//
+// Boş listede 0'dır. Taşma math.MaxInt32'de doyurulur: taşan bir sıra negatife
+// döner ve "sona ekle" isteği değeri listenin başına taşırdı.
+func nextRank(values []models.OptionValue) int32 {
+	highest := int32(-1)
+	for i := range values {
+		if values[i].Rank > highest {
+			highest = values[i].Rank
+		}
+	}
+	if highest == math.MaxInt32 {
+		return math.MaxInt32
+	}
+	return highest + 1
 }
 
 // DeleteOption seçeneği SOFT siler.
@@ -333,19 +385,32 @@ func buildOptions(productID string, in []CreateOptionInput) ([]models.Option, er
 	return out, nil
 }
 
-// writeOptions seçenekleri ve değerlerini yazar.
-func writeOptions(ctx context.Context, tx repository.Store, options []models.Option) error {
+// writeOptions seçenekleri ve değerlerini yazar; SAKLANAN satırları döner.
+//
+// Dönen satırlar veritabanının RETURNING ile verdikleridir. Zaman damgaları
+// orada üretilir, bellekteki model onları taşımaz; yazılan modeli geri dönmek
+// istemciye sıfır damga göstermek olurdu.
+func writeOptions(ctx context.Context, tx repository.Store, options []models.Option) ([]models.Option, error) {
+	stored := make([]models.Option, 0, len(options))
 	for i := range options {
-		if _, err := tx.CreateOption(ctx, options[i]); err != nil {
-			return err
+		option, err := tx.CreateOption(ctx, options[i])
+		if err != nil {
+			return nil, err
 		}
+		option.Values = make([]models.OptionValue, 0, len(options[i].Values))
 		for j := range options[i].Values {
-			if _, err := tx.CreateOptionValue(ctx, options[i].Values[j]); err != nil {
-				return err
+			value, err := tx.CreateOptionValue(ctx, options[i].Values[j])
+			if err != nil {
+				return nil, err
 			}
+			// OptionTitle bir SÜTUN DEĞİLDİR (bkz. models.OptionValue); RETURNING
+			// onu doldurmaz, bu yüzden yazılan modelden taşınır.
+			value.OptionTitle = options[i].Values[j].OptionTitle
+			option.Values = append(option.Values, value)
 		}
+		stored = append(stored, option)
 	}
-	return nil
+	return stored, nil
 }
 
 // createVariantTx varyantı ve seçenek bağlarını AÇIK BİR İŞLEMDE yazar.

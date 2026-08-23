@@ -23,6 +23,19 @@ RETURNING *;
 SELECT * FROM product
 WHERE id = $1 AND deleted_at IS NULL;
 
+-- name: GetProductForUpdate :one
+-- GetProductForUpdate ürünü SATIR KİLİDİYLE okur; yalnızca bir işlem içinde
+-- anlamlıdır.
+--
+-- Varyant yazmadan önce sahibin var olduğunu doğrulamak tek başına yetmez:
+-- silme SOFT olduğu için foreign key boşluğu kapatmaz ve eşzamanlı bir silme
+-- kontrol ile INSERT arasına girerse sahibi silinmiş bir varyant ortaya çıkar.
+-- Kilit, silmeyi bu işlemle SIRAYA DİZER: silme önce gelirse burada satır
+-- bulunamaz, sonra gelirse varyant silmenin temizliğine yetişir.
+SELECT * FROM product
+WHERE id = $1 AND deleted_at IS NULL
+FOR UPDATE;
+
 -- name: GetProductByHandle :one
 SELECT * FROM product
 WHERE handle = $1 AND deleted_at IS NULL;

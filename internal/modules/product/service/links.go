@@ -78,7 +78,8 @@ type VariantLinks struct {
 //
 // Bağ TEKİLDİR (OneToOne): varyant başka bir kümeye bağlıysa eski bağ önce
 // kaldırılır. Aksi hâlde link servisi kardinalite ihlali yüzünden Conflict
-// dönerdi ve "fiyatı değiştir" isteği hata gibi görünürdü.
+// dönerdi ve "fiyatı değiştir" isteği hata gibi görünürdü. İstek çakışmayla
+// düşerse varyant ESKİ kümesine bağlı kalır (bkz. setVariantLink).
 func (s *Service) SetVariantPriceSet(ctx context.Context, variantID, priceSetID string) error {
 	return s.setVariantLink(ctx, LinkVariantPriceSet, variantID, priceSetID, "price_set_id")
 }
@@ -123,6 +124,20 @@ func (s *Service) VariantLinkIDs(ctx context.Context, variantID string) (Variant
 }
 
 // setVariantLink varyantı verilen link üzerinden hedef kayda bağlar.
+//
+// # Sıra ve telafi
+//
+// OneToOne kardinalitesinde İKİ uç da benzersizdir. Varyantın (FROM ucu) yeni
+// bağı, eskisi kaldırılmadan kurulamaz; bu yüzden önce silinir. Ama hedefin
+// (TO ucu) başka bir varyanta bağlı olması da ihlaldir ve Create o durumda
+// Conflict döner — silme zaten yapılmış olduğu için varyant fiyatsız/stoksuz
+// kalırdı. İstek 409 döndüğü için operatör "hiçbir şey değişmedi" okur, oysa
+// vitrin o varyantı fiyatsız yayınlar: sessiz veri kaybı.
+//
+// Bu yüzden Create başarısız olursa silinen bağlar GERİ KURULUR ve hata
+// dönülür; başarısız bir istek varyantın mevcut bağını bozmaz. Telafi de
+// düşerse (arada başka bir istek hedefi kapmışsa) durum uyarı olarak loglanır —
+// asıl hatayı gölgelemek çağırana yanlış sebebi gösterirdi.
 func (s *Service) setVariantLink(ctx context.Context, name, variantID, toID, field string) error {
 	if _, err := requireID("variant_id", variantID); err != nil {
 		return err
@@ -144,19 +159,38 @@ func (s *Service) setVariantLink(ctx context.Context, name, variantID, toID, fie
 	if err != nil {
 		return wrapLink(err, "%q bağı okunamadı (varyant: %s)", name, variantID)
 	}
+	removed := make([]string, 0, len(existing))
 	for _, current := range existing {
 		if current == toID {
 			continue
 		}
 		if err := s.links.Delete(ctx, name, variantID, current); err != nil {
+			s.restoreVariantLinks(ctx, name, variantID, removed)
 			return wrapLink(err, "%q bağının eskisi kaldırılamadı (varyant: %s)", name, variantID)
 		}
+		removed = append(removed, current)
 	}
 
 	if err := s.links.Create(ctx, name, variantID, toID); err != nil {
+		s.restoreVariantLinks(ctx, name, variantID, removed)
 		return wrapLink(err, "%q bağı kurulamadı (varyant: %s -> %s)", name, variantID, toID)
 	}
 	return nil
+}
+
+// restoreVariantLinks başarısız bir yeniden bağlamada kaldırılan bağları geri
+// kurar.
+//
+// Hata DÖNMEZ: çağıran zaten asıl hatayı döndürecektir ve telafinin hatası onu
+// gölgelerse istemci düzeltilebilir çakışma yerine anlamsız bir sebep görür.
+// Geri kurulamayan bağ uyarı olarak loglanır.
+func (s *Service) restoreVariantLinks(ctx context.Context, name, variantID string, removed []string) {
+	for _, toID := range removed {
+		if err := s.links.Create(ctx, name, variantID, toID); err != nil {
+			s.log.WarnContext(ctx, "başarısız yeniden bağlamada eski bağ geri kurulamadı",
+				"link", name, "variant_id", variantID, "to_id", toID, "error", err)
+		}
+	}
 }
 
 // clearVariantLink varyantın verilen linkteki tüm bağlarını kaldırır.

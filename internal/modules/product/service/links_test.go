@@ -89,6 +89,72 @@ func TestSetVariantPriceSetIsIdempotent(t *testing.T) {
 	assert.Empty(t, links.deletes, "aynı hedefe yeniden bağlamak eski bağı kaldırmamalı")
 }
 
+// TestSetVariantPriceSetKeepsExistingLinkWhenTargetIsTaken çakışmayla düşen bir
+// yeniden bağlamanın varyantın MEVCUT bağını bozmadığını doğrular.
+//
+// OneToOne'ın TO ucu da benzersizdir: başka bir varyanta bağlı bir fiyat kümesi
+// istendiğinde Create çakışma döner. Eski bağ o noktada zaten silinmiş olursa
+// istek 409 döner ("değişmedi" diye okunur) ama varyant fiyatsız kalır ve vitrin
+// onu öyle yayınlar — sessiz veri kaybı. Bu yüzden düşen istek eski bağı geri
+// kurmak zorundadır.
+func TestSetVariantPriceSetKeepsExistingLinkWhenTargetIsTaken(t *testing.T) {
+	t.Parallel()
+
+	links := newFakeLinker()
+	svc := newService(t, newMemStore(), links, nil)
+	ctx := context.Background()
+
+	product := seedProduct(t, svc, "tisort", "Tişört")
+	first := product.Variants[0].ID
+	second, err := svc.CreateVariant(ctx, product.ID, service.CreateVariantInput{Title: "İkinci"})
+	require.NoError(t, err)
+
+	require.NoError(t, svc.SetVariantPriceSet(ctx, first, "pset_1"))
+	require.NoError(t, svc.SetVariantPriceSet(ctx, second.ID, "pset_2"))
+
+	// pset_1 zaten "first" varyantına bağlı; "second" onu isteyemez.
+	err = svc.SetVariantPriceSet(ctx, second.ID, "pset_1")
+	require.Error(t, err)
+	assert.True(t, errors.IsConflict(err), "çakışma bekleniyordu: %v", err)
+
+	assert.Equal(t, []string{"pset_2"}, links.linked(service.LinkVariantPriceSet, second.ID),
+		"düşen istek varyantın mevcut fiyat bağını bozmamalı")
+	assert.Equal(t, []string{"pset_1"}, links.linked(service.LinkVariantPriceSet, first),
+		"hedefin asıl sahibi de etkilenmemeli")
+
+	// Bağ okunabilir kalmalı: vitrin bu varyantı fiyatsız yayınlamamalı.
+	linkIDs, err := svc.VariantLinkIDs(ctx, second.ID)
+	require.NoError(t, err)
+	require.NotNil(t, linkIDs.PriceSetID)
+	assert.Equal(t, "pset_2", *linkIDs.PriceSetID)
+}
+
+// TestSetVariantInventoryItemKeepsExistingLinkWhenTargetIsTaken aynı telafinin
+// stok bağında da çalıştığını doğrular; iki uç aynı yardımcıyı paylaşır ama
+// sözleşme her ikisi için de bağlayıcıdır.
+func TestSetVariantInventoryItemKeepsExistingLinkWhenTargetIsTaken(t *testing.T) {
+	t.Parallel()
+
+	links := newFakeLinker()
+	svc := newService(t, newMemStore(), links, nil)
+	ctx := context.Background()
+
+	product := seedProduct(t, svc, "tisort", "Tişört")
+	first := product.Variants[0].ID
+	second, err := svc.CreateVariant(ctx, product.ID, service.CreateVariantInput{Title: "İkinci"})
+	require.NoError(t, err)
+
+	require.NoError(t, svc.SetVariantInventoryItem(ctx, first, "invitem_1"))
+	require.NoError(t, svc.SetVariantInventoryItem(ctx, second.ID, "invitem_2"))
+
+	err = svc.SetVariantInventoryItem(ctx, second.ID, "invitem_1")
+	require.Error(t, err)
+	assert.True(t, errors.IsConflict(err), "çakışma bekleniyordu: %v", err)
+
+	assert.Equal(t, []string{"invitem_2"}, links.linked(service.LinkVariantInventory, second.ID),
+		"düşen istek varyantın mevcut stok bağını bozmamalı")
+}
+
 // TestSetVariantLinkRequiresExistingVariant var olmayan varyanta bağ
 // kurulamadığını doğrular.
 //

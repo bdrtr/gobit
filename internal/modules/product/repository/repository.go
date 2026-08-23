@@ -82,6 +82,9 @@ type Store interface {
 
 	CreateProduct(ctx context.Context, p models.Product) (models.Product, error)
 	GetProduct(ctx context.Context, id string) (models.Product, error)
+	// GetProductForUpdate ürünü satır kilidiyle okur; yalnızca InTx içinde
+	// anlamlıdır (bkz. Repo.GetProductForUpdate).
+	GetProductForUpdate(ctx context.Context, id string) (models.Product, error)
 	GetProductByHandle(ctx context.Context, handle string) (models.Product, error)
 	ListProducts(ctx context.Context, f ProductFilter) ([]models.Product, error)
 	CountProducts(ctx context.Context, f ProductFilter) (int, error)

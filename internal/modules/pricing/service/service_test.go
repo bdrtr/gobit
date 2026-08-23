@@ -20,7 +20,9 @@ import (
 // davranıştır; sıra tersine dönerse test düşer.
 func TestCreatePriceSetValidatesBeforeWriting(t *testing.T) {
 	repo := newStubRepo()
-	repo.createPriceSetFn = func(_ context.Context, id string, now time.Time) (models.PriceSet, error) {
+	repo.createPriceSetFn = func(
+		_ context.Context, id string, _ []models.Price, now time.Time,
+	) (models.PriceSet, error) {
 		return models.PriceSet{ID: id, CreatedAt: now, UpdatedAt: now}, nil
 	}
 
@@ -32,7 +34,6 @@ func TestCreatePriceSetValidatesBeforeWriting(t *testing.T) {
 	require.Error(t, err)
 	assert.Equal(t, errors.KindInvalid, errors.KindOf(err))
 	assert.Zero(t, repo.calls["CreatePriceSet"], "geçersiz fiyat varken kap oluşturulmamalı")
-	assert.Zero(t, repo.calls["ReplacePrices"])
 }
 
 // TestCreatePriceSetReportsFailingIndex hangi fiyatın reddedildiğinin hatada
@@ -51,11 +52,15 @@ func TestCreatePriceSetReportsFailingIndex(t *testing.T) {
 	assert.Equal(t, 1, typed.Details["index"])
 }
 
-// TestCreatePriceSetWithoutPricesSkipsWrite fiyat verilmediğinde yazma
-// yolunun hiç açılmadığını kanıtlar.
-func TestCreatePriceSetWithoutPricesSkipsWrite(t *testing.T) {
+// TestCreatePriceSetWithoutPricesWritesEmptySet fiyat verilmediğinde kabın
+// boş fiyat kümesiyle yazıldığını kanıtlar.
+func TestCreatePriceSetWithoutPricesWritesEmptySet(t *testing.T) {
 	repo := newStubRepo()
-	repo.createPriceSetFn = func(_ context.Context, id string, now time.Time) (models.PriceSet, error) {
+	var gotPrices []models.Price
+	repo.createPriceSetFn = func(
+		_ context.Context, id string, prices []models.Price, now time.Time,
+	) (models.PriceSet, error) {
+		gotPrices = prices
 		return models.PriceSet{ID: id, CreatedAt: now, UpdatedAt: now}, nil
 	}
 
@@ -64,7 +69,37 @@ func TestCreatePriceSetWithoutPricesSkipsWrite(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, strings.HasPrefix(set.ID, models.PriceSetIDPrefix))
 	assert.Equal(t, 1, repo.calls["CreatePriceSet"])
-	assert.Zero(t, repo.calls["ReplacePrices"], "fiyat yoksa yazma yapılmamalı")
+	assert.Empty(t, gotPrices)
+}
+
+// TestCreatePriceSetWritesSetAndPricesInOneCall kabın ve fiyatlarının depoya
+// TEK çağrıda geçtiğini kanıtlar.
+//
+// İkinci bir yazma turu (ReplacePrices) açılsaydı o tur AYRI bir işlem olurdu ve
+// veritabanı fiyatı reddettiğinde kap çoktan commit edilmiş, yani fiyatsız ve
+// kimseye bağlanmamış bir kap geride kalmış olurdu. stubRepo'nun ReplacePrices'i
+// betiklenmemiştir; çağrılırsa hata döner ve test bu yüzden de düşer.
+func TestCreatePriceSetWritesSetAndPricesInOneCall(t *testing.T) {
+	repo := newStubRepo()
+	var gotPrices []models.Price
+	repo.createPriceSetFn = func(
+		_ context.Context, id string, prices []models.Price, now time.Time,
+	) (models.PriceSet, error) {
+		gotPrices = prices
+		return models.PriceSet{ID: id, CreatedAt: now, UpdatedAt: now}, nil
+	}
+
+	set, err := newTestService(repo).CreatePriceSet(context.Background(), []PriceInput{
+		{CurrencyCode: "TRY", Amount: 100},
+		{CurrencyCode: "USD", Amount: 200},
+	})
+
+	require.NoError(t, err)
+	assert.True(t, strings.HasPrefix(set.ID, models.PriceSetIDPrefix))
+	require.Len(t, gotPrices, 2, "fiyatlar kabı yaratan çağrıya geçmeli")
+	assert.Equal(t, "TRY", gotPrices[0].CurrencyCode)
+	assert.Equal(t, "USD", gotPrices[1].CurrencyCode)
+	assert.Zero(t, repo.calls["ReplacePrices"], "kap ve fiyatları AYRI turda yazılmamalı")
 }
 
 // TestSetPricesNormalizesInput girdinin depoya normalleştirilmiş hâlde
@@ -347,7 +382,11 @@ func TestSetBasePricesWritesBasePrices(t *testing.T) {
 // döndüğünü kanıtlar.
 func TestCreateEmptyPriceSetReturnsID(t *testing.T) {
 	repo := newStubRepo()
-	repo.createPriceSetFn = func(_ context.Context, id string, now time.Time) (models.PriceSet, error) {
+	var gotPrices []models.Price
+	repo.createPriceSetFn = func(
+		_ context.Context, id string, prices []models.Price, now time.Time,
+	) (models.PriceSet, error) {
+		gotPrices = prices
 		return models.PriceSet{ID: id, CreatedAt: now, UpdatedAt: now}, nil
 	}
 
@@ -355,5 +394,32 @@ func TestCreateEmptyPriceSetReturnsID(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.True(t, strings.HasPrefix(id, models.PriceSetIDPrefix))
-	assert.Zero(t, repo.calls["ReplacePrices"])
+	assert.Empty(t, gotPrices, "fiyatsız kap yaratılmalı")
+}
+
+// TestCreatePriceSetReportsFailingRuleIndex kural düzeyindeki bir hatanın HEM
+// fiyat HEM kural sırasını taşıdığını kanıtlar.
+//
+// İki seviye aynı ayrıntı anahtarını kullansaydı dıştaki fiyat indeksi içteki
+// kural indeksini EZER ve istemci "prices[1].rules[2] geçersiz" durumunda
+// yalnızca index=1 görüp hatayı fiyatın kendisinde arardı. İki indeks bu yüzden
+// FARKLI değerlerle kurulur; biri diğerinin yerine yazılsa test düşer.
+func TestCreatePriceSetReportsFailingRuleIndex(t *testing.T) {
+	repo := newStubRepo()
+
+	_, err := newTestService(repo).CreatePriceSet(context.Background(), []PriceInput{
+		{CurrencyCode: "TRY", Amount: 100},
+		{CurrencyCode: "TRY", Amount: 200, Rules: []RuleInput{
+			{Attribute: "region_id", Operator: models.OpEq, Values: []string{"reg_1"}},
+			{Attribute: "customer_group_id", Operator: models.OpIn, Values: []string{"vip"}},
+			{Attribute: "customer_age", Operator: models.OpGt, Values: []string{"on sekiz"}},
+		}},
+	})
+
+	require.Error(t, err)
+	var typed *errors.Error
+	require.True(t, errors.As(err, &typed))
+	assert.Equal(t, 1, typed.Details[detailIndex], "kaçıncı fiyat")
+	assert.Equal(t, 2, typed.Details[detailRuleIndex], "o fiyatın kaçıncı kuralı")
+	assert.Zero(t, repo.calls["CreatePriceSet"], "geçersiz kural varken kap oluşturulmamalı")
 }

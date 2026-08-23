@@ -30,6 +30,16 @@ const (
 	keyInventory = "inventory_item"
 )
 
+// codeProviderNotFound Query katmanının "bu entity'nin sağlayıcısı container'da
+// kayıtlı değil" hata kodudur.
+//
+// Kod BURADA TEKRARLANIR çünkü core/query'deki karşılığı unexported'dır ve
+// paketler arası tek taşınabilir bağ hata kodudur (bkz. core/errors: "kod
+// sözleşmenin parçasıdır"). Değeri değişirse bu modül sessizce daha az
+// bağışlayıcı olur — vitrin fiyatsız dönmek yerine hata verir; sessizce daha
+// hoşgörülü olmaktan yeğdir.
+const codeProviderNotFound = "query_provider_not_found"
+
 // StoreListOptions vitrin (store) ürün listelemesinin ölçütleridir.
 //
 // Durum filtresi YOKTUR: vitrin yalnızca yayındaki ürünleri gösterir ve bunun
@@ -183,10 +193,17 @@ func (s *Service) toStoreProducts(ctx context.Context, products []models.Product
 // # Eksik modüle karşı davranış
 //
 // pricing ya da inventory bu kurulumda kayıtlı değilse Query "sağlayıcı
-// bulunamadı" (NotFound) döner. Bu durumda listeleme HATA VERMEZ: katalog
-// fiyatsız/stoksuz döner ve durum uyarı olarak loglanır. Gerekçe, modülerliğin
-// kendisidir — product modülü tek başına da dağıtılabilmelidir; ayrıca fiyatın
-// eksik olması yanlış fiyat göstermekten iyidir (alan hiç yazılmaz).
+// bulunamadı" (codeProviderNotFound) döner. YALNIZCA bu durumda listeleme HATA
+// VERMEZ: katalog fiyatsız/stoksuz döner ve durum uyarı olarak loglanır.
+// Gerekçe, modülerliğin kendisidir — product modülü tek başına da
+// dağıtılabilmelidir; ayrıca fiyatın eksik olması yanlış fiyat göstermekten
+// iyidir (alan hiç yazılmaz).
+//
+// Düşüş HATA SINIFINA göre değil KODA göre daraltılmıştır. Sınıfa bakmak
+// (KindNotFound) fazla genişti: kayıtlı bir sağlayıcının kendi içinde ürettiği
+// NotFound da (query_provider_failed) o kapıdan geçer ve gerçek bir arıza,
+// fiyatsız ama 200 dönen bir vitrin sayfasına dönüşürdü — Faz 4'ün DoD'si
+// tek bir log satırı dışında hiçbir iz bırakmadan ihlal edilirdi.
 func (s *Service) enrichVariants(ctx context.Context, variantIDs []string) (map[string]enrichment, error) {
 	out := make(map[string]enrichment, len(variantIDs))
 	if len(variantIDs) == 0 {
@@ -208,8 +225,8 @@ func (s *Service) enrichVariants(ctx context.Context, variantIDs []string) (map[
 		},
 	})
 	if err != nil {
-		if errors.IsNotFound(err) {
-			s.log.WarnContext(ctx, "fiyat/stok genişletmesi çözülemedi; vitrin bu bilgi olmadan dönüyor",
+		if errors.CodeOf(err) == codeProviderNotFound {
+			s.log.WarnContext(ctx, "fiyat/stok sağlayıcısı kayıtlı değil; vitrin bu bilgi olmadan dönüyor",
 				"error", err)
 			return out, nil
 		}

@@ -11,12 +11,17 @@ RETURNING *;
 SELECT * FROM stock_locations
 WHERE id = $1 AND deleted_at IS NULL;
 
--- Toplam sayı, sayfalama zarfının count alanı için pencere fonksiyonuyla aynı
--- sorguda hesaplanır: pencere LIMIT'ten ÖNCE değerlendirildiği için sayfadaki
--- satır sayısını değil, filtreye uyan TÜM satırların sayısını verir.
 -- name: ListStockLocations :many
-SELECT *, COUNT(*) OVER () AS total_count
-FROM stock_locations
+SELECT * FROM stock_locations
 WHERE deleted_at IS NULL
 ORDER BY created_at DESC, id DESC
 LIMIT sqlc.arg('row_limit')::bigint OFFSET sqlc.arg('row_offset')::bigint;
+
+-- CountStockLocations sayfalama zarfının toplam sayısını verir; ListStockLocations
+-- ile aynı filtreyi uygular.
+--
+-- Sayım ayrı bir sorgudur: satırlarla birlikte dönen bir pencere fonksiyonu,
+-- aralık dışı bir sayfada hiç satır dönmediği için toplamı 0 gösterirdi.
+-- name: CountStockLocations :one
+SELECT COUNT(*) FROM stock_locations
+WHERE deleted_at IS NULL;

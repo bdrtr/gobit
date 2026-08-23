@@ -79,6 +79,9 @@ func (s *Service) SetInventoryLevel(ctx context.Context, itemID, locationID stri
 // Sonuç NEGATİFE DÜŞEMEZ ve rezerve adedin altına inemez; her iki durumda da
 // errors.Conflict döner ve hiçbir şey yazılmaz. Okuma satır kilidi altında
 // yapıldığı için eşzamanlı iki düzeltme birbirinin yazdığını ezmez.
+//
+// Kilitler kalem -> seviye sırasında alınır (bkz. [Store] "Kilit sırası");
+// kalem yoksa errors.NotFound döner.
 func (s *Service) AdjustInventory(ctx context.Context, itemID, locationID string, delta int64) (models.InventoryLevel, error) {
 	if err := requireIDs(itemID, locationID); err != nil {
 		return models.InventoryLevel{}, err
@@ -89,6 +92,10 @@ func (s *Service) AdjustInventory(ctx context.Context, itemID, locationID string
 
 	var out models.InventoryLevel
 	err := s.store.WithTx(ctx, func(ctx context.Context) error {
+		if err := s.store.LockInventoryItemShared(ctx, itemID); err != nil {
+			return err
+		}
+
 		level, err := s.store.LockInventoryLevel(ctx, itemID, locationID)
 		if err != nil {
 			return err
@@ -195,6 +202,11 @@ type ReserveInput struct {
 // hiçbir şey yazılmaz. Seviye satırı işlem boyunca kilitli olduğu için son bir
 // adet için yarışan iki çağrıdan TAM OLARAK BİRİ kazanır.
 //
+// Kilitler kalem -> seviye sırasında alınır (bkz. [Store] "Kilit sırası").
+// Kalem kilidi PAYLAŞIMLIDIR: eşzamanlı rezervasyonları seri hâle getirmez,
+// yalnızca kalemi yapısal olarak değiştiren akışlarla (SetInventoryLevel,
+// DeleteInventoryItem) çakışır. Kalem yoksa errors.NotFound döner.
+//
 // Faz 6'daki complete_cart saga'sının stok adımı budur; telafisi
 // [Service.ReleaseReservation]'dır.
 func (s *Service) Reserve(ctx context.Context, in ReserveInput) (models.Reservation, error) {
@@ -214,6 +226,10 @@ func (s *Service) Reserve(ctx context.Context, in ReserveInput) (models.Reservat
 
 	var out models.Reservation
 	err := s.store.WithTx(ctx, func(ctx context.Context) error {
+		if err := s.store.LockInventoryItemShared(ctx, in.InventoryItemID); err != nil {
+			return err
+		}
+
 		level, err := s.store.LockInventoryLevel(ctx, in.InventoryItemID, in.LocationID)
 		if err != nil {
 			return err
@@ -271,6 +287,9 @@ func (s *Service) Reserve(ctx context.Context, in ReserveInput) (models.Reservat
 //
 // Onaylanmış bir rezervasyon serbest bırakılamaz (errors.Conflict): stok çoktan
 // fiziksel olarak düşülmüştür, geri almak stok yaratmak olurdu.
+//
+// Kilitler rezervasyon -> kalem -> seviye sırasında alınır (bkz. [Store]
+// "Kilit sırası"); kalem kilidi seviye kilidinden ÖNCE gelir.
 func (s *Service) ReleaseReservation(ctx context.Context, reservationID string) error {
 	if err := requireText("reservation_id", reservationID); err != nil {
 		return err
@@ -297,6 +316,10 @@ func (s *Service) ReleaseReservation(ctx context.Context, reservationID string) 
 				"bilinmeyen rezervasyon durumu %q (%s)", reservation.Status, reservationID)
 		}
 
+		if err := s.store.LockInventoryItemShared(ctx, reservation.InventoryItemID); err != nil {
+			return err
+		}
+
 		level, err := s.store.LockInventoryLevel(ctx, reservation.InventoryItemID, reservation.LocationID)
 		if err != nil {
 			return err
@@ -321,6 +344,9 @@ func (s *Service) ReleaseReservation(ctx context.Context, reservationID string) 
 // [Service.ReleaseReservation] gibi idempotenttir: zaten onaylanmış bir
 // rezervasyon için hata dönmez. Serbest bırakılmış bir rezervasyon onaylanamaz
 // (errors.Conflict); stok geri verilmiştir, düşülecek bir söz kalmamıştır.
+//
+// Kilitler rezervasyon -> kalem -> seviye sırasında alınır (bkz. [Store]
+// "Kilit sırası"); kalem kilidi seviye kilidinden ÖNCE gelir.
 func (s *Service) ConfirmReservation(ctx context.Context, reservationID string) error {
 	if err := requireText("reservation_id", reservationID); err != nil {
 		return err
@@ -345,6 +371,10 @@ func (s *Service) ConfirmReservation(ctx context.Context, reservationID string) 
 		default:
 			return errors.Internal(CodeInconsistentState,
 				"bilinmeyen rezervasyon durumu %q (%s)", reservation.Status, reservationID)
+		}
+
+		if err := s.store.LockInventoryItemShared(ctx, reservation.InventoryItemID); err != nil {
+			return err
 		}
 
 		level, err := s.store.LockInventoryLevel(ctx, reservation.InventoryItemID, reservation.LocationID)

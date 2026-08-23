@@ -8,6 +8,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/bdrtr/gobit/internal/core/errors"
 	"github.com/bdrtr/gobit/internal/core/query"
 	"github.com/bdrtr/gobit/internal/modules/product/models"
 	"github.com/bdrtr/gobit/internal/modules/product/service"
@@ -17,11 +18,24 @@ import (
 // zamana bağlı kalmamasını sağlar.
 var deletionTime = time.Date(2026, 8, 23, 12, 0, 0, 0, time.UTC)
 
+// creationTime sahte deponun kayıt oluşturma damgasıdır.
+//
+// Gerçek şemada created_at/updated_at sütunlarının DEFAULT now() değeri vardır
+// ve satır RETURNING ile geri döner: damgayı üreten VERİTABANIDIR, çağıranın
+// gönderdiği model değil. Sahte depo bunu taklit etmeseydi "saklanan satırı dön"
+// kuralı burada hiç sınanamaz, sıfır damga dönen bir uç testten geçerdi.
+var creationTime = time.Date(2026, 8, 23, 10, 0, 0, 0, time.UTC)
+
 // fakeLinker [service.Linker]'ın bellek içi uygulamasıdır.
 //
 // Gerçek link servisi çekirdektedir ve veritabanı ister; burada doğrulanan şey
 // SERVİSİN link'leri nasıl kullandığıdır: eski bağı kaldırıp yenisini kurması,
 // varyantın varlığını önce doğrulaması ve silmede temizlik yapması.
+//
+// Sahte, product'ın İKİ linkinin de OneToOne olmasını (bkz. service.Definitions)
+// zorlar: hem FROM hem TO ucu tektir ve ihlal errors.Conflict döner. Kardinalite
+// zorlanmasaydı sahte, gerçek link servisinin reddedeceği bir akışı sessizce
+// kabul eder ve testler var olmayan bir davranışı "kanıtlardı".
 type fakeLinker struct {
 	mu sync.Mutex
 	// links link adı -> fromID -> toID listesi.
@@ -39,7 +53,8 @@ func newFakeLinker() *fakeLinker {
 	return &fakeLinker{links: map[string]map[string][]string{}}
 }
 
-// Create bağı kaydeder.
+// Create bağı kaydeder; aynı çift için no-op, kardinalite ihlalinde
+// errors.Conflict döner (gerçek servisin sözleşmesi).
 func (f *fakeLinker) Create(_ context.Context, name, fromID, toID string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -52,6 +67,23 @@ func (f *fakeLinker) Create(_ context.Context, name, fromID, toID string) error 
 	for _, existing := range f.links[name][fromID] {
 		if existing == toID {
 			return nil
+		}
+	}
+	// FROM ucu: varyant zaten başka bir hedefe bağlı.
+	if len(f.links[name][fromID]) > 0 {
+		return errors.Conflict("link_cardinality_violation",
+			"%q linkinde %s zaten bağlı", name, fromID)
+	}
+	// TO ucu: hedef zaten başka bir varyanta bağlı.
+	for otherFrom, targets := range f.links[name] {
+		if otherFrom == fromID {
+			continue
+		}
+		for _, existing := range targets {
+			if existing == toID {
+				return errors.Conflict("link_cardinality_violation",
+					"%q linkinde %s zaten %s'e bağlı", name, toID, otherFrom)
+			}
 		}
 	}
 	f.links[name][fromID] = append(f.links[name][fromID], toID)

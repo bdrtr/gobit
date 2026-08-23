@@ -52,6 +52,7 @@ const (
 	codeInsufficientStock   = "inventory_insufficient_stock"
 	codeTxRequired          = "inventory_tx_required"
 	codeQueryFailed         = "inventory_query_failed"
+	codeConcurrentUpdate    = "inventory_concurrent_update"
 )
 
 // Kısıt adları; sürücü hatasını anlamlı bir tipli hataya çevirmek için
@@ -68,6 +69,7 @@ const (
 	sqlStateUniqueViolation     = "23505"
 	sqlStateForeignKeyViolation = "23503"
 	sqlStateCheckViolation      = "23514"
+	sqlStateDeadlockDetected    = "40P01"
 )
 
 // rollbackTimeout iptal edilmiş bir bağlamda geri almaya tanınan süredir.
@@ -193,6 +195,9 @@ func (r *Repository) GetStockLocation(ctx context.Context, id string) (models.St
 
 // ListStockLocations lokasyonları sayfalayarak döner. İkinci dönüş değeri
 // sayfaya değil, filtreye uyan TÜM satırlara ait toplam sayıdır.
+//
+// Toplam AYRI bir sorgudan gelir; sayfa aralık dışında olsa ve hiç satır
+// dönmese de doğrudur (bkz. queries/stock_locations.sql).
 func (r *Repository) ListStockLocations(ctx context.Context, limit, offset int64) ([]models.StockLocation, int64, error) {
 	rows, err := r.queries(ctx).ListStockLocations(ctx, inventorydb.ListStockLocationsParams{
 		RowLimit:  limit,
@@ -202,23 +207,14 @@ func (r *Repository) ListStockLocations(ctx context.Context, limit, offset int64
 		return nil, 0, classify(err, codeQueryFailed, "stok lokasyonları listelenemedi")
 	}
 
+	total, err := r.queries(ctx).CountStockLocations(ctx)
+	if err != nil {
+		return nil, 0, classify(err, codeQueryFailed, "stok lokasyonları sayılamadı")
+	}
+
 	out := make([]models.StockLocation, 0, len(rows))
-	var total int64
 	for i := range rows {
-		row := &rows[i]
-		total = row.TotalCount
-		out = append(out, models.StockLocation{
-			ID:          row.ID,
-			Name:        row.Name,
-			Address1:    stringValue(row.Address1),
-			Address2:    stringValue(row.Address2),
-			City:        stringValue(row.City),
-			Province:    stringValue(row.Province),
-			PostalCode:  stringValue(row.PostalCode),
-			CountryCode: stringValue(row.CountryCode),
-			CreatedAt:   timeValue(row.CreatedAt),
-			UpdatedAt:   timeValue(row.UpdatedAt),
-		})
+		out = append(out, toStockLocation(rows[i]))
 	}
 	return out, total, nil
 }
@@ -268,8 +264,33 @@ func (r *Repository) LockInventoryItem(ctx context.Context, id string) error {
 	return nil
 }
 
+// LockInventoryItemShared kalemi işlem boyunca PAYLAŞIMLI kilitler ve var
+// olduğunu doğrular. İşlem dışında çağrılırsa hata döner.
+//
+// Seviye ya da rezervasyon satırına dokunan akışlar kilit sırasının ilk adımı
+// olarak bunu alır; paylaşımlı olduğu için eşzamanlı rezervasyonları birbirine
+// beklettirmez ama [Repository.LockInventoryItem]'ın dışlayıcı kilidiyle
+// çakışır (bkz. queries/inventory_items.sql).
+func (r *Repository) LockInventoryItemShared(ctx context.Context, id string) error {
+	if err := requireTx(ctx, "LockInventoryItemShared"); err != nil {
+		return err
+	}
+	if _, err := r.queries(ctx).LockInventoryItemShared(ctx, id); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return errors.NotFound(codeItemNotFound, "stok kalemi bulunamadı: %s", id)
+		}
+		return classify(err, codeQueryFailed, "stok kalemi kilitlenemedi")
+	}
+	return nil
+}
+
 // ListInventoryItems kalemleri filtreleyerek ve sayfalayarak döner.
 // İkinci dönüş değeri filtreye uyan TÜM satırların sayısıdır.
+//
+// Toplam AYRI bir sorgudan gelir ve listeyle aynı filtreleri uygular; sayfa
+// aralık dışında olsa ve hiç satır dönmese de doğrudur. İki sorgu arasında
+// yazılan bir satır toplamı bir değiştirebilir: toplam, sayfalama zarfının
+// bilgilendirici alanıdır, işlem kararı ona dayandırılmaz.
 func (r *Repository) ListInventoryItems(ctx context.Context, filter models.InventoryItemFilter) ([]models.InventoryItem, int64, error) {
 	rows, err := r.queries(ctx).ListInventoryItems(ctx, inventorydb.ListInventoryItemsParams{
 		Sku:              filter.SKU,
@@ -281,20 +302,17 @@ func (r *Repository) ListInventoryItems(ctx context.Context, filter models.Inven
 		return nil, 0, classify(err, codeQueryFailed, "stok kalemleri listelenemedi")
 	}
 
+	total, err := r.queries(ctx).CountInventoryItems(ctx, inventorydb.CountInventoryItemsParams{
+		Sku:              filter.SKU,
+		RequiresShipping: filter.RequiresShipping,
+	})
+	if err != nil {
+		return nil, 0, classify(err, codeQueryFailed, "stok kalemleri sayılamadı")
+	}
+
 	out := make([]models.InventoryItem, 0, len(rows))
-	var total int64
 	for i := range rows {
-		row := &rows[i]
-		total = row.TotalCount
-		out = append(out, models.InventoryItem{
-			ID:               row.ID,
-			SKU:              row.Sku,
-			Title:            stringValue(row.Title),
-			Description:      stringValue(row.Description),
-			RequiresShipping: row.RequiresShipping,
-			CreatedAt:        timeValue(row.CreatedAt),
-			UpdatedAt:        timeValue(row.UpdatedAt),
-		})
+		out = append(out, toInventoryItem(rows[i]))
 	}
 	return out, total, nil
 }
@@ -519,7 +537,8 @@ func levelNotFound(itemID, locationID string) error {
 //
 // Benzersizlik, foreign key ve CHECK ihlalleri istemcinin düzeltebileceği
 // durumlardır; sınıflandırılmazsa hepsi 500 olarak görünür ve gerçek sebep
-// yalnızca logda kalırdı.
+// yalnızca logda kalırdı. Kilitlenme (deadlock) de aynı sebeple ayrı ele
+// alınır: işlemin kendisinde bir yanlışlık yoktur, YENİDEN DENENEBİLİR.
 func classify(err error, code, format string, a ...any) error {
 	var pgErr *pgconn.PgError
 	if !errors.As(err, &pgErr) {
@@ -551,6 +570,12 @@ func classify(err error, code, format string, a ...any) error {
 			return errors.Wrap(err, errors.KindConflict, codeInsufficientStock,
 				"stok yetersiz: satılabilir adet negatife düşemez")
 		}
+	case sqlStateDeadlockDetected:
+		// Kilit sırası tekleştirildiği için normal akışlarda oluşmaz; burası
+		// son savunmadır. İşlem geri alınmıştır, aynı istek olduğu gibi
+		// yeniden denenebilir — bu yüzden Internal (500) değil Conflict.
+		return errors.Wrap(err, errors.KindConflict, codeConcurrentUpdate,
+			"eşzamanlı bir işlemle çakışıldı; istek yeniden denenebilir")
 	}
 	return errors.Wrap(err, errors.KindInternal, code, format, a...)
 }

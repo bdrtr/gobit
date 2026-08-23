@@ -24,6 +24,16 @@ import (
 // [Store.WithTx] içinde çağrılabilir. Stok adedini değiştiren her akış, okumayı
 // bu metotlarla yapar: kilitsiz okunan bir adet yazma anında bayat olabilir ve
 // iki eşzamanlı rezervasyon aynı son adedi alabilirdi.
+//
+// # Kilit sırası
+//
+// Kilitler HER AKIŞTA aynı sırada alınır: önce KALEM
+// ([Store.LockInventoryItem] ya da [Store.LockInventoryItemShared]), sonra
+// SEVİYE ([Store.LockInventoryLevel]). Sıra akışa göre değişirse iki işlem
+// birbirini bekler ve veritabanı kilitlenmeyi (deadlock) saptayıp birini
+// öldürür. Kalem kilidi yalnızca "kalem var mı" kontrolü değildir; sıranın
+// kendisidir ve rezervasyon INSERT'ünün foreign key yüzünden zaten isteyeceği
+// örtük kalem kilidini ÖNCEDEN, doğru sırada alır.
 type Store interface {
 	// WithTx fn'i tek bir işlemde çalıştırır; fn hata dönerse işlem geri alınır.
 	WithTx(ctx context.Context, fn func(ctx context.Context) error) error
@@ -39,8 +49,14 @@ type Store interface {
 	CreateInventoryItem(ctx context.Context, item models.InventoryItem) (models.InventoryItem, error)
 	// GetInventoryItem kalemi kimliğiyle döner; yoksa NotFound.
 	GetInventoryItem(ctx context.Context, id string) (models.InventoryItem, error)
-	// LockInventoryItem kalemi işlem boyunca kilitler ve varlığını doğrular.
+	// LockInventoryItem kalemi işlem boyunca DIŞLAYICI kilitler ve varlığını
+	// doğrular. Kalemin yapısını değiştiren akışlar (seviye oluşturma, silme)
+	// bunu kullanır.
 	LockInventoryItem(ctx context.Context, id string) error
+	// LockInventoryItemShared kalemi işlem boyunca PAYLAŞIMLI kilitler ve
+	// varlığını doğrular. Yalnızca adetlere dokunan akışlar bunu kullanır:
+	// birbirlerini beklemezler ama dışlayıcı kilitle çakışırlar.
+	LockInventoryItemShared(ctx context.Context, id string) error
 	// ListInventoryItems kalemleri filtreleyip sayfalar; ikinci değer toplam sayıdır.
 	ListInventoryItems(ctx context.Context, filter models.InventoryItemFilter) ([]models.InventoryItem, int64, error)
 	// InventoryItemsByIDs kimlik kümesini TEK sorguda getirir (N+1 yok).

@@ -114,6 +114,7 @@ func (m *memStore) CreateProduct(_ context.Context, p models.Product) (models.Pr
 	if err := m.track("CreateProduct"); err != nil {
 		return models.Product{}, err
 	}
+	p.CreatedAt, p.UpdatedAt = creationTime, creationTime
 	// Haritalar anahtarla gezilir: kayıt yapıları büyüktür ve değerle
 	// kopyalamak her turda birkaç yüz bayt taşır.
 	for id := range m.products {
@@ -131,6 +132,27 @@ func (m *memStore) GetProduct(_ context.Context, id string) (models.Product, err
 	defer m.mu.Unlock()
 	if err := m.track("GetProduct"); err != nil {
 		return models.Product{}, err
+	}
+	p, ok := m.products[id]
+	if !ok || p.DeletedAt != nil {
+		return models.Product{}, errors.NotFound("product_not_found", "ürün bulunamadı: %s", id)
+	}
+	return p, nil
+}
+
+// GetProductForUpdate kilit alamaz; sahte depo tek goroutine'de çalışır ve
+// kilidin gerçek etkisi (eşzamanlı silmeyle sıraya dizilme) yalnızca gerçek
+// veritabanında sınanabilir. Burada sınanan şey, kontrolün İŞLEMİN İÇİNDE
+// yapıldığıdır.
+func (m *memStore) GetProductForUpdate(_ context.Context, id string) (models.Product, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := m.track("GetProductForUpdate"); err != nil {
+		return models.Product{}, err
+	}
+	if !m.inTx {
+		return models.Product{}, errors.Internal("product_test_no_tx",
+			"GetProductForUpdate işlem dışında çağrıldı; kilit hiçbir şeyi sıraya dizmez")
 	}
 	p, ok := m.products[id]
 	if !ok || p.DeletedAt != nil {
@@ -320,6 +342,7 @@ func (m *memStore) CreateVariant(_ context.Context, v models.Variant) (models.Va
 	if err := m.track("CreateVariant"); err != nil {
 		return models.Variant{}, err
 	}
+	v.CreatedAt, v.UpdatedAt = creationTime, creationTime
 	m.variants[v.ID] = v
 	return v, nil
 }
@@ -470,6 +493,9 @@ func (m *memStore) CreateOption(_ context.Context, o models.Option) (models.Opti
 	if err := m.track("CreateOption"); err != nil {
 		return models.Option{}, err
 	}
+	// Seçenek değerleri AYRI satırlardır; RETURNING onları döndürmez.
+	o.Values = nil
+	o.CreatedAt, o.UpdatedAt = creationTime, creationTime
 	m.options[o.ID] = o
 	return o, nil
 }
@@ -530,6 +556,9 @@ func (m *memStore) CreateOptionValue(_ context.Context, v models.OptionValue) (m
 	if err := m.track("CreateOptionValue"); err != nil {
 		return models.OptionValue{}, err
 	}
+	// OptionTitle bir sütun değildir; gerçek depo onu RETURNING'den döndüremez.
+	v.OptionTitle = ""
+	v.CreatedAt, v.UpdatedAt = creationTime, creationTime
 	m.values[v.ID] = v
 	return v, nil
 }
@@ -632,6 +661,7 @@ func (m *memStore) CreateCollection(_ context.Context, c models.Collection) (mod
 	if err := m.track("CreateCollection"); err != nil {
 		return models.Collection{}, err
 	}
+	c.CreatedAt, c.UpdatedAt = creationTime, creationTime
 	m.collections[c.ID] = c
 	return c, nil
 }
@@ -681,6 +711,7 @@ func (m *memStore) CreateCategory(_ context.Context, c models.Category) (models.
 	if err := m.track("CreateCategory"); err != nil {
 		return models.Category{}, err
 	}
+	c.CreatedAt, c.UpdatedAt = creationTime, creationTime
 	m.categories[c.ID] = c
 	return c, nil
 }
@@ -735,6 +766,7 @@ func (m *memStore) CreateTag(_ context.Context, t models.Tag) (models.Tag, error
 	if err := m.track("CreateTag"); err != nil {
 		return models.Tag{}, err
 	}
+	t.CreatedAt, t.UpdatedAt = creationTime, creationTime
 	m.tags[t.ID] = t
 	return t, nil
 }
@@ -841,6 +873,7 @@ func (m *memStore) CreateImage(_ context.Context, img models.Image) (models.Imag
 	if err := m.track("CreateImage"); err != nil {
 		return models.Image{}, err
 	}
+	img.CreatedAt, img.UpdatedAt = creationTime, creationTime
 	m.images[img.ID] = img
 	return img, nil
 }

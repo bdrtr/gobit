@@ -14,25 +14,25 @@ import (
 // çağrılmasını beklemiyordur ve çağrı tipli bir hata döner. Sessiz sıfır değer
 // dönmek, testin yanlış nedenle geçmesine yol açardı.
 type stubRepo struct {
-	createPriceSetFn    func(ctx context.Context, id string, now time.Time) (models.PriceSet, error)
-	getPriceSetFn       func(ctx context.Context, id string) (models.PriceSet, error)
-	listPriceSetsFn     func(ctx context.Context, limit, offset int32) ([]models.PriceSet, int64, error)
-	getPriceSetsByIDsFn func(ctx context.Context, ids []string) ([]models.PriceSet, error)
-	deletePriceSetFn    func(ctx context.Context, id string, now time.Time) error
-	listPricesFn        func(ctx context.Context, priceSetID string) ([]models.Price, error)
-	listPricesBySetsFn  func(ctx context.Context, ids []string) (map[string][]models.Price, error)
-	listCandidatesFn    func(ctx context.Context, priceSetID string) ([]models.PriceCandidate, error)
-	replacePricesFn     func(ctx context.Context, priceSetID string, prices []models.Price, now time.Time) ([]models.Price, error)
-	getPriceFn          func(ctx context.Context, id string) (models.Price, error)
-	createPriceRuleFn   func(ctx context.Context, rule models.PriceRule, now time.Time) (models.PriceRule, error)
-	getPriceRuleFn      func(ctx context.Context, id string) (models.PriceRule, error)
-	listPriceRulesFn    func(ctx context.Context, priceID string) ([]models.PriceRule, error)
-	deletePriceRuleFn   func(ctx context.Context, id string, now time.Time) error
-	createPriceListFn   func(ctx context.Context, list models.PriceList, now time.Time) (models.PriceList, error)
-	getPriceListFn      func(ctx context.Context, id string) (models.PriceList, error)
-	listPriceListsFn    func(ctx context.Context, limit, offset int32) ([]models.PriceList, int64, error)
-	updatePriceListFn   func(ctx context.Context, list models.PriceList, now time.Time) (models.PriceList, error)
-	deletePriceListFn   func(ctx context.Context, id string, now time.Time) error
+	createPriceSetFn       func(ctx context.Context, id string, prices []models.Price, now time.Time) (models.PriceSet, error)
+	getPriceSetFn          func(ctx context.Context, id string) (models.PriceSet, error)
+	listPriceSetsFn        func(ctx context.Context, limit, offset int32) ([]models.PriceSet, int64, error)
+	getPriceSetsByIDsFn    func(ctx context.Context, ids []string) ([]models.PriceSet, error)
+	deletePriceSetFn       func(ctx context.Context, id string, now time.Time) error
+	listPricesFn           func(ctx context.Context, priceSetID string) ([]models.Price, error)
+	listCandidatesBySetsFn func(ctx context.Context, ids []string) (map[string][]models.PriceCandidate, error)
+	listCandidatesFn       func(ctx context.Context, priceSetID string) ([]models.PriceCandidate, error)
+	replacePricesFn        func(ctx context.Context, priceSetID string, prices []models.Price, now time.Time) ([]models.Price, error)
+	getPriceFn             func(ctx context.Context, id string) (models.Price, error)
+	createPriceRuleFn      func(ctx context.Context, rule models.PriceRule, now time.Time) (models.PriceRule, error)
+	getPriceRuleFn         func(ctx context.Context, id string) (models.PriceRule, error)
+	listPriceRulesFn       func(ctx context.Context, priceID string) ([]models.PriceRule, error)
+	deletePriceRuleFn      func(ctx context.Context, id string, now time.Time) error
+	createPriceListFn      func(ctx context.Context, list models.PriceList, now time.Time) (models.PriceList, error)
+	getPriceListFn         func(ctx context.Context, id string) (models.PriceList, error)
+	listPriceListsFn       func(ctx context.Context, limit, offset int32) ([]models.PriceList, int64, error)
+	updatePriceListFn      func(ctx context.Context, list models.PriceList, now time.Time) (models.PriceList, error)
+	deletePriceListFn      func(ctx context.Context, id string, now time.Time) error
 
 	// calls metot adı -> çağrı sayısıdır; toplu (batch) davranışın kanıtı budur.
 	calls map[string]int
@@ -58,12 +58,17 @@ func unset(name string) error {
 	return errors.Internal("stub_unset", "%s testte betiklenmedi", name)
 }
 
-func (s *stubRepo) CreatePriceSet(ctx context.Context, id string, now time.Time) (models.PriceSet, error) {
+func (s *stubRepo) CreatePriceSet(
+	ctx context.Context,
+	id string,
+	prices []models.Price,
+	now time.Time,
+) (models.PriceSet, error) {
 	s.record("CreatePriceSet")
 	if s.createPriceSetFn == nil {
 		return models.PriceSet{}, unset("CreatePriceSet")
 	}
-	return s.createPriceSetFn(ctx, id, now)
+	return s.createPriceSetFn(ctx, id, prices, now)
 }
 
 func (s *stubRepo) GetPriceSet(ctx context.Context, id string) (models.PriceSet, error) {
@@ -106,12 +111,15 @@ func (s *stubRepo) ListPrices(ctx context.Context, priceSetID string) ([]models.
 	return s.listPricesFn(ctx, priceSetID)
 }
 
-func (s *stubRepo) ListPricesBySets(ctx context.Context, priceSetIDs []string) (map[string][]models.Price, error) {
-	s.record("ListPricesBySets")
-	if s.listPricesBySetsFn == nil {
-		return nil, unset("ListPricesBySets")
+func (s *stubRepo) ListPriceCandidatesBySets(
+	ctx context.Context,
+	priceSetIDs []string,
+) (map[string][]models.PriceCandidate, error) {
+	s.record("ListPriceCandidatesBySets")
+	if s.listCandidatesBySetsFn == nil {
+		return nil, unset("ListPriceCandidatesBySets")
 	}
-	return s.listPricesBySetsFn(ctx, priceSetIDs)
+	return s.listCandidatesBySetsFn(ctx, priceSetIDs)
 }
 
 func (s *stubRepo) ListPriceCandidates(ctx context.Context, priceSetID string) ([]models.PriceCandidate, error) {
