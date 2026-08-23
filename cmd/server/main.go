@@ -1,21 +1,36 @@
-// Command server, gobit commerce framework'ünün tek binary giriş noktasıdır.
+// Command server gobit commerce framework'ünün tek binary giriş noktasıdır.
 //
-// Görevi: config yükle -> logger kur -> container kur -> modülleri register et
-// -> HTTP router'ı mount et -> dinle. Faz 0'da container ve modül kaydı henüz
-// yoktur; bunlar Faz 1'de eklenecektir.
+// Akış: config yükle -> logger kur -> container kur -> altyapı servislerini
+// (Postgres, Redis, event bus) kaydet -> modülleri bootstrap et -> HTTP
+// router'ı mount et -> dinle. Modüller Faz 4'ten itibaren eklenecektir.
 package main
 
 import (
 	"context"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
 
+	"github.com/redis/go-redis/v9"
+
 	"github.com/bdrtr/gobit/internal/core/config"
+	"github.com/bdrtr/gobit/internal/core/container"
+	"github.com/bdrtr/gobit/internal/core/db"
+	"github.com/bdrtr/gobit/internal/core/errors"
+	"github.com/bdrtr/gobit/internal/core/eventbus"
 	corehttp "github.com/bdrtr/gobit/internal/core/http"
 	"github.com/bdrtr/gobit/internal/core/logger"
+	"github.com/bdrtr/gobit/internal/core/module"
+)
+
+// Container'daki altyapı servislerinin adları. Modüller bu adlarla çözer.
+const (
+	svcDB       = "core.db"
+	svcRedis    = "core.redis"
+	svcEventBus = "core.eventbus"
 )
 
 // version derleme sırasında -ldflags ile doldurulur (bkz. Makefile).
@@ -51,11 +66,47 @@ func run() error {
 		"version", version,
 		"env", cfg.AppEnv,
 		"log_level", cfg.LogLevel,
+		"event_bus", cfg.EventBus,
 	)
 
-	// Faz 1: container.New() + ModuleRegistry.Bootstrap(ctx, c) burada çalışacak,
-	// modüllerin route'ları router'a mount edilecek.
-	router := corehttp.NewRouter(version)
+	c := container.New(log)
+
+	pool, err := db.New(ctx, db.DefaultConfig(cfg.DatabaseURL), log)
+	if err != nil {
+		return err
+	}
+	// Defer'lar LIFO çalışır: önce container servisleri kapanır, sonra havuz.
+	defer pool.Close()
+	defer shutdownContainer(ctx, c, cfg, log)
+
+	if err := c.Provide(svcDB, pool); err != nil {
+		return err
+	}
+
+	checks := map[string]corehttp.HealthCheck{"postgres": pool.Ping}
+
+	bus, err := setupEventBus(ctx, c, cfg, checks, log)
+	if err != nil {
+		return err
+	}
+	if err := c.Provide(svcEventBus, bus); err != nil {
+		return err
+	}
+
+	router := corehttp.NewRouter(corehttp.RouterOptions{
+		Version:         version,
+		Logger:          log,
+		ReadinessChecks: checks,
+	})
+
+	registry := module.NewRegistry(log, func(ctx context.Context, src fs.FS, owner string) error {
+		return db.Migrate(ctx, cfg.DatabaseURL, src, owner)
+	})
+	// Faz 4'ten itibaren commerce modülleri burada registry'ye eklenecek:
+	//   registry.Add(product.New()); registry.Add(pricing.New()); ...
+	if err := registry.Bootstrap(ctx, c, router); err != nil {
+		return err
+	}
 
 	srv := corehttp.NewServer(corehttp.ServerOptions{
 		Addr:              cfg.Addr(),
@@ -69,4 +120,58 @@ func run() error {
 	})
 
 	return srv.Run(ctx)
+}
+
+// setupEventBus yapılandırmaya göre olay veri yolunu kurar ve gerekiyorsa
+// Redis istemcisini container'a kaydedip readiness kontrolüne ekler.
+func setupEventBus(
+	ctx context.Context,
+	c *container.Container,
+	cfg config.Config,
+	checks map[string]corehttp.HealthCheck,
+	log *slog.Logger,
+) (eventbus.EventBus, error) {
+	if cfg.EventBus != "redis" {
+		log.InfoContext(ctx, "olay veri yolu: bellek içi (tek süreç)")
+		return eventbus.NewInMemory(log), nil
+	}
+
+	opt, err := redis.ParseURL(cfg.RedisURL)
+	if err != nil {
+		return nil, errors.Wrap(err, errors.KindInvalid, "redis_url_invalid",
+			"REDIS_URL çözümlenemedi")
+	}
+
+	client := redis.NewClient(opt)
+	if err := client.Ping(ctx).Err(); err != nil {
+		_ = client.Close()
+		return nil, errors.Wrap(err, errors.KindUnavailable, "redis_unreachable",
+			"Redis'e bağlanılamadı (%s)", opt.Addr)
+	}
+
+	// Sıra önemli: container ters kayıt sırasında kapatır, yani veri yolu
+	// istemciden ÖNCE kapanır.
+	if err := c.Provide(svcRedis, client); err != nil {
+		_ = client.Close()
+		return nil, err
+	}
+
+	bus, err := eventbus.NewRedisStream(client, eventbus.RedisConfig{}, log)
+	if err != nil {
+		return nil, err
+	}
+
+	checks["redis"] = func(ctx context.Context) error { return client.Ping(ctx).Err() }
+	log.InfoContext(ctx, "olay veri yolu: Redis Streams", "addr", opt.Addr)
+	return bus, nil
+}
+
+// shutdownContainer container'daki servisleri kapatır ve hataları loglar.
+func shutdownContainer(ctx context.Context, c *container.Container, cfg config.Config, log *slog.Logger) {
+	shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), cfg.ShutdownTimeout)
+	defer cancel()
+
+	if err := c.Shutdown(shutdownCtx); err != nil {
+		log.Error("container servisleri kapatılamadı", "error", err)
+	}
 }

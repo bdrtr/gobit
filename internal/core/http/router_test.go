@@ -10,7 +10,7 @@ import (
 )
 
 func TestHealthEndpoint(t *testing.T) {
-	r := corehttp.NewRouter("v1.2.3")
+	r := corehttp.NewRouter(corehttp.RouterOptions{Version: "v1.2.3"})
 
 	req := httptest.NewRequest(http.MethodGet, "/health", http.NoBody)
 	rec := httptest.NewRecorder()
@@ -39,7 +39,7 @@ func TestHealthEndpoint(t *testing.T) {
 }
 
 func TestUnknownRouteReturns404(t *testing.T) {
-	r := corehttp.NewRouter("dev")
+	r := corehttp.NewRouter(corehttp.RouterOptions{Version: "dev"})
 
 	req := httptest.NewRequest(http.MethodGet, "/yok-boyle-bir-sey", http.NoBody)
 	rec := httptest.NewRecorder()
@@ -51,7 +51,7 @@ func TestUnknownRouteReturns404(t *testing.T) {
 }
 
 func TestHealthRejectsPost(t *testing.T) {
-	r := corehttp.NewRouter("dev")
+	r := corehttp.NewRouter(corehttp.RouterOptions{Version: "dev"})
 
 	req := httptest.NewRequest(http.MethodPost, "/health", http.NoBody)
 	rec := httptest.NewRecorder()

@@ -6,7 +6,7 @@ servise çıkarılabilir.
 
 Uygulama planının tamamı için: [`go-commerce-framework-plan.md`](./go-commerce-framework-plan.md)
 
-**Mevcut durum: Faz 0 — Proje İskeleti & Tooling ✅**
+**Mevcut durum: Faz 1 — Çekirdek Altyapı ✅**
 
 ## Hızlı başlangıç
 
@@ -15,7 +15,13 @@ make up      # Postgres 16 + Redis 7 (sağlıklı olana kadar bekler)
 make run     # sunucuyu :9000'de başlatır
 curl -s localhost:9000/health
 # {"status":"ok","version":"dev"}
+curl -s localhost:9000/ready
+# {"status":"ok","version":"dev","checks":{"postgres":{"status":"ok"}}}
 ```
+
+`/health` yalnızca sürecin canlı olduğunu bildirir (liveness) ve bağımlılıkları
+sınamaz — geçici bir veritabanı kesintisi sürecin öldürülmesine yol açmamalıdır.
+`/ready` bağımlılıkları sınar ve biri düşükse **503** döner (readiness).
 
 Tüm hedefler için `make help`.
 
@@ -97,6 +103,22 @@ derleme öncesi denetlenir:
 Yeni modül eklerken `.golangci.yml` içindeki `depguard.rules` listesini de
 güncelleyin.
 
+## Çekirdek paketler
+
+| Paket | Sorumluluk |
+|---|---|
+| `core/config` | env tabanlı 12-factor config + doğrulama, üretim koruması |
+| `core/logger` | slog JSON/text handler |
+| `core/errors` | Tipli hatalar (`Kind`), stdlib `errors` yardımcılarını yeniden dışa verir |
+| `core/db` | pgxpool havuzu + modül başına ayrı versiyon tablolu migration runner |
+| `core/container` | İsimli kayıt, generic `Resolve[T]`, tembel singleton, döngü tespiti, ters sırada kapatma |
+| `core/module` | `Module` sözleşmesi + `ModuleRegistry` (register → migrate → routes) |
+| `core/eventbus` | `EventBus` + InMemory (dev) ve Redis Streams (prod, consumer group + XACK) |
+| `core/http` | chi router, RequestID/RequestLogger/Recoverer/RequireAuth, `Kind`→status eşlemesi |
+
+Event bus arka ucu `EVENT_BUS=inmemory|redis` ile seçilir. `redis` seçildiğinde
+Redis erişilemezse uygulama açılışta durur.
+
 ## Mimari kararlar (ADR)
 
 Planın bıraktığı belirsizlikler `docs/adr/` altında karara bağlanır. ADR'ler plan
@@ -105,6 +127,8 @@ dokümanı kadar bağlayıcıdır; çelişki hâlinde ADR geçerlidir.
 | # | Karar | Özet |
 |---|---|---|
 | [0001](docs/adr/0001-modul-arasi-iletisim.md) | Modüller arası iletişim | Tüketici tarafı interface: ihtiyacı olan modül, dar interface'i **kendi paketinde** tanımlar; sağlayıcı import edilmez, container'dan isimle çözülür |
+| [0002](docs/adr/0002-di-container-el-yazmasi.md) | DI container | `samber/do` yerine el yazması: Bölüm 5.1 sözleşmesi `any` alan `Provide` istiyor, do tip parametreli olduğu için teşhis/conflict/kapatma sırası elden gidiyordu |
+| [0003](docs/adr/0003-migration-iptali.md) | Migration iptali | golang-migrate sürücüsü ctx kullanmıyor; bağlantının sahibi biz olup iptalde kapatıyoruz, böylece iptal edilen akış dönüşten sonra ilerlemiyor |
 
 ADR 0001, planın Bölüm 2.1 ("erişim public service interface üzerinden") ile
 Bölüm 2.4 ("modüller derleme zamanında birbirine bağımlı olmaz") arasındaki
@@ -136,7 +160,7 @@ make rename-module MODULE=github.com/kullanici/repo
 | Faz | Kapsam | Durum |
 |---|---|---|
 | 0 | Proje iskeleti & tooling | ✅ |
-| 1 | Çekirdek altyapı (errors, db, container, module, eventbus, http middleware) | ⬜ |
+| 1 | Çekirdek altyapı (errors, db, container, module, eventbus, http middleware) | ✅ |
 | 2 | Module Links & Query | ⬜ |
 | 3 | Workflow Engine (saga) | ⬜ |
 | 4 | Katalog (product · pricing · inventory) | ⬜ |

@@ -15,7 +15,7 @@ import (
 var envKeys = []string{
 	"APP_ENV", "APP_PORT", "DATABASE_URL", "REDIS_URL",
 	"LOG_LEVEL", "LOG_FORMAT", "SHUTDOWN_TIMEOUT", "READ_HEADER_TIMEOUT",
-	"READ_TIMEOUT", "WRITE_TIMEOUT", "IDLE_TIMEOUT",
+	"READ_TIMEOUT", "WRITE_TIMEOUT", "IDLE_TIMEOUT", "EVENT_BUS",
 }
 
 // clearEnv testin çalıştığı kabukta tanımlı olabilecek değişkenleri
@@ -105,6 +105,7 @@ func TestLoadInvalidEnv(t *testing.T) {
 		"port aralık dışı":  {"APP_PORT", "70000"},
 		"bilinmeyen seviye": {"LOG_LEVEL", "trace"},
 		"bilinmeyen biçim":  {"LOG_FORMAT", "logfmt"},
+		"bilinmeyen bus":    {"EVENT_BUS", "kafka"},
 		"negatif timeout":   {"SHUTDOWN_TIMEOUT", "-1s"},
 		"sayı olmayan port": {"APP_PORT", "abc"},
 	}
@@ -140,7 +141,7 @@ func TestSlogLevel(t *testing.T) {
 func TestValidateRejectsEmptyURLs(t *testing.T) {
 	base := config.Config{
 		AppEnv: "development", AppPort: 9000,
-		LogLevel: "info", LogFormat: "json",
+		LogLevel: "info", LogFormat: "json", EventBus: "inmemory",
 		DatabaseURL: "postgres://x", RedisURL: "redis://x",
 		ShutdownTimeout: time.Second, ReadHeaderTimeout: time.Second,
 		ReadTimeout: time.Second, WriteTimeout: time.Second, IdleTimeout: time.Second,

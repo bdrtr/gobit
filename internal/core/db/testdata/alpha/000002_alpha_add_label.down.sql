@@ -1,0 +1,1 @@
+ALTER TABLE alpha_items DROP COLUMN IF EXISTS label;

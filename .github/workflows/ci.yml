@@ -44,3 +44,17 @@ jobs:
       - run: go test -race -coverprofile=coverage.out -covermode=atomic ./...
       - name: Kapsam özeti
         run: go tool cover -func=coverage.out | tail -1
+
+  integration:
+    name: Entegrasyon
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+      # testcontainers-go, runner'daki Docker daemon'ı kullanarak gerçek
+      # Postgres ve Redis kaldırır; ayrıca servis tanımı gerekmez.
+      - name: Entegrasyon testleri
+        run: go test -race -tags=integration -count=1 -timeout 15m ./...

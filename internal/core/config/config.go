@@ -33,6 +33,7 @@ var (
 	validAppEnvs    = []string{"development", "staging", "production"}
 	validLogLevels  = []string{"debug", "info", "warn", "error"}
 	validLogFormats = []string{"json", "text"}
+	validEventBuses = []string{"inmemory", "redis"}
 )
 
 // Config sunucunun çalışması için gereken tüm ayarları tutar.
@@ -50,6 +51,10 @@ type Config struct {
 	DatabaseURL string `env:"DATABASE_URL" envDefault:"postgres://gobit:gobit@localhost:5432/gobit?sslmode=disable"`
 	// RedisURL Redis bağlantı adresidir.
 	RedisURL string `env:"REDIS_URL" envDefault:"redis://:gobit@localhost:6379/0"`
+	// EventBus olay veri yolunun arka ucudur: inmemory | redis.
+	// inmemory tek süreçlidir ve süreç ölünce olaylar kaybolur; birden çok
+	// örnek çalıştırılıyorsa redis kullanılmalıdır (plan Bölüm 3).
+	EventBus string `env:"EVENT_BUS" envDefault:"inmemory"`
 
 	// LogLevel yapısal log seviyesidir: debug | info | warn | error.
 	LogLevel string `env:"LOG_LEVEL" envDefault:"info"`
@@ -97,6 +102,9 @@ func (c Config) Validate() error {
 	}
 	if !slices.Contains(validLogFormats, c.LogFormat) {
 		return fmt.Errorf("config: geçersiz LOG_FORMAT %q (beklenen: %s)", c.LogFormat, strings.Join(validLogFormats, ", "))
+	}
+	if !slices.Contains(validEventBuses, c.EventBus) {
+		return fmt.Errorf("config: geçersiz EVENT_BUS %q (beklenen: %s)", c.EventBus, strings.Join(validEventBuses, ", "))
 	}
 	if c.DatabaseURL == "" {
 		return fmt.Errorf("config: DATABASE_URL boş olamaz")

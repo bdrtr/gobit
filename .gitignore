@@ -1,7 +1,8 @@
 # derleme çıktıları
 /bin/
 /dist/
-gobit
+/gobit
+/server
 
 # test / coverage
 coverage.out

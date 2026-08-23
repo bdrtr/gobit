@@ -57,7 +57,7 @@
 | Veritabanı | PostgreSQL 16+ | |
 | DB erişim | **`sqlc` + `pgx/v5`** | Modül başına ayrı codegen paketi; ent'in FK/graph modeli modül izolasyonuyla çelişiyor |
 | Migration | **`golang-migrate`** | `Module.Migrations() fs.FS` ile birebir uyum; modül başına `x-migrations-table` |
-| DI / container | **`samber/do` v2** | İsimli servis + generic resolve; lazy instantiation, shutdown hook |
+| DI / container | **El yazması** (`internal/core/container`) | Bölüm 5.1 sözleşmesi `Provide(name, ctor any)` istiyor; samber/do tip parametreli olduğu için `any`'ye düzleşiyor ve teşhis/conflict/kapatma sırası elden gidiyor — bkz. [ADR 0002](docs/adr/0002-di-container-el-yazmasi.md) |
 | Event bus | In-memory (dev) + Redis Streams (prod) | Arayüz tek, backend pluggable |
 | Cache / kuyruk | Redis | İş kuyruğu için `hibiken/asynq` opsiyonel |
 | Workflow | Custom saga engine | İstenirse ileride Temporal'a köprü |
@@ -187,8 +187,9 @@ type Event struct {
 type Handler func(ctx context.Context, e Event) error
 
 type EventBus interface {
-    Publish(ctx context.Context, e Event) error
-    Subscribe(eventName string, h Handler)
+    Publish(ctx context.Context, e Event) error   // handler'ları BEKLEMEZ
+    Subscribe(eventName string, h Handler) error
+    Shutdown(ctx context.Context) error           // çalışan handler'ları ctx sınırında bekler
 }
 // Backendler: InMemoryBus (dev), RedisStreamBus (prod). Aynı interface.
 ```
@@ -272,6 +273,7 @@ type PaymentProvider interface {
 ### Faz 1 — Çekirdek Altyapı
 **Yapılacaklar:** `core/errors`, `core/db` (bağlantı + migration runner), `core/container` + `ModuleRegistry`, `core/module` interface, `core/eventbus` (InMemory + Redis), `core/http` (router, request-id, recover, logging, error→status middleware, auth stub). Bir `dummy` modül ile registry akışını doğrula.
 **DoD:** Dummy modül register edilip servisi container'dan resolve edilebiliyor; `eventbus.Publish/Subscribe` in-memory ve Redis backend'de testle çalışıyor; migration runner dummy migration'ı uyguluyor.
+> **Tamamlandı.** Ek olarak: `/ready` bağımlılık kontrolü, `EVENT_BUS` ile backend seçimi, migration'da gerçek iptal ([ADR 0003](docs/adr/0003-migration-iptali.md)), el yazması container ([ADR 0002](docs/adr/0002-di-container-el-yazmasi.md)).
 
 ### Faz 2 — Module Links & Query
 **Yapılacaklar:** `core/link` (LinkDefinition, link tablosu oluşturma, CRUD), `core/query` (basit resolver: kök çek → link çöz → batch getir → birleştir). İki dummy modül ile uçtan uca doğrula.

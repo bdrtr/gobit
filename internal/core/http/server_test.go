@@ -21,7 +21,7 @@ func discardLogger() *slog.Logger {
 func TestServerShutsDownOnContextCancel(t *testing.T) {
 	srv := corehttp.NewServer(corehttp.ServerOptions{
 		Addr:              "127.0.0.1:0",
-		Handler:           corehttp.NewRouter("test"),
+		Handler:           corehttp.NewRouter(corehttp.RouterOptions{Version: "test"}),
 		Logger:            discardLogger(),
 		ShutdownTimeout:   5 * time.Second,
 		ReadHeaderTimeout: time.Second,
@@ -55,7 +55,7 @@ func TestServerReturnsErrorOnBusyPort(t *testing.T) {
 
 	srv := corehttp.NewServer(corehttp.ServerOptions{
 		Addr:              ln.Addr().String(),
-		Handler:           corehttp.NewRouter("test"),
+		Handler:           corehttp.NewRouter(corehttp.RouterOptions{Version: "test"}),
 		Logger:            discardLogger(),
 		ShutdownTimeout:   time.Second,
 		ReadHeaderTimeout: time.Second,
@@ -79,7 +79,7 @@ func TestServerServesRequests(t *testing.T) {
 
 	srv := corehttp.NewServer(corehttp.ServerOptions{
 		Addr:              addr,
-		Handler:           corehttp.NewRouter("e2e"),
+		Handler:           corehttp.NewRouter(corehttp.RouterOptions{Version: "e2e"}),
 		Logger:            discardLogger(),
 		ShutdownTimeout:   5 * time.Second,
 		ReadHeaderTimeout: time.Second,
