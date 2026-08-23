@@ -13,7 +13,7 @@
 2. Bölüm 2'deki **Mimari Prensipleri asla ihlal etme** (özellikle modül izolasyonu ve cross-module FK yasağı).
 3. Her core bileşen ve modül için **birim + entegrasyon testi** yaz. Entegrasyon testlerinde `testcontainers-go` kullan.
 4. Her fazın sonunda `make lint`, `make test` temiz geçmeli; ardından anlamlı bir commit at.
-5. Bir kararı netleştirmen gerekirse, varsayılanı bu dokümandan al; doküman sessizse en sade, en idiomatik Go çözümünü seç ve kararı kod yorumunda belgele.
+5. Bir kararı netleştirmen gerekirse, varsayılanı bu dokümandan al; doküman sessizse en sade, en idiomatik Go çözümünü seç ve kararı kod yorumunda belgele. `docs/adr/` altındaki kararlar bu doküman kadar bağlayıcıdır; çelişki hâlinde **ADR geçerlidir** (daha sonra alınmıştır). Mimari bir belirsizlik çözdüğünde yeni bir ADR yaz.
 6. Üretilen her public fonksiyon/interface için kısa godoc yorumu yaz.
 
 ---
@@ -38,10 +38,10 @@
 
 ## 2. Mimari Prensipler (DEĞİŞMEZ KURALLAR)
 
-1. **Modül izolasyonu:** Bir modül başka bir modülün repository'sine, modeline veya tablosuna **doğrudan erişemez**. Erişim yalnızca diğer modülün **public service interface'i** üzerinden olur.
+1. **Modül izolasyonu:** Bir modül başka bir modülün repository'sine, modeline veya tablosuna **doğrudan erişemez**. Erişim yalnızca bir **servis interface'i** üzerinden olur; bu interface'i **tüketen modül kendi paketinde** tanımlar, sağlayıcı modül import edilmez (bkz. [ADR 0001](docs/adr/0001-modul-arasi-iletisim.md)).
 2. **Cross-module FK yok:** Farklı modüllerin tabloları arasında foreign key **kurulmaz**. İlişki yalnızca **Module Links** ile kurulur.
 3. **Veri sahipliği:** Her veri tam olarak bir modüle aittir. O modül o verinin tek yazma yetkilisidir.
-4. **Bağımlılık yönü:** Core, modülleri tanımaz; modüller core'a bağımlıdır. Modüller birbirine derleme zamanında bağımlı olmaz (yalnızca interface paketleri paylaşılır).
+4. **Bağımlılık yönü:** Core, modülleri tanımaz; modüller core'a bağımlıdır. Modüller birbirini **hiçbir koşulda import etmez** — ortak bir interface/sözleşme paketi de yoktur. Tüketici, ihtiyaç duyduğu **dar** interface'i kendi paketinde tanımlar; sağlayıcının somut tipi bunu yapısal olarak karşılar ve container'dan **isimle** çözülür (bkz. [ADR 0001](docs/adr/0001-modul-arasi-iletisim.md)). Bu kural `.golangci.yml` içindeki `depguard` ile CI'da zorlanır.
 5. **İş mantığı modülde, orkestrasyon workflow'da:** Tek modüle ait kural modül servisinde; birden çok modüle dokunan akış workflow'da yazılır.
 6. **Idempotency:** Dışarıya açık state-değiştiren işlemler (ödeme, sipariş) idempotency-key ile korunur.
 7. **Açık hata tipleri:** Hatalar `core/errors` içindeki tipli hatalarla (`NotFound`, `Invalid`, `Conflict`, `Unauthorized`) döner; HTTP katmanı bunları status koda çevirir.
@@ -52,16 +52,16 @@
 
 | Alan | Seçim | Not |
 |---|---|---|
-| Dil | Go 1.22+ (en güncel stable) | `net/http` yeni routing veya `chi` |
+| Dil | Go 1.26+ | `go.mod` sürümü referans alınır |
 | HTTP router | `chi` | Hafif, idiomatic, middleware dostu |
 | Veritabanı | PostgreSQL 16+ | |
-| DB erişim | `sqlc` (önerilen) veya `ent` | sqlc: SQL-first, type-safe. ent: graph + codegen |
-| Migration | `atlas` veya `golang-migrate` | Modül başına ayrı migration klasörü |
-| DI / container | `samber/do` veya `uber/dig` | Runtime DI; module registry burada |
+| DB erişim | **`sqlc` + `pgx/v5`** | Modül başına ayrı codegen paketi; ent'in FK/graph modeli modül izolasyonuyla çelişiyor |
+| Migration | **`golang-migrate`** | `Module.Migrations() fs.FS` ile birebir uyum; modül başına `x-migrations-table` |
+| DI / container | **`samber/do` v2** | İsimli servis + generic resolve; lazy instantiation, shutdown hook |
 | Event bus | In-memory (dev) + Redis Streams (prod) | Arayüz tek, backend pluggable |
 | Cache / kuyruk | Redis | İş kuyruğu için `hibiken/asynq` opsiyonel |
 | Workflow | Custom saga engine | İstenirse ileride Temporal'a köprü |
-| Config | `env` + `viper` veya `caarlos0/env` | 12-factor |
+| Config | **`caarlos0/env`** | 12-factor; viper'ın dosya/uzak config yükü gereksiz |
 | Validation | `go-playground/validator` | |
 | Auth | JWT + session; OAuth opsiyonel | |
 | Loglama | `log/slog` (stdlib) | Structured, JSON |
@@ -94,7 +94,7 @@
     /product
       /models              # domain modelleri
       /repository          # SADECE bu modülün tabloları
-      /service             # public interface (service.go) + impl
+      /service             # bu modülün servisi + DIŞARIDAN ihtiyaç duyduğu dar interface'ler (ADR 0001)
       /migrations          # bu modülün migration'ları
       /api                 # store + admin route'ları
       module.go            # Module interface implementasyonu (register)

@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/turkbirdev/gobit/internal/core/config"
+	"github.com/bdrtr/gobit/internal/core/config"
 )
 
 // envKeys Config'in okuduğu tüm ortam değişkenleridir.

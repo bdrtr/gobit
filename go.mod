@@ -1,4 +1,4 @@
-module github.com/turkbirdev/gobit
+module github.com/bdrtr/gobit
 
 go 1.26.6
 

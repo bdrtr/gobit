@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	corehttp "github.com/turkbirdev/gobit/internal/core/http"
+	corehttp "github.com/bdrtr/gobit/internal/core/http"
 )
 
 // discardLogger test çıktısını kirletmemek için logları yutar.

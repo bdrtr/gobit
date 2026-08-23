@@ -13,9 +13,9 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/turkbirdev/gobit/internal/core/config"
-	corehttp "github.com/turkbirdev/gobit/internal/core/http"
-	"github.com/turkbirdev/gobit/internal/core/logger"
+	"github.com/bdrtr/gobit/internal/core/config"
+	corehttp "github.com/bdrtr/gobit/internal/core/http"
+	"github.com/bdrtr/gobit/internal/core/logger"
 )
 
 // version derleme sırasında -ldflags ile doldurulur (bkz. Makefile).

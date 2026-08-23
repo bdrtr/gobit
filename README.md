@@ -80,6 +80,20 @@ derleme öncesi denetlenir:
 Yeni modül eklerken `.golangci.yml` içindeki `depguard.rules` listesini de
 güncelleyin.
 
+## Mimari kararlar (ADR)
+
+Planın bıraktığı belirsizlikler `docs/adr/` altında karara bağlanır. ADR'ler plan
+dokümanı kadar bağlayıcıdır; çelişki hâlinde ADR geçerlidir.
+
+| # | Karar | Özet |
+|---|---|---|
+| [0001](docs/adr/0001-modul-arasi-iletisim.md) | Modüller arası iletişim | Tüketici tarafı interface: ihtiyacı olan modül, dar interface'i **kendi paketinde** tanımlar; sağlayıcı import edilmez, container'dan isimle çözülür |
+
+ADR 0001, planın Bölüm 2.1 ("erişim public service interface üzerinden") ile
+Bölüm 2.4 ("modüller derleme zamanında birbirine bağımlı olmaz") arasındaki
+çelişkiyi çözer — Go'da interface'ler paketlerde yaşadığı için sağlayıcının
+interface'ini import etmek 2.4'ü ihlal ederdi.
+
 ## Geliştirme
 
 ```bash
@@ -94,7 +108,7 @@ farkı, `golangci-lint`, `go vet` ve race'li testleri çalıştırır.
 
 ## Modül yolunu değiştirme
 
-Varsayılan modül yolu `github.com/turkbirdev/gobit`. Kendi deponuza taşımak için:
+Varsayılan modül yolu `github.com/bdrtr/gobit`. Kendi deponuza taşımak için:
 
 ```bash
 make rename-module MODULE=github.com/kullanici/repo

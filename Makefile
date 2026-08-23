@@ -1,7 +1,6 @@
 # gobit — Go Headless Commerce Framework
 # Tüm hedefler için: make help
 
-MODULE      := github.com/turkbirdev/gobit
 BIN_DIR     := $(CURDIR)/bin
 COMPOSE     := docker compose -f deploy/docker-compose.yml
 VERSION     ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
@@ -103,9 +102,15 @@ $(SQLC):
 clean: ## Üretilmiş dosyaları temizle
 	rm -rf $(BIN_DIR) coverage.out
 
-rename-module: ## Go modül yolunu değiştir: make rename-module MODULE=github.com/kullanici/repo
-	test -n "$(MODULE)" || (echo "kullanım: make rename-module MODULE=github.com/kullanici/repo" && exit 1)
-	old=$$(head -1 go.mod | awk '{print $$2}'); \
-		grep -rl "$$old" --include='*.go' --include='go.mod' --include='Makefile' . | xargs sed -i "s|$$old|$(MODULE)|g"; \
-		echo "modül yolu $$old -> $(MODULE) olarak güncellendi"
-	go mod tidy
+rename-module: ## Go modul yolunu degistir: make rename-module MODULE=github.com/kullanici/repo
+	@test -n "$(MODULE)" || (echo "kullanim: make rename-module MODULE=github.com/kullanici/repo" >&2 && exit 1)
+	@old=$$(head -1 go.mod | awk '{print $$2}'); \
+	if [ "$$old" = "$(MODULE)" ]; then echo "modul yolu zaten $(MODULE)"; exit 0; fi; \
+	files=$$(grep -rlI --exclude-dir=.git --exclude-dir=bin --exclude-dir=vendor -- "$$old" . || true); \
+	if [ -z "$$files" ]; then echo "hata: $$old hicbir dosyada bulunamadi" >&2; exit 1; fi; \
+	echo "$$files" | xargs sed -i "s|$$old|$(MODULE)|g"; \
+	kalan=$$(grep -rlI --exclude-dir=.git --exclude-dir=bin --exclude-dir=vendor -- "$$old" . || true); \
+	if [ -n "$$kalan" ]; then echo "hata: eski yol hala su dosyalarda: $$kalan" >&2; exit 1; fi; \
+	echo "modul yolu $$old -> $(MODULE) ($$(echo "$$files" | wc -l) dosya guncellendi)"; \
+	echo "not: .golangci.yml depguard kurallari ve README dahil edildi."
+	@go mod tidy

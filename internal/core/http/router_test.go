@@ -6,7 +6,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	corehttp "github.com/turkbirdev/gobit/internal/core/http"
+	corehttp "github.com/bdrtr/gobit/internal/core/http"
 )
 
 func TestHealthEndpoint(t *testing.T) {

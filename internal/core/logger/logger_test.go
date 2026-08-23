@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/turkbirdev/gobit/internal/core/logger"
+	"github.com/bdrtr/gobit/internal/core/logger"
 )
 
 func TestNewJSONFormat(t *testing.T) {
