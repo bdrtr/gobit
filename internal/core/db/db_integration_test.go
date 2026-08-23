@@ -24,9 +24,9 @@ import (
 	"github.com/bdrtr/gobit/internal/core/errors"
 )
 
-// Testlerde kullanılan iki sahte modülün migration'ları. İkisi de aynı
-// veritabanına yazar; amaç ayrı versiyon tablolarının birbirini bozmadığını
-// göstermektir (plan Bölüm 2.1/2.3).
+// alphaMigrations ve betaMigrations testlerde kullanılan iki sahte modülün
+// migration'larıdır. İkisi de aynı veritabanına yazar; amaç ayrı versiyon
+// tablolarının birbirini bozmadığını göstermektir (plan Bölüm 2.1/2.3).
 //
 //go:embed testdata/alpha
 var alphaMigrations embed.FS
@@ -34,14 +34,14 @@ var alphaMigrations embed.FS
 //go:embed testdata/beta
 var betaMigrations embed.FS
 
-// Kasten patlayan bir migration: yürütme hatasının tipli hata olarak dışarı
-// çıktığını doğrulamak için.
+// brokenMigrations kasten patlayan bir migration taşır: yürütme hatasının
+// tipli hata olarak dışarı çıktığını doğrulamak için.
 //
 //go:embed testdata/broken
 var brokenMigrations embed.FS
 
-// Geri alma testleri kendi migration'larıyla çalışır; alpha/beta durumundan
-// bağımsızdır.
+// rollbackMigrations geri alma testlerinin kendi migration'larıdır;
+// alpha/beta durumundan bağımsızdır.
 //
 //go:embed testdata/rollback
 var rollbackMigrations embed.FS

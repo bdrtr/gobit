@@ -22,10 +22,15 @@ import (
 	"github.com/bdrtr/gobit/internal/core/errors"
 	"github.com/bdrtr/gobit/internal/core/eventbus"
 	corehttp "github.com/bdrtr/gobit/internal/core/http"
+	"github.com/bdrtr/gobit/internal/core/link"
 	"github.com/bdrtr/gobit/internal/core/logger"
 	"github.com/bdrtr/gobit/internal/core/module"
+	"github.com/bdrtr/gobit/internal/core/query"
 	"github.com/bdrtr/gobit/internal/core/workflow"
 	"github.com/bdrtr/gobit/internal/core/workflow/pgstore"
+	"github.com/bdrtr/gobit/internal/modules/inventory"
+	"github.com/bdrtr/gobit/internal/modules/pricing"
+	"github.com/bdrtr/gobit/internal/modules/product"
 )
 
 // Container'daki altyapı servislerinin adları. Modüller bu adlarla çözer.
@@ -37,6 +42,10 @@ const (
 	svcWorkflow = "core.workflow"
 	// svcWorkflowStore yürütme durumunun kalıcı deposudur.
 	svcWorkflowStore = "core.workflow.store"
+	// svcLink Module Links servisidir; modüller link tanımlarını buradan bildirir.
+	svcLink = "core.link"
+	// svcQuery cross-module okuma katmanıdır.
+	svcQuery = "core.query"
 )
 
 // version derleme sırasında -ldflags ile doldurulur (bkz. Makefile).
@@ -95,6 +104,14 @@ func run() error {
 		return err
 	}
 
+	links := link.New(pool, log)
+	if err := c.Provide(svcLink, links); err != nil {
+		return err
+	}
+	if err := c.Provide(svcQuery, query.New(links, c, log)); err != nil {
+		return err
+	}
+
 	workflowStore := pgstore.New(pool, log)
 	if err := c.Provide(svcWorkflowStore, workflowStore); err != nil {
 		return err
@@ -122,8 +139,12 @@ func run() error {
 	registry := module.NewRegistry(log, func(ctx context.Context, src fs.FS, owner string) error {
 		return db.Migrate(ctx, cfg.DatabaseURL, src, owner)
 	})
-	// Faz 4'ten itibaren commerce modülleri burada registry'ye eklenecek:
-	//   registry.Add(product.New()); registry.Add(pricing.New()); ...
+	// Commerce modülleri. Sıra ÖNEMSİZDİR: registry tüm modülleri register
+	// ettikten SONRA migration ve route adımlarına geçer, dolayısıyla bir
+	// modülün handler'ı başka modülün servisini güvenle çözebilir.
+	registry.Add(product.New())
+	registry.Add(pricing.New(log))
+	registry.Add(inventory.New())
 	if err := registry.Bootstrap(ctx, c, router); err != nil {
 		return err
 	}

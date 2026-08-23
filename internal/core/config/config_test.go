@@ -163,7 +163,7 @@ func TestValidateRejectsEmptyURLs(t *testing.T) {
 	}
 }
 
-// TestProductionRejectsLocalDefaults, üretimde yerel geliştirme
+// TestProductionRejectsLocalDefaults üretimde yerel geliştirme
 // varsayılanlarına sessizce düşülmediğini doğrular.
 //
 // Regresyon: envDefault dolu olduğu için Validate'in `== ""` kontrolü Load
@@ -222,7 +222,7 @@ func TestDevelopmentAllowsLocalDefaults(t *testing.T) {
 	}
 }
 
-// TestDefaultTagsMatchConstants, envDefault etiketleri ile sabitlerin
+// TestDefaultTagsMatchConstants envDefault etiketleri ile sabitlerin
 // birbirinden kaymadığını denetler. Go struct etiketleri sabit referansı kabul
 // etmediği için değer iki yerde tekrarlanmak zorunda; kayma olursa üretim
 // koruması sessizce devre dışı kalırdı.

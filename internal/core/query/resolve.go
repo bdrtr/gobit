@@ -268,15 +268,18 @@ func shape(ids []string, byID map[string]Record, many bool) any {
 // (reverse=true) yönde gidilir. İki uç da aynı entity ise (kendine link) ileri
 // yön seçilir. Link kök entity'ye hiç dokunmuyorsa errors.KindInvalid döner.
 func targetSide(def link.LinkDefinition, entity string) (target string, reverse bool, err error) {
+	// Uçlar ENTITY adıyla eşleştirilir, modül adıyla değil: bir modül birden
+	// çok entity sunabilir (bkz. link.LinkSide.Entity).
+	from, to := def.From.EntityName(), def.To.EntityName()
 	switch {
-	case def.From.Module == entity:
-		return def.To.Module, false, nil
-	case def.To.Module == entity:
-		return def.From.Module, true, nil
+	case from == entity:
+		return to, false, nil
+	case to == entity:
+		return from, true, nil
 	default:
 		return "", false, errors.Invalid(codeLinkMismatch,
 			"%q link'i %q entity'sine bağlanmıyor; link'in uçları: %q ve %q",
-			def.Name, entity, def.From.Module, def.To.Module).
+			def.Name, entity, from, to).
 			WithDetails(map[string]any{detailLink: def.Name, detailEntity: entity})
 	}
 }

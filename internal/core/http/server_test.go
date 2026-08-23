@@ -114,7 +114,7 @@ func TestServerServesRequests(t *testing.T) {
 	}
 }
 
-// TestServerForceClosesOnShutdownTimeout, ShutdownTimeout dolduğunda açık
+// TestServerForceClosesOnShutdownTimeout ShutdownTimeout dolduğunda açık
 // bağlantıların gerçekten koparıldığını doğrular.
 //
 // Regresyon: Shutdown tek başına deadline dolduğunda hata döner ama aktif

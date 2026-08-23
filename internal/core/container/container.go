@@ -71,7 +71,7 @@ const (
 	codeClosed       = "container_closed"
 )
 
-// defaultWaitWarn, kurulmakta olan bir servisi bekleyen çağıranın uyarı
+// defaultWaitWarn kurulmakta olan bir servisi bekleyen çağıranın uyarı
 // loglamadan önce sessizce bekleyeceği süredir. Bkz. registry.waitReady.
 const defaultWaitWarn = 5 * time.Second
 

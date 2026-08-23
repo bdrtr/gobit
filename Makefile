@@ -83,12 +83,19 @@ migrate-down: ## Son migration'ı geri al
 
 ## --- Kod üretimi ---
 
-gen: ## sqlc ile repository kodunu üret (Faz 4'ten itibaren)
-	@if [ ! -f sqlc.yaml ]; then \
-		echo "gen: sqlc.yaml henüz yok — ilk modül (Faz 4: product) ile birlikte eklenecek."; \
-	else \
-		$(MAKE) $(SQLC) && $(SQLC) generate; \
-	fi
+gen: $(SQLC) ## sqlc ile repository kodunu üret (modül başına ayrı config)
+	@found=0; \
+	for cfg in internal/modules/*/sqlc.yaml; do \
+		[ -e "$$cfg" ] || continue; \
+		mod=$$(basename $$(dirname $$cfg)); \
+		if [ -z "$$(ls -A $$(dirname $$cfg)/queries 2>/dev/null)" ]; then \
+			echo "  $$mod: sorgu yok, atlanıyor"; continue; \
+		fi; \
+		echo "  $$mod: sqlc generate"; \
+		$(SQLC) generate -f "$$cfg" || exit 1; \
+		found=$$((found+1)); \
+	done; \
+	if [ "$$found" = "0" ]; then echo "gen: üretilecek sorgu bulunamadı"; fi
 
 ## --- Araçlar ---
 

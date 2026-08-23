@@ -15,7 +15,8 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
-// varsayılan readiness süresi; tek bir kontrol takılırsa istek asılı kalmasın.
+// defaultReadinessTimeout readiness kontrollerinin toplam süre sınırıdır;
+// tek bir kontrol takılırsa istek asılı kalmasın diye vardır.
 const defaultReadinessTimeout = 5 * time.Second
 
 // HealthCheck bir bağımlılığın erişilebilirliğini sınar.

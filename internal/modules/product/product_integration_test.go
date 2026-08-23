@@ -1,0 +1,463 @@
+//go:build integration
+
+// Bu dosyadaki testler gerçek bir PostgreSQL örneği (dolayısıyla Docker)
+// gerektirir; `make test` hızlı kalsın diye `integration` etiketiyle
+// ayrılmıştır. Çalıştırmak için: make test-integration
+//
+// Buradaki iddiaların çoğu YALNIZCA gerçek veritabanında kanıtlanabilir:
+// kısmi benzersiz indeksin eşzamanlı iki isteği ayırması, soft delete'in
+// okuma sorgularından düşmesi, migration'ın geri alınabilmesi ve — Faz 4'ün
+// kalbi — vitrin listelemesinin link'ler üzerinden fiyat ve stoğu gerçek
+// Query katmanıyla toplaması.
+package product_test
+
+import (
+	"context"
+	"fmt"
+	"net/url"
+	"os"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"github.com/testcontainers/testcontainers-go"
+	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
+
+	"github.com/bdrtr/gobit/internal/core/db"
+	coreerrors "github.com/bdrtr/gobit/internal/core/errors"
+	"github.com/bdrtr/gobit/internal/modules/product"
+	"github.com/bdrtr/gobit/internal/modules/product/models"
+	"github.com/bdrtr/gobit/internal/modules/product/repository"
+	"github.com/bdrtr/gobit/internal/modules/product/service"
+)
+
+const postgresImage = "postgres:16-alpine"
+
+var (
+	// testPool tüm testlerin paylaştığı havuzdur.
+	testPool *db.Pool
+	// testDSN paylaşılan veritabanının adresidir.
+	testDSN string
+)
+
+func TestMain(m *testing.M) {
+	os.Exit(runWithPostgres(m))
+}
+
+// runWithPostgres tek bir Postgres konteyneri kaldırır, product şemasını
+// uygular ve tüm testleri onun üzerinde çalıştırır.
+func runWithPostgres(m *testing.M) int {
+	ctx := context.Background()
+
+	ctr, err := tcpostgres.Run(ctx, postgresImage,
+		tcpostgres.WithDatabase("gobit_test"),
+		tcpostgres.WithUsername("gobit"),
+		tcpostgres.WithPassword("gobit"),
+		tcpostgres.BasicWaitStrategies(),
+	)
+	defer func() {
+		if termErr := testcontainers.TerminateContainer(ctr); termErr != nil {
+			fmt.Fprintf(os.Stderr, "postgres konteyneri durdurulamadı: %v\n", termErr)
+		}
+	}()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "postgres konteyneri başlatılamadı: %v\n", err)
+		return 1
+	}
+
+	testDSN, err = ctr.ConnectionString(ctx, "sslmode=disable")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "bağlantı adresi alınamadı: %v\n", err)
+		return 1
+	}
+
+	mod := product.New()
+	if err = db.Migrate(ctx, testDSN, mod.Migrations(), mod.Name()); err != nil {
+		fmt.Fprintf(os.Stderr, "product şeması uygulanamadı: %v\n", err)
+		return 1
+	}
+
+	testPool, err = db.New(ctx, db.DefaultConfig(testDSN), nil)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "bağlantı havuzu açılamadı: %v\n", err)
+		return 1
+	}
+	defer testPool.Close()
+
+	return m.Run()
+}
+
+// --- yardımcılar --------------------------------------------------------
+
+// newService gerçek depo üzerinde çalışan bir servis kurar.
+func newService(t *testing.T, links service.Linker, graph service.Grapher) *service.Service {
+	t.Helper()
+
+	svc, err := service.New(service.Options{
+		Repo:  repository.New(testPool.Pool()),
+		Links: links,
+		Query: graph,
+	})
+	require.NoError(t, err)
+	return svc
+}
+
+// uniqueHandle testler arası çakışmayı önleyen benzersiz bir handle üretir.
+//
+// Testler tek veritabanını paylaşır; sabit bir handle, ilgisiz bir testin
+// bıraktığı kayıt yüzünden çakışma üretirdi.
+func uniqueHandle(prefix string) string {
+	return fmt.Sprintf("%s-%d", prefix, time.Now().UnixNano())
+}
+
+// newDatabase testin kendi veritabanını açar ve sonunda düşürür.
+//
+// Migration'ı geri alan test paylaşılan şemayı düşürseydi diğer testler
+// çalışamazdı; bu yüzden yalnızca o test kendi veritabanında yürür.
+func newDatabase(ctx context.Context, t *testing.T) string {
+	t.Helper()
+
+	name := fmt.Sprintf("gobit_product_%d", time.Now().UnixNano())
+
+	conn, err := pgx.Connect(ctx, testDSN)
+	require.NoError(t, err)
+	defer func() { _ = conn.Close(ctx) }()
+
+	// Veritabanı adı SQL'de parametrelenemez; ad testin ürettiği sabit
+	// biçimdedir (harf, alt çizgi, rakam) ve dışarıdan veri almaz.
+	_, err = conn.Exec(ctx, `CREATE DATABASE `+name)
+	require.NoError(t, err)
+
+	t.Cleanup(func() {
+		cleanup := context.Background()
+		c, cErr := pgx.Connect(cleanup, testDSN)
+		if cErr != nil {
+			return
+		}
+		defer func() { _ = c.Close(cleanup) }()
+		_, _ = c.Exec(cleanup, `DROP DATABASE IF EXISTS `+name+` WITH (FORCE)`)
+	})
+
+	u, err := url.Parse(testDSN)
+	require.NoError(t, err)
+	u.Path = "/" + name
+	return u.String()
+}
+
+// tableExists tablonun geçerli şemada bulunup bulunmadığını bildirir.
+func tableExists(ctx context.Context, t *testing.T, dsn, table string) bool {
+	t.Helper()
+
+	conn, err := pgx.Connect(ctx, dsn)
+	require.NoError(t, err)
+	defer func() { _ = conn.Close(ctx) }()
+
+	var exists bool
+	err = conn.QueryRow(ctx, `SELECT to_regclass($1) IS NOT NULL`, table).Scan(&exists)
+	require.NoError(t, err)
+	return exists
+}
+
+// --- migration ----------------------------------------------------------
+
+// TestMigrationUpDownIsReversible şemanın uygulanabildiğini ve GERİ
+// ALINABİLDİĞİNİ doğrular (plan Bölüm 8).
+func TestMigrationUpDownIsReversible(t *testing.T) {
+	ctx := context.Background()
+	dsn := newDatabase(ctx, t)
+	mod := product.New()
+
+	require.NoError(t, db.Migrate(ctx, dsn, mod.Migrations(), mod.Name()))
+
+	tables := []string{
+		"product", "product_variant", "product_option", "product_option_value",
+		"product_variant_option_value", "product_category", "product_collection",
+		"product_tag", "product_image", "product_tag_map", "product_category_map",
+	}
+	for _, table := range tables {
+		assert.True(t, tableExists(ctx, t, dsn, table), "%s tablosu oluşmalı", table)
+	}
+
+	version, dirty, err := db.Version(ctx, dsn, mod.Name())
+	require.NoError(t, err)
+	assert.False(t, dirty, "migration yarıda kalmamalı")
+	assert.Equal(t, uint(1), version)
+
+	require.NoError(t, db.MigrateDown(ctx, dsn, mod.Migrations(), mod.Name(), 0),
+		"şema geri alınabilmeli")
+	for _, table := range tables {
+		assert.False(t, tableExists(ctx, t, dsn, table), "%s tablosu düşmeli", table)
+	}
+
+	// Geri alınan şema yeniden uygulanabilmeli: geri alma, bir sonraki
+	// dağıtımı bloke etmemelidir.
+	require.NoError(t, db.Migrate(ctx, dsn, mod.Migrations(), mod.Name()))
+	assert.True(t, tableExists(ctx, t, dsn, "product"))
+}
+
+// --- CRUD ---------------------------------------------------------------
+
+// TestProductLifecycle ürün oluşturma, okuma, güncelleme ve silmenin gerçek
+// veritabanında uçtan uca çalıştığını doğrular.
+func TestProductLifecycle(t *testing.T) {
+	ctx := context.Background()
+	svc := newService(t, nil, nil)
+	handle := uniqueHandle("tisort")
+
+	created, err := svc.CreateProduct(ctx, service.CreateProductInput{
+		Handle:      handle,
+		Title:       "Tişört",
+		Status:      models.StatusPublished,
+		Description: ptrString("Pamuklu"),
+		Metadata:    map[string]any{"koleksiyon": "yaz"},
+		Options: []service.CreateOptionInput{
+			{Title: "Beden", Values: []string{"S", "M", "L"}},
+		},
+		Variants: []service.CreateVariantInput{
+			{Title: "S beden", SKU: ptrString(uniqueHandle("sku-s")), Options: map[string]string{"Beden": "S"}},
+			{Title: "M beden", SKU: ptrString(uniqueHandle("sku-m")), Options: map[string]string{"Beden": "M"}},
+		},
+		Images: []service.CreateImageInput{{URL: "https://cdn.example/1.png"}},
+	})
+	require.NoError(t, err)
+	assert.True(t, strings.HasPrefix(created.ID, "prod_"))
+	assert.Equal(t, handle, created.Handle)
+	require.Len(t, created.Variants, 2)
+	require.Len(t, created.Options, 1)
+	require.Len(t, created.Options[0].Values, 3)
+	require.Len(t, created.Images, 1)
+	assert.Equal(t, "yaz", created.Metadata["koleksiyon"], "jsonb alanı gidiş dönüş korunmalı")
+	assert.False(t, created.CreatedAt.IsZero(), "zaman damgası veritabanından gelmeli")
+	assert.Equal(t, time.UTC, created.CreatedAt.Location(), "zaman UTC olmalı")
+
+	// Varyantlar seçenek değerlerine gerçekten bağlanmış olmalı.
+	var sVariant models.Variant
+	for _, v := range created.Variants {
+		if v.Title == "S beden" {
+			sVariant = v
+		}
+	}
+	require.NotEmpty(t, sVariant.ID)
+	require.Len(t, sVariant.OptionValues, 1)
+	assert.Equal(t, "S", sVariant.OptionValues[0].Value)
+	assert.Equal(t, "Beden", sVariant.OptionValues[0].OptionTitle)
+
+	fetched, err := svc.GetProduct(ctx, created.ID)
+	require.NoError(t, err)
+	assert.Equal(t, created.ID, fetched.ID)
+	assert.Len(t, fetched.Variants, 2)
+
+	updated, err := svc.UpdateProduct(ctx, created.ID, service.UpdateProductInput{
+		Title:  ptrString("Tişört v2"),
+		Status: ptrStatus(models.StatusArchived),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "Tişört v2", updated.Title)
+	assert.Equal(t, models.StatusArchived, updated.Status)
+	assert.True(t, updated.UpdatedAt.After(created.UpdatedAt) || updated.UpdatedAt.Equal(created.UpdatedAt),
+		"güncelleme damgası geri gitmemeli")
+
+	require.NoError(t, svc.DeleteProduct(ctx, created.ID))
+}
+
+// TestSoftDeleteHidesFromReads silinen kaydın okuma sorgularından düştüğünü ve
+// handle'ının serbest kaldığını doğrular.
+//
+// İkincisi kısmi benzersiz indeksin (WHERE deleted_at IS NULL) doğrudan
+// sonucudur: silinmiş bir ürün yeni bir ürünün handle'ını tıkamamalıdır.
+func TestSoftDeleteHidesFromReads(t *testing.T) {
+	ctx := context.Background()
+	svc := newService(t, nil, nil)
+	handle := uniqueHandle("silinecek")
+
+	created, err := svc.CreateProduct(ctx, service.CreateProductInput{
+		Handle:   handle,
+		Title:    "Silinecek",
+		Status:   models.StatusPublished,
+		Variants: []service.CreateVariantInput{{Title: "Tek"}},
+	})
+	require.NoError(t, err)
+	variantID := created.Variants[0].ID
+
+	require.NoError(t, svc.DeleteProduct(ctx, created.ID))
+
+	_, err = svc.GetProduct(ctx, created.ID)
+	assert.True(t, coreerrors.IsNotFound(err), "silinen ürün okunamamalı: %v", err)
+
+	_, err = svc.GetVariant(ctx, variantID)
+	assert.True(t, coreerrors.IsNotFound(err), "silinen ürünün varyantı da düşmeli: %v", err)
+
+	list, err := svc.ListProducts(ctx, service.ListProductsOptions{Handle: &handle})
+	require.NoError(t, err)
+	assert.Empty(t, list.Items, "silinen ürün listelenmemeli")
+	assert.Zero(t, list.Count, "silinen ürün sayıma girmemeli")
+
+	// Handle serbest kalmalı.
+	again, err := svc.CreateProduct(ctx, service.CreateProductInput{
+		Handle: handle,
+		Title:  "Yeniden",
+	})
+	require.NoError(t, err, "silinen ürünün handle'ı yeniden kullanılabilmeli")
+	assert.NotEqual(t, created.ID, again.ID)
+}
+
+// TestHandleConflictIsEnforcedByDatabase eşzamanlı iki isteğin ARASINDAN
+// geçilemediğini doğrular.
+//
+// Servisin ön kontrolü iki isteği de "boş" görebilir; benzersizliğin tek gerçek
+// garantisi kısmi benzersiz indekstir. Bu iddia yalnızca gerçek veritabanında
+// kanıtlanabilir.
+func TestHandleConflictIsEnforcedByDatabase(t *testing.T) {
+	ctx := context.Background()
+	svc := newService(t, nil, nil)
+	handle := uniqueHandle("yaris")
+
+	const attempts = 6
+	var (
+		wg       sync.WaitGroup
+		mu       sync.Mutex
+		ok       int
+		conflict int
+		other    []error
+	)
+
+	wg.Add(attempts)
+	for i := range attempts {
+		go func(i int) {
+			defer wg.Done()
+			_, err := svc.CreateProduct(ctx, service.CreateProductInput{
+				Handle: handle,
+				Title:  fmt.Sprintf("Yarışan %d", i),
+			})
+
+			mu.Lock()
+			defer mu.Unlock()
+			switch {
+			case err == nil:
+				ok++
+			case coreerrors.IsConflict(err):
+				conflict++
+			default:
+				other = append(other, err)
+			}
+		}(i)
+	}
+	wg.Wait()
+
+	assert.Empty(t, other, "beklenmeyen hata: %v", other)
+	assert.Equal(t, 1, ok, "aynı handle ile yalnızca BİR ürün oluşabilmeli")
+	assert.Equal(t, attempts-1, conflict, "kalan istekler çakışma almalı")
+}
+
+// TestDuplicateSKUIsRejected varyant SKU'sunun benzersiz olduğunu doğrular.
+func TestDuplicateSKUIsRejected(t *testing.T) {
+	ctx := context.Background()
+	svc := newService(t, nil, nil)
+	sku := uniqueHandle("sku")
+
+	first, err := svc.CreateProduct(ctx, service.CreateProductInput{
+		Handle:   uniqueHandle("sku-bir"),
+		Title:    "Bir",
+		Variants: []service.CreateVariantInput{{Title: "Tek", SKU: &sku}},
+	})
+	require.NoError(t, err)
+	require.Len(t, first.Variants, 1)
+
+	_, err = svc.CreateProduct(ctx, service.CreateProductInput{
+		Handle:   uniqueHandle("sku-iki"),
+		Title:    "İki",
+		Variants: []service.CreateVariantInput{{Title: "Tek", SKU: &sku}},
+	})
+	require.Error(t, err)
+	assert.True(t, coreerrors.IsConflict(err), "aynı SKU çakışma vermeli: %v", err)
+	assert.Equal(t, "product_sku_taken", coreerrors.CodeOf(err))
+
+	// Çakışan istek yarım kayıt bırakmamalı: ürün de yazılmamış olmalı.
+	list, err := svc.ListProducts(ctx, service.ListProductsOptions{Search: ptrString("İki")})
+	require.NoError(t, err)
+	assert.Empty(t, list.Items, "işlem geri alınmalı; sahipsiz ürün kalmamalı")
+}
+
+// TestVariantOptionValueIsUniquePerOption bir varyantın aynı seçenekten tek
+// değer taşıdığını doğrular.
+//
+// Kural şemadadır (birincil anahtar: variant_id, option_id); ikinci yazma yeni
+// satır değil güncelleme üretir.
+func TestVariantOptionValueIsUniquePerOption(t *testing.T) {
+	ctx := context.Background()
+	svc := newService(t, nil, nil)
+
+	created, err := svc.CreateProduct(ctx, service.CreateProductInput{
+		Handle:  uniqueHandle("secenek"),
+		Title:   "Seçenekli",
+		Options: []service.CreateOptionInput{{Title: "Beden", Values: []string{"S", "M"}}},
+		Variants: []service.CreateVariantInput{
+			{Title: "Değişecek", Options: map[string]string{"Beden": "S"}},
+		},
+	})
+	require.NoError(t, err)
+	variantID := created.Variants[0].ID
+
+	var mValueID string
+	for _, value := range created.Options[0].Values {
+		if value.Value == "M" {
+			mValueID = value.ID
+		}
+	}
+	require.NotEmpty(t, mValueID)
+
+	require.NoError(t, svc.SetVariantOptionValues(ctx, variantID, []string{mValueID}))
+
+	variant, err := svc.GetVariant(ctx, variantID)
+	require.NoError(t, err)
+	require.Len(t, variant.OptionValues, 1, "aynı seçenekten iki değer taşınamaz")
+	assert.Equal(t, "M", variant.OptionValues[0].Value)
+}
+
+// TestListProductsPagesConsistently sayfalamanın kararlı sıra ürettiğini
+// doğrular.
+func TestListProductsPagesConsistently(t *testing.T) {
+	ctx := context.Background()
+	svc := newService(t, nil, nil)
+	collection, err := svc.CreateCollection(ctx, service.CreateCollectionInput{
+		Title: "Sayfalama " + uniqueHandle("koleksiyon"),
+	})
+	require.NoError(t, err)
+
+	const total = 5
+	for i := range total {
+		_, err := svc.CreateProduct(ctx, service.CreateProductInput{
+			Handle:       uniqueHandle(fmt.Sprintf("sayfa-%d", i)),
+			Title:        fmt.Sprintf("Sayfa %d", i),
+			CollectionID: &collection.ID,
+		})
+		require.NoError(t, err)
+	}
+
+	seen := map[string]struct{}{}
+	for offset := 0; offset < total; offset += 2 {
+		page, err := svc.ListProducts(ctx, service.ListProductsOptions{
+			CollectionID: &collection.ID,
+			Limit:        2,
+			Offset:       offset,
+		})
+		require.NoError(t, err)
+		assert.Equal(t, total, page.Count, "count sayfadan bağımsız olmalı")
+		for _, item := range page.Items {
+			_, dup := seen[item.ID]
+			assert.False(t, dup, "aynı kayıt iki sayfada görünmemeli: %s", item.ID)
+			seen[item.ID] = struct{}{}
+		}
+	}
+	assert.Len(t, seen, total, "sayfalar bütün kümeyi kapsamalı")
+}
+
+// ptrString dizgenin adresini döner.
+func ptrString(v string) *string { return &v }
+
+// ptrStatus durumun adresini döner.
+func ptrStatus(v models.Status) *models.Status { return &v }

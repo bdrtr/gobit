@@ -18,19 +18,19 @@ import (
 
 // --- dummy modül (test fixture) ---
 
-// greeter, dummy modülün sunduğu servistir.
+// greeter dummy modülün sunduğu servistir.
 type greeter struct{ prefix string }
 
 func (g *greeter) Greet(name string) string { return g.prefix + " " + name }
 
-// Greeter, dummy modülü TÜKETEN tarafın tanımlayacağı dar arayüzdür.
+// Greeter dummy modülü TÜKETEN tarafın tanımlayacağı dar arayüzdür.
 // ADR 0001'in örüntüsü: tüketici arayüzü kendi paketinde tanımlar, sağlayıcının
 // somut tipi onu yapısal olarak karşılar.
 type Greeter interface {
 	Greet(name string) string
 }
 
-// dummyModule, Module sözleşmesini karşılayan test modülüdür.
+// dummyModule Module sözleşmesini karşılayan test modülüdür.
 type dummyModule struct {
 	name       string
 	migrations fs.FS

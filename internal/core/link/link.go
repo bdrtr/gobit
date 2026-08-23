@@ -166,10 +166,35 @@ func (c Cardinality) Valid() bool {
 // katmanı (plan Bölüm 5.3, ADR 0004) kök kayıttaki hangi alanın link'e girdiğini
 // bu bilgiyle bulur.
 type LinkSide struct { //nolint:revive // ad, plan Bölüm 5.2'deki bağlayıcı sözleşmeden gelir
-	// Module ucun sahibi modülün adıdır (örn. "product").
+	// Module ucun sahibi modülün adıdır (örn. "pricing").
 	Module string
-	// Field o modüldeki kimlik alanının adıdır (örn. "product_id").
+	// Entity bu ucun Query katmanındaki entity adıdır (örn. "price_set").
+	//
+	// Module'dan AYRIDIR çünkü bir modül birden çok entity sunabilir: product
+	// modülü hem "product" hem "variant" sağlayıcısı kaydeder, pricing modülünün
+	// entity'si ise "price_set"tir. Query, genişletmenin hedef sağlayıcısını
+	// "<Entity>" + query.ProviderSuffix adıyla arar; buraya modül adı yazmak
+	// çalışma zamanında errors.NotFound demektir.
+	//
+	// Boş bırakılırsa Module kullanılır — modülün tek entity'si kendi adıysa
+	// alan yazılmak zorunda değildir.
+	//
+	// Entity, linkin KİMLİĞİNİN parçası DEĞİLDİR ve kalıcı tanım defterine
+	// yazılmaz: link tablosunun şeması ona bağlı değildir, yalnızca süreç içi
+	// sorgu yönlendirmesini etkiler. Yanlış yazılırsa hata ilk genişletmede
+	// aranan adı içeren net bir NotFound olarak çıkar.
+	Entity string
+	// Field o modüldeki kimlik alanının adıdır (örn. "price_set_id").
 	Field string
+}
+
+// EntityName ucun Query katmanındaki entity adını döner.
+// Entity boşsa Module'a düşer.
+func (s LinkSide) EntityName() string {
+	if s.Entity != "" {
+		return s.Entity
+	}
+	return s.Module
 }
 
 // String ucu "modül.alan" biçiminde yazar.

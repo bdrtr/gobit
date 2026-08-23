@@ -79,7 +79,7 @@ type Error struct {
 	err error
 }
 
-// Error, error arayüzünü karşılar.
+// Error error arayüzünü karşılar.
 func (e *Error) Error() string {
 	if e == nil {
 		return "<nil>"
