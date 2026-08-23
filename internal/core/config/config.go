@@ -12,6 +12,22 @@ import (
 	"github.com/caarlos0/env/v11"
 )
 
+// Yalnızca yerel geliştirme için varsayılan bağlantı adresleri.
+// deploy/docker-compose.yml ile eşleşirler. Validate, APP_ENV=production iken
+// bu değerlerin ezilmiş olmasını ZORUNLU kılar; aksi hâlde eksik secret
+// enjeksiyonu sessizce sabit-kodlu kimlik bilgisiyle üretime çıkardı.
+//
+// DİKKAT: Aşağıdaki envDefault etiketleri bu sabitlerle birebir aynı olmalıdır
+// (Go struct etiketleri sabit referansı kabul etmez). TestDefaultTagsMatchConstants
+// bu eşleşmeyi denetler.
+const (
+	// Buradaki gosec bastırmaları bilinçlidir: bu sabitler gizli bilgi DEĞİL,
+	// tam tersine üretimde REDDEDİLMESİ gereken, bilinen yerel geliştirme
+	// değerleridir. Validate bunlarla karşılaştırma yaparak korumayı uygular.
+	DefaultDatabaseURL = "postgres://gobit:gobit@localhost:5432/gobit?sslmode=disable" //nolint:gosec // G101: kasıtlı yerel geliştirme varsayılanı; üretimde Validate reddeder
+	DefaultRedisURL    = "redis://:gobit@localhost:6379/0"                             //nolint:gosec // G101: kasıtlı yerel geliştirme varsayılanı; üretimde Validate reddeder
+)
+
 // Geçerli enum değerleri; Validate bunlara göre doğrulama yapar.
 var (
 	validAppEnvs    = []string{"development", "staging", "production"}
@@ -33,7 +49,7 @@ type Config struct {
 	// DatabaseURL PostgreSQL bağlantı adresidir (pgx DSN formatı).
 	DatabaseURL string `env:"DATABASE_URL" envDefault:"postgres://gobit:gobit@localhost:5432/gobit?sslmode=disable"`
 	// RedisURL Redis bağlantı adresidir.
-	RedisURL string `env:"REDIS_URL" envDefault:"redis://localhost:6379/0"`
+	RedisURL string `env:"REDIS_URL" envDefault:"redis://:gobit@localhost:6379/0"`
 
 	// LogLevel yapısal log seviyesidir: debug | info | warn | error.
 	LogLevel string `env:"LOG_LEVEL" envDefault:"info"`
@@ -43,8 +59,16 @@ type Config struct {
 	// ShutdownTimeout, SIGTERM sonrası açık isteklerin tamamlanması için
 	// tanınan azami süredir.
 	ShutdownTimeout time.Duration `env:"SHUTDOWN_TIMEOUT" envDefault:"15s"`
-	// ReadHeaderTimeout, Slowloris tipi saldırılara karşı zorunlu sınırdır.
+	// ReadHeaderTimeout, yalnızca istek BAŞLIKLARININ okunması için tanınan süredir.
 	ReadHeaderTimeout time.Duration `env:"READ_HEADER_TIMEOUT" envDefault:"10s"`
+	// ReadTimeout, başlık + gövdenin tamamının okunması için tanınan süredir.
+	// ReadHeaderTimeout tek başına gövdeyi bayt bayt akıtan Slowloris türevini
+	// durdurmaz; bu sınır olmadan her bağlantı süresiz goroutine + fd tutar.
+	ReadTimeout time.Duration `env:"READ_TIMEOUT" envDefault:"15s"`
+	// WriteTimeout, yanıtın yazılması için tanınan süredir.
+	WriteTimeout time.Duration `env:"WRITE_TIMEOUT" envDefault:"30s"`
+	// IdleTimeout, keep-alive bağlantısının boşta bekleyebileceği süredir.
+	IdleTimeout time.Duration `env:"IDLE_TIMEOUT" envDefault:"120s"`
 }
 
 // Load ortam değişkenlerini okuyup doğrulanmış bir Config döner.
@@ -83,8 +107,33 @@ func (c Config) Validate() error {
 	if c.ShutdownTimeout <= 0 {
 		return fmt.Errorf("config: SHUTDOWN_TIMEOUT pozitif olmalı, %s verildi", c.ShutdownTimeout)
 	}
-	if c.ReadHeaderTimeout <= 0 {
-		return fmt.Errorf("config: READ_HEADER_TIMEOUT pozitif olmalı, %s verildi", c.ReadHeaderTimeout)
+	for _, t := range []struct {
+		name  string
+		value time.Duration
+	}{
+		{"READ_HEADER_TIMEOUT", c.ReadHeaderTimeout},
+		{"READ_TIMEOUT", c.ReadTimeout},
+		{"WRITE_TIMEOUT", c.WriteTimeout},
+		{"IDLE_TIMEOUT", c.IdleTimeout},
+	} {
+		if t.value <= 0 {
+			return fmt.Errorf("config: %s pozitif olmalı, %s verildi", t.name, t.value)
+		}
+	}
+	if c.ReadTimeout < c.ReadHeaderTimeout {
+		return fmt.Errorf("config: READ_TIMEOUT (%s), READ_HEADER_TIMEOUT'tan (%s) küçük olamaz", c.ReadTimeout, c.ReadHeaderTimeout)
+	}
+
+	// Üretimde yerel geliştirme varsayılanlarına düşmek, sabit-kodlu kimlik
+	// bilgisi ve TLS'siz bağlantı demektir. Eksik/boş secret enjeksiyonu bu
+	// kontrol olmadan sessizce buraya düşerdi.
+	if c.IsProduction() {
+		if c.DatabaseURL == DefaultDatabaseURL {
+			return fmt.Errorf("config: APP_ENV=production iken DATABASE_URL ezilmelidir (yerel geliştirme varsayılanı kullanılıyor)")
+		}
+		if c.RedisURL == DefaultRedisURL {
+			return fmt.Errorf("config: APP_ENV=production iken REDIS_URL ezilmelidir (yerel geliştirme varsayılanı kullanılıyor)")
+		}
 	}
 	return nil
 }

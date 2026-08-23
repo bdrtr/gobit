@@ -63,6 +63,9 @@ func run() error {
 		Logger:            log,
 		ShutdownTimeout:   cfg.ShutdownTimeout,
 		ReadHeaderTimeout: cfg.ReadHeaderTimeout,
+		ReadTimeout:       cfg.ReadTimeout,
+		WriteTimeout:      cfg.WriteTimeout,
+		IdleTimeout:       cfg.IdleTimeout,
 	})
 
 	return srv.Run(ctx)

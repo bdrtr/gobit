@@ -3,6 +3,7 @@ package config_test
 import (
 	"log/slog"
 	"os"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -14,6 +15,7 @@ import (
 var envKeys = []string{
 	"APP_ENV", "APP_PORT", "DATABASE_URL", "REDIS_URL",
 	"LOG_LEVEL", "LOG_FORMAT", "SHUTDOWN_TIMEOUT", "READ_HEADER_TIMEOUT",
+	"READ_TIMEOUT", "WRITE_TIMEOUT", "IDLE_TIMEOUT",
 }
 
 // clearEnv testin çalıştığı kabukta tanımlı olabilecek değişkenleri
@@ -141,6 +143,7 @@ func TestValidateRejectsEmptyURLs(t *testing.T) {
 		LogLevel: "info", LogFormat: "json",
 		DatabaseURL: "postgres://x", RedisURL: "redis://x",
 		ShutdownTimeout: time.Second, ReadHeaderTimeout: time.Second,
+		ReadTimeout: time.Second, WriteTimeout: time.Second, IdleTimeout: time.Second,
 	}
 	if err := base.Validate(); err != nil {
 		t.Fatalf("geçerli config reddedildi: %v", err)
@@ -156,5 +159,108 @@ func TestValidateRejectsEmptyURLs(t *testing.T) {
 	noRedis.RedisURL = ""
 	if err := noRedis.Validate(); err == nil {
 		t.Error("boş REDIS_URL kabul edildi")
+	}
+}
+
+// TestProductionRejectsLocalDefaults, üretimde yerel geliştirme
+// varsayılanlarına sessizce düşülmediğini doğrular.
+//
+// Regresyon: envDefault dolu olduğu için Validate'in `== ""` kontrolü Load
+// yolundan asla tetiklenmiyordu. Eksik (ya da boş) secret enjeksiyonu
+// sabit-kodlu gobit:gobit kimlik bilgisi ve sslmode=disable ile üretime çıkardı.
+func TestProductionRejectsLocalDefaults(t *testing.T) {
+	tests := map[string]func(t *testing.T){
+		"env hic set edilmemis": func(t *testing.T) {},
+		"env bos string": func(t *testing.T) {
+			t.Setenv("DATABASE_URL", "")
+			t.Setenv("REDIS_URL", "")
+		},
+		"acikca varsayilanla ayni": func(t *testing.T) {
+			t.Setenv("DATABASE_URL", config.DefaultDatabaseURL)
+			t.Setenv("REDIS_URL", config.DefaultRedisURL)
+		},
+	}
+
+	for name, setup := range tests {
+		t.Run(name, func(t *testing.T) {
+			clearEnv(t)
+			t.Setenv("APP_ENV", "production")
+			setup(t)
+
+			cfg, err := config.Load()
+			if err == nil {
+				t.Fatalf("Load() hata dönmeliydi; DatabaseURL=%q", cfg.DatabaseURL)
+			}
+			if !strings.Contains(err.Error(), "production") {
+				t.Errorf("hata mesajı üretim koşulunu anlatmalı: %v", err)
+			}
+		})
+	}
+}
+
+func TestProductionAcceptsOverriddenURLs(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("APP_ENV", "production")
+	t.Setenv("DATABASE_URL", "postgres://u:p@db.internal:5432/gobit?sslmode=require")
+	t.Setenv("REDIS_URL", "rediss://:s3cret@cache.internal:6380/0")
+
+	if _, err := config.Load(); err != nil {
+		t.Fatalf("ezilmiş URL'lerle Load() hata verdi: %v", err)
+	}
+}
+
+func TestDevelopmentAllowsLocalDefaults(t *testing.T) {
+	// Yerel geliştirme "make up && make run" ile ek ayar gerektirmemeli.
+	clearEnv(t)
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load() hata verdi: %v", err)
+	}
+	if cfg.DatabaseURL != config.DefaultDatabaseURL {
+		t.Errorf("DatabaseURL = %q, beklenen varsayılan", cfg.DatabaseURL)
+	}
+}
+
+// TestDefaultTagsMatchConstants, envDefault etiketleri ile sabitlerin
+// birbirinden kaymadığını denetler. Go struct etiketleri sabit referansı kabul
+// etmediği için değer iki yerde tekrarlanmak zorunda; kayma olursa üretim
+// koruması sessizce devre dışı kalırdı.
+func TestDefaultTagsMatchConstants(t *testing.T) {
+	want := map[string]string{
+		"DatabaseURL": config.DefaultDatabaseURL,
+		"RedisURL":    config.DefaultRedisURL,
+	}
+
+	typ := reflect.TypeOf(config.Config{})
+	for field, expected := range want {
+		f, ok := typ.FieldByName(field)
+		if !ok {
+			t.Fatalf("Config.%s alanı yok", field)
+		}
+		if got := f.Tag.Get("envDefault"); got != expected {
+			t.Errorf("Config.%s envDefault etiketi %q, sabit %q — kaymış", field, got, expected)
+		}
+	}
+}
+
+func TestTimeoutValidation(t *testing.T) {
+	tests := map[string]struct{ key, value string }{
+		"read timeout sifir":            {"READ_TIMEOUT", "0s"},
+		"write timeout negatif":         {"WRITE_TIMEOUT", "-1s"},
+		"idle timeout sifir":            {"IDLE_TIMEOUT", "0s"},
+		"read < read-header (tutarsiz)": {"READ_TIMEOUT", "5s"},
+	}
+
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			clearEnv(t)
+			if tt.key == "READ_TIMEOUT" && tt.value == "5s" {
+				t.Setenv("READ_HEADER_TIMEOUT", "10s")
+			}
+			t.Setenv(tt.key, tt.value)
+			if _, err := config.Load(); err == nil {
+				t.Fatalf("Load() hata dönmeliydi (%s=%s)", tt.key, tt.value)
+			}
+		})
 	}
 }

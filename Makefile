@@ -11,11 +11,14 @@ SQLC_VERSION     := v1.31.1
 GOLANGCI         := $(BIN_DIR)/golangci-lint
 SQLC             := $(BIN_DIR)/sqlc
 
-# Varsa .env dosyasındaki değişkenleri ortama al.
-ifneq (,$(wildcard .env))
-include .env
-export
-endif
+# .env, make'in `include` mekanizmasıyla DEĞİL, POSIX kabuk semantiğiyle yüklenir.
+# `include .env` + `export` kullanılamaz çünkü make:
+#   - değerin içindeki `#` karakterinden sonrasını yorum sayıp keser
+#     (pa#ss içeren parola -> "pa"),
+#   - `$` karakterini değişken genişletmesi olarak yorumlar (se$cret -> "seret"),
+#   - tırnakları değerin parçası bırakır (LOG_FORMAT="text" -> `"text"`).
+# Parola içeren gerçek bir DSN bu yolla sessizce bozuluyordu.
+DOTENV = set -a; [ -f .env ] && . ./.env; set +a;
 
 .DEFAULT_GOAL := help
 .PHONY: help run build test test-integration lint fmt tidy gen up down logs psql redis-cli migrate-up migrate-down tools clean rename-module
@@ -26,7 +29,7 @@ help: ## Bu yardım metnini göster
 ## --- Uygulama ---
 
 run: ## Sunucuyu yerelde çalıştır
-	go run -ldflags '$(LDFLAGS)' ./cmd/server
+	@$(DOTENV) go run -ldflags '$(LDFLAGS)' ./cmd/server
 
 build: ## Binary'yi bin/gobit olarak derle
 	@mkdir -p $(BIN_DIR)
@@ -44,9 +47,9 @@ test-integration: ## Entegrasyon testlerini çalıştır (testcontainers gerekti
 lint: $(GOLANGCI) ## golangci-lint çalıştır
 	$(GOLANGCI) run ./...
 
-fmt: ## Kaynakları biçimlendir
-	gofmt -w -s .
-	go mod tidy
+fmt: $(GOLANGCI) ## Kaynakları biçimlendir (gofmt + goimports)
+	@$(GOLANGCI) fmt ./...
+	@go mod tidy
 
 tidy: ## go.mod/go.sum'ı düzenle ve doğrula
 	go mod tidy
@@ -55,20 +58,20 @@ tidy: ## go.mod/go.sum'ı düzenle ve doğrula
 ## --- Altyapı ---
 
 up: ## Postgres + Redis'i ayağa kaldır (sağlıklı olana kadar bekler)
-	$(COMPOSE) up -d --wait
+	@$(DOTENV) $(COMPOSE) up -d --wait
 	@echo "postgres ve redis hazır."
 
 down: ## Servisleri durdur (veri korunur)
-	$(COMPOSE) down
+	@$(DOTENV) $(COMPOSE) down
 
 logs: ## Servis loglarını izle
-	$(COMPOSE) logs -f
+	@$(DOTENV) $(COMPOSE) logs -f
 
 psql: ## Postgres'e psql ile bağlan
-	$(COMPOSE) exec postgres psql -U gobit -d gobit
+	@$(DOTENV) $(COMPOSE) exec postgres psql -U "$${POSTGRES_USER:-gobit}" -d "$${POSTGRES_DB:-gobit}"
 
 redis-cli: ## Redis'e redis-cli ile bağlan
-	$(COMPOSE) exec redis redis-cli
+	@$(DOTENV) $(COMPOSE) exec redis redis-cli --no-auth-warning -a "$${REDIS_PASSWORD:-gobit}"
 
 ## --- Migration (Faz 1'de core/db migration runner'a bağlanacak) ---
 

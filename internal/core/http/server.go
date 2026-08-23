@@ -19,8 +19,15 @@ type ServerOptions struct {
 	Logger *slog.Logger
 	// ShutdownTimeout, kapanışta açık isteklerin tamamlanması için tanınan süredir.
 	ShutdownTimeout time.Duration
-	// ReadHeaderTimeout, Slowloris tipi saldırılara karşı zorunlu sınırdır.
+	// ReadHeaderTimeout, yalnızca istek başlıklarının okunma süresidir.
 	ReadHeaderTimeout time.Duration
+	// ReadTimeout, başlık + gövdenin tamamının okunma süresidir. Bu sınır
+	// olmadan gövdeyi bayt bayt akıtan bir istemci bağlantıyı süresiz tutar.
+	ReadTimeout time.Duration
+	// WriteTimeout, yanıtın yazılma süresidir.
+	WriteTimeout time.Duration
+	// IdleTimeout, keep-alive bağlantısının boşta bekleme süresidir.
+	IdleTimeout time.Duration
 }
 
 // Server graceful shutdown destekli HTTP sunucusudur.
@@ -42,6 +49,9 @@ func NewServer(opts ServerOptions) *Server {
 			Addr:              opts.Addr,
 			Handler:           opts.Handler,
 			ReadHeaderTimeout: opts.ReadHeaderTimeout,
+			ReadTimeout:       opts.ReadTimeout,
+			WriteTimeout:      opts.WriteTimeout,
+			IdleTimeout:       opts.IdleTimeout,
 		},
 		log:             log,
 		shutdownTimeout: opts.ShutdownTimeout,
@@ -52,7 +62,7 @@ func NewServer(opts ServerOptions) *Server {
 //
 // ctx iptal edildiğinde yeni bağlantı kabul edilmez ve açık istekler
 // ShutdownTimeout süresince tamamlanmaya çalışılır. Süre dolarsa kalan
-// bağlantılar zorla kapatılır ve hata döner.
+// bağlantılar Close ile zorla kapatılır ve hata döner.
 func (s *Server) Run(ctx context.Context) error {
 	errCh := make(chan error, 1)
 
@@ -76,7 +86,14 @@ func (s *Server) Run(ctx context.Context) error {
 	defer cancel()
 
 	if err := s.httpSrv.Shutdown(shutdownCtx); err != nil {
-		return fmt.Errorf("http: düzgün kapanış tamamlanamadı: %w", err)
+		// Shutdown, deadline dolduğunda hata döner ama AKTİF BAĞLANTILARI
+		// KAPATMAZ; zorla kapatmak için ayrıca Close gerekir. Bu olmadan
+		// handler goroutine'leri ve TCP bağlantıları Run döndükten sonra
+		// yaşamaya devam ederdi.
+		s.log.Warn("düzgün kapanış süresi doldu, bağlantılar zorla kapatılıyor", "error", err)
+		closeErr := s.httpSrv.Close()
+		<-errCh // ListenAndServe'in dönmesini bekle, goroutine'i sızdırma
+		return fmt.Errorf("http: düzgün kapanış tamamlanamadı: %w", errors.Join(err, closeErr))
 	}
 
 	s.log.Info("HTTP sunucusu kapandı")

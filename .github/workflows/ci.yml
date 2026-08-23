@@ -22,12 +22,6 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      - name: gofmt kontrolü
-        run: |
-          unformatted=$(gofmt -l -s .)
-          if [ -n "$unformatted" ]; then
-            echo "Biçimlendirilmemiş dosyalar:"; echo "$unformatted"; exit 1
-          fi
       - name: go.mod güncel mi
         run: |
           go mod tidy

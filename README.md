@@ -37,8 +37,25 @@ Tüm ayarlar ortam değişkeninden okunur (12-factor). Varsayılanlar
 `cp .env.example .env` ile özelleştirebilirsiniz. Değişken listesi için
 [`.env.example`](./.env.example) veya `internal/core/config/config.go`.
 
-> **Üretim uyarısı:** `DATABASE_URL` ve `REDIS_URL` varsayılanları yalnızca
-> yerel geliştirme içindir; üretimde mutlaka ezilmelidir.
+> **Üretim koruması:** `DATABASE_URL` ve `REDIS_URL` varsayılanları yalnızca
+> yerel geliştirme içindir. `APP_ENV=production` iken bu ikisi ezilmemişse
+> uygulama **açılışta hata verip durur** — eksik secret enjeksiyonunun
+> sabit-kodlu kimlik bilgisiyle sessizce üretime çıkmasını engeller.
+
+> **`.env` biçimi:** Dosya POSIX kabuk semantiğiyle yüklenir. İçinde `$` geçen
+> değerleri **tek tırnağa alın** (`REDIS_URL='redis://:pa$word@…'`), aksi hâlde
+> kabuk onları genişletir.
+
+### Güvenlik varsayılanları
+
+- Compose portları `127.0.0.1`'e bağlanır; paylaşılan bir ağda (ofis/kafe WiFi)
+  Postgres ve Redis dışarıdan erişilebilir olmaz.
+- Redis `requirepass` ile açılır; parolasız bağlantı reddedilir.
+- HTTP sunucusunda `ReadHeaderTimeout` yanında `ReadTimeout`, `WriteTimeout` ve
+  `IdleTimeout` de tanımlıdır — gövdeyi bayt bayt akıtan Slowloris türevine karşı
+  `ReadHeaderTimeout` tek başına yetmez.
+- Kapanışta `ShutdownTimeout` dolarsa açık bağlantılar `Close` ile **zorla
+  kapatılır**; `Shutdown` tek başına aktif bağlantıları koparmaz.
 
 ## Dizin yapısı
 
