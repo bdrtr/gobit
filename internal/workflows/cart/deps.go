@@ -21,6 +21,15 @@ const (
 	ServiceRegion = "region.service"
 	// ServiceCustomer müşteri modülünün servisidir.
 	ServiceCustomer = "customer.service"
+	// ServicePromotion promosyon modülünün modüller arası yüzeyidir.
+	//
+	// OPSİYONELDİR: kayıtlı değilse indirim sıfır kalır (bkz. [Discounts]).
+	ServicePromotion = "promotion.interop"
+	// ServiceTax vergi modülünün modüller arası yüzeyidir.
+	//
+	// OPSİYONELDİR: kayıtlı değilse vergi region'ın oranıyla hesaplanır
+	// (bkz. [Taxes]).
+	ServiceTax = "tax.interop"
 	// ServiceLink çekirdeğin Module Links servisidir.
 	ServiceLink = "core.link"
 	// ServiceQuery çekirdeğin cross-module okuma katmanıdır.
@@ -41,6 +50,14 @@ const (
 	EntityVariant = "variant"
 	// FieldTitle varyant kaydında başlığın bulunduğu alan adıdır.
 	FieldTitle = "title"
+	// EntityRegion bölgelerin Query katmanındaki entity adıdır; tanımı region
+	// modülü bildirir.
+	EntityRegion = "region"
+	// FieldCountries bölge kaydında ülke alt kayıtlarının bulunduğu alan adıdır.
+	FieldCountries = "countries"
+	// FieldCode ülke alt kaydında ISO 3166-1 alpha-2 kodunun bulunduğu alan
+	// adıdır.
+	FieldCode = "code"
 )
 
 // Hata kodları. İstemciler bunlara göre dallanabilir; mesajlar değişebilir,
@@ -88,7 +105,33 @@ const (
 	// CodeTotalsAfterChange satırın YAZILDIĞINI ama toplamların
 	// hesaplanamadığını bildirir.
 	CodeTotalsAfterChange = "cart_workflow_totals_after_change_failed"
+	// CodeDiscountFailed indirim hesabının BAŞARISIZ olduğunu bildirir.
+	//
+	// "İndirim yok"tan ayrıdır: indirimin sıfır olması normal bir sonuçtur,
+	// bu kod ise hesabın hiç yapılamadığını söyler.
+	CodeDiscountFailed = "cart_workflow_discount_failed"
+	// CodeDiscountInvalid promosyon modülünün sözleşme dışı bir indirim sonucu
+	// bildirdiğini söyler.
+	CodeDiscountInvalid = "cart_workflow_discount_invalid"
+	// CodeTaxFailed vergi hesabının BAŞARISIZ olduğunu bildirir.
+	CodeTaxFailed = "cart_workflow_tax_failed"
+	// CodeTaxInvalid vergi modülünün sözleşme dışı bir hesap sonucu
+	// bildirdiğini söyler.
+	CodeTaxInvalid = "cart_workflow_tax_invalid"
+	// CodeRegionReadFailed bölge kaydının Query katmanından OKUNAMADIĞINI
+	// bildirir; bölgenin var olmadığı anlamına GELMEZ.
+	CodeRegionReadFailed = "cart_workflow_region_read_failed"
 )
+
+// codeServiceNotFound container'ın "bu ad kayıtlı değil" hata kodudur.
+//
+// Kod BURADA TEKRARLANIR çünkü core/container'daki karşılığı unexported'dır ve
+// paketler arası tek taşınabilir bağ hata kodudur (bkz. core/errors: "kod
+// sözleşmenin parçasıdır"). Değeri değişirse [FromContainer] sessizce daha AZ
+// bağışlayıcı olur — promotion/tax kayıtlı değilken akışlar hiç kurulamaz,
+// yani hata açılışta ve gürültülü biçimde görülür. Ters yön (sessizce daha
+// hoşgörülü olmak) kabul edilemezdi.
+const codeServiceNotFound = "container_service_not_found"
 
 // Carts sepet modülünün ("cart.interop") bu paketçe kullanılan yüzeyidir.
 //
@@ -184,6 +227,40 @@ type Customers interface {
 	CustomerEmail(ctx context.Context, customerID string) (string, error)
 }
 
+// Discounts promosyon modülünün ("promotion.interop") bu paketçe kullanılan
+// yüzeyidir.
+//
+// Yüzey TEK metotludur. promotion'ın interop'u üç metot yayımlar
+// (ComputeDiscountsJSON, RedeemPromotion, ReleasePromotion) ama sepet hesabı
+// yalnızca birincisini kullanır: hesap YAN ETKİSİZDİR ve bir kuponu fiilen
+// harcamak siparişin işidir (bkz. promotion paket yorumu, "Hesap ile kullanım
+// AYRIDIR"). Kullanılmayan iki metodu buraya yazmak, bu paketin ihtiyaç
+// duymadığı bir sözleşmeyi sahiplenmesi ve sahtelerinin gereksiz büyümesi
+// olurdu.
+//
+// İstek ve yanıt gövdelerinin şeması [discountRequest] ve [discountResponse]
+// tiplerinde, tek yerde tanımlıdır.
+type Discounts interface {
+	// ComputeDiscountsJSON sepet bağlamı için indirimleri hesaplar; HİÇBİR ŞEY
+	// YAZMAZ ve hiçbir kupon sayacını tüketmez.
+	ComputeDiscountsJSON(ctx context.Context, request json.RawMessage) (json.RawMessage, error)
+}
+
+// Taxes vergi modülünün ("tax.interop") bu paketçe kullanılan yüzeyidir.
+//
+// Yüzey TEK metotludur. tax'ın interop'u RateForCountry'yi de yayımlar ve o,
+// region'ın geçici RegionTax metodunun birebir karşılığıdır — ama sepet hesabı
+// kalem BAŞINA vergi ister (fatura satır satır açıklanabilir olmalıdır ve
+// ürün sınıfına göre satır başına farklı oranlar gelebilir), tek bir düz oran
+// bunu veremez. Bu yüzden hesap daima [Taxes.CalculateTaxJSON] ile yapılır.
+//
+// İstek ve yanıt gövdelerinin şeması [taxRequest] ve [taxResponse] tiplerinde,
+// tek yerde tanımlıdır.
+type Taxes interface {
+	// CalculateTaxJSON verilen ülke ve kalemler için vergiyi hesaplar.
+	CalculateTaxJSON(ctx context.Context, request json.RawMessage) (json.RawMessage, error)
+}
+
 // Links çekirdeğin Module Links servisinin ("core.link") bu paketçe kullanılan
 // yüzeyidir.
 //
@@ -219,6 +296,17 @@ type Deps struct {
 	// dokunmaz. Yine de zorunludur: eksikliği, kayıtlı müşteri sepetinin ilk
 	// isteğinde patlayan bir kurulum hatasıdır ve o hata açılışta görülmelidir.
 	Customers Customers
+	// Discounts promosyon yüzeyidir; OPSİYONELDİR.
+	//
+	// nil ise indirim sıfır kalır ve vitrin çalışmaya devam eder; gerekçe
+	// [Workflows.applyDiscounts] godoc'undadır.
+	Discounts Discounts
+	// Taxes vergi yüzeyidir; OPSİYONELDİR.
+	//
+	// nil ise vergi region'ın oranıyla hesaplanır (Faz 5 yolu) ve kullanılan
+	// kaynak [Totals.TaxSource] alanında GÖRÜNÜR; gerekçe
+	// [Workflows.applyTaxes] godoc'undadır.
+	Taxes Taxes
 	// Links Module Links yüzeyidir; zorunludur.
 	Links Links
 	// Catalog Query yüzeyidir; zorunludur.
@@ -233,6 +321,8 @@ type Workflows struct {
 	prices    Prices
 	regions   Regions
 	customers Customers
+	discounts Discounts
+	taxes     Taxes
 	links     Links
 	catalog   Catalog
 	log       *slog.Logger
@@ -240,9 +330,15 @@ type Workflows struct {
 
 // New verilen bağımlılıklarla akışları kurar.
 //
-// Eksik bir bağımlılık KURULUM anında hata döner; çalışma zamanında nil
+// Eksik bir ZORUNLU bağımlılık KURULUM anında hata döner; çalışma zamanında nil
 // kontrolü yapılmaz. Eksikliğin ilk çağrıya bırakılması, yanlış kablolanmış bir
 // kurulumun ancak müşterinin sepetinde patlaması demek olurdu.
+//
+// [Deps.Discounts] ve [Deps.Taxes] bunun DIŞINDADIR ve nil bırakılabilir:
+// ikisi de kendi modülü kurulumda bulunmadığında akışın çalışmaya devam ettiği
+// bir DEGRADASYON yolu taşır ve o yol nil kontrolüyle seçilir. Zorunlu
+// sayılsalardı promotion ya da tax modülünü kurmayan bir dağıtımda sepet
+// akışları hiç kurulamazdı — modülerliğin kendisi kaybolurdu.
 func New(deps Deps) (*Workflows, error) {
 	for _, dep := range []struct {
 		name    string
@@ -270,6 +366,8 @@ func New(deps Deps) (*Workflows, error) {
 		prices:    deps.Prices,
 		regions:   deps.Regions,
 		customers: deps.Customers,
+		discounts: deps.Discounts,
+		taxes:     deps.Taxes,
 		links:     deps.Links,
 		catalog:   deps.Catalog,
 		log:       log,
@@ -283,6 +381,14 @@ func New(deps Deps) (*Workflows, error) {
 // varsa her çalıştırmada aynı hata döner ve teşhis yeniden üretilebilir olur.
 // Uyumsuzluk hatası hem kayıtlı somut tipi hem beklenen arayüzü, arayüzse
 // eksik metotları yazar (bkz. container.Resolve).
+//
+// # İki ad OPSİYONELDİR
+//
+// [ServicePromotion] ve [ServiceTax] KAYITLI DEĞİLSE akışlar yine kurulur ve
+// ilgili yüzey nil kalır (bkz. [resolveOptional]). Kayıtlı ama yüzeyi
+// KARŞILAMIYORSA kurulum yine de düşer: o bir kablolama hatasıdır ve sessizce
+// degradasyona uğramak, yanlış kaydedilmiş bir modülü sonsuza kadar görünmez
+// kılardı.
 func FromContainer(c *container.Container) (*Workflows, error) {
 	if c == nil {
 		return nil, errors.Internal(CodeNotReady, "sepet akışları container olmadan kurulamaz")
@@ -304,6 +410,14 @@ func FromContainer(c *container.Container) (*Workflows, error) {
 	if err != nil {
 		return nil, err
 	}
+	discounts, err := resolveOptional[Discounts](c, ServicePromotion)
+	if err != nil {
+		return nil, err
+	}
+	taxes, err := resolveOptional[Taxes](c, ServiceTax)
+	if err != nil {
+		return nil, err
+	}
 	links, err := resolve[Links](c, ServiceLink)
 	if err != nil {
 		return nil, err
@@ -313,17 +427,55 @@ func FromContainer(c *container.Container) (*Workflows, error) {
 		return nil, err
 	}
 
+	// Uygulama açılışta slog.SetDefault ile logger'ı kurar; akışlar ayrı bir
+	// logger kaydı aramaz.
+	log := slog.Default().With("workflow", "cart")
+	// Eksik bir opsiyonel yüzey KURULUŞTA bir kez duyurulur, her hesap turunda
+	// değil: tur başına uyarı, günde milyonlarca satır üretir ve gürültü
+	// içinde kaybolan bir uyarı hiç olmamış gibidir.
+	if discounts == nil {
+		log.Warn("promosyon yüzeyi kayıtlı değil; sepet indirimi SIFIR hesaplanacak",
+			slog.String("servis", ServicePromotion))
+	}
+	if taxes == nil {
+		log.Warn("vergi yüzeyi kayıtlı değil; vergi region oranıyla hesaplanacak",
+			slog.String("servis", ServiceTax), slog.String("tax_source", TaxSourceRegion))
+	}
+
 	return New(Deps{
 		Carts:     carts,
 		Prices:    prices,
 		Regions:   regions,
 		Customers: customers,
+		Discounts: discounts,
+		Taxes:     taxes,
 		Links:     links,
 		Catalog:   catalog,
-		// Uygulama açılışta slog.SetDefault ile logger'ı kurar; akışlar ayrı
-		// bir logger kaydı aramaz.
-		Logger: slog.Default().With("workflow", "cart"),
+		Logger:    log,
 	})
+}
+
+// resolveOptional opsiyonel bir servisi çözer; KAYITLI DEĞİLSE sıfır değer ve
+// nil hata döner.
+//
+// Degradasyon hata SINIFINA göre değil KODA göre daraltılmıştır ve ayrım
+// bilinçlidir (aynı örüntü: product modülünün vitrin listelemesi). Sınıfa
+// bakmak (KindNotFound) fazla genişti: kayıtlı bir tembel yapıcının KENDİ
+// içinde ürettiği NotFound da o kapıdan geçer ve gerçek bir kurulum arızası,
+// sessizce indirimsiz/vergisiz koşan bir sepete dönüşürdü. Kayıtlı ama uyumsuz
+// bir tip de buradan DÖNMEZ; o hata çağırana geçer.
+func resolveOptional[T any](c *container.Container, name string) (T, error) {
+	value, err := container.Resolve[T](c, name)
+	if err == nil {
+		return value, nil
+	}
+
+	var zero T
+	if errors.CodeOf(err) == codeServiceNotFound {
+		return zero, nil
+	}
+	return zero, errors.Wrap(err, errors.KindOf(err), CodeDependencyMissing,
+		"sepet akışları %q servisini çözemedi", name)
 }
 
 // resolve tek bir servisi çözer ve hatasını SINIFINI KORUYARAK sarar.

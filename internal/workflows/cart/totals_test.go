@@ -41,7 +41,7 @@ func TestCalculateTotalsBosSepet(t *testing.T) {
 	totals, err := h.wf.CalculateTotals(context.Background(), testCartID)
 	require.NoError(t, err)
 
-	assert.Equal(t, Totals{Revision: 0, Lines: []LineTotals{}}, totals)
+	assert.Equal(t, Totals{Revision: 0, TaxSource: TaxSourceRegion, Lines: []LineTotals{}}, totals)
 	requireIdentity(t, totals)
 }
 
@@ -110,21 +110,6 @@ func TestCalculateTotalsCokSatirVeKargo(t *testing.T) {
 	assert.Equal(t, int64(2500), totals.ShippingTotal)
 	assert.Equal(t, int64(5800), totals.Total)
 	requireIdentity(t, totals)
-}
-
-// TestCalculateTotalsIndirimSifirdir Faz 7'ye kadar indirimin sıfır kaldığını
-// sabitler.
-func TestCalculateTotalsIndirimSifirdir(t *testing.T) {
-	h := newHarness(t)
-	serveSnapshot(h.carts, snapshotOf(1,
-		[]SnapshotItem{{ID: testLineA, VariantID: testVariantA, Quantity: 1}}, nil))
-
-	totals, err := h.wf.CalculateTotals(context.Background(), testCartID)
-	require.NoError(t, err)
-
-	assert.Zero(t, totals.DiscountTotal)
-	require.Len(t, totals.Lines, 1)
-	assert.Zero(t, totals.Lines[0].DiscountTotal)
 }
 
 // TestCalculateTotalsVergiAsagiYuvarlar baz puan bölmesinin aşağı yuvarladığını

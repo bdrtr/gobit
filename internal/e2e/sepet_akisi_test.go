@@ -35,9 +35,10 @@ func toplamlariDogrula(t *testing.T, gercek cartwf.Totals, beklenen beklenenTopl
 		"%s: ara toplam yanlış. Ara toplam satırların (birim fiyat × adet) toplamıdır; "+
 			"yanlışsa müşteriye maldan farklı bir bedel gösterilir.", asama)
 	require.Equal(t, beklenen.indirim, gercek.DiscountTotal,
-		"%s: indirim yanlış. Faz 5'te indirim üretecek hiçbir kaynak yoktur ve alan DAİMA "+
-			"sıfırdır; sıfırdan farklı bir değer, hesabın bilinmeyen bir yerden tutar "+
-			"düşürdüğü anlamına gelir.", asama)
+		"%s: indirim yanlış. İndirim Faz 7'den beri promotion modülünden gelir ve "+
+			"yalnızca kendi hedef kuralıyla eşleşen kalemlere iner; beklenenden farklı "+
+			"bir değer, ya hesabın kalemi yanlış tanıdığını ya da bir promosyonun "+
+			"hedeflemediği sepetlere sızdığını gösterir.", asama)
 	require.Equal(t, beklenen.vergi, gercek.TaxTotal,
 		"%s: vergi yanlış. Vergi satır başına, indirim SONRASI taban üzerinden ve AŞAĞI "+
 			"yuvarlanarak hesaplanır (workflows/cart, \"Vergi sözleşmesi\"); sapma "+

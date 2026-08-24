@@ -161,7 +161,10 @@ type CreateRegionInput struct {
 	CurrencyCode string
 	// AutomaticTaxes verginin otomatik uygulanıp uygulanmayacağıdır.
 	AutomaticTaxes bool
-	// TaxRate GEÇİCİ vergi oranıdır (baz puan; 2000 = %20).
+	// TaxRate bölgenin YEDEK vergi oranıdır (baz puan; 2000 = %20).
+	//
+	// Faz 7'de tax modülü vergi hesabını devraldı; bu alan sepet akışının
+	// GERİ DÜŞÜŞ yolu olarak kaldı (bkz. [Service.RegionTax]).
 	TaxRate int32
 }
 

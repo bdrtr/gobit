@@ -40,7 +40,7 @@ CREATE TABLE IF NOT EXISTS currency (
 -- bırakırdı. Silme kısıtlıdır (varsayılan NO ACTION): kullanımdaki bir para
 -- birimi satırı silinemez.
 --
--- tax_rate GEÇİCİDİR (plan Faz 7'de tax modülü devralacak) ve BAZ PUAN olarak
+-- tax_rate YEDEK orandır (tax modülü devraldı, bu geri düşüş yolu) ve BAZ PUAN olarak
 -- saklanır: 2000 = %20. Oranın tam sayı olması bilinçlidir — plan Bölüm 8 para
 -- ve türevlerinde float yasaklar, ve %20'lik bir oranın float karşılığı
 -- (0.2) tutarla çarpıldığında kuruş düzeyinde sessiz yuvarlama üretirdi.

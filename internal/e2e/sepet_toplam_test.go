@@ -167,7 +167,8 @@ func TestCokSatirliSepetToplamTutarliligi(t *testing.T) {
 // Vergisiz bölge senaryosunun ELLE hesaplanmış tutarları.
 //
 //	5_000 × 2 = 10_000 ara toplam
-//	vergi 0 (bölge otomatik vergiyi KAPATMIŞTIR; taşıdığı %19 oran uygulanmaz)
+//	vergi 0 (ülkenin tax modülünde vergi bölgesi YOKTUR; bölgenin taşıdığı %19
+//	         oran da uygulanmaz)
 //	10_000 - 0 + 0 + 0 = 10_000 genel toplam
 const (
 	vergisizBirimFiyat int64 = 5_000
@@ -175,24 +176,41 @@ const (
 	vergisizToplam     int64 = 10_000
 )
 
-// TestVergisizBolgedeVergiSifir automatic_taxes kapalı bir bölgede verginin
-// sıfır olduğunu doğrular.
+// TestVergisizBolgedeVergiSifir vergisi olmayan bir bölgede sepetin sıfır vergi
+// taşıdığını doğrular.
 //
-// Bölge SIFIR OLMAYAN bir oran taşır (%19); sınanan şey oranın küçüklüğü değil,
-// bölgenin "vergiyi ben hesaplamayacağım" kararına akışın UYMASIDIR. Sıfır
-// oranlı bir bölgeyle kurulsaydı test iki durumu ayırt edemez ve otomatik vergi
-// bayrağını sessizce yok sayan bir hata görünmezdi.
+// # Faz 7'de verginin sıfır kalmasının SEBEBİ değişti
+//
+// Faz 5'te sebep bölgenin bayrağıydı: automatic_taxes kapalıydı ve akış onu
+// dinliyordu. Faz 7'de vergiyi tax modülü devraldı ve bu ülkeye bir vergi
+// bölgesi kurulmadı ([vergiFiksturleriniKur]); tax "yapılandırma yok" diye
+// YETKİLİ bir cevap verir ve region'a geri düşülmez.
+//
+// İki sebep AYNI tutarı üretir, yani sepetin toplamı hangisinin geçerli
+// olduğunu söylemez. Ayrımı yapan tek şey [cartwf.Totals.TaxSource] alanıdır ve
+// bu senaryo tam da onu sınar: alan olmasaydı, devralmanın bu bölgede hiç
+// çalışmadığı da aynı sayılarla gizlenebilirdi.
+//
+// Bölgenin hâlâ sıfır OLMAYAN bir oran taşıması ([vergisizOranBps]) bir kalıntı
+// değildir: region yolu SİLİNMEDİ, geri düşüş yolu olarak duruyor ve o yola
+// düşülseydi verginin görülebilir bir değeri olurdu.
 func TestVergisizBolgedeVergiSifir(t *testing.T) {
 	ctx := t.Context()
 
 	oran, otomatik, err := bolgeSvc.RegionTax(ctx, vergisizBolgeID)
 	require.NoError(t, err, "bölgenin vergi ayarı okunabilmeli")
 	require.False(t, otomatik,
-		"fikstür bölgesi otomatik vergiyi KAPALI tutmalı; açık olsaydı test hiçbir şey "+
-			"kanıtlamazdı")
+		"fikstür bölgesi otomatik vergiyi KAPALI tutmalı; Faz 5'te verginin sıfır "+
+			"çıkmasının sebebi buydu ve fikstür o hâliyle korunur")
 	require.Equal(t, vergisizOranBps, oran,
 		"fikstür bölgesi sıfır OLMAYAN bir oran taşımalı; verginin sıfır çıkması oranın "+
-			"küçüklüğünden değil, bayrağın kapalı olmasından gelmelidir")
+			"küçüklüğünden gelmemelidir")
+
+	_, bulundu, err := vergiInterop.RateForCountry(ctx, vergisizUlke)
+	require.NoError(t, err, "tax yüzeyinden oran sorgulanabilmeli")
+	require.False(t, bulundu,
+		"%s ülkesinin tax modülünde vergi bölgesi OLMAMALI; bu senaryonun sıfırı "+
+			"yapılandırma yokluğundan gelir", vergisizUlke)
 
 	varyantID := yeniVaryant(ctx, t, "E2E Vergisiz Ürün", map[string]int64{
 		vergisizParaBirimi: vergisizBirimFiyat,
@@ -220,6 +238,13 @@ func TestVergisizBolgedeVergiSifir(t *testing.T) {
 		kargo:     0,
 		toplam:    vergisizToplam,
 	}, "vergisiz bölgede 2 adet eklendikten sonra")
+
+	require.Equal(t, cartwf.TaxSourceTaxUnconfigured, eklendi.Totals.TaxSource,
+		"vergiyi TAX modülü hesaplamış ve ülkenin YAPILANDIRILMAMIŞ olduğunu bildirmiş "+
+			"olmalı. Kaynak %q çıksaydı hesap region yoluna düşmüş olurdu; tutar yine "+
+			"sıfır olacağı için fark başka hiçbir iddiada görünmez, yani devralmanın bu "+
+			"bölgede hiç çalışmadığı sessizce geçerdi",
+		cartwf.TaxSourceRegion)
 
 	require.Len(t, eklendi.Totals.Lines, 1, "tek satır beklenir")
 	require.Equal(t, int64(0), eklendi.Totals.Lines[0].TaxTotal,

@@ -34,7 +34,7 @@ type Totals struct {
 	// Subtotal satır ara toplamlarının toplamıdır.
 	Subtotal int64 `json:"subtotal"`
 	// DiscountTotal toplam indirimdir; pozitif taşınır ve toplamdan düşülür.
-	// Bu fazda daima sıfırdır (bkz. paket yorumu, "İndirim").
+	// Satır indirimlerinin TOPLAMIDIR (bkz. paket yorumu, "İndirim").
 	DiscountTotal int64 `json:"discount_total"`
 	// TaxTotal toplam vergidir; satır vergilerinin toplamıdır.
 	TaxTotal int64 `json:"tax_total"`
@@ -42,6 +42,15 @@ type Totals struct {
 	ShippingTotal int64 `json:"shipping_total"`
 	// Total ödenecek tutardır.
 	Total int64 `json:"total"`
+	// TaxSource verginin HANGİ kaynaktan geldiğidir; değerleri
+	// [TaxSourceTax], [TaxSourceTaxUnconfigured] ve [TaxSourceRegion].
+	//
+	// Alan PARA DEĞİLDİR ve sepete yazılan gövdede cart modülünce yok sayılır
+	// (sepetin toplam şeması onu tanımaz). Yine de gövdenin parçasıdır ve
+	// çağırana döner: bir tutarın hangi otoriteye dayandığı, tutarın kendisi
+	// kadar önemlidir. Vergisi 0 çıkan bir sepette "oran sıfırdı" ile
+	// "yapılandırma yoktu" ancak burada ayrılır.
+	TaxSource string `json:"tax_source"`
 	// Lines satır başına hesaplanan tutarlardır ve sepetin TÜM satırlarını
 	// kapsar.
 	Lines []LineTotals `json:"lines"`
@@ -58,7 +67,7 @@ type LineTotals struct {
 	UnitPrice int64 `json:"unit_price"`
 	// Subtotal satırın ara toplamıdır: UnitPrice × Quantity.
 	Subtotal int64 `json:"subtotal"`
-	// DiscountTotal satıra düşen indirimdir; bu fazda daima sıfırdır.
+	// DiscountTotal satıra düşen indirimdir; satırın ara toplamını ASLA aşmaz.
 	DiscountTotal int64 `json:"discount_total"`
 	// TaxTotal satıra düşen vergidir.
 	TaxTotal int64 `json:"tax_total"`
@@ -76,10 +85,13 @@ type LineTotals struct {
 //     (N+1 yoktur).
 //  3. Her satırın birim fiyatı pricing'den YENİDEN alınır; saklı tutara asla
 //     güvenilmez.
-//  4. İndirim sıfırdır; Faz 7'de promotion devralacaktır.
-//  5. Vergi bölgeden gelen baz puan oranıyla, satır başına ve indirim sonrası
-//     taban üzerinden hesaplanır (bkz. paket yorumu, "Vergi sözleşmesi").
-//  6. Kargo, sepetin kargo yöntemlerinin toplamıdır.
+//  4. İndirim promotion modülünden KALEM BAŞINA alınır ve satırlara yazılır
+//     (bkz. [Workflows.applyDiscounts]).
+//  5. Vergi, İNDİRİM SONRASI taban üzerinden satır başına hesaplanır; hesabı
+//     tax modülü yapar, yapamıyorsa region'ın oranı kullanılır ve kullanılan
+//     kaynak [Totals.TaxSource] alanında bildirilir
+//     (bkz. [Workflows.applyTaxes]).
+//  6. Kargo, sepetin kargo yöntemlerinin toplamıdır ve vergi tabanına GİRMEZ.
 //  7. Sonuç, 1. adımda not edilen şekille damgalanarak yazılır.
 //
 // # Çakışma
@@ -166,44 +178,124 @@ func (w *Workflows) totalsRound(ctx context.Context, cartID string) (out Totals,
 //
 // Ayrılık bilinçlidir: hesabın tamamı yan etkisizdir ve tek başına
 // sınanabilir. Yazma yalnızca [Workflows.totalsRound] içindedir.
+//
+// # Adımların SIRASI sözleşmedir
+//
+// Ara toplam -> indirim -> vergi. İndirim vergiden önce gelmek ZORUNDADIR
+// çünkü vergi tabanı indirim sonrasıdır (bkz. paket yorumu, "Vergi
+// sözleşmesi"); sıra bozulursa hiçbir denetim patlamaz, yalnızca müşteri
+// ödemediği paranın vergisini öder.
 func (w *Workflows) computeTotals(ctx context.Context, snap Snapshot) (Totals, error) {
+	lines, err := w.lineSubtotals(ctx, snap)
+	if err != nil {
+		return Totals{}, err
+	}
+	shippingTotal, err := shippingTotalOf(snap)
+	if err != nil {
+		return Totals{}, err
+	}
+	if err := w.applyDiscounts(ctx, snap, lines); err != nil {
+		return Totals{}, err
+	}
+	taxSource, err := w.applyTaxes(ctx, snap, shippingTotal, lines)
+	if err != nil {
+		return Totals{}, err
+	}
+	return assembleTotals(snap, lines, shippingTotal, taxSource)
+}
+
+// lineSubtotals her satırın birim fiyatını ve ara toplamını hesaplar.
+//
+// İndirim ve vergi alanları SIFIR bırakılır; onları [Workflows.applyDiscounts]
+// ve [Workflows.applyTaxes] doldurur. Dönen dilim, anlık görüntüdeki satırlarla
+// AYNI SIRADA ve AYNI UZUNLUKTADIR; iki modüle giden istekler ile dönen
+// yanıtların eşleşmesi bu değişmeze dayanır.
+func (w *Workflows) lineSubtotals(ctx context.Context, snap Snapshot) ([]LineTotals, error) {
 	priceSets, err := w.priceSetsFor(ctx, snap.VariantIDs())
 	if err != nil {
-		return Totals{}, err
-	}
-	rateBps, err := w.taxRate(ctx, snap.RegionID)
-	if err != nil {
-		return Totals{}, err
+		return nil, err
 	}
 
-	totals := Totals{
-		Revision: snap.Revision,
-		Lines:    make([]LineTotals, 0, len(snap.Items)),
-	}
+	lines := make([]LineTotals, 0, len(snap.Items))
 	for i := range snap.Items {
-		line, lineErr := w.lineTotals(ctx, snap, snap.Items[i], priceSets[snap.Items[i].VariantID], rateBps)
-		if lineErr != nil {
-			return Totals{}, lineErr
+		item := snap.Items[i]
+
+		unitPrice, priceErr := w.unitPrice(ctx, priceSets[item.VariantID], snap, item)
+		if priceErr != nil {
+			return nil, priceErr
+		}
+		subtotal, mulErr := mulAmount(unitPrice, item.Quantity)
+		if mulErr != nil {
+			return nil, mulErr
 		}
 
-		totals.Subtotal, err = addAmount(totals.Subtotal, line.Subtotal)
+		lines = append(lines, LineTotals{
+			LineItemID: item.ID,
+			UnitPrice:  unitPrice,
+			Subtotal:   subtotal,
+		})
+	}
+	return lines, nil
+}
+
+// shippingTotalOf kargo yöntemlerinin toplamını TAŞMADAN hesaplar.
+func shippingTotalOf(snap Snapshot) (int64, error) {
+	var total int64
+	for i := range snap.ShippingMethods {
+		next, err := addAmount(total, snap.ShippingMethods[i].Amount)
 		if err != nil {
-			return Totals{}, err
+			return 0, err
 		}
-		totals.DiscountTotal, err = addAmount(totals.DiscountTotal, line.DiscountTotal)
-		if err != nil {
-			return Totals{}, err
-		}
-		totals.TaxTotal, err = addAmount(totals.TaxTotal, line.TaxTotal)
-		if err != nil {
-			return Totals{}, err
-		}
-		totals.Lines = append(totals.Lines, line)
+		total = next
+	}
+	return total, nil
+}
+
+// assembleTotals doldurulmuş satırlardan sepet toplamlarını üretir ve satır
+// toplamlarını yazar.
+//
+// # Σ kimlikleri BURADA doğar
+//
+// Sepetin indirimi ve vergisi, satır değerlerinin TOPLANMASIYLA üretilir;
+// promotion ve tax'ın bildirdiği toplamlar yeniden kullanılmaz (onlar kendi
+// yerlerinde satır değerleriyle karşılaştırılmıştır). Böylece
+// Σ(satır indirimi) = sepet indirimi ve Σ(satır vergisi) = sepet vergisi
+// kimlikleri hesap yapısı gereği sağlanır, bir denetimin hatırlanmasına bağlı
+// kalmaz.
+//
+// # Kuruş artığı NEREDE kalır
+//
+// Bu işlev hiçbir bölme yapmaz, dolayısıyla hiçbir artık ÜRETMEZ. Artık
+// yalnızca oran hesaplarında doğar ve doğduğu SATIRDA düşer: indirim yüzdesi
+// ve vergi oranı satır başına AŞAĞI yuvarlanır, kalan kesir başka bir satıra
+// TAŞINMAZ ve sepet düzeyinde yeniden dağıtılmaz. Yönleri terstir ve ikisi de
+// satır başına bir minor unit'ten küçüktür: aşağı yuvarlanan vergi müşteri
+// LEHİNE (daha az vergi), aşağı yuvarlanan indirim satıcı lehinedir (daha az
+// indirim). Taşımanın reddedilme sebebi de aynıdır — artığı bir satıra
+// eklemek, o satırın vergisini ya da indirimini kendi oranının söylediğinden
+// farklı yapar ve fatura satır satır açıklanamaz hâle gelirdi.
+func assembleTotals(snap Snapshot, lines []LineTotals, shippingTotal int64, taxSource string) (Totals, error) {
+	totals := Totals{
+		Revision:      snap.Revision,
+		ShippingTotal: shippingTotal,
+		TaxSource:     taxSource,
+		Lines:         lines,
 	}
 
-	for i := range snap.ShippingMethods {
-		totals.ShippingTotal, err = addAmount(totals.ShippingTotal, snap.ShippingMethods[i].Amount)
-		if err != nil {
+	var err error
+	for i := range lines {
+		line := &lines[i]
+
+		if totals.Subtotal, err = addAmount(totals.Subtotal, line.Subtotal); err != nil {
+			return Totals{}, err
+		}
+		if totals.DiscountTotal, err = addAmount(totals.DiscountTotal, line.DiscountTotal); err != nil {
+			return Totals{}, err
+		}
+		if totals.TaxTotal, err = addAmount(totals.TaxTotal, line.TaxTotal); err != nil {
+			return Totals{}, err
+		}
+		if line.Total, err = addAmount(line.Subtotal-line.DiscountTotal, line.TaxTotal); err != nil {
 			return Totals{}, err
 		}
 	}
@@ -212,55 +304,11 @@ func (w *Workflows) computeTotals(ctx context.Context, snap Snapshot) (Totals, e
 	if err != nil {
 		return Totals{}, err
 	}
-	total, err = addAmount(total, totals.ShippingTotal)
-	if err != nil {
+	if total, err = addAmount(total, totals.ShippingTotal); err != nil {
 		return Totals{}, err
 	}
 	totals.Total = total
 	return totals, nil
-}
-
-// lineTotals tek bir satırın tutarlarını hesaplar.
-func (w *Workflows) lineTotals(
-	ctx context.Context,
-	snap Snapshot,
-	item SnapshotItem,
-	priceSetID string,
-	rateBps int32,
-) (LineTotals, error) {
-	unitPrice, err := w.unitPrice(ctx, priceSetID, snap, item)
-	if err != nil {
-		return LineTotals{}, err
-	}
-	subtotal, err := mulAmount(unitPrice, item.Quantity)
-	if err != nil {
-		return LineTotals{}, err
-	}
-
-	// İndirim Faz 7'de promotion modülünün devralacağı alandır; bu fazda satır
-	// başına indirim üretecek hiçbir kaynak yoktur ve sıfır, "indirim yok"un
-	// dürüst karşılığıdır. Vergi tabanı bugünden indirim SONRASI tanımlıdır
-	// (paket yorumu, "Vergi sözleşmesi"), böylece promotion geldiğinde tabanın
-	// tanımı değişmek zorunda kalmaz.
-	var discount int64
-
-	tax, err := taxOf(subtotal-discount, rateBps)
-	if err != nil {
-		return LineTotals{}, err
-	}
-	total, err := addAmount(subtotal-discount, tax)
-	if err != nil {
-		return LineTotals{}, err
-	}
-
-	return LineTotals{
-		LineItemID:    item.ID,
-		UnitPrice:     unitPrice,
-		Subtotal:      subtotal,
-		DiscountTotal: discount,
-		TaxTotal:      tax,
-		Total:         total,
-	}, nil
 }
 
 // unitPrice satırın birim fiyatını pricing'den alır.
@@ -292,27 +340,6 @@ func (w *Workflows) unitPrice(ctx context.Context, priceSetID string, snap Snaps
 		return 0, err
 	}
 	return amount, nil
-}
-
-// taxRate bölgenin uygulanacak vergi oranını baz puan olarak döner.
-//
-// Vergi OTOMATİK değilse oran sıfırdır: bölge, vergiyi kendi hesaplamak yerine
-// dışarıda bırakmayı seçmiştir ve oranı yine de uygulamak o seçimi sessizce
-// tersine çevirirdi.
-func (w *Workflows) taxRate(ctx context.Context, regionID string) (int32, error) {
-	rateBps, automatic, err := w.regions.RegionTax(ctx, regionID)
-	if err != nil {
-		return 0, err
-	}
-	if !automatic {
-		return 0, nil
-	}
-	if rateBps < 0 || rateBps > MaxTaxRateBps {
-		return 0, errors.Internal(CodeTaxRateInvalid,
-			"%s bölgesi sözleşme dışı vergi oranı bildirdi: %d baz puan ([0, %d] beklenir)",
-			regionID, rateBps, MaxTaxRateBps)
-	}
-	return rateBps, nil
 }
 
 // snapshot sepetin anlık görüntüsünü okur ve çözer.

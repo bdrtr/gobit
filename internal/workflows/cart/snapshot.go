@@ -34,6 +34,13 @@ type Snapshot struct {
 	Items []SnapshotItem `json:"items"`
 	// ShippingMethods sepete seçilmiş kargo yöntemleridir.
 	ShippingMethods []SnapshotShippingMethod `json:"shipping_methods"`
+
+	// KUPON KODLARI BURAYA GELECEK. Sepet modülü kupon alanı kazandığında
+	// şemaya bir "promotion_codes []string" alanı eklenir ve
+	// [Workflows.discountRequestFor] onu isteğin "codes" dizisine geçirir;
+	// başka hiçbir yer değişmez. Alan bugün YOKTUR çünkü sepet kodu saklamaz
+	// ve saklanmayan bir kodun hesaba girmesi, aynı sepetin toplamını hangi
+	// uçtan geçildiğine bağlı kılardı (bkz. paket yorumu, "Kupon kodları").
 }
 
 // SnapshotItem bir sepet satırının hesaba giren alanlarıdır.

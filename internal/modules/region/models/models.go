@@ -130,10 +130,11 @@ type Region struct {
 	// AutomaticTaxes verginin sepet toplamına otomatik uygulanıp
 	// uygulanmayacağını belirtir.
 	AutomaticTaxes bool
-	// TaxRate GEÇİCİ vergi oranıdır (baz puan; 2000 = %20).
+	// TaxRate bölgenin YEDEK vergi oranıdır (baz puan; 2000 = %20).
 	//
-	// GEÇİCİ: plan Faz 7'de tax modülü vergi hesabını devralacak ve oran
-	// TaxRegion/TaxRate kayıtlarına taşınacaktır. O güne kadar sepet akışının
+	// Faz 7'de tax modülü vergi hesabını DEVRALDI; bu alan sepet akışının
+	// GERİ DÜŞÜŞ yolu olarak KALDI ve kaldırılmamalıdır: tax modülü kayıtlı
+	// değilken ya da bölgeden ülke çözülemediğinde vergi buradan hesaplanır.
 	// çalışabilmesi için bölge üstünde tek ve basit bir oran taşınır; kural
 	// karmaşıklaştığında (ürün türüne göre oran, muafiyet, kayıtlı vergi
 	// numarası) bu alan KALDIRILACAKTIR ve buraya yeni kural eklenmemelidir.

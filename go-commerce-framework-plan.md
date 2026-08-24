@@ -307,6 +307,7 @@ type PaymentProvider interface {
 ### Faz 7 — Fulfillment · Promotion · Tax
 **Yapılacaklar:** Fulfillment modülü + `FulfillmentProvider` soyutlaması (+ manual provider), shipping option'lar. Promotion modülü (indirim kuralları, kampanya) ve cart/order toplamına uygulanması. Tax modülü gerçek hesaplama (region bazlı rate).
 **DoD:** Siparişe fulfillment oluşturulabiliyor; sepete indirim uygulanıp toplam doğru güncelleniyor; vergi region'a göre hesaplanıyor.
+> **Tamamlandı.** İki geçici çözüm devralındı: indirim artık `promotion.interop`'tan (önceden DAİMA sıfırdı), vergi `tax.interop`'tan (önceden region alanından). Region'ın vergi alanı KALDIRILMADI, bilinçli GERİ DÜŞÜŞ yolu oldu ve hangi kaynağın konuştuğu `Totals.TaxSource` ile raporlanıyor.
 
 ### Faz 8 — Auth · Admin User · API Key · RBAC
 **Yapılacaklar:** Auth modülü: admin user, JWT login, publishable/secret API key, sales channel. HTTP'de gerçek auth middleware (admin route'ları korumalı, store route'ları publishable key ile).

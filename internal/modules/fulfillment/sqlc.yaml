@@ -1,0 +1,20 @@
+# sqlc yapılandırması — modül başına AYRI dosya.
+#
+# Ortak bir kök sqlc.yaml yerine modül başına config, modül izolasyonunun
+# (plan Bölüm 2.1) araç düzeyindeki karşılığıdır: bir modülün şeması ya da
+# sorguları değiştiğinde yalnızca kendi paketi yeniden üretilir ve iki modül
+# aynı dosyayı düzenlemek zorunda kalmaz.
+#
+# Üretmek için: make gen
+version: "2"
+sql:
+  - engine: postgresql
+    schema: migrations
+    queries: queries
+    gen:
+      go:
+        package: fulfillmentdb
+        out: repository/fulfillmentdb
+        sql_package: pgx/v5
+        emit_pointers_for_null_types: true
+        emit_empty_slices: true

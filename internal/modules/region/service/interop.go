@@ -73,12 +73,19 @@ func (s *Service) RegionCurrency(ctx context.Context, regionID string) (code str
 	return currency.Code, currency.DecimalDigits, nil
 }
 
-// RegionTax bölgenin GEÇİCİ vergi oranını (baz puan) ve verginin otomatik
+// RegionTax bölgenin YEDEK vergi oranını (baz puan) ve verginin otomatik
 // uygulanıp uygulanmayacağını döner.
 //
-// GEÇİCİ: plan Faz 7'de tax modülü vergi hesabını devralacaktır ve bu metot
-// kaldırılacaktır. O güne kadar sepet toplamının vergi satırını hesaplayabilmesi
-// için tek ve basit bir oran taşınır.
+// Faz 7'de tax modülü vergi hesabını DEVRALDI, ama bu metot KALDIRILMADI:
+// sepet akışı onu GERİ DÜŞÜŞ yolu olarak kullanmaya devam eder
+// (internal/workflows/cart, "Vergi kaynağı" başlığı). İki durumda çağrılır:
+// tax modülü hiç kayıtlı değilken, ve sepetin bölgesinden bir ÜLKE
+// çözülemediğinde — tax modülü ülkesiz hesap yapamaz.
+//
+// Yani bu yüzey KALICIDIR. Kaldırılırsa, tax modülü olmadan çalışan bir kurulum
+// (ör. tek bölgeli küçük bir mağaza) vergiyi sessizce sıfırlar. Sözleşmeyi
+// derleyici denetlemediği için (ADR 0006) kaldırma kararı ancak
+// internal/workflows/cart okunarak verilebilir.
 //
 // Oran tam sayıdır ve baz puandır (2000 = %20): float bir oran, tutarla
 // çarpıldığında kuruş düzeyinde sessiz yuvarlama üretirdi (plan Bölüm 8).

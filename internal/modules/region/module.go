@@ -9,7 +9,7 @@
 // Sepet para birimini ve vergi bölgesini buradan alır: müşterinin ülkesinden
 // bölge bulunur ([service.Service.RegionIDForCountry]), bölgenin para birimi
 // sepete yazılır ([service.Service.RegionCurrency]) ve vergi satırı bölgenin
-// GEÇİCİ oranıyla hesaplanır ([service.Service.RegionTax]). Bu üç metot ilkel
+// YEDEK oranıyla hesaplanır ([service.Service.RegionTax]). Bu üç metot ilkel
 // tiplerle yazılmıştır ki tüketici modül region'ı import etmeden kendi dar
 // arayüzünü tanımlayabilsin (ADR 0001).
 //

@@ -20,7 +20,7 @@ type regionDTO struct {
 	CurrencyCode string `json:"currency_code"`
 	// AutomaticTaxes verginin otomatik uygulanıp uygulanmayacağıdır.
 	AutomaticTaxes bool `json:"automatic_taxes"`
-	// TaxRate GEÇİCİ vergi oranıdır; BAZ PUAN cinsindendir (2000 = %20).
+	// TaxRate bölgenin YEDEK vergi oranıdır; BAZ PUAN cinsindendir (2000 = %20).
 	//
 	// Alan adının sonundaki birim bilinçlidir: "tax_rate": 20 gövdesi %20 mi
 	// yoksa 0,2 mi olduğu belirsiz kalırdı ve istemci tarafında yüz kat hata
@@ -85,7 +85,7 @@ type createRegionRequest struct {
 	CurrencyCode string `json:"currency_code"`
 	// AutomaticTaxes verginin otomatik uygulanıp uygulanmayacağıdır.
 	AutomaticTaxes bool `json:"automatic_taxes"`
-	// TaxRateBps GEÇİCİ vergi oranıdır (baz puan; 2000 = %20).
+	// TaxRateBps bölgenin YEDEK vergi oranıdır (baz puan; 2000 = %20).
 	TaxRateBps int32 `json:"tax_rate_bps"`
 }
 

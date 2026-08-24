@@ -30,12 +30,15 @@ import (
 	"github.com/bdrtr/gobit/internal/core/workflow/pgstore"
 	"github.com/bdrtr/gobit/internal/modules/cart"
 	"github.com/bdrtr/gobit/internal/modules/customer"
+	"github.com/bdrtr/gobit/internal/modules/fulfillment"
 	"github.com/bdrtr/gobit/internal/modules/inventory"
 	"github.com/bdrtr/gobit/internal/modules/order"
 	"github.com/bdrtr/gobit/internal/modules/payment"
 	"github.com/bdrtr/gobit/internal/modules/pricing"
 	"github.com/bdrtr/gobit/internal/modules/product"
+	"github.com/bdrtr/gobit/internal/modules/promotion"
 	"github.com/bdrtr/gobit/internal/modules/region"
+	"github.com/bdrtr/gobit/internal/modules/tax"
 )
 
 // Container'daki altyapı servislerinin adları. Modüller bu adlarla çözer.
@@ -158,6 +161,10 @@ func run() error {
 	// Faz 6: ödeme ve sipariş
 	registry.Add(payment.New())
 	registry.Add(order.New())
+	// Faz 7: kargo, promosyon, vergi
+	registry.Add(fulfillment.New())
+	registry.Add(promotion.New(log))
+	registry.Add(tax.New(log))
 	if err := registry.Bootstrap(ctx, c, router); err != nil {
 		return err
 	}

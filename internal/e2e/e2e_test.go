@@ -1,7 +1,7 @@
 //go:build integration
 
-// Package e2e planın Faz 5 ve Faz 6 DoD'lerini GERÇEK modüllerle uçtan uca
-// doğrular.
+// Package e2e planın Faz 5, Faz 6 ve Faz 7 DoD'lerini GERÇEK modüllerle uçtan
+// uca doğrular.
 //
 // Faz 5 DoD'si tek cümleyle: "Sepet oluştur -> ürün ekle -> adet güncelle ->
 // ara toplam / indirim / vergi / genel toplam DOĞRU hesaplanıyor; MİSAFİR ve
@@ -10,6 +10,29 @@
 // Faz 6 DoD'si tek cümleyle: "Uçtan uca sepet -> sipariş akışı test provider
 // ile çalışıyor; ödeme adımı başarısızken STOK REZERVASYONU VE SİPARİŞ GERİ
 // ALINIYOR (saga testi); order.placed eventi yayınlanıyor."
+//
+// Faz 7 DoD'si tek cümleyle: "Siparişe fulfillment oluşturulabiliyor; sepete
+// indirim uygulanıp toplam DOĞRU güncelleniyor; vergi region'a göre
+// hesaplanıyor."
+//
+// # Faz 7 devralması Faz 5/6 tutarlarını neden değiştirmiyor
+//
+// Faz 7'de internal/workflows/cart'taki iki geçici çözüm devralındı: indirim
+// artık promotion, vergi ise tax modülünden gelir. Buna rağmen Faz 5 ve Faz 6
+// senaryolarının elle yazılmış tutarları AYNI kaldı ve bu bir tesadüf değil,
+// fikstürün gereğidir.
+//
+// Vergi tarafında: [vergiFiksturleriniKur] tax modülünde [vergiliUlke] için
+// %20'lik bir VARSAYILAN oran kurar, yani yeni yetkili eskisiyle aynı cevabı
+// verir. Oran kurulmasaydı tax "bu ülkenin vergi bölgesi yok" derdi, vergi
+// sıfıra düşerdi ve Faz 5/6'nın her tutarı kayardı — eski testler böylece
+// devralmanın doğru kablolandığının da denetimi olur.
+//
+// İndirim tarafında aynı korumayı promosyonun HEDEF KURALI sağlar: Faz 7
+// senaryosunun otomatik promosyonu yalnızca kendi varyantlarına iner
+// (bkz. indirim_test.go), bu yüzden diğer senaryoların indirimi sıfır kalır.
+// Kural konmasaydı tek bir otomatik promosyon, testlerin çalışma sırasına göre
+// başka senaryoların toplamlarını da düşürürdü.
 //
 // # Neden internal/workflows altında değil
 //
@@ -51,6 +74,7 @@ package e2e
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io/fs"
 	"log/slog"
@@ -73,6 +97,8 @@ import (
 	cartsvc "github.com/bdrtr/gobit/internal/modules/cart/service"
 	customermod "github.com/bdrtr/gobit/internal/modules/customer"
 	customersvc "github.com/bdrtr/gobit/internal/modules/customer/service"
+	fulfillmentmod "github.com/bdrtr/gobit/internal/modules/fulfillment"
+	fulfillmentsvc "github.com/bdrtr/gobit/internal/modules/fulfillment/service"
 	inventorymod "github.com/bdrtr/gobit/internal/modules/inventory"
 	inventorysvc "github.com/bdrtr/gobit/internal/modules/inventory/service"
 	ordermod "github.com/bdrtr/gobit/internal/modules/order"
@@ -83,8 +109,12 @@ import (
 	pricingsvc "github.com/bdrtr/gobit/internal/modules/pricing/service"
 	productmod "github.com/bdrtr/gobit/internal/modules/product"
 	productsvc "github.com/bdrtr/gobit/internal/modules/product/service"
+	promotionmod "github.com/bdrtr/gobit/internal/modules/promotion"
+	promotionsvc "github.com/bdrtr/gobit/internal/modules/promotion/service"
 	regionmod "github.com/bdrtr/gobit/internal/modules/region"
 	regionsvc "github.com/bdrtr/gobit/internal/modules/region/service"
+	taxmod "github.com/bdrtr/gobit/internal/modules/tax"
+	taxsvc "github.com/bdrtr/gobit/internal/modules/tax/service"
 	cartwf "github.com/bdrtr/gobit/internal/workflows/cart"
 	checkoutwf "github.com/bdrtr/gobit/internal/workflows/checkout"
 )
@@ -139,6 +169,45 @@ const (
 	vergisizOranBps int32 = 1900
 )
 
+// Vergisi TAX modülünden gelen ikinci bölgenin fikstür sabitleri (Faz 7).
+//
+// Bölge, [vergiliUlke] bölgesinden YALNIZCA vergi oranıyla ayrılır: para
+// birimi bilinçli olarak aynıdır ([vergiliParaBirimi]). Farklı olsaydı aynı
+// ürünün fiyatı da değişir ve iki bölgenin vergisi arasındaki farkın orandan
+// mı fiyattan mı geldiği ayırt edilemezdi.
+const (
+	// ikinciVergiUlke ikinci vergi bölgesine bağlanan ülkedir.
+	ikinciVergiUlke = "FR"
+	// ikinciVergiOraniBps ülkenin TAX modülündeki oranıdır: 1000 = %10.
+	ikinciVergiOraniBps int32 = 1000
+	// ikinciBolgeRegionOraniBps bölgenin KENDİ (Faz 5) oranıdır: 5000 = %50 ve
+	// bölgede otomatik vergi AÇIKTIR.
+	//
+	// Değer tax'ınkinden bilinçli olarak FARKLIDIR: hesap hâlâ region'ın
+	// oranını kullanıyor olsaydı vergi beş katına çıkar ve devralmanın
+	// yapılmadığı tek bir sayıda görünürdü.
+	ikinciBolgeRegionOraniBps int32 = 5000
+)
+
+// Vergi bölgesi TAX modülünde YAPILANDIRILMAMIŞ ülkenin fikstür sabitleri
+// (Faz 7).
+//
+// Bölge otomatik vergiyi AÇIK tutar ve sıfır olmayan bir oran taşır; bu
+// bilinçlidir. Hesap "tax cevap veremedi, region'a geri döneyim" deseydi vergi
+// bu oranla çıkardı. Sıfır çıkması, tax'ın yetkili cevabının (bu ülkenin vergi
+// bölgesi yok) OLDUĞU GİBİ kabul edildiğini kanıtlar.
+const (
+	// yapilandirilmamisUlke vergi bölgesi kurulmayan ülkedir.
+	yapilandirilmamisUlke = "IT"
+	// cokUlkeliOranBps çok ülkeli bölgenin REGION oranıdır: %30.
+	// Diğer fikstür oranlarından FARKLI seçildi ki tutarın hangi kaynaktan
+	// geldiği tek başına ele versin.
+	cokUlkeliOranBps int32 = 3000
+	// yapilandirilmamisRegionOraniBps bölgenin taşıdığı ama uygulanMAMASI
+	// gereken orandır: 1800 = %18.
+	yapilandirilmamisRegionOraniBps int32 = 1800
+)
+
 // Testlerin paylaştığı zemin. TestMain doldurur, testler yalnızca okur.
 var (
 	// testPool tüm modüllerin paylaştığı bağlantı havuzudur.
@@ -150,6 +219,14 @@ var (
 	// baglar çekirdeğin Module Links servisidir; testler bağların GERÇEKTEN
 	// kurulduğunu buradan okuyarak doğrular.
 	baglar link.LinkService
+	// testRouter modüllerin route'larını taşıyan router'dır.
+	//
+	// Faz 5 ve Faz 6 senaryoları akışları doğrudan çağırır ve router'a hiç
+	// dokunmaz; Faz 7'nin "mağaza yüzeyi" senaryosu ise tam olarak HTTP ucunun
+	// davranışını sınar (bkz. kargo_test.go). admin_only bir seçeneğin
+	// vitrinde görünmemesi bir SERVİS kararı değil, o ucun sabitlediği bir
+	// güven kararıdır ve yalnızca uçtan geçilerek kanıtlanabilir.
+	testRouter *chi.Mux
 )
 
 // Modül servisleri; hepsi container'dan ADLA çözülür, elle kurulmaz.
@@ -162,6 +239,53 @@ var (
 	stokSvc    *inventorysvc.Service
 	siparisSvc *ordersvc.Service
 	odemeSvc   *paymentsvc.Service
+	// Faz 7 modülleri.
+	kargoSvc     *fulfillmentsvc.Service
+	promosyonSvc *promotionsvc.Service
+	vergiSvc     *taxsvc.Service
+)
+
+// kargoYuzeyi fulfillment modülünün modüller arası yüzeyidir
+// ("fulfillment.interop", ADR 0006).
+//
+// Arayüz BURADA yeniden tanımlanır, modülün somut tipi kullanılmaz. Sebep,
+// yüzeyin bugün hiçbir tüketicisi olmamasıdır: sipariş saga'sı kargo adımını
+// henüz yürütmez, yani modülün interop.go'sunda "tüketici tarafındaki
+// karşılığı" diye yazılmış imzaları hiçbir paket derleme zamanında
+// sabitlemiyor. Dar arayüzü burada tanımlamak o boşluğu doldurur: imza kayarsa
+// container çözümü DÜŞER ve kayma testte görünür.
+type kargoYuzeyi interface {
+	// ListOptionsJSON bir sepet bağlamı için uygun seçenekleri fiyatlarıyla
+	// döner.
+	ListOptionsJSON(ctx context.Context, request json.RawMessage) (json.RawMessage, error)
+	// CreateFulfillment bir sipariş için gönderi açar ve KİMLİĞİNİ döner.
+	CreateFulfillment(ctx context.Context, reference, optionID, idempotencyKey string) (string, error)
+	// CancelFulfillment gönderiyi iptal eder; saga telafisi budur.
+	CancelFulfillment(ctx context.Context, fulfillmentID string) error
+	// FulfillmentStatus gönderinin güncel durumunu döner.
+	FulfillmentStatus(ctx context.Context, fulfillmentID string) (string, error)
+}
+
+// vergiYuzeyi vergi modülünün modüller arası yüzeyidir ("tax.interop",
+// ADR 0006).
+//
+// İki metot da yazılıdır, oysa sepet hesabı yalnızca [vergiYuzeyi.CalculateTaxJSON]
+// kullanır (bkz. cartwf paketindeki Taxes arayüzü). RateForCountry'nin burada
+// olması bilinçlidir: region modülünün geçici RegionTax metodunun birebir
+// karşılığı odur ve devralmanın "eski yüzeyin yerine geçen yeni yüzey"
+// tarafını hiçbir üretim paketi sabitlemiyor.
+type vergiYuzeyi interface {
+	// CalculateTaxJSON verilen ülke ve kalemler için vergiyi hesaplar.
+	CalculateTaxJSON(ctx context.Context, request json.RawMessage) (json.RawMessage, error)
+	// RateForCountry bir ülkenin VARSAYILAN oranını baz puan olarak döner;
+	// ikinci dönüş değeri yapılandırmanın var olup olmadığıdır.
+	RateForCountry(ctx context.Context, countryCode string) (rateBps int32, found bool, err error)
+}
+
+// Faz 7 yüzeyleri; ikisi de container'dan ADLA çözülür.
+var (
+	kargoInterop kargoYuzeyi
+	vergiInterop vergiYuzeyi
 )
 
 // akislar sepet akışlarının ÜRETİM kablolamasıyla kurulmuş örneğidir
@@ -181,6 +305,19 @@ var siparisAkislari *checkoutwf.Workflows
 var (
 	vergiliBolgeID  string
 	vergisizBolgeID string
+	// ikinciVergiBolgeID vergisi tax modülünden gelen ikinci bölgedir.
+	ikinciVergiBolgeID string
+	// yapilandirilmamisBolgeID ülkesinin tax modülünde vergi bölgesi
+	// BULUNMAYAN bölgedir.
+	yapilandirilmamisBolgeID string
+	// cokUlkeliBolgeID iki ülke taşıyan bölgedir ve verginin REGION'dan
+	// hesaplandığı yolu tetikler: sepet hesabı vergi ülkesini bölgeden okur,
+	// bölge birden çok ülke taşıdığında hangisinin sorulacağı bilinemez ve
+	// tax'a HİÇ sorulmaz. Üretimde son derece sıradan bir yapılandırmadır
+	// (çok ülkeli "Avrupa" bölgesi) ve geri düşüş yolunun tek e2e kanıtıdır.
+	cokUlkeliBolgeID string
+	// cokUlkeliUlkeler bölgenin taşıdığı iki ülkedir.
+	cokUlkeliUlkeler = []string{"ES", "PT"}
 )
 
 // stokLokasyonID Faz 6 senaryolarının stoğu ayırdığı TEK lokasyondur.
@@ -313,7 +450,13 @@ func zeminiKur(ctx context.Context) error {
 	kayit.Add(cartmod.New())
 	kayit.Add(paymentmod.New())
 	kayit.Add(ordermod.New())
-	if err := kayit.Bootstrap(ctx, kap, chi.NewRouter()); err != nil {
+	// Faz 7: kargo, promosyon, vergi. Üçü de main.go'daki SIRAYLA eklenir.
+	kayit.Add(fulfillmentmod.New())
+	kayit.Add(promotionmod.New(nil))
+	kayit.Add(taxmod.New(nil))
+	// Router atılmaz, saklanır: Faz 7'nin mağaza senaryosu HTTP ucundan geçer.
+	testRouter = chi.NewRouter()
+	if err := kayit.Bootstrap(ctx, kap, testRouter); err != nil {
 		return err
 	}
 
@@ -330,6 +473,9 @@ func zeminiKur(ctx context.Context) error {
 	}
 
 	if err := bolgeFiksturleriniKur(ctx); err != nil {
+		return err
+	}
+	if err := vergiFiksturleriniKur(ctx); err != nil {
 		return err
 	}
 	return stokLokasyonuKur(ctx)
@@ -365,7 +511,25 @@ func modulServisleriniCoz() error {
 	if siparisSvc, err = container.Resolve[*ordersvc.Service](kap, ordermod.ServiceName); err != nil {
 		return err
 	}
-	odemeSvc, err = container.Resolve[*paymentsvc.Service](kap, paymentmod.ServiceName)
+	if odemeSvc, err = container.Resolve[*paymentsvc.Service](kap, paymentmod.ServiceName); err != nil {
+		return err
+	}
+	if kargoSvc, err = container.Resolve[*fulfillmentsvc.Service](kap, fulfillmentmod.ServiceName); err != nil {
+		return err
+	}
+	if promosyonSvc, err = container.Resolve[*promotionsvc.Service](kap, promotionmod.ServiceName); err != nil {
+		return err
+	}
+	if vergiSvc, err = container.Resolve[*taxsvc.Service](kap, taxmod.ServiceName); err != nil {
+		return err
+	}
+
+	// Yüzeyler DAR ARAYÜZLE çözülür (bkz. [kargoYuzeyi], [vergiYuzeyi]); somut
+	// tiple çözmek imza uyumunu hiç sınamazdı.
+	if kargoInterop, err = container.Resolve[kargoYuzeyi](kap, fulfillmentmod.InteropName); err != nil {
+		return err
+	}
+	vergiInterop, err = container.Resolve[vergiYuzeyi](kap, taxmod.InteropName)
 	return err
 }
 
@@ -407,10 +571,20 @@ func stokLokasyonuKur(ctx context.Context) error {
 	return nil
 }
 
-// bolgeFiksturleriniKur senaryoların paylaştığı iki bölgeyi hazırlar.
+// bolgeFiksturleriniKur senaryoların paylaştığı dört bölgeyi hazırlar.
 //
 // Bölgeler TestMain'de bir kez kurulur çünkü bir ülke aynı anda tek bir bölgeye
 // bağlanabilir; test başına yeniden kurmak ikinci çağrıda çakışırdı.
+//
+// Her bölge TEK bir ülkeye bağlanır ve bu Faz 7'de bir gerekliliktir: sepet
+// hesabı vergi ülkesini bölgeden okur ve bölge birden çok ülke taşıyorsa
+// hangisinin sorulacağı bilinemediği için tax'a HİÇ sorulmaz (bkz. cartwf
+// countryForRegion). Çok ülkeli bir fikstür, tax modülünün cevabını sınayan
+// her senaryoyu sessizce region yoluna düşürürdü.
+//
+// Son iki bölge Faz 7 içindir ve ikisi de otomatik vergiyi AÇIK tutar: bu
+// sayede "vergi region'dan mı tax'tan mı geliyor" sorusu, tutarın kendisiyle
+// yanıtlanabilir.
 func bolgeFiksturleriniKur(ctx context.Context) error {
 	vergili, err := bolgeSvc.CreateRegion(ctx, regionsvc.CreateRegionInput{
 		Name:           "E2E Vergili Bölge",
@@ -439,6 +613,107 @@ func bolgeFiksturleriniKur(ctx context.Context) error {
 		return err
 	}
 	vergisizBolgeID = vergisiz.ID
+
+	ikinci, err := bolgeSvc.CreateRegion(ctx, regionsvc.CreateRegionInput{
+		Name:           "E2E İkinci Vergi Bölgesi",
+		CurrencyCode:   vergiliParaBirimi,
+		AutomaticTaxes: true,
+		TaxRate:        ikinciBolgeRegionOraniBps,
+	})
+	if err != nil {
+		return err
+	}
+	if _, err := bolgeSvc.AddCountryToRegion(ctx, ikinci.ID, ikinciVergiUlke); err != nil {
+		return err
+	}
+	ikinciVergiBolgeID = ikinci.ID
+
+	yapilandirilmamis, err := bolgeSvc.CreateRegion(ctx, regionsvc.CreateRegionInput{
+		Name:           "E2E Vergisi Yapılandırılmamış Bölge",
+		CurrencyCode:   vergiliParaBirimi,
+		AutomaticTaxes: true,
+		TaxRate:        yapilandirilmamisRegionOraniBps,
+	})
+	if err != nil {
+		return err
+	}
+	if _, err := bolgeSvc.AddCountryToRegion(ctx, yapilandirilmamis.ID, yapilandirilmamisUlke); err != nil {
+		return err
+	}
+	yapilandirilmamisBolgeID = yapilandirilmamis.ID
+
+	// Çok ülkeli bölge: region oranı %30, tax modülünde HİÇBİR ŞEY yok.
+	// İki ülke taşıdığı için ülke çözülemez ve hesap region'a düşer.
+	cokUlkeli, err := bolgeSvc.CreateRegion(ctx, regionsvc.CreateRegionInput{
+		Name:           "E2E Çok Ülkeli Bölge",
+		CurrencyCode:   vergisizParaBirimi,
+		AutomaticTaxes: true,
+		TaxRate:        cokUlkeliOranBps,
+	})
+	if err != nil {
+		return fmt.Errorf("çok ülkeli bölge oluşturulamadı: %w", err)
+	}
+	for _, ulke := range cokUlkeliUlkeler {
+		if _, err := bolgeSvc.AddCountryToRegion(ctx, cokUlkeli.ID, ulke); err != nil {
+			return fmt.Errorf("%s ülkesi çok ülkeli bölgeye eklenemedi: %w", ulke, err)
+		}
+	}
+	cokUlkeliBolgeID = cokUlkeli.ID
+
+	return nil
+}
+
+// vergiFiksturleriniKur tax modülündeki vergi bölgelerini ve oranlarını
+// hazırlar (Faz 7).
+//
+// # Neden ülke BAŞINA tek kök ve tek varsayılan oran
+//
+// tax modülü bir ülkeye ikinci kök bölge ya da bir bölgeye ikinci varsayılan
+// oran yazılmasını reddeder; fikstür bu yüzden TestMain'de bir kez kurulur.
+// Test başına kurulsaydı ikinci çağrı errors.Conflict alırdı.
+//
+// # Hangi ülkeye NE kuruluyor
+//
+//   - [vergiliUlke] -> %20. Faz 5 ve Faz 6 senaryolarının bütün tutarları bu
+//     orana dayanır; devralmadan sonra AYNI sayıların çıkması için yeni
+//     yetkilinin eskisiyle aynı cevabı vermesi gerekir.
+//   - [ikinciVergiUlke] -> %10. İki ülkenin FARKLI vergi üretmesi buradan
+//     görünür.
+//   - [yapilandirilmamisUlke] -> HİÇBİR ŞEY. Bölgesi olmayan ülkenin ne
+//     yaptığı ancak yapılandırma yokluğuyla sınanabilir.
+//
+// Bölgelerin sağlayıcısı boş bırakılır: kök bölgede boş sağlayıcı "yerel
+// hesaplama" demektir ve dış bir vergi servisi bu testin konusu değildir.
+func vergiFiksturleriniKur(ctx context.Context) error {
+	vergiliKok, err := vergiSvc.CreateTaxRegion(ctx, taxsvc.CreateTaxRegionInput{
+		CountryCode: vergiliUlke,
+	})
+	if err != nil {
+		return err
+	}
+	if _, err := vergiSvc.CreateTaxRate(ctx, taxsvc.CreateTaxRateInput{
+		TaxRegionID: vergiliKok.ID,
+		Name:        "E2E KDV",
+		RateBps:     vergiOraniBps,
+		IsDefault:   true,
+	}); err != nil {
+		return err
+	}
+
+	ikinciKok, err := vergiSvc.CreateTaxRegion(ctx, taxsvc.CreateTaxRegionInput{
+		CountryCode: ikinciVergiUlke,
+	})
+	if err != nil {
+		return err
+	}
+	if _, err := vergiSvc.CreateTaxRate(ctx, taxsvc.CreateTaxRateInput{
+		TaxRegionID: ikinciKok.ID,
+		Name:        "E2E TVA",
+		RateBps:     ikinciVergiOraniBps,
+		IsDefault:   true,
+	}); err != nil {
+		return err
+	}
 
 	return nil
 }

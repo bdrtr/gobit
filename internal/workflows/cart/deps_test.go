@@ -147,3 +147,89 @@ func TestNewLoggersizKurulabilir(t *testing.T) {
 	_, err = wf.CreateCart(context.Background(), CreateCartInput{CountryCode: "TR"})
 	require.NoError(t, err)
 }
+
+// TestFromContainerOpsiyonelYuzeyleriCozer promotion ve tax kayıtlıysa
+// çözüldüklerini ve hesapta KULLANILDIKLARINI doğrular.
+//
+// Yalnızca "hata dönmedi" demek yetmezdi: yanlış adla çözülen bir yüzey de
+// hatasız kurulur ve sepet sessizce degrade yolda koşardı. İddia bu yüzden
+// sonuçtaki vergi kaynağına dayanır.
+func TestFromContainerOpsiyonelYuzeyleriCozer(t *testing.T) {
+	h := newModulHarness(t)
+	h.taxes.rateBps = 1000
+	serveSnapshot(h.carts, ikiSatirliSepet(1))
+
+	c := container.New(nil)
+	provideAll(t, c, h)
+	require.NoError(t, c.Provide(ServicePromotion, h.discounts))
+	require.NoError(t, c.Provide(ServiceTax, h.taxes))
+
+	wf, err := FromContainer(c)
+	require.NoError(t, err)
+
+	totals, err := wf.CalculateTotals(context.Background(), testCartID)
+	require.NoError(t, err)
+	assert.Equal(t, TaxSourceTax, totals.TaxSource)
+	assert.Equal(t, int64(275), totals.TaxTotal, "tax'ın %10 oranı; region %20 taşıyor")
+}
+
+// TestFromContainerOpsiyonelYuzeySizKurulur promotion ve tax KAYITSIZKEN
+// akışların yine de kurulduğunu ve degrade yolda koştuğunu doğrular.
+//
+// Zorunlu sayılsalardı bu iki modülü kurmayan bir dağıtımda sepet hiç
+// çalışmazdı; modülerlik tam olarak bunun mümkün olması demektir.
+func TestFromContainerOpsiyonelYuzeySizKurulur(t *testing.T) {
+	h := newHarness(t)
+	serveSnapshot(h.carts, ikiSatirliSepet(1))
+
+	c := container.New(nil)
+	provideAll(t, c, h)
+
+	wf, err := FromContainer(c)
+	require.NoError(t, err)
+
+	totals, err := wf.CalculateTotals(context.Background(), testCartID)
+	require.NoError(t, err)
+	assert.Equal(t, TaxSourceRegion, totals.TaxSource)
+	assert.Zero(t, totals.DiscountTotal)
+}
+
+// TestFromContainerOpsiyonelUyumsuzTipiBildirir kayıtlı ama yüzeyi
+// KARŞILAMAYAN bir opsiyonel servisin sessizce yok sayılmadığını doğrular.
+//
+// Ayrım kritiktir: "kayıtlı değil" bir dağıtım kararıdır, "kayıtlı ama yanlış
+// tip" bir kablolama hatasıdır. İkincisi degradasyona uğrasaydı, yanlış
+// kaydedilmiş bir tax modülü sonsuza kadar görünmez kalırdı.
+func TestFromContainerOpsiyonelUyumsuzTipiBildirir(t *testing.T) {
+	for _, name := range []string{ServicePromotion, ServiceTax} {
+		t.Run(name, func(t *testing.T) {
+			h := newHarness(t)
+			c := container.New(nil)
+			provideAll(t, c, h)
+			require.NoError(t, c.Provide(name, h.regions))
+
+			_, err := FromContainer(c)
+			require.Error(t, err)
+			assert.True(t, errors.IsInvalid(err))
+			assert.Equal(t, CodeDependencyMissing, errors.CodeOf(err))
+			assert.Contains(t, err.Error(), name)
+		})
+	}
+}
+
+// TestNewOpsiyonelBagimlilikSiz eksik opsiyonel yüzeyin KURULUMU düşürmediğini
+// doğrular; zorunlu yüzeylerin testi TestNewEksikBagimliligiReddeder'dir.
+func TestNewOpsiyonelBagimlilikSiz(t *testing.T) {
+	h := newHarness(t)
+
+	wf, err := New(Deps{
+		Carts:     h.carts,
+		Prices:    h.prices,
+		Regions:   h.regions,
+		Customers: h.customers,
+		Links:     h.links,
+		Catalog:   h.catalog,
+	})
+	require.NoError(t, err)
+	assert.NotNil(t, wf)
+}

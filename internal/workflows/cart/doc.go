@@ -3,16 +3,21 @@
 // Dört akış sunar: [Workflows.CreateCart], [Workflows.AddLineItem],
 // [Workflows.UpdateLineItem] ve [Workflows.CalculateTotals]. Dördü de birden
 // çok modüle dokunur ve plan Bölüm 2.5 gereği modül servisinde değil BURADA
-// yaşar: sepetin şekli cart'ın, fiyat pricing'in, para birimi ve vergi
-// region'ın verisidir; hiçbiri tek başına bir sepetin ne tuttuğunu bilemez.
+// yaşar: sepetin şekli cart'ın, fiyat pricing'in, para birimi region'ın,
+// indirim promotion'ın ve vergi tax'ın verisidir; hiçbiri tek başına bir
+// sepetin ne tuttuğunu bilemez.
 //
 // # Modüllere erişim
 //
 // Bu paket internal/modules altındaki HİÇBİR paketi import etmez (ADR 0006).
 // İhtiyaç duyduğu her yüzey burada DAR bir arayüz olarak tanımlıdır ([Carts],
-// [Prices], [Regions], [Customers], [Links], [Catalog]) ve somut servis
-// container'dan ADLA çözülür (bkz. [FromContainer]). Kural
+// [Prices], [Regions], [Customers], [Discounts], [Taxes], [Links], [Catalog])
+// ve somut servis container'dan ADLA çözülür (bkz. [FromContainer]). Kural
 // internal/arch'taki TestWorkflowlarModulleriImportEtmez ile denetlenir.
+//
+// Sekiz yüzeyin altısı ZORUNLUDUR; [Discounts] ve [Taxes] opsiyoneldir ve
+// kayıtlı olmadıklarında hesap degrade bir yolda sürer (bkz. "İndirim" ve
+// "Vergi sözleşmesi").
 //
 // Arayüzlerin imzaları yalnızca ilkel ve stdlib tipleri kullanır. Sebep Go'nun
 // yapısal uyum kuralıdır: bir modülün tipini adlandıramayan tüketici, o tipi
@@ -30,7 +35,8 @@
 //
 //   - CreateCart: region ve customer'dan okur, cart'a bir kez yazar.
 //   - AddLineItem / UpdateLineItem: catalog, link ve pricing'den okur, cart'a yazar.
-//   - CalculateTotals: cart, link, pricing ve region'dan okur, cart'a yazar.
+//   - CalculateTotals: cart, link, pricing, promotion, tax ve region'dan okur,
+//     cart'a yazar.
 //
 // Tek yazma patlarsa geri alınacak bir şey yoktur; adım hiç olmamıştır. İki
 // yazma yapan tek yol satır ekleme/güncellemedir (önce satır, sonra toplamlar)
@@ -55,24 +61,23 @@
 //
 // # Vergi sözleşmesi
 //
-// Vergi bu fazda region'dan tek bir baz puan oranı olarak gelir
-// ([Regions.RegionTax]); plan Faz 7'de tax modülü devralacaktır. Devralmanın
-// sözleşmesi şu üç karardır:
+// Vergiyi tax modülü hesaplar ([Taxes.CalculateTaxJSON]); Faz 5'te bu iş
+// geçici olarak region'daydı ve region'ın godoc'u devralmayı zaten
+// işaretlemişti. Sözleşmenin üç kararı devralmadan ETKİLENMEZ:
 //
 //  1. TABAN: vergi, İNDİRİM SONRASI satır ara toplamı üzerinden hesaplanır ve
 //     KARGO tabana girmez. Vergi fiilen ödenen bedeli izler; indirim öncesi
 //     tutarı vergilemek, müşteriden hiç alınmayan bir paranın vergisini almak
 //     olurdu. Kargo dışarıda bırakılır çünkü kargonun vergilenip
-//     vergilenmediği yargı bölgesine göre değişir, region ise tek bir düz oran
-//     taşır ve kargo için ayrı bir kural taşımaz. Olmayan bir kuralı "malla
-//     aynıdır" diye varsaymak sessiz bir tahmindir; dışarıda bırakmak hem
-//     muhafazakâr hem de Faz 7'de geri alınabilir seçimdir.
+//     vergilenmediği yargı bölgesine göre değişir; tax modülü bunu
+//     ShippingInput.Taxable ile opsiyonel kılar ve bu akış o seçeneği AÇMAZ.
+//     Olmayan bir kuralı "malla aynıdır" diye varsaymak sessiz bir tahmindir.
 //  2. SATIR BAŞINA: vergi her satır için ayrı hesaplanır, sepetin vergisi de
 //     satır vergilerinin TOPLAMIDIR. Sepet tabanını tek seferde vergilemek
-//     yuvarlama yüzünden birkaç minor unit farklı sonuç verebilir; satır
-//     başına hesaplamak seçilmiştir çünkü (a) faturada her satırın vergisi tek
-//     tek açıklanabilir olmalıdır, (b) Faz 7'de ürün sınıfına göre satır
-//     başına FARKLI oranlar gelecektir ve o gün tabanın tanımı değişmemelidir.
+//     yuvarlama yüzünden birkaç minor unit farklı sonuç verirdi; satır başına
+//     hesaplamak seçilmiştir çünkü (a) faturada her satırın vergisi tek tek
+//     açıklanabilir olmalıdır, (b) tax modülü ürün sınıfına göre satır başına
+//     FARKLI oranlar uygulayabilir ve o gün tabanın tanımı değişmemelidir.
 //  3. YUVARLAMA: baz puan aritmetiği TAM SAYIDIR ve bölme AŞAĞI yuvarlar
 //     (taban × oran / 10000). Kabul edilir: hata satır başına bir minor
 //     unit'ten küçüktür ve daima müşteri LEHİNEDİR. Yakına yuvarlama
@@ -80,18 +85,56 @@
 //     "fazlası nereden geldi" sorusunu mutabakata bırakır; kayan noktalı oran
 //     ise plan Bölüm 8 gereği hiç düşünülmez.
 //
-// [Regions.RegionTax] verginin OTOMATİK uygulanmadığını bildirirse oran
-// hesaba hiç girmez ve vergi sıfırdır: bölge, vergiyi kendi hesaplamak yerine
-// dışarıda bırakmayı seçmiştir.
+// # Vergi ÜLKESİ nereden geliyor
+//
+// tax modülü ülke ister, sepet ise BÖLGE tutar. Ülke, bölgenin Query
+// katmanındaki kaydından okunur ve bölge TEK bir ülkeye bağlıysa kullanılır.
+// Reddedilen alternatif (sepetin kargo adresi) ve çok ülkeli bölgenin neden
+// "çözülemedi" sayıldığı [Workflows.countryForRegion] godoc'undadır.
+//
+// # Vergi KAYNAĞI sonuçta görünür
+//
+// Vergiyi kimin hesapladığı [Totals.TaxSource] alanında bildirilir ve üç değer
+// alır: [TaxSourceTax], [TaxSourceTaxUnconfigured], [TaxSourceRegion]. tax
+// yüzeyi kayıtlı değilse ya da ülke çözülemiyorsa hesap region'ın oranına
+// (Faz 5 yoluna) DÜŞER — sıfıra değil. Ladder'ın tamamı ve "neden sıfır değil"
+// gerekçesi [Workflows.applyTaxes] godoc'undadır. Kısaca: eksik vergi
+// satıcının cebinden sessizce çıkar, eksik indirim ise müşterinin gördüğü bir
+// fazlalıktır; iki yönün riski simetrik değildir.
 //
 // # İndirim
 //
-// [Totals.DiscountTotal] ve [LineTotals.DiscountTotal] bu fazda DAİMA sıfırdır.
-// İndirim hesabını plan Faz 7'de promotion modülü DEVRALACAKTIR; alanlar
-// şimdiden taşınır ki devralma toplam kimliğini (total = subtotal - discount +
-// tax + shipping) değiştirmek zorunda kalmasın. Vergi tabanı da bugünden
-// indirim sonrası tanımlanmıştır (yukarıdaki 1. karar), yani promotion
-// geldiğinde vergi kendiliğinden doğru tabana oturur.
+// İndirimi promotion modülü hesaplar ([Discounts.ComputeDiscountsJSON]) ve
+// sonuç KALEM BAŞINA gelir: satır indirimleri [LineTotals.DiscountTotal],
+// toplamları [Totals.DiscountTotal] alanına yazılır. Hesap YAN ETKİSİZDİR —
+// kuponu fiilen harcayan çağrı promotion'ın RedeemPromotion metodudur ve o,
+// siparişin işidir; bu yüzden [Discounts] yüzeyi onu hiç tanımaz.
+//
+// promotion yüzeyi kayıtlı DEĞİLSE indirim sıfır kalır ve vitrin çalışmaya
+// devam eder; gerekçe [Workflows.applyDiscounts] godoc'undadır.
+//
+// # Kupon kodları: YALNIZCA otomatik promosyonlar
+//
+// Sepette kupon alanı YOKTUR ve [Workflows.CalculateTotals] kupon kodu ALMAZ;
+// hesaba yalnızca OTOMATİK promosyonlar girer.
+//
+// Reddedilen alternatif, kodları CalculateTotals'a opsiyonel bir parametre
+// olarak vermekti. İki sebeple reddedildi:
+//
+//   - Toplam hesabı sepetin KENDİ durumundan yeniden üretilebilir olmalıdır.
+//     Akış üç yerden çağrılır (doğrudan, satır ekleme ve satır güncelleme
+//     sonrası) ve kod yalnızca birine geçseydi sepete YAZILAN indirim, en son
+//     hangi uçtan geçildiğine göre görünüp kaybolurdu. Müşteri adedi bir
+//     artırdığında kuponun sessizce düşmesi, o tasarımın kaçınılmaz sonucudur.
+//   - Kod KALICI DEĞİLDİR. Sepet onu saklayamadığı için sipariş, sepette
+//     görülen indirimden farklı bir toplamla oluşabilirdi; Faz 6'nın saga'sı
+//     sepetin YAZILI toplamını kullanır.
+//
+// Kupon alanı sepet modülüne eklendiğinde bağlanacağı yer bellidir ve üç
+// noktadır: [Snapshot] şemasına kodları taşıyan bir alan eklenir, o alan
+// [Workflows.discountRequestFor] içinde isteğin "codes" dizisine geçirilir ve
+// sipariş anında promotion'ın RedeemPromotion'ı çağrılır. Bu turda ilk iki
+// nokta boş, üçüncüsü ise bu paketin dışındadır.
 //
 // # Müşteri segmenti fiyatları
 //
@@ -99,23 +142,20 @@
 // bağlamı öznitelik başına TEK değer taşır; birden çok gruba üye bir müşteri
 // için hangi grubun yazılacağı belirsizdir ve sessizce birini seçmek fiyatı
 // harita dolaşım sırasına bağlardı. Seçim kuralı ("müşterinin hakkı olan en
-// iyi fiyat") pricing'in kararıdır ve promotion ile birlikte Faz 7'ye aittir.
+// iyi fiyat") pricing'in kararıdır. Aynı boşluk indirim bağlamında da vardır
+// ve aynı sebeple doldurulmaz (bkz. [Workflows.discountRequestFor]).
 //
-// # cart.service bu yüzeyi BUGÜN karşılamıyor
+// # [Carts] yüzeyini kim karşılıyor
 //
-// [Carts] arayüzünün altı metodundan yalnızca RemoveLineItem cart modülünün
-// servisinde birebir aynı imzayla vardır. Kalan beşi cart'ın kendi models ve
-// service tiplerini kullandığı için yapısal olarak KARŞILANAMAZ; sonuç,
-// [FromContainer] çağrısının "cart.service" adında tipli bir uyumsuzluk
-// hatasıyla dönmesidir ve hata hangi metodun eksik olduğunu yazar
-// (ADR 0001, ADR 0002).
+// Bu yüzey cart modülünün SERVİSİYLE değil, onun modüller arası interop
+// tipiyle karşılanır ve container'da [ServiceCart] adıyla kayıtlıdır. Ayrım
+// zorunludur: servisin imzaları cart'ın kendi models ve service tiplerini
+// kullanır, bu paket ise o tipleri adlandıramaz (ADR 0006) — yapısal uyum
+// ancak ilkel imzalı bir yüzeyle kurulabilir. Aynı örüntü region, pricing,
+// customer, promotion ve tax modüllerinde de vardır.
 //
-// Eksik olan şey region, pricing ve customer modüllerinde ZATEN bulunan
-// şeydir: ilkel imzalı bir modüller arası yüzey (örn.
-// internal/modules/region/service/interop.go). cart'ın karşılığı
-// internal/modules/cart/service/interop.go olarak yazılmalı ve [Carts]
-// arayüzündeki altı imzayı aynen yayımlamalıdır; her biri cart'ın var olan
-// metotlarının ince bir sarmalayıcısıdır. O dosya bu turun kapsamı dışındadır
-// (bu tur yalnızca internal/workflows altına yazar), bu yüzden sözleşme tek
-// yerde — arayüzün kendisinde — durur.
+// Uyumu derleyici DENETLEMEZ; yanlış kaydedilmiş bir tip [FromContainer]
+// çağrısında tipli bir uyumsuzluk hatası verir ve hata hangi metodun eksik
+// olduğunu yazar (ADR 0001, ADR 0002). Alan adlarının uyumu ise ancak
+// entegrasyon testiyle kanıtlanabilir (bkz. internal/e2e).
 package cart

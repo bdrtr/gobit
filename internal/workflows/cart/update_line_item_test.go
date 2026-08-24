@@ -72,7 +72,7 @@ func TestUpdateLineItemSonSatirKaldirilinca(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.True(t, out.Removed)
-	assert.Equal(t, Totals{Revision: 7, Lines: []LineTotals{}}, out.Totals)
+	assert.Equal(t, Totals{Revision: 7, TaxSource: TaxSourceRegion, Lines: []LineTotals{}}, out.Totals)
 }
 
 // TestUpdateLineItemNegatifAdetReddedilir negatif adedin satır SİLMEDİĞİNİ

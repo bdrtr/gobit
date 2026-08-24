@@ -36,11 +36,21 @@ linters:
       locale: US
       # Türkçe kelimeler İngilizce yanlış yazım sanılıyor. Kod ve yorumlar
       # Türkçe olduğu için bu kaçınılmaz; kelime bazında istisna tutulur.
+      #
+      # TAKAS AÇIKÇA KABUL EDİLİYOR: istisna DEPO GENELİNDE geçerlidir, yani
+      # İngilizce bir metinde gerçek bir yazım hatası da sessizce geçer.
+      # Alternatif, her Türkçe geçişte kelimeyi değiştirmek ya da nolint
+      # serpiştirmekti; ikisi de yorumları bozar. Bu depoda İngilizce düzyazı
+      # bulunmadığı için kaçırılan hata riski pratikte sıfıra yakındır.
+      # Listeye kelime eklerken bu ölçüt kullanılmalıdır: kelime Türkçe'de
+      # SIK geçiyor ve İngilizce karşılığı bu kod tabanında YAZILMIYOR mu?
       #   paralel  -> "parallel" sanılıyor
       #   mamal    -> "açmamalıdır" içinde "mammal" sanılıyor
+      #   adres    -> "address" sanılıyor
       ignore-rules:
         - paralel
         - mamal
+        - adres
     gocritic:
       enabled-tags: [diagnostic, style, performance]
       disabled-checks: [whyNoLint, hugeParam]
