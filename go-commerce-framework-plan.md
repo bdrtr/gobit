@@ -297,6 +297,7 @@ type PaymentProvider interface {
 ### Faz 5 — Sepet Akışı (Cart · Customer · Region)
 **Yapılacaklar:** Cart, Customer, Region/Currency modülleri. Cart workflow'ları: `create_cart`, `add_line_item`, `update_line_item`, `calculate_totals` (fiyatı pricing'den, vergiyi tax stub'ından alır). `cart↔customer`, `cart↔region` linkleri.
 **DoD:** Sepet oluştur → ürün ekle → adet güncelle → ara toplam/indirim/vergi/genel toplam doğru hesaplanıyor; misafir ve kayıtlı müşteri senaryoları test edilmiş.
+> **Tamamlandı.** DoD `internal/e2e` altında GERÇEK modüllerle ve gerçek Postgres'le doğrulandı (8 senaryo). Ek olarak: [ADR 0006](docs/adr/0006-workflow-modul-erisimi.md) ile workflow→modül erişimi karara bağlandı, `cart` modülü ilkel `interop.go` yüzeyi yayımlıyor, indirim ara toplamla sınırlandı ve kargo vergi tabanına girmiyor.
 
 ### Faz 6 — Ödeme & Sipariş Tamamlama
 **Yapılacaklar:** Payment modülü + `PaymentProvider` soyutlaması + `manual/test` provider. Order modülü. `complete_cart` workflow'u (saga): `reserve_inventory → create_order → authorize/capture_payment → clear_cart`. Hata durumunda compensation: rezervasyonu geri al, ödemeyi iptal et, siparişi iptal et.

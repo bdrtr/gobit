@@ -119,6 +119,7 @@ güncelleyin.
 | `core/query` | Cross-module okuma — kök çek, link çöz, batch getir, birleştir; N+1 yapısal olarak yok |
 | `core/workflow` | Saga motoru — ters sırada telafi, retry, idempotency-key, panik izolasyonu |
 | `core/workflow/pgstore` | Yürütme durumunun Postgres deposu (`workflow_executions`) |
+| `workflows/cart` | Sepet akışları: create_cart, add_line_item, update_line_item, calculate_totals |
 
 Event bus arka ucu `EVENT_BUS=inmemory|redis` ile seçilir. `redis` seçildiğinde
 Redis erişilemezse uygulama açılışta durur.
@@ -171,7 +172,7 @@ make rename-module MODULE=github.com/kullanici/repo
 | 2 | Module Links & Query | ✅ |
 | 3 | Workflow Engine (saga) | ✅ |
 | 4 | Katalog (product · pricing · inventory) | ⬜ |
-| 5 | Sepet (cart · customer · region) | 🚧 modüller hazır, workflow'lar sırada |
+| 5 | Sepet (cart · customer · region) | ✅ |
 | 6 | Ödeme & sipariş tamamlama | ⬜ |
 | 7 | Fulfillment · promotion · tax | ⬜ |
 | 8 | Auth · admin user · API key · RBAC | ⬜ |

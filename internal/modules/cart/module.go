@@ -62,6 +62,13 @@ const ModuleName = "cart"
 // dar bir arayüzle kullanır.
 const ServiceName = ModuleName + ".service"
 
+// InteropName modüller arası ilkel yüzeyin container'daki adıdır (ADR 0006).
+//
+// Servisin kendisinden AYRI kaydedilir: servis cart'ın zengin tipleriyle
+// konuşur, bu yüzey yalnızca ilkel ve stdlib tipleriyle. Sepet akışları onu
+// kendi tanımladıkları dar arayüzle çözer.
+const InteropName = ModuleName + ".interop"
+
 // ProviderName Query sağlayıcısının container'daki adıdır (ADR 0004).
 const ProviderName = service.EntityName + query.ProviderSuffix
 
@@ -144,6 +151,12 @@ func (m *Module) Register(ctx context.Context, c *container.Container) error {
 	}
 	// Sağlayıcı adı "<entity>.query" biçimindedir; Query onu bu adla arar ve
 	// Entity() ile adın örtüştüğünü doğrular (ADR 0004).
+	// Modüller arası yüzey AYRI bir adla kaydedilir: servisin kendisi cart'ın
+	// zengin tipleriyle konuşur, bu yüzey ise yalnızca ilkel tiplerle (ADR 0006).
+	// Sepet akışları onu kendi dar arayüzleriyle çözer.
+	if err := c.Provide(InteropName, service.NewInterop(svc)); err != nil {
+		return err
+	}
 	if err := c.Provide(ProviderName, service.NewQueryProvider(svc)); err != nil {
 		return err
 	}

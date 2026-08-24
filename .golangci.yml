@@ -34,6 +34,13 @@ linters:
         - name: package-comments
     misspell:
       locale: US
+      # Türkçe kelimeler İngilizce yanlış yazım sanılıyor. Kod ve yorumlar
+      # Türkçe olduğu için bu kaçınılmaz; kelime bazında istisna tutulur.
+      #   paralel  -> "parallel" sanılıyor
+      #   mamal    -> "açmamalıdır" içinde "mammal" sanılıyor
+      ignore-rules:
+        - paralel
+        - mamal
     gocritic:
       enabled-tags: [diagnostic, style, performance]
       disabled-checks: [whyNoLint, hugeParam]
