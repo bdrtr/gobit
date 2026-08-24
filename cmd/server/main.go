@@ -31,6 +31,8 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/cart"
 	"github.com/bdrtr/gobit/internal/modules/customer"
 	"github.com/bdrtr/gobit/internal/modules/inventory"
+	"github.com/bdrtr/gobit/internal/modules/order"
+	"github.com/bdrtr/gobit/internal/modules/payment"
 	"github.com/bdrtr/gobit/internal/modules/pricing"
 	"github.com/bdrtr/gobit/internal/modules/product"
 	"github.com/bdrtr/gobit/internal/modules/region"
@@ -153,6 +155,9 @@ func run() error {
 	registry.Add(region.New(log))
 	registry.Add(customer.New(log))
 	registry.Add(cart.New())
+	// Faz 6: ödeme ve sipariş
+	registry.Add(payment.New())
+	registry.Add(order.New())
 	if err := registry.Bootstrap(ctx, c, router); err != nil {
 		return err
 	}
