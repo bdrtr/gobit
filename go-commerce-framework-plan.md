@@ -302,6 +302,7 @@ type PaymentProvider interface {
 ### Faz 6 — Ödeme & Sipariş Tamamlama
 **Yapılacaklar:** Payment modülü + `PaymentProvider` soyutlaması + `manual/test` provider. Order modülü. `complete_cart` workflow'u (saga): `reserve_inventory → create_order → authorize/capture_payment → clear_cart`. Hata durumunda compensation: rezervasyonu geri al, ödemeyi iptal et, siparişi iptal et.
 **DoD:** Uçtan uca sepet→sipariş akışı test provider ile çalışıyor; ödeme adımı başarısızken **stok rezervasyonu ve sipariş geri alınıyor** (saga testi); `order.placed` eventi yayınlanıyor.
+> **Tamamlandı.** DoD `internal/e2e` altında GERÇEK modüller, gerçek Postgres ve pgstore üzerindeki saga motoruyla doğrulandı. Not: `capture_payment` bir PİVOTTUR — tahsilat denendikten sonra geri alma yapılmaz; belirsiz tahsilatın kalan riski ve mutabakat ihtiyacı `internal/workflows/checkout/doc.go`'da belgelidir.
 
 ### Faz 7 — Fulfillment · Promotion · Tax
 **Yapılacaklar:** Fulfillment modülü + `FulfillmentProvider` soyutlaması (+ manual provider), shipping option'lar. Promotion modülü (indirim kuralları, kampanya) ve cart/order toplamına uygulanması. Tax modülü gerçek hesaplama (region bazlı rate).

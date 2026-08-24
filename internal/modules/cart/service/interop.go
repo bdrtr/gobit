@@ -200,3 +200,51 @@ func (i *Interop) SetCartTotalsJSON(ctx context.Context, cartID string, totals j
 		Lines:         satirlar,
 	})
 }
+
+// MarkCompleted sepeti tamamlanmış olarak işaretler.
+//
+// Sipariş tamamlama saga'sının SON adımıdır: bu noktadan sonra sepet
+// DEĞİŞTİRİLEMEZ (her yazma metodu errors.Conflict döner). Tamamlanmış bir
+// sepetin ikinci kez işaretlenmesi hata VERMEZ; saga bir adımı yeniden
+// çalıştırabilir.
+func (i *Interop) MarkCompleted(ctx context.Context, cartID string) error {
+	_, err := i.svc.MarkCompleted(ctx, cartID)
+	return err
+}
+
+// interopCartTotals sepetin yazılmış toplamlarının JSON şemasıdır.
+//
+// Alan adları tüketici tarafındaki şemayla BİREBİR aynı olmak zorundadır;
+// bu modül workflow paketini import edemediği için derleyici uyumu
+// denetleyemez ve uyum ancak entegrasyon testiyle kanıtlanır.
+type interopCartTotals struct {
+	CurrencyCode  string `json:"currency_code"`
+	Subtotal      int64  `json:"subtotal"`
+	DiscountTotal int64  `json:"discount_total"`
+	TaxTotal      int64  `json:"tax_total"`
+	ShippingTotal int64  `json:"shipping_total"`
+	Total         int64  `json:"total"`
+	Completed     bool   `json:"completed"`
+}
+
+// CartTotalsJSON sepetin YAZILMIŞ toplamlarını döner.
+//
+// Saga, ödeme koleksiyonunu sepetin genel toplamıyla açar; tutarı KENDİ
+// hesaplamaz. Hesap calculate_totals akışının işidir ve sonucu sepette
+// saklanır (bkz. [Service.SetTotals]). Böylece ödeme, hesabın yapıldığı
+// andaki tutarla açılır ve iki yerde ayrışan bir aritmetik oluşmaz.
+func (i *Interop) CartTotalsJSON(ctx context.Context, cartID string) (json.RawMessage, error) {
+	detay, err := i.svc.GetCart(ctx, cartID)
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(interopCartTotals{
+		CurrencyCode:  detay.CurrencyCode,
+		Subtotal:      detay.Subtotal,
+		DiscountTotal: detay.DiscountTotal,
+		TaxTotal:      detay.TaxTotal,
+		ShippingTotal: detay.ShippingTotal,
+		Total:         detay.Total,
+		Completed:     detay.Completed(),
+	})
+}

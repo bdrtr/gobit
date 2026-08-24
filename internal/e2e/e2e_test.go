@@ -1,10 +1,15 @@
 //go:build integration
 
-// Package e2e planın Faz 5 DoD'sini GERÇEK modüllerle uçtan uca doğrular.
+// Package e2e planın Faz 5 ve Faz 6 DoD'lerini GERÇEK modüllerle uçtan uca
+// doğrular.
 //
-// DoD tek cümleyle: "Sepet oluştur -> ürün ekle -> adet güncelle -> ara toplam /
-// indirim / vergi / genel toplam DOĞRU hesaplanıyor; MİSAFİR ve KAYITLI MÜŞTERİ
-// senaryoları test edilmiş."
+// Faz 5 DoD'si tek cümleyle: "Sepet oluştur -> ürün ekle -> adet güncelle ->
+// ara toplam / indirim / vergi / genel toplam DOĞRU hesaplanıyor; MİSAFİR ve
+// KAYITLI MÜŞTERİ senaryoları test edilmiş."
+//
+// Faz 6 DoD'si tek cümleyle: "Uçtan uca sepet -> sipariş akışı test provider
+// ile çalışıyor; ödeme adımı başarısızken STOK REZERVASYONU VE SİPARİŞ GERİ
+// ALINIYOR (saga testi); order.placed eventi yayınlanıyor."
 //
 // # Neden internal/workflows altında değil
 //
@@ -20,11 +25,17 @@
 //
 // Testler tek bir PostgreSQL konteyneri paylaşır (testcontainers) ve kurulum
 // cmd/server/main.go'daki sırayı ÖRNEK ALIR: çekirdek servisler container'a
-// adla kaydedilir (core.db, core.link, core.query, core.eventbus), çekirdek
-// migration'ları uygulanır, modüller [module.Registry] ile ayağa kaldırılır ve
-// sepet akışları container'dan ADLA çözülen yüzeylerle kurulur. Kurulumun
-// gerçek olması testin bütün değeridir: sahte bir bağımlılıkla geçen bir
-// hesap, üretimde aynı hesabı yapacağını kanıtlamaz.
+// adla kaydedilir (core.db, core.link, core.query, core.eventbus,
+// core.workflow), çekirdek migration'ları uygulanır, modüller
+// [module.Registry] ile ayağa kaldırılır ve akışlar container'dan ADLA çözülen
+// yüzeylerle kurulur. Kurulumun gerçek olması testin bütün değeridir: sahte bir
+// bağımlılıkla geçen bir hesap, üretimde aynı hesabı yapacağını kanıtlamaz.
+//
+// Saga motoru BELLEK İÇİ değil, üretimdeki gibi pgstore üzerinde koşar
+// (core.workflow.store). Fark testin gördüğü şeyi değiştirir: idempotency
+// anahtarı ve yürütme durumu gerçekten veritabanına yazılır, dolayısıyla "aynı
+// sepet iki kez tamamlanamaz" iddiası süreç içi bir haritanın değil, kalıcı
+// bir kaydın davranışını sınar.
 //
 // # Beklenen tutarlar neden elle yazılıyor
 //
@@ -56,12 +67,18 @@ import (
 	"github.com/bdrtr/gobit/internal/core/link"
 	"github.com/bdrtr/gobit/internal/core/module"
 	"github.com/bdrtr/gobit/internal/core/query"
+	"github.com/bdrtr/gobit/internal/core/workflow"
 	"github.com/bdrtr/gobit/internal/core/workflow/pgstore"
 	cartmod "github.com/bdrtr/gobit/internal/modules/cart"
 	cartsvc "github.com/bdrtr/gobit/internal/modules/cart/service"
 	customermod "github.com/bdrtr/gobit/internal/modules/customer"
 	customersvc "github.com/bdrtr/gobit/internal/modules/customer/service"
 	inventorymod "github.com/bdrtr/gobit/internal/modules/inventory"
+	inventorysvc "github.com/bdrtr/gobit/internal/modules/inventory/service"
+	ordermod "github.com/bdrtr/gobit/internal/modules/order"
+	ordersvc "github.com/bdrtr/gobit/internal/modules/order/service"
+	paymentmod "github.com/bdrtr/gobit/internal/modules/payment"
+	paymentsvc "github.com/bdrtr/gobit/internal/modules/payment/service"
 	pricingmod "github.com/bdrtr/gobit/internal/modules/pricing"
 	pricingsvc "github.com/bdrtr/gobit/internal/modules/pricing/service"
 	productmod "github.com/bdrtr/gobit/internal/modules/product"
@@ -69,6 +86,7 @@ import (
 	regionmod "github.com/bdrtr/gobit/internal/modules/region"
 	regionsvc "github.com/bdrtr/gobit/internal/modules/region/service"
 	cartwf "github.com/bdrtr/gobit/internal/workflows/cart"
+	checkoutwf "github.com/bdrtr/gobit/internal/workflows/checkout"
 )
 
 // postgresImage testlerin paylaştığı veritabanı imajıdır; modül entegrasyon
@@ -86,6 +104,11 @@ const (
 	svcLink     = "core.link"
 	svcQuery    = "core.query"
 	svcEventBus = "core.eventbus"
+	// svcWorkflow saga yürütücüsüdür; sipariş tamamlama akışı onu bu adla
+	// çözer (checkoutwf.ServiceWorkflow).
+	svcWorkflow = "core.workflow"
+	// svcWorkflowStore yürütme durumunun KALICI deposudur.
+	svcWorkflowStore = "core.workflow.store"
 )
 
 // Vergisi otomatik uygulanan bölgenin fikstür sabitleri.
@@ -136,17 +159,40 @@ var (
 	bolgeSvc   *regionsvc.Service
 	musteriSvc *customersvc.Service
 	sepetSvc   *cartsvc.Service
+	stokSvc    *inventorysvc.Service
+	siparisSvc *ordersvc.Service
+	odemeSvc   *paymentsvc.Service
 )
 
 // akislar sepet akışlarının ÜRETİM kablolamasıyla kurulmuş örneğidir
 // (cartwf.FromContainer). Testte hiçbir köprü ya da sahte yoktur.
 var akislar *cartwf.Workflows
 
+// siparisAkislari sipariş tamamlama akışının ÜRETİM kablolamasıyla kurulmuş
+// örneğidir (checkoutwf.FromContainer).
+//
+// Ayrı bir değişken olması bilinçlidir: iki akış kümesi aynı container üzerinde
+// ama BİRBİRİNDEN habersiz kurulur ve checkout, sepet hesabını kendi içinde
+// yeniden kurar (bkz. checkoutwf.FromContainer). Testin ikisini de aynı
+// container'dan alması, üretimde de aynı kabın kullanıldığını doğrular.
+var siparisAkislari *checkoutwf.Workflows
+
 // Fikstür bölgelerinin kimlikleri.
 var (
 	vergiliBolgeID  string
 	vergisizBolgeID string
 )
+
+// stokLokasyonID Faz 6 senaryolarının stoğu ayırdığı TEK lokasyondur.
+//
+// Lokasyon TestMain'de bir kez kurulur ve tüm testler onu paylaşır; her test
+// KENDİ stok kalemini oluşturduğu için seviyeler yine testler arasında
+// ayrışmaz. Tek lokasyon aynı zamanda akışın bugünkü varsayımıdır
+// (bkz. checkoutwf.CompleteCartInput.LocationID, "TEK LOKASYON VARSAYIMI").
+var stokLokasyonID string
+
+// olayDefteri yayımlanmış "order.placed" olaylarının test tarafındaki kaydıdır.
+var olayDefteri = &siparisOlayDefteri{}
 
 // TestMain tek bir Postgres konteyneri kaldırır, modülleri ayağa kaldırır ve
 // tüm testleri o zeminin üstünde koşturur.
@@ -229,23 +275,44 @@ func zeminiKur(ctx context.Context) error {
 	if err := kap.Provide(svcQuery, query.New(baglar, kap, nil)); err != nil {
 		return err
 	}
-	if err := kap.Provide(svcEventBus, eventbus.NewInMemory(nil)); err != nil {
+
+	// Saga motoru KALICI depo üzerine kurulur (main.go'daki gibi). Bellek içi
+	// motor (workflow.NewInMemory) idempotency korumasını süreç sınırında
+	// bırakır; Faz 6'nın "aynı sepet iki kez tamamlanamaz" iddiası tam olarak o
+	// korumanın veritabanındaki hâlini sınamak zorundadır.
+	kaliciDepo := pgstore.New(testPool, nil)
+	if err := kap.Provide(svcWorkflowStore, kaliciDepo); err != nil {
+		return err
+	}
+	if err := kap.Provide(svcWorkflow, workflow.New(kaliciDepo, nil)); err != nil {
+		return err
+	}
+
+	// Veri yolu ayrı bir değişkende tutulur: "order.placed" abonesi modüller
+	// ayağa kalkmadan ÖNCE bağlanmalıdır, aksi hâlde bootstrap sırasında
+	// yayımlanan bir olay kaçırılırdı.
+	veriYolu := eventbus.NewInMemory(nil)
+	if err := kap.Provide(svcEventBus, veriYolu); err != nil {
+		return err
+	}
+	if err := olayDefteri.abone(veriYolu); err != nil {
 		return err
 	}
 
 	kayit := module.NewRegistry(nil, func(ctx context.Context, src fs.FS, owner string) error {
 		return db.Migrate(ctx, testDSN, src, owner)
 	})
-	// Modül kümesi cmd/server/main.go'dakinin aynısıdır. inventory sepet
-	// akışlarında kullanılmaz ama listede DURUR: kurulumun tamamı sınanmalıdır
-	// ve bir modülü test için ayıklamak, üretimde ancak açılışta görülecek bir
-	// çakışmayı testten gizlerdi.
+	// Modül kümesi ve sırası cmd/server/main.go'dakinin aynısıdır. Kurulumun
+	// tamamı sınanmalıdır: bir modülü test için ayıklamak, üretimde ancak
+	// açılışta görülecek bir çakışmayı testten gizlerdi.
 	kayit.Add(productmod.New())
 	kayit.Add(pricingmod.New(nil))
 	kayit.Add(inventorymod.New())
 	kayit.Add(regionmod.New(nil))
 	kayit.Add(customermod.New(nil))
 	kayit.Add(cartmod.New())
+	kayit.Add(paymentmod.New())
+	kayit.Add(ordermod.New())
 	if err := kayit.Bootstrap(ctx, kap, chi.NewRouter()); err != nil {
 		return err
 	}
@@ -258,8 +325,14 @@ func zeminiKur(ctx context.Context) error {
 	if akislar, kurulumErr = sepetAkislariniKur(); kurulumErr != nil {
 		return fmt.Errorf("sepet akışları kurulamadı: %w", kurulumErr)
 	}
+	if siparisAkislari, kurulumErr = siparisAkislariniKur(); kurulumErr != nil {
+		return fmt.Errorf("sipariş tamamlama akışı kurulamadı: %w", kurulumErr)
+	}
 
-	return bolgeFiksturleriniKur(ctx)
+	if err := bolgeFiksturleriniKur(ctx); err != nil {
+		return err
+	}
+	return stokLokasyonuKur(ctx)
 }
 
 // modulServisleriniCoz fikstürlerin kullanacağı modül servislerini container'dan
@@ -283,7 +356,16 @@ func modulServisleriniCoz() error {
 	if musteriSvc, err = container.Resolve[*customersvc.Service](kap, customermod.ServiceName); err != nil {
 		return err
 	}
-	sepetSvc, err = container.Resolve[*cartsvc.Service](kap, cartmod.ServiceName)
+	if sepetSvc, err = container.Resolve[*cartsvc.Service](kap, cartmod.ServiceName); err != nil {
+		return err
+	}
+	if stokSvc, err = container.Resolve[*inventorysvc.Service](kap, inventorymod.ServiceName); err != nil {
+		return err
+	}
+	if siparisSvc, err = container.Resolve[*ordersvc.Service](kap, ordermod.ServiceName); err != nil {
+		return err
+	}
+	odemeSvc, err = container.Resolve[*paymentsvc.Service](kap, paymentmod.ServiceName)
 	return err
 }
 
@@ -294,6 +376,35 @@ func modulServisleriniCoz() error {
 // ya da sahte yoktur: burada bir uyumsuzluk çıkarsa üretimde de çıkar.
 func sepetAkislariniKur() (*cartwf.Workflows, error) {
 	return cartwf.FromContainer(kap)
+}
+
+// siparisAkislariniKur sipariş tamamlama akışını ÜRETİM kablolamasıyla kurar.
+//
+// [checkoutwf.FromContainer] yedi yüzeyi container'dan adla çözer
+// (cart.interop, inventory.interop, order.interop, payment.interop, core.link,
+// core.query, core.workflow) ve sepet hesabını AYRICA aynı container üzerinde
+// kendisi kurar. Testte hiçbir köprü ya da sahte yoktur: buradaki bir
+// uyumsuzluk üretimde de açılışta patlar.
+func siparisAkislariniKur() (*checkoutwf.Workflows, error) {
+	return checkoutwf.FromContainer(kap)
+}
+
+// stokLokasyonuKur senaryoların paylaştığı tek stok lokasyonunu hazırlar.
+//
+// Lokasyon test başına değil TestMain'de kurulur: paylaşılması güvenlidir çünkü
+// stok SEVİYESİ (kalem, lokasyon) çiftine yazılır ve her test kendi kalemini
+// oluşturur. Ülke kodu vergili bölgeninkiyle aynı seçilmiştir ki fikstür
+// gerçekçi kalsın; akış lokasyonun ülkesini bugün kullanmaz.
+func stokLokasyonuKur(ctx context.Context) error {
+	lokasyon, err := stokSvc.CreateStockLocation(ctx, inventorysvc.CreateStockLocationInput{
+		Name:        "E2E Ana Depo",
+		CountryCode: vergiliUlke,
+	})
+	if err != nil {
+		return err
+	}
+	stokLokasyonID = lokasyon.ID
+	return nil
 }
 
 // bolgeFiksturleriniKur senaryoların paylaştığı iki bölgeyi hazırlar.

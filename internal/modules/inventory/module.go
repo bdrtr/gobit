@@ -42,6 +42,12 @@ const (
 	// servisi bu adla çözer ve KENDİ paketlerinde tanımladıkları dar bir
 	// arayüzle kullanır (ADR 0001).
 	ServiceName = ModuleName + ".service"
+	// InteropName modüller arası ilkel yüzeyin container'daki adıdır (ADR 0006).
+	//
+	// Servisten AYRI kaydedilir: servis inventory'nin zengin tipleriyle konuşur,
+	// bu yüzey yalnızca ilkel ve stdlib tipleriyle. Saga'lar onu kendi
+	// tanımladıkları dar arayüzle çözer.
+	InteropName = ModuleName + ".interop"
 	// ProviderName Query sağlayıcısının container'daki adıdır (ADR 0004).
 	ProviderName = service.EntityName + query.ProviderSuffix
 	// dbServiceName çekirdek veritabanı havuzunun container'daki adıdır.
@@ -92,6 +98,9 @@ func (m *Module) Register(ctx context.Context, c *container.Container) error {
 	svc := service.New(repository.New(pool.Pool()), slog.Default())
 
 	if err := c.Provide(ServiceName, svc); err != nil {
+		return err
+	}
+	if err := c.Provide(InteropName, service.NewInterop(svc)); err != nil {
 		return err
 	}
 	if err := c.Provide(ProviderName, service.NewQueryProvider(svc)); err != nil {
