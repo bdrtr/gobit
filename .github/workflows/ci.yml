@@ -41,8 +41,14 @@ jobs:
           cache: true
       - run: go build ./...
       - run: go vet ./...
-      - run: go test -race -coverprofile=coverage.out -covermode=atomic ./...
-      - name: Kapsam özeti
+      # -coverpkg: onsuz yalnızca test edilen paketin KENDİ kodu sayılır ve bir
+      # paketi başka paketin testi kapsadığında görünmez.
+      - run: go test -race -coverpkg=./... -coverprofile=coverage.out -covermode=atomic ./...
+      # BU SAYI YALNIZCA BİRİM TESTLERİNİNKİDİR (~%55) ve tek başına okunursa
+      # yanıltır: depoda kapsamın büyük kısmı entegrasyon testlerinden gelir
+      # (birim + entegrasyon, -coverpkg ile ~%76). Gerçek sayı Entegrasyon
+      # işindedir; buradaki, birim testlerinin tek başına ne kadarını tuttuğudur.
+      - name: Kapsam özeti (YALNIZCA birim testleri)
         run: go tool cover -func=coverage.out | tail -1
 
   integration:
@@ -57,4 +63,10 @@ jobs:
       # testcontainers-go, runner'daki Docker daemon'ı kullanarak gerçek
       # Postgres ve Redis kaldırır; ayrıca servis tanımı gerekmez.
       - name: Entegrasyon testleri
-        run: go test -race -tags=integration -count=1 -timeout 15m ./...
+        run: |
+          go test -race -tags=integration -count=1 -timeout 15m \
+            -coverpkg=./... -coverprofile=coverage-integration.out -covermode=atomic ./...
+      # Deponun GERÇEK kapsamı budur: birim + entegrasyon, paketler arası
+      # atıfla. Test işindeki sayı yalnızca birim testlerini kapsar.
+      - name: Kapsam özeti (birim + entegrasyon)
+        run: go tool cover -func=coverage-integration.out | tail -1

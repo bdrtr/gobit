@@ -88,6 +88,13 @@ yalnızca test koşarak görünmeyen üç arıza:
 - Modüller arası imzalar derleme zamanında denetlenmez
   ([ADR 0001](docs/adr/0001-modul-arasi-iletisim.md)'in kabul edilen bedeli).
 - Stokta tek lokasyon varsayımı.
+- **Satış kanalı bağı kuruluyor ama kullanılmıyor.** Publishable anahtar
+  isteği bir kanala bağlar, `Principal.SalesChannelIDs` dolar; hiçbir modül
+  okumaz. Katalog her anahtar için aynıdır — planın `product↔sales_channel`
+  bağı henüz kurulmadı.
+- **Migration geri alma yolu yok.** Her modülün `.down.sql` dosyaları vardır
+  ve geri alınabilirlikleri testle denetlenir, ama onları çağıracak bir yüzey
+  yoktur; geri alma elle yapılır. İleri yön açılışta otomatiktir.
 - Yük testi süreç içidir; kapasite planı üretmez.
 
 [Yayımlanmamış]: https://github.com/bdrtr/gobit/compare/v0.1.0...HEAD

@@ -159,7 +159,15 @@ Koruma yığınının sırası bilinçlidir:
    birlikte tutulur.
 
 Publishable anahtar bir **sır değildir**: tarayıcıda görünür ve tek işi isteği
-bir satış kanalına bağlamaktır — yetki taşımaz. Gizli anahtar yetki taşır ve
+bir satış kanalına bağlamaktır — yetki taşımaz.
+
+> **Bağ bugün KURULUYOR ama KULLANILMIYOR.** Anahtar doğrulanır ve isteğin
+> satış kanalları `Principal.SalesChannelIDs` alanına yazılır; ancak hiçbir
+> modül bunu okumaz. Sonuç: `GET /store/v1/products` her publishable anahtar
+> için **aynı kataloğu** döner. Planın `product↔sales_channel` bağı
+> kurulmadığı için katalog süzmesi henüz yoktur; auth bunun için gereken iki
+> yüzeyi (`auth.service` üzerinden `ActiveSalesChannelIDs` ve
+> `sales_channel.query`) yayımlar, tüketicisi eksiktir. Gizli anahtar yetki taşır ve
 satış kanalına bağlanmaz; ikisini karıştıran bir girdi sessizce düzeltilmez,
 reddedilir.
 

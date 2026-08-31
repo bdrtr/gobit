@@ -39,10 +39,16 @@ build: ## Binary'yi bin/gobit olarak derle
 ## --- Kalite ---
 
 test: ## Birim testlerini çalıştır (race + coverage)
-	go test -race -coverprofile=coverage.out -covermode=atomic ./...
+	# -coverpkg olmadan yalnızca test edilen paketin KENDİ kodu sayılır; bir
+	# paketi başka paketin testi kapsadığında görünmez. Buradaki sayı YALNIZCA
+	# birim testlerinindir (~%55); deponun gerçek kapsamı entegrasyon
+	# testleriyle birlikte ölçülür (make test-integration, ~%76).
+	go test -race -coverpkg=./... -coverprofile=coverage.out -covermode=atomic ./...
 
 test-integration: ## Entegrasyon testlerini çalıştır (testcontainers gerektirir)
-	go test -race -tags=integration -count=1 ./...
+	go test -race -tags=integration -count=1 -coverpkg=./... \
+		-coverprofile=coverage-integration.out -covermode=atomic ./...
+	@go tool cover -func=coverage-integration.out | tail -1
 
 load-test: ## Temel yük testini çalıştır (REQUESTS/CONCURRENCY ile ayarlanır)
 	GOBIT_LOAD_REQUESTS=$(or $(REQUESTS),5000) \
@@ -84,13 +90,28 @@ psql: ## Postgres'e psql ile bağlan
 redis-cli: ## Redis'e redis-cli ile bağlan
 	@$(DOTENV) $(COMPOSE) exec redis redis-cli --no-auth-warning -a "$${REDIS_PASSWORD:-gobit}"
 
-## --- Migration (Faz 1'de core/db migration runner'a bağlanacak) ---
+## --- Migration ---
+#
+# AYRI BİR KOMUT YOKTUR ve bu bilinçlidir: migration'lar uygulama AÇILIŞINDA,
+# modül başına ve golang-migrate'in kilidiyle uygulanır (bkz. core/db.Migrate
+# ve module.Registry.Bootstrap). Ayrı bir komut, "şemayı güncellemeyi unuttum"
+# hatasını mümkün kılardı — kod ile şemanın ayrı adımlarda ilerlediği her
+# kurulumda er geç olan budur.
+#
+# Eşzamanlı açılış güvenlidir: birden çok örnek aynı anda açıldığında
+# golang-migrate'in kilidi birini geçirir, ötekiler bekler (gerçek sunucuyla
+# üç örnekle doğrulandı).
 
-migrate-up: ## Bekleyen migration'ları uygula
-	@echo "migrate-up: Faz 1'de core/db migration runner'ı devreye girecek (golang-migrate, modül başına ayrı klasör)."
+migrate-up: ## Migration'lar açılışta otomatik uygulanır (ayrı komut yok)
+	@echo "migrate-up: ayrı bir komut YOKTUR."
+	@echo "  Migration'lar 'make run' ile açılışta, modül başına uygulanır."
+	@echo "  Yalnızca şemayı kurmak için: DATABASE_URL=... go run ./cmd/server (açıldıktan sonra durdurun)."
 
-migrate-down: ## Son migration'ı geri al
-	@echo "migrate-down: Faz 1'de core/db migration runner'ı devreye girecek."
+migrate-down: ## Geri alma yolu YOK (bkz. README, bilinen sınırlar)
+	@echo "migrate-down: geri alma için bir komut YOKTUR."
+	@echo "  Her modülün .down.sql dosyaları vardır ve geri alınabilirlikleri"
+	@echo "  internal/arch TestMigrationlarGercektenGeriAlinabilir ile denetlenir,"
+	@echo "  ama bugün onları çağıracak bir yüzey yok. Geri alma elle yapılmalıdır."
 
 ## --- Kod üretimi ---
 
@@ -121,7 +142,7 @@ $(SQLC):
 	GOBIN=$(BIN_DIR) go install github.com/sqlc-dev/sqlc/cmd/sqlc@$(SQLC_VERSION)
 
 clean: ## Üretilmiş dosyaları temizle
-	rm -rf $(BIN_DIR) coverage.out
+	rm -rf $(BIN_DIR) coverage.out coverage-integration.out
 
 rename-module: ## Go modul yolunu degistir: make rename-module MODULE=github.com/kullanici/repo
 	@test -n "$(MODULE)" || (echo "kullanim: make rename-module MODULE=github.com/kullanici/repo" >&2 && exit 1)

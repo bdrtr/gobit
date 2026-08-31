@@ -284,6 +284,8 @@ bırakırdı — ödemede bunun bedeli paranın beklenmedik bir kuruluşa gitmes
 | Oturum iptali yalnızca **toptan** | Tek cihazı düşürmek yok | jti bazlı kara liste — her istekte okunan yeni bir depo demektir |
 | Tek lokasyon varsayımı (stok) | Çok depolu senaryo desteklenmez | Plan Bölüm 10 |
 | Yük testi süreç içi | Kapasite planı üretmez | Gerçek dağıtımda dış yük aracı |
+| Satış kanalı bağı kuruluyor ama okunmuyor | Katalog her publishable anahtar için aynı | `product↔sales_channel` bağını bildir ve store listesini `Principal.SalesChannelIDs` ile süz |
+| Migration geri alma yüzeyi yok | `.down.sql` dosyaları çağrılamıyor | `cmd/server`'a migrate alt komutu |
 | Yetki sözlüğü modül başına iki girdi | Kaynak bazlı ayrım yok (örn. yalnızca varyant okuma) | Ayrım gerçekten gerektiğinde eklenir; şimdiden eklemek yanlış bir kesinlik hissi verirdi |
 
 Çok örneklilik artık bir sınır değil bir **ayardır**: `GUARD_BACKEND=redis` hız
