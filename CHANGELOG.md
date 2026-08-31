@@ -10,6 +10,25 @@ Sabitlenme `1.0.0` ile olur.
 
 ## [Yayımlanmamış]
 
+### Eklendi
+
+- **Smoke testleri: gerçek süreç, gerçek migration, gerçek sinyal.**
+  Birim + entegrasyon testleri (~%76 kapsam) ve lint TEMİZ geçerken uygulama
+  elle çalıştırıldığında dört arıza çıkmıştı; dördü de `main.go`'nun
+  kablolamasında, açılıştaki migration'larda, config yüklemesinde ve sinyal
+  işlemede saklanıyordu. `internal/e2e` bunları göremez: `httptest` ile
+  router'ı sürer, yani gerçek bir açılış DEĞİLDİR.
+  `internal/smoke` sunucu ikilisini derleyip **süreç olarak** çalıştırır ve
+  o hata sınıfını CI'a bağlar: soğuk açılış + README akışı, üç örneğin aynı
+  boş veritabanına eşzamanlı açılışı (tohum yarışının regresyonu), beş yanlış
+  yapılandırmanın açılışta anlaşılır mesajla durması, OTLP adresinin iki
+  biçiminin de kabul edilmesi ve `METRIC_EXPORT_INTERVAL` ad çakışmasının geri
+  gelmemesi, SIGTERM sonrası çıkış kodu 0 ile düzgün kapanış.
+  İki regresyon **mutasyonla** doğrulandı: tohum düzeltmesi geri alındığında
+  eşzamanlı açılış testi, ad çakışması geri getirildiğinde izleme testi düşüyor.
+  `make smoke` ile çalışır; CI'da AYRI bir iş — "entegrasyon düştü" ile
+  "uygulama açılmıyor" aynı satırda görünmemeli.
+
 ## [0.3.0] — 2026-08-31
 
 API artık kendini anlatıyor: şemadan çalışan bir istemci üretilebiliyor.

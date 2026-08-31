@@ -465,11 +465,20 @@ interface'ini import etmek 2.4'ü ihlal ederdi.
 ```bash
 make test              # birim testleri (race + coverage)
 make test-integration  # gerçek Postgres ile entegrasyon + uçtan uca testler
+make smoke             # gerçek ikiliyi açar, süreç davranışını sınar
 make load-test         # temel yük testi (REQUESTS=… CONCURRENCY=… ile ayarlanır)
 make lint              # golangci-lint
 make fmt               # gofmt -s + go mod tidy
 make down              # altyapıyı durdur
 ```
+
+**Smoke testleri** (`internal/smoke`) bir adım öteye gider: sunucu ikilisini
+derleyip **süreç olarak** çalıştırır. Uçtan uca testler `httptest` ile router'ı
+sürer, yani `main.go`'nun kablolamasını, açılıştaki migration'ları, config
+yüklemesini ve sinyal işlemeyi ATLAR. Bu depoda testler geçerken uygulamayı
+elle çalıştırıp bulunan dört arıza tam olarak orada saklanıyordu; smoke
+testleri o sınıfı kalıcı olarak kapatır (eşzamanlı açılış yarışı, yanlış
+yapılandırmaların açılışta durması, OTLP adres biçimleri, SIGTERM davranışı).
 
 Uçtan uca testler (`internal/e2e`) modülleri **üretimdeki kablolamayla** kurar:
 aynı container adları, aynı modül sırası ve aynı koruma yığını

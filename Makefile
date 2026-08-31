@@ -21,7 +21,7 @@ SQLC             := $(BIN_DIR)/sqlc
 DOTENV = set -a; [ -f .env ] && . ./.env; set +a;
 
 .DEFAULT_GOAL := help
-.PHONY: help run build test test-integration load-test openapi-schema openapi-client openapi-validate lint fmt tidy gen up up-tracing down logs psql redis-cli migrate-up migrate-down tools clean rename-module
+.PHONY: help run build test test-integration smoke load-test openapi-schema openapi-client openapi-validate lint fmt tidy gen up up-tracing down logs psql redis-cli migrate-up migrate-down tools clean rename-module
 
 help: ## Bu yardım metnini göster
 	@grep -hE '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2}'
@@ -49,6 +49,19 @@ test-integration: ## Entegrasyon testlerini çalıştır (testcontainers gerekti
 	go test -race -tags=integration -count=1 -coverpkg=./... \
 		-coverprofile=coverage-integration.out -covermode=atomic ./...
 	@go tool cover -func=coverage-integration.out | tail -1
+
+# Smoke testleri ikiliyi DERLER ve gerçek süreçler başlatır; entegrasyon
+# etiketine karıştırılmadılar çünkü karıştırılsalardı süreç başlatmayan
+# yüzlerce test de bu maliyeti her koşumda öderdi (bkz. internal/smoke).
+#
+# -race YOKTUR ve bunun bir anlamı var: yarış dedektörü test SÜRECİNİ
+# izler, sınanan sunucu ise AYRI bir süreçtir ve kapsanmaz. Bayrağı koymak,
+# ölçmediği bir güvenceyi ima ederdi.
+#
+# Zaman aşımı açıkça verilir: varsayılan 10 dakika, konteyner çekme +
+# derleme + beş senaryonun toplamı için soğuk bir makinede dar kalabilir.
+smoke: ## Smoke testleri: gerçek ikiliyi açıp süreç davranışını sınar (Docker gerektirir)
+	go test -tags=smoke -count=1 -timeout 20m ./internal/smoke/
 
 load-test: ## Temel yük testini çalıştır (REQUESTS/CONCURRENCY ile ayarlanır)
 	GOBIT_LOAD_REQUESTS=$(or $(REQUESTS),5000) \

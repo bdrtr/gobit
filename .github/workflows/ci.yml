@@ -70,3 +70,27 @@ jobs:
       # atıfla. Test işindeki sayı yalnızca birim testlerini kapsar.
       - name: Kapsam özeti (birim + entegrasyon)
         run: go tool cover -func=coverage-integration.out | tail -1
+
+  # Smoke, Entegrasyon işine EKLENMEDİ ve bu bilinçlidir: bu testler ikiliyi
+  # derleyip gerçek süreçler başlatır, yani hem daha yavaştırlar hem de bambaşka
+  # bir arıza sınıfını kanıtlarlar — main.go'nun kablolaması, açılıştaki
+  # migration'lar, config yüklemesi ve sinyal işleme. Ayrı iş olmalarının somut
+  # karşılığı, PR sayfasında ayrı bir kırmızı: "entegrasyon düştü" ile "uygulama
+  # AÇILMIYOR" aynı satırda görünmemeli.
+  #
+  # Kapsam ölçülmez: ölçülen şey kapsanan satır değil, sürecin davranışıdır ve
+  # -coverpkg burada yalnızca gürültü üretirdi (sunucu ayrı bir süreçtir,
+  # profili zaten toplanamaz).
+  smoke:
+    name: Smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+      # testcontainers-go, runner'daki Docker daemon'ı kullanarak gerçek
+      # Postgres ve Redis kaldırır; ayrıca servis tanımı gerekmez.
+      - name: Smoke testleri
+        run: go test -tags=smoke -count=1 -timeout 20m ./internal/smoke/
