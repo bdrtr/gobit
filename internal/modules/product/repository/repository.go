@@ -91,6 +91,15 @@ type Store interface {
 	// ProductVisibleInSalesChannels tekil vitrin ucunun görünürlük denetimidir;
 	// listeyle AYNI SQL kuralını kullanır (bkz. saleschannel.go).
 	ProductVisibleInSalesChannels(ctx context.Context, productID string, salesChannelIDs []string) (bool, error)
+
+	// VisibleProductIDs verilen kimliklerden kanallarda görünür olanları TEK
+	// sorguda döner.
+	//
+	// Tekil sorgunun toplu karşılığıdır ve ayrı durmasının sebebi çağrı
+	// desenidir: arama bir seferde onlarca kimlik getirir ve görünürlüğü
+	// kimlik başına sormak, sonuç sayısı kadar gidiş-dönüş demektir. İki metot
+	// AYNI SQL şablonundan üretilir, yani kural tektir.
+	VisibleProductIDs(ctx context.Context, productIDs []string, salesChannelIDs []string) (map[string]struct{}, error)
 	ListProductsByIDs(ctx context.Context, ids []string) ([]models.Product, error)
 	UpdateProduct(ctx context.Context, id string, patch ProductPatch) (models.Product, error)
 	SoftDeleteProduct(ctx context.Context, id string) error

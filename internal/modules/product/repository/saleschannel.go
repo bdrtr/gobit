@@ -157,6 +157,21 @@ LIMIT $6::int OFFSET $7::int`
 var countProductsSQL = `SELECT count(*) FROM product
 ` + productFilterSQL + salesChannelVisible("product.id", "$5")
 
+// visibleProductIDsSQL verilen kimliklerden kanallarda GÖRÜNÜR olanları döner.
+//
+// Toplu sorulmasının sebebi somut: arama bir seferde onlarca kimlik getirir ve
+// görünürlüğü kimlik başına sormak, sonuç sayısı kadar gidiş-dönüş demektir.
+// Bu depo N+1'i yapısal olarak dışarıda tutan bir mimaride yaşıyor
+// (bkz. core/query) ve arama yolunda onu geri getirmek, en sıcak uçta en pahalı
+// erişim desenini kurmak olurdu.
+//
+// Kural [salesChannelVisibleTemplate]'ten gelir, yani tekil sorguyla AYNI
+// tanımdır; ikinci bir kopya çıkarılsaydı biri değiştiğinde arama ile vitrin
+// sessizce ayrışırdı.
+var visibleProductIDsSQL = `SELECT id FROM product
+WHERE id = ANY($1::text[]) AND deleted_at IS NULL AND ` +
+	salesChannelVisible("product.id", "$2")
+
 // productVisibleSQL tek bir ürünün verilen kanallarda görünür olup olmadığını
 // sorar.
 //
@@ -223,4 +238,37 @@ func (r *Repo) ProductVisibleInSalesChannels(
 		return false, wrapDB(err, "ürünün satış kanalı görünürlüğü okunamadı: %s", productID)
 	}
 	return visible, nil
+}
+
+// VisibleProductIDs verilen kimliklerden kanallarda görünür olanları TEK
+// sorguda döner.
+//
+// Sonuç bir küme olarak döner çünkü çağıranın tek ihtiyacı üyelik sorusudur;
+// dilim dönseydi her çağıran kendi haritasını kurardı ve sıralama, dilimin
+// taşımadığı bir anlam gibi görünürdü — istek sırası çağıranın elindedir.
+func (r *Repo) VisibleProductIDs(
+	ctx context.Context,
+	productIDs []string,
+	salesChannelIDs []string,
+) (map[string]struct{}, error) {
+	if len(productIDs) == 0 {
+		return map[string]struct{}{}, nil
+	}
+
+	rows, err := r.db.Query(ctx, visibleProductIDsSQL, productIDs, salesChannelIDs)
+	if err != nil {
+		return nil, wrapDB(err, "ürün görünürlüğü okunamadı (%d kimlik)", len(productIDs))
+	}
+
+	ids, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	if err != nil {
+		return nil, wrapDB(err, "ürün görünürlüğü okunamadı (%d kimlik)", len(productIDs))
+	}
+
+	gorunur := make(map[string]struct{}, len(ids))
+	for _, id := range ids {
+		gorunur[id] = struct{}{}
+	}
+
+	return gorunur, nil
 }

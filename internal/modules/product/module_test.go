@@ -21,6 +21,8 @@ func TestModuleContract(t *testing.T) {
 	assert.Equal(t, "product", mod.Name())
 	assert.Equal(t, "product.service", product.ServiceName,
 		"servis adı modüller arası sözleşmedir; başka modüller bu adla çözer")
+	assert.Equal(t, "product.interop", product.InteropName,
+		"interop adı modüller arası sözleşmedir; eklentiler katalogu bu adla çözer")
 }
 
 // TestMigrationsAreEmbeddedInPairs migration dosyalarının gömüldüğünü ve her

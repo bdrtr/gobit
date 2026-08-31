@@ -54,6 +54,12 @@
 // yüzeylerle kurulur. Kurulumun gerçek olması testin bütün değeridir: sahte bir
 // bağımlılıkla geçen bir hesap, üretimde aynı hesabı yapacağını kanıtlamaz.
 //
+// Zemin ayrıca ARAMA EKLENTİSİNİ de üretimdeki sırayla kurar (Install ->
+// Bootstrap -> Start): eklentinin getirdiği modül çekirdek modüllerle aynı
+// yaşam döngüsünden geçer ve abonelikleri ilk üründen önce bağlanır. Kararın
+// tamamı ve neden ödeme eklentisinin zemine KURULMADIĞI arama_test.go
+// dosyasının başındadır.
+//
 // Saga motoru BELLEK İÇİ değil, üretimdeki gibi pgstore üzerinde koşar
 // (core.workflow.store). Fark testin gördüğü şeyi değiştirir: idempotency
 // anahtarı ve yürütme durumu gerçekten veritabanına yazılır, dolayısıyla "aynı
@@ -541,6 +547,15 @@ func zeminiKur(ctx context.Context) error {
 			IdempotencyStore: corehttp.NewMemoryIdempotencyStore(time.Hour),
 		}),
 	})
+
+	// Eklentiler modüllerden ÖNCE kurulur (main.go ile aynı sıra): eklentinin
+	// GETİRDİĞİ modül de Register/migration/route döngüsünden geçmelidir.
+	// Gerekçesi ve zemine kurulmalarının neden mevcut testleri kırmadığı
+	// arama_test.go dosyasının başındadır.
+	if err := eklentileriKur(ctx, kayit, veriYolu); err != nil {
+		return fmt.Errorf("eklentiler kurulamadı: %w", err)
+	}
+
 	if err := kayit.Bootstrap(ctx, kap, testRouter); err != nil {
 		return err
 	}
@@ -551,6 +566,12 @@ func zeminiKur(ctx context.Context) error {
 		return fmt.Errorf("kimlik doğrulayıcı çözülemedi: %w", err)
 	}
 	testAuthn.Bind(dogrulayici)
+
+	// Eklentilerin abonelikleri ve route'ları modüller ayağa kalktıktan SONRA
+	// uygulanır; sağlayıcı kayıtları ile abonelikler ancak o anda çözülebilir.
+	if err := eklentileriBaslat(ctx); err != nil {
+		return fmt.Errorf("eklentiler başlatılamadı: %w", err)
+	}
 
 	// OpenAPI ucu da üretimdeki gibi router ağacından üretilir (Faz 9).
 	testRouter.Get("/openapi.json", openapi.New("gobit API", "e2e").Handler(testRouter))

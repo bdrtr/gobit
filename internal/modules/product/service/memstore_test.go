@@ -263,6 +263,33 @@ func (m *memStore) ProductVisibleInSalesChannels(
 	return m.visibleIn(productID, salesChannelIDs), nil
 }
 
+// VisibleProductIDs toplu görünürlüğü tekil kuralın ta kendisiyle hesaplar.
+//
+// Sahte, iki metodun AYNI cevabı vermesini garanti eder: ayrı bir kural
+// yazsaydı gerçek depoda ayrışan bir davranışı testte gizleyebilirdi.
+func (m *memStore) VisibleProductIDs(
+	_ context.Context,
+	productIDs []string,
+	salesChannelIDs []string,
+) (map[string]struct{}, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if err := m.track("VisibleProductIDs"); err != nil {
+		return nil, err
+	}
+
+	gorunur := make(map[string]struct{}, len(productIDs))
+
+	for _, id := range productIDs {
+		if m.visibleIn(id, salesChannelIDs) {
+			gorunur[id] = struct{}{}
+		}
+	}
+
+	return gorunur, nil
+}
+
 func (m *memStore) ListProducts(_ context.Context, f repository.ProductFilter) ([]models.Product, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

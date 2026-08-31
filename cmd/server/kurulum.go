@@ -22,6 +22,7 @@ import (
 	authmodels "github.com/bdrtr/gobit/internal/modules/auth/models"
 	authservice "github.com/bdrtr/gobit/internal/modules/auth/service"
 	"github.com/bdrtr/gobit/plugins/paymentstripe"
+	"github.com/bdrtr/gobit/plugins/searchpg"
 )
 
 // API yüzeylerinin yol önekleri. Koruma, hız sınırı ve idempotency bu iki
@@ -53,8 +54,15 @@ const gecicSirBayt = 32
 // Katalog burada, kurulum kökünde durur: eklenti eklemek çekirdeği ya da
 // herhangi bir modülü değiştirmez, yalnızca bu haritaya bir satır ekler
 // (plan Faz 9 DoD). Hangisinin kurulacağını PLUGINS ortam değişkeni seçer.
+//
+// İki eklenti iki farklı uzatma biçimini gösterir: paymentstripe yalnızca bir
+// SAĞLAYICI kaydeder (payment modülünün genişleme noktası), searchpg ise KENDİ
+// MODÜLÜNÜ getirir — kendi tablosu, kendi migration'ı ve kendi route'larıyla.
+// İkincisi, aşağıdaki satır dışında hiçbir yerde adı geçmeden yeni bir uç
+// (GET /store/v1/search) açar.
 var eklentiKatalogu = map[string]func() coreplugin.Plugin{
 	paymentstripe.Name: func() coreplugin.Plugin { return paymentstripe.New() },
+	searchpg.Name:      func() coreplugin.Plugin { return searchpg.New() },
 }
 
 // korumaYigini uygulamanın koruma middleware'lerini yapılandırmadan kurar.

@@ -355,9 +355,52 @@ modül de yaşam döngüsünden geçebilsin), `Start` modüllerden **sonra**
 (sağlayıcı kaydı ancak payment modülü ayağa kalkınca vardır). Bilinmeyen bir
 eklenti adı ya da eksik ayar açılışta hata verir.
 
-`plugins/paymentstripe` bir **iskelettir**: kayıt ve yaşam döngüsü tam çalışır,
-Stripe API çağrıları yapılmamıştır ve para hareketi üreten her metod açık bir
-"uygulanmadı" hatası döner.
+İki eklenti iki farklı uzatma biçimini gösterir:
+
+| Eklenti | Ne yapar | Hangi uzatma noktaları |
+|---|---|---|
+| `paymentstripe` | **iskelet** — kayıt ve yaşam döngüsü tam çalışır, Stripe API çağrıları yapılmamıştır ve para hareketi üreten her metod açık bir "uygulanmadı" hatası döner | sağlayıcı kaydı |
+| `searchpg` | **gerçek özellik** — ürün olaylarını dinler, PostgreSQL tam metin indeksini taze tutar, `GET /store/v1/search` ve `POST /admin/v1/search/reindex` uçlarını açar | kendi modülü + migration'ı, olay aboneliği, kendi route'ları |
+
+```bash
+PLUGINS=searchpg make run
+curl -s 'localhost:9000/store/v1/search?q=tişört' -H "x-publishable-api-key: pk_…"
+```
+
+Arama motoru bilinçli olarak **dış bir servis değildir**: PostgreSQL tam metin
+araması, yeni bir bağımlılık ve yeni bir compose servisi getirmeden gerçek bir
+özellik verir; eklenti sınırı sayesinde ileride Meilisearch/OpenSearch'e geçmek
+başka hiçbir yeri değiştirmez.
+
+> **Arama, kanal süzmesinin bypass'ı değildir.** Eklenti yalnızca ürün
+> *kimliklerini* indeksler; kayıtları `product.interop` getirir ve görünürlük
+> kuralı tek yerde kalır. Kuralı eklentide tekrar etmek, biri değiştiğinde
+> vitrin ile aramanın sessizce ayrışması demek olurdu.
+
+## Alan olayları
+
+Modüller kendi alan olaylarını event bus'a yayımlar; aboneler (eklentiler,
+entegrasyonlar) onları dinler.
+
+| Olay | Yük |
+|---|---|
+| `order.placed` | `order_id`, `display_id`, `status`, `region_id`, `customer_id`, `currency_code`, `total`, `item_count` |
+| `product.created` / `product.updated` | `product_id`, `status` |
+| `product.deleted` | `product_id` |
+
+İki kural bağlayıcıdır:
+
+- **Yük DARDIR.** Aboneye lazım olan her alanı olaya koymak, olayı kaydın
+  ikinci bir kopyasına çevirir ve iki gösterim ayrışır. Abonenin elinde kimlik
+  vardır, kaydı okuyabilir.
+- **Tüm değerler dizedir**, sayısal olanlar da. Redis backend'i `Data`'yı JSON
+  ile yazar; JSON'un tek sayı tipi olduğu için `int64` konan bir alan aboneye
+  `float64` olarak ulaşır — aynı abone geliştirmede çalışıp **üretimde**
+  düşerdi, üstelik para float üzerinden geçerdi.
+
+> Handler hata dönerse olay **işlenmiş sayılır**; hiçbir backend yeniden
+> teslim etmez (Redis, handler'ın sonucundan bağımsız olarak ACK'ler). Hata
+> dönmek bir "yeniden dene" isteği değil, **görünürlük** sağlar.
 
 ## OpenAPI
 

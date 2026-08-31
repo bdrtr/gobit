@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/bdrtr/gobit/internal/core/errors"
+	"github.com/bdrtr/gobit/internal/core/eventbus"
 	"github.com/bdrtr/gobit/internal/core/link"
 	"github.com/bdrtr/gobit/internal/core/query"
 	"github.com/bdrtr/gobit/internal/modules/product/models"
@@ -188,18 +189,84 @@ func (f *fakeGraph) lastSpec(t *testing.T) query.GraphSpec {
 	return f.specs[len(f.specs)-1]
 }
 
+// fakeBus [service.EventPublisher]'ın bellek içi karşılığıdır.
+//
+// Yayımlanan olayları SIRASIYLA tutar: katalog olaylarının gerçekten
+// yayımlandığı ancak yayımın gözlemlenmesiyle kanıtlanabilir — servisin dönüş
+// değerinde olayın izi yoktur (Publish handler'ları beklemez).
+type fakeBus struct {
+	mu sync.Mutex
+	// published yayımlanan olaylardır.
+	published []eventbus.Event
+	// failErr ayarlanırsa Publish bu hatayı döner.
+	failErr error
+}
+
+// Sahte veri yolunun servisin beklediği yüzeyi karşıladığı derleme zamanında
+// doğrulanır.
+var _ service.EventPublisher = (*fakeBus)(nil)
+
+// newFakeBus boş bir sahte veri yolu üretir.
+func newFakeBus() *fakeBus { return &fakeBus{} }
+
+// Publish olayı kaydeder.
+func (b *fakeBus) Publish(_ context.Context, e eventbus.Event) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	if b.failErr != nil {
+		return b.failErr
+	}
+	b.published = append(b.published, e)
+	return nil
+}
+
+// events yayımlanan olayların anlık kopyasını döner.
+func (b *fakeBus) events() []eventbus.Event {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return append([]eventbus.Event(nil), b.published...)
+}
+
+// byName verilen adla yayımlanmış olayları döner.
+func (b *fakeBus) byName(name string) []eventbus.Event {
+	out := make([]eventbus.Event, 0, 1)
+	for _, e := range b.events() {
+		if e.Name == name {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
 // newService test için servis kurar.
 //
 // Sahte depo ile sahte link servisi BURADA birbirine bağlanır: satış kanalı
 // bağı gerçekte tek bir tabloda durur ve servis onu link üzerinden yazıp depo
 // sorgusuyla okur. Bağlanmasalardı yazma bir yere, okuma başka bir yere gider
 // ve süzme testleri hiçbir şey kanıtlamazdı (bkz. memStore.links).
+//
+// Veri yolu VERİLMEZ: olayları gözleyen testler [newServiceWithBus] kullanır.
+// Ayrımın kendisi de bir iddiadır — veri yolusuz servis her yazma yolunda
+// çalışmaya devam etmelidir (bkz. service.Service.publishProductEvent).
 func newService(t *testing.T, store *memStore, links service.Linker, graph service.Grapher) *service.Service {
+	t.Helper()
+	return newServiceWithBus(t, store, links, graph, nil)
+}
+
+// newServiceWithBus olay veri yolu bağlanmış bir servis kurar.
+func newServiceWithBus(
+	t *testing.T,
+	store *memStore,
+	links service.Linker,
+	graph service.Grapher,
+	bus service.EventPublisher,
+) *service.Service {
 	t.Helper()
 	if fake, ok := links.(*fakeLinker); ok && store != nil {
 		store.links = fake
 	}
-	svc, err := service.New(service.Options{Repo: store, Links: links, Query: graph})
+	svc, err := service.New(service.Options{Repo: store, Links: links, Query: graph, Events: bus})
 	require.NoError(t, err)
 	return svc
 }

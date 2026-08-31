@@ -19,6 +19,7 @@ import (
 	"log/slog"
 
 	"github.com/bdrtr/gobit/internal/core/errors"
+	"github.com/bdrtr/gobit/internal/core/eventbus"
 	"github.com/bdrtr/gobit/internal/core/query"
 	"github.com/bdrtr/gobit/internal/modules/product/models"
 	"github.com/bdrtr/gobit/internal/modules/product/repository"
@@ -47,6 +48,21 @@ type Grapher interface {
 	Graph(ctx context.Context, spec query.GraphSpec) ([]query.Record, error)
 }
 
+// EventPublisher servisin olay veri yolundan ihtiyaç duyduğu DAR yüzeydir.
+//
+// core/eventbus ÇEKİRDEKTİR ve import edilmesi serbesttir (Prensip 2.4);
+// buradaki daralma bağımlılığı azaltmak içindir: katalog yalnızca YAYIMLAR,
+// abone olmaz ve veri yolunu kapatmaz. [eventbus.EventBus]'ın tamamına
+// bağlanmak, modülün abonelik ve kapatma yetkisi varmış izlenimi verirdi.
+//
+// [eventbus.Event] tipi olduğu gibi kullanılır: olayın şekli çekirdeğin
+// sözleşmesidir ve burada yeniden tanımlanması iki tipin ayrışmasına yol
+// açardı.
+type EventPublisher interface {
+	// Publish olayı yayımlar ve handler'ları BEKLEMEZ.
+	Publish(ctx context.Context, e eventbus.Event) error
+}
+
 // Options servis kurulumunun bağımlılıklarıdır.
 type Options struct {
 	// Repo zorunludur.
@@ -57,6 +73,9 @@ type Options struct {
 	// Query store listelemesinin fiyat/stok genişletmesi içindir; nil
 	// verilirse listeleme fiyatsız ve stoksuz çalışır.
 	Query Grapher
+	// Events katalog olaylarının yayımlandığı veri yoludur; nil verilirse
+	// olaylar sessizce atlanır (gerekçe: [Service.publishProductEvent]).
+	Events EventPublisher
 	// Logger nil verilirse loglar atılır.
 	Logger *slog.Logger
 }
@@ -66,10 +85,11 @@ type Options struct {
 // Container'a "product.service" adıyla kaydedilir. Tüm metodları
 // goroutine-güvenlidir (durum tutmaz; durum veritabanındadır).
 type Service struct {
-	repo  repository.Store
-	links Linker
-	graph Grapher
-	log   *slog.Logger
+	repo   repository.Store
+	links  Linker
+	graph  Grapher
+	events EventPublisher
+	log    *slog.Logger
 }
 
 // New verilen bağımlılıklarla servisi kurar.
@@ -84,7 +104,7 @@ func New(opts Options) (*Service, error) {
 	if log == nil {
 		log = slog.New(slog.DiscardHandler)
 	}
-	return &Service{repo: opts.Repo, links: opts.Links, graph: opts.Query, log: log}, nil
+	return &Service{repo: opts.Repo, links: opts.Links, graph: opts.Query, events: opts.Events, log: log}, nil
 }
 
 // ListResult sayfalı bir listenin sonucudur.
@@ -243,7 +263,12 @@ func (s *Service) CreateProduct(ctx context.Context, in CreateProductInput) (mod
 		return models.Product{}, err
 	}
 
-	return s.GetProduct(ctx, product.ID)
+	created, err := s.GetProduct(ctx, product.ID)
+	if err != nil {
+		return models.Product{}, err
+	}
+	s.publishProductEvent(ctx, EventProductCreated, created.ID, created.Status)
+	return created, nil
 }
 
 // GetProduct ürünü ilişkili kayıtlarıyla birlikte döner.
@@ -373,7 +398,12 @@ func (s *Service) UpdateProduct(ctx context.Context, id string, in UpdateProduct
 		return models.Product{}, err
 	}
 
-	return s.GetProduct(ctx, id)
+	updated, err := s.GetProduct(ctx, id)
+	if err != nil {
+		return models.Product{}, err
+	}
+	s.publishProductEvent(ctx, EventProductUpdated, updated.ID, updated.Status)
+	return updated, nil
 }
 
 // DeleteProduct ürünü ve alt kayıtlarını SOFT siler.
@@ -408,6 +438,11 @@ func (s *Service) DeleteProduct(ctx context.Context, id string) error {
 		s.cleanupVariantLinks(ctx, variantID)
 	}
 	s.cleanupProductSalesChannels(ctx, id)
+
+	// Olay bağ temizliğinden SONRA yayımlanır: aboneyi kaydın bağlarını
+	// okumaya çağıran bir sıralamada, temizlik yarım kalmışken gelen abone
+	// silinmiş ürünün bağlarını hâlâ görürdü.
+	s.publishProductEvent(ctx, EventProductDeleted, id, "")
 	return nil
 }
 

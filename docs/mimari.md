@@ -250,6 +250,17 @@ reddedilir.
 3. `cmd/server` ve `internal/e2e` içindeki modül listesine ekle — ikisi aynı
    sırayı taşır.
 
+### Yeni alan olayı
+
+Modülün `service` paketinde olay adını ve yük anahtarlarını **sabit** olarak
+yayımla; ad, Redis backend'inde aynı zamanda stream adıdır ve değişmesi tüm
+abonelerin sessizce olay almayı bırakması demektir. Yük dar tutulur ve tüm
+değerler dize olur (gerekçe: `order/service/events.go`).
+
+Yayım hatasının yazmayı düşürüp düşürmeyeceği modüle göre değişir: siparişte
+saga içindedir, katalogda commit'ten sonradır ve hata dönmek çağırana
+"uygulanmadı" demek olurdu.
+
 ### Yeni eklenti
 
 `plugins/<ad>/` altında `coreplugin.Plugin` uygulayan bir paket; sözleşme

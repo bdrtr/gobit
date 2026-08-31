@@ -206,6 +206,104 @@ func (s *Service) GetStoreProduct(
 	return items[0], nil
 }
 
+// StoreProductsByIDs vitrin ürünlerini KİMLİĞE göre, İSTENEN SIRAYLA döner.
+//
+// Arama gibi dış tüketiciler içindir: alaka sırasını dışarıdan onlar verir
+// ("product.interop" yüzeyi bu metoda bakar, bkz. interop.go).
+//
+// # Görünürlük kuralı listeyle AYNIDIR
+//
+// Kural burada YENİDEN YAZILMAZ; iki yerde ifade edilen bir görünürlük kuralı,
+// biri değiştiğinde vitrin ile aramanın ayrışması ve aramanın kanal süzmesinin
+// BYPASS'ı hâline gelmesi demektir. Bu yüzden:
+//
+//   - Yayın durumu tekil vitrin ucuyla aynı şekilde süzülür (yalnızca
+//     "published"; bkz. [Service.GetStoreProduct]).
+//   - Kanal görünürlüğü, tekil ucun kullandığı depo çağrısıyla
+//     (ProductVisibleInSalesChannels) — yani listelemenin SQL'iyle AYNI
+//     şablonla — sorulur (bkz. repository/saleschannel.go).
+//
+// salesChannelIDs'in nil ile boş dilim arasındaki farkı listelemedekiyle aynı
+// anlamı taşır (bkz. [StoreListOptions.SalesChannelIDs]).
+//
+// Görünürlük kimlik başına bir sorgudur; kimlik sayısı [MaxLimit] ile
+// sınırlıdır ve her sorgu link tablosunun birincil anahtar önekini kullanır.
+// Bedel bilinçlidir: kuralın TEK tanımı kalsın diye ödenir. Bu yol bir gün
+// sıcaklaşırsa doğru adım kuralı Go'ya taşımak değil, saleschannel.go'daki
+// salesChannelVisible şablonundan TOPLU bir sorgu üretmektir.
+//
+// # Sıra ve bulunamayan kimlikler
+//
+// Yanıt, isteğin kimlik sırasını korur. Bilinmeyen, silinmiş, yayında olmayan
+// ya da isteğin kanallarında görünmeyen kimlik SESSİZCE atlanır — hepsi
+// çağıranın "bu kimlik sende var mı" sorusunun geçerli yanıtlarıdır ve hata
+// dönmek, aramanın bir ürün silindiği için tümüyle düşmesi demek olurdu. Sızma
+// yönünde bir bilgi de vermez: başka kanaldaki ürün ile hiç var olmayan ürün
+// çağıran için AYIRT EDİLEMEZ (tekil vitrin ucunun ikisine de NotFound
+// dönmesiyle aynı gerekçe).
+//
+// Tekrarlanan kimlik yanıtta BİR KEZ görünür; ilk geçtiği sırayı korur.
+func (s *Service) StoreProductsByIDs(ctx context.Context, ids, salesChannelIDs []string) ([]StoreProduct, error) {
+	wanted, err := uniqueIDs("ids", ids)
+	if err != nil {
+		return nil, err
+	}
+	if len(wanted) == 0 {
+		return []StoreProduct{}, nil
+	}
+	// Sınırı aşan istek KIRPILMAZ, reddedilir: sessiz kırpma arama sonucunu
+	// sessizce eksiltir ve çağıran bunu asla göremez. Açık hata onu sayfalamaya
+	// zorlar.
+	if len(wanted) > MaxLimit {
+		return nil, invalid("ids en fazla %d kimlik taşıyabilir (verilen: %d)", MaxLimit, len(wanted))
+	}
+
+	found, err := s.repo.ListProductsByIDs(ctx, wanted)
+	if err != nil {
+		return nil, err
+	}
+	byID := make(map[string]models.Product, len(found))
+	for i := range found {
+		byID[found[i].ID] = found[i]
+	}
+
+	// Görünürlük TEK sorguda sorulur. Kimlik başına sormak, arama sonucu
+	// sayısı kadar gidiş-dönüş demektir ve N+1'i yapısal olarak dışarıda tutan
+	// bir mimaride (bkz. core/query) onu en sıcak uçta geri getirirdi.
+	//
+	// nil, "istek kanal kimliği taşımıyor" demektir; süzgeç uygulanmaz ve
+	// sorgu hiç atılmaz.
+	var gorunur map[string]struct{}
+	if salesChannelIDs != nil {
+		gorunur, err = s.repo.VisibleProductIDs(ctx, wanted, salesChannelIDs)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	visible := make([]models.Product, 0, len(wanted))
+	for _, id := range wanted {
+		product, ok := byID[id]
+		if !ok || product.Status != models.StatusPublished {
+			continue
+		}
+		if gorunur != nil {
+			if _, ok := gorunur[id]; !ok {
+				continue
+			}
+		}
+		visible = append(visible, product)
+	}
+	if len(visible) == 0 {
+		return []StoreProduct{}, nil
+	}
+
+	if err := s.attachRelations(ctx, visible); err != nil {
+		return nil, err
+	}
+	return s.toStoreProducts(ctx, visible)
+}
+
 // toStoreProducts ürünleri vitrin biçimine çevirir ve varyantları
 // zenginleştirir.
 func (s *Service) toStoreProducts(ctx context.Context, products []models.Product) ([]StoreProduct, error) {

@@ -12,6 +12,22 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Eklendi
 
+- **Alan olayları ve gerçek bir eklenti: arama.** `order.placed` depodaki TEK
+  olaydı — event bus tamamen kurulu (bellek içi + Redis Streams, consumer
+  group, XACK), plan Bölüm 5.4'te çekirdek sözleşme, `Host.Subscribe`
+  eklentiler için hazır, ama abone olunacak neredeyse hiçbir şey yoktu.
+  `product` artık `product.created` / `product.updated` / `product.deleted`
+  yayımlıyor (sipariş olaylarının doktrini: dar yük, tüm değerler dize, kalıcı
+  akışa kişisel veri yok).
+  `plugins/searchpg` bunları tüketen ilk **gerçek** eklenti: kendi modülünü,
+  kendi tablosunu ve migration'ını getiriyor (`Host.AddModule` bugüne kadar hiç
+  kullanılmamıştı), PostgreSQL tam metin araması yapıyor ve
+  `GET /store/v1/search` ile `POST /admin/v1/search/reindex` uçlarını açıyor.
+  Dış servis bilinçli olarak yok: eklenti sınırı sayesinde ileride
+  Meilisearch/OpenSearch'e geçmek başka hiçbir yeri değiştirmez.
+  **Arama, kanal süzmesinin bypass'ı değildir** — eklenti yalnızca kimlik
+  indeksler, kayıtları `product.interop` getirir ve görünürlük kuralı tek
+  yerde kalır.
 - **Çoklu depo: stok satır başına, doğru depodan ayrılır.** `complete_cart`
   saga'sındaki "TEK LOKASYON VARSAYIMI" kaldırıldı — kod bu değişikliği
   "Faz 7'de" diye vaat ediyordu, Faz 7 bitmiş ve varsayım durmuştu.

@@ -122,6 +122,11 @@ func defineLinks(ctx context.Context) error {
 // --- yardımcılar --------------------------------------------------------
 
 // newService gerçek depo üzerinde çalışan bir servis kurar.
+//
+// Olay veri yolu VERİLMEZ: buradaki testler deponun ve kuralların davranışını
+// sınar, olayları değil — veri yolusuz serviste olaylar sessizce atlanır
+// (bkz. service.Service.publishProductEvent). Olayların gerçekten yayımlandığı
+// interop_integration_test.go içinde, modül Register edilerek kanıtlanır.
 func newService(t *testing.T, links service.Linker, graph service.Grapher) *service.Service {
 	t.Helper()
 

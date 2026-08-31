@@ -16,6 +16,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/bdrtr/gobit/internal/core/container"
+	"github.com/bdrtr/gobit/internal/core/eventbus"
 	corehttp "github.com/bdrtr/gobit/internal/core/http"
 	"github.com/bdrtr/gobit/internal/core/link"
 	"github.com/bdrtr/gobit/internal/core/query"
@@ -126,6 +127,10 @@ func newSystem(t *testing.T) system {
 	require.NoError(t, c.Provide("core.db", testPool))
 	require.NoError(t, c.Provide("core.link", links))
 	require.NoError(t, c.Provide("core.query", query.New(links, c, nil)))
+	// Olay veri yolu ZORUNLUDUR: Register onu çözemezse açılış düşer
+	// (bkz. [TestRegisterOlayVeriYoluOlmadanDuser]). Kurulum main.go'nunkiyle
+	// aynı sırayı izler; veri yolu modüller ayağa kalkmadan önce konur.
+	require.NoError(t, c.Provide("core.eventbus", eventbus.NewInMemory(nil)))
 
 	// pricing ve inventory modülleri bu ikili ile temsil edilir; çekirdek
 	// onları da yalnızca bu adlar ve bu arayüz üzerinden tanır.
@@ -183,8 +188,9 @@ func jsonBody(t *testing.T, rec *httptest.ResponseRecorder) map[string]any {
 	return out
 }
 
-// TestModuleRegisterWiresContainer Register'ın sözleşmedeki üç şeyi de
-// yaptığını doğrular: servis kaydı, Query sağlayıcıları ve link tanımları.
+// TestModuleRegisterWiresContainer Register'ın sözleşmedeki dört şeyi de
+// yaptığını doğrular: servis kaydı, interop yüzeyi, Query sağlayıcıları ve link
+// tanımları.
 func TestModuleRegisterWiresContainer(t *testing.T) {
 	ctx := context.Background()
 	sys := newSystem(t)
@@ -192,6 +198,12 @@ func TestModuleRegisterWiresContainer(t *testing.T) {
 	svc, err := container.Resolve[*service.Service](sys.container, product.ServiceName)
 	require.NoError(t, err, "servis %q adıyla çözülebilmeli", product.ServiceName)
 	assert.NotNil(t, svc)
+
+	// Modüller arası yüzey servisten AYRI bir adla kayıtlıdır: eklentiler
+	// katalogu yalnızca bu adla ve ilkel tiplerle görür (ADR 0006).
+	interop, err := container.Resolve[*service.Interop](sys.container, product.InteropName)
+	require.NoError(t, err, "yüzey %q adıyla çözülebilmeli", product.InteropName)
+	assert.NotNil(t, interop)
 
 	for _, entity := range []string{service.EntityProduct, service.EntityVariant} {
 		name := entity + query.ProviderSuffix
@@ -556,6 +568,7 @@ func TestStoreListingDegradesWithoutOtherModules(t *testing.T) {
 	require.NoError(t, c.Provide("core.db", testPool))
 	require.NoError(t, c.Provide("core.link", links))
 	require.NoError(t, c.Provide("core.query", query.New(links, c, nil)))
+	require.NoError(t, c.Provide("core.eventbus", eventbus.NewInMemory(nil)))
 	// pricing ve inventory sağlayıcıları BİLİNÇLİ olarak kaydedilmez.
 
 	mod := product.New()

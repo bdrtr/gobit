@@ -3,13 +3,21 @@
 //
 // # Modülün çekirdekle sözleşmesi
 //
-// [Module] çekirdeğin module.Module arayüzünü karşılar. Register sırasında üç
-// şey yapılır:
+// [Module] çekirdeğin module.Module arayüzünü karşılar. Register sırasında
+// dört şey yapılır:
 //
 //  1. Servis container'a "product.service" adıyla kaydedilir.
-//  2. Query sağlayıcıları "product.query" ve "variant.query" adlarıyla
+//  2. Modüller arası İLKEL okuma yüzeyi "product.interop" adıyla kaydedilir
+//     (ADR 0006); eklentiler ve akışlar katalog kaydını buradan okur.
+//  3. Query sağlayıcıları "product.query" ve "variant.query" adlarıyla
 //     kaydedilir (ADR 0004).
-//  3. Fiyat, stok ve satış kanalı link tanımları bildirilir (ADR 0005).
+//  4. Fiyat, stok ve satış kanalı link tanımları bildirilir (ADR 0005).
+//
+// # Yayımladığı olaylar
+//
+// "product.created", "product.updated" ve "product.deleted" — ürün yazıldığında,
+// güncellendiğinde ve silindiğinde. Yükleri ve yayım politikası için bkz.
+// [service.EventProductCreated] ve service/events.go.
 //
 // # Başka modüller
 //
@@ -45,9 +53,10 @@ const Name = "product"
 
 // Container'da çözülen çekirdek servislerin adları.
 const (
-	svcDB    = "core.db"
-	svcLink  = "core.link"
-	svcQuery = "core.query"
+	svcDB       = "core.db"
+	svcLink     = "core.link"
+	svcQuery    = "core.query"
+	svcEventBus = "core.eventbus"
 )
 
 // ServiceName modülün servisinin container'daki adıdır.
@@ -55,6 +64,14 @@ const (
 // Başka modüller (ADR 0001 gereği bu paketi import ETMEDEN) katalog servisine
 // bu adla ulaşır.
 const ServiceName = Name + ".service"
+
+// InteropName modüller arası ilkel yüzeyin container'daki adıdır (ADR 0006).
+//
+// Servisin kendisinden AYRI kaydedilir: servis product'ın zengin tipleriyle
+// konuşur, bu yüzey yalnızca ilkel ve stdlib tipleriyle. Eklentiler (plugins/**)
+// hiçbir modülü import edemedikleri için katalogu ANCAK bu adla ve kendi
+// tanımladıkları dar arayüzle okuyabilir.
+const InteropName = Name + ".interop"
 
 // Hata kodları.
 const (
@@ -92,11 +109,25 @@ func (m *Module) Name() string { return Name }
 // Migrations modülün migration dosyalarını döner.
 func (m *Module) Migrations() fs.FS { return migrationsRoot }
 
-// Register servisi ve Query sağlayıcılarını container'a kaydeder, link
-// tanımlarını bildirir.
+// Register servisi, interop yüzeyini ve Query sağlayıcılarını container'a
+// kaydeder, link tanımlarını bildirir.
 //
 // Yalnızca ÇEKİRDEK servisler çözülür; başka modüllerin servisleri bu aşamada
 // henüz kayıtlı olmayabilir (bkz. module.Module belgesi).
+//
+// # Olay veri yolu ZORUNLUDUR ve eksikse açılış durur
+//
+// core.eventbus da tıpkı core.db, core.link ve core.query gibi modüller ayağa
+// kalkmadan önce main.go'da hazır değer olarak kaydedilir; eksikliği bir
+// dağıtım biçimi değil, bir KURULUM HATASIDIR. Bu yüzden "olaylar sessizce
+// atlansın" seçilmedi: o yol arızayı görünmez kılardı — katalog çalışmaya
+// devam eder, hiçbir hata görünmez, yalnızca arama indeksi güncellenmez ve
+// eksiklik ancak müşteriler yeni ürünleri bulamadığında, yani ÜRETİMDE fark
+// edilirdi. Açılışta düşen bir kurulum ise ilk saniyede görülür.
+//
+// Sessiz atlama yine de mümkündür ama YALNIZCA gömülü kullanım ve testler için:
+// [service.Options].Events nil verilebilir (bkz. service.Service.publishProductEvent).
+// Bu yol Register'dan geçmez.
 func (m *Module) Register(ctx context.Context, c *container.Container) error {
 	pool, err := container.Resolve[*db.Pool](c, svcDB)
 	if err != nil {
@@ -113,12 +144,20 @@ func (m *Module) Register(ctx context.Context, c *container.Container) error {
 		return errors.Wrap(err, errors.KindOf(err), codeSetupFailed,
 			"%s modülü query katmanını çözemedi (%q)", Name, svcQuery)
 	}
+	// Dar arayüzle çözülür: modül yalnızca YAYIMLAR, abone olmaz ve veri
+	// yolunu kapatmaz (bkz. service.EventPublisher).
+	bus, err := container.Resolve[service.EventPublisher](c, svcEventBus)
+	if err != nil {
+		return errors.Wrap(err, errors.KindOf(err), codeSetupFailed,
+			"%s modülü olay veri yolunu çözemedi (%q)", Name, svcEventBus)
+	}
 
 	repo := repository.New(pool.Pool())
 	svc, err := service.New(service.Options{
-		Repo:  repo,
-		Links: links,
-		Query: graph,
+		Repo:   repo,
+		Links:  links,
+		Query:  graph,
+		Events: bus,
 		// Uygulama açılışta slog.SetDefault ile yapılandırılmış logger'ı kurar;
 		// modül ayrı bir logger kaydı aramaz.
 		Logger: slog.Default().With("modul", Name),
@@ -129,6 +168,12 @@ func (m *Module) Register(ctx context.Context, c *container.Container) error {
 	}
 
 	if err := c.Provide(ServiceName, svc); err != nil {
+		return err
+	}
+	// Modüller arası yüzey AYRI bir adla kaydedilir: servisin kendisi
+	// product'ın zengin tipleriyle konuşur, bu yüzey ise yalnızca ilkel
+	// tiplerle (ADR 0006).
+	if err := c.Provide(InteropName, service.NewInterop(svc)); err != nil {
 		return err
 	}
 	// Sağlayıcı adları "<entity>.query" biçimindedir; Query onları bu adla
