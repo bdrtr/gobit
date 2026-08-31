@@ -395,6 +395,173 @@ func TestVitrinUclarininTumuAnlatildi(t *testing.T) {
 		"tabloda olmayan bir vitrin ucu sınanmamış demektir")
 }
 
+// TestYonetimListesiGovdesiniAnlatir /admin/v1/carts'ın ne döndüğünü
+// söylediğini doğrular.
+//
+// Kayıt tipi burada asıl mesele: uç satırları, adresleri ve kargo yöntemlerini
+// YÜKLEMEZ (bkz. [Handler.adminListCarts]). [cartDetailDTO] anlatılsaydı şema
+// hiç dolmayacak alanlar vaat eder, istemci de her yanıtta boş bir "items"
+// dizisi görüp satırların gerçekten olmadığını sanardı.
+func TestYonetimListesiGovdesiniAnlatir(t *testing.T) {
+	t.Parallel()
+
+	yollar, bilesenler := belge(t)
+	op := islem(t, yollar, http.MethodGet, "/admin/v1/carts")
+
+	assert.NotEmpty(t, op["summary"])
+	assert.NotContains(t, op, "requestBody",
+		"cart'ın yönetim yüzeyi yalnızca okur; hiçbir ucu gövde almaz")
+
+	yanitlar, ok := op["responses"].(map[string]any)
+	require.True(t, ok)
+
+	// Liste 200 döner (bkz. adminListCarts); başka bir kod yazmak istemci
+	// üretecinde yanlış dallanma üretirdi.
+	tanim, ok := yanitlar["200"].(map[string]any)
+	require.True(t, ok, "handler'ın GERÇEKTEN yazdığı kod belgelenmeli")
+
+	zarf := govdeSemasi(t, tanim)
+	assert.ElementsMatch(t, []string{"data", "count", "offset", "limit"},
+		alanlar(t, bilesenler, zarf), "liste zarfı plan Bölüm 8'deki biçimdir")
+
+	oge := listeOgesi(t, bilesenler, zarf)
+	kayitAlanlari := alanlar(t, bilesenler, oge)
+
+	assert.ElementsMatch(t, jsonAnahtarlari(t, doluCart(time.Now().UTC())), kayitAlanlari,
+		"liste kaydı cartDTO ile örtüşmeli")
+	assert.NotContains(t, kayitAlanlari, "items",
+		"liste ucu satırları yüklemez; detay şeması vaat edilmemeli")
+	assert.ElementsMatch(t, jsonAnahtarlari(t, cartDTO{}),
+		zorunlular(t, bilesenler, oge),
+		"required, encoding/json'un HER ZAMAN yazdığı anahtarlarla aynı olmalı")
+}
+
+// listeOgesi liste zarfının "data" dizisinin öğe şemasını döner.
+func listeOgesi(t *testing.T, bilesenler, zarf map[string]any) map[string]any {
+	t.Helper()
+
+	veri := zarfKaydi(t, bilesenler, zarf)
+	assert.Equal(t, "array", veri["type"], "liste zarfının data alanı dizidir")
+
+	oge, ok := veri["items"].(map[string]any)
+	require.True(t, ok, "liste zarfının öğe şeması olmalı")
+
+	return oge
+}
+
+// TestYonetimTekilUcuGovdesiniAnlatir /admin/v1/carts/{id}'nin sepeti
+// çocuklarıyla döndüğünü söylediğini doğrular.
+func TestYonetimTekilUcuGovdesiniAnlatir(t *testing.T) {
+	t.Parallel()
+
+	yollar, bilesenler := belge(t)
+	op := islem(t, yollar, http.MethodGet, "/admin/v1/carts/{id}")
+
+	assert.NotEmpty(t, op["summary"])
+	assert.NotContains(t, op, "requestBody", "okuma ucu gövde almaz")
+
+	yanitlar, ok := op["responses"].(map[string]any)
+	require.True(t, ok)
+
+	tanim, ok := yanitlar["200"].(map[string]any)
+	require.True(t, ok, "handler'ın GERÇEKTEN yazdığı kod belgelenmeli")
+
+	zarf := govdeSemasi(t, tanim)
+	assert.ElementsMatch(t, []string{"data"}, alanlar(t, bilesenler, zarf),
+		"tekil yanıtlar {\"data\": …} zarfıyla döner")
+
+	adres := addressDTO{}
+	beklenen := cartDetailDTO{
+		cartDTO:         doluCart(time.Now().UTC()),
+		ShippingAddress: &adres,
+		BillingAddress:  &adres,
+	}
+
+	kayit := zarfKaydi(t, bilesenler, zarf)
+	assert.ElementsMatch(t, jsonAnahtarlari(t, beklenen), alanlar(t, bilesenler, kayit),
+		"yanıt kaydı cartDetailDTO ile örtüşmeli")
+}
+
+// TestYonetimListesiYalnizcaOkunanParametreleriAnlatir sorgu parametrelerinin
+// handler'ın GERÇEKTEN okuduklarıyla aynı olduğunu doğrular.
+//
+// Sepeti sorgu dizesinden süzen TEK uç budur. Fazlası istemciye çalışmayan bir
+// süzgeç vaat etmek, eksiği ise okunan bir süzgeci istemciden gizlemek olurdu.
+func TestYonetimListesiYalnizcaOkunanParametreleriAnlatir(t *testing.T) {
+	t.Parallel()
+
+	yollar, _ := belge(t)
+	op := islem(t, yollar, http.MethodGet, "/admin/v1/carts")
+
+	assert.ElementsMatch(t,
+		[]string{"customer_id", "region_id", "completed", "limit", "offset"},
+		parametreAdlari(t, op, "query"),
+		"parametreler adminListCarts'ın okuduklarıyla aynı olmalı")
+
+	tekil := islem(t, yollar, http.MethodGet, "/admin/v1/carts/{id}")
+	assert.Empty(t, parametreAdlari(t, tekil, "query"),
+		"tekil yönetim ucu sorgu dizesini okumaz")
+}
+
+// parametreAdlari işlemin verilen yerdeki parametre adlarını döner.
+func parametreAdlari(t *testing.T, op map[string]any, yer string) []string {
+	t.Helper()
+
+	params, _ := op["parameters"].([]any)
+
+	adlar := make([]string, 0, len(params))
+
+	for _, ham := range params {
+		p, ok := ham.(map[string]any)
+		require.True(t, ok)
+
+		if p["in"] != yer {
+			continue
+		}
+
+		ad, ok := p["name"].(string)
+		require.True(t, ok)
+
+		adlar = append(adlar, ad)
+	}
+
+	return adlar
+}
+
+// TestYonetimUclarininTumuAnlatildi anlatılmamış bir yönetim ucu kalmadığını
+// doğrular.
+//
+// Cart'ın yönetim yüzeyi bilinçli olarak iki uçtan ibarettir (sepeti değiştiren
+// tek taraf müşteridir); listeye üçüncü bir uç eklendiğinde bu test düşer ve
+// anlatılmadan geçmesini engeller.
+func TestYonetimUclarininTumuAnlatildi(t *testing.T) {
+	t.Parallel()
+
+	yollar, _ := belge(t)
+
+	var bulunan []string
+
+	for yol, islemler := range yollar {
+		if !strings.HasPrefix(yol, "/admin/v1") {
+			continue
+		}
+
+		islemHaritasi, ok := islemler.(map[string]any)
+		require.True(t, ok, "yol girdisi metot haritası olmalı")
+
+		for metod, ham := range islemHaritasi {
+			op, ok := ham.(map[string]any)
+			require.True(t, ok)
+
+			assert.NotEmpty(t, op["summary"], "%s %s anlatılmalı", metod, yol)
+			bulunan = append(bulunan, strings.ToUpper(metod)+" "+yol)
+		}
+	}
+
+	assert.ElementsMatch(t,
+		[]string{"GET /admin/v1/carts", "GET /admin/v1/carts/{id}"}, bulunan)
+}
+
 // TestVitrinUclariSorguParametresiVaatEtmez şemanın okunmayan bir parametre
 // duyurmadığını doğrular.
 //

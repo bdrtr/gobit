@@ -198,7 +198,7 @@ func (m *Module) Routes(r chi.Router) {
 	m.handler.Routes(r)
 }
 
-// Describe modülün VİTRİN uçlarını OpenAPI belgesine işler.
+// Describe modülün vitrin ve yönetim uçlarını OpenAPI belgesine işler.
 //
 // Anlatımın kendisi [api.Describe]'dedir: gövde şemaları o paketin dışa kapalı
 // DTO'larından türetilir ve tipleri yalnızca belge uğruna dışa açmak modülün

@@ -60,12 +60,38 @@ const semaRefAnahtari = "$ref"
 // yol değiştiğinde 404 alıp "şema üretilemedi" diye rapor etmesi demekti.
 const semaYolu = "/openapi.json"
 
-// govdeliMetotlar istek GÖVDESİ taşıması beklenen yazma metotlarıdır.
+// sekliBilinen bir şemanın istemciye BİR ŞEY söyleyip söylemediğini bildirir.
+//
+// "properties taşımalı" demek YANLIŞ olurdu: bir liste kaydı pekâlâ skaler
+// olabilir. GET /admin/v1/payment-providers sağlayıcı KİMLİKLERİNİ döner ve
+// öğeleri düz dizedir; {"type":"string"} tam ve doğru bir anlatımdır, eksik
+// değil. Kural "alan taşısın" olsaydı test, doğru şemayı reddeder ve düzeltmek
+// için şemaya var olmayan bir nesne uydurmak gerekirdi.
+//
+// Asıl kabul edilemez olan BOŞ şemadır ({}): o, "şekli bilmiyorum" demektir ve
+// istemci üretecinde 'any' üretir.
+func sekliBilinen(sema map[string]any) bool {
+	if len(sema) == 0 {
+		return false
+	}
+
+	for _, anahtar := range []string{"properties", "type", "$ref", "items", "anyOf", "oneOf", "allOf", "enum"} {
+		if _, var_ := sema[anahtar]; var_ {
+			return true
+		}
+	}
+
+	return false
+}
+
+// govdeliMetotlar gövde taşıMAYA İZİNLİ metotlardır.
+//
+// Ad "taşımalı" değil "taşıyabilir" anlamındadır: bu kümenin DIŞINDAKİ bir
+// metodun gövdesi olması hatadır (sunucu okumaz), içindeki bir metodun
+// gövdesiz olması ise gayet olağandır (bkz. /auth/logout).
 //
 // DELETE bilinçli olarak DIŞARIDADIR: o da bir yazma metodudur ama kaynağını
-// yolundan seçer, gövde okumaz. Listeye alınsaydı test, sunucunun hiç
-// okumadığı bir gövdenin belgelenmesini zorunlu kılardı — yani şemanın
-// yalan söylemesini isterdi.
+// yolundan seçer, gövde okumaz.
 var govdeliMetotlar = map[string]struct{}{
 	http.MethodPost:  {},
 	http.MethodPut:   {},
@@ -435,8 +461,9 @@ func TestSemaAnlatilanUclariGovdeleriyleAnlatir(t *testing.T) {
 				}
 
 				kayit := kayitSemasi(t, belge, jsonSemasi(t, tanim, uc+" "+kod))
-				assert.NotEmpty(t, altNesne(t, kayit, "properties", uc+" "+kod+" kaydı"),
-					"%s yanıt kaydı alan taşımalı", kod)
+				assert.True(t, sekliBilinen(kayit),
+					"%s yanıt kaydının ŞEKLİ bilinmeli; boş şema istemciyi tahmine bırakır (gelen: %v)",
+					kod, anahtarlar(kayit))
 			}
 
 			if _, yazma := govdeliMetotlar[metot]; !yazma {
@@ -446,8 +473,28 @@ func TestSemaAnlatilanUclariGovdeleriyleAnlatir(t *testing.T) {
 				return
 			}
 
-			govde := altNesne(t, islem, "requestBody", uc)
-			assert.Equal(t, true, govde["required"], "yazma ucunun gövdesi zorunlu olmalı")
+			// Yazma metodu gövde okuduğunu KANITLAMAZ: /auth/logout kimliği
+			// jetondan, /api-keys/{id}/revoke kaynağı yoldan alır ve ikisi de
+			// POST'tur. Gövde ZORUNLU tutulsaydı test, sunucunun hiç okumadığı
+			// bir alanın belgelenmesini isterdi — yani şemanın yalan
+			// söylemesini. Hangi ucun gövde okuduğu modülün KENDİ testinde
+			// tablolanır; buradaki iddia yalnızca "yazılmışsa doğru yazılmış".
+			govdeHam, govdeliMi := islem["requestBody"]
+			if !govdeliMi {
+				return
+			}
+
+			govde, ok := govdeHam.(map[string]any)
+			require.True(t, ok, "%s requestBody nesne olmalı", uc)
+
+			// "required" burada SINANMAZ. Gövdenin zorunlu olup olmadığı ucun
+			// kendi kararıdır: POST .../payment-sessions/{id}/capture gövdesiz
+			// çağrıldığında bloke tutarın TAMAMINI tahsil eder ve en yaygın
+			// çağrı budur. Zorunlu dayatmak, istemci üretecinin çağıranı
+			// yalnızca şema öyle dediği için boş bir nesne kurmaya zorlaması
+			// demekti. Hangi ucun gövdeyi zorunlu okuduğu modülün KENDİ
+			// testinde tablolanır; buradaki iddia gövdenin ŞEKLİNİN bilinmesi.
+			assert.Contains(t, govde, "content", "%s gövdesi içerik taşımalı", uc)
 
 			istek := cozulmus(t, belge, jsonSemasi(t, govde, uc+" requestBody"))
 			assert.NotEmpty(t, altNesne(t, istek, "properties", uc+" istek gövdesi"),
@@ -472,11 +519,15 @@ func TestSemaAnlatimlariGercekRoutelarlaEslesir(t *testing.T) {
 		"anlatılan her uç router ağacında bulunmalı; eşleşmeyen kayıt, yolu değişmiş ya da silinmiş bir route demektir")
 }
 
-// ayrilmisAdlar çekirdeğin kendi ortak bileşenlerinin adlarıdır.
+// ayrilmisAdlar çekirdeğin YAYIMLADIĞI ortak bileşenlerin adlarıdır.
 //
-// Yalnızca "türetilmiş şema var mı" sorusunu yanıtlamak için tutulur;
-// çekirdek bu adları dışa açmaz ve açmasına da gerek yoktur.
-var ayrilmisAdlar = []string{"Error", "List"}
+// Yalnızca "türetilmiş şema var mı" sorusunu yanıtlamak için tutulur.
+// "List" burada YOKTUR: tipsiz liste zarfı bir zamanlar yayımlanıyordu ama
+// hiçbir uç ona atıf yapmıyordu ve gerçek bir istemci üreteci onu
+// "kullanılmayan model" diye bildirdi — üretilen her istemcide ölü bir sınıf.
+// Ad çekirdekte hâlâ REZERVEDİR (bir modülün "List" adlı DTO'su yayımlanan
+// sözleşmede anlamı olmayan bir genel ad üretirdi), yalnızca yayımlanmaz.
+var ayrilmisAdlar = []string{"Error"}
 
 // TestSemaKokAnahtarlariVeOrtakBilesenleriTasir belgenin iskeletini doğrular.
 //
@@ -506,10 +557,11 @@ func TestSemaKokAnahtarlariVeOrtakBilesenleriTasir(t *testing.T) {
 	altKumeOlmali(t, []string{"code", "message", "request_id", "details"}, anahtarlar(hataAlanlari),
 		"hata zarfının alanları eksiksiz anlatılmalı")
 
-	// Tipsiz liste zarfı: kayıt şeması bilinmeyen uçlar için sayfalama biçimi.
-	liste := altNesne(t, semalar, "List", "components/schemas")
-	assert.ElementsMatch(t, []string{"data", "count", "offset", "limit"}, dizeDilimi(t, liste["required"]),
-		"liste zarfının biçimi sabittir")
+	// Tipsiz liste zarfı YAYIMLANMAZ (bkz. [ayrilmisAdlar]); liste zarfının
+	// biçimi her uçta kayıt tipiyle birlikte SATIR İÇİ yazılır ve o biçim
+	// TestSemaAnlatilanUclariGovdeleriyleAnlatir tarafından denetlenir.
+	assert.NotContains(t, semalar, "List",
+		"kullanılmayan genel bileşen yayımlanmamalı; her istemcide ölü bir sınıf olur")
 
 	guvenlik := altNesne(t, altNesne(t, belge, "components", "belge"), "securitySchemes", "components")
 	altKumeOlmali(t, []string{"bearerAuth", "publishableKey"}, anahtarlar(guvenlik),

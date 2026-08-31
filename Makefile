@@ -21,7 +21,7 @@ SQLC             := $(BIN_DIR)/sqlc
 DOTENV = set -a; [ -f .env ] && . ./.env; set +a;
 
 .DEFAULT_GOAL := help
-.PHONY: help run build test test-integration load-test lint fmt tidy gen up up-tracing down logs psql redis-cli migrate-up migrate-down tools clean rename-module
+.PHONY: help run build test test-integration load-test openapi-schema openapi-client openapi-validate lint fmt tidy gen up up-tracing down logs psql redis-cli migrate-up migrate-down tools clean rename-module
 
 help: ## Bu yardım metnini göster
 	@grep -hE '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2}'
@@ -113,6 +113,36 @@ migrate-down: ## Geri alma yolu YOK (bkz. README, bilinen sınırlar)
 	@echo "  internal/arch TestMigrationlarGercektenGeriAlinabilir ile denetlenir,"
 	@echo "  ama bugün onları çağıracak bir yüzey yok. Geri alma elle yapılmalıdır."
 
+## --- İstemci üretimi ---
+
+# Şema router'dan üretildiği ve gövdeler Go tiplerinden türetildiği için
+# istemci ELDE TUTULMAZ: depoda bir SDK vendorlamak, ikinci bir artefaktı
+# sürümlemek ve şemayla senkron tutmak demektir. Bunun yerine komut belgelenir
+# ve isteyen kendi dilinde üretir.
+#
+# openapi-client, çalışan bir sunucudan şemayı çeker; sunucu ayakta olmalıdır
+# (make up && make run). DIL değişkeniyle hedef değiştirilir:
+#   make openapi-client DIL=go
+#   make openapi-client DIL=python
+
+OPENAPI_URL ?= http://localhost:$(or $(APP_PORT),9000)/openapi.json
+DIL         ?= typescript-fetch
+
+openapi-schema: ## Çalışan sunucudan OpenAPI şemasını indir (openapi.json)
+	@curl -sSf $(OPENAPI_URL) -o openapi.json
+	@echo "yazıldı: openapi.json ($$(wc -c < openapi.json) bayt)"
+
+openapi-client: openapi-schema ## Şemadan istemci üret (DIL=... ile dil seçilir)
+	@docker run --rm -v $(CURDIR):/local \
+		openapitools/openapi-generator-cli:v7.10.0 \
+		generate -i /local/openapi.json -g $(DIL) -o /local/clients/$(DIL)
+	@echo "üretildi: clients/$(DIL)"
+
+openapi-validate: openapi-schema ## Şemayı gerçek OpenAPI üreteciyle doğrula
+	@docker run --rm -v $(CURDIR):/local \
+		openapitools/openapi-generator-cli:v7.10.0 \
+		validate -i /local/openapi.json
+
 ## --- Kod üretimi ---
 
 gen: $(SQLC) ## sqlc ile repository kodunu üret (modül başına ayrı config)
@@ -142,7 +172,7 @@ $(SQLC):
 	GOBIN=$(BIN_DIR) go install github.com/sqlc-dev/sqlc/cmd/sqlc@$(SQLC_VERSION)
 
 clean: ## Üretilmiş dosyaları temizle
-	rm -rf $(BIN_DIR) coverage.out coverage-integration.out
+	rm -rf $(BIN_DIR) coverage.out coverage-integration.out openapi.json clients
 
 rename-module: ## Go modul yolunu degistir: make rename-module MODULE=github.com/kullanici/repo
 	@test -n "$(MODULE)" || (echo "kullanim: make rename-module MODULE=github.com/kullanici/repo" >&2 && exit 1)

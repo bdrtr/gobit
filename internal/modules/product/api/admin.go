@@ -219,12 +219,21 @@ type linkRequest struct {
 	InventoryItemID string `json:"inventory_item_id"`
 }
 
-// salesChannelRequest ürünü bir satış kanalına bağlama isteğidir.
+// linkSalesChannelRequest ürünü bir satış kanalına BAĞLAMA isteğidir.
+//
+// Adı bilinçli olarak "link" ile başlar: auth modülünde de bir
+// salesChannelRequest vardır ve o, kanalın KENDİSİNİ oluşturur. İki tip iki
+// ayrı şeydir ama Go adları aynı olsaydı yayımlanan şemada da aynı bileşen
+// adını isterlerdi ("SalesChannelRequest") ve belge üretimi çakışma hatasıyla
+// TAMAMEN düşerdi — yalnızca o uç değil, /openapi.json'ın tamamı.
+//
+// Bileşen adı yayımlanan sözleşmedir; Go adlandırma tesadüfünün onu
+// belirlemesine izin verilmez.
 //
 // [linkRequest]'e eklenmez: o bağlar VARYANT düzeyinde ve tekildir, bu bağ ÜRÜN
 // düzeyinde ve çoktan çoğadır. Tek bir gövde tipini paylaşmaları, bir ucun
 // diğerinin alanını sessizce yok saymasına izin verirdi.
-type salesChannelRequest struct {
+type linkSalesChannelRequest struct {
 	SalesChannelID string `json:"sales_channel_id"`
 }
 
@@ -645,7 +654,7 @@ func (h *Handler) adminAddSalesChannel(w http.ResponseWriter, r *http.Request) {
 		corehttp.WriteError(r.Context(), w, err)
 		return
 	}
-	req, err := decode[salesChannelRequest](w, r)
+	req, err := decode[linkSalesChannelRequest](w, r)
 	if err != nil {
 		corehttp.WriteError(r.Context(), w, err)
 		return

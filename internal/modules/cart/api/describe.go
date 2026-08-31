@@ -6,7 +6,20 @@ import (
 	"github.com/bdrtr/gobit/internal/core/openapi"
 )
 
-// Describe cart'ın VİTRİN uçlarını OpenAPI belgesine işler.
+// Parametre şemalarında geçen JSON Schema adları.
+//
+// Çekirdeğin karşılıkları dışa kapalıdır ve burada tekrarlanmalarının sebebi
+// maliyet değil SESSİZLİK: "strig" yazılmış bir tip adı derlenir, belge
+// üretilir ve yalnızca şemayı okuyan istemci parametreyi yanlış tiple
+// ürettiğinde ortaya çıkar.
+const (
+	semaTip      = "type"
+	tipDize      = "string"
+	tipTamSayi   = "integer"
+	tipMantiksal = "boolean"
+)
+
+// Describe cart'ın uçlarını OpenAPI belgesine işler.
 //
 // # Neden bu pakette
 //
@@ -23,11 +36,12 @@ import (
 // söylerdi; oysa Register hiç çalışmamışken de belge üretilebilir ve
 // üretilmelidir.
 //
-// # Neden yalnızca /store/v1
+// # İki yüzey de anlatılır
 //
-// Bir mağaza istemcisinin (storefront, SDK) ihtiyacı budur. /admin/v1 yüzeyi
-// AYRI bir iştir ve anlatılmamış bir uç geçerli bir modeldir: belgede yolu,
-// metodu ve güvenliğiyle görünür, yalnızca gövdesi olmaz.
+// Vitrin uçları bir mağaza istemcisinin (storefront, SDK), /admin/v1 uçları
+// yönetim panelinin ihtiyacıdır. Yönetim yüzeyi YALNIZCA OKUMADIR (bkz.
+// admin.go); anlatımı da bu yüzden hiçbir istek gövdesi taşımaz — gövdesi
+// olmayan bir yazma ucu değil, gövdesi OLMAYAN bir okuma ucu anlatılır.
 //
 // # Bilinen sınır: istek gövdelerinin "required" kümesi GENİŞTİR
 //
@@ -43,12 +57,14 @@ import (
 // politikası); tag'lere omitempty serpiştirmek zorunluluğu servisin
 // doğrulamasından json etiketine taşır ve ikisi sessizce ayrışırdı.
 //
-// # Sorgu parametresi YOKTUR
+// # Sorgu parametresini yalnızca yönetim listesi okur
 //
-// Vitrin sepeti uçlarının hiçbiri sorgu dizesini okumaz (bkz. store.go;
-// [parsePage] yalnızca /admin/v1/carts içindir). Şemaya yine de bir parametre
-// yazmak, istemciye ÇALIŞMAYAN bir özellik vaat etmek olurdu: istemci üreteci
-// metoda bir argüman koyar, çağıran onu doldurur ve sunucu sessizce yok sayar.
+// Vitrin sepeti uçlarının hiçbiri sorgu dizesine bakmaz (bkz. store.go) ve
+// şemaları da parametre duyurmaz; sorgu dizesini okuyan TEK uç
+// GET /admin/v1/carts'tır (bkz. admin.go ve [parsePage]). Okunmayan bir
+// parametreyi şemaya yazmak, istemciye ÇALIŞMAYAN bir özellik vaat etmek
+// olurdu: istemci üreteci metoda bir argüman koyar, çağıran onu doldurur ve
+// sunucu sessizce yok sayar.
 func Describe(d *openapi.Doc) {
 	d.Describe(http.MethodPost, "/store/v1/carts", openapi.Operation{
 		Summary:     "Yeni sepet oluşturur.",
@@ -83,6 +99,7 @@ func Describe(d *openapi.Doc) {
 	describeSatirlar(d)
 	describeAdresler(d)
 	describeKargo(d)
+	describeYonetim(d)
 }
 
 // describeSatirlar sepet satırı uçlarını anlatır.
@@ -150,6 +167,56 @@ func describeKargo(d *openapi.Doc) {
 				"204": bosYanit("Kargo yöntemi kaldırıldı"),
 			},
 		})
+}
+
+// describeYonetim /admin/v1 sepet uçlarını anlatır.
+//
+// Yüzey YALNIZCA OKUMADIR (bkz. admin.go), dolayısıyla hiçbir uçta requestBody
+// yoktur. Bunu "eksik anlatım" sanmamak için burada yazılıyor: sepeti
+// değiştiren tek taraf müşteridir ve yönetimde bir yazma ucu YOKTUR.
+func describeYonetim(d *openapi.Doc) {
+	d.Describe(http.MethodGet, "/admin/v1/carts", openapi.Operation{
+		Summary: "Sepetleri müşteri, bölge ve tamamlanma durumuna göre sayfalar.",
+		// Parametreler [Handler.adminListCarts]'ın OKUDUKLARIDIR; başkası
+		// eklenirse istemciye çalışmayan bir süzgeç vaat edilmiş olurdu.
+		Parameters: []openapi.Parameter{
+			sorguParametresi("customer_id", tipDize,
+				"Sepetleri tek bir müşteriyle sınırlar."),
+			sorguParametresi("region_id", tipDize,
+				"Sepetleri tek bir bölgeyle sınırlar."),
+			sorguParametresi("completed", tipMantiksal,
+				"true yalnızca tamamlanmış, false yalnızca açık sepetleri döner."),
+			sorguParametresi("limit", tipTamSayi,
+				"Sayfa boyutu; verilmezse servisin varsayılanı uygulanır."),
+			sorguParametresi("offset", tipTamSayi, "Atlanacak kayıt sayısı."),
+		},
+		Responses: map[string]any{
+			// Kayıt [cartDetailDTO] DEĞİL [cartDTO]'dur: liste ucu satırları,
+			// adresleri ve kargo yöntemlerini YÜKLEMEZ (N+1'e açardı). Detay
+			// şemasını yazmak, istemciye hiç dolmayacak alanlar vaat etmek olurdu.
+			"200": openapi.Response("Sepet sayfası", d.List(cartDTO{})),
+		},
+	})
+
+	d.Describe(http.MethodGet, "/admin/v1/carts/{id}", openapi.Operation{
+		Summary: "Tek bir sepeti satırları, adresleri ve kargo yöntemleriyle döner.",
+		Responses: map[string]any{
+			"200": openapi.Response("Sepet ve çocukları", d.Item(cartDetailDTO{})),
+		},
+	})
+}
+
+// sorguParametresi sorgu dizesinden okunan bir parametreyi tanımlar.
+//
+// Hiçbiri zorunlu DEĞİLDİR: verilmediğinde handler varsayılanla devam eder
+// (bkz. [parsePage] ve [Handler.adminListCarts]).
+func sorguParametresi(ad, tip, aciklama string) openapi.Parameter {
+	return openapi.Parameter{
+		Name:        ad,
+		In:          "query",
+		Schema:      map[string]any{semaTip: tip},
+		Description: aciklama,
+	}
 }
 
 // bosYanit GÖVDESİZ bir yanıt tanımı üretir.

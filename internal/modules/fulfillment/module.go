@@ -68,6 +68,7 @@ import (
 	"github.com/bdrtr/gobit/internal/core/db"
 	"github.com/bdrtr/gobit/internal/core/errors"
 	"github.com/bdrtr/gobit/internal/core/module"
+	"github.com/bdrtr/gobit/internal/core/openapi"
 	"github.com/bdrtr/gobit/internal/core/query"
 	"github.com/bdrtr/gobit/internal/modules/fulfillment/api"
 	"github.com/bdrtr/gobit/internal/modules/fulfillment/manual"
@@ -127,6 +128,14 @@ type Module struct {
 
 // Çekirdek sözleşmesinin karşılandığı derleme zamanında sabitlenir.
 var _ module.Module = (*Module)(nil)
+
+// Belgeyi anlatabildiği de derleme zamanında sabitlenir.
+//
+// [openapi.Describer] OPSİYONEL bir arayüzdür ve kompozisyon kökü onu TİP
+// İDDİASIYLA arar; metot adı ya da imzası kayarsa hiçbir şey derlemede
+// kırılmaz, yalnızca kargo uçları belgeden sessizce düşerdi. Bu satır o
+// sessizliği kapatır.
+var _ openapi.Describer = (*Module)(nil)
 
 // New kaydedilmeye hazır bir fulfillment modülü üretir.
 //
@@ -218,6 +227,17 @@ func (m *Module) Routes(r chi.Router) {
 	}
 	m.handler.Routes(r)
 }
+
+// Describe modülün uçlarını OpenAPI belgesine işler.
+//
+// Anlatımın kendisi [api.Describe]'dedir: gövde şemaları o paketin dışa kapalı
+// DTO'larından türetilir ve tipleri yalnızca belge uğruna dışa açmak modülün
+// yüzeyini genişletirdi.
+//
+// [Module.Routes]'un tersine Register kontrolü YOKTUR ve gerekmez: şema
+// tiplerden gelir, servisten değil. Kontrol koymak, kurulmamış bir modülün
+// belgesini de sessizce boşaltırdı.
+func (m *Module) Describe(d *openapi.Doc) { api.Describe(d) }
 
 // Service modülün servisini döner; Register çağrılmadıysa nil'dir.
 //

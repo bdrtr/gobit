@@ -531,10 +531,20 @@ func (d *Doc) semaBilesenleri() map[string]any {
 		},
 	}
 
-	// Tipsiz liste zarfı, kayıt şeması BİLİNMEYEN uçlar içindir; şekli
-	// [Doc.List] ile AYNI kaynaktan gelir, böylece zarf biçimi değiştiğinde
-	// ikisi birlikte değişir.
-	semalar[semaAdiList] = listeSemasi(map[string]any{})
+	// TİPSİZ liste zarfı BİLİNÇLİ olarak yayımlanmaz.
+	//
+	// Bir zamanlar "kayıt şeması bilinmeyen uçlar için" diye yazılıyordu ama
+	// hiçbir uç ona atıf yapmıyordu; gerçek bir istemci üreteci
+	// (openapi-generator) onu "kullanılmayan model" diye bildirdi ve üretilen
+	// her istemcide ölü bir sınıf olarak duruyordu.
+	//
+	// Anlatılmamış liste uçlarına varsayılan olarak bağlamak da cazipti ama
+	// YANLIŞ olurdu: zarf biçimi bu depoda evrensel olsa bile, bir ucun
+	// gerçekten liste döndüğü DOĞRULANMADAN şemaya yazılamaz. Doğrulanmamış
+	// bir iddia, sessizlikten kötüdür — istemci onu doğru sanır.
+	//
+	// Ad yine de [ayrilmisSemaAdlari] içinde KALIR: bir modülün "List" adlı
+	// DTO'su, yayımlanan sözleşmede anlamı olmayan bir genel ad üretirdi.
 
 	return semalar
 }

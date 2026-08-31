@@ -12,6 +12,15 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Eklendi
 
+- **Tüm API yüzeyi anlatıldı (196 uç).** Şema artık her ucun ne aldığını ve ne
+  döndüğünü söylüyor. Ölçüldü: `openapi-generator v7.10.0` şemayı **sıfır
+  bulguyla** doğruluyor ve 237 modelli bir TypeScript istemcisi üretiyor.
+  `POST /admin/v1/users` örneği farkı özetler —
+  öncesi `postAdminV1Users(): Promise<void>` (gövdesiz, dönüşsüz, kullanılamaz),
+  sonrası `postAdminV1Users(req: PostAdminV1UsersRequest): Promise<…201Response>`.
+  `make openapi-client DIL=…` ile istemci üretilebilir; depoda SDK
+  VENDORLANMAZ, çünkü şema router'dan üretildiğine göre ikinci bir artefaktı
+  sürümlemek ve senkron tutmak gereksiz bir yük olurdu.
 - **OpenAPI şeması artık gövdeleri anlatıyor.** Şema sözdizimsel olarak
   geçerliydi ama anlamsal olarak BOŞTU: `Doc.Describe` hiçbir yerde
   çağrılmıyordu ve her işlem yalnızca `operationId`, `tags`, `security` ve
@@ -28,6 +37,10 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Değişti
 
+- **Kullanılmayan `List` bileşeni yayımlanmıyor.** Gerçek üreteç onu
+  "kullanılmayan model" diye bildirdi; üretilen her istemcide ölü bir sınıftı.
+  Anlatılmamış liste uçlarına varsayılan olarak bağlamak cazipti ama yanlış
+  olurdu: bir ucun gerçekten liste döndüğü doğrulanmadan şemaya yazılamaz.
 - **Şema bileşen adları normalleştirildi** (`cartDTO` → `Cart`). Bileşen adı
   bir iç ayrıntı değil yayımlanan sözleşmedir; istemci üreteçleri ondan sınıf
   adı üretir. Normalleştirilmeseydi aynı belgede `StoreProduct` (dışa açık) ile

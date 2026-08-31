@@ -429,9 +429,16 @@ func (m *Module) Describe(d *openapi.Doc) { api.Describe(d) }
 `module.Module` sözleşmesine metot EKLENMEDİ: anlatılmamış bir modül de
 geçerli bir modeldir ve zorunlu kılmak tüm modülleri kırardı.
 
-> Bugün yalnızca `cart` ve `product`'ın **vitrin** uçları anlatılıyor. Yönetim
-> yüzeyi henüz gövdesiz — hangi uçların anlatıldığını
-> `internal/e2e` şema testi sabitler.
+Şemadan istemci üretebilirsiniz:
+
+```bash
+make openapi-validate              # gerçek üreteçle doğrula
+make openapi-client DIL=go         # ya da typescript-fetch, python, …
+```
+
+Depoda SDK **vendorlanmaz**: şema router'dan üretildiğine göre ikinci bir
+artefaktı sürümlemek ve şemayla senkron tutmak gereksiz bir yüktür. Komut
+belgelenir, isteyen kendi dilinde üretir.
 
 ## Mimari kararlar (ADR)
 

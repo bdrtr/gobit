@@ -219,11 +219,13 @@ func (m *Module) Routes(r chi.Router) {
 	m.handler.Routes(r)
 }
 
-// Describe modülün VİTRİN uçlarını OpenAPI belgesine işler.
+// Describe modülün vitrin ve yönetim uçlarını OpenAPI belgesine işler.
 //
-// Anlatımın kendisi [api.Describe]'dedir: sorgu parametreleri handler'ın
-// gerçekten okuduklarıdır ve o okuma api paketindedir; liste burada dursaydı
-// okumadan uzaklaşır ve ikisi sessizce ayrışırdı.
+// Anlatımın kendisi [api.Describe]'dedir ve iki sebeple oradadır. Sorgu
+// parametreleri handler'ın gerçekten okuduklarıdır ve o okuma api paketindedir;
+// liste burada dursaydı okumadan uzaklaşır ve ikisi sessizce ayrışırdı. Yönetim
+// uçlarının istek gövdeleri ise o paketin DIŞA KAPALI DTO'larıdır; tipleri
+// yalnızca belge uğruna dışa açmak modülün yüzeyini genişletirdi.
 //
 // [Module.Routes]'un tersine Register kontrolü YOKTUR ve gerekmez: şema
 // tiplerden gelir, servisten değil.

@@ -28,6 +28,7 @@ import (
 	"github.com/bdrtr/gobit/internal/core/db"
 	"github.com/bdrtr/gobit/internal/core/errors"
 	"github.com/bdrtr/gobit/internal/core/module"
+	"github.com/bdrtr/gobit/internal/core/openapi"
 	"github.com/bdrtr/gobit/internal/core/query"
 	"github.com/bdrtr/gobit/internal/modules/inventory/api"
 	"github.com/bdrtr/gobit/internal/modules/inventory/repository"
@@ -70,6 +71,14 @@ type Module struct {
 
 // Modülün çekirdek sözleşmesini karşıladığı derleme zamanında doğrulanır.
 var _ module.Module = (*Module)(nil)
+
+// Belgeyi anlatabildiği de derleme zamanında sabitlenir.
+//
+// [openapi.Describer] OPSİYONEL bir arayüzdür ve kompozisyon kökü onu TİP
+// İDDİASIYLA arar; metot adı ya da imzası kayarsa hiçbir şey derlemede
+// kırılmaz, yalnızca stok uçları belgeden sessizce düşerdi. Bu satır o
+// sessizliği kapatır.
+var _ openapi.Describer = (*Module)(nil)
 
 // New kaydedilmeye hazır bir inventory modülü üretir.
 func New() *Module {
@@ -130,6 +139,17 @@ func (m *Module) Routes(r chi.Router) {
 	}
 	api.NewHandler(m.svc).Routes(r)
 }
+
+// Describe modülün yönetim uçlarını OpenAPI belgesine işler.
+//
+// Anlatımın kendisi [api.Describe]'dedir: gövde şemaları o paketin dışa kapalı
+// tiplerinden türetilir ve tipleri yalnızca belge uğruna dışa açmak modülün
+// yüzeyini genişletirdi.
+//
+// [Module.Routes]'un tersine servis kontrolü YOKTUR ve gerekmez: şema
+// tiplerden gelir, servisten değil. Kontrol koymak, kurulmamış bir modülün
+// belgesini de sessizce boşaltırdı.
+func (m *Module) Describe(d *openapi.Doc) { api.Describe(d) }
 
 // mustSub alt dosya sistemini açar; açılamazsa panikler.
 //
