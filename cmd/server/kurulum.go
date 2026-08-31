@@ -11,12 +11,15 @@ import (
 	"strings"
 	"time"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/redis/go-redis/v9"
 
 	"github.com/bdrtr/gobit/internal/core/config"
 	"github.com/bdrtr/gobit/internal/core/errors"
 	corehttp "github.com/bdrtr/gobit/internal/core/http"
 	"github.com/bdrtr/gobit/internal/core/http/redisguard"
+	"github.com/bdrtr/gobit/internal/core/module"
+	"github.com/bdrtr/gobit/internal/core/openapi"
 	coreplugin "github.com/bdrtr/gobit/internal/core/plugin"
 	authapi "github.com/bdrtr/gobit/internal/modules/auth/api"
 	authmodels "github.com/bdrtr/gobit/internal/modules/auth/models"
@@ -63,6 +66,56 @@ const gecicSirBayt = 32
 var eklentiKatalogu = map[string]func() coreplugin.Plugin{
 	paymentstripe.Name: func() coreplugin.Plugin { return paymentstripe.New() },
 	searchpg.Name:      func() coreplugin.Plugin { return searchpg.New() },
+}
+
+// belgeyiAnlat OpenAPI belgesini kurar ve kendini anlatabilen modüllere işletir.
+//
+// [openapi.Describer] OPSİYONEL bir arayüzdür ve tip iddiası BURADA yapılır.
+// Sözleşmeye ([module.Module]) metot eklemek tüm modülleri aynı anda kıran bir
+// değişiklikti; üstelik anlatılmamış bir modül GEÇERLİ bir modeldir — belgede
+// yolu, metodu ve güvenliğiyle görünür, yalnızca gövdesi olmaz.
+//
+// Çağrının kompozisyon kökünde olması zorunlu: çekirdek modülleri tanımaz
+// (Prensip 2.4) ve modül listesini gören tek yer burasıdır.
+func belgeyiAnlat(baslik, surum string, moduller []module.Module) *openapi.Doc {
+	doc := openapi.New(baslik, surum)
+
+	for _, mod := range moduller {
+		anlatici, anlatabilir := mod.(openapi.Describer)
+		if !anlatabilir {
+			continue
+		}
+
+		anlatici.Describe(doc)
+	}
+
+	return doc
+}
+
+// semayiDenetle belgeyi açılışta BİR KEZ üretip ayrışmaları raporlar.
+//
+// Şema her istekte yeniden üretilir; buradaki üretim yalnızca denetim
+// içindir. Denetim olmadan iki arıza da SESSİZ kalırdı: yolu değişmiş bir
+// route'un açıklaması belgeden düşer, iki modülün aynı adlı DTO'su ise
+// belgeyi tümden üretilemez kılar — ikisi de ancak biri /openapi.json'ı
+// açtığında görülürdü.
+//
+// Açılış DURMAZ (ADR 0007'nin ayrımı): şema belgedir, ürünün doğruluğu değil.
+// Yanlış bir şema hiçbir siparişi bozmaz; mağazayı belge hatası yüzünden
+// kapatmak, arızanın bedelinden büyük bir bedel ödemek olurdu.
+func semayiDenetle(ctx context.Context, doc *openapi.Doc, r chi.Routes, log *slog.Logger) {
+	_, err := doc.Build(r)
+
+	if eksik := doc.UnmatchedDescriptions(); len(eksik) > 0 {
+		log.WarnContext(ctx, "openapi: hiçbir route ile eşleşmeyen açıklama var",
+			"kayitlar", eksik,
+			"anlami", "route'un yolu değişmiş ya da silinmiş olabilir; açıklama belgeye girmiyor")
+	}
+
+	if err != nil {
+		log.ErrorContext(ctx, "openapi şeması üretilemedi; /openapi.json 500 dönecek",
+			"error", err)
+	}
 }
 
 // korumaYigini uygulamanın koruma middleware'lerini yapılandırmadan kurar.

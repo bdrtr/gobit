@@ -10,6 +10,30 @@ Sabitlenme `1.0.0` ile olur.
 
 ## [Yayımlanmamış]
 
+### Eklendi
+
+- **OpenAPI şeması artık gövdeleri anlatıyor.** Şema sözdizimsel olarak
+  geçerliydi ama anlamsal olarak BOŞTU: `Doc.Describe` hiçbir yerde
+  çağrılmıyordu ve her işlem yalnızca `operationId`, `tags`, `security` ve
+  GENEL hata yanıtları (401/422/429/500) taşıyordu. `POST /store/v1/carts`
+  için ne `requestBody` ne de bir 2xx yanıtı vardı — bir istemci üreteci
+  bundan her şeyi `any` olan, dönüş tipi `void` metotlar üretirdi.
+  Gövde şemaları artık Go tiplerinden **yansımayla türetiliyor**: elle yazılan
+  bir alan listesi, DTO'ya alan eklendiği gün eksik kalır ve kimse fark etmez.
+  Türetme `encoding/json`'un davranışını taklit eder (etiket, `omitempty`,
+  dışa kapalı alanlar, gömülü struct düzleştirmesi ve **gölgelenme**).
+  Modüller opsiyonel `openapi.Describer` arayüzüyle kendi uçlarını anlatır;
+  `module.Module` sözleşmesi değişmedi. Bugün `cart` ve `product`'ın vitrin
+  uçları anlatılıyor.
+
+### Değişti
+
+- **Şema bileşen adları normalleştirildi** (`cartDTO` → `Cart`). Bileşen adı
+  bir iç ayrıntı değil yayımlanan sözleşmedir; istemci üreteçleri ondan sınıf
+  adı üretir. Normalleştirilmeseydi aynı belgede `StoreProduct` (dışa açık) ile
+  `cartDTO` (dışa kapalı) yan yana durur, üretilen istemcide iki farklı
+  adlandırma düzeni olurdu.
+
 ## [0.2.0] — 2026-08-31
 
 Yol haritası bittikten sonra bulunanlar. Ortak bir örüntü var: bu sürümdeki

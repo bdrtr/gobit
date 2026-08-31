@@ -413,6 +413,26 @@ curl -s localhost:9000/openapi.json | jq '.paths | keys'
 Uç yalnızca route desenlerini yayımlar, veri değil. Elle yazılan bir şema ilk
 route değişikliğinde sessizce yalan söylemeye başlardı.
 
+Gövde şemaları da **elle yazılmaz, Go tiplerinden türetilir** — aynı gerekçeyle:
+elle yazılmış bir alan listesi, DTO'ya alan eklendiği gün eksik kalır ve kimse
+fark etmez. Türetme `encoding/json`'un davranışını taklit eder (etiket,
+`omitempty`, dışa kapalı alanlar, gömülü struct düzleştirmesi ve gölgelenme);
+taklidin eksik olduğu yerde şema, hiç şema olmamasından kötüdür — istemci
+doğru sandığı bir alan adını gönderir.
+
+Modüller opsiyonel `openapi.Describer` arayüzüyle kendi uçlarını anlatır:
+
+```go
+func (m *Module) Describe(d *openapi.Doc) { api.Describe(d) }
+```
+
+`module.Module` sözleşmesine metot EKLENMEDİ: anlatılmamış bir modül de
+geçerli bir modeldir ve zorunlu kılmak tüm modülleri kırardı.
+
+> Bugün yalnızca `cart` ve `product`'ın **vitrin** uçları anlatılıyor. Yönetim
+> yüzeyi henüz gövdesiz — hangi uçların anlatıldığını
+> `internal/e2e` şema testi sabitler.
+
 ## Mimari kararlar (ADR)
 
 Planın bıraktığı belirsizlikler `docs/adr/` altında karara bağlanır. ADR'ler plan

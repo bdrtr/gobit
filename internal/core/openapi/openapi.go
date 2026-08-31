@@ -7,26 +7,38 @@
 // yollar chi'nin GERÇEK route ağacından okunur, yani sunucunun o an
 // servis ettiği şeyle her zaman aynıdır.
 //
+// # Gövde şemaları da türetilir
+//
+// Yol ve metod router'dan okunduğu gibi, istek/yanıt GÖVDELERİ de Go
+// TİPLERİNDEN yansımayla türetilir (bkz. [Doc.SchemaOf]). Gerekçe aynıdır:
+// elle yazılmış bir alan listesi, DTO'ya alan eklendiği gün eksik kalır ve
+// kimse fark etmez.
+//
+// Çalışma zamanı bir handler'ın hangi tipi okuyup hangi tipi yazdığını
+// BİLEMEZ; bu bağı modül kurar. Modül kendi uçlarını [Describer] arayüzüyle
+// anlatır, [Doc.Describe] ile route'a bağlar ve gövde şemasını [Doc.Item],
+// [Doc.List], [Doc.RequestBody] ile TİPTEN üretir.
+//
 // # Neyi kapsamaz
 //
-// Bu üretici yol, metod, yol parametresi, güvenlik şeması ve ortak hata
-// zarfını üretir. İstek/yanıt GÖVDE şemaları otomatik türetilemez; Go'nun
-// çalışma zamanı bir handler'ın hangi tipi okuyup hangi tipi yazdığını
-// bilmez. Bu şemalar [Doc.Describe] ile route bazında zenginleştirilir.
-//
-// Kapsam sınırının açıkça yazılması bilinçlidir: "OpenAPI üretiyoruz" deyip
-// gövdesiz bir şema sunmak, istemci geliştiricinin şemaya güvenip yanlış
-// alan adları göndermesine yol açardı. Eksik olduğunu bilmek, eksik olduğunu
-// sanmamaktan iyidir.
+// Anlatılmamış bir uç yalnızca yol, metod, güvenlik ve ortak hata yanıtlarını
+// taşır; gövdesi olmaz. Kapsam sınırının açıkça yazılması bilinçlidir:
+// "OpenAPI üretiyoruz" deyip gövdesiz bir şema sunmak, istemci
+// geliştiricisinin şemaya güvenip yanlış alan adları göndermesine yol açardı.
+// Eksik olduğunu bilmek, eksik olduğunu sanmamaktan iyidir.
 package openapi
 
 import (
 	"encoding/json"
 	"net/http"
+	"reflect"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/go-chi/chi/v5"
+
+	"github.com/bdrtr/gobit/internal/core/errors"
 )
 
 // Version üretilen belgenin OpenAPI sürümüdür.
@@ -106,6 +118,19 @@ type Doc struct {
 	baslik string
 	// surum API sürümüdür.
 	surum string
+	// semalar Go tiplerinden türetilmiş bileşen şemalarıdır.
+	semalar map[string]any
+	// semaSahipleri her bileşen adının hangi Go tipinden türediğini tutar;
+	// ad çakışmasını yakalayan tek kayıt budur.
+	semaSahipleri map[string]reflect.Type
+	// semaCakismalari aynı bileşen adını isteyen FARKLI tiplerin raporudur.
+	semaCakismalari []string
+	// mu gorulen alanını korur.
+	//
+	// Şema HER İSTEKTE yeniden üretilir ([Doc.Handler]) ve /openapi.json'a eş
+	// zamanlı iki istek gelmesi olağandır; kilitsiz bir yazma, iki Build'in
+	// aynı alana aynı anda yazması demekti.
+	mu sync.Mutex
 	// gorulen son Build sırasında bulunan route anahtarlarıdır;
 	// UnmatchedDescriptions onu okur.
 	gorulen map[string]struct{}
@@ -117,7 +142,29 @@ func New(baslik, surum string) *Doc {
 		zenginlestirme: make(map[string]Operation),
 		baslik:         baslik,
 		surum:          surum,
+		semalar:        make(map[string]any),
+		semaSahipleri:  make(map[string]reflect.Type),
 	}
+}
+
+// Describer kendi uçlarını anlatabilen modüllerin OPSİYONEL arayüzüdür.
+//
+// # Neden module.Module'e eklenmedi
+//
+// Metodu modül sözleşmesine koymak TÜM modülleri aynı anda kıran bir
+// değişiklikti ve bedeli karşılığında hiçbir şey vermezdi: anlatılmamış bir
+// modül GEÇERLİ bir modeldir — belgede yolu, metodu ve güvenliğiyle görünür,
+// yalnızca gövdesi olmaz. Zorunlu bir metot, boş gövdeli Describe
+// uygulamalarını çoğaltmaktan başka bir şey üretmezdi.
+//
+// # Kim çağırır
+//
+// Kompozisyon kökü (cmd/server) modül listesi üzerinden tip iddiasıyla
+// çağırır. Çekirdek çağıramaz: [Doc] modülleri tanımaz (Prensip 2.4) ve
+// modül listesini gören tek yer kurulumdur.
+type Describer interface {
+	// Describe modülün uçlarını belgeye işler ([Doc.Describe] ile).
+	Describe(d *Doc)
 }
 
 // Describe bir route'un işlem ayrıntılarını kaydeder.
@@ -161,7 +208,17 @@ func (d *Doc) Build(r chi.Routes) (map[string]any, error) {
 		return nil, err
 	}
 
+	d.mu.Lock()
 	d.gorulen = gorulen
+	d.mu.Unlock()
+
+	// Çakışma kontrolü YÜRÜYÜŞTEN SONRADIR: eşleşmeyen açıklamalar
+	// ([Doc.UnmatchedDescriptions]) çakışmadan bağımsız bir arızadır ve
+	// operatörün ikisini birden görebilmesi için gorulen yine de dolmalıdır.
+	if len(d.semaCakismalari) > 0 {
+		return nil, errors.Invalid(codeSchemaNameConflict,
+			"OpenAPI bileşen adı çakıştı: %s", strings.Join(d.semaCakismalari, "; "))
+	}
 
 	return map[string]any{
 		"openapi": Version,
@@ -170,7 +227,7 @@ func (d *Doc) Build(r chi.Routes) (map[string]any, error) {
 			"version": d.surum,
 		},
 		"paths":      yollar,
-		"components": bilesenler(),
+		"components": d.bilesenler(),
 	}, nil
 }
 
@@ -181,6 +238,9 @@ func (d *Doc) Build(r chi.Routes) (map[string]any, error) {
 // açıklamasının kaldığı anlamına gelir. Sessiz kalmak, belgede olmayan bir
 // ucun anlatılmasına ya da var olan bir ucun anlatılmamasına yol açardı.
 func (d *Doc) UnmatchedDescriptions() []string {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
 	var eksik []string
 
 	for k := range d.zenginlestirme {
@@ -347,13 +407,37 @@ func guvenlik(yol string) []map[string][]string {
 // SESSİZ olmasıdır: "propertes" yazılmış bir harita anahtarı derlenir, şema
 // üretilir ve yalnızca şemayı okuyan istemci alanı bulamayınca ortaya çıkar.
 const (
-	semaTip        = "type"
-	semaOzellikler = "properties"
-	semaZorunlu    = "required"
-	semaAciklama   = "description"
-	tipNesne       = "object"
-	tipDize        = "string"
-	tipTamSayi     = "integer"
+	semaTip          = "type"
+	semaOzellikler   = "properties"
+	semaZorunlu      = "required"
+	semaAciklama     = "description"
+	semaOgeler       = "items"
+	semaEkOzellikler = "additionalProperties"
+	semaBicim        = "format"
+	semaRef          = "$ref"
+	semaHerhangi     = "anyOf"
+	tipNesne         = "object"
+	tipDize          = "string"
+	tipTamSayi       = "integer"
+	tipSayi          = "number"
+	tipDizi          = "array"
+	tipMantiksal     = "boolean"
+	tipBos           = "null"
+	bicimTarihSaat   = "date-time"
+	bicimBayt        = "byte"
+	bicimInt32       = "int32"
+	bicimInt64       = "int64"
+	bicimFloat       = "float"
+	bicimDouble      = "double"
+)
+
+// Çekirdeğin kendi paylaşılan bileşenlerinin adları.
+//
+// Türetilen şemalarla AYNI ad alanını paylaşırlar; bu yüzden adları
+// [ayrilmisSemaAdlari] üzerinden korunur.
+const (
+	semaAdiError = "Error"
+	semaAdiList  = "List"
 )
 
 // varsayilanYanitlar her uçta olabilecek ortak hata yanıtlarını döner.
@@ -391,18 +475,12 @@ func varsayilanYanitlar(yol string) map[string]any {
 
 // hataYaniti ortak hata zarfına atıfta bulunan bir yanıt tanımı üretir.
 func hataYaniti(aciklama string) map[string]any {
-	return map[string]any{
-		semaAciklama: aciklama,
-		"content": map[string]any{
-			"application/json": map[string]any{
-				"schema": map[string]any{"$ref": "#/components/schemas/Error"},
-			},
-		},
-	}
+	return Response(aciklama, refSemasi(semaAdiError))
 }
 
-// bilesenler paylaşılan şemaları ve güvenlik tanımlarını döner.
-func bilesenler() map[string]any {
+// bilesenler paylaşılan şemaları, türetilmiş şemaları ve güvenlik tanımlarını
+// döner.
+func (d *Doc) bilesenler() map[string]any {
 	return map[string]any{
 		"securitySchemes": map[string]any{
 			bearerScheme: map[string]any{
@@ -419,35 +497,46 @@ func bilesenler() map[string]any {
 					"SIR DEĞİLDİR; tarayıcıda görünmesi beklenir.",
 			},
 		},
-		"schemas": map[string]any{
-			"Error": map[string]any{
+		"schemas": d.semaBilesenleri(),
+	}
+}
+
+// semaBilesenleri çekirdeğin ortak şemalarını türetilmiş şemalarla birleştirir.
+//
+// Türetilenler ortakları EZEMEZ: [ayrilmisSemaAdlari] çakışmayı daha
+// [Doc.SchemaOf] aşamasında yakalar ve [Doc.Build] hata döner. Burada
+// ortakların sonra yazılması ikinci savunma hattıdır — bir gün o kontrol
+// atlanırsa hata zarfının şeması yine de bozulmaz.
+func (d *Doc) semaBilesenleri() map[string]any {
+	semalar := make(map[string]any, len(d.semalar)+len(ayrilmisSemaAdlari))
+
+	for ad, sema := range d.semalar {
+		semalar[ad] = sema
+	}
+
+	semalar[semaAdiError] = map[string]any{
+		semaTip:     tipNesne,
+		semaZorunlu: []string{"error"},
+		semaOzellikler: map[string]any{
+			"error": map[string]any{
 				semaTip:     tipNesne,
-				semaZorunlu: []string{"error"},
+				semaZorunlu: []string{"code", "message"},
 				semaOzellikler: map[string]any{
-					"error": map[string]any{
-						semaTip:     tipNesne,
-						semaZorunlu: []string{"code", "message"},
-						semaOzellikler: map[string]any{
-							"code":       map[string]any{semaTip: tipDize},
-							"message":    map[string]any{semaTip: tipDize},
-							"request_id": map[string]any{semaTip: tipDize},
-							"details":    map[string]any{semaTip: tipNesne},
-						},
-					},
-				},
-			},
-			"List": map[string]any{
-				semaTip:     tipNesne,
-				semaZorunlu: []string{"data", "count", "offset", "limit"},
-				semaOzellikler: map[string]any{
-					"data":   map[string]any{"type": "array", "items": map[string]any{}},
-					"count":  map[string]any{semaTip: tipTamSayi},
-					"offset": map[string]any{semaTip: tipTamSayi},
-					"limit":  map[string]any{semaTip: tipTamSayi},
+					"code":       map[string]any{semaTip: tipDize},
+					"message":    map[string]any{semaTip: tipDize},
+					"request_id": map[string]any{semaTip: tipDize},
+					"details":    map[string]any{semaTip: tipNesne},
 				},
 			},
 		},
 	}
+
+	// Tipsiz liste zarfı, kayıt şeması BİLİNMEYEN uçlar içindir; şekli
+	// [Doc.List] ile AYNI kaynaktan gelir, böylece zarf biçimi değiştiğinde
+	// ikisi birlikte değişir.
+	semalar[semaAdiList] = listeSemasi(map[string]any{})
+
+	return semalar
 }
 
 // Handler üretilen şemayı JSON olarak sunan handler'ı döner.

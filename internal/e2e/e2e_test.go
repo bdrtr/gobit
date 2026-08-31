@@ -273,6 +273,19 @@ var (
 	// vitrinde görünmemesi bir SERVİS kararı değil, o ucun sabitlediği bir
 	// güven kararıdır ve yalnızca uçtan geçilerek kanıtlanabilir.
 	testRouter chi.Router
+	// testModuller router'a bağlanan modüllerin TAM listesidir (eklentilerin
+	// getirdikleri dâhil). Şema testleri "hangi uçlar anlatıldı" sorusunu
+	// yalnızca bu listeden yanıtlayabilir; elle tutulan ikinci bir liste,
+	// anlatımı yeni eklenen modülü sessizce kapsam dışı bırakırdı.
+	testModuller []module.Module
+	// testBelge /openapi.json ucunun sunduğu belgenin TA KENDİSİDİR.
+	//
+	// Testin ayrı bir kopya kurmaması bilinçlidir: kopya, üretilen şemayı
+	// değil testin kendi kurduğu şemayı doğrular ve ikisi ayrıştığında yeşil
+	// kalırdı. Değişkenin ayrıca tutulmasının sebebi
+	// [openapi.Doc.UnmatchedDescriptions]: hiçbir route ile eşleşmeyen
+	// açıklamalar JSON gövdesinde GÖRÜNMEZ, yalnızca belgeden okunur.
+	testBelge *openapi.Doc
 )
 
 // Faz 8 fikstürünün ürettiği kimlikler; testler yalnızca okur.
@@ -573,8 +586,18 @@ func zeminiKur(ctx context.Context) error {
 		return fmt.Errorf("eklentiler başlatılamadı: %w", err)
 	}
 
-	// OpenAPI ucu da üretimdeki gibi router ağacından üretilir (Faz 9).
-	testRouter.Get("/openapi.json", openapi.New("gobit API", "e2e").Handler(testRouter))
+	// OpenAPI ucu da üretimdeki gibi kurulur (Faz 9): yol, metod ve güvenlik
+	// router ağacından okunur, GÖVDE şemaları ise modüllerin anlatımından
+	// gelir. Anlatım kancasının burada da işletilmesi zorunludur —
+	// openapi.New tek başına bağlansaydı e2e şeması gövdesiz kalır ve
+	// "sunucunun sunduğu şema dolu" iddiası üretimde hiç var olmayan bir
+	// kurulumu sınamış olurdu.
+	//
+	// Modül listesi registry'den OKUNUR (main.go ile aynı gerekçe):
+	// eklentilerin getirdiği modüller yalnızca orada görünür.
+	testModuller = kayit.Modules()
+	testBelge = belgeyiAnlat("gobit API", "e2e", testModuller)
+	testRouter.Get(semaYolu, testBelge.Handler(testRouter))
 
 	if err := modulServisleriniCoz(); err != nil {
 		return err

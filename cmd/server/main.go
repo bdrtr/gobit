@@ -30,7 +30,6 @@ import (
 	"github.com/bdrtr/gobit/internal/core/logger"
 	"github.com/bdrtr/gobit/internal/core/module"
 	"github.com/bdrtr/gobit/internal/core/observability"
-	"github.com/bdrtr/gobit/internal/core/openapi"
 	coreplugin "github.com/bdrtr/gobit/internal/core/plugin"
 	"github.com/bdrtr/gobit/internal/core/query"
 	"github.com/bdrtr/gobit/internal/core/workflow"
@@ -286,7 +285,13 @@ func run() error {
 	// OpenAPI şeması router ağacından ÜRETİLİR, elle yazılmaz: elle yazılan
 	// şema, ilk route değişikliğinde sessizce yalan söylemeye başlar.
 	// Uç yalnızca route DESENLERİNİ yayımlar, veri değil.
-	router.Get(openAPIPath, openapi.New(cfg.ServiceName+" API", version).Handler(router))
+	//
+	// Modül listesi registry'den OKUNUR, burada ikinci bir liste tutulmaz:
+	// eklentilerin getirdiği modüller (bkz. searchpg) yalnızca registry'de
+	// görünür ve elle tutulan bir liste onları sessizce anlatmadan bırakırdı.
+	doc := belgeyiAnlat(cfg.ServiceName+" API", version, registry.Modules())
+	router.Get(openAPIPath, doc.Handler(router))
+	semayiDenetle(ctx, doc, router, log)
 
 	srv := corehttp.NewServer(corehttp.ServerOptions{
 		Addr:              cfg.Addr(),
