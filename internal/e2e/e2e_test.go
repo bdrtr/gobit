@@ -80,19 +80,27 @@ import (
 	"log/slog"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/testcontainers/testcontainers-go"
 	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
+	"golang.org/x/crypto/bcrypt"
 
 	"github.com/bdrtr/gobit/internal/core/container"
 	"github.com/bdrtr/gobit/internal/core/db"
 	"github.com/bdrtr/gobit/internal/core/eventbus"
+	corehttp "github.com/bdrtr/gobit/internal/core/http"
 	"github.com/bdrtr/gobit/internal/core/link"
 	"github.com/bdrtr/gobit/internal/core/module"
+	"github.com/bdrtr/gobit/internal/core/openapi"
 	"github.com/bdrtr/gobit/internal/core/query"
 	"github.com/bdrtr/gobit/internal/core/workflow"
 	"github.com/bdrtr/gobit/internal/core/workflow/pgstore"
+	authmod "github.com/bdrtr/gobit/internal/modules/auth"
+	authapi "github.com/bdrtr/gobit/internal/modules/auth/api"
+	"github.com/bdrtr/gobit/internal/modules/auth/models"
+	authsvc "github.com/bdrtr/gobit/internal/modules/auth/service"
 	cartmod "github.com/bdrtr/gobit/internal/modules/cart"
 	cartsvc "github.com/bdrtr/gobit/internal/modules/cart/service"
 	customermod "github.com/bdrtr/gobit/internal/modules/customer"
@@ -139,6 +147,31 @@ const (
 	svcWorkflow = "core.workflow"
 	// svcWorkflowStore yürütme durumunun KALICI deposudur.
 	svcWorkflowStore = "core.workflow.store"
+	// svcAuthInterop kimlik doğrulayıcının container'daki adıdır; çekirdek
+	// onu bu ADLA çözer ve auth modülünü import etmez (ADR 0001).
+	svcAuthInterop = "auth.interop"
+)
+
+// Faz 8 kimlik fikstürünün sabitleri.
+//
+// Sır 32 karakterden UZUNDUR: auth modülü kısa sırrı reddetmez ama uyarı
+// loglar ve testin çıktısı iddialarla kalmalıdır.
+const (
+	// testJWTSecret uçtan uca testlerin imza sırrıdır.
+	testJWTSecret = "e2e-test-imza-sirri-32-bayttan-uzun-olmali"
+	// yoneticiEposta fikstür yöneticisinin e-postasıdır.
+	yoneticiEposta = "yonetici@gobit.test"
+	// yoneticiParola fikstür yöneticisinin parolasıdır.
+	yoneticiParola = "cok-gizli-parola-42"
+	// testKanalAdi publishable anahtarın bağlandığı satış kanalıdır.
+	testKanalAdi = "e2e-vitrin"
+	// testHizSiniri paylaşılan router'ın dakikalık istek sınırıdır.
+	//
+	// Üretim varsayılanından (600) bilinçli olarak YÜKSEKTİR: yığının şekli
+	// üretimdekiyle aynı kalsın ama sınır, senaryoların ortasında tetiklenip
+	// alakasız testleri düşürmesin. Sınırın KENDİ davranışı kendi router'ında
+	// sınanır (bkz. sertlestirme_test.go).
+	testHizSiniri = 1_000_000
 )
 
 // Vergisi otomatik uygulanan bölgenin fikstür sabitleri.
@@ -219,6 +252,13 @@ var (
 	// baglar çekirdeğin Module Links servisidir; testler bağların GERÇEKTEN
 	// kurulduğunu buradan okuyarak doğrular.
 	baglar link.LinkService
+	// testAuthn koruma middleware'ine bağlanan kimlik doğrulayıcıdır.
+	//
+	// Router, modüller ayağa kalkmadan ÖNCE kurulmak zorundadır (chi,
+	// route'lardan sonra r.Use çağrılmasını reddeder), kimlik doğrulayıcı ise
+	// auth modülü Register olduğunda doğar. Üretimde de aynı boşluk vardır ve
+	// aynı tiple kapatılır (bkz. cmd/server/main.go).
+	testAuthn = &corehttp.DeferredAuthenticator{}
 	// testRouter modüllerin route'larını taşıyan router'dır.
 	//
 	// Faz 5 ve Faz 6 senaryoları akışları doğrudan çağırır ve router'a hiç
@@ -226,7 +266,22 @@ var (
 	// davranışını sınar (bkz. kargo_test.go). admin_only bir seçeneğin
 	// vitrinde görünmemesi bir SERVİS kararı değil, o ucun sabitlediği bir
 	// güven kararıdır ve yalnızca uçtan geçilerek kanıtlanabilir.
-	testRouter *chi.Mux
+	testRouter chi.Router
+)
+
+// Faz 8 fikstürünün ürettiği kimlikler; testler yalnızca okur.
+var (
+	// authSvc auth modülünün servisidir; fikstür kullanıcıyı ve anahtarları
+	// bununla kurar.
+	authSvc *authsvc.Service
+	// yoneticiID fikstür yöneticisinin kimliğidir.
+	yoneticiID string
+	// gizliAnahtar yönetim yüzeyinde kullanılabilen DÜZ gizli anahtardır.
+	gizliAnahtar string
+	// publishableAnahtar mağaza yüzeyinin DÜZ publishable anahtarıdır.
+	publishableAnahtar string
+	// testKanalID publishable anahtarın bağlı olduğu satış kanalıdır.
+	testKanalID string
 )
 
 // Modül servisleri; hepsi container'dan ADLA çözülür, elle kurulmaz.
@@ -454,11 +509,45 @@ func zeminiKur(ctx context.Context) error {
 	kayit.Add(fulfillmentmod.New())
 	kayit.Add(promotionmod.New(nil))
 	kayit.Add(taxmod.New(nil))
-	// Router atılmaz, saklanır: Faz 7'nin mağaza senaryosu HTTP ucundan geçer.
-	testRouter = chi.NewRouter()
+	// Faz 8: kimlik.
+	kayit.Add(authmod.New(authmod.Options{
+		JWTSecret: testJWTSecret,
+		JWTTTL:    time.Hour,
+		JWTIssuer: "gobit-e2e",
+		// Bcrypt maliyeti test için DÜŞÜRÜLÜR: varsayılan maliyet her giriş
+		// çağrısına ~100ms ekler ve kimlik senaryoları onlarca giriş yapar.
+		// Maliyet parametresinin KENDİSİ burada sınanmaz; parola doğrulamanın
+		// davranışı sınanır.
+		BcryptCost: bcrypt.MinCost,
+	}))
+
+	// Router ÜRETİMDEKİ gibi kurulur: koruma yığını (hız sınırı -> kimlik ->
+	// idempotency) çekirdekteki tek tanımdan gelir, testin kendi kopyası
+	// yoktur. Kopya olsaydı üretimdeki sıra değiştiğinde test hâlâ eski
+	// sırayı doğrular ve yeşil kalırdı.
+	testRouter = corehttp.NewRouter(corehttp.RouterOptions{
+		Version: "e2e",
+		Middlewares: corehttp.APIGuards(corehttp.GuardOptions{
+			Authenticator:    testAuthn,
+			AdminExempt:      []string{authapi.LoginPath},
+			Limiter:          corehttp.NewMemoryLimiter(testHizSiniri, time.Minute),
+			LimitKey:         corehttp.ClientIPKey,
+			IdempotencyStore: corehttp.NewMemoryIdempotencyStore(time.Hour),
+		}),
+	})
 	if err := kayit.Bootstrap(ctx, kap, testRouter); err != nil {
 		return err
 	}
+
+	// Kimlik doğrulayıcı ancak Bootstrap'tan sonra container'dadır.
+	dogrulayici, err := container.Resolve[corehttp.Authenticator](kap, svcAuthInterop)
+	if err != nil {
+		return fmt.Errorf("kimlik doğrulayıcı çözülemedi: %w", err)
+	}
+	testAuthn.Bind(dogrulayici)
+
+	// OpenAPI ucu da üretimdeki gibi router ağacından üretilir (Faz 9).
+	testRouter.Get("/openapi.json", openapi.New("gobit API", "e2e").Handler(testRouter))
 
 	if err := modulServisleriniCoz(); err != nil {
 		return err
@@ -478,7 +567,63 @@ func zeminiKur(ctx context.Context) error {
 	if err := vergiFiksturleriniKur(ctx); err != nil {
 		return err
 	}
+	if err := kimlikFiksturunuKur(ctx); err != nil {
+		return err
+	}
 	return stokLokasyonuKur(ctx)
+}
+
+// kimlikFiksturunuKur Faz 8 senaryolarının paylaştığı kimlikleri üretir.
+//
+// Kimlikler HTTP'den değil SERVİSTEN kurulur ve bu bilinçlidir: yönetim
+// uçlarının kendisi artık korumalıdır, yani ilk yöneticiyi HTTP'den yaratmanın
+// yolu yoktur. Gerçek bir kurulumda da ilk yönetici bir tohum (seed) adımıyla
+// doğar; test o adımı taklit eder.
+//
+// Üretilenler:
+//   - parolası olan bir yönetim kullanıcısı (giriş senaryoları),
+//   - tam yetkili bir GİZLİ anahtar (jetonsuz yönetim erişimi),
+//   - bir satış kanalı ve ona bağlı bir PUBLISHABLE anahtar (mağaza yüzeyi).
+func kimlikFiksturunuKur(ctx context.Context) error {
+	yonetici, err := authSvc.CreateUser(ctx, authsvc.CreateUserInput{
+		Email:     yoneticiEposta,
+		FirstName: "E2E",
+		LastName:  "Yönetici",
+	}, yoneticiParola)
+	if err != nil {
+		return fmt.Errorf("yönetim kullanıcısı kurulamadı: %w", err)
+	}
+	yoneticiID = yonetici.ID
+
+	_, gizliAnahtar, err = authSvc.CreateAPIKey(ctx, authsvc.CreateAPIKeyInput{
+		Type:      models.APIKeySecret,
+		Title:     "e2e gizli anahtar",
+		CreatedBy: yoneticiID,
+	})
+	if err != nil {
+		return fmt.Errorf("gizli api anahtarı kurulamadı: %w", err)
+	}
+
+	kanal, err := authSvc.CreateSalesChannel(ctx, authsvc.SalesChannelInput{
+		Name:        testKanalAdi,
+		Description: "uçtan uca test vitrini",
+	})
+	if err != nil {
+		return fmt.Errorf("satış kanalı kurulamadı: %w", err)
+	}
+	testKanalID = kanal.ID
+
+	_, publishableAnahtar, err = authSvc.CreateAPIKey(ctx, authsvc.CreateAPIKeyInput{
+		Type:            models.APIKeyPublishable,
+		Title:           "e2e publishable anahtar",
+		CreatedBy:       yoneticiID,
+		SalesChannelIDs: []string{testKanalID},
+	})
+	if err != nil {
+		return fmt.Errorf("publishable api anahtarı kurulamadı: %w", err)
+	}
+
+	return nil
 }
 
 // modulServisleriniCoz fikstürlerin kullanacağı modül servislerini container'dan
@@ -521,6 +666,9 @@ func modulServisleriniCoz() error {
 		return err
 	}
 	if vergiSvc, err = container.Resolve[*taxsvc.Service](kap, taxmod.ServiceName); err != nil {
+		return err
+	}
+	if authSvc, err = container.Resolve[*authsvc.Service](kap, authmod.ServiceName); err != nil {
 		return err
 	}
 

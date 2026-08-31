@@ -21,7 +21,7 @@ SQLC             := $(BIN_DIR)/sqlc
 DOTENV = set -a; [ -f .env ] && . ./.env; set +a;
 
 .DEFAULT_GOAL := help
-.PHONY: help run build test test-integration lint fmt tidy gen up down logs psql redis-cli migrate-up migrate-down tools clean rename-module
+.PHONY: help run build test test-integration load-test lint fmt tidy gen up down logs psql redis-cli migrate-up migrate-down tools clean rename-module
 
 help: ## Bu yardım metnini göster
 	@grep -hE '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2}'
@@ -43,6 +43,11 @@ test: ## Birim testlerini çalıştır (race + coverage)
 
 test-integration: ## Entegrasyon testlerini çalıştır (testcontainers gerektirir)
 	go test -race -tags=integration -count=1 ./...
+
+load-test: ## Temel yük testini çalıştır (REQUESTS/CONCURRENCY ile ayarlanır)
+	GOBIT_LOAD_REQUESTS=$(or $(REQUESTS),5000) \
+	GOBIT_LOAD_CONCURRENCY=$(or $(CONCURRENCY),32) \
+	go test -tags=integration -count=1 -v -run TestTemelYukAltindaDogruKalir ./internal/e2e/
 
 lint: $(GOLANGCI) ## golangci-lint çalıştır
 	$(GOLANGCI) run ./...

@@ -1,8 +1,12 @@
 // Command server gobit commerce framework'ünün tek binary giriş noktasıdır.
 //
-// Akış: config yükle -> logger kur -> container kur -> altyapı servislerini
-// (Postgres, Redis, event bus) kaydet -> modülleri bootstrap et -> HTTP
-// router'ı mount et -> dinle. Modüller Faz 4'ten itibaren eklenecektir.
+// Akış: config yükle -> logger ve izleme kur -> container kur -> altyapı
+// servislerini (Postgres, Redis, event bus) kaydet -> eklentileri kur ->
+// modülleri bootstrap et -> eklentileri başlat -> dinle.
+//
+// Bu paket, mimarinin TEK "her şeyi bilen" noktasıdır: çekirdek modülleri,
+// modüller birbirini, eklentiler de commerce modüllerini tanımaz. Kimin
+// kiminle konuşacağına dair her karar burada, açıkça verilir.
 package main
 
 import (
@@ -25,9 +29,13 @@ import (
 	"github.com/bdrtr/gobit/internal/core/link"
 	"github.com/bdrtr/gobit/internal/core/logger"
 	"github.com/bdrtr/gobit/internal/core/module"
+	"github.com/bdrtr/gobit/internal/core/observability"
+	"github.com/bdrtr/gobit/internal/core/openapi"
+	coreplugin "github.com/bdrtr/gobit/internal/core/plugin"
 	"github.com/bdrtr/gobit/internal/core/query"
 	"github.com/bdrtr/gobit/internal/core/workflow"
 	"github.com/bdrtr/gobit/internal/core/workflow/pgstore"
+	"github.com/bdrtr/gobit/internal/modules/auth"
 	"github.com/bdrtr/gobit/internal/modules/cart"
 	"github.com/bdrtr/gobit/internal/modules/customer"
 	"github.com/bdrtr/gobit/internal/modules/fulfillment"
@@ -90,7 +98,33 @@ func run() error {
 		"env", cfg.AppEnv,
 		"log_level", cfg.LogLevel,
 		"event_bus", cfg.EventBus,
+		"eklentiler", cfg.Plugins,
 	)
+
+	// İzleme kurulumu BAŞARISIZ OLSA BİLE uygulama açılır (ADR 0007): izleme,
+	// ürünün doğruluğu için değil görünürlüğü için vardır ve toplayıcının
+	// kesintisi mağazayı kapatmamalıdır. OTLP adresi verilmemişse hiçbir dış
+	// bağlantı denenmez.
+	izlemeKapat, err := observability.Setup(ctx, observability.Options{
+		Endpoint:       cfg.OTLPEndpoint,
+		Insecure:       cfg.OTLPInsecure,
+		ServiceName:    cfg.ServiceName,
+		ServiceVersion: version,
+		Environment:    cfg.AppEnv,
+		SampleRatio:    cfg.TraceSampleRatio,
+		MetricInterval: cfg.MetricInterval,
+		Logger:         log,
+	})
+	if err != nil {
+		log.Warn("izleme kurulamadı, kapalı devam ediliyor", "error", err)
+	}
+	// Kapanış bağlamı iptal EDİLMEMİŞ olmalıdır: SIGTERM ctx'i çoktan iptal
+	// etmiş olur ve bekleyen span'lar gönderilemeden düşerdi.
+	defer func() {
+		if err := izlemeKapat(context.WithoutCancel(ctx)); err != nil {
+			log.Error("izleme kapatılamadı", "error", err)
+		}
+	}()
 
 	c := container.New(log)
 
@@ -138,10 +172,17 @@ func run() error {
 		return err
 	}
 
+	// Kimlik doğrulayıcı auth modülü Register olduğunda doğar, koruma
+	// middleware'i ise router kurulurken takılmalıdır. Aradaki boşluğu
+	// gecikmeli doğrulayıcı kapatır (bkz. kurulum.go).
+	authn := &corehttp.DeferredAuthenticator{}
+
 	router := corehttp.NewRouter(corehttp.RouterOptions{
-		Version:         version,
-		Logger:          log,
-		ReadinessChecks: checks,
+		Version:          version,
+		Logger:           log,
+		ReadinessChecks:  checks,
+		TelemetryService: cfg.ServiceName,
+		Middlewares:      korumaYigini(cfg, authn),
 	})
 
 	registry := module.NewRegistry(log, func(ctx context.Context, src fs.FS, owner string) error {
@@ -165,9 +206,59 @@ func run() error {
 	registry.Add(fulfillment.New())
 	registry.Add(promotion.New(log))
 	registry.Add(tax.New(log))
+	// Faz 8: kimlik. Diğer modüllerden bağımsızdır; yalnızca çekirdek havuzunu
+	// ister ve karşılığında koruma middleware'inin ihtiyacı olan doğrulayıcıyı
+	// container'a bırakır.
+	registry.Add(auth.New(auth.Options{
+		JWTSecret: jwtSirri(cfg, log),
+		JWTTTL:    cfg.JWTTTL,
+		JWTIssuer: cfg.ServiceName,
+		Logger:    log,
+	}))
+
+	// Eklentiler modüllerden ÖNCE kurulur: eklentinin getirdiği modül de
+	// Register/migration/route döngüsünden geçebilmelidir.
+	eklentiler, err := eklentileriSec(cfg.Plugins)
+	if err != nil {
+		return err
+	}
+	host := coreplugin.NewHost(c, registry, bus, log, eklentiAyarlari())
+	if err := eklentiler.Install(ctx, host); err != nil {
+		return err
+	}
+
 	if err := registry.Bootstrap(ctx, c, router); err != nil {
 		return err
 	}
+
+	// Kimlik doğrulayıcı ancak Bootstrap'tan sonra container'dadır.
+	// Çözülemezse açılış DURUR: korumalı görünen ama her isteği reddeden bir
+	// yönetim yüzeyiyle çalışmaya devam etmek, arızayı ilk giriş denemesine
+	// kadar gizlerdi.
+	dogrulayici, err := container.Resolve[corehttp.Authenticator](c, auth.InteropName)
+	if err != nil {
+		return errors.Wrap(err, errors.KindOf(err), "auth_interop_missing",
+			"kimlik doğrulayıcı %q çözülemedi", auth.InteropName)
+	}
+	authn.Bind(dogrulayici)
+
+	// Sağlayıcı ve abonelik kayıtları modüller ayağa kalktıktan SONRA
+	// uygulanır; route'lar ise modül route'larından sonra bağlanır.
+	if err := eklentiler.Start(ctx, host); err != nil {
+		return err
+	}
+	// Mevcut bir yolu gölgeleyen eklenti route'u AÇILIŞI DURDURUR. Hatayı
+	// yutmak, modül ucunun sessizce eklenti tarafından ele geçirildiği ya da
+	// eklentinin hiç bağlanmadığı bir kurulumla çalışmaya devam etmek olurdu;
+	// ikisi de ancak ilk isteğin yanlış yere gitmesiyle fark edilirdi.
+	if err := eklentiler.MountRoutes(router, host); err != nil {
+		return err
+	}
+
+	// OpenAPI şeması router ağacından ÜRETİLİR, elle yazılmaz: elle yazılan
+	// şema, ilk route değişikliğinde sessizce yalan söylemeye başlar.
+	// Uç yalnızca route DESENLERİNİ yayımlar, veri değil.
+	router.Get(openAPIPath, openapi.New(cfg.ServiceName+" API", version).Handler(router))
 
 	srv := corehttp.NewServer(corehttp.ServerOptions{
 		Addr:              cfg.Addr(),

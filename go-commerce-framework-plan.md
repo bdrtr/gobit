@@ -293,6 +293,9 @@ type PaymentProvider interface {
 ### Faz 4 — Katalog Modülleri (Product · Pricing · Inventory)
 **Yapılacaklar:** Üç modülün modelleri, migration'ları, servisleri, store+admin API'leri. `product↔pricing` ve `product↔inventory` linkleri. Admin API: ürün/varyant/fiyat/stok oluşturma. Store API: ürün listeleme (fiyat + stok ile, `query` üzerinden).
 **DoD:** Admin API'den ürün + varyant + fiyat + stok seviyesi oluşturulabiliyor; Store API ürünleri fiyat ve stok bilgisiyle birlikte listeliyor; entegrasyon testi yeşil.
+> **Tamamlandı.** Modül başına entegrasyon testleri gerçek Postgres üzerinde
+> koşar; katalog listesi fiyat ve stoğu `core/query` üzerinden çeker, yani
+> modüller birbirini import etmeden birleşik veri döner.
 
 ### Faz 5 — Sepet Akışı (Cart · Customer · Region)
 **Yapılacaklar:** Cart, Customer, Region/Currency modülleri. Cart workflow'ları: `create_cart`, `add_line_item`, `update_line_item`, `calculate_totals` (fiyatı pricing'den, vergiyi tax stub'ından alır). `cart↔customer`, `cart↔region` linkleri.
@@ -312,10 +315,34 @@ type PaymentProvider interface {
 ### Faz 8 — Auth · Admin User · API Key · RBAC
 **Yapılacaklar:** Auth modülü: admin user, JWT login, publishable/secret API key, sales channel. HTTP'de gerçek auth middleware (admin route'ları korumalı, store route'ları publishable key ile).
 **DoD:** Yetkisiz istek `401`; admin login → token ile korumalı endpoint'e erişim; publishable key olmadan store API erişimi reddediliyor.
+> **Tamamlandı.** DoD `internal/e2e/kimlik_test.go` altında GERÇEK modüller,
+> gerçek Postgres ve ÜRETİMDEKİ koruma yığınıyla doğrulandı. Kritik ayrım:
+> koruma modülde değil, router'ı kuran tarafta takılır — modüller route'larını
+> tam yolla düz bir router'a kaydettiği için chi'nin doğal kapsamlama aracı
+> (Route/Group) kullanılamaz ve kapsam `corehttp.Scoped` ile middleware'in
+> kendi içinde kurulur. Sıra tek bir yerde (`corehttp.APIGuards`) yazılıdır ve
+> uçtan uca testler o yığının TA KENDİSİNİ kurar. Tanımsız bir `/admin/v1/...`
+> yolu da 401 döner: 404 olsaydı uç haritası status kodundan sızardı.
+> Kimlik doğrulayıcı router'dan SONRA doğduğu için `corehttp.DeferredAuthenticator`
+> ile bağlanır; bağlanmadan gelen istek reddedilir (ADR 0007).
 
 ### Faz 9 — Plugin Sistemi · Observability · Sertleştirme
 **Yapılacaklar:** Plugin yükleme mekanizması (modül/subscriber/route/provider register edebilen); örnek `payment-stripe` plugin iskeleti; OpenTelemetry trace+metric; rate limiting; idempotency middleware; OpenAPI/Swagger üretimi; README + mimari dokümanı.
 **DoD:** Örnek payment provider plugin'i çekirdeğe dokunmadan takılıp seçilebiliyor; trace'ler dışa aktarılıyor; OpenAPI şeması üretiliyor; temel yük testi geçiyor.
+> **Tamamlandı.** Eklenti mekanizması DERLEME ZAMANI kaydıdır; Go'nun `plugin`
+> paketi (.so) bilinçli olarak kullanılmadı (yalnızca Linux/macOS, çapraz
+> derleme yok, tüm bağımlılıkların bit düzeyinde aynı sürümde derlenmiş olması
+> şartı). "Çekirdeğe dokunmadan" ölçütü şöyle karşılanır: eklenti eklemek
+> `cmd/server` katalog haritasına bir satır ekler, çekirdek ve modüller
+> DEĞİŞMEZ; hangisinin kurulacağını `PLUGINS` seçer.
+> Kurulum iki fazlıdır (`Install` → modüller → `Start`) çünkü sağlayıcı kaydı
+> ancak payment modülü ayağa kalkınca vardır.
+> Arıza davranışı [ADR 0007](docs/adr/0007-sertlestirme-arizada-davranis.md)
+> ile karara bağlandı: kimlik fail-closed, hız sınırı fail-open, idempotency
+> ayırmada reddeder / kayıtta anahtarı serbest bırakır. Tek tip kural YOKTUR.
+> Yük testi süreç içidir (`internal/e2e/yuk_test.go`): ölçtüğü şey mutlak
+> performans değil, eşzamanlı yük altında DOĞRULUK — düşen istek, 5xx ve
+> koruma yığınındaki yarış. Kapasite planı için bir sayı üretmez.
 
 ---
 

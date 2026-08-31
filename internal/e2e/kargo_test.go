@@ -15,6 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/bdrtr/gobit/internal/core/errors"
+	corehttp "github.com/bdrtr/gobit/internal/core/http"
 	fulfillmentmanual "github.com/bdrtr/gobit/internal/modules/fulfillment/manual"
 	fulfillmentmodels "github.com/bdrtr/gobit/internal/modules/fulfillment/models"
 	fulfillmentsvc "github.com/bdrtr/gobit/internal/modules/fulfillment/service"
@@ -423,6 +424,9 @@ func magazaKargoSecenekleri(t *testing.T, sorgu url.Values) []map[string]any {
 
 	istek := httptest.NewRequest(http.MethodGet,
 		"/store/v1/shipping-options?"+sorgu.Encode(), http.NoBody)
+	// Mağaza yüzeyi Faz 8'den beri publishable anahtar ister; anahtarsız
+	// istek daha router'a varmadan 401 olur (bkz. kimlik_test.go).
+	istek.Header.Set(corehttp.PublishableKeyHeader, publishableAnahtar)
 	kayit := httptest.NewRecorder()
 	testRouter.ServeHTTP(kayit, istek)
 

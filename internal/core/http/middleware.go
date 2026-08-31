@@ -43,12 +43,37 @@ const (
 	loggerKey
 )
 
-// sensitiveQueryMarkers sorgu parametresi adlarında arandığında değerin
+// sensitiveQueryMarkers sorgu parametresi adının İÇİNDE geçtiğinde değerin
 // maskelenmesini gerektiren parçalardır. Bilinçli olarak geniş tutulmuştur:
 // yanlışlıkla maskelemek, yanlışlıkla sızdırmaktan ucuzdur (plan Bölüm 8).
+//
+// Liste yalnızca kimlik bilgisini değil KİŞİSEL VERİYİ de kapsar. Erişim logu
+// uzun ömürlüdür ve onu görebilenlerin kümesi uygulamayı çalıştıranlardan
+// geniştir; auth modülü e-postayı bilinçli olarak loglamazken aynı değerin
+// "GET /admin/v1/users?email=..." süzgecinden erişim loguna düşmesi o kararı
+// boşa çıkarırdı.
 var sensitiveQueryMarkers = []string{
-	"token", "secret", "password", "passwd", "pwd", "key", "auth",
-	"signature", "credential", "session", "jwt", "otp",
+	// Kimlik bilgisi ve jetonlar.
+	"token", "secret", "password", "passwd", "passphrase", "pwd", "key",
+	"auth", "signature", "credential", "session", "cookie", "jwt", "otp",
+	// Kişisel veri. "mail" parçası hem "email" hem "e-mail" hem de
+	// "customer_email" gibi bileşikleri yakalar; ayrıca "email" yazmak
+	// listeyi uzatır, kapsamı genişletmez.
+	"mail", "posta", "phone", "telefon", "msisdn", "gsm",
+	"iban", "tckn", "vkn", "cvv", "cvc",
+}
+
+// sensitiveQueryExactKeys yalnızca TAM eşleşmede maskelenen parametre adlarıdır.
+//
+// Bu adlar alt dize olarak aranamayacak kadar kısadır: "pin" masum "shipping"
+// içinde, "tel" ise "telemetry" içinde geçer. sensitiveQueryMarkers'a
+// konsalardı erişim logunun en çok işe yarayan süzgeçlerini okunmaz hâle
+// getirirlerdi ki maskelemenin amacı logu kullanılamaz kılmak değil. Bedeli
+// bilinçlidir: "card_pin" gibi bileşik bir ad buradan yakalanmaz, böyle bir
+// parametre doğarsa sensitiveQueryMarkers'a eklenmelidir.
+var sensitiveQueryExactKeys = map[string]struct{}{
+	"pin": {},
+	"tel": {},
 }
 
 // RequestID her isteğe bir kimlik atayan middleware'dir.
@@ -165,8 +190,12 @@ func Recoverer(log *slog.Logger) func(http.Handler) http.Handler {
 // Kaydedilen alanlar: method, path, (maskelenmiş) query, status, bytes,
 // duration_ms ve request_id. Hassas veri loglanmaz (plan Bölüm 8): istek
 // başlıkları — özellikle Authorization ve Cookie — hiç okunmaz, sorgu
-// parametrelerinden token benzeri olanların değerleri maskelenir, istek ve
-// yanıt gövdeleri log'a girmez.
+// parametrelerinden jeton ya da kişisel veri taşıyan adların değerleri
+// maskelenir (bkz. redactQuery), istek ve yanıt gövdeleri log'a girmez.
+//
+// path maskelenmez: rota şablonu erişim logunun temel eksenidir ve maskelenirse
+// geriye izlenebilir hiçbir şey kalmaz. Karşılığı, rotaların kişisel veriyi yol
+// parçasına koymaması ve kaynakları kimlikle adreslemesidir.
 //
 // Satır defer ile yazılır: handler paniklese (veya http.ErrAbortHandler ile
 // isteği bıraksa) bile erişim kaydı kaybolmaz — izlenmesi en kritik istekler
@@ -204,27 +233,6 @@ func RequestLogger(log *slog.Logger) func(http.Handler) http.Handler {
 			finished = true
 		})
 	}
-}
-
-// RequireAuth kimlik doğrulaması gerektiren route'ları koruyan middleware'dir.
-//
-// FAZ 8 NOTU — BU BİR STUB'DIR. Şimdilik yalnızca Authorization başlığının
-// var olup olmadığına bakar: token'ı çözmez, imzasını/süresini doğrulamaz,
-// yetki (RBAC) kontrolü yapmaz ve kimliği context'e koymaz. Gerçek JWT /
-// API key doğrulaması Faz 8'de auth modülüyle birlikte gelecek ve bu
-// implementasyonun yerini alacaktır (plan Faz 8).
-func RequireAuth(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.TrimSpace(r.Header.Get("Authorization")) == "" {
-			// RFC 9110: 401 yanıtı hangi şemanın beklendiğini bildirmelidir.
-			w.Header().Set("WWW-Authenticate", "Bearer")
-			WriteError(r.Context(), w,
-				coreerrors.Unauthorized("unauthorized", "kimlik doğrulama gerekli"))
-			return
-		}
-
-		next.ServeHTTP(w, r)
-	})
 }
 
 // responseWriter yanıtın status kodunu ve yazılan bayt sayısını sayan
@@ -322,9 +330,18 @@ func sanitizeRequestID(v string) string {
 	return v
 }
 
-// redactQuery sorgu dizesini loglanabilir hâle getirir: token benzeri
+// redactQuery sorgu dizesini loglanabilir hâle getirir: hassas adlı
 // parametrelerin değerleri maskelenir, geri kalanı (sayfalama, filtre)
 // olduğu gibi kalır. Ayrıştırılamayan sorgu tamamen maskelenir.
+//
+// Maskeleme bir DENY-LIST'tir ve bedeli açıkça kabul edilir: listede olmayan
+// yeni bir hassas parametre — yarın eklenen "?recovery_hint=..." gibi —
+// maskesiz loglanır, koruma ancak adın listeye eklenmesiyle gelir. Ters
+// seçenek olan allow-list bu katmanda mümkün değildi: çekirdek modülleri
+// tanımaz (Prensip 2.4), dolayısıyla core/http hiçbir modülün süzgeç adını
+// önceden bilemez. Allow-list ya sürekli eksik kalıp her yeni uç noktanın
+// sorgusunu tümüyle maskeleyerek erişim logunu körleştirirdi ya da modülleri
+// çekirdeğe ad kaydetmeye zorlayarak bağımlılık yönünü tersine çevirirdi.
 func redactQuery(raw string) string {
 	if raw == "" {
 		return ""
@@ -348,8 +365,14 @@ func redactQuery(raw string) string {
 }
 
 // isSensitiveKey parametre adının hassas bir değeri taşıyıp taşımadığını bildirir.
+//
+// Karşılaştırma küçük harfe indirgenerek yapılır: anahtar adını istemci
+// belirler ve "?Email=" ile "?EMAIL=" yazmak maskelemeyi atlatmaya yetmemeli.
 func isSensitiveKey(key string) bool {
 	lower := strings.ToLower(key)
+	if _, ok := sensitiveQueryExactKeys[lower]; ok {
+		return true
+	}
 	for _, marker := range sensitiveQueryMarkers {
 		if strings.Contains(lower, marker) {
 			return true

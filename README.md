@@ -5,8 +5,9 @@ Go tabanlı, modüler, headless commerce framework. Tek binary olarak çalışan
 servise çıkarılabilir.
 
 Uygulama planının tamamı için: [`go-commerce-framework-plan.md`](./go-commerce-framework-plan.md)
+Mimarinin **neden** böyle kurulduğu için: [`docs/mimari.md`](./docs/mimari.md)
 
-**Mevcut durum: Faz 3 — Workflow Engine ✅**
+**Mevcut durum: Faz 9 — Eklenti sistemi · Observability · Sertleştirme ✅**
 
 ## Hızlı başlangıç
 
@@ -114,7 +115,7 @@ güncelleyin.
 | `core/container` | İsimli kayıt, generic `Resolve[T]`, tembel singleton, döngü tespiti, ters sırada kapatma |
 | `core/module` | `Module` sözleşmesi + `ModuleRegistry` (register → migrate → routes) |
 | `core/eventbus` | `EventBus` + InMemory (dev) ve Redis Streams (prod, consumer group + XACK) |
-| `core/http` | chi router, RequestID/RequestLogger/Recoverer/RequireAuth, `Kind`→status eşlemesi |
+| `core/http` | chi router, RequestID/RequestLogger/Recoverer/Telemetry, RequireAdmin/RequireStore/RequireScope, `Scoped`/`APIGuards` koruma yığını, hız sınırı, idempotency, `Kind`→status eşlemesi |
 | `core/link` | Module Links — modüller arası ilişki FK olmadan; kardinalite veritabanı kısıtıyla zorlanır |
 | `core/query` | Cross-module okuma — kök çek, link çöz, batch getir, birleştir; N+1 yapısal olarak yok |
 | `core/workflow` | Saga motoru — ters sırada telafi, retry, idempotency-key, panik izolasyonu |
@@ -122,9 +123,153 @@ güncelleyin.
 | `workflows/cart` | Sepet akışları: create_cart, add_line_item, update_line_item, calculate_totals |
 | `workflows/checkout` | `complete_cart` saga: stok ayır → sipariş → yetkilendir → tahsil et → sepeti kapat |
 | `core/provider` | Ödeme/kargo sağlayıcı sözleşmeleri (plan Bölüm 5.6) |
+| `core/plugin` | Eklenti sözleşmesi + iki fazlı kurulum (`Install` → modüller → `Start`) |
+| `core/observability` | OpenTelemetry trace + metrik kurulumu; toplayıcı yoksa gerçekten kapalı |
+| `core/openapi` | Router ağacından OpenAPI şeması üretimi (`/openapi.json`) |
 
 Event bus arka ucu `EVENT_BUS=inmemory|redis` ile seçilir. `redis` seçildiğinde
 Redis erişilemezse uygulama açılışta durur.
+
+## API güvenliği
+
+İki yüzey, iki kimlik. Koruma modüllerde değil, **router'ı kuran tarafta**
+(`cmd/server`) takılır: modüller route'larını tam yolla düz bir router'a
+kaydeder, kapsamlama `corehttp.Scoped` ile yapılır ve sıra tek bir yerde,
+`corehttp.APIGuards` içinde yazılıdır.
+
+| Yüzey | Kimlik | Başlık |
+|---|---|---|
+| `/admin/v1/**` | Oturum jetonu (HS256 JWT) **ya da** gizli anahtar (`sk_…`) | `Authorization: Bearer …` |
+| `/store/v1/**` | Publishable anahtar (`pk_…`) | `x-publishable-api-key: …` |
+| `/health`, `/ready`, `/openapi.json` | yok | — |
+
+**Tek korumasız yönetim ucu** `POST /admin/v1/auth/login`'dir: kimliği
+doğrulanacak istek, kimliği daha yeni kuracaktır. Muafiyet elle yazılmaz,
+`authapi.LoginPath` sabitinden okunur.
+
+Koruma yığınının sırası bilinçlidir:
+
+1. **Hız sınırı** — kimlik doğrulamadan *önce*. Aksi hâlde parola deneyen bir
+   saldırgan her denemede bcrypt + veritabanı maliyetini ödetir, kotası ancak
+   ondan sonra düşerdi.
+2. **Kimlik** — giriş ucu hariç tüm yönetim yüzeyi, anahtarsız tüm mağaza
+   yüzeyi reddedilir. Tanımsız bir `/admin/v1/...` yolu da **401** döner (404
+   olsaydı uç haritası status kodundan sızardı).
+3. **Idempotency** — kimlikten *sonra*; kayıt anahtarı çağıranın kimliğiyle
+   birlikte tutulur.
+
+Publishable anahtar bir **sır değildir**: tarayıcıda görünür ve tek işi isteği
+bir satış kanalına bağlamaktır — yetki taşımaz. Gizli anahtar yetki taşır ve
+satış kanalına bağlanmaz; ikisini karıştıran bir girdi sessizce düzeltilmez,
+reddedilir.
+
+### Yetki (scope)
+
+Kimlik "kimsin", yetki "ne yapabilirsin" sorusudur; ikisi ayrı katmandır.
+`RequireAdmin` yalnızca kimliği çözer, yetkiyi `RequireScope` uç uç zorlar:
+
+| Uç | İstenen |
+|---|---|
+| `POST /admin/v1/auth/login` | — (kimlik daha yeni kurulacak) |
+| `GET /admin/v1/auth/me` | yalnızca kimlik |
+| auth yönetim yüzeyi, **okuma** | `auth:read` |
+| auth yönetim yüzeyi, **yazma** | `admin` |
+
+`admin` üst yetkidir ve diğerlerini kapsar. Yazma uçlarında ayrı bir
+`auth:write` **yoktur** ve bu bir eksiklik değildir: o uçlarda yazılan şeyin
+kendisi yetkidir (kullanıcının yetkisi, anahtarın yetkisi, anahtarın göreceği
+kanal), yani yetki yazabilen bir kimlik tek istekte kendini admin yapabilir —
+zaten admindir.
+
+**Yetki yükseltme iki katmanda** engellenir: middleware ucu kapatır, servis ise
+çağıranın *kendisinde olmayan* bir yetkiyi vermesini reddeder. İkinci katman
+gereklidir çünkü ilkinin haritası bir gün gevşetilebilir.
+
+> Bugün yalnızca auth modülünün uçları yetki katmanından geçer. Diğer
+> modüllerin yönetim uçları kimlik ister ama scope istemez; aynı zorlamanın
+> onların `api` paketlerine de taşınması bekleyen iştir.
+
+```bash
+# 1) Giriş -> jeton
+TOKEN=$(curl -s localhost:9000/admin/v1/auth/login \
+  -H 'content-type: application/json' \
+  -d '{"email":"admin@example.com","password":"…"}' | jq -r .data.token)
+
+# 2) Korumalı uç
+curl -s localhost:9000/admin/v1/auth/me -H "Authorization: Bearer $TOKEN"
+
+# 3) Mağaza yüzeyi
+curl -s localhost:9000/store/v1/products -H "x-publishable-api-key: pk_…"
+```
+
+> **İlk yönetici** bir tohum adımıyla doğar: yönetim uçları korumalı olduğu
+> için ilk kullanıcıyı HTTP'den yaratmanın yolu yoktur.
+
+`JWT_SECRET` verilmezse geliştirmede **açılışa özel rastgele** bir sır
+üretilir (yeniden başlatmada oturumlar düşer) ve uyarı loglanır; paylaşılan
+ortamlarda config doğrulaması sırrı zorunlu kılar.
+
+## Sertleştirme
+
+| Bileşen | Ayar | Yapılandırılmamışsa |
+|---|---|---|
+| Hız sınırı | `RATE_LIMIT_PER_MINUTE`, `TRUSTED_PROXY_HOPS` | no-op (geçirir) |
+| Idempotency | `IDEMPOTENCY_TTL` | no-op (geçirir) |
+| Kimlik | `JWT_SECRET` | **her isteği reddeder** |
+
+Neden aynı kural değil: bkz. [ADR 0007](docs/adr/0007-sertlestirme-arizada-davranis.md).
+
+`Idempotency-Key` başlığı taşıyan bir POST/PUT/PATCH/DELETE bir kez işlenir;
+tekrar aynı yanıtı `Idempotency-Replayed: true` ile alır. Aynı anahtarla
+**farklı** bir gövde göndermek `409` döner — sessizce ilk yanıtı çalmak,
+istemcinin ikinci isteğinin hiç işlenmediğini gizlerdi.
+
+> Hız sınırı ve idempotency deposu **bellek içidir**: tek süreçlik kurulum
+> içindir. Yatay ölçeklenen bir dağıtımda sınır örnek sayısıyla çarpılır ve
+> idempotency koruması örnekler arasında hiç çalışmaz; ikisi de paylaşılan bir
+> depo ister.
+
+## İzleme
+
+OTLP toplayıcısının adresi (`OTEL_EXPORTER_OTLP_ENDPOINT`) verilmezse izleme
+**tamamen kapanır** ve hiçbir dış bağlantı denenmez. Toplayıcıya ulaşılamaması
+uygulamayı düşürmez.
+
+Her isteğe bir span açılır; span adı ham yol değil **route deseni**dir
+(`GET /store/v1/products/{id}`) — ham yol kullanılsaydı her ürün kimliği ayrı
+bir metrik serisi üretir ve kardinalite patlardı.
+
+## Eklentiler
+
+Eklenti sıradan bir Go paketidir; `plugins/` altında yaşar ve hiçbir commerce
+modülünü import etmez. Sözleşmeyi `core/provider`'dan, kayıt noktasını
+`core/plugin.Host`'tan alır. Eklenti eklemek çekirdeği ya da bir modülü
+**değiştirmez**: `cmd/server` içindeki katalog haritasına bir satır eklenir ve
+kurulum `PLUGINS` ile seçilir.
+
+```bash
+PLUGINS=payment-stripe STRIPE_API_KEY=sk_test_… make run
+```
+
+Kurulum iki fazlıdır: `Install` modüllerden **önce** (eklentinin getirdiği
+modül de yaşam döngüsünden geçebilsin), `Start` modüllerden **sonra**
+(sağlayıcı kaydı ancak payment modülü ayağa kalkınca vardır). Bilinmeyen bir
+eklenti adı ya da eksik ayar açılışta hata verir.
+
+`plugins/paymentstripe` bir **iskelettir**: kayıt ve yaşam döngüsü tam çalışır,
+Stripe API çağrıları yapılmamıştır ve para hareketi üreten her metod açık bir
+"uygulanmadı" hatası döner.
+
+## OpenAPI
+
+Şema router ağacından **üretilir**, elle yazılmaz:
+
+```bash
+curl -s localhost:9000/openapi.json | jq '.paths | keys'
+```
+
+Uç yalnızca route desenlerini yayımlar, veri değil. Elle yazılan bir şema ilk
+route değişikliğinde sessizce yalan söylemeye başlardı.
 
 ## Mimari kararlar (ADR)
 
@@ -139,6 +284,7 @@ dokümanı kadar bağlayıcıdır; çelişki hâlinde ADR geçerlidir.
 | [0004](docs/adr/0004-query-veri-erisimi.md) | Query veri erişimi | Modüller container'a `<modül>.query` adıyla dar bir `Provider` kaydeder; çekirdek modülleri tanımadan batch okuma yapar |
 | [0005](docs/adr/0005-link-semasi-migration-disinda.md) | Link şeması | Link tabloları derleme zamanında bilinmediği için migration dosyasıyla değil, bildirim anında idempotent DDL ile kurulur |
 | [0006](docs/adr/0006-workflow-modul-erisimi.md) | Workflow → modül erişimi | `internal/workflows` de modülleri import etmez; dar arayüz + container'dan adla çözüm (ADR 0001'in workflow'lara uygulanması) |
+| [0007](docs/adr/0007-sertlestirme-arizada-davranis.md) | Sertleştirmede arıza davranışı | Tek tip kural yok: kimlik **kapalı kalır** (fail-closed), hız sınırı **açık kalır** (fail-open), idempotency ayırmada reddeder / kayıtta anahtarı serbest bırakır |
 
 ADR 0001, planın Bölüm 2.1 ("erişim public service interface üzerinden") ile
 Bölüm 2.4 ("modüller derleme zamanında birbirine bağımlı olmaz") arasındaki
@@ -148,11 +294,19 @@ interface'ini import etmek 2.4'ü ihlal ederdi.
 ## Geliştirme
 
 ```bash
-make test      # birim testleri (race + coverage)
-make lint      # golangci-lint
-make fmt       # gofmt -s + go mod tidy
-make down      # altyapıyı durdur
+make test              # birim testleri (race + coverage)
+make test-integration  # gerçek Postgres ile entegrasyon + uçtan uca testler
+make load-test         # temel yük testi (REQUESTS=… CONCURRENCY=… ile ayarlanır)
+make lint              # golangci-lint
+make fmt               # gofmt -s + go mod tidy
+make down              # altyapıyı durdur
 ```
+
+Uçtan uca testler (`internal/e2e`) modülleri **üretimdeki kablolamayla** kurar:
+aynı container adları, aynı modül sırası ve aynı koruma yığını
+(`corehttp.APIGuards`). Testin kanıtladığı koruma, üretimde çalışanın ta
+kendisidir; testin kendi kopyası olsaydı üretimdeki sıra değiştiğinde test
+eski sırayı doğrulayıp yeşil kalırdı.
 
 CI (`.github/workflows/ci.yml`) her push ve PR'da `gofmt`, `go mod tidy`
 farkı, `golangci-lint`, `go vet` ve race'li testleri çalıştırır.
@@ -173,9 +327,9 @@ make rename-module MODULE=github.com/kullanici/repo
 | 1 | Çekirdek altyapı (errors, db, container, module, eventbus, http middleware) | ✅ |
 | 2 | Module Links & Query | ✅ |
 | 3 | Workflow Engine (saga) | ✅ |
-| 4 | Katalog (product · pricing · inventory) | ⬜ |
+| 4 | Katalog (product · pricing · inventory) | ✅ |
 | 5 | Sepet (cart · customer · region) | ✅ |
 | 6 | Ödeme & sipariş tamamlama | ✅ |
 | 7 | Fulfillment · promotion · tax | ✅ |
-| 8 | Auth · admin user · API key · RBAC | ⬜ |
-| 9 | Plugin sistemi · observability · sertleştirme | ⬜ |
+| 8 | Auth · admin user · API key · RBAC | ✅ |
+| 9 | Plugin sistemi · observability · sertleştirme | ✅ |

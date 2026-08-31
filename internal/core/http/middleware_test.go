@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -21,6 +22,11 @@ import (
 
 // requestIDHeaderName testlerde kullanılan istek kimliği başlığıdır.
 const requestIDHeaderName = "X-Request-Id"
+
+// maskeliDeger maskelenen bir değerin yerine erişim loguna yazılan işarettir.
+// Testler çıktıda tam olarak bunu arar; sabit, maskelemenin "sessizce boş
+// dizeye dönüşme" ihtimalini de eleyerek iddiayı keskinleştirir.
+const maskeliDeger = "REDACTED"
 
 // testLogger çıktısı buffer'a giden bir JSON logger üretir.
 // Loglanan alanların gerçekten ne içerdiğini kanıtlamak için kullanılır.
@@ -326,7 +332,110 @@ func TestRequestLoggerHassasVeriLoglamaz(t *testing.T) {
 	// Hassas olmayan sorgu parametreleri gözlemlenebilirlik için korunur.
 	assert.Contains(t, out, "limit=20")
 	assert.Contains(t, out, "offset=40")
-	assert.Contains(t, out, "REDACTED", "maskeleme uygulanmalı")
+	assert.Contains(t, out, maskeliDeger, "maskeleme uygulanmalı")
+}
+
+func TestRequestLoggerEpostaErisimLogunaDusmez(t *testing.T) {
+	t.Parallel()
+
+	// auth modülü e-postayı bilinçli olarak loglamıyor; aynı değer HTTP
+	// katmanının erişim logundan da sızmamalı. Süzgeç uydurma değil:
+	// GET /admin/v1/users "email" sorgu parametresini okuyor.
+	const (
+		yerelAd = "musteri.gizli"
+		alanAdi = "ornek-magaza.test"
+	)
+
+	log, buf := testLogger()
+	h := corehttp.RequestLogger(log)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	sorgu := url.Values{"email": {yerelAd + "@" + alanAdi}, "limit": {"20"}}
+	h.ServeHTTP(httptest.NewRecorder(),
+		httptest.NewRequest(http.MethodGet, "/admin/v1/users?"+sorgu.Encode(), http.NoBody))
+
+	// E-posta parça parça aranıyor: "@" yüzde kodlamasıyla "%40"a dönüştüğü
+	// için tam dizeyi aramak, maskeleme hiç çalışmasa bile geçen bir test
+	// üretirdi.
+	out := buf.String()
+	assert.NotContains(t, out, yerelAd, "e-postanın yerel kısmı erişim loguna düşmemeli")
+	assert.NotContains(t, out, alanAdi, "e-postanın alan adı erişim loguna düşmemeli")
+
+	records := logRecords(t, buf)
+	require.Len(t, records, 1)
+	assert.Equal(t, "email="+maskeliDeger+"&limit=20", records[0]["query"],
+		"e-posta maskelenmeli, sayfalama olduğu gibi kalmalı")
+}
+
+// erisimLoguSorgusu verilen ham sorguyla bir istek geçirir ve erişim
+// kaydındaki "query" alanını döner.
+func erisimLoguSorgusu(t *testing.T, rawQuery string) string {
+	t.Helper()
+
+	log, buf := testLogger()
+	h := corehttp.RequestLogger(log)(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {}))
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/v1/users", http.NoBody)
+	req.URL.RawQuery = rawQuery
+	h.ServeHTTP(httptest.NewRecorder(), req)
+
+	records := logRecords(t, buf)
+	require.Len(t, records, 1, "tek bir erişim kaydı beklenir")
+	query, ok := records[0]["query"].(string)
+	require.True(t, ok, "query alanı dize olmalı: %#v", records[0]["query"])
+	return query
+}
+
+func TestRequestLoggerHassasSorguAnahtarlariniMaskeler(t *testing.T) {
+	t.Parallel()
+
+	const gizliDeger = "sizmamasi-gereken-deger"
+
+	tests := map[string]struct {
+		anahtar    string
+		maskelenir bool
+	}{
+		// Kişisel veri.
+		"e-posta":                 {anahtar: "email", maskelenir: true},
+		"büyük harfli e-posta":    {anahtar: "EMail", maskelenir: true},
+		"bileşik e-posta süzgeci": {anahtar: "customer_email", maskelenir: true},
+		"telefon":                 {anahtar: "phone", maskelenir: true},
+		"türkçe telefon":          {anahtar: "telefon", maskelenir: true},
+		"kısa telefon":            {anahtar: "tel", maskelenir: true},
+		"tc kimlik no":            {anahtar: "tckn", maskelenir: true},
+		"kart doğrulama kodu":     {anahtar: "card_cvv", maskelenir: true},
+		// Kimlik bilgisi ve jetonlar.
+		"parola":              {anahtar: "password", maskelenir: true},
+		"büyük harfli parola": {anahtar: "PASSWORD", maskelenir: true},
+		"jeton":               {anahtar: "access_token", maskelenir: true},
+		"api anahtarı":        {anahtar: "api_key", maskelenir: true},
+		"imza":                {anahtar: "X-Signature", maskelenir: true},
+		// Deny-list: tanınmayan ve masum adlar gözlemlenebilirlik için geçer.
+		"sayfalama":          {anahtar: "limit", maskelenir: false},
+		"sıralama":           {anahtar: "sort", maskelenir: false},
+		"durum süzgeci":      {anahtar: "status", maskelenir: false},
+		"bilinmeyen anahtar": {anahtar: "renk", maskelenir: false},
+		// "shipping" içinde "pin" geçer: kısa adlar alt dize olarak
+		// aranmadığı için kargo süzgeci okunabilir kalmalı.
+		"kargo süzgeci": {anahtar: "shipping", maskelenir: false},
+	}
+
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			query := erisimLoguSorgusu(t, url.Values{tc.anahtar: {gizliDeger}}.Encode())
+
+			if tc.maskelenir {
+				assert.NotContains(t, query, gizliDeger, "hassas anahtarın değeri loglanmamalı")
+				assert.Contains(t, query, maskeliDeger, "değer maske işaretiyle değiştirilmeli")
+				return
+			}
+			assert.Contains(t, query, gizliDeger,
+				"deny-list: tanınmayan anahtar erişim logunda olduğu gibi kalmalı")
+		})
+	}
 }
 
 func TestRequestLoggerBozukSorguyuTamamenMaskeler(t *testing.T) {
@@ -341,7 +450,7 @@ func TestRequestLoggerBozukSorguyuTamamenMaskeler(t *testing.T) {
 
 	records := logRecords(t, buf)
 	require.Len(t, records, 1)
-	assert.Equal(t, "REDACTED", records[0]["query"], "ayrıştırılamayan sorgu tamamen maskelenmeli")
+	assert.Equal(t, maskeliDeger, records[0]["query"], "ayrıştırılamayan sorgu tamamen maskelenmeli")
 	assert.NotContains(t, buf.String(), "acik-deger")
 }
 
@@ -527,91 +636,4 @@ func TestResponseWriterHijackDesteklenmiyorsaHataDoner(t *testing.T) {
 
 	require.Error(t, hata)
 	assert.ErrorIs(t, hata, http.ErrNotSupported, "desteklenmeyen hijack açıkça bildirilmeli")
-}
-
-func TestRequireAuthBaslikYoksa401Doner(t *testing.T) {
-	t.Parallel()
-
-	cagrildi := false
-	h := corehttp.RequestID(corehttp.RequireAuth(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
-		cagrildi = true
-	})))
-
-	req := httptest.NewRequest(http.MethodGet, "/admin/v1/products", http.NoBody)
-	req.Header.Set(requestIDHeaderName, "req_auth")
-	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, req)
-
-	assert.False(t, cagrildi, "korunan handler çalıştırılmamalı")
-	assert.Equal(t, http.StatusUnauthorized, rec.Code)
-	assert.Equal(t, "Bearer", rec.Header().Get("WWW-Authenticate"))
-
-	var body corehttp.ErrorResponse
-	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body), "gövde JSON olmalı: %s", rec.Body.String())
-	assert.Equal(t, "unauthorized", body.Error.Code)
-	assert.Equal(t, "req_auth", body.Error.RequestID)
-	assert.NotEmpty(t, body.Error.Message)
-}
-
-func TestRequireAuthBosBasligiReddeder(t *testing.T) {
-	t.Parallel()
-
-	h := corehttp.RequireAuth(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
-		t.Error("boş Authorization başlığı geçmemeli")
-	}))
-
-	req := httptest.NewRequest(http.MethodGet, "/admin/v1/products", http.NoBody)
-	req.Header.Set("Authorization", "   ")
-	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, req)
-
-	assert.Equal(t, http.StatusUnauthorized, rec.Code)
-}
-
-func TestRequireAuthBaslikVarsaGecirir(t *testing.T) {
-	t.Parallel()
-
-	h := corehttp.RequireAuth(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusTeapot)
-	}))
-
-	req := httptest.NewRequest(http.MethodGet, "/admin/v1/products", http.NoBody)
-	req.Header.Set("Authorization", "Bearer herhangi-bir-token")
-	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, req)
-
-	// Faz 1 stub'ı token'ı doğrulamaz; yalnızca varlığına bakar.
-	assert.Equal(t, http.StatusTeapot, rec.Code)
-}
-
-func TestMiddlewareYigininiUctanUcaCalisir(t *testing.T) {
-	t.Parallel()
-
-	log, buf := testLogger()
-	var h http.Handler = http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
-		panic("zincir testi")
-	})
-	h = corehttp.RequireAuth(h)
-	h = corehttp.Recoverer(log)(h)
-	h = corehttp.RequestLogger(log)(h)
-	h = corehttp.RequestID(h)
-
-	// Auth başlığı yok: panikleyen handler'a hiç ulaşılmaz.
-	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/admin/v1/x", http.NoBody))
-	assert.Equal(t, http.StatusUnauthorized, rec.Code)
-
-	// Auth başlığı var: panik yakalanır, 500 loglanır.
-	req := httptest.NewRequest(http.MethodGet, "/admin/v1/x", http.NoBody)
-	req.Header.Set("Authorization", "Bearer t")
-	rec = httptest.NewRecorder()
-	h.ServeHTTP(rec, req)
-	assert.Equal(t, http.StatusInternalServerError, rec.Code)
-	assert.NotEmpty(t, rec.Header().Get(requestIDHeaderName), "yanıtta kimlik başlığı bulunmalı")
-
-	records := logRecords(t, buf)
-	require.Len(t, records, 3, "iki istek + bir panik kaydı beklenir")
-	assert.InDelta(t, float64(http.StatusUnauthorized), records[0]["status"], 0)
-	assert.Equal(t, "handler panikledi", records[1]["msg"])
-	assert.InDelta(t, float64(http.StatusInternalServerError), records[2]["status"], 0)
 }

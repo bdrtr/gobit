@@ -186,6 +186,8 @@ func policyForKind(kind coreerrors.Kind) kindPolicy {
 		return kindPolicy{status: http.StatusForbidden, clientSafe: true}
 	case coreerrors.KindUnavailable:
 		return kindPolicy{status: http.StatusServiceUnavailable, clientSafe: true}
+	case coreerrors.KindTooManyRequests:
+		return kindPolicy{status: http.StatusTooManyRequests, clientSafe: true}
 	case coreerrors.KindInternal:
 		return kindPolicy{status: http.StatusInternalServerError, clientSafe: false}
 	default:

@@ -12,6 +12,15 @@ import (
 	"github.com/caarlos0/env/v11"
 )
 
+// minJWTSecretLen paylaşılan ortamlarda kabul edilen en kısa imza sırrıdır.
+//
+// HS256 için sır, çıktı uzunluğu kadar (32 bayt) entropi taşımalıdır; daha
+// kısası kaba kuvvetle bulunabilir.
+const minJWTSecretLen = 32
+
+// devAppEnv sırların ve TLS zorunluluğunun GEVŞETİLDİĞİ tek ortamdır.
+const devAppEnv = "development"
+
 // Yalnızca yerel geliştirme için varsayılan bağlantı adresleri.
 // deploy/docker-compose.yml ile eşleşirler. Validate, APP_ENV=production iken
 // bu değerlerin ezilmiş olmasını ZORUNLU kılar; aksi hâlde eksik secret
@@ -30,7 +39,7 @@ const (
 
 // Geçerli enum değerleri; Validate bunlara göre doğrulama yapar.
 var (
-	validAppEnvs    = []string{"development", "staging", "production"}
+	validAppEnvs    = []string{devAppEnv, "staging", "production"}
 	validLogLevels  = []string{"debug", "info", "warn", "error"}
 	validLogFormats = []string{"json", "text"}
 	validEventBuses = []string{"inmemory", "redis"}
@@ -51,6 +60,15 @@ type Config struct {
 	DatabaseURL string `env:"DATABASE_URL" envDefault:"postgres://gobit:gobit@localhost:5432/gobit?sslmode=disable"`
 	// RedisURL Redis bağlantı adresidir.
 	RedisURL string `env:"REDIS_URL" envDefault:"redis://:gobit@localhost:6379/0"`
+	// JWTSecret admin oturum jetonlarının imzalandığı sırdır.
+	//
+	// Varsayılanı YOKTUR ve olmamalıdır: tahmin edilebilir bir imza sırrı,
+	// herkesin kendine admin jetonu üretebilmesi demektir. Boş bırakıldığında
+	// yalnızca YEREL GELİŞTİRMEDE uygulama açılır; paylaşılan her ortamda
+	// (staging ve production) Validate bunu REDDEDER. Bkz. IsShared.
+	JWTSecret string `env:"JWT_SECRET"`
+	// JWTTTL admin oturum jetonunun geçerlilik süresidir.
+	JWTTTL time.Duration `env:"JWT_TTL" envDefault:"12h"`
 	// EventBus olay veri yolunun arka ucudur: inmemory | redis.
 	// inmemory tek süreçlidir ve süreç ölünce olaylar kaybolur; birden çok
 	// örnek çalıştırılıyorsa redis kullanılmalıdır (plan Bölüm 3).
@@ -74,6 +92,56 @@ type Config struct {
 	WriteTimeout time.Duration `env:"WRITE_TIMEOUT" envDefault:"30s"`
 	// IdleTimeout, keep-alive bağlantısının boşta bekleyebileceği süredir.
 	IdleTimeout time.Duration `env:"IDLE_TIMEOUT" envDefault:"120s"`
+
+	// OTLPEndpoint OpenTelemetry toplayıcısının gRPC adresidir (host:port).
+	//
+	// Varsayılanı YOKTUR: boş bırakıldığında izleme tamamen kapanır ve
+	// uygulama hiçbir dış bağlantı denemez. Varsayılan bir adres koymak,
+	// toplayıcısı olmayan her geliştirme ortamında sürekli bağlantı hatası
+	// üretirdi.
+	OTLPEndpoint string `env:"OTEL_EXPORTER_OTLP_ENDPOINT"`
+	// OTLPInsecure toplayıcıya TLS'siz bağlanılacağını bildirir.
+	//
+	// Paylaşılan ortamlarda (staging ve production) true olması Validate
+	// tarafından REDDEDİLİR: trace'ler istek yollarını, kimlikleri ve hata
+	// mesajlarını taşır; şifresiz göndermek bunları ağda dinlenebilir kılar.
+	OTLPInsecure bool `env:"OTEL_EXPORTER_OTLP_INSECURE" envDefault:"false"`
+	// ServiceName trace ve metriklerde raporlanan servis adıdır.
+	ServiceName string `env:"OTEL_SERVICE_NAME" envDefault:"gobit"`
+	// TraceSampleRatio örneklenecek trace oranıdır (0.0 - 1.0).
+	//
+	// Varsayılan 1.0'dır çünkü örnekleme kararı geri alınamaz: kaydedilmemiş
+	// bir trace sonradan kurtarılamaz. Yük arttıkça düşürülmelidir.
+	TraceSampleRatio float64 `env:"OTEL_TRACES_SAMPLER_ARG" envDefault:"1.0"`
+	// MetricInterval metriklerin toplayıcıya gönderilme sıklığıdır.
+	MetricInterval time.Duration `env:"OTEL_METRIC_EXPORT_INTERVAL" envDefault:"60s"`
+
+	// RateLimitPerMinute bir istemcinin dakikada yapabileceği istek sayısıdır.
+	//
+	// Sıfır ya da negatif değer hız sınırlamayı KAPATIR; "0 istek" anlamına
+	// gelmez. Bkz. ADR 0007.
+	RateLimitPerMinute int `env:"RATE_LIMIT_PER_MINUTE" envDefault:"600"`
+	// TrustedProxyHops istekle aramızdaki GÜVENİLEN ters proxy sayısıdır.
+	//
+	// Sıfırsa X-Forwarded-For hiç okunmaz. Yanlış (fazla) bir değer, istemcinin
+	// uydurduğu adresi gerçek sanmaya ve hız sınırının atlanmasına yol açar;
+	// bu yüzden varsayılanı sıfırdır ve açıkça verilmelidir.
+	TrustedProxyHops int `env:"TRUSTED_PROXY_HOPS" envDefault:"0"`
+	// IdempotencyTTL idempotency kayıtlarının saklanma süresidir.
+	IdempotencyTTL time.Duration `env:"IDEMPOTENCY_TTL" envDefault:"24h"`
+
+	// Plugins kurulacak eklentilerin adlarıdır (virgülle ayrılır).
+	//
+	// Varsayılanı BOŞTUR: derlenmiş bir eklentinin varlığı onu kurmak için
+	// yeterli değildir, açıkça seçilmesi gerekir. Sebep somut: eklentiler
+	// yapılandırma ister (örn. payment-stripe için STRIPE_API_KEY) ve kurulum
+	// o ayar yoksa açılışta HATA verir. Derlenen her eklentiyi otomatik
+	// kurmak, tek bir eksik ortam değişkeni yüzünden uygulamanın hiç
+	// açılmaması demek olurdu.
+	//
+	// Bilinmeyen bir ad açılışta hata verir; sessizce yok saymak, adı yanlış
+	// yazılmış bir eklentinin "kurulu" sanılmasına yol açardı.
+	Plugins []string `env:"PLUGINS" envSeparator:","`
 }
 
 // Load ortam değişkenlerini okuyup doğrulanmış bir Config döner.
@@ -132,9 +200,37 @@ func (c Config) Validate() error {
 		return fmt.Errorf("config: READ_TIMEOUT (%s), READ_HEADER_TIMEOUT'tan (%s) küçük olamaz", c.ReadTimeout, c.ReadHeaderTimeout)
 	}
 
-	// Üretimde yerel geliştirme varsayılanlarına düşmek, sabit-kodlu kimlik
-	// bilgisi ve TLS'siz bağlantı demektir. Eksik/boş secret enjeksiyonu bu
-	// kontrol olmadan sessizce buraya düşerdi.
+	if c.JWTTTL <= 0 {
+		return fmt.Errorf("config: JWT_TTL pozitif olmalı, %s verildi", c.JWTTTL)
+	}
+
+	if c.TraceSampleRatio < 0 || c.TraceSampleRatio > 1 {
+		return fmt.Errorf("config: OTEL_TRACES_SAMPLER_ARG 0.0-1.0 aralığında olmalı, %v verildi", c.TraceSampleRatio)
+	}
+	if c.MetricInterval <= 0 {
+		return fmt.Errorf("config: OTEL_METRIC_EXPORT_INTERVAL pozitif olmalı, %s verildi", c.MetricInterval)
+	}
+	if c.ServiceName == "" {
+		return fmt.Errorf("config: OTEL_SERVICE_NAME boş olamaz")
+	}
+	if c.TrustedProxyHops < 0 {
+		return fmt.Errorf("config: TRUSTED_PROXY_HOPS negatif olamaz, %d verildi", c.TrustedProxyHops)
+	}
+	if c.IdempotencyTTL <= 0 {
+		return fmt.Errorf("config: IDEMPOTENCY_TTL pozitif olmalı, %s verildi", c.IdempotencyTTL)
+	}
+	if err := c.validatePlugins(); err != nil {
+		return err
+	}
+
+	// Üretimde yerel geliştirme varsayılanlarına düşmek, sabit-kodlu gobit:gobit
+	// kimlik bilgisi ve sslmode=disable demektir. Eksik/boş secret enjeksiyonu
+	// bu kontrol olmadan sessizce buraya düşerdi.
+	//
+	// Bu kapı staging'e GENİŞLETİLMEDİ: staging'in localhost'a bakması çalışan
+	// bir kurulumda zaten mümkün değil (bağlantı ilk sorguda patlar), yani
+	// buradaki kontrolün sessiz arıza örtme değeri yok. Aşağıdaki iki kapı ise
+	// tam tersine sessiz arızayı önler; bkz. IsShared.
 	if c.IsProduction() {
 		if c.DatabaseURL == DefaultDatabaseURL {
 			return fmt.Errorf("config: APP_ENV=production iken DATABASE_URL ezilmelidir (yerel geliştirme varsayılanı kullanılıyor)")
@@ -142,6 +238,43 @@ func (c Config) Validate() error {
 		if c.RedisURL == DefaultRedisURL {
 			return fmt.Errorf("config: APP_ENV=production iken REDIS_URL ezilmelidir (yerel geliştirme varsayılanı kullanılıyor)")
 		}
+	}
+
+	if c.IsShared() {
+		// Trace'ler istek yollarını, kimlikleri ve hata mesajlarını taşır;
+		// şifresiz göndermek bunları ağda dinlenebilir kılar. staging'in
+		// trafiği "gerçek değil" sayılsa bile, ağı ve jetonları gerçektir.
+		if c.OTLPEndpoint != "" && c.OTLPInsecure {
+			return fmt.Errorf("config: APP_ENV=%s iken OTEL_EXPORTER_OTLP_INSECURE=true olamaz", c.AppEnv)
+		}
+		// Boş bir imza sırrı iki ayrı arızadır: sabit bir sır herkesin kendine
+		// admin jetonu üretebilmesi, üretilmiş rastgele bir sır ise örnekler
+		// arası jeton geçersizliğidir. İkisi de sessizce açılmaktansa açılışta
+		// durmayı hak eder.
+		if len(c.JWTSecret) < minJWTSecretLen {
+			return fmt.Errorf("config: APP_ENV=%s iken JWT_SECRET en az %d karakter olmalıdır", c.AppEnv, minJWTSecretLen)
+		}
+	}
+	return nil
+}
+
+// validatePlugins eklenti listesinin biçimini doğrular.
+//
+// Boş ve tekrarlanan adlar REDDEDİLİR: "PLUGINS=stripe,,stripe" gibi bir değer
+// neredeyse her zaman elle düzenlenmiş bir ortam dosyasındaki hatadır ve
+// tekrarlanan ad eklenti kaydında zaten çakışma üretirdi. Hangi adların
+// GEÇERLİ olduğunu config bilmez; onu uygulamayı kuran taraf (cmd/server)
+// bilir ve bilinmeyen adı orada reddeder.
+func (c Config) validatePlugins() error {
+	gorulen := make(map[string]struct{}, len(c.Plugins))
+	for i, ad := range c.Plugins {
+		if strings.TrimSpace(ad) == "" {
+			return fmt.Errorf("config: PLUGINS listesinde %d. sırada boş ad var", i+1)
+		}
+		if _, dup := gorulen[ad]; dup {
+			return fmt.Errorf("config: PLUGINS listesinde %q iki kez geçiyor", ad)
+		}
+		gorulen[ad] = struct{}{}
 	}
 	return nil
 }
@@ -163,6 +296,25 @@ func (c Config) SlogLevel() slog.Level {
 
 // IsProduction üretim ortamında çalışılıp çalışılmadığını bildirir.
 func (c Config) IsProduction() bool { return c.AppEnv == "production" }
+
+// IsShared ortamın PAYLAŞILAN (yerel geliştirme dışı) bir ortam olduğunu bildirir.
+//
+// Sır ve TLS zorunluluklarının kapısı budur, IsProduction değil: staging ile
+// production arasında güvenlik açısından anlamlı bir fark yoktur, ikisi de
+// birden çok geliştiricinin ve birden çok SUNUCU ÖRNEĞİNİN paylaştığı
+// ortamlardır.
+//
+// Somut arıza: staging çok örnekli çalışırken JWT_SECRET boş bırakılırsa her
+// örnek açılışta kendi rastgele sırrını üretir (bkz. cmd/server jwtSirri);
+// A örneğinden alınan jeton B örneğinde 401 döner. Yük dengeleyicinin
+// dağıtımına bağlı olduğu için arıza ARALIKLIDIR ve teşhisi zordur —
+// üretime çıkmadan yakalanması gereken sınıftan bile değildir, çünkü üretimde
+// zaten aynı ayar zorunludur.
+//
+// Kolaylık yalnızca yerel geliştirmeye tanınır: orada tek örnek çalışır,
+// jetonun yeniden başlatmada düşmesinin bedeli yok denecek kadar azdır ve
+// "make up && make run" ek ayar istememelidir.
+func (c Config) IsShared() bool { return c.AppEnv != devAppEnv }
 
 // Addr HTTP sunucusunun dinleyeceği adresi döner.
 func (c Config) Addr() string { return fmt.Sprintf(":%d", c.AppPort) }

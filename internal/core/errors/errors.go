@@ -40,6 +40,8 @@ const (
 	KindForbidden
 	// KindUnavailable bir alt sistemin geçici olarak erişilemez olduğunu bildirir.
 	KindUnavailable
+	// KindTooManyRequests istemcinin hız sınırını aştığını bildirir.
+	KindTooManyRequests
 )
 
 // String Kind'ın okunabilir adını döner.
@@ -57,6 +59,8 @@ func (k Kind) String() string {
 		return "forbidden"
 	case KindUnavailable:
 		return "unavailable"
+	case KindTooManyRequests:
+		return "too_many_requests"
 	case KindInternal:
 		return "internal"
 	default:
@@ -151,6 +155,11 @@ func Forbidden(code, format string, a ...any) *Error {
 	return newError(KindForbidden, code, format, a...)
 }
 
+// TooManyRequests hız sınırının aşıldığını bildiren bir hata kurar.
+func TooManyRequests(code, format string, a ...any) *Error {
+	return newError(KindTooManyRequests, code, format, a...)
+}
+
 // Unavailable bir alt sistemin geçici olarak erişilemez olduğunu bildirir.
 func Unavailable(code, format string, a ...any) *Error {
 	return newError(KindUnavailable, code, format, a...)
@@ -211,3 +220,6 @@ func IsUnauthorized(err error) bool { return HasKind(err, KindUnauthorized) }
 
 // IsForbidden hatanın KindForbidden sınıfında olup olmadığını bildirir.
 func IsForbidden(err error) bool { return HasKind(err, KindForbidden) }
+
+// IsTooManyRequests hatanın KindTooManyRequests sınıfında olup olmadığını bildirir.
+func IsTooManyRequests(err error) bool { return HasKind(err, KindTooManyRequests) }
