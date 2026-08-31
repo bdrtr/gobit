@@ -12,12 +12,33 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	corehttp "github.com/bdrtr/gobit/internal/core/http"
 	"github.com/bdrtr/gobit/internal/modules/tax/api"
 	"github.com/bdrtr/gobit/internal/modules/tax/service"
 )
 
 // testNow testlerin sabit saatidir.
 var testNow = time.Date(2026, 8, 24, 10, 0, 0, 0, time.UTC)
+
+// adminKimlik testlerin varsayılan çağıranıdır: tam yetkili yönetici.
+//
+// Yönetim uçları corehttp.RequireScope ile korunuyor ve o middleware
+// context'te kimlik YOKSA 401 döner. Bu testler router'ı doğrudan kuruyor,
+// yani zincirde kimliği yerleştiren corehttp.RequireAdmin yok; kimliği bu
+// yüzden testin kendisi koyar. Eklenen tek şey KİMLİKTİR — testlerin
+// doğruladığı davranış (durum kodları, zarflar, hata kodları) değişmedi.
+var adminKimlik = corehttp.Principal{
+	ID:     "usr_test",
+	Kind:   "user",
+	Scopes: []string{corehttp.ScopeAdmin},
+}
+
+// okumaKimligi yalnızca [api.ScopeRead] taşıyan dar yetkili çağırandır.
+var okumaKimligi = corehttp.Principal{
+	ID:     "usr_dar",
+	Kind:   "user",
+	Scopes: []string{api.ScopeRead},
+}
 
 // newTestRouter gerçek servis ve bellek içi depoyla bir router kurar.
 func newTestRouter(t *testing.T) (chi.Router, *memRepo) {
@@ -31,12 +52,20 @@ func newTestRouter(t *testing.T) (chi.Router, *memRepo) {
 	return r, repo
 }
 
-// do bir istek çalıştırır ve yanıtı döner.
+// do bir isteği tam yetkili kimlikle çalıştırır ve yanıtı döner.
 func do(t *testing.T, r chi.Router, method, path, body string) *httptest.ResponseRecorder {
+	t.Helper()
+
+	return doAs(t, r, adminKimlik, method, path, body)
+}
+
+// doAs bir isteği verilen kimlikle çalıştırır ve yanıtı döner.
+func doAs(t *testing.T, r chi.Router, kimlik corehttp.Principal, method, path, body string) *httptest.ResponseRecorder {
 	t.Helper()
 
 	req := httptest.NewRequest(method, path, strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
+	req = req.WithContext(corehttp.WithPrincipal(req.Context(), kimlik))
 
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
@@ -362,4 +391,55 @@ func TestGovdeBoyutuSinirli(t *testing.T) {
 	buyuk := `{"country_code":"TR","metadata":{"x":"` + strings.Repeat("a", 128<<10) + `"}}`
 	rec := do(t, r, http.MethodPost, "/admin/v1/tax-regions", buyuk)
 	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code)
+}
+
+// TestDarYetkiYazmaUcunuAcmaz yalnızca okuma yetkisi taşıyan bir kimliğin
+// yönetim yazma uçlarında 403 aldığını doğrular.
+//
+// Kimlik doğrulama tek başına yetmez: yetkileri boşaltılmış ya da yalnızca
+// okumaya yetkili bir yönetim kullanıcısı, yetki zorlaması olmadan vergi
+// kataloğunu değiştirebilir veya silebilirdi. 401 değil 403 beklenir — kimlik
+// bilinmektedir, eksik olan yetkidir.
+func TestDarYetkiYazmaUcunuAcmaz(t *testing.T) {
+	r, _ := newTestRouter(t)
+
+	for _, durum := range []struct {
+		ad     string
+		method string
+		path   string
+		body   string
+	}{
+		{"bölge oluştur", http.MethodPost, "/admin/v1/tax-regions", `{"country_code":"TR"}`},
+		{"bölge sil", http.MethodDelete, "/admin/v1/tax-regions/taxreg_1", ``},
+		{"oran oluştur", http.MethodPost, "/admin/v1/tax-rates", `{"tax_region_id":"taxreg_1","name":"KDV","rate_bps":2000}`},
+		{"oran güncelle", http.MethodPut, "/admin/v1/tax-rates/taxrate_1", `{"rate_bps":1800}`},
+		{"oran sil", http.MethodDelete, "/admin/v1/tax-rates/taxrate_1", ``},
+		{"kural ekle", http.MethodPost, "/admin/v1/tax-rates/taxrate_1/rules", `{"reference":"product","reference_id":"prod_1"}`},
+		{"kural sil", http.MethodDelete, "/admin/v1/tax-rates/taxrate_1/rules/taxrule_1", ``},
+	} {
+		rec := doAs(t, r, okumaKimligi, durum.method, durum.path, durum.body)
+		assert.Equal(t, http.StatusForbidden, rec.Code, "durum: %s", durum.ad)
+		assert.Equal(t, corehttp.CodeForbidden, errorCode(t, rec), "durum: %s", durum.ad)
+	}
+}
+
+// TestDarYetkiOkumaUcundaGecer aynı dar kimliğin okuma uçlarından geçtiğini
+// doğrular.
+//
+// Bu testin çifti [TestDarYetkiYazmaUcunuAcmaz]'dır: yetki haritası her yazma
+// ucunu kapatırken okuma uçlarını da kapatsaydı, 403 sonuçları haritanın
+// doğruluğunu değil yalnızca aşırı kısıtlayıcılığını kanıtlardı.
+func TestDarYetkiOkumaUcundaGecer(t *testing.T) {
+	r, _ := newTestRouter(t)
+	regionID := createRegion(t, r, "TR")
+
+	for _, path := range []string{
+		"/admin/v1/tax-regions",
+		"/admin/v1/tax-regions/" + regionID,
+		"/admin/v1/tax-regions/" + regionID + "/tax-rates",
+		"/admin/v1/tax-rates?tax_region_id=" + regionID,
+	} {
+		rec := doAs(t, r, okumaKimligi, http.MethodGet, path, "")
+		assert.Equal(t, http.StatusOK, rec.Code, "yol: %s — gövde: %s", path, rec.Body.String())
+	}
 }

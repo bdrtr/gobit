@@ -21,6 +21,7 @@
 // Modülün güvenlik kararları ve gerekçeleri tek tek belgelenmiştir:
 //
 //   - Parola saklama ve zamanlama eşitliği — password.go
+//   - Oturumun düşürülmesi (çıkış ve parola değişimi) — session.go
 //   - JWT üretimi ve doğrulaması — token.go
 //   - API anahtarı üretimi, saklanması ve tür ayrımı — apikey.go ve
 //     [models.APIKey]
@@ -62,6 +63,12 @@ const (
 	CodeNoSalesChannel = "auth_no_sales_channel"
 	// CodeTokenInvalid oturum jetonunun kabul edilmediğini bildirir.
 	CodeTokenInvalid = "auth_token_invalid" //nolint:gosec // G101: kimlik bilgisi değil, istemciye dönen sabit hata KODU
+	// CodeNoSession çağıranın kapatılabilecek bir oturumu olmadığını bildirir.
+	//
+	// Bugünkü tek kaynağı, çıkış ucunu çağıran bir API anahtarıdır: anahtar
+	// jetonla değil kalıcı bir sırla gelir ve o sırrın "kapatılması" diye bir
+	// işlem yoktur (bkz. [Service.Logout]).
+	CodeNoSession = "auth_no_session"
 	// CodeUnconfigured servisin kurulmadığını bildirir.
 	CodeUnconfigured = "auth_service_unconfigured"
 	// CodeSecretMissing imza sırrının verilmediğini bildirir.
@@ -137,6 +144,7 @@ type Repository interface {
 
 	GetIdentity(ctx context.Context, userID, provider string) (models.AuthIdentity, error)
 	SetPasswordHash(ctx context.Context, userID, provider, providerIdentity, hash string, now time.Time) (models.AuthIdentity, error)
+	RevokeSessions(ctx context.Context, userID, provider string, now time.Time) (models.AuthIdentity, error)
 	RegisterLoginFailure(ctx context.Context, identityID string, threshold int, lockUntil, now time.Time) (models.AuthIdentity, error)
 	RegisterLoginSuccess(ctx context.Context, identityID string, now time.Time) error
 

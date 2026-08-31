@@ -23,6 +23,18 @@ import (
 // doğrulaması kusursuz çalışırken yetkilendirmenin hiç bağlanmamış olduğu
 // durum — yani düzeltilen arıza — görünür kalır.
 
+// Testlerin paylaştığı kimlik sabitleri.
+const (
+	// kimlikTestID sahte middleware'in context'e koyduğu kimliktir.
+	kimlikTestID = "usr_test"
+	// kimlikTuruKullanici yönetim kullanıcısı kimlik türüdür.
+	kimlikTuruKullanici = "user"
+	// kimlikTuruAnahtar API anahtarı kimlik türüdür.
+	kimlikTuruAnahtar = "api_key"
+	// cikisYolu çıkış ucunun tam yoludur.
+	cikisYolu = "/admin/v1/auth/logout"
+)
+
 // yetkiliRouter verilen yetkileri taşıyan DOĞRULANMIŞ bir kimlikle router
 // kurar.
 //
@@ -50,16 +62,26 @@ func kimliksizRouter(t *testing.T) (chi.Router, *sahteAuth) {
 	return r, svc
 }
 
-// kimlikVer doğrulanmış bir kimliği context'e koyan middleware döner.
+// kimlikVer doğrulanmış bir KULLANICI kimliğini context'e koyan middleware
+// döner.
 //
 // Üretimde bunu corehttp.RequireAdmin yapar; testte kimliği elle koymak,
 // yetki katmanını jeton üretimi ve veritabanı olmadan sınamayı sağlar.
 func kimlikVer(scopes ...string) func(http.Handler) http.Handler {
+	return kimlikVerTur(kimlikTuruKullanici, scopes...)
+}
+
+// kimlikVerTur verilen TÜRDE doğrulanmış bir kimliği context'e koyar.
+//
+// Tür ayrı verilebilmelidir: çıkış ucu kararını kimliğin türüne göre verir
+// (bir API anahtarının kapatılacak oturumu yoktur) ve handler'ın türü servise
+// geçirdiği ancak böyle sınanabilir.
+func kimlikVerTur(kind string, scopes ...string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			principal := corehttp.Principal{
-				ID:     "usr_test",
-				Kind:   "user",
+				ID:     kimlikTestID,
+				Kind:   kind,
 				Scopes: scopes,
 			}
 			next.ServeHTTP(w, r.WithContext(corehttp.WithPrincipal(r.Context(), principal)))
@@ -216,12 +238,15 @@ func TestOkumaUcuYetkisizCagiraniReddeder(t *testing.T) {
 	}
 }
 
-// TestKimlikUclariYetkiIstemez giriş ve /auth/me uçlarının yetki sormadığını
-// kanıtlar.
+// TestKimlikUclariYetkiIstemez giriş, /auth/me ve /auth/logout uçlarının yetki
+// sormadığını kanıtlar.
 //
 // Giriş ucu kimliği daha yeni kuracaktır; yetki isteseydi hiç kimse giriş
 // yapamazdı. Kimlik ucu ise çağıranın ZATEN sahip olduğu yetkileri geri okur;
-// yetki isteseydi yetkisiz bir kullanıcı 403'ünün nedenini göremezdi.
+// yetki isteseydi yetkisiz bir kullanıcı 403'ünün nedenini göremezdi. Çıkış
+// ucu da yetki istemez: kendi oturumunu kapatmak bir ayrıcalık değildir ve
+// yetki isteseydi, yetkisi geri alınmış bir yöneticinin jetonu süresi dolana
+// kadar kapatılamazdı.
 func TestKimlikUclariYetkiIstemez(t *testing.T) {
 	r, svc := yetkiliRouter(t)
 
@@ -233,7 +258,12 @@ func TestKimlikUclariYetkiIstemez(t *testing.T) {
 	assert.Equal(t, http.StatusOK, kimlik.Code,
 		"kimlik ucu yetki istememeli; gövde: %s", kimlik.Body.String())
 
-	assert.Equal(t, 1, svc.cagriSayisi, "yalnızca giriş servise iner; /auth/me context'ten okur")
+	cikis := istek(t, r, http.MethodPost, cikisYolu, "")
+	assert.Equal(t, http.StatusOK, cikis.Code,
+		"çıkış ucu yetki istememeli; gövde: %s", cikis.Body.String())
+
+	assert.Equal(t, 2, svc.cagriSayisi,
+		"giriş ve çıkış servise iner; /auth/me context'ten okur")
 }
 
 // TestKimliksizIstekYetkiKatmanindaDa401Dondurur kimliğin olmadığı durumda

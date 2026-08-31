@@ -88,6 +88,15 @@ func (d *sahteDepo) SetPasswordHash(
 	return models.AuthIdentity{}, nil
 }
 
+func (d *sahteDepo) RevokeSessions(
+	_ context.Context,
+	_, _ string,
+	now time.Time,
+) (models.AuthIdentity, error) {
+	d.yazmaSayisi++
+	return models.AuthIdentity{UpdatedAt: now}, nil
+}
+
 func (d *sahteDepo) RegisterLoginFailure(
 	_ context.Context,
 	_ string,

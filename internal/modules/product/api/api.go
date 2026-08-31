@@ -7,6 +7,15 @@
 //
 // Yanıt zarfı: liste uçları {"data": [...], "count": N, "offset": N, "limit": N},
 // tekil uçlar {"data": {...}} döner.
+//
+// # Yetki
+//
+// /admin/v1 uçları yetki ister ve sözlük ikiye ayrılır: GET uçları [ScopeRead],
+// POST/PUT/PATCH/DELETE uçları [ScopeWrite] (bkz. [Handler.Routes]).
+// corehttp.ScopeAdmin ÜST YETKİDİR ve ikisini de tek başına karşılar.
+//
+// /store/v1 uçlarına yetki EKLENMEZ: mağaza yüzeyinin kimliği publishable
+// anahtardır ve o anahtar tanımı gereği yetki TAŞIMAZ.
 package api
 
 import (

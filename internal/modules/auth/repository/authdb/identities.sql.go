@@ -68,10 +68,11 @@ type InsertIdentityParams struct {
 //
 // # updated_at bu tabloda bir GÜVENLİK ÇAPASIDIR
 //
-// Sütun burada "satır en son ne zaman yazıldı" demek DEĞİLDİR: yalnızca KİMLİK
-// BİLGİSİ (parola) değiştiğinde ilerler ve oturum iptali ona dayanır — servis,
-// bu andan önce üretilmiş oturum jetonlarını reddeder (bkz. service/password.go,
-// passwordChangedAt).
+// Sütun burada "satır en son ne zaman yazıldı" demek DEĞİLDİR: yalnızca hesap
+// sahibinin BİLEREK yaptığı iki işte ilerler — parola değişimi
+// (UpdatePasswordHash) ve çıkış (RevokeSessions). Oturum iptali ona dayanır:
+// servis, bu andan önce üretilmiş oturum jetonlarını reddeder
+// (bkz. service/session.go, sessionAnchor).
 //
 // Bu yüzden giriş sayaçlarını yazan sorgular (RegisterLoginFailure,
 // RegisterLoginSuccess) updated_at'e DOKUNMAZ. Dokunsalardı:
@@ -204,6 +205,56 @@ type RegisterLoginSuccessParams struct {
 func (q *Queries) RegisterLoginSuccess(ctx context.Context, arg RegisterLoginSuccessParams) error {
 	_, err := q.db.Exec(ctx, registerLoginSuccess, arg.ID, arg.LastLoginAt)
 	return err
+}
+
+const revokeSessions = `-- name: RevokeSessions :one
+UPDATE auth_identity SET
+    updated_at = $3
+WHERE user_id = $1 AND provider = $2 AND deleted_at IS NULL
+RETURNING id, user_id, provider, provider_identity, password_hash, failed_attempts, locked_until, last_login_at, metadata, created_at, updated_at, deleted_at
+`
+
+type RevokeSessionsParams struct {
+	UserID    string
+	Provider  string
+	UpdatedAt pgtype.Timestamptz
+}
+
+// RevokeSessions oturum çapasını ilerletir; KİMLİK BİLGİSİNE DOKUNMAZ.
+//
+// Çıkışın tamamı bu tek yazmadır. Jeton durum tutmaz ve jti bazlı bir kara
+// liste yoktur, dolayısıyla "şu jetonu düşür" diye bir işlem YAPILAMAZ;
+// yapılabilen tek şey çapayı ileri almak, yani ondan önce üretilmiş bütün
+// jetonları birden geçersizleştirmektir (bkz. service/session.go).
+//
+// password_hash'e DOKUNULMAZ: çıkış yapmak parolayı değiştirmez ve değişse
+// kullanıcı bir daha giremezdi.
+//
+// failed_attempts ve locked_until'e de DOKUNULMAZ. Sıfırlansalardı çıkış ucu
+// kilidi temizlemenin yolu olurdu: kilitli hesabın elinde hâlâ geçerli bir
+// jeton varsa (kilit jetonu düşürmez) art arda "çıkış yap + yeniden dene" ile
+// sayaç sonsuza dek sıfırlanabilir, yani kilit hiç devreye girmezdi.
+//
+// Kimlik (user_id, provider) ile bulunur; satır yoksa hiçbir şey dönmez ve
+// çağıran bunu errors.NotFound'a çevirir.
+func (q *Queries) RevokeSessions(ctx context.Context, arg RevokeSessionsParams) (AuthIdentity, error) {
+	row := q.db.QueryRow(ctx, revokeSessions, arg.UserID, arg.Provider, arg.UpdatedAt)
+	var i AuthIdentity
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.Provider,
+		&i.ProviderIdentity,
+		&i.PasswordHash,
+		&i.FailedAttempts,
+		&i.LockedUntil,
+		&i.LastLoginAt,
+		&i.Metadata,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DeletedAt,
+	)
+	return i, err
 }
 
 const updatePasswordHash = `-- name: UpdatePasswordHash :one

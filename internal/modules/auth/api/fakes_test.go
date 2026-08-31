@@ -19,9 +19,25 @@ import (
 type sahteAuth struct {
 	// cagriSayisi servise ulaşan çağrıların sayısıdır.
 	cagriSayisi int
+	// sonCikisKimligi çıkış ucunun servise geçirdiği kimliktir.
+	sonCikisKimligi string
+	// sonCikisTuru çıkış ucunun servise geçirdiği kimlik TÜRÜDÜR.
+	//
+	// Alan ayrı tutulur çünkü "api anahtarı çıkış yapamaz" kararını servis
+	// verir ve o kararı verebilmesi için türü GÖRMESİ gerekir; handler türü
+	// geçirmezse servis her çağıranı kullanıcı sanardı.
+	sonCikisTuru string
+	// cikisHatasi doluysa Logout bu hatayı döner.
+	cikisHatasi error
 }
 
 var _ api.Auth = (*sahteAuth)(nil)
+
+// cikisAni sahtenin çıkış ucundan döndüğü sabit iptal anıdır.
+//
+// Sabit olması bilinçlidir: yanıt gövdesinin bu değeri OLDUĞU GİBİ taşıdığı
+// ancak bilinen bir anla doğrulanabilir.
+var cikisAni = time.Date(2026, 3, 1, 10, 0, 0, 0, time.UTC)
 
 // gecti bir servis çağrısını sayar.
 func (f *sahteAuth) gecti() { f.cagriSayisi++ }
@@ -29,6 +45,16 @@ func (f *sahteAuth) gecti() { f.cagriSayisi++ }
 func (f *sahteAuth) Login(_ context.Context, _, _ string) (string, time.Time, error) {
 	f.gecti()
 	return "jeton", time.Unix(0, 0).UTC(), nil
+}
+
+func (f *sahteAuth) Logout(_ context.Context, principalID, principalKind string) (time.Time, error) {
+	f.gecti()
+	f.sonCikisKimligi = principalID
+	f.sonCikisTuru = principalKind
+	if f.cikisHatasi != nil {
+		return time.Time{}, f.cikisHatasi
+	}
+	return cikisAni, nil
 }
 
 func (f *sahteAuth) CreateUser(_ context.Context, _ service.CreateUserInput, _ string) (models.User, error) {

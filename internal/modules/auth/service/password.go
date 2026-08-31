@@ -113,24 +113,6 @@ func (s *Service) hashPassword(password string) (string, error) {
 	return string(hash), nil
 }
 
-// passwordChangedAt kimliğin parolasının son değiştiği anı döner.
-//
-// # Neden updated_at
-//
-// Tabloda ayrı bir "password_changed_at" sütunu YOKTUR ve gerekmez: bu tabloda
-// updated_at yalnızca KİMLİK BİLGİSİ yazıldığında ilerler. Giriş sayaçları ve
-// kilit alanları onu bilerek kıpırdatmaz (bkz. queries/identities.sql,
-// RegisterLoginFailure ve RegisterLoginSuccess) — kıpırdatsalardı tek bir
-// HATALI giriş denemesi yöneticinin bütün oturumlarını düşürürdü ve
-// e-postasını bilen herkesin elinde bir hizmet dışı bırakma aracı olurdu.
-//
-// Fonksiyon tek satırdır ama bir SÖZLEŞMEYİ adlandırır: sütun seçimi ileride
-// değişirse (örneğin gerçekten ayrı bir sütun eklenirse) dokunulacak tek yer
-// burasıdır.
-func passwordChangedAt(identity models.AuthIdentity) time.Time {
-	return identity.UpdatedAt
-}
-
 // SetPassword kullanıcının parolasını belirler; giriş kimliği yoksa oluşturur.
 //
 // Parola politikası [validatePassword] ile uygulanır. Düz parola yalnızca bu
@@ -143,11 +125,14 @@ func passwordChangedAt(identity models.AuthIdentity) time.Time {
 //
 // # Mevcut oturumlar DÜŞER
 //
-// Yazma, kimliğin [passwordChangedAt] değerini bu ana taşır ve daha önce
-// üretilmiş oturum jetonları bir sonraki isteklerinde reddedilir
+// Yazma, kimliğin [sessionAnchor] değerini bu ana taşır ve daha önce üretilmiş
+// oturum jetonları bir sonraki isteklerinde reddedilir
 // (bkz. [Service.principalFromToken]). Bu, parola değişiminin yan etkisi değil
-// AMACIDIR: jeton durum tutmaz ve iptal listesi yoktur, dolayısıyla sızmış bir
-// yönetici jetonunu süresi dolmadan geri almanın tek yolu budur.
+// AMACIDIR: sızmış bir yönetici jetonu, parola değişmemişse süresi dolana
+// kadar geçerli kalırdı.
+//
+// Oturumları kapatmak için parolayı değiştirmek GEREKMEZ: aynı çapayı
+// kimlik bilgisine dokunmadan ilerleten uç [Service.Logout]'tur.
 func (s *Service) SetPassword(ctx context.Context, userID, password string) error {
 	if err := s.ready(); err != nil {
 		return err

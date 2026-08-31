@@ -168,28 +168,40 @@ reddedilir.
 Kimlik "kimsin", yetki "ne yapabilirsin" sorusudur; ikisi ayrı katmandır.
 `RequireAdmin` yalnızca kimliği çözer, yetkiyi `RequireScope` uç uç zorlar:
 
+Sözlük tek kuraldan türer:
+
 | Uç | İstenen |
 |---|---|
 | `POST /admin/v1/auth/login` | — (kimlik daha yeni kurulacak) |
-| `GET /admin/v1/auth/me` | yalnızca kimlik |
-| auth yönetim yüzeyi, **okuma** | `auth:read` |
-| auth yönetim yüzeyi, **yazma** | `admin` |
+| `GET /admin/v1/auth/me`, `POST /admin/v1/auth/logout` | yalnızca kimlik |
+| `/admin/v1/**` **okuma** (GET, HEAD) | `<modül>:read` |
+| `/admin/v1/**` **yazma** (POST, PUT, PATCH, DELETE) | `<modül>:write` |
+| `/store/v1/**` | — (publishable anahtar yetki taşımaz) |
 
-`admin` üst yetkidir ve diğerlerini kapsar. Yazma uçlarında ayrı bir
-`auth:write` **yoktur** ve bu bir eksiklik değildir: o uçlarda yazılan şeyin
-kendisi yetkidir (kullanıcının yetkisi, anahtarın yetkisi, anahtarın göreceği
-kanal), yani yetki yazabilen bir kimlik tek istekte kendini admin yapabilir —
-zaten admindir.
+`<modül>` uca sahip modülün adıdır: `product:read`, `order:write`,
+`promotion:write` … `admin` **üst yetkidir** ve hepsini kapsar.
+
+Tek istisna auth modülünün yazma uçlarıdır: orada `auth:write` yerine doğrudan
+`admin` istenir. O uçlarda yazılan şeyin kendisi yetkidir (kullanıcının
+yetkisi, anahtarın yetkisi, anahtarın göreceği kanal), yani yetki yazabilen
+bir kimlik tek istekte kendini admin yapabilir — zaten admindir; ayrı bir ad
+gerçekte var olmayan bir sınırı varmış gibi gösterirdi.
 
 **Yetki yükseltme iki katmanda** engellenir: middleware ucu kapatır, servis ise
 çağıranın *kendisinde olmayan* bir yetkiyi vermesini reddeder. İkinci katman
 gereklidir çünkü ilkinin haritası bir gün gevşetilebilir.
 
-> Bugün yalnızca auth modülünün uçları yetki katmanından geçer. Diğer
-> modüllerin yönetim uçları kimlik ister ama scope istemez; aynı zorlamanın
-> onların `api` paketlerine de taşınması bekleyen iştir.
+Yetkisi **boş** (nil değil, boş dilim) bir kullanıcı giriş yapabilir ama
+hiçbir korumalı uçta iş yapamaz. Bu bir kaza değil sözleşmedir ve router ağacı
+gezilerek denetlenir: `internal/e2e/yetki_test.go` her `/admin/v1` ucuna
+yetkisiz bir jetonla gidip **403** bekler, yani zorlamayı eklemeyi unutan bir
+modül sessiz kalamaz.
 
 ```bash
+# 0) İlk yönetici (yalnızca boş bir veritabanında)
+ADMIN_BOOTSTRAP_EMAIL=admin@example.com \
+ADMIN_BOOTSTRAP_PASSWORD='…' make run
+
 # 1) Giriş -> jeton
 TOKEN=$(curl -s localhost:9000/admin/v1/auth/login \
   -H 'content-type: application/json' \
@@ -198,12 +210,23 @@ TOKEN=$(curl -s localhost:9000/admin/v1/auth/login \
 # 2) Korumalı uç
 curl -s localhost:9000/admin/v1/auth/me -H "Authorization: Bearer $TOKEN"
 
-# 3) Mağaza yüzeyi
+# 3) Çıkış (çağıranın TÜM oturumlarını düşürür)
+curl -s -X POST localhost:9000/admin/v1/auth/logout -H "Authorization: Bearer $TOKEN"
+
+# 4) Mağaza yüzeyi
 curl -s localhost:9000/store/v1/products -H "x-publishable-api-key: pk_…"
 ```
 
-> **İlk yönetici** bir tohum adımıyla doğar: yönetim uçları korumalı olduğu
-> için ilk kullanıcıyı HTTP'den yaratmanın yolu yoktur.
+**İlk yönetici** bir tohum adımıyla doğar: yönetim uçları korumalı olduğu için
+ilk kullanıcıyı HTTP'den yaratmanın yolu yoktur. Tohum **yalnızca hiç kullanıcı
+yokken** çalışır — yeniden başlatma güvenlidir ve var olan bir kurulumun
+yetkilerini asla değiştirmez. İki değişken **birlikte** verilir; yalnızca biri
+verilirse uygulama açılışta durur.
+
+**Oturum iptali** iki yoldan olur ve ikisi de **toptan**dır: parola değişimi ve
+`POST /admin/v1/auth/logout`. Tek bir cihazı düşürmek yoktur — bunun için jti
+bazlı, her istekte okunan bir kara liste gerekirdi. API anahtarının oturumu
+yoktur; o `POST /admin/v1/api-keys/{id}/revoke` ile kapatılır.
 
 `JWT_SECRET` verilmezse geliştirmede **açılışa özel rastgele** bir sır
 üretilir (yeniden başlatmada oturumlar düşer) ve uyarı loglanır; paylaşılan
@@ -222,12 +245,33 @@ Neden aynı kural değil: bkz. [ADR 0007](docs/adr/0007-sertlestirme-arizada-dav
 `Idempotency-Key` başlığı taşıyan bir POST/PUT/PATCH/DELETE bir kez işlenir;
 tekrar aynı yanıtı `Idempotency-Replayed: true` ile alır. Aynı anahtarla
 **farklı** bir gövde göndermek `409` döner — sessizce ilk yanıtı çalmak,
-istemcinin ikinci isteğinin hiç işlenmediğini gizlerdi.
+istemcinin ikinci isteğinin hiç işlenmediğini gizlerdi. Kayıt anahtarı
+**çağıranın kimliğiyle ad alanına alınır**: aynı anahtarı seçen iki çağırandan
+biri diğerinin yanıtını göremez.
 
-> Hız sınırı ve idempotency deposu **bellek içidir**: tek süreçlik kurulum
-> içindir. Yatay ölçeklenen bir dağıtımda sınır örnek sayısıyla çarpılır ve
-> idempotency koruması örnekler arasında hiç çalışmaz; ikisi de paylaşılan bir
-> depo ister.
+`TRUSTED_PROXY_HOPS`, istekle aramızdaki **güvenilen** ters proxy sayısıdır.
+Fazla verilen bir değer, istemcinin `X-Forwarded-For`'a kendi yazdığı adresi
+gerçek sanmaya ve hız sınırının IP uydurularak atlanmasına yol açar; doğrudan
+internete bakan bir kurulumda `0` bırakın.
+
+### Tek örnek mi, birden çok mu?
+
+`GUARD_BACKEND` ikisini birden seçer:
+
+| Değer | Hız sınırı | Idempotency |
+|---|---|---|
+| `memory` (varsayılan) | örnek sayısıyla **çarpılır** | örnekler arasında **hiç çalışmaz** |
+| `redis` | paylaşılan | paylaşılan |
+
+Fark yalnızca derece değil **tür** farkıdır: hız sınırının gevşemesi bir *hız*
+sorunudur, hiçbir istek yanlış işlenmez. Idempotency'nin çalışmaması bir
+*doğruluk* sorunudur — aynı anahtarla farklı örneklere düşen iki istek iki kez
+işlenir, yani iki sipariş ve iki tahsilat. Birden çok örnek çalıştırıyorsanız
+`GUARD_BACKEND=redis` zorunludur; paylaşılan bir ortamda `memory` bırakmak
+açılışta uyarı üretir.
+
+`GUARD_BACKEND=redis` ve `EVENT_BUS=redis` **aynı** istemciyi paylaşır; ikisi de
+kapalıysa hiç bağlantı açılmaz.
 
 ## İzleme
 

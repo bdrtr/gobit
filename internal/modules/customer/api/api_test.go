@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/bdrtr/gobit/internal/core/errors"
+	corehttp "github.com/bdrtr/gobit/internal/core/http"
 	"github.com/bdrtr/gobit/internal/modules/customer/api"
 	"github.com/bdrtr/gobit/internal/modules/customer/models"
 	"github.com/bdrtr/gobit/internal/modules/customer/service"
@@ -29,8 +30,29 @@ func yeniRouter(svc api.Customer) chi.Router {
 	return r
 }
 
-// istek bir HTTP isteği çalıştırıp yanıtı döner.
+// adminKimlik testlerin varsayılan çağıranıdır: tam yetkili yönetim kimliği.
+var adminKimlik = corehttp.Principal{
+	ID:     "user_test",
+	Kind:   "user",
+	Scopes: []string{corehttp.ScopeAdmin},
+}
+
+// istek bir HTTP isteğini TAM YETKİLİ bir kimlikle çalıştırıp yanıtı döner.
+//
+// Kimliğin context'e konması, yönetim uçları corehttp.RequireScope ile
+// korunduğu için gereklidir: o middleware kimliği context'ten okur ve kimliği
+// oraya koyan corehttp.RequireAdmin bu testte YOKTUR (router doğrudan
+// kurulur). Kimlik eklenmeseydi bu dosyadaki her yönetim testi, sınadığı
+// davranışa hiç ulaşamadan 401 alırdı. Testlerin ne doğruladığı değişmedi;
+// yalnızca çağıranın kim olduğu belirtildi.
 func istek(t *testing.T, r chi.Router, method, path, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	return istekGonder(t, r, &adminKimlik, method, path, body)
+}
+
+// istekGonder isteği verilen kimlikle çalıştırır; kimlik nil ise istek
+// KİMLİKSİZ gider.
+func istekGonder(t *testing.T, r chi.Router, kimlik *corehttp.Principal, method, path, body string) *httptest.ResponseRecorder {
 	t.Helper()
 
 	var reader *strings.Reader
@@ -39,7 +61,11 @@ func istek(t *testing.T, r chi.Router, method, path, body string) *httptest.Resp
 	} else {
 		reader = strings.NewReader(body)
 	}
-	req := httptest.NewRequestWithContext(context.Background(), method, path, reader)
+	ctx := context.Background()
+	if kimlik != nil {
+		ctx = corehttp.WithPrincipal(ctx, *kimlik)
+	}
+	req := httptest.NewRequestWithContext(ctx, method, path, reader)
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 	return rec
@@ -499,4 +525,96 @@ func TestVitrindeMusteriListelemesiYok(t *testing.T) {
 	rec := istek(t, r, http.MethodGet, "/store/v1/customers", "")
 	assert.Equal(t, http.StatusMethodNotAllowed, rec.Code,
 		"vitrinde müşteri LİSTELEME ucu olmamalı")
+}
+
+// TestDarYetkiliKimlikYazmaUcunda403Alir yalnızca [api.ScopeRead] taşıyan bir
+// kimliğin yönetim YAZMA uçlarından geçemediğini kanıtlar.
+//
+// Sınanan senaryo somuttur: okuma yetkisiyle giriş yapan bir yönetim kimliği,
+// yetki zorlaması olmasaydı DELETE /admin/v1/customers/{id} ile müşteri
+// kayıtlarını silebilirdi. Servis HİÇ çağrılmamalıdır; sahtenin içindeki
+// t.Fatal bunu ayrıca kanıtlar.
+func TestDarYetkiliKimlikYazmaUcunda403Alir(t *testing.T) {
+	svc := &stubCustomer{
+		createCustomerFn: func(_ context.Context, _ service.CustomerInput) (models.Customer, error) {
+			t.Fatal("yetkisiz istek servise ULAŞMAMALI")
+			return models.Customer{}, nil
+		},
+		deleteCustomerFn: func(_ context.Context, _ string) error {
+			t.Fatal("yetkisiz istek servise ULAŞMAMALI")
+			return nil
+		},
+		updateCustomerFn: func(_ context.Context, _ string, _ service.UpdateCustomerInput) (models.Customer, error) {
+			t.Fatal("yetkisiz istek servise ULAŞMAMALI")
+			return models.Customer{}, nil
+		},
+	}
+	r := yeniRouter(svc)
+	darKimlik := corehttp.Principal{ID: "user_dar", Kind: "user", Scopes: []string{api.ScopeRead}}
+
+	for _, uc := range []struct{ method, path, body string }{
+		{http.MethodPost, "/admin/v1/customers", `{"email":"a@b.co"}`},
+		{http.MethodPut, "/admin/v1/customers/cust_1", `{"first_name":"Ali"}`},
+		{http.MethodDelete, "/admin/v1/customers/cust_1", ""},
+		{http.MethodPost, "/admin/v1/customer-groups", `{"name":"VIP"}`},
+	} {
+		rec := istekGonder(t, r, &darKimlik, uc.method, uc.path, uc.body)
+		assert.Equal(t, http.StatusForbidden, rec.Code,
+			"%s %s okuma yetkisiyle açılmamalı: %s", uc.method, uc.path, rec.Body.String())
+	}
+}
+
+// TestDarYetkiliKimlikOkumaUcundaGecer aynı dar kimliğin yönetim OKUMA
+// uçlarından GEÇTİĞİNİ kanıtlar.
+//
+// Yetki zorlamasının değeri, dar yetkiyi de gerçekten kabul etmesindedir:
+// yalnızca reddetseydi kimse dar yetki dağıtmaz, herkese admin verilirdi.
+func TestDarYetkiliKimlikOkumaUcundaGecer(t *testing.T) {
+	svc := &stubCustomer{
+		listCustomersFn: func(_ context.Context, _ service.ListCustomersInput) (service.Page[models.Customer], error) {
+			return service.Page[models.Customer]{Items: []models.Customer{ornekMusteri(true)}, Count: 1}, nil
+		},
+		getCustomerFn: func(_ context.Context, _ string) (models.Customer, error) {
+			return ornekMusteri(true), nil
+		},
+	}
+	r := yeniRouter(svc)
+	darKimlik := corehttp.Principal{ID: "user_dar", Kind: "user", Scopes: []string{api.ScopeRead}}
+
+	for _, path := range []string{"/admin/v1/customers", "/admin/v1/customers/cust_1"} {
+		rec := istekGonder(t, r, &darKimlik, http.MethodGet, path, "")
+		assert.Equal(t, http.StatusOK, rec.Code, "GET %s: %s", path, rec.Body.String())
+	}
+}
+
+// TestKimliksizYonetimIstegi401Alir kimliği hiç olmayan isteğin 401 aldığını
+// kanıtlar.
+//
+// Ayrım bilinçlidir: 401 "kim olduğunu söyle", 403 "kim olduğunu biliyorum
+// ama yetkin yok" demektir. İkisi karışsaydı istemci, kimliğini yenileyerek
+// çözülmeyecek bir sorun için oturum tazelemeyi denerdi.
+func TestKimliksizYonetimIstegi401Alir(t *testing.T) {
+	r := yeniRouter(&stubCustomer{})
+
+	rec := istekGonder(t, r, nil, http.MethodGet, "/admin/v1/customers", "")
+
+	assert.Equal(t, http.StatusUnauthorized, rec.Code, rec.Body.String())
+}
+
+// TestMagazaUclariYetkiIstemez store yüzeyine yetki EKLENMEDİĞİNİ kanıtlar.
+//
+// Mağaza yüzeyinin kimliği publishable anahtardır ve o anahtar tanımı gereği
+// yetki taşımaz; store uçlarına yanlışlıkla bir scope takılırsa vitrin
+// tamamen çalışmaz hâle gelir ve bu test onu hemen yakalar.
+func TestMagazaUclariYetkiIstemez(t *testing.T) {
+	svc := &stubCustomer{
+		registerGuestFn: func(_ context.Context, _ service.CustomerInput) (models.Customer, error) {
+			return ornekMusteri(false), nil
+		},
+	}
+	r := yeniRouter(svc)
+
+	rec := istekGonder(t, r, nil, http.MethodPost, "/store/v1/customers", `{"email":"a@b.co"}`)
+
+	assert.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
 }

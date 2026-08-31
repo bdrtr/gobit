@@ -10,7 +10,9 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
+	"github.com/bdrtr/gobit/internal/core/config"
 	coreplugin "github.com/bdrtr/gobit/internal/core/plugin"
+	authsvc "github.com/bdrtr/gobit/internal/modules/auth/service"
 	"github.com/bdrtr/gobit/internal/modules/fulfillment"
 	"github.com/bdrtr/gobit/internal/modules/payment"
 )
@@ -76,4 +78,26 @@ func TestEklentilerModulleriImportEtmez(t *testing.T) {
 			}
 		}
 	}
+}
+
+// TestTohumParolaTabaniAuthinUstunde config'in ilk yönetici için istediği
+// parola uzunluğunun, auth'un HERKESE uyguladığı tabanın ÜSTÜNDE kaldığını
+// doğrular.
+//
+// İki sabit iki ayrı pakette yaşar ve aralarında derleyici bağı yoktur.
+// auth'un tabanı bir gün config'inkine yetişirse, config'deki kapı SESSİZCE
+// etkisizleşir: auth'un zaten reddettiği bir parolayı ikinci kez reddetmek
+// hiçbir şey eklemez ve "paylaşılan ortamda daha uzun parola isteniyor"
+// iddiası gerçekliğini kaybeder. Sessiz etkisizleşme, kaldırılmış bir
+// korumadan daha kötüdür: koruma hâlâ varmış gibi görünür.
+//
+// Testin burada yaşamasının nedeni, arch paketinin test-only olması ve hem
+// çekirdeği hem modülleri import edebilmesidir; iki paketin hiçbiri diğerini
+// import edemez (Prensip 2.4).
+func TestTohumParolaTabaniAuthinUstunde(t *testing.T) {
+	t.Parallel()
+
+	assert.Greater(t, config.MinBootstrapPasswordLen, authsvc.MinPasswordLen,
+		"ilk yönetici parolası, auth'un genel tabanından KESİN olarak uzun olmalı; "+
+			"eşitlenirse config'deki kapı hiçbir şey eklemez")
 }

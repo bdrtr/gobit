@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/bdrtr/gobit/internal/core/errors"
+	corehttp "github.com/bdrtr/gobit/internal/core/http"
 	"github.com/bdrtr/gobit/internal/modules/payment/api"
 	"github.com/bdrtr/gobit/internal/modules/payment/models"
 )
@@ -23,8 +24,38 @@ func yeniRouter(svc *fakePayments) chi.Router {
 	return r
 }
 
-// istek verilen isteği router'a uygular ve yanıtı döner.
+// yonetici testlerin varsayılan kimliğidir: tam yetkili bir yönetim
+// kullanıcısı.
+//
+// Router burada DOĞRUDAN kuruluyor, yani corehttp.RequireAdmin zincirde yok ve
+// context'e kimliği koyan kimse yok. Yönetim uçları artık
+// corehttp.RequireScope ile korunduğu için kimliksiz istek 401 döner ve
+// testlerin asıl doğruladığı davranışa (zarf, status eşlemesi, gövde çözümü)
+// hiç sıra gelmezdi. Bu yüzden kimlik testin kendisi tarafından eklenir;
+// testlerin NE doğruladığı değişmez, yalnızca eksik olan kimlik tamamlanır.
+func yonetici() corehttp.Principal {
+	return corehttp.Principal{
+		ID:     "user_test",
+		Kind:   "user",
+		Scopes: []string{corehttp.ScopeAdmin},
+	}
+}
+
+// istek verilen isteği tam yetkili bir kimlikle router'a uygular ve yanıtı
+// döner.
 func istek(t *testing.T, r chi.Router, method, path, body string) *httptest.ResponseRecorder {
+	t.Helper()
+
+	return kimlikliIstek(t, r, method, path, body, yonetici())
+}
+
+// kimlikliIstek verilen isteği belirtilen kimlikle uygular ve yanıtı döner.
+//
+// Yetki denetimini sınayan testler için ayrıdır: [istek] her zaman tam yetkili
+// çağırır, burada dar yetkili bir kimlik verilebilir.
+func kimlikliIstek(
+	t *testing.T, r chi.Router, method, path, body string, kimlik corehttp.Principal,
+) *httptest.ResponseRecorder {
 	t.Helper()
 
 	var reader *strings.Reader
@@ -35,6 +66,7 @@ func istek(t *testing.T, r chi.Router, method, path, body string) *httptest.Resp
 	}
 	req := httptest.NewRequest(method, path, reader)
 	req.Header.Set("Content-Type", "application/json")
+	req = req.WithContext(corehttp.WithPrincipal(req.Context(), kimlik))
 
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
@@ -454,4 +486,122 @@ func TestOturumDTOsuRetSebebiniTasir(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, "failed", data["status"])
 	assert.Equal(t, "yetersiz bakiye", data["decline_reason"])
+}
+
+// darYetkili yalnızca [api.ScopeRead] taşıyan bir yönetim kimliği döner.
+func darYetkili() corehttp.Principal {
+	return corehttp.Principal{
+		ID:     "user_dar",
+		Kind:   "user",
+		Scopes: []string{api.ScopeRead},
+	}
+}
+
+// TestDarYetkiliKimlikYazmaUcunda403Alir okuma yetkisinin yazmaya
+// yetmediğini doğrular.
+//
+// Buradaki uç PARA ÇIKARIR. Yetki denetimi olmasaydı kimlik doğrulama tek
+// başına yetkilendirme yerine geçerdi: yalnızca rapor okusun diye verilmiş bir
+// kimlik kasadan iade yapabilirdi.
+func TestDarYetkiliKimlikYazmaUcunda403Alir(t *testing.T) {
+	svc := &fakePayments{}
+	r := yeniRouter(svc)
+
+	rec := kimlikliIstek(t, r, http.MethodPost, "/admin/v1/payments/pay_1/refunds",
+		`{"amount":500,"reason":"müşteri iadesi"}`, darYetkili())
+
+	require.Equal(t, http.StatusForbidden, rec.Code)
+	assert.Equal(t, corehttp.CodeForbidden, hataKodu(t, rec))
+	assert.Zero(t, svc.sonRefundAmount, "yetki yetmiyorsa servise hiç gidilmemeli")
+}
+
+// TestDarYetkiliKimlikOkumaUcundaGecer aynı kimliğin okuma ucunda geçtiğini
+// doğrular.
+//
+// Çift eşlik eden test budur: 403 dönen bir uç, yetki haritasının fazla dar
+// olmasından da kaynaklanabilirdi. Aynı kimliğin okumada geçmesi, reddin
+// yetki AYRIMINDAN geldiğini gösterir.
+func TestDarYetkiliKimlikOkumaUcundaGecer(t *testing.T) {
+	svc := &fakePayments{
+		collections: []models.PaymentCollection{{ID: "pcol_1", Amount: 1000, CurrencyCode: "TRY"}},
+		count:       1,
+	}
+	r := yeniRouter(svc)
+
+	rec := kimlikliIstek(t, r, http.MethodGet, "/admin/v1/payment-collections", "", darYetkili())
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	assert.Equal(t, float64(1), govde(t, rec)["count"])
+}
+
+// TestYetkisizKimlikYonetimUcunuAcamaz yetkileri BOŞ bırakılmış bir yönetim
+// kullanıcısının hiçbir yönetim ucuna erişemediğini doğrular.
+//
+// Kimlik geçerlidir — giriş yapabilir, kim olduğu bilinir — ama yetkisi
+// yoktur. Bu ayrım olmasaydı yetki listesi boş bırakılan bir kullanıcı
+// "hiçbir şeye erişemez" sanılırken tahsilat tetikleyebilirdi.
+func TestYetkisizKimlikYonetimUcunuAcamaz(t *testing.T) {
+	yetkisiz := corehttp.Principal{ID: "user_bos", Kind: "user", Scopes: []string{}}
+
+	for _, tc := range []struct {
+		ad     string
+		method string
+		yol    string
+	}{
+		{ad: "okuma", method: http.MethodGet, yol: "/admin/v1/payment-collections"},
+		{ad: "yazma", method: http.MethodPost, yol: "/admin/v1/payment-sessions/pses_1/capture"},
+	} {
+		t.Run(tc.ad, func(t *testing.T) {
+			svc := &fakePayments{}
+			r := yeniRouter(svc)
+
+			rec := kimlikliIstek(t, r, tc.method, tc.yol, "", yetkisiz)
+
+			assert.Equal(t, http.StatusForbidden, rec.Code)
+			assert.Zero(t, svc.sonCaptureAmount, "yetkisiz kimlik için servise hiç gidilmemeli")
+		})
+	}
+}
+
+// TestKimliksizIstek401Alir kimliği hiç olmayan isteğin 403 DEĞİL 401
+// aldığını doğrular.
+//
+// Ayrım istemci için anlamlıdır: 401 "kim olduğunu söyle" (kimlikle tekrar
+// dene), 403 "kim olduğunu biliyorum ama yetkin yok" (tekrar denemenin
+// anlamı yok) demektir.
+func TestKimliksizIstek401Alir(t *testing.T) {
+	r := yeniRouter(&fakePayments{})
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/v1/payment-collections", strings.NewReader(""))
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusUnauthorized, rec.Code)
+}
+
+// TestMagazaUclariYetkiIstemez mağaza uçlarının yetki taşımayan bir kimlikle
+// çalıştığını doğrular.
+//
+// /store/v1'in kimliği publishable anahtardır ve o anahtar tanımı gereği yetki
+// TAŞIMAZ. Yönetim yetkisi eklerken mağaza ucunu da kapatmak tüm vitrini
+// düşürürdü; bu risk gerçektir, çünkü sağlayıcı listesi ve koleksiyon okuma
+// uçları iki yüzeyde AYNI handler'ı paylaşır.
+func TestMagazaUclariYetkiIstemez(t *testing.T) {
+	svc := &fakePayments{
+		providerIDs: []string{"manual"},
+		collection:  models.PaymentCollection{ID: "pcol_1", Amount: 1000, CurrencyCode: "TRY"},
+	}
+	magaza := corehttp.Principal{ID: "pk_1", Kind: "api_key", Scopes: []string{}}
+	r := yeniRouter(svc)
+
+	for _, yol := range []string{
+		"/store/v1/payment-providers",
+		"/store/v1/payment-collections/pcol_1",
+	} {
+		t.Run(yol, func(t *testing.T) {
+			rec := kimlikliIstek(t, r, http.MethodGet, yol, "", magaza)
+
+			assert.Equal(t, http.StatusOK, rec.Code)
+		})
+	}
 }

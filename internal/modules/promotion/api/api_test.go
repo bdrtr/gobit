@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	corehttp "github.com/bdrtr/gobit/internal/core/http"
 	"github.com/bdrtr/gobit/internal/modules/promotion/api"
 	"github.com/bdrtr/gobit/internal/modules/promotion/models"
 	"github.com/bdrtr/gobit/internal/modules/promotion/service"
@@ -19,6 +20,26 @@ import (
 
 // testNow testlerin sabit saatidir.
 var testNow = time.Date(2026, 8, 24, 12, 0, 0, 0, time.UTC)
+
+// adminKimlik testlerin varsayılan çağıranıdır: tam yetkili yönetici.
+//
+// Yönetim uçları corehttp.RequireScope ile korunuyor ve o middleware
+// context'te kimlik YOKSA 401 döner. Bu testler router'ı doğrudan kuruyor,
+// yani zincirde kimliği yerleştiren corehttp.RequireAdmin yok; kimliği bu
+// yüzden testin kendisi koyar. Eklenen tek şey KİMLİKTİR — testlerin
+// doğruladığı davranış (durum kodları, zarflar, sızıntı sınamaları) değişmedi.
+var adminKimlik = corehttp.Principal{
+	ID:     "usr_test",
+	Kind:   "user",
+	Scopes: []string{corehttp.ScopeAdmin},
+}
+
+// okumaKimligi yalnızca [api.ScopeRead] taşıyan dar yetkili çağırandır.
+var okumaKimligi = corehttp.Principal{
+	ID:     "usr_dar",
+	Kind:   "user",
+	Scopes: []string{api.ScopeRead},
+}
 
 // newTestRouter gerçek servis ve bellek içi depoyla bir router kurar.
 func newTestRouter(t *testing.T) (chi.Router, *memRepo) {
@@ -32,12 +53,20 @@ func newTestRouter(t *testing.T) (chi.Router, *memRepo) {
 	return r, repo
 }
 
-// do bir istek çalıştırır ve yanıtı döner.
+// do bir isteği tam yetkili kimlikle çalıştırır ve yanıtı döner.
 func do(t *testing.T, r chi.Router, method, path, body string) *httptest.ResponseRecorder {
+	t.Helper()
+
+	return doAs(t, r, adminKimlik, method, path, body)
+}
+
+// doAs bir isteği verilen kimlikle çalıştırır ve yanıtı döner.
+func doAs(t *testing.T, r chi.Router, kimlik corehttp.Principal, method, path, body string) *httptest.ResponseRecorder {
 	t.Helper()
 
 	req := httptest.NewRequest(method, path, strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
+	req = req.WithContext(corehttp.WithPrincipal(req.Context(), kimlik))
 
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
@@ -420,4 +449,83 @@ func TestStoreYazmaYuzeyiYoktur(t *testing.T) {
 		assert.Equal(t, http.StatusMethodNotAllowed, rec.Code,
 			"%s: kupon yazmak yönetim işidir", method)
 	}
+}
+
+// TestDarYetkiYazmaUcunuAcmaz yalnızca okuma yetkisi taşıyan bir kimliğin
+// yönetim yazma uçlarında 403 aldığını doğrular.
+//
+// Kimlik doğrulama tek başına yetmez: yetkileri boşaltılmış ya da yalnızca
+// okumaya yetkili bir yönetim kullanıcısı, yetki zorlaması olmadan kendine
+// %100 indirimli bir promosyon yazabilir ya da kampanya bütçesini
+// sıfırlayabilirdi. 401 değil 403 beklenir — kimlik bilinmektedir, eksik olan
+// yetkidir.
+func TestDarYetkiYazmaUcunuAcmaz(t *testing.T) {
+	r, _ := newTestRouter(t)
+
+	for _, durum := range []struct {
+		ad     string
+		method string
+		path   string
+		body   string
+	}{
+		{"kampanya oluştur", http.MethodPost, "/admin/v1/campaigns", `{"name":"X","campaign_identifier":"X","budget_type":"none"}`},
+		{"kampanya güncelle", http.MethodPut, "/admin/v1/campaigns/promocamp_1", `{"name":"X","campaign_identifier":"X","budget_type":"none"}`},
+		{"kampanya sil", http.MethodDelete, "/admin/v1/campaigns/promocamp_1", ``},
+		{"promosyon oluştur", http.MethodPost, "/admin/v1/promotions", `{"code":"BEDAVA"}`},
+		{"promosyon güncelle", http.MethodPut, "/admin/v1/promotions/promo_1", `{"code":"BEDAVA"}`},
+		{"promosyon sil", http.MethodDelete, "/admin/v1/promotions/promo_1", ``},
+		{"uygulama yöntemi yaz", http.MethodPut, "/admin/v1/promotions/promo_1/application-method",
+			`{"type":"percentage","target_type":"items","value":10000}`},
+		{"uygulama yöntemi sil", http.MethodDelete, "/admin/v1/promotions/promo_1/application-method", ``},
+		{"kural ekle", http.MethodPost, "/admin/v1/promotions/promo_1/rules", `{"attribute":"x","operator":"eq","values":["y"]}`},
+		{"kural sil", http.MethodDelete, "/admin/v1/promotion-rules/promorule_1", ``},
+		{"kullan", http.MethodPost, "/admin/v1/promotions/promo_1/redeem", `{}`},
+		{"geri al", http.MethodPost, "/admin/v1/promotions/promo_1/release", `{}`},
+		// Hesap ucu hiçbir şey YAZMAZ ama sözlük yöntem üzerinden tanımlıdır:
+		// POST → yazma. İstisnası olsaydı sözlük uç uç tartışılan bir şey olurdu.
+		{"indirim hesapla", http.MethodPost, "/admin/v1/promotions/compute", `{"items":[]}`},
+	} {
+		rec := doAs(t, r, okumaKimligi, durum.method, durum.path, durum.body)
+		assert.Equal(t, http.StatusForbidden, rec.Code, "durum: %s", durum.ad)
+		kod, _ := hataKodu(t, rec)
+		assert.Equal(t, corehttp.CodeForbidden, kod, "durum: %s", durum.ad)
+	}
+}
+
+// TestDarYetkiOkumaUcundaGecer aynı dar kimliğin okuma uçlarından geçtiğini
+// doğrular.
+//
+// Bu testin çifti [TestDarYetkiYazmaUcunuAcmaz]'dır: yetki haritası her yazma
+// ucunu kapatırken okuma uçlarını da kapatsaydı, 403 sonuçları haritanın
+// doğruluğunu değil yalnızca aşırı kısıtlayıcılığını kanıtlardı.
+func TestDarYetkiOkumaUcundaGecer(t *testing.T) {
+	r, _ := newTestRouter(t)
+	id := promosyonOlustur(t, r, `{"code": "YAZ20", "status": "active"}`)
+
+	for _, path := range []string{
+		"/admin/v1/campaigns",
+		"/admin/v1/promotions",
+		"/admin/v1/promotions/" + id,
+		"/admin/v1/promotions/" + id + "/rules",
+		"/admin/v1/promotions/" + id + "/redemptions",
+	} {
+		rec := doAs(t, r, okumaKimligi, http.MethodGet, path, "")
+		assert.Equal(t, http.StatusOK, rec.Code, "yol: %s — gövde: %s", path, rec.Body.String())
+	}
+}
+
+// TestStoreUcuYetkiIstemez mağaza ucunun yetkisiz bir kimlikle de çalıştığını
+// doğrular.
+//
+// Vitrinin kimliği publishable anahtardır ve o anahtar tanımı gereği yetki
+// TAŞIMAZ. Yönetim uçlarına yetki eklerken store ucuna da eklemek, ilk
+// dağıtımda bütün vitrini kapatmanın en sessiz yoludur; bu test o hatayı
+// derleme değil TEST zamanında yakalar. Beklenen 404'tür: kod yoktur — ama
+// 403 ya da 401 DEĞİL.
+func TestStoreUcuYetkiIstemez(t *testing.T) {
+	r, _ := newTestRouter(t)
+
+	yetkisiz := corehttp.Principal{ID: "pk_1", Kind: "api_key"}
+	rec := doAs(t, r, yetkisiz, http.MethodGet, "/store/v1/promotions/HICBOYLEBIRKODYOK", "")
+	assert.Equal(t, http.StatusNotFound, rec.Code, "gövde: %s", rec.Body.String())
 }

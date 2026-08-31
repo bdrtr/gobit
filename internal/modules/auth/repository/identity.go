@@ -45,8 +45,9 @@ func (r *Repo) GetIdentity(ctx context.Context, userID, provider string) (models
 //
 // Yazma, kaydın updated_at değerini now'a taşır. Bu sütun bu tabloda basit bir
 // denetim alanı DEĞİLDİR: servis, ondan önce üretilmiş oturum jetonlarını
-// reddeder (bkz. queries/identities.sql dosya başı ve service/password.go,
-// passwordChangedAt). Yani bu çağrı kullanıcının açık oturumlarını da kapatır.
+// reddeder (bkz. queries/identities.sql dosya başı ve service/session.go,
+// sessionAnchor). Yani bu çağrı kullanıcının açık oturumlarını da kapatır;
+// oturumları parolaya dokunmadan kapatmak için [Repo.RevokeSessions] vardır.
 func (r *Repo) SetPasswordHash(
 	ctx context.Context,
 	userID, provider, providerIdentity, hash string,
@@ -104,6 +105,41 @@ func (r *Repo) SetPasswordHash(
 		return models.AuthIdentity{}, txErr
 	}
 	return identity, nil
+}
+
+// RevokeSessions kimliğin oturum çapasını now anına taşır ve kullanıcının
+// AÇIK OTURUMLARININ TAMAMINI düşürür.
+//
+// Yazılan tek sütun updated_at'tir. O sütun bu tabloda bir denetim alanı
+// DEĞİLDİR: servis, ondan önce üretilmiş oturum jetonlarını reddeder
+// (bkz. queries/identities.sql dosya başı ve service/session.go,
+// sessionAnchor). Çıkışın tamamı bu yazmadır; düşürülecek bir "oturum kaydı"
+// yoktur, düşen şey jetonların geçerliliğidir.
+//
+// Parola ve kilit sayaçları KORUNUR: çıkış yapmak parolayı değiştirmez ve
+// sayaç sıfırlansaydı çıkış ucu, giriş kilidini temizlemenin yolu olurdu
+// (gerekçe queries/identities.sql).
+//
+// Kimlik yoksa errors.NotFound döner.
+func (r *Repo) RevokeSessions(
+	ctx context.Context,
+	userID, provider string,
+	now time.Time,
+) (models.AuthIdentity, error) {
+	if err := r.ready(); err != nil {
+		return models.AuthIdentity{}, err
+	}
+
+	row, err := r.q.RevokeSessions(ctx, authdb.RevokeSessionsParams{
+		UserID:    userID,
+		Provider:  provider,
+		UpdatedAt: fromTime(now),
+	})
+	if err != nil {
+		return models.AuthIdentity{}, notFoundOr(err, CodeIdentityNotFound,
+			"%s kullanıcısının %q kimliği bulunamadı", userID, provider)
+	}
+	return toIdentity(row)
 }
 
 // RegisterLoginFailure başarısız bir giriş denemesini ATOMİK olarak sayar ve

@@ -16,6 +16,19 @@
 // belirtecinden almak ve [storeCustomerID] yardımcısını o kaynağa bağlamak.
 // Üretime bu hâliyle çıkılmamalıdır.
 //
+// # Yetki
+//
+// /admin/v1 altındaki uçlar kimlikten AYRI olarak yetki ister:
+//
+//   - [ScopeRead] ("customer:read") — GET uçlarını açar.
+//   - [ScopeWrite] ("customer:write") — POST, PUT ve DELETE uçlarını açar.
+//
+// corehttp.ScopeAdmin ("admin") ÜST YETKİDİR ve ikisini de karşılar; tam
+// yetkili bir kimliğe ayrıca verilmesi gerekmez.
+//
+// /store/v1 uçları yetki İSTEMEZ: mağaza yüzeyinin kimliği publishable
+// anahtardır ve o anahtar tanımı gereği yetki taşımaz.
+//
 // Handler'lar status kodu SEÇMEZ: servis tipli hata döner, corehttp.WriteError
 // onu status koduna çevirir (plan Bölüm 2.7). Bu, hata sınıflandırmasının tek
 // bir yerde kalmasını sağlar.
@@ -113,35 +126,82 @@ func New(svc Customer) *Handler {
 	return &Handler{svc: svc}
 }
 
+// Yetki sözlüğü: customer'ın yönetim uçlarının istediği yetkiler.
+//
+// Adlar TÜM modüllerde aynı kalıptadır ("<modül>:read" / "<modül>:write").
+// Her modülün kendi sözcüğünü uydurması, yetki dağıtan kişinin modül başına
+// ayrı bir sözlük ezberlemesi demek olurdu; ezberlenmeyen sözlükte yapılan
+// hata da her zaman aynı yöne düşer — fazla yetki verilir.
+const (
+	// ScopeRead customer yönetim yüzeyindeki OKUMA uçlarının istediği
+	// yetkidir.
+	//
+	// Müşteri kayıtlarını, adreslerini ve gruplarını okumaya yeter; hiçbir
+	// yazma ucunu açmaz. Tam yetkili kimliklere ayrıca verilmesi gerekmez:
+	// corehttp.ScopeAdmin taşıyan bir çağıran bunu da karşılar (bkz.
+	// corehttp.Principal.HasScope).
+	ScopeRead = "customer:read"
+
+	// ScopeWrite customer yönetim yüzeyindeki YAZMA uçlarının istediği
+	// yetkidir.
+	//
+	// Müşteri oluşturma, güncelleme, silme, misafiri hesaba çevirme, adres
+	// yazma ve grup üyeliği değiştirme uçlarını açar. Bu uçların bazıları
+	// kişisel veriyi KALICI olarak değiştirir; okuma yetkisiyle karışmaması
+	// bu yüzden önemlidir.
+	ScopeWrite = "customer:write"
+)
+
 // Routes customer'ın admin ve store route'larını router'a bağlar.
 //
 // Route'lar chi'nin Route/Mount yardımcılarıyla DEĞİL, tam yollarla kaydedilir:
 // /admin/v1 önekini birden çok modül paylaşır ve aynı öneki iki kez Mount etmek
 // chi'de panik üretirdi. Tam yol kaydı aynı ağaca yan yana yazar.
+//
+// # KORUMA
+//
+// Yönetim uçlarının iki katmanı vardır ve ikisi de gereklidir:
+//
+//  1. KİMLİK — corehttp.RequireAdmin. Bu modülde DEĞİL, router'ı kuran
+//     tarafta takılır (bkz. corehttp.APIGuards).
+//  2. YETKİ — BURADA, uç uç corehttp.RequireScope ile: okuma uçları
+//     [ScopeRead], yazma uçları [ScopeWrite] ister.
+//
+// İkinci katman olmasaydı kimlik doğrulama yetkilendirmenin yerine geçerdi:
+// yetkileri bilinçli olarak boşaltılmış bir yönetim kullanıcısı da geçerli bir
+// kimliktir ve DELETE /admin/v1/customers/{id} ile müşteri kayıtlarını
+// silebilirdi.
+//
+// Store uçlarına yetki EKLENMEZ: mağaza yüzeyinin kimliği publishable
+// anahtardır ve o anahtar tanımı gereği yetki TAŞIMAZ. Bu, store uçlarının
+// korunduğu anlamına gelmez — korunmuyorlar, bkz. paket belgesindeki UYARI.
 func (h *Handler) Routes(r chi.Router) {
+	okuma := r.With(corehttp.RequireScope(ScopeRead))
+	yazma := r.With(corehttp.RequireScope(ScopeWrite))
+
 	// --- yönetim ---
-	r.Post("/admin/v1/customers", h.adminCreateCustomer)
-	r.Get("/admin/v1/customers", h.adminListCustomers)
-	r.Get("/admin/v1/customers/{id}", h.adminGetCustomer)
-	r.Put("/admin/v1/customers/{id}", h.adminUpdateCustomer)
-	r.Delete("/admin/v1/customers/{id}", h.adminDeleteCustomer)
-	r.Post("/admin/v1/customers/{id}/convert-to-account", h.adminConvertGuest)
+	yazma.Post("/admin/v1/customers", h.adminCreateCustomer)
+	okuma.Get("/admin/v1/customers", h.adminListCustomers)
+	okuma.Get("/admin/v1/customers/{id}", h.adminGetCustomer)
+	yazma.Put("/admin/v1/customers/{id}", h.adminUpdateCustomer)
+	yazma.Delete("/admin/v1/customers/{id}", h.adminDeleteCustomer)
+	yazma.Post("/admin/v1/customers/{id}/convert-to-account", h.adminConvertGuest)
 
-	r.Get("/admin/v1/customers/{id}/groups", h.adminListGroupsOfCustomer)
-	r.Get("/admin/v1/customers/{id}/addresses", h.adminListAddresses)
-	r.Post("/admin/v1/customers/{id}/addresses", h.adminCreateAddress)
-	r.Put("/admin/v1/customers/{id}/addresses/{address_id}", h.adminUpdateAddress)
-	r.Delete("/admin/v1/customers/{id}/addresses/{address_id}", h.adminDeleteAddress)
-	r.Post("/admin/v1/customers/{id}/addresses/{address_id}/default-shipping", h.adminSetDefaultShipping)
-	r.Post("/admin/v1/customers/{id}/addresses/{address_id}/default-billing", h.adminSetDefaultBilling)
+	okuma.Get("/admin/v1/customers/{id}/groups", h.adminListGroupsOfCustomer)
+	okuma.Get("/admin/v1/customers/{id}/addresses", h.adminListAddresses)
+	yazma.Post("/admin/v1/customers/{id}/addresses", h.adminCreateAddress)
+	yazma.Put("/admin/v1/customers/{id}/addresses/{address_id}", h.adminUpdateAddress)
+	yazma.Delete("/admin/v1/customers/{id}/addresses/{address_id}", h.adminDeleteAddress)
+	yazma.Post("/admin/v1/customers/{id}/addresses/{address_id}/default-shipping", h.adminSetDefaultShipping)
+	yazma.Post("/admin/v1/customers/{id}/addresses/{address_id}/default-billing", h.adminSetDefaultBilling)
 
-	r.Post("/admin/v1/customer-groups", h.adminCreateGroup)
-	r.Get("/admin/v1/customer-groups", h.adminListGroups)
-	r.Get("/admin/v1/customer-groups/{id}", h.adminGetGroup)
-	r.Put("/admin/v1/customer-groups/{id}", h.adminUpdateGroup)
-	r.Delete("/admin/v1/customer-groups/{id}", h.adminDeleteGroup)
-	r.Post("/admin/v1/customer-groups/{id}/customers", h.adminAddToGroup)
-	r.Delete("/admin/v1/customer-groups/{id}/customers/{customer_id}", h.adminRemoveFromGroup)
+	yazma.Post("/admin/v1/customer-groups", h.adminCreateGroup)
+	okuma.Get("/admin/v1/customer-groups", h.adminListGroups)
+	okuma.Get("/admin/v1/customer-groups/{id}", h.adminGetGroup)
+	yazma.Put("/admin/v1/customer-groups/{id}", h.adminUpdateGroup)
+	yazma.Delete("/admin/v1/customer-groups/{id}", h.adminDeleteGroup)
+	yazma.Post("/admin/v1/customer-groups/{id}/customers", h.adminAddToGroup)
+	yazma.Delete("/admin/v1/customer-groups/{id}/customers/{customer_id}", h.adminRemoveFromGroup)
 
 	// --- vitrin (Faz 8'e kadar KORUMASIZ, bkz. paket belgesi) ---
 	r.Post("/store/v1/customers", h.storeRegisterGuest)

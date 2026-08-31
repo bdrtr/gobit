@@ -15,6 +15,22 @@
 // Handler'lar status kodu SEÇMEZ: servis tipli hata döner, corehttp.WriteError
 // onu status koduna çevirir (plan Bölüm 2.7). Bu, hata sınıflandırmasının tek
 // bir yerde kalmasını sağlar.
+//
+// # Yetki
+//
+// Yönetim uçlarının tamamı yetki ister ve sözlük iki girdiden ibarettir:
+//
+//   - [ScopeRead] — /admin/v1 altındaki OKUMA (GET, HEAD) uçlarını açar:
+//     kampanyalar, promosyonlar, kurallar ve kullanım kayıtları okunabilir.
+//   - [ScopeWrite] — /admin/v1 altındaki YAZMA (POST, PUT, PATCH, DELETE)
+//     uçlarını açar: CRUD'un yanı sıra kullanım/iade (redeem, release) ve
+//     indirim hesabı (compute) uçları da buraya girer.
+//
+// corehttp.ScopeAdmin ÜST YETKİDİR ve ikisini de karşılar; ayrıca
+// listelenmesine gerek yoktur, corehttp.Principal.HasScope bunu zaten yapar.
+//
+// /store/v1 kupon doğrulama ucu yetki İSTEMEZ: mağaza yüzeyinin kimliği
+// publishable anahtardır ve o anahtar tanımı gereği yetki TAŞIMAZ.
 package api
 
 import (
@@ -52,37 +68,76 @@ func New(svc *service.Service) *API {
 	return &API{svc: svc}
 }
 
+// Yetki sözlüğü: promotion'ın yönetim uçlarının istediği yetkiler.
+//
+// Sözlük BİLİNÇLİ OLARAK okuma/yazma ayrımından ibarettir. Kaynak başına ayrı
+// yetki ("campaigns:write", "redemptions:write" …) tanımlamak listeyi büyütür
+// ama bugün verilebilecek yeni bir kararı mümkün kılmaz: promosyonu
+// yazabilen bir kimlik zaten kampanyayı da yazabilmelidir, çünkü bütçe
+// kampanyada tutulur. Ayrım gerçekten gerektiğinde eklenir; şimdiden
+// eklenirse yalnızca yanlış bir kesinlik hissi verir.
+const (
+	// ScopeRead promotion yönetim yüzeyindeki OKUMA uçlarının istediği
+	// yetkidir.
+	ScopeRead = "promotion:read"
+	// ScopeWrite promotion yönetim yüzeyindeki YAZMA uçlarının istediği
+	// yetkidir.
+	ScopeWrite = "promotion:write"
+)
+
 // Routes promotion'ın admin ve store route'larını router'a bağlar.
 //
 // Route'lar chi'nin Route/Mount yardımcılarıyla DEĞİL, tam yollarla kaydedilir:
 // /admin/v1 önekini birden çok modül paylaşır ve aynı öneki iki kez Mount etmek
 // chi'de panik üretirdi. Tam yol kaydı aynı ağaca yan yana yazar.
+//
+// # KORUMA
+//
+// İki katman vardır ve ikisi de gereklidir:
+//
+//  1. KİMLİK — corehttp.RequireAdmin ile, router'ı kuran tarafta.
+//  2. YETKİ — BURADA, uç uç corehttp.RequireScope ile: okuma uçları
+//     [ScopeRead], yazma uçları [ScopeWrite] ister.
+//
+// İkinci katman olmasaydı kimlik doğrulama yetkilendirmenin yerine geçerdi ve
+// yetkileri BOŞALTILMIŞ bir yönetim kullanıcısı promosyon oluşturup kendine
+// %100 indirim yazabilirdi — doğrudan para kaybı.
+//
+// POST /admin/v1/promotions/compute yalnızca HESAPLAR, hiçbir şey yazmaz; yine
+// de [ScopeWrite] ister. Sözlük yöntem üzerinden tanımlıdır ("POST → write")
+// ve istisnası yoktur: "aslında okuma olan POST" ayrımı, sözlüğü uç uç
+// tartışılan bir şeye çevirir ve bir sonraki gevşetme sessizce gelir. Hesabın
+// gerçekten yazmadığını doğrulayan yer servis katmanıdır.
 func (a *API) Routes(r chi.Router) {
-	r.Post("/admin/v1/campaigns", a.createCampaign)
-	r.Get("/admin/v1/campaigns", a.listCampaigns)
-	r.Get("/admin/v1/campaigns/{id}", a.getCampaign)
-	r.Put("/admin/v1/campaigns/{id}", a.updateCampaign)
-	r.Delete("/admin/v1/campaigns/{id}", a.deleteCampaign)
+	okuma := r.With(corehttp.RequireScope(ScopeRead))
+	yazma := r.With(corehttp.RequireScope(ScopeWrite))
 
-	r.Post("/admin/v1/promotions", a.createPromotion)
-	r.Get("/admin/v1/promotions", a.listPromotions)
-	r.Get("/admin/v1/promotions/{id}", a.getPromotion)
-	r.Put("/admin/v1/promotions/{id}", a.updatePromotion)
-	r.Delete("/admin/v1/promotions/{id}", a.deletePromotion)
+	yazma.Post("/admin/v1/campaigns", a.createCampaign)
+	okuma.Get("/admin/v1/campaigns", a.listCampaigns)
+	okuma.Get("/admin/v1/campaigns/{id}", a.getCampaign)
+	yazma.Put("/admin/v1/campaigns/{id}", a.updateCampaign)
+	yazma.Delete("/admin/v1/campaigns/{id}", a.deleteCampaign)
 
-	r.Put("/admin/v1/promotions/{id}/application-method", a.setApplicationMethod)
-	r.Delete("/admin/v1/promotions/{id}/application-method", a.deleteApplicationMethod)
+	yazma.Post("/admin/v1/promotions", a.createPromotion)
+	okuma.Get("/admin/v1/promotions", a.listPromotions)
+	okuma.Get("/admin/v1/promotions/{id}", a.getPromotion)
+	yazma.Put("/admin/v1/promotions/{id}", a.updatePromotion)
+	yazma.Delete("/admin/v1/promotions/{id}", a.deletePromotion)
 
-	r.Get("/admin/v1/promotions/{id}/rules", a.listPromotionRules)
-	r.Post("/admin/v1/promotions/{id}/rules", a.createPromotionRule)
-	r.Delete("/admin/v1/promotion-rules/{id}", a.deletePromotionRule)
+	yazma.Put("/admin/v1/promotions/{id}/application-method", a.setApplicationMethod)
+	yazma.Delete("/admin/v1/promotions/{id}/application-method", a.deleteApplicationMethod)
 
-	r.Get("/admin/v1/promotions/{id}/redemptions", a.listRedemptions)
-	r.Post("/admin/v1/promotions/{id}/redeem", a.redeemPromotion)
-	r.Post("/admin/v1/promotions/{id}/release", a.releasePromotion)
+	okuma.Get("/admin/v1/promotions/{id}/rules", a.listPromotionRules)
+	yazma.Post("/admin/v1/promotions/{id}/rules", a.createPromotionRule)
+	yazma.Delete("/admin/v1/promotion-rules/{id}", a.deletePromotionRule)
 
-	r.Post("/admin/v1/promotions/compute", a.computeDiscounts)
+	okuma.Get("/admin/v1/promotions/{id}/redemptions", a.listRedemptions)
+	yazma.Post("/admin/v1/promotions/{id}/redeem", a.redeemPromotion)
+	yazma.Post("/admin/v1/promotions/{id}/release", a.releasePromotion)
 
+	yazma.Post("/admin/v1/promotions/compute", a.computeDiscounts)
+
+	// Mağaza ucu DEĞİŞMEZ: publishable anahtar yetki taşımaz.
 	r.Get("/store/v1/promotions/{code}", a.storeGetPromotion)
 }
 

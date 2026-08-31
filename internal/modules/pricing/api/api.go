@@ -8,6 +8,15 @@
 // Handler'lar status kodu SEÇMEZ: servis tipli hata döner, corehttp.WriteError
 // onu status koduna çevirir (plan Bölüm 2.7). Bu, hata sınıflandırmasının tek
 // bir yerde kalmasını sağlar.
+//
+// # Yetki
+//
+// /admin/v1 uçları yetki ister ve sözlük ikiye ayrılır: GET uçları [ScopeRead],
+// POST/PUT/PATCH/DELETE uçları [ScopeWrite] (bkz. [API.Routes]).
+// corehttp.ScopeAdmin ÜST YETKİDİR ve ikisini de tek başına karşılar.
+//
+// /store/v1 ucuna yetki EKLENMEZ: mağaza yüzeyinin kimliği publishable
+// anahtardır ve o anahtar tanımı gereği yetki TAŞIMAZ.
 package api
 
 import (
@@ -36,6 +45,30 @@ const maxBodyBytes int64 = 1 << 20 // 1 MiB
 // codeInvalidBody istek gövdesi çözümlenemediğinde dönen hata kodudur.
 const codeInvalidBody = "pricing_invalid_body"
 
+// Yetki sözlüğü: pricing'in yönetim uçlarının istediği yetkiler.
+//
+// Sözlük tüm modüllerde AYNI biçimdedir ve BİLİNÇLİ olarak iki girdiden
+// ibarettir: okuma ve yazma. Kaynak başına ayrı yetki ("price-lists:write",
+// "price-rules:read" …) tanımlamak listeyi büyütür ama bugün verilebilecek
+// hiçbir yeni kararı mümkün kılmaz; ayrım gerçekten gerektiğinde eklenir.
+const (
+	// ScopeRead pricing yönetim yüzeyindeki OKUMA uçlarının istediği yetkidir.
+	//
+	// Fiyat setlerini, fiyat listelerini ve fiyat kurallarını okumaya yeter;
+	// hiçbir yazma ucunu açmaz. Tam yetkili kimliklere ayrıca verilmesi
+	// gerekmez: corehttp.ScopeAdmin taşıyan bir çağıran bunu da karşılar
+	// (bkz. corehttp.Principal.HasScope).
+	ScopeRead = "pricing:read"
+
+	// ScopeWrite pricing yönetim yüzeyindeki YAZMA uçlarının istediği
+	// yetkidir.
+	//
+	// Fiyat yazabilen bir kimlik, tek istekle bütün kataloğu bir kuruşa
+	// indirebilir; bu yüzden fiyatı yalnızca RAPORLAYAN entegrasyonların
+	// [ScopeRead] ile yetinebilmesi önemlidir.
+	ScopeWrite = "pricing:write"
+)
+
 // API pricing'in HTTP handler'larını barındırır.
 type API struct {
 	svc *service.Service
@@ -51,24 +84,51 @@ func New(svc *service.Service) *API {
 // Route'lar chi'nin Route/Mount yardımcılarıyla DEĞİL, tam yollarla kaydedilir:
 // /admin/v1 önekini birden çok modül paylaşır ve aynı öneki iki kez Mount etmek
 // chi'de panik üretirdi. Tam yol kaydı aynı ağaca yan yana yazar.
+//
+// # KORUMA
+//
+// İki katman vardır ve ikisi de gereklidir:
+//
+//  1. KİMLİK — /admin/v1 uçları corehttp.RequireAdmin ile korunur. O
+//     middleware bu modülde değil, router'ı kuran tarafta takılır (bkz.
+//     corehttp.APIGuards).
+//  2. YETKİ — uçlar BURADA, uç uç corehttp.RequireScope ile işaretlenir:
+//     GET uçları [ScopeRead], POST/PUT/DELETE uçları [ScopeWrite] ister.
+//
+// İkinci katman olmasaydı kimlik doğrulama yetkilendirmenin yerine geçerdi:
+// yetkileri boşaltılmış bir yönetim kullanıcısı giriş yapıp
+// POST /admin/v1/price-sets/{id}/prices ile bütün fiyatları değiştirebilirdi.
+//
+// Mağaza ucuna yetki EKLENMEZ: /store/v1'in kimliği publishable anahtardır ve
+// o anahtar tanımı gereği yetki TAŞIMAZ.
 func (a *API) Routes(r chi.Router) {
-	r.Post("/admin/v1/price-sets", a.createPriceSet)
-	r.Get("/admin/v1/price-sets", a.listPriceSets)
-	r.Get("/admin/v1/price-sets/{id}", a.getPriceSet)
-	r.Delete("/admin/v1/price-sets/{id}", a.deletePriceSet)
-	r.Get("/admin/v1/price-sets/{id}/prices", a.listPrices)
-	r.Post("/admin/v1/price-sets/{id}/prices", a.setPrices)
-	r.Post("/admin/v1/price-sets/{id}/calculate", a.calculatePrice)
+	okuma := r.With(corehttp.RequireScope(ScopeRead))
+	yazma := r.With(corehttp.RequireScope(ScopeWrite))
 
-	r.Post("/admin/v1/price-lists", a.createPriceList)
-	r.Get("/admin/v1/price-lists", a.listPriceLists)
-	r.Get("/admin/v1/price-lists/{id}", a.getPriceList)
-	r.Put("/admin/v1/price-lists/{id}", a.updatePriceList)
-	r.Delete("/admin/v1/price-lists/{id}", a.deletePriceList)
+	yazma.Post("/admin/v1/price-sets", a.createPriceSet)
+	okuma.Get("/admin/v1/price-sets", a.listPriceSets)
+	okuma.Get("/admin/v1/price-sets/{id}", a.getPriceSet)
+	yazma.Delete("/admin/v1/price-sets/{id}", a.deletePriceSet)
+	okuma.Get("/admin/v1/price-sets/{id}/prices", a.listPrices)
+	yazma.Post("/admin/v1/price-sets/{id}/prices", a.setPrices)
 
-	r.Get("/admin/v1/prices/{price_id}/rules", a.listPriceRules)
-	r.Post("/admin/v1/prices/{price_id}/rules", a.createPriceRule)
-	r.Delete("/admin/v1/price-rules/{id}", a.deletePriceRule)
+	// Hesaplama ucu hiçbir şey YAZMAZ ama yine de [ScopeWrite] ister.
+	// Sözlük HTTP metoduna bakar, handler'ın niyetine değil: "bu POST aslında
+	// okuma" istisnası bir kez açıldığında, yetkinin bir uçta ne olduğunu
+	// anlamak için handler'ı okumak gerekir. Gövdeyle gelen bağlamı fiyata
+	// çeviren bu ucun okumaya açılması gerekirse, doğru çözüm onu bir GET'e
+	// taşımaktır — sözlüğü delmek değil.
+	yazma.Post("/admin/v1/price-sets/{id}/calculate", a.calculatePrice)
+
+	yazma.Post("/admin/v1/price-lists", a.createPriceList)
+	okuma.Get("/admin/v1/price-lists", a.listPriceLists)
+	okuma.Get("/admin/v1/price-lists/{id}", a.getPriceList)
+	yazma.Put("/admin/v1/price-lists/{id}", a.updatePriceList)
+	yazma.Delete("/admin/v1/price-lists/{id}", a.deletePriceList)
+
+	okuma.Get("/admin/v1/prices/{price_id}/rules", a.listPriceRules)
+	yazma.Post("/admin/v1/prices/{price_id}/rules", a.createPriceRule)
+	yazma.Delete("/admin/v1/price-rules/{id}", a.deletePriceRule)
 
 	r.Get("/store/v1/price-sets/{id}", a.storeGetPriceSet)
 }

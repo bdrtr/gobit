@@ -13,6 +13,20 @@
 // çağırır (ADR 0006). HTTP'ye açılsalardı bir istemci sepetin tutarını kendi
 // yazabilir ya da ödeme yapmadan sepeti kapatabilirdi.
 //
+// # Yetki
+//
+// /admin/v1 altındaki uçlar kimlikten AYRI olarak yetki ister:
+//
+//   - [ScopeRead] ("cart:read") — GET uçlarını açar.
+//   - [ScopeWrite] ("cart:write") — yazma uçlarını açardı; cart'ın yönetim
+//     yüzeyi yalnızca okuma olduğu için bugün hiçbir route'a bağlı değildir.
+//
+// corehttp.ScopeAdmin ("admin") ÜST YETKİDİR ve ikisini de karşılar; tam
+// yetkili bir kimliğe ayrıca verilmesi gerekmez.
+//
+// /store/v1 uçları yetki İSTEMEZ: mağaza yüzeyinin kimliği publishable
+// anahtardır ve o anahtar tanımı gereği yetki taşımaz.
+//
 // Handler'lar status kodu SEÇMEZ: servis core/errors tipli hatasını döner,
 // corehttp.WriteError sınıfına uygun kodu yazar (plan Bölüm 8).
 package api

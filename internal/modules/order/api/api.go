@@ -3,6 +3,21 @@
 // İki yüzey vardır: yönetim tarafı (/admin/v1/orders …) siparişi okur ve durum
 // geçişlerini uygular, müşteri tarafı (/store/v1/orders/{id}) YALNIZCA OKUR.
 //
+// # Yetki
+//
+// Yönetim uçları yetki İSTER ve yetki uç uç zorlanır (bkz. [Handler.Routes]):
+//
+//   - [ScopeRead] ("order:read") — /admin/v1 altındaki GET uçlarını açar:
+//     sipariş listesi ve tekil sipariş, iade/değişim/hasar kayıtları.
+//   - [ScopeWrite] ("order:write") — /admin/v1 altındaki POST uçlarını açar:
+//     iptal, tamamla, arşivle ve satış sonrası kayıt oluşturma.
+//
+// corehttp.ScopeAdmin ("admin") ÜST YETKİDİR; ikisini de tek başına karşılar
+// (bkz. corehttp.Principal.HasScope).
+//
+// Mağaza ucuna yetki EKLENMEZ: /store/v1'in kimliği publishable anahtardır ve
+// o anahtar tanımı gereği yetki taşımaz.
+//
 // # HTTP'ye açılmayan yüzeyler
 //
 // [service.Service.CreateOrder] BİLİNÇLİ OLARAK route almaz. Sipariş, tutarları

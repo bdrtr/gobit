@@ -16,7 +16,22 @@
 // ödemenin tutarını ya da sonucunu yazabilen bir uç, aynı kapıyı arka taraftan
 // açardı.
 //
-// Kimlik doğrulama Faz 8'de gelir; şimdilik iki yüzey de açıktır.
+// # Yetki
+//
+// Yönetim uçları yetki İSTER ve yetki uç uç zorlanır (bkz. [Handler.Routes]):
+//
+//   - [ScopeRead] ("payment:read") — /admin/v1 altındaki GET uçlarını açar:
+//     sağlayıcı listesi, koleksiyonlar, oturumlar, tahsilatlar, iadeler.
+//   - [ScopeWrite] ("payment:write") — /admin/v1 altındaki POST uçlarını açar:
+//     koleksiyon ve oturum açma, yetkilendirme, tahsilat, iptal, iade.
+//
+// corehttp.ScopeAdmin ("admin") ÜST YETKİDİR; ikisini de tek başına karşılar
+// (bkz. corehttp.Principal.HasScope).
+//
+// Mağaza uçlarına yetki EKLENMEZ: /store/v1'in kimliği publishable anahtardır
+// ve o anahtar tanımı gereği yetki taşımaz. Mağaza yüzeyini dar tutan şey
+// yetki değil, yüzeyin KENDİSİDİR — yukarıda sayılan sebeple orada tahsilat
+// ucu hiç yoktur.
 //
 // Handler'lar status kodu SEÇMEZ: servis core/errors tipli hatasını döner,
 // corehttp.WriteError sınıfına uygun kodu yazar (plan Bölüm 8).
@@ -120,25 +135,72 @@ type Handler struct {
 // New verilen servis üzerinde çalışan handler kümesini üretir.
 func New(svc Payments) *Handler { return &Handler{svc: svc} }
 
+// Yetki sözlüğü: payment'ın yönetim uçlarının istediği yetkiler.
+//
+// Ayrım OKUMA/YAZMA üzerinedir, kaynak üzerine değil. "payment_refunds:write"
+// gibi kaynak başına yetkiler listeyi büyütür ama bugün verilebilecek yeni bir
+// karar üretmez: iade yapabilen ama tahsilat yapamayan bir kimliğe olan
+// ihtiyaç henüz yok ve olmayan bir ihtiyaç için tanımlanan yetki adı, ilk kez
+// verildiği gün ne işe yaradığı bilinmeyen bir addır.
+const (
+	// ScopeRead payment yönetim yüzeyindeki OKUMA uçlarının istediği yetkidir.
+	//
+	// Koleksiyonları, oturumları, tahsilatları ve iadeleri okumaya yeter; para
+	// hareketi doğuran hiçbir ucu açmaz. Tam yetkili kimliklere ayrıca
+	// verilmesi gerekmez: corehttp.ScopeAdmin taşıyan bir çağıran bunu da
+	// karşılar (bkz. corehttp.Principal.HasScope).
+	ScopeRead = "payment:read"
+
+	// ScopeWrite payment yönetim yüzeyindeki YAZMA uçlarının istediği
+	// yetkidir.
+	//
+	// Bu modülde yazma, PARA HAREKETİ demektir: tahsilat müşterinin kartından
+	// çeker, iade kasadan çıkarır, iptal bloke tutarı serbest bırakır. Okuma
+	// yetkisinden ayrılmasının sebebi budur — raporlama için verilen bir
+	// kimliğin kasaya erişmemesi gerekir.
+	ScopeWrite = "payment:write"
+)
+
 // Routes modülün admin ve store route'larını router'a bağlar.
+//
+// # KORUMA
+//
+// Yönetim uçları iki katmanla korunur ve ikisi de gereklidir:
+//
+//  1. KİMLİK — corehttp.RequireAdmin, router'ı kuran tarafta takılır (bkz.
+//     corehttp.APIGuards); bu modülün işi değildir.
+//  2. YETKİ — uçlar BURADA, uç uç corehttp.RequireScope ile işaretlenir.
+//
+// İkinci katman olmadan kimlik doğrulama yetkilendirmenin yerine geçerdi:
+// yetkileri BOŞ bırakılmış bir yönetim kullanıcısı giriş yapıp bir tahsilatı
+// iade edebilirdi. Kimlik "kim" sorusunu yanıtlar, "ne yapabilir" sorusunu
+// değil.
+//
+// Mağaza uçları AYNI KALIR: oradaki kimlik publishable anahtardır ve yetki
+// taşımaz. İki yüzeyin PAYLAŞTIĞI handler'lar (listProviders, getCollection)
+// yalnızca yönetim yolunda yetki ister; yetki route'a takılır, handler'a
+// değil.
 func (h *Handler) Routes(r chi.Router) {
-	r.Get(pathAdminProviders, h.listProviders)
+	okuma := r.With(corehttp.RequireScope(ScopeRead))
+	yazma := r.With(corehttp.RequireScope(ScopeWrite))
 
-	r.Post(pathAdminCollections, h.createCollection)
-	r.Get(pathAdminCollections, h.listCollections)
-	r.Get(pathAdminCollection, h.getCollection)
-	r.Get(pathAdminCollectionSess, h.listSessions)
-	r.Post(pathAdminCollectionSess, h.createSession)
-	r.Get(pathAdminCollectionPays, h.listPayments)
+	okuma.Get(pathAdminProviders, h.listProviders)
 
-	r.Get(pathAdminSession, h.getSession)
-	r.Post(pathAdminSessionAuthorize, h.authorizeSession)
-	r.Post(pathAdminSessionCapture, h.captureSession)
-	r.Post(pathAdminSessionCancel, h.cancelSession)
+	yazma.Post(pathAdminCollections, h.createCollection)
+	okuma.Get(pathAdminCollections, h.listCollections)
+	okuma.Get(pathAdminCollection, h.getCollection)
+	okuma.Get(pathAdminCollectionSess, h.listSessions)
+	yazma.Post(pathAdminCollectionSess, h.createSession)
+	okuma.Get(pathAdminCollectionPays, h.listPayments)
 
-	r.Get(pathAdminPayment, h.getPayment)
-	r.Get(pathAdminPaymentRefund, h.listRefunds)
-	r.Post(pathAdminPaymentRefund, h.refundPayment)
+	okuma.Get(pathAdminSession, h.getSession)
+	yazma.Post(pathAdminSessionAuthorize, h.authorizeSession)
+	yazma.Post(pathAdminSessionCapture, h.captureSession)
+	yazma.Post(pathAdminSessionCancel, h.cancelSession)
+
+	okuma.Get(pathAdminPayment, h.getPayment)
+	okuma.Get(pathAdminPaymentRefund, h.listRefunds)
+	yazma.Post(pathAdminPaymentRefund, h.refundPayment)
 
 	r.Get(pathStoreProviders, h.listProviders)
 	r.Get(pathStoreCollection, h.getCollection)

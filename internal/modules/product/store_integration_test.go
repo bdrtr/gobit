@@ -16,6 +16,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/bdrtr/gobit/internal/core/container"
+	corehttp "github.com/bdrtr/gobit/internal/core/http"
 	"github.com/bdrtr/gobit/internal/core/link"
 	"github.com/bdrtr/gobit/internal/core/query"
 	"github.com/bdrtr/gobit/internal/modules/product"
@@ -150,11 +151,24 @@ func newSystem(t *testing.T) system {
 }
 
 // request istek yapar ve yanıtı döner.
+//
+// İstek TAM YETKİLİ bir kimlik taşır. Üretimde kimliği corehttp.RequireAdmin
+// context'e koyar; bu kurulum router'ı doğrudan bağladığı için o middleware
+// devrede değildir ve kimlik elle konur. Gerekçesi, yönetim uçlarına
+// corehttp.RequireScope eklenmesidir: kimliksiz bir istek artık handler'a hiç
+// ulaşmadan 401 alır ve buradaki testler Faz 4 DoD'si yerine yetki katmanını
+// ölçerdi. Yetkinin KENDİSİ api/yetki_test.go'da sınanır; bu dosyanın
+// iddiaları değişmedi.
 func (s system) request(t *testing.T, method, target, body string) *httptest.ResponseRecorder {
 	t.Helper()
 
 	req := httptest.NewRequest(method, target, strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
+	req = req.WithContext(corehttp.WithPrincipal(req.Context(), corehttp.Principal{
+		ID:     "usr_test",
+		Kind:   "user",
+		Scopes: []string{corehttp.ScopeAdmin},
+	}))
 	rec := httptest.NewRecorder()
 	s.router.ServeHTTP(rec, req)
 	return rec

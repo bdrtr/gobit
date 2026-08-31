@@ -26,6 +26,7 @@ var envKeys = []string{
 	"LOG_LEVEL", "LOG_FORMAT", "SHUTDOWN_TIMEOUT", "READ_HEADER_TIMEOUT",
 	"READ_TIMEOUT", "WRITE_TIMEOUT", "IDLE_TIMEOUT", "EVENT_BUS",
 	"JWT_SECRET", "JWT_TTL",
+	"ADMIN_BOOTSTRAP_EMAIL", "ADMIN_BOOTSTRAP_PASSWORD",
 }
 
 // uretimJWTSirri üretim senaryolarında kullanılan 32 karakterlik imza sırrıdır.
@@ -534,6 +535,100 @@ func TestIsSharedYalnizcaGelistirmeyiDisardaTutar(t *testing.T) {
 		t.Run(ortam, func(t *testing.T) {
 			cfg := config.Config{AppEnv: ortam}
 			assert.Equal(t, beklenen, cfg.IsShared())
+		})
+	}
+}
+
+// tohumEPostasi ilk yönetici senaryolarında kullanılan e-postadır.
+const tohumEPostasi = "ilk.yonetici@ornek.com"
+
+// TestIlkYoneticiTohumuIkisiniBirlikteIster yarım yapılandırmanın SESSİZCE
+// atlanmadığını doğrular.
+//
+// İki değişkenden birini yazıp diğerini unutan operatör, sessiz atlamada
+// tohumun çalıştığını sanır; eksikliği ancak ilk giriş denemesinde, çoğu zaman
+// kurulumdan günler sonra keşfeder. Açılışta durmak arızayı yapılandırmanın
+// hâlâ elde olduğu ana taşır.
+func TestIlkYoneticiTohumuIkisiniBirlikteIster(t *testing.T) {
+	tests := map[string]struct {
+		eposta    string
+		parola    string
+		reddedili bool
+	}{
+		// Tohum yapılandırması ZORUNLU değildir: kurulmuş bir sistemin
+		// ortamında bu değişkenlerin durması gerekmez.
+		"ikisi de verilmemiş": {},
+		"ikisi de verilmiş":   {eposta: tohumEPostasi, parola: "gelistirme-parolasi"},
+		"yalnızca e-posta":    {eposta: tohumEPostasi, reddedili: true},
+		"yalnızca parola":     {parola: "gelistirme-parolasi", reddedili: true},
+	}
+
+	for ad, tt := range tests {
+		t.Run(ad, func(t *testing.T) {
+			clearEnv(t)
+			if tt.eposta != "" {
+				t.Setenv("ADMIN_BOOTSTRAP_EMAIL", tt.eposta)
+			}
+			if tt.parola != "" {
+				t.Setenv("ADMIN_BOOTSTRAP_PASSWORD", tt.parola)
+			}
+
+			cfg, err := config.Load()
+			if !tt.reddedili {
+				require.NoError(t, err, "geçerli tohum yapılandırması reddedildi")
+				assert.Equal(t, tt.eposta, cfg.AdminBootstrapEmail)
+				assert.Equal(t, tt.parola, cfg.AdminBootstrapPassword)
+
+				return
+			}
+
+			require.Error(t, err, "yarım tohum yapılandırması sessizce atlanmamalı")
+			assert.Contains(t, err.Error(), "ADMIN_BOOTSTRAP_EMAIL")
+			assert.Contains(t, err.Error(), "ADMIN_BOOTSTRAP_PASSWORD",
+				"hata mesajı eksik olanın hangisi olabileceğini görünür kılmalı")
+		})
+	}
+}
+
+// TestPaylasilanOrtamdaTohumParolasiUzunlukIster asgari uzunluk kapısının
+// yalnızca paylaşılan ortamlarda işlediğini doğrular.
+//
+// İlk yönetici parolası bir kullanıcı parolası değil, dağıtım sırrıdır: ortam
+// dosyasında durur ve kimsenin ezberlemesi gerekmez, yani uzunluğun maliyeti
+// yoktur. Yerelde ise kolaylık kazanır — "make up && make run" ile denemek
+// isteyen geliştirici kısa bir parola yazabilmelidir.
+func TestPaylasilanOrtamdaTohumParolasiUzunlukIster(t *testing.T) {
+	tests := map[string]struct {
+		ortam     string
+		parola    string
+		reddedili bool
+	}{
+		"staging 15 karakter":     {ortam: "staging", parola: "onbes-karakter1", reddedili: true},
+		"staging 16 karakter":     {ortam: "staging", parola: "onalti-karakter1"},
+		"production kısa parola":  {ortam: "production", parola: "kisa", reddedili: true},
+		"production uzun parola":  {ortam: "production", parola: "yeterince-uzun-bir-parola"},
+		"development kısa parola": {ortam: "development", parola: "kisa"},
+	}
+
+	for ad, tt := range tests {
+		t.Run(ad, func(t *testing.T) {
+			paylasilanOrtamKur(t, tt.ortam)
+			t.Setenv("JWT_SECRET", uretimJWTSirri)
+			t.Setenv("ADMIN_BOOTSTRAP_EMAIL", tohumEPostasi)
+			t.Setenv("ADMIN_BOOTSTRAP_PASSWORD", tt.parola)
+
+			_, err := config.Load()
+			if !tt.reddedili {
+				require.NoError(t, err, "geçerli tohum yapılandırması reddedildi")
+
+				return
+			}
+
+			require.Error(t, err, "kısa tohum parolası paylaşılan ortamda kabul edilemez")
+			assert.Contains(t, err.Error(), "ADMIN_BOOTSTRAP_PASSWORD")
+			assert.Contains(t, err.Error(), tt.ortam, "hata mesajı hangi ortamın zorladığını söylemeli")
+			assert.NotContains(t, err.Error(), tt.parola,
+				"parola hata mesajında GEÇMEMELİ; mesaj stderr'den log toplayıcısına düşer")
 		})
 	}
 }

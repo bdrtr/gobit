@@ -11,10 +11,31 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	corehttp "github.com/bdrtr/gobit/internal/core/http"
 	"github.com/bdrtr/gobit/internal/modules/fulfillment/api"
 	"github.com/bdrtr/gobit/internal/modules/fulfillment/models"
 	"github.com/bdrtr/gobit/internal/modules/fulfillment/service"
 )
+
+// adminKimlik testlerin varsayılan çağıranıdır: tam yetkili yönetici.
+//
+// Yönetim uçları corehttp.RequireScope ile korunuyor ve o middleware
+// context'te kimlik YOKSA 401 döner. Bu testler router'ı doğrudan kuruyor,
+// yani zincirde kimliği yerleştiren corehttp.RequireAdmin yok; kimliği bu
+// yüzden testin kendisi koyar. Eklenen tek şey KİMLİKTİR — testlerin
+// doğruladığı davranış (durum kodları, zarflar, sızıntı sınamaları) değişmedi.
+var adminKimlik = corehttp.Principal{
+	ID:     "usr_test",
+	Kind:   "user",
+	Scopes: []string{corehttp.ScopeAdmin},
+}
+
+// okumaKimligi yalnızca [api.ScopeRead] taşıyan dar yetkili çağırandır.
+var okumaKimligi = corehttp.Principal{
+	ID:     "usr_dar",
+	Kind:   "user",
+	Scopes: []string{api.ScopeRead},
+}
 
 // yeniRouter sahte servis üzerinde çalışan bir router kurar.
 func yeniRouter(svc *fakeFulfillments) chi.Router {
@@ -23,12 +44,20 @@ func yeniRouter(svc *fakeFulfillments) chi.Router {
 	return r
 }
 
-// istek verilen isteği router'a uygular ve yanıtı döner.
+// istek verilen isteği tam yetkili kimlikle router'a uygular ve yanıtı döner.
 func istek(t *testing.T, r chi.Router, method, path, body string) *httptest.ResponseRecorder {
+	t.Helper()
+
+	return istekKimlikle(t, r, adminKimlik, method, path, body)
+}
+
+// istekKimlikle verilen isteği verilen kimlikle router'a uygular.
+func istekKimlikle(t *testing.T, r chi.Router, kimlik corehttp.Principal, method, path, body string) *httptest.ResponseRecorder {
 	t.Helper()
 
 	req := httptest.NewRequest(method, path, strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
+	req = req.WithContext(corehttp.WithPrincipal(req.Context(), kimlik))
 
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
@@ -416,6 +445,10 @@ func TestUzunlugBilinmeyenGovdeYokSayilmaz(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/admin/v1/fulfillments/ful_1/ship",
 		strings.NewReader(`{"tracking_number":"TK-9"}`))
 	req.Header.Set("Content-Type", "application/json")
+	// Yönetim ucu artık yetki istiyor; kimlik context'e konmazsa istek
+	// gövdeye hiç bakılmadan 401 ile döner ve testin sınadığı chunked okuma
+	// yolu hiç çalışmazdı. Eklenen tek şey kimliktir.
+	req = req.WithContext(corehttp.WithPrincipal(req.Context(), adminKimlik))
 	// httptest gövde uzunluğunu okuyucudan çıkarır; chunked isteği taklit
 	// etmek için BİLİNMEYEN uzunluk elle konur.
 	req.ContentLength = -1
@@ -524,4 +557,94 @@ func TestListeZarfiTutarli(t *testing.T) {
 	assert.EqualValues(t, 20, body["offset"])
 	assert.EqualValues(t, 10, body["limit"])
 	assert.Contains(t, body, "data")
+}
+
+// TestDarYetkiYazmaUcunuAcmaz yalnızca okuma yetkisi taşıyan bir kimliğin
+// yönetim yazma uçlarında 403 aldığını kanıtlar.
+//
+// Kimlik doğrulama tek başına yetmez: yetkileri boşaltılmış ya da yalnızca
+// okumaya yetkili bir yönetim kullanıcısı, yetki zorlaması olmadan gönderi
+// açıp kargo etiketi bastırabilir, açılmış bir gönderiyi iptal edebilir ya da
+// hiç gönderilmemiş bir siparişi "teslim edildi" diye kapatabilirdi. 401
+// değil 403 beklenir — kimlik bilinmektedir, eksik olan yetkidir.
+func TestDarYetkiYazmaUcunuAcmaz(t *testing.T) {
+	t.Parallel()
+
+	// Sahte servis her çağrıya BAŞARIYLA yanıt verir; 403 gelmesi tek
+	// başına middleware'in isteği handler'a hiç ulaştırmadığını gösterir.
+	svc := &fakeFulfillments{}
+	r := yeniRouter(svc)
+
+	for _, durum := range []struct {
+		ad     string
+		method string
+		path   string
+		body   string
+	}{
+		{"profil oluştur", http.MethodPost, "/admin/v1/shipping-profiles", `{"name":"Varsayılan","type":"default"}`},
+		{"profil güncelle", http.MethodPatch, "/admin/v1/shipping-profiles/sprof_1", `{"name":"Yeni"}`},
+		{"profil sil", http.MethodDelete, "/admin/v1/shipping-profiles/sprof_1", ``},
+		{"seçenek oluştur", http.MethodPost, "/admin/v1/shipping-options", `{"name":"Kargo"}`},
+		{"seçenek güncelle", http.MethodPatch, "/admin/v1/shipping-options/sopt_1", `{"name":"Kargo 2"}`},
+		{"seçenek sil", http.MethodDelete, "/admin/v1/shipping-options/sopt_1", ``},
+		{"kural ekle", http.MethodPost, "/admin/v1/shipping-options/sopt_1/rules", `{"attribute":"subtotal","operator":"gte","value":"1000"}`},
+		{"kural sil", http.MethodDelete, "/admin/v1/shipping-options/sopt_1/rules/sorule_1", ``},
+		{"gönderi aç", http.MethodPost, "/admin/v1/fulfillments", `{"reference":"order_1","shipping_option_id":"sopt_1"}`},
+		{"gönderi iptal", http.MethodPost, "/admin/v1/fulfillments/ful_1/cancel", ``},
+		{"kargoya ver", http.MethodPost, "/admin/v1/fulfillments/ful_1/ship", `{"tracking_number":"TK-9"}`},
+		{"teslim bildir", http.MethodPost, "/admin/v1/fulfillments/ful_1/deliver", ``},
+	} {
+		rec := istekKimlikle(t, r, okumaKimligi, durum.method, durum.path, durum.body)
+		assert.Equal(t, http.StatusForbidden, rec.Code, "durum: %s", durum.ad)
+		assert.Equal(t, corehttp.CodeForbidden, hataKodu(t, rec), "durum: %s", durum.ad)
+	}
+
+	assert.Empty(t, svc.sonIptalEdilen, "istek servise hiç ulaşmamalı")
+	assert.Equal(t, [2]string{}, svc.sonShipTracking, "istek servise hiç ulaşmamalı")
+}
+
+// TestDarYetkiOkumaUcundaGecer aynı dar kimliğin okuma uçlarından geçtiğini
+// kanıtlar.
+//
+// Bu testin çifti [TestDarYetkiYazmaUcunuAcmaz]'dır: yetki haritası her yazma
+// ucunu kapatırken okuma uçlarını da kapatsaydı, 403 sonuçları haritanın
+// doğruluğunu değil yalnızca aşırı kısıtlayıcılığını kanıtlardı.
+func TestDarYetkiOkumaUcundaGecer(t *testing.T) {
+	t.Parallel()
+
+	svc := &fakeFulfillments{providerIDs: []string{"manual"}, quoted: ornekQuoted()}
+	r := yeniRouter(svc)
+
+	for _, path := range []string{
+		"/admin/v1/fulfillment-providers",
+		"/admin/v1/shipping-profiles",
+		"/admin/v1/shipping-profiles/sprof_1",
+		"/admin/v1/shipping-options",
+		"/admin/v1/shipping-options/eligible?currency_code=TRY",
+		"/admin/v1/shipping-options/sopt_1",
+		"/admin/v1/shipping-options/sopt_1/rules",
+		"/admin/v1/fulfillments",
+		"/admin/v1/fulfillments/ful_1",
+	} {
+		rec := istekKimlikle(t, r, okumaKimligi, http.MethodGet, path, "")
+		assert.Equal(t, http.StatusOK, rec.Code, "yol: %s — gövde: %s", path, rec.Body.String())
+	}
+}
+
+// TestMagazaUcuYetkiIstemez mağaza ucunun yetkisiz bir kimlikle de
+// çalıştığını kanıtlar.
+//
+// Vitrinin kimliği publishable anahtardır ve o anahtar tanımı gereği yetki
+// TAŞIMAZ. Yönetim uçlarına yetki eklerken store ucuna da eklemek, ilk
+// dağıtımda bütün vitrini kapatmanın en sessiz yoludur; bu test o hatayı
+// yakalar.
+func TestMagazaUcuYetkiIstemez(t *testing.T) {
+	t.Parallel()
+
+	r := yeniRouter(&fakeFulfillments{quoted: ornekQuoted()})
+
+	yetkisiz := corehttp.Principal{ID: "pk_1", Kind: "api_key"}
+	rec := istekKimlikle(t, r, yetkisiz, http.MethodGet,
+		"/store/v1/shipping-options?currency_code=TRY", "")
+	assert.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 }

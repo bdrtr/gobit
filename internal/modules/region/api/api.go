@@ -12,6 +12,19 @@
 // gösterirdi. Bu yüzden currency ve country uç noktaları OKUMADIR; değiştirilen
 // tek şey ülkenin hangi bölgeye ait olduğudur ve o da bölgenin alt kaynağıdır.
 //
+// # Yetki
+//
+// /admin/v1 altındaki uçlar kimlikten AYRI olarak yetki ister:
+//
+//   - [ScopeRead] ("region:read") — GET uçlarını açar.
+//   - [ScopeWrite] ("region:write") — POST, PUT ve DELETE uçlarını açar.
+//
+// corehttp.ScopeAdmin ("admin") ÜST YETKİDİR ve ikisini de karşılar; tam
+// yetkili bir kimliğe ayrıca verilmesi gerekmez.
+//
+// /store/v1 uçları yetki İSTEMEZ: mağaza yüzeyinin kimliği publishable
+// anahtardır ve o anahtar tanımı gereği yetki taşımaz.
+//
 // Handler'lar status kodu SEÇMEZ: servis tipli hata döner, corehttp.WriteError
 // onu status koduna çevirir (plan Bölüm 2.7). Bu, hata sınıflandırmasının tek
 // bir yerde kalmasını sağlar.
@@ -67,21 +80,68 @@ func New(svc *service.Service) *API {
 	return &API{svc: svc}
 }
 
+// Yetki sözlüğü: region'ın yönetim uçlarının istediği yetkiler.
+//
+// Adlar TÜM modüllerde aynı kalıptadır ("<modül>:read" / "<modül>:write").
+// Her modülün kendi sözcüğünü uydurması, yetki dağıtan kişinin modül başına
+// ayrı bir sözlük ezberlemesi demek olurdu; ezberlenmeyen sözlükte yapılan
+// hata da her zaman aynı yöne düşer — fazla yetki verilir.
+const (
+	// ScopeRead region yönetim yüzeyindeki OKUMA uçlarının istediği yetkidir.
+	//
+	// Bölgeleri, ülkeleri ve para birimlerini okumaya yeter; hiçbir yazma
+	// ucunu açmaz. Tam yetkili kimliklere ayrıca verilmesi gerekmez:
+	// corehttp.ScopeAdmin taşıyan bir çağıran bunu da karşılar (bkz.
+	// corehttp.Principal.HasScope).
+	ScopeRead = "region:read"
+
+	// ScopeWrite region yönetim yüzeyindeki YAZMA uçlarının istediği
+	// yetkidir.
+	//
+	// Bölge oluşturma, güncelleme, silme ve bölge-ülke bağını değiştirme
+	// uçlarını açar. Bu uçlar vergi ve para birimi seçimini belirler: bir
+	// ülkeyi başka bir bölgeye taşımak, o ülkeden gelen her siparişin para
+	// birimini ve vergi oranını değiştirir.
+	ScopeWrite = "region:write"
+)
+
 // Routes region'ın admin ve store route'larını router'a bağlar.
+//
+// # KORUMA
+//
+// Yönetim uçlarının iki katmanı vardır ve ikisi de gereklidir:
+//
+//  1. KİMLİK — corehttp.RequireAdmin. Bu modülde DEĞİL, router'ı kuran
+//     tarafta takılır (bkz. corehttp.APIGuards).
+//  2. YETKİ — BURADA, uç uç corehttp.RequireScope ile: okuma uçları
+//     [ScopeRead], yazma uçları [ScopeWrite] ister.
+//
+// İkinci katman olmasaydı kimlik doğrulama yetkilendirmenin yerine geçerdi:
+// yetkileri bilinçli olarak boşaltılmış bir yönetim kullanıcısı da geçerli bir
+// kimliktir ve DELETE /admin/v1/regions/{id} ile bölgeleri silebilirdi.
+//
+// Para birimi ve ülke uçları zaten OKUMADIR (bkz. paket belgesi); onlara
+// ayrıca yazma yetkisi bağlanacak bir route yoktur.
+//
+// Store uçlarına yetki EKLENMEZ: mağaza yüzeyinin kimliği publishable
+// anahtardır ve o anahtar tanımı gereği yetki TAŞIMAZ.
 func (a *API) Routes(r chi.Router) {
-	r.Post(pathAdminRegions, a.createRegion)
-	r.Get(pathAdminRegions, a.listRegions)
-	r.Get(pathAdminRegion, a.getRegion)
-	r.Put(pathAdminRegion, a.updateRegion)
-	r.Delete(pathAdminRegion, a.deleteRegion)
+	okuma := r.With(corehttp.RequireScope(ScopeRead))
+	yazma := r.With(corehttp.RequireScope(ScopeWrite))
 
-	r.Post(pathAdminRegionCountries, a.addCountry)
-	r.Get(pathAdminRegionCountries, a.listRegionCountries)
-	r.Delete(pathAdminRegionCountry, a.removeCountry)
+	yazma.Post(pathAdminRegions, a.createRegion)
+	okuma.Get(pathAdminRegions, a.listRegions)
+	okuma.Get(pathAdminRegion, a.getRegion)
+	yazma.Put(pathAdminRegion, a.updateRegion)
+	yazma.Delete(pathAdminRegion, a.deleteRegion)
 
-	r.Get(pathAdminCountries, a.listCountries)
-	r.Get(pathAdminCurrencies, a.listCurrencies)
-	r.Get(pathAdminCurrency, a.getCurrency)
+	yazma.Post(pathAdminRegionCountries, a.addCountry)
+	okuma.Get(pathAdminRegionCountries, a.listRegionCountries)
+	yazma.Delete(pathAdminRegionCountry, a.removeCountry)
+
+	okuma.Get(pathAdminCountries, a.listCountries)
+	okuma.Get(pathAdminCurrencies, a.listCurrencies)
+	okuma.Get(pathAdminCurrency, a.getCurrency)
 
 	r.Get(pathStoreRegions, a.storeListRegions)
 	r.Get(pathStoreRegion, a.storeGetRegion)

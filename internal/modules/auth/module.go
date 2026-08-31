@@ -20,8 +20,17 @@
 //     internal/modules/auth/service, interop.go).
 //   - "sales_channel.query" — Query katmanına açılan okuma sağlayıcısı
 //     (ADR 0004). Kullanıcılar ve API anahtarları BU YÜZEYE AÇILMAZ.
-//   - /admin/v1/auth/login, /admin/v1/users, /admin/v1/api-keys,
-//     /admin/v1/sales-channels — yönetim API'si.
+//   - /admin/v1/auth/login, /admin/v1/auth/me, /admin/v1/auth/logout,
+//     /admin/v1/users, /admin/v1/api-keys, /admin/v1/sales-channels —
+//     yönetim API'si.
+//
+// # Oturum kapatma TOPTANDIR
+//
+// POST /admin/v1/auth/logout çağıranın BÜTÜN oturumlarını düşürür; tek cihaz
+// seçilemez. Jeton durum tutmaz ve tek bir jetonu geçersizleştirmek jti bazlı
+// bir kara liste (yeni bir depo) isterdi; onun yerine kimlik başına tutulan
+// tek bir zaman çapası ilerletilir ve ondan önce üretilmiş tüm jetonlar birden
+// düşer (bkz. internal/modules/auth/service, session.go).
 //
 // # KORUMASIZ UÇ
 //

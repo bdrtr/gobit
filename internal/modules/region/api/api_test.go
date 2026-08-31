@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	corehttp "github.com/bdrtr/gobit/internal/core/http"
 	"github.com/bdrtr/gobit/internal/modules/region/api"
 	"github.com/bdrtr/gobit/internal/modules/region/service"
 )
@@ -31,12 +32,36 @@ func newTestRouter(t *testing.T) (chi.Router, *memRepo) {
 	return r, repo
 }
 
-// do bir istek çalıştırır ve yanıtı döner.
+// adminKimlik testlerin varsayılan çağıranıdır: tam yetkili yönetim kimliği.
+var adminKimlik = corehttp.Principal{
+	ID:     "user_test",
+	Kind:   "user",
+	Scopes: []string{corehttp.ScopeAdmin},
+}
+
+// do bir isteği TAM YETKİLİ bir kimlikle çalıştırır ve yanıtı döner.
+//
+// Kimliğin context'e konması, yönetim uçları corehttp.RequireScope ile
+// korunduğu için gereklidir: o middleware kimliği context'ten okur ve kimliği
+// oraya koyan corehttp.RequireAdmin bu testte YOKTUR (router doğrudan
+// kurulur). Kimlik eklenmeseydi bu dosyadaki her yönetim testi, sınadığı
+// davranışa hiç ulaşamadan 401 alırdı. Testlerin ne doğruladığı değişmedi;
+// yalnızca çağıranın kim olduğu belirtildi.
 func do(t *testing.T, r chi.Router, method, path, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	return doAs(t, r, &adminKimlik, method, path, body)
+}
+
+// doAs isteği verilen kimlikle çalıştırır; kimlik nil ise istek KİMLİKSİZ
+// gider.
+func doAs(t *testing.T, r chi.Router, kimlik *corehttp.Principal, method, path, body string) *httptest.ResponseRecorder {
 	t.Helper()
 
 	req := httptest.NewRequest(method, path, strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
+	if kimlik != nil {
+		req = req.WithContext(corehttp.WithPrincipal(req.Context(), *kimlik))
+	}
 
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
@@ -392,5 +417,88 @@ func TestPagingParamsMustBeIntegers(t *testing.T) {
 
 		assert.Equal(t, http.StatusUnprocessableEntity, rec.Code, "yol: %s", path)
 		assert.Equal(t, "region_invalid_body", errorCode(t, rec), "yol: %s", path)
+	}
+}
+
+// TestDarYetkiliKimlikYazmaUcunda403Alir yalnızca [api.ScopeRead] taşıyan bir
+// kimliğin yönetim YAZMA uçlarından geçemediğini kanıtlar.
+//
+// Sınanan senaryo somuttur: okuma yetkisiyle giriş yapan bir yönetim kimliği,
+// yetki zorlaması olmasaydı DELETE /admin/v1/regions/{id} ile bölgeleri
+// silebilir ya da bir ülkeyi başka bölgeye taşıyıp o ülkeden gelen her
+// siparişin para birimini ve vergi oranını değiştirebilirdi.
+func TestDarYetkiliKimlikYazmaUcunda403Alir(t *testing.T) {
+	r, _ := newTestRouter(t)
+	id := createRegion(t, r, "Türkiye", "TRY")
+	darKimlik := corehttp.Principal{ID: "user_dar", Kind: "user", Scopes: []string{api.ScopeRead}}
+
+	for _, uc := range []struct{ method, path, body string }{
+		{http.MethodPost, "/admin/v1/regions", `{"name":"Avrupa","currency_code":"USD"}`},
+		{http.MethodPut, "/admin/v1/regions/" + id, `{"name":"Yeni"}`},
+		{http.MethodDelete, "/admin/v1/regions/" + id, ""},
+		{http.MethodPost, "/admin/v1/regions/" + id + "/countries", `{"country_code":"tr"}`},
+		{http.MethodDelete, "/admin/v1/regions/" + id + "/countries/tr", ""},
+	} {
+		rec := doAs(t, r, &darKimlik, uc.method, uc.path, uc.body)
+		assert.Equal(t, http.StatusForbidden, rec.Code,
+			"%s %s okuma yetkisiyle açılmamalı: %s", uc.method, uc.path, rec.Body.String())
+	}
+
+	// Reddedilen istekler gerçekten YAZMAMIŞ olmalı: bölge hâlâ yerinde ve
+	// eski adıyla durmalı. Yalnızca status koduna bakmak, middleware'in
+	// handler'dan SONRA çalıştığı bir hatayı gözden kaçırırdı.
+	rec := do(t, r, http.MethodGet, "/admin/v1/regions/"+id, "")
+	require.Equal(t, http.StatusOK, rec.Code, "bölge silinmemiş olmalı")
+	assert.Equal(t, "Türkiye", decodeItem(t, rec)["name"], "bölge güncellenmemiş olmalı")
+}
+
+// TestDarYetkiliKimlikOkumaUcundaGecer aynı dar kimliğin yönetim OKUMA
+// uçlarından GEÇTİĞİNİ kanıtlar.
+//
+// Yetki zorlamasının değeri, dar yetkiyi de gerçekten kabul etmesindedir:
+// yalnızca reddetseydi kimse dar yetki dağıtmaz, herkese admin verilirdi.
+func TestDarYetkiliKimlikOkumaUcundaGecer(t *testing.T) {
+	r, _ := newTestRouter(t)
+	id := createRegion(t, r, "Türkiye", "TRY")
+	darKimlik := corehttp.Principal{ID: "user_dar", Kind: "user", Scopes: []string{api.ScopeRead}}
+
+	for _, path := range []string{
+		"/admin/v1/regions",
+		"/admin/v1/regions/" + id,
+		"/admin/v1/regions/" + id + "/countries",
+		"/admin/v1/countries",
+		"/admin/v1/currencies",
+	} {
+		rec := doAs(t, r, &darKimlik, http.MethodGet, path, "")
+		assert.Equal(t, http.StatusOK, rec.Code, "GET %s: %s", path, rec.Body.String())
+	}
+}
+
+// TestKimliksizYonetimIstegi401Alir kimliği hiç olmayan isteğin 401 aldığını
+// kanıtlar.
+//
+// Ayrım bilinçlidir: 401 "kim olduğunu söyle", 403 "kim olduğunu biliyorum
+// ama yetkin yok" demektir. İkisi karışsaydı istemci, kimliğini yenileyerek
+// çözülmeyecek bir sorun için oturum tazelemeyi denerdi.
+func TestKimliksizYonetimIstegi401Alir(t *testing.T) {
+	r, _ := newTestRouter(t)
+
+	rec := doAs(t, r, nil, http.MethodGet, "/admin/v1/regions", "")
+
+	assert.Equal(t, http.StatusUnauthorized, rec.Code, rec.Body.String())
+}
+
+// TestMagazaUclariYetkiIstemez store yüzeyine yetki EKLENMEDİĞİNİ kanıtlar.
+//
+// Mağaza yüzeyinin kimliği publishable anahtardır ve o anahtar tanımı gereği
+// yetki taşımaz; store uçlarına yanlışlıkla bir scope takılırsa vitrin
+// tamamen çalışmaz hâle gelir ve bu test onu hemen yakalar.
+func TestMagazaUclariYetkiIstemez(t *testing.T) {
+	r, _ := newTestRouter(t)
+	id := createRegion(t, r, "Türkiye", "TRY")
+
+	for _, path := range []string{"/store/v1/regions", "/store/v1/regions/" + id} {
+		rec := doAs(t, r, nil, http.MethodGet, path, "")
+		assert.Equal(t, http.StatusOK, rec.Code, "GET %s: %s", path, rec.Body.String())
 	}
 }

@@ -4,6 +4,21 @@
 // YOKTUR. Mağaza tarafındaki karşılığı bir uç değil, publishable anahtarı
 // okuyan corehttp.RequireStore middleware'idir.
 //
+// # Uçlar
+//
+// Kimlik uçları (yetki İSTEMEZ, bkz. [Handler.Routes]):
+//
+//   - POST /admin/v1/auth/login — jeton üretir; TEK KORUMASIZ uçtur.
+//   - GET /admin/v1/auth/me — doğrulanmış çağıranın kimliğini geri okur.
+//   - POST /admin/v1/auth/logout — çağıranın TÜM oturumlarını düşürür; tek
+//     cihaz seçilemez (bkz. [Handler.adminLogout]).
+//
+// Kaynak uçları ([ScopeRead] ya da [ScopeWrite] ister):
+//
+//   - /admin/v1/users, /admin/v1/users/{id}/password
+//   - /admin/v1/api-keys, /admin/v1/api-keys/{id}/revoke ve kanal bağları
+//   - /admin/v1/sales-channels
+//
 // # KORUMASIZ UÇ: POST /admin/v1/auth/login
 //
 // Giriş ucu doğası gereği KORUMASIZDIR: kimlik doğrulaması yapılacak olan
@@ -79,6 +94,11 @@ func (s secret) LogValue() slog.Value { return slog.StringValue("REDACTED") }
 type Auth interface {
 	// Login e-posta ve parolayla oturum jetonu üretir.
 	Login(ctx context.Context, email, password string) (string, time.Time, error)
+	// Logout çağıranın TÜM oturumlarını düşürür ve iptal anını döner.
+	//
+	// Kimliğin TÜRÜ de geçirilir: bir API anahtarının oturumu yoktur ve o
+	// çağrı tipli bir hata ile reddedilir (bkz. service.Service.Logout).
+	Logout(ctx context.Context, principalID, principalKind string) (time.Time, error)
 
 	// CreateUser yeni bir yönetim kullanıcısı oluşturur; password boş olabilir.
 	CreateUser(ctx context.Context, in service.CreateUserInput, password string) (models.User, error)
@@ -190,17 +210,21 @@ const (
 // yükseltme servis katmanında ikinci kez engellenir (bkz.
 // service.CreateAPIKey), çünkü buradaki harita bir gün gevşetilebilir.
 //
-// [LoginPath] ve GET /admin/v1/auth/me yetki İSTEMEZ: ilki kimliği daha yeni
-// kuracaktır, ikincisi kurulmuş kimliğin kendisini geri okur. Kimlik ucuna
-// yetki koymak, yetkisiz bir çağıranın kim olduğunu bile öğrenememesi demek
-// olurdu ve bu, hiçbir şeyi korumadan hata ayıklamayı imkânsızlaştırırdı.
+// Kimlik uçları yetki İSTEMEZ: [LoginPath] kimliği daha yeni kuracaktır,
+// GET /admin/v1/auth/me kurulmuş kimliğin kendisini geri okur,
+// POST /admin/v1/auth/logout ise onu sonlandırır. Kimlik ucuna yetki koymak,
+// yetkisiz bir çağıranın kim olduğunu bile öğrenememesi demek olurdu ve bu,
+// hiçbir şeyi korumadan hata ayıklamayı imkânsızlaştırırdı. Çıkış ucuna yetki
+// koymak ise daha kötüsünü yapardı: yetkisi geri alınmış bir yöneticinin
+// elindeki jeton, süresi dolana kadar kapatılamaz hâle gelirdi.
 func (h *Handler) Routes(r chi.Router) {
 	okuma := r.With(corehttp.RequireScope(ScopeRead))
 	yazma := r.With(corehttp.RequireScope(ScopeWrite))
 
-	// --- kimlik (login KORUMASIZ, /me yalnızca KİMLİK ister) ---
+	// --- kimlik (login KORUMASIZ, /me ve /logout yalnızca KİMLİK ister) ---
 	r.Post(LoginPath, h.adminLogin)
 	r.Get("/admin/v1/auth/me", h.adminWhoami)
+	r.Post("/admin/v1/auth/logout", h.adminLogout)
 
 	// --- kullanıcılar ---
 	yazma.Post("/admin/v1/users", h.adminCreateUser)

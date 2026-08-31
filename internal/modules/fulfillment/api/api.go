@@ -26,10 +26,25 @@
 //   - shipping_profile_id ve metadata YAZILMAZ: ikisi de kataloğun iç
 //     yapısıdır ve müşterinin bir seçim yapması için gerekmez.
 //
-// Kimlik doğrulama Faz 8'de gelir; şimdilik iki yüzey de açıktır.
-//
 // Handler'lar status kodu SEÇMEZ: servis core/errors tipli hatasını döner,
 // corehttp.WriteError sınıfına uygun kodu yazar (plan Bölüm 8).
+//
+// # Yetki
+//
+// Yönetim uçlarının tamamı yetki ister ve sözlük iki girdiden ibarettir:
+//
+//   - [ScopeRead] — /admin/v1 altındaki OKUMA (GET, HEAD) uçlarını açar:
+//     sağlayıcı listesi, profiller, seçenekler, kurallar, uygunluk listelemesi
+//     ve gönderiler okunabilir.
+//   - [ScopeWrite] — /admin/v1 altındaki YAZMA (POST, PATCH, DELETE) uçlarını
+//     açar: katalog CRUD'unun yanı sıra gönderi açma, iptal, kargoya verme ve
+//     teslim bildirimi de buraya girer.
+//
+// corehttp.ScopeAdmin ÜST YETKİDİR ve ikisini de karşılar; ayrıca
+// listelenmesine gerek yoktur, corehttp.Principal.HasScope bunu zaten yapar.
+//
+// /store/v1 uygun seçenek ucu yetki İSTEMEZ: mağaza yüzeyinin kimliği
+// publishable anahtardır ve o anahtar tanımı gereği yetki TAŞIMAZ.
 package api
 
 import (
@@ -145,36 +160,71 @@ type Handler struct {
 // New verilen servis üzerinde çalışan handler kümesini üretir.
 func New(svc Fulfillments) *Handler { return &Handler{svc: svc} }
 
+// Yetki sözlüğü: fulfillment'ın yönetim uçlarının istediği yetkiler.
+//
+// Sözlük BİLİNÇLİ OLARAK okuma/yazma ayrımından ibarettir. "Kataloğu yazan"
+// ile "gönderiyi yürüten" yetkileri ayırmak akla yatkın görünür ama bugün
+// verilebilecek bir kararı mümkün kılmaz: gönderiyi yürüten kimlik, gönderinin
+// açılacağı seçeneği de belirleyebilmelidir. Ayrım gerçekten gerektiğinde
+// eklenir; şimdiden eklenirse yalnızca yanlış bir kesinlik hissi verir.
+const (
+	// ScopeRead fulfillment yönetim yüzeyindeki OKUMA uçlarının istediği
+	// yetkidir.
+	ScopeRead = "fulfillment:read"
+	// ScopeWrite fulfillment yönetim yüzeyindeki YAZMA uçlarının istediği
+	// yetkidir.
+	ScopeWrite = "fulfillment:write"
+)
+
 // Routes modülün admin ve store route'larını router'a bağlar.
+//
+// # KORUMA
+//
+// İki katman vardır ve ikisi de gereklidir:
+//
+//  1. KİMLİK — corehttp.RequireAdmin ile, router'ı kuran tarafta.
+//  2. YETKİ — BURADA, uç uç corehttp.RequireScope ile: okuma uçları
+//     [ScopeRead], yazma uçları [ScopeWrite] ister.
+//
+// İkinci katman olmasaydı kimlik doğrulama yetkilendirmenin yerine geçerdi ve
+// yetkileri BOŞALTILMIŞ bir yönetim kullanıcısı gönderi açıp kargo etiketi
+// bastırabilir, açılmış bir gönderiyi iptal edebilir ya da hiç gönderilmemiş
+// bir siparişi "teslim edildi" diye kapatabilirdi. Bunların üçü de dışarıya —
+// kargo firmasına ve müşteriye — yansıyan, geri alınması para maliyetli
+// işlemlerdir.
 func (h *Handler) Routes(r chi.Router) {
-	r.Get(pathAdminProviders, h.listProviders)
+	okuma := r.With(corehttp.RequireScope(ScopeRead))
+	yazma := r.With(corehttp.RequireScope(ScopeWrite))
 
-	r.Post(pathAdminProfiles, h.createProfile)
-	r.Get(pathAdminProfiles, h.listProfiles)
-	r.Get(pathAdminProfile, h.getProfile)
-	r.Patch(pathAdminProfile, h.updateProfile)
-	r.Delete(pathAdminProfile, h.deleteProfile)
+	okuma.Get(pathAdminProviders, h.listProviders)
 
-	r.Post(pathAdminOptions, h.createOption)
-	r.Get(pathAdminOptions, h.listOptions)
+	yazma.Post(pathAdminProfiles, h.createProfile)
+	okuma.Get(pathAdminProfiles, h.listProfiles)
+	okuma.Get(pathAdminProfile, h.getProfile)
+	yazma.Patch(pathAdminProfile, h.updateProfile)
+	yazma.Delete(pathAdminProfile, h.deleteProfile)
+
+	yazma.Post(pathAdminOptions, h.createOption)
+	okuma.Get(pathAdminOptions, h.listOptions)
 	// Uygunluk listelemesi seçenek okumasından ÖNCE bağlanır; okunurluk
 	// içindir, chi sıradan bağımsız olarak sabit segmenti tercih eder.
-	r.Get(pathAdminEligible, h.listAdminEligibleOptions)
-	r.Get(pathAdminOption, h.getOption)
-	r.Patch(pathAdminOption, h.updateOption)
-	r.Delete(pathAdminOption, h.deleteOption)
+	okuma.Get(pathAdminEligible, h.listAdminEligibleOptions)
+	okuma.Get(pathAdminOption, h.getOption)
+	yazma.Patch(pathAdminOption, h.updateOption)
+	yazma.Delete(pathAdminOption, h.deleteOption)
 
-	r.Post(pathAdminOptionRules, h.createRule)
-	r.Get(pathAdminOptionRules, h.listRules)
-	r.Delete(pathAdminOptionRule, h.deleteRule)
+	yazma.Post(pathAdminOptionRules, h.createRule)
+	okuma.Get(pathAdminOptionRules, h.listRules)
+	yazma.Delete(pathAdminOptionRule, h.deleteRule)
 
-	r.Post(pathAdminFulfillments, h.createFulfillment)
-	r.Get(pathAdminFulfillments, h.listFulfillments)
-	r.Get(pathAdminFulfillment, h.getFulfillment)
-	r.Post(pathAdminCancel, h.cancelFulfillment)
-	r.Post(pathAdminShip, h.shipFulfillment)
-	r.Post(pathAdminDeliver, h.deliverFulfillment)
+	yazma.Post(pathAdminFulfillments, h.createFulfillment)
+	okuma.Get(pathAdminFulfillments, h.listFulfillments)
+	okuma.Get(pathAdminFulfillment, h.getFulfillment)
+	yazma.Post(pathAdminCancel, h.cancelFulfillment)
+	yazma.Post(pathAdminShip, h.shipFulfillment)
+	yazma.Post(pathAdminDeliver, h.deliverFulfillment)
 
+	// Mağaza ucu DEĞİŞMEZ: publishable anahtar yetki taşımaz.
 	r.Get(pathStoreOptions, h.listStoreEligibleOptions)
 }
 

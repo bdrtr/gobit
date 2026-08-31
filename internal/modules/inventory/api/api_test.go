@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/bdrtr/gobit/internal/core/errors"
+	corehttp "github.com/bdrtr/gobit/internal/core/http"
 	"github.com/bdrtr/gobit/internal/modules/inventory/api"
 	"github.com/bdrtr/gobit/internal/modules/inventory/models"
 	"github.com/bdrtr/gobit/internal/modules/inventory/service"
@@ -116,6 +117,14 @@ func yeniSunucu(t *testing.T) (chi.Router, *fakeInventory) {
 }
 
 // istek verilen isteği router'a gönderir ve yanıtı döner.
+//
+// İstek TAM YETKİLİ bir kimlik taşır. Üretimde kimliği corehttp.RequireAdmin
+// context'e koyar; bu testler router'ı doğrudan kurduğu için o middleware
+// devrede değildir ve kimlik elle konur. Gerekçesi, yönetim uçlarına
+// corehttp.RequireScope eklenmesidir: kimliksiz bir istek artık handler'a hiç
+// ulaşmadan 401 alır ve buradaki testler stok davranışı yerine yetki katmanını
+// sınamış olurdu. Yetkinin KENDİSİ ayrı bir dosyada sınanır (yetki_test.go);
+// bu dosyanın iddiaları değişmedi.
 func istek(t *testing.T, router chi.Router, method, path, body string) *httptest.ResponseRecorder {
 	t.Helper()
 
@@ -127,6 +136,11 @@ func istek(t *testing.T, router chi.Router, method, path, body string) *httptest
 	}
 	req := httptest.NewRequest(method, path, reader)
 	req.Header.Set("Content-Type", "application/json")
+	req = req.WithContext(corehttp.WithPrincipal(req.Context(), corehttp.Principal{
+		ID:     "usr_test",
+		Kind:   "user",
+		Scopes: []string{corehttp.ScopeAdmin},
+	}))
 
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)

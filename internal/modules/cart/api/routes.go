@@ -1,6 +1,34 @@
 package api
 
-import "github.com/go-chi/chi/v5"
+import (
+	"github.com/go-chi/chi/v5"
+
+	corehttp "github.com/bdrtr/gobit/internal/core/http"
+)
+
+// Yetki sözlüğü: cart'ın yönetim uçlarının istediği yetkiler.
+//
+// Adlar TÜM modüllerde aynı kalıptadır ("<modül>:read" / "<modül>:write").
+// Her modülün kendi sözcüğünü uydurması, yetki dağıtan kişinin modül başına
+// ayrı bir sözlük ezberlemesi demek olurdu; ezberlenmeyen sözlükte yapılan
+// hata da her zaman aynı yöne düşer — fazla yetki verilir.
+const (
+	// ScopeRead cart yönetim yüzeyindeki OKUMA uçlarının istediği yetkidir.
+	//
+	// Sepetleri listelemeye ve tek tek okumaya yeter. Tam yetkili kimliklere
+	// ayrıca verilmesi gerekmez: corehttp.ScopeAdmin taşıyan bir çağıran bunu
+	// da karşılar (bkz. corehttp.Principal.HasScope).
+	ScopeRead = "cart:read"
+
+	// ScopeWrite cart yönetim yüzeyindeki YAZMA uçlarının istediği yetkidir.
+	//
+	// Bugün HİÇBİR route'u açmaz, çünkü cart'ın /admin/v1 yüzeyi yalnızca
+	// okumadır (bkz. [Handler.Routes]). Yine de yayımlanır: sözlük modüller
+	// arasında aynı olduğu için, yönetime bir gün yazma ucu eklendiğinde
+	// yetkinin adı O GÜN uydurulmaz. Adın o gün seçilmesi, çoktan dağıtılmış
+	// yetki listelerinin sessizce eksik kalması demek olurdu.
+	ScopeWrite = "cart:write"
+)
 
 // Routes modülün store ve admin uçlarını router'a bağlar.
 //
@@ -9,7 +37,26 @@ import "github.com/go-chi/chi/v5"
 // AYNI router üzerinde çağırır ve chi, aynı desene ikinci kez mount edilmeyi
 // panikle reddeder. İlk modül "/store/v1"i mount etseydi, ikinci modül
 // sunucuyu açılışta düşürürdü.
+//
+// # KORUMA
+//
+// Yönetim uçlarının iki katmanı vardır ve ikisi de gereklidir:
+//
+//  1. KİMLİK — corehttp.RequireAdmin. Bu modülde DEĞİL, router'ı kuran
+//     tarafta takılır (bkz. corehttp.APIGuards).
+//  2. YETKİ — BURADA, uç uç corehttp.RequireScope ile. Okuma uçları
+//     [ScopeRead] ister.
+//
+// İkinci katman olmasaydı kimlik doğrulama yetkilendirmenin yerine geçerdi:
+// yetkileri bilinçli olarak boşaltılmış bir yönetim kullanıcısı da geçerli bir
+// kimliktir ve GET /admin/v1/carts ile tüm müşterilerin sepetlerini, e-posta
+// adresleri dâhil okuyabilirdi.
+//
+// Store uçlarına yetki EKLENMEZ: mağaza yüzeyinin kimliği publishable
+// anahtardır ve o anahtar tanımı gereği yetki TAŞIMAZ.
 func (h *Handler) Routes(r chi.Router) {
+	okuma := r.With(corehttp.RequireScope(ScopeRead))
+
 	// --- Store API (müşteri) ---
 	r.Post("/store/v1/carts", h.storeCreateCart)
 	r.Get("/store/v1/carts/{id}", h.storeGetCart)
@@ -27,6 +74,6 @@ func (h *Handler) Routes(r chi.Router) {
 	r.Delete("/store/v1/carts/{id}/shipping-methods/{shipping_method_id}", h.storeRemoveShippingMethod)
 
 	// --- Admin API (yönetim, YALNIZCA OKUMA) ---
-	r.Get("/admin/v1/carts", h.adminListCarts)
-	r.Get("/admin/v1/carts/{id}", h.adminGetCart)
+	okuma.Get("/admin/v1/carts", h.adminListCarts)
+	okuma.Get("/admin/v1/carts/{id}", h.adminGetCart)
 }

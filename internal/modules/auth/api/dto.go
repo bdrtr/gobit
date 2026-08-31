@@ -141,6 +141,27 @@ type loginResponse struct {
 	TokenType string `json:"token_type"`
 }
 
+// logoutResponse çıkış yanıtının gövdesidir.
+//
+// Gövde, status kodunun söyleyemediğini söyler: çıkışın ÇAĞIRANIN TÜMÜNÜ
+// kapsadığını ve hangi ana dayandığını. Boş bir 204, "bu cihazdan çıktım"
+// sanan istemciyi düzeltmezdi.
+type logoutResponse struct {
+	// AllSessions iptalin çağıranın TÜM oturumlarını kapsadığını bildirir.
+	//
+	// Alan bugün her zaman true'dur ve bu bir eksiklik değil, sözleşmenin
+	// kendisidir: tek cihazı düşürmenin yolu yoktur (bkz.
+	// service.Service.Logout). Sabit olduğu için atılabilirdi ama o zaman
+	// istemcinin toptan iptali öğrenebileceği tek yer belgeler olurdu ve
+	// yanıta bakan bir geliştirici yanlış varsayımıyla baş başa kalırdı.
+	AllSessions bool `json:"all_sessions"`
+	// RevokedAt iptalin dayandığı andır (RFC3339, UTC).
+	//
+	// Bu andan ÖNCE üretilmiş her oturum jetonu artık reddedilir; isteğin
+	// kendisinde kullanılan jeton da buna dâhildir.
+	RevokedAt time.Time `json:"revoked_at"`
+}
+
 // principalResponse doğrulanmış çağıranın kimliğidir.
 type principalResponse struct {
 	// ID çağıranın kimliğidir (kullanıcı ya da API anahtarı).

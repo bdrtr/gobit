@@ -21,6 +21,41 @@ const minJWTSecretLen = 32
 // devAppEnv sırların ve TLS zorunluluğunun GEVŞETİLDİĞİ tek ortamdır.
 const devAppEnv = "development"
 
+// BackendRedis paylaşılan Redis arka ucunun adıdır.
+//
+// Hem [Config.EventBus] hem [Config.GuardBackend] bu değeri alabilir ve ikisi
+// AYNI istemciyi paylaşır (bkz. [Config.NeedsRedis]). Adın tek bir sabitten
+// okunması, iki alanın sessizce farklı yazımlara ayrışmasını önler.
+const BackendRedis = "redis"
+
+// MinBootstrapPasswordLen paylaşılan ortamlarda ilk yönetici parolasının kabul
+// edilen en kısa uzunluğudur.
+//
+// 16, auth modülünün HER yöneticiye uyguladığı 12'lik tabanın (service
+// paketindeki MinPasswordLen) ÜSTÜNDEDİR ve bu bilinçlidir: buradaki değer bir
+// kullanıcı parolası değil, DAĞITIM SIRRIDIR. Ortam dosyasında ya da secret
+// deposunda durur, bir kez yazılır ve kimsenin ezberlemesi gerekmez — yani
+// uzunluğun kullanıcıya maliyeti yokken karşılığında sistemin ilk ve en
+// yetkili hesabının arama uzayı büyür.
+//
+// Sayı auth modülünden kopyalanmaz, ondan BAĞIMSIZ olarak seçilir; çekirdek
+// modülleri tanımadığı için (Prensip 2.4) sabite bağlanmak zaten mümkün
+// değildir. Tek şartı auth'un tabanının altına düşmemektir: düşseydi config
+// kabul ettiği bir parolayı tohum adımı reddeder ve açılış anlaşılmaz biçimde
+// dururdu.
+//
+// Yerel geliştirmede ZORLANMAZ: "make up && make run" ile denemek isteyen
+// geliştirici kısa bir parola yazabilmelidir. Taban orada da kaybolmaz, auth
+// modülünün kendi politikası yine uygulanır; yalnızca bu ek kat düşer.
+//
+// DIŞA AÇIKTIR ki auth modülünün genel parola tabanıyla ilişkisi bir testle
+// sabitlenebilsin (bkz. internal/arch). Bağ elle tutulsaydı, auth'un tabanı bir
+// gün bu değerin üstüne çıktığında buradaki kapı SESSİZCE etkisizleşirdi:
+// auth'un zaten reddettiği bir parolayı burada ayrıca reddetmek hiçbir şey
+// eklemez ve "paylaşılan ortamda daha uzun parola isteniyor" iddiası
+// gerçekliğini kaybederdi.
+const MinBootstrapPasswordLen = 16
+
 // Yalnızca yerel geliştirme için varsayılan bağlantı adresleri.
 // deploy/docker-compose.yml ile eşleşirler. Validate, APP_ENV=production iken
 // bu değerlerin ezilmiş olmasını ZORUNLU kılar; aksi hâlde eksik secret
@@ -42,7 +77,9 @@ var (
 	validAppEnvs    = []string{devAppEnv, "staging", "production"}
 	validLogLevels  = []string{"debug", "info", "warn", "error"}
 	validLogFormats = []string{"json", "text"}
-	validEventBuses = []string{"inmemory", "redis"}
+	validEventBuses = []string{"inmemory", BackendRedis}
+	// validGuardBackends koruma bileşenlerinin geçerli arka uçlarıdır.
+	validGuardBackends = []string{"memory", BackendRedis}
 )
 
 // Config sunucunun çalışması için gereken tüm ayarları tutar.
@@ -69,6 +106,29 @@ type Config struct {
 	JWTSecret string `env:"JWT_SECRET"`
 	// JWTTTL admin oturum jetonunun geçerlilik süresidir.
 	JWTTTL time.Duration `env:"JWT_TTL" envDefault:"12h"`
+
+	// AdminBootstrapEmail açılışta yaratılacak İLK yönetim kullanıcısının
+	// e-postasıdır.
+	//
+	// Boş bir veritabanıyla açılan sunucuda hiç yönetici yoktur ve yönetim
+	// uçları korumalı olduğu için ilkini HTTP'den yaratmanın yolu da yoktur;
+	// bu iki değişken olmadan taze bir kurulum KULLANILAMAZ kalırdı.
+	//
+	// [Config.AdminBootstrapPassword] ile BİRLİKTE verilir; yalnızca biri
+	// verilirse Validate hata döner. İkisi de boşsa tohum adımı hiç çalışmaz
+	// ve bu meşru bir seçimdir: kurulmuş bir sistemin ortamında bu
+	// değişkenlerin durması gerekmez.
+	AdminBootstrapEmail string `env:"ADMIN_BOOTSTRAP_EMAIL"`
+	// AdminBootstrapPassword ilk yönetim kullanıcısının parolasıdır.
+	//
+	// ASLA loglanmaz ve hiçbir hata mesajında geçmez; doğrulama yalnızca
+	// UZUNLUĞUNU bildirir. Paylaşılan ortamlarda en az
+	// [MinBootstrapPasswordLen] karakter olmalıdır.
+	//
+	// Tohum adımı yalnızca hiç kullanıcı yokken çalıştığı için (bkz. cmd/server
+	// tohumlaYonetici) bu değerin ortamda unutulması var olan bir yöneticinin
+	// parolasını DEĞİŞTİRMEZ.
+	AdminBootstrapPassword string `env:"ADMIN_BOOTSTRAP_PASSWORD"`
 	// EventBus olay veri yolunun arka ucudur: inmemory | redis.
 	// inmemory tek süreçlidir ve süreç ölünce olaylar kaybolur; birden çok
 	// örnek çalıştırılıyorsa redis kullanılmalıdır (plan Bölüm 3).
@@ -129,6 +189,20 @@ type Config struct {
 	TrustedProxyHops int `env:"TRUSTED_PROXY_HOPS" envDefault:"0"`
 	// IdempotencyTTL idempotency kayıtlarının saklanma süresidir.
 	IdempotencyTTL time.Duration `env:"IDEMPOTENCY_TTL" envDefault:"24h"`
+	// GuardBackend hız sınırı ve idempotency deposunun arka ucudur:
+	// memory | redis.
+	//
+	// Varsayılan "memory"dir ve TEK ÖRNEKLİ kurulum içindir. Birden çok örnek
+	// çalıştırılıyorsa "redis" ZORUNLUDUR; bellek içi depoyla hız sınırı örnek
+	// sayısıyla çarpılır (bir hız sorunu) ve idempotency koruması örnekler
+	// arasında HİÇ çalışmaz — aynı anahtarla farklı örneklere düşen iki istek
+	// iki kez işlenir, yani iki sipariş. İkincisi bir doğruluk sorunudur.
+	//
+	// Tek bir anahtarın ikisini birden seçmesi bilinçlidir: ayrı ayrı
+	// seçilebilseydi, idempotency'yi paylaşılan yapıp hız sınırını unutmak
+	// gibi yarım bir yapılandırma mümkün olurdu ve o yarımlık ancak yük
+	// altında görünürdü.
+	GuardBackend string `env:"GUARD_BACKEND" envDefault:"memory"`
 
 	// Plugins kurulacak eklentilerin adlarıdır (virgülle ayrılır).
 	//
@@ -170,6 +244,9 @@ func (c Config) Validate() error {
 	}
 	if !slices.Contains(validLogFormats, c.LogFormat) {
 		return fmt.Errorf("config: geçersiz LOG_FORMAT %q (beklenen: %s)", c.LogFormat, strings.Join(validLogFormats, ", "))
+	}
+	if !slices.Contains(validGuardBackends, c.GuardBackend) {
+		return fmt.Errorf("config: geçersiz GUARD_BACKEND %q (beklenen: %s)", c.GuardBackend, strings.Join(validGuardBackends, ", "))
 	}
 	if !slices.Contains(validEventBuses, c.EventBus) {
 		return fmt.Errorf("config: geçersiz EVENT_BUS %q (beklenen: %s)", c.EventBus, strings.Join(validEventBuses, ", "))
@@ -220,6 +297,11 @@ func (c Config) Validate() error {
 		return fmt.Errorf("config: IDEMPOTENCY_TTL pozitif olmalı, %s verildi", c.IdempotencyTTL)
 	}
 	if err := c.validatePlugins(); err != nil {
+		return err
+	}
+	// Ortama bağlı kapıyı kendi içinde taşır; bu yüzden aşağıdaki IsShared
+	// bloğuna değil, sıradan doğrulamaların yanına konur.
+	if err := c.validateAdminBootstrap(); err != nil {
 		return err
 	}
 
@@ -279,6 +361,30 @@ func (c Config) validatePlugins() error {
 	return nil
 }
 
+// validateAdminBootstrap ilk yönetici tohumunun yapılandırmasını doğrular.
+//
+// YARIM YAPILANDIRMA REDDEDİLİR. İki değişkenden birini yazıp diğerini unutan
+// operatör, sessiz atlamada tohumun çalıştığını sanır ve eksikliği ancak ilk
+// giriş denemesinde — çoğu zaman kurulumdan günler sonra, kimsenin ortam
+// dosyasına bakmayacağı bir anda — keşfeder. Açılışta durmak bu arızayı
+// yapılandırmanın hâlâ elde olduğu ana taşır.
+//
+// Parola HATA MESAJINDA GEÇMEZ; yalnızca beklenen uzunluk bildirilir. Hata
+// metni stderr'e ve oradan çoğu kurulumda log toplayıcısına düşer.
+func (c Config) validateAdminBootstrap() error {
+	if (c.AdminBootstrapEmail == "") != (c.AdminBootstrapPassword == "") {
+		return fmt.Errorf("config: ADMIN_BOOTSTRAP_EMAIL ve ADMIN_BOOTSTRAP_PASSWORD birlikte verilmelidir (yalnızca biri verildi)")
+	}
+	if c.AdminBootstrapPassword == "" {
+		return nil
+	}
+	if c.IsShared() && len(c.AdminBootstrapPassword) < MinBootstrapPasswordLen {
+		return fmt.Errorf("config: APP_ENV=%s iken ADMIN_BOOTSTRAP_PASSWORD en az %d karakter olmalıdır",
+			c.AppEnv, MinBootstrapPasswordLen)
+	}
+	return nil
+}
+
 // SlogLevel LogLevel alanını slog.Level'a çevirir.
 // Validate geçmiş bir Config için her zaman geçerli bir seviye döner.
 func (c Config) SlogLevel() slog.Level {
@@ -315,6 +421,17 @@ func (c Config) IsProduction() bool { return c.AppEnv == "production" }
 // jetonun yeniden başlatmada düşmesinin bedeli yok denecek kadar azdır ve
 // "make up && make run" ek ayar istememelidir.
 func (c Config) IsShared() bool { return c.AppEnv != devAppEnv }
+
+// NeedsRedis yapılandırmanın bir Redis bağlantısı gerektirip gerektirmediğini
+// bildirir.
+//
+// İki bağımsız özellik aynı istemciyi paylaşır: olay veri yolu ve koruma arka
+// ucu. Sorunun tek bir yerde sorulması, "Redis'i kim açacak"ın iki ayrı yerde
+// farklı cevaplanmasını önler — o ayrışma, biri Redis'teyken diğerinin
+// sessizce bellek içinde kalması demek olurdu.
+func (c Config) NeedsRedis() bool {
+	return c.EventBus == BackendRedis || c.GuardBackend == BackendRedis
+}
 
 // Addr HTTP sunucusunun dinleyeceği adresi döner.
 func (c Config) Addr() string { return fmt.Sprintf(":%d", c.AppPort) }

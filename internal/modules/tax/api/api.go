@@ -12,6 +12,22 @@
 // Handler'lar status kodu SEÇMEZ: servis tipli hata döner, corehttp.WriteError
 // onu status koduna çevirir (plan Bölüm 2.7). Bu, hata sınıflandırmasının tek
 // bir yerde kalmasını sağlar.
+//
+// # Yetki
+//
+// Yönetim uçlarının tamamı yetki ister ve sözlük iki girdiden ibarettir:
+//
+//   - [ScopeRead] — /admin/v1 altındaki OKUMA (GET, HEAD) uçlarını açar:
+//     vergi bölgeleri, oranlar ve oran kuralları okunabilir.
+//   - [ScopeWrite] — /admin/v1 altındaki YAZMA (POST, PUT, PATCH, DELETE)
+//     uçlarını açar: bölge/oran/kural oluşturma, güncelleme ve silme.
+//
+// corehttp.ScopeAdmin ÜST YETKİDİR ve ikisini de karşılar; ayrıca
+// listelenmesine gerek yoktur, corehttp.Principal.HasScope bunu zaten yapar.
+//
+// Yetki kontrolü KİMLİKTEN SONRA gelir: kimlik yoksa 401, kimlik var ama yetki
+// yetmiyorsa 403 döner. Kimliği kuran corehttp.RequireAdmin bu modülde değil,
+// router'ı kuran tarafta (corehttp.APIGuards) takılır.
 package api
 
 import (
@@ -63,23 +79,55 @@ func New(svc *service.Service) *API {
 	return &API{svc: svc}
 }
 
+// Yetki sözlüğü: tax'ın yönetim uçlarının istediği yetkiler.
+//
+// Sözlük BİLİNÇLİ OLARAK okuma/yazma ayrımından ibarettir. Kaynak başına ayrı
+// yetki ("tax_rates:write", "tax_regions:write" …) tanımlamak listeyi büyütür
+// ama bugün verilebilecek yeni bir kararı mümkün kılmaz: oranı yazabilen bir
+// kimlik zaten bölgeyi de yazabilmelidir, çünkü oran bölgesiz anlamsızdır.
+// Ayrım gerçekten gerektiğinde eklenir; şimdiden eklenirse yalnızca yanlış bir
+// kesinlik hissi verir.
+const (
+	// ScopeRead tax yönetim yüzeyindeki OKUMA uçlarının istediği yetkidir.
+	ScopeRead = "tax:read"
+	// ScopeWrite tax yönetim yüzeyindeki YAZMA uçlarının istediği yetkidir.
+	ScopeWrite = "tax:write"
+)
+
 // Routes tax'ın admin route'larını router'a bağlar.
+//
+// # KORUMA
+//
+// İki katman vardır ve ikisi de gereklidir:
+//
+//  1. KİMLİK — corehttp.RequireAdmin ile, router'ı kuran tarafta.
+//  2. YETKİ — BURADA, uç uç corehttp.RequireScope ile: okuma uçları
+//     [ScopeRead], yazma uçları [ScopeWrite] ister.
+//
+// İkinci katman olmasaydı kimlik doğrulama yetkilendirmenin yerine geçerdi ve
+// yetkileri BOŞALTILMIŞ bir yönetim kullanıcısı (auth'un "hiçbir korumalı uca
+// erişemez" dediği kullanıcı) tüm vergi kataloğunu silebilirdi. Vergi
+// yapılandırması sessizce yanlışlanabilen bir veridir: silinen bir oran hatayı
+// hemen göstermez, yalnızca sonraki siparişleri eksik vergiyle kapatır.
 func (a *API) Routes(r chi.Router) {
-	r.Post(pathAdminRegions, a.createRegion)
-	r.Get(pathAdminRegions, a.listRegions)
-	r.Get(pathAdminRegion, a.getRegion)
-	r.Delete(pathAdminRegion, a.deleteRegion)
-	r.Get(pathAdminRegionRates, a.listRegionRates)
+	okuma := r.With(corehttp.RequireScope(ScopeRead))
+	yazma := r.With(corehttp.RequireScope(ScopeWrite))
 
-	r.Post(pathAdminRates, a.createRate)
-	r.Get(pathAdminRates, a.listRates)
-	r.Get(pathAdminRate, a.getRate)
-	r.Put(pathAdminRate, a.updateRate)
-	r.Delete(pathAdminRate, a.deleteRate)
+	yazma.Post(pathAdminRegions, a.createRegion)
+	okuma.Get(pathAdminRegions, a.listRegions)
+	okuma.Get(pathAdminRegion, a.getRegion)
+	yazma.Delete(pathAdminRegion, a.deleteRegion)
+	okuma.Get(pathAdminRegionRates, a.listRegionRates)
 
-	r.Post(pathAdminRateRules, a.createRule)
-	r.Get(pathAdminRateRules, a.listRules)
-	r.Delete(pathAdminRateRule, a.deleteRule)
+	yazma.Post(pathAdminRates, a.createRate)
+	okuma.Get(pathAdminRates, a.listRates)
+	okuma.Get(pathAdminRate, a.getRate)
+	yazma.Put(pathAdminRate, a.updateRate)
+	yazma.Delete(pathAdminRate, a.deleteRate)
+
+	yazma.Post(pathAdminRateRules, a.createRule)
+	okuma.Get(pathAdminRateRules, a.listRules)
+	yazma.Delete(pathAdminRateRule, a.deleteRule)
 }
 
 // itemEnvelope tekil yanıtların zarfıdır (plan Bölüm 8).

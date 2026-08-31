@@ -217,8 +217,12 @@ açıdan üç nokta önemlidir:
    kayıtta anahtarı serbest bırakır. Tek tip kural yoktur çünkü "bu bileşen
    olmadan ne bozulur" sorusunun cevabı her satırda farklıdır.
 
-Bugün yalnızca auth modülünün uçları yetki katmanından geçer; aynı zorlamanın
-diğer modüllerin `api` paketlerine taşınması bekleyen iştir.
+Yetki sözlüğü tek kuraldan türer — `<modül>:read` okuma, `<modül>:write` yazma,
+`admin` hepsini kapsar — ve her modülün `api` paketi kendi sabitlerini yayımlar.
+Zorlamayı eklemeyi unutan bir modül sessiz kalamaz: `internal/e2e/yetki_test.go`
+router ağacını **gezip** her `/admin/v1` ucuna yetkisiz bir jetonla gider ve 403
+bekler. Elle yazılmış bir uç listesi, listeye eklenmesi unutulan ilk uçta kör
+kalırdı — ve unutulacak uç, tam da yeni yazılmış olandır.
 
 Kimlik doğrulayıcı router'dan **sonra** doğduğu için
 `corehttp.DeferredAuthenticator` ile bağlanır; bağlanmadan gelen istek
@@ -255,6 +259,14 @@ koşar. Bu kısıtlar "çalışırken tak" vaadini pratikte "her eklenti için t
 uygulamayı yeniden derle"ye çevirir — yani derleme zamanı kaydının zaten
 sağladığı şeye, üstüne kırılganlık ekleyerek.
 
+### Yeni modülün yetki sözlüğü
+
+Modülün `api` paketi `ScopeRead = "<modül>:read"` ve
+`ScopeWrite = "<modül>:write"` sabitlerini yayımlar; `Routes` içinde okuma ve
+yazma alt router'ları `corehttp.RequireScope` ile kurulur. Unutmak sessiz
+değildir: `internal/e2e/yetki_test.go` router ağacını gezip her `/admin/v1`
+ucuna yetkisiz bir jetonla gider.
+
 ### Yeni sağlayıcı (payment/fulfillment)
 
 `core/provider` sözleşmesini uygula ve `<modül>.providers` kaydına ekle.
@@ -268,7 +280,14 @@ bırakırdı — ödemede bunun bedeli paranın beklenmedik bir kuruluşa gitmes
 
 | Sınır | Etki | Çıkış yolu |
 |---|---|---|
-| Hız sınırı ve idempotency deposu bellek içi | Çok örnekli kurulumda sınır örnek sayısıyla çarpılır, idempotency hiç çalışmaz | Paylaşılan depo (Redis/Postgres) uygulaması yaz; arayüzler hazır |
 | Modüller arası imzalar derleme zamanında denetlenmez | Ayrışma çalışma anında görünür | Her interop yüzeyi için entegrasyon testi (mevcut kural) |
+| Oturum iptali yalnızca **toptan** | Tek cihazı düşürmek yok | jti bazlı kara liste — her istekte okunan yeni bir depo demektir |
 | Tek lokasyon varsayımı (stok) | Çok depolu senaryo desteklenmez | Plan Bölüm 10 |
 | Yük testi süreç içi | Kapasite planı üretmez | Gerçek dağıtımda dış yük aracı |
+| Yetki sözlüğü modül başına iki girdi | Kaynak bazlı ayrım yok (örn. yalnızca varyant okuma) | Ayrım gerçekten gerektiğinde eklenir; şimdiden eklemek yanlış bir kesinlik hissi verirdi |
+
+Çok örneklilik artık bir sınır değil bir **ayardır**: `GUARD_BACKEND=redis` hız
+sınırını ve idempotency deposunu paylaşılan hâle getirir (bkz.
+`internal/core/http/redisguard`). Varsayılan `memory` bilinçlidir — tek örnekli
+geliştirme kurulumu Redis istememelidir — ama paylaşılan bir ortamda açılışta
+uyarı üretir.

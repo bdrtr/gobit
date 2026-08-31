@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/bdrtr/gobit/internal/core/errors"
+	corehttp "github.com/bdrtr/gobit/internal/core/http"
 	"github.com/bdrtr/gobit/internal/modules/cart/api"
 	"github.com/bdrtr/gobit/internal/modules/cart/models"
 	"github.com/bdrtr/gobit/internal/modules/cart/service"
@@ -137,8 +138,29 @@ func yeniSunucu(t *testing.T, svc *fakeCarts) http.Handler {
 	return r
 }
 
-// istek verilen isteği router'a gönderir ve yanıtı döner.
+// adminKimlik testlerin varsayılan çağıranıdır: tam yetkili yönetim kimliği.
+var adminKimlik = corehttp.Principal{
+	ID:     "user_test",
+	Kind:   "user",
+	Scopes: []string{corehttp.ScopeAdmin},
+}
+
+// istek verilen isteği TAM YETKİLİ bir kimlikle router'a gönderir.
+//
+// Kimliğin context'e konması, yönetim uçları corehttp.RequireScope ile
+// korunduğu için gereklidir: o middleware kimliği context'ten okur ve kimliği
+// oraya koyan corehttp.RequireAdmin bu testte YOKTUR (router doğrudan
+// kurulur). Kimlik eklenmeseydi bu dosyadaki her yönetim testi, sınadığı
+// davranışa hiç ulaşamadan 401 alırdı. Testlerin ne doğruladığı değişmedi;
+// yalnızca çağıranın kim olduğu belirtildi.
 func istek(t *testing.T, h http.Handler, method, path, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	return istekGonder(t, h, &adminKimlik, method, path, body)
+}
+
+// istekGonder isteği verilen kimlikle çalıştırır; kimlik nil ise istek
+// KİMLİKSİZ gider.
+func istekGonder(t *testing.T, h http.Handler, kimlik *corehttp.Principal, method, path, body string) *httptest.ResponseRecorder {
 	t.Helper()
 
 	var reader *strings.Reader
@@ -149,6 +171,9 @@ func istek(t *testing.T, h http.Handler, method, path, body string) *httptest.Re
 	}
 	req := httptest.NewRequest(method, path, reader)
 	req.Header.Set("Content-Type", "application/json")
+	if kimlik != nil {
+		req = req.WithContext(corehttp.WithPrincipal(req.Context(), *kimlik))
+	}
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	return rec
@@ -543,4 +568,71 @@ func TestGecersizCompletedParametresi(t *testing.T) {
 	rec := istek(t, h, http.MethodGet, "/admin/v1/carts?completed=belki", "")
 
 	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code, rec.Body.String())
+}
+
+// TestDarYetkiliKimlikYonetimOkumasindaGecer yalnızca [api.ScopeRead] taşıyan
+// bir kimliğin yönetim OKUMA ucundan geçtiğini doğrular.
+//
+// Yetki zorlamasının değeri, dar yetkiyi de GERÇEKTEN kabul etmesindedir:
+// yalnızca reddetseydi kimse dar yetki dağıtmaz, herkese admin verilirdi.
+func TestDarYetkiliKimlikYonetimOkumasindaGecer(t *testing.T) {
+	h := yeniSunucu(t, &fakeCarts{})
+	darKimlik := corehttp.Principal{ID: "user_dar", Kind: "user", Scopes: []string{api.ScopeRead}}
+
+	rec := istekGonder(t, h, &darKimlik, http.MethodGet, "/admin/v1/carts", "")
+
+	assert.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+}
+
+// TestYetkisizKimlikYonetimOkumasinda403Alir sepetlerin, yetkileri boşaltılmış
+// bir yönetim kimliğine KAPALI olduğunu doğrular.
+//
+// Bu testin sınadığı senaryo somuttur: geçerli bir oturum açan ama hiçbir
+// yetkisi olmayan bir kullanıcı, GET /admin/v1/carts ile tüm müşterilerin
+// sepetlerini e-posta adresleriyle birlikte okuyabilirdi.
+//
+// Cart'ın yönetim yüzeyinde YAZMA ucu bulunmadığı için "okuma yetkisiyle
+// yazma ucuna gitme" durumu burada sınanamaz; onun yerine [api.ScopeWrite]
+// taşıyan kimlik kullanılır ve yazma yetkisinin okumayı AÇMADIĞI gösterilir.
+func TestYetkisizKimlikYonetimOkumasinda403Alir(t *testing.T) {
+	h := yeniSunucu(t, &fakeCarts{})
+
+	for ad, kimlik := range map[string]corehttp.Principal{
+		"yetkisiz":       {ID: "user_bos", Kind: "user", Scopes: []string{}},
+		"baska modül":    {ID: "user_ord", Kind: "user", Scopes: []string{"order:read"}},
+		"yalnızca yazma": {ID: "user_yaz", Kind: "user", Scopes: []string{api.ScopeWrite}},
+	} {
+		t.Run(ad, func(t *testing.T) {
+			rec := istekGonder(t, h, &kimlik, http.MethodGet, "/admin/v1/carts", "")
+
+			assert.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
+		})
+	}
+}
+
+// TestKimliksizYonetimIstegi401Alir kimliği hiç olmayan isteğin 401, yetkisi
+// yetmeyenin 403 aldığını doğrular.
+//
+// Ayrım bilinçlidir: 401 "kim olduğunu söyle", 403 "kim olduğunu biliyorum
+// ama yetkin yok" demektir. İkisi karışsaydı istemci, kimliğini yenileyerek
+// çözülmeyecek bir sorun için oturum tazelemeyi denerdi.
+func TestKimliksizYonetimIstegi401Alir(t *testing.T) {
+	h := yeniSunucu(t, &fakeCarts{})
+
+	rec := istekGonder(t, h, nil, http.MethodGet, "/admin/v1/carts", "")
+
+	assert.Equal(t, http.StatusUnauthorized, rec.Code, rec.Body.String())
+}
+
+// TestMagazaUclariYetkiIstemez store yüzeyine yetki EKLENMEDİĞİNİ doğrular.
+//
+// Mağaza yüzeyinin kimliği publishable anahtardır ve o anahtar tanımı gereği
+// yetki taşımaz; store uçlarına yanlışlıkla bir scope takılırsa vitrin
+// tamamen çalışmaz hâle gelir ve bu test onu hemen yakalar.
+func TestMagazaUclariYetkiIstemez(t *testing.T) {
+	h := yeniSunucu(t, &fakeCarts{})
+
+	rec := istekGonder(t, h, nil, http.MethodPost, "/store/v1/carts", `{"region_id":"reg_1","currency_code":"TRY"}`)
+
+	assert.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
 }

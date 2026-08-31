@@ -214,6 +214,66 @@ func TestParolaAtamaIkinciKimlikAcmaz(t *testing.T) {
 		t, `SELECT count(*) FROM auth_identity WHERE user_id = $1 AND deleted_at IS NULL`, user.ID))
 }
 
+// TestCikisCapayiIlerletirKimlikBilgisineDokunmaz
+// [repository.Repo.RevokeSessions] sorgusunun SÖZLEŞMESİNİ gerçek veritabanında
+// kanıtlar.
+//
+// İkisi de aynı ölçüde şarttır:
+//
+//   - updated_at İLERLEMELİDİR — oturum iptalinin dayandığı çapa odur, yerinde
+//     kalsaydı çıkış ucu 200 döner ve hiçbir jetonu düşürmezdi.
+//   - password_hash ile kilit sayaçları YERİNDE KALMALIDIR — parola değişseydi
+//     kullanıcı bir daha giremezdi, sayaç sıfırlansaydı çıkış ucu giriş
+//     kilidini temizlemenin yolu olurdu.
+//
+// Sözleşme yalnızca gerçek SQL ile sınanabilir: sahte bir depo, sorgunun SET
+// listesinde ne yazdığını göremez.
+func TestCikisCapayiIlerletirKimlikBilgisineDokunmaz(t *testing.T) {
+	ctx := context.Background()
+	repo := yeniDepo(t)
+	user := yeniKullanici(ctx, t, repo)
+	now := time.Now().UTC()
+
+	onceki, err := repo.SetPasswordHash(ctx, user.ID, models.ProviderEmailPass, user.Email, "hash-1", now)
+	require.NoError(t, err)
+
+	// Kilit çıkıştan ÖNCE kurulur; korunup korunmadığı ancak gerçekten kilitli
+	// bir kayıtta görülebilir. Eşik 1'dir: tek başarısız deneme kilitler.
+	kilitli, err := repo.RegisterLoginFailure(ctx, onceki.ID, 1, now.Add(time.Minute), now)
+	require.NoError(t, err)
+	require.Equal(t, 1, kilitli.FailedAttempts)
+	require.True(t, kilitli.IsLocked(now), "test zemini: kayıt çıkıştan önce kilitli olmalı")
+
+	cikis := now.Add(2 * time.Second)
+	sonraki, err := repo.RevokeSessions(ctx, user.ID, models.ProviderEmailPass, cikis)
+	require.NoError(t, err)
+
+	assert.Equal(t, onceki.ID, sonraki.ID, "çıkış yeni kimlik satırı açmamalı")
+	assert.True(t, sonraki.UpdatedAt.After(onceki.UpdatedAt),
+		"oturum çapası ilerlemeli: önce %s, sonra %s", onceki.UpdatedAt, sonraki.UpdatedAt)
+	assert.Equal(t, "hash-1", sonraki.PasswordHash, "çıkış parolayı değiştirmemeli")
+	assert.Equal(t, 1, sonraki.FailedAttempts, "çıkış başarısız deneme sayacını sıfırlamamalı")
+	assert.True(t, sonraki.IsLocked(cikis),
+		"çıkış giriş kilidini kaldırmamalı; kaldırsaydı kilidi atlatmanın yolu olurdu")
+}
+
+// TestKimliksizKullaniciCikisYapamaz giriş kimliği hiç olmayan bir kullanıcıda
+// çıkışın SESSİZCE başarılı olmadığını kanıtlar.
+//
+// Yazılacak satır yoksa yazılan çapa da yoktur; başarılı dönmek, hiçbir şey
+// düşürmeyen bir çıkışı başarı gibi göstermek olurdu.
+func TestKimliksizKullaniciCikisYapamaz(t *testing.T) {
+	ctx := context.Background()
+	repo := yeniDepo(t)
+	user := yeniKullanici(ctx, t, repo)
+
+	_, err := repo.RevokeSessions(ctx, user.ID, models.ProviderEmailPass, time.Now().UTC())
+
+	require.Error(t, err)
+	assert.True(t, errors.IsNotFound(err), "beklenen tür NotFound, gelen: %s", errors.KindOf(err))
+	assert.Equal(t, repository.CodeIdentityNotFound, errors.CodeOf(err))
+}
+
 // TestSilinmisKanalaAnahtarBaglanamaz yumuşak silinmiş bir kanala bağ
 // kurulmadığını kanıtlar.
 //

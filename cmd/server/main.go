@@ -164,7 +164,14 @@ func run() error {
 
 	checks := map[string]corehttp.HealthCheck{"postgres": pool.Ping}
 
-	bus, err := setupEventBus(ctx, c, cfg, checks, log)
+	// Redis istemcisi, olay veri yolu ve koruma arka ucu tarafından PAYLAŞILIR;
+	// ikisi de bellek içiyse hiç açılmaz ve nil kalır.
+	redisClient, err := setupRedis(ctx, c, cfg, checks, log)
+	if err != nil {
+		return err
+	}
+
+	bus, err := setupEventBus(ctx, cfg, redisClient, log)
 	if err != nil {
 		return err
 	}
@@ -177,12 +184,17 @@ func run() error {
 	// gecikmeli doğrulayıcı kapatır (bkz. kurulum.go).
 	authn := &corehttp.DeferredAuthenticator{}
 
+	yigin, err := korumaYigini(cfg, authn, redisClient, log)
+	if err != nil {
+		return err
+	}
+
 	router := corehttp.NewRouter(corehttp.RouterOptions{
 		Version:          version,
 		Logger:           log,
 		ReadinessChecks:  checks,
 		TelemetryService: cfg.ServiceName,
-		Middlewares:      korumaYigini(cfg, authn),
+		Middlewares:      yigin,
 	})
 
 	registry := module.NewRegistry(log, func(ctx context.Context, src fs.FS, owner string) error {
@@ -242,6 +254,22 @@ func run() error {
 	}
 	authn.Bind(dogrulayici)
 
+	// İlk yönetici tohumu da Bootstrap'tan SONRA çalışır: auth servisi ancak o
+	// zaman container'dadır ve tablolar ancak o zaman göçürülmüştür. Servis DAR
+	// bir arayüzle alınır (bkz. kurulum.go), somut tipiyle değil.
+	//
+	// Hata açılışı DURDURUR: yaratılamamış bir yönetici, yönetim yüzeyi olmayan
+	// bir sistem demektir ve bu, açılıp da hiçbir yönetim isteğini kabul
+	// etmeyen bir sunucudan çok daha erken fark edilir.
+	kullanicilar, err := container.Resolve[yoneticiKullanicilari](c, auth.ServiceName)
+	if err != nil {
+		return errors.Wrap(err, errors.KindOf(err), codeBootstrapFailed,
+			"auth servisi %q çözülemedi", auth.ServiceName)
+	}
+	if err := tohumlaYonetici(ctx, kullanicilar, cfg, log); err != nil {
+		return err
+	}
+
 	// Sağlayıcı ve abonelik kayıtları modüller ayağa kalktıktan SONRA
 	// uygulanır; route'lar ise modül route'larından sonra bağlanır.
 	if err := eklentiler.Start(ctx, host); err != nil {
@@ -274,18 +302,21 @@ func run() error {
 	return srv.Run(ctx)
 }
 
-// setupEventBus yapılandırmaya göre olay veri yolunu kurar ve gerekiyorsa
-// Redis istemcisini container'a kaydedip readiness kontrolüne ekler.
-func setupEventBus(
+// setupRedis gerekiyorsa Redis istemcisini açar, container'a kaydeder ve
+// readiness kontrolüne ekler.
+//
+// Gerekmiyorsa (nil, nil) döner ve HİÇBİR bağlantı denenmez: Redis'e ihtiyacı
+// olmayan bir kurulumda "bağlanamadım" uyarısı üretmek, gerçek bir arızayı
+// gürültüde boğardı.
+func setupRedis(
 	ctx context.Context,
 	c *container.Container,
 	cfg config.Config,
 	checks map[string]corehttp.HealthCheck,
 	log *slog.Logger,
-) (eventbus.EventBus, error) {
-	if cfg.EventBus != "redis" {
-		log.InfoContext(ctx, "olay veri yolu: bellek içi (tek süreç)")
-		return eventbus.NewInMemory(log), nil
+) (*redis.Client, error) {
+	if !cfg.NeedsRedis() {
+		return nil, nil //nolint:nilnil // "Redis gerekmiyor" bir hata değildir
 	}
 
 	opt, err := redis.ParseURL(cfg.RedisURL)
@@ -308,13 +339,39 @@ func setupEventBus(
 		return nil, err
 	}
 
+	checks["redis"] = func(ctx context.Context) error { return client.Ping(ctx).Err() }
+	log.InfoContext(ctx, "redis bağlandı",
+		"addr", opt.Addr,
+		"olay_veri_yolu", cfg.EventBus == config.BackendRedis,
+		"koruma_arka_ucu", cfg.GuardBackend == config.BackendRedis,
+	)
+
+	return client, nil
+}
+
+// setupEventBus yapılandırmaya göre olay veri yolunu kurar.
+//
+// Redis istemcisi PARAMETREDİR, burada açılmaz: aynı istemciyi koruma arka ucu
+// da kullanır ve iki yerde ayrı bağlantı açmak, kapanış sırasını ve sağlık
+// kontrolünü ikiye bölerdi.
+func setupEventBus(
+	ctx context.Context,
+	cfg config.Config,
+	client *redis.Client,
+	log *slog.Logger,
+) (eventbus.EventBus, error) {
+	if cfg.EventBus != config.BackendRedis {
+		log.InfoContext(ctx, "olay veri yolu: bellek içi (tek süreç)")
+		return eventbus.NewInMemory(log), nil
+	}
+
 	bus, err := eventbus.NewRedisStream(client, eventbus.RedisConfig{}, log)
 	if err != nil {
 		return nil, err
 	}
 
-	checks["redis"] = func(ctx context.Context) error { return client.Ping(ctx).Err() }
-	log.InfoContext(ctx, "olay veri yolu: Redis Streams", "addr", opt.Addr)
+	log.InfoContext(ctx, "olay veri yolu: Redis Streams")
+
 	return bus, nil
 }
 

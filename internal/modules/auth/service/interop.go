@@ -77,7 +77,7 @@ func NewInterop(svc *Service) *Interop {
 //  1. OTURUM JETONU (JWT) — normal, insan yolu: yönetici giriş yapar, jeton
 //     alır, jetonla gezer. Önce denenir çünkü yaygın olan budur. Jetonun
 //     kendisi bir ARAMA gerektirmez; imzası doğrulandıktan sonra iki indeksli
-//     okuma yapılır (sahibi hâlâ var mı, parolası jetondan sonra değişti mi —
+//     okuma yapılır (sahibi hâlâ var mı, oturumu jetondan sonra düşürüldü mü —
 //     bkz. [Service.principalFromToken]).
 //  2. GİZLİ API ANAHTARI — makineden makineye yol: betikler ve entegrasyonlar.
 //
@@ -166,15 +166,16 @@ func (i *Interop) AuthenticateStore(ctx context.Context, key string) (corehttp.P
 // anahtar üzerinden tek okumadır; bedeli, silinen bir yöneticinin 12 saat
 // boyunca içeride kalabilmesinin bedelinin yanında hiçtir.
 //
-// # Parola değişimi jetonu DÜŞÜRÜR
+// # Çıkış ve parola değişimi jetonu DÜŞÜRÜR
 //
-// Jeton, sahibinin parolası jetonun üretiminden SONRA değiştiyse reddedilir.
-// Bu denetim olmadan sızmış bir yönetici jetonu, parola değiştirilse bile
-// [DefaultJWTTTL] boyunca (varsayılan 12 saat) tam yetkili kimlik üretmeye
-// devam ederdi — yani "parolamı değiştirdim" hiçbir şeyi geri almazdı ve
-// oturum kapatmanın hiçbir yolu kalmazdı.
+// Jeton, sahibinin oturum çapası jetonun üretiminden SONRA ilerlediyse
+// reddedilir. Çapayı iki iş ilerletir: çıkış ([Service.Logout]) ve parola
+// değişimi ([Service.SetPassword]). Bu denetim olmadan sızmış bir yönetici
+// jetonu, ikisi de yapılsa bile [DefaultJWTTTL] boyunca (varsayılan 12 saat)
+// tam yetkili kimlik üretmeye devam ederdi — yani ne "çıkış yaptım" ne de
+// "parolamı değiştirdim" hiçbir şeyi geri alırdı.
 //
-// Karşılaştırma jetonun "iat" iddiası ile kimliğin [passwordChangedAt] değeri
+// Karşılaştırma jetonun "iat" iddiası ile kimliğin [sessionAnchor] değeri
 // arasındadır; saniye çözünürlüğünün getirdiği sınır durumu ve orada yapılan
 // tercih [parsedToken.issuedBefore] godoc'unda açıktır.
 //
@@ -218,9 +219,9 @@ func (s *Service) principalFromToken(ctx context.Context, raw string) (corehttp.
 		}
 		return corehttp.Principal{}, err
 	}
-	if parsed.issuedBefore(passwordChangedAt(identity)) {
+	if parsed.issuedBefore(sessionAnchor(identity)) {
 		return corehttp.Principal{}, errors.Unauthorized(CodeTokenInvalid,
-			"jeton parola değişiminden önce üretilmiş: %s", user.ID)
+			"jeton, çıkış ya da parola değişiminden önce üretilmiş: %s", user.ID)
 	}
 
 	return corehttp.Principal{

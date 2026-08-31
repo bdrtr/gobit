@@ -325,6 +325,17 @@ type PaymentProvider interface {
 > yolu da 401 döner: 404 olsaydı uç haritası status kodundan sızardı.
 > Kimlik doğrulayıcı router'dan SONRA doğduğu için `corehttp.DeferredAuthenticator`
 > ile bağlanır; bağlanmadan gelen istek reddedilir (ADR 0007).
+>
+> RBAC yalnızca auth'ta değil, **TÜM modüllerde** zorlanır: sözlük tek
+> kuraldan türer (`<modül>:read` / `<modül>:write`, `admin` üst yetki) ve
+> `internal/e2e/yetki_test.go` router ağacını GEZEREK 183 yönetim ucunun
+> tamamında yetkisiz bir jetonun 403 aldığını denetler — elle yazılmış bir uç
+> listesi, eklenmesi unutulan ilk uçta kör kalırdı.
+>
+> İlk yönetici bir TOHUM adımıyla doğar (`ADMIN_BOOTSTRAP_*`) ve tohum yalnızca
+> hiç kullanıcı yokken çalışır; bu adım olmadan yönetim uçları korumalı olduğu
+> için taze bir kurulum kullanılamaz durumdaydı. Oturum iptali iki yoldan olur
+> ve ikisi de TOPTANDIR: parola değişimi ve `POST /admin/v1/auth/logout`.
 
 ### Faz 9 — Plugin Sistemi · Observability · Sertleştirme
 **Yapılacaklar:** Plugin yükleme mekanizması (modül/subscriber/route/provider register edebilen); örnek `payment-stripe` plugin iskeleti; OpenTelemetry trace+metric; rate limiting; idempotency middleware; OpenAPI/Swagger üretimi; README + mimari dokümanı.
@@ -343,6 +354,13 @@ type PaymentProvider interface {
 > Yük testi süreç içidir (`internal/e2e/yuk_test.go`): ölçtüğü şey mutlak
 > performans değil, eşzamanlı yük altında DOĞRULUK — düşen istek, 5xx ve
 > koruma yığınındaki yarış. Kapasite planı için bir sayı üretmez.
+>
+> Hız sınırı ve idempotency deposu `GUARD_BACKEND` ile seçilir. `memory`
+> (varsayılan) tek süreçliktir; `redis` (`internal/core/http/redisguard`)
+> paylaşılandır. Fark derece değil TÜR farkıdır: sınırın gevşemesi bir hız
+> sorunudur, idempotency'nin çalışmaması bir DOĞRULUK sorunudur — aynı
+> anahtarla farklı örneklere düşen iki istek iki sipariş üretir. Paylaşılan bir
+> ortamda `memory` bırakmak açılışta uyarı üretir.
 
 ---
 

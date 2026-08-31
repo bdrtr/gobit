@@ -8,6 +8,14 @@
 //
 // Handler'lar status kodu SEÇMEZ: servis core/errors tipli hatasını döner,
 // corehttp.WriteError sınıfına uygun kodu yazar (plan Bölüm 8).
+//
+// # Yetki
+//
+// /admin/v1 uçları yetki ister ve sözlük ikiye ayrılır: GET uçları [ScopeRead],
+// POST/PUT/PATCH/DELETE uçları [ScopeWrite] (bkz. [Handler.Routes]).
+// corehttp.ScopeAdmin ÜST YETKİDİR ve ikisini de tek başına karşılar.
+//
+// Modülün /store/v1 ucu YOKTUR, dolayısıyla yetkisiz bir yüzeyi de yoktur.
 package api
 
 import (
@@ -45,6 +53,31 @@ const maxBodyBytes int64 = 1 << 20 // 1 MiB
 
 // codeInvalidRequest gövde/parametre çözümlenemediğinde dönen hata kodudur.
 const codeInvalidRequest = "inventory_invalid_request"
+
+// Yetki sözlüğü: inventory'nin yönetim uçlarının istediği yetkiler.
+//
+// Sözlük tüm modüllerde AYNI biçimdedir ve BİLİNÇLİ olarak iki girdiden
+// ibarettir: okuma ve yazma. Kaynak başına ayrı yetki ("stock-locations:write",
+// "levels:read" …) tanımlamak listeyi büyütür ama bugün verilebilecek hiçbir
+// yeni kararı mümkün kılmaz; ayrım gerçekten gerektiğinde eklenir.
+const (
+	// ScopeRead inventory yönetim yüzeyindeki OKUMA uçlarının istediği
+	// yetkidir.
+	//
+	// Lokasyonları, stok kalemlerini ve seviyeleri okumaya yeter; hiçbir yazma
+	// ucunu açmaz. Tam yetkili kimliklere ayrıca verilmesi gerekmez:
+	// corehttp.ScopeAdmin taşıyan bir çağıran bunu da karşılar (bkz.
+	// corehttp.Principal.HasScope).
+	ScopeRead = "inventory:read"
+
+	// ScopeWrite inventory yönetim yüzeyindeki YAZMA uçlarının istediği
+	// yetkidir.
+	//
+	// Ayrım burada özellikle işe yarar: stoğu yalnızca RAPORLAYAN bir
+	// entegrasyon (depo panosu, satış tahmini) [ScopeRead] ile çalışabilir ve
+	// bir hata durumunda gerçek stoğu bozamaz.
+	ScopeWrite = "inventory:write"
+)
 
 // Inventory handler'ların servisten ihtiyaç duyduğu yüzeydir.
 //
@@ -86,19 +119,36 @@ func NewHandler(svc Inventory) *Handler {
 }
 
 // Routes modülün admin route'larını router'a bağlar.
+//
+// # KORUMA
+//
+// İki katman vardır ve ikisi de gereklidir:
+//
+//  1. KİMLİK — uçlar corehttp.RequireAdmin ile korunur. O middleware bu
+//     modülde değil, router'ı kuran tarafta takılır (bkz. corehttp.APIGuards).
+//  2. YETKİ — uçlar BURADA, uç uç corehttp.RequireScope ile işaretlenir:
+//     GET uçları [ScopeRead], POST/DELETE uçları [ScopeWrite] ister.
+//
+// İkinci katman olmasaydı kimlik doğrulama yetkilendirmenin yerine geçerdi:
+// yetkileri boşaltılmış bir yönetim kullanıcısı giriş yapıp stok seviyelerini
+// yazabilir ya da kalemleri silebilirdi. Stok, satılabilirliği belirleyen
+// sayıdır; yanlış yazılması doğrudan satış kaybı ya da fazla satıştır.
 func (h *Handler) Routes(r chi.Router) {
-	r.Post(pathStockLocations, h.createStockLocation)
-	r.Get(pathStockLocations, h.listStockLocations)
-	r.Get(pathStockLocation, h.getStockLocation)
+	okuma := r.With(corehttp.RequireScope(ScopeRead))
+	yazma := r.With(corehttp.RequireScope(ScopeWrite))
 
-	r.Post(pathItems, h.createItem)
-	r.Get(pathItems, h.listItems)
-	r.Get(pathItem, h.getItem)
-	r.Delete(pathItem, h.deleteItem)
+	yazma.Post(pathStockLocations, h.createStockLocation)
+	okuma.Get(pathStockLocations, h.listStockLocations)
+	okuma.Get(pathStockLocation, h.getStockLocation)
 
-	r.Get(pathItemLevels, h.listLevels)
-	r.Post(pathItemLevels, h.setLevel)
-	r.Post(pathItemLevelAdjust, h.adjustLevel)
+	yazma.Post(pathItems, h.createItem)
+	okuma.Get(pathItems, h.listItems)
+	okuma.Get(pathItem, h.getItem)
+	yazma.Delete(pathItem, h.deleteItem)
+
+	okuma.Get(pathItemLevels, h.listLevels)
+	yazma.Post(pathItemLevels, h.setLevel)
+	yazma.Post(pathItemLevelAdjust, h.adjustLevel)
 }
 
 // --- stok lokasyonları -------------------------------------------------------

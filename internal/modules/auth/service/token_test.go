@@ -115,6 +115,23 @@ func (d *oturumDeposu) SetPasswordHash(
 	return d.kimlik, nil
 }
 
+// RevokeSessions oturum çapasını ilerletir ve kimlik bilgisine DOKUNMAZ.
+//
+// Sorgunun sözleşmesi budur (bkz. queries/identities.sql, RevokeSessions):
+// yalnızca updated_at yazılır; parola, sayaç ve kilit alanları korunur.
+func (d *oturumDeposu) RevokeSessions(
+	_ context.Context,
+	userID, provider string,
+	now time.Time,
+) (models.AuthIdentity, error) {
+	if d.kimlikSilindi || userID != d.kimlik.UserID || provider != d.kimlik.Provider {
+		return models.AuthIdentity{}, errors.NotFound("test_kimlik_yok",
+			"%s kullanıcısının %q kimliği yok", userID, provider)
+	}
+	d.kimlik.UpdatedAt = now
+	return d.kimlik, nil
+}
+
 // RegisterLoginSuccess sayaçları temizler ve son giriş anını yazar.
 //
 // updated_at'e DOKUNMAZ; sorgunun sözleşmesi budur.

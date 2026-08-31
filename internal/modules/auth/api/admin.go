@@ -76,6 +76,57 @@ func (h *Handler) adminWhoami(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// adminLogout çağıranın oturumlarını kapatır (POST /admin/v1/auth/logout).
+//
+// # ÇAĞIRANIN TÜM OTURUMLARI DÜŞER
+//
+// Uç bir cihazı değil, çağıranın bütün oturumlarını kapatır: telefonundan
+// çıkan yönetici dizüstündeki oturumunu da kapatmış olur. Tek cihazı düşürmek
+// yoktur ve bugün olamaz da — bunun için jti bazlı bir kara liste, yani her
+// istekte okunan yeni bir depo gerekirdi (bkz. service.Service.Logout).
+//
+// # BU UÇ YETKİ İSTEMEZ
+//
+// Kendi oturumunu kapatmak bir ayrıcalık değildir. Yetki isteseydi, yetkisi
+// geri alınmış bir yöneticinin jetonu süresi dolana kadar kapatılamazdı.
+//
+// # YANIT: 200 ve gövde, 204 DEĞİL
+//
+// Gövdesiz bir 204 idiomatik olurdu ama burada eksik kalırdı: çağıran "bu
+// cihazdan çıktım" sanırken sunucu HEPSİNİ kapatmıştır ve status kodu bunu
+// söyleyemez. Gövde iki şeyi açıkça bildirir: iptalin TOPTAN olduğu
+// ([logoutResponse.AllSessions]) ve dayandığı AN ([logoutResponse.RevokedAt]);
+// ikincisi, istemcinin elinde kalmış bir jetonun artık geçersiz olduğunu
+// deneme-yanılmadan görmesini sağlar.
+//
+// API anahtarıyla çağrılırsa istek tipli bir hata ile reddedilir: anahtarın
+// oturumu yoktur ve sessizce 2xx dönmek, anahtarın kapatıldığı yanılgısını
+// bırakırdı (bkz. service.Service.Logout).
+func (h *Handler) adminLogout(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	// Kimlik ÇEKİRDEKTEN gelir; kimin çıkış yapacağı istemcinin gövdede
+	// bildirdiği bir değerden okunsaydı, uç başkasının oturumunu kapatmanın
+	// yolu olurdu.
+	principal, ok := corehttp.PrincipalFromContext(ctx)
+	if !ok {
+		corehttp.WriteError(ctx, w, coreerrors.Unauthorized(
+			corehttp.CodeUnauthenticated, "kimlik doğrulama gerekli"))
+		return
+	}
+
+	revokedAt, err := h.svc.Logout(ctx, principal.ID, principal.Kind)
+	if err != nil {
+		corehttp.WriteError(ctx, w, err)
+		return
+	}
+
+	writeItem(w, r, http.StatusOK, logoutResponse{
+		AllSessions: true,
+		RevokedAt:   revokedAt,
+	})
+}
+
 // --- kullanıcılar -------------------------------------------------------------
 
 // adminCreateUser yeni bir yönetim kullanıcısı oluşturur
