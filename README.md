@@ -382,6 +382,9 @@ başka hiçbir yeri değiştirmez.
 Modüller kendi alan olaylarını event bus'a yayımlar; aboneler (eklentiler,
 entegrasyonlar) onları dinler.
 
+Aboneler bugün: arama eklentisi (`product.*`) ve bildirim modülü
+(`order.placed`).
+
 | Olay | Yük |
 |---|---|
 | `order.placed` | `order_id`, `display_id`, `status`, `region_id`, `customer_id`, `currency_code`, `total`, `item_count` |
@@ -397,6 +400,13 @@ entegrasyonlar) onları dinler.
   ile yazar; JSON'un tek sayı tipi olduğu için `int64` konan bir alan aboneye
   `float64` olarak ulaşır — aynı abone geliştirmede çalışıp **üretimde**
   düşerdi, üstelik para float üzerinden geçerdi.
+
+**Bildirim** `order.placed`'i dinler ve sipariş onayını seçili
+`NotificationProvider` üzerinden gönderir. Alıcı adresi **olaydan değil
+sipariş kaydından** okunur (`order.interop`), çünkü kalıcı bir akışa kişisel
+veri konmaz. Varsayılan sağlayıcı `log`'dur ve gerçekten göndermez — bunu
+WARN seviyesinde açıkça söyler; gerçek gönderim bir eklentinin işidir
+(`Host.RegisterNotificationProvider`).
 
 > Handler hata dönerse olay **işlenmiş sayılır**; hiçbir backend yeniden
 > teslim etmez (Redis, handler'ın sonucundan bağımsız olarak ACK'ler). Hata

@@ -1,10 +1,10 @@
 // Package plugin çekirdeğe dokunmadan yetenek ekleyen eklentileri tanımlar.
 //
 // Bir eklenti modül, route, event subscriber ve sağlayıcı (payment,
-// fulfillment) kaydedebilir. Bunu yaparken hiçbir commerce modülünü import
-// ETMEZ: kayıt noktalarına container'dan ADLA ulaşır ve sözleşmeleri
-// çekirdekteki [github.com/bdrtr/gobit/internal/core/provider] paketinden
-// alır (ADR 0001).
+// fulfillment, notification) kaydedebilir. Bunu yaparken hiçbir commerce
+// modülünü import ETMEZ: kayıt noktalarına container'dan ADLA ulaşır ve
+// sözleşmeleri çekirdekteki [github.com/bdrtr/gobit/internal/core/provider]
+// paketinden alır (ADR 0001).
 //
 // # Neden derleme zamanı eklentisi
 //
@@ -57,6 +57,9 @@ const PaymentProvidersName = "payment.providers"
 // FulfillmentProvidersName kargo sağlayıcı kaydının container'daki adıdır.
 const FulfillmentProvidersName = "fulfillment.providers"
 
+// NotificationProvidersName bildirim sağlayıcı kaydının container'daki adıdır.
+const NotificationProvidersName = "notification.providers"
+
 // Hata kodları.
 const (
 	codeNameEmpty       = "plugin_name_empty"
@@ -93,6 +96,11 @@ type paymentSink interface {
 // fulfillmentSink kargo sağlayıcı kaydının dar yüzeyidir.
 type fulfillmentSink interface {
 	Register(p coreprovider.FulfillmentProvider) error
+}
+
+// notificationSink bildirim sağlayıcı kaydının dar yüzeyidir.
+type notificationSink interface {
+	Register(p coreprovider.NotificationProvider) error
 }
 
 // routeKaydi bir eklentinin bağlamak istediği route işlevidir.
@@ -247,6 +255,37 @@ func (h *Host) RegisterFulfillmentProvider(p coreprovider.FulfillmentProvider) {
 		aciklama: ad + " eklentisinin kargo sağlayıcısı (" + p.ID() + ")",
 		uygula: func(_ context.Context, host *Host) error {
 			sink, err := cozSink[fulfillmentSink](host, FulfillmentProvidersName, "fulfillment")
+			if err != nil {
+				return err
+			}
+
+			return sink.Register(p)
+		},
+	})
+}
+
+// RegisterNotificationProvider bir bildirim sağlayıcısını notification
+// modülüne ekler.
+//
+// Sıralama kuralı [Host.RegisterPaymentProvider] ile aynıdır ve burada daha da
+// bağlayıcıdır: bildirim modülü, sağlayıcısını "order.placed" abonesinden
+// çağırır ve o abonelik de aynı Start turunda kurulur. Kayıt Setup'ta
+// denenseydi eklenti sağlayıcısı kaydın açılmasından önce gelir ve kurulum
+// patlardı.
+//
+// notification modülü hiç kayıtlı değilse Start bir HATA döner; sessizce yok
+// saymak, sipariş e-postası gönderdiğini sanan bir kurulumun hiçbir müşteriye
+// ulaşmaması demek olurdu.
+func (h *Host) RegisterNotificationProvider(p coreprovider.NotificationProvider) {
+	if p == nil {
+		return
+	}
+
+	ad := h.aktif
+	h.kuyruk = append(h.kuyruk, kuyrukIsi{
+		aciklama: ad + " eklentisinin bildirim sağlayıcısı (" + p.ID() + ")",
+		uygula: func(_ context.Context, host *Host) error {
+			sink, err := cozSink[notificationSink](host, NotificationProvidersName, "notification")
 			if err != nil {
 				return err
 			}

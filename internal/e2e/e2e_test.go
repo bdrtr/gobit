@@ -115,6 +115,7 @@ import (
 	fulfillmentsvc "github.com/bdrtr/gobit/internal/modules/fulfillment/service"
 	inventorymod "github.com/bdrtr/gobit/internal/modules/inventory"
 	inventorysvc "github.com/bdrtr/gobit/internal/modules/inventory/service"
+	notificationmod "github.com/bdrtr/gobit/internal/modules/notification"
 	ordermod "github.com/bdrtr/gobit/internal/modules/order"
 	ordersvc "github.com/bdrtr/gobit/internal/modules/order/service"
 	paymentmod "github.com/bdrtr/gobit/internal/modules/payment"
@@ -534,6 +535,20 @@ func zeminiKur(ctx context.Context) error {
 	kayit.Add(fulfillmentmod.New())
 	kayit.Add(promotionmod.New(nil))
 	kayit.Add(taxmod.New(nil))
+	// Bildirim. "order.placed" abonesinin GERÇEKTEN kurulduğu ve siparişin
+	// iletişim bilgisini gerçek order modülünden okuyabildiği ancak burada
+	// sınanabilir — modülün kendi entegrasyon testinde sipariş yüzeyi
+	// TAKLİTTİR ve iki tarafın şeması derleyiciyle denetlenemez (Prensip 2.4).
+	//
+	// Sağlayıcı olarak kutudan çıkan "log" DEĞİL, bir CASUS seçilir
+	// (bkz. bildirim_test.go). Tek sebebi vardır: "bildirimin alıcısı
+	// siparişin e-postasıdır" iddiası adresi GÖREN bir yer gerektirir ve adres
+	// bilinçli olarak hiçbir yerde saklanmaz — teslim günlüğünde sütunu
+	// yoktur, "log" sağlayıcısı da onu loglamaz. Geriye tek yer kalır:
+	// sağlayıcının kendisi. Casus, gerçek bir eklenti sağlayıcısının durduğu
+	// yerde durur; zincirin geri kalanı üretim kodudur ve kutudan çıkan
+	// sağlayıcı da kayıtta kalır.
+	kayit.Add(notificationmod.New(notificationmod.Options{ProviderID: bildirimCasusuID}))
 	// Faz 8: kimlik.
 	kayit.Add(authmod.New(authmod.Options{
 		JWTSecret: testJWTSecret,
@@ -584,6 +599,14 @@ func zeminiKur(ctx context.Context) error {
 	// uygulanır; sağlayıcı kayıtları ile abonelikler ancak o anda çözülebilir.
 	if err := eklentileriBaslat(ctx); err != nil {
 		return fmt.Errorf("eklentiler başlatılamadı: %w", err)
+	}
+
+	// Bildirim casusu eklenti sağlayıcılarıyla AYNI aşamada, yani modüller
+	// ayağa kalktıktan SONRA kaydedilir: "notification.providers" container'a
+	// modülün Register'ında konur, daha erken denemek hiçbir şeyin gerçekten
+	// eksik olmadığı bir hatayla zemini düşürürdü.
+	if err := bildirimCasusunuKur(); err != nil {
+		return fmt.Errorf("bildirim casusu kurulamadı: %w", err)
 	}
 
 	// OpenAPI ucu da üretimdeki gibi kurulur (Faz 9): yol, metod ve güvenlik

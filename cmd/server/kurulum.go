@@ -15,15 +15,19 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/bdrtr/gobit/internal/core/config"
+	"github.com/bdrtr/gobit/internal/core/container"
 	"github.com/bdrtr/gobit/internal/core/errors"
 	corehttp "github.com/bdrtr/gobit/internal/core/http"
 	"github.com/bdrtr/gobit/internal/core/http/redisguard"
 	"github.com/bdrtr/gobit/internal/core/module"
 	"github.com/bdrtr/gobit/internal/core/openapi"
 	coreplugin "github.com/bdrtr/gobit/internal/core/plugin"
+	coreprovider "github.com/bdrtr/gobit/internal/core/provider"
 	authapi "github.com/bdrtr/gobit/internal/modules/auth/api"
 	authmodels "github.com/bdrtr/gobit/internal/modules/auth/models"
 	authservice "github.com/bdrtr/gobit/internal/modules/auth/service"
+	"github.com/bdrtr/gobit/internal/modules/notification"
+	notificationservice "github.com/bdrtr/gobit/internal/modules/notification/service"
 	"github.com/bdrtr/gobit/plugins/paymentstripe"
 	"github.com/bdrtr/gobit/plugins/searchpg"
 )
@@ -40,6 +44,10 @@ const codeUnknownPlugin = "plugin_unknown"
 
 // codeBootstrapFailed ilk yönetici tohumunun başarısız olduğunu bildirir.
 const codeBootstrapFailed = "admin_bootstrap_failed"
+
+// codeUnknownNotificationProvider NOTIFICATION_PROVIDER'ın kayıtlı bir
+// sağlayıcıya karşılık gelmediğini bildirir.
+const codeUnknownNotificationProvider = "notification_provider_unknown"
 
 // openAPIPath üretilen API şemasının sunulduğu yoldur.
 const openAPIPath = "/openapi.json"
@@ -296,6 +304,66 @@ func jwtSirri(cfg config.Config, log *slog.Logger) string {
 		"uyari", "yeniden başlatmada tüm yönetim oturumları düşer")
 
 	return base64.RawURLEncoding.EncodeToString(bayt)
+}
+
+// bildirimSaglayicilari kurulumun bildirim sağlayıcı kaydından istediği DAR
+// yüzeydir.
+//
+// Somut kayıt tipi yerine iki metotluk bir arayüz kullanılır: kurulum,
+// notification modülünün servis yüzeyine değil yalnızca burada sayılan iki
+// çağrıya bağlanır ve denetim, modülün tamamı ayağa kaldırılmadan sahte bir
+// kayıtla sınanabilir.
+type bildirimSaglayicilari interface {
+	Get(id string) (coreprovider.NotificationProvider, error)
+	IDs() []string
+}
+
+// Gerçek kaydın bu dar yüzeyi karşıladığı DERLEME zamanında sabitlenir.
+//
+// Uyum çalışma zamanında container.Resolve'un tip iddiasıyla denetlenir ve
+// orada kayması, açılışın "kayıt beklenen yüzeyi karşılamıyor" diyerek
+// durması demektir — yani en geç fark edilecek yerde. Bu satır aynı soruyu
+// derleyiciye sorar; notification modülünü import etmek kompozisyon kökü için
+// zaten serbesttir (bkz. [yoneticiKullanicilari]).
+var _ bildirimSaglayicilari = (*notificationservice.ProviderRegistry)(nil)
+
+// bildirimSaglayicisiniDogrula seçili sağlayıcının GERÇEKTEN kayıtlı
+// olduğunu doğrular.
+//
+// # Neden burada, config'te değil
+//
+// Geçerli adları config bilemez: sağlayıcılar eklentilerden gelir ve eklenti
+// listesi derleme zamanında belirlenir. Aynı ayrım PLUGINS için de geçerlidir
+// (bkz. [eklentileriSec]) — biçimi config, ANLAMI kompozisyon kökü doğrular.
+//
+// # Neden açılış DURUR
+//
+// Alternatif — bilinmeyen adı yok sayıp varsayılan "log" sağlayıcısına düşmek —
+// tam olarak kaçınılması gereken şeydir: kurulum açılır, hiçbir hata görünmez
+// ve sipariş onayları yalnızca loga yazılır. Arıza, müşteriler onay beklerken
+// ve genellikle günler sonra fark edilir. Açılışta durmak, arızayı
+// yapılandırmanın hâlâ elde olduğu ana taşır.
+//
+// # Neden bu adım Start'tan SONRA
+//
+// Eklentilerin sağlayıcı kayıtları [coreplugin.Registry.Start] sırasında
+// uygulanır; daha erken bir denetim, eklentiden gelen geçerli bir adı
+// "bilinmiyor" diye reddederdi.
+func bildirimSaglayicisiniDogrula(c *container.Container, id string) error {
+	kayit, err := container.Resolve[bildirimSaglayicilari](c, notification.ProvidersName)
+	if err != nil {
+		return errors.Wrap(err, errors.KindOf(err), codeUnknownNotificationProvider,
+			"bildirim sağlayıcı kaydı %q çözülemedi", notification.ProvidersName)
+	}
+
+	if _, err := kayit.Get(id); err != nil {
+		return errors.Wrap(err, errors.KindInvalid, codeUnknownNotificationProvider,
+			"NOTIFICATION_PROVIDER=%q kayıtlı bir bildirim sağlayıcısı değil (kayıtlı olanlar: %s); "+
+				"eklenti getiriyorsa PLUGINS listesine eklenmiş mi?",
+			id, strings.Join(kayit.IDs(), ", "))
+	}
+
+	return nil
 }
 
 // yoneticiKullanicilari tohum adımının auth modülünden istediği DAR yüzeydir.

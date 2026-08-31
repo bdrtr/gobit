@@ -65,6 +65,29 @@ func (k *sahteKayit) Register(p coreprovider.PaymentProvider) error {
 	return nil
 }
 
+// sahteBildirimSaglayici testlerde kullanılan en küçük bildirim sağlayıcısıdır.
+type sahteBildirimSaglayici struct{ id string }
+
+// ID sağlayıcının kimliğini döner.
+func (p sahteBildirimSaglayici) ID() string { return p.id }
+
+// Send testte çağrılmaz; arayüzü karşılamak için vardır.
+func (p sahteBildirimSaglayici) Send(_ context.Context, _ coreprovider.Notification) error {
+	return nil
+}
+
+// sahteBildirimKayit notification modülünün sağlayıcı kaydını taklit eder.
+type sahteBildirimKayit struct {
+	kayitli []string
+}
+
+// Register sağlayıcıyı kaydeder.
+func (k *sahteBildirimKayit) Register(p coreprovider.NotificationProvider) error {
+	k.kayitli = append(k.kayitli, p.ID())
+
+	return nil
+}
+
 // testEklenti Setup'ta verilen işlevi çalıştıran eklentidir.
 type testEklenti struct {
 	ad    string
@@ -162,6 +185,56 @@ func TestSaglayiciKayitHatasiYayilir(t *testing.T) {
 	err := reg.Start(t.Context(), h)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "aynı kimlik zaten kayıtlı")
+}
+
+// TestBildirimSaglayiciKaydiStartaKadarBeklenir bildirim sağlayıcısının da
+// Setup'ta DEĞİL Start'ta kaydedildiğini doğrular.
+//
+// Ödeme sağlayıcısındaki testin kopyası değildir: kuyruğa alma her sağlayıcı
+// türü için AYRI yazılmıştır ve bu tür, kaydı doğrudan uygulayan bir kısayolla
+// eklenmeye en açık olanıdır — bildirim modülü ödeme kadar erken ayağa
+// kalkmadığı için hata ancak gerçek kurulumda görülürdü.
+func TestBildirimSaglayiciKaydiStartaKadarBeklenir(t *testing.T) {
+	t.Parallel()
+
+	c, reg, h := kurulum(t, nil)
+
+	reg.Add(testEklenti{ad: "postaci", setup: func(_ context.Context, h *coreplugin.Host) error {
+		h.RegisterNotificationProvider(sahteBildirimSaglayici{id: "smtp"})
+		return nil
+	}})
+
+	// notification modülü HENÜZ yok.
+	require.NoError(t, reg.Install(t.Context(), h), "kurulum modül olmadan da geçmeli")
+
+	kayit := &sahteBildirimKayit{}
+	require.NoError(t, c.Provide(coreplugin.NotificationProvidersName, kayit))
+
+	require.NoError(t, reg.Start(t.Context(), h))
+	assert.Equal(t, []string{"smtp"}, kayit.kayitli)
+}
+
+// TestBildirimSaglayiciKaydiModulYoksaHataDoner notification modülü hiç kayıtlı
+// değilken Start'ın SESSİZ KALMADIĞINI doğrular.
+//
+// Sessiz kalsaydı arıza ödeme sağlayıcısındakinden daha geç fark edilirdi:
+// bildirim gönderilmemesi hiçbir HTTP isteğini düşürmez, yalnızca müşteri
+// sipariş e-postasını hiç almaz.
+func TestBildirimSaglayiciKaydiModulYoksaHataDoner(t *testing.T) {
+	t.Parallel()
+
+	_, reg, h := kurulum(t, nil)
+
+	reg.Add(testEklenti{ad: "postaci", setup: func(_ context.Context, h *coreplugin.Host) error {
+		h.RegisterNotificationProvider(sahteBildirimSaglayici{id: "smtp"})
+		return nil
+	}})
+	require.NoError(t, reg.Install(t.Context(), h))
+
+	err := reg.Start(t.Context(), h)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "notification")
+	assert.Contains(t, err.Error(), "smtp")
 }
 
 // TestSetupHatasiKurulumuDurdurur bir eklentinin Setup hatasının sonrakileri

@@ -27,7 +27,7 @@ var envKeys = []string{
 	"READ_TIMEOUT", "WRITE_TIMEOUT", "IDLE_TIMEOUT", "EVENT_BUS",
 	"JWT_SECRET", "JWT_TTL",
 	"ADMIN_BOOTSTRAP_EMAIL", "ADMIN_BOOTSTRAP_PASSWORD",
-	"GUARD_BACKEND", "REDIS_KEY_PREFIX",
+	"GUARD_BACKEND", "REDIS_KEY_PREFIX", "NOTIFICATION_PROVIDER",
 }
 
 // uretimJWTSirri üretim senaryolarında kullanılan 32 karakterlik imza sırrıdır.
@@ -243,9 +243,10 @@ func TestDevelopmentAllowsLocalDefaults(t *testing.T) {
 // koruması sessizce devre dışı kalırdı.
 func TestDefaultTagsMatchConstants(t *testing.T) {
 	want := map[string]string{
-		"DatabaseURL":    config.DefaultDatabaseURL,
-		"RedisURL":       config.DefaultRedisURL,
-		"RedisKeyPrefix": config.DefaultRedisKeyPrefix,
+		"DatabaseURL":          config.DefaultDatabaseURL,
+		"RedisURL":             config.DefaultRedisURL,
+		"RedisKeyPrefix":       config.DefaultRedisKeyPrefix,
+		"NotificationProvider": config.DefaultNotificationProvider,
 	}
 
 	typ := reflect.TypeOf(config.Config{})
@@ -711,4 +712,74 @@ func TestBosRedisAnahtarOnegiReddedilir(t *testing.T) {
 
 	require.Error(t, err, "boş önek kabul edilmemeli")
 	assert.Contains(t, err.Error(), "REDIS_KEY_PREFIX")
+}
+
+// TestBildirimSaglayicisiVarsayilaniGondermeyendir varsayılan sağlayıcının
+// GERÇEKTEN göndermeyen "log" olduğunu doğrular.
+//
+// Varsayılanın kayması sessiz bir arıza olurdu: kurulum açılır, uçlar çalışır
+// ve yalnızca müşteriler sipariş onayı beklerken fark edilirdi.
+func TestBildirimSaglayicisiVarsayilaniGondermeyendir(t *testing.T) {
+	clearEnv(t)
+
+	cfg, err := config.Load()
+
+	require.NoError(t, err)
+	assert.Equal(t, config.DefaultNotificationProvider, cfg.NotificationProvider)
+	assert.Equal(t, "log", cfg.NotificationProvider,
+		"varsayılan sağlayıcının adı gönderim YAPMADIĞINI söylemeli")
+}
+
+// TestBildirimSaglayicisiBicimDogrular adın biçim denetimini doğrular.
+//
+// Config, adın KAYITLI olup olmadığını bilemez (sağlayıcılar eklentilerden
+// gelir); burada sınanan yalnızca biçimdir. Tanınmayan bir adın açılışı
+// durdurduğu cmd/server tarafında sınanır.
+func TestBildirimSaglayicisiBicimDogrular(t *testing.T) {
+	tests := map[string]struct {
+		deger     string
+		reddedili bool
+	}{
+		"eklenti adı":       {deger: "sendgrid"},
+		"varsayılan":        {deger: "log"},
+		"baştaki boşluk":    {deger: " log", reddedili: true},
+		"sondaki boşluk":    {deger: "log ", reddedili: true},
+		"yalnızca boşlukla": {deger: "   ", reddedili: true},
+	}
+
+	for ad, tt := range tests {
+		t.Run(ad, func(t *testing.T) {
+			clearEnv(t)
+			t.Setenv("NOTIFICATION_PROVIDER", tt.deger)
+
+			cfg, err := config.Load()
+			if !tt.reddedili {
+				require.NoError(t, err, "geçerli sağlayıcı adı reddedildi")
+				assert.Equal(t, tt.deger, cfg.NotificationProvider)
+
+				return
+			}
+
+			require.Error(t, err, "bozuk sağlayıcı adı sessizce kabul edilmemeli")
+			assert.Contains(t, err.Error(), "NOTIFICATION_PROVIDER",
+				"hata mesajı hangi değişkenin yanlış olduğunu söylemeli")
+		})
+	}
+}
+
+// TestBosBildirimSaglayicisiReddedilir elle kurulmuş bir Config'in sağlayıcı
+// adını boş bırakamayacağını doğrular.
+//
+// Ortam değişkeni yolundan boş değer zaten varsayılana düşer; bu kapı,
+// Load'dan geçmeden Validate çağıran (örn. gömen ya da test eden) çağıranlar
+// içindir. Boş ad, sağlayıcı kaydında boş kimlik aramak demektir ve hiçbir
+// sağlayıcı boş kimlikle kaydedilemeyeceği için her bildirim hata dönerdi.
+func TestBosBildirimSaglayicisiReddedilir(t *testing.T) {
+	cfg := gecerliConfig(t)
+	cfg.NotificationProvider = ""
+
+	err := cfg.Validate()
+
+	require.Error(t, err, "boş sağlayıcı adı kabul edilmemeli")
+	assert.Contains(t, err.Error(), "NOTIFICATION_PROVIDER")
 }

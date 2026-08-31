@@ -65,6 +65,17 @@ const MinBootstrapPasswordLen = 16
 // kılar; o an uçan her tekrar isteği ikinci kez işlenir, yani ikinci sipariş.
 const DefaultRedisKeyPrefix = "gobit"
 
+// DefaultNotificationProvider bildirim sağlayıcısı seçilmediğinde kullanılan
+// kimliktir.
+//
+// Değer, notification modülünün kutudan çıkan sağlayıcısının kimliğiyle
+// (logonly.ID) aynıdır ama o pakete BAĞLANAMAZ: çekirdek modülleri import
+// edemez (Prensip 2.4). Ayrışırlarsa kurulum, kayıtta bulunmayan bir sağlayıcı
+// adıyla açılmaya çalışır ve cmd/server açılışı durdurur — sessiz kalmaz.
+//
+// DIŞA AÇIKTIR ki envDefault etiketiyle uyumu bir testle sabitlenebilsin.
+const DefaultNotificationProvider = "log"
+
 // Yalnızca yerel geliştirme için varsayılan bağlantı adresleri.
 // deploy/docker-compose.yml ile eşleşirler. Validate, APP_ENV=production iken
 // bu değerlerin ezilmiş olmasını ZORUNLU kılar; aksi hâlde eksik secret
@@ -142,6 +153,22 @@ type Config struct {
 	// inmemory tek süreçlidir ve süreç ölünce olaylar kaybolur; birden çok
 	// örnek çalıştırılıyorsa redis kullanılmalıdır (plan Bölüm 3).
 	EventBus string `env:"EVENT_BUS" envDefault:"inmemory"`
+
+	// NotificationProvider bildirimleri gönderecek sağlayıcının kimliğidir.
+	//
+	// Varsayılan [DefaultNotificationProvider], yani hiçbir yere GÖNDERMEYEN
+	// "log" sağlayıcısıdır: çerçeve hangi e-posta/SMS servisinin
+	// kullanılacağını bilemez ve varsayılanın adı, gönderim yapmadığını
+	// açıkça söylemelidir.
+	//
+	// Hangi adların GEÇERLİ olduğunu config BİLMEZ ve bilemez: sağlayıcılar
+	// eklentilerden gelir ve eklenti listesi derleme zamanında belirlenir
+	// (aynı ayrım [Config.Plugins] için de geçerlidir). Burada yalnızca BİÇİM
+	// doğrulanır; adın gerçekten kayıtlı olup olmadığını, tüm eklentiler
+	// yüklendikten sonra kompozisyon kökü (cmd/server) denetler ve bilinmeyen
+	// bir ad açılışı DURDURUR. Sessizce varsayılana düşmek, üretimde e-posta
+	// gönderdiğini sanan ama hiçbir müşteriye ulaşmayan bir kurulum üretirdi.
+	NotificationProvider string `env:"NOTIFICATION_PROVIDER" envDefault:"log"`
 
 	// LogLevel yapısal log seviyesidir: debug | info | warn | error.
 	LogLevel string `env:"LOG_LEVEL" envDefault:"info"`
@@ -352,6 +379,9 @@ func (c Config) Validate() error {
 	if err := c.validatePlugins(); err != nil {
 		return err
 	}
+	if err := c.validateNotificationProvider(); err != nil {
+		return err
+	}
 	// Ortama bağlı kapıyı kendi içinde taşır; bu yüzden aşağıdaki IsShared
 	// bloğuna değil, sıradan doğrulamaların yanına konur.
 	if err := c.validateAdminBootstrap(); err != nil {
@@ -446,6 +476,31 @@ func (c Config) validatePlugins() error {
 			return fmt.Errorf("config: PLUGINS listesinde %q iki kez geçiyor", ad)
 		}
 		gorulen[ad] = struct{}{}
+	}
+	return nil
+}
+
+// validateNotificationProvider bildirim sağlayıcısı adının BİÇİMİNİ doğrular.
+//
+// Yalnızca biçim: adın kayıtlı olup olmadığını config bilemez (bkz.
+// [Config.NotificationProvider]). Boş bir değer REDDEDİLİR — envDefault
+// yüzünden ancak "NOTIFICATION_PROVIDER=" yazılarak üretilebilir ve o hâlde
+// sağlayıcı kaydında boş kimlik aranırdı; kimse boş kimlikle kayıt yapamayacağı
+// için sonuç, her siparişte hata dönen bir bildirim yolu olurdu.
+//
+// Baştaki/sondaki boşluk da reddedilir. Ortam dosyalarında bu, gözle
+// görülmeyen ve en sık yapılan hatadır; sessizce kırpmak da yanlış olurdu:
+// operatörün yazdığı değer ile sistemin kullandığı değer ayrışır ve bir sonraki
+// yazım hatası (örn. iki kelimelik bir ad) yine sessizce başka bir sonuç
+// verirdi.
+func (c Config) validateNotificationProvider() error {
+	if c.NotificationProvider == "" {
+		return fmt.Errorf("config: NOTIFICATION_PROVIDER boş olamaz (varsayılan: %q)",
+			DefaultNotificationProvider)
+	}
+	if strings.TrimSpace(c.NotificationProvider) != c.NotificationProvider {
+		return fmt.Errorf("config: NOTIFICATION_PROVIDER %q baştaki/sondaki boşluk içeremez",
+			c.NotificationProvider)
 	}
 	return nil
 }

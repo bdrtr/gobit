@@ -16,6 +16,8 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/auth"
 	authsvc "github.com/bdrtr/gobit/internal/modules/auth/service"
 	"github.com/bdrtr/gobit/internal/modules/fulfillment"
+	"github.com/bdrtr/gobit/internal/modules/notification"
+	"github.com/bdrtr/gobit/internal/modules/notification/logonly"
 	"github.com/bdrtr/gobit/internal/modules/payment"
 	productsvc "github.com/bdrtr/gobit/internal/modules/product/service"
 )
@@ -32,6 +34,11 @@ import (
 // Bu test, o bağı DERLEME zamanına taşır. Burada yaşamasının nedeni,
 // arch paketinin test-only olması ve hem çekirdeği hem modülleri import
 // edebilmesidir; çekirdeğin kendisi bu testi barındıramazdı.
+//
+// Bildirim iddiasının bedeli diğerlerinden FARKLIDIR ve daha sessizdir: ödeme
+// ayrışırsa müşteri ödeyemez ve bunu hemen söyler, bildirim ayrışırsa eklenti
+// sağlayıcısı hiç kaydedilemez ve kurulum sipariş onaylarını yalnızca loga
+// yazmaya devam eder — hiç hata üretmeden.
 func TestSaglayiciKayitAdlariUyusuyor(t *testing.T) {
 	t.Parallel()
 
@@ -39,6 +46,30 @@ func TestSaglayiciKayitAdlariUyusuyor(t *testing.T) {
 		"eklenti paketindeki ödeme sağlayıcı kayıt adı payment modülüyle aynı olmalı")
 	assert.Equal(t, fulfillment.ProvidersName, coreplugin.FulfillmentProvidersName,
 		"eklenti paketindeki kargo sağlayıcı kayıt adı fulfillment modülüyle aynı olmalı")
+	assert.Equal(t, notification.ProvidersName, coreplugin.NotificationProvidersName,
+		"eklenti paketindeki bildirim sağlayıcı kayıt adı notification modülüyle aynı olmalı")
+}
+
+// TestBildirimVarsayilanSaglayicisiConfigleUyusuyor config'in varsayılan
+// sağlayıcı adının GERÇEKTEN kayıtlı bir sağlayıcıya karşılık geldiğini
+// doğrular.
+//
+// İki sabit iki ayrı pakette yaşar ve aralarında derleyici bağı YOKTUR:
+// çekirdek modülleri import edemez (Prensip 2.4), bu yüzden
+// [config.DefaultNotificationProvider] logonly.ID'ye bağlanamaz ve değeri elle
+// tekrarlar.
+//
+// Ayrışmanın bedeli, hiçbir ortam değişkeni verilmemiş bir kurulumun AÇILMAMASI
+// olurdu: cmd/server, seçili sağlayıcıyı kayıtta bulamayınca açılışı durdurur.
+// Yani ayrışma sessiz değil, ama en kötü anda — hiçbir şeyi yapılandırmamış
+// birinin ilk denemesinde — patlardı.
+func TestBildirimVarsayilanSaglayicisiConfigleUyusuyor(t *testing.T) {
+	t.Parallel()
+
+	assert.Equal(t, logonly.ID, config.DefaultNotificationProvider,
+		"config'in varsayılan bildirim sağlayıcısı, modülün kutudan çıkan sağlayıcısı olmalı")
+	assert.Equal(t, logonly.ID, notification.DefaultProviderID,
+		"modülün varsayılanı da aynı sağlayıcı olmalı")
 }
 
 // TestSatisKanaliEntityAdiUyusuyor product'ın link tanımına yazdığı satış

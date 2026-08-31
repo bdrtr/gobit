@@ -39,6 +39,7 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/customer"
 	"github.com/bdrtr/gobit/internal/modules/fulfillment"
 	"github.com/bdrtr/gobit/internal/modules/inventory"
+	"github.com/bdrtr/gobit/internal/modules/notification"
 	"github.com/bdrtr/gobit/internal/modules/order"
 	"github.com/bdrtr/gobit/internal/modules/payment"
 	"github.com/bdrtr/gobit/internal/modules/pricing"
@@ -217,6 +218,15 @@ func run() error {
 	registry.Add(fulfillment.New())
 	registry.Add(promotion.New(log))
 	registry.Add(tax.New(log))
+	// Bildirim. "order.placed" olayının İLK gerçek tüketicisidir; sipariş
+	// modülüne bağlanmaz, olayı dinler ve iletişim bilgisini "order.interop"
+	// yüzeyinden okur. Hangi sağlayıcının kullanılacağını yapılandırma seçer;
+	// adın kayıtlı olduğu, eklentiler de yüklendikten SONRA denetlenir
+	// (bkz. bildirimSaglayicisiniDogrula).
+	registry.Add(notification.New(notification.Options{
+		ProviderID: cfg.NotificationProvider,
+		Logger:     log,
+	}))
 	// Faz 8: kimlik. Diğer modüllerden bağımsızdır; yalnızca çekirdek havuzunu
 	// ister ve karşılığında koruma middleware'inin ihtiyacı olan doğrulayıcıyı
 	// container'a bırakır.
@@ -274,6 +284,13 @@ func run() error {
 	if err := eklentiler.Start(ctx, host); err != nil {
 		return err
 	}
+	// Bildirim sağlayıcısı ancak BURADA denetlenebilir: eklentilerin getirdiği
+	// sağlayıcılar Start sırasında kaydedilir ve modül Register edilirken kayıt
+	// yalnızca kutudan çıkan sağlayıcıyı içerir.
+	if err := bildirimSaglayicisiniDogrula(c, cfg.NotificationProvider); err != nil {
+		return err
+	}
+
 	// Mevcut bir yolu gölgeleyen eklenti route'u AÇILIŞI DURDURUR. Hatayı
 	// yutmak, modül ucunun sessizce eklenti tarafından ele geçirildiği ya da
 	// eklentinin hiç bağlanmadığı bir kurulumla çalışmaya devam etmek olurdu;

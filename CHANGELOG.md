@@ -12,6 +12,25 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Eklendi
 
+- **`NotificationProvider` ve `notification` modülü.** Plan Bölüm 5.6 DÖRT
+  sağlayıcı soyutlaması sayıyor (payment, fulfillment, notification, file);
+  kodda yalnızca ikisi vardı. Bu iş üçüncüsünü kapatır ve aynı anda ikinci bir
+  boşluğu da: `order.placed` yayımlanıyordu ama **tek abonesi yoktu** — arama
+  eklentisi ürün olaylarını dinliyor, sipariş olaylarını değil. Bildirim, o
+  olayın ilk gerçek tüketicisi.
+  Varsayılan sağlayıcı `log`'dur ve **gerçekten göndermediğini söyler**: WARN
+  seviyesinde "bildirim GÖNDERİLMEDİ" yazar, alıcıyı loglamaz ve şablon
+  verisinin değerlerini değil yalnızca anahtarlarını basar. Sessiz bir "gitti"
+  yalanı, sipariş onayının müşteriye ulaştığını sanmak demek olurdu.
+  Bilinmeyen bir `NOTIFICATION_PROVIDER` adı açılışı durdurur.
+  Teslim günlüğü **alıcı adresini saklamaz**: e-posta zaten sipariş kaydında
+  duruyor ve ikinci bir kopya, silinmesi gereken yerlerin sayısını artırırdı.
+  `(şablon, referans)` benzersizdir — aynı sipariş için iki kez bildirim
+  gitmez.
+  Abone e-postayı **olaydan değil kayıttan** okur (olay yükü kalıcı akışa PII
+  koymaz); bunun için `order.interop` dar bir okuma yüzeyi açtı
+  (`OrderContactJSON`). Uçtan uca test tam olarak bu ayrımı çiviler.
+
 - **Smoke testleri: gerçek süreç, gerçek migration, gerçek sinyal.**
   Birim + entegrasyon testleri (~%76 kapsam) ve lint TEMİZ geçerken uygulama
   elle çalıştırıldığında dört arıza çıkmıştı; dördü de `main.go`'nun

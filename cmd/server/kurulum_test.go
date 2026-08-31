@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"testing"
 	"time"
 
@@ -14,10 +15,13 @@ import (
 	"log/slog"
 
 	"github.com/bdrtr/gobit/internal/core/config"
+	"github.com/bdrtr/gobit/internal/core/container"
 	"github.com/bdrtr/gobit/internal/core/errors"
 	corehttp "github.com/bdrtr/gobit/internal/core/http"
+	coreprovider "github.com/bdrtr/gobit/internal/core/provider"
 	authmodels "github.com/bdrtr/gobit/internal/modules/auth/models"
 	authservice "github.com/bdrtr/gobit/internal/modules/auth/service"
+	"github.com/bdrtr/gobit/internal/modules/notification"
 	"github.com/bdrtr/gobit/plugins/paymentstripe"
 )
 
@@ -484,4 +488,85 @@ func TestTohumlaYoneticiCakismaDisindakiHatayiYutmaz(t *testing.T) {
 			assert.Contains(t, err.Error(), "ilk yönetici oluşturulamadı")
 		})
 	}
+}
+
+// sahteBildirimKaydi bildirim sağlayıcı kaydının test karşılığıdır.
+//
+// Gerçek kaydı (notification/service.ProviderRegistry) kurmak da mümkündü ama
+// yanlış olurdu: denetlenen şey KURULUMUN davranışıdır — bilinmeyen bir adı
+// nasıl karşıladığı — ve o davranış, kaydın somut tipinden bağımsızdır.
+// Sahte, kurulumun dar arayüzünü karşılar.
+type sahteBildirimKaydi struct {
+	kimlikler []string
+}
+
+func (s *sahteBildirimKaydi) Get(id string) (coreprovider.NotificationProvider, error) {
+	if slices.Contains(s.kimlikler, id) {
+		return nil, nil //nolint:nilnil // kurulum yalnızca HATAYA bakar, sağlayıcıyı kullanmaz
+	}
+
+	return nil, errors.NotFound("notification_provider_not_found",
+		"%q bildirim sağlayıcısı kayıtlı değil", id)
+}
+
+func (s *sahteBildirimKaydi) IDs() []string { return s.kimlikler }
+
+// bildirimContainer verilen kayıtla dolu bir container üretir.
+func bildirimContainer(t *testing.T, kayit *sahteBildirimKaydi) *container.Container {
+	t.Helper()
+
+	c := container.New(slogYut())
+	require.NoError(t, c.Provide(notification.ProvidersName, kayit))
+
+	return c
+}
+
+// TestBildirimSaglayicisiBilinmeyenAdiReddeder yanlış yapılandırılmış bir
+// kurulumun AÇILMADIĞINI doğrular.
+//
+// Sessizce varsayılana ("log") düşmek en kötü seçenekti: kurulum açılır,
+// hiçbir hata görünmez ve sipariş onayları yalnızca loga yazılır — arıza
+// ancak müşteriler onay beklerken, genellikle günler sonra fark edilir.
+func TestBildirimSaglayicisiBilinmeyenAdiReddeder(t *testing.T) {
+	t.Parallel()
+
+	c := bildirimContainer(t, &sahteBildirimKaydi{kimlikler: []string{"log"}})
+
+	err := bildirimSaglayicisiniDogrula(c, "sendgrid")
+
+	require.Error(t, err, "bilinmeyen sağlayıcı adı açılışı DURDURMALI")
+	assert.Equal(t, codeUnknownNotificationProvider, errors.CodeOf(err))
+	assert.Contains(t, err.Error(), "sendgrid", "reddedilen ad yazılmalı")
+	assert.Contains(t, err.Error(), "log", "kayıtlı adlar yazılmalı ki yazım hatası görünsün")
+	assert.Contains(t, err.Error(), "PLUGINS",
+		"eklentiden gelen bir adı unutan operatöre yol gösterilmeli")
+}
+
+// TestBildirimSaglayicisiKayitliAdiKabulEder eklentiden gelen bir adın
+// geçtiğini doğrular.
+//
+// Denetim Start'tan SONRA çalışır; daha erken bir kapı, eklentiden gelen
+// GEÇERLİ bir adı "bilinmiyor" diye reddederdi.
+func TestBildirimSaglayicisiKayitliAdiKabulEder(t *testing.T) {
+	t.Parallel()
+
+	c := bildirimContainer(t, &sahteBildirimKaydi{kimlikler: []string{"log", "sendgrid"}})
+
+	assert.NoError(t, bildirimSaglayicisiniDogrula(c, "sendgrid"))
+	assert.NoError(t, bildirimSaglayicisiniDogrula(c, config.DefaultNotificationProvider))
+}
+
+// TestBildirimSaglayicisiKayitYoksaDurur notification modülü hiç kurulmamışsa
+// açılışın sessizce devam etmediğini doğrular.
+//
+// Kayıt yoksa hiçbir bildirim gönderilemez; "sağlayıcı seçtim" diyen bir
+// yapılandırmayla açılmak, olmayan bir yeteneği varmış gibi göstermek olurdu.
+func TestBildirimSaglayicisiKayitYoksaDurur(t *testing.T) {
+	t.Parallel()
+
+	err := bildirimSaglayicisiniDogrula(container.New(slogYut()), "log")
+
+	require.Error(t, err)
+	assert.Equal(t, codeUnknownNotificationProvider, errors.CodeOf(err))
+	assert.Contains(t, err.Error(), notification.ProvidersName)
 }

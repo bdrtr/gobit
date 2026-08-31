@@ -91,6 +91,9 @@ linters:
               desc: "Prensip 2.1/2.4 - product modulu region moduluna dogrudan bagimli olamaz; erisim container uzerinden servis interface ile yapilir."
             - pkg: "github.com/bdrtr/gobit/internal/modules/auth"
               desc: "Prensip 2.1/2.4 - product modulu auth moduluna dogrudan bagimli olamaz; erisim container uzerinden servis interface ile yapilir."
+            - pkg: "github.com/bdrtr/gobit/internal/modules/notification"
+              desc: "Prensip 2.1/2.4 - product modulu notification moduluna dogrudan bagimli olamaz; erisim container uzerinden servis interface ile yapilir."
+
         modul-izolasyonu-pricing:
           files:
             - "**/internal/modules/pricing/**"
@@ -117,6 +120,9 @@ linters:
               desc: "Prensip 2.1/2.4 - pricing modulu region moduluna dogrudan bagimli olamaz; erisim container uzerinden servis interface ile yapilir."
             - pkg: "github.com/bdrtr/gobit/internal/modules/auth"
               desc: "Prensip 2.1/2.4 - pricing modulu auth moduluna dogrudan bagimli olamaz; erisim container uzerinden servis interface ile yapilir."
+            - pkg: "github.com/bdrtr/gobit/internal/modules/notification"
+              desc: "Prensip 2.1/2.4 - pricing modulu notification moduluna dogrudan bagimli olamaz; erisim container uzerinden servis interface ile yapilir."
+
         modul-izolasyonu-inventory:
           files:
             - "**/internal/modules/inventory/**"
@@ -143,6 +149,9 @@ linters:
               desc: "Prensip 2.1/2.4 - inventory modulu region moduluna dogrudan bagimli olamaz; erisim container uzerinden servis interface ile yapilir."
             - pkg: "github.com/bdrtr/gobit/internal/modules/auth"
               desc: "Prensip 2.1/2.4 - inventory modulu auth moduluna dogrudan bagimli olamaz; erisim container uzerinden servis interface ile yapilir."
+            - pkg: "github.com/bdrtr/gobit/internal/modules/notification"
+              desc: "Prensip 2.1/2.4 - inventory modulu notification moduluna dogrudan bagimli olamaz; erisim container uzerinden servis interface ile yapilir."
+
         modul-izolasyonu-cart:
           files:
             - "**/internal/modules/cart/**"
@@ -169,6 +178,9 @@ linters:
               desc: "Prensip 2.1/2.4 - cart modulu region moduluna dogrudan bagimli olamaz; erisim container uzerinden servis interface ile yapilir."
             - pkg: "github.com/bdrtr/gobit/internal/modules/auth"
               desc: "Prensip 2.1/2.4 - cart modulu auth moduluna dogrudan bagimli olamaz; erisim container uzerinden servis interface ile yapilir."
+            - pkg: "github.com/bdrtr/gobit/internal/modules/notification"
+              desc: "Prensip 2.1/2.4 - cart modulu notification moduluna dogrudan bagimli olamaz; erisim container uzerinden servis interface ile yapilir."
+
         modul-izolasyonu-order:
           files:
             - "**/internal/modules/order/**"
@@ -195,6 +207,9 @@ linters:
               desc: "Prensip 2.1/2.4 - order modulu region moduluna dogrudan bagimli olamaz; erisim container uzerinden servis interface ile yapilir."
             - pkg: "github.com/bdrtr/gobit/internal/modules/auth"
               desc: "Prensip 2.1/2.4 - order modulu auth moduluna dogrudan bagimli olamaz; erisim container uzerinden servis interface ile yapilir."
+            - pkg: "github.com/bdrtr/gobit/internal/modules/notification"
+              desc: "Prensip 2.1/2.4 - order modulu notification moduluna dogrudan bagimli olamaz; erisim container uzerinden servis interface ile yapilir."
+
         modul-izolasyonu-payment:
           files:
             - "**/internal/modules/payment/**"
@@ -221,6 +236,9 @@ linters:
               desc: "Prensip 2.1/2.4 - payment modulu region moduluna dogrudan bagimli olamaz; erisim container uzerinden servis interface ile yapilir."
             - pkg: "github.com/bdrtr/gobit/internal/modules/auth"
               desc: "Prensip 2.1/2.4 - payment modulu auth moduluna dogrudan bagimli olamaz; erisim container uzerinden servis interface ile yapilir."
+            - pkg: "github.com/bdrtr/gobit/internal/modules/notification"
+              desc: "Prensip 2.1/2.4 - payment modulu notification moduluna dogrudan bagimli olamaz; erisim container uzerinden servis interface ile yapilir."
+
         modul-izolasyonu-fulfillment:
           files:
             - "**/internal/modules/fulfillment/**"
@@ -247,6 +265,9 @@ linters:
               desc: "Prensip 2.1/2.4 - fulfillment modulu region moduluna dogrudan bagimli olamaz; erisim container uzerinden servis interface ile yapilir."
             - pkg: "github.com/bdrtr/gobit/internal/modules/auth"
               desc: "Prensip 2.1/2.4 - fulfillment modulu auth moduluna dogrudan bagimli olamaz; erisim container uzerinden servis interface ile yapilir."
+            - pkg: "github.com/bdrtr/gobit/internal/modules/notification"
+              desc: "Prensip 2.1/2.4 - fulfillment modulu notification moduluna dogrudan bagimli olamaz; erisim container uzerinden servis interface ile yapilir."
+
         modul-izolasyonu-customer:
           files:
             - "**/internal/modules/customer/**"
@@ -273,6 +294,9 @@ linters:
               desc: "Prensip 2.1/2.4 - customer modulu region moduluna dogrudan bagimli olamaz; erisim container uzerinden servis interface ile yapilir."
             - pkg: "github.com/bdrtr/gobit/internal/modules/auth"
               desc: "Prensip 2.1/2.4 - customer modulu auth moduluna dogrudan bagimli olamaz; erisim container uzerinden servis interface ile yapilir."
+            - pkg: "github.com/bdrtr/gobit/internal/modules/notification"
+              desc: "Prensip 2.1/2.4 - customer modulu notification moduluna dogrudan bagimli olamaz; erisim container uzerinden servis interface ile yapilir."
+
         modul-izolasyonu-promotion:
           files:
             - "**/internal/modules/promotion/**"
@@ -299,6 +323,9 @@ linters:
               desc: "Prensip 2.1/2.4 - promotion modulu region moduluna dogrudan bagimli olamaz; erisim container uzerinden servis interface ile yapilir."
             - pkg: "github.com/bdrtr/gobit/internal/modules/auth"
               desc: "Prensip 2.1/2.4 - promotion modulu auth moduluna dogrudan bagimli olamaz; erisim container uzerinden servis interface ile yapilir."
+            - pkg: "github.com/bdrtr/gobit/internal/modules/notification"
+              desc: "Prensip 2.1/2.4 - promotion modulu notification moduluna dogrudan bagimli olamaz; erisim container uzerinden servis interface ile yapilir."
+
         modul-izolasyonu-tax:
           files:
             - "**/internal/modules/tax/**"
@@ -325,6 +352,9 @@ linters:
               desc: "Prensip 2.1/2.4 - tax modulu region moduluna dogrudan bagimli olamaz; erisim container uzerinden servis interface ile yapilir."
             - pkg: "github.com/bdrtr/gobit/internal/modules/auth"
               desc: "Prensip 2.1/2.4 - tax modulu auth moduluna dogrudan bagimli olamaz; erisim container uzerinden servis interface ile yapilir."
+            - pkg: "github.com/bdrtr/gobit/internal/modules/notification"
+              desc: "Prensip 2.1/2.4 - tax modulu notification moduluna dogrudan bagimli olamaz; erisim container uzerinden servis interface ile yapilir."
+
         modul-izolasyonu-region:
           files:
             - "**/internal/modules/region/**"
@@ -351,6 +381,9 @@ linters:
               desc: "Prensip 2.1/2.4 - region modulu tax moduluna dogrudan bagimli olamaz; erisim container uzerinden servis interface ile yapilir."
             - pkg: "github.com/bdrtr/gobit/internal/modules/auth"
               desc: "Prensip 2.1/2.4 - region modulu auth moduluna dogrudan bagimli olamaz; erisim container uzerinden servis interface ile yapilir."
+            - pkg: "github.com/bdrtr/gobit/internal/modules/notification"
+              desc: "Prensip 2.1/2.4 - region modulu notification moduluna dogrudan bagimli olamaz; erisim container uzerinden servis interface ile yapilir."
+
         modul-izolasyonu-auth:
           files:
             - "**/internal/modules/auth/**"
@@ -377,6 +410,37 @@ linters:
               desc: "Prensip 2.1/2.4 - auth modulu tax moduluna dogrudan bagimli olamaz; erisim container uzerinden servis interface ile yapilir."
             - pkg: "github.com/bdrtr/gobit/internal/modules/region"
               desc: "Prensip 2.1/2.4 - auth modulu region moduluna dogrudan bagimli olamaz; erisim container uzerinden servis interface ile yapilir."
+            - pkg: "github.com/bdrtr/gobit/internal/modules/notification"
+              desc: "Prensip 2.1/2.4 - auth modulu notification moduluna dogrudan bagimli olamaz; erisim container uzerinden servis interface ile yapilir."
+
+        modul-izolasyonu-notification:
+          files:
+            - "**/internal/modules/notification/**"
+          deny:
+            - pkg: "github.com/bdrtr/gobit/internal/modules/product"
+              desc: "Prensip 2.1/2.4 - notification modulu product moduluna dogrudan bagimli olamaz; erisim container uzerinden servis interface ile yapilir."
+            - pkg: "github.com/bdrtr/gobit/internal/modules/pricing"
+              desc: "Prensip 2.1/2.4 - notification modulu pricing moduluna dogrudan bagimli olamaz; erisim container uzerinden servis interface ile yapilir."
+            - pkg: "github.com/bdrtr/gobit/internal/modules/inventory"
+              desc: "Prensip 2.1/2.4 - notification modulu inventory moduluna dogrudan bagimli olamaz; erisim container uzerinden servis interface ile yapilir."
+            - pkg: "github.com/bdrtr/gobit/internal/modules/cart"
+              desc: "Prensip 2.1/2.4 - notification modulu cart moduluna dogrudan bagimli olamaz; erisim container uzerinden servis interface ile yapilir."
+            - pkg: "github.com/bdrtr/gobit/internal/modules/order"
+              desc: "Prensip 2.1/2.4 - notification modulu order moduluna dogrudan bagimli olamaz; erisim container uzerinden servis interface ile yapilir."
+            - pkg: "github.com/bdrtr/gobit/internal/modules/payment"
+              desc: "Prensip 2.1/2.4 - notification modulu payment moduluna dogrudan bagimli olamaz; erisim container uzerinden servis interface ile yapilir."
+            - pkg: "github.com/bdrtr/gobit/internal/modules/fulfillment"
+              desc: "Prensip 2.1/2.4 - notification modulu fulfillment moduluna dogrudan bagimli olamaz; erisim container uzerinden servis interface ile yapilir."
+            - pkg: "github.com/bdrtr/gobit/internal/modules/customer"
+              desc: "Prensip 2.1/2.4 - notification modulu customer moduluna dogrudan bagimli olamaz; erisim container uzerinden servis interface ile yapilir."
+            - pkg: "github.com/bdrtr/gobit/internal/modules/promotion"
+              desc: "Prensip 2.1/2.4 - notification modulu promotion moduluna dogrudan bagimli olamaz; erisim container uzerinden servis interface ile yapilir."
+            - pkg: "github.com/bdrtr/gobit/internal/modules/tax"
+              desc: "Prensip 2.1/2.4 - notification modulu tax moduluna dogrudan bagimli olamaz; erisim container uzerinden servis interface ile yapilir."
+            - pkg: "github.com/bdrtr/gobit/internal/modules/region"
+              desc: "Prensip 2.1/2.4 - notification modulu region moduluna dogrudan bagimli olamaz; erisim container uzerinden servis interface ile yapilir."
+            - pkg: "github.com/bdrtr/gobit/internal/modules/auth"
+              desc: "Prensip 2.1/2.4 - notification modulu auth moduluna dogrudan bagimli olamaz; erisim container uzerinden servis interface ile yapilir."
 
   exclusions:
     generated: lax

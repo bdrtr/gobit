@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"strconv"
 
 	"github.com/bdrtr/gobit/internal/core/errors"
 )
@@ -21,6 +22,20 @@ import (
 //	type OrderPlacer interface {
 //	    PlaceOrderJSON(ctx context.Context, snapshot json.RawMessage) (string, error)
 //	    CancelOrder(ctx context.Context, orderID, reason string) error
+//	}
+//
+// [Interop.CompleteOrder] o arayüzde BİLİNÇLİ OLARAK yoktur: tamamlanmış bir
+// sipariş iptal edilemez, yani saga onu çağırdığı anda kendi telafisini
+// imkânsız kılardı (gerekçe tüketici tarafında da yazılıdır).
+//
+// Yüzeyin İKİNCİ tüketicisi "order.placed" olayına abone olan BİLDİRİM
+// tarafıdır ve o yalnızca OKUR. Olayın yükü bilinçli olarak dardır ve kişisel
+// veri TAŞIMAZ (gerekçe: [EventFieldTotal] üzerindeki blok); abone gönderim
+// için gereken e-postayı olaydan alamaz, elindeki order_id ile siparişi
+// okuması gerekir. O da kendi dar arayüzünü kendi paketinde tanımlar:
+//
+//	type OrderContactReader interface {
+//	    OrderContactJSON(ctx context.Context, orderID string) (json.RawMessage, error)
 //	}
 //
 // Bileşik veri (sepetin anlık görüntüsü) JSON olarak taşınır. Alan adları
@@ -190,4 +205,84 @@ func (i *Interop) CancelOrder(ctx context.Context, orderID, reason string) error
 func (i *Interop) CompleteOrder(ctx context.Context, orderID string) error {
 	_, err := i.svc.CompleteOrder(ctx, orderID)
 	return err
+}
+
+// interopContact bildirim gönderecek abonenin siparişten okuduğu alanların
+// JSON şemasıdır.
+//
+// # Şema
+//
+//	{
+//	  "order_id":      "order_01H…",
+//	  "display_id":    "1042",       // ondalıksız DİZE
+//	  "email":         "a@b.com",    // BOŞ olabilir
+//	  "currency_code": "TRY",
+//	  "total":         "6100",       // minor unit, ondalıksız DİZE
+//	  "item_count":    "2"           // ondalıksız DİZE
+//	}
+//
+// # Neden TÜM değerler dize
+//
+// Alan adları ve tipleri "order.placed" olayının yüküyle BİREBİR aynıdır
+// (bkz. [EventFieldOrderID] ve devamı). Abone iki kaynağı yan yana kullanır:
+// olaydan order_id'yi alır, gerisini buradan okur. İkisi farklı tip
+// kullansaydı — olayda dize, burada tam sayı — abone aynı alanı iki ayrı
+// biçimde çözmek zorunda kalır ve tutar bir tarafta float64'e uğrardı
+// (plan Bölüm 8: float ASLA). Tek biçim, aboneyi tek bir okuma kuralına
+// bağlar.
+//
+// # Neden yalnızca bu alanlar
+//
+// Şablonun doldurabilmesi için gereken en küçük küme budur: kime (email),
+// hangi sipariş (order_id, display_id) ve ne kadar (total, currency_code,
+// item_count). Siparişin tamamını — satırları, adresi, özeti — dönmek yüzeyi
+// bir daha daraltılamayacak geniş bir sözleşmeye çevirirdi: sözleşmeye giren
+// alan, tüketicisi olmasa bile bir daha çıkarılamaz.
+type interopContact struct {
+	OrderID      string `json:"order_id"`
+	DisplayID    string `json:"display_id"`
+	Email        string `json:"email"`
+	CurrencyCode string `json:"currency_code"`
+	Total        string `json:"total"`
+	ItemCount    string `json:"item_count"`
+}
+
+// OrderContactJSON siparişin bildirim için gereken alanlarını döner.
+//
+// Şema [interopContact] belgesinde tanımlıdır ve TÜM değerleri dizedir.
+// Sipariş yoksa (ya da yumuşak silinmişse) errors.NotFound döner; kimlik boşsa
+// errors.Invalid.
+//
+// # E-postası olmayan sipariş HATA DEĞİLDİR
+//
+// Email opsiyoneldir (bkz. [CreateOrderInput.Email]): yönetim tarafından
+// açılan bir sipariş adressiz olabilir. Böyle bir siparişte alan BOŞ DİZE
+// olarak döner, çağrı BAŞARILIDIR ve "email" anahtarı yine gövdededir.
+//
+// Alternatif — adressiz siparişte hata dönmek — iki yerde yanlış olurdu.
+// Birincisi bu yüzey bir OKUMADIR: kaydın ne olduğunu bildirir, kaydın ne
+// olması gerektiğine karar vermez; adressiz sipariş geçerli bir kayıttır.
+// İkincisi ve asıl olanı, tüketicinin hatayı nasıl karşılayacağıdır: abone
+// için "gönderilecek adres yok" KALICI bir durumdur ve atlanmalıdır, oysa
+// hata dönmek onu yeniden denenecek bir arızadan ayırt edilemez hâle
+// getirirdi — abone ya adressiz her siparişi sonsuza dek yeniden dener ya da
+// gerçek arızaları da sessizce yutardı. Boş dize, tek bir kontrolle
+// ayrılabilen kesin bir cevaptır.
+//
+// Okuma [Service.GetOrder] ile yapılır: satır sayısı ve sipariş başlığı AYNI
+// anlık görüntüden gelir, dolayısıyla item_count her zaman dönen tutarın ait
+// olduğu siparişin satır sayısıdır.
+func (i *Interop) OrderContactJSON(ctx context.Context, orderID string) (json.RawMessage, error) {
+	detay, err := i.svc.GetOrder(ctx, orderID)
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(interopContact{
+		OrderID:      detay.ID,
+		DisplayID:    strconv.FormatInt(detay.DisplayID, 10),
+		Email:        detay.Email,
+		CurrencyCode: detay.CurrencyCode,
+		Total:        strconv.FormatInt(detay.Total, 10),
+		ItemCount:    strconv.Itoa(len(detay.Items)),
+	})
 }

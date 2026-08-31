@@ -23,8 +23,10 @@
 // # Dışarıya açtığı yüzeyler
 //
 //   - "order.service" — modül içi kullanım ve zengin tiplerle okuma.
-//   - "order.interop" — saga'nın kullandığı İLKEL yüzey (ADR 0006).
-//     complete_cart siparişi buradan açar ve telafide buradan iptal eder.
+//   - "order.interop" — saga'nın ve "order.placed" abonelerinin kullandığı
+//     İLKEL yüzey (ADR 0006). complete_cart siparişi buradan açar ve telafide
+//     buradan iptal eder; bildirim tarafı, olayda BULUNMAYAN e-postayı
+//     [service.Interop.OrderContactJSON] ile buradan okur.
 //   - "order.query" — Query katmanına açılan okuma sağlayıcısı (ADR 0004).
 //   - /admin/v1/orders … — yönetim API'si (okuma + durum geçişleri).
 //   - /store/v1/orders/{id} — müşteri API'si (YALNIZCA okuma).

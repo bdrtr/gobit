@@ -15,6 +15,7 @@ package order_test
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"strconv"
@@ -809,4 +810,92 @@ func TestOzetTutarlariGercekVeritabaninda(t *testing.T) {
 		`UPDATE order_summaries SET refunded_total = paid_total + 1 WHERE order_id = $1`, siparis.ID)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "order_summaries_refund_within_paid")
+}
+
+// TestOrderContactJSONOlayAbonesineEpostayiAcar bildirim yolunu uçtan uca
+// doğrular: olay gerçek veri yolundan gelir, e-posta gerçek veritabanından
+// okunur.
+//
+// Kanıtlanan şey iki parçanın BİRLİKTE çalışmasıdır. "order.placed" yükü
+// kişisel veri taşımaz, dolayısıyla bildirim gönderecek abone e-postayı
+// olaydan ALAMAZ; elindeki tek şey order_id'dir ve siparişi OKUMASI gerekir.
+// Birim testi yüzeyin şemasını sahte depo üzerinde kanıtlar; burada sınanan,
+// abonenin gerçekten o kimlikle gerçek kaydı bulabildiğidir.
+func TestOrderContactJSONOlayAbonesineEpostayiAcar(t *testing.T) {
+	ctx := context.Background()
+	svc, bus := yeniServis(t)
+	interop := service.NewInterop(svc)
+
+	teslim := make(chan eventbus.Event, 1)
+	require.NoError(t, bus.Subscribe(service.EventOrderPlaced, func(_ context.Context, e eventbus.Event) error {
+		teslim <- e
+		return nil
+	}))
+
+	in := gecerliGirdi()
+	in.Items = append(in.Items, service.CreateOrderItemInput{
+		VariantID: "variant_B", Title: "Mavi Kupa",
+		Quantity: 1, UnitPrice: 500, Subtotal: 500, TaxTotal: 100, Total: 600,
+	})
+	in.Subtotal = 3500
+	in.TaxTotal = 700
+	in.Total = 6700
+	siparis, err := svc.CreateOrder(ctx, in)
+	require.NoError(t, err)
+
+	var olay eventbus.Event
+	select {
+	case olay = <-teslim:
+	case <-time.After(5 * time.Second):
+		t.Fatal("order.placed olayı aboneye teslim edilmedi")
+	}
+	require.NotContains(t, olay.Data, "email", "olay kişisel veri TAŞIMAMALI")
+
+	siparisID, ok := olay.Data[service.EventFieldOrderID].(string)
+	require.True(t, ok, "order_id dize olarak taşınmalı")
+
+	govde, err := interop.OrderContactJSON(ctx, siparisID)
+	require.NoError(t, err)
+
+	// map[string]string sözleşmenin kendisini sınar: bir alan sayı olarak
+	// yazılsaydı çözümleme burada düşerdi.
+	var alanlar map[string]string
+	require.NoError(t, json.Unmarshal(govde, &alanlar))
+
+	assert.Equal(t, map[string]string{
+		"order_id":      siparis.ID,
+		"display_id":    strconv.FormatInt(siparis.DisplayID, 10),
+		"email":         "musteri@ornek.com",
+		"currency_code": testCurrency,
+		"total":         "6700",
+		"item_count":    "2",
+	}, alanlar)
+
+	// Olayın taşıdığı alanlar yüzeyle AYNI adı ve AYNI değeri taşımalı; abone
+	// ikisini yan yana kullanır.
+	for _, alan := range []string{
+		service.EventFieldDisplayID,
+		service.EventFieldCurrencyCode,
+		service.EventFieldTotal,
+		service.EventFieldItemCount,
+	} {
+		assert.Equal(t, olay.Data[alan], alanlar[alan], "%q alanı olayla ayrışmamalı", alan)
+	}
+}
+
+// TestOrderContactJSONOlmayanSipariste gerçek veritabanında da NotFound
+// döndüğünü doğrular.
+//
+// Abonenin elindeki kimlik silinmiş ya da hiç yazılmamış olabilir; ayrımın
+// hata TÜRÜYLE yapılabilmesi, bildirim tarafının "atla" ile "yeniden dene"yi
+// ayırmasının tek yoludur.
+func TestOrderContactJSONOlmayanSipariste(t *testing.T) {
+	ctx := context.Background()
+	svc, _ := yeniServis(t)
+	interop := service.NewInterop(svc)
+
+	_, err := interop.OrderContactJSON(ctx, "order_OLMAYAN")
+
+	require.Error(t, err)
+	assert.True(t, errors.IsNotFound(err), "aldığı: %v", err)
 }

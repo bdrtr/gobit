@@ -3,6 +3,7 @@ package service_test
 import (
 	"context"
 	"encoding/json"
+	"strconv"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -198,4 +199,128 @@ func TestInteropCompleteOrderTelafiDegildir(t *testing.T) {
 
 	require.Error(t, err)
 	assert.Equal(t, errors.KindConflict, errors.KindOf(err))
+}
+
+// TestOrderContactJSONAlanlariDoldurur bildirim yüzeyinin şemasını ve
+// değerlerini doğrular.
+//
+// Gövde map[string]string içine çözülür: bu, "TÜM değerler dizedir"
+// sözleşmesinin tek kanıtıdır. Alanlardan biri sayı olarak yazılsaydı çözümleme
+// burada DÜŞERDİ; hedef tipe map[string]any dense aynı kayma sessizce geçerdi.
+func TestOrderContactJSONAlanlariDoldurur(t *testing.T) {
+	ctx := context.Background()
+	o := yeniOrtam(t)
+	interop := service.NewInterop(o.svc)
+
+	in := gecerliGirdi()
+	in.Items = append(in.Items, service.CreateOrderItemInput{
+		VariantID: "variant_IKINCI", Title: "Mavi Kupa",
+		Quantity: 1, UnitPrice: 500, Subtotal: 500, TaxTotal: 100, Total: 600,
+	})
+	in.Subtotal = 3500
+	in.TaxTotal = 700
+	in.Total = 6700
+	siparis, err := o.svc.CreateOrder(ctx, in)
+	require.NoError(t, err)
+
+	govde, err := interop.OrderContactJSON(ctx, siparis.ID)
+	require.NoError(t, err)
+
+	var alanlar map[string]string
+	require.NoError(t, json.Unmarshal(govde, &alanlar),
+		"yükün TÜM değerleri dize olmalı")
+
+	assert.Equal(t, map[string]string{
+		"order_id":      siparis.ID,
+		"display_id":    strconv.FormatInt(siparis.DisplayID, 10),
+		"email":         "musteri@ornek.com",
+		"currency_code": "TRY",
+		"total":         "6700",
+		"item_count":    "2",
+	}, alanlar)
+}
+
+// TestOrderContactJSONOlayYukuyleAyniAdlariKullanir yüzeyin ve "order.placed"
+// olayının aynı alanları AYNI adla taşıdığını doğrular.
+//
+// Abone ikisini yan yana kullanır: order_id olaydan, gerisi buradan gelir.
+// Adlardan biri kayarsa abone alanı bulamaz ve eksiklik ancak bildirim
+// gönderilemediğinde — yani üretimde — görünürdü.
+func TestOrderContactJSONOlayYukuyleAyniAdlariKullanir(t *testing.T) {
+	ctx := context.Background()
+	o := yeniOrtam(t)
+	interop := service.NewInterop(o.svc)
+
+	siparis, err := o.svc.CreateOrder(ctx, gecerliGirdi())
+	require.NoError(t, err)
+
+	govde, err := interop.OrderContactJSON(ctx, siparis.ID)
+	require.NoError(t, err)
+	var alanlar map[string]string
+	require.NoError(t, json.Unmarshal(govde, &alanlar))
+
+	olaylar := o.bus.events()
+	require.Len(t, olaylar, 1)
+	olay := olaylar[0]
+	for _, alan := range []string{
+		service.EventFieldOrderID,
+		service.EventFieldDisplayID,
+		service.EventFieldCurrencyCode,
+		service.EventFieldTotal,
+		service.EventFieldItemCount,
+	} {
+		require.Contains(t, alanlar, alan, "yüzey olay yükündeki alanı taşımalı")
+		assert.Equal(t, olay.Data[alan], alanlar[alan],
+			"%q alanı olayla aynı değeri taşımalı", alan)
+	}
+}
+
+// TestOrderContactJSONEpostasizSiparisteBosDoner adressiz siparişin hata
+// DEĞİL, boş bir alan döndürdüğünü doğrular.
+//
+// Abone için "gönderilecek adres yok" kalıcı bir durumdur ve atlanmalıdır;
+// hata dönmek onu yeniden denenecek bir arızadan ayırt edilemez hâle
+// getirirdi (gerekçe: [service.Interop.OrderContactJSON]).
+func TestOrderContactJSONEpostasizSiparisteBosDoner(t *testing.T) {
+	ctx := context.Background()
+	o := yeniOrtam(t)
+	interop := service.NewInterop(o.svc)
+
+	in := gecerliGirdi()
+	in.Email = ""
+	siparis, err := o.svc.CreateOrder(ctx, in)
+	require.NoError(t, err)
+
+	govde, err := interop.OrderContactJSON(ctx, siparis.ID)
+	require.NoError(t, err)
+
+	var alanlar map[string]string
+	require.NoError(t, json.Unmarshal(govde, &alanlar))
+	require.Contains(t, alanlar, "email", "alan gövdeden DÜŞMEMELİ")
+	assert.Empty(t, alanlar["email"])
+}
+
+// TestOrderContactJSONOlmayanSipariste NotFound döndüğünü doğrular.
+func TestOrderContactJSONOlmayanSipariste(t *testing.T) {
+	ctx := context.Background()
+	o := yeniOrtam(t)
+	interop := service.NewInterop(o.svc)
+
+	_, err := interop.OrderContactJSON(ctx, "order_YOK")
+
+	require.Error(t, err)
+	assert.True(t, errors.IsNotFound(err), "aldığı: %v", err)
+}
+
+// TestOrderContactJSONBosKimligiReddeder boş kimliğin veritabanına hiç
+// gitmeden Invalid döndüğünü doğrular.
+func TestOrderContactJSONBosKimligiReddeder(t *testing.T) {
+	ctx := context.Background()
+	o := yeniOrtam(t)
+	interop := service.NewInterop(o.svc)
+
+	_, err := interop.OrderContactJSON(ctx, "")
+
+	require.Error(t, err)
+	assert.Equal(t, errors.KindInvalid, errors.KindOf(err))
 }
