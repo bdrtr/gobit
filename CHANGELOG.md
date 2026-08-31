@@ -10,6 +10,16 @@ Sabitlenme `1.0.0` ile olur.
 
 ## [Yayımlanmamış]
 
+## [0.3.0] — 2026-08-31
+
+API artık kendini anlatıyor: şemadan çalışan bir istemci üretilebiliyor.
+
+**Kırıcı değişiklik YOKTUR.** `internal/core/openapi` paketinin dışa açık
+API'si yalnızca büyüdü (metot eklendi, hiçbiri kaldırılmadı) ve kaldırılan
+`List` bileşeni v0.2.0'da zaten yayımlanmıyordu — eklenmesi ve kaldırılması
+aynı yayımlanmamış pencerede oldu, yani kimsenin ürettiği bir istemciye
+girmedi.
+
 ### Eklendi
 
 - **Tüm API yüzeyi anlatıldı (196 uç).** Şema artık her ucun ne aldığını ve ne
@@ -212,6 +222,7 @@ yalnızca test koşarak görünmeyen üç arıza:
   yoktur; geri alma elle yapılır. İleri yön açılışta otomatiktir.
 - Yük testi süreç içidir; kapasite planı üretmez.
 
-[Yayımlanmamış]: https://github.com/bdrtr/gobit/compare/v0.2.0...HEAD
+[Yayımlanmamış]: https://github.com/bdrtr/gobit/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/bdrtr/gobit/releases/tag/v0.3.0
 [0.2.0]: https://github.com/bdrtr/gobit/releases/tag/v0.2.0
 [0.1.0]: https://github.com/bdrtr/gobit/releases/tag/v0.1.0
