@@ -29,6 +29,7 @@ import (
 
 	"github.com/bdrtr/gobit/internal/core/db"
 	coreerrors "github.com/bdrtr/gobit/internal/core/errors"
+	"github.com/bdrtr/gobit/internal/core/link"
 	"github.com/bdrtr/gobit/internal/modules/product"
 	"github.com/bdrtr/gobit/internal/modules/product/models"
 	"github.com/bdrtr/gobit/internal/modules/product/repository"
@@ -88,7 +89,34 @@ func runWithPostgres(m *testing.M) int {
 	}
 	defer testPool.Close()
 
+	// Link tabloları migration'la DEĞİL, modülün bildirimiyle kurulur (ADR
+	// 0005): şemayı core/link, link.Define çağrıldığında yaratır. Üretimde bunu
+	// Module.Register açılışta yapar ve hiçbir istek ondan önce gelemez.
+	//
+	// Burada elle yapılmasının sebebi, bu dosyadaki bazı testlerin modülü
+	// Register etmeden doğrudan depo üzerinde servis kurmasıdır. Bildirim
+	// olmasaydı ürün listelemesi tümüyle düşerdi: süzgeç link tablosuna karşı
+	// bir EXISTS koşulu taşır ve PostgreSQL ilişkiyi, koşul kısa devre etse
+	// bile ayrıştırma anında arar. Bu bağımlılık bilinçlidir — eksik link
+	// tablosunun sessizce "hiç atama yok" sayılması, her anahtara tüm kataloğu
+	// açan arızanın ta kendisini geri getirirdi.
+	if err = defineLinks(ctx); err != nil {
+		fmt.Fprintf(os.Stderr, "link tanımları bildirilemedi: %v\n", err)
+		return 1
+	}
+
 	return m.Run()
+}
+
+// defineLinks product'ın link tanımlarını paylaşılan veritabanına bildirir.
+func defineLinks(ctx context.Context) error {
+	links := link.New(testPool, nil)
+	for _, def := range service.Definitions() {
+		if err := links.Define(ctx, def); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // --- yardımcılar --------------------------------------------------------
@@ -521,5 +549,104 @@ func TestCreateVariantLosesRaceWithProductDeletion(t *testing.T) {
 // ptrString dizgenin adresini döner.
 func ptrString(v string) *string { return &v }
 
+// ptrInt32 tam sayı işaretçisi üretir.
+func ptrInt32(v int32) *int32 { return &v }
+
+// ptrBool mantıksal işaretçi üretir.
+func ptrBool(v bool) *bool { return &v }
+
 // ptrStatus durumun adresini döner.
 func ptrStatus(v models.Status) *models.Status { return &v }
+
+// TestUrunSutunEslemesiKaymamis elle yazılan sütun listesi ile sqlc'nin
+// ürettiği alan sırasının ayrışmadığını doğrular.
+//
+// # Neden ayrı bir test gerekiyor
+//
+// Vitrin listesi satırları KONUMA göre çözer (pgx.RowToStructByPos), çünkü
+// ada göre çözüm sqlc'nin etiketsiz alanlarıyla çalışmaz. Konum eşlemesi
+// sessizce bozulabilir: bu tabloda handle ile title bitişik ve ikisi de text,
+// subtitle/description/thumbnail üç text, weight/length/height/width dört
+// integer. Aynı tipte iki komşunun yer değiştirmesi HİÇBİR hata üretmez —
+// yalnızca her ürünün başlığıyla handle'ını takas eder.
+//
+// Bu yüzden test her alana AYIRT EDİLEBİLİR bir değer yazar: iki alan yer
+// değiştirirse iddia düşer. Yalnızca "alan dolu mu" diye bakan bir test bu
+// takası göremezdi.
+func TestUrunSutunEslemesiKaymamis(t *testing.T) {
+	ctx := context.Background()
+	svc := newService(t, nil, nil)
+	handle := uniqueHandle("sutun-eslemesi")
+
+	created, err := svc.CreateProduct(ctx, service.CreateProductInput{
+		Handle: handle,
+		Title:  "BASLIK-" + handle,
+		Status: models.StatusPublished,
+		// Aynı tipteki komşu alanların HEPSİ farklı değer taşır.
+		Subtitle:      ptrString("ALTBASLIK-ayirt-edici"),
+		Description:   ptrString("ACIKLAMA-ayirt-edici"),
+		Thumbnail:     ptrString("KAPAK-ayirt-edici"),
+		Material:      ptrString("MALZEME-ayirt-edici"),
+		OriginCountry: ptrString("TR"),
+		Weight:        ptrInt32(1001),
+		Length:        ptrInt32(1002),
+		Height:        ptrInt32(1003),
+		Width:         ptrInt32(1004),
+		Discountable:  ptrBool(false),
+		Metadata:      map[string]any{"isaret": "ayirt-edici"},
+	})
+	require.NoError(t, err)
+
+	// Vitrin listesi ELLE YAZILAN sorguyu kullanır; eşlemeyi sınayan yol budur.
+	sayfa, err := svc.ListStoreProducts(ctx, service.StoreListOptions{
+		Search: ptrString("BASLIK-" + handle),
+		Limit:  10,
+	})
+	require.NoError(t, err)
+
+	var okunan *service.StoreProduct
+
+	for i := range sayfa.Items {
+		if sayfa.Items[i].ID == created.ID {
+			okunan = &sayfa.Items[i]
+		}
+	}
+
+	require.NotNil(t, okunan, "ürün vitrin listesinde bulunmalı")
+
+	assert.Equal(t, handle, okunan.Handle, "handle ile title yer değiştirmiş olabilir")
+	assert.Equal(t, "BASLIK-"+handle, okunan.Title, "title ile handle yer değiştirmiş olabilir")
+	assert.Equal(t, "ALTBASLIK-ayirt-edici", derefString(okunan.Subtitle))
+	assert.Equal(t, "ACIKLAMA-ayirt-edici", derefString(okunan.Description))
+	assert.Equal(t, "KAPAK-ayirt-edici", derefString(okunan.Thumbnail))
+	assert.Equal(t, "MALZEME-ayirt-edici", derefString(okunan.Material))
+	assert.Equal(t, "TR", derefString(okunan.OriginCountry))
+	assert.Equal(t, int32(1001), derefInt32(okunan.Weight), "weight ile length/height/width karışmış olabilir")
+	assert.Equal(t, int32(1002), derefInt32(okunan.Length))
+	assert.Equal(t, int32(1003), derefInt32(okunan.Height))
+	assert.Equal(t, int32(1004), derefInt32(okunan.Width))
+	assert.Equal(t, models.StatusPublished, okunan.Status)
+	assert.False(t, okunan.Discountable, "discountable ile is_giftcard yer değiştirmiş olabilir")
+	assert.False(t, okunan.IsGiftcard)
+	assert.Equal(t, "ayirt-edici", okunan.Metadata["isaret"])
+	assert.False(t, okunan.CreatedAt.IsZero())
+	assert.False(t, okunan.UpdatedAt.IsZero())
+}
+
+// derefString bir işaretçiyi güvenle çözer; nil ise boş dize döner.
+func derefString(p *string) string {
+	if p == nil {
+		return ""
+	}
+
+	return *p
+}
+
+// derefInt32 bir işaretçiyi güvenle çözer; nil ise sıfır döner.
+func derefInt32(p *int32) int32 {
+	if p == nil {
+		return 0
+	}
+
+	return *p
+}

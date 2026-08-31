@@ -9,13 +9,15 @@
 //  1. Servis container'a "product.service" adıyla kaydedilir.
 //  2. Query sağlayıcıları "product.query" ve "variant.query" adlarıyla
 //     kaydedilir (ADR 0004).
-//  3. Fiyat ve stok link tanımları bildirilir (ADR 0005).
+//  3. Fiyat, stok ve satış kanalı link tanımları bildirilir (ADR 0005).
 //
 // # Başka modüller
 //
-// pricing ve inventory paketleri İMPORT EDİLMEZ (Prensip 2.4, ADR 0001; kural
-// .golangci.yml içindeki depguard ile CI'da zorlanır). Fiyat ve stok verisi
-// yalnızca link adları ve Query katmanı üzerinden görünür.
+// pricing, inventory ve auth paketleri İMPORT EDİLMEZ (Prensip 2.4, ADR 0001;
+// kural .golangci.yml içindeki depguard ile CI'da zorlanır). Fiyat ve stok
+// verisi yalnızca link adları ve Query katmanı üzerinden görünür; satış kanalı
+// ise yalnızca bir link adı ve isteğin kimliğinden gelen kimlik dizgeleri
+// olarak görünür (bkz. service.LinkProductSalesChannel).
 package product
 
 import (

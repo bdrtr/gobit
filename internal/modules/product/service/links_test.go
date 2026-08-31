@@ -25,7 +25,7 @@ func TestDefinitionsAreTheCrossModuleContract(t *testing.T) {
 	t.Parallel()
 
 	defs := service.Definitions()
-	require.Len(t, defs, 2)
+	require.Len(t, defs, 3)
 
 	byName := map[string]link.LinkDefinition{}
 	for _, def := range defs {
@@ -44,6 +44,16 @@ func TestDefinitionsAreTheCrossModuleContract(t *testing.T) {
 	assert.Equal(t, link.LinkSide{Module: "product", Entity: "variant", Field: "variant_id"}, inventory.From)
 	assert.Equal(t, link.LinkSide{Module: "inventory", Entity: "inventory_item", Field: "inventory_item_id"}, inventory.To)
 	assert.Equal(t, link.OneToOne, inventory.Cardinality)
+
+	salesChannel, ok := byName["product_sales_channel"]
+	require.True(t, ok, "satış kanalı bağı bu adla bildirilmeli")
+	assert.Equal(t, link.LinkSide{Module: "product", Entity: "product", Field: "product_id"}, salesChannel.From,
+		"bağ VARYANT değil ÜRÜN düzeyindedir")
+	assert.Equal(t, link.LinkSide{Module: "sales_channel", Entity: "sales_channel", Field: "sales_channel_id"},
+		salesChannel.To,
+		"To ucu auth'un MODÜL adını değil ENTITY adını taşımalı; sağlayıcı o adla kayıtlıdır")
+	assert.Equal(t, link.ManyToMany, salesChannel.Cardinality,
+		"bir ürün çok kanalda, bir kanal çok üründe olabilir")
 }
 
 // TestSetVariantPriceSetReplacesExisting fiyat kümesi değiştirilirken eski

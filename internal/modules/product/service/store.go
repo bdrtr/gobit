@@ -47,8 +47,26 @@ const codeProviderNotFound = "query_provider_not_found"
 type StoreListOptions struct {
 	CollectionID *string
 	Search       *string
-	Limit        int
-	Offset       int
+	// SalesChannelIDs isteğin bağlı olduğu satış kanallarıdır.
+	//
+	// Değer isteğin KİMLİĞİNDEN gelir (publishable anahtarın kanalları), sorgu
+	// dizesinden DEĞİL; gerekçe için bkz. api/store.go.
+	//
+	// nil ile BOŞ AMA nil OLMAYAN dilim FARKLI şeyler söyler:
+	//
+	//   - nil: istek hiçbir satış kanalı kimliği taşımıyor (mağaza kimlik
+	//     doğrulaması bu kurulumda bağlı değil). Süzgeç UYGULANMAZ.
+	//   - boş dilim: kimlik var ama hiç kanalı yok. Süzgeç UYGULANIR ve yalnızca
+	//     ataması olmayan ürünler görünür.
+	//
+	// İkinci durum pratikte oluşmaz — auth kanalsız bir publishable anahtarı
+	// zaten reddeder — ama savunmacı davranış şudur: kanalsız bir kimliği
+	// "süzme yok" saymak, o kimliğe TÜM kanalların katalogunu açardı. Boş kümeyi
+	// kuralın kendisine uygulamak (hiçbir atama eşleşmez, atamasızlar kalır)
+	// ayrı bir kod yolu açmaz ve sızdırma yönünde asla yanılmaz.
+	SalesChannelIDs []string
+	Limit           int
+	Offset          int
 }
 
 // StoreProduct vitrin için hazırlanmış üründür.
@@ -87,15 +105,31 @@ type enrichment struct {
 // Sorgu sayısı ürün ya da varyant sayısından BAĞIMSIZDIR: katalog için sabit
 // sayıda sorgu, zenginleştirme için genişletme başına bir link çözümü ve bir
 // sağlayıcı çağrısı yapılır. N+1 yoktur.
+//
+// # Satış kanalı süzgeci
+//
+// Kural şudur: kanal ataması OLMAYAN ürün TÜM kanallarda görünür, ataması OLAN
+// ürün YALNIZCA atandığı kanallarda görünür. Geriye uyumludur (bugünkü katalog
+// bir gecede boşalmaz) ama süzme gerçekten çalışır: bir ürün A kanalına
+// atandığı an B kanalında görünmez olur.
+//
+// Katı alternatif — "atanmamış ürün gizlidir" — bilinçli olarak UYGULANMADI.
+// İleriye dönük bir karardır ve uygulandığı gün var olan her kataloğu tek
+// seferde boşaltır; seçilecekse önce bir geçiş (tüm ürünleri varsayılan kanala
+// atama) gerekir.
+//
+// Süzgeç [repository.Store] üzerinden VERİTABANINDA uygulanır; sayfalamayı
+// neden Go tarafında yapamayacağımız için bkz. repository/saleschannel.go.
 func (s *Service) ListStoreProducts(ctx context.Context, opts StoreListOptions) (ListResult[StoreProduct], error) {
 	published := models.StatusPublished
 	result, err := s.ListProducts(ctx, ListProductsOptions{
-		Status:        &published,
-		CollectionID:  opts.CollectionID,
-		Search:        opts.Search,
-		Limit:         opts.Limit,
-		Offset:        opts.Offset,
-		WithRelations: true,
+		Status:          &published,
+		CollectionID:    opts.CollectionID,
+		Search:          opts.Search,
+		SalesChannelIDs: opts.SalesChannelIDs,
+		Limit:           opts.Limit,
+		Offset:          opts.Offset,
+		WithRelations:   true,
 	})
 	if err != nil {
 		return ListResult[StoreProduct]{}, err
@@ -118,7 +152,21 @@ func (s *Service) ListStoreProducts(ctx context.Context, opts StoreListOptions) 
 // Kimlik ya da handle kabul edilir: vitrin adresleri handle taşır, iç çağrılar
 // kimlik. Yayında olmayan ürün BULUNAMADI döner — taslak bir ürünün varlığını
 // "yetkisiz" gibi bir hatayla ele vermek de sızıntıdır.
-func (s *Service) GetStoreProduct(ctx context.Context, idOrHandle string) (StoreProduct, error) {
+//
+// salesChannelIDs, listelemedekiyle AYNI anlamı taşır
+// (bkz. [StoreListOptions.SalesChannelIDs]) ve tekil uç da AYNI süzgece
+// tabidir: listede gizlenen bir ürünü tekil uçtan göstermek, gizlemeyi tümüyle
+// anlamsız kılardı — vitrin adresleri handle taşıdığı için tahmin edilebilir
+// olan tam da bu uçtur.
+//
+// Görünmeyen ürün, yayında olmayan ürünle AYNI hatayı (NotFound) döner: başka
+// bir kanalda satılan bir ürünün varlığını farklı bir hata sınıfıyla ele
+// vermek, gizlemenin kendisini delerdi.
+func (s *Service) GetStoreProduct(
+	ctx context.Context,
+	idOrHandle string,
+	salesChannelIDs []string,
+) (StoreProduct, error) {
 	if _, err := requireID("id", idOrHandle); err != nil {
 		return StoreProduct{}, err
 	}
@@ -137,6 +185,18 @@ func (s *Service) GetStoreProduct(ctx context.Context, idOrHandle string) (Store
 	}
 	if product.Status != models.StatusPublished {
 		return StoreProduct{}, errors.NotFound(codeNotFound, "ürün bulunamadı: %s", idOrHandle)
+	}
+
+	// nil, "istek kanal kimliği taşımıyor" demektir; sorgu o durumda zaten
+	// true dönerdi, tur boşuna atılmaz.
+	if salesChannelIDs != nil {
+		visible, err := s.repo.ProductVisibleInSalesChannels(ctx, product.ID, salesChannelIDs)
+		if err != nil {
+			return StoreProduct{}, err
+		}
+		if !visible {
+			return StoreProduct{}, errors.NotFound(codeNotFound, "ürün bulunamadı: %s", idOrHandle)
+		}
 	}
 
 	items, err := s.toStoreProducts(ctx, []models.Product{product})

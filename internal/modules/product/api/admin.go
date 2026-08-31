@@ -219,6 +219,25 @@ type linkRequest struct {
 	InventoryItemID string `json:"inventory_item_id"`
 }
 
+// salesChannelRequest ürünü bir satış kanalına bağlama isteğidir.
+//
+// [linkRequest]'e eklenmez: o bağlar VARYANT düzeyinde ve tekildir, bu bağ ÜRÜN
+// düzeyinde ve çoktan çoğadır. Tek bir gövde tipini paylaşmaları, bir ucun
+// diğerinin alanını sessizce yok saymasına izin verirdi.
+type salesChannelRequest struct {
+	SalesChannelID string `json:"sales_channel_id"`
+}
+
+// productSalesChannels ürünün satış kanalı bağlarının yanıt gövdesidir.
+//
+// Yanıt, tek bir bağı değil GÜNCEL LİSTEYİ döner: bağ çoktan çoğa olduğu için
+// istemcinin asıl merak ettiği şey "hangi kanallardayım" sorusunun cevabıdır ve
+// ikinci bir GET gerektirmemelidir.
+type productSalesChannels struct {
+	ProductID       string   `json:"product_id"`
+	SalesChannelIDs []string `json:"sales_channel_ids"`
+}
+
 // createCollectionRequest koleksiyon isteğinin gövdesidir.
 type createCollectionRequest struct {
 	Title    string         `json:"title"`
@@ -608,6 +627,84 @@ func (h *Handler) adminGetVariantLinks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.writeVariantLinks(w, r, id)
+}
+
+// adminAddSalesChannel POST /admin/v1/products/{id}/sales-channels
+//
+// Uç POST'tur çünkü bağ ÇOKTAN ÇOĞADIR: istek bir kaynağı değiştirmez, bir
+// koleksiyona üye ekler. Fiyat/stok uçlarının PUT'u burada yanlış olurdu — PUT
+// "bu ucun tamamı budur" der ve ürünün diğer kanal bağlarını silmek zorunda
+// kalırdı.
+//
+// Yanıt 201 DEĞİL 200'dür: link servisi aynı çifti ikinci kez bağlamayı no-op
+// sayar (idempotent), dolayısıyla her istek yeni bir kayıt yaratmaz ve 201
+// yaratılmamış bir kaynağı bildirirdi.
+func (h *Handler) adminAddSalesChannel(w http.ResponseWriter, r *http.Request) {
+	productID, err := pathParam(r, "id")
+	if err != nil {
+		corehttp.WriteError(r.Context(), w, err)
+		return
+	}
+	req, err := decode[salesChannelRequest](w, r)
+	if err != nil {
+		corehttp.WriteError(r.Context(), w, err)
+		return
+	}
+	if err := h.svc.AddProductSalesChannel(r.Context(), productID, req.SalesChannelID); err != nil {
+		corehttp.WriteError(r.Context(), w, err)
+		return
+	}
+
+	h.writeSalesChannels(w, r, productID)
+}
+
+// adminRemoveSalesChannel DELETE /admin/v1/products/{id}/sales-channels/{sales_channel_id}
+//
+// Kanal kimliği gövdede değil YOLDA taşınır: kaldırılan şey ürün ile kanal
+// arasındaki bağdır ve o bağın adresi budur; DELETE gövdesi ise ara katmanlar
+// tarafından atılabildiği için güvenilir bir taşıyıcı değildir.
+func (h *Handler) adminRemoveSalesChannel(w http.ResponseWriter, r *http.Request) {
+	productID, err := pathParam(r, "id")
+	if err != nil {
+		corehttp.WriteError(r.Context(), w, err)
+		return
+	}
+	channelID, err := pathParam(r, "sales_channel_id")
+	if err != nil {
+		corehttp.WriteError(r.Context(), w, err)
+		return
+	}
+	if err := h.svc.RemoveProductSalesChannel(r.Context(), productID, channelID); err != nil {
+		corehttp.WriteError(r.Context(), w, err)
+		return
+	}
+
+	h.writeSalesChannels(w, r, productID)
+}
+
+// adminListSalesChannels GET /admin/v1/products/{id}/sales-channels
+func (h *Handler) adminListSalesChannels(w http.ResponseWriter, r *http.Request) {
+	productID, err := pathParam(r, "id")
+	if err != nil {
+		corehttp.WriteError(r.Context(), w, err)
+		return
+	}
+	h.writeSalesChannels(w, r, productID)
+}
+
+// writeSalesChannels ürünün güncel satış kanalı bağlarını yanıtlar.
+func (h *Handler) writeSalesChannels(w http.ResponseWriter, r *http.Request, productID string) {
+	ids, err := h.svc.ProductSalesChannelIDs(r.Context(), productID)
+	if err != nil {
+		corehttp.WriteError(r.Context(), w, err)
+		return
+	}
+	if ids == nil {
+		// JSON'da "null" değil "[]" dönmeli; istemci alanı her zaman dizi
+		// sayabilmelidir (writeList ile aynı gerekçe).
+		ids = []string{}
+	}
+	writeItem(w, r, http.StatusOK, productSalesChannels{ProductID: productID, SalesChannelIDs: ids})
 }
 
 // writeVariantLinks varyantın güncel bağlarını yanıtlar.

@@ -96,7 +96,7 @@ func TestCreateProductDerivedHandleStaysAddressable(t *testing.T) {
 	assert.False(t, strings.HasSuffix(product.Handle, "-"), "kırpma sonda tire bırakmamalı")
 
 	// Asıl iddia: ürün kendi handle'ıyla vitrinde açılabilmeli.
-	fetched, err := svc.GetStoreProduct(ctx, product.Handle)
+	fetched, err := svc.GetStoreProduct(ctx, product.Handle, nil)
 	require.NoError(t, err, "üretilen handle ile ürün okunabilmeli")
 	assert.Equal(t, product.ID, fetched.ID)
 }

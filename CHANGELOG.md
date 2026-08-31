@@ -10,6 +10,18 @@ Sabitlenme `1.0.0` ile olur.
 
 ## [Yayımlanmamış]
 
+### Eklendi
+
+- **`product↔sales_channel` bağı ve vitrin katalog süzmesi.** Planın "önemli
+  linkler" listesindeki son eksik bağ kuruldu: publishable anahtarın bağlı
+  olduğu kanal artık kataloğu gerçekten belirliyor. Önceden anahtar
+  doğrulanıyor ve `Principal.SalesChannelIDs` doluyordu ama hiçbir modül
+  okumuyordu — her anahtar aynı kataloğu görüyordu.
+  Süzgeç veritabanında uygulanır (`EXISTS`/`NOT EXISTS`), böylece sayfalama ve
+  toplam sayaç süzülmüş küme üzerinde çalışır. Kanal kimlikten okunur, sorgu
+  dizesinden ASLA.
+  Yeni uçlar: `POST`/`DELETE`/`GET /admin/v1/products/{id}/sales-channels`.
+
 ## [0.1.0] — 2026-08-31
 
 Planın Faz 0–9 yol haritasının tamamı. Tek binary olarak çalışan, modüller
@@ -88,10 +100,11 @@ yalnızca test koşarak görünmeyen üç arıza:
 - Modüller arası imzalar derleme zamanında denetlenmez
   ([ADR 0001](docs/adr/0001-modul-arasi-iletisim.md)'in kabul edilen bedeli).
 - Stokta tek lokasyon varsayımı.
-- **Satış kanalı bağı kuruluyor ama kullanılmıyor.** Publishable anahtar
-  isteği bir kanala bağlar, `Principal.SalesChannelIDs` dolar; hiçbir modül
-  okumaz. Katalog her anahtar için aynıdır — planın `product↔sales_channel`
-  bağı henüz kurulmadı.
+- **Kanal ataması olmayan ürün tüm kanallarda görünür.** Kural bilinçli ve
+  geriye uyumludur, ama bir tuzağı vardır: son kanal bağını silmek ürünü
+  gizlemez, tüm vitrinlere açar. Gizlemek için `status` kullanılmalıdır.
+  Katı alternatif ("ataması olmayan hiçbir kanalda görünmez") bir sonraki
+  minor sürüm için düşünülmeli — açıldığı gün mevcut katalogları boşaltır.
 - **Migration geri alma yolu yok.** Her modülün `.down.sql` dosyaları vardır
   ve geri alınabilirlikleri testle denetlenir, ama onları çağıracak bir yüzey
   yoktur; geri alma elle yapılır. İleri yön açılışta otomatiktir.

@@ -64,6 +64,21 @@ func (p *productProvider) Entity() string { return EntityProduct }
 // filtre errors.Invalid döner (ADR 0004): sessizce yok saymak, istemcinin
 // filtrelediğini sandığı ama filtrelenmemiş bir listeyi doğru sanmasına yol
 // açardı.
+//
+// # Satış kanalı süzgeci burada UYGULANMAZ
+//
+// Bu yüzey MODÜLLER ARASI bir okumadır ve arkasında bir müşteri isteği yoktur:
+// Query çağrısını yapan sepet ya da sipariş, bir publishable anahtarın
+// kanallarını taşımaz. Var olmayan bir kimliğe göre süzmek ya her şeyi gizler
+// ya da uydurma bir kanal kümesi seçmek olurdu.
+//
+// Bunun bilinen sınırı şudur: kanal kapsamı VİTRİN YÜZEYİNİN kuralıdır
+// (bkz. [Service.ListStoreProducts]) ve bu sağlayıcıdan okuyan bir modül,
+// kanal ataması olan ürünleri de görür. Bugün doğru olan budur — sepete
+// eklenmiş bir ürünün adı, o ürün sonradan başka bir kanala taşınsa bile
+// çözülebilmelidir. Kanala göre kapsam gerekirse doğru yol, bu sağlayıcıya
+// sessiz bir varsayılan koymak değil, çağıranın kanal kümesini AÇIKÇA bir
+// filtre olarak geçirmesidir.
 func (p *productProvider) List(ctx context.Context, opts query.ListOptions) ([]query.Record, error) {
 	filter := repository.ProductFilter{Limit: providerLimit(opts.Limit), Offset: opts.Offset}
 	var ids []string

@@ -12,9 +12,12 @@ import (
 
 	"github.com/bdrtr/gobit/internal/core/config"
 	coreplugin "github.com/bdrtr/gobit/internal/core/plugin"
+	"github.com/bdrtr/gobit/internal/core/query"
+	"github.com/bdrtr/gobit/internal/modules/auth"
 	authsvc "github.com/bdrtr/gobit/internal/modules/auth/service"
 	"github.com/bdrtr/gobit/internal/modules/fulfillment"
 	"github.com/bdrtr/gobit/internal/modules/payment"
+	productsvc "github.com/bdrtr/gobit/internal/modules/product/service"
 )
 
 // TestSaglayiciKayitAdlariUyusuyor eklenti paketiyle modüllerin sağlayıcı
@@ -36,6 +39,30 @@ func TestSaglayiciKayitAdlariUyusuyor(t *testing.T) {
 		"eklenti paketindeki ödeme sağlayıcı kayıt adı payment modülüyle aynı olmalı")
 	assert.Equal(t, fulfillment.ProvidersName, coreplugin.FulfillmentProvidersName,
 		"eklenti paketindeki kargo sağlayıcı kayıt adı fulfillment modülüyle aynı olmalı")
+}
+
+// TestSatisKanaliEntityAdiUyusuyor product'ın link tanımına yazdığı satış
+// kanalı entity adının, auth'un sağlayıcısını KAYDETTİĞİ adla aynı olduğunu
+// doğrular.
+//
+// product, auth'u import EDEMEZ (Prensip 2.4, ADR 0001), bu yüzden
+// [productsvc.EntitySalesChannel] auth'un sabitine bağlanamaz; değeri elle
+// tekrarlar. Gerekçe [TestSaglayiciKayitAdlariUyusuyor] ile aynıdır ve
+// tekrarlanmıyor — burada ayrışmanın somut bedeli şudur: Query, genişletmenin
+// hedefini link'in To ucundaki entity adından bulup sağlayıcıyı
+// "<ad>.query" ile arar. Adlar ayrışırsa arama boşa düşer ve ürün ↔ satış
+// kanalı genişletmesi çalışma zamanında errors.NotFound verir.
+//
+// İkinci iddia zinciri kapatır: auth'un container'a yazdığı ad gerçekten
+// entity adından türemelidir; auth bir gün sağlayıcısını modül adıyla
+// kaydetseydi ilk iddia hâlâ geçer ama arama yine boşa düşerdi.
+func TestSatisKanaliEntityAdiUyusuyor(t *testing.T) {
+	t.Parallel()
+
+	assert.Equal(t, authsvc.Entity, productsvc.EntitySalesChannel,
+		"product'ın link ucuna yazdığı entity adı auth'un sunduğu entity adıyla aynı olmalı")
+	assert.Equal(t, productsvc.EntitySalesChannel+query.ProviderSuffix, auth.ProviderName,
+		"auth sağlayıcısını entity adından türeyen adla kaydetmeli; Query onu bu adla arar")
 }
 
 // TestEklentilerModulleriImportEtmez Faz 9'un "çekirdeğe dokunmadan takılıp

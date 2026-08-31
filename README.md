@@ -161,13 +161,37 @@ Koruma yığınının sırası bilinçlidir:
 Publishable anahtar bir **sır değildir**: tarayıcıda görünür ve tek işi isteği
 bir satış kanalına bağlamaktır — yetki taşımaz.
 
-> **Bağ bugün KURULUYOR ama KULLANILMIYOR.** Anahtar doğrulanır ve isteğin
-> satış kanalları `Principal.SalesChannelIDs` alanına yazılır; ancak hiçbir
-> modül bunu okumaz. Sonuç: `GET /store/v1/products` her publishable anahtar
-> için **aynı kataloğu** döner. Planın `product↔sales_channel` bağı
-> kurulmadığı için katalog süzmesi henüz yoktur; auth bunun için gereken iki
-> yüzeyi (`auth.service` üzerinden `ActiveSalesChannelIDs` ve
-> `sales_channel.query`) yayımlar, tüketicisi eksiktir. Gizli anahtar yetki taşır ve
+### Katalog satış kanalına göre süzülür
+
+`GET /store/v1/products` isteğin anahtarına bağlı kanalları `Principal`'dan
+okur ve kataloğu ona göre süzer. Kural tek cümlelik:
+
+> Kanal ataması **olmayan** ürün tüm kanallarda görünür; ataması **olan** ürün
+> yalnızca atandığı kanallarda görünür.
+
+Kanal **sorgu dizesinden alınmaz**, kimlikten gelir — alınsaydı süzgeç bir
+yetkilendirme olmaktan çıkıp görüntüleme tercihine dönüşür, elindeki herhangi
+bir publishable anahtarla gelen istemci başka bir vitrinin kataloğunu okurdu.
+Tekil uç (`/store/v1/products/{id}`) de aynı süzgece tabidir ve gizlenen ürün,
+hiç var olmayan ürünle **aynı** hata kodunu döner.
+
+Bağ yönetimden kurulur:
+
+```
+POST   /admin/v1/products/{id}/sales-channels
+DELETE /admin/v1/products/{id}/sales-channels/{sales_channel_id}
+GET    /admin/v1/products/{id}/sales-channels
+```
+
+> **Dikkat:** Bir ürünü vitrinden kaldırmanın yolu son kanal bağını silmek
+> **değildir** — kural gereği ataması kalmayan ürün *tüm* vitrinlerde görünür
+> olur, yani tam tersi olur. Gizlemek için `status` alanını kullanın
+> (`draft` / `archived`).
+
+Katı alternatif — "ataması olmayan ürün hiçbir kanalda görünmez" — daha doğru
+olanıdır ve sektör alışkanlığıdır (yayımlama açık bir eylem olur). Uygulanmadı
+çünkü açıldığı gün mevcut her kurulumun kataloğu bir anda boşalır; bir sürüm
+sınırında duyurulması gerekir (bkz. [`CHANGELOG.md`](./CHANGELOG.md)). Gizli anahtar yetki taşır ve
 satış kanalına bağlanmaz; ikisini karıştıran bir girdi sessizce düzeltilmez,
 reddedilir.
 

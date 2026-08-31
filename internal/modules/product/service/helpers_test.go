@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/bdrtr/gobit/internal/core/errors"
+	"github.com/bdrtr/gobit/internal/core/link"
 	"github.com/bdrtr/gobit/internal/core/query"
 	"github.com/bdrtr/gobit/internal/modules/product/models"
 	"github.com/bdrtr/gobit/internal/modules/product/service"
@@ -32,14 +33,19 @@ var creationTime = time.Date(2026, 8, 23, 10, 0, 0, 0, time.UTC)
 // SERVİSİN link'leri nasıl kullandığıdır: eski bağı kaldırıp yenisini kurması,
 // varyantın varlığını önce doğrulaması ve silmede temizlik yapması.
 //
-// Sahte, product'ın İKİ linkinin de OneToOne olmasını (bkz. service.Definitions)
-// zorlar: hem FROM hem TO ucu tektir ve ihlal errors.Conflict döner. Kardinalite
-// zorlanmasaydı sahte, gerçek link servisinin reddedeceği bir akışı sessizce
-// kabul eder ve testler var olmayan bir davranışı "kanıtlardı".
+// Sahte, kardinaliteyi [service.Definitions] içindeki BİLDİRİMDEN okuyup zorlar
+// (bkz. [cardinalities]): fiyat/stok bağlarında hem FROM hem TO ucu tektir ve
+// ihlal errors.Conflict döner, satış kanalı bağında ise kısıt yoktur.
+// Kardinalite zorlanmasaydı sahte, gerçek link servisinin reddedeceği bir akışı
+// sessizce kabul eder ve testler var olmayan bir davranışı "kanıtlardı";
+// bildirimden okunmasaydı da tersi olur — çoktan çoğa bir bağ, sahte yüzünden
+// ikinci kanalda çakışma verirdi.
 type fakeLinker struct {
 	mu sync.Mutex
 	// links link adı -> fromID -> toID listesi.
 	links map[string]map[string][]string
+	// cardinality link adı -> bildirilen kardinalite.
+	cardinality map[string]link.Cardinality
 	// createErr doluysa Create bu hatayı döner.
 	createErr error
 	// listErr doluysa List bu hatayı döner.
@@ -48,9 +54,22 @@ type fakeLinker struct {
 	deletes []string
 }
 
+// cardinalities link adına göre bildirilen kardinaliteleri döner.
+//
+// Değerler [service.Definitions] içindeki BİLDİRİMDEN okunur, elle
+// tekrarlanmaz: bir bağın kardinalitesi değiştiğinde sahte de kendiliğinden
+// değişir ve testler gerçekte olmayan bir kısıtı zorlamaya devam etmez.
+func cardinalities() map[string]link.Cardinality {
+	out := map[string]link.Cardinality{}
+	for _, def := range service.Definitions() {
+		out[def.Name] = def.Cardinality
+	}
+	return out
+}
+
 // newFakeLinker boş bir sahte link servisi üretir.
 func newFakeLinker() *fakeLinker {
-	return &fakeLinker{links: map[string]map[string][]string{}}
+	return &fakeLinker{links: map[string]map[string][]string{}, cardinality: cardinalities()}
 }
 
 // Create bağı kaydeder; aynı çift için no-op, kardinalite ihlalinde
@@ -69,20 +88,26 @@ func (f *fakeLinker) Create(_ context.Context, name, fromID, toID string) error 
 			return nil
 		}
 	}
-	// FROM ucu: varyant zaten başka bir hedefe bağlı.
-	if len(f.links[name][fromID]) > 0 {
+
+	cardinality := f.cardinality[name]
+	// FROM ucu yalnızca OneToOne'da benzersizdir: kayıt zaten başka bir hedefe
+	// bağlı.
+	if cardinality == link.OneToOne && len(f.links[name][fromID]) > 0 {
 		return errors.Conflict("link_cardinality_violation",
 			"%q linkinde %s zaten bağlı", name, fromID)
 	}
-	// TO ucu: hedef zaten başka bir varyanta bağlı.
-	for otherFrom, targets := range f.links[name] {
-		if otherFrom == fromID {
-			continue
-		}
-		for _, existing := range targets {
-			if existing == toID {
-				return errors.Conflict("link_cardinality_violation",
-					"%q linkinde %s zaten %s'e bağlı", name, toID, otherFrom)
+	// TO ucu OneToOne ve OneToMany'de benzersizdir: hedef zaten başka bir kayda
+	// bağlı. ManyToMany'de kısıt yoktur.
+	if cardinality != link.ManyToMany {
+		for otherFrom, targets := range f.links[name] {
+			if otherFrom == fromID {
+				continue
+			}
+			for _, existing := range targets {
+				if existing == toID {
+					return errors.Conflict("link_cardinality_violation",
+						"%q linkinde %s zaten %s'e bağlı", name, toID, otherFrom)
+				}
 			}
 		}
 	}
@@ -164,8 +189,16 @@ func (f *fakeGraph) lastSpec(t *testing.T) query.GraphSpec {
 }
 
 // newService test için servis kurar.
+//
+// Sahte depo ile sahte link servisi BURADA birbirine bağlanır: satış kanalı
+// bağı gerçekte tek bir tabloda durur ve servis onu link üzerinden yazıp depo
+// sorgusuyla okur. Bağlanmasalardı yazma bir yere, okuma başka bir yere gider
+// ve süzme testleri hiçbir şey kanıtlamazdı (bkz. memStore.links).
 func newService(t *testing.T, store *memStore, links service.Linker, graph service.Grapher) *service.Service {
 	t.Helper()
+	if fake, ok := links.(*fakeLinker); ok && store != nil {
+		store.links = fake
+	}
 	svc, err := service.New(service.Options{Repo: store, Links: links, Query: graph})
 	require.NoError(t, err)
 	return svc

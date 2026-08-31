@@ -9,6 +9,7 @@ import (
 	"github.com/bdrtr/gobit/internal/core/errors"
 	"github.com/bdrtr/gobit/internal/modules/product/models"
 	"github.com/bdrtr/gobit/internal/modules/product/repository"
+	"github.com/bdrtr/gobit/internal/modules/product/service"
 )
 
 // memStore [repository.Store]'un bellek içi uygulamasıdır.
@@ -38,6 +39,18 @@ type memStore struct {
 	variantValues map[string]map[string]string
 	productTags   map[string][]string
 	productCats   map[string][]string
+
+	// links satış kanalı bağlarının okunduğu sahte link servisidir.
+	//
+	// Gerçekte ürün ↔ kanal bağı TEK bir tabloda durur: servis onu core/link
+	// üzerinden YAZAR, depo ise kendi sorgusunun EXISTS koşuluyla OKUR. Sahte
+	// depo kendi ayrı kopyasını tutsaydı yazma ile okuma ayrışır ve testler
+	// gerçekte var olmayan bir tutarlılığı "kanıtlardı" — bu yüzden okuma da
+	// yazmanın gittiği yere, [fakeLinker]'a bakar.
+	//
+	// nil ise hiçbir ürünün ataması yoktur; kural gereği hepsi her kanalda
+	// görünür.
+	links *fakeLinker
 
 	// calls metot adına göre çağrı sayacıdır.
 	calls map[string]int
@@ -188,7 +201,7 @@ func (m *memStore) liveProducts() []models.Product {
 }
 
 // matches ürünün filtreye uyup uymadığını bildirir.
-func matches(p *models.Product, f repository.ProductFilter) bool {
+func (m *memStore) matches(p *models.Product, f repository.ProductFilter) bool {
 	switch {
 	case f.Status != nil && p.Status.String() != *f.Status:
 		return false
@@ -199,8 +212,55 @@ func matches(p *models.Product, f repository.ProductFilter) bool {
 	case f.Search != nil && !strings.Contains(strings.ToLower(p.Title), strings.ToLower(*f.Search)):
 		return false
 	default:
+		return m.visibleIn(p.ID, f.SalesChannelIDs)
+	}
+}
+
+// visibleIn satış kanalı görünürlük kuralının sahte karşılığıdır.
+//
+// Gerçek kural SQL'dedir (repository/saleschannel.go); burada tekrar edilmesi
+// kaçınılmazdır çünkü sahte deponun veritabanı yoktur. İkisinin ayrışmadığı
+// entegrasyon testleriyle kanıtlanır: aynı senaryolar hem burada hem gerçek
+// PostgreSQL üzerinde koşar.
+//
+// nil dilim "süzme yok", boş dilim "kimlik var ama kanalı yok" demektir;
+// ayrımın gerekçesi için bkz. repository.ProductFilter.SalesChannelIDs.
+func (m *memStore) visibleIn(productID string, channelIDs []string) bool {
+	if channelIDs == nil {
 		return true
 	}
+	assigned := m.assignedChannels(productID)
+	if len(assigned) == 0 {
+		return true
+	}
+	for _, id := range assigned {
+		if slices.Contains(channelIDs, id) {
+			return true
+		}
+	}
+	return false
+}
+
+// assignedChannels ürünün bağlı olduğu kanalları sahte link servisinden okur.
+func (m *memStore) assignedChannels(productID string) []string {
+	if m.links == nil {
+		return nil
+	}
+	return m.links.linked(service.LinkProductSalesChannel, productID)
+}
+
+// ProductVisibleInSalesChannels tekil vitrin ucunun görünürlük denetimidir.
+func (m *memStore) ProductVisibleInSalesChannels(
+	_ context.Context,
+	productID string,
+	salesChannelIDs []string,
+) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := m.track("ProductVisibleInSalesChannels"); err != nil {
+		return false, err
+	}
+	return m.visibleIn(productID, salesChannelIDs), nil
 }
 
 func (m *memStore) ListProducts(_ context.Context, f repository.ProductFilter) ([]models.Product, error) {
@@ -213,7 +273,7 @@ func (m *memStore) ListProducts(_ context.Context, f repository.ProductFilter) (
 	all := m.liveProducts()
 	out := make([]models.Product, 0, len(all))
 	for i := range all {
-		if matches(&all[i], f) {
+		if m.matches(&all[i], f) {
 			out = append(out, all[i])
 		}
 	}
@@ -230,7 +290,7 @@ func (m *memStore) CountProducts(_ context.Context, f repository.ProductFilter) 
 	all := m.liveProducts()
 	count := 0
 	for i := range all {
-		if matches(&all[i], f) {
+		if m.matches(&all[i], f) {
 			count++
 		}
 	}

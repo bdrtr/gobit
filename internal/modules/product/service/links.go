@@ -20,6 +20,17 @@ const (
 	EntityProduct = "product"
 	// EntityVariant varyant kayıtlarının entity adıdır.
 	EntityVariant = "variant"
+	// EntitySalesChannel auth modülünün satış kanalı entity adıdır.
+	//
+	// Modülün adı "auth"tur, entity'si "sales_channel": auth sağlayıcısını tam
+	// bu adla kaydeder (auth.ProviderName = service.Entity + query.ProviderSuffix)
+	// ve link'in To ucuna yazılması gereken ad da budur. Buraya "auth" yazmak
+	// çalışma zamanında errors.NotFound demek olurdu; gerekçenin tamamı için
+	// yukarıdaki blok yorumuna ve [Definitions] godoc'una bakınız.
+	//
+	// İki paketteki adın örtüştüğü internal/arch içinde bir testle sabitlenir;
+	// bu paket auth'u import EDEMEZ (Prensip 2.4, ADR 0001).
+	EntitySalesChannel = "sales_channel"
 )
 
 // Link adları. Bu adlar MODÜLLER ARASI SÖZLEŞMEDİR: pricing ve inventory
@@ -31,6 +42,11 @@ const (
 	LinkVariantPriceSet = "product_variant_price_set"
 	// LinkVariantInventory varyantı inventory modülündeki stok kalemine bağlar.
 	LinkVariantInventory = "product_variant_inventory"
+	// LinkProductSalesChannel ürünü auth modülündeki satış kanalına bağlar.
+	//
+	// Bu bağ ÜRÜN düzeyindedir (varyant değil): bir ürünün hangi vitrinlerde
+	// satıldığı varyanttan varyanta değişmez.
+	LinkProductSalesChannel = "product_sales_channel"
 )
 
 // Definitions product modülünün bildirdiği link tanımlarıdır.
@@ -48,6 +64,17 @@ const (
 // link tablosunu ÜRÜN sağlayıcısına sorar ve hiçbir kayıt eşleşmezdi — hata
 // vermeden boş fiyat/stok dönerdi ki bu, bulunması en pahalı hata türüdür.
 // Alan adı (variant_id) sahipliği ayrıca belgeler.
+//
+// # Satış kanalı bağı
+//
+// [LinkProductSalesChannel] aynı kuralın ÜRÜN düzeyindeki örneğidir: To ucuna
+// modül adı ("auth") değil [EntitySalesChannel] yazılır — yukarıdaki gerekçenin
+// aynısı geçerlidir, tekrar edilmiyor.
+//
+// Kardinalitesi ManyToMany'dir ve bu, gerçek ilişkinin ta kendisidir: bir ürün
+// birden çok vitrinde satılabilir, bir vitrinde de binlerce ürün bulunur.
+// Kısıtlı bir kardinalite seçmek (OneToMany) bir kanala ikinci ürünü eklemeyi
+// çakışmaya çevirirdi.
 func Definitions() []link.LinkDefinition {
 	return []link.LinkDefinition{
 		{
@@ -61,6 +88,12 @@ func Definitions() []link.LinkDefinition {
 			From:        link.LinkSide{Module: ModuleName, Entity: EntityVariant, Field: "variant_id"},
 			To:          link.LinkSide{Module: "inventory", Entity: "inventory_item", Field: "inventory_item_id"},
 			Cardinality: link.OneToOne,
+		},
+		{
+			Name:        LinkProductSalesChannel,
+			From:        link.LinkSide{Module: ModuleName, Entity: EntityProduct, Field: "product_id"},
+			To:          link.LinkSide{Module: EntitySalesChannel, Entity: EntitySalesChannel, Field: "sales_channel_id"},
+			Cardinality: link.ManyToMany,
 		},
 	}
 }
@@ -121,6 +154,117 @@ func (s *Service) VariantLinkIDs(ctx context.Context, variantID string) (Variant
 		return VariantLinks{}, err
 	}
 	return VariantLinks{PriceSetID: priceSetID, InventoryItemID: itemID}, nil
+}
+
+// AddProductSalesChannel ürünü bir satış kanalına bağlar.
+//
+// Bağ ÇOKTAN ÇOĞADIR: eski bağlar kaldırılmaz, yenisi eklenir (fiyat/stok
+// bağlarındaki "önce sil sonra yaz" kalıbı burada YANLIŞ olurdu — ürün ikinci
+// bir kanala eklendiği anda birincisinden düşerdi).
+//
+// Çağrı idempotenttir: aynı çift ikinci kez bağlanırsa link servisi no-op
+// yapar (bkz. core/link LinkService.Create).
+//
+// Kanalın gerçekten var olduğu BURADA DOĞRULANMAZ ve doğrulanamaz: satış
+// kanalı auth modülünün verisidir ve bu modül onu import edemez (Prensip 2.4).
+// Var olmayan bir kanala kurulan bağ zararsızdır — hiçbir isteğin kanal listesi
+// onu içermez, dolayısıyla ürün hiçbir vitrinde o bağ yüzünden görünmez.
+func (s *Service) AddProductSalesChannel(ctx context.Context, productID, salesChannelID string) error {
+	if err := s.checkProductSalesChannel(ctx, productID, salesChannelID); err != nil {
+		return err
+	}
+	if err := s.links.Create(ctx, LinkProductSalesChannel, productID, salesChannelID); err != nil {
+		return wrapLink(err, "%q bağı kurulamadı (ürün: %s -> kanal: %s)",
+			LinkProductSalesChannel, productID, salesChannelID)
+	}
+	return nil
+}
+
+// RemoveProductSalesChannel ürünün bir satış kanalıyla bağını kaldırır.
+//
+// Bağ zaten yoksa çağrı no-op'tur (core/link sözleşmesi): "yok" istenen sonucun
+// ta kendisidir ve yeniden denenen bir kaldırma isteğinin hata dönmesi
+// istemciyi yanıltırdı.
+//
+// DİKKAT: son kanal bağı kaldırılan ürün gizlenmez, TÜM kanallarda görünür
+// hâle gelir — "ataması olmayan ürün her yerde görünür" kuralının doğrudan
+// sonucudur (bkz. [Service.ListStoreProducts]).
+func (s *Service) RemoveProductSalesChannel(ctx context.Context, productID, salesChannelID string) error {
+	if err := s.checkProductSalesChannel(ctx, productID, salesChannelID); err != nil {
+		return err
+	}
+	if err := s.links.Delete(ctx, LinkProductSalesChannel, productID, salesChannelID); err != nil {
+		return wrapLink(err, "%q bağı kaldırılamadı (ürün: %s -> kanal: %s)",
+			LinkProductSalesChannel, productID, salesChannelID)
+	}
+	return nil
+}
+
+// ProductSalesChannelIDs ürünün bağlı olduğu satış kanallarının kimliklerini
+// döner.
+//
+// Boş sonuç "hiç kanal yok" demektir ve bu, ürünün HİÇBİR yerde görünmediği
+// anlamına GELMEZ: atamasız ürün tüm kanallarda görünür.
+func (s *Service) ProductSalesChannelIDs(ctx context.Context, productID string) ([]string, error) {
+	if _, err := requireID("id", productID); err != nil {
+		return nil, err
+	}
+	if s.links == nil {
+		return nil, s.linkerMissing()
+	}
+	if _, err := s.repo.GetProduct(ctx, productID); err != nil {
+		return nil, err
+	}
+
+	ids, err := s.links.List(ctx, LinkProductSalesChannel, productID)
+	if err != nil {
+		return nil, wrapLink(err, "%q bağı okunamadı (ürün: %s)", LinkProductSalesChannel, productID)
+	}
+	return ids, nil
+}
+
+// checkProductSalesChannel satış kanalı bağı uçlarının ortak ön denetimidir.
+//
+// Ürünün gerçekten var olduğu BURADA doğrulanır: link servisi kimlikleri
+// serbest dizge olarak görür ve hiçbir modülün şemasını tanımaz, yani yazım
+// hatası taşıyan bir ürün kimliği sessizce bağlanır ve o bağ hiçbir zaman
+// hiçbir sorguda görünmezdi.
+func (s *Service) checkProductSalesChannel(ctx context.Context, productID, salesChannelID string) error {
+	if _, err := requireID("id", productID); err != nil {
+		return err
+	}
+	if _, err := requireID("sales_channel_id", salesChannelID); err != nil {
+		return err
+	}
+	if s.links == nil {
+		return s.linkerMissing()
+	}
+	_, err := s.repo.GetProduct(ctx, productID)
+	return err
+}
+
+// cleanupProductSalesChannels silinen ürünün satış kanalı bağlarını temizler.
+//
+// Hata DÖNMEZ, uyarı olarak loglanır; gerekçe [Service.cleanupVariantLinks] ile
+// aynıdır. Temizlik yine de yapılır: bağ kalırsa auth tarafında ters yönde
+// yapılan bir okuma (bu kanalda hangi ürünler var) silinmiş bir ürüne çıkardı.
+func (s *Service) cleanupProductSalesChannels(ctx context.Context, productID string) {
+	if s.links == nil {
+		return
+	}
+	existing, err := s.links.List(ctx, LinkProductSalesChannel, productID)
+	if err != nil {
+		s.log.WarnContext(ctx, "silinen ürünün satış kanalı bağları okunamadı",
+			"link", LinkProductSalesChannel, "product_id", productID, "error", err)
+		return
+	}
+	for _, channelID := range existing {
+		if err := s.links.Delete(ctx, LinkProductSalesChannel, productID, channelID); err != nil {
+			s.log.WarnContext(ctx, "silinen ürünün satış kanalı bağı temizlenemedi",
+				"link", LinkProductSalesChannel, "product_id", productID,
+				"sales_channel_id", channelID, "error", err)
+		}
+	}
 }
 
 // setVariantLink varyantı verilen link üzerinden hedef kayda bağlar.

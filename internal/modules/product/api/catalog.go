@@ -37,6 +37,10 @@ type Catalog interface {
 	ClearVariantInventoryItem(ctx context.Context, variantID string) error
 	VariantLinkIDs(ctx context.Context, variantID string) (service.VariantLinks, error)
 
+	AddProductSalesChannel(ctx context.Context, productID, salesChannelID string) error
+	RemoveProductSalesChannel(ctx context.Context, productID, salesChannelID string) error
+	ProductSalesChannelIDs(ctx context.Context, productID string) ([]string, error)
+
 	CreateCollection(ctx context.Context, in service.CreateCollectionInput) (models.Collection, error)
 	GetCollection(ctx context.Context, id string) (models.Collection, error)
 	ListCollections(ctx context.Context, limit, offset int) (service.ListResult[models.Collection], error)
@@ -49,5 +53,5 @@ type Catalog interface {
 	ListTags(ctx context.Context, limit, offset int) (service.ListResult[models.Tag], error)
 
 	ListStoreProducts(ctx context.Context, opts service.StoreListOptions) (service.ListResult[service.StoreProduct], error)
-	GetStoreProduct(ctx context.Context, idOrHandle string) (service.StoreProduct, error)
+	GetStoreProduct(ctx context.Context, idOrHandle string, salesChannelIDs []string) (service.StoreProduct, error)
 }

@@ -17,8 +17,19 @@ type ProductFilter struct {
 	CollectionID *string
 	Handle       *string
 	Search       *string
-	Limit        int
-	Offset       int
+	// SalesChannelIDs isteğin bağlı olduğu satış kanallarıdır.
+	//
+	// Burada nil ile BOŞ AMA nil OLMAYAN dilim FARKLI şeyler söyler ve ayrım
+	// işaretçiyle değil, dilimin kendisiyle korunur (aynı ayrım ProductPatch'te
+	// de var): nil "istek kanal kimliği taşımıyor, süzme" demektir; boş dilim
+	// "kimlik var ama hiç kanalı yok" demektir ve süzgeç uygulanır. İkisi bir
+	// tutulsaydı kanalsız bir kimlik TÜM kanalların katalogunu okurdu.
+	//
+	// Kuralın kendisi ve neden veritabanında uygulandığı için bkz.
+	// saleschannel.go.
+	SalesChannelIDs []string
+	Limit           int
+	Offset          int
 }
 
 // ProductPatch bir ürünün kısmi güncellemesidir.
@@ -112,39 +123,6 @@ func (r *Repo) GetProductByHandle(ctx context.Context, handle string) (models.Pr
 		return models.Product{}, wrapDB(err, "ürün bulunamadı (handle: %s)", handle)
 	}
 	return toProduct(row)
-}
-
-// ListProducts ölçütlere uyan ürünleri sayfalı döner.
-func (r *Repo) ListProducts(ctx context.Context, f ProductFilter) ([]models.Product, error) {
-	rows, err := r.q.ListProducts(ctx, productdb.ListProductsParams{
-		Status:       f.Status,
-		CollectionID: f.CollectionID,
-		Handle:       f.Handle,
-		Search:       f.Search,
-		Lim:          toInt32(f.Limit),
-		Off:          toInt32(f.Offset),
-	})
-	if err != nil {
-		return nil, wrapDB(err, "ürünler listelenemedi")
-	}
-	return toProducts(rows)
-}
-
-// CountProducts ölçütlere uyan TOPLAM ürün sayısını döner.
-//
-// Sayı, sayfalama zarfının ("count") kaynağıdır ve limit/offset'ten
-// BAĞIMSIZDIR; istemci kaç sayfa olduğunu ancak böyle bilebilir.
-func (r *Repo) CountProducts(ctx context.Context, f ProductFilter) (int, error) {
-	n, err := r.q.CountProducts(ctx, productdb.CountProductsParams{
-		Status:       f.Status,
-		CollectionID: f.CollectionID,
-		Handle:       f.Handle,
-		Search:       f.Search,
-	})
-	if err != nil {
-		return 0, wrapDB(err, "ürün sayısı okunamadı")
-	}
-	return int(n), nil
 }
 
 // ListProductsByIDs verilen kimliklerin ürünlerini TEK sorguda döner.

@@ -40,23 +40,15 @@ FOR UPDATE;
 SELECT * FROM product
 WHERE handle = $1 AND deleted_at IS NULL;
 
--- name: ListProducts :many
-SELECT * FROM product
-WHERE deleted_at IS NULL
-  AND (sqlc.narg('status')::text IS NULL OR status = sqlc.narg('status')::text)
-  AND (sqlc.narg('collection_id')::text IS NULL OR collection_id = sqlc.narg('collection_id')::text)
-  AND (sqlc.narg('handle')::text IS NULL OR handle = sqlc.narg('handle')::text)
-  AND (sqlc.narg('search')::text IS NULL OR title ILIKE '%' || sqlc.narg('search')::text || '%')
-ORDER BY created_at DESC, id DESC
-LIMIT sqlc.arg('lim')::int OFFSET sqlc.arg('off')::int;
-
--- name: CountProducts :one
-SELECT count(*) FROM product
-WHERE deleted_at IS NULL
-  AND (sqlc.narg('status')::text IS NULL OR status = sqlc.narg('status')::text)
-  AND (sqlc.narg('collection_id')::text IS NULL OR collection_id = sqlc.narg('collection_id')::text)
-  AND (sqlc.narg('handle')::text IS NULL OR handle = sqlc.narg('handle')::text)
-  AND (sqlc.narg('search')::text IS NULL OR title ILIKE '%' || sqlc.narg('search')::text || '%');
+-- ListProducts ve CountProducts BURADA DEĞİL, elle yazılmış SQL olarak
+-- repository/saleschannel.go içinde durur.
+--
+-- Sebebi tek başına bu dosyada anlaşılmaz: iki sorgu satış kanalı süzgeci için
+-- link tablosuna (link_product_sales_channel) karşı bir EXISTS/NOT EXISTS
+-- koşulu taşır ve o tablo bu modülün migration'larında YOKTUR — şemasını
+-- core/link çalışma anında kurar. sqlc şemayı bu dizinden okuduğu için
+-- "relation does not exist" ile üretimi reddeder. Gerekçenin tamamı ve
+-- süzgecin neden veritabanında uygulandığı için bkz. repository/saleschannel.go.
 
 -- name: ListProductsByIDs :many
 SELECT * FROM product

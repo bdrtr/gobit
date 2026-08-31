@@ -168,6 +168,24 @@ func (f *yetkiKatalogu) VariantLinkIDs(context.Context, string) (service.Variant
 	return service.VariantLinks{}, nil
 }
 
+// AddProductSalesChannel çağrıyı sayar.
+func (f *yetkiKatalogu) AddProductSalesChannel(context.Context, string, string) error {
+	f.say()
+	return nil
+}
+
+// RemoveProductSalesChannel çağrıyı sayar.
+func (f *yetkiKatalogu) RemoveProductSalesChannel(context.Context, string, string) error {
+	f.say()
+	return nil
+}
+
+// ProductSalesChannelIDs çağrıyı sayar.
+func (f *yetkiKatalogu) ProductSalesChannelIDs(context.Context, string) ([]string, error) {
+	f.say()
+	return nil, nil
+}
+
 // CreateCollection çağrıyı sayar.
 func (f *yetkiKatalogu) CreateCollection(
 	context.Context, service.CreateCollectionInput,
@@ -233,7 +251,7 @@ func (f *yetkiKatalogu) ListStoreProducts(
 }
 
 // GetStoreProduct çağrıyı sayar.
-func (f *yetkiKatalogu) GetStoreProduct(context.Context, string) (service.StoreProduct, error) {
+func (f *yetkiKatalogu) GetStoreProduct(context.Context, string, []string) (service.StoreProduct, error) {
 	f.say()
 	return service.StoreProduct{}, nil
 }
@@ -332,6 +350,12 @@ var yazmaUclari = map[string]struct {
 	"stok kalemi kaldırma": {
 		http.MethodDelete, "/admin/v1/variants/var_1/inventory-item", "",
 	},
+	"satış kanalı bağlama": {
+		http.MethodPost, "/admin/v1/products/prod_1/sales-channels", `{}`,
+	},
+	"satış kanalı kaldırma": {
+		http.MethodDelete, "/admin/v1/products/prod_1/sales-channels/sc_1", "",
+	},
 	"koleksiyon oluşturma": {http.MethodPost, "/admin/v1/product-collections", `{}`},
 	"kategori oluşturma":   {http.MethodPost, "/admin/v1/product-categories", `{}`},
 	"etiket oluşturma":     {http.MethodPost, "/admin/v1/product-tags", `{}`},
@@ -345,6 +369,7 @@ var okumaUclari = map[string]string{
 	"tekil varyant":      "/admin/v1/variants/var_1",
 	"seçenek listesi":    "/admin/v1/products/prod_1/options",
 	"varyant bağları":    "/admin/v1/variants/var_1/links",
+	"satış kanalları":    "/admin/v1/products/prod_1/sales-channels",
 	"koleksiyon listesi": "/admin/v1/product-collections",
 	"kategori listesi":   "/admin/v1/product-categories",
 	"etiket listesi":     "/admin/v1/product-tags",

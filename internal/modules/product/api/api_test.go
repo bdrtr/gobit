@@ -36,7 +36,11 @@ type fakeCatalog struct {
 	setPriceSet       func(ctx context.Context, variantID, priceSetID string) error
 	variantLinks      func(ctx context.Context, variantID string) (service.VariantLinks, error)
 	listStoreProducts func(ctx context.Context, opts service.StoreListOptions) (service.ListResult[service.StoreProduct], error)
-	getStoreProduct   func(ctx context.Context, idOrHandle string) (service.StoreProduct, error)
+	getStoreProduct   func(ctx context.Context, idOrHandle string, salesChannelIDs []string) (service.StoreProduct, error)
+
+	addSalesChannel    func(ctx context.Context, productID, salesChannelID string) error
+	removeSalesChannel func(ctx context.Context, productID, salesChannelID string) error
+	salesChannelIDs    func(ctx context.Context, productID string) ([]string, error)
 }
 
 func (f *fakeCatalog) CreateProduct(ctx context.Context, in service.CreateProductInput) (models.Product, error) {
@@ -81,8 +85,24 @@ func (f *fakeCatalog) ListStoreProducts(
 	return f.listStoreProducts(ctx, opts)
 }
 
-func (f *fakeCatalog) GetStoreProduct(ctx context.Context, idOrHandle string) (service.StoreProduct, error) {
-	return f.getStoreProduct(ctx, idOrHandle)
+func (f *fakeCatalog) GetStoreProduct(
+	ctx context.Context,
+	idOrHandle string,
+	salesChannelIDs []string,
+) (service.StoreProduct, error) {
+	return f.getStoreProduct(ctx, idOrHandle, salesChannelIDs)
+}
+
+func (f *fakeCatalog) AddProductSalesChannel(ctx context.Context, productID, salesChannelID string) error {
+	return f.addSalesChannel(ctx, productID, salesChannelID)
+}
+
+func (f *fakeCatalog) RemoveProductSalesChannel(ctx context.Context, productID, salesChannelID string) error {
+	return f.removeSalesChannel(ctx, productID, salesChannelID)
+}
+
+func (f *fakeCatalog) ProductSalesChannelIDs(ctx context.Context, productID string) ([]string, error) {
+	return f.salesChannelIDs(ctx, productID)
 }
 
 // newRouter sahte servisle bağlanmış bir router üretir.
@@ -479,7 +499,7 @@ func TestStoreGetProductAcceptsHandle(t *testing.T) {
 
 	var got string
 	catalog := &fakeCatalog{
-		getStoreProduct: func(_ context.Context, idOrHandle string) (service.StoreProduct, error) {
+		getStoreProduct: func(_ context.Context, idOrHandle string, _ []string) (service.StoreProduct, error) {
 			got = idOrHandle
 			return service.StoreProduct{
 				Product:  models.Product{ID: "prod_1", Handle: idOrHandle},
@@ -503,7 +523,7 @@ func TestStoreProductHidesEmbeddedVariants(t *testing.T) {
 	t.Parallel()
 
 	catalog := &fakeCatalog{
-		getStoreProduct: func(context.Context, string) (service.StoreProduct, error) {
+		getStoreProduct: func(context.Context, string, []string) (service.StoreProduct, error) {
 			return service.StoreProduct{
 				Product: models.Product{
 					ID: "prod_1",

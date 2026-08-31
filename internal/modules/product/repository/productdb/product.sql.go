@@ -9,34 +9,6 @@ import (
 	"context"
 )
 
-const countProducts = `-- name: CountProducts :one
-SELECT count(*) FROM product
-WHERE deleted_at IS NULL
-  AND ($1::text IS NULL OR status = $1::text)
-  AND ($2::text IS NULL OR collection_id = $2::text)
-  AND ($3::text IS NULL OR handle = $3::text)
-  AND ($4::text IS NULL OR title ILIKE '%' || $4::text || '%')
-`
-
-type CountProductsParams struct {
-	Status       *string
-	CollectionID *string
-	Handle       *string
-	Search       *string
-}
-
-func (q *Queries) CountProducts(ctx context.Context, arg CountProductsParams) (int64, error) {
-	row := q.db.QueryRow(ctx, countProducts,
-		arg.Status,
-		arg.CollectionID,
-		arg.Handle,
-		arg.Search,
-	)
-	var count int64
-	err := row.Scan(&count)
-	return count, err
-}
-
 const createImage = `-- name: CreateImage :one
 INSERT INTO product_image (id, product_id, url, rank, metadata)
 VALUES ($1, $2, $3, $4, $5)
@@ -314,80 +286,22 @@ func (q *Queries) ListImagesByProductIDs(ctx context.Context, dollar_1 []string)
 	return items, nil
 }
 
-const listProducts = `-- name: ListProducts :many
-SELECT id, handle, title, subtitle, description, thumbnail, status, is_giftcard, discountable, weight, length, height, width, material, origin_country, collection_id, metadata, created_at, updated_at, deleted_at FROM product
-WHERE deleted_at IS NULL
-  AND ($1::text IS NULL OR status = $1::text)
-  AND ($2::text IS NULL OR collection_id = $2::text)
-  AND ($3::text IS NULL OR handle = $3::text)
-  AND ($4::text IS NULL OR title ILIKE '%' || $4::text || '%')
-ORDER BY created_at DESC, id DESC
-LIMIT $6::int OFFSET $5::int
-`
-
-type ListProductsParams struct {
-	Status       *string
-	CollectionID *string
-	Handle       *string
-	Search       *string
-	Off          int32
-	Lim          int32
-}
-
-func (q *Queries) ListProducts(ctx context.Context, arg ListProductsParams) ([]Product, error) {
-	rows, err := q.db.Query(ctx, listProducts,
-		arg.Status,
-		arg.CollectionID,
-		arg.Handle,
-		arg.Search,
-		arg.Off,
-		arg.Lim,
-	)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []Product{}
-	for rows.Next() {
-		var i Product
-		if err := rows.Scan(
-			&i.ID,
-			&i.Handle,
-			&i.Title,
-			&i.Subtitle,
-			&i.Description,
-			&i.Thumbnail,
-			&i.Status,
-			&i.IsGiftcard,
-			&i.Discountable,
-			&i.Weight,
-			&i.Length,
-			&i.Height,
-			&i.Width,
-			&i.Material,
-			&i.OriginCountry,
-			&i.CollectionID,
-			&i.Metadata,
-			&i.CreatedAt,
-			&i.UpdatedAt,
-			&i.DeletedAt,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const listProductsByIDs = `-- name: ListProductsByIDs :many
+
 SELECT id, handle, title, subtitle, description, thumbnail, status, is_giftcard, discountable, weight, length, height, width, material, origin_country, collection_id, metadata, created_at, updated_at, deleted_at FROM product
 WHERE id = ANY($1::text[]) AND deleted_at IS NULL
 ORDER BY created_at DESC, id DESC
 `
 
+// ListProducts ve CountProducts BURADA DEĞİL, elle yazılmış SQL olarak
+// repository/saleschannel.go içinde durur.
+//
+// Sebebi tek başına bu dosyada anlaşılmaz: iki sorgu satış kanalı süzgeci için
+// link tablosuna (link_product_sales_channel) karşı bir EXISTS/NOT EXISTS
+// koşulu taşır ve o tablo bu modülün migration'larında YOKTUR — şemasını
+// core/link çalışma anında kurar. sqlc şemayı bu dizinden okuduğu için
+// "relation does not exist" ile üretimi reddeder. Gerekçenin tamamı ve
+// süzgecin neden veritabanında uygulandığı için bkz. repository/saleschannel.go.
 func (q *Queries) ListProductsByIDs(ctx context.Context, dollar_1 []string) ([]Product, error) {
 	rows, err := q.db.Query(ctx, listProductsByIDs, dollar_1)
 	if err != nil {

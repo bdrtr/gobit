@@ -140,7 +140,7 @@ func TestGetStoreProductByHandle(t *testing.T) {
 
 	fx := newStoreFixture(t)
 
-	product, err := fx.svc.GetStoreProduct(context.Background(), "tisort")
+	product, err := fx.svc.GetStoreProduct(context.Background(), "tisort", nil)
 	require.NoError(t, err)
 	assert.Equal(t, "tisort", product.Handle)
 	require.Len(t, product.Variants, 1)
@@ -153,7 +153,7 @@ func TestGetStoreProductByID(t *testing.T) {
 
 	fx := newStoreFixture(t)
 
-	product, err := fx.svc.GetStoreProduct(context.Background(), fx.products[0].ID)
+	product, err := fx.svc.GetStoreProduct(context.Background(), fx.products[0].ID, nil)
 	require.NoError(t, err)
 	assert.Equal(t, fx.products[0].ID, product.ID)
 }
@@ -171,7 +171,7 @@ func TestGetStoreProductHidesDraft(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	_, err = svc.GetStoreProduct(ctx, draft.ID)
+	_, err = svc.GetStoreProduct(ctx, draft.ID, nil)
 	require.Error(t, err)
 	assert.True(t, errors.IsNotFound(err), "taslak ürün vitrinde bulunamamalı: %v", err)
 }

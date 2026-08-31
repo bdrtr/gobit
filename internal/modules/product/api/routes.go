@@ -97,6 +97,15 @@ func (h *Handler) Routes(r chi.Router) {
 	yazma.Delete("/admin/v1/variants/{id}/inventory-item", h.adminDeleteInventoryItem)
 	okuma.Get("/admin/v1/variants/{id}/links", h.adminGetVariantLinks)
 
+	// Satış kanalı bağı ÜRÜN düzeyindedir ve çoktan çoğadır; bu yüzden yol
+	// varyant bağlarının tekil kalıbını değil koleksiyon kalıbını izler
+	// (POST ekler, yoldaki kimlikle DELETE çıkarır). Bağ kurmak ürünün hangi
+	// vitrinlerde GÖRÜNECEĞİNİ belirler, yani katalog verisini değiştirir:
+	// yazma uçları [ScopeWrite], okuma ucu [ScopeRead] ister.
+	yazma.Post("/admin/v1/products/{id}/sales-channels", h.adminAddSalesChannel)
+	yazma.Delete("/admin/v1/products/{id}/sales-channels/{sales_channel_id}", h.adminRemoveSalesChannel)
+	okuma.Get("/admin/v1/products/{id}/sales-channels", h.adminListSalesChannels)
+
 	// --- Admin API: taksonomi (sade yüzey: liste + oluştur) ---
 	yazma.Post("/admin/v1/product-collections", h.adminCreateCollection)
 	okuma.Get("/admin/v1/product-collections", h.adminListCollections)

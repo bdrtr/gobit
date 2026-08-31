@@ -88,6 +88,9 @@ type Store interface {
 	GetProductByHandle(ctx context.Context, handle string) (models.Product, error)
 	ListProducts(ctx context.Context, f ProductFilter) ([]models.Product, error)
 	CountProducts(ctx context.Context, f ProductFilter) (int, error)
+	// ProductVisibleInSalesChannels tekil vitrin ucunun görünürlük denetimidir;
+	// listeyle AYNI SQL kuralını kullanır (bkz. saleschannel.go).
+	ProductVisibleInSalesChannels(ctx context.Context, productID string, salesChannelIDs []string) (bool, error)
 	ListProductsByIDs(ctx context.Context, ids []string) ([]models.Product, error)
 	UpdateProduct(ctx context.Context, id string, patch ProductPatch) (models.Product, error)
 	SoftDeleteProduct(ctx context.Context, id string) error
@@ -142,6 +145,12 @@ type Store interface {
 // Repo [Store]'un PostgreSQL uygulamasıdır.
 type Repo struct {
 	q *productdb.Queries
+	// db elle yazılmış sorguların çalıştığı bağlantı yüzeyidir (bkz.
+	// saleschannel.go). Ayrı bir alan olarak tutulur çünkü sqlc'nin Queries
+	// tipi kendi bağlantısını DIŞARIYA AÇMAZ; işleme bağlı bir Repo'da bu alan
+	// işlemin kendisidir, dolayısıyla elle yazılan sorgular da aynı işlemde
+	// yürür.
+	db productdb.DBTX
 	// pool yalnızca işlem açmak için gerekir; işleme bağlı bir Repo'da nil'dir.
 	pool DB
 }
@@ -152,7 +161,7 @@ var _ Store = (*Repo)(nil)
 
 // New verilen bağlantı havuzu üzerinde çalışan bir depo üretir.
 func New(pool DB) *Repo {
-	return &Repo{q: productdb.New(pool), pool: pool}
+	return &Repo{q: productdb.New(pool), db: pool, pool: pool}
 }
 
 // InTx fn'i tek bir veritabanı işleminde çalıştırır.
@@ -172,7 +181,7 @@ func (r *Repo) InTx(ctx context.Context, fn func(ctx context.Context, s Store) e
 	// Kesinleşmiş bir işlemde Rollback no-op'tur; hata yolunda ise geri alır.
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	if err := fn(ctx, &Repo{q: r.q.WithTx(tx)}); err != nil {
+	if err := fn(ctx, &Repo{q: r.q.WithTx(tx), db: tx}); err != nil {
 		return err
 	}
 	if err := tx.Commit(ctx); err != nil {

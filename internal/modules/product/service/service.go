@@ -165,8 +165,14 @@ type ListProductsOptions struct {
 	CollectionID *string
 	Handle       *string
 	Search       *string
-	Limit        int
-	Offset       int
+	// SalesChannelIDs satış kanalı süzgecidir; anlamı ve nil/boş ayrımı için
+	// bkz. [StoreListOptions.SalesChannelIDs].
+	//
+	// Yönetim listelemesi burayı DOLDURMAZ: yönetim kimliğinin bir satış kanalı
+	// yoktur ve kataloğu bütün olarak görmesi gerekir.
+	SalesChannelIDs []string
+	Limit           int
+	Offset          int
 	// WithRelations true ise varyantlar, seçenekler, görseller, etiketler ve
 	// kategoriler TOPLU sorgularla doldurulur (ürün başına sorgu yapılmaz).
 	WithRelations bool
@@ -287,11 +293,12 @@ func (s *Service) ListProducts(ctx context.Context, opts ListProductsOptions) (L
 	}
 
 	filter := repository.ProductFilter{
-		CollectionID: opts.CollectionID,
-		Handle:       opts.Handle,
-		Search:       opts.Search,
-		Limit:        limit,
-		Offset:       offset,
+		CollectionID:    opts.CollectionID,
+		Handle:          opts.Handle,
+		Search:          opts.Search,
+		SalesChannelIDs: opts.SalesChannelIDs,
+		Limit:           limit,
+		Offset:          offset,
 	}
 	if opts.Status != nil {
 		status, err := normalizeStatus(*opts.Status)
@@ -371,8 +378,9 @@ func (s *Service) UpdateProduct(ctx context.Context, id string, in UpdateProduct
 
 // DeleteProduct ürünü ve alt kayıtlarını SOFT siler.
 //
-// Varyantların fiyat/stok bağları da temizlenir: silinen bir varyantın
-// link'i kalırsa başka modüllerin sorguları var olmayan bir varyanta çıkar.
+// Varyantların fiyat/stok bağları ve ürünün satış kanalı bağları da
+// temizlenir: silinen bir kaydın link'i kalırsa başka modüllerin sorguları var
+// olmayan bir kayda çıkar.
 // Link temizliği veritabanı işleminin DIŞINDADIR (link tabloları çekirdeğe
 // aittir); bu yüzden başarısızlığı silmeyi geri almaz, uyarı olarak loglanır
 // ve yetim bağlar zararsızdır — kimlikler yeniden kullanılmaz.
@@ -399,6 +407,7 @@ func (s *Service) DeleteProduct(ctx context.Context, id string) error {
 	for _, variantID := range variantIDs {
 		s.cleanupVariantLinks(ctx, variantID)
 	}
+	s.cleanupProductSalesChannels(ctx, id)
 	return nil
 }
 
