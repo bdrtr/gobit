@@ -41,6 +41,41 @@ func (q *Queries) GetIdentityOfUser(ctx context.Context, arg GetIdentityOfUserPa
 	return i, err
 }
 
+const getSessionAnchor = `-- name: GetSessionAnchor :one
+SELECT updated_at FROM auth_identity
+WHERE user_id = $1 AND deleted_at IS NULL
+ORDER BY updated_at DESC
+LIMIT 1
+`
+
+// GetSessionAnchor kullanıcının EN YENİ oturum çapasını döner.
+//
+// Jeton doğrulaması bu tek değere dayanır: "iat" bundan önceyse jeton
+// reddedilir (bkz. service/interop.go, principalFromToken).
+//
+// # Neden EN YENİ (ve neden tek bir sağlayıcı değil)
+//
+// Jetonun hangi sağlayıcıdan alındığını söyleyen bir iddia YOKTUR; iddia
+// olmadığı için çapa sağlayıcıya göre seçilemez. Seçilebilen iki uç vardır ve
+// en ESKİSİNİ almak yanlış olurdu: çapası hiç ilerlemeyen tek bir satır (örn.
+// parola değişimi yalnızca emailpass satırını yazar) iptalin tamamını etkisiz
+// bırakırdı. EN YENİ olan alınır — belirsizlik güvenlik lehine çözülür, bedeli
+// bir sağlayıcıdaki iptalin ötekinin jetonlarını da düşürmesidir.
+//
+// Kullanıcının sağlayıcı sayısı elle ölçülür; sıralama, user_id önekiyle
+// taranan indeksten (auth_identity_user_provider_uniq) gelen bir avuç satır
+// üzerindedir.
+//
+// Canlı kimlik hiç yoksa satır dönmez: çağıran bunu errors.NotFound'a çevirir
+// ve jetonu reddeder, çünkü jetonun ne zaman geçersizleştiğini söyleyecek bir
+// değer kalmamıştır.
+func (q *Queries) GetSessionAnchor(ctx context.Context, userID string) (pgtype.Timestamptz, error) {
+	row := q.db.QueryRow(ctx, getSessionAnchor, userID)
+	var updated_at pgtype.Timestamptz
+	err := row.Scan(&updated_at)
+	return updated_at, err
+}
+
 const insertIdentity = `-- name: InsertIdentity :one
 
 INSERT INTO auth_identity (
@@ -207,16 +242,15 @@ func (q *Queries) RegisterLoginSuccess(ctx context.Context, arg RegisterLoginSuc
 	return err
 }
 
-const revokeSessions = `-- name: RevokeSessions :one
+const revokeSessions = `-- name: RevokeSessions :many
 UPDATE auth_identity SET
-    updated_at = $3
-WHERE user_id = $1 AND provider = $2 AND deleted_at IS NULL
+    updated_at = $2
+WHERE user_id = $1 AND deleted_at IS NULL
 RETURNING id, user_id, provider, provider_identity, password_hash, failed_attempts, locked_until, last_login_at, metadata, created_at, updated_at, deleted_at
 `
 
 type RevokeSessionsParams struct {
 	UserID    string
-	Provider  string
 	UpdatedAt pgtype.Timestamptz
 }
 
@@ -227,6 +261,20 @@ type RevokeSessionsParams struct {
 // yapılabilen tek şey çapayı ileri almak, yani ondan önce üretilmiş bütün
 // jetonları birden geçersizleştirmektir (bkz. service/session.go).
 //
+// # Sağlayıcı SEÇİLMEZ: kullanıcının BÜTÜN kimlikleri ilerletilir
+//
+// Filtre yalnızca user_id'dir. Bu tablo sağlayıcı BAŞINA satır tutar
+// ((user_id, provider) benzersizliği) ve tek bir sağlayıcı seçilseydi, ileride
+// OAuth eklendiği gün çıkış o sağlayıcıdan alınmış jetonları düşürmez, üstelik
+// bunu SESSİZCE yapardı: uç 200 döner, "çıkış yaptım" diyen kullanıcı hâlâ
+// oturumda kalırdı. Bugün tek sağlayıcı olduğu için etkilenen satır sayısı
+// birdir ve gözlemlenebilir davranış aynıdır; değişen şey, ikinci sağlayıcının
+// eklendiği günün sessiz açık BIRAKMAMASIDIR.
+//
+// Okuma tarafı da aynı kuralı uygular: jeton doğrulanırken çapa tek bir
+// sağlayıcıdan değil, kullanıcının EN YENİ kimliğinden okunur
+// (bkz. GetSessionAnchor). İkisi ayrışsaydı buradaki yazma boşa giderdi.
+//
 // password_hash'e DOKUNULMAZ: çıkış yapmak parolayı değiştirmez ve değişse
 // kullanıcı bir daha giremezdi.
 //
@@ -235,26 +283,40 @@ type RevokeSessionsParams struct {
 // jeton varsa (kilit jetonu düşürmez) art arda "çıkış yap + yeniden dene" ile
 // sayaç sonsuza dek sıfırlanabilir, yani kilit hiç devreye girmezdi.
 //
-// Kimlik (user_id, provider) ile bulunur; satır yoksa hiçbir şey dönmez ve
-// çağıran bunu errors.NotFound'a çevirir.
-func (q *Queries) RevokeSessions(ctx context.Context, arg RevokeSessionsParams) (AuthIdentity, error) {
-	row := q.db.QueryRow(ctx, revokeSessions, arg.UserID, arg.Provider, arg.UpdatedAt)
-	var i AuthIdentity
-	err := row.Scan(
-		&i.ID,
-		&i.UserID,
-		&i.Provider,
-		&i.ProviderIdentity,
-		&i.PasswordHash,
-		&i.FailedAttempts,
-		&i.LockedUntil,
-		&i.LastLoginAt,
-		&i.Metadata,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-		&i.DeletedAt,
-	)
-	return i, err
+// Kullanıcının hiç canlı kimliği yoksa HİÇBİR satır dönmez ve çağıran bunu
+// errors.NotFound'a çevirir; sessizce başarılı dönmek, hiçbir şey düşürmeyen
+// bir çıkışı başarı gibi göstermek olurdu.
+func (q *Queries) RevokeSessions(ctx context.Context, arg RevokeSessionsParams) ([]AuthIdentity, error) {
+	rows, err := q.db.Query(ctx, revokeSessions, arg.UserID, arg.UpdatedAt)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AuthIdentity{}
+	for rows.Next() {
+		var i AuthIdentity
+		if err := rows.Scan(
+			&i.ID,
+			&i.UserID,
+			&i.Provider,
+			&i.ProviderIdentity,
+			&i.PasswordHash,
+			&i.FailedAttempts,
+			&i.LockedUntil,
+			&i.LastLoginAt,
+			&i.Metadata,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.DeletedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const updatePasswordHash = `-- name: UpdatePasswordHash :one

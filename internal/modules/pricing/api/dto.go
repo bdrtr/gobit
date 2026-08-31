@@ -167,17 +167,8 @@ type priceListRequest struct {
 	EndsAt *time.Time `json:"ends_at"`
 }
 
-// calculateRequest fiyat hesaplama isteğidir.
-type calculateRequest struct {
-	// CurrencyCode istenen para birimidir; zorunludur.
-	CurrencyCode string `json:"currency_code"`
-	// Quantity adettir; 0 verilirse 1 kabul edilir.
-	Quantity int32 `json:"quantity"`
-	// Attributes kural bağlamıdır.
-	Attributes map[string]string `json:"attributes"`
-	// At hesaplama anıdır; verilmezse "şimdi".
-	At *time.Time `json:"at"`
-}
+// Hesaplama isteğinin gövde karşılığı YOKTUR: uç bir GET'tir ve bağlamını
+// sorgu dizesinden okur (bkz. [API.calculatePrice], [calculateQuery]).
 
 // toPriceSetDTO price set modelini yanıt gövdesine çevirir.
 // prices nil verilirse fiyat alanı yanıta yazılmaz.

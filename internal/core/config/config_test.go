@@ -21,12 +21,13 @@ import (
 var envKeys = []string{
 	"APP_ENV", "APP_PORT", "DATABASE_URL", "REDIS_URL",
 	"OTEL_EXPORTER_OTLP_ENDPOINT", "OTEL_EXPORTER_OTLP_INSECURE", "OTEL_SERVICE_NAME",
-	"OTEL_TRACES_SAMPLER_ARG", "OTEL_METRIC_EXPORT_INTERVAL",
+	"OTEL_TRACES_SAMPLER_ARG", "METRIC_EXPORT_INTERVAL",
 	"RATE_LIMIT_PER_MINUTE", "TRUSTED_PROXY_HOPS", "IDEMPOTENCY_TTL",
 	"LOG_LEVEL", "LOG_FORMAT", "SHUTDOWN_TIMEOUT", "READ_HEADER_TIMEOUT",
 	"READ_TIMEOUT", "WRITE_TIMEOUT", "IDLE_TIMEOUT", "EVENT_BUS",
 	"JWT_SECRET", "JWT_TTL",
 	"ADMIN_BOOTSTRAP_EMAIL", "ADMIN_BOOTSTRAP_PASSWORD",
+	"GUARD_BACKEND", "REDIS_KEY_PREFIX",
 }
 
 // uretimJWTSirri üretim senaryolarında kullanılan 32 karakterlik imza sırrıdır.
@@ -242,8 +243,9 @@ func TestDevelopmentAllowsLocalDefaults(t *testing.T) {
 // koruması sessizce devre dışı kalırdı.
 func TestDefaultTagsMatchConstants(t *testing.T) {
 	want := map[string]string{
-		"DatabaseURL": config.DefaultDatabaseURL,
-		"RedisURL":    config.DefaultRedisURL,
+		"DatabaseURL":    config.DefaultDatabaseURL,
+		"RedisURL":       config.DefaultRedisURL,
+		"RedisKeyPrefix": config.DefaultRedisKeyPrefix,
 	}
 
 	typ := reflect.TypeOf(config.Config{})
@@ -631,4 +633,82 @@ func TestPaylasilanOrtamdaTohumParolasiUzunlukIster(t *testing.T) {
 				"parola hata mesajında GEÇMEMELİ; mesaj stderr'den log toplayıcısına düşer")
 		})
 	}
+}
+
+// TestVarsayilanRedisAnahtarOnegiGeriyeUyumlu önek yapılandırılabilir olurken
+// bugünkü davranışın korunduğunu doğrular.
+//
+// Beklenen değer sabitten okunmaz, ELLE yazılır: sabit değişirse test düşer ve
+// değişikliğin bedeli görünür olur. O bedel somut — yükseltilen bir kurulumun
+// tüm hız sınırı sayaçları ve işlemdeki idempotency kayıtları bir anda başka
+// bir ad alanına taşınır, yani o an uçan her tekrar isteği ikinci kez işlenir.
+func TestVarsayilanRedisAnahtarOnegiGeriyeUyumlu(t *testing.T) {
+	clearEnv(t)
+
+	cfg, err := config.Load()
+	require.NoError(t, err, "önek yapılandırılmadan da açılabilmeli")
+	assert.Equal(t, "gobit", cfg.RedisKeyPrefix,
+		"varsayılan önek, redisguard'a gömülü olan eski önekle aynı kalmalı")
+}
+
+// TestRedisAnahtarOnegiBicimDogrular ayırıcı içeren ya da görünmez karakterli
+// bir önekin SESSİZCE kabul edilmediğini doğrular.
+//
+// Önek, aynı Redis'i paylaşan iki kurulumu ayıran tek şeydir. Kabul edilen
+// bozuk bir önek iki ayrı arıza üretir: ':' iki kurulumun anahtarlarını
+// çakıştırabilir, sondaki bir boşluk ise kurulumu kimsenin fark etmeyeceği
+// biçimde BAŞKA bir ad alanına taşır — sayaçlar sıfırlanır, işlemdeki
+// idempotency kayıtları yok sayılır.
+func TestRedisAnahtarOnegiBicimDogrular(t *testing.T) {
+	tests := map[string]struct {
+		onek      string
+		reddedili bool
+	}{
+		"sade ad":           {onek: "gobit"},
+		"tireli ad":         {onek: "gobit-staging"},
+		"alt çizgili ad":    {onek: "gobit_prod"},
+		"noktalı ad":        {onek: "magaza.42"},
+		"ayırıcı içeren":    {onek: "gobit:staging", reddedili: true},
+		"ayırıcıyla biten":  {onek: "gobit:", reddedili: true},
+		"sondan boşluklu":   {onek: "gobit ", reddedili: true},
+		"glob imi içeren":   {onek: "gobit*", reddedili: true},
+		"eğik çizgi içeren": {onek: "gobit/prod", reddedili: true},
+		"latin dışı harfli": {onek: "mağaza", reddedili: true},
+	}
+
+	for ad, tt := range tests {
+		t.Run(ad, func(t *testing.T) {
+			clearEnv(t)
+			t.Setenv("REDIS_KEY_PREFIX", tt.onek)
+
+			cfg, err := config.Load()
+			if !tt.reddedili {
+				require.NoError(t, err, "geçerli önek reddedildi")
+				assert.Equal(t, tt.onek, cfg.RedisKeyPrefix)
+
+				return
+			}
+
+			require.Error(t, err, "bozuk önek sessizce kabul edilmemeli")
+			assert.Contains(t, err.Error(), "REDIS_KEY_PREFIX",
+				"hata mesajı hangi değişkenin yanlış olduğunu söylemeli")
+		})
+	}
+}
+
+// TestBosRedisAnahtarOnegiReddedilir elle kurulmuş bir Config'in ad alanı
+// önekini boş bırakamayacağını doğrular.
+//
+// Ortam değişkeni yolundan boş değer zaten varsayılana düşer; bu kapı,
+// Load'dan geçmeden Validate çağıran (örn. gömen ya da test eden) çağıranlar
+// içindir. Boş önek anahtarları ":idem:..." yapar; ad alanı yok demektir ve
+// önek yapılandırılabilir olmasının tek sebebi ad alanıdır.
+func TestBosRedisAnahtarOnegiReddedilir(t *testing.T) {
+	cfg := gecerliConfig(t)
+	cfg.RedisKeyPrefix = ""
+
+	err := cfg.Validate()
+
+	require.Error(t, err, "boş önek kabul edilmemeli")
+	assert.Contains(t, err.Error(), "REDIS_KEY_PREFIX")
 }

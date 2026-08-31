@@ -25,6 +25,15 @@ import (
 // TOPTANDIR — çapa ilerlediğinde kullanıcının bütün cihazlarındaki jetonlar
 // aynı anda düşer.
 //
+// # Çapa KİMLİK başınadır, kullanıcı başına değil
+//
+// auth_identity tablosu sağlayıcı başına satır tutar, dolayısıyla bir
+// kullanıcının birden çok çapası olabilir. İki uç da bu çokluğu görür ve AYNI
+// kuralı uygular: çıkış hepsini birden ilerletir ([Service.Logout]), jeton
+// doğrulaması ise en YENİ olanı okur ([latestAnchor], Repository.SessionAnchor).
+// Yalnızca biri sağlayıcıya göre seçseydi öteki boşa çalışırdı — çıkışın
+// yazdığı çapa hiç okunmaz ya da okunan çapa hiç yazılmaz olurdu.
+//
 // # Çapayı yalnızca SAHİBİNİN İRADESİ ilerletir
 //
 // İki iş çapayı ilerletir ve ikisi de hesap sahibinin bilerek yaptığı
@@ -50,6 +59,29 @@ func sessionAnchor(identity models.AuthIdentity) time.Time {
 	return identity.UpdatedAt
 }
 
+// latestAnchor kimlik kümesinin EN YENİ oturum çapasını döner; küme boşsa sıfır
+// zaman.
+//
+// EN YENİ olan seçilir, en eski değil. Çapalar sağlayıcı başına ilerler ve
+// hepsi birlikte ilerlemez: parola değişimi yalnızca emailpass satırını yazar.
+// En eskiyi almak, hiç ilerlemeyen tek bir satırın iptalin tamamını etkisiz
+// bırakması demek olurdu. Aynı seçim okuma tarafında SQL'de yapılır
+// (queries/identities.sql, GetSessionAnchor); iki uç aynı kuralı uygular.
+//
+// Boş küme çağıranın eleyeceği bir durumdur: kimliği olmayan kullanıcının
+// çıkışı depo katmanında errors.NotFound ile reddedilir.
+func latestAnchor(identities []models.AuthIdentity) time.Time {
+	var latest time.Time
+	// Dizin ile dolaşılır: [models.AuthIdentity] büyük bir yapıdır ve değerle
+	// dolaşmak her turda gereksiz kopya üretirdi.
+	for i := range identities {
+		if anchor := sessionAnchor(identities[i]); anchor.After(latest) {
+			latest = anchor
+		}
+	}
+	return latest
+}
+
 // Logout çağıranın oturumlarını kapatır ve iptalin dayandığı anı döner.
 //
 // # TÜM oturumlar düşer; tek cihaz seçilemez
@@ -64,6 +96,21 @@ func sessionAnchor(identity models.AuthIdentity) time.Time {
 // dolmuş kayıtları temizlenen YENİ BİR DEPO demektir. Bugünkü ihtiyaç —
 // "cihazımı kaybettim, her yerden çıkış yap" — toptan iptalle zaten
 // karşılanıyor; ayrım gerçekten gerektiğinde eklenir (bkz. dosya başı).
+//
+// # TÜM sağlayıcılar düşer
+//
+// Çapa kullanıcının BÜTÜN kimlik satırlarında ilerletilir, yalnızca
+// [models.ProviderEmailPass] olanda değil. Bugün gözlemlenebilir bir fark
+// YOKTUR: tek sağlayıcı odur, dolayısıyla ilerletilen satır sayısı birdir ve
+// uç aynı yanıtı verir. Kazanılan şey gelecekteki sessiz açığın kapanmasıdır —
+// OAuth eklendiği gün tek bir sağlayıcı seçen bir çıkış, öteki sağlayıcıdan
+// alınmış jetonları DÜŞÜRMEZ ve bunu haber vermeden yapardı: 204 alan
+// kullanıcı hâlâ oturumda kalırdı.
+//
+// Zincirin öteki ucu da aynı kuralı uygular: jeton doğrulanırken çapa tek bir
+// sağlayıcıdan değil, kullanıcının en yeni kimliğinden okunur
+// (bkz. [Service.principalFromToken]). Yalnızca burası değişseydi yazılan
+// fazladan çapa hiç okunmaz ve değişiklik hiçbir işe yaramazdı.
 //
 // # Yalnızca KİMLİK ister
 //
@@ -104,22 +151,23 @@ func (s *Service) Logout(ctx context.Context, principalID, principalKind string)
 		return time.Time{}, err
 	}
 
-	// Kimlik kaydı yoksa errors.NotFound döner. Bu yol normalde imkânsızdır:
-	// çağıranın jetonu, kimlik kaydı okunarak doğrulanmıştır
+	// Hiç kimlik kaydı yoksa errors.NotFound döner. Bu yol normalde
+	// imkânsızdır: çağıranın jetonu, çapası okunarak doğrulanmıştır
 	// (bkz. [Service.principalFromToken]). Yine de sessizce başarılı DÖNÜLMEZ —
-	// dönülseydi, çıkışın hiçbir şey yazmadığı bir arıza (yanlış sağlayıcı adı,
-	// silinmiş kimlik) 200 yanıtının arkasında görünmez kalırdı.
-	identity, err := s.repo.RevokeSessions(
-		ctx, principalID, models.ProviderEmailPass, s.clock(),
-	)
+	// dönülseydi, çıkışın hiçbir şey yazmadığı bir arıza (silinmiş kimlik)
+	// 204 yanıtının arkasında görünmez kalırdı.
+	identities, err := s.repo.RevokeSessions(ctx, principalID, s.clock())
 	if err != nil {
 		return time.Time{}, err
 	}
 
-	revokedAt := sessionAnchor(identity)
+	revokedAt := latestAnchor(identities)
 	s.log.InfoContext(ctx, "yönetim oturumları kapatıldı",
 		slog.String("user_id", principalID),
 		slog.Time("revoked_at", revokedAt),
+		// Kaç kimliğin ilerletildiği loglanır: ikinci bir sağlayıcı eklendiği
+		// gün çıkışın gerçekten hepsine dokunduğu ancak buradan görülür.
+		slog.Int("identity_count", len(identities)),
 	)
 	return revokedAt, nil
 }

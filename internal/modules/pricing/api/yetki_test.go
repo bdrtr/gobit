@@ -112,9 +112,6 @@ func TestYazmaUcuDarYetkiliCagiraniReddeder(t *testing.T) {
 			http.MethodPost, "/admin/v1/price-sets/" + setID + "/prices",
 			`{"prices":[{"currency_code":"TRY","amount":1}]}`,
 		},
-		"fiyat hesaplama": {
-			http.MethodPost, "/admin/v1/price-sets/" + setID + "/calculate", `{"currency_code":"TRY"}`,
-		},
 		"fiyat listesi oluşturma": {
 			http.MethodPost, "/admin/v1/price-lists", `{"title":"x","type":"sale"}`,
 		},
@@ -170,6 +167,7 @@ func TestOkumaUcuDarYetkiyleCalisir(t *testing.T) {
 		"fiyat listeleri":       "/admin/v1/price-lists",
 		"tekil fiyat listesi":   "/admin/v1/price-lists/" + listID,
 		"fiyatın kural listesi": "/admin/v1/prices/" + priceID + "/rules",
+		"fiyat hesaplama":       "/admin/v1/price-sets/" + setID + "/calculate?currency_code=TRY",
 	}
 
 	for ad, yol := range uclar {
@@ -180,6 +178,39 @@ func TestOkumaUcuDarYetkiyleCalisir(t *testing.T) {
 				"okuma yetkisi okuma ucuna yetmeli; gövde: %s", kayit.Body.String())
 		})
 	}
+}
+
+// TestHesaplamaUcuOkumaYetkisiyleCalisir düzeltilen arızanın kendisini
+// kanıtlar: fiyat HESAPLATMAK için fiyat YAZABİLEN bir kimlik gerekmez.
+//
+// Uç eskiden POST'tu; yetki sözlüğü metoda baktığı için (bkz. api.API.Routes)
+// [api.ScopeWrite] istiyordu ve fiyatı yalnızca raporlayan bir entegrasyon —
+// fiyat karşılaştırma, dışa aktarma — tek istekte bütün kataloğu
+// değiştirebilen bir kimlikle çalışmak zorunda kalıyordu.
+//
+// İkinci iddia aynı testte durur ve bilinçlidir: hesaplama okumaya açılırken
+// YAZMA yüzeyi kapalı kalmalıdır. Yalnızca ilk iddia sınansaydı, dar kimliğe
+// yazma yetkisi de veren bir gerileme testi geçerdi ve düzeltme arızayı
+// büyütmüş olurdu.
+func TestHesaplamaUcuOkumaYetkisiyleCalisir(t *testing.T) {
+	r, _ := newTestRouter(t)
+	setID, _, _ := yetkiFiksturu(t, r)
+
+	kayit := yetkiliIstek(t, r, http.MethodGet,
+		"/admin/v1/price-sets/"+setID+"/calculate?currency_code=TRY&quantity=2", "",
+		api.ScopeRead)
+
+	require.Equal(t, http.StatusOK, kayit.Code,
+		"okuma yetkisi fiyat hesaplamaya yetmeli; gövde: %s", kayit.Body.String())
+	hesap := decodeItem(t, kayit)
+	assert.InDelta(t, 19900, hesap["amount"], 0)
+	assert.InDelta(t, 39800, hesap["total"], 0, "hesap gerçekten yapılmalı, boş zarf dönmemeli")
+
+	yazma := yetkiliIstek(t, r, http.MethodPost, "/admin/v1/price-sets/"+setID+"/prices",
+		`{"prices":[{"currency_code":"TRY","amount":1}]}`, api.ScopeRead)
+
+	assert.Equal(t, http.StatusForbidden, yazma.Code,
+		"aynı dar kimlik fiyat yazamamalı; gövde: %s", yazma.Body.String())
 }
 
 // TestAdminUstYetkidir corehttp.ScopeAdmin'in "pricing:write" ayrıca

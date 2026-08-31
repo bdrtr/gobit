@@ -56,6 +56,15 @@ const BackendRedis = "redis"
 // gerçekliğini kaybederdi.
 const MinBootstrapPasswordLen = 16
 
+// DefaultRedisKeyPrefix koruma anahtarlarının varsayılan ad alanı önekidir.
+//
+// Değer, önek yapılandırılabilir olmadan önce redisguard'a GÖMÜLÜ olan
+// önekin ta kendisidir. Geriye uyumluluk burada bir tercih değil zorunluluktur:
+// varsayılanı değiştirmek, yükseltilen bir kurulumun tüm hız sınırı sayaçlarını
+// ve — çok daha kötüsü — işlemdeki idempotency kayıtlarını bir anda görünmez
+// kılar; o an uçan her tekrar isteği ikinci kez işlenir, yani ikinci sipariş.
+const DefaultRedisKeyPrefix = "gobit"
+
 // Yalnızca yerel geliştirme için varsayılan bağlantı adresleri.
 // deploy/docker-compose.yml ile eşleşirler. Validate, APP_ENV=production iken
 // bu değerlerin ezilmiş olmasını ZORUNLU kılar; aksi hâlde eksik secret
@@ -174,7 +183,21 @@ type Config struct {
 	// bir trace sonradan kurtarılamaz. Yük arttıkça düşürülmelidir.
 	TraceSampleRatio float64 `env:"OTEL_TRACES_SAMPLER_ARG" envDefault:"1.0"`
 	// MetricInterval metriklerin toplayıcıya gönderilme sıklığıdır.
-	MetricInterval time.Duration `env:"OTEL_METRIC_EXPORT_INTERVAL" envDefault:"60s"`
+	//
+	// Adı bilinçli olarak OTEL_ önekli DEĞİLDİR, oysa komşuları öyle.
+	// OpenTelemetry belirtimi OTEL_METRIC_EXPORT_INTERVAL adını AYIRMIŞTIR ve
+	// değerini MİLİSANİYE TAMSAYI olarak tanımlar; bu paket ise her süreyi Go
+	// süresi olarak okur. İki anlam aynı ada sığmaz ve çakışma iki yönde de
+	// keser:
+	//
+	//   - Belirtime uyan değer (60000) burada "birimi eksik" hatası verir ve
+	//     uygulama HİÇ AÇILMAZ.
+	//   - Buraya uyan değer (60s) OTel SDK'sının kendi okuyucusunda her
+	//     açılışta ayrıştırma hatası loglar.
+	//
+	// Komşu OTEL_* adları korunur çünkü onların anlamı belirtimle UYUŞUR;
+	// ödünç alınan ad ancak anlam da ödünç alınabildiğinde doğrudur.
+	MetricInterval time.Duration `env:"METRIC_EXPORT_INTERVAL" envDefault:"60s"`
 
 	// RateLimitPerMinute bir istemcinin dakikada yapabileceği istek sayısıdır.
 	//
@@ -203,6 +226,33 @@ type Config struct {
 	// gibi yarım bir yapılandırma mümkün olurdu ve o yarımlık ancak yük
 	// altında görünürdü.
 	GuardBackend string `env:"GUARD_BACKEND" envDefault:"memory"`
+	// RedisKeyPrefix koruma anahtarlarının Redis'teki ad alanı önekidir.
+	//
+	// Anahtarlar "<önek>:rl:<istemci>" ve "<önek>:idem:<anahtar>" biçiminde
+	// yazılır (bkz. internal/core/http/redisguard paket godoc'u).
+	//
+	// AYNI Redis'i paylaşan iki gobit kurulumu (staging ile production, ya da
+	// aynı kümedeki iki mağaza) bu değeri FARKLI vermelidir. Aynı bırakılırsa
+	// birbirlerinin hız sınırı kotasını harcarlar — bu bir hız sorunudur — ve
+	// birbirlerinin idempotency kaydını OKURLAR: bir kurulumun yanıtı ötekinin
+	// istemcisine gider. İkincisi doğruluk sorunudur.
+	//
+	// Ayrı Redis DB'si (redis://.../1) ya da ayrı örnek de ayırır ama ikisi de
+	// ALTYAPI kararıdır: Redis Cluster numaralı DB'leri desteklemez ve ayrı
+	// örnek para/operasyon maliyetidir. Önek aynı ayrımı yapılandırmayla yapar.
+	//
+	// AYRI bir değişkendir; var olan OTEL_SERVICE_NAME'e bağlanmaz. O ad
+	// panolarda görünen servis adıdır ve gözlemlenebilirlik için değiştirilmesi
+	// SIRADAN bir iştir; ikisini tek değişkene bağlamak, panoda yapılan bir
+	// yeniden adlandırmanın çalışan kurulumun tüm idempotency kayıtlarını
+	// sessizce terk etmesi demek olurdu.
+	//
+	// Varsayılanı [DefaultRedisKeyPrefix]'tir ve bugünkü davranışı korur; tek
+	// kurulumlu ortamlarda dokunulması gerekmez. Biçimi GUARD_BACKEND'den
+	// bağımsız doğrulanır: bellek içi arka uçta değer atıldır, ama yalnızca
+	// backend değiştirilince patlayan bir yazım hatası, arızayı tam da en
+	// kötü ana — canlı geçiş anına — saklamak olurdu.
+	RedisKeyPrefix string `env:"REDIS_KEY_PREFIX" envDefault:"gobit"`
 
 	// Plugins kurulacak eklentilerin adlarıdır (virgülle ayrılır).
 	//
@@ -285,7 +335,7 @@ func (c Config) Validate() error {
 		return fmt.Errorf("config: OTEL_TRACES_SAMPLER_ARG 0.0-1.0 aralığında olmalı, %v verildi", c.TraceSampleRatio)
 	}
 	if c.MetricInterval <= 0 {
-		return fmt.Errorf("config: OTEL_METRIC_EXPORT_INTERVAL pozitif olmalı, %s verildi", c.MetricInterval)
+		return fmt.Errorf("config: METRIC_EXPORT_INTERVAL pozitif olmalı, %s verildi", c.MetricInterval)
 	}
 	if c.ServiceName == "" {
 		return fmt.Errorf("config: OTEL_SERVICE_NAME boş olamaz")
@@ -295,6 +345,9 @@ func (c Config) Validate() error {
 	}
 	if c.IdempotencyTTL <= 0 {
 		return fmt.Errorf("config: IDEMPOTENCY_TTL pozitif olmalı, %s verildi", c.IdempotencyTTL)
+	}
+	if err := c.validateRedisKeyPrefix(); err != nil {
+		return err
 	}
 	if err := c.validatePlugins(); err != nil {
 		return err
@@ -338,6 +391,42 @@ func (c Config) Validate() error {
 		}
 	}
 	return nil
+}
+
+// validateRedisKeyPrefix koruma anahtarı ad alanı önekinin biçimini doğrular.
+//
+// Kabul edilen: en az bir karakter, ve yalnızca ASCII harf, rakam, '-', '_',
+// '.'. Kural burada TEKRARLANIR; redisguard kurucuları aynı denetimi kendi
+// içlerinde de yapar. Tekrar bilinçlidir: config bu paketi import EDEMEZ
+// (redisguard bir Redis istemcisi taşır ve config en alt katmandır), ayrıca
+// bir kütüphane çağıranına güvenmemelidir. Buradaki kopya arızayı AÇILIŞA
+// taşır ve operatöre hangi ortam değişkeninin yanlış olduğunu söyler;
+// redisguard'daki kopya ise config'ten geçmeyen çağıranları korur.
+//
+// Reddedilen karakterlerin gerekçesi redisguard.dogrulaOnek godoc'undadır;
+// özeti: ':' iki kurulumun anahtarlarını ÇAKIŞTIRABİLİR, glob imleri
+// operatörün "<önek>:idem:*" taramasını bozar, boşluk ve kontrol karakterleri
+// görünmez oldukları için kurulumu fark edilmeden başka bir ad alanına taşır.
+func (c Config) validateRedisKeyPrefix() error {
+	if c.RedisKeyPrefix == "" {
+		return fmt.Errorf("config: REDIS_KEY_PREFIX boş olamaz (varsayılan: %q)", DefaultRedisKeyPrefix)
+	}
+	if strings.ContainsFunc(c.RedisKeyPrefix, func(r rune) bool { return !validPrefixRune(r) }) {
+		return fmt.Errorf(
+			"config: geçersiz REDIS_KEY_PREFIX %q (yalnızca ASCII harf, rakam, '-', '_' ve '.' kabul edilir)",
+			c.RedisKeyPrefix)
+	}
+	return nil
+}
+
+// validPrefixRune karakterin ad alanı önekinde kullanılabildiğini bildirir.
+func validPrefixRune(r rune) bool {
+	switch {
+	case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+		return true
+	default:
+		return r == '-' || r == '_' || r == '.'
+	}
 }
 
 // validatePlugins eklenti listesinin biçimini doğrular.

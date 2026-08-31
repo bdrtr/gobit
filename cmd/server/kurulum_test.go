@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -28,6 +29,7 @@ func temelConfig() config.Config {
 		RateLimitPerMinute: 600,
 		IdempotencyTTL:     time.Hour,
 		GuardBackend:       "memory",
+		RedisKeyPrefix:     config.DefaultRedisKeyPrefix,
 	}
 }
 
@@ -330,9 +332,12 @@ func TestTohumlaYoneticiYapilandirilmamissaHicCalismaz(t *testing.T) {
 func TestTohumlaYoneticiHatayiYukariTasir(t *testing.T) {
 	t.Parallel()
 
+	// ÇAKIŞMA burada YOKTUR ve bu bilinçlidir: o durum bir arıza değil,
+	// eşzamanlı açılış yarışıdır ve ayrıca sınanır (bkz.
+	// [TestTohumlaYoneticiEszamanliYarisiYutar]).
 	tests := map[string]*sahteKullanicilar{
 		"sayım okunamıyor":      {listeHata: errors.Unavailable("db_down", "veritabanı yok")},
-		"kullanıcı yazılamıyor": {yaratHata: errors.Conflict("auth_conflict", "e-posta kullanımda")},
+		"kullanıcı yazılamıyor": {yaratHata: errors.Unavailable("db_down", "veritabanı yok")},
 	}
 
 	for ad, sahte := range tests {
@@ -346,6 +351,68 @@ func TestTohumlaYoneticiHatayiYukariTasir(t *testing.T) {
 				"hata tohum adımına ait bir kodla sarmalanmalı")
 		})
 	}
+}
+
+// yapayRedis bağlanmayan ama nil de olmayan bir Redis istemcisi üretir.
+//
+// go-redis bağlantıyı ilk komutta kurar; redisguard kurucuları yalnızca ayar
+// doğrular, hiç komut çalıştırmaz. Böylece Redis yolunun KURULUM mantığı
+// Docker'sız sınanabilir.
+func yapayRedis() *redis.Client {
+	return redis.NewClient(&redis.Options{Addr: "127.0.0.1:0"})
+}
+
+// TestKorumaYiginiAnahtarOneginiKuruculariGecirir önekin yapılandırmadan
+// redisguard kurucularına GERÇEKTEN ulaştığını doğrular.
+//
+// Kurucular önek geçmezse hiçbir şey patlamaz: her kurulum sessizce aynı ad
+// alanına yazmayı sürdürür, yani aynı Redis'i paylaşan iki kurulum
+// birbirinin hız sınırı kotasını harcar ve birbirinin idempotency kaydını
+// okur. Test bunu, kurucuların REDDEDECEĞİ bir önek vererek yakalar: hata
+// dönmüyorsa önek yolda kaybolmuş demektir.
+//
+// config.Validate aynı biçimi zaten zorluyor; buradaki tekrar boşuna değil,
+// çünkü yığın Config'i elle kuran çağıranlarla (testler, gömen kurulumlar)
+// da çağrılabilir.
+func TestKorumaYiginiAnahtarOneginiKuruculariGecirir(t *testing.T) {
+	t.Parallel()
+
+	for ad, onek := range map[string]string{
+		"boş önek":       "",
+		"ayırıcı içeren": "gobit:staging",
+	} {
+		t.Run(ad, func(t *testing.T) {
+			t.Parallel()
+
+			cfg := temelConfig()
+			cfg.GuardBackend = config.BackendRedis
+			cfg.RedisKeyPrefix = onek
+
+			_, err := korumaYigini(cfg, &corehttp.DeferredAuthenticator{}, yapayRedis(), slogYut())
+
+			require.Error(t, err, "geçersiz önek kurucuya ulaşıp açılışı durdurmalı")
+			assert.Equal(t, "redisguard_invalid_config", errors.CodeOf(err),
+				"hata redisguard kurucusundan gelmeli")
+		})
+	}
+}
+
+// TestKorumaYiginiRedisArkaUcunuKurar geçerli bir önekle Redis yolunun sonuna
+// kadar kurulduğunu doğrular.
+//
+// Yalnızca hata yolunu sınamak yanıltıcı olurdu: her öneki reddeden bir
+// kurucu da o testi geçerdi.
+func TestKorumaYiginiRedisArkaUcunuKurar(t *testing.T) {
+	t.Parallel()
+
+	cfg := temelConfig()
+	cfg.GuardBackend = config.BackendRedis
+	cfg.RedisKeyPrefix = "gobit-staging"
+
+	yigin, err := korumaYigini(cfg, &corehttp.DeferredAuthenticator{}, yapayRedis(), slogYut())
+
+	require.NoError(t, err, "geçerli önekle redis arka ucu kurulabilmeli")
+	assert.NotEmpty(t, yigin, "koruma yığını boş dönmemeli")
 }
 
 // TestKorumaYiginiRedisSecilipIstemciYoksaDurur yarım yapılandırmanın sessizce
@@ -364,4 +431,57 @@ func TestKorumaYiginiRedisSecilipIstemciYoksaDurur(t *testing.T) {
 
 	require.Error(t, err, "Redis istemcisi olmadan redis arka ucu kurulmamalı")
 	assert.Contains(t, err.Error(), "GUARD_BACKEND")
+}
+
+// TestTohumlaYoneticiEszamanliYarisiYutar birden çok örneğin boş bir
+// veritabanına AYNI ANDA açılmasının açılışı düşürmediğini doğrular.
+//
+// Yarış gerçektir ve gerçek sunucuyla gözlemlenmiştir: üç örnek eşzamanlı
+// açıldığında üçü de "hiç kullanıcı yok" görür, üçü de yaratmayı dener ve
+// e-posta benzersizliği ikisini reddeder. Çakışmayı hata saymak, üç kopyalı
+// ilk dağıtımda ikisinin yeniden başlatma döngüsüne girmesi demekti.
+//
+// Testin sınadığı şey "hata yutuluyor mu" değil, İSTENEN SON DURUMUN
+// sağlanmış olmasıdır: kaybeden örnek için de bir yönetici vardır.
+func TestTohumlaYoneticiEszamanliYarisiYutar(t *testing.T) {
+	t.Parallel()
+
+	sahte := &sahteKullanicilar{
+		sayim: 0,
+		yaratHata: errors.Conflict("auth_email_taken",
+			"%q e-postası zaten kullanılıyor", "ilk.yonetici@ornek.com"),
+	}
+
+	err := tohumlaYonetici(context.Background(), sahte, tohumluConfig(), slogYut())
+
+	assert.NoError(t, err, "eşzamanlı tohum çakışması açılışı DÜŞÜRMEMELİ")
+}
+
+// TestTohumlaYoneticiCakismaDisindakiHatayiYutmaz yutmanın yalnızca ÇAKIŞMAYA
+// özel olduğunu doğrular.
+//
+// Bağlantı hatası ya da geçersiz parola gibi durumlarda istenen son durum
+// sağlanMAMIŞTIR: yönetici yoktur ve sistem kullanılamaz. Onları da yutmak,
+// yöneticisiz bir kurulumu sessizce sağlıklı göstermek olurdu.
+func TestTohumlaYoneticiCakismaDisindakiHatayiYutmaz(t *testing.T) {
+	t.Parallel()
+
+	testler := map[string]error{
+		"geçersiz girdi": errors.Invalid("auth_weak_password", "parola çok kısa"),
+		"alt sistem":     errors.Unavailable("db_unreachable", "veritabanına ulaşılamadı"),
+		"iç hata":        errors.Internal("beklenmeyen", "beklenmeyen hata"),
+	}
+
+	for ad, hata := range testler {
+		t.Run(ad, func(t *testing.T) {
+			t.Parallel()
+
+			sahte := &sahteKullanicilar{sayim: 0, yaratHata: hata}
+
+			err := tohumlaYonetici(context.Background(), sahte, tohumluConfig(), slogYut())
+
+			require.Error(t, err, "çakışma dışındaki hata açılışı durdurmalı")
+			assert.Contains(t, err.Error(), "ilk yönetici oluşturulamadı")
+		})
+	}
 }

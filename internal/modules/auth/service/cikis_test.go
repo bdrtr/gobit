@@ -129,7 +129,7 @@ func TestApiAnahtariCikisYapamaz(t *testing.T) {
 	svc, _, depo, _ := oturumKur(t)
 	ctx := context.Background()
 
-	oncekiCapa := depo.kimlik.UpdatedAt
+	oncekiCapa := depo.capa(models.ProviderEmailPass)
 
 	_, err := svc.Logout(ctx, "apk_01JABC", service.PrincipalKindAPIKey)
 
@@ -138,6 +138,106 @@ func TestApiAnahtariCikisYapamaz(t *testing.T) {
 		"beklenen tür Invalid (422), gelen: %v", errors.KindOf(err))
 	assert.Equal(t, service.CodeNoSession, errors.CodeOf(err),
 		"ret, ayrı bir kodla bildirilmeli; istemci bunu bir kimlik hatasından ayırabilmeli")
-	assert.Equal(t, oncekiCapa, depo.kimlik.UpdatedAt,
+	assert.Equal(t, oncekiCapa, depo.capa(models.ProviderEmailPass),
 		"reddedilen çıkış hiçbir kimliğin çapasını ilerletmemeli")
+}
+
+// oturumIkinciSaglayici testte ELLE kurulan ikinci kimlik sağlayıcısıdır.
+//
+// Ham dize bilinçlidir: models paketinde yalnızca [models.ProviderEmailPass]
+// sabiti vardır ve uygulanmamış bir sağlayıcı için oraya sabit eklemek, kodun
+// desteklemediği bir giriş yolu varmış gibi gösterirdi. Değerin kendisi
+// iddiaya girmez; anlamı yalnızca "emailpass OLMAYAN bir satır"dır.
+const oturumIkinciSaglayici = "google"
+
+// ikinciSaglayiciEkle depoya ikinci bir sağlayıcının kimlik satırını kurar.
+//
+// Satır elle kurulur çünkü servisin ikinci bir sağlayıcı AÇAN ucu yoktur:
+// bugün tek giriş yolu emailpass'tır. Şema ise böyle bir satırı BUGÜN DE
+// kabul eder — benzersizlik (user_id, provider) üzerindedir, yani sağlayıcı
+// başına bir satıra izin verir. Test bu yüzden hayali bir durumu değil,
+// şemanın halihazırda ifade ettiği bir durumu kurar.
+func ikinciSaglayiciEkle(depo *oturumDeposu, olusturuldu time.Time) {
+	depo.kimlikler = append(depo.kimlikler, models.AuthIdentity{
+		ID:               oturumKimlikID + "_ikinci",
+		UserID:           oturumKullaniciID,
+		Provider:         oturumIkinciSaglayici,
+		ProviderIdentity: "google-oauth-sub-123",
+		// Parola YOKTUR: OAuth kimliğinin parolası olmaz ve boş hash ile giriş
+		// zaten reddedilir (bkz. password.go, Login).
+		CreatedAt: olusturuldu,
+		UpdatedAt: olusturuldu,
+	})
+}
+
+// TestCikisTumSaglayicilarinCapasiniIlerletir çıkışın TEK BİR sağlayıcıyı
+// değil, kullanıcının bütün kimliklerini ilerlettiğini kanıtlar.
+//
+// # Test neyi kanıtlar, neyi kanıtlamaz
+//
+// Bugün canlı sağlayıcı tek olduğu için gözlemlenebilir davranış
+// DEĞİŞMEMİŞTİR; kanıtlanan iki şey vardır:
+//
+//   - emailpass kimliğinin çapası eskisi gibi ilerler (mevcut davranış
+//     korunuyor),
+//   - ELLE kurulmuş ikinci bir sağlayıcı satırının çapası da ilerler.
+//
+// İkincisi bir kullanıcı hikâyesi değil, gelecek için konmuş bir kilittir:
+// OAuth eklendiği gün çıkış tek sağlayıcıyı seçseydi o sağlayıcıdan alınmış
+// jetonlar düşmez ve bu SESSİZ kalırdı — uç yine 204 döner, "çıkış yaptım"
+// diyen kullanıcı hâlâ oturumda olurdu.
+func TestCikisTumSaglayicilarinCapasiniIlerletir(t *testing.T) {
+	svc, interop, depo, saat := oturumKur(t)
+	ctx := context.Background()
+	ikinciSaglayiciEkle(depo, saat.simdi())
+
+	jeton := oturumJetonuAl(t, svc, oturumParola)
+	_, err := oturumKimligiCoz(interop, jeton)
+	require.NoError(t, err, "jeton çıkıştan önce kabul edilmeli")
+
+	saat.ilerlet(2 * time.Second)
+	iptalAni, err := svc.Logout(ctx, oturumKullaniciID, service.PrincipalKindUser)
+	require.NoError(t, err, "kullanıcı çıkış yapabilmeli")
+
+	assert.Equal(t, saat.simdi(), depo.capa(models.ProviderEmailPass),
+		"emailpass kimliğinin çapası ilerlemeli; bugünkü davranış korunmalı")
+	assert.Equal(t, saat.simdi(), depo.capa(oturumIkinciSaglayici),
+		"ikinci sağlayıcının çapası da ilerlemeli — ilerlemeseydi o sağlayıcıdan "+
+			"alınmış jetonlar çıkıştan sonra da kabul edilirdi")
+	assert.Equal(t, saat.simdi(), iptalAni,
+		"dönen an, kimliklere yazılan çapa olmalı")
+
+	_, err = oturumKimligiCoz(interop, jeton)
+	oturumRediniDogrula(t, err, "çıkıştan sonra jeton kabul edilmemeli")
+}
+
+// TestIkinciSaglayidakiCapaJetonuDusurur doğrulama tarafının da tek bir
+// sağlayıcıya BAKMADIĞINI kanıtlar.
+//
+// Zincirin bu ucu olmadan çıkış tarafındaki değişiklik işe yaramazdı: çıkış
+// bütün satırları ilerletse bile doğrulama yalnızca emailpass satırına
+// bakıyorsa, öteki satıra yazılan çapa hiç okunmaz.
+//
+// Test bunu, çıkışın ilerletemeyeceği bir asimetri kurarak sınar: ikinci
+// sağlayıcının çapası ilerletilir, emailpass satırı YERİNDE bırakılır. Sabit
+// bir sağlayıcıya bakan bir doğrulama bu jetonu kabul etmeye devam ederdi.
+//
+// Kabul edilen bedel açıktır ve bilinçlidir: bir sağlayıcıdaki iptal ötekinin
+// jetonlarını da düşürür (gerekçe interop.go, principalFromToken).
+func TestIkinciSaglayidakiCapaJetonuDusurur(t *testing.T) {
+	svc, interop, depo, saat := oturumKur(t)
+	ikinciSaglayiciEkle(depo, saat.simdi())
+
+	jeton := oturumJetonuAl(t, svc, oturumParola)
+	_, err := oturumKimligiCoz(interop, jeton)
+	require.NoError(t, err, "hiçbir çapa ilerlemeden jeton kabul edilmeli")
+
+	saat.ilerlet(2 * time.Second)
+	ikinci := depo.kimlik(oturumIkinciSaglayici)
+	require.NotNil(t, ikinci, "test zemini: ikinci sağlayıcı satırı kurulmuş olmalı")
+	ikinci.UpdatedAt = saat.simdi()
+
+	_, err = oturumKimligiCoz(interop, jeton)
+	oturumRediniDogrula(t, err,
+		"ikinci sağlayıcıda ilerleyen çapa da jetonu düşürmeli")
 }

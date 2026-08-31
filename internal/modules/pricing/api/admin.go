@@ -4,7 +4,6 @@ import (
 	"net/http"
 
 	corehttp "github.com/bdrtr/gobit/internal/core/http"
-	"github.com/bdrtr/gobit/internal/modules/pricing/service"
 )
 
 // createPriceSet yeni bir price set oluşturur (POST /admin/v1/price-sets).
@@ -123,27 +122,39 @@ func (a *API) setPrices(w http.ResponseWriter, r *http.Request) {
 }
 
 // calculatePrice bir kabın verilen bağlamdaki geçerli fiyatını seçer
-// (POST /admin/v1/price-sets/{id}/calculate).
+// (GET /admin/v1/price-sets/{id}/calculate).
 //
-// GET değil POST'tur: bağlam (kural öznitelikleri) yapılandırılmış bir gövdedir
-// ve sorgu dizesine düzleştirilirse iç içe değerler kaybolurdu. Yan etkisi
-// yoktur.
+// POST değil GET'tir. Uç eskiden POST'tu ve gerekçesi "bağlam yapılandırılmış
+// bir gövdedir, sorgu dizesine düzleştirilirse iç içe değerler kaybolur" diye
+// yazılmıştı; bu gerekçenin tiplerde karşılığı yok: service.CalculateParams
+// düzdür ve kural bağlamı map[string]string'tir — kaybolacak iç içe değer
+// yoktur. Bedeli ise somuttu: yetki sözlüğü metoda baktığı için (bkz.
+// [API.Routes]) hiçbir şey yazmayan bu uç [ScopeWrite] istiyordu ve fiyatı
+// yalnızca okuyan entegrasyonlar — fiyat karşılaştırma, dışa aktarma — fiyat
+// YAZABİLEN bir kimlikle çalışmak zorunda kalıyordu.
+//
+// Sorgu biçimi:
+//
+//	?currency_code=TRY&quantity=10&at=2026-06-15T12:00:00Z&attr_region_id=reg_1
+//
+// Kural bağlamı tek bir yapılı değer yerine [paramAttrPrefix] ÖNEKLİ ayrı
+// parametrelerle taşınır: alan adları modelin kendi snake_case adlarıdır ve
+// önek onları ayrılmış parametrelerden ([paramCurrencyCode], [paramQuantity],
+// [paramAt]) ayırmaya yeter. İki alternatif elendi: sorguya gömülü bir JSON
+// nesnesi ("attributes={...}") ve "attributes[region_id]" biçimi. İkisi de
+// URL'i elle okunamaz kılar ve HTTP katmanına ikinci bir çözümleyici sokar;
+// karşılığında çözecekleri bir iç içe yapı yoktur.
+//
+// Zaman damgası RFC 3339'dur ve saat dilimi ofsetindeki "+" sorgu dizesinde
+// yüzde kodlanmalıdır ("%2B"); yoksa net/url onu boşluk olarak çözer. "Z"
+// biçimi bu tuzağı hiç yaşamaz.
 func (a *API) calculatePrice(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
-	var req calculateRequest
-	if err := decodeBody(w, r, &req); err != nil {
+	params, err := calculateQuery(r)
+	if err != nil {
 		corehttp.WriteError(ctx, w, err)
 		return
-	}
-
-	params := service.CalculateParams{
-		CurrencyCode: req.CurrencyCode,
-		Quantity:     req.Quantity,
-		Attributes:   req.Attributes,
-	}
-	if req.At != nil {
-		params.At = *req.At
 	}
 
 	calculated, err := a.svc.CalculatePrice(ctx, pathID(r, "id"), params)

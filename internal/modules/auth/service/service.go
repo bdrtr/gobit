@@ -144,7 +144,8 @@ type Repository interface {
 
 	GetIdentity(ctx context.Context, userID, provider string) (models.AuthIdentity, error)
 	SetPasswordHash(ctx context.Context, userID, provider, providerIdentity, hash string, now time.Time) (models.AuthIdentity, error)
-	RevokeSessions(ctx context.Context, userID, provider string, now time.Time) (models.AuthIdentity, error)
+	SessionAnchor(ctx context.Context, userID string) (time.Time, error)
+	RevokeSessions(ctx context.Context, userID string, now time.Time) ([]models.AuthIdentity, error)
 	RegisterLoginFailure(ctx context.Context, identityID string, threshold int, lockUntil, now time.Time) (models.AuthIdentity, error)
 	RegisterLoginSuccess(ctx context.Context, identityID string, now time.Time) error
 

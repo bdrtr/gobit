@@ -10,11 +10,6 @@ import (
 	corehttp "github.com/bdrtr/gobit/internal/core/http"
 )
 
-// RateLimitKeyPrefix hız sınırı sayaçlarının anahtar önekidir.
-//
-// "istemci-a" anahtarı "gobit:rl:istemci-a" sayacına düşer.
-const RateLimitKeyPrefix = "gobit:rl:"
-
 // limitBetigi sayacı artırır ve pencerenin kalan süresini döner.
 //
 // Neden Lua: INCR ve PEXPIRE AYRI komut olarak gönderilirse aralarında bir şey
@@ -71,8 +66,20 @@ return {sayac, kalan}
 // hız sınırlayıcının kendisi saldırı yüzeyi olurdu. 2× patlama, kötüye
 // kullanımı durdurmak için yeterince sıkı bir sınırdır; hassas eşik isteyen
 // uçlar zaten sınırlayıcıya değil kotaya/lisansa aittir.
+//
+// # Anahtar biçimi
+//
+// Sayaçlar "<önek>:rl:<anahtar>" adresine yazılır; varsayılan önekle
+// "istemci-a" anahtarı "gobit:rl:istemci-a" sayacına düşer. Önek kurucudan
+// gelir ve aynı Redis'i paylaşan iki kurulumu ayıran şeydir (bkz. paket
+// godoc'u).
 type Limiter struct {
 	client *redis.Client
+	// onek sayaç anahtarlarının TAM önekidir (örn. "gobit:rl:").
+	//
+	// Ad alanı önekiyle bölüm adı her istekte yeniden birleştirilmesin diye
+	// kurucuda bir kez kurulur.
+	onek string
 	// limit pencere başına izin verilen istek sayısıdır.
 	limit int
 	// window kotanın tamamen yenilendiği süredir.
@@ -86,16 +93,26 @@ var _ corehttp.RateLimiter = (*Limiter)(nil)
 
 // NewLimiter window süresinde limit isteğe izin veren Redis sınırlayıcısı kurar.
 //
-// client nil ya da limit/window pozitif değilse HATA döner.
+// keyPrefix sayaçların ad alanı önekidir; sayaçlar "<keyPrefix>:rl:<anahtar>"
+// adresine yazılır. Biçimi [dogrulaOnek] denetler ve geçersiz önek HATA döner:
+// aynı Redis'i paylaşan iki kurulumun ayrılması buna bağlıdır, sessizce
+// düzeltmek (kırpmak ya da varsayılana düşmek) iki kurulumu yine aynı sayaca
+// bindirirdi.
+//
+// client nil ya da limit/window pozitif değilse de HATA döner.
 // corehttp.NewMemoryLimiter'ın aksine nil DÖNMEZ: nil bir *Limiter,
 // corehttp.RateLimit'e arayüz olarak verildiğinde "nil olmayan ama içi nil"
 // bir arayüz değeri üretir, middleware'in limiter == nil kontrolü FALSE çıkar
 // ve ilk istekte panik olur. Kurucu zaten hata dönüyorken bu tuzağı taşımanın
 // bir gerekçesi yok; sınır istemeyen çağıran corehttp.RateLimit'e doğrudan
 // nil verir.
-func NewLimiter(client *redis.Client, limit int, window time.Duration) (*Limiter, error) {
+func NewLimiter(client *redis.Client, keyPrefix string, limit int, window time.Duration) (*Limiter, error) {
 	if client == nil {
 		return nil, coreerrors.Invalid(CodeInvalidConfig, "redis istemcisi nil olamaz")
+	}
+
+	if err := dogrulaOnek(keyPrefix); err != nil {
+		return nil, err
 	}
 
 	if limit <= 0 {
@@ -108,6 +125,7 @@ func NewLimiter(client *redis.Client, limit int, window time.Duration) (*Limiter
 
 	return &Limiter{
 		client: client,
+		onek:   keyPrefix + ayirici + hizSinirBolumu + ayirici,
 		limit:  limit,
 		window: window,
 		// Redis'in en küçük çözünürlüğü milisaniyedir; daha kısa bir pencere
@@ -126,7 +144,7 @@ func NewLimiter(client *redis.Client, limit int, window time.Duration) (*Limiter
 // middleware onu RateLimit-Reset başlığına yazar.
 func (l *Limiter) Allow(ctx context.Context, key string) (corehttp.Decision, error) {
 	sonuc, err := limitBetigi.Run(ctx, l.client,
-		[]string{RateLimitKeyPrefix + key},
+		[]string{l.onek + key},
 		l.pencereMs,
 	).Int64Slice()
 	if err != nil {

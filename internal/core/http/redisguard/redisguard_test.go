@@ -25,6 +25,9 @@ func yapayIstemci() *redis.Client {
 	return redis.NewClient(&redis.Options{Addr: "127.0.0.1:0"})
 }
 
+// gecerliOnek biçim denetimini geçen, bugünkü varsayılanla aynı önektir.
+const gecerliOnek = "gobit"
+
 func TestNewLimiterGecersizAyariReddeder(t *testing.T) {
 	t.Parallel()
 
@@ -43,7 +46,7 @@ func TestNewLimiterGecersizAyariReddeder(t *testing.T) {
 		t.Run(ad, func(t *testing.T) {
 			t.Parallel()
 
-			lim, err := redisguard.NewLimiter(yapayIstemci(), d.limit, d.window)
+			lim, err := redisguard.NewLimiter(yapayIstemci(), gecerliOnek, d.limit, d.window)
 
 			require.Error(t, err, "geçersiz ayar hata döndürmeli")
 			assert.Nil(t, lim)
@@ -56,12 +59,12 @@ func TestNewLimiterGecersizAyariReddeder(t *testing.T) {
 func TestKuruculariNilIstemciyiReddeder(t *testing.T) {
 	t.Parallel()
 
-	lim, err := redisguard.NewLimiter(nil, 10, time.Minute)
+	lim, err := redisguard.NewLimiter(nil, gecerliOnek, 10, time.Minute)
 	require.Error(t, err, "nil istemci hata döndürmeli")
 	assert.Nil(t, lim)
 	assert.Equal(t, redisguard.CodeInvalidConfig, coreerrors.CodeOf(err))
 
-	depo, err := redisguard.NewIdempotencyStore(nil, time.Hour)
+	depo, err := redisguard.NewIdempotencyStore(nil, gecerliOnek, time.Hour)
 	require.Error(t, err, "nil istemci hata döndürmeli")
 	assert.Nil(t, depo)
 	assert.Equal(t, redisguard.CodeInvalidConfig, coreerrors.CodeOf(err))
@@ -78,7 +81,7 @@ func TestKuruculariNilIstemciyiReddeder(t *testing.T) {
 func TestNewLimiterHataDondurupNilDonmez(t *testing.T) {
 	t.Parallel()
 
-	lim, err := redisguard.NewLimiter(yapayIstemci(), 0, time.Minute)
+	lim, err := redisguard.NewLimiter(yapayIstemci(), gecerliOnek, 0, time.Minute)
 	require.Error(t, err)
 	require.Nil(t, lim)
 
@@ -116,9 +119,88 @@ func TestNewIdempotencyStoreGecersizTTLdeVarsayilanaDuser(t *testing.T) {
 		t.Run(ad, func(t *testing.T) {
 			t.Parallel()
 
-			depo, err := redisguard.NewIdempotencyStore(yapayIstemci(), ttl)
+			depo, err := redisguard.NewIdempotencyStore(yapayIstemci(), gecerliOnek, ttl)
 
 			require.NoError(t, err, "geçersiz ttl varsayılana düşmeli, hata dönmemeli")
+			assert.NotNil(t, depo)
+		})
+	}
+}
+
+// TestKurucularGecersizOnegiReddeder ayırıcı içeren ya da boş bir ad alanı
+// önekinin SESSİZCE kabul edilmediğini doğrular.
+//
+// Önek, aynı Redis'i paylaşan iki kurulumu ayıran tek şeydir; sessizce
+// düzeltilen (kırpılan ya da varsayılana düşürülen) bir önek iki kurulumu yine
+// aynı ad alanına bindirir ve paketin çözmeye çalıştığı arıza — birinin
+// yanıtının ötekinin istemcisine gitmesi — geri gelir. Bu yüzden kurucu
+// düzeltmez, DURUR.
+func TestKurucularGecersizOnegiReddeder(t *testing.T) {
+	t.Parallel()
+
+	onekler := map[string]string{
+		// Ad alanı yok demektir; oysa çağıran önek parametresi vererek tam da
+		// ad alanı istediğini söylemiştir.
+		"boş": "",
+		// Ayırıcı içeren önek gerçek bir çakışma açar: istemcinin uydurduğu bir
+		// idempotency anahtarı iki kurulumu aynı anahtara düşürebilir.
+		"ayırıcı içeren":   "gobit:staging",
+		"ayırıcıyla biten": "gobit:",
+		// Görünmez karakterler kurulumu fark edilmeden başka bir ad alanına
+		// taşır; tüm sayaçlar ve işlemdeki kayıtlar bir anda yok sayılır.
+		"sondan boşluklu": "gobit ",
+		"baştan boşluklu": " gobit",
+		"sekme içeren":    "gobit\tprod",
+		"yeni satır":      "gobit\n",
+		// Glob imleri operatörün "<önek>:idem:*" taramasını bozar.
+		"yıldız içeren":          "gobit*",
+		"köşeli parantez içeren": "gobit[1]",
+		"soru işareti içeren":    "gobit?",
+		// Görsel olarak ayırt edilemeyen karakterler iki ayrı ad alanını AYNI
+		// gösterir (buradaki 'а' Kiril'dir).
+		"latin dışı harf": "gоbit",
+	}
+
+	for ad, onek := range onekler {
+		t.Run(ad, func(t *testing.T) {
+			t.Parallel()
+
+			lim, err := redisguard.NewLimiter(yapayIstemci(), onek, 10, time.Minute)
+			require.Error(t, err, "geçersiz önek sınırlayıcıda hata döndürmeli")
+			assert.Nil(t, lim)
+			assert.True(t, coreerrors.IsInvalid(err), "hata KindInvalid olmalı")
+			assert.Equal(t, redisguard.CodeInvalidConfig, coreerrors.CodeOf(err))
+
+			depo, err := redisguard.NewIdempotencyStore(yapayIstemci(), onek, time.Hour)
+			require.Error(t, err, "geçersiz önek depoda hata döndürmeli")
+			assert.Nil(t, depo)
+			assert.True(t, coreerrors.IsInvalid(err), "hata KindInvalid olmalı")
+			assert.Equal(t, redisguard.CodeInvalidConfig, coreerrors.CodeOf(err))
+		})
+	}
+}
+
+// TestKurucularGecerliOnegiKabulEder biçim denetiminin meşru kurulum adlarını
+// da kapıda tutmadığını doğrular.
+//
+// Denetim fazla sıkı olsaydı bedeli somut olurdu: operatör kurulumları
+// ayıramaz, ayıramadığı için de varsayılanda bırakır — yani reddetmek istediği
+// arızayı kendi eliyle geri getirirdi.
+func TestKurucularGecerliOnegiKabulEder(t *testing.T) {
+	t.Parallel()
+
+	for _, onek := range []string{
+		"gobit", "gobit-staging", "gobit_prod", "magaza.42", "GOBIT", "g",
+	} {
+		t.Run(onek, func(t *testing.T) {
+			t.Parallel()
+
+			lim, err := redisguard.NewLimiter(yapayIstemci(), onek, 10, time.Minute)
+			require.NoError(t, err, "geçerli önek reddedilmemeli")
+			assert.NotNil(t, lim)
+
+			depo, err := redisguard.NewIdempotencyStore(yapayIstemci(), onek, time.Hour)
+			require.NoError(t, err, "geçerli önek reddedilmemeli")
 			assert.NotNil(t, depo)
 		})
 	}

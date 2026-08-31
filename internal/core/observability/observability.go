@@ -25,6 +25,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -175,6 +176,40 @@ func kapanisiYurut(ctx context.Context, sure time.Duration, sağlayıcılar ...k
 	return errors.Join(hatalar...)
 }
 
+// ucSemaliMi adresin bir URL şeması taşıyıp taşımadığını bildirir.
+//
+// OTEL_EXPORTER_OTLP_ENDPOINT, OpenTelemetry belirtiminde bir URL'dir
+// ("http://collector:4317"); Go SDK'sının WithEndpoint seçeneği ise ŞEMASIZ
+// bir "host:port" bekler. İkisi karıştırıldığında hata VERİLMEZ: gRPC tembel
+// bağlanır, kurulum "başarılı" loglanır ve span'lar SESSİZCE hiçbir yere
+// gitmez.
+//
+// Sessiz kayıp gürültülü bir hatadan çok daha pahalıdır: izleme açık sanılır,
+// oysa kapalıdır ve bu ancak bir arıza incelenirken — yani en kötü anda —
+// fark edilir. Belirtimin adını ödünç alan bir değişken, belirtimin değerini
+// de kabul etmelidir; bu yüzden iki biçim de desteklenir.
+func ucSemaliMi(uc string) bool {
+	return strings.Contains(uc, "://")
+}
+
+// izUcu iz dışa aktarıcısına adresi doğru seçenekle verir.
+func izUcu(uc string) otlptracegrpc.Option {
+	if ucSemaliMi(uc) {
+		return otlptracegrpc.WithEndpointURL(uc)
+	}
+
+	return otlptracegrpc.WithEndpoint(uc)
+}
+
+// metrikUcu metrik dışa aktarıcısına adresi doğru seçenekle verir.
+func metrikUcu(uc string) otlpmetricgrpc.Option {
+	if ucSemaliMi(uc) {
+		return otlpmetricgrpc.WithEndpointURL(uc)
+	}
+
+	return otlpmetricgrpc.WithEndpoint(uc)
+}
+
 // noopShutdown izleme kapalıyken kullanılan kapanış işlevidir.
 func noopShutdown(context.Context) error { return nil }
 
@@ -193,7 +228,7 @@ func kaynak(ctx context.Context, opts Options) (*resource.Resource, error) {
 func izSaglayici(
 	ctx context.Context, opts Options, res *resource.Resource,
 ) (*sdktrace.TracerProvider, error) {
-	cikis := []otlptracegrpc.Option{otlptracegrpc.WithEndpoint(opts.Endpoint)}
+	cikis := []otlptracegrpc.Option{izUcu(opts.Endpoint)}
 	if opts.Insecure {
 		cikis = append(cikis, otlptracegrpc.WithInsecure())
 	}
@@ -246,7 +281,7 @@ func ornekleyici(oran float64) sdktrace.Sampler {
 func metrikSaglayici(
 	ctx context.Context, opts Options, res *resource.Resource,
 ) (*sdkmetric.MeterProvider, error) {
-	cikis := []otlpmetricgrpc.Option{otlpmetricgrpc.WithEndpoint(opts.Endpoint)}
+	cikis := []otlpmetricgrpc.Option{metrikUcu(opts.Endpoint)}
 	if opts.Insecure {
 		cikis = append(cikis, otlpmetricgrpc.WithInsecure())
 	}

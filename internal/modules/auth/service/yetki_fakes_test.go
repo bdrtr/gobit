@@ -88,13 +88,17 @@ func (d *sahteDepo) SetPasswordHash(
 	return models.AuthIdentity{}, nil
 }
 
+func (d *sahteDepo) SessionAnchor(_ context.Context, _ string) (time.Time, error) {
+	return time.Time{}, errors.NotFound("identity_not_found", "kimlik bulunamadı")
+}
+
 func (d *sahteDepo) RevokeSessions(
 	_ context.Context,
-	_, _ string,
+	_ string,
 	now time.Time,
-) (models.AuthIdentity, error) {
+) ([]models.AuthIdentity, error) {
 	d.yazmaSayisi++
-	return models.AuthIdentity{UpdatedAt: now}, nil
+	return []models.AuthIdentity{{UpdatedAt: now}}, nil
 }
 
 func (d *sahteDepo) RegisterLoginFailure(

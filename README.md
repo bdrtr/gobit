@@ -263,6 +263,10 @@ internete bakan bir kurulumda `0` bırakın.
 | `memory` (varsayılan) | örnek sayısıyla **çarpılır** | örnekler arasında **hiç çalışmaz** |
 | `redis` | paylaşılan | paylaşılan |
 
+Aynı Redis örneğini paylaşan iki gobit kurulumu (örn. staging ve prod) farklı
+`REDIS_KEY_PREFIX` kullanmalıdır; aksi hâlde birbirlerinin hız sınırını harcar
+ve — daha kötüsü — birbirlerinin idempotency kaydını oynatır.
+
 Fark yalnızca derece değil **tür** farkıdır: hız sınırının gevşemesi bir *hız*
 sorunudur, hiçbir istek yanlış işlenmez. Idempotency'nin çalışmaması bir
 *doğruluk* sorunudur — aynı anahtarla farklı örneklere düşen iki istek iki kez
@@ -281,7 +285,26 @@ uygulamayı düşürmez.
 
 Her isteğe bir span açılır; span adı ham yol değil **route deseni**dir
 (`GET /store/v1/products/{id}`) — ham yol kullanılsaydı her ürün kimliği ayrı
-bir metrik serisi üretir ve kardinalite patlardı.
+bir metrik serisi üretir ve kardinalite patlardı. Ham yol yine de span'da
+`url.path` özniteliğinde durur, yani ayrıntı kaybolmaz; kardinalite yalnızca
+metriklerde sınırlanır.
+
+Koruma middleware'inde reddedilen bir istek route eşleşmesine hiç varmaz ve
+`http.route` değeri `unknown` olur; hangi uca gidildiği o span'ın `url.path`
+özniteliğinden okunur.
+
+Yerelde denemek için:
+
+```bash
+make up-tracing        # Postgres + Redis + Jaeger
+OTEL_EXPORTER_OTLP_ENDPOINT=localhost:4317 OTEL_EXPORTER_OTLP_INSECURE=true make run
+# arayüz: http://localhost:16686
+```
+
+> Jaeger **yalnızca trace** kabul eder; uygulama aynı uca metrik de göndermeye
+> çalışır ve her aralıkta bir `failed to upload metrics` satırı düşer.
+> Zararsızdır (izleme arızası uygulamayı düşürmez) ama metrik de toplamak
+> isteyen bir kurulum araya bir OpenTelemetry Collector koymalıdır.
 
 ## Eklentiler
 

@@ -21,7 +21,7 @@ SQLC             := $(BIN_DIR)/sqlc
 DOTENV = set -a; [ -f .env ] && . ./.env; set +a;
 
 .DEFAULT_GOAL := help
-.PHONY: help run build test test-integration load-test lint fmt tidy gen up down logs psql redis-cli migrate-up migrate-down tools clean rename-module
+.PHONY: help run build test test-integration load-test lint fmt tidy gen up up-tracing down logs psql redis-cli migrate-up migrate-down tools clean rename-module
 
 help: ## Bu yardım metnini göster
 	@grep -hE '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2}'
@@ -66,8 +66,14 @@ up: ## Postgres + Redis'i ayağa kaldır (sağlıklı olana kadar bekler)
 	@$(DOTENV) $(COMPOSE) up -d --wait
 	@echo "postgres ve redis hazır."
 
+up-tracing: ## Altyapıyı Jaeger izleme toplayıcısıyla birlikte kaldır
+	@$(DOTENV) $(COMPOSE) --profile tracing up -d --wait
+	@echo "postgres, redis ve jaeger hazır."
+	@echo "izlemeyi açmak için: OTEL_EXPORTER_OTLP_ENDPOINT=localhost:4317 OTEL_EXPORTER_OTLP_INSECURE=true make run"
+	@echo "arayüz: http://localhost:$${JAEGER_UI_PORT:-16686}"
+
 down: ## Servisleri durdur (veri korunur)
-	@$(DOTENV) $(COMPOSE) down
+	@$(DOTENV) $(COMPOSE) --profile tracing down
 
 logs: ## Servis loglarını izle
 	@$(DOTENV) $(COMPOSE) logs -f

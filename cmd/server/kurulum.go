@@ -74,6 +74,12 @@ var eklentiKatalogu = map[string]func() coreplugin.Plugin{
 // Redis seçilmişse istemci ZORUNLUDUR ve yoksa açılış durur: "paylaşılan depo
 // istedim ama sessizce bellek içiyle çalıştım", tam da korumanın çalıştığı
 // sanılırken çalışmadığı durumdur.
+//
+// Anahtar ad alanı öneki (REDIS_KEY_PREFIX) de buradan geçer ve AYNI Redis'i
+// paylaşan iki kurulumu ayıran tek şeydir; gerekçesi [config.Config]
+// RedisKeyPrefix alanındadır. Önek loglanır: iki kurulumun aynı ad alanına
+// düştüğü, ancak iki açılış logu yan yana konduğunda görülebilecek bir
+// arızadır ve yanlışın sonucu (birinin yanıtının ötekine gitmesi) sessizdir.
 func korumaYigini(
 	cfg config.Config,
 	authn corehttp.Authenticator,
@@ -96,7 +102,7 @@ func korumaYigini(
 				"GUARD_BACKEND=%s seçildi ama Redis istemcisi yok", config.BackendRedis)
 		}
 
-		depo, err := redisguard.NewIdempotencyStore(rdb, cfg.IdempotencyTTL)
+		depo, err := redisguard.NewIdempotencyStore(rdb, cfg.RedisKeyPrefix, cfg.IdempotencyTTL)
 		if err != nil {
 			return nil, err
 		}
@@ -105,7 +111,7 @@ func korumaYigini(
 		// Sınır kapalıysa (limit <= 0) sınırlayıcı hiç kurulmaz; kurulsaydı
 		// "0 istek" gibi davranıp tüm trafiği keserdi.
 		if cfg.RateLimitPerMinute > 0 {
-			limiter, limitErr := redisguard.NewLimiter(rdb, cfg.RateLimitPerMinute, time.Minute)
+			limiter, limitErr := redisguard.NewLimiter(rdb, cfg.RedisKeyPrefix, cfg.RateLimitPerMinute, time.Minute)
 			if limitErr != nil {
 				return nil, limitErr
 			}
@@ -114,7 +120,8 @@ func korumaYigini(
 			opts.LimitKey = corehttp.TrustedProxyIPKey(cfg.TrustedProxyHops)
 		}
 
-		log.Info("koruma arka ucu: redis (paylaşılan)")
+		log.Info("koruma arka ucu: redis (paylaşılan)",
+			"anahtar_oneki", cfg.RedisKeyPrefix)
 
 		return corehttp.APIGuards(opts), nil
 	}
@@ -306,7 +313,24 @@ func tohumlaYonetici(
 	kullanici, err := kullanicilar.CreateUser(ctx, authservice.CreateUserInput{
 		Email: cfg.AdminBootstrapEmail,
 	}, cfg.AdminBootstrapPassword)
-	if err != nil {
+
+	switch {
+	// Çakışma bir ARIZA DEĞİL, YARIŞTIR. Birden çok örnek boş bir veritabanına
+	// aynı anda açıldığında hepsi "hiç kullanıcı yok" görür ve hepsi yaratmayı
+	// dener; e-posta benzersizliği birinden fazlasını reddeder.
+	//
+	// Bunu hata sayıp açılışı durdurmak, üç kopyalı ilk dağıtımda ikisinin
+	// yeniden başlatma döngüsüne girmesi demekti — kendini onaran ama bozuk
+	// görünen bir dağıtım. İstenen son durum ("bir yönetici var") kaybeden
+	// örnekler için de sağlanmıştır; yapılacak tek doğru şey devam etmektir.
+	//
+	// Yalnızca ÇAKIŞMA yutulur: bağlantı hatası ya da geçersiz parola hâlâ
+	// açılışı durdurur, çünkü onlarda istenen son durum sağlanmamıştır.
+	case errors.IsConflict(err):
+		log.InfoContext(ctx, "ilk yönetici tohumu atlandı: başka bir örnek aynı anda oluşturdu")
+
+		return nil
+	case err != nil:
 		return errors.Wrap(err, errors.KindOf(err), codeBootstrapFailed,
 			"ilk yönetici oluşturulamadı")
 	}

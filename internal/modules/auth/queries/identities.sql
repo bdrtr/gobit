@@ -59,6 +59,20 @@ RETURNING *;
 -- yapılabilen tek şey çapayı ileri almak, yani ondan önce üretilmiş bütün
 -- jetonları birden geçersizleştirmektir (bkz. service/session.go).
 --
+-- # Sağlayıcı SEÇİLMEZ: kullanıcının BÜTÜN kimlikleri ilerletilir
+--
+-- Filtre yalnızca user_id'dir. Bu tablo sağlayıcı BAŞINA satır tutar
+-- ((user_id, provider) benzersizliği) ve tek bir sağlayıcı seçilseydi, ileride
+-- OAuth eklendiği gün çıkış o sağlayıcıdan alınmış jetonları düşürmez, üstelik
+-- bunu SESSİZCE yapardı: uç 200 döner, "çıkış yaptım" diyen kullanıcı hâlâ
+-- oturumda kalırdı. Bugün tek sağlayıcı olduğu için etkilenen satır sayısı
+-- birdir ve gözlemlenebilir davranış aynıdır; değişen şey, ikinci sağlayıcının
+-- eklendiği günün sessiz açık BIRAKMAMASIDIR.
+--
+-- Okuma tarafı da aynı kuralı uygular: jeton doğrulanırken çapa tek bir
+-- sağlayıcıdan değil, kullanıcının EN YENİ kimliğinden okunur
+-- (bkz. GetSessionAnchor). İkisi ayrışsaydı buradaki yazma boşa giderdi.
+--
 -- password_hash'e DOKUNULMAZ: çıkış yapmak parolayı değiştirmez ve değişse
 -- kullanıcı bir daha giremezdi.
 --
@@ -67,13 +81,41 @@ RETURNING *;
 -- jeton varsa (kilit jetonu düşürmez) art arda "çıkış yap + yeniden dene" ile
 -- sayaç sonsuza dek sıfırlanabilir, yani kilit hiç devreye girmezdi.
 --
--- Kimlik (user_id, provider) ile bulunur; satır yoksa hiçbir şey dönmez ve
--- çağıran bunu errors.NotFound'a çevirir.
--- name: RevokeSessions :one
+-- Kullanıcının hiç canlı kimliği yoksa HİÇBİR satır dönmez ve çağıran bunu
+-- errors.NotFound'a çevirir; sessizce başarılı dönmek, hiçbir şey düşürmeyen
+-- bir çıkışı başarı gibi göstermek olurdu.
+-- name: RevokeSessions :many
 UPDATE auth_identity SET
-    updated_at = $3
-WHERE user_id = $1 AND provider = $2 AND deleted_at IS NULL
+    updated_at = $2
+WHERE user_id = $1 AND deleted_at IS NULL
 RETURNING *;
+
+-- GetSessionAnchor kullanıcının EN YENİ oturum çapasını döner.
+--
+-- Jeton doğrulaması bu tek değere dayanır: "iat" bundan önceyse jeton
+-- reddedilir (bkz. service/interop.go, principalFromToken).
+--
+-- # Neden EN YENİ (ve neden tek bir sağlayıcı değil)
+--
+-- Jetonun hangi sağlayıcıdan alındığını söyleyen bir iddia YOKTUR; iddia
+-- olmadığı için çapa sağlayıcıya göre seçilemez. Seçilebilen iki uç vardır ve
+-- en ESKİSİNİ almak yanlış olurdu: çapası hiç ilerlemeyen tek bir satır (örn.
+-- parola değişimi yalnızca emailpass satırını yazar) iptalin tamamını etkisiz
+-- bırakırdı. EN YENİ olan alınır — belirsizlik güvenlik lehine çözülür, bedeli
+-- bir sağlayıcıdaki iptalin ötekinin jetonlarını da düşürmesidir.
+--
+-- Kullanıcının sağlayıcı sayısı elle ölçülür; sıralama, user_id önekiyle
+-- taranan indeksten (auth_identity_user_provider_uniq) gelen bir avuç satır
+-- üzerindedir.
+--
+-- Canlı kimlik hiç yoksa satır dönmez: çağıran bunu errors.NotFound'a çevirir
+-- ve jetonu reddeder, çünkü jetonun ne zaman geçersizleştiğini söyleyecek bir
+-- değer kalmamıştır.
+-- name: GetSessionAnchor :one
+SELECT updated_at FROM auth_identity
+WHERE user_id = $1 AND deleted_at IS NULL
+ORDER BY updated_at DESC
+LIMIT 1;
 
 -- RegisterLoginFailure başarısız bir giriş denemesini ATOMİK olarak sayar.
 --

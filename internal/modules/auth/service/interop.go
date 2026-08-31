@@ -179,6 +179,23 @@ func (i *Interop) AuthenticateStore(ctx context.Context, key string) (corehttp.P
 // arasındadır; saniye çözünürlüğünün getirdiği sınır durumu ve orada yapılan
 // tercih [parsedToken.issuedBefore] godoc'unda açıktır.
 //
+// # Çapa SAĞLAYICIYA GÖRE seçilmez
+//
+// Okunan değer kullanıcının EN YENİ çapasıdır, tek bir sağlayıcınınki değil
+// (Repository.SessionAnchor). Seçim yapılamaz çünkü jeton hangi sağlayıcıdan
+// alındığını söyleyen bir iddia TAŞIMAZ; sabit bir sağlayıcıya bakmak ise
+// çıkışla tutarsız olurdu — çıkış bütün satırları ilerletir
+// ([Service.Logout]) ve doğrulama tek satıra bakarsa OAuth eklendiği gün o
+// sağlayıcının jetonları çıkıştan sonra da kabul edilmeye devam ederdi.
+//
+// Belirsizlik GÜVENLİK lehine çözülür: bir sağlayıcıdaki iptal ötekinin
+// jetonlarını da düşürür. Ters tercih (en eski çapa) hiç ilerlemeyen tek bir
+// satırın iptalin tamamını etkisiz bırakması demek olurdu. Sağlayıcı başına
+// kesinlik gerçekten gerekirse yol, jetona bir sağlayıcı iddiası eklemektir.
+//
+// Bugün tek sağlayıcı olduğu için okunan değer eskisiyle AYNIDIR; kazanılan
+// şey ikinci satırın eklendiği günkü tutarlılıktır.
+//
 // Giriş kimliği HİÇ YOKSA jeton reddedilir. Bu yol normalde imkânsızdır —
 // jeton yalnızca [Service.Login] tarafından, yani kimliği olan bir kullanıcı
 // için üretilir — ama kimlik silinmişse jetonun ne zaman geçersizleştiğini
@@ -187,11 +204,12 @@ func (i *Interop) AuthenticateStore(ctx context.Context, key string) (corehttp.P
 //
 // # Maliyet
 //
-// Kimlik okuması EK BİR TUR DEĞİLDİR: bu yol zaten istek başına bir
-// veritabanı okuması yapıyordu (yetkiler jetondan değil kayıttan okunuyor,
-// yukarıya bakınız). İkinci okuma da indeksli tek satırdır
-// (auth_identity_user_idx) ve isteğin bütçesinde ölçülebilir bir yer tutmaz;
-// karşılığında iptal ANINDA etkili olur.
+// Çapa okuması EK BİR TUR DEĞİLDİR: bu yol zaten istek başına bir veritabanı
+// okuması yapıyordu (yetkiler jetondan değil kayıttan okunuyor, yukarıya
+// bakınız). İkinci okuma indekslidir (auth_identity_user_provider_uniq,
+// user_id önekiyle) ve sağlayıcı sayısı elle ölçüldüğü için sıralama bir avuç
+// satır üzerindedir; isteğin bütçesinde ölçülebilir bir yer tutmaz.
+// Karşılığında iptal ANINDA etkili olur.
 func (s *Service) principalFromToken(ctx context.Context, raw string) (corehttp.Principal, error) {
 	if err := s.ready(); err != nil {
 		return corehttp.Principal{}, err
@@ -211,7 +229,7 @@ func (s *Service) principalFromToken(ctx context.Context, raw string) (corehttp.
 		return corehttp.Principal{}, err
 	}
 
-	identity, err := s.repo.GetIdentity(ctx, user.ID, models.ProviderEmailPass)
+	anchor, err := s.repo.SessionAnchor(ctx, user.ID)
 	if err != nil {
 		if errors.IsNotFound(err) {
 			return corehttp.Principal{}, errors.Unauthorized(CodeTokenInvalid,
@@ -219,7 +237,7 @@ func (s *Service) principalFromToken(ctx context.Context, raw string) (corehttp.
 		}
 		return corehttp.Principal{}, err
 	}
-	if parsed.issuedBefore(sessionAnchor(identity)) {
+	if parsed.issuedBefore(anchor) {
 		return corehttp.Principal{}, errors.Unauthorized(CodeTokenInvalid,
 			"jeton, çıkış ya da parola değişiminden önce üretilmiş: %s", user.ID)
 	}

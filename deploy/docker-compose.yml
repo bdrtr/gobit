@@ -45,6 +45,38 @@ services:
       retries: 10
       start_period: 5s
 
+  # İZLEME TOPLAYICISI — bilinçli olarak PROFİL ARKASINDA.
+  #
+  # `make up` bunu BAŞLATMAZ: izleme kapalıyken uygulama hiçbir dış bağlantı
+  # denemez ve geliştirme kurulumu bir toplayıcı çalıştırmak zorunda değildir.
+  # Toplayıcıyı istemek AÇIK bir karardır (bkz. `make up-tracing`).
+  #
+  # all-in-one imajı bellek içi depo kullanır: yeniden başlatmada trace'ler
+  # kaybolur. Geliştirme ve doğrulama içindir, üretim için değildir.
+  #
+  # YALNIZCA TRACE KABUL EDER. Uygulama aynı uca metrik de göndermeye çalışır
+  # ve Jaeger bunu reddeder; her dışa aktarma aralığında şu satır düşer:
+  #
+  #   failed to upload metrics: ... unknown service ...MetricsService
+  #
+  # Zararsızdır (izleme arızası uygulamayı düşürmez, bkz. ADR 0007) ama
+  # gürültülüdür. Metrik de toplamak isteyen bir kurulum, uygulamayı bir
+  # OpenTelemetry Collector'a yöneltmeli ve trace'leri oradan Jaeger'a
+  # iletmelidir. Buraya Collector koymamak bilinçlidir: bir yapılandırma
+  # dosyası daha getirir ve bu profilin tek işi "trace'ler gerçekten dışa
+  # aktarılıyor mu" sorusunu cevaplamaktır.
+  jaeger:
+    image: jaegertracing/all-in-one:1.62.0
+    container_name: gobit-jaeger
+    profiles: ["tracing"]
+    restart: unless-stopped
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+    ports:
+      # 16686: web arayüzü. 4317: OTLP/gRPC — uygulamanın bağlandığı port.
+      - "127.0.0.1:${JAEGER_UI_PORT:-16686}:16686"
+      - "127.0.0.1:${OTLP_GRPC_PORT:-4317}:4317"
+
 volumes:
   postgres-data:
   redis-data:

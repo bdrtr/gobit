@@ -63,12 +63,28 @@ func redisIstemcisi(t *testing.T) *redis.Client {
 	return istemciAc(t, redisBaslat(t))
 }
 
+// varsayilanOnek testlerin çoğunda kullanılan ad alanı önekidir.
+//
+// Değeri config.DefaultRedisKeyPrefix ile aynıdır; ad alanının kendisi bu
+// testlerin konusu olmadığı için gerçek kurulumun kullandığı önek seçilir.
+const varsayilanOnek = "gobit"
+
+// Ad alanı ayrımını sınayan testlerin kullandığı, birbirinden FARKLI iki önek.
+//
+// İkisi de AYNI Redis örneğine ve AYNI DB'ye yazar; ayrımı yapan tek şey
+// önektir. Ayrı DB/örnek kullanmak testi anlamsızlaştırırdı: kanıtlanmak
+// istenen şey tam olarak "aynı Redis'te ayrışıyorlar mı" sorusudur.
+const (
+	stagingOnek = "gobit-staging"
+	uretimOnek  = "gobit-prod"
+)
+
 // --- Hız sınırlayıcı ---
 
 func TestKotaBitinceIstekReddedilir(t *testing.T) {
 	const limit = 3
 
-	lim, err := redisguard.NewLimiter(redisIstemcisi(t), limit, time.Minute)
+	lim, err := redisguard.NewLimiter(redisIstemcisi(t), varsayilanOnek, limit, time.Minute)
 	require.NoError(t, err)
 
 	for i := range limit {
@@ -90,7 +106,7 @@ func TestKotaBitinceIstekReddedilir(t *testing.T) {
 func TestPencereDoluncaKotaYenilenir(t *testing.T) {
 	const window = time.Second
 
-	lim, err := redisguard.NewLimiter(redisIstemcisi(t), 1, window)
+	lim, err := redisguard.NewLimiter(redisIstemcisi(t), varsayilanOnek, 1, window)
 	require.NoError(t, err)
 
 	ilk, err := lim.Allow(t.Context(), "istemci-a")
@@ -112,7 +128,7 @@ func TestPencereDoluncaKotaYenilenir(t *testing.T) {
 }
 
 func TestFarkliIstemcilerBirbirininKotasiniHarcamaz(t *testing.T) {
-	lim, err := redisguard.NewLimiter(redisIstemcisi(t), 1, time.Minute)
+	lim, err := redisguard.NewLimiter(redisIstemcisi(t), varsayilanOnek, 1, time.Minute)
 	require.NoError(t, err)
 
 	a, err := lim.Allow(t.Context(), "istemci-a")
@@ -137,9 +153,9 @@ func TestFarkliIstemcilerBirbirininKotasiniHarcamaz(t *testing.T) {
 func TestIkiSurecAyniKotayiPaylasir(t *testing.T) {
 	uri := redisBaslat(t)
 
-	birinci, err := redisguard.NewLimiter(istemciAc(t, uri), 2, time.Minute)
+	birinci, err := redisguard.NewLimiter(istemciAc(t, uri), varsayilanOnek, 2, time.Minute)
 	require.NoError(t, err)
-	ikinci, err := redisguard.NewLimiter(istemciAc(t, uri), 2, time.Minute)
+	ikinci, err := redisguard.NewLimiter(istemciAc(t, uri), varsayilanOnek, 2, time.Minute)
 	require.NoError(t, err)
 
 	d1, err := birinci.Allow(t.Context(), "istemci-a")
@@ -160,7 +176,7 @@ func TestIkiSurecAyniKotayiPaylasir(t *testing.T) {
 // --- Idempotency deposu ---
 
 func TestBeginAyniAnahtarlaIkinciKezIslemdeDoner(t *testing.T) {
-	depo, err := redisguard.NewIdempotencyStore(redisIstemcisi(t), time.Hour)
+	depo, err := redisguard.NewIdempotencyStore(redisIstemcisi(t), varsayilanOnek, time.Hour)
 	require.NoError(t, err)
 
 	kayit, tamam, err := depo.Begin(t.Context(), "kiracı-1:anahtar", "izi-1")
@@ -174,7 +190,7 @@ func TestBeginAyniAnahtarlaIkinciKezIslemdeDoner(t *testing.T) {
 }
 
 func TestCompleteSonrasiBeginKaydiDondurur(t *testing.T) {
-	depo, err := redisguard.NewIdempotencyStore(redisIstemcisi(t), time.Hour)
+	depo, err := redisguard.NewIdempotencyStore(redisIstemcisi(t), varsayilanOnek, time.Hour)
 	require.NoError(t, err)
 
 	const anahtar = "kiracı-1:anahtar"
@@ -212,7 +228,7 @@ func TestCompleteSonrasiBeginKaydiDondurur(t *testing.T) {
 // UTF-8 baytlarını sessizce U+FFFD ile değiştirir ve çalınan yanıt BOZUK
 // çıkardı. Buradaki bayt dizisi bilinçli olarak geçerli UTF-8 değildir.
 func TestIkiliGovdeBozulmadanSaklanir(t *testing.T) {
-	depo, err := redisguard.NewIdempotencyStore(redisIstemcisi(t), time.Hour)
+	depo, err := redisguard.NewIdempotencyStore(redisIstemcisi(t), varsayilanOnek, time.Hour)
 	require.NoError(t, err)
 
 	govde := []byte{0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0xff, 0xfe, 0x00}
@@ -232,7 +248,7 @@ func TestIkiliGovdeBozulmadanSaklanir(t *testing.T) {
 }
 
 func TestAbortSonrasiAnahtarYenidenAyrilabilir(t *testing.T) {
-	depo, err := redisguard.NewIdempotencyStore(redisIstemcisi(t), time.Hour)
+	depo, err := redisguard.NewIdempotencyStore(redisIstemcisi(t), varsayilanOnek, time.Hour)
 	require.NoError(t, err)
 
 	const anahtar = "kiracı-1:anahtar"
@@ -255,7 +271,7 @@ func TestAbortSonrasiAnahtarYenidenAyrilabilir(t *testing.T) {
 // koşulsuz silen bir uygulama, kaydı silip tekrar gelen isteğin baştan
 // işlenmesine — yani ikinci bir siparişe — yol açardı.
 func TestAbortTamamlanmisKaydiSilmez(t *testing.T) {
-	depo, err := redisguard.NewIdempotencyStore(redisIstemcisi(t), time.Hour)
+	depo, err := redisguard.NewIdempotencyStore(redisIstemcisi(t), varsayilanOnek, time.Hour)
 	require.NoError(t, err)
 
 	const anahtar = "kiracı-1:anahtar"
@@ -280,7 +296,7 @@ func TestAbortTamamlanmisKaydiSilmez(t *testing.T) {
 func TestTTLDoluncaKayitKaybolur(t *testing.T) {
 	const ttl = 800 * time.Millisecond
 
-	depo, err := redisguard.NewIdempotencyStore(redisIstemcisi(t), ttl)
+	depo, err := redisguard.NewIdempotencyStore(redisIstemcisi(t), varsayilanOnek, ttl)
 	require.NoError(t, err)
 
 	const anahtar = "kiracı-1:anahtar"
@@ -312,9 +328,9 @@ func TestTTLDoluncaKayitKaybolur(t *testing.T) {
 func TestIkiSurecAyniKaydiGorur(t *testing.T) {
 	uri := redisBaslat(t)
 
-	birinci, err := redisguard.NewIdempotencyStore(istemciAc(t, uri), time.Hour)
+	birinci, err := redisguard.NewIdempotencyStore(istemciAc(t, uri), varsayilanOnek, time.Hour)
 	require.NoError(t, err)
-	ikinci, err := redisguard.NewIdempotencyStore(istemciAc(t, uri), time.Hour)
+	ikinci, err := redisguard.NewIdempotencyStore(istemciAc(t, uri), varsayilanOnek, time.Hour)
 	require.NoError(t, err)
 
 	const anahtar = "kiracı-1:anahtar"
@@ -336,4 +352,122 @@ func TestIkiSurecAyniKaydiGorur(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, tamam, "ikinci örnek birincinin yazdığı kaydı okumalı")
 	assert.Equal(t, []byte(`{"id":"order_01"}`), kayit.Body)
+}
+
+// --- Ad alanı ayrımı ---
+
+// TestFarkliOnekliSinirlayicilarBirbirininKotasiniHarcamaz aynı Redis'i
+// paylaşan iki KURULUMUN hız sınırı sayaçlarının ayrıldığını doğrular.
+//
+// Önek sabitken bu ayrım yoktu: staging ile production aynı Redis'e bakıyorsa
+// staging'in yük testi production'ın kotasını yer ve production'daki gerçek
+// istemciler 429 alır. Sayaçlar tek istemci üzerinden, yani AYNI Redis DB'sinde
+// tutuluyor; ayrımı yapan tek şey önektir.
+func TestFarkliOnekliSinirlayicilarBirbirininKotasiniHarcamaz(t *testing.T) {
+	client := redisIstemcisi(t)
+
+	staging, err := redisguard.NewLimiter(client, stagingOnek, 1, time.Minute)
+	require.NoError(t, err)
+	uretim, err := redisguard.NewLimiter(client, uretimOnek, 1, time.Minute)
+	require.NoError(t, err)
+
+	// AYNI sınır anahtarı bilinçlidir: iki kurulumun aynı IP'den istek alması
+	// olağandır ve ayrımın anahtara değil ÖNEKE dayandığı ancak böyle görünür.
+	const anahtar = "istemci-a"
+
+	ilk, err := staging.Allow(t.Context(), anahtar)
+	require.NoError(t, err)
+	require.True(t, ilk.Allowed)
+
+	tekrar, err := staging.Allow(t.Context(), anahtar)
+	require.NoError(t, err)
+	require.False(t, tekrar.Allowed, "staging kendi kotasını bitirdi")
+
+	uretimKarari, err := uretim.Allow(t.Context(), anahtar)
+	require.NoError(t, err)
+	assert.True(t, uretimKarari.Allowed,
+		"başka önekteki kurulumun harcadığı kota bu kurulumu etkilememeli")
+	assert.Zero(t, uretimKarari.Remaining, "üretim kendi kotasından ilk hakkını kullandı")
+}
+
+// TestFarkliOnekliDepolarBirbirininKaydiniGormez aynı Redis'i paylaşan iki
+// KURULUMUN idempotency kayıtlarının ayrıldığını doğrular.
+//
+// Bu, ikisi arasında ağır basan arızadır: önek sabitken staging'in bir
+// anahtara yazdığı yanıt, aynı anahtarla gelen production isteğine YANIT
+// olarak dönerdi — istemci hiç yapmadığı bir siparişin kimliğini alır ve
+// gerçek isteği hiç işlenmez.
+func TestFarkliOnekliDepolarBirbirininKaydiniGormez(t *testing.T) {
+	client := redisIstemcisi(t)
+
+	staging, err := redisguard.NewIdempotencyStore(client, stagingOnek, time.Hour)
+	require.NoError(t, err)
+	uretim, err := redisguard.NewIdempotencyStore(client, uretimOnek, time.Hour)
+	require.NoError(t, err)
+
+	const anahtar = "kiracı-1:anahtar"
+
+	_, _, err = staging.Begin(t.Context(), anahtar, "izi-staging")
+	require.NoError(t, err)
+
+	// Ayırma da ad alanına aittir: staging'in tuttuğu anahtar üretimi
+	// bloklasaydı, bir ortamın trafiği ötekini durdurabilirdi.
+	kayit, tamam, err := uretim.Begin(t.Context(), anahtar, "izi-uretim")
+	require.NoError(t, err, "başka önekteki ayırma bu depoyu bloklamamalı")
+	assert.Nil(t, kayit)
+	assert.False(t, tamam)
+
+	require.NoError(t, staging.Complete(t.Context(), anahtar, corehttp.IdempotentResponse{
+		Status:      http.StatusCreated,
+		Body:        []byte(`{"id":"staging_01"}`),
+		Fingerprint: "izi-staging",
+	}))
+	require.NoError(t, uretim.Complete(t.Context(), anahtar, corehttp.IdempotentResponse{
+		Status:      http.StatusCreated,
+		Body:        []byte(`{"id":"uretim_01"}`),
+		Fingerprint: "izi-uretim",
+	}))
+
+	stagingKaydi, tamam, err := staging.Begin(t.Context(), anahtar, "izi-staging")
+	require.NoError(t, err)
+	require.True(t, tamam)
+	assert.Equal(t, []byte(`{"id":"staging_01"}`), stagingKaydi.Body,
+		"her kurulum KENDİ yanıtını okumalı")
+
+	uretimKaydi, tamam, err := uretim.Begin(t.Context(), anahtar, "izi-uretim")
+	require.NoError(t, err)
+	require.True(t, tamam)
+	assert.Equal(t, []byte(`{"id":"uretim_01"}`), uretimKaydi.Body,
+		"bir kurulumun yanıtı ötekinin istemcisine gitmemeli")
+}
+
+// TestVarsayilanOnekEskiAnahtarBiciminiKorur önek yapılandırılabilir olurken
+// GERİYE UYUMLULUĞUN korunduğunu doğrular.
+//
+// Anahtar biçimi değişseydi, yükseltilen bir kurulumun tüm hız sınırı
+// sayaçları ve işlemdeki idempotency kayıtları bir anda görünmez olurdu; o an
+// uçan her tekrar isteği ikinci kez işlenir, yani ikinci sipariş. Bu yüzden
+// beklenen anahtarlar sabitten türetilmez, ELLE yazılır: sabit değişirse test
+// düşer ve değişikliğin bedeli görünür olur.
+func TestVarsayilanOnekEskiAnahtarBiciminiKorur(t *testing.T) {
+	client := redisIstemcisi(t)
+
+	lim, err := redisguard.NewLimiter(client, varsayilanOnek, 5, time.Minute)
+	require.NoError(t, err)
+
+	_, err = lim.Allow(t.Context(), "istemci-a")
+	require.NoError(t, err)
+
+	sayac, err := client.Get(t.Context(), "gobit:rl:istemci-a").Result()
+	require.NoError(t, err, "sayaç eski anahtar biçiminde yazılmalı")
+	assert.Equal(t, "1", sayac)
+
+	depo, err := redisguard.NewIdempotencyStore(client, varsayilanOnek, time.Hour)
+	require.NoError(t, err)
+
+	_, _, err = depo.Begin(t.Context(), "kiracı-1:anahtar", "izi-1")
+	require.NoError(t, err)
+
+	require.NoError(t, client.Get(t.Context(), "gobit:idem:kiracı-1:anahtar").Err(),
+		"idempotency kaydı eski anahtar biçiminde yazılmalı")
 }

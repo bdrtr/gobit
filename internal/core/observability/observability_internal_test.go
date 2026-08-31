@@ -180,3 +180,58 @@ func TestKapanisHatalariBirlestirilir(t *testing.T) {
 	assert.ErrorIs(t, err, izHatasi)
 	assert.ErrorIs(t, err, metrikHatasi)
 }
+
+// TestUcSemaliMiIkiBicimiDeAyirtEder toplayıcı adresinin iki yazımını da
+// tanıdığını doğrular.
+//
+// # Bu testin KANITLAMADIĞI şey
+//
+// Doğru seçeneğin gerçekten span gönderdiğini kanıtlamaz — gRPC tembel
+// bağlanır, yani yanlış seçenekle de kurulum "başarılı" döner. Sessiz kayıp
+// tam olarak bu yüzden gerçek bir toplayıcıya karşı gözlemlendi: şemalı adres
+// verildiğinde uygulama "izleme kuruldu" logluyor ve Jaeger hiçbir span
+// görmüyordu.
+//
+// Burada sabitlenen şey KARARDIR: şemalı adres URL seçeneğine, şemasız adres
+// host:port seçeneğine gider. Karar bozulursa bu test kırılır; kablolamanın
+// kendisi `make up-tracing` ile elle doğrulanır.
+func TestUcSemaliMiIkiBicimiDeAyirtEder(t *testing.T) {
+	t.Parallel()
+
+	testler := map[string]struct {
+		uc      string
+		bekleme bool
+	}{
+		"go sdk biçimi":         {uc: "localhost:4317", bekleme: false},
+		"ipv4 host:port":        {uc: "10.0.0.5:4317", bekleme: false},
+		"belirtim biçimi http":  {uc: "http://localhost:4317", bekleme: true},
+		"belirtim biçimi https": {uc: "https://collector.ornek.com:4317", bekleme: true},
+		"yol taşıyan url":       {uc: "http://collector:4317/v1/traces", bekleme: true},
+	}
+
+	for ad, tt := range testler {
+		t.Run(ad, func(t *testing.T) {
+			t.Parallel()
+
+			if got := ucSemaliMi(tt.uc); got != tt.bekleme {
+				t.Errorf("ucSemaliMi(%q) = %v, beklenen %v", tt.uc, got, tt.bekleme)
+			}
+		})
+	}
+}
+
+// TestUcSecenekleriNilDonmez her iki biçim için de bir seçenek üretildiğini
+// doğrular; nil bir seçenek dışa aktarıcı kurulumunda panik üretirdi.
+func TestUcSecenekleriNilDonmez(t *testing.T) {
+	t.Parallel()
+
+	for _, uc := range []string{"localhost:4317", "http://localhost:4317"} {
+		if izUcu(uc) == nil {
+			t.Errorf("izUcu(%q) nil döndü", uc)
+		}
+
+		if metrikUcu(uc) == nil {
+			t.Errorf("metrikUcu(%q) nil döndü", uc)
+		}
+	}
+}

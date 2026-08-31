@@ -15,6 +15,13 @@
 // POST/PUT/PATCH/DELETE uçları [ScopeWrite] (bkz. [API.Routes]).
 // corehttp.ScopeAdmin ÜST YETKİDİR ve ikisini de tek başına karşılar.
 //
+// Sözlükte İSTİSNA YOKTUR ve bu bilinçlidir: yetkinin metottan okunabilmesi,
+// bir ucun neyi açtığını handler'a bakmadan söyleyebilmek demektir. Yan
+// etkisiz bir hesabı yazma yetkisine bağlamamanın doğru yolu sözlüğe istisna
+// açmak değil, ucu okuma metoduna TAŞIMAKTIR; fiyat hesaplama ucu bunun
+// örneğidir (GET /admin/v1/price-sets/{id}/calculate, bkz.
+// [API.calculatePrice]).
+//
 // /store/v1 ucuna yetki EKLENMEZ: mağaza yüzeyinin kimliği publishable
 // anahtardır ve o anahtar tanımı gereği yetki TAŞIMAZ.
 package api
@@ -26,6 +33,8 @@ import (
 	"math"
 	"net/http"
 	"strconv"
+	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
@@ -112,13 +121,15 @@ func (a *API) Routes(r chi.Router) {
 	okuma.Get("/admin/v1/price-sets/{id}/prices", a.listPrices)
 	yazma.Post("/admin/v1/price-sets/{id}/prices", a.setPrices)
 
-	// Hesaplama ucu hiçbir şey YAZMAZ ama yine de [ScopeWrite] ister.
-	// Sözlük HTTP metoduna bakar, handler'ın niyetine değil: "bu POST aslında
-	// okuma" istisnası bir kez açıldığında, yetkinin bir uçta ne olduğunu
-	// anlamak için handler'ı okumak gerekir. Gövdeyle gelen bağlamı fiyata
-	// çeviren bu ucun okumaya açılması gerekirse, doğru çözüm onu bir GET'e
-	// taşımaktır — sözlüğü delmek değil.
-	yazma.Post("/admin/v1/price-sets/{id}/calculate", a.calculatePrice)
+	// Hesaplama ucu hiçbir şey YAZMAZ ve bu yüzden bir GET'tir; bağlamını
+	// sorgu dizesinden alır (bkz. [API.calculatePrice]). Eskiden POST'tu ve
+	// sözlük metoda baktığı için [ScopeWrite] istiyordu: fiyatı yalnızca
+	// RAPORLAYAN bir entegrasyon, hesap yaptırabilmek için bütün kataloğu tek
+	// istekte değiştirebilen bir kimlikle çalışmak zorundaydı. Çözüm sözlüğe
+	// "bu POST aslında okuma" istisnası açmak DEĞİLDİ: istisna bir kez
+	// açıldığında bir ucun neyi açtığını anlamak için handler'ı okumak
+	// gerekirdi. Uç metoduyla niyetini söyleyecek biçimde taşındı.
+	okuma.Get("/admin/v1/price-sets/{id}/calculate", a.calculatePrice)
 
 	yazma.Post("/admin/v1/price-lists", a.createPriceList)
 	okuma.Get("/admin/v1/price-lists", a.listPriceLists)
@@ -270,6 +281,91 @@ func intParam(r *http.Request, name string) (int32, error) {
 			"%q parametresi tam sayı olmalı, %q verildi", name, raw)
 	}
 	return int32(value), nil
+}
+
+// Hesaplama ucunun sorgu parametreleri.
+//
+// Ayrılmış adlar ucun POST hâlindeki JSON alan adlarının AYNISIDIR; taşınırken
+// yeniden adlandırılmadılar. Yeni bir ad kümesi istemciye metot değişikliğinin
+// üstüne bir de ad değişikliği yüklerdi ve karşılığında hiçbir şey
+// kazandırmazdı. Biçimleri modülün öbür sorgu parametreleriyle de aynıdır
+// (limit, offset): düz snake_case.
+const (
+	// paramCurrencyCode istenen para birimidir (ISO 4217).
+	paramCurrencyCode = "currency_code"
+	// paramQuantity hesaplamanın yapılacağı adettir.
+	paramQuantity = "quantity"
+	// paramAt hesaplama anıdır (RFC 3339).
+	paramAt = "at"
+	// paramAttrPrefix kural bağlamı alanlarının sorgu önekidir.
+	paramAttrPrefix = "attr_"
+)
+
+// calculateQuery hesaplama bağlamını sorgu dizesinden okur.
+//
+// TANINMAYAN parametre hatadır; bu, ucun POST hâlindeki [decodeBody]
+// katılığının GET karşılığıdır. Sessizce yok sayılsalardı "?qty=10" yazan bir
+// istemci 10 adetlik fiyat sorduğunu sanırken tek adetlik fiyatı okurdu —
+// hata dönmeyen, yalnızca YANLIŞ cevap veren bir arıza.
+//
+// Aynı parametrenin iki kez verilmesi de hatadır: net/url ikinci değeri
+// saklar ama url.Values.Get yalnızca ilkini döner ve sessiz seçim, istemcinin
+// gönderdiğinden BAŞKA bir bağlamda hesap yapmak demektir. Kural bağlamı da
+// bir eşlemedir; bir alanın iki değeri olamaz.
+func calculateQuery(r *http.Request) (service.CalculateParams, error) {
+	attributes := map[string]string{}
+	for name, values := range r.URL.Query() {
+		if len(values) > 1 {
+			return service.CalculateParams{}, coreerrors.Invalid(codeInvalidBody,
+				"%q parametresi birden çok kez verildi", name)
+		}
+		switch {
+		case name == paramCurrencyCode, name == paramQuantity, name == paramAt:
+			// Ayrılmış adlar; değerleri aşağıda tek tek okunur.
+		case strings.HasPrefix(name, paramAttrPrefix):
+			attributes[strings.TrimPrefix(name, paramAttrPrefix)] = values[0]
+		default:
+			return service.CalculateParams{}, coreerrors.Invalid(codeInvalidBody,
+				"%q parametresi tanınmıyor; kural bağlamı %q önekiyle verilir",
+				name, paramAttrPrefix)
+		}
+	}
+
+	quantity, err := intParam(r, paramQuantity)
+	if err != nil {
+		return service.CalculateParams{}, err
+	}
+	at, err := timeParam(r, paramAt)
+	if err != nil {
+		return service.CalculateParams{}, err
+	}
+
+	// Doğrulama YAPILMAZ: para biriminin geçerliliğine, adet sınırlarına ve
+	// varsayılanlara servis karar verir (bkz. dto.go'daki toPriceInputs).
+	return service.CalculateParams{
+		CurrencyCode: r.URL.Query().Get(paramCurrencyCode),
+		Quantity:     quantity,
+		Attributes:   attributes,
+		At:           at,
+	}, nil
+}
+
+// timeParam tek bir zaman sorgu parametresini okur; yoksa sıfır zaman döner.
+//
+// Sıfır zaman servis için "şimdi" demektir. Çözülemeyen bir damga sessizce
+// "şimdi"ye DÜŞMEZ: geçmiş ya da gelecek bir an için sorulmuş fiyata bugünün
+// kampanyalarıyla cevap vermek, sessiz yanlışın en pahalı biçimidir.
+func timeParam(r *http.Request, name string) (time.Time, error) {
+	raw := r.URL.Query().Get(name)
+	if raw == "" {
+		return time.Time{}, nil
+	}
+	value, err := time.Parse(time.RFC3339, raw)
+	if err != nil {
+		return time.Time{}, coreerrors.Wrap(err, coreerrors.KindInvalid, codeInvalidBody,
+			"%q parametresi RFC 3339 biçiminde olmalı, %q verildi", name, raw)
+	}
+	return value.UTC(), nil
 }
 
 // listTypeOrNil fiyat listesi türünü dize işaretçisi olarak döner; boşsa nil.

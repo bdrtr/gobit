@@ -131,6 +131,12 @@ func (s *Service) hashPassword(password string) (string, error) {
 // AMACIDIR: sızmış bir yönetici jetonu, parola değişmemişse süresi dolana
 // kadar geçerli kalırdı.
 //
+// İlerletilen satır YALNIZCA [models.ProviderEmailPass] kimliğininkidir; parola
+// o kimliğin bilgisidir ve başka sağlayıcıların satırlarında karşılığı yoktur.
+// Yine de düşen oturumlar HEPSİDİR, çünkü doğrulama çapayı sağlayıcıya göre
+// seçmez: kullanıcının en yeni çapasını okur. Bu yüzden çıkışın aksine burada
+// bütün satırlara dokunmak gerekmez.
+//
 // Oturumları kapatmak için parolayı değiştirmek GEREKMEZ: aynı çapayı
 // kimlik bilgisine dokunmadan ilerleten uç [Service.Logout]'tur.
 func (s *Service) SetPassword(ctx context.Context, userID, password string) error {

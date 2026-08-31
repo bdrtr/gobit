@@ -13,16 +13,6 @@ import (
 	corehttp "github.com/bdrtr/gobit/internal/core/http"
 )
 
-// IdempotencyKeyPrefix idempotency kayıtlarının anahtar önekidir.
-//
-// Depoya gelen anahtar çağıranın kimliğiyle ad alanına alınmış hâldedir ve
-// istemciye dayatılan 255 karakterlik sınırdan uzun olabilir (bkz.
-// corehttp.IdempotencyStore godoc'u); Redis'te anahtar uzunluğu sorun
-// olmadığı için kısaltılmaz, olduğu gibi öneke eklenir. Kısaltmak (örn.
-// hash'lemek) çakışma riski getirir ve çakışan iki anahtar, iki FARKLI
-// isteğin birbirinin yanıtını görmesi demektir.
-const IdempotencyKeyPrefix = "gobit:idem:"
-
 // DefaultIdempotencyTTL kaydın varsayılan saklanma süresidir.
 //
 // corehttp.NewMemoryIdempotencyStore'un varsayılanıyla aynıdır; iki depo
@@ -99,8 +89,27 @@ type kayit struct {
 // da JSON gövde). Ayırma ve okuma tek atomik adımdır, bu yüzden aynı anahtarla
 // aynı anda gelen iki istekten yalnızca biri işi yapar — hangi örneğe
 // düştükleri fark etmez.
+//
+// # Anahtar biçimi
+//
+// Kayıtlar "<önek>:idem:<anahtar>" adresine yazılır; varsayılan önekle
+// "kiracı-1:abc" anahtarı "gobit:idem:kiracı-1:abc" kaydına düşer. Önek
+// kurucudan gelir ve aynı Redis'i paylaşan iki kurulumu ayıran şeydir (bkz.
+// paket godoc'u).
+//
+// Depoya gelen anahtar çağıranın kimliğiyle ad alanına alınmış hâldedir ve
+// istemciye dayatılan 255 karakterlik sınırdan uzun olabilir (bkz.
+// corehttp.IdempotencyStore godoc'u); Redis'te anahtar uzunluğu sorun
+// olmadığı için kısaltılmaz, olduğu gibi öneke eklenir. Kısaltmak (örn.
+// hash'lemek) çakışma riski getirir ve çakışan iki anahtar, iki FARKLI
+// isteğin birbirinin yanıtını görmesi demektir.
 type IdempotencyStore struct {
 	client *redis.Client
+	// onek kayıt anahtarlarının TAM önekidir (örn. "gobit:idem:").
+	//
+	// Ad alanı önekiyle bölüm adı her çağrıda yeniden birleştirilmesin diye
+	// kurucuda bir kez kurulur.
+	onek string
 	// ttl kayıtların saklanma süresidir.
 	ttl time.Duration
 	// ttlMs ttl'in milisaniye karşılığıdır; betiğe her çağrıda yeniden
@@ -112,12 +121,25 @@ var _ corehttp.IdempotencyStore = (*IdempotencyStore)(nil)
 
 // NewIdempotencyStore verilen saklama süresiyle Redis tabanlı depo kurar.
 //
+// keyPrefix kayıtların ad alanı önekidir; kayıtlar "<keyPrefix>:idem:<anahtar>"
+// adresine yazılır. Biçimi [dogrulaOnek] denetler ve geçersiz önek HATA döner.
+//
+// ÖNEKTE ttl'in aksine varsayılana düşülmez ve bu ayrım bilinçlidir: geçersiz
+// bir ttl'in bedeli kaydın beklenenden uzun/kısa yaşamasıdır, geçersiz bir
+// önekin bedeli ise iki kurulumun AYNI ad alanını paylaşmasıdır — yani birinin
+// yanıtının ötekinin istemcisine gitmesi. Sessizce düzeltmek, düzeltmeye
+// çalıştığımız arızayı geri getirirdi.
+//
 // ttl sıfır ya da negatifse [DefaultIdempotencyTTL] kullanılır; bu,
 // corehttp.NewMemoryIdempotencyStore ile aynı davranıştır. client nil ise
 // hata döner.
-func NewIdempotencyStore(client *redis.Client, ttl time.Duration) (*IdempotencyStore, error) {
+func NewIdempotencyStore(client *redis.Client, keyPrefix string, ttl time.Duration) (*IdempotencyStore, error) {
 	if client == nil {
 		return nil, coreerrors.Invalid(CodeInvalidConfig, "redis istemcisi nil olamaz")
+	}
+
+	if err := dogrulaOnek(keyPrefix); err != nil {
+		return nil, err
 	}
 
 	if ttl <= 0 {
@@ -128,7 +150,12 @@ func NewIdempotencyStore(client *redis.Client, ttl time.Duration) (*IdempotencyS
 	// ile komut hatasına dönerdi.
 	ttl = max(ttl, time.Millisecond)
 
-	return &IdempotencyStore{client: client, ttl: ttl, ttlMs: ttl.Milliseconds()}, nil
+	return &IdempotencyStore{
+		client: client,
+		onek:   keyPrefix + ayirici + idempotencyBolumu + ayirici,
+		ttl:    ttl,
+		ttlMs:  ttl.Milliseconds(),
+	}, nil
 }
 
 // Begin anahtarı bu istek için ayırmaya çalışır.
@@ -145,7 +172,7 @@ func (s *IdempotencyStore) Begin(
 	ctx context.Context, key, fingerprint string,
 ) (*corehttp.IdempotentResponse, bool, error) {
 	deger, err := beginBetigi.Run(ctx, s.client,
-		[]string{IdempotencyKeyPrefix + key},
+		[]string{s.onek + key},
 		imIslemde+fingerprint,
 		s.ttlMs,
 	).Text()
@@ -214,7 +241,7 @@ func (s *IdempotencyStore) Complete(
 			CodeIdempotencyStoreFailed, "idempotency kaydı JSON'a çevrilemedi")
 	}
 
-	if err := s.client.Set(ctx, IdempotencyKeyPrefix+key, imTamam+string(ham), s.ttl).Err(); err != nil {
+	if err := s.client.Set(ctx, s.onek+key, imTamam+string(ham), s.ttl).Err(); err != nil {
 		return coreerrors.Wrap(err, coreerrors.KindUnavailable,
 			CodeIdempotencyStoreFailed, "idempotency kaydı yazılamadı")
 	}
@@ -236,7 +263,7 @@ func (s *IdempotencyStore) Complete(
 // istek daha sürerken dolması gerekir.
 func (s *IdempotencyStore) Abort(ctx context.Context, key string) error {
 	if err := abortBetigi.Run(ctx, s.client,
-		[]string{IdempotencyKeyPrefix + key},
+		[]string{s.onek + key},
 		imIslemde,
 	).Err(); err != nil {
 		return coreerrors.Wrap(err, coreerrors.KindUnavailable,

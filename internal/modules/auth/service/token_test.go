@@ -67,10 +67,56 @@ type oturumDeposu struct {
 	service.Repository
 
 	kullanici models.User
-	kimlik    models.AuthIdentity
-	// kimlikSilindi true ise GetIdentity errors.NotFound döner; kimliği
-	// silinmiş bir kullanıcının jetonu senaryosu böyle kurulur.
+	// kimlikler kullanıcının kimlik satırlarıdır: sağlayıcı başına EN FAZLA
+	// BİR tane. Dilim, tablodaki (user_id, provider) benzersizliğini taklit
+	// eder ve gerçek şemanın izin verdiği çokluğu — ikinci bir sağlayıcı —
+	// testte kurulabilir kılar.
+	kimlikler []models.AuthIdentity
+	// kimlikSilindi true ise kullanıcının hiç canlı kimliği kalmamış gibi
+	// davranılır; kimliği silinmiş bir kullanıcının jetonu senaryosu böyle
+	// kurulur.
 	kimlikSilindi bool
+}
+
+// kimlik verilen sağlayıcının satırını döner; yoksa nil.
+//
+// İşaretçi döner çünkü çağıranların çoğu satırı YAZAR; kopya dönseydi yazma
+// depoya hiç ulaşmaz ve testler sessizce yeşil kalırdı.
+func (d *oturumDeposu) kimlik(provider string) *models.AuthIdentity {
+	if d.kimlikSilindi {
+		return nil
+	}
+	for i := range d.kimlikler {
+		if d.kimlikler[i].Provider == provider {
+			return &d.kimlikler[i]
+		}
+	}
+	return nil
+}
+
+// kimlikByID verilen kimliğe sahip satırı döner; yoksa nil.
+func (d *oturumDeposu) kimlikByID(id string) *models.AuthIdentity {
+	if d.kimlikSilindi {
+		return nil
+	}
+	for i := range d.kimlikler {
+		if d.kimlikler[i].ID == id {
+			return &d.kimlikler[i]
+		}
+	}
+	return nil
+}
+
+// capa verilen sağlayıcının oturum çapasını döner; satır yoksa sıfır zaman.
+//
+// Testlerin iddiası tek tek satırların updated_at değerine bakar: "çıkış
+// hepsini ilerletti" ancak satır satır sorularak kanıtlanabilir.
+func (d *oturumDeposu) capa(provider string) time.Time {
+	kimlik := d.kimlik(provider)
+	if kimlik == nil {
+		return time.Time{}
+	}
+	return kimlik.UpdatedAt
 }
 
 // GetUser kullanıcıyı döner; kimlik tutmuyorsa errors.NotFound.
@@ -91,54 +137,103 @@ func (d *oturumDeposu) GetUserByEmail(_ context.Context, email string) (models.U
 
 // GetIdentity giriş kimliğini döner; yoksa errors.NotFound.
 func (d *oturumDeposu) GetIdentity(_ context.Context, userID, provider string) (models.AuthIdentity, error) {
-	if d.kimlikSilindi || userID != d.kimlik.UserID || provider != d.kimlik.Provider {
+	kimlik := d.kimlik(provider)
+	if kimlik == nil || userID != kimlik.UserID {
 		return models.AuthIdentity{}, errors.NotFound("test_kimlik_yok",
 			"%s kullanıcısının %q kimliği yok", userID, provider)
 	}
-	return d.kimlik, nil
+	return *kimlik, nil
 }
 
 // SetPasswordHash hash'i yazar, kilit sayaçlarını sıfırlar ve updated_at'i
 // ilerletir.
 //
+// Yalnızca VERİLEN sağlayıcının satırına dokunur: parola emailpass kimliğinin
+// bilgisidir, öteki sağlayıcıların satırlarında karşılığı yoktur.
+//
 // updated_at'in ilerlemesi UpdatePasswordHash sorgusunun sözleşmesidir ve
 // oturum iptalinin çapasıdır.
 func (d *oturumDeposu) SetPasswordHash(
 	_ context.Context,
-	_, _, _, hash string,
+	userID, provider, providerIdentity, hash string,
 	now time.Time,
 ) (models.AuthIdentity, error) {
-	d.kimlik.PasswordHash = hash
-	d.kimlik.FailedAttempts = 0
-	d.kimlik.LockedUntil = nil
-	d.kimlik.UpdatedAt = now
-	return d.kimlik, nil
+	kimlik := d.kimlik(provider)
+	if kimlik == nil {
+		// Gerçek depo kimlik yoksa OLUŞTURUR; sahte depo da öyle yapar, aksi
+		// hâlde "parola ata" çağrısı burada gerçekte olmayan bir hatayla
+		// düşerdi.
+		d.kimlikler = append(d.kimlikler, models.AuthIdentity{
+			ID:               "authid_" + provider,
+			UserID:           userID,
+			Provider:         provider,
+			ProviderIdentity: providerIdentity,
+			CreatedAt:        now,
+		})
+		kimlik = &d.kimlikler[len(d.kimlikler)-1]
+	}
+	kimlik.PasswordHash = hash
+	kimlik.FailedAttempts = 0
+	kimlik.LockedUntil = nil
+	kimlik.UpdatedAt = now
+	return *kimlik, nil
 }
 
-// RevokeSessions oturum çapasını ilerletir ve kimlik bilgisine DOKUNMAZ.
+// SessionAnchor kullanıcının EN YENİ oturum çapasını döner; canlı kimlik yoksa
+// errors.NotFound.
+//
+// Sorgunun sözleşmesi budur (bkz. queries/identities.sql, GetSessionAnchor):
+// sağlayıcı seçilmez, satırların en ilerisi alınır.
+func (d *oturumDeposu) SessionAnchor(_ context.Context, userID string) (time.Time, error) {
+	if d.kimlikSilindi || userID != d.kullanici.ID || len(d.kimlikler) == 0 {
+		return time.Time{}, errors.NotFound("test_kimlik_yok",
+			"%s kullanıcısının hiç kimliği yok", userID)
+	}
+
+	var enYeni time.Time
+	for i := range d.kimlikler {
+		if d.kimlikler[i].UpdatedAt.After(enYeni) {
+			enYeni = d.kimlikler[i].UpdatedAt
+		}
+	}
+	return enYeni, nil
+}
+
+// RevokeSessions kullanıcının TÜM kimliklerinin çapasını ilerletir ve kimlik
+// bilgisine DOKUNMAZ.
 //
 // Sorgunun sözleşmesi budur (bkz. queries/identities.sql, RevokeSessions):
-// yalnızca updated_at yazılır; parola, sayaç ve kilit alanları korunur.
+// sağlayıcı seçilmez, yalnızca updated_at yazılır; parola, sayaç ve kilit
+// alanları korunur.
 func (d *oturumDeposu) RevokeSessions(
 	_ context.Context,
-	userID, provider string,
+	userID string,
 	now time.Time,
-) (models.AuthIdentity, error) {
-	if d.kimlikSilindi || userID != d.kimlik.UserID || provider != d.kimlik.Provider {
-		return models.AuthIdentity{}, errors.NotFound("test_kimlik_yok",
-			"%s kullanıcısının %q kimliği yok", userID, provider)
+) ([]models.AuthIdentity, error) {
+	if d.kimlikSilindi || userID != d.kullanici.ID || len(d.kimlikler) == 0 {
+		return nil, errors.NotFound("test_kimlik_yok",
+			"%s kullanıcısının hiç kimliği yok", userID)
 	}
-	d.kimlik.UpdatedAt = now
-	return d.kimlik, nil
+
+	ilerletilen := make([]models.AuthIdentity, 0, len(d.kimlikler))
+	for i := range d.kimlikler {
+		d.kimlikler[i].UpdatedAt = now
+		ilerletilen = append(ilerletilen, d.kimlikler[i])
+	}
+	return ilerletilen, nil
 }
 
 // RegisterLoginSuccess sayaçları temizler ve son giriş anını yazar.
 //
 // updated_at'e DOKUNMAZ; sorgunun sözleşmesi budur.
-func (d *oturumDeposu) RegisterLoginSuccess(_ context.Context, _ string, now time.Time) error {
-	d.kimlik.FailedAttempts = 0
-	d.kimlik.LockedUntil = nil
-	d.kimlik.LastLoginAt = &now
+func (d *oturumDeposu) RegisterLoginSuccess(_ context.Context, identityID string, now time.Time) error {
+	kimlik := d.kimlikByID(identityID)
+	if kimlik == nil {
+		return errors.NotFound("test_kimlik_yok", "kimlik yok: %s", identityID)
+	}
+	kimlik.FailedAttempts = 0
+	kimlik.LockedUntil = nil
+	kimlik.LastLoginAt = &now
 	return nil
 }
 
@@ -147,16 +242,21 @@ func (d *oturumDeposu) RegisterLoginSuccess(_ context.Context, _ string, now tim
 // updated_at'e DOKUNMAZ; sorgunun sözleşmesi budur.
 func (d *oturumDeposu) RegisterLoginFailure(
 	_ context.Context,
-	_ string,
+	identityID string,
 	threshold int,
 	lockUntil, _ time.Time,
 ) (models.AuthIdentity, error) {
-	d.kimlik.FailedAttempts++
-	if d.kimlik.FailedAttempts >= threshold {
-		kilit := lockUntil
-		d.kimlik.LockedUntil = &kilit
+	kimlik := d.kimlikByID(identityID)
+	if kimlik == nil {
+		return models.AuthIdentity{}, errors.NotFound("test_kimlik_yok",
+			"kimlik yok: %s", identityID)
 	}
-	return d.kimlik, nil
+	kimlik.FailedAttempts++
+	if kimlik.FailedAttempts >= threshold {
+		kilit := lockUntil
+		kimlik.LockedUntil = &kilit
+	}
+	return *kimlik, nil
 }
 
 // oturumKur sabit saatli bir servis, kimlik doğrulayıcısını ve sahte depoyu
@@ -181,7 +281,7 @@ func oturumKur(t *testing.T) (*service.Service, *service.Interop, *oturumDeposu,
 			CreatedAt: baslangic,
 			UpdatedAt: baslangic,
 		},
-		kimlik: models.AuthIdentity{
+		kimlikler: []models.AuthIdentity{{
 			ID:               oturumKimlikID,
 			UserID:           oturumKullaniciID,
 			Provider:         models.ProviderEmailPass,
@@ -189,7 +289,7 @@ func oturumKur(t *testing.T) (*service.Service, *service.Interop, *oturumDeposu,
 			PasswordHash:     string(hash),
 			CreatedAt:        baslangic,
 			UpdatedAt:        baslangic,
-		},
+		}},
 	}
 
 	svc := service.New(depo, service.Options{

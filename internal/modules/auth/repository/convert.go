@@ -70,6 +70,21 @@ func toIdentity(row authdb.AuthIdentity) (models.AuthIdentity, error) {
 	}, nil
 }
 
+// toIdentities bir kimlik satırı dilimini domain modellerine çevirir.
+func toIdentities(rows []authdb.AuthIdentity) ([]models.AuthIdentity, error) {
+	out := make([]models.AuthIdentity, 0, len(rows))
+	// Dizin ile dolaşılır: satır tipleri büyüktür ve değerle dolaşmak her
+	// turda yüzlerce baytı kopyalardı.
+	for i := range rows {
+		identity, err := toIdentity(rows[i])
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, identity)
+	}
+	return out, nil
+}
+
 // toAPIKey bir anahtar satırını domain modeline çevirir.
 func toAPIKey(row authdb.ApiKey) models.APIKey {
 	return models.APIKey{

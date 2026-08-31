@@ -107,8 +107,8 @@ func (r *Repo) SetPasswordHash(
 	return identity, nil
 }
 
-// RevokeSessions kimliğin oturum çapasını now anına taşır ve kullanıcının
-// AÇIK OTURUMLARININ TAMAMINI düşürür.
+// RevokeSessions kullanıcının BÜTÜN sağlayıcılarındaki oturum çapasını now
+// anına taşır ve AÇIK OTURUMLARININ TAMAMINI düşürür.
 //
 // Yazılan tek sütun updated_at'tir. O sütun bu tabloda bir denetim alanı
 // DEĞİLDİR: servis, ondan önce üretilmiş oturum jetonlarını reddeder
@@ -116,30 +116,71 @@ func (r *Repo) SetPasswordHash(
 // sessionAnchor). Çıkışın tamamı bu yazmadır; düşürülecek bir "oturum kaydı"
 // yoktur, düşen şey jetonların geçerliliğidir.
 //
+// # Sağlayıcı PARAMETRE DEĞİLDİR
+//
+// Tablo sağlayıcı başına satır tutar ((user_id, provider) benzersizliği) ve
+// çağıranın "hangi sağlayıcıdan çıkılıyor" diye bir seçimi yoktur: satırların
+// hepsi ilerletilir ve ilerletilenler dönülür. Tek sağlayıcı seçilebilseydi,
+// ileride OAuth eklendiği gün çıkış o sağlayıcının jetonlarını düşürmez ve
+// bunu sessizce yapardı. Bugün canlı sağlayıcı bir tane olduğu için dönen
+// dilim tek elemanlıdır; değişen şey davranış değil, ikinci satırın eklendiği
+// günkü davranıştır.
+//
 // Parola ve kilit sayaçları KORUNUR: çıkış yapmak parolayı değiştirmez ve
 // sayaç sıfırlansaydı çıkış ucu, giriş kilidini temizlemenin yolu olurdu
 // (gerekçe queries/identities.sql).
 //
-// Kimlik yoksa errors.NotFound döner.
+// Kullanıcının hiç canlı kimliği yoksa errors.NotFound döner; boş dilimle
+// başarılı dönmek, hiçbir şey düşürmeyen bir çıkışı başarı gibi göstermek
+// olurdu.
 func (r *Repo) RevokeSessions(
 	ctx context.Context,
-	userID, provider string,
+	userID string,
 	now time.Time,
-) (models.AuthIdentity, error) {
+) ([]models.AuthIdentity, error) {
 	if err := r.ready(); err != nil {
-		return models.AuthIdentity{}, err
+		return nil, err
 	}
 
-	row, err := r.q.RevokeSessions(ctx, authdb.RevokeSessionsParams{
+	rows, err := r.q.RevokeSessions(ctx, authdb.RevokeSessionsParams{
 		UserID:    userID,
-		Provider:  provider,
 		UpdatedAt: fromTime(now),
 	})
 	if err != nil {
-		return models.AuthIdentity{}, notFoundOr(err, CodeIdentityNotFound,
-			"%s kullanıcısının %q kimliği bulunamadı", userID, provider)
+		return nil, wrapDB(err, "%s kullanıcısının oturumları kapatılamadı", userID)
 	}
-	return toIdentity(row)
+	if len(rows) == 0 {
+		// Çok satırlı UPDATE pgx.ErrNoRows ÜRETMEZ, boş dilim döner; "satır
+		// yok" durumu bu yüzden elle sınanır. notFoundOr'a bırakılsaydı
+		// kimliksiz kullanıcının çıkışı sessizce başarılı olurdu.
+		return nil, errors.NotFound(CodeIdentityNotFound,
+			"%s kullanıcısının hiç giriş kimliği yok", userID)
+	}
+	return toIdentities(rows)
+}
+
+// SessionAnchor kullanıcının EN YENİ oturum çapasını döner; hiç kimliği yoksa
+// errors.NotFound.
+//
+// Dönen değer TEK BİR sağlayıcınınki değildir: kullanıcının bütün kimlikleri
+// arasından en ileri olanıdır (gerekçe queries/identities.sql,
+// GetSessionAnchor). Çıkış hepsini birden ilerlettiği için bu iki uç aynı
+// kuralı uygular; ayrışsalardı çıkışın yazdığı çapa okunmaz olurdu.
+//
+// Kimlik satırı DÖNMEZ, yalnızca zaman damgası döner: çağıranın ihtiyacı olan
+// tek şey budur ve satırın tamamını vermek, password_hash'i hiç gerekmeyen bir
+// yolda repository sınırının dışına taşırdı.
+func (r *Repo) SessionAnchor(ctx context.Context, userID string) (time.Time, error) {
+	if err := r.ready(); err != nil {
+		return time.Time{}, err
+	}
+
+	anchor, err := r.q.GetSessionAnchor(ctx, userID)
+	if err != nil {
+		return time.Time{}, notFoundOr(err, CodeIdentityNotFound,
+			"%s kullanıcısının hiç giriş kimliği yok", userID)
+	}
+	return toTime(anchor), nil
 }
 
 // RegisterLoginFailure başarısız bir giriş denemesini ATOMİK olarak sayar ve

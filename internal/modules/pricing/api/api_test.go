@@ -242,8 +242,8 @@ func TestCalculateEndpoint(t *testing.T) {
 	id, ok := created["id"].(string)
 	require.True(t, ok)
 
-	rec := do(t, r, http.MethodPost, "/admin/v1/price-sets/"+id+"/calculate",
-		`{"currency_code":"TRY","quantity":10}`)
+	rec := do(t, r, http.MethodGet,
+		"/admin/v1/price-sets/"+id+"/calculate?currency_code=TRY&quantity=10", "")
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 
 	data := decodeItem(t, rec)
@@ -263,11 +263,132 @@ func TestCalculateEndpointNotCalculable(t *testing.T) {
 	id, ok := created["id"].(string)
 	require.True(t, ok)
 
-	rec := do(t, r, http.MethodPost, "/admin/v1/price-sets/"+id+"/calculate",
-		`{"currency_code":"EUR"}`)
+	rec := do(t, r, http.MethodGet,
+		"/admin/v1/price-sets/"+id+"/calculate?currency_code=EUR", "")
 
 	assert.Equal(t, http.StatusNotFound, rec.Code)
 	assert.Equal(t, "price_not_calculable", errorCode(t, rec))
+}
+
+// TestEskiHesaplamaPostuKaldirildi hesaplama ucunun POST karşılığının artık
+// OLMADIĞINI kanıtlar.
+//
+// Kırıcı bir değişikliktir ve bilinçlidir: POST yolu uyumluluk için bırakılsa
+// düzeltilen arıza olduğu yerde dururdu — yazma yetkisi isteyen bir hesaplama
+// ucu ayakta kalır ve entegrasyonlar ona yaslanmayı sürdürürdü.
+func TestEskiHesaplamaPostuKaldirildi(t *testing.T) {
+	r, _ := newTestRouter(t)
+
+	created := decodeItem(t, do(t, r, http.MethodPost, "/admin/v1/price-sets",
+		`{"prices":[{"currency_code":"TRY","amount":1000}]}`))
+	id, ok := created["id"].(string)
+	require.True(t, ok)
+
+	rec := do(t, r, http.MethodPost, "/admin/v1/price-sets/"+id+"/calculate",
+		`{"currency_code":"TRY"}`)
+
+	assert.Equal(t, http.StatusMethodNotAllowed, rec.Code, rec.Body.String())
+}
+
+// TestHesaplamaKuralBaglaminiSorgudanOkur kural bağlamının sorgu dizesinden
+// EKSİKSİZ taşındığını kanıtlar.
+//
+// Ucun gövdeden sorguya taşınmasının tek gerçek riski buydu: bağlam yolda
+// düşerse hesap hata vermez, sessizce BAŞKA bir fiyata düşer. Bu yüzden her
+// iki yön de sınanır — bağlam verilmeyince kurala bağlı fiyat elenmeli,
+// verilince kazanmalıdır.
+func TestHesaplamaKuralBaglaminiSorgudanOkur(t *testing.T) {
+	r, _ := newTestRouter(t)
+
+	created := decodeItem(t, do(t, r, http.MethodPost, "/admin/v1/price-sets", `{"prices":[
+		{"currency_code":"TRY","amount":1000},
+		{"currency_code":"TRY","amount":800,"rules":[
+			{"attribute":"region_id","operator":"eq","values":["reg_tr"]}
+		]}
+	]}`))
+	id, ok := created["id"].(string)
+	require.True(t, ok)
+	temel := "/admin/v1/price-sets/" + id + "/calculate?currency_code=TRY"
+
+	rec := do(t, r, http.MethodGet, temel, "")
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.InDelta(t, 1000, decodeItem(t, rec)["amount"], 0,
+		"bağlam verilmediğinde kurala bağlı fiyat elenmeli")
+
+	rec = do(t, r, http.MethodGet, temel+"&attr_region_id=reg_tr", "")
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+	data := decodeItem(t, rec)
+	assert.InDelta(t, 800, data["amount"], 0, "kural eşleşince bölgeye özel fiyat seçilmeli")
+	assert.InDelta(t, 1, data["matched_rules"], 0)
+}
+
+// TestHesaplamaAniniSorgudanOkur "at" parametresinin hesaba GERÇEKTEN
+// geçtiğini kanıtlar.
+//
+// Zaman damgası, sorgu dizesindeki tek yapılandırılmış değerdir; çözülüp
+// servise verilmezse kampanya penceresi her zaman "şimdi"ye göre
+// değerlendirilir ve geçmişe/geleceğe dönük her hesap sessizce yanlış olur.
+func TestHesaplamaAniniSorgudanOkur(t *testing.T) {
+	r, _ := newTestRouter(t)
+
+	liste := decodeItem(t, do(t, r, http.MethodPost, "/admin/v1/price-lists",
+		`{"title":"Temmuz kampanyası","type":"sale","status":"active",`+
+			`"starts_at":"2026-07-01T00:00:00Z","ends_at":"2026-08-01T00:00:00Z"}`))
+	listID, ok := liste["id"].(string)
+	require.True(t, ok)
+
+	created := decodeItem(t, do(t, r, http.MethodPost, "/admin/v1/price-sets", `{}`))
+	id, ok := created["id"].(string)
+	require.True(t, ok)
+
+	require.Equal(t, http.StatusOK, do(t, r, http.MethodPost,
+		"/admin/v1/price-sets/"+id+"/prices",
+		`{"prices":[{"currency_code":"TRY","amount":1000},`+
+			`{"currency_code":"TRY","amount":700,"price_list_id":"`+listID+`"}]}`).Code)
+	temel := "/admin/v1/price-sets/" + id + "/calculate?currency_code=TRY"
+
+	rec := do(t, r, http.MethodGet, temel, "")
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.InDelta(t, 1000, decodeItem(t, rec)["amount"], 0,
+		"testin saati kampanya penceresinin dışında; taban fiyat kazanmalı")
+
+	rec = do(t, r, http.MethodGet, temel+"&at=2026-07-10T00:00:00Z", "")
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.InDelta(t, 700, decodeItem(t, rec)["amount"], 0,
+		"verilen an pencerenin içinde; kampanya fiyatı kazanmalı")
+}
+
+// TestHesaplamaSorgusuSessizceYokSaymaz bozuk sorgunun REDDEDİLDİĞİNİ
+// kanıtlar.
+//
+// Uç POST'ken gövde decodeBody ile katı çözülüyordu: bilinmeyen alan hataydı.
+// Sorgu dizesi doğası gereği hoşgörülüdür ve aynı katılık elle kurulmazsa
+// taşıma sessiz bir gerileme olurdu — "?qty=10" yazan istemci 10 adet için
+// sorduğunu sanırken tek adetlik fiyatı okurdu.
+func TestHesaplamaSorgusuSessizceYokSaymaz(t *testing.T) {
+	r, _ := newTestRouter(t)
+
+	created := decodeItem(t, do(t, r, http.MethodPost, "/admin/v1/price-sets",
+		`{"prices":[{"currency_code":"TRY","amount":1000}]}`))
+	id, ok := created["id"].(string)
+	require.True(t, ok)
+	temel := "/admin/v1/price-sets/" + id + "/calculate"
+
+	for ad, sorgu := range map[string]string{
+		"tanınmayan parametre":    "?currency_code=TRY&qty=10",
+		"sayı olmayan adet":       "?currency_code=TRY&quantity=abc",
+		"bozuk zaman damgası":     "?currency_code=TRY&at=2026-06-15",
+		"tekrarlanan parametre":   "?currency_code=TRY&currency_code=USD",
+		"tekrarlanan kural alanı": "?currency_code=TRY&attr_region_id=reg_1&attr_region_id=reg_2",
+	} {
+		t.Run(ad, func(t *testing.T) {
+			rec := do(t, r, http.MethodGet, temel+sorgu, "")
+
+			assert.Equal(t, http.StatusUnprocessableEntity, rec.Code, rec.Body.String())
+			assert.NotEmpty(t, errorCode(t, rec), "hata zarfında kod bulunmalı")
+		})
+	}
 }
 
 // TestPriceListLifecycle fiyat listesi CRUD'unu kanıtlar.

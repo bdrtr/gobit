@@ -245,9 +245,11 @@ func TestCikisCapayiIlerletirKimlikBilgisineDokunmaz(t *testing.T) {
 	require.True(t, kilitli.IsLocked(now), "test zemini: kayıt çıkıştan önce kilitli olmalı")
 
 	cikis := now.Add(2 * time.Second)
-	sonraki, err := repo.RevokeSessions(ctx, user.ID, models.ProviderEmailPass, cikis)
+	ilerletilenler, err := repo.RevokeSessions(ctx, user.ID, cikis)
 	require.NoError(t, err)
+	require.Len(t, ilerletilenler, 1, "kullanıcının tek kimliği var, tek satır dönmeli")
 
+	sonraki := ilerletilenler[0]
 	assert.Equal(t, onceki.ID, sonraki.ID, "çıkış yeni kimlik satırı açmamalı")
 	assert.True(t, sonraki.UpdatedAt.After(onceki.UpdatedAt),
 		"oturum çapası ilerlemeli: önce %s, sonra %s", onceki.UpdatedAt, sonraki.UpdatedAt)
@@ -257,17 +259,130 @@ func TestCikisCapayiIlerletirKimlikBilgisineDokunmaz(t *testing.T) {
 		"çıkış giriş kilidini kaldırmamalı; kaldırsaydı kilidi atlatmanın yolu olurdu")
 }
 
+// TestCikisTumSaglayicilarinCapasiniIlerletir çıkış sorgusunun sağlayıcı
+// SEÇMEDİĞİNİ gerçek veritabanında kanıtlar.
+//
+// # Test neyi kanıtlar
+//
+// İki şeyi birlikte:
+//
+//   - emailpass kimliğinin çapası eskisi gibi ilerler — bugünkü davranış
+//     korunuyor, gözlemlenebilir bir değişiklik YOKTUR (bugün canlı sağlayıcı
+//     tektir),
+//   - elle kurulmuş İKİNCİ bir sağlayıcı satırının çapası da ilerler.
+//
+// İkincisi bugün hiçbir kullanıcı akışında görünmez; kilitlediği şey OAuth
+// eklendiği günkü davranıştır. Sorgu tek sağlayıcıyı seçseydi çıkış o
+// sağlayıcının jetonlarını düşürmez ve bunu SESSİZCE yapardı.
+//
+// İkinci satır ham SQL ile yazılır: depo yüzeyinin "OAuth kimliği aç" diye bir
+// ucu yoktur ve olmamalıdır. Sınanan şey KODUN değil, sorgunun ŞEMADAKİ bütün
+// satırlara dokunduğudur.
+func TestCikisTumSaglayicilarinCapasiniIlerletir(t *testing.T) {
+	ctx := context.Background()
+	repo := yeniDepo(t)
+	user := yeniKullanici(ctx, t, repo)
+	now := time.Now().UTC()
+
+	emailpass, err := repo.SetPasswordHash(ctx, user.ID, models.ProviderEmailPass, user.Email, "hash-1", now)
+	require.NoError(t, err)
+
+	// Sağlayıcı adı ham dizedir: models paketinde yalnızca emailpass sabiti
+	// vardır ve uygulanmamış bir sağlayıcı için oraya sabit eklemek, kodun
+	// desteklemediği bir giriş yolu varmış gibi gösterirdi.
+	const ikinciSaglayici = "google"
+	_, err = testPool.Pool().Exec(ctx,
+		`INSERT INTO auth_identity (id, user_id, provider, provider_identity, created_at, updated_at)
+		 VALUES ($1, $2, $3, $4, $5, $5)`,
+		models.NewAuthIdentityID(now), user.ID, ikinciSaglayici, "oauth-sub-"+user.ID, now)
+	require.NoError(t, err, "şema, sağlayıcı başına ikinci bir kimliğe izin vermeli")
+
+	cikis := now.Add(2 * time.Second)
+	ilerletilenler, err := repo.RevokeSessions(ctx, user.ID, cikis)
+	require.NoError(t, err)
+
+	require.Len(t, ilerletilenler, 2, "çıkış her iki kimliğe de dokunmalı")
+	capalar := map[string]time.Time{}
+	for _, kimlik := range ilerletilenler {
+		capalar[kimlik.Provider] = kimlik.UpdatedAt
+	}
+	assert.True(t, capalar[models.ProviderEmailPass].After(emailpass.UpdatedAt),
+		"emailpass kimliğinin çapası ilerlemeli; bugünkü davranış korunmalı")
+	assert.True(t, capalar[ikinciSaglayici].After(now),
+		"ikinci sağlayıcının çapası da ilerlemeli — ilerlemeseydi o sağlayıcıdan "+
+			"alınmış jetonlar çıkıştan sonra da kabul edilirdi")
+
+	// Okuma tarafı da aynı yazmayı görmeli; ayrışsalardı yazılan fazladan çapa
+	// hiç okunmaz ve çıkış o sağlayıcı için etkisiz kalırdı.
+	capa, err := repo.SessionAnchor(ctx, user.ID)
+	require.NoError(t, err)
+	assert.Equal(t, capalar[ikinciSaglayici], capa,
+		"okunan çapa, yazılan en yeni çapa olmalı")
+}
+
+// TestOturumCapasiEnYeniSaglayicidanOkunur okuma sorgusunun sağlayıcı
+// SEÇMEDİĞİNİ, satırların en ilerisini aldığını kanıtlar.
+//
+// Asimetri bilerek kurulur: yalnızca ikinci sağlayıcının çapası ilerletilir,
+// emailpass satırı yerinde bırakılır. Sorgu sabit bir sağlayıcıya baksaydı
+// (ya da en ESKİ çapayı alsaydı) bu ilerleme görünmez olur ve o sağlayıcıdaki
+// iptal hiçbir jetonu düşürmezdi.
+func TestOturumCapasiEnYeniSaglayicidanOkunur(t *testing.T) {
+	ctx := context.Background()
+	repo := yeniDepo(t)
+	user := yeniKullanici(ctx, t, repo)
+	now := time.Now().UTC()
+
+	_, err := repo.SetPasswordHash(ctx, user.ID, models.ProviderEmailPass, user.Email, "hash-1", now)
+	require.NoError(t, err)
+
+	ileri := now.Add(time.Hour)
+	_, err = testPool.Pool().Exec(ctx,
+		`INSERT INTO auth_identity (id, user_id, provider, provider_identity, created_at, updated_at)
+		 VALUES ($1, $2, $3, $4, $5, $6)`,
+		models.NewAuthIdentityID(now), user.ID, "google", "oauth-sub-"+user.ID, now, ileri)
+	require.NoError(t, err)
+
+	capa, err := repo.SessionAnchor(ctx, user.ID)
+	require.NoError(t, err)
+
+	// Beklenen değer mikrosaniyeye kırpılır: timestamptz sütunu mikrosaniye
+	// çözünürlüklüdür ve Go'nun nanosaniyeleri yazmada düşer. Kırpılmasaydı
+	// iddia, sınadığı kuralla ilgisiz bir nedenle kırılırdı.
+	assert.Equal(t, ileri.Truncate(time.Microsecond), capa,
+		"çapa, sağlayıcılar arasındaki EN YENİ değer olmalı")
+}
+
 // TestKimliksizKullaniciCikisYapamaz giriş kimliği hiç olmayan bir kullanıcıda
 // çıkışın SESSİZCE başarılı olmadığını kanıtlar.
 //
 // Yazılacak satır yoksa yazılan çapa da yoktur; başarılı dönmek, hiçbir şey
-// düşürmeyen bir çıkışı başarı gibi göstermek olurdu.
+// düşürmeyen bir çıkışı başarı gibi göstermek olurdu. Denetim elle yapılır:
+// çok satırlı bir UPDATE "satır yok" diye hata ÜRETMEZ, boş küme döner.
 func TestKimliksizKullaniciCikisYapamaz(t *testing.T) {
 	ctx := context.Background()
 	repo := yeniDepo(t)
 	user := yeniKullanici(ctx, t, repo)
 
-	_, err := repo.RevokeSessions(ctx, user.ID, models.ProviderEmailPass, time.Now().UTC())
+	_, err := repo.RevokeSessions(ctx, user.ID, time.Now().UTC())
+
+	require.Error(t, err)
+	assert.True(t, errors.IsNotFound(err), "beklenen tür NotFound, gelen: %s", errors.KindOf(err))
+	assert.Equal(t, repository.CodeIdentityNotFound, errors.CodeOf(err))
+}
+
+// TestKimliksizKullanicininCapasiOkunamaz kimliği olmayan kullanıcıda çapa
+// okumasının sessizce sıfır zaman dönmediğini kanıtlar.
+//
+// Sıfır zaman dönseydi HER jeton ondan sonra üretilmiş sayılır ve kimliği
+// silinmiş bir kullanıcının jetonu süresi dolana kadar kabul edilirdi; yani
+// denetim, kimlik satırı silinerek atlatılabilirdi.
+func TestKimliksizKullanicininCapasiOkunamaz(t *testing.T) {
+	ctx := context.Background()
+	repo := yeniDepo(t)
+	user := yeniKullanici(ctx, t, repo)
+
+	_, err := repo.SessionAnchor(ctx, user.ID)
 
 	require.Error(t, err)
 	assert.True(t, errors.IsNotFound(err), "beklenen tür NotFound, gelen: %s", errors.KindOf(err))
