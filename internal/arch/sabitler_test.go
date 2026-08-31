@@ -12,9 +12,12 @@ import (
 
 	"github.com/bdrtr/gobit/internal/core/config"
 	coreplugin "github.com/bdrtr/gobit/internal/core/plugin"
+	coreprovider "github.com/bdrtr/gobit/internal/core/provider"
 	"github.com/bdrtr/gobit/internal/core/query"
 	"github.com/bdrtr/gobit/internal/modules/auth"
 	authsvc "github.com/bdrtr/gobit/internal/modules/auth/service"
+	"github.com/bdrtr/gobit/internal/modules/file"
+	"github.com/bdrtr/gobit/internal/modules/file/local"
 	"github.com/bdrtr/gobit/internal/modules/fulfillment"
 	"github.com/bdrtr/gobit/internal/modules/notification"
 	"github.com/bdrtr/gobit/internal/modules/notification/logonly"
@@ -39,6 +42,17 @@ import (
 // ayrışırsa müşteri ödeyemez ve bunu hemen söyler, bildirim ayrışırsa eklenti
 // sağlayıcısı hiç kaydedilemez ve kurulum sipariş onaylarını yalnızca loga
 // yazmaya devam eder — hiç hata üretmeden.
+//
+// DÖRDÜNCÜ sağlayıcının ([coreplugin.FileProvidersName]) iddiası bir süre
+// EKSİK kaldı: sözleşme ve kayıt noktası, onları tüketecek modülden önce
+// yazılmıştı ve olmayan bir paketi import etmek derlemeyi kırardı. Dosya
+// modülü geldiğinde satır eklendi — çünkü eksik bir iddia, yanlış bir iddia
+// gibi testi patlatmaz, hiç sesini çıkarmaz.
+//
+// Dosyada ayrışmanın bedeli bildiriminkinden de sinsidir: eklenti sağlayıcısı
+// (örn. S3) hiç kaydedilemez, kurulum yerel diske yazmaya devam eder ve fark
+// ancak kap yeniden başlatılıp yüklenen görseller kaybolduğunda edilir —
+// üstelik o an ürün kayıtlarındaki adresler hâlâ yerinde durur.
 func TestSaglayiciKayitAdlariUyusuyor(t *testing.T) {
 	t.Parallel()
 
@@ -48,6 +62,60 @@ func TestSaglayiciKayitAdlariUyusuyor(t *testing.T) {
 		"eklenti paketindeki kargo sağlayıcı kayıt adı fulfillment modülüyle aynı olmalı")
 	assert.Equal(t, notification.ProvidersName, coreplugin.NotificationProvidersName,
 		"eklenti paketindeki bildirim sağlayıcı kayıt adı notification modülüyle aynı olmalı")
+	assert.Equal(t, file.ProvidersName, coreplugin.FileProvidersName,
+		"eklenti paketindeki dosya sağlayıcı kayıt adı file modülüyle aynı olmalı")
+}
+
+// TestDosyaVarsayilanSaglayicisiConfigleUyusuyor config'in varsayılan dosya
+// sağlayıcısının GERÇEKTEN kayıtlı bir sağlayıcıya karşılık geldiğini
+// doğrular.
+//
+// İki sabit iki ayrı pakette yaşar ve aralarında derleyici bağı YOKTUR:
+// çekirdek modülleri import edemez (Prensip 2.4), bu yüzden
+// [config.DefaultFileProvider] local.ID'ye bağlanamaz ve değeri elle tekrarlar.
+//
+// Ayrışmanın bedeli, hiçbir ortam değişkeni verilmemiş bir kurulumun
+// AÇILMAMASI olurdu: cmd/server, seçili sağlayıcıyı kayıtta bulamayınca
+// açılışı durdurur (bkz. dosyaSaglayicisiniDogrula). Yani ayrışma sessiz
+// değil, ama en kötü anda — hiçbir şeyi yapılandırmamış birinin ilk
+// denemesinde — patlardı.
+func TestDosyaVarsayilanSaglayicisiConfigleUyusuyor(t *testing.T) {
+	t.Parallel()
+
+	assert.Equal(t, local.ID, config.DefaultFileProvider,
+		"config'in varsayılan dosya sağlayıcısı, modülün kutudan çıkan sağlayıcısı olmalı")
+	assert.Equal(t, local.ID, file.DefaultProviderID,
+		"modülün varsayılanı da aynı sağlayıcı olmalı")
+}
+
+// TestDosyaIzinListesiCekirdekSabitleriyleUyusuyor config'in varsayılan izin
+// listesinin çekirdeğin içerik tipi sabitleriyle aynı kümeyi anlattığını
+// doğrular.
+//
+// Değer config'te tek bir DİZE olarak durur (envDefault etiketleri sabit
+// referansı kabul etmez) ve çekirdekte dört ayrı sabit olarak. Ayrışma iki
+// yönde de sessizdir: listeye yazım hatasıyla girmiş bir tip hiçbir dosyayı
+// geçirmez (kimse fark etmez, "o biçim desteklenmiyor" sanılır), listeden
+// düşen bir tip ise dünkü yüklemelerin bugün reddedilmesi demektir.
+//
+// SVG'nin listede OLMADIĞI ayrıca iddia edilir: bu, unutulmuş bir eksiklik
+// değil VERİLMİŞ bir karardır (SVG bir belgedir, script taşır ve aynı
+// kökenden sunulduğunda depolanmış XSS olur). Kararın bir testi yoksa, bir
+// gün "eksik" diye tamamlanır.
+func TestDosyaIzinListesiCekirdekSabitleriyleUyusuyor(t *testing.T) {
+	t.Parallel()
+
+	tipler := strings.Split(config.DefaultFileAllowedTypes, ",")
+
+	assert.ElementsMatch(t, []string{
+		coreprovider.ContentTypeJPEG,
+		coreprovider.ContentTypePNG,
+		coreprovider.ContentTypeGIF,
+		coreprovider.ContentTypeWebP,
+	}, tipler, "config'in varsayılan izin listesi çekirdeğin sabitleriyle aynı olmalı")
+
+	assert.NotContains(t, tipler, "image/svg+xml",
+		"SVG varsayılan izin listesinde OLMAMALI; belge olduğu için depolanmış XSS taşır")
 }
 
 // TestBildirimVarsayilanSaglayicisiConfigleUyusuyor config'in varsayılan

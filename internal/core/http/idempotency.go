@@ -169,6 +169,28 @@ func Idempotency(store IdempotencyStore) func(http.Handler) http.Handler {
 				return
 			}
 
+			// AKIŞLA işlenen gövdeler tamponlanMAZ ve idempotency kaydı da
+			// alınmaz.
+			//
+			// Parmak izi gövdenin TAMAMINI okumayı gerektirir; bir dosya
+			// yüklemesinde bu, akışın anlamını yok eder (aynı baytlar hem
+			// bellekte hem diskte) ve sınırı da sessizce değiştirir: buradaki
+			// 1 MiB tampon, yükleme ucunun kendi (çok daha büyük) sınırından
+			// ÖNCE devreye girer ve istemci, ayarladığı sınırın altında bir
+			// yerde "gövde çok büyük" hatası alır. İki farklı sınırın aynı
+			// isteğe uygulanması, hangisinin konuştuğu anlaşılmayan bir arıza
+			// üretirdi.
+			//
+			// Bedeli AÇIKTIR: multipart bir istek tekrarlandığında yeniden
+			// işlenir. Yükleme için bu, ikinci bir dosya nesnesi demektir —
+			// mükerrer bir kayıt, tamponlanmış bir akıştan ve yanlış sınırdan
+			// ucuzdur. Gerçekten idempotent yükleme isteyen bir uç, anahtarı
+			// gövdeden değil içerik ÖZETİNDEN türetmelidir.
+			if akisliGovde(r) {
+				next.ServeHTTP(w, r)
+				return
+			}
+
 			if len(ham) > maxIdempotencyKeyLen {
 				WriteError(r.Context(), w, coreerrors.Invalid(CodeIdempotencyKeyTooLong,
 					"idempotency anahtarı en fazla %d karakter olabilir", maxIdempotencyKeyLen))
@@ -412,6 +434,16 @@ func fingerprint(kova string, r *http.Request, govde []byte) string {
 	h.Write(govde)
 
 	return hex.EncodeToString(h.Sum(nil))
+}
+
+// akisliGovde isteğin gövdesinin akışla işlenmesi gereken bir tür olup
+// olmadığını bildirir.
+//
+// Bugün yalnızca multipart. Ayrım Content-Type'tan yapılır çünkü karar gövde
+// OKUNMADAN verilmelidir — okunduktan sonra vermek, tam da kaçınılmak istenen
+// tamponlamayı yapmış olmak demektir.
+func akisliGovde(r *http.Request) bool {
+	return strings.HasPrefix(strings.ToLower(r.Header.Get("Content-Type")), "multipart/")
 }
 
 // idempotentMethod metodun idempotency kaydı gerektirip gerektirmediğini bildirir.

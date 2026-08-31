@@ -377,6 +377,35 @@ başka hiçbir yeri değiştirmez.
 > kuralı tek yerde kalır. Kuralı eklentide tekrar etmek, biri değiştiğinde
 > vitrin ile aramanın sessizce ayrışması demek olurdu.
 
+## Dosya yükleme
+
+`POST /admin/v1/uploads` (multipart) bir görsel alır ve erişilebilir bir adres
+döner; o adres mevcut ürün görseli akışına doğrudan takılır.
+
+Bu, istemciden **rastgele bayt** kabul edilen tek yerdir ve kuralları yapısaldır:
+
+- **Depo anahtarı üretilir.** İstemcinin dosya adı hiçbir yol ifadesine
+  girmez, yani yol geçişi (`../`) *imkânsızdır* — "temizlemeyle" çözmek, her
+  yeni kodlama numarasında yeniden karar vermek demekti.
+- **İçerik tipi istemciye sorulmaz**, içerikten tespit edilir. İstemcinin
+  `Content-Type`'ı bir iddiadır; ona güvenen bir izin listesi hiçbir şey elemez.
+- **İzin listesi**, yasak listesi değil. Varsayılan yalnızca yaygın görsel
+  tipleridir ve SVG **yoktur**: SVG bir belgedir, script taşır ve aynı kökenden
+  sunulunca depolanmış XSS olur. Yapılandırmaya `text/html` gibi tarayıcıda
+  çalışan bir tip yazmak da **reddedilir** — `nosniff` onu durdurmaz, çünkü
+  yanıt gerçekten o tiptir.
+- Sunumda `Content-Type` **saklanan** tipten yazılır ve `nosniff` her yanıtta
+  bulunur.
+
+Sunum ucu kimliksizdir (vitrindeki `<img>` başlık gönderemez) ama **kotasız
+değildir**: kimlik ve kota ayrı kararlardır.
+
+> Varsayılan `local` sağlayıcısı diske yazar ve kök dizin **kalıcı** olmalıdır.
+> Göreli bir kök yerel geliştirmede doğrudur; paylaşılan bir ortamda konteynerin
+> kalıcı olmayan katmanına düşer ve bir sonraki dağıtımda görseller kaybolur —
+> ürün kaydındaki adres yerinde kalır, yani hiçbir hata görünmeden her görsel
+> 404 döner. Açılışta uyarı loglanır.
+
 ## Alan olayları
 
 Modüller kendi alan olaylarını event bus'a yayımlar; aboneler (eklentiler,

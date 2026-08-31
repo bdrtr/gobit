@@ -3,8 +3,10 @@ package http_test
 import (
 	"context"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -353,4 +355,82 @@ func TestDeferredAuthenticatorBaglanmadanReddeder(t *testing.T) {
 
 	_, err = d.AuthenticateStore(context.Background(), "pk_x")
 	assert.True(t, coreerrors.IsUnauthorized(err))
+}
+
+// TestAPIGuardsKimliksizOnegiDeSinirlar kimlik istemeyen bir ucun kotasız
+// OLMADIĞINI doğrular.
+//
+// Kimlik ve kota AYRI kararlardır. Yüklenen dosyalar kimliksiz sunulur çünkü
+// vitrindeki <img> etiketi başlık gönderemez — ama her istek bir veritabanı
+// okuması ve bir disk erişimi yapar. Kotasız bırakmak, kimlik doğrulama
+// maliyeti bile ödemeden atılabilen bir yük bırakmak olurdu.
+func TestAPIGuardsKimliksizOnegiDeSinirlar(t *testing.T) {
+	t.Parallel()
+
+	r := corehttp.NewRouter(corehttp.RouterOptions{
+		Version: "test",
+		Middlewares: corehttp.APIGuards(corehttp.GuardOptions{
+			Authenticator: sabitDogrulayici{err: errors.New("geçersiz")},
+			Limiter:       corehttp.NewMemoryLimiter(1, time.Minute),
+			OpenPrefixes:  []string{"/files"},
+		}),
+	})
+	r.Get("/files/{key}", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	ilk := cagir(r, httptest.NewRequest(http.MethodGet, "/files/abc.png", http.NoBody))
+	assert.Equal(t, http.StatusOK, ilk.Code, "kimliksiz uç kimlik İSTEMEZ")
+
+	ikinci := cagir(r, httptest.NewRequest(http.MethodGet, "/files/abc.png", http.NoBody))
+	assert.Equal(t, http.StatusTooManyRequests, ikinci.Code,
+		"kimliksiz olmak kotasız olmak DEĞİLDİR")
+
+	// Sağlık ucu kimliksiz VE kotasızdır; kotaya takılması, orkestratörün
+	// sağlıklı bir örneği trafikten çekmesine yol açardı.
+	saglik := cagir(r, httptest.NewRequest(http.MethodGet, "/health", http.NoBody))
+	assert.Equal(t, http.StatusOK, saglik.Code, "sağlık ucu kotaya girmemeli")
+}
+
+// TestIdempotencyAkisliGovdeyiTamponlamaz multipart bir isteğin gövdesinin
+// idempotency middleware'i tarafından okunMADIĞINI doğrular.
+//
+// Okunsaydı iki şey birden bozulurdu: akış anlamını yitirir (aynı baytlar hem
+// bellekte hem diskte) ve middleware'in kendi 1 MiB tamponu, yükleme ucunun
+// çok daha büyük sınırından ÖNCE devreye girip istemciye yanlış sınırı
+// bildirirdi.
+func TestIdempotencyAkisliGovdeyiTamponlamaz(t *testing.T) {
+	t.Parallel()
+
+	var okunanUzunluk int
+
+	r := corehttp.NewRouter(corehttp.RouterOptions{
+		Version: "test",
+		Middlewares: corehttp.APIGuards(corehttp.GuardOptions{
+			Authenticator:    sabitDogrulayici{principal: corehttp.Principal{ID: "usr_1", Kind: "user"}},
+			IdempotencyStore: corehttp.NewMemoryIdempotencyStore(time.Hour),
+		}),
+	})
+	r.Post("/admin/v1/uploads", func(w http.ResponseWriter, req *http.Request) {
+		// Handler gövdeyi TAM olarak okuyabilmeli: middleware tükettiyse
+		// buraya sıfır bayt gelir.
+		b, _ := io.ReadAll(req.Body)
+		okunanUzunluk = len(b)
+
+		w.WriteHeader(http.StatusCreated)
+	})
+
+	govde := strings.Repeat("x", 4096)
+	istek := httptest.NewRequest(http.MethodPost, "/admin/v1/uploads", strings.NewReader(govde))
+	istek.Header.Set("Authorization", "Bearer jeton")
+	istek.Header.Set("Content-Type", "multipart/form-data; boundary=sinir")
+	istek.Header.Set(corehttp.IdempotencyKeyHeader, "yukleme-1")
+
+	kayit := cagir(r, istek)
+
+	require.Equal(t, http.StatusCreated, kayit.Code)
+	assert.Equal(t, len(govde), okunanUzunluk,
+		"multipart gövde handler'a TAM ulaşmalı; middleware onu tüketmemeli")
+	assert.Empty(t, kayit.Header().Get(corehttp.IdempotencyReplayedHeader),
+		"akışlı gövde kaydedilmez, dolayısıyla oynatılamaz")
 }

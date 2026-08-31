@@ -12,6 +12,41 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Eklendi
 
+- **`FileProvider` ve `file` modülü — plan Bölüm 5.6 tamamlandı.** Dört
+  sağlayıcı soyutlamasının sonuncusu. `POST /admin/v1/uploads` (multipart) →
+  dönen adres → `GET /files/{anahtar}`. Üretilen URL mevcut ürün görseli
+  akışına doğrudan takılır, yani `product` modülüne dokunmadan gerçek bir
+  tüketici yolu oluşur.
+  Bu, depoda istemciden **rastgele bayt** kabul edilen ilk yerdir; güvenlik
+  kuralları yapısal: depo anahtarı ÜRETİLİR (istemcinin dosya adı hiçbir yol
+  ifadesine girmez, yol geçişi imkânsız), içerik tipi istemciye sorulmaz
+  içerikten tespit edilir, izin listesi (yasak listesi değil) ve SVG dışarıda,
+  boyut sınırı hem gövdede hem dosyada zorlanır, sunumda `Content-Type`
+  saklanan tipten yazılır ve `nosniff` her yanıtta bulunur.
+
+### Düzeltildi
+
+Düşmanca bir güvenlik incelemesinin çıkardığı altı bulgu:
+
+- **Idempotency middleware yükleme akışını öldürüyordu.** `Idempotency-Key`
+  taşıyan bir multipart isteğin TÜM gövdesi parmak izi için belleğe alınıyor,
+  akışın anlamı yok oluyor ve middleware'in 1 MiB tamponu yükleme ucunun kendi
+  sınırından ÖNCE devreye giriyordu — istemci, ayarladığı sınırın altında
+  "gövde çok büyük" alıyordu. Akışlı gövdeler artık kaydedilmez.
+- **`/files` koruma yığınının dışındaydı**: kimliksiz VE kotasız, üstelik her
+  istek bir veritabanı okuması. Kimliksiz olmak korumasız olmak değildir;
+  `GuardOptions.OpenPrefixes` eklendi. Sağlık uçları bilinçli olarak dışarıda.
+- **Çok aralıklı `Range` ile ~11x yanıt büyütmesi**: `ServeContent` aralıkların
+  toplam baytını sınırlar, SAYISINI değil. Tek aralık korunur, çoklu olanda
+  başlık silinir.
+- **`Cache-Control: immutable` yanlıştı**: anahtar tekrar kullanılmaz ama
+  içerik SİLİNEBİLİR; paylaşılan bir önbellek silinen dosyayı bir yıl daha
+  sunardı. Süre bir saate indirildi, `immutable` kaldırıldı.
+- **`FILE_ALLOWED_TYPES` tarayıcıda çalışan tipleri kabul ediyordu.**
+  `text/html` yazan bir kurulumda zincir çalışır ve depolanmış XSS olur;
+  `nosniff` bunu DURDURMAZ, çünkü yanıt gerçekten o tiptir.
+- Geçici yükleme dosyasının temizliği defer edilmemişti (panikte sızıntı).
+
 - **`NotificationProvider` ve `notification` modülü.** Plan Bölüm 5.6 DÖRT
   sağlayıcı soyutlaması sayıyor (payment, fulfillment, notification, file);
   kodda yalnızca ikisi vardı. Bu iş üçüncüsünü kapatır ve aynı anda ikinci bir

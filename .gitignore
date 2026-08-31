@@ -14,6 +14,12 @@ coverage.html
 .env
 .env.local
 
+# yerel dosya deposu (FILE_ROOT varsayılanı)
+#
+# Yüklenen dosyalar depoya GİRMEZ: kullanıcı içeriğidir, sürüm kontrolüne ait
+# değildir ve tek bir görsel bile depoyu kalıcı olarak şişirir.
+/data/
+
 # editör
 .idea/
 .vscode/

@@ -1,7 +1,7 @@
 // Package plugin çekirdeğe dokunmadan yetenek ekleyen eklentileri tanımlar.
 //
 // Bir eklenti modül, route, event subscriber ve sağlayıcı (payment,
-// fulfillment, notification) kaydedebilir. Bunu yaparken hiçbir commerce
+// fulfillment, notification, file) kaydedebilir. Bunu yaparken hiçbir commerce
 // modülünü import ETMEZ: kayıt noktalarına container'dan ADLA ulaşır ve
 // sözleşmeleri çekirdekteki [github.com/bdrtr/gobit/internal/core/provider]
 // paketinden alır (ADR 0001).
@@ -60,6 +60,15 @@ const FulfillmentProvidersName = "fulfillment.providers"
 // NotificationProvidersName bildirim sağlayıcı kaydının container'daki adıdır.
 const NotificationProvidersName = "notification.providers"
 
+// FileProvidersName dosya sağlayıcı kaydının container'daki adıdır.
+//
+// Diğer üçünün aksine bu adı karşılayan bir modül HENÜZ YOKTUR: sözleşme
+// ([github.com/bdrtr/gobit/internal/core/provider.FileProvider]) ve kayıt
+// noktası, onları tüketecek modülden önce yazıldı. Bu yüzden ad şu an TEK
+// TARAFLIDIR ve [TestSaglayiciKayitAdlariUyusuyor] onun için bir iddia
+// taşıyamaz; dosya modülü geldiğinde oraya bir satır eklenmelidir.
+const FileProvidersName = "file.providers"
+
 // Hata kodları.
 const (
 	codeNameEmpty       = "plugin_name_empty"
@@ -101,6 +110,11 @@ type fulfillmentSink interface {
 // notificationSink bildirim sağlayıcı kaydının dar yüzeyidir.
 type notificationSink interface {
 	Register(p coreprovider.NotificationProvider) error
+}
+
+// fileSink dosya sağlayıcı kaydının dar yüzeyidir.
+type fileSink interface {
+	Register(p coreprovider.FileProvider) error
 }
 
 // routeKaydi bir eklentinin bağlamak istediği route işlevidir.
@@ -286,6 +300,37 @@ func (h *Host) RegisterNotificationProvider(p coreprovider.NotificationProvider)
 		aciklama: ad + " eklentisinin bildirim sağlayıcısı (" + p.ID() + ")",
 		uygula: func(_ context.Context, host *Host) error {
 			sink, err := cozSink[notificationSink](host, NotificationProvidersName, "notification")
+			if err != nil {
+				return err
+			}
+
+			return sink.Register(p)
+		},
+	})
+}
+
+// RegisterFileProvider bir dosya sağlayıcısını file modülüne ekler.
+//
+// Sıralama kuralı [Host.RegisterPaymentProvider] ile aynıdır: kayıt Setup'ta
+// değil [Registry.Start] sırasında uygulanır.
+//
+// file modülü hiç kayıtlı değilse Start bir HATA döner. Buradaki sessiz arıza
+// diğerlerinden daha UZUN ÖMÜRLÜ olurdu: "S3 eklentisi kurulu" sanılan bir
+// kurulum yüklemeleri kabın yerel diskine yazmaya devam eder, her şey
+// çalışıyor görünür ve kayıp ancak kap yeniden başlatıldığında ortaya çıkar —
+// o an dosyalar gitmiş, veritabanında ise hiçbir şeye çıkmayan adresler
+// kalmıştır. Ödeme arızası ilk müşteri denemesinde görülür; bu, ilk yeniden
+// başlatmaya kadar görünmez.
+func (h *Host) RegisterFileProvider(p coreprovider.FileProvider) {
+	if p == nil {
+		return
+	}
+
+	ad := h.aktif
+	h.kuyruk = append(h.kuyruk, kuyrukIsi{
+		aciklama: ad + " eklentisinin dosya sağlayıcısı (" + p.ID() + ")",
+		uygula: func(_ context.Context, host *Host) error {
+			sink, err := cozSink[fileSink](host, FileProvidersName, "file")
 			if err != nil {
 				return err
 			}

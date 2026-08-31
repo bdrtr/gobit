@@ -5,6 +5,7 @@ package config
 import (
 	"fmt"
 	"log/slog"
+	"path/filepath"
 	"slices"
 	"strings"
 	"time"
@@ -75,6 +76,36 @@ const DefaultRedisKeyPrefix = "gobit"
 //
 // DIŞA AÇIKTIR ki envDefault etiketiyle uyumu bir testle sabitlenebilsin.
 const DefaultNotificationProvider = "log"
+
+// DefaultFileProvider dosya sağlayıcısı seçilmediğinde kullanılan kimliktir.
+//
+// Değer, file modülünün kutudan çıkan sağlayıcısının kimliğiyle (local.ID)
+// aynıdır ama o pakete BAĞLANAMAZ: çekirdek modülleri import edemez
+// (Prensip 2.4). Ayrışmanın bedeli [DefaultNotificationProvider]'ınkiyle
+// aynıdır ve tekrarlanmıyor.
+//
+// DIŞA AÇIKTIR ki envDefault etiketiyle ve modülün sabitiyle uyumu birer
+// testle sabitlenebilsin (bkz. internal/arch).
+const DefaultFileProvider = "local"
+
+// DefaultFileRoot "local" dosya sağlayıcısının varsayılan kök dizinidir.
+//
+// Göreli ve KALICI bir yoldur; gerekçesi [Config.FileRoot] alanındadır.
+const DefaultFileRoot = "./data/uploads"
+
+// DefaultFileMaxUploadBytes tek bir yüklemenin varsayılan azami boyutudur.
+//
+// 5 MiB, bir ürün görseli için bol; kazara sürüklenmiş bir video için dardır.
+// Değer envDefault etiketinde ONDALIK olarak tekrarlanır (Go struct etiketleri
+// sabit referansı kabul etmez) ve uyum bir testle sabitlenmiştir.
+const DefaultFileMaxUploadBytes int64 = 5 << 20
+
+// DefaultFileAllowedTypes yüklemede varsayılan olarak kabul edilen içerik
+// tipleridir.
+//
+// Dize olmasının sebebi envSeparator'dır: etiketteki varsayılan da tek bir
+// dizedir ve ikisinin uyumu ancak aynı biçimde tutulurlarsa denetlenebilir.
+const DefaultFileAllowedTypes = "image/jpeg,image/png,image/gif,image/webp"
 
 // Yalnızca yerel geliştirme için varsayılan bağlantı adresleri.
 // deploy/docker-compose.yml ile eşleşirler. Validate, APP_ENV=production iken
@@ -169,6 +200,67 @@ type Config struct {
 	// bir ad açılışı DURDURUR. Sessizce varsayılana düşmek, üretimde e-posta
 	// gönderdiğini sanan ama hiçbir müşteriye ulaşmayan bir kurulum üretirdi.
 	NotificationProvider string `env:"NOTIFICATION_PROVIDER" envDefault:"log"`
+
+	// FileProvider yüklenen dosyaları saklayacak sağlayıcının kimliğidir.
+	//
+	// Varsayılan [DefaultFileProvider], yani dosyaları [Config.FileRoot]
+	// altına yazan "local" sağlayıcısıdır. Adın GEÇERLİ olup olmadığını config
+	// bilemez — gerekçe [Config.NotificationProvider] ile birebir aynıdır ve
+	// tekrarlanmıyor; burada yalnızca BİÇİM doğrulanır.
+	FileProvider string `env:"FILE_PROVIDER" envDefault:"local"`
+
+	// FileRoot "local" sağlayıcısının dosyaları yazdığı kök dizindir.
+	//
+	// # Neden GEÇİCİ DİZİN DEĞİL
+	//
+	// Yapılandırılmadığında os.TempDir()'e yazmak cazip ama YANLIŞTIR: yüklenen
+	// görselin adresi ürün kaydına KALICI olarak yazılır ve işletim sistemi o
+	// dizini temizlediğinde (ya da süreç başka bir makinede yeniden
+	// başladığında) vitrindeki her görsel 404 döner. Kimse hata görmez; yalnızca
+	// resimler kaybolur. Sessiz veri kaybı, açılışta patlayan bir yapılandırma
+	// hatasından her zaman pahalıdır.
+	//
+	// Varsayılan bu yüzden KALICI ve göze görünür bir yoldur: depo köküne göre
+	// "./data/uploads". Yerel geliştirmede "make up && make run" ek ayar
+	// istemez (deponun kuralı) ve yeniden başlatmada dosyalar yerinde durur.
+	//
+	// PAYLAŞILAN ortamlarda mutlak bir yol (bağlanmış bir birim) verilmelidir;
+	// göreli yol orada aynı sessiz kaybın yavaş çekimidir. Bu AÇILIŞI
+	// DURDURMAZ, uyarılır — gerekçesi [Config.LocalFileRootIsPortable]
+	// godoc'undadır.
+	//
+	// Boş bırakılması ayrı bir karardır ve config onu REDDEDER: kök olmadan
+	// yerel sağlayıcı kaydedilemez, kaydedilmeyen bir sağlayıcı seçiliyse de
+	// açılış zaten durur. Reddin burada olması, aynı sonucu iki adım önce ve
+	// hangi değişkenin eksik olduğunu söyleyerek verir.
+	FileRoot string `env:"FILE_ROOT" envDefault:"./data/uploads"`
+
+	// FileMaxUploadBytes tek bir yüklemenin azami boyutudur (bayt).
+	//
+	// Sınırsız gövde, tek istekle diski doldurmanın en ucuz yoludur; bu yüzden
+	// sınır vardır ve yapılandırılabilirdir. Varsayılan
+	// [DefaultFileMaxUploadBytes]'tır (5 MiB) — ürün görseli için bol, bir
+	// videoyu kazara yüklemek için dar.
+	FileMaxUploadBytes int64 `env:"FILE_MAX_UPLOAD_BYTES" envDefault:"5242880"`
+
+	// FileAllowedTypes yüklemede kabul edilen İÇERİK tipleridir.
+	//
+	// Liste bir İZİN LİSTESİDİR: burada olmayan tip reddedilir. Yasak listesi
+	// olsaydı, bugün akla gelmemiş her biçim (bir belge, bir arşiv, bir betik)
+	// varsayılan olarak kabul edilirdi.
+	//
+	// Değerler İÇERİKTEN tespit edilen tiple (net/http.DetectContentType)
+	// karşılaştırılır, istemcinin Content-Type başlığıyla DEĞİL. Bu yüzden
+	// biçim de dar tutulur: küçük harf, parametresiz ("image/png"). "Image/PNG"
+	// ya da "image/png; charset=..." yazılmış bir giriş hiçbir zaman eşleşmez
+	// ve izin listesi sessizce DARALIRDI — listede duran ama hiçbir dosyayı
+	// geçirmeyen bir satır, en kötü türden yapılandırma hatasıdır.
+	//
+	// Varsayılan [DefaultFileAllowedTypes]'tır ve SVG İÇERMEZ; gerekçesi
+	// internal/core/provider'daki içerik tipi sabitlerinin godoc'undadır
+	// (özet: SVG bir belgedir, script taşır ve aynı kökenden sunulduğunda
+	// depolanmış XSS olur).
+	FileAllowedTypes []string `env:"FILE_ALLOWED_TYPES" envSeparator:"," envDefault:"image/jpeg,image/png,image/gif,image/webp"`
 
 	// LogLevel yapısal log seviyesidir: debug | info | warn | error.
 	LogLevel string `env:"LOG_LEVEL" envDefault:"info"`
@@ -382,6 +474,12 @@ func (c Config) Validate() error {
 	if err := c.validateNotificationProvider(); err != nil {
 		return err
 	}
+	// Dosya ayarları kendi ortam kapısını (paylaşılan ortamda mutlak yol)
+	// taşır; bu yüzden aşağıdaki IsShared bloğuna değil, sıradan
+	// doğrulamaların yanına konur.
+	if err := c.validateFile(); err != nil {
+		return err
+	}
 	// Ortama bağlı kapıyı kendi içinde taşır; bu yüzden aşağıdaki IsShared
 	// bloğuna değil, sıradan doğrulamaların yanına konur.
 	if err := c.validateAdminBootstrap(); err != nil {
@@ -494,14 +592,143 @@ func (c Config) validatePlugins() error {
 // yazım hatası (örn. iki kelimelik bir ad) yine sessizce başka bir sonuç
 // verirdi.
 func (c Config) validateNotificationProvider() error {
-	if c.NotificationProvider == "" {
-		return fmt.Errorf("config: NOTIFICATION_PROVIDER boş olamaz (varsayılan: %q)",
-			DefaultNotificationProvider)
+	return adBicimi("NOTIFICATION_PROVIDER", c.NotificationProvider, DefaultNotificationProvider)
+}
+
+// validateFile dosya yükleme ayarlarının BİÇİMİNİ ve kök dizin kuralını
+// doğrular.
+//
+// Sağlayıcı adının kayıtlı olup olmadığı burada bilinemez (bkz.
+// [Config.FileProvider]); kayıt denetimi kompozisyon kökündedir.
+//
+// Kök dizin, sağlayıcı "local" OLMASA da biçim açısından doğrulanır: değer
+// yalnızca yerel sağlayıcıda kullanılır ama boş bırakılmış bir kök, sağlayıcı
+// bir gün "local"a çevrildiğinde patlardı — yani arıza tam da en kötü ana,
+// canlı geçiş anına saklanırdı. Aynı gerekçe REDIS_KEY_PREFIX'te de yazılıdır.
+//
+// MUTLAK YOL şartı ise yalnızca yerel sağlayıcı seçiliyken uygulanır: nesne
+// deposuna yazan bir kurulumda o kuralın öznesi yoktur ve kullanılmayan bir
+// alan için mutlak yol istemek, hiçbir şey korumayan bir engel olurdu.
+func (c Config) validateFile() error {
+	if err := adBicimi("FILE_PROVIDER", c.FileProvider, DefaultFileProvider); err != nil {
+		return err
 	}
-	if strings.TrimSpace(c.NotificationProvider) != c.NotificationProvider {
-		return fmt.Errorf("config: NOTIFICATION_PROVIDER %q baştaki/sondaki boşluk içeremez",
-			c.NotificationProvider)
+	if err := adBicimi("FILE_ROOT", c.FileRoot, DefaultFileRoot); err != nil {
+		return err
 	}
+	if c.FileMaxUploadBytes <= 0 {
+		return fmt.Errorf("config: FILE_MAX_UPLOAD_BYTES pozitif olmalı, %d verildi (varsayılan: %d)",
+			c.FileMaxUploadBytes, DefaultFileMaxUploadBytes)
+	}
+	return c.validateFileTypes()
+}
+
+// LocalFileRootIsPortable "local" sağlayıcısının kök dizininin, sürecin ÇALIŞMA
+// DİZİNİNDEN bağımsız olup olmadığını bildirir.
+//
+// Göreli bir kök yerel geliştirmede doğrudur ve varsayılan da odur; paylaşılan
+// bir ortamda ise sessiz bir veri kaybı riskidir: yol sürecin çalışma dizinine
+// göre çözülür ve konteynerde neredeyse her zaman kalıcı OLMAYAN katmana düşer.
+// Bir sonraki dağıtımda yüklenen görseller kaybolur, ama ürün kaydındaki adres
+// yerinde kalır — yani hiçbir hata görünmeden vitrindeki her görsel 404 döner.
+//
+// # Neden AÇILIŞI DURDURMAZ
+//
+// Kural [Config.Validate]'e konsaydı, dosya yükleme özelliğini hiç
+// kullanmayan (görsel adreslerini elle giren) her üretim kurulumu, karşılığını
+// göremediği bir ortam değişkenini vermeden açılamazdı. Aynı ödünç
+// GUARD_BACKEND'de de verildi: bellek içi koruma çok örnekli dağıtımda
+// BOZUKTUR ama açılışı durdurmaz, uyarı loglanır (bkz. cmd/server
+// korumaYigini). Buradaki karar onunla tutarlıdır — ve nedeni ortaktır:
+// yapılandırmanın YANLIŞ olduğu kesin değildir, yalnızca RİSKLİDİR.
+//
+// Kararın config'te durmasının sebebi, "riskli" tanımının burada olmasıdır:
+// uyarıyı yazan taraf (cmd/server) yalnızca çağırır.
+func (c Config) LocalFileRootIsPortable() bool {
+	return c.FileProvider != DefaultFileProvider || filepath.IsAbs(c.FileRoot)
+}
+
+// tarayicidaCalisanTipler yükleme izin listesine KONAMAYACAK içerik tipleridir.
+//
+// Biçim denetimi tek başına yetmez: FILE_ALLOWED_TYPES=image/png,text/html
+// yazan bir kurulumda zincirin tamamı çalışır — http.DetectContentType bir
+// HTML dosyası için gerçekten "text/html" döner, izin listesi onu geçirir ve
+// dosya AYNI KÖKENDEN sunulur. Sonuç depolanmış XSS'tir.
+//
+// X-Content-Type-Options: nosniff bunu DURDURMAZ ve bu, başlığın ne işe
+// yaradığının yanlış anlaşılmasıdır: nosniff, tarayıcının bildirilen tipi
+// TAHMİNLE değiştirmesini engeller. Burada tahmin yoktur — yanıt gerçekten
+// text/html'dir ve tarayıcı onu doğru biçimde çalıştırır.
+//
+// text/* önekinin tamamı reddedilir: yeni bir metin tipi (text/vtt, text/xsl…)
+// listeye eklenmeyi bekleyemez ve yasak listesi olarak yazılan her kural,
+// listelenmeyeni varsayılan olarak kabul eder.
+var tarayicidaCalisanTipler = map[string]struct{}{
+	"application/xhtml+xml":  {},
+	"application/xml":        {},
+	"image/svg+xml":          {},
+	"application/pdf":        {},
+	"application/javascript": {},
+	"application/ecmascript": {},
+}
+
+// validateFileTypes izin listesinin biçimini doğrular.
+//
+// Boş liste REDDEDİLİR: sıfır tipin kabul edildiği bir yükleme ucu, her isteği
+// reddeden ama var olmaya devam eden bir kapıdır. "Her şeyi kabul et" demenin
+// yolu listeyi boşaltmak DEĞİLDİR — o karar, tipi tek tek yazmayı gerektirecek
+// kadar bilinçli olmalıdır.
+func (c Config) validateFileTypes() error {
+	if len(c.FileAllowedTypes) == 0 {
+		return fmt.Errorf("config: FILE_ALLOWED_TYPES boş olamaz (varsayılan: %q)",
+			DefaultFileAllowedTypes)
+	}
+
+	gorulen := make(map[string]struct{}, len(c.FileAllowedTypes))
+	for i, tip := range c.FileAllowedTypes {
+		switch {
+		case strings.TrimSpace(tip) == "":
+			return fmt.Errorf("config: FILE_ALLOWED_TYPES listesinde %d. sırada boş tip var", i+1)
+		case strings.TrimSpace(tip) != tip:
+			return fmt.Errorf("config: FILE_ALLOWED_TYPES içindeki %q baştaki/sondaki boşluk içeremez", tip)
+		// Parametreli ya da büyük harfli bir tip, tespit edilen tiple HİÇBİR
+		// ZAMAN eşleşmez; sessizce kabul etmek listede duran ama hiçbir dosyayı
+		// geçirmeyen bir satır bırakırdı.
+		case strings.ContainsAny(tip, ";"), tip != strings.ToLower(tip), !strings.Contains(tip, "/"):
+			return fmt.Errorf(
+				"config: geçersiz FILE_ALLOWED_TYPES girdisi %q (küçük harf ve parametresiz olmalı, örn. %q)",
+				tip, "image/png")
+		}
+
+		if _, tehlikeli := tarayicidaCalisanTipler[tip]; tehlikeli || strings.HasPrefix(tip, "text/") {
+			return fmt.Errorf(
+				"config: FILE_ALLOWED_TYPES %q kabul edemez: tarayıcı bu tipi BELGE olarak çalıştırır "+
+					"ve dosyalar aynı kökenden sunulduğu için depolanmış XSS olur (nosniff bunu durdurmaz, "+
+					"çünkü yanıt gerçekten o tiptir)", tip)
+		}
+
+		if _, dup := gorulen[tip]; dup {
+			return fmt.Errorf("config: FILE_ALLOWED_TYPES listesinde %q iki kez geçiyor", tip)
+		}
+		gorulen[tip] = struct{}{}
+	}
+
+	return nil
+}
+
+// adBicimi boş bırakılamayan tek satırlık bir ayarın biçimini doğrular.
+//
+// Baştaki/sondaki boşluk REDDEDİLİR ve kırpılmaz; gerekçe
+// [Config.validateNotificationProvider] godoc'undadır (özet: sessizce kırpmak,
+// operatörün yazdığı değer ile sistemin kullandığı değeri ayırır).
+func adBicimi(degisken, deger, varsayilan string) error {
+	if deger == "" {
+		return fmt.Errorf("config: %s boş olamaz (varsayılan: %q)", degisken, varsayilan)
+	}
+	if strings.TrimSpace(deger) != deger {
+		return fmt.Errorf("config: %s %q baştaki/sondaki boşluk içeremez", degisken, deger)
+	}
+
 	return nil
 }
 

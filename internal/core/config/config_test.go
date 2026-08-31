@@ -4,6 +4,7 @@ import (
 	"log/slog"
 	"os"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -28,6 +29,7 @@ var envKeys = []string{
 	"JWT_SECRET", "JWT_TTL",
 	"ADMIN_BOOTSTRAP_EMAIL", "ADMIN_BOOTSTRAP_PASSWORD",
 	"GUARD_BACKEND", "REDIS_KEY_PREFIX", "NOTIFICATION_PROVIDER",
+	"FILE_PROVIDER", "FILE_ROOT", "FILE_MAX_UPLOAD_BYTES", "FILE_ALLOWED_TYPES",
 }
 
 // uretimJWTSirri üretim senaryolarında kullanılan 32 karakterlik imza sırrıdır.
@@ -247,6 +249,10 @@ func TestDefaultTagsMatchConstants(t *testing.T) {
 		"RedisURL":             config.DefaultRedisURL,
 		"RedisKeyPrefix":       config.DefaultRedisKeyPrefix,
 		"NotificationProvider": config.DefaultNotificationProvider,
+		"FileProvider":         config.DefaultFileProvider,
+		"FileRoot":             config.DefaultFileRoot,
+		"FileAllowedTypes":     config.DefaultFileAllowedTypes,
+		"FileMaxUploadBytes":   strconv.FormatInt(config.DefaultFileMaxUploadBytes, 10),
 	}
 
 	typ := reflect.TypeOf(config.Config{})
@@ -782,4 +788,105 @@ func TestBosBildirimSaglayicisiReddedilir(t *testing.T) {
 
 	require.Error(t, err, "boş sağlayıcı adı kabul edilmemeli")
 	assert.Contains(t, err.Error(), "NOTIFICATION_PROVIDER")
+}
+
+// TestDosyaAyarlariVarsayilaniKaliciDizindir kutudan çıkan yüklemenin GEÇİCİ
+// dizine yazmadığını doğrular.
+//
+// Geçici dizin cazip olurdu ("hiçbir şey yapılandırmadan çalışsın") ama
+// yeniden başlatmada görselleri sessizce kaybettirirdi: adres ürün kaydında
+// kalıcı olarak durur, dosya ise gitmiştir. İddia bu yüzden yalnızca "varsayılan
+// nedir"i değil, "ne DEĞİLDİR"i de sabitler.
+func TestDosyaAyarlariVarsayilaniKaliciDizindir(t *testing.T) {
+	clearEnv(t)
+
+	cfg, err := config.Load()
+
+	require.NoError(t, err)
+	assert.Equal(t, config.DefaultFileProvider, cfg.FileProvider)
+	assert.Equal(t, config.DefaultFileRoot, cfg.FileRoot)
+	assert.NotContains(t, cfg.FileRoot, os.TempDir(),
+		"varsayılan kök GEÇİCİ dizin olamaz; yeniden başlatmada sessiz veri kaybı demektir")
+	assert.Equal(t, config.DefaultFileMaxUploadBytes, cfg.FileMaxUploadBytes)
+	assert.Equal(t,
+		[]string{"image/jpeg", "image/png", "image/gif", "image/webp"}, cfg.FileAllowedTypes)
+	assert.NotContains(t, cfg.FileAllowedTypes, "image/svg+xml",
+		"SVG bir belgedir ve script taşır; varsayılan izin listesinde OLMAMALI")
+}
+
+// TestDosyaAyarlariBicimDogrular geçersiz dosya ayarlarının açılışı
+// durdurduğunu doğrular.
+//
+// İzin listesindeki biçim iddiaları özellikle önemlidir: parametreli ya da
+// büyük harfli bir tip, İÇERİKTEN tespit edilen tiple hiçbir zaman eşleşmez.
+// Sessizce kabul edilseydi listede duran ama hiçbir dosyayı geçirmeyen bir
+// satır kalırdı — operatör tipi "açtığını" sanardı.
+func TestDosyaAyarlariBicimDogrular(t *testing.T) {
+	base := gecerliConfig(t)
+
+	tests := map[string]struct {
+		boz      func(c *config.Config)
+		degisken string
+	}{
+		"sağlayıcı boş":        {func(c *config.Config) { c.FileProvider = "" }, "FILE_PROVIDER"},
+		"sağlayıcı boşluklu":   {func(c *config.Config) { c.FileProvider = " local" }, "FILE_PROVIDER"},
+		"kök boş":              {func(c *config.Config) { c.FileRoot = "" }, "FILE_ROOT"},
+		"kök boşluklu":         {func(c *config.Config) { c.FileRoot = "/veri/yuklemeler " }, "FILE_ROOT"},
+		"azami boyut sıfır":    {func(c *config.Config) { c.FileMaxUploadBytes = 0 }, "FILE_MAX_UPLOAD_BYTES"},
+		"azami boyut negatif":  {func(c *config.Config) { c.FileMaxUploadBytes = -1 }, "FILE_MAX_UPLOAD_BYTES"},
+		"izin listesi boş":     {func(c *config.Config) { c.FileAllowedTypes = nil }, "FILE_ALLOWED_TYPES"},
+		"tip boş":              {func(c *config.Config) { c.FileAllowedTypes = []string{"image/png", ""} }, "FILE_ALLOWED_TYPES"},
+		"tip parametreli":      {func(c *config.Config) { c.FileAllowedTypes = []string{"text/plain; charset=utf-8"} }, "FILE_ALLOWED_TYPES"},
+		"tip büyük harfli":     {func(c *config.Config) { c.FileAllowedTypes = []string{"Image/PNG"} }, "FILE_ALLOWED_TYPES"},
+		"tip bölü işareti yok": {func(c *config.Config) { c.FileAllowedTypes = []string{"png"} }, "FILE_ALLOWED_TYPES"},
+		"tip iki kez":          {func(c *config.Config) { c.FileAllowedTypes = []string{"image/png", "image/png"} }, "FILE_ALLOWED_TYPES"},
+	}
+
+	for ad, tt := range tests {
+		t.Run(ad, func(t *testing.T) {
+			cfg := base
+			tt.boz(&cfg)
+
+			err := cfg.Validate()
+
+			require.Error(t, err, "bozuk dosya ayarı sessizce kabul edilmemeli")
+			assert.Contains(t, err.Error(), tt.degisken,
+				"hata mesajı hangi değişkenin yanlış olduğunu söylemeli")
+		})
+	}
+}
+
+// TestGoreliDosyaKokuPaylasilanOrtamdaTasinabilirDegil uyarı kapısının hangi
+// kurulumlarda açıldığını sabitler.
+//
+// Kural AÇILIŞI DURDURMAZ (gerekçe config.LocalFileRootIsPortable godoc'unda),
+// bu yüzden tek koruması bu testtir: kapı sessizce kapanırsa uyarı hiç
+// yazılmaz ve göreli kökle çıkılan bir üretim dağıtımı hiçbir iz bırakmaz.
+func TestGoreliDosyaKokuPaylasilanOrtamdaTasinabilirDegil(t *testing.T) {
+	base := gecerliConfig(t)
+
+	tests := map[string]struct {
+		ortam       string
+		saglayici   string
+		kok         string
+		tasinabilir bool
+	}{
+		"geliştirme göreli kök": {"development", "local", "./data/uploads", false},
+		"üretim göreli kök":     {"production", "local", "./data/uploads", false},
+		"üretim mutlak kök":     {"production", "local", "/var/lib/gobit/uploads", true},
+		"staging göreli kök":    {"staging", "local", "data/uploads", false},
+		"üretim eklenti deposu": {"production", "s3", "./data/uploads", true},
+		"geliştirme mutlak kök": {"development", "local", "/tmp/gobit-uploads", true},
+	}
+
+	for ad, tt := range tests {
+		t.Run(ad, func(t *testing.T) {
+			cfg := base
+			cfg.AppEnv = tt.ortam
+			cfg.FileProvider = tt.saglayici
+			cfg.FileRoot = tt.kok
+
+			assert.Equal(t, tt.tasinabilir, cfg.LocalFileRootIsPortable())
+		})
+	}
 }

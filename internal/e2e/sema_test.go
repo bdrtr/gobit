@@ -203,7 +203,9 @@ func islemBul(t *testing.T, belge map[string]any, metot, desen string) map[strin
 	return altNesne(t, yol, strings.ToLower(metot), desen)
 }
 
-// jsonSemasi bir istek/yanıt tanımından application/json şemasını çıkarır.
+// jsonSemasi bir YANIT tanımından application/json şemasını çıkarır.
+//
+// İstek gövdeleri için [istekSemasi] kullanılır: onların hepsi JSON değildir.
 func jsonSemasi(t *testing.T, tanim map[string]any, nerede string) map[string]any {
 	t.Helper()
 
@@ -211,6 +213,38 @@ func jsonSemasi(t *testing.T, tanim map[string]any, nerede string) map[string]an
 	tur := altNesne(t, icerik, "application/json", nerede+".content")
 
 	return altNesne(t, tur, "schema", nerede+".content.application/json")
+}
+
+// istekSemasi bir istek gövdesinin şemasını ortam tipinden BAĞIMSIZ okur.
+//
+// [jsonSemasi]'ndan ayrı durmasının sebebi somut: her istek gövdesi JSON
+// DEĞİLDİR. POST /admin/v1/uploads gövdesi multipart/form-data'dır ve öyle
+// olmak zorundadır — dosya baytlarını JSON'a sarmak, her yüklemeyi base64
+// büyümesiyle cezalandırır ve akışla ayrıştırmayı imkânsız kılardı. Buraya
+// "application/json" dayatan bir test, o ucun DOĞRU anlatımını hata sayardı;
+// düzeltmesi de şemayı yalan söylemeye zorlamak olurdu.
+//
+// Ortam tipi kümesinin TEK olması beklenir: birden çok tip anlatan bir uç,
+// hangi şeklin hangi tiple gittiğini istemciye seçtiriyor demektir ve bu
+// depoda öyle bir uç yoktur. Çıktığı gün burada görünmesi ve bilinçli olarak
+// ele alınması doğrudur.
+//
+// YANIT tarafında bu esneklik YOKTUR ve olmamalıdır ([jsonSemasi] orada
+// kullanılmaya devam eder): yanıt zarfı çekirdeğin tek biçimidir ve JSON
+// olmayan bir yanıt gövdesi anlatılsaydı, zarfı çözen her iddia sessizce
+// anlamsızlaşırdı.
+func istekSemasi(t *testing.T, tanim map[string]any, nerede string) map[string]any {
+	t.Helper()
+
+	icerik := altNesne(t, tanim, "content", nerede)
+	tipler := anahtarlar(icerik)
+	require.Len(t, tipler, 1,
+		"%s tek bir ortam tipi anlatmalı; birden çoğu istemciye seçim bırakır (gelen: %v)",
+		nerede, tipler)
+
+	tur := altNesne(t, icerik, tipler[0], nerede+".content")
+
+	return altNesne(t, tur, "schema", nerede+".content."+tipler[0])
 }
 
 // cozulmus $ref taşıyan bir şemayı bileşen tanımına kadar izler.
@@ -496,7 +530,7 @@ func TestSemaAnlatilanUclariGovdeleriyleAnlatir(t *testing.T) {
 			// testinde tablolanır; buradaki iddia gövdenin ŞEKLİNİN bilinmesi.
 			assert.Contains(t, govde, "content", "%s gövdesi içerik taşımalı", uc)
 
-			istek := cozulmus(t, belge, jsonSemasi(t, govde, uc+" requestBody"))
+			istek := cozulmus(t, belge, istekSemasi(t, govde, uc+" requestBody"))
 			assert.NotEmpty(t, altNesne(t, istek, "properties", uc+" istek gövdesi"),
 				"istek gövdesi alan taşımalı; alansız bir gövde istemciyi tahmine bırakır")
 		})

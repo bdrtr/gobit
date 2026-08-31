@@ -117,6 +117,18 @@ type GuardOptions struct {
 	// PublishableKeyHeader publishable anahtarın okunacağı başlıktır; boşsa
 	// [PublishableKeyHeader].
 	PublishableKeyHeader string
+	// OpenPrefixes kimlik İSTEMEYEN ama yine de hız sınırına tabi olması
+	// gereken yol önekleridir (örn. yüklenen dosyaların sunulduğu "/files").
+	//
+	// Kimlik ve kota AYRI kararlardır. Bir uç, istemcisi başlık gönderemediği
+	// için kimliksiz olabilir (vitrindeki <img>), ama bu onun bedava olduğu
+	// anlamına gelmez: her istek bir veritabanı okuması ya da disk erişimi
+	// yapıyorsa, kotasızlık kimlik doğrulama maliyeti bile ödemeden atılabilen
+	// bir yük demektir.
+	//
+	// Sağlık uçları BURAYA KONMAZ: orkestratörün gördüğü yolun kotaya takılması,
+	// sağlıklı bir örneği trafikten çektirirdi.
+	OpenPrefixes []string
 }
 
 // Varsayılan API önekleri.
@@ -168,6 +180,18 @@ func APIGuards(opts GuardOptions) []func(http.Handler) http.Handler {
 
 		sinir := RateLimit(opts.Limiter, anahtar)
 		yigin = append(yigin, Scoped(admin, nil, sinir), Scoped(store, nil, sinir))
+
+		// KİMLİKSİZ önekler de sınırlanır.
+		//
+		// Kimliksiz olmak "korumasız" demek DEĞİLDİR: kimlik istemeyen bir uç,
+		// tam da bu yüzden kotası olmayan bir uç olmamalıdır. Dosya sunumu
+		// örnektir — vitrindeki <img> etiketi başlık gönderemez, dolayısıyla uç
+		// kimliksizdir; ama her istek bir veritabanı okuması yapar ve
+		// sınırsızlık, kimlik doğrulama maliyeti ödemeden atılabilen bir yük
+		// demektir.
+		for _, onek := range opts.OpenPrefixes {
+			yigin = append(yigin, Scoped(onek, nil, sinir))
+		}
 	}
 
 	yigin = append(yigin,

@@ -88,6 +88,34 @@ func (k *sahteBildirimKayit) Register(p coreprovider.NotificationProvider) error
 	return nil
 }
 
+// sahteDosyaSaglayici testlerde kullanılan en küçük dosya sağlayıcısıdır.
+type sahteDosyaSaglayici struct{ id string }
+
+// ID sağlayıcının kimliğini döner.
+func (p sahteDosyaSaglayici) ID() string { return p.id }
+
+// Upload testte çağrılmaz; arayüzü karşılamak için vardır.
+func (p sahteDosyaSaglayici) Upload(
+	_ context.Context, _ coreprovider.UploadInput,
+) (coreprovider.File, error) {
+	return coreprovider.File{}, nil
+}
+
+// Delete testte çağrılmaz.
+func (p sahteDosyaSaglayici) Delete(_ context.Context, _ string) error { return nil }
+
+// sahteDosyaKayit dosya modülünün sağlayıcı kaydını taklit eder.
+type sahteDosyaKayit struct {
+	kayitli []string
+}
+
+// Register sağlayıcıyı kaydeder.
+func (k *sahteDosyaKayit) Register(p coreprovider.FileProvider) error {
+	k.kayitli = append(k.kayitli, p.ID())
+
+	return nil
+}
+
 // testEklenti Setup'ta verilen işlevi çalıştıran eklentidir.
 type testEklenti struct {
 	ad    string
@@ -235,6 +263,57 @@ func TestBildirimSaglayiciKaydiModulYoksaHataDoner(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "notification")
 	assert.Contains(t, err.Error(), "smtp")
+}
+
+// TestDosyaSaglayiciKaydiStartaKadarBeklenir dosya sağlayıcısının da Setup'ta
+// DEĞİL Start'ta kaydedildiğini doğrular.
+//
+// Kanıt bu tür için diğerlerinden daha GEREKLİDİR: file modülü henüz yoktur,
+// yani kayıt yolunu uçtan uca çalıştıran gerçek bir kurulum da yoktur. Kuyruğa
+// alma burada kırılırsa bugün hiçbir şey uyarmaz; arıza ancak modül yazıldığı
+// gün ilk eklentinin kurulumu patlayınca görülür ve suç, aylar önce yazılmış
+// kayıt noktasında değil yeni modülde aranır.
+func TestDosyaSaglayiciKaydiStartaKadarBeklenir(t *testing.T) {
+	t.Parallel()
+
+	c, reg, h := kurulum(t, nil)
+
+	reg.Add(testEklenti{ad: "depo", setup: func(_ context.Context, h *coreplugin.Host) error {
+		h.RegisterFileProvider(sahteDosyaSaglayici{id: "s3"})
+		return nil
+	}})
+
+	// file modülü HENÜZ yok.
+	require.NoError(t, reg.Install(t.Context(), h), "kurulum modül olmadan da geçmeli")
+
+	kayit := &sahteDosyaKayit{}
+	require.NoError(t, c.Provide(coreplugin.FileProvidersName, kayit))
+
+	require.NoError(t, reg.Start(t.Context(), h))
+	assert.Equal(t, []string{"s3"}, kayit.kayitli)
+}
+
+// TestDosyaSaglayiciKaydiModulYoksaHataDoner file modülü hiç kayıtlı değilken
+// Start'ın SESSİZ KALMADIĞINI doğrular.
+//
+// Sessiz kalsaydı yükleme yolu ayakta kalır ve dosyalar eklentinin deposuna
+// hiç ulaşmadan kabın yerel diskinde birikirdi; arıza ancak o disk silindiğinde
+// ve geriye hiçbir şeye çıkmayan adresler kaldığında görülürdü.
+func TestDosyaSaglayiciKaydiModulYoksaHataDoner(t *testing.T) {
+	t.Parallel()
+
+	_, reg, h := kurulum(t, nil)
+
+	reg.Add(testEklenti{ad: "depo", setup: func(_ context.Context, h *coreplugin.Host) error {
+		h.RegisterFileProvider(sahteDosyaSaglayici{id: "s3"})
+		return nil
+	}})
+	require.NoError(t, reg.Install(t.Context(), h))
+
+	err := reg.Start(t.Context(), h)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "file")
+	assert.Contains(t, err.Error(), "s3")
 }
 
 // TestSetupHatasiKurulumuDurdurur bir eklentinin Setup hatasının sonrakileri

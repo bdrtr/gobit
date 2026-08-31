@@ -37,6 +37,7 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/auth"
 	"github.com/bdrtr/gobit/internal/modules/cart"
 	"github.com/bdrtr/gobit/internal/modules/customer"
+	"github.com/bdrtr/gobit/internal/modules/file"
 	"github.com/bdrtr/gobit/internal/modules/fulfillment"
 	"github.com/bdrtr/gobit/internal/modules/inventory"
 	"github.com/bdrtr/gobit/internal/modules/notification"
@@ -227,6 +228,18 @@ func run() error {
 		ProviderID: cfg.NotificationProvider,
 		Logger:     log,
 	}))
+	// Dosya. Yüklemenin ürettiği adres, ürün görseli akışına doğrudan takılır;
+	// modül product'a hiç dokunmaz. Sağlayıcı seçimi ve sınırlar
+	// yapılandırmadan gelir, adın kayıtlı olduğu eklentiler de yüklendikten
+	// SONRA denetlenir (bkz. dosyaSaglayicisiniDogrula).
+	registry.Add(file.New(file.Options{
+		ProviderID:     cfg.FileProvider,
+		Root:           cfg.FileRoot,
+		MaxUploadBytes: cfg.FileMaxUploadBytes,
+		AllowedTypes:   cfg.FileAllowedTypes,
+		Logger:         log,
+	}))
+	dosyaKokunuUyar(cfg, log)
 	// Faz 8: kimlik. Diğer modüllerden bağımsızdır; yalnızca çekirdek havuzunu
 	// ister ve karşılığında koruma middleware'inin ihtiyacı olan doğrulayıcıyı
 	// container'a bırakır.
@@ -288,6 +301,11 @@ func run() error {
 	// sağlayıcılar Start sırasında kaydedilir ve modül Register edilirken kayıt
 	// yalnızca kutudan çıkan sağlayıcıyı içerir.
 	if err := bildirimSaglayicisiniDogrula(c, cfg.NotificationProvider); err != nil {
+		return err
+	}
+	// Dosya sağlayıcısı da aynı sebeple burada denetlenir; bilinmeyen bir ad
+	// açılışı DURDURUR.
+	if err := dosyaSaglayicisiniDogrula(c, cfg.FileProvider); err != nil {
 		return err
 	}
 

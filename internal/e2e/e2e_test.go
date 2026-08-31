@@ -85,6 +85,7 @@ import (
 	"io/fs"
 	"log/slog"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -93,6 +94,7 @@ import (
 	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
 	"golang.org/x/crypto/bcrypt"
 
+	"github.com/bdrtr/gobit/internal/core/config"
 	"github.com/bdrtr/gobit/internal/core/container"
 	"github.com/bdrtr/gobit/internal/core/db"
 	"github.com/bdrtr/gobit/internal/core/eventbus"
@@ -111,6 +113,7 @@ import (
 	cartsvc "github.com/bdrtr/gobit/internal/modules/cart/service"
 	customermod "github.com/bdrtr/gobit/internal/modules/customer"
 	customersvc "github.com/bdrtr/gobit/internal/modules/customer/service"
+	filemod "github.com/bdrtr/gobit/internal/modules/file"
 	fulfillmentmod "github.com/bdrtr/gobit/internal/modules/fulfillment"
 	fulfillmentsvc "github.com/bdrtr/gobit/internal/modules/fulfillment/service"
 	inventorymod "github.com/bdrtr/gobit/internal/modules/inventory"
@@ -412,6 +415,20 @@ var stokLokasyonID string
 // olayDefteri yayımlanmış "order.placed" olaylarının test tarafındaki kaydıdır.
 var olayDefteri = &siparisOlayDefteri{}
 
+// dosyaKoku yüklenen dosyaların yazıldığı kök dizindir (FILE_ROOT karşılığı).
+//
+// GEÇİCİ bir dizindir ve koşu bitince silinir. Üretimde geçici dizin
+// YASAKTIR — yeniden başlatmada sessiz veri kaybı olurdu ve file modülü bu
+// yüzden oraya asla düşmez (bkz. file/local paketi). Testte doğru olan tam
+// tersidir: koşu bittiğinde diskte hiçbir şey kalmamalıdır, çünkü buradaki
+// dosyalar test verisidir ve kalıcı olmaları yalnızca bir sonraki koşuyu
+// kirletirdi.
+//
+// Dizin TestMain'de bir kez kurulur ve tüm testler onu paylaşır; paylaşmak
+// güvenlidir çünkü depo anahtarını sağlayıcı üretir ve iki yükleme aynı adı
+// asla almaz.
+var dosyaKoku string
+
 // TestMain tek bir Postgres konteyneri kaldırır, modülleri ayağa kaldırır ve
 // tüm testleri o zeminin üstünde koşturur.
 func TestMain(m *testing.M) {
@@ -428,6 +445,21 @@ func postgresIleCalistir(m *testing.M) int {
 	slog.SetDefault(slog.New(slog.DiscardHandler))
 
 	ctx := context.Background()
+
+	// Yükleme kökü konteynerden ÖNCE kurulur ve çıkışta silinir; os.Exit
+	// defer'ları atladığı için temizlik ancak bu fonksiyonda güvenlidir
+	// (konteyner ve havuzla aynı gerekçe).
+	var kokErr error
+	if dosyaKoku, kokErr = os.MkdirTemp("", "gobit-e2e-yuklemeler-"); kokErr != nil {
+		fmt.Fprintf(os.Stderr, "yükleme kök dizini oluşturulamadı: %v\n", kokErr)
+
+		return 1
+	}
+	defer func() {
+		if rmErr := os.RemoveAll(dosyaKoku); rmErr != nil {
+			fmt.Fprintf(os.Stderr, "yükleme kök dizini silinemedi: %v\n", rmErr)
+		}
+	}()
 
 	ctr, err := tcpostgres.Run(ctx, postgresImage,
 		tcpostgres.WithDatabase("gobit_e2e"),
@@ -549,6 +581,21 @@ func zeminiKur(ctx context.Context) error {
 	// yerde durur; zincirin geri kalanı üretim kodudur ve kutudan çıkan
 	// sağlayıcı da kayıtta kalır.
 	kayit.Add(notificationmod.New(notificationmod.Options{ProviderID: bildirimCasusuID}))
+	// Dosya. Yüklemenin ürettiği adresin GERÇEKTEN bir ürün görseli olarak
+	// kullanılabildiği ancak burada sınanabilir: zincirin iki ucu iki ayrı
+	// modüldedir (file yükler, product saklar) ve ikisi birbirini import
+	// etmez, yani hiçbir birim testi ikisini aynı anda göremez
+	// (bkz. dosya_test.go).
+	//
+	// Sınır ve izin listesi ÜRETİM VARSAYILANLARIDIR (config sabitleri);
+	// testin kendi değerlerini uydurması, e2e'nin bir gün üretimin
+	// kabul etmediği bir dosyayı kabul ettiğini "kanıtlamasına" yol açardı.
+	// Kök dizin ise zorunlu olarak ayrışır (bkz. [dosyaKoku]).
+	kayit.Add(filemod.New(filemod.Options{
+		Root:           dosyaKoku,
+		MaxUploadBytes: config.DefaultFileMaxUploadBytes,
+		AllowedTypes:   strings.Split(config.DefaultFileAllowedTypes, ","),
+	}))
 	// Faz 8: kimlik.
 	kayit.Add(authmod.New(authmod.Options{
 		JWTSecret: testJWTSecret,

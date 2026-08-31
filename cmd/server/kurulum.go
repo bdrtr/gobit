@@ -26,6 +26,9 @@ import (
 	authapi "github.com/bdrtr/gobit/internal/modules/auth/api"
 	authmodels "github.com/bdrtr/gobit/internal/modules/auth/models"
 	authservice "github.com/bdrtr/gobit/internal/modules/auth/service"
+	"github.com/bdrtr/gobit/internal/modules/file"
+	filelocal "github.com/bdrtr/gobit/internal/modules/file/local"
+	fileservice "github.com/bdrtr/gobit/internal/modules/file/service"
 	"github.com/bdrtr/gobit/internal/modules/notification"
 	notificationservice "github.com/bdrtr/gobit/internal/modules/notification/service"
 	"github.com/bdrtr/gobit/plugins/paymentstripe"
@@ -48,6 +51,10 @@ const codeBootstrapFailed = "admin_bootstrap_failed"
 // codeUnknownNotificationProvider NOTIFICATION_PROVIDER'ın kayıtlı bir
 // sağlayıcıya karşılık gelmediğini bildirir.
 const codeUnknownNotificationProvider = "notification_provider_unknown"
+
+// codeUnknownFileProvider FILE_PROVIDER'ın kayıtlı bir sağlayıcıya karşılık
+// gelmediğini bildirir.
+const codeUnknownFileProvider = "file_provider_unknown"
 
 // openAPIPath üretilen API şemasının sunulduğu yoldur.
 const openAPIPath = "/openapi.json"
@@ -163,6 +170,11 @@ func korumaYigini(
 		// daha yeni kuracaktır. Yol elle yazılmaz, auth modülünün sabitinden
 		// okunur.
 		AdminExempt: []string{authapi.LoginPath},
+		// Yüklenen dosyalar KİMLİKSİZ sunulur (vitrindeki <img> başlık
+		// gönderemez) ama kotasız DEĞİLDİR: her istek bir veritabanı okuması
+		// ve bir disk erişimi yapar. Önek elle yazılmaz, sağlayıcının
+		// sabitinden okunur.
+		OpenPrefixes: []string{filelocal.DefaultURLPrefix},
 	}
 
 	if cfg.GuardBackend == config.BackendRedis {
@@ -364,6 +376,79 @@ func bildirimSaglayicisiniDogrula(c *container.Container, id string) error {
 	}
 
 	return nil
+}
+
+// dosyaSaglayicilari kurulumun dosya sağlayıcı kaydından istediği DAR
+// yüzeydir.
+//
+// Gerekçe [bildirimSaglayicilari] ile birebir aynıdır ve tekrarlanmıyor. İki
+// arayüzün tek bir jenerik tiple birleştirilmesi denenmedi çünkü kazancı
+// yalnızca iki satırlık bir tanımdır; karşılığında container.Resolve çağrısı
+// jenerik bir arayüz tipiyle yazılır ve tip uyuşmazlığı hatasının okunması
+// zorlaşırdı — oysa bu kodun tek işi teşhis edilebilir bir hata üretmek.
+type dosyaSaglayicilari interface {
+	Get(id string) (coreprovider.FileProvider, error)
+	IDs() []string
+}
+
+// Gerçek kaydın bu dar yüzeyi karşıladığı DERLEME zamanında sabitlenir.
+var _ dosyaSaglayicilari = (*fileservice.ProviderRegistry)(nil)
+
+// dosyaSaglayicisiniDogrula seçili dosya sağlayıcısının GERÇEKTEN kayıtlı
+// olduğunu doğrular.
+//
+// Denetimin neden config'te değil burada, ve neden [coreplugin.Registry.Start]
+// SONRASINDA olduğu [bildirimSaglayicisiniDogrula] godoc'unda yazılıdır.
+//
+// # Neden açılış DURUR
+//
+// Bedeli bildirimdekinden FARKLIDIR ve daha erken görünür: bilinmeyen bir ad
+// yok sayılıp varsayılana düşülseydi, kurulum "local" sağlayıcısıyla açılır ve
+// nesne deposuna gittiğini sanan bir kurulum dosyaları YEREL DİSKE yazardı.
+// Kap yeniden başlatıldığında o dosyalar gider; kayıtlar ve ürün görseli
+// adresleri ise yerinde kalır. Yani hata, en pahalı hâliyle — veri kaybı
+// olarak — ortaya çıkardı.
+//
+// Ters yön de aynı derecede kötüdür: kök dizini verilmediği için "local"
+// KAYDEDİLMEMİŞ bir kurulumda (bkz. file.Options.Root) bu denetim, yükleme
+// ucunun her isteği reddedeceğini açılışta söyler.
+func dosyaSaglayicisiniDogrula(c *container.Container, id string) error {
+	kayit, err := container.Resolve[dosyaSaglayicilari](c, file.ProvidersName)
+	if err != nil {
+		return errors.Wrap(err, errors.KindOf(err), codeUnknownFileProvider,
+			"dosya sağlayıcı kaydı %q çözülemedi", file.ProvidersName)
+	}
+
+	if _, err := kayit.Get(id); err != nil {
+		return errors.Wrap(err, errors.KindInvalid, codeUnknownFileProvider,
+			"FILE_PROVIDER=%q kayıtlı bir dosya sağlayıcısı değil (kayıtlı olanlar: %s); "+
+				"eklenti getiriyorsa PLUGINS listesine eklenmiş mi, yerel sağlayıcı için FILE_ROOT verilmiş mi?",
+			id, strings.Join(kayit.IDs(), ", "))
+	}
+
+	return nil
+}
+
+// dosyaKokunuUyar taşınabilir olmayan bir yerel kök dizini için uyarı loglar.
+//
+// Uyarının açılışı DURDURMAMASININ gerekçesi
+// [config.Config.LocalFileRootIsPortable] godoc'undadır. Buradaki tek iş,
+// riskin görünür kalmasıdır: göreli bir kökle çıkılan bir üretim dağıtımı,
+// bu satır olmadan hiçbir iz bırakmaz ve arıza ancak ilk yeniden dağıtımdan
+// sonra — görseller kaybolduğunda — fark edilir.
+//
+// Yerel geliştirmede SUSAR: orada göreli kök doğru olandır ve her açılışta
+// uyarı basmak, gerçek bir uyarıyı gürültüde boğardı.
+func dosyaKokunuUyar(cfg config.Config, log *slog.Logger) {
+	if !cfg.IsShared() || cfg.LocalFileRootIsPortable() {
+		return
+	}
+
+	log.Warn("dosya kök dizini göreli",
+		"kok", cfg.FileRoot,
+		"uyari", "yol sürecin ÇALIŞMA DİZİNİNE göre çözülür; konteynerde kalıcı olmayan katmana düşer "+
+			"ve yeniden dağıtımda yüklenen dosyalar kaybolur (adresler kayıtlarda kalır)",
+		"cozum", "FILE_ROOT olarak bağlanmış bir birimin MUTLAK yolunu verin")
 }
 
 // yoneticiKullanicilari tohum adımının auth modülünden istediği DAR yüzeydir.
