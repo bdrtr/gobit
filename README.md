@@ -386,6 +386,14 @@ Varsayılan modül yolu `github.com/bdrtr/gobit`. Kendi deponuza taşımak için
 make rename-module MODULE=github.com/kullanici/repo
 ```
 
+## Sürüm
+
+Güncel sürüm: **v0.1.0** — Faz 0–9'un tamamı. Değişiklikler için
+[`CHANGELOG.md`](./CHANGELOG.md).
+
+`0.x` boyunca **kırıcı değişiklikler minor sürümlerde gelebilir**: API yüzeyi
+henüz sabitlenmemiştir. Sabitlenme `1.0.0` ile olur.
+
 ## Faz durumu
 
 | Faz | Kapsam | Durum |

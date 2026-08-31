@@ -10,16 +10,6 @@ Sabitlenme `1.0.0` ile olur.
 
 ## [Yayımlanmamış]
 
-### Kırıcı değişiklikler (0.1.0 içinde, yayımlanmadan önce)
-
-- `POST /admin/v1/price-sets/{id}/calculate` → **`GET`**. Uç hiçbir şey
-  yazmıyordu ama metoda dayalı yetki sözlüğü yüzünden `pricing:write`
-  istiyordu; kataloğu yalnızca okuyan bir entegrasyonun fiyat yazabilen bir
-  kimlikle çalışması gerekiyordu. Girdiler sorgu dizesine taşındı
-  (`attr_` önekli kural bağlamı dâhil); eski POST artık `405` döner.
-- `OTEL_METRIC_EXPORT_INTERVAL` → **`METRIC_EXPORT_INTERVAL`** (gerekçe
-  aşağıda).
-
 ## [0.1.0] — 2026-08-31
 
 Planın Faz 0–9 yol haritasının tamamı. Tek binary olarak çalışan, modüller
