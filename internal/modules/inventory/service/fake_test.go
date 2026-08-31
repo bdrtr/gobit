@@ -434,11 +434,22 @@ func (f *fakeStore) seedItem(id, sku string) models.InventoryItem {
 
 // seedLevel sahte depoya bir stok seviyesi koyar.
 func (f *fakeStore) seedLevel(itemID, locationID string, stocked, reserved int64) models.InventoryLevel {
+	return f.seedLevelWithID("invlevel_"+itemID+"_"+locationID, itemID, locationID, stocked, reserved)
+}
+
+// seedLevelWithID sahte depoya kimliği VERİLEN bir stok seviyesi koyar.
+//
+// [fakeStore.ListInventoryLevels] seviyeleri kimliğe göre sıralı döner ve
+// [fakeStore.seedLevel]'ın ürettiği kimlik lokasyon kimliğini içerir; yani iki
+// sıra kendiliğinden birbirini tutar. Sıralamayı sınayan bir test bu fikstürle
+// HİÇ SIRALAMAYAN bir uygulamada da geçerdi. Bu yardımcı, deponun döndürdüğü
+// sırayı beklenen sıradan bilinçli olarak AYIRMAK için vardır.
+func (f *fakeStore) seedLevelWithID(levelID, itemID, locationID string, stocked, reserved int64) models.InventoryLevel {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
 	level := models.InventoryLevel{
-		ID:               "invlevel_" + itemID + "_" + locationID,
+		ID:               levelID,
 		InventoryItemID:  itemID,
 		LocationID:       locationID,
 		StockedQuantity:  stocked,

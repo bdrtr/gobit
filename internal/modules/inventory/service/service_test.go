@@ -74,6 +74,144 @@ func TestAvailableQuantityOlmayanKalemNotFound(t *testing.T) {
 	assert.Equal(t, errors.KindNotFound, errors.KindOf(err))
 }
 
+// TestLocationsWithStockYalnizcaYeterliLokasyonlariDoner eşiği karşılamayan
+// lokasyonun listeden çıktığını doğrular.
+//
+// Fikstür bilinçlidir: İKİ LOKASYONUN FİZİKSEL ADEDİ DE 10'dur, yalnızca
+// rezerve adetleri farklıdır. Rezerveyi düşmeyi unutup stocked_quantity'ye
+// bakan bir uygulama ikisini de döndürür ve bu testi geçemez. locA'nın
+// satılabilir adedi eşiğe TAM eşittir (5); sınır ">" değil ">=" olmalıdır,
+// çünkü Reserve de tam son adedi ayırmaya izin verir.
+func TestLocationsWithStockYalnizcaYeterliLokasyonlariDoner(t *testing.T) {
+	svc, store := yeniServis(t)
+	store.seedItem(itemID, "SKU-1")
+	store.seedLevel(itemID, locA, 10, 5)
+	store.seedLevel(itemID, locB, 10, 6)
+
+	locations, err := svc.LocationsWithStock(context.Background(), itemID, 5)
+
+	require.NoError(t, err)
+	assert.Equal(t, []string{locA}, locations,
+		"locA'da 10-5=5 (yeterli), locB'de 10-6=4 (yetersiz)")
+}
+
+// TestLocationsWithStockRezervasyonMusaitligiDusurur bir rezervasyondan sonra
+// lokasyonun listeden çıktığını doğrular.
+//
+// Asıl kanıt sondaki iki iddiadır: liste ile [service.Service.Reserve] AYNI
+// "satılabilir" tanımını kullanır, dolayısıyla listede olmayan bir lokasyon
+// Reserve'de de Conflict alır. İki tanım ayrışsaydı, aday olarak dönen bir
+// lokasyon rezervasyonda patlar ve saga sebebini bulamazdı.
+func TestLocationsWithStockRezervasyonMusaitligiDusurur(t *testing.T) {
+	ctx := context.Background()
+	svc, store := yeniServis(t)
+	store.seedItem(itemID, "SKU-1")
+	store.seedLevel(itemID, locA, 10, 0)
+
+	locations, err := svc.LocationsWithStock(ctx, itemID, 5)
+	require.NoError(t, err)
+	require.Equal(t, []string{locA}, locations, "rezervasyondan önce aday olmalı")
+
+	_, err = svc.Reserve(ctx, service.ReserveInput{
+		InventoryItemID: itemID, LocationID: locA, Quantity: 6,
+	})
+	require.NoError(t, err)
+
+	locations, err = svc.LocationsWithStock(ctx, itemID, 5)
+	require.NoError(t, err)
+	assert.Empty(t, locations, "rezervasyon satılabilir adedi 4'e düşürdü; 5 için aday kalmadı")
+
+	_, err = svc.Reserve(ctx, service.ReserveInput{
+		InventoryItemID: itemID, LocationID: locA, Quantity: 5,
+	})
+	require.Error(t, err)
+	assert.Equal(t, service.CodeInsufficientStock, errors.CodeOf(err),
+		"liste ile Reserve aynı tanımı kullanmalı")
+}
+
+// TestLocationsWithStockSiralamaDeterministiktir sonucun lokasyon kimliğine
+// göre artan sırada döndüğünü doğrular.
+//
+// Fikstür depo sırasını beklenen sıradan AYIRIR (bkz.
+// [fakeStore.seedLevelWithID]): depo seviyeleri locC, locB, locA sırasında
+// döner, sonuç locA, locB, locC olmalıdır. Sıra bir stok olgusunun sırasıdır;
+// "en çok stoklu önce" gibi bir tercih sırası kargo politikası olurdu ve o
+// karar fulfillment'a aittir — bu yüzden üç lokasyonun adetleri de FARKLIDIR
+// ama sonucu etkilemez.
+func TestLocationsWithStockSiralamaDeterministiktir(t *testing.T) {
+	const locC = "sloc_C"
+
+	svc, store := yeniServis(t)
+	store.seedItem(itemID, "SKU-1")
+	store.seedLevelWithID("invlevel_3", itemID, locA, 10, 0)
+	store.seedLevelWithID("invlevel_1", itemID, locC, 30, 0)
+	store.seedLevelWithID("invlevel_2", itemID, locB, 20, 0)
+
+	locations, err := svc.LocationsWithStock(context.Background(), itemID, 5)
+
+	require.NoError(t, err)
+	assert.Equal(t, []string{locA, locB, locC}, locations)
+	assert.True(t, slices.IsSorted(locations), "sıra lokasyon kimliğine göre artan olmalı")
+}
+
+// TestLocationsWithStockAdaySizsaBosDilim yeterli lokasyon olmadığında BOŞ ve
+// nil OLMAYAN bir dilim döndüğünü doğrular.
+//
+// "Yeterli stok yok" bir arıza değil bir cevaptır: hata dönmek, çağıranın
+// (saga) durumu kendi bağlamında yorumlama hakkını elinden alırdı. nil yerine
+// boş dilim dönmek ise çağıranın "yok" ile "hiç sorulmadı" ayrımı yapmak
+// zorunda kalmamasını sağlar.
+func TestLocationsWithStockAdaySizsaBosDilim(t *testing.T) {
+	ctx := context.Background()
+	svc, store := yeniServis(t)
+	store.seedItem(itemID, "SKU-1")
+
+	locations, err := svc.LocationsWithStock(ctx, itemID, 5)
+	require.NoError(t, err)
+	assert.Empty(t, locations, "hiç seviyesi olmayan kalem için aday yok")
+	assert.NotNil(t, locations, "boş dilim dönmeli, nil değil")
+
+	store.seedLevel(itemID, locA, 10, 8)
+
+	locations, err = svc.LocationsWithStock(ctx, itemID, 5)
+	require.NoError(t, err)
+	assert.Empty(t, locations, "10-8=2 eşiği karşılamıyor")
+	assert.NotNil(t, locations, "boş dilim dönmeli, nil değil")
+}
+
+// TestLocationsWithStockPozitifOlmayanAdetInvalid sıfır ve negatif eşiğin
+// reddedildiğini doğrular.
+//
+// Sessizce tüm lokasyonları döndürmek, Reserve'ün DOĞRUDAN reddedeceği bir
+// adet için aday listelemek olurdu; boş liste dönmek ise çağıranın hatasını
+// "stok yok" gibi gösterip gizlerdi. İkisi de sebebi çağırandan uzaklaştırır.
+func TestLocationsWithStockPozitifOlmayanAdetInvalid(t *testing.T) {
+	ctx := context.Background()
+	svc, store := yeniServis(t)
+	store.seedItem(itemID, "SKU-1")
+	store.seedLevel(itemID, locA, 10, 0)
+
+	for _, adet := range []int64{0, -1} {
+		_, err := svc.LocationsWithStock(ctx, itemID, adet)
+
+		require.Error(t, err)
+		assert.Equal(t, errors.KindInvalid, errors.KindOf(err))
+		assert.Equal(t, service.CodeInvalidInput, errors.CodeOf(err))
+	}
+}
+
+// TestLocationsWithStockOlmayanKalemNotFound olmayan kalem için boş liste
+// değil NotFound dönüldüğünü doğrular; [service.Service.AvailableQuantity] ile
+// aynı ayrım: "stoğu yok" ile "kendisi yok" çağıran için farklı durumlardır.
+func TestLocationsWithStockOlmayanKalemNotFound(t *testing.T) {
+	svc, _ := yeniServis(t)
+
+	_, err := svc.LocationsWithStock(context.Background(), unknown, 1)
+
+	require.Error(t, err)
+	assert.Equal(t, errors.KindNotFound, errors.KindOf(err))
+}
+
 // TestAdjustInventoryNegatifStoguReddeder stoğu negatife düşürecek bir
 // düzeltmenin Conflict ile reddedildiğini ve HİÇBİR ŞEYİN yazılmadığını
 // doğrular.

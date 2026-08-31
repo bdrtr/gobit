@@ -12,6 +12,17 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Eklendi
 
+- **Çoklu depo: stok satır başına, doğru depodan ayrılır.** `complete_cart`
+  saga'sındaki "TEK LOKASYON VARSAYIMI" kaldırıldı — kod bu değişikliği
+  "Faz 7'de" diye vaat ediyordu, Faz 7 bitmiş ve varsayım durmuştu.
+  `CompleteCartInput.LocationID` artık **opsiyoneldir**: dolu ise eski davranış
+  aynen korunur, boş ise lokasyon satır başına seçilir ve bir siparişin
+  satırları farklı depolardan ayrılabilir.
+  İş bölümü bilinçlidir — "hangi depolarda yeterli stok var" bir **stok
+  olgusudur** (`inventory.interop.LocationsWithStock`), "hangisinden
+  gönderelim" bir **kargo kararıdır** (`fulfillment.interop.SelectLocation`).
+  Seçilen depo ayırma anında tükenmişse sıradaki adaya geçilir; bu yalnızca
+  çakışmada olur, diğer hata sınıflarında ısrar edilmez.
 - **`product↔sales_channel` bağı ve vitrin katalog süzmesi.** Planın "önemli
   linkler" listesindeki son eksik bağ kuruldu: publishable anahtarın bağlı
   olduğu kanal artık kataloğu gerçekten belirliyor. Önceden anahtar

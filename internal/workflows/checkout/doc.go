@@ -23,9 +23,9 @@
 //
 // Bu paket internal/modules altındaki HİÇBİR paketi import etmez (ADR 0006).
 // İhtiyaç duyduğu her yüzey burada DAR bir arayüz olarak tanımlıdır ([Carts],
-// [Inventory], [Orders], [Payments], [Links], [Catalog]) ve somut servis
-// container'dan ADLA çözülür (bkz. [FromContainer]). Kural internal/arch'taki
-// TestWorkflowlarModulleriImportEtmez ile denetlenir.
+// [Inventory], [Fulfillment], [Orders], [Payments], [Links], [Catalog]) ve
+// somut servis container'dan ADLA çözülür (bkz. [FromContainer]). Kural
+// internal/arch'taki TestWorkflowlarModulleriImportEtmez ile denetlenir.
 //
 // Arayüzlerin imzaları yalnızca ilkel ve stdlib tipleri kullanır; sebebi Go'nun
 // yapısal uyum kuralıdır (ADR 0001). Bileşik veri (sepetin anlık şekli,
@@ -33,8 +33,8 @@
 //
 // Arayüzler BİLİNÇLİ OLARAK dardır: modül yüzeyinde var olan ama bu akışın
 // kullanmadığı metotlar (inventory.AvailableQuantity, payment.Refund,
-// order.CompleteOrder …) buraya YAZILMAZ. Gerekçeler ilgili arayüzlerin
-// godoc'undadır.
+// order.CompleteOrder, fulfillment.CreateFulfillment …) buraya YAZILMAZ.
+// Gerekçeler ilgili arayüzlerin godoc'undadır.
 //
 // # internal/workflows/cart bağımlılığı
 //
@@ -63,12 +63,13 @@
 //
 // # Adım adım kararlar
 //
-// reserve_inventory — sepetin her satırı için stok ayrılır; telafisi
-// ReleaseReservation'dır ve İDEMPOTENTTİR. Adım kendi içinde bileşiktir: bir
-// satır patlarsa o ana kadar alınmış rezervasyonları KENDİ bırakır, çünkü
-// motor tek denemede patlayan bir adımı telafi etmez (bkz. core/workflow paket
-// yorumu). Kendi temizliği de patlarsa hata [workflow.ErrUncompensated] ile
-// sarılır ve yürütme compensation_failed yazılır.
+// reserve_inventory — sepetin her satırı için önce lokasyon belirlenir, sonra
+// stok ayrılır; telafisi ReleaseReservation'dır ve İDEMPOTENTTİR. Adım kendi
+// içinde bileşiktir: bir satır patlarsa o ana kadar alınmış rezervasyonları
+// KENDİ bırakır, çünkü motor tek denemede patlayan bir adımı telafi etmez
+// (bkz. core/workflow paket yorumu). Kendi temizliği de patlarsa hata
+// [workflow.ErrUncompensated] ile sarılır ve yürütme compensation_failed
+// yazılır. Lokasyonun nasıl belirlendiği için bkz. "Lokasyon".
 //
 // create_order — sipariş, hazırlıkta kurulan görüntüden açılır; telafisi
 // CancelOrder'dır ve İDEMPOTENTTİR. Görüntüye yürütme kimliği idempotency
@@ -84,6 +85,31 @@
 //
 // clear_cart — sepet tamamlanmış işaretlenir ve rezervasyonlar kesinleştirilir.
 // Telafisi yoktur; hem son adımdır hem de ConfirmReservation geri alınamaz.
+//
+// # Lokasyon: stok OLGUSU ile kargo KARARI ayrı yerlerde durur
+//
+// [CompleteCartInput.LocationID] OPSİYONELDİR. Doluysa akış hiçbir seçim yapmaz
+// ve sepetin tüm satırları o lokasyondan ayrılır — bildirilen lokasyon bir
+// tercih değil talimattır. Boşsa lokasyon SATIR BAŞINA belirlenir ve soru ikiye
+// bölünür:
+//
+//  1. "Bu kalemden bu adet hangi depolarda ayrılabilir" bir STOK OLGUSUDUR;
+//     cevabı [Inventory.LocationsWithStock] verir ve bir tercih sırası taşımaz.
+//  2. "Bu adaylardan hangisinden gönderelim" bir KARGO KARARIDIR; cevabı
+//     [Fulfillment.SelectLocation] verir.
+//
+// İkisini tek modülde toplamak, stok sorgusunu kargo politikasına ya da kargo
+// politikasını stok şemasına bağımlı kılardı. Seçimi bu paketin yapması ise
+// ADR 0006'yı çiğnemeden mümkün olurdu ama yine yanlış olurdu: sepet akışının
+// depo politikası hakkında söyleyecek bir sözü yoktur.
+//
+// Sonucu şudur: bir siparişin satırları FARKLI depolardan ayrılabilir. Telafi
+// bundan etkilenmez, çünkü rezervasyonlar KİMLİK başına bırakılır ve hangi
+// depodan alındıkları bırakmayı değiştirmez. Hiçbir lokasyonda yeterli stok
+// bulunamayan bir satır ise ayırmanın patladığı durumla AYNI yoldan raporlanır
+// (errors.Conflict, [CodeReservationFailed]) ve o ana kadar alınmış
+// rezervasyonlar adımın KENDİ temizliğiyle geri bırakılır — çok depolu bir
+// sepette bu, tek depoluya göre daha kolay oluşan bir durumdur.
 //
 // # TAM ÖDEME KURALI
 //

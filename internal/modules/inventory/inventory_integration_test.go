@@ -16,6 +16,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"slices"
 	"sync"
 	"testing"
 
@@ -350,6 +351,146 @@ func TestSatilabilirAdetSQLVeServisAyniSonucuVerir(t *testing.T) {
 
 	assert.Equal(t, int64(12), tekil, "(10-4) + 6 = 12")
 	assert.Equal(t, tekil, toplu[item.ID], "iki hesap yolu aynı sonucu vermeli")
+}
+
+// TestLocationsWithStockYeterliLokasyonlariSiraliDoner aday lokasyon listesini
+// gerçek veritabanı üzerinde doğrular: eşiği karşılamayan lokasyon listede
+// yoktur ve sıra lokasyon kimliğine göre artandır.
+//
+// Fikstür seviyeleri KİMLİK SIRASININ TERSİNE yazar. Sebep budur:
+// ListInventoryLevels satırları created_at'e göre döndürür, yani deponun
+// verdiği sıra beklenen sıranın tam tersidir. Seviyeler kimlik sırasında
+// yazılsaydı iki sıra çakışır ve hiç sıralamayan bir uygulama da bu testi
+// geçerdi.
+func TestLocationsWithStockYeterliLokasyonlariSiraliDoner(t *testing.T) {
+	ctx := context.Background()
+	svc := yeniServis(t)
+
+	item := yeniKalem(ctx, t, svc)
+	ids := []string{
+		yeniLokasyon(ctx, t, svc).ID,
+		yeniLokasyon(ctx, t, svc).ID,
+		yeniLokasyon(ctx, t, svc).ID,
+	}
+	slices.Sort(ids)
+
+	adetler := map[string]int64{ids[0]: 10, ids[1]: 4, ids[2]: 6}
+	for i := len(ids) - 1; i >= 0; i-- {
+		_, err := svc.SetInventoryLevel(ctx, item.ID, ids[i], adetler[ids[i]])
+		require.NoError(t, err)
+	}
+
+	locations, err := svc.LocationsWithStock(ctx, item.ID, 5)
+
+	require.NoError(t, err)
+	assert.Equal(t, []string{ids[0], ids[2]}, locations,
+		"4 adetlik lokasyon eşiği karşılamıyor; kalanlar kimlik sırasında dönmeli")
+	assert.True(t, slices.IsSorted(locations), "sıra deterministik olmalı")
+}
+
+// TestLocationsWithStockRezervasyonSonrasiAdaydanCikar rezervasyonun aday
+// listesini düşürdüğünü ve serbest bırakmanın geri getirdiğini doğrular.
+//
+// Testin çekirdeği ortadaki iki iddiadır: liste ile [service.Service.Reserve]
+// AYNI "satılabilir" tanımını kullanır. Ayrışsalardı, listede görünen bir
+// lokasyon rezervasyonda Conflict alır ve saga adayı olan bir depoda sipariş
+// veremediğini açıklayamazdı.
+func TestLocationsWithStockRezervasyonSonrasiAdaydanCikar(t *testing.T) {
+	ctx := context.Background()
+	svc := yeniServis(t)
+	item, loc := stoklu(ctx, t, svc, 10)
+
+	locations, err := svc.LocationsWithStock(ctx, item.ID, 6)
+	require.NoError(t, err)
+	require.Equal(t, []string{loc.ID}, locations, "rezervasyondan önce aday olmalı")
+
+	res, err := svc.Reserve(ctx, service.ReserveInput{
+		InventoryItemID: item.ID, LocationID: loc.ID, Quantity: 5,
+	})
+	require.NoError(t, err)
+
+	locations, err = svc.LocationsWithStock(ctx, item.ID, 6)
+	require.NoError(t, err)
+	assert.Empty(t, locations, "10-5=5 adet, 6'lık istek için yetmez")
+
+	_, err = svc.Reserve(ctx, service.ReserveInput{
+		InventoryItemID: item.ID, LocationID: loc.ID, Quantity: 6,
+	})
+	require.Error(t, err)
+	assert.Equal(t, errors.KindConflict, errors.KindOf(err),
+		"listede olmayan lokasyon Reserve'de de reddedilmeli")
+
+	locations, err = svc.LocationsWithStock(ctx, item.ID, 5)
+	require.NoError(t, err)
+	assert.Equal(t, []string{loc.ID}, locations, "kalan 5 adet için hâlâ aday")
+
+	require.NoError(t, svc.ReleaseReservation(ctx, res.ID))
+
+	locations, err = svc.LocationsWithStock(ctx, item.ID, 6)
+	require.NoError(t, err)
+	assert.Equal(t, []string{loc.ID}, locations, "serbest bırakma adaylığı geri getirmeli")
+}
+
+// TestLocationsWithStockAdaySizsaBosDilim aday yokken hata değil BOŞ dilim
+// döndüğünü, olmayan kalem içinse NotFound döndüğünü doğrular.
+//
+// "Yeterli stok yok" bir arıza değil bir cevaptır; saga onu kendi bağlamında
+// Conflict'e çevirmeyi seçer. Olmayan kalem ise çağıranın hatasıdır ve boş
+// listeye karışmamalıdır.
+func TestLocationsWithStockAdaySizsaBosDilim(t *testing.T) {
+	ctx := context.Background()
+	svc := yeniServis(t)
+
+	stoksuz := yeniKalem(ctx, t, svc)
+	locations, err := svc.LocationsWithStock(ctx, stoksuz.ID, 1)
+	require.NoError(t, err)
+	assert.Empty(t, locations, "hiç seviyesi olmayan kalem için aday yok")
+	assert.NotNil(t, locations, "boş dilim dönmeli, nil değil")
+
+	item, _ := stoklu(ctx, t, svc, 3)
+	locations, err = svc.LocationsWithStock(ctx, item.ID, 4)
+	require.NoError(t, err)
+	assert.Empty(t, locations, "3 adet 4'lük isteği karşılamaz")
+	assert.NotNil(t, locations, "boş dilim dönmeli, nil değil")
+
+	_, err = svc.LocationsWithStock(ctx, "invitem_YOK", 1)
+	require.Error(t, err)
+	assert.Equal(t, errors.KindNotFound, errors.KindOf(err))
+}
+
+// TestInteropLokasyonYuzeyiAdiylaCozulur modüller arası yüzeyin container'dan
+// SABİT ADIYLA ve tüketicinin yazacağı DAR ARAYÜZLE çözülebildiğini doğrular.
+//
+// İmza bir sözleşmedir ve tüketici bu modülü import edemez (ADR 0006); bir
+// kayma ancak çözüm anında görünür. Test o anı erkene çeker ve yüzeyi gerçek
+// veriyle bir kez çağırarak kablolamanın da doğru olduğunu gösterir.
+func TestInteropLokasyonYuzeyiAdiylaCozulur(t *testing.T) {
+	ctx := context.Background()
+	c := container.New(nil)
+	require.NoError(t, c.Provide("core.db", testPool))
+	require.NoError(t, inventory.New().Register(ctx, c))
+
+	// Tüketicinin kendi paketinde yazacağı dar arayüzün birebir kopyası.
+	type stockLocations interface {
+		LocationsWithStock(ctx context.Context, inventoryItemID string, quantity int64) ([]string, error)
+	}
+
+	// Ad ELDE yazılır; sabiti kullanmak testi totolojiye çevirirdi.
+	yuzey, err := container.Resolve[stockLocations](c, "inventory.interop")
+	require.NoError(t, err, "yüzey sabit adıyla ve dar arayüzle çözülebilmeli")
+	assert.Equal(t, "inventory.interop", inventory.InteropName,
+		"ad değişirse tüketici akışlar yüzeyi bulamaz")
+
+	svc := yeniServis(t)
+	item, loc := stoklu(ctx, t, svc, 7)
+
+	locations, err := yuzey.LocationsWithStock(ctx, item.ID, 7)
+	require.NoError(t, err)
+	assert.Equal(t, []string{loc.ID}, locations, "tam son adet de yeterlidir")
+
+	locations, err = yuzey.LocationsWithStock(ctx, item.ID, 8)
+	require.NoError(t, err)
+	assert.Empty(t, locations)
 }
 
 // TestEszamanliReserveSonAdediTekKazanir eşzamanlılık iddiasının çekirdeğini

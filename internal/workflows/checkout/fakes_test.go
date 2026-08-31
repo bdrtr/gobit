@@ -42,6 +42,17 @@ const (
 	testAmount       = int64(3000)
 )
 
+// Satır başına lokasyon seçimini sınayan testlerin depoları.
+//
+// Üç tanedir çünkü iki depo yetmez: seçilen aday listede ne İLK ne SON sırada
+// olabilmelidir, aksi hâlde "ilk adayı al" ya da "son adayı al" diyen bir
+// uygulama da testi geçerdi.
+const (
+	testLocationEast  = "sloc_east"
+	testLocationNorth = "sloc_north"
+	testLocationWest  = "sloc_west"
+)
+
 // TestMain testlerin varsayılan logger'ını susturur.
 //
 // [FromContainer] kurulum logger'ını slog.Default'tan alır (uygulama açılışta
@@ -201,9 +212,41 @@ func (s *stubTotals) CalculateTotals(ctx context.Context, cartID string) (cartwf
 type stubInventory struct {
 	rec *recorder
 
-	reserveFn func(ctx context.Context, itemID, locationID string, quantity int64, lineItemID string) (string, error)
-	releaseFn func(ctx context.Context, reservationID string) error
-	confirmFn func(ctx context.Context, reservationID string) error
+	locationsFn func(ctx context.Context, itemID string, quantity int64) ([]string, error)
+	reserveFn   func(ctx context.Context, itemID, locationID string, quantity int64, lineItemID string) (string, error)
+	releaseFn   func(ctx context.Context, reservationID string) error
+	confirmFn   func(ctx context.Context, reservationID string) error
+
+	// reserved Reserve çağrılarının ARGÜMANLARINI geliş sırasında tutar.
+	//
+	// recorder yalnızca "hangi çağrı ne zaman" sorusunu yanıtlar; satır başına
+	// lokasyon seçimi ise "hangi satır HANGİ depodan" sorusunu sordurur ve
+	// cevabı yalnızca argümanlarda vardır.
+	reserved []reservedCall
+}
+
+// reservedCall tek bir Reserve çağrısının argümanlarıdır.
+type reservedCall struct {
+	LineItemID string
+	ItemID     string
+	LocationID string
+	Quantity   int64
+}
+
+// LocationsWithStock betiklenen aday lokasyon listesini döner.
+//
+// Varsayılanı YOKTUR: lokasyonu çağıranın bildirdiği akış bu yüzeye HİÇ
+// dokunmamalıdır ve sessiz bir varsayılan, o iddiayı test yeşilken çürütürdü.
+func (s *stubInventory) LocationsWithStock(
+	ctx context.Context,
+	itemID string,
+	quantity int64,
+) ([]string, error) {
+	s.rec.add("inventory:locations:" + itemID)
+	if s.locationsFn == nil {
+		return nil, errUnexpected("LocationsWithStock")
+	}
+	return s.locationsFn(ctx, itemID, quantity)
 }
 
 // Reserve betiklenen ayırma davranışını uygular.
@@ -214,6 +257,12 @@ func (s *stubInventory) Reserve(
 	lineItemID string,
 ) (string, error) {
 	s.rec.add("inventory:reserve:" + lineItemID)
+	s.reserved = append(s.reserved, reservedCall{
+		LineItemID: lineItemID,
+		ItemID:     itemID,
+		LocationID: locationID,
+		Quantity:   quantity,
+	})
 	if s.reserveFn == nil {
 		return "res_" + lineItemID, nil
 	}
@@ -236,6 +285,49 @@ func (s *stubInventory) ConfirmReservation(ctx context.Context, reservationID st
 		return nil
 	}
 	return s.confirmFn(ctx, reservationID)
+}
+
+// stubFulfillment [Fulfillment] arayüzünün testlerde betiklenebilen
+// uygulamasıdır.
+type stubFulfillment struct {
+	rec *recorder
+
+	selectFn func(ctx context.Context, candidateLocationIDs []string) (string, error)
+
+	// offered SelectLocation'a geçen aday listelerini sırayla tutar.
+	//
+	// Adayların stok modülünden GELDİĞİ gibi geçtiği ancak böyle
+	// kanıtlanabilir: checkout listeyi süzse ya da sıralasa seçim yine
+	// "çalışır" görünürdü, oysa o an tercih sırasını checkout belirlemiş
+	// olurdu.
+	offered [][]string
+}
+
+// SelectLocation betiklenen seçim davranışını uygular.
+func (s *stubFulfillment) SelectLocation(ctx context.Context, candidateLocationIDs []string) (string, error) {
+	s.rec.add("fulfillment:select_location")
+	s.offered = append(s.offered, append([]string(nil), candidateLocationIDs...))
+	if s.selectFn == nil {
+		return "", errUnexpected("SelectLocation")
+	}
+	return s.selectFn(ctx, candidateLocationIDs)
+}
+
+// selectGreatestID adaylar arasından kimliği EN BÜYÜK olanı seçen bir kargo
+// yüzeyi davranışıdır.
+//
+// Gerçek modülün politikası (en küçük kimlik) BİLİNÇLİ OLARAK tersine
+// çevrilmiştir: seçimi kargo modülünün yaptığı ancak böyle kanıtlanabilir.
+// Gerçek politikayı taklit eden bir sahteyle, adayların ilkini kendi seçen bir
+// checkout da yeşil kalırdı.
+func selectGreatestID(_ context.Context, candidateLocationIDs []string) (string, error) {
+	greatest := ""
+	for _, candidate := range candidateLocationIDs {
+		if candidate > greatest {
+			greatest = candidate
+		}
+	}
+	return greatest, nil
 }
 
 // stubOrders [Orders] arayüzünün testlerde betiklenebilen uygulamasıdır.
@@ -398,15 +490,16 @@ func (s *stubCatalog) Graph(ctx context.Context, spec query.GraphSpec) ([]query.
 
 // harness bir testin ihtiyaç duyduğu tüm sahteleri ve kurulu akışı taşır.
 type harness struct {
-	rec       *recorder
-	carts     *stubCarts
-	totals    *stubTotals
-	inventory *stubInventory
-	orders    *stubOrders
-	payments  *stubPayments
-	links     *stubLinks
-	catalog   *stubCatalog
-	wf        *Workflows
+	rec         *recorder
+	carts       *stubCarts
+	totals      *stubTotals
+	inventory   *stubInventory
+	fulfillment *stubFulfillment
+	orders      *stubOrders
+	payments    *stubPayments
+	links       *stubLinks
+	catalog     *stubCatalog
+	wf          *Workflows
 }
 
 // newHarness MUTLU YOL'a ayarlanmış sahtelerle bir akış kurar.
@@ -419,26 +512,28 @@ func newHarness(t *testing.T) *harness {
 
 	rec := &recorder{}
 	h := &harness{
-		rec:       rec,
-		carts:     &stubCarts{rec: rec, snapshotFn: defaultSnapshot},
-		totals:    &stubTotals{rec: rec, calculateFn: defaultTotals},
-		inventory: &stubInventory{rec: rec},
-		orders:    &stubOrders{rec: rec},
-		payments:  &stubPayments{rec: rec},
-		links:     &stubLinks{rec: rec, listManyFn: defaultLinks},
-		catalog:   &stubCatalog{rec: rec, graphFn: defaultCatalog},
+		rec:         rec,
+		carts:       &stubCarts{rec: rec, snapshotFn: defaultSnapshot},
+		totals:      &stubTotals{rec: rec, calculateFn: defaultTotals},
+		inventory:   &stubInventory{rec: rec},
+		fulfillment: &stubFulfillment{rec: rec},
+		orders:      &stubOrders{rec: rec},
+		payments:    &stubPayments{rec: rec},
+		links:       &stubLinks{rec: rec, listManyFn: defaultLinks},
+		catalog:     &stubCatalog{rec: rec, graphFn: defaultCatalog},
 	}
 
 	wf, err := New(Deps{
-		Carts:     h.carts,
-		Totals:    h.totals,
-		Inventory: h.inventory,
-		Orders:    h.orders,
-		Payments:  h.payments,
-		Links:     h.links,
-		Catalog:   h.catalog,
-		Executor:  workflow.NewInMemory(slog.New(slog.DiscardHandler)),
-		Logger:    slog.New(slog.DiscardHandler),
+		Carts:       h.carts,
+		Totals:      h.totals,
+		Inventory:   h.inventory,
+		Fulfillment: h.fulfillment,
+		Orders:      h.orders,
+		Payments:    h.payments,
+		Links:       h.links,
+		Catalog:     h.catalog,
+		Executor:    workflow.NewInMemory(slog.New(slog.DiscardHandler)),
+		Logger:      slog.New(slog.DiscardHandler),
 	})
 	require.NoError(t, err)
 
@@ -447,6 +542,9 @@ func newHarness(t *testing.T) *harness {
 }
 
 // input mutlu yolun girdisini döner.
+//
+// Lokasyon DOLUDUR: mutlu yol, alanın opsiyonel hâle gelmesinden önceki
+// davranışı korur ve satır başına seçimi sınayan testler onu tek tek boşaltır.
 func (h *harness) input() CompleteCartInput {
 	return CompleteCartInput{
 		CartID:            testCartID,

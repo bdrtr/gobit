@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"math"
+	"slices"
 	"strings"
 
 	"github.com/bdrtr/gobit/internal/core/errors"
@@ -178,6 +179,65 @@ func (s *Service) AvailableQuantities(ctx context.Context, itemIDs []string) (ma
 	for _, id := range itemIDs {
 		out[id] = found[id]
 	}
+	return out, nil
+}
+
+// LocationsWithStock kalemden EN AZ quantity adet ayrılabilen lokasyonların
+// kimliklerini döner.
+//
+// "Ayrılabilir" tanımı [Service.Reserve] ile AYNIDIR: her seviyenin
+// [models.InventoryLevel.Available] değeri, yani stocked - reserved. Liste,
+// [Service.AvailableQuantity]'nin topladığı seviyelerin ta kendisinden
+// süzülür; ikinci bir "müsait" tanımı yazmak (örneğin yalnızca fiziksel adede
+// bakan ayrı bir sorgu) listede görünen ama Reserve'de errors.Conflict alan
+// lokasyonlar üretirdi.
+//
+// # Sıra bir OLGUDUR, politika değil
+//
+// Sonuç LOKASYON KİMLİĞİNE göre artan sıradadır ve bu sıra DETERMİNİSTİKTİR.
+// "En çok stoklu önce" gibi bir sıra cazip görünür ama yanlıştır: hangi
+// depodan gönderileceği bir KARGO KARARIDIR ve fulfillment'a aittir; bu metot
+// yalnızca bir stok olgusu döner. Sıraya politika saklamak, kararı hiç
+// kimsenin bakmadığı bir yerde — stok modülünün sıralamasında — verirdi.
+//
+// # Sonuç bir ADAY listesidir
+//
+// Liste kilitsiz okunur, dolayısıyla dönüş anında bayatlayabilir: araya giren
+// bir sepet son adedi alabilir. Yeterliliğin TEK yetkilisi, kararını işlem
+// içinde ve satır kilidi altında veren [Service.Reserve]'dir. Bu metot onun
+// yerine geçmez, yalnızca Reserve'ün DENENEBİLECEĞİ lokasyonları daraltır.
+//
+// Hiçbir lokasyon yetmiyorsa BOŞ dilim döner, hata değil: "yeterli stok yok"
+// bir arıza değil bir cevaptır ve çağıran onu kendi bağlamında (saga adımında)
+// Conflict'e çevirmeyi seçer. Kalem yoksa errors.NotFound döner; "stoğu yok"
+// ile "kendisi yok" çağıran için farklı durumlardır.
+//
+// quantity POZİTİF olmalıdır, aksi hâlde errors.Invalid döner. Sıfır ya da
+// negatif bir eşik, Reserve'ün doğrudan reddedeceği bir adet için lokasyon
+// listelemek olurdu: dönen her lokasyon rezervasyonda patlardı. Sessizce boş
+// liste dönmek ise çağıranın hatasını "stok yok" gibi göstererek gizlerdi.
+func (s *Service) LocationsWithStock(ctx context.Context, itemID string, quantity int64) ([]string, error) {
+	if quantity <= 0 {
+		return nil, errors.Invalid(CodeInvalidInput,
+			"istenen adet pozitif olmalı: %d", quantity)
+	}
+
+	// Kalem kimliğinin doğrulaması ve varlık kontrolü ListInventoryLevels'te
+	// yapılır; burada tekrarlamak aynı kuralın iki yere ayrışması olurdu.
+	levels, err := s.ListInventoryLevels(ctx, itemID)
+	if err != nil {
+		return nil, err
+	}
+
+	out := make([]string, 0, len(levels))
+	for _, level := range levels {
+		if level.Available() >= quantity {
+			out = append(out, level.LocationID)
+		}
+	}
+	// Seviyeler (kalem, lokasyon) çiftinde benzersiz olduğu için listede
+	// tekrar oluşmaz; sıralamak tek başına yeterlidir.
+	slices.Sort(out)
 	return out, nil
 }
 

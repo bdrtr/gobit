@@ -177,6 +177,242 @@ func TestIkinciSatirdaYetersizStokIlkiniBirakir(t *testing.T) {
 	assert.Equal(t, 0, h.rec.count("order:place"))
 }
 
+// TestLokasyonDoluysaEskiDavranisKorunur çağıranın bildirdiği lokasyonun bir
+// TALİMAT olduğunu doğrular: seçim yapılmaz, hiçbir modüle sorulmaz ve sepetin
+// TÜM satırları o depodan ayrılır.
+//
+// Geriye uyumluluğun testi budur. Alan opsiyonel hâle geldi ama dolu geldiğinde
+// davranış zerre değişmemelidir; aksi hâlde tek depolu bir kurulumun ya da
+// belirli bir depodan çıkacak bir yönetim siparişinin kararı sessizce
+// çiğnenirdi.
+func TestLokasyonDoluysaEskiDavranisKorunur(t *testing.T) {
+	h := newHarness(t)
+
+	out, err := h.wf.CompleteCart(context.Background(), h.input())
+	require.NoError(t, err)
+	assert.Equal(t, testOrderID, out.OrderID)
+
+	require.Len(t, h.inventory.reserved, 2)
+	assert.Equal(t, testLocationID, h.inventory.reserved[0].LocationID)
+	assert.Equal(t, testLocationID, h.inventory.reserved[1].LocationID)
+
+	// Sahteler betiklenmemiştir, yani çağrılsalardı akış zaten patlardı; iz
+	// yine de sınanır çünkü "hata dönmedi" ile "hiç çağrılmadı" aynı şey
+	// değildir.
+	for _, call := range h.rec.snapshot() {
+		assert.NotContains(t, call, "inventory:locations")
+		assert.NotContains(t, call, "fulfillment:select_location")
+	}
+}
+
+// TestLokasyonBossaSatirBasinaSecilir tek lokasyon varsayımının kalktığını
+// doğrular.
+//
+// Üç iddia birlikte sınanır: adayları STOK modülü verir, seçimi KARGO modülü
+// yapar ve bir siparişin satırları FARKLI depolardan ayrılabilir. Sahtenin
+// politikası gerçek modülünkinin tersidir (bkz. [selectGreatestID]) ve seçilen
+// aday listede ne ilk ne son sıradadır: listeden kendi seçen bir checkout
+// burada düşer.
+func TestLokasyonBossaSatirBasinaSecilir(t *testing.T) {
+	h := newHarness(t)
+	h.inventory.locationsFn = func(_ context.Context, itemID string, _ int64) ([]string, error) {
+		if itemID == testItemA {
+			return []string{testLocationEast, testLocationWest, testLocationNorth}, nil
+		}
+		return []string{testLocationEast}, nil
+	}
+	h.fulfillment.selectFn = selectGreatestID
+
+	in := h.input()
+	in.LocationID = ""
+
+	out, err := h.wf.CompleteCart(context.Background(), in)
+	require.NoError(t, err, "lokasyonsuz istek artık geçerlidir")
+	assert.Equal(t, testOrderID, out.OrderID)
+
+	require.Len(t, h.inventory.reserved, 2)
+	assert.Equal(t, testLocationWest, h.inventory.reserved[0].LocationID,
+		"lokasyonu kargo modülü seçer; checkout adaylardan kendi seçemez")
+	assert.Equal(t, testLocationEast, h.inventory.reserved[1].LocationID)
+	assert.NotEqual(t, h.inventory.reserved[0].LocationID, h.inventory.reserved[1].LocationID,
+		"bir siparişin satırları farklı depolardan ayrılabilmeli")
+
+	// Adaylar stok modülünden GELDİĞİ gibi geçer: checkout onları süzse ya da
+	// sıralasa, tercih sırasını fiilen kendisi belirlemiş olurdu.
+	assert.Equal(t, [][]string{
+		{testLocationEast, testLocationWest, testLocationNorth},
+		{testLocationEast},
+	}, h.fulfillment.offered)
+
+	// Sıra: her satır için önce OLGU sorulur, sonra KARAR alınır, sonra ayrılır.
+	var stokVeKargo []string
+	for _, call := range h.rec.snapshot() {
+		if strings.HasPrefix(call, "inventory:") || strings.HasPrefix(call, "fulfillment:") {
+			stokVeKargo = append(stokVeKargo, call)
+		}
+	}
+	assert.Equal(t, []string{
+		"inventory:locations:" + testItemA,
+		"fulfillment:select_location",
+		"inventory:reserve:" + testLineA,
+		"inventory:locations:" + testItemB,
+		"fulfillment:select_location",
+		"inventory:reserve:" + testLineB,
+		"inventory:confirm:res_" + testLineA,
+		"inventory:confirm:res_" + testLineB,
+	}, stokVeKargo)
+}
+
+// TestIkinciSatirinDeposuYoksaIlkininRezervasyonuBirakilir çok depolu ayırmanın
+// telafisini kanıtlar.
+//
+// Durum tek depolu akışta zor, çok depoluda kolaydır: ilk satır bir depodan
+// ayrılır, ikinci satır hiçbir depoda bulunamaz. Motor tek denemede patlayan
+// adımı telafi etmediği için borç adımındadır ve ilk satırın rezervasyonu
+// BIRAKILMALIDIR. Raporlama da yeni bir sınıf uydurmaz: stok yetersizken ne
+// dönüyorsa (errors.Conflict) o döner.
+func TestIkinciSatirinDeposuYoksaIlkininRezervasyonuBirakilir(t *testing.T) {
+	h := newHarness(t)
+	h.inventory.locationsFn = func(_ context.Context, itemID string, _ int64) ([]string, error) {
+		if itemID == testItemA {
+			return []string{testLocationEast}, nil
+		}
+		return []string{}, nil
+	}
+	h.fulfillment.selectFn = selectGreatestID
+
+	in := h.input()
+	in.LocationID = ""
+
+	_, err := h.wf.CompleteCart(context.Background(), in)
+	require.Error(t, err)
+	assert.True(t, errors.IsConflict(err),
+		"hiçbir depoda yeterli stok yoksa sonuç 'sipariş verilemez'dir: %v", err)
+	assert.True(t, hasCode(err, CodeReservationFailed), "hata: %v", err)
+	assert.Contains(t, err.Error(), testItemB,
+		"mesaj hangi kalemin yerleşemediğini söylemeli")
+
+	assert.Equal(t, 1, h.rec.count("inventory:release:res_"+testLineA),
+		"ilk satırın rezervasyonu adımın KENDİ temizliğiyle bırakılmalı")
+	assert.Equal(t, 1, h.rec.count("fulfillment:select_location"),
+		"aday yokken seçim SORULMAZ: eksik olan gönderilecek depo değil, stoktur")
+	assert.Equal(t, 0, h.rec.count("order:place"))
+	assert.Empty(t, h.orders.canceled)
+}
+
+// TestKargoLokasyonSecemezseStokYetersizGibiRaporlanir kargo modülünün
+// adayları eleyip hiçbirini seçememesinin de AYNI dalda karşılandığını
+// doğrular.
+//
+// Sınıf yine errors.Conflict'tir: eksik olan istekte düzeltilebilecek bir şey
+// değil, dünyanın durumudur.
+func TestKargoLokasyonSecemezseStokYetersizGibiRaporlanir(t *testing.T) {
+	h := newHarness(t)
+	h.inventory.locationsFn = func(_ context.Context, itemID string, _ int64) ([]string, error) {
+		if itemID == testItemA {
+			return []string{testLocationEast}, nil
+		}
+		return []string{testLocationNorth}, nil
+	}
+	h.fulfillment.selectFn = func(_ context.Context, candidates []string) (string, error) {
+		if slices.Contains(candidates, testLocationNorth) {
+			return "", errors.Conflict("fulfillment_no_shipping_location",
+				"gönderi yapılabilecek lokasyon yok")
+		}
+		return selectGreatestID(context.Background(), candidates)
+	}
+
+	in := h.input()
+	in.LocationID = ""
+
+	_, err := h.wf.CompleteCart(context.Background(), in)
+	require.Error(t, err)
+	assert.True(t, errors.IsConflict(err), "hata: %v", err)
+	assert.True(t, hasCode(err, CodeReservationFailed), "hata: %v", err)
+	assert.Contains(t, err.Error(), "seçilemedi",
+		"lokasyon seçilemeden patlayan çağrı mesajda bir depo adı uyduramaz")
+
+	assert.Equal(t, 1, h.rec.count("inventory:release:res_"+testLineA))
+	assert.Equal(t, 0, h.rec.count("inventory:reserve:"+testLineB))
+	assert.Equal(t, 0, h.rec.count("order:place"))
+}
+
+// TestBosLokasyonSecimiKabulEdilmez kargo modülünün hata dönmeden BOŞ kimlik
+// döndürmesinin başarı sayılmadığını doğrular.
+//
+// Kabul edilseydi ayırma boş lokasyonla denenir ve hata, sebebinden bir modül
+// uzakta — stok modülünün girdi doğrulamasında — patlardı.
+func TestBosLokasyonSecimiKabulEdilmez(t *testing.T) {
+	h := newHarness(t)
+	h.inventory.locationsFn = func(_ context.Context, itemID string, _ int64) ([]string, error) {
+		if itemID == testItemA {
+			return []string{testLocationEast}, nil
+		}
+		return []string{testLocationNorth}, nil
+	}
+	h.fulfillment.selectFn = func(_ context.Context, candidates []string) (string, error) {
+		if slices.Contains(candidates, testLocationNorth) {
+			return "", nil
+		}
+		return selectGreatestID(context.Background(), candidates)
+	}
+
+	in := h.input()
+	in.LocationID = ""
+
+	_, err := h.wf.CompleteCart(context.Background(), in)
+	require.Error(t, err)
+	assert.Equal(t, errors.KindInternal, errors.KindOf(err),
+		"sözleşmeyi çiğneyen bir sağlayıcı çağıranın düzeltebileceği bir durum değildir")
+	assert.True(t, hasCode(err, CodeReservationFailed), "hata: %v", err)
+
+	assert.Equal(t, 0, h.rec.count("inventory:reserve:"+testLineB),
+		"boş lokasyonla ayırma DENENMEZ")
+	assert.Equal(t, 1, h.rec.count("inventory:release:res_"+testLineA))
+}
+
+// TestRezervasyonIziSecilenLokasyonuTasir yürütme kaydına yazılan izin, satır
+// başına seçilen depoyu taşıdığını doğrular.
+//
+// Kayıt, elle müdahale eden operatörün tek bilgi kaynağıdır; satırlar farklı
+// depolardan ayrılabildiğinde "hangi depo" sorusunun cevabı orada olmalıdır.
+// Adım DOĞRUDAN çağrılır çünkü sorulan şey saga'nın sonucu değil, adımın
+// yürütme kaydına yazdığı çıktıdır.
+func TestRezervasyonIziSecilenLokasyonuTasir(t *testing.T) {
+	h := newHarness(t)
+	h.inventory.locationsFn = func(_ context.Context, itemID string, _ int64) ([]string, error) {
+		if itemID == testItemA {
+			return []string{testLocationEast, testLocationWest, testLocationNorth}, nil
+		}
+		return []string{testLocationEast}, nil
+	}
+	h.fulfillment.selectFn = selectGreatestID
+
+	in := h.input()
+	in.LocationID = ""
+
+	plan, err := h.wf.prepare(context.Background(), in)
+	require.NoError(t, err)
+
+	step := &reserveInventoryStep{w: h.wf, plan: plan}
+	sc := &workflow.StepContext{Shared: map[string]any{}}
+
+	raw, err := step.Invoke(context.Background(), sc)
+	require.NoError(t, err)
+
+	out, ok := raw.(reserveOutput)
+	require.True(t, ok, "adımın çıktısı reserveOutput olmalı: %T", raw)
+	assert.Equal(t, []reservationRef{
+		{LineItemID: testLineA, ReservationID: "res_" + testLineA, LocationID: testLocationWest},
+		{LineItemID: testLineB, ReservationID: "res_" + testLineB, LocationID: testLocationEast},
+	}, out.Reservations)
+
+	payload, err := json.Marshal(out)
+	require.NoError(t, err)
+	assert.Contains(t, string(payload), `"location_id":"`+testLocationWest+`"`,
+		"seçilen depo kayda YAZILMALI")
+}
+
 // TestSiparisPatlayincaRezervasyonGeriBirakilir sipariş adımının hatasının
 // stoğu geri bıraktığını ve ödemeye hiç geçilmediğini doğrular.
 func TestSiparisPatlayincaRezervasyonGeriBirakilir(t *testing.T) {
@@ -501,10 +737,13 @@ func TestEksikHesapSatiriReddedilir(t *testing.T) {
 func TestGirdiDogrulamasi(t *testing.T) {
 	tests := map[string]func(*CompleteCartInput){
 		"cart_id boş":             func(in *CompleteCartInput) { in.CartID = "" },
-		"location_id boş":         func(in *CompleteCartInput) { in.LocationID = "" },
 		"payment_provider_id boş": func(in *CompleteCartInput) { in.PaymentProviderID = "" },
 		"cart_id boşluklu":        func(in *CompleteCartInput) { in.CartID = " cart_1" },
-		"expected_total negatif":  func(in *CompleteCartInput) { in.ExpectedTotal = -1 },
+		// Lokasyon OPSİYONELDİR ama VERİLDİĞİNDE denetlenir: boş girdi artık
+		// "sen seç" demek olduğu için buradan çıkarıldı, boşluklu kimlik ise
+		// hâlâ reddedilmelidir (bkz. TestLokasyonBossaSatirBasinaSecilir).
+		"location_id boşluklu":   func(in *CompleteCartInput) { in.LocationID = " sloc_1" },
+		"expected_total negatif": func(in *CompleteCartInput) { in.ExpectedTotal = -1 },
 	}
 
 	for name, boz := range tests {
@@ -1159,4 +1398,137 @@ func TestKoleksiyonTutariPlanlaAyrisirsaAdimDuser(t *testing.T) {
 	require.Error(t, err, "koleksiyon tutarı planla ayrışmışsa adım düşmeli")
 	assert.True(t, hasCode(err, CodePaymentUndercaptured), "hata: %v", err)
 	assert.Equal(t, 0, h.rec.count("cart:complete"))
+}
+
+// TestTukenenDepoYerineSonrakiAdayDenenir aday listesi ile ayırma arasındaki
+// YARIŞIN siparişi düşürmediğini doğrular.
+//
+// Adaylar kilitsiz okunur, ayırma kilit altında yapılır: aradaki pencerede
+// seçilen depo tükenmiş olabilir. Tek adayla yetinen bir uygulama siparişin
+// TAMAMINI düşürürdü — üstelik başka bir depoda yeterli stok dururken.
+//
+// Senaryo teorik değildir: seçim deterministiktir, yani eşzamanlı gelen her
+// sipariş AYNI depoyu seçer ve hepsi aynı satırda çarpışır. Deterministik
+// seçim çakışmayı azaltmaz, yoğunlaştırır.
+func TestTukenenDepoYerineSonrakiAdayDenenir(t *testing.T) {
+	h := newHarness(t)
+	h.inventory.locationsFn = func(_ context.Context, _ string, _ int64) ([]string, error) {
+		return []string{testLocationEast, testLocationWest}, nil
+	}
+	h.fulfillment.selectFn = selectGreatestID
+
+	// selectGreatestID önce west'i seçer; o depo tam bu arada tükenmiştir.
+	h.inventory.reserveFn = func(
+		_ context.Context, _, locationID string, _ int64, lineItemID string,
+	) (string, error) {
+		if locationID == testLocationWest {
+			return "", errors.Conflict("inventory_insufficient_stock",
+				"%s deposunda yeterli stok yok", locationID)
+		}
+		return "res_" + lineItemID, nil
+	}
+
+	in := h.input()
+	in.LocationID = ""
+
+	out, err := h.wf.CompleteCart(context.Background(), in)
+	require.NoError(t, err, "başka depoda stok varken sipariş düşmemeli: %v", err)
+	assert.Equal(t, testOrderID, out.OrderID)
+
+	require.Len(t, h.inventory.reserved, 4, "her satır için tükenen depo + geçerli depo denenmeli")
+	assert.Equal(t, testLocationWest, h.inventory.reserved[0].LocationID)
+	assert.Equal(t, testLocationEast, h.inventory.reserved[1].LocationID,
+		"tükenen depodan sonra sıradaki adaya geçilmeli")
+
+	// Tükenen depo ADAY LİSTESİNDEN düşer: ikinci seçim ona tekrar sorulmaz,
+	// yoksa döngü hiç kısalmaz ve sonsuza girerdi.
+	assert.Equal(t, [][]string{
+		{testLocationEast, testLocationWest},
+		{testLocationEast},
+		{testLocationEast, testLocationWest},
+		{testLocationEast},
+	}, h.fulfillment.offered)
+}
+
+// TestGeriDusmeYALNIZCACakismadaOlur ısrarın hangi hatada doğru, hangisinde
+// yanlış olduğunu ayırır.
+//
+// errors.Conflict "bu depoda yeterli stok yok" demektir ve başka bir depoda
+// cevabı farklı olabilir. Erişilemeyen bir veritabanı ise HER depoda aynı
+// cevabı verir; orada ısrar etmek arızayı gizleyip gecikmeyi aday sayısıyla
+// çarpardı.
+func TestGeriDusmeYALNIZCACakismadaOlur(t *testing.T) {
+	h := newHarness(t)
+	h.inventory.locationsFn = func(_ context.Context, _ string, _ int64) ([]string, error) {
+		return []string{testLocationEast, testLocationWest, testLocationNorth}, nil
+	}
+	h.fulfillment.selectFn = selectGreatestID
+	h.inventory.reserveFn = func(
+		_ context.Context, _, _ string, _ int64, _ string,
+	) (string, error) {
+		return "", errors.Unavailable("db_down", "veritabanına ulaşılamadı")
+	}
+
+	in := h.input()
+	in.LocationID = ""
+
+	_, err := h.wf.CompleteCart(context.Background(), in)
+	require.Error(t, err)
+	assert.Equal(t, errors.KindUnavailable, errors.KindOf(err),
+		"sınıf korunmalı, çakışmaya çevrilmemeli: %v", err)
+
+	assert.Len(t, h.inventory.reserved, 1,
+		"çakışma olmayan hatada sonraki adaylar DENENMEMELİ")
+}
+
+// TestTumAdaylarTukenirseSiparisDuser geri düşmenin sınırsız olmadığını ve
+// tükendiğinde davranışın değişmediğini doğrular.
+func TestTumAdaylarTukenirseSiparisDuser(t *testing.T) {
+	h := newHarness(t)
+	h.inventory.locationsFn = func(_ context.Context, _ string, _ int64) ([]string, error) {
+		return []string{testLocationEast, testLocationWest}, nil
+	}
+	h.fulfillment.selectFn = selectGreatestID
+	h.inventory.reserveFn = func(
+		_ context.Context, _, locationID string, _ int64, _ string,
+	) (string, error) {
+		return "", errors.Conflict("inventory_insufficient_stock",
+			"%s deposunda yeterli stok yok", locationID)
+	}
+
+	in := h.input()
+	in.LocationID = ""
+
+	_, err := h.wf.CompleteCart(context.Background(), in)
+	require.Error(t, err)
+	assert.True(t, errors.IsConflict(err), "hata: %v", err)
+	assert.True(t, hasCode(err, CodeReservationFailed), "hata: %v", err)
+
+	assert.Len(t, h.inventory.reserved, 2, "her aday bir kez denenmeli, fazlası değil")
+	assert.Equal(t, 0, h.rec.count("order:place"))
+}
+
+// TestBildirilenLokasyonTukenirseGeriDusulmez talimatın tercih olmadığını
+// doğrular.
+//
+// Çağıran bir lokasyon bildirdiyse başka bir depoya kaymak, onun kararını
+// sessizce değiştirmek olurdu — malın hangi depodan çıkacağı çağıranın
+// bildiği ve başka kararlar (kargo sözleşmesi, gümrük) verdiği bir bilgidir.
+func TestBildirilenLokasyonTukenirseGeriDusulmez(t *testing.T) {
+	h := newHarness(t)
+	h.inventory.reserveFn = func(
+		_ context.Context, _, locationID string, _ int64, _ string,
+	) (string, error) {
+		return "", errors.Conflict("inventory_insufficient_stock",
+			"%s deposunda yeterli stok yok", locationID)
+	}
+
+	// LocationID h.input() içinde DOLUDUR; aday listesi hiç sorulmamalı.
+	_, err := h.wf.CompleteCart(context.Background(), h.input())
+	require.Error(t, err)
+	assert.True(t, errors.IsConflict(err), "hata: %v", err)
+
+	assert.Len(t, h.inventory.reserved, 1, "bildirilen lokasyon tek denemedir")
+	assert.Equal(t, 0, h.rec.count("fulfillment:select_location"),
+		"lokasyon bildirildiyse kargo modülüne hiç sorulmaz")
 }

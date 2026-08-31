@@ -375,12 +375,18 @@ var (
 	cokUlkeliUlkeler = []string{"ES", "PT"}
 )
 
-// stokLokasyonID Faz 6 senaryolarının stoğu ayırdığı TEK lokasyondur.
+// stokLokasyonID senaryoların PAYLAŞTIĞI stok lokasyonudur.
 //
 // Lokasyon TestMain'de bir kez kurulur ve tüm testler onu paylaşır; her test
 // KENDİ stok kalemini oluşturduğu için seviyeler yine testler arasında
-// ayrışmaz. Tek lokasyon aynı zamanda akışın bugünkü varsayımıdır
-// (bkz. checkoutwf.CompleteCartInput.LocationID, "TEK LOKASYON VARSAYIMI").
+// ayrışmaz.
+//
+// Depoyu paylaşan senaryolar lokasyonu akışa BİLDİRİR
+// (checkoutwf.CompleteCartInput.LocationID): alan artık opsiyoneldir ve boş
+// bırakıldığında depo satır başına seçilir, ama bildirildiğinde eski davranış
+// birebir korunur ve bu testlerin sınadığı şey depo seçimi değildir. Çok
+// depolu yolun kendi kanıtı ayrıdır ve depolarını da kendisi kurar
+// (bkz. coklu_depo_test.go).
 var stokLokasyonID string
 
 // olayDefteri yayımlanmış "order.placed" olaylarının test tarafındaki kaydıdır.

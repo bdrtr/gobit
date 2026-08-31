@@ -9,6 +9,21 @@ import "context"
 // region/cart/payment/order modüllerindekiyle aynıdır: yalnızca İLKEL ve
 // stdlib tipleri kullanan bir yüzey yayımlamak. Tüketici kendi dar arayüzünü
 // tanımlar, bu tip onu YAPISAL olarak karşılar ve container'dan adla çözülür.
+//
+// Yüzey BİLİNÇLİ OLARAK dardır ve akışların ihtiyacına göre seçilmiştir:
+// stoğu ayır ([Interop.Reserve]), ayrılanı geri bırak
+// ([Interop.ReleaseReservation]), düşülmüş stoğa çevir
+// ([Interop.ConfirmReservation]), satılabilir toplamı sor
+// ([Interop.AvailableQuantity]) ve yeterli stoğu olan lokasyonları listele
+// ([Interop.LocationsWithStock]). Buraya eklenen her metot bir SÖZLEŞMEDİR:
+// tüketici onu kendi paketinde birebir aynı imzayla yazar ve uyumu derleyici
+// değil, yalnızca testler denetleyebilir.
+//
+// LocationsWithStock yüzeye "hangi depodan gönderelim" sorusunu TAŞIMAZ, o bir
+// kargo kararıdır ve fulfillment'a aittir. Bu yüzey yalnızca stok olgusunu —
+// hangi lokasyonlarda yeterli adet olduğunu — bildirir; kararı verecek olan
+// modül adayları buradan alır. İkisini tek metotta birleştirmek, stok
+// sorgusunu kargo politikasına bağımlı kılardı.
 
 // Interop stok servisini modüller arası ilkel yüzeye çevirir.
 //
@@ -67,4 +82,19 @@ func (i *Interop) ConfirmReservation(ctx context.Context, reservationID string) 
 // AvailableQuantity kalemin tüm lokasyonlardaki kullanılabilir adedini döner.
 func (i *Interop) AvailableQuantity(ctx context.Context, inventoryItemID string) (int64, error) {
 	return i.svc.AvailableQuantity(ctx, inventoryItemID)
+}
+
+// LocationsWithStock kalemden en az quantity adet ayrılabilen lokasyonların
+// kimliklerini artan sırada döner.
+//
+// Dönen sıra bir OLGUNUN sırasıdır, tercih sırası DEĞİLDİR: aday lokasyonlar
+// arasından seçimi yapan fulfillment'tır. Hiçbir lokasyon yetmiyorsa boş dilim
+// döner, hata değil; saga bunu kendi bağlamında Conflict'e çevirir. Ayrıntılı
+// gerekçe için bkz. [Service.LocationsWithStock].
+func (i *Interop) LocationsWithStock(
+	ctx context.Context,
+	inventoryItemID string,
+	quantity int64,
+) ([]string, error) {
+	return i.svc.LocationsWithStock(ctx, inventoryItemID, quantity)
 }

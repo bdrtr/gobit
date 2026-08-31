@@ -240,6 +240,88 @@ func TestInteropGonderiAcVeIptalEt(t *testing.T) {
 	assert.Equal(t, 1, cancel, "sağlayıcıya tek iptal gitmeli")
 }
 
+// TestInteropSelectLocationDeterministik aynı adaylarla yapılan ikinci
+// çağrının aynı lokasyonu döndüğünü ve sonucun adayların GELİŞ SIRASINDAN
+// bağımsız olduğunu kanıtlar.
+//
+// İddia saga içindir: sıraya bağlı bir seçim, yeniden denemede BAŞKA bir
+// depodan ayırır ve ilk denemenin rezervasyonu yetim kalırdı.
+func TestInteropSelectLocationDeterministik(t *testing.T) {
+	t.Parallel()
+
+	kurulum := yeniKurulum(t)
+	interop := service.NewInterop(kurulum.svc)
+
+	ilk, err := interop.SelectLocation(context.Background(),
+		[]string{"sloc_izmir", "sloc_ankara", "sloc_bursa"})
+	require.NoError(t, err)
+
+	ikinci, err := interop.SelectLocation(context.Background(),
+		[]string{"sloc_izmir", "sloc_ankara", "sloc_bursa"})
+	require.NoError(t, err)
+	assert.Equal(t, ilk, ikinci, "aynı adaylar aynı lokasyonu vermeli")
+
+	karisik, err := interop.SelectLocation(context.Background(),
+		[]string{"sloc_bursa", "sloc_izmir", "sloc_ankara"})
+	require.NoError(t, err)
+	assert.Equal(t, ilk, karisik, "seçim adayların sırasına bağlı olmamalı")
+
+	assert.Equal(t, "sloc_ankara", ilk, "kimliği en küçük aday seçilmeli")
+}
+
+// TestInteropSelectLocationTekAdayKendisi tek adaylı listede o adayın
+// döndüğünü kanıtlar.
+func TestInteropSelectLocationTekAdayKendisi(t *testing.T) {
+	t.Parallel()
+
+	kurulum := yeniKurulum(t)
+	interop := service.NewInterop(kurulum.svc)
+
+	secilen, err := interop.SelectLocation(context.Background(), []string{"sloc_tek"})
+	require.NoError(t, err)
+	assert.Equal(t, "sloc_tek", secilen)
+}
+
+// TestInteropSelectLocationBosListeConflict boş aday listesinin SESSİZCE boş
+// dize dönmediğini kanıtlar.
+//
+// Boş dize dönseydi çağıran onunla stok ayırmaya kalkar ve hata, sebebinden
+// bir modül uzakta patlardı. Sınıf Conflict'tir: istekte düzeltilecek bir şey
+// yoktur, hiçbir lokasyonda yeterli stok yoktur.
+func TestInteropSelectLocationBosListeConflict(t *testing.T) {
+	t.Parallel()
+
+	kurulum := yeniKurulum(t)
+	interop := service.NewInterop(kurulum.svc)
+
+	for _, adaylar := range [][]string{nil, {}} {
+		secilen, err := interop.SelectLocation(context.Background(), adaylar)
+		require.Error(t, err)
+		assert.Empty(t, secilen)
+		assert.True(t, errors.IsConflict(err), "hata errors.Conflict olmalı: %v", err)
+		assert.Equal(t, service.CodeNoShippingLocation, errors.CodeOf(err))
+	}
+}
+
+// TestInteropSelectLocationBosAdayReddedilir listedeki boş bir kimliğin
+// seçilmediğini kanıtlar.
+//
+// "Kimliği en küçük aday" kuralı boş dizeyi seçerdi; test o yolun kapalı
+// olduğunu sabitler.
+func TestInteropSelectLocationBosAdayReddedilir(t *testing.T) {
+	t.Parallel()
+
+	kurulum := yeniKurulum(t)
+	interop := service.NewInterop(kurulum.svc)
+
+	secilen, err := interop.SelectLocation(context.Background(),
+		[]string{"sloc_ankara", "   "})
+	require.Error(t, err)
+	assert.Empty(t, secilen)
+	assert.True(t, errors.IsInvalid(err), "hata errors.Invalid olmalı: %v", err)
+	assert.Equal(t, service.CodeInvalidInput, errors.CodeOf(err))
+}
+
 // TestInteropBilinmeyenGonderiIptaliNotFound telafinin var olmayan bir kaydı
 // sessizce yutmadığını kanıtlar.
 func TestInteropBilinmeyenGonderiIptaliNotFound(t *testing.T) {

@@ -2,6 +2,7 @@ package checkout
 
 import (
 	"context"
+	"slices"
 	"time"
 
 	"github.com/bdrtr/gobit/internal/core/errors"
@@ -38,6 +39,15 @@ type reservationRef struct {
 	LineItemID string `json:"line_item_id"`
 	// ReservationID stok modülünün ürettiği rezervasyon kimliğidir.
 	ReservationID string `json:"reservation_id"`
+	// LocationID stoğun AYRILDIĞI lokasyondur.
+	//
+	// Geri bırakmak için gerekmez — telafi yalnızca rezervasyon kimliğini
+	// kullanır — ama kayda YAZILIR: lokasyon satır başına seçilebildiğinden
+	// (bkz. [CompleteCartInput.LocationID]) bir siparişin satırları farklı
+	// depolardan ayrılmış olabilir. Elle müdahale eden operatörün "hangi depo"
+	// sorusunu yürütme kaydından yanıtlayabilmesi gerekir; alan olmasaydı cevap
+	// yalnızca stok modülüne tek tek sorularak bulunurdu.
+	LocationID string `json:"location_id"`
 }
 
 // sharedRefs paylaşılan haritadan rezervasyon izlerini okur.
@@ -245,32 +255,216 @@ func (s *reserveInventoryStep) Name() string { return StepReserveInventory }
 // kabul etmek, listede görünmeyen bir rezervasyonu sonsuza kadar asılı
 // bırakırdı; bu yüzden durum [workflow.ErrUncompensated] ile bildirilir ve o
 // ana kadar alınmış rezervasyonlar yine geri bırakılır.
+//
+// # Lokasyon satır BAŞINA belirlenir
+//
+// Çağıran bir lokasyon bildirmediyse her satırın deposu ayrı ayrı seçilir
+// (bkz. [reserveInventoryStep.locationFor]) ve bir siparişin satırları farklı
+// depolardan ayrılabilir. Seçim ayırmanın hemen ÖNÜNDE yapılır, hazırlıkta
+// değil: adaylar kilitsiz okunan bir olgudur ve seçim ile ayırma arasındaki her
+// milisaniye, listeye giren bir deponun Reserve'e gelindiğinde tükenmiş olma
+// ihtimalidir. Yarış tümüyle kapanmaz — kapatan tek şey Reserve'ün kendi
+// kilididir — ama pencere gereksiz yere büyütülmez.
+//
+// Seçim de bir satırın patlayabileceği yeni bir noktadır ve tıpkı ayırma gibi
+// [reserveInventoryStep.unwind]'a düşer: önceki satırların rezervasyonları
+// geri bırakılır. Çok depolu bir sepette bu durum daha kolay oluşur — ilk satır
+// bir depodan ayrılmışken ikinci satır hiçbir depoda bulunamayabilir.
 func (s *reserveInventoryStep) Invoke(ctx context.Context, sc *workflow.StepContext) (any, error) {
 	refs := make([]reservationRef, 0, len(s.plan.Lines))
 
 	for i := range s.plan.Lines {
 		line := s.plan.Lines[i]
 
-		reservationID, err := s.w.inventory.Reserve(ctx,
-			line.InventoryItemID, s.plan.LocationID, line.Quantity, line.LineItemID)
+		locationID, reservationID, err := s.reserveLine(ctx, line)
 		if err != nil {
-			return nil, s.unwind(ctx, sc, refs, line, err)
+			return nil, s.unwind(ctx, sc, refs, line, locationID, err)
 		}
 		if reservationID == "" {
-			return nil, s.unwind(ctx, sc, refs, line, errors.Join(
+			return nil, s.unwind(ctx, sc, refs, line, locationID, errors.Join(
 				errors.Internal(CodeEmptyIdentifier,
 					"stok modülü %s satırı için BOŞ rezervasyon kimliği döndürdü; ayrılan stok geri bırakılamaz",
 					line.LineItemID),
 				workflow.ErrUncompensated))
 		}
 
-		refs = append(refs, reservationRef{LineItemID: line.LineItemID, ReservationID: reservationID})
+		refs = append(refs, reservationRef{
+			LineItemID:    line.LineItemID,
+			ReservationID: reservationID,
+			LocationID:    locationID,
+		})
 		sc.Shared[sharedReservations] = refs
 	}
 
 	s.w.log.DebugContext(ctx, "stok ayrıldı",
-		"cart_id", s.plan.CartID, "location_id", s.plan.LocationID, "lines", len(refs))
+		"cart_id", s.plan.CartID, "lines", len(refs))
 	return reserveOutput{Reservations: refs}, nil
+}
+
+// locationFor satırın stoğunun ayrılabileceği ADAY lokasyonları döner.
+//
+// Tek bir lokasyon değil LİSTE döner ve bunun sebebi somut: adaylar kilitsiz
+// okunur, ayırma kilit altında yapılır ve aradaki pencerede seçilen depo
+// tükenebilir. Tek lokasyon dönseydi çağıranın geri düşecek yeri kalmaz,
+// sipariş başka depoda stok dururken düşerdi (bkz. [reserveInventoryStep.reserveLine]).
+//
+// # Çağıran bildirdiyse SEÇİM YOKTUR
+//
+// [CompleteCartInput.LocationID] doluysa tek elemanlı bir liste döner ve
+// hiçbir modüle sorulmaz. Bildirilen lokasyon bir tercih değil TALİMATTIR;
+// onu "aday" sayıp kargo modülüne onaylatmak, çağıranın kararını sessizce
+// değiştirebilirdi.
+//
+// # Boşsa adaylar STOK modülünden gelir
+//
+// Hangi depolarda yeterli adet olduğu bir OLGUDUR ve stok modülünün işidir.
+// Hangisinden gönderileceği bir KARARDIR ve kargo modülüne aittir
+// (bkz. [reserveInventoryStep.secim]). Bölünme bilinçlidir: iki yarıyı tek
+// yüzeyde toplamak, stok sorgusunu kargo politikasına ya da kargo politikasını
+// stok şemasına bağımlı kılardı.
+//
+// # Aday yoksa kararı BU paket verir
+//
+// Stok modülü boş liste döner, hata değil (bkz. [Inventory.LocationsWithStock]);
+// "sipariş verilemez" sonucunu çıkaran bu adımdır ve sınıf, Reserve'ün yetersiz
+// stokta döndüğüyle AYNIDIR (errors.Conflict, [CodeReservationFailed]). Boş
+// listeyi kargo modülüne sormak da aynı sınıfta bir hata üretirdi ama yanlış
+// modülü işaret ederdi: eksik olan gönderilecek bir depo değil, ayrılacak
+// STOKTUR ve operatörün mesajda görmesi gereken kalem ile adettir.
+func (s *reserveInventoryStep) locationFor(ctx context.Context, line planLine) ([]string, error) {
+	if s.plan.LocationID != "" {
+		return []string{s.plan.LocationID}, nil
+	}
+
+	candidates, err := s.w.inventory.LocationsWithStock(ctx, line.InventoryItemID, line.Quantity)
+	if err != nil {
+		return nil, err
+	}
+	if len(candidates) == 0 {
+		return nil, errors.Conflict(CodeReservationFailed,
+			"%s kaleminden %d adet ayrılabilecek lokasyon yok", line.InventoryItemID, line.Quantity)
+	}
+
+	return candidates, nil
+}
+
+// reserveLine satırın stoğunu ayırır ve kullanılan lokasyonu döner.
+//
+// # Neden tek adayla yetinmiyoruz
+//
+// Aday listesi KİLİTSİZ okunur, ayırma ise kilit altında yapılır. Aradaki
+// pencerede seçilen deponun stoğu tükenmiş olabilir ve o zaman Reserve
+// errors.Conflict döner. Tek adayla yetinen bir uygulama siparişin TAMAMINI
+// düşürürdü — üstelik BAŞKA bir depoda yeterli stok dururken.
+//
+// Bu yalnızca teorik bir yarış değildir: seçim deterministiktir, yani
+// eşzamanlı gelen her sipariş AYNI depoyu seçer ve hepsi aynı satırda
+// çarpışır. Deterministik seçim çakışmayı azaltmaz, yoğunlaştırır.
+//
+// # Neden bu, adımı yeniden denemek DEĞİLDİR
+//
+// Motorun adım tekrarı bilinçli olarak kapalıdır (bkz. [Workflows.CompleteCart]):
+// Reserve iki kez çağrılırsa iki rezervasyon üretir. Burada öyle bir risk
+// yoktur — geri düşülen çağrı BAŞARISIZ olmuş, yani hiçbir rezervasyon
+// bırakmamıştır. Denenen şey aynı iş değil, aynı işin BAŞKA bir deposudur.
+//
+// # Yalnızca ÇAKIŞMADA geri düşülür
+//
+// errors.Conflict, [Inventory.Reserve] sözleşmesinde "yeterli stok yok"
+// demektir ve başka bir depoda cevabı farklı olabilir. Diğer hata sınıfları
+// (erişilemeyen veritabanı, geçersiz girdi) her depoda AYNI cevabı verir;
+// onlarda ısrar etmek arızayı gizleyip gecikmeyi aday sayısıyla çarpardı.
+//
+// Çağıran bir lokasyon BİLDİRDİYSE aday tektir ve geri düşülecek yer yoktur:
+// bildirilen lokasyon bir tercih değil talimattır.
+func (s *reserveInventoryStep) reserveLine(
+	ctx context.Context, line planLine,
+) (locationID, reservationID string, err error) {
+	kalan, err := s.locationFor(ctx, line)
+	if err != nil {
+		return "", "", err
+	}
+
+	var sonHata error
+
+	for len(kalan) > 0 {
+		secilen, err := s.secim(ctx, line, kalan)
+		if err != nil {
+			return "", "", err
+		}
+
+		reservationID, err := s.w.inventory.Reserve(ctx,
+			line.InventoryItemID, secilen, line.Quantity, line.LineItemID)
+
+		switch {
+		case err == nil:
+			return secilen, reservationID, nil
+		case !errors.IsConflict(err):
+			return secilen, "", err
+		}
+
+		sonHata = err
+		kalan = cikar(kalan, secilen)
+
+		s.w.log.DebugContext(ctx, "depo tükenmiş, sonraki adaya geçiliyor",
+			"cart_id", s.plan.CartID, "line_item_id", line.LineItemID,
+			"location_id", secilen, "kalan_aday", len(kalan))
+	}
+
+	return "", "", sonHata
+}
+
+// secim adaylar arasından lokasyonu seçtirir.
+//
+// Çağıran lokasyon bildirdiyse seçim yoktur ve hiçbir modüle sorulmaz:
+// bildirilen lokasyon bir tercih değil TALİMATTIR; onu "aday" sayıp kargo
+// modülüne onaylatmak, çağıranın kararını sessizce değiştirebilirdi.
+//
+// Aksi hâlde soru İKİYE bölünür: hangi depolarda yeterli stok olduğu bir
+// OLGUDUR (stok modülü, çağrılmış olarak elimizde), hangisinden gönderileceği
+// bir KARARDIR (kargo modülü). Seçimi bu paketin yapması en kötüsü olurdu —
+// sepet akışının depo politikası hakkında söyleyecek bir sözü yoktur.
+//
+// Kargo modülü aday olmayan bir kimlik döndürürse hata errors.Internal'dır:
+// listede olmayan bir depoya ayırmayı denemek, hatayı sebebinden bir modül
+// uzakta patlatırdı ve döngü de asla kısalmayacağı için sonsuza girerdi.
+func (s *reserveInventoryStep) secim(ctx context.Context, line planLine, kalan []string) (string, error) {
+	if s.plan.LocationID != "" {
+		return s.plan.LocationID, nil
+	}
+
+	secilen, err := s.w.fulfillment.SelectLocation(ctx, kalan)
+	if err != nil {
+		return "", err
+	}
+	if secilen == "" {
+		return "", errors.Internal(CodeReservationFailed,
+			"kargo modülü %d aday arasından BOŞ lokasyon kimliği seçti (kalem %s)",
+			len(kalan), line.InventoryItemID)
+	}
+	if !slices.Contains(kalan, secilen) {
+		return "", errors.Internal(CodeReservationFailed,
+			"kargo modülü aday olmayan bir lokasyon seçti: %s (kalem %s)",
+			secilen, line.InventoryItemID)
+	}
+
+	return secilen, nil
+}
+
+// cikar bir lokasyonu aday listesinden düşürür.
+//
+// Yeni dilim üretir; çağıranın (stok modülünün) döndürdüğü dilimi yerinde
+// değiştirmek, sahibi olmadığımız bir veriyi bozmak olurdu.
+func cikar(kalan []string, secilen string) []string {
+	kalanYeni := make([]string, 0, len(kalan))
+
+	for _, aday := range kalan {
+		if aday != secilen {
+			kalanYeni = append(kalanYeni, aday)
+		}
+	}
+
+	return kalanYeni
 }
 
 // unwind yarıda kalan ayırmanın kendi temizliğini yapar ve nihai hatayı üretir.
@@ -279,16 +473,27 @@ func (s *reserveInventoryStep) Invoke(ctx context.Context, sc *workflow.StepCont
 // (bkz. [retryCleanup]) ve her denemede yalnızca KALAN rezervasyonlara
 // dokunulur: bırakılmış bir rezervasyonu yeniden bırakmak gereksizdir ve
 // listeyi budamak, hangi kimliğin gerçekten asılı kaldığını görünür tutar.
+//
+// locationID satırın deposudur ve LOKASYON SEÇİLEMEDEN patlayan bir çağrıda
+// boştur; mesaj o hâlde "seçilemedi" yazar. Planın lokasyonunu yazmak artık
+// yanlış olurdu: alan opsiyoneldir ve satır başına seçim yapılan bir akışta
+// boş bir alanı mesaja koymak, operatöre "boş lokasyona ayırmayı denedik"
+// dedirtirdi.
 func (s *reserveInventoryStep) unwind(
 	ctx context.Context,
 	sc *workflow.StepContext,
 	refs []reservationRef,
 	line planLine,
+	locationID string,
 	cause error,
 ) error {
+	location := locationID
+	if location == "" {
+		location = "seçilemedi"
+	}
 	failure := errors.Wrap(cause, errors.KindOf(cause), CodeReservationFailed,
 		"%s satırı için stok ayrılamadı (kalem %s, lokasyon %s, adet %d)",
-		line.LineItemID, line.InventoryItemID, s.plan.LocationID, line.Quantity)
+		line.LineItemID, line.InventoryItemID, location, line.Quantity)
 	if len(refs) == 0 {
 		return failure
 	}

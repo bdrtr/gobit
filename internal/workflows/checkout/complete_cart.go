@@ -56,21 +56,34 @@ const SagaTimeout = 2 * time.Minute
 type CompleteCartInput struct {
 	// CartID tamamlanacak sepettir; ZORUNLUDUR.
 	CartID string
-	// LocationID stoğun ayrılacağı stok lokasyonudur; ZORUNLUDUR.
+	// LocationID stoğun ayrılacağı stok lokasyonudur; OPSİYONELDİR.
 	//
-	// # TEK LOKASYON VARSAYIMI — Faz 7'de değişecektir
+	// # DOLUYSA: tüm satırlar o lokasyondan ayrılır
 	//
-	// Sepetin TÜM satırları aynı lokasyondan ayrılır ve lokasyonu bu akış
-	// SEÇMEZ, çağıran bildirir. İki gerekçesi vardır: (1) hangi depodan
-	// gönderileceği bir FULFILLMENT kararıdır ve kuralları (kargo bölgesi, satış
-	// kanalı, stoğun dağılımı) plan Faz 7'de fulfillment modülüyle gelir;
-	// (2) stok modülünün modüller arası yüzeyi lokasyon LİSTELEMEZ, yani bu
-	// paketin "ilk lokasyonu" seçmesi teknik olarak da mümkün değildir ve
-	// mümkün olsaydı bile sıralama tesadüfüne bağlı bir depo seçimi olurdu.
+	// Akış hiçbir seçim yapmaz ve hiçbir modüle sormaz. Yol korunmuştur çünkü
+	// bildirilen lokasyon bir tercih değil TALİMATTIR: belirli bir depodan
+	// çıkacak bir yönetim siparişi ya da tek depolu bir kurulum, seçimin hiç
+	// yapılmamasını ister.
 	//
-	// Faz 7 geldiğinde bu alan opsiyonel hâle gelebilir ve boş bırakıldığında
-	// lokasyonu fulfillment seçer; o gün geldiğinde satır BAŞINA farklı
-	// lokasyon da gerekebilir ve [planLine] o yüzden kendi kimliklerini taşır.
+	// # BOŞSA: lokasyon SATIR BAŞINA seçilir
+	//
+	// Her satır için önce stok modülünden o kalemden yeterli adet ayrılabilen
+	// lokasyonlar istenir ([Inventory.LocationsWithStock]), sonra adaylar
+	// arasından seçimi kargo modülü yapar ([Fulfillment.SelectLocation]) ve
+	// rezervasyon SEÇİLEN lokasyonda açılır. Bir siparişin satırları bu yüzden
+	// FARKLI depolardan ayrılabilir; kimliklerini satır başına taşıyan
+	// [planLine] bunu zaten mümkün kılıyordu.
+	//
+	// İş bölümü, bu alanın eski godoc'unun saydığı iki gerekçeyi tek tek
+	// karşılar: (1) hangi depodan gönderileceği bir FULFILLMENT kararıdır ve
+	// kararı bu paket vermez, kargo modülüne SORAR; (2) stok modülünün yüzeyi
+	// artık lokasyon LİSTELER, yani "ilk lokasyonu" sıralama tesadüfüne bakarak
+	// seçmek zorunda kalmayız — gelen liste bir olgudur, tercih sırası değil.
+	//
+	// Hiçbir lokasyonda yeterli stok yoksa akış, ayırmanın patladığı durumla
+	// AYNI şekilde raporlar (errors.Conflict, [CodeReservationFailed]):
+	// çağıranın gördüğü şey yine "sipariş verilemez"dir ve o ana kadar alınmış
+	// rezervasyonlar geri bırakılır.
 	LocationID string
 	// PaymentProviderID ödemenin açılacağı sağlayıcıdır; ZORUNLUDUR.
 	//
@@ -266,8 +279,14 @@ func (in *CompleteCartInput) normalize() error {
 	if err := requireID("cart_id", in.CartID, MaxCartIDLen); err != nil {
 		return err
 	}
-	if err := requireID("location_id", in.LocationID, maxIDLen); err != nil {
-		return err
+	// Lokasyon OPSİYONELDİR (bkz. [CompleteCartInput.LocationID]) ve boş değer
+	// "sen seç" demektir; dolu olduğunda denetim aynen uygulanır. Boşluklu ya
+	// da aşırı uzun bir kimliği kabul etmek, hatayı sebebinden bir modül uzakta
+	// — stok modülünün girdi doğrulamasında — patlatırdı.
+	if in.LocationID != "" {
+		if err := requireID("location_id", in.LocationID, maxIDLen); err != nil {
+			return err
+		}
 	}
 	if err := requireID("payment_provider_id", in.PaymentProviderID, maxIDLen); err != nil {
 		return err

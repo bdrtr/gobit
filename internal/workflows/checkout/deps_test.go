@@ -75,6 +75,7 @@ func provideCheckout(t *testing.T, c *container.Container, h *harness) {
 
 	require.NoError(t, c.Provide(ServiceCart, h.carts))
 	require.NoError(t, c.Provide(ServiceInventory, h.inventory))
+	require.NoError(t, c.Provide(ServiceFulfillment, h.fulfillment))
 	require.NoError(t, c.Provide(ServiceOrder, h.orders))
 	require.NoError(t, c.Provide(ServicePayment, h.payments))
 	require.NoError(t, c.Provide(ServiceLink, h.links))
@@ -145,6 +146,7 @@ func TestFromContainerUyumsuzTipiBildirir(t *testing.T) {
 
 	require.NoError(t, c.Provide(ServiceCart, h.carts))
 	require.NoError(t, c.Provide(ServiceInventory, h.inventory))
+	require.NoError(t, c.Provide(ServiceFulfillment, h.fulfillment))
 	// "order.interop" adına [Orders] yüzeyini KARŞILAMAYAN bir değer konur.
 	require.NoError(t, c.Provide(ServiceOrder, h.links))
 	require.NoError(t, c.Provide(ServicePayment, h.payments))
@@ -185,26 +187,28 @@ func TestFromContainerContainersizReddedilir(t *testing.T) {
 func TestNewEksikBagimliligiReddeder(t *testing.T) {
 	full := func(h *harness) Deps {
 		return Deps{
-			Carts:     h.carts,
-			Totals:    h.totals,
-			Inventory: h.inventory,
-			Orders:    h.orders,
-			Payments:  h.payments,
-			Links:     h.links,
-			Catalog:   h.catalog,
-			Executor:  workflow.NewInMemory(slog.New(slog.DiscardHandler)),
+			Carts:       h.carts,
+			Totals:      h.totals,
+			Inventory:   h.inventory,
+			Fulfillment: h.fulfillment,
+			Orders:      h.orders,
+			Payments:    h.payments,
+			Links:       h.links,
+			Catalog:     h.catalog,
+			Executor:    workflow.NewInMemory(slog.New(slog.DiscardHandler)),
 		}
 	}
 
 	tests := map[string]func(*Deps){
-		ServiceCart:       func(d *Deps) { d.Carts = nil },
-		serviceCartTotals: func(d *Deps) { d.Totals = nil },
-		ServiceInventory:  func(d *Deps) { d.Inventory = nil },
-		ServiceOrder:      func(d *Deps) { d.Orders = nil },
-		ServicePayment:    func(d *Deps) { d.Payments = nil },
-		ServiceLink:       func(d *Deps) { d.Links = nil },
-		ServiceQuery:      func(d *Deps) { d.Catalog = nil },
-		ServiceWorkflow:   func(d *Deps) { d.Executor = nil },
+		ServiceCart:        func(d *Deps) { d.Carts = nil },
+		serviceCartTotals:  func(d *Deps) { d.Totals = nil },
+		ServiceInventory:   func(d *Deps) { d.Inventory = nil },
+		ServiceFulfillment: func(d *Deps) { d.Fulfillment = nil },
+		ServiceOrder:       func(d *Deps) { d.Orders = nil },
+		ServicePayment:     func(d *Deps) { d.Payments = nil },
+		ServiceLink:        func(d *Deps) { d.Links = nil },
+		ServiceQuery:       func(d *Deps) { d.Catalog = nil },
+		ServiceWorkflow:    func(d *Deps) { d.Executor = nil },
 	}
 
 	for name, drop := range tests {
@@ -227,14 +231,15 @@ func TestNewLoggersizKurulabilir(t *testing.T) {
 	h := newHarness(t)
 
 	wf, err := New(Deps{
-		Carts:     h.carts,
-		Totals:    h.totals,
-		Inventory: h.inventory,
-		Orders:    h.orders,
-		Payments:  h.payments,
-		Links:     h.links,
-		Catalog:   h.catalog,
-		Executor:  workflow.NewInMemory(slog.New(slog.DiscardHandler)),
+		Carts:       h.carts,
+		Totals:      h.totals,
+		Inventory:   h.inventory,
+		Fulfillment: h.fulfillment,
+		Orders:      h.orders,
+		Payments:    h.payments,
+		Links:       h.links,
+		Catalog:     h.catalog,
+		Executor:    workflow.NewInMemory(slog.New(slog.DiscardHandler)),
 	})
 	require.NoError(t, err)
 

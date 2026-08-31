@@ -23,6 +23,12 @@ const (
 	ServiceOrder = "order.interop"
 	// ServicePayment ödeme modülünün modüller arası ilkel yüzeyidir.
 	ServicePayment = "payment.interop"
+	// ServiceFulfillment kargo modülünün modüller arası ilkel yüzeyidir.
+	//
+	// Ad, fulfillment modülünün KENDİ kablolamasından okunmuştur (modülün
+	// InteropName sabiti); tahmin edilmiş bir ad ancak çözüm anında, kurulum
+	// hatası olarak görünürdü.
+	ServiceFulfillment = "fulfillment.interop"
 	// ServiceLink çekirdeğin Module Links servisidir.
 	ServiceLink = "core.link"
 	// ServiceQuery çekirdeğin cross-module okuma katmanıdır.
@@ -170,7 +176,29 @@ type CartTotals interface {
 // yaptığı denetimin yarışa açık bir kopyasıdır. Okuma ile ayırma arasında
 // başka bir sepet son adedi alabilir; o hâlde ön kontrol yalnızca hatanın
 // yerini değiştirir, kendisini engellemez.
+//
+// [Inventory.LocationsWithStock] o yasağın istisnası DEĞİLDİR, çünkü başka bir
+// soru sorar: "yeterli mi" sorusunun tek yetkilisi hâlâ Reserve'dür, listenin
+// yanıtladığı soru "NEREDE" sorusudur. Cevabı olmadan bu akış tek bir depo adı
+// bile üretemez ve lokasyonu çağıranın bildirmesi ZORUNLU kalırdı
+// (bkz. [CompleteCartInput.LocationID]).
 type Inventory interface {
+	// LocationsWithStock kalemden en az quantity adet AYRILABİLEN lokasyonların
+	// kimliklerini döner.
+	//
+	// Dönen şey bir ADAY listesidir, güvence değil: liste kilitsiz okunur ve
+	// iki çağrı arasında son adedi başka bir sepet alabilir. O durumda hata
+	// bugünkü yolla — Reserve'ün errors.Conflict'i ile — raporlanır, yani liste
+	// hiçbir denetimi devralmaz.
+	//
+	// Hiçbir lokasyon yetmiyorsa boş dilim döner, HATA DEĞİL: "sipariş
+	// verilemez" bir stok modülü kararı değildir ve sonucu bu paket çıkarır
+	// (bkz. [reserveInventoryStep.locationFor]).
+	//
+	// Sıra deterministiktir ama TERCİH sırası değildir; adaylar arasından
+	// seçimi [Fulfillment.SelectLocation] yapar.
+	LocationsWithStock(ctx context.Context, inventoryItemID string, quantity int64) ([]string, error)
+
 	// Reserve stoğu ayırır ve rezervasyon kimliğini döner.
 	//
 	// Yeterli stok yoksa errors.Conflict döner ve saga bunu "sipariş
@@ -190,6 +218,36 @@ type Inventory interface {
 	// ConfirmReservation rezervasyonu düşülmüş stoğa çevirir. Bu noktadan
 	// sonra stok geri bırakılamaz; iade ayrı bir akıştır.
 	ConfirmReservation(ctx context.Context, reservationID string) error
+}
+
+// Fulfillment kargo modülünün ("fulfillment.interop") bu paketçe kullanılan
+// yüzeyidir.
+//
+// Yüzey TEK metotludur ve bu bilinçlidir: bu akış gönderi AÇMAZ. Gönderi,
+// ödemesi alınmış bir siparişin ardından başlayan ayrı bir iştir; onu saga'ya
+// eklemek, telafisi kargo firmasına verilmiş bir çağrıyı pivot'un ötesine
+// taşımak olurdu (bkz. paket yorumu, "Dönüşü olmayan nokta").
+//
+// Buraya sorulan tek soru şudur: satırın stoğu HANGİ depodan ayrılacak.
+// Sorunun cevabı bir KARGO kararıdır (kargo bölgesi, taşıyıcının kapsama
+// alanı, teslim süresi), oysa "hangi depolarda yeterli stok var" bir STOK
+// OLGUSUDUR ve [Inventory.LocationsWithStock]'tan gelir. İkisini tek yüzeyde
+// toplamak, stok sorgusunu kargo politikasına ya da kargo politikasını stok
+// şemasına bağımlı kılardı.
+type Fulfillment interface {
+	// SelectLocation adaylar arasından gönderinin çıkacağı lokasyonu seçer.
+	//
+	// Seçim DETERMİNİSTİKTİR: aynı adaylarla ikinci çağrı aynı lokasyonu döner
+	// ve sonuç adayların GELİŞ SIRASINDAN bağımsızdır. Saga'nın yeniden
+	// denenmesi bu yüzden başka bir depodan ayırmaz; aksi hâlde ilk denemenin
+	// rezervasyonu yetim kalırdı.
+	//
+	// Aday listesi bu paket tarafından BOŞ verilmez
+	// (bkz. [reserveInventoryStep.locationFor]); verilirse modül
+	// errors.Conflict döner. Modülün adayları elemesi de mümkündür ve hiçbiri
+	// kalmazsa hata yine errors.Conflict'tir: çağıran onu yetersiz stokla AYNI
+	// dalda ("sipariş verilemez") karşılar.
+	SelectLocation(ctx context.Context, candidateLocationIDs []string) (locationID string, err error)
 }
 
 // Orders sipariş modülünün ("order.interop") bu paketçe kullanılan yüzeyidir.
@@ -289,6 +347,13 @@ type Deps struct {
 	Totals CartTotals
 	// Inventory stok yüzeyidir; zorunludur.
 	Inventory Inventory
+	// Fulfillment kargo yüzeyidir; zorunludur.
+	//
+	// Lokasyonu çağıranın bildirdiği isteklerde hiç çağrılmaz ama yine de
+	// ZORUNLUDUR: bağımlılık KURULUMDA denetlenmezse, yanlış kablolanmış bir
+	// kurulum eksikliğini ancak lokasyonsuz ilk istekte — yani müşterinin ödeme
+	// sayfasında — gösterirdi.
+	Fulfillment Fulfillment
 	// Orders sipariş yüzeyidir; zorunludur.
 	Orders Orders
 	// Payments ödeme yüzeyidir; zorunludur.
@@ -310,15 +375,16 @@ type Deps struct {
 // Workflows sipariş tamamlama akışını yürüten tiptir. Eşzamanlı kullanıma
 // güvenlidir.
 type Workflows struct {
-	carts     Carts
-	totals    CartTotals
-	inventory Inventory
-	orders    Orders
-	payments  Payments
-	links     Links
-	catalog   Catalog
-	executor  workflow.Executor
-	log       *slog.Logger
+	carts       Carts
+	totals      CartTotals
+	inventory   Inventory
+	fulfillment Fulfillment
+	orders      Orders
+	payments    Payments
+	links       Links
+	catalog     Catalog
+	executor    workflow.Executor
+	log         *slog.Logger
 }
 
 // New verilen bağımlılıklarla akışı kurar.
@@ -334,6 +400,7 @@ func New(deps Deps) (*Workflows, error) {
 		{ServiceCart, deps.Carts == nil},
 		{serviceCartTotals, deps.Totals == nil},
 		{ServiceInventory, deps.Inventory == nil},
+		{ServiceFulfillment, deps.Fulfillment == nil},
 		{ServiceOrder, deps.Orders == nil},
 		{ServicePayment, deps.Payments == nil},
 		{ServiceLink, deps.Links == nil},
@@ -351,15 +418,16 @@ func New(deps Deps) (*Workflows, error) {
 		log = slog.New(slog.DiscardHandler)
 	}
 	return &Workflows{
-		carts:     deps.Carts,
-		totals:    deps.Totals,
-		inventory: deps.Inventory,
-		orders:    deps.Orders,
-		payments:  deps.Payments,
-		links:     deps.Links,
-		catalog:   deps.Catalog,
-		executor:  deps.Executor,
-		log:       log,
+		carts:       deps.Carts,
+		totals:      deps.Totals,
+		inventory:   deps.Inventory,
+		fulfillment: deps.Fulfillment,
+		orders:      deps.Orders,
+		payments:    deps.Payments,
+		links:       deps.Links,
+		catalog:     deps.Catalog,
+		executor:    deps.Executor,
+		log:         log,
 	}, nil
 }
 
@@ -395,6 +463,10 @@ func FromContainer(c *container.Container) (*Workflows, error) {
 	if err != nil {
 		return nil, err
 	}
+	fulfillment, err := resolve[Fulfillment](c, ServiceFulfillment)
+	if err != nil {
+		return nil, err
+	}
 	orders, err := resolve[Orders](c, ServiceOrder)
 	if err != nil {
 		return nil, err
@@ -423,14 +495,15 @@ func FromContainer(c *container.Container) (*Workflows, error) {
 	}
 
 	return New(Deps{
-		Carts:     carts,
-		Totals:    totals,
-		Inventory: inventory,
-		Orders:    orders,
-		Payments:  payments,
-		Links:     links,
-		Catalog:   catalog,
-		Executor:  executor,
+		Carts:       carts,
+		Totals:      totals,
+		Inventory:   inventory,
+		Fulfillment: fulfillment,
+		Orders:      orders,
+		Payments:    payments,
+		Links:       links,
+		Catalog:     catalog,
+		Executor:    executor,
 		// Uygulama açılışta slog.SetDefault ile logger'ı kurar; akış ayrı bir
 		// logger kaydı aramaz.
 		Logger: slog.Default().With("workflow", WorkflowName),

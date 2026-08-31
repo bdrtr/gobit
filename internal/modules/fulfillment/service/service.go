@@ -82,6 +82,9 @@ const (
 	// CodeProviderContract sağlayıcının sözleşme dışı bir yanıt döndüğünü
 	// bildirir; normal işleyişte oluşmaz.
 	CodeProviderContract = "fulfillment_provider_contract_violation"
+	// CodeNoShippingLocation gönderinin çıkabileceği bir lokasyon kalmadığını
+	// bildirir (bkz. [Service.SelectLocation]).
+	CodeNoShippingLocation = "fulfillment_no_shipping_location"
 	// CodeNotReady servisin eksik bağımlılıkla kurulduğunu bildirir.
 	CodeNotReady = "fulfillment_service_not_ready"
 )

@@ -87,7 +87,13 @@ type checkoutPlan struct {
 	CurrencyCode string `json:"currency_code"`
 	// Revision hesabın ve anlık görüntünün ORTAK şekil sayacıdır.
 	Revision int64 `json:"revision"`
-	// LocationID stoğun ayrılacağı lokasyondur.
+	// LocationID çağıranın BİLDİRDİĞİ stok lokasyonudur; boş olabilir.
+	//
+	// Boşsa lokasyon satır başına ve saga sırasında seçilir
+	// (bkz. [reserveInventoryStep.locationFor]). Seçimin sonucu buraya
+	// YAZILMAZ: plan saga'nın değişmez girdisidir ve adımlar onu değiştirmez;
+	// hangi satırın hangi depodan ayrıldığı rezervasyon izine yazılır
+	// (bkz. [reservationRef]).
 	LocationID string `json:"location_id"`
 	// PaymentProviderID ödemenin açılacağı sağlayıcıdır.
 	PaymentProviderID string `json:"payment_provider_id"`

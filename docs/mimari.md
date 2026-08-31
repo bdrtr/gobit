@@ -188,6 +188,15 @@ bir kaydın davranışıdır.
 `internal/workflows` de modülleri import etmez ([ADR 0006](adr/0006-workflow-modul-erisimi.md));
 aynı dar arayüz + adla çözüm kuralı burada da geçerlidir.
 
+**Çok depolu ayırma** sagaya sonradan eklendi ve seam'i iki modüle bölünmüştür:
+stok "hangi depolarda yeterli adet var" olgusunu, fulfillment "hangisinden
+gönderelim" kararını verir. Saga hiçbirini kendi vermez — sepet akışının depo
+politikası hakkında söyleyecek bir sözü yoktur. Aday listesi kilitsiz okunduğu
+için seçilen depo ayırma anında tükenmiş olabilir; o durumda sıradaki adaya
+geçilir. Bu, adımı yeniden denemek DEĞİLDİR (o kapalıdır, çünkü `Reserve`'ün
+tekrarı ikinci bir rezervasyon üretir) — başarısız bir çağrı hiçbir rezervasyon
+bırakmamıştır.
+
 **Pivot adımlar** ayrıca belgelenir. `capture_payment` bir pivottur: tahsilat
 denendikten sonra geri alma yapılmaz, çünkü belirsiz bir tahsilatı "iptal
 edildi" saymak parayı kaybetmenin en sessiz yoludur. Kalan risk ve mutabakat
@@ -282,7 +291,6 @@ bırakırdı — ödemede bunun bedeli paranın beklenmedik bir kuruluşa gitmes
 |---|---|---|
 | Modüller arası imzalar derleme zamanında denetlenmez | Ayrışma çalışma anında görünür | Her interop yüzeyi için entegrasyon testi (mevcut kural) |
 | Oturum iptali yalnızca **toptan** | Tek cihazı düşürmek yok | jti bazlı kara liste — her istekte okunan yeni bir depo demektir |
-| Tek lokasyon varsayımı (stok) | Çok depolu senaryo desteklenmez | Plan Bölüm 10 |
 | Yük testi süreç içi | Kapasite planı üretmez | Gerçek dağıtımda dış yük aracı |
 | Satış kanalı bağı kuruluyor ama okunmuyor | Katalog her publishable anahtar için aynı | `product↔sales_channel` bağını bildir ve store listesini `Principal.SalesChannelIDs` ile süz |
 | Migration geri alma yüzeyi yok | `.down.sql` dosyaları çağrılamıyor | `cmd/server`'a migrate alt komutu |
