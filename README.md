@@ -463,8 +463,12 @@ make rename-module MODULE=github.com/kullanici/repo
 
 ## Sürüm
 
-Güncel sürüm: **v0.1.0** — Faz 0–9'un tamamı. Değişiklikler için
+Güncel sürüm: **v0.2.0**. Değişiklikler için
 [`CHANGELOG.md`](./CHANGELOG.md).
+
+- **v0.1.0** — Faz 0–9'un tamamı.
+- **v0.2.0** — yol haritası bittikten sonra bulunanlar: satış kanalı katalog
+  süzmesi, çoklu depo, alan olayları ve ilk gerçek eklenti (arama).
 
 `0.x` boyunca **kırıcı değişiklikler minor sürümlerde gelebilir**: API yüzeyi
 henüz sabitlenmemiştir. Sabitlenme `1.0.0` ile olur.

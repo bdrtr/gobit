@@ -10,6 +10,29 @@ Sabitlenme `1.0.0` ile olur.
 
 ## [Yayımlanmamış]
 
+## [0.2.0] — 2026-08-31
+
+Yol haritası bittikten sonra bulunanlar. Ortak bir örüntü var: bu sürümdeki
+işlerin çoğu yeni özellik değil, **kurulmuş ama tüketicisi olmayan**
+yeteneklere tüketici yazmaktır — satış kanalı doğrulanıyor ama okunmuyordu,
+event bus hazırdı ama tek olay vardı, `Host.AddModule` hiç kullanılmamıştı.
+
+### Kırıcı değişiklikler
+
+`0.x` boyunca minor sürümlerde kırıcı değişiklik olabilir. Bu sürümdekiler
+yalnızca **modülleri gömen** kodu etkiler; HTTP API'sini kullanan istemciler
+etkilenmez.
+
+- `product` modülü `Register` sırasında `core.eventbus` servisini ZORUNLU
+  kılar; yoksa açılış durur. Sessizce atlamak, katalog çalışırken indeksin
+  sessizce eskimesi demekti.
+- `product/repository.Store` arayüzü büyüdü (`ProductVisibleInSalesChannels`,
+  `VisibleProductIDs`); kendi uygulamasını yazan kod
+  bunları eklemelidir.
+- `product/service.GetStoreProduct` artık satış kanalı kimliklerini de alır.
+- `workflows/checkout`'un `Inventory` ve `Fulfillment` dar arayüzleri büyüdü
+  (`LocationsWithStock`, `SelectLocation`).
+
 ### Eklendi
 
 - **Alan olayları ve gerçek bir eklenti: arama.** `order.placed` depodaki TEK
@@ -121,6 +144,21 @@ yalnızca test koşarak görünmeyen üç arıza:
   değer uygulamayı açılışta düşürüyordu. Değişken `METRIC_EXPORT_INTERVAL`
   oldu.
 
+### Düzeltildi
+
+- **`make migrate-up` dokuz faz geriden konuşuyordu.** Operatöre "Faz 1'de
+  core/db migration runner'ı devreye girecek" diyordu; Faz 1 dokuz faz önce
+  bitmiş ve migration'lar açılışta otomatik uygulanıyordu. Hedefler gerçeğe
+  uyduruldu ve geri alma yolunun OLMADIĞI açıkça yazıldı.
+- **Kapsam ölçümü 22 puan yanıltıyordu.** CI `-coverpkg` olmadan ölçüyordu,
+  yani bir paketi BAŞKA paketin testi kapsadığında sayılmıyordu. Artık iki
+  ayrı sayı raporlanıyor: yalnızca birim (~%55) ve birim + entegrasyon (~%76).
+- **Arama yolunda N+1.** Görünürlük kimlik başına sorulurken toplu sorguya
+  çevrildi; aynı SQL şablonundan üretildiği için kural hâlâ tek.
+- **Çoklu depoda yarış.** Aday listesi kilitsiz okunur, ayırma kilitlidir;
+  seçilen depo bu arada tükenmişse sıradaki adaya geçilir. Önceden sipariş
+  tümden düşerdi — üstelik başka depoda stok dururken.
+
 ### Bilinen sınırlar
 
 - Oturum iptali yalnızca toptan; tek cihaz düşürülemez.
@@ -137,5 +175,6 @@ yalnızca test koşarak görünmeyen üç arıza:
   yoktur; geri alma elle yapılır. İleri yön açılışta otomatiktir.
 - Yük testi süreç içidir; kapasite planı üretmez.
 
-[Yayımlanmamış]: https://github.com/bdrtr/gobit/compare/v0.1.0...HEAD
+[Yayımlanmamış]: https://github.com/bdrtr/gobit/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/bdrtr/gobit/releases/tag/v0.2.0
 [0.1.0]: https://github.com/bdrtr/gobit/releases/tag/v0.1.0
