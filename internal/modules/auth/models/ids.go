@@ -39,7 +39,7 @@ var idEncoding = base32.NewEncoding("0123456789ABCDEFGHJKMNPQRSTVWXYZ").WithPadd
 // taşıması demektir.
 //
 // DİKKAT: bu üreteç KİMLİK içindir, SIR için değil. API anahtarının düz metni
-// zaman damgası taşımaz ve tamamı rastgeledir (bkz. [NewSecretToken]).
+// zaman damgası taşımaz ve tamamı rastgeledir (bkz. [NewToken]).
 //
 // Aynı üretici customer, pricing ve inventory modüllerinde de bulunur; modül
 // izolasyonu gereği o paketler import EDİLMEZ (Prensip 2.4), üretici burada

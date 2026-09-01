@@ -5,7 +5,6 @@ import (
 	"go/parser"
 	"go/token"
 	"maps"
-	"os"
 	"path/filepath"
 	"reflect"
 	"slices"
@@ -190,16 +189,38 @@ func TestGraphQLSinirVarsayilanlariConfigleUyusuyor(t *testing.T) {
 	// ayarlayamadığını ancak üretimde fark eder. Bu tam olarak GRAPHQL
 	// sertleştirmesinde bir kez YAŞANMIŞ durumdur.
 	tip := reflect.TypeOf(graph.Options{})
+	gezilenSinir := 0
 	for i := range tip.NumField() {
 		alan := tip.Field(i)
 		if !strings.HasPrefix(alan.Name, "Max") {
 			continue
 		}
+		gezilenSinir++
 		require.Contains(t, beklenen, alan.Name,
 			"graph.Options.%s bir sınırdır ama çekirdekte varsayılanı YOK; "+
 				"her sınırın bir ortam değişkeni ve eşleşen bir varsayılanı olmalı, "+
 				"aksi hâlde operatör onu ayarlayamaz", alan.Name)
 	}
+
+	// Yansıma denetiminin TAMAMI "Max" ön ekine bağlıdır. Ön ek düştüğü gün
+	// (alanlar DepthLimit/ComplexityLimit gibi adlara geçtiğinde) döngü hiçbir
+	// alana girmez ve "eksik kalamaz" iddiası sessizce eksik kalabilir hâle
+	// gelir; aşağıdaki elle yazılmış eşleşmeler ise yedisini karşılaştırmaya
+	// devam ettiği için test yeşil kalır — yani kaybolan şey KAPSAM olur.
+	//
+	// Sayaç yalnızca "hiç" ile "en az bir" arasını ayırır: alanların BİR KISMI
+	// ön ekten çıktığında bu kapı geçer ve o alanlar kapsam dışı kalır. Daha
+	// güçlüsü (alan sayısının eşleşme listesiyle birebir olması) yazılabilirdi
+	// ama denetime yeni bir iddia ekler; buradaki soru, denetimin kör olup
+	// olmadığıdır.
+	require.Positive(t, gezilenSinir,
+		"graph.Options'ta \"Max\" ön ekli TEK BİR alan bile yok; yansıma denetimi KÖR "+
+			"kalmış olmalı.\n"+
+			"Sınırlar DepthLimit/ComplexityLimit gibi adlara geçtiyse döngü hiçbir alana "+
+			"girmez ve \"her sınırın bir ortam değişkeni vardır\" iddiası kendiliğinden "+
+			"doğrulanamaz hâle gelir: aşağıdaki elle yazılmış eşleşmeler yediyi "+
+			"karşılaştırmaya devam eder, kaybolan şey KAPSAM olur ve yarın eklenen sınır "+
+			"sessizce ayarlanamaz kalır. Ön ek değiştiyse bu denetim de değişmelidir.")
 
 	for ad, cfgDeger := range beklenen {
 		assert.Equal(t, uygulanan[ad], cfgDeger,
@@ -252,14 +273,22 @@ func TestSatisKanaliEntityAdiUyusuyor(t *testing.T) {
 func TestEklentilerModulleriImportEtmez(t *testing.T) {
 	t.Parallel()
 
-	root := filepath.Join(repoRoot, "plugins")
-	if _, err := os.Stat(root); err != nil {
-		t.Skip("henüz eklenti yok")
-	}
+	// Ağaç yoksa denetim ATLANMAZ, DÜŞER: bu testin tek girdisi eklenti
+	// kaynağıdır ve atlanan bir koşu, yasağın hâlâ zorlandığı izlenimini verir.
+	root := filepath.Join(repoRoot, eklentilerYolu)
+	require.DirExists(t, root,
+		"%s ağacı YOK; eklentilerin modül import etmediğini gezecek bir dosya kalmaz.\n"+
+			"depguard kuralları bu ağacı KAPSAMIYOR, yani tarama sustuğunda kuralı "+
+			"zorlayan başka hiçbir şey kalmaz.", eklentilerYolu)
 
-	prefix := modulePath + "/" + modulesDir + "/"
+	dosyalar := goFiles(t, root)
+	require.NotEmpty(t, dosyalar,
+		"%s altında hiç Go dosyası YOK; dizin duruyor ama gezilecek bir şey bırakmamış. "+
+			"İhlal ancak bir dosyanın import listesinde bulunabilir.", eklentilerYolu)
 
-	for _, file := range goFiles(t, root) {
+	prefix := modulImportOneki(t)
+
+	for _, file := range dosyalar {
 		parsed, err := parser.ParseFile(token.NewFileSet(), file, nil, parser.ImportsOnly)
 		if err != nil {
 			t.Fatalf("%s ayrıştırılamadı: %v", file, err)

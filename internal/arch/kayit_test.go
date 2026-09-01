@@ -25,8 +25,15 @@ const (
 	// arkasındadır; ayrıştırma etiketi umursamaz, bu yüzden bu denetim
 	// entegrasyon koşusu olmadan da çalışır.
 	e2eZemini = "internal/e2e"
-	// cekirdekModulPaketi [module.Module] sözleşmesinin ve [module.Registry]
-	// kaydının yaşadığı çekirdek paketidir.
+	// cekirdekModulPaketi
+	// [github.com/bdrtr/gobit/internal/core/module.Module] sözleşmesinin ve
+	// [github.com/bdrtr/gobit/internal/core/module.Registry] kaydının yaşadığı
+	// çekirdek paketidir.
+	//
+	// Aşağıdaki godoc'lar aynı iki adı KISACA (module.Module, module.Registry)
+	// anar ve bağ olarak yazmaz: bu paket core/module'ü import etmez, yani kısa
+	// ad hiçbir yere çözülmez. Tam yol yalnızca burada, adın tanımlandığı
+	// yerde bir kez verilir.
 	cekirdekModulPaketi = modulePath + "/internal/core/module"
 	// akisDizini modüller arası akışların yaşadığı ağaçtır (ADR 0006). Ne
 	// çekirdektir ne de modül: depguard kuralları internal/modules içindir,
@@ -47,7 +54,7 @@ const (
 	kurulumIsaretiAdi = "FromContainer"
 )
 
-// modulSozlesmesi [module.Module] arayüzünün metot kümesidir: metot adından
+// modulSozlesmesi module.Module arayüzünün metot kümesidir: metot adından
 // beklenen parametre ve sonuç tiplerine.
 //
 // İmzalar KAYNAK METİN olarak karşılaştırılır (go/types.ExprString), çünkü bu
@@ -184,7 +191,7 @@ type akisKurulumu struct {
 //
 // # Neden liste tutmuyor
 //
-// Denetim modül dizinlerini GEZER ve [module.Module] sözleşmesini kimin
+// Denetim modül dizinlerini GEZER ve module.Module sözleşmesini kimin
 // karşıladığını metot kümesinden çıkarır. Elle yazılmış bir modül listesi,
 // kuralı yalnızca BUGÜN için uygulardı: on altıncı modülü yazan kişi listeyi
 // güncellemeyi unuttuğunda test yine yeşil kalırdı — yani tam olarak
@@ -193,7 +200,7 @@ type akisKurulumu struct {
 // # Neden ayrıştırıyor, import etmiyor
 //
 // Bileşim kökü main paketidir ve import EDİLEMEZ. Kayıt bu yüzden kaynaktan
-// okunur: [module.Registry] değişkeni bulunur, üzerindeki Add çağrıları
+// okunur: module.Registry değişkeni bulunur, üzerindeki Add çağrıları
 // toplanır ve her çağrının argümanının hangi pakete gittiği dosyanın import
 // listesinden çözülür.
 func TestHerModulBilesimKokundeKayitli(t *testing.T) {
@@ -258,7 +265,7 @@ func TestHerModulBilesimKokundeKayitli(t *testing.T) {
 // # Neden e2e zemini, neden başka bir zemin değil
 //
 // Zemin, kurulumun üretimdeki hâlinin tek kopyasıdır: aynı çekirdek servis
-// adları, aynı [module.Registry], gerçek PostgreSQL, gerçek migration'lar ve
+// adları, aynı module.Registry, gerçek PostgreSQL, gerçek migration'lar ve
 // yetki denetimini router AĞACINI gezerek yapan testler (bkz.
 // internal/e2e/yetki_test.go, 196 yönetim ucu). Bir modül o zemine girdiği anda
 // mevcut ağaç gezen testlerin kapsamına da girer; girmediği sürece ne kadar
@@ -284,6 +291,16 @@ func TestKayitliHerModulE2EZemindeKurulu(t *testing.T) {
 
 	uretim := modulPaketlerineSuz(kayitliModulPaketleri(t, bilesimKoku, false))
 	zemin := modulPaketlerineSuz(kayitliModulPaketleri(t, e2eZemini, true))
+
+	// İki uç da ayrı ayrı korunur. Üretim ucu boşalırsa döngü hiç dönmez ve bu
+	// test — adı "kayıtlı her modül" dese de — hiçbir modül hakkında bir şey
+	// söylemeden geçer. [TestHerModulBilesimKokundeKayitli] o durumda gürültülü
+	// düşer, ama komşunun düşmesine GÜVENMEK bir koruma değildir: iki test
+	// birbirinden bağımsız değişebilir ve o gün buradaki sessizlik fark
+	// edilmezdi.
+	require.NotEmpty(t, uretim,
+		"%s/'da hiçbir modül kaydı bulunamadı; denetim KÖR kalmış olmalı — kayıt "+
+			"biçimi (module.Registry üzerinde Add) değişmiş olabilir", bilesimKoku)
 	require.NotEmpty(t, zemin,
 		"e2e zemininde hiçbir modül kaydı bulunamadı; denetim KÖR kalmış olmalı")
 
@@ -330,7 +347,7 @@ func TestKayitliHerModulE2EZemindeKurulu(t *testing.T) {
 // anlatıyordu.
 //
 // [TestHerModulBilesimKokundeKayitli] bunu göremezdi: o denetim
-// internal/modules altını gezer ve [module.Module] sözleşmesini arar. Akışlar
+// internal/modules altını gezer ve module.Module sözleşmesini arar. Akışlar
 // modül DEĞİLDİR (dört metodu taşımazlar) ve internal/modules altında
 // durmazlar, yani değişmezin KAPSAMI, kapatması gereken sınıfın bir örneğini
 // dışarıda bırakmıştı. Bu test o kapsamı genişletir.
@@ -600,7 +617,7 @@ func bayatMuafiyetleriDenetle[T any](
 	}
 }
 
-// modulUygulayanPaketler internal/modules altında [module.Module] sözleşmesini
+// modulUygulayanPaketler internal/modules altında module.Module sözleşmesini
 // karşılayan paketleri döner: anahtar paketin import yolu, değer sözleşmeyi
 // karşılayan tiplerin adlarıdır.
 //
@@ -644,7 +661,7 @@ func modulUygulayanPaketler(t *testing.T) map[string][]string {
 	return bulunan
 }
 
-// sozlesmeyiKarsiliyor bir tipin metot kümesinin [module.Module]'ü karşılayıp
+// sozlesmeyiKarsiliyor bir tipin metot kümesinin module.Module'ü karşılayıp
 // karşılamadığını söyler.
 //
 // Dört metot ADININ tamamı varken imzalardan biri tutmuyorsa sonuç "hayır"
@@ -700,7 +717,7 @@ func sozlesmeyiKarsiliyor(
 	return true
 }
 
-// kayitliModulPaketleri verilen paketteki [module.Registry] kaydına eklenen
+// kayitliModulPaketleri verilen paketteki module.Registry kaydına eklenen
 // modüllerin import yollarını döner; değer, Add çağrısının konumudur.
 //
 // testDosyalariDahil, e2e zemini içindir: orada kurulum TestMain akışında
@@ -762,7 +779,7 @@ func kayitliModulPaketleri(t *testing.T, kok string, testDosyalariDahil bool) ma
 	return kayitli
 }
 
-// kayitDegiskenAdlari paketteki [module.Registry] değerlerini tutan
+// kayitDegiskenAdlari paketteki module.Registry değerlerini tutan
 // tanımlayıcıların adlarını döner.
 //
 // İki kaynak taranır: module.NewRegistry çağrısının atandığı değişkenler ve

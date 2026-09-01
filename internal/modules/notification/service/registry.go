@@ -11,10 +11,12 @@ import (
 
 // ProviderRegistry bildirim sağlayıcılarını kimlikleriyle tutar.
 //
-// Modül kendi varsayılan sağlayıcısını ([logonly.Provider]) Register sırasında
-// buraya koyar ve kaydı container'a "notification.providers" adıyla verir.
-// Eklenti sistemi (coreplugin.Host.RegisterNotificationProvider), çekirdeğe ve
-// bu modüle DOKUNMADAN kaydı çözüp kendi sağlayıcısını ekler; sözleşme
+// Modül kendi varsayılan sağlayıcısını
+// ([github.com/bdrtr/gobit/internal/modules/notification/logonly.Provider])
+// Register sırasında buraya koyar ve kaydı container'a
+// "notification.providers" adıyla verir. Eklenti sistemi
+// (coreplugin.Host.RegisterNotificationProvider), çekirdeğe ve bu modüle
+// DOKUNMADAN kaydı çözüp kendi sağlayıcısını ekler; sözleşme
 // internal/core/provider'daki NotificationProvider arayüzüdür.
 //
 // Eşzamanlı kullanıma güvenlidir: kayıt açılışta, okuma her bildirimde yapılır.

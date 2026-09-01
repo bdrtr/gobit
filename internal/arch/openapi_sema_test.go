@@ -88,6 +88,11 @@ func TestVitrinUrunSemasiGercekTipiAnlatir(t *testing.T) {
 	zorunlu, ok := semaCoz(t, doc, sema)["required"].([]string)
 	require.True(t, ok, "şemada required olmalı")
 
+	// Boş bir anahtar kümesine karşı AYRICA bir koruma yazılmadı ve bu bilinçli:
+	// tip alanlarını kaybetse bile yukarıdaki "şemada required olmalı" iddiası
+	// düşer (ölçüldü — boş bir yapının şemasında required anahtarı hiç
+	// üretilmiyor), yani iki boş kümeyi sessizce eşleştiren bir yol yok. İkinci
+	// bir kapı, kapalı bir kapının önüne konmuş olurdu.
 	yazilanlar := jsonAnahtarKumesi(t, productsvc.StoreProduct{})
 	assert.ElementsMatch(t, yazilanlar, zorunlu,
 		"required, encoding/json'un HER ZAMAN yazdığı anahtarlarla aynı olmalı")

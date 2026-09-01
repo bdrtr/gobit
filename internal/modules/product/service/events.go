@@ -117,9 +117,10 @@ const (
 // # Veri yolu kayıtlı değilse olay sessizce atlanır
 //
 // [Options.Events] nil olabilir ve bu YALNIZCA gömülü kullanım ile testler
-// içindir: [Module.Register] veri yolunu container'dan çözer ve bulamazsa
-// açılışı düşürür, dolayısıyla üretimde nil bir veri yolu oluşmaz. Aynı kalıp
-// Query katmanında da vardır (bkz. [Service.enrichVariants]).
+// içindir: [github.com/bdrtr/gobit/internal/modules/product.Module.Register]
+// veri yolunu container'dan çözer ve bulamazsa açılışı düşürür, dolayısıyla
+// üretimde nil bir veri yolu oluşmaz. Aynı kalıp Query katmanında da vardır
+// (bkz. [Service.enrichVariants]).
 func (s *Service) publishProductEvent(ctx context.Context, name, productID string, status models.Status) {
 	if s.events == nil {
 		s.log.DebugContext(ctx, "olay veri yolu kayıtlı değil; katalog olayı atlandı",

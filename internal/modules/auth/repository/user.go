@@ -17,7 +17,7 @@ import (
 // İkisi tek işlemdedir: kimliksiz kalan bir kullanıcı hiç giriş yapamaz ve
 // bunu ancak ilk giriş denemesinde fark edersiniz; kullanıcısız kalan bir
 // kimlik ise sahipsizdir. identity nil ise yalnızca kullanıcı yazılır — parola
-// sonradan [Repo.SetPassword] ile atanır.
+// sonradan [Repo.SetPasswordHash] ile atanır.
 //
 // E-posta zaten kullanılıyorsa errors.Conflict döner; kural veritabanındaki
 // kısmi benzersiz indekstedir (bkz. [IndexUserEmail]) ve uygulama tarafında

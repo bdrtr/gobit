@@ -31,7 +31,8 @@
 // MANUEL SAĞLAYICININ kendi defteri (payment_manual_sessions). İkincisi
 // modülün alan verisi değildir; taklit edilen dış sistemin durumudur ve ona
 // yalnızca manual paketi dokunur. Ayrım fiziksel olarak da korunur: servisin
-// [service.Store] arayüzünde manuel defter metotları YOKTUR.
+// [github.com/bdrtr/gobit/internal/modules/payment/service.Store] arayüzünde
+// manuel defter metotları YOKTUR.
 package repository
 
 import (

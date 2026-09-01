@@ -90,10 +90,10 @@ const (
 // okunup lokasyonu doğrulanır. Yalnızca siparişin oluştuğuna bakan bir test,
 // rezervasyonları sessizce tek depoya toplayan bir uygulamayı da geçirirdi.
 //
-// [CompleteCartInput.LocationID] bilinçli olarak BOŞ verilir: bu, akışa "depoyu
-// sen belirle" demenin tek yoludur ve iş bölümü ancak o zaman devreye girer —
-// "hangi depolarda yeterli stok var" olgusunu stok modülü, "hangisinden
-// gönderelim" kararını kargo modülü verir.
+// [checkoutwf.CompleteCartInput.LocationID] bilinçli olarak BOŞ verilir: bu,
+// akışa "depoyu sen belirle" demenin tek yoludur ve iş bölümü ancak o zaman
+// devreye girer — "hangi depolarda yeterli stok var" olgusunu stok modülü,
+// "hangisinden gönderelim" kararını kargo modülü verir.
 func TestLokasyonBossaSatirlarFarkliDepolardanAyrilir(t *testing.T) {
 	ctx := t.Context()
 

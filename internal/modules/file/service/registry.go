@@ -11,10 +11,11 @@ import (
 
 // ProviderRegistry dosya sağlayıcılarını kimlikleriyle tutar.
 //
-// Modül kendi varsayılan sağlayıcısını ([local.Provider]) Register sırasında
-// buraya koyar ve kaydı container'a "file.providers" adıyla verir. Eklenti
-// sistemi (coreplugin.Host.RegisterFileProvider), çekirdeğe ve bu modüle
-// DOKUNMADAN kaydı çözüp kendi sağlayıcısını ekler; sözleşme
+// Modül kendi varsayılan sağlayıcısını
+// ([github.com/bdrtr/gobit/internal/modules/file/local.Provider]) Register
+// sırasında buraya koyar ve kaydı container'a "file.providers" adıyla verir.
+// Eklenti sistemi (coreplugin.Host.RegisterFileProvider), çekirdeğe ve bu
+// modüle DOKUNMADAN kaydı çözüp kendi sağlayıcısını ekler; sözleşme
 // internal/core/provider'daki FileProvider arayüzüdür.
 //
 // Eşzamanlı kullanıma güvenlidir: kayıt açılışta, okuma her yükleme ve her

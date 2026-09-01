@@ -64,7 +64,7 @@ seçiminin kendisinden büyüktür.
 
 **Üçüncüsü: yüzey kiracıya göre değişemez, yalnızca veri değişebilir.**
 Route'lar tek router'a bir kez bağlanır ve chi aynı deseni ikinci kez mount
-etmede panikler (`internal/core/http/guard.go:16-25`); OpenAPI belgesinin
+etmede panikler (`internal/core/http.Scoped` godoc'u); OpenAPI belgesinin
 önbelleği tek yuvalıdır. Bu bir arıza değil, kabul edilmesi gereken bir sınırdır
 ve hangi seçenek seçilirse seçilsin geçerlidir.
 
@@ -103,17 +103,18 @@ Kararın üç bağlayıcı sonucu vardır:
      hâliyle yazılır. Kayda geçmemiş bir açık, kimsenin kapatmadığı açıktır.
    - **`eventbus.Handler` godoc'u davranışıyla uzlaştırılır.** Godoc "verilen
      ctx, Publish'i çağıran isteğin ctx'inden türetilir" diyor; bu yalnızca
-     in-memory backend için doğrudur (`inmemory.go:67` `ctx`'ten türetir,
-     `redis.go:491` veri yolunun kök ctx'inden). Varsayılan `EVENT_BUS=inmemory`
-     olduğu için ctx'te bir şey taşıyan her tasarım testlerde yeşil geçip
-     üretimde kırılır. Sözün düzeltilmesi bir paragraftır ve kiracılıktan
+     in-memory backend için doğrudur (`eventbus.inMemoryBus.Publish` çağıranın
+     `ctx`'inden türetir, `eventbus.redisBus.dispatch` veri yolunun kök
+     ctx'inden). Varsayılan `EVENT_BUS=inmemory` olduğu için ctx'te bir şey
+     taşıyan her tasarım testlerde yeşil geçip üretimde kırılır. Sözün
+     düzeltilmesi bir paragraftır ve kiracılıktan
      bağımsız olarak bugün yanlıştır.
    - **`corehttp.PrincipalKey` ya bağlanır ya silinir.** Üretimde hiçbir
      tüketicisi yok (yalnızca kendi testi çağırıyor) ve godoc'u "kimliği
      doğrulanmış çağrıyı kimliğine göre anahtarlar" diyor; oysa koruma yığınında
-     hız sınırı kimlikten **önce** koşar (`guard.go:169-224`), yani bağlansaydı
-     her zaman `ip:`'ye düşerdi. Aynı yerde hem tüketicisiz bir yetenek hem de
-     godoc'u davranışından ayrışan bir fonksiyon duruyor.
+     hız sınırı kimlikten **önce** koşar (`internal/core/http.APIGuards`), yani
+     bağlansaydı her zaman `ip:`'ye düşerdi. Aynı yerde hem tüketicisiz bir
+     yetenek hem de godoc'u davranışından ayrışan bir fonksiyon duruyor.
 
 ## Sonuçlar
 

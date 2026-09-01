@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 // cekirdekHTTPDizini çekirdeğin HTTP paketinin depo içindeki dizinidir.
@@ -188,6 +190,8 @@ func TestHataYanitlariTekYerdenYazilir(t *testing.T) {
 	if len(paketler) == 0 {
 		t.Fatal("hiç api paketi bulunamadı; tarama kökü yanlış olabilir")
 	}
+	yaziciTasiyanDosyalariDogrula(t, paketler,
+		"internal/modules/*/api", "handler'lar http.ResponseWriter almayı bıraktıysa")
 
 	for _, dizin := range paketler {
 		paketiDenetle(t, dizin, kullanilan)
@@ -226,6 +230,10 @@ func TestHTTPYuzeyleriYalnizcaApiPaketlerinde(t *testing.T) {
 		muafPaketler[filepath.FromSlash(muaf.paket)] = muaf
 	}
 	gorulen := map[string]bool{}
+	// Bu testin girdisi modül listesi değil, modüllerde YAZICI taşıyan
+	// dosyalardır: modüller yerinde dururken de o küme boşalabilir ve o an test
+	// "api dışında yüzey yok" demiş olur — oysa hiç bakmamıştır.
+	yaziciTasiyanDosya := 0
 
 	for _, mod := range modulNames(t) {
 		kok := filepath.Join(repoRoot, modulesDir, mod)
@@ -233,6 +241,7 @@ func TestHTTPYuzeyleriYalnizcaApiPaketlerinde(t *testing.T) {
 			if !yaziciGeciyor(t, dosya) {
 				continue
 			}
+			yaziciTasiyanDosya++
 			paket := depoYolu(filepath.Dir(dosya))
 			if filepath.Base(paket) == "api" {
 				continue
@@ -263,6 +272,14 @@ func TestHTTPYuzeyleriYalnizcaApiPaketlerinde(t *testing.T) {
 				"(ya da paket kaldırıldı). Muafiyet silinmeli.", paket)
 		}
 	}
+
+	require.Positive(t, yaziciTasiyanDosya,
+		"modüllerde http.%s taşıyan TEK BİR üretim dosyası bile yok; kapsam denetimi "+
+			"KÖR kalmış olmalı.\n"+
+			"Bu test \"api dışında denetlenmeyen HTTP yüzeyi var mı\" diye sorar; yazıcıyı "+
+			"tanıyamadığında cevabı her zaman \"yok\" olur ve yarın eklenen bir "+
+			"modules/x/webhook paketi sessizce kapsam dışında kalır. Yazıcının tanınma "+
+			"ölçütü (yaziciTipiMi) gerçekle birlikte güncellenmelidir.", yaziciTipAdi)
 }
 
 // govdeYazanNetHTTPCagrilari net/http'nin yanıt GÖVDESİ yazan yardımcılarıdır.
@@ -429,6 +446,11 @@ func TestModulDisiHTTPYuzeyleriCekirdektenYazar(t *testing.T) {
 	if len(paketler) == 0 {
 		t.Fatal("hiç paket bulunamadı; tarama kökü yanlış olabilir")
 	}
+	// Paket sayısı bu testin GÖRÜŞ ALANINI ölçmez: modül dışı paketlerin
+	// çoğunda yanıt yazan bir yol yoktur ve liste her hâlükârda doludur.
+	// Ölçülmesi gereken şey yazıcının hâlâ TANINDIĞIDIR.
+	yaziciTasiyanDosyalariDogrula(t, paketler,
+		"modül dışı üretim paketleri", "yazıcı bir sarmalayıcı arayüzün arkasına geçtiyse")
 
 	for _, dizin := range paketler {
 		cekirdekPaketiniDenetle(t, dizin, kullanilan)
@@ -1391,6 +1413,40 @@ func uretimDosyalari(t *testing.T, kok string) []string {
 	}
 
 	return out
+}
+
+// yaziciTasiyanDosyalariDogrula verilen paketlerde en az bir dosyanın
+// http.ResponseWriter taşıdığını doğrular.
+//
+// Üç hata yolu denetiminin de girdisi PAKET listesi değil, o paketlerdeki
+// YAZICI kullanımlarıdır: paket listesi doluyken de tarama boş kalabilir,
+// çünkü ihlal ancak yazıcıya dokunan bir yolda aranır. Yazıcı tanınmaz hâle
+// geldiği gün (tip bir arayüzün arkasına geçtiğinde, handler imzası bir çatı
+// tipine döndüğünde) denetimlerin üçü de hiçbir çağrıya bakmaz ve yeşil kalır.
+//
+// Bugün bu durumu MUAFİYETLER de dolaylı olarak yakalar: kullanılmayan bir
+// muafiyet testi düşürür ve muafiyetlerin işaretlenmesi taramanın yazıcıyı
+// görmesine bağlıdır. Ama o koruma tesadüfidir — borç ödenip son muafiyet
+// silindiği gün kendisi de yok olur. Bu kapı, o güne bağlı değildir.
+func yaziciTasiyanDosyalariDogrula(t *testing.T, paketler []string, kapsam, ipucu string) {
+	t.Helper()
+
+	bulunan := 0
+	for _, dizin := range paketler {
+		for _, dosya := range uretimDosyalari(t, dizin) {
+			if yaziciGeciyor(t, dosya) {
+				bulunan++
+			}
+		}
+	}
+
+	require.Positive(t, bulunan,
+		"%s içinde http.%s taşıyan TEK BİR üretim dosyası bile yok; hata yolu denetimi "+
+			"KÖR kalmış olmalı (%s).\n"+
+			"Yazıcıyı tanımayan bir tarama hiçbir yazma yoluna bakmaz: çekirdeğin "+
+			"dışında yazılan bir hata gövdesi — maskelenmemiş metin, zarfsız yanıt — "+
+			"hiçbir yerde görünmez. Yazıcının tanınma ölçütü (yaziciTipiMi) gerçekle "+
+			"birlikte güncellenmelidir.", kapsam, yaziciTipAdi, ipucu)
 }
 
 // yaziciGeciyor dosyada http.ResponseWriter kullanılıp kullanılmadığını

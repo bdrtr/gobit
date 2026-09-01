@@ -305,7 +305,7 @@ type Config struct {
 	//
 	// PAYLAŞILAN ortamlarda mutlak bir yol (bağlanmış bir birim) verilmelidir;
 	// göreli yol orada aynı sessiz kaybın yavaş çekimidir. Bu AÇILIŞI
-	// DURDURMAZ, uyarılır — gerekçesi [Config.LocalFileRootIsPortable]
+	// DURDURMAZ, uyarılır — gerekçesi [Config.LocalFileRootIsDurable]
 	// godoc'undadır.
 	//
 	// Boş bırakılması ayrı bir karardır ve config onu REDDEDER: kök olmadan

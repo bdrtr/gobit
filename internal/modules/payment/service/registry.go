@@ -12,11 +12,12 @@ import (
 
 // ProviderRegistry ödeme sağlayıcılarını kimlikleriyle tutar.
 //
-// Modül kendi varsayılan sağlayıcısını ([manual.Provider]) Register sırasında
-// buraya koyar ve kaydı container'a "payment.providers" adıyla verir. Faz 9'daki
-// plugin sistemi, çekirdeğe ve bu modüle DOKUNMADAN, container'dan kaydı çözüp
-// kendi sağlayıcısını ekleyebilir; sözleşme internal/core/provider'daki
-// PaymentProvider arayüzüdür.
+// Modül kendi varsayılan sağlayıcısını
+// ([github.com/bdrtr/gobit/internal/modules/payment/manual.Provider]) Register
+// sırasında buraya koyar ve kaydı container'a "payment.providers" adıyla
+// verir. Faz 9'daki plugin sistemi, çekirdeğe ve bu modüle DOKUNMADAN,
+// container'dan kaydı çözüp kendi sağlayıcısını ekleyebilir; sözleşme
+// internal/core/provider'daki PaymentProvider arayüzüdür.
 //
 // Eşzamanlı kullanıma güvenlidir: kayıt açılışta, okuma her istekte yapılır.
 type ProviderRegistry struct {

@@ -533,6 +533,13 @@ func TestBelgelerdekiEklentiAdlariGercek(t *testing.T) {
 	ortamOrnegi, err := os.ReadFile(filepath.Join(repoRoot, ortamOrnegiYolu))
 	require.NoError(t, err, "%s okunamadı", ortamOrnegiYolu)
 
+	// İleri yönün girdisi PLUGINS=... örnekleridir ve o kümenin boşalması
+	// SESSİZDİR: geri yön (kayıtlı her eklenti belgede ANILMALI) düz metin
+	// araması yaptığı için geçmeye devam eder, yani belgedeki yazım
+	// "PLUGINS: search-pg" gibi bir biçime kaydığı gün yalnızca ileri yön
+	// kaybolur ve kopyalanabilir yanlış bir ad denetimsiz kalır.
+	ornekSayisi := 0
+
 	for _, belge := range []struct {
 		ad     string
 		icerik string
@@ -541,6 +548,7 @@ func TestBelgelerdekiEklentiAdlariGercek(t *testing.T) {
 		{ortamOrnegiYolu, string(ortamOrnegi)},
 	} {
 		for _, e := range pluginsAtamaDeseni.FindAllStringSubmatch(belge.icerik, -1) {
+			ornekSayisi++
 			for _, ad := range strings.Split(e[1], ",") {
 				assert.Contains(t, kayitli, ad,
 					"%s: PLUGINS=%s örneğindeki %q adı kayıtlı DEĞİL.\n"+
@@ -551,6 +559,14 @@ func TestBelgelerdekiEklentiAdlariGercek(t *testing.T) {
 			}
 		}
 	}
+
+	require.Positive(t, ornekSayisi,
+		"%s ve %s içinde tek bir PLUGINS=... örneği bile bulunamadı; ileri yön denetimi "+
+			"KÖR kalmış olmalı.\n"+
+			"Belgelerdeki yazım kalıbı değiştiyse (pluginsAtamaDeseni artık eşleşmiyor) "+
+			"kopyalanabilir bir örnekteki YANLIŞ ad denetimsiz kalır — ve o örneği "+
+			"kopyalayan kurulum açılışta \"bilinmeyen eklenti\" ile durur. Geri yön düz "+
+			"metin araması yaptığı için bu kaybı GÖRMEZ.", readmeYolu, ortamOrnegiYolu)
 
 	for ad := range kayitli {
 		assert.Contains(t, string(ortamOrnegi), ad,

@@ -47,10 +47,11 @@ const idBodyLen = 26
 // sırayı korur; kimlikler bu sayede zamana göre sıralanabilir kalır ve
 // "ORDER BY id" doğal olarak oluşturma sırasını verir.
 //
-// Sıralanabilirlik bu modülde bir SÜSLEME DEĞİLDİR: [ComputeResult] içindeki
-// uygulama sırası kimliğe göre belirlenir (bkz. service paketindeki sıralama
-// kuralı) ve "önce yazılan promosyon önce uygulanır" iddiası ancak kimliğin
-// zaman sırasını taşımasıyla anlamlıdır.
+// Sıralanabilirlik bu modülde bir SÜSLEME DEĞİLDİR:
+// [github.com/bdrtr/gobit/internal/modules/promotion/service.ComputeResult]
+// içindeki uygulama sırası kimliğe göre belirlenir (bkz. service paketindeki
+// sıralama kuralı) ve "önce yazılan promosyon önce uygulanır" iddiası ancak
+// kimliğin zaman sırasını taşımasıyla anlamlıdır.
 var idEncoding = base32.NewEncoding("0123456789ABCDEFGHJKMNPQRSTVWXYZ").WithPadding(base32.NoPadding)
 
 // NewID verilen önekle zaman sıralı ve tekil bir kimlik üretir.

@@ -171,9 +171,11 @@ const (
 	//
 	// Mekanik, "hangi kalemler ALIŞ koşulunu sağlıyor" ve "indirim hangi
 	// kalemlerin kaç ADEDİNE uygulanacak" sorularını gerektirir; ikincisi
-	// kalemin BİRİM fiyatını ister ve [ComputeInput]'un taşıdığı satır tutarı
-	// (birim × adet) bölünmeden birim fiyata çevrilemez — bölme, adede tam
-	// bölünmeyen bir satırda sessiz bir yuvarlama hatası üretirdi.
+	// kalemin BİRİM fiyatını ister ve servisin hesap girdisinin
+	// ([github.com/bdrtr/gobit/internal/modules/promotion/service.ComputeInput])
+	// taşıdığı satır tutarı (birim × adet) bölünmeden birim fiyata çevrilemez —
+	// bölme, adede tam bölünmeyen bir satırda sessiz bir yuvarlama hatası
+	// üretirdi.
 	//
 	// Eksiği SESSİZ bırakmamak için tür YAPISAL olarak kapatılmıştır: buyget
 	// bir promosyon oluşturulabilir ama "active" duruma alınamaz (bkz. servis

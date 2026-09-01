@@ -9,10 +9,11 @@ package models
 
 // SessionStatus bir ödeme oturumunun durumudur.
 //
-// Değerler internal/core/provider'daki [provider.SessionStatus] ile BİREBİR
-// aynıdır ama o paket burada yeniden kullanılmaz: sütun değeri modülün kendi
-// şemasına aittir ve çekirdek sözleşmesi değiştiğinde veritabanındaki değerler
-// sessizce değişmemelidir. Çeviri repository/servis sınırında yapılır.
+// Değerler [github.com/bdrtr/gobit/internal/core/provider.SessionStatus] ile
+// BİREBİR aynıdır ama o paket burada yeniden kullanılmaz: sütun değeri
+// modülün kendi şemasına aittir ve çekirdek sözleşmesi değiştiğinde
+// veritabanındaki değerler sessizce değişmemelidir. Çeviri repository/servis
+// sınırında yapılır.
 type SessionStatus string
 
 // Ödeme oturumu durumları.

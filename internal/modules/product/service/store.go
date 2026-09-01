@@ -239,9 +239,9 @@ func (s *Service) GetStoreProduct(
 // salesChannelIDs'in nil ile boş dilim arasındaki farkı listelemedekiyle aynı
 // anlamı taşır (bkz. [StoreListOptions.SalesChannelIDs]).
 //
-// Görünürlük TEK bir toplu sorgudur ([Store.VisibleProductIDs]), kimlik sayısı
-// [MaxLimit] ile sınırlıdır ve sorgu link tablosunun birincil anahtar önekini
-// kullanır. Sorgu, kuralın TEK tanımı olan saleschannel.go'daki
+// Görünürlük TEK bir toplu sorgudur ([repository.Store.VisibleProductIDs]),
+// kimlik sayısı [MaxLimit] ile sınırlıdır ve sorgu link tablosunun birincil
+// anahtar önekini kullanır. Sorgu, kuralın TEK tanımı olan saleschannel.go'daki
 // salesChannelVisibleTemplate'ten üretilir — yani toplu olması kuralı ikinci
 // kez yazmaz.
 //

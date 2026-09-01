@@ -56,13 +56,16 @@ func TestMigrationlarGercektenGeriAlinabilir(t *testing.T) {
 	dsn, err := ctr.ConnectionString(ctx, "sslmode=disable")
 	require.NoError(t, err)
 
+	kosulan := 0
+
 	for _, mod := range modulNames(t) {
-		migDir := filepath.Join(repoRoot, modulesDir, mod, "migrations")
+		migDir := filepath.Join(repoRoot, modulesDir, mod, migrationDizinAdi)
 		entries, globErr := filepath.Glob(filepath.Join(migDir, "*.up.sql"))
 		require.NoError(t, globErr)
 		if len(entries) == 0 {
 			continue
 		}
+		kosulan++
 
 		t.Run(mod, func(t *testing.T) {
 			src := os.DirFS(migDir)
@@ -96,4 +99,15 @@ func TestMigrationlarGercektenGeriAlinabilir(t *testing.T) {
 			require.NoError(t, db.MigrateDown(ctx, dsn, src, mod, 0))
 		})
 	}
+
+	// Bu testin sessizce boşalması diğerlerinden PAHALIDIR: koşu bir konteyner
+	// açar, dakikalar sürer ve sonunda "ok" yazar — yani hem bir şey yaptığı
+	// izlenimi verir hem de hiçbir migration çalıştırmamış olur. Boş bir liste
+	// atlanacak bir durum değil, teşhis edilecek bir arızadır.
+	require.Positive(t, kosulan,
+		"hiçbir modülde çalıştırılacak migration bulunamadı; denetim KÖR kalmış olmalı — "+
+			"dosyalar %q dizini dışına taşınmış ya da adlandırma \".up.sql\" kalıbından "+
+			"çıkmış olabilir.\nGerçek veritabanında hiç up/down koşmayan bir kapı, "+
+			"golang-migrate defterini \"dirty\" bırakan bir down'ı yakalayamaz — Faz 5'te "+
+			"sunucuyu açılamaz hâle getiren arıza tam olarak buydu.", migrationDizinAdi)
 }
