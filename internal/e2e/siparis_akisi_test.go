@@ -184,13 +184,12 @@ func TestSepettenSipariseMutluYol(t *testing.T) {
 		"sipariş özeti bu akışta YAZILMAZ; sıfırdan farklı bir değer, ödemenin izinin "+
 			"iki yerde birden tutulmaya başlandığını gösterir")
 
-	// Sipariş bağları link servisinden okunur; sütun kaynak, link onun Query
-	// katmanına açılan aynasıdır ve ikisi ayrışmamalıdır.
-	require.Equal(t, []string{musteriID}, bagliKimlikler(ctx, t, ordersvc.LinkOrderCustomer, sonuc.OrderID),
-		"%q bağı kurulmalı; bağ olmadan sipariş Query katmanında hiçbir müşteriye "+
-			"bağlanmaz", ordersvc.LinkOrderCustomer)
-	require.Equal(t, []string{vergiliBolgeID}, bagliKimlikler(ctx, t, ordersvc.LinkOrderRegion, sonuc.OrderID),
-		"%q bağı kurulmalı", ordersvc.LinkOrderRegion)
+	// Siparişin müşterisi ve bölgesi KENDİ sütunlarındadır; sepetten siparişe
+	// taşınan tek yer burasıdır ve süzme de tam olarak bu sütunlardan yapılır.
+	require.Equal(t, musteriID, siparis.CustomerID,
+		"sipariş, sepetin sahibi olan müşteriye yazılmalı")
+	require.Equal(t, vergiliBolgeID, siparis.RegionID,
+		"sipariş, sepetin bölgesiyle açılmalı")
 
 	// --- 2) stok rezervasyonu KESİNLEŞTİ mi ---
 

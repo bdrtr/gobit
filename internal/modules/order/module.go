@@ -45,9 +45,13 @@
 //
 // # Bildirdiği linkler
 //
-// "order_customer" ve "order_region" tanımlarını BU modül bildirir (ADR 0005).
-// "order_payment" ve "order_fulfillment" bildirilmez; gerekçe için bkz.
-// [service.Definitions].
+// Yoktur. Siparişin bölgesi ve müşterisi KENDİ SÜTUNLARINDA durur ve her okuma
+// o sütunlardan yapılır (bkz. queries/orders.sql); aynı ilişkiyi bir de link
+// tablosunda tutmak satır yazardı, bakım maliyeti doğururdu ve hiçbir okumaya
+// hizmet etmezdi (bkz. CHANGELOG, "order_customer/order_region kaldırıldı").
+// "order_payment" ve "order_fulfillment" bağlarının sahibi de bu modül
+// değildir: bir link tanımı yalnızca BİR kez bildirilebilir (ADR 0005) ve
+// tanımı, bağın taşıdığı kaydı yazan taraf — payment, fulfillment — bildirir.
 package order
 
 import (
@@ -63,7 +67,6 @@ import (
 	"github.com/bdrtr/gobit/internal/core/container"
 	"github.com/bdrtr/gobit/internal/core/db"
 	"github.com/bdrtr/gobit/internal/core/errors"
-	"github.com/bdrtr/gobit/internal/core/link"
 	"github.com/bdrtr/gobit/internal/core/module"
 	"github.com/bdrtr/gobit/internal/core/openapi"
 	"github.com/bdrtr/gobit/internal/core/query"
@@ -96,7 +99,6 @@ const ProviderName = service.EntityName + query.ProviderSuffix
 // Container'da çözülen çekirdek servislerin adları.
 const (
 	svcDB       = "core.db"
-	svcLink     = "core.link"
 	svcEventBus = "core.eventbus"
 )
 
@@ -111,11 +113,8 @@ const (
 // doğruluk kaynağı b2b modülünün InteropName sabitidir.
 const SpendingPolicyName = "b2b.interop"
 
-// Hata kodları.
-const (
-	codeSetupFailed = "order_module_setup_failed"
-	codeLinkDefine  = "order_link_define_failed"
-)
+// codeSetupFailed modülün kablolanamadığını bildiren hata kodudur.
+const codeSetupFailed = "order_module_setup_failed"
 
 //go:embed migrations/*.sql
 var migrationFiles embed.FS
@@ -156,23 +155,18 @@ func (m *Module) Name() string { return ModuleName }
 func (m *Module) Migrations() fs.FS { return migrationsRoot }
 
 // Register servisi, interop yüzeyini ve Query sağlayıcısını container'a
-// kaydeder, link tanımlarını bildirir.
+// kaydeder.
 //
 // Yalnızca ÇEKİRDEK servisler çözülür; başka modüllerin servisleri bu aşamada
-// henüz kayıtlı olmayabilir (bkz. module.Module belgesi). core.db, core.link ve
-// core.eventbus modüller ayağa kalkmadan önce main.go'da hazır değer olarak
-// kaydedildiği için burada çözülmeleri güvenlidir ve eksiklikleri modülün hiç
-// çalışamayacağı bir kurulum hatasıdır — sessizce ertelenmez.
+// henüz kayıtlı olmayabilir (bkz. module.Module belgesi). core.db ve core.eventbus
+// modüller ayağa kalkmadan önce main.go'da hazır değer olarak kaydedildiği için
+// burada çözülmeleri güvenlidir ve eksiklikleri modülün hiç çalışamayacağı bir
+// kurulum hatasıdır — sessizce ertelenmez.
 func (m *Module) Register(ctx context.Context, c *container.Container) error {
 	pool, err := container.Resolve[*db.Pool](c, svcDB)
 	if err != nil {
 		return errors.Wrap(err, errors.KindOf(err), codeSetupFailed,
 			"%s modülü veritabanı havuzunu çözemedi (%q)", ModuleName, svcDB)
-	}
-	links, err := container.Resolve[link.LinkService](c, svcLink)
-	if err != nil {
-		return errors.Wrap(err, errors.KindOf(err), codeSetupFailed,
-			"%s modülü link servisini çözemedi (%q)", ModuleName, svcLink)
 	}
 	// Dar arayüzle çözülür: modül yalnızca YAYIMLAR, abone olmaz ve veri yolunu
 	// kapatmaz (bkz. service.EventPublisher).
@@ -188,7 +182,6 @@ func (m *Module) Register(ctx context.Context, c *container.Container) error {
 
 	svc, err := service.New(service.Options{
 		Repo:   repository.New(pool.Pool()),
-		Links:  links,
 		Events: bus,
 		// Harcama kuralının sağlayıcısı BAŞKA bir modüldür ve bu aşamada henüz
 		// kayıtlı olmayabilir; çözüm ilk kullanıma bırakılır
@@ -213,15 +206,6 @@ func (m *Module) Register(ctx context.Context, c *container.Container) error {
 	// Entity() ile adın örtüştüğünü doğrular (ADR 0004).
 	if err := c.Provide(ProviderName, service.NewQueryProvider(svc)); err != nil {
 		return err
-	}
-
-	// Link tanımları BURADA bildirilir: şema, tanımın kendisiyle aynı yerde
-	// durur ve her açılışta idempotent olarak doğrulanır (ADR 0005).
-	for _, def := range service.Definitions() {
-		if err := links.Define(ctx, def); err != nil {
-			return errors.Wrap(err, errors.KindOf(err), codeLinkDefine,
-				"%q link tanımı bildirilemedi", def.Name)
-		}
 	}
 
 	m.svc = svc

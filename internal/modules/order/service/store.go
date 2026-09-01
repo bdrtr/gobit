@@ -123,22 +123,6 @@ type Store interface {
 	ListClaims(ctx context.Context, filter models.ChildFilter) ([]models.Claim, int64, error)
 }
 
-// Linker servisin modüller arası bağ katmanından ihtiyaç duyduğu DAR yüzeydir.
-//
-// core/link'in tam arayüzü toplu okuma metotlarını da içerir; sipariş onların
-// hiçbirini kullanmaz. Dar tutulması iki işe yarar: bağımlılık gerçekten
-// kullanılan yüzeyle sınırlanır ve birim testlerinde sahte bir bağ servisi
-// birkaç satırda yazılabilir.
-type Linker interface {
-	// Create fromID ile toID arasında bağ kurar; aynı çift ikinci kez
-	// bağlanırsa çağrı no-op'tur.
-	Create(ctx context.Context, name, fromID, toID string) error
-	// Delete bağı kaldırır; bağ yoksa çağrı no-op'tur.
-	Delete(ctx context.Context, name, fromID, toID string) error
-	// List fromID'ye bağlı toID'leri döner.
-	List(ctx context.Context, name, fromID string) ([]string, error)
-}
-
 // EventPublisher servisin olay veri yolundan ihtiyaç duyduğu DAR yüzeydir.
 //
 // core/eventbus ÇEKİRDEKTİR ve import edilmesi serbesttir (Prensip 2.4);

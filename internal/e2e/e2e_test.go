@@ -261,8 +261,8 @@ var (
 	testDSN string
 	// kap modüllerin ve akışların çözüldüğü DI kabıdır.
 	kap *container.Container
-	// baglar çekirdeğin Module Links servisidir; testler bağların GERÇEKTEN
-	// kurulduğunu buradan okuyarak doğrular.
+	// baglar çekirdeğin Module Links servisidir; kaba ve Query motoruna
+	// verilir, çünkü genişletmeler bağları onun üzerinden gezer.
 	baglar link.LinkService
 	// testAuthn koruma middleware'ine bağlanan kimlik doğrulayıcıdır.
 	//

@@ -37,11 +37,16 @@
 // yazılmalıdır:
 //
 //	link.LinkDefinition{
-//	    Name:        "cart_customer",
-//	    From:        link.LinkSide{Module: "cart", Field: "cart_id"},
+//	    Name:        "b2b_employee_customer",
+//	    From:        link.LinkSide{Module: "b2b", Field: "employee_id"},
 //	    To:          link.LinkSide{Module: "customer", Field: "customer_id"},
 //	    Cardinality: link.OneToOne,
 //	}
+//
+// Örnek GERÇEKTİR: b2b modülü bu bağı bildirir ve çalışanın müşteri kaydını
+// ONUN ÜZERİNDEN okur. Okunmayan bir bağ bildirmek yerine sütun kullanmak
+// gerekir; bunun neden böyle olduğu için bkz. internal/arch
+// TestLinkTanimlariGeziliyor.
 //
 // Burada entity adı ile modül adı aynıdır ("customer"), ama bu bir rastlantıdır
 // ve sağlayıcı adı [ProviderName] sabitinden okunmalıdır.
@@ -130,8 +135,8 @@ func (m *Module) Migrations() fs.FS { return migrationsRoot }
 // güvenlidir — modül sırasına bağımlılık yaratan tek şey başka bir MODÜLÜN
 // servisini çözmek olurdu ve bu yapılmaz.
 //
-// Link tanımı BİLDİRİLMEZ: "cart_customer" ve "order_customer" linklerinin
-// sahibi cart ve order modülleridir; customer o linkleri tanımaz.
+// Link tanımı BİLDİRİLMEZ: customer, kendisine işaret eden bağların ucudur,
+// sahibi değil. Bugünkü tek sahip b2b modülüdür ("b2b_employee_customer").
 func (m *Module) Register(ctx context.Context, c *container.Container) error {
 	pool, err := container.Resolve[*db.Pool](c, dbServiceName)
 	if err != nil {

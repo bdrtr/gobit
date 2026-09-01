@@ -18,7 +18,7 @@ import (
 // Query sağlayıcıyı "<entity>.query" adıyla arar ve Entity() ile örtüşmeyi
 // DOĞRULAR (ADR 0004); iki ad ayrışırsa hata çalışma zamanına kalır.
 func TestProviderEntityAdiSablonaUyar(t *testing.T) {
-	svc, _, _ := yeniServis(t)
+	svc, _ := yeniServis(t)
 
 	provider := service.NewQueryProvider(svc)
 
@@ -29,7 +29,7 @@ func TestProviderEntityAdiSablonaUyar(t *testing.T) {
 // TestProviderListKayitDoner listelemenin kayıt döndürdüğünü ve birleştirme
 // anahtarını (id) taşıdığını doğrular.
 func TestProviderListKayitDoner(t *testing.T) {
-	svc, _, _ := yeniServis(t)
+	svc, _ := yeniServis(t)
 	ctx := context.Background()
 	cart, err := svc.CreateCart(ctx, service.CreateCartInput{
 		RegionID: regionID, CustomerID: customerID, CurrencyCode: currency,
@@ -56,7 +56,7 @@ func TestProviderListKayitDoner(t *testing.T) {
 // Bayatlık toplamlarla birlikte sunulmasaydı, cross-module bir okuma eski bir
 // tutarı güncel sanırdı.
 func TestProviderBayatToplamiBildirir(t *testing.T) {
-	svc, _, _ := yeniServis(t)
+	svc, _ := yeniServis(t)
 	ctx := context.Background()
 	cart := yeniSepet(ctx, t, svc)
 	_, err := svc.AddLineItem(ctx, cart.ID, service.AddLineItemInput{
@@ -77,7 +77,7 @@ func TestProviderBayatToplamiBildirir(t *testing.T) {
 // TestProviderAlanSecimiUygulanir istenen alan kümesinin birebir döndüğünü
 // doğrular.
 func TestProviderAlanSecimiUygulanir(t *testing.T) {
-	svc, _, _ := yeniServis(t)
+	svc, _ := yeniServis(t)
 	ctx := context.Background()
 	cart := yeniSepet(ctx, t, svc)
 	provider := service.NewQueryProvider(svc)
@@ -95,7 +95,7 @@ func TestProviderAlanSecimiUygulanir(t *testing.T) {
 // TestProviderTanimsizAlanReddedilir sunulmayan bir alanın errors.Invalid ile
 // reddedildiğini doğrular (ADR 0004).
 func TestProviderTanimsizAlanReddedilir(t *testing.T) {
-	svc, _, _ := yeniServis(t)
+	svc, _ := yeniServis(t)
 	ctx := context.Background()
 	provider := service.NewQueryProvider(svc)
 
@@ -111,7 +111,7 @@ func TestProviderTanimsizAlanReddedilir(t *testing.T) {
 // TestProviderFiltreleriUygular desteklenen filtrelerin çalıştığını,
 // desteklenmeyenin reddedildiğini doğrular.
 func TestProviderFiltreleriUygular(t *testing.T) {
-	svc, _, _ := yeniServis(t)
+	svc, _ := yeniServis(t)
 	ctx := context.Background()
 	provider := service.NewQueryProvider(svc)
 
@@ -155,7 +155,7 @@ func TestProviderFiltreleriUygular(t *testing.T) {
 // Sınırsız bir kök sorgu tüm sepet tablosunu belleğe alırdı; kırpma sessizdir
 // ve hata dönmez, çünkü limit burada istemci girdisi değil sorgu tanımıdır.
 func TestProviderSinirsizIstekTavanaKirpilir(t *testing.T) {
-	svc, _, _ := yeniServis(t)
+	svc, _ := yeniServis(t)
 	ctx := context.Background()
 	provider := service.NewQueryProvider(svc)
 
@@ -176,7 +176,7 @@ func TestProviderSinirsizIstekTavanaKirpilir(t *testing.T) {
 // TestProviderBulunamayanKimlikHataDegil eksik kimliğin kayıt döndürmediğini
 // ama hata da üretmediğini doğrular (ADR 0004 sözleşmesi).
 func TestProviderBulunamayanKimlikHataDegil(t *testing.T) {
-	svc, _, _ := yeniServis(t)
+	svc, _ := yeniServis(t)
 	ctx := context.Background()
 	cart := yeniSepet(ctx, t, svc)
 	provider := service.NewQueryProvider(svc)
@@ -191,7 +191,7 @@ func TestProviderBulunamayanKimlikHataDegil(t *testing.T) {
 // TestProviderBosKimlikListesiBosDilim boş kimlik listesinin boş (nil olmayan)
 // dilim döndürdüğünü doğrular.
 func TestProviderBosKimlikListesiBosDilim(t *testing.T) {
-	svc, _, _ := yeniServis(t)
+	svc, _ := yeniServis(t)
 	provider := service.NewQueryProvider(svc)
 
 	records, err := provider.FetchByIDs(context.Background(), nil, nil)

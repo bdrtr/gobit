@@ -28,7 +28,6 @@ const (
 type ortam struct {
 	svc   *service.Service
 	store *fakeStore
-	links *fakeLink
 	bus   *fakeBus
 }
 
@@ -37,13 +36,12 @@ func yeniOrtam(t *testing.T) ortam {
 	t.Helper()
 
 	store := newFakeStore()
-	links := newFakeLink()
 	bus := newFakeBus()
 
-	svc, err := service.New(service.Options{Repo: store, Links: links, Events: bus})
+	svc, err := service.New(service.Options{Repo: store, Events: bus})
 	require.NoError(t, err)
 
-	return ortam{svc: svc, store: store, links: links, bus: bus}
+	return ortam{svc: svc, store: store, bus: bus}
 }
 
 // gecerliGirdi tutarlı bir sipariş girdisi üretir.
@@ -259,24 +257,25 @@ func TestCreateOrderZorunluAlanlariDogrular(t *testing.T) {
 	}
 }
 
-// TestCreateOrderBaglariKurar sipariş yazıldıktan sonra bölge ve müşteri
-// bağlarının kurulduğunu doğrular.
-func TestCreateOrderBaglariKurar(t *testing.T) {
+// TestCreateOrderBolgeVeMusteriyiSutunaYazar siparişin bölgesinin ve
+// müşterisinin KENDİ SÜTUNLARINDA durduğunu doğrular.
+//
+// İlişkinin tek yeri budur: sipariş bir de link tablosuna yazılmaz ve bu iddia
+// o kararın bekçisidir — ikinci bir kopya eklenirse sütun ile bağ ayrışabilir.
+func TestCreateOrderBolgeVeMusteriyiSutunaYazar(t *testing.T) {
 	ctx := context.Background()
 	o := yeniOrtam(t)
 
 	siparis, err := o.svc.CreateOrder(ctx, gecerliGirdi())
 	require.NoError(t, err)
 
-	assert.ElementsMatch(t, []string{
-		linkKey(service.LinkOrderRegion, siparis.ID, testRegionID),
-		linkKey(service.LinkOrderCustomer, siparis.ID, testCustomerID),
-	}, o.links.links())
+	assert.Equal(t, testRegionID, siparis.RegionID)
+	assert.Equal(t, testCustomerID, siparis.CustomerID)
 }
 
-// TestCreateOrderMisafirSiparisiMusteriBagiKurmaz misafir siparişinde yalnızca
-// bölge bağının kurulduğunu doğrular.
-func TestCreateOrderMisafirSiparisiMusteriBagiKurmaz(t *testing.T) {
+// TestCreateOrderMisafirSiparisiMusterisizAcilir müşteri kimliği verilmeyen
+// siparişin MİSAFİR olarak açıldığını doğrular.
+func TestCreateOrderMisafirSiparisiMusterisizAcilir(t *testing.T) {
 	ctx := context.Background()
 	o := yeniOrtam(t)
 
@@ -287,90 +286,8 @@ func TestCreateOrderMisafirSiparisiMusteriBagiKurmaz(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.True(t, siparis.Guest())
-	assert.Equal(t, []string{linkKey(service.LinkOrderRegion, siparis.ID, testRegionID)},
-		o.links.links())
-}
-
-// TestCreateOrderBagKurulamazsaSiparisGeriAlinir bağsız bir siparişin ayakta
-// kalmadığını doğrular.
-//
-// Bağsız sipariş "çalışır görünür ama Query katmanında hiçbir bölgeye
-// bağlanmaz" durumudur; eksiklik ancak raporlamada fark edilirdi.
-func TestCreateOrderBagKurulamazsaSiparisGeriAlinir(t *testing.T) {
-	ctx := context.Background()
-	o := yeniOrtam(t)
-	o.links.failOn = service.LinkOrderCustomer
-	o.links.failErr = errors.Conflict("link_cardinality_violation", "bağ kurulamadı")
-
-	_, err := o.svc.CreateOrder(ctx, gecerliGirdi())
-
-	require.Error(t, err)
-	assert.Equal(t, errors.KindConflict, errors.KindOf(err), "bağ hatasının sınıfı korunmalı")
-	assert.Equal(t, service.CodeLinkFailed, errors.CodeOf(err))
-
-	siparisler, sayi, listErr := o.svc.ListOrders(ctx, service.ListOrdersInput{})
-	require.NoError(t, listErr)
-	assert.Zero(t, sayi, "bağı kurulamayan sipariş geri alınmalı")
-	assert.Empty(t, siparisler)
-	assert.Empty(t, o.bus.events(), "geri alınan sipariş için olay yayımlanmamalı")
-}
-
-// TestCreateOrderBagKurulurkenGelenIdempotentCagriHayaletSiparisGormez
-// oluşturma yarıda kalırken gelen ikinci çağrının GERÇEK bir sipariş
-// döndürdüğünü doğrular.
-//
-// Senaryo şudur: A çağrısı bağlarını kurarken düşer; tam o sırada AYNI
-// idempotency anahtarıyla B çağrısı gelir. B'nin döndürdüğü kimlik
-// ÇÖZÜLEBİLİR olmalıdır — sipariş de özeti de yerinde durmalıdır.
-//
-// Sıra "önce yaz, sonra bağla, hata olursa geri al" olsaydı A'nın siparişi B'ye
-// bir an GÖRÜNÜR olur, B onu "başarı" olarak döndürür ve A geri alınca B'nin
-// kimliği hiçbir siparişe karşılık gelmezdi: saga o kimliğe güvenip ödemeye
-// geçer, telafi (CancelOrder) ise NotFound alırdı.
-func TestCreateOrderBagKurulurkenGelenIdempotentCagriHayaletSiparisGormez(t *testing.T) {
-	ctx := context.Background()
-	o := yeniOrtam(t)
-
-	in := gecerliGirdi()
-	in.IdempotencyKey = "wf_ADIM_1"
-
-	// A'nın bölge bağı düşer. Tek atımlık kanca tam o anda B'yi çalıştırır;
-	// failOn'u temizlemesi B'nin kendi bağlarını kurabilmesi içindir (A'nın
-	// hatası kanca çağrılmadan ÖNCE kararlaştırılmıştır).
-	o.links.failOn = service.LinkOrderRegion
-	o.links.failErr = errors.Conflict("link_cardinality_violation", "bağ kurulamadı")
-
-	var (
-		b     models.Order
-		bHata error
-	)
-	o.links.hookCreate = func() {
-		o.links.mu.Lock()
-		o.links.failOn = ""
-		o.links.mu.Unlock()
-		b, bHata = o.svc.CreateOrder(ctx, in)
-	}
-
-	_, aHata := o.svc.CreateOrder(ctx, in)
-
-	require.Error(t, aHata, "bağı kurulamayan çağrı hata dönmeli")
-	require.NoError(t, bHata, "araya giren çağrı sipariş açabilmeli")
-
-	// Asıl iddia: B'nin döndürdüğü kimlik hâlâ ÇÖZÜLÜYOR olmalı.
-	detay, err := o.svc.GetOrder(ctx, b.ID)
-	require.NoError(t, err, "başarı olarak dönen sipariş sonradan kaybolmamalı")
-	assert.Equal(t, b.ID, detay.ID)
-
-	// Kardeş kusur: özet de siparişle aynı yanıtı vermeli; "siparişi olmayan
-	// özet" ya da "özeti olmayan sipariş" diye bir kayıt kalmamalı.
-	ozet, err := o.svc.GetOrderSummary(ctx, b.ID)
-	require.NoError(t, err)
-	assert.Equal(t, b.ID, ozet.OrderID)
-
-	// Ortada tek bir sipariş vardır: A hiç yazılmamıştır.
-	_, sayi, listErr := o.svc.ListOrders(ctx, service.ListOrdersInput{})
-	require.NoError(t, listErr)
-	assert.Equal(t, int64(1), sayi, "bağı kurulamayan çağrı sipariş bırakmamalı")
+	assert.Empty(t, siparis.CustomerID)
+	assert.Equal(t, testRegionID, siparis.RegionID)
 }
 
 // TestCreateOrderNumarasizSiparisiGeriAlir depo kullanılabilir bir numara
@@ -408,7 +325,6 @@ func TestCreateOrderSatirYazilamazsaHicbirSeyYazilmaz(t *testing.T) {
 	_, sayi, listErr := o.svc.ListOrders(ctx, service.ListOrdersInput{})
 	require.NoError(t, listErr)
 	assert.Zero(t, sayi, "satır yazılamayınca sipariş de yazılmamalı")
-	assert.Empty(t, o.links.links(), "yazma düşünce önceden kurulan bağ kaldırılmalı")
 	assert.Empty(t, o.bus.events())
 }
 
@@ -888,9 +804,8 @@ func TestSetOrderSummaryTotalsOlmayanSiparisNotFound(t *testing.T) {
 // sipariş sessizce yazılır ama "order.placed" hiç yayımlanmazdı.
 func TestNewEksikBagimlilikliKurulumuReddeder(t *testing.T) {
 	testler := map[string]service.Options{
-		"depo yok":      {Links: newFakeLink(), Events: newFakeBus()},
-		"link yok":      {Repo: newFakeStore(), Events: newFakeBus()},
-		"veri yolu yok": {Repo: newFakeStore(), Links: newFakeLink()},
+		"depo yok":      {Events: newFakeBus()},
+		"veri yolu yok": {Repo: newFakeStore()},
 	}
 
 	for ad, opts := range testler {

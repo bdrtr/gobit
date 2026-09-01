@@ -6,9 +6,8 @@
 //
 // Birim testleri sahte bir depo ile servisin KARARLARINI kanıtlar. Buradaki
 // testler kararların dayandığı ZEMİNİ kanıtlar: migration'ın geri
-// alınabildiğini, kısıtların gerçekten uygulandığını, link'lerin gerçekten
-// kurulduğunu ve sipariş NUMARASININ eşzamanlı yazmalarda gerçekten benzersiz
-// kaldığını. Özellikle "eşzamanlı 20 sipariş aynı numarayı almaz" iddiası
+// alınabildiğini, kısıtların gerçekten uygulandığını ve sipariş NUMARASININ
+// eşzamanlı yazmalarda gerçekten benzersiz kaldığını. Özellikle "eşzamanlı 20 sipariş aynı numarayı almaz" iddiası
 // yalnızca burada, gerçek goroutine'lerle gerçek bir sequence üzerinde
 // sınanabilir.
 package order_test
@@ -34,7 +33,6 @@ import (
 	"github.com/bdrtr/gobit/internal/core/db"
 	"github.com/bdrtr/gobit/internal/core/errors"
 	"github.com/bdrtr/gobit/internal/core/eventbus"
-	"github.com/bdrtr/gobit/internal/core/link"
 	"github.com/bdrtr/gobit/internal/modules/order"
 	"github.com/bdrtr/gobit/internal/modules/order/models"
 	"github.com/bdrtr/gobit/internal/modules/order/repository"
@@ -67,8 +65,6 @@ var (
 	testPool *db.Pool
 	// testDSN migration çağrıları için bağlantı adresidir.
 	testDSN string
-	// testLinks gerçek link servisidir.
-	testLinks link.LinkService
 )
 
 func TestMain(m *testing.M) {
@@ -118,19 +114,11 @@ func runWithPostgres(m *testing.M) int {
 		return 1
 	}
 
-	testLinks = link.New(testPool, nil)
-	for _, def := range service.Definitions() {
-		if err := testLinks.Define(ctx, def); err != nil {
-			fmt.Fprintf(os.Stderr, "%q link tanımı bildirilemedi: %v\n", def.Name, err)
-			return 1
-		}
-	}
-
 	return m.Run()
 }
 
-// yeniServis gerçek depo, gerçek link servisi ve gerçek olay veri yolu üzerinde
-// çalışan bir servis kurar; ikinci dönüş değeri veri yoludur.
+// yeniServis gerçek depo ve gerçek olay veri yolu üzerinde çalışan bir servis
+// kurar; ikinci dönüş değeri veri yoludur.
 func yeniServis(t *testing.T) (*service.Service, eventbus.EventBus) {
 	t.Helper()
 	return yeniServisDepoyla(t, repository.New(testPool.Pool()))
@@ -156,7 +144,6 @@ func yeniServisDepoyla(t *testing.T, depo service.Store) (*service.Service, even
 
 	svc, err := service.New(service.Options{
 		Repo:   depo,
-		Links:  testLinks,
 		Events: bus,
 	})
 	require.NoError(t, err)
@@ -293,13 +280,10 @@ func TestSiparisYasamDongusu(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, siparis.ID, numarayla.ID)
 
-	// Bağlar gerçekten kurulmuş olmalı.
-	bolgeler, err := testLinks.List(ctx, service.LinkOrderRegion, siparis.ID)
-	require.NoError(t, err)
-	assert.Equal(t, []string{testRegionID}, bolgeler)
-	musteriler, err := testLinks.List(ctx, service.LinkOrderCustomer, siparis.ID)
-	require.NoError(t, err)
-	assert.Equal(t, []string{testCustomerID}, musteriler)
+	// Bölge ve müşteri siparişin KENDİ SÜTUNLARINDA durur; ilişkinin tek yeri
+	// budur.
+	assert.Equal(t, testRegionID, siparis.RegionID)
+	assert.Equal(t, testCustomerID, siparis.CustomerID)
 
 	tamamlanan, err := svc.CompleteOrder(ctx, siparis.ID)
 	require.NoError(t, err)
@@ -448,7 +432,6 @@ func TestOrderPlacedOlayiRedisUzerindeTipDegistirmez(t *testing.T) {
 
 	svc, err := service.New(service.Options{
 		Repo:   repository.New(testPool.Pool()),
-		Links:  testLinks,
 		Events: bus,
 	})
 	require.NoError(t, err)

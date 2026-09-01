@@ -23,9 +23,10 @@
 // # Neyi bilmez
 //
 // region hiçbir modülü import etmez ve sepetlerin, siparişlerin varlığından
-// haberdar değildir. cart ile bağ, cart'ın bildireceği "cart_region" linkiyle
-// kurulur; link tablosu çekirdektedir ve region onu hiç görmez (Prensip 2.2:
-// cross-module FK yoktur).
+// haberdar değildir. Sepet ve sipariş bölgeyi KENDİ SÜTUNLARINDA taşır; bunun
+// bir link ile aynalanması denendi ve okuyucusu çıkmadığı için kaldırıldı
+// (bkz. CHANGELOG, "cart_region"). Bugün region'a işaret eden bir link
+// YOKTUR — ihtiyaç doğarsa bildiren taraf aşağıdaki nota bakmalıdır.
 //
 // # Dışarıya açtığı yüzeyler
 //
@@ -41,11 +42,13 @@
 // Query, bir genişletmenin hedef sağlayıcısını link tanımının UCUNDAKİ MODÜL
 // ADINDAN bulur (bkz. internal/core/query targetSide: hedef ad + ".query"
 // aranır). region için entity adı ile modül adı AYNIDIR ("region"), yani linki
-// bildiren modül ucu doğal biçimde yazabilir:
+// bildiren modül ucu doğal biçimde yazabilir. Aşağıdaki tanım VARSAYIMSALDIR;
+// böyle bir link bugün yoktur ve eklenmesi ancak GEZEN bir okuyucusu varsa
+// doğrudur (bkz. internal/arch TestLinkTanimlariGeziliyor):
 //
 //	link.LinkDefinition{
-//	    Name:        "cart_region",
-//	    From:        link.LinkSide{Module: "cart", Field: "cart_id"},
+//	    Name:        "siparis_region",
+//	    From:        link.LinkSide{Module: "siparis", Field: "siparis_id"},
 //	    To:          link.LinkSide{Module: "region", Field: "region_id"},
 //	    Cardinality: link.OneToOne,
 //	}
@@ -130,8 +133,8 @@ func (m *Module) Name() string { return ModuleName }
 // güvenlidir — modül sırasına bağımlılık yaratan tek şey başka bir MODÜLÜN
 // servisini çözmek olurdu ve bu yapılmaz.
 //
-// Link tanımı bildirilmez: "cart_region" linkinin sahibi cart'tır ve region o
-// linki tanımaz.
+// Link tanımı bildirilmez ve region'a işaret eden bir link de yoktur: bölge
+// kimliğini taşıyan taraflar onu kendi sütunlarında tutar.
 func (m *Module) Register(ctx context.Context, c *container.Container) error {
 	pool, err := container.Resolve[*db.Pool](c, dbServiceName)
 	if err != nil {

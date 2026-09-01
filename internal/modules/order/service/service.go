@@ -83,8 +83,6 @@ const (
 	// CodeRefundExceedsOrder iade/hasar kaydının tutarının siparişin toplamını
 	// aştığını bildirir.
 	CodeRefundExceedsOrder = "order_refund_exceeds_total"
-	// CodeLinkFailed modüller arası bağın kurulamadığını bildirir.
-	CodeLinkFailed = "order_link_failed"
 	// CodeSpendingLimitExceeded siparişin, müşterinin dönem içindeki harcama
 	// limitini aştığını bildirir.
 	CodeSpendingLimitExceeded = "order_spending_limit_exceeded"
@@ -117,9 +115,10 @@ const maxTextLen = 512
 
 // maxIDLen dışarıdan gelen kimlikler için üst sınırdır.
 //
-// Kimlikler link tablosunun benzersiz indeksine de girer; core/link aynı sınırı
-// uygular ve orada aşılırsa hata sipariş yazıldıktan SONRA çıkardı. Sınırın
-// burada da olması, bağı kurulamayacak bir siparişin hiç yazılmamasını sağlar.
+// Bu kimlikler (region_id, customer_id, cart_id, variant_id) orders_region_idx
+// ve orders_customer_idx indekslerine girer. Sınırsız bir dize indeksi sipariş
+// başına keyfi büyüklükte şişirir ve süzme maliyetini tek bir isteğin
+// belirlemesine izin verirdi.
 const maxIDLen = 255
 
 // maxOrderItems tek bir siparişin taşıyabileceği azami satır sayısıdır.
@@ -132,7 +131,6 @@ const maxOrderItems = 500
 // Service order modülünün dışa açık servisidir. Eşzamanlı kullanıma güvenlidir.
 type Service struct {
 	store    Store
-	links    Linker
 	events   EventPublisher
 	spending SpendingPolicy
 	log      *slog.Logger
@@ -142,9 +140,6 @@ type Service struct {
 type Options struct {
 	// Repo kalıcılık yüzeyidir; zorunludur.
 	Repo Store
-	// Links modüller arası bağ servisidir; zorunludur. Sipariş, bölge ve
-	// müşteri bağlarını buradan kurar (bkz. links.go).
-	Links Linker
 	// Events olay veri yoludur; zorunludur. "order.placed" olayı buradan
 	// yayımlanır (plan Faz 6 DoD).
 	Events EventPublisher
@@ -176,9 +171,6 @@ func New(opts Options) (*Service, error) {
 	if opts.Repo == nil {
 		return nil, errors.Internal(CodeNotReady, "order servisi depo olmadan kurulamaz")
 	}
-	if opts.Links == nil {
-		return nil, errors.Internal(CodeNotReady, "order servisi link servisi olmadan kurulamaz")
-	}
 	if opts.Events == nil {
 		return nil, errors.Internal(CodeNotReady, "order servisi olay veri yolu olmadan kurulamaz")
 	}
@@ -188,7 +180,6 @@ func New(opts Options) (*Service, error) {
 	}
 	return &Service{
 		store:    opts.Repo,
-		links:    opts.Links,
 		events:   opts.Events,
 		spending: opts.Spending,
 		log:      log,

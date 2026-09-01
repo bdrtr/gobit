@@ -22,15 +22,14 @@ const (
 	currency    = "TRY"
 )
 
-// yeniServis sahte depo ve sahte bağ servisi üzerinde çalışan bir servis kurar.
-func yeniServis(t *testing.T) (*service.Service, *fakeStore, *fakeLinker) {
+// yeniServis sahte depo üzerinde çalışan bir servis kurar.
+func yeniServis(t *testing.T) (*service.Service, *fakeStore) {
 	t.Helper()
 
 	store := newFakeStore()
-	links := newFakeLinker()
-	svc, err := service.New(service.Options{Repo: store, Links: links})
+	svc, err := service.New(service.Options{Repo: store})
 	require.NoError(t, err)
-	return svc, store, links
+	return svc, store
 }
 
 // yeniSepet test için misafir sepeti oluşturur.
@@ -48,22 +47,17 @@ func yeniSepet(ctx context.Context, t *testing.T, svc *service.Service) models.C
 // TestNewEksikBagimlilikKurulumdaPatlar servisin eksik bağımlılıkla
 // kurulamadığını doğrular.
 //
-// Bağsız bir sepet "sessizce yarım çalışırdı": satırlar yazılır, ama sepet
-// hiçbir bölgeye bağlanmaz ve eksiklik ancak Query katmanında boş sonuç olarak
-// görünürdü.
+// Deposuz bir servis her çağrıda panik üretirdi; eksikliğin ilk istekte değil
+// açılışta görünmesi için hiçbir sebep yoktur.
 func TestNewEksikBagimlilikKurulumdaPatlar(t *testing.T) {
-	_, err := service.New(service.Options{Repo: newFakeStore()})
-	require.Error(t, err)
-	assert.Equal(t, service.CodeNotReady, errors.CodeOf(err))
-
-	_, err = service.New(service.Options{Links: newFakeLinker()})
+	_, err := service.New(service.Options{})
 	require.Error(t, err)
 	assert.Equal(t, service.CodeNotReady, errors.CodeOf(err))
 }
 
 // TestCreateCartRegionZorunlu bölgesiz bir sepetin reddedildiğini doğrular.
 func TestCreateCartRegionZorunlu(t *testing.T) {
-	svc, _, _ := yeniServis(t)
+	svc, _ := yeniServis(t)
 
 	_, err := svc.CreateCart(context.Background(), service.CreateCartInput{
 		CurrencyCode: currency,
@@ -80,7 +74,7 @@ func TestCreateCartRegionZorunlu(t *testing.T) {
 // Tekleştirme olmasaydı "try" ile "TRY" iki ayrı para birimi gibi saklanır ve
 // tutar karşılaştırmaları sessizce yanlış sonuç verirdi.
 func TestCreateCartParaBirimiDogrulanirVeTeklesir(t *testing.T) {
-	svc, _, _ := yeniServis(t)
+	svc, _ := yeniServis(t)
 	ctx := context.Background()
 
 	cart, err := svc.CreateCart(ctx, service.CreateCartInput{
@@ -98,14 +92,14 @@ func TestCreateCartParaBirimiDogrulanirVeTeklesir(t *testing.T) {
 	}
 }
 
-// TestCreateCartMisafirSepetiYalnizcaBolgeyeBaglanir misafir sepetinin müşteri
-// bağı KURMADIĞINI doğrular.
+// TestCreateCartMisafirSepetiMusterisizAcilir müşteri kimliği verilmeyen
+// sepetin MİSAFİR olarak açıldığını doğrular.
 //
-// Boş bir müşteri kimliğiyle bağ kurulsaydı, link tablosunda boş dizeye
-// bağlanmış sepetler birikir ve "müşterisi olmayan" ile "müşterisi boş dize
-// olan" ayrımı kaybolurdu.
-func TestCreateCartMisafirSepetiYalnizcaBolgeyeBaglanir(t *testing.T) {
-	svc, _, links := yeniServis(t)
+// Boş kimlik saklanmaz, YOKLUK olarak saklanır: "müşterisi olmayan" ile
+// "müşterisi boş dize olan" ayrımı kaybolsaydı carts_customer_idx boş dizeye
+// yazılmış sepetlerle dolardı.
+func TestCreateCartMisafirSepetiMusterisizAcilir(t *testing.T) {
+	svc, _ := yeniServis(t)
 
 	cart, err := svc.CreateCart(context.Background(), service.CreateCartInput{
 		RegionID: regionID, CurrencyCode: currency,
@@ -113,15 +107,17 @@ func TestCreateCartMisafirSepetiYalnizcaBolgeyeBaglanir(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.True(t, cart.Guest(), "müşterisiz sepet misafir sayılmalı")
-	assert.Equal(t, []string{regionID}, links.targets(service.LinkCartRegion))
-	assert.Empty(t, links.targets(service.LinkCartCustomer),
-		"misafir sepeti müşteriye bağlanmamalı")
+	assert.Empty(t, cart.CustomerID)
+	assert.Equal(t, regionID, cart.RegionID)
 }
 
-// TestCreateCartKayitliMusteriIkiBagiDaKurar kayıtlı müşteri sepetinin hem
-// bölge hem müşteri bağını kurduğunu doğrular.
-func TestCreateCartKayitliMusteriIkiBagiDaKurar(t *testing.T) {
-	svc, _, links := yeniServis(t)
+// TestCreateCartKayitliMusteriSutunlaraYazilir kayıtlı müşteri sepetinin
+// bölgesinin ve müşterisinin KENDİ SÜTUNLARINDA durduğunu doğrular.
+//
+// İlişkinin tek yeri budur; sepet bir de link tablosuna yazılmaz. İddia o
+// kararın bekçisidir: ikinci bir kopya eklenirse sütun ile bağ ayrışabilir.
+func TestCreateCartKayitliMusteriSutunlaraYazilir(t *testing.T) {
+	svc, _ := yeniServis(t)
 
 	cart, err := svc.CreateCart(context.Background(), service.CreateCartInput{
 		RegionID: regionID, CustomerID: customerID, CurrencyCode: currency,
@@ -131,18 +127,18 @@ func TestCreateCartKayitliMusteriIkiBagiDaKurar(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, cart.Guest())
 	assert.Equal(t, "musteri@ornek.com", cart.Email, "e-posta küçük harfe indirilmeli")
-	assert.Equal(t, []string{regionID}, links.targets(service.LinkCartRegion))
-	assert.Equal(t, []string{customerID}, links.targets(service.LinkCartCustomer))
+	assert.Equal(t, regionID, cart.RegionID)
+	assert.Equal(t, customerID, cart.CustomerID)
 }
 
 // TestCreateCartAyniBolgedeIkiSepetAcilabilir bir bölgede (ve bir müşteride)
 // birden çok sepet açılabildiğini doğrular.
 //
-// Test bilinçli olarak KARDİNALİTE seçimini korur: cart_region ya da
-// cart_customer link'i OneToOne bildirilseydi, ikinci sepet link tablosunun
-// to_id benzersiz indeksine çarpar ve Conflict alırdı (bkz. service.Definitions).
+// Kural sepetin kendi tabiatıdır: bir müşterinin zaman içinde birden çok
+// sepeti olur ve bir bölgede binlerce sepet bulunur. Herhangi bir katmanda
+// bölge ya da müşteri başına TEKİLLİK dayatan bir kısıt bu testi düşürür.
 func TestCreateCartAyniBolgedeIkiSepetAcilabilir(t *testing.T) {
-	svc, _, links := yeniServis(t)
+	svc, _ := yeniServis(t)
 	ctx := context.Background()
 
 	first, err := svc.CreateCart(ctx, service.CreateCartInput{
@@ -156,67 +152,16 @@ func TestCreateCartAyniBolgedeIkiSepetAcilabilir(t *testing.T) {
 	require.NoError(t, err, "aynı müşteri aynı bölgede ikinci sepet açabilmeli")
 
 	assert.NotEqual(t, first.ID, second.ID)
-	assert.Equal(t, []string{regionID, regionID}, links.targets(service.LinkCartRegion))
-	assert.Equal(t, []string{customerID, customerID}, links.targets(service.LinkCartCustomer))
-}
-
-// TestCreateCartBagKurulamazsaSepetGeriAlinir bağ kurulamayan sepetin ayakta
-// KALMADIĞINI doğrular.
-//
-// Bağsız bir sepet çalışır görünür ama Query katmanında hiçbir bölgeye
-// bağlanmaz; eksiklik ancak raporlama sırasında fark edilirdi.
-func TestCreateCartBagKurulamazsaSepetGeriAlinir(t *testing.T) {
-	store := newFakeStore()
-	links := newFakeLinker()
-	links.failCreate = errors.Unavailable("link_db_unavailable", "link servisi kapalı")
-	svc, err := service.New(service.Options{Repo: store, Links: links})
-	require.NoError(t, err)
-	ctx := context.Background()
-
-	_, err = svc.CreateCart(ctx, service.CreateCartInput{
-		RegionID: regionID, CurrencyCode: currency,
-	})
-
-	require.Error(t, err)
-	assert.Equal(t, service.CodeLinkFailed, errors.CodeOf(err))
-	assert.Equal(t, errors.KindUnavailable, errors.KindOf(err),
-		"link hatasının sınıfı korunmalı")
-
-	carts, count, listErr := svc.ListCarts(ctx, service.ListCartsInput{})
-	require.NoError(t, listErr)
-	assert.Zero(t, count, "bağı kurulamayan sepet geri alınmalı")
-	assert.Empty(t, carts)
-}
-
-// TestCreateCartMusteriBagiDusersePartialKalmaz müşteri bağı kurulamadığında
-// sepetin (bölge bağı kurulmuş olsa bile) geri alındığını doğrular.
-func TestCreateCartMusteriBagiDusersePartialKalmaz(t *testing.T) {
-	store := newFakeStore()
-	links := newFakeLinker()
-	links.failCreate = errors.Conflict("link_cardinality_violation", "çakışma")
-	links.failCreateFor = service.LinkCartCustomer
-	svc, err := service.New(service.Options{Repo: store, Links: links})
-	require.NoError(t, err)
-	ctx := context.Background()
-
-	_, err = svc.CreateCart(ctx, service.CreateCartInput{
-		RegionID: regionID, CustomerID: customerID, CurrencyCode: currency,
-	})
-
-	require.Error(t, err)
-	assert.Equal(t, errors.KindConflict, errors.KindOf(err))
-	assert.Empty(t, links.targets(service.LinkCartRegion),
-		"telafi, kurulmuş bölge bağını da kaldırmalı")
 
 	_, count, listErr := svc.ListCarts(ctx, service.ListCartsInput{})
 	require.NoError(t, listErr)
-	assert.Zero(t, count)
+	assert.Equal(t, int64(2), count)
 }
 
 // TestAddLineItemAdetPozitifOlmali sıfır ve negatif adedin reddedildiğini
 // doğrular.
 func TestAddLineItemAdetPozitifOlmali(t *testing.T) {
-	svc, store, _ := yeniServis(t)
+	svc, store := yeniServis(t)
 	ctx := context.Background()
 	cart := yeniSepet(ctx, t, svc)
 
@@ -235,7 +180,7 @@ func TestAddLineItemAdetPozitifOlmali(t *testing.T) {
 
 // TestAddLineItemAdetTavaniAsilamaz adet üst sınırının uygulandığını doğrular.
 func TestAddLineItemAdetTavaniAsilamaz(t *testing.T) {
-	svc, _, _ := yeniServis(t)
+	svc, _ := yeniServis(t)
 	ctx := context.Background()
 	cart := yeniSepet(ctx, t, svc)
 
@@ -254,7 +199,7 @@ func TestAddLineItemAdetTavaniAsilamaz(t *testing.T) {
 // satırı da "1-4" kademesinden fiyatlar ve müşteri "5+" fiyatını alamaz
 // (bkz. Service.AddLineItem).
 func TestAddLineItemAyniVaryantAdediArtirir(t *testing.T) {
-	svc, _, _ := yeniServis(t)
+	svc, _ := yeniServis(t)
 	ctx := context.Background()
 	cart := yeniSepet(ctx, t, svc)
 
@@ -281,7 +226,7 @@ func TestAddLineItemAyniVaryantAdediArtirir(t *testing.T) {
 // TestAddLineItemFarkliVaryantYeniSatirAcar farklı varyantların ayrı satır
 // olduğunu doğrular.
 func TestAddLineItemFarkliVaryantYeniSatirAcar(t *testing.T) {
-	svc, _, _ := yeniServis(t)
+	svc, _ := yeniServis(t)
 	ctx := context.Background()
 	cart := yeniSepet(ctx, t, svc)
 
@@ -303,7 +248,7 @@ func TestAddLineItemFarkliVaryantYeniSatirAcar(t *testing.T) {
 // tavanı aşması hâlinde isteğin reddedildiğini ve satırın DEĞİŞMEDİĞİNİ
 // doğrular.
 func TestAddLineItemBirlestirmedeTavanAsilirsaReddedilir(t *testing.T) {
-	svc, _, _ := yeniServis(t)
+	svc, _ := yeniServis(t)
 	ctx := context.Background()
 	cart := yeniSepet(ctx, t, svc)
 
@@ -332,7 +277,7 @@ func TestAddLineItemBirlestirmedeTavanAsilirsaReddedilir(t *testing.T) {
 // çevirmek, adet alanına sıfır gönderen bir hatanın sessizce veri silmesi
 // demek olurdu.
 func TestUpdateLineItemQuantitySifiriReddeder(t *testing.T) {
-	svc, _, _ := yeniServis(t)
+	svc, _ := yeniServis(t)
 	ctx := context.Background()
 	cart := yeniSepet(ctx, t, svc)
 	item, err := svc.AddLineItem(ctx, cart.ID, service.AddLineItemInput{
@@ -354,7 +299,7 @@ func TestUpdateLineItemQuantitySifiriReddeder(t *testing.T) {
 // TestUpdateLineItemQuantityMutlakYazar adedin MUTLAK değerle yazıldığını
 // (artımlı olmadığını) doğrular.
 func TestUpdateLineItemQuantityMutlakYazar(t *testing.T) {
-	svc, _, _ := yeniServis(t)
+	svc, _ := yeniServis(t)
 	ctx := context.Background()
 	cart := yeniSepet(ctx, t, svc)
 	item, err := svc.AddLineItem(ctx, cart.ID, service.AddLineItemInput{
@@ -371,7 +316,7 @@ func TestUpdateLineItemQuantityMutlakYazar(t *testing.T) {
 // TestRemoveLineItemBaskaSepetinSatiriniSilemez satır kimliği bilinse bile
 // başka bir sepetin satırının silinemediğini doğrular.
 func TestRemoveLineItemBaskaSepetinSatiriniSilemez(t *testing.T) {
-	svc, _, _ := yeniServis(t)
+	svc, _ := yeniServis(t)
 	ctx := context.Background()
 	mine := yeniSepet(ctx, t, svc)
 	other, err := svc.CreateCart(ctx, service.CreateCartInput{
@@ -401,7 +346,7 @@ func TestRemoveLineItemBaskaSepetinSatiriniSilemez(t *testing.T) {
 // dolayısıyla WithTx'i atlayan bir akış burada patlar. Ayrıca kilit sayısı,
 // kilidin gerçekten alındığını gösterir.
 func TestYazmaAkislariSepetiKilitler(t *testing.T) {
-	svc, store, _ := yeniServis(t)
+	svc, store := yeniServis(t)
 	ctx := context.Background()
 	cart := yeniSepet(ctx, t, svc)
 
@@ -443,7 +388,7 @@ func TestYazmaAkislariSepetiKilitler(t *testing.T) {
 // Bayatlığın görünür olması, calculate_totals çalışmadan sepetin
 // tamamlanmasını engelleyen tek şeydir (bkz. Service.MarkCompleted).
 func TestYapisalDegisiklikToplamlariBayatlatir(t *testing.T) {
-	svc, _, _ := yeniServis(t)
+	svc, _ := yeniServis(t)
 	ctx := context.Background()
 	cart := yeniSepet(ctx, t, svc)
 	assert.False(t, cart.TotalsStale(), "boş sepetin toplamları güncel sayılır")
@@ -485,7 +430,7 @@ func TestYapisalDegisiklikToplamlariBayatlatir(t *testing.T) {
 // kontrol unutulursa bu test onu yakalamaz — ama var olanların hiçbirinin
 // gevşemediğini garanti eder.
 func TestTamamlanmisSepetDegistirilemez(t *testing.T) {
-	svc, _, _ := yeniServis(t)
+	svc, _ := yeniServis(t)
 	ctx := context.Background()
 	cart := yeniSepet(ctx, t, svc)
 	item, err := svc.AddLineItem(ctx, cart.ID, service.AddLineItemInput{
@@ -575,7 +520,7 @@ func TestTamamlanmisSepetDegistirilemez(t *testing.T) {
 // Senaryo gerçektir: ödeme sayfası açıkken sepete satır eklenir. Damga atmak,
 // o anki YANLIŞ tutarı sipariş tutarı hâline getirirdi.
 func TestMarkCompletedBayatToplamiReddeder(t *testing.T) {
-	svc, _, _ := yeniServis(t)
+	svc, _ := yeniServis(t)
 	ctx := context.Background()
 	cart := yeniSepet(ctx, t, svc)
 
@@ -603,7 +548,7 @@ func TestMarkCompletedBayatToplamiReddeder(t *testing.T) {
 // edilemez. Sepet satırsız olduğu için asıl kapı orasıdır: satırsız bir
 // sepetten doğacak sipariş, hiçbir şeyin satılmadığı bir sipariştir.
 func TestMarkCompletedHicHesaplanmamisSepetiReddeder(t *testing.T) {
-	svc, _, _ := yeniServis(t)
+	svc, _ := yeniServis(t)
 	ctx := context.Background()
 	cart := yeniSepet(ctx, t, svc)
 	require.False(t, cart.TotalsStale(), "yeni sepette bayatlık ölçütü sessizdir")
@@ -626,7 +571,7 @@ func TestMarkCompletedHicHesaplanmamisSepetiReddeder(t *testing.T) {
 // çalışan hesap turu sepeti yeniden TAZE damgalar. Geriye tutarı sıfır,
 // satırı olmayan, "güncel" bir sepet kalır.
 func TestMarkCompletedSatirsizSepetiReddeder(t *testing.T) {
-	svc, _, _ := yeniServis(t)
+	svc, _ := yeniServis(t)
 	ctx := context.Background()
 	cart := yeniSepet(ctx, t, svc)
 
@@ -659,7 +604,7 @@ func TestMarkCompletedSatirsizSepetiReddeder(t *testing.T) {
 // okunur; müşteriye "toplam 1000 ama satırlar 3000 ediyor" gibi kendi içinde
 // tutarsız bir sepet gösterilirdi.
 func TestGetCartYirtikGorunumDondurmez(t *testing.T) {
-	svc, store, _ := yeniServis(t)
+	svc, store := yeniServis(t)
 	ctx := context.Background()
 	cart := yeniSepet(ctx, t, svc)
 
@@ -705,10 +650,10 @@ func TestGetCartYirtikGorunumDondurmez(t *testing.T) {
 		"sepet başlığı ile satırlar AYNI ana ait olmalı")
 }
 
-// TestDeleteCartCocuklariVeBaglariTemizler silmenin sepeti, çocuklarını ve
-// bağlarını birlikte temizlediğini doğrular.
-func TestDeleteCartCocuklariVeBaglariTemizler(t *testing.T) {
-	svc, store, links := yeniServis(t)
+// TestDeleteCartCocuklariTemizler silmenin sepeti ve çocuklarını birlikte
+// temizlediğini doğrular.
+func TestDeleteCartCocuklariTemizler(t *testing.T) {
+	svc, store := yeniServis(t)
 	ctx := context.Background()
 	cart, err := svc.CreateCart(ctx, service.CreateCartInput{
 		RegionID: regionID, CustomerID: customerID, CurrencyCode: currency,
@@ -738,9 +683,6 @@ func TestDeleteCartCocuklariVeBaglariTemizler(t *testing.T) {
 	methods, err := store.ListShippingMethods(ctx, cart.ID)
 	require.NoError(t, err)
 	assert.Empty(t, methods)
-
-	assert.Empty(t, links.targets(service.LinkCartRegion), "bağlar temizlenmeli")
-	assert.Empty(t, links.targets(service.LinkCartCustomer))
 }
 
 // TestAddLineItemHataHalindeHicbirSeyYazilmaz depo hatası aldığında işlemin
@@ -749,7 +691,7 @@ func TestDeleteCartCocuklariVeBaglariTemizler(t *testing.T) {
 // Özellikle şekil sayacı: satır yazılamadığı hâlde sayaç artsaydı, sepetin
 // toplamları hiçbir sebep yokken bayat görünürdü.
 func TestAddLineItemHataHalindeHicbirSeyYazilmaz(t *testing.T) {
-	svc, store, _ := yeniServis(t)
+	svc, store := yeniServis(t)
 	ctx := context.Background()
 	cart := yeniSepet(ctx, t, svc)
 	store.failCreateLineItem = errors.Internal("cart_query_failed", "veritabanı düştü")
@@ -768,7 +710,7 @@ func TestAddLineItemHataHalindeHicbirSeyYazilmaz(t *testing.T) {
 // TestGetCartCocuklariylaDoner tam sepetin satır, adresi ve kargo yöntemiyle
 // birlikte döndüğünü doğrular.
 func TestGetCartCocuklariylaDoner(t *testing.T) {
-	svc, _, _ := yeniServis(t)
+	svc, _ := yeniServis(t)
 	ctx := context.Background()
 	cart := yeniSepet(ctx, t, svc)
 
@@ -803,7 +745,7 @@ func TestGetCartCocuklariylaDoner(t *testing.T) {
 // TestSetAddressAyniTurdeIkinciKayitAcmaz aynı türden ikinci adresi yazmanın
 // yeni kayıt AÇMADIĞINI, var olanı güncellediğini doğrular.
 func TestSetAddressAyniTurdeIkinciKayitAcmaz(t *testing.T) {
-	svc, _, _ := yeniServis(t)
+	svc, _ := yeniServis(t)
 	ctx := context.Background()
 	cart := yeniSepet(ctx, t, svc)
 
@@ -829,7 +771,7 @@ func TestSetAddressAyniTurdeIkinciKayitAcmaz(t *testing.T) {
 // "12" ya da "T1" gibi biçimsiz bir kod sepette sessizce durur ve hatasını çok
 // sonra, eşleme aşamasında verirdi.
 func TestSetAddressUlkeKoduHarfOlmali(t *testing.T) {
-	svc, _, _ := yeniServis(t)
+	svc, _ := yeniServis(t)
 	ctx := context.Background()
 	cart := yeniSepet(ctx, t, svc)
 
@@ -854,13 +796,13 @@ func TestSetAddressUlkeKoduHarfOlmali(t *testing.T) {
 }
 
 // TestUpdateCartMisafirSepetiMusteriyeDevredilir misafir sepetin kayıtlı
-// müşteriye devrini ve bağın gerçekten kurulduğunu doğrular.
+// müşteriye devrini doğrular.
 //
 // Gerçek akış budur: müşteri sepeti misafir olarak açar, e-postasını ödeme
-// adımında girer ve/veya araya giriş yapar. Bu yol olmadan sepet baştan
-// kurulmalı (satırlar kaybolur) ya da müşteri bağı hiç kurulamazdı.
+// adımında girer ve/veya araya giriş yapar. Bu yol olmadan sepetin baştan
+// kurulması gerekirdi ve satırlar kaybolurdu.
 func TestUpdateCartMisafirSepetiMusteriyeDevredilir(t *testing.T) {
-	svc, _, links := yeniServis(t)
+	svc, _ := yeniServis(t)
 	ctx := context.Background()
 	cart := yeniSepet(ctx, t, svc)
 	require.True(t, cart.Guest())
@@ -879,8 +821,6 @@ func TestUpdateCartMisafirSepetiMusteriyeDevredilir(t *testing.T) {
 	assert.Equal(t, "musteri@ornek.com", updated.Email, "e-posta tekleştirilmeli")
 	assert.Equal(t, customerID, updated.CustomerID)
 	assert.False(t, updated.Guest())
-	assert.Equal(t, []string{customerID}, links.targets(service.LinkCartCustomer),
-		"devir müşteri bağını da kurmalı")
 
 	detail, err := svc.GetCart(ctx, cart.ID)
 	require.NoError(t, err)
@@ -895,7 +835,7 @@ func TestUpdateCartMisafirSepetiMusteriyeDevredilir(t *testing.T) {
 // İki farklı müşterinin aynı sepeti sahiplenmesi, siparişin kime yazılacağı
 // sorusunu yanıtsız bırakırdı.
 func TestUpdateCartBaskaMusteriyeDevredilemez(t *testing.T) {
-	svc, _, _ := yeniServis(t)
+	svc, _ := yeniServis(t)
 	ctx := context.Background()
 
 	cart, err := svc.CreateCart(ctx, service.CreateCartInput{
@@ -918,33 +858,11 @@ func TestUpdateCartBaskaMusteriyeDevredilemez(t *testing.T) {
 	require.NoError(t, err)
 }
 
-// TestUpdateCartBagKurulamazsaDevirGeriAlinir bağ kurulamadığında sepetin eski
-// sahipliğine döndüğünü doğrular.
-//
-// Bağ sepet satırıyla aynı işlemde değildir; telafi edilmeseydi sepet müşteriye
-// yazılı görünür ama Query katmanında hiçbir müşteriye bağlanmazdı.
-func TestUpdateCartBagKurulamazsaDevirGeriAlinir(t *testing.T) {
-	svc, _, links := yeniServis(t)
-	ctx := context.Background()
-	cart := yeniSepet(ctx, t, svc)
-	links.failCreate = errors.Internal("link_failed", "bağ servisi düştü")
-	links.failCreateFor = service.LinkCartCustomer
-
-	_, err := svc.UpdateCart(ctx, cart.ID, service.UpdateCartInput{CustomerID: customerID})
-
-	require.Error(t, err)
-	assert.Equal(t, service.CodeLinkFailed, errors.CodeOf(err))
-
-	detail, err := svc.GetCart(ctx, cart.ID)
-	require.NoError(t, err)
-	assert.True(t, detail.Guest(), "bağı kurulamayan devir geri alınmalı")
-}
-
 // TestUpdateCartBosGirdiReddedilir hiçbir alan taşımayan güncellemenin
 // reddedildiğini doğrular; sessizce başarılı sayılsaydı çağıran, gönderdiğini
 // sandığı değişikliğin uygulandığını sanırdı.
 func TestUpdateCartBosGirdiReddedilir(t *testing.T) {
-	svc, _, _ := yeniServis(t)
+	svc, _ := yeniServis(t)
 	ctx := context.Background()
 	cart := yeniSepet(ctx, t, svc)
 
@@ -958,7 +876,7 @@ func TestUpdateCartBosGirdiReddedilir(t *testing.T) {
 // TestAddShippingMethodTutarNegatifOlamaz negatif kargo tutarının
 // reddedildiğini doğrular.
 func TestAddShippingMethodTutarNegatifOlamaz(t *testing.T) {
-	svc, _, _ := yeniServis(t)
+	svc, _ := yeniServis(t)
 	ctx := context.Background()
 	cart := yeniSepet(ctx, t, svc)
 
@@ -973,7 +891,7 @@ func TestAddShippingMethodTutarNegatifOlamaz(t *testing.T) {
 // TestOlmayanSepeteYazmaNotFound olmayan bir sepete yazmanın NotFound
 // döndürdüğünü doğrular.
 func TestOlmayanSepeteYazmaNotFound(t *testing.T) {
-	svc, _, _ := yeniServis(t)
+	svc, _ := yeniServis(t)
 	ctx := context.Background()
 
 	_, err := svc.AddLineItem(ctx, "cart_YOK", service.AddLineItemInput{
@@ -987,7 +905,7 @@ func TestOlmayanSepeteYazmaNotFound(t *testing.T) {
 // TestListCartsSuzerVeSayfalar listelemenin süzgeç ve sayfalama uyguladığını
 // doğrular.
 func TestListCartsSuzerVeSayfalar(t *testing.T) {
-	svc, _, _ := yeniServis(t)
+	svc, _ := yeniServis(t)
 	ctx := context.Background()
 
 	for range 3 {
@@ -1020,7 +938,7 @@ func TestListCartsSuzerVeSayfalar(t *testing.T) {
 // TestListCartsLimitTavaniAsilamaz sayfa boyutu tavanının uygulandığını
 // doğrular.
 func TestListCartsLimitTavaniAsilamaz(t *testing.T) {
-	svc, _, _ := yeniServis(t)
+	svc, _ := yeniServis(t)
 
 	_, _, err := svc.ListCarts(context.Background(), service.ListCartsInput{
 		Page: service.Page{Limit: service.MaxLimit + 1},
@@ -1036,7 +954,7 @@ func TestListCartsLimitTavaniAsilamaz(t *testing.T) {
 // Kırpma, çağıranın gönderdiği kimlikle saklanan kimliği ayırır ve fark ancak
 // veri bozulduktan sonra görünür; core/link de aynı sözleşmeyi uygular.
 func TestKimlikBosluklaGelirseReddedilir(t *testing.T) {
-	svc, _, _ := yeniServis(t)
+	svc, _ := yeniServis(t)
 	ctx := context.Background()
 
 	_, err := svc.CreateCart(ctx, service.CreateCartInput{

@@ -7,6 +7,13 @@
 // Bu paket, mimarinin TEK "her şeyi bilen" noktasıdır: çekirdek modülleri,
 // modüller birbirini, eklentiler de commerce modüllerini tanımaz. Kimin
 // kiminle konuşacağına dair her karar burada, açıkça verilir.
+//
+// Tek nokta olmasının bedeli şudur: buraya EKLENMEYEN bir modül hiçbir
+// kurulumda YOKTUR — migration'ı uygulanmaz, servisi container'a girmez,
+// uçları mount edilmez — ve modülün kendi testleri bunu göremez, çünkü onlar
+// modülü kendileri kurar. Faz 8/9'un yönetim yüzeyi ve b2b'nin harcama limiti
+// tam olarak böyle kayboldu. Şart bu yüzden dışarıdan denetlenir: bkz.
+// internal/arch/kayit_test.go, TestHerModulBilesimKokundeKayitli.
 package main
 
 import (

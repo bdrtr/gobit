@@ -6,8 +6,8 @@
 //
 // Birim testleri sahte bir depo ile servisin KARARLARINI kanıtlar. Buradaki
 // testler kararların dayandığı ZEMİNİ kanıtlar: migration'ın geri
-// alınabildiğini, kısıtların gerçekten uygulandığını, link'lerin gerçekten
-// kurulduğunu ve eşzamanlılık iddiasının veritabanı düzeyinde tuttuğunu.
+// alınabildiğini, kısıtların gerçekten uygulandığını ve eşzamanlılık
+// iddiasının veritabanı düzeyinde tuttuğunu.
 // Özellikle "eşzamanlı AddLineItem satırları bozmaz" iddiası yalnızca burada,
 // gerçek goroutine'lerle gerçek satır kilitleri üzerinde sınanabilir.
 package cart_test
@@ -56,8 +56,6 @@ var (
 	testPool *db.Pool
 	// testDSN migration çağrıları için bağlantı adresidir.
 	testDSN string
-	// testLinks gerçek link servisidir.
-	testLinks link.LinkService
 )
 
 func TestMain(m *testing.M) {
@@ -107,26 +105,14 @@ func runWithPostgres(m *testing.M) int {
 		return 1
 	}
 
-	testLinks = link.New(testPool, nil)
-	for _, def := range service.Definitions() {
-		if err := testLinks.Define(ctx, def); err != nil {
-			fmt.Fprintf(os.Stderr, "%q link tanımı bildirilemedi: %v\n", def.Name, err)
-			return 1
-		}
-	}
-
 	return m.Run()
 }
 
-// yeniServis gerçek depo ve gerçek link servisi üzerinde çalışan bir servis
-// kurar.
+// yeniServis gerçek depo üzerinde çalışan bir servis kurar.
 func yeniServis(t *testing.T) *service.Service {
 	t.Helper()
 
-	svc, err := service.New(service.Options{
-		Repo:  repository.New(testPool.Pool()),
-		Links: testLinks,
-	})
+	svc, err := service.New(service.Options{Repo: repository.New(testPool.Pool())})
 	require.NoError(t, err)
 	return svc
 }
@@ -456,7 +442,8 @@ func TestMarkCompletedSatirsizSepetiReddeder(t *testing.T) {
 }
 
 // TestUpdateCartMisafirSepetiMusteriyeDevreder misafir sepetin kayıtlı
-// müşteriye devrini ve müşteri bağının GERÇEKTEN kurulduğunu doğrular.
+// müşteriye devrini ve devrin ardından müşteri süzgecinde göründüğünü
+// doğrular.
 func TestUpdateCartMisafirSepetiMusteriyeDevreder(t *testing.T) {
 	ctx := context.Background()
 	svc := yeniServis(t)
@@ -477,10 +464,6 @@ func TestUpdateCartMisafirSepetiMusteriyeDevreder(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "devir@ornek.com", guncel.Email)
 	assert.Equal(t, musteriID, guncel.CustomerID)
-
-	bagli, err := testLinks.List(ctx, service.LinkCartCustomer, sepet.ID)
-	require.NoError(t, err)
-	assert.Equal(t, []string{musteriID}, bagli, "devir müşteri bağını da kurmalı")
 
 	// Sepet artık müşteri süzgecinde görünür ve satırlarını korumuştur.
 	_, count, err := svc.ListCarts(ctx, service.ListCartsInput{CustomerID: &musteriID})
@@ -517,14 +500,9 @@ func TestMisafirVeKayitliMusteriSepeti(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, kayitli.Guest())
 
-	// Misafir sepeti müşteriye BAĞLANMAZ.
-	bagli, err := testLinks.List(ctx, service.LinkCartCustomer, misafir.ID)
-	require.NoError(t, err)
-	assert.Empty(t, bagli, "misafir sepetinin müşteri bağı olmamalı")
-
-	bagli, err = testLinks.List(ctx, service.LinkCartCustomer, kayitli.ID)
-	require.NoError(t, err)
-	assert.Equal(t, []string{musteriID}, bagli)
+	// Misafir sepetinin müşteri sütunu BOŞ kalır; kayıtlı sepetinki dolar.
+	assert.Empty(t, misafir.CustomerID, "misafir sepetinin müşterisi olmamalı")
+	assert.Equal(t, musteriID, kayitli.CustomerID)
 
 	// Süzgeç ikisini ayırır.
 	_, count, err := svc.ListCarts(ctx, service.ListCartsInput{CustomerID: &musteriID})
@@ -532,44 +510,13 @@ func TestMisafirVeKayitliMusteriSepeti(t *testing.T) {
 	assert.Equal(t, int64(1), count)
 }
 
-// TestLinklerGercektenKurulur bölge ve müşteri bağlarının link tablolarına
-// GERÇEKTEN yazıldığını, silmede de kaldırıldığını doğrular.
-func TestLinklerGercektenKurulur(t *testing.T) {
-	ctx := context.Background()
-	svc := yeniServis(t)
-
-	musteriID := "cust_LINK_" + models.NewCartID()
-	sepet, err := svc.CreateCart(ctx, service.CreateCartInput{
-		RegionID: testRegionID, CustomerID: musteriID, CurrencyCode: testCurrency,
-	})
-	require.NoError(t, err)
-
-	bolge, err := testLinks.List(ctx, service.LinkCartRegion, sepet.ID)
-	require.NoError(t, err)
-	assert.Equal(t, []string{testRegionID}, bolge)
-
-	musteri, err := testLinks.List(ctx, service.LinkCartCustomer, sepet.ID)
-	require.NoError(t, err)
-	assert.Equal(t, []string{musteriID}, musteri)
-
-	require.NoError(t, svc.DeleteCart(ctx, sepet.ID))
-
-	bolge, err = testLinks.List(ctx, service.LinkCartRegion, sepet.ID)
-	require.NoError(t, err)
-	assert.Empty(t, bolge, "silinen sepetin bölge bağı kalmamalı")
-	musteri, err = testLinks.List(ctx, service.LinkCartCustomer, sepet.ID)
-	require.NoError(t, err)
-	assert.Empty(t, musteri, "silinen sepetin müşteri bağı kalmamalı")
-}
-
-// TestAyniBolgedeCokSepetBaglanabilir link kardinalitesinin çok sepete izin
-// verdiğini doğrular.
+// TestAyniBolgedeCokSepetAcilabilir bir bölge ve müşteri için birden çok
+// sepet açılabildiğini doğrular.
 //
-// Bu test kardinalite seçiminin BEKÇİSİDİR: cart_region ya da cart_customer
-// OneToOne bildirilseydi, link tablosunun to_id benzersiz indeksi ikinci
-// sepeti reddederdi ve bir bölgede yalnızca tek sepet açılabilirdi
-// (bkz. service.Definitions).
-func TestAyniBolgedeCokSepetBaglanabilir(t *testing.T) {
+// Bu, sepetin tabiatıdır: bir müşterinin zaman içinde birden çok sepeti olur ve
+// bir bölgede binlerce sepet bulunur. Şemanın herhangi bir yerinde bölge ya da
+// müşteri başına TEKİLLİK dayatan bir indeks bu testi düşürür.
+func TestAyniBolgedeCokSepetAcilabilir(t *testing.T) {
 	ctx := context.Background()
 	svc := yeniServis(t)
 	musteriID := "cust_COK_" + models.NewCartID()
@@ -796,8 +743,8 @@ func TestYumusakSilmeOkumalaridanDuser(t *testing.T) {
 	assert.True(t, silinmis)
 }
 
-// TestModuleRegisterContaineraBaglar Register'ın sözleşmedeki üç şeyi de
-// yaptığını doğrular: servis kaydı, Query sağlayıcısı ve link tanımları.
+// TestModuleRegisterContaineraBaglar Register'ın sözleşmedeki iki şeyi de
+// yaptığını doğrular: servis kaydı ve Query sağlayıcısı.
 func TestModuleRegisterContaineraBaglar(t *testing.T) {
 	ctx := context.Background()
 
@@ -820,13 +767,6 @@ func TestModuleRegisterContaineraBaglar(t *testing.T) {
 	require.NoError(t, err, "sağlayıcı %q adıyla çözülebilmeli", cart.ProviderName)
 	assert.Equal(t, service.EntityName, provider.Entity(),
 		"sağlayıcı adının öneki Entity() ile örtüşmeli (ADR 0004)")
-
-	for _, def := range service.Definitions() {
-		stored, defErr := links.Definition(ctx, def.Name)
-		require.NoError(t, defErr, "%q link tanımı bildirilmiş olmalı", def.Name)
-		assert.Equal(t, def.Cardinality, stored.Cardinality)
-		assert.Equal(t, def.To.Module, stored.To.Module)
-	}
 
 	// Kaydedilen servis gerçekten çalışmalı.
 	created, err := svc.CreateCart(ctx, service.CreateCartInput{

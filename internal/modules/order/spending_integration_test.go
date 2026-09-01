@@ -78,7 +78,6 @@ func limitliServis(t *testing.T, kural json.RawMessage) *service.Service {
 
 	svc, err := service.New(service.Options{
 		Repo:     repository.New(testPool.Pool()),
-		Links:    testLinks,
 		Events:   bus,
 		Spending: sabitKural{payload: kural},
 	})

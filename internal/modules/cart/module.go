@@ -27,9 +27,10 @@
 //
 // # Bildirdiği linkler
 //
-// "cart_customer" ve "cart_region" tanımlarını BU modül bildirir (ADR 0005);
-// bağın sahibi sepettir. Kardinalite seçiminin gerekçesi için bkz.
-// [service.Definitions].
+// Yoktur. Sepetin bölgesi ve müşterisi KENDİ SÜTUNLARINDA durur ve her okuma o
+// sütunlardan yapılır; aynı ilişkiyi bir de link tablosunda tutmak satır
+// yazardı, bakım maliyeti doğururdu ve hiçbir okumaya hizmet etmezdi
+// (bkz. CHANGELOG, "cart_customer/cart_region kaldırıldı").
 package cart
 
 import (
@@ -43,7 +44,6 @@ import (
 	"github.com/bdrtr/gobit/internal/core/container"
 	"github.com/bdrtr/gobit/internal/core/db"
 	"github.com/bdrtr/gobit/internal/core/errors"
-	"github.com/bdrtr/gobit/internal/core/link"
 	"github.com/bdrtr/gobit/internal/core/module"
 	"github.com/bdrtr/gobit/internal/core/openapi"
 	"github.com/bdrtr/gobit/internal/core/query"
@@ -73,17 +73,11 @@ const InteropName = ModuleName + ".interop"
 // ProviderName Query sağlayıcısının container'daki adıdır (ADR 0004).
 const ProviderName = service.EntityName + query.ProviderSuffix
 
-// Container'da çözülen çekirdek servislerin adları.
-const (
-	svcDB   = "core.db"
-	svcLink = "core.link"
-)
+// svcDB veritabanı havuzunun container'daki adıdır.
+const svcDB = "core.db"
 
-// Hata kodları.
-const (
-	codeSetupFailed = "cart_module_setup_failed"
-	codeLinkDefine  = "cart_link_define_failed"
-)
+// codeSetupFailed modülün kablolanamadığını bildiren hata kodudur.
+const codeSetupFailed = "cart_module_setup_failed"
 
 //go:embed migrations/*.sql
 var migrationFiles embed.FS
@@ -123,29 +117,22 @@ func (m *Module) Name() string { return ModuleName }
 // Migrations modülün migration dosyalarını döner.
 func (m *Module) Migrations() fs.FS { return migrationsRoot }
 
-// Register servisi ve Query sağlayıcısını container'a kaydeder, link
-// tanımlarını bildirir.
+// Register servisi ve Query sağlayıcısını container'a kaydeder.
 //
 // Yalnızca ÇEKİRDEK servisler çözülür; başka modüllerin servisleri bu aşamada
-// henüz kayıtlı olmayabilir (bkz. module.Module belgesi). core.db ve core.link
-// modüller ayağa kalkmadan önce main.go'da hazır değer olarak kaydedildiği için
-// burada çözülmeleri güvenlidir ve eksiklikleri modülün hiç çalışamayacağı bir
-// kurulum hatasıdır — sessizce ertelenmez.
+// henüz kayıtlı olmayabilir (bkz. module.Module belgesi). core.db modüller
+// ayağa kalkmadan önce main.go'da hazır değer olarak kaydedildiği için burada
+// çözülmesi güvenlidir ve eksikliği modülün hiç çalışamayacağı bir kurulum
+// hatasıdır — sessizce ertelenmez.
 func (m *Module) Register(ctx context.Context, c *container.Container) error {
 	pool, err := container.Resolve[*db.Pool](c, svcDB)
 	if err != nil {
 		return errors.Wrap(err, errors.KindOf(err), codeSetupFailed,
 			"%s modülü veritabanı havuzunu çözemedi (%q)", ModuleName, svcDB)
 	}
-	links, err := container.Resolve[link.LinkService](c, svcLink)
-	if err != nil {
-		return errors.Wrap(err, errors.KindOf(err), codeSetupFailed,
-			"%s modülü link servisini çözemedi (%q)", ModuleName, svcLink)
-	}
 
 	svc, err := service.New(service.Options{
-		Repo:  repository.New(pool.Pool()),
-		Links: links,
+		Repo: repository.New(pool.Pool()),
 		// Uygulama açılışta slog.SetDefault ile yapılandırılmış logger'ı kurar;
 		// modül ayrı bir logger kaydı aramaz.
 		Logger: slog.Default().With("modul", ModuleName),
@@ -168,15 +155,6 @@ func (m *Module) Register(ctx context.Context, c *container.Container) error {
 	}
 	if err := c.Provide(ProviderName, service.NewQueryProvider(svc)); err != nil {
 		return err
-	}
-
-	// Link tanımları BURADA bildirilir: şema, tanımın kendisiyle aynı yerde
-	// durur ve her açılışta idempotent olarak doğrulanır (ADR 0005).
-	for _, def := range service.Definitions() {
-		if err := links.Define(ctx, def); err != nil {
-			return errors.Wrap(err, errors.KindOf(err), codeLinkDefine,
-				"%q link tanımı bildirilemedi", def.Name)
-		}
 	}
 
 	m.svc = svc

@@ -246,6 +246,59 @@ Düşmanca bir güvenlik incelemesinin çıkardığı altı bulgu:
   `make smoke` ile çalışır; CI'da AYRI bir iş — "entegrasyon düştü" ile
   "uygulama açılmıyor" aynı satırda görünmemeli.
 
+### Kaldırıldı
+
+- **`cart_customer`, `cart_region`, `order_customer`, `order_region` link
+  tanımları.** Dördü de her sepette/siparişte YAZILIYOR, hiç GEZİLMİYORDU.
+  Bu **kayıp bir özellik değildir**: bu bağların taşıdığı her okumayı zaten
+  sütunlar yapıyor. `carts.region_id` / `carts.customer_id` ve
+  `orders.region_id` / `orders.customer_id` hem kaynaktır hem indekslidir;
+  müşteri ve bölge süzgeçleri (`ListCarts`, `ListOrders`,
+  `order/queries/orders.sql`) tam olarak o sütunlardan çalışır. Link tablosu
+  aynı ilişkinin ikinci bir kopyasıydı; satır yazıyor, kardinalite kısıtının
+  bedelini ödüyor ve karşılığında hiçbir davranış üretmiyordu.
+
+  Bu, bilinçli bir tasarım kararının geri alınmasıdır. Bağlar "Query katmanına
+  açılan ayna" olsun diye bildirilmişti ve `ManyToMany` kardinalitesi tam da o
+  ayna uğruna seçilmişti (tekillik zaten sütunda garantiliydi). Aynaya bakan
+  bir okuyucu hiç çıkmadı: ne bir `query.Expansion`, ne bir modül API'si.
+  Bulan şey `internal/arch/tuketici_test.go`'daki `TestLinkTanimlariGeziliyor`
+  değişmezidir — "üretilen her yeteneğin bir tüketicisi vardır" kuralının
+  link yüzeyi. Aynı sınıfın önceki vakası ürün ↔ satış kanalı arızasıydı.
+
+  Silme telafisi de gitti ve **kod bundan sadeleşerek çıktı**: bağ sepet
+  satırıyla aynı işlemde olmadığı için `CreateCart` bağ kurulamayınca sepeti
+  geri alıyor, `UpdateCart` müşteri devrini geri alıyor, `CreateOrder` ise
+  siparişi yazmadan ÖNCE bağlanıp yazma düşünce bağı temizliyordu. Şimdi her
+  ikisi de tek yazma işlemidir; telafi yolu, telafinin telafisi ve
+  "hayalet sipariş" penceresi diye bir şey kalmadı. `cart` ve `order`
+  modüllerinin `core.link` bağımlılığı da tamamen kalktı (`service.Linker`,
+  `Options.Links`, `Definitions()`).
+
+  **Veritabanı: migration YAZILMADI, bu bilinçlidir.** Link şeması
+  migration'ın değil, açılıştaki bildirimin ürünüdür ve sahibi `core/link`'tir
+  (ADR 0005); bir modülün migration'ının başka bir alt sistemin tablosunu
+  düşürmesi, `b2b`'nin down migration'ında da bilinçle yapılmayan şeydir.
+  Somut sonuçlar:
+
+  - `link_cart_customer`, `link_cart_region`, `link_order_customer` ve
+    `link_order_region` tabloları var olan kurulumlarda **yetim kalır**.
+    Zararsızdırlar: hiçbir kod yolu onlara dokunmaz ve işaret ettikleri
+    kimlikler bir daha üretilmez. Temizlik OPERASYONEL bir karardır ve elle
+    yapılır (`DROP TABLE IF EXISTS link_cart_customer, link_cart_region,
+    link_order_customer, link_order_region;`). Otomatikleştirilmemesinin
+    sebebi ADR 0005'te yazılıdır: tabloyu koda bakarak düşürmek, bir dağıtım
+    hatası yüzünden geçici olarak kaybolan bir tanımın tüm bağları silmesi
+    demek olurdu — ve **silinen satır geri gelmez**.
+  - `link_definitions` tablosunda bu dört ada ait satırlar kalır. Açılışta
+    **hiçbir çakışma üretmezler**: `LinkService.Define` yalnızca kendi
+    bildirdiği adın satırını okuyup karşılaştırır (upsert + `RETURNING`,
+    bkz. `internal/core/link/service.go`), defteri koda karşı taramaz.
+    Koddan gelmeyen bir satır hiç okunmaz. Tek koşullu sonuç şudur: ileride
+    aynı ADLA fakat farklı uçlarla bir link bildirilirse açılış
+    `errors.Conflict` ile durur — ki bu, defterin görevini yapmasıdır, bir
+    arıza değil.
+
 ## [0.3.0] — 2026-08-31
 
 API artık kendini anlatıyor: şemadan çalışan bir istemci üretilebiliyor.

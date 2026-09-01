@@ -44,16 +44,15 @@ func limitliOrtam(t *testing.T, payload json.RawMessage) (ortam, *fakeSpendingPo
 	t.Helper()
 
 	store := newFakeStore()
-	links := newFakeLink()
 	bus := newFakeBus()
 	policy := &fakeSpendingPolicy{payload: payload}
 
 	svc, err := service.New(service.Options{
-		Repo: store, Links: links, Events: bus, Spending: policy,
+		Repo: store, Events: bus, Spending: policy,
 	})
 	require.NoError(t, err)
 
-	return ortam{svc: svc, store: store, links: links, bus: bus}, policy
+	return ortam{svc: svc, store: store, bus: bus}, policy
 }
 
 // gecmisSiparis müşterinin geçmiş harcamasını depoya yazar.
@@ -275,9 +274,8 @@ func TestFarkliParaBirimiSiparisiReddedilir(t *testing.T) {
 	require.Error(t, err)
 	assert.True(t, errors.IsConflict(err))
 	assert.Equal(t, service.CodeSpendingCurrencyMismatch, errors.CodeOf(err))
-	// Ret, hiçbir yan etki bırakmadan gelmeli: bağ bile kurulmaz.
+	// Ret, hiçbir yan etki bırakmadan gelmeli: müşteri kilidi bile alınmaz.
 	assert.Equal(t, 0, o.store.spendingLockCount())
-	assert.Empty(t, o.links.created)
 }
 
 // TestKuralOkunamazsaSiparisAcilmaz "kural yok" ile "kuralı öğrenemedik"

@@ -7,7 +7,6 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	cartsvc "github.com/bdrtr/gobit/internal/modules/cart/service"
 	cartwf "github.com/bdrtr/gobit/internal/workflows/cart"
 )
 
@@ -245,19 +244,11 @@ func TestKayitliMusteriSepeti(t *testing.T) {
 		"e-posta verilmediğinde müşterinin KAYITLI adresi sepete geçmeli; adressiz bir "+
 			"sepet, aynı bilgiyi ödeme adımında yeniden sormak demektir")
 
-	// --- bağın GERÇEKTEN kurulduğu link servisinden doğrulanır ---
+	// --- sepetin bölgesi de akışın kurduğu bölge olmalı ---
 
-	musteriBaglari := bagliKimlikler(ctx, t, cartsvc.LinkCartCustomer, sepet.CartID)
-	require.Equal(t, []string{musteriID}, musteriBaglari,
-		"%q bağı kurulmuş olmalı; bağ kurulmazsa sepet Query katmanında hiçbir müşteriye "+
-			"bağlanmaz ve eksiklik ancak raporlama sırasında fark edilir",
-		cartsvc.LinkCartCustomer)
-
-	bolgeBaglari := bagliKimlikler(ctx, t, cartsvc.LinkCartRegion, sepet.CartID)
-	require.Equal(t, []string{vergiliBolgeID}, bolgeBaglari,
-		"%q bağı da kurulmuş olmalı; bölge bağı sepetin sütunundaki region_id'nin Query "+
-			"katmanına açılan aynasıdır ve ikisinin ayrışmaması gerekir",
-		cartsvc.LinkCartRegion)
+	require.Equal(t, vergiliBolgeID, sepet.RegionID,
+		"sepet, akışa verilen bölgeyle açılmalı; bölge sepetin KENDİ sütunudur ve "+
+			"vergi ile para birimi tam olarak oradan okunur")
 
 	// --- misafir yolundaki hesap zinciri kayıtlı müşteride de aynı çalışır ---
 

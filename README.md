@@ -44,6 +44,19 @@ Tüm ayarlar ortam değişkeninden okunur (12-factor). Varsayılanlar
 `cp .env.example .env` ile özelleştirebilirsiniz. Değişken listesi için
 [`.env.example`](./.env.example) veya `internal/core/config/config.go`.
 
+İkisi **ayrışamaz**: bir test `Config`'i yansımayla gezer ve `env` etiketli her
+alanın `.env.example`'da yazdığını, oradaki değerin de `envDefault` ile aynı
+olduğunu doğrular. Ters yön de denetlenir — belgede duran ama ne uygulamanın, ne
+compose'un, ne de bir eklentinin okuduğu bir değişken bırakılamaz
+(`internal/arch/yapilandirma_test.go`). Bilinçli tek ayrışma `LOG_FORMAT`'tır:
+kodun varsayılanı `json`, bu dosyanınki `text`; gerekçesi testte yazılıdır ve
+ayrışma ortadan kalkarsa test kaydın **silinmesini** ister.
+
+Belgesi eskimiş bir ayar, yanlış bir varsayılan kadar zararlıdır ve daha
+sessizdir: ikisi de operatörün ayarladığını sandığı şeyi ayarlamamasıyla
+sonuçlanır, ama hiçbir test düşmez ve hiçbir log satırı düşmez — fark ancak
+sınır aşıldığında, yani üretimde edilir.
+
 > **Üretim koruması:** `DATABASE_URL` ve `REDIS_URL` varsayılanları yalnızca
 > yerel geliştirme içindir. `APP_ENV=production` iken bu ikisi ezilmemişse
 > uygulama **açılışta hata verip durur** — eksik secret enjeksiyonunun
@@ -104,6 +117,35 @@ derleme öncesi denetlenir:
 
 Yeni modül eklerken `.golangci.yml` içindeki `depguard.rules` listesini de
 güncelleyin.
+
+### Mimari testler: yapıyı gezerler, liste tutmazlar
+
+`depguard` import grafiğini tutar; `internal/arch` altındaki testler ise
+**davranışsal** değişmezleri zorlar. Hepsinin ortak kuralı şudur: **yapıyı
+gezerler, ad listesi tutmazlar.** Liste tutan bir test kuralı yalnızca *bugün*
+için uygular — yarın eklenen vaka sessizce dışarıda kalır.
+
+| Değişmez | Ne zorlar | Yaşanmış arıza |
+|---|---|---|
+| `TestHerModulBilesimKokundeKayitli` | `module.Module`'ü uygulayan her paket `cmd/server`'da kayıtlı | Faz 8/9'un tamamı yazılmıştı, testleri yeşildi, ve `/admin/v1/**` uçlarının **hiçbiri mount edilmemişti** |
+| `TestKayitliHerModulE2EZemindeKurulu` | Kayıtlı her modül e2e zemininde de kurulu | Kayıt satırının derlenmesi ile modülün gerçekten çalışması aynı şey değil |
+| `TestInteropYuzeylerininTuketicisiVar` | Kaydedilen her `*.interop` çözülüyor | Ölü sözleşme; `Host.AddModule` hiç çağrılmıyordu |
+| `TestOlayKonularininAbonesiVar` | Yayımlanan her konunun abonesi var | `order.placed` uzun süre abonesizdi ve olay hiçbir şey yapmıyordu |
+| `TestLinkTanimlariGeziliyor` | Bildirilen her bağ **okunuyor** | Satış kanalı bağı yazılıyor, hiç okunmuyordu. Bu test ilk koşuşunda **dört ölü bağ** buldu (bkz. CHANGELOG) |
+| `TestOrtamOrnegiConfigVarsayilanlariylaUyusuyor` | Her `env` etiketi `.env.example`'da ve varsayılanı aynı | `.env.example` "aşağıdaki **iki** sınır" diyordu, yedi taneydi |
+| `TestOrtamOrnegindeSahipsizDegiskenYok` | `.env.example`'da karşılığı olmayan değişken yok | Silinen ayarın belgede kalması, operatöre çalışmayan bir kol vaat eder |
+| `TestBelgelerdekiEklentiAdlariGercek` | Belgelerdeki eklenti adları kayıtlı adlar | README, eklentiyi dizin adıyla (tireli kayıt adı yerine) çağıran bir komut örneği veriyordu; kopyalayan kurulum açılışta "bilinmeyen eklenti" ile duruyordu |
+| `TestHataYanitlariTekYerdenYazilir` | Hata gövdesi yalnızca `corehttp.WriteError`'dan | GraphQL sunucusu kuralı tekrar etmeye çalışıp ayrıştı; DSN+parola istemciye ulaştı, loglanmadı |
+| `TestGraphQLSinirVarsayilanlariConfigleUyusuyor` | `graph.Options`'ın her `Max*` alanının çekirdekte karşılığı var | Beş sertleştirme sınırının ortam değişkeni yoktu; operatör onları ayarlayamıyordu |
+
+Bu testlerin hepsi **mutasyonla doğrulanmıştır**: değişmez kasten bozulduğunda
+düştükleri gösterilmiştir. Düşürülemeyen bir mimari testi, olmayan bir mimari
+testinden daha kötüdür — güvence hissi verir, güvence vermez.
+
+Bir değişmezden **muaf tutma** gerekiyorsa mekanizma koddadır ve gerekçe
+ZORUNLUDUR; ayrıca muafiyetler **bayatlarsa testi düşürür**: muaf tutulan şey
+artık kuralı ihlal etmiyorsa satır silinmek zorundadır. Muafiyet borçtur, borç
+ödendiğinde defterde kalmaz.
 
 ## Çekirdek paketler
 
@@ -372,11 +414,11 @@ eklenti adı ya da eksik ayar açılışta hata verir.
 
 | Eklenti | Ne yapar | Hangi uzatma noktaları |
 |---|---|---|
-| `paymentstripe` | **iskelet** — kayıt ve yaşam döngüsü tam çalışır, Stripe API çağrıları yapılmamıştır ve para hareketi üreten her metod açık bir "uygulanmadı" hatası döner | sağlayıcı kaydı |
-| `searchpg` | **gerçek özellik** — ürün olaylarını dinler, PostgreSQL tam metin indeksini taze tutar, `GET /store/v1/search` ve `POST /admin/v1/search/reindex` uçlarını açar | kendi modülü + migration'ı, olay aboneliği, kendi route'ları |
+| `payment-stripe` | **iskelet** — kayıt ve yaşam döngüsü tam çalışır, Stripe API çağrıları yapılmamıştır ve para hareketi üreten her metod açık bir "uygulanmadı" hatası döner | sağlayıcı kaydı |
+| `search-pg` | **gerçek özellik** — ürün olaylarını dinler, PostgreSQL tam metin indeksini taze tutar, `GET /store/v1/search` ve `POST /admin/v1/search/reindex` uçlarını açar | kendi modülü + migration'ı, olay aboneliği, kendi route'ları |
 
 ```bash
-PLUGINS=searchpg make run
+PLUGINS=search-pg make run
 curl -s 'localhost:9000/store/v1/search?q=tişört' -H "x-publishable-api-key: pk_…"
 ```
 

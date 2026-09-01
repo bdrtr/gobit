@@ -78,8 +78,6 @@ const (
 	CodeCustomerMismatch = "cart_customer_mismatch"
 	// CodeLineItemNotFound sepette olmayan bir satıra atıf yapıldığını bildirir.
 	CodeLineItemNotFound = "cart_line_item_not_found"
-	// CodeLinkFailed modüller arası bağın kurulamadığını bildirir.
-	CodeLinkFailed = "cart_link_failed"
 	// CodeNotReady servisin eksik bağımlılıkla kurulduğunu bildirir.
 	CodeNotReady = "cart_service_not_ready"
 )
@@ -98,15 +96,15 @@ const maxTextLen = 512
 
 // maxIDLen dışarıdan gelen kimlikler için üst sınırdır.
 //
-// Kimlikler link tablosunun benzersiz indeksine de girer; core/link aynı sınırı
-// uygular ve orada aşılırsa hata sepet yazıldıktan SONRA çıkardı. Sınırın
-// burada da olması, bağı kurulamayacak bir sepetin hiç yazılmamasını sağlar.
+// Bu kimlikler (region_id, customer_id, variant_id) carts_region_idx ve
+// carts_customer_idx indekslerine girer. Sınırsız bir dize indeksi sepet
+// başına keyfi büyüklükte şişirir ve süzme maliyetini tek bir isteğin
+// belirlemesine izin verirdi.
 const maxIDLen = 255
 
 // Service cart modülünün dışa açık servisidir. Eşzamanlı kullanıma güvenlidir.
 type Service struct {
 	store Store
-	links Linker
 	log   *slog.Logger
 }
 
@@ -114,9 +112,6 @@ type Service struct {
 type Options struct {
 	// Repo kalıcılık yüzeyidir; zorunludur.
 	Repo Store
-	// Links modüller arası bağ servisidir; zorunludur. Sepet, bölge ve müşteri
-	// bağlarını buradan kurar (bkz. links.go).
-	Links Linker
 	// Logger nil verilirse loglar atılır.
 	Logger *slog.Logger
 }
@@ -124,21 +119,17 @@ type Options struct {
 // New verilen bağımlılıklarla bir servis üretir.
 //
 // Eksik bir bağımlılık KURULUM anında hata döner; çalışma zamanında nil
-// kontrolü yapılmaz. Sepetin bağları olmadan çalışması "sessizce yarım
-// çalışmak" olurdu: satırlar yazılır, ama sepet hiçbir bölgeye ya da müşteriye
-// bağlanmaz ve eksiklik ancak Query katmanında boş sonuç olarak görünürdü.
+// kontrolü yapılmaz. Deposuz bir servis her çağrıda panik üretirdi ve bunun
+// açılışta değil ilk istekte görünmesi için hiçbir sebep yoktur.
 func New(opts Options) (*Service, error) {
 	if opts.Repo == nil {
 		return nil, errors.Internal(CodeNotReady, "cart servisi depo olmadan kurulamaz")
-	}
-	if opts.Links == nil {
-		return nil, errors.Internal(CodeNotReady, "cart servisi link servisi olmadan kurulamaz")
 	}
 	log := opts.Logger
 	if log == nil {
 		log = slog.New(slog.DiscardHandler)
 	}
-	return &Service{store: opts.Repo, links: opts.Links, log: log}, nil
+	return &Service{store: opts.Repo, log: log}, nil
 }
 
 // Page liste isteklerinin sayfalama parametreleridir.

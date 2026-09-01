@@ -160,17 +160,3 @@ func stokSeviyesi(ctx context.Context, t *testing.T, stokKalemID string) invento
 			"adetlerin hangi depodan geldiğini belirsizleştirirdi")
 	return seviyeler[0]
 }
-
-// bagliKimlikler bir linkin verilen kaynaktan çıkan hedeflerini döner.
-//
-// Okuma link servisinden yapılır, sepetin kendi sütunlarından DEĞİL: sınanan
-// iddia, sepetin bağının Query katmanına açılan link tablosunda GERÇEKTEN
-// kurulduğudur. Sütunu okumak yalnızca sepet servisinin kendi yazdığını
-// doğrulardı.
-func bagliKimlikler(ctx context.Context, t *testing.T, linkAdi, kaynakID string) []string {
-	t.Helper()
-
-	hedefler, err := baglar.List(ctx, linkAdi, kaynakID)
-	require.NoError(t, err, "%q bağı okunamadı", linkAdi)
-	return hedefler
-}

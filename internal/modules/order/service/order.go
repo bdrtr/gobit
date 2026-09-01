@@ -142,25 +142,13 @@ type CreateOrderInput struct {
 // Tekrarlanan çağrı harcamayı İKİNCİ KEZ saymaz: ucuz yol siparişi anahtarından
 // bulur ve limit kontrolüne hiç girmez.
 //
-// # Sıra: bağla -> yaz -> yayımla
+// # Sıra: yaz -> yayımla
 //
-// Bağlar sipariş YAZILMADAN ÖNCE kurulur ve sipariş, satırları, özeti ve
-// numarasının doğrulaması TEK işlemdedir. Yani commit edilmiş bir sipariş her
-// zaman TAMDIR: numarası geçerlidir, bağları kuruludur ve bir daha geri
-// alınmaz.
-//
-// Sıranın tersi (önce yaz, sonra bağla, hata olursa siparişi geri al) bir
-// HAYALET SİPARİŞ penceresi açardı: sipariş geri alınana kadar GÖRÜNÜRDÜR ve
-// aynı idempotency anahtarıyla gelen ikinci çağrı onu ucuz yolda bulup
-// "başarı" olarak dönerdi. Saga o kimliğe güvenip ödemeye geçer, telafi
-// (CancelOrder) ise artık silinmiş kayıtta NotFound alırdı. Bağ kurulumu
-// siparişle AYNI işleme alınamaz — link servisi kendi bağlantısını kullanır —
-// ama bağın önce kurulması aynı korumayı sağlar: yazma düşerse ortada yalnızca
-// hiçbir siparişe ait olmayan bir bağ kalır ve o zararsızdır (kimlikler
-// yeniden kullanılmaz), üstelik en iyi çabayla temizlenir
-// ([Service.unlinkOrder]).
-//
-// Sipariş kimliği bu yüzden burada, yazmadan önce üretilir: bağın FROM ucu odur.
+// Sipariş, satırları, özeti ve numarasının doğrulaması TEK işlemdedir. Yani
+// commit edilmiş bir sipariş her zaman TAMDIR: numarası geçerlidir, bölgesi ve
+// (varsa) müşterisi kendi sütunlarında yazılıdır ve bir daha geri alınmaz.
+// Yazmadan önce hiçbir yan etki üretilmez; hiçbir telafi yolu gerekmemesinin
+// sebebi budur.
 //
 // "order.placed" olayı EN SONDA, sipariş kesinleşmişken yayımlanır; yayım
 // hatası siparişi düşürmez (gerekçe: [Service.publishOrderPlaced]).
@@ -183,10 +171,10 @@ func (s *Service) CreateOrder(ctx context.Context, in CreateOrderInput) (models.
 		}
 	}
 
-	// Harcama kuralı bağ kurulmadan ve hiçbir satır yazılmadan ÖNCE okunur:
-	// para birimi uyuşmazlığı gibi kesin bir ret, arkasında hiçbir iz
-	// bırakmamalıdır. Kuralın harcamaya UYGULANMASI ise yazma işleminin içinde,
-	// müşteri kilidi altında yapılır (bkz. spending.go).
+	// Harcama kuralı hiçbir satır yazılmadan ÖNCE okunur: para birimi
+	// uyuşmazlığı gibi kesin bir ret, arkasında hiçbir iz bırakmamalıdır.
+	// Kuralın harcamaya UYGULANMASI ise yazma işleminin içinde, müşteri kilidi
+	// altında yapılır (bkz. spending.go).
 	rule, err := s.spendingRuleFor(ctx, normalized.CustomerID)
 	if err != nil {
 		return models.Order{}, err
@@ -195,15 +183,8 @@ func (s *Service) CreateOrder(ctx context.Context, in CreateOrderInput) (models.
 		return models.Order{}, err
 	}
 
-	orderID := models.NewOrderID()
-	if linkErr := s.linkOrder(ctx, orderID, normalized.RegionID, normalized.CustomerID); linkErr != nil {
-		s.unlinkOrder(ctx, orderID)
-		return models.Order{}, linkErr
-	}
-
-	created, err := s.writeOrder(ctx, orderID, normalized, rule)
+	created, err := s.writeOrder(ctx, normalized, rule)
 	if err != nil {
-		s.unlinkOrder(ctx, orderID)
 		if replay, ok := s.replayedOrder(ctx, normalized.IdempotencyKey, err); ok {
 			return replay, nil
 		}
@@ -232,12 +213,7 @@ func (s *Service) CreateOrder(ctx context.Context, in CreateOrderInput) (models.
 // zorunludur: limit, henüz yazılmamış bu siparişi de kapsayan bir TOPLAMA
 // bakar. Kontrol işlemin dışında yapılsaydı iki eşzamanlı sipariş toplamı aynı
 // anda okur, ikisi de limitin altında görünür ve ikisi de yazılırdı.
-func (s *Service) writeOrder(
-	ctx context.Context,
-	orderID string,
-	in CreateOrderInput,
-	rule spendingRule,
-) (models.Order, error) {
+func (s *Service) writeOrder(ctx context.Context, in CreateOrderInput, rule spendingRule) (models.Order, error) {
 	var created models.Order
 
 	err := s.store.WithTx(ctx, func(ctx context.Context) error {
@@ -246,7 +222,7 @@ func (s *Service) writeOrder(
 		}
 
 		order, err := s.store.CreateOrder(ctx, models.Order{
-			ID:             orderID,
+			ID:             models.NewOrderID(),
 			Status:         models.OrderPending,
 			RegionID:       in.RegionID,
 			CustomerID:     in.CustomerID,

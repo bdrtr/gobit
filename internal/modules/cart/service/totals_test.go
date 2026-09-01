@@ -45,7 +45,7 @@ func toplamliSepet(ctx context.Context, t *testing.T, svc *service.Service) (car
 // TestSetTotalsBasariliYazarVeDamgalar tutarlı bir hesabın yazıldığını ve
 // toplamların artık bayat OLMADIĞINI doğrular.
 func TestSetTotalsBasariliYazarVeDamgalar(t *testing.T) {
-	svc, _, _ := yeniServis(t)
+	svc, _ := yeniServis(t)
 	ctx := context.Background()
 	cart, first, second := toplamliSepet(ctx, t, svc)
 
@@ -88,7 +88,7 @@ func TestSetTotalsBasariliYazarVeDamgalar(t *testing.T) {
 // Bu, SetTotals'ın var oluş sebebidir: workflow'daki bir hesap hatası sessizce
 // veritabanına yazılamaz.
 func TestSetTotalsSepetKimliginiZorlar(t *testing.T) {
-	svc, _, _ := yeniServis(t)
+	svc, _ := yeniServis(t)
 	ctx := context.Background()
 	cart, first, second := toplamliSepet(ctx, t, svc)
 
@@ -136,7 +136,7 @@ func TestSetTotalsSepetKimliginiZorlar(t *testing.T) {
 // TestSetTotalsSatirKimliginiZorlar satır toplam kimliğini sağlamayan bir
 // hesabın reddedildiğini doğrular.
 func TestSetTotalsSatirKimliginiZorlar(t *testing.T) {
-	svc, _, _ := yeniServis(t)
+	svc, _ := yeniServis(t)
 	ctx := context.Background()
 	cart, first, second := toplamliSepet(ctx, t, svc)
 
@@ -161,7 +161,7 @@ func TestSetTotalsSatirKimliginiZorlar(t *testing.T) {
 // Adet sepetin KENDİ verisidir; bu çarpımı doğrulayabilen tek yer burasıdır.
 // Yanlış adetle fiyatlanmış bir satır başka hiçbir kapıda yakalanmazdı.
 func TestSetTotalsSatirAraToplamiCarpimiZorlar(t *testing.T) {
-	svc, _, _ := yeniServis(t)
+	svc, _ := yeniServis(t)
 	ctx := context.Background()
 	cart, first, second := toplamliSepet(ctx, t, svc)
 
@@ -184,7 +184,7 @@ func TestSetTotalsSatirAraToplamiCarpimiZorlar(t *testing.T) {
 // TestSetTotalsAraToplamSatirlarinToplamiOlmali sepet ara toplamının
 // satırların ara toplamlarına eşit olmasını zorladığını doğrular.
 func TestSetTotalsAraToplamSatirlarinToplamiOlmali(t *testing.T) {
-	svc, _, _ := yeniServis(t)
+	svc, _ := yeniServis(t)
 	ctx := context.Background()
 	cart, first, second := toplamliSepet(ctx, t, svc)
 
@@ -211,7 +211,7 @@ func TestSetTotalsAraToplamSatirlarinToplamiOlmali(t *testing.T) {
 // satırları göndermeyi unutan bir hesap turu, 300000 tutarındaki bir sepeti
 // "subtotal 0, total 0" ile TUTARLI gösterir ve sepet bedavaya tamamlanırdı.
 func TestSetTotalsFiyatlanmamisSatirSifirTutarlaGecemez(t *testing.T) {
-	svc, _, _ := yeniServis(t)
+	svc, _ := yeniServis(t)
 	ctx := context.Background()
 	cart := yeniSepet(ctx, t, svc)
 
@@ -244,7 +244,7 @@ func TestSetTotalsFiyatlanmamisSatirSifirTutarlaGecemez(t *testing.T) {
 // güvenilseydi Σ değişmediği için hesap tutarlı görünür, sepet 10 adetlik malı
 // 1 adet fiyatına TAZE damgayla tamamlardı.
 func TestSetTotalsAdetDegistiktenSonraSatirsizYazmaReddedilir(t *testing.T) {
-	svc, _, _ := yeniServis(t)
+	svc, _ := yeniServis(t)
 	ctx := context.Background()
 	cart := yeniSepet(ctx, t, svc)
 
@@ -287,7 +287,7 @@ func TestSetTotalsAdetDegistiktenSonraSatirsizYazmaReddedilir(t *testing.T) {
 // kapıdan fiyatlanmamış satır da geçer. Kargo değişimi zaten sepetin şeklini
 // değiştirir ve hesabın baştan koşmasını gerektirir.
 func TestSetTotalsKargoGuncellemesiDeTumSatirlariIster(t *testing.T) {
-	svc, _, _ := yeniServis(t)
+	svc, _ := yeniServis(t)
 	ctx := context.Background()
 	cart, first, second := toplamliSepet(ctx, t, svc)
 
@@ -326,7 +326,7 @@ func TestSetTotalsKargoGuncellemesiDeTumSatirlariIster(t *testing.T) {
 // MarkCompleted'ın bayatlık kapısı açılır ve müşteri sepetindeki maldan azını
 // öderdi.
 func TestSetTotalsBayatHesapReddedilir(t *testing.T) {
-	svc, _, _ := yeniServis(t)
+	svc, _ := yeniServis(t)
 	ctx := context.Background()
 	cart := yeniSepet(ctx, t, svc)
 
@@ -372,7 +372,7 @@ func TestSetTotalsBayatHesapReddedilir(t *testing.T) {
 // Kargo yöntemi eklemek satırlara dokunmaz; kapsama kontrolü bu turu geçerdi.
 // Yakalayan tek şey, hesabın dayandığı şeklin çağırandan alınmasıdır.
 func TestSetTotalsSatirDisiDegisiklikDeYakalanir(t *testing.T) {
-	svc, _, _ := yeniServis(t)
+	svc, _ := yeniServis(t)
 	ctx := context.Background()
 	cart := yeniSepet(ctx, t, svc)
 
@@ -408,7 +408,7 @@ func TestSetTotalsSatirDisiDegisiklikDeYakalanir(t *testing.T) {
 // için sıfırda eski davranışa düşülseydi, alanı doldurmayı unutan her çağıran
 // tam da kapatılmak istenen yarışı geri getirirdi.
 func TestSetTotalsSifirSurumEskiDavranisaDusmez(t *testing.T) {
-	svc, _, _ := yeniServis(t)
+	svc, _ := yeniServis(t)
 	ctx := context.Background()
 	cart, first, second := toplamliSepet(ctx, t, svc)
 	require.Positive(t, cart.Revision, "fikstür sepeti değiştirmiş olmalı")
@@ -428,7 +428,7 @@ func TestSetTotalsSifirSurumEskiDavranisaDusmez(t *testing.T) {
 // TestSetTotalsBosSepetteAraToplamSifirOlmali satırsız bir sepette sıfırdan
 // farklı bir ara toplamın reddedildiğini doğrular.
 func TestSetTotalsBosSepetteAraToplamSifirOlmali(t *testing.T) {
-	svc, _, _ := yeniServis(t)
+	svc, _ := yeniServis(t)
 	ctx := context.Background()
 	cart := yeniSepet(ctx, t, svc)
 
@@ -445,7 +445,7 @@ func TestSetTotalsBosSepetteAraToplamSifirOlmali(t *testing.T) {
 // TestSetTotalsBilinmeyenSatirReddedilir başka bir sepetin (ya da olmayan bir)
 // satırının tutarının yazılamayacağını doğrular.
 func TestSetTotalsBilinmeyenSatirReddedilir(t *testing.T) {
-	svc, _, _ := yeniServis(t)
+	svc, _ := yeniServis(t)
 	ctx := context.Background()
 	cart, first, _ := toplamliSepet(ctx, t, svc)
 
@@ -469,7 +469,7 @@ func TestSetTotalsBilinmeyenSatirReddedilir(t *testing.T) {
 // Sessizce sonuncusu kazansaydı, birbirini ezen iki hesap arasındaki fark
 // yalnızca sıraya bağlı olurdu.
 func TestSetTotalsTekrarlananSatirReddedilir(t *testing.T) {
-	svc, _, _ := yeniServis(t)
+	svc, _ := yeniServis(t)
 	ctx := context.Background()
 	cart, first, second := toplamliSepet(ctx, t, svc)
 
@@ -490,7 +490,7 @@ func TestSetTotalsTekrarlananSatirReddedilir(t *testing.T) {
 // TestSetTotalsNegatifTutarReddedilir negatif toplamların reddedildiğini
 // doğrular.
 func TestSetTotalsNegatifTutarReddedilir(t *testing.T) {
-	svc, _, _ := yeniServis(t)
+	svc, _ := yeniServis(t)
 	ctx := context.Background()
 	cart := yeniSepet(ctx, t, svc)
 
@@ -515,7 +515,7 @@ func TestSetTotalsNegatifTutarReddedilir(t *testing.T) {
 // TestSetTotalsTavaniAsanTutarReddedilir üst sınırı aşan tutarların
 // reddedildiğini doğrular; sınır taşmayı yapısal olarak imkânsız kılar.
 func TestSetTotalsTavaniAsanTutarReddedilir(t *testing.T) {
-	svc, _, _ := yeniServis(t)
+	svc, _ := yeniServis(t)
 	ctx := context.Background()
 	cart := yeniSepet(ctx, t, svc)
 
@@ -534,7 +534,7 @@ func TestSetTotalsTavaniAsanTutarReddedilir(t *testing.T) {
 // Kısmen yazılmış bir hesap turu, sepetin ara toplamı ile satırlarının
 // birbirini tutmadığı bir duruma yol açardı.
 func TestSetTotalsHataHalindeHicbirSatirYazilmaz(t *testing.T) {
-	svc, store, _ := yeniServis(t)
+	svc, store := yeniServis(t)
 	ctx := context.Background()
 	cart, first, second := toplamliSepet(ctx, t, svc)
 	store.failSetLineItemTotals = errors.Internal("cart_query_failed", "veritabanı düştü")
@@ -560,7 +560,7 @@ func TestSetTotalsHataHalindeHicbirSatirYazilmaz(t *testing.T) {
 // TestSetTotalsOlmayanSepetNotFound olmayan bir sepete yazmanın NotFound
 // döndürdüğünü doğrular.
 func TestSetTotalsOlmayanSepetNotFound(t *testing.T) {
-	svc, _, _ := yeniServis(t)
+	svc, _ := yeniServis(t)
 
 	err := svc.SetTotals(context.Background(), "cart_YOK", service.Totals{})
 
@@ -578,7 +578,7 @@ func TestSetTotalsOlmayanSepetNotFound(t *testing.T) {
 // ediliyordu. Müşteri 1000'lik mala 2500'lük kargoyla birlikte 500 öder ve ne
 // servis ne de carts_totals_consistent kısıtı bunu görürdü.
 func TestSetTotalsIndirimAraToplamiAsamaz(t *testing.T) {
-	svc, _, _ := yeniServis(t)
+	svc, _ := yeniServis(t)
 	ctx := context.Background()
 	cart, first, second := toplamliSepet(ctx, t, svc)
 

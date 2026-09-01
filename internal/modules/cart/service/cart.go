@@ -30,13 +30,12 @@ type CreateCartInput struct {
 	Metadata map[string]any
 }
 
-// CreateCart yeni bir sepet oluşturur ve bölge/müşteri bağlarını kurar.
+// CreateCart yeni bir sepet oluşturur.
 //
-// Bağ kurulumu sepet satırıyla AYNI işlemde değildir — link servisi kendi
-// bağlantısını kullanır — bu yüzden bağ kurulamazsa sepet GERİ ALINIR
-// (yumuşak silinir) ve hata dönülür. Alternatifi, bağsız bir sepetin ayakta
-// kalmasıydı: sepet çalışır görünür, ama Query katmanında hiçbir bölgeye ya da
-// müşteriye bağlanmaz ve eksiklik ancak raporlama sırasında fark edilirdi.
+// Sepetin bölgesi ve (varsa) müşterisi KENDİ SÜTUNLARINDA durur
+// (carts.region_id / carts.customer_id) ve ikisi de sepet satırıyla AYNI
+// INSERT'te yazılır. Bu yüzden yarım kalmış bir sepet yoktur: satır ya bölgesi
+// ve sahibiyle birlikte doğar ya da hiç doğmaz.
 func (s *Service) CreateCart(ctx context.Context, in CreateCartInput) (models.Cart, error) {
 	if err := requireID("region_id", in.RegionID); err != nil {
 		return models.Cart{}, err
@@ -66,26 +65,7 @@ func (s *Service) CreateCart(ctx context.Context, in CreateCartInput) (models.Ca
 	if err != nil {
 		return models.Cart{}, err
 	}
-
-	if err := s.linkCart(ctx, cart.ID, cart.RegionID, cart.CustomerID); err != nil {
-		s.rollbackCart(ctx, cart.ID)
-		return models.Cart{}, err
-	}
 	return cart, nil
-}
-
-// rollbackCart bağı kurulamayan sepeti geri alır.
-//
-// Hata DÖNMEZ: çağıran zaten asıl hatayı döndürecektir ve telafinin hatası onu
-// gölgelerse istemci düzeltilebilir bir sebep yerine anlamsız bir sebep görür.
-// Geri alınamayan sepet uyarı olarak loglanır; kimse ona referans vermediği
-// için zararsızdır ama görünür kalmalıdır.
-func (s *Service) rollbackCart(ctx context.Context, cartID string) {
-	s.unlinkCart(ctx, cartID)
-	if err := s.store.SoftDeleteCart(ctx, cartID); err != nil {
-		s.log.WarnContext(ctx, "bağı kurulamayan sepet geri alınamadı",
-			"cart_id", cartID, "error", err)
-	}
 }
 
 // GetCart sepeti satırları, adresleri ve kargo yöntemleriyle birlikte döner.
@@ -172,24 +152,19 @@ type UpdateCartInput struct {
 // UpdateCart sepetin e-postasını ve/veya müşterisini günceller.
 //
 // Gerçek akış bunu gerektirir: müşteri sepeti MİSAFİR olarak açar, e-postasını
-// ödeme adımında girer ve/veya araya giriş yapar. Bu yol olmadan sepet ya baştan
-// kurulmalı (satırlar kaybolur) ya da cart_customer bağı hiç kurulamazdı; Faz
-// 6'daki complete_cart siparişin iletişim adresini sepetten okuyacağı için
-// eksiklik oraya taşınırdı.
+// ödeme adımında girer ve/veya araya giriş yapar. Bu yol olmadan sepetin baştan
+// kurulması gerekirdi ve satırlar kaybolurdu; üstelik complete_cart siparişin
+// iletişim adresini sepetten okuduğu için eksiklik oraya taşınırdı.
 //
 // # Neden toplamları bayatlatır
 //
 // Çağrı [Service.mutate] çerçevesinde koşar, yani sepetin şekil sayacını
-// ARTIRIR ve toplamları bayat hâle getirir. Sebep müşteri bağıdır: fiyat
+// ARTIRIR ve toplamları bayat hâle getirir. Sebep sahiplik değişimidir: fiyat
 // müşteri grubuna, vergi ise muafiyete göre değişebilir ve sepetin sahibi
 // değiştikten sonra eski hesap artık o sepetin hesabı değildir. Hangisinin
 // gerçekten değiştiğini bilen taraf pricing/tax'tır, cart değil (ADR 0006); bu
 // yüzden karar temkinli verilir — bir tur fazladan hesaplamak, yanlış tutarla
 // sipariş yazmaktan ucuzdur.
-//
-// Müşteri bağı sepet satırıyla AYNI işlemde değildir (link servisi kendi
-// bağlantısını kullanır), bu yüzden bağ kurulamazsa devir GERİ ALINIR ve hata
-// dönülür — [Service.CreateCart] ile aynı örüntü.
 //
 // Tamamlanmış sepete yazılamaz: errors.Conflict döner.
 func (s *Service) UpdateCart(ctx context.Context, cartID string, in UpdateCartInput) (models.Cart, error) {
@@ -211,10 +186,7 @@ func (s *Service) UpdateCart(ctx context.Context, cartID string, in UpdateCartIn
 			"güncellenecek alan verilmedi: email ya da customer_id gerekli")
 	}
 
-	var previous models.Cart
 	updated, err := s.mutate(ctx, cartID, func(ctx context.Context, cart models.Cart) error {
-		previous = cart
-
 		contact := models.CartContact{Email: cart.Email, CustomerID: cart.CustomerID}
 		if email != nil {
 			contact.Email = *email
@@ -233,38 +205,7 @@ func (s *Service) UpdateCart(ctx context.Context, cartID string, in UpdateCartIn
 	if err != nil {
 		return models.Cart{}, err
 	}
-
-	// Bağ yalnızca sahiplik BOŞTAN DOLUYA geçtiğinde kurulur; aynı müşterinin
-	// tekrar yazılması bağ tarafında zaten no-op'tur.
-	if previous.CustomerID == "" && updated.CustomerID != "" {
-		if linkErr := s.links.Create(ctx, LinkCartCustomer, updated.ID, updated.CustomerID); linkErr != nil {
-			s.rollbackContact(ctx, previous)
-			return models.Cart{}, wrapLink(linkErr, "%q bağı kurulamadı (sepet: %s -> müşteri: %s)",
-				LinkCartCustomer, updated.ID, updated.CustomerID)
-		}
-	}
 	return updated, nil
-}
-
-// rollbackContact bağı kurulamayan devri geri alır.
-//
-// Hata DÖNMEZ: çağıran zaten asıl hatayı döndürecektir ve telafinin hatası onu
-// gölgelerse istemci düzeltilebilir bir sebep yerine anlamsız bir sebep görür
-// (aynı gerekçe [Service.rollbackCart] için de geçerlidir). Geri alınamayan
-// devir uyarı olarak loglanır: sepet müşteriye yazılı görünür ama bağı yoktur
-// ve fark yalnızca Query katmanında görünürdü.
-func (s *Service) rollbackContact(ctx context.Context, previous models.Cart) {
-	_, err := s.mutate(ctx, previous.ID, func(ctx context.Context, _ models.Cart) error {
-		_, restoreErr := s.store.UpdateCartContact(ctx, previous.ID, models.CartContact{
-			Email:      previous.Email,
-			CustomerID: previous.CustomerID,
-		})
-		return restoreErr
-	})
-	if err != nil {
-		s.log.WarnContext(ctx, "bağı kurulamayan müşteri devri geri alınamadı",
-			"cart_id", previous.ID, "error", err)
-	}
 }
 
 // ListCartsInput sepet listelemesinin girdisidir.
@@ -319,7 +260,7 @@ func (s *Service) ListCartsByIDs(ctx context.Context, ids []string) ([]models.Ca
 	return s.store.CartsByIDs(ctx, ids)
 }
 
-// DeleteCart sepeti ve çocuklarını yumuşak siler, bağlarını kaldırır.
+// DeleteCart sepeti ve çocuklarını yumuşak siler.
 //
 // TAMAMLANMIŞ sepet silinemez (errors.Conflict): siparişin dayandığı kayıt
 // odur ve silinmesi geçmişi yok etmek olurdu.
@@ -328,7 +269,7 @@ func (s *Service) DeleteCart(ctx context.Context, cartID string) error {
 		return err
 	}
 
-	err := s.store.WithTx(ctx, func(ctx context.Context) error {
+	return s.store.WithTx(ctx, func(ctx context.Context) error {
 		cart, err := s.store.LockCart(ctx, cartID)
 		if err != nil {
 			return err
@@ -347,14 +288,6 @@ func (s *Service) DeleteCart(ctx context.Context, cartID string) error {
 		}
 		return s.store.SoftDeleteCart(ctx, cartID)
 	})
-	if err != nil {
-		return err
-	}
-
-	// Bağlar silme BAŞARILI olduktan sonra temizlenir: önce temizlenip silme
-	// düşseydi, yaşayan bir sepet bağlarını kaybederdi.
-	s.unlinkCart(ctx, cartID)
-	return nil
 }
 
 // MarkCompleted sepeti tamamlanmış olarak damgalar.
