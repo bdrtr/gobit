@@ -5,6 +5,7 @@ package config
 import (
 	"fmt"
 	"log/slog"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -212,8 +213,14 @@ type Config struct {
 	//
 	// [Config.AdminBootstrapPassword] ile BİRLİKTE verilir; yalnızca biri
 	// verilirse Validate hata döner. İkisi de boşsa tohum adımı hiç çalışmaz
-	// ve bu meşru bir seçimdir: kurulmuş bir sistemin ortamında bu
+	// ve bu meşru bir seçimdir: KURULMUŞ bir sistemin ortamında bu
 	// değişkenlerin durması gerekmez.
+	//
+	// "Kurulmuş" şartı doğrulamanın GÖREMEDİĞİ bir şarttır: veritabanında hiç
+	// kullanıcı olup olmadığı buradan bilinemez. Denetim bu yüzden tohum
+	// adımına aittir ve orada taze bir veritabanı + boş bu iki değişken,
+	// paylaşılan ortamlarda açılışı DURDURUR; gerekçesi cmd/server
+	// yonetimsizKurulumuBildir godoc'undadır.
 	AdminBootstrapEmail string `env:"ADMIN_BOOTSTRAP_EMAIL"`
 	// AdminBootstrapPassword ilk yönetim kullanıcısının parolasıdır.
 	//
@@ -226,9 +233,36 @@ type Config struct {
 	// parolasını DEĞİŞTİRMEZ.
 	AdminBootstrapPassword string `env:"ADMIN_BOOTSTRAP_PASSWORD"`
 	// EventBus olay veri yolunun arka ucudur: inmemory | redis.
-	// inmemory tek süreçlidir ve süreç ölünce olaylar kaybolur; birden çok
-	// örnek çalıştırılıyorsa redis kullanılmalıdır (plan Bölüm 3).
+	//
+	// inmemory tek süreçlidir ve KALICI DEĞİLDİR: teslim asenkrondur, süreç
+	// çökerse ya da kapanış [Config.ShutdownTimeout] içinde bitmezse teslim
+	// edilmemiş olaylar iz bırakmadan kaybolur — sipariş konulmuş, onay
+	// bildirimi hiç gitmemiştir. Paylaşılan ortamlarda bu risk açılışta
+	// UYARILIR (bkz. cmd/server olayVeriYolunuUyar); durdurulmaz, çünkü tek
+	// örnekli bir staging kurulumunda inmemory hâlâ meşru bir seçimdir ve
+	// GUARD_BACKEND=memory ile aynı ödünç verilir.
+	//
+	// Birden çok örnek çalıştırılıyorsa redis kullanılmalıdır (plan Bölüm 3);
+	// o zaman olayların ad alanını [Config.RedisKeyPrefix] belirler.
 	EventBus string `env:"EVENT_BUS" envDefault:"inmemory"`
+
+	// EventBusConsumer bu süreci consumer group içinde tanımlayan addır
+	// (yalnızca EVENT_BUS=redis iken kullanılır).
+	//
+	// Boş bırakılırsa "<hostname>-<pid>" kullanılır ve bu, kap başına tek süreç
+	// çalıştıran her dağıtımda doğru olandır. Açıkça verilmesinin tek meşru
+	// sebebi KALICI bir kimliktir (örn. StatefulSet pod adı): veri yolu bekleyen
+	// listeyi yalnızca KENDİ adına sorar, yani süreç her açılışta yeni bir adla
+	// gelirse önceki çalışmanın işlenip ACK'lenmemiş mesajları hiçbir zaman
+	// teslim edilmez.
+	//
+	// AYNI adı iki sürece vermek en kötü seçenektir ve sessizdir: ikisi de
+	// açılışta o adın bekleyen listesini okur, yani ötekinin HÂLÂ işlemekte
+	// olduğu mesajları da alır ve aynı olay iki kez işlenir. Doğrulama bunu
+	// göremez — tek süreç, kendisinden başkasını bilmez — bu yüzden kullanılan
+	// ad açılışta LOGLANIR; çakışma ancak iki açılış logu yan yana konduğunda
+	// görülür.
+	EventBusConsumer string `env:"EVENT_BUS_CONSUMER"`
 
 	// NotificationProvider bildirimleri gönderecek sağlayıcının kimliğidir.
 	//
@@ -370,9 +404,22 @@ type Config struct {
 	RateLimitPerMinute int `env:"RATE_LIMIT_PER_MINUTE" envDefault:"600"`
 	// TrustedProxyHops istekle aramızdaki GÜVENİLEN ters proxy sayısıdır.
 	//
-	// Sıfırsa X-Forwarded-For hiç okunmaz. Yanlış (fazla) bir değer, istemcinin
-	// uydurduğu adresi gerçek sanmaya ve hız sınırının atlanmasına yol açar;
-	// bu yüzden varsayılanı sıfırdır ve açıkça verilmelidir.
+	// Sıfırsa X-Forwarded-For hiç okunmaz ve hız sınırı anahtarı bağlantının
+	// RemoteAddr'ına düşer. Yanlış (fazla) bir değer ise istemcinin uydurduğu
+	// adresi gerçek sanmaya ve hız sınırının tamamen atlanmasına yol açar.
+	//
+	// İki yanlışın bedeli AYNI DEĞİLDİR ve varsayılanı sıfır yapan da budur:
+	// fazla verilen bir değer korumayı YOK EDER (saldırgan her istekte taze bir
+	// kova alır), eksik verilen bir değer ise yalnızca GEVŞETİR — kota tüm
+	// mağaza için tek bir kovaya düşer. İlki bir güvenlik açığı, ikincisi bir
+	// kapasite sorunudur; bu yüzden güvenli varsayılan sıfırdır.
+	//
+	// Eksik değerin bedeli yine de küçük değildir ve SESSİZDİR: ters proxy,
+	// ingress ya da CDN arkasında RemoteAddr her istekte proxy'nin adresidir,
+	// yani RATE_LIMIT_PER_MINUTE "müşteri başına" değil "TÜM MAĞAZA için" bir
+	// tavan olur ve tek bir müşteri vitrini kilitleyebilir. Paylaşılan
+	// ortamlarda bu durum açılışta UYARILIR; gerekçesi ve neden açılışın
+	// durmadığı [Config.RateLimitKeyIsPerClient] godoc'undadır.
 	TrustedProxyHops int `env:"TRUSTED_PROXY_HOPS" envDefault:"0"`
 	// IdempotencyTTL idempotency kayıtlarının saklanma süresidir.
 	IdempotencyTTL time.Duration `env:"IDEMPOTENCY_TTL" envDefault:"24h"`
@@ -390,16 +437,30 @@ type Config struct {
 	// gibi yarım bir yapılandırma mümkün olurdu ve o yarımlık ancak yük
 	// altında görünürdü.
 	GuardBackend string `env:"GUARD_BACKEND" envDefault:"memory"`
-	// RedisKeyPrefix koruma anahtarlarının Redis'teki ad alanı önekidir.
+	// RedisKeyPrefix kurulumun Redis'teki ad alanı önekidir.
 	//
-	// Anahtarlar "<önek>:rl:<istemci>" ve "<önek>:idem:<anahtar>" biçiminde
-	// yazılır (bkz. internal/core/http/redisguard paket godoc'u).
+	// ÜÇ tür anahtarı birden kapsar: koruma anahtarları "<önek>:rl:<istemci>"
+	// ve "<önek>:idem:<anahtar>" (bkz. internal/core/http/redisguard paket
+	// godoc'u), olay akışları ise "<önek>:events:<olay adı>" biçiminde yazılır;
+	// olay veri yolunun consumer group adı da önekin kendisidir (bkz.
+	// eventbus.RedisConfig.WithNamespace).
 	//
 	// AYNI Redis'i paylaşan iki gobit kurulumu (staging ile production, ya da
 	// aynı kümedeki iki mağaza) bu değeri FARKLI vermelidir. Aynı bırakılırsa
-	// birbirlerinin hız sınırı kotasını harcarlar — bu bir hız sorunudur — ve
-	// birbirlerinin idempotency kaydını OKURLAR: bir kurulumun yanıtı ötekinin
-	// istemcisine gider. İkincisi doğruluk sorunudur.
+	// üç arıza birden doğar ve ağırlıkları farklıdır:
+	//
+	//   - Birbirlerinin hız sınırı kotasını harcarlar. Hız sorunudur.
+	//   - Birbirlerinin idempotency kaydını OKURLAR: bir kurulumun yanıtı
+	//     ötekinin istemcisine gider. Doğruluk sorunudur.
+	//   - AYNI consumer group'a bağlanırlar. En ağırı budur: grubun tanımı
+	//     gereği bir olayı iki kurulumdan yalnızca BİRİ alır, yani üretimin
+	//     "order.placed" olayı staging tarafından tüketilip yutulabilir ve
+	//     sipariş onayı hiçbir yere gitmez.
+	//
+	// Öneki DEĞİŞTİRMEK de bedava değildir ve bunu bilerek yapmak gerekir:
+	// yeni önek yeni stream ve yeni grup demektir, yani eski stream'de bekleyen
+	// teslim edilmemiş olaylar orada KALIR. Değişiklik, kurulumu ayırmak için
+	// yapılır; çalışan bir kurulumun öneki oynatılmaz.
 	//
 	// Ayrı Redis DB'si (redis://.../1) ya da ayrı örnek de ayırır ama ikisi de
 	// ALTYAPI kararıdır: Redis Cluster numaralı DB'leri desteklemez ve ayrı
@@ -621,6 +682,9 @@ func (c Config) Validate() error {
 	if err := c.validateRedisKeyPrefix(); err != nil {
 		return err
 	}
+	if err := c.validateEventBusConsumer(); err != nil {
+		return err
+	}
 	if err := c.validateGraphQL(); err != nil {
 		return err
 	}
@@ -699,6 +763,28 @@ func (c Config) validateRedisKeyPrefix() error {
 		return fmt.Errorf(
 			"config: geçersiz REDIS_KEY_PREFIX %q (yalnızca ASCII harf, rakam, '-', '_' ve '.' kabul edilir)",
 			c.RedisKeyPrefix)
+	}
+	return nil
+}
+
+// validateEventBusConsumer olay veri yolu tüketici adının BİÇİMİNİ doğrular.
+//
+// [adBicimi] KULLANILMAZ çünkü o, boş değeri reddeder; burada boş değer
+// geçerlidir ve "adı sen üret" demektir (bkz. [Config.EventBusConsumer]).
+// Baştaki/sondaki boşluk yine de reddedilir: Redis tüketici adı olarak
+// " gobit-1" gibi bir değeri sorunsuz kabul eder, yani yazım hatası hiçbir
+// hata üretmez — yalnızca süreç, bir sonraki açılışta kendi bekleyen listesini
+// bulamaz ve o mesajlar kimseye teslim edilmez.
+//
+// Adın BENZERSİZ olduğu burada denetlenemez: tek süreç, aynı gruba bağlı öteki
+// süreçleri bilmez. O yüzden kullanılan ad açılışta loglanır.
+func (c Config) validateEventBusConsumer() error {
+	if c.EventBusConsumer == "" {
+		return nil
+	}
+	if strings.TrimSpace(c.EventBusConsumer) != c.EventBusConsumer {
+		return fmt.Errorf("config: EVENT_BUS_CONSUMER %q baştaki/sondaki boşluk içeremez",
+			c.EventBusConsumer)
 	}
 	return nil
 }
@@ -806,9 +892,12 @@ func (c Config) validateNotificationProvider() error {
 // bir gün "local"a çevrildiğinde patlardı — yani arıza tam da en kötü ana,
 // canlı geçiş anına saklanırdı. Aynı gerekçe REDIS_KEY_PREFIX'te de yazılıdır.
 //
-// MUTLAK YOL şartı ise yalnızca yerel sağlayıcı seçiliyken uygulanır: nesne
-// deposuna yazan bir kurulumda o kuralın öznesi yoktur ve kullanılmayan bir
-// alan için mutlak yol istemek, hiçbir şey korumayan bir engel olurdu.
+// KÖKÜN KALICI OLDUĞU BURADA DENETLENMEZ ve bu bilinçlidir. Kural bir
+// doğrulama değil bir UYARIDIR: soruyu [Config.LocalFileRootIsDurable] sorar,
+// cevabı açılışta cmd/server yazar (bkz. dosyaKokunuUyar). Doğrulamaya
+// konsaydı, dosya yükleme özelliğini hiç kullanmayan her paylaşılan kurulum
+// karşılığını göremediği bir ortam değişkeni vermeden açılamazdı; gerekçenin
+// tamamı o godoc'tadır. Buradaki tek iş BİÇİMDİR.
 func (c Config) validateFile() error {
 	if err := adBicimi("FILE_PROVIDER", c.FileProvider, DefaultFileProvider); err != nil {
 		return err
@@ -823,14 +912,24 @@ func (c Config) validateFile() error {
 	return c.validateFileTypes()
 }
 
-// LocalFileRootIsPortable "local" sağlayıcısının kök dizininin, sürecin ÇALIŞMA
-// DİZİNİNDEN bağımsız olup olmadığını bildirir.
+// LocalFileRootIsDurable "local" sağlayıcısının kök dizininin, süreç yeniden
+// başladığında YERİNDE kalıp kalmayacağını bildirir.
 //
-// Göreli bir kök yerel geliştirmede doğrudur ve varsayılan da odur; paylaşılan
-// bir ortamda ise sessiz bir veri kaybı riskidir: yol sürecin çalışma dizinine
-// göre çözülür ve konteynerde neredeyse her zaman kalıcı OLMAYAN katmana düşer.
-// Bir sonraki dağıtımda yüklenen görseller kaybolur, ama ürün kaydındaki adres
-// yerinde kalır — yani hiçbir hata görünmeden vitrindeki her görsel 404 döner.
+// İki ayrı yol aynı sonuca çıkar ve ikincisi ilkinden daha sinsidir:
+//
+//   - GÖRELİ kök sürecin ÇALIŞMA DİZİNİNE göre çözülür ve konteynerde
+//     neredeyse her zaman kalıcı OLMAYAN katmana düşer.
+//   - GEÇİCİ kök (bkz. [geciciKokler]) MUTLAKTIR, yani "mutlak yol verin"
+//     öğüdünü geçer ve hiçbir kuşku uyandırmaz; ama işletim sistemi onu
+//     temizler, üstelik çoğu dağıtımda tmpfs olduğu için yeniden başlatmayı
+//     bile beklemez.
+//
+// Sonuç ikisinde de aynıdır: bir sonraki dağıtımda yüklenen görseller
+// kaybolur, ürün kaydındaki adres yerinde kalır — yani hiçbir hata görünmeden
+// vitrindeki her görsel 404 döner. Bu, [Config.FileRoot] godoc'unun varsayılan
+// için REDDETTİĞİ sessiz veri kaybının ta kendisidir; ölçüt yalnızca
+// filepath.IsAbs olsaydı, reddedilen davranış FILE_ROOT=/tmp/... yazılarak
+// tek satırda geri gelir ve uyarı susardı.
 //
 // # Neden AÇILIŞI DURDURMAZ
 //
@@ -840,12 +939,48 @@ func (c Config) validateFile() error {
 // GUARD_BACKEND'de de verildi: bellek içi koruma çok örnekli dağıtımda
 // BOZUKTUR ama açılışı durdurmaz, uyarı loglanır (bkz. cmd/server
 // korumaYigini). Buradaki karar onunla tutarlıdır — ve nedeni ortaktır:
-// yapılandırmanın YANLIŞ olduğu kesin değildir, yalnızca RİSKLİDİR.
+// yapılandırmanın YANLIŞ olduğu kesin değildir, yalnızca RİSKLİDİR. Geçici bir
+// kök, dosyaların kalıcı olmasını istemeyen bir kurulumda (önizleme ortamı,
+// tek seferlik gösterim) bilinçli bir tercih olabilir.
 //
 // Kararın config'te durmasının sebebi, "riskli" tanımının burada olmasıdır:
 // uyarıyı yazan taraf (cmd/server) yalnızca çağırır.
-func (c Config) LocalFileRootIsPortable() bool {
-	return c.FileProvider != DefaultFileProvider || filepath.IsAbs(c.FileRoot)
+func (c Config) LocalFileRootIsDurable() bool {
+	if c.FileProvider != DefaultFileProvider {
+		return true
+	}
+	if !filepath.IsAbs(c.FileRoot) {
+		return false
+	}
+
+	kok := filepath.Clean(c.FileRoot)
+	// os.TempDir listeye AYRICA bakılır: TMPDIR ayarlanmış bir kurulumda geçici
+	// dizin /tmp olmayabilir ve sabit liste onu göremezdi.
+	if altindaMi(kok, filepath.Clean(os.TempDir())) {
+		return false
+	}
+	for _, gecici := range geciciKokler {
+		if altindaMi(kok, gecici) {
+			return false
+		}
+	}
+
+	return true
+}
+
+// geciciKokler işletim sisteminin temizlediği, bilinen mutlak kök dizinlerdir.
+//
+// Liste kısa TUTULUR: uzun bir liste "burada yoksa kalıcıdır" izlenimi verir ve
+// uyarıyı bir güvenceye çevirirdi — oysa bu, kesin bir sınıflandırma değil,
+// mutlak yol şartını geçen tipik hataların yakalanmasıdır.
+var geciciKokler = []string{"/tmp", "/var/tmp", "/dev/shm"}
+
+// altindaMi yolun verilen kökün kendisi ya da altında olduğunu bildirir.
+//
+// Ayırıcı şartı gerekli: sade bir önek karşılaştırması "/tmpfoo" yolunu da
+// "/tmp" altında sayardı.
+func altindaMi(yol, kok string) bool {
+	return yol == kok || strings.HasPrefix(yol, kok+string(filepath.Separator))
 }
 
 // tarayicidaCalisanTipler yükleme izin listesine KONAMAYACAK içerik tipleridir.
@@ -954,6 +1089,37 @@ func (c Config) validateAdminBootstrap() error {
 			c.AppEnv, MinBootstrapPasswordLen)
 	}
 	return nil
+}
+
+// RateLimitKeyIsPerClient hız sınırı kotasının gerçekten İSTEMCİ BAŞINA düşüp
+// düşmediğini bildirir.
+//
+// Sınırlayıcı istemciyi TRUSTED_PROXY_HOPS pozitifken X-Forwarded-For
+// zincirinden, aksi hâlde bağlantının RemoteAddr'ından okur (bkz.
+// corehttp.TrustedProxyIPKey). Ters proxy, ingress ya da CDN arkasında
+// RemoteAddr HER İSTEKTE proxy'nin adresidir: o kurulumda
+// RATE_LIMIT_PER_MINUTE "müşteri başına 600" değil "TÜM MAĞAZA için dakikada
+// 600" olur ve tek bir müşteri bütün vitrini kilitleyebilir. Headless
+// ticarette ters proxy arkasında çalışmak neredeyse tek dağıtım biçimi
+// olduğundan, sessiz kalırsa en sık karşılaşılan hâl budur.
+//
+// Sınır KAPALIYKEN (RATE_LIMIT_PER_MINUTE <= 0) soru konusuzdur ve true döner:
+// hiç takılmamış bir sınırlayıcının anahtarı hakkında uyarmak, operatörü
+// ilgisiz bir ayara yönlendirirdi. O hâlin kendi bildirimi ayrıdır (bkz.
+// cmd/server hizSiniriniUyar).
+//
+// # Neden varsayılan DEĞİŞMEDİ ve neden açılış DURMUYOR
+//
+// Sıfır atlama, doğrudan internete bakan bir kurulumda DOĞRU cevaptır ve
+// yapılandırma hangisinin geçerli olduğunu bilemez — bu yüzden burada da
+// [Config.LocalFileRootIsDurable]'ın ölçütü geçerlidir: yanlış olduğu kesin
+// değil, riskli. Varsayılanı 1'e çekmek kolay cevaptır ama daha pahalıdır:
+// güvenilmeyen bir X-Forwarded-For okumak, istemcinin uydurduğu adresi gerçek
+// saymak demektir ve saldırgan her istekte taze bir kova alarak sınırı TAMAMEN
+// atlar. Sessiz gevşeme bir kapasite sorunudur, sahtecilik ise korumanın
+// kendisini yok eder; ikisi arasında güvenli varsayılan sıfırdır.
+func (c Config) RateLimitKeyIsPerClient() bool {
+	return c.RateLimitPerMinute <= 0 || c.TrustedProxyHops > 0
 }
 
 // SlogLevel LogLevel alanını slog.Level'a çevirir.

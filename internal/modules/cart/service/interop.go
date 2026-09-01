@@ -94,6 +94,13 @@ type interopLineTotals struct {
 }
 
 // OpenCart yeni bir sepet açar ve kimliğini döner.
+//
+// currencyCode BÖLGENİN para birimidir ve çağıran onu bölgeden okumuş olmak
+// zorundadır; bu yüzey o soruyu soramaz (cart modülü region'ı çağırmaz,
+// ADR 0006). Bugünkü tek çağıran create_cart workflow'udur ve kodu ülke
+// kodundan çözdüğü bölgeden alır — yani parametre bir SEÇİM değil, çağıranın
+// yaptığı türetmenin taşıyıcısıdır. Vitrin ucu bu yüzeyden geçmez; para
+// birimini kendi bölge okumasından türetir (bkz. api.RegionCurrencyReader).
 func (i *Interop) OpenCart(ctx context.Context, regionID, currencyCode, customerID, email string) (string, error) {
 	sepet, err := i.svc.CreateCart(ctx, CreateCartInput{
 		RegionID:     regionID,

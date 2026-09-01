@@ -173,6 +173,26 @@ artık kuralı ihlal etmiyorsa satır silinmek zorundadır. Muafiyet borçtur, b
 Event bus arka ucu `EVENT_BUS=inmemory|redis` ile seçilir. `redis` seçildiğinde
 Redis erişilemezse uygulama açılışta durur.
 
+`inmemory` **kalıcı değildir**: teslim asenkrondur ve süreç çökerse ya da
+kapanış `SHUTDOWN_TIMEOUT` içinde bitmezse teslim edilmemiş olaylar iz
+bırakmadan kaybolur — sipariş konmuş, onay bildirimi hiç gitmemiş olur.
+Paylaşılan bir ortamda (`APP_ENV != development`) bu risk açılışta **uyarı**
+üretir; açılış durmaz, çünkü tek örnekli bir staging kurulumunda `inmemory`
+hâlâ meşrudur. Ödünç `GUARD_BACKEND=memory` ile aynıdır.
+
+`redis` seçildiğinde olayların ad alanını `REDIS_KEY_PREFIX` belirler: stream
+anahtarı `<önek>:events:<olay adı>`, consumer group ise `<önek>`. **İkisinin de
+ayrılması şarttır.** Yalnızca stream ayrılsaydı iki kurulum aynı gruba bağlanır
+ve consumer group'un tanımı gereği bir olayı ikisinden yalnızca **biri** alırdı
+— üretimin `order.placed` olayı staging tarafından tüketilip yutulabilirdi.
+
+`EVENT_BUS_CONSUMER` ters yönde çalışır: kurulumları değil, **aynı gruptaki
+süreçleri** ayırır. Boş bırakılırsa `<hostname>-<pid>` kullanılır. Aynı adı iki
+örneğe vermek çift işleme yol açar (her ikisi de açılışta o adın bekleyen
+listesini okur, yani ötekinin hâlâ işlemekte olduğu mesajları da alır) ve
+doğrulama bunu göremez — tek süreç, ötekini bilmez. Bu yüzden çözülen ad
+açılışta loglanır; çakışma ancak iki açılış logu yan yana konduğunda görülür.
+
 ## API güvenliği
 
 İki yüzey, iki kimlik. Koruma modüllerde değil, **router'ı kuran tarafta**
@@ -180,11 +200,21 @@ Redis erişilemezse uygulama açılışta durur.
 kaydeder, kapsamlama `corehttp.Scoped` ile yapılır ve sıra tek bir yerde,
 `corehttp.APIGuards` içinde yazılıdır.
 
-| Yüzey | Kimlik | Başlık |
-|---|---|---|
-| `/admin/v1/**` | Oturum jetonu (HS256 JWT) **ya da** gizli anahtar (`sk_…`) | `Authorization: Bearer …` |
-| `/store/v1/**` | Publishable anahtar (`pk_…`) | `x-publishable-api-key: …` |
-| `/health`, `/ready`, `/openapi.json` | yok | — |
+| Yüzey | Kimlik | Hız sınırı | Başlık |
+|---|---|---|---|
+| `/admin/v1/**` | Oturum jetonu (HS256 JWT) **ya da** gizli anahtar (`sk_…`) | var | `Authorization: Bearer …` |
+| `/store/v1/**` | Publishable anahtar (`pk_…`) | var | `x-publishable-api-key: …` |
+| `/files/**`, `/openapi.json` | yok | **var** | — |
+| `/health`, `/ready` | yok | yok | — |
+
+**Kimlik ve kota AYRI kararlardır.** Dosya sunumu ve şema ucu kimliksizdir
+çünkü istemcileri başlık gönderemez (vitrindeki `<img>`, bir kod üreteci) —
+ama bedava değildir: biri disk ve veritabanı okur, öteki route ağacını gezer.
+Sağlık uçları ise ikisinin de dışındadır; onları çağıran orkestratördür ve
+kotaya takılan bir sağlık ucu, sağlıklı bir örneği trafikten çektirir — yani
+sınırın kendisi arızayı üretir. Kapsam `internal/smoke`'ta gerçek süreçte
+sabitlenmiştir (`TestKotaKapsamiGercekSurecte`), çünkü eksik bir önek hiçbir
+şeyi düşürmez: uç çalışmaya devam eder, yalnızca kotasız çalışır.
 
 **Tek korumasız yönetim ucu** `POST /admin/v1/auth/login`'dir: kimliği
 doğrulanacak istek, kimliği daha yeni kuracaktır. Muafiyet elle yazılmaz,
@@ -300,6 +330,16 @@ yokken** çalışır — yeniden başlatma güvenlidir ve var olan bir kurulumun
 yetkilerini asla değiştirmez. İki değişken **birlikte** verilir; yalnızca biri
 verilirse uygulama açılışta durur.
 
+**İkisini birden boş bırakmak** kurulmuş bir sistem için meşrudur — kullanıcılar
+zaten vardır — ama **taze bir veritabanında** sonuç yönetilemez bir kurulumdur:
+hiç kullanıcı yoktur, yönetim yüzeyi giriş ucu dışında tamamen korumalıdır ve
+ilk kullanıcıyı HTTP'den yaratmanın yolu yoktur; mağaza yüzeyi de kapalıdır,
+çünkü publishable anahtarı da yönetim ucu üretir. Sunucu yine de açılır,
+`/health` ve `/ready` yeşil döner. Bu yüzden sıfır kullanıcı + tohumsuz
+yapılandırma paylaşılan ortamlarda **açılışı durdurur**, yerel geliştirmede ise
+yalnızca uyarı üretir (`.env` olmadan `make up && make run` sözü orada
+korunur). Ayrım `JWT_SECRET`'inkiyle aynıdır.
+
 **Oturum iptali** iki yoldan olur ve ikisi de **toptan**dır: parola değişimi ve
 `POST /admin/v1/auth/logout`. Tek bir cihazı düşürmek yoktur — bunun için jti
 bazlı, her istekte okunan bir kara liste gerekirdi. API anahtarının oturumu
@@ -368,6 +408,37 @@ Operatörün ihtiyacı olan metin (hangi ad çözülemedi) hatada korunur ama
 istemciye sızmaz: `KindInternal` gövdeleri maskelenir, geriye yalnızca
 `cart_module_setup_failed` kodu kalır.
 
+### Sepetin para birimi bölgeden TÜRETİLİR
+
+`POST /store/v1/carts` gövdesi bir zamanlar `currency_code` alıyordu ve sınıfı
+`unit_price` ile **aynıydı**: sunucunun verisi istemciden geliyordu. Para birimi
+`region` şemasında bölge başına **tek bir sütundur** (`region.currency_code`,
+`currency` tablosuna FK), yani bir bölgenin iki para birimi olamaz — sepetin
+para birimi bir seçim değil bir **türetmedir**.
+
+Ayrışma **reddedilmiyordu** da: `cart` servisi `region`'ı tanımadığı için
+(ADR 0006) kodun yalnızca biçimini doğruluyor, bölgeninkiyle
+karşılaştırmıyordu. TRY bölgesinde açılan bir sepete `EUR` yazan istemci, o
+sepeti gerçekten EUR olarak alıyordu. Sonucu kozmetik değildi, çünkü para
+birimi **fiyat seçer**: satır akışı birim fiyatı varyantın fiyat kümesinden
+"sepetin para biriminde" okur. İstemci tutar uyduramıyordu ama **hangi fiyat
+listesinin** uygulanacağını seçebiliyordu.
+
+Alan gövdeden **kaldırıldı** (kırıcı; `0.x`) ve handler para birimini bölgeden
+okuyor. Kalıp fiyattakiyle aynı: `cart`, `region`'ı import etmez; kendi
+paketinde dar bir arayüz tanımlar (`api.RegionCurrencyReader`) ve somut servisi
+container'dan `region.service` adıyla çözer. Yol da aynı şekilde **kapalı**
+arızalanır — bölge yüzeyi çözülemezse sepet hiç açılmaz, çünkü bir varsayılana
+düşmek (mağazanın ilk para birimi ya da istemcinin dediği) kapatılan kapıyı
+geri açardı. Yan kazanç: bölgenin gerçekten var olduğu artık doğrulanır,
+uydurma bir `region_id` sepet açamaz.
+
+Yönetim tarafında aynı alan **meşrudur** ve kaldırılmadı: `POST
+/admin/v1/regions` gövdesindeki `currency_code` bölgeyi **tanımlar** — operatör
+orada bir kopya değil aslı yazar ve kopyalanacak bir kaynak yoktur. Ölçüt "alan
+gövdede mi" değil, "bu değer çağıranın kendi verisi mi" sorusudur. `cart`'ın
+kendi `/admin/v1` yüzeyinde soru hiç doğmaz: orası yalnızca okur.
+
 ### Reddin sebebi vitrine ulaşır
 
 Saga motoru patlayan adımı sararken hatanın **sınıfını** alt hatadan
@@ -410,15 +481,16 @@ koleksiyon ve rezervasyon kimlikleri ile operatöre ait uyarılar **yayımlanmaz
 Kayda geçmemiş bir açık, kimsenin kapatmadığı açıktır. İkisi de araştırıldı,
 karar verildi ve bilerek açık bırakıldı; gerekçeleri kodun godoc'larındadır.
 
-- **`POST /store/v1/carts` hâlâ `currency_code` (ve `region_id`) alıyor.**
-  Sınıf `unit_price` ile **aynıdır**: `region` tablosunda para birimi bölge
-  başına tek bir sütundur, yani sepetin para birimi bir seçim değil bir
-  türetmedir — üstelik **fiyatı da o seçer**, çünkü satır akışı birim fiyatı
-  "sepetin para biriminde" okur. Patlama yarıçapı daha küçüktür (istemci tutar
-  uyduramaz, yalnızca operatörün yayımladığı listeler arasından seçebilir), ama
-  bu kusuru meşrulaştırmaz. Doğru kapatma yeri handler değil: türetmeyi zaten
-  yapan bir akış var — `create_cart` ülke kodundan hem bölgeyi hem para
-  birimini çözüyor — ve ucun ona devredilmesi gerekir.
+- **`POST /store/v1/carts` hâlâ `region_id` alıyor.** `currency_code` bu
+  gövdeden kaldırıldı (yukarı bakın) ama bölge kimliği kaldı ve aynı sınıftadır:
+  bölge vergi **oranını** seçer. Patlama yarıçapı iki adım küçüldü — bölgenin
+  gerçekten var olduğu artık doğrulanıyor (para birimi ondan okunuyor) ve
+  seçimin fiyat listesi üzerindeki etkisi kalktı — ama kusur meşrulaşmadı.
+  Doğru kapatma yeri handler değil: türetmeyi zaten yapan bir akış var —
+  `create_cart` ülke kodundan hem bölgeyi hem para birimini çözüyor — ve gövde
+  `country_code`'a indirilerek ucun ona devredilmesi gerekir. Maliyeti,
+  akışın modüller arası yüzeyine bugün bilinçli olarak bulunmayan bir metot
+  eklemektir.
 - **Vitrin sepetlerinde sahiplik denetimi yok.** Model bir **yetenek URL**'idir:
   sepet kimliği 48 bit zaman damgası + 80 bit kriptografik rastgelelikten
   üretilir, tahmin edilemez ve onu bilmek erişim hakkını taşır. Zorunluluktan
@@ -458,10 +530,26 @@ eder — ve **tam yola** uygulanır, önekin tamamına değil. Yol çekirdekte y
 değildir (çekirdek modülleri import edemez); bileşim kökünden, modülün
 `graph.Path` sabitinden geçirilir.
 
-`TRUSTED_PROXY_HOPS`, istekle aramızdaki **güvenilen** ters proxy sayısıdır.
-Fazla verilen bir değer, istemcinin `X-Forwarded-For`'a kendi yazdığı adresi
-gerçek sanmaya ve hız sınırının IP uydurularak atlanmasına yol açar; doğrudan
-internete bakan bir kurulumda `0` bırakın.
+`TRUSTED_PROXY_HOPS`, istekle aramızdaki **güvenilen** ters proxy sayısıdır ve
+iki yönde de yanlış verilebilir — ama bedelleri **aynı sınıfta değildir**:
+
+| Değer | Sonuç | Sınıf |
+|---|---|---|
+| Fazla | İstemcinin `X-Forwarded-For`'a kendi yazdığı adres gerçek sanılır; saldırgan her istekte taze bir kova alır ve sınırı **tamamen** atlar | Güvenlik açığı |
+| Eksik (`0`, proxy arkasında) | `X-Forwarded-For` hiç okunmaz, anahtar bağlantının adresine düşer; o adres her istekte proxy'nindir, yani `RATE_LIMIT_PER_MINUTE` "müşteri başına" değil **"tüm mağaza için"** bir tavan olur | Kapasite sorunu |
+
+Varsayılan bu yüzden `0`'dır ve **değiştirilmedi**: doğrudan internete bakan bir
+kurulumda doğru cevap odur ve yapılandırma hangisinin geçerli olduğunu bilemez.
+Ama eksik değer de sessiz kalamaz — headless ticarette ters proxy arkasında
+çalışmak neredeyse tek dağıtım biçimidir — bu yüzden hız sınırı **açıkken**
+`TRUSTED_PROXY_HOPS=0` bırakılmış bir paylaşılan kurulum açılışta **uyarı**
+üretir. Proxy arkasındaysanız aradaki güvendiğiniz atlama sayısını yazın (tek
+ingress için `1`).
+
+`RATE_LIMIT_PER_MINUTE <= 0` sınırlayıcıyı **hiç kurmaz** (ADR 0007'de sıfır
+"kapat" demektir). Meşru bir seçimdir ama giriş ucunu da kotasız bırakır ve
+kimsenin bilmediği bir "kapalı", kazayla yazılmış bir sıfırdan ayırt edilemez;
+paylaşılan ortamlarda bu da uyarılır.
 
 ### Tek örnek mi, birden çok mu?
 
@@ -582,6 +670,13 @@ değildir**: kimlik ve kota ayrı kararlardır.
 > kalıcı olmayan katmanına düşer ve bir sonraki dağıtımda görseller kaybolur —
 > ürün kaydındaki adres yerinde kalır, yani hiçbir hata görünmeden her görsel
 > 404 döner. Açılışta uyarı loglanır.
+>
+> **Mutlak olması yetmez.** `FILE_ROOT=/tmp/gobit-uploads` mutlaktır, "göreli yol
+> vermeyin" öğüdünü geçer ve yine de kaybolur: `/tmp`, `/var/tmp`, `/dev/shm` ve
+> `TMPDIR`'in gösterdiği yer işletim sistemi tarafından temizlenir, üstelik çoğu
+> dağıtımda tmpfs oldukları için yeniden başlatmayı bile beklemez. Uyarı bu
+> kökleri de sayar; ölçüt "çalışma dizininden bağımsız mı" değil, **"süreç
+> yeniden başladığında yerinde kalır mı"**dır.
 
 ## Alan olayları
 
@@ -857,7 +952,15 @@ atlardı — bu deponun defalarca bulduğu hata sınıfı tam olarak budur.
 - Şirketin para birimi ile sepetinki farklıysa sipariş reddedilir; çevirmek için
   bir kur kaynağı gerekirdi ve o karar bu modülün değildir.
 - `b2b` **kayıtlı değilken** davranış b2b hiç yokmuş gibidir: hiçbir okuma,
-  hiçbir kilit. Saf B2C kurulum, `cmd/server`'daki tek satır silinerek elde edilir.
+  hiçbir kilit. Saf B2C kurulum, `cmd/server`'daki tek satır silinerek elde
+  edilir — yani bir **kod** değişikliğiyle. Kapatan bir ortam değişkeni
+  **bilinçli olarak yoktur**: yanlışlıkla `false` verilen bir anahtar, harcama
+  limitini hiçbir hata üretmeden kaldırır ve bu tam da kapatılmaya çalışılan
+  sessiz arıza sınıfıdır. Kod yolu ise yarım kalamaz —
+  `TestHerModulBilesimKokundeKayitli` satırı silen kişiden kararı gerekçesiyle
+  yazmasını ister. Modülü B2C kurulumda **bırakmanın** bedeli de küçüktür ve
+  görünürdür: iki boş tablo ve hiçbir şirket kaydı olmadığı için asla
+  tetiklenmeyen bir kural.
 
 ## Mimari kararlar (ADR)
 

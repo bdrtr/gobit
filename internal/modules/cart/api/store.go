@@ -15,59 +15,72 @@ import (
 
 // createCartRequest POST /store/v1/carts gövdesidir.
 //
-// # region_id ve currency_code hâlâ İSTEMCİDEN geliyor ve bu bir BORÇTUR
+// # currency_code BURADA YOKTUR
 //
-// unit_price bu API'den kaldırıldı çünkü sunucunun verisiydi
-// ([addLineItemRequest]). Aynı ölçüt bu iki alana uygulandığında cevap
-// değişmez; godoc onu saklamak için değil ADLANDIRMAK için buradadır.
+// Alan bir zamanlar bu gövdedeydi ve SUNUCUNUN verisiydi — sınıfı, aynı
+// ölçütle kaldırılan unit_price ile aynıdır ([addLineItemRequest]).
 //
-//   - currency_code bölgenin verisidir. region tablosunda para birimi tek bir
-//     SÜTUNDUR (bölge başına tam bir kod), yani sepetin para birimi bir seçim
-//     değil bir TÜRETMEDİR.
-//   - Ve para birimi FİYAT SEÇER: satır fiyatlandırma akışı birim fiyatı
-//     varyantın fiyat kümesinden "sepetin para biriminde" okur. İstemci tutarı
-//     yazamasa da HANGİ FİYAT LİSTESİNİN uygulanacağını seçebilir — TRY
-//     bölgesinde açılmış bir sepete USD yazan istemci, operatörün USD
-//     listesindeki fiyatı öder.
-//   - region_id de aynı sınıftadır ve vergi ORANINI seçer.
+// Para birimi bölgenin verisidir: region şemasında bölge başına TEK bir
+// sütundur (region.currency_code, currency tablosuna FK). Bir bölgenin iki
+// para birimi olamaz, dolayısıyla sepetin para birimi bir SEÇİM değil bir
+// TÜRETMEDİR ve bugün handler onu bölgeden türetir
+// ([Handler.currencyForRegion]).
 //
-// Sınıf unit_price ile AYNIDIR: sunucunun verisi istemciden alınıyor. PATLAMA
-// YARIÇAPI daha küçüktür — istemci tutar UYDURAMAZ, yalnızca operatörün
-// YAYIMLADIĞI listeler arasından seçebilir ve tek para birimli bir mağazada
-// seçecek başka bir şey yoktur. Bu, kusuru küçültür; meşrulaştırmaz.
+// Türetmenin bedeli kozmetik değildi. Para birimi FİYAT SEÇER: satır
+// fiyatlandırma akışı birim fiyatı varyantın fiyat kümesinden "sepetin para
+// biriminde" okur. Alan gövdedeyken istemci tutar uyduramıyordu ama HANGİ
+// FİYAT LİSTESİNİN uygulanacağını seçebiliyordu — TRY bölgesinde açtığı sepete
+// USD yazan bir istemci, operatörün USD listesindeki fiyatı ödüyordu. Üstelik
+// ayrışma REDDEDİLMİYORDU: cart servisi region'ı tanımadığı için (ADR 0006)
+// kodun yalnızca BİÇİMİNİ doğruluyor, bölgeninkiyle karşılaştırmıyordu.
 //
-// # Neden burada kapatılamıyor
+// Gövde tanınmayan alanı REDDEDER ([decodeBody]), yani "currency_code" gönderen
+// eski bir istemci 422 alır. Sessizce yok saymak seçilmedi: istemci
+// gönderdiğini sanır, sunucu başka bir para birimi yazardı — ve fiyat listesi
+// beklediğinden başkası olurdu.
 //
-// Doğru kapatma yeri bu handler DEĞİLDİR: cart modülü region modülünü
-// çağıramaz (ADR 0006) ve para birimini bölgeden türetecek taraf zaten
-// vardır — internal/workflows/cart'taki create_cart akışı ülke kodundan hem
-// bölgeyi hem para birimini kendisi çözer. Yapılması gereken, bu ucu satır
-// ekleme ve tamamlama uçlarında yapıldığı gibi O AKIŞA devretmek ve gövdeyi
-// country_code'a indirmektir. İki maliyeti vardır ve ikisi de bilerek
-// ertelenmiştir: akışın modüller arası yüzeyine yeni bir metot eklemek
-// (bugün orada bilinçli olarak yalnızca satır uçları var) ve mağaza
-// sözleşmesini ikinci kez kırmak.
+// # YÖNETİM yüzeyinde aynı alan MEŞRUDUR
+//
+// Para biriminin gövdede yer alması her yerde kusur değildir; soru "bu değer
+// çağıranın kendi verisi mi" sorusudur. POST /admin/v1/regions gövdesindeki
+// currency_code bölgeyi TANIMLAR — operatör orada bir kopya değil ASLI yazar
+// ve kopyalanacak bir kaynak yoktur. Burada ise aynı alan, sunucunun zaten
+// bildiği bir değerin istemci tarafından tekrar edilmesiydi. Cart'ın kendi
+// yönetim yüzeyinde bu soru hiç doğmaz: /admin/v1/carts YALNIZCA OKUR ve
+// sepet açan bir yönetim ucu yoktur.
+//
+// # region_id hâlâ İSTEMCİDEN geliyor ve bu bir BORÇTUR
+//
+// Bölge vergi ORANINI seçer ve alan aynı sınıftadır. İki şey değişti:
+// bölgenin gerçekten VAR OLDUĞU artık doğrulanır (para birimi ondan
+// okunduğu için uydurma bir kimlik sepet açamaz) ve seçimin fiyat listesi
+// üzerindeki etkisi kalktı. Doğru kapatma yeri yine bu handler değildir:
+// türetmeyi zaten yapan bir akış vardır — internal/workflows/cart'taki
+// create_cart ülke kodundan hem bölgeyi hem para birimini çözer — ve ucun
+// gövdesi country_code'a indirilerek O AKIŞA devredilmelidir. Maliyeti,
+// akışın modüller arası yüzeyine bugün bilinçli olarak bulunmayan bir metot
+// eklemektir.
 //
 // Borç burada YAZILIDIR: kayda geçmemiş bir açık, kimsenin kapatmadığı
 // açıktır.
 type createCartRequest struct {
-	// RegionID zorunludur.
+	// RegionID zorunludur; sepetin para birimi de ondan türetilir.
 	RegionID string `json:"region_id"`
 	// CustomerID boş bırakılırsa sepet misafirindir.
 	//
 	// Alan bir SAHİPLİK İDDİASIDIR ve bugün hiçbir kanıt istemez; sınırı
 	// paket belgesindeki "Vitrin sepetlerinde sahiplik" bölümündedir.
-	CustomerID string `json:"customer_id"`
-	Email      string `json:"email"`
-	// CurrencyCode zorunludur; bölgenin para birimidir ve çağıran onu bölgeden
-	// kopyalar (cart modülü region modülünü çağırmaz, bkz. ADR 0006).
-	//
-	// Kopyalayanın İSTEMCİ olmasının bedeli tipin godoc'unda yazılıdır.
-	CurrencyCode string         `json:"currency_code"`
-	Metadata     map[string]any `json:"metadata"`
+	CustomerID string         `json:"customer_id"`
+	Email      string         `json:"email"`
+	Metadata   map[string]any `json:"metadata"`
 }
 
-// storeCreateCart yeni bir sepet oluşturur.
+// storeCreateCart yeni bir sepet oluşturur; para birimini SUNUCU belirler.
+//
+// Para birimi gövdeden değil BÖLGEDEN gelir ([Handler.currencyForRegion]) ve
+// sıra bilinçlidir: türetme, sepet YAZILMADAN önce koşar. Sonraya bırakılsaydı
+// bölgesi bilinmeyen bir sepet açılmış olur ve para birimi ancak ikinci bir
+// yazmayla düzelebilirdi.
 func (h *Handler) storeCreateCart(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -77,11 +90,17 @@ func (h *Handler) storeCreateCart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	currency, err := h.currencyForRegion(ctx, body.RegionID)
+	if err != nil {
+		corehttp.WriteError(ctx, w, err)
+		return
+	}
+
 	cart, err := h.svc.CreateCart(ctx, service.CreateCartInput{
 		RegionID:     body.RegionID,
 		CustomerID:   body.CustomerID,
 		Email:        body.Email,
-		CurrencyCode: body.CurrencyCode,
+		CurrencyCode: currency,
 		Metadata:     body.Metadata,
 	})
 	if err != nil {

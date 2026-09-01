@@ -428,6 +428,9 @@ func (d *Doc) structSemasiVeyaRef(t reflect.Type, izlenen map[reflect.Type]bool)
 	d.semaSahipleri[ad] = t
 	d.semalar[ad] = map[string]any{}
 	d.semalar[ad] = d.structSemasi(t, izlenen)
+	// Bileşen kümesi belgenin ikinci girdisidir; üretilmiş bir belge artık
+	// eksik kalmıştır (bkz. [Doc.Handler]).
+	d.anlatimSurumu++
 
 	return refSemasi(ad)
 }
@@ -469,6 +472,9 @@ func (d *Doc) cakismaBildir(mesaj string) {
 	}
 
 	d.semaCakismalari = append(d.semaCakismalari, mesaj)
+	// Çakışma belgeyi üretilemez kılar; önbellekteki sağlam belge artık
+	// GEÇERSİZDİR (bkz. [Doc.Handler]).
+	d.anlatimSurumu++
 }
 
 // refSemasi bir bileşene atıf şeması üretir.

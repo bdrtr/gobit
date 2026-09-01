@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -213,6 +214,82 @@ func TestEklentiAyarlariOrtamdanOkur(t *testing.T) {
 // slogYut testlerin çıktısını kirletmeyen bir logger döner.
 func slogYut() *slog.Logger { return slog.New(slog.DiscardHandler) }
 
+// kayitYakalayici üretilen log kayıtlarını toplayan bir slog handler'ıdır.
+//
+// Açılış uyarılarının tek işi GÖRÜNMEKTİR: hiçbir davranışı değiştirmezler,
+// bu yüzden başka hiçbir iddiayla sınanamazlar. Sessizce silinen ya da kapısı
+// yanlış kurulan bir uyarı hiçbir testi düşürmezdi — oysa o uyarı, kurulumu
+// sessizce bozan bir ayarın tek fark edilme şansıdır.
+type kayitYakalayici struct {
+	mu       sync.Mutex
+	kayitlar []slog.Record
+}
+
+// Enabled her seviyeyi kabul eder; test hangi seviyenin seçildiğini kendisi
+// denetler.
+func (k *kayitYakalayici) Enabled(context.Context, slog.Level) bool { return true }
+
+// Handle kaydı kopyalayarak saklar.
+func (k *kayitYakalayici) Handle(_ context.Context, kayit slog.Record) error {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+
+	k.kayitlar = append(k.kayitlar, kayit.Clone())
+
+	return nil
+}
+
+// WithAttrs aynı yakalayıcıyı döner; testler öznitelikleri kayıttan okur.
+func (k *kayitYakalayici) WithAttrs([]slog.Attr) slog.Handler { return k }
+
+// WithGroup aynı yakalayıcıyı döner.
+func (k *kayitYakalayici) WithGroup(string) slog.Handler { return k }
+
+// logger yakalayıcıya yazan bir logger döner.
+func (k *kayitYakalayici) logger() *slog.Logger { return slog.New(k) }
+
+// mesajlar verilen seviyedeki kayıtların mesajlarını döner.
+func (k *kayitYakalayici) mesajlar(seviye slog.Level) []string {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+
+	var bulunan []string
+	for i := range k.kayitlar {
+		if k.kayitlar[i].Level == seviye {
+			bulunan = append(bulunan, k.kayitlar[i].Message)
+		}
+	}
+
+	return bulunan
+}
+
+// oznitelik verilen mesajı taşıyan ilk kaydın bir özniteliğini dize olarak döner.
+func (k *kayitYakalayici) oznitelik(mesaj, ad string) string {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+
+	for i := range k.kayitlar {
+		if k.kayitlar[i].Message != mesaj {
+			continue
+		}
+
+		deger := ""
+		k.kayitlar[i].Attrs(func(a slog.Attr) bool {
+			if a.Key == ad {
+				deger = a.Value.String()
+
+				return false
+			}
+
+			return true
+		})
+
+		return deger
+	}
+
+	return ""
+}
+
 // sahteKullanicilar tohum testlerinde dar auth yüzeyinin yerine geçer.
 //
 // Sahte kullanılmasının sebebi, tohumun sınanacak DAVRANIŞININ veritabanına
@@ -315,17 +392,69 @@ func TestTohumlaYoneticiKullaniciVarkenAtlar(t *testing.T) {
 	assert.Empty(t, sahte.yaratilan, "kullanıcısı olan kuruluma yeni yönetici yazılmamalı")
 }
 
-// TestTohumlaYoneticiYapilandirilmamissaHicCalismaz tohumun İSTEĞE BAĞLI
-// olduğunu doğrular: kurulmuş bir sistemin ortamında bu değişkenlerin durması
-// gerekmez ve yoklukları veritabanına tek bir sorgu bile göndermemelidir.
-func TestTohumlaYoneticiYapilandirilmamissaHicCalismaz(t *testing.T) {
+// TestTohumlaYoneticiYapilandirilmamissaYaratmaz tohumun İSTEĞE BAĞLI
+// olduğunu doğrular: KURULMUŞ bir sistemin ortamında bu değişkenlerin durması
+// gerekmez ve yoklukları hiçbir kullanıcı yaratmamalıdır.
+//
+// Sayım yine de OKUNUR ve bu bilinçli bir değişikliktir: "kurulmuş mu"
+// sorusunun cevabı yalnızca oradadır ve sorulmadığında sıfır kullanıcılı bir
+// kurulum sessizce açılıyordu (bkz. [yonetimsizKurulumuBildir]).
+func TestTohumlaYoneticiYapilandirilmamissaYaratmaz(t *testing.T) {
 	t.Parallel()
 
-	sahte := &sahteKullanicilar{}
+	sahte := &sahteKullanicilar{sayim: 3}
 
 	require.NoError(t, tohumlaYonetici(context.Background(), sahte, temelConfig(), slogYut()))
 
-	assert.False(t, sahte.listelendi, "tohum kapalıyken kullanıcı sayımı bile yapılmamalı")
+	assert.True(t, sahte.listelendi, "kurulumun yönetilebilir olduğu sayımla anlaşılır")
+	assert.Empty(t, sahte.yaratilan, "tohum kapalıyken kullanıcı yaratılmamalı")
+}
+
+// TestYonetimsizKurulumPaylasilanOrtamdaAcilisiDurdurur sıfır kullanıcılı ve
+// tohumsuz bir kurulumun SESSİZCE açılmadığını doğrular.
+//
+// O kurulumda yönetim yüzeyi giriş ucu dışında tamamen korumalıdır ve ilk
+// kullanıcıyı HTTP'den yaratmanın yolu yoktur; mağaza yüzeyi de kapalıdır,
+// çünkü publishable anahtarı da yönetim ucu üretir. Sunucu yine de açılır,
+// /health ve /ready yeşil döner — yani hiçbir denetim olmadan arıza ilk giriş
+// denemesine kadar görünmez.
+func TestYonetimsizKurulumPaylasilanOrtamdaAcilisiDurdurur(t *testing.T) {
+	t.Parallel()
+
+	for _, ortam := range []string{"staging", "production"} {
+		t.Run(ortam, func(t *testing.T) {
+			t.Parallel()
+
+			cfg := temelConfig()
+			cfg.AppEnv = ortam
+			sahte := &sahteKullanicilar{sayim: 0}
+
+			err := tohumlaYonetici(context.Background(), sahte, cfg, slogYut())
+
+			require.Error(t, err, "yönetilemez bir kurulum sessizce açılmamalı")
+			assert.Equal(t, "admin_bootstrap_required", errors.CodeOf(err),
+				"hata, hangi ayarın eksik olduğunu bildiren kendi koduyla dönmeli")
+			assert.Contains(t, err.Error(), "ADMIN_BOOTSTRAP_EMAIL",
+				"mesaj operatöre hangi değişkenleri vereceğini söylemeli")
+		})
+	}
+}
+
+// TestYonetimsizKurulumGelistirmedeAcilir aynı durumun yerel geliştirmede
+// açılışı DURDURMADIĞINI doğrular.
+//
+// Deponun sözü ".env olmadan da make up && make run çalışır"dır ve taze bir
+// veritabanıyla ilk kez açan geliştirici tam olarak bu hâle düşer. Ayrım
+// JWT_SECRET'inkiyle aynıdır: geliştirmede uyarı, paylaşılan ortamda ret.
+func TestYonetimsizKurulumGelistirmedeAcilir(t *testing.T) {
+	t.Parallel()
+
+	cfg := temelConfig()
+	cfg.AppEnv = "development"
+	sahte := &sahteKullanicilar{sayim: 0}
+
+	require.NoError(t, tohumlaYonetici(context.Background(), sahte, cfg, slogYut()),
+		"yerel geliştirme ek ayar istemeden açılabilmeli")
 	assert.Empty(t, sahte.yaratilan)
 }
 
@@ -355,6 +484,184 @@ func TestTohumlaYoneticiHatayiYukariTasir(t *testing.T) {
 			require.Error(t, err, "tohum arızası açılışı durdurmalı")
 			assert.Equal(t, "admin_bootstrap_failed", errors.CodeOf(err),
 				"hata tohum adımına ait bir kodla sarmalanmalı")
+		})
+	}
+}
+
+// TestHizSiniriKapaliykenPaylasilanOrtamdaUyarilir sınırlayıcının HİÇ
+// kurulmadığı hâlin bildirildiğini doğrular.
+//
+// RATE_LIMIT_PER_MINUTE <= 0 meşru bir seçimdir (ADR 0007'de sıfır "kapat"
+// demektir) ama tek satır iz bırakmadığında, kazayla yazılmış bir sıfırdan
+// ayırt edilemez: giriş ucu da dâhil hiçbir uç kotalı değildir.
+func TestHizSiniriKapaliykenPaylasilanOrtamdaUyarilir(t *testing.T) {
+	t.Parallel()
+
+	cfg := temelConfig()
+	cfg.AppEnv = "production"
+	cfg.RateLimitPerMinute = 0
+	yakalayici := &kayitYakalayici{}
+
+	_, err := korumaYigini(cfg, gecerliKimlik{}, nil, yakalayici.logger())
+
+	require.NoError(t, err)
+	assert.Contains(t, yakalayici.mesajlar(slog.LevelWarn), "hız sınırlayıcı TAKILMADI",
+		"kapalı bir hız sınırı paylaşılan ortamda sessiz kalmamalı")
+}
+
+// TestHizSiniriProxyArkasindaAnahtarUyarisiVerir kotanın istemci başına
+// düşmediği hâlin bildirildiğini doğrular.
+//
+// TRUSTED_PROXY_HOPS=0 iken X-Forwarded-For hiç okunmaz ve anahtar bağlantının
+// adresine düşer; ters proxy arkasında o adres her istekte proxy'nindir, yani
+// kota tüm mağaza için tek bir kovadır.
+func TestHizSiniriProxyArkasindaAnahtarUyarisiVerir(t *testing.T) {
+	t.Parallel()
+
+	cfg := temelConfig()
+	cfg.AppEnv = "production"
+	cfg.RateLimitPerMinute = 600
+	cfg.TrustedProxyHops = 0
+	yakalayici := &kayitYakalayici{}
+
+	_, err := korumaYigini(cfg, gecerliKimlik{}, nil, yakalayici.logger())
+
+	require.NoError(t, err, "uyarı açılışı DURDURMAMALI: sıfır atlama, doğrudan "+
+		"internete bakan bir kurulumda doğru cevaptır")
+	assert.Contains(t, yakalayici.mesajlar(slog.LevelWarn),
+		"hız sınırı anahtarı istemciye DEĞİL bağlantıya düşüyor")
+}
+
+// TestHizSiniriDogruKuruldugundaSessizdir uyarının GÜRÜLTÜ olmadığını
+// doğrular.
+//
+// Her açılışta basılan bir uyarı, gerçek bir uyarıyı gürültüde boğar; kapının
+// kapalı kaldığı hâller bu yüzden ayrıca sabitlenir.
+func TestHizSiniriDogruKuruldugundaSessizdir(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]func(c *config.Config){
+		"proxy atlaması verilmiş": func(c *config.Config) {
+			c.AppEnv = "production"
+			c.TrustedProxyHops = 1
+		},
+		"yerel geliştirme, sınır kapalı": func(c *config.Config) {
+			c.AppEnv = "development"
+			c.RateLimitPerMinute = 0
+		},
+		"yerel geliştirme, proxy yok": func(c *config.Config) {
+			c.AppEnv = "development"
+			c.TrustedProxyHops = 0
+		},
+	}
+
+	for ad, ayarla := range tests {
+		t.Run(ad, func(t *testing.T) {
+			t.Parallel()
+
+			cfg := temelConfig()
+			ayarla(&cfg)
+			yakalayici := &kayitYakalayici{}
+
+			_, err := korumaYigini(cfg, gecerliKimlik{}, nil, yakalayici.logger())
+
+			require.NoError(t, err)
+			// Bellek içi koruma uyarısı bu kapının DIŞINDADIR ve paylaşılan
+			// ortamda basılmaya devam eder; burada yalnızca hız sınırına ait
+			// iki mesaj aranır.
+			uyarilar := yakalayici.mesajlar(slog.LevelWarn)
+			assert.NotContains(t, uyarilar, "hız sınırlayıcı TAKILMADI",
+				"doğru kurulmuş bir hız sınırı için uyarı basılmamalı")
+			assert.NotContains(t, uyarilar, "hız sınırı anahtarı istemciye DEĞİL bağlantıya düşüyor",
+				"doğru kurulmuş bir hız sınırı için uyarı basılmamalı")
+		})
+	}
+}
+
+// TestOlayVeriYoluAdAlaniniAnahtarOnegindenAlir Redis veri yolunun sıfır
+// değerli bir yapılandırmayla KURULMADIĞINI doğrular.
+//
+// Sıfır değerli RedisConfig, stream önekini de consumer group'u da paketin
+// varsayılanına düşürür ve REDIS_KEY_PREFIX olay tarafına HİÇ ulaşmaz: aynı
+// Redis'i paylaşan iki kurulumun koruma anahtarları ayrılır, olayları
+// ayrılmaz. En ağır sonucu grubun paylaşılmasıdır — bir olayı iki kurulumdan
+// yalnızca biri alır.
+//
+// İddia LOG üzerinden kurulur çünkü kurulan yapılandırma [eventbus.EventBus]
+// arayüzünün arkasında kalır; log satırının kendisi de gereklidir (bkz.
+// [eventbus.ConsumerName]).
+func TestOlayVeriYoluAdAlaniniAnahtarOnegindenAlir(t *testing.T) {
+	t.Parallel()
+
+	cfg := temelConfig()
+	cfg.EventBus = config.BackendRedis
+	cfg.RedisKeyPrefix = "gobit-staging"
+	cfg.EventBusConsumer = "gobit-0"
+	yakalayici := &kayitYakalayici{}
+
+	bus, err := setupEventBus(context.Background(), cfg, yapayRedis(), yakalayici.logger())
+
+	require.NoError(t, err)
+	require.NotNil(t, bus)
+
+	const mesaj = "olay veri yolu: Redis Streams"
+	assert.Equal(t, "gobit-staging:events", yakalayici.oznitelik(mesaj, "stream_oneki"))
+	assert.Equal(t, "gobit-staging", yakalayici.oznitelik(mesaj, "grup"),
+		"consumer group da ayrılmalı; ayrılmazsa olayı iki kurulumdan yalnızca biri alır")
+	assert.Equal(t, "gobit-0", yakalayici.oznitelik(mesaj, "tuketici"))
+}
+
+// TestOlayVeriYoluTuketiciAdiVerilmezseUretilir çözülen tüketici adının her
+// hâlde loglandığını doğrular.
+//
+// Aynı adı iki sürece vermek sessizce çift işlemeye yol açar ve doğrulama bunu
+// göremez; iki açılış logunu yan yana koymak tek fark edilme şansıdır. Ad
+// loglanmasaydı o şans da olmazdı.
+func TestOlayVeriYoluTuketiciAdiVerilmezseUretilir(t *testing.T) {
+	t.Parallel()
+
+	cfg := temelConfig()
+	cfg.EventBus = config.BackendRedis
+	yakalayici := &kayitYakalayici{}
+
+	_, err := setupEventBus(context.Background(), cfg, yapayRedis(), yakalayici.logger())
+
+	require.NoError(t, err)
+	assert.NotEmpty(t, yakalayici.oznitelik("olay veri yolu: Redis Streams", "tuketici"),
+		"tüketici adı loglanmazsa iki sürecin aynı adı kullandığı hiç görülemez")
+}
+
+// TestBellekIciOlayVeriYoluPaylasilanOrtamdaUyarir kalıcı olmayan veri
+// yolunun paylaşılan ortamda sessiz kalmadığını doğrular.
+//
+// Bedeli GUARD_BACKEND=memory ile aynı sınıftadır ve o zaten uyarıyordu;
+// ikisinin farklı seviyede loglanması, aynı ödünün birinde görünüp ötekinde
+// görünmemesi demekti.
+func TestBellekIciOlayVeriYoluPaylasilanOrtamdaUyarir(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]struct {
+		ortam  string
+		seviye slog.Level
+	}{
+		"üretim":           {"production", slog.LevelWarn},
+		"staging":          {"staging", slog.LevelWarn},
+		"yerel geliştirme": {"development", slog.LevelInfo},
+	}
+
+	for ad, tt := range tests {
+		t.Run(ad, func(t *testing.T) {
+			t.Parallel()
+
+			cfg := temelConfig()
+			cfg.AppEnv = tt.ortam
+			cfg.EventBus = "inmemory"
+			yakalayici := &kayitYakalayici{}
+
+			_, err := setupEventBus(context.Background(), cfg, nil, yakalayici.logger())
+
+			require.NoError(t, err)
+			assert.Contains(t, yakalayici.mesajlar(tt.seviye), "olay veri yolu: bellek içi (tek süreç)")
 		})
 	}
 }

@@ -54,6 +54,10 @@ const codeUnknownPlugin = "plugin_unknown"
 // codeBootstrapFailed ilk yönetici tohumunun başarısız olduğunu bildirir.
 const codeBootstrapFailed = "admin_bootstrap_failed"
 
+// codeAdminBootstrapRequired taze bir kurulumun yönetilebilir olmadığını
+// bildirir: hiç kullanıcı yok ve tohum yapılandırılmamış.
+const codeAdminBootstrapRequired = "admin_bootstrap_required"
+
 // codeUnknownNotificationProvider NOTIFICATION_PROVIDER'ın kayıtlı bir
 // sağlayıcıya karşılık gelmediğini bildirir.
 const codeUnknownNotificationProvider = "notification_provider_unknown"
@@ -160,8 +164,10 @@ func akislariKaydet(c *container.Container) error {
 
 // semayiDenetle belgeyi açılışta BİR KEZ üretip ayrışmaları raporlar.
 //
-// Şema her istekte yeniden üretilir; buradaki üretim yalnızca denetim
-// içindir. Denetim olmadan iki arıza da SESSİZ kalırdı: yolu değişmiş bir
+// Belge ÖNBELLEKLENİR ve önbellek route ağacı ya da anlatım sürümü
+// değiştiğinde kendiliğinden tazelenir (bkz. [openapi.Doc.Handler]); buradaki
+// üretim yalnızca denetim içindir ve ilk isteği de ucuzlatır.
+// Denetim olmadan iki arıza da SESSİZ kalırdı: yolu değişmiş bir
 // route'un açıklaması belgeden düşer, iki modülün aynı adlı DTO'su ise
 // belgeyi tümden üretilemez kılar — ikisi de ancak biri /openapi.json'ı
 // açtığında görülürdü.
@@ -207,12 +213,17 @@ func semayiDenetle(ctx context.Context, doc *openapi.Doc, r chi.Routes, log *slo
 // RedisKeyPrefix alanındadır. Önek loglanır: iki kurulumun aynı ad alanına
 // düştüğü, ancak iki açılış logu yan yana konduğunda görülebilecek bir
 // arızadır ve yanlışın sonucu (birinin yanıtının ötekine gitmesi) sessizdir.
+//
+// Hız sınırının SESSİZ kalan iki hâli de burada bildirilir; bkz.
+// [hizSiniriniUyar].
 func korumaYigini(
 	cfg config.Config,
 	authn corehttp.Authenticator,
 	rdb *redis.Client,
 	log *slog.Logger,
 ) ([]func(http.Handler) http.Handler, error) {
+	hizSiniriniUyar(cfg, log)
+
 	opts := corehttp.GuardOptions{
 		Authenticator: authn,
 		AdminPrefix:   adminPrefix,
@@ -225,7 +236,14 @@ func korumaYigini(
 		// gönderemez) ama kotasız DEĞİLDİR: her istek bir veritabanı okuması
 		// ve bir disk erişimi yapar. Önek elle yazılmaz, sağlayıcının
 		// sabitinden okunur.
-		OpenPrefixes: []string{filelocal.DefaultURLPrefix},
+		//
+		// /openapi.json aynı sınıftadır ve aynı sebeple buradadır: istemci
+		// bir kod üreteci ya da IDE'dir, başlık göndermez — ama uç bedava
+		// değildir. Belge önbelleklense bile her istek route ağacını gezip
+		// önbelleğin hâlâ geçerli olduğunu doğrular, ağaç değiştiğinde ise
+		// tüm modüllerin DTO'ları yansımayla yeniden çevrilir. Kimlik ve kota
+		// AYRI kararlardır; bu uç için verilen karar "kimliksiz ama kotalı".
+		OpenPrefixes: []string{filelocal.DefaultURLPrefix, openAPIPath},
 		// GraphQL vitrin ucu POST'tur ama bir OKUMADIR; idempotency kaydının
 		// koruyacağı bir yan etki yoktur ve GraphQL sözleşmesi gereği iç
 		// hatada bile 200 döndüğü için kayıt, geçici bir arızayı TTL boyunca
@@ -284,6 +302,57 @@ func korumaYigini(
 	}
 
 	return corehttp.APIGuards(opts), nil
+}
+
+// hizSiniriniUyar hız sınırının sessiz kalan iki hâlini bildirir.
+//
+// İkisi de yapılandırmadan doğar, ikisi de bugüne kadar TEK SATIR iz
+// bırakmıyordu ve ikisi de ancak yük altında — yani en pahalı anda —
+// görülürdü:
+//
+//  1. RATE_LIMIT_PER_MINUTE <= 0 iken sınırlayıcı HİÇ kurulmaz (ADR 0007'de
+//     sıfır "kapat" demektir, "0 istek" değil). Meşru bir seçimdir ama
+//     paylaşılan bir ortamda giriş ucunu da korumasız bırakır: parola deneyen
+//     bir saldırgan kotasız çalışır. Kimsenin bilmediği bir "kapalı", kazayla
+//     yazılmış bir sıfırdan ayırt edilemez; log ikisini de görünür kılar.
+//  2. Sınır AÇIKKEN kotanın istemci başına DÜŞMEDİĞİ hâl. Gerekçesi ve
+//     varsayılanın neden değişmediği [config.Config.RateLimitKeyIsPerClient]
+//     godoc'undadır.
+//
+// Yerel geliştirmede ikisi de sessizdir ya da INFO'dur: orada tek örnek
+// çalışır, ters proxy yoktur ve her açılışta uyarı basmak gerçek bir uyarıyı
+// gürültüde boğardı. Aynı kapı [dosyaKokunuUyar] ve bellek içi koruma
+// uyarısında da açıktır.
+func hizSiniriniUyar(cfg config.Config, log *slog.Logger) {
+	if cfg.RateLimitPerMinute <= 0 {
+		if !cfg.IsShared() {
+			log.Info("hız sınırlayıcı takılmadı",
+				"sebep", "RATE_LIMIT_PER_MINUTE <= 0")
+
+			return
+		}
+
+		log.Warn("hız sınırlayıcı TAKILMADI",
+			"rate_limit_per_minute", cfg.RateLimitPerMinute,
+			"uyari", "hiçbir uç için kota uygulanmaz; giriş ucu da (POST /admin/v1/auth/login) "+
+				"sınırsız denemeye açıktır",
+			"cozum", "kapatmak bilinçli değilse RATE_LIMIT_PER_MINUTE'a pozitif bir değer verin")
+
+		return
+	}
+
+	if !cfg.IsShared() || cfg.RateLimitKeyIsPerClient() {
+		return
+	}
+
+	log.Warn("hız sınırı anahtarı istemciye DEĞİL bağlantıya düşüyor",
+		"trusted_proxy_hops", cfg.TrustedProxyHops,
+		"rate_limit_per_minute", cfg.RateLimitPerMinute,
+		"uyari", "X-Forwarded-For hiç okunmaz; ters proxy, ingress ya da CDN arkasında her isteğin "+
+			"kaynağı proxy'nin IP'sidir, yani kota müşteri başına değil TÜM MAĞAZA için tek bir "+
+			"kovadır ve tek müşteri vitrini kilitleyebilir",
+		"cozum", "güvendiğiniz ters proxy sayısını TRUSTED_PROXY_HOPS ile verin; doğrudan internete "+
+			"bakan bir kurulumda 0 DOĞRUDUR ve bu uyarı yok sayılmalıdır")
 }
 
 // eklentileriSec PLUGINS listesindeki adları katalogdan kurar.
@@ -487,26 +556,30 @@ func dosyaSaglayicisiniDogrula(c *container.Container, id string) error {
 	return nil
 }
 
-// dosyaKokunuUyar taşınabilir olmayan bir yerel kök dizini için uyarı loglar.
+// dosyaKokunuUyar kalıcı olmayan bir yerel kök dizini için uyarı loglar.
 //
-// Uyarının açılışı DURDURMAMASININ gerekçesi
-// [config.Config.LocalFileRootIsPortable] godoc'undadır. Buradaki tek iş,
-// riskin görünür kalmasıdır: göreli bir kökle çıkılan bir üretim dağıtımı,
-// bu satır olmadan hiçbir iz bırakmaz ve arıza ancak ilk yeniden dağıtımdan
-// sonra — görseller kaybolduğunda — fark edilir.
+// Uyarının açılışı DURDURMAMASININ gerekçesi ve "kalıcı" ölçütünün ne olduğu
+// [config.Config.LocalFileRootIsDurable] godoc'undadır. Buradaki tek iş,
+// riskin görünür kalmasıdır: göreli ya da geçici bir kökle çıkılan bir üretim
+// dağıtımı, bu satır olmadan hiçbir iz bırakmaz ve arıza ancak ilk yeniden
+// dağıtımdan sonra — görseller kaybolduğunda — fark edilir.
+//
+// Mesaj İKİ sebebi birden sayar çünkü ölçüt ikisini birden kapsar; kökün
+// kendisi loglandığı için operatör hangisine düştüğünü tek bakışta görür.
 //
 // Yerel geliştirmede SUSAR: orada göreli kök doğru olandır ve her açılışta
 // uyarı basmak, gerçek bir uyarıyı gürültüde boğardı.
 func dosyaKokunuUyar(cfg config.Config, log *slog.Logger) {
-	if !cfg.IsShared() || cfg.LocalFileRootIsPortable() {
+	if !cfg.IsShared() || cfg.LocalFileRootIsDurable() {
 		return
 	}
 
-	log.Warn("dosya kök dizini göreli",
+	log.Warn("dosya kök dizini KALICI DEĞİL",
 		"kok", cfg.FileRoot,
-		"uyari", "yol sürecin ÇALIŞMA DİZİNİNE göre çözülür; konteynerde kalıcı olmayan katmana düşer "+
-			"ve yeniden dağıtımda yüklenen dosyalar kaybolur (adresler kayıtlarda kalır)",
-		"cozum", "FILE_ROOT olarak bağlanmış bir birimin MUTLAK yolunu verin")
+		"uyari", "göreli bir yol sürecin ÇALIŞMA DİZİNİNE göre çözülür, geçici bir kök (/tmp, "+
+			"/var/tmp, /dev/shm ya da TMPDIR) ise işletim sistemi tarafından temizlenir; iki hâlde de "+
+			"yeniden dağıtımda yüklenen dosyalar kaybolur (adresler kayıtlarda kalır)",
+		"cozum", "FILE_ROOT olarak bağlanmış KALICI bir birimin mutlak yolunu verin")
 }
 
 // yoneticiKullanicilari tohum adımının auth modülünden istediği DAR yüzeydir.
@@ -556,13 +629,11 @@ func tohumlaYonetici(
 	cfg config.Config,
 	log *slog.Logger,
 ) error {
-	// config.Validate ikisinin BİRLİKTE verilmesini zorlar; buraya yalnızca
-	// "hiç verilmemiş" hâli düşer. Yine de iki alan da denetlenir: doğrulamadan
-	// geçmemiş elle kurulmuş bir Config yarım girdiyle tohum çalıştıramamalı.
-	if cfg.AdminBootstrapEmail == "" || cfg.AdminBootstrapPassword == "" {
-		return nil
-	}
-
+	// Kullanıcı sayısı HER HÂLDE okunur. İki farklı soruyu da o yanıtlar: tohum
+	// yapılandırılmışsa "ikinci kez yaratmalı mıyım", yapılandırılmamışsa "bu
+	// kurulum yönetilebilir mi". İkincisi eskiden hiç sorulmuyordu ve cevabı
+	// "hayır" olan bir kurulum sessizce açılıyordu.
+	//
 	// Sayfa boyu 1'dir: burada gereken tek bilgi "hiç kullanıcı var mı",
 	// listenin kendisi değil. Page.Count süzgece uyan TOPLAMI verir, sayfadaki
 	// kayıt sayısını değil.
@@ -571,6 +642,14 @@ func tohumlaYonetici(
 		return errors.Wrap(err, errors.KindOf(err), codeBootstrapFailed,
 			"ilk yönetici tohumu için kullanıcı sayısı okunamadı")
 	}
+
+	// config.Validate ikisinin BİRLİKTE verilmesini zorlar; buraya yalnızca
+	// "hiç verilmemiş" hâli düşer. Yine de iki alan da denetlenir: doğrulamadan
+	// geçmemiş elle kurulmuş bir Config yarım girdiyle tohum çalıştıramamalı.
+	if cfg.AdminBootstrapEmail == "" || cfg.AdminBootstrapPassword == "" {
+		return yonetimsizKurulumuBildir(ctx, cfg, sayfa.Count, log)
+	}
+
 	if sayfa.Count > 0 {
 		log.InfoContext(ctx, "ilk yönetici tohumu atlandı: kurulumda kullanıcı var",
 			slog.Int64("kullanici_sayisi", sayfa.Count))
@@ -608,6 +687,68 @@ func tohumlaYonetici(
 	}
 
 	log.InfoContext(ctx, "ilk yönetici oluşturuldu", slog.String("user_id", kullanici.ID))
+
+	return nil
+}
+
+// yonetimsizKurulumuBildir tohum yapılandırılmamışken kurulumun yönetilebilir
+// olduğunu denetler.
+//
+// # Hangi arıza
+//
+// Taze bir veritabanı + boş ADMIN_BOOTSTRAP_* ikilisi config.Validate'ten
+// GEÇER, çünkü ikisini birden boş bırakmak KURULMUŞ bir sistem için meşru bir
+// seçimdir (bkz. [config.Config.AdminBootstrapEmail]) ve "kurulmuş mu"
+// sorusunu doğrulama göremez. Veritabanı da boşsa sonuç yönetilemez bir
+// kurulumdur: hiç kullanıcı yoktur, /admin/v1 giriş ucu dışında tamamen
+// korumalıdır ve ilk kullanıcıyı HTTP'den yaratmanın YOLU YOKTUR. Mağaza
+// yüzeyi de kapalıdır, çünkü publishable anahtarı da yönetim ucu üretir.
+//
+// Sunucu yine de sorunsuz açılır: /health ve /ready yeşil döner, tüm route'lar
+// mount edilmiştir, hiçbir log satırı eksik bir şey söylemez. Arıza ilk giriş
+// denemesinde görülür.
+//
+// # Neden paylaşılan ortamda DURDURUYOR
+//
+// Burada belirsizlik YOKTUR ve ölçüt budur:
+// [config.Config.LocalFileRootIsDurable] uyarıyla yetinir çünkü yapılandırmanın
+// yanlış olduğu kesin değildir; sıfır kullanıcılı bir kurulumun yönetilemez
+// olduğu ise kesindir. Aynı kesinlik main.go'da kimlik doğrulayıcı
+// çözülemediğinde de açılışı durdurur ve gerekçe birebir aynıdır: korumalı
+// görünen ama hiçbir yönetim isteğini kabul edemeyen bir yüzeyle çalışmaya
+// devam etmek, arızayı ilk giriş denemesine — çoğu zaman kurulumdan günler
+// sonrasına — saklar. O noktada düzeltmenin yolu da yapılandırma değil, üretim
+// veritabanına elle SQL'dir.
+//
+// # Neden geliştirmede DURDURMUYOR
+//
+// Deponun sözü ".env olmadan da make up && make run çalışır"dır ve taze bir
+// veritabanıyla ilk kez açan geliştirici tam olarak bu hâle düşer. Orada bedel
+// yok denecek kadar azdır: uyarıyı yazan terminalin başında oturan kişidir ve
+// iki ortam değişkeniyle saniyeler içinde yeniden açar. Ayrım JWT_SECRET'inkiyle
+// aynıdır — geliştirmede uyarı, paylaşılan ortamda ret.
+func yonetimsizKurulumuBildir(
+	ctx context.Context,
+	cfg config.Config,
+	kullaniciSayisi int64,
+	log *slog.Logger,
+) error {
+	if kullaniciSayisi > 0 {
+		return nil
+	}
+
+	if cfg.IsShared() {
+		return errors.Invalid(codeAdminBootstrapRequired,
+			"kurulumda hiç kullanıcı yok ve ADMIN_BOOTSTRAP_EMAIL/ADMIN_BOOTSTRAP_PASSWORD verilmedi: "+
+				"yönetim yüzeyi giriş ucu dışında tamamen korumalı olduğu için ilk yöneticiyi "+
+				"HTTP'den yaratmanın yolu yoktur (APP_ENV=%s)", cfg.AppEnv)
+	}
+
+	log.WarnContext(ctx, "kurulumda hiç kullanıcı yok",
+		"uyari", "yönetim yüzeyi giriş ucu dışında tamamen korumalıdır ve ilk yöneticiyi HTTP'den "+
+			"yaratmanın yolu yoktur; mağaza yüzeyi de kapalıdır, çünkü publishable anahtarı da "+
+			"yönetim ucu üretir",
+		"cozum", "ADMIN_BOOTSTRAP_EMAIL ve ADMIN_BOOTSTRAP_PASSWORD verip yeniden başlatın")
 
 	return nil
 }

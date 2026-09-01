@@ -207,3 +207,103 @@ func TestAkisAdlariSozlesmedir(t *testing.T) {
 	assert.Equal(t, "workflows.checkout.interop", CartCompletionName,
 		"ad sipariş tamamlama akışının InteropName sabitiyle aynı olmalı")
 }
+
+// stubRegions container'a kaydedilen sahte bölge yüzeyidir.
+type stubRegions struct {
+	kod   string
+	calls int
+}
+
+// Sahtenin beklenen yüzeyi karşıladığı derleme zamanında sabitlenir.
+var _ api.RegionCurrencyReader = (*stubRegions)(nil)
+
+// RegionCurrency bölgenin para birimini döner.
+func (s *stubRegions) RegionCurrency(
+	_ context.Context,
+	_ string,
+) (code string, decimalDigits int32, err error) {
+	s.calls++
+	return s.kod, 2, nil
+}
+
+// TestBolgeYuzeyiAdlaCozulur bölge yüzeyinin container'dan ADLA çözüldüğünü ve
+// yapısal olarak karşılandığını doğrular.
+//
+// Bağ derleme zamanında YOKTUR: bu modül region'ı import edemez (ADR 0001),
+// yani somut region servisiyle [api.RegionCurrencyReader] arayüzünü birbirine
+// bağlayan tek şey [RegionServiceName] dizesidir. Test o dizenin gerçekten
+// çözüm anahtarı olduğunu sabitler.
+func TestBolgeYuzeyiAdlaCozulur(t *testing.T) {
+	t.Parallel()
+
+	kap := container.New(nil)
+	bolgeler := &stubRegions{kod: "TRY"}
+	require.NoError(t, kap.Provide(RegionServiceName, bolgeler))
+
+	sarmalayici := &regionCurrency{c: kap, log: sessizLog()}
+	kod, basamak, err := sarmalayici.RegionCurrency(t.Context(), "reg_1")
+
+	require.NoError(t, err)
+	assert.Equal(t, "TRY", kod)
+	assert.Equal(t, int32(2), basamak)
+	assert.Equal(t, 1, bolgeler.calls)
+}
+
+// TestBolgeYuzeyiYokkenKapaliArizalanir para birimi türetilemediğinde sepet
+// açma yolunun SESSİZCE DEVAM ETMEDİĞİNİ doğrular.
+//
+// Sepetin para birimi hangi fiyat listesinin uygulanacağını seçer. Bir
+// varsayılana düşmek ya da istemcinin dediğini kullanmak, tam olarak
+// kapatılan yetki kapısını geri açardı; tek doğru sonuç sepetin HİÇ
+// AÇILMAMASIDIR.
+func TestBolgeYuzeyiYokkenKapaliArizalanir(t *testing.T) {
+	t.Parallel()
+
+	sarmalayici := &regionCurrency{c: container.New(nil), log: sessizLog()}
+
+	kod, _, err := sarmalayici.RegionCurrency(t.Context(), "reg_1")
+	require.Error(t, err, "çözülemeyen bölge yüzeyi hata döndürmeli")
+	assert.Empty(t, kod, "para birimi ASLA varsayılana düşmemeli")
+	assert.Equal(t, codeSetupFailed, coreerrors.CodeOf(err))
+	assert.Equal(t, coreerrors.KindInternal, coreerrors.KindOf(err),
+		"kayıtsız ad container'da KindNotFound üretir; devralınsaydı sepet açma ucu "+
+			"404 döner ve istemciye \"böyle bir uç yok\" derdi — oysa arıza SUNUCU "+
+			"YAPILANDIRMASINDADIR")
+	assert.Equal(t, http.StatusInternalServerError, corehttp.StatusFor(err),
+		"iddia sınıf adında değil ÜRETİMDEKİ eşlemede sabitlenir")
+	assert.Contains(t, err.Error(), RegionServiceName, "hata hangi adın çözülemediğini yazmalı")
+}
+
+// TestBolgeYuzeyiUyumsuzTipiReddeder doğru adla kayıtlı ama yüzeyi
+// karşılamayan bir tipin de sepet açtırMADIĞINI doğrular.
+//
+// İmza region'ın modüller arası yüzeyiyle birebir aynı olmak zorundadır ve
+// uyumu derleyici denetleyemez; ondalık basamak sayısının imzada kalmasının
+// sebebi de budur. Ayrışma bu kapıda görünür.
+func TestBolgeYuzeyiUyumsuzTipiReddeder(t *testing.T) {
+	t.Parallel()
+
+	kap := container.New(nil)
+	require.NoError(t, kap.Provide(RegionServiceName, yabanciTip{}))
+
+	sarmalayici := &regionCurrency{c: kap, log: sessizLog()}
+	_, _, err := sarmalayici.RegionCurrency(t.Context(), "reg_1")
+
+	require.Error(t, err)
+	assert.Equal(t, codeSetupFailed, coreerrors.CodeOf(err))
+	assert.Equal(t, coreerrors.KindInternal, coreerrors.KindOf(err),
+		"yanlış tipte kayıt container'da KindInvalid üretir; devralınsaydı uç 422 "+
+			"ile \"gövden geçersiz\" derdi, oysa gövde kusursuz olsa da sonuç aynıydı")
+}
+
+// TestBolgeYuzeyiAdiSozlesmedir container adının değerini sabitler.
+//
+// Ad region modülünündür ve burada DİZE olarak tekrarlanır; bir taraf adı
+// değiştirdiğinde diğeri sessizce çözülemez hâle gelir. Test değeri TEK yerde
+// sabitler ve değişikliğin bilinçli olmasını zorlar.
+func TestBolgeYuzeyiAdiSozlesmedir(t *testing.T) {
+	t.Parallel()
+
+	assert.Equal(t, "region.service", RegionServiceName,
+		"ad region modülünün ServiceName sabitiyle aynı olmalı")
+}

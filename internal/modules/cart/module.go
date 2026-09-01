@@ -39,6 +39,18 @@
 // Fiyat yolu KAPALI arızalanır: akış çözülemezse satır eklenmez
 // (bkz. [linePricing]).
 //
+// # Kullandığı modül yüzeyi
+//
+// Bir tane vardır: BÖLGE ([RegionServiceName]). Sepetin para birimi bölgenin
+// verisidir — region şemasında bölge başına tek bir sütundur — ve vitrin ucu
+// onu istemciden almaz, bölgeden TÜRETİR. Çözüm yine adladır ve arayüz yine bu
+// modülün kendi paketinde tanımlıdır (api.RegionCurrencyReader); modül region'ı
+// import etmez.
+//
+// Bu yol da KAPALI arızalanır: bölge yüzeyi çözülemezse sepet açılmaz
+// (bkz. [regionCurrency]). Para birimini bir varsayılana düşürmek, hangi fiyat
+// listesinin uygulanacağını sunucunun bilmediği bir sepet üretirdi.
+//
 // # Bildirdiği linkler
 //
 // Yoktur. Sepetin bölgesi ve müşterisi KENDİ SÜTUNLARINDA durur ve her okuma o
@@ -109,6 +121,18 @@ const LinePricingName = "workflows.cart.interop"
 // Ad internal/workflows/checkout paketinindir ve aynı gerekçeyle burada
 // tekrarlanır; adın tek doğruluk kaynağı o paketin InteropName sabitidir.
 const CartCompletionName = "workflows.checkout.interop"
+
+// RegionServiceName bölge modülünün container'daki adıdır (ADR 0001/0006).
+//
+// Ad region modülünündür ve burada DİZE olarak tekrarlanır: modüller birbirini
+// import edemez ve tekrarın bedeli izolasyonun kabul edilen bedelidir. Aynı
+// örüntü [LinePricingName] sabitinde de kullanılır; adın tek doğruluk kaynağı
+// region modülünün ServiceName sabitidir.
+//
+// Yazım hatası SESSİZ KALMAZ: ad çözülemezse sepet açma ucu kapalı arızalanır
+// (bkz. [regionCurrency]), çünkü para birimi türetilemeden sepet açmak, tam
+// olarak kapatılan yetki kapısını geri açardı.
+const RegionServiceName = "region.service"
 
 // svcDB veritabanı havuzunun container'daki adıdır.
 const svcDB = "core.db"
@@ -203,7 +227,12 @@ func (m *Module) Register(ctx context.Context, c *container.Container) error {
 	// Bağımlılık dairesi, çözümü İSTEK ANINA erteleyerek kırılır
 	// (bkz. [linePricing] ve [cartCompletion]); aynı kalıbı order modülü
 	// harcama limiti kuralı için uygular.
-	m.handler = api.New(svc, api.Flows{
+	//
+	// Bölge yüzeyi de aynı sarmalayıcıdan geçer ama sebebi daha basittir:
+	// region modülü bu modülden SONRA Register olabilir ve kayıt sırasına
+	// bağımlı bir modül, kompozisyon kökündeki bir satır yer değiştirdiğinde
+	// sessizce bozulurdu.
+	m.handler = api.New(svc, &regionCurrency{c: c, log: log}, api.Flows{
 		Pricing:  &linePricing{c: c, log: log},
 		Checkout: &cartCompletion{c: c, log: log},
 	})
@@ -392,4 +421,62 @@ func (p *cartCompletion) resolve(ctx context.Context) {
 	}
 	p.svc = svc
 	p.log.InfoContext(ctx, "sepet tamamlama akışı bağlandı", "akis", CartCompletionName)
+}
+
+// regionCurrency bölge yüzeyini İLK KULLANIMDA çözen sarmalayıcıdır.
+//
+// # Neden burada bir modül yüzeyi çözülüyor
+//
+// Sepetin para birimi bölgenin verisidir ve bölgeden TÜRETİLİR
+// (bkz. api.RegionCurrencyReader). Türetmeyi yapabilmek için bölgeyi bilen
+// tarafa sormak gerekir; bu modül region'ı import edemez (ADR 0001), o yüzden
+// yüzey container'dan ADLA çözülür ve modül yalnızca kendi tanımladığı dar
+// arayüzü tanır.
+//
+// # Neden tembel ve neden KAPALI arızalanıyor
+//
+// Tembellik kayıt sırası içindir: region bu modülden sonra Register olabilir.
+// Kapalı arızalanma ise [linePricing] ile aynı gerekçededir — bölge yüzeyi
+// yoksa doğru cevap "para birimi yok" ya da "istemcininkini kullan" DEĞİLDİR.
+// Sepetin para birimi hangi fiyat listesinden fiyatlanacağını seçer; bir
+// varsayılana düşmek, kapatılan yetki kapısını geri açardı. Sepet HİÇ AÇILMAZ.
+type regionCurrency struct {
+	c    *container.Container
+	log  *slog.Logger
+	once sync.Once
+	svc  api.RegionCurrencyReader
+	err  error
+}
+
+// Sarmalayıcının handler'ın beklediği yüzeyi karşıladığı derleme zamanında
+// sabitlenir.
+var _ api.RegionCurrencyReader = (*regionCurrency)(nil)
+
+// RegionCurrency bölgenin para birimini ve ondalık basamak sayısını döner.
+func (p *regionCurrency) RegionCurrency(
+	ctx context.Context,
+	regionID string,
+) (code string, decimalDigits int32, err error) {
+	p.once.Do(func() { p.resolve(ctx) })
+	if p.err != nil {
+		return "", 0, p.err
+	}
+	return p.svc.RegionCurrency(ctx, regionID)
+}
+
+// resolve bölge yüzeyini container'dan çözer; sonucu bir kez saklar.
+//
+// Hata sınıfının container'dan devralınmama gerekçesi [linePricing.resolve]
+// godoc'undadır ve burada da aynen geçerlidir: eksik ya da yanlış tipte bir
+// kayıt istemcinin değil KURULUMUN sorunudur.
+func (p *regionCurrency) resolve(ctx context.Context) {
+	svc, err := container.Resolve[api.RegionCurrencyReader](p.c, RegionServiceName)
+	if err != nil {
+		p.err = errors.Wrap(err, errors.KindInternal, codeSetupFailed,
+			"%s modülü bölge yüzeyini çözemedi (%q); sepetin para birimi bölgeden "+
+				"türetilemeden sepet açılamaz", ModuleName, RegionServiceName)
+		return
+	}
+	p.svc = svc
+	p.log.InfoContext(ctx, "bölge yüzeyi bağlandı", "yuzey", RegionServiceName)
 }

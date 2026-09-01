@@ -67,6 +67,107 @@ func TestRedisConfigStreamName(t *testing.T) {
 	}
 }
 
+// TestWithNamespaceStreamVeGrubuBirlikteAyirir ad alanı önekinin İKİ alanı
+// birden ayırdığını doğrular.
+//
+// Yalnızca stream öneki ayrılsaydı iki kurulum aynı consumer group'a bağlanır
+// ve bir olayı ikisinden yalnızca BİRİ alırdı — üretimin "order.placed" olayı
+// staging tarafından tüketilip yutulabilirdi. Bu test, o yarım ayrımın sessizce
+// geri gelmesini engeller.
+func TestWithNamespaceStreamVeGrubuBirlikteAyirir(t *testing.T) {
+	cfg := eventbus.RedisConfig{}.WithNamespace("gobit-staging")
+
+	if got, want := cfg.StreamName("order.placed"), "gobit-staging:events:order.placed"; got != want {
+		t.Errorf("StreamName() = %q, beklenen %q", got, want)
+	}
+	if got, want := cfg.Group, "gobit-staging"; got != want {
+		t.Errorf("Group = %q, beklenen %q", got, want)
+	}
+
+	uretim := eventbus.RedisConfig{}.WithNamespace("gobit-prod")
+	if uretim.Group == cfg.Group {
+		t.Errorf("iki ad alanı aynı consumer group'a düştü (%q); olaylar ayrılmıyor", cfg.Group)
+	}
+}
+
+// TestWithNamespaceTuketiciAdinaDokunmaz ad alanının SÜREÇ kimliğini
+// ezmediğini doğrular.
+//
+// İkisi ters yönde çalışır: ad alanı KURULUMLARI ayırır, tüketici adı ise aynı
+// gruptaki süreçleri. Ad alanı tüketiciye de yazılsaydı, aynı kurulumun tüm
+// örnekleri aynı tüketici adını alır ve her açılışta birbirlerinin işlemekte
+// olduğu mesajları okurdu — yani aynı olay iki kez işlenirdi.
+func TestWithNamespaceTuketiciAdinaDokunmaz(t *testing.T) {
+	cfg := eventbus.RedisConfig{Consumer: "gobit-0"}.WithNamespace("gobit-prod")
+
+	if got, want := cfg.Consumer, "gobit-0"; got != want {
+		t.Errorf("Consumer = %q, beklenen %q", got, want)
+	}
+}
+
+// TestWithNamespaceBosAdAlaniniYokSayar başsız bir anahtar üretilmediğini
+// doğrular.
+//
+// Boş bir ad alanı ":events:order.placed" gibi bir anahtar verirdi: ayıracak
+// bir AD olmadan yapılmış bir ayrım, hiçbir şeyi ayırmaz ama varsayılanı da
+// bozardı.
+func TestWithNamespaceBosAdAlaniniYokSayar(t *testing.T) {
+	cfg := eventbus.RedisConfig{}.WithNamespace("")
+
+	if got, want := cfg.StreamName("order.placed"), eventbus.DefaultStreamPrefix+":order.placed"; got != want {
+		t.Errorf("StreamName() = %q, beklenen %q", got, want)
+	}
+	if cfg.Group != "" {
+		t.Errorf("Group = %q, beklenen boş (varsayılana düşmeli)", cfg.Group)
+	}
+}
+
+// TestVarsayilanAdAlaniAyrimlaUyusuyor varsayılanların, ad alanı türetmesinin
+// bir ÖZEL DURUMU olduğunu sabitler.
+//
+// Bugüne kadarki kurulumların anahtarları "gobit:events:*" ve grubu "gobit"tir;
+// varsayılan önekle (config.DefaultRedisKeyPrefix) türetilen ad alanı bundan
+// ayrışırsa, yükseltilen bir kurulum yeni ve BOŞ bir stream ile yeni bir gruba
+// geçer — eski stream'de bekleyen olaylar orada kalır ve kimseye teslim
+// edilmez.
+func TestVarsayilanAdAlaniAyrimlaUyusuyor(t *testing.T) {
+	cfg := eventbus.RedisConfig{}.WithNamespace(eventbus.DefaultGroup)
+
+	if got, want := cfg.StreamPrefix, eventbus.DefaultStreamPrefix; got != want {
+		t.Errorf("StreamPrefix = %q, beklenen %q", got, want)
+	}
+	if got, want := cfg.Group, eventbus.DefaultGroup; got != want {
+		t.Errorf("Group = %q, beklenen %q", got, want)
+	}
+
+	// Anahtarın TARİHSEL hâli ayrıca sabitlenir: yukarıdaki iddia sabitlerin
+	// birbiriyle tutarlı olduğunu söyler, bu satır ise değerin ne olduğunu.
+	// İkisi olmadan sabitler birlikte kayabilir ve yükseltilen bir kurulum
+	// yeni, BOŞ bir stream'e geçerdi — eski stream'de bekleyen olaylar orada
+	// kalır ve kimseye teslim edilmezdi. Değer, config.DefaultRedisKeyPrefix
+	// ile eşleşir (çekirdek config'i import EDEMEZ, bkz. Prensip 2.4).
+	const tarihsel = "gobit:events:order.placed"
+	if got := cfg.StreamName("order.placed"); got != tarihsel {
+		t.Errorf("StreamName() = %q, beklenen %q (yükseltilen kurulum eski stream'ini kaybeder)",
+			got, tarihsel)
+	}
+}
+
+// TestConsumerNameBosAdiSurecBasinaTamamlar otomatik tüketici adının GERÇEKTEN
+// üretildiğini doğrular.
+//
+// Verilen ad korunur; boş ad süreç başına türetilir. İkincisi sessizce boş
+// kalsaydı Redis, adı boş olan tek bir tüketici görürdü ve tüm örnekler aynı
+// bekleyen listeyi paylaşırdı.
+func TestConsumerNameBosAdiSurecBasinaTamamlar(t *testing.T) {
+	if got, want := eventbus.ConsumerName("gobit-0"), "gobit-0"; got != want {
+		t.Errorf("ConsumerName(%q) = %q, beklenen %q", want, got, want)
+	}
+	if got := eventbus.ConsumerName(""); got == "" {
+		t.Error("ConsumerName(\"\") boş döndü; süreç başına bir ad üretmeliydi")
+	}
+}
+
 func TestRedisPublishRejectsUnserializableData(t *testing.T) {
 	bus, err := eventbus.NewRedisStream(unreachableClient(), eventbus.RedisConfig{}, discardLogger())
 	if err != nil {

@@ -287,9 +287,21 @@ func run() error {
 	// Bölüm 10: B2B. Alıcının bir birey değil, harcama yetkisi sınırlı bir
 	// ÇALIŞAN olduğu kurulum. Modül başka hiçbir modüle dokunmaz; harcama
 	// kuralını "b2b.interop" adıyla container'a bırakır ve order onu KENDİ
-	// dar arayüzünden çözer (bkz. order.SpendingPolicyName). Bu satır
-	// silindiğinde order kuralı bulamaz ve her müşteriyi sınırsız sayar —
-	// yani saf B2C kurulum, kodu değiştirmeden elde edilir.
+	// dar arayüzünden çözer (bkz. order.SpendingPolicyName).
+	//
+	// Saf B2C satan bir kurulum bu satırı SİLEBİLİR; o zaman order kuralı
+	// bulamaz ve her müşteriyi sınırsız sayar — b2b hiç yokmuş gibi olan
+	// doğru davranış budur. Ama silmek bir KOD değişikliğidir ve öyle kalması
+	// bilinçlidir: kapatan bir ortam değişkeni, yanlışlıkla kapatıldığında
+	// harcama limitini hiçbir hata üretmeden kaldırırdı — yani kurulumu
+	// sessizce bozan ayarların tam da yenisi olurdu. Kodla kapatmanın yarım
+	// kalması ise mümkün değildir: modül kayıt denetimi (internal/arch,
+	// TestHerModulBilesimKokundeKayitli) satırı silen kişiden kararı
+	// gerekçesiyle yazmasını ister.
+	//
+	// B2C kurulumda modülü BIRAKMANIN bedeli de küçüktür ve görünürdür: iki
+	// boş tablo ve hiçbir şirket kaydı olmadığı için asla tetiklenmeyen bir
+	// harcama kuralı.
 	registry.Add(b2b.New(log))
 
 	// Eklentiler modüllerden ÖNCE kurulur: eklentinin getirdiği modül de
@@ -451,6 +463,17 @@ func setupRedis(
 // Redis istemcisi PARAMETREDİR, burada açılmaz: aynı istemciyi koruma arka ucu
 // da kullanır ve iki yerde ayrı bağlantı açmak, kapanış sırasını ve sağlık
 // kontrolünü ikiye bölerdi.
+//
+// # Ad alanı neden BURADA veriliyor
+//
+// Sıfır değerli bir [eventbus.RedisConfig] geçilseydi hem stream öneki hem
+// consumer group paketin varsayılanına düşerdi ve REDIS_KEY_PREFIX olay
+// tarafına HİÇ ulaşmazdı: koruma anahtarları ayrılmış, olaylar ayrılmamış bir
+// kurulum çıkardı. Grubun paylaşılması ikisinin daha kötüsüdür; gerekçesi
+// [eventbus.RedisConfig.WithNamespace] godoc'undadır.
+//
+// Tüketici adı ad alanından AYRIDIR ve süreç başına çözülür; loglanmasının
+// sebebi [eventbus.ConsumerName] godoc'undadır.
 func setupEventBus(
 	ctx context.Context,
 	cfg config.Config,
@@ -458,18 +481,56 @@ func setupEventBus(
 	log *slog.Logger,
 ) (eventbus.EventBus, error) {
 	if cfg.EventBus != config.BackendRedis {
-		log.InfoContext(ctx, "olay veri yolu: bellek içi (tek süreç)")
+		olayVeriYolunuUyar(ctx, cfg, log)
+
 		return eventbus.NewInMemory(log), nil
 	}
 
-	bus, err := eventbus.NewRedisStream(client, eventbus.RedisConfig{}, log)
+	busCfg := eventbus.RedisConfig{
+		Consumer: eventbus.ConsumerName(cfg.EventBusConsumer),
+	}.WithNamespace(cfg.RedisKeyPrefix)
+
+	bus, err := eventbus.NewRedisStream(client, busCfg, log)
 	if err != nil {
 		return nil, err
 	}
 
-	log.InfoContext(ctx, "olay veri yolu: Redis Streams")
+	log.InfoContext(ctx, "olay veri yolu: Redis Streams",
+		"stream_oneki", busCfg.StreamPrefix,
+		"grup", busCfg.Group,
+		"tuketici", busCfg.Consumer)
 
 	return bus, nil
+}
+
+// olayVeriYolunuUyar bellek içi veri yolunun paylaşılan ortamdaki riskini
+// bildirir.
+//
+// Bedeli GUARD_BACKEND=memory ile aynı sınıftadır ve o zaten uyarıyor (bkz.
+// korumaYigini); ikisinin farklı seviyede loglanması, aynı ödünün birinde
+// görünüp ötekinde görünmemesi demekti.
+//
+// Bellek içi veri yolu ÇALIŞIR — her örnek kendi olayını kendi işler — ama
+// KALICI DEĞİLDİR: teslim asenkrondur ve süreç çökerse ya da kapanış
+// SHUTDOWN_TIMEOUT içinde bitmezse teslim edilmemiş olaylar iz bırakmadan
+// kaybolur. Somut hâli, siparişi konmuş ama onay bildirimi hiç gitmemiş bir
+// müşteridir; hiçbir hata görünmez, hiçbir kayıt eksilmez.
+//
+// Yerel geliştirmede INFO kalır: orada tek süreç çalışır, kayıp bir olayın
+// bedeli yoktur ve her açılışta uyarı basmak gerçek bir uyarıyı gürültüde
+// boğardı.
+func olayVeriYolunuUyar(ctx context.Context, cfg config.Config, log *slog.Logger) {
+	if !cfg.IsShared() {
+		log.InfoContext(ctx, "olay veri yolu: bellek içi (tek süreç)")
+
+		return
+	}
+
+	log.WarnContext(ctx, "olay veri yolu: bellek içi (tek süreç)",
+		"uyari", "olaylar KALICI DEĞİLDİR: süreç çökerse ya da kapanış SHUTDOWN_TIMEOUT içinde "+
+			"tamamlanmazsa teslim edilmemiş olaylar iz bırakmadan kaybolur (örn. sipariş onayı "+
+			"bildirimi gönderilmez)",
+		"cozum", "EVENT_BUS=redis")
 }
 
 // shutdownContainer container'daki servisleri kapatır ve hataları loglar.

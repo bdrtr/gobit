@@ -12,8 +12,22 @@ import (
 	"testing"
 )
 
+// cekirdekHTTPDizini çekirdeğin HTTP paketinin depo içindeki dizinidir.
+const cekirdekHTTPDizini = "internal/core/http"
+
 // coreHTTPPath çekirdeğin HTTP paketinin import yoludur.
-const coreHTTPPath = modulePath + "/internal/core/http"
+const coreHTTPPath = modulePath + "/" + cekirdekHTTPDizini
+
+// cekirdekYaziciTanimi hata ve başarı yazıcılarının TANIMLANDIĞI dosyadır.
+//
+// Bu dosya taramanın dışındadır ve dışında olmak ZORUNDADIR: gövdeyi ve durum
+// kodunu yazan yer tam olarak burasıdır, yani kuralı kendisine uygulamak
+// "politikanın tek kopyası politikayı ihlal ediyor" demek olurdu. Adın sabit
+// tutulması yerine yazıcıları GERÇEKTEN tanımladığı doğrulanır
+// (bkz. [TestModulDisiHTTPYuzeyleriCekirdektenYazar]); yazıcılar başka bir
+// dosyaya taşınırsa muafiyet onlarla birlikte taşınmalıdır, yoksa bu dosya
+// sessizce "her şeyi yazabilen" bir ada dönüşürdü.
+const cekirdekYaziciTanimi = cekirdekHTTPDizini + "/response.go"
 
 // netHTTPPath standart kütüphanenin HTTP paketinin import yoludur.
 const netHTTPPath = "net/http"
@@ -249,6 +263,608 @@ func TestHTTPYuzeyleriYalnizcaApiPaketlerinde(t *testing.T) {
 				"(ya da paket kaldırıldı). Muafiyet silinmeli.", paket)
 		}
 	}
+}
+
+// govdeYazanNetHTTPCagrilari net/http'nin yanıt GÖVDESİ yazan yardımcılarıdır.
+//
+// Eşleşme yalnızca ADA bakar, çağrının argümanlarına değil: bu fonksiyonların
+// TEK işi yanıt yazmaktır. Argümana bakan bir kontrol, yazıcı bir sarmalayıcıya
+// konduğunda ("http.Error(rw, ...)") kaçırırdı — oysa gövdenin çekirdeğin
+// dışında üretildiği gerçeği değişmez.
+var govdeYazanNetHTTPCagrilari = map[string]bool{
+	"Error":           true,
+	"NotFound":        true,
+	"NotFoundHandler": true,
+	"Redirect":        true,
+	"ServeContent":    true,
+	"ServeFile":       true,
+	"ServeFileFS":     true,
+}
+
+// yaziciyaGovdeYazanDisCagrilar yazıcıyı ALIP gövdesine yazan dış çağrılardır.
+//
+// Anahtar "importYolu.Ad" biçimindedir. Bunlar [yaziciAlanGuvenliCagrilar]'ın
+// tersidir: yazıcıyı alırlar VE gövdeye yazarlar, yani zarf kararı çekirdeğin
+// dışında verilmiş olur.
+var yaziciyaGovdeYazanDisCagrilar = map[string]bool{
+	"encoding/json.NewEncoder": true,
+	"fmt.Fprint":               true,
+	"fmt.Fprintf":              true,
+	"fmt.Fprintln":             true,
+	"io.Copy":                  true,
+	"io.WriteString":           true,
+}
+
+// cekirdekYaziciMuafiyeti modül DIŞINDAKİ bir yüzeyde yanıtı çekirdek
+// yazıcılarının dışında yazan, gerekçesi tartışılmış bir fonksiyondur.
+//
+// Muafiyet fonksiyonun ADIYLA değil, orada geçmesine izin verilen ÇAĞRILARLA
+// tanımlanır. Fonksiyon düzeyinde bir blanket muafiyet denendi ve HOLE
+// olduğu görüldü: "gövdeyi kendi yazıyor" diye muaf tutulan bir fonksiyona
+// sonradan eklenen bir http.Error da sessizce muaf kalıyordu — yani muafiyet,
+// tam olarak kapatmak için var olduğu sınıfı içeriden açıyordu.
+type cekirdekYaziciMuafiyeti struct {
+	// dosya depo köküne göre yoldur.
+	dosya string
+	// fonksiyon muaf tutulan fonksiyonun (ya da metodun) adıdır.
+	fonksiyon string
+	// cagrilar bu fonksiyonda geçmesine izin verilen çağrılardır; kaynakta
+	// yazıldığı hâliyle ("w.Write", "WriteJSON").
+	//
+	// Listede olmayan her çağrı, fonksiyon muaf olsa bile ihlaldir; listede
+	// olup KULLANILMAYAN her çağrı testi düşürür.
+	cagrilar []string
+	// neden bu çağrıların neden ikinci bir hata tanımı ÜRETMEDİĞİDİR.
+	neden string
+}
+
+// cekirdekYaziciMuafiyetleri modül dışındaki meşru yazma yollarıdır.
+//
+// Her muafiyet İKİ kapıdan geçer: bayatlayan bir muafiyet testi düşürür
+// (gerekçe kodla birlikte yaşamak zorundadır) ve muaf dosyanın çekirdeğin
+// yazıcılarını GERÇEKTEN çağırdığı aranır — muaf bir yüzey gövdesini kendi
+// yazabilir ama hangi hatanın istemciye verilebileceği kararını çekirdeğe
+// SORMAK zorundadır.
+var cekirdekYaziciMuafiyetleri = []cekirdekYaziciMuafiyeti{
+	{
+		dosya:     cekirdekHTTPDizini + "/idempotency.go",
+		fonksiyon: "replay",
+		cagrilar:  []string{"w.WriteHeader", "w.Write"},
+		// Çalınan yanıt bu sunucunun DAHA ÖNCE ürettiği yanıttır: gövdesi de
+		// durumu da o zaman çekirdeğin yazıcılarından geçmiştir. Yeniden
+		// zarflamak, kaydedilen yanıtın üstüne İKİNCİ bir gövde yazmak olurdu
+		// ve idempotency'nin tek vaadi — "aynı anahtar aynı yanıtı verir" —
+		// tam olarak burada bozulurdu. Hata yolu yine çekirdektedir: boş kayıt
+		// ve parmak izi uyuşmazlığı corehttp.WriteError ile döner.
+		neden: "kaydedilmiş yanıtı olduğu gibi çalar; gövde de durum da daha önce " +
+			"çekirdek yazıcılarından geçmiştir",
+	},
+	{
+		dosya:     cekirdekHTTPDizini + "/middleware.go",
+		fonksiyon: "Recoverer",
+		cagrilar:  []string{basariYazanAd},
+		// Panik değeri bir error DEĞİLDİR (recover() any döner), yani
+		// WriteError'a verilecek bir hata yoktur. Politika buna rağmen
+		// kopyalanmaz: yanıt çekirdeğin KENDİ zarfıyla (newErrorResponse) ve
+		// KENDİ maskelenmiş metniyle (genericInternalMessage) yazılır, yığın
+		// izi yalnızca loga gider.
+		neden: "panik değeri error değildir; yanıt yine çekirdeğin zarfı ve maskelenmiş " +
+			"metniyle yazılır",
+	},
+	{
+		dosya:     cekirdekHTTPDizini + "/router.go",
+		fonksiyon: "readyHandler",
+		cagrilar:  []string{basariYazanAd},
+		// 503 burada bir HATA yanıtı değil, orkestratörün AYRIŞTIRDIĞI hazırlık
+		// raporudur: hangi kontrolün düştüğü gövdenin anlamıdır ve maskelenirse
+		// uç işlevini kaybeder. Durum kodu da çağrının kendisinde değil kontrol
+		// sonuçlarında hesaplanır, yani bu taramayla çözülemez.
+		neden: "/ready gövdesi hata zarfı değil, kontrol sonuçlarını taşıyan hazırlık " +
+			"raporudur",
+	},
+	{
+		dosya:     "internal/core/openapi/openapi.go",
+		fonksiyon: "Handler",
+		cagrilar:  []string{"w.Write"},
+		// Gövde, ZATEN KODLANMIŞ ve önbelleklenmiş OpenAPI belgesidir; JSON
+		// zarfı değildir ve çekirdeğin yazıcısına verilseydi her istekte bir
+		// kez daha taranıp kopyalanırdı — önbelleğin varlık sebebi buydu.
+		// Başlık ve durum kodu yine çekirdekten yazılır (WriteJSON, nil gövde),
+		// hata yolu ise tümüyle corehttp.WriteError'dadır.
+		neden: "önceden kodlanmış OpenAPI belgesini yazar; başlık, durum ve hata yolu " +
+			"yine çekirdekten geçer",
+	},
+}
+
+// TestModulDisiHTTPYuzeyleriCekirdektenYazar modüller DIŞINDA kalan HTTP
+// yüzeylerinin de çekirdeğin yazıcılarından geçtiğini doğrular.
+//
+// # Neden bu test var
+//
+// [TestHataYanitlariTekYerdenYazilir] yalnızca internal/modules/*/api altını
+// gezer ve [TestHTTPYuzeyleriYalnizcaApiPaketlerinde] o kapsamı MODÜLLER
+// içinde denetler. İkisi birlikte bile depoda yanıt yazan yerlerin tamamını
+// görmez: çekirdeğin kendi uçları (/health, /ready, /openapi.json),
+// middleware'leri ve eklentilerin getirdiği uçlar hiçbir taramanın içinde
+// değildi. Bedeli ölçüldü — /openapi.json belge üretilemediğinde
+// "http.Error(w, ...)" ile DÜZ METİN bir 500 dönüyordu: JSON bekleyen istemci
+// gövdeyi ayrıştıramıyor, istek kimliği yanıtta hiç geçmiyor ve hatanın metni
+// (çakışan tiplerin paket yolları) maskelenmeden dışarı gidiyordu. Kural
+// vardı, kapsam onu görmüyordu.
+//
+// # Ne sınanır
+//
+// Modüller dışındaki her üretim paketinde, yanıt yazan her yol çekirdeğin
+// yazıcılarından birine gitmelidir:
+//
+//   - corehttp.WriteError — hatanın TEK kapısı.
+//   - corehttp.WriteJSON — başarının kapısı; durumu 2xx OLMAK ZORUNDA, yoksa
+//     hata yanıtı maskeleme ve loglama kararlarını atlamış olur.
+//
+// İhlal sayılanlar: net/http'nin gövde yazan yardımcıları
+// ([govdeYazanNetHTTPCagrilari]), yazıcının kendi üzerindeki yazma metotları
+// (Write/WriteHeader), yazıcıyı alıp gövdesine yazan dış çağrılar
+// ([yaziciyaGovdeYazanDisCagrilar]) ve 2xx olmayan bir WriteJSON.
+//
+// # Bilinen sınır
+//
+// Yazıcı olarak tanınanlar: http.ResponseWriter tipli PARAMETRELER ve pakette
+// tanımlı bir SARMALAYICI tipten (gömülü http.ResponseWriter taşıyan struct)
+// kurulan yerel değişkenler. Sarmalayıcı tipin KENDİ metotları taranmaz; onlar
+// yazıcıyı üretmez, aktarır — sarmalayıcının işi tam olarak budur. Sınırın
+// yazılması bilinçlidir: eksik olduğunu bilmek, eksik olduğunu sanmamaktan
+// iyidir. net/http yardımcıları bu sınırın dışındadır, çünkü onlar ADLA
+// yakalanır.
+func TestModulDisiHTTPYuzeyleriCekirdektenYazar(t *testing.T) {
+	t.Parallel()
+
+	yaziciTaniminiDogrula(t)
+
+	kullanilan := make([]map[string]bool, len(cekirdekYaziciMuafiyetleri))
+	for i := range kullanilan {
+		kullanilan[i] = map[string]bool{}
+	}
+
+	paketler := modulDisiPaketler(t)
+	if len(paketler) == 0 {
+		t.Fatal("hiç paket bulunamadı; tarama kökü yanlış olabilir")
+	}
+
+	for _, dizin := range paketler {
+		cekirdekPaketiniDenetle(t, dizin, kullanilan)
+	}
+
+	for i, muaf := range cekirdekYaziciMuafiyetleri {
+		bayat := false
+
+		for _, cagri := range muaf.cagrilar {
+			if kullanilan[i][cagri] {
+				continue
+			}
+
+			bayat = true
+
+			t.Errorf("kullanılmayan muafiyet: %s içindeki %q artık %s çağırmıyor.\n"+
+				"Gerekçesi (%q) bu çağrı için bir şeyi savunmuyor: ya yol düzeltildi ve "+
+				"satır silinmeli, ya da çağrı başka bir fonksiyona taşındı ve muafiyet "+
+				"onu artık görmüyor.", muaf.dosya, muaf.fonksiyon, cagri, muaf.neden)
+		}
+
+		if bayat {
+			continue
+		}
+
+		if !cekirdekYazicisiGeciyorMu(t, filepath.Join(repoRoot, muaf.dosya)) {
+			t.Errorf("%s: muafiyetin gerekçesi (%q) tutmuyor — dosyada hiç corehttp.%s "+
+				"ya da corehttp.%s çağrısı yok.\nMuaf yüzey gövdesini kendi yazabilir ama "+
+				"hangi hatanın istemciye verilebileceği kararını çekirdeğe SORMAK "+
+				"zorundadır.", muaf.dosya, muaf.neden, hataYazanAd, basariYazanAd)
+		}
+	}
+}
+
+// yaziciTaniminiDogrula taramadan muaf tutulan dosyanın gerçekten yazıcıları
+// tanımladığını doğrular.
+//
+// Muafiyet bir DOSYA ADINA değil, o dosyanın İŞİNE verilmiştir. Yazıcılar
+// başka bir dosyaya taşınırsa bu ad, hiçbir gerekçesi kalmadan "her şeyi
+// yazabilen" bir muafiyete dönüşürdü — ve taşıma sırasında kimse buraya
+// bakmazdı.
+func yaziciTaniminiDogrula(t *testing.T) {
+	t.Helper()
+
+	yol := filepath.Join(repoRoot, cekirdekYaziciTanimi)
+
+	agac, err := parser.ParseFile(token.NewFileSet(), yol, nil, 0)
+	if err != nil {
+		t.Fatalf("%s ayrıştırılamadı: %v", cekirdekYaziciTanimi, err)
+	}
+
+	bulunan := map[string]bool{}
+	for _, decl := range agac.Decls {
+		if fn, ok := decl.(*ast.FuncDecl); ok && fn.Recv == nil {
+			bulunan[fn.Name.Name] = true
+		}
+	}
+
+	for _, ad := range []string{hataYazanAd, basariYazanAd} {
+		if !bulunan[ad] {
+			t.Fatalf("%s artık %q tanımlamıyor.\nBu dosya taramadan MUAFTIR çünkü "+
+				"yazıcıların tanımlandığı yerdir; yazıcı taşındıysa cekirdekYaziciTanimi "+
+				"de onunla taşınmalı, yoksa muafiyet gerekçesiz kalır.",
+				cekirdekYaziciTanimi, ad)
+		}
+	}
+}
+
+// modulDisiPaketler modüller dışındaki üretim paketlerinin dizinlerini döner.
+//
+// Modüller BİLİNÇLİ olarak dışarıdadır: onları [TestHataYanitlariTekYerdenYazilir]
+// çok daha ayrıntılı bir taramayla (yazıcının kaçırılması, durum kodunun
+// izlenmesi) gezer. Geri kalan her şey — çekirdek, workflow'lar, eklentiler ve
+// bileşim kökü — buraya düşer; yani depoda taranmayan bir dizin adı KALMAZ.
+func modulDisiPaketler(t *testing.T) []string {
+	t.Helper()
+
+	kume := map[string]bool{}
+
+	for _, dosya := range goFiles(t, repoRoot) {
+		if strings.HasSuffix(dosya, "_test.go") {
+			continue
+		}
+
+		yol := depoYolu(dosya)
+		if strings.HasPrefix(yol, modulesDir+string(filepath.Separator)) || yol == cekirdekYaziciTanimi {
+			continue
+		}
+
+		kume[filepath.Dir(dosya)] = true
+	}
+
+	dizinler := make([]string, 0, len(kume))
+	for dizin := range kume {
+		dizinler = append(dizinler, dizin)
+	}
+	sort.Strings(dizinler)
+
+	return dizinler
+}
+
+// cekirdekDenetimi modül dışı tek bir dosyanın denetim bağlamıdır.
+type cekirdekDenetimi struct {
+	t     *testing.T
+	fset  *token.FileSet
+	dosya string
+	// yollar dosyanın import adlarını yollarına eşler.
+	yollar map[string]string
+	// sarmalayicilar pakette tanımlı, gömülü http.ResponseWriter taşıyan
+	// struct tiplerinin adlarıdır.
+	sarmalayicilar map[string]bool
+	// cekirdekHTTPPaketi dosyanın çekirdeğin HTTP paketinde olduğunu söyler;
+	// orada yazıcı çağrıları NİTELİKSİZDİR (WriteError, corehttp.WriteError değil).
+	cekirdekHTTPPaketi bool
+	// kullanildi muafiyet başına, kullanılan çağrıların kümesidir.
+	kullanildi []map[string]bool
+}
+
+// cekirdekPaketiniDenetle tek bir paketi gezer ve ihlalleri raporlar.
+//
+// Denetim PAKET düzeyindedir çünkü sarmalayıcı tipler bir dosyada tanımlanıp
+// başka dosyalarda kullanılır (responseWriter middleware.go'da tanımlıdır,
+// telemetry.go'da kurulur); dosya dosya bakan bir tarama onları göremezdi.
+func cekirdekPaketiniDenetle(t *testing.T, dizin string, kullanilan []map[string]bool) {
+	t.Helper()
+
+	fset := token.NewFileSet()
+	dosyalar := uretimDosyalari(t, dizin)
+	agaclar := make(map[string]*ast.File, len(dosyalar))
+
+	for _, dosya := range dosyalar {
+		if depoYolu(dosya) == cekirdekYaziciTanimi {
+			continue
+		}
+
+		agac, err := parser.ParseFile(fset, dosya, nil, 0)
+		if err != nil {
+			t.Fatalf("%s ayrıştırılamadı: %v", dosya, err)
+		}
+
+		agaclar[dosya] = agac
+	}
+
+	sarmalayicilar := sarmalayiciTipler(t, dizin)
+
+	for dosya, agac := range agaclar {
+		d := &cekirdekDenetimi{
+			t:                  t,
+			fset:               fset,
+			dosya:              dosya,
+			yollar:             importYollari(agac),
+			sarmalayicilar:     sarmalayicilar,
+			cekirdekHTTPPaketi: depoYolu(dizin) == cekirdekHTTPDizini,
+			kullanildi:         kullanilan,
+		}
+
+		for _, decl := range agac.Decls {
+			if fn, ok := decl.(*ast.FuncDecl); ok {
+				d.fonksiyonuDenetle(fn)
+			}
+		}
+	}
+}
+
+// sarmalayiciTipler paketteki, gömülü http.ResponseWriter taşıyan struct
+// adlarını döner.
+//
+// Yazıcının sarmalayıcıya konması bu depoda İSTİSNA değil kuraldır (durum
+// sayacı, idempotency kaydı, telemetri); sarmalayıcıyı tanımayan bir tarama,
+// gövdenin oradan yazıldığı her yolu kaçırırdı.
+func sarmalayiciTipler(t *testing.T, dizin string) map[string]bool {
+	t.Helper()
+
+	adlar := map[string]bool{}
+
+	for _, dosya := range uretimDosyalari(t, dizin) {
+		agac, err := parser.ParseFile(token.NewFileSet(), dosya, nil, 0)
+		if err != nil {
+			t.Fatalf("%s ayrıştırılamadı: %v", dosya, err)
+		}
+
+		yollar := importYollari(agac)
+
+		ast.Inspect(agac, func(n ast.Node) bool {
+			tip, ok := n.(*ast.TypeSpec)
+			if !ok {
+				return true
+			}
+
+			yapi, ok := tip.Type.(*ast.StructType)
+			if !ok || yapi.Fields == nil {
+				return true
+			}
+
+			for _, alan := range yapi.Fields.List {
+				if len(alan.Names) == 0 && yaziciTipiMi(alan.Type, yollar) {
+					adlar[tip.Name.Name] = true
+				}
+			}
+
+			return true
+		})
+	}
+
+	return adlar
+}
+
+// fonksiyonuDenetle bir fonksiyondaki yanıt yazma yollarını denetler.
+func (d *cekirdekDenetimi) fonksiyonuDenetle(fn *ast.FuncDecl) {
+	if fn.Body == nil {
+		return
+	}
+
+	yazicilar := yaziciDegiskenleri(fn, d.yollar, d.sarmalayicilar)
+
+	ast.Inspect(fn.Body, func(n ast.Node) bool {
+		if cagri, ok := n.(*ast.CallExpr); ok {
+			d.cagriyiDenetle(fn.Name.Name, cagri, yazicilar)
+		}
+
+		return true
+	})
+}
+
+// cagriyiDenetle tek bir çağrıyı kurallara vurur.
+func (d *cekirdekDenetimi) cagriyiDenetle(fonksiyon string, cagri *ast.CallExpr, yazicilar map[string]bool) {
+	hedef := cagriHedefi(cagri, d.yollar)
+
+	if hedef.paket == netHTTPPath && govdeYazanNetHTTPCagrilari[hedef.ad] {
+		d.ihlal(fonksiyon, hedef.kaynak, cagri.Pos(),
+			"%s yanıt gövdesini çekirdeğin DIŞINDA yazıyor.\n"+
+				"Gövde ortak JSON zarfı olmaz: istemci hatayı ayrıştıramaz, istek kimliği "+
+				"yanıta hiç girmez ve hatanın metni maskelenmeden dışarı çıkar. Hatanın tek "+
+				"kapısı corehttp.%s'dır.", hedef.kaynak, hataYazanAd)
+
+		return
+	}
+
+	if d.cekirdekYazicisiMi(hedef) {
+		if hedef.ad == basariYazanAd {
+			d.durumuDenetle(fonksiyon, hedef.kaynak, cagri)
+		}
+
+		return
+	}
+
+	if hedef.alici != "" && yazicilar[hedef.alici] {
+		if yaziciyaGuvenliMetotlar[hedef.ad] {
+			return
+		}
+
+		d.ihlal(fonksiyon, hedef.kaynak, cagri.Pos(),
+			"%s ile yanıt DOĞRUDAN yazılıyor.\n"+
+				"Hata gövdesinin tek kapısı corehttp.%s, başarınınki corehttp.%s'dır; "+
+				"ikinci bir yazma yolu, maskeleme ve loglama kararlarının kopyalanması "+
+				"demektir.", hedef.kaynak, hataYazanAd, basariYazanAd)
+
+		return
+	}
+
+	if !yaziciAlanCagri(cagri, yazicilar) {
+		return
+	}
+
+	if hedef.paket != "" && yaziciyaGovdeYazanDisCagrilar[hedef.paket+"."+hedef.ad] {
+		d.ihlal(fonksiyon, hedef.kaynak, cagri.Pos(),
+			"yazıcı %s çağrısına veriliyor ve gövde oradan "+
+				"yazılıyor.\nZarfın biçimi ve maskeleme kararı çekirdekte durmalı; elle "+
+				"kodlanan bir gövde, o kararların ikinci bir kopyasıdır.", hedef.kaynak)
+	}
+}
+
+// durumuDenetle WriteJSON çağrısının durum kodunun 2xx olduğunu doğrular.
+//
+// 4xx/5xx bir durumla çağrılan WriteJSON, hata yanıtını corehttp.WriteError'ın
+// maskeleme ve loglama kararlarını ATLAYARAK yazar; sonuç, çekirdeği hiç
+// çağırmamakla aynıdır.
+func (d *cekirdekDenetimi) durumuDenetle(fonksiyon, kaynak string, cagri *ast.CallExpr) {
+	const durumSirasi = 2
+
+	if len(cagri.Args) <= durumSirasi {
+		return
+	}
+
+	switch v := cagri.Args[durumSirasi].(type) {
+	case *ast.SelectorExpr:
+		x, ok := v.X.(*ast.Ident)
+		if ok && d.yollar[x.Name] == netHTTPPath && basariDurumlari[v.Sel.Name] {
+			return
+		}
+	case *ast.BasicLit:
+		if v.Kind == token.INT {
+			if kod, err := strconv.Atoi(v.Value); err == nil && kod >= 200 && kod <= 299 {
+				return
+			}
+		}
+	}
+
+	d.ihlal(fonksiyon, kaynak, cagri.Args[durumSirasi].Pos(),
+		"corehttp.%s çağrısının durum kodu 2xx olarak ÇÖZÜLEMİYOR.\n"+
+			"2xx olmayan bir gövde corehttp.%s'ın maskeleme ve loglama kararlarını "+
+			"atlar: gövde ne yazılırsa istemciye o gider.", basariYazanAd, hataYazanAd)
+}
+
+// cekirdekYazicisiMi çağrının çekirdeğin yazıcılarına gidip gitmediğini söyler.
+//
+// Çekirdeğin KENDİ paketinde çağrı niteliksizdir (WriteError), dışarıda ise
+// import adıyla nitelenir (corehttp.WriteError); ikisi de aynı fonksiyondur ve
+// tarama ikisini de tanımak zorundadır.
+func (d *cekirdekDenetimi) cekirdekYazicisiMi(hedef hedefBilgisi) bool {
+	if hedef.ad != hataYazanAd && hedef.ad != basariYazanAd {
+		return false
+	}
+
+	if hedef.paket == coreHTTPPath {
+		return true
+	}
+
+	return d.cekirdekHTTPPaketi && hedef.yerel && hedef.alici == ""
+}
+
+// ihlal muaf değilse bir ihlal raporlar.
+func (d *cekirdekDenetimi) ihlal(fonksiyon, kaynak string, pos token.Pos, bicim string, args ...any) {
+	d.t.Helper()
+
+	if d.muafMi(fonksiyon, kaynak) {
+		return
+	}
+
+	konum := d.fset.Position(pos)
+	d.t.Errorf("%s:%d: %s içinde "+bicim,
+		append([]any{depoYolu(d.dosya), konum.Line, fonksiyon}, args...)...)
+}
+
+// muafMi çağrının bu dosya ve fonksiyon için gerekçelendirilip
+// gerekçelendirilmediğini söyler.
+func (d *cekirdekDenetimi) muafMi(fonksiyon, kaynak string) bool {
+	yol := depoYolu(d.dosya)
+
+	for i, muaf := range cekirdekYaziciMuafiyetleri {
+		if filepath.FromSlash(muaf.dosya) != yol || muaf.fonksiyon != fonksiyon {
+			continue
+		}
+
+		for _, cagri := range muaf.cagrilar {
+			if cagri != kaynak {
+				continue
+			}
+
+			d.kullanildi[i][cagri] = true
+
+			return true
+		}
+	}
+
+	return false
+}
+
+// yaziciDegiskenleri fonksiyondaki yazıcı adlarını toplar.
+//
+// İki kaynak vardır: http.ResponseWriter tipli PARAMETRELER (iç fonksiyon
+// değişmezlerininki dâhil) ve pakette tanımlı bir sarmalayıcı tipten kurulan
+// yerel değişkenler. İkincisi olmasaydı, yazıcıyı bir sarmalayıcıya koyup
+// gövdeyi oradan yazmak taramayı sessizce atlatırdı.
+func yaziciDegiskenleri(fn ast.Node, yollar map[string]string, sarmalayicilar map[string]bool) map[string]bool {
+	adlar, _ := yaziciParametreleri(fn, yollar)
+
+	ast.Inspect(fn, func(n ast.Node) bool {
+		atama, ok := n.(*ast.AssignStmt)
+		if !ok {
+			return true
+		}
+
+		for i, sag := range atama.Rhs {
+			if i >= len(atama.Lhs) || !sarmalayiciKurulumu(sag, sarmalayicilar) {
+				continue
+			}
+
+			if hedef, ok := atama.Lhs[i].(*ast.Ident); ok {
+				adlar[hedef.Name] = true
+			}
+		}
+
+		return true
+	})
+
+	return adlar
+}
+
+// sarmalayiciKurulumu ifadenin bir sarmalayıcı tipin örneğini kurup kurmadığını
+// söyler.
+func sarmalayiciKurulumu(ifade ast.Expr, sarmalayicilar map[string]bool) bool {
+	if birli, ok := ifade.(*ast.UnaryExpr); ok && birli.Op == token.AND {
+		ifade = birli.X
+	}
+
+	yapi, ok := ifade.(*ast.CompositeLit)
+	if !ok {
+		return false
+	}
+
+	ad, ok := yapi.Type.(*ast.Ident)
+
+	return ok && sarmalayicilar[ad.Name]
+}
+
+// cekirdekYazicisiGeciyorMu dosyada çekirdeğin yazıcılarına yapılmış bir çağrı
+// arar.
+func cekirdekYazicisiGeciyorMu(t *testing.T, dosya string) bool {
+	t.Helper()
+
+	agac, err := parser.ParseFile(token.NewFileSet(), dosya, nil, 0)
+	if err != nil {
+		t.Fatalf("%s ayrıştırılamadı: %v", dosya, err)
+	}
+
+	d := &cekirdekDenetimi{
+		yollar:             importYollari(agac),
+		cekirdekHTTPPaketi: depoYolu(filepath.Dir(dosya)) == cekirdekHTTPDizini,
+	}
+
+	bulundu := false
+
+	ast.Inspect(agac, func(n ast.Node) bool {
+		if bulundu {
+			return false
+		}
+
+		if cagri, ok := n.(*ast.CallExpr); ok && d.cekirdekYazicisiMi(cagriHedefi(cagri, d.yollar)) {
+			bulundu = true
+		}
+
+		return true
+	})
+
+	return bulundu
 }
 
 // paketiDenetle tek bir api paketini gezer ve ihlalleri raporlar.

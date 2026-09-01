@@ -129,6 +129,34 @@ func (f *fakeCarts) RemoveShippingMethod(_ context.Context, cartID, methodID str
 	return f.err
 }
 
+// fakeRegions api.RegionCurrencyReader'ın test karşılığıdır.
+//
+// Sahte, bölgenin para birimini SABİT döner ve sorulan kimliği kaydeder:
+// testin sınadığı şey handler'ın para birimini gövdeden değil BURADAN
+// alması, ve sorduğu bölgenin gövdedeki bölge olmasıdır.
+type fakeRegions struct {
+	code   string
+	digits int32
+	err    error
+
+	// gotRegionID son çağrının bölge kimliğidir.
+	gotRegionID string
+	calls       int
+}
+
+// Sahtenin handler'ın beklediği yüzeyi karşıladığı derleme zamanında doğrulanır.
+var _ api.RegionCurrencyReader = (*fakeRegions)(nil)
+
+// RegionCurrency bölgenin para birimini döner ve argümanı kaydeder.
+func (f *fakeRegions) RegionCurrency(
+	_ context.Context,
+	regionID string,
+) (code string, decimalDigits int32, err error) {
+	f.calls++
+	f.gotRegionID = regionID
+	return f.code, f.digits, f.err
+}
+
 // fakePricing api.LinePricing'in test karşılığıdır.
 //
 // Sahte hiçbir fiyat HESAPLAMAZ; testin sınadığı şey handler'ın fiyatı KENDİ
@@ -197,22 +225,46 @@ func (f *fakeCheckout) CompleteCartJSON(_ context.Context, request json.RawMessa
 	return f.response, f.err
 }
 
-// yeniSunucu sahte servise ve BOŞ sahte akışlara bağlı bir router kurar.
+// varsayilanParaBirimi sahte bölgenin döndüğü para birimidir.
 //
-// Akışlara dokunmayan testler için yeterlidir; akışın argümanlarını ya da
-// yokluğunu sınayan testler [yeniAkisliSunucu] ile kendi sahtelerini verir.
+// Sepet gövdelerinde geçen koddan ("TRY") FARKLI seçilmiştir ve bu bilinçlidir:
+// ikisi aynı olsaydı, para biriminin bölgeden mi yoksa hâlâ istemciden mi
+// geldiği hiçbir iddiada ayırt edilemezdi.
+const varsayilanParaBirimi = "EUR"
+
+// yeniSunucu sahte servise, sahte bölgeye ve BOŞ sahte akışlara bağlı bir
+// router kurar.
+//
+// Bölgeye ve akışlara dokunmayan testler için yeterlidir; argümanlarını ya da
+// yokluğunu sınayan testler [yeniBagimliSunucu] ile kendi sahtelerini verir.
 func yeniSunucu(t *testing.T, svc *fakeCarts) http.Handler {
 	t.Helper()
 
 	return yeniAkisliSunucu(t, svc, api.Flows{Pricing: &fakePricing{}, Checkout: &fakeCheckout{}})
 }
 
-// yeniAkisliSunucu verilen servis ve akışlarla bir router kurar.
+// yeniAkisliSunucu verilen servis ve akışlarla, VARSAYILAN sahte bölgeyle bir
+// router kurar.
 func yeniAkisliSunucu(t *testing.T, svc *fakeCarts, akislar api.Flows) http.Handler {
 	t.Helper()
 
+	return yeniBagimliSunucu(t, svc, &fakeRegions{code: varsayilanParaBirimi, digits: 2}, akislar)
+}
+
+// yeniBagimliSunucu verilen servis, bölge yüzeyi ve akışlarla bir router kurar.
+//
+// bolgeler nil verilebilir; handler'ın bölge yüzeyi olmadan KAPALI arızalandığı
+// ancak böyle sınanabilir.
+func yeniBagimliSunucu(
+	t *testing.T,
+	svc *fakeCarts,
+	bolgeler api.RegionCurrencyReader,
+	akislar api.Flows,
+) http.Handler {
+	t.Helper()
+
 	r := chi.NewRouter()
-	api.New(svc, akislar).Routes(r)
+	api.New(svc, bolgeler, akislar).Routes(r)
 	return r
 }
 
@@ -288,13 +340,13 @@ func dizi(t *testing.T, value any) []any {
 // döndürdüğünü doğrular.
 func TestCreateCart201VeTekilZarf(t *testing.T) {
 	svc := &fakeCarts{cart: models.Cart{
-		ID: "cart_1", RegionID: "reg_1", CurrencyCode: "TRY",
+		ID: "cart_1", RegionID: "reg_1", CurrencyCode: varsayilanParaBirimi,
 		CreatedAt: time.Unix(0, 0).UTC(), UpdatedAt: time.Unix(0, 0).UTC(),
 	}}
 	h := yeniSunucu(t, svc)
 
 	rec := istek(t, h, http.MethodPost, "/store/v1/carts",
-		`{"region_id":"reg_1","currency_code":"TRY","customer_id":"cust_1","email":"a@b.c"}`)
+		`{"region_id":"reg_1","customer_id":"cust_1","email":"a@b.c"}`)
 
 	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
 	data := nesne(t, govde(t, rec)["data"])
@@ -304,6 +356,92 @@ func TestCreateCart201VeTekilZarf(t *testing.T) {
 	assert.Equal(t, "reg_1", svc.createInput.RegionID)
 	assert.Equal(t, "cust_1", svc.createInput.CustomerID)
 	assert.Equal(t, "a@b.c", svc.createInput.Email)
+}
+
+// TestCreateCartParaBirimiBolgedenGelir sepetin para biriminin gövdeden değil
+// BÖLGEDEN türetildiğini doğrular.
+//
+// İddia iki parçalıdır ve ikisi de gereklidir: handler bölgeye SORMALI (sorulan
+// kimlik gövdedeki bölge olmalı) ve servise yazılan kod bölgenin cevabı olmalı.
+// Yalnızca ikincisine bakmak yetmezdi — sabit bir varsayılan yazan bir handler
+// da aynı iddiayı geçerdi.
+func TestCreateCartParaBirimiBolgedenGelir(t *testing.T) {
+	svc := &fakeCarts{cart: models.Cart{ID: "cart_1", RegionID: "reg_1"}}
+	bolgeler := &fakeRegions{code: "JPY", digits: 0}
+	h := yeniBagimliSunucu(t, svc, bolgeler,
+		api.Flows{Pricing: &fakePricing{}, Checkout: &fakeCheckout{}})
+
+	rec := istek(t, h, http.MethodPost, "/store/v1/carts", `{"region_id":"reg_1"}`)
+
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+	assert.Equal(t, 1, bolgeler.calls, "para birimi bölgeye SORULMALI")
+	assert.Equal(t, "reg_1", bolgeler.gotRegionID,
+		"sorulan bölge gövdedeki bölge olmalı; başka bir bölgeye sorulsaydı sepet "+
+			"kendi bölgesinin para biriminde olmazdı")
+	assert.Equal(t, "JPY", svc.createInput.CurrencyCode,
+		"sepete yazılan kod BÖLGENİN cevabı olmalı")
+}
+
+// TestCreateCartIstemciParaBirimiReddedilir vitrinin para birimi KABUL
+// ETMEDİĞİNİ doğrular.
+//
+// İddia iki katmanlıdır: istek reddedilmeli VE hiçbir sepet yazılmamalı. Alan
+// sessizce yok sayılıp sepet yine açılsaydı istemci gönderdiğini sanır, sunucu
+// başka bir para birimi yazardı — ve satır, beklenenden başka bir fiyat
+// listesinden fiyatlanırdı. Aynı ölçüt satır ucundaki unit_price için de
+// uygulanmıştı.
+func TestCreateCartIstemciParaBirimiReddedilir(t *testing.T) {
+	svc := &fakeCarts{cart: models.Cart{ID: "cart_1", RegionID: "reg_1"}}
+	bolgeler := &fakeRegions{code: varsayilanParaBirimi, digits: 2}
+	h := yeniBagimliSunucu(t, svc, bolgeler,
+		api.Flows{Pricing: &fakePricing{}, Checkout: &fakeCheckout{}})
+
+	rec := istek(t, h, http.MethodPost, "/store/v1/carts",
+		`{"region_id":"reg_1","currency_code":"USD"}`)
+
+	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code,
+		"tanınmayan alan reddedilmeli; gövde: %s", rec.Body.String())
+	assert.Empty(t, svc.createInput.RegionID, "reddedilen istek sepet YAZMAMALI")
+	assert.Zero(t, bolgeler.calls, "reddedilen istek bölgeye de sormamalı")
+}
+
+// TestCreateCartBolgeYuzeyiYoksaKapali bölge yüzeyi bağlı değilken sepetin HİÇ
+// AÇILMADIĞINI doğrular.
+//
+// Kapalı arızalanma bilinçlidir ve gerekçesi fiyatlandırma akışınınkiyle
+// aynıdır: bölge yüzeyi yoksa doğru cevap "para birimi yok" ya da "istemcinin
+// dediğini kullan" değildir. Para birimi hangi fiyat listesinin uygulanacağını
+// seçer; bir varsayılana düşmek, kapatılan yetki kapısını geri açardı.
+func TestCreateCartBolgeYuzeyiYoksaKapali(t *testing.T) {
+	svc := &fakeCarts{cart: models.Cart{ID: "cart_1", RegionID: "reg_1"}}
+	h := yeniBagimliSunucu(t, svc, nil,
+		api.Flows{Pricing: &fakePricing{}, Checkout: &fakeCheckout{}})
+
+	rec := istek(t, h, http.MethodPost, "/store/v1/carts", `{"region_id":"reg_1"}`)
+
+	assert.Equal(t, http.StatusInternalServerError, rec.Code,
+		"kurulum arızası istemciye 5xx olmalı; gövde: %s", rec.Body.String())
+	assert.Empty(t, svc.createInput.RegionID, "para birimi türetilemeden sepet YAZILMAMALI")
+}
+
+// TestCreateCartBilinmeyenBolgeSepetAcmaz bölgenin gerçekten var olduğunun
+// artık DOĞRULANDIĞINI gösterir.
+//
+// Doğrulama bir yan kazançtır: cart servisi region'ı tanımadığı için (ADR 0006)
+// bölgenin varlığını denetleyemez ve uydurma bir kimlik eskiden sepet
+// açabiliyordu. Para birimi bölgeden okunduğu için o kapı da kapandı. Hata
+// SINIFI korunur — region'ın errors.NotFound'u 404'e düşer ve istemciye
+// düzeltebileceği bir şey söyler.
+func TestCreateCartBilinmeyenBolgeSepetAcmaz(t *testing.T) {
+	svc := &fakeCarts{cart: models.Cart{ID: "cart_1"}}
+	bolgeler := &fakeRegions{err: errors.NotFound("region_not_found", "bölge bulunamadı")}
+	h := yeniBagimliSunucu(t, svc, bolgeler,
+		api.Flows{Pricing: &fakePricing{}, Checkout: &fakeCheckout{}})
+
+	rec := istek(t, h, http.MethodPost, "/store/v1/carts", `{"region_id":"reg_yok"}`)
+
+	assert.Equal(t, http.StatusNotFound, rec.Code, "gövde: %s", rec.Body.String())
+	assert.Empty(t, svc.createInput.RegionID, "bilinmeyen bölgede sepet YAZILMAMALI")
 }
 
 // TestUpdateCartAlanlariServiseGecirir güncelleme gövdesinin servise olduğu
@@ -924,7 +1062,7 @@ func TestKimliksizYonetimIstegi401Alir(t *testing.T) {
 func TestMagazaUclariYetkiIstemez(t *testing.T) {
 	h := yeniSunucu(t, &fakeCarts{})
 
-	rec := istekGonder(t, h, nil, http.MethodPost, "/store/v1/carts", `{"region_id":"reg_1","currency_code":"TRY"}`)
+	rec := istekGonder(t, h, nil, http.MethodPost, "/store/v1/carts", `{"region_id":"reg_1"}`)
 
 	assert.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
 }

@@ -399,13 +399,16 @@ func vitrinStogunuBagla(t *testing.T, s *surec, jeton, varyantID string) {
 func vitrinSepetiAc(t *testing.T, s *surec, anahtar, bolgeID, eposta string) string {
 	t.Helper()
 
+	// Gövdede para birimi YOK: onu sunucu bölgeden türetir. Göndermek 422
+	// alırdı — fiyat yetkisiyle aynı kural (bkz. CHANGELOG, "Para birimi
+	// yetkisi istemciden alındı").
 	kod, govde := s.vitrinIste(http.MethodPost, "/store/v1/carts", anahtar, map[string]any{
-		"region_id":     bolgeID,
-		"currency_code": vitrinParaBirimi,
-		"email":         eposta,
+		"region_id": bolgeID,
+		"email":     eposta,
 	})
 	require.Equal(t, http.StatusCreated, kod,
-		"sepet açılamadı; 404 vitrin uçlarının mount edilmediğini gösterir. gövde: %s", govde)
+		"sepet açılamadı; 404 vitrin uçlarının mount edilmediğini gösterir, "+
+			"422 ise gövdenin sunucunun belirlediği bir alanı taşıdığını. gövde: %s", govde)
 
 	sepet := zarfVerisi[vitrinSepet](t, govde)
 	require.NotEmpty(t, sepet.ID, "sepet kimlik dönmeli; gövde: %s", govde)

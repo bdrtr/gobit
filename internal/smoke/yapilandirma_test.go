@@ -24,11 +24,32 @@ import (
 //
 // # Neden açılış, ilk istek değil
 //
-// Beş arızanın hepsi sessizce ERTELENEBİLİRDİ: bilinmeyen eklenti yok
+// Yedi arızanın hepsi sessizce ERTELENEBİLİRDİ: bilinmeyen eklenti yok
 // sayılabilir, eksik anahtar ilk ödemede patlayabilir, paylaşılan koruma
-// sessizce bellek içine düşebilir. Hepsinde bedel aynı: arıza, yapılandırmayı
-// yazan kişinin elinden çıktıktan GÜNLER sonra, çoğu zaman bir müşteri
-// isteğinin ortasında görünür.
+// sessizce bellek içine düşebilir, bilinmeyen bir sağlayıcı adı ilk bildirim
+// ya da ilk yüklemeye kadar beklenebilir. Hepsinde bedel aynı: arıza,
+// yapılandırmayı yazan kişinin elinden çıktıktan GÜNLER sonra, çoğu zaman bir
+// müşteri isteğinin ortasında görünür.
+//
+// # Sağlayıcı senaryoları neden burada
+//
+// Son iki senaryo (bildirim ve dosya sağlayıcısı) yapılandırmanın SIRA
+// bakımından en geç doğrulanan kısmıdır: ikisi de modüller ayağa kalktıktan,
+// akışlar kurulduktan ve eklentiler başlatıldıktan SONRA denetlenir. Yani
+// süreç bunlarda ölüyorsa, o noktaya kadarki tüm kurulum adımları dinleyici
+// AÇILMADAN ÖNCE ve SENKRON koşmuş demektir. Bir kurulum adımının sessizce
+// arka plana (goroutine'e) alınması, kurulum hatasını "açılış durdu"dan "ilk
+// istekte 500"e çevirir ve bu senaryolar tam olarak o kaymayı yakalar.
+//
+// # Neyi kapsamaz
+//
+// Akış kurulumunun (cmd/server, akislariKaydet) KENDİSİNİ başarısız kılan bir
+// yapılandırma bugün YAZILAMIYOR: akışlar yalnızca modüllerin koşulsuz
+// kaydettiği adları çözer (cart/pricing/region/customer/order/payment/... ve
+// çekirdek servisleri) ve o modüllerin kaydını hiçbir ortam değişkeni
+// kapatmaz. Yani "akış kurulamadı" hâli ancak KOD değişikliğiyle üretilebilir;
+// buradaki en yakın güvence, akış kurulumundan SONRA koşan yukarıdaki iki
+// denetimdir.
 func TestYanlisYapilandirmaAcilistaDurur(t *testing.T) {
 	// Erişilemez Redis için KAPALI bir port kullanılır: adres biçimsel olarak
 	// geçerlidir, yani hata "URL çözümlenemedi" değil gerçekten
@@ -77,6 +98,21 @@ func TestYanlisYapilandirmaAcilistaDurur(t *testing.T) {
 				delete(a, "JWT_SECRET")
 			},
 			anahtarlar: []string{"JWT_SECRET", "staging"},
+		},
+		"bilinmeyen bildirim sağlayıcısı": {
+			duzenle: func(a ayarlar) {
+				// Ad, hiçbir eklentinin ve kutudan çıkan hiçbir sağlayıcının
+				// karşılamayacağı biçimde seçilir: sınanan şey "yanlış ad"
+				// değil, yanlış adın AÇILIŞTA yakalanmasıdır.
+				a["NOTIFICATION_PROVIDER"] = "boyle-bir-saglayici-yok"
+			},
+			anahtarlar: []string{"notification_provider_unknown", "NOTIFICATION_PROVIDER"},
+		},
+		"bilinmeyen dosya sağlayıcısı": {
+			duzenle: func(a ayarlar) {
+				a["FILE_PROVIDER"] = "boyle-bir-saglayici-yok"
+			},
+			anahtarlar: []string{"file_provider_unknown", "FILE_PROVIDER"},
 		},
 	}
 

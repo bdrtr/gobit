@@ -394,10 +394,7 @@ func refleriTopla(dugum any, toplam *[]string) {
 func sepetOlustur(t *testing.T) (sepetID string, govde []byte) {
 	t.Helper()
 
-	istekGovdesi, err := json.Marshal(map[string]string{
-		"region_id":     vergiliBolgeID,
-		"currency_code": vergiliParaBirimi,
-	})
+	istekGovdesi, err := json.Marshal(map[string]string{"region_id": vergiliBolgeID})
 	require.NoError(t, err, "sepet gövdesi kodlanamadı")
 
 	istek := httptest.NewRequest(http.MethodPost, "/store/v1/carts", bytes.NewReader(istekGovdesi))

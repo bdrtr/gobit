@@ -44,10 +44,7 @@ import (
 func TestIdempotencyAyniAnahtarlaTekSepetUretir(t *testing.T) {
 	ctx := context.Background()
 
-	govde, err := json.Marshal(map[string]string{
-		"region_id":     vergiliBolgeID,
-		"currency_code": vergiliParaBirimi,
-	})
+	govde, err := json.Marshal(map[string]string{"region_id": vergiliBolgeID})
 	require.NoError(t, err, "sepet isteği kodlanamadı")
 
 	sepetIstegi := func() *http.Request {
@@ -108,11 +105,8 @@ func sepetSayisi(ctx context.Context, t *testing.T) int64 {
 func TestIdempotencyAyniAnahtarFarkliGovdeyiReddeder(t *testing.T) {
 	anahtar := "e2e-sepet-anahtari-2"
 
-	istekYap := func(bolgeID, paraBirimi string) *http.Request {
-		govde, err := json.Marshal(map[string]string{
-			"region_id":     bolgeID,
-			"currency_code": paraBirimi,
-		})
+	istekYap := func(bolgeID string) *http.Request {
+		govde, err := json.Marshal(map[string]string{"region_id": bolgeID})
 		require.NoError(t, err)
 
 		istek := httptest.NewRequest(http.MethodPost, "/store/v1/carts", bytes.NewReader(govde))
@@ -124,11 +118,11 @@ func TestIdempotencyAyniAnahtarFarkliGovdeyiReddeder(t *testing.T) {
 	}
 
 	ilk := httptest.NewRecorder()
-	testRouter.ServeHTTP(ilk, istekYap(vergiliBolgeID, vergiliParaBirimi))
+	testRouter.ServeHTTP(ilk, istekYap(vergiliBolgeID))
 	require.Equal(t, http.StatusCreated, ilk.Code, "gövde: %s", ilk.Body.String())
 
 	farkli := httptest.NewRecorder()
-	testRouter.ServeHTTP(farkli, istekYap(vergisizBolgeID, vergisizParaBirimi))
+	testRouter.ServeHTTP(farkli, istekYap(vergisizBolgeID))
 	assert.Equal(t, http.StatusConflict, farkli.Code,
 		"aynı anahtar farklı gövdeyle reddedilmeli; gövde: %s", farkli.Body.String())
 }

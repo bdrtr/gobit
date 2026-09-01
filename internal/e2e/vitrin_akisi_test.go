@@ -208,6 +208,88 @@ func TestVitrinIstemciFiyatiniReddeder(t *testing.T) {
 		"reddedilen isteklerin hiçbiri sepete satır yazmamalı")
 }
 
+// TestVitrinIstemciParaBiriminiReddeder sepet AÇMA ucunun para birimi kabul
+// etmediğini gerçek uçta kanıtlar.
+//
+// Sınıf [TestVitrinIstemciFiyatiniReddeder] ile aynıdır: istemcinin
+// belirlediği bir değer sunucunun fiyat kararına giriyordu. İstemci tutar
+// uyduramıyordu ama HANGİ FİYAT LİSTESİNİN uygulanacağını seçebiliyordu — ve
+// ayrışma reddedilmiyordu: sepet, bölgesi TRY olsa bile istemcinin dediği para
+// biriminde açılıyor, satır da o listeden fiyatlanıyordu.
+//
+// İddia iki katmanlıdır: istek reddedilmeli VE hiçbir sepet yazılmamalı. Alan
+// sessizce yok sayılsaydı istemci gönderdiğini sanır, sunucu başka bir para
+// birimi yazardı.
+func TestVitrinIstemciParaBiriminiReddeder(t *testing.T) {
+	ctx := t.Context()
+
+	oncekiSayi := sepetSayisi(ctx, t)
+
+	// Gövdedeki para birimi bölgeninkinden BAŞKA: eskiden tam da bu istek,
+	// TRY bölgesinde EUR fiyat listesiyle bir sepet açıyordu.
+	red := vitrinIstegi(t, http.MethodPost, "/store/v1/carts", fmt.Sprintf(
+		`{"region_id":%q,"currency_code":%q}`, vergiliBolgeID, vergisizParaBirimi))
+
+	assert.Equal(t, http.StatusUnprocessableEntity, red.Code,
+		"vitrin para birimi kabul etmemeli; gövde: %s", red.Body.String())
+	assert.Equal(t, oncekiSayi, sepetSayisi(ctx, t),
+		"reddedilen istek sepet YAZMAMALI; yazsaydı istemci gönderdiği para "+
+			"biriminin uygulandığını sanırdı")
+}
+
+// TestVitrinParaBirimiBolgedenTuretilir sepetin para biriminin BÖLGEDEN
+// geldiğini ve fiyatın gerçekten o para biriminin listesinden seçildiğini
+// kanıtlar.
+//
+// İki bölge FARKLI para birimi taşır ve tek bir varyant ikisinde de
+// fiyatlıdır. Yalnızca sepetin currency_code alanına bakmak yetmezdi: alan
+// doğru yazılıp fiyat başka bir listeden okunsaydı iddia yine geçerdi. Asıl
+// kanıt, aynı varyantın iki sepette FARKLI birim fiyat almasıdır — para birimi
+// sepetin bir etiketi değil, fiyatın SEÇİCİSİDİR.
+func TestVitrinParaBirimiBolgedenTuretilir(t *testing.T) {
+	ctx := t.Context()
+
+	// Tutarlar bilinçli olarak birbirine yakın DEĞİLDİR: bir kayma olsaydı
+	// hangi listeden okunduğu tek bir sayıdan anlaşılsın.
+	const (
+		vergiliBolgeFiyat  int64 = 30_000
+		vergisizBolgeFiyat int64 = 1_100
+	)
+
+	musteriID, eposta := yeniMusteri(ctx, t)
+	varyantID := yeniVaryant(ctx, t, "E2E Para Birimi Ürünü", map[string]int64{
+		vergiliParaBirimi:  vergiliBolgeFiyat,
+		vergisizParaBirimi: vergisizBolgeFiyat,
+	})
+
+	for _, senaryo := range []struct {
+		ad         string
+		bolgeID    string
+		paraBirimi string
+		fiyat      int64
+	}{
+		{"vergili bölge", vergiliBolgeID, vergiliParaBirimi, vergiliBolgeFiyat},
+		{"vergisiz bölge", vergisizBolgeID, vergisizParaBirimi, vergisizBolgeFiyat},
+	} {
+		t.Run(senaryo.ad, func(t *testing.T) {
+			sepetID := vitrinBolgeSepetiAc(t, senaryo.bolgeID, musteriID, eposta)
+
+			oku := vitrinIstegi(t, http.MethodGet, "/store/v1/carts/"+sepetID, "")
+			require.Equal(t, http.StatusOK, oku.Code, "gövde: %s", oku.Body.String())
+			assert.Equal(t, senaryo.paraBirimi, vitrinVeri(t, oku)["currency_code"],
+				"sepetin para birimi BÖLGENİNKİ olmalı; istemci hiçbir kod göndermedi")
+
+			ekle := vitrinIstegi(t, http.MethodPost, "/store/v1/carts/"+sepetID+"/line-items",
+				fmt.Sprintf(`{"variant_id":%q,"quantity":1}`, varyantID))
+			require.Equal(t, http.StatusCreated, ekle.Code, "gövde: %s", ekle.Body.String())
+
+			assert.InDelta(t, float64(senaryo.fiyat), vitrinVeri(t, ekle)["unit_price"], 0,
+				"birim fiyat sepetin para birimindeki listeden seçilmeli; yanlış "+
+					"liste okunsaydı müşteri başka bir ülkenin fiyatını öderdi")
+		})
+	}
+}
+
 // TestVitrinOnaylanmayanToplamdaSiparisVermez müşterinin gördüğü toplam ile
 // sunucunun hesapladığı toplam ayrıştığında HİÇBİR yan etki olmadığını
 // kanıtlar.
@@ -338,13 +420,25 @@ func TestVitrinB2BLimitReddiSebebiniBildirir(t *testing.T) {
 			"düzeldiğinde sepetini yeniden kurmak zorunda kalırdı")
 }
 
-// vitrinSepetiAc mağaza ucundan bir sepet açar ve kimliğini döner.
+// vitrinSepetiAc mağaza ucundan VERGİLİ bölgede bir sepet açar ve kimliğini
+// döner.
 func vitrinSepetiAc(t *testing.T, musteriID, eposta string) string {
 	t.Helper()
 
+	return vitrinBolgeSepetiAc(t, vergiliBolgeID, musteriID, eposta)
+}
+
+// vitrinBolgeSepetiAc mağaza ucundan VERİLEN bölgede bir sepet açar ve
+// kimliğini döner.
+//
+// Gövdede para birimi YOKTUR ve olamaz: sunucu onu bölgeden türetir. Bölgenin
+// parametre olması tam da bunu görünür kılmak içindir — sepetin para birimini
+// değiştirmenin tek yolu BAŞKA bir bölge seçmektir.
+func vitrinBolgeSepetiAc(t *testing.T, bolgeID, musteriID, eposta string) string {
+	t.Helper()
+
 	kayit := vitrinIstegi(t, http.MethodPost, "/store/v1/carts", fmt.Sprintf(
-		`{"region_id":%q,"currency_code":%q,"customer_id":%q,"email":%q}`,
-		vergiliBolgeID, vergiliParaBirimi, musteriID, eposta))
+		`{"region_id":%q,"customer_id":%q,"email":%q}`, bolgeID, musteriID, eposta))
 	require.Equal(t, http.StatusCreated, kayit.Code, "sepet açılamadı; gövde: %s", kayit.Body.String())
 
 	return sepetKimliginiOku(t, kayit)

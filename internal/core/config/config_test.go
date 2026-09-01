@@ -25,7 +25,7 @@ var envKeys = []string{
 	"OTEL_TRACES_SAMPLER_ARG", "METRIC_EXPORT_INTERVAL",
 	"RATE_LIMIT_PER_MINUTE", "TRUSTED_PROXY_HOPS", "IDEMPOTENCY_TTL",
 	"LOG_LEVEL", "LOG_FORMAT", "SHUTDOWN_TIMEOUT", "READ_HEADER_TIMEOUT",
-	"READ_TIMEOUT", "WRITE_TIMEOUT", "IDLE_TIMEOUT", "EVENT_BUS",
+	"READ_TIMEOUT", "WRITE_TIMEOUT", "IDLE_TIMEOUT", "EVENT_BUS", "EVENT_BUS_CONSUMER",
 	"JWT_SECRET", "JWT_TTL",
 	"ADMIN_BOOTSTRAP_EMAIL", "ADMIN_BOOTSTRAP_PASSWORD",
 	"GUARD_BACKEND", "REDIS_KEY_PREFIX", "NOTIFICATION_PROVIDER",
@@ -860,27 +860,44 @@ func TestDosyaAyarlariBicimDogrular(t *testing.T) {
 	}
 }
 
-// TestGoreliDosyaKokuPaylasilanOrtamdaTasinabilirDegil uyarı kapısının hangi
+// TestKaliciOlmayanDosyaKokuUyariKapisiniAcar uyarı kapısının hangi
 // kurulumlarda açıldığını sabitler.
 //
-// Kural AÇILIŞI DURDURMAZ (gerekçe config.LocalFileRootIsPortable godoc'unda),
+// Kural AÇILIŞI DURDURMAZ (gerekçe config.LocalFileRootIsDurable godoc'unda),
 // bu yüzden tek koruması bu testtir: kapı sessizce kapanırsa uyarı hiç
-// yazılmaz ve göreli kökle çıkılan bir üretim dağıtımı hiçbir iz bırakmaz.
-func TestGoreliDosyaKokuPaylasilanOrtamdaTasinabilirDegil(t *testing.T) {
+// yazılmaz ve kalıcı olmayan bir kökle çıkılan üretim dağıtımı hiçbir iz
+// bırakmaz.
+//
+// GEÇİCİ kök vakaları burada ayrıca sayılıyor çünkü ölçüt bir kez yalnızca
+// filepath.IsAbs'e bakıyordu: "/tmp/gobit-uploads" mutlaktır, o ölçütü geçer
+// ve yine de kap her yeniden başladığında boşalır — yani config'in kendi
+// varsayılan gerekçesinde REDDETTİĞİ sessiz veri kaybı, uyarı hiç yazılmadan
+// geri gelirdi.
+func TestKaliciOlmayanDosyaKokuUyariKapisiniAcar(t *testing.T) {
 	base := gecerliConfig(t)
 
 	tests := map[string]struct {
-		ortam       string
-		saglayici   string
-		kok         string
-		tasinabilir bool
+		ortam     string
+		saglayici string
+		kok       string
+		kalici    bool
 	}{
-		"geliştirme göreli kök": {"development", "local", "./data/uploads", false},
-		"üretim göreli kök":     {"production", "local", "./data/uploads", false},
-		"üretim mutlak kök":     {"production", "local", "/var/lib/gobit/uploads", true},
-		"staging göreli kök":    {"staging", "local", "data/uploads", false},
-		"üretim eklenti deposu": {"production", "s3", "./data/uploads", true},
-		"geliştirme mutlak kök": {"development", "local", "/tmp/gobit-uploads", true},
+		"geliştirme göreli kök":     {"development", "local", "./data/uploads", false},
+		"üretim göreli kök":         {"production", "local", "./data/uploads", false},
+		"üretim mutlak kök":         {"production", "local", "/var/lib/gobit/uploads", true},
+		"staging göreli kök":        {"staging", "local", "data/uploads", false},
+		"üretim eklenti deposu":     {"production", "s3", "./data/uploads", true},
+		"üretim geçici kök":         {"production", "local", "/tmp/gobit-uploads", false},
+		"üretim geçici kökün kendi": {"production", "local", "/tmp", false},
+		"üretim var/tmp":            {"production", "local", "/var/tmp/gobit", false},
+		"üretim dev/shm":            {"production", "local", "/dev/shm/gobit", false},
+		// Önek benzerliği yetmez: "/tmpfoo" geçici dizinin ALTINDA değildir ve
+		// sade bir strings.HasPrefix karşılaştırması onu haksız yere kalıcı
+		// olmayan sayardı.
+		"üretim benzer adlı kök": {"production", "local", "/tmpfoo/uploads", true},
+		// Eklenti deposu seçiliyken kök hiç kullanılmaz; geçici bir yol bile
+		// uyarı üretmemeli, yoksa uyarı hiçbir şey korumadan her açılışta basar.
+		"üretim eklenti deposu geçici kök": {"production", "s3", "/tmp/gobit", true},
 	}
 
 	for ad, tt := range tests {
@@ -890,9 +907,103 @@ func TestGoreliDosyaKokuPaylasilanOrtamdaTasinabilirDegil(t *testing.T) {
 			cfg.FileProvider = tt.saglayici
 			cfg.FileRoot = tt.kok
 
-			assert.Equal(t, tt.tasinabilir, cfg.LocalFileRootIsPortable())
+			assert.Equal(t, tt.kalici, cfg.LocalFileRootIsDurable())
 		})
 	}
+}
+
+// TestHizSiniriAnahtariProxyArkasindaIstemciyeDusmez uyarı kapısının hangi
+// kurulumlarda açıldığını sabitler.
+//
+// TRUSTED_PROXY_HOPS=0 iken X-Forwarded-For hiç okunmaz ve hız sınırı anahtarı
+// bağlantının adresine düşer; ters proxy arkasında o adres HER İSTEKTE
+// proxy'nindir, yani kota müşteri başına değil tüm mağaza için tek bir kova
+// olur. Açılış DURMAZ (gerekçe config.RateLimitKeyIsPerClient godoc'unda), bu
+// yüzden kapının tek koruması bu testtir.
+func TestHizSiniriAnahtariProxyArkasindaIstemciyeDusmez(t *testing.T) {
+	base := gecerliConfig(t)
+
+	tests := map[string]struct {
+		limit         int
+		atlama        int
+		istemciBasina bool
+	}{
+		"sınır açık, atlama yok":      {600, 0, false},
+		"sınır açık, tek atlama":      {600, 1, true},
+		"sınır açık, iki atlama":      {600, 2, true},
+		"sınır kapalı, atlama yok":    {0, 0, true},
+		"sınır negatif, atlama yok":   {-1, 0, true},
+		"sınır kapalı, atlama verili": {0, 2, true},
+	}
+
+	for ad, tt := range tests {
+		t.Run(ad, func(t *testing.T) {
+			cfg := base
+			cfg.RateLimitPerMinute = tt.limit
+			cfg.TrustedProxyHops = tt.atlama
+
+			assert.Equal(t, tt.istemciBasina, cfg.RateLimitKeyIsPerClient())
+		})
+	}
+}
+
+// TestOlayVeriYoluTuketiciAdiBicimDogrular tüketici adının biçim kapısını
+// sabitler.
+//
+// Boş değer GEÇERLİDİR ve "adı sen üret" demektir; baştaki/sondaki boşluk ise
+// reddedilir. Redis " gobit-1" gibi bir adı sorunsuz kabul eder, yani yazım
+// hatası hiçbir hata üretmez — yalnızca süreç bir sonraki açılışta kendi
+// bekleyen listesini bulamaz ve o mesajlar kimseye teslim edilmez.
+func TestOlayVeriYoluTuketiciAdiBicimDogrular(t *testing.T) {
+	base := gecerliConfig(t)
+
+	tests := map[string]struct {
+		ad        string
+		reddedili bool
+	}{
+		"boş (otomatik ad)": {ad: ""},
+		"pod adı":           {ad: "gobit-0"},
+		"nokta içeren ad":   {ad: "gobit.eu.0"},
+		"baştaki boşluk":    {ad: " gobit-0", reddedili: true},
+		"sondaki boşluk":    {ad: "gobit-0 ", reddedili: true},
+		"sondaki satır":     {ad: "gobit-0\n", reddedili: true},
+	}
+
+	for ad, tt := range tests {
+		t.Run(ad, func(t *testing.T) {
+			cfg := base
+			cfg.EventBusConsumer = tt.ad
+
+			err := cfg.Validate()
+
+			if tt.reddedili {
+				require.Error(t, err, "bozuk tüketici adı sessizce kabul edilmemeli")
+				assert.Contains(t, err.Error(), "EVENT_BUS_CONSUMER",
+					"hata mesajı hangi değişkenin yanlış olduğunu söylemeli")
+
+				return
+			}
+
+			require.NoError(t, err)
+		})
+	}
+}
+
+// TestOlayVeriYoluTuketiciAdiVarsayilaniBostur ayarın varsayılanının BOŞ
+// olduğunu sabitler.
+//
+// Boş, "adı süreç başına sen üret" demektir ve tek doğru varsayılan budur:
+// sabit bir varsayılan (örn. "gobit") aynı gruptaki tüm süreçlere AYNI adı
+// verir, yani her açılışta birbirlerinin işlemekte olduğu mesajları da alırlar
+// ve aynı olay iki kez işlenir.
+func TestOlayVeriYoluTuketiciAdiVarsayilaniBostur(t *testing.T) {
+	clearEnv(t)
+
+	cfg, err := config.Load()
+
+	require.NoError(t, err)
+	assert.Empty(t, cfg.EventBusConsumer,
+		"varsayılan bir tüketici adı, tüm örneklere aynı adı vermek demektir")
 }
 
 // TestGraphQLSinirlariVarsayilanDolu ayar verilmemiş bir kurulumun GraphQL

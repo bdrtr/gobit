@@ -39,10 +39,18 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/bdrtr/gobit/internal/core/errors"
+	corehttp "github.com/bdrtr/gobit/internal/core/http"
 )
 
 // Version üretilen belgenin OpenAPI sürümüdür.
 const Version = "3.1.0"
+
+// codeDocumentUnavailable belgenin üretilemediğini bildirir.
+//
+// İstemciye giden TEK ayrıntı budur: üretim hatasının metni çakışan tiplerin
+// PAKET YOLLARINI taşır (bkz. [Doc.cakismaBildir]) ve bu uç kimliksizdir.
+// Sebebin tamamı loga yazılır (bkz. corehttp.WriteError).
+const codeDocumentUnavailable = "openapi_document_unavailable"
 
 // adminPrefix admin API'sinin yol önekidir.
 const adminPrefix = "/admin/v1"
@@ -125,15 +133,57 @@ type Doc struct {
 	semaSahipleri map[string]reflect.Type
 	// semaCakismalari aynı bileşen adını isteyen FARKLI tiplerin raporudur.
 	semaCakismalari []string
-	// mu gorulen alanını korur.
+	// anlatimSurumu anlatım kayıtlarının kaçıncı sürümde olduğudur.
 	//
-	// Şema HER İSTEKTE yeniden üretilir ([Doc.Handler]) ve /openapi.json'a eş
-	// zamanlı iki istek gelmesi olağandır; kilitsiz bir yazma, iki Build'in
-	// aynı alana aynı anda yazması demekti.
+	// [Doc.Describe] ve bileşen kaydı ([Doc.structSemasiVeyaRef]) onu artırır;
+	// [Doc.Handler] önbelleğinin GEÇERLİLİK anahtarına girer. Anlatım API'si
+	// kurulum içindir ve TEK İPLİKLİDİR (modüller Describe'ı bileşim kökünde,
+	// sunucu dinlemeye başlamadan çağırır); üretim tarafı ise eş zamanlıdır ve
+	// bu alanı yalnızca [Doc.mu] altında OKUR.
+	anlatimSurumu uint64
+	// mu belge ÜRETİMİNİ, gorulen alanını ve önbelleği korur.
+	//
+	// Üretim baştan sona kilit altındadır çünkü okuma gibi görünse de
+	// DEĞİŞTİRİR: [Doc.islem] anlatılan işlemin Responses haritasına ortak
+	// hata yanıtlarını yazar. /openapi.json'a eş zamanlı iki istek gelmesi
+	// olağandır ve kilitsiz iki üretim aynı haritaya aynı anda yazardı — Go'da
+	// bu, kurtarılamayan bir çalışma zamanı hatasıdır.
 	mu sync.Mutex
-	// gorulen son Build sırasında bulunan route anahtarlarıdır;
+	// gorulen son üretimde bulunan route anahtarlarıdır;
 	// UnmatchedDescriptions onu okur.
 	gorulen map[string]struct{}
+	// onbellek son üretilen belgenin KODLANMIŞ hâlidir (bkz. [Doc.Handler]).
+	onbellek *onbellekGirdisi
+}
+
+// belgeKimligi belgenin üretildiği GİRDİLERİ tek bir karşılaştırılabilir
+// değere indirger.
+//
+// Önbelleğin geçerliliği bir varsayıma ("ağaç artık donmuştur") değil bu
+// değere bağlanır; girdilerden biri değişirse belge yeniden üretilir.
+type belgeKimligi struct {
+	// routeKarmasi ağaçtaki "METOD YOL" çiftlerinin karmasıdır.
+	routeKarmasi uint64
+	// routeSayisi ağaçtaki route sayısıdır.
+	//
+	// Karma SIRADAN BAĞIMSIZ birleştirildiği için (XOR) tek başına iki farklı
+	// kümeyi aynı değere indirebilir; sayı, bu ihtimali pratikte kapatır.
+	routeSayisi int
+	// anlatimSurumu belgenin okunduğu andaki [Doc.anlatimSurumu] değeridir.
+	anlatimSurumu uint64
+}
+
+// onbellekGirdisi üretilmiş belgeyi ve hangi girdiden üretildiğini tutar.
+type onbellekGirdisi struct {
+	// kimlik gövdenin üretildiği girdilerin kimliğidir.
+	kimlik belgeKimligi
+	// govde kodlanmış belgedir; üretim başarısızsa nil'dir.
+	govde []byte
+	// hata üretim başarısızsa saklanan hatadır.
+	//
+	// Hata da ÖNBELLEKLENİR: aynı girdiden aynı hata çıkar ve her istekte
+	// yeniden üretmek, arızalı bir belgeyi sağlamından PAHALI kılardı.
+	hata error
 }
 
 // New boş bir belge kurar.
@@ -173,12 +223,26 @@ type Describer interface {
 // "GET", "/store/v1/products/{id}"). Eşleşmeyen bir kayıt sessizce yok
 // SAYILMAZ — [Doc.Build] onu [Doc.UnmatchedDescriptions] ile raporlar; aksi
 // hâlde yolu değişmiş bir route'un açıklaması sessizce kaybolurdu.
+//
+// Kayıt, üretilmiş belgeyi de GEÇERSİZ kılar (bkz. [Doc.Handler]): kurulumdan
+// sonra anlatılan bir uç, aksi hâlde önbellekteki eski belgede görünmezdi.
 func (d *Doc) Describe(method, pattern string, op Operation) {
 	d.zenginlestirme[anahtar(method, pattern)] = op
+	d.anlatimSurumu++
 }
 
 // Build router'ı dolaşarak OpenAPI belgesini üretir.
+//
+// Üretim baştan sona kilit altındadır; gerekçesi [Doc.mu] alanındadır.
 func (d *Doc) Build(r chi.Routes) (map[string]any, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	return d.uret(r)
+}
+
+// uret belgeyi üretir ve [Doc.mu] kilidinin TUTULDUĞUNU varsayar.
+func (d *Doc) uret(r chi.Routes) (map[string]any, error) {
 	yollar := map[string]any{}
 	gorulen := map[string]struct{}{}
 
@@ -208,9 +272,7 @@ func (d *Doc) Build(r chi.Routes) (map[string]any, error) {
 		return nil, err
 	}
 
-	d.mu.Lock()
 	d.gorulen = gorulen
-	d.mu.Unlock()
 
 	// Çakışma kontrolü YÜRÜYÜŞTEN SONRADIR: eşleşmeyen açıklamalar
 	// ([Doc.UnmatchedDescriptions]) çakışmadan bağımsız bir arızadır ve
@@ -551,26 +613,164 @@ func (d *Doc) semaBilesenleri() map[string]any {
 
 // Handler üretilen şemayı JSON olarak sunan handler'ı döner.
 //
-// Şema her istekte YENİDEN üretilir. Maliyeti route sayısıyla doğrusaldır ve
-// bu uç nadiren çağrılır; önbelleğe almak, çalışırken route ekleyen bir
-// eklentinin şemada hiç görünmemesi riskini getirirdi.
+// # Neden önbellek
+//
+// Belge üretimi ucuz DEĞİLDİR: router ağacının tamamı gezilir, her route için
+// işlem nesnesi (parametreler, ortak yanıtlar, güvenlik) kurulur, bileşen
+// şemaları kopyalanır ve sonuç JSON'a kodlanır. Bunu her istekte yapmak,
+// küçük bir GET'i sürecin en pahalı işine çevirir — üstelik bu uç, kimlik ve
+// kota kapılarının DIŞINDA mount edilebilen bir uçtur.
+//
+// # Neden "açılışta bir kez" değil
+//
+// Ağacın ne zaman DONDUĞU çekirdeğin bilebileceği bir şey değildir: route'ları
+// modüller bootstrap sırasında, eklentiler ise ondan sonra bağlar
+// (bkz. plugin paketindeki Registry.MountRoutes) ve bu handler'ın hangi sırada
+// kaydedildiğine dair bir garanti YOKTUR. Açılışta bir kez üretmek, handler
+// kaydedildikten sonra bağlanan her route'u belgeden SESSİZCE düşürürdü —
+// belgenin varlık sebebi tam da bunun olmamasıdır.
+//
+// Bu yüzden önbellek bir varsayıma değil, belgenin GİRDİLERİNE bağlanır: her
+// istek ağacın kimliğini çıkarır (yalnızca gezme; işlem kurulmaz, kodlama
+// yapılmaz) ve anlatım sürümüyle birleştirip önbellektekiyle karşılaştırır.
+// Girdi aynıysa kodlanmış gövde olduğu gibi yazılır. Kalan maliyet ağacın
+// gezilmesidir ve üretimin yanında küçüktür; karşılığında önbellek, çalışırken
+// route ekleyen bir kurulumda da doğru kalır.
 func (d *Doc) Handler(r chi.Routes) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
-		belge, err := d.Build(r)
+		govde, err := d.kodlanmisBelge(r)
 		if err != nil {
-			http.Error(w, "openapi şeması üretilemedi", http.StatusInternalServerError)
+			// Hata istemciye HAM verilmez: metni çakışan tiplerin PAKET
+			// YOLLARINI taşır ve bu uç kimliksiz çağrılabilir. KindInternal'a
+			// sarmak çekirdeğin kararını uygular — gövde ortak hata zarfıdır,
+			// mesaj maskelenir, gerçek sebep istek kimliğiyle loglanır.
+			corehttp.WriteError(req.Context(), w,
+				errors.Wrap(err, errors.KindInternal, codeDocumentUnavailable,
+					"openapi belgesi üretilemedi"))
 
 			return
 		}
 
-		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		// Başlık ve durum kodu çekirdeğin kapısından yazılır: nil gövde
+		// WriteJSON'da "yalnızca başlık ve status" demektir, yani Content-Type
+		// kararı burada İKİNCİ kez tanımlanmaz.
+		corehttp.WriteJSON(req.Context(), w, http.StatusOK, nil)
 
-		enc := json.NewEncoder(w)
-		enc.SetIndent("", "  ")
-
-		if err := enc.Encode(belge); err != nil {
-			// Yanıt başlığı çoktan yazıldı; yapılabilecek tek şey loglamaktır.
-			_ = err
+		// Gövde doğrudan yazılır çünkü ZATEN KODLANMIŞTIR. Çekirdeğin
+		// yazıcısına verilseydi (json.RawMessage ile) belge her istekte bir
+		// kez daha taranıp kopyalanırdı; ölçülen bedel, önbelleğin kazandırdığı
+		// sürenin çoğunu geri alacak kadar büyüktür.
+		if _, err := w.Write(govde); err != nil {
+			// Durum kodu çoktan gönderildi (istemci bağlantıyı kapatmış
+			// olabilir); yapılabilecek tek şey kaydetmektir — corehttp.WriteJSON
+			// de aynısını yapar.
+			corehttp.LoggerFromContext(req.Context()).ErrorContext(req.Context(),
+				"openapi belgesi yazılamadı",
+				"error", err,
+				"request_id", corehttp.RequestIDFromContext(req.Context()),
+			)
 		}
 	}
+}
+
+// kodlanmisBelge belgeyi önbellekten döner, girdiler değiştiyse yeniden üretir.
+func (d *Doc) kodlanmisBelge(r chi.Routes) ([]byte, error) {
+	// Ağaç kilidin DIŞINDA gezilir: gezme belgeye dokunmaz ve kilit, üretimin
+	// gerçekten gerektiği ana saklanır.
+	kimlik, err := routeKimligi(r)
+	if err != nil {
+		return nil, err
+	}
+
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	kimlik.anlatimSurumu = d.anlatimSurumu
+
+	if d.onbellek != nil && d.onbellek.kimlik == kimlik {
+		return d.onbellek.govde, d.onbellek.hata
+	}
+
+	govde, uretimHatasi := d.uretVeKodla(r)
+	d.onbellek = &onbellekGirdisi{kimlik: kimlik, govde: govde, hata: uretimHatasi}
+
+	return govde, uretimHatasi
+}
+
+// uretVeKodla belgeyi üretip JSON'a kodlar; kilidin TUTULDUĞUNU varsayar.
+//
+// Gövde GİRİNTİLİ ve satır sonuyla biter. İkisi de önbellekten önceki
+// davranışla aynıdır ve aynı kalması bilinçlidir: belge yayımlanan bir
+// SÖZLEŞMEDİR, kaydedilmiş çıktılarla karşılaştırılır (make openapi-schema) ve
+// bir hızlandırmanın onu bayt düzeyinde değiştirmesi, değişikliği gerçek bir
+// şema değişikliğinden ayırt edilemez kılardı. Girintinin bedeli de artık
+// istek başına değil, üretim başına ödenir.
+func (d *Doc) uretVeKodla(r chi.Routes) ([]byte, error) {
+	belge, err := d.uret(r)
+	if err != nil {
+		return nil, err
+	}
+
+	govde, err := json.MarshalIndent(belge, "", "  ")
+	if err != nil {
+		return nil, errors.Wrap(err, errors.KindInternal, codeDocumentUnavailable,
+			"openapi belgesi kodlanamadı")
+	}
+
+	// MarshalIndent satır sonu koymaz; json.Encoder koyardı.
+	return append(govde, '\n'), nil
+}
+
+// routeKimligi router ağacının O ANDAKİ içeriğini kimliğe indirger.
+//
+// Karma SIRADAN BAĞIMSIZ birleştirilir (XOR). chi'nin yürüyüş sırası bugün
+// deterministiktir ama ona bağlanmanın bedeli sessizdir: sıra bir gün
+// değişirse kimlik her istekte farklı çıkar, önbellek hiç tutmaz ve çıktı yine
+// doğru olduğu için kimse fark etmez.
+func routeKimligi(r chi.Routes) (belgeKimligi, error) {
+	var kimlik belgeKimligi
+
+	err := chi.Walk(r, func(
+		method, route string, _ http.Handler, _ ...func(http.Handler) http.Handler,
+	) error {
+		karma := karmaEkle(karmaEkle(karmaBaslangici, method), route)
+
+		kimlik.routeKarmasi ^= karma
+		kimlik.routeSayisi++
+
+		return nil
+	})
+	if err != nil {
+		return belgeKimligi{}, errors.Wrap(err, errors.KindInternal, codeDocumentUnavailable,
+			"route ağacı gezilemedi")
+	}
+
+	return kimlik, nil
+}
+
+// FNV-1a 64-bit karmasının sabitleri.
+//
+// Karma elle yazılır çünkü hash/fnv'nin arayüzü her route için bir nesne
+// AYIRIR; kimlik her istekte hesaplandığı için ayırma sayısı doğrudan route
+// sayısıyla çarpılırdı. Kriptografik güç aranmıyor: değer yalnızca "girdi
+// değişti mi" sorusuna cevap verir ve çakışma hâlinde bedel, belgenin bir kez
+// fazladan üretilmemesidir — bu yüzden sayı ([belgeKimligi.routeSayisi])
+// karmayla BİRLİKTE karşılaştırılır.
+const (
+	karmaBaslangici uint64 = 14695981039346656037
+	karmaCarpani    uint64 = 1099511628211
+)
+
+// karmaEkle bir dizeyi mevcut karmaya karıştırır.
+func karmaEkle(karma uint64, s string) uint64 {
+	for i := range len(s) {
+		karma ^= uint64(s[i])
+		karma *= karmaCarpani
+	}
+
+	// Ayraç: "GET" + "/a" ile "GE" + "T/a" aynı karmayı vermemelidir.
+	karma ^= uint64(' ')
+	karma *= karmaCarpani
+
+	return karma
 }

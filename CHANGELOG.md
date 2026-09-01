@@ -20,6 +20,19 @@ Sabitlenme `1.0.0` ile olur.
   reddeder). Sessizce yok saymak seçilmedi: istemci gönderdiğini sanır, sunucu
   başka bir fiyat yazardı. Fiyat `pricing`'den, başlık katalogdan gelir; gerekçe
   aşağıda ("Fiyat yetkisi istemciden alındı").
+- **`POST /store/v1/carts` gövdesinden `currency_code` KALDIRILDI.** Alanı
+  gönderen istek artık `422` alır (gövde tanınmayan alanı reddeder). Sepetin
+  para birimini sunucu, sepetin BÖLGESİNDEN türetir. Sessizce yok saymak yine
+  seçilmedi: istemci gönderdiğini sanır, sunucu başka bir para birimi yazar ve
+  satır beklenenden başka bir fiyat listesinden fiyatlanırdı. Gerekçe aşağıda
+  ("Para birimi yetkisi istemciden alındı").
+
+- **`POST /store/v1/carts` bilinmeyen bir `region_id` ile artık `404` döner.**
+  Eskiden bölgenin varlığı hiç denetlenmiyordu ve uydurma bir kimlikle sepet
+  açılabiliyordu; para birimi bölgeden okunduğu için o kapı da kapandı. Boş ya
+  da biçimsiz `region_id` yine `422`'dir — ama hata artık `region` modülünün
+  kodunu taşır (`region_invalid_input`), `cart`'ınkini değil.
+
 - **`PATCH /store/v1/carts/{id}/line-items/{line_item_id}` sıfır adette artık
   `422` değil `204` döner** ve satırı kaldırır. Sıfır adet eskiden geçersizdi,
   yani hiçbir istemci ona bağımlı olamaz; her sepet arayüzünde adet seçiciyi
@@ -97,6 +110,45 @@ Sabitlenme `1.0.0` ile olur.
   eklenmediği, tamamlama ucunun gerçekten sipariş ürettiği ve onaylanmayan
   toplamda hiçbir yan etki bırakmadığı (e2e, gerçek modüller ve gerçek
   Postgres üzerinde, tümüyle HTTP'den).
+
+- **Para birimi yetkisi istemciden alındı.** `POST /store/v1/carts` gövdesi
+  `currency_code` alıyor ve cart servisi onu OLDUĞU GİBİ yazıyordu; yalnızca
+  kodun BİÇİMİ doğrulanıyor, bölgeninkiyle karşılaştırılmıyordu. Yani ayrışma
+  reddedilmiyordu: TRY bölgesinde açılan bir sepete `EUR` yazan istemci, o
+  sepeti gerçekten EUR olarak alıyordu.
+
+  Sınıf `unit_price` ile AYNIDIR ve patlama yarıçapı yalnızca daha küçüktür:
+  istemci tutar uyduramıyordu ama HANGİ FİYAT LİSTESİNİN uygulanacağını
+  seçebiliyordu. Para birimi sepetin bir etiketi değil, fiyatın SEÇİCİSİDİR —
+  satır akışı birim fiyatı varyantın fiyat kümesinden "sepetin para biriminde"
+  okur. Küçük yarıçap kusuru küçültür, meşrulaştırmaz.
+
+  Para birimi bölgenin verisidir: `region` şemasında bölge başına TEK bir
+  sütundur (`region.currency_code`, `currency` tablosuna FK). Bir bölgenin iki
+  para birimi olamayacağı için sepetin para birimi bir seçim değil bir
+  TÜRETMEDİR ve artık handler onu bölgeden okur. Kalıp fiyattakinin aynısıdır:
+  `cart`, `region`'ı import etmez; kendi paketinde dar bir arayüz tanımlar
+  (`api.RegionCurrencyReader`) ve somut servisi container'dan `region.service`
+  adıyla çözer (ADR 0001/0006).
+
+  **Bu yol da KAPALI arızalanır**: bölge yüzeyi çözülemezse sepet HİÇ AÇILMAZ.
+  Bir varsayılana düşmek — mağazanın ilk para birimi ya da istemcinin dediği —
+  tam olarak kapatılan kapıyı geri açardı. Gerekçe `regionCurrency` godoc'una
+  yazıldı.
+
+  **Yönetim yüzeyinde aynı alan MEŞRUDUR ve kaldırılmadı.** `POST
+  /admin/v1/regions` gövdesindeki `currency_code` bölgeyi TANIMLAR: operatör
+  orada bir kopya değil ASLI yazar ve kopyalanacak bir kaynak yoktur. Ölçüt
+  "alan gövdede mi" değil, "bu değer çağıranın kendi verisi mi" sorusudur.
+  `cart`'ın kendi `/admin/v1` yüzeyinde soru hiç doğmaz: orası yalnızca okur ve
+  sepet açan bir yönetim ucu yoktur.
+
+  Yeni testler: alanın reddedildiği ve reddedilen isteğin sepet YAZMADIĞI
+  (birim + e2e), para biriminin gerçekten bölgeden geldiği, bölge yüzeyi
+  yokken sepetin açılmadığı, bilinmeyen bölgenin sepet açtırmadığı ve
+  container adının sözleşme olduğu (birim). Asıl kanıt e2e'dedir: farklı para
+  birimli İKİ bölgede aynı varyant, sepet başına FARKLI birim fiyat alır —
+  para biriminin fiyatı seçtiği ancak bu iddiada görünür.
 
 
 - **B2B modülü: şirket, çalışan ve harcama limiti.** Alıcının bir birey değil,
@@ -276,6 +328,109 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltildi
 
+İşletmecinin kurulumunu **sessizce** bozan ayarlar kapatıldı. Ortak yanları,
+hiçbirinin hata üretmemesi ve hepsinin ancak üretimde — sınır aşıldığında, ilk
+giriş denemesinde ya da görseller kaybolduğunda — görünmesiydi:
+
+- **Olay veri yolu, aynı Redis'i paylaşan iki kurulum arasında AYRILMIYORDU.**
+  `cmd/server` veri yolunu sıfır değerli bir `eventbus.RedisConfig` ile
+  kuruyordu: stream öneki de consumer group da paketin varsayılanına düşüyor,
+  yani `REDIS_KEY_PREFIX` olay tarafına HİÇ ulaşmıyordu. Koruma anahtarları
+  ayrılıyor, olaylar ayrılmıyordu.
+
+  Grubun paylaşılması ikisinin de kötüsüdür: consumer group'un tanımı gereği
+  bir mesajı gruptaki tüketicilerden yalnızca **biri** alır, yani üretimin
+  `order.placed` olayı staging tarafından tüketilip yutulabilirdi — sipariş
+  konur, onay bildirimi hiçbir yere gitmez ve hiçbir yerde hata görünmez.
+
+  Ad alanı artık önekten türetiliyor (`<önek>:events:<olay>` ve grup `<önek>`)
+  ve türetme tek bir yerde, `eventbus.RedisConfig.WithNamespace` içinde
+  yaşıyor; paketin varsayılanları da o türetmeden okunuyor
+  (`DefaultStreamPrefix = DefaultGroup + ":events"`), yani varsayılan kurulum
+  ile ayrılmış kurulum yarım ayrışamıyor. Varsayılan önekle sonuç **bugünküyle
+  birebir aynıdır**: yükseltilen bir kurulumun stream'i ve grubu yerinde kalır.
+
+  Tüketici adı ters yönde çalışır — kurulumları değil, aynı gruptaki
+  **süreçleri** ayırır — ve bu yüzden ad alanına bağlanmadı. Bunun yerine
+  `EVENT_BUS_CONSUMER` eklendi: `RedisConfig.Consumer`'ın godoc'u kalıcı bir
+  kimliğin (StatefulSet pod adı) "açıkça verilmesi" gerektiğini söylüyordu ama
+  onu verecek bir ortam değişkeni YOKTU. Aynı adı iki örneğe vermek sessizce
+  çift işlemeye yol açar (ikisi de açılışta o adın bekleyen listesini okur) ve
+  tek süreç bunu göremez; bu yüzden çözülen ad açılışta **loglanır**.
+
+- **`TRUSTED_PROXY_HOPS=0`, ters proxy arkasında hız sınırını mağaza geneline
+  düşürüyordu ve bunu sessizce yapıyordu.** Değer sıfırken `X-Forwarded-For`
+  hiç okunmaz ve anahtar `RemoteAddr`'a düşer; ters proxy / ingress / CDN
+  arkasında o adres HER İSTEKTE proxy'nindir, yani `RATE_LIMIT_PER_MINUTE`
+  "müşteri başına 600" değil "tüm mağaza için dakikada 600" olur ve tek bir
+  müşteri vitrini kilitleyebilir.
+
+  **Varsayılan değişmedi ve açılış durmuyor**, çünkü iki yanlışın bedeli aynı
+  sınıfta değil: fazla verilen bir değer istemcinin uydurduğu adresi gerçek
+  saydırır ve saldırgan her istekte taze bir kova alarak sınırı TAMAMEN atlar —
+  bir güvenlik açığı; eksik değer ise korumayı yalnızca gevşetir. Sıfır, doğrudan
+  internete bakan bir kurulumda DOĞRU cevaptır ve yapılandırma hangisinin
+  geçerli olduğunu bilemez. Eklenen şey deponun kendi kalıbı: hız sınırı açıkken
+  sıfır atlamayla çıkan paylaşılan bir kurulum artık açılışta **uyarı** üretir
+  (`GUARD_BACKEND=memory` ve `FILE_ROOT` uyarılarıyla aynı kapı). "Riskli"
+  tanımı config'te (`Config.RateLimitKeyIsPerClient`), uyarıyı yazan taraf
+  `cmd/server`'dadır.
+
+- **`EVENT_BUS=inmemory` paylaşılan ortamda yalnızca INFO logluyordu**, oysa
+  eşdeğeri `GUARD_BACKEND=memory` WARN üretiyordu — aynı ödün birinde görünüp
+  ötekinde görünmüyordu. Bellek içi veri yolu ÇALIŞIR ama kalıcı değildir:
+  teslim asenkrondur ve süreç çökerse ya da kapanış `SHUTDOWN_TIMEOUT` içinde
+  bitmezse teslim edilmemiş olaylar iz bırakmadan kaybolur. Artık paylaşılan
+  ortamda WARN, yerel geliştirmede INFO.
+
+- **`RATE_LIMIT_PER_MINUTE <= 0` iken sınırlayıcının hiç kurulmadığı tek
+  satırla bile bildirilmiyordu.** Kapatmak meşru bir seçimdir (ADR 0007'de
+  sıfır "kapat" demektir) ama giriş ucunu da kotasız bırakır ve kimsenin
+  bilmediği bir "kapalı", kazayla yazılmış bir sıfırdan ayırt edilemez. Artık
+  paylaşılan ortamda WARN, yerel geliştirmede INFO.
+
+- **Taze veritabanı + boş `ADMIN_BOOTSTRAP_*` ikilisi sessizce açılıyordu.**
+  İkisini birden boş bırakmak `config.Validate`'ten geçiyordu ve haklı olarak:
+  KURULMUŞ bir sistem için meşru bir seçimdir ve "kurulmuş mu" sorusunu
+  doğrulama göremez. Ama veritabanı da boşsa sonuç yönetilemez bir kurulumdur —
+  hiç kullanıcı yoktur, yönetim yüzeyi giriş ucu dışında tamamen korumalıdır ve
+  ilk kullanıcıyı HTTP'den yaratmanın yolu yoktur; mağaza yüzeyi de kapalıdır,
+  çünkü publishable anahtarı da yönetim ucu üretir. Sunucu yine de açılıyor,
+  `/health` ve `/ready` yeşil dönüyor ve arıza ilk giriş denemesine kadar
+  görünmüyordu.
+
+  Tohum adımı artık kullanıcı sayısını HER HÂLDE okuyor ve sıfır kullanıcı +
+  tohumsuz yapılandırma paylaşılan ortamlarda **açılışı durduruyor**
+  (`admin_bootstrap_required`), yerel geliştirmede uyarı üretiyor. Burada
+  belirsizlik yok — `FILE_ROOT` uyarıyla yetiniyor çünkü yapılandırmanın yanlış
+  olduğu kesin değil, sıfır kullanıcılı bir kurulumun yönetilemez olduğu ise
+  kesin. Ayrım `JWT_SECRET`'inkiyle aynıdır ve ".env olmadan `make up &&
+  make run` çalışır" sözü korunur.
+
+- **`Config.LocalFileRootIsPortable` yalnızca `filepath.IsAbs`'e bakıyordu.**
+  `FILE_ROOT=/tmp/gobit-uploads` mutlaktır, "göreli yol vermeyin" öğüdünü geçer
+  ve uyarı susardı — oysa `/tmp` (ve `/var/tmp`, `/dev/shm`, `TMPDIR`) işletim
+  sistemi tarafından temizlenir, üstelik çoğu dağıtımda tmpfs oldukları için
+  yeniden başlatmayı bile beklemez. Yani `Config.FileRoot` godoc'unun varsayılan
+  için REDDETTİĞİ sessiz veri kaybı, tek satırlık bir ayarla geri geliyordu.
+  Ölçüt artık "çalışma dizininden bağımsız mı" değil "süreç yeniden başladığında
+  yerinde kalır mı"; ad da davranışa çekildi: `LocalFileRootIsDurable`.
+
+- **`validateFile` godoc'u mutlak yol şartını UYGULUYORMUŞ gibi yazıyordu**,
+  oysa doğrulama durdurmuyor, `cmd/server` yalnızca WARN logluyor. Belge
+  davranışa çekildi: kalıcılık bir doğrulama değil uyarıdır ve gerekçesi
+  `LocalFileRootIsDurable` godoc'undadır.
+
+- **`cmd/server`'daki b2b kaydının yorumu kendisiyle çelişiyordu**: "bu satır
+  silindiğinde ... saf B2C kurulum, KODU DEĞİŞTİRMEDEN elde edilir" diyordu,
+  oysa satırı silmek kod değişikliğidir. Cümle düzeltildi ve b2b'yi kapatan bir
+  ortam değişkeninin neden **eklenmediği** yazıldı: yanlışlıkla `false` verilen
+  bir anahtar harcama limitini hiçbir hata üretmeden kaldırırdı — yani bu
+  bölümün kapattığı sessiz arıza sınıfının yenisi olurdu. Kod yolu ise yarım
+  kalamıyor; `TestHerModulBilesimKokundeKayitli` satırı silen kişiden kararı
+  gerekçesiyle yazmasını istiyor. Modülü B2C kurulumda bırakmanın bedeli de
+  küçük ve görünür: iki boş tablo ve hiç tetiklenmeyen bir kural.
+
 Sepet akışlarının bağlanmasını izleyen bağımsız doğrulamanın çıkardığı bulgular:
 
 - **Saga adım hatası, alt hatanın KODUNU kaybediyordu.** `core/workflow`
@@ -420,19 +575,17 @@ Düşmanca bir güvenlik incelemesinin çıkardığı altı bulgu:
 Bu turda ARAŞTIRILDI, karar verildi ve BİLEREK açık bırakıldı. Kayda geçmemiş
 bir açık, kimsenin kapatmadığı açıktır.
 
-- **`POST /store/v1/carts` hâlâ `currency_code` (ve `region_id`) alıyor.**
-  Sınıf `unit_price` ile AYNIDIR — sunucunun verisi istemciden alınıyor.
-  `region` tablosunda para birimi bölge başına TEK bir sütundur, yani sepetin
-  para birimi bir seçim değil bir türetmedir; üstelik fiyatı da o SEÇER (satır
-  akışı birim fiyatı "sepetin para biriminde" okur). Patlama yarıçapı daha
-  küçüktür: istemci tutar uyduramaz, yalnızca operatörün YAYIMLADIĞI listeler
-  arasından seçebilir ve tek para birimli bir mağazada seçecek bir şey yoktur.
-  Doğru kapatma yeri handler değil: `cart` modülü `region`'ı çağıramaz
-  (ADR 0006) ve türetmeyi zaten yapan bir akış var — `create_cart` ülke
-  kodundan hem bölgeyi hem para birimini çözüyor. Ucun o akışa devredilmesi ve
-  gövdenin `country_code`'a inmesi gerekir; akışın modüller arası yüzeyine yeni
-  bir metot eklemeyi ve mağaza sözleşmesini ikinci kez kırmayı gerektirdiği
-  için bu tura alınmadı. Gerekçe `api.createCartRequest` godoc'unda.
+- **`POST /store/v1/carts` hâlâ `region_id` alıyor.** `currency_code` bu
+  gövdeden KALDIRILDI (yukarı bakın); bölge kimliği kaldı ve aynı sınıftadır —
+  bölge vergi ORANINI seçer. Patlama yarıçapı iki adım küçüldü: bölgenin
+  gerçekten var olduğu artık doğrulanıyor (para birimi ondan okunuyor) ve
+  seçimin fiyat listesi üzerindeki etkisi kalktı. Doğru kapatma yeri yine
+  handler değil: türetmeyi zaten yapan bir akış var — `create_cart` ülke
+  kodundan hem bölgeyi hem para birimini çözüyor. Gövdenin `country_code`'a
+  inmesi ve ucun o akışa devredilmesi gerekir; akışın modüller arası yüzeyine
+  bugün bilinçli olarak bulunmayan bir metot eklemeyi ve mağaza sözleşmesini
+  bir kez daha kırmayı gerektirdiği için bu tura alınmadı. Gerekçe
+  `api.createCartRequest` godoc'unda.
 
 - **Vitrin sepetlerinde SAHİPLİK denetimi yok — model bu, ve artık YAZILI.**
   `/store/v1/carts/{id}` altındaki uçlar isteği yapanın sepetin sahibi

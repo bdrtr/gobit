@@ -20,7 +20,12 @@ import (
 const (
 	// DefaultStreamPrefix stream anahtarlarının varsayılan önekidir.
 	// "order.placed" olayı "gobit:events:order.placed" stream'ine yazılır.
-	DefaultStreamPrefix = "gobit:events"
+	//
+	// Değer elle yazılmaz, [DefaultGroup]'tan TÜRETİLİR: ikisi tek bir ad
+	// alanının iki yüzüdür ve [RedisConfig.WithNamespace] onları aynı önekten
+	// üretir. Elle yazılsalardı, birini değiştirip ötekini unutan bir
+	// düzenleme varsayılan kurulumu sessizce yarım ayrılmış bırakırdı.
+	DefaultStreamPrefix = DefaultGroup + ":" + streamSegment
 	// DefaultGroup varsayılan consumer group adıdır.
 	DefaultGroup = "gobit"
 	// DefaultBlockTimeout XREADGROUP'un varsayılan bloklama süresidir.
@@ -35,6 +40,12 @@ const (
 
 // Redis backend'inin iç sabitleri.
 const (
+	// streamSegment ad alanı öneki ile olay adı arasındaki sabit parçadır.
+	// Anahtar "<ad alanı>:events:<olay adı>" biçiminde kurulur; parçanın
+	// varlığı, aynı ad alanını kullanan koruma anahtarlarıyla ("<ad
+	// alanı>:rl:*", "<ad alanı>:idem:*") olay akışlarının Redis'te
+	// karışmamasını sağlar.
+	streamSegment = "events"
 	// cursorNew XREADGROUP'un "hiçbir tüketiciye verilmemiş mesajlar" imidir.
 	cursorNew = ">"
 	// cursorPending XREADGROUP'un "bu tüketicinin bekleyen mesajları" imidir.
@@ -74,7 +85,14 @@ type RedisConfig struct {
 	// başladığında aynı ad kullanılırsa, işlenip ACK'lenmemiş mesajlar
 	// (pending list) yeniden bu sürece teslim edilir. Boşsa "<hostname>-<pid>"
 	// kullanılır; kalıcı bir kimlik isteniyorsa (örn. StatefulSet pod adı)
-	// açıkça verilmelidir.
+	// açıkça verilmelidir (bkz. [ConsumerName]).
+	//
+	// AYNI ad iki SÜRECE verilmemelidir ve bu, [RedisConfig.Group]'un tam
+	// tersidir: grup adını paylaşmak ölçeklemenin ta kendisidir, tüketici adını
+	// paylaşmak ise bekleyen listeyi paylaşmaktır. Açılışta her süreç kendi
+	// adının bekleyen listesini okur (consume, cursorPending), yani ötekinin
+	// HÂLÂ işlemekte olduğu mesajları da alır ve aynı olay iki kez işlenir.
+	// Veri yolu bunu göremez — tek süreç, kendisinden başkasını bilmez.
 	Consumer string
 
 	// BlockTimeout XREADGROUP'un mesaj beklerken bloklanacağı süredir. Küçük
@@ -96,6 +114,39 @@ func (c RedisConfig) StreamName(eventName string) string {
 	return c.withDefaults().StreamPrefix + ":" + eventName
 }
 
+// WithNamespace stream önekini ve consumer group adını verilen ad alanından
+// türeten bir kopya döner.
+//
+// # Neden İKİSİ birden
+//
+// AYNI Redis'i paylaşan iki kurulumun olayları da ayrılmalıdır ve ayrımın
+// yalnızca stream anahtarında yapılması YETMEZ. Grup paylaşımı daha kötüdür:
+// consumer group'un tanımı gereği bir mesajı gruptaki tüketicilerden yalnızca
+// BİRİ alır, yani üretimin "order.placed" olayı staging tarafından tüketilip
+// yutulabilir — sipariş onayı hiç gitmez ve hiçbir yerde hata görünmez.
+// Anahtarın ikisini birden ayırması bu yüzden bir kolaylık değil şarttır;
+// ayrı ayrı verilebilseydi, stream'i ayırıp grubu unutmak mümkün olurdu ve o
+// yarımlık tam olarak yukarıdaki arızayı üretirdi.
+//
+// # Neden Consumer'a dokunulmaz
+//
+// O alan kurulumları değil, aynı gruptaki SÜREÇLERİ ayırır ve ad alanıyla
+// ilgisi yoktur; gerekçesi [RedisConfig.Consumer] godoc'undadır.
+//
+// Boş ad alanı hiçbir şeyi değiştirmez: ":events" biçiminde başsız bir anahtar,
+// ayıracak bir AD olmadan yapılmış bir ayrım olurdu ve varsayılanları korumak
+// (bkz. [DefaultStreamPrefix]) daha dürüst bir cevaptır.
+func (c RedisConfig) WithNamespace(namespace string) RedisConfig {
+	if namespace == "" {
+		return c
+	}
+
+	c.StreamPrefix = namespace + ":" + streamSegment
+	c.Group = namespace
+
+	return c
+}
+
 // withDefaults boş bırakılan alanları varsayılanlarla doldurulmuş bir kopya döner.
 func (c RedisConfig) withDefaults() RedisConfig {
 	if c.StreamPrefix == "" {
@@ -104,9 +155,7 @@ func (c RedisConfig) withDefaults() RedisConfig {
 	if c.Group == "" {
 		c.Group = DefaultGroup
 	}
-	if c.Consumer == "" {
-		c.Consumer = defaultConsumerName()
-	}
+	c.Consumer = ConsumerName(c.Consumer)
 	if c.BlockTimeout <= 0 {
 		c.BlockTimeout = DefaultBlockTimeout
 	}
@@ -117,6 +166,23 @@ func (c RedisConfig) withDefaults() RedisConfig {
 		c.MaxLen = DefaultMaxLen
 	}
 	return c
+}
+
+// ConsumerName verilen tüketici adını, boş bırakılmışsa süreç başına türetilmiş
+// bir adla tamamlar.
+//
+// [RedisConfig.withDefaults] zaten aynı işi yapar; bu işlev DIŞA AÇIKTIR ki
+// veri yolunu kuran taraf, kullanılacak adı açılışta LOGLAYABİLSİN. Loglamak
+// tek fark edilme şansıdır: aynı adın iki sürece verilmesi çift işlemeye yol
+// açar (bkz. [RedisConfig.Consumer]) ve bu, ancak iki açılış logu yan yana
+// konduğunda görülebilecek bir arızadır — çalışma zamanında hiçbir hata
+// üretmez, yalnızca bazı olaylar iki kez işlenir.
+func ConsumerName(name string) string {
+	if name != "" {
+		return name
+	}
+
+	return defaultConsumerName()
 }
 
 // defaultConsumerName süreci grup içinde ayırt eden bir ad üretir.
