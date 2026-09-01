@@ -89,11 +89,33 @@ func (w *Workflows) priceSetsFor(ctx context.Context, variantIDs []string) (map[
 // Okuma Query üzerinden yapılır çünkü product servisinin okuma imzaları kendi
 // model tipleriyle konuşur ve modüller arası çağrıya kapalıdır; Query tam bu
 // boşluk için vardır (ADR 0004).
+//
+// # Okuma isteğin SATIŞ KANALLARINA göre kapsanır
+//
+// Sorgu, isteğin doğrulanmış kimliğinden gelen kanalları süzgeç olarak taşır
+// (bkz. saleschannel.go). Bu, satırın sepete girdiği TEK kapıdır ve kapsam
+// kuralı yazma yolunda burada uygulanır: kapsam dışı bir varyant için katalog
+// hiç kayıt döndürmez.
+//
+// # Kapsam dışı varyant "BULUNAMADI" döner
+//
+// Hata sınıfı ve KODU, katalogda hiç bulunmayan bir varyantınkiyle BİREBİR
+// aynıdır; mesaj bile aynıdır. Ayırt edilebilir bir hata (örneğin "yasak")
+// gizlemenin kendisini delerdi: elindeki herhangi bir publishable anahtarla
+// gelen bir rakip, varyant kimliklerini tek tek deneyerek hangilerinin BAŞKA
+// bir kanalda satıldığını öğrenebilirdi. Okuma yüzeyi de aynı kararı verir ve
+// aynı gerekçeyi yazar (bkz. productsvc.Service.GetStoreProduct); iki yüzeyin
+// AYNI cevabı vermesi, kapsamın tek bir kural olduğunu söyleyen şeydir.
 func (w *Workflows) variantTitle(ctx context.Context, variantID string) (string, error) {
+	filters := map[string]any{query.IDField: variantID}
+	if channels, apply := salesChannelFilter(ctx); apply {
+		filters[FilterSalesChannelIDs] = channels
+	}
+
 	records, err := w.catalog.Graph(ctx, query.GraphSpec{
 		Entity:  EntityVariant,
 		Fields:  []string{query.IDField, FieldTitle},
-		Filters: map[string]any{query.IDField: variantID},
+		Filters: filters,
 		Limit:   1,
 	})
 	if err != nil {

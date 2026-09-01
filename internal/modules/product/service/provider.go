@@ -164,11 +164,49 @@ func (v *variantProvider) Entity() string { return EntityVariant }
 
 // List varyant kayıtlarını döner.
 //
-// Desteklenen filtreler: product_id, product_ids, id/ids.
+// Desteklenen filtreler: product_id, product_ids, id/ids ve
+// [FilterSalesChannelIDs].
+//
+// # Satış kanalı süzgeci
+//
+// Ürün sağlayıcısının aksine ([productProvider.List], "Satış kanalı süzgeci
+// burada UYGULANMAZ") bu sağlayıcı kanal kapsamını uygular — ama yalnızca
+// çağıran onu AÇIKÇA istediğinde. Sessiz bir varsayılan yoktur ve fark
+// önemlidir: bu yüzeyden okuyan her çağıranın arkasında bir müşteri isteği
+// bulunmaz, uydurma bir kanal kümesi seçmek ya her şeyi gizler ya da hiçbir
+// şeyi süzmez.
+//
+// Süzgecin tüketicisi sepet YAZMA yoludur: satır ekleyen akış varyantı
+// buradan okur ve isteğin DOĞRULANMIŞ kimliğinden gelen kanalları filtre
+// olarak geçirir (bkz. internal/workflows/cart). Kural burada yeniden
+// yazılmaz; depo, vitrin listesinin kullandığı SQL şablonunun ta kendisiyle
+// sorulur (bkz. repository/saleschannel.go).
+//
+// nil ile boş dilim ayrımı çağıranda korunur: anahtar HİÇ verilmezse süzgeç
+// uygulanmaz, boş dizi verilirse UYGULANIR ve yalnızca ataması olmayan
+// ürünlerin varyantları döner — okuma yüzeyindeki anlamın aynısı
+// (bkz. [StoreListOptions.SalesChannelIDs]).
+//
+// # Neden yalnızca kimlikle birlikte
+//
+// Kanal süzgeci id/ids OLMADAN verilirse errors.Invalid döner. İki sebebi var
+// ve ikincisi teknik:
+//
+//   - Bu yüzeyin sorusu "şu varyant benim kapsamımda mı"dır, "kapsamımdaki
+//     varyantları listele" değil. İkincisinin bugün tüketicisi yoktur ve
+//     tüketicisi olmayan bir yetenek, doğruluğu hiçbir yerde sınanmayan bir
+//     yüzeydir.
+//   - Kimliksiz yollar sayfalamayı VERİTABANINDA yapar (ListVariants LIMIT ile
+//     okur). Süzgeç o yolda Go tarafında uygulansaydı sayfa eksik dolar,
+//     üstelik sessizce dolardı — ürün listelemesinin süzgeci tam olarak bu
+//     yüzden SQL'e girmişti (bkz. repository/saleschannel.go). Yanlış
+//     sayfalayan bir yüzey açmaktansa, istenmeyen bileşimi reddetmek yeğdir.
 func (v *variantProvider) List(ctx context.Context, opts query.ListOptions) ([]query.Record, error) {
 	var (
 		ids        []string
 		productIDs []string
+		channels   []string
+		scoped     bool
 	)
 
 	for key, raw := range opts.Filters {
@@ -185,12 +223,28 @@ func (v *variantProvider) List(ctx context.Context, opts query.ListOptions) ([]q
 				return nil, err
 			}
 			ids = append(ids, values...)
+		case FilterSalesChannelIDs:
+			values, err := stringsFilter(key, raw)
+			if err != nil {
+				return nil, err
+			}
+			// Boş bir dizi de bir KARARDIR ("kanalı olmayan kimlik"), bu yüzden
+			// varlık ayrı bir bayrakla taşınır; dilimin uzunluğuna bakmak iki
+			// farklı durumu tek duruma indirirdi.
+			channels, scoped = values, true
 		default:
 			return nil, unsupportedFilter(EntityVariant, key)
 		}
 	}
 
-	variants, err := v.fetch(ctx, ids, productIDs, opts)
+	if scoped && len(ids) == 0 {
+		return nil, errors.Invalid(codeInvalidInput,
+			"%q süzgeci yalnızca %q ya da %q ile birlikte kullanılabilir",
+			FilterSalesChannelIDs, filterID, filterIDs).
+			WithDetails(filterDetails(EntityVariant, FilterSalesChannelIDs))
+	}
+
+	variants, err := v.fetch(ctx, ids, productIDs, channels, scoped, opts)
 	if err != nil {
 		return nil, err
 	}
@@ -198,15 +252,36 @@ func (v *variantProvider) List(ctx context.Context, opts query.ListOptions) ([]q
 }
 
 // fetch varyantları en dar ölçüte göre okur.
+//
+// scoped true ise kanal kapsamı UYGULANIR ve bu yalnızca kimlik dalında
+// mümkündür ([variantProvider.List] diğer bileşimleri reddeder).
 func (v *variantProvider) fetch(
 	ctx context.Context,
-	ids, productIDs []string,
+	ids, productIDs, channels []string,
+	scoped bool,
 	opts query.ListOptions,
 ) ([]models.Variant, error) {
 	limit := providerLimit(opts.Limit)
 
 	switch {
 	case len(ids) > 0:
+		if scoped {
+			// Kapsam kimlikler ÜZERİNDE, satırlar okunmadan önce uygulanır:
+			// görünmeyen bir varyantın kaydını hiç çekmemek, onu çekip sonra
+			// atmaktan hem ucuz hem de daha az kaza açıktır.
+			visible, err := v.repo.VisibleVariantIDs(ctx, ids, channels)
+			if err != nil {
+				return nil, err
+			}
+			ids = slices.DeleteFunc(slices.Clone(ids), func(id string) bool {
+				_, ok := visible[id]
+				return !ok
+			})
+			if len(ids) == 0 {
+				return []models.Variant{}, nil
+			}
+		}
+
 		variants, err := v.repo.ListVariantsByIDs(ctx, ids)
 		if err != nil {
 			return nil, err
@@ -389,7 +464,17 @@ func stringsFilter(key string, raw any) ([]string, error) {
 func unsupportedFilter(entity, key string) error {
 	return errors.Invalid(codeInvalidInput,
 		"%q sağlayıcısı %q filtresini desteklemiyor", entity, key).
-		WithDetails(map[string]any{"entity": entity, "filtre": key})
+		WithDetails(filterDetails(entity, key))
+}
+
+// filterDetails bir filtre hatasının yapısal ayrıntılarını üretir.
+//
+// Şekil TEK yerde durur çünkü istemci hatayı MESAJDAN değil bu alanlardan
+// okur: anahtarlardan biri bir çağrı yerinde farklı yazılsaydı, aynı hata
+// sınıfı iki farklı gövdeyle görünür ve okuyan taraf ikisini de tanımak
+// zorunda kalırdı.
+func filterDetails(entity, key string) map[string]any {
+	return map[string]any{"entity": entity, "filtre": key}
 }
 
 // deref işaretçiyi değere çevirir; nil ise boş dizge döner.

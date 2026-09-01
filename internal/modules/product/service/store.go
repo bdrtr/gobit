@@ -22,6 +22,19 @@ const (
 	filterStatus       = "status"
 	filterHandle       = "handle"
 	filterCollectionID = "collection_id"
+
+	// FilterSalesChannelIDs varyant sağlayıcısının satış kanalı süzgecidir.
+	//
+	// Kardeşlerinden farklı olarak DIŞA AÇIKTIR ve fark tüketicidendir: bu
+	// modülün DIŞINDAN, sepet akışından geçilir (bkz. service/provider.go,
+	// "Satış kanalı süzgeci"). Akış bu paketi import EDEMEZ (ADR 0006) ve
+	// anahtarı kendi tarafında dize olarak tekrarlar; sabitin dışa açık olması,
+	// iki tarafı bir testin birbirine bağlayabilmesi içindir (bkz. internal/arch).
+	//
+	// Ayrışmanın bedeli açıktır ama GEÇTİR: sağlayıcı tanımadığı filtre için
+	// errors.Invalid döner, yani sepete satır ekleme tümüyle kırılır. Sessiz
+	// değildir — yine de arızanın üretimde değil testte görülmesi yeğdir.
+	FilterSalesChannelIDs = "sales_channel_ids"
 )
 
 // Store yanıtında fiyat ve stok kayıtlarının yazıldığı anahtarlar.
@@ -226,11 +239,11 @@ func (s *Service) GetStoreProduct(
 // salesChannelIDs'in nil ile boş dilim arasındaki farkı listelemedekiyle aynı
 // anlamı taşır (bkz. [StoreListOptions.SalesChannelIDs]).
 //
-// Görünürlük kimlik başına bir sorgudur; kimlik sayısı [MaxLimit] ile
-// sınırlıdır ve her sorgu link tablosunun birincil anahtar önekini kullanır.
-// Bedel bilinçlidir: kuralın TEK tanımı kalsın diye ödenir. Bu yol bir gün
-// sıcaklaşırsa doğru adım kuralı Go'ya taşımak değil, saleschannel.go'daki
-// salesChannelVisible şablonundan TOPLU bir sorgu üretmektir.
+// Görünürlük TEK bir toplu sorgudur ([Store.VisibleProductIDs]), kimlik sayısı
+// [MaxLimit] ile sınırlıdır ve sorgu link tablosunun birincil anahtar önekini
+// kullanır. Sorgu, kuralın TEK tanımı olan saleschannel.go'daki
+// salesChannelVisibleTemplate'ten üretilir — yani toplu olması kuralı ikinci
+// kez yazmaz.
 //
 // # Sıra ve bulunamayan kimlikler
 //

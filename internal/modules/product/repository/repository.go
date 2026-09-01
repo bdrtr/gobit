@@ -112,6 +112,12 @@ type Store interface {
 	CountVariants(ctx context.Context, f VariantFilter) (int, error)
 	ListVariantsByProductIDs(ctx context.Context, productIDs []string) ([]models.Variant, error)
 	ListVariantsByIDs(ctx context.Context, ids []string) ([]models.Variant, error)
+	// VisibleVariantIDs verilen varyantlardan kanallarda görünür olanları TEK
+	// sorguda döner.
+	//
+	// [VisibleProductIDs] ile AYNI SQL şablonundan üretilir; varyantın kanalı
+	// yoktur, bağlı olduğu ürünün kanalı vardır (bkz. saleschannel.go).
+	VisibleVariantIDs(ctx context.Context, variantIDs []string, salesChannelIDs []string) (map[string]struct{}, error)
 	UpdateVariant(ctx context.Context, id string, patch VariantPatch) (models.Variant, error)
 	SoftDeleteVariant(ctx context.Context, id string) error
 

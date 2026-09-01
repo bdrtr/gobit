@@ -303,6 +303,14 @@ func TestInMemoryPublishDoesNotWaitForHandlers(t *testing.T) {
 	}
 }
 
+// TestInMemoryHandlerContextSurvivesCallerCancel handler ctx'inin çağıranın
+// iptalinden etkilenmediğini ve değerlerini koruduğunu doğrular.
+//
+// Değerlerin korunması YALNIZCA bu backend'in davranışıdır; Redis'te olay
+// süreç sınırını geçer ve yayımcının ctx'i karşıya geçmez
+// (bkz. TestConsumeHandlerCtxCarriesNoPublisherValues). İki testin karşıtlığı
+// bilinçlidir: varsayılan backend bu olduğu için, buradaki yeşil tek başına
+// "değerler taşınır" anlamına GELMEZ.
 func TestInMemoryHandlerContextSurvivesCallerCancel(t *testing.T) {
 	bus := eventbus.NewInMemory(discardLogger())
 	defer func() { _ = bus.Shutdown(context.Background()) }()

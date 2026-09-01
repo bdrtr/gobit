@@ -188,6 +188,32 @@ func jsonBody(t *testing.T, rec *httptest.ResponseRecorder) map[string]any {
 	return out
 }
 
+// jsonAlan bir JSON nesnesindeki alanı BEKLENEN tipte döner.
+//
+// Denetlenmemiş bir tip iddiası ("nesne[alan].(string)") aynı işi bir satırda
+// yapardı ama arıza anında paniğe düşer ve testin çıktısı yalnızca bir yığın
+// izi olurdu. Burada beklenen tip ile GELEN değer birlikte yazılır; yanıt şeması
+// kaydığında hangi alanın ne olduğu tek satırda görünür.
+func jsonAlan[T any](t *testing.T, nesne map[string]any, alan string) T {
+	t.Helper()
+
+	deger, ok := nesne[alan].(T)
+	require.True(t, ok, "%q alanı %T tipinde olmalı; gelen: %#v", alan, deger, nesne[alan])
+	return deger
+}
+
+// jsonNesne bir JSON değerini nesne olarak döner.
+//
+// [jsonAlan] alan adıyla çalışır; bu, dizideki bir ÖĞE için gerekir ve öğenin
+// adı olmadığı için mesaja değerin kendisi yazılır.
+func jsonNesne(t *testing.T, deger any) map[string]any {
+	t.Helper()
+
+	nesne, ok := deger.(map[string]any)
+	require.True(t, ok, "değer nesne olmalı; gelen: %#v", deger)
+	return nesne
+}
+
 // TestModuleRegisterWiresContainer Register'ın sözleşmedeki dört şeyi de
 // yaptığını doğrular: servis kaydı, interop yüzeyi, Query sağlayıcıları ve link
 // tanımları.
@@ -235,10 +261,10 @@ func TestAdminAPICreatesProductAndVariant(t *testing.T) {
 	}`)
 	require.Equal(t, http.StatusCreated, rec.Code, "gövde: %s", rec.Body.String())
 
-	created := jsonBody(t, rec)["data"].(map[string]any)
-	productID := created["id"].(string)
+	created := itemData(t, rec)
+	productID := jsonAlan[string](t, created, "id")
 	assert.True(t, strings.HasPrefix(productID, "prod_"))
-	require.Len(t, created["variants"].([]any), 1)
+	require.Len(t, jsonAlan[[]any](t, created, "variants"), 1)
 
 	rec = sys.request(t, http.MethodPost, "/admin/v1/products/"+productID+"/variants", `{
 		"title": "M beden",
@@ -246,16 +272,18 @@ func TestAdminAPICreatesProductAndVariant(t *testing.T) {
 	}`)
 	require.Equal(t, http.StatusCreated, rec.Code, "gövde: %s", rec.Body.String())
 
-	variant := jsonBody(t, rec)["data"].(map[string]any)
-	assert.True(t, strings.HasPrefix(variant["id"].(string), "variant_"))
-	optionValues := variant["option_values"].([]any)
+	variant := itemData(t, rec)
+	assert.True(t, strings.HasPrefix(jsonAlan[string](t, variant, "id"), "variant_"))
+	optionValues := jsonAlan[[]any](t, variant, "option_values")
 	require.Len(t, optionValues, 1, "varyant seçenek değerine bağlanmalı")
-	assert.Equal(t, "M", optionValues[0].(map[string]any)["value"])
+	ilkDeger, ok := optionValues[0].(map[string]any)
+	require.True(t, ok, "seçenek değeri nesne olmalı; gelen: %#v", optionValues[0])
+	assert.Equal(t, "M", ilkDeger["value"])
 
 	rec = sys.request(t, http.MethodGet, "/admin/v1/products/"+productID, "")
 	require.Equal(t, http.StatusOK, rec.Code)
-	fetched := jsonBody(t, rec)["data"].(map[string]any)
-	assert.Len(t, fetched["variants"].([]any), 2, "ikinci varyant da ürüne bağlanmalı")
+	assert.Len(t, jsonAlan[[]any](t, itemData(t, rec), "variants"), 2,
+		"ikinci varyant da ürüne bağlanmalı")
 
 	// Aynı handle ikinci kez kullanılamaz; hata 409 olmalıdır.
 	rec = sys.request(t, http.MethodPost, "/admin/v1/products",
@@ -294,12 +322,12 @@ func TestStoreListingReturnsPriceAndStock(t *testing.T) {
 	}`)
 	require.Equal(t, http.StatusCreated, rec.Code, "gövde: %s", rec.Body.String())
 
-	created := jsonBody(t, rec)["data"].(map[string]any)
-	productID := created["id"].(string)
-	variants := created["variants"].([]any)
+	created := itemData(t, rec)
+	productID := jsonAlan[string](t, created, "id")
+	variants := jsonAlan[[]any](t, created, "variants")
 	require.Len(t, variants, 2)
-	firstVariantID := variants[0].(map[string]any)["id"].(string)
-	secondVariantID := variants[1].(map[string]any)["id"].(string)
+	firstVariantID := jsonAlan[string](t, jsonNesne(t, variants[0]), "id")
+	secondVariantID := jsonAlan[string](t, jsonNesne(t, variants[1]), "id")
 
 	// pricing ve inventory modüllerinin ürettiği kayıtlar.
 	sys.pricing.put("pset_"+firstVariantID, query.Record{"currency_code": "try", "amount": int64(19900)})
@@ -316,7 +344,7 @@ func TestStoreListingReturnsPriceAndStock(t *testing.T) {
 		`{"inventory_item_id": "invitem_`+firstVariantID+`"}`)
 	require.Equal(t, http.StatusOK, rec.Code, "gövde: %s", rec.Body.String())
 
-	links := jsonBody(t, rec)["data"].(map[string]any)
+	links := itemData(t, rec)
 	assert.Equal(t, "invitem_"+firstVariantID, links["inventory_item_id"])
 	assert.Equal(t, "pset_"+firstVariantID, links["price_set_id"],
 		"iki bağ birbirini ezmemeli")
@@ -330,18 +358,18 @@ func TestStoreListingReturnsPriceAndStock(t *testing.T) {
 
 	body := jsonBody(t, rec)
 	assert.Equal(t, float64(1), body["count"])
-	data := body["data"].([]any)
+	data := jsonAlan[[]any](t, body, "data")
 	require.Len(t, data, 1)
 
-	storeProduct := data[0].(map[string]any)
+	storeProduct := jsonNesne(t, data[0])
 	assert.Equal(t, handle, storeProduct["handle"])
-	storeVariants := storeProduct["variants"].([]any)
+	storeVariants := jsonAlan[[]any](t, storeProduct, "variants")
 	require.Len(t, storeVariants, 2)
 
 	byID := map[string]map[string]any{}
 	for _, raw := range storeVariants {
-		variant := raw.(map[string]any)
-		byID[variant["id"].(string)] = variant
+		variant := jsonNesne(t, raw)
+		byID[jsonAlan[string](t, variant, "id")] = variant
 	}
 
 	first := byID[firstVariantID]
@@ -356,7 +384,7 @@ func TestStoreListingReturnsPriceAndStock(t *testing.T) {
 
 	second := byID[secondVariantID]
 	require.NotNil(t, second)
-	assert.Equal(t, "pset_"+secondVariantID, second["price_set"].(map[string]any)["id"])
+	assert.Equal(t, "pset_"+secondVariantID, jsonAlan[map[string]any](t, second, "price_set")["id"])
 	assert.NotContains(t, second, "inventory_item",
 		"stok bağı olmayan varyantta alan hiç yazılmamalı")
 
@@ -369,9 +397,9 @@ func TestStoreListingReturnsPriceAndStock(t *testing.T) {
 	// --- Vitrin tekil ucu ---
 	rec = sys.request(t, http.MethodGet, "/store/v1/products/"+handle, "")
 	require.Equal(t, http.StatusOK, rec.Code, "gövde: %s", rec.Body.String())
-	single := jsonBody(t, rec)["data"].(map[string]any)
+	single := itemData(t, rec)
 	assert.Equal(t, productID, single["id"])
-	require.Len(t, single["variants"].([]any), 2)
+	require.Len(t, jsonAlan[[]any](t, single, "variants"), 2)
 }
 
 // TestStoreListingHidesDraftProducts vitrinin taslak ürünü göstermediğini
@@ -400,7 +428,7 @@ func TestStoreListingHidesDraftProducts(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code)
 	body := jsonBody(t, rec)
 	assert.Zero(t, body["count"], "taslak ürün vitrinde sayılmamalı")
-	assert.Empty(t, body["data"].([]any), "taslak ürün vitrinde listelenmemeli")
+	assert.Empty(t, jsonAlan[[]any](t, body, "data"), "taslak ürün vitrinde listelenmemeli")
 
 	rec = sys.request(t, http.MethodGet, "/store/v1/products/"+handle, "")
 	assert.Equal(t, http.StatusNotFound, rec.Code, "taslak ürün vitrinde bulunamamalı")
@@ -423,8 +451,8 @@ func TestVariantDeletionRemovesLinks(t *testing.T) {
 	}`)
 	require.Equal(t, http.StatusCreated, rec.Code, "gövde: %s", rec.Body.String())
 
-	created := jsonBody(t, rec)["data"].(map[string]any)
-	variantID := created["variants"].([]any)[0].(map[string]any)["id"].(string)
+	created := itemData(t, rec)
+	variantID := jsonAlan[string](t, jsonNesne(t, jsonAlan[[]any](t, created, "variants")[0]), "id")
 
 	rec = sys.request(t, http.MethodPut, "/admin/v1/variants/"+variantID+"/price-set",
 		`{"price_set_id": "pset_silinecek"}`)
@@ -456,8 +484,8 @@ func TestPriceSetLinkIsReplacedNotDuplicated(t *testing.T) {
 	}`)
 	require.Equal(t, http.StatusCreated, rec.Code, "gövde: %s", rec.Body.String())
 
-	created := jsonBody(t, rec)["data"].(map[string]any)
-	variantID := created["variants"].([]any)[0].(map[string]any)["id"].(string)
+	created := itemData(t, rec)
+	variantID := jsonAlan[string](t, jsonNesne(t, jsonAlan[[]any](t, created, "variants")[0]), "id")
 
 	for _, priceSetID := range []string{"pset_eski", "pset_yeni"} {
 		rec = sys.request(t, http.MethodPut, "/admin/v1/variants/"+variantID+"/price-set",
@@ -494,11 +522,11 @@ func TestPriceSetLinkKeepsExistingWhenTargetIsTaken(t *testing.T) {
 	}`)
 	require.Equal(t, http.StatusCreated, rec.Code, "gövde: %s", rec.Body.String())
 
-	created := jsonBody(t, rec)["data"].(map[string]any)
-	variants := created["variants"].([]any)
+	created := itemData(t, rec)
+	variants := jsonAlan[[]any](t, created, "variants")
 	require.Len(t, variants, 2)
-	firstVariantID := variants[0].(map[string]any)["id"].(string)
-	secondVariantID := variants[1].(map[string]any)["id"].(string)
+	firstVariantID := jsonAlan[string](t, jsonNesne(t, variants[0]), "id")
+	secondVariantID := jsonAlan[string](t, jsonNesne(t, variants[1]), "id")
 
 	// Kimlikler test başına benzersiz olmalı: OneToOne'ın TO ucu link tablosunun
 	// TAMAMINDA benzersizdir, sabit bir kimlik başka bir testin bağıyla çakışırdı.

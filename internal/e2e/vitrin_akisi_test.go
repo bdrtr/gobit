@@ -3,7 +3,6 @@
 package e2e
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -13,7 +12,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	corehttp "github.com/bdrtr/gobit/internal/core/http"
 	b2bmodels "github.com/bdrtr/gobit/internal/modules/b2b/models"
 	ordermodels "github.com/bdrtr/gobit/internal/modules/order/models"
 	ordersvc "github.com/bdrtr/gobit/internal/modules/order/service"
@@ -524,21 +522,7 @@ func vitrinTamamlamaGovdesi(t *testing.T, onaylananToplam int64) string {
 func vitrinIstegi(t *testing.T, metod, yol, govde string) *httptest.ResponseRecorder {
 	t.Helper()
 
-	var okuyucu *bytes.Reader
-	if govde == "" {
-		okuyucu = bytes.NewReader(nil)
-	} else {
-		okuyucu = bytes.NewReader([]byte(govde))
-	}
-
-	istek := httptest.NewRequest(metod, yol, okuyucu)
-	istek.Header.Set("Content-Type", "application/json")
-	istek.Header.Set(corehttp.PublishableKeyHeader, publishableAnahtar)
-
-	kayit := httptest.NewRecorder()
-	testRouter.ServeHTTP(kayit, istek)
-
-	return kayit
+	return anahtarliVitrinIstegi(t, publishableAnahtar, metod, yol, govde)
 }
 
 // vitrinVeri yanıt zarfının "data" alanını nesne olarak döner.

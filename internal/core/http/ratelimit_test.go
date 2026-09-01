@@ -309,27 +309,6 @@ func TestTrustedProxyIPKeyKisaZincirdeRemoteAddraDuser(t *testing.T) {
 	}
 }
 
-// TestPrincipalKeyKimligeGoreAyirir kimliği doğrulanmış çağrıların IP'ye
-// değil kimliğe göre anahtarlandığını doğrular.
-//
-// Aksi hâlde aynı NAT arkasındaki iki farklı müşteri birbirinin kotasını
-// tüketirdi.
-func TestPrincipalKeyKimligeGoreAyirir(t *testing.T) {
-	t.Parallel()
-
-	r := istekYap("203.0.113.7:1234", nil)
-	assert.Equal(t, "ip:203.0.113.7", corehttp.PrincipalKey(r),
-		"kimlik yoksa IP'ye düşmeli")
-
-	ctx := corehttp.WithPrincipal(r.Context(),
-		corehttp.Principal{ID: "user_01", Kind: "user"})
-	assert.Equal(t, "user:user_01", corehttp.PrincipalKey(r.WithContext(ctx)))
-
-	ctx = corehttp.WithPrincipal(r.Context(),
-		corehttp.Principal{ID: "apikey_01", Kind: "api_key"})
-	assert.Equal(t, "api_key:apikey_01", corehttp.PrincipalKey(r.WithContext(ctx)))
-}
-
 // TestMemoryLimiterKotayiTuketir kotanın tam olarak limit kadar istekte
 // bittiğini doğrular.
 func TestMemoryLimiterKotayiTuketir(t *testing.T) {

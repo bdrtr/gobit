@@ -51,6 +51,16 @@ type RateLimiter interface {
 // KeyFunc bir isteği hız sınırı anahtarına çevirir.
 //
 // Boş dize dönerse istek sınırlanmaz.
+//
+// Anahtar, isteğin KENDİSİNDEN türetilebilecek şeylerle sınırlıdır. Bu
+// middleware koruma yığınında kimlik doğrulamadan ÖNCE koşar (gerekçesi
+// [APIGuards]'ın sıra bölümünde) ve o noktada context'te henüz [Principal]
+// yoktur: çağıranın kimliğine bakan bir KeyFunc her istekte IP'ye düşer,
+// üstelik [TrustedProxyIPKey]'in proxy düzeltmesini de kaybederek. Böyle bir
+// anahtar hiçbir şeyi bölmez, yalnızca bölüyormuş gibi görünür.
+//
+// Çağıranın kimliğine göre ad alanı ayıran halka, yığında kimlikten SONRA
+// koşan tek halkadır: idempotency (bkz. [Idempotency]).
 type KeyFunc func(r *http.Request) string
 
 // RateLimit istekleri anahtar başına sınırlayan middleware üretir.
@@ -192,19 +202,6 @@ func TrustedProxyIPKey(hops int) KeyFunc {
 
 		return ip
 	}
-}
-
-// PrincipalKey kimliği doğrulanmış çağrıyı kimliğine, doğrulanmamış çağrıyı
-// IP'sine göre anahtarlar.
-//
-// Kimliğe göre anahtarlamak, aynı NAT arkasındaki farklı müşterilerin
-// birbirinin kotasını tüketmesini engeller.
-func PrincipalKey(r *http.Request) string {
-	if p, ok := PrincipalFromContext(r.Context()); ok && p.ID != "" {
-		return p.Kind + ":" + p.ID
-	}
-
-	return "ip:" + ClientIPKey(r)
 }
 
 // bucket tek bir anahtarın jeton kovasıdır.

@@ -221,7 +221,7 @@ func TestYuklemeSunmaSilmeUCTANUCA(t *testing.T) {
 	// Dosya GERÇEKTEN diskte ve kök dizinin İÇİNDE olmalı.
 	anahtar := filepath.Base(yanit.Data.URL)
 	diskYolu := filepath.Join(kok, anahtar)
-	diskteki, err := os.ReadFile(diskYolu) //nolint:gosec // G304: yol testin kendi geçici dizininden geliyor
+	diskteki, err := os.ReadFile(diskYolu)
 	require.NoError(t, err, "yüklenen dosya kök dizinde olmalı")
 	assert.Equal(t, pngIcerik, string(diskteki))
 

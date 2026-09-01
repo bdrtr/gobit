@@ -137,6 +137,7 @@ için uygular — yarın eklenen vaka sessizce dışarıda kalır.
 | `TestBelgelerdekiEklentiAdlariGercek` | Belgelerdeki eklenti adları kayıtlı adlar | README, eklentiyi dizin adıyla (tireli kayıt adı yerine) çağıran bir komut örneği veriyordu; kopyalayan kurulum açılışta "bilinmeyen eklenti" ile duruyordu |
 | `TestHataYanitlariTekYerdenYazilir` | Hata gövdesi yalnızca `corehttp.WriteError`'dan | GraphQL sunucusu kuralı tekrar etmeye çalışıp ayrıştı; DSN+parola istemciye ulaştı, loglanmadı |
 | `TestGraphQLSinirVarsayilanlariConfigleUyusuyor` | `graph.Options`'ın her `Max*` alanının çekirdekte karşılığı var | Beş sertleştirme sınırının ortam değişkeni yoktu; operatör onları ayarlayamıyordu |
+| `TestVaryantOkumalariKanalKararindanGecer` | Query'den `variant` okuyan her fonksiyon satış kanalı kapsamı hakkında **görünür bir karar** verir | Kapsam okuma yüzeyinde uygulanıyor, sepete ekleme yolunda uygulanmıyordu: B kanalının anahtarıyla A kanalının varyantı satın alınabiliyordu |
 
 Bu testlerin hepsi **mutasyonla doğrulanmıştır**: değişmez kasten bozulduğunda
 düştükleri gösterilmiştir. Düşürülemeyen bir mimari testi, olmayan bir mimari
@@ -262,6 +263,29 @@ GET    /admin/v1/products/{id}/sales-channels
 > **değildir** — kural gereği ataması kalmayan ürün *tüm* vitrinlerde görünür
 > olur, yani tam tersi olur. Gizlemek için `status` alanını kullanın
 > (`draft` / `archived`).
+
+#### Kural SEPETE EKLEMEDE de uygulanır
+
+Kapsam bir görüntüleme tercihi değil, bir **yetkilendirme** olduğu için okuma
+yüzeyinde durması yetmez. `POST /store/v1/carts/{id}/line-items` varyantı
+kataloğa sorarken isteğin kanallarını da taşır: kapsam dışı bir varyant için
+katalog kayıt döndürmez ve satır **hiç yazılmaz**.
+
+Kural ikinci kez yazılmaz — akış "bu varyant bu kanallarda görünür mü" diye
+`product`'a sorar ve cevabı, vitrin listesinin kullandığı SQL şablonunun ta
+kendisi üretir. Kanallar yine **kimlikten** gelir; nil / boş küme / dolu küme
+ayrımı okuma yüzeyindekiyle birebir aynıdır.
+
+Kapsam dışı varyant, hiç var olmayan varyantla **aynı** hatayı döner
+(`404 cart_workflow_variant_unknown`) — farklı bir sınıf, ürünün varlığını ele
+verirdi.
+
+> **Sınır:** denetim varyantın sepete **girdiği** yerdedir. Adet güncelleme ve
+> sepeti tamamlama yolları kapsamı yeniden sormaz; sepete varyant sokabilen tek
+> yol satır eklemedir ve sepete girmiş bir satır, ürünü sonradan başka bir
+> kanala taşıyan bir düzenleme yüzünden ödenemez hâle gelmez. Kararı
+> `TestVaryantOkumalariKanalKararindanGecer` (bkz. `internal/arch`) korur: yeni
+> bir varyant okuması ya kanal kararını verir ya da gerekçesini yazar.
 
 Katı alternatif — "ataması olmayan ürün hiçbir kanalda görünmez" — daha doğru
 olanıdır ve sektör alışkanlığıdır (yayımlama açık bir eylem olur). Uygulanmadı
@@ -597,6 +621,15 @@ açılışta uyarı üretir.
 
 `GUARD_BACKEND=redis` ve `EVENT_BUS=redis` **aynı** istemciyi paylaşır; ikisi de
 kapalıysa hiç bağlantı açılmaz.
+
+Birden çok **örnek** birden çok **kiracı** demek değildir: örnekler aynı veritabanını
+ve aynı kataloğu paylaşır, tek bir kurulumun yatay kopyalarıdır. Çerçeve kiracılar
+arası bir sınır **tanımaz** — 72 tablonun hiçbirinde "bu satır kime ait" sorusunun
+cevabı yoktur ve hiçbir sorgu böyle bir süzgeç taşımaz. İki müşteriye tek kurulumdan
+hizmet vermek istiyorsanız cevap iki kurulumdur: bir kiracı = bir kurulum = bir
+veritabanı = bir süreç. Bunun neden bir eksiklik değil bir karar olduğu, hangi
+seçeneklerin reddedildiği ve kararı yeniden neyin açacağı
+[ADR 0009](docs/adr/0009-cok-kiracililik-kurulum-siniri.md)'da yazılıdır.
 
 ## İzleme
 
@@ -1046,6 +1079,7 @@ dokümanı kadar bağlayıcıdır; çelişki hâlinde ADR geçerlidir.
 | [0006](docs/adr/0006-workflow-modul-erisimi.md) | Workflow → modül erişimi | `internal/workflows` de modülleri import etmez; dar arayüz + container'dan adla çözüm (ADR 0001'in workflow'lara uygulanması) |
 | [0007](docs/adr/0007-sertlestirme-arizada-davranis.md) | Sertleştirmede arıza davranışı | Tek tip kural yok: kimlik **kapalı kalır** (fail-closed), hız sınırı **açık kalır** (fail-open), idempotency ayırmada reddeder / kayıtta anahtarı serbest bırakır |
 | [0008](docs/adr/0008-musteri-kimligi-guven-siniri.md) | Müşteri kimliği güven sınırı | Çerçeve müşteri kimliğini **doğrulamaz**: `customer_id` bir iddiadır, harcama limiti yalnızca müşterisini **beyan eden** alışverişe uygulanır; doğrulama gömen uygulamanın işidir |
+| [0009](docs/adr/0009-cok-kiracililik-kurulum-siniri.md) | Çok kiracılılık | Sınır **kurulumdur, satır değil**: her kurulum tek kiracılıdır, izolasyon dağıtım katmanındadır; çerçeve kiracılar arası bir sınır tanımaz, uygular ve iddia etmez |
 
 ADR 0001, planın Bölüm 2.1 ("erişim public service interface üzerinden") ile
 Bölüm 2.4 ("modüller derleme zamanında birbirine bağımlı olmaz") arasındaki

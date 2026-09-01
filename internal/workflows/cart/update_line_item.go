@@ -54,6 +54,25 @@ type UpdateLineItemResult struct {
 // yoktur ve sıfıra yuvarlanması, işaret hatası taşıyan bir isteğe satır
 // sildirirdi.
 //
+// # Satış kanalı kapsamı burada YENİDEN sorulmaz
+//
+// Kapsam denetimi giriş kapısındadır ([Workflows.AddLineItem]): kimliğin
+// kanallarında görünmeyen bir varyant sepete HİÇ giremez. Bu metot yeni varyant
+// sokamaz, yalnızca sepette ZATEN duran bir satırın adedini yazar.
+//
+// Bunun ölçülmüş bir sonucu vardır ve saklanmıyor: bir ürün sepete girdikten
+// SONRA yönetim ucundan başka bir kanala taşınırsa, müşteri o satırın adedini
+// artırmaya ve sepeti tamamlamaya devam edebilir. Aynı varyantı yeniden EKLEMEK
+// ise reddedilir (404) — giriş kapısı kapalıdır.
+//
+// Bu bir açık değil, sepetin ANLIK GÖRÜNTÜ olmasının sonucudur ve bilinçlidir:
+// alternatifi, bir yöneticinin katalog düzenlemesinin müşterilerin dolu
+// sepetlerini ödenemez kılmasıdır. Saldırganın eline geçen bir şey de yoktur —
+// satırın sepete girebilmesi için o an kapsamda olması GEREKMİŞTİR ve taşımayı
+// yapan taraf saldırgan değil operatördür. Kapsamı satır ömrü boyunca sürekli
+// dayatmak isteyen bir kurulum, kapsam kontrolünü tamamlama adımına da koymayı
+// seçebilir; o zaman ödenecek bedel yukarıdaki cümledir.
+//
 // # Toplam hesabı patlarsa
 //
 // Adet YAZILMIŞTIR ve geri alınmaz; hata [CodeTotalsAfterChange] koduyla

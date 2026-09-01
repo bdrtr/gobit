@@ -50,6 +50,14 @@ const (
 	EntityVariant = "variant"
 	// FieldTitle varyant kaydında başlığın bulunduğu alan adıdır.
 	FieldTitle = "title"
+	// FilterSalesChannelIDs varyant sorgusunun satış kanalı süzgeç anahtarıdır;
+	// tanımı product modülü bildirir (productsvc.FilterSalesChannelIDs).
+	//
+	// Anlamı ve neden bu akıştan geçirildiği saleschannel.go'dadır. Adın burada
+	// tekrarlanması izolasyonun bedelidir; ayrışırsa sağlayıcı filtreyi
+	// TANIMAZ ve satır ekleme errors.Invalid ile düşer — sessiz değil, ama yine
+	// de bir arch testi iki adı birbirine bağlar.
+	FilterSalesChannelIDs = "sales_channel_ids"
 	// EntityRegion bölgelerin Query katmanındaki entity adıdır; tanımı region
 	// modülü bildirir.
 	EntityRegion = "region"

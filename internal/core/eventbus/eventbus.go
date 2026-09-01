@@ -4,9 +4,9 @@
 // Sözleşme tek, backend değiştirilebilirdir: NewInMemory geliştirme ve test
 // için süreç içi bir veri yolu, NewRedisStream üretim için Redis Streams
 // tabanlı kalıcı bir veri yolu üretir. Ortak olan yalnızca ARAYÜZDÜR; teslim,
-// sıra ve eşzamanlılık garantileri backend'e göre değişir ve aşağıdaki
-// bölümlerde tek tek tanımlanmıştır. Backend değiştirmeden önce handler'ların
-// bu garantilerin EN ZAYIFINA göre yazıldığından emin olun.
+// sıra, eşzamanlılık ve handler'a verilen BAĞLAM backend'e göre değişir ve
+// aşağıdaki bölümlerde tek tek tanımlanmıştır. Backend değiştirmeden önce
+// handler'ların bu garantilerin EN ZAYIFINA göre yazıldığından emin olun.
 //
 // # Teslim semantiği
 //
@@ -45,6 +45,46 @@
 // kilitlemesine yol açar. Yeniden deneme ve telafi gerektiren işler
 // core/workflow'un saga motoruna aittir (plan Faz 3); handler'ın kendi
 // içinde yeniden denemesi de serbesttir.
+//
+// # Bağlam ve gözlemlenebilirlik
+//
+// Handler'a verilen ctx'in İPTAL davranışı iki backend'de aynıdır, DEĞERLERİ
+// değildir (bkz. [Handler]): InMemory olayı süreç içinde taşıdığı için
+// Publish'e verilen ctx'in değerleri handler'a ulaşır, Redis ise olayı
+// SÜREÇLER ARASI taşır ve tüketici süreç yayımcının ctx'ini hiç görmez.
+//
+// Bunun ölçülen bedeli bir gözlemlenebilirlik farkıdır ve BİLİNÇLİ olarak
+// kapatılmamıştır: in-memory kurulumda bir handler'ın logları yayımlayan
+// isteğin request_id'sini taşır, Redis kurulumunda TAŞIMAZ. Yani bir olayı
+// tetikleyen istek ile onun yan etkisi, üretim kurulumunda request_id
+// üzerinden birbirine bağlanamaz.
+//
+// Farkı kapatmak teknik olarak ucuzdur — request_id mesaja bir alan olarak
+// yazılıp tüketicide ctx'e geri konabilirdi — ama ÜÇ bedeli vardır ve
+// toplamı, kazandırdığı tek log alanından pahalıdır:
+//
+//   - Veri yolu, hangi ctx değerlerinin taşınmaya değer olduğunu BİLMEK
+//     zorunda kalırdı. request_id çekirdeğin HTTP katmanının anahtarıdır;
+//     taşımak, taşıma katmanı olan bu paketi o katmana bağlar ve listeye her
+//     eklenen değer bağı büyütür.
+//   - Sonuç YARIM bir doğruluk olurdu: request_id dolu ama logger, kimlik ve
+//     izleme span'i boş bir ctx, handler yazarını "hangi değer var" diye
+//     tahmine iter. Bugünkü kural tahmine yer bırakmıyor: Redis'te HİÇBİRİ
+//     yok.
+//   - En az bir kez teslim, mesajı süreç yeniden başladıktan sonra da
+//     verebilir. O anda geri konan request_id, çoktan bitmiş bir isteğe ait
+//     olurdu; log satırı canlı bir isteğe aitmiş gibi görünür ve bu, hiç
+//     korelasyon olmamasından daha yanıltıcıdır.
+//
+// İki backend'de de çalışan korelasyon yolu Event'in KENDİSİDİR: Event.ID
+// mesajla birlikte taşınır ve handler hatalarında zaten loglanır (event_id),
+// yayımlayan taraf isteğe bağlı olarak request_id'yi Event.Data'ya AÇIKÇA
+// koyabilir. Data, iki backend'in de taşıdığı tek şeydir.
+//
+// Bu karar, dağıtık izleme (trace context) gerçekten istendiğinde yeniden
+// açılır. O zaman taşınacak şey request_id değil W3C traceparent'tır, taşıma
+// yeri yine mesajın kendisidir ve tüketici tarafında span, kopyalanmış bir
+// değer olarak değil AÇIKÇA sürdürülür.
 package eventbus
 
 import (
@@ -86,9 +126,23 @@ type Event struct {
 
 // Handler bir olayı işleyen fonksiyondur.
 //
-// Verilen ctx, Publish'i çağıran isteğin ctx'inden türetilir ancak iptali
-// devralmaz: istek bittiğinde işleme yarıda kesilmez, yalnızca değerler
-// (örn. request_id) korunur. Dönen hata çağırana ulaşmaz, yalnızca loglanır.
+// Verilen ctx hiçbir backend'de İPTAL DEVRALMAZ: çağıranın isteği bitse de,
+// Shutdown çağrılsa da işleme yarıda kesilmez. Ctx'in DEĞERLERİ ise backend'e
+// göre değişir:
+//
+//   - InMemory: ctx, Publish'e verilen ctx'ten türetilir; istek değerleri
+//     (örn. request_id) korunur.
+//   - Redis: olay SÜREÇLER ARASI gider. Tüketici süreç yayımcının ctx'ini HİÇ
+//     görmez; handler, veri yolunun kendi kök ctx'inden türeyen ve hiçbir
+//     istek değeri TAŞIMAYAN bir ctx alır.
+//
+// Handler bu yüzden ctx'teki değerlere GÜVENMEMELİDİR. Varsayılan backend
+// in-memory olduğundan, ctx'te bir şey taşıyan tasarım testlerde ve yerel
+// geliştirmede yeşil geçer, üretimde sessizce boş okur: ihtiyaç duyulan her
+// şey Event.Data'da olmalıdır. Korelasyonun iki backend'de de çalışan hâli
+// için bkz. paket yorumundaki "Bağlam ve gözlemlenebilirlik".
+//
+// Dönen hata çağırana ulaşmaz, yalnızca loglanır.
 type Handler func(ctx context.Context, e Event) error
 
 // EventBus olay yayımlama ve abonelik sözleşmesidir.

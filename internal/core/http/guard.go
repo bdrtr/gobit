@@ -110,6 +110,10 @@ type GuardOptions struct {
 	// Limiter hız sınırlayıcıdır; nil ise hız sınırı takılmaz.
 	Limiter RateLimiter
 	// LimitKey istemciyi tanımlayan anahtarı üretir; nil ise [ClientIPKey].
+	//
+	// Çağıranın KİMLİĞİNE bakan bir işlev buraya uymaz: bu halka kimlikten
+	// önce koşar (aşağıdaki sıraya bkz.) ve o noktada context'te [Principal]
+	// yoktur. Tam gerekçe [KeyFunc] godoc'undadır.
 	LimitKey KeyFunc
 	// IdempotencyStore idempotency kayıtlarının deposudur; nil ise
 	// idempotency takılmaz.

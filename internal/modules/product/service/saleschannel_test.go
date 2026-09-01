@@ -10,6 +10,7 @@ import (
 
 	"github.com/bdrtr/gobit/internal/core/errors"
 	"github.com/bdrtr/gobit/internal/core/link"
+	"github.com/bdrtr/gobit/internal/core/query"
 	"github.com/bdrtr/gobit/internal/modules/product/repository"
 	"github.com/bdrtr/gobit/internal/modules/product/service"
 )
@@ -27,6 +28,7 @@ import (
 type channelFixture struct {
 	svc   *service.Service
 	links *fakeLinker
+	store *memStore
 }
 
 // newChannelFixture yayında ürünler kurulabilen bir servis üretir.
@@ -34,7 +36,18 @@ func newChannelFixture(t *testing.T) channelFixture {
 	t.Helper()
 
 	links := newFakeLinker()
-	return channelFixture{svc: newService(t, newMemStore(), links, nil), links: links}
+	store := newMemStore()
+	return channelFixture{svc: newService(t, store, links, nil), links: links, store: store}
+}
+
+// variantProvider fikstürün deposu üzerinde bir varyant sağlayıcısı üretir.
+//
+// Sağlayıcı YAZMA yolunun kapsam sorusunu soran yüzeydir (sepet akışı Query
+// üzerinden buraya iner); vitrin testleriyle aynı fikstürde durması bilinçlidir
+// — iki yüzeyin aynı kurulumda AYNI cevabı vermesi, kuralın tek olduğunu
+// söyleyen şeydir.
+func (f channelFixture) variantProvider() query.Provider {
+	return service.NewVariantProvider(f.store)
 }
 
 // storeHandles vitrin listesinden dönen ürünlerin handle'larını verir.
@@ -372,4 +385,122 @@ func TestSalesChannelLinksRequireLinkService(t *testing.T) {
 	_, err = svc.ProductSalesChannelIDs(ctx, product.ID)
 	require.Error(t, err)
 	assert.True(t, errors.HasKind(err, errors.KindUnavailable), "beklenen sınıf unavailable: %v", err)
+}
+
+// --- YAZMA yolunun kapsam sorusu -------------------------------------------
+//
+// Aşağıdaki testler kuralın vitrinden başka bir yerde de sorulduğunu sınar:
+// sepete satır ekleyen akış varyantı Query katmanından okur ve okumayı isteğin
+// kanallarıyla kapsar. Kuralın kendisi burada YENİDEN yazılmaz — sağlayıcı
+// depoya iner, depo da vitrin listesiyle aynı şablonu kullanır — bu yüzden
+// buradaki iddialar kuralın DOĞRULUĞUNU değil, yazma yolunun aynı kurala
+// BAĞLANDIĞINI kanıtlar. SQL'in gerçekten doğru olduğu entegrasyon
+// testlerindedir.
+
+// varyantKimlikleri sağlayıcı kayıtlarından varyant kimliklerini çıkarır.
+func varyantKimlikleri(records []query.Record) []string {
+	out := make([]string, 0, len(records))
+	for i := range records {
+		id, _ := records[i][query.IDField].(string)
+		out = append(out, id)
+	}
+	return out
+}
+
+// TestVariantProviderScopesBySalesChannel varyant okumasının kanal süzgecine
+// uyduğunu doğrular.
+//
+// Üç durum da sınanır çünkü üçü de yazma yolunda karşılaşılır: atanmış
+// varyantın kendi kanalında görünmesi, yabancı kanalda görünmemesi ve
+// atamasız varyantın her kanalda görünmesi.
+func TestVariantProviderScopesBySalesChannel(t *testing.T) {
+	t.Parallel()
+
+	fx := newChannelFixture(t)
+	ctx := context.Background()
+
+	atanmis := seedProduct(t, fx.svc, "tisort", "Tişört")
+	require.NoError(t, fx.svc.AddProductSalesChannel(ctx, atanmis.ID, "sc_a"))
+	atamasiz := seedProduct(t, fx.svc, "corap", "Çorap")
+
+	atanmisVaryant := atanmis.Variants[0].ID
+	atamasizVaryant := atamasiz.Variants[0].ID
+	provider := fx.variantProvider()
+
+	testler := map[string]struct {
+		kanallar []string
+		beklenen []string
+	}{
+		"kendi kanalı": {
+			kanallar: []string{"sc_a"},
+			beklenen: []string{atanmisVaryant, atamasizVaryant},
+		},
+		"yabancı kanal": {
+			kanallar: []string{"sc_b"},
+			beklenen: []string{atamasizVaryant},
+		},
+		"kanalsız kimlik": {
+			// Boş ama nil OLMAYAN dilim: kimlik var, kanalı yok. Yalnızca
+			// atamasız varyant kalır — okuma yüzeyindeki anlamın aynısı.
+			kanallar: []string{},
+			beklenen: []string{atamasizVaryant},
+		},
+	}
+
+	for ad, tt := range testler {
+		t.Run(ad, func(t *testing.T) {
+			records, err := provider.List(ctx, query.ListOptions{
+				Filters: map[string]any{
+					"ids":                         []string{atanmisVaryant, atamasizVaryant},
+					service.FilterSalesChannelIDs: tt.kanallar,
+				},
+			})
+			require.NoError(t, err)
+			assert.ElementsMatch(t, tt.beklenen, varyantKimlikleri(records))
+		})
+	}
+}
+
+// TestVariantProviderWithoutChannelFilterSeesEverything süzgecin SESSİZ bir
+// varsayılanı olmadığını doğrular.
+//
+// Anahtar hiç verilmezse kapsam uygulanmaz: bu yüzeyden okuyan her çağıranın
+// arkasında bir müşteri isteği yoktur ve olmayan bir kimliğe göre süzmek,
+// kimliksiz kurulumlarda sepeti tümüyle çalışmaz kılardı.
+func TestVariantProviderWithoutChannelFilterSeesEverything(t *testing.T) {
+	t.Parallel()
+
+	fx := newChannelFixture(t)
+	ctx := context.Background()
+
+	atanmis := seedProduct(t, fx.svc, "tisort", "Tişört")
+	require.NoError(t, fx.svc.AddProductSalesChannel(ctx, atanmis.ID, "sc_a"))
+
+	records, err := fx.variantProvider().List(ctx, query.ListOptions{
+		Filters: map[string]any{"ids": []string{atanmis.Variants[0].ID}},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, []string{atanmis.Variants[0].ID}, varyantKimlikleri(records),
+		"süzgeç istenmediğinde atanmış varyant da görünmeli")
+}
+
+// TestVariantProviderRejectsChannelFilterWithoutIDs kanal süzgecinin kimliksiz
+// kullanımının REDDEDİLDİĞİNİ doğrular.
+//
+// Kimliksiz yollar sayfalamayı veritabanında yapar; süzgeç orada bellek içinde
+// uygulansaydı sayfa SESSİZCE eksik dolardı. Sessizce yanlış sayfalayan bir
+// yüzey açmaktansa bileşimi reddetmek yeğdir; gerekçenin tamamı
+// [service.NewVariantProvider]'ın List belgesindedir.
+func TestVariantProviderRejectsChannelFilterWithoutIDs(t *testing.T) {
+	t.Parallel()
+
+	fx := newChannelFixture(t)
+
+	_, err := fx.variantProvider().List(context.Background(), query.ListOptions{
+		Filters: map[string]any{service.FilterSalesChannelIDs: []string{"sc_a"}},
+	})
+
+	require.Error(t, err)
+	assert.True(t, errors.HasKind(err, errors.KindInvalid),
+		"desteklenmeyen bileşim errors.Invalid olmalı (ADR 0004): %v", err)
 }

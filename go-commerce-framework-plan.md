@@ -32,7 +32,13 @@
 - **Store API** (müşteri) + **Admin API** (yönetim)
 - Plugin sistemi (modül, subscriber, workflow, route, provider eklenebilir)
 
-**Non-goals (ilk sürümde yok):** Storefront UI, admin panel UI, GraphQL (REST ile başla), çoklu-tenant. Bunlar sonraki sürümlere bırakılır.
+**Non-goals (ilk sürümde yok):** Storefront UI, admin panel UI, GraphQL (REST ile başla),
+çoklu-tenant. Bunlar sonraki sürümlere bırakılır.
+
+Çoklu-tenant'ın kapsam dışı kalması bir sıralama tercihi değil, gerekçesi yazılmış
+bir karardır: **her gobit kurulumu tek kiracılıdır, izolasyon dağıtım katmanındadır**
+(bir kiracı = bir kurulum = bir veritabanı). Gerekçe, reddedilen seçenekler ve kararı
+yeniden açacak sorular [ADR 0009](docs/adr/0009-cok-kiracililik-kurulum-siniri.md)'da.
 
 ---
 
@@ -393,4 +399,10 @@ type PaymentProvider interface {
 
 ## 10. Sonraki Sürüm Fikirleri (şimdilik kapsam dışı)
 
-GraphQL query yüzeyi, admin panel UI, storefront SDK, çoklu-tenant, çoklu-depo gelişmiş stok, Temporal entegrasyonu, B2B (quote/şirket hesapları), arama (OpenSearch/Meilisearch entegrasyonu).
+GraphQL query yüzeyi, admin panel UI, storefront SDK, çoklu-depo gelişmiş stok,
+Temporal entegrasyonu, B2B (quote/şirket hesapları), arama (OpenSearch/Meilisearch
+entegrasyonu).
+
+**Çoklu-tenant bu listede değildir**: "henüz sırası gelmedi" değil, karara bağlandı.
+[ADR 0009](docs/adr/0009-cok-kiracililik-kurulum-siniri.md) sınırı kurulum düzeyine
+koyar ve kararı yeniden açacak veriyi adıyla yazar.

@@ -135,6 +135,13 @@ func (f *fakeStreamClient) ackedIDs() []string {
 	return slices.Clone(f.acked)
 }
 
+// addedArgs XAdd'e verilen argümanları sırayla döner.
+func (f *fakeStreamClient) addedArgs() []*redis.XAddArgs {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.added)
+}
+
 // fakeConfig taklit istemciyle kullanılan yalıtılmış ayarı döner.
 func fakeConfig() RedisConfig {
 	return RedisConfig{
@@ -413,6 +420,80 @@ func TestConsumeDeliversDecodedEventAndAcks(t *testing.T) {
 
 	if acked := fake.ackedIDs(); !slices.Equal(acked, []string{"5-0"}) {
 		t.Errorf("ACK'lenen kimlikler = %v, beklenen [5-0]", acked)
+	}
+}
+
+// TestConsumeHandlerCtxCarriesNoPublisherValues Redis backend'inin [Handler]
+// sözleşmesindeki ctx davranışını sabitler.
+//
+// Bu backend'de olay SÜREÇ SINIRINI geçer: tüketici yayımcının ctx'ini hiç
+// görmez, yani yayımcı ctx'e ne koyarsa koysun handler'a ulaşmaz. In-memory
+// backend'in aynı noktadaki davranışı TAM TERSİDİR
+// (bkz. TestInMemoryHandlerContextSurvivesCallerCancel) ve varsayılan backend
+// o olduğu için, fark ancak burada yazılıysa görülebilir — aksi hâlde ctx'te
+// bir şey taşıyan tasarım testlerde yeşil geçip üretimde sessizce boş okur.
+//
+// Mesajın ALAN KÜMESİ de sabitlenir: yayımcının ctx'inden hiçbir şey
+// serileştirilmez. Alan eklemek yasak değildir ama bu test ile [Handler]
+// godoc'u BİRLİKTE değişmelidir; ikisinin ayrışması bu borcun ta kendisiydi.
+func TestConsumeHandlerCtxCarriesNoPublisherValues(t *testing.T) {
+	type ctxKey struct{}
+
+	cfg := fakeConfig()
+	stream := cfg.StreamName(testEventName)
+	when := time.Date(2026, 8, 23, 12, 30, 0, 0, time.UTC)
+
+	fake := newFakeStreamClient(
+		scriptedRead(stream, eventMessage("9-0", "evt_01", testEventName, when, `{}`)),
+	)
+	bus := newRedisBus(fake, cfg, quietLogger())
+
+	got := make(chan context.Context, 1)
+	if err := bus.Subscribe(testEventName, func(ctx context.Context, _ Event) error {
+		got <- ctx
+		return nil
+	}); err != nil {
+		t.Fatalf("Subscribe hata verdi: %v", err)
+	}
+
+	// Yayımcı ctx'inde bir istek değeri taşıyor; ne mesaja ne handler'a geçmeli.
+	yayimCtx := context.WithValue(t.Context(), ctxKey{}, "req_01")
+	if err := bus.Publish(yayimCtx, Event{Name: testEventName}); err != nil {
+		t.Fatalf("Publish hata verdi: %v", err)
+	}
+
+	waitClosed(t, fake.drained, "mesaj hiç okunmadı")
+	shutdownBus(t, bus)
+
+	select {
+	case hctx := <-got:
+		if v := hctx.Value(ctxKey{}); v != nil {
+			t.Errorf("handler ctx'i yayımcının değerini taşıyor (%v); tüketici süreç "+
+				"yayımcının ctx'ini göremez, godoc bunu vaat etmemeli", v)
+		}
+		if err := hctx.Err(); err != nil {
+			t.Errorf("handler ctx'i iptal edilmiş: %v (Shutdown işlemeyi yarıda kesmemeli)", err)
+		}
+	default:
+		t.Fatal("olay handler'a hiç ulaşmadı")
+	}
+
+	eklenen := fake.addedArgs()
+	if len(eklenen) != 1 {
+		t.Fatalf("XAdd çağrı sayısı = %d, beklenen 1", len(eklenen))
+	}
+
+	degerler, ok := eklenen[0].Values.(map[string]any)
+	if !ok {
+		t.Fatalf("XAdd değerleri %T tipinde; map[string]any bekleniyordu", eklenen[0].Values)
+	}
+
+	beklenen := []string{fieldID, fieldName, fieldOccurredAt, fieldData}
+	slices.Sort(beklenen)
+
+	if alanlar := slices.Sorted(maps.Keys(degerler)); !slices.Equal(alanlar, beklenen) {
+		t.Errorf("mesaj alanları = %v, beklenen %v (yayımcının ctx'inden hiçbir şey "+
+			"serileştirilmez; alan eklendiyse Handler godoc'u da değişmeli)", alanlar, beklenen)
 	}
 }
 

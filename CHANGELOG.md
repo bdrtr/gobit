@@ -68,6 +68,52 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Güvenlik
 
+- **Satış kanalı kapsamı artık YAZMA yolunda da uygulanıyor: başka bir kanalın
+  varyantı sepete EKLENEMİYOR.** Kural (`ataması olmayan ürün her kanalda
+  görünür, ataması olan yalnızca atandığı kanallarda`) v0.4.0'a kadar yalnızca
+  OKUMA yüzeyinde uygulanıyordu — liste, sayaç, tekil uç ve toplu okuma tek bir
+  SQL şablonundan geçiyordu. `POST /store/v1/carts/{id}/line-items` ise varyantı
+  YALNIZCA kimlikle okuyordu.
+
+  Sonucu, kuralın kendisini anlamsız kılıyordu: B kanalının publishable
+  anahtarıyla gelen bir istemci, yalnızca A kanalında satılan bir varyantın
+  kimliğini gövdeye yazarak satırı ekliyor ve alışverişi tamamlayabiliyordu.
+  Vitrinde gizlenen ürün sepette satılabiliyordu, yani süzgeç bir yetkilendirme
+  değil bir görüntüleme tercihiydi. Gerçek yığında ölçüldü: düzeltme öncesi
+  yabancı kanalın varyantı `201`, sonrasında `404` alıyor
+  (`internal/e2e/kanal_sepeti_test.go`).
+
+  Kural İKİNCİ KEZ YAZILMADI. Akış varyantı yine Query katmanından okur;
+  eklenen tek şey, okumaya isteğin DOĞRULANMIŞ kimliğinden gelen kanalların
+  süzgeç olarak konmasıdır. Süzgeci uygulayan taraf product modülüdür ve
+  vitrinin kullandığı SQL şablonunun ta kendisiyle uygular
+  (`repository/saleschannel.go`); yeni sorgu yalnızca şablonu varyantın
+  `product_id`'siyle örnekler.
+
+  Kanallar İSTEMCİDEN ALINMAZ, `corehttp.Principal`'dan gelir — okuma
+  yüzeyindeki kararın aynısı. Üç durum da okuma yüzeyiyle BİREBİR aynı ayrılır:
+  kimlik yok → süzgeç uygulanmaz, kanalsız kimlik → BOŞ KÜME (yalnızca atamasız
+  ürünler), kanallı kimlik → o kanallar. İki türetmenin aynı anlamı taşıdığını
+  bir arch testi çiviler (`TestKanalTuretmesiIkiYuzeydeAyniAnlamda`).
+
+  Kapsam dışı varyant, hiç var olmayan varyantla **aynı** hatayı döner
+  (`404 cart_workflow_variant_unknown`): farklı bir sınıf, başka bir kanalda
+  satılan ürünün varlığını ele verir ve gizlemenin kendisini delerdi.
+
+  **Kapsam GİRİŞTE uygulanır.** Satır adedi güncelleme ve sepet tamamlama
+  yolları kapsamı yeniden sormaz: sepete varyant sokabilen tek yol satır
+  eklemedir ve sepete GİRMİŞ bir satırın, ürünü sonradan başka bir kanala
+  taşıyan bir yönetici düzenlemesiyle ödenemez hâle gelmemesi verilmiş bir
+  karardır. Sınır `workflows/cart/saleschannel.go`'da ve README'de yazılıdır;
+  bir arch testi (`TestVaryantOkumalariKanalKararindanGecer`) her yeni varyant
+  okumasını ya kararı vermeye ya da gerekçesini yazmaya zorlar.
+
+  **Kimden ne isteniyor:** kanal ataması hiç kullanmayan kurulumlar
+  etkilenmez (atamasız ürün her kanalda satılabilir kalır). Kanal ataması
+  KULLANAN kurulumlarda, bugüne kadar açığa dayanarak yabancı kanalın ürününü
+  sepete ekleyen bir istemci artık `404` alır; doğru düzeltme, vitrinde
+  gösterilen katalogla sepete eklenen ürünü aynı anahtardan geçirmektir.
+
 - **B2B harcama limitinin uygulanma KOŞULU belgelendi: limit, müşterisini
   BEYAN EDEN alışverişe uygulanır.** Davranış **değişmedi**; değişen şey, bu
   deponun v0.4.0'a kadar limiti koşulsuz uygulanan bir kural gibi anlatmasıydı.

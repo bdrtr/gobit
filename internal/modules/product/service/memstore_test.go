@@ -535,6 +535,45 @@ func (m *memStore) ListVariantsByIDs(_ context.Context, ids []string) ([]models.
 	return out, nil
 }
 
+// VisibleVariantIDs varyant görünürlüğünü ÜRÜN kuralının ta kendisiyle
+// hesaplar.
+//
+// Sahte, gerçek deponun yaptığının aynısını yapar: varyantın kendi kanalı
+// yoktur, bağlı olduğu ürünün kanalı vardır (bkz. repository/saleschannel.go).
+// Ayrı bir kural yazsaydı, gerçek SQL ile ayrışan bir davranışı testte
+// gizleyebilirdi.
+//
+// Silinmiş varyant görünmez sayılır; [memStore.liveVariants] zaten yalnızca
+// yaşayanları döner.
+func (m *memStore) VisibleVariantIDs(
+	_ context.Context,
+	variantIDs []string,
+	salesChannelIDs []string,
+) (map[string]struct{}, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if err := m.track("VisibleVariantIDs"); err != nil {
+		return nil, err
+	}
+
+	gorunur := make(map[string]struct{}, len(variantIDs))
+
+	// Döngü indeksle gezilir: varyant yapısı büyüktür ve değerle kopyalamak
+	// her tur birkaç yüz baytı boşuna taşır.
+	all := m.liveVariants()
+	for i := range all {
+		if !slices.Contains(variantIDs, all[i].ID) {
+			continue
+		}
+		if m.visibleIn(all[i].ProductID, salesChannelIDs) {
+			gorunur[all[i].ID] = struct{}{}
+		}
+	}
+
+	return gorunur, nil
+}
+
 func (m *memStore) UpdateVariant(_ context.Context, id string, patch repository.VariantPatch) (models.Variant, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

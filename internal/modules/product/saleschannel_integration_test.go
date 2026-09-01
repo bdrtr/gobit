@@ -14,6 +14,7 @@ import (
 
 	"github.com/bdrtr/gobit/internal/core/container"
 	corehttp "github.com/bdrtr/gobit/internal/core/http"
+	"github.com/bdrtr/gobit/internal/core/query"
 	"github.com/bdrtr/gobit/internal/modules/product"
 	"github.com/bdrtr/gobit/internal/modules/product/service"
 )
@@ -406,4 +407,109 @@ func TestSalesChannelLinkRejectsUnknownProduct(t *testing.T) {
 	rec := sys.request(t, http.MethodPost, "/admin/v1/products/prod_yok/sales-channels",
 		`{"sales_channel_id": "sc_1"}`)
 	assert.Equal(t, http.StatusNotFound, rec.Code, "gövde: %s", rec.Body.String())
+}
+
+// --- YAZMA yolunun kapsam sorusu -------------------------------------------
+
+// seedPublishedWithVariant koleksiyona yayında bir ürün ve ona bağlı bir
+// varyant ekler; ürün ile varyantın kimliklerini döner.
+//
+// Varyant gerekiyor çünkü sepete giren şey ÜRÜN değil VARYANTTIR ve kapsam
+// sorusu yazma yolunda varyant kimliğiyle sorulur. Kanal ataması ise ürüne
+// yapılır; bu testlerin sınadığı şey tam olarak o devralmanın gerçek SQL'de
+// çalışmasıdır.
+func (f channelFixture) seedPublishedWithVariant(t *testing.T, handle string) (productID, variantID string) {
+	t.Helper()
+
+	productID = f.seedPublished(t, handle)
+
+	rec := f.sys.request(t, http.MethodPost, "/admin/v1/products/"+productID+"/variants",
+		`{"title": "Tek beden"}`)
+	require.Equal(t, http.StatusCreated, rec.Code, "gövde: %s", rec.Body.String())
+
+	variantID, ok := itemData(t, rec)["id"].(string)
+	require.True(t, ok, "oluşturulan varyant kimlik taşımalı: %s", rec.Body.String())
+	return productID, variantID
+}
+
+// variantIDsInChannels varyant sağlayıcısını Query'nin kaydettiği ADLA çözer ve
+// verilen kanallarda görünen kimlikleri döner.
+//
+// Sağlayıcı container'dan adla çözülür ki test, sepet akışının gerçekte
+// izlediği yolu izlesin: akış somut tipi değil "variant.query" adını bilir
+// (ADR 0004/0006). Yapıcıyı doğrudan çağıran bir test, kaydın adı yanlış olsa
+// bile yeşil kalırdı.
+func (f channelFixture) variantIDsInChannels(t *testing.T, ids, channels []string) []string {
+	t.Helper()
+
+	provider, err := container.Resolve[query.Provider](f.sys.container,
+		service.EntityVariant+query.ProviderSuffix)
+	require.NoError(t, err, "varyant sağlayıcısı kayıtlı olmalı")
+
+	filters := map[string]any{"ids": ids}
+	if channels != nil {
+		filters[service.FilterSalesChannelIDs] = channels
+	}
+
+	records, err := provider.List(context.Background(), query.ListOptions{
+		Fields:  []string{query.IDField},
+		Filters: filters,
+	})
+	require.NoError(t, err)
+
+	out := make([]string, 0, len(records))
+	for i := range records {
+		id, ok := records[i][query.IDField].(string)
+		require.True(t, ok, "kayıt kimlik taşımalı: %v", records[i])
+		out = append(out, id)
+	}
+	return out
+}
+
+// TestVariantVisibilityFollowsProductChannels varyant kapsamının GERÇEK SQL'de
+// ürünün kanallarından türediğini doğrular.
+//
+// Bu, sepete satır ekleyen yazma yolunun sorduğu sorunun ta kendisidir ve
+// sahte bir depoyla kanıtlanamaz: koşul, varyantın product_id'si üzerinden
+// link tablosuna bakan bir EXISTS/NOT EXISTS'tir ve tabloyu core/link çalışma
+// anında kurar.
+func TestVariantVisibilityFollowsProductChannels(t *testing.T) {
+	fx := newChannelFixture(t)
+
+	atanmisID, atanmisVaryant := fx.seedPublishedWithVariant(t, uniqueHandle("kanalli-varyant"))
+	fx.assign(t, atanmisID, fx.channelA)
+	_, atamasizVaryant := fx.seedPublishedWithVariant(t, uniqueHandle("atamasiz-varyant"))
+
+	hepsi := []string{atanmisVaryant, atamasizVaryant}
+
+	assert.ElementsMatch(t, hepsi, fx.variantIDsInChannels(t, hepsi, []string{fx.channelA}),
+		"varyant, ürününün atandığı kanalda görünmeli")
+	assert.Equal(t, []string{atamasizVaryant}, fx.variantIDsInChannels(t, hepsi, []string{fx.channelB}),
+		"YABANCI kanalda yalnızca atamasız ürünün varyantı kalmalı; kalmıyorsa "+
+			"yazma yolu kapsamsızdır ve başka bir vitrinin ürünü sepete girebilir")
+	assert.Equal(t, []string{atamasizVaryant}, fx.variantIDsInChannels(t, hepsi, []string{}),
+		"kanalsız kimlik BOŞ KÜMEDİR: yalnızca atamasız ürünün varyantı görünür")
+	assert.ElementsMatch(t, hepsi, fx.variantIDsInChannels(t, hepsi, nil),
+		"süzgeç hiç istenmediğinde kapsam uygulanmamalı")
+}
+
+// TestVariantVisibilityMatchesStoreListing yazma yolunun cevabının vitrin
+// listesiyle AYNI olduğunu doğrular.
+//
+// İki yüzeyin aynı kurulumda ayrışması, bu değişikliğin kapatmaya çalıştığı
+// hata sınıfının kendisidir: kural bir yerde uygulanıp diğerinde
+// uygulanmadığında, vitrinde gizlenen ürün sepette satılabilir kalır. Test
+// ikisini yan yana koyar ve ayrışmayı gözle görülür kılar.
+func TestVariantVisibilityMatchesStoreListing(t *testing.T) {
+	fx := newChannelFixture(t)
+
+	gizliID, gizliVaryant := fx.seedPublishedWithVariant(t, uniqueHandle("gizli"))
+	fx.assign(t, gizliID, fx.channelA)
+
+	handles, _ := fx.list(t, []string{fx.channelB})
+	require.Empty(t, handles, "ürün yabancı vitrinde GÖRÜNMEMELİ (okuma yüzeyi)")
+
+	assert.Empty(t, fx.variantIDsInChannels(t, []string{gizliVaryant}, []string{fx.channelB}),
+		"vitrinde gizlenen ürünün varyantı yazma yolunda da GÖRÜNMEMELİ; "+
+			"görünüyorsa gizleme yalnızca kozmetiktir")
 }

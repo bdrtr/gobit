@@ -64,6 +64,10 @@ func (b *inMemoryBus) Publish(ctx context.Context, e Event) error {
 	// Handler'lar çağıranın isteğinden bağımsız yaşar: ctx'in değerleri
 	// (örn. request_id) korunur, iptali devralınmaz. Aksi hâlde istek biter
 	// bitmez yan etki yarıda kesilirdi.
+	//
+	// Değerlerin korunması YALNIZCA bu backend'in özelliğidir; Redis
+	// backend'inde olay süreç sınırını geçer ve yayımcının ctx'i karşıya
+	// geçmez (bkz. [Handler]). Handler'lar bu yüzden değerlere güvenemez.
 	hctx := context.WithoutCancel(ctx)
 
 	// wg.Add RLock altında yapılır; Shutdown closed'ı yazma kilidiyle işaretlediği

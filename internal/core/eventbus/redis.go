@@ -488,6 +488,11 @@ func (b *redisBus) dispatch(stream, eventName string, msg redis.XMessage) {
 	// Handler'lar veri yolunun kökünden türeyen ama iptali devralmayan bir ctx
 	// alır; böylece Shutdown çağrıldığında çalışan işleme yarıda kesilmez ve
 	// Shutdown onun bitmesini bekler (graceful kapanış).
+	//
+	// Kök, yayımcının ctx'i DEĞİLDİR ve olamaz: mesaj başka bir süreçten
+	// gelmiş olabilir. Yayımcının istek değerleri (örn. request_id) bu yüzden
+	// burada YOKTUR — in-memory backend'den ayrıştığımız tek nokta budur ve
+	// gerekçesi paket yorumundaki "Bağlam ve gözlemlenebilirlik"tedir.
 	hctx := context.WithoutCancel(b.ctx)
 	for _, h := range handlers {
 		invokeHandler(hctx, b.log, e, h)

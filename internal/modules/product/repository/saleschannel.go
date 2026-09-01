@@ -172,6 +172,38 @@ var visibleProductIDsSQL = `SELECT id FROM product
 WHERE id = ANY($1::text[]) AND deleted_at IS NULL AND ` +
 	salesChannelVisible("product.id", "$2")
 
+// visibleVariantIDsSQL verilen VARYANT kimliklerinden kanallarda görünür
+// olanları döner.
+//
+// # Görünürlük varyantın değil ÜRÜNÜN özelliğidir
+//
+// Kanal ataması ürüne yapılır ([SalesChannelLinkTable] ürün kimliği taşır) ve
+// varyant onu devralır. Bu yüzden şablona ürün ifadesi olarak varyantın
+// product_id sütunu verilir; kural yeniden yazılmaz, aynı
+// [salesChannelVisibleTemplate] ikinci bir ifadeyle örneklenir. Varyanta ayrı
+// bir atama YOKTUR ve olmamalıdır: aynı ürünün bir varyantının bir vitrinde,
+// diğerinin başka bir vitrinde satılması diye bir kavram yok — vitrin ürünü
+// gösterir, varyant onun bir seçeneğidir.
+//
+// # Neden var
+//
+// Kanal kapsamı bir zamanlar YALNIZCA okuma yüzeyinde uygulanıyordu: liste,
+// sayaç, tekil uç ve toplu okuma hepsi buradaki şablondan geçiyordu ama sepete
+// satır ekleyen YAZMA yolu varyantı kimlikle, süzgeçsiz okuyordu. Yani B
+// kanalının publishable anahtarıyla gelen istemci, yalnızca A kanalında
+// satılan bir varyantın kimliğini istek gövdesine yazarak onu satın alabilirdi.
+// Bu sorgu o yolun sorusunu ("bu varyant benim kanallarımda görünür mü") aynı
+// tanıma bağlar; kuralı Go tarafında yeniden yazmak — varyantın ürününün
+// bağlarını çekip kesişime bakmak — ikinci bir tanım olurdu ve ayrıştığı gün
+// vitrin bir ürünü gizlerken sepet onu satmaya devam ederdi.
+//
+// # Neden toplu
+//
+// Gerekçe [visibleProductIDsSQL] ile aynıdır ve tekrarlanmıyor.
+var visibleVariantIDsSQL = `SELECT v.id FROM product_variant v
+WHERE v.id = ANY($1::text[]) AND v.deleted_at IS NULL AND ` +
+	salesChannelVisible("v.product_id", "$2")
+
 // productVisibleSQL tek bir ürünün verilen kanallarda görünür olup olmadığını
 // sorar.
 //
@@ -251,22 +283,60 @@ func (r *Repo) VisibleProductIDs(
 	productIDs []string,
 	salesChannelIDs []string,
 ) (map[string]struct{}, error) {
-	if len(productIDs) == 0 {
+	return r.visibleIDs(ctx, visibleProductIDsSQL, productIDs, salesChannelIDs, "ürün")
+}
+
+// VisibleVariantIDs verilen varyant kimliklerinden kanallarda görünür olanları
+// TEK sorguda döner.
+//
+// Sepete satır ekleyen akış, varyantın kanal kapsamını Query katmanı üzerinden
+// bu yola sorar (bkz. service/provider.go). Kuralın kendisi ve neden varyantın
+// değil ürününün sorulduğu [visibleVariantIDsSQL] belgesindedir.
+//
+// Sonucun küme olması ve boş girdinin tur atmaması [VisibleProductIDs] ile
+// aynı gerekçelerdir.
+func (r *Repo) VisibleVariantIDs(
+	ctx context.Context,
+	variantIDs []string,
+	salesChannelIDs []string,
+) (map[string]struct{}, error) {
+	return r.visibleIDs(ctx, visibleVariantIDsSQL, variantIDs, salesChannelIDs, "varyant")
+}
+
+// visibleIDs bir toplu görünürlük sorgusunu çalıştırır ve dönen kimlikleri
+// ÜYELİK kümesine çevirir.
+//
+// İki toplu sorgu ([visibleProductIDsSQL] ve [visibleVariantIDsSQL]) yalnızca
+// hangi tablodan seçtiklerinde ayrılır; gövdeyi paylaşmaları, birinin bir gün
+// rows.Err()'i unutması ya da boş girdide gereksiz tur atması gibi sessiz bir
+// ayrışmayı imkânsız kılar. Kural zaten tek şablondadır; bu, kuralı ÇAĞIRAN
+// yolun da tek olmasını sağlar.
+//
+// kind hata mesajına giren varlık adıdır ("ürün", "varyant"); mesajı sorgudan
+// türetmek, operatörün gördüğü metni SQL'in biçimine bağlardı.
+func (r *Repo) visibleIDs(
+	ctx context.Context,
+	sql string,
+	ids []string,
+	salesChannelIDs []string,
+	kind string,
+) (map[string]struct{}, error) {
+	if len(ids) == 0 {
 		return map[string]struct{}{}, nil
 	}
 
-	rows, err := r.db.Query(ctx, visibleProductIDsSQL, productIDs, salesChannelIDs)
+	rows, err := r.db.Query(ctx, sql, ids, salesChannelIDs)
 	if err != nil {
-		return nil, wrapDB(err, "ürün görünürlüğü okunamadı (%d kimlik)", len(productIDs))
+		return nil, wrapDB(err, "%s görünürlüğü okunamadı (%d kimlik)", kind, len(ids))
 	}
 
-	ids, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	found, err := pgx.CollectRows(rows, pgx.RowTo[string])
 	if err != nil {
-		return nil, wrapDB(err, "ürün görünürlüğü okunamadı (%d kimlik)", len(productIDs))
+		return nil, wrapDB(err, "%s görünürlüğü okunamadı (%d kimlik)", kind, len(ids))
 	}
 
-	gorunur := make(map[string]struct{}, len(ids))
-	for _, id := range ids {
+	gorunur := make(map[string]struct{}, len(found))
+	for _, id := range found {
 		gorunur[id] = struct{}{}
 	}
 

@@ -269,6 +269,15 @@ type stubCatalog struct {
 	titles map[string]string
 	// countries bölge -> ülke kodları eşlemesidir.
 	countries map[string][]string
+	// scopedOut, kanal süzgeci TAŞIYAN bir sorguda kayıt DÖNDÜRÜLMEYECEK
+	// varyantlardır.
+	//
+	// Sahte, satış kanalı kuralını yeniden UYGULAMAZ — o kural product
+	// modülünün SQL'indedir ve burada tekrarlanması, testin gerçek yüzeyle
+	// ayrışabilen ikinci bir tanımı sınaması olurdu. Bunun yerine sahte,
+	// sağlayıcının VERECEĞİ CEVABI betikler: "bu varyant bu isteğin
+	// kapsamında değil" cevabı, Query katmanında boş sonuç demektir.
+	scopedOut map[string]bool
 	// regionErr verilirse bölge sorgusu bu hatayla düşer.
 	regionErr error
 	err       error
@@ -288,6 +297,9 @@ func (s *stubCatalog) Graph(_ context.Context, spec query.GraphSpec) ([]query.Re
 	id, ok := spec.Filters[query.IDField].(string)
 	if !ok {
 		return nil, errors.Invalid("test_bad_filter", "kimlik filtresi dizge değil")
+	}
+	if _, scoped := spec.Filters[FilterSalesChannelIDs]; scoped && s.scopedOut[id] {
+		return []query.Record{}, nil
 	}
 	title, ok := s.titles[id]
 	if !ok {
