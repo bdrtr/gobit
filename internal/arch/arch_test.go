@@ -19,6 +19,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"unicode"
 
 	"github.com/stretchr/testify/require"
 )
@@ -324,8 +325,61 @@ func TestMigrationlarGeriAlinabilir(t *testing.T) {
 			"üretimde söyler.", migrationDizinAdi)
 }
 
-// paraAlanlari para tuttuğu varsayılan alan adlarıdır.
-var paraAlanlari = regexp.MustCompile(`(?i)^(amount|price|total|subtotal|cost|fee|discount|tax|shipping)([A-Za-z]*)?$`)
+// paraSozcukleri bir alan adının para tuttuğunu düşündüren sözcüklerdir.
+//
+// Ad, camelCase/snake_case parçalarına AYRILARAK denenir; baştan bağlı bir
+// kalıp kullanılmaz. Gerekçe ölçülmüş bir kör noktadır: önceki kalıp
+// "^(amount|price|…)" biçimindeydi ve "UnitPrice", "NetAmount",
+// "OriginalPrice" gibi ÖN EKLİ adlarla eşleşmiyordu — yani o adlara konan
+// float bir alan denetimden sessizce geçerdi.
+//
+// Sözcük SINIRI aranır, alt dize değil: "Discountable" (bool) bir para alanı
+// değildir ve "discount" alt dizesi yüzünden yakalanmamalıdır.
+var paraSozcukleri = map[string]bool{
+	"amount": true, "price": true, "total": true, "subtotal": true,
+	"cost": true, "fee": true, "discount": true, "tax": true, "shipping": true,
+}
+
+// paraAdiMi bir alan adının para tuttuğunu düşündürüp düşündürmediğini söyler.
+func paraAdiMi(ad string) bool {
+	for _, sozcuk := range adParcalari(ad) {
+		if paraSozcukleri[sozcuk] {
+			return true
+		}
+	}
+	return false
+}
+
+// adParcalari bir Go alan adını küçük harfli sözcüklerine ayırır.
+//
+// Hem camelCase ("UnitPrice" -> unit, price) hem snake_case ("unit_price")
+// ele alınır; ardışık büyük harfler ("URLTotal") tek parça sayılmaz, çünkü
+// kısaltmayı bölmek "u", "r", "l" gibi anlamsız parçalar üretirdi.
+func adParcalari(ad string) []string {
+	var parcalar []string
+	var kelime strings.Builder
+
+	bitir := func() {
+		if kelime.Len() > 0 {
+			parcalar = append(parcalar, strings.ToLower(kelime.String()))
+			kelime.Reset()
+		}
+	}
+	for i, r := range ad {
+		switch {
+		case r == '_':
+			bitir()
+		case unicode.IsUpper(r) && i > 0 && !unicode.IsUpper(rune(ad[i-1])):
+			bitir()
+			kelime.WriteRune(r)
+		default:
+			kelime.WriteRune(r)
+		}
+	}
+	bitir()
+
+	return parcalar
+}
 
 // TestParaTamSayidir plan Bölüm 8'i zorlar: para minor unit TAM SAYI saklanır.
 //
@@ -333,10 +387,11 @@ var paraAlanlari = regexp.MustCompile(`(?i)^(amount|price|total|subtotal|cost|fe
 // hatayı ancak mutabakat sırasında görürsünüz.
 func TestParaTamSayidir(t *testing.T) {
 	// Sayaç, ADI para gibi görünen alanları sayar — tipine bakmadan. Ölçülen
-	// şey ihlal değil, GÖRÜŞ ALANIDIR: paraAlanlari kalıbı depodaki adlandırmayla
-	// ayrıştığı gün (örn. alanlar UnitPrice/NetAmount gibi ön ekli adlara
-	// geçtiğinde — kalıp baştan bağlıdır ve "UnitPrice" ile EŞLEŞMEZ) bu tarama
-	// hiçbir alana bakmaz ve float bir para alanı sessizce geçerdi.
+	// şey ihlal değil, GÖRÜŞ ALANIDIR: adlandırma bir gün kalıbın tanımadığı
+	// bir biçime geçerse (örn. para alanları "Money" son ekiyle yazılmaya
+	// başlarsa) bu tarama hiçbir alana bakmaz ve float bir para alanı sessizce
+	// geçerdi. Ön ekli adlar (UnitPrice, NetAmount) artık KAPSAMDADIR;
+	// bkz. [adParcalari].
 	gorulenParaAlani := 0
 
 	for _, mod := range modulNames(t) {
@@ -359,7 +414,7 @@ func TestParaTamSayidir(t *testing.T) {
 				for _, f := range st.Fields.List {
 					ident, tipliAd := f.Type.(*ast.Ident)
 					for _, name := range f.Names {
-						if !paraAlanlari.MatchString(name.Name) {
+						if !paraAdiMi(name.Name) {
 							continue
 						}
 						gorulenParaAlani++
@@ -377,7 +432,7 @@ func TestParaTamSayidir(t *testing.T) {
 	}
 
 	require.Positive(t, gorulenParaAlani,
-		"modüllerde paraAlanlari kalıbına uyan TEK BİR alan adı bile bulunamadı; "+
+		"modüllerde para gibi adlandırılmış TEK BİR alan bile bulunamadı; "+
 			"denetim KÖR kalmış olmalı.\n"+
 			"Kalıp ada BAŞTAN bağlıdır (^amount|price|total…), yani adlandırma ön ekli "+
 			"biçime kaydığında (UnitPrice, NetAmount) hiçbir alanı görmez ve float bir "+
