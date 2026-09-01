@@ -158,7 +158,7 @@ openapi-validate: openapi-schema ## Şemayı gerçek OpenAPI üreteciyle doğrul
 
 ## --- Kod üretimi ---
 
-gen: $(SQLC) ## sqlc ile repository kodunu üret (modül başına ayrı config)
+gen: $(SQLC) ## Üretilen kodu yenile: sqlc (repository) + gqlgen (GraphQL)
 	@found=0; \
 	for cfg in internal/modules/*/sqlc.yaml; do \
 		[ -e "$$cfg" ] || continue; \
@@ -171,6 +171,23 @@ gen: $(SQLC) ## sqlc ile repository kodunu üret (modül başına ayrı config)
 		found=$$((found+1)); \
 	done; \
 	if [ "$$found" = "0" ]; then echo "gen: üretilecek sorgu bulunamadı"; fi
+	@# gqlgen, sqlc'den İKİ noktada ayrılır ve ikisi de bilinçlidir:
+	@#
+	@# 1. Üreteç bin/ altına KURULMAZ, `go tool` ile go.mod'daki sürümden
+	@#    çalıştırılır (go.mod'daki "tool" satırı). Sebep: üretilen kod, kendisini
+	@#    çalıştıran kütüphaneyle AYNI sürümden gelmelidir. İkinci bir sürüm pini
+	@#    (burada bir GQLGEN_VERSION) ayrıştığı gün, üretilen kod imzası değişmiş
+	@#    bir yardımcıyı çağırır ve hata şemayla ilgisi olmayan bir yerde çıkar.
+	@#
+	@# 2. Modül dizinine GİRİLİR. gqlgen yolları çalışma dizinine göre çözer;
+	@#    kökten çalıştırmak hata vermez, sessizce BOŞ bir şema okuyup kökte bir
+	@#    graph/ dizini üretir (denendi). "cd", o sessiz arızayı imkânsız kılar.
+	@for cfg in internal/modules/*/gqlgen.yml; do \
+		[ -e "$$cfg" ] || continue; \
+		mod=$$(basename $$(dirname $$cfg)); \
+		echo "  $$mod: gqlgen generate"; \
+		(cd $$(dirname $$cfg) && go tool gqlgen generate --config $$(basename $$cfg)) || exit 1; \
+	done
 
 ## --- Araçlar ---
 

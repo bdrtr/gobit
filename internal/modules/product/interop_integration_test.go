@@ -160,7 +160,7 @@ func TestKatalogOlaylariVeriYolunaGider(t *testing.T) {
 		require.NoError(t, bus.Subscribe(ad, defter.kaydet))
 	}
 
-	mod := product.New()
+	mod := product.New(product.Options{})
 	require.NoError(t, mod.Register(ctx, c))
 
 	svc, err := container.Resolve[*service.Service](c, product.ServiceName)
@@ -210,7 +210,7 @@ func TestRegisterOlayVeriYoluOlmadanDuser(t *testing.T) {
 	require.NoError(t, c.Provide("core.query", query.New(links, c, nil)))
 	// core.eventbus BİLİNÇLİ olarak kaydedilmez.
 
-	err := product.New().Register(ctx, c)
+	err := product.New(product.Options{}).Register(ctx, c)
 	require.Error(t, err, "veri yolu olmadan Register başarılı olmamalı")
 	assert.Equal(t, "product_module_setup_failed", coreerrors.CodeOf(err))
 	assert.Contains(t, err.Error(), "core.eventbus",

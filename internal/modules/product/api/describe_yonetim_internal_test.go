@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/bdrtr/gobit/internal/core/openapi"
+	"github.com/bdrtr/gobit/internal/modules/product/graph"
 	"github.com/bdrtr/gobit/internal/modules/product/models"
 	"github.com/bdrtr/gobit/internal/modules/product/service"
 )
@@ -37,7 +38,7 @@ func yonetimBelgesi(t *testing.T) (yollar, bilesenler map[string]any) {
 	Describe(doc)
 
 	r := chi.NewRouter()
-	New(nil).Routes(r)
+	New(nil, graph.Options{}).Routes(r)
 
 	ham, err := doc.Build(r)
 	require.NoError(t, err,

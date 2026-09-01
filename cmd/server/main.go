@@ -35,6 +35,7 @@ import (
 	"github.com/bdrtr/gobit/internal/core/workflow"
 	"github.com/bdrtr/gobit/internal/core/workflow/pgstore"
 	"github.com/bdrtr/gobit/internal/modules/auth"
+	"github.com/bdrtr/gobit/internal/modules/b2b"
 	"github.com/bdrtr/gobit/internal/modules/cart"
 	"github.com/bdrtr/gobit/internal/modules/customer"
 	"github.com/bdrtr/gobit/internal/modules/file"
@@ -45,6 +46,7 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/payment"
 	"github.com/bdrtr/gobit/internal/modules/pricing"
 	"github.com/bdrtr/gobit/internal/modules/product"
+	"github.com/bdrtr/gobit/internal/modules/product/graph"
 	"github.com/bdrtr/gobit/internal/modules/promotion"
 	"github.com/bdrtr/gobit/internal/modules/region"
 	"github.com/bdrtr/gobit/internal/modules/tax"
@@ -205,7 +207,33 @@ func run() error {
 	// ettikten SONRA migration ve route adımlarına geçer, dolayısıyla bir
 	// modülün handler'ı başka modülün servisini güvenle çözebilir.
 	// Faz 4: katalog
-	registry.Add(product.New())
+	//
+	// GraphQL okuma yüzeyinin sınırları yapılandırmadan gelir: bu uçta bir
+	// isteğin maliyetini SORGUYU YAZAN belirler ve kaç seviyenin/kaç alanın
+	// kabul edilebilir olduğu, kurulumun donanımına ve katalog boyutuna göre
+	// değişir. Modül config paketini tanımadığı için (Prensip 2.4) değerler
+	// buradan parametre olarak verilir.
+	registry.Add(product.New(product.Options{
+		GraphQL: graph.Options{
+			MaxDepth:      cfg.GraphQLMaxDepth,
+			MaxComplexity: cfg.GraphQLMaxComplexity,
+			// Aşağıdaki beş sınır, derinlik ve karmaşıklığın GÖREMEDİĞİ
+			// maliyetleri bağlar: aynı ağır alanın takma adlarla çoğaltılması,
+			// gerçekleşen yanıt baytı, iç gözlem selinin iki boyutu ve üssel
+			// fragment açılımı. Beşi de buradan geçirilir çünkü hepsinin
+			// operatör tarafından ayarlanabilir olması gerekir — ayarlanamayan
+			// bir sınır, kurulumu koda çatal atmaya zorlar.
+			MaxFieldRepetition:    cfg.GraphQLMaxFieldRepetition,
+			MaxResponseBytes:      cfg.GraphQLMaxResponseBytes,
+			MaxIntrospectionRoots: cfg.GraphQLMaxIntrospectionRoots,
+			MaxIntrospectionDepth: cfg.GraphQLMaxIntrospectionDepth,
+			MaxSelections:         cfg.GraphQLMaxSelections,
+			// Alan OLUMSUZ adlandırıldığı için (sıfır değeri paketin
+			// varsayılanını, yani AÇIK iç gözlemi vermelidir) değer burada
+			// tersine çevrilir; ortam değişkeni operatöre olumlu soruyu sorar.
+			IntrospectionDisabled: !cfg.GraphQLIntrospection,
+		},
+	}))
 	registry.Add(pricing.New(log))
 	registry.Add(inventory.New())
 	// Faz 5: sepet akışı
@@ -249,6 +277,13 @@ func run() error {
 		JWTIssuer: cfg.ServiceName,
 		Logger:    log,
 	}))
+	// Bölüm 10: B2B. Alıcının bir birey değil, harcama yetkisi sınırlı bir
+	// ÇALIŞAN olduğu kurulum. Modül başka hiçbir modüle dokunmaz; harcama
+	// kuralını "b2b.interop" adıyla container'a bırakır ve order onu KENDİ
+	// dar arayüzünden çözer (bkz. order.SpendingPolicyName). Bu satır
+	// silindiğinde order kuralı bulamaz ve her müşteriyi sınırsız sayar —
+	// yani saf B2C kurulum, kodu değiştirmeden elde edilir.
+	registry.Add(b2b.New(log))
 
 	// Eklentiler modüllerden ÖNCE kurulur: eklentinin getirdiği modül de
 	// Register/migration/route döngüsünden geçebilmelidir.

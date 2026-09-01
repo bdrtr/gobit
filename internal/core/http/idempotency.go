@@ -138,6 +138,15 @@ type IdempotencyStore interface {
 // tekrar denemesi tam da istediğimiz şeydir. Kalıcı bir 500'ü 24 saat boyunca
 // çalmak, kendini onaran bir arızayı kalıcı arızaya çevirirdi.
 //
+// Bu koruma yalnızca DURUM KODUNA bakar ve bakabildiği tek şey odur: kararı
+// gövdeden vermek, her yüzeyin hata biçimini bu middleware'e öğretmek olurdu
+// — kural o an tek yerden çıkar ve her yeni zarf onu yeniden yazmayı
+// gerektirir. Bedeli AÇIKTIR: iç hatasını da 200 ile bildiren bir yüzey
+// korumanın DIŞINDA kalır ve geçici arıza TTL boyunca çalınır. Bugün depoda
+// böyle tek bir yüzey var (GraphQL vitrin ucu; sözleşmesi gereği çözümlenen
+// her isteğe 200 der) ve çözümü kaydı akıllandırmak değil, ucu yığından
+// çıkarmaktır: bkz. [GuardOptions.IdempotencyExempt].
+//
 // # Kimlik ad alanı
 //
 // Hem depo anahtarı hem parmak izi ÇAĞIRANIN KİMLİĞİYLE ad alanına alınır

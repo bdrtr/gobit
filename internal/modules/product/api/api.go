@@ -30,6 +30,7 @@ import (
 
 	coreerrors "github.com/bdrtr/gobit/internal/core/errors"
 	corehttp "github.com/bdrtr/gobit/internal/core/http"
+	"github.com/bdrtr/gobit/internal/modules/product/graph"
 	"github.com/bdrtr/gobit/internal/modules/product/service"
 )
 
@@ -49,11 +50,29 @@ const (
 // Handler modülün HTTP handler'larını taşır.
 type Handler struct {
 	svc Catalog
+	// graphql vitrinin GraphQL okuma ucudur (bkz. [graph.NewHandler]).
+	//
+	// Handler'ın bir ALANIDIR, istek başına kurulmaz: gqlgen sunucusu şemayı
+	// bir kez ayrıştırır ve ayrıştırılmış sorgu önbelleğini içinde taşır;
+	// her istekte yeniden kurmak ikisini de çöpe atardı.
+	graphql http.Handler
 }
 
-// New verilen servisle handler üretir.
-func New(svc Catalog) *Handler {
-	return &Handler{svc: svc}
+// New verilen servis ve GraphQL sınırlarıyla handler üretir.
+//
+// GraphQL ucu BURADA kurulur ki modülün tüm HTTP yüzeyi tek bir yerden
+// (bkz. [Handler.Routes]) bağlansın; yoksa uçların listesi iki dosyaya
+// bölünürdü.
+//
+// graphOpts SIFIR DEĞER olabilir ve paket varsayılanlarını verir; "sınırsız"
+// anlamına GELMEZ (bkz. [graph.Options]). Sınırlar api katmanında
+// yorumlanmaz, olduğu gibi geçirilir: burada bir varsayılan seçmek aynı
+// kuralın ikinci bir tanımı olurdu.
+//
+// svc nil olabilir (belge üretimi bunu yapar): gqlgen sunucusu kurulurken
+// servise dokunmaz, yalnızca istek geldiğinde çağırır.
+func New(svc Catalog, graphOpts graph.Options) *Handler {
+	return &Handler{svc: svc, graphql: graph.NewHandler(svc, graphOpts)}
 }
 
 // Somut servisin api katmanının beklediği yüzeyi karşıladığı derleme zamanında

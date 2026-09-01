@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	corehttp "github.com/bdrtr/gobit/internal/core/http"
+	"github.com/bdrtr/gobit/internal/modules/product/graph"
 	"github.com/bdrtr/gobit/internal/modules/product/service"
 )
 
@@ -69,23 +70,12 @@ func (h *Handler) storeGetProduct(w http.ResponseWriter, r *http.Request) {
 // corehttp.RequireStore middleware'i koyar; kanal listesi anahtarın kaydından
 // gelir.
 //
-// Dönüş değerinin nil olup olmaması ANLAMLIDIR
-// (bkz. service.StoreListOptions.SalesChannelIDs):
-//
-//   - Kimlik YOKSA nil dönülür. Bu, mağaza kimlik doğrulamasının bu kurulumda
-//     hiç bağlanmamış olduğu durumdur (product tek başına dağıtılabilir) ve
-//     süzgeç uygulanmaz; aksi hâlde auth'suz bir kurulumda vitrin sessizce
-//     boşalırdı.
-//   - Kimlik VARSA nil ASLA dönülmez: kanalsız bir kimlik boş küme demektir,
-//     "süzme yok" demek değildir. Bu iki durumu bir tutmak, kanalsız bir
-//     kimliğe tüm kanalların katalogunu açardı.
+// Kuralın KENDİSİ burada değil [graph.SalesChannelIDsFromContext]'tedir ve
+// bunun sebebi ikinci okuma yüzeyidir: GraphQL resolver'larının elinde
+// *http.Request yoktur, yalnızca context vardır. Kural iki yerde yazılsaydı
+// biri düzeltilip diğeri unutulduğunda yüzeylerden birinde katalog sızıntısı
+// olurdu — dönüşün nil ile BOŞ dilim arasındaki farkı dâhil (anlamı için o
+// belgeye bakın; ikisi farklı şey söyler).
 func salesChannelIDs(r *http.Request) []string {
-	principal, ok := corehttp.PrincipalFromContext(r.Context())
-	if !ok {
-		return nil
-	}
-	if principal.SalesChannelIDs == nil {
-		return []string{}
-	}
-	return principal.SalesChannelIDs
+	return graph.SalesChannelIDsFromContext(r.Context())
 }

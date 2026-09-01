@@ -12,6 +12,169 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Eklendi
 
+- **B2B modülü: şirket, çalışan ve harcama limiti.** Alıcının bir birey değil,
+  dönem başına harcama yetkisi sınırlı bir ÇALIŞAN olduğu kurulum. Modül başka
+  hiçbir modülü import etmez; çalışan → müşteri bağı yalnızca `core/link`'tedir
+  ve `b2b_company_employee` tablosunda `customer_id` sütunu **yoktur** (aynı
+  ilişkiyi iki yerde tutmak, ayrışabilecekleri bir yer açardı).
+
+  Kural iki modüle bölünmüştür: **limit** `b2b`'nin, **harcama** (verilmiş
+  siparişlerin toplamı) `order`'ın verisidir. İkisi birbirini import edemediği
+  için sözleşme JSON'dur, `order` kendi dar arayüzünü (`service.SpendingPolicy`)
+  kendi paketinde tanımlar ve somut tipi container'dan `b2b.interop` adıyla
+  çözer. Bunun kabul edilen bedeli, **derleyicinin bu sözleşmeyi
+  denetlememesidir**: bir alan adı ayrışsaydı iki paketin birim testleri de
+  yeşil kalır, üretimde limit sessizce kalkardı — sözleşmenin iki ucu bu yüzden
+  gerçek container üzerinden e2e'de birleştirilir.
+
+  Kontrol `order.CreateOrder` içinde, siparişin yazıldığı **işlemin içinde** ve
+  müşteri kilidi altında yapılır. `complete_cart` saga'sında `create_order`,
+  `authorize_payment`'tan **önce** koştuğu için reddedilen alışverişte para hiç
+  yetkilendirilmez; kontrol ile yazma aynı işlemde olduğu için iki eşzamanlı
+  sipariş limiti birlikte aşamaz. Kural saga yerine servise konmuştur çünkü bu
+  modülde sipariş yaratan tek yol odur — saga'ya konsaydı ileride eklenecek
+  ikinci bir çağıran onu sessizce atlardı.
+
+  Limit `nil` ise sınırsız, `0` ise gerçek bir sıfır limittir. Pencere
+  takvimdendir (aylık/yıllık, UTC). Şirketin para birimi sepetinkinden farklıysa
+  sipariş reddedilir; çevirmek bir kur kaynağı gerektirirdi ve o karar bu
+  modülün değildir. Modül kayıtlı değilken davranış b2b hiç yokmuş gibidir.
+
+- **GraphQL'in beş yeni sertleştirme sınırı artık ortam değişkeniyle
+  ayarlanıyor.** `GRAPHQL_MAX_FIELD_REPETITION`, `GRAPHQL_MAX_RESPONSE_BYTES`,
+  `GRAPHQL_MAX_INTROSPECTION_ROOTS`, `GRAPHQL_MAX_INTROSPECTION_DEPTH` ve
+  `GRAPHQL_MAX_SELECTIONS`. Kapılar eklendiğinde yalnızca `graph.Options`
+  üzerinden ayarlanabiliyordu; yani operatörün ayarlayamadığı kapılar tam da
+  **en yüksek ciddiyetli ikisiydi** (bayt çoğaltması ve iç gözlem seli) ve
+  meşru bir ihtiyaç doğduğunda tek çare kodu çatallamaktı.
+
+  `internal/arch`'taki simetri testi bu boşluğu göremiyordu çünkü üç sınırı elle
+  karşılaştırıyordu; test artık `graph.Options`'ı **yansımayla gezer** ve
+  `Max*` ile başlayan her alanın çekirdekte bir karşılığı olmasını zorlar.
+  Mutasyonla doğrulandı: eşlemeden bir girdi çıkarıldığında test düşüyor.
+
+- **GraphQL hata politikası artık hatanın TİPİNE değil KAYNAĞINA bakıyor.**
+  Presenter "bu bir `*errors.Error` mi" diye soruyor, olmayanı istemciye olduğu
+  gibi veriyordu; oysa çekirdeğin kuralı tam tersidir. Ölçüldü: vitrin servisi
+  sınıflandırılmamış bir hata döndürdüğünde yanıt (durum 200)
+  `pq: SSL connection error host=db.internal user=gobit password=s3cr3t …;
+  SELECT * FROM product_products WHERE id=$1` metnini aynen taşıyordu ve o hata
+  **hiçbir yere de yazılmıyordu** — aynı hata REST ucunda 500, `internal_error`
+  ve genel mesajla dönüp gerçek metni logluyordu. Artık resolver'ın altından
+  gelen her şey, tipli olsun olmasın, `WriteError`'a verilir (maskeleme ve
+  loglama kuralı ikinci kez yazılmaz); ayrıştırma, doğrulama ve sınır kapıları
+  ise olduğu gibi döner ve sunucu hatası olarak **loglanmaz** — istemcinin
+  yazım yanlışı logu doldurabilen bir boru olurdu.
+
+  Aynı ayrımın iki yan sonucu:
+
+  - **`GRAPHQL_INTROSPECTION=false` artık şemayı gerçekten gizliyor.**
+    Anahtar `__schema`'yı kapatıyordu ama doğrulayıcı adları perakende
+    dağıtmaya devam ediyordu: `prodcts` → `Did you mean "products" or
+    "product"?`, `Prodct` → `Did you mean "Product"?`, `limitt` →
+    `Did you mean "limit"?`. Doğrulayıcı bütün hataları tek yanıtta topladığı
+    için bir istekte onlarca ad denenebiliyor, hız sınırı da bunu bir istek
+    sayıyordu. Anahtar artık `SetDisableSuggestion`'ı da kurar ve gqlgen'in
+    ulaşamadığı kuralların öneri cümlesi yanıtta kesilir. İç gözlem sorgusu da
+    çalıştırılmadan reddedilir (`INTROSPECTION_DISABLED`); `__typename` bir
+    kök değildir ve çalışmaya devam eder.
+  - **Bozuk JSON gövdesi artık yansıtılmıyor.** gqlgen'in POST taşıması
+    çözemediği gövdeyi hata mesajına EKLİYOR (`… body:…`), yani 64 KiB'a kadar
+    saldırgan denetimindeki metin yanıta ve yanıtı kaydeden ara katmanların
+    loglarına giriyordu. Taşımanın hataları kodsuz geldiği için tanınır ve
+    metinleri bizim sabitlerimizle değiştirilir: `REQUEST_DECODE_FAILED` ve —
+    boyutunu bildirmeyen istemcinin gövdesi kesildiğinde —
+    `REQUEST_BODY_TOO_LARGE`, artık sınırı sayıyla söyleyerek.
+
+- **GraphQL sertleştirmesinde ölçülen dört boşluk kapatıldı: yanıt baytı, iç
+  gözlem, sorgu önbelleği ve fragment açılımı.** Dördü de gerçek handler
+  üzerinde ölçüldü, tahmin edilmedi.
+
+  1. **Yanıt boyutu hiçbir kapıdan geçmiyordu.** Karmaşıklık modeli alan
+     *sayısını* fiyatlıyor, baytı değil:
+     `products(limit:100){ items { a0:description … a488:description } }`
+     belgesinin maliyeti tam **50.000**, yani tavana oturuyor ve geçiyordu —
+     8,5 KiB'lık istek **204,9 MiB** yanıt üretiyordu (24.620 kat) ve hız
+     sınırlayıcı bunu *bir* istek sayıyordu. İki kapı eklendi: aynı alanın aynı
+     nesne altında kaç kez seçilebileceği (`MaxFieldRepetition`, varsayılan 20;
+     kardeş kapsamlı sayım, takma adlar yok sayılır) ve **gerçekleşen** yanıt
+     baytı (`MaxResponseBytes`, varsayılan 4 MiB). İkincisi tahmine değil
+     ölçüme bakar. Sınıra çarpıldığında **yarım JSON gönderilmez**: hiçbir bayt
+     gitmemişken aşan gövde atılıp tam bir hata zarfı yazılır, bir kısmı
+     gitmişse bağlantı `http.ErrAbortHandler` ile bırakılır.
+  2. **İç gözlem her iki kapının da dışındaydı.** Derinlik sayımı
+     `__schema`/`__type` köklerini atlıyor, gqlgen'in karmaşıklık yürüyüşü de
+     `__Schema` tipli alanı atlıyordu; yani ölçülen derinlik 0, karmaşıklık 0
+     ve operatörün elinde ayar yoktu. Ölçüldü: 302 takma adlı `__schema`
+     belgesi 5,00 MiB dönüyordu ve `Options{MaxDepth: 1, MaxComplexity: 1}` ile
+     bile 200 alıyordu — aynı ayarla `products { count }` reddedilirken. Artık
+     iç gözlem *sayılıyor*: kök sayısı (`MaxIntrospectionRoots`, varsayılan 2)
+     ve alt ağacın kendi derinlik tavanı (`MaxIntrospectionDepth`, varsayılan
+     15) ayrı ayrı sınırlı. Ayrı tavan, veri sınırının 13'ün üstüne
+     çıkarılmasını gerektiren eski gerekçeyi de ortadan kaldırdı.
+  3. **Sorgu önbelleği reddedilen belgeleri saklıyordu.** gqlgen belgeyi
+     doğrulamadan hemen sonra önbelleğe ekler, sınır eklentileri ise ondan
+     sonra koşar; yani servise hiç ulaşmayan belge de yer tutuyordu. Ölçüldü:
+     65 KB'lık 100 reddedilmiş belge, `runtime.GC` sonrası **171,8 MiB** kalıcı
+     yığın (6,5 MB'lık yüklemenin 26 katı) — üstelik vitrinin gerçek belgeleri
+     önbellekten atılıyordu. Önbellek artık girdi *sayısıyla* değil **bayt** ile
+     sınırlı (girdi başına 8 KiB) ve bir belge ancak **tüm kapılardan geçtikten
+     sonra** saklanıyor. Ayrıca `SetParserTokenLimit` kuruldu (8.192; daha önce
+     hiç çağrılmıyordu, yani sınırsızdı): jeton sınırı ayrıştırmanın *içinde*
+     çalıştığı için en ucuz kapıdır ve gövde sınırına sığan 302/448 takma adlı
+     iç gözlem belgelerini belge sonuna kadar ayrıştırmadan reddeder.
+
+  4. **Fragment açılımı üsseldi ve ağacı gezen her hesap orada asılıyordu.**
+     `fragment f(k) on Product { ...f(k-1) ...f(k-1) }` zinciri geçerlidir,
+     döngü içermez (doğrulamanın reddettiği tek şey odur) ve 26 seviyede
+     **1.127 bayttır** — ama açılımı 2²⁶ seçimdir. Ölçüldü: bu belge ucu on
+     saniyede bitiremiyordu. Tuzak tek bir yürüyüşte değildi; derinlik sayımı,
+     yeni alan tekrarı sayımı ve gqlgen'in kendi karmaşıklık yürüyüşü, üçü de
+     fragment tanımına belleksiz iniyor. Bu yüzden düzeltme bir yürüyüşü değil
+     ağacın büyüklüğünü bağlar: `MaxSelections` (varsayılan 10.000, jeton
+     sınırının hemen üstü) diğer bütün kapılardan önce koşar ve bütçe bittiği
+     anda gezinmeyi yarıda keser — sınırı uygularken tam da sınırın engellediği
+     işi yapmamak için.
+
+  Kalibrasyon tablosuna **bayt sütunu** geldi (README ve `limits.go`): eski
+  tablo yalnızca alan sayımını ölçüyordu, yani tam da kaçırdığı boyutu hiç
+  sormuyordu. Tablodaki karmaşıklık sayıları artık `graph/limits_test.go`
+  içinde ölçümle sabitleniyor (ürün sayfası satırı kök sorgu maliyetini
+  saymadığı için 1,4 bin yazıyordu; ölçüldüğünde 2.368 çıktı). Yeni sınırlar
+  `graph.Options`/`product.Options` üzerinden yapılandırılır.
+
+- **GraphQL ucunun sertleştirilmesi: derinlik, karmaşıklık, gövde ve iç
+  gözlem.** Bu uçta bir isteğin maliyetini sorguyu **yazan** belirler; hız
+  sınırlayıcı ise takma adlarla yüzlerce kök sorgu taşıyan belgeyi de bir
+  istek sayar. Üç kapı eklendi ve her biri ötekinin göremediği belgeyi
+  yakalar (kalanları yukarıdaki maddede): derinlik (`GRAPHQL_MAX_DEPTH`, varsayılan 10), karmaşıklık
+  (`GRAPHQL_MAX_COMPLEXITY`, varsayılan 50.000) ve 64 KiB'lık gövde sınırı —
+  ilk ikisi ancak belge ayrıştırıldıktan sonra ölçülebildiği için ayrıştırma
+  maliyetini yalnızca sonuncusu bağlar. Karmaşıklık modeli **liste
+  alanlarının maliyetini eleman sayısıyla çarpar** (sabit maliyet, tam da
+  pahalı olan sorguyu ucuz gösterirdi) ve kök sorgulara ayrıca bir veritabanı
+  gidiş-dönüşü fiyatı yazar. Sınırlar **yükseltilebilir, kaldırılamaz**:
+  sıfır/negatif değer geçersizdir ve açılışı durdurur. İç gözlem
+  yapılandırılabilir oldu (`GRAPHQL_INTROSPECTION`) ve varsayılanı **açık**
+  bırakıldı: şema bu deponun içinde duran bir dosyadır, kapatmak saldırgandan
+  bir şey saklamaz ama kod üreteçlerini körleştirir. `product.New` artık
+  `product.Options` alır (kırıcı: modül config'i tanımadığı için sınırlar
+  kompozisyon kökünden geçirilir).
+
+- **GraphQL vitrin okuma yüzeyi (`POST /store/v1/graphql`).** Katalog ikinci
+  bir yüzeyden okunur: `products` ve `product` sorguları, `StoreProduct`'ın
+  bugün döndüğü alanlarla. Şema (`internal/modules/product/graph/schema.graphqls`)
+  elle yazılan sözleşmedir, Go tarafı ondan üretilir (gqlgen, `make gen`).
+  Resolver'lar **vitrin servisini** çağırır — depoya inilmez, yeni SQL
+  yazılmaz: satış kanalı görünürlük kuralının ikinci bir uygulaması, ayrıştığı
+  gün kataloğu sızdırırdı. Kanal kimlikleri `Principal`'dan okunur ve şemada
+  argümanı **yoktur**; uç `/store/v1` altında olduğu için publishable anahtar
+  ve hız sınırı yığından otomatik gelir. Yazma yüzeyi yok, GET yok
+  (yalnızca POST; yanıt kanala göre değiştiğinden GET'in önbellek getirisi
+  yoktur, bedeli vardır). Fiyat ve stok, sahibi başka modüller olduğu için
+  JSON skalarıdır; hata gövdesi çekirdeğin `WriteError`'ından geçirilir, yani
+  maskeleme kuralı ve hata kodları REST ile aynıdır.
+
 - **`FileProvider` ve `file` modülü — plan Bölüm 5.6 tamamlandı.** Dört
   sağlayıcı soyutlamasının sonuncusu. `POST /admin/v1/uploads` (multipart) →
   dönen adres → `GET /files/{anahtar}`. Üretilen URL mevcut ürün görseli

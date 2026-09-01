@@ -14,6 +14,7 @@ import (
 	"github.com/bdrtr/gobit/internal/core/openapi"
 	"github.com/bdrtr/gobit/internal/core/query"
 	"github.com/bdrtr/gobit/internal/modules/product/api"
+	"github.com/bdrtr/gobit/internal/modules/product/graph"
 	"github.com/bdrtr/gobit/internal/modules/product/models"
 	"github.com/bdrtr/gobit/internal/modules/product/service"
 )
@@ -32,7 +33,7 @@ func vitrinBelgesi(t *testing.T) (yollar, bilesenler map[string]any) {
 	api.Describe(doc)
 
 	r := chi.NewRouter()
-	api.New(nil).Routes(r)
+	api.New(nil, graph.Options{}).Routes(r)
 
 	ham, err := doc.Build(r)
 	require.NoError(t, err)
@@ -432,6 +433,55 @@ func TestVitrinUclarininTumuAnlatildi(t *testing.T) {
 		}
 	}
 
-	assert.ElementsMatch(t,
-		[]string{"GET /store/v1/products", "GET /store/v1/products/{id}"}, bulunan)
+	assert.ElementsMatch(t, []string{
+		"GET /store/v1/products",
+		"GET /store/v1/products/{id}",
+		// GraphQL ucu da vitrindedir ve anlatılır; OpenAPI onun ŞEMASINI
+		// anlatamaz ama yolunu, gövdesini ve sözleşmenin nerede olduğunu
+		// anlatır (bkz. api.describeVitrinGraphQL).
+		"POST /store/v1/graphql",
+	}, bulunan)
+}
+
+// TestGraphQLUcuGovdesiniAnlatir GraphQL ucunun istek ve yanıt zarflarını
+// anlattığını doğrular.
+//
+// İddia iki yerden gelir. Birincisi istemci üretecidir: gövdesi anlatılmamış
+// bir POST, çağrılamayan bir metoda dönüşür. İkincisi uçtan uca şema testidir
+// (internal/e2e): anlatılan HER ucun 2xx gövdesinin şekli bilinmelidir ve o
+// test yalnızca Docker'lı koşumda çalışır — burada kırılması, sorunu bir
+// konteyner beklemeden gösterir.
+//
+// "data"nın İÇİ kasten anlatılmaz: biçimini istemcinin sorgusu belirler.
+func TestGraphQLUcuGovdesiniAnlatir(t *testing.T) {
+	t.Parallel()
+
+	yollar, bilesenler := vitrinBelgesi(t)
+	op := vitrinIslemi(t, yollar, http.MethodPost, "/store/v1/graphql")
+
+	assert.NotEmpty(t, op["summary"])
+
+	govde, ok := op["requestBody"].(map[string]any)
+	require.True(t, ok, "GraphQL ucu gövde okur ve bunu söylemelidir")
+
+	icerik, ok := govde["content"].(map[string]any)
+	require.True(t, ok)
+
+	json_, ok := icerik["application/json"].(map[string]any)
+	require.True(t, ok)
+
+	istek, ok := json_["schema"].(map[string]any)
+	require.True(t, ok)
+	assert.ElementsMatch(t, []string{"query", "operationName", "variables"},
+		vitrinAlanlari(t, bilesenler, istek))
+
+	yanitlar, ok := op["responses"].(map[string]any)
+	require.True(t, ok)
+
+	tanim, ok := yanitlar["200"].(map[string]any)
+	require.True(t, ok, "GraphQL, çözümlenen isteğe alan hatalarıyla birlikte 200 döner")
+
+	zarf := yanitSemasi(t, tanim)
+	assert.ElementsMatch(t, []string{"data", "errors"},
+		vitrinAlanlari(t, bilesenler, zarf), "GraphQL yanıt zarfı bu iki alandır")
 }

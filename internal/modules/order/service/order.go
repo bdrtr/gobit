@@ -108,6 +108,29 @@ type CreateOrderInput struct {
 // sonradan düzeltilemez (kayıt değişmez). Bir saga adımının yanlış hesabı
 // sessizce siparişe yazılmamalıdır.
 //
+// # Harcama limiti
+//
+// Müşterinin bir harcama limiti varsa (kuralın kaynağı için bkz.
+// [SpendingPolicy]) sipariş, limitin ÜSTÜNE çıkıyorsa açılmaz ve çağrı
+// errors.Conflict döner ([CodeSpendingLimitExceeded]).
+//
+// HARCAMA NASIL SAYILIR: müşterinin, kuralın bildirdiği pencere içinde verilmiş
+// siparişlerinin toplamıdır. İPTAL EDİLMİŞ ve yumuşak silinmiş siparişler
+// toplama girmez; 'pending' olanlar GİRER (ödemesi düşen bir sipariş saga
+// tarafından iptal edilir ve o anda kendini toplamdan çıkarır). Sipariş başına
+// İADE EDİLEN tutar toplamdan DÜŞÜLÜR — para şirkete geri döndüyse bütçe de
+// geri dönmelidir. Sorgunun tamamı ve gerekçeleri queries/spending.sql
+// belgesindedir.
+//
+// KONTROL NEREDE: siparişin yazıldığı işlemin içinde ve müşteri kilidi altında
+// (bkz. [Service.writeOrder]). Bu, "önce kontrol et sonra yaz" yarışını
+// yapısal olarak kapatır: aynı müşteri için gelen ikinci sipariş bekler ve
+// toplamı birincinin yazdığı satırla birlikte okur.
+//
+// PARA BİRİMİ: siparişin para birimi limitin para biriminden farklıysa sipariş
+// açılmaz ([CodeSpendingCurrencyMismatch]). Çevrim YAPILMAZ; gerekçe için bkz.
+// [spendingRule.checkCurrency].
+//
 // # İdempotency
 //
 // [CreateOrderInput.IdempotencyKey] verildiyse çağrı idempotenttir: aynı
@@ -115,6 +138,9 @@ type CreateOrderInput struct {
 // katlıdır — önce anahtar aranır (ucuz yol), sonra veritabanındaki benzersiz
 // indeks yarışan iki eşzamanlı çağrıdan birini reddeder ve reddedilen çağrı
 // kaydı yeniden okuyup döner (bkz. [Service.replayedOrder]).
+//
+// Tekrarlanan çağrı harcamayı İKİNCİ KEZ saymaz: ucuz yol siparişi anahtarından
+// bulur ve limit kontrolüne hiç girmez.
 //
 // # Sıra: bağla -> yaz -> yayımla
 //
@@ -157,13 +183,25 @@ func (s *Service) CreateOrder(ctx context.Context, in CreateOrderInput) (models.
 		}
 	}
 
+	// Harcama kuralı bağ kurulmadan ve hiçbir satır yazılmadan ÖNCE okunur:
+	// para birimi uyuşmazlığı gibi kesin bir ret, arkasında hiçbir iz
+	// bırakmamalıdır. Kuralın harcamaya UYGULANMASI ise yazma işleminin içinde,
+	// müşteri kilidi altında yapılır (bkz. spending.go).
+	rule, err := s.spendingRuleFor(ctx, normalized.CustomerID)
+	if err != nil {
+		return models.Order{}, err
+	}
+	if err := rule.checkCurrency(normalized.CurrencyCode); err != nil {
+		return models.Order{}, err
+	}
+
 	orderID := models.NewOrderID()
 	if linkErr := s.linkOrder(ctx, orderID, normalized.RegionID, normalized.CustomerID); linkErr != nil {
 		s.unlinkOrder(ctx, orderID)
 		return models.Order{}, linkErr
 	}
 
-	created, err := s.writeOrder(ctx, orderID, normalized)
+	created, err := s.writeOrder(ctx, orderID, normalized, rule)
 	if err != nil {
 		s.unlinkOrder(ctx, orderID)
 		if replay, ok := s.replayedOrder(ctx, normalized.IdempotencyKey, err); ok {
@@ -187,10 +225,26 @@ func (s *Service) CreateOrder(ctx context.Context, in CreateOrderInput) (models.
 // sequence'ın bozulduğu anlamına gelir ve müşterinin hiçbir yerde bulamayacağı
 // bir sipariş demektir. Kontrolün işlemin içinde olması, böyle bir siparişin
 // bir an bile GÖRÜNÜR olmamasını sağlar: commit hiç gerçekleşmez.
-func (s *Service) writeOrder(ctx context.Context, orderID string, in CreateOrderInput) (models.Order, error) {
+//
+// # Harcama limiti de burada uygulanır
+//
+// İşlemin İLK işi harcama limitidir ([Service.enforceSpendingLimit]) ve bu
+// zorunludur: limit, henüz yazılmamış bu siparişi de kapsayan bir TOPLAMA
+// bakar. Kontrol işlemin dışında yapılsaydı iki eşzamanlı sipariş toplamı aynı
+// anda okur, ikisi de limitin altında görünür ve ikisi de yazılırdı.
+func (s *Service) writeOrder(
+	ctx context.Context,
+	orderID string,
+	in CreateOrderInput,
+	rule spendingRule,
+) (models.Order, error) {
 	var created models.Order
 
 	err := s.store.WithTx(ctx, func(ctx context.Context) error {
+		if err := s.enforceSpendingLimit(ctx, rule, in); err != nil {
+			return err
+		}
+
 		order, err := s.store.CreateOrder(ctx, models.Order{
 			ID:             orderID,
 			Status:         models.OrderPending,
@@ -265,6 +319,11 @@ func (s *Service) writeOrder(ctx context.Context, orderID string, in CreateOrder
 // implementasyondur (ADR 0001 örüntüsü; depo yalnızca [Store] arayüzüyle
 // görülür). Anahtarla okuma zaten kesin ölçüttür — kayıt varsa çağrının istediği
 // sipariş odur; yoksa asıl hata olduğu gibi yukarı verilir.
+//
+// Ölçütün SINIF olması harcama limitiyle de doğru çalışır: yarışı kaybeden
+// çağrı, kilit altında artık kazananın siparişini de sayan bir toplam görür ve
+// benzersizlik ihlali yerine limit aşımıyla düşebilir. İkisi de Conflict'tir ve
+// ikisinde de doğru cevap aynıdır — anahtarın söz verdiği sipariş yazılmıştır.
 func (s *Service) replayedOrder(ctx context.Context, key string, cause error) (models.Order, bool) {
 	if key == "" || !errors.IsConflict(cause) {
 		return models.Order{}, false

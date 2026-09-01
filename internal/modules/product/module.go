@@ -44,6 +44,7 @@ import (
 	"github.com/bdrtr/gobit/internal/core/openapi"
 	"github.com/bdrtr/gobit/internal/core/query"
 	"github.com/bdrtr/gobit/internal/modules/product/api"
+	"github.com/bdrtr/gobit/internal/modules/product/graph"
 	"github.com/bdrtr/gobit/internal/modules/product/repository"
 	"github.com/bdrtr/gobit/internal/modules/product/service"
 )
@@ -87,8 +88,25 @@ var migrationFiles embed.FS
 // db.Migrate kaynağı kökten okur.
 var migrationsRoot = mustSub(migrationFiles, "migrations")
 
+// Options product modülünün kurulum ayarlarıdır.
+//
+// Modül internal/core/config paketini TANIMAZ (Prensip 2.4) ve container'da
+// da config kayıtlı değildir; ayarlar uygulamayı kuran taraftan parametre
+// olarak gelir (auth ve file modüllerindeki kalıbın aynısı).
+type Options struct {
+	// GraphQL vitrinin GraphQL okuma ucunun sertleştirme sınırlarıdır.
+	//
+	// Tip modülün kendi tipi DEĞİL, doğrudan [graph.Options]'tır: aradan bir
+	// kopya geçirmek, sınırların ikinci bir tanımı ve her yeni sınırda
+	// güncellenmesi unutulacak bir eşleme kodu demekti.
+	//
+	// Sıfır değeri paket varsayılanlarını verir; "sınırsız" ANLAMINA GELMEZ.
+	GraphQL graph.Options
+}
+
 // Module product modülünün çekirdeğe sunduğu uygulamadır.
 type Module struct {
+	opts    Options
 	svc     *service.Service
 	handler *api.Handler
 }
@@ -108,8 +126,11 @@ var _ openapi.Describer = (*Module)(nil)
 //
 // Bağımlılıklar burada değil Register sırasında çözülür: container o ana kadar
 // çekirdek servisleri kurmuş olmayabilir.
-func New() *Module {
-	return &Module{}
+//
+// [Options] sıfır değeriyle çağrılabilir; gömülü kullanım ve testler bunu
+// yapar ve GraphQL ucu paket varsayılanı sınırlarla açılır.
+func New(opts Options) *Module {
+	return &Module{opts: opts}
 }
 
 // Name modülün benzersiz adını döner.
@@ -148,7 +169,7 @@ func (m *Module) Register(ctx context.Context, c *container.Container) error {
 		return errors.Wrap(err, errors.KindOf(err), codeSetupFailed,
 			"%s modülü link servisini çözemedi (%q)", Name, svcLink)
 	}
-	graph, err := container.Resolve[query.Query](c, svcQuery)
+	sorgu, err := container.Resolve[query.Query](c, svcQuery)
 	if err != nil {
 		return errors.Wrap(err, errors.KindOf(err), codeSetupFailed,
 			"%s modülü query katmanını çözemedi (%q)", Name, svcQuery)
@@ -165,7 +186,7 @@ func (m *Module) Register(ctx context.Context, c *container.Container) error {
 	svc, err := service.New(service.Options{
 		Repo:   repo,
 		Links:  links,
-		Query:  graph,
+		Query:  sorgu,
 		Events: bus,
 		// Uygulama açılışta slog.SetDefault ile yapılandırılmış logger'ı kurar;
 		// modül ayrı bir logger kaydı aramaz.
@@ -204,7 +225,7 @@ func (m *Module) Register(ctx context.Context, c *container.Container) error {
 	}
 
 	m.svc = svc
-	m.handler = api.New(svc)
+	m.handler = api.New(svc, m.opts.GraphQL)
 	return nil
 }
 
@@ -212,6 +233,10 @@ func (m *Module) Register(ctx context.Context, c *container.Container) error {
 //
 // Register çalışmadıysa hiçbir uç bağlanmaz: servisi olmayan bir handler'ın
 // ilk istekte panik üretmesindense ucun hiç var olmaması yeğdir.
+//
+// Vitrinin GraphQL okuma ucu (POST /store/v1/graphql) da buradan geçer; uçların
+// tamamı [api.Handler.Routes] içinde, tek listede durur. GraphQL yüzeyinin
+// kapsamı ve satış kanalı kuralı için bkz. graph paketi.
 func (m *Module) Routes(r chi.Router) {
 	if m.handler == nil {
 		return

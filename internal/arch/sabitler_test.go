@@ -5,10 +5,12 @@ import (
 	"go/token"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/bdrtr/gobit/internal/core/config"
 	coreplugin "github.com/bdrtr/gobit/internal/core/plugin"
@@ -22,6 +24,7 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/notification"
 	"github.com/bdrtr/gobit/internal/modules/notification/logonly"
 	"github.com/bdrtr/gobit/internal/modules/payment"
+	"github.com/bdrtr/gobit/internal/modules/product/graph"
 	productsvc "github.com/bdrtr/gobit/internal/modules/product/service"
 )
 
@@ -138,6 +141,76 @@ func TestBildirimVarsayilanSaglayicisiConfigleUyusuyor(t *testing.T) {
 		"config'in varsayılan bildirim sağlayıcısı, modülün kutudan çıkan sağlayıcısı olmalı")
 	assert.Equal(t, logonly.ID, notification.DefaultProviderID,
 		"modülün varsayılanı da aynı sağlayıcı olmalı")
+}
+
+// TestGraphQLSinirVarsayilanlariConfigleUyusuyor GraphQL sertleştirme
+// sınırlarının İKİ ayrı yerdeki varsayılanlarının aynı olduğunu doğrular.
+//
+// Sınırları UYGULAYAN taraf product modülünün graph paketidir; okuyan taraf
+// çekirdeğin yapılandırmasıdır ve çekirdek modülleri import EDEMEDİĞİ için
+// (Prensip 2.4) sabitlere bağlanamaz, değerlerini elle tekrarlar.
+//
+// Ayrışmanın bedeli, bu dosyadaki komşularının aksine, açılışta patlamaz —
+// hiç patlamaz. Ortam değişkeni vermeyen bir kurulum config'in sayısıyla
+// çalışır, gömülü kullanım (product'ı kendi binary'sine alan biri) graph'ın
+// sayısıyla; ikisi ayrıştığı gün aynı belge bir kurulumda geçer, ötekinde
+// reddedilir ve iki taraf da kendi belgesinde yazanı doğru sanar.
+//
+// İç gözlemin varsayılanı da buraya dâhildir çünkü graph tarafında alan
+// OLUMSUZ adlandırılmıştır (IntrospectionDisabled): sıfır değeri "açık"
+// demektir ve config'in varsayılanı da true, yani açık olmalıdır. İkisi
+// ayrışırsa yüzey, kimsenin istemediği hâlde kapanır.
+func TestGraphQLSinirVarsayilanlariConfigleUyusuyor(t *testing.T) {
+	t.Parallel()
+
+	// Eşleme graph.Options'ın SAYISAL alan adından çekirdeğin varsayılanına
+	// gider. Liste elle yazılır ama EKSİK KALAMAZ: aşağıdaki yansıma denetimi,
+	// Options'a eklenip buraya eklenmeyen her sınırı düşürür.
+	beklenen := map[string]int{
+		"MaxDepth":              config.DefaultGraphQLMaxDepth,
+		"MaxComplexity":         config.DefaultGraphQLMaxComplexity,
+		"MaxFieldRepetition":    config.DefaultGraphQLMaxFieldRepetition,
+		"MaxResponseBytes":      config.DefaultGraphQLMaxResponseBytes,
+		"MaxIntrospectionRoots": config.DefaultGraphQLMaxIntrospectionRoots,
+		"MaxIntrospectionDepth": config.DefaultGraphQLMaxIntrospectionDepth,
+		"MaxSelections":         config.DefaultGraphQLMaxSelections,
+	}
+	uygulanan := map[string]int{
+		"MaxDepth":              graph.DefaultMaxDepth,
+		"MaxComplexity":         graph.DefaultMaxComplexity,
+		"MaxFieldRepetition":    graph.DefaultMaxFieldRepetition,
+		"MaxResponseBytes":      graph.DefaultMaxResponseBytes,
+		"MaxIntrospectionRoots": graph.DefaultMaxIntrospectionRoots,
+		"MaxIntrospectionDepth": graph.DefaultMaxIntrospectionDepth,
+		"MaxSelections":         graph.DefaultMaxSelections,
+	}
+
+	// Yansıma denetimi kuralın KENDİSİNİ zorlar: "her sınırın bir ortam
+	// değişkeni ve eşleşen bir varsayılanı vardır". Elle yazılmış bir
+	// karşılaştırma listesi bu kuralı yalnızca bugün için uygular; yarın
+	// eklenen sekizinci sınır sessizce dışarıda kalır ve operatör onu
+	// ayarlayamadığını ancak üretimde fark eder. Bu tam olarak GRAPHQL
+	// sertleştirmesinde bir kez YAŞANMIŞ durumdur.
+	tip := reflect.TypeOf(graph.Options{})
+	for i := range tip.NumField() {
+		alan := tip.Field(i)
+		if !strings.HasPrefix(alan.Name, "Max") {
+			continue
+		}
+		require.Contains(t, beklenen, alan.Name,
+			"graph.Options.%s bir sınırdır ama çekirdekte varsayılanı YOK; "+
+				"her sınırın bir ortam değişkeni ve eşleşen bir varsayılanı olmalı, "+
+				"aksi hâlde operatör onu ayarlayamaz", alan.Name)
+	}
+
+	for ad, cfgDeger := range beklenen {
+		assert.Equal(t, uygulanan[ad], cfgDeger,
+			"config'in %s varsayılanı sınırı uygulayan paketinkiyle aynı olmalı", ad)
+	}
+
+	varsayilan := graph.Options{}
+	assert.Equal(t, config.DefaultGraphQLIntrospection, !varsayilan.IntrospectionDisabled,
+		"graph'ın sıfır değeri iç gözlemi açık bırakıyorsa config'in varsayılanı da açık olmalı")
 }
 
 // TestSatisKanaliEntityAdiUyusuyor product'ın link tanımına yazdığı satış

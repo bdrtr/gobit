@@ -37,9 +37,11 @@ package repository
 
 import (
 	"context"
+	"hash/fnv"
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/bdrtr/gobit/internal/core/errors"
@@ -616,4 +618,99 @@ func (r *Repository) ListClaims(ctx context.Context, filter models.ChildFilter) 
 		return nil, 0, err
 	}
 	return items, total, nil
+}
+
+// --- harcama ------------------------------------------------------------------
+
+// advisoryLockSQL müşteri başına işlem ömürlü danışma kilidini alır.
+//
+// Kilit sqlc üzerinden ÜRETİLMEZ ve doğrudan işlem tutamağıyla çalıştırılır:
+// sorgu bu modülün hiçbir tablosuna dokunmaz, bir eşzamanlılık ilkelidir. sqlc
+// için de şema bilgisi taşımaz.
+const advisoryLockSQL = `SELECT pg_advisory_xact_lock($1)`
+
+// spendingLockClass danışma kilidinin SINIF numarasıdır ve anahtarın ÜST 32
+// bitine yazılır.
+//
+// pg_advisory_xact_lock'un anahtar uzayı VERİTABANI GENELİNDE tektir: aynı
+// sayıyı başka bir amaçla kilitleyen bir kod, bu kilidi farkında olmadan
+// bekletirdi. Üst bitlerdeki sınıf numarası, ileride eklenecek başka bir
+// danışma kilidinin (başka bir sınıfla) bu kilitle çakışmasını imkânsız kılar.
+const spendingLockClass int64 = 1
+
+// LockCustomerSpending müşterinin harcama toplamını İŞLEM SONUNA kadar
+// kilitler.
+//
+// # Neden satır kilidi değil
+//
+// Korunan şey bir SATIR değil, bir TOPLAMDIR: "bu müşterinin pencere içindeki
+// siparişlerinin toplamı". Toplamın kilitlenecek tek bir satırı yoktur ve
+// SELECT ... FOR UPDATE var olan satırları kilitler, HENÜZ YAZILMAMIŞ olanı
+// değil. İki eşzamanlı sipariş tam da bu yüzden yarışırdı: ikisi de toplamı
+// okur, ikisi de limitin altında görür, ikisi de yazar (klasik write skew).
+// Danışma kilidi bu boşluğu kapatır — kilit satırlara değil, MÜŞTERİ
+// KİMLİĞİNE bağlanır ve işlem commit edilene kadar tutulur, yani bekleyen
+// ikinci işlem toplamı birincinin yazdığı satırla birlikte okur.
+//
+// SERIALIZABLE yalıtım düzeyi de bu sınıf yarışı çözerdi ama bedeli, çakışan
+// işlemlerin serileştirme hatasıyla düşmesi ve çağıranın yeniden denemeyi
+// üstlenmesidir; kilit bekleyip devam eder ve mevcut hiçbir akışa yeniden
+// deneme sorumluluğu yüklemez.
+//
+// # Anahtar
+//
+// Anahtarın üst 32 biti sınıf ([spendingLockClass]), alt 32 biti müşteri
+// kimliğinin FNV-1a özetidir. İki farklı kimliğin aynı özete düşmesi
+// mümkündür; sonucu YALNIZCA gereksiz beklemedir, yanlış sonuç değildir —
+// kilit bir doğruluk kapısıdır, kimlik değil.
+//
+// Yalnızca [Repository.WithTx] içinde çağrılabilir: işlemsiz bir
+// pg_advisory_xact_lock hemen serbest kalır ve hiçbir şeyi korumaz.
+func (r *Repository) LockCustomerSpending(ctx context.Context, customerID string) error {
+	if err := requireTx(ctx, "LockCustomerSpending"); err != nil {
+		return err
+	}
+	tx, _ := txFromContext(ctx)
+	if _, err := tx.Exec(ctx, advisoryLockSQL, spendingLockKey(customerID)); err != nil {
+		return classify(err, codeQueryFailed, "müşterinin harcama kilidi alınamadı")
+	}
+	return nil
+}
+
+// spendingLockKey müşteri kimliğini danışma kilidi anahtarına çevirir.
+//
+// Özet FNV-1a'dır: kriptografik olması gerekmez, yalnızca aynı kimlik için
+// aynı sayıyı üretmesi gerekir. uint32'den int64'e genişletme kayıpsızdır,
+// dolayısıyla anahtar süreçler ve sürümler arasında aynıdır.
+func spendingLockKey(customerID string) int64 {
+	h := fnv.New32a()
+	// hash.Hash.Write hiçbir zaman hata dönmez (belgelenmiş sözleşme).
+	_, _ = h.Write([]byte(customerID))
+	return spendingLockClass<<32 | int64(h.Sum32())
+}
+
+// SumCustomerSpend müşterinin pencere içindeki harcamasını döner.
+//
+// Neyin toplandığı (iptaller hariç, iadeler düşülür, para birimi sabit) ve
+// pencerenin sınırları queries/spending.sql belgesindedir. windowStart nil ise
+// müşterinin TÜM geçmişi toplanır.
+func (r *Repository) SumCustomerSpend(
+	ctx context.Context,
+	customerID, currencyCode string,
+	windowStart *time.Time,
+) (int64, error) {
+	var window pgtype.Timestamptz
+	if windowStart != nil {
+		window = pgtype.Timestamptz{Time: windowStart.UTC(), Valid: true}
+	}
+
+	spent, err := r.queries(ctx).SumCustomerSpend(ctx, orderdb.SumCustomerSpendParams{
+		CustomerID:   customerID,
+		CurrencyCode: currencyCode,
+		WindowStart:  window,
+	})
+	if err != nil {
+		return 0, classify(err, codeQueryFailed, "müşterinin harcaması okunamadı")
+	}
+	return spent, nil
 }

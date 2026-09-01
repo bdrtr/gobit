@@ -2,6 +2,7 @@ package service_test
 
 import (
 	"context"
+	"encoding/json"
 	"maps"
 	"slices"
 	"strings"
@@ -79,6 +80,13 @@ type fakeStore struct {
 	// alınmadığı bir eşzamanlılık sözleşmesidir ve gerçek veritabanında ihlali
 	// ancak yarış altında görünür; burada doğrudan okunabilir.
 	lockedOrders []string
+
+	// spendingLocks harcama kilidi alınan müşterileri SIRASIYLA kaydeder.
+	spendingLocks []string
+	// spendingSums harcama toplamının kaç kez okunduğunu sayar. Limiti olmayan
+	// bir müşteride SIFIR kalmalıdır: kuralı olmayan siparişe ek bir sorgu
+	// yüklemek bedelsiz değildir.
+	spendingSums int
 
 	// failCreateLineItem ayarlanırsa CreateLineItem bu hatayı döner; işlem geri
 	// alma yolunu sınamak için kullanılır.
@@ -764,4 +772,156 @@ func (b *fakeBus) events() []eventbus.Event {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return slices.Clone(b.published)
+}
+
+// --- harcama ------------------------------------------------------------------
+
+// LockCustomerSpending müşterinin harcama kilidini alır.
+//
+// Sahte, gerçek kilidin TEK gözlemlenebilir sözleşmesini taklit eder: işlem
+// dışında çağrılırsa hata döner. Kilidin GERÇEKTEN serileştirdiği ancak eş
+// zamanlı goroutine'lerle ve gerçek bir veritabanıyla kanıtlanabilir
+// (bkz. order_integration_test.go).
+func (f *fakeStore) LockCustomerSpending(ctx context.Context, customerID string) error {
+	if err := requireTx(ctx, "LockCustomerSpending"); err != nil {
+		return err
+	}
+
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.spendingLocks = append(f.spendingLocks, customerID)
+	return nil
+}
+
+// SumCustomerSpend müşterinin pencere içindeki harcamasını döner.
+//
+// queries/spending.sql'in kurallarını taklit eder: iptal edilmiş ve yumuşak
+// silinmiş siparişler toplama girmez, iade edilen tutar düşülür, para birimi
+// birebir eşleşir ve pencerenin alt ucu DÂHİLDİR.
+func (f *fakeStore) SumCustomerSpend(
+	ctx context.Context,
+	customerID, currencyCode string,
+	windowStart *time.Time,
+) (int64, error) {
+	snapshot := f.view(ctx)
+
+	f.mu.Lock()
+	f.spendingSums++
+	f.mu.Unlock()
+
+	var toplam int64
+	for id := range snapshot.orders {
+		order := snapshot.orders[id]
+		switch {
+		case order.DeletedAt != nil,
+			order.Status == models.OrderCanceled,
+			order.CustomerID != customerID,
+			order.CurrencyCode != currencyCode:
+			continue
+		}
+		if windowStart != nil && order.PlacedAt.Before(*windowStart) {
+			continue
+		}
+		toplam += order.Total - snapshot.summaries[id].RefundedTotal
+	}
+	return toplam, nil
+}
+
+// seedOrder depoya doğrudan bir sipariş yazar ve PLACED_AT'ini çağıranın
+// verdiği ana sabitler.
+//
+// [fakeStore.CreateOrder] zamanı kendi damgalar (gerçek veritabanının now()
+// karşılığı) ve o damga 1970'e yakındır; pencere sınırlarını sınayan testler
+// ise siparişin ne zaman verildiğini SEÇEBİLMELİDİR. Servisin hiçbir kuralı
+// atlanmaz: bu yol yalnızca GEÇMİŞ veriyi kurar, sınanan çağrı yine servistir.
+func (f *fakeStore) seedOrder(order models.Order) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	f.displaySeq++
+	order.DisplayID = f.displaySeq
+	if order.Status == "" {
+		order.Status = models.OrderPending
+	}
+	if order.CreatedAt.IsZero() {
+		order.CreatedAt = order.PlacedAt
+	}
+	order.UpdatedAt = order.CreatedAt
+	f.orders[order.ID] = order
+}
+
+// seedRefund depodaki bir siparişin iade edilen tutarını yazar.
+func (f *fakeStore) seedRefund(orderID string, refunded int64) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	f.summaries[orderID] = models.OrderSummary{
+		ID:            "ordsum_" + orderID,
+		OrderID:       orderID,
+		PaidTotal:     refunded,
+		RefundedTotal: refunded,
+	}
+}
+
+// spendingLockCount alınan harcama kilidi sayısını döner.
+func (f *fakeStore) spendingLockCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.spendingLocks)
+}
+
+// spendingSumCount yapılan harcama toplamı okumasının sayısını döner.
+func (f *fakeStore) spendingSumCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.spendingSums
+}
+
+// fakeSpendingPolicy service.SpendingPolicy'nin bellek içi karşılığıdır.
+//
+// Gerçek sağlayıcı b2b modülüdür ve bu paket onu import EDEMEZ; sahte, sınırın
+// yalnızca JSON şemasını taklit eder. Şemanın iki tarafta AYNI olduğu bu
+// testlerle kanıtlanamaz — o, entegrasyon testinin işidir.
+type fakeSpendingPolicy struct {
+	mu sync.Mutex
+	// payload dönecek gövdedir; boşsa "kural yok" gövdesi dönülür.
+	payload json.RawMessage
+	// empty doğruysa çağrı BOŞ gövde döner ve payload yok sayılır.
+	//
+	// Ayrı bir bayraktır çünkü boş dilim ile "ayarlanmamış" Go'da aynı şeye
+	// çözülür; ayrım olmasaydı, sağlayıcının hiç gövde döndürmediği durum
+	// sınanamazdı.
+	empty bool
+	// err ayarlanırsa çağrı bu hatayı döner.
+	err error
+	// asked sorulan müşteri kimliklerini SIRASIYLA kaydeder.
+	asked []string
+}
+
+// Sahtenin servisin beklediği yüzeyi karşıladığı derleme zamanında doğrulanır.
+var _ service.SpendingPolicy = (*fakeSpendingPolicy)(nil)
+
+// SpendingLimitJSON kurulmuş cevabı döner ve çağrıyı kaydeder.
+func (p *fakeSpendingPolicy) SpendingLimitJSON(_ context.Context, customerID string) (json.RawMessage, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	p.asked = append(p.asked, customerID)
+	if p.err != nil {
+		return nil, p.err
+	}
+	if p.empty {
+		return nil, nil
+	}
+	if len(p.payload) == 0 {
+		return json.RawMessage(`{"limited":false}`), nil
+	}
+	return p.payload, nil
+}
+
+// calls sorulan müşteri kimliklerinin kopyasını döner.
+func (p *fakeSpendingPolicy) calls() []string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return slices.Clone(p.asked)
 }

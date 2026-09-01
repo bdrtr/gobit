@@ -17,7 +17,7 @@ import (
 func TestModuleContract(t *testing.T) {
 	t.Parallel()
 
-	var mod module.Module = product.New()
+	var mod module.Module = product.New(product.Options{})
 	assert.Equal(t, "product", mod.Name())
 	assert.Equal(t, "product.service", product.ServiceName,
 		"servis adı modüller arası sözleşmedir; başka modüller bu adla çözer")
@@ -33,7 +33,7 @@ func TestModuleContract(t *testing.T) {
 func TestMigrationsAreEmbeddedInPairs(t *testing.T) {
 	t.Parallel()
 
-	src := product.New().Migrations()
+	src := product.New(product.Options{}).Migrations()
 	require.NotNil(t, src, "modül migration kaynağı sunmalı")
 
 	entries, err := fs.ReadDir(src, ".")
@@ -67,6 +67,6 @@ func TestRoutesWithoutRegisterIsNoop(t *testing.T) {
 	t.Parallel()
 
 	r := chi.NewRouter()
-	assert.NotPanics(t, func() { product.New().Routes(r) })
-	assert.Nil(t, product.New().Service(), "Register çağrılmadan servis kurulmaz")
+	assert.NotPanics(t, func() { product.New(product.Options{}).Routes(r) })
+	assert.Nil(t, product.New(product.Options{}).Service(), "Register çağrılmadan servis kurulmaz")
 }

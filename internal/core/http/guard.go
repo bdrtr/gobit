@@ -114,6 +114,28 @@ type GuardOptions struct {
 	// IdempotencyStore idempotency kayıtlarının deposudur; nil ise
 	// idempotency takılmaz.
 	IdempotencyStore IdempotencyStore
+	// IdempotencyExempt idempotency halkasından MUAF tutulacak tam yollardır.
+	//
+	// [Idempotency]'nin "geçici arızayı kalıcıya çevirme" koruması yalnızca
+	// HTTP DURUMUNA bakar: 5xx kaydedilmez, gerisi kaydedilir. Yanıtını hata
+	// hâlinde de 200 ile veren bir yüzeyde o koruma HİÇ devreye girmez ve
+	// geçici bir iç hata TTL boyunca (varsayılan 24 saat) çalınır — arıza
+	// giderilse bile istemci aynı hata gövdesini almaya devam eder. Bu alan,
+	// böyle bir ucu yığına hiç sokmamanın yoludur.
+	//
+	// Muafiyet en çok OKUMA yüzeylerine yakışır: idempotency kaydının işi yan
+	// etkiyi (tahsilat, sipariş) ikinci kez üretmemektir ve okuma ucunda
+	// üretecek yan etki yoktur — kayıt yalnızca bayat veri saklar. Bir okuma
+	// ucu POST olduğu için (gövdesinde sorgu taşıyan GraphQL gibi) yığına
+	// takılıyorsa, oraya ait olan şey muafiyettir.
+	//
+	// Çekirdek bu yolu kendisi BİLEMEZ: uç bir modülde yaşar ve çekirdek
+	// modülleri import edemez (Prensip 2.4). Yol, [GuardOptions.AdminExempt]
+	// gibi, uygulamayı kuran taraftan parametre olarak gelir.
+	//
+	// Muafiyet YALNIZCA idempotency halkasınadır: yol hız sınırından ve
+	// kimlikten geçmeye devam eder.
+	IdempotencyExempt []string
 	// PublishableKeyHeader publishable anahtarın okunacağı başlıktır; boşsa
 	// [PublishableKeyHeader].
 	PublishableKeyHeader string
@@ -155,6 +177,8 @@ const (
 //  3. IDEMPOTENCY — kimlikten SONRA. Kayıt anahtarı çağıranın kimliğiyle
 //     birlikte tutulur (bkz. [Idempotency]); kimlik henüz çözülmemişken
 //     çalışsaydı iki farklı çağıranın aynı anahtarı çakışırdı.
+//     [GuardOptions.IdempotencyExempt] yolları bu halkayı — YALNIZCA bu
+//     halkayı — atlar.
 //
 // Bu fonksiyonun çekirdekte durmasının sebebi, sıranın TEK bir yerde
 // yazılmasıdır: uygulama ile uçtan uca testler aynı yığını kurar, yani test
@@ -201,7 +225,12 @@ func APIGuards(opts GuardOptions) []func(http.Handler) http.Handler {
 
 	if opts.IdempotencyStore != nil {
 		idem := Idempotency(opts.IdempotencyStore)
-		yigin = append(yigin, Scoped(admin, nil, idem), Scoped(store, nil, idem))
+		// Muaf listesi iki önek için de AYNIDIR: bir yol zaten yalnızca birinin
+		// altındadır, listeyi ikiye bölmek çağırana anlamsız bir karar
+		// sordurmak olurdu.
+		yigin = append(yigin,
+			Scoped(admin, opts.IdempotencyExempt, idem),
+			Scoped(store, opts.IdempotencyExempt, idem))
 	}
 
 	return yigin

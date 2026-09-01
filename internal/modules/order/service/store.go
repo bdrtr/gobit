@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"time"
 
 	"github.com/bdrtr/gobit/internal/core/eventbus"
 	"github.com/bdrtr/gobit/internal/modules/order/models"
@@ -39,6 +40,12 @@ import (
 // Çocuklar ayrıca kilitlenmez — sipariş kilidi zaten o siparişin tüm durum
 // geçişlerini seri hâle getirir ve tek kilit, sıranın ters dönmesini
 // (dolayısıyla kilitlenmeyi) imkânsız kılar.
+//
+// [Store.LockCustomerSpending] bu sıranın DIŞINDA değil, ÖNÜNDEDİR: harcama
+// kilidi yalnızca sipariş AÇMA yolunda ve her zaman ilk iş olarak alınır. Ters
+// yönde bir bekleme oluşamaz, çünkü sipariş satırını kilitleyen akışların
+// (iptal, tamamla, arşivle) hiçbiri harcama kilidini istemez; iki kilidi ters
+// sırada isteyen bir akış olmadığı sürece döngü kurulamaz.
 type Store interface {
 	// WithTx fn'i tek bir işlemde çalıştırır; fn hata dönerse işlem geri alınır.
 	WithTx(ctx context.Context, fn func(ctx context.Context) error) error
@@ -66,6 +73,20 @@ type Store interface {
 	CompleteOrder(ctx context.Context, id string) (models.Order, error)
 	// ArchiveOrder siparişi arşivler; yalnızca 'completed' durumda etki eder.
 	ArchiveOrder(ctx context.Context, id string) (models.Order, error)
+
+	// LockCustomerSpending müşterinin harcama TOPLAMINI işlem sonuna kadar
+	// kilitler ve yalnızca [Store.WithTx] içinde çağrılabilir.
+	//
+	// Kilit bir satıra değil, müşteri kimliğine bağlanır: korunan şey henüz
+	// yazılmamış bir siparişi de kapsayan bir TOPLAMDIR ve var olan satırları
+	// kilitleyen FOR UPDATE onu koruyamaz (bkz. repository paketi).
+	LockCustomerSpending(ctx context.Context, customerID string) error
+	// SumCustomerSpend müşterinin verilen para birimindeki harcamasını döner;
+	// windowStart nil ise TÜM geçmiş toplanır.
+	//
+	// İptal edilmiş ve yumuşak silinmiş siparişler toplama girmez, iade edilen
+	// tutar düşülür (bkz. queries/spending.sql).
+	SumCustomerSpend(ctx context.Context, customerID, currencyCode string, windowStart *time.Time) (int64, error)
 
 	// CreateLineItem yeni bir sipariş satırı kaydeder.
 	CreateLineItem(ctx context.Context, item models.OrderLineItem) (models.OrderLineItem, error)

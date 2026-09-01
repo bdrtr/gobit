@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -22,6 +23,7 @@ import (
 	authmodels "github.com/bdrtr/gobit/internal/modules/auth/models"
 	authservice "github.com/bdrtr/gobit/internal/modules/auth/service"
 	"github.com/bdrtr/gobit/internal/modules/notification"
+	"github.com/bdrtr/gobit/internal/modules/product/graph"
 	"github.com/bdrtr/gobit/plugins/paymentstripe"
 )
 
@@ -569,4 +571,79 @@ func TestBildirimSaglayicisiKayitYoksaDurur(t *testing.T) {
 	require.Error(t, err)
 	assert.Equal(t, codeUnknownNotificationProvider, errors.CodeOf(err))
 	assert.Contains(t, err.Error(), notification.ProvidersName)
+}
+
+// gecerliKimlik her isteği kabul eden doğrulayıcıdır.
+//
+// Bu dosyadaki diğer testler bağlanmamış doğrulayıcıyla çalışır çünkü
+// iddiaları REDDEDİLME üzerinedir; idempotency halkasına ulaşmak ise kimliğin
+// GEÇMESİNİ gerektirir (halka kimlikten sonradır).
+type gecerliKimlik struct{}
+
+// AuthenticateAdmin sabit bir yönetici kimliği döner.
+func (gecerliKimlik) AuthenticateAdmin(_ context.Context, _, _ string) (corehttp.Principal, error) {
+	return corehttp.Principal{ID: "usr_1", Kind: "user"}, nil
+}
+
+// AuthenticateStore sabit bir mağaza kimliği döner.
+func (gecerliKimlik) AuthenticateStore(_ context.Context, _ string) (corehttp.Principal, error) {
+	return corehttp.Principal{ID: "pk_1", Kind: "api_key"}, nil
+}
+
+// TestKorumaYiginiGraphQLUcunuIdempotencydenMuafTutar muafiyetin GERÇEK yığında
+// ve modülün SABİTİNDEN uygulandığını doğrular.
+//
+// Muafiyetin yeri burasıdır çünkü çekirdek yolu bilemez (modülleri import
+// edemez); yol bileşim kökünden geçer ve elle yazılmış bir dize olsaydı,
+// graph.Path değiştiği gün muafiyet sessizce düşerdi — GraphQL ucu yeniden
+// kaydedilmeye başlar ve kimse fark etmezdi.
+//
+// Handler, GraphQL sözleşmesinin ölçülen davranışını taklit eder: iç hatada da
+// 200 döner. Idempotency'nin "5xx kaydedilmez" koruması bu yüzden burada hiç
+// devreye girmez; muafiyet olmasaydı geçici arıza IDEMPOTENCY_TTL boyunca
+// çalınırdı.
+func TestKorumaYiginiGraphQLUcunuIdempotencydenMuafTutar(t *testing.T) {
+	t.Parallel()
+
+	yigin, err := korumaYigini(temelConfig(), gecerliKimlik{}, nil, slogYut())
+	require.NoError(t, err)
+
+	arizali := true
+
+	r := corehttp.NewRouter(corehttp.RouterOptions{Version: "test", Middlewares: yigin})
+	r.Post(graph.Path, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+
+		if arizali {
+			_, _ = w.Write([]byte(`{"errors":[{"message":"beklenmeyen bir sunucu hatası oluştu"}]}`))
+			return
+		}
+
+		_, _ = w.Write([]byte(`{"data":{"products":{"count":42}}}`))
+	})
+
+	istekYap := func() *http.Request {
+		req := httptest.NewRequest(http.MethodPost, graph.Path,
+			strings.NewReader(`{"query":"{ products { count } }"}`))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set(corehttp.PublishableKeyHeader, "pk_test")
+		req.Header.Set(corehttp.IdempotencyKeyHeader, "ayni-anahtar")
+
+		return req
+	}
+
+	ilk := httptest.NewRecorder()
+	r.ServeHTTP(ilk, istekYap())
+	require.Equal(t, http.StatusOK, ilk.Code)
+	require.Contains(t, ilk.Body.String(), "sunucu hatası")
+
+	arizali = false
+
+	ikinci := httptest.NewRecorder()
+	r.ServeHTTP(ikinci, istekYap())
+
+	assert.Empty(t, ikinci.Header().Get(corehttp.IdempotencyReplayedHeader),
+		"GraphQL ucu kaydedilmez, dolayısıyla oynatılamaz")
+	assert.Contains(t, ikinci.Body.String(), `"count":42`,
+		"arıza giderildikten sonra istemci GÜNCEL yanıtı almalı")
 }

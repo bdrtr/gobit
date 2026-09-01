@@ -109,6 +109,8 @@ import (
 	authapi "github.com/bdrtr/gobit/internal/modules/auth/api"
 	"github.com/bdrtr/gobit/internal/modules/auth/models"
 	authsvc "github.com/bdrtr/gobit/internal/modules/auth/service"
+	b2bmod "github.com/bdrtr/gobit/internal/modules/b2b"
+	b2bsvc "github.com/bdrtr/gobit/internal/modules/b2b/service"
 	cartmod "github.com/bdrtr/gobit/internal/modules/cart"
 	cartsvc "github.com/bdrtr/gobit/internal/modules/cart/service"
 	customermod "github.com/bdrtr/gobit/internal/modules/customer"
@@ -321,6 +323,8 @@ var (
 	kargoSvc     *fulfillmentsvc.Service
 	promosyonSvc *promotionsvc.Service
 	vergiSvc     *taxsvc.Service
+	// Bölüm 10 modülü.
+	b2bSvc *b2bsvc.Service
 )
 
 // kargoYuzeyi fulfillment modülünün modüller arası yüzeyidir
@@ -555,7 +559,7 @@ func zeminiKur(ctx context.Context) error {
 	// Modül kümesi ve sırası cmd/server/main.go'dakinin aynısıdır. Kurulumun
 	// tamamı sınanmalıdır: bir modülü test için ayıklamak, üretimde ancak
 	// açılışta görülecek bir çakışmayı testten gizlerdi.
-	kayit.Add(productmod.New())
+	kayit.Add(productmod.New(productmod.Options{}))
 	kayit.Add(pricingmod.New(nil))
 	kayit.Add(inventorymod.New())
 	kayit.Add(regionmod.New(nil))
@@ -607,6 +611,11 @@ func zeminiKur(ctx context.Context) error {
 		// davranışı sınanır.
 		BcryptCost: bcrypt.MinCost,
 	}))
+	// Bölüm 10: B2B. ÜRETİMDEKİ gibi kaydedilir, çünkü sınanan şey modülün
+	// kendi uçları değil, kaydedilmiş olmasının order modülünün davranışını
+	// DEĞİŞTİRMESİDİR: order harcama kuralını "b2b.interop" adıyla container'dan
+	// çözer ve kayıt yoksa her müşteriyi sınırsız sayar.
+	kayit.Add(b2bmod.New(nil))
 
 	// Router ÜRETİMDEKİ gibi kurulur: koruma yığını (hız sınırı -> kimlik ->
 	// idempotency) çekirdekteki tek tanımdan gelir, testin kendi kopyası
@@ -789,6 +798,9 @@ func modulServisleriniCoz() error {
 		return err
 	}
 	if authSvc, err = container.Resolve[*authsvc.Service](kap, authmod.ServiceName); err != nil {
+		return err
+	}
+	if b2bSvc, err = container.Resolve[*b2bsvc.Service](kap, b2bmod.ServiceName); err != nil {
 		return err
 	}
 

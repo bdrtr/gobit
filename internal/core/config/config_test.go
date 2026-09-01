@@ -30,6 +30,7 @@ var envKeys = []string{
 	"ADMIN_BOOTSTRAP_EMAIL", "ADMIN_BOOTSTRAP_PASSWORD",
 	"GUARD_BACKEND", "REDIS_KEY_PREFIX", "NOTIFICATION_PROVIDER",
 	"FILE_PROVIDER", "FILE_ROOT", "FILE_MAX_UPLOAD_BYTES", "FILE_ALLOWED_TYPES",
+	"GRAPHQL_MAX_DEPTH", "GRAPHQL_MAX_COMPLEXITY", "GRAPHQL_INTROSPECTION",
 }
 
 // uretimJWTSirri üretim senaryolarında kullanılan 32 karakterlik imza sırrıdır.
@@ -253,6 +254,9 @@ func TestDefaultTagsMatchConstants(t *testing.T) {
 		"FileRoot":             config.DefaultFileRoot,
 		"FileAllowedTypes":     config.DefaultFileAllowedTypes,
 		"FileMaxUploadBytes":   strconv.FormatInt(config.DefaultFileMaxUploadBytes, 10),
+		"GraphQLMaxDepth":      strconv.Itoa(config.DefaultGraphQLMaxDepth),
+		"GraphQLMaxComplexity": strconv.Itoa(config.DefaultGraphQLMaxComplexity),
+		"GraphQLIntrospection": strconv.FormatBool(config.DefaultGraphQLIntrospection),
 	}
 
 	typ := reflect.TypeOf(config.Config{})
@@ -889,4 +893,80 @@ func TestGoreliDosyaKokuPaylasilanOrtamdaTasinabilirDegil(t *testing.T) {
 			assert.Equal(t, tt.tasinabilir, cfg.LocalFileRootIsPortable())
 		})
 	}
+}
+
+// TestGraphQLSinirlariVarsayilanDolu ayar verilmemiş bir kurulumun GraphQL
+// ucunu SINIRSIZ açmadığını doğrular.
+//
+// Bu, sertleştirmenin sessizce kaybolabileceği tek yoldur: ortam değişkeni
+// yoksa alanlar Go'nun sıfır değerinde kalır ve sıfır, uygulayan tarafta
+// "sınır uygulama" diye okunsaydı hiçbir hata görünmeden korumasız bir uç
+// açılırdı.
+func TestGraphQLSinirlariVarsayilanDolu(t *testing.T) {
+	cfg := gecerliConfig(t)
+
+	assert.Equal(t, config.DefaultGraphQLMaxDepth, cfg.GraphQLMaxDepth)
+	assert.Equal(t, config.DefaultGraphQLMaxComplexity, cfg.GraphQLMaxComplexity)
+	assert.Equal(t, config.DefaultGraphQLIntrospection, cfg.GraphQLIntrospection,
+		"iç gözlemin varsayılanı bir karardır; sessizce değişmemeli")
+	assert.Positive(t, cfg.GraphQLMaxDepth)
+	assert.Positive(t, cfg.GraphQLMaxComplexity)
+}
+
+// TestGraphQLSinirlariAcilistaDogrulanir anlamsız bir sınırın uygulamayı
+// AÇILIŞTA durdurduğunu doğrular.
+//
+// Sıfır ve negatif değerler bilinçli olarak reddedilir: sınır YÜKSELTİLEBİLİR,
+// KALDIRILAMAZ. RATE_LIMIT_PER_MINUTE'ta sıfırın "kapat" demesiyle
+// karıştırılmamalı — hız sınırını kapatmak bir kapasite tercihidir, derinlik
+// sınırını kapatmak tek bir sorgunun sunucuyu tüketmesine izin vermektir.
+//
+// Sayı olmayan değerler zaten ayrıştırmada düşer; onlar da burada sınanır ki
+// "geçersiz değer sessizce varsayılana düşsün" davranışı bir gün eklenmesin:
+// o davranış, operatöre verdiği değerin uygulandığını sandırırdı.
+func TestGraphQLSinirlariAcilistaDogrulanir(t *testing.T) {
+	// beklenen, hatanın operatöre HANGİ ayarın yanlış olduğunu söylediğini
+	// sınar. Ayrıştırma hataları kütüphaneden gelir ve ortam değişkeninin adını
+	// değil alan adını taşır; ikisi de kullanıcıyı doğru yere götürdüğü için
+	// beklenen metin durum başına yazılır.
+	tests := map[string]struct{ key, value, beklenen string }{
+		"derinlik sıfır":            {"GRAPHQL_MAX_DEPTH", "0", "GRAPHQL_MAX_DEPTH"},
+		"derinlik negatif":          {"GRAPHQL_MAX_DEPTH", "-1", "GRAPHQL_MAX_DEPTH"},
+		"derinlik sayı değil":       {"GRAPHQL_MAX_DEPTH", "derin", "GraphQLMaxDepth"},
+		"karmaşıklık sıfır":         {"GRAPHQL_MAX_COMPLEXITY", "0", "GRAPHQL_MAX_COMPLEXITY"},
+		"karmaşıklık negatif":       {"GRAPHQL_MAX_COMPLEXITY", "-100", "GRAPHQL_MAX_COMPLEXITY"},
+		"karmaşıklık sayı değil":    {"GRAPHQL_MAX_COMPLEXITY", "çok", "GraphQLMaxComplexity"},
+		"iç gözlem mantıksal değil": {"GRAPHQL_INTROSPECTION", "belki", "GraphQLIntrospection"},
+	}
+
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			clearEnv(t)
+			t.Setenv(tt.key, tt.value)
+
+			_, err := config.Load()
+			require.Error(t, err, "geçersiz değer açılışı durdurmalı (%s=%s)", tt.key, tt.value)
+			assert.Contains(t, err.Error(), tt.beklenen)
+		})
+	}
+}
+
+// TestGraphQLSinirlariYukseltilebilir ayarın gerçekten okunduğunu doğrular.
+//
+// Doğrulama testleri tek başına eksiktir: her değeri reddeden bir kapı da
+// onları geçerdi. Sınırın YÜKSELTİLEBİLİR olması, kapının kabul ettiği tarafın
+// da sınanmasını gerektirir.
+func TestGraphQLSinirlariYukseltilebilir(t *testing.T) {
+	clearEnv(t)
+
+	t.Setenv("GRAPHQL_MAX_DEPTH", "25")
+	t.Setenv("GRAPHQL_MAX_COMPLEXITY", "250000")
+	t.Setenv("GRAPHQL_INTROSPECTION", "false")
+
+	cfg, err := config.Load()
+	require.NoError(t, err)
+
+	assert.Equal(t, 25, cfg.GraphQLMaxDepth)
+	assert.Equal(t, 250000, cfg.GraphQLMaxComplexity)
+	assert.False(t, cfg.GraphQLIntrospection)
 }

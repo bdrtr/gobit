@@ -31,6 +31,7 @@ import (
 	fileservice "github.com/bdrtr/gobit/internal/modules/file/service"
 	"github.com/bdrtr/gobit/internal/modules/notification"
 	notificationservice "github.com/bdrtr/gobit/internal/modules/notification/service"
+	"github.com/bdrtr/gobit/internal/modules/product/graph"
 	"github.com/bdrtr/gobit/plugins/paymentstripe"
 	"github.com/bdrtr/gobit/plugins/searchpg"
 )
@@ -175,6 +176,13 @@ func korumaYigini(
 		// ve bir disk erişimi yapar. Önek elle yazılmaz, sağlayıcının
 		// sabitinden okunur.
 		OpenPrefixes: []string{filelocal.DefaultURLPrefix},
+		// GraphQL vitrin ucu POST'tur ama bir OKUMADIR; idempotency kaydının
+		// koruyacağı bir yan etki yoktur ve GraphQL sözleşmesi gereği iç
+		// hatada bile 200 döndüğü için kayıt, geçici bir arızayı TTL boyunca
+		// çalardı. Gerekçenin tamamı
+		// [corehttp.GuardOptions.IdempotencyExempt] alanındadır; yol elle
+		// yazılmaz, modülün sabitinden okunur.
+		IdempotencyExempt: []string{graph.Path},
 	}
 
 	if cfg.GuardBackend == config.BackendRedis {

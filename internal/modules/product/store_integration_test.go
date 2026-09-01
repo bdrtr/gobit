@@ -146,7 +146,7 @@ func newSystem(t *testing.T) system {
 	require.NoError(t, c.Provide(entityPriceSet+query.ProviderSuffix, pricing))
 	require.NoError(t, c.Provide(entityInventoryItem+query.ProviderSuffix, inventory))
 
-	mod := product.New()
+	mod := product.New(product.Options{})
 	require.NoError(t, mod.Register(ctx, c))
 
 	router := chi.NewRouter()
@@ -571,7 +571,7 @@ func TestStoreListingDegradesWithoutOtherModules(t *testing.T) {
 	require.NoError(t, c.Provide("core.eventbus", eventbus.NewInMemory(nil)))
 	// pricing ve inventory sağlayıcıları BİLİNÇLİ olarak kaydedilmez.
 
-	mod := product.New()
+	mod := product.New(product.Options{})
 	require.NoError(t, mod.Register(ctx, c))
 
 	router := chi.NewRouter()

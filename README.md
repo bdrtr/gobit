@@ -87,6 +87,7 @@ deploy                # docker-compose, Dockerfile
 | DI | **`samber/do` v2** | Kontrat isimli servis + generic resolve istiyor; lazy instantiation ve shutdown hook'ları hazır |
 | Config | `caarlos0/env` | Yalnızca env okur; viper'ın dosya/uzak config yükü gereksiz |
 | Log | `log/slog` (stdlib) | Yapısal, bağımlılıksız |
+| GraphQL | **`99designs/gqlgen`** | Şema-önce: şema incelenebilir bir artefakt kalır ve üretilen tipli resolver'lar imza kaymasını derleme zamanında yakalar (sqlc ile aynı disiplin) |
 
 sqlc, golang-migrate ve samber/do **Faz 1–4 arasında** devreye girer; Faz 0
 yalnızca iskeleti kurar.
@@ -156,7 +157,9 @@ Koruma yığınının sırası bilinçlidir:
    yüzeyi reddedilir. Tanımsız bir `/admin/v1/...` yolu da **401** döner (404
    olsaydı uç haritası status kodundan sızardı).
 3. **Idempotency** — kimlikten *sonra*; kayıt anahtarı çağıranın kimliğiyle
-   birlikte tutulur.
+   birlikte tutulur. Tek tek yollar bu halkadan (yalnızca bu halkadan) muaf
+   tutulabilir; bugün tek muaf yol GraphQL vitrin ucudur — gerekçe
+   "Sertleştirme" bölümünde.
 
 Publishable anahtar bir **sır değildir**: tarayıcıda görünür ve tek işi isteği
 bir satış kanalına bağlamaktır — yetki taşımaz.
@@ -280,6 +283,16 @@ tekrar aynı yanıtı `Idempotency-Replayed: true` ile alır. Aynı anahtarla
 istemcinin ikinci isteğinin hiç işlenmediğini gizlerdi. Kayıt anahtarı
 **çağıranın kimliğiyle ad alanına alınır**: aynı anahtarı seçen iki çağırandan
 biri diğerinin yanıtını göremez.
+
+Kayıt kararı **yalnızca durum koduna** bakar — gövdeden vermek, her yüzeyin
+hata biçimini çekirdeğe öğretmek olurdu. Bunun bedeli, hatasını da `200` ile
+bildiren bir yüzeyin korumanın dışında kalmasıdır; bugün depoda öyle tek bir uç
+var (`POST /store/v1/graphql`) ve çözüm kaydı akıllandırmak değil **ucu yığından
+çıkarmaktır**: `GuardOptions.IdempotencyExempt`. Muafiyet **yalnızca**
+idempotency halkasınadır — muaf yol hız sınırından ve kimlikten geçmeye devam
+eder — ve **tam yola** uygulanır, önekin tamamına değil. Yol çekirdekte yazılı
+değildir (çekirdek modülleri import edemez); bileşim kökünden, modülün
+`graph.Path` sabitinden geçirilir.
 
 `TRUSTED_PROXY_HOPS`, istekle aramızdaki **güvenilen** ters proxy sayısıdır.
 Fazla verilen bir değer, istemcinin `X-Forwarded-For`'a kendi yazdığı adresi
@@ -479,6 +492,209 @@ Depoda SDK **vendorlanmaz**: şema router'dan üretildiğine göre ikinci bir
 artefaktı sürümlemek ve şemayla senkron tutmak gereksiz bir yüktür. Komut
 belgelenir, isteyen kendi dilinde üretir.
 
+## GraphQL vitrin okuma yüzeyi
+
+Katalog ikinci bir yüzeyden daha okunur:
+
+```bash
+curl -s localhost:9000/store/v1/graphql \
+  -H "x-publishable-api-key: pk_…" -H 'content-type: application/json' \
+  -d '{"query":"{ products(limit: 5, q: \"tişört\") { count items { handle variants { sku priceSet } } } }"}'
+```
+
+Yüzey **dar** tutuldu: `products` ve `product` sorguları, mutation **yok**.
+Sözleşme `internal/modules/product/graph/schema.graphqls` dosyasıdır — OpenAPI
+belgesi gibi incelenebilir bir artefakt; Go tarafı ondan **üretilir**
+(`make gen`, gqlgen).
+
+Kararlar ve gerekçeleri:
+
+| Karar | Gerekçe |
+|---|---|
+| Resolver'lar **vitrin servisini** çağırır (depoya inmez, yeni SQL yazmaz) | Satış kanalı görünürlük kuralı tek bir yerde yaşar; ikinci bir uygulama sessizce ayrışır ve yüzeylerden biri kataloğu sızdırır |
+| Satış kanalı **argüman değildir**, `Principal`'dan okunur | Argüman olsaydı süzgeç yetkilendirme olmaktan çıkıp görüntüleme tercihine dönerdi (REST ile aynı gerekçe) |
+| Uç `/store/v1` altındadır | Publishable anahtar doğrulaması ve hız sınırı önek yığınından **otomatik** gelir; ayrı bir önek, kimlik ve kota kurallarını ikinci kez yazmak olurdu |
+| Yalnızca **POST** (GET 405) | Yanıt satış kanalına göre değiştiği için GET'in önbellek getirisi yok; bedeli var (sorgu loglara/tarayıcı geçmişine düşer, uzun sorgu 414 olur) |
+| Uç **idempotency'den muaftır** (`Idempotency-Key` yok sayılır) | POST olması onu bir yazma yapmaz: kaydın koruyacağı yan etki yok, sakladığı şey yalnızca bayat katalog olurdu. Asıl gerekçe ise şu: GraphQL sözleşmesi gereği iç hatada da **200** döner, yani "5xx kaydedilmez" koruması bu yüzeyde hiç devreye girmez ve geçici bir arıza `IDEMPOTENCY_TTL` boyunca çalınırdı — arıza giderilse bile istemci aynı hata gövdesini almaya devam ederdi. Muafiyet aynı zamanda 900 KiB'lık bir sorgunun 64 KiB'lık gövde kapısından **önce** parmak izi için belleğe alınmasını da bitirir |
+| `priceSet` / `inventoryItem` **JSON skalarıdır** | Tiplemek pricing/inventory şemasını `product`'a kopyalamak olurdu; kayıt bu modüle zaten gevşek tipli gelir. Bedeli kabul edildi: alan adları şemadan öğrenilemez, sahibi modülün belgesinden okunur. Karşılığında alan `null` olabilir — sağlayıcı kurulu değilse "fiyatı sıfır ürün" uydurmak zorunda kalmayız |
+| Tek belgeye **yedi aile kapı**: fragment açılımı, derinlik, karmaşıklık, alan tekrarı, iç gözlem, ayrıştırma ve **yanıt baytı** | Bu uçta maliyeti sorguyu **yazan** belirler; hız sınırlayıcı ise takma adlarla yüzlerce kök sorgu taşıyan belgeyi de **bir** istek sayar. Ayrıntı ve ölçümler aşağıda |
+| **İç gözlem açık** (`GRAPHQL_INTROSPECTION=false` ile kapanır), ama kendi kapılarının arkasında | Şema bu deponun içinde duran bir dosyadır: kapatmak saldırgandan bir şey saklamaz, kod üreteçlerini körleştirir. Şemasına kendi alanlarını ekleyen kurulum için hesap değişir, o yüzden anahtar var. Anahtar artık bir acil durum vanası değil: iç gözlemin kök sayısı ve derinliği ayrıca sınırlıdır |
+| Hata gövdesi çekirdeğin `WriteError`'ından geçirilir; ayrım hatanın **tipine değil kaynağına** bakar | "Hangi hata istemciye olduğu gibi verilir" kuralının ikinci bir uygulaması, ayrıştığı gün sunucu içi ayrıntı sızdırırdı — nitekim sızdırdı: tipe bakan eski ayrım, sınıflandırılmamış sürücü hatasını (bağlantı dizesi, parola, SQL metni) maskelemeden ve loglamadan geçiriyordu. Kodlar REST ile aynıdır (`extensions.code`) |
+
+### Sertleştirme: maliyeti istemci belirliyorsa sınırı sunucu koyar
+
+REST'te bir isteğin maliyetini sunucu belirler — yol sabit, gövde sabit, bir
+istek bir sorgudur. GraphQL'de sorgunun **şeklini**, yani maliyetini istemci
+yazar; hız sınırlayıcı ise iki yüzeyde de aynı şeyi sayar: **bir istek**. Kapı
+ailesi yedidir ve her biri ötekinin göremediği belgeyi yakalar:
+
+| Kapı | Varsayılan | Neyi sayar | Yakaladığı |
+|---|---|---|---|
+| Açılım | `GRAPHQL_MAX_SELECTIONS=10000` | fragment'lar açıldıktan sonraki seçim | **Fragment bombası.** `f(k) = ...f(k-1) ...f(k-1)` zinciri 26 seviyede **1.127 bayt** yazıp 2²⁶ seçim açar; ağacı gezen her hesap (derinlik, tekrar, gqlgen'in karmaşıklığı) orada asılırdı. En başta koşar ve ötekileri korur; bütçe bitince gezinme yarıda kesilir |
+| Derinlik | `GRAPHQL_MAX_DEPTH=10` | seviye | İç içe geçen sorgu. Şema bugün döngüsel değil (en derin meşru yol 5), ama bir alan geri referans verdiği gün sorgu şemanın değil istemcinin yazdığı yere kadar iner |
+| Karmaşıklık | `GRAPHQL_MAX_COMPLEXITY=50000` | alan × eleman | Sığ ama pahalı sorgu: `limit=100` ile yüz ürünün tüm ağacı, ya da takma adlarla yığılmış yüzlerce kök sorgu |
+| Alan tekrarı | `GRAPHQL_MAX_FIELD_REPETITION=20` | aynı kümede aynı `(tip, alan)` | **Aynı alanın takma adlarla yığılması.** Karmaşıklık alan *sayısını* fiyatlar, baytı değil: 489 kez istenen `description` 50.000'lik tavana tam oturur ve 204,9 MiB yanıt üretirdi |
+| İç gözlem kökü | `GRAPHQL_MAX_INTROSPECTION_ROOTS=2` | belgedeki `__schema` / `__type` | Tek belgede yığılmış iç gözlem. Kökler *sığdır*, yani derinlik kapısı onları hiçbir ayarla göremez |
+| İç gözlem derinliği | `GRAPHQL_MAX_INTROSPECTION_DEPTH=15` | seviye | İç gözlem ağacının derinliği. Veri tavanından **ayrıdır**: standart iç gözlem sorgusu 13 seviyedir, tek tavan olsaydı veri sınırını da 13'ün üstüne çıkarmak gerekirdi |
+| Gövde | 64 KiB (sabit) | bayt | Yukarıdakiler ancak belge **ayrıştırıldıktan sonra** ölçülebilir; ayrıştırma maliyetini yalnızca bu ve jeton sınırı bağlar |
+| Jeton | 8.192 (sabit) | jeton | Gövdeye sığan ama binlerce jeton taşıyan belge (64 KiB en ucuz jetonlarla 32.000 jeton demektir). En ucuz kapıdır: belge sonuna kadar ayrıştırılmaz |
+| Yanıt | `GRAPHQL_MAX_RESPONSE_BYTES=4194304` | **gerçekleşen bayt** | Tahminin kaçırdığı her şey. Diğer kapılar belgeye bakıp maliyeti *tahmin* eder ve bir alanın **içeriğini** bilemez; son söz ölçümündür |
+
+Karmaşıklığın birimi "kaç alan çözülür"dür ve **liste alanlarında eleman
+sayısıyla çarpılır** — sabit maliyet vermek, tam da pahalı olan sorguyu ucuz
+gösterirdi. Kök sorgular ayrıca sabit bir taban taşır (bir veritabanı
+gidiş-dönüşü, seçilen alan azalınca ucuzlamaz).
+
+Kalibrasyon **ölçülmüştür** ve `graph/limits_test.go` içindeki
+`kalibrasyonBelgeleri` tablosunda sabitlenmiştir; bayt sütunu aynı dosyadaki
+ölçüm fikstürüyle (4 KiB açıklamalı ürün, üç varyant, fiyat ve stok kayıtları)
+alınmıştır:
+
+| belge | istek | karmaşıklık | yanıt | sonuç |
+|---|---:|---:|---:|---|
+| ürün sayfası (PDP, her şey dâhil) | 643 B | 2.368 | 6,8 KiB | geçer |
+| kategori listesi (24 ürün, kart + fiyat) | 118 B | 2.344 | 15,1 KiB | geçer |
+| varsayılan sayfada TÜM alanlar (20 ürün × tüm ağaç) | 655 B | 28.440 | 136 KiB | geçer |
+| `limit=100` ile TÜM alanlar | 667 B | 138.200 | 680 KiB | karmaşıklık |
+| 400 takma adlı `products { count }` | 9,7 KiB | 408.000 | 8,5 KiB | alan tekrarı |
+| **489 takma adlı `description`, `limit=100`** | 8,5 KiB | **50.000** | **204,9 MiB** | alan tekrarı |
+| **1500 takma adlı `description`, varsayılan sayfa** | 26,8 KiB | 31.020 | **125,7 MiB** | alan tekrarı |
+| **302 takma adlı `__schema`** | 44,7 KiB | **0** | **5,00 MiB** | jeton (9.364) |
+| **448 takma adlı `__type`** | 58,5 KiB | 7.168 | 1,32 MiB | jeton (14.786) |
+| **302 küçük `__schema` kökü** | 9,3 KiB | **0** | 0,84 MiB | iç gözlem kökü |
+| **26 seviyelik katlanan fragment** | **1,1 KiB** | ölçülemez (asılır) | — | açılım bütçesi |
+
+Kalın satırların **yanıt sütunu, o kapılar eklenmeden önce ölçülen** yanıttır;
+bugün hiçbiri çalıştırılmıyor (reddedilen belgelerin yanıt sütunu, çalıştırılsa
+ne üreteceklerini gösterir). Tablonun asıl söylediği şey şudur: karmaşıklık
+sütunu tek başına bakıldığında bu belgelerin hepsi **masumdur** — 489 takma adlı
+belge tavana tam oturur, iç gözlem belgelerinin karmaşıklığı sıfırdır, fragment
+bombasının karmaşıklığı hiç hesaplanamaz. Alan sayımı, tam da kaçırdığı boyutu
+hiç sormuyordu.
+
+Karşılaştırma noktası `limit=100` satırıdır: aynı yüz ürünü tüm alanlarıyla
+çekmek **680 KiB**'dır ve REST'ten `GET /store/v1/products?limit=100` ile
+istemek de aynı mertebedir. 204,9 MiB'ı üreten şey daha çok *kayıt* değil,
+**aynı kaydın 489 kez serileştirilmesidir** — ve REST istemcisi bunu isteyemez.
+
+Yanıt sınırına çarpıldığında **yarım JSON gönderilmez**: gövdenin hiçbir baytı
+gitmemişken (bugünkü POST taşıması yanıtı tek seferde yazar) aşan gövde atılır
+ve yerine tam bir hata zarfı yazılır; bir kısmı gitmişse tam bir belge artık
+imkânsızdır ve bağlantı `http.ErrAbortHandler` ile bırakılır. Kırpılmış bir
+gövde istemciyi ya çözemeyeceği bir ayrıştırma hatasına düşürür ya da — daha
+kötüsü — kısa bir sonuç sanılır.
+
+Sorgu önbelleği **girdi sayısıyla değil bayt ile** sınırlıdır (girdi başına 8
+KiB) ve bir belge önbelleğe ancak **tüm kapılardan geçtikten sonra** girer:
+gqlgen belgeyi doğrulamadan hemen sonra saklar, sınır eklentileri ise ondan
+sonra koşar — yani reddedilen belgeler de yer tutuyordu (ölçüldü: 100 reddedilmiş
+belge, `runtime.GC` sonrası 171,8 MiB kalıcı yığın) ve vitrinin gerçek
+belgelerini önbellekten atıyordu.
+
+Sınırlar **yükseltilebilir, kaldırılamaz**: `0` ya da negatif değer "sınırsız"
+değil "varsayılanı kullan" demektir; ortam değişkeni olarak verilen `0`/negatif
+değerde uygulama açılışta durur. (`RATE_LIMIT_PER_MINUTE` ile karıştırmayın;
+orada `0` gerçekten "kapat" demektir — bkz. ADR 0007.) Gövde ve jeton sınırları
+sabittir: ikisi de ayrıştırıcıyı bağlar ve gevşetilmeleri bir kapasite tercihi
+değil, ayrıştırıcıyı istemciye açmaktır. Kalan **yedi kapının hepsinin** bir ortam
+değişkeni vardır ve varsayılanları iki yerde (çekirdek yapılandırması ve
+sınırı uygulayan `graph` paketi) tekrarlandığı için bağ bir testle sabitlenmiştir
+(`internal/arch`). Test yalnızca bugünkü değerleri karşılaştırmakla kalmaz,
+`graph.Options`'a eklenen **her** yeni sınırın çekirdekte karşılığı olmasını
+zorlar: ayarlanamayan bir sınır, kurulumu koda çatal atmaya zorlar ve bunu
+operatör ancak üretimde fark eder.
+
+### Hata politikası: ayrım tipe değil kaynağa bakar
+
+Hata gövdesi tarafında da tek kural geçerlidir ve kural **kaynak** üzerinedir:
+
+- **Servis hataları** — resolver'ın altından gelen her şey, *tipli olsun
+  olmasın* — çekirdeğin `WriteError` yolundan geçer. Yani sınıflandırılmamış
+  bir hata (sürücünün `pq: … password=… ; SELECT …` metni gibi) burada da
+  `KindInternal` sayılır: istemci genel mesajı ve `internal_error` kodunu
+  görür, gerçek metin **loglanır**. Ayrım bir zamanlar hatanın *tipine*
+  bakıyordu ve tipsiz olanı istemciye olduğu gibi veriyor, üstelik hiç
+  loglamıyordu — yani REST'te maskelenen hata bu yüzeyden çıkabiliyordu.
+- **Protokol hataları** — ayrıştırma, doğrulama ve sınır kapıları — maskelenmez;
+  maskelenseydi istemci sorgusunu düzeltemezdi. Aynı sebeple bunlar sunucu
+  hatası olarak **loglanmaz**: istemcinin yazım yanlışı, logu istemcinin
+  doldurabildiği bir boru hâline getirirdi.
+- **Taşıma hataları** — belge daha okunamadan başarısız olan istek — kendi
+  metnimizle döner. gqlgen'in taşıması JSON'u çözemediğinde **ham gövdeyi**
+  hata mesajına ekliyordu; 64 KiB'a kadar saldırgan denetimindeki metin hem
+  yanıta hem de yanıtı kaydeden ara katmanların loglarına giriyordu.
+
+`GRAPHQL_INTROSPECTION=false` **önerileri de kapatır** ve bu, anahtarın
+vaadinin tamamlanmasıdır: doğrulayıcı, `__schema` kapalıyken bile
+`Did you mean "products" or "product"?` diyerek şemanın adlarını perakende
+dağıtıyordu — hem de bütün hataları tek yanıtta topladığı için bir istekte
+onlarca ad denenebiliyordu. Kapanan şey adların *sayılmasıdır*, tek tek
+*tahmin edilmesi* değil; onu da kapatmanın tek yolu doğrulama mesajlarını
+tümüyle silmek, yani yüzeyi meşru istemci için de hata ayıklanamaz hâle
+getirmekti. Aynı anahtarla `__schema`/`__type` isteyen belge artık
+çalıştırılmadan reddedilir (`INTROSPECTION_DISABLED`); `__typename` bir iç
+gözlem kökü değildir ve çalışmaya devam eder.
+
+Kodlar `extensions.code` altındadır: `DEPTH_LIMIT_EXCEEDED`,
+`COMPLEXITY_LIMIT_EXCEEDED`, `FIELD_REPETITION_LIMIT_EXCEEDED`,
+`INTROSPECTION_LIMIT_EXCEEDED`, `INTROSPECTION_DISABLED`,
+`RESPONSE_LIMIT_EXCEEDED`, `SELECTION_BUDGET_EXCEEDED`,
+`REQUEST_BODY_TOO_LARGE`, `REQUEST_DECODE_FAILED`.
+
+## B2B: alıcı bir birey değil, yetkisi sınırlı bir çalışan
+
+`b2b` modülü **şirket** ve **şirket çalışanı** kavramlarını ekler; çalışanın
+dönem başına harcayabileceği bir üst sınırı olabilir. Modül başka hiçbir modülü
+import etmez ve çekirdeğe dokunmaz — bu deponun "modüler monolit" iddiasının
+sınavı da buydu: yeni bir alan modülü mevcut kalıba uyarak eklenebiliyor mu.
+
+Çalışan → müşteri bağı **yalnızca `core/link`'tedir**; `b2b_company_employee`
+tablosunda `customer_id` sütunu **yoktur**. Aynı ilişkiyi hem sütunda hem link'te
+tutmak, ikisinin ayrışabileceği bir yer açardı.
+
+### Kural iki modüle bölünmüştür ve bu bilinçlidir
+
+Harcama limiti iki bilgiyi birleştirir: **limit** (`b2b`'nin verisi) ve
+**harcama** (`order`'ın verisi — verilmiş siparişlerin toplamı). İkisi
+birbirini import edemez, bu yüzden sözleşme JSON'dur ve `order` kendi dar
+arayüzünü (`service.SpendingPolicy`) kendi paketinde tanımlar, somut tipi
+container'dan `b2b.interop` adıyla çözer (ADR 0001).
+
+Bunun kabul edilen bedeli şudur: **derleyici bu sözleşmeyi denetlemez.** Alan
+adlarından biri ayrışsaydı her iki paketin birim testleri de yeşil kalır,
+üretimde ise `"limited"` alanı çözülemediği için limit *sessizce kalkardı*.
+Sözleşmenin iki ucu bu yüzden gerçek container üzerinden, e2e'de birleştirilir
+(`internal/e2e/b2b_test.go`).
+
+### Kontrol nerede ve neden orada
+
+Kural `order.CreateOrder` içinde, siparişin yazıldığı **işlemin içinde** ve
+müşteri kilidi altında uygulanır. İki sonucu vardır:
+
+- **Para hiç yetkilendirilmez.** `complete_cart` saga'sında `create_order`,
+  `authorize_payment`'tan **önce** koşar. Reddedilecek bir alışverişin parasını
+  çekip sonra iade etmek yanlış olurdu.
+- **İki eşzamanlı sipariş limiti birlikte aşamaz.** Kontrolü çağıran tarafta
+  (örneğin saga'da) yapmak mümkündü ama kontrol ile yazma iki ayrı işleme
+  düşer ve ikisi de limitin altında görünürdü.
+
+İkinci sebep **kaçıştır**: bu modülde sipariş yaratan tek yol `CreateOrder`'dır.
+Kural saga'ya konsaydı, ileride eklenecek ikinci bir çağıran onu sessizce
+atlardı — bu deponun defalarca bulduğu hata sınıfı tam olarak budur.
+
+### Sınırlar
+
+- Limit `nil` ise **sınırsız**, `0` ise **gerçek bir sıfır limit**. İkisi ayrı
+  cümlelerdir; karışsalardı limiti girilmemiş her çalışan alışveriş yapamazdı.
+- Pencere **takvimdendir** (aylık: ayın 1'i, yıllık: 1 Ocak, UTC), çalışanın işe
+  başlama anından değil. Dönem ortasında şirket değiştiren çalışan eski şirketteki
+  harcamasını da taşır; sapma tek yönlü ve **kısıtlayıcıdır** (hak ettiğinden az
+  harcar, fazlasını asla).
+- Şirketin para birimi ile sepetinki farklıysa sipariş reddedilir; çevirmek için
+  bir kur kaynağı gerekirdi ve o karar bu modülün değildir.
+- `b2b` **kayıtlı değilken** davranış b2b hiç yokmuş gibidir: hiçbir okuma,
+  hiçbir kilit. Saf B2C kurulum, `cmd/server`'daki tek satır silinerek elde edilir.
+
 ## Mimari kararlar (ADR)
 
 Planın bıraktığı belirsizlikler `docs/adr/` altında karara bağlanır. ADR'ler plan
@@ -564,3 +780,4 @@ henüz sabitlenmemiştir. Sabitlenme `1.0.0` ile olur.
 | 7 | Fulfillment · promotion · tax | ✅ |
 | 8 | Auth · admin user · API key · RBAC | ✅ |
 | 9 | Plugin sistemi · observability · sertleştirme | ✅ |
+| 10 | GraphQL vitrin yüzeyi · B2B (şirket · çalışan · harcama limiti) | ✅ |

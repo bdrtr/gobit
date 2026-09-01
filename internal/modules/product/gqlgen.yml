@@ -1,0 +1,86 @@
+# gqlgen yapılandırması — product modülünün GraphQL vitrin yüzeyi.
+#
+# Konum, sqlc.yaml ile aynı gerekçedir: kod üretimi MODÜL BAŞINA yapılandırılır
+# ve yapılandırma, ürettiği kodun yanında durur.
+#
+# DİKKAT: buradaki yollar üretecin ÇALIŞMA DİZİNİNE görelidir, bu dosyaya
+# değil. Depo kökünden `--config internal/modules/product/gqlgen.yml` ile
+# çalıştırmak HATA VERMEZ; sessizce boş bir şema okur ve kökte bir graph/
+# dizini üretir. `make gen` bu yüzden modül dizinine girerek çalıştırır.
+#
+# Üreteç sürümü BURADA PİNLENMEZ ve bu bilinçlidir: `make gen` üreteci
+# `go tool gqlgen` ile, yani go.mod'daki sürümle çalıştırır. İkinci bir pin
+# (Makefile'da bir GQLGEN_VERSION) üretecin sürümüyle çalışma zamanı
+# kütüphanesinin sürümünü AYRI iki yere yazmak olurdu; ayrıştıkları gün
+# üretilen kod, kendisini çalıştıran kütüphaneyle uyuşmaz ve hata derleme
+# zamanında değil, imzası değişmiş bir yardımcı fonksiyonda ortaya çıkar.
+
+schema:
+  - graph/schema.graphqls
+
+# Üretilen kod, ELLE YAZILAN resolver'la AYNI pakette ama AYRI dosyalardadır.
+#
+# Ayrı bir paket denenmedi çünkü model bağlamaları (aşağıda) bu paketin
+# tiplerine bakar: üretilen kod ayrı bir pakette olsaydı, o paket ProductList
+# için buraya, burası da üretilen exec için oraya bakar ve import döngüsü
+# oluşurdu.
+exec:
+  filename: graph/generated.go
+  package: graph
+
+model:
+  filename: graph/models_gen.go
+  package: graph
+
+# "resolver:" bloğu BİLİNÇLİ OLARAK YOKTUR.
+#
+# Blok verilseydi gqlgen resolver dosyalarını da ÜRETİR ve her üretimde
+# yeniden yazardı; o dosyalar hem üretilmiş hem elle düzenlenen melez
+# dosyalardır. Bu depoda üretilen kod düzenlenmez (bkz. repository/productdb).
+# Bu yüzden resolver'lar tümüyle elle yazılır (graph/resolver.go) ve üretilen
+# ResolverRoot arayüzünü karşılarlar: şema ile resolver arasındaki imza
+# kayması DERLEME zamanında görünür.
+
+# Dizi öğeleri İŞARETÇİ TAŞIMAZ.
+#
+# Servis []service.StoreProduct döner, []*service.StoreProduct değil; bu ayar
+# olmadan üretilen kod işaretçi dilimi bekler, bağlama başarısız olur ve her
+# liste alanı gereksiz yere resolver'a düşerdi.
+omit_slice_element_pointers: true
+
+# Üretimden sonra "go mod tidy" ÇALIŞTIRILMAZ: bu deponun tidy'si ayrı bir
+# hedeftir (make tidy) ve kod üretiminin go.mod'u sessizce değiştirmesi,
+# `make gen` diff'ini okuyanı şaşırtır.
+skip_mod_tidy: true
+
+models:
+  # Şema tipleri modülün GERÇEK tiplerine bağlanır; ayrı bir GraphQL model
+  # katmanı ÜRETİLMEZ.
+  #
+  # Üretilen modeller + elle yazılmış bir dönüştürücü de mümkündü ve
+  # REDDEDİLDİ: dönüştürücü, "vitrin ürünü nedir" sorusunun İKİNCİ tanımı
+  # olurdu ve servise eklenen bir alan orada sessizce unutulduğunda hiçbir
+  # şey kırılmazdı — bu deponun her hatası tam olarak bu sınıftandı. Doğrudan
+  # bağlama ile servisin alan adı değiştiği an üretim DERLENMEZ.
+  Product:
+    model: github.com/bdrtr/gobit/internal/modules/product/service.StoreProduct
+  Variant:
+    model: github.com/bdrtr/gobit/internal/modules/product/service.StoreVariant
+  ProductList:
+    model: github.com/bdrtr/gobit/internal/modules/product/graph.ProductList
+  Option:
+    model: github.com/bdrtr/gobit/internal/modules/product/models.Option
+  OptionValue:
+    model: github.com/bdrtr/gobit/internal/modules/product/models.OptionValue
+  Image:
+    model: github.com/bdrtr/gobit/internal/modules/product/models.Image
+  Tag:
+    model: github.com/bdrtr/gobit/internal/modules/product/models.Tag
+  Category:
+    model: github.com/bdrtr/gobit/internal/modules/product/models.Category
+
+  # JSON, gqlgen'in map[string]any taşıyan hazır skalarıdır; adı şemada
+  # istemciye daha çok şey söylediği için değiştirildi ("Map" bir Go tipinin
+  # adıdır, bir sözleşmenin değil).
+  JSON:
+    model: github.com/99designs/gqlgen/graphql.Map

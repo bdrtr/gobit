@@ -15,6 +15,13 @@
 // Ödemeyi de bilmez: tahsil edilen ve iade edilen tutar OrderSummary üzerinden,
 // ödeme sonucunu bilen akış tarafından yazılır.
 //
+// Harcama LİMİTİNİ de bilmez: limit b2b modülünün verisidir ve bu modüle
+// [SpendingPolicyName] adıyla çözülen dar bir yüzeyden gelir. Bildiği şey
+// HARCAMANIN kendisidir — verilmiş siparişlerin toplamı — ve limiti o toplama
+// uygulayan taraf bu yüzden burasıdır; kural, siparişin yazıldığı işlemin
+// içinde uygulandığında yarışa kapanır (bkz. [service.SpendingPolicy]).
+// Bağımlılık OPSİYONELDİR: b2b kurulu değilse hiçbir limit uygulanmaz.
+//
 // Modül başka HİÇBİR modülü import etmez (Prensip 2.1/2.4, ADR 0001; kural
 // .golangci.yml içindeki depguard ve internal/arch testleriyle zorlanır).
 // region_id, customer_id, cart_id ve variant_id başka modüllerin kimlikleridir;
@@ -46,8 +53,10 @@ package order
 import (
 	"context"
 	"embed"
+	"encoding/json"
 	"io/fs"
 	"log/slog"
+	"sync"
 
 	"github.com/go-chi/chi/v5"
 
@@ -90,6 +99,17 @@ const (
 	svcLink     = "core.link"
 	svcEventBus = "core.eventbus"
 )
+
+// SpendingPolicyName harcama limiti kuralını yayımlayan servisin container'daki
+// adıdır (ADR 0001).
+//
+// Ad b2b modülünündür ve burada DİZE olarak tekrarlanır; modüller birbirini
+// import edemez (Prensip 2.4) ve tekrarın bedeli izolasyonun kabul edilen
+// bedelidir. Yazım hatası sessiz kalmaz: ad çözülemezse modül b2b'nin hiç
+// kurulmadığı sonucuna varır ve limit uygulanmaz — bu yüzden ad değişirse
+// [spendingPolicy] belgesindeki "kurulu değil" dalı yanlış tetiklenir. Adın tek
+// doğruluk kaynağı b2b modülünün InteropName sabitidir.
+const SpendingPolicyName = "b2b.interop"
 
 // Hata kodları.
 const (
@@ -162,13 +182,19 @@ func (m *Module) Register(ctx context.Context, c *container.Container) error {
 			"%s modülü olay veri yolunu çözemedi (%q)", ModuleName, svcEventBus)
 	}
 
+	// Uygulama açılışta slog.SetDefault ile yapılandırılmış logger'ı kurar;
+	// modül ayrı bir logger kaydı aramaz.
+	log := slog.Default().With("modul", ModuleName)
+
 	svc, err := service.New(service.Options{
 		Repo:   repository.New(pool.Pool()),
 		Links:  links,
 		Events: bus,
-		// Uygulama açılışta slog.SetDefault ile yapılandırılmış logger'ı kurar;
-		// modül ayrı bir logger kaydı aramaz.
-		Logger: slog.Default().With("modul", ModuleName),
+		// Harcama kuralının sağlayıcısı BAŞKA bir modüldür ve bu aşamada henüz
+		// kayıtlı olmayabilir; çözüm ilk kullanıma bırakılır
+		// (bkz. [spendingPolicy] ve module.Module belgesi).
+		Spending: &spendingPolicy{c: c, log: log},
+		Logger:   log,
 	})
 	if err != nil {
 		return errors.Wrap(err, errors.KindOf(err), codeSetupFailed,
@@ -247,4 +273,78 @@ func mustSub(files embed.FS, dir string) fs.FS {
 		panic("order: gömülü migration dizini açılamadı: " + err.Error())
 	}
 	return sub
+}
+
+// spendingPolicy harcama kuralı sağlayıcısını İLK KULLANIMDA çözen
+// sarmalayıcıdır.
+//
+// # Neden tembel
+//
+// [module.Module] sözleşmesi Register sırasında BAŞKA modüllerin servislerinin
+// henüz kayıtlı olmayabileceğini söyler ve çözümü ilk kullanıma bırakmayı
+// şart koşar. Kayıt sırası da bu yüzden önemsizdir: b2b modülü order'dan sonra
+// eklenmiş olsa bile ilk sipariş açıldığında çoktan kayıtlıdır.
+//
+// # Neden OPSİYONEL
+//
+// [SpendingPolicyName] hiç kayıtlı değilse b2b modülü kurulu değildir; o
+// kurulumda "harcama limiti" diye bir kavram yoktur ve doğru cevap kuralsız
+// bir kuraldır. Bu, [emptySpendingRule] gövdesiyle verilir — servise nil
+// vermek yerine sabit bir cevap dönmek, "politika yok" durumunu servisin
+// dallanması gereken bir hâl olmaktan çıkarır.
+//
+// # Ama SESSİZCE devre dışı KALMAZ
+//
+// Ad kayıtlı AMA beklenen yüzeyi karşılamıyorsa hata döner ve sipariş açılmaz.
+// Bu ayrım önemlidir: "b2b kurulu değil" bir kurulum kararıdır, "b2b kurulu ama
+// yüzeyi tanınmıyor" ise bir kablolama hatasıdır ve onu sessizce limitsiz
+// alışverişe çevirmek, kuralın en çok gerektiği kurulumda kapanması demek
+// olurdu. Karar BİR KEZ verilir ve saklanır; her siparişte yeniden çözmek aynı
+// hatayı sonsuza kadar tekrar üretmekten başka bir şey yapmazdı.
+type spendingPolicy struct {
+	c    *container.Container
+	log  *slog.Logger
+	once sync.Once
+	svc  service.SpendingPolicy
+	err  error
+}
+
+// emptySpendingRule "bu müşterinin harcama kuralı yok" cevabının gövdesidir.
+//
+// Şema service.SpendingPolicy belgesinde tanımlıdır; "limited" alanı false
+// olduğunda diğer alanlar okunmaz.
+var emptySpendingRule = json.RawMessage(`{"limited":false}`)
+
+// Sarmalayıcının servisin beklediği yüzeyi karşıladığı derleme zamanında
+// sabitlenir.
+var _ service.SpendingPolicy = (*spendingPolicy)(nil)
+
+// SpendingLimitJSON müşterinin harcama kuralını döner.
+func (p *spendingPolicy) SpendingLimitJSON(ctx context.Context, customerID string) (json.RawMessage, error) {
+	p.once.Do(func() { p.resolve(ctx) })
+	if p.err != nil {
+		return nil, p.err
+	}
+	if p.svc == nil {
+		return emptySpendingRule, nil
+	}
+	return p.svc.SpendingLimitJSON(ctx, customerID)
+}
+
+// resolve sağlayıcıyı container'dan çözer; sonucu bir kez saklar.
+func (p *spendingPolicy) resolve(ctx context.Context) {
+	svc, err := container.Resolve[service.SpendingPolicy](p.c, SpendingPolicyName)
+	switch {
+	case err == nil:
+		p.svc = svc
+		p.log.InfoContext(ctx, "harcama limiti kuralı bağlandı",
+			"saglayici", SpendingPolicyName)
+	case errors.IsNotFound(err):
+		// Kurulumda b2b modülü yok: limit kavramı da yok.
+		p.log.DebugContext(ctx, "harcama limiti sağlayıcısı kayıtlı değil, limit uygulanmayacak",
+			"saglayici", SpendingPolicyName)
+	default:
+		p.err = errors.Wrap(err, errors.KindOf(err), codeSetupFailed,
+			"%s modülü harcama kuralı sağlayıcısını çözemedi (%q)", ModuleName, SpendingPolicyName)
+	}
 }

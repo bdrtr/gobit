@@ -14,6 +14,7 @@ import (
 
 	corehttp "github.com/bdrtr/gobit/internal/core/http"
 	"github.com/bdrtr/gobit/internal/modules/product/api"
+	"github.com/bdrtr/gobit/internal/modules/product/graph"
 	"github.com/bdrtr/gobit/internal/modules/product/models"
 	"github.com/bdrtr/gobit/internal/modules/product/service"
 )
@@ -267,7 +268,7 @@ func yetkiliRouter(t *testing.T, scopes ...string) (chi.Router, *yetkiKatalogu) 
 	svc := &yetkiKatalogu{}
 	r := chi.NewRouter()
 	r.Use(kimlikVer(scopes...))
-	api.New(svc).Routes(r)
+	api.New(svc, graph.Options{}).Routes(r)
 
 	return r, svc
 }
@@ -278,7 +279,7 @@ func kimliksizRouter(t *testing.T) (chi.Router, *yetkiKatalogu) {
 
 	svc := &yetkiKatalogu{}
 	r := chi.NewRouter()
-	api.New(svc).Routes(r)
+	api.New(svc, graph.Options{}).Routes(r)
 
 	return r, svc
 }

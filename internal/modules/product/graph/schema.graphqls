@@ -1,0 +1,208 @@
+# gobit vitrin (storefront) GraphQL şeması.
+#
+# Bu dosya SÖZLEŞMEDİR ve elle yazılır; graph/generated.go ondan üretilir
+# (make gen). OpenAPI belgesi gibi İNCELENEBİLİR bir artefakttır: bir alanın
+# eklenmesi ya da çıkarılması diff'te görünür.
+#
+# Şemadaki her alanın karşılığı service.StoreProduct ağacında VARDIR ve bu
+# graph/schema_test.go ile denetlenir. Ters yön kasten serbesttir: servisin
+# döndüğü her alanı şemaya koymak zorunda değiliz, ama şemaya koyduğumuz her
+# alan servisten gelmek ZORUNDADIR — aksi hâlde istemciye hiç dolmayacak bir
+# alan vaat edilmiş olur.
+#
+# YAZMA YOKTUR. Mutation tipi bilinçli olarak tanımlanmadı: bu yüzey Faz
+# 10'da yalnızca OKUMA için açıldı ve yazma akışları (sepet, sipariş, ödeme)
+# idempotency başlığı, hata sınıfı → HTTP kodu eşlemesi ve olay yayımı gibi
+# REST tarafında çözülmüş sözleşmelere dayanır. Boş bir Mutation tipi koymak,
+# yarın birinin oraya yazma ekleyeceğini varsaymak olurdu.
+
+"Zaman damgası; RFC 3339 (UTC)."
+scalar Time
+
+"""
+Şeması BU MODÜLE AİT OLMAYAN, gevşek tipli JSON nesnesi.
+
+Yalnızca iki yerde kullanılır ve ikisi de bilinçlidir: modülün kendi serbest
+alanı (metadata) ve BAŞKA modüllerin kayıtları (priceSet, inventoryItem).
+Gerekçe için bkz. Variant.priceSet.
+"""
+scalar JSON
+
+"""
+Vitrinin okuma yüzeyi.
+
+Sorguların gördüğü katalog, isteğin publishable anahtarının bağlı olduğu
+SATIŞ KANALLARIYLA sınırlıdır. Kanal bir sorgu argümanı DEĞİLDİR ve
+olmayacaktır: argüman olsaydı süzgeç bir yetkilendirme olmaktan çıkıp
+görüntüleme tercihine dönüşür, elindeki herhangi bir anahtarla gelen istemci
+başka bir vitrinin katalogunu okuyabilirdi.
+"""
+type Query {
+  """
+  Yayındaki ürünleri fiyat ve stok bilgisiyle listeler.
+
+  Argümanlar service.StoreListOptions ile BİREBİR örtüşür; servisin okumadığı
+  bir argüman burada YOKTUR (bkz. schema_test.go). Sıralama argümanı da bu
+  yüzden yoktur: servis bugün sıralamayı dışarıdan almıyor.
+
+  limit verilmezse servisin varsayılanı, üst sınırı aşarsa servisin tavanı
+  uygulanır; negatif değer hatadır. Kural servisin kendisindedir ve burada
+  TEKRARLANMAZ.
+  """
+  products(limit: Int, offset: Int, q: String, collectionId: ID): ProductList!
+
+  """
+  Tek bir vitrin ürününü kimliğe ya da handle'a göre döner.
+
+  İkisinden TAM OLARAK BİRİ verilmelidir; ikisi birden ya da hiçbiri
+  verilmezse istek doğrulama hatasıyla reddedilir.
+
+  Yayında olmayan, silinmiş ya da isteğin kanallarında görünmeyen ürün için
+  sonuç null'dur ve hata "bulunamadı" sınıfındadır: başka bir kanalda satılan
+  bir ürünün VARLIĞINI farklı bir hatayla ele vermek gizlemenin kendisini
+  delerdi.
+  """
+  product(id: ID, handle: String): Product
+}
+
+"Sayfalanmış ürün listesi; REST vitrin listesiyle aynı zarfı taşır."
+type ProductList {
+  items: [Product!]!
+  "Süzgece uyan TOPLAM kayıt sayısı (sayfadaki değil)."
+  count: Int!
+  offset: Int!
+  "Uygulanan sayfa boyutu; istenen değil (servis varsayılanı/tavanı uygulanmış olabilir)."
+  limit: Int!
+}
+
+"""
+Vitrindeki ürün.
+
+Yalnızca YAYINDAKİ ürünler döner; bu yüzden "status" ve "deletedAt" alanları
+şemada YOKTUR — biri her zaman "published", öteki her zaman null olurdu ve
+istemciye üzerine karar verilebilecek bir bilgi taşımazdı.
+"""
+type Product {
+  id: ID!
+  "Vitrin adresinde geçen okunabilir kimlik."
+  handle: String!
+  title: String!
+  subtitle: String
+  description: String
+  thumbnail: String
+  isGiftcard: Boolean!
+  discountable: Boolean!
+  weight: Int
+  length: Int
+  height: Int
+  width: Int
+  material: String
+  originCountry: String
+  collectionId: ID
+  metadata: JSON
+  createdAt: Time!
+  updatedAt: Time!
+  "Satılabilir birimler. Fiyat ve stok BURADADIR, ürün düzeyinde değil."
+  variants: [Variant!]!
+  options: [Option!]!
+  images: [Image!]!
+  tags: [Tag!]!
+  categories: [Category!]!
+}
+
+"Satılabilir birim: sepete giren, stoğu tutulan ve fiyatlanan şey varyanttır."
+type Variant {
+  id: ID!
+  productId: ID!
+  title: String!
+  sku: String
+  barcode: String
+  ean: String
+  upc: String
+  manageInventory: Boolean!
+  allowBackorder: Boolean!
+  weight: Int
+  rank: Int!
+  metadata: JSON
+  createdAt: Time!
+  updatedAt: Time!
+  "Varyantı seçenek uzayında konumlandıran değerler (örn. Beden: S)."
+  optionValues: [OptionValue!]!
+
+  """
+  Varyantın fiyat seti — PRICING modülünün kaydıdır.
+
+  Tipsizdir ve bu VERİLMİŞ bir karardır. Alanları burada tiplemek, pricing'in
+  şemasını product'ın şemasına KOPYALAMAK olurdu: iki şema aynı anda
+  değişmek zorunda kalır, biri unutulduğunda vitrin ya var olmayan bir alanı
+  ister ya da var olanı gizler. Kayıt bu modüle Query katmanından gevşek
+  tipli geldiği için (bkz. service.StoreVariant) buradaki tipleme zaten bir
+  DÖNÜŞTÜRME değil, bir İDDİA olurdu.
+
+  Bedeli açıktır ve kabul edilmiştir: istemci alan adlarını şemadan
+  öğrenemez, pricing'in belgesine bakar. Karşılığında iki şey kazanılır —
+  pricing bir alan eklediğinde vitrin şeması değişmeden istemciye ulaşır ve
+  pricing kurulu DEĞİLSE alan null döner. Tipli bir alan bu durumda "fiyatı
+  sıfır olan ürün" uydurmak zorunda kalırdı; yanlış fiyat göstermektense
+  fiyatı hiç göstermemek yeğdir.
+  """
+  priceSet: JSON
+
+  """
+  Varyantın stok kalemi — INVENTORY modülünün kaydıdır.
+
+  Tipsizliğin gerekçesi priceSet ile aynıdır.
+  """
+  inventoryItem: JSON
+}
+
+"Ürünün seçenek ekseni (örn. Beden)."
+type Option {
+  id: ID!
+  productId: ID!
+  title: String!
+  rank: Int!
+  values: [OptionValue!]!
+}
+
+"Bir seçeneğin tek değeri (örn. S)."
+type OptionValue {
+  id: ID!
+  optionId: ID!
+  value: String!
+  rank: Int!
+  """
+  Değerin ait olduğu seçeneğin başlığı.
+
+  Yalnızca varyantın seçenek değerlerinde doludur ("S" tek başına anlamsızdır,
+  "Beden: S" anlamlıdır); Option.values altında BOŞ DİZEDİR.
+  """
+  optionTitle: String!
+}
+
+"Ürün görseli; dosyanın kendisi bu modülde durmaz, yalnızca adresi saklanır."
+type Image {
+  id: ID!
+  productId: ID!
+  url: String!
+  rank: Int!
+  metadata: JSON
+}
+
+"Ürüne iliştirilen serbest etiket."
+type Tag {
+  id: ID!
+  value: String!
+}
+
+"Ürünleri ağaç biçiminde gruplayan kategori."
+type Category {
+  id: ID!
+  name: String!
+  handle: String!
+  description: String
+  parentId: ID
+  isActive: Boolean!
+  isInternal: Boolean!
+  rank: Int!
+}

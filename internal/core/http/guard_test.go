@@ -434,3 +434,109 @@ func TestIdempotencyAkisliGovdeyiTamponlamaz(t *testing.T) {
 	assert.Empty(t, kayit.Header().Get(corehttp.IdempotencyReplayedHeader),
 		"akışlı gövde kaydedilmez, dolayısıyla oynatılamaz")
 }
+
+// TestAPIGuardsMuafYolIdempotencyKaydetmez muaf bir yolun yanıtının
+// SAKLANMADIĞINI ve her isteğin yeniden çalıştığını doğrular.
+//
+// Ölçülen arıza şuydu: yanıtını hata hâlinde de 200 ile veren bir uç (GraphQL
+// sözleşmesi böyledir) "5xx kaydedilmez" korumasının dışında kalır. Aşağıdaki
+// handler tam olarak onu taklit eder — önce 200 içinde bir hata gövdesi, sonra
+// düzelmiş bir yanıt. Muafiyet olmasaydı ikinci istek, arıza giderilmiş olsa
+// bile TTL boyunca (varsayılan 24 saat) İLK gövdeyi Idempotency-Replayed ile
+// geri alırdı.
+func TestAPIGuardsMuafYolIdempotencyKaydetmez(t *testing.T) {
+	t.Parallel()
+
+	const muafYol = "/store/v1/graphql"
+
+	arizali := true
+
+	r := corehttp.NewRouter(corehttp.RouterOptions{
+		Version: "test",
+		Middlewares: corehttp.APIGuards(corehttp.GuardOptions{
+			Authenticator:     sabitDogrulayici{principal: corehttp.Principal{ID: "pk_1", Kind: "api_key"}},
+			IdempotencyStore:  corehttp.NewMemoryIdempotencyStore(time.Hour),
+			IdempotencyExempt: []string{muafYol},
+		}),
+	})
+	r.Post(muafYol, func(w http.ResponseWriter, _ *http.Request) {
+		// Durum kodu HER İKİ hâlde de 200; ayrımı yalnızca gövde taşır.
+		w.WriteHeader(http.StatusOK)
+
+		if arizali {
+			_, _ = w.Write([]byte(`{"errors":[{"message":"ic hata"}]}`))
+			return
+		}
+
+		_, _ = w.Write([]byte(`{"data":{"products":{"count":42}}}`))
+	})
+	r.Post("/store/v1/carts", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"data":{"id":"cart_1"}}`))
+	})
+
+	istekYap := func(yol string) *http.Request {
+		req := httptest.NewRequest(http.MethodPost, yol, strings.NewReader(`{"query":"{ products { count } }"}`))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set(corehttp.PublishableKeyHeader, "pk_test")
+		req.Header.Set(corehttp.IdempotencyKeyHeader, "ayni-anahtar")
+
+		return req
+	}
+
+	ilk := cagir(r, istekYap(muafYol))
+	require.Equal(t, http.StatusOK, ilk.Code)
+	require.Contains(t, ilk.Body.String(), "ic hata")
+
+	arizali = false
+
+	ikinci := cagir(r, istekYap(muafYol))
+	assert.Equal(t, http.StatusOK, ikinci.Code)
+	assert.Empty(t, ikinci.Header().Get(corehttp.IdempotencyReplayedHeader),
+		"muaf yolda kayıt hiç alınmaz, dolayısıyla oynatılacak bir şey de yoktur")
+	assert.Contains(t, ikinci.Body.String(), `"count":42`,
+		"arıza giderildikten sonra istemci GÜNCEL yanıtı almalı, 24 saatlik kaydı değil")
+
+	// Muafiyet TAM YOLADIR: aynı önekteki başka bir uç kaydedilmeye devam
+	// eder. Aksi hâlde tek bir muafiyet, yüzeyin tamamının korumasını sessizce
+	// kaldırırdı.
+	sepetIlk := cagir(r, istekYap("/store/v1/carts"))
+	require.Equal(t, http.StatusOK, sepetIlk.Code)
+
+	sepetIkinci := cagir(r, istekYap("/store/v1/carts"))
+	assert.Equal(t, "true", sepetIkinci.Header().Get(corehttp.IdempotencyReplayedHeader),
+		"muaf OLMAYAN uç aynı anahtarla kaydı oynatmalı")
+}
+
+// TestAPIGuardsMuafYolKimlikVeKotadanGecer muafiyetin KAPSAMINI çizer.
+//
+// Muafiyet yalnızca idempotency halkasınadır. Yanlışlıkla tüm yığına
+// uygulansaydı, bir okuma ucunu kayıttan çıkarma kararı sessizce o ucu kimlik
+// doğrulamasından ve kotadan da çıkarırdı — vitrin kataloğu anahtarsız
+// okunabilir hâle gelirdi.
+func TestAPIGuardsMuafYolKimlikVeKotadanGecer(t *testing.T) {
+	t.Parallel()
+
+	const muafYol = "/store/v1/graphql"
+
+	r := corehttp.NewRouter(corehttp.RouterOptions{
+		Version: "test",
+		Middlewares: corehttp.APIGuards(corehttp.GuardOptions{
+			Authenticator:     sabitDogrulayici{err: errors.New("geçersiz")},
+			Limiter:           corehttp.NewMemoryLimiter(1, time.Minute),
+			IdempotencyStore:  corehttp.NewMemoryIdempotencyStore(time.Hour),
+			IdempotencyExempt: []string{muafYol},
+		}),
+	})
+	r.Post(muafYol, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	ilk := cagir(r, httptest.NewRequest(http.MethodPost, muafYol, http.NoBody))
+	assert.Equal(t, http.StatusUnauthorized, ilk.Code,
+		"idempotency muafiyeti kimlik doğrulamasını kaldırmaz")
+
+	ikinci := cagir(r, httptest.NewRequest(http.MethodPost, muafYol, http.NoBody))
+	assert.Equal(t, http.StatusTooManyRequests, ikinci.Code,
+		"idempotency muafiyeti kotayı da kaldırmaz")
+}

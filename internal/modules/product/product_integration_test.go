@@ -76,7 +76,7 @@ func runWithPostgres(m *testing.M) int {
 		return 1
 	}
 
-	mod := product.New()
+	mod := product.New(product.Options{})
 	if err = db.Migrate(ctx, testDSN, mod.Migrations(), mod.Name()); err != nil {
 		fmt.Fprintf(os.Stderr, "product şeması uygulanamadı: %v\n", err)
 		return 1
@@ -202,7 +202,7 @@ func tableExists(ctx context.Context, t *testing.T, dsn, table string) bool {
 func TestMigrationUpDownIsReversible(t *testing.T) {
 	ctx := context.Background()
 	dsn := newDatabase(ctx, t)
-	mod := product.New()
+	mod := product.New(product.Options{})
 
 	require.NoError(t, db.Migrate(ctx, dsn, mod.Migrations(), mod.Name()))
 

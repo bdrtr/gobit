@@ -16,6 +16,7 @@ import (
 	corehttp "github.com/bdrtr/gobit/internal/core/http"
 	"github.com/bdrtr/gobit/internal/core/query"
 	"github.com/bdrtr/gobit/internal/modules/product/api"
+	"github.com/bdrtr/gobit/internal/modules/product/graph"
 	"github.com/bdrtr/gobit/internal/modules/product/models"
 	"github.com/bdrtr/gobit/internal/modules/product/service"
 )
@@ -108,7 +109,7 @@ func (f *fakeCatalog) ProductSalesChannelIDs(ctx context.Context, productID stri
 // newRouter sahte servisle bağlanmış bir router üretir.
 func newRouter(catalog api.Catalog) chi.Router {
 	r := chi.NewRouter()
-	api.New(catalog).Routes(r)
+	api.New(catalog, graph.Options{}).Routes(r)
 	return r
 }
 
@@ -552,7 +553,7 @@ func TestRoutesDoNotMountSharedPrefixes(t *testing.T) {
 	t.Parallel()
 
 	r := chi.NewRouter()
-	api.New(&fakeCatalog{}).Routes(r)
+	api.New(&fakeCatalog{}, graph.Options{}).Routes(r)
 
 	assert.NotPanics(t, func() {
 		// Başka bir modülün (örn. pricing) aynı sürüm öneki altındaki ucu.
@@ -566,4 +567,53 @@ func TestRoutesDoNotMountSharedPrefixes(t *testing.T) {
 
 	rec := do(t, r, http.MethodGet, "/admin/v1/price-sets", "")
 	assert.Equal(t, http.StatusOK, rec.Code)
+}
+
+// TestGraphQLUcuVitrinServisiniCagirir GraphQL ucunun router'a BAĞLI olduğunu
+// ve vitrin servisine indiğini doğrular.
+//
+// Yüzeyin kendi davranışı graph paketinde sınanır; buradaki iddia yalnızca
+// bağlantıdır: uç kaydedilmiş mi, isteği alan handler gerçekten GraphQL
+// sunucusu mu. Bağlantı kopsaydı graph paketinin tüm testleri yeşil kalır ama
+// uç 404 dönerdi.
+func TestGraphQLUcuVitrinServisiniCagirir(t *testing.T) {
+	t.Parallel()
+
+	catalog := &fakeCatalog{
+		listStoreProducts: func(
+			context.Context, service.StoreListOptions,
+		) (service.ListResult[service.StoreProduct], error) {
+			return service.ListResult[service.StoreProduct]{
+				Items: []service.StoreProduct{{Product: models.Product{ID: "prod_1"}}},
+				Count: 1,
+			}, nil
+		},
+	}
+
+	rec := do(t, newRouter(catalog), http.MethodPost, "/store/v1/graphql",
+		`{"query":"{ products { count items { id } } }"}`)
+	require.Equal(t, http.StatusOK, rec.Code, "gövde: %s", rec.Body.String())
+
+	govde := decodeBody(t, rec)
+	assert.NotContains(t, govde, "errors", "gövde: %s", rec.Body.String())
+
+	data, ok := govde["data"].(map[string]any)
+	require.True(t, ok)
+
+	liste, ok := data["products"].(map[string]any)
+	require.True(t, ok)
+	assert.InDelta(t, float64(1), liste["count"], 0)
+}
+
+// TestGraphQLUcuGETKabulEtmez ucun yalnızca POST ile kaydedildiğini doğrular.
+//
+// GET'in neden açılmadığı için bkz. graph.NewHandler. chi, kayıtlı olmayan
+// metoda 405 döner; gqlgen'in "transport not supported" 400'ünden daha
+// dürüsttür çünkü sorun taşımada değil METOTTADIR.
+func TestGraphQLUcuGETKabulEtmez(t *testing.T) {
+	t.Parallel()
+
+	rec := do(t, newRouter(&fakeCatalog{}), http.MethodGet,
+		"/store/v1/graphql?query={products{count}}", "")
+	assert.Equal(t, http.StatusMethodNotAllowed, rec.Code)
 }

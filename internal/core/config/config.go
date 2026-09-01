@@ -107,6 +107,51 @@ const DefaultFileMaxUploadBytes int64 = 5 << 20
 // dizedir ve ikisinin uyumu ancak aynı biçimde tutulurlarsa denetlenebilir.
 const DefaultFileAllowedTypes = "image/jpeg,image/png,image/gif,image/webp"
 
+// GraphQL okuma yüzeyinin varsayılan sınırları.
+//
+// Değerler, sınırları UYGULAYAN paketin (internal/modules/product/graph)
+// sabitlerinin tekrarıdır; çekirdek modülleri import EDEMEDİĞİ için
+// (Prensip 2.4) onlara bağlanamaz. Ayrışmanın bedeli sessizdir: hiçbir ortam
+// değişkeni vermemiş bir kurulum, hem bu dosyada hem modülün belgesinde
+// yazandan BAŞKA bir sınırla çalışırdı. Bağ bu yüzden bir testle sabitlendi
+// (bkz. internal/arch).
+//
+// Adların GRAPHQL_ öneki güvenlidir: METRIC_EXPORT_INTERVAL'ın kaçındığı
+// durumun (bkz. [Config.MetricInterval]) tersine, ne GraphQL belirtimi ne de
+// gqlgen bu adlardan birini AYIRMIŞTIR — yani ödünç alınmış bir ada, anlamı
+// ödünç alınmadan sahip olunmuyor.
+const (
+	// DefaultGraphQLMaxDepth iç içe geçen alan sayısının varsayılan üst
+	// sınırıdır.
+	DefaultGraphQLMaxDepth = 10
+
+	// DefaultGraphQLMaxComplexity tek bir belgenin varsayılan maliyet tavanıdır.
+	DefaultGraphQLMaxComplexity = 50000
+
+	// DefaultGraphQLIntrospection iç gözlemin varsayılan olarak açık olduğunu
+	// bildirir.
+	DefaultGraphQLIntrospection = true
+
+	// DefaultGraphQLMaxFieldRepetition aynı alanın aynı nesne altında kaç kez
+	// seçilebileceğinin varsayılan üst sınırıdır.
+	DefaultGraphQLMaxFieldRepetition = 20
+
+	// DefaultGraphQLMaxResponseBytes tek bir yanıtın varsayılan bayt tavanıdır.
+	DefaultGraphQLMaxResponseBytes = 4 << 20
+
+	// DefaultGraphQLMaxIntrospectionRoots bir belgedeki iç gözlem kökü
+	// sayısının varsayılan üst sınırıdır.
+	DefaultGraphQLMaxIntrospectionRoots = 2
+
+	// DefaultGraphQLMaxIntrospectionDepth iç gözlem alt ağacının varsayılan
+	// derinlik tavanıdır.
+	DefaultGraphQLMaxIntrospectionDepth = 15
+
+	// DefaultGraphQLMaxSelections bir belgenin açıldığında üretebileceği
+	// varsayılan azami seçim sayısıdır.
+	DefaultGraphQLMaxSelections = 10000
+)
+
 // Yalnızca yerel geliştirme için varsayılan bağlantı adresleri.
 // deploy/docker-compose.yml ile eşleşirler. Validate, APP_ENV=production iken
 // bu değerlerin ezilmiş olmasını ZORUNLU kılar; aksi hâlde eksik secret
@@ -373,6 +418,114 @@ type Config struct {
 	// kötü ana — canlı geçiş anına — saklamak olurdu.
 	RedisKeyPrefix string `env:"REDIS_KEY_PREFIX" envDefault:"gobit"`
 
+	// GraphQLMaxDepth bir GraphQL belgesinde iç içe geçebilecek alan sayısının
+	// üst sınırıdır.
+	//
+	// Bu ayar REST tarafında karşılığı OLMAYAN bir riski kapatır: orada bir
+	// isteğin maliyetini sunucu belirler (yol sabit, gövde sabit), GraphQL'de
+	// ise sorgunun ŞEKLİNİ, yani maliyetini istemci yazar. Hız sınırlayıcı iki
+	// yüzeyde de aynı şeyi sayar — bir istek.
+	//
+	// SIFIR VE NEGATİF DEĞER GEÇERSİZDİR ve açılışı durdurur; "0 = sınırsız"
+	// gibi bir okuma bilinçli olarak YOKTUR. RATE_LIMIT_PER_MINUTE'ta sıfırın
+	// "kapat" demesiyle karıştırılmamalı: hız sınırını kapatmak bir kapasite
+	// tercihidir ve etkisi hemen görülür, derinlik sınırını kapatmak ise tek
+	// bir sorgunun sunucuyu tüketmesine izin vermektir.
+	GraphQLMaxDepth int `env:"GRAPHQL_MAX_DEPTH" envDefault:"10"`
+
+	// GraphQLMaxComplexity tek bir GraphQL belgesinin tahmini maliyet tavanıdır.
+	//
+	// Birim "kaç alan çözülür"dür ve liste alanlarında eleman sayısıyla
+	// çarpılır; bu yüzden sayı büyüktür (bkz. modülün graph paketi). Derinlik
+	// sınırının yerine geçmez: sığ ama geniş bir belge — takma adlarla
+	// yüzlerce kök sorgu ya da limit=100 ile yüz ürünün tüm varyantları —
+	// derinlik testinden geçer, buradan geçemez.
+	//
+	// Sıfır ve negatif değer GEÇERSİZDİR; gerekçe [Config.GraphQLMaxDepth] ile
+	// aynıdır.
+	GraphQLMaxComplexity int `env:"GRAPHQL_MAX_COMPLEXITY" envDefault:"50000"`
+
+	// GraphQLIntrospection GraphQL şemasının iç gözlemle (introspection)
+	// okunabilmesini belirler.
+	//
+	// Varsayılan AÇIKTIR: vitrin şeması bu deponun içinde duran bir dosyadır ve
+	// her kurulum aynısını sunar, yani kapatmak saldırgandan bir şey saklamaz,
+	// yalnızca istemci araçlarını (kod üreteçleri, IDE'ler) körleştirir. Uç
+	// zaten publishable anahtarın ve hız sınırının arkasındadır; maliyetini de
+	// GRAPHQL_MAX_INTROSPECTION_ROOTS ve GRAPHQL_MAX_INTROSPECTION_DEPTH
+	// bağlar. O iki ayar AYRIDIR çünkü iç gözlem alt ağacı derinlik ve
+	// karmaşıklık hesaplarının DIŞINDA kalır — kapatmamak, sınırsız bırakmakla
+	// aynı şey olurdu.
+	//
+	// Şemasına kendi alanlarını ekleyen bir kurulum için hesap değişir ve
+	// anahtar bu yüzden vardır: false verildiğinde tüm yüzeyi tek istekte
+	// döken sorgu kapanır. Anahtarın varlığı, kapalılığı bir kaza değil karar
+	// yapar.
+	GraphQLIntrospection bool `env:"GRAPHQL_INTROSPECTION" envDefault:"true"`
+
+	// GraphQLMaxFieldRepetition aynı alanın aynı nesne altında kaç kez
+	// seçilebileceğinin üst sınırıdır.
+	//
+	// Karmaşıklık sınırının GÖREMEDİĞİ riski kapatır: o model alan SAYISINI
+	// fiyatlar, BAYT'ı değil. Aynı ağır alanı — örneğin bir ürün açıklamasını
+	// — takma adlarla yüzlerce kez seçen belge tavanın ALTINDA kalır ve yanıtı
+	// yüzlerce katına çıkarır. Ölçüldüğünde 8 KiB'lık bir istek 191 MiB yanıt
+	// üretiyordu ve hız sınırlayıcı bunu BİR istek sayıyordu.
+	//
+	// Sayım kardeş kapsamlıdır ve takma adlar anahtara girmez: saldırının tek
+	// aracı takma addır, meşru istemcinin aynı alanı farklı adla iki kez
+	// istemesi ise olağandır.
+	//
+	// Sıfır ve negatif değer GEÇERSİZDİR; gerekçe [Config.GraphQLMaxDepth] ile
+	// aynıdır.
+	GraphQLMaxFieldRepetition int `env:"GRAPHQL_MAX_FIELD_REPETITION" envDefault:"20"`
+
+	// GraphQLMaxResponseBytes tek bir GraphQL yanıtının azami boyutudur.
+	//
+	// Diğer sınırlardan farkı ölçtüğü şeydir: onlar belgeye bakıp maliyeti
+	// TAHMİN eder, bu sınır gerçekleşen baytı SAYAR. Tahmin modeli bir gün
+	// yanıldığında son kapı budur ve tam da yanılmanın görülemediği yerde
+	// durur.
+	//
+	// Sıfır ve negatif değer GEÇERSİZDİR.
+	GraphQLMaxResponseBytes int `env:"GRAPHQL_MAX_RESPONSE_BYTES" envDefault:"4194304"`
+
+	// GraphQLMaxIntrospectionRoots bir belgedeki __schema/__type kökü
+	// sayısının üst sınırıdır.
+	//
+	// İç gözlem alt ağacı hem derinlik hem karmaşıklık hesabının DIŞINDADIR
+	// (gqlgen kendi yürüyüşünde de atlar), yani o iki sınır onu hiç görmez.
+	// Ölçüldüğünde 63 KB'lık takma adlı bir belge 7,3 MiB yanıt veriyordu ve
+	// en katı derinlik/karmaşıklık ayarıyla bile geçiyordu — aynı ayarla en
+	// küçük meşru veri sorgusu reddedilirken.
+	//
+	// İki kök yeterlidir: hiçbir istemci aracı aynı belgede iki kez şema
+	// istemez. Sıfır ve negatif değer GEÇERSİZDİR.
+	GraphQLMaxIntrospectionRoots int `env:"GRAPHQL_MAX_INTROSPECTION_ROOTS" envDefault:"2"`
+
+	// GraphQLMaxIntrospectionDepth iç gözlem alt ağacının derinlik tavanıdır.
+	//
+	// GRAPHQL_MAX_DEPTH'ten AYRI olması zorunludur: standart iç gözlem
+	// sorgusunun ölçülen derinliği 13'tür ve veri yüzeyinin sınırı ona göre
+	// kalibre edilseydi, vitrinin gerçek sorguları için gereğinden çok gevşek
+	// kalırdı. İki sayaç ayrıldığı için veri sınırı 10'da durabiliyor.
+	//
+	// Sıfır ve negatif değer GEÇERSİZDİR.
+	GraphQLMaxIntrospectionDepth int `env:"GRAPHQL_MAX_INTROSPECTION_DEPTH" envDefault:"15"`
+
+	// GraphQLMaxSelections bir belgenin AÇILDIĞINDA ürettiği azami seçim
+	// sayısıdır.
+	//
+	// Fragment açılımı ÜSSELDİR: birbirini iki kez çağıran 26 seviyelik bir
+	// fragment zinciri 1,1 KB'lık geçerli ve döngüsüz bir belgedir ama 2^26
+	// seçim açar. Tuzak tek bir sayaçta değildir — derinlik, alan tekrarı ve
+	// gqlgen'in karmaşıklık yürüyüşü fragment tanımına belleksiz iner — bu
+	// yüzden bütçe hepsinden ÖNCE koşar ve tükendiğinde gezinme yarıda kesilir:
+	// sınırı uygularken sınırın engellediği işi yapmamak için.
+	//
+	// Sıfır ve negatif değer GEÇERSİZDİR.
+	GraphQLMaxSelections int `env:"GRAPHQL_MAX_SELECTIONS" envDefault:"10000"`
+
 	// Plugins kurulacak eklentilerin adlarıdır (virgülle ayrılır).
 	//
 	// Varsayılanı BOŞTUR: derlenmiş bir eklentinin varlığı onu kurmak için
@@ -468,6 +621,9 @@ func (c Config) Validate() error {
 	if err := c.validateRedisKeyPrefix(); err != nil {
 		return err
 	}
+	if err := c.validateGraphQL(); err != nil {
+		return err
+	}
 	if err := c.validatePlugins(); err != nil {
 		return err
 	}
@@ -543,6 +699,50 @@ func (c Config) validateRedisKeyPrefix() error {
 		return fmt.Errorf(
 			"config: geçersiz REDIS_KEY_PREFIX %q (yalnızca ASCII harf, rakam, '-', '_' ve '.' kabul edilir)",
 			c.RedisKeyPrefix)
+	}
+	return nil
+}
+
+// validateGraphQL okuma yüzeyinin sınırlarını doğrular.
+//
+// Kural tek satırdır ve bilinçlidir: SINIR YÜKSELTİLEBİLİR, KALDIRILAMAZ.
+// Sıfır ya da negatif bir değer, "sınır uygulanmasın" niyetiyle yazılmış bile
+// olsa, kaynak tüketimini istemcinin yazdığı sorguya devretmek demektir; bu
+// yüzden kabul edilmez ve açılışta durur. Sessizce varsayılana düşmek daha da
+// kötü olurdu: operatör verdiği değerin uygulandığını sanırdı.
+//
+// ÜST sınır konmadı. "Çok büyük" bir değerle "sınırsız" arasındaki farkı
+// config tahmin edemez; devasa bir katalogda meşru olabilecek bir tavanı
+// açılışta reddetmek, korumadığı bir şey için çalışan kurulumu durdurmak
+// olurdu. Buradaki kapı yalnızca ANLAMSIZ değeri eler.
+func (c Config) validateGraphQL() error {
+	if c.GraphQLMaxDepth < 1 {
+		return fmt.Errorf("config: GRAPHQL_MAX_DEPTH en az 1 olmalı, %d verildi (sınır yükseltilebilir, kaldırılamaz)",
+			c.GraphQLMaxDepth)
+	}
+	if c.GraphQLMaxFieldRepetition < 1 {
+		return fmt.Errorf("config: GRAPHQL_MAX_FIELD_REPETITION en az 1 olmalı, %d verildi (sınır yükseltilebilir, kaldırılamaz)",
+			c.GraphQLMaxFieldRepetition)
+	}
+	if c.GraphQLMaxResponseBytes < 1 {
+		return fmt.Errorf("config: GRAPHQL_MAX_RESPONSE_BYTES en az 1 olmalı, %d verildi (sınır yükseltilebilir, kaldırılamaz)",
+			c.GraphQLMaxResponseBytes)
+	}
+	if c.GraphQLMaxIntrospectionRoots < 1 {
+		return fmt.Errorf("config: GRAPHQL_MAX_INTROSPECTION_ROOTS en az 1 olmalı, %d verildi (sınır yükseltilebilir, kaldırılamaz)",
+			c.GraphQLMaxIntrospectionRoots)
+	}
+	if c.GraphQLMaxIntrospectionDepth < 1 {
+		return fmt.Errorf("config: GRAPHQL_MAX_INTROSPECTION_DEPTH en az 1 olmalı, %d verildi (sınır yükseltilebilir, kaldırılamaz)",
+			c.GraphQLMaxIntrospectionDepth)
+	}
+	if c.GraphQLMaxSelections < 1 {
+		return fmt.Errorf("config: GRAPHQL_MAX_SELECTIONS en az 1 olmalı, %d verildi (sınır yükseltilebilir, kaldırılamaz)",
+			c.GraphQLMaxSelections)
+	}
+	if c.GraphQLMaxComplexity < 1 {
+		return fmt.Errorf("config: GRAPHQL_MAX_COMPLEXITY en az 1 olmalı, %d verildi (sınır yükseltilebilir, kaldırılamaz)",
+			c.GraphQLMaxComplexity)
 	}
 	return nil
 }

@@ -1,9 +1,12 @@
 package api
 
 import (
+	"net/http"
+
 	"github.com/go-chi/chi/v5"
 
 	corehttp "github.com/bdrtr/gobit/internal/core/http"
+	"github.com/bdrtr/gobit/internal/modules/product/graph"
 )
 
 // Yetki sözlüğü: product'ın yönetim uçlarının istediği yetkiler.
@@ -65,6 +68,12 @@ func (h *Handler) Routes(r chi.Router) {
 	// --- Store API (müşteri) ---
 	r.Get("/store/v1/products", h.storeListProducts)
 	r.Get("/store/v1/products/{id}", h.storeGetProduct)
+
+	// GraphQL vitrin okuma yüzeyi. YALNIZCA POST kaydedilir; GET'in neden
+	// açılmadığı için bkz. [graph.NewHandler]. Yolun /store/v1 altında olması
+	// koruma yığınını (publishable anahtar + hız sınırı) otomatik getirir ve
+	// satış kanalı kimliklerini Principal'a doldurur.
+	r.Method(http.MethodPost, graph.Path, h.graphql)
 
 	// --- Admin API: ürünler ---
 	yazma.Post("/admin/v1/products", h.adminCreateProduct)

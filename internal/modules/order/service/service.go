@@ -85,6 +85,20 @@ const (
 	CodeRefundExceedsOrder = "order_refund_exceeds_total"
 	// CodeLinkFailed modüller arası bağın kurulamadığını bildirir.
 	CodeLinkFailed = "order_link_failed"
+	// CodeSpendingLimitExceeded siparişin, müşterinin dönem içindeki harcama
+	// limitini aştığını bildirir.
+	CodeSpendingLimitExceeded = "order_spending_limit_exceeded"
+	// CodeSpendingCurrencyMismatch siparişin para biriminin harcama limitinin
+	// para biriminden farklı olduğunu bildirir; iki tutar çevrilmeden
+	// karşılaştırılamaz.
+	CodeSpendingCurrencyMismatch = "order_spending_currency_mismatch"
+	// CodeSpendingPolicyUnavailable harcama kuralının OKUNAMADIĞINI bildirir.
+	// "Kural yok" ile "kuralı öğrenemedik" farklı durumlardır; ikincisinde
+	// sipariş açılmaz.
+	CodeSpendingPolicyUnavailable = "order_spending_policy_unavailable"
+	// CodeSpendingPolicyInvalid harcama kuralı gövdesinin sözleşmeye
+	// uymadığını bildirir.
+	CodeSpendingPolicyInvalid = "order_spending_policy_invalid"
 	// CodeNotReady servisin eksik bağımlılıkla kurulduğunu bildirir.
 	CodeNotReady = "order_service_not_ready"
 )
@@ -117,10 +131,11 @@ const maxOrderItems = 500
 
 // Service order modülünün dışa açık servisidir. Eşzamanlı kullanıma güvenlidir.
 type Service struct {
-	store  Store
-	links  Linker
-	events EventPublisher
-	log    *slog.Logger
+	store    Store
+	links    Linker
+	events   EventPublisher
+	spending SpendingPolicy
+	log      *slog.Logger
 }
 
 // Options servisin bağımlılıklarıdır.
@@ -133,6 +148,14 @@ type Options struct {
 	// Events olay veri yoludur; zorunludur. "order.placed" olayı buradan
 	// yayımlanır (plan Faz 6 DoD).
 	Events EventPublisher
+	// Spending harcama limiti kuralının kaynağıdır; OPSİYONELDİR.
+	//
+	// nil ise hiçbir limit uygulanmaz ve sipariş açma yolu bu alan hiç
+	// eklenmemiş gibi davranır: ne ek bir okuma ne de bir kilit vardır. Saf
+	// B2C bir kurulumda "harcama limiti" diye bir kavram olmadığı için doğru
+	// varsayılan budur; alanı dolduran taraf modülün kablolamasıdır
+	// (bkz. module.go).
+	Spending SpendingPolicy
 	// Logger nil verilirse loglar atılır.
 	Logger *slog.Logger
 }
@@ -144,6 +167,11 @@ type Options struct {
 // olsaydı, veri yolu kaydı unutulmuş bir kurulumda sipariş sessizce yazılır ama
 // "order.placed" hiç yayımlanmazdı ve eksiklik ancak abonelerin çalışmadığı
 // fark edildiğinde — yani üretimde — görünürdü.
+//
+// [Options.Spending] bu kuralın TEK istisnasıdır ve olmak zorundadır: harcama
+// limiti B2B'ye özgü bir kavramdır, saf B2C bir kurulumda kuralın kaynağı diye
+// bir şey yoktur ve onu zorunlu kılmak, b2b modülü olmayan her kurulumu
+// açılışta düşürürdü.
 func New(opts Options) (*Service, error) {
 	if opts.Repo == nil {
 		return nil, errors.Internal(CodeNotReady, "order servisi depo olmadan kurulamaz")
@@ -158,7 +186,13 @@ func New(opts Options) (*Service, error) {
 	if log == nil {
 		log = slog.New(slog.DiscardHandler)
 	}
-	return &Service{store: opts.Repo, links: opts.Links, events: opts.Events, log: log}, nil
+	return &Service{
+		store:    opts.Repo,
+		links:    opts.Links,
+		events:   opts.Events,
+		spending: opts.Spending,
+		log:      log,
+	}, nil
 }
 
 // Page liste isteklerinin sayfalama parametreleridir.

@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"github.com/bdrtr/gobit/internal/core/openapi"
+	"github.com/bdrtr/gobit/internal/modules/product/graph"
 	"github.com/bdrtr/gobit/internal/modules/product/models"
 	"github.com/bdrtr/gobit/internal/modules/product/service"
 )
@@ -19,6 +20,8 @@ const (
 	tipDize      = "string"
 	tipTamSayi   = "integer"
 	tipMantiksal = "boolean"
+	tipNesne     = "object"
+	tipDizi      = "array"
 )
 
 // Describe product'ın uçlarını OpenAPI belgesine işler.
@@ -91,12 +94,103 @@ func Describe(d *openapi.Doc) {
 		},
 	})
 
+	describeVitrinGraphQL(d)
 	describeYonetimUrunler(d)
 	describeYonetimVaryantlar(d)
 	describeYonetimSecenekler(d)
 	describeYonetimBaglar(d)
 	describeYonetimSatisKanallari(d)
 	describeYonetimTaksonomi(d)
+}
+
+// graphqlRequest GraphQL istek gövdesidir.
+//
+// Bu tip gövdeyi ÇÖZMEZ; çözen gqlgen'dir (bkz. graph.NewHandler). Yalnızca
+// belge için vardır ve sebebi somuttur: anlatılmamış bir POST ucu belgede
+// gövdesiz görünür, istemci üreteci de parametresiz — yani çağrılamaz — bir
+// metot üretir. Alanlar GraphQL'in HTTP taşımasında sabittir, bu yüzden
+// gqlgen'in iç tipiyle sessizce ayrışma riski taşımazlar.
+type graphqlRequest struct {
+	// Query çalıştırılacak GraphQL belgesidir.
+	Query string `json:"query"`
+	// OperationName belge birden çok işlem taşıyorsa çalıştırılacak olanı seçer.
+	OperationName string `json:"operationName,omitempty"`
+	// Variables sorgunun değişkenleridir.
+	Variables map[string]any `json:"variables,omitempty"`
+}
+
+// describeVitrinGraphQL GraphQL vitrin ucunu anlatır.
+//
+// # Uç OpenAPI'de NEDEN anlatılıyor
+//
+// Sözleşme burada değil, modülün GraphQL şemasındadır (graph/schema.graphqls)
+// ve OpenAPI onu anlatamaz: tek bir yol, tek bir gövde ve istemcinin SEÇTİĞİ
+// alanlar. Yine de uç router'da vardır ve belge router'dan üretilir
+// (bkz. [openapi.Doc.Build]); anlatılmasaydı belgede özetsiz ve gövdesiz bir
+// POST satırı olarak görünürdü. Anlatım iki şey yapar: gövdenin biçimini
+// verir ve asıl sözleşmenin nerede olduğunu söyler.
+//
+// # Yanıt zarfı yazılır, İÇİ yazılmaz
+//
+// "data" ve "errors" GraphQL sözleşmesinin sabit parçalarıdır ve yazılırlar.
+// "data"nın İÇİ ise sorguya göre biçim değiştirir; onu tiplemek her sorgu için
+// ayrı bir şema yazmak ya da yalan söylemek olurdu.
+//
+// # Idempotency muafiyeti YAZILIR
+//
+// Uç /store/v1 altındaki tek POST'tur ki koruma yığınının idempotency
+// halkasından MUAFTIR (bkz. corehttp.GuardOptions.IdempotencyExempt). Bu, her
+// POST ucunun aynı davrandığını sanan istemciden saklanamaz: Idempotency-Key
+// gönderen bir istemci burada Idempotency-Replayed başlığını asla göremez ve
+// bunu belgede okumazsa, ya kaydın çalıştığını sanar ya da eksik bir uygulama
+// olduğunu düşünüp bildirir.
+func describeVitrinGraphQL(d *openapi.Doc) {
+	d.Describe(http.MethodPost, graph.Path, openapi.Operation{
+		Summary: "Vitrin kataloğunu GraphQL ile okur.",
+		Description: "Sözleşme modülün GraphQL şemasıdır; alan listesi için şemaya " +
+			"(graph/schema.graphqls) ya da uca yapılan iç gözlem sorgusuna bakın. " +
+			"Yüzey yalnızca OKUMADIR: products ve product sorguları vardır, mutation yoktur. " +
+			"Satış kanalı süzgeci isteğin publishable anahtarından gelir; sorgu argümanı YOKTUR. " +
+			"Yalnızca POST kabul edilir (GET 405 döner). " +
+			"GraphQL sözleşmesi gereği çözümlenebilen bir isteğin yanıtı, alan hataları olsa " +
+			"bile 200'dür ve hatalar gövdedeki \"errors\" dizisinde döner; kodları REST " +
+			"yüzeyindekilerle AYNI sözlükten gelir (extensions.code). " +
+			"Belgenin DERİNLİĞİ ve tahmini MALİYETİ sınırlıdır (kurulum başına " +
+			"yapılandırılır): sınırı aşan belge çalıştırılmaz ve 200 içinde " +
+			"DEPTH_LIMIT_EXCEEDED / COMPLEXITY_LIMIT_EXCEEDED koduyla döner. " +
+			"Maliyet, liste alanlarında istenen kayıt sayısıyla çarpılır — yani limit " +
+			"büyüdükçe sorgu pahalılaşır. İstek gövdesi 64 KiB'ı aşarsa belge hiç " +
+			"ayrıştırılmaz ve yanıt, GraphQL zarfı değil çekirdeğin hata zarfıdır (422). " +
+			"Uç, yüzeydeki diğer POST'ların aksine IDEMPOTENCY KAYDI ALMAZ: " +
+			"Idempotency-Key başlığı kabul edilir ama yok sayılır ve yanıt hiçbir zaman " +
+			"Idempotency-Replayed taşımaz. Sebebi iki katlıdır — yüzey yalnızca okumadır, " +
+			"yani kaydın koruyacağı bir yan etki yoktur; ve GraphQL çözümlenen her isteğe " +
+			"200 dediği için kayıt, geçici bir sunucu hatasını da saklar ve arıza " +
+			"giderildikten sonra bile TTL boyunca eski yanıtı geri verirdi.",
+		RequestBody: d.RequestBody(graphqlRequest{}),
+		Responses: map[string]any{
+			// Zarf REST'inkiyle aynı adı taşır ("data") ama İÇİ tiplenmez:
+			// biçimi istemcinin sorgusu belirler. "errors" ise GraphQL
+			// sözleşmesinin parçasıdır ve 200 yanıtın içinde gelir — bu ucun
+			// diğerlerinden ayrıldığı tek nokta budur, o yüzden yazılıdır.
+			"200": openapi.Response(
+				"GraphQL yanıtı: sorgulanan alanları taşıyan \"data\" ve/veya \"errors\".",
+				map[string]any{
+					semaTip: tipNesne,
+					"properties": map[string]any{
+						"data": map[string]any{
+							semaTip:       tipNesne,
+							"description": "Sorgulanan alanlar; biçimini sorgu belirler.",
+						},
+						"errors": map[string]any{
+							semaTip:       tipDizi,
+							"description": "Hata listesi; kodlar REST ile aynı sözlükten (extensions.code).",
+							"items":       map[string]any{semaTip: tipNesne},
+						},
+					},
+				}),
+		},
+	})
 }
 
 // describeYonetimUrunler /admin/v1 ürün uçlarını anlatır.
