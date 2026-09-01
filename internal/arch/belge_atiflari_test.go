@@ -64,6 +64,11 @@ import (
 //   - Alıcısız üye adları (bkz. [atifPaketi]) paketteki HERHANGİ bir tipin
 //     üyesine çözülür. Silinmiş bir alanı anan böyle bir atıf, aynı adı taşıyan
 //     başka bir tip varsa denetimden sessizce geçer.
+//
+// Yukarıdaki maddeler GO YORUMLARI içindir. Markdown belgeleri de denetlenir
+// ama kapsamı ayrı çizilmiştir: orada çıpa köşeli ayraç değil, yolun kendi
+// şekli ile ters tırnaktır. Sınırlar [markdownAtiflari] ve
+// [TestBelgelerdekiAtiflarCozuluyor] godoc'larında yazılıdır.
 
 // atifDosyasi taranmış tek bir Go dosyasıdır.
 type atifDosyasi struct {
@@ -637,6 +642,27 @@ func uyeAtfiVar(paket *atifPaketi, alici, ad string, derinlik int) bool {
 	return false
 }
 
+// atifHedefi bir import yolunun taranmış paketini ve deponun içinde olup
+// olmadığını döner.
+//
+// Depo içi bir yol için nil hedef "böyle bir paket YOK" demektir; depo dışı bir
+// yol için ise yalnızca "kaynağına bakılamadı" demektir (stdlib değilse üçüncü
+// taraftır). İki durumu ayırt eden şey dönen ikinci değerdir; ayırt edilmezse
+// var olmayan bir depo paketi, doğrulanamayan bir üçüncü taraf paketi gibi
+// sessizce onaylanırdı.
+func (a *atifTaramasi) atifHedefi(importYolu string) (hedef *atifPaketi, depoIci bool) {
+	depoIci = importYolu == modulePath || strings.HasPrefix(importYolu, modulePath+"/")
+	if !depoIci {
+		return a.stdPaketi(importYolu), false
+	}
+	ad, ok := a.uretimAdi[importYolu]
+	if !ok {
+		return nil, true
+	}
+	dizin := strings.TrimPrefix(importYolu, modulePath+"/")
+	return a.paketler[dizin+"\x00"+ad], true
+}
+
 // paketteAtifAra bir import yolundaki paketde adı arar.
 //
 // Üç sınıf paket vardır ve üçüne verilen söz FARKLIDIR:
@@ -649,25 +675,13 @@ func uyeAtfiVar(paket *atifPaketi, alici, ad string, derinlik int) bool {
 //     küçüktür (bu bağlar ancak bağımlılık yükseltmesinde çürür), maliyet ise
 //     denetimi ağa ve modül düzenine bağlamaktır.
 func (a *atifTaramasi) paketteAtifAra(importYolu string, parcalar []string) string {
-	depoIci := importYolu == modulePath || strings.HasPrefix(importYolu, modulePath+"/")
-
-	var hedef *atifPaketi
-	if depoIci {
-		dizin := strings.TrimPrefix(importYolu, modulePath+"/")
-		ad, ok := a.uretimAdi[importYolu]
-		if !ok {
-			return "depoda böyle bir paket yok: " + importYolu
-		}
-		hedef = a.paketler[dizin+"\x00"+ad]
-	} else {
-		hedef = a.stdPaketi(importYolu)
+	hedef, depoIci := a.atifHedefi(importYolu)
+	if depoIci && hedef == nil {
+		return "depoda böyle bir paket yok: " + importYolu
 	}
 
 	switch {
 	case len(parcalar) == 0:
-		if depoIci && hedef == nil {
-			return "depoda böyle bir paket yok: " + importYolu
-		}
 		return ""
 	case hedef == nil:
 		return "" // üçüncü taraf: sembol doğrulanmaz
@@ -1211,6 +1225,577 @@ func yolMuafiyetiniBul(dosya, yol string) int {
 	})
 }
 
+// markdownAtifSinifi bir markdown atfının SÖZDİZİM sınıfıdır.
+//
+// Sınıf, körleşme denetiminin ölçüsüdür: her sınıf ayrı bir kod yolundan geçer
+// (yol deseni, sembol ayıklaması, niteleyici tablosu, üye dizini) ve biri
+// bozulduğunda toplam sayı hâlâ yüzlerde kalır. Sınıf başına sayaç, o kaybı
+// görünür kılar.
+type markdownAtifSinifi int
+
+const (
+	// mdYol depo kökünden yazılmış bir dizin ya da dosya yoludur.
+	mdYol markdownAtifSinifi = iota
+	// mdYolluSembol paket YOLU + sembol taşır: internal/core/http.Scoped.
+	mdYolluSembol
+	// mdNitelikliSembol paket ADIYLA niteler: corehttp.PrincipalKey.
+	mdNitelikliSembol
+	// mdUyeSembol alıcı + üye ikilisidir: Config.FileRoot.
+	mdUyeSembol
+	mdSinifSayisi
+)
+
+// mdSinifAdlari hata mesajlarında sınıfın adıdır.
+var mdSinifAdlari = [mdSinifSayisi]string{
+	mdYol:             "depo yolu (internal/…)",
+	mdYolluSembol:     "yollu sembol (internal/…/paket.Ad)",
+	mdNitelikliSembol: "nitelikli sembol (paket.Ad)",
+	mdUyeSembol:       "üye ikilisi (Tip.Üye)",
+}
+
+// markdownAtfi bir belgede geçen, çözülmesi beklenen tek bir atıftır.
+type markdownAtfi struct {
+	belge string
+	satir int
+	ham   string
+	sinif markdownAtifSinifi
+	// yol mdYol sınıfında depo köküne göre dosya/dizin yoludur.
+	yol string
+	// importYolu sembol sınıflarında adın arandığı pakettir.
+	importYolu string
+	// parcalar sembolün nokta ile ayrılmış parçalarıdır (Ad ya da Tip.Üye).
+	parcalar []string
+}
+
+// mdNitelikliDeseni ters tırnak içindeki "paket.Ad" atıflarını yakalar.
+//
+// Desen üç şeyi ZORLAR ve üçü de yanlış pozitifi eleyen kuralın kendisidir:
+//
+//  1. Niteleyici küçük harfle başlar. Go'da paket adları küçüktür; büyük harfle
+//     başlayan bir niteleyici TİP adıdır ("Principal.Kind") ve o ayrı bir sınıfa,
+//     [mdUyeDeseni]'ne aittir — orada paket değil ALICI aranır.
+//  2. Sembol BÜYÜK harfle başlar. Paket dışından anılabilen tek ad dışa açık
+//     olandır; bu Go'nun kendi kuralıdır ve bu depoda tam olarak ihtiyaç duyulan
+//     ayrımı verir: "product.created" bir olay adı, "cart.interop" bir container
+//     kaydı, "region.currency_code" bir sütundur — hiçbiri sembol değildir.
+//  3. Atıf ters tırnağın TAMAMINI kaplar. "eventbus.Publish/Subscribe" ya da
+//     "db.Pool.Pool()" gibi bir kabuk değil bir ANLATIM olan yazımlar elenir.
+var mdNitelikliDeseni = regexp.MustCompile(`^([a-z][a-z0-9]*)\.([A-Z][A-Za-z0-9_]*)(?:\.([A-Za-z_][A-Za-z0-9_]*))?$`)
+
+// mdUyeDeseni ters tırnak içindeki "Tip.Üye" atıflarını yakalar.
+//
+// Alıcı adı BÜYÜK harfle başlar ve en az bir küçük harf taşır. İkinci koşul
+// dosya adlarını eler ("CHANGELOG.md", "README.md" tam olarak bu şekildedir);
+// Go tip adları CamelCase'tir, tümü büyük harfli bir belirteç bu depoda tip
+// değil dosya ya da kısaltmadır.
+var mdUyeDeseni = regexp.MustCompile(`^([A-Z][A-Za-z0-9_]*)\.([A-Za-z_][A-Za-z0-9_]*)$`)
+
+// mdSatirIciKod bir satırdaki ters tırnaklı parçaları yakalar.
+var mdSatirIciKod = regexp.MustCompile("`([^`]+)`")
+
+// mdSecenekBasligiSozcukleri bir ADR bölümünü "seçenek tartışması" yapan
+// başlık sözcükleridir.
+//
+// Sözcükler bir muafiyet listesi DEĞİLDİR: hangi yolun affedileceğini değil,
+// belgenin hangi BÖLÜMÜNÜN bugünkü depo hakkında iddia taşımadığını söylerler.
+// Bkz. [markdownAtiflari].
+var mdSecenekBasligiSozcukleri = []string{"seçenek", "değerlendirme"}
+
+// markdownAtiflari tek bir belgedeki atıf adaylarını çıkarır.
+//
+// # Kapsam KURALLA çizilir, listeyle değil
+//
+// Dört karar, dördü de ölçümle verildi:
+//
+//  1. Kod blokları (üç ters tırnak) KAPSAM İÇİNDEDİR. Ölçüm: bloklardaki her
+//     depo yolu bugün çözülüyor ve bloklar en çok okunan haritayı taşıyor
+//     (README'nin dizin ağacı, plan belgesinin dosya başlıkları). Bir atfın
+//     doğruluğu yazıldığı yerin dizgisine bağlı olsaydı, ağaç taşındığında
+//     sessizce yanlışa dönen bir harita elde ederdik.
+//  2. Ters tırnak içi ile düz metin AYNIDIR — yol atıfları için. Yol deseni
+//     kendi çıpasını taşır (üst düzey dizin adı + eğik çizgi) ve bu şekil Türkçe
+//     düz metinde kazara oluşmaz. Ölçüm: README yollarının bir kısmı tırnaksız
+//     yazılmıştır (bağ hedefleri, cümle içi anmalar) ve tırnağı şart koşan bir
+//     kural onları kaçırırdı.
+//  3. SEMBOL atıfları ("paket.Ad" ve "Tip.Üye") yalnızca ters tırnak içinde
+//     aranır. Bunun gerekçesi (2)'nin tersidir: noktalı şekil kendi çıpasını
+//     TAŞIMAZ — cümle sonu noktalaması, sürüm numaraları ve tablo hücreleri
+//     aynı şekli üretir. Burada ters tırnak, yazarın "bu bir addır" demesidir.
+//  4. ADR'lerin seçenek bölümleri KAPSAM DIŞIDIR. Kural yolun kendisine değil
+//     belgenin YAPISINA bakar: bir ADR'nin seçenek bölümü, tanımı gereği
+//     KURULMAMIŞ bir dünyayı anlatır. Ölçülmüş örneği ADR 0001'dedir ("nötr bir
+//     paket" olarak anılan, hiç yazılmamış bir sözleşme paketi). Muafiyet
+//     yazmak yerine kural bulundu çünkü muafiyet her yeni ADR'de yeniden
+//     yazılırdı; bölümün rolü ise ADR biçiminin bir parçasıdır.
+//
+// # Bu ayıklamanın NE GARANTİ ETMEDİĞİ
+//
+//   - Göreli anmalar ("core/link", "cart/api/store.go") görülmez. Gerekçe
+//     [yolAtfiDeseni] ile aynıdır ve aynı ölçüme dayanır: aynı ada sahip dosya
+//     on altı modülde birden vardır.
+//   - TEK PARÇALI çıplak adlar ("salesChannelVisibleTemplate",
+//     "ModuleRegistry") görülmez. Bkz. [TestBelgelerdekiAtiflarCozuluyor].
+//   - Üçüncü taraf paketlerin sembolleri doğrulanmaz (bkz. [paketteAtifAra]).
+func markdownAtiflari(belge markdownBelgesi, niteleyiciler map[string]string) []markdownAtfi {
+	var atiflar []markdownAtfi
+	bolum := ""
+	kodBlogu := false
+
+	for i, satir := range belge.satirlar {
+		if strings.HasPrefix(strings.TrimSpace(satir), "```") {
+			kodBlogu = !kodBlogu
+			continue
+		}
+		if !kodBlogu {
+			if baslik, ok := strings.CutPrefix(satir, "## "); ok {
+				bolum = strings.TrimSpace(baslik)
+			} else if strings.HasPrefix(satir, "# ") {
+				bolum = ""
+			}
+		}
+		if adrSecenekBolumu(belge.yol, bolum) {
+			continue
+		}
+
+		for _, eslesme := range yolAtfiDeseni.FindAllStringSubmatch(satir, -1) {
+			ham := yolAtfiniBudakla(eslesme[1])
+			if ham == "" {
+				continue
+			}
+			atif := markdownAtfi{belge: belge.yol, satir: i + 1, ham: ham}
+			if paketYolu, parcalar := markdownYolluSembol(ham); paketYolu != "" {
+				atif.sinif = mdYolluSembol
+				atif.importYolu = modulePath + "/" + paketYolu
+				atif.parcalar = parcalar
+			} else {
+				atif.sinif = mdYol
+				atif.yol = ham
+			}
+			atiflar = append(atiflar, atif)
+		}
+
+		for _, eslesme := range mdSatirIciKod.FindAllStringSubmatch(satir, -1) {
+			uye := mdUyeDeseni.FindStringSubmatch(eslesme[1])
+			if len(uye) == 3 && strings.ToUpper(uye[1]) != uye[1] {
+				atiflar = append(atiflar, markdownAtfi{
+					belge:    belge.yol,
+					satir:    i + 1,
+					ham:      eslesme[1],
+					sinif:    mdUyeSembol,
+					parcalar: uye[1:],
+				})
+				continue
+			}
+			parcalar := mdNitelikliDeseni.FindStringSubmatch(eslesme[1])
+			if parcalar == nil {
+				continue
+			}
+			hedef, ok := niteleyiciler[parcalar[1]]
+			if !ok {
+				continue
+			}
+			ad := []string{parcalar[2]}
+			if parcalar[3] != "" {
+				ad = append(ad, parcalar[3])
+			}
+			atiflar = append(atiflar, markdownAtfi{
+				belge:      belge.yol,
+				satir:      i + 1,
+				ham:        eslesme[1],
+				sinif:      mdNitelikliSembol,
+				importYolu: hedef,
+				parcalar:   ad,
+			})
+		}
+	}
+	return atiflar
+}
+
+// adrSecenekBolumu bir bölümün, ADR'nin seçenek tartışması olup olmadığını
+// söyler.
+//
+// Kural yalnızca docs/adr altında geçerlidir: seçenek bölümü ADR BİÇİMİNİN bir
+// parçasıdır. README ya da CHANGELOG'da aynı başlık bugünkü depo hakkında bir
+// iddia olurdu ve affedilmesi için bir sebep yoktur.
+func adrSecenekBolumu(belgeYolu, bolum string) bool {
+	if !strings.HasPrefix(belgeYolu, "docs/adr/") || bolum == "" {
+		return false
+	}
+	kucuk := strings.ToLower(bolum)
+	return slices.ContainsFunc(mdSecenekBasligiSozcukleri, func(s string) bool {
+		return strings.Contains(kucuk, s)
+	})
+}
+
+// markdownYolluSembol "paket/yolu.Sembol" atfını paket yolu ve sembol
+// parçalarına böler; atıf bu biçimde değilse boş paket yolu döner.
+//
+// Ayrımın ölçütü [yolAtfindanSembolAyikla] ile AYNIDIR (son parça büyük harfle
+// başlıyorsa semboldür) ama sonucu farklıdır: yorumlarda sembol ATILIR ve
+// yalnızca dizin doğrulanır, markdown'da ise sembol de aranır. Fark bilinçlidir
+// — yorumdaki bir sembol ayraçla yazıldığında zaten
+// [TestGodocBaglariCozuluyor] tarafından denetlenir, markdown'da ise ayraç
+// yoktur ve denetlenecek başka bir yer kalmaz.
+func markdownYolluSembol(atif string) (paketYolu string, parcalar []string) {
+	yol, kuyruk, ok := bagParcala(atif)
+	if !ok || yol == "" || len(kuyruk) == 0 {
+		return "", nil
+	}
+	ilk, _ := utf8.DecodeRuneInString(kuyruk[0])
+	if !unicode.IsUpper(ilk) {
+		return "", nil
+	}
+	return yol, kuyruk
+}
+
+// markdownNiteleyicileri paket adından import yoluna giden depo geneli tabloyu
+// kurar.
+//
+// # Tablo neden KAYNAKTAN çıkarılıyor
+//
+// Bir belge "corehttp.Principal" yazdığında "corehttp"nin hangi paket olduğunu
+// yalnızca deponun kendi import'ları bilir; elle yazılmış bir eşleme, bir paket
+// taşındığında güncellenmeyecek ikinci bir gerçek olurdu.
+//
+// # BELİRSİZ niteleyiciler tablodan DÜŞÜLÜR
+//
+// İki kural eliyor:
+//
+//   - Aynı ad iki farklı yola bağlanıyorsa ("api", "service", "models",
+//     "repository", "errors") niteleyici hiçbir paketi ADRESLEMİYOR demektir.
+//   - Ad bir MODÜL adıysa düşülür. Bu deponun belgelerinde modül adı Go
+//     paketini değil MODÜLÜ anar ve modül api/service/repository üçlüsüne
+//     yayılır: "order.CreateOrder" gerçekte order/service içindedir, modülün
+//     kök paketinde değil. Kural olmasaydı doğru yazılmış her modül anması
+//     kırık görünürdü.
+func markdownNiteleyicileri(t *testing.T, tarama *atifTaramasi) map[string]string {
+	t.Helper()
+
+	tablo := map[string]string{}
+	for _, paket := range tarama.paketler {
+		for yerel, yol := range paket.importlar {
+			eski, varsa := tablo[yerel]
+			if yol == "" || (varsa && eski != yol) {
+				tablo[yerel] = ""
+				continue
+			}
+			tablo[yerel] = yol
+		}
+	}
+	for _, mod := range modulNames(t) {
+		delete(tablo, mod)
+	}
+	for ad, yol := range tablo {
+		if yol == "" {
+			delete(tablo, ad)
+		}
+	}
+
+	require.NotEmpty(t, tablo,
+		"depo import'larından TEK BİR niteleyici bile çıkarılamadı; tablo KÖR kalmış "+
+			"olmalı.\nBoş bir tabloyla nitelikli sembol atıflarının hepsi sessizce "+
+			"atlanır ve denetim o sınıfta hiçbir şey söylemez.")
+	return tablo
+}
+
+// markdownSembolCoz markdown'daki bir sembol atfını çözer; boş dize ÇÖZÜLDÜ
+// demektir.
+//
+// [paketteAtifAra]'dan tek farkı, tek parçalı bir adın paketin ÜYE adlarında da
+// aranmasıdır. Genişletme ölçülmüştür: belgeler bir metodu paketiyle anar
+// ("config.Validate"), alıcı tipini yazmaz — Go bunu tanımaz ama okuyan kişi
+// için atıf çözülür. Bedeli, bu dosyanın başındaki "garanti etmez" listesindeki
+// alıcısız üye kuralının markdown'a da yayılmasıdır: aynı adı taşıyan başka bir
+// tip varsa silinmiş bir üyeye yapılan atıf sessizce geçer.
+func (a *atifTaramasi) markdownSembolCoz(importYolu string, parcalar []string) string {
+	neden := a.paketteAtifAra(importYolu, parcalar)
+	if neden == "" || len(parcalar) != 1 {
+		return neden
+	}
+	if hedef, _ := a.atifHedefi(importYolu); hedef != nil && hedef.uyeler[parcalar[0]] {
+		return ""
+	}
+	return neden
+}
+
+// markdownAtfiniCoz bir atfın çözülüp çözülmediğini söyler; boş dize ÇÖZÜLDÜ
+// demektir.
+func (a *atifTaramasi) markdownAtfiniCoz(atif markdownAtfi) string {
+	switch atif.sinif {
+	case mdYol:
+		if _, err := os.Stat(filepath.Join(repoRoot, filepath.FromSlash(atif.yol))); err == nil {
+			return ""
+		}
+		return "depo kökünde böyle bir dosya ya da dizin yok"
+	case mdUyeSembol:
+		if a.uyeCiftiVar(atif.parcalar[0], atif.parcalar[1]) {
+			return ""
+		}
+		return fmt.Sprintf("depoda %s tipinin %s diye bir üyesi yok",
+			atif.parcalar[0], atif.parcalar[1])
+	default:
+		return a.markdownSembolCoz(atif.importYolu, atif.parcalar)
+	}
+}
+
+// uyeCiftiVar "Tip.Üye" ikilisini DEPO GENELİNDE arar.
+//
+// Arama paketsizdir çünkü atıf da paketsizdir; bu, ikilinin niteliksiz
+// yazılabilmesinin bedelidir ve bu dosyanın başındaki "garanti etmez"
+// listesindeki alıcısız üye kuralının markdown'daki karşılığıdır: aynı adı
+// taşıyan başka bir tip varsa, silinmiş bir üyeye yapılan atıf sessizce geçer.
+func (a *atifTaramasi) uyeCiftiVar(tip, uye string) bool {
+	for _, paket := range a.paketler {
+		if uyeAtfiVar(paket, tip, uye, 0) {
+			return true
+		}
+	}
+	return false
+}
+
+// TestBelgelerdekiAtiflarCozuluyor markdown belgelerindeki her yol ve sembol
+// atfının GERÇEK bir dosyaya, dizine ya da bildirime çözüldüğünü doğrular.
+//
+// # Neden markdown ayrı bir denetim
+//
+// Go yorumlarındaki atıflar bu dosyanın öteki denetimlerine takılır; markdown
+// TAKILMIYORDU ve bu bir ÖLÇÜM ile biliniyordu: bağımsız bir doğrulama bir
+// ADR'de hem sembolü hem yolu bozdu, internal/arch yeşil kaldı. Boşluk tam da
+// [TestBelgelerdeSatirNumarasiAtfiYok] satır numarasını yasakladığı ve mevcut
+// atıfları sembole çevirdiği turda önemliydi: belgeler denetlenmeyen bir biçime
+// yönlendiriliyordu.
+//
+// Belgelerde bedel yorumlardakinden BÜYÜKTÜR. ADR'ler uzun ömürlü karar
+// kayıtlarıdır: kimse onları derlemez, kimse yeniden okumaz, ve kanıt blokları
+// tam da çürüyen yerdir. Deponun kendi provası var — ADR 0009'un dört satır
+// numarası atfının dördü de kaymıştı.
+//
+// # TEK PARÇALI çıplak adlar neden kapsam dışı
+//
+// "salesChannelVisibleTemplate" ya da "ModuleRegistry" gibi tek parçalı bir ad
+// kapsam DIŞIDIR ve bu bir eksiklik değil, sınırın dürüst çizilmesidir: çıplak
+// bir ad hangi pakette aranacağını SÖYLEMEZ, yani denetim hangi göğe bakacağını
+// bilemez. Ölçüm bunu doğruluyor — depodaki markdown'da ters tırnak içinde
+// yazılmış yüzlerce tek parçalı ad var ve aralarında golang-migrate'in
+// "SetVersion"ı, net/http'nin "ServeContent"ı, gqlgen'in "SetParserTokenLimit"i
+// gibi ÜÇÜNCÜ TARAF adları duruyor. (Kesin sayı YAZILMIYOR: "tek parçalı aday"
+// tanımı ters tırnak, büyük harf ve dışa açıklık ölçütlerine göre değişiyor ve
+// yeniden üretilemeyen bir sayı, doğrulanamayan bir iddiadır.) Depo kaynağında aranan bir kural onları kırık ilan ederdi; aramayan
+// bir kural ise yalnızca "bu ad depoda bir yerde geçiyor mu" derdi ve o soru,
+// adın hangi pakette olduğunu doğrulamadığı için bir atfı DEĞİL bir grep'i
+// onaylar. Aynı gerekçe [paketteAtifAra]'nın üçüncü taraf sembollerini
+// doğrulamama kararının ta kendisidir; orada paket biliniyor ve denetim
+// susuyor, burada paket hiç bilinmiyor.
+//
+// "Tip.Üye" İKİLİSİ ise kapsam İÇİNDEDİR (bkz. [mdUyeSembol]) ve ayrımın
+// dayanağı ölçümdür, sezgi değil: ikili, tek parçalı adın taşımadığı bir
+// bağlamı taşır (alıcı tipi) ve depodaki 18 anmanın 18'i de bu deponun
+// tipleridir — üçüncü taraf bir ikili yoktur. Bir gün olursa çıkış yolu
+// açıktır ve daha iyi bir yazımdır: ikiliyi paketiyle nitelemek
+// ("http.Server.ReadTimeout"), ki o biçim [paketteAtifAra] üzerinden çözülür.
+//
+// Kapsam dışı kalmanın bedeli ölçüldü ve kabul edildi: bu turda tek parçalı
+// yazıldığı için yakalanamayan iki çürük atıf vardı ("ModuleRegistry" ve
+// "regionCurrency"); ikisi de denetlenebilir biçime çevrildi, yani bugünden
+// sonra kapsam İÇİNDELER. Çürük bir atfı düzeltmenin doğru yolu denetimi
+// genişletmek değil, atfı denetlenebilir biçimde yazmaktır.
+func TestBelgelerdekiAtiflarCozuluyor(t *testing.T) {
+	t.Parallel()
+
+	tarama := belgeAtiflariniTara(t)
+	niteleyiciler := markdownNiteleyicileri(t, tarama)
+
+	for _, belge := range markdownBelgeleri(t) {
+		for _, atif := range markdownAtiflari(belge, niteleyiciler) {
+			neden := tarama.markdownAtfiniCoz(atif)
+			if neden == "" {
+				continue
+			}
+			t.Errorf("%s:%d: %q atfı çözülmüyor — %s.\n"+
+				"Belgedeki bir atıf okuyanı ARAMAYA yollar; aranan şey yoksa okuyan "+
+				"bunu ancak depo genelinde grep ettikten sonra öğrenir. Ad ya da yol "+
+				"değiştiyse atıf da değişmeli; anlatılan şey hiç kurulmadıysa (bir "+
+				"ADR'nin reddettiği seçenek gibi) o anlatım belgenin SEÇENEK bölümüne "+
+				"aittir.",
+				atif.belge, atif.satir, atif.ham, neden)
+		}
+	}
+}
+
+// markdownCozucuOrnegi çözücünün HER sınıfta gerçekten "çözülmedi" diyebildiğini
+// sınayan, BİLEREK BOZUK atıflardan oluşan örnektir.
+//
+// # Neden tarayıcı örneği yetmiyor
+//
+// [markdownTarayiciOrnegi] tarayıcıyı korur: hangi yazımın atıf SAYILDIĞINI
+// sabitler. Ama tarayıcı sağlamken çözücü körleşebilir ve o körleşme SESSİZDİR:
+// aday sayısı düşmez, sayaç mutlu kalır, her atıf "çözüldü" sayılır. Ölçüldü —
+// markdownAtfiniCoz'un yol dalını "her zaman çözüldü" yapmak, denetlenen 223
+// atfın 142'sini (dörtte üçe yakınını) sessizce öldürüyor ve arch paketinin
+// TAMAMI yeşil kalıyordu.
+//
+// Bu örnek o boşluğu kapatır: dört sınıfın dördünde de var olmayan bir hedefe
+// atıf yapar ve DÖRDÜNÜN DE bildirildiğini şart koşar. Çözücü hangi sınıfta
+// körleşirse o satır eksilir.
+var markdownCozucuOrnegi = markdownBelgesi{
+	yol: "docs/adr/9997-cozucu-ornegi.md",
+	satirlar: []string{
+		"# ADR 9997 — çözücü örneği",
+		"",
+		"## Bağlam",
+		"",
+		"Yol: `internal/core/boyle-bir-paket-yok`.",
+		"Yollu sembol: `internal/core/http.BoyleBirSembolYok`.",
+		"Nitelikli sembol: `corehttp.BoyleBirSembolYok`.",
+		"Üye ikilisi: `Config.BoyleBirUyeYok`.",
+	},
+}
+
+// TestMarkdownCozucusuKorlesmemis çözücünün dört sınıfta da ısırdığını doğrular.
+//
+// Olumlu kontroldür: denetimin BULABİLDİĞİNİ sınar, bulmadığını değil. Bir
+// sınıfın çözümü "her zaman tamam" hâline gelirse o satır listeden eksilir ve
+// bu test düşer — [TestBelgelerdekiAtiflarCozuluyor] ise sessizce yeşil kalırdı.
+func TestMarkdownCozucusuKorlesmemis(t *testing.T) {
+	t.Parallel()
+
+	tarama := belgeAtiflariniTara(t)
+	niteleyiciler := markdownNiteleyicileri(t, tarama)
+
+	atiflar := markdownAtiflari(markdownCozucuOrnegi, niteleyiciler)
+	require.Len(t, atiflar, 4,
+		"çözücü örneğinin dört sınıfı da tarayıcıdan geçmeli; geçmiyorsa sınanan "+
+			"şey çözücü değil tarayıcıdır (bkz. markdownTarayiciOrnegi)")
+
+	var bildirilen []string
+	for _, atif := range atiflar {
+		if neden := tarama.markdownAtfiniCoz(atif); neden != "" {
+			bildirilen = append(bildirilen, mdSinifAdlari[atif.sinif])
+		}
+	}
+
+	require.ElementsMatch(t,
+		[]string{
+			mdSinifAdlari[mdYol],
+			mdSinifAdlari[mdYolluSembol],
+			mdSinifAdlari[mdNitelikliSembol],
+			mdSinifAdlari[mdUyeSembol],
+		},
+		bildirilen,
+		"çözücü, var olmayan bir hedefe yapılan atfı DÖRT sınIFTA da bildirmeli.\n"+
+			"Eksik kalan sınıfın çözümü körleşmiş demektir: aday sayısı düşmez, "+
+			"sayaç mutlu kalır ve o sınıftaki her atıf sessizce ÇÖZÜLDÜ sayılır.")
+}
+
+// markdownTarayiciOrnegi tarayıcının HER kuralını tek bir belgede sınayan
+// örnektir.
+//
+// Örnek bir fikstür değil, kuralların YÜRÜTÜLEBİLİR yazımıdır: hangi yazımın
+// atıf sayıldığı ve hangisinin sayılmadığı burada koddan okunur. Kurallar
+// gevşerse örnek düşer.
+var markdownTarayiciOrnegi = markdownBelgesi{
+	yol: "docs/adr/9999-tarayici-ornegi.md",
+	satirlar: []string{
+		"# ADR 9999 — tarayıcı örneği",
+		"",
+		"## Bağlam",
+		"",
+		"Ters tırnaklı yol: `internal/core/db/migrate.go`.",
+		"Düz metin yol: internal/arch içinde yaşar.",
+		"Yollu sembol: `internal/core/http.Scoped`.",
+		"Nitelikli sembol: `corehttp.Principal`.",
+		"",
+		"```",
+		"internal/core/config/config.go",
+		"```",
+		"",
+		"Üye ikilisi: `Principal.Kind`.",
+		"",
+		"Olay adı `product.created`, container kaydı `cart.interop`, sütun",
+		"`region.currency_code` ve dosya adı `CHANGELOG.md` sembol DEĞİLDİR.",
+		"Modül adıyla anma `order.CreateOrder` da kapsam dışıdır.",
+		"Göreli anma `core/link` ve kabuk yazımı `db.Pool.Pool()` de öyle.",
+		"",
+		"## Reddedilen seçenekler",
+		"",
+		"`internal/contracts/product` gibi nötr bir paket ve `db.Conn` arayüzü.",
+	},
+}
+
+// TestMarkdownAtifTarayicisiKorlesmemis markdown tarayıcısının HÂLÂ atıf
+// gördüğünü ve gördüklerini DOĞRU sınıflandırdığını doğrular.
+//
+// [TestBelgelerdekiAtiflarCozuluyor] hiçbir aday bulamadığında SESSİZCE geçer:
+// deseni bozulmuş bir tarayıcı ile çürüksüz bir depo, çıktı olarak birbirinin
+// aynısıdır. Vakumda yeşil kalan bir denetim, olmayan bir denetimden kötüdür.
+func TestMarkdownAtifTarayicisiKorlesmemis(t *testing.T) {
+	t.Parallel()
+
+	tarama := belgeAtiflariniTara(t)
+	niteleyiciler := markdownNiteleyicileri(t, tarama)
+
+	// 1. Kurallar: örnek belgeden ne çıktığı TAM olarak sınanır.
+	var ornek []string
+	for _, atif := range markdownAtiflari(markdownTarayiciOrnegi, niteleyiciler) {
+		ornek = append(ornek, fmt.Sprintf("%s|%s", mdSinifAdlari[atif.sinif], atif.ham))
+	}
+	require.Equal(t, []string{
+		mdSinifAdlari[mdYol] + "|internal/core/db/migrate.go",
+		mdSinifAdlari[mdYol] + "|internal/arch",
+		mdSinifAdlari[mdYolluSembol] + "|internal/core/http.Scoped",
+		mdSinifAdlari[mdNitelikliSembol] + "|corehttp.Principal",
+		mdSinifAdlari[mdYol] + "|internal/core/config/config.go",
+		mdSinifAdlari[mdUyeSembol] + "|Principal.Kind",
+	}, ornek,
+		"tarayıcı örnek belgeyi beklenenden farklı okudu.\nÖrnek, kapsam "+
+			"kurallarının yürütülebilir yazımıdır: fazladan bir satır YANLIŞ POZİTİF "+
+			"kuralının (olay adı, container kaydı, sütun, dosya adı, modül anması, "+
+			"göreli yol, seçenek bölümü) gevşediğini; eksik bir satır ise tarayıcının "+
+			"o sınıfta KÖRLEŞTİĞİNİ söyler.")
+
+	// 2. Gerçek belgeler: her sınıf depoda hâlâ görülüyor mu?
+	sayac := [mdSinifSayisi]int{}
+	secenekBolumu := 0
+	for _, belge := range markdownBelgeleri(t) {
+		for _, atif := range markdownAtiflari(belge, niteleyiciler) {
+			sayac[atif.sinif]++
+		}
+		for _, satir := range belge.satirlar {
+			if baslik, ok := strings.CutPrefix(satir, "## "); ok &&
+				adrSecenekBolumu(belge.yol, strings.TrimSpace(baslik)) {
+				secenekBolumu++
+			}
+		}
+	}
+	for sinif, adet := range sayac {
+		require.Positive(t, adet,
+			"belgelerde %s sınıfından TEK BİR atıf bile bulunamadı; tarayıcı bu sınıfta "+
+				"KÖR kalmış olmalı.\nSınıf gerçekten belgelerden kalktıysa hem bu iddia "+
+				"hem de karşılık gelen ayıklama dalı silinmelidir; sessizce yeşil kalması, "+
+				"o sınıfın hâlâ denetlendiği izlenimini verir.",
+			mdSinifAdlari[sinif])
+	}
+	require.Positive(t, secenekBolumu,
+		"hiçbir ADR'de seçenek bölümü bulunamadı; varsayımsal yolları ayıran kural KÖR "+
+			"kalmış olmalı.\nBaşlıklar değiştiyse mdSecenekBasligiSozcukleri de "+
+			"değişmelidir: eşleşmeyen bir kural, reddedilmiş seçeneklerin yollarını "+
+			"gerçek atıf sanıp bir yanlış suçlama yığını üretir.")
+
+	// 3. Olumlu kontroller: çözümleme "bulamadım" ile "bakamadım" arasındaki
+	// farkı sessizce yutabilir. Var olmayan bir sembolün REDDEDİLDİĞİ hem depo
+	// hem stdlib paketinde ayrıca sınanır.
+	require.NotEmpty(t, tarama.markdownSembolCoz(modulePath+"/internal/core/http", []string{"BoyleBirSembolYok"}),
+		"depo paketinde olmayan bir sembol onaylandı; üye genişletmesi her adı kabul "+
+			"ediyor olmalı. O durumda markdown'daki her nitelikli atıf doğrulanmadan geçer.")
+	require.NotEmpty(t, tarama.markdownSembolCoz("net/http", []string{"BoyleBirSembolYok"}),
+		"stdlib paketinde olmayan bir sembol onaylandı; GOROOT kaynağı okunamamış olmalı.")
+	require.True(t, tarama.uyeCiftiVar("Principal", "Kind"),
+		"depoda var olan bir üye ikilisi bulunamadı; üye dizini KÖR kalmış olmalı ve o "+
+			"durumda her Tip.Üye atfı haksız yere kırık sayılır.")
+	require.False(t, tarama.uyeCiftiVar("Principal", "BoyleBirUyeYok"),
+		"olmayan bir üye ikilisi onaylandı; arama her adı kabul ediyor olmalı.")
+}
+
 // satirNumarasiAtfi "dosya.go:satır" biçimindeki atıfları yakalar.
 var satirNumarasiAtfi = regexp.MustCompile(`[A-Za-z0-9_./-]+\.go:\d+`)
 
@@ -1226,19 +1811,30 @@ var satirNumarasiAtfi = regexp.MustCompile(`[A-Za-z0-9_./-]+\.go:\d+`)
 // Bu, çürümeye YAPISAL olarak mahkûm tek atıf biçimidir: üstteki bir satırın
 // eklenmesi bile onu kaydırır ve kaydırma hiçbir iz bırakmaz.
 //
-// # Yerine konan biçim her yerde DENETLENMİYOR
+// # Yerine konan biçim ARTIK denetleniyor
 //
-// Go yorumlarında bir sembol adı silindiğinde bu dosyadaki öteki denetimlere
-// takılır. MARKDOWN'da TAKILMAZ: ADR ve README'deki "paket/yolu.Sembol"
-// atıflarını hiçbir şey doğrulamıyor (ölçüldü — bir ADR'de hem sembolü hem
-// yolu bozdum, arch paketi yeşil kaldı).
+// Bu godoc bir zamanlar tersini yazıyordu: ADR ve README'deki
+// "paket/yolu.Sembol" atıflarını hiçbir şeyin doğrulamadığını, markdown'ı
+// denetlemenin ayrı ve henüz yapılmamış bir iş olduğunu söylüyordu. Boşluk
+// [TestBelgelerdekiAtiflarCozuluyor] ile kapatıldı ve kapanış ölçümle
+// doğrulandı: bir ADR'de sembolü bozmak da yolu bozmak da artık testi DÜŞÜRÜR.
+// Yasağın yönlendirdiği biçim, yasağın kendisiyle aynı turda denetime girdi.
+//
+// Kapanmamış İKİ nokta var ve ikisi de ÖLÇÜLDÜ:
+//
+//   - ÇIPLAK sembol adları; gerekçesi [TestBelgelerdekiAtiflarCozuluyor]
+//     godoc'unda yazılıdır: paketi anılmayan bir ad, hangi pakette aranacağını
+//     söylemez.
+//   - KOD BLOĞU içindeki nitelikli semboller. Yol atıfları kod bloklarında da
+//     denetlenir, semboller denetlenmez: bir Go kod bloğu üçüncü taraf ya da
+//     varsayımsal çağrı taşıyabilir ve onları kırık ilan eden bir kural,
+//     belgelerdeki her örnek kod parçasını denetime sokardı.
 //
 // Yasak yine de doğrudur ve gerekçesi bu boşlukla birlikte okunmalıdır: çürümüş
 // bir satır numarası SESSİZDİR — okuyan yanlış koda bakar ve baktığını sanır.
 // Çürümüş bir sembol adı ise en azından ARANABİLİR: adı grep'leyen okuyucu
 // sonuç bulamaz ve atfın bayatladığını anlar. Yasak, sessiz çürümeyi gürültülü
-// çürümeye çevirir; markdown atıflarını denetlemek AYRI ve henüz yapılmamış
-// bir iştir.
+// çürümeye çevirir.
 //
 // Yasağın kapsamı Go yorumları ile markdown belgeleridir. Kaynak KODDA geçen
 // "dosya.go:satır" dizeleri (hata mesajları, konum biçimleri) kapsam dışıdır:

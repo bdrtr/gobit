@@ -157,7 +157,7 @@ artık kuralı ihlal etmiyorsa satır silinmek zorundadır. Muafiyet borçtur, b
 | `core/errors` | Tipli hatalar (`Kind`), stdlib `errors` yardımcılarını yeniden dışa verir |
 | `core/db` | pgxpool havuzu + modül başına ayrı versiyon tablolu migration runner |
 | `core/container` | İsimli kayıt, generic `Resolve[T]`, tembel singleton, döngü tespiti, ters sırada kapatma |
-| `core/module` | `Module` sözleşmesi + `ModuleRegistry` (register → migrate → routes) |
+| `core/module` | `module.Module` sözleşmesi + `module.Registry` (register → migrate → routes) |
 | `core/eventbus` | `EventBus` + InMemory (dev) ve Redis Streams (prod, consumer group + XACK) |
 | `core/http` | chi router, RequestID/RequestLogger/Recoverer/Telemetry, RequireAdmin/RequireStore/RequireScope, `Scoped`/`APIGuards` koruma yığını, hız sınırı, idempotency, `Kind`→status eşlemesi |
 | `core/link` | Module Links — modüller arası ilişki FK olmadan; kardinalite veritabanı kısıtıyla zorlanır |

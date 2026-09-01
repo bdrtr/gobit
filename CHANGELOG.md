@@ -270,8 +270,8 @@ Sabitlenme `1.0.0` ile olur.
 
   **Bu yol da KAPALI arızalanır**: bölge yüzeyi çözülemezse sepet HİÇ AÇILMAZ.
   Bir varsayılana düşmek — mağazanın ilk para birimi ya da istemcinin dediği —
-  tam olarak kapatılan kapıyı geri açardı. Gerekçe `regionCurrency` godoc'una
-  yazıldı.
+  tam olarak kapatılan kapıyı geri açardı. Gerekçe sepet açma ucunun godoc'una
+  yazıldı (`internal/modules/cart/api/store.go`).
 
   **Yönetim yüzeyinde aynı alan MEŞRUDUR ve kaldırılmadı.** `POST
   /admin/v1/regions` gövdesindeki `currency_code` bölgeyi TANIMLAR: operatör
@@ -544,7 +544,8 @@ giriş denemesinde ya da görseller kaybolduğunda — görünmesiydi:
   kesin. Ayrım `JWT_SECRET`'inkiyle aynıdır ve ".env olmadan `make up &&
   make run` çalışır" sözü korunur.
 
-- **`Config.LocalFileRootIsPortable` yalnızca `filepath.IsAbs`'e bakıyordu.**
+- **`Config.LocalFileRootIsDurable` (o gün adı LocalFileRootIsPortable'dı)
+  yalnızca `filepath.IsAbs`'e bakıyordu.**
   `FILE_ROOT=/tmp/gobit-uploads` mutlaktır, "göreli yol vermeyin" öğüdünü geçer
   ve uyarı susardı — oysa `/tmp` (ve `/var/tmp`, `/dev/shm`, `TMPDIR`) işletim
   sistemi tarafından temizlenir, üstelik çoğu dağıtımda tmpfs oldukları için

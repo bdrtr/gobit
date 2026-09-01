@@ -109,12 +109,21 @@ Kararın üç bağlayıcı sonucu vardır:
      taşıyan her tasarım testlerde yeşil geçip üretimde kırılır. Sözün
      düzeltilmesi bir paragraftır ve kiracılıktan
      bağımsız olarak bugün yanlıştır.
-   - **`corehttp.PrincipalKey` ya bağlanır ya silinir.** Üretimde hiçbir
-     tüketicisi yok (yalnızca kendi testi çağırıyor) ve godoc'u "kimliği
-     doğrulanmış çağrıyı kimliğine göre anahtarlar" diyor; oysa koruma yığınında
-     hız sınırı kimlikten **önce** koşar (`internal/core/http.APIGuards`), yani
-     bağlansaydı her zaman `ip:`'ye düşerdi. Aynı yerde hem tüketicisiz bir
-     yetenek hem de godoc'u davranışından ayrışan bir fonksiyon duruyor.
+   - **Hız sınırının kimliğe göre anahtarlanması ya bağlanır ya silinir.**
+     Üretimde hiçbir tüketicisi olmayan bir `internal/core/http.KeyFunc`
+     uygulaması duruyordu (yalnızca kendi testi çağırıyordu) ve godoc'u "kimliği
+     doğrulanmış çağrıyı kimliğine göre anahtarlar" diyordu; oysa koruma
+     yığınında hız sınırı kimlikten **önce** koşar
+     (`internal/core/http.APIGuards`), yani bağlansaydı her zaman IP'ye
+     düşerdi. Aynı yerde hem tüketicisiz bir yetenek hem de godoc'u
+     davranışından ayrışan bir fonksiyon duruyordu.
+
+     > **Kapatıldı: fonksiyon silindi.** Hız sınırı bugün yalnızca IP anahtarlar
+     > (`internal/core/http.ClientIPKey`, üretimde
+     > `internal/core/http.TrustedProxyIPKey`); kimliğe göre anahtarlama
+     > yeteneği depoda **yoktur**. Kimlik başına kota istendiği gün yeniden
+     > yazılır ve o gün sıranın kendisi de (hız sınırı kimlikten önce koşuyor)
+     > birlikte çözülmelidir — yoksa yeni yazılan da aynı sebeple IP'ye düşer.
 
 ## Sonuçlar
 
