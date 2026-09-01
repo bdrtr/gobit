@@ -1021,7 +1021,7 @@ make rename-module MODULE=github.com/kullanici/repo
 
 ## Sürüm
 
-Güncel sürüm: **v0.3.0**. Değişiklikler için
+Güncel sürüm: **v0.4.0**. Değişiklikler için
 [`CHANGELOG.md`](./CHANGELOG.md).
 
 - **v0.1.0** — Faz 0–9'un tamamı.
@@ -1029,6 +1029,11 @@ Güncel sürüm: **v0.3.0**. Değişiklikler için
   süzmesi, çoklu depo, alan olayları ve ilk gerçek eklenti (arama).
 - **v0.3.0** — API kendini anlatıyor: 196 uç şemada gövdeleriyle tanımlı,
   şemadan çalışan istemci üretilebiliyor.
+- **v0.4.0** — Bölüm 10 (GraphQL vitrin yüzeyi, B2B harcama limiti) ve üç hata
+  sınıfını yapısal olarak kapatan mimari değişmezler. Uygulamayı gerçekten
+  çalıştırmak, sepeti siparişe çeviren yolun hiçbir kurulumda BAĞLI OLMADIĞINI
+  ortaya çıkardı; iplik çekilince fiyat ve para birimi yetkisinin istemcide
+  olduğu görüldü. **Mağaza API'sinde kırıcı değişiklikler var.**
 
 `0.x` boyunca **kırıcı değişiklikler minor sürümlerde gelebilir**: API yüzeyi
 henüz sabitlenmemiştir. Sabitlenme `1.0.0` ile olur.

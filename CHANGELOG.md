@@ -10,6 +10,8 @@ Sabitlenme `1.0.0` ile olur.
 
 ## [Yayımlanmamış]
 
+## [0.4.0] — 2026-09-01
+
 ### Kırıcı değişiklikler
 
 `0.x` boyunca minor sürümlerde kırıcı değişiklik olabilir. Aşağıdakiler
@@ -819,7 +821,8 @@ yalnızca test koşarak görünmeyen üç arıza:
   yoktur; geri alma elle yapılır. İleri yön açılışta otomatiktir.
 - Yük testi süreç içidir; kapasite planı üretmez.
 
-[Yayımlanmamış]: https://github.com/bdrtr/gobit/compare/v0.3.0...HEAD
+[Yayımlanmamış]: https://github.com/bdrtr/gobit/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/bdrtr/gobit/releases/tag/v0.4.0
 [0.3.0]: https://github.com/bdrtr/gobit/releases/tag/v0.3.0
 [0.2.0]: https://github.com/bdrtr/gobit/releases/tag/v0.2.0
 [0.1.0]: https://github.com/bdrtr/gobit/releases/tag/v0.1.0
