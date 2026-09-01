@@ -20,11 +20,16 @@ type CreateCartInput struct {
 	Email string
 	// CurrencyCode ISO 4217 kodudur; ZORUNLUDUR.
 	//
-	// Para birimi bölgenin verisidir ve bölgeden KOPYALANIR — ama kopyalayan
-	// taraf create_cart WORKFLOW'udur. Cart servisi region modülünü çağırmaz
+	// Para birimi bölgenin verisidir ve bölgeden KOPYALANIR — kopyalayan taraf
+	// create_cart WORKFLOW'udur. Cart servisi region modülünü çağırmaz
 	// (ADR 0006); yalnızca kodun biçimini doğrular ve saklar. Kopyalanmasının
 	// sebebi de tarihseldir: bölge para birimini sonradan değiştirirse açık
 	// sepetlerin tutarları sessizce başka bir para biriminde okunmamalıdır.
+	//
+	// Bugün o akış TEK çağıran DEĞİLDİR: vitrin ucu POST /store/v1/carts bu
+	// servisi doğrudan çağırır ve kodu İSTEMCİDEN alır. Servis "kim kopyaladı"
+	// sorusunu soramaz; bedeli ve neden bu katmanda kapatılamadığı
+	// api.createCartRequest godoc'unda yazılıdır.
 	CurrencyCode string
 	// Metadata çağıranın serbest ek verisidir.
 	Metadata map[string]any

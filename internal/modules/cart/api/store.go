@@ -1,24 +1,68 @@
 package api
 
 import (
+	"context"
+	"encoding/json"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
 
 	coreerrors "github.com/bdrtr/gobit/internal/core/errors"
 	corehttp "github.com/bdrtr/gobit/internal/core/http"
+	"github.com/bdrtr/gobit/internal/modules/cart/models"
 	"github.com/bdrtr/gobit/internal/modules/cart/service"
 )
 
 // createCartRequest POST /store/v1/carts gövdesidir.
+//
+// # region_id ve currency_code hâlâ İSTEMCİDEN geliyor ve bu bir BORÇTUR
+//
+// unit_price bu API'den kaldırıldı çünkü sunucunun verisiydi
+// ([addLineItemRequest]). Aynı ölçüt bu iki alana uygulandığında cevap
+// değişmez; godoc onu saklamak için değil ADLANDIRMAK için buradadır.
+//
+//   - currency_code bölgenin verisidir. region tablosunda para birimi tek bir
+//     SÜTUNDUR (bölge başına tam bir kod), yani sepetin para birimi bir seçim
+//     değil bir TÜRETMEDİR.
+//   - Ve para birimi FİYAT SEÇER: satır fiyatlandırma akışı birim fiyatı
+//     varyantın fiyat kümesinden "sepetin para biriminde" okur. İstemci tutarı
+//     yazamasa da HANGİ FİYAT LİSTESİNİN uygulanacağını seçebilir — TRY
+//     bölgesinde açılmış bir sepete USD yazan istemci, operatörün USD
+//     listesindeki fiyatı öder.
+//   - region_id de aynı sınıftadır ve vergi ORANINI seçer.
+//
+// Sınıf unit_price ile AYNIDIR: sunucunun verisi istemciden alınıyor. PATLAMA
+// YARIÇAPI daha küçüktür — istemci tutar UYDURAMAZ, yalnızca operatörün
+// YAYIMLADIĞI listeler arasından seçebilir ve tek para birimli bir mağazada
+// seçecek başka bir şey yoktur. Bu, kusuru küçültür; meşrulaştırmaz.
+//
+// # Neden burada kapatılamıyor
+//
+// Doğru kapatma yeri bu handler DEĞİLDİR: cart modülü region modülünü
+// çağıramaz (ADR 0006) ve para birimini bölgeden türetecek taraf zaten
+// vardır — internal/workflows/cart'taki create_cart akışı ülke kodundan hem
+// bölgeyi hem para birimini kendisi çözer. Yapılması gereken, bu ucu satır
+// ekleme ve tamamlama uçlarında yapıldığı gibi O AKIŞA devretmek ve gövdeyi
+// country_code'a indirmektir. İki maliyeti vardır ve ikisi de bilerek
+// ertelenmiştir: akışın modüller arası yüzeyine yeni bir metot eklemek
+// (bugün orada bilinçli olarak yalnızca satır uçları var) ve mağaza
+// sözleşmesini ikinci kez kırmak.
+//
+// Borç burada YAZILIDIR: kayda geçmemiş bir açık, kimsenin kapatmadığı
+// açıktır.
 type createCartRequest struct {
 	// RegionID zorunludur.
 	RegionID string `json:"region_id"`
 	// CustomerID boş bırakılırsa sepet misafirindir.
+	//
+	// Alan bir SAHİPLİK İDDİASIDIR ve bugün hiçbir kanıt istemez; sınırı
+	// paket belgesindeki "Vitrin sepetlerinde sahiplik" bölümündedir.
 	CustomerID string `json:"customer_id"`
 	Email      string `json:"email"`
 	// CurrencyCode zorunludur; bölgenin para birimidir ve çağıran onu bölgeden
 	// kopyalar (cart modülü region modülünü çağırmaz, bkz. ADR 0006).
+	//
+	// Kopyalayanın İSTEMCİ olmasının bedeli tipin godoc'unda yazılıdır.
 	CurrencyCode string         `json:"currency_code"`
 	Metadata     map[string]any `json:"metadata"`
 }
@@ -108,19 +152,44 @@ func (h *Handler) storeDeleteCart(w http.ResponseWriter, r *http.Request) {
 }
 
 // addLineItemRequest POST /store/v1/carts/{id}/line-items gövdesidir.
+//
+// # FİYAT VE BAŞLIK BURADA YOKTUR
+//
+// İkisi de bir zamanlar bu gövdedeydi ve ikisi de SUNUCUNUN bilgisidir:
+//
+//   - unit_price. Alanın godoc'u "opsiyoneldir; nihai fiyatı calculate_totals
+//     workflow'u yazar" diyordu, ama o workflow hiçbir kurulumda kablolanmamıştı;
+//     yani istemcinin gönderdiği tutar NİHAİ tutardı. Vitrinin kimliği
+//     publishable anahtardır ve tarayıcıda durur, dolayısıyla bu, herkesin
+//     erişebildiği bir "kendi fiyatını yaz" ucuydu. Fiyat artık
+//     [LinePricing] üzerinden pricing modülünden gelir.
+//   - title. Satırın adı KATALOĞUN verisidir; istemciden alınması, sepette ve
+//     dolayısıyla siparişte, faturada ve kargo listesinde ürünün gerçek adıyla
+//     ilgisi olmayan bir metnin görünmesi demekti. Başlık artık akış tarafından
+//     Query katmanından okunur (bkz. akışın snapshot/catalog tarafı).
+//
+// Gövde tanınmayan alanı REDDEDER ([decodeBody]), yani eski bir istemci
+// sessizce eski davranışa dönmez: "unit_price" gönderen istek 422 alır. Kırıcı
+// olması bilinçlidir — sessiz kabul, kaldırılan arızayı geri getirirdi.
 type addLineItemRequest struct {
 	VariantID string `json:"variant_id"`
-	Title     string `json:"title"`
 	// Quantity işaretçidir: gönderilmeyen adet ile sıfır adet birbirinden
 	// ayrılsın diye. Sıfır adet zaten geçersizdir, ama iki durum FARKLI
 	// mesajlar hak eder.
 	Quantity *int64 `json:"quantity"`
-	// UnitPrice opsiyoneldir; nihai fiyatı calculate_totals workflow'u yazar.
-	UnitPrice int64          `json:"unit_price"`
-	Metadata  map[string]any `json:"metadata"`
+	// Metadata satırın serbest ek verisidir (hediye notu, kişiselleştirme).
+	//
+	// Fiyattan farklı olarak bu, gerçekten İSTEMCİNİN bilgisidir ve hiçbir
+	// hesaba girmez; bu yüzden gövdede kalır ve akışa olduğu gibi taşınır.
+	Metadata map[string]any `json:"metadata"`
 }
 
-// storeAddLineItem sepete satır ekler.
+// storeAddLineItem sepete satır ekler; fiyatı SUNUCU belirler.
+//
+// Satırı bu handler değil [LinePricing] yazar: akış varyantın başlığını
+// katalogdan, fiyatını pricing modülünden alır, satırı sepete ekler ve sepetin
+// toplamlarını yeniden hesaplar. Fiyatlandırıcı çözülemiyorsa satır HİÇ
+// eklenmez (bkz. [Handler.pricing]).
 func (h *Handler) storeAddLineItem(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -133,14 +202,25 @@ func (h *Handler) storeAddLineItem(w http.ResponseWriter, r *http.Request) {
 		corehttp.WriteError(ctx, w, coreerrors.Invalid(codeInvalidRequest, "quantity zorunludur"))
 		return
 	}
+	akis, err := h.pricing()
+	if err != nil {
+		corehttp.WriteError(ctx, w, err)
+		return
+	}
+	metadata, err := encodeMetadata(body.Metadata)
+	if err != nil {
+		corehttp.WriteError(ctx, w, err)
+		return
+	}
 
-	item, err := h.svc.AddLineItem(ctx, cartID(r), service.AddLineItemInput{
-		VariantID: body.VariantID,
-		Title:     body.Title,
-		Quantity:  *body.Quantity,
-		UnitPrice: body.UnitPrice,
-		Metadata:  body.Metadata,
-	})
+	id := cartID(r)
+	lineID, err := akis.AddPricedLineItem(ctx, id, body.VariantID, *body.Quantity, metadata)
+	if err != nil {
+		corehttp.WriteError(ctx, w, err)
+		return
+	}
+
+	item, err := h.lineItem(ctx, id, lineID)
 	if err != nil {
 		corehttp.WriteError(ctx, w, err)
 		return
@@ -154,7 +234,20 @@ type updateLineItemRequest struct {
 	Quantity *int64 `json:"quantity"`
 }
 
-// storeUpdateLineItem satırın adedini yazar.
+// storeUpdateLineItem satırın adedini yazar ve satırı YENİDEN FİYATLAR.
+//
+// Adedi yazan yol da akıştan geçer, çünkü adet fiyatı DEĞİŞTİREBİLİR: pricing
+// birim fiyatı adet aralığına göre seçer (3 adet ile 5 adet farklı kademedir).
+// Servise doğrudan yazılsaydı satır, yeni adetle ama ESKİ kademenin fiyatıyla
+// kalır ve sepetin toplamı bayatlardı.
+//
+// # Sıfır adet satırı KALDIRIR ve 204 döner
+//
+// Sıfır adet eskiden 422'ydi; artık akışın niyet çevirisi geçerlidir (her
+// sepet arayüzünde adet seçiciyi sıfıra indirmek "bunu kaldır" demektir, bkz.
+// akıştaki UpdateLineItem). Uç bu durumda gövdesiz 204 döner: kaldırılmış bir
+// satırın kaydını yanıtta sunmak, istemciye artık var olmayan bir kaynağı
+// vermek olurdu.
 func (h *Handler) storeUpdateLineItem(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -167,14 +260,76 @@ func (h *Handler) storeUpdateLineItem(w http.ResponseWriter, r *http.Request) {
 		corehttp.WriteError(ctx, w, coreerrors.Invalid(codeInvalidRequest, "quantity zorunludur"))
 		return
 	}
+	akis, err := h.pricing()
+	if err != nil {
+		corehttp.WriteError(ctx, w, err)
+		return
+	}
 
-	item, err := h.svc.UpdateLineItemQuantity(ctx,
-		cartID(r), chi.URLParam(r, paramLineItemID), *body.Quantity)
+	id, lineID := cartID(r), chi.URLParam(r, paramLineItemID)
+	removed, err := akis.SetLineItemQuantity(ctx, id, lineID, *body.Quantity)
+	if err != nil {
+		corehttp.WriteError(ctx, w, err)
+		return
+	}
+	if removed {
+		corehttp.WriteJSON(ctx, w, http.StatusNoContent, nil)
+		return
+	}
+
+	item, err := h.lineItem(ctx, id, lineID)
 	if err != nil {
 		corehttp.WriteError(ctx, w, err)
 		return
 	}
 	corehttp.WriteJSON(ctx, w, http.StatusOK, singleEnvelope{Data: toLineItemDTO(item)})
+}
+
+// lineItem yazılmış satırı sepetten OKUYUP döner.
+//
+// # Neden yeniden okunuyor
+//
+// Akış geriye yalnızca satırın kimliğini verir ve bu bilinçlidir: yüzeyi ilkel
+// tiplerle sınırlıdır, sepetin zengin kaydını taşıyamaz. Ama okumanın asıl
+// sebebi bu değil: satırın TUTARLARI (birim fiyat, ara toplam, indirim, vergi)
+// satır yazıldıktan SONRA koşan hesap turunda yazılır. Akıştan dönen anlık
+// değeri sunmak, müşteriye sepetteki tutardan farklı bir sayı göstermek
+// olurdu — hem de tam olarak fiyatın kaynağını düzelttiğimiz uçta.
+//
+// Satır bulunamazsa hata Internal'dır: az önce yazılmış bir kaydın okunamaması
+// istemcinin düzeltebileceği bir şey değildir.
+func (h *Handler) lineItem(ctx context.Context, cartID, lineID string) (models.LineItem, error) {
+	detail, err := h.svc.GetCart(ctx, cartID)
+	if err != nil {
+		return models.LineItem{}, err
+	}
+	for i := range detail.Items {
+		if detail.Items[i].ID == lineID {
+			return detail.Items[i], nil
+		}
+	}
+	return models.LineItem{}, coreerrors.Internal(codeLineItemMissing,
+		"satır yazıldı ama sepette bulunamadı: %s (%s)", lineID, cartID)
+}
+
+// encodeMetadata serbest ek veriyi akışın taşıdığı JSON'a çevirir; boş harita
+// nil döner.
+//
+// Çevirinin gerekmesi, akış yüzeyinin yalnızca ilkel ve stdlib tipleri
+// kullanabilmesindendir (ADR 0006): map[string]any bu paketin tipi değil ama
+// akışın imzasında yer alması, sınırın iki ucunu aynı Go tipine bağlamak
+// olurdu. Kodlama hatası errors.Invalid'dir — gövde istemciden gelir ve
+// kodlanamayan tek durum, JSON'a çevrilemeyen bir değerdir.
+func encodeMetadata(metadata map[string]any) (json.RawMessage, error) {
+	if len(metadata) == 0 {
+		return nil, nil
+	}
+	raw, err := json.Marshal(metadata)
+	if err != nil {
+		return nil, coreerrors.Wrap(err, coreerrors.KindInvalid, codeInvalidRequest,
+			"metadata JSON'a çevrilemedi")
+	}
+	return raw, nil
 }
 
 // storeRemoveLineItem satırı sepetten kaldırır.
@@ -186,6 +341,177 @@ func (h *Handler) storeRemoveLineItem(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	corehttp.WriteJSON(ctx, w, http.StatusNoContent, nil)
+}
+
+// completeCartRequest POST /store/v1/carts/{id}/complete gövdesidir.
+//
+// # Hangi alan neden BURADA, hangisi neden DEĞİL
+//
+// Her alan bir yetki sorusudur: gövdeye konan şey, müşterinin belirleyebildiği
+// şeydir.
+//
+//   - payment_provider_id VARDIR. Hangi sağlayıcıyla ödeneceği müşterinin
+//     seçimidir ve sunucunun bir varsayılanı olamaz. Yetki sorunu doğurmaz:
+//     tanınmayan bir ad tahsilat açmaz, akışı düşürür.
+//   - payment_data VARDIR. Sağlayıcıya olduğu gibi iletilen serbest veridir
+//     (kart tokenı, dönüş adresi); tanımı gereği istemcinin bilgisidir.
+//   - expected_total VARDIR ve ZORUNLUDUR; gerekçe alanın godoc'undadır.
+//   - email YOKTUR. Sepetin iletişim adresi zaten sepette durur ve buraya
+//     ikinci bir kanal açmak, siparişin sepette görünenden BAŞKA bir adrese
+//     bağlanmasına izin verirdi. Handler onu kendi servisinden okur — akışın
+//     "sepet modülünün yüzeyi e-postayı yayımlamıyor" kısıtı bu uçta yoktur,
+//     çünkü sepetin sahibi bu modüldür.
+//   - location_id YOKTUR. Hangi depodan çıkılacağı bir kargo kararıdır ve
+//     akış onu satır başına stok + kargo modüllerine sorarak verir; müşteriye
+//     depo seçtirmek hem stok topolojisini sızdırır hem de siparişin nereden
+//     çıkacağını ona bırakırdı.
+type completeCartRequest struct {
+	PaymentProviderID string `json:"payment_provider_id"`
+	// PaymentData sağlayıcıya olduğu gibi iletilir; opsiyoneldir.
+	PaymentData json.RawMessage `json:"payment_data"`
+	// ExpectedTotal müşterinin ONAYLADIĞI genel toplamdır (minor unit);
+	// ZORUNLUDUR.
+	//
+	// # Neden zorunlu
+	//
+	// Hesap, tamamlama akışının başında YENİLENİR: katalogdaki bir fiyat
+	// değişikliği ya da süresi dolan bir promosyon, müşterinin gördüğü tutarla
+	// çekilecek tutarı ayırabilir. Alan gönderilirse fark errors.Conflict
+	// üretir ve HİÇBİR yan etki uygulanmaz — kontrol saga'nın ilk adımından
+	// önce koşar.
+	//
+	// İşaretçidir ve eksikliği 422'dir: opsiyonel bırakılsaydı alanı unutan
+	// her istemci, korumayı sessizce kapatırdı. Bu depoda tekrar eden hata
+	// sınıfı tam olarak budur — kural tanımlıdır, uygulandığı yer yoktur.
+	//
+	// Sıfır "karşılaştırma yapma" demektir ve yalnızca gerçekten sıfır tutan
+	// bir sepet için meşrudur. Bir güvenlik boşluğu DEĞİLDİR: karşılaştırmayı
+	// atlayan istemci yine sunucunun hesapladığı tutarı öder, yalnızca
+	// müşterisini fiyat değişiminden haberdar etme fırsatını kaybeder.
+	ExpectedTotal *int64 `json:"expected_total"`
+}
+
+// completeCartFlowRequest tamamlama akışına gönderilen JSON'un şemasıdır.
+//
+// Alan adları akış tarafındaki şemayla BİREBİR aynı olmak zorundadır; bu modül
+// internal/workflows'u import edemediği için (ADR 0006) uyumu derleyici
+// denetlemez ve ancak entegrasyon testiyle kanıtlanır (bkz. internal/e2e).
+type completeCartFlowRequest struct {
+	CartID            string          `json:"cart_id"`
+	PaymentProviderID string          `json:"payment_provider_id"`
+	PaymentData       json.RawMessage `json:"payment_data,omitempty"`
+	Email             string          `json:"email,omitempty"`
+	ExpectedTotal     int64           `json:"expected_total"`
+}
+
+// completeCartFlowResult tamamlama akışından dönen JSON'un şemasıdır.
+type completeCartFlowResult struct {
+	OrderID      string `json:"order_id"`
+	CartID       string `json:"cart_id"`
+	CurrencyCode string `json:"currency_code"`
+	Amount       int64  `json:"amount"`
+}
+
+// completeCartDTO tamamlanan sepetin dış gösterimidir.
+//
+// Yanıt siparişin KİMLİĞİNİ ve tahsil edilen tutarı taşır, başka bir şey
+// taşımaz: ödeme oturumu ve rezervasyon kimlikleri iç yapıdır, uyarılar ise
+// operatörün işidir (akış onları loglar). Siparişin ayrıntısı
+// GET /store/v1/orders/{id} ile okunur.
+type completeCartDTO struct {
+	OrderID      string `json:"order_id"`
+	CartID       string `json:"cart_id"`
+	CurrencyCode string `json:"currency_code"`
+	Total        int64  `json:"total"`
+}
+
+// storeCompleteCart sepeti siparişe çevirir.
+//
+// # Neden bu uç BU modülde
+//
+// Akışların HTTP sahibi modüldür (ADR 0001'in kalıbı): sepetin uçlarının
+// sahibi cart modülüdür, dolayısıyla sepeti kapatan uç da buradadır. Bileşim
+// kökü yalnızca akışı KURAR ve container'a bırakır; handler kodu oraya
+// girmez. Modül somut akışı tanımaz, [CartCompletion] arayüzüyle konuşur.
+//
+// # Neden /complete
+//
+// Yol sepetin altındadır ve bir FİİL taşır: uç bir kaynak yaratmaz, sepetin
+// durumunu değiştirir (ve yan ürünü bir siparişdir). Alternatif
+// POST /store/v1/orders olurdu ama sipariş oluşturma order modülünün
+// yüzeyidir ve o modül sepeti bilmez; ucun oraya konması, siparişi sepetten
+// üreten bilgiyi hiç sahibi olmayan bir yere taşırdı.
+//
+// # Neden 200, 201 değil
+//
+// Yaratılan kaynak (sipariş) BU yolun kaynağı değildir ve bu uç ona bir adres
+// veremez; 201, "Location" başlığıyla adresi gösterebildiği yerde doğrudur.
+// Yanıt siparişin kimliğini taşır, istemci onu order ucundan okur.
+//
+// # İkinci çağrı
+//
+// Sepet tamamlanmış damgalandığı için ikinci çağrı errors.Conflict alır; akışın
+// idempotency anahtarı da aynı sepette ikinci bir yürütmeyi engeller. Ağı kopan
+// bir istemcinin isteği tekrarlaması bu yüzden ikinci sipariş üretmez.
+func (h *Handler) storeCompleteCart(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	var body completeCartRequest
+	if err := decodeBody(w, r, &body); err != nil {
+		corehttp.WriteError(ctx, w, err)
+		return
+	}
+	if body.ExpectedTotal == nil {
+		corehttp.WriteError(ctx, w, coreerrors.Invalid(codeInvalidRequest,
+			"expected_total zorunludur; müşteriye onaylatılan toplam bildirilmelidir"))
+		return
+	}
+	akis, err := h.checkout()
+	if err != nil {
+		corehttp.WriteError(ctx, w, err)
+		return
+	}
+
+	// Sepetin iletişim adresi KENDİ servisimizden okunur; istemciden alınmaz.
+	id := cartID(r)
+	detail, err := h.svc.GetCart(ctx, id)
+	if err != nil {
+		corehttp.WriteError(ctx, w, err)
+		return
+	}
+
+	istek, err := json.Marshal(completeCartFlowRequest{
+		CartID:            id,
+		PaymentProviderID: body.PaymentProviderID,
+		PaymentData:       body.PaymentData,
+		Email:             detail.Email,
+		ExpectedTotal:     *body.ExpectedTotal,
+	})
+	if err != nil {
+		corehttp.WriteError(ctx, w, coreerrors.Wrap(err, coreerrors.KindInternal, codeInvalidRequest,
+			"sipariş tamamlama isteği kodlanamadı"))
+		return
+	}
+
+	yanit, err := akis.CompleteCartJSON(ctx, istek)
+	if err != nil {
+		corehttp.WriteError(ctx, w, err)
+		return
+	}
+
+	var sonuc completeCartFlowResult
+	if err := json.Unmarshal(yanit, &sonuc); err != nil {
+		corehttp.WriteError(ctx, w, coreerrors.Wrap(err, coreerrors.KindInternal, codeFlowResultInvalid,
+			"sipariş tamamlama sonucu çözülemedi: %s", id))
+		return
+	}
+
+	corehttp.WriteJSON(ctx, w, http.StatusOK, singleEnvelope{Data: completeCartDTO{
+		OrderID:      sonuc.OrderID,
+		CartID:       sonuc.CartID,
+		CurrencyCode: sonuc.CurrencyCode,
+		Total:        sonuc.Amount,
+	}})
 }
 
 // storeSetShippingAddress sepetin kargo adresini yazar.

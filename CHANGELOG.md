@@ -10,7 +10,94 @@ Sabitlenme `1.0.0` ile olur.
 
 ## [Yayımlanmamış]
 
+### Kırıcı değişiklikler
+
+`0.x` boyunca minor sürümlerde kırıcı değişiklik olabilir. Aşağıdakiler
+**mağaza API'sini** kullanan istemcileri doğrudan etkiler.
+
+- **`POST /store/v1/carts/{id}/line-items` gövdesinden `unit_price` ve `title`
+  KALDIRILDI.** İkisini gönderen istek artık `422` alır (gövde tanınmayan alanı
+  reddeder). Sessizce yok saymak seçilmedi: istemci gönderdiğini sanır, sunucu
+  başka bir fiyat yazardı. Fiyat `pricing`'den, başlık katalogdan gelir; gerekçe
+  aşağıda ("Fiyat yetkisi istemciden alındı").
+- **`PATCH /store/v1/carts/{id}/line-items/{line_item_id}` sıfır adette artık
+  `422` değil `204` döner** ve satırı kaldırır. Sıfır adet eskiden geçersizdi,
+  yani hiçbir istemci ona bağımlı olamaz; her sepet arayüzünde adet seçiciyi
+  sıfıra indirmek "bunu kaldır" demektir ve niyeti akış çevirir.
+- `workflows/cart`'ın `Carts` dar arayüzü büyüdü: `AddCartLineItem` artık satır
+  metadata'sını da taşır. Kendi uygulamasını yazan gömülü kodu etkiler.
+
 ### Eklendi
+
+- **Sepet akışları üretim ikilisine BAĞLANDI; `POST
+  /store/v1/carts/{id}/complete` eklendi.** `internal/workflows/cart` ve
+  `internal/workflows/checkout` hiçbir kurulumda çağrılmıyordu: `cmd/server`
+  yalnızca saga MOTORUNU (`core.workflow`) kaydediyor, akışların kendisini
+  üretim kodunda kuran tek satır bulunmuyordu. Tek çağıran `internal/e2e`
+  testleriydi — yani çalışan ikilide sepeti siparişe çeviren yol YOKTU: ödeme,
+  kargo, checkout promosyonu, `order.placed` bildirimi ve b2b harcama limiti
+  erişilemezdi. README ise `complete_cart`'ı sunulan bir yetenek gibi
+  anlatıyordu.
+
+  Kablolama, `order` → `b2b` harcama kuralındaki kalıbın aynısıdır: akışların
+  HTTP sahibi MODÜLDÜR. `cart` kendi paketinde iki dar arayüz tanımlar
+  (`api.LinePricing`, `api.CartCompletion`), somut akışı container'dan
+  `workflows.cart.interop` / `workflows.checkout.interop` adıyla çözer ve
+  `cmd/server` yalnızca akışları kurup kaydeder — bileşim köküne handler kodu
+  girmez, URL'ler sepetin altında kalır.
+
+  Kayıt sırası **dairesel**dir ve daire iki yerden kırılır: akış tüm modüllerin
+  yüzeylerini çözdüğü için ancak `Bootstrap`'tan sonra kurulabilir, modülün
+  handler'ı ise `Register` sırasında kurulur. Modül tarafındaki çözüm bu yüzden
+  TEMBELDİR (ilk istekte, sonucu saklanarak) — `order`'ın `spendingPolicy`
+  sarmalayıcısıyla birebir aynı mekanizma; yenisi icat edilmedi.
+
+  Bağlanan uçlar: satır ekleme ve adet güncelleme artık `add_line_item` /
+  `update_line_item` akışlarından geçer (yani satır her değişiklikte YENİDEN
+  FİYATLANIR ve sepetin toplamı bayat kalmaz), `POST .../complete` ise
+  `complete_cart` saga'sını çalıştırır.
+
+  Tamamlama gövdesindeki her alan bir yetki sorusu olarak ayrı ayrı
+  kararlaştırıldı: `payment_provider_id` ve `payment_data` istemciden gelir
+  (müşterinin seçimi), `expected_total` **zorunludur** (opsiyonel olsaydı alanı
+  unutan her istemci "gördüğün tutarla çekilen tutar aynı mı" korumasını
+  sessizce kapatırdı; ayrışma `409` üretir ve hesap saga'nın ilk adımından önce
+  yenilendiği için HİÇBİR yan etki uygulanmaz), `email` gövdede YOKTUR (sepetin
+  adresi zaten sepettedir; ikinci bir kanal, siparişi sepette görünenden başka
+  bir adrese bağlardı) ve `location_id` de YOKTUR (hangi depodan çıkılacağı
+  kargo kararıdır; müşteriye depo seçtirmek stok topolojisini sızdırırdı).
+  Yanıt siparişin kimliğini ve tahsil edilen tutarı taşır; ödeme oturumu/
+  koleksiyon/rezervasyon kimlikleri ve operatöre ait uyarılar yayımlanmaz.
+
+- **Fiyat yetkisi istemciden alındı.** `POST
+  /store/v1/carts/{id}/line-items` gövdesi `unit_price` alıyor ve cart servisi
+  onu OLDUĞU GİBİ yazıyordu; yalnızca aralığı denetleniyor (`checkAmount`),
+  doğruluğu denetlenmiyordu. Alanın godoc'u "nihai fiyatı `calculate_totals`
+  workflow'u yazar" diyordu — ama o workflow hiç kurulmuyordu, yani istemcinin
+  gönderdiği fiyat NİHAİ fiyattı. Vitrinin kimliği publishable anahtardır ve
+  tarayıcıda durur: bu, herkesin erişebildiği bir "kendi fiyatını yaz" ucuydu.
+  Sonuca gitmiyordu çünkü checkout ucu da yoktu — ama ikisi aynı kökten ve
+  checkout bağlandığı anda "her şeyi 1 kuruşa al" açılırdı. `title` de aynı
+  sınıftaydı: satırın adı kataloğun verisidir ve sepette, siparişte, faturada
+  ve kargo listesinde görünen odur.
+
+  Fiyat artık `pricing` modülünden, başlık Query katmanından gelir. Yönetim
+  tarafında karşılığı açılmadı ve gerekmiyor: `cart`'ın `/admin/v1` yüzeyi
+  tanımı gereği YALNIZCA OKUMADIR (sepeti değiştiren tek taraf müşteridir),
+  yani "yönetici fiyat girebilsin" için değiştirilecek bir uç yoktur.
+
+  **Fiyat yolu KAPALI arızalanır**: fiyatlandırma akışı çözülemezse satır HİÇ
+  EKLENMEZ — ne istemcinin fiyatıyla, ne sıfırla. Bu, b2b harcama kuralının
+  bilinçli TERSİDİR: b2b kayıtlı değilse "limit yok" doğru cevaptır, ama
+  fiyatlandırıcı yoksa "fiyat yok" satırı yazmak sessizce bedava mal satmaktır.
+  Gerekçe `linePricing` godoc'una yazıldı.
+
+  Yeni testler: vitrinin fiyat/başlık kabul etmediği ve reddedilen isteğin
+  sepete satır YAZMADIĞI (birim + e2e), fiyatlandırıcı yokken satırın
+  eklenmediği, tamamlama ucunun gerçekten sipariş ürettiği ve onaylanmayan
+  toplamda hiçbir yan etki bırakmadığı (e2e, gerçek modüller ve gerçek
+  Postgres üzerinde, tümüyle HTTP'den).
+
 
 - **B2B modülü: şirket, çalışan ve harcama limiti.** Alıcının bir birey değil,
   dönem başına harcama yetkisi sınırlı bir ÇALIŞAN olduğu kurulum. Modül başka
@@ -189,6 +276,35 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltildi
 
+Sepet akışlarının bağlanmasını izleyen bağımsız doğrulamanın çıkardığı bulgular:
+
+- **Saga adım hatası, alt hatanın KODUNU kaybediyordu.** `core/workflow`
+  patlayan adımı sararken hatanın SINIFINI (`Kind`) alt hatadan devralıyor ama
+  KODUNU kendi sabitiyle (`workflow_step_failed`) eziyordu. Taşıma katmanı
+  gövdeye tek bir makine okunur alan yazar (`error.code`), yani her saga hatası
+  istemci için TEK bir değere düzleşiyordu. Somut bedeli B2B harcama limitiydi:
+  limiti aşan alışveriş `409` alıyor, gövdede `spending_limit` HİÇ geçmiyordu ve
+  vitrin "limitiniz yetmedi" ile "geçici çakışma, tekrar deneyin"i ayırt
+  edemiyordu — oysa `409` tam olarak tekrarın çözmediği sınıftır. Kod artık
+  korunur (`stepFailureCode`); kodsuz bir adım hatası motorun kendi sabitini
+  alır. YALNIZCA kod taşınır: mesaj ve `Details` zincirde kalır ve
+  `KindInternal` hatalarında yine maskelenir. Değişikliğin SINIRI da testle
+  çizildi — telafi patladığında dıştaki kod `workflow_compensation_failed`
+  olarak KALIR, çünkü orada okunması gereken şey adımın neden düştüğü değil,
+  sistemin tutarsız kaldığıdır.
+
+- **KAPALI arıza yanlış status sınıfı döndürüyordu (`404`).** Satır
+  fiyatlandırma / sepet tamamlama akışı çözülemediğinde `cart` modülü
+  container'ın hata sınıfını olduğu gibi geçiriyordu: kayıtsız ad
+  `KindNotFound` → `404`, yanlış tipte kayıt `KindInvalid` → `422`. Para
+  açısından davranış doğruydu (satır YAZILMIYOR), sınıf yanlıştı: `404`
+  istemciye "böyle bir uç yok" der, `5xx` uyarı zinciri hiç çalmaz ve ara
+  katmanlar yanıtı önbelleğe alıp arızayı kurulum düzeldikten sonra da
+  sürdürebilir. Sarmalama artık `KindInternal`'dır; operatöre ne söylediği
+  korunur, istemciye giden metin çekirdeğin maskeleme kuralından geçer ve
+  geriye yalnızca `cart_module_setup_failed` kodu kalır. Aynı sınıf hatası
+  `order` modülünün harcama kuralı sarmalayıcısında da düzeltildi.
+
 Düşmanca bir güvenlik incelemesinin çıkardığı altı bulgu:
 
 - **Idempotency middleware yükleme akışını öldürüyordu.** `Idempotency-Key`
@@ -298,6 +414,45 @@ Düşmanca bir güvenlik incelemesinin çıkardığı altı bulgu:
     aynı ADLA fakat farklı uçlarla bir link bildirilirse açılış
     `errors.Conflict` ile durur — ki bu, defterin görevini yapmasıdır, bir
     arıza değil.
+
+### Bilinen sınırlar
+
+Bu turda ARAŞTIRILDI, karar verildi ve BİLEREK açık bırakıldı. Kayda geçmemiş
+bir açık, kimsenin kapatmadığı açıktır.
+
+- **`POST /store/v1/carts` hâlâ `currency_code` (ve `region_id`) alıyor.**
+  Sınıf `unit_price` ile AYNIDIR — sunucunun verisi istemciden alınıyor.
+  `region` tablosunda para birimi bölge başına TEK bir sütundur, yani sepetin
+  para birimi bir seçim değil bir türetmedir; üstelik fiyatı da o SEÇER (satır
+  akışı birim fiyatı "sepetin para biriminde" okur). Patlama yarıçapı daha
+  küçüktür: istemci tutar uyduramaz, yalnızca operatörün YAYIMLADIĞI listeler
+  arasından seçebilir ve tek para birimli bir mağazada seçecek bir şey yoktur.
+  Doğru kapatma yeri handler değil: `cart` modülü `region`'ı çağıramaz
+  (ADR 0006) ve türetmeyi zaten yapan bir akış var — `create_cart` ülke
+  kodundan hem bölgeyi hem para birimini çözüyor. Ucun o akışa devredilmesi ve
+  gövdenin `country_code`'a inmesi gerekir; akışın modüller arası yüzeyine yeni
+  bir metot eklemeyi ve mağaza sözleşmesini ikinci kez kırmayı gerektirdiği
+  için bu tura alınmadı. Gerekçe `api.createCartRequest` godoc'unda.
+
+- **Vitrin sepetlerinde SAHİPLİK denetimi yok — model bu, ve artık YAZILI.**
+  `/store/v1/carts/{id}` altındaki uçlar isteği yapanın sepetin sahibi
+  olduğunu doğrulamaz. Bu bir "yetenek URL" modelidir: sepet kimliği 48 bit
+  zaman damgası + 80 bit kriptografik rastgelelikten üretilir, tahmin edilemez
+  ve onu bilmek erişim hakkını taşır. Zorunluluktan da doğar — mağaza
+  yüzeyinin tek kimliği publishable anahtardır ve o bir SIR değildir; ortada
+  müşteri oturumu yoktur. Aynı beyan `order` modülünde zaten yazılıydı; `cart`
+  için hiçbir yerde yazmıyordu ve şimdi paket belgesinde duruyor, modelin
+  kuralıyla birlikte (vitrin tarafında LİSTE ucu YOKTUR; bir liste ucu tek bir
+  kimliği bilmeyi tüm sepetleri okumaya çevirirdi).
+
+  Modelin KAPSAMADIĞI şey ayrıca adlandırıldı: yetenek URL'i "elimdeki kimliğe
+  erişebilirim" der, "ben şu müşteriyim" DEMEZ. Oysa gövdelerdeki
+  `customer_id` kanıtsız bir sahiplik iddiasıdır ve sepetin müşterisi b2b
+  harcama limitinin hangi şirket penceresinden düşüleceğini belirler — yani
+  iddia başkasının penceresini tüketebilir. Servis yalnızca tek bir sınırı
+  korur (müşterisi olan sepet başkasına devredilemez). Tek doğru kapatma
+  müşteri oturumudur (Faz 8) ve bu turda uydurma bir yetki mekanizması İNŞA
+  EDİLMEDİ.
 
 ## [0.3.0] — 2026-08-31
 

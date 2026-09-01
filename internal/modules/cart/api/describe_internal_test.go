@@ -35,7 +35,7 @@ func belge(t *testing.T) (yollar, bilesenler map[string]any) {
 	Describe(doc)
 
 	r := chi.NewRouter()
-	New(nil).Routes(r)
+	New(nil, Flows{}).Routes(r)
 
 	ham, err := doc.Build(r)
 	require.NoError(t, err)
@@ -237,6 +237,10 @@ func vitrinUclari() []ucBeklentisi {
 		{
 			metod: http.MethodPost, yol: "/store/v1/carts/{id}/shipping-methods", durum: "201",
 			istek: addShippingMethodRequest{}, yanit: doluYontem(),
+		},
+		{
+			metod: http.MethodPost, yol: "/store/v1/carts/{id}/complete", durum: "200",
+			istek: completeCartRequest{}, yanit: completeCartDTO{},
 		},
 		{
 			metod: http.MethodDelete,

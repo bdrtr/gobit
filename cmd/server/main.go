@@ -307,6 +307,21 @@ func run() error {
 		return err
 	}
 
+	// Modüller arası akışlar ancak BURADA kurulabilir: her biri birden çok
+	// modülün yüzeyini container'dan adla çözer ve o yüzeyler Bootstrap'tan
+	// önce kayıtlı değildir. Uçlarının sahibi ise modüldür (cart), yani
+	// handler akışı ister; daire, modül tarafındaki çözümün ilk isteğe
+	// ertelenmesiyle kırılır (bkz. kurulum.go, akislariKaydet).
+	//
+	// Bu satır silindiğinde sepete satır eklenemez ve sepet siparişe
+	// çevrilemez: fiyat yolu KAPALI arızalanır, yani istemcinin fiyatıyla ya
+	// da sıfır fiyatla satır yazılmaz. Faz 5-7'nin bütün akış zinciri —
+	// fiyatlandırma, indirim, vergi, ödeme, kargo, order.placed bildirimi ve
+	// b2b harcama limiti — üretim ikilisine tam olarak buradan bağlanır.
+	if err := akislariKaydet(c); err != nil {
+		return err
+	}
+
 	// Kimlik doğrulayıcı ancak Bootstrap'tan sonra container'dadır.
 	// Çözülemezse açılış DURUR: korumalı görünen ama her isteği reddeden bir
 	// yönetim yüzeyiyle çalışmaya devam etmek, arızayı ilk giriş denemesine

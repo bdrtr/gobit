@@ -813,24 +813,52 @@ func modulServisleriniCoz() error {
 	return err
 }
 
-// sepetAkislariniKur sepet akışlarını ÜRETİM kablolamasıyla kurar.
+// sepetAkislariniKur sepet akışlarını ÜRETİM kablolamasıyla kurar ve
+// container'a KAYDEDER.
 //
 // [cartwf.FromContainer] altı yüzeyi de container'dan adla çözer; cart tarafı
 // "cart.interop" adıyla kayıtlı ilkel yüzeydir (ADR 0006). Testte hiçbir köprü
 // ya da sahte yoktur: burada bir uyumsuzluk çıkarsa üretimde de çıkar.
+//
+// # Kayıt neden ZORUNLU
+//
+// Akış yalnızca bu dosyanın değişkenine yazılsaydı, testler onu çağırabilir
+// ama MAĞAZA UÇLARI çağıramazdı: cart modülünün vitrin satır uçları akışı
+// container'dan [cartwf.InteropName] adıyla çözer ve bulamazsa KAPALI
+// arızalanır. Kayıt cmd/server'daki akislariKaydet'in aynısıdır; olmasaydı
+// e2e, üretimde çalışan bir kurulumu değil yalnızca akışın kendisini sınardı.
 func sepetAkislariniKur() (*cartwf.Workflows, error) {
-	return cartwf.FromContainer(kap)
+	akislar, err := cartwf.FromContainer(kap)
+	if err != nil {
+		return nil, err
+	}
+	if err := kap.Provide(cartwf.InteropName, cartwf.NewInterop(akislar)); err != nil {
+		return nil, err
+	}
+	return akislar, nil
 }
 
-// siparisAkislariniKur sipariş tamamlama akışını ÜRETİM kablolamasıyla kurar.
+// siparisAkislariniKur sipariş tamamlama akışını ÜRETİM kablolamasıyla kurar ve
+// container'a KAYDEDER.
 //
 // [checkoutwf.FromContainer] yedi yüzeyi container'dan adla çözer
 // (cart.interop, inventory.interop, order.interop, payment.interop, core.link,
 // core.query, core.workflow) ve sepet hesabını AYRICA aynı container üzerinde
 // kendisi kurar. Testte hiçbir köprü ya da sahte yoktur: buradaki bir
 // uyumsuzluk üretimde de açılışta patlar.
+//
+// Kaydın gerekçesi [sepetAkislariniKur] ile aynıdır: POST
+// /store/v1/carts/{id}/complete ucu akışı [checkoutwf.InteropName] adıyla
+// çözer.
 func siparisAkislariniKur() (*checkoutwf.Workflows, error) {
-	return checkoutwf.FromContainer(kap)
+	akis, err := checkoutwf.FromContainer(kap)
+	if err != nil {
+		return nil, err
+	}
+	if err := kap.Provide(checkoutwf.InteropName, checkoutwf.NewInterop(akis)); err != nil {
+		return nil, err
+	}
+	return akis, nil
 }
 
 // stokLokasyonuKur senaryoların paylaştığı tek stok lokasyonunu hazırlar.

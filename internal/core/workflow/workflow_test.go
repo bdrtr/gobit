@@ -1138,3 +1138,121 @@ func TestStepContextCarriesEngineFields(t *testing.T) {
 	assert.Equal(t, 1, seen[1].StepIndex)
 	assert.Equal(t, 1, seen[1].Attempt)
 }
+
+// TestStepFailureKeepsUnderlyingCode adım hatasının KODUNUN motorun
+// sarmalamasında korunduğunu doğrular.
+//
+// # Neden bu iddia parayla ilgili
+//
+// Taşıma katmanı hata gövdesine tek bir makine okunur alan yazar: Code. Motor
+// onu kendi sabitiyle ezdiğinde HER adım hatası istemci için tek bir değere —
+// "workflow_step_failed" — düzleşiyordu. Somut bedeli B2B harcama limitiydi:
+// limiti aşan alışveriş 409 alıyor ama vitrin, "limitiniz yetmedi" ile
+// "geçici çakışma, tekrar deneyin"i AYIRT EDEMİYORDU. 409 tam olarak tekrarın
+// çözmediği sınıftır; ayrımı yapacak veri (alt hatanın kodu) üretiliyor,
+// yalnızca tüketiciye ulaşmıyordu.
+//
+// Sınıf (Kind) zaten devralınıyordu; test onun da korunduğunu birlikte
+// sabitler — kod taşınırken sınıfın kayması, ikisini tek yerde okuyan taşıma
+// katmanını bozardı.
+func TestStepFailureKeepsUnderlyingCode(t *testing.T) {
+	rec := &recorder{}
+	eng := workflow.New(workflow.NewMemoryStore(), testLogger())
+
+	a := step(rec, "a")
+	b := step(rec, "b")
+	b.onInvoke = func(context.Context, *workflow.StepContext) (any, error) {
+		return nil, errors.Conflict("order_spending_limit_exceeded",
+			"müşterinin dönem harcama limiti aşıldı")
+	}
+
+	_, err := eng.Run(t.Context(), workflow.Workflow{Name: "limit", Steps: steps(a, b)}, nil)
+	require.Error(t, err)
+
+	assert.Equal(t, "order_spending_limit_exceeded", errors.CodeOf(err),
+		"reddin KODU dışa taşınmalı; motorun kendi kodu onu ezerse istemci "+
+			"limit aşımını geçici bir arızadan ayıramaz")
+	assert.Equal(t, errors.KindConflict, errors.KindOf(err),
+		"sınıf da alt hatadan gelmeli: 409, tekrarın çözmediği sınıftır")
+	assert.Contains(t, err.Error(), "\"b\" adımı",
+		"motorun kendi cümlesi (hangi workflow, hangi adım) KAYBOLMAMALI")
+
+	// Telafi zinciri kod değişikliğinden etkilenmez: a geri alınmış olmalı.
+	assert.Equal(t, []string{"invoke:a", "invoke:b", "compensate:a"}, rec.snapshot())
+}
+
+// TestStepFailureFallsBackToEngineCode KODSUZ bir adım hatasının motorun kendi
+// kodunu aldığını doğrular.
+//
+// Tipsiz bir stdlib hatası için taşınacak kod yoktur ve kodsuz bir gövde
+// istemciye hiçbir şey söylemez; yedek kod bu yüzden vardır.
+func TestStepFailureFallsBackToEngineCode(t *testing.T) {
+	rec := &recorder{}
+	eng := workflow.New(workflow.NewMemoryStore(), testLogger())
+
+	a := step(rec, "a")
+	a.onInvoke = func(context.Context, *workflow.StepContext) (any, error) {
+		return nil, errors.New("kodsuz arıza")
+	}
+
+	_, err := eng.Run(t.Context(), workflow.Workflow{Name: "kodsuz", Steps: steps(a)}, nil)
+	require.Error(t, err)
+
+	assert.Equal(t, workflow.CodeStepFailed, errors.CodeOf(err),
+		"kodsuz adım hatası motorun kendi kodunu almalı")
+	assert.Equal(t, errors.KindInternal, errors.KindOf(err),
+		"sınıflandırılmamış hata güvenli tarafa, internal'a düşmeli")
+}
+
+// TestStepPanicKeepsPanicCode panik yolunun da kendi kodunu koruduğunu
+// doğrular.
+//
+// Panik bir PROGRAMLAMA hatasıdır ve operatörün onu geçici bir arızadan
+// ayırabilmesi gerekir; kod dışa taşınmasaydı panik de sıradan bir adım
+// hatasına benzerdi. Gözcü hata (ErrPanic) zincirde ayrıca durur.
+func TestStepPanicKeepsPanicCode(t *testing.T) {
+	rec := &recorder{}
+	eng := workflow.New(workflow.NewMemoryStore(), testLogger())
+
+	a := step(rec, "a")
+	a.onInvoke = func(context.Context, *workflow.StepContext) (any, error) {
+		panic("adım paniği")
+	}
+
+	_, err := eng.Run(t.Context(), workflow.Workflow{Name: "panik_kodu", Steps: steps(a)}, nil)
+	require.Error(t, err)
+
+	assert.Equal(t, workflow.CodeStepPanicked, errors.CodeOf(err))
+	assert.ErrorIs(t, err, workflow.ErrPanic)
+}
+
+// TestCompensationFailureCodeUnchanged telafi patladığında dışa çıkan kodun
+// DEĞİŞMEDİĞİNİ doğrular.
+//
+// Adım kodunun taşınması motorun tüm saga'larını etkiler; bu test o
+// değişikliğin sınırını çizer. Telafi patladığında istemcinin/operatörün
+// görmesi gereken şey adımın neden düştüğü değil, SİSTEMİN TUTARSIZ kaldığıdır
+// — o yüzden dıştaki kod [workflow.CodeCompensationFailed] olarak kalmalıdır
+// ve adım kodu yalnızca zincirin içinde durmalıdır.
+func TestCompensationFailureCodeUnchanged(t *testing.T) {
+	rec := &recorder{}
+	eng := workflow.New(workflow.NewMemoryStore(), testLogger())
+
+	a := step(rec, "a")
+	a.onCompensate = func(context.Context, *workflow.StepContext) error {
+		return errors.Internal("a_comp", "a telafisi patladı")
+	}
+	b := step(rec, "b")
+	b.onInvoke = func(context.Context, *workflow.StepContext) (any, error) {
+		return nil, errors.Conflict("order_spending_limit_exceeded", "limit aşıldı")
+	}
+
+	_, err := eng.Run(t.Context(), workflow.Workflow{Name: "telafi_kodu", Steps: steps(a, b)}, nil)
+	require.Error(t, err)
+
+	assert.Equal(t, workflow.CodeCompensationFailed, errors.CodeOf(err),
+		"elle müdahale gerektiren durum adım koduyla maskelenmemeli")
+	assert.Equal(t, errors.KindInternal, errors.KindOf(err))
+	assert.Contains(t, err.Error(), "order_spending_limit_exceeded",
+		"adım kodu zincirde yine okunabilmeli")
+}

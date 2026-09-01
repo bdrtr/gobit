@@ -24,6 +24,10 @@ import (
 // CodeInteropTotalsInvalid çözülemeyen bir toplam gövdesi geldiğini bildirir.
 const CodeInteropTotalsInvalid = "e2e_kopru_totals_invalid"
 
+// CodeInteropMetadataInvalid çözülemeyen bir satır metadata'sı geldiğini
+// bildirir.
+const CodeInteropMetadataInvalid = "cart_interop_metadata_invalid"
+
 // Interop cart servisini modüller arası İLKEL yüzeye çevirir.
 //
 // Hiçbir karar vermez: yalnızca imzayı ve JSON şemasını çevirir. Tüm iş
@@ -142,21 +146,51 @@ func (i *Interop) CartSnapshotJSON(ctx context.Context, cartID string) (json.Raw
 }
 
 // AddCartLineItem sepete satır ekler ve satırın kimliğini döner.
+//
+// metadata satırın serbest ek verisidir ve JSON NESNESİ olmak zorundadır; boş
+// bırakılabilir. Bozuk bir gövde errors.Invalid'dir ve satır YAZILMAZ: sessizce
+// atmak, istemcinin gönderdiğini sandığı ama hiçbir yerde bulunmayan bir alan
+// bırakırdı.
 func (i *Interop) AddCartLineItem(
 	ctx context.Context,
 	cartID, variantID, title string,
 	quantity, unitPrice int64,
+	metadata json.RawMessage,
 ) (string, error) {
+	ek, err := decodeInteropMetadata(metadata)
+	if err != nil {
+		return "", err
+	}
+
 	satir, err := i.svc.AddLineItem(ctx, cartID, AddLineItemInput{
 		VariantID: variantID,
 		Title:     title,
 		Quantity:  quantity,
 		UnitPrice: unitPrice,
+		Metadata:  ek,
 	})
 	if err != nil {
 		return "", err
 	}
 	return satir.ID, nil
+}
+
+// decodeInteropMetadata satır metadata'sını çözer; boş gövde nil döner.
+//
+// "JSON null" da nil sayılır: bir istemcinin alanı açıkça boşaltma niyeti ile
+// hiç göndermemesi arasında bu yüzeyde fark yoktur — satır YENİ açılıyor,
+// silinecek bir değer yok.
+func decodeInteropMetadata(raw json.RawMessage) (map[string]any, error) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil, nil
+	}
+
+	var ek map[string]any
+	if err := json.Unmarshal(raw, &ek); err != nil {
+		return nil, errors.Wrap(err, errors.KindInvalid, CodeInteropMetadataInvalid,
+			"satır metadata'sı JSON nesnesi olmalı")
+	}
+	return ek, nil
 }
 
 // SetCartLineItemQuantity satırın adedini mutlak değerle yazar.

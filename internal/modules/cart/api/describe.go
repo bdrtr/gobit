@@ -96,6 +96,14 @@ func Describe(d *openapi.Doc) {
 		},
 	})
 
+	d.Describe(http.MethodPost, "/store/v1/carts/{id}/complete", openapi.Operation{
+		Summary:     "Sepeti siparişe çevirir: stok ayrılır, ödeme tahsil edilir, sepet kapanır.",
+		RequestBody: d.RequestBody(completeCartRequest{}),
+		Responses: map[string]any{
+			"200": openapi.Response("Oluşan sipariş ve tahsil edilen tutar", d.Item(completeCartDTO{})),
+		},
+	})
+
 	describeSatirlar(d)
 	describeAdresler(d)
 	describeKargo(d)
@@ -105,18 +113,23 @@ func Describe(d *openapi.Doc) {
 // describeSatirlar sepet satırı uçlarını anlatır.
 func describeSatirlar(d *openapi.Doc) {
 	d.Describe(http.MethodPost, "/store/v1/carts/{id}/line-items", openapi.Operation{
-		Summary:     "Sepete satır ekler.",
+		Summary:     "Sepete satır ekler; birim fiyatı ve başlığı sunucu belirler.",
 		RequestBody: d.RequestBody(addLineItemRequest{}),
 		Responses: map[string]any{
 			"201": openapi.Response("Eklenen satır", d.Item(lineItemDTO{})),
 		},
 	})
 
+	// Adet güncelleme İKİ başarılı sonuç üretir: satır kaldığında 200 ve
+	// kaydını, SIFIR adetle kaldırıldığında gövdesiz 204. İkincisini yazmamak,
+	// istemci üretecine gövde bekleyen tek bir dönüş tipi ürettirirdi ve o
+	// istemci 204'te boş gövdeyi çözmeye çalışırdı.
 	d.Describe(http.MethodPatch, "/store/v1/carts/{id}/line-items/{line_item_id}", openapi.Operation{
-		Summary:     "Sepet satırının adedini günceller.",
+		Summary:     "Sepet satırının adedini günceller; sıfır adet satırı kaldırır.",
 		RequestBody: d.RequestBody(updateLineItemRequest{}),
 		Responses: map[string]any{
 			"200": openapi.Response("Güncellenen satır", d.Item(lineItemDTO{})),
+			"204": bosYanit("Adet sıfır verildi, satır kaldırıldı"),
 		},
 	})
 

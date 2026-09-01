@@ -18,6 +18,7 @@ type addedLine struct {
 	title     string
 	quantity  int64
 	unitPrice int64
+	metadata  json.RawMessage
 	calls     int
 }
 
@@ -25,10 +26,15 @@ type addedLine struct {
 // betikler.
 func recordAddLine(carts *stubCarts, lineID string) *addedLine {
 	seen := &addedLine{}
-	carts.addLineFn = func(_ context.Context, cartID, variantID, title string, quantity, unitPrice int64) (string, error) {
+	carts.addLineFn = func(
+		_ context.Context,
+		cartID, variantID, title string,
+		quantity, unitPrice int64,
+		metadata json.RawMessage,
+	) (string, error) {
 		seen.calls++
 		seen.cartID, seen.variantID, seen.title = cartID, variantID, title
-		seen.quantity, seen.unitPrice = quantity, unitPrice
+		seen.quantity, seen.unitPrice, seen.metadata = quantity, unitPrice, metadata
 		return lineID, nil
 	}
 	return seen
@@ -70,6 +76,32 @@ func TestAddLineItemFiyatiBulurVeToplamlariYeniler(t *testing.T) {
 	assert.Equal(t, int64(1), out.Totals.Revision)
 	requireIdentity(t, out.Totals)
 	require.Len(t, h.carts.written, 1)
+}
+
+// TestAddLineItemMetadataOlduguGibiTasinir satır metadata'sının akış
+// tarafından OKUNMADAN taşındığını doğrular.
+//
+// Akış onu hesaba katmaz ve katmamalıdır; ama taşımak zorundadır: satırı açan
+// tek yol bu akıştır ve taşınmasaydı vitrinin gönderdiği alan sessizce
+// düşerdi — "gönderildiği sanılan ama uygulanmayan ayar" tam olarak bu API'nin
+// tanımadığı alanları reddetme sebebidir.
+func TestAddLineItemMetadataOlduguGibiTasinir(t *testing.T) {
+	h := newHarness(t)
+	seen := recordAddLine(h.carts, testLineA)
+	serveSnapshot(h.carts,
+		snapshotOf(0, nil, nil),
+		snapshotOf(1, []SnapshotItem{{ID: testLineA, VariantID: testVariantA, Quantity: 1}}, nil),
+	)
+
+	_, err := h.wf.AddLineItem(context.Background(), AddLineItemInput{
+		CartID:    testCartID,
+		VariantID: testVariantA,
+		Quantity:  1,
+		Metadata:  json.RawMessage(`{"not":"hediye paketi"}`),
+	})
+	require.NoError(t, err)
+
+	assert.JSONEq(t, `{"not":"hediye paketi"}`, string(seen.metadata))
 }
 
 // TestAddLineItemFiyatBaglamiAdediTasir açılış fiyatının istenen adede göre

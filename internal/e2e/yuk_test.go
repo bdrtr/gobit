@@ -28,7 +28,7 @@ import (
 // düşmemeli, hiçbiri 5xx dönmemeli, koruma yığını yarış üretmemeli ve
 // gecikme makul bir tavanın altında kalmalı.
 //
-// ÖLÇMEDİĞİ: mutlak performans. Ölçüm süreç içinde (httptest) yapılır, ağ ve
+// ÖLÇMEDİĞİ: mutlak başarım. Ölçüm süreç içinde (httptest) yapılır, ağ ve
 // çekirdek yığını yoktur; çıkan sayılar bir kapasite planı DEĞİLDİR. Eşik de
 // bu yüzden cömerttir: amaç kilitlenmeyi, havuz tükenmesini ve N+1
 // patlamasını yakalamaktır, milisaniye kovalamak değil.

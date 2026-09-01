@@ -619,12 +619,15 @@ type aramaBariyeriDepo struct {
 // GetOrderByIdempotencyKey aramayı yapar ve ilk [aramaBariyeriDepo.adet] çağrıyı
 // bariyerde bekletir.
 func (d *aramaBariyeriDepo) GetOrderByIdempotencyKey(ctx context.Context, key string) (models.Order, error) {
-	order, err := d.Repository.GetOrderByIdempotencyKey(ctx, key)
+	// Değişken adı paketin adını (order) GÖLGELEMEZ: gölgeleme, dosyanın
+	// ilerisinde paket adıyla yazılmış bir çağrının derlenmeyip okunmasını
+	// zorlaştırırdı.
+	siparis, err := d.Repository.GetOrderByIdempotencyKey(ctx, key)
 	if d.gelen.Add(1) == d.adet {
 		close(d.serbest)
 	}
 	<-d.serbest
-	return order, err
+	return siparis, err
 }
 
 // TestEszamanliAyniAnahtarlaTekSiparisAcilir modülün en kritik saga

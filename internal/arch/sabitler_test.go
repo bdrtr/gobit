@@ -1,11 +1,14 @@
 package arch_test
 
 import (
+	"go/ast"
 	"go/parser"
 	"go/token"
+	"maps"
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -85,10 +88,7 @@ func TestSaglayiciKayitAdlariUyusuyor(t *testing.T) {
 func TestDosyaVarsayilanSaglayicisiConfigleUyusuyor(t *testing.T) {
 	t.Parallel()
 
-	assert.Equal(t, local.ID, config.DefaultFileProvider,
-		"config'in varsayılan dosya sağlayıcısı, modülün kutudan çıkan sağlayıcısı olmalı")
-	assert.Equal(t, local.ID, file.DefaultProviderID,
-		"modülün varsayılanı da aynı sağlayıcı olmalı")
+	varsayilanSaglayiciIddiasi(t, "dosya", local.ID, config.DefaultFileProvider, file.DefaultProviderID)
 }
 
 // TestDosyaIzinListesiCekirdekSabitleriyleUyusuyor config'in varsayılan izin
@@ -137,10 +137,8 @@ func TestDosyaIzinListesiCekirdekSabitleriyleUyusuyor(t *testing.T) {
 func TestBildirimVarsayilanSaglayicisiConfigleUyusuyor(t *testing.T) {
 	t.Parallel()
 
-	assert.Equal(t, logonly.ID, config.DefaultNotificationProvider,
-		"config'in varsayılan bildirim sağlayıcısı, modülün kutudan çıkan sağlayıcısı olmalı")
-	assert.Equal(t, logonly.ID, notification.DefaultProviderID,
-		"modülün varsayılanı da aynı sağlayıcı olmalı")
+	varsayilanSaglayiciIddiasi(t, "bildirim", logonly.ID,
+		config.DefaultNotificationProvider, notification.DefaultProviderID)
 }
 
 // TestGraphQLSinirVarsayilanlariConfigleUyusuyor GraphQL sertleştirme
@@ -299,4 +297,287 @@ func TestTohumParolaTabaniAuthinUstunde(t *testing.T) {
 	assert.Greater(t, config.MinBootstrapPasswordLen, authsvc.MinPasswordLen,
 		"ilk yönetici parolası, auth'un genel tabanından KESİN olarak uzun olmalı; "+
 			"eşitlenirse config'deki kapı hiçbir şey eklemez")
+}
+
+// Simetri denetiminin taradığı ağaçlar ve kendi adı.
+const (
+	// configDizini çekirdeğin yapılandırma paketidir. Kaynağı AYRIŞTIRILIR,
+	// import edilmez: Go sabitleri yansımayla gezilemez, yani "bu pakette hangi
+	// sabitler var" sorusunun tek yapısal cevabı kaynağın kendisidir.
+	configDizini = "internal/core/config"
+
+	// archDizini simetri iddialarının yaşadığı test paketidir; kapsam bu
+	// ağaçtaki Test* gövdelerinden okunur.
+	//
+	// Yalnızca bu dosya değil TÜM paket taranır: bir iddia komşu bir dosyada
+	// yazıldığında (yapılandırma denetimleri de config'i import eder) denetim
+	// onu da görmelidir. Görmeseydi, doğru yere yazılmış bir iddia yüzünden
+	// düşer ve insanlar testi susturmak için iddiayı bu dosyaya TAŞIRDI.
+	archDizini = "internal/arch"
+
+	// simetriDenetimiAdi kuralı zorlayan testin kendi adıdır ve taramanın
+	// DIŞINDA tutulur.
+	//
+	// Denetim bir gün config'ten bir sabit okursa (örneğin bir hata mesajında
+	// örnek göstermek için), o sabiti kendi eliyle "iddia edilmiş" sayardı:
+	// kural kendi kendini karşılayan bir cümleye döner ve hiçbir şeyi zorlamaz.
+	//
+	// Bu sabitin kendisi de elle tekrardır ve aynı kurala tabidir: böyle bir
+	// testin var olduğu [simetriIddiasindakiSabitler] içinde DOĞRULANIR, çünkü
+	// ad ayrıştığında dışlama sessizce boşa düşerdi.
+	simetriDenetimiAdi = "TestConfigSabitleriSimetriIddiasinaBagli"
+)
+
+// simetrisizConfigSabitleri modül tarafında karşılığı OLMAYAN config
+// sabitlerini gerekçeleriyle listeler.
+//
+// Muafiyet borçtur: bir sabit buraya yazıldığında "bu değer başka hiçbir
+// pakette tekrarlanmıyor" İDDİA EDİLMİŞ olur. İddia bugün doğru olsa bile
+// yarın yanlışlaşabilir — biri değeri modül tarafında da yazdığı gün buradaki
+// satır, tam da bu dosyanın önlemek için var olduğu ayrışmayı GİZLER. Bu
+// yüzden gerekçe zorunludur ve bayatlığı denetlenir
+// (bkz. [bayatMuafiyetleriDenetle]).
+var simetrisizConfigSabitleri = map[string]string{
+	"BackendRedis": `"redis" adı yalnızca çekirdekte yaşar: config'in enum ` +
+		`listeleri ve cmd/server'ın Redis istemcisini kurma kararı. Hiçbir modül ` +
+		`bu dizeyi kendi sabitinde tekrarlamaz, yani ayrışacak bir uç yok.`,
+
+	"DefaultRedisKeyPrefix": `Öneki tüketen redisguard'ın KENDİ varsayılanı ` +
+		`yoktur; önek zorunlu bir kurucu parametresidir ve boş verilirse ` +
+		`reddedilir (redisguard.dogrulaOnek). Değer bir tekrar değil tek ` +
+		`kaynaktır; geriye uyumluluk iddiası da değerin ikinci bir kopyasında ` +
+		`değil, sabitin godoc'unda durur.`,
+
+	"DefaultFileRoot": `local sağlayıcının Options.Root alanı ZORUNLUDUR ve ` +
+		`varsayılanı yoktur; kök dizin yalnızca burada seçilir. Modül tarafında ` +
+		`tekrarlanan bir değer olmadığı için karşılaştırılacak ikinci uç da yok.`,
+
+	"DefaultFileMaxUploadBytes": `file servisi pozitif bir sınır olmadan ` +
+		`KURULMAZ (service.New, MaxUploadBytes <= 0'ı reddeder), yani modül ` +
+		`tarafında varsayılan yoktur — sınırın tek kaynağı budur.`,
+
+	"DefaultDatabaseURL": `Eşi bir Go paketi değil, deploy/docker-compose.yml ` +
+		`ve .env.example'dır. Zincir zaten kapalı: sabit ile envDefault etiketini ` +
+		`config paketinin TestDefaultTagsMatchConstants'ı, etiketi de ` +
+		`TestOrtamOrnegiConfigVarsayilanlariylaUyusuyor bağlar. Buraya ikinci bir ` +
+		`kopya yazmak iddiayı güçlendirmez, yalnızca bir yerde daha tutar.`,
+
+	"DefaultRedisURL": `Gerekçe DefaultDatabaseURL ile aynıdır: eşi compose ` +
+		`dosyası ve .env.example'dır, Go tarafında bir modül sabiti değil.`,
+}
+
+// TestConfigSabitleriSimetriIddiasinaBagli config'in dışa açık HER sabitinin
+// ya bir simetri iddiasında geçtiğini ya da gerekçesiyle muaf tutulduğunu
+// zorlar.
+//
+// # Hangi arıza sınıfı
+//
+// Bu dosyadaki testlerin hepsi aynı kuralın ayrı ayrı uygulanmış hâlidir:
+// "çekirdek modülleri import EDEMEDİĞİ için (Prensip 2.4) değeri elle tekrarlar;
+// tekrar ayrışırsa hiçbir derleyici uyarmaz". Kural altı vakaya TEK TEK
+// uygulanmıştı — altıncısının İÇİ yapısallaşmış olsa bile
+// ([TestGraphQLSinirVarsayilanlariConfigleUyusuyor] graph.Options'ı gezer), o
+// iddianın VAR OLMASI hâlâ birinin elle yazmasına bağlıydı. Elle uygulanan bir
+// kural ise YEDİNCİ vakayı kapsamaz: yarın config'e eklenen bir varsayılan,
+// karşılığı bir modülde dursa bile testsiz kalırdı — üstelik sessizce, çünkü
+// EKSİK bir iddia yanlış bir iddia gibi testi düşürmez, hiç ses çıkarmaz. Bu,
+// [TestSaglayiciKayitAdlariUyusuyor] godoc'unda anlatılan dördüncü sağlayıcı
+// vakasında bir kez YAŞANMIŞTIR.
+//
+// Bu denetim o alışkanlığın yerini alır: kuralı zorlayan şey artık altı yerde
+// tekrarlanan bir dikkat değil, eksik kalamayan tek bir gezintidir.
+//
+// # Kapsam neden "dışa açık her sabit", neden "Default*" değil
+//
+// Ada göre süzmek, kuralı gene ELLE uygulamak olurdu: [config.BackendRedis] ya
+// da [config.MinBootstrapPasswordLen] gibi Default ile başlamayan sabitler de
+// pekâlâ başka bir paketteki değerin tekrarıdır (ikincisi gerçekten öyledir,
+// bkz. [TestTohumParolaTabaniAuthinUstunde]). Yarın "SeedAdminEmail" diye bir
+// sabit eklenirse ön ek kuralı onu sessizce dışarıda bırakırdı. Dışa açık
+// olmak yeterli ve doğru ölçüttür: bir sabit yalnızca BAŞKA bir paket onu
+// okuyacaksa dışa açılır, yani dışa açıklık zaten "paket dışında bir ucu var"
+// demektir.
+//
+// var bildirimleri de gezilir. Bugün config'te dışa açık bir var yoktur; yine
+// de bakılır, çünkü sabit yerine değişken yazmak kuralın dışına çıkmanın en
+// ucuz yoludur ve o kaçış yolu bilinçli bir karar değil, bir dalgınlık olurdu.
+//
+// # Kapsam nasıl ölçülür
+//
+// "İddia edilmiş" demek, adın internal/arch'taki bir Test* GÖVDESİNDE
+// config.<Ad> biçiminde geçmesi demektir. Ölçüt AST'dir, metin değil: godoc'ta
+// [config.DefaultFileProvider] diye ANMAK kapsam saymaz. Saysaydı, sabiti bir
+// yorumda anan herkes denetimi susturabilirdi — ve yorumda anılan bir değer
+// hiçbir zaman karşılaştırılmaz.
+//
+// Ölçüt "değer gerçekten karşılaştırılıyor mu" kadar dar DEĞİLDİR; bir testin
+// sabiti okuyup hiçbir şey iddia etmemesi teknik olarak mümkündür. Daha darı
+// (örn. assert çağrısının argümanı olma şartı) iddianın BİÇİMİNİ sabitler ve
+// testi ifade tanımaya dönüştürürdü; buradaki ölçüt niyeti değil, BAĞI arar:
+// sabit bir denetimin gözünün önünde olsun yeter — çünkü ayrışma anında düşecek
+// olan da o denetimdir.
+func TestConfigSabitleriSimetriIddiasinaBagli(t *testing.T) {
+	t.Parallel()
+
+	sabitler := disaAcikConfigSabitleri(t)
+	iddialar := simetriIddiasindakiSabitler(t)
+
+	for _, ad := range slices.Sorted(maps.Keys(sabitler)) {
+		if _, iddiaVar := iddialar[ad]; iddiaVar {
+			continue
+		}
+		if gerekce, muaf := simetrisizConfigSabitleri[ad]; muaf {
+			t.Logf("config.%s modül tarafında karşılıksız: %s", ad, gerekce)
+			continue
+		}
+		t.Errorf("config.%s (%s) hiçbir simetri iddiasında GEÇMİYOR.\n"+
+			"Çekirdek modülleri import edemez (Prensip 2.4), bu yüzden dışa açık bir "+
+			"config sabiti ya başka bir paketteki değerin ELLE tekrarıdır ya da hiçbir "+
+			"yerde eşi olmayan tek kaynaktır. İlkiyse ayrışması derleme zamanında "+
+			"görünmez ve çalışma zamanında da çoğu kez sessizdir; ikinciyse bunu "+
+			"YAZMAK gerekir.\n"+
+			"Yapılacak: ya %s/ altındaki bir Test* gövdesinde eşiyle karşılaştırın, "+
+			"ya da simetrisizConfigSabitleri'ne GEREKÇESİYLE ekleyin.",
+			ad, depoYolu(sabitler[ad].String()), archDizini)
+	}
+
+	bayatMuafiyetleriDenetle(t, simetrisizConfigSabitleri, sabitler,
+		"config paketinin dışa açık bir sabiti", iddialar, archDizini)
+}
+
+// disaAcikConfigSabitleri config paketinin dışa açık const ve var adlarını
+// kaynaktan okuyup bildirim konumlarıyla döner.
+//
+// Kaynak ayrıştırılır çünkü Go'da sabitler çalışma zamanında YOKTUR: reflect
+// bir paketin sabit listesini veremez, derleyici onları kullanım yerine gömer.
+// Kuralı yansımayla zorlamanın yolu olmadığı için gezinti derleyicinin gördüğü
+// tek yere, kaynağın kendisine bakar.
+func disaAcikConfigSabitleri(t *testing.T) map[string]token.Position {
+	t.Helper()
+
+	fset := token.NewFileSet()
+	sabitler := map[string]token.Position{}
+
+	for _, dosya := range ayristir(t, fset, filepath.Join(repoRoot, configDizini), false) {
+		for _, decl := range dosya.agac.Decls {
+			gen, ok := decl.(*ast.GenDecl)
+			if !ok || (gen.Tok != token.CONST && gen.Tok != token.VAR) {
+				continue
+			}
+			for _, spec := range gen.Specs {
+				deger, ok := spec.(*ast.ValueSpec)
+				if !ok {
+					continue
+				}
+				for _, ad := range deger.Names {
+					if !ad.IsExported() {
+						continue
+					}
+					sabitler[ad.Name] = fset.Position(ad.Pos())
+				}
+			}
+		}
+	}
+
+	require.NotEmpty(t, sabitler,
+		"%s içinde hiç dışa açık sabit bulunamadı; gezinti bozulmuş olmalı — "+
+			"hiçbir şey bulamayan bir denetim boşlukta yeşil kalır", configDizini)
+
+	return sabitler
+}
+
+// simetriIddiasindakiSabitler internal/arch'taki Test* gövdelerinde
+// config.<Ad> biçiminde geçen dışa açık adları konumlarıyla döner.
+//
+// Yalnızca Test* gövdelerine bakılır: paket düzeyindeki bir bildirim (örneğin
+// bir tablo değişkeni) hiçbir koşuda değerlendirilmeyebilir, oysa iddianın
+// değeri KOŞUYOR olmasındadır. Yardımcı fonksiyonlar da kapsam dışıdır; bir
+// yardımcı yalnızca çağrıldığında bir şey iddia eder ve çağrı zincirini
+// izlemek, denetimi tip denetleyicisi yazmaya doğru sürüklerdi — buradaki
+// yardımcılar sabitleri zaten çağıranından PARAMETRE olarak alır
+// (bkz. [varsayilanSaglayiciIddiasi]), yani ad çağrı yerinde görünür.
+func simetriIddiasindakiSabitler(t *testing.T) map[string]token.Position {
+	t.Helper()
+
+	fset := token.NewFileSet()
+	configYolu := modulePath + "/" + configDizini
+	iddialar := map[string]token.Position{}
+	denetimBulundu := false
+
+	for _, dosya := range ayristir(t, fset, filepath.Join(repoRoot, archDizini), true) {
+		takmaAd := ""
+		for ad, yol := range dosya.importlar {
+			if yol == configYolu {
+				takmaAd = ad
+				break
+			}
+		}
+
+		for _, decl := range dosya.agac.Decls {
+			fn, ok := decl.(*ast.FuncDecl)
+			if !ok || fn.Body == nil || fn.Recv != nil {
+				continue
+			}
+			if !strings.HasPrefix(fn.Name.Name, "Test") {
+				continue
+			}
+			// Dışlanan testin GERÇEKTEN bulunduğu, config'i import etmeyen
+			// dosyalarda da aranır: dışlamanın doğruluğu import'a bağlı
+			// olmamalıdır.
+			if fn.Name.Name == simetriDenetimiAdi {
+				denetimBulundu = true
+				continue
+			}
+			if takmaAd == "" {
+				continue
+			}
+
+			ast.Inspect(fn.Body, func(dugum ast.Node) bool {
+				secici, ok := dugum.(*ast.SelectorExpr)
+				if !ok {
+					return true
+				}
+				paket, ok := secici.X.(*ast.Ident)
+				if !ok || paket.Name != takmaAd || !secici.Sel.IsExported() {
+					return true
+				}
+				if _, gorulduMu := iddialar[secici.Sel.Name]; !gorulduMu {
+					iddialar[secici.Sel.Name] = fset.Position(secici.Sel.Pos())
+				}
+
+				return true
+			})
+		}
+	}
+
+	require.NotEmpty(t, iddialar,
+		"%s içinde hiç config.<Ad> kullanımı bulunamadı; tarama bozulmuş olmalı — "+
+			"boş bir kapsam kümesi, TÜM sabitleri iddiasız gösterip denetimi "+
+			"gürültüye boğardı", archDizini)
+
+	require.True(t, denetimBulundu,
+		"%s içinde %q adında bir test YOK; simetriDenetimiAdi bayatlamış olmalı.\n"+
+			"Sabit, denetimin KENDİ adının elle tekrarıdır — yani bu dosyanın "+
+			"kapatmaya çalıştığı sınıfın bir örneği. Ad ayrıştığında dışlama boşa "+
+			"düşer ve denetim kendi gövdesindeki config kullanımlarını kapsam "+
+			"sayarak kendini sessizce onaylamaya başlar.", archDizini, simetriDenetimiAdi)
+
+	return iddialar
+}
+
+// varsayilanSaglayiciIddiasi bir sağlayıcı ailesinin ÜÇ ucunun aynı kimliği
+// gösterdiğini doğrular: config'in varsayılanı, modülün varsayılanı ve
+// sağlayıcının kendi kimliği.
+//
+// Üçüncü uç zinciri kapatır. Yalnızca config ile modülü karşılaştırmak, ikisi
+// BİRLİKTE kayarsa (aynı yanlış değere) sessiz kalırdı; sağlayıcının kendi
+// kimliği ise kayıt anahtarının ta kendisidir, yani çalışma zamanında aranan
+// addır.
+func varsayilanSaglayiciIddiasi(t *testing.T, aile, saglayiciID, configVarsayilani, modulVarsayilani string) {
+	t.Helper()
+
+	assert.Equal(t, saglayiciID, configVarsayilani,
+		"config'in varsayılan %s sağlayıcısı, modülün kutudan çıkan sağlayıcısı olmalı", aile)
+	assert.Equal(t, saglayiciID, modulVarsayilani,
+		"%s modülünün varsayılanı da aynı sağlayıcı olmalı", aile)
 }

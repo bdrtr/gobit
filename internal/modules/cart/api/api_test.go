@@ -129,12 +129,90 @@ func (f *fakeCarts) RemoveShippingMethod(_ context.Context, cartID, methodID str
 	return f.err
 }
 
-// yeniSunucu sahte servise bağlı bir router kurar.
+// fakePricing api.LinePricing'in test karşılığıdır.
+//
+// Sahte hiçbir fiyat HESAPLAMAZ; testin sınadığı şey handler'ın fiyatı KENDİ
+// belirlemediği, akışa bıraktığıdır. Kaydedilen argümanlar tam olarak bunu
+// görünür kılar: gövdede fiyat alanı olmadığı için akışa geçirilecek bir fiyat
+// da yoktur.
+type fakePricing struct {
+	lineID  string
+	removed bool
+	err     error
+
+	// Son çağrının argümanları.
+	gotCartID    string
+	gotVariantID string
+	gotLineID    string
+	gotQuantity  int64
+	gotMetadata  json.RawMessage
+	calls        int
+}
+
+// Sahtenin handler'ın beklediği yüzeyi karşıladığı derleme zamanında doğrulanır.
+var _ api.LinePricing = (*fakePricing)(nil)
+
+// AddPricedLineItem satırın kimliğini döner ve argümanları kaydeder.
+func (f *fakePricing) AddPricedLineItem(
+	_ context.Context,
+	cartID, variantID string,
+	quantity int64,
+	metadata json.RawMessage,
+) (string, error) {
+	f.calls++
+	f.gotCartID, f.gotVariantID, f.gotQuantity, f.gotMetadata = cartID, variantID, quantity, metadata
+	return f.lineID, f.err
+}
+
+// SetLineItemQuantity adedi kaydeder ve satırın kaldırılıp kaldırılmadığını
+// döner.
+func (f *fakePricing) SetLineItemQuantity(
+	_ context.Context,
+	cartID, lineItemID string,
+	quantity int64,
+) (bool, error) {
+	f.calls++
+	f.gotCartID, f.gotLineID, f.gotQuantity = cartID, lineItemID, quantity
+	return f.removed, f.err
+}
+
+// fakeCheckout api.CartCompletion'ın test karşılığıdır.
+type fakeCheckout struct {
+	response json.RawMessage
+	err      error
+
+	// got akışa gönderilen ham istektir; e-postanın SEPETTEN geldiği ancak
+	// buradan görülebilir.
+	got   json.RawMessage
+	calls int
+}
+
+// Sahtenin handler'ın beklediği yüzeyi karşıladığı derleme zamanında doğrulanır.
+var _ api.CartCompletion = (*fakeCheckout)(nil)
+
+// CompleteCartJSON isteği kaydeder ve betiklenen yanıtı döner.
+func (f *fakeCheckout) CompleteCartJSON(_ context.Context, request json.RawMessage) (json.RawMessage, error) {
+	f.calls++
+	f.got = request
+	return f.response, f.err
+}
+
+// yeniSunucu sahte servise ve BOŞ sahte akışlara bağlı bir router kurar.
+//
+// Akışlara dokunmayan testler için yeterlidir; akışın argümanlarını ya da
+// yokluğunu sınayan testler [yeniAkisliSunucu] ile kendi sahtelerini verir.
 func yeniSunucu(t *testing.T, svc *fakeCarts) http.Handler {
 	t.Helper()
 
+	return yeniAkisliSunucu(t, svc, api.Flows{Pricing: &fakePricing{}, Checkout: &fakeCheckout{}})
+}
+
+// yeniAkisliSunucu verilen servis ve akışlarla bir router kurar.
+func yeniAkisliSunucu(t *testing.T, svc *fakeCarts, akislar api.Flows) http.Handler {
+	t.Helper()
+
 	r := chi.NewRouter()
-	api.New(svc).Routes(r)
+	api.New(svc, akislar).Routes(r)
 	return r
 }
 
@@ -308,20 +386,95 @@ func TestBosSepetteCocukAlanlariDizidir(t *testing.T) {
 	assert.Equal(t, []any{}, data["shipping_methods"])
 }
 
-// TestAddLineItem201 satır eklemenin 201 döndürdüğünü ve girdiyi servise
+// sepetliSatir sepet ayrıntısında tek bir satır taşıyan sahte servis üretir.
+//
+// Satırın tutarları DOLUDUR ve bilinçlidir: handler yanıtı akıştan dönen
+// kimlikle sepetten OKUR, yani yanıttaki fiyat sepette yazılı olandır.
+func sepetliSatir() *fakeCarts {
+	return &fakeCarts{detail: models.CartDetail{
+		Cart: models.Cart{ID: "cart_1", CurrencyCode: "TRY", Email: "a@b.c"},
+		Items: []models.LineItem{{
+			ID: "li_1", CartID: "cart_1", VariantID: "var_1", Title: "Tişört",
+			Quantity: 3, UnitPrice: 1000, Subtotal: 3000, Total: 3000,
+		}},
+	}}
+}
+
+// TestAddLineItem201 satır eklemenin 201 döndürdüğünü ve isteği AKIŞA
 // aktardığını doğrular.
+//
+// Handler'ın servisin AddLineItem'ını çağırmaması iddianın yarısıdır: satırı
+// yazan taraf akıştır, çünkü fiyatı bilen tek taraf odur.
 func TestAddLineItem201(t *testing.T) {
-	svc := &fakeCarts{item: models.LineItem{ID: "li_1", CartID: "cart_1", VariantID: "var_1", Quantity: 3}}
-	h := yeniSunucu(t, svc)
+	svc := sepetliSatir()
+	akis := &fakePricing{lineID: "li_1"}
+	h := yeniAkisliSunucu(t, svc, api.Flows{Pricing: akis})
 
 	rec := istek(t, h, http.MethodPost, "/store/v1/carts/cart_1/line-items",
-		`{"variant_id":"var_1","title":"Tişört","quantity":3,"unit_price":1000}`)
+		`{"variant_id":"var_1","quantity":3,"metadata":{"not":"hediye"}}`)
 
 	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
-	assert.Equal(t, "cart_1", svc.gotCartID)
-	assert.Equal(t, "var_1", svc.addInput.VariantID)
-	assert.Equal(t, int64(3), svc.addInput.Quantity)
-	assert.Equal(t, int64(1000), svc.addInput.UnitPrice)
+	assert.Equal(t, 1, akis.calls, "satırı akış yazmalı")
+	assert.Equal(t, "cart_1", akis.gotCartID)
+	assert.Equal(t, "var_1", akis.gotVariantID)
+	assert.Equal(t, int64(3), akis.gotQuantity)
+	assert.JSONEq(t, `{"not":"hediye"}`, string(akis.gotMetadata),
+		"metadata gerçekten istemcinin bilgisidir ve akışa taşınmalı")
+	assert.Empty(t, svc.addInput.VariantID, "satır servise DOĞRUDAN yazılmamalı")
+
+	// Yanıt sepetten okunur: gösterilen fiyat, sepette yazılı olandır.
+	data := nesne(t, govde(t, rec)["data"])
+	assert.Equal(t, "li_1", data["id"])
+	assert.InDelta(t, 1000, data["unit_price"], 0.0)
+}
+
+// TestAddLineItemIstemciFiyatiniReddeder vitrinin fiyat ve başlık KABUL
+// ETMEDİĞİNİ doğrular.
+//
+// Bulunan arıza tam olarak buydu: gövdedeki "unit_price" servise olduğu gibi
+// yazılıyordu ve nihai fiyatı yazacağı söylenen workflow hiçbir kurulumda
+// kablolanmamıştı. Vitrinin kimliği publishable anahtardır — yani bu, herkese
+// açık bir "kendi fiyatını yaz" ucuydu.
+//
+// Alanların sessizce YOK SAYILMASI yetmezdi: eski bir istemci gönderdiğini
+// sanır, sunucu başka bir fiyat yazardı. Gövde tanınmayan alanı REDDEDER.
+func TestAddLineItemIstemciFiyatiniReddeder(t *testing.T) {
+	for ad, govdeMetni := range map[string]string{
+		"fiyat":   `{"variant_id":"var_1","quantity":3,"unit_price":1}`,
+		"baslik":  `{"variant_id":"var_1","quantity":3,"title":"Bedava Tişört"}`,
+		"ikisi":   `{"variant_id":"var_1","quantity":3,"title":"X","unit_price":1}`,
+		"sifirla": `{"variant_id":"var_1","quantity":3,"unit_price":0}`,
+	} {
+		t.Run(ad, func(t *testing.T) {
+			svc := sepetliSatir()
+			akis := &fakePricing{lineID: "li_1"}
+			h := yeniAkisliSunucu(t, svc, api.Flows{Pricing: akis})
+
+			rec := istek(t, h, http.MethodPost, "/store/v1/carts/cart_1/line-items", govdeMetni)
+
+			assert.Equal(t, http.StatusUnprocessableEntity, rec.Code, rec.Body.String())
+			assert.Zero(t, akis.calls, "reddedilen istek akışa hiç ulaşmamalı")
+			assert.Empty(t, svc.addInput.VariantID, "servise satır yazılmamalı")
+		})
+	}
+}
+
+// TestAddLineItemFiyatlandiriciYokkenSatirEklenmez fiyat yolunun KAPALI
+// arızalandığını doğrular.
+//
+// Bu, b2b harcama kuralının tersidir ve fark bilinçlidir: b2b kurulu değilse
+// "limit yok" doğru cevaptır, ama fiyatlandırıcı yoksa "fiyat yok" satırı
+// yazmak sessizce bedava mal satmaktır. Tek doğru sonuç, satırın HİÇ
+// eklenmemesidir.
+func TestAddLineItemFiyatlandiriciYokkenSatirEklenmez(t *testing.T) {
+	svc := sepetliSatir()
+	h := yeniAkisliSunucu(t, svc, api.Flows{})
+
+	rec := istek(t, h, http.MethodPost, "/store/v1/carts/cart_1/line-items",
+		`{"variant_id":"var_1","quantity":3}`)
+
+	assert.Equal(t, http.StatusInternalServerError, rec.Code, rec.Body.String())
+	assert.Empty(t, svc.addInput.VariantID, "fiyatı bilinmeyen satır sepete yazılmamalı")
 }
 
 // TestAddLineItemAdetZorunlu gövdede adet yoksa isteğin reddedildiğini
@@ -331,27 +484,159 @@ func TestAddLineItem201(t *testing.T) {
 // göndermiş sayılırdı.
 func TestAddLineItemAdetZorunlu(t *testing.T) {
 	svc := &fakeCarts{}
-	h := yeniSunucu(t, svc)
+	akis := &fakePricing{}
+	h := yeniAkisliSunucu(t, svc, api.Flows{Pricing: akis})
 
 	rec := istek(t, h, http.MethodPost, "/store/v1/carts/cart_1/line-items",
-		`{"variant_id":"var_1","title":"Tişört"}`)
+		`{"variant_id":"var_1"}`)
 
 	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code, rec.Body.String())
-	assert.Empty(t, svc.addInput.VariantID, "servis çağrılmamalı")
+	assert.Zero(t, akis.calls, "akış çağrılmamalı")
 }
 
-// TestUpdateLineItemAdetYazar adet güncellemenin doğru yola ve parametrelere
-// bağlandığını doğrular.
+// TestUpdateLineItemAdetYazar adet güncellemenin AKIŞA bağlandığını doğrular.
+//
+// Adet fiyatı değiştirebilir (pricing birim fiyatı adet aralığına göre seçer),
+// bu yüzden yol servise değil akışa gider: servise gitseydi satır yeni adetle
+// ama eski kademenin fiyatıyla kalırdı.
 func TestUpdateLineItemAdetYazar(t *testing.T) {
-	svc := &fakeCarts{item: models.LineItem{ID: "li_1", Quantity: 5}}
-	h := yeniSunucu(t, svc)
+	svc := sepetliSatir()
+	akis := &fakePricing{}
+	h := yeniAkisliSunucu(t, svc, api.Flows{Pricing: akis})
 
 	rec := istek(t, h, http.MethodPatch, "/store/v1/carts/cart_1/line-items/li_1", `{"quantity":5}`)
 
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
-	assert.Equal(t, "cart_1", svc.gotCartID)
-	assert.Equal(t, "li_1", svc.gotLineID)
-	assert.Equal(t, int64(5), svc.gotQuantity)
+	assert.Equal(t, "cart_1", akis.gotCartID)
+	assert.Equal(t, "li_1", akis.gotLineID)
+	assert.Equal(t, int64(5), akis.gotQuantity)
+	assert.Zero(t, svc.gotQuantity, "adet servise DOĞRUDAN yazılmamalı")
+}
+
+// TestUpdateLineItemSifirAdetKaldirir sıfır adedin satırı kaldırdığını ve
+// gövdesiz 204 döndüğünü doğrular.
+//
+// Kaldırılmış bir satırın kaydını yanıtta sunmak, istemciye artık var olmayan
+// bir kaynağı vermek olurdu.
+func TestUpdateLineItemSifirAdetKaldirir(t *testing.T) {
+	svc := sepetliSatir()
+	akis := &fakePricing{removed: true}
+	h := yeniAkisliSunucu(t, svc, api.Flows{Pricing: akis})
+
+	rec := istek(t, h, http.MethodPatch, "/store/v1/carts/cart_1/line-items/li_1", `{"quantity":0}`)
+
+	require.Equal(t, http.StatusNoContent, rec.Code, rec.Body.String())
+	assert.Empty(t, rec.Body.String())
+	assert.Equal(t, int64(0), akis.gotQuantity)
+}
+
+// TestCompleteCartSiparisUretir tamamlama ucunun akışı çağırdığını ve siparişi
+// döndürdüğünü doğrular.
+func TestCompleteCartSiparisUretir(t *testing.T) {
+	svc := sepetliSatir()
+	akis := &fakeCheckout{response: json.RawMessage(
+		`{"order_id":"order_1","cart_id":"cart_1","currency_code":"TRY","amount":3600}`)}
+	h := yeniAkisliSunucu(t, svc, api.Flows{Checkout: akis})
+
+	rec := istek(t, h, http.MethodPost, "/store/v1/carts/cart_1/complete",
+		`{"payment_provider_id":"test","payment_data":{"token":"tok_1"},"expected_total":3600}`)
+
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.Equal(t, 1, akis.calls)
+
+	data := nesne(t, govde(t, rec)["data"])
+	assert.Equal(t, "order_1", data["order_id"])
+	assert.InDelta(t, 3600, data["total"], 0.0)
+
+	// Akışa giden istek: sepet kimliği yoldan, e-posta SEPETTEN gelir.
+	gonderilen := map[string]any{}
+	require.NoError(t, json.Unmarshal(akis.got, &gonderilen))
+	assert.Equal(t, "cart_1", gonderilen["cart_id"])
+	assert.Equal(t, "test", gonderilen["payment_provider_id"])
+	assert.InDelta(t, 3600, gonderilen["expected_total"], 0.0)
+	assert.Equal(t, "a@b.c", gonderilen["email"],
+		"iletişim adresi sepetin verisidir; istemciden alınmaz")
+}
+
+// TestCompleteCartEpostaGovdedenAlinmaz e-postanın istek gövdesinde
+// TAŞINAMADIĞINI doğrular.
+//
+// Alan kabul edilseydi sipariş, sepette görünenden başka bir adrese
+// bağlanabilirdi; adresin tek kaynağı sepettir.
+func TestCompleteCartEpostaGovdedenAlinmaz(t *testing.T) {
+	svc := sepetliSatir()
+	akis := &fakeCheckout{}
+	h := yeniAkisliSunucu(t, svc, api.Flows{Checkout: akis})
+
+	rec := istek(t, h, http.MethodPost, "/store/v1/carts/cart_1/complete",
+		`{"payment_provider_id":"test","expected_total":3600,"email":"saldirgan@x.y"}`)
+
+	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code, rec.Body.String())
+	assert.Zero(t, akis.calls, "reddedilen istek akışa ulaşmamalı")
+}
+
+// TestCompleteCartLokasyonGovdedenAlinmaz depo seçiminin istemciye
+// bırakılmadığını doğrular.
+//
+// Hangi depodan çıkılacağı bir kargo kararıdır; alanın kabul edilmesi hem stok
+// topolojisini sızdırır hem de siparişin nereden çıkacağını müşteriye
+// bırakırdı.
+func TestCompleteCartLokasyonGovdedenAlinmaz(t *testing.T) {
+	svc := sepetliSatir()
+	akis := &fakeCheckout{}
+	h := yeniAkisliSunucu(t, svc, api.Flows{Checkout: akis})
+
+	rec := istek(t, h, http.MethodPost, "/store/v1/carts/cart_1/complete",
+		`{"payment_provider_id":"test","expected_total":3600,"location_id":"sloc_1"}`)
+
+	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code, rec.Body.String())
+	assert.Zero(t, akis.calls)
+}
+
+// TestCompleteCartOnaylananToplamZorunlu expected_total'ın eksikliğinin
+// reddedildiğini doğrular.
+//
+// Opsiyonel olsaydı alanı unutan her istemci, "gördüğün tutarla çekilen tutar
+// aynı mı" korumasını sessizce kapatırdı — kural tanımlı, uygulandığı yer yok.
+func TestCompleteCartOnaylananToplamZorunlu(t *testing.T) {
+	svc := sepetliSatir()
+	akis := &fakeCheckout{}
+	h := yeniAkisliSunucu(t, svc, api.Flows{Checkout: akis})
+
+	rec := istek(t, h, http.MethodPost, "/store/v1/carts/cart_1/complete",
+		`{"payment_provider_id":"test"}`)
+
+	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code, rec.Body.String())
+	assert.Zero(t, akis.calls, "onaylanan toplam bildirilmeden akış çalışmamalı")
+}
+
+// TestCompleteCartAkisYokkenTamamlanmaz akış bağlı değilken sepetin
+// tamamlanmadığını doğrular.
+func TestCompleteCartAkisYokkenTamamlanmaz(t *testing.T) {
+	h := yeniAkisliSunucu(t, sepetliSatir(), api.Flows{})
+
+	rec := istek(t, h, http.MethodPost, "/store/v1/carts/cart_1/complete",
+		`{"payment_provider_id":"test","expected_total":3600}`)
+
+	assert.Equal(t, http.StatusInternalServerError, rec.Code, rec.Body.String())
+}
+
+// TestCompleteCartAkisHatasiOlduguGibiDoner akışın hata SINIFININ korunduğunu
+// doğrular.
+//
+// Onaylanan tutar ile hesaplanan tutar ayrıştığında akış errors.Conflict döner
+// ve istemcinin bunu 409 olarak görmesi gerekir: 500 görseydi "sunucu bozuk"
+// diye yeniden denerdi, oysa yapması gereken müşteriye yeni tutarı
+// onaylatmaktır.
+func TestCompleteCartAkisHatasiOlduguGibiDoner(t *testing.T) {
+	akis := &fakeCheckout{err: errors.Conflict("checkout_workflow_total_mismatch",
+		"onaylanan toplam ile hesaplanan toplam uyuşmuyor")}
+	h := yeniAkisliSunucu(t, sepetliSatir(), api.Flows{Checkout: akis})
+
+	rec := istek(t, h, http.MethodPost, "/store/v1/carts/cart_1/complete",
+		`{"payment_provider_id":"test","expected_total":1}`)
+
+	assert.Equal(t, http.StatusConflict, rec.Code, rec.Body.String())
 }
 
 // TestRemoveLineItem204 satır kaldırmanın gövdesiz 204 döndürdüğünü doğrular.
@@ -461,17 +746,24 @@ func TestAdminYazmaUcuYok(t *testing.T) {
 	}
 }
 
-// TestToplamUclariHTTPyeAcilmaz toplam yazma ve sepet tamamlama uçlarının
-// BULUNMADIĞINI doğrular.
+// TestToplamUclariHTTPyeAcilmaz servisin workflow yüzeyinin HTTP'ye
+// AÇILMADIĞINI doğrular.
 //
-// Açık olsalardı bir istemci sepetin tutarını kendi yazabilir ya da ödeme
-// yapmadan sepeti kapatabilirdi; ikisi de workflow yüzeyidir (ADR 0006).
+// [service.Service.SetTotals] ve [service.Service.MarkCompleted] hâlâ route
+// almaz: açık olsalardı bir istemci sepetin tutarını kendi yazabilir ya da
+// ödeme yapmadan sepeti kapatabilirdi.
+//
+// Vitrindeki /complete bu kuralın istisnası DEĞİLDİR ve bu yüzden listede
+// yoktur: o uç sepeti "tamamlandı" damgalamaz, complete_cart saga'sını
+// çalıştırır — stok ayrılır, sipariş açılır, ödeme tahsil edilir ve sepet
+// ancak ONDAN SONRA, akış tarafından kapatılır. Kapatma yetkisi hâlâ HTTP'de
+// değil akıştadır (bkz. [TestCompleteCartSiparisUretir]). Yönetim tarafında
+// karşılığı yoktur: sepeti tamamlayan taraf müşteridir.
 func TestToplamUclariHTTPyeAcilmaz(t *testing.T) {
 	h := yeniSunucu(t, &fakeCarts{})
 
 	for _, path := range []string{
 		"/store/v1/carts/cart_1/totals",
-		"/store/v1/carts/cart_1/complete",
 		"/admin/v1/carts/cart_1/totals",
 		"/admin/v1/carts/cart_1/complete",
 	} {

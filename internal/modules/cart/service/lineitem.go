@@ -18,9 +18,19 @@ type AddLineItemInput struct {
 	Title string
 	// Quantity eklenecek adettir; POZİTİF olmalıdır.
 	Quantity int64
-	// UnitPrice birim fiyattır (minor unit); opsiyoneldir. Nihai fiyatı
-	// calculate_totals workflow'u pricing'den alıp [Service.SetTotals] ile
-	// yazar; buradaki değer yalnızca satırın ilk hâlidir.
+	// UnitPrice birim fiyattır (minor unit).
+	//
+	// Değeri İSTEMCİ VERMEZ ve veremez: vitrin gövdesinde fiyat alanı yoktur
+	// (bkz. api paketindeki addLineItemRequest) ve satırı açan tek yol,
+	// fiyatı pricing modülünden alan add_line_item akışıdır. Burada
+	// opsiyonel görünmesi servisin bir eksikliği değil sınırıdır — modül
+	// fiyatın DOĞRU olup olmadığını bilemez, yalnızca aralığını denetler; o
+	// yüzden fiyat yetkisi çağıranın kim olduğuyla korunur ve tek çağıran
+	// akıştır.
+	//
+	// Nihai değeri yine akış yazar: satır eklendikten hemen sonra koşan hesap
+	// turu tüm satırları güncel adetle yeniden fiyatlar ve sonucu
+	// [Service.SetTotals] ile yazar.
 	UnitPrice int64
 	// Metadata çağıranın serbest ek verisidir.
 	Metadata map[string]any

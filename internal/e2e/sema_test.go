@@ -161,7 +161,7 @@ func anlatilanUclar(t *testing.T) []string {
 // Ham gövde de dönülür ve gerekçesi tekniktir: "alan hiç yazılmamış" ile
 // "null yazılmış" ayrımı ve belgenin İÇİNDE ham kayıt kimliği aranması ancak
 // metin üzerinde yapılabilir.
-func semaBelgesi(t *testing.T) ([]byte, map[string]any) {
+func semaBelgesi(t *testing.T) (ham []byte, belge map[string]any) {
 	t.Helper()
 
 	istek := httptest.NewRequest(http.MethodGet, semaYolu, http.NoBody)
@@ -171,9 +171,8 @@ func semaBelgesi(t *testing.T) ([]byte, map[string]any) {
 	require.Equal(t, http.StatusOK, kayit.Code,
 		"şema ucu 200 dönmeli; gövde: %s", kayit.Body.String())
 
-	ham := kayit.Body.Bytes()
+	ham = kayit.Body.Bytes()
 
-	var belge map[string]any
 	require.NoError(t, json.Unmarshal(ham, &belge),
 		"şema çözülemedi; gövde: %s", string(ham))
 
@@ -392,7 +391,7 @@ func refleriTopla(dugum any, toplam *[]string) {
 }
 
 // sepetOlustur vitrin ucundan GERÇEK bir sepet açar; kimliğini ve gövdesini döner.
-func sepetOlustur(t *testing.T) (string, []byte) {
+func sepetOlustur(t *testing.T) (sepetID string, govde []byte) {
 	t.Helper()
 
 	istekGovdesi, err := json.Marshal(map[string]string{
@@ -411,7 +410,7 @@ func sepetOlustur(t *testing.T) (string, []byte) {
 	require.Equal(t, http.StatusCreated, kayit.Code,
 		"sepet oluşturulmalı; gövde: %s", kayit.Body.String())
 
-	govde := kayit.Body.Bytes()
+	govde = kayit.Body.Bytes()
 
 	var zarf struct {
 		Data struct {

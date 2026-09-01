@@ -20,10 +20,24 @@
 // # Dışarıya açtığı yüzeyler
 //
 //   - "cart.service" — modüller arası çağrılar ve workflow'lar için servis.
-//     Faz 6'daki complete_cart saga'sı sepeti buradan kapatır.
+//   - "cart.interop" — akışların kullandığı İLKEL yüzey (ADR 0006).
+//     complete_cart saga'sı sepeti buradan kapatır.
 //   - "cart.query" — Query katmanına açılan okuma sağlayıcısı (ADR 0004).
-//   - /store/v1/carts … — müşteri API'si (sepeti kuran ve değiştiren yüzey).
+//   - /store/v1/carts … — müşteri API'si (sepeti kuran, değiştiren ve
+//     SİPARİŞE ÇEVİREN yüzey).
 //   - /admin/v1/carts — yönetim API'si (YALNIZCA okuma).
+//
+// # Kullandığı akışlar
+//
+// Vitrinin üç ucu — satır ekleme, satır adedi güncelleme ve sepeti tamamlama —
+// modüller arası AKIŞLARA devredilmiştir; modül onları container'dan
+// [LinePricingName] ve [CartCompletionName] adlarıyla, KENDİ paketinde
+// tanımladığı dar arayüzlerle çözer (ADR 0001/0006). Gerekçe: satırın fiyatı
+// pricing'in, başlığı kataloğun, sipariş ise order + payment + inventory'nin
+// verisidir ve bu modül hiçbirini bilmez.
+//
+// Fiyat yolu KAPALI arızalanır: akış çözülemezse satır eklenmez
+// (bkz. [linePricing]).
 //
 // # Bildirdiği linkler
 //
@@ -36,8 +50,10 @@ package cart
 import (
 	"context"
 	"embed"
+	"encoding/json"
 	"io/fs"
 	"log/slog"
+	"sync"
 
 	"github.com/go-chi/chi/v5"
 
@@ -72,6 +88,27 @@ const InteropName = ModuleName + ".interop"
 
 // ProviderName Query sağlayıcısının container'daki adıdır (ADR 0004).
 const ProviderName = service.EntityName + query.ProviderSuffix
+
+// LinePricingName satır fiyatlandırma akışının container'daki adıdır
+// (ADR 0001/0006).
+//
+// Ad internal/workflows/cart paketinindir ve burada DİZE olarak tekrarlanır;
+// modüller workflow paketlerini import edemez (ADR 0006 her iki yönde de) ve
+// tekrarın bedeli izolasyonun kabul edilen bedelidir. Aynı örüntü order
+// modülünün SpendingPolicyName sabitinde de kullanılır.
+//
+// Yazım hatası SESSİZ KALMAZ ve b2b'dekinin tersine bir degradasyona da yol
+// açmaz: ad çözülemezse satır ekleme ucu kapalı arızalanır
+// (bkz. [linePricing]). Adın tek doğruluk kaynağı sepet akışlarının
+// InteropName sabitidir.
+const LinePricingName = "workflows.cart.interop"
+
+// CartCompletionName sepet tamamlama akışının container'daki adıdır
+// (ADR 0001/0006).
+//
+// Ad internal/workflows/checkout paketinindir ve aynı gerekçeyle burada
+// tekrarlanır; adın tek doğruluk kaynağı o paketin InteropName sabitidir.
+const CartCompletionName = "workflows.checkout.interop"
 
 // svcDB veritabanı havuzunun container'daki adıdır.
 const svcDB = "core.db"
@@ -131,11 +168,13 @@ func (m *Module) Register(ctx context.Context, c *container.Container) error {
 			"%s modülü veritabanı havuzunu çözemedi (%q)", ModuleName, svcDB)
 	}
 
+	// Uygulama açılışta slog.SetDefault ile yapılandırılmış logger'ı kurar;
+	// modül ayrı bir logger kaydı aramaz.
+	log := slog.Default().With("modul", ModuleName)
+
 	svc, err := service.New(service.Options{
-		Repo: repository.New(pool.Pool()),
-		// Uygulama açılışta slog.SetDefault ile yapılandırılmış logger'ı kurar;
-		// modül ayrı bir logger kaydı aramaz.
-		Logger: slog.Default().With("modul", ModuleName),
+		Repo:   repository.New(pool.Pool()),
+		Logger: log,
 	})
 	if err != nil {
 		return errors.Wrap(err, errors.KindOf(err), codeSetupFailed,
@@ -158,7 +197,16 @@ func (m *Module) Register(ctx context.Context, c *container.Container) error {
 	}
 
 	m.svc = svc
-	m.handler = api.New(svc)
+	// Akışlar bu aşamada HENÜZ KAYITLI DEĞİLDİR ve olamazlar: akış, tüm
+	// modüllerin servislerini container'dan çözerek kurulur, yani Register
+	// döngüsünün TAMAMI bittikten sonra doğar. Handler ise akışa ihtiyaç duyar.
+	// Bağımlılık dairesi, çözümü İSTEK ANINA erteleyerek kırılır
+	// (bkz. [linePricing] ve [cartCompletion]); aynı kalıbı order modülü
+	// harcama limiti kuralı için uygular.
+	m.handler = api.New(svc, api.Flows{
+		Pricing:  &linePricing{c: c, log: log},
+		Checkout: &cartCompletion{c: c, log: log},
+	})
 	slog.Default().DebugContext(ctx, "cart modülü kaydedildi",
 		"servis", ServiceName, "saglayici", ProviderName)
 	return nil
@@ -205,4 +253,143 @@ func mustSub(files embed.FS, dir string) fs.FS {
 		panic("cart: gömülü migration dizini açılamadı: " + err.Error())
 	}
 	return sub
+}
+
+// linePricing satır fiyatlandırma akışını İLK KULLANIMDA çözen sarmalayıcıdır.
+//
+// # Neden tembel
+//
+// [module.Module] sözleşmesi Register sırasında başka modüllerin servislerinin
+// henüz kayıtlı olmayabileceğini söyler. Buradaki bağımlılık daha da geç
+// doğar: akış, TÜM modüllerin yüzeylerini container'dan çözerek kurulur, yani
+// Register döngüsü bittikten sonra — oysa handler Register sırasında kurulur.
+// Daire, çözümü ilk isteğe erteleyerek kırılır. Kayıt sırası böylece
+// önemsizleşir ve bileşim kökü akışları modüllerden SONRA kaydedebilir.
+//
+// # Neden KAPALI arızalanıyor
+//
+// Bu, order modülünün harcama limiti sarmalayıcısının (spendingPolicy)
+// TERSİDİR ve fark bilinçlidir. Orada ad kayıtlı değilse doğru cevap "limit
+// yok"tur: b2b kurulu olmayan bir mağazada harcama limiti diye bir kavram
+// yoktur. Burada ad kayıtlı değilse doğru cevap "fiyat yok" DEĞİLDİR —
+// fiyatı olmayan bir satırı sepete yazmak (ne istemcinin gönderdiği tutarla,
+// ne sıfırla) sessizce bedava mal satmak olurdu. Tek doğru sonuç, satırın HİÇ
+// EKLENMEMESİDİR; bu yüzden çözülemeyen ad da, yüzeyi karşılamayan kayıtlı bir
+// tip de HATA döndürür ve uç kapanır.
+//
+// Karar BİR KEZ verilir ve saklanır. Akışlar açılışta, ilk isteğten önce
+// kaydedilir; ilk çözümde bulunmayan bir ad sonraki isteklerde de
+// bulunmayacaktır ve her istekte yeniden denemek aynı hatayı sonsuza kadar
+// tekrar üretmekten başka bir şey yapmazdı.
+type linePricing struct {
+	c    *container.Container
+	log  *slog.Logger
+	once sync.Once
+	svc  api.LinePricing
+	err  error
+}
+
+// Sarmalayıcının handler'ın beklediği yüzeyi karşıladığı derleme zamanında
+// sabitlenir.
+var _ api.LinePricing = (*linePricing)(nil)
+
+// AddPricedLineItem sepete satır ekler ve satırın kimliğini döner.
+func (p *linePricing) AddPricedLineItem(
+	ctx context.Context,
+	cartID, variantID string,
+	quantity int64,
+	metadata json.RawMessage,
+) (string, error) {
+	p.once.Do(func() { p.resolve(ctx) })
+	if p.err != nil {
+		return "", p.err
+	}
+	return p.svc.AddPricedLineItem(ctx, cartID, variantID, quantity, metadata)
+}
+
+// SetLineItemQuantity satırın adedini yazar ve satırın kaldırılıp
+// kaldırılmadığını bildirir.
+func (p *linePricing) SetLineItemQuantity(
+	ctx context.Context,
+	cartID, lineItemID string,
+	quantity int64,
+) (bool, error) {
+	p.once.Do(func() { p.resolve(ctx) })
+	if p.err != nil {
+		return false, p.err
+	}
+	return p.svc.SetLineItemQuantity(ctx, cartID, lineItemID, quantity)
+}
+
+// resolve akışı container'dan çözer; sonucu bir kez saklar.
+//
+// # Hata sınıfı container'dan DEVRALINMAZ
+//
+// Sarmalama sınıfı sabit [errors.KindInternal]'dır; container'ın kendi sınıfı
+// (kayıtsız ad → KindNotFound, yanlış tipte kayıt → KindInvalid) olduğu gibi
+// geçirilmez. Sebep, o sınıfların hatanın MUHATABINI yanlış göstermesidir:
+// ikisi de istemcinin düzeltebileceği bir şey değil, SUNUCU YAPILANDIRMASI
+// arızasıdır.
+//
+// Devralınsaydı satır ekleme ucu 404 dönerdi. Üç ayrı bedeli vardır: istemciye
+// "böyle bir uç yok" der ve vitrini var olmayan bir yolu aramaya iter, 5xx
+// üzerinden kurulmuş uyarı zinciri hiç çalmaz, ara katmanlar da 404'ü
+// önbelleğe alıp arızayı kurulum düzeldikten SONRA da sürdürebilir. Yanlış
+// tipte kayıt ise 422 ile "gövden geçersiz" derdi; gövde kusursuz olsa bile.
+//
+// Operatörün ihtiyacı olan metin (hangi ad çözülemedi, neyin imkânsız olduğu)
+// hatada KORUNUR ve istemciye sızmaz: taşıma katmanı KindInternal gövdelerini
+// maskeler, gerçek zinciri yalnızca loga yazar (bkz. corehttp.WriteError).
+// İstemcinin gördüğü tek makine okunur alan [codeSetupFailed] kalır.
+func (p *linePricing) resolve(ctx context.Context) {
+	svc, err := container.Resolve[api.LinePricing](p.c, LinePricingName)
+	if err != nil {
+		p.err = errors.Wrap(err, errors.KindInternal, codeSetupFailed,
+			"%s modülü satır fiyatlandırma akışını çözemedi (%q); fiyatı sunucu "+
+				"belirlemeden satır eklenemez", ModuleName, LinePricingName)
+		return
+	}
+	p.svc = svc
+	p.log.InfoContext(ctx, "satır fiyatlandırma akışı bağlandı", "akis", LinePricingName)
+}
+
+// cartCompletion sepet tamamlama akışını İLK KULLANIMDA çözen sarmalayıcıdır.
+//
+// Tembelliğin ve kapalı arızalanmanın gerekçesi [linePricing] ile aynıdır;
+// burada daha da açıktır: akış yoksa sipariş, ödeme ve stok rezervasyonu da
+// yoktur ve "sepeti tamamlandı say" diye bir kestirme yol olamaz.
+type cartCompletion struct {
+	c    *container.Container
+	log  *slog.Logger
+	once sync.Once
+	svc  api.CartCompletion
+	err  error
+}
+
+// Sarmalayıcının handler'ın beklediği yüzeyi karşıladığı derleme zamanında
+// sabitlenir.
+var _ api.CartCompletion = (*cartCompletion)(nil)
+
+// CompleteCartJSON sepeti siparişe çevirir.
+func (p *cartCompletion) CompleteCartJSON(ctx context.Context, request json.RawMessage) (json.RawMessage, error) {
+	p.once.Do(func() { p.resolve(ctx) })
+	if p.err != nil {
+		return nil, p.err
+	}
+	return p.svc.CompleteCartJSON(ctx, request)
+}
+
+// resolve akışı container'dan çözer; sonucu bir kez saklar.
+//
+// Hata sınıfının container'dan devralınmama gerekçesi [linePricing.resolve]
+// godoc'undadır ve burada da aynen geçerlidir.
+func (p *cartCompletion) resolve(ctx context.Context) {
+	svc, err := container.Resolve[api.CartCompletion](p.c, CartCompletionName)
+	if err != nil {
+		p.err = errors.Wrap(err, errors.KindInternal, codeSetupFailed,
+			"%s modülü sepet tamamlama akışını çözemedi (%q)", ModuleName, CartCompletionName)
+		return
+	}
+	p.svc = svc
+	p.log.InfoContext(ctx, "sepet tamamlama akışı bağlandı", "akis", CartCompletionName)
 }

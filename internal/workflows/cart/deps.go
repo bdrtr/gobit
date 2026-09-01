@@ -176,7 +176,20 @@ type Carts interface {
 	// Aynı varyant zaten sepetteyse yeni satır açılmaz, var olan satırın adedi
 	// artar ve o satırın kimliği döner. Karşılığı cart servisindeki
 	// AddLineItem'dır.
-	AddCartLineItem(ctx context.Context, cartID, variantID, title string, quantity, unitPrice int64) (lineItemID string, err error)
+	//
+	// metadata çağıranın satıra iliştirdiği SERBEST veridir (JSON nesnesi) ve
+	// boş bırakılabilir. Bu paket onu OKUMAZ, yalnızca taşır: alan vitrinin
+	// niyetidir (hediye notu, kişiselleştirme) ve hesabın hiçbir adımına
+	// girmez. Taşınması yine de zorunludur, çünkü satırı açan tek yol bu
+	// akıştır; taşınmasaydı istemcinin gönderdiği alan sessizce düşerdi ve
+	// "gönderildiğini sanılan ama uygulanmayan ayar" tam olarak bu API'nin
+	// tanımadığı alanları reddetme sebebidir.
+	AddCartLineItem(
+		ctx context.Context,
+		cartID, variantID, title string,
+		quantity, unitPrice int64,
+		metadata json.RawMessage,
+	) (lineItemID string, err error)
 
 	// SetCartLineItemQuantity satırın adedini MUTLAK değerle yazar; adet
 	// pozitif olmalıdır. Karşılığı cart servisindeki

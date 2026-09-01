@@ -2,6 +2,7 @@ package cart
 
 import (
 	"context"
+	"encoding/json"
 
 	"github.com/bdrtr/gobit/internal/core/errors"
 )
@@ -17,6 +18,16 @@ type AddLineItemInput struct {
 	// Değer MUTLAK değil EKLENECEK adettir: aynı varyant sepette zaten varsa
 	// yeni satır açılmaz, var olan satırın adedi bu kadar ARTAR.
 	Quantity int64
+	// Metadata satıra iliştirilecek serbest JSON nesnesidir; OPSİYONELDİR.
+	//
+	// Akış onu okumaz ve hesaba katmaz; yalnızca sepet modülüne taşır. Alan,
+	// vitrinin satır başına niyetini (hediye notu, kişiselleştirme) tutar ve
+	// satırı açan tek yol bu akış olduğu için başka bir taşıyıcısı yoktur.
+	//
+	// Birleştirmede YAZILMAZ: aynı varyant sepette zaten varsa cart modülü
+	// yalnızca adedi artırır ve var olan satırın metadata'sını korur
+	// (bkz. cart servisindeki AddLineItem).
+	Metadata json.RawMessage
 }
 
 // AddLineItemResult eklenen satırın ve yeniden hesaplanan toplamların
@@ -112,7 +123,7 @@ func (w *Workflows) AddLineItem(ctx context.Context, in AddLineItemInput) (AddLi
 		return AddLineItemResult{}, err
 	}
 
-	lineID, err := w.carts.AddCartLineItem(ctx, in.CartID, in.VariantID, title, in.Quantity, unitPrice)
+	lineID, err := w.carts.AddCartLineItem(ctx, in.CartID, in.VariantID, title, in.Quantity, unitPrice, in.Metadata)
 	if err != nil {
 		return AddLineItemResult{}, err
 	}

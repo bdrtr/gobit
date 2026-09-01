@@ -169,6 +169,10 @@ const (
 	// CodeInvalidOutput yürütme çıktısının istenen tipe çevrilemediğini bildirir.
 	CodeInvalidOutput = "workflow_invalid_output"
 	// CodeStepFailed bir adımın patladığını ve telafinin tamamlandığını bildirir.
+	//
+	// YEDEK koddur: adım hatası kendi kodunu taşıyorsa O korunur ve bu kod hiç
+	// görünmez (bkz. [stepFailureCode]). Kodsuz bir adım hatası — tipsiz bir
+	// stdlib hatası — için geriye kalan tek ad budur.
 	CodeStepFailed = "workflow_step_failed"
 	// CodeStepPanicked bir adımın panik ettiğini bildirir.
 	CodeStepPanicked = "workflow_step_panicked"
@@ -629,7 +633,7 @@ func (e *executor) execute(ctx context.Context, wf Workflow, input any, exec *Ex
 				done = append(done, doneStep{step: s, rec: rec, bestEffort: true})
 			}
 
-			cause := errors.Wrap(serr, errors.KindOf(serr), CodeStepFailed,
+			cause := errors.Wrap(serr, errors.KindOf(serr), stepFailureCode(serr),
 				"%q workflow'unun %q adımı (%d) başarısız oldu", wf.Name, name, i)
 			return e.unwind(ctx, sc, exec, done, o, cause)
 		}
@@ -655,6 +659,40 @@ func (e *executor) execute(ctx context.Context, wf Workflow, input any, exec *Ex
 		attrWorkflow, wf.Name, attrExecutionID, exec.ID, "steps", len(wf.Steps))
 
 	return output, nil
+}
+
+// stepFailureCode adım hatasının dışa taşınacak kodunu seçer.
+//
+// Alt hata kendi kodunu taşıyorsa O korunur; taşımıyorsa [CodeStepFailed]
+// kullanılır.
+//
+// # Neden motorun kendi kodu ezmiyor
+//
+// Motorun sarmalaması, hatanın SINIFINI (Kind) zaten alt hatadan devralıyordu
+// ama KODUNU kendi sabitiyle eziyordu. Sonuç, sınıfın yarısını kaybetmekti:
+// taşıma katmanı gövdeye tek bir makine okunur alan yazar (Code) ve her adım
+// hatası orada tek bir değere — "workflow_step_failed" — düzleşiyordu. Bunun
+// bedeli somuttur: B2B harcama limitini aşan bir alışveriş 409 alıyor ama
+// gövdesi, geçici bir çakışmadan ayırt edilemiyordu. Oysa 409 tam olarak
+// TEKRARIN ÇÖZMEDİĞİ sınıftır ve vitrinin müşteriye "limitiniz yetmedi"
+// demesi, "tekrar deneyin" dememesi gerekir; ayrımı yapacak veri üretiliyor,
+// yalnızca tüketiciye ulaşmıyordu.
+//
+// # Yalnızca KOD taşınır
+//
+// Mesaj ve Details sarmalanan zincirde kalır; motor kendi cümlesini (hangi
+// workflow, hangi adım, kaçıncı sıra) dışta yazmayı sürdürür. KindInternal
+// hatalarında taşıma katmanı o cümleyi ve zinciri yine maskeler, yalnızca kodu
+// yayımlar (bkz. internal/core/http.WriteError). Kod tanımı gereği sabit ve
+// makine okunurdur; sızdırdığı bir sunucu ayrıntısı yoktur.
+//
+// Adım hatası kodsuzsa — tipsiz bir stdlib hatası — geriye motorun kendi
+// sabiti kalır: kodsuz bir gövde, istemciye hiçbir şey söylemeyen bir gövdedir.
+func stepFailureCode(err error) string {
+	if code := errors.CodeOf(err); code != "" {
+		return code
+	}
+	return CodeStepFailed
 }
 
 // unwind telafi zincirini yürütür ve yürütmeyi uç duruma yazar.

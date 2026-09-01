@@ -163,8 +163,8 @@ artık kuralı ihlal etmiyorsa satır silinmek zorundadır. Muafiyet borçtur, b
 | `core/query` | Cross-module okuma — kök çek, link çöz, batch getir, birleştir; N+1 yapısal olarak yok |
 | `core/workflow` | Saga motoru — ters sırada telafi, retry, idempotency-key, panik izolasyonu |
 | `core/workflow/pgstore` | Yürütme durumunun Postgres deposu (`workflow_executions`) |
-| `workflows/cart` | Sepet akışları: create_cart, add_line_item, update_line_item, calculate_totals |
-| `workflows/checkout` | `complete_cart` saga: stok ayır → sipariş → yetkilendir → tahsil et → sepeti kapat |
+| `workflows/cart` | Sepet akışları: create_cart, add_line_item, update_line_item, calculate_totals. `cmd/server` `workflows.cart.interop` adıyla kaydeder, `cart` modülünün vitrin uçları o adla çözer |
+| `workflows/checkout` | `complete_cart` saga: stok ayır → sipariş → yetkilendir → tahsil et → sepeti kapat. `workflows.checkout.interop` adıyla kaydedilir, `POST /store/v1/carts/{id}/complete` onu çağırır |
 | `core/provider` | Ödeme/kargo sağlayıcı sözleşmeleri (plan Bölüm 5.6) |
 | `core/plugin` | Eklenti sözleşmesi + iki fazlı kurulum (`Install` → modüller → `Start`) |
 | `core/observability` | OpenTelemetry trace + metrik kurulumu; toplayıcı yoksa gerçekten kapalı |
@@ -308,6 +308,128 @@ yoktur; o `POST /admin/v1/api-keys/{id}/revoke` ile kapatılır.
 `JWT_SECRET` verilmezse geliştirmede **açılışa özel rastgele** bir sır
 üretilir (yeniden başlatmada oturumlar düşer) ve uyarı loglanır; paylaşılan
 ortamlarda config doğrulaması sırrı zorunlu kılar.
+
+## Sepetten siparişe: akışları kim çağırıyor, fiyatı kim belirliyor
+
+Sepetin uçları `cart` modülündedir ama sepetin **tutarı** orada değildir: fiyat
+`pricing`'in, başlık kataloğun, vergi `tax`/`region`'ın, sipariş ise
+`order` + `payment` + `inventory`'nin verisidir. Bu yüzden üç vitrin ucu işini
+kendi servisiyle değil, modüller arası bir **akışla** yapar:
+
+| Uç | Ne yapar | Akış |
+|---|---|---|
+| `POST /store/v1/carts/{id}/line-items` | Fiyatı ve başlığı **sunucu** belirler, satırı ekler, toplamları yeniler | `workflows/cart` add_line_item |
+| `PATCH /store/v1/carts/{id}/line-items/{line_item_id}` | Adedi yazar ve satırı **yeniden fiyatlar**; sıfır adet satırı kaldırır (204) | `workflows/cart` update_line_item |
+| `POST /store/v1/carts/{id}/complete` | Stok ayırır, siparişi açar, ödemeyi tahsil eder, sepeti kapatır | `workflows/checkout` complete_cart |
+
+### Akışın HTTP sahibi modüldür
+
+Modül somut akışı **tanımaz**: kendi paketinde dar bir arayüz tanımlar
+(`api.LinePricing`, `api.CartCompletion`) ve somut tipi container'dan
+`workflows.cart.interop` / `workflows.checkout.interop` adıyla çözer (ADR 0001).
+`cmd/server` yalnızca akışları **kurar ve kaydeder**; bileşim köküne handler
+kodu girmez. Bu, `order` → `b2b` harcama kuralında zaten kullanılan kalıbın
+aynısıdır.
+
+Kayıt sırası **dairesel**dir ve daire iki yerden kırılır: akış tüm modüllerin
+yüzeylerini çözdüğü için ancak `Bootstrap`'tan **sonra** kurulabilir, modülün
+handler'ı ise `Register` sırasında kurulur ve akışa ihtiyaç duyar. Bu yüzden
+modül tarafındaki çözüm **tembeldir** — ilk istekte yapılır ve sonucu
+saklanır.
+
+### Fiyat yetkisi sunucudadır ve yol KAPALI arızalanır
+
+Satır ekleme gövdesi bir zamanlar `unit_price` alıyordu ve cart servisi onu
+olduğu gibi yazıyordu; yalnızca aralığı denetleniyor, **doğruluğu**
+denetlenmiyordu. Alanın godoc'u "nihai fiyatı `calculate_totals` yazar" diyordu
+ama o akış hiçbir kurulumda kablolanmamıştı — yani istemcinin gönderdiği tutar
+nihai tutardı ve vitrinin kimliği (publishable anahtar) tarayıcıda durduğu için
+bu, **herkesin erişebildiği** bir uçtu. `title` de aynı sınıftaydı: satırın adı
+kataloğun verisidir ve sepette, siparişte, faturada görünen odur.
+
+İkisi de vitrin gövdesinden **kaldırıldı** (kırıcı; `0.x`). Gövde tanınmayan
+alanı reddettiği için eski bir istemci sessizce eski davranışa dönmez, `422`
+alır. Yönetim tarafında karşılığı yoktur: `cart`'ın `/admin/v1` yüzeyi tanımı
+gereği yalnızca okumadır (sepeti değiştiren tek taraf müşteridir), dolayısıyla
+"yönetici fiyat girebilsin" için açılacak bir uç da yoktur.
+
+Fiyatlandırıcı çözülemezse satır **hiç eklenmez**. Bu, `b2b` harcama kuralının
+bilinçli tersidir: `b2b` kurulu değilse "limit yok" doğru cevaptır, ama
+fiyatlandırıcı yoksa "fiyat yok" satırı yazmak — istemcinin fiyatıyla ya da
+sıfırla — sessizce bedava mal satmaktır.
+
+Arıza **`500`** ile bildirilir, `404` ya da `422` ile değil. Ayrım kozmetik
+değildir: container kayıtsız bir adı `not_found`, yanlış tipte bir kaydı
+`invalid` sayar ve bu sınıflar olduğu gibi geçirilseydi uç istemciye "böyle bir
+uç yok" ya da "gövden geçersiz" derdi — oysa arıza **sunucu
+yapılandırmasındadır**. `5xx` uyarı zinciri o zaman hiç çalmaz ve ara katmanlar
+`404`'ü önbelleğe alıp arızayı kurulum düzeldikten sonra da sürdürebilir.
+Operatörün ihtiyacı olan metin (hangi ad çözülemedi) hatada korunur ama
+istemciye sızmaz: `KindInternal` gövdeleri maskelenir, geriye yalnızca
+`cart_module_setup_failed` kodu kalır.
+
+### Reddin sebebi vitrine ulaşır
+
+Saga motoru patlayan adımı sararken hatanın **sınıfını** alt hatadan
+devralıyor ama **kodunu** kendi sabitiyle (`workflow_step_failed`) eziyordu.
+Gövdedeki tek makine okunur alan `error.code` olduğu için her saga hatası
+istemci için tek bir değere düzleşiyordu: B2B harcama limitini aşan alışveriş
+`409` alıyor, `spending_limit` yanıtın hiçbir yerinde geçmiyordu ve vitrin
+"limitiniz yetmedi" ile "geçici çakışma, tekrar deneyin"i ayırt edemiyordu —
+oysa `409` tam olarak tekrarın **çözmediği** sınıftır.
+
+Kod artık korunur (`order_spending_limit_exceeded` gövdeye kadar gelir);
+kodsuz bir adım hatası motorun kendi sabitini alır. Taşınan **yalnızca
+koddur**: mesaj ve `Details` zincirde kalır ve `KindInternal` hatalarında yine
+maskelenir. Değişikliğin sınırı da testle çizilidir — telafi patladığında
+dıştaki kod `workflow_compensation_failed` olarak **kalır**, çünkü orada
+okunması gereken şey adımın neden düştüğü değil, sistemin tutarsız kaldığıdır.
+
+### Tamamlama gövdesindeki her alan bir yetki sorusudur
+
+- `payment_provider_id` **var**: hangi sağlayıcıyla ödendiği müşterinin
+  seçimidir. Ad sunucuda kayıtlı olmak zorundadır.
+- `payment_data` **var**: sağlayıcıya olduğu gibi iletilen serbest veri.
+- `expected_total` **var ve zorunlu**: müşteriye onaylatılan toplam. Hesap
+  tamamlamanın başında yenilenir; ayrışma `409` üretir ve **hiçbir yan etki**
+  uygulanmaz (kontrol saga'nın ilk adımından önce koşar). Opsiyonel olsaydı
+  alanı unutan her istemci korumayı sessizce kapatırdı.
+- `email` **yok**: sepetin iletişim adresi zaten sepettedir ve handler onu
+  kendi servisinden okur; gövdeye açmak, siparişin sepette görünenden başka bir
+  adrese bağlanmasına izin verirdi.
+- `location_id` **yok**: hangi depodan çıkılacağı bir kargo kararıdır ve akış
+  onu satır başına `inventory` + `fulfillment`'a sorarak verir. Müşteriye depo
+  seçtirmek hem stok topolojisini sızdırır hem de siparişin nereden çıkacağını
+  ona bırakırdı.
+
+Yanıt siparişin kimliğini ve tahsil edilen tutarı taşır; ödeme oturumu,
+koleksiyon ve rezervasyon kimlikleri ile operatöre ait uyarılar **yayımlanmaz**.
+
+### Aynı ölçütün henüz uygulanmadığı iki yer
+
+Kayda geçmemiş bir açık, kimsenin kapatmadığı açıktır. İkisi de araştırıldı,
+karar verildi ve bilerek açık bırakıldı; gerekçeleri kodun godoc'larındadır.
+
+- **`POST /store/v1/carts` hâlâ `currency_code` (ve `region_id`) alıyor.**
+  Sınıf `unit_price` ile **aynıdır**: `region` tablosunda para birimi bölge
+  başına tek bir sütundur, yani sepetin para birimi bir seçim değil bir
+  türetmedir — üstelik **fiyatı da o seçer**, çünkü satır akışı birim fiyatı
+  "sepetin para biriminde" okur. Patlama yarıçapı daha küçüktür (istemci tutar
+  uyduramaz, yalnızca operatörün yayımladığı listeler arasından seçebilir), ama
+  bu kusuru meşrulaştırmaz. Doğru kapatma yeri handler değil: türetmeyi zaten
+  yapan bir akış var — `create_cart` ülke kodundan hem bölgeyi hem para
+  birimini çözüyor — ve ucun ona devredilmesi gerekir.
+- **Vitrin sepetlerinde sahiplik denetimi yok.** Model bir **yetenek URL**'idir:
+  sepet kimliği 48 bit zaman damgası + 80 bit kriptografik rastgelelikten
+  üretilir, tahmin edilemez ve onu bilmek erişim hakkını taşır. Zorunluluktan
+  da doğar — mağaza yüzeyinin tek kimliği publishable anahtardır ve o bir sır
+  değildir; ortada müşteri oturumu yoktur. Modelin kuralı da uygulanır: vitrin
+  tarafında **liste ucu yoktur**, çünkü bir liste ucu tek bir kimliği bilmeyi
+  tüm sepetleri okumaya çevirirdi. Modelin **kapsamadığı** şey gövdelerdeki
+  `customer_id`'dir: yetenek "elimdeki kimliğe erişebilirim" der, "ben şu
+  müşteriyim" demez — ve sepetin müşterisi, b2b harcama limitinin hangi şirket
+  penceresinden düşüleceğini belirler. Tek doğru kapatma müşteri oturumudur
+  (Faz 8).
 
 ## Sertleştirme
 

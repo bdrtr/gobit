@@ -166,7 +166,9 @@ func (s *stubCarts) OpenCart(_ context.Context, _, _, _, _ string) (string, erro
 }
 
 // AddCartLineItem sepet akışlarının yüzeyini tamamlar; bu paket onu çağırmaz.
-func (s *stubCarts) AddCartLineItem(_ context.Context, _, _, _ string, _, _ int64) (string, error) {
+func (s *stubCarts) AddCartLineItem(
+	_ context.Context, _, _, _ string, _, _ int64, _ json.RawMessage,
+) (string, error) {
 	return "", errUnexpected("AddCartLineItem")
 }
 

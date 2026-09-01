@@ -23,8 +23,21 @@
 // internal/e2e bunları göremez ve görmesi de beklenmemelidir: httptest ile
 // router'ı sürer, yani main.go'nun kablolamasını, açılıştaki migration'ları,
 // config yüklemesini ve sinyal işlemeyi ATLAR. Bu paket tam olarak o boşluğu
-// kapatır ve bu yüzden başka hiçbir şeyi test etmez — iş mantığı iddiaları
-// internal/e2e'nin ve modül testlerinin işidir, orada çok daha ucuza sınanır.
+// kapatır.
+//
+// # Ne sınanır, ne sınanmaz
+//
+// Ölçüt "iş mantığı mı, altyapı mı" DEĞİLDİR; ölçüt şudur: iddia, ancak GERÇEK
+// SÜRECİN kararlarıyla doğrulanabiliyor mu? Bir uç mount edilmiş mi, bir modül
+// kayıtlı mı, bir akış kurulu mu, bir migration açılışta koşmuş mu — bunların
+// hepsini main() belirler ve hiçbir modül testi göremez. Böyle bir iddianın
+// gövdesi kaçınılmaz olarak iş mantığından geçer (sepet açılır, fiyat okunur,
+// sipariş doğar), ama sınanan şey hesabın kendisi değil YOLUN AÇIK OLMASIDIR.
+//
+// Hesabın doğruluğu buraya girmez: aynı toplamı sınayan bir iddia
+// internal/e2e'de ve modül testlerinde çok daha ucuza koşar ve orada koşar.
+// Bu paketteki her senaryo, konteyner + açılış + gerçek süreç maliyetini
+// ödediği için ancak o maliyetin karşılığını veren soruyu sorar.
 //
 // # Hangi senaryo hangi arızayı bekliyor
 //
@@ -38,6 +51,11 @@
 //     aralığı değişkeninin ad çakışması.
 //   - yapilandirma_test.go ve kapanis_test.go: aynı sınıfın kapatılmamış iki
 //     kanadı — kusurlu yapılandırmayla AÇILMAK ve sinyalle KAPANAMAMAK.
+//   - b2b_test.go ve graphql_test.go: gerçek süreçte HİÇ koşmamış iki yüzey;
+//     ikisi de yalnızca bileşim kökündeki bir kayıt satırı sayesinde vardır.
+//   - vitrin_test.go: sepetten siparişe giden yolun gerçekten AÇIK olduğu.
+//     internal/arch'taki statik değişmez akışların bileşim kökünde KURULDUĞUNU
+//     görür ama kurulumun KOŞTUĞUNU göremez; o yarının kanıtı burada durur.
 //
 // # Kurulum
 //

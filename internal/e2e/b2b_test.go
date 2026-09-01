@@ -139,10 +139,12 @@ func TestB2BLimitiAsanSiparisReddedilirVeParaCekilmez(t *testing.T) {
 	require.True(t, errors.IsConflict(err),
 		"limit aşımı çakışmadır (422 değil 409): istek biçimsel olarak geçerlidir, "+
 			"reddin sebebi sistemin O ANDAKİ durumudur; gövde: %v", err)
-	// Saga adım hatasını KENDİ koduyla sarar (workflow.CodeStepFailed), bu
-	// yüzden zincirin İÇİNE bakılır; depodaki diğer saga senaryoları da bu
-	// kalıbı kullanır.
-	require.ErrorContains(t, err, ordersvc.CodeSpendingLimitExceeded,
+	// Kod DIŞTAN okunur, zincirin içinden değil: saga adım hatasını sararken
+	// alt hatanın kodunu KORUR (bkz. workflow.CodeStepFailed). Fark tüketicide
+	// görünür — taşıma katmanı gövdeye tek bir makine okunur alan yazar ve o
+	// alan motorun kendi sabitiyle dolsaydı, vitrin "limitiniz yetmedi" ile
+	// "geçici çakışma, tekrar deneyin"i ayırt edemezdi.
+	require.Equal(t, ordersvc.CodeSpendingLimitExceeded, errors.CodeOf(err),
 		"reddin kodu harcama limiti olmalı; başka bir kod, siparişin BAŞKA bir "+
 			"sebeple düştüğünü ve testin limiti hiç sınamadığını gösterir")
 	require.ErrorContains(t, err, checkoutwf.StepCreateOrder,
@@ -190,7 +192,7 @@ func TestB2BPencereIcindekiHarcamaBirikir(t *testing.T) {
 	require.Error(t, err,
 		"İKİNCİ alışveriş reddedilmeli: tek başına limitin altında ama dönem "+
 			"toplamı (120_000 + 120_000 = 240_000) limitin üstünde")
-	require.ErrorContains(t, err, ordersvc.CodeSpendingLimitExceeded,
+	require.Equal(t, ordersvc.CodeSpendingLimitExceeded, errors.CodeOf(err),
 		"reddin sebebi harcama limiti olmalı; gövde: %v", err)
 }
 

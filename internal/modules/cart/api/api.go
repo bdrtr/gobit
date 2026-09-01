@@ -13,6 +13,20 @@
 // çağırır (ADR 0006). HTTP'ye açılsalardı bir istemci sepetin tutarını kendi
 // yazabilir ya da ödeme yapmadan sepeti kapatabilirdi.
 //
+// # Akışa devredilen uçlar
+//
+// Üç vitrin ucu işini KENDİ SERVİSİYLE değil, container'dan adla çözülen bir
+// AKIŞLA yapar: satır ekleme, satır adedi güncelleme ([LinePricing]) ve sepeti
+// tamamlama ([CartCompletion]). Sebep tek cümleyle şudur — bu uçların doğru
+// çalışması cart modülünün BİLMEDİĞİ verilere (katalog başlığı, fiyat, vergi,
+// stok, ödeme) bağlıdır ve o veriler ancak modüller arası bir akışta bir araya
+// gelir.
+//
+// Akışların HTTP sahibinin modül olması bilinçli bir karardır: URL'ler sepetin
+// altında kalır, bileşim köküne handler kodu girmez ve modül somut akışı değil
+// yalnızca kendi tanımladığı dar arayüzü tanır (ADR 0001'in kalıbı; aynısı
+// order modülünün b2b harcama kuralında da kullanılır).
+//
 // # Yetki
 //
 // /admin/v1 altındaki uçlar kimlikten AYRI olarak yetki ister:
@@ -26,6 +40,53 @@
 //
 // /store/v1 uçları yetki İSTEMEZ: mağaza yüzeyinin kimliği publishable
 // anahtardır ve o anahtar tanımı gereği yetki taşımaz.
+//
+// # Vitrin sepetlerinde SAHİPLİK
+//
+// /store/v1/carts/{id} altındaki hiçbir uç, isteği yapanın o sepetin sahibi
+// olduğunu doğrulamaz. Bu bir GÖZDEN KAÇMA DEĞİL, seçilmiş bir modeldir:
+// sepetin kimliği YETENEĞİN kendisidir ("yetenek URL"). Kimlik 48 bit zaman
+// damgası + 80 bit kriptografik rastgelelikten üretilir
+// (bkz. models.NewCartID); tahmin edilemez, dolayısıyla onu BİLMEK sepete
+// erişim hakkını taşımak demektir.
+//
+// Model başsız ticarette yaygındır ve burada zorunluluktan da doğar: mağaza
+// yüzeyinin bugünkü tek kimliği publishable anahtardır ve o anahtar bir SIR
+// DEĞİLDİR — tarayıcıda durur, tek işi isteği bir satış kanalına bağlamaktır
+// (bkz. corehttp.RequireStore). Ortada müşteri OTURUMU yoktur, yani "bu sepet
+// senin mi" sorusunu soracak bir özne de yoktur. Aynı beyan sipariş modülünde
+// de yazılıdır (order/api storeGetOrder) ve gerçek yetkilendirme Faz 8'in
+// işidir.
+//
+// Modelin bedava olmayan KURALLARI vardır ve bu paket onlara uyar:
+//
+//   - Vitrin tarafında LİSTE ucu YOKTUR. Bir liste ucu, tek bir kimliği
+//     bilmeyi TÜM sepetleri okumaya çevirirdi; listeleme yalnızca /admin/v1
+//     altındadır ve [ScopeRead] ister.
+//   - Sepet kimliği bir SIR gibi taşınmalıdır. Log'a, Referer başlığına ya da
+//     üçüncü taraf betiklerine sızması, erişimin kendisinin sızmasıdır.
+//
+// # Modelin KAPSAMADIĞI şey: customer_id
+//
+// Yetenek URL'i "elimdeki kimliğe erişebilirim" der; "ben şu müşteriyim"
+// DEMEZ. Oysa POST /store/v1/carts ve POST /store/v1/carts/{id} gövdeleri
+// customer_id alır ve hiçbir kanıt istemez. Servis yalnızca TEK bir sınırı
+// korur: müşterisi olan bir sepet başka bir müşteriye devredilemez
+// (service.CodeCustomerMismatch). Kalan iki kapı açıktır — çağıran açtığı yeni
+// sepete başkasının müşteri kimliğini yazabilir, ve kimliğini bildiği bir
+// MİSAFİR sepetini istediği müşteriye devredebilir.
+//
+// Sonucu kozmetik değildir: sepetin müşterisi siparişin sahibini belirler ve
+// b2b harcama limiti O müşterinin şirket penceresinden düşülür (bkz. order
+// modülünün harcama kuralı). Yani iddia, başkasının limit penceresini
+// tüketebilir.
+//
+// Tahmin edilemezlik bunu KAPATMAZ, çünkü korunan şey çağıranın elindeki bir
+// yetenek değil, BAŞKASI hakkında yapılmış bir iddiadır. Tek doğru kapatma
+// müşteri oturumudur (Faz 8): customer_id gövdeden alınmayı bırakır ve
+// doğrulanmış kimlikten okunur. O mekanizma bugün YOKTUR ve bu paket onu
+// uydurmaya çalışmaz; verilen karar, açığın YAZILI olmasıdır — yazılmamış bir
+// güvenlik modeli, olmayan bir güvenlik modelidir.
 //
 // Handler'lar status kodu SEÇMEZ: servis core/errors tipli hatasını döner,
 // corehttp.WriteError sınıfına uygun kodu yazar (plan Bölüm 8).
@@ -53,6 +114,22 @@ const maxBodyBytes int64 = 1 << 20 // 1 MiB
 
 // codeInvalidRequest gövde/parametre çözümlenemediğinde dönen hata kodudur.
 const codeInvalidRequest = "cart_invalid_request"
+
+// codeFlowUnavailable bir akışın handler'a bağlanmadığını bildirir.
+//
+// İstemcinin düzeltebileceği bir şey yoktur; kod bir KURULUM arızasını
+// adlandırır ve bu yüzden Internal sınıfındadır.
+const codeFlowUnavailable = "cart_workflow_unavailable"
+
+// codeLineItemMissing yazılan satırın hemen ardından okunamadığını bildirir.
+const codeLineItemMissing = "cart_line_item_missing"
+
+// codeFlowResultInvalid akıştan dönen gövdenin çözülemediğini bildirir.
+//
+// Sözleşmenin iki ucu birbirini import edemez (ADR 0006), yani bir alan adı
+// ayrıştığında derleyici sessiz kalır; bu kod o sessizliği çalışma zamanında
+// bozar.
+const codeFlowResultInvalid = "cart_workflow_result_invalid"
 
 // URL parametre adları.
 const (
@@ -96,14 +173,112 @@ type Carts interface {
 	RemoveShippingMethod(ctx context.Context, cartID, methodID string) error
 }
 
-// Handler cart modülünün HTTP handler kümesidir.
-type Handler struct {
-	svc Carts
+// LinePricing satır fiyatını SUNUCUDA belirleyen akışın bu paketçe kullanılan
+// yüzeyidir (ADR 0001/0006).
+//
+// # Neden burada tanımlı
+//
+// Somut akış internal/workflows/cart'tadır ve bu modül onu import EDEMEZ
+// (ADR 0006 her iki yönde de geçerlidir). Tüketici tarafında tanımlanan bu
+// arayüz, container'dan ADLA çözülen somut tip tarafından YAPISAL olarak
+// karşılanır; uyumu derleyici değil, ilk çözüm denemesi denetler.
+//
+// # Neden fiyat parametresi YOK
+//
+// Yüzeyin tamamı bu boşluk içindir. Fiyat, varyantın fiyat kümesinden ve
+// sepetin para biriminden akış tarafından belirlenir; buraya bir "unitPrice"
+// parametresi koymak, kaldırılan arızayı bir katman aşağıda yeniden kurmak
+// olurdu.
+type LinePricing interface {
+	// AddPricedLineItem sepete satır ekler ve satırın kimliğini döner.
+	//
+	// Fiyat ve başlık SUNUCUDA belirlenir: fiyat pricing'den, başlık
+	// katalogdan gelir. metadata çağıranın satıra iliştirdiği serbest JSON
+	// nesnesidir ve boş bırakılabilir.
+	AddPricedLineItem(
+		ctx context.Context,
+		cartID, variantID string,
+		quantity int64,
+		metadata json.RawMessage,
+	) (lineItemID string, err error)
+
+	// SetLineItemQuantity satırın adedini MUTLAK değerle yazar, toplamları
+	// yeniden hesaplar ve satırın KALDIRILIP kaldırılmadığını bildirir.
+	//
+	// Sıfır adet satırı kaldırır; negatif adet reddedilir.
+	SetLineItemQuantity(
+		ctx context.Context,
+		cartID, lineItemID string,
+		quantity int64,
+	) (removed bool, err error)
 }
 
-// New verilen servis üzerinde çalışan handler kümesini üretir.
-func New(svc Carts) *Handler {
-	return &Handler{svc: svc}
+// CartCompletion sepeti siparişe çeviren akışın bu paketçe kullanılan
+// yüzeyidir (ADR 0001/0006).
+//
+// İmza JSON'dur çünkü akışın girdisi de çıktısı da BİLEŞİKTİR ve iki taraf
+// birbirinin tiplerini adlandıramaz; şema [completeCartFlowRequest] ve
+// [completeCartFlowResult] tiplerinde, tek yerde yazılıdır.
+type CartCompletion interface {
+	// CompleteCartJSON sepeti siparişe çevirir: stok ayrılır, sipariş açılır,
+	// ödeme yetkilendirilip tahsil edilir ve sepet kapatılır.
+	CompleteCartJSON(ctx context.Context, request json.RawMessage) (json.RawMessage, error)
+}
+
+// Flows handler'ın akışlardan ihtiyaç duyduğu yüzeylerin kümesidir.
+//
+// İkisi de ZORUNLUDUR ve eksikliği çalışma zamanında hata üretir
+// (bkz. [Handler.pricing] ve [Handler.checkout]); route'ları hiç bağlamamak
+// bir seçenek değildi, çünkü akışlar modüllerden SONRA kurulur ve Routes
+// çağrıldığında henüz kayıtlı olmayabilirler.
+type Flows struct {
+	// Pricing satır fiyatlandırma akışıdır.
+	Pricing LinePricing
+	// Checkout sepet tamamlama akışıdır.
+	Checkout CartCompletion
+}
+
+// Handler cart modülünün HTTP handler kümesidir.
+type Handler struct {
+	svc   Carts
+	flows Flows
+}
+
+// New verilen servis ve akışlar üzerinde çalışan handler kümesini üretir.
+func New(svc Carts, flows Flows) *Handler {
+	return &Handler{svc: svc, flows: flows}
+}
+
+// pricing satır fiyatlandırma akışını döner; bağlı değilse HATA döner.
+//
+// # Neden KAPALI arızalanıyor
+//
+// Bu, order modülünün harcama limiti kuralının TERSİDİR ve fark bilinçlidir.
+// Orada sağlayıcı yoksa doğru cevap "limit yok"tur: b2b kurulmamış bir
+// mağazada harcama limiti diye bir kavram yoktur ve kuralsız devam etmek
+// kurulumun kendi kararıdır. Burada ise sağlayıcı yoksa doğru cevap "fiyat
+// yok" DEĞİLDİR — fiyatı olmayan bir satır yazmak (ne istemcinin verdiği
+// tutarla, ne sıfırla) sessizce bedava mal satmak olurdu. Eksik bir
+// fiyatlandırıcının tek doğru sonucu, satırın HİÇ EKLENMEMESİDİR.
+func (h *Handler) pricing() (LinePricing, error) {
+	if h.flows.Pricing == nil {
+		return nil, coreerrors.Internal(codeFlowUnavailable,
+			"satır fiyatlandırma akışı bağlı değil; fiyatı sunucu belirlemeden satır eklenemez")
+	}
+	return h.flows.Pricing, nil
+}
+
+// checkout sepet tamamlama akışını döner; bağlı değilse HATA döner.
+//
+// Gerekçe [Handler.pricing] ile aynı yönde ama daha da açıktır: akış yoksa
+// sipariş, ödeme ve stok rezervasyonu da yoktur ve "sepeti tamamlandı say"
+// diye bir kestirme yol olamaz.
+func (h *Handler) checkout() (CartCompletion, error) {
+	if h.flows.Checkout == nil {
+		return nil, coreerrors.Internal(codeFlowUnavailable,
+			"sepet tamamlama akışı bağlı değil; sepet siparişe çevrilemez")
+	}
+	return h.flows.Checkout, nil
 }
 
 // --- zarflar ve DTO'lar ------------------------------------------------------

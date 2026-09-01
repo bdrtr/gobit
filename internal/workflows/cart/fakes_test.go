@@ -38,7 +38,7 @@ func errUnexpected(what string) error {
 type stubCarts struct {
 	openCartFn  func(ctx context.Context, regionID, currencyCode, customerID, email string) (string, error)
 	snapshotFn  func(ctx context.Context, cartID string) (json.RawMessage, error)
-	addLineFn   func(ctx context.Context, cartID, variantID, title string, quantity, unitPrice int64) (string, error)
+	addLineFn   func(ctx context.Context, cartID, variantID, title string, quantity, unitPrice int64, metadata json.RawMessage) (string, error)
 	setQtyFn    func(ctx context.Context, cartID, lineItemID string, quantity int64) error
 	removeFn    func(ctx context.Context, cartID, lineItemID string) error
 	setTotalsFn func(ctx context.Context, cartID string, totals json.RawMessage) error
@@ -80,11 +80,12 @@ func (s *stubCarts) AddCartLineItem(
 	ctx context.Context,
 	cartID, variantID, title string,
 	quantity, unitPrice int64,
+	metadata json.RawMessage,
 ) (string, error) {
 	if s.addLineFn == nil {
 		return "", errUnexpected("AddCartLineItem")
 	}
-	return s.addLineFn(ctx, cartID, variantID, title, quantity, unitPrice)
+	return s.addLineFn(ctx, cartID, variantID, title, quantity, unitPrice, metadata)
 }
 
 // SetCartLineItemQuantity betiklenen adet yazma davranışını uygular.

@@ -32,6 +32,8 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/notification"
 	notificationservice "github.com/bdrtr/gobit/internal/modules/notification/service"
 	"github.com/bdrtr/gobit/internal/modules/product/graph"
+	cartwf "github.com/bdrtr/gobit/internal/workflows/cart"
+	checkoutwf "github.com/bdrtr/gobit/internal/workflows/checkout"
 	"github.com/bdrtr/gobit/plugins/paymentstripe"
 	"github.com/bdrtr/gobit/plugins/searchpg"
 )
@@ -42,6 +44,9 @@ const (
 	adminPrefix = "/admin/v1"
 	storePrefix = "/store/v1"
 )
+
+// codeFlowSetupFailed modüller arası akışların kurulamadığını bildirir.
+const codeFlowSetupFailed = "workflow_setup_failed"
 
 // codeUnknownPlugin PLUGINS listesinde tanınmayan bir ad olduğunu bildirir.
 const codeUnknownPlugin = "plugin_unknown"
@@ -106,6 +111,51 @@ func belgeyiAnlat(baslik, surum string, moduller []module.Module) *openapi.Doc {
 	}
 
 	return doc
+}
+
+// akislariKaydet modüller arası akışları kurar ve container'a bırakır.
+//
+// # Neden BURADA ve neden Bootstrap'tan SONRA
+//
+// Akışlar hiçbir modülün içinde kurulamaz: her biri BİRDEN ÇOK modülün
+// yüzeyini container'dan adla çözer (sepet hesabı altı, sipariş tamamlama yedi
+// yüzey) ve o yüzeyler ancak Register döngüsünün TAMAMI bittiğinde kayıtlıdır.
+// Bir modülün Register'ında kurulmaya çalışılsalardı, kayıt sırasına bağlı
+// olarak bazen çalışan bazen çalışmayan bir kurulum elde edilirdi.
+//
+// Ters yön de doğrudur: akışların HTTP uçlarının sahibi MODÜLDÜR (cart), yani
+// handler akışa ihtiyaç duyar ve handler Register sırasında kurulur. Daire bu
+// yüzden iki yerden birden kırılır — kayıt burada, ÇÖZÜM ise modül tarafında
+// ilk isteğe ertelenmiş olarak yapılır (bkz. cart modülündeki linePricing).
+// Bileşim köküne handler kodu girmez; buraya giren tek şey KİMİN KURULACAĞI
+// kararıdır.
+//
+// # Neden açılışı DURDURUYOR
+//
+// Kurulamayan bir akış, sepete satır ekleyemeyen ve siparişe çevrilemeyen bir
+// mağaza demektir; ayakta ama satış yapamayan bir sunucu, açılışta duran bir
+// sunucudan çok daha geç fark edilir. Hata mesajı hangi adın çözülemediğini
+// yazar (bkz. cartwf.FromContainer).
+func akislariKaydet(c *container.Container) error {
+	sepetAkislari, err := cartwf.FromContainer(c)
+	if err != nil {
+		return errors.Wrap(err, errors.KindOf(err), codeFlowSetupFailed,
+			"sepet akışları kurulamadı")
+	}
+	if err := c.Provide(cartwf.InteropName, cartwf.NewInterop(sepetAkislari)); err != nil {
+		return err
+	}
+
+	// Sipariş tamamlama akışı sepet hesabını KENDİ kurar (aynı container
+	// üzerinde, bkz. checkoutwf.FromContainer); yukarıdaki örnekle
+	// paylaşılmaz ve paylaşılmaması bilinçlidir — akış kendi bağımlılık
+	// kümesini kendi çözer, biz ona bir nesne enjekte etmeyiz.
+	siparisAkisi, err := checkoutwf.FromContainer(c)
+	if err != nil {
+		return errors.Wrap(err, errors.KindOf(err), codeFlowSetupFailed,
+			"sipariş tamamlama akışı kurulamadı")
+	}
+	return c.Provide(checkoutwf.InteropName, checkoutwf.NewInterop(siparisAkisi))
 }
 
 // semayiDenetle belgeyi açılışta BİR KEZ üretip ayrışmaları raporlar.

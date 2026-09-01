@@ -28,6 +28,23 @@ const (
 	// cekirdekModulPaketi [module.Module] sözleşmesinin ve [module.Registry]
 	// kaydının yaşadığı çekirdek paketidir.
 	cekirdekModulPaketi = modulePath + "/internal/core/module"
+	// akisDizini modüller arası akışların yaşadığı ağaçtır (ADR 0006). Ne
+	// çekirdektir ne de modül: depguard kuralları internal/modules içindir,
+	// modül kayıt denetimi de internal/modules altını gezer — yani bu ağacı
+	// bugüne kadar HİÇBİR kablolama kuralı kapsamıyordu.
+	akisDizini = "internal/workflows"
+	// cekirdekContainerPaketi container'ın yaşadığı çekirdek paketidir. Bir
+	// akış paketinin "container'dan kurulmak üzere tasarlandığı" işareti, dışa
+	// açık bir işlevinin bu tipi PARAMETRE olarak almasıdır.
+	cekirdekContainerPaketi = modulePath + "/internal/core/container"
+	// kurulumIsaretiAdi akış yapıcılarının konvansiyonel adıdır.
+	//
+	// İleri yön denetimi bu adı KULLANMAZ (şekle bakar, bkz.
+	// [containerdanKurulanAkisPaketleri]); ad yalnızca TERS yönde, bileşim
+	// kökünün kurduğu ama denetimin yapıcı olarak GÖRMEDİĞİ bir paketi
+	// yakalamak için gerekir. Bayatlığı [TestHerAkisBilesimKokundeKurulu]
+	// içinde doğrulanır.
+	kurulumIsaretiAdi = "FromContainer"
 )
 
 // modulSozlesmesi [module.Module] arayüzünün metot kümesidir: metot adından
@@ -87,12 +104,40 @@ var kayitDisiModuller = map[string]string{}
 // Bugün boştur: zemin üretimin kaydettiği her modülü kurar.
 var e2eZemininDisiModuller = map[string]string{}
 
+// kurulmayanAkislar bileşim kökünde BİLİNÇLİ olarak kurulmayan akış
+// paketlerinin gerekçeleridir; anahtar paketin import yoludur.
+//
+// Muafiyetin neden var olduğu ve neden BURADA olduğu [kayitDisiModuller]
+// godoc'unda anlatılmıştır ve tekrarlanmıyor. Bu haritanın ayrı durmasının
+// sebebi, borcun BÜYÜKLÜĞÜNÜN farklı olmasıdır: kaydedilmemiş bir modül
+// yalnızca kendi yüzeyini kaybettirir, kurulmamış bir akış ise onu ADLA çözen
+// modül uçlarını da kapatır (bkz. cart modülündeki linePricing). İki borcu
+// aynı listede tutmak, ağır olanı hafif gösterirdi.
+//
+// Bugün boştur: internal/workflows'un iki paketi de bileşim kökünde kuruludur.
+var kurulmayanAkislar = map[string]string{}
+
 // ayristirilmisDosya bir Go dosyasının ayrıştırılmış hâlini ve import takma
 // adlarını taşır.
 type ayristirilmisDosya struct {
 	yol       string
 	agac      *ast.File
 	importlar map[string]string
+}
+
+// akisKurulumu bileşim kökünde bulunan bir akış kurulumunun yeridir.
+type akisKurulumu struct {
+	// konum yapıcıya yapılan başvurunun kaynak konumudur.
+	konum token.Position
+	// kapsayan başvuruyu içeren işlevin adıdır; paket düzeyindeki bir
+	// bildirimdeyse boştur.
+	kapsayan string
+	// yapici çağrılan yapıcının adıdır.
+	yapici string
+	// sayilmiyor başvurunun bulunduğunu ama GEÇERLİ bir kurulum sayılmadığını
+	// söyler (ölü kod ya da çağrılmayan başvuru). Sebebi bulunduğu yerde
+	// raporlanmıştır; çağıran taraf ikinci bir hata üretmez.
+	sayilmiyor bool
 }
 
 // TestHerModulBilesimKokundeKayitli "yazılan her modül BİLEŞİM KÖKÜNDE
@@ -241,6 +286,188 @@ func TestKayitliHerModulE2EZemindeKurulu(t *testing.T) {
 	// demek olurdu.
 	bayatMuafiyetleriDenetle(t, e2eZemininDisiModuller, uretim,
 		"bileşim kökünde kayıtlı bir modül", zemin, e2eZemini)
+}
+
+// TestHerAkisBilesimKokundeKurulu "container'dan kurulmak üzere yazılan her
+// akış BİLEŞİM KÖKÜNDE gerçekten kurulur" değişmezini denetler.
+//
+// # Hangi arıza sınıfı
+//
+// Yukarıdaki iki testin kapattığı sınıfın ta kendisi — ama onların kapsamı
+// DIŞINDA kalmış bir örneğiyle. internal/workflows/cart ve
+// internal/workflows/checkout yazılmış, birim testleri yeşil, uçtan uca
+// zeminde kanıtlanmış ve bileşim köküne HİÇ bağlanmamıştı: cmd/server yalnızca
+// saga MOTORUNU kaydediyordu, iki akışın FromContainer'ını üretim kodunda
+// çağıran kimse yoktu. Yani çalışan ikilide sepeti siparişe çeviren yol
+// yoktu — ödeme, kargo, checkout promosyonu, order.placed bildirimi ve b2b
+// harcama limiti erişilemezdi — üstelik README onu sunulan bir yetenek gibi
+// anlatıyordu.
+//
+// [TestHerModulBilesimKokundeKayitli] bunu göremezdi: o denetim
+// internal/modules altını gezer ve [module.Module] sözleşmesini arar. Akışlar
+// modül DEĞİLDİR (dört metodu taşımazlar) ve internal/modules altında
+// durmazlar, yani değişmezin KAPSAMI, kapatması gereken sınıfın bir örneğini
+// dışarıda bırakmıştı. Bu test o kapsamı genişletir.
+//
+// # İşaret neden ŞEKİL, neden "FromContainer" adı değil
+//
+// Ada bakmak kuralı yalnızca BUGÜN için uygulardı: yapıcısını Kur ya da New
+// diye adlandıran üçüncü bir akış paketi, denetimin gözünde hiç var olmazdı ve
+// bağlanmadığı gün test yine yeşil kalırdı — yani tam olarak yakalaması
+// gereken hatayı kaçırırdı. Bir paketi "container'dan kurulur" yapan şey
+// yapıcısının ADI değil, ŞEKLİDİR: dışa açık bir işlevin *container.Container
+// alması, o paketin bağımlılıklarını kayıttan ADLA çözdüğünün ve bunu ancak
+// Register döngüsü bittikten sonra yapabileceğinin işaretidir.
+//
+// Konvansiyonel ad yine de bir işe yarar ve TERS yönde kullanılır: bileşim
+// kökü FromContainer çağırdığı hâlde denetim o pakette container alan bir
+// yapıcı GÖRMÜYORSA, şekil okuması gerçekle ayrışmış demektir (örneğin imza
+// container yerine bir arayüz almaya başlamıştır) ve o andan sonra denetim
+// paketi sessizce kapsam dışı bırakırdı.
+//
+// # Neden ÖLÜ KOD da kurulum sayılmıyor
+//
+// Bulunan arızanın şekli tam olarak buydu: FromContainer çağrılıyordu — ama
+// yalnızca internal/e2e içinden. Üretim ikilisinde kurulumun VAR OLMASI
+// yetmez, main()'den ERİŞİLİYOR olması gerekir; erişilmeyen bir kurulum
+// işlevi, hiç yazılmamış bir kurulum işleviyle aynı şeydir ve derleyici de,
+// modülün kendi testleri de bundan haberdar olmaz. Bu yüzden denetim bileşim
+// kökünün çağrı grafiğini main()'den gezer ve ulaşamadığı bir kurulumu
+// kurulum saymaz.
+//
+// Graf ADLARDAN kurulur ve bilinçli olarak GENİŞ tutulur: bir ad başka bir adın
+// gövdesinde geçiyorsa kenar vardır (çağrı olmasa bile, örneğin değer olarak
+// geçirilmişse) ve düğümler yalnızca işlevler değil, paket düzeyindeki var/const
+// bildirimleridir de — kurulumu bir işlev değişkenine almak onu grafın dışına
+// çıkarmaz (bkz. [bilesimKokuDugumleri]). Aşırı geniş bir graf en fazla ölü bir
+// kurulumu canlı sanır; dar bir graf ise canlı kurulumu ölü ilan edip testi
+// yanlış yere düşürürdü ve insanlar denetime güvenmeyi bırakırdı.
+//
+// # Bu değişmez neyi GARANTİ ETMEZ
+//
+// Yalnızca ŞUNU garanti eder: bileşim kökünde, main()'den erişilebilen bir
+// yerde, her akış paketinin yapıcısı çağrılıyor. Statik analizin
+// cevaplayabileceği soru budur ve daha fazlasını iddia etmek yanlış olurdu.
+//
+// Cevaplayamadığı soru, çağrının KOŞUP koşmadığıdır. Kurulum bir koşulun
+// arkasına alındığında —
+//
+//	var akislariAc = false
+//	if akislariAc { akislariKaydet(c) }
+//
+// — çağrı grafta durmaya devam eder ve bu test GEÇER, oysa çalışan ikilide
+// sepete satır eklenemez ve sepet siparişe çevrilemez (iki uç da 500 döner:
+// cart modülü akışı çözemez ve kapalı arızalanır). Bayrağı
+// okuyup değerlendirmek de kurtarmazdı: değer bir ortam değişkeninden, bir
+// yapılandırmadan ya da bir başka çağrının dönüşünden gelebilir ve o noktada
+// denetim, uygulamayı çalıştırmanın kötü bir taklidine dönüşür.
+//
+// # Eksik yarı: ÇALIŞMA ZAMANI KANITI
+//
+// O soruyu yalnızca yolu GERÇEKTEN KULLANAN bir koşum yanıtlar ve yanıtı
+// internal/smoke'tadır: TestVitrinSepettenSipariseGercekSurecte gerçek ikiliyi
+// açar, katalogdan fiyatlanan bir satırla sepeti doldurur ve sepeti siparişe
+// çevirir. Bayrak, koşul ya da değişken — yolu kapatan HER mutasyon orada
+// düşer, çünkü o test yolu kullanır.
+//
+// İki katman birbirinin yerine GEÇMEZ, birbirini tamamlar:
+//
+//   - Statik değişmez, kurulum satırı SİLİNDİĞİNDE düşer ve bunu docker'sız,
+//     saniyeler içinde, hangi paketin kurulmadığını adıyla söyleyerek yapar.
+//     Smoke koşusu aynı arızayı yalnızca "satır eklenemedi, 500" diye
+//     bildirir; teşhis için kaynağa inmek gerekir.
+//   - Smoke, kurulum KOŞMADIĞINDA düşer. Statik değişmez o durumu göremez ve
+//     görebileceğini iddia etmez.
+//
+// Biri kaldırılırsa ötekinin yettiği SANILIR; ikisinin de neyi kapattığı bu
+// yüzden yazılıdır.
+//
+// # Neden liste tutmuyor, neden ayrıştırıyor
+//
+// Gerekçeler [TestHerModulBilesimKokundeKayitli] godoc'undakiyle birebir
+// aynıdır ve tekrarlanmıyor: elle yazılmış bir akış listesi üçüncü akışı
+// kaçırırdı, bileşim kökü de main paketi olduğu için import edilemez.
+//
+// # Neden e2e ikizi YOK
+//
+// Modül tarafında ikinci bir yarı vardır ([TestKayitliHerModulE2EZemindeKurulu])
+// çünkü orada KAYIT ile ÇALIŞMA ayrı şeylerdir. Akışlarda bu ayrım yoktur:
+// akış zaten yalnızca kurulduğu yerde vardır ve zemin onu kurmazsa mağaza
+// uçları KAPALI arızalanır, yani zeminde akış kurmayı unutan bir kişi yeşil
+// bir koşu göremez — vitrin senaryoları o anda 500 alır. Kuralı ikinci kez
+// yazmak, kendini zaten zorlayan bir şartı tekrar etmek olurdu.
+func TestHerAkisBilesimKokundeKurulu(t *testing.T) {
+	t.Parallel()
+
+	akislar := containerdanKurulanAkisPaketleri(t)
+	require.NotEmpty(t, akislar,
+		"%s altında container'dan kurulan hiçbir paket bulunamadı; denetim KÖR kalmış "+
+			"olmalı (yapıcılar artık *container.Container almıyor mu?)", akisDizini)
+
+	konvansiyonYasiyor := false
+	for _, yapicilar := range akislar {
+		if slices.Contains(yapicilar, kurulumIsaretiAdi) {
+			konvansiyonYasiyor = true
+			break
+		}
+	}
+	require.True(t, konvansiyonYasiyor,
+		"hiçbir akış paketinde %q adında bir yapıcı YOK; kurulumIsaretiAdi bayatlamış "+
+			"olmalı.\nSabit, ters yön denetiminin tek dayanağıdır: bayatladığında bileşim "+
+			"kökünün kurduğu ama denetimin göremediği bir paket sessizce kapsam dışı kalır.",
+		kurulumIsaretiAdi)
+
+	kurulan := bilesimKokundeKurulanAkislar(t, akislar)
+
+	canli := map[string]token.Position{}
+	for yol, kurulum := range kurulan {
+		if !kurulum.sayilmiyor {
+			canli[yol] = kurulum.konum
+		}
+	}
+
+	for _, yol := range slices.Sorted(maps.Keys(akislar)) {
+		if _, kuruluMu := canli[yol]; kuruluMu {
+			continue
+		}
+		// Bulunmuş ama sayılmamış bir kurulumun hatası, neden sayılmadığını
+		// bilen yerde çoktan verildi; burada ikinci kez ve daha kaba bir
+		// cümleyle söylemek, doğru teşhisi gürültüye gömerdi.
+		if _, bulunduMu := kurulan[yol]; bulunduMu {
+			continue
+		}
+		if gerekce, muaf := kurulmayanAkislar[yol]; muaf {
+			t.Logf("%s bileşim kökünde bilinçli olarak KURULMUYOR: %s", yol, gerekce)
+			continue
+		}
+		t.Errorf("%s paketi container'dan kurulmak üzere yazılmış (%s) ama %s/'da "+
+			"KURULMUYOR.\n"+
+			"Kurulmayan bir akış hiçbir kurulumda yoktur: onu container'dan ADLA çözen "+
+			"modül uçları kapalı arızalanır, modüller arası zincirin tamamı (fiyat, "+
+			"indirim, vergi, ödeme, kargo, bildirim) erişilemez olur ve akışın kendi "+
+			"testleri akışı kendisi kurduğu için bu hiçbir yerde görünmez.\n"+
+			"Ya %s/'da yapıcıyı çağırıp sonucu container'a bırakın, ya da paketi "+
+			"gerekçesiyle birlikte kurulmayanAkislar haritasına yazın.",
+			yol, strings.Join(akislar[yol], ", "), bilesimKoku, bilesimKoku)
+	}
+
+	// Ters yön denetimin KENDİ kör noktasını kapatır: bileşim kökü bir akış
+	// paketinin yapıcısını çağırdığı hâlde denetim o pakette container alan bir
+	// yapıcı görmüyorsa, şekil okuması gerçekle ayrışmıştır. O andan sonra bu
+	// test "her akış kurulu" değil "gördüğüm akışlar kurulu" derdi.
+	for _, yol := range slices.Sorted(maps.Keys(kurulan)) {
+		if _, gorulduMu := akislar[yol]; !gorulduMu {
+			t.Errorf("%s paketinin %q yapıcısı %s/'da çağrılıyor (%s) ama denetim o "+
+				"pakette container'dan kurulan bir yapıcı GÖRMÜYOR.\n"+
+				"Çağrının kendisi paketin container'dan kurulduğunu kanıtlar; denetimin "+
+				"görmemesi, şekil okumasının (dışa açık + *container.Container parametresi) "+
+				"gerçekle ayrıştığı anlamına gelir ve bu testi bundan sonra kör bırakır.",
+				yol, kurulan[yol].yapici, bilesimKoku, kurulan[yol].konum)
+		}
+	}
+
+	bayatMuafiyetleriDenetle(t, kurulmayanAkislar, akislar,
+		"container'dan kurulan bir akış paketi", canli, bilesimKoku)
 }
 
 // bayatMuafiyetleriDenetle muafiyet haritasının çürümesini yakalar.
@@ -554,6 +781,361 @@ func modulPaketlerineSuz(kayitli map[string]token.Position) map[string]token.Pos
 	}
 
 	return suzulmus
+}
+
+// containerdanKurulanAkisPaketleri internal/workflows altında container'dan
+// kurulmak üzere tasarlanmış paketleri döner: anahtar paketin import yolu,
+// değer yapıcıların adlarıdır.
+//
+// Ölçüt "dışa açık ve *container.Container alan bir işlev"dir. İkisi de
+// gereklidir: dışa açık olmayan bir yapıcıyı bileşim kökü zaten çağıramaz
+// (yani kural onu kapsayamaz), container almayan bir işlev de bağımlılıklarını
+// kayıttan çözmüyor demektir — o paketi kuran taraf onu doğrudan elle kurar ve
+// kayıt sırası sorunu doğmaz.
+//
+// Akış olmayan yardımcı paketler (para, anlık görüntü, katalog…) böylece
+// kendiliğinden elenir: ölçüt dizin adı değil imzadır.
+func containerdanKurulanAkisPaketleri(t *testing.T) map[string][]string {
+	t.Helper()
+
+	kok := filepath.Join(repoRoot, akisDizini)
+	require.DirExists(t, kok,
+		"%s ağacı YOK; akış kablolaması denetimi dayanaksız kalır. Ağaç taşındıysa "+
+			"akisDizini de taşınmalıdır, yoksa denetim boşlukta yeşil kalır", akisDizini)
+
+	bulunan := map[string][]string{}
+	for _, dizin := range slices.Sorted(maps.Keys(uretimPaketleri(t, kok))) {
+		fset := token.NewFileSet()
+
+		var yapicilar []string
+		for _, d := range ayristir(t, fset, dizin, false) {
+			for _, decl := range d.agac.Decls {
+				fn, ok := decl.(*ast.FuncDecl)
+				if !ok || fn.Recv != nil || !fn.Name.IsExported() {
+					continue
+				}
+				if containerAlanIs(fn, d.importlar) {
+					yapicilar = append(yapicilar, fn.Name.Name)
+				}
+			}
+		}
+
+		if len(yapicilar) > 0 {
+			slices.Sort(yapicilar)
+			bulunan[paketImportYolu(t, dizin)] = yapicilar
+		}
+	}
+
+	return bulunan
+}
+
+// containerAlanIs işlevin parametrelerinden en az birinin çekirdeğin
+// container'ı olup olmadığını söyler.
+func containerAlanIs(fn *ast.FuncDecl, importlar map[string]string) bool {
+	if fn.Type.Params == nil {
+		return false
+	}
+	for _, alan := range fn.Type.Params.List {
+		if akisContainerTipi(alan.Type, importlar) {
+			return true
+		}
+	}
+
+	return false
+}
+
+// akisContainerTipi ifadenin çekirdeğin container tipi olup olmadığını söyler;
+// işaretçi yıldızı yok sayılır.
+//
+// Takma ad haritası üzerinden çözülür, tanımlayıcı adına bakılmaz: paketi
+// "corecontainer" diye import eden bir dosya da doğru tanınmalıdır.
+func akisContainerTipi(ifade ast.Expr, importlar map[string]string) bool {
+	if yildiz, ok := ifade.(*ast.StarExpr); ok {
+		ifade = yildiz.X
+	}
+	sec, ok := ifade.(*ast.SelectorExpr)
+	if !ok || sec.Sel.Name != "Container" {
+		return false
+	}
+	paket, ok := sec.X.(*ast.Ident)
+
+	return ok && importlar[paket.Name] == cekirdekContainerPaketi
+}
+
+// bilesimKokundeKurulanAkislar verilen paketteki akış kurulumlarını döner;
+// anahtar kurulan akış paketinin import yolu, değer kurulumun yeridir.
+//
+// Aranan şey "yapıcı ADININ paket niteleyicisiyle ÇAĞRILMASI"dır. Bu biçimin
+// dışına çıkan her başvuru SESSİZ bırakılmaz, çünkü kaçamak yolların tamamı
+// aynı sonucu verir: kurulumun hangi pakete gittiği denetimden gizlenir ve
+// gizlenen bir bağ, olmayan bir bağla aynı şeydir.
+//
+//   - Yapıcı bir değere alınıp öyle çağrılırsa (kur := paket.FromContainer)
+//     ya da bir dilime konup döngüyle çağrılırsa, ad ÇAĞRI konumunda değil
+//     DEĞER konumunda görünür; ikisi de burada yakalanır.
+//   - Niteleyici bir paket adı değilse (bir ifadenin sonucu, bir alan) hangi
+//     pakete gidildiği okunamaz ve durum hata olarak raporlanır.
+func bilesimKokundeKurulanAkislar(t *testing.T, yapicilar map[string][]string) map[string]akisKurulumu {
+	t.Helper()
+
+	fset := token.NewFileSet()
+	dosyalar := ayristir(t, fset, filepath.Join(repoRoot, bilesimKoku), false)
+	require.NotEmpty(t, dosyalar, "%s içinde ayrıştırılacak Go dosyası yok", bilesimKoku)
+
+	// Aranan ad kümesi: paketlerin GERÇEK yapıcıları ve konvansiyonel ad.
+	// İkincisi ters yön denetimi içindir; bkz. [kurulumIsaretiAdi].
+	adlar := map[string]bool{kurulumIsaretiAdi: true}
+	for _, paketYapicilari := range yapicilar {
+		for _, ad := range paketYapicilari {
+			adlar[ad] = true
+		}
+	}
+
+	onek := modulePath + "/" + akisDizini + "/"
+	erisilebilir := maindenErisilebilirIsler(dosyalar)
+	kurulan := map[string]akisKurulumu{}
+
+	for _, d := range dosyalar {
+		cagrilanlar := cagriIfadeleri(d.agac)
+		for _, decl := range d.agac.Decls {
+			// Paket düzeyindeki bir bildirimin (var başlatıcısı) kapsayanı
+			// yoktur ve o kod her koşuda çalışır; erişilebilirlik sorusu
+			// yalnızca işlevler için anlamlıdır.
+			kapsayan, kapsayanCanli := "", true
+			if fn, ok := decl.(*ast.FuncDecl); ok {
+				kapsayan, kapsayanCanli = fn.Name.Name, erisilebilir[fn.Name.Name]
+			}
+
+			ast.Inspect(decl, func(n ast.Node) bool {
+				sec, ok := n.(*ast.SelectorExpr)
+				if !ok || !adlar[sec.Sel.Name] {
+					return true
+				}
+				yol, cozuldu := akisPaketiniCoz(t, fset.Position(sec.Sel.Pos()), sec, d, onek)
+				if !cozuldu {
+					return true
+				}
+				// Ad kümesi PAKETLERİN BİRLEŞİMİDİR; burada o paketin KENDİ
+				// yapıcısı olduğu doğrulanır. Doğrulanmasaydı, bir akış
+				// paketinin yapıcı adını paylaşan bambaşka bir işlev (örneğin
+				// bir yardımcının New'i) o paketi kurulmuş gösterirdi.
+				if !slices.Contains(yapicilar[yol], sec.Sel.Name) && sec.Sel.Name != kurulumIsaretiAdi {
+					return true
+				}
+
+				kurulum := akisKurulumu{
+					konum:    fset.Position(sec.Sel.Pos()),
+					kapsayan: kapsayan,
+					yapici:   sec.Sel.Name,
+				}
+				switch {
+				case !cagrilanlar[sec]:
+					t.Errorf("%s: %s.%s bir DEĞER olarak kullanılıyor, çağrılmıyor.\n"+
+						"Yapıcıyı bir değişkene, bir dilime ya da bir tabloya alıp öyle "+
+						"çağırmak, kurulumun hangi akışa gittiğini bu denetimden GİZLER: "+
+						"çağrı yerinde artık paket adı yoktur. Kurulum \"paket.Yapıcı(...)\" "+
+						"biçiminde yazılmalı ya da bilesimKokundeKurulanAkislar bu biçimi de "+
+						"okuyacak şekilde genişletilmelidir.",
+						kurulum.konum, sec.X, sec.Sel.Name)
+					kurulum.sayilmiyor = true
+				case !kapsayanCanli:
+					t.Errorf("%s: %s.%s çağrısı ÖLÜ KODDA — %s() işlevine main()'den "+
+						"erişilemiyor.\n"+
+						"Derlenen ama koşmayan bir kurulum, hiç yazılmamış bir kurulumla aynı "+
+						"şeydir ve tam olarak bu turda bulunan arızadır: akışların yapıcısı "+
+						"çağrılıyordu, ama yalnızca testlerin içinden.\n"+
+						"Ya çağrı zincirini main()'e bağlayın, ya da kurulum gerçekten "+
+						"gereksizse ölü işlevi silin.",
+						kurulum.konum, sec.X, sec.Sel.Name, kapsayan)
+					kurulum.sayilmiyor = true
+				}
+
+				// Aynı paket için geçerli bir kurulum bulunmuşsa kusurlu olan
+				// onun yerini almaz: kusur zaten yukarıda raporlandı, kaydın
+				// işi ise "kurulu mu" sorusuna cevap vermektir.
+				if mevcut, varMi := kurulan[yol]; varMi && !mevcut.sayilmiyor {
+					return true
+				}
+				kurulan[yol] = kurulum
+
+				return true
+			})
+		}
+	}
+
+	return kurulan
+}
+
+// akisPaketiniCoz yapıcı başvurusunun hangi akış paketine gittiğini döner.
+//
+// Akış ağacının dışına giden başvurular (aynı adı taşıyan başka bir paketin
+// işlevi) sessizce elenir; okunamayan biçimler ise hata verir, çünkü orada
+// eleme ile GÖRMEME arasındaki farkı denetim bilemez.
+func akisPaketiniCoz(
+	t *testing.T,
+	konum token.Position,
+	sec *ast.SelectorExpr,
+	d ayristirilmisDosya,
+	onek string,
+) (string, bool) {
+	t.Helper()
+
+	paket, ok := sec.X.(*ast.Ident)
+	if !ok {
+		t.Errorf("%s: %s çağrısının niteleyicisi bir paket adı DEĞİL.\n"+
+			"Denetim yalnızca \"paket.Yapıcı(...)\" biçimini okuyabilir; başka bir biçim, "+
+			"kurulumun hangi akışa gittiğini GİZLER.", konum, sec.Sel.Name)
+
+		return "", false
+	}
+
+	yol, bilinen := d.importlar[paket.Name]
+	if !bilinen {
+		t.Errorf("%s: %q, %s dosyasının import listesinde çözülemedi.\n"+
+			"Yapıcı adı bir paketin değil bir DEĞERİN üzerinden kullanılıyorsa kurulumun "+
+			"hedefi okunamaz; kurulum doğrudan paket üzerinden çağrılmalıdır.",
+			konum, paket.Name, filepath.Base(d.yol))
+
+		return "", false
+	}
+
+	return yol, strings.HasPrefix(yol, onek)
+}
+
+// cagriIfadeleri dosyadaki her çağrının ÇAĞRILAN ifadesini kümeler.
+//
+// Genel (generic) çağrıların "paket.Yapıcı[T](...)" biçiminde araya bir indeks
+// ifadesi girer; taban ifade de kümeye alınır, aksi hâlde böyle bir çağrı
+// "değer olarak kullanılıyor" sanılırdı.
+func cagriIfadeleri(agac *ast.File) map[ast.Expr]bool {
+	cagrilan := map[ast.Expr]bool{}
+	ast.Inspect(agac, func(n ast.Node) bool {
+		cagri, ok := n.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		cagrilan[cagri.Fun] = true
+		switch tipli := cagri.Fun.(type) {
+		case *ast.IndexExpr:
+			cagrilan[tipli.X] = true
+		case *ast.IndexListExpr:
+			cagrilan[tipli.X] = true
+		}
+
+		return true
+	})
+
+	return cagrilan
+}
+
+// maindenErisilebilirIsler bileşim kökündeki paket düzeyi adlardan main()'den
+// erişilebilenlerin kümesini döner.
+//
+// Kenarlar ADLARDAN kurulur ve bilinçli olarak geniştir: bir ad başka bir adın
+// gövdesinde herhangi bir biçimde geçiyorsa (çağrı, değer olarak geçirme,
+// defer) kenar sayılır. Gerekçe [TestHerAkisBilesimKokundeKurulu]
+// godoc'undadır.
+//
+// init de köktür: paket başlatma her koşuda çalışır ve oradan çağrılan bir
+// kurulum ölü değildir.
+func maindenErisilebilirIsler(dosyalar []ayristirilmisDosya) map[string]bool {
+	govdeler := bilesimKokuDugumleri(dosyalar)
+
+	erisilebilir := map[string]bool{}
+	var gez func(ad string)
+	gez = func(ad string) {
+		if erisilebilir[ad] {
+			return
+		}
+		erisilebilir[ad] = true
+		for _, govde := range govdeler[ad] {
+			ast.Inspect(govde, func(n ast.Node) bool {
+				ident, ok := n.(*ast.Ident)
+				if !ok {
+					return true
+				}
+				if _, tanidik := govdeler[ident.Name]; tanidik {
+					gez(ident.Name)
+				}
+
+				return true
+			})
+		}
+	}
+
+	gez("main")
+	if _, varMi := govdeler["init"]; varMi {
+		gez("init")
+	}
+
+	return erisilebilir
+}
+
+// bilesimKokuDugumleri paket düzeyindeki her adı, o adın "gövdesi" sayılan AST
+// düğümlerine eşler: işlevler için gövde bloğu, var/const bildirimleri için
+// başlatıcı ifadeleri.
+//
+// # Neden bildirimler de düğüm
+//
+// Graf yalnızca işlev gövdelerini gezdiği sürece, kurulumu bir işlev
+// DEĞİŞKENİNE almak onu denetimin gözünde ölü gösterirdi:
+//
+//	var akisKurucu = akislariKaydet   // paket düzeyi, hiçbir gövdede değil
+//	func main() { akisKurucu(c) }     // "akislariKaydet" adı hiç geçmiyor
+//
+// İkili tamamen çalışırken denetim "ÖLÜ KODDA" derdi — canlıyı ölü ilan eden
+// bir denetim ise en kötü denetimdir: susturulmayı hak ettiğine insanları HAKLI
+// olarak ikna eder. Bildirimi düğüm yapmak zinciri tamamlar (main -> akisKurucu
+// -> akislariKaydet) ve grafı, godoc'unun zaten VAAT ETTİĞİ genişliğe getirir.
+//
+// # Neden bildirimler KÖK değil
+//
+// Paket başlatma her koşuda çalışır, yani bir başlatıcı İFADESİ kayıtsız
+// şartsız koşar. Ama "var f = Kur" ifadesinin koştuğu, Kur'un koştuğu anlamına
+// GELMEZ: değişkeni kimse çağırmıyorsa Kur hâlâ ölüdür. Bildirimleri kök
+// saymak bu ayrımı yutar ve "if false ile kapatılmış ama bir değişkende duran"
+// bir kurulumu canlı gösterirdi. Bu yüzden bildirim, ancak REFERANS EDİLDİĞİNDE
+// gezilen bir düğümdür.
+//
+// Ayrım [bilesimKokundeKurulanAkislar] ile de tutarlıdır: orada paket düzeyi
+// bir bildirimin İÇİNDEKİ çağrı koşulsuz canlı sayılır, çünkü orada sorulan
+// soru başkadır — ifadenin kendisi koşuyor mu? Burada sorulan soru, ADIN
+// gösterdiği işlevin koşup koşmadığıdır.
+func bilesimKokuDugumleri(dosyalar []ayristirilmisDosya) map[string][]ast.Node {
+	govdeler := map[string][]ast.Node{}
+	for _, d := range dosyalar {
+		for _, decl := range d.agac.Decls {
+			switch tipli := decl.(type) {
+			case *ast.FuncDecl:
+				if tipli.Body != nil {
+					govdeler[tipli.Name.Name] = append(govdeler[tipli.Name.Name], tipli.Body)
+				}
+			case *ast.GenDecl:
+				// import ve type bildirimleri çalışan kod taşımaz; yalnızca
+				// var/const başlatıcıları bir ada gövde verir.
+				if tipli.Tok != token.VAR && tipli.Tok != token.CONST {
+					continue
+				}
+				for _, spec := range tipli.Specs {
+					deger, degerMi := spec.(*ast.ValueSpec)
+					if !degerMi {
+						continue
+					}
+					// Adlar ile başlatıcılar TAM eşleşmeyebilir ("a, b := f()"
+					// biçiminin bildirim karşılığında tek ifade iki ada
+					// düşer); her ada hepsi bağlanır. Fazlalık grafı yalnızca
+					// GENİŞLETİR ve bu, kabul edilen yöndür.
+					for _, ad := range deger.Names {
+						for _, baslatici := range deger.Values {
+							govdeler[ad.Name] = append(govdeler[ad.Name], baslatici)
+						}
+					}
+				}
+			}
+		}
+	}
+
+	return govdeler
 }
 
 // uretimPaketleri kök altındaki, en az bir üretim (_test.go olmayan) dosyası

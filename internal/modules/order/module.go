@@ -316,6 +316,13 @@ func (p *spendingPolicy) SpendingLimitJSON(ctx context.Context, customerID strin
 }
 
 // resolve sağlayıcıyı container'dan çözer; sonucu bir kez saklar.
+//
+// Kalan dal (ad kayıtlı ama yüzeyi tanınmıyor) KindInternal'a çevrilir;
+// container'ın kendi sınıfı — yanlış tipte kayıt için KindInvalid — olduğu gibi
+// geçirilmez. Devralınsaydı sipariş açan uç 422 ile "gövden geçersiz" derdi,
+// oysa gövde kusursuz olsa da istek aynı sonucu alırdı: arıza SUNUCU
+// YAPILANDIRMASINDADIR. Aynı gerekçe cart modülünün akış sarmalayıcılarında da
+// yazılıdır.
 func (p *spendingPolicy) resolve(ctx context.Context) {
 	svc, err := container.Resolve[service.SpendingPolicy](p.c, SpendingPolicyName)
 	switch {
@@ -328,7 +335,7 @@ func (p *spendingPolicy) resolve(ctx context.Context) {
 		p.log.DebugContext(ctx, "harcama limiti sağlayıcısı kayıtlı değil, limit uygulanmayacak",
 			"saglayici", SpendingPolicyName)
 	default:
-		p.err = errors.Wrap(err, errors.KindOf(err), codeSetupFailed,
+		p.err = errors.Wrap(err, errors.KindInternal, codeSetupFailed,
 			"%s modülü harcama kuralı sağlayıcısını çözemedi (%q)", ModuleName, SpendingPolicyName)
 	}
 }

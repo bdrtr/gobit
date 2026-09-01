@@ -73,6 +73,11 @@ func (h *Handler) Routes(r chi.Router) {
 	r.Post("/store/v1/carts/{id}/shipping-methods", h.storeAddShippingMethod)
 	r.Delete("/store/v1/carts/{id}/shipping-methods/{shipping_method_id}", h.storeRemoveShippingMethod)
 
+	// Sepeti siparişe çeviren uç. Sepetin uçlarının sahibi bu modüldür,
+	// dolayısıyla sepeti KAPATAN uç da buradadır; bileşim kökü yalnızca akışı
+	// kurar ve container'a bırakır (bkz. [Handler.storeCompleteCart]).
+	r.Post("/store/v1/carts/{id}/complete", h.storeCompleteCart)
+
 	// --- Admin API (yönetim, YALNIZCA OKUMA) ---
 	okuma.Get("/admin/v1/carts", h.adminListCarts)
 	okuma.Get("/admin/v1/carts/{id}", h.adminGetCart)
