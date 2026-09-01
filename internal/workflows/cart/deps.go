@@ -163,7 +163,17 @@ type Carts interface {
 	//
 	// customerID boş ise sepet MİSAFİRE aittir; email boş bırakılabilir.
 	// Karşılığı cart servisindeki CreateCart'tır.
-	OpenCart(ctx context.Context, regionID, currencyCode, customerID, email string) (cartID string, err error)
+	//
+	// metadata çağıranın SEPETE iliştirdiği serbest veridir (JSON nesnesi) ve
+	// boş bırakılabilir. Gerekçe [Carts.AddCartLineItem] metadata paragrafının
+	// aynısıdır: alan vitrinin niyetidir, bu paket onu OKUMAZ ve hiçbir hesaba
+	// girmez — ama sepeti açan tek yol bu akış olduğu için taşınması
+	// zorunludur; taşınmasaydı istemcinin gönderdiği alan sessizce düşerdi.
+	OpenCart(
+		ctx context.Context,
+		regionID, currencyCode, customerID, email string,
+		metadata json.RawMessage,
+	) (cartID string, err error)
 
 	// CartSnapshotJSON sepetin hesaba giren şeklini TEK okumada döner.
 	//

@@ -41,6 +41,15 @@ import (
 // yokmuş gibidir: hiçbir okuma, hiçbir kilit, hiçbir ek karar. Saf B2C bir
 // kurulumun harcama limiti diye bir kavramı yoktur ve o kurulumda her siparişe
 // bir sorgu daha yüklemek bedelsiz değildir.
+//
+// # Kural KİME uygulanır
+//
+// Yalnızca [CreateOrderInput.CustomerID] dolu olan siparişlere. O alan bugün
+// vitrinin BEYANIDIR ve hiçbir katman onu doğrulamaz; kuralın hangi koşulda
+// uygulanMADIĞI [Service.spendingRuleFor] godoc'undaki güven sınırı bölümünde
+// ve ADR 0008'de yazılıdır. Yüzeyi kuran gömülü uygulamanın bilmesi gereken
+// şey budur: bu arayüzü bağlamak, limitin uygulandığını KENDİ BAŞINA
+// garanti etmez.
 type SpendingPolicy interface {
 	// SpendingLimitJSON müşteriye uygulanacak kuralı döner.
 	//
@@ -86,9 +95,44 @@ type spendingRule struct {
 // güncel değeri değil, TOPLAMIN tutarlılığıdır; toplam kilit altında okunur.
 //
 // Politika kurulu değilse (nil) ya da müşteri yoksa kural "sınırsız"dır.
+//
+// # GÜVEN SINIRI: kural, çağıranın BEYAN ETTİĞİ müşteriye uygulanır
+//
+// Bu fonksiyonun aldığı customerID bir OLGU değil bir İDDİADIR ve bu modül onu
+// doğrulayamaz. Kimliğin kaynağı vitrin sepetinin gövdesindeki "customer_id"
+// alanıdır; mağaza yüzeyinin tek kimliği publishable API anahtarıdır ve o bir
+// SATIŞ KANALINI temsil eder, bir müşteriyi değil (bkz. corehttp.Principal —
+// alanları arasında müşteri kimliği YOKTUR). Yani sunucunun "isteği gerçekten
+// bu müşteri yaptı" diyebileceği bir kanıt hiçbir katmanda üretilmiyor.
+//
+// Sonucu tek cümleyle: harcama limiti, MÜŞTERİYİ BEYAN EDEN alışverişlere
+// uygulanır. Beyan etmeyen alışverişe uygulanmaz ve bu iki durum ölçüldü —
+// aynı sepet, aynı anahtar, tek fark gövdedeki alan:
+//
+//	{"country_code":"TR","customer_id":"cus_…"}  -> 409 order_spending_limit_exceeded
+//	{"country_code":"TR"}                        -> 200, sipariş açılır
+//
+// Kaçış üç biçimde ifade edilebilir ve üçü de bu satırın ALTINDAN geçer:
+// alanı hiç göndermemek (misafir), başkasının kimliğini göndermek (harcama
+// onun penceresinden düşer — limitli bir çalışanın hakkını yakmanın da yolu
+// budur) ve POST /store/v1/customers ile yepyeni bir misafir kaydı açıp onu
+// göndermek (yeni kayıt hiçbir şirkete bağlı olmadığı için kuralsızdır).
+//
+// # Kapatma NEDEN buraya konmadı
+//
+// Kapatılabilecek bir şey yok: kaçış "yanlış bir iddia" değil, "hiç iddia
+// etmemek"tir. Beyanı ZORUNLU kılmak da işe yaramaz — üçüncü biçim bir istek
+// daha atarak yeni bir kimlik üretir. İddiayı KANITA bağlamak için bir müşteri
+// oturumu gerekir ve o, bu modülün değil çerçevenin kararıdır; sorumluluğun
+// nerede durduğu ADR 0008'de yazılıdır.
+//
+// Bu yüzden buradaki dal bir kusur değil, sınırın GÖRÜNDÜĞÜ yerdir ve
+// TestMisafirSiparisindeHarcamaKuraliHicSorulmaz ile sabitlenmiştir: kimliği
+// doğrulayan bir katman eklendiğinde değişmesi gereken ilk yer burasıdır.
 func (s *Service) spendingRuleFor(ctx context.Context, customerID string) (spendingRule, error) {
 	// Misafir siparişinde uygulanacak bir kural yoktur: kural çalışana
-	// bağlıdır ve çalışanın kimliği bir müşteri kaydıdır.
+	// bağlıdır ve çalışanın kimliği bir müşteri kaydıdır. Kimliğin
+	// DOĞRULANMADIĞI bu godoc'un güven sınırı bölümündedir.
 	if s.spending == nil || customerID == "" {
 		return spendingRule{}, nil
 	}

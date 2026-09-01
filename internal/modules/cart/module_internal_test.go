@@ -16,9 +16,9 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/cart/api"
 )
 
-// Test DAHİLİ pakettedir çünkü sınanan tipler ([linePricing], [cartCompletion])
-// dışa kapalıdır ve kapalı kalmalıdır: ikisi de bu modülün kendi kablolama
-// ayrıntısıdır, dışarıdan kurulacak bir yüzey değil.
+// Test DAHİLİ pakettedir çünkü sınanan tipler ([cartOpening], [linePricing],
+// [cartCompletion]) dışa kapalıdır ve kapalı kalmalıdır: üçü de bu modülün
+// kendi kablolama ayrıntısıdır, dışarıdan kurulacak bir yüzey değil.
 
 // stubPricing container'a kaydedilen sahte fiyatlandırma akışıdır.
 type stubPricing struct {
@@ -54,14 +54,14 @@ func sessizLog() *slog.Logger { return slog.New(slog.DiscardHandler) }
 //
 // Bağ derleme zamanında YOKTUR: modül internal/workflows'u import edemez
 // (ADR 0006), yani somut akışla bu arayüzü birbirine bağlayan tek şey
-// [LinePricingName] dizesidir. Test o dizenin gerçekten çözüm anahtarı
+// [CartFlowsName] dizesidir. Test o dizenin gerçekten çözüm anahtarı
 // olduğunu sabitler.
 func TestSatirFiyatlandirmaAkisiAdlaCozulur(t *testing.T) {
 	t.Parallel()
 
 	kap := container.New(nil)
 	akis := &stubPricing{lineID: "li_1"}
-	require.NoError(t, kap.Provide(LinePricingName, akis))
+	require.NoError(t, kap.Provide(CartFlowsName, akis))
 
 	sarmalayici := &linePricing{c: kap, log: sessizLog()}
 	lineID, err := sarmalayici.AddPricedLineItem(t.Context(), "cart_1", "var_1", 3, nil)
@@ -95,7 +95,7 @@ func TestSatirFiyatlandirmaAkisiYokkenKapaliArizalanir(t *testing.T) {
 	assert.Equal(t, http.StatusInternalServerError, corehttp.StatusFor(err),
 		"iddia sınıf adında değil ÜRETİMDEKİ eşlemede sabitlenir: ucun gerçekten "+
 			"hangi status kodunu döndüğünü belirleyen tek yer burasıdır")
-	assert.Contains(t, err.Error(), LinePricingName, "hata hangi adın çözülemediğini yazmalı")
+	assert.Contains(t, err.Error(), CartFlowsName, "hata hangi adın çözülemediğini yazmalı")
 
 	// Adet güncelleme yolu da aynı kapıdan geçer.
 	_, err = sarmalayici.SetLineItemQuantity(t.Context(), "cart_1", "li_1", 5)
@@ -111,7 +111,7 @@ func TestSatirFiyatlandirmaAkisiUyumsuzTipiReddeder(t *testing.T) {
 	t.Parallel()
 
 	kap := container.New(nil)
-	require.NoError(t, kap.Provide(LinePricingName, yabanciTip{}))
+	require.NoError(t, kap.Provide(CartFlowsName, yabanciTip{}))
 
 	sarmalayici := &linePricing{c: kap, log: sessizLog()}
 	_, err := sarmalayici.AddPricedLineItem(t.Context(), "cart_1", "var_1", 3, nil)
@@ -141,7 +141,7 @@ func TestSatirFiyatlandirmaKarariBirKezVerilir(t *testing.T) {
 	require.Error(t, err)
 
 	// Akış SONRADAN kaydedilse bile karar değişmez.
-	require.NoError(t, kap.Provide(LinePricingName, &stubPricing{lineID: "li_1"}))
+	require.NoError(t, kap.Provide(CartFlowsName, &stubPricing{lineID: "li_1"}))
 
 	_, err = sarmalayici.AddPricedLineItem(t.Context(), "cart_1", "var_1", 3, nil)
 	assert.Error(t, err, "karar bir kez verilir ve saklanır")
@@ -202,68 +202,67 @@ func TestSepetTamamlamaAkisiYokkenKapaliArizalanir(t *testing.T) {
 func TestAkisAdlariSozlesmedir(t *testing.T) {
 	t.Parallel()
 
-	assert.Equal(t, "workflows.cart.interop", LinePricingName,
+	assert.Equal(t, "workflows.cart.interop", CartFlowsName,
 		"ad sepet akışlarının InteropName sabitiyle aynı olmalı")
 	assert.Equal(t, "workflows.checkout.interop", CartCompletionName,
 		"ad sipariş tamamlama akışının InteropName sabitiyle aynı olmalı")
 }
 
-// stubRegions container'a kaydedilen sahte bölge yüzeyidir.
-type stubRegions struct {
-	kod   string
-	calls int
+// stubOpening container'a kaydedilen sahte sepet açma akışıdır.
+type stubOpening struct {
+	cartID string
+	calls  int
 }
 
 // Sahtenin beklenen yüzeyi karşıladığı derleme zamanında sabitlenir.
-var _ api.RegionCurrencyReader = (*stubRegions)(nil)
+var _ api.CartOpening = (*stubOpening)(nil)
 
-// RegionCurrency bölgenin para birimini döner.
-func (s *stubRegions) RegionCurrency(
-	_ context.Context,
-	_ string,
-) (code string, decimalDigits int32, err error) {
+// OpenCartForCountry sepetin kimliğini döner.
+func (s *stubOpening) OpenCartForCountry(
+	_ context.Context, _, _, _ string, _ json.RawMessage,
+) (string, error) {
 	s.calls++
-	return s.kod, 2, nil
+	return s.cartID, nil
 }
 
-// TestBolgeYuzeyiAdlaCozulur bölge yüzeyinin container'dan ADLA çözüldüğünü ve
-// yapısal olarak karşılandığını doğrular.
+// TestSepetAcmaAkisiAdlaCozulur sepet açma akışının container'dan ADLA
+// çözüldüğünü ve yüzeyin yapısal olarak karşılandığını doğrular.
 //
-// Bağ derleme zamanında YOKTUR: bu modül region'ı import edemez (ADR 0001),
-// yani somut region servisiyle [api.RegionCurrencyReader] arayüzünü birbirine
-// bağlayan tek şey [RegionServiceName] dizesidir. Test o dizenin gerçekten
-// çözüm anahtarı olduğunu sabitler.
-func TestBolgeYuzeyiAdlaCozulur(t *testing.T) {
+// Bağ derleme zamanında YOKTUR: modül internal/workflows'u import edemez
+// (ADR 0006), yani somut akışla bu arayüzü birbirine bağlayan tek şey
+// [CartFlowsName] dizesidir. Test o dizenin gerçekten çözüm anahtarı olduğunu
+// sabitler — ve aynı adın satır fiyatlandırmayı da beslediğini
+// [TestSatirFiyatlandirmaAkisiAdlaCozulur] ile birlikte gösterir.
+func TestSepetAcmaAkisiAdlaCozulur(t *testing.T) {
 	t.Parallel()
 
 	kap := container.New(nil)
-	bolgeler := &stubRegions{kod: "TRY"}
-	require.NoError(t, kap.Provide(RegionServiceName, bolgeler))
+	akis := &stubOpening{cartID: "cart_1"}
+	require.NoError(t, kap.Provide(CartFlowsName, akis))
 
-	sarmalayici := &regionCurrency{c: kap, log: sessizLog()}
-	kod, basamak, err := sarmalayici.RegionCurrency(t.Context(), "reg_1")
+	sarmalayici := &cartOpening{c: kap, log: sessizLog()}
+	cartID, err := sarmalayici.OpenCartForCountry(t.Context(), "TR", "", "", nil)
 
 	require.NoError(t, err)
-	assert.Equal(t, "TRY", kod)
-	assert.Equal(t, int32(2), basamak)
-	assert.Equal(t, 1, bolgeler.calls)
+	assert.Equal(t, "cart_1", cartID)
+	assert.Equal(t, 1, akis.calls)
 }
 
-// TestBolgeYuzeyiYokkenKapaliArizalanir para birimi türetilemediğinde sepet
-// açma yolunun SESSİZCE DEVAM ETMEDİĞİNİ doğrular.
+// TestSepetAcmaAkisiYokkenKapaliArizalanir bölge türetilemediğinde sepet açma
+// yolunun SESSİZCE DEVAM ETMEDİĞİNİ doğrular.
 //
-// Sepetin para birimi hangi fiyat listesinin uygulanacağını seçer. Bir
-// varsayılana düşmek ya da istemcinin dediğini kullanmak, tam olarak
-// kapatılan yetki kapısını geri açardı; tek doğru sonuç sepetin HİÇ
-// AÇILMAMASIDIR.
-func TestBolgeYuzeyiYokkenKapaliArizalanir(t *testing.T) {
+// Sepetin bölgesi vergi oranını, ondan türetilen para birimi de hangi fiyat
+// listesinin uygulanacağını seçer. Bir varsayılana düşmek ya da istemcinin
+// dediğini kullanmak, tam olarak kapatılan yetki kapısını geri açardı; tek
+// doğru sonuç sepetin HİÇ AÇILMAMASIDIR.
+func TestSepetAcmaAkisiYokkenKapaliArizalanir(t *testing.T) {
 	t.Parallel()
 
-	sarmalayici := &regionCurrency{c: container.New(nil), log: sessizLog()}
+	sarmalayici := &cartOpening{c: container.New(nil), log: sessizLog()}
 
-	kod, _, err := sarmalayici.RegionCurrency(t.Context(), "reg_1")
-	require.Error(t, err, "çözülemeyen bölge yüzeyi hata döndürmeli")
-	assert.Empty(t, kod, "para birimi ASLA varsayılana düşmemeli")
+	cartID, err := sarmalayici.OpenCartForCountry(t.Context(), "TR", "", "", nil)
+	require.Error(t, err, "çözülemeyen akış hata döndürmeli")
+	assert.Empty(t, cartID, "sepet ASLA açılmamalı")
 	assert.Equal(t, codeSetupFailed, coreerrors.CodeOf(err))
 	assert.Equal(t, coreerrors.KindInternal, coreerrors.KindOf(err),
 		"kayıtsız ad container'da KindNotFound üretir; devralınsaydı sepet açma ucu "+
@@ -271,39 +270,27 @@ func TestBolgeYuzeyiYokkenKapaliArizalanir(t *testing.T) {
 			"YAPILANDIRMASINDADIR")
 	assert.Equal(t, http.StatusInternalServerError, corehttp.StatusFor(err),
 		"iddia sınıf adında değil ÜRETİMDEKİ eşlemede sabitlenir")
-	assert.Contains(t, err.Error(), RegionServiceName, "hata hangi adın çözülemediğini yazmalı")
+	assert.Contains(t, err.Error(), CartFlowsName, "hata hangi adın çözülemediğini yazmalı")
 }
 
-// TestBolgeYuzeyiUyumsuzTipiReddeder doğru adla kayıtlı ama yüzeyi
+// TestSepetAcmaAkisiUyumsuzTipiReddeder doğru adla kayıtlı ama yüzeyi
 // karşılamayan bir tipin de sepet açtırMADIĞINI doğrular.
 //
-// İmza region'ın modüller arası yüzeyiyle birebir aynı olmak zorundadır ve
-// uyumu derleyici denetleyemez; ondalık basamak sayısının imzada kalmasının
-// sebebi de budur. Ayrışma bu kapıda görünür.
-func TestBolgeYuzeyiUyumsuzTipiReddeder(t *testing.T) {
+// "Kayıtlı değil" ile "kayıtlı ama tanınmıyor" farklı arızalardır; ikisinin de
+// sonucu aynı olmalıdır, çünkü ikisinde de bölgeyi türetecek taraf yoktur.
+func TestSepetAcmaAkisiUyumsuzTipiReddeder(t *testing.T) {
 	t.Parallel()
 
 	kap := container.New(nil)
-	require.NoError(t, kap.Provide(RegionServiceName, yabanciTip{}))
+	require.NoError(t, kap.Provide(CartFlowsName, yabanciTip{}))
 
-	sarmalayici := &regionCurrency{c: kap, log: sessizLog()}
-	_, _, err := sarmalayici.RegionCurrency(t.Context(), "reg_1")
+	sarmalayici := &cartOpening{c: kap, log: sessizLog()}
+	cartID, err := sarmalayici.OpenCartForCountry(t.Context(), "TR", "", "", nil)
 
 	require.Error(t, err)
+	assert.Empty(t, cartID)
 	assert.Equal(t, codeSetupFailed, coreerrors.CodeOf(err))
 	assert.Equal(t, coreerrors.KindInternal, coreerrors.KindOf(err),
 		"yanlış tipte kayıt container'da KindInvalid üretir; devralınsaydı uç 422 "+
 			"ile \"gövden geçersiz\" derdi, oysa gövde kusursuz olsa da sonuç aynıydı")
-}
-
-// TestBolgeYuzeyiAdiSozlesmedir container adının değerini sabitler.
-//
-// Ad region modülünündür ve burada DİZE olarak tekrarlanır; bir taraf adı
-// değiştirdiğinde diğeri sessizce çözülemez hâle gelir. Test değeri TEK yerde
-// sabitler ve değişikliğin bilinçli olmasını zorlar.
-func TestBolgeYuzeyiAdiSozlesmedir(t *testing.T) {
-	t.Parallel()
-
-	assert.Equal(t, "region.service", RegionServiceName,
-		"ad region modülünün ServiceName sabitiyle aynı olmalı")
 }

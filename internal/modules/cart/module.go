@@ -29,27 +29,23 @@
 //
 // # Kullandığı akışlar
 //
-// Vitrinin üç ucu — satır ekleme, satır adedi güncelleme ve sepeti tamamlama —
-// modüller arası AKIŞLARA devredilmiştir; modül onları container'dan
-// [LinePricingName] ve [CartCompletionName] adlarıyla, KENDİ paketinde
-// tanımladığı dar arayüzlerle çözer (ADR 0001/0006). Gerekçe: satırın fiyatı
+// Vitrinin YAZAN uçlarının tamamı — sepet açma, satır ekleme, satır adedi
+// güncelleme ve sepeti tamamlama — modüller arası AKIŞLARA devredilmiştir;
+// modül onları container'dan [CartFlowsName] ve [CartCompletionName]
+// adlarıyla, KENDİ paketinde tanımladığı dar arayüzlerle çözer
+// (ADR 0001/0006). Gerekçe: sepetin bölgesi region'ın, satırın fiyatı
 // pricing'in, başlığı kataloğun, sipariş ise order + payment + inventory'nin
 // verisidir ve bu modül hiçbirini bilmez.
 //
-// Fiyat yolu KAPALI arızalanır: akış çözülemezse satır eklenmez
-// (bkz. [linePricing]).
+// Her üç yol da KAPALI arızalanır: akış çözülemezse sepet açılmaz, satır
+// eklenmez, sipariş oluşmaz (bkz. [cartOpening], [linePricing] ve
+// [cartCompletion]).
 //
 // # Kullandığı modül yüzeyi
 //
-// Bir tane vardır: BÖLGE ([RegionServiceName]). Sepetin para birimi bölgenin
-// verisidir — region şemasında bölge başına tek bir sütundur — ve vitrin ucu
-// onu istemciden almaz, bölgeden TÜRETİR. Çözüm yine adladır ve arayüz yine bu
-// modülün kendi paketinde tanımlıdır (api.RegionCurrencyReader); modül region'ı
-// import etmez.
-//
-// Bu yol da KAPALI arızalanır: bölge yüzeyi çözülemezse sepet açılmaz
-// (bkz. [regionCurrency]). Para birimini bir varsayılana düşürmek, hangi fiyat
-// listesinin uygulanacağını sunucunun bilmediği bir sepet üretirdi.
+// Yoktur. Bir tane vardı — BÖLGE — ve sepetin para birimini ondan okuyordu;
+// bugün o türetmeyi sepet açma akışı yapıyor, dolayısıyla modülün başka bir
+// modülü adla çözdüğü tek yer de kapandı.
 //
 // # Bildirdiği linkler
 //
@@ -101,8 +97,13 @@ const InteropName = ModuleName + ".interop"
 // ProviderName Query sağlayıcısının container'daki adıdır (ADR 0004).
 const ProviderName = service.EntityName + query.ProviderSuffix
 
-// LinePricingName satır fiyatlandırma akışının container'daki adıdır
-// (ADR 0001/0006).
+// CartFlowsName sepet akışlarının container'daki adıdır (ADR 0001/0006).
+//
+// TEK bir ad İKİ dar arayüzü besler ([api.CartOpening] ve [api.LinePricing]):
+// ikisini de aynı kayıt, sepet akışlarının modüller arası yüzeyi karşılar.
+// Sabitin adı bu yüzden akışın ADIDIR, arayüzlerden birininki değil — "sepet
+// açma" da o kayıttan çözüldüğü hâlde "LinePricingName" demek, kodun
+// söylediğiyle yaptığını ayırırdı.
 //
 // Ad internal/workflows/cart paketinindir ve burada DİZE olarak tekrarlanır;
 // modüller workflow paketlerini import edemez (ADR 0006 her iki yönde de) ve
@@ -110,10 +111,10 @@ const ProviderName = service.EntityName + query.ProviderSuffix
 // modülünün SpendingPolicyName sabitinde de kullanılır.
 //
 // Yazım hatası SESSİZ KALMAZ ve b2b'dekinin tersine bir degradasyona da yol
-// açmaz: ad çözülemezse satır ekleme ucu kapalı arızalanır
-// (bkz. [linePricing]). Adın tek doğruluk kaynağı sepet akışlarının
-// InteropName sabitidir.
-const LinePricingName = "workflows.cart.interop"
+// açmaz: ad çözülemezse sepet açma ve satır ekleme uçları kapalı arızalanır
+// (bkz. [cartOpening] ve [linePricing]). Adın tek doğruluk kaynağı sepet
+// akışlarının InteropName sabitidir.
+const CartFlowsName = "workflows.cart.interop"
 
 // CartCompletionName sepet tamamlama akışının container'daki adıdır
 // (ADR 0001/0006).
@@ -121,18 +122,6 @@ const LinePricingName = "workflows.cart.interop"
 // Ad internal/workflows/checkout paketinindir ve aynı gerekçeyle burada
 // tekrarlanır; adın tek doğruluk kaynağı o paketin InteropName sabitidir.
 const CartCompletionName = "workflows.checkout.interop"
-
-// RegionServiceName bölge modülünün container'daki adıdır (ADR 0001/0006).
-//
-// Ad region modülünündür ve burada DİZE olarak tekrarlanır: modüller birbirini
-// import edemez ve tekrarın bedeli izolasyonun kabul edilen bedelidir. Aynı
-// örüntü [LinePricingName] sabitinde de kullanılır; adın tek doğruluk kaynağı
-// region modülünün ServiceName sabitidir.
-//
-// Yazım hatası SESSİZ KALMAZ: ad çözülemezse sepet açma ucu kapalı arızalanır
-// (bkz. [regionCurrency]), çünkü para birimi türetilemeden sepet açmak, tam
-// olarak kapatılan yetki kapısını geri açardı.
-const RegionServiceName = "region.service"
 
 // svcDB veritabanı havuzunun container'daki adıdır.
 const svcDB = "core.db"
@@ -225,14 +214,11 @@ func (m *Module) Register(ctx context.Context, c *container.Container) error {
 	// modüllerin servislerini container'dan çözerek kurulur, yani Register
 	// döngüsünün TAMAMI bittikten sonra doğar. Handler ise akışa ihtiyaç duyar.
 	// Bağımlılık dairesi, çözümü İSTEK ANINA erteleyerek kırılır
-	// (bkz. [linePricing] ve [cartCompletion]); aynı kalıbı order modülü
-	// harcama limiti kuralı için uygular.
+	// (bkz. [cartOpening], [linePricing] ve [cartCompletion]); aynı kalıbı
+	// order modülü harcama limiti kuralı için uygular.
 	//
-	// Bölge yüzeyi de aynı sarmalayıcıdan geçer ama sebebi daha basittir:
-	// region modülü bu modülden SONRA Register olabilir ve kayıt sırasına
-	// bağımlı bir modül, kompozisyon kökündeki bir satır yer değiştirdiğinde
-	// sessizce bozulurdu.
-	m.handler = api.New(svc, &regionCurrency{c: c, log: log}, api.Flows{
+	m.handler = api.New(svc, api.Flows{
+		Opening:  &cartOpening{c: c, log: log},
 		Pricing:  &linePricing{c: c, log: log},
 		Checkout: &cartCompletion{c: c, log: log},
 	})
@@ -371,15 +357,15 @@ func (p *linePricing) SetLineItemQuantity(
 // maskeler, gerçek zinciri yalnızca loga yazar (bkz. corehttp.WriteError).
 // İstemcinin gördüğü tek makine okunur alan [codeSetupFailed] kalır.
 func (p *linePricing) resolve(ctx context.Context) {
-	svc, err := container.Resolve[api.LinePricing](p.c, LinePricingName)
+	svc, err := container.Resolve[api.LinePricing](p.c, CartFlowsName)
 	if err != nil {
 		p.err = errors.Wrap(err, errors.KindInternal, codeSetupFailed,
 			"%s modülü satır fiyatlandırma akışını çözemedi (%q); fiyatı sunucu "+
-				"belirlemeden satır eklenemez", ModuleName, LinePricingName)
+				"belirlemeden satır eklenemez", ModuleName, CartFlowsName)
 		return
 	}
 	p.svc = svc
-	p.log.InfoContext(ctx, "satır fiyatlandırma akışı bağlandı", "akis", LinePricingName)
+	p.log.InfoContext(ctx, "satır fiyatlandırma akışı bağlandı", "akis", CartFlowsName)
 }
 
 // cartCompletion sepet tamamlama akışını İLK KULLANIMDA çözen sarmalayıcıdır.
@@ -423,60 +409,57 @@ func (p *cartCompletion) resolve(ctx context.Context) {
 	p.log.InfoContext(ctx, "sepet tamamlama akışı bağlandı", "akis", CartCompletionName)
 }
 
-// regionCurrency bölge yüzeyini İLK KULLANIMDA çözen sarmalayıcıdır.
+// cartOpening sepet açma akışını İLK KULLANIMDA çözen sarmalayıcıdır.
 //
-// # Neden burada bir modül yüzeyi çözülüyor
+// Tembelliğin gerekçesi [linePricing] ile aynıdır ve kapalı arızalanmanınki de
+// aynı yöndedir: akış yoksa doğru cevap "bölgesiz sepet" ya da "istemcinin
+// dediği bölge" DEĞİLDİR. Sepetin bölgesi vergi oranını, ondan türetilen para
+// birimi de hangi fiyat listesinin uygulanacağını seçer; ikisini de bir
+// varsayılana düşürmek, kapatılan yetki kapısını geri açardı. Sepet HİÇ
+// AÇILMAZ.
 //
-// Sepetin para birimi bölgenin verisidir ve bölgeden TÜRETİLİR
-// (bkz. api.RegionCurrencyReader). Türetmeyi yapabilmek için bölgeyi bilen
-// tarafa sormak gerekir; bu modül region'ı import edemez (ADR 0001), o yüzden
-// yüzey container'dan ADLA çözülür ve modül yalnızca kendi tanımladığı dar
-// arayüzü tanır.
-//
-// # Neden tembel ve neden KAPALI arızalanıyor
-//
-// Tembellik kayıt sırası içindir: region bu modülden sonra Register olabilir.
-// Kapalı arızalanma ise [linePricing] ile aynı gerekçededir — bölge yüzeyi
-// yoksa doğru cevap "para birimi yok" ya da "istemcininkini kullan" DEĞİLDİR.
-// Sepetin para birimi hangi fiyat listesinden fiyatlanacağını seçer; bir
-// varsayılana düşmek, kapatılan yetki kapısını geri açardı. Sepet HİÇ AÇILMAZ.
-type regionCurrency struct {
+// Sarmalayıcı [linePricing] ile AYNI adı çözer ([CartFlowsName]) ama ayrı bir
+// tiptir: iki uç iki farklı dar arayüz görür ve tek bir sarmalayıcıya
+// indirilseydi handler, satır fiyatlandırmayı da sepet açmayı da tek bir
+// yüzeyin arkasında görürdü — oysa arayüzün dar olması tam olarak "bu uç
+// hangi yeteneği kullanıyor" sorusunun cevabıdır.
+type cartOpening struct {
 	c    *container.Container
 	log  *slog.Logger
 	once sync.Once
-	svc  api.RegionCurrencyReader
+	svc  api.CartOpening
 	err  error
 }
 
 // Sarmalayıcının handler'ın beklediği yüzeyi karşıladığı derleme zamanında
 // sabitlenir.
-var _ api.RegionCurrencyReader = (*regionCurrency)(nil)
+var _ api.CartOpening = (*cartOpening)(nil)
 
-// RegionCurrency bölgenin para birimini ve ondalık basamak sayısını döner.
-func (p *regionCurrency) RegionCurrency(
+// OpenCartForCountry sepeti açar ve kimliğini döner.
+func (p *cartOpening) OpenCartForCountry(
 	ctx context.Context,
-	regionID string,
-) (code string, decimalDigits int32, err error) {
+	countryCode, customerID, email string,
+	metadata json.RawMessage,
+) (string, error) {
 	p.once.Do(func() { p.resolve(ctx) })
 	if p.err != nil {
-		return "", 0, p.err
+		return "", p.err
 	}
-	return p.svc.RegionCurrency(ctx, regionID)
+	return p.svc.OpenCartForCountry(ctx, countryCode, customerID, email, metadata)
 }
 
-// resolve bölge yüzeyini container'dan çözer; sonucu bir kez saklar.
+// resolve akışı container'dan çözer; sonucu bir kez saklar.
 //
 // Hata sınıfının container'dan devralınmama gerekçesi [linePricing.resolve]
-// godoc'undadır ve burada da aynen geçerlidir: eksik ya da yanlış tipte bir
-// kayıt istemcinin değil KURULUMUN sorunudur.
-func (p *regionCurrency) resolve(ctx context.Context) {
-	svc, err := container.Resolve[api.RegionCurrencyReader](p.c, RegionServiceName)
+// godoc'undadır ve burada da aynen geçerlidir.
+func (p *cartOpening) resolve(ctx context.Context) {
+	svc, err := container.Resolve[api.CartOpening](p.c, CartFlowsName)
 	if err != nil {
 		p.err = errors.Wrap(err, errors.KindInternal, codeSetupFailed,
-			"%s modülü bölge yüzeyini çözemedi (%q); sepetin para birimi bölgeden "+
-				"türetilemeden sepet açılamaz", ModuleName, RegionServiceName)
+			"%s modülü sepet açma akışını çözemedi (%q); bölge ülkeden "+
+				"türetilemeden sepet açılamaz", ModuleName, CartFlowsName)
 		return
 	}
 	p.svc = svc
-	p.log.InfoContext(ctx, "bölge yüzeyi bağlandı", "yuzey", RegionServiceName)
+	p.log.InfoContext(ctx, "sepet açma akışı bağlandı", "akis", CartFlowsName)
 }

@@ -15,29 +15,32 @@ import (
 
 // createCartRequest POST /store/v1/carts gövdesidir.
 //
-// # currency_code BURADA YOKTUR
+// # currency_code ve region_id BURADA YOKTUR
 //
-// Alan bir zamanlar bu gövdedeydi ve SUNUCUNUN verisiydi — sınıfı, aynı
-// ölçütle kaldırılan unit_price ile aynıdır ([addLineItemRequest]).
+// İkisi de bir zamanlar bu gövdedeydi ve ikisi de SUNUCUNUN verisiydi; sınıf,
+// aynı ölçütle kaldırılan unit_price ile aynıdır ([addLineItemRequest]).
 //
-// Para birimi bölgenin verisidir: region şemasında bölge başına TEK bir
-// sütundur (region.currency_code, currency tablosuna FK). Bir bölgenin iki
-// para birimi olamaz, dolayısıyla sepetin para birimi bir SEÇİM değil bir
-// TÜRETMEDİR ve bugün handler onu bölgeden türetir
-// ([Handler.currencyForRegion]).
+//   - currency_code. Para birimi bölgenin verisidir: region şemasında bölge
+//     başına TEK bir sütundur (region.currency_code, currency tablosuna FK).
+//     Bir bölgenin iki para birimi olamaz, dolayısıyla sepetin para birimi bir
+//     SEÇİM değil bir TÜRETMEDİR. Bedeli kozmetik değildi — para birimi FİYAT
+//     SEÇER: satır fiyatlandırma akışı birim fiyatı varyantın fiyat kümesinden
+//     "sepetin para biriminde" okur. TRY bölgesinde açtığı sepete USD yazan bir
+//     istemci, operatörün USD listesindeki fiyatı ödüyordu.
+//   - region_id. Bölge vergi ORANINI seçer ve para birimini de o taşır, ama
+//     asıl kusur şudur: region_id müşterinin ifade etmek istediği şey DEĞİLDİR.
+//     Müşteri bir ÜLKE seçer (ya da tarayıcısı söyler); bölge, o ülkenin
+//     sunucudaki karşılığıdır ve eşlemeyi operatör kurar. İstemciye bir İÇ
+//     VARLIK KİMLİĞİ yazdırmak, "sunucunun verisini istemciden almak"
+//     sınıfının daha yumuşak bir biçimidir. Üstelik türetmeyi zaten yapan bir
+//     akış vardı (create_cart, ülke kodundan hem bölgeyi hem para birimini
+//     çözer) ve bu uç onu ATLIYORDU.
 //
-// Türetmenin bedeli kozmetik değildi. Para birimi FİYAT SEÇER: satır
-// fiyatlandırma akışı birim fiyatı varyantın fiyat kümesinden "sepetin para
-// biriminde" okur. Alan gövdedeyken istemci tutar uyduramıyordu ama HANGİ
-// FİYAT LİSTESİNİN uygulanacağını seçebiliyordu — TRY bölgesinde açtığı sepete
-// USD yazan bir istemci, operatörün USD listesindeki fiyatı ödüyordu. Üstelik
-// ayrışma REDDEDİLMİYORDU: cart servisi region'ı tanımadığı için (ADR 0006)
-// kodun yalnızca BİÇİMİNİ doğruluyor, bölgeninkiyle karşılaştırmıyordu.
-//
-// Gövde tanınmayan alanı REDDEDER ([decodeBody]), yani "currency_code" gönderen
-// eski bir istemci 422 alır. Sessizce yok saymak seçilmedi: istemci
-// gönderdiğini sanır, sunucu başka bir para birimi yazardı — ve fiyat listesi
-// beklediğinden başkası olurdu.
+// Gövde tanınmayan alanı REDDEDER ([decodeBody]), yani "region_id" ya da
+// "currency_code" gönderen eski bir istemci 422 alır. Sessizce yok saymak
+// seçilmedi: istemci gönderdiğini sanır, sunucu başka bir bölgede sepet
+// açardı — ve o sepet başka bir vergi oranıyla, başka bir fiyat listesinden
+// fiyatlanırdı.
 //
 // # YÖNETİM yüzeyinde aynı alan MEŞRUDUR
 //
@@ -48,39 +51,42 @@ import (
 // bildiği bir değerin istemci tarafından tekrar edilmesiydi. Cart'ın kendi
 // yönetim yüzeyinde bu soru hiç doğmaz: /admin/v1/carts YALNIZCA OKUR ve
 // sepet açan bir yönetim ucu yoktur.
-//
-// # region_id hâlâ İSTEMCİDEN geliyor ve bu bir BORÇTUR
-//
-// Bölge vergi ORANINI seçer ve alan aynı sınıftadır. İki şey değişti:
-// bölgenin gerçekten VAR OLDUĞU artık doğrulanır (para birimi ondan
-// okunduğu için uydurma bir kimlik sepet açamaz) ve seçimin fiyat listesi
-// üzerindeki etkisi kalktı. Doğru kapatma yeri yine bu handler değildir:
-// türetmeyi zaten yapan bir akış vardır — internal/workflows/cart'taki
-// create_cart ülke kodundan hem bölgeyi hem para birimini çözer — ve ucun
-// gövdesi country_code'a indirilerek O AKIŞA devredilmelidir. Maliyeti,
-// akışın modüller arası yüzeyine bugün bilinçli olarak bulunmayan bir metot
-// eklemektir.
-//
-// Borç burada YAZILIDIR: kayda geçmemiş bir açık, kimsenin kapatmadığı
-// açıktır.
 type createCartRequest struct {
-	// RegionID zorunludur; sepetin para birimi de ondan türetilir.
-	RegionID string `json:"region_id"`
+	// CountryCode müşterinin ülkesidir (ISO 3166-1 alpha-2) ve ZORUNLUDUR;
+	// sepetin bölgesi ile para birimi ondan türetilir.
+	//
+	// Doğrulaması BURADA yapılmaz, akışta yapılır: boş kod 422, biçimi bozuk
+	// kod yine 422 (region'ın doğrulaması), bölgesi olmayan geçerli bir ülke
+	// ise 404 alır. Handler'da ikinci bir kontrol, aynı kuralın iki yerde
+	// ayrışması demek olurdu.
+	CountryCode string `json:"country_code"`
 	// CustomerID boş bırakılırsa sepet misafirindir.
 	//
 	// Alan bir SAHİPLİK İDDİASIDIR ve bugün hiçbir kanıt istemez; sınırı
-	// paket belgesindeki "Vitrin sepetlerinde sahiplik" bölümündedir.
-	CustomerID string         `json:"customer_id"`
-	Email      string         `json:"email"`
-	Metadata   map[string]any `json:"metadata"`
+	// paket belgesindeki "Modelin KAPSAMADIĞI şey: customer_id" bölümündedir.
+	//
+	// Alanın BOŞ bırakılması da bir karardır ve bedeli oradadır: müşterisiz
+	// sepetten doğan siparişe b2b harcama limiti hiç uygulanmaz.
+	CustomerID string `json:"customer_id"`
+	Email      string `json:"email"`
+	// Metadata sepetin serbest ek verisidir (kampanya kaynağı, vitrin
+	// oturumu).
+	//
+	// Bölge ve para biriminden farklı olarak bu, gerçekten İSTEMCİNİN
+	// bilgisidir ve hiçbir hesaba girmez; bu yüzden gövdede kalır ve akışa
+	// olduğu gibi taşınır. Karar satır metadata'sında verilenin aynısıdır
+	// (bkz. [addLineItemRequest]).
+	Metadata map[string]any `json:"metadata"`
 }
 
-// storeCreateCart yeni bir sepet oluşturur; para birimini SUNUCU belirler.
+// storeCreateCart yeni bir sepet açar; bölgeyi ve para birimini SUNUCU
+// türetir.
 //
-// Para birimi gövdeden değil BÖLGEDEN gelir ([Handler.currencyForRegion]) ve
-// sıra bilinçlidir: türetme, sepet YAZILMADAN önce koşar. Sonraya bırakılsaydı
-// bölgesi bilinmeyen bir sepet açılmış olur ve para birimi ancak ikinci bir
-// yazmayla düzelebilirdi.
+// Sepeti bu handler değil [CartOpening] açar: akış müşterinin ülkesinden
+// bölgeyi, bölgeden para birimini çözer, kayıtlı müşteriyi doğrular ve sepeti
+// yazar. Akış çözülemiyorsa sepet HİÇ açılmaz (bkz. [Handler.opening]).
+//
+// Yanıt için sepet YENİDEN OKUNUR; gerekçe [Handler.cart] godoc'undadır.
 func (h *Handler) storeCreateCart(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -89,25 +95,53 @@ func (h *Handler) storeCreateCart(w http.ResponseWriter, r *http.Request) {
 		corehttp.WriteError(ctx, w, err)
 		return
 	}
-
-	currency, err := h.currencyForRegion(ctx, body.RegionID)
+	akis, err := h.opening()
+	if err != nil {
+		corehttp.WriteError(ctx, w, err)
+		return
+	}
+	metadata, err := encodeMetadata(body.Metadata)
 	if err != nil {
 		corehttp.WriteError(ctx, w, err)
 		return
 	}
 
-	cart, err := h.svc.CreateCart(ctx, service.CreateCartInput{
-		RegionID:     body.RegionID,
-		CustomerID:   body.CustomerID,
-		Email:        body.Email,
-		CurrencyCode: currency,
-		Metadata:     body.Metadata,
-	})
+	id, err := akis.OpenCartForCountry(ctx, body.CountryCode, body.CustomerID, body.Email, metadata)
+	if err != nil {
+		corehttp.WriteError(ctx, w, err)
+		return
+	}
+
+	cart, err := h.cart(ctx, id)
 	if err != nil {
 		corehttp.WriteError(ctx, w, err)
 		return
 	}
 	corehttp.WriteJSON(ctx, w, http.StatusCreated, singleEnvelope{Data: toCartDTO(cart)})
+}
+
+// cart açılmış sepeti YENİDEN OKUYUP döner.
+//
+// # Neden yeniden okunuyor
+//
+// Akış geriye yalnızca sepetin kimliğini verir ve bu bilinçlidir: yüzeyi ilkel
+// tiplerle sınırlıdır (ADR 0006), sepetin zengin kaydını taşıyamaz. Kaydı
+// akışın döndürdüğü birkaç alandan KURMAK da bir seçenek değildi — zaman
+// damgaları, revision ve toplam alanları sepetin kendi verisidir ve elde
+// üretilmiş bir kopya, ilk okumada gerçeğinden farklı çıkardı.
+//
+// Sepet bulunamazsa hata Internal'dır: az önce yazılmış bir kaydın
+// okunamaması istemcinin düzeltebileceği bir şey değildir.
+func (h *Handler) cart(ctx context.Context, cartID string) (models.Cart, error) {
+	detail, err := h.svc.GetCart(ctx, cartID)
+	if err != nil {
+		if coreerrors.IsNotFound(err) {
+			return models.Cart{}, coreerrors.Wrap(err, coreerrors.KindInternal, codeCartMissing,
+				"sepet açıldı ama okunamadı: %s", cartID)
+		}
+		return models.Cart{}, err
+	}
+	return detail.Cart, nil
 }
 
 // storeGetCart sepeti çocuklarıyla döner.

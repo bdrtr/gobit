@@ -2,6 +2,7 @@ package cart
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 
 	"github.com/bdrtr/gobit/internal/core/errors"
@@ -18,6 +19,13 @@ type CreateCartInput struct {
 	// Email sepetin iletişim adresidir; opsiyoneldir. Kayıtlı müşteri
 	// sepetinde boş bırakılırsa müşterinin kayıtlı adresi kullanılır.
 	Email string
+	// Metadata sepete iliştirilecek SERBEST JSON nesnesidir; opsiyoneldir.
+	//
+	// Akış onu OKUMAZ ve hiçbir kararına katmaz, yalnızca sepete taşır: alan
+	// gerçekten çağıranın kendi verisidir (kampanya kaynağı, vitrin oturumu)
+	// ve türetilecek bir karşılığı yoktur. Ayrımın ölçütü [CountryCode] ile
+	// aynıdır — orada gövdeye konan şey sunucunun verisiydi, burada değil.
+	Metadata json.RawMessage
 }
 
 // CreateCartResult oluşturulan sepetin çağıranı ilgilendiren alanlarıdır.
@@ -97,7 +105,7 @@ func (w *Workflows) CreateCart(ctx context.Context, in CreateCartInput) (CreateC
 		}
 	}
 
-	cartID, err := w.carts.OpenCart(ctx, regionID, currency, in.CustomerID, email)
+	cartID, err := w.carts.OpenCart(ctx, regionID, currency, in.CustomerID, email, in.Metadata)
 	if err != nil {
 		return CreateCartResult{}, err
 	}

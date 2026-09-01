@@ -43,6 +43,11 @@ type CreateOrderInput struct {
 	RegionID string
 	// CustomerID siparişin sahibidir; OPSİYONELDİR. Boş bırakılırsa sipariş
 	// MİSAFİRE aittir.
+	//
+	// Alan bugün vitrin sepetinin gövdesinden gelen bir SAHİPLİK İDDİASIDIR ve
+	// bu modül onu doğrulayamaz. Harcama limiti tam olarak bu alana
+	// bağlandığından, alanın boş gelmesi kuralın hiç sorulmaması demektir;
+	// sınırın tamamı [Service.spendingRuleFor] godoc'undadır.
 	CustomerID string
 	// Email siparişin iletişim adresidir; opsiyoneldir ama misafir siparişinde
 	// tek takip yoludur.
@@ -113,6 +118,12 @@ type CreateOrderInput struct {
 // Müşterinin bir harcama limiti varsa (kuralın kaynağı için bkz.
 // [SpendingPolicy]) sipariş, limitin ÜSTÜNE çıkıyorsa açılmaz ve çağrı
 // errors.Conflict döner ([CodeSpendingLimitExceeded]).
+//
+// KİME UYGULANIR: yalnızca [CreateOrderInput.CustomerID] dolu olan siparişlere.
+// Alan boşsa kural SORULMAZ bile ve sipariş limitten bağımsız açılır. Bugünkü
+// yüzeyde o alan doğrulanmamış bir beyandır, yani limit "her alışverişe" değil
+// "müşterisini beyan eden alışverişe" uygulanır; sınırın tamamı ve neden bu
+// modülde kapatılamadığı [Service.spendingRuleFor] godoc'unda ve ADR 0008'de.
 //
 // HARCAMA NASIL SAYILIR: müşterinin, kuralın bildirdiği pencere içinde verilmiş
 // siparişlerinin toplamıdır. İPTAL EDİLMİŞ ve yumuşak silinmiş siparişler

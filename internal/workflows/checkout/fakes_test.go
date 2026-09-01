@@ -161,7 +161,9 @@ func (s *stubCarts) MarkCompleted(ctx context.Context, cartID string) error {
 }
 
 // OpenCart sepet akışlarının yüzeyini tamamlar; bu paket onu çağırmaz.
-func (s *stubCarts) OpenCart(_ context.Context, _, _, _, _ string) (string, error) {
+func (s *stubCarts) OpenCart(
+	_ context.Context, _, _, _, _ string, _ json.RawMessage,
+) (string, error) {
 	return "", errUnexpected("OpenCart")
 }
 

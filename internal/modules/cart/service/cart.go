@@ -25,12 +25,12 @@ type CreateCartInput struct {
 	// değiştirirse, açık sepetlerin tutarları sessizce başka bir para biriminde
 	// okunmamalıdır.
 	//
-	// Kopyalayan taraf HER ZAMAN SUNUCUDUR ve bu servisin DIŞINDADIR: vitrin
-	// ucu bölgeyi api.RegionCurrencyReader ile sorar, create_cart workflow'u
-	// ülke kodundan hem bölgeyi hem para birimini çözer. Servis bu soruyu
-	// kendisi soramaz — region modülünü çağırmaz (ADR 0006) — ve bu yüzden
-	// yalnızca kodun BİÇİMİNİ doğrular. Alan bir zamanlar vitrin gövdesinden,
-	// yani İSTEMCİDEN geliyordu; kaldırılma gerekçesi api.createCartRequest
+	// Kopyalayan taraf HER ZAMAN SUNUCUDUR ve bu servisin DIŞINDADIR:
+	// create_cart workflow'u ülke kodundan hem bölgeyi hem para birimini
+	// çözer ve vitrin ucu da o akıştan geçer. Servis bu soruyu kendisi
+	// soramaz — region modülünü çağırmaz (ADR 0006) — ve bu yüzden yalnızca
+	// kodun BİÇİMİNİ doğrular. Alan bir zamanlar vitrin gövdesinden, yani
+	// İSTEMCİDEN geliyordu; kaldırılma gerekçesi api.createCartRequest
 	// godoc'unda yazılıdır.
 	CurrencyCode string
 	// Metadata çağıranın serbest ek verisidir.

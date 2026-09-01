@@ -15,26 +15,27 @@
 //
 // # Akışa devredilen uçlar
 //
-// Üç vitrin ucu işini KENDİ SERVİSİYLE değil, container'dan adla çözülen bir
-// AKIŞLA yapar: satır ekleme, satır adedi güncelleme ([LinePricing]) ve sepeti
-// tamamlama ([CartCompletion]). Sebep tek cümleyle şudur — bu uçların doğru
-// çalışması cart modülünün BİLMEDİĞİ verilere (katalog başlığı, fiyat, vergi,
-// stok, ödeme) bağlıdır ve o veriler ancak modüller arası bir akışta bir araya
-// gelir.
+// Vitrinin YAZAN uçlarının tamamı işini KENDİ SERVİSİYLE değil, container'dan
+// adla çözülen bir AKIŞLA yapar: sepet açma ([CartOpening]), satır ekleme ve
+// satır adedi güncelleme ([LinePricing]), sepeti tamamlama ([CartCompletion]).
+// Sebep tek cümleyle şudur — bu uçların doğru çalışması cart modülünün
+// BİLMEDİĞİ verilere (bölge, para birimi, katalog başlığı, fiyat, vergi, stok,
+// ödeme) bağlıdır ve o veriler ancak modüller arası bir akışta bir araya gelir.
 //
 // Akışların HTTP sahibinin modül olması bilinçli bir karardır: URL'ler sepetin
 // altında kalır, bileşim köküne handler kodu girmez ve modül somut akışı değil
 // yalnızca kendi tanımladığı dar arayüzü tanır (ADR 0001'in kalıbı; aynısı
 // order modülünün b2b harcama kuralında da kullanılır).
 //
-// # Bölgeden TÜRETİLEN alan
+// # Bu paket artık hiçbir MODÜL yüzeyi çözmüyor
 //
-// Dördüncü bir uç, sepet AÇMA ucu, aynı kalıbı bir akışa değil bir MODÜL
-// yüzeyine uygular: sepetin para birimini gövdeden değil bölgeden okur
-// ([RegionCurrencyReader]). Sebep bu paketin yetki ölçütüdür — gövdeye konan
-// şey müşterinin belirleyebildiği şeydir ve para birimi öyle değildir: bölge
-// başına tek bir sütundur ve hangi fiyat listesinin uygulanacağını seçer.
-// Ölçütün aynısı satır ucundaki unit_price ve title alanlarını da kaldırmıştı.
+// Sepet açma ucu bir süre farklı çalıştı: bölgeyi gövdeden alıyor, para
+// birimini de o bölgeden okumak için region modülünün yüzeyini adla çözüyordu.
+// İki kusuru vardı. Birincisi, region_id müşterinin ifade ettiği şey DEĞİLDİR
+// — müşteri bir ÜLKE seçer ve bölge onun sunucudaki karşılığıdır; ikincisi,
+// türetmeyi zaten yapan bir akış (create_cart) varken uç onu ATLIYORDU. İkisi
+// de akışa devredilerek kapandı ve bu paketin region'a olan tek bağı da
+// böylece düştü: bölgeyi bilen taraf artık akıştır.
 //
 // # Yetki
 //
@@ -88,7 +89,17 @@
 // Sonucu kozmetik değildir: sepetin müşterisi siparişin sahibini belirler ve
 // b2b harcama limiti O müşterinin şirket penceresinden düşülür (bkz. order
 // modülünün harcama kuralı). Yani iddia, başkasının limit penceresini
-// tüketebilir.
+// tüketebilir. Gerçek ikilide ölçüldü: yabancının tamamladığı alışveriş
+// hedefin penceresinden düştü ve ARDINDAN o müşterinin kendi alışverişi 409
+// aldı — yani iddia yalnızca kaçış değil, adı bilinen bir çalışanın harcama
+// hakkını YAKMA yoludur.
+//
+// Üçüncü kapı ise iki kapının da altından geçer ve en ucuzudur: alanı HİÇ
+// GÖNDERMEMEK. Müşterisiz sepet misafirindir, misafir siparişinde harcama
+// kuralı SORULMAZ bile ve limit hiç uygulanmaz. Yani limitine dayanmış bir
+// çalışanın yapması gereken tek şey, gövdeden bir alanı çıkarmaktır.
+// "Kimliğini beyan et" demek de kapatmaz: POST /store/v1/customers publishable
+// anahtarla hiçbir şirkete bağlı olmayan taze bir misafir kaydı açar.
 //
 // Tahmin edilemezlik bunu KAPATMAZ, çünkü korunan şey çağıranın elindeki bir
 // yetenek değil, BAŞKASI hakkında yapılmış bir iddiadır. Tek doğru kapatma
@@ -96,6 +107,12 @@
 // doğrulanmış kimlikten okunur. O mekanizma bugün YOKTUR ve bu paket onu
 // uydurmaya çalışmaz; verilen karar, açığın YAZILI olmasıdır — yazılmamış bir
 // güvenlik modeli, olmayan bir güvenlik modelidir.
+//
+// Sorumluluğun nerede durduğu ADR 0008'de karara bağlanmıştır: kimliği
+// doğrulamak çerçevenin değil GÖMEN UYGULAMANIN işidir ve harcama limitinin
+// hangi koşulda uygulandığı (yalnızca müşterisini BEYAN EDEN alışverişte)
+// order modülünün spendingRuleFor godoc'unda ve README'nin B2B bölümünde
+// yazılıdır.
 //
 // Handler'lar status kodu SEÇMEZ: servis core/errors tipli hatasını döner,
 // corehttp.WriteError sınıfına uygun kodu yazar (plan Bölüm 8).
@@ -130,16 +147,15 @@ const codeInvalidRequest = "cart_invalid_request"
 // adlandırır ve bu yüzden Internal sınıfındadır.
 const codeFlowUnavailable = "cart_workflow_unavailable"
 
-// codeRegionUnavailable bölge yüzeyinin handler'a bağlanmadığını bildirir.
-//
-// [codeFlowUnavailable]'dan AYRI bir koddur çünkü eksik olan şey farklıdır:
-// orada bir akış, burada bir MODÜL yüzeyi yoktur. İkisi tek koda indirgenseydi
-// operatör, sepetin neden açılamadığını logu okumadan ayırt edemezdi. Sınıfı
-// yine Internal'dır — istemcinin düzeltebileceği bir şey yoktur.
-const codeRegionUnavailable = "cart_region_unavailable"
-
 // codeLineItemMissing yazılan satırın hemen ardından okunamadığını bildirir.
 const codeLineItemMissing = "cart_line_item_missing"
+
+// codeCartMissing açılan sepetin hemen ardından okunamadığını bildirir.
+//
+// [codeLineItemMissing]'den AYRI bir koddur çünkü kaybolan kayıt farklıdır ve
+// operatörün bakacağı yer de öyle: biri sepeti, diğeri satırı arar. İkisi tek
+// koda indirgenseydi teşhis logu okumadan yapılamazdı.
+const codeCartMissing = "cart_missing_after_create"
 
 // codeFlowResultInvalid akıştan dönen gövdenin çözülemediğini bildirir.
 //
@@ -160,9 +176,13 @@ const (
 // Dar tutulması testleri sadeleştirir: HTTP davranışı, gerçek bir veritabanı
 // olmadan birkaç yüz satırlık bir sahte ile doğrulanabilir. Yüzeyde SetTotals
 // ve MarkCompleted YOKTUR; ikisi de HTTP'ye açılmayan workflow yüzeyidir.
+//
+// CreateCart da YOKTUR ve sebebi farklıdır: sepet açma ucu servisi değil
+// [CartOpening] akışını çağırır (bölge ülkeden orada türetilir) ve yazılan
+// sepeti yanıta çevirmek için [Carts.GetCart] zaten yeter. Metodu yüzeyde
+// tutmak, handler'ın akışı ATLAYIP sepeti doğrudan yazabileceği bir kapıyı
+// açık bırakırdı.
 type Carts interface {
-	// CreateCart yeni bir sepet oluşturur.
-	CreateCart(ctx context.Context, in service.CreateCartInput) (models.Cart, error)
 	// GetCart sepeti çocuklarıyla döner.
 	GetCart(ctx context.Context, cartID string) (models.CartDetail, error)
 	// UpdateCart sepetin e-posta ve müşteri alanlarını günceller.
@@ -190,41 +210,41 @@ type Carts interface {
 	RemoveShippingMethod(ctx context.Context, cartID, methodID string) error
 }
 
-// RegionCurrencyReader bölge modülünün bu paketçe kullanılan yüzeyidir
+// CartOpening sepeti AÇAN akışın bu paketçe kullanılan yüzeyidir
 // (ADR 0001/0006).
 //
-// # Neden var
+// # Neden burada tanımlı
 //
-// Sepetin para birimi bir SEÇİM değil bir TÜRETMEDİR: region şemasında para
-// birimi bölge başına TEK bir sütundur (region.currency_code, currency
-// tablosuna FK). Bir bölgenin iki para birimi olamadığı için, bölgesi bilinen
-// bir sepetin para birimini sormanın tek doğru yeri bölgenin kendisidir ve
-// istemcinin söylediğinin hiçbir ağırlığı yoktur.
+// Somut akış internal/workflows/cart'tadır ve bu modül onu import EDEMEZ
+// (ADR 0006 her iki yönde de geçerlidir). Kalıp [LinePricing] ile aynıdır:
+// arayüz TÜKETİCİ tarafında ve yalnızca ilkel tiplerle tanımlanır, somut tip
+// onu YAPISAL olarak karşılar ve container'dan ADLA çözülür.
 //
-// Türetme ÖNEMLİDİR çünkü para birimi FİYAT SEÇER: satır fiyatlandırma akışı
-// birim fiyatı varyantın fiyat kümesinden "sepetin para biriminde" okur.
-// İstemci tutar uyduramasa da, para birimini yazabildiği sürece HANGİ FİYAT
-// LİSTESİNİN uygulanacağını seçebilirdi — TRY bölgesinde açtığı sepete USD
-// yazan bir istemci, operatörün USD listesindeki fiyatı öderdi.
+// # Neden BÖLGE parametresi YOK
 //
-// # Neden bu biçimde
-//
-// Bu modül region'ı IMPORT EDEMEZ (ADR 0001) ve edemediği için imzasında
-// region'ın tiplerini adlandıramaz. Kalıp [LinePricing] ile aynıdır: arayüz
-// TÜKETİCİ tarafında ve yalnızca ilkel tiplerle tanımlanır, somut servis onu
-// YAPISAL olarak karşılar ve container'dan ADLA çözülür. Uyumu derleyici değil
-// ilk çözüm denemesi denetler; bu yüzden imza, region'ın modüller arası
-// yüzeyiyle BİREBİR aynı olmak zorundadır.
-type RegionCurrencyReader interface {
-	// RegionCurrency bölgenin para birimi kodunu ve ONDALIK BASAMAK sayısını
-	// döner; bölge yoksa errors.NotFound.
+// Yüzeyin tamamı bu boşluk içindir ve boşluk [LinePricing]'deki fiyat
+// boşluğunun aynısıdır. Sepetin bölgesi müşterinin ÜLKESİNDEN türetilir:
+// müşteri bir ülke seçer (ya da tarayıcısı söyler), bölge onun sunucudaki
+// karşılığıdır. Buraya bir "regionID" parametresi koymak, istemciye bir İÇ
+// VARLIK KİMLİĞİ yazdırmak ve sepetin vergi oranını onun seçimine bırakmak
+// olurdu — para birimi de aynı bölgeden okunduğu için bir zamanlar tam olarak
+// bu oluyordu.
+type CartOpening interface {
+	// OpenCartForCountry sepeti açar ve sepetin KİMLİĞİNİ döner.
 	//
-	// Basamak sayısı bu modülde kullanılmaz ve SAKLANMAZ: para her yerde minor
-	// unit tam sayıdır ve basamak sayısı yalnızca sunum içindir — sepete
-	// kopyalanmış bir basamak sayısı, referans tablosu düzeltildiğinde sessizce
-	// eskirdi. İmzada yer almasının tek sebebi sağlayıcının imzasıdır;
-	// daraltmak yapısal uyumu bozar ve uç açılışta değil İLK İSTEKTE kapanırdı.
-	RegionCurrency(ctx context.Context, regionID string) (code string, decimalDigits int32, err error)
+	// Bölge ve para birimi SUNUCUDA belirlenir: ikisi de countryCode'dan
+	// akış tarafından çözülür. customerID boş bırakılırsa sepet misafirindir;
+	// metadata çağıranın sepete iliştirdiği serbest JSON nesnesidir ve boş
+	// bırakılabilir.
+	//
+	// Ülkenin bölgesi yoksa errors.NotFound, kodun biçimi bozuksa
+	// errors.Invalid döner; ikisi de region modülünün hatasıdır ve olduğu gibi
+	// geçer.
+	OpenCartForCountry(
+		ctx context.Context,
+		countryCode, customerID, email string,
+		metadata json.RawMessage,
+	) (cartID string, err error)
 }
 
 // LinePricing satır fiyatını SUNUCUDA belirleyen akışın bu paketçe kullanılan
@@ -281,11 +301,13 @@ type CartCompletion interface {
 
 // Flows handler'ın akışlardan ihtiyaç duyduğu yüzeylerin kümesidir.
 //
-// İkisi de ZORUNLUDUR ve eksikliği çalışma zamanında hata üretir
-// (bkz. [Handler.pricing] ve [Handler.checkout]); route'ları hiç bağlamamak
-// bir seçenek değildi, çünkü akışlar modüllerden SONRA kurulur ve Routes
-// çağrıldığında henüz kayıtlı olmayabilirler.
+// Üçü de ZORUNLUDUR ve eksikliği çalışma zamanında hata üretir
+// (bkz. [Handler.opening], [Handler.pricing] ve [Handler.checkout]);
+// route'ları hiç bağlamamak bir seçenek değildi, çünkü akışlar modüllerden
+// SONRA kurulur ve Routes çağrıldığında henüz kayıtlı olmayabilirler.
 type Flows struct {
+	// Opening sepet açma akışıdır.
+	Opening CartOpening
 	// Pricing satır fiyatlandırma akışıdır.
 	Pricing LinePricing
 	// Checkout sepet tamamlama akışıdır.
@@ -294,49 +316,34 @@ type Flows struct {
 
 // Handler cart modülünün HTTP handler kümesidir.
 type Handler struct {
-	svc     Carts
-	regions RegionCurrencyReader
-	flows   Flows
+	svc   Carts
+	flows Flows
 }
 
-// New verilen servis, bölge yüzeyi ve akışlar üzerinde çalışan handler kümesini
-// üretir.
+// New verilen servis ve akışlar üzerinde çalışan handler kümesini üretir.
 //
-// regions AYRI bir parametredir, [Flows]'a konmamıştır: o küme AKIŞLARI taşır
-// ve bölge bir akış değil bir modül yüzeyidir. Aynı kutuya konsaydı, "sepetin
-// para birimi bir akıştan geliyor" gibi okunur ve türetmenin nereden geldiği
-// gizlenirdi.
-func New(svc Carts, regions RegionCurrencyReader, flows Flows) *Handler {
-	return &Handler{svc: svc, regions: regions, flows: flows}
+// Bir zamanlar üçüncü bir parametre daha vardı (bölge yüzeyi) ve sepetin para
+// birimi ondan okunurdu; bugün o türetmeyi sepet açma AKIŞI yapıyor, yani
+// handler'ın tanıdığı tek dış taraf [Flows]'tur.
+func New(svc Carts, flows Flows) *Handler {
+	return &Handler{svc: svc, flows: flows}
 }
 
-// currencyForRegion sepetin para birimini BÖLGEDEN türetir.
+// opening sepet açma akışını döner; bağlı değilse HATA döner.
 //
 // # Neden KAPALI arızalanıyor
 //
-// Gerekçe [Handler.pricing] ile aynı yöndedir: bölge yüzeyi yoksa doğru cevap
-// "para birimi yok" DEĞİLDİR. Sepetin para birimi, satırın hangi fiyat
-// listesinden fiyatlanacağını seçer; bir varsayılana düşmek (mağazanın ilk
-// para birimi, ya da istemcinin dediği) tam olarak kapatılan kapıyı geri
-// açardı. Yüzey çözülemiyorsa sepet HİÇ AÇILMAZ.
-//
-// Bilinmeyen bölge de burada elenir ve bu bir yan kazançtır: bölgenin
-// gerçekten var olduğunu cart servisi denetlemez (ADR 0006 gereği region'ı
-// tanımaz), yani bu çağrı olmadan istemci var olmayan bir bölge kimliğiyle
-// sepet açabiliyordu. Hata region'dan olduğu gibi geçer — errors.NotFound
-// 404'e düşer ve istemciye düzeltilebilir bir şey söyler.
-func (h *Handler) currencyForRegion(ctx context.Context, regionID string) (string, error) {
-	if h.regions == nil {
-		return "", coreerrors.Internal(codeRegionUnavailable,
-			"bölge yüzeyi bağlı değil; sepetin para birimi bölgeden türetilemeden sepet açılamaz")
+// Gerekçe [Handler.pricing] ile aynı yöndedir: akış yoksa doğru cevap
+// "bölgesiz sepet" ya da "istemcinin dediği bölge" DEĞİLDİR. Sepetin bölgesi
+// vergi oranını, ondan türetilen para birimi de hangi fiyat listesinin
+// uygulanacağını seçer; ikisini de bir varsayılana düşürmek, tam olarak
+// kapatılan yetki kapısını geri açardı. Akış çözülemiyorsa sepet HİÇ AÇILMAZ.
+func (h *Handler) opening() (CartOpening, error) {
+	if h.flows.Opening == nil {
+		return nil, coreerrors.Internal(codeFlowUnavailable,
+			"sepet açma akışı bağlı değil; bölgeyi sunucu türetmeden sepet açılamaz")
 	}
-	// Ondalık basamak sayısı BİLİNÇLİ olarak atılır; gerekçe
-	// [RegionCurrencyReader.RegionCurrency] godoc'undadır.
-	code, _, err := h.regions.RegionCurrency(ctx, regionID)
-	if err != nil {
-		return "", err
-	}
-	return code, nil
+	return h.flows.Opening, nil
 }
 
 // pricing satır fiyatlandırma akışını döner; bağlı değilse HATA döner.

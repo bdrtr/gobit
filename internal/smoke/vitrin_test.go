@@ -74,6 +74,14 @@ const (
 // açılışta değil, ilk sepet isteğinde patlatırdı.
 const vitrinParaBirimi = "TRY"
 
+// vitrinUlkeleri senaryonun bölgesine bağlanan ülkelerdir; İLKİ sepet açarken
+// gönderilir.
+//
+// İki tane olmalarının gerekçesi [vitrinBolgesiAc] godoc'undadır. Kodlar
+// region modülünün tohumunda kayıtlıdır; tohumlanmamış bir kod bölgeye
+// bağlanamaz.
+var vitrinUlkeleri = []string{"TR", "AZ"}
+
 // vitrinVaryantBasligi katalogdaki varyantın başlığıdır.
 //
 // Satırın başlığı KATALOGDAN kopyalanır ve istemci başlık gönderemez; sabitin
@@ -263,11 +271,13 @@ func TestVitrinSepettenSipariseGercekSurecte(t *testing.T) {
 
 // vitrinBolgesiAc senaryonun vergili bölgesini açar ve kimliğini döner.
 //
-// Bölgeye ÜLKE bağlanmaz ve bu bilinçlidir: ülkesi tek bir koda çözülemeyen
-// bölgede vergi, tax modülü yerine bölgenin kendi oranıyla hesaplanır
-// (bkz. workflows/cart countryForRegion). Senaryonun sınadığı şey verginin
-// hangi modülden geldiği değil, hesap turunun KOŞTUĞUDUR; vergi bölgesi
-// kurmak, o soruyla ilgisi olmayan üç isteği daha senaryoya eklerdi.
+// Bölgeye İKİ ülke bağlanır ve sayı bilinçlidir. Bir tane bağlanması ZORUNLUDUR:
+// sepet açma ucu bölgeyi ülkeden türetir, ülkesiz bir bölgede hiç sepet
+// açılamaz. İkincisi ise verginin kaynağını sabitler — ülkesi tek bir koda
+// çözülemeyen bölgede vergi, tax modülü yerine bölgenin kendi oranıyla
+// hesaplanır (bkz. workflows/cart countryForRegion). Senaryonun sınadığı şey
+// verginin hangi modülden geldiği değil, hesap turunun KOŞTUĞUDUR; bir vergi
+// bölgesi kurmak, o soruyla ilgisi olmayan üç isteği daha senaryoya eklerdi.
 func vitrinBolgesiAc(t *testing.T, s *surec, jeton string) string {
 	t.Helper()
 
@@ -283,6 +293,14 @@ func vitrinBolgesiAc(t *testing.T, s *surec, jeton string) string {
 		ID string `json:"id"`
 	}](t, govde)
 	require.NotEmpty(t, bolge.ID, "bölge kimlik dönmeli; gövde: %s", govde)
+
+	for _, ulke := range vitrinUlkeleri {
+		kod, govde = s.yonetimIste(http.MethodPost, "/admin/v1/regions/"+bolge.ID+"/countries",
+			jeton, map[string]any{"country_code": ulke})
+		require.Equal(t, http.StatusCreated, kod,
+			"%s ülkesi bölgeye bağlanamadı; bağ olmadan vitrin hiç sepet açamaz. gövde: %s",
+			ulke, govde)
+	}
 
 	return bolge.ID
 }
@@ -399,12 +417,12 @@ func vitrinStogunuBagla(t *testing.T, s *surec, jeton, varyantID string) {
 func vitrinSepetiAc(t *testing.T, s *surec, anahtar, bolgeID, eposta string) string {
 	t.Helper()
 
-	// Gövdede para birimi YOK: onu sunucu bölgeden türetir. Göndermek 422
-	// alırdı — fiyat yetkisiyle aynı kural (bkz. CHANGELOG, "Para birimi
-	// yetkisi istemciden alındı").
+	// Gövdede ne bölge ne para birimi VAR: ikisini de sunucu ÜLKEDEN türetir.
+	// Göndermek 422 alırdı — fiyat yetkisiyle aynı kural (bkz. CHANGELOG,
+	// "Bölge yetkisi istemciden alındı").
 	kod, govde := s.vitrinIste(http.MethodPost, "/store/v1/carts", anahtar, map[string]any{
-		"region_id": bolgeID,
-		"email":     eposta,
+		"country_code": vitrinUlkeleri[0],
+		"email":        eposta,
 	})
 	require.Equal(t, http.StatusCreated, kod,
 		"sepet açılamadı; 404 vitrin uçlarının mount edilmediğini gösterir, "+
@@ -413,7 +431,8 @@ func vitrinSepetiAc(t *testing.T, s *surec, anahtar, bolgeID, eposta string) str
 	sepet := zarfVerisi[vitrinSepet](t, govde)
 	require.NotEmpty(t, sepet.ID, "sepet kimlik dönmeli; gövde: %s", govde)
 	require.Equal(t, bolgeID, sepet.RegionID,
-		"sepet istenen bölgede açılmalı; gövde: %s", govde)
+		"sepet ÜLKENİN bölgesinde açılmalı; ayrışma, sunucunun ülkeyi başka bir "+
+			"bölgeye çözdüğünü gösterir. gövde: %s", govde)
 
 	return sepet.ID
 }

@@ -12,11 +12,11 @@ import (
 // Register olduktan SONRA kurulabilirler — bir modülün Register'ında kurulmaya
 // çalışılsalardı henüz var olmayan servisleri arıyor olurlardı.
 //
-// Tüketici cart MODÜLÜDÜR: vitrin satır uçlarının sahibi odur ve akışı bu adla
-// çözer (bkz. cart modülündeki LinePricingName). Modül bu paketi import
-// edemediği için ad orada DİZE olarak tekrarlanır; tekrarın bedeli izolasyonun
-// kabul edilen bedelidir ve yazım hatası sessiz kalmaz — ad çözülemezse satır
-// ekleme ucu KAPALI arızalanır.
+// Tüketici cart MODÜLÜDÜR: vitrinin sepet açma ve satır uçlarının sahibi odur
+// ve akışı bu adla çözer (bkz. cart modülündeki CartFlowsName). Modül bu
+// paketi import edemediği için ad orada DİZE olarak tekrarlanır; tekrarın
+// bedeli izolasyonun kabul edilen bedelidir ve yazım hatası sessiz kalmaz —
+// ad çözülemezse sepet açma ve satır ekleme uçları KAPALI arızalanır.
 const InteropName = "workflows.cart.interop"
 
 // Interop sepet akışlarını modüller arası İLKEL yüzeye çevirir.
@@ -33,18 +33,56 @@ const InteropName = "workflows.cart.interop"
 //
 // # Neden akışların TAMAMI değil
 //
-// Yüzey yalnızca vitrinin HTTP ucu olan iki akışı taşır. [Workflows.CreateCart]
-// ve [Workflows.CalculateTotals] burada YOKTUR: birincisinin vitrin ucu bugün
-// sepet modülünün kendi servisine bağlıdır, ikincisi ise HTTP'ye açılan bir
+// Yüzey yalnızca vitrinin HTTP ucu olan üç akışı taşır.
+// [Workflows.CalculateTotals] burada YOKTUR ve olmayacaktır: HTTP'ye açılan bir
 // yetenek değildir — hesabı istemcinin istediği anda çalıştırmak, tutarı
-// istemcinin zamanlamasına bağlardı. Kullanılmayan metotları buraya yazmak,
+// istemcinin zamanlamasına bağlardı. Kullanılmayan bir metodu buraya yazmak,
 // tüketicisi olmayan bir sözleşme üretmek olurdu.
+//
+// [Workflows.CreateCart] bir süre bu gerekçeyle DIŞARIDA kaldı: sepet açma
+// ucu sepet modülünün kendi servisine bağlıydı. O bağ, ucun bölgeyi
+// İSTEMCİDEN alması demekti ve akışın ülkeden bölge türetmesini atlıyordu;
+// yüzeyin üçüncü metodu ([Interop.OpenCartForCountry]) tam olarak o atlamayı
+// kapatmak için eklendi.
 type Interop struct {
 	w *Workflows
 }
 
 // NewInterop verilen akışlar için modüller arası yüzeyi kurar.
 func NewInterop(w *Workflows) *Interop { return &Interop{w: w} }
+
+// OpenCartForCountry ülke kodundan bölgeyi çözüp sepeti açar ve sepetin
+// KİMLİĞİNİ döner.
+//
+// Bölgeyi ve para birimini ÇAĞIRAN VERMEZ: ikisi de countryCode'dan bu akış
+// tarafından türetilir (bkz. [Workflows.CreateCart]). Yüzeyin bölge parametresi
+// olmaması bilinçlidir ve bu metodun var oluş sebebidir — parametre olsaydı
+// çağıranın onu doldurmasının önünde hiçbir şey kalmazdı, oysa müşterinin ifade
+// ettiği şey bir ÜLKEDİR ve bölge onun sunucudaki karşılığıdır. Aynı boşluk
+// [Interop.AddPricedLineItem]'daki fiyat parametresinin yokluğudur.
+//
+// customerID boş bırakılırsa sepet MİSAFİRE aittir. metadata sepete
+// iliştirilecek serbest JSON nesnesidir; boş bırakılabilir.
+//
+// Yalnızca kimlik döner: sepetin kendisi bu yüzeyin taşıyabileceğinden zengin
+// bir kayıttır ve çağıran onu zaten kendi servisinden okuyabilir. Aynı seçim
+// [Interop.AddPricedLineItem]'da da yapılmıştır.
+func (i *Interop) OpenCartForCountry(
+	ctx context.Context,
+	countryCode, customerID, email string,
+	metadata json.RawMessage,
+) (string, error) {
+	sonuc, err := i.w.CreateCart(ctx, CreateCartInput{
+		CountryCode: countryCode,
+		CustomerID:  customerID,
+		Email:       email,
+		Metadata:    metadata,
+	})
+	if err != nil {
+		return "", err
+	}
+	return sonuc.CartID, nil
+}
 
 // AddPricedLineItem sepete satır ekler ve satırın KİMLİĞİNİ döner.
 //

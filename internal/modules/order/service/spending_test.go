@@ -405,3 +405,64 @@ func TestSifirLimitliCalisanHicHarcayamaz(t *testing.T) {
 	assert.Equal(t, service.CodeSpendingLimitExceeded, errors.CodeOf(err))
 	assert.Contains(t, fmt.Sprint(err), "limit 0")
 }
+
+// TestMisafirSiparisindeHarcamaKuraliHicSorulmaz kuralın GÜVEN SINIRINI
+// sabitler: müşterisini beyan etmeyen alışverişe hiçbir limit uygulanmaz.
+//
+// Test bir YETENEĞİ değil, bilinçli olarak açık bırakılmış bir sınırı korur.
+// Sabitlenmesinin sebebi, sınırın kazara ortadan kalkmasının da kazara
+// genişlemesinin de sessiz olmasıdır: bugün kuralın uygulanmadığı bu yol, bir
+// gün müşteri oturumu geldiğinde DEĞİŞMESİ gereken ilk yerdir ve o gün bu
+// testin düşmesi, kararın gerçekten verildiğinin işareti olacaktır.
+//
+// Kurulum, kural sorulsaydı siparişin KESİN reddedileceği hâldir: limit
+// sıfırdır. Sipariş yine de geçer, çünkü [service.CreateOrderInput.CustomerID]
+// boş olduğunda sağlayıcıya hiç gidilmez — iddianın yokluğu, kuralın da
+// yokluğudur.
+func TestMisafirSiparisindeHarcamaKuraliHicSorulmaz(t *testing.T) {
+	o, policy := limitliOrtam(t, limitKurali(0, testCurrency, &pencereBasi))
+
+	girdi := gecerliGirdi()
+	girdi.CustomerID = ""
+
+	created, err := o.svc.CreateOrder(context.Background(), girdi)
+
+	require.NoError(t, err,
+		"misafir siparişi bugün limitten BAĞIMSIZDIR; hata dönmesi sınırın "+
+			"kapandığı anlamına gelir ve o karar ADR 0008'i güncellemeden verilemez")
+	assert.Equal(t, int64(6100), created.Total)
+	assert.Empty(t, policy.calls(),
+		"kural SORULMAMALI bile: sorulup 'limitsiz' cevabı alınması başka bir "+
+			"davranıştır ve b2b'ye her misafir siparişinde bir sorgu yüklerdi")
+	assert.Equal(t, 0, o.store.spendingLockCount())
+	assert.Equal(t, 0, o.store.spendingSumCount())
+}
+
+// TestHarcamaKuraliBeyanEdilenMusteriyeUygulanir sınırın ikinci yüzünü
+// sabitler: modül, kendisine verilen kimliği DOĞRULAMAZ.
+//
+// Girdideki kimlik siparişi gerçekten veren kişininki olmak zorunda değildir;
+// bu modülün elinde onu sınayacak bir kanıt yoktur (bkz. spendingRuleFor
+// godoc'undaki güven sınırı). Sonuç iki yönlüdür ve ikisi de burada görünür:
+// harcama BEYAN EDİLEN müşterinin penceresinden düşer, dolayısıyla bir
+// yabancının alışverişi limitli bir çalışanın hakkını yakabilir.
+//
+// İddia sorgunun ARGÜMANINA bakar, çünkü sınırın yaşadığı yer tam olarak
+// orasıdır: kimlik doğrulayan bir katman eklendiğinde bu çağrının argümanı
+// gövdeden değil oturumdan gelmelidir.
+func TestHarcamaKuraliBeyanEdilenMusteriyeUygulanir(t *testing.T) {
+	const yabanciKimlik = "cus_BASKASININ_KIMLIGI"
+
+	o, policy := limitliOrtam(t, limitKurali(0, testCurrency, &pencereBasi))
+
+	girdi := gecerliGirdi()
+	girdi.CustomerID = yabanciKimlik
+
+	_, err := o.svc.CreateOrder(context.Background(), girdi)
+
+	require.Error(t, err)
+	assert.Equal(t, service.CodeSpendingLimitExceeded, errors.CodeOf(err))
+	assert.Equal(t, []string{yabanciKimlik}, policy.calls(),
+		"kural, İDDİA EDİLEN müşteri için sorulur; modülün iddiayı sınayacak "+
+			"bir kanıtı yoktur ve bu yüzden hangi kimlik verilirse onu sorar")
+}

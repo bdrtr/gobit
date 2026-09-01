@@ -351,13 +351,15 @@ ortamlarda config doğrulaması sırrı zorunlu kılar.
 
 ## Sepetten siparişe: akışları kim çağırıyor, fiyatı kim belirliyor
 
-Sepetin uçları `cart` modülündedir ama sepetin **tutarı** orada değildir: fiyat
-`pricing`'in, başlık kataloğun, vergi `tax`/`region`'ın, sipariş ise
-`order` + `payment` + `inventory`'nin verisidir. Bu yüzden üç vitrin ucu işini
-kendi servisiyle değil, modüller arası bir **akışla** yapar:
+Sepetin uçları `cart` modülündedir ama sepetin **bölgesi** de **tutarı** da
+orada değildir: bölge `region`'ın, fiyat `pricing`'in, başlık kataloğun, vergi
+`tax`/`region`'ın, sipariş ise `order` + `payment` + `inventory`'nin verisidir.
+Bu yüzden vitrinin **yazan uçlarının tamamı** işini kendi servisiyle değil,
+modüller arası bir **akışla** yapar:
 
 | Uç | Ne yapar | Akış |
 |---|---|---|
+| `POST /store/v1/carts` | `country_code`'dan bölgeyi ve para birimini **sunucu** türetir, müşteriyi doğrular, sepeti açar | `workflows/cart` create_cart |
 | `POST /store/v1/carts/{id}/line-items` | Fiyatı ve başlığı **sunucu** belirler, satırı ekler, toplamları yeniler | `workflows/cart` add_line_item |
 | `PATCH /store/v1/carts/{id}/line-items/{line_item_id}` | Adedi yazar ve satırı **yeniden fiyatlar**; sıfır adet satırı kaldırır (204) | `workflows/cart` update_line_item |
 | `POST /store/v1/carts/{id}/complete` | Stok ayırır, siparişi açar, ödemeyi tahsil eder, sepeti kapatır | `workflows/checkout` complete_cart |
@@ -365,8 +367,9 @@ kendi servisiyle değil, modüller arası bir **akışla** yapar:
 ### Akışın HTTP sahibi modüldür
 
 Modül somut akışı **tanımaz**: kendi paketinde dar bir arayüz tanımlar
-(`api.LinePricing`, `api.CartCompletion`) ve somut tipi container'dan
-`workflows.cart.interop` / `workflows.checkout.interop` adıyla çözer (ADR 0001).
+(`api.CartOpening`, `api.LinePricing`, `api.CartCompletion`) ve somut tipi
+container'dan `workflows.cart.interop` / `workflows.checkout.interop` adıyla
+çözer (ADR 0001).
 `cmd/server` yalnızca akışları **kurar ve kaydeder**; bileşim köküne handler
 kodu girmez. Bu, `order` → `b2b` harcama kuralında zaten kullanılan kalıbın
 aynısıdır.
@@ -408,30 +411,49 @@ Operatörün ihtiyacı olan metin (hangi ad çözülemedi) hatada korunur ama
 istemciye sızmaz: `KindInternal` gövdeleri maskelenir, geriye yalnızca
 `cart_module_setup_failed` kodu kalır.
 
-### Sepetin para birimi bölgeden TÜRETİLİR
+### Sepetin bölgesi ve para birimi ÜLKEDEN türetilir
 
-`POST /store/v1/carts` gövdesi bir zamanlar `currency_code` alıyordu ve sınıfı
-`unit_price` ile **aynıydı**: sunucunun verisi istemciden geliyordu. Para birimi
-`region` şemasında bölge başına **tek bir sütundur** (`region.currency_code`,
-`currency` tablosuna FK), yani bir bölgenin iki para birimi olamaz — sepetin
-para birimi bir seçim değil bir **türetmedir**.
+`POST /store/v1/carts` gövdesi bir zamanlar `currency_code`, sonra da
+`region_id` alıyordu ve ikisinin de sınıfı `unit_price` ile **aynıydı**:
+sunucunun verisi istemciden geliyordu.
 
-Ayrışma **reddedilmiyordu** da: `cart` servisi `region`'ı tanımadığı için
-(ADR 0006) kodun yalnızca biçimini doğruluyor, bölgeninkiyle
-karşılaştırmıyordu. TRY bölgesinde açılan bir sepete `EUR` yazan istemci, o
-sepeti gerçekten EUR olarak alıyordu. Sonucu kozmetik değildi, çünkü para
-birimi **fiyat seçer**: satır akışı birim fiyatı varyantın fiyat kümesinden
-"sepetin para biriminde" okur. İstemci tutar uyduramıyordu ama **hangi fiyat
-listesinin** uygulanacağını seçebiliyordu.
+Para birimi `region` şemasında bölge başına **tek bir sütundur**
+(`region.currency_code`, `currency` tablosuna FK), yani bir bölgenin iki para
+birimi olamaz — sepetin para birimi bir seçim değil bir **türetmedir**. Ayrışma
+reddedilmiyordu da: `cart` servisi `region`'ı tanımadığı için (ADR 0006) kodun
+yalnızca biçimini doğruluyor, bölgeninkiyle karşılaştırmıyordu. TRY bölgesinde
+açılan bir sepete `EUR` yazan istemci, o sepeti gerçekten EUR olarak alıyordu.
+Sonucu kozmetik değildi, çünkü para birimi **fiyat seçer**: satır akışı birim
+fiyatı varyantın fiyat kümesinden "sepetin para biriminde" okur.
 
-Alan gövdeden **kaldırıldı** (kırıcı; `0.x`) ve handler para birimini bölgeden
-okuyor. Kalıp fiyattakiyle aynı: `cart`, `region`'ı import etmez; kendi
-paketinde dar bir arayüz tanımlar (`api.RegionCurrencyReader`) ve somut servisi
-container'dan `region.service` adıyla çözer. Yol da aynı şekilde **kapalı**
-arızalanır — bölge yüzeyi çözülemezse sepet hiç açılmaz, çünkü bir varsayılana
-düşmek (mağazanın ilk para birimi ya da istemcinin dediği) kapatılan kapıyı
-geri açardı. Yan kazanç: bölgenin gerçekten var olduğu artık doğrulanır,
-uydurma bir `region_id` sepet açamaz.
+`region_id` bir tur daha kaldı ve iki sebeple düştü. Birincisi aynı sınıftadır:
+bölge sepetin **vergi oranını** seçer. İkincisi daha temeldir — `region_id`
+müşterinin ifade etmek istediği şey **değildir**. Müşteri bir **ülke** seçer
+(ya da tarayıcısı söyler); bölge, o ülkenin sunucudaki karşılığıdır ve eşlemeyi
+operatör kurar. İstemciye bir iç varlık kimliği yazdırmak, kapatılan sınıfın
+daha yumuşak bir biçimiydi. Üstelik türetmeyi zaten yapan bir akış vardı —
+`create_cart` ülke kodundan hem bölgeyi hem para birimini çözer — ve **vitrin
+ucu onu atlıyordu**: aynı işlem için iki sözleşme, işletmecinin gördüğü yol da
+ham olan.
+
+Bugün gövde yalnızca `country_code` (zorunlu), `customer_id`, `email` ve
+`metadata` alır. Kalıp fiyattakiyle aynı: `cart` akışı import etmez; kendi
+paketinde dar bir arayüz tanımlar (`api.CartOpening`) ve somut tipi
+container'dan `workflows.cart.interop` adıyla **tembel** çözer. Yol da aynı
+şekilde **kapalı** arızalanır — akış çözülemezse sepet hiç açılmaz, çünkü bir
+varsayılana düşmek (mağazanın ilk bölgesi ya da istemcinin dediği) kapatılan
+kapıyı geri açardı.
+
+Yan etkisi mimaridir: `cart` modülünün başka bir modülü adla çözdüğü **tek yer
+de kapandı**. Para birimini okumak için tuttuğu `region.service` bağı ve
+`api.RegionCurrencyReader` arayüzü kaldırıldı; bölgeyi bilen taraf artık
+akıştır.
+
+Hata yüzeyi de ülkeye taşındı: bölgesi olmayan geçerli bir ülke `404`
+(operatör o ülkeye satış açmamıştır — istemci başka bir ülke seçebilir), biçimi
+bozuk ya da boş bir kod `422`'dir. `metadata` gövdede **kaldı** ve akışa olduğu
+gibi taşınır; o gerçekten istemcinin verisidir ve hiçbir hesaba girmez — aynı
+karar satır metadata'sında da verilmişti.
 
 Yönetim tarafında aynı alan **meşrudur** ve kaldırılmadı: `POST
 /admin/v1/regions` gövdesindeki `currency_code` bölgeyi **tanımlar** — operatör
@@ -476,21 +498,11 @@ okunması gereken şey adımın neden düştüğü değil, sistemin tutarsız ka
 Yanıt siparişin kimliğini ve tahsil edilen tutarı taşır; ödeme oturumu,
 koleksiyon ve rezervasyon kimlikleri ile operatöre ait uyarılar **yayımlanmaz**.
 
-### Aynı ölçütün henüz uygulanmadığı iki yer
+### Aynı ölçütün henüz uygulanmadığı yer
 
-Kayda geçmemiş bir açık, kimsenin kapatmadığı açıktır. İkisi de araştırıldı,
-karar verildi ve bilerek açık bırakıldı; gerekçeleri kodun godoc'larındadır.
+Kayda geçmemiş bir açık, kimsenin kapatmadığı açıktır. Araştırıldı, karar
+verildi ve bilerek açık bırakıldı; gerekçesi kodun godoc'undadır.
 
-- **`POST /store/v1/carts` hâlâ `region_id` alıyor.** `currency_code` bu
-  gövdeden kaldırıldı (yukarı bakın) ama bölge kimliği kaldı ve aynı sınıftadır:
-  bölge vergi **oranını** seçer. Patlama yarıçapı iki adım küçüldü — bölgenin
-  gerçekten var olduğu artık doğrulanıyor (para birimi ondan okunuyor) ve
-  seçimin fiyat listesi üzerindeki etkisi kalktı — ama kusur meşrulaşmadı.
-  Doğru kapatma yeri handler değil: türetmeyi zaten yapan bir akış var —
-  `create_cart` ülke kodundan hem bölgeyi hem para birimini çözüyor — ve gövde
-  `country_code`'a indirilerek ucun ona devredilmesi gerekir. Maliyeti,
-  akışın modüller arası yüzeyine bugün bilinçli olarak bulunmayan bir metot
-  eklemektir.
 - **Vitrin sepetlerinde sahiplik denetimi yok.** Model bir **yetenek URL**'idir:
   sepet kimliği 48 bit zaman damgası + 80 bit kriptografik rastgelelikten
   üretilir, tahmin edilemez ve onu bilmek erişim hakkını taşır. Zorunluluktan
@@ -502,6 +514,18 @@ karar verildi ve bilerek açık bırakıldı; gerekçeleri kodun godoc'larındad
   müşteriyim" demez — ve sepetin müşterisi, b2b harcama limitinin hangi şirket
   penceresinden düşüleceğini belirler. Tek doğru kapatma müşteri oturumudur
   (Faz 8).
+
+- **Müşteri kimliği doğrulanmıyor, dolayısıyla harcama limiti KOŞULLU
+  uygulanıyor.** Yukarıdaki maddenin doğrudan sonucudur ama ayrı yazılmayı hak
+  eder, çünkü ölçülen davranış üç ayrı biçimde ifade edilebiliyor: `customer_id`
+  alanını hiç göndermemek (misafir sepeti, hiçbir limit uygulanmaz), başkasının
+  kimliğini göndermek (harcama onun penceresinden düşer) ve
+  `POST /store/v1/customers` ile taze bir misafir kaydı açıp onu göndermek
+  (yeni kayıt hiçbir şirkete bağlı olmadığı için kuralsızdır). Üçü de gerçek
+  ikilide, tek bir publishable anahtarla ölçüldü; sayılar aşağıdaki B2B
+  bölümünün "Kuralın koşulu" başlığında, karar ise
+  [ADR 0008](docs/adr/0008-musteri-kimligi-guven-siniri.md)'de. Çerçeve kimliği
+  doğrulayan bir yüzey **sunmuyor**; sunması gereken taraf gömen uygulamadır.
 
 ## Sertleştirme
 
@@ -941,6 +965,51 @@ müşteri kilidi altında uygulanır. İki sonucu vardır:
 Kural saga'ya konsaydı, ileride eklenecek ikinci bir çağıran onu sessizce
 atlardı — bu deponun defalarca bulduğu hata sınıfı tam olarak budur.
 
+### Kuralın koşulu: limit, müşterisini BEYAN EDEN alışverişe uygulanır
+
+Yukarıdaki her cümle doğrudur ama tek başına okununca yanlış bir şey söyler.
+Kural `CreateOrderInput.CustomerID` üzerinden çalışır ve o kimlik zincire vitrin
+sepetinin **gövdesinden** girer. Mağaza yüzeyinin tek kimliği publishable
+anahtardır ve o bir satış kanalını temsil eder, bir müşteriyi değil
+(`corehttp.Principal` müşteri kimliği taşımaz). Yani `customer_id` bir olgu
+değil, hiçbir kanıt istemeyen bir **iddiadır**.
+
+Gerçek ikili üzerinde, tek bir publishable anahtarla ölçüldü — aynı sepet, aynı
+istemci, tek fark gövdedeki alan (limit `50_000`, sepet toplamı `76_800`):
+
+| `POST /store/v1/carts` gövdesi | Tamamlama sonucu |
+|---|---|
+| `{"country_code":"TR","customer_id":"cus_…"}` | **`409`** `order_spending_limit_exceeded` |
+| `{"country_code":"TR"}` | **`200`**, sipariş açılır (`customer_id: ""`) |
+
+Aynı ölçümün ikinci yarısı: başkasının `customer_id`'siyle tamamlanan alışveriş
+o müşterinin adına yazıldı ve harcaması **onun** penceresinden düştü — ardından
+çalışanın kendi alışverişi `409` aldı. Yani iddia yalnızca bir kaçış yolu değil,
+adı bilinen bir çalışanın harcama hakkını **yakma** yoludur.
+
+Beyanı zorunlu kılmak da kapatmaz: `POST /store/v1/customers` publishable
+anahtarla yeni bir misafir kaydı açar ve o kayıt hiçbir şirkete bağlı
+olmadığı için kuralsızdır.
+
+Dördüncü kapı atfın **sonradan** yapılabilmesidir: misafir olarak açılan bir
+sepet `POST /store/v1/carts/{id}` ile başkasının `customer_id`'sine devredilir
+ve sipariş o kimliğe yazılır. Yani atıf yalnızca sepet açılışında değil,
+sepetin ömrü boyunca beyana dayanır (ölçüldü: devir `200`, sipariş kurbanın
+adına).
+
+Bu bir açık değil, **çizilmiş bir sınırdır**: gobit müşteri kimliğini
+doğrulayan bir yüzey sunmaz; sunması gereken taraf gömen uygulamadır. Kararın
+tamamı, reddedilen seçenekleri ve gömen uygulamaya düşen işin listesi
+[ADR 0008](docs/adr/0008-musteri-kimligi-guven-siniri.md)'dedir. Sınırın
+bugünkü yeri `order`'da iki testle sabitlenmiştir
+(`TestMisafirSiparisindeHarcamaKuraliHicSorulmaz`,
+`TestHarcamaKuraliBeyanEdilenMusteriyeUygulanir`); ikisi de bir yeteneği değil
+bir kararı korur ve kimlik doğrulama geldiğinde **düşmeleri beklenir**.
+
+Kuralın ne işe yaradığı bu koşulla birlikte okunmalıdır: kimliğin doğrulandığı
+bir vitrinde limit muhasebe disiplinini **uygular**; doğrulanmadığı bir
+vitrinde ise yalnızca dürüst istemcinin hatasını yakalar.
+
 ### Sınırlar
 
 - Limit `nil` ise **sınırsız**, `0` ise **gerçek bir sıfır limit**. İkisi ayrı
@@ -976,6 +1045,7 @@ dokümanı kadar bağlayıcıdır; çelişki hâlinde ADR geçerlidir.
 | [0005](docs/adr/0005-link-semasi-migration-disinda.md) | Link şeması | Link tabloları derleme zamanında bilinmediği için migration dosyasıyla değil, bildirim anında idempotent DDL ile kurulur |
 | [0006](docs/adr/0006-workflow-modul-erisimi.md) | Workflow → modül erişimi | `internal/workflows` de modülleri import etmez; dar arayüz + container'dan adla çözüm (ADR 0001'in workflow'lara uygulanması) |
 | [0007](docs/adr/0007-sertlestirme-arizada-davranis.md) | Sertleştirmede arıza davranışı | Tek tip kural yok: kimlik **kapalı kalır** (fail-closed), hız sınırı **açık kalır** (fail-open), idempotency ayırmada reddeder / kayıtta anahtarı serbest bırakır |
+| [0008](docs/adr/0008-musteri-kimligi-guven-siniri.md) | Müşteri kimliği güven sınırı | Çerçeve müşteri kimliğini **doğrulamaz**: `customer_id` bir iddiadır, harcama limiti yalnızca müşterisini **beyan eden** alışverişe uygulanır; doğrulama gömen uygulamanın işidir |
 
 ADR 0001, planın Bölüm 2.1 ("erişim public service interface üzerinden") ile
 Bölüm 2.4 ("modüller derleme zamanında birbirine bağımlı olmaz") arasındaki

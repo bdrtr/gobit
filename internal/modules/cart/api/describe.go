@@ -67,7 +67,7 @@ const (
 // sunucu sessizce yok sayar.
 func Describe(d *openapi.Doc) {
 	d.Describe(http.MethodPost, "/store/v1/carts", openapi.Operation{
-		Summary:     "Yeni sepet oluşturur.",
+		Summary:     "Yeni sepet açar; bölgeyi ve para birimini ülkeden sunucu türetir.",
 		RequestBody: d.RequestBody(createCartRequest{}),
 		Responses: map[string]any{
 			"201": openapi.Response("Oluşturulan sepet", d.Item(cartDTO{})),

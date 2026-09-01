@@ -24,8 +24,12 @@ import (
 // CodeInteropTotalsInvalid çözülemeyen bir toplam gövdesi geldiğini bildirir.
 const CodeInteropTotalsInvalid = "e2e_kopru_totals_invalid"
 
-// CodeInteropMetadataInvalid çözülemeyen bir satır metadata'sı geldiğini
+// CodeInteropMetadataInvalid çözülemeyen bir metadata gövdesi geldiğini
 // bildirir.
+//
+// Kod sepet ve satır yüzeyleri için ORTAKTIR: ikisinde de bozukluk aynı
+// şeydir (JSON nesnesi olmayan bir gövde) ve çağıranın yapacağı düzeltme de
+// aynıdır. Ayrı kodlar, istemciye ayırt edemeyeceği bir fark sunardı.
 const CodeInteropMetadataInvalid = "cart_interop_metadata_invalid"
 
 // Interop cart servisini modüller arası İLKEL yüzeye çevirir.
@@ -95,18 +99,32 @@ type interopLineTotals struct {
 
 // OpenCart yeni bir sepet açar ve kimliğini döner.
 //
-// currencyCode BÖLGENİN para birimidir ve çağıran onu bölgeden okumuş olmak
-// zorundadır; bu yüzey o soruyu soramaz (cart modülü region'ı çağırmaz,
-// ADR 0006). Bugünkü tek çağıran create_cart workflow'udur ve kodu ülke
-// kodundan çözdüğü bölgeden alır — yani parametre bir SEÇİM değil, çağıranın
-// yaptığı türetmenin taşıyıcısıdır. Vitrin ucu bu yüzeyden geçmez; para
-// birimini kendi bölge okumasından türetir (bkz. api.RegionCurrencyReader).
-func (i *Interop) OpenCart(ctx context.Context, regionID, currencyCode, customerID, email string) (string, error) {
+// regionID ve currencyCode'un ikisi de ÇAĞIRANIN TÜRETMESİDİR, bir seçim
+// değil: bölge müşterinin ülkesinden, para birimi o bölgeden çözülür ve bu
+// yüzey ikisini de kendisi soramaz (cart modülü region'ı çağırmaz, ADR 0006).
+// Tek çağıran create_cart workflow'udur ve vitrin ucu da artık ondan geçer —
+// yani sepet açan HER yol aynı türetmeden geçer, hiçbiri bölgeyi istemciden
+// almaz.
+//
+// metadata sepetin serbest ek verisidir ve JSON NESNESİ olmak zorundadır; boş
+// bırakılabilir. Bozuk bir gövde errors.Invalid'dir ve sepet AÇILMAZ; gerekçe
+// [Interop.AddCartLineItem] godoc'undakiyle aynıdır.
+func (i *Interop) OpenCart(
+	ctx context.Context,
+	regionID, currencyCode, customerID, email string,
+	metadata json.RawMessage,
+) (string, error) {
+	ek, err := decodeInteropMetadata(metadata)
+	if err != nil {
+		return "", err
+	}
+
 	sepet, err := i.svc.CreateCart(ctx, CreateCartInput{
 		RegionID:     regionID,
 		CustomerID:   customerID,
 		Email:        email,
 		CurrencyCode: currencyCode,
+		Metadata:     ek,
 	})
 	if err != nil {
 		return "", err
@@ -182,11 +200,11 @@ func (i *Interop) AddCartLineItem(
 	return satir.ID, nil
 }
 
-// decodeInteropMetadata satır metadata'sını çözer; boş gövde nil döner.
+// decodeInteropMetadata serbest ek veriyi çözer; boş gövde nil döner.
 //
 // "JSON null" da nil sayılır: bir istemcinin alanı açıkça boşaltma niyeti ile
-// hiç göndermemesi arasında bu yüzeyde fark yoktur — satır YENİ açılıyor,
-// silinecek bir değer yok.
+// hiç göndermemesi arasında bu yüzeyde fark yoktur — kayıt (sepet ya da satır)
+// YENİ açılıyor, silinecek bir değer yok.
 func decodeInteropMetadata(raw json.RawMessage) (map[string]any, error) {
 	if len(raw) == 0 || string(raw) == "null" {
 		return nil, nil
@@ -195,7 +213,7 @@ func decodeInteropMetadata(raw json.RawMessage) (map[string]any, error) {
 	var ek map[string]any
 	if err := json.Unmarshal(raw, &ek); err != nil {
 		return nil, errors.Wrap(err, errors.KindInvalid, CodeInteropMetadataInvalid,
-			"satır metadata'sı JSON nesnesi olmalı")
+			"metadata JSON nesnesi olmalı")
 	}
 	return ek, nil
 }

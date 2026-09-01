@@ -36,7 +36,7 @@ func errUnexpected(what string) error {
 
 // stubCarts [Carts] arayüzünün testlerde betiklenebilen uygulamasıdır.
 type stubCarts struct {
-	openCartFn  func(ctx context.Context, regionID, currencyCode, customerID, email string) (string, error)
+	openCartFn  func(ctx context.Context, regionID, currencyCode, customerID, email string, metadata json.RawMessage) (string, error)
 	snapshotFn  func(ctx context.Context, cartID string) (json.RawMessage, error)
 	addLineFn   func(ctx context.Context, cartID, variantID, title string, quantity, unitPrice int64, metadata json.RawMessage) (string, error)
 	setQtyFn    func(ctx context.Context, cartID, lineItemID string, quantity int64) error
@@ -59,11 +59,15 @@ func newStubCarts() *stubCarts {
 }
 
 // OpenCart betiklenen sepet açma davranışını uygular.
-func (s *stubCarts) OpenCart(ctx context.Context, regionID, currencyCode, customerID, email string) (string, error) {
+func (s *stubCarts) OpenCart(
+	ctx context.Context,
+	regionID, currencyCode, customerID, email string,
+	metadata json.RawMessage,
+) (string, error) {
 	if s.openCartFn == nil {
 		return "", errUnexpected("OpenCart")
 	}
-	return s.openCartFn(ctx, regionID, currencyCode, customerID, email)
+	return s.openCartFn(ctx, regionID, currencyCode, customerID, email, metadata)
 }
 
 // CartSnapshotJSON betiklenen anlık görüntüyü döner ve çağrıyı sayar.

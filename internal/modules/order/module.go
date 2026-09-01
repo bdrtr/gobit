@@ -22,6 +22,13 @@
 // içinde uygulandığında yarışa kapanır (bkz. [service.SpendingPolicy]).
 // Bağımlılık OPSİYONELDİR: b2b kurulu değilse hiçbir limit uygulanmaz.
 //
+// SİPARİŞİ KİMİN VERDİĞİNİ de bilmez ve öğrenemez. customer_id bu modüle
+// vitrinin BEYANI olarak gelir; mağaza yüzeyinin kimliği bir satış kanalıdır,
+// bir müşteri değil. Harcama limiti o beyana bağlı olduğu için kural
+// müşterisini beyan etmeyen alışverişe UYGULANMAZ — bir açık değil, çerçevenin
+// gömen uygulamaya bıraktığı bir SORUMLULUKTUR ve ADR 0008'de karara
+// bağlanmıştır.
+//
 // Modül başka HİÇBİR modülü import etmez (Prensip 2.1/2.4, ADR 0001; kural
 // .golangci.yml içindeki depguard ve internal/arch testleriyle zorlanır).
 // region_id, customer_id, cart_id ve variant_id başka modüllerin kimlikleridir;

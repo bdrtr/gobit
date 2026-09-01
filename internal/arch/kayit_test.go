@@ -91,6 +91,28 @@ var modulSozlesmesi = map[string]struct {
 // Bugün boştur: deponun on beş modülünün on beşi de kayıtlıdır.
 var kayitDisiModuller = map[string]string{}
 
+// acilisYolunaGirmeyenKurulumlar goroutine denetiminden BİLİNÇLİ olarak muaf
+// tutulan akış paketlerinin import yolunu gerekçesine eşler.
+//
+// # Neden bir kapı var
+//
+// Denetim sözdizimsel bir VEKİLDİR (bkz. [TestHerAkisBilesimKokundeKurulu]) ve
+// bir yönde YANLIŞ POZİTİF verir: açılışın sync.WaitGroup ya da errgroup ile
+// GERÇEKTEN beklediği, hatanın açılışı GERÇEKTEN durdurduğu paralel bir kurulum
+// da "açılış yolunda değil" diye düşer. Ölçüldü. Paralel açılış Go'da olağan bir
+// kalıptır ve o gün geldiğinde seçenek ikidir: denetimi susturmak ya da gerekçe
+// yazmak. Kapı olmasaydı susturmak tek yol olurdu ve susturulan bir denetim,
+// hiç yazılmamış olandan daha kötüdür — yerinde durup güven veriyor görünür.
+//
+// # Kapıya girerken ne yazılmalı
+//
+// Gerekçe, açılışın kurulumu NASIL beklediğini ve hatanın açılışı NASIL
+// durdurduğunu somut olarak söylemelidir. "Paralel kuruyoruz" yetmez; aranan
+// özellik paralellik değil, hatanın açılışa DÖNMESİDİR.
+//
+// Bugün BOŞTUR: kurulum senkrondur ve muafiyete ihtiyaç yoktur.
+var acilisYolunaGirmeyenKurulumlar = map[string]string{}
+
 // e2eZemininDisiModuller e2e zemininde BİLİNÇLİ olarak kurulmayan modül
 // paketlerinin gerekçeleridir; anahtar paketin import yoludur.
 //
@@ -138,6 +160,10 @@ type akisKurulumu struct {
 	// söyler (ölü kod ya da çağrılmayan başvuru). Sebebi bulunduğu yerde
 	// raporlanmıştır; çağıran taraf ikinci bir hata üretmez.
 	sayilmiyor bool
+	// goroutineBiciminde kurulumun bir go ifadesinin altında ya da arkasında
+	// bulunduğunu söyler. Muafiyet olsun olmasın işaretlenir: muafiyetin
+	// BAYATLADIĞINI ancak bu alan gösterebilir.
+	goroutineBiciminde bool
 }
 
 // TestHerModulBilesimKokundeKayitli "yazılan her modül BİLEŞİM KÖKÜNDE
@@ -343,11 +369,80 @@ func TestKayitliHerModulE2EZemindeKurulu(t *testing.T) {
 // kurulumu canlı sanır; dar bir graf ise canlı kurulumu ölü ilan edip testi
 // yanlış yere düşürürdü ve insanlar denetime güvenmeyi bırakırdı.
 //
+// # Neden GO İFADESİNİN ARKASI da kurulum sayılmıyor
+//
+// Kurulumu bir go ifadesine almak onu ölü YAPMAZ: koşar, container'a yazar ve
+// mağaza çalışır. Ölçüldü — kurulum "go func() { ... }()" içine alındığında bu
+// denetimin erişilebilirlik sorusu da smoke koşusu da GEÇTİ ve gerçek süreç
+// uçtan uca sipariş üretti. İki katman da "kurulum koşuyor mu" diye sorar ve
+// ikisi de HAKLI olarak evet der.
+//
+// Sessizce kaybolan şey KAPALI AÇILIŞTIR. Aynı kurulum HATASI iki biçimde
+// ölçüldü: senkron çağrıda süreç HİÇ açılmadı ("workflow_setup_failed", çıkış
+// kodu 1); go ifadesinde süreç sağlıklı açıldı, /health 200 verdi, yönetim
+// yüzeyi tamamen çalıştı, logda tek satır ERROR kaldı ve arıza ilk sepet
+// satırında 500 olarak patladı. Yani go biçimi bir AÇILIŞ arızasını bir
+// ÇALIŞMA ZAMANI arızasına çevirir ve bunu hiçbir şey bildirmez.
+//
+// Aranan özellik bu yüzden "çağrı senkron mu" değil, "YANLIŞ YAPILANDIRMA
+// AÇILIŞI DURDURABİLİR mi"dir. O özelliği çalışma zamanında sınamak bugün
+// mümkün değil: akış kurulumunu başarısız kılan bir yapılandırma yazılamıyor,
+// çünkü FromContainer yalnızca HER ZAMAN kayıtlı olan modül interoplarını
+// çözer. Geriye statik tarafın cevaplayabildiği yapısal soru kalır ve grafın
+// zaten hesapladığı erişilebilirliğin yanına eklenen üçüncü soru budur:
+// kurulumun main()'e giden yolu bir GO İFADESİNDEN geçiyor mu?
+//
+// Soru İKİ yerde birden sorulur, çünkü biçim de iki türlüdür: çağrının KENDİSİ
+// bir go ifadesinin altında olabilir (o zaman ad grafında hiçbir kenar
+// değişmez), ya da çağrıyı içeren işleve main()'den yalnızca bir go ifadesinin
+// arkasından gidiliyor olabilir (o zaman çağrının sözdiziminde hiçbir iz
+// yoktur). Yalnızca biri sorulsaydı öteki biçim açıkta kalırdı.
+//
+// Kural yalnızca İZLENEN KURULUM ÇAĞRILARI içindir ve "goroutine kullanmak
+// yasak" demek DEĞİLDİR: sunucunun kendisi, olay veri yolu ve kapanış
+// izleyicileri goroutine kullanır ve kullanmalıdır. Hiçbiri bir akış yapıcısı
+// çağırmadığı için denetim onları hiç görmez.
+//
 // # Bu değişmez neyi GARANTİ ETMEZ
 //
-// Yalnızca ŞUNU garanti eder: bileşim kökünde, main()'den erişilebilen bir
-// yerde, her akış paketinin yapıcısı çağrılıyor. Statik analizin
-// cevaplayabileceği soru budur ve daha fazlasını iddia etmek yanlış olurdu.
+// Yalnızca ŞUNU garanti eder: bileşim kökünde, main()'den bir go ifadesine
+// girmeden erişilebilen bir yerde, her akış paketinin yapıcısı çağrılıyor —
+// yani kurulum çağrısı AÇILIŞ YOLUNDADIR ve hatası açılışı durdurabilir.
+// Statik analizin cevaplayabileceği soru budur ve daha fazlasını iddia etmek
+// yanlış olurdu.
+//
+// "Durdurabilir" ile "durdurur" arasındaki fark bilinçlidir: denetim çağrının
+// açılış yolunda durduğunu görür, dönen hatanın YUTULMADIĞINI göremez. Hatayı
+// loglayıp devam eden bir kurulum da bu testten geçer.
+//
+// # Goroutine sorusu bir VEKİLDİR ve iki yönde de ayrışır
+//
+// Aranan özellik "yanlış yapılandırma açılışı durdurabilir mi"dir. Uygulanan
+// şey o özellik DEĞİL, onun sözdizimsel vekilidir: "kurulum çağrısına giden
+// yol bir go ifadesinden geçiyor mu". İkisi ÖRTÜŞMEZ ve ayrışmanın iki yönü de
+// ÖLÇÜLDÜ:
+//
+//   - YANLIŞ POZİTİF: sync.WaitGroup ya da errgroup ile paralel kurulan,
+//     açılışın Wait() ile GERÇEKTEN beklediği ve hatanın açılışı GERÇEKTEN
+//     durdurduğu bir kurulum bu denetimi DÜŞÜRÜR — oysa aranan özellik
+//     sağlanmıştır. Paralel açılış Go'da olağan bir kalıptır, bu yüzden
+//     [acilisYolunaGirmeyenKurulumlar] kapısı vardır: o gün geldiğinde seçenek
+//     "denetimi sustur" değil "gerekçe yaz" olsun diye.
+//
+//   - YANLIŞ NEGATİF: go ifadesi tek satırlık bir dolaylamanın içine
+//     saklandığında —
+//
+//     func arkaPlanda(fn func()) { go fn() }
+//     arkaPlanda(func() { akislariKaydet(c) })
+//
+//     — denetim GEÇER, oysa özellik sağlanmamıştır: gerçek süreçte ölçüldü,
+//     senkron ikili kurulum hatasında "fatal" ile çıkış kodu 1 verirken bu
+//     biçimdeki ikili sağlıklı açılıp arızayı tek bir ERROR satırına indiriyor.
+//
+// Vekil yine de tutuluyor çünkü YAKALADIĞI biçimler (çıplak "go", kapanış,
+// çok halkalı zincir) birinin kazara yazacağı biçimlerdir; kaçırdığı biçim ise
+// bilerek yazılmayı gerektirir. Ama "bu değişmez açılışın kapalı arızalandığını
+// garanti eder" cümlesi YANLIŞ olurdu ve burada kurulmuyor.
 //
 // Cevaplayamadığı soru, çağrının KOŞUP koşmadığıdır. Kurulum bir koşulun
 // arkasına alındığında —
@@ -372,10 +467,12 @@ func TestKayitliHerModulE2EZemindeKurulu(t *testing.T) {
 //
 // İki katman birbirinin yerine GEÇMEZ, birbirini tamamlar:
 //
-//   - Statik değişmez, kurulum satırı SİLİNDİĞİNDE düşer ve bunu docker'sız,
-//     saniyeler içinde, hangi paketin kurulmadığını adıyla söyleyerek yapar.
-//     Smoke koşusu aynı arızayı yalnızca "satır eklenemedi, 500" diye
-//     bildirir; teşhis için kaynağa inmek gerekir.
+//   - Statik değişmez, kurulum satırı SİLİNDİĞİNDE ve kurulum AÇILIŞ YOLUNDAN
+//     ÇIKARILDIĞINDA düşer; bunu docker'sız, saniyeler içinde, hangi paketin
+//     kurulmadığını adıyla söyleyerek yapar. Smoke koşusu birincisini yalnızca
+//     "satır eklenemedi, 500" diye bildirir; teşhis için kaynağa inmek
+//     gerekir. İkincisini ise HİÇ göremez: go ifadesine alınmış bir kurulum
+//     smoke zemininde sorunsuz koşar.
 //   - Smoke, kurulum KOŞMADIĞINDA düşer. Statik değişmez o durumu göremez ve
 //     görebileceğini iddia etmez.
 //
@@ -418,6 +515,7 @@ func TestHerAkisBilesimKokundeKurulu(t *testing.T) {
 		kurulumIsaretiAdi)
 
 	kurulan := bilesimKokundeKurulanAkislar(t, akislar)
+	bayatGoroutineMuafiyetleriniDenetle(t, akislar, kurulan)
 
 	canli := map[string]token.Position{}
 	for yol, kurulum := range kurulan {
@@ -892,18 +990,22 @@ func bilesimKokundeKurulanAkislar(t *testing.T, yapicilar map[string][]string) m
 	}
 
 	onek := modulePath + "/" + akisDizini + "/"
-	erisilebilir := maindenErisilebilirIsler(dosyalar)
+	erisim := maindenErisim(dosyalar)
 	kurulan := map[string]akisKurulumu{}
 
 	for _, d := range dosyalar {
 		cagrilanlar := cagriIfadeleri(d.agac)
+		goIcindekiler := goIfadesiIcindekiler(d.agac)
 		for _, decl := range d.agac.Decls {
 			// Paket düzeyindeki bir bildirimin (var başlatıcısı) kapsayanı
-			// yoktur ve o kod her koşuda çalışır; erişilebilirlik sorusu
-			// yalnızca işlevler için anlamlıdır.
-			kapsayan, kapsayanCanli := "", true
+			// yoktur; o kod her koşuda ve main()'den ÖNCE, senkron çalışır.
+			// Erişilebilirlik soruları bu yüzden yalnızca işlevler için
+			// anlamlıdır.
+			kapsayan, kapsayanCanli, kapsayanAcilista := "", true, true
 			if fn, ok := decl.(*ast.FuncDecl); ok {
-				kapsayan, kapsayanCanli = fn.Name.Name, erisilebilir[fn.Name.Name]
+				kapsayan = fn.Name.Name
+				kapsayanCanli = erisim.erisilebilir[kapsayan]
+				kapsayanAcilista = erisim.acilisYolunda[kapsayan]
 			}
 
 			ast.Inspect(decl, func(n ast.Node) bool {
@@ -947,6 +1049,37 @@ func bilesimKokundeKurulanAkislar(t *testing.T, yapicilar map[string][]string) m
 						"Ya çağrı zincirini main()'e bağlayın, ya da kurulum gerçekten "+
 						"gereksizse ölü işlevi silin.",
 						kurulum.konum, sec.X, sec.Sel.Name, kapsayan)
+					kurulum.sayilmiyor = true
+				case goIcindekiler[sec] && goroutineMuaf(yol):
+					// Muaf: açılış kurulumu beklediğini gerekçesiyle beyan etti.
+					kurulum.goroutineBiciminde = true
+				case !kapsayanAcilista && goroutineMuaf(yol):
+					// Muaf: aynı gerekçe, zincirin halkasındaki biçim için.
+					kurulum.goroutineBiciminde = true
+				case goIcindekiler[sec]:
+					t.Errorf("%s: %s.%s çağrısı bir GO İFADESİNİN içinde — kurulum AÇILIŞ "+
+						"YOLUNDA DEĞİL.\n"+
+						"Ayrı bir goroutine'de kurulan akışın hatası açılışa DÖNEMEZ: süreç "+
+						"sağlıklı açılır, /health 200 verir, yönetim yüzeyi tamamen çalışır ve "+
+						"arıza ilk sepet satırında 500 olarak patlar — bir AÇILIŞ arızası "+
+						"sessizce bir ÇALIŞMA ZAMANI arızasına çevrilmiş olur.\n"+
+						"Kural yalnızca izlenen KURULUM çağrıları içindir; sunucunun, olay veri "+
+						"yolunun ve kapanış izleyicilerinin goroutine'leri bu denetimin konusu "+
+						"değildir. Kurulum go ifadesinin DIŞINA alınmalıdır — ya da açılış "+
+						"onu GERÇEKTEN bekliyorsa (WaitGroup/errgroup) gerekçesiyle "+
+						"acilisYolunaGirmeyenKurulumlar haritasına yazılmalıdır.",
+						kurulum.konum, sec.X, sec.Sel.Name)
+					kurulum.sayilmiyor = true
+				case !kapsayanAcilista:
+					t.Errorf("%s: %s.%s çağrısı AÇILIŞ YOLUNDA DEĞİL — %s() işlevine "+
+						"main()'den yalnızca bir GO İFADESİNİN arkasından erişiliyor.\n"+
+						"Çağrının kendisi senkron görünse de zincirin bir halkası ayrı bir "+
+						"goroutine'de koşuyor: kurulum hatası açılışa DÖNEMEZ, süreç sağlıklı "+
+						"açılır ve arıza ilk sepet satırında 500 olarak patlar.\n"+
+						"Ya %s() zincirini go ifadesinin dışına alın, ya da kurulumun hatasını "+
+						"açılışın BEKLEDİĞİ bir yere taşıyın. Açılış onu ZATEN bekliyorsa "+
+						"gerekçesiyle acilisYolunaGirmeyenKurulumlar haritasına yazın.",
+						kurulum.konum, sec.X, sec.Sel.Name, kapsayan, kapsayan)
 					kurulum.sayilmiyor = true
 				}
 
@@ -1028,8 +1161,19 @@ func cagriIfadeleri(agac *ast.File) map[ast.Expr]bool {
 	return cagrilan
 }
 
-// maindenErisilebilirIsler bileşim kökündeki paket düzeyi adlardan main()'den
-// erişilebilenlerin kümesini döner.
+// bilesimKokuErisimi bileşim kökündeki paket düzeyi adların main()'den
+// erişilebilirliğini İKİ ayrı soruya göre tutar.
+type bilesimKokuErisimi struct {
+	// erisilebilir main()'den herhangi bir biçimde erişilen adlardır; bir go
+	// ifadesinin arkasında kalan ad da buradadır. Sorusu "bu kod koşuyor mu".
+	erisilebilir map[string]bool
+	// acilisYolunda main()'e bir GO İFADESİNE girmeden bağlanan adlardır.
+	// Sorusu "açılış bu adımı BEKLİYOR mu", yani hatası açılışa dönebilir mi.
+	acilisYolunda map[string]bool
+}
+
+// maindenErisim bileşim kökündeki paket düzeyi adların main()'den erişim
+// kümelerini döner.
 //
 // Kenarlar ADLARDAN kurulur ve bilinçli olarak geniştir: bir ad başka bir adın
 // gövdesinde herhangi bir biçimde geçiyorsa (çağrı, değer olarak geçirme,
@@ -1038,37 +1182,106 @@ func cagriIfadeleri(agac *ast.File) map[ast.Expr]bool {
 //
 // init de köktür: paket başlatma her koşuda çalışır ve oradan çağrılan bir
 // kurulum ölü değildir.
-func maindenErisilebilirIsler(dosyalar []ayristirilmisDosya) map[string]bool {
+//
+// # İki küme neden ayrı
+//
+// Bir go ifadesinin altında kalan ad KOŞAR — yani ölü değildir — ama açılışın
+// beklediği bir adım değildir: hatası kendi goroutine'inde kalır ve açılış onu
+// göremeden devam eder. Tek küme tutulsaydı iki sorudan yalnızca birine cevap
+// verilebilir, hangisinin verildiği de çağıran tarafta belirsiz kalırdı; oysa
+// iki arıza farklı teşhis ister ("ölü kod" ile "açılış yolunda değil" aynı şey
+// değildir).
+//
+// Dar küme, adın açılış yolunda EN AZ BİR yolu olmasını arar: aynı işleve hem
+// go ifadesinin arkasından hem doğrudan gidiliyorsa açılış onu bekliyordur.
+// Canlı bir kurulumu suçlamak, denetime güveni yitirmenin en kısa yoludur.
+func maindenErisim(dosyalar []ayristirilmisDosya) bilesimKokuErisimi {
 	govdeler := bilesimKokuDugumleri(dosyalar)
 
-	erisilebilir := map[string]bool{}
-	var gez func(ad string)
-	gez = func(ad string) {
-		if erisilebilir[ad] {
+	erisim := bilesimKokuErisimi{
+		erisilebilir:  map[string]bool{},
+		acilisYolunda: map[string]bool{},
+	}
+
+	var (
+		gez      func(ad string, acilista bool)
+		gezGovde func(dugum ast.Node, acilista bool)
+	)
+
+	gezGovde = func(dugum ast.Node, acilista bool) {
+		ast.Inspect(dugum, func(n ast.Node) bool {
+			// Go ifadesinin ALTI hâlâ gezilir — oradaki adlar koşar — ama o
+			// noktadan sonrası açılış yolu SAYILMAZ.
+			if goIfadesi, goMu := n.(*ast.GoStmt); goMu && acilista {
+				gezGovde(goIfadesi.Call, false)
+
+				return false
+			}
+			ident, ok := n.(*ast.Ident)
+			if !ok {
+				return true
+			}
+			if _, tanidik := govdeler[ident.Name]; tanidik {
+				gez(ident.Name, acilista)
+			}
+
+			return true
+		})
+	}
+
+	gez = func(ad string, acilista bool) {
+		// Aynı ad İKİ KEZ gezilebilir: önce bir go ifadesinin arkasından,
+		// sonra açılış yolundan. İkinci geçiş atlanırsa dar küme ziyaret
+		// SIRASINA bağlı kalır ve canlı bir kurulum "açılış yolunda değil"
+		// diye raporlanabilirdi.
+		if erisim.erisilebilir[ad] && (!acilista || erisim.acilisYolunda[ad]) {
 			return
 		}
-		erisilebilir[ad] = true
+		erisim.erisilebilir[ad] = true
+		if acilista {
+			erisim.acilisYolunda[ad] = true
+		}
 		for _, govde := range govdeler[ad] {
-			ast.Inspect(govde, func(n ast.Node) bool {
-				ident, ok := n.(*ast.Ident)
-				if !ok {
-					return true
-				}
-				if _, tanidik := govdeler[ident.Name]; tanidik {
-					gez(ident.Name)
-				}
-
-				return true
-			})
+			gezGovde(govde, acilista)
 		}
 	}
 
-	gez("main")
+	gez("main", true)
 	if _, varMi := govdeler["init"]; varMi {
-		gez("init")
+		gez("init", true)
 	}
 
-	return erisilebilir
+	return erisim
+}
+
+// goIfadesiIcindekiler dosyada bir GO İFADESİNİN altında kalan ifadeleri
+// kümeler.
+//
+// Ad grafı bu biçimi göremez: kurulumun kendi ÇAĞRI yerini go ifadesine almak
+// (go func() { paket.Yapıcı(c) }()) çağıran işlevi açılış yolundan ÇIKARMAZ —
+// o işleve main()'den hâlâ senkron gidilir. Leke yalnızca burada, çağrının
+// sözdizimsel yerinde görünür.
+func goIfadesiIcindekiler(agac *ast.File) map[ast.Expr]bool {
+	icerideki := map[ast.Expr]bool{}
+	ast.Inspect(agac, func(n ast.Node) bool {
+		goIfadesi, ok := n.(*ast.GoStmt)
+		if !ok {
+			return true
+		}
+		// İç içe go ifadeleri de bu gezintiyle kapsanır; dış gezintinin aynı
+		// alt ağaca ikinci kez inmesine gerek yok.
+		ast.Inspect(goIfadesi.Call, func(ic ast.Node) bool {
+			if ifade, ifadeMi := ic.(ast.Expr); ifadeMi {
+				icerideki[ifade] = true
+			}
+
+			return true
+		})
+
+		return false
+	})
+
+	return icerideki
 }
 
 // bilesimKokuDugumleri paket düzeyindeki her adı, o adın "gövdesi" sayılan AST
@@ -1251,4 +1464,47 @@ func paketImportYolu(t *testing.T, dizin string) string {
 	}
 
 	return modulePath + "/" + filepath.ToSlash(rel)
+}
+
+// goroutineMuaf verilen akış paketinin goroutine denetiminden muaf olup
+// olmadığını bildirir.
+//
+// Muafiyet YALNIZCA goroutine sorusunu susturur. "Bu paket bileşim kökünde
+// kurulu mu" ve "çağrı ölü kodda mı" soruları muaf pakette de sorulmaya devam
+// eder: muafiyetin beyanı "açılış bunu bekliyor", "bu kurulum gereksiz" değil.
+func goroutineMuaf(paketYolu string) bool {
+	_, muaf := acilisYolunaGirmeyenKurulumlar[paketYolu]
+	return muaf
+}
+
+// bayatGoroutineMuafiyetleriniDenetle borcu ödenmiş goroutine muafiyetlerini
+// düşürür.
+//
+// İki bayatlama yolu vardır ve ikisi de sessiz kalırsa muafiyet kalıcı bir
+// köre dönüşür: muaf paket artık bir akış paketi değildir (silinmiş ya da adı
+// değişmiştir), ya da kurulum artık goroutine biçiminde DEĞİLDİR — yani
+// muafiyetin koruduğu durum ortadan kalkmıştır. İkincisi asıl olandır:
+// muafiyet borçtur ve borç ödendiğinde defterde kalmamalıdır.
+func bayatGoroutineMuafiyetleriniDenetle[T any](
+	t *testing.T,
+	akislar map[string]T,
+	kurulan map[string]akisKurulumu,
+) {
+	t.Helper()
+
+	for _, yol := range slices.Sorted(maps.Keys(acilisYolunaGirmeyenKurulumlar)) {
+		if _, akisMi := akislar[yol]; !akisMi {
+			t.Errorf("muafiyet BAYAT: %q artık container'dan kurulan bir akış paketi değil.\n"+
+				"Paket silindiyse ya da adı değiştiyse muafiyet satırı da gitmelidir; "+
+				"kalırsa bir gün aynı adla yazılan yeni bir paketi sessizce muaf tutar.", yol)
+			continue
+		}
+		kurulum, bulunduMu := kurulan[yol]
+		if !bulunduMu || !kurulum.goroutineBiciminde {
+			t.Errorf("muafiyet BAYAT: %q'nun kurulumu artık goroutine biçiminde DEĞİL, "+
+				"yani muafiyete ihtiyaç yok.\n"+
+				"Muafiyet borçtur; borç ödendiğinde satır silinmelidir. Kalırsa, kurulum "+
+				"bir gün yeniden goroutine'e alındığında denetim sessiz kalır.", yol)
+		}
+	}
 }

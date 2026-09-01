@@ -208,33 +208,85 @@ func TestVitrinIstemciFiyatiniReddeder(t *testing.T) {
 		"reddedilen isteklerin hiçbiri sepete satır yazmamalı")
 }
 
-// TestVitrinIstemciParaBiriminiReddeder sepet AÇMA ucunun para birimi kabul
-// etmediğini gerçek uçta kanıtlar.
+// TestVitrinIstemciBolgesiniReddeder sepet AÇMA ucunun ne bölge ne para birimi
+// kabul ettiğini gerçek uçta kanıtlar.
 //
 // Sınıf [TestVitrinIstemciFiyatiniReddeder] ile aynıdır: istemcinin
-// belirlediği bir değer sunucunun fiyat kararına giriyordu. İstemci tutar
-// uyduramıyordu ama HANGİ FİYAT LİSTESİNİN uygulanacağını seçebiliyordu — ve
-// ayrışma reddedilmiyordu: sepet, bölgesi TRY olsa bile istemcinin dediği para
-// biriminde açılıyor, satır da o listeden fiyatlanıyordu.
+// belirlediği bir değer sunucunun kararına giriyordu.
+//
+//   - currency_code, HANGİ FİYAT LİSTESİNİN uygulanacağını seçiyordu ve
+//     ayrışma reddedilmiyordu: sepet, bölgesi TRY olsa bile istemcinin dediği
+//     para biriminde açılıyor, satır da o listeden fiyatlanıyordu.
+//   - region_id, sepetin VERGİ ORANINI seçiyordu ve müşterinin ifade etmek
+//     istediği şey zaten değildi: müşteri bir ülke seçer, bölge onun
+//     sunucudaki karşılığıdır.
 //
 // İddia iki katmanlıdır: istek reddedilmeli VE hiçbir sepet yazılmamalı. Alan
-// sessizce yok sayılsaydı istemci gönderdiğini sanır, sunucu başka bir para
-// birimi yazardı.
-func TestVitrinIstemciParaBiriminiReddeder(t *testing.T) {
+// sessizce yok sayılsaydı istemci gönderdiğini sanır, sunucu başka bir bölgede
+// sepet açardı.
+func TestVitrinIstemciBolgesiniReddeder(t *testing.T) {
 	ctx := t.Context()
 
-	oncekiSayi := sepetSayisi(ctx, t)
+	for ad, govde := range map[string]string{
+		// Gövdedeki para birimi bölgeninkinden BAŞKA: eskiden tam da bu istek,
+		// TRY bölgesinde EUR fiyat listesiyle bir sepet açıyordu.
+		"para birimi": fmt.Sprintf(`{"country_code":%q,"currency_code":%q}`,
+			vergiliUlke, vergisizParaBirimi),
+		"bölge": fmt.Sprintf(`{"country_code":%q,"region_id":%q}`,
+			vergiliUlke, vergisizBolgeID),
+	} {
+		t.Run(ad, func(t *testing.T) {
+			oncekiSayi := sepetSayisi(ctx, t)
 
-	// Gövdedeki para birimi bölgeninkinden BAŞKA: eskiden tam da bu istek,
-	// TRY bölgesinde EUR fiyat listesiyle bir sepet açıyordu.
-	red := vitrinIstegi(t, http.MethodPost, "/store/v1/carts", fmt.Sprintf(
-		`{"region_id":%q,"currency_code":%q}`, vergiliBolgeID, vergisizParaBirimi))
+			red := vitrinIstegi(t, http.MethodPost, "/store/v1/carts", govde)
 
-	assert.Equal(t, http.StatusUnprocessableEntity, red.Code,
-		"vitrin para birimi kabul etmemeli; gövde: %s", red.Body.String())
-	assert.Equal(t, oncekiSayi, sepetSayisi(ctx, t),
-		"reddedilen istek sepet YAZMAMALI; yazsaydı istemci gönderdiği para "+
-			"biriminin uygulandığını sanırdı")
+			assert.Equal(t, http.StatusUnprocessableEntity, red.Code,
+				"vitrin sunucunun türettiği alanı kabul etmemeli; gövde: %s", red.Body.String())
+			assert.Equal(t, oncekiSayi, sepetSayisi(ctx, t),
+				"reddedilen istek sepet YAZMAMALI; yazsaydı istemci gönderdiği "+
+					"değerin uygulandığını sanırdı")
+		})
+	}
+}
+
+// TestVitrinBilinmeyenUlkedeSepetAcilmaz satış açılmamış bir ülkenin sepet
+// açtırMADIĞINI kanıtlar.
+//
+// Bölge artık gövdeden gelmediği için "bölge var mı" sorusu "bu ülkeye satış
+// var mı" sorusuna dönüştü ve cevabı 404'tür: istemcinin düzeltebileceği bir
+// durumdur (başka bir ülke seç), sunucu arızası değil. Ülke kodunun BİÇİMİ
+// bozuksa cevap 422'dir — ikisi ayrı sorulardır ve ayrı kalmalıdır.
+func TestVitrinBilinmeyenUlkedeSepetAcilmaz(t *testing.T) {
+	ctx := t.Context()
+
+	for ad, senaryo := range map[string]struct {
+		govde string
+		durum int
+		neden string
+	}{
+		"bölgesi olmayan ülke": {
+			govde: `{"country_code":"NL"}`, durum: http.StatusNotFound,
+			neden: "operatör o ülkeye satış açmamıştır; istemci başka bir ülke seçebilir",
+		},
+		"biçimsiz ülke kodu": {
+			govde: `{"country_code":"TURKIYE"}`, durum: http.StatusUnprocessableEntity,
+			neden: "ISO 3166-1 alpha-2 olmayan kod gövde hatasıdır",
+		},
+		"boş ülke kodu": {
+			govde: `{}`, durum: http.StatusUnprocessableEntity,
+			neden: "ülke zorunludur; bölgenin türetileceği başka bir kaynak yoktur",
+		},
+	} {
+		t.Run(ad, func(t *testing.T) {
+			oncekiSayi := sepetSayisi(ctx, t)
+
+			red := vitrinIstegi(t, http.MethodPost, "/store/v1/carts", senaryo.govde)
+
+			assert.Equal(t, senaryo.durum, red.Code, "%s; gövde: %s", senaryo.neden, red.Body.String())
+			assert.Equal(t, oncekiSayi, sepetSayisi(ctx, t),
+				"bölgesi türetilemeyen bir sepet HİÇ açılmamalı")
+		})
+	}
 }
 
 // TestVitrinParaBirimiBolgedenTuretilir sepetin para biriminin BÖLGEDEN
@@ -264,20 +316,21 @@ func TestVitrinParaBirimiBolgedenTuretilir(t *testing.T) {
 
 	for _, senaryo := range []struct {
 		ad         string
-		bolgeID    string
+		ulke       string
 		paraBirimi string
 		fiyat      int64
 	}{
-		{"vergili bölge", vergiliBolgeID, vergiliParaBirimi, vergiliBolgeFiyat},
-		{"vergisiz bölge", vergisizBolgeID, vergisizParaBirimi, vergisizBolgeFiyat},
+		{"vergili bölge", vergiliUlke, vergiliParaBirimi, vergiliBolgeFiyat},
+		{"vergisiz bölge", vergisizUlke, vergisizParaBirimi, vergisizBolgeFiyat},
 	} {
 		t.Run(senaryo.ad, func(t *testing.T) {
-			sepetID := vitrinBolgeSepetiAc(t, senaryo.bolgeID, musteriID, eposta)
+			sepetID := vitrinUlkeSepetiAc(t, senaryo.ulke, musteriID, eposta)
 
 			oku := vitrinIstegi(t, http.MethodGet, "/store/v1/carts/"+sepetID, "")
 			require.Equal(t, http.StatusOK, oku.Code, "gövde: %s", oku.Body.String())
 			assert.Equal(t, senaryo.paraBirimi, vitrinVeri(t, oku)["currency_code"],
-				"sepetin para birimi BÖLGENİNKİ olmalı; istemci hiçbir kod göndermedi")
+				"sepetin para birimi ÜLKENİN BÖLGESİNİNKİ olmalı; istemci ne bölge "+
+					"ne para birimi gönderdi")
 
 			ekle := vitrinIstegi(t, http.MethodPost, "/store/v1/carts/"+sepetID+"/line-items",
 				fmt.Sprintf(`{"variant_id":%q,"quantity":1}`, varyantID))
@@ -420,25 +473,26 @@ func TestVitrinB2BLimitReddiSebebiniBildirir(t *testing.T) {
 			"düzeldiğinde sepetini yeniden kurmak zorunda kalırdı")
 }
 
-// vitrinSepetiAc mağaza ucundan VERGİLİ bölgede bir sepet açar ve kimliğini
+// vitrinSepetiAc mağaza ucundan VERGİLİ ülkede bir sepet açar ve kimliğini
 // döner.
 func vitrinSepetiAc(t *testing.T, musteriID, eposta string) string {
 	t.Helper()
 
-	return vitrinBolgeSepetiAc(t, vergiliBolgeID, musteriID, eposta)
+	return vitrinUlkeSepetiAc(t, vergiliUlke, musteriID, eposta)
 }
 
-// vitrinBolgeSepetiAc mağaza ucundan VERİLEN bölgede bir sepet açar ve
-// kimliğini döner.
+// vitrinUlkeSepetiAc mağaza ucundan VERİLEN ülkede bir sepet açar ve kimliğini
+// döner.
 //
-// Gövdede para birimi YOKTUR ve olamaz: sunucu onu bölgeden türetir. Bölgenin
-// parametre olması tam da bunu görünür kılmak içindir — sepetin para birimini
-// değiştirmenin tek yolu BAŞKA bir bölge seçmektir.
-func vitrinBolgeSepetiAc(t *testing.T, bolgeID, musteriID, eposta string) string {
+// Gövdede ne bölge ne para birimi VARDIR ve olamaz: sunucu ikisini de ülkeden
+// türetir. Ülkenin parametre olması tam da bunu görünür kılmak içindir —
+// sepetin bölgesini (ve dolayısıyla para birimini) değiştirmenin tek yolu
+// BAŞKA bir ülke seçmektir, çünkü müşterinin ifade edebildiği tek şey odur.
+func vitrinUlkeSepetiAc(t *testing.T, ulkeKodu, musteriID, eposta string) string {
 	t.Helper()
 
 	kayit := vitrinIstegi(t, http.MethodPost, "/store/v1/carts", fmt.Sprintf(
-		`{"region_id":%q,"customer_id":%q,"email":%q}`, bolgeID, musteriID, eposta))
+		`{"country_code":%q,"customer_id":%q,"email":%q}`, ulkeKodu, musteriID, eposta))
 	require.Equal(t, http.StatusCreated, kayit.Code, "sepet açılamadı; gövde: %s", kayit.Body.String())
 
 	return sepetKimliginiOku(t, kayit)

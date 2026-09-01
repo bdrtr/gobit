@@ -2,6 +2,7 @@ package cart
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -14,7 +15,9 @@ import (
 // kaydedecek biçimde betikler.
 func recordOpenCart(carts *stubCarts, cartID string) *[]string {
 	seen := &[]string{}
-	carts.openCartFn = func(_ context.Context, regionID, currencyCode, customerID, email string) (string, error) {
+	carts.openCartFn = func(
+		_ context.Context, regionID, currencyCode, customerID, email string, _ json.RawMessage,
+	) (string, error) {
 		*seen = []string{regionID, currencyCode, customerID, email}
 		return cartID, nil
 	}
@@ -100,7 +103,7 @@ func TestCreateCartVerilenEpostaMusterininkiniEzmez(t *testing.T) {
 func TestCreateCartBilinmeyenMusteriReddedilir(t *testing.T) {
 	h := newHarness(t)
 	opened := false
-	h.carts.openCartFn = func(_ context.Context, _, _, _, _ string) (string, error) {
+	h.carts.openCartFn = func(_ context.Context, _, _, _, _ string, _ json.RawMessage) (string, error) {
 		opened = true
 		return testCartID, nil
 	}
@@ -143,4 +146,75 @@ func TestCreateCartGecersizGirdiReddedilir(t *testing.T) {
 			assert.Zero(t, h.customers.calls)
 		})
 	}
+}
+
+// TestCreateCartMetadataOlduguGibiTasinir sepete iliştirilen serbest verinin
+// akış tarafından DEĞİŞTİRİLMEDEN geçtiğini doğrular.
+//
+// Alan, bölge ve para biriminden ayrı bir sınıftadır: gerçekten çağıranın
+// kendi verisidir ve türetilecek bir karşılığı yoktur. Akışın onu okuması ya
+// da yeniden kodlaması, vitrinin gönderdiği gövdeyi sessizce değiştirebilecek
+// tek yer olurdu; iddia tam da bunun olmadığıdır. Aynı karar satır
+// metadata'sında da verilmişti.
+func TestCreateCartMetadataOlduguGibiTasinir(t *testing.T) {
+	h := newHarness(t)
+
+	beklenen := json.RawMessage(`{"kaynak":"vitrin"}`)
+	var gelen json.RawMessage
+	h.carts.openCartFn = func(
+		_ context.Context, _, _, _, _ string, metadata json.RawMessage,
+	) (string, error) {
+		gelen = metadata
+		return testCartID, nil
+	}
+
+	_, err := h.wf.CreateCart(context.Background(), CreateCartInput{
+		CountryCode: "TR",
+		Metadata:    beklenen,
+	})
+	require.NoError(t, err)
+
+	assert.JSONEq(t, string(beklenen), string(gelen),
+		"metadata sepete olduğu gibi ulaşmalı")
+}
+
+// TestOpenCartForCountryBolgeyiTuretir modüller arası yüzeyin bölgeyi ÜLKEDEN
+// çözdüğünü ve dışarıya yalnızca kimlik verdiğini doğrular.
+//
+// Yüzeyin bölge parametresi YOKTUR ve bu, sepet açma ucunun akışa
+// bağlanmasının çekirdek gerekçesidir: parametre olsaydı çağıranın (yani
+// vitrin ucunun) onu istemciden gelen bir değerle doldurmasının önünde hiçbir
+// şey kalmazdı.
+func TestOpenCartForCountryBolgeyiTuretir(t *testing.T) {
+	h := newHarness(t)
+	seen := recordOpenCart(h.carts, testCartID)
+
+	cartID, err := NewInterop(h.wf).OpenCartForCountry(
+		context.Background(), "TR", "", "misafir@example.com", nil)
+	require.NoError(t, err)
+
+	assert.Equal(t, testCartID, cartID)
+	assert.Equal(t, []string{testRegionID, testCurrency, "", "misafir@example.com"}, *seen,
+		"bölge ve para birimi ÜLKEDEN türetilmeli")
+}
+
+// TestOpenCartForCountryBilinmeyenUlkedeSepetAcmaz yüzeyin hatayı yutmadığını
+// doğrular.
+//
+// İddia kimliğin boş dönmesinden ibaret değildir: sepet HİÇ açılmamalıdır.
+// Bölgesi olmayan bir ülkede "bir şekilde" sepet açmak, bölgeyi bir
+// varsayılana düşürmekle aynı kapıya çıkardı.
+func TestOpenCartForCountryBilinmeyenUlkedeSepetAcmaz(t *testing.T) {
+	h := newHarness(t)
+	opened := false
+	h.carts.openCartFn = func(_ context.Context, _, _, _, _ string, _ json.RawMessage) (string, error) {
+		opened = true
+		return testCartID, nil
+	}
+
+	cartID, err := NewInterop(h.wf).OpenCartForCountry(context.Background(), "ZZ", "", "", nil)
+	require.Error(t, err)
+	assert.True(t, errors.IsNotFound(err))
+	assert.Empty(t, cartID)
+	assert.False(t, opened, "bölgesi olmayan ülkede sepet YAZILMAMALI")
 }

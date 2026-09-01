@@ -35,7 +35,7 @@ func belge(t *testing.T) (yollar, bilesenler map[string]any) {
 	Describe(doc)
 
 	r := chi.NewRouter()
-	New(nil, nil, Flows{}).Routes(r)
+	New(nil, Flows{}).Routes(r)
 
 	ham, err := doc.Build(r)
 	require.NoError(t, err)

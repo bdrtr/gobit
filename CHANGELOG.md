@@ -10,6 +10,95 @@ Sabitlenme `1.0.0` ile olur.
 
 ## [Yayımlanmamış]
 
+### Kırıcı değişiklikler
+
+`0.x` boyunca minor sürümlerde kırıcı değişiklik olabilir. Aşağıdaki
+**mağaza API'sini** kullanan istemcileri doğrudan etkiler.
+
+- **`POST /store/v1/carts` gövdesinden `region_id` KALDIRILDI; yerine
+  `country_code` ZORUNLU oldu.** Alanı gönderen istek artık `422` alır (gövde
+  tanınmayan alanı reddeder). Sepetin bölgesini ve para birimini sunucu,
+  müşterinin ÜLKESİNDEN türetir.
+
+  Kaldırmanın iki sebebi vardır ve ikisi de aynı ölçüttendir ("gövdeye konan
+  şey müşterinin belirleyebildiği şeydir"):
+
+  1. `region_id` müşterinin ifade etmek istediği şey **değildir**. Müşteri bir
+     ülke seçer (ya da tarayıcısı söyler); bölge, o ülkenin sunucudaki
+     karşılığıdır ve eşlemeyi operatör kurar. İstemciye bir iç varlık kimliği
+     yazdırmak, `unit_price`/`currency_code` ile kapatılan "sunucunun verisini
+     istemciden almak" sınıfının daha yumuşak bir biçimidir; bölge sepetin
+     **vergi oranını** seçtiği için sonucu da kozmetik değildir.
+  2. Türetmeyi zaten yapan bir akış vardı — `internal/workflows/cart`'ın
+     `create_cart`'ı ülke kodundan hem bölgeyi hem para birimini çözer — ve
+     vitrin ucu onu **atlıyordu**. Aynı işlem için iki sözleşme, işletmecinin
+     gördüğü yol da ham olan.
+
+  Sessizce yok saymak yine seçilmedi: istemci gönderdiğini sanır, sunucu başka
+  bir bölgede sepet açardı — ve o sepet başka bir vergi oranıyla, başka bir
+  fiyat listesinden fiyatlanırdı.
+
+  Yeni hata yüzeyi: bölgesi olmayan geçerli bir ülke `404`
+  (`country_has_no_region` / `country_not_found`), biçimi bozuk ya da boş bir
+  kod `422`'dir. Ayrım korunur çünkü ikisi farklı düzeltmeler ister: birinde
+  müşteri başka bir ülke seçer, diğerinde istemci gövdesini düzeltir.
+
+- **Bağlama, satır uçlarındaki kalıbın AYNISIDIR ve yeni bir mekanizma
+  getirmez.** `cart` kendi paketinde üçüncü bir dar arayüz tanımlar
+  (`api.CartOpening`), somut akışı container'dan `workflows.cart.interop`
+  adıyla **tembel** çözer ve çözülemezse **kapalı** arızalanır: `500`, sepet
+  yazılmaz. Bunun bir sonucu olarak `cart` modülünün başka bir modülü adla
+  çözdüğü tek yer de kapandı — `api.RegionCurrencyReader` ve `region.service`
+  bağı **kaldırıldı**, çünkü para birimini artık akış türetiyor. Modülün
+  `LinePricingName` sabiti `CartFlowsName` oldu: aynı kayıt bugün iki dar
+  arayüzü besliyor ve sabitin adı akışın adı olmalıydı.
+
+- `workflows/cart`'ın `Carts` dar arayüzü yine büyüdü: `OpenCart` artık sepet
+  metadata'sını da taşır. Kendi uygulamasını yazan gömülü kodu etkiler. Aynı
+  yüzeye `OpenCartForCountry` eklendi — `Interop` bir süre bilinçli olarak
+  sepet açmayı yayımlamıyordu, çünkü tüketicisi yoktu; artık var.
+
+### Değişti
+
+- `POST /store/v1/carts` gövdesindeki `metadata` **kaldı** ve akışa olduğu gibi
+  taşınıyor. Karar satır metadata'sında verilenin aynısıdır: alan gerçekten
+  istemcinin bilgisidir (kampanya kaynağı, vitrin oturumu), hiçbir hesaba
+  girmez ve türetilecek bir karşılığı yoktur. Düşürülseydi, sepeti açan tek yol
+  artık akış olduğu için istemcinin gönderdiği alan sessizce kaybolurdu.
+
+### Güvenlik
+
+- **B2B harcama limitinin uygulanma KOŞULU belgelendi: limit, müşterisini
+  BEYAN EDEN alışverişe uygulanır.** Davranış **değişmedi**; değişen şey, bu
+  deponun v0.4.0'a kadar limiti koşulsuz uygulanan bir kural gibi anlatmasıydı.
+
+  Kural `order.CreateOrder` içinde `CustomerID` üzerinden çalışır ve o kimlik
+  zincire vitrin sepetinin gövdesinden girer. Mağaza yüzeyinin tek kimliği
+  publishable anahtardır ve o bir satış kanalını temsil eder, bir müşteriyi
+  değil (`corehttp.Principal` müşteri kimliği taşımaz) — yani `customer_id`
+  hiçbir kanıt istemeyen bir iddiadır. Gerçek ikilide, tek bir publishable
+  anahtarla ölçüldü (limit `50_000`, sepet toplamı `76_800`): gövdede
+  `customer_id` varken tamamlama `409 order_spending_limit_exceeded`, aynı sepet
+  alan olmadan `200` alıyor. Başkasının kimliğiyle tamamlanan alışveriş o
+  müşterinin penceresinden düşüyor, yani adı bilinen bir çalışanın harcama hakkı
+  **yakılabiliyor**. Beyanı zorunlu kılmak da kapatmıyor:
+  `POST /store/v1/customers` publishable anahtarla kuralsız, taze bir misafir
+  kaydı açıyor.
+
+  Kimlik doğrulama **inşa edilmedi** ve bu bilinçlidir: doğrulama çerçevenin
+  değil gömen uygulamanın işi olarak karara bağlandı
+  ([ADR 0008](docs/adr/0008-musteri-kimligi-guven-siniri.md) — reddedilen
+  seçenekler ve gömen uygulamaya düşen işin listesi orada). Sınır README'nin
+  B2B bölümüne, `order` modülünün godoc'una, `service.SpendingPolicy` ile
+  `CreateOrderInput.CustomerID` alanlarına yazıldı ve `order`'da iki testle
+  sabitlendi (`TestMisafirSiparisindeHarcamaKuraliHicSorulmaz`,
+  `TestHarcamaKuraliBeyanEdilenMusteriyeUygulanir`). İki test bir yeteneği
+  değil bir kararı korur: kimlik doğrulama geldiğinde düşmeleri **beklenir**.
+
+  B2B kurulumu olan gömen uygulamaların yapması gereken: vitrin yüzeyini bir
+  müşteri oturumuyla korumak ve `customer_id`'yi gövdeden değil oturumdan
+  okumak. O katman olmadan limit, yalnızca dürüst istemcinin hatasını yakalar.
+
 ## [0.4.0] — 2026-09-01
 
 ### Kırıcı değişiklikler
