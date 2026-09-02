@@ -16,6 +16,7 @@ import (
 
 	"log/slog"
 
+	"github.com/bdrtr/gobit/internal/adminui"
 	"github.com/bdrtr/gobit/internal/core/config"
 	"github.com/bdrtr/gobit/internal/core/container"
 	"github.com/bdrtr/gobit/internal/core/errors"
@@ -48,7 +49,7 @@ func temelConfig() config.Config {
 func korumaliRouter(t *testing.T, cfg config.Config, authn corehttp.Authenticator) http.Handler {
 	t.Helper()
 
-	yigin, err := korumaYigini(cfg, authn, nil, slogYut())
+	yigin, err := korumaYigini(cfg, authn, &adminui.Ring{}, nil, slogYut())
 	require.NoError(t, err, "koruma yığını kurulamadı")
 
 	r := corehttp.NewRouter(corehttp.RouterOptions{
@@ -124,11 +125,11 @@ func TestKorumaYiginiHizSiniriKapatilabilir(t *testing.T) {
 	cfg := temelConfig()
 	cfg.RateLimitPerMinute = 0
 
-	kapali, err := korumaYigini(cfg, &corehttp.DeferredAuthenticator{}, nil, slogYut())
+	kapali, err := korumaYigini(cfg, &corehttp.DeferredAuthenticator{}, &adminui.Ring{}, nil, slogYut())
 	require.NoError(t, err)
 
 	cfg.RateLimitPerMinute = 600
-	acik, err := korumaYigini(cfg, &corehttp.DeferredAuthenticator{}, nil, slogYut())
+	acik, err := korumaYigini(cfg, &corehttp.DeferredAuthenticator{}, &adminui.Ring{}, nil, slogYut())
 	require.NoError(t, err)
 
 	assert.Less(t, len(kapali), len(acik),
@@ -502,7 +503,7 @@ func TestHizSiniriKapaliykenPaylasilanOrtamdaUyarilir(t *testing.T) {
 	cfg.RateLimitPerMinute = 0
 	yakalayici := &kayitYakalayici{}
 
-	_, err := korumaYigini(cfg, gecerliKimlik{}, nil, yakalayici.logger())
+	_, err := korumaYigini(cfg, gecerliKimlik{}, &adminui.Ring{}, nil, yakalayici.logger())
 
 	require.NoError(t, err)
 	assert.Contains(t, yakalayici.mesajlar(slog.LevelWarn), "hız sınırlayıcı TAKILMADI",
@@ -524,7 +525,7 @@ func TestHizSiniriProxyArkasindaAnahtarUyarisiVerir(t *testing.T) {
 	cfg.TrustedProxyHops = 0
 	yakalayici := &kayitYakalayici{}
 
-	_, err := korumaYigini(cfg, gecerliKimlik{}, nil, yakalayici.logger())
+	_, err := korumaYigini(cfg, gecerliKimlik{}, &adminui.Ring{}, nil, yakalayici.logger())
 
 	require.NoError(t, err, "uyarı açılışı DURDURMAMALI: sıfır atlama, doğrudan "+
 		"internete bakan bir kurulumda doğru cevaptır")
@@ -563,7 +564,7 @@ func TestHizSiniriDogruKuruldugundaSessizdir(t *testing.T) {
 			ayarla(&cfg)
 			yakalayici := &kayitYakalayici{}
 
-			_, err := korumaYigini(cfg, gecerliKimlik{}, nil, yakalayici.logger())
+			_, err := korumaYigini(cfg, gecerliKimlik{}, &adminui.Ring{}, nil, yakalayici.logger())
 
 			require.NoError(t, err)
 			// Bellek içi koruma uyarısı bu kapının DIŞINDADIR ve paylaşılan
@@ -701,7 +702,7 @@ func TestKorumaYiginiAnahtarOneginiKuruculariGecirir(t *testing.T) {
 			cfg.GuardBackend = config.BackendRedis
 			cfg.RedisKeyPrefix = onek
 
-			_, err := korumaYigini(cfg, &corehttp.DeferredAuthenticator{}, yapayRedis(), slogYut())
+			_, err := korumaYigini(cfg, &corehttp.DeferredAuthenticator{}, &adminui.Ring{}, yapayRedis(), slogYut())
 
 			require.Error(t, err, "geçersiz önek kurucuya ulaşıp açılışı durdurmalı")
 			assert.Equal(t, "redisguard_invalid_config", errors.CodeOf(err),
@@ -722,7 +723,7 @@ func TestKorumaYiginiRedisArkaUcunuKurar(t *testing.T) {
 	cfg.GuardBackend = config.BackendRedis
 	cfg.RedisKeyPrefix = "gobit-staging"
 
-	yigin, err := korumaYigini(cfg, &corehttp.DeferredAuthenticator{}, yapayRedis(), slogYut())
+	yigin, err := korumaYigini(cfg, &corehttp.DeferredAuthenticator{}, &adminui.Ring{}, yapayRedis(), slogYut())
 
 	require.NoError(t, err, "geçerli önekle redis arka ucu kurulabilmeli")
 	assert.NotEmpty(t, yigin, "koruma yığını boş dönmemeli")
@@ -740,7 +741,7 @@ func TestKorumaYiginiRedisSecilipIstemciYoksaDurur(t *testing.T) {
 	cfg := temelConfig()
 	cfg.GuardBackend = "redis"
 
-	_, err := korumaYigini(cfg, &corehttp.DeferredAuthenticator{}, nil, slogYut())
+	_, err := korumaYigini(cfg, &corehttp.DeferredAuthenticator{}, &adminui.Ring{}, nil, slogYut())
 
 	require.Error(t, err, "Redis istemcisi olmadan redis arka ucu kurulmamalı")
 	assert.Contains(t, err.Error(), "GUARD_BACKEND")
@@ -912,7 +913,7 @@ func (gecerliKimlik) AuthenticateStore(_ context.Context, _ string) (corehttp.Pr
 func TestKorumaYiginiGraphQLUcunuIdempotencydenMuafTutar(t *testing.T) {
 	t.Parallel()
 
-	yigin, err := korumaYigini(temelConfig(), gecerliKimlik{}, nil, slogYut())
+	yigin, err := korumaYigini(temelConfig(), gecerliKimlik{}, &adminui.Ring{}, nil, slogYut())
 	require.NoError(t, err)
 
 	arizali := true

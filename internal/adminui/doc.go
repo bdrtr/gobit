@@ -1,42 +1,42 @@
-// Package adminui gobit'in yönetim panelidir: sunucu tarafında üretilen HTML.
+// Package adminui is gobit's admin panel: server-rendered HTML.
 //
-// # Ne çekirdek ne modül — DÖRDÜNCÜ ağaç
+// # Neither core nor module — a FOURTH tree
 //
-// Bu paket internal/workflows'un kardeşidir ve aynı sebeple oradadır (ADR
-// 0011). Modül ağacına konsaydı üç duvara birden çarpardı ve üçü de ölçüldü:
-// başka hiçbir modülü import edemez, api paketinde şablonu yazıcıya veremez ve
-// şablonu alan üzerinden çalıştıran doğal Go yazımı muafiyet listesine
-// YAZILAMAZ bile — çağrının adı çözülemediği için. Çekirdek altına konamaz
-// (çekirdek modülleri tanımaz), bileşim kökü altına konamaz (orası yalnızca
-// kablolamadır).
+// This package is a sibling of internal/workflows and lives here for the same
+// reason (ADR 0011). Placed under the module tree it would hit three walls, all
+// of them measured: it could not import any other module, it could not hand the
+// writer to a template inside an api package, and the natural Go spelling that
+// runs a template through a field CANNOT EVEN BE EXEMPTED — the call target is
+// unresolvable. It cannot live under core (core does not know modules) nor under
+// the composition root (that place is wiring only).
 //
-// Ağacın bedeli, ADR 0006'nın internal/workflows için ödediği bedelin
-// aynısıdır: kurallar ağaç adına göre yazıldığı için bu ağaç kendiliğinden
-// hiçbir kablolama kuralının kapsamında değildir. Bedel [FromContainer] ile ve
-// internal/arch'taki kayıt denetiminin kapsamının buraya genişletilmesiyle
-// ödenir.
+// The tree's cost is the one ADR 0006 already paid for internal/workflows: since
+// rules are written against tree names, this tree is covered by no wiring rule
+// by default. The cost is paid by [FromContainer] and by extending the
+// registration invariant in internal/arch to reach this tree.
 //
-// # Neyi bilmez
+// # What it does not know
 //
-// Modülleri BİLMEZ ve hiçbirini import etmez. Veriyi Query katmanından, dar bir
-// arayüzle ve container'dan ADLA çözerek alır (ADR 0001/0004/0006); sepet akışı
-// aynı kalıbın kanıtlanmış örneğidir.
+// It does NOT know modules and imports none of them. Data comes from the Query
+// layer through a narrow interface resolved from the container BY NAME (ADR
+// 0001/0004/0006); the cart workflow is the proven example of the same pattern.
 //
-// Bugün YALNIZCA OKUR. Katalog yazma bilinçli olarak ertelenmiştir: modüllerin
-// yönetim tarafına açılmış dar bir yüzeyi yok ve açmak, üç modüle derleyicisiz
-// yeni sözleşmeler eklemek demektir (ADR 0011, Karar 6).
+// Today it only READS. Catalog writes are deliberately deferred: no module
+// exposes an admin-facing narrow surface, and opening one means adding
+// compiler-unchecked contracts to three modules (ADR 0011, Decision 6).
 //
-// # Yanıt gövdesi çekirdeğin yazıcısından geçer
+// # Response bodies go through core's writer
 //
-// HTML doğrudan yazıcıya AKITILMAZ. Şablon önce belleğe üretilir, hata olursa
-// corehttp.WriteError çağrılır, ancak başarılıysa corehttp.WriteHTML'e verilir.
-// Ortada doğan bir hata aksi hâlde 200 durum kodlu YARIM bir sayfa bırakırdı.
+// HTML is never STREAMED to the writer. The template is rendered into memory
+// first; on failure corehttp.WriteError is called, and only on success does the
+// buffer reach corehttp.WriteHTML. Streaming would leave a HALF-written page
+// carrying a 200 status when a template fails midway.
 //
-// # Kimlik panelin kendi ağacında kalır
+// # The session stays inside this tree
 //
-// Panel oturumu HttpOnly bir çerezle taşınır ve çerez YALNIZCA bu ağaçta
-// geçerlidir. Yönetim API'si onu kabul etmez: API'nin CSRF bağışıklığı bir
-// savunmadan değil, jetonun tarayıcının kendiliğinden eklemediği bir başlıkta
-// durmasından gelir ve çerezi oraya açmak o bağışıklığı yok ederdi (ADR 0011,
-// Karar 3).
+// The panel session travels in an HttpOnly cookie scoped to this tree only. The
+// admin API does not accept it: that API's CSRF immunity comes not from a
+// defense but from the token living in a header browsers never attach
+// automatically, and admitting the cookie there would destroy it (ADR 0011,
+// Decision 3).
 package adminui

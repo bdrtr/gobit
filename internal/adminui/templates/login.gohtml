@@ -1,0 +1,25 @@
+{{- /*
+login.gohtml is the panel's sign-in form.
+
+The body is sent urlencoded and parsed in the panel's OWN handler; it never
+reaches the JSON endpoint. The concrete consequence is that the admin endpoints'
+strict body decoder — the one that rejects unknown fields — never runs here:
+form field names are the panel's business, not the API contract's.
+
+The error message is printed conditionally and is an ordinary field, so escaping
+applies to it as well. Field-level validation errors do not exist in the
+framework, so a single box is shown.
+*/ -}}
+{{ define "body" }}
+<h1>Sign in</h1>
+{{ if .Error }}<p role="alert">{{ .Error }}</p>{{ end }}
+<form method="post" action="{{ .LoginPath }}">
+  <label>Email
+    <input type="email" name="email" value="{{ .Email }}" required autocomplete="username">
+  </label>
+  <label>Password
+    <input type="password" name="password" required autocomplete="current-password">
+  </label>
+  <button type="submit">Sign in</button>
+</form>
+{{ end }}

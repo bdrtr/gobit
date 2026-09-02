@@ -1,0 +1,28 @@
+{{- /*
+layout.gohtml is the panel's outer frame: every page defines a "body" block and
+is rendered inside this.
+
+The body is not passed as a VALUE, it is defined as a BLOCK. Passed as a value,
+the layout would have to convert it to template.HTML, and template.HTML DISABLES
+escaping — in a panel that runs inside an administrator's session, disabling
+escaping is the shortest path to handing an attacker admin privileges.
+
+No template here uses template.HTML, template.JS or template.URL.
+*/ -}}
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{ .Title }} · gobit</title>
+</head>
+<body>
+<header>
+  <strong>gobit</strong>
+  <span>admin</span>
+</header>
+<main>
+{{ template "body" . }}
+</main>
+</body>
+</html>

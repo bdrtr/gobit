@@ -173,14 +173,14 @@ func akislariKaydet(c *container.Container) error {
 //
 // Kurulum HATA DÖNER, panik üretmez: bozuk bir şablon açılışı durdurur ve
 // arıza dağıtımda görünür, kullanıcının karşısında değil.
-func paneliKaydet(c *container.Container, router chi.Router) error {
-	panel, err := adminui.FromContainer(c)
+func paneliKaydet(cfg config.Config, c *container.Container, router chi.Router) (*adminui.UI, error) {
+	panel, err := adminui.FromContainer(c, cfg.IsShared())
 	if err != nil {
-		return errors.Wrap(err, errors.KindOf(err), codeFlowSetupFailed,
+		return nil, errors.Wrap(err, errors.KindOf(err), codeFlowSetupFailed,
 			"yönetim paneli kurulamadı")
 	}
 	panel.Routes(router)
-	return nil
+	return panel, nil
 }
 
 // semayiDenetle belgeyi açılışta BİR KEZ üretip ayrışmaları raporlar.
@@ -240,6 +240,7 @@ func semayiDenetle(ctx context.Context, doc *openapi.Doc, r chi.Routes, log *slo
 func korumaYigini(
 	cfg config.Config,
 	authn corehttp.Authenticator,
+	panel *adminui.Ring,
 	rdb *redis.Client,
 	log *slog.Logger,
 ) ([]func(http.Handler) http.Handler, error) {
@@ -264,7 +265,12 @@ func korumaYigini(
 		// önbelleğin hâlâ geçerli olduğunu doğrular, ağaç değiştiğinde ise
 		// tüm modüllerin DTO'ları yansımayla yeniden çevrilir. Kimlik ve kota
 		// AYRI kararlardır; bu uç için verilen karar "kimliksiz ama kotalı".
-		OpenPrefixes: []string{filelocal.DefaultURLPrefix, openAPIPath},
+		// Yönetim paneli AYNI SINIFTA değildir ve buraya kimlik için değil KOTA
+		// için girer: kendi kimlik halkası hemen aşağıda, yığının sonuna
+		// takılır. Önek listede olmasaydı panel hiçbir hız sınırına girmezdi —
+		// koruma kapsamı segment sınırında eşleşir ve /admin/ui, /admin/v1'in
+		// altında DEĞİLDİR.
+		OpenPrefixes: []string{filelocal.DefaultURLPrefix, openAPIPath, adminui.URLPrefix},
 		// GraphQL vitrin ucu POST'tur ama bir OKUMADIR; idempotency kaydının
 		// koruyacağı bir yan etki yoktur ve GraphQL sözleşmesi gereği iç
 		// hatada bile 200 döndüğü için kayıt, geçici bir arızayı TTL boyunca
@@ -301,7 +307,7 @@ func korumaYigini(
 		log.Info("koruma arka ucu: redis (paylaşılan)",
 			"anahtar_oneki", cfg.RedisKeyPrefix)
 
-		return corehttp.APIGuards(opts), nil
+		return panelHalkasiylaBirlikte(opts, panel), nil
 	}
 
 	opts.IdempotencyStore = corehttp.NewMemoryIdempotencyStore(cfg.IdempotencyTTL)
@@ -322,7 +328,37 @@ func korumaYigini(
 			"cozum", "GUARD_BACKEND=redis")
 	}
 
-	return corehttp.APIGuards(opts), nil
+	return panelHalkasiylaBirlikte(opts, panel), nil
+}
+
+// panelHalkasiylaBirlikte API korumalarının ÜSTÜNE panelin kendi halkasını
+// ekler.
+//
+// # Neden çekirdeğin yığınının içinde değil
+//
+// Panel /admin/v1'in ALTINDA değildir ve olmaması bilinçlidir (ADR 0011): oraya
+// konsaydı adres çubuğundan gelen her sayfa 401 alırdı, HTML uçları OpenAPI
+// belgesine sızardı ve router ağacını gezen yetki testi her sayfadan 403
+// beklerdi. Bunun bedeli, panel ağacının çekirdeğin kimlik halkasına
+// KENDİLİĞİNDEN girmemesidir — kapsam segment sınırında eşleşir.
+//
+// Bedel burada ödenir. Halka eklenmezse panel kimliksiz açılır ve bunu HİÇBİR
+// test göremezdi; arıza ancak ilk yetkisiz erişimde görülürdü.
+//
+// # Sıra
+//
+// Köken denetimi kimlikten ÖNCE gelir ve muafiyeti YOKTUR: giriş gönderimi
+// kimlik istemez ama durum değiştiren bir istektir, yani çapraz siteden
+// tetiklenmeye açık olan tam olarak odur. Kimlik halkası ise giriş sayfasını
+// muaf tutar — kimliği doğrulanacak istek, kimliği daha yeni kuracaktır.
+func panelHalkasiylaBirlikte(
+	opts corehttp.GuardOptions,
+	panel *adminui.Ring,
+) []func(http.Handler) http.Handler {
+	return append(corehttp.APIGuards(opts),
+		corehttp.Scoped(adminui.URLPrefix, nil, panel.CheckOrigin),
+		corehttp.Scoped(adminui.URLPrefix, adminui.ExemptPaths(), panel.Protect),
+	)
 }
 
 // hizSiniriniUyar hız sınırının sessiz kalan iki hâlini bildirir.

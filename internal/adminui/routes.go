@@ -6,32 +6,32 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
-// Routes panelin yollarını router'a bağlar.
+// Routes binds the panel's paths to the router.
 //
-// Yollar TAM YOLLA kaydedilir; bir ön ek MOUNT EDİLMEZ. Kural modüllerinkiyle
-// aynıdır ve aynı sebebe dayanır: mount eden ilk taraf o alt ağacın tamamını
-// sahiplenir ve aynı öneki kullanan başka bir tarafla çakışır.
+// Paths are registered in FULL; no prefix is mounted. The rule matches the
+// modules' and rests on the same reason: whoever mounts first owns that whole
+// subtree and collides with anyone else using the same prefix.
 //
-// # Koruma BURADA takılmaz
+// # The guard is NOT installed here
 //
-// Panelin kimlik halkası bileşim kökünde, koruma yığınının içine konur — bu
-// metotta değil. Router, route kaydından sonra halka eklenmesini panikle
-// reddediyor ve sağlık uçları router kurulurken kaydediliyor; yani halkayı
-// buradan takmak MÜMKÜN değil. Ayrım ADR 0011'de yazılıdır.
+// The panel's identity ring goes into the guard stack in the composition root,
+// not in this method. The router refuses, with a panic, to accept middleware
+// after routes are registered, and the health endpoints are registered while
+// the router is built — so installing it from here is IMPOSSIBLE. The split is
+// written down in ADR 0011.
 func (u *UI) Routes(r chi.Router) {
-	r.Get(URLPrefix, u.giris)
+	r.Get(LoginPath, u.showLogin)
+	r.Post(LoginPath, u.submitLogin)
+	r.Post(LogoutPath, u.submitLogout)
+	r.Get(URLPrefix, u.home)
 }
 
-// giris panelin giriş sayfasıdır.
+// home is the panel's protected entry point.
 //
-// BUGÜN bir yer tutucudur ve HİÇBİR VERİ taşımaz: oturum ve koruma halkası
-// henüz kurulmadığı için bu ağaç kimliksizdir ve veri taşıyan bir sayfa
-// yayımlamak, korumadan önce içerik yayımlamak olurdu. Sayfanın bu turdaki
-// işi, yazma yolunun uçtan uca çalıştığını göstermektir: gömülü şablon →
-// ayrıştırma → tampon → çekirdeğin HTML yazıcısı.
-func (u *UI) giris(w http.ResponseWriter, r *http.Request) {
-	u.sablonlar.yaz(w, r, http.StatusOK, "duzen.gohtml", map[string]any{
-		"Baslik": "Yönetim",
-		"Icerik": "Panel kuruluyor.",
-	})
+// TODAY it is a placeholder: catalog screens arrive in the next round. It is
+// protected nonetheless — an unidentified request never reaches it, the guard
+// ring returns the login page with a 401.
+func (u *UI) home(w http.ResponseWriter, r *http.Request) {
+	u.errorPage(w, r, http.StatusOK, "Admin",
+		"The panel is under construction. Catalog screens arrive next round.")
 }

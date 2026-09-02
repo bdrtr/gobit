@@ -27,6 +27,7 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
+	"github.com/bdrtr/gobit/internal/adminui"
 	"github.com/bdrtr/gobit/internal/core/config"
 	"github.com/bdrtr/gobit/internal/core/container"
 	"github.com/bdrtr/gobit/internal/core/db"
@@ -194,7 +195,12 @@ func run() error {
 	// gecikmeli doğrulayıcı kapatır (bkz. kurulum.go).
 	authn := &corehttp.DeferredAuthenticator{}
 
-	yigin, err := korumaYigini(cfg, authn, redisClient, log)
+	// Panel halkası router'dan ÖNCE doğar, paneli SONRA alır: rota kaydından
+	// sonra halka eklenemez, panel ise container'dan çözülen servisleri
+	// bekler. Bağlanmadan gelen istek REDDEDİLİR.
+	panelHalkasi := &adminui.Ring{}
+
+	yigin, err := korumaYigini(cfg, authn, panelHalkasi, redisClient, log)
 	if err != nil {
 		return err
 	}
@@ -339,9 +345,11 @@ func run() error {
 	// değildir (ADR 0011), bu yüzden registry'ye girmez; kablolamasının
 	// denetimi internal/arch'taki kayıt testinin panel ağacına genişletilmiş
 	// kolundadır.
-	if err := paneliKaydet(c, router); err != nil {
+	panel, err := paneliKaydet(cfg, c, router)
+	if err != nil {
 		return err
 	}
+	panelHalkasi.Bind(panel)
 
 	// Kimlik doğrulayıcı ancak Bootstrap'tan sonra container'dadır.
 	// Çözülemezse açılış DURUR: korumalı görünen ama her isteği reddeden bir

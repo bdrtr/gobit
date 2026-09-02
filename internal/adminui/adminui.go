@@ -2,86 +2,154 @@ package adminui
 
 import (
 	"context"
+	"time"
 
 	"github.com/bdrtr/gobit/internal/core/container"
 	"github.com/bdrtr/gobit/internal/core/errors"
+	corehttp "github.com/bdrtr/gobit/internal/core/http"
 	"github.com/bdrtr/gobit/internal/core/query"
 )
 
-// Panelin yol öneki ve container'da çözdüğü adlar.
+// Panel paths and the container names it resolves.
 const (
-	// URLPrefix panelin yol önekidir.
+	// URLPrefix is the panel's path prefix.
 	//
-	// Yönetim API'sinin önekinin ALTINDA değildir ve bu bilinçlidir: oraya
-	// konsaydı adres çubuğundan gelen her sayfa 401 alırdı (koruma yalnızca
-	// Authorization başlığı okur), HTML uçları OpenAPI belgesine sızardı ve
-	// router ağacını gezen yetki testi her sayfadan 403 beklerdi (ADR 0011).
+	// It is NOT under the admin API prefix, and that is deliberate: placed
+	// there, every page reached from the address bar would get a 401 (the guard
+	// reads only the Authorization header), the HTML routes would leak into the
+	// OpenAPI document, and the router-walking authorization test would demand
+	// a 403 from every page (ADR 0011).
 	//
-	// Önekin koruma yığınına AÇIKÇA eklenmesi zorunludur: kapsam segment
-	// sınırında eşleştiği için bu ağaç kendiliğinden ne kimliğe ne kotaya
-	// girer.
+	// Adding this prefix to the guard stack is MANDATORY: scoping matches on
+	// segment boundaries, so this tree joins neither identity nor quota on its
+	// own.
 	URLPrefix = "/admin/ui"
 
-	// ServiceQuery cross-module okuma katmanının container'daki adıdır.
+	// LoginPath is the full path of the login page. It is the only panel path
+	// that does not require identity, and the only member of the exempt list.
+	LoginPath = URLPrefix + "/login"
+	// LogoutPath ends the session.
+	LogoutPath = URLPrefix + "/logout"
+
+	// ServiceQuery is the cross-module read layer's container name.
 	ServiceQuery = "core.query"
+	// ServiceAuth is the identity service's container name.
+	ServiceAuth = "auth.service"
+	// InteropAuth is the authenticator's container name.
+	InteropAuth = "auth.interop"
 )
 
-// Hata kodları. İstemciler bunlara göre dallanabilir; mesajlar değişebilir,
-// kodlar değişmez.
+// Error codes. Clients may branch on these; messages change, codes do not.
 const (
-	// CodeNotReady panelin eksik bağımlılıkla kurulduğunu bildirir.
+	// CodeNotReady reports that the panel was built without a dependency.
 	CodeNotReady = "adminui_not_ready"
-	// CodeDependencyMissing container'da beklenen bir servisin bulunmadığını
-	// bildirir.
+	// CodeDependencyMissing reports that an expected service is absent from the
+	// container.
 	CodeDependencyMissing = "adminui_dependency_missing"
-	// CodeSablonBozuk şablonun ayrıştırılamadığını ya da üretilemediğini
-	// bildirir.
-	CodeSablonBozuk = "adminui_template_invalid"
+	// CodeTemplateInvalid reports that a template could not be parsed or
+	// rendered.
+	CodeTemplateInvalid = "adminui_template_invalid"
+	// CodeNotBound reports that the guard ring has not been bound to a panel
+	// yet; such a request is REJECTED (see [Ring]).
+	CodeNotBound = "adminui_not_bound"
 )
 
-// Katalog panelin okuma yüzeyidir ve TÜKETEN tarafta tanımlıdır (ADR 0001).
+// Catalog is the panel's read surface, declared on the CONSUMER side (ADR 0001).
 //
-// Yüzey Query katmanının tamamı DEĞİL, panelin kullandığı tek metottur: dar
-// tutulması, bir gün Query'nin başka bir metodunun değişmesinin paneli
-// derleme zamanında kırmamasını sağlar. Panel hiçbir modülü import etmez;
-// katalog verisi bu arayüzden gelir (ADR 0004/0006).
-type Katalog interface {
-	// Graph kök kayıtları çeker, link'leri çözer ve birleşik veriyi döner.
+// The surface is not the whole Query layer but the single method the panel
+// uses: keeping it narrow means a future change to some other Query method
+// cannot break the panel at compile time. The panel imports no module; catalog
+// data arrives through this interface (ADR 0004/0006).
+type Catalog interface {
+	// Graph fetches root records, resolves links and returns the joined view.
 	Graph(ctx context.Context, spec query.GraphSpec) ([]query.Record, error)
 }
 
-// UI yönetim panelidir. Eşzamanlı kullanıma güvenlidir.
-type UI struct {
-	katalog   Katalog
-	sablonlar *sablonSeti
+// Session is the pair of methods the panel needs from the identity service.
+//
+// The surface is deliberately NARROW: the panel does not change passwords,
+// create users or manage keys, and not seeing those methods makes calling one
+// by accident impossible. The interface is declared on the consumer side (ADR
+// 0001); the panel does not import the auth module.
+type Session interface {
+	// Login verifies credentials and returns the token with its expiry.
+	Login(ctx context.Context, email, password string) (string, time.Time, error)
+	// Logout drops ALL of the caller's sessions and returns the cut-off instant.
+	Logout(ctx context.Context, principalID, principalKind string) (time.Time, error)
 }
 
-// FromContainer paneli container üzerinde kurar.
+// UI is the admin panel. It is safe for concurrent use.
+type UI struct {
+	catalog       Catalog
+	session       Session
+	authenticator corehttp.Authenticator
+	templates     *templateSet
+	// secureCookie is the session cookie's Secure flag.
+	//
+	// It is on in SHARED environments, and the distinction is not invented: the
+	// framework already separates development as "the only environment where
+	// secrets and TLS requirements are relaxed". Local development runs over
+	// plain HTTP, where a Secure cookie would never be sent and the panel could
+	// not be opened at all.
+	secureCookie bool
+}
+
+// FromContainer builds the panel on the container.
 //
-// Ad KONVANSİYONELDİR ve internal/arch'taki kablolama denetimi onu ters yönde
-// kullanır: bileşim kökünün kurduğu ama denetimin yapıcı olarak GÖREMEDİĞİ bir
-// paketi yakalamak için. Aynı ad internal/workflows ağacında da geçerlidir;
-// bu paket o kalıbın ikinci örneğidir (ADR 0011).
+// The name is CONVENTIONAL and the wiring invariant in internal/arch uses it in
+// the reverse direction: to catch a package the composition root builds but the
+// invariant cannot see as a constructor. The same name holds in the
+// internal/workflows tree; this package is that pattern's second instance
+// (ADR 0011).
 //
-// Şablonlar BURADA ayrıştırılır, ilk istekte değil: bozuk bir şablon sunucuyu
-// açılışta düşürmelidir. Bileşim kökü hatayı çıkış koduna çevirir, yani arıza
-// kullanıcının karşısında değil, dağıtımda görünür.
-func FromContainer(c *container.Container) (*UI, error) {
+// Templates are parsed HERE, not on first request: a broken template must stop
+// the server at startup. The composition root turns the error into an exit
+// code, so the failure shows up in deployment rather than in front of a user.
+func FromContainer(c *container.Container, secureCookie bool) (*UI, error) {
 	if c == nil {
 		return nil, errors.Internal(CodeNotReady,
-			"yönetim paneli container olmadan kurulamaz")
+			"admin panel cannot be built without a container")
 	}
 
-	katalog, err := container.Resolve[Katalog](c, ServiceQuery)
+	catalog, err := resolveService[Catalog](c, ServiceQuery)
 	if err != nil {
-		return nil, errors.Wrap(err, errors.KindOf(err), CodeDependencyMissing,
-			"yönetim paneli %q servisini çözemedi", ServiceQuery)
+		return nil, err
 	}
-
-	sablonlar, err := sablonlariYukle()
+	session, err := resolveService[Session](c, ServiceAuth)
+	if err != nil {
+		return nil, err
+	}
+	authenticator, err := resolveService[corehttp.Authenticator](c, InteropAuth)
 	if err != nil {
 		return nil, err
 	}
 
-	return &UI{katalog: katalog, sablonlar: sablonlar}, nil
+	templates, err := loadTemplates()
+	if err != nil {
+		return nil, err
+	}
+
+	return &UI{
+		catalog:       catalog,
+		session:       session,
+		authenticator: authenticator,
+		templates:     templates,
+		secureCookie:  secureCookie,
+	}, nil
+}
+
+// resolveService looks a service up by name and wraps the failure with the
+// panel's code.
+//
+// The message names WHICH service could not be resolved: a panel that cannot be
+// built means a server that stops at startup, and this line is the only thing
+// there is to read at that moment.
+func resolveService[T any](c *container.Container, name string) (T, error) {
+	value, err := container.Resolve[T](c, name)
+	if err != nil {
+		var zero T
+		return zero, errors.Wrap(err, errors.KindOf(err), CodeDependencyMissing,
+			"admin panel could not resolve service %q", name)
+	}
+	return value, nil
 }

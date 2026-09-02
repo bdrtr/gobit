@@ -10,6 +10,46 @@ Sabitlenme `1.0.0` ile olur.
 
 ## [Yayımlanmamış]
 
+### Eklendi
+
+- **Yönetim paneli iskeleti: dördüncü ağaç `internal/adminui`**
+  ([ADR 0011](docs/adr/0011-yonetim-paneli-dorduncu-agac.md)). Panel `/admin/ui`
+  altında yaşar, sunucu tarafında HTML üretir (`html/template`, ikiliye gömülü)
+  ve modülleri İMPORT ETMEZ — çerçevenin okuma yollarını container'dan adla
+  çözer. Bu turda giriş, çıkış ve korumalı bir giriş noktası var; katalog
+  ekranları bir sonraki turda.
+
+- **Panelin kimliği bir çerezle taşınır ve çerez YALNIZCA panel ağacında
+  geçerlidir.** `Path` panel önekine sabitlenmiştir; `HttpOnly`, `SameSite=Strict`
+  ve paylaşılan ortamlarda `Secure`. Bunun sebebi savunma değil KORUMA:
+  yönetim API'sinin bugünkü CSRF bağışıklığı, jetonun tarayıcının KENDİLİĞİNDEN
+  eklemediği bir başlıkta yaşamasından gelir. Çerez `/admin/v1`'e de gitseydi o
+  bağışıklık kaybolur ve her yönetim ucu yeni bir saldırı yüzeyine girerdi.
+  CSRF'in ikinci katmanı `Origin` denetimidir (`adminui.UI.CheckOrigin`).
+
+- **`corehttp.WriteHTML`, `corehttp.WriteRedirect` ve `corehttp.WriteAsset`.**
+  Panel gövdesini kendi yazmaz: HTML de çekirdeğin yazıcısından geçer, böylece
+  hata yolu değişmezi (gövde yalnızca çekirdeğin yazıcılarından yazılır)
+  panelde de geçerli kalır. Sayfa önce TAMPONA üretilir; ortada oluşan bir hata
+  yarım gövde + 200 yerine 500 döner.
+
+- **Panelin koruma halkası bileşim kökünde takılır** (`adminui.Ring`).
+  Middleware router kurulurken takılmak zorundadır, panel ise container'dan
+  modül önyüklemesi SIRASINDA doğar; halka bu boşluğu köprüler ve bağlanmadan
+  önce gelen isteği REDDEDER — korumasız bir yönetim yüzeyi sessizce açık
+  kalmaktansa gürültüyle kapalı kalır (ADR 0007'nin kimlik hattı).
+
+### Değiştirildi
+
+- Kablolama değişmezi (`TestPanelBilesimKokundeKurulu`) ve modül-izolasyonu
+  denetimi (`TestPanelModulleriImportEtmez`) dördüncü ağacı da kapsıyor. Önek
+  eşlemesi ağacın KÖKÜNÜ de kabul edecek şekilde düzeltildi: eskiden yalnızca
+  alt paketleri görüyordu, yani kökte kurulan bir paket denetimin dışında
+  kalırdı.
+- Gövde yazımı taraması artık `tmpl.Execute(w, …)` biçimindeki şablon
+  akıtmalarını da yakalıyor. Tarama alıcının import adına baktığı için şablon
+  yazıcısına KÖRDÜ ve panel bu kör noktadan geçebilirdi.
+
 ## [0.5.0] — 2026-09-02
 
 ### Kırıcı değişiklikler

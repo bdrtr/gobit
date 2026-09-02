@@ -1,0 +1,16 @@
+{{- /*
+error.gohtml is the panel's human-readable error page.
+
+It does NOT replace the framework's JSON error envelope; it stands beside it. An
+API endpoint writing an error still goes through the single gate and its body is
+JSON. This page is only for paths inside the panel's own tree, the ones a
+browser navigates to directly — showing JSON to a browser would make the error
+unreadable.
+
+The status code is chosen by the CALLER, not by the page: the same page serves
+403 and 404, and the HTML writer carries the right code.
+*/ -}}
+{{ define "body" }}
+<h1>{{ .Title }}</h1>
+<p>{{ .Message }}</p>
+{{ end }}
