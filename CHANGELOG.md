@@ -132,6 +132,44 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Eklendi
 
+- **Yönetim paneli başladı: yazma kapısı, iskelet ve denetimin kapsamı.**
+  Panel `internal/adminui` altında, `internal/workflows`'un kardeşi olarak
+  dördüncü bir ağaçta yaşıyor ve sunucu tarafında üretilen HTML'i ikiliye
+  gömülü şablonlardan üretiyor. Karar ve reddedilen seçenekler
+  [ADR 0011](docs/adr/0011-yonetim-paneli-dorduncu-agac.md)'de. Bu turda gelen
+  yalnızca iskelettir: oturum, koruma halkası ve katalog ekranları sonraki
+  turlarda.
+
+  Çekirdeğe üç yazıcı eklendi — HTML, yönlendirme ve statik varlık. HTML
+  yazıcısı gövdeyi **önce belleğe** üretmeyi şart koşuyor: doğrudan yazıcıya
+  akıtılan bir şablonda ortada doğan hata, `200` durum kodlu YARIM bir sayfa
+  bırakır ve başlık gönderildikten sonra ne panik yakalayıcı ne hata yazıcısı
+  bir şey yapabilir. JSON yazıcısının aksine 2xx zorunluluğu YOKTUR ve bu
+  bilinçli: kimliksiz bir tarayıcıya giriş sayfasını `401` ile döndürmek, onu
+  başka bir yere yollamaktan daha dürüsttür.
+
+  **İki kör nokta, açıldıkları turda kapatıldı** — ikisi de ölçüldü:
+
+  - Kayıt denetimleri kapsamlarını modül ağacına indiriyordu; panel ağacında
+    "yazılmış ama hiçbir yere bağlanmamış" bir yetenek arch koşusunu YEŞİL
+    bırakırdı. Uydurmaya gerek olmadı: aynı boşluk `internal/workflows` için
+    zaten kapatılmıştı ve kalıbı hazırdı. Denetim ayrıca kökte yaşayan
+    paketleri de görecek şekilde düzeltildi — önek eşleşmesi yalnızca alt
+    paketleri kapsıyordu.
+  - "Gövde tek yerden yazılır" değişmezinin modül dışı kolu şablon yazımını
+    GÖRMÜYORDU: çağrının alıcısı bir paket adı olmadığı için hedef çözülemiyor
+    ve çağrı sessizce geçiyordu. Bu bir izin değil, taramanın ölçme biçiminin
+    negatifiydi — kural kalkmıyor, körleşiyordu. Tarama artık şablonun yazıcıya
+    akıtılmasını yakalıyor.
+
+  Şablonlar AÇILIŞTA ayrıştırılıyor ve adları iki yönlü çiviliyor: beklenen bir
+  ad ayrıştırılmamışsa da, ayrıştırılan bir şablon hiçbir yerde çağrılmıyorsa da
+  açılış durur. Şablon adı bir dizedir; yazım hatası derlenir, lint görmez ve
+  yalnızca o sayfa açıldığında patlar.
+
+  Beş mutasyonla doğrulandı: panelin kablolaması, modül import yasağı, şablonun
+  yazıcıya akıtılması ve şablon adı denetiminin her iki yönü.
+
 - **Depo seçimi artık bir POLİTİKA taşıyor.** Sınır bu turda YAZIYA GEÇTİ ve
   aynı yayımlanmamış pencerede kapandı; hiçbir yayımlanmış sürümün bilinen
   sınırlarında durmadı. Kaydın değeri, kuralın v0.2.0'dan beri sessizce

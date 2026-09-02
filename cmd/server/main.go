@@ -334,6 +334,15 @@ func run() error {
 		return err
 	}
 
+	// Yönetim paneli akışlardan SONRA kurulur: okuma yüzeyini container'dan
+	// çözer ve o yüzey Bootstrap'tan önce kayıtlı değildir. Panel bir modül
+	// değildir (ADR 0011), bu yüzden registry'ye girmez; kablolamasının
+	// denetimi internal/arch'taki kayıt testinin panel ağacına genişletilmiş
+	// kolundadır.
+	if err := paneliKaydet(c, router); err != nil {
+		return err
+	}
+
 	// Kimlik doğrulayıcı ancak Bootstrap'tan sonra container'dadır.
 	// Çözülemezse açılış DURUR: korumalı görünen ama her isteği reddeden bir
 	// yönetim yüzeyiyle çalışmaya devam etmek, arızayı ilk giriş denemesine

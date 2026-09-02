@@ -40,6 +40,15 @@ const (
 	// modül kayıt denetimi de internal/modules altını gezer — yani bu ağacı
 	// bugüne kadar HİÇBİR kablolama kuralı kapsamıyordu.
 	akisDizini = "internal/workflows"
+	// panelDizini yönetim panelinin yaşadığı ağaçtır (ADR 0011) ve
+	// [akisDizini] ile AYNI boşluğu paylaşır: ne çekirdek ne modül olduğu için
+	// hiçbir kablolama kuralı onu kendiliğinden kapsamaz.
+	//
+	// Ağaç bu turda açıldı ve boşluğu AÇILDIĞI ANDA kapatıldı: kaydı olmayan
+	// yetenek bu deponun en pahalı hata sınıfıdır ve onu yeni bir ağaç için
+	// yeniden açmak, ADR 0006'nın bir kez ödediği bedeli ikinci kez ödemek
+	// olurdu.
+	panelDizini = "internal/adminui"
 	// cekirdekContainerPaketi container'ın yaşadığı çekirdek paketidir. Bir
 	// akış paketinin "container'dan kurulmak üzere tasarlandığı" işareti, dışa
 	// açık bir işlevinin bu tipi PARAMETRE olarak almasıdır.
@@ -513,7 +522,7 @@ func TestKayitliHerModulE2EZemindeKurulu(t *testing.T) {
 func TestHerAkisBilesimKokundeKurulu(t *testing.T) {
 	t.Parallel()
 
-	akislar := containerdanKurulanAkisPaketleri(t)
+	akislar := containerdanKurulanAkisPaketleri(t, akisDizini)
 	require.NotEmpty(t, akislar,
 		"%s altında container'dan kurulan hiçbir paket bulunamadı; denetim KÖR kalmış "+
 			"olmalı (yapıcılar artık *container.Container almıyor mu?)", akisDizini)
@@ -531,7 +540,7 @@ func TestHerAkisBilesimKokundeKurulu(t *testing.T) {
 			"kökünün kurduğu ama denetimin göremediği bir paket sessizce kapsam dışı kalır.",
 		kurulumIsaretiAdi)
 
-	kurulan := bilesimKokundeKurulanAkislar(t, akislar)
+	kurulan := bilesimKokundeKurulanAkislar(t, akislar, akisDizini)
 	bayatGoroutineMuafiyetleriniDenetle(t, akislar, kurulan)
 
 	canli := map[string]token.Position{}
@@ -910,13 +919,13 @@ func modulPaketlerineSuz(kayitli map[string]token.Position) map[string]token.Pos
 //
 // Akış olmayan yardımcı paketler (para, anlık görüntü, katalog…) böylece
 // kendiliğinden elenir: ölçüt dizin adı değil imzadır.
-func containerdanKurulanAkisPaketleri(t *testing.T) map[string][]string {
+func containerdanKurulanAkisPaketleri(t *testing.T, dizin string) map[string][]string {
 	t.Helper()
 
-	kok := filepath.Join(repoRoot, akisDizini)
+	kok := filepath.Join(repoRoot, dizin)
 	require.DirExists(t, kok,
-		"%s ağacı YOK; akış kablolaması denetimi dayanaksız kalır. Ağaç taşındıysa "+
-			"akisDizini de taşınmalıdır, yoksa denetim boşlukta yeşil kalır", akisDizini)
+		"%s ağacı YOK; kablolama denetimi dayanaksız kalır. Ağaç taşındıysa sabiti de "+
+			"taşınmalıdır, yoksa denetim boşlukta yeşil kalır", dizin)
 
 	bulunan := map[string][]string{}
 	for _, dizin := range slices.Sorted(maps.Keys(uretimPaketleri(t, kok))) {
@@ -990,7 +999,7 @@ func akisContainerTipi(ifade ast.Expr, importlar map[string]string) bool {
 //     DEĞER konumunda görünür; ikisi de burada yakalanır.
 //   - Niteleyici bir paket adı değilse (bir ifadenin sonucu, bir alan) hangi
 //     pakete gidildiği okunamaz ve durum hata olarak raporlanır.
-func bilesimKokundeKurulanAkislar(t *testing.T, yapicilar map[string][]string) map[string]akisKurulumu {
+func bilesimKokundeKurulanAkislar(t *testing.T, yapicilar map[string][]string, dizin string) map[string]akisKurulumu {
 	t.Helper()
 
 	fset := token.NewFileSet()
@@ -1006,7 +1015,13 @@ func bilesimKokundeKurulanAkislar(t *testing.T, yapicilar map[string][]string) m
 		}
 	}
 
-	onek := modulePath + "/" + akisDizini + "/"
+	// Kök, ağacın KENDİSİDİR; önek ise alt paketleri kapsar. İkisi birden
+	// gerekir: akış ağacında paketler alt dizinlerde yaşıyor (…/workflows/cart),
+	// panel ağacında ise paketin kendisi köktür (…/adminui). Yalnızca öneke
+	// bakan bir denetim, kökte yaşayan bir paketi HİÇ göremez ve o paket için
+	// sessizce yeşil kalırdı — ölçüldü.
+	kok := modulePath + "/" + dizin
+	onek := kok + "/"
 	erisim := maindenErisim(dosyalar)
 	kurulan := map[string]akisKurulumu{}
 
@@ -1030,7 +1045,7 @@ func bilesimKokundeKurulanAkislar(t *testing.T, yapicilar map[string][]string) m
 				if !ok || !adlar[sec.Sel.Name] {
 					return true
 				}
-				yol, cozuldu := akisPaketiniCoz(t, fset.Position(sec.Sel.Pos()), sec, d, onek)
+				yol, cozuldu := akisPaketiniCoz(t, fset.Position(sec.Sel.Pos()), sec, d, kok, onek)
 				if !cozuldu {
 					return true
 				}
@@ -1126,7 +1141,7 @@ func akisPaketiniCoz(
 	konum token.Position,
 	sec *ast.SelectorExpr,
 	d ayristirilmisDosya,
-	onek string,
+	kok, onek string,
 ) (string, bool) {
 	t.Helper()
 
@@ -1149,7 +1164,7 @@ func akisPaketiniCoz(
 		return "", false
 	}
 
-	return yol, strings.HasPrefix(yol, onek)
+	return yol, yol == kok || strings.HasPrefix(yol, onek)
 }
 
 // cagriIfadeleri dosyadaki her çağrının ÇAĞRILAN ifadesini kümeler.
@@ -1522,6 +1537,119 @@ func bayatGoroutineMuafiyetleriniDenetle[T any](
 				"yani muafiyete ihtiyaç yok.\n"+
 				"Muafiyet borçtur; borç ödendiğinde satır silinmelidir. Kalırsa, kurulum "+
 				"bir gün yeniden goroutine'e alındığında denetim sessiz kalır.", yol)
+		}
+	}
+}
+
+// TestPanelBilesimKokundeKurulu yönetim panelinin bileşim kökünde GERÇEKTEN
+// kurulduğunu doğrular (ADR 0011).
+//
+// Denetim [TestHerAkisBilesimKokundeKurulu]'nun ikizidir ve aynı yardımcıları
+// kullanır; ayrı bir test olmasının sebebi adının dürüst kalmasıdır — panel bir
+// akış değildir ve akış testinin adı altında denetlenmesi, bir gün akış ağacı
+// kalktığında panelin de sessizce denetimsiz kalması demek olurdu.
+//
+// # Boşluk AÇILDIĞI turda kapatıldı
+//
+// Panel ağacı ne çekirdek ne modüldür: modül kayıt denetimleri kapsamlarını
+// internal/modules önekine indirir, depguard kuralları da oraya bakar. Yani bu
+// ağaçta "yazılmış ama hiçbir yere bağlanmamış" bir yetenek, bu test olmadan
+// arch koşusunu YEŞİL bırakırdı — ölçüldü. Kaydı olmayan yetenek bu deponun en
+// pahalı hata sınıfıdır; ADR 0006 onu akış ağacı için bir kez kapattı, bu test
+// panel ağacı için ikinci kez kapatıyor.
+//
+// # Ne KANITLAMAZ
+//
+// Kurulumun KOŞTUĞUNU kanıtlamaz, yalnızca kurulum satırının açılış yolunda
+// durduğunu kanıtlar. Ayrım [TestHerAkisBilesimKokundeKurulu] godoc'unda
+// ölçülmüş hâliyle yazılıdır ve burada tekrarlanmıyor.
+//
+// Kapsamın bir ucu daha ölçüldü: kurulum işlevine yapılan salt BAŞVURU da
+// erişim sayılır. Çağrı silinip yerine bir değer başvurusu bırakılırsa denetim
+// GEÇER — çünkü şekil okuması "bu işleve ulaşılabiliyor mu" diye sorar, "bu
+// işlev çağrılıyor mu" diye değil. Aynı sınıf, akış testinin godoc'unda "go
+// ifadesine alınmış kurulum" olarak zaten adlandırılmıştır ve cevabı yine
+// aynıdır: çalışma zamanı kanıtı statik değişmezin yerine geçmez.
+func TestPanelBilesimKokundeKurulu(t *testing.T) {
+	t.Parallel()
+
+	paketler := containerdanKurulanAkisPaketleri(t, panelDizini)
+	require.NotEmpty(t, paketler,
+		"%s altında container'dan kurulan hiçbir paket bulunamadı; denetim KÖR kalmış "+
+			"olmalı (yapıcı artık *container.Container almıyor mu?)", panelDizini)
+
+	konvansiyonYasiyor := false
+	for _, yapicilar := range paketler {
+		if slices.Contains(yapicilar, kurulumIsaretiAdi) {
+			konvansiyonYasiyor = true
+			break
+		}
+	}
+	require.True(t, konvansiyonYasiyor,
+		"panel ağacında %q adında bir yapıcı YOK; ters yön denetiminin tek dayanağı "+
+			"budur ve bayatladığında bileşim kökünün kurduğu ama denetimin göremediği "+
+			"bir paket sessizce kapsam dışı kalır", kurulumIsaretiAdi)
+
+	kurulan := bilesimKokundeKurulanAkislar(t, paketler, panelDizini)
+
+	for _, yol := range slices.Sorted(maps.Keys(paketler)) {
+		kurulum, kuruluMu := kurulan[yol]
+		if kuruluMu && !kurulum.sayilmiyor {
+			continue
+		}
+		t.Errorf("%s paketi container'dan kurulmak üzere yazılmış (%s) ama %s/'da "+
+			"KURULMUYOR.\n"+
+			"Kurulmayan bir panel derlenir, testleri geçer ve HİÇBİR kurulumda yoktur: "+
+			"yönetim yüzeyi diye bir şey yayımlanmaz ve bunu hiçbir birim testi "+
+			"göremez, çünkü panelin kendi testleri paneli kendisi kurar.",
+			yol, strings.Join(paketler[yol], ", "), bilesimKoku)
+	}
+
+	for _, yol := range slices.Sorted(maps.Keys(kurulan)) {
+		if _, gorulduMu := paketler[yol]; !gorulduMu {
+			t.Errorf("%s paketinin yapıcısı %s/'da çağrılıyor ama denetim o pakette "+
+				"container'dan kurulan bir yapıcı GÖRMÜYOR; şekil okuması gerçekle "+
+				"ayrışmış olmalı", yol, bilesimKoku)
+		}
+	}
+}
+
+// TestPanelModulleriImportEtmez ADR 0011'in import yasağını zorlar.
+//
+// Panel ağacı da akış ağacı gibi hiçbir mevcut kuralın kapsamında değildir:
+// depguard kuralları internal/modules içindir, çekirdek yasağı da onu bağlamaz.
+// Modülleri doğrudan import etseydi tüm modülleri tanıyan ikinci bir düğüme
+// dönüşür ve ADR 0006'nın akışlar için reddettiği yapı, panel adıyla geri
+// gelirdi.
+//
+// Erişim, panelin KENDİ paketinde tanımladığı dar arayüz ve container'dan adla
+// çözüm üzerinden olmalıdır.
+func TestPanelModulleriImportEtmez(t *testing.T) {
+	t.Parallel()
+
+	kok := filepath.Join(repoRoot, panelDizini)
+	require.DirExists(t, kok,
+		"%s ağacı YOK; ADR 0011'in import yasağını gezecek bir dosya kalmaz ve denetim "+
+			"boşlukta yeşil kalır", panelDizini)
+
+	dosyalar := goFiles(t, kok)
+	require.NotEmpty(t, dosyalar,
+		"%s altında hiç Go dosyası YOK; dizin duruyor ama gezilecek bir şey bırakmamış. "+
+			"Boş bir dosya kümesi, kuralın kalktığını değil KÖR kaldığını gösterir",
+		panelDizini)
+
+	onek := modulePath + "/internal/modules/"
+	for _, dosya := range dosyalar {
+		agac, err := parser.ParseFile(token.NewFileSet(), dosya, nil, parser.ImportsOnly)
+		require.NoError(t, err, "%s ayrıştırılamadı", dosya)
+
+		for _, imp := range agac.Imports {
+			yol := strings.Trim(imp.Path.Value, `"`)
+			if strings.HasPrefix(yol, onek) {
+				t.Errorf("%s: panel %q modülünü import ediyor (ADR 0011).\n"+
+					"Panel modülleri tanımaz: ihtiyacı olan yüzeyi KENDİ paketinde dar bir "+
+					"arayüz olarak tanımlar ve container'dan ADLA çözer.", dosya, yol)
+			}
 		}
 	}
 }

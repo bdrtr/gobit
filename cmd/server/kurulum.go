@@ -14,6 +14,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/redis/go-redis/v9"
 
+	"github.com/bdrtr/gobit/internal/adminui"
 	"github.com/bdrtr/gobit/internal/core/config"
 	"github.com/bdrtr/gobit/internal/core/container"
 	"github.com/bdrtr/gobit/internal/core/errors"
@@ -160,6 +161,26 @@ func akislariKaydet(c *container.Container) error {
 			"sipariş tamamlama akışı kurulamadı")
 	}
 	return c.Provide(checkoutwf.InteropName, checkoutwf.NewInterop(siparisAkisi))
+}
+
+// paneliKaydet yönetim panelini kurar ve yollarını bağlar.
+//
+// Panel ne çekirdek ne modüldür (ADR 0011); dördüncü ağaçta yaşar ve tıpkı
+// akışlar gibi container'dan ADLA çözülen dar bir arayüzle beslenir. Bu satır
+// silindiğinde panel derlenir ama HİÇBİR YERE bağlanmaz — arch tarafındaki
+// kablolama denetimi bu turda tam olarak o sessizliği kapatmak için panel
+// ağacını da kapsamına aldı.
+//
+// Kurulum HATA DÖNER, panik üretmez: bozuk bir şablon açılışı durdurur ve
+// arıza dağıtımda görünür, kullanıcının karşısında değil.
+func paneliKaydet(c *container.Container, router chi.Router) error {
+	panel, err := adminui.FromContainer(c)
+	if err != nil {
+		return errors.Wrap(err, errors.KindOf(err), codeFlowSetupFailed,
+			"yönetim paneli kurulamadı")
+	}
+	panel.Routes(router)
+	return nil
 }
 
 // semayiDenetle belgeyi açılışta BİR KEZ üretip ayrışmaları raporlar.

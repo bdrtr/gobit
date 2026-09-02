@@ -1,0 +1,25 @@
+{{- /*
+hata.gohtml panelin insan okunur hata sayfasıdır.
+
+Çerçevenin JSON hata zarfının YERİNE geçmez; onun yanında durur. API bir hata
+yazarken hâlâ tek kapıdan (WriteError) geçer ve gövdesi JSON'dur. Bu sayfa
+yalnızca panelin kendi ağacındaki, tarayıcının doğrudan gezindiği yollar
+içindir — bir tarayıcıya JSON göstermek, hatayı okunamaz kılardı.
+
+Durum kodu sayfanın kendisinde DEĞİL, çağıranda seçilir: aynı sayfa 401, 403 ve
+404 için kullanılır ve doğru kodu WriteHTML taşır.
+*/ -}}
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{ .Baslik }} · gobit</title>
+</head>
+<body>
+<main>
+  <h1>{{ .Baslik }}</h1>
+  <p>{{ .Mesaj }}</p>
+</main>
+</body>
+</html>

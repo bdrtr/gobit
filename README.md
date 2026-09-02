@@ -1229,6 +1229,7 @@ dokümanı kadar bağlayıcıdır; çelişki hâlinde ADR geçerlidir.
 | [0007](docs/adr/0007-sertlestirme-arizada-davranis.md) | Sertleştirmede arıza davranışı | Tek tip kural yok: kimlik **kapalı kalır** (fail-closed), hız sınırı **açık kalır** (fail-open), idempotency ayırmada reddeder / kayıtta anahtarı serbest bırakır |
 | [0008](docs/adr/0008-musteri-kimligi-guven-siniri.md) | Müşteri kimliği güven sınırı | Çerçeve müşteri kimliğini **doğrulamaz**: `customer_id` bir iddiadır, harcama limiti yalnızca müşterisini **beyan eden** alışverişe uygulanır; doğrulama gömen uygulamanın işidir |
 | [0009](docs/adr/0009-cok-kiracililik-kurulum-siniri.md) | Çok kiracılılık | Sınır **kurulumdur, satır değil**: her kurulum tek kiracılıdır, izolasyon dağıtım katmanındadır; çerçeve kiracılar arası bir sınır tanımaz, uygular ve iddia etmez |
+| [0011](docs/adr/0011-yonetim-paneli-dorduncu-agac.md) | Yönetim paneli | Panel dördüncü bir ağaçta (`internal/adminui`) yaşar, oturumu **yalnızca kendi ağacında** geçerli bir çerezle taşır ve HTML'i çekirdeğin yazıcısından geçirir; yönetim API'si başlık-only kalır, CSRF bağışıklığı korunur |
 | [0010](docs/adr/0010-depo-secim-politikasi.md) | Depo seçim politikası | Lokasyon modeli kargo modülünün **kendi** şemasındadır; bölge bağı bir **kısıt**, öncelik bir **sıra**dır. Yüzey tek depo değil tercih sırası döner ve satır başına bir kez sorulur |
 
 ADR 0001, planın Bölüm 2.1 ("erişim public service interface üzerinden") ile

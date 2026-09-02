@@ -80,6 +80,103 @@ func WriteJSON(ctx context.Context, w http.ResponseWriter, status int, v any) {
 	}
 }
 
+// contentTypeHTML HTML yanıtlarının Content-Type değeridir.
+const contentTypeHTML = "text/html; charset=utf-8"
+
+// headerContentTypeOptions ve nosniff, tarayıcının gövdeyi kendi tahminine göre
+// yeniden yorumlamasını engeller. JSON yanıtlarında gerekmez (tarayıcı onları
+// çalıştırmaz); HTML ve varlık yanıtlarında gerekir ve dosya sunumunda da aynı
+// gerekçeyle yazılır.
+const (
+	headerContentTypeOptions = "X-Content-Type-Options"
+	nosniff                  = "nosniff"
+)
+
+// WriteHTML hazır bir HTML gövdesini yanıta yazar.
+//
+// # Gövde ÖNCEDEN üretilmiş olmalıdır
+//
+// İmza bilinçli olarak bir şablon değil, []byte alır: çağıran şablonu ÖNCE
+// belleğe üretir, hata olursa [WriteError] çağırır, ancak başarılıysa buraya
+// gelir. Şablonu doğrudan yazıcıya akıtan bir tasarımda, şablonun ORTASINDA
+// doğan bir hata 200 durum kodlu YARIM bir sayfa bırakır: başlık gönderilmiş
+// olduğu için panik yakalayıcı da hata yazıcısı da artık hiçbir şey yapamaz ve
+// arıza istemcide sessizleşir. Aynı gerekçe [WriteJSON]'ın gövdeyi önce
+// belleğe kodlamasının da sebebidir.
+//
+// # Durum kodu SERBESTTİR
+//
+// [WriteJSON]'ın aksine burada 2xx zorunluluğu yoktur ve bu bilinçlidir:
+// kimliksiz bir tarayıcıya giriş sayfasını 401 ile döndürmek, onu 303 ile başka
+// bir yere yollamaktan daha dürüsttür — yönlendirme, isteğin başarısız
+// olduğunu durum kodundan siler.
+//
+// Bu yüzeyi kullanan tek yer bugün yönetim panelidir (ADR 0011). Çerçevenin
+// JSON hata zarfı DEĞİŞMEZ: bir API ucu hata yazarken hâlâ [WriteError]
+// kullanır ve panelin varlığı o politikayı hiçbir yerde ikinci bir politikaya
+// bölmez.
+func WriteHTML(ctx context.Context, w http.ResponseWriter, status int, govde []byte) {
+	w.Header().Set("Content-Type", contentTypeHTML)
+	w.Header().Set(headerContentTypeOptions, nosniff)
+	w.WriteHeader(status)
+
+	if len(govde) == 0 {
+		return
+	}
+	if _, err := w.Write(govde); err != nil {
+		// Status kodu gönderildikten sonra yapılabilecek bir şey kalmaz.
+		LoggerFromContext(ctx).ErrorContext(ctx, "HTML gövdesi yazılamadı",
+			"error", err,
+			"request_id", RequestIDFromContext(ctx),
+		)
+	}
+}
+
+// WriteRedirect tarayıcıyı başka bir yola yollar.
+//
+// net/http'nin kendi yönlendiricisi KULLANILMAZ: o, gövdeyi çekirdeğin
+// dışında yazar ve depo genelinde yanıt gövdesinin tek kapıdan geçmesi kuralı
+// onu yapısal olarak reddeder. Buradaki uygulama gövdesizdir; yönlendirmenin
+// gövdesi zaten hiçbir tarayıcı tarafından gösterilmez.
+//
+// Varsayılan durum kodu 303'tür ve çağıranın seçimine bırakılmaz: bir formun
+// POST'undan sonra 303, tarayıcıya "hedefe GET ile git" der ve yenilemede
+// formun yeniden gönderilmesini engeller. Panelde yönlendirmenin tek meşru
+// sebebi budur.
+func WriteRedirect(_ context.Context, w http.ResponseWriter, hedef string) {
+	w.Header().Set("Location", hedef)
+	w.WriteHeader(http.StatusSeeOther)
+}
+
+// WriteAsset gömülü bir statik varlığı yazar.
+//
+// [WriteHTML]'den ayrı durmasının sebebi önbelleklemedir: varlıklar ikiliye
+// gömülüdür, yani sürüm boyunca DEĞİŞMEZLER ve tarayıcının onları her sayfada
+// yeniden indirmesi gereksizdir. HTML sayfaları ise oturuma ve veriye bağlıdır
+// ve önbelleklenemez; ikisini tek yüzeyde toplamak, birine doğru olan başlığı
+// diğerine de yazmak olurdu.
+//
+// etag çağıranın verdiği sürüm damgasıdır; boşsa önbellek başlığı yazılmaz.
+func WriteAsset(ctx context.Context, w http.ResponseWriter, contentType, etag string, govde []byte) {
+	w.Header().Set("Content-Type", contentType)
+	w.Header().Set(headerContentTypeOptions, nosniff)
+	if etag != "" {
+		w.Header().Set("ETag", etag)
+		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+	}
+	w.WriteHeader(http.StatusOK)
+
+	if len(govde) == 0 {
+		return
+	}
+	if _, err := w.Write(govde); err != nil {
+		LoggerFromContext(ctx).ErrorContext(ctx, "varlık gövdesi yazılamadı",
+			"error", err,
+			"request_id", RequestIDFromContext(ctx),
+		)
+	}
+}
+
 // WriteError hatayı sınıfına uygun status kodu ve tutarlı JSON zarfıyla yazar.
 //
 // KindInternal hatalarında alttaki hata metni istemciye sızdırılmaz: gövdeye

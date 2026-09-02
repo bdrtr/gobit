@@ -43,6 +43,13 @@ const hataYazanAd = "WriteError"
 // basariYazanAd çekirdekte BAŞARI gövdesini yazan yardımcının adıdır.
 const basariYazanAd = "WriteJSON"
 
+// htmlYazanAd HTML gövdesinin tek kapısıdır (ADR 0011).
+//
+// [basariYazanAd]'ın aksine 2xx zorunluluğu YOKTUR: kimliksiz bir tarayıcıya
+// giriş sayfasını 401 ile döndürmek, onu başka bir yere yollamaktan daha
+// dürüsttür. Denetim bu yüzden HTML yazıcısına durum kısıtı uygulamaz.
+const htmlYazanAd = "WriteHTML"
+
 // yaziciTipAdi ResponseWriter parametrelerini tanımak için aranan tip adıdır.
 const yaziciTipAdi = "ResponseWriter"
 
@@ -310,6 +317,31 @@ var yaziciyaGovdeYazanDisCagrilar = map[string]bool{
 	"fmt.Fprintln":             true,
 	"io.Copy":                  true,
 	"io.WriteString":           true,
+}
+
+// sablonYazanMetotlar bir şablon kümesini yazıcıya AKITAN metot adlarıdır.
+//
+// # Neden ADA bakıyor
+//
+// Bu denetimin geri kalanı çağrının hedefini import yoluyla çözer; şablon
+// çalıştırma bunun DIŞINDA kalır çünkü alıcı bir paket adı değil, bir değerdir
+// ("sablonlar.Execute(w, …)"). Hedef çözülemediği için [yaziciyaGovdeYazanDisCagrilar]
+// dalı hiç koşmaz ve çağrı SESSİZCE geçer — ölçüldü.
+//
+// Bu bir izin değil, taramanın ölçme biçiminin negatifiydi: kural kalkmıyor,
+// KÖRLEŞİYORDU. Ve körleşeceği yer rastgele değil — yönetim paneli (ADR 0011)
+// tam olarak bu biçimi kullanan ilk ve en büyük yüzey.
+//
+// Ada bakmanın yanlış pozitif riski burada düşüktür: dal ancak yazıcı ARGÜMAN
+// olarak verildiğinde koşar ve bir http.ResponseWriter'ı "Execute" adlı bir
+// çağrıya vermek, şablonu doğrudan yanıta akıtmaktan başka bir şey değildir.
+//
+// Doğru yol şablonu ÖNCE belleğe üretip corehttp.WriteHTML'e vermektir; o zaman
+// ortada doğan bir hata hâlâ 500'e çevrilebilir, oysa akıtılan şablonda 200
+// durum kodlu YARIM bir sayfa kalır.
+var sablonYazanMetotlar = map[string]bool{
+	"Execute":         true,
+	"ExecuteTemplate": true,
 }
 
 // cekirdekYaziciMuafiyeti modül DIŞINDAKİ bir yüzeyde yanıtı çekirdek
@@ -720,6 +752,18 @@ func (d *cekirdekDenetimi) cagriyiDenetle(fonksiyon string, cagri *ast.CallExpr,
 			"yazıcı %s çağrısına veriliyor ve gövde oradan "+
 				"yazılıyor.\nZarfın biçimi ve maskeleme kararı çekirdekte durmalı; elle "+
 				"kodlanan bir gövde, o kararların ikinci bir kopyasıdır.", hedef.kaynak)
+
+		return
+	}
+
+	if sablonYazanMetotlar[hedef.ad] {
+		d.ihlal(fonksiyon, hedef.kaynak, cagri.Pos(),
+			"yazıcı %s çağrısına veriliyor: şablon doğrudan yanıta AKITILIYOR.\n"+
+				"Şablon önce belleğe üretilmeli, hata olursa corehttp.%s çağrılmalı, ancak "+
+				"başarılıysa corehttp.%s'e verilmelidir. Akıtılan bir şablonda ortada doğan "+
+				"hata, 200 durum kodlu YARIM bir sayfa bırakır: başlık gönderilmiş olduğu "+
+				"için ne panik yakalayıcı ne hata yazıcısı bir şey yapabilir.",
+			hedef.kaynak, hataYazanAd, htmlYazanAd)
 	}
 }
 
