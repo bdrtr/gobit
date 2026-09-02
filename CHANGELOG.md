@@ -39,6 +39,38 @@ Sabitlenme `1.0.0` ile olur.
   önce gelen isteği REDDEDER — korumasız bir yönetim yüzeyi sessizce açık
   kalmaktansa gürültüyle kapalı kalır (ADR 0007'nin kimlik hattı).
 
+- **Deponun çalışma dili İngilizce oldu ve geçiş bir DEFTERE bağlandı**
+  ([ADR 0012](docs/adr/0012-repository-language-and-solid.md)).
+  `internal/arch/testdata/turkish_ledger.txt` hâlâ Türkçe içeren her dosyayı,
+  `internal/arch/testdata/turkish_paths.txt` ise Türkçe ADI olan her yolu adıyla
+  sayar; defterde olmayan bir dosya Türkçe içeremez. Defterler yalnızca
+  KÜÇÜLÜR: bir satırı silmek dosyanın gerçekten çevrilmiş olmasını gerektirir.
+  Başlangıç borcu 784 dosya + 41 yol.
+
+  Dedektör ÜÇ ŞERİTLİDİR ve bunun sebebi ölçüldü: bütün ağacı harf çevirisine
+  sokmak yalnızca diyakritiğe bakan bir kuralı 724 dosyadan 0'a düşürüyor —
+  yani tek bir komutla "çeviri bitti" dedirtiyor. İkinci şerit, harf
+  çevirisinden SAĞ ÇIKAN Türkçe işlev sözcüklerini yorum ve dize
+  değişmezlerinde arar (liste Go standart kütüphanesinin 7711 dosyasına karşı
+  ölçüldü, yalnızca sıfır isabet verenler alındı); üçüncüsü Türkçe kökleri
+  tanımlayıcıların TAM parçalarında arar.
+
+- **Dedektörün kendi körlüğüne karşı denetimler.** `TestDetectorIsNotBlind`
+  her şeridin ayrı sayacını ve taranan her kökü pozitif tutar; taranacak
+  köklerin listesi DİSKE karşı doğrulanır, çünkü listeyi kendi içinden okuyan
+  bir sayaç, listeden bir ağaç düştüğünde onunla birlikte susar (mutasyonla
+  görüldü). `TestDetectorFindsPlantedTurkish` her şeride bilinen bir örnek
+  ekiller, `TestDetectorPassesEnglishSource` ise doğru İngilizceyi yanlışlıkla
+  suçlamadığını kanıtlar — `module`, `rollback`, `reason` ve Go'nun `x, ok`
+  deyiminden doğan `yok` değişkeni dâhil.
+
+- **SOLID kuralı ölçüme bağlandı.** ADR 0012 beş prensibin bugünkü durumunu
+  tabloya döküyor: DIP ve OCP zorlanıyor, ISP modül sınırlarında YAPISAL olarak
+  sağlanıyor, SRP yalnızca makro düzeyde, LSP için hiçbir denetim yok. Son ikisi
+  için "denetim yoktur" AÇIKÇA yazıldı; boyut linter'ları kapalı kalıyor çünkü
+  53 metotlu bir arayüzü eşiğe göre altıya bölmek tasarımı değil sayacı
+  memnun eder.
+
 ### Değiştirildi
 
 - Kablolama değişmezi (`TestPanelBilesimKokundeKurulu`) ve modül-izolasyonu
@@ -49,6 +81,10 @@ Sabitlenme `1.0.0` ile olur.
 - Gövde yazımı taraması artık `tmpl.Execute(w, …)` biçimindeki şablon
   akıtmalarını da yakalıyor. Tarama alıcının import adına baktığı için şablon
   yazıcısına KÖRDÜ ve panel bu kör noktadan geçebilirdi.
+- ADR seçenek bölümü başlıklarını tanıyan liste İKİ DİLLİ oldu
+  (`internal/arch/belge_atiflari_test.go`). Yalnızca Türkçe başlık tanıyan
+  kural, İngilizce yazılmış bir ADR'nin REDDEDİLMİŞ seçeneklerini bugünkü depo
+  hakkında iddia sanar ve var olmayan sembolleri kırık bildirirdi.
 
 ## [0.5.0] — 2026-09-02
 
