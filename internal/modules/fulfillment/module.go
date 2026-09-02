@@ -2,9 +2,11 @@
 //
 // Sorumluluğu tek cümleyle: bir siparişin FİZİKSEL olarak nereye kadar
 // geldiğini bilmek — hangi kargo seçeneği kaç para, gönderi açıldı mı, yola
-// çıktı mı, teslim edildi mi. Modül ShippingProfile, ShippingOption,
-// ShippingOptionRule Fulfillment ve FulfillmentItem verisinin TEK yazma
-// yetkilisidir (Prensip 2.3).
+// çıktı mı, teslim edildi mi — ve bir sipariş satırının HANGİ depodan
+// çıkacağını sıraya dizmek. Modül ShippingProfile, ShippingOption,
+// ShippingOptionRule, Fulfillment, FulfillmentItem ve ShippingLocation (depo
+// kargo politikası ile bölge bağları) verisinin TEK yazma yetkilisidir
+// (Prensip 2.3).
 //
 // # Sağlayıcı soyutlaması
 //
@@ -31,9 +33,16 @@
 // Modül hiçbir modülü import etmez ve bir gönderinin HANGİ siparişe ait
 // olduğunu bilmez. reference serbest bir metindir, foreign key DEĞİLDİR
 // (Prensip 2.2) ve varlığı burada doğrulanmaz; aynı şey kargo seçeneğinin
-// region_id'si ve gönderi kaleminin line_item_id'si için de geçerlidir. Bağ,
-// siparişin bildireceği link ile kurulur. Bu yüzden bu modül HİÇBİR link
-// tanımı bildirmez: bağın sahibi kargo değil, kargoya ihtiyaç duyan taraftır.
+// region_id'si, gönderi kaleminin line_item_id'si ve depo kargo politikasının
+// location_id ile region_id'si için de geçerlidir. Bağ, siparişin bildireceği
+// link ile kurulur. Bu yüzden bu modül HİÇBİR link tanımı bildirmez: bağın
+// sahibi kargo değil, kargoya ihtiyaç duyan taraftır.
+//
+// Depoların KENDİSİ de bu modülün verisi değildir: adları, adresleri ve
+// stokları stok modülündedir. Buradaki politika satırı yalnızca o deponun
+// kargo niteliğini taşır ve var OLMAYAN bir depo için de yazılabilir —
+// doğrulayacak kimse yoktur. Böyle bir satır asla seçilemez, çünkü seçim
+// yalnızca stok modülünün ürettiği adayları eler ve sıralar.
 //
 // Aynı sebeple modül, sepetin ürünlerinin hangi kargo profillerine bağlı
 // olduğunu da bilmez; profil kimlikleri uygunluk sorgusuna DIŞARIDAN verilir.
@@ -48,7 +57,9 @@
 //   - "shipping_option.query" — Query katmanına açılan okuma sağlayıcısı
 //     (ADR 0004).
 //   - /admin/v1/shipping-profiles, /admin/v1/shipping-options,
-//     /admin/v1/fulfillments … — yönetim API'si.
+//     /admin/v1/shipping-locations, /admin/v1/fulfillments … — yönetim API'si.
+//     Depo politikası ucu, modülün SİPARİŞ YOLUNU durdurabilen tek yazma
+//     yüzeyidir (gerekçe ve yetki kararı: fulfillment/api paket godoc'u).
 //   - /store/v1/shipping-options — sepet için uygun seçenekler. Sepet olguları
 //     (ara toplam, adet, ağırlık) bu uçta İSTEMCİNİN İDDİASIDIR ve
 //     doğrulanamaz; bu yüzden o olgulara bağlı kuralı olan seçenekler bu uçtan

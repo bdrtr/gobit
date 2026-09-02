@@ -58,6 +58,58 @@ Sabitlenme `1.0.0` ile olur.
   yüzeye `OpenCartForCountry` eklendi — `Interop` bir süre bilinçli olarak
   sepet açmayı yayımlamıyordu, çünkü tüketicisi yoktu; artık var.
 
+- **`fulfillment.interop`'un `SelectLocation` metodu KALDIRILDI; yerine
+  `RankLocations` geldi.** Gömülü kodu ve kendi kargo yüzeyini yazan tüketiciyi
+  etkiler; vitrin ve yönetim HTTP sözleşmeleri DEĞİŞMEDİ.
+
+  ```go
+  // önce
+  SelectLocation(ctx context.Context, candidateLocationIDs []string) (string, error)
+  // sonra
+  RankLocations(ctx context.Context, destinationRegionID string, candidateLocationIDs []string) ([]string, error)
+  ```
+
+  İki değişiklik var ve ikisinin de ayrı gerekçesi var.
+
+  **Bölge parametresi** yazılı bir taahhüdü kırıyor: eski godoc "politika bu
+  metodun İÇİNDE zenginleşir; çağıranın gördüğü imza değişmez" diyordu. Taahhüt
+  yanlıştı ve nerede yanlış olduğu somut: eksik olan yalnızca deponun kendisi
+  değil, gönderinin NEREYE gittiğiydi ve ikincisi modülün içinde zenginleşmeyle
+  elde edilemez. Bölge çağıranın elindedir — sepet akışının planı zaten taşıyor.
+
+  **Sıra dönmesi** bir maliyet kararıdır. Çağıran tükenen bir depodan sonra
+  sıradakini dener; eski yüzeyle bu, her tükenişte politikanın yeniden sorulması
+  ve aynı kayıtların yeniden okunması demekti — N adaylı bir satır için bir
+  sorgu yerine N sorgu. Sıra deterministik olduğu için o N-1 çağrı zaten aynı
+  cevabı üretiyordu. Yan kazanç ölçülebilir: sepet akışının aday döngüsünün
+  sonlanması artık modülün ne döndüğünden bağımsızdır — eskiden seçilen adayın
+  listeden düşürülebilmesine bağlıydı, şimdi sonlu bir dilimin uzunluğuyla
+  sınırlıdır.
+
+  Derleyicinin denetlemediği tek dikiş, arayüzün container'dan **adla**
+  çözüldüğü yerdir; kanıtı `internal/e2e` altındaki uçtan uca senaryodur.
+
+- **Stok ayırma adımı artık ALT HATANIN KODUNU koruyor.** Vitrin istemcisinin
+  gövdede gördüğü `error.code`, tamamlama sırasında stok ayrılamadığında
+  değişti:
+
+  | Durum | Önce | Sonra |
+  |---|---|---|
+  | Hiçbir depoda aday yok | `checkout_workflow_reservation_failed` | değişmedi |
+  | Seçilen depolar tükendi | `checkout_workflow_reservation_failed` | `inventory_insufficient_stock` |
+  | Hiçbir aday sepetin bölgesine hizmet etmiyor | — | `fulfillment_no_serviceable_location` |
+
+  Durum kodu üçünde de `409` kalır. Değişikliğin sebebi bu turun kendi
+  ihtiyacıdır ve bu özelliğin ÖN KOŞULUDUR: taşıma katmanı gövdeye tek bir
+  makine okunur alan yazar ve kod ezildiği sürece yanlış kurulmuş bir bölge
+  bağı, dolu raflarla "stok ayrılamadı" diye raporlanırdı — operatör bakması
+  gereken yeri bulamazdı. Kalıp yeni değil: motor aynı hatayı bir tur önce
+  kendi sarmalamasında düzeltmişti ve gerekçesi orada B2B harcama limitiyle
+  ölçülmüş hâlde yazılı.
+
+  Koda göre dallanan istemciyi etkiler; `checkout_workflow_reservation_failed`
+  artık YEDEK koddur ve yalnızca kodsuz bir hata için görünür.
+
 ### Değişti
 
 - `POST /store/v1/carts` gövdesindeki `metadata` **kaldı** ve akışa olduğu gibi
@@ -102,6 +154,61 @@ Sabitlenme `1.0.0` ile olur.
   kaldırıldı, kapsam açıkça yazıldı.
 
 ### Eklendi
+
+- **Depo seçimi artık bir POLİTİKA taşıyor.** README'nin bilinen sınırları şunu
+  yazıyordu ve madde bu sürümle DÜŞTÜ: *"Depo seçimi bir POLİTİKA taşımaz …
+  yakınlık, maliyet ve stok dağılımı İFADE EDİLEMEZ, çünkü modülün bir lokasyon
+  modeli yoktur."*
+
+  Lokasyon modeli kargo modülünün **kendi** şemasına geldi (iki tablo) ve depo
+  kimliği opak, FK'sız bir yabancı kimlik olarak duruyor — `region_id`'nin
+  bugüne kadar durduğu gibi. Modül ad ya da adres KOPYALAMIYOR: deponun nerede
+  olduğu stok modülünün verisidir ve orada kalıyor.
+
+  Kural üç adımdır — **ele** (bir depoya bağlanmış bölgeler varsa ve hedef
+  onların arasında değilse aday düşer), **sırala** (`priority`, küçük olan öne),
+  **eşitliği boz** (kimliği küçük olan öne). Yönetim yüzeyi
+  `PUT/GET/DELETE /admin/v1/shipping-locations/{location_id}` ve
+  `GET /admin/v1/shipping-locations`.
+
+  **Geriye uyumluluk SEÇİLEN DEPO için tamdır ve testlidir:** politika kaydı
+  yokken eleme ve sıralama boşa düşer, geriye eşitliği bozan kural kalır ve
+  seçilen depo bu turdan öncekiyle aynıdır.
+
+  Kayıtsız kurulumda da değişen iki şey var ve ikisi de burada yazılı olmalı:
+  hata KODU değişti (yukarıdaki kırıcı değişikliğe bakın; depo BİLDİREN
+  çağrıları da etkiler, çünkü o yol politikaya hiç girmese de aynı sarmalamadan
+  geçer) ve seçim artık satır başına BİR SQL SORGUSU yapıyor — eski seçim saf
+  bir fonksiyondu ve veritabanına hiç dokunmuyordu, yani bu yolda yeni bir
+  arıza ihtimali doğdu.
+
+  Gerçek yığında ölçüldü: `internal/e2e/coklu_depo_test.go`, gerçek Postgres ve
+  gerçek modüllerle iki yeterli depo kurar, politikayı yazar ve rezervasyonun
+  hangi depoda açıldığını okur. Mutasyonla doğrulandı.
+
+  Politikanın İFADE ETMEDİKLERİ de yazıya geçti — stok dağılımı, maliyet,
+  sipariş düzeyinde karar ve (depo, bölge) çifti başına tercih — ve her birinin
+  neden edilemediği [ADR 0010](docs/adr/0010-depo-secim-politikasi.md)'da.
+
+  Kabul edilen üç bedel README'nin bilinen sınırlarına GİRDİ ve en ağırı şudur:
+  var olmayan bir bölge kimliği bağlamak (ya da bir bölgeyi silip aynı adla
+  yeniden açmak — yeni kayıt yeni kimlik alır) o depoyu her sepette eler ve tek
+  depolu bir kurulumda mağazayı kapatır; düşen sepet de bir daha tamamlanamaz,
+  çünkü tamamlama akışının idempotency anahtarı sepet kimliğinden türer.
+
+  Bedel kaldırılmadı, GÖRÜNÜR yapıldı — ama görünürlüğün sınırı da yazılı
+  olmalı: vitrin gövdesine yalnızca KOD ulaşır
+  (`fulfillment_no_serviceable_location`); gövdedeki mesaj her üç ayırma
+  arızasında da aynıdır, çünkü taşıma katmanı en dıştaki mesajı yazar.
+  Adayların gerçekte hangi bölgelere bağlı olduğunu yazan döküm SUNUCU LOGUNDA
+  ve `workflow_executions` kaydındadır. Yani kod istemciye, döküm operatöre
+  gider.
+
+  Bölge bağının bir **kısıt** olduğu, tercih için `priority` kullanıldığı ayrımı
+  da bilinçlidir: "hizmet ettiği bölgeler" taşıyıcının kapsama alanıdır ve
+  kapsam dışına göndermek graceful bir geri düşüş değil, imkânsız bir gönderidir.
+  Bağı sıralama anahtarına çevirip katı kesiği bir bayrağın arkasına almak
+  değerlendirildi ve reddedildi; gerekçe ADR'de.
 
 - **Kurulum tuzağı artık gerçek süreçte çivili:**
   `internal/smoke/anahtar_test.go` içindeki
@@ -244,7 +351,7 @@ aynen geçerlidir; model değişmedi. Değişen tek şey, modelin kapsamadığı
   (`TestVaryantOkumalariKanalKararindanGecer`).
 
 - **Çok kiracılılık YOKTUR ve bu bir karardır: sınır KURULUMDUR, satır değil.**
-  72 tablonun hiçbirinde "bu satır kime ait" sorusunun cevabı yoktur, hiçbir
+  74 tablonun hiçbirinde "bu satır kime ait" sorusunun cevabı yoktur, hiçbir
   sorgu böyle bir süzgeç taşımaz ve çerçeve kiracılar arası bir sınır
   tanımadığı gibi İDDİA DA ETMEZ. İki müşteriye tek kurulumdan hizmet vermek
   desteklenmiyor: bir kiracı = bir kurulum = bir veritabanı = bir süreç. Plan

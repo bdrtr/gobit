@@ -19,6 +19,7 @@ package models
 
 import (
 	"encoding/json"
+	"slices"
 	"time"
 )
 
@@ -357,4 +358,71 @@ type ManualShipment struct {
 	// CreatedAt ve UpdatedAt UTC'dir.
 	CreatedAt time.Time
 	UpdatedAt time.Time
+}
+
+// ShippingLocation bir stok lokasyonunun KARGO politikasıdır.
+//
+// Modül deponun nerede olduğunu ya da adının ne olduğunu BİLMEZ: bunlar stok
+// modülünün verisidir ve orada kalır. Burada duran şey yalnızca deponun kargo
+// niteliğidir — hangi bölgelere hizmet eder ve hangi sırayla tercih edilir.
+// [ShippingLocation.LocationID] stok modülünün kimliğidir ve FOREIGN KEY
+// DEĞİLDİR (Prensip 2.2), tıpkı [ShippingOption.RegionID] gibi.
+//
+// # Politikası OLMAYAN depo da geçerli bir depodur
+//
+// Bir depo için hiç kayıt yoksa varsayılan geçerlidir: öncelik SIFIR ve TÜM
+// bölgelere hizmet eder. Bu yüzden hiç kayıt bulunmayan bir kurulumda seçim,
+// politika eklenmeden önceki davranışın aynısıdır.
+type ShippingLocation struct {
+	// LocationID stok modülünün lokasyon kimliğidir ve birincil anahtardır:
+	// bir deponun EN FAZLA bir politikası olur.
+	LocationID string
+	// Priority tercih sırasıdır ve KÜÇÜK OLAN KAZANIR. Sıfır varsayılandır;
+	// bir depoyu varsayılanların üstüne çıkarmak için NEGATİF değer verilir.
+	Priority int64
+	// RegionIDs deponun hizmet ettiği kargo bölgeleridir ve KİMLİĞE göre
+	// sıralıdır: bağlar bir küme kurar, yazma sırası korunmaz.
+	//
+	// BOŞ ise depo TÜM bölgelere hizmet eder — "hiçbirine" değil
+	// (bkz. [LocationPolicy]). region modülünün kimlikleridir ve foreign key
+	// DEĞİLDİR.
+	RegionIDs []string
+	// CreatedAt ve UpdatedAt UTC'dir.
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
+// LocationPolicy seçim ANINDA bir adayın kararı etkileyen olgularıdır.
+//
+// [ShippingLocation]'dan ayrı bir tiptir çünkü aynı veriyi farklı bir soru için
+// taşır: yönetim yüzeyi "bu deponun ayarı nedir" diye sorar, seçim yolu ise
+// "bu depo BU bölgeye hizmet ediyor mu ve kaçıncı sırada" diye. İkisi bugün
+// aynı alanları taşıyor olabilir ama tek tip yapmak, yönetim yüzeyine eklenen
+// her alanı sipariş yolunun okumasına da sokardı.
+type LocationPolicy struct {
+	// LocationID politikanın ait olduğu depodur.
+	LocationID string
+	// Priority tercih sırasıdır; küçük olan öne geçer.
+	Priority int64
+	// RegionIDs deponun bağlı olduğu kargo bölgeleridir ve KİMLİĞE göre
+	// sıralıdır.
+	//
+	// BOŞ olması "hiçbir bölgeye hizmet etmiyor" DEĞİL, "TÜM bölgelere hizmet
+	// ediyor" demektir. Ayrım tek bir bayrakla ifade edilemezdi: bağı olmayan
+	// depo ile bağı olup istenen bölgeyi taşımayan depo aynı kefeye düşerdi ve
+	// politikasız kurulumların tüm siparişleri elenirdi.
+	//
+	// Kimlikler SAYI ya da BAYRAK olarak değil olduğu gibi taşınır: tüm adaylar
+	// elendiğinde hata mesajı depoların gerçekte hangi bölgelere bağlı olduğunu
+	// yazar. Silinip yeniden açılmış bir bölgenin kimliği hiçbir yerde
+	// eşleşmez ve bu, teşhisin tek yoludur.
+	RegionIDs []string
+}
+
+// ServesRegion deponun verilen bölgeye hizmet edip etmediğini söyler.
+//
+// Bağı olmayan depo TÜM bölgelere hizmet eder; kural
+// [ShippingLocation.RegionIDs] ile aynıdır ve tek yerde durur.
+func (p LocationPolicy) ServesRegion(regionID string) bool {
+	return len(p.RegionIDs) == 0 || slices.Contains(p.RegionIDs, regionID)
 }

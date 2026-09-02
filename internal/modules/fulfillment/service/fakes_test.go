@@ -18,6 +18,11 @@ import (
 // txMarkerKey sahte deponun "işlem içindeyiz" işaretidir.
 type txMarkerKey struct{}
 
+// testRegionID seçim testlerinin hedef kargo bölgesidir. Bu modül bölge
+// kimliğini OPAK tutar (foreign key yoktur), bu yüzden değer gerçek bir region
+// kaydına karşılık gelmek zorunda değildir.
+const testRegionID = "reg_tr"
+
 // fakeStore service.Store'un bellek içi karşılığıdır.
 //
 // Dört davranışı gerçek depodan BİLİNÇLİ olarak taklit eder, çünkü servisin
@@ -38,6 +43,8 @@ type fakeStore struct {
 	rules    map[string]models.ShippingOptionRule
 	fuls     map[string]models.Fulfillment
 	items    map[string]models.FulfillmentItem
+	// locations depo kargo politikalarıdır; anahtar lokasyon kimliğidir.
+	locations map[string]models.ShippingLocation
 
 	// kilitler alınan kilitleri sırasıyla kaydeder; kilit alma iddiası
 	// doğrudan okunabilir olmalıdır.
@@ -54,11 +61,12 @@ type fakeStore struct {
 // newFakeStore boş bir sahte depo üretir.
 func newFakeStore() *fakeStore {
 	return &fakeStore{
-		profiles: map[string]models.ShippingProfile{},
-		options:  map[string]models.ShippingOption{},
-		rules:    map[string]models.ShippingOptionRule{},
-		fuls:     map[string]models.Fulfillment{},
-		items:    map[string]models.FulfillmentItem{},
+		profiles:  map[string]models.ShippingProfile{},
+		options:   map[string]models.ShippingOption{},
+		rules:     map[string]models.ShippingOptionRule{},
+		fuls:      map[string]models.Fulfillment{},
+		items:     map[string]models.FulfillmentItem{},
+		locations: map[string]models.ShippingLocation{},
 	}
 }
 
@@ -74,17 +82,19 @@ func (f *fakeStore) WithTx(ctx context.Context, fn func(ctx context.Context) err
 
 	f.mu.Lock()
 	snapshot := struct {
-		profiles map[string]models.ShippingProfile
-		options  map[string]models.ShippingOption
-		rules    map[string]models.ShippingOptionRule
-		fuls     map[string]models.Fulfillment
-		items    map[string]models.FulfillmentItem
+		profiles  map[string]models.ShippingProfile
+		options   map[string]models.ShippingOption
+		rules     map[string]models.ShippingOptionRule
+		fuls      map[string]models.Fulfillment
+		items     map[string]models.FulfillmentItem
+		locations map[string]models.ShippingLocation
 	}{
-		profiles: maps.Clone(f.profiles),
-		options:  maps.Clone(f.options),
-		rules:    maps.Clone(f.rules),
-		fuls:     maps.Clone(f.fuls),
-		items:    maps.Clone(f.items),
+		profiles:  maps.Clone(f.profiles),
+		options:   maps.Clone(f.options),
+		rules:     maps.Clone(f.rules),
+		fuls:      maps.Clone(f.fuls),
+		items:     maps.Clone(f.items),
+		locations: maps.Clone(f.locations),
 	}
 	f.mu.Unlock()
 
@@ -92,6 +102,7 @@ func (f *fakeStore) WithTx(ctx context.Context, fn func(ctx context.Context) err
 		f.mu.Lock()
 		f.profiles, f.options, f.rules = snapshot.profiles, snapshot.options, snapshot.rules
 		f.fuls, f.items = snapshot.fuls, snapshot.items
+		f.locations = snapshot.locations
 		f.mu.Unlock()
 		return err
 	}
@@ -920,4 +931,141 @@ func (k testKurulum) secenekAc(t interface {
 		t.Fatalf("kargo seçeneği oluşturulamadı: %v", err)
 	}
 	return option.ID
+}
+
+// --- depo kargo politikaları -------------------------------------------------
+
+// Politika satırları da işlem anlık görüntüsüne girer: geri alma iddiası
+// yalnızca eski tablolar için doğru olsaydı, yeni yazma yolunun atomikliği
+// sınanmamış kalırdı.
+
+func (f *fakeStore) UpsertShippingLocation(
+	_ context.Context,
+	locationID string,
+	priority int64,
+) (models.ShippingLocation, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	loc, exists := f.locations[locationID]
+	if !exists {
+		loc = models.ShippingLocation{LocationID: locationID, CreatedAt: now}
+	}
+	loc.Priority = priority
+	loc.UpdatedAt = now
+	f.locations[locationID] = loc
+	return loc, nil
+}
+
+// ReplaceShippingLocationRegions gerçek deponun işlem şartını taklit eder:
+// işlem dışında çağrılırsa hata döner. Şart bir yorum değil, sınanan bir
+// davranıştır — iki deyimli bir yazma işlemsiz kalırsa depo bir an için TÜM
+// bölgelere açık görünür.
+func (f *fakeStore) ReplaceShippingLocationRegions(
+	ctx context.Context,
+	locationID string,
+	regionIDs []string,
+) error {
+	if err := requireTx(ctx, "ReplaceShippingLocationRegions"); err != nil {
+		return err
+	}
+
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	loc, exists := f.locations[locationID]
+	if !exists {
+		return errors.NotFound("fake_location_not_found", "politika yok: %s", locationID)
+	}
+	// Gerçek depo bağları KİMLİĞE göre sıralı döner (okuma sorguları
+	// ORDER BY region_id uygular); sahte de sıralar. Sıralamasaydı birim
+	// testleri girdinin sırasını korunmuş sanar ve gerçek depoya karşı koşan
+	// bir iddia sessizce ayrışırdı.
+	sirali := slices.Clone(regionIDs)
+	slices.Sort(sirali)
+	loc.RegionIDs = sirali
+	f.locations[locationID] = loc
+	return nil
+}
+
+func (f *fakeStore) GetShippingLocation(
+	_ context.Context,
+	locationID string,
+) (models.ShippingLocation, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	loc, ok := f.locations[locationID]
+	if !ok {
+		return models.ShippingLocation{}, errors.NotFound(
+			"fulfillment_shipping_location_not_found", "politika yok: %s", locationID)
+	}
+	return loc, nil
+}
+
+func (f *fakeStore) ListShippingLocations(
+	_ context.Context,
+	filter models.LocationFilter,
+) ([]models.ShippingLocation, int64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	out := slices.Collect(maps.Values(f.locations))
+	slices.SortFunc(out, func(a, b models.ShippingLocation) int {
+		if a.Priority != b.Priority {
+			return int(a.Priority - b.Priority)
+		}
+		return strings.Compare(a.LocationID, b.LocationID)
+	})
+
+	total := int64(len(out))
+	if filter.Offset >= total {
+		return nil, total, nil
+	}
+	out = out[filter.Offset:]
+	if int64(len(out)) > filter.Limit {
+		out = out[:filter.Limit]
+	}
+	return out, total, nil
+}
+
+func (f *fakeStore) DeleteShippingLocation(_ context.Context, locationID string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	if _, ok := f.locations[locationID]; !ok {
+		return errors.NotFound(
+			"fulfillment_shipping_location_not_found", "politika yok: %s", locationID)
+	}
+	delete(f.locations, locationID)
+	return nil
+}
+
+// LocationPolicies gerçek sorgunun ayrımını taklit eder: kaydı OLMAYAN aday
+// dönen dilimde HİÇ yer almaz ve bölge bağları bayrak olarak değil KİMLİK
+// DİZİSİ olarak taşınır.
+func (f *fakeStore) LocationPolicies(
+	_ context.Context,
+	locationIDs []string,
+) ([]models.LocationPolicy, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	out := make([]models.LocationPolicy, 0, len(locationIDs))
+	for _, id := range locationIDs {
+		loc, ok := f.locations[id]
+		if !ok {
+			continue
+		}
+		out = append(out, models.LocationPolicy{
+			LocationID: loc.LocationID,
+			Priority:   loc.Priority,
+			RegionIDs:  slices.Clone(loc.RegionIDs),
+		})
+	}
+	slices.SortFunc(out, func(a, b models.LocationPolicy) int {
+		return strings.Compare(a.LocationID, b.LocationID)
+	})
+	return out, nil
 }

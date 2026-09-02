@@ -68,17 +68,21 @@ type CompleteCartInput struct {
 	// # BOŞSA: lokasyon SATIR BAŞINA seçilir
 	//
 	// Her satır için önce stok modülünden o kalemden yeterli adet ayrılabilen
-	// lokasyonlar istenir ([Inventory.LocationsWithStock]), sonra adaylar
-	// arasından seçimi kargo modülü yapar ([Fulfillment.SelectLocation]) ve
-	// rezervasyon SEÇİLEN lokasyonda açılır. Bir siparişin satırları bu yüzden
-	// FARKLI depolardan ayrılabilir; kimliklerini satır başına taşıyan
+	// lokasyonlar istenir ([Inventory.LocationsWithStock]), sonra adayları
+	// kargo modülü TERCİH SIRASINA dizer ([Fulfillment.RankLocations]) ve
+	// rezervasyon sıranın ilk çalışan deposunda açılır. Bir siparişin satırları
+	// bu yüzden FARKLI depolardan ayrılabilir; kimliklerini satır başına taşıyan
 	// [planLine] bunu zaten mümkün kılıyordu.
 	//
 	// İş bölümü, bu alanın eski godoc'unun saydığı iki gerekçeyi tek tek
 	// karşılar: (1) hangi depodan gönderileceği bir FULFILLMENT kararıdır ve
 	// kararı bu paket vermez, kargo modülüne SORAR; (2) stok modülünün yüzeyi
-	// artık lokasyon LİSTELER, yani "ilk lokasyonu" sıralama tesadüfüne bakarak
+	// lokasyon LİSTELER, yani "ilk lokasyonu" sıralama tesadüfüne bakarak
 	// seçmek zorunda kalmayız — gelen liste bir olgudur, tercih sırası değil.
+	//
+	// Kargo modülünün tercihini nasıl kurduğu (hedef bölgeye hizmet etmeyen
+	// depoları eleme, işletmecinin öncelik sırası) bu paketin bilgisi değildir;
+	// buradan geçen tek bağlam siparişin bölgesidir.
 	//
 	// Hiçbir lokasyonda yeterli stok yoksa akış, ayırmanın patladığı durumla
 	// AYNI şekilde raporlar (errors.Conflict, [CodeReservationFailed]):

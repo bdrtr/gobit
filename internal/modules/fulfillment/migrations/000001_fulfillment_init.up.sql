@@ -12,9 +12,18 @@
 -- sütunda durur (plan Bölüm 8). NUMERIC ya da kayan nokta hiçbir yerde
 -- kullanılmaz — kargo ücretinin kuruşu, sipariş toplamına birebir girer.
 --
--- Zaman: tüm damgalar timestamptz (UTC). Silme yumuşaktır (deleted_at) ve tüm
--- okuma sorguları deleted_at IS NULL filtresi uygular. Tek istisna manuel
--- sağlayıcının defteridir; gerekçesi kendi tablosunun başındadır.
+-- Zaman: tüm damgalar timestamptz (UTC). Silme KURAL OLARAK yumuşaktır
+-- (deleted_at) ve o tabloların tüm okuma sorguları deleted_at IS NULL filtresi
+-- uygular. İstisnalar sayılıdır ve her birinin gerekçesi kendi tablosunun
+-- başındadır:
+--
+--   - fulfillment_items — gönderinin kalemi gönderiden ayrı yaşamaz; gönderi
+--     iptal edilince kalem "silinmez", gönderinin durumu değişir.
+--   - fulfillment_manual_shipments — modülün alan verisi değil, taklit edilen
+--     dış sistemin defteridir.
+--
+-- 000002 iki istisna daha ekler (shipping_locations ve
+-- shipping_location_regions); gerekçeleri o dosyanın başındadır.
 
 -- shipping_profiles kargo profilidir: hangi ürünlerin hangi kargo kurallarına
 -- tabi olduğunu gruplayan kaptır.

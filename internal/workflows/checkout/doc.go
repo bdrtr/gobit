@@ -95,8 +95,11 @@
 //
 //  1. "Bu kalemden bu adet hangi depolarda ayrılabilir" bir STOK OLGUSUDUR;
 //     cevabı [Inventory.LocationsWithStock] verir ve bir tercih sırası taşımaz.
-//  2. "Bu adaylardan hangisinden gönderelim" bir KARGO KARARIDIR; cevabı
-//     [Fulfillment.SelectLocation] verir.
+//  2. "Bu adaylar hangi sırayla denensin" bir KARGO KARARIDIR; cevabı
+//     [Fulfillment.RankLocations] verir. Kargo modülü hedef bölgeye hizmet
+//     etmeyen depoları eler ve kalanları işletmecinin öncelik sırasına dizer;
+//     buradan geçen tek bağlam siparişin bölgesidir. Sıra satır başına BİR KEZ
+//     sorulur, tükenen her adaydan sonra değil.
 //
 // İkisini tek modülde toplamak, stok sorgusunu kargo politikasına ya da kargo
 // politikasını stok şemasına bağımlı kılardı. Seçimi bu paketin yapması ise

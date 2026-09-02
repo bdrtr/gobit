@@ -83,6 +83,7 @@ func Describe(d *openapi.Doc) {
 	})
 
 	describeProfiller(d)
+	describeDepoPolitikalari(d)
 	describeSecenekler(d)
 	describeUygunluk(d)
 	describeGonderiler(d)
@@ -127,6 +128,39 @@ func describeProfiller(d *openapi.Doc) {
 		Summary: "Kargo profilini yumuşak siler.",
 		Responses: map[string]any{
 			"204": bosYanit("Profil silindi"),
+		},
+	})
+}
+
+// describeDepoPolitikalari depo seçim politikası uçlarını anlatır.
+func describeDepoPolitikalari(d *openapi.Doc) {
+	d.Describe(http.MethodGet, pathAdminLocations, openapi.Operation{
+		Summary:    "Depo kargo politikalarını öncelik sırasıyla listeler.",
+		Parameters: sayfaParametreleri(),
+		Responses: map[string]any{
+			"200": openapi.Response("Depo kargo politikaları", d.List(locationDTO{})),
+		},
+	})
+
+	d.Describe(http.MethodGet, pathAdminLocation, openapi.Operation{
+		Summary: "Bir deponun kargo politikasını döner.",
+		Responses: map[string]any{
+			"200": openapi.Response("Depo kargo politikası", d.Item(locationDTO{})),
+		},
+	})
+
+	d.Describe(http.MethodPut, pathAdminLocation, openapi.Operation{
+		Summary:     "Bir deponun kargo politikasını yazar ya da üzerine yazar.",
+		RequestBody: d.RequestBody(setLocationRequest{}),
+		Responses: map[string]any{
+			"200": openapi.Response("Yazılan politika", d.Item(locationDTO{})),
+		},
+	})
+
+	d.Describe(http.MethodDelete, pathAdminLocation, openapi.Operation{
+		Summary: "Bir deponun kargo politikasını siler ve depoyu varsayılana döndürür.",
+		Responses: map[string]any{
+			"204": bosYanit("Politika silindi"),
 		},
 	})
 }

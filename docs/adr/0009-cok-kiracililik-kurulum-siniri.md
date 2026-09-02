@@ -10,6 +10,13 @@ Plan belgesi çok kiracılılığı iki yerde kapsam dışı bırakıyor
 (`go-commerce-framework-plan.md:35` ve `:396`) ama **neden** bıraktığını
 söylemiyor. Kavram depoda hiç geçmiyor: 72 tablonun hiçbirinde kiracı sütunu,
 hiçbir imzada kiracı parametresi, hiçbir ad alanında kiracı segmenti yok.
+
+> **Bu ADR'deki sayımlar KARAR TARİHİNE aittir** (2026-09-01) ve o gün ölçülmüş
+> hâlleriyle bırakılır; kararın dayandığı büyüklüğü gösterirler, bugünkü şemayı
+> değil. Sayı büyüdükçe kararın gerekçesi ZAYIFLAMAZ, güçlenir. Şemanın bugünkü
+> tablo sayısı `README.md`'nin "Tek örnek mi, birden çok mu?" başlığındadır ve
+> orası bugünü anlatır. İki sayı ayrıştığında geçerli olan, sorulan soruya göre
+> değişir: "karar neye dayandı" için buradaki, "bugün ne var" için README'deki.
 Gerekçesiz bir kapsam dışı bırakma bir karar değildir; her turda yeniden
 tartışılır ve bu arada kapılar sessizce kapanır. Bu ADR o boşluğu kapatıyor.
 

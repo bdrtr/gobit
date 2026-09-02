@@ -65,3 +65,16 @@ type FulfillmentFilter struct {
 	// Offset atlanacak satır sayısıdır.
 	Offset int64
 }
+
+// LocationFilter depo seçim politikalarının listelenmesidir.
+//
+// Süzgeç alanı YOKTUR ve bu bilinçlidir: tablo kurulumdaki depo sayısı kadar
+// satır taşır (onlarca, milyonlarca değil) ve bir bölgeye göre süzmek isteyen
+// yönetim yüzeyi, dönen kayıtların bölge listesine zaten bakabilir. Süzgeç
+// eklendiği gün listeleme ile SAYMA sorgusunun aynı koşulu taşıması gerekir.
+type LocationFilter struct {
+	// Limit döndürülecek azami satır sayısıdır.
+	Limit int64
+	// Offset atlanacak satır sayısıdır.
+	Offset int64
+}

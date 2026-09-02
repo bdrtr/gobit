@@ -334,7 +334,7 @@ type PaymentProvider interface {
 >
 > RBAC yalnızca auth'ta değil, **TÜM modüllerde** zorlanır: sözlük tek
 > kuraldan türer (`<modül>:read` / `<modül>:write`, `admin` üst yetki) ve
-> `internal/e2e/yetki_test.go` router ağacını GEZEREK 183 yönetim ucunun
+> `internal/e2e/yetki_test.go` router ağacını GEZEREK 205 yönetim ucunun
 > tamamında yetkisiz bir jetonun 403 aldığını denetler — elle yazılmış bir uç
 > listesi, eklenmesi unutulan ilk uçta kör kalırdı.
 >

@@ -87,8 +87,9 @@ func (i *Interop) AvailableQuantity(ctx context.Context, inventoryItemID string)
 // LocationsWithStock kalemden en az quantity adet ayrılabilen lokasyonların
 // kimliklerini artan sırada döner.
 //
-// Dönen sıra bir OLGUNUN sırasıdır, tercih sırası DEĞİLDİR: aday lokasyonlar
-// arasından seçimi yapan fulfillment'tır. Hiçbir lokasyon yetmiyorsa boş dilim
+// Dönen sıra bir OLGUNUN sırasıdır, tercih sırası DEĞİLDİR: adayları tercih
+// sırasına fulfillment dizer ve sıradaki ilk çalışan depoyu sepet akışı
+// kullanır. Hiçbir lokasyon yetmiyorsa boş dilim
 // döner, hata değil; saga bunu kendi bağlamında Conflict'e çevirir. Ayrıntılı
 // gerekçe için bkz. [Service.LocationsWithStock].
 func (i *Interop) LocationsWithStock(

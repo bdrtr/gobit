@@ -240,84 +240,91 @@ func TestInteropGonderiAcVeIptalEt(t *testing.T) {
 	assert.Equal(t, 1, cancel, "sağlayıcıya tek iptal gitmeli")
 }
 
-// TestInteropSelectLocationDeterministik aynı adaylarla yapılan ikinci
-// çağrının aynı lokasyonu döndüğünü ve sonucun adayların GELİŞ SIRASINDAN
+// TestInteropRankLocationsDeterministik aynı adaylarla yapılan ikinci
+// çağrının aynı sırayı döndüğünü ve sonucun adayların GELİŞ SIRASINDAN
 // bağımsız olduğunu kanıtlar.
 //
-// İddia saga içindir: sıraya bağlı bir seçim, yeniden denemede BAŞKA bir
-// depodan ayırır ve ilk denemenin rezervasyonu yetim kalırdı.
-func TestInteropSelectLocationDeterministik(t *testing.T) {
+// İddia çağıran içindir: tükenen adayları listeden düşürerek bu metodu yeniden
+// çağıran döngü, sıraya bağlı bir seçimde her turda başka bir depo gösterir ve
+// ilk turun rezervasyonu yetim kalırdı.
+//
+// Kurulumda HİÇ politika kaydı yoktur; bu yüzden test aynı zamanda geriye
+// uyumluluğun kanıtıdır: eleme ve sıralama boşa düşer, eşitliği bozan kural
+// (kimliği en küçük aday) tek başına kalır ve sonuç politikadan ÖNCEKİ
+// davranışın aynısıdır.
+func TestInteropRankLocationsDeterministik(t *testing.T) {
 	t.Parallel()
 
 	kurulum := yeniKurulum(t)
 	interop := service.NewInterop(kurulum.svc)
 
-	ilk, err := interop.SelectLocation(context.Background(),
+	ilk, err := interop.RankLocations(context.Background(), testRegionID,
 		[]string{"sloc_izmir", "sloc_ankara", "sloc_bursa"})
 	require.NoError(t, err)
 
-	ikinci, err := interop.SelectLocation(context.Background(),
+	ikinci, err := interop.RankLocations(context.Background(), testRegionID,
 		[]string{"sloc_izmir", "sloc_ankara", "sloc_bursa"})
 	require.NoError(t, err)
-	assert.Equal(t, ilk, ikinci, "aynı adaylar aynı lokasyonu vermeli")
+	assert.Equal(t, ilk, ikinci, "aynı adaylar aynı sırayı vermeli")
 
-	karisik, err := interop.SelectLocation(context.Background(),
+	karisik, err := interop.RankLocations(context.Background(), testRegionID,
 		[]string{"sloc_bursa", "sloc_izmir", "sloc_ankara"})
 	require.NoError(t, err)
-	assert.Equal(t, ilk, karisik, "seçim adayların sırasına bağlı olmamalı")
+	assert.Equal(t, ilk, karisik, "sıra adayların geliş sırasına bağlı olmamalı")
 
-	assert.Equal(t, "sloc_ankara", ilk, "kimliği en küçük aday seçilmeli")
+	assert.Equal(t, []string{"sloc_ankara", "sloc_bursa", "sloc_izmir"}, ilk,
+		"politika kaydı yokken sıra yalnızca kimliğe göre kurulmalı")
 }
 
-// TestInteropSelectLocationTekAdayKendisi tek adaylı listede o adayın
+// TestInteropRankLocationsTekAdayKendisi tek adaylı listede o adayın
 // döndüğünü kanıtlar.
-func TestInteropSelectLocationTekAdayKendisi(t *testing.T) {
+func TestInteropRankLocationsTekAdayKendisi(t *testing.T) {
 	t.Parallel()
 
 	kurulum := yeniKurulum(t)
 	interop := service.NewInterop(kurulum.svc)
 
-	secilen, err := interop.SelectLocation(context.Background(), []string{"sloc_tek"})
+	sirali, err := interop.RankLocations(context.Background(), testRegionID, []string{"sloc_tek"})
 	require.NoError(t, err)
-	assert.Equal(t, "sloc_tek", secilen)
+	assert.Equal(t, []string{"sloc_tek"}, sirali)
 }
 
-// TestInteropSelectLocationBosListeConflict boş aday listesinin SESSİZCE boş
-// dize dönmediğini kanıtlar.
+// TestInteropRankLocationsBosListeConflict boş aday listesinin SESSİZCE boş
+// bir sıra dönmediğini kanıtlar.
 //
-// Boş dize dönseydi çağıran onunla stok ayırmaya kalkar ve hata, sebebinden
-// bir modül uzakta patlardı. Sınıf Conflict'tir: istekte düzeltilecek bir şey
+// Boş sıra dönseydi çağıran hiçbir depo denemeden döngüden çıkar ve satır,
+// sebebi yazılmadan düşerdi. Sınıf Conflict'tir: istekte düzeltilecek bir şey
 // yoktur, hiçbir lokasyonda yeterli stok yoktur.
-func TestInteropSelectLocationBosListeConflict(t *testing.T) {
+func TestInteropRankLocationsBosListeConflict(t *testing.T) {
 	t.Parallel()
 
 	kurulum := yeniKurulum(t)
 	interop := service.NewInterop(kurulum.svc)
 
 	for _, adaylar := range [][]string{nil, {}} {
-		secilen, err := interop.SelectLocation(context.Background(), adaylar)
+		sirali, err := interop.RankLocations(context.Background(), testRegionID, adaylar)
 		require.Error(t, err)
-		assert.Empty(t, secilen)
+		assert.Empty(t, sirali)
 		assert.True(t, errors.IsConflict(err), "hata errors.Conflict olmalı: %v", err)
 		assert.Equal(t, service.CodeNoShippingLocation, errors.CodeOf(err))
 	}
 }
 
-// TestInteropSelectLocationBosAdayReddedilir listedeki boş bir kimliğin
-// seçilmediğini kanıtlar.
+// TestInteropRankLocationsBosAdayReddedilir listedeki boş bir kimliğin
+// sıraya girmediğini kanıtlar.
 //
-// "Kimliği en küçük aday" kuralı boş dizeyi seçerdi; test o yolun kapalı
-// olduğunu sabitler.
-func TestInteropSelectLocationBosAdayReddedilir(t *testing.T) {
+// Eşitliği bozan kural (kimliği en küçük aday) boş dizeyi seçerdi; test o
+// yolun kapalı olduğunu sabitler.
+func TestInteropRankLocationsBosAdayReddedilir(t *testing.T) {
 	t.Parallel()
 
 	kurulum := yeniKurulum(t)
 	interop := service.NewInterop(kurulum.svc)
 
-	secilen, err := interop.SelectLocation(context.Background(),
+	sirali, err := interop.RankLocations(context.Background(), testRegionID,
 		[]string{"sloc_ankara", "   "})
 	require.Error(t, err)
-	assert.Empty(t, secilen)
+	assert.Empty(t, sirali)
 	assert.True(t, errors.IsInvalid(err), "hata errors.Invalid olmalı: %v", err)
 	assert.Equal(t, service.CodeInvalidInput, errors.CodeOf(err))
 }

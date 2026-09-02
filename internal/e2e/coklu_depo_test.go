@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/bdrtr/gobit/internal/core/errors"
+	fulfillmentsvc "github.com/bdrtr/gobit/internal/modules/fulfillment/service"
 	inventorymodels "github.com/bdrtr/gobit/internal/modules/inventory/models"
 	inventorysvc "github.com/bdrtr/gobit/internal/modules/inventory/service"
 	ordermodels "github.com/bdrtr/gobit/internal/modules/order/models"
@@ -304,8 +305,13 @@ func TestDeposuOlmayanSatirOncekiRezervasyonuBirakir(t *testing.T) {
 	require.ErrorContains(t, err, checkoutwf.StepReserveInventory,
 		"hata PATLAYAN ADIMI adlandırmalı; adım adı yürütme kaydına da yazılır")
 	require.ErrorContains(t, err, checkoutwf.CodeReservationFailed,
-		"hata kodu ayırmanın patladığı durumla AYNI olmalı; aday yokluğu için ayrı bir "+
-			"kod uydurmak, aynı sonucu iki isimle raporlamak olurdu")
+		"aday YOKKEN sonucu sepet akışı çıkarır ve kod onundur; korunacak bir alt kod "+
+			"yoktur çünkü hiçbir modüle sorulmamıştır")
+	require.ErrorContains(t, err, "ayrılabilecek lokasyon yok",
+		"mesaj sebebi ADLANDIRMALI. Bu iddia olmadan test, aday listesi DOLU olduğu "+
+			"hâlde politikanın hepsini elediği bir arızada da yeşil kalırdı — ikisi de "+
+			"Conflict döner ve ikisi de aynı adımda patlar, ama düzeltmeleri farklı "+
+			"yerlerdedir")
 	require.ErrorContains(t, err, kalem2,
 		"mesaj HANGİ kalemin karşılanamadığını yazmalı; ikinci kalemi adlandırması "+
 			"aynı zamanda akışın İLK satırı geçtiğinin de kanıtıdır — ilk satırda "+
@@ -379,13 +385,25 @@ const (
 // davranışının birebir korunduğunu kanıtlar.
 //
 // Geriye uyumluluk testi, çok depolu kurulumda anlamlı olacak şekilde
-// kurgulanır: kalemin stoğu İKİ depoda da yeterlidir, yani seçim yapılsaydı
-// gerçekten bir seçim olurdu. Bildirilen depo, kargo modülünün bugünkü
-// politikasının SEÇMEYECEĞİ depodur (politika kimliği en küçük adayı seçer);
-// böylece rezervasyonun bildirilen depoda açılması, akışın seçimi hiç
-// yapmadığının kanıtı olur. İki deponun ikisinde de stok bulunması şarttır —
-// tek depoda stok olsaydı "bildirileni kullandı" ile "tek adayı seçti" ayırt
-// edilemezdi.
+// kurgulanır: kalemin stoğu İKİ depoda da yeterlidir, yani sıralama yapılsaydı
+// gerçekten bir tercih olurdu. Bildirilen deponun DIŞINDAKİ depoya, politikanın
+// onu kesinlikle başa koyacağı bir öncelik yazılır; böylece rezervasyonun
+// bildirilen depoda açılması, akışın kargo modülüne hiç sormadığının kanıtı
+// olur.
+//
+// Ayırt edicilik POLİTİKAYLA kurulur, kimlik sırasıyla DEĞİL. Eskiden bu test
+// "kimliği büyük olanı bildir" diyordu ve iddiası eşitliği bozan kurala
+// bağlıydı; o kural bir gün değişirse test düşmez, sessizce AYIRT EDİCİLİĞİNİ
+// kaybederdi.
+//
+// Kurgu iki yönlü seçilir ve bu bilinçlidir: bildirilen depo, politikanın
+// ELEYECEĞİ depodur (başka bir bölgeye bağlıdır), diğeri ise politikanın başa
+// koyacağı depodur. Böylece akış kargo modülüne sorsaydı iki farklı yoldan da
+// DÜŞERDİ — tek aday olarak sorulsa eleme boş küme üretip siparişi düşürürdü,
+// iki aday olarak sorulsa diğer depo seçilirdi. Tek yönlü bir kurgu (yalnızca
+// "diğerine öncelik yaz") ikincisini yakalar ama birincisini kaçırırdı: talimat
+// yolu adayları zaten tek elemana indiriyor ve tek adayın sıralanması onu yine
+// döndürürdü.
 //
 // Bildirilen lokasyon bir tercih değil TALİMATTIR: belirli bir depodan çıkacak
 // bir yönetim siparişi ya da tek depolu bir kurulum, seçimin hiç yapılmamasını
@@ -397,14 +415,13 @@ func TestBildirilenLokasyonSecimYaptirmaz(t *testing.T) {
 	depoBir := yeniDepo(ctx, t, "E2E Bildirilen Depo 1")
 	depoIki := yeniDepo(ctx, t, "E2E Bildirilen Depo 2")
 
-	// Bildirilen depo, politikanın seçmeyeceği olan seçilir. Hangisinin
-	// kimliğinin büyük olduğu KOŞU SIRASINDA karşılaştırılarak bulunur:
-	// kimlikler üretilir ve "ikinci oluşturulanın kimliği büyüktür" varsayımı,
-	// kimlik üreticisi değiştiği gün testi sessizce anlamsızlaştırırdı.
+	// Bildirilen depo depoBir'dir ve politikaya göre GEÇERSİZDİR: yalnızca
+	// başka bir bölgeye hizmet eder. depoIki ise sepetin bölgesine hizmet eder
+	// ve önceliklidir. Sorulsaydı sonuç ya sipariş düşmesi ya da depoIki
+	// olurdu; ikisi de bu testi düşürür.
 	bildirilenDepo, politikaninSececegi := depoBir, depoIki
-	if politikaninSececegi > bildirilenDepo {
-		bildirilenDepo, politikaninSececegi = politikaninSececegi, bildirilenDepo
-	}
+	depoPolitikasi(ctx, t, bildirilenDepo, 0, "reg_bambaska_bir_bolge")
+	depoPolitikasi(ctx, t, politikaninSececegi, -1, vergiliBolgeID)
 
 	varyantID, stokKalemID := depolaraDagilmisVaryant(ctx, t, "E2E Bildirilen Lokasyon Ürünü",
 		map[string]int64{vergiliParaBirimi: bildirilenFiyat},
@@ -439,10 +456,10 @@ func TestBildirilenLokasyonSecimYaptirmaz(t *testing.T) {
 	rezervasyon, err := stokSvc.GetReservation(ctx, sonuc.ReservationIDs[0])
 	require.NoError(t, err, "rezervasyon stok modülünden okunabilmeli")
 	require.Equal(t, bildirilenDepo, rezervasyon.LocationID,
-		"rezervasyon BİLDİRİLEN depoda açılmalı. Diğer depo (%s) da yeterli stok "+
-			"taşıyor ve kargo modülünün politikası onu seçerdi; bildirilenin dışında "+
-			"bir depo, akışın çağıranın talimatını 'aday' sayıp sessizce değiştirdiği "+
-			"anlamına gelir", politikaninSececegi)
+		"rezervasyon BİLDİRİLEN depoda açılmalı — politikaya göre GEÇERSİZ olsa bile. "+
+			"Diğer depo (%s) yeterli stok taşıyor, sepetin bölgesine hizmet ediyor ve "+
+			"önceliklidir; bildirilenin dışında bir depo, akışın çağıranın talimatını "+
+			"'aday' sayıp sessizce değiştirdiği anlamına gelir", politikaninSececegi)
 
 	seviyeBildirilen := depoSeviyesi(ctx, t, stokKalemID, bildirilenDepo)
 	require.Equal(t, bildirilenKalan, seviyeBildirilen.StockedQuantity,
@@ -467,8 +484,9 @@ func TestBildirilenLokasyonSecimYaptirmaz(t *testing.T) {
 // kılardı. Ada sayaç eklenir ki aynı senaryo iki kez koşsa bile depolar
 // kayıtta ayırt edilebilsin.
 //
-// Ülke kodu vergili bölgeninkiyle aynıdır; akış lokasyonun ülkesini bugün
-// kullanmaz, fikstür yalnızca gerçekçi kalır.
+// Ülke kodu vergili bölgeninkiyle aynıdır ama KARARA GİRMEZ: kargo politikası
+// deponun ülkesine değil, kendi şemasındaki bölge BAĞLARINA bakar ve o bağlar
+// ayrıca yazılır (bkz. [depoPolitikasi]). Fikstür yalnızca gerçekçi kalır.
 func yeniDepo(ctx context.Context, t *testing.T, ad string) string {
 	t.Helper()
 
@@ -639,4 +657,256 @@ func rezervasyonlariOku(
 		kalemBasina[rezervasyon.InventoryItemID] = rezervasyon
 	}
 	return kalemBasina
+}
+
+// depoPolitikasi bir depoya kargo politikası yazar.
+//
+// Bölge listesi BOŞ verilirse depo tüm bölgelere hizmet eder; yazılan tek şey
+// önceliktir. Fikstür kargo modülünün GERÇEK servisini çağırır — politikayı
+// doğrudan tabloya yazmak, servisin doğrulamasını ve işlem sınırını atlayarak
+// üretimde oluşamayacak bir durum kurardı.
+func depoPolitikasi(ctx context.Context, t *testing.T, depoID string, oncelik int64, bolgeler ...string) {
+	t.Helper()
+
+	_, err := kargoSvc.SetShippingLocation(ctx, fulfillmentsvc.SetShippingLocationInput{
+		LocationID: depoID,
+		Priority:   oncelik,
+		RegionIDs:  bolgeler,
+	})
+	require.NoError(t, err, "depo kargo politikası yazılamadı: %s", depoID)
+}
+
+// Politika senaryolarının ELLE hesaplanmış tutarları.
+//
+//	9_000 × 2 = 18_000 ara toplam
+//	18_000 × %20 = 3_600 vergi
+//	18_000 - 0 + 3_600 + 0 = 21_600 genel toplam
+const (
+	politikaFiyat          int64 = 9_000
+	politikaAdet           int64 = 2
+	politikaAraToplam      int64 = 18_000
+	politikaVergi          int64 = 3_600
+	politikaToplam         int64 = 21_600
+	politikaDepoBasinaStok int64 = 5
+	// politikaKalan tahsilat sonrası seçilen depodaki fiziksel adettir: 5 - 2.
+	politikaKalan int64 = 3
+)
+
+// TestPolitikaOncelikliDepoyuSecer işletmecinin yazdığı ÖNCELİĞİN gerçek
+// yığında karara girdiğini kanıtlar.
+//
+// Kurgu, sonucun başka hiçbir kuralla açıklanamayacağı şekilde seçilir: iki
+// depo da yeterli stok taşır (yani stok olgusu ikisini de aday yapar), ikisi de
+// tüm bölgelere hizmet eder (yani eleme hiçbirini düşürmez) ve öncelik verilen
+// depo, eşitliği bozan kuralın (kimliği küçük olan öne) SEÇMEYECEĞİ depodur.
+// Geriye tek açıklama kalır: sıralamayı öncelik belirledi.
+//
+// Kimlik karşılaştırması koşu sırasında yapılır. "İkinci oluşturulanın kimliği
+// büyüktür" varsayımı, kimlik üreticisi değiştiği gün testi düşürmez, sessizce
+// anlamsızlaştırırdı — o yüzden varsayım değil ÖLÇÜM kullanılır.
+func TestPolitikaOncelikliDepoyuSecer(t *testing.T) {
+	ctx := t.Context()
+
+	musteriID, eposta := yeniMusteri(ctx, t)
+	depoBir := yeniDepo(ctx, t, "E2E Politika Öncelik 1")
+	depoIki := yeniDepo(ctx, t, "E2E Politika Öncelik 2")
+
+	kucukKimlik, buyukKimlik := depoBir, depoIki
+	if buyukKimlik < kucukKimlik {
+		kucukKimlik, buyukKimlik = buyukKimlik, kucukKimlik
+	}
+
+	// Öncelik KİMLİĞİ BÜYÜK olana yazılır: eşitliği bozan kural onu SONA
+	// koyardı, politika ise başa alır.
+	depoPolitikasi(ctx, t, buyukKimlik, -1)
+
+	varyantID, stokKalemID := depolaraDagilmisVaryant(ctx, t, "E2E Politika Öncelik Ürünü",
+		map[string]int64{vergiliParaBirimi: politikaFiyat},
+		map[string]int64{
+			kucukKimlik: politikaDepoBasinaStok,
+			buyukKimlik: politikaDepoBasinaStok,
+		})
+
+	sepetID, toplamlar := sepetHazirla(ctx, t, musteriID, varyantID, politikaAdet)
+	toplamlariDogrula(t, toplamlar, beklenenToplam{
+		araToplam: politikaAraToplam,
+		indirim:   0,
+		vergi:     politikaVergi,
+		kargo:     0,
+		toplam:    politikaToplam,
+	}, "politika sepeti hazırlandıktan sonra")
+
+	sonuc, err := siparisAkislari.CompleteCart(ctx, checkoutwf.CompleteCartInput{
+		CartID:            sepetID,
+		LocationID:        "",
+		PaymentProviderID: manual.ID,
+		PaymentData:       odemeDavranisi(t, manual.OutcomeAuthorize),
+		Email:             eposta,
+		ExpectedTotal:     politikaToplam,
+	})
+	require.NoError(t, err, "iki depo da yeterliyken sipariş verilebilmeli: %v", err)
+	require.Len(t, sonuc.ReservationIDs, 1, "tek satır için tek rezervasyon alınmalı")
+
+	rezervasyon, err := stokSvc.GetReservation(ctx, sonuc.ReservationIDs[0])
+	require.NoError(t, err, "rezervasyon stok modülünden okunabilmeli")
+	require.Equal(t, buyukKimlik, rezervasyon.LocationID,
+		"rezervasyon ÖNCELİKLİ depoda açılmalı. Kimliği küçük olan (%s) da yeterli "+
+			"stok taşıyor ve eşitliği bozan kural onu seçerdi; sonucun onun olması, "+
+			"işletmecinin yazdığı önceliğin karara hiç girmediği anlamına gelir",
+		kucukKimlik)
+
+	seviyeSecilen := depoSeviyesi(ctx, t, stokKalemID, buyukKimlik)
+	require.Equal(t, politikaKalan, seviyeSecilen.StockedQuantity,
+		"öncelikli deponun FİZİKSEL adedi azalmalı (%d - %d)",
+		politikaDepoBasinaStok, politikaAdet)
+
+	seviyeDiger := depoSeviyesi(ctx, t, stokKalemID, kucukKimlik)
+	require.Equal(t, politikaDepoBasinaStok, seviyeDiger.StockedQuantity,
+		"diğer deponun stoğuna HİÇ dokunulmamalı")
+}
+
+// TestPolitikaKapsamDisiDepoyuEler bölge bağının bir KISIT olduğunu, yani
+// aday listesinden DÜŞÜRDÜĞÜNÜ kanıtlar.
+//
+// Fark önemlidir ve testin kurgusu onu ölçer: elenen depo yalnızca "sona
+// atılsaydı" da sipariş yine diğerinden çıkardı, yani sonuç aynı olurdu. Bu
+// yüzden test elemeyi tek başına sınamaz; kardeşi
+// [TestHicbirDepoBolgeyeHizmetEtmezseSiparisDuser] elenmiş bir kümenin geri
+// düşülecek yer BIRAKMADIĞINI gösterir ve ikisi birlikte "kısıt" iddiasını
+// kurar.
+//
+// Elenen depo, öncelikle BAŞA alınmış olandır: eleme sıralamadan ÖNCE
+// çalışmasaydı sonuç o depo olurdu.
+func TestPolitikaKapsamDisiDepoyuEler(t *testing.T) {
+	ctx := t.Context()
+
+	musteriID, eposta := yeniMusteri(ctx, t)
+	kapsamDisi := yeniDepo(ctx, t, "E2E Politika Kapsam Dışı")
+	kapsamIci := yeniDepo(ctx, t, "E2E Politika Kapsam İçi")
+
+	// Kapsam dışı depo hem ÖNCELİKLİDİR hem de başka bir bölgeye bağlıdır.
+	// Eleme çalışmasaydı öncelik onu başa koyardı.
+	depoPolitikasi(ctx, t, kapsamDisi, -5, "reg_baska_bir_bolge")
+	depoPolitikasi(ctx, t, kapsamIci, 0, vergiliBolgeID)
+
+	varyantID, stokKalemID := depolaraDagilmisVaryant(ctx, t, "E2E Politika Kapsam Ürünü",
+		map[string]int64{vergiliParaBirimi: politikaFiyat},
+		map[string]int64{
+			kapsamDisi: politikaDepoBasinaStok,
+			kapsamIci:  politikaDepoBasinaStok,
+		})
+
+	sepetID, _ := sepetHazirla(ctx, t, musteriID, varyantID, politikaAdet)
+
+	sonuc, err := siparisAkislari.CompleteCart(ctx, checkoutwf.CompleteCartInput{
+		CartID:            sepetID,
+		LocationID:        "",
+		PaymentProviderID: manual.ID,
+		PaymentData:       odemeDavranisi(t, manual.OutcomeAuthorize),
+		Email:             eposta,
+		ExpectedTotal:     politikaToplam,
+	})
+	require.NoError(t, err, "kapsam içi depo yeterliyken sipariş verilebilmeli: %v", err)
+	require.Len(t, sonuc.ReservationIDs, 1, "tek satır için tek rezervasyon alınmalı")
+
+	rezervasyon, err := stokSvc.GetReservation(ctx, sonuc.ReservationIDs[0])
+	require.NoError(t, err, "rezervasyon stok modülünden okunabilmeli")
+	require.Equal(t, kapsamIci, rezervasyon.LocationID,
+		"rezervasyon sepetin bölgesine HİZMET EDEN depoda açılmalı. Diğer depo (%s) "+
+			"hem yeterli stok taşıyor hem de daha öncelikli; sonucun o olması, "+
+			"elemenin sıralamadan sonra çalıştığı ya da hiç çalışmadığı anlamına gelir",
+		kapsamDisi)
+
+	seviyeKapsamDisi := depoSeviyesi(ctx, t, stokKalemID, kapsamDisi)
+	require.Equal(t, politikaDepoBasinaStok, seviyeKapsamDisi.StockedQuantity,
+		"kapsam dışı deponun stoğuna HİÇ dokunulmamalı")
+	require.Equal(t, int64(0), seviyeKapsamDisi.ReservedQuantity,
+		"kapsam dışı depoda rezerve adet doğmamalı")
+}
+
+// TestHicbirDepoBolgeyeHizmetEtmezseSiparisDuser yanlış kurulmuş bir kapsamın
+// bedelini ÖLÇER: stok dolu olduğu hâlde sipariş düşer.
+//
+// Bu, özelliğin kabul edilmiş en ağır bedelidir ve testin görevi onu
+// gizlememektir. İki depo da fazlasıyla stokludur; tek eksik, ikisinin de
+// sepetin bölgesine bağlı OLMAMASIDIR — operatörün var olmayan bir bölge
+// kimliği yazmasıyla ya da bir bölgeyi silip yeniden açmasıyla (yeni kayıt yeni
+// kimlik alır) oluşan durum budur.
+//
+// Testin asıl iddiası hatanın TEŞHİS EDİLEBİLİR olmasıdır: kod, stok
+// yetersizliğininkinden farklı olmalı ve hata adayların GERÇEKTE hangi bölgelere
+// bağlı olduğunu yazmalıdır. Ölü bir bölge kimliği ancak böyle görülebilir —
+// yalnızca "hizmet eden depo yok" diyen bir hatayla operatör, kimliklerin
+// ayrıştığını fark edemezdi.
+//
+// İddianın SINIRI da burada yazılı olmalı: test hata NESNESİNİ okur, HTTP
+// gövdesini değil. Vitrin istemcisine yalnızca KOD ulaşır; bölge dökümünü
+// taşıyan metin sunucu logunda ve yürütme kaydında kalır.
+func TestHicbirDepoBolgeyeHizmetEtmezseSiparisDuser(t *testing.T) {
+	ctx := t.Context()
+
+	const oluBolge = "reg_silinmis_bolge"
+
+	musteriID, eposta := yeniMusteri(ctx, t)
+	depoBir := yeniDepo(ctx, t, "E2E Kapsamsız Depo 1")
+	depoIki := yeniDepo(ctx, t, "E2E Kapsamsız Depo 2")
+
+	depoPolitikasi(ctx, t, depoBir, 0, oluBolge)
+	depoPolitikasi(ctx, t, depoIki, 0, oluBolge)
+
+	varyantID, stokKalemID := depolaraDagilmisVaryant(ctx, t, "E2E Kapsamsız Ürün",
+		map[string]int64{vergiliParaBirimi: politikaFiyat},
+		map[string]int64{
+			depoBir: politikaDepoBasinaStok,
+			depoIki: politikaDepoBasinaStok,
+		})
+
+	oncekiSatilabilir := satilabilirAdet(ctx, t, stokKalemID)
+	require.Equal(t, 2*politikaDepoBasinaStok, oncekiSatilabilir,
+		"kurgunun anlamı stoğun DOLU olmasıdır; senaryonun durduğu yer stok değildir")
+
+	sepetID, _ := sepetHazirla(ctx, t, musteriID, varyantID, politikaAdet)
+
+	sonuc, err := siparisAkislari.CompleteCart(ctx, checkoutwf.CompleteCartInput{
+		CartID:            sepetID,
+		LocationID:        "",
+		PaymentProviderID: manual.ID,
+		PaymentData:       odemeDavranisi(t, manual.OutcomeAuthorize),
+		Email:             eposta,
+		ExpectedTotal:     politikaToplam,
+	})
+	require.Error(t, err,
+		"hiçbir aday sepetin bölgesine hizmet etmiyorsa sipariş verilememeli")
+	require.Equal(t, checkoutwf.CompleteCartResult{}, sonuc,
+		"hata dönen bir akış yarım bir sonuç SIZDIRMAMALI")
+
+	require.True(t, errors.IsConflict(err),
+		"sınıf errors.Conflict olmalı: istekte düzeltilecek bir şey yoktur ve motorun "+
+			"varsayılan yeniden deneme yüklemi bu sınıfı DENEMEZ — elenmiş bir aday "+
+			"kümesi tekrar denemekle değişmez. Dönen hata: %v", err)
+	require.Equal(t, fulfillmentsvc.CodeNoServiceableLocation, errors.CodeOf(err),
+		"kod, stok yetersizliğininkinden AYRI olmalı ve vitrine ULAŞMALI: adım hatası "+
+			"alt hatanın kodunu korur ve taşıma katmanı gövdeye EN DIŞTAKİ kodu yazar. "+
+			"Zinciri gezen bir iddia burada yetmezdi — kodu ezen bir sarmalamada da "+
+			"alt hatayı bulup yeşil kalırdı. Dönen hata: %v", err)
+	require.ErrorContains(t, err, oluBolge,
+		"mesaj adayların GERÇEKTE bağlı olduğu bölgeyi yazmalı; ölü bir bölge kimliği "+
+			"ancak böyle teşhis edilebilir")
+	require.ErrorContains(t, err, vergiliBolgeID,
+		"mesaj hangi bölgenin arandığını da yazmalı; iki kimliği yan yana görmeyen "+
+			"operatör ayrışmayı fark edemez")
+
+	// --- ardında ne bıraktı ---
+
+	siparisler, toplamSayi, err := siparisSvc.ListOrders(ctx, ordersvc.ListOrdersInput{CustomerID: &musteriID})
+	require.NoError(t, err, "müşterinin siparişleri okunabilmeli")
+	require.Zero(t, toplamSayi, "sipariş HİÇ oluşmamalı")
+	require.Empty(t, siparisler, "sipariş listesi boş olmalı")
+
+	require.Equal(t, oncekiSatilabilir, satilabilirAdet(ctx, t, stokKalemID),
+		"hiçbir depoda rezervasyon açılmamalı; eleme ayırmadan ÖNCE çalışır")
+
+	sepet, err := sepetSvc.GetCart(ctx, sepetID)
+	require.NoError(t, err, "sepet modülünden okunabilmeli")
+	require.False(t, sepet.Completed(), "sepet tamamlanmış damgalanMAMALI")
 }

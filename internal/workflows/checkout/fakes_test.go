@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"log/slog"
 	"os"
+	"slices"
+	"strings"
 	"sync"
 	"testing"
 
@@ -296,42 +298,53 @@ func (s *stubInventory) ConfirmReservation(ctx context.Context, reservationID st
 type stubFulfillment struct {
 	rec *recorder
 
-	selectFn func(ctx context.Context, candidateLocationIDs []string) (string, error)
+	rankFn func(ctx context.Context, destinationRegionID string, candidateLocationIDs []string) ([]string, error)
 
-	// offered SelectLocation'a geçen aday listelerini sırayla tutar.
+	// offered RankLocations'a geçen aday listelerini sırayla tutar.
 	//
 	// Adayların stok modülünden GELDİĞİ gibi geçtiği ancak böyle
-	// kanıtlanabilir: checkout listeyi süzse ya da sıralasa seçim yine
+	// kanıtlanabilir: checkout listeyi süzse ya da sıralasa akış yine
 	// "çalışır" görünürdü, oysa o an tercih sırasını checkout belirlemiş
 	// olurdu.
 	offered [][]string
+
+	// offeredRegions RankLocations'a geçen hedef bölgeleri sırayla tutar.
+	//
+	// Politikanın girdisinin PLANDAN geldiği ancak böyle kanıtlanabilir: boş
+	// bir bölge geçirilse gerçek modül isteği düşürürdü, ama sahte modül
+	// düşürmez ve akış yeşil kalırdı.
+	offeredRegions []string
 }
 
-// SelectLocation betiklenen seçim davranışını uygular.
-func (s *stubFulfillment) SelectLocation(ctx context.Context, candidateLocationIDs []string) (string, error) {
-	s.rec.add("fulfillment:select_location")
+// RankLocations betiklenen sıralama davranışını uygular.
+func (s *stubFulfillment) RankLocations(
+	ctx context.Context,
+	destinationRegionID string,
+	candidateLocationIDs []string,
+) ([]string, error) {
+	s.rec.add("fulfillment:rank_locations")
 	s.offered = append(s.offered, append([]string(nil), candidateLocationIDs...))
-	if s.selectFn == nil {
-		return "", errUnexpected("SelectLocation")
+	s.offeredRegions = append(s.offeredRegions, destinationRegionID)
+	if s.rankFn == nil {
+		return nil, errUnexpected("RankLocations")
 	}
-	return s.selectFn(ctx, candidateLocationIDs)
+	return s.rankFn(ctx, destinationRegionID, candidateLocationIDs)
 }
 
-// selectGreatestID adaylar arasından kimliği EN BÜYÜK olanı seçen bir kargo
-// yüzeyi davranışıdır.
+// rankByGreatestID adayları kimliği EN BÜYÜK olan başta olacak şekilde dizen
+// bir kargo yüzeyi davranışıdır.
 //
-// Gerçek modülün politikası (en küçük kimlik) BİLİNÇLİ OLARAK tersine
-// çevrilmiştir: seçimi kargo modülünün yaptığı ancak böyle kanıtlanabilir.
-// Gerçek politikayı taklit eden bir sahteyle, adayların ilkini kendi seçen bir
-// checkout da yeşil kalırdı.
-func selectGreatestID(_ context.Context, candidateLocationIDs []string) (string, error) {
-	greatest := ""
-	for _, candidate := range candidateLocationIDs {
-		if candidate > greatest {
-			greatest = candidate
-		}
-	}
-	return greatest, nil
+// Gerçek modülün EŞİTLİK BOZMA kuralı (en küçük kimlik önce) BİLİNÇLİ OLARAK
+// tersine çevrilmiştir: sırayı kargo modülünün kurduğu ancak böyle
+// kanıtlanabilir. Gerçek kuralı taklit eden bir sahteyle, adayları kendi sıraya
+// dizen bir checkout da yeşil kalırdı.
+//
+// Hedef bölge KULLANILMAZ: bu sahte politikayı taklit etmez, politikanın
+// checkout'ta OLMADIĞINI kanıtlar.
+func rankByGreatestID(_ context.Context, _ string, candidateLocationIDs []string) ([]string, error) {
+	sirali := slices.Clone(candidateLocationIDs)
+	slices.SortFunc(sirali, func(a, b string) int { return strings.Compare(b, a) })
+	return sirali, nil
 }
 
 // stubOrders [Orders] arayüzünün testlerde betiklenebilen uygulamasıdır.

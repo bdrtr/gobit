@@ -146,7 +146,11 @@ channels, err := container.Resolve[SalesChannelReader](c, "auth.service")
 ```
 
 Yayımlanan yüzeyler bilinçli olarak **dardır ve ilkel tiplerle** konuşur: her
-metot, sağlayıcının bir daha değiştiremeyeceği bir sözleşmedir. Zengin veri
+metot bir sözleşmedir ve derleyici onu denetlemez — arayüz TÜKETEN tarafta
+tanımlıdır, sağlayıcı onu yapısal olarak karşılar. `0.x` boyunca bir imza
+değişebilir ama bedeli görünür olmalıdır: kırıcı değişiklik olarak
+`CHANGELOG.md`'ye yazılır ve adla çözülen dikişin kanıtı e2e testidir, çünkü
+ayrışan bir imza iki paketin birim testlerini de yeşil bırakır. Zengin veri
 gerekiyorsa doğru yol yeni bir ilkel metot değil, Query katmanıdır.
 
 Container'daki ad sözlüğü:
@@ -173,7 +177,10 @@ Container'daki ad sözlüğü:
 - **Para** tam sayı minor unit (kuruş/cent); float yoktur, para birimi ayrı
   alandır.
 - **Zaman** UTC; `created_at/updated_at/deleted_at`, yumuşak silme
-  `deleted_at` ile.
+  `deleted_at` ile. İstisnalar sayılıdır ve her biri kendi tablosunun başında
+  gerekçelendirilir: sahibinden ayrı yaşamayan satırlar, taklit edilen dış
+  sistemlerin defterleri ve **yapılandırma tabloları** (yumuşak silinmiş bir
+  ayar satırının etkisi, hiç var olmamış bir satırınkiyle aynıdır).
 
 ---
 
@@ -191,11 +198,16 @@ aynı dar arayüz + adla çözüm kuralı burada da geçerlidir.
 **Çok depolu ayırma** sagaya sonradan eklendi ve seam'i iki modüle bölünmüştür:
 stok "hangi depolarda yeterli adet var" olgusunu, fulfillment "hangisinden
 gönderelim" kararını verir. Saga hiçbirini kendi vermez — sepet akışının depo
-politikası hakkında söyleyecek bir sözü yoktur. Aday listesi kilitsiz okunduğu
-için seçilen depo ayırma anında tükenmiş olabilir; o durumda sıradaki adaya
-geçilir. Bu, adımı yeniden denemek DEĞİLDİR (o kapalıdır, çünkü `Reserve`'ün
-tekrarı ikinci bir rezervasyon üretir) — başarısız bir çağrı hiçbir rezervasyon
-bırakmamıştır.
+politikası hakkında söyleyecek bir sözü yoktur. Fulfillment'ın kararı satır
+başına BİR KEZ sorulur ve tek bir depo değil bir TERCİH SIRASI döner: modül
+hedef bölgeye hizmet etmeyen depoları eler, kalanları işletmecinin öncelik
+sırasına dizer. Aday listesi kilitsiz okunduğu için sıranın başındaki depo
+ayırma anında tükenmiş olabilir; o durumda sıradaki adaya geçilir ve kargo
+modülüne yeniden sorulmaz. Bu, adımı yeniden denemek DEĞİLDİR (o kapalıdır,
+çünkü `Reserve`'ün tekrarı ikinci bir rezervasyon üretir) — başarısız bir çağrı
+hiçbir rezervasyon bırakmamıştır. Sıradaki adayların **hepsi elenmişse** satır
+düşer; hata o zaman kargo modülünün kendi kodunu taşır ve stok yetersizliğinden
+ayırt edilebilir.
 
 **Pivot adımlar** ayrıca belgelenir. `capture_payment` bir pivottur: tahsilat
 denendikten sonra geri alma yapılmaz, çünkü belirsiz bir tahsilatı "iptal

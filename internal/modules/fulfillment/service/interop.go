@@ -22,8 +22,8 @@ import (
 // arayüzünü karşılamaz.
 //
 // Yüzey BİLİNÇLİ OLARAK dardır ve akışların ihtiyacına göre seçilmiştir:
-// sepete uygun kargo seçeneklerini fiyatlarıyla sor, gönderinin çıkacağı
-// lokasyonu seçtir, gönderi aç, gönderiyi iptal et (telafi) ve durumunu oku.
+// sepete uygun kargo seçeneklerini fiyatlarıyla sor, aday depoları tercih
+// sırasına dizdir, gönderi aç, gönderiyi iptal et (telafi) ve durumunu oku.
 // Buraya eklenen her metot, fulfillment'ı ayrı bir servise çıkarmanın
 // maliyetini artırır.
 //
@@ -210,24 +210,37 @@ func (i *Interop) ListOptionsJSON(ctx context.Context, request json.RawMessage) 
 	return body, nil
 }
 
-// SelectLocation gönderinin çıkacağı TEK lokasyonu adaylar arasından seçer.
+// RankLocations adayları TERCİH SIRASINA dizer: gönderi ilkinden çıkar.
 //
 // Adaylar, stok modülünün "şu kalemden şu adet için yeterli stoğu olan
 // lokasyonlar" yanıtıdır; hangisinden gönderileceği ise bir KARGO kararıdır ve
-// bu yüzden buradadır. Kural ve gerekçeleri (determinizm, bugünkü sade
-// politika, politikanın nasıl zenginleşeceği) [Service.SelectLocation]
+// bu yüzden buradadır. Kural ve gerekçeleri (eleme, sıralama, determinizmin
+// neyi kapsadığı ve politikanın NEYİ garanti etmediği) [Service.RankLocations]
 // belgesindedir.
 //
+// destinationRegionID gönderinin gideceği kargo bölgesidir ve ZORUNLUDUR:
+// deponun o bölgeye hizmet edip etmediği elemenin girdisidir. Boş verilirse
+// errors.Invalid döner.
+//
+// Dönen dilim verilen adayların bir ALT KÜMESİDİR ve elemanları BİREBİR aynı
+// dizelerdir; çağıran sonucu kendi aday defterinde arayabilir.
+//
 // Boş aday listesi errors.Conflict döner ve çağıran bunu yetersiz stokla AYNI
-// dalda karşılamalıdır; boş bir kimlik taşıyan aday listesi errors.Invalid'dir.
+// dalda karşılamalıdır; adayların TAMAMI elenirse yine Conflict döner (ayrı
+// kod: [CodeNoServiceableLocation]). Boş bir kimlik taşıyan aday listesi
+// errors.Invalid'dir.
 //
 // Tüketici tarafındaki karşılığı:
 //
-//	type LocationSelector interface {
-//	    SelectLocation(ctx context.Context, candidateLocationIDs []string) (string, error)
+//	type LocationRanker interface {
+//	    RankLocations(ctx context.Context, destinationRegionID string, candidateLocationIDs []string) ([]string, error)
 //	}
-func (i *Interop) SelectLocation(ctx context.Context, candidateLocationIDs []string) (string, error) {
-	return i.svc.SelectLocation(ctx, candidateLocationIDs)
+func (i *Interop) RankLocations(
+	ctx context.Context,
+	destinationRegionID string,
+	candidateLocationIDs []string,
+) ([]string, error) {
+	return i.svc.RankLocations(ctx, destinationRegionID, candidateLocationIDs)
 }
 
 // CreateFulfillment bir sipariş için gönderi açar ve gönderinin KİMLİĞİNİ

@@ -2,9 +2,9 @@
 //
 // İki yüzey vardır ve yetkileri farklıdır:
 //
-//   - /admin/v1 — kargo kataloğunu ve gönderileri YÖNETİR: profil, seçenek ve
-//     kural CRUD'u, gönderi oluşturma, iptal, kargoya verme ve teslim
-//     bildirimi.
+//   - /admin/v1 — kargo kataloğunu, DEPO SEÇİM POLİTİKASINI ve gönderileri
+//     YÖNETİR: profil, seçenek ve kural CRUD'u, depo politikası yazma/okuma/
+//     silme, gönderi oluşturma, iptal, kargoya verme ve teslim bildirimi.
 //   - /store/v1 — müşterinin gördüğü TEK yüzey: bir sepet bağlamı için uygun
 //     kargo seçenekleri ve ücretleri. Gönderi oluşturmak, iptal etmek ya da
 //     durumunu değiştirmek mağaza tarafından TETİKLENMEZ; onları sipariş
@@ -34,11 +34,11 @@
 // Yönetim uçlarının tamamı yetki ister ve sözlük iki girdiden ibarettir:
 //
 //   - [ScopeRead] — /admin/v1 altındaki OKUMA (GET, HEAD) uçlarını açar:
-//     sağlayıcı listesi, profiller, seçenekler, kurallar, uygunluk listelemesi
-//     ve gönderiler okunabilir.
-//   - [ScopeWrite] — /admin/v1 altındaki YAZMA (POST, PATCH, DELETE) uçlarını
-//     açar: katalog CRUD'unun yanı sıra gönderi açma, iptal, kargoya verme ve
-//     teslim bildirimi de buraya girer.
+//     sağlayıcı listesi, profiller, seçenekler, kurallar, uygunluk listelemesi,
+//     depo kargo politikaları ve gönderiler okunabilir.
+//   - [ScopeWrite] — /admin/v1 altındaki YAZMA (POST, PUT, PATCH, DELETE)
+//     uçlarını açar: katalog CRUD'unun yanı sıra depo politikası yazma/silme,
+//     gönderi açma, iptal, kargoya verme ve teslim bildirimi de buraya girer.
 //
 // corehttp.ScopeAdmin ÜST YETKİDİR ve ikisini de karşılar; ayrıca
 // listelenmesine gerek yoktur, corehttp.Principal.HasScope bunu zaten yapar.
@@ -81,6 +81,13 @@ const (
 	pathAdminOption      = "/admin/v1/shipping-options/{id}"
 	pathAdminOptionRules = "/admin/v1/shipping-options/{id}/rules"
 	pathAdminOptionRule  = "/admin/v1/shipping-options/{id}/rules/{rule_id}"
+
+	// pathAdminLocations depo SEÇİM POLİTİKASIDIR: hangi depo hangi kargo
+	// bölgesine hizmet eder ve hangi sırayla tercih edilir. Depoların kendisi
+	// stok modülünün uçlarındadır (/admin/v1/stock-locations); buradaki kayıt
+	// yalnızca o deponun kargo niteliğidir.
+	pathAdminLocations = "/admin/v1/shipping-locations"
+	pathAdminLocation  = "/admin/v1/shipping-locations/{location_id}"
 
 	pathAdminFulfillments = "/admin/v1/fulfillments"
 	pathAdminFulfillment  = "/admin/v1/fulfillments/{id}"
@@ -135,6 +142,16 @@ type Fulfillments interface {
 	// DeleteShippingOptionRule kuralı yumuşak siler.
 	DeleteShippingOptionRule(ctx context.Context, ruleID string) error
 
+	// SetShippingLocation bir deponun kargo politikasını yazar ya da üzerine
+	// yazar.
+	SetShippingLocation(ctx context.Context, in service.SetShippingLocationInput) (models.ShippingLocation, error)
+	// GetShippingLocation deponun politikasını bölgeleriyle döner.
+	GetShippingLocation(ctx context.Context, locationID string) (models.ShippingLocation, error)
+	// ListShippingLocations politikaları öncelik sırasıyla sayfalar.
+	ListShippingLocations(ctx context.Context, page service.Page) ([]models.ShippingLocation, int64, error)
+	// DeleteShippingLocation politikayı siler ve depoyu varsayılana döndürür.
+	DeleteShippingLocation(ctx context.Context, locationID string) error
+
 	// ListShippingOptionsFor bir sepet bağlamı için uygun seçenekleri döner.
 	ListShippingOptionsFor(ctx context.Context, in service.ListOptionsInput) ([]service.QuotedOption, error)
 
@@ -167,6 +184,32 @@ func New(svc Fulfillments) *Handler { return &Handler{svc: svc} }
 // verilebilecek bir kararı mümkün kılmaz: gönderiyi yürüten kimlik, gönderinin
 // açılacağı seçeneği de belirleyebilmelidir. Ayrım gerçekten gerektiğinde
 // eklenir; şimdiden eklenirse yalnızca yanlış bir kesinlik hissi verir.
+//
+// # Depo politikası ucunun ETKİ ALANI daha geniştir ve üçüncü bir yetki almadı
+//
+// [pathAdminLocation]'a yapılan tek bir yazma, sipariş yolunu durdurabilir:
+// bir depoya var olmayan bir bölge kimliği bağlamak, o depoyu her sepette
+// eleyen bir kural yazmaktır ve tek depolu bir kurulumda sonuç, katalog dolu
+// olduğu hâlde her tamamlamanın 409 almasıdır. Modüldeki diğer yazma uçlarının
+// hiçbiri bunu yapamaz.
+//
+// Buna rağmen üçüncü bir yetki (örn. "fulfillment:policy") eklenmedi ve sebep
+// bu ucun zararsızlığı değil, SÖZLÜĞÜN kendisidir: projedeki yetki dağarcığı
+// tek bir kuraldan türer (<modül>:read / <modül>:write, "admin" üst yetki) ve
+// yüzlerce yönetim ucu bu kuralla denetlenir. Tek bir uca özel bir ad, kuralı
+// öğrenilemez ve denetlenemez kılardı; kazanç ise sınırlı olurdu, çünkü
+// fulfillment:write taşıyan kimlik zaten bir yönetim kimliğidir.
+//
+// Kararın bedeli AZALTILDI, kaldırılmadı: eleme yüzünden düşen bir sipariş
+// yanıt gövdesinde kargo modülünün KENDİ hata kodunu taşır
+// (service.CodeNoServiceableLocation), yani operatör bakması gereken yeri
+// KODDAN bulur. Bu, kararın ÖN KOŞULUDUR: sebebi görünmeyen bir arıza için
+// "yönetim ucundan geri alınır" demek boş bir söz olurdu.
+//
+// Görünürlüğün SINIRI da yazılmalı: gövdedeki MESAJ her üç ayırma arızasında da
+// aynıdır (taşıma katmanı en dıştaki mesajı yazar). Adayların gerçekte hangi
+// bölgelere bağlı olduğunu yazan döküm sunucu logunda ve yürütme kaydındadır,
+// gövdede değil.
 const (
 	// ScopeRead fulfillment yönetim yüzeyindeki OKUMA uçlarının istediği
 	// yetkidir.
@@ -217,6 +260,11 @@ func (h *Handler) Routes(r chi.Router) {
 	okuma.Get(pathAdminOptionRules, h.listRules)
 	yazma.Delete(pathAdminOptionRule, h.deleteRule)
 
+	okuma.Get(pathAdminLocations, h.listLocations)
+	okuma.Get(pathAdminLocation, h.getLocation)
+	yazma.Put(pathAdminLocation, h.setLocation)
+	yazma.Delete(pathAdminLocation, h.deleteLocation)
+
 	yazma.Post(pathAdminFulfillments, h.createFulfillment)
 	okuma.Get(pathAdminFulfillments, h.listFulfillments)
 	okuma.Get(pathAdminFulfillment, h.getFulfillment)
@@ -246,6 +294,39 @@ type listEnvelope struct {
 	Offset int64 `json:"offset"`
 	// Limit istenen sayfa boyutudur.
 	Limit int64 `json:"limit"`
+}
+
+// locationDTO bir deponun KARGO POLİTİKASININ gösterimidir.
+//
+// Deponun adı ve adresi YOKTUR ve olmayacaktır: onlar stok modülünün verisidir
+// ve /admin/v1/stock-locations altından okunur. İki listeyi birleştirmek
+// yönetim yüzeyinin işidir; buraya kopyalamak aynı bilgiyi iki modülde iki
+// doğruluk kaynağı hâline getirirdi.
+type locationDTO struct {
+	LocationID string `json:"location_id"`
+	Priority   int64  `json:"priority"`
+	// RegionIDs BOŞ ise depo TÜM bölgelere hizmet eder — hiçbirine değil.
+	// Alan omitempty TAŞIMAZ ve bu bilinçlidir: "regions" anahtarının yanıttan
+	// düşmesi, istemciye "bilgi yok" dedirtirdi; boş dizi ise kuralın kendisini
+	// söyler.
+	RegionIDs []string  `json:"region_ids"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// toLocationDTO politikayı yanıt gösterimine çevirir.
+func toLocationDTO(loc models.ShippingLocation) locationDTO {
+	regions := loc.RegionIDs
+	if regions == nil {
+		regions = []string{}
+	}
+	return locationDTO{
+		LocationID: loc.LocationID,
+		Priority:   loc.Priority,
+		RegionIDs:  regions,
+		CreatedAt:  loc.CreatedAt,
+		UpdatedAt:  loc.UpdatedAt,
+	}
 }
 
 // profileDTO kargo profilinin dış gösterimidir.

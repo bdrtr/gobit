@@ -660,3 +660,98 @@ func (h *Handler) writeFulfillment(w http.ResponseWriter, r *http.Request, id st
 	}
 	corehttp.WriteJSON(ctx, w, http.StatusOK, singleEnvelope{Data: toFulfillmentDTO(ful)})
 }
+
+// --- depo kargo politikası ----------------------------------------------------
+
+// setLocationRequest PUT /admin/v1/shipping-locations/{location_id} gövdesidir.
+//
+// Yol PATCH değil PUT'tur ve bu bilinçlidir: gövde bir DÜZELTME değil, deponun
+// politikasının TAMAMIDIR. Eksik verilen bir alan "değiştirme" anlamına gelmez;
+// bölge listesi verilmezse deponun bağları SİLİNİR ve depo tüm bölgelere hizmet
+// eder hâle gelir. PATCH, "gönderdiğimi değiştir, kalanına dokunma" sözü verirdi
+// ve o söz bu gövde için tutulamazdı — boş dilim ile eksik alan JSON'dan geçerken
+// ayırt edilemez.
+type setLocationRequest struct {
+	// Priority tercih sırasıdır; küçük olan öne geçer, negatif serbesttir.
+	Priority int64 `json:"priority"`
+	// RegionIDs deponun hizmet ettiği kargo bölgeleridir. BOŞ ise depo TÜM
+	// bölgelere hizmet eder.
+	RegionIDs []string `json:"region_ids"`
+}
+
+// setLocation bir deponun kargo politikasını yazar ya da üzerine yazar.
+func (h *Handler) setLocation(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	var body setLocationRequest
+	if err := decodeBody(w, r, &body); err != nil {
+		corehttp.WriteError(ctx, w, err)
+		return
+	}
+
+	loc, err := h.svc.SetShippingLocation(ctx, service.SetShippingLocationInput{
+		LocationID: chi.URLParam(r, "location_id"),
+		Priority:   body.Priority,
+		RegionIDs:  body.RegionIDs,
+	})
+	if err != nil {
+		corehttp.WriteError(ctx, w, err)
+		return
+	}
+	corehttp.WriteJSON(ctx, w, http.StatusOK, singleEnvelope{Data: toLocationDTO(loc)})
+}
+
+// getLocation deponun politikasını döner.
+func (h *Handler) getLocation(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	loc, err := h.svc.GetShippingLocation(ctx, chi.URLParam(r, "location_id"))
+	if err != nil {
+		corehttp.WriteError(ctx, w, err)
+		return
+	}
+	corehttp.WriteJSON(ctx, w, http.StatusOK, singleEnvelope{Data: toLocationDTO(loc)})
+}
+
+// listLocations yazılmış politikaları öncelik sırasıyla sayfalayarak döner.
+func (h *Handler) listLocations(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	page, err := parsePage(r)
+	if err != nil {
+		corehttp.WriteError(ctx, w, err)
+		return
+	}
+
+	locations, count, err := h.svc.ListShippingLocations(ctx, page)
+	if err != nil {
+		corehttp.WriteError(ctx, w, err)
+		return
+	}
+
+	data := make([]locationDTO, 0, len(locations))
+	for i := range locations {
+		data = append(data, toLocationDTO(locations[i]))
+	}
+	corehttp.WriteJSON(ctx, w, http.StatusOK, listEnvelope{
+		Data:   data,
+		Count:  count,
+		Offset: page.Offset,
+		Limit:  page.Limit,
+	})
+}
+
+// deleteLocation politikayı siler ve depoyu VARSAYILANA döndürür.
+//
+// Silmek depoyu kapatmaz: kaydı olmayan depo sıfır öncelikte ve tüm bölgelere
+// hizmet ediyor sayılır. Bir depoyu adaylıktan çıkarmak kargo modülünün
+// yetkisinde değildir — aday listesini stok olgusu üretir.
+func (h *Handler) deleteLocation(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	if err := h.svc.DeleteShippingLocation(ctx, chi.URLParam(r, "location_id")); err != nil {
+		corehttp.WriteError(ctx, w, err)
+		return
+	}
+	corehttp.WriteJSON(ctx, w, http.StatusNoContent, nil)
+}

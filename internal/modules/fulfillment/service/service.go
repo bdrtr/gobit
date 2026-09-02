@@ -83,8 +83,15 @@ const (
 	// bildirir; normal işleyişte oluşmaz.
 	CodeProviderContract = "fulfillment_provider_contract_violation"
 	// CodeNoShippingLocation gönderinin çıkabileceği bir lokasyon kalmadığını
-	// bildirir (bkz. [Service.SelectLocation]).
+	// bildirir (bkz. [Service.RankLocations]).
 	CodeNoShippingLocation = "fulfillment_no_shipping_location"
+	// CodeNoServiceableLocation aday depoların hiçbirinin hedef bölgeye hizmet
+	// etmediğini bildirir (bkz. [Service.RankLocations]).
+	//
+	// [CodeNoShippingLocation]'dan AYRI bir koddur çünkü işletmecinin yapacağı
+	// iş de ayrıdır: orada stok yoktur, burada depoların bölge kapsamı yanlış
+	// kurulmuştur. Sınıf ikisinde de Conflict'tir.
+	CodeNoServiceableLocation = "fulfillment_no_serviceable_location"
 	// CodeNotReady servisin eksik bağımlılıkla kurulduğunu bildirir.
 	CodeNotReady = "fulfillment_service_not_ready"
 )
@@ -212,6 +219,31 @@ type Store interface {
 
 	// CreateFulfillmentItem gönderiye bir kalem ekler.
 	CreateFulfillmentItem(ctx context.Context, item models.FulfillmentItem) (models.FulfillmentItem, error)
+	// UpsertShippingLocation deponun kargo ÖNCELİĞİNİ yazar ya da üzerine
+	// yazar; bölge bağlarına dokunmaz.
+	UpsertShippingLocation(ctx context.Context, locationID string, priority int64) (models.ShippingLocation, error)
+	// ReplaceShippingLocationRegions deponun bölge bağlarını TOPTAN yazar ve
+	// yalnızca [Store.WithTx] içinde çağrılabilir: iki deyimden oluşur ve
+	// aradaki bir okuma depoyu bölgesiz, yani tüm bölgelere açık görürdü.
+	ReplaceShippingLocationRegions(ctx context.Context, locationID string, regionIDs []string) error
+	// GetShippingLocation politikayı bölgeleriyle döner; kaydı yoksa NotFound.
+	GetShippingLocation(ctx context.Context, locationID string) (models.ShippingLocation, error)
+	// ListShippingLocations politikaları öncelik sırasıyla sayfalar; ikinci
+	// değer TÜM satırların sayısıdır.
+	ListShippingLocations(ctx context.Context, filter models.LocationFilter) ([]models.ShippingLocation, int64, error)
+	// DeleteShippingLocation politikayı KALICI olarak siler; kaydı yoksa
+	// NotFound. Yumuşak silme yoktur; gerekçesi migration'ın başındadır.
+	DeleteShippingLocation(ctx context.Context, locationID string) error
+	// LocationPolicies aday depoların seçim anındaki olgularını TEK sorguda
+	// döner. Dönen dilim yalnızca KAYDI OLAN adayları içerir ve aday
+	// listesinden kısa olabilir.
+	//
+	// Hedef bölge PARAMETRE DEĞİLDİR: eşleştirme veritabanında değil, saf bir
+	// fonksiyonda yapılır — böylece kural gerçek bir Postgres olmadan
+	// sınanabilir ve elenen adayların bağlı olduğu bölgeler hata mesajına
+	// yazılabilir.
+	LocationPolicies(ctx context.Context, locationIDs []string) ([]models.LocationPolicy, error)
+
 	// ListFulfillmentItems bir gönderinin kalemlerini döner.
 	ListFulfillmentItems(ctx context.Context, fulfillmentID string) ([]models.FulfillmentItem, error)
 	// FulfillmentItemsByFulfillments kalemleri BİRDEN ÇOK gönderi için TEK

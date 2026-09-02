@@ -217,6 +217,20 @@ func anlatilanUclar() []ucBeklentisi {
 		},
 		{metod: http.MethodDelete, yol: pathAdminProfile, durum: "204"},
 
+		{
+			metod: http.MethodGet, yol: pathAdminLocations, durum: "200",
+			yanit: doluPolitika(), liste: true,
+		},
+		{
+			metod: http.MethodGet, yol: pathAdminLocation, durum: "200",
+			yanit: doluPolitika(),
+		},
+		{
+			metod: http.MethodPut, yol: pathAdminLocation, durum: "200",
+			istek: setLocationRequest{}, yanit: doluPolitika(),
+		},
+		{metod: http.MethodDelete, yol: pathAdminLocation, durum: "204"},
+
 		{metod: http.MethodDelete, yol: pathAdminOption, durum: "204"},
 		{
 			metod: http.MethodPost, yol: pathAdminOptionRules, durum: "201",
@@ -280,6 +294,14 @@ func anlatilmayanSecenekUclari() []ucBeklentisi {
 // doluProfil omitempty alanları da yazılan bir profil kaydı üretir.
 func doluProfil() profileDTO {
 	return profileDTO{Metadata: map[string]any{"k": "v"}}
+}
+
+// doluPolitika bir depo kargo politikası örneği üretir.
+//
+// locationDTO'da omitempty alan YOKTUR — "region_ids" boşken bile yazılır ve
+// bu kuralın kendisidir (boş = tüm bölgeler) — bu yüzden örnek boş kalabilir.
+func doluPolitika() locationDTO {
+	return locationDTO{RegionIDs: []string{"reg_tr"}}
 }
 
 // doluGonderi omitempty alanları da yazılan bir gönderi kaydı üretir.

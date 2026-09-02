@@ -46,6 +46,7 @@ const postgresImage = "postgres:16-alpine"
 var modulTablolari = []string{
 	"shipping_profiles", "shipping_options", "shipping_option_rules",
 	"fulfillments", "fulfillment_items", "fulfillment_manual_shipments",
+	"shipping_locations", "shipping_location_regions",
 }
 
 // Test verisinde kullanılan sabitler. Referans BAŞKA bir modüle (siparişe)
@@ -279,6 +280,17 @@ func TestMigrationVeriVarkenGeriAlinabilir(t *testing.T) {
 	})
 	require.NoError(t, err)
 
+	// Depo politikası da yazılır ve BÖLGE BAĞIYLA birlikte yazılır: iki tablo
+	// arasında modül içi bir foreign key vardır ve geri almanın onları doğru
+	// SIRADA düşürdüğü ancak dolu tablolarla sınanabilir. Boş tablolarla
+	// yanlış sıralı bir down da geçerdi.
+	_, err = svc.SetShippingLocation(ctx, service.SetShippingLocationInput{
+		LocationID: "sloc_migration",
+		Priority:   -1,
+		RegionIDs:  []string{testBolge},
+	})
+	require.NoError(t, err)
+
 	for _, table := range modulTablolari {
 		require.True(t, tabloVar(ctx, t, table), "%s başlangıçta var olmalı", table)
 	}
@@ -297,7 +309,10 @@ func TestMigrationVeriVarkenGeriAlinabilir(t *testing.T) {
 	version, dirty, err := db.Version(ctx, testDSN, fulfillment.ModuleName)
 	require.NoError(t, err)
 	assert.False(t, dirty, "yarıda kalmış migration olmamalı")
-	assert.Equal(t, uint(1), version)
+	assert.Equal(t, uint(2), version,
+		"sürüm modüldeki migration SAYISIDIR; yeni bir dosya eklendiğinde burası da "+
+			"artar. Sabit tutulsaydı, uygulanmayan bir migration sessizce fark "+
+			"edilmezdi")
 }
 
 // TestCrossModuleForeignKeyYok modülün tablolarındaki TÜM foreign key'lerin

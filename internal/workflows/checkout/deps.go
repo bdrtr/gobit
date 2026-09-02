@@ -99,6 +99,11 @@ const (
 	// göründüğünü bildirir.
 	CodeVariantInventoryAmbiguous = "checkout_workflow_variant_inventory_ambiguous"
 	// CodeReservationFailed stok ayırma adımının patladığını bildirir.
+	//
+	// YEDEK koddur: adımın patlamasına yol açan hata kendi kodunu taşıyorsa O
+	// korunur ve bu kod görünmez (bkz. [reserveInventoryStep.unwind]). Geriye
+	// yalnızca kodsuz bir hata için — ve bu paketin kendi ürettiği sözleşme
+	// ihlali hataları için — kalır.
 	CodeReservationFailed = "checkout_workflow_reservation_failed"
 	// CodeReservationLeaked ayrılan stoğun geri BIRAKILAMADIĞINI bildirir;
 	// elle müdahale gerekir.
@@ -195,8 +200,10 @@ type Inventory interface {
 	// verilemez" bir stok modülü kararı değildir ve sonucu bu paket çıkarır
 	// (bkz. [reserveInventoryStep.locationFor]).
 	//
-	// Sıra deterministiktir ama TERCİH sırası değildir; adaylar arasından
-	// seçimi [Fulfillment.SelectLocation] yapar.
+	// Sıra deterministiktir ama TERCİH sırası değildir; adayları tercih
+	// sırasına [Fulfillment.RankLocations] dizer. Ayrım bu yüzeyin varlık
+	// sebebidir: sıraya politika saklamak, kararı hiç kimsenin bakmadığı bir
+	// yerde — stok modülünün sıralamasında — verirdi.
 	LocationsWithStock(ctx context.Context, inventoryItemID string, quantity int64) ([]string, error)
 
 	// Reserve stoğu ayırır ve rezervasyon kimliğini döner.
@@ -229,25 +236,62 @@ type Inventory interface {
 // taşımak olurdu (bkz. paket yorumu, "Dönüşü olmayan nokta").
 //
 // Buraya sorulan tek soru şudur: satırın stoğu HANGİ depodan ayrılacak.
-// Sorunun cevabı bir KARGO kararıdır (kargo bölgesi, taşıyıcının kapsama
-// alanı, teslim süresi), oysa "hangi depolarda yeterli stok var" bir STOK
-// OLGUSUDUR ve [Inventory.LocationsWithStock]'tan gelir. İkisini tek yüzeyde
-// toplamak, stok sorgusunu kargo politikasına ya da kargo politikasını stok
-// şemasına bağımlı kılardı.
+// Sorunun cevabı bir KARGO kararıdır — bugün deponun hedef bölgeye hizmet edip
+// etmediğine ve işletmecinin tercih sırasına bakar — oysa "hangi depolarda
+// yeterli stok var" bir STOK OLGUSUDUR ve [Inventory.LocationsWithStock]'tan
+// gelir. İkisini tek yüzeyde toplamak, stok sorgusunu kargo politikasına ya da
+// kargo politikasını stok şemasına bağımlı kılardı.
 type Fulfillment interface {
-	// SelectLocation adaylar arasından gönderinin çıkacağı lokasyonu seçer.
+	// RankLocations adayları TERCİH SIRASINA dizer: gönderi ilkinden çıkar.
 	//
-	// Seçim DETERMİNİSTİKTİR: aynı adaylarla ikinci çağrı aynı lokasyonu döner
-	// ve sonuç adayların GELİŞ SIRASINDAN bağımsızdır. Saga'nın yeniden
-	// denenmesi bu yüzden başka bir depodan ayırmaz; aksi hâlde ilk denemenin
-	// rezervasyonu yetim kalırdı.
+	// destinationRegionID gönderinin gideceği kargo bölgesidir ve ZORUNLUDUR;
+	// bu paket onu plandan verir. Modül deponun o bölgeye hizmet edip
+	// etmediğini kendi kaydından bilir, yani bu paket bir POLİTİKA taşımaz,
+	// politikanın SORUSUNU taşır. Boş verilirse modül errors.Invalid döner.
+	//
+	// # Zorunlu değişmez: dönen dilim girdinin ALT KÜMESİDİR
+	//
+	// Elemanlar candidateLocationIDs'in elemanlarıyla BİREBİR aynı dizelerdir
+	// ve hiçbiri iki kez geçmez. Normalleştirilmiş bir kopya ya da politika
+	// tablosundan okunmuş bir eş DEĞİL: bu paket sonucu kendi aday defterinde
+	// arar ve bulamazsa akışı errors.Internal ile düşürür
+	// (bkz. [reserveInventoryStep.sirala]).
+	//
+	// # Sıra BİR KEZ sorulur
+	//
+	// Tükenen bir depodan sonra bu yüzey YENİDEN çağrılmaz; çağıran sıradaki
+	// adayı kendi listesinden alır (bkz. [reserveInventoryStep.reserveLine]).
+	// Tek lokasyon değil sıra dönmesinin sebebi budur: her tükenişte yeniden
+	// sormak, aynı kayıtları aynı sıra için tekrar tekrar okumak olurdu — sıra
+	// deterministik olduğu için o okumalar zaten aynı cevabı üretirdi — ve her
+	// biri, adayların KİLİTSİZ okunmasıyla ayırmanın KİLİTLİ yapılması
+	// arasındaki yarış penceresini uzatırdı.
+	//
+	// Sıra aynı adaylar VE aynı politika kayıtlarıyla DETERMİNİSTİKTİR ve
+	// adayların geliş sırasından bağımsızdır. İşletmeci politikayı iki çağrı
+	// arasında değiştirirse sıra da değişir; determinizm iddiası onu KAPSAMAZ
+	// ve kapsaması gerekmez, çünkü bu bir ayarın beklenen sonucudur. Bir
+	// yürütmenin İÇİNDE sıranın değişmesi de mümkün değildir: satır başına tek
+	// çağrı yapılır.
 	//
 	// Aday listesi bu paket tarafından BOŞ verilmez
 	// (bkz. [reserveInventoryStep.locationFor]); verilirse modül
-	// errors.Conflict döner. Modülün adayları elemesi de mümkündür ve hiçbiri
-	// kalmazsa hata yine errors.Conflict'tir: çağıran onu yetersiz stokla AYNI
-	// dalda ("sipariş verilemez") karşılar.
-	SelectLocation(ctx context.Context, candidateLocationIDs []string) (locationID string, err error)
+	// errors.Conflict döner. Modülün adayları elemesi de mümkündür — bugün
+	// hedef bölgeye hizmet etmeyen depoları eler — ve hiçbiri kalmazsa hata
+	// yine errors.Conflict'tir: çağıran onu yetersiz stokla AYNI dalda
+	// ("sipariş verilemez") karşılar. Sınıfın önemi bu paketin dallanmasında
+	// DEĞİL, iki başka yerdedir: hatanın HTTP karşılığı sınıftan türer ve
+	// motorun varsayılan yeniden deneme yüklemi KindConflict'i DENEMEZ. Elenmiş
+	// bir aday kümesi tekrar denemekle değişmez.
+	//
+	// Modülün kendi kodu KORUNUR ve istemciye ulaşan kod odur: adım hatası
+	// [reserveInventoryStep.unwind] tarafından sarılırken kod devralınır.
+	// [CodeReservationFailed] yalnızca kodsuz bir hata için yedektir.
+	RankLocations(
+		ctx context.Context,
+		destinationRegionID string,
+		candidateLocationIDs []string,
+	) (orderedLocationIDs []string, err error)
 }
 
 // Orders sipariş modülünün ("order.interop") bu paketçe kullanılan yüzeyidir.

@@ -593,6 +593,12 @@ func TestDarYetkiYazmaUcunuAcmaz(t *testing.T) {
 		{"gönderi iptal", http.MethodPost, "/admin/v1/fulfillments/ful_1/cancel", ``},
 		{"kargoya ver", http.MethodPost, "/admin/v1/fulfillments/ful_1/ship", `{"tracking_number":"TK-9"}`},
 		{"teslim bildir", http.MethodPost, "/admin/v1/fulfillments/ful_1/deliver", ``},
+		// Depo politikası yazmak, modüldeki diğer yazmalardan farklı olarak
+		// SİPARİŞ YOLUNU durdurabilir: yanlış bir bölge bağı her sepette
+		// depoyu eler. Uç, aynı yetkiyle korunur ve bu tablo onun kapsam
+		// dışında kalmadığının kanıtıdır.
+		{"depo politikası yaz", http.MethodPut, "/admin/v1/shipping-locations/sloc_1", `{"priority":0,"region_ids":["reg_tr"]}`},
+		{"depo politikası sil", http.MethodDelete, "/admin/v1/shipping-locations/sloc_1", ``},
 	} {
 		rec := istekKimlikle(t, r, okumaKimligi, durum.method, durum.path, durum.body)
 		assert.Equal(t, http.StatusForbidden, rec.Code, "durum: %s", durum.ad)
@@ -601,6 +607,8 @@ func TestDarYetkiYazmaUcunuAcmaz(t *testing.T) {
 
 	assert.Empty(t, svc.sonIptalEdilen, "istek servise hiç ulaşmamalı")
 	assert.Equal(t, [2]string{}, svc.sonShipTracking, "istek servise hiç ulaşmamalı")
+	assert.Equal(t, service.SetShippingLocationInput{}, svc.sonLocationInput,
+		"depo politikası isteği servise hiç ulaşmamalı")
 }
 
 // TestDarYetkiOkumaUcundaGecer aynı dar kimliğin okuma uçlarından geçtiğini
@@ -625,6 +633,8 @@ func TestDarYetkiOkumaUcundaGecer(t *testing.T) {
 		"/admin/v1/shipping-options/sopt_1/rules",
 		"/admin/v1/fulfillments",
 		"/admin/v1/fulfillments/ful_1",
+		"/admin/v1/shipping-locations",
+		"/admin/v1/shipping-locations/sloc_1",
 	} {
 		rec := istekKimlikle(t, r, okumaKimligi, http.MethodGet, path, "")
 		assert.Equal(t, http.StatusOK, rec.Code, "yol: %s — gövde: %s", path, rec.Body.String())
@@ -647,4 +657,159 @@ func TestMagazaUcuYetkiIstemez(t *testing.T) {
 	rec := istekKimlikle(t, r, yetkisiz, http.MethodGet,
 		"/store/v1/shipping-options?currency_code=TRY", "")
 	assert.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+}
+
+// TestDepoPolitikasiYazmaGovdeyiVeYoluBirlestirir PUT'un lokasyon kimliğini
+// YOLDAN, geri kalanını gövdeden aldığını kanıtlar.
+//
+// Kimliğin gövdede de kabul edilmesi iki kaynak yaratırdı ve ikisi ayrıştığında
+// hangisinin kazandığı yalnızca kodu okuyanın bileceği bir ayrıntı olurdu.
+func TestDepoPolitikasiYazmaGovdeyiVeYoluBirlestirir(t *testing.T) {
+	t.Parallel()
+
+	svc := &fakeFulfillments{location: models.ShippingLocation{
+		LocationID: "sloc_1", Priority: -2, RegionIDs: []string{"reg_tr"},
+	}}
+	r := yeniRouter(svc)
+
+	rec := istek(t, r, http.MethodPut,
+		"/admin/v1/shipping-locations/sloc_1", `{"priority":-2,"region_ids":["reg_tr"]}`)
+	require.Equal(t, http.StatusOK, rec.Code, "gövde: %s", rec.Body.String())
+
+	assert.Equal(t, service.SetShippingLocationInput{
+		LocationID: "sloc_1",
+		Priority:   -2,
+		RegionIDs:  []string{"reg_tr"},
+	}, svc.sonLocationInput)
+}
+
+// TestDepoPolitikasiYanitiBosBolgeyiYAZAR "region_ids" anahtarının bölge bağı
+// olmayan bir depoda da yanıtta DURDUĞUNU kanıtlar.
+//
+// Alan omitempty taşısaydı anahtar düşerdi ve istemci "bilgi yok" ile "tüm
+// bölgelere hizmet ediyor" arasında ayrım yapamazdı; oysa boş dizi kuralın
+// kendisini söyler.
+func TestDepoPolitikasiYanitiBosBolgeyiYAZAR(t *testing.T) {
+	t.Parallel()
+
+	svc := &fakeFulfillments{location: models.ShippingLocation{LocationID: "sloc_1"}}
+	r := yeniRouter(svc)
+
+	rec := istekKimlikle(t, r, okumaKimligi, http.MethodGet,
+		"/admin/v1/shipping-locations/sloc_1", "")
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	// İddia TİPE bağlanır. assert.Empty hem null'ı hem boş diziyi geçirirdi,
+	// yani nil->[] dönüşümü kaldırılsa bile test yeşil kalırdı; oysa istemci
+	// için null "bilgi yok", [] ise "tüm bölgelere hizmet ediyor" demektir.
+	assert.Contains(t, rec.Body.String(), `"region_ids":[]`,
+		"boş bölge listesi gövdeye BOŞ DİZİ olarak yazılmalı, null olarak değil")
+
+	data, ok := govde(t, rec)["data"].(map[string]any)
+	require.True(t, ok, "yanıt tekil zarf taşımalı")
+	require.Contains(t, data, "region_ids", "anahtar boşken de yazılmalı")
+	assert.Equal(t, []any{}, data["region_ids"])
+}
+
+// TestDepoPolitikasiOkumaKimligiYOLDANAlinir GET'in lokasyon kimliğini yol
+// parametresinden DOĞRU adla okuduğunu kanıtlar.
+//
+// Parametre adı yanlış yazılsaydı chi boş dize döner, servis onu 422 ile
+// reddeder ve yalnızca "200 geldi mi" diye bakan bir test bunu yakalardı —
+// ama yakalayacağı şey yanlış olurdu: 422'yi gören okuyucu istemcinin
+// gövdesinde bir kusur arardı. Kimliğin servise NE OLARAK ulaştığını sınamak,
+// arızayı doğru yerde gösterir.
+func TestDepoPolitikasiOkumaKimligiYOLDANAlinir(t *testing.T) {
+	t.Parallel()
+
+	svc := &fakeFulfillments{location: models.ShippingLocation{LocationID: "sloc_okuma"}}
+	r := yeniRouter(svc)
+
+	rec := istekKimlikle(t, r, okumaKimligi, http.MethodGet,
+		"/admin/v1/shipping-locations/sloc_okuma", "")
+	require.Equal(t, http.StatusOK, rec.Code, "gövde: %s", rec.Body.String())
+	assert.Equal(t, "sloc_okuma", svc.sonOkunanLocation,
+		"kimlik yoldan alınıp servise olduğu gibi geçmeli")
+}
+
+// TestDepoPolitikasiSilmeKimligiYOLDANAlinirVe204Doner DELETE handler'ının
+// gerçekten koştuğunu, kimliği yoldan aldığını ve gövdesiz yanıt döndüğünü
+// kanıtlar.
+func TestDepoPolitikasiSilmeKimligiYOLDANAlinirVe204Doner(t *testing.T) {
+	t.Parallel()
+
+	svc := &fakeFulfillments{}
+	r := yeniRouter(svc)
+
+	rec := istek(t, r, http.MethodDelete, "/admin/v1/shipping-locations/sloc_silinecek", "")
+	require.Equal(t, http.StatusNoContent, rec.Code, "gövde: %s", rec.Body.String())
+	assert.Empty(t, rec.Body.String(), "204'ün gövdesi olmamalı")
+	assert.Equal(t, "sloc_silinecek", svc.sonSilinenLocation,
+		"kimlik yoldan alınıp servise olduğu gibi geçmeli")
+}
+
+// TestDepoPolitikasiYanitiALANLARIBirebirYazar yanıt gövdesinin servisten gelen
+// değerleri OLDUĞU GİBİ taşıdığını kanıtlar.
+//
+// Durum koduna bakan bir test yetmez: yanlış önceliği ya da boş bir bölge
+// listesini dönen bir çeviri de 200 döner ve yönetim ekranı, işletmecinin
+// yazdığından başka bir politika gösterirdi.
+func TestDepoPolitikasiYanitiALANLARIBirebirYazar(t *testing.T) {
+	t.Parallel()
+
+	svc := &fakeFulfillments{location: models.ShippingLocation{
+		LocationID: "sloc_alanlar", Priority: -7, RegionIDs: []string{"reg_tr", "reg_de"},
+	}}
+	r := yeniRouter(svc)
+
+	rec := istekKimlikle(t, r, okumaKimligi, http.MethodGet,
+		"/admin/v1/shipping-locations/sloc_alanlar", "")
+	require.Equal(t, http.StatusOK, rec.Code, "gövde: %s", rec.Body.String())
+
+	data, ok := govde(t, rec)["data"].(map[string]any)
+	require.True(t, ok, "yanıt tekil zarf taşımalı")
+	assert.Equal(t, "sloc_alanlar", data["location_id"])
+	assert.EqualValues(t, -7, data["priority"], "negatif öncelik gövdeye olduğu gibi yazılmalı")
+	assert.Equal(t, []any{"reg_tr", "reg_de"}, data["region_ids"],
+		"bölge listesi eksiksiz ve SIRASI korunmuş yazılmalı")
+}
+
+// TestDepoPolitikasiListesiTUMKayitlariVeSayfayiTasir listelemenin sayfadaki
+// kayıtların HEPSİNİ yazdığını ve sayfalama parametrelerinin servise
+// ULAŞTIĞINI kanıtlar.
+//
+// İki iddia birlikte durur çünkü ikisi de sessizce bozulabilir: yalnızca ilk
+// kaydı yazan bir döngü de, limit/offset'i yok sayan bir handler da 200 döner.
+func TestDepoPolitikasiListesiTUMKayitlariVeSayfayiTasir(t *testing.T) {
+	t.Parallel()
+
+	svc := &fakeFulfillments{
+		locations: []models.ShippingLocation{
+			{LocationID: "sloc_1", Priority: -1, RegionIDs: []string{"reg_tr"}},
+			{LocationID: "sloc_2", Priority: 3},
+		},
+		count: 42,
+	}
+	r := yeniRouter(svc)
+
+	rec := istekKimlikle(t, r, okumaKimligi, http.MethodGet,
+		"/admin/v1/shipping-locations?limit=1&offset=5", "")
+	require.Equal(t, http.StatusOK, rec.Code, "gövde: %s", rec.Body.String())
+
+	body := govde(t, rec)
+	assert.EqualValues(t, 42, body["count"], "count süzgece uyan TÜM kayıtların sayısı olmalı")
+	assert.EqualValues(t, 1, body["limit"])
+	assert.EqualValues(t, 5, body["offset"])
+
+	data, ok := body["data"].([]any)
+	require.True(t, ok, "yanıt liste zarfı taşımalı")
+	require.Len(t, data, 2, "servisten dönen HER kayıt yazılmalı")
+
+	ikinci, ok := data[1].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "sloc_2", ikinci["location_id"])
+	assert.Equal(t, []any{}, ikinci["region_ids"], "bağı olmayan kayıt boş dizi taşımalı")
+
+	assert.Equal(t, service.Page{Limit: 1, Offset: 5}, svc.sonLocationPage,
+		"sayfalama parametreleri servise ULAŞMALI; yok sayılsaydı yanıt yine 200 olurdu")
 }

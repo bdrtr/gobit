@@ -28,6 +28,7 @@ const (
 	codeRuleNotFound           = "fulfillment_shipping_option_rule_not_found"
 	codeFulfillmentNotFound    = "fulfillment_not_found"
 	codeManualShipmentNotFound = "fulfillment_manual_shipment_not_found"
+	codeLocationNotFound       = "fulfillment_shipping_location_not_found"
 	codeProfileNameExists      = "fulfillment_shipping_profile_name_exists"
 	codeFulfillmentExists      = "fulfillment_idempotency_key_exists"
 	codeItemExists             = "fulfillment_item_already_added"
@@ -130,6 +131,16 @@ func fulfillmentNotFound(id string) error {
 func manualShipmentNotFound(id string) error {
 	return errors.NotFound(codeManualShipmentNotFound,
 		"manuel sağlayıcı gönderisi bulunamadı: %s", id)
+}
+
+// locationNotFound politikası olmayan depo için ortak hatayı üretir.
+//
+// "Politikası yok" ile "depo yok" AYNI ŞEY DEĞİLDİR ve mesaj bunu söyler:
+// bu modül bir deponun var olup olmadığını bilmez (o stok modülünün bilgisidir),
+// yalnızca kendi kaydının bulunmadığını bildirir.
+func locationNotFound(id string) error {
+	return errors.NotFound(codeLocationNotFound,
+		"depo kargo politikası bulunamadı: %s", id)
 }
 
 // classify sürücü hatasını tipli hataya çevirir.

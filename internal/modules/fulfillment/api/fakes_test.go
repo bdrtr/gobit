@@ -27,6 +27,8 @@ type fakeFulfillments struct {
 	quoted      []service.QuotedOption
 	fulfillment models.Fulfillment
 	list        []models.Fulfillment
+	location    models.ShippingLocation
+	locations   []models.ShippingLocation
 	count       int64
 
 	err error
@@ -41,6 +43,17 @@ type fakeFulfillments struct {
 	sonUpdateProfile service.UpdateProfileInput
 	sonShipTracking  [2]string
 	sonIptalEdilen   string
+	sonLocationInput service.SetShippingLocationInput
+	// sonOkunanLocation ve sonSilinenLocation, yol parametresinin handler'dan
+	// servise DOĞRU adla geçtiğini kanıtlar. Kaydedilmeselerdi, parametre adı
+	// yanlış yazıldığında chi boş dize döner, servis 422 üretir ve test
+	// "hata bekleniyordu" demediği sürece bunu fark etmezdi.
+	sonOkunanLocation  string
+	sonSilinenLocation string
+	// sonLocationPage listeleme ucundan servise geçen sayfalamadır. Handler
+	// sayfayı çözüp servise VERMEZSE yanıt yine 200 döner ve yalnızca durum
+	// koduna bakan bir test bunu göremezdi.
+	sonLocationPage service.Page
 }
 
 // Sahte servisin handler'ların beklediği yüzeyi karşıladığı derleme zamanında
@@ -190,4 +203,33 @@ func notFoundHatasi() error {
 // conflictHatasi testlerde kullanılan tipli bir çakışma hatasıdır.
 func conflictHatasi() error {
 	return errors.Conflict(service.CodeInvalidTransition, "teslim edilmiş gönderi iptal edilemez")
+}
+
+func (f *fakeFulfillments) SetShippingLocation(
+	_ context.Context,
+	in service.SetShippingLocationInput,
+) (models.ShippingLocation, error) {
+	f.sonLocationInput = in
+	return f.location, f.err
+}
+
+func (f *fakeFulfillments) GetShippingLocation(
+	_ context.Context,
+	id string,
+) (models.ShippingLocation, error) {
+	f.sonOkunanLocation = id
+	return f.location, f.err
+}
+
+func (f *fakeFulfillments) ListShippingLocations(
+	_ context.Context,
+	page service.Page,
+) ([]models.ShippingLocation, int64, error) {
+	f.sonLocationPage = page
+	return f.locations, f.count, f.err
+}
+
+func (f *fakeFulfillments) DeleteShippingLocation(_ context.Context, id string) error {
+	f.sonSilinenLocation = id
+	return f.err
 }

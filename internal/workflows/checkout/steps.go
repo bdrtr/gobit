@@ -258,15 +258,16 @@ func (s *reserveInventoryStep) Name() string { return StepReserveInventory }
 //
 // # Lokasyon satır BAŞINA belirlenir
 //
-// Çağıran bir lokasyon bildirmediyse her satırın deposu ayrı ayrı seçilir
+// Çağıran bir lokasyon bildirmediyse her satırın deposu ayrı ayrı belirlenir
 // (bkz. [reserveInventoryStep.locationFor]) ve bir siparişin satırları farklı
-// depolardan ayrılabilir. Seçim ayırmanın hemen ÖNÜNDE yapılır, hazırlıkta
-// değil: adaylar kilitsiz okunan bir olgudur ve seçim ile ayırma arasındaki her
-// milisaniye, listeye giren bir deponun Reserve'e gelindiğinde tükenmiş olma
-// ihtimalidir. Yarış tümüyle kapanmaz — kapatan tek şey Reserve'ün kendi
-// kilididir — ama pencere gereksiz yere büyütülmez.
+// depolardan ayrılabilir. Adaylar ve tercih sırası ayırmanın hemen ÖNÜNDE
+// çözülür, hazırlıkta değil: adaylar kilitsiz okunan bir olgudur ve okuma ile
+// ayırma arasındaki her milisaniye, listeye giren bir deponun Reserve'e
+// gelindiğinde tükenmiş olma ihtimalidir. Yarış tümüyle kapanmaz — kapatan tek
+// şey Reserve'ün kendi kilididir — ama pencere gereksiz yere büyütülmez;
+// sıralama bu yüzden satır başına BİR kez sorulur.
 //
-// Seçim de bir satırın patlayabileceği yeni bir noktadır ve tıpkı ayırma gibi
+// Sıralama da bir satırın patlayabileceği yeni bir noktadır ve tıpkı ayırma gibi
 // [reserveInventoryStep.unwind]'a düşer: önceki satırların rezervasyonları
 // geri bırakılır. Çok depolu bir sepette bu durum daha kolay oluşur — ilk satır
 // bir depodan ayrılmışken ikinci satır hiçbir depoda bulunamayabilir.
@@ -319,7 +320,7 @@ func (s *reserveInventoryStep) Invoke(ctx context.Context, sc *workflow.StepCont
 //
 // Hangi depolarda yeterli adet olduğu bir OLGUDUR ve stok modülünün işidir.
 // Hangisinden gönderileceği bir KARARDIR ve kargo modülüne aittir
-// (bkz. [reserveInventoryStep.secim]). Bölünme bilinçlidir: iki yarıyı tek
+// (bkz. [reserveInventoryStep.sirala]). Bölünme bilinçlidir: iki yarıyı tek
 // yüzeyde toplamak, stok sorgusunu kargo politikasına ya da kargo politikasını
 // stok şemasına bağımlı kılardı.
 //
@@ -353,13 +354,22 @@ func (s *reserveInventoryStep) locationFor(ctx context.Context, line planLine) (
 // # Neden tek adayla yetinmiyoruz
 //
 // Aday listesi KİLİTSİZ okunur, ayırma ise kilit altında yapılır. Aradaki
-// pencerede seçilen deponun stoğu tükenmiş olabilir ve o zaman Reserve
-// errors.Conflict döner. Tek adayla yetinen bir uygulama siparişin TAMAMINI
-// düşürürdü — üstelik BAŞKA bir depoda yeterli stok dururken.
+// pencerede sıranın başındaki deponun stoğu tükenmiş olabilir ve o zaman
+// Reserve errors.Conflict döner. Tek adayla yetinen bir uygulama siparişin
+// TAMAMINI düşürürdü — üstelik BAŞKA bir depoda yeterli stok dururken.
 //
-// Bu yalnızca teorik bir yarış değildir: seçim deterministiktir, yani
-// eşzamanlı gelen her sipariş AYNI depoyu seçer ve hepsi aynı satırda
-// çarpışır. Deterministik seçim çakışmayı azaltmaz, yoğunlaştırır.
+// Bu yalnızca teorik bir yarış değildir: sıra deterministiktir, yani eşzamanlı
+// gelen her sipariş AYNI depoyu dener ve hepsi aynı satırda çarpışır.
+// Deterministik sıra çakışmayı azaltmaz, yoğunlaştırır.
+//
+// # Sıra BİR KEZ sorulur
+//
+// Kargo modülü satır başına tek kez çağrılır ve tercih sırasını verir; geri
+// düşme o listede bir sonrakine geçmektir. Her tükenişte yeniden sormak aynı
+// cevabı üretirdi (sıra deterministiktir) ama her defasında politika
+// kayıtlarını yeniden okurdu: N adaylı bir satır için bir sorgu yerine N sorgu
+// ve her biri, adayların KİLİTSİZ okunmasıyla ayırmanın KİLİTLİ yapılması
+// arasındaki yarış penceresini uzatan bir gidiş-dönüş.
 //
 // # Neden bu, adımı yeniden denemek DEĞİLDİR
 //
@@ -375,24 +385,32 @@ func (s *reserveInventoryStep) locationFor(ctx context.Context, line planLine) (
 // (erişilemeyen veritabanı, geçersiz girdi) her depoda AYNI cevabı verir;
 // onlarda ısrar etmek arızayı gizleyip gecikmeyi aday sayısıyla çarpardı.
 //
-// Çağıran bir lokasyon BİLDİRDİYSE aday tektir ve geri düşülecek yer yoktur:
+// Çağıran bir lokasyon BİLDİRDİYSE sıra tektir ve geri düşülecek yer yoktur:
 // bildirilen lokasyon bir tercih değil talimattır.
+//
+// # Döngü SONLANIR
+//
+// Sıra sonlu bir dilimdir ve her tur bir eleman ilerler; sonlanma, kargo
+// modülünün ne döndüğünden bağımsız olarak dilimin uzunluğuyla sınırlıdır.
+// Bu, sıranın bir kez sorulmasının ikinci kazancıdır: eskiden sonlanma,
+// seçilen adayın listeden düşürülebilmesine — yani modülün aday kümesinin
+// DIŞINA çıkmamasına — bağlıydı.
 func (s *reserveInventoryStep) reserveLine(
 	ctx context.Context, line planLine,
 ) (locationID, reservationID string, err error) {
-	kalan, err := s.locationFor(ctx, line)
+	adaylar, err := s.locationFor(ctx, line)
+	if err != nil {
+		return "", "", err
+	}
+
+	sirali, err := s.sirala(ctx, line, adaylar)
 	if err != nil {
 		return "", "", err
 	}
 
 	var sonHata error
 
-	for len(kalan) > 0 {
-		secilen, err := s.secim(ctx, line, kalan)
-		if err != nil {
-			return "", "", err
-		}
-
+	for i, secilen := range sirali {
 		reservationID, err := s.w.inventory.Reserve(ctx,
 			line.InventoryItemID, secilen, line.Quantity, line.LineItemID)
 
@@ -404,67 +422,72 @@ func (s *reserveInventoryStep) reserveLine(
 		}
 
 		sonHata = err
-		kalan = cikar(kalan, secilen)
 
-		s.w.log.DebugContext(ctx, "depo tükenmiş, sonraki adaya geçiliyor",
+		s.w.log.DebugContext(ctx, "depo tükenmiş, sıradaki adaya geçiliyor",
 			"cart_id", s.plan.CartID, "line_item_id", line.LineItemID,
-			"location_id", secilen, "kalan_aday", len(kalan))
+			"location_id", secilen, "sira_uzunlugu", len(sirali), "sira_indeksi", i)
 	}
 
 	return "", "", sonHata
 }
 
-// secim adaylar arasından lokasyonu seçtirir.
+// sirala adayları kargo modülüne TERCİH SIRASINA dizdirir.
 //
-// Çağıran lokasyon bildirdiyse seçim yoktur ve hiçbir modüle sorulmaz:
+// Çağıran lokasyon bildirdiyse sıra yoktur ve hiçbir modüle sorulmaz:
 // bildirilen lokasyon bir tercih değil TALİMATTIR; onu "aday" sayıp kargo
 // modülüne onaylatmak, çağıranın kararını sessizce değiştirebilirdi.
 //
 // Aksi hâlde soru İKİYE bölünür: hangi depolarda yeterli stok olduğu bir
 // OLGUDUR (stok modülü, çağrılmış olarak elimizde), hangisinden gönderileceği
-// bir KARARDIR (kargo modülü). Seçimi bu paketin yapması en kötüsü olurdu —
+// bir KARARDIR (kargo modülü). Sırayı bu paketin kurması en kötüsü olurdu —
 // sepet akışının depo politikası hakkında söyleyecek bir sözü yoktur.
 //
-// Kargo modülü aday olmayan bir kimlik döndürürse hata errors.Internal'dır:
-// listede olmayan bir depoya ayırmayı denemek, hatayı sebebinden bir modül
-// uzakta patlatırdı ve döngü de asla kısalmayacağı için sonsuza girerdi.
-func (s *reserveInventoryStep) secim(ctx context.Context, line planLine, kalan []string) (string, error) {
-	if s.plan.LocationID != "" {
-		return s.plan.LocationID, nil
-	}
-
-	secilen, err := s.w.fulfillment.SelectLocation(ctx, kalan)
-	if err != nil {
-		return "", err
-	}
-	if secilen == "" {
-		return "", errors.Internal(CodeReservationFailed,
-			"kargo modülü %d aday arasından BOŞ lokasyon kimliği seçti (kalem %s)",
-			len(kalan), line.InventoryItemID)
-	}
-	if !slices.Contains(kalan, secilen) {
-		return "", errors.Internal(CodeReservationFailed,
-			"kargo modülü aday olmayan bir lokasyon seçti: %s (kalem %s)",
-			secilen, line.InventoryItemID)
-	}
-
-	return secilen, nil
-}
-
-// cikar bir lokasyonu aday listesinden düşürür.
+// Karara giren tek bağlam siparişin BÖLGESİDİR ve plandan gelir. Kargo modülü
+// deponun o bölgeye hizmet edip etmediğini kendi kaydından bilir; bu paketin
+// taşıdığı şey politika değil, politikanın SORUSUDUR. Bölgeden fazlası (örn.
+// teslimat adresi) bilinçli olarak geçirilmez: yürütme kaydı kalıcı bir
+// defterdir ve plan Bölüm 8 hassas verinin oraya yazılmamasını ister.
 //
-// Yeni dilim üretir; çağıranın (stok modülünün) döndürdüğü dilimi yerinde
-// değiştirmek, sahibi olmadığımız bir veriyi bozmak olurdu.
-func cikar(kalan []string, secilen string) []string {
-	kalanYeni := make([]string, 0, len(kalan))
-
-	for _, aday := range kalan {
-		if aday != secilen {
-			kalanYeni = append(kalanYeni, aday)
-		}
+// # Cevap üç yerden denetlenir
+//
+// Kargo modülü boş bir sıra, aday olmayan bir kimlik ya da aynı adayı iki kez
+// döndürürse hata errors.Internal'dır. Üçü de sözleşmenin ihlalidir ve
+// denetlenmeselerdi arıza sebebinden bir modül uzakta çıkardı: aday olmayan bir
+// depoya ayırma denenir, yinelenen bir aday aynı depoya iki kez gidilmesine yol
+// açardı.
+func (s *reserveInventoryStep) sirala(
+	ctx context.Context, line planLine, adaylar []string,
+) ([]string, error) {
+	if s.plan.LocationID != "" {
+		return []string{s.plan.LocationID}, nil
 	}
 
-	return kalanYeni
+	sirali, err := s.w.fulfillment.RankLocations(ctx, s.plan.RegionID, adaylar)
+	if err != nil {
+		return nil, err
+	}
+	if len(sirali) == 0 {
+		return nil, errors.Internal(CodeReservationFailed,
+			"kargo modülü %d aday arasından BOŞ bir sıra döndürdü (kalem %s)",
+			len(adaylar), line.InventoryItemID)
+	}
+
+	gorulen := make(map[string]struct{}, len(sirali))
+	for _, secilen := range sirali {
+		if !slices.Contains(adaylar, secilen) {
+			return nil, errors.Internal(CodeReservationFailed,
+				"kargo modülü aday olmayan bir lokasyon sıraladı: %s (kalem %s)",
+				secilen, line.InventoryItemID)
+		}
+		if _, dup := gorulen[secilen]; dup {
+			return nil, errors.Internal(CodeReservationFailed,
+				"kargo modülü aynı lokasyonu iki kez sıraladı: %s (kalem %s)",
+				secilen, line.InventoryItemID)
+		}
+		gorulen[secilen] = struct{}{}
+	}
+
+	return sirali, nil
 }
 
 // unwind yarıda kalan ayırmanın kendi temizliğini yapar ve nihai hatayı üretir.
@@ -474,11 +497,31 @@ func cikar(kalan []string, secilen string) []string {
 // dokunulur: bırakılmış bir rezervasyonu yeniden bırakmak gereksizdir ve
 // listeyi budamak, hangi kimliğin gerçekten asılı kaldığını görünür tutar.
 //
-// locationID satırın deposudur ve LOKASYON SEÇİLEMEDEN patlayan bir çağrıda
-// boştur; mesaj o hâlde "seçilemedi" yazar. Planın lokasyonunu yazmak artık
-// yanlış olurdu: alan opsiyoneldir ve satır başına seçim yapılan bir akışta
-// boş bir alanı mesaja koymak, operatöre "boş lokasyona ayırmayı denedik"
-// dedirtirdi.
+// locationID satırın deposudur ve İKİ durumda boştur: sıra hiç kurulamadığında
+// (aday yok ya da hepsi elendi) ve sıradaki depoların HEPSİ denenip
+// tükendiğinde. Mesaj ikisinde de "seçilemedi" yazar ve bu, mesajın SÖYLEMEDİĞİ
+// şeydir — hangisinin yaşandığı KODDAN okunur (aday yoksa bu paketin kodu,
+// eleme boşalttıysa kargo modülünün kodu, tükendiyse stok modülünün kodu).
+// Planın lokasyonunu yazmak yanlış olurdu: alan opsiyoneldir ve satır başına
+// depo belirlenen bir akışta boş bir alanı mesaja koymak, operatöre "boş
+// lokasyona ayırmayı denedik" dedirtirdi.
+//
+// # Alt hatanın KODU korunur
+//
+// Sarmalama sınıfı (Kind) zaten alt hatadan devralıyordu; kod da devralınır ve
+// [CodeReservationFailed] yalnızca kodsuz bir hata için YEDEKTİR. Kalıp motorun
+// kendi sarmalamasından alınmıştır (bkz. [github.com/bdrtr/gobit/internal/core/workflow.CodeStepFailed])
+// ve orada gerekçesi ölçülmüş bir bedelle yazılıdır: taşıma katmanı gövdeye tek
+// bir makine okunur alan (kod) yazar ve o alan tek bir değere düzleşirse
+// istemci farklı arızaları ayırt edemez.
+//
+// Bedel burada daha da somuttur. Bu adımda üç ayrı dünya aynı sınıfta (409)
+// patlar: hiçbir depoda yeterli stok yoktur, seçilen depo yarışta tükenmiştir,
+// ya da hiçbir aday siparişin bölgesine HİZMET ETMEZ. Üçüncüsü bir stok sorunu
+// DEĞİL, işletmecinin yazdığı bir kargo politikasının sonucudur ve düzeltmesi
+// başka bir yerdedir. Kod ezilseydi dolu raflarla "stok ayrılamadı" raporlanır,
+// operatör de bakması gereken yeri bulamazdı — mesaj zinciri sebebi taşır ama
+// taşıma katmanı yalnızca en dıştaki mesajı yayımlar.
 func (s *reserveInventoryStep) unwind(
 	ctx context.Context,
 	sc *workflow.StepContext,
@@ -491,7 +534,11 @@ func (s *reserveInventoryStep) unwind(
 	if location == "" {
 		location = "seçilemedi"
 	}
-	failure := errors.Wrap(cause, errors.KindOf(cause), CodeReservationFailed,
+	code := errors.CodeOf(cause)
+	if code == "" {
+		code = CodeReservationFailed
+	}
+	failure := errors.Wrap(cause, errors.KindOf(cause), code,
 		"%s satırı için stok ayrılamadı (kalem %s, lokasyon %s, adet %d)",
 		line.LineItemID, line.InventoryItemID, location, line.Quantity)
 	if len(refs) == 0 {

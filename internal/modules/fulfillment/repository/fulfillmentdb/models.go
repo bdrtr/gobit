@@ -50,6 +50,19 @@ type FulfillmentManualShipment struct {
 	UpdatedAt      pgtype.Timestamptz
 }
 
+type ShippingLocation struct {
+	LocationID string
+	Priority   int64
+	CreatedAt  pgtype.Timestamptz
+	UpdatedAt  pgtype.Timestamptz
+}
+
+type ShippingLocationRegion struct {
+	LocationID string
+	RegionID   string
+	CreatedAt  pgtype.Timestamptz
+}
+
 type ShippingOption struct {
 	ID                string
 	Name              string

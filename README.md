@@ -604,6 +604,90 @@ verildi ve bilerek açık bırakıldı; gerekçesi kodun godoc'undadır.
   [ADR 0008](docs/adr/0008-musteri-kimligi-guven-siniri.md)'de. Çerçeve kimliği
   doğrulayan bir yüzey **sunmuyor**; sunması gereken taraf gömen uygulamadır.
 
+## Hangi depodan gönderilir
+
+Bir siparişin satırları farklı depolardan ayrılabilir ve karar iki modüle
+bölünmüştür: **hangi depolarda yeterli stok var** bir olgudur ve stok
+modülünden gelir, **hangisinden gönderelim** bir karardır ve kargo modülüne
+aittir. Sepet akışı hiçbirini kendi vermez.
+
+Kargo modülü tek bir depo değil bir **tercih sırası** döner; sepet akışı ilk
+depoda ayırmayı dener, o depo yarışta tükenmişse sıradakine geçer ve kargo
+modülüne yeniden sormaz. Sıra satır başına **bir kez** hesaplanır.
+
+### Politika: ele, sırala, eşitliği boz
+
+Politika `/admin/v1/shipping-locations` altından yazılır ve depo başına iki şey
+taşır: hizmet ettiği kargo bölgeleri ve tercih sırası (`priority`).
+
+```bash
+# Ankara deposu yalnızca reg_tr'ye hizmet etsin ve varsayılanların önüne geçsin
+curl -X PUT http://localhost:9000/admin/v1/shipping-locations/sloc_ankara \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"priority": -1, "region_ids": ["reg_tr"]}'
+```
+
+Sırayla uygulanır:
+
+1. **Eleme** — bir depoya en az bir bölge bağlanmışsa ve sepetin bölgesi onların
+   arasında değilse aday düşer. Hiç bağı olmayan depo **tüm** bölgelere hizmet
+   eder.
+2. **Sıralama** — kalanlar `priority` küçükten büyüğe dizilir. Kaydı olmayan
+   depo sıfır önceliktedir; bir depoyu varsayılanların önüne almak için negatif
+   değer verilir.
+3. **Eşitlik bozma** — eşit öncelikte kimliği küçük olan öne geçer.
+
+Gövde bir düzeltme değil, politikanın **tamamıdır** (bu yüzden `PATCH` değil
+`PUT`): `region_ids` verilmezse deponun bağları silinir ve depo tüm bölgelere
+açılır. `DELETE` kaydı siler, yani depoyu **kapatmaz, varsayılana döndürür** —
+bir depoyu adaylıktan çıkarmak kargo modülünün yetkisinde değildir, aday
+listesini stok olgusu üretir.
+
+**Politika kaydı yoksa SEÇİLEN DEPO eskisiyle aynıdır**: eleme ve sıralama boşa
+düşer, geriye eşitliği bozan kural kalır. Katı alternatif (kaydı olmayan depo
+aday olamaz) açıldığı gün mevcut kurulumların tüm siparişlerini durdururdu.
+
+Aynısı kalmayan iki şey var ve ikisi de kayıtsız kurulumu da etkiler: satır
+başına **bir SQL sorgusu** eklendi (eski seçim veritabanına hiç dokunmuyordu,
+yani yeni bir 500 yolu da açıldı) ve stok ayırma hatalarının **kodu** değişti
+(bkz. `CHANGELOG.md`, kırıcı değişiklikler). Kod değişikliği depo bildiren
+çağrıları da etkiler; o yol politikaya hiç girmez ama aynı sarmalamadan geçer.
+
+### Kapsam bir kısıttır; tercih ayrı yazılır
+
+`region_ids` "bu depo oraya **gönderemez**" demektir, "oraya göndermeyi tercih
+etmem" demek değil. İki depoyu ayrı bölgelere bağlarsanız, birinin stoğu
+tükendiğinde sipariş **düşer** — diğerinde mal olsa bile. "Önce Ankara,
+tükenirse İstanbul" istiyorsanız bağ vermeyin, `priority` verin.
+
+Bunun bir tuzağı var ve ölçülmüş hâliyle "Bilinen sınırlar"da yazılıdır: var
+olmayan bir bölge kimliği bağlamak o depoyu her sepette eler ve tek depolu bir
+kurulumda mağazayı kapatır.
+
+### Reddin sebebi ayırt edilebilir
+
+Eleme yüzünden düşen bir sipariş, stok yetersizliğinden farklı bir kod taşır:
+
+| Durum | Kod |
+|---|---|
+| Hiçbir depoda yeterli stok yok | `checkout_workflow_reservation_failed` |
+| Seçilen depolar tükendi | `inventory_insufficient_stock` |
+| Hiçbir aday sepetin bölgesine hizmet etmiyor | `fulfillment_no_serviceable_location` |
+
+Üçü de `409`'dur — girdide düzeltilecek bir şey yoktur — ama işletmecinin
+yapacağı iş farklıdır. Vitrine ulaşan tek ayrım **koddur**: adım hatası alt
+hatanın kodunu korur, mesaj ise her üç durumda da aynıdır (taşıma katmanı
+gövdeye yalnızca en dıştaki mesajı yazar).
+
+Üçüncü durumun mesajı adayların gerçekte hangi bölgelere bağlı olduğunu da
+yazar — silinip yeniden açılmış bir bölgenin ölü kimliği ancak böyle görülür —
+ama o metin **sunucu logunda ve `workflow_executions` kaydındadır**, HTTP
+gövdesinde değil. Yani kod istemciye, döküm operatöre gider.
+
+Karar ve reddedilen seçenekler:
+[ADR 0010](docs/adr/0010-depo-secim-politikasi.md).
+
 ## Sertleştirme
 
 | Bileşen | Ayar | Yapılandırılmamışsa |
@@ -677,7 +761,7 @@ kapalıysa hiç bağlantı açılmaz.
 
 Birden çok **örnek** birden çok **kiracı** demek değildir: örnekler aynı veritabanını
 ve aynı kataloğu paylaşır, tek bir kurulumun yatay kopyalarıdır. Çerçeve kiracılar
-arası bir sınır **tanımaz** — 72 tablonun hiçbirinde "bu satır kime ait" sorusunun
+arası bir sınır **tanımaz** — 74 tablonun hiçbirinde "bu satır kime ait" sorusunun
 cevabı yoktur ve hiçbir sorgu böyle bir süzgeç taşımaz. İki müşteriye tek kurulumdan
 hizmet vermek istiyorsanız cevap iki kurulumdur: bir kiracı = bir kurulum = bir
 veritabanı = bir süreç. Bunun neden bir eksiklik değil bir karar olduğu, hangi
@@ -1145,6 +1229,7 @@ dokümanı kadar bağlayıcıdır; çelişki hâlinde ADR geçerlidir.
 | [0007](docs/adr/0007-sertlestirme-arizada-davranis.md) | Sertleştirmede arıza davranışı | Tek tip kural yok: kimlik **kapalı kalır** (fail-closed), hız sınırı **açık kalır** (fail-open), idempotency ayırmada reddeder / kayıtta anahtarı serbest bırakır |
 | [0008](docs/adr/0008-musteri-kimligi-guven-siniri.md) | Müşteri kimliği güven sınırı | Çerçeve müşteri kimliğini **doğrulamaz**: `customer_id` bir iddiadır, harcama limiti yalnızca müşterisini **beyan eden** alışverişe uygulanır; doğrulama gömen uygulamanın işidir |
 | [0009](docs/adr/0009-cok-kiracililik-kurulum-siniri.md) | Çok kiracılılık | Sınır **kurulumdur, satır değil**: her kurulum tek kiracılıdır, izolasyon dağıtım katmanındadır; çerçeve kiracılar arası bir sınır tanımaz, uygular ve iddia etmez |
+| [0010](docs/adr/0010-depo-secim-politikasi.md) | Depo seçim politikası | Lokasyon modeli kargo modülünün **kendi** şemasındadır; bölge bağı bir **kısıt**, öncelik bir **sıra**dır. Yüzey tek depo değil tercih sırası döner ve satır başına bir kez sorulur |
 
 ADR 0001, planın Bölüm 2.1 ("erişim public service interface üzerinden") ile
 Bölüm 2.4 ("modüller derleme zamanında birbirine bağımlı olmaz") arasındaki
@@ -1201,12 +1286,25 @@ açıktır.
   `internal/core/db/migrate.go` içindeki `db.MigrateDown` Go'dan çağrılabilir —
   ama onu çağıran bir komut ya da uç YOKTUR; `make migrate-down` da bunu söyler.
   İleri yön açılışta otomatiktir.
-- **Depo seçimi bir POLİTİKA taşımaz.** Çoklu depo desteklenir (adaylar stok
-  olgusundan gelir, seçimi kargo modülü yapar) ama bugünkü kural "kimliği en
-  küçük aday"dır: yakınlık, maliyet ve stok dağılımı İFADE EDİLEMEZ, çünkü
-  modülün bir lokasyon modeli yoktur. Seçim deterministiktir ve
-  `internal/modules/fulfillment/service/location.go` içinde tek noktadadır;
-  yapılandırılabilir değildir.
+- **Depo politikası bölge KAPSAMINI ve TERCİH sırasını ifade eder, başkasını
+  değil.** Stok dağılımı ("en çok stoğu olan depoyu öne al"), maliyet ve sipariş
+  düzeyinde karar ("tüm satırları tek depodan çıkar") İFADE EDİLEMEZ; her birinin
+  neden edilemediği [ADR 0010](docs/adr/0010-depo-secim-politikasi.md)'da
+  yazılıdır. Öncelik **depo** başınadır, yani "R1 için önce A, R2 için önce B"
+  de yazılamaz — bölge başına yazılabilen tek şey dışlamadır.
+- **Yanlış bir bölge bağı mağazayı KAPATIR ve sepeti kalıcı olarak tüketir.**
+  Var olmayan bir bölge kimliği bağlamak (ya da bir bölgeyi silip aynı adla
+  yeniden açmak — yeni kayıt yeni kimlik alır) o depoyu her sepette eler; tek
+  depolu bir kurulumda sonucu, katalog dolu olduğu hâlde her tamamlamanın
+  reddedilmesidir. Düşen sepet bir daha tamamlanamaz, çünkü tamamlama akışının
+  idempotency anahtarı sepet kimliğinden türer. Arıza görünürdür
+  (`fulfillment_no_serviceable_location` + adayların bağlarını yazan mesaj) ve
+  geri dönüşü tek bir yönetim yazmasıdır.
+- **Bölge bağı bir TERCİH değil KISITTIR.** İki depoyu ayrı bölgelere bağlayan
+  bir işletmeci, ilk deponun stoğu yarışta tükendiğinde siparişin düşmesini
+  kabul etmiş olur. "Önce A, tükenirse B" bölge bağıyla değil ÖNCELİKLE yazılır.
+- **Son bölge bağını silmek depoyu gizlemez, TÜM bölgelere açar** — satış kanalı
+  kuralının aynısı, tek farkla: orada bedel görünürlük, burada düşen sipariştir.
 
 **Değişmezlerin sınırı**
 
