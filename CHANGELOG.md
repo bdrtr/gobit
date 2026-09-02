@@ -10,6 +10,8 @@ Sabitlenme `1.0.0` ile olur.
 
 ## [Yayımlanmamış]
 
+## [0.5.0] — 2026-09-02
+
 ### Kırıcı değişiklikler
 
 `0.x` boyunca minor sürümlerde kırıcı değişiklik olabilir. Aşağıdaki
@@ -38,9 +40,14 @@ Sabitlenme `1.0.0` ile olur.
   bir bölgede sepet açardı — ve o sepet başka bir vergi oranıyla, başka bir
   fiyat listesinden fiyatlanırdı.
 
-  Yeni hata yüzeyi: bölgesi olmayan geçerli bir ülke `404`
-  (`country_has_no_region` / `country_not_found`), biçimi bozuk ya da boş bir
-  kod `422`'dir. Ayrım korunur çünkü ikisi farklı düzeltmeler ister: birinde
+  Yeni hata yüzeyi ÜÇ ayrı `404` taşır ve üçü ayrı durumdur: geçerli ama hiçbir
+  bölgeye bağlı olmayan ülke `country_has_no_region`, referans tablosunda hiç
+  bulunmayan ülke kodu `country_not_found`, bağlı olduğu bölge silinmiş ülke
+  ise `country_region_missing`. Biçimi bozuk ya da boş bir kod `422`'dir.
+  Ayrıca sepet açma yolundan `cart_region_unavailable` (500) kodu DÜŞTÜ —
+  bölge yüzeyi handler'a artık hiç bağlanmıyor — ve yerine sepet açılıp
+  okunamadığında `cart_missing_after_create` geldi; ikisi de operatör kodudur,
+  istemci onlara göre dallanmaz. Ayrım korunur çünkü ikisi farklı düzeltmeler ister: birinde
   müşteri başka bir ülke seçer, diğerinde istemci gövdesini düzeltir.
 
 - **Bağlama, satır uçlarındaki kalıbın AYNISIDIR ve yeni bir mekanizma
@@ -60,7 +67,9 @@ Sabitlenme `1.0.0` ile olur.
 
 - **`fulfillment.interop`'un `SelectLocation` metodu KALDIRILDI; yerine
   `RankLocations` geldi.** Gömülü kodu ve kendi kargo yüzeyini yazan tüketiciyi
-  etkiler; vitrin ve yönetim HTTP sözleşmeleri DEĞİŞMEDİ.
+  etkiler. VAR OLAN uçların yolları ile istek/yanıt şemaları değişmedi; hata
+  kodu için bir alttaki maddeye, yeni yönetim uçları için "Eklendi" bölümüne
+  bakın.
 
   ```go
   // önce
@@ -77,11 +86,12 @@ Sabitlenme `1.0.0` ile olur.
   değil, gönderinin NEREYE gittiğiydi ve ikincisi modülün içinde zenginleşmeyle
   elde edilemez. Bölge çağıranın elindedir — sepet akışının planı zaten taşıyor.
 
-  **Sıra dönmesi** bir maliyet kararıdır. Çağıran tükenen bir depodan sonra
-  sıradakini dener; eski yüzeyle bu, her tükenişte politikanın yeniden sorulması
-  ve aynı kayıtların yeniden okunması demekti — N adaylı bir satır için bir
-  sorgu yerine N sorgu. Sıra deterministik olduğu için o N-1 çağrı zaten aynı
-  cevabı üretiyordu. Yan kazanç ölçülebilir: sepet akışının aday döngüsünün
+  **Sıra dönmesi** bir maliyet kararıdır ve karşılaştırma KARŞI-OLGUSALDIR:
+  v0.4.0'ın seçimi saf bir fonksiyondu, veritabanına hiç dokunmuyordu. Politika
+  eski yüzeye (tek lokasyon dönen `SelectLocation`) eklenseydi, çağıran tükenen
+  her depodan sonra yeniden sormak zorunda kalacaktı — N adaylı bir satır için
+  bir sorgu yerine N sorgu; üstelik sıra deterministik olduğu için o N-1 çağrı
+  aynı sıralamayı yeniden hesaplayacaktı. Yan kazanç ölçülebilir: sepet akışının aday döngüsünün
   sonlanması artık modülün ne döndüğünden bağımsızdır — eskiden seçilen adayın
   listeden düşürülebilmesine bağlıydı, şimdi sonlu bir dilimin uzunluğuyla
   sınırlıdır.
@@ -107,58 +117,27 @@ Sabitlenme `1.0.0` ile olur.
   kendi sarmalamasında düzeltmişti ve gerekçesi orada B2B harcama limitiyle
   ölçülmüş hâlde yazılı.
 
-  Koda göre dallanan istemciyi etkiler; `checkout_workflow_reservation_failed`
-  artık YEDEK koddur ve yalnızca kodsuz bir hata için görünür.
+  Koda göre dallanan istemciyi etkiler. `checkout_workflow_reservation_failed`
+  artık adım hatasının SARMALAMASINDA yedektir: alt hata kendi kodunu taşıyorsa
+  o korunur. Kod kaybolmuş DEĞİLDİR — adımın KENDİ ürettiği hatalarda görünmeye
+  devam eder: hiçbir depoda aday bulunmadığında (yukarıdaki tablonun ilk satırı)
+  ve kargo modülü sözleşmeyi çiğnediğinde (boş sıra, aday olmayan kimlik,
+  yinelenen aday — üçü de `500`).
 
-### Değişti
-
-- `POST /store/v1/carts` gövdesindeki `metadata` **kaldı** ve akışa olduğu gibi
-  taşınıyor. Karar satır metadata'sında verilenin aynısıdır: alan gerçekten
-  istemcinin bilgisidir (kampanya kaynağı, vitrin oturumu), hiçbir hesaba
-  girmez ve türetilecek bir karşılığı yoktur. Düşürülseydi, sepeti açan tek yol
-  artık akış olduğu için istemcinin gönderdiği alan sessizce kaybolurdu.
-
-### Düzeltildi
-
-- **`.env`, komut satırından verilen ortam değişkenlerini SESSİZCE eziyordu.**
-  `Makefile`'ın `.env` yükleyicisi dosyayı çağıranın ortamının ÜSTÜNE
-  uyguluyordu; `.env.example`'daki boş `PLUGINS=`,
-  `OTEL_EXPORTER_OTLP_ENDPOINT=` ve `ADMIN_BOOTSTRAP_EMAIL=` satırları,
-  README'nin `DEĞİŞKEN=… make run` biçimindeki her örneğini etkisiz bırakıyordu
-  — hata vermeden. Ölçüldü (aynı Makefile, aynı `.env`, tek fark yükleyici):
-  düzeltme öncesi `PLUGINS=search-pg … make` → `PLUGINS=[]`,
-  `OTEL_EXPORTER_OTLP_ENDPOINT=[]`; sonrasında ikisi de komut satırındaki
-  değeri taşıyor ve `.env` hâlâ okunuyor (`LOG_FORMAT=text` geliyor).
-  Öncelik docker compose'unkiyle aynı yöne çevrildi: **ortam > `.env`**.
-  Yöntem ayrıştırmaz — çağıranın ortamı `export -p` ile saklanır, `.env`
-  kabukla yüklenir, saklanan ortam geri uygulanır.
-
-- **`make openapi-client` çalışma ağacına root'a ait dosyalar yazıyordu** ve
-  ardından `make clean` "Permission denied" ile düşüyordu; geliştirici kendi
-  deposunu temizlemek için `sudo`'ya muhtaç kalıyordu. Üreteç konteynerine
-  `--user` verildi. Mekanizma ölçüldü: `--user` olmadan konteyner `uid 0` ile
-  yazıyor ve `rm -rf` çıkış kodu 1 veriyor; `--user` ile dosyaların sahibi
-  çağıran oluyor ve aynı `rm -rf` 0 dönüyor.
-
-- README'nin modül izolasyonu güvencesi BAYATTI: "12 modül × 11 yasak"
-  yazıyordu, oysa `.golangci.yml` bugün 15 modülün her biri için 14 yasak
-  taşıyor (sayıldı: 15 kural, 210 `deny` girdisi, hiçbiri eksik değil). Sayı
-  düzeltildi ve listenin elle tutulduğu, ama unutulması hâlinde kuralın
-  denetimsiz KALMADIĞI yazıldı — `TestModullerBirbiriniImportEtmez` modül
-  ağacını gezer, `.golangci.yml`'den haberi yoktur.
-
-- README, müşteri oturumunu "Faz 8" diye anıyordu; aynı belgenin "Faz durumu"
-  tablosunda Faz 8 (Auth · admin user · API key · RBAC) **tamamlanmış**
-  görünüyor. Okuyan için çelişkili işaret: yapılmış bir fazın kapsamı olarak
-  gösterilen şey aslında hiçbir fazın kapsamında değil. Faz numarası
-  kaldırıldı, kapsam açıkça yazıldı.
+- **Satış kanalı kapsamı artık YAZMA yolunda da uygulanıyor.** Kanal ataması
+  KULLANAN kurulumlarda `POST /store/v1/carts/{id}/line-items`, yabancı kanalın
+  varyantı için `201` yerine `404` döner. Ayrıntı ve gerekçe aşağıda, Güvenlik
+  başlığında; madde buraya da konuldu çünkü yükseltme öncesi yalnızca bu bölümü
+  tarayan entegratör aksi hâlde görmezdi.
 
 ### Eklendi
 
-- **Depo seçimi artık bir POLİTİKA taşıyor.** README'nin bilinen sınırları şunu
-  yazıyordu ve madde bu sürümle DÜŞTÜ: *"Depo seçimi bir POLİTİKA taşımaz …
-  yakınlık, maliyet ve stok dağılımı İFADE EDİLEMEZ, çünkü modülün bir lokasyon
-  modeli yoktur."*
+- **Depo seçimi artık bir POLİTİKA taşıyor.** Sınır bu turda YAZIYA GEÇTİ ve
+  aynı yayımlanmamış pencerede kapandı; hiçbir yayımlanmış sürümün bilinen
+  sınırlarında durmadı. Kaydın değeri, kuralın v0.2.0'dan beri sessizce
+  "kimliği en küçük aday" olmasıdır. Yazıya geçtiğinde şöyle duruyordu:
+  *"Depo seçimi bir POLİTİKA taşımaz … yakınlık, maliyet ve stok dağılımı
+  İFADE EDİLEMEZ, çünkü modülün bir lokasyon modeli yoktur."*
 
   Lokasyon modeli kargo modülünün **kendi** şemasına geldi (iki tablo) ve depo
   kimliği opak, FK'sız bir yabancı kimlik olarak duruyor — `region_id`'nin
@@ -220,6 +199,74 @@ Sabitlenme `1.0.0` ile olur.
   beklemiyordu ve `internal/smoke`'un kendi yardımcıları anahtarı her zaman
   bir kanala bağlı üretiyordu. Mutasyonla doğrulandı — kanalsız anahtarı kabul
   eden bir sunucuda senaryo `401` beklerken `200` görüp düşüyor.
+
+- `product` modülünün varyant Query sağlayıcısı yeni bir süzgeç tanıyor:
+  `sales_channel_ids`. Yalnızca `id` ya da `ids` ile BİRLİKTE kullanılabilir;
+  tek başına verilirse istek `422` alır — kanal süzgeci bir yetkilendirme
+  daraltmasıdır, kendi başına bir listeleme ölçütü değil. Sepet akışının kanal
+  kapsamını yazma yolunda uygulaması buna dayanır. HTTP yüzeyine açık DEĞİLDİR.
+
+### Değişti
+
+- `POST /store/v1/carts` gövdesindeki `metadata` **kaldı** ve akışa olduğu gibi
+  taşınıyor. Karar satır metadata'sında verilenin aynısıdır: alan gerçekten
+  istemcinin bilgisidir (kampanya kaynağı, vitrin oturumu), hiçbir hesaba
+  girmez ve türetilecek bir karşılığı yoktur. Düşürülseydi, sepeti açan tek yol
+  artık akış olduğu için istemcinin gönderdiği alan sessizce kaybolurdu.
+
+### Düzeltildi
+
+- **`.env`, komut satırından verilen ortam değişkenlerini SESSİZCE eziyordu.**
+  `Makefile`'ın `.env` yükleyicisi dosyayı çağıranın ortamının ÜSTÜNE
+  uyguluyordu; `.env.example`'daki boş `PLUGINS=`,
+  `OTEL_EXPORTER_OTLP_ENDPOINT=` ve `ADMIN_BOOTSTRAP_EMAIL=` satırları,
+  README'nin `DEĞİŞKEN=… make run` biçimindeki her örneğini etkisiz bırakıyordu
+  — hata vermeden. Ölçüldü (aynı Makefile, aynı `.env`, tek fark yükleyici):
+  düzeltme öncesi `PLUGINS=search-pg … make` → `PLUGINS=[]`,
+  `OTEL_EXPORTER_OTLP_ENDPOINT=[]`; sonrasında ikisi de komut satırındaki
+  değeri taşıyor ve `.env` hâlâ okunuyor (`LOG_FORMAT=text` geliyor).
+  Öncelik docker compose'unkiyle aynı yöne çevrildi: **ortam > `.env`**.
+  Yöntem ayrıştırmaz — çağıranın ortamı `export -p` ile saklanır, `.env`
+  kabukla yüklenir, saklanan ortam geri uygulanır.
+
+- **`make openapi-client` çalışma ağacına root'a ait dosyalar yazıyordu** ve
+  ardından `make clean` "Permission denied" ile düşüyordu; geliştirici kendi
+  deposunu temizlemek için `sudo`'ya muhtaç kalıyordu. Üreteç konteynerine
+  `--user` verildi. Mekanizma ölçüldü: `--user` olmadan konteyner `uid 0` ile
+  yazıyor ve `rm -rf` çıkış kodu 1 veriyor; `--user` ile dosyaların sahibi
+  çağıran oluyor ve aynı `rm -rf` 0 dönüyor.
+
+- README'nin modül izolasyonu güvencesi BAYATTI: "12 modül × 11 yasak"
+  yazıyordu, oysa `.golangci.yml` bugün 15 modülün her biri için 14 yasak
+  taşıyor (sayıldı: 15 kural, 210 `deny` girdisi, hiçbiri eksik değil). Sayı
+  düzeltildi ve listenin elle tutulduğu, ama unutulması hâlinde kuralın
+  denetimsiz KALMADIĞI yazıldı — `TestModullerBirbiriniImportEtmez` modül
+  ağacını gezer, `.golangci.yml`'den haberi yoktur.
+
+- README, müşteri oturumunu "Faz 8" diye anıyordu; aynı belgenin "Faz durumu"
+  tablosunda Faz 8 (Auth · admin user · API key · RBAC) **tamamlanmış**
+  görünüyor. Okuyan için çelişkili işaret: yapılmış bir fazın kapsamı olarak
+  gösterilen şey aslında hiçbir fazın kapsamında değil. Faz numarası
+  kaldırıldı, kapsam açıkça yazıldı.
+
+### Kaldırıldı
+
+- **Hız sınırının dışa açık anahtar yardımcısı KALDIRILDI** —
+  `internal/core/http` paketindeki `PrincipalKey`. (Ad burada paketiyle
+  nitelenmeden yazılıyor: nitelenmiş bir atıf okuyanı ARAMAYA yollar ve
+  `internal/arch` bunu denetler; oysa bu maddenin söylediği şey tam olarak
+  aranacak bir şey KALMADIĞIDIR.)
+
+  v0.4.0'da dışa açık bir yardımcıydı ve hız sınırı anahtarını çağıranın
+  kimliğinden türetiyordu. Üretimde tüketicisi
+  YOKTU ve olamazdı: hız sınırı halkası koruma yığınında kimlik doğrulamadan
+  ÖNCE koşar, yani çağrıldığı anda ortada bir kimlik bulunmaz ve fonksiyon her
+  istekte aynı yedek anahtarı döndürürdü. Sunduğu şey tutulamayan bir vaatti.
+
+  Gömülü kodu etkiler: kendi `KeyFunc`'ını yazan taraf bu yardımcıyı çağırıyorsa
+  artık derlenmez. Karşılığı aynı davranışın kendi paketinde iki satırla
+  yazılmasıdır; anahtarın kimliğe göre ayrılması isteniyorsa halkanın kimlik
+  doğrulamadan SONRA takılması gerekir ve gerekçe `KeyFunc` godoc'undadır.
 
 ### Güvenlik
 
@@ -286,6 +333,13 @@ Sabitlenme `1.0.0` ile olur.
   `POST /store/v1/customers` publishable anahtarla kuralsız, taze bir misafir
   kaydı açıyor.
 
+  Dördüncü kapı atfın **sonradan** yapılabilmesidir: misafir olarak açılan bir
+  sepet `POST /store/v1/carts/{id}` ile başkasının `customer_id`'sine devredilir
+  ve sipariş o kimliğe yazılır — yani atıf yalnızca sepet açılışında değil,
+  sepetin ÖMRÜ BOYUNCA beyana dayanır (ölçüldü: devir `200`, sipariş kurbanın
+  adına). Kapı sayısı üç değil DÖRTTÜR; aynı sayı README'nin B2B bölümünde ve
+  ADR 0008'de de dörttür.
+
   Kimlik doğrulama **inşa edilmedi** ve bu bilinçlidir: doğrulama çerçevenin
   değil gömen uygulamanın işi olarak karara bağlandı
   ([ADR 0008](docs/adr/0008-musteri-kimligi-guven-siniri.md) — reddedilen
@@ -323,6 +377,12 @@ benimseme kararını veren kişi tam olarak o listeyi okur.
   kimsenin kapatmadığı sınırdır; bu kez onu görünür kılan şey de bir belge oldu
   ([ADR 0009](docs/adr/0009-cok-kiracililik-kurulum-siniri.md) açığı, kendi
   gerekçesini kurarken buldu).
+- Depo seçiminin POLİTİKASIZ olması KAPANDI (yukarıda, Eklendi): kural artık
+  ele → sırala → eşitliği boz üçlüsüdür. Bu sınır da hiçbir YAYIMLANMIŞ sürümün
+  "Bilinen sınırlar" bölümünde durmadı — aynı yayımlanmamış pencerede yazıya
+  geçti ve kapandı. Kaydın değeri, kuralın v0.2.0'dan (çoklu depo desteğinin
+  geldiği sürüm) beri sessizce "kimliği en küçük aday" olmasıdır. Kapatmanın
+  kabul edilen bedelleri aşağıdaki açık sınırlara girdi.
 
 **Devam eden.** v0.4.0'ın "vitrin sepetlerinde SAHİPLİK denetimi yok" maddesi
 aynen geçerlidir; model değişmedi. Değişen tek şey, modelin kapsamadığı yerin
@@ -359,6 +419,31 @@ aynen geçerlidir; model değişmedi. Değişen tek şey, modelin kapsamadığı
   yazmıyordu; gerekçesiz bir kapsam dışı bırakma karar değildir, her turda
   yeniden tartışılır. Reddedilen iki tasarım ve kararı yeniden neyin açacağı
   [ADR 0009](docs/adr/0009-cok-kiracililik-kurulum-siniri.md)'da.
+
+- **Yanlış bir bölge bağı MAĞAZAYI KAPATIR ve düşen sepeti KALICI olarak
+  tüketir.** Var olmayan bir bölge kimliği bağlamak — ya da bir bölgeyi silip
+  aynı adla yeniden açmak, çünkü yeni kayıt yeni kimlik alır — o depoyu her
+  sepette eler; tek depolu bir kurulumda sonucu, katalog dolu olduğu hâlde her
+  tamamlamanın reddedilmesidir. Düşen sepet bir daha tamamlanamaz, çünkü
+  tamamlama akışının idempotency anahtarı sepet kimliğinden türer ve başarısız
+  bir yürütme aynı anahtarla tekrar koşamaz. Bu yakma bu sürümden ÖNCE de
+  vardı; değişen, tetikleyicisinin artık bir stok olgusu değil tek bir yönetim
+  yazması olabilmesidir. Bedel kaldırılmadı, GÖRÜNÜR yapıldı: arıza kendi hata
+  kodunu taşır ve o kod vitrine ulaşır.
+
+- **Bölge bağı bir TERCİH değil KISITTIR ve geri düşme kümesini DARALTIR.** İki
+  depoyu ayrı bölgelere bağlayan işletmeci, ilk deponun stoğu yarışta
+  tükendiğinde siparişin düşmesini kabul etmiş olur — oysa politika yazılmadan
+  önce o sipariş diğerinden çıkardı. "Önce A, tükenirse B" bölge bağıyla değil
+  ÖNCELİKLE yazılır. Bağı sıralama anahtarına çevirip katı kesiği bir bayrağın
+  arkasına almak değerlendirildi ve reddedildi; gerekçe
+  [ADR 0010](docs/adr/0010-depo-secim-politikasi.md)'da.
+
+- **Bir deponun SON bölge bağını silmek onu gizlemez, TÜM bölgelere açar.**
+  Kural satış kanalı kapsamınınkiyle aynıdır ve aynı gerekçeden gelir: katı
+  alternatif, açıldığı gün politikası olmayan tüm kurulumların siparişini
+  durdururdu. Asimetri yazılmalı — satış kanalında bedel GÖRÜNÜRLÜKTÜR, burada
+  DÜŞEN SİPARİŞTİR.
 
 - **Akış kurulumunu denetleyen mimari değişmez sözdizimsel bir VEKİLDİR ve
   yanlış negatifi ÖLÇÜLDÜ.** `TestHerAkisBilesimKokundeKurulu`, "yanlış
@@ -1185,7 +1270,8 @@ yalnızca test koşarak görünmeyen üç arıza:
   yoktur; geri alma elle yapılır. İleri yön açılışta otomatiktir.
 - Yük testi süreç içidir; kapasite planı üretmez.
 
-[Yayımlanmamış]: https://github.com/bdrtr/gobit/compare/v0.4.0...HEAD
+[Yayımlanmamış]: https://github.com/bdrtr/gobit/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/bdrtr/gobit/releases/tag/v0.5.0
 [0.4.0]: https://github.com/bdrtr/gobit/releases/tag/v0.4.0
 [0.3.0]: https://github.com/bdrtr/gobit/releases/tag/v0.3.0
 [0.2.0]: https://github.com/bdrtr/gobit/releases/tag/v0.2.0

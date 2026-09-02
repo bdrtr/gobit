@@ -17,6 +17,7 @@ hiçbir imzada kiracı parametresi, hiçbir ad alanında kiracı segmenti yok.
 > tablo sayısı `README.md`'nin "Tek örnek mi, birden çok mu?" başlığındadır ve
 > orası bugünü anlatır. İki sayı ayrıştığında geçerli olan, sorulan soruya göre
 > değişir: "karar neye dayandı" için buradaki, "bugün ne var" için README'deki.
+
 Gerekçesiz bir kapsam dışı bırakma bir karar değildir; her turda yeniden
 tartışılır ve bu arada kapılar sessizce kapanır. Bu ADR o boşluğu kapatıyor.
 

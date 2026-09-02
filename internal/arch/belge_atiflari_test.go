@@ -1238,7 +1238,7 @@ const (
 	mdYol markdownAtifSinifi = iota
 	// mdYolluSembol paket YOLU + sembol taşır: internal/core/http.Scoped.
 	mdYolluSembol
-	// mdNitelikliSembol paket ADIYLA niteler: corehttp.PrincipalKey.
+	// mdNitelikliSembol paket ADIYLA niteler: corehttp.RequireScope.
 	mdNitelikliSembol
 	// mdUyeSembol alıcı + üye ikilisidir: Config.FileRoot.
 	mdUyeSembol

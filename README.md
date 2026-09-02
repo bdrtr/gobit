@@ -15,9 +15,9 @@ Mimarinin **neden** böyle kurulduğu için: [`docs/mimari.md`](./docs/mimari.md
 make up      # Postgres 16 + Redis 7 (sağlıklı olana kadar bekler)
 make run     # sunucuyu :9000'de başlatır
 curl -s localhost:9000/health
-# {"status":"ok","version":"v0.4.0-5-g3622492"}
+# {"status":"ok","version":"v0.5.0"}
 curl -s localhost:9000/ready
-# {"status":"ok","version":"v0.4.0-5-g3622492","checks":{"postgres":{"status":"ok"}}}
+# {"status":"ok","version":"v0.5.0","checks":{"postgres":{"status":"ok"}}}
 ```
 
 `/health` yalnızca sürecin canlı olduğunu bildirir (liveness) ve bağımlılıkları
@@ -1238,8 +1238,10 @@ interface'ini import etmek 2.4'ü ihlal ederdi.
 
 ## Bilinen sınırlar
 
-Bu bölüm **bugünü** anlatır: aşağıdakiler v0.4.0 sonrası depoda hâlâ geçerli
-olan sınırlardır. Kapanmış olanlar buradan DÜŞER; hangi sürümde kapandıkları
+Bu bölüm **bugünü** anlatır: aşağıdakiler `main`'de hâlâ geçerli olan
+sınırlardır. Bir sürüm adı bilinçli olarak YAZILMAZ — yazılsaydı her sürüm
+kesiminde güncellenmesi gereken, güncellenmediğinde de sessizce bayatlayan bir
+tarih iddiası olurdu. Kapanmış olanlar buradan DÜŞER; hangi sürümde kapandıkları
 [`CHANGELOG.md`](./CHANGELOG.md)'de durur, çünkü orası bir geçmiş kaydıdır ve
 geriye dönük düzeltilmez. Hepsi araştırıldı, karara bağlandı ve gerekçeleri
 kodun godoc'unda duruyor — kayda geçmemiş bir açık, kimsenin kapatmadığı
@@ -1297,9 +1299,11 @@ açıktır.
   yeniden açmak — yeni kayıt yeni kimlik alır) o depoyu her sepette eler; tek
   depolu bir kurulumda sonucu, katalog dolu olduğu hâlde her tamamlamanın
   reddedilmesidir. Düşen sepet bir daha tamamlanamaz, çünkü tamamlama akışının
-  idempotency anahtarı sepet kimliğinden türer. Arıza görünürdür
-  (`fulfillment_no_serviceable_location` + adayların bağlarını yazan mesaj) ve
-  geri dönüşü tek bir yönetim yazmasıdır.
+  idempotency anahtarı sepet kimliğinden türer. Arıza görünürdür ama
+  görünürlüğün sınırı vardır: vitrin gövdesine yalnızca KOD ulaşır
+  (`fulfillment_no_serviceable_location`); adayların bağlarını yazan döküm
+  sunucu logunda ve `workflow_executions` kaydındadır. Geri dönüş tek bir
+  yönetim yazmasıdır — ama operatörün o kayda erişebilmesine bağlıdır.
 - **Bölge bağı bir TERCİH değil KISITTIR.** İki depoyu ayrı bölgelere bağlayan
   bir işletmeci, ilk deponun stoğu yarışta tükendiğinde siparişin düşmesini
   kabul etmiş olur. "Önce A, tükenirse B" bölge bağıyla değil ÖNCELİKLE yazılır.
@@ -1364,7 +1368,7 @@ make rename-module MODULE=github.com/kullanici/repo
 
 ## Sürüm
 
-Güncel sürüm: **v0.4.0**. Değişiklikler için
+Güncel sürüm: **v0.5.0**. Değişiklikler için
 [`CHANGELOG.md`](./CHANGELOG.md).
 
 - **v0.1.0** — Faz 0–9'un tamamı.
@@ -1377,6 +1381,18 @@ Güncel sürüm: **v0.4.0**. Değişiklikler için
   çalıştırmak, sepeti siparişe çeviren yolun hiçbir kurulumda BAĞLI OLMADIĞINI
   ortaya çıkardı; iplik çekilince fiyat ve para birimi yetkisinin istemcide
   olduğu görüldü. **Mağaza API'sinde kırıcı değişiklikler var.**
+- **v0.5.0** — depo seçimi bir POLİTİKA kazandı (kapsam bir kısıt, tercih bir
+  sıra; [ADR 0010](docs/adr/0010-depo-secim-politikasi.md)) ve sepet açma
+  akışa bağlandı: bölgeyi ve para birimini artık sunucu `country_code`'dan
+  türetiyor. İki güven sınırı yazıya geçti — müşteri kimliği doğrulanmıyor
+  ([ADR 0008](docs/adr/0008-musteri-kimligi-guven-siniri.md)), her kurulum tek
+  kiracılıdır ([ADR 0009](docs/adr/0009-cok-kiracililik-kurulum-siniri.md)) —
+  ve aynı avın bulduğu gerçek açık, satış kanalı kuralının yazma yolunda
+  uygulanmaması, kapatıldı. Belgeler de denetime girdi: godoc bağları ve
+  markdown atıfları çözülüyor (`TestGodocBaglariCozuluyor`,
+  `TestBelgelerdekiAtiflarCozuluyor`), satır numarasıyla atıf yasak
+  (`TestBelgelerdeSatirNumarasiAtfiYok`) ve para değişmezinin kör noktası
+  kapandı (`TestParaTamSayidir`). **Mağaza API'sinde kırıcı değişiklikler var.**
 
 `0.x` boyunca **kırıcı değişiklikler minor sürümlerde gelebilir**: API yüzeyi
 henüz sabitlenmemiştir. Sabitlenme `1.0.0` ile olur.
