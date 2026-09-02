@@ -37,6 +37,14 @@ const yoklamaAraligi = 100 * time.Millisecond
 // istekSuresi tek bir HTTP isteğine tanınan süredir.
 const istekSuresi = 5 * time.Second
 
+// gunlukSuresi bir log satırının tampona düşmesi için tanınan azami süredir.
+//
+// Sıfır olamaz ve gerekçesi bir yarıştır: uygulama teşhis satırını yanıtı
+// yazmadan ÖNCE loglar, ama boruyu tampona kopyalayan taraf exec.Cmd'nin AYRI
+// bir goroutine'idir. Yanıt elde olduğu anda tamponu tek seferde okumak,
+// arızası olmayan bir senaryoyu makinenin hızına bağlardı.
+const gunlukSuresi = 5 * time.Second
+
 // oldurmeSuresi kapanış sinyalinden sonra süreci zorla öldürmeden önce
 // beklenen süredir.
 //
@@ -398,4 +406,27 @@ func acilistaDurmali(t *testing.T, ayar ayarlar, sure time.Duration) (cikisKodu 
 func (s *surec) gunlukIceriyorMu(metin string) bool {
 	return strings.Contains(s.stdout.String(), metin) ||
 		strings.Contains(s.stderr.String(), metin)
+}
+
+// gunlukBekle metin iki akıştan birinde görünene kadar YOKLAR.
+//
+// Yoklamanın gerekçesi gunlukSuresi godoc'unda; sabit uyku bulunmamasının
+// gerekçesi ise [surec.hazirBekle] ile aynıdır. Zaman aşımında sürecin LOGU
+// basılır: onsuz tek bilgi "satır görünmedi" olurdu ve satırın hiç
+// yazılmaması ile geç yazılması ayırt edilemezdi.
+func (s *surec) gunlukBekle(metin string, sure time.Duration) {
+	s.t.Helper()
+
+	son := time.Now().Add(sure)
+	for {
+		if s.gunlukIceriyorMu(metin) {
+			return
+		}
+
+		if time.Now().After(son) {
+			s.t.Fatalf("%q sürecin logunda %s içinde görünmedi\n%s", metin, sure, s.gunluk())
+		}
+
+		time.Sleep(yoklamaAraligi)
+	}
 }

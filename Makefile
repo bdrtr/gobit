@@ -18,7 +18,21 @@ SQLC             := $(BIN_DIR)/sqlc
 #   - `$` karakterini değişken genişletmesi olarak yorumlar (se$cret -> "seret"),
 #   - tırnakları değerin parçası bırakır (LOG_FORMAT="text" -> `"text"`).
 # Parola içeren gerçek bir DSN bu yolla sessizce bozuluyordu.
-DOTENV = set -a; [ -f .env ] && . ./.env; set +a;
+#
+# ÖNCELİK: komut satırından verilen değişken .env'i EZER, tersi değil. Düz
+# `. ./.env` bunun tam tersini yapıyordu ve arıza SESSİZDİ: README'nin
+# `cp .env.example .env` adımını izleyen geliştiricinin ardından yazdığı
+# `OTEL_EXPORTER_OTLP_ENDPOINT=… make run`, `PLUGINS=… make run` ve
+# `ADMIN_BOOTSTRAP_EMAIL=… make run` komutlarının hepsi .env'deki BOŞ değerle
+# eziliyordu — izleme açılmıyor, eklenti yüklenmiyor, ilk yönetici
+# tohumlanmıyordu ve hiçbiri hata vermiyordu (ölçüldü: `eklentiler=[]`).
+# Öncelik docker compose'unkiyle aynı yöne çevrildi: ortam > .env.
+#
+# Yöntem AYRIŞTIRMAZ: çağıranın dışa verilmiş ortamı `export -p` ile
+# saklanır, .env kabukla yüklenir, sonra saklanan ortam geri uygulanır.
+# `KEY=$${KEY:-değer}` gibi bir sed dönüşümü .env'in içeriğine bağımlı olurdu
+# (satır sonundaki yorum, çok satırlı değer) — tam da bu dosyada kaçınılan şey.
+DOTENV = set -a; [ -f .env ] && { __cagiran_ortam=$$(export -p); . ./.env; eval "$$__cagiran_ortam"; }; set +a;
 
 .DEFAULT_GOAL := help
 .PHONY: help run build test test-integration smoke load-test openapi-schema openapi-client openapi-validate lint fmt tidy gen up up-tracing down logs psql redis-cli migrate-up migrate-down tools clean rename-module
@@ -145,8 +159,14 @@ openapi-schema: ## Çalışan sunucudan OpenAPI şemasını indir (openapi.json)
 	@curl -sSf $(OPENAPI_URL) -o openapi.json
 	@echo "yazıldı: openapi.json ($$(wc -c < openapi.json) bayt)"
 
+# Üreteç konteyneri varsayılan olarak root koşar ve bağlanan dizine root'a ait
+# dosyalar yazar: üretilen istemci o an okunabilir ama `make clean` onu SİLEMEZ
+# ("Permission denied") ve geliştirici kendi çalışma ağacında sudo'ya muhtaç
+# kalır (yaşandı). --user, üretilen dosyaların sahibini çağırana sabitler.
+DOCKER_USER := --user $(shell id -u):$(shell id -g)
+
 openapi-client: openapi-schema ## Şemadan istemci üret (DIL=... ile dil seçilir)
-	@docker run --rm -v $(CURDIR):/local \
+	@docker run --rm $(DOCKER_USER) -v $(CURDIR):/local \
 		openapitools/openapi-generator-cli:v7.10.0 \
 		generate -i /local/openapi.json -g $(DIL) -o /local/clients/$(DIL)
 	@echo "üretildi: clients/$(DIL)"

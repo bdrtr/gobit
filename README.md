@@ -15,24 +15,35 @@ Mimarinin **neden** böyle kurulduğu için: [`docs/mimari.md`](./docs/mimari.md
 make up      # Postgres 16 + Redis 7 (sağlıklı olana kadar bekler)
 make run     # sunucuyu :9000'de başlatır
 curl -s localhost:9000/health
-# {"status":"ok","version":"dev"}
+# {"status":"ok","version":"v0.4.0-5-g3622492"}
 curl -s localhost:9000/ready
-# {"status":"ok","version":"dev","checks":{"postgres":{"status":"ok"}}}
+# {"status":"ok","version":"v0.4.0-5-g3622492","checks":{"postgres":{"status":"ok"}}}
 ```
 
 `/health` yalnızca sürecin canlı olduğunu bildirir (liveness) ve bağımlılıkları
 sınamaz — geçici bir veritabanı kesintisi sürecin öldürülmesine yol açmamalıdır.
 `/ready` bağımlılıkları sınar ve biri düşükse **503** döner (readiness).
 
+`version` alanı derleme sırasında `git describe --tags --always --dirty`
+çıktısından gömülür, yani yukarıdaki değer sizin çalışma ağacınızda farklı
+olacaktır (çalışma ağacı kirliyse sonuna `-dirty` eklenir). `dev` yalnızca
+ldflags'siz derlenen bir ikilinin — örneğin düz `go run ./cmd/server` — yanıtıdır;
+`make run` ve `make build` sürümü her zaman gömer.
+
 Tüm hedefler için `make help`.
 
 ## Gereksinimler
 
-| Araç | Sürüm |
-|---|---|
-| Go | 1.26+ |
-| Docker + Compose | v2+ |
-| make | GNU Make |
+| Araç | Sürüm | Ne için |
+|---|---|---|
+| Go | 1.26+ | derleme ve testler |
+| Docker + Compose | v2+ | Postgres, Redis, izleme toplayıcısı, istemci üreteci |
+| make | GNU Make | tüm hedefler |
+| curl + jq | — | bu belgedeki örnekler |
+
+`curl` ve `jq` uygulamanın değil **belgenin** bağımlılığıdır: aşağıdaki her
+örnek ikisini de kullanır (`jq` olmadan `TOKEN=$(… | jq -r .data.token)`
+satırı boş bir jeton üretir ve sıradaki istek `401` alır).
 
 `make tools`, sabitlenmiş sürümlerle `golangci-lint` ve `sqlc`'yi `./bin` altına kurar.
 
@@ -65,6 +76,14 @@ sınır aşıldığında, yani üretimde edilir.
 > **`.env` biçimi:** Dosya POSIX kabuk semantiğiyle yüklenir. İçinde `$` geçen
 > değerleri **tek tırnağa alın** (`REDIS_URL='redis://:pa$word@…'`), aksi hâlde
 > kabuk onları genişletir.
+
+> **Öncelik:** Komut satırından verilen değişken `.env`'i **ezer**
+> (`PLUGINS=search-pg make run`), tersi değil — docker compose'un kuralıyla
+> aynı yön. Bu belgedeki `DEĞİŞKEN=… make run` biçimindeki her örnek, siz
+> `.env` oluşturmuş olsanız da yazdığını yapar. Ters öncelik **sessiz** bir
+> arıza sınıfıydı: `.env.example`'daki boş `PLUGINS=` satırı komut satırındaki
+> eklenti adını yutuyor, uygulama hatasız açılıyor ve eklentinin uçları
+> yalnızca **404** dönüyordu.
 
 ### Güvenlik varsayılanları
 
@@ -112,11 +131,14 @@ derleme öncesi denetlenir:
 
 - **Prensip 2.4** — `internal/core/**` içinden `internal/modules/**` import edilemez.
 - **Prensip 2.1 / 2.4** — Hiçbir modül başka bir modülü import edemez
-  (12 modül × 11 yasak = tam izolasyon). Modüller arası erişim container'dan
+  (15 modül × 14 yasak = tam izolasyon). Modüller arası erişim container'dan
   çözülen servis interface'i üzerinden yapılır.
 
 Yeni modül eklerken `.golangci.yml` içindeki `depguard.rules` listesini de
-güncelleyin.
+güncelleyin. Liste **elle** tutulur ama güncellenmesi unutulursa kural
+denetimsiz kalmaz: `internal/arch` içindeki
+`TestModullerBirbiriniImportEtmez` modül ağacını gezip gerçek import
+grafiğine bakar ve o listeden haberi yoktur.
 
 ### Mimari testler: yapıyı gezerler, liste tutmazlar
 
@@ -341,12 +363,41 @@ TOKEN=$(curl -s localhost:9000/admin/v1/auth/login \
 # 2) Korumalı uç
 curl -s localhost:9000/admin/v1/auth/me -H "Authorization: Bearer $TOKEN"
 
-# 3) Çıkış (çağıranın TÜM oturumlarını düşürür)
-curl -s -X POST localhost:9000/admin/v1/auth/logout -H "Authorization: Bearer $TOKEN"
+# 3) Vitrinin anahtarı: önce satış kanalı, sonra publishable anahtar
+SC=$(curl -s localhost:9000/admin/v1/sales-channels \
+  -H "Authorization: Bearer $TOKEN" -H 'content-type: application/json' \
+  -d '{"name":"Varsayılan vitrin"}' | jq -r .data.id)
+
+PK=$(curl -s localhost:9000/admin/v1/api-keys \
+  -H "Authorization: Bearer $TOKEN" -H 'content-type: application/json' \
+  -d "{\"title\":\"vitrin\",\"type\":\"publishable\",\"scopes\":[],\"sales_channel_ids\":[\"$SC\"]}" \
+  | jq -r .data.key)
 
 # 4) Mağaza yüzeyi
-curl -s localhost:9000/store/v1/products -H "x-publishable-api-key: pk_…"
+curl -s localhost:9000/store/v1/products -H "x-publishable-api-key: $PK"
+
+# 5) Çıkış (çağıranın TÜM oturumlarını düşürür)
+curl -s -X POST localhost:9000/admin/v1/auth/logout -H "Authorization: Bearer $TOKEN"
 ```
+
+**Publishable anahtar bir satış kanalına bağlı doğar.** Sıra tersine
+çevrilemez: anahtar üretme gövdesi `sales_channel_ids` ister ve **boş bir
+listeyle de anahtar üretilir** — ama o anahtar mağaza yüzeyinde
+`401 unauthenticated` alır (sunucu logunda `auth_no_sales_channel`), çünkü
+kimliğin taşıdığı tek bilgi zaten kanaldır ve kanalsız bir publishable anahtar
+hiçbir isteği bağlayamaz. Anahtar sonradan da bağlanabilir:
+`POST /admin/v1/api-keys/{id}/sales-channels`.
+
+Bu paragrafın üç cümlesi de gerçek ikilide çividir:
+`internal/smoke/anahtar_test.go` içindeki
+`TestKanalsizPublishableAnahtarVitrindeReddedilir` kanalsız anahtarı üretir
+(201), mağaza yüzeyinde **401** alır, teşhis kodunu sunucunun **logunda**
+arar ve kanalı sonradan bağlayıp **aynı** anahtarla girer.
+
+Düz anahtar **yalnızca üretim yanıtında** döner; diğer tüm uçlar maskelenmiş
+gösterimini (`pk_...WnjU`) verir. Kaybederseniz tek yol iptal edip yenisini
+üretmektir. Yönetim tarafının anahtarı (`sk_…`) aynı uçtan `"type":"secret"`
+ile çıkar ve o **bir sırdır**: yetki taşır, satış kanalına bağlanmaz.
 
 **İlk yönetici** bir tohum adımıyla doğar: yönetim uçları korumalı olduğu için
 ilk kullanıcıyı HTTP'den yaratmanın yolu yoktur. Tohum **yalnızca hiç kullanıcı
@@ -536,8 +587,10 @@ verildi ve bilerek açık bırakıldı; gerekçesi kodun godoc'undadır.
   tüm sepetleri okumaya çevirirdi. Modelin **kapsamadığı** şey gövdelerdeki
   `customer_id`'dir: yetenek "elimdeki kimliğe erişebilirim" der, "ben şu
   müşteriyim" demez — ve sepetin müşterisi, b2b harcama limitinin hangi şirket
-  penceresinden düşüleceğini belirler. Tek doğru kapatma müşteri oturumudur
-  (Faz 8).
+  penceresinden düşüleceğini belirler. Tek doğru kapatma müşteri oturumudur ve
+  o **henüz yoktur**: "Faz durumu" tablosundaki Faz 8 yönetim kimliğidir
+  (admin user, API key, RBAC) ve tamamlanmıştır; müşteri oturumu hiçbir fazın
+  kapsamında değildir.
 
 - **Müşteri kimliği doğrulanmıyor, dolayısıyla harcama limiti KOŞULLU
   uygulanıyor.** Yukarıdaki maddenin doğrudan sonucudur ama ayrı yazılmayı hak
@@ -686,8 +739,20 @@ eklenti adı ya da eksik ayar açılışta hata verir.
 
 ```bash
 PLUGINS=search-pg make run
-curl -s 'localhost:9000/store/v1/search?q=tişört' -H "x-publishable-api-key: pk_…"
+
+# Eklenti kurulmadan ÖNCE var olan katalog indekste yoktur: bir kereye mahsus
+# yeniden indeksleme. (Bundan sonrası olaylarla kendiliğinden tazelenir.)
+curl -s -X POST localhost:9000/admin/v1/search/reindex -H "Authorization: Bearer $TOKEN"
+# {"data":{"indexed":1,"removed":0,"pages":1}}
+
+curl -s 'localhost:9000/store/v1/search?q=tişört' -H "x-publishable-api-key: $PK"
 ```
+
+İndeks **olaylarla** tazelenir (`product.created` / `product.updated` /
+`product.deleted`), yani eklenti açıkken eklenen ürün aramaya kendiliğinden
+girer. Yeniden indeksleme yalnızca eklentinin **görmediği** dönem için
+gerekir: eklentisiz açılmış bir kurulumda oluşturulan ürünler aksi hâlde
+aramada hiç görünmez ve uç bunu bir hatayla değil, **boş bir sonuçla** bildirir.
 
 Arama motoru bilinçli olarak **dış bir servis değildir**: PostgreSQL tam metin
 araması, yeni bir bağımlılık ve yeni bir compose servisi getirmeden gerçek bir
@@ -1086,6 +1151,79 @@ Bölüm 2.4 ("modüller derleme zamanında birbirine bağımlı olmaz") arasınd
 çelişkiyi çözer — Go'da interface'ler paketlerde yaşadığı için sağlayıcının
 interface'ini import etmek 2.4'ü ihlal ederdi.
 
+## Bilinen sınırlar
+
+Bu bölüm **bugünü** anlatır: aşağıdakiler v0.4.0 sonrası depoda hâlâ geçerli
+olan sınırlardır. Kapanmış olanlar buradan DÜŞER; hangi sürümde kapandıkları
+[`CHANGELOG.md`](./CHANGELOG.md)'de durur, çünkü orası bir geçmiş kaydıdır ve
+geriye dönük düzeltilmez. Hepsi araştırıldı, karara bağlandı ve gerekçeleri
+kodun godoc'unda duruyor — kayda geçmemiş bir açık, kimsenin kapatmadığı
+açıktır.
+
+**Kimlik ve yetki**
+
+- **Müşteri kimliği doğrulanmaz.** `customer_id` bir olgu değil, hiçbir kanıt
+  istemeyen bir iddiadır; bunun harcama limiti üzerindeki üç ayrı sonucu
+  yukarıda "Kuralın koşulu" başlığında ölçümleriyle yazılıdır. Sınırın doğru
+  cümlesi "harcama limiti uygulanmıyor" değil, "limit yalnızca müşterisini
+  **beyan eden** alışverişe uygulanır"dır. Karar
+  [ADR 0008](docs/adr/0008-musteri-kimligi-guven-siniri.md)'de; doğrulamayı
+  kuracak taraf gömen uygulamadır.
+- **Vitrin sepetlerinde sahiplik denetimi yoktur** — model bir yetenek URL'idir
+  ve kuralları yukarıda "Aynı ölçütün henüz uygulanmadığı yer" başlığında
+  yazılıdır.
+- **Oturum iptali yalnızca toptandır.** `POST /admin/v1/auth/logout` ve parola
+  değişimi çağıranın BÜTÜN oturumlarını düşürür; tek bir cihazı düşürecek bir
+  uç yoktur (bkz. `internal/modules/auth/api`).
+
+**Satış kanalı kapsamı**
+
+- **Kanal ataması olmayan ürün tüm kanallarda görünür.** Kural bilinçli ve
+  geriye uyumludur (açıldığı gün katı alternatif mevcut katalogları boşaltırdı)
+  ama bir tuzağı vardır: son kanal bağını silmek ürünü gizlemez, tüm vitrinlere
+  açar. Gizlemek için `status` kullanılır. Kuralın tek kaynağı
+  `internal/modules/product/repository/saleschannel.go`'daki SQL şablonudur.
+- **Kapsam GİRİŞTE uygulanır; sepete girmiş bir satırın adedi sonradan
+  artırılabilir.** Satır adedini güncelleyen yol
+  (`internal/workflows/cart/update_line_item.go`) ve tamamlama akışı kapsamı
+  yeniden sormaz. Sonucu: ürün başka bir kanala taşındıktan sonra bile,
+  sepetinde zaten bir satırı olan istemci o üründen daha fazla satın alabilir.
+  Bu, yukarıda gerekçesi yazılı kararın bedelidir — alternatifi, bir katalog
+  düzenlemesinin müşterinin dolu sepetini ödenemez hâle getirmesiydi.
+
+**Kurulum ve işletim**
+
+- **Çok kiracılılık yoktur.** Bir kiracı = bir kurulum = bir veritabanı = bir
+  süreç; ayrıntı yukarıda "Tek örnek mi, birden çok mu?" başlığında, karar
+  [ADR 0009](docs/adr/0009-cok-kiracililik-kurulum-siniri.md)'da.
+- **Migration'ların işletmeciye açık bir geri alma yolu yoktur.** Her modülün
+  `.down.sql` dosyaları vardır, geri alınabilirlikleri testle denetlenir ve
+  `internal/core/db/migrate.go` içindeki `db.MigrateDown` Go'dan çağrılabilir —
+  ama onu çağıran bir komut ya da uç YOKTUR; `make migrate-down` da bunu söyler.
+  İleri yön açılışta otomatiktir.
+- **Depo seçimi bir POLİTİKA taşımaz.** Çoklu depo desteklenir (adaylar stok
+  olgusundan gelir, seçimi kargo modülü yapar) ama bugünkü kural "kimliği en
+  küçük aday"dır: yakınlık, maliyet ve stok dağılımı İFADE EDİLEMEZ, çünkü
+  modülün bir lokasyon modeli yoktur. Seçim deterministiktir ve
+  `internal/modules/fulfillment/service/location.go` içinde tek noktadadır;
+  yapılandırılabilir değildir.
+
+**Değişmezlerin sınırı**
+
+- **Modüller arası imzalar derleme zamanında denetlenmez.** Dar arayüz +
+  container'dan adla çözüm, [ADR 0001](docs/adr/0001-modul-arasi-iletisim.md)'in
+  kabul edilen bedelidir: ayrışan bir alan adı iki paketin birim testlerini de
+  yeşil bırakır, uçları gerçek container üzerinden e2e'de birleşir.
+- **`TestHerAkisBilesimKokundeKurulu` sözdizimsel bir vekildir.** "Yanlış
+  yapılandırma açılışı durdurabilir mi" sorusunu "kuruluma giden yol bir `go`
+  ifadesinden geçiyor mu" diye sorar; `go` tek satırlık bir dolaylamanın
+  arkasına saklandığında denetim geçer, oysa özellik sağlanmaz (gerçek süreçte
+  ölçüldü). Yakaladığı biçimler kazara yazılanlar, kaçırdığı biçim bilerek
+  yazılması gerekendir — ama "açılış kapalı arızalanır" cümlesi bu değişmezden
+  ÇIKMAZ. Kapsam `internal/arch/kayit_test.go`'da yazılıdır.
+- **Yük testi süreç içidir** (`make load-test`, `internal/e2e`): doğruluğu yük
+  altında sınar, kapasite planı üretmez.
+
 ## Geliştirme
 
 ```bash
@@ -1095,6 +1233,9 @@ make smoke             # gerçek ikiliyi açar, süreç davranışını sınar
 make load-test         # temel yük testi (REQUESTS=… CONCURRENCY=… ile ayarlanır)
 make lint              # golangci-lint
 make fmt               # gofmt -s + go mod tidy
+make build             # dağıtılabilir ikiliyi bin/gobit olarak derle
+make psql              # çalışan Postgres'e psql ile bağlan
+make logs              # compose servislerinin loglarını izle
 make down              # altyapıyı durdur
 ```
 

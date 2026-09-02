@@ -53,6 +53,9 @@
 //     kanadı — kusurlu yapılandırmayla AÇILMAK ve sinyalle KAPANAMAMAK.
 //   - b2b_test.go ve graphql_test.go: gerçek süreçte HİÇ koşmamış iki yüzey;
 //     ikisi de yalnızca bileşim kökündeki bir kayıt satırı sayesinde vardır.
+//   - anahtar_test.go: belgeyi izleyen geliştiricinin düştüğü KURULUM TUZAĞI —
+//     kanalsız üretilen publishable anahtar 201 alır ama mağaza yüzeyinde her
+//     zaman 401 alır ve teşhis kodu yanıtta değil sunucunun logundadır.
 //   - vitrin_test.go: sepetten siparişe giden yolun gerçekten AÇIK olduğu.
 //     internal/arch'taki statik değişmez akışların bileşim kökünde KURULDUĞUNU
 //     görür ama kurulumun KOŞTUĞUNU göremez; o yarının kanıtı burada durur.

@@ -103,6 +103,25 @@ func zarfVerisi[T any](t *testing.T, yanit string) T {
 	return zarf.Data
 }
 
+// hataKodu hata zarfının MAKİNE kodunu döner.
+//
+// Mesaja değil koda bakılır: mesaj serbest metindir ve değişebilir, kod ise
+// istemcinin dallandığı sözleşmedir (bkz. core/http ErrorBody). Çekirdeğin
+// zarf TİPİ yine import edilmez; gerekçe zarfVerisi godoc'undadır.
+func hataKodu(t *testing.T, yanit string) string {
+	t.Helper()
+
+	var zarf struct {
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(yanit), &zarf),
+		"hata zarfı çözülemedi; gövde: %s", yanit)
+
+	return zarf.Error.Code
+}
+
 // satisKanaliAc yeni bir satış kanalı açar ve kimliğini döner.
 //
 // Kanal, vitrin yüzeyinin ÇALIŞMA KOŞULUDUR: publishable anahtar bir kanalı

@@ -66,6 +66,54 @@ Sabitlenme `1.0.0` ile olur.
   girmez ve türetilecek bir karşılığı yoktur. Düşürülseydi, sepeti açan tek yol
   artık akış olduğu için istemcinin gönderdiği alan sessizce kaybolurdu.
 
+### Düzeltildi
+
+- **`.env`, komut satırından verilen ortam değişkenlerini SESSİZCE eziyordu.**
+  `Makefile`'ın `.env` yükleyicisi dosyayı çağıranın ortamının ÜSTÜNE
+  uyguluyordu; `.env.example`'daki boş `PLUGINS=`,
+  `OTEL_EXPORTER_OTLP_ENDPOINT=` ve `ADMIN_BOOTSTRAP_EMAIL=` satırları,
+  README'nin `DEĞİŞKEN=… make run` biçimindeki her örneğini etkisiz bırakıyordu
+  — hata vermeden. Ölçüldü (aynı Makefile, aynı `.env`, tek fark yükleyici):
+  düzeltme öncesi `PLUGINS=search-pg … make` → `PLUGINS=[]`,
+  `OTEL_EXPORTER_OTLP_ENDPOINT=[]`; sonrasında ikisi de komut satırındaki
+  değeri taşıyor ve `.env` hâlâ okunuyor (`LOG_FORMAT=text` geliyor).
+  Öncelik docker compose'unkiyle aynı yöne çevrildi: **ortam > `.env`**.
+  Yöntem ayrıştırmaz — çağıranın ortamı `export -p` ile saklanır, `.env`
+  kabukla yüklenir, saklanan ortam geri uygulanır.
+
+- **`make openapi-client` çalışma ağacına root'a ait dosyalar yazıyordu** ve
+  ardından `make clean` "Permission denied" ile düşüyordu; geliştirici kendi
+  deposunu temizlemek için `sudo`'ya muhtaç kalıyordu. Üreteç konteynerine
+  `--user` verildi. Mekanizma ölçüldü: `--user` olmadan konteyner `uid 0` ile
+  yazıyor ve `rm -rf` çıkış kodu 1 veriyor; `--user` ile dosyaların sahibi
+  çağıran oluyor ve aynı `rm -rf` 0 dönüyor.
+
+- README'nin modül izolasyonu güvencesi BAYATTI: "12 modül × 11 yasak"
+  yazıyordu, oysa `.golangci.yml` bugün 15 modülün her biri için 14 yasak
+  taşıyor (sayıldı: 15 kural, 210 `deny` girdisi, hiçbiri eksik değil). Sayı
+  düzeltildi ve listenin elle tutulduğu, ama unutulması hâlinde kuralın
+  denetimsiz KALMADIĞI yazıldı — `TestModullerBirbiriniImportEtmez` modül
+  ağacını gezer, `.golangci.yml`'den haberi yoktur.
+
+- README, müşteri oturumunu "Faz 8" diye anıyordu; aynı belgenin "Faz durumu"
+  tablosunda Faz 8 (Auth · admin user · API key · RBAC) **tamamlanmış**
+  görünüyor. Okuyan için çelişkili işaret: yapılmış bir fazın kapsamı olarak
+  gösterilen şey aslında hiçbir fazın kapsamında değil. Faz numarası
+  kaldırıldı, kapsam açıkça yazıldı.
+
+### Eklendi
+
+- **Kurulum tuzağı artık gerçek süreçte çivili:**
+  `internal/smoke/anahtar_test.go` içindeki
+  `TestKanalsizPublishableAnahtarVitrindeReddedilir`, README'nin publishable
+  anahtar paragrafını uçtan uca yürür — kanalsız anahtar üretilir (`201`),
+  mağaza yüzeyinde `401` alır, teşhis kodu (`auth_no_sales_channel`) yanıtta
+  değil sunucunun LOGUNDA aranır ve kanal sonradan bağlanınca AYNI anahtar
+  girer. Bu yol depoda hiçbir zeminde koşmuyordu: hiçbir test o kodu
+  beklemiyordu ve `internal/smoke`'un kendi yardımcıları anahtarı her zaman
+  bir kanala bağlı üretiyordu. Mutasyonla doğrulandı — kanalsız anahtarı kabul
+  eden bir sunucuda senaryo `401` beklerken `200` görüp düşüyor.
+
 ### Güvenlik
 
 - **Satış kanalı kapsamı artık YAZMA yolunda da uygulanıyor: başka bir kanalın
@@ -144,6 +192,79 @@ Sabitlenme `1.0.0` ile olur.
   B2B kurulumu olan gömen uygulamaların yapması gereken: vitrin yüzeyini bir
   müşteri oturumuyla korumak ve `customer_id`'yi gövdeden değil oturumdan
   okumak. O katman olmadan limit, yalnızca dürüst istemcinin hatasını yakalar.
+
+### Bilinen sınırlar
+
+Bu bölüm bir GEÇMİŞ kaydının parçasıdır ve yalnızca **bu sürümde değişeni**
+söyler. v0.1.0 ile v0.4.0'ın "Bilinen sınırlar" bölümleri O SÜRÜMLERDE neyin
+bilindiğini anlatır ve geriye dönük düzeltilmezler; kapanan bir sınır, kapandığı
+sürümün kaydına yazılır — buraya. Bugün geçerli olan sınırların TAM listesi
+[`README.md`](./README.md)'nin "Bilinen sınırlar" bölümündedir: bir sürüm
+kaydından bugünü çıkarmak, üç listeyi üst üste koymayı gerektirirdi ve
+benimseme kararını veren kişi tam olarak o listeyi okur.
+
+**Kapananlar.**
+
+- v0.4.0'ın "`POST /store/v1/carts` hâlâ `region_id` alıyor" maddesi KAPANDI:
+  alan gövdeden kalktı, bölgeyi ve para birimini sunucu `country_code`'dan
+  türetiyor (yukarıda, Kırıcı değişiklikler). Kapatma, maddenin kendi işaret
+  ettiği yerde yapıldı — handler'da değil, türetmeyi zaten yapan akışta.
+- Satış kanalı kuralının YAZMA yolunda uygulanmaması KAPANDI (yukarıda,
+  Güvenlik). Bu, hiçbir sürümün "Bilinen sınırlar" bölümünde YAZMIYORDU ve
+  kaydın asıl kısmı budur: kural v0.1.0'dan beri bir yetkilendirme diye
+  anlatılıyor, yalnızca okuma yüzeyinde uygulanıyordu. Yazılmamış bir sınır,
+  kimsenin kapatmadığı sınırdır; bu kez onu görünür kılan şey de bir belge oldu
+  ([ADR 0009](docs/adr/0009-cok-kiracililik-kurulum-siniri.md) açığı, kendi
+  gerekçesini kurarken buldu).
+
+**Devam eden.** v0.4.0'ın "vitrin sepetlerinde SAHİPLİK denetimi yok" maddesi
+aynen geçerlidir; model değişmedi. Değişen tek şey, modelin kapsamadığı yerin
+(`customer_id` iddiası) bu sürümde gerçek ikilide ÖLÇÜLMÜŞ olmasıdır.
+
+**Bu turda araştırıldı, karar verildi ve BİLEREK açık bırakıldı.**
+
+- **Müşteri kimliği doğrulanmıyor; harcama limiti KOŞULLU uygulanıyor.**
+  Ölçümler ve gerekçe yukarıda, Güvenlik başlığında; karar
+  [ADR 0008](docs/adr/0008-musteri-kimligi-guven-siniri.md)'de. Sınırın doğru
+  cümlesi "harcama limiti uygulanmıyor" DEĞİL, "limit yalnızca müşterisini
+  BEYAN EDEN alışverişe uygulanır"dır: kimliğin doğrulandığı bir vitrinde kural
+  muhasebe disiplinini gerçekten uygular.
+
+- **Satış kanalı kapsamı GİRİŞTE uygulanır; sepete girmiş bir satırın ADEDİ
+  sonradan artırılabilir.** Kapsam yalnızca satır eklemede sorulur. Ürün
+  sonradan başka bir kanala taşınsa bile satır adedini güncelleyen yol kapsamı
+  yeniden sormaz (`Workflows.UpdateLineItem`,
+  `internal/workflows/cart/update_line_item.go`); tamamlama akışı da sormaz.
+  Sonucu tek cümleyle: vitrininde artık görünmeyen bir üründen, sepetinde zaten
+  bir satırı olan istemci DAHA FAZLA satın alabilir. Bu bir gözden kaçma değil,
+  verilmiş kararın bedelidir — alternatifi, yöneticinin bir katalog
+  düzenlemesiyle müşterinin dolu sepetini ödenemez hâle getirmesiydi. Karar
+  gerekçesiyle `internal/workflows/cart/saleschannel.go`'da yazılıdır ve bir
+  arch testi her yeni varyant okumasını aynı kararı vermeye zorlar
+  (`TestVaryantOkumalariKanalKararindanGecer`).
+
+- **Çok kiracılılık YOKTUR ve bu bir karardır: sınır KURULUMDUR, satır değil.**
+  72 tablonun hiçbirinde "bu satır kime ait" sorusunun cevabı yoktur, hiçbir
+  sorgu böyle bir süzgeç taşımaz ve çerçeve kiracılar arası bir sınır
+  tanımadığı gibi İDDİA DA ETMEZ. İki müşteriye tek kurulumdan hizmet vermek
+  desteklenmiyor: bir kiracı = bir kurulum = bir veritabanı = bir süreç. Plan
+  belgesi kavramı iki yerde kapsam dışı bırakıyordu ama GEREKÇESİNİ
+  yazmıyordu; gerekçesiz bir kapsam dışı bırakma karar değildir, her turda
+  yeniden tartışılır. Reddedilen iki tasarım ve kararı yeniden neyin açacağı
+  [ADR 0009](docs/adr/0009-cok-kiracililik-kurulum-siniri.md)'da.
+
+- **Akış kurulumunu denetleyen mimari değişmez sözdizimsel bir VEKİLDİR ve
+  yanlış negatifi ÖLÇÜLDÜ.** `TestHerAkisBilesimKokundeKurulu`, "yanlış
+  yapılandırma açılışı durdurabilir mi" sorusunu "kuruluma giden yol bir `go`
+  ifadesinden geçiyor mu" diye sorar. `go` tek satırlık bir dolaylamanın
+  arkasına saklandığında denetim GEÇER, oysa özellik sağlanmaz: gerçek süreçte
+  ölçüldü — senkron ikili, kurulum hatasında çıkış kodu 1 verirken o biçimdeki
+  ikili sağlıklı açılıp arızayı tek bir ERROR satırına indiriyor. Vekil yine de
+  tutuluyor çünkü YAKALADIĞI biçimler (çıplak `go`, kapanış, çok halkalı
+  zincir) kazara yazılanlardır; kaçırdığı biçim bilerek yazılmayı gerektirir.
+  Kapsam `internal/arch/kayit_test.go`'da yazılıdır ve orada "bu değişmez
+  açılışın kapalı arızalandığını garanti eder" cümlesi bilinçli olarak
+  kurulmuyor.
 
 ## [0.4.0] — 2026-09-01
 
