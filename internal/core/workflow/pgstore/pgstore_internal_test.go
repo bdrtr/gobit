@@ -394,7 +394,7 @@ func TestCreateErrorCakismaEslemesi(t *testing.T) {
 		icerir string
 	}{
 		{"idempotency indeksi", idempotencyIndex, CodeDuplicateKey, coreerrors.KindConflict, "idempotency"},
-		{"birincil anahtar", executionsPKConstraint, CodeDuplicateID, coreerrors.KindInvalid, "kimlikli"},
+		{"birincil anahtar", executionsPKConstraint, CodeDuplicateID, coreerrors.KindInvalid, "already exists"},
 		{"tanınmayan kısıt", "baska_kisit", CodeConflict, coreerrors.KindInternal, "baska_kisit"},
 	}
 

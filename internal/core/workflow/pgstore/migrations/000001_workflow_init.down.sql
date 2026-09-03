@@ -1,8 +1,9 @@
--- Yukarıdaki şemayı tümüyle geri alır (plan Bölüm 8: up/down çiftleri).
+-- Rolls the schema above back completely (plan Section 8: up/down pairs).
 --
--- Sıra önemlidir: adımlar tablosu yürütmelere FK ile bağlıdır, önce o düşer.
--- İndeksler tabloyla birlikte kendiliğinden düşer; yine de açıkça yazılmıştır
--- ki tablo elle korunmak istendiğinde tek tek geri alınabilsinler.
+-- The order matters: the steps table is bound to the executions by an FK, so it
+-- goes first. The indexes drop with the table on their own; they are still
+-- written out explicitly so they can be rolled back one by one when the table
+-- itself is to be kept by hand.
 DROP TABLE IF EXISTS workflow_execution_steps;
 
 DROP INDEX IF EXISTS workflow_executions_workflow_created_at_idx;

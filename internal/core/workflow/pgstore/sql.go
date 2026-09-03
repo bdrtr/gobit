@@ -1,64 +1,68 @@
 package pgstore
 
-// PostgreSQL SQLSTATE kodları. (github.com/jackc/pgerrcode bağımlılığı eklemek
-// yerine kullanılan kodlar sabit yazıldı; link paketi de aynı yolu izler.)
+// PostgreSQL SQLSTATE codes. (The codes in use are written out rather than
+// taking a dependency on github.com/jackc/pgerrcode; the link package does the
+// same.)
 //
-// Son üçü ÇAĞIRANIN VERİSİNDEN doğar: değer sütun tipine çevrilemez (metinde
-// NUL baytı, JSON'da NUL kaçışı, bozuk UTF-8). Bu yüzden KindInvalid'e
-// eşlenirler; bkz. wrapDB. Kodların gerçekten bunlar olduğu entegrasyon
-// testinde canlı sunucuya sorularak doğrulanır.
+// The last three arise from the CALLER'S DATA: a value that cannot be converted
+// to the column's type (a NUL byte in text, a NUL escape in JSON, broken
+// UTF-8). That is why they map to KindInvalid; see wrapDB. That these really
+// are the codes is verified against a live server in the integration test.
 const (
-	// uniqueViolation benzersizlik ihlalidir (kimlik ya da idempotency çakışması).
+	// uniqueViolation is a uniqueness violation (an id or idempotency clash).
 	uniqueViolation = "23505"
-	// foreignKeyViolation adımın bağlandığı yürütmenin bulunmadığını bildirir.
+	// foreignKeyViolation reports that the execution the step attaches to does
+	// not exist.
 	foreignKeyViolation = "23503"
-	// checkViolation şema düzeyindeki CHECK kısıtının ihlalidir.
+	// checkViolation is a violation of a schema-level CHECK constraint.
 	checkViolation = "23514"
-	// notInRepertoire değerin sunucu kodlamasında karşılığı olmadığını bildirir
-	// (örn. metindeki NUL baytı).
+	// notInRepertoire reports that the value has no representation in the
+	// server encoding (a NUL byte in text, say).
 	notInRepertoire = "22021"
-	// untranslatableCharacter JSONB'nin desteklemediği Unicode kaçışını
-	// bildirir (NUL kaçışı metne çevrilemez).
+	// untranslatableCharacter reports a Unicode escape JSONB does not support
+	// (a NUL escape cannot be turned into text).
 	untranslatableCharacter = "22P05"
-	// invalidTextRepresentation metnin hedef tipe ayrıştırılamadığını bildirir
-	// (örn. eşi olmayan vekil çift taşıyan JSON).
+	// invalidTextRepresentation reports that the text could not be parsed into
+	// the target type (JSON carrying an unpaired surrogate, say).
 	invalidTextRepresentation = "22P02"
 )
 
-// Hata eşlemesinde tanınan kısıt adları. Şemadaki karşılıkları
-// migrations/000001_workflow_init.up.sql içindedir; adların gerçekten bu
-// olduğu entegrasyon testinde katalogdan (pg_class) doğrulanır — yoksa
-// eşleme sessizce genel dala düşerdi.
+// The constraint names the error mapping recognizes. Their counterparts in the
+// schema are in migrations/000001_workflow_init.up.sql; that the names really
+// are these is verified against the catalog (pg_class) in the integration test
+// — otherwise the mapping would quietly fall through to the general branch.
 const (
-	// executionsPKConstraint id sütunu üzerindeki birincil anahtardır.
+	// executionsPKConstraint is the primary key on the id column.
 	executionsPKConstraint = "workflow_executions_pkey"
-	// idempotencyIndex (workflow, idempotency_key) kısmi benzersiz indeksidir.
+	// idempotencyIndex is the partial unique index on
+	// (workflow, idempotency_key).
 	idempotencyIndex = "workflow_executions_idempotency_key_uniq"
 )
 
-// insertExecutionSQL yeni bir yürütme kaydı açar.
+// insertExecutionSQL opens a new execution record.
 //
-// Zaman damgalarını VERİTABANI saati üretir: birden çok replika aynı tabloya
-// yazdığında uygulama saatleri arasındaki kayma kayıtların sırasını bozardı.
-// RETURNING, yazılan gerçek değerleri geri verir; çağıranın struct'ı bunlarla
-// doldurulur.
+// The DATABASE clock produces the timestamps: with several replicas writing to
+// the same table, drift between the application clocks would break the order of
+// the records. RETURNING hands back the values actually written, and the
+// caller's struct is filled from those.
 const insertExecutionSQL = `
 INSERT INTO workflow_executions (
 	id, workflow, idempotency_key, status, input, output, failure, created_at, updated_at
 ) VALUES ($1, $2, $3, $4, $5, $6, $7, now(), now())
 RETURNING created_at, updated_at`
 
-// upsertStepSQL adım kaydını ekler ya da aynı index'li kaydı günceller.
+// upsertStepSQL inserts the step record or updates the one with the same index.
 //
-// Tek ifadedir: ekleme, veri değiştiren bir CTE içinde yapılır ve ana UPDATE
-// yürütmenin updated_at'ini tazeler. Ayrı iki ifade seçilseydi araya düşen bir
-// hata, adımı yazılmış ama yürütmeyi bayat updated_at ile bırakabilirdi.
+// It is a single statement: the insert happens inside a data-modifying CTE and
+// the outer UPDATE refreshes the execution's updated_at. Had two separate
+// statements been chosen, an error landing between them could leave the step
+// written and the execution on a stale updated_at.
 //
-// ON CONFLICT hedefi (execution_id, step_index) birincil anahtarıdır: retry
-// sırasında aynı adım yeniden yazıldığında yeni satır AÇILMAZ, attempts dahil
-// tüm alanlar güncellenir.
+// The ON CONFLICT target (execution_id, step_index) is the primary key: when a
+// retry rewrites the same step no new row is OPENED, and every field including
+// attempts is updated.
 const upsertStepSQL = `
-WITH yazilan AS (
+WITH written AS (
 	INSERT INTO workflow_execution_steps (
 		execution_id, step_index, name, status, output, failure, attempts, started_at, ended_at
 	) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
@@ -74,34 +78,36 @@ WITH yazilan AS (
 )
 UPDATE workflow_executions e
 SET updated_at = now()
-FROM yazilan
-WHERE e.id = yazilan.execution_id`
+FROM written
+WHERE e.id = written.execution_id`
 
-// updateStatusSQL yürütmenin son durumunu yazar.
-// $5 idempotency anahtarının BIRAKILIP bırakılmayacağıdır.
+// updateStatusSQL writes the execution's final status.
+// $5 is whether the idempotency key is to be RELEASED.
 //
-// Karar Go tarafında verilir ve buraya boolean olarak gelir; SQL'e 'failed'
-// dizesini gömmek, durum sabitinin ikinci bir kopyasını üretirdi ve iki kopya
-// ayrıştığı gün kural sessizce çalışmaz olurdu.
+// The decision is taken on the Go side and arrives here as a boolean; embedding
+// the 'failed' string in the SQL would produce a second copy of the status
+// constant, and the rule would quietly stop working the day the two copies
+// diverged.
 //
-// Anahtar NULL'a çekilir, SATIR SİLİNMEZ: başarısız deneme denetim kaydı olarak
-// kalmalıdır. Kısmi tekil indeks yalnızca DOLU anahtarları kapsadığı için
-// NULL'a çekilen satır bir sonraki denemenin önünü açar.
+// The key is set to NULL, the ROW IS NOT DELETED: a failed attempt has to stay
+// as an audit record. Because the partial unique index covers only NON-NULL
+// keys, a row set to NULL clears the way for the next attempt.
 const updateStatusSQL = `
 UPDATE workflow_executions
 SET status = $2, output = $3, failure = $4, updated_at = now(),
     idempotency_key = CASE WHEN $5 THEN NULL ELSE idempotency_key END
 WHERE id = $1`
 
-// selectExecutionSQL yürütmeyi adımlarıyla birlikte TEK ifadede okur.
+// selectExecutionSQL reads the execution together with its steps in a SINGLE
+// statement.
 //
-// LEFT JOIN bilinçlidir: adımı olmayan bir yürütme de tek satırla döner
-// (adım sütunları NULL olur). İki ayrı sorgu seçilseydi aralarında araya
-// giren bir yazma, yürütmeyi bir anın adımlarını başka bir anın hâliyle
-// birleştirebilirdi; tek ifade tutarlı bir görüntü garanti eder.
+// The LEFT JOIN is deliberate: an execution with no steps also comes back as
+// one row (its step columns are NULL). Had two separate queries been chosen, a
+// write landing between them could combine an execution from one instant with
+// steps from another; one statement guarantees a consistent picture.
 //
-// ORDER BY s.step_index, sözleşmenin "adımlar Index sırasına göre döner"
-// koşulunu veritabanı tarafında karşılar.
+// ORDER BY s.step_index satisfies the contract's "steps come back in Index
+// order" on the database side.
 const selectExecutionSQL = `
 SELECT
 	e.id, e.workflow, e.idempotency_key, e.status, e.input, e.output, e.failure,
@@ -112,11 +118,11 @@ FROM workflow_executions e
 LEFT JOIN workflow_execution_steps s ON s.execution_id = e.id
 `
 
-// selectByIDSQL yürütmeyi kimliğiyle okur.
+// selectByIDSQL reads the execution by its id.
 const selectByIDSQL = selectExecutionSQL + `WHERE e.id = $1
 ORDER BY s.step_index`
 
-// selectByKeySQL yürütmeyi (workflow, idempotency_key) çiftiyle okur.
-// Çift, kısmi benzersiz indeks sayesinde en fazla bir satır seçer.
+// selectByKeySQL reads the execution by the (workflow, idempotency_key) pair.
+// Thanks to the partial unique index the pair selects at most one row.
 const selectByKeySQL = selectExecutionSQL + `WHERE e.workflow = $1 AND e.idempotency_key = $2
 ORDER BY s.step_index`

@@ -66,16 +66,9 @@ internal/core/workflow/memory_test.go
 internal/core/workflow/options.go
 internal/core/workflow/parallel.go
 internal/core/workflow/parallel_test.go
-internal/core/workflow/pgstore/convert.go
-internal/core/workflow/pgstore/ids.go
-internal/core/workflow/pgstore/migrations.go
-internal/core/workflow/pgstore/migrations/000001_workflow_init.down.sql
-internal/core/workflow/pgstore/migrations/000001_workflow_init.up.sql
-internal/core/workflow/pgstore/pgstore.go
 internal/core/workflow/pgstore/pgstore_integration_test.go
 internal/core/workflow/pgstore/pgstore_internal_test.go
 internal/core/workflow/pgstore/pgstore_test.go
-internal/core/workflow/pgstore/sql.go
 internal/core/workflow/regression_test.go
 internal/core/workflow/store.go
 internal/core/workflow/workflow.go

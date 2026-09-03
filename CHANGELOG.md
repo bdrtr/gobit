@@ -123,6 +123,21 @@ Sabitlenme `1.0.0` ile olur.
   bulur. Zamanlanmış süpürücü bilinçli olarak eklenmedi — kurtarma yan etkisi
   olan bir iş çalıştırır.
 
+- **`internal/core/workflow/pgstore`'un ÜRETİM dosyaları İngilizceye çevrildi**
+  (ADR 0012'nin cırcırı): `pgstore.go`, `convert.go`, `sql.go`, `ids.go`,
+  `migrations.go` ve iki migration SQL'i. Defter 727 dosyadan 720'ye indi;
+  pakette Türkçe kalan üç dosya da test dosyalarıdır.
+
+  Davranış değişmedi ama bir TEST BAĞI kırıldı ve kırıldığı yerde düzeltildi:
+  hata eşlemesini sınayan tablo, birincil anahtar ihlalinin mesajında
+  "kimlikli" kelimesini arıyordu. Bu, deponun kendi mesaj METNİNE bağlanmış tek
+  iddiaydı; kod ve mesaj arasında derleyici bağı olmadığı için ancak koşunca
+  görülür.
+
+  Migration dosyalarının yalnızca YORUMLARI değişti; DDL'e dokunulmadı ve
+  golang-migrate dosyaları sürüm numarasına göre uyguladığı için uygulanmış bir
+  veritabanı etkilenmez.
+
 - **`internal/core/link` ve `internal/core/eventbus` İngilizceye çevrildi**
   (ADR 0012'nin cırcırı). Türkçe defterinden 15 satır DÜŞTÜ: 742 dosyadan
   727'ye; yol defteri 38'de kaldı (iki pakette hiç yol kaydı yoktu). İki pakette

@@ -1,23 +1,24 @@
-// Package pgstore workflow yürütme durumunu PostgreSQL'de kalıcılaştırır.
+// Package pgstore persists workflow execution state in PostgreSQL.
 //
-// Paket [workflow.Store] arayüzünü uygular. Arayüzü TÜKETEN taraf (motor)
-// tanımlar, bu paket yalnızca imzayı karşılar — ADR 0001'in tüketici tarafı
-// interface örüntüsü. Motor bu paketi import etmez; somut depo container'dan
-// çözülür.
+// The package implements the [workflow.Store] interface. The CONSUMING side
+// (the engine) defines that interface and this package only satisfies the
+// signature — ADR 0001's consumer-side interface pattern. The engine does not
+// import this package; the concrete store is resolved from the container.
 //
-// Şema iki tablodur: workflow_executions (yürütmenin kendisi) ve
-// workflow_execution_steps (adım kayıtları). Migration'lar pakete gömülüdür;
-// çekirdek onları db.Migrate ile uygular (bkz. [Migrations], [MigrationOwner]).
+// The schema is two tables: workflow_executions (the execution itself) and
+// workflow_execution_steps (the step records). The migrations are embedded in
+// the package; the core applies them with db.Migrate (see [Migrations],
+// [MigrationOwner]).
 //
-// Paket genelinde geçerli üç kural:
+// Three rules hold across the package:
 //
-//   - Yürütme girdileri ve çıktıları İŞ VERİSİDİR; hiçbir log kaydında
-//     görünmezler (plan Bölüm 8, "hassas veri loglanmaz"). Loglar yalnızca
-//     kimlik, workflow adı ve durum taşır.
-//   - Bütün değerler sorgulara PARAMETRE olarak geçer; hiçbir SQL dizgesi
-//     çalışma zamanı verisiyle birleştirilmez.
-//   - Dışarı çıkan her hata core/errors ile tiplidir; ham sürücü hatası
-//     zincirde kalır ve errors.Is/As ile erişilebilir.
+//   - An execution's input and output are BUSINESS DATA; they appear in no log
+//     record (plan Section 8, "sensitive data is not logged"). The logs carry
+//     only the id, the workflow name and the status.
+//   - Every value reaches a query as a PARAMETER; no SQL string is concatenated
+//     with runtime data.
+//   - Every error leaving the package is typed with core/errors; the raw driver
+//     error stays in the chain and is reachable with errors.Is/As.
 package pgstore
 
 import (
@@ -34,33 +35,35 @@ import (
 	"github.com/bdrtr/gobit/internal/core/workflow"
 )
 
-// Hata kodları; çağıran taraf errors.CodeOf ile bunlara göre dallanabilir.
+// Error codes; the caller can branch on them with errors.CodeOf.
 const (
-	// CodeInvalid girdinin depoya yazılamayacak durumda olduğunu bildirir.
+	// CodeInvalid reports that the input is in a state the store cannot write.
 	CodeInvalid = "workflow_store_invalid"
-	// CodeNotFound istenen yürütmenin bulunmadığını bildirir.
+	// CodeNotFound reports that the requested execution does not exist.
 	CodeNotFound = "workflow_execution_not_found"
-	// CodeDuplicateKey aynı (workflow, idempotency_key) çiftinin zaten
-	// kullanıldığını bildirir. Motor idempotent tekrarı bu kodla tanır ve
-	// depodan Conflict sınıfıyla dönen TEK arıza budur (bkz. createError).
+	// CodeDuplicateKey reports that the same (workflow, idempotency_key) pair is
+	// already in use. The engine recognizes an idempotent repeat by this code,
+	// and it is the ONLY failure the store returns with the Conflict class (see
+	// createError).
 	CodeDuplicateKey = "workflow_execution_duplicate_key"
-	// CodeDuplicateID aynı kimlikle ikinci kez kayıt açıldığını bildirir.
-	// Sınıfı Invalid'dir: aynı kimliği iki kez vermek bir tekrar isteği değil,
-	// çağıranın girdi hatasıdır.
+	// CodeDuplicateID reports that a record was opened a second time with the
+	// same id. Its class is Invalid: giving the same id twice is the caller's
+	// input error, not a repeat request.
 	CodeDuplicateID = "workflow_execution_duplicate_id"
-	// CodeConflict tanınmayan bir benzersizlik ihlalini bildirir; şema koddaki
-	// varsayımdan sapmıştır. Sınıfı Internal'dır — ne olduğu bilinmeden
-	// Conflict demek motoru tekrar yoluna sokardı.
+	// CodeConflict reports an unrecognized uniqueness violation; the schema has
+	// drifted from the assumption in the code. Its class is Internal — saying
+	// Conflict without knowing what happened would send the engine down the
+	// replay path.
 	CodeConflict = "workflow_store_conflict"
-	// CodeQueryFailed sorgunun sürücü seviyesinde başarısız olduğunu bildirir.
+	// CodeQueryFailed reports that the query failed at the driver level.
 	CodeQueryFailed = "workflow_store_query_failed"
-	// CodeUnavailable veritabanı havuzunun kurulmamış olduğunu bildirir.
+	// CodeUnavailable reports that the database pool was never built.
 	CodeUnavailable = "workflow_store_unavailable"
-	// CodeCanceled bağlamın iş bitmeden iptal edildiğini bildirir.
+	// CodeCanceled reports that the context was canceled before the work ended.
 	CodeCanceled = "workflow_store_canceled"
 )
 
-// Log alanlarında ve hata ayrıntılarında kullanılan anahtarlar.
+// The keys used in log fields and error details.
 const (
 	keyExecutionID = "execution_id"
 	keyWorkflow    = "workflow"
@@ -68,59 +71,62 @@ const (
 	keyStepIndex   = "step_index"
 )
 
-// store [workflow.Store] arayüzünün PostgreSQL uygulamasıdır.
-// Eşzamanlı kullanıma güvenlidir; durumu yalnızca havuz ve logger'dır.
+// store is the PostgreSQL implementation of the [workflow.Store] interface.
+// It is safe for concurrent use; its state is only the pool and the logger.
 type store struct {
 	pool *db.Pool
 	log  *slog.Logger
 }
 
-// store'un sözleşmeyi karşıladığı derleme zamanında doğrulanır.
+// That store satisfies the contract is verified at compile time.
 var _ workflow.Store = (*store)(nil)
 
-// New verilen havuz üzerinde çalışan bir yürütme deposu döner.
+// New returns an execution store running on the given pool.
 //
-// log nil ise loglama yapılmaz. Havuz nil ise New yine de bir depo döner;
-// her metot o zaman KindUnavailable sınıfında tipli hata verir — yapıcının
-// hata dönmemesi sözleşmenin (func New(...) workflow.Store) gereğidir.
+// A nil log means nothing is logged. With a nil pool New still returns a store;
+// every method then fails with a typed error of class KindUnavailable — the
+// constructor not returning an error is what the contract
+// (func New(...) workflow.Store) requires.
 func New(pool *db.Pool, log *slog.Logger) workflow.Store {
 	if log == nil {
 		log = slog.New(slog.DiscardHandler)
 	}
+
 	return &store{pool: pool, log: log}
 }
 
-// Create yeni yürütme kaydı açar.
+// Create opens a new execution record.
 //
-// Boş bırakılan alanları doldurur ve çağıranın struct'ına geri yazar:
-// ID boşsa "wfx_" önekli yeni bir kimlik üretilir (bkz. newExecutionID),
-// Status boşsa StatusRunning kullanılır, CreatedAt/UpdatedAt veritabanı
-// saatinden alınır. Çağıranın verdiği zaman damgaları yok sayılır: birden çok
-// replika yazarken tek doğru saat veritabanınınkidir.
+// It fills the fields that were left empty and writes them back into the
+// caller's struct: an empty ID gets a new id with the "wfx_" prefix (see
+// newExecutionID), an empty Status becomes StatusRunning, and
+// CreatedAt/UpdatedAt come from the database clock. The timestamps the caller
+// supplied are ignored: with several replicas writing, the only correct clock is
+// the database's.
 //
-// exec.Steps YOK SAYILIR; adım kayıtları yalnızca AppendStep ile eklenir.
+// exec.Steps is IGNORED; step records are added only through AppendStep.
 //
-// Aynı (Workflow, IdempotencyKey) çifti zaten varsa errors.Conflict döner
-// (kod: CodeDuplicateKey). Bu karar SELECT ile değil, kısmi benzersiz indeksin
-// ihlali yakalanarak verilir; iki süreç aynı anda çağırdığında yalnızca birinin
-// başarılı olması bu yüzden garantidir. Conflict sınıfı YALNIZCA bu duruma
-// ayrılmıştır: aynı KİMLİĞİN ikinci kez verilmesi errors.Invalid döner
-// (kod: CodeDuplicateID), çünkü o bir tekrar isteği değil girdi hatasıdır
-// (bkz. createError).
+// If the same (Workflow, IdempotencyKey) pair already exists it returns
+// errors.Conflict (code: CodeDuplicateKey). That decision is taken by catching
+// the violation of the partial unique index rather than with a SELECT, which is
+// why only one of two processes calling at the same instant is guaranteed to
+// succeed. The Conflict class is reserved for that case ALONE: giving the same
+// ID a second time returns errors.Invalid (code: CodeDuplicateID), because that
+// is an input error rather than a repeat request (see createError).
 //
-// IdempotencyKey boş dizeyse "anahtar yok" sayılır; yalnızca boşluktan oluşan
-// bir anahtar ise errors.Invalid döner — sessizce anahtarsız sayılsaydı
-// çağıranın istediği tekrar koruması hiçbir uyarı vermeden kaybolurdu.
+// An empty IdempotencyKey counts as "no key"; a key made of whitespace only
+// returns errors.Invalid — were it silently taken as keyless, the repeat
+// protection the caller asked for would vanish without a warning.
 //
-// exec.Failure yazılabilir hâle GETİRİLİR (NUL baytı ve geçersiz UTF-8
-// dizileri atılır, bkz. safeText) ve temizlenmiş hâli çağıranın struct'ına
-// geri yazılır.
+// exec.Failure is MADE writable (NUL bytes and invalid UTF-8 sequences are
+// dropped, see safeText) and the cleaned form is written back into the caller's
+// struct.
 func (s *store) Create(ctx context.Context, exec *workflow.Execution) error {
 	if exec == nil {
-		return errors.Invalid(CodeInvalid, "yürütme kaydı nil olamaz")
+		return errors.Invalid(CodeInvalid, "the execution record cannot be nil")
 	}
 
-	name, err := requireText(exec.Workflow, "workflow adı", maxNameLen)
+	name, err := requireText(exec.Workflow, "the workflow name", maxNameLen)
 	if err != nil {
 		return err
 	}
@@ -129,7 +135,7 @@ func (s *store) Create(ctx context.Context, exec *workflow.Execution) error {
 	if strings.TrimSpace(string(status)) == "" {
 		status = workflow.StatusRunning
 	}
-	statusText, err := requireText(string(status), "durum", maxNameLen)
+	statusText, err := requireText(string(status), "the status", maxNameLen)
 	if err != nil {
 		return err
 	}
@@ -138,7 +144,7 @@ func (s *store) Create(ctx context.Context, exec *workflow.Execution) error {
 	if id == "" {
 		id = newExecutionID(time.Now())
 	} else {
-		id, err = requireText(id, "yürütme kimliği", maxIDLen)
+		id, err = requireText(id, "the execution id", maxIDLen)
 		if err != nil {
 			return err
 		}
@@ -180,83 +186,86 @@ func (s *store) Create(ctx context.Context, exec *workflow.Execution) error {
 	exec.CreatedAt = createdAt.UTC()
 	exec.UpdatedAt = updatedAt.UTC()
 
-	s.log.DebugContext(ctx, "workflow yürütmesi açıldı",
+	s.log.DebugContext(ctx, "workflow execution opened",
 		slog.String(keyExecutionID, exec.ID),
 		slog.String(keyWorkflow, exec.Workflow),
 		slog.String(keyStatus, statusText),
 	)
+
 	return nil
 }
 
-// FindByIdempotencyKey anahtara karşılık gelen yürütmeyi döner; yoksa
+// FindByIdempotencyKey returns the execution the key belongs to, or
 // errors.NotFound.
 //
-// Dönen kayıt adımlarını da taşır (Get ile aynı biçimde, Index sırasında):
-// motor idempotent tekrarda yalnızca sonucu değil, nerede kalındığını da
-// görebilmelidir.
+// The record it returns carries its steps too (in the same shape as Get, in
+// Index order): on an idempotent repeat the engine has to be able to see not
+// only the result but also where the run had got to.
 //
-// Anahtar Create'in kabul ettiği kümeden gelmelidir: boş anahtar aranamaz —
-// depoda NULL olarak durur ve hiçbir kaydı tekil olarak seçmez — ve yazma
-// yolunun reddettiği bir anahtar (yalnızca boşluk, sınırı aşan uzunluk) burada
-// da errors.Invalid döner. İki yolun kabul kümesi ayrılsaydı, yazılabilen bir
-// anahtar geri okunamaz ya da okunabilen bir anahtar hiç yazılamazdı.
+// The key must come from the set Create accepts: an empty key cannot be looked
+// up — it is stored as NULL and selects no single record — and a key the write
+// path rejects (whitespace only, over the length limit) returns errors.Invalid
+// here as well. Were the two paths' accepted sets to diverge, a key that could
+// be written could not be read back, or one that could be read could never be
+// written.
 func (s *store) FindByIdempotencyKey(ctx context.Context, wf, key string) (*workflow.Execution, error) {
-	name, err := requireText(wf, "workflow adı", maxNameLen)
+	name, err := requireText(wf, "the workflow name", maxNameLen)
 	if err != nil {
 		return nil, err
 	}
-	aranan, err := keyParam(key)
+	wanted, err := keyParam(key)
 	if err != nil {
 		return nil, err
 	}
-	if aranan == nil {
-		return nil, errors.Invalid(CodeInvalid, "idempotency anahtarı boş olamaz")
+	if wanted == nil {
+		return nil, errors.Invalid(CodeInvalid, "the idempotency key cannot be empty")
 	}
 
-	exec, err := s.queryExecution(ctx, selectByKeySQL, name, *aranan)
+	exec, err := s.queryExecution(ctx, selectByKeySQL, name, *wanted)
 	if err != nil {
 		return nil, err
 	}
 	if exec == nil {
 		return nil, errors.NotFound(CodeNotFound,
-			"%s workflow'unda %q idempotency anahtarlı yürütme yok", name, key).
+			"the %s workflow has no execution with the idempotency key %q", name, key).
 			WithDetails(map[string]any{keyWorkflow: name})
 	}
+
 	return exec, nil
 }
 
-// AppendStep bir adım kaydını ekler ya da aynı Index'li kaydı günceller.
+// AppendStep inserts a step record or updates the one with the same Index.
 //
-// Güncelleme yolu retry içindir: aynı adım yeniden denendiğinde ikinci bir
-// satır açılmaz, var olan kayıt (Attempts dahil) üzerine yazılır. Çağrı ayrıca
-// yürütmenin UpdatedAt'ini tazeler.
+// The update path is for retries: when the same step is tried again no second
+// row is opened, the existing record (including Attempts) is overwritten. The
+// call also refreshes the execution's UpdatedAt.
 //
-// rec.Failure yazılabilir hâle GETİRİLİR (bkz. safeText); tanı metni yüzünden
-// adımın izinin hiç yazılamaması, hatanın kendisinden daha kötüdür.
+// rec.Failure is MADE writable (see safeText); losing the step's trace entirely
+// over a piece of diagnostic text would be worse than the error itself.
 //
-// Yürütme yoksa errors.NotFound döner.
+// If the execution does not exist it returns errors.NotFound.
 func (s *store) AppendStep(ctx context.Context, executionID string, rec workflow.StepRecord) error {
-	id, err := requireText(executionID, "yürütme kimliği", maxIDLen)
+	id, err := requireText(executionID, "the execution id", maxIDLen)
 	if err != nil {
 		return err
 	}
-	stepName, err := requireText(rec.Name, "adım adı", maxNameLen)
+	stepName, err := requireText(rec.Name, "the step name", maxNameLen)
 	if err != nil {
 		return err
 	}
-	stepStatus, err := requireText(string(rec.Status), "adım durumu", maxNameLen)
+	stepStatus, err := requireText(string(rec.Status), "the step status", maxNameLen)
 	if err != nil {
 		return err
 	}
-	index, err := requireCount(rec.Index, "adım sırası (Index)")
+	index, err := requireCount(rec.Index, "the step order (Index)")
 	if err != nil {
 		return err
 	}
-	attempts, err := requireCount(rec.Attempts, "deneme sayısı (Attempts)")
+	attempts, err := requireCount(rec.Attempts, "the attempt count (Attempts)")
 	if err != nil {
 		return err
 	}
-	output, err := jsonParam(rec.Output, "adım çıktısı")
+	output, err := jsonParam(rec.Output, "the step output")
 	if err != nil {
 		return err
 	}
@@ -272,33 +281,34 @@ func (s *store) AppendStep(ctx context.Context, executionID string, rec workflow
 	)
 	if err != nil {
 		return wrapDB(err, CodeQueryFailed,
-			"%q yürütmesinin %d numaralı adımı yazılamadı", id, rec.Index)
+			"step %d of execution %q could not be written", rec.Index, id)
 	}
 	if tag.RowsAffected() == 0 {
-		// Yabancı anahtar bu duruma normalde izin vermez; kısıt bir gün
-		// düşerse adımın sahipsiz yazıldığı sessizce geçmesin diye kontrol
-		// edilir.
+		// The foreign key does not normally allow this; the check is here so
+		// that a step written with no owner does not pass in silence should the
+		// constraint ever be dropped.
 		return errors.NotFound(CodeNotFound,
-			"%q kimlikli yürütme yok; adım yazılamadı", id).
+			"there is no execution with the id %q; the step could not be written", id).
 			WithDetails(map[string]any{keyExecutionID: id, keyStepIndex: rec.Index})
 	}
 
-	s.log.DebugContext(ctx, "workflow adımı yazıldı",
+	s.log.DebugContext(ctx, "workflow step written",
 		slog.String(keyExecutionID, id),
 		slog.Int(keyStepIndex, rec.Index),
 		slog.String(keyStatus, stepStatus),
 	)
+
 	return nil
 }
 
-// UpdateStatus yürütmenin son durumunu yazar.
+// UpdateStatus writes the execution's final status.
 //
-// output nil ise sütun NULL'a çekilir; failure boş dizeyse arıza açıklaması
-// temizlenir. failure yazılabilir hâle GETİRİLİR (bkz. safeText): uç durumun
-// yazılması, açıklamanın bozulmamasından önce gelir — yazılamayan bir uç durum
-// kaydı sonsuza dek "running" bırakırdı.
+// A nil output sets the column to NULL; an empty failure clears the failure
+// description. failure is MADE writable (see safeText): writing the terminal
+// state comes before keeping the description intact — a terminal state that
+// could not be written would leave the record "running" forever.
 //
-// Yürütme yoksa errors.NotFound döner.
+// If the execution does not exist it returns errors.NotFound.
 func (s *store) UpdateStatus(
 	ctx context.Context,
 	executionID string,
@@ -306,11 +316,11 @@ func (s *store) UpdateStatus(
 	output json.RawMessage,
 	failure string,
 ) error {
-	id, err := requireText(executionID, "yürütme kimliği", maxIDLen)
+	id, err := requireText(executionID, "the execution id", maxIDLen)
 	if err != nil {
 		return err
 	}
-	statusText, err := requireText(string(status), "durum", maxNameLen)
+	statusText, err := requireText(string(status), "the status", maxNameLen)
 	if err != nil {
 		return err
 	}
@@ -324,29 +334,31 @@ func (s *store) UpdateStatus(
 		return err
 	}
 
-	// Telafi eksiksiz tamamlandıysa yürütme dünyada iz BIRAKMAMIŞTIR; anahtar
-	// da bir izdir ve bırakılır. Gerekçe [workflow.StatusFailed] godoc'unda.
+	// If compensation completed in full the execution left NO TRACE in the
+	// world; the key is a trace too, and it is released. The reasoning is in
+	// the [workflow.StatusFailed] godoc.
 	tag, err := pool.Exec(ctx, updateStatusSQL, id, statusText, outputParam, safeText(failure),
 		status == workflow.StatusFailed)
 	if err != nil {
-		return wrapDB(err, CodeQueryFailed, "%q yürütmesinin durumu yazılamadı", id)
+		return wrapDB(err, CodeQueryFailed, "the status of execution %q could not be written", id)
 	}
 	if tag.RowsAffected() == 0 {
-		return errors.NotFound(CodeNotFound, "%q kimlikli yürütme yok", id).
+		return errors.NotFound(CodeNotFound, "there is no execution with the id %q", id).
 			WithDetails(map[string]any{keyExecutionID: id})
 	}
 
-	s.log.DebugContext(ctx, "workflow yürütmesinin durumu güncellendi",
+	s.log.DebugContext(ctx, "workflow execution status updated",
 		slog.String(keyExecutionID, id),
 		slog.String(keyStatus, statusText),
 	)
+
 	return nil
 }
 
-// Get yürütmeyi adımlarıyla birlikte okur; yoksa errors.NotFound.
-// Adımlar Index'e göre artan sırada döner.
+// Get reads the execution together with its steps, or errors.NotFound.
+// The steps come back in ascending Index order.
 func (s *store) Get(ctx context.Context, executionID string) (*workflow.Execution, error) {
-	id, err := requireText(executionID, "yürütme kimliği", maxIDLen)
+	id, err := requireText(executionID, "the execution id", maxIDLen)
 	if err != nil {
 		return nil, err
 	}
@@ -356,17 +368,18 @@ func (s *store) Get(ctx context.Context, executionID string) (*workflow.Executio
 		return nil, err
 	}
 	if exec == nil {
-		return nil, errors.NotFound(CodeNotFound, "%q kimlikli yürütme yok", id).
+		return nil, errors.NotFound(CodeNotFound, "there is no execution with the id %q", id).
 			WithDetails(map[string]any{keyExecutionID: id})
 	}
+
 	return exec, nil
 }
 
-// queryExecution tek yürütme seçen bir sorguyu çalıştırır ve satırları
-// yürütme + adım listesine katlar.
+// queryExecution runs a query that selects a single execution and folds the
+// rows into an execution plus its list of steps.
 //
-// Kayıt bulunamazsa (nil, nil) döner: "yok" durumunun mesajı çağrı yoluna
-// göre değiştiği için hatayı çağıran üretir.
+// It returns (nil, nil) when no record is found: the message for "not there"
+// differs by call path, so the caller produces the error.
 func (s *store) queryExecution(ctx context.Context, sql string, args ...any) (*workflow.Execution, error) {
 	pool, err := s.rawPool()
 	if err != nil {
@@ -375,7 +388,7 @@ func (s *store) queryExecution(ctx context.Context, sql string, args ...any) (*w
 
 	rows, err := pool.Query(ctx, sql, args...)
 	if err != nil {
-		return nil, wrapDB(err, CodeQueryFailed, "yürütme okunamadı")
+		return nil, wrapDB(err, CodeQueryFailed, "the execution could not be read")
 	}
 	defer rows.Close()
 
@@ -384,58 +397,61 @@ func (s *store) queryExecution(ctx context.Context, sql string, args ...any) (*w
 		return nil, err
 	}
 	if err := rows.Err(); err != nil {
-		return nil, wrapDB(err, CodeQueryFailed, "yürütme satırları okunamadı")
+		return nil, wrapDB(err, CodeQueryFailed, "the execution rows could not be read")
 	}
+
 	return exec, nil
 }
 
-// rowSource foldRows'un ihtiyaç duyduğu en küçük okuma yüzeyidir; pgx.Rows onu
-// karşılar. Dar arayüz, katlama mantığının veritabanı olmadan sınanmasını
-// sağlar (ADR 0001: arayüzü TÜKETEN taraf tanımlar).
+// rowSource is the smallest read surface foldRows needs; pgx.Rows satisfies it.
+// The narrow interface is what lets the folding logic be tested without a
+// database (ADR 0001: the CONSUMING side defines the interface).
 type rowSource interface {
 	Next() bool
 	Scan(dest ...any) error
 }
 
-// foldRows birleşim satırlarını tek bir yürütmeye katlar.
+// foldRows folds the join rows into a single execution.
 //
-// Yürütme sütunları YALNIZCA İLK SATIRDA taranır; gerekçesi
-// [skipExecColumns] içindedir. Hiç satır yoksa (nil, nil) döner.
+// The execution columns are scanned ONLY ON THE FIRST ROW; the reasoning is in
+// [skipExecColumns]. With no rows at all it returns (nil, nil).
 func foldRows(rows rowSource) (*workflow.Execution, error) {
 	var (
-		exec     *workflow.Execution
-		row      execRow
-		step     stepRow
-		hedefler = scanTargets(&row, &step)
+		exec    *workflow.Execution
+		row     execRow
+		step    stepRow
+		targets = scanTargets(&row, &step)
 	)
 	for rows.Next() {
-		// Hedefler satırlar arasında paylaşıldığı için adım alanları
-		// sıfırlanır: sürücü NULL sütunda hedefi zaten nil'ler, ama bu
-		// varsayıma yaslanmak sessiz bir kopyalama hatasına açık kapı olurdu.
+		// The targets are shared between rows, so the step fields are cleared:
+		// the driver does nil a target on a NULL column, but leaning on that
+		// assumption would leave the door open to a silent copy bug.
 		step = stepRow{}
-		if err := rows.Scan(hedefler...); err != nil {
-			return nil, wrapDB(err, CodeQueryFailed, "yürütme satırı çözümlenemedi")
+		if err := rows.Scan(targets...); err != nil {
+			return nil, wrapDB(err, CodeQueryFailed, "the execution row could not be decoded")
 		}
 
 		if exec == nil {
 			exec = row.execution()
-			skipExecColumns(hedefler)
+			skipExecColumns(targets)
 		}
-		// LEFT JOIN'de adımı olmayan yürütme tek satırla, adım sütunları NULL
-		// olarak gelir; step_index NULL ise ortada adım yoktur.
+		// Under the LEFT JOIN an execution with no steps arrives as a single
+		// row with NULL step columns; a NULL step_index means there is no step.
 		if step.index != nil {
 			exec.Steps = append(exec.Steps, step.record())
 		}
 	}
+
 	return exec, nil
 }
 
-// execColumnCount birleşim satırındaki yürütme sütunlarının sayısıdır.
+// execColumnCount is the number of execution columns in a join row.
 const execColumnCount = 9
 
-// scanTargets bir birleşim satırının tarama hedeflerini kurar.
+// scanTargets builds the scan targets for one join row.
 //
-// Sıra selectExecutionSQL'deki sütun sırasıdır; ikisi birlikte değişmelidir.
+// The order is the column order in selectExecutionSQL; the two have to change
+// together.
 func scanTargets(row *execRow, step *stepRow) []any {
 	return []any{
 		&row.id, &row.name, &row.key, &row.status, &row.input, &row.output, &row.failure,
@@ -445,48 +461,52 @@ func scanTargets(row *execRow, step *stepRow) []any {
 	}
 }
 
-// skipExecColumns yürütme sütunlarının tarama hedeflerini boşaltır.
+// skipExecColumns empties the scan targets of the execution columns.
 //
-// LEFT JOIN yürütme satırını her adım için TEKRAR taşır; ilk satırdan sonrası
-// aynı verinin kopyasıdır. pgx nil hedefi atlar (Rows.Scan: "nil will skip the
-// value entirely"), yani 100 KB'lık bir girdi yirmi adımlı bir yürütmede yirmi
-// kez yeniden ayrılıp anında çöpe atılmaz. Ölçüldü: 256 KB girdisi ve sekiz
-// adımı olan bir kaydın Get'i 2,17 MB yerine 0,28 MB ayırıyor.
+// The LEFT JOIN carries the execution row AGAIN for every step; everything
+// after the first row is a copy of the same data. pgx skips a nil target
+// (Rows.Scan: "nil will skip the value entirely"), so a 100 KB input is not
+// allocated twenty times over and thrown away at once in a twenty-step
+// execution. Measured: Get on a record with a 256 KB input and eight steps
+// allocates 0.28 MB instead of 2.17 MB.
 //
-// Sütunlar yine de tel üzerinden gelir: bu bedel, yürütme ile adımlarını TEK
-// ifadede (tek anlık görüntüde) okumanın karşılığıdır — bkz. selectExecutionSQL.
+// The columns still come over the wire: that is the price of reading an
+// execution and its steps in ONE statement (one snapshot) — see
+// selectExecutionSQL.
 func skipExecColumns(targets []any) {
 	for i := range execColumnCount {
 		targets[i] = nil
 	}
 }
 
-// rawPool ham pgx havuzunu döner; havuz kurulmamışsa tipli hata üretir.
+// rawPool returns the raw pgx pool and produces a typed error when the pool was
+// never built.
 //
-// Gövde paket düzeyindeki [driverPool]'dadır: aynı kontrolü listeleme okuyucusu
-// da yapmak zorunda ve iki kopya ayrıştığında biri nil havuzda tipli hata
-// verirken öteki panikle düşerdi.
+// The body is in the package-level [driverPool]: the listing reader has to make
+// the same check, and were the two copies to diverge one would give a typed
+// error on a nil pool while the other went down with a panic.
 func (s *store) rawPool() (*pgxpool.Pool, error) {
 	return driverPool(s.pool)
 }
 
-// driverPool sarmalayıcının altındaki pgx havuzunu döner.
+// driverPool returns the pgx pool underneath the wrapper.
 //
-// Depo ile listeleme okuyucusu bunu paylaşır: "havuz hiç kurulmamış" durumu
-// hangi yüzeyden gelinirse gelinsin AYNI mesajı ve aynı hata sınıfını üretsin
-// diye. İki kopya ayrıştığında biri tipli hata verirken öteki nil havuzda
-// panikleyebilirdi.
+// The store and the listing reader share it so that "the pool was never built"
+// produces the SAME message and the same error class whichever surface it is
+// reached from. Were the two copies to diverge, one could give a typed error
+// while the other panicked on a nil pool.
 func driverPool(pool *db.Pool) (*pgxpool.Pool, error) {
-	// db.Pool.Pool() nil alıcıya karşı güvenlidir; nil havuz nil döner.
+	// db.Pool.Pool() is safe against a nil receiver; a nil pool returns nil.
 	raw := pool.Pool()
 	if raw == nil {
 		return nil, errors.Unavailable(CodeUnavailable,
-			"workflow deposu için veritabanı havuzu kurulmamış")
+			"the database pool for the workflow store was never built")
 	}
+
 	return raw, nil
 }
 
-// execRow workflow_executions satırının ham okuma biçimidir.
+// execRow is the raw read shape of a workflow_executions row.
 type execRow struct {
 	id        string
 	name      string
@@ -499,7 +519,7 @@ type execRow struct {
 	updatedAt time.Time
 }
 
-// execution ham satırı sözleşmedeki yürütme tipine çevirir.
+// execution turns the raw row into the execution type of the contract.
 func (r execRow) execution() *workflow.Execution {
 	return &workflow.Execution{
 		ID:             r.id,
@@ -514,8 +534,8 @@ func (r execRow) execution() *workflow.Execution {
 	}
 }
 
-// stepRow workflow_execution_steps satırının ham okuma biçimidir.
-// Alanların işaretçi olması LEFT JOIN'den gelen NULL'ları taşımak içindir.
+// stepRow is the raw read shape of a workflow_execution_steps row.
+// The fields are pointers so they can carry the NULLs the LEFT JOIN produces.
 type stepRow struct {
 	index     *int32
 	name      *string
@@ -527,8 +547,8 @@ type stepRow struct {
 	endedAt   *time.Time
 }
 
-// record ham satırı sözleşmedeki adım kaydına çevirir.
-// Yalnızca index dolu olduğunda çağrılır.
+// record turns the raw row into the step record of the contract.
+// It is called only when index is non-nil.
 func (r stepRow) record() workflow.StepRecord {
 	return workflow.StepRecord{
 		Name:      textValue(r.name),
@@ -542,18 +562,20 @@ func (r stepRow) record() workflow.StepRecord {
 	}
 }
 
-// textValue NULL metni boş dizeye çevirir.
+// textValue turns NULL text into the empty string.
 func textValue(v *string) string {
 	if v == nil {
 		return ""
 	}
+
 	return *v
 }
 
-// countValue NULL sayacı sıfıra çevirir.
+// countValue turns a NULL counter into zero.
 func countValue(v *int32) int {
 	if v == nil {
 		return 0
 	}
+
 	return int(*v)
 }
