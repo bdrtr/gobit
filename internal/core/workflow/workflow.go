@@ -760,15 +760,6 @@ func (e *executor) judgeAbandoned(ctx context.Context, wf Workflow, prev *Execut
 		return false, nil
 	}
 
-	switch e.claimAbandoned(ctx, prev, o) {
-	case claimLost:
-		// Somebody else is recovering it; the caller tries to open again.
-		return true, nil
-	case claimUndecided:
-		return false, nil
-	case claimWon:
-	}
-
 	// The steps are read separately: the contract does not say
 	// FindByIdempotencyKey brings them, and this path is exceptional anyway.
 	sctx, cancel := o.storeContext(ctx)
@@ -783,6 +774,21 @@ func (e *executor) judgeAbandoned(ctx context.Context, wf Workflow, prev *Execut
 			attrWorkflow, wf.Name, attrExecutionID, prev.ID, attrError, err)
 
 		return false, nil
+	}
+
+	// The claim comes AFTER the read and before the first write. Reading has no
+	// side effect, while a won claim STAMPS UpdatedAt and so renews the lease
+	// (see [ClaimingStore]); claiming first would mean a caller that then cannot
+	// read the steps has silently pushed the record's lease out by a full
+	// period, hiding a genuinely stuck saga from the next caller and from
+	// "gobit stuck" for exactly that long.
+	switch e.claimAbandoned(ctx, prev, o) {
+	case claimLost:
+		// Somebody else is recovering it; the caller tries to open again.
+		return true, nil
+	case claimUndecided:
+		return false, nil
+	case claimWon:
 	}
 
 	if hasHeldWork(full.Steps) {

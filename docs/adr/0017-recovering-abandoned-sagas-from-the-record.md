@@ -106,6 +106,13 @@ at any instant, and the second turn answers both endings correctly (the key is
 free → open a new execution; the winner is still working → the record it finds
 is fresh, so "still going" is the truth).
 
+The claim comes AFTER the step records are read and before the first write.
+Reading has no side effect; a won claim stamps `updated_at` and so renews the
+lease. Claiming first would mean a caller that then cannot read the steps — the
+undecidable case, where the engine deliberately does nothing — has silently
+pushed the lease out by a full period, hiding a genuinely stuck saga from the
+next caller and from `gobit stuck` for exactly that long.
+
 The capability is OPTIONAL (`workflow.ClaimingStore`, a type assertion, the same
 shape as `Recoverable` on steps) rather than a new method on `Store`. A port
 method would break every Store written outside this repository for a guarantee

@@ -911,6 +911,58 @@ func TestTerkEdilmisKaydiTekBirCagiranKAPATIR(t *testing.T) {
 		"aynı anahtarla yalnızca bir saga koşmalı")
 }
 
+// okunamayanDepo adımları okutmaz ama talep yeteneğini ELDEN GEÇİRİR.
+type okunamayanDepo struct {
+	workflow.Store
+}
+
+func (s *okunamayanDepo) Get(context.Context, string) (*workflow.Execution, error) {
+	return nil, errors.Unavailable("depo_yok", "adımlar okunamadı")
+}
+
+func (s *okunamayanDepo) ClaimAbandoned(ctx context.Context, execID string, seen time.Time) (bool, error) {
+	talepci, ok := s.Store.(workflow.ClaimingStore)
+	if !ok {
+		return true, nil
+	}
+
+	return talepci.ClaimAbandoned(ctx, execID, seen)
+}
+
+// TestKararVerilemeyenKayitTalepEDILMEZ talebin sırasını sabitler.
+//
+// Talep bir YAZMADIR: kazanan updated_at'i damgalar ve kirayı bir dönem daha
+// uzatır. Adımları okunamayan bir kayıtta karar verilemez ve motor hiçbir şey
+// yapmaz — ama talep okumadan ÖNCE gelseydi, "hiçbir şey yapmayan" o çağıran
+// kaydın kirasını sessizce ileri atmış olurdu. Sonuç, gerçekten yarım kalmış
+// bir saga'nın hem bir sonraki çağırandan hem de `gobit stuck`'tan tam bir kira
+// süresi boyunca SAKLANMASIDIR.
+//
+// Bu yüzden sıra: önce oku (yan etkisiz), sonra talep et (ilk yazma).
+func TestKararVerilemeyenKayitTalepEDILMEZ(t *testing.T) {
+	rec := &recorder{}
+	temel := workflow.NewMemoryStore()
+	store := &okunamayanDepo{Store: temel}
+	eng := workflow.New(store, testLogger())
+	wf := workflow.Workflow{Name: "idem", Steps: steps(step(rec, "a"))}
+
+	id := terkedilmisKayit(t, temel, "sepet-okunamaz", time.Hour)
+	once, err := temel.Get(t.Context(), id)
+	require.NoError(t, err)
+
+	_, err = eng.Run(t.Context(), wf, nil,
+		workflow.WithIdempotencyKey("sepet-okunamaz"), workflow.WithLease(time.Minute))
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "is still going")
+
+	sonra, err := temel.Get(t.Context(), id)
+	require.NoError(t, err)
+	assert.True(t, sonra.UpdatedAt.Equal(once.UpdatedAt),
+		"karar verilemeyen kayıt TALEP EDİLMEMELİ: kirası uzatılırsa yarım kalmış saga saklanır")
+	assert.Empty(t, rec.snapshot())
+}
+
 // TestIdempotencyDifferentKeyRunsAgain farklı anahtarın yeni yürütme açtığını doğrular.
 func TestIdempotencyDifferentKeyRunsAgain(t *testing.T) {
 	rec := &recorder{}

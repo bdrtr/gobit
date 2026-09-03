@@ -264,6 +264,13 @@ Sabitlenme `1.0.0` ile olur.
   kurtarma sürdükçe tazeliyor. Ölçüm: aynı dört çağıran, TEK telafi (talep
   kaldırıldığında dörde dönüyor).
 
+  Talep, adım kayıtları OKUNDUKTAN sonra ve ilk yazmadan önce alınıyor. Okuma
+  yan etkisizdir; kazanılan talep ise `updated_at`'i damgalar, yani kirayı
+  uzatır. Talep önce gelseydi, adımları okuyamayan — yani hiçbir şey yapmayan —
+  bir çağıran kaydın kirasını sessizce ileri atmış olurdu ve gerçekten yarım
+  kalmış bir saga hem bir sonraki çağırandan hem de `gobit stuck`'tan tam bir
+  kira süresi boyunca saklanırdı.
+
   Talebi KAYBEDEN çağırana "hâlâ sürüyor" denmiyor, döngüye bir tur daha
   gönderiliyor: kazanan anahtarı her an bırakabilir ve ikinci tur iki sonu da
   doğru yanıtlar — anahtar serbestse yeni yürütme açılır, kazanan hâlâ
