@@ -659,6 +659,7 @@ Usage:
   %s %-34s start the HTTP server
   %s %-34s report every owner's schema version
   %s %-34s roll ONE owner back
+  %s %-34s list executions left half-done (read only)
   %s %-34s print this text
 
 %s %s flags:
@@ -673,6 +674,7 @@ there is deliberately no "migrate up", so a deploy cannot forget it.
 		binaryName, "",
 		binaryName, cmdMigrate+" "+cmdStatus,
 		binaryName, cmdMigrate+" "+cmdDown+" <owner> [flags]",
+		binaryName, stuckCommand+" [flags]",
 		binaryName, cmdHelp,
 		cmdMigrate, cmdDown,
 		flagSteps+" N", defaultDownSteps,

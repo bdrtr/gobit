@@ -105,6 +105,14 @@ func main() {
 // flags [migrateDown] takes. The rule from ADR 0001 that a dependency has to
 // earn its place applies to the binary's own front door too.
 //
+// # Why the binary grows subcommands at all
+//
+// The composition root is the only place that knows how to reach THIS
+// installation's database, and some operator work is nothing but a query
+// against it. That is why the migrate verbs live here rather than in a second
+// binary with its own configuration loading, and it is why [stuckCommand] —
+// the read surface for half-done sagas — lands here too.
+//
 // # Why starting the server has NO verb
 //
 // Before this function existed the binary parsed no arguments at all: it was
@@ -129,6 +137,8 @@ func run(args []string, out io.Writer) error {
 		return writeReport(out, usageText())
 	case cmdMigrate:
 		return runMigrate(args[1:], out)
+	case stuckCommand:
+		return runStuck(args[1:], out)
 	default:
 		if err := writeReport(out, usageText()); err != nil {
 			return err

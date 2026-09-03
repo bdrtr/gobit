@@ -462,14 +462,28 @@ func skipExecColumns(targets []any) {
 }
 
 // rawPool ham pgx havuzunu döner; havuz kurulmamışsa tipli hata üretir.
+//
+// Gövde paket düzeyindeki [driverPool]'dadır: aynı kontrolü listeleme okuyucusu
+// da yapmak zorunda ve iki kopya ayrıştığında biri nil havuzda tipli hata
+// verirken öteki panikle düşerdi.
 func (s *store) rawPool() (*pgxpool.Pool, error) {
+	return driverPool(s.pool)
+}
+
+// driverPool sarmalayıcının altındaki pgx havuzunu döner.
+//
+// Depo ile listeleme okuyucusu bunu paylaşır: "havuz hiç kurulmamış" durumu
+// hangi yüzeyden gelinirse gelinsin AYNI mesajı ve aynı hata sınıfını üretsin
+// diye. İki kopya ayrıştığında biri tipli hata verirken öteki nil havuzda
+// panikleyebilirdi.
+func driverPool(pool *db.Pool) (*pgxpool.Pool, error) {
 	// db.Pool.Pool() nil alıcıya karşı güvenlidir; nil havuz nil döner.
-	pool := s.pool.Pool()
-	if pool == nil {
+	raw := pool.Pool()
+	if raw == nil {
 		return nil, errors.Unavailable(CodeUnavailable,
 			"workflow deposu için veritabanı havuzu kurulmamış")
 	}
-	return pool, nil
+	return raw, nil
 }
 
 // execRow workflow_executions satırının ham okuma biçimidir.

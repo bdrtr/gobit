@@ -206,7 +206,7 @@ func TestUsageNamesEveryVerbTheDispatchAccepts(t *testing.T) {
 
 	usage := usageText()
 
-	for _, verb := range []string{cmdHelp, cmdMigrate, cmdStatus, cmdDown, flagSteps, flagConfirm} {
+	for _, verb := range []string{cmdHelp, cmdMigrate, cmdStatus, cmdDown, stuckCommand, flagSteps, flagConfirm} {
 		assert.Contains(t, usage, verb, "the usage text does not mention %q", verb)
 	}
 

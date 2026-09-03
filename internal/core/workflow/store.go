@@ -71,6 +71,40 @@ const (
 	StepCompensationFailed StepStatus = "compensation_failed"
 )
 
+// Held adımın yan etkisinin dünyada HÂLÂ DURDUĞUNU bildirir.
+//
+// invoked "iş yapıldı ve telafi edilmedi", compensation_failed ise "iş yapıldı,
+// geri alınamadı" demektir; ikisinde de asılı bir yan etki vardır. compensated
+// geri alınmıştır, failed ise hiç iş yapmamıştır — ikisi de asılı DEĞİLDİR.
+//
+// Yüklem motorun terk edilmiş yürütme kararının ta kendisidir (bkz.
+// [WithLease]): kirası dolmuş bir kaydın [StatusFailed] mi yoksa
+// [StatusCompensationFailed] mi olacağına bu ayrım karar verir. Elle müdahale
+// bekleyen kayıtları LİSTELEYEN yüzey de aynı yüklemi kullanmalıdır; ayrı
+// yazılsalardı liste, motorun "iş yapılmış" saydığı bir kaydı bir gün sessizce
+// atlardı ve asılı rezervasyon görünmez kalırdı.
+func (s StepStatus) Held() bool {
+	return s == StepInvoked || s == StepCompensationFailed
+}
+
+// HeldStepStatuses [StepStatus.Held] doğru dönen durumların TAMAMIDIR.
+//
+// Liste yüklemi SQL'e taşımak için vardır: veritabanı Go metodunu çağıramaz,
+// dolayısıyla süzgeç sorguya PARAMETRE olarak gider. Aynı çözüm pgstore'un
+// updateStatusSQL'inde de kullanılıyor — durum sabitinin ikinci bir kopyasını
+// SQL metnine gömmek, iki kopya ayrıştığı gün kuralı sessizce çalışmaz hâle
+// getirirdi.
+//
+// Listenin yüklemle uyumu testle denetlenir (kaynaktaki durum sabitleri
+// ayrıştırılarak); elle tutulan bir liste yeni bir adım durumu eklendiğinde
+// sessizce eksik kalırdı.
+//
+// Dönen dilim her çağrıda YENİDİR: paket düzeyinde bir değişken paylaşılsaydı
+// çağıran onu sıralayarak ya da üzerine yazarak motorun kararını değiştirebilirdi.
+func HeldStepStatuses() []StepStatus {
+	return []StepStatus{StepInvoked, StepCompensationFailed}
+}
+
 // Ad ve anahtar uzunluk sınırları.
 //
 // Sınırlar Store SÖZLEŞMESİNİN parçasıdır. Kalıcı bir uygulama bu alanları

@@ -1462,10 +1462,19 @@ açıktır.
   diyerek ERROR loglar (yani hata bildirimi açıksa toplayıcıya gider). Hangi
   rezervasyonun asılı kaldığı adım kayıtlarının `output` alanında durur.
 
-  Ama **otomatik kurtarma YOKTUR**: motor adım çıktılarını saklıyor,
-  `StepContext.Shared`'ı saklamıyor, dolayısıyla telafi zincirini sonradan
-  çalıştıramıyor. Asılı rezervasyonu düşürmek bugün bir operatör işidir ve
-  onları LİSTELEYEN bir yönetim ucu da henüz yok.
+  Artık LİSTELENEBİLİYOR da: `gobit stuck` yarım kalmış yürütmeleri ve her
+  birinin hangi adımının hâlâ ne tuttuğunu yazar. İki sınıfı birden kapsar,
+  çünkü durum sorgusu tek başına yetmiyor: süreç saga'nın ortasında öldüyse ve
+  müşteri bir daha dönmediyse kayıt `compensation_failed` bile OLMAZ, sonsuza
+  dek `running` kalır — komut o sınıfı "kirası dolmuş ve hâlâ tutulan adımı
+  olan" olarak bulur.
+
+  Ama **otomatik kurtarma YOKTUR** ve komut da yalnızca OKUR: motor adım
+  çıktılarını saklıyor, `StepContext.Shared`'ı saklamıyor, dolayısıyla telafi
+  zincirini sonradan çalıştıramıyor. Asılı rezervasyonu düşürmek hâlâ bir
+  operatör işidir — hâlâ koşan bir saga'nın stoğunu bırakmak onu ikinci kez
+  ayırtacağı için bırakmayı komut üstlenmez. Listede kabuk gerekir; tarayıcıdan
+  görülebilmesi ADR 0011'in panel kararını yeniden açmayı gerektirir.
 - **Hata bildirimi bir İŞARETTİR, olayın kopyası değil.** `error-sentry`
   eklentisi ([ADR 0014](docs/adr/0014-error-reporting.md)) toplayıcıya arıza
   kodunu, güvenli mesajı ve `request_id`'yi gönderir; geri kalan her şey logda

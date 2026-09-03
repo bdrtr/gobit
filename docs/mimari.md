@@ -262,6 +262,22 @@ denendikten sonra geri alma yapılmaz, çünkü belirsiz bir tahsilatı "iptal
 edildi" saymak parayı kaybetmenin en sessiz yoludur. Kalan risk ve mutabakat
 ihtiyacı `internal/workflows/checkout/doc.go` içinde yazılıdır.
 
+**Yarım kalan yürütmeleri LİSTELEYEN yüzey ikilide bir alt komuttur**
+(`gobit stuck`, [ADR 0016](adr/0016-operator-read-surface-for-half-done-sagas.md)).
+Kayıtlar çekirdeğin tablolarındadır ve çekirdeğin modüller gibi bir HTTP ucu
+yoktur; panel ise ADR 0011'in Karar 6'sını yeniden açmadan bu ekranı taşıyamaz.
+Komut YALNIZCA OKUR — asılı bir rezervasyonu bırakmak hâlâ elle yapılır, çünkü
+hâlâ koşan bir saga'nın stoğunu bırakmak onu ikinci kez ayırtır.
+
+Komutun kapsadığı iki sınıf aynı koşul DEĞİLDİR ve ikincisi ölçülerek bulundu:
+`compensation_failed` kayıtları motorca kapatılmış ve ERROR loglanmıştır, ama o
+duruma geçmek için **bir şeyin olması** gerekir: motor onu ya CANLI yazar (bir
+adım ve onun telafisi aynı çağrıda düşer) ya da TEKRAR yolunda (kirası dolmuş
+bir kayda yeniden gelinir). Süreç saga'nın ortasında ÖLDÜYSE ve müşteri bir daha
+dönmediyse ikisi de olmaz: sepet `running` kalır, stoğu tutar ve hiçbir log
+satırında geçmez. Ölçüm: altı kayıtlık düzenekte elle müdahale
+bekleyen iki yürütmeden yalnızca **biri** durum sorgusuyla bulunuyor.
+
 ---
 
 ## 8. Kimlik ve sertleştirme
@@ -365,6 +381,8 @@ bırakırdı — ödemede bunun bedeli paranın beklenmedik bir kuruluşa gitmes
 | Yük testi süreç içi | Kapasite planı üretmez | Gerçek dağıtımda dış yük aracı |
 | Geri alma TEK sahip içindir ve sırayı bilmez | Modülleri birlikte geri almak isteyen işletmeci komutu sahip başına tekrarlar; hangi sırada geri alınacağını komut söylemez | Modüller arası FK olmadığı için sıra bugün bir kısıt değil; gerçekten gerektiğinde bir sıra tanımı eklenir |
 | Yarım kalmış migration'ı ONARACAK bir komut yok | `migrate down` dirty defteri reddeder ve elle onarıma yollar; "force" yüzeyi yoktur | Bilinçli: sürümü doğru bilen tek taraf, yarım şemaya bakan insandır |
+| Asılı rezervasyonu DÜŞÜREN bir yüzey yok | Liste var, telafi yok: `gobit stuck` neyin tutulduğunu söyler, bırakmayı operatöre bırakır | Motor `StepContext.Shared`'ı da saklarsa telafi zinciri sonradan koşturulabilir; o güne kadar elle |
+| Yarım kalan yürütme listesi tarayıcıdan görünmez | Kabuğu olmayan operatör komutu koşamaz | Panelde bir ekran — ama ADR 0011'in Karar 6'sını bilerek yeniden açmak gerekir |
 | Yetki sözlüğü modül başına iki girdi | Kaynak bazlı ayrım yok (örn. yalnızca varyant okuma) | Ayrım gerçekten gerektiğinde eklenir; şimdiden eklemek yanlış bir kesinlik hissi verirdi |
 | Bellek içi idempotency deposu bir bayt bütçesiyle sınırlı | Bütçe dolunca **en eski** kayıt düşer; o anahtarla gelen tekrar yeniden işlenir (mükerrer yan etki) | `GUARD_BACKEND=redis`, ya da daha büyük `IDEMPOTENCY_MAX_MEMORY_BYTES` |
 

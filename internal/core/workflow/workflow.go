@@ -662,11 +662,12 @@ func (e *executor) terkEdilmisMi(ctx context.Context, wf Workflow, prev *Executi
 
 // isYapilmis adım kayıtlarında GERİ ALINMAMIŞ iş olup olmadığını söyler.
 //
-// invoked = iş yapıldı ve telafi edilmedi. compensated ve failed geri
-// alınmıştır ya da hiç yapılmamıştır; compensation_failed ise zaten yarım iştir.
+// Karar tek bir yüklemdedir ([StepStatus.Held]) ve burada TEKRARLANMAZ: aynı
+// ayrımı listeleme yüzeyi de kullanıyor ve iki kopya ayrıştığı gün motor bir
+// kaydı "iş yapılmış" sayarken liste onu atlardı.
 func isYapilmis(steps []StepRecord) bool {
 	for i := range steps {
-		if steps[i].Status == StepInvoked || steps[i].Status == StepCompensationFailed {
+		if steps[i].Status.Held() {
 			return true
 		}
 	}

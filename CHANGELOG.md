@@ -12,6 +12,32 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Değiştirildi
 
+- **`gobit stuck`: yarım kalmış saga'lar artık LİSTELENEBİLİYOR.** v0.7.0
+  kesintiye uğrayan bir ödemeyi sessiz olmaktan çıkarmıştı (kirası dolan
+  yürütme kapanıyor, iş yapılmışsa `compensation_failed` yazılıyor ve ERROR
+  loglanıyor) ama o kaydı GÖRECEK hiçbir yüzey yoktu; operatör psql açıyordu.
+  Komut YALNIZCA OKUR: hiçbir rezervasyon bırakılmaz, hiçbir yürütme kapanmaz,
+  hiçbir anahtar serbest bırakılmaz — hâlâ koşan bir saga'nın stoğunu bırakmak
+  onu ikinci kez ayırtır.
+
+  Komut İKİ sınıf listeliyor ve ikincisi ölçülerek bulundu. Durum sorgusu
+  (`compensation_failed`) yalnızca motorun KAPATTIĞI kayıtları görür; oysa
+  süreç saga'nın ortasında ölür ve müşteri bir daha dönmezse kayıt sonsuza dek
+  `running` kalır, stoğu tutar ve hiçbir log satırında geçmez. Ölçüm: elle
+  müdahale bekleyen iki yürütmeden yalnızca biri durum sorgusuyla bulunuyordu.
+  İkinci sınıf bu yüzden "kirası dolmuş VE hâlâ tutulan adımı olan" olarak
+  tanımlı — yalnızca yaşlı olan bir kayıt hiçbir şey tutmuyorsa motor onu kendi
+  onarır ve listelemek operatörün sayfasını gereksiz satırla doldururdu.
+
+  Kararın kendisi [ADR 0016](docs/adr/0016-operator-read-surface-for-half-done-sagas.md)'da.
+
+  Bayatlığın kesim ANI artık sorgunun İÇİNDE hesaplanıyor ve satırlarla birlikte
+  geri dönüyor: satırları SEÇEN an ile başlıkta YAZAN an aynı ifadeden geliyor.
+  İki ayrı değer bırakmak, testte görünmeyen bir sapma sınıfıydı — testte
+  çağıran ile veritabanı aynı makinede olduğu için çağıranın saatiyle süzüp
+  veritabanının saatini yazan bir sürüm bütün suite'i geçiyordu (mutasyonla
+  ölçüldü).
+
 - **`gobit migrate status` ve `gobit migrate down <owner>`: migration'ların
   operatöre açık bir yüzeyi oldu.** `.down.sql` dosyaları vardı, geri
   alınabilirlikleri testliydi, ama onları çağıracak bir şey yoktu; geri alma
