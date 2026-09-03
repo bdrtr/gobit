@@ -79,8 +79,8 @@ func TestSigtermDuzgunKapanisYapar(t *testing.T) {
 
 	// Log, kapanışın SİNYALLE geldiğini söylemeli: sıfır kodla ve hızla biten
 	// bir süreç, sinyali hiç görmeden main'den düşmüş de olabilirdi.
-	assert.True(t, s.gunlukIceriyorMu("kapanış sinyali alındı"),
+	assert.True(t, s.gunlukIceriyorMu("the shutdown signal arrived"),
 		"süreç SIGTERM'i görmeli\n%s", s.gunluk())
-	assert.True(t, s.gunlukIceriyorMu("HTTP sunucusu kapandı"),
+	assert.True(t, s.gunlukIceriyorMu("the HTTP server is closed"),
 		"kapanış düzgün yoldan tamamlanmalı\n%s", s.gunluk())
 }

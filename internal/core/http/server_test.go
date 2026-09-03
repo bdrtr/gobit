@@ -184,7 +184,7 @@ func TestServerForceClosesOnShutdownTimeout(t *testing.T) {
 		if err == nil {
 			t.Fatal("Run() nil döndü; zaman aşımında hata beklenirdi")
 		}
-		if !strings.Contains(err.Error(), "düzgün kapanış tamamlanamadı") {
+		if !strings.Contains(err.Error(), "the graceful shutdown could not finish") {
 			t.Errorf("beklenmedik hata: %v", err)
 		}
 	case <-time.After(10 * time.Second):

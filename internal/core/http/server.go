@@ -9,35 +9,38 @@ import (
 	"time"
 )
 
-// ServerOptions Server'ın davranışını belirler.
+// ServerOptions decides the Server's behavior.
 type ServerOptions struct {
-	// Addr, dinlenecek TCP adresidir (örn. ":9000").
+	// Addr is the TCP address to listen on (e.g. ":9000").
 	Addr string
-	// Handler, isteklerin yönlendirileceği kök handler'dır.
+	// Handler is the root handler the requests are routed to.
 	Handler http.Handler
-	// Logger, sunucu yaşam döngüsü olaylarının yazılacağı logger'dır.
+	// Logger is where the server lifecycle events are written.
 	Logger *slog.Logger
-	// ShutdownTimeout, kapanışta açık isteklerin tamamlanması için tanınan süredir.
+	// ShutdownTimeout is the time allowed at shutdown for the open requests to
+	// finish.
 	ShutdownTimeout time.Duration
-	// ReadHeaderTimeout, yalnızca istek başlıklarının okunma süresidir.
+	// ReadHeaderTimeout is the time allowed for reading the request headers
+	// alone.
 	ReadHeaderTimeout time.Duration
-	// ReadTimeout, başlık + gövdenin tamamının okunma süresidir. Bu sınır
-	// olmadan gövdeyi bayt bayt akıtan bir istemci bağlantıyı süresiz tutar.
+	// ReadTimeout is the time allowed for reading the headers and the whole
+	// body. Without this bound a client streaming the body byte by byte holds
+	// the connection forever.
 	ReadTimeout time.Duration
-	// WriteTimeout, yanıtın yazılma süresidir.
+	// WriteTimeout is the time allowed for writing the response.
 	WriteTimeout time.Duration
-	// IdleTimeout, keep-alive bağlantısının boşta bekleme süresidir.
+	// IdleTimeout is how long a keep-alive connection may sit idle.
 	IdleTimeout time.Duration
 }
 
-// Server graceful shutdown destekli HTTP sunucusudur.
+// Server is the HTTP server with graceful shutdown support.
 type Server struct {
 	httpSrv         *http.Server
 	log             *slog.Logger
 	shutdownTimeout time.Duration
 }
 
-// NewServer verilen ayarlarla bir Server kurar.
+// NewServer builds a Server with the given options.
 func NewServer(opts ServerOptions) *Server {
 	log := opts.Logger
 	if log == nil {
@@ -58,18 +61,18 @@ func NewServer(opts ServerOptions) *Server {
 	}
 }
 
-// Run sunucuyu başlatır ve ctx iptal edilene kadar bloklar.
+// Run starts the server and blocks until ctx is canceled.
 //
-// ctx iptal edildiğinde yeni bağlantı kabul edilmez ve açık istekler
-// ShutdownTimeout süresince tamamlanmaya çalışılır. Süre dolarsa kalan
-// bağlantılar Close ile zorla kapatılır ve hata döner.
+// Once ctx is canceled no new connection is accepted and the open requests are
+// given ShutdownTimeout to finish. When that runs out the remaining connections
+// are forced closed with Close and an error is returned.
 func (s *Server) Run(ctx context.Context) error {
 	errCh := make(chan error, 1)
 
 	go func() {
-		s.log.Info("HTTP sunucusu dinlemede", "addr", s.httpSrv.Addr)
+		s.log.Info("the HTTP server is listening", "addr", s.httpSrv.Addr)
 		if err := s.httpSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			errCh <- fmt.Errorf("http: sunucu başlatılamadı: %w", err)
+			errCh <- fmt.Errorf("http: the server could not be started: %w", err)
 			return
 		}
 		errCh <- nil
@@ -79,23 +82,23 @@ func (s *Server) Run(ctx context.Context) error {
 	case err := <-errCh:
 		return err
 	case <-ctx.Done():
-		s.log.Info("kapanış sinyali alındı, açık istekler bekleniyor", "timeout", s.shutdownTimeout)
+		s.log.Info("the shutdown signal arrived, waiting for the open requests", "timeout", s.shutdownTimeout)
 	}
 
 	shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), s.shutdownTimeout)
 	defer cancel()
 
 	if err := s.httpSrv.Shutdown(shutdownCtx); err != nil {
-		// Shutdown, deadline dolduğunda hata döner ama AKTİF BAĞLANTILARI
-		// KAPATMAZ; zorla kapatmak için ayrıca Close gerekir. Bu olmadan
-		// handler goroutine'leri ve TCP bağlantıları Run döndükten sonra
-		// yaşamaya devam ederdi.
-		s.log.Warn("düzgün kapanış süresi doldu, bağlantılar zorla kapatılıyor", "error", err)
+		// When the deadline runs out Shutdown returns an error but does NOT
+		// CLOSE THE ACTIVE CONNECTIONS; forcing them shut needs a separate
+		// Close. Without it the handler goroutines and the TCP connections
+		// would keep living after Run had returned.
+		s.log.Warn("the graceful shutdown budget ran out, forcing the connections closed", "error", err)
 		closeErr := s.httpSrv.Close()
-		<-errCh // ListenAndServe'in dönmesini bekle, goroutine'i sızdırma
-		return fmt.Errorf("http: düzgün kapanış tamamlanamadı: %w", errors.Join(err, closeErr))
+		<-errCh // wait for ListenAndServe to return; do not leak the goroutine
+		return fmt.Errorf("http: the graceful shutdown could not finish: %w", errors.Join(err, closeErr))
 	}
 
-	s.log.Info("HTTP sunucusu kapandı")
+	s.log.Info("the HTTP server is closed")
 	return <-errCh
 }

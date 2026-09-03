@@ -57,9 +57,7 @@ internal/core/http/redisguard/ratelimit.go
 internal/core/http/redisguard/redisguard.go
 internal/core/http/redisguard/redisguard_integration_test.go
 internal/core/http/redisguard/redisguard_test.go
-internal/core/http/router.go
 internal/core/http/router_test.go
-internal/core/http/server.go
 internal/core/http/server_test.go
 internal/core/http/telemetry.go
 internal/core/http/telemetry_test.go
