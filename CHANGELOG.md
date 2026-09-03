@@ -10,6 +10,132 @@ Sabitlenme `1.0.0` ile olur.
 
 ## [Yayımlanmamış]
 
+### Eklendi
+
+- **Yönetim paneli iskeleti: dördüncü ağaç `internal/adminui`**
+  ([ADR 0011](docs/adr/0011-yonetim-paneli-dorduncu-agac.md)). Panel `/admin/ui`
+  altında yaşar, sunucu tarafında HTML üretir (`html/template`, ikiliye gömülü)
+  ve modülleri İMPORT ETMEZ — çerçevenin okuma yollarını container'dan adla
+  çözer. Bu turda giriş, çıkış ve korumalı bir giriş noktası var; katalog
+  ekranları bir sonraki turda.
+
+- **Panelin kimliği bir çerezle taşınır ve çerez YALNIZCA panel ağacında
+  geçerlidir.** `Path` panel önekine sabitlenmiştir; `HttpOnly`, `SameSite=Strict`
+  ve paylaşılan ortamlarda `Secure`. Bunun sebebi savunma değil KORUMA:
+  yönetim API'sinin bugünkü CSRF bağışıklığı, jetonun tarayıcının KENDİLİĞİNDEN
+  eklemediği bir başlıkta yaşamasından gelir. Çerez `/admin/v1`'e de gitseydi o
+  bağışıklık kaybolur ve her yönetim ucu yeni bir saldırı yüzeyine girerdi.
+  CSRF'in ikinci katmanı `Origin` denetimidir (`adminui.UI.CheckOrigin`).
+
+- **`corehttp.WriteHTML`, `corehttp.WriteRedirect` ve `corehttp.WriteAsset`.**
+  Panel gövdesini kendi yazmaz: HTML de çekirdeğin yazıcısından geçer, böylece
+  hata yolu değişmezi (gövde yalnızca çekirdeğin yazıcılarından yazılır)
+  panelde de geçerli kalır. Sayfa önce TAMPONA üretilir; ortada oluşan bir hata
+  yarım gövde + 200 yerine 500 döner.
+
+- **Panelin koruma halkası bileşim kökünde takılır** (`adminui.Ring`).
+  Middleware router kurulurken takılmak zorundadır, panel ise container'dan
+  modül önyüklemesi SIRASINDA doğar; halka bu boşluğu köprüler ve bağlanmadan
+  önce gelen isteği REDDEDER — korumasız bir yönetim yüzeyi sessizce açık
+  kalmaktansa gürültüyle kapalı kalır (ADR 0007'nin kimlik hattı).
+
+- **Deponun çalışma dili İngilizce oldu ve geçiş bir DEFTERE bağlandı**
+  ([ADR 0012](docs/adr/0012-repository-language-and-solid.md)).
+  `internal/arch/testdata/turkish_ledger.txt` hâlâ Türkçe içeren her dosyayı,
+  `internal/arch/testdata/turkish_paths.txt` ise Türkçe ADI olan her yolu adıyla
+  sayar; defterde olmayan bir dosya Türkçe içeremez. Defterler yalnızca
+  KÜÇÜLÜR: bir satırı silmek dosyanın gerçekten çevrilmiş olmasını gerektirir.
+  Başlangıç borcu 784 dosya + 41 yol.
+
+  Dedektör ÜÇ ŞERİTLİDİR ve bunun sebebi ölçüldü: bütün ağacı harf çevirisine
+  sokmak yalnızca diyakritiğe bakan bir kuralı 724 dosyadan 0'a düşürüyor —
+  yani tek bir komutla "çeviri bitti" dedirtiyor. İkinci şerit, harf
+  çevirisinden SAĞ ÇIKAN Türkçe işlev sözcüklerini yorum ve dize
+  değişmezlerinde arar (liste Go standart kütüphanesinin 7711 dosyasına karşı
+  ölçüldü, yalnızca sıfır isabet verenler alındı); üçüncüsü Türkçe kökleri
+  tanımlayıcıların TAM parçalarında arar.
+
+- **Dedektörün kendi körlüğüne karşı denetimler.** `TestDetectorIsNotBlind`
+  her şeridin ayrı sayacını ve taranan her kökü pozitif tutar; taranacak
+  köklerin listesi DİSKE karşı doğrulanır, çünkü listeyi kendi içinden okuyan
+  bir sayaç, listeden bir ağaç düştüğünde onunla birlikte susar (mutasyonla
+  görüldü). `TestDetectorFindsPlantedTurkish` her şeride bilinen bir örnek
+  ekiller, `TestDetectorPassesEnglishSource` ise doğru İngilizceyi yanlışlıkla
+  suçlamadığını kanıtlar — `module`, `rollback`, `reason` ve Go'nun `x, ok`
+  deyiminden doğan `yok` değişkeni dâhil.
+
+- **SOLID kuralı ölçüme bağlandı.** ADR 0012 beş prensibin bugünkü durumunu
+  tabloya döküyor: DIP ve OCP zorlanıyor, ISP modül sınırlarında YAPISAL olarak
+  sağlanıyor, SRP yalnızca makro düzeyde, LSP için hiçbir denetim yok. Son ikisi
+  için "denetim yoktur" AÇIKÇA yazıldı; boyut linter'ları kapalı kalıyor çünkü
+  53 metotlu bir arayüzü eşiğe göre altıya bölmek tasarımı değil sayacı
+  memnun eder.
+
+### Değiştirildi
+
+- Kablolama değişmezi (`TestPanelBilesimKokundeKurulu`) ve modül-izolasyonu
+  denetimi (`TestPanelModulleriImportEtmez`) dördüncü ağacı da kapsıyor. Önek
+  eşlemesi ağacın KÖKÜNÜ de kabul edecek şekilde düzeltildi: eskiden yalnızca
+  alt paketleri görüyordu, yani kökte kurulan bir paket denetimin dışında
+  kalırdı.
+- Gövde yazımı taraması artık `tmpl.Execute(w, …)` biçimindeki şablon
+  akıtmalarını da yakalıyor. Tarama alıcının import adına baktığı için şablon
+  yazıcısına KÖRDÜ ve panel bu kör noktadan geçebilirdi.
+- **Panel çerezinin `/admin/v1`'de KABUL EDİLMEDİĞİ artık bir değişmez**
+  (`TestPanelCookieIsNotAcceptedByTheAdminAPI`). ADR 0011'in taşıyıcı iddiası
+  buydu ve bugüne kadar hiçbir test onu tutmuyordu: yönetim API'sinin CSRF
+  bağışıklığı bir savunmadan değil, jetonun tarayıcının KENDİLİĞİNDEN
+  eklemediği bir başlıkta yaşamasından geliyor. İddia GERÇEK koruma yığınında
+  sınanıyor, elle kurulmuş bir zincirde değil — çünkü kanıtlanan şey KAPSAMIN
+  bir özelliği.
+
+  Test yazılırken dört mutasyon sağ kaldı ve dördü de testteki gerçek
+  boşluklardı: çerezle panelin açılması, halka hiç takılı değilken de
+  geçiyordu (panel öneki kotalar için zaten açık); köken halkasının TAKILI
+  olduğunu hiçbir şey kanıtlamıyordu; giriş yolunun kimlik muafiyetini
+  kaldırmak hiçbir testi düşürmüyordu — oysa bedeli "kimse giriş yapamaz"dır
+  ve arıza bir hataya bile benzemez, giriş sayfası 401'le geri gelir.
+
+- **`corehttp.SchemeBearer`.** Çekirdek, `Authorization` başlığından okuduğu
+  şemayı KÜÇÜK HARFE indirip doğrulayıcıya öyle veriyor; panel ise jetonu
+  çerezde taşıdığı için başlıktan hiç geçmiyor ve şemayı elle yazıyordu. İki
+  yazım bugün yalnızca auth modülünün büyük/küçük harf duyarsız
+  karşılaştırması sayesinde çalışıyordu. Sözleşme artık `Authenticator`
+  arayüzünde yazılı ve iki taraf da aynı sabiti kullanıyor.
+
+- `internal/core/http/auth.go` İngilizceye çevrildi. Kimlik doğrulama
+  yanıtlarının mesajları değişti (`"authentication is required"`); kodlar
+  (`unauthenticated`, `forbidden`) değişmedi.
+
+- **Çekirdeğin beş paketi İngilizceye çevrildi** (ADR 0012): `internal/core/errors`,
+  `internal/core/container`, `internal/core/module`, `internal/core/provider`,
+  `internal/core/logger`. Davranış değişmedi. Değişen KULLANICIYA/OPERATÖRE
+  giden metinlerdir: container'ın teşhis mesajları (`"missing: Reserve(...)"`,
+  `"...have pointer receivers"`), modül kaydı hataları ve log anahtarları
+  (`"servis"` → `"service"`, `"tembel"` → `"lazy"`). `Kind.String()` çıktıları
+  (`not_found`, `invalid`, …) SÖZLEŞMEDİR ve değişmedi; godoc'a bu açıkça
+  yazıldı.
+
+- **Bileşim kökü ve çekirdeğin yanıt yazıcısı İngilizceye çevrildi**
+  ([ADR 0012](docs/adr/0012-repository-language-and-solid.md)). `cmd/server`
+  içinde `kurulum.go` → `setup.go`, `kurulum_test.go` → `setup_test.go`,
+  `belge_test.go` → `docs_test.go`; `internal/core/http` içinde `response.go`
+  ve testi. Davranış değişmedi, ama açılış LOG MESAJLARI
+  ve kullanıcıya dönen genel iç hata mesajı artık İngilizce
+  (`"an unexpected server error occurred"`). Hata KODLARI değişmedi ve
+  değişmeyecek: kod makine sözleşmesidir, mesaj insan içindir.
+
+  Yeniden adlandırmalar sırasında kayıt denetimi gerçek bir tuzağı yakaladı:
+  eklenti kaydının yerel değişkenine `registry` demek, denetimin alıcıyı ADIYLA
+  tanıması yüzünden o satırı modül kaydı gibi gösteriyordu.
+
+  İçerik defteri 784 → 777, yol defteri 41 → 38.
+
+- ADR seçenek bölümü başlıklarını tanıyan liste İKİ DİLLİ oldu
+  (`internal/arch/belge_atiflari_test.go`). Yalnızca Türkçe başlık tanıyan
+  kural, İngilizce yazılmış bir ADR'nin REDDEDİLMİŞ seçeneklerini bugünkü depo
+  hakkında iddia sanar ve var olmayan sembolleri kırık bildirirdi.
+
 ## [0.5.0] — 2026-09-02
 
 ### Kırıcı değişiklikler
@@ -131,6 +257,44 @@ Sabitlenme `1.0.0` ile olur.
   tarayan entegratör aksi hâlde görmezdi.
 
 ### Eklendi
+
+- **Yönetim paneli başladı: yazma kapısı, iskelet ve denetimin kapsamı.**
+  Panel `internal/adminui` altında, `internal/workflows`'un kardeşi olarak
+  dördüncü bir ağaçta yaşıyor ve sunucu tarafında üretilen HTML'i ikiliye
+  gömülü şablonlardan üretiyor. Karar ve reddedilen seçenekler
+  [ADR 0011](docs/adr/0011-yonetim-paneli-dorduncu-agac.md)'de. Bu turda gelen
+  yalnızca iskelettir: oturum, koruma halkası ve katalog ekranları sonraki
+  turlarda.
+
+  Çekirdeğe üç yazıcı eklendi — HTML, yönlendirme ve statik varlık. HTML
+  yazıcısı gövdeyi **önce belleğe** üretmeyi şart koşuyor: doğrudan yazıcıya
+  akıtılan bir şablonda ortada doğan hata, `200` durum kodlu YARIM bir sayfa
+  bırakır ve başlık gönderildikten sonra ne panik yakalayıcı ne hata yazıcısı
+  bir şey yapabilir. JSON yazıcısının aksine 2xx zorunluluğu YOKTUR ve bu
+  bilinçli: kimliksiz bir tarayıcıya giriş sayfasını `401` ile döndürmek, onu
+  başka bir yere yollamaktan daha dürüsttür.
+
+  **İki kör nokta, açıldıkları turda kapatıldı** — ikisi de ölçüldü:
+
+  - Kayıt denetimleri kapsamlarını modül ağacına indiriyordu; panel ağacında
+    "yazılmış ama hiçbir yere bağlanmamış" bir yetenek arch koşusunu YEŞİL
+    bırakırdı. Uydurmaya gerek olmadı: aynı boşluk `internal/workflows` için
+    zaten kapatılmıştı ve kalıbı hazırdı. Denetim ayrıca kökte yaşayan
+    paketleri de görecek şekilde düzeltildi — önek eşleşmesi yalnızca alt
+    paketleri kapsıyordu.
+  - "Gövde tek yerden yazılır" değişmezinin modül dışı kolu şablon yazımını
+    GÖRMÜYORDU: çağrının alıcısı bir paket adı olmadığı için hedef çözülemiyor
+    ve çağrı sessizce geçiyordu. Bu bir izin değil, taramanın ölçme biçiminin
+    negatifiydi — kural kalkmıyor, körleşiyordu. Tarama artık şablonun yazıcıya
+    akıtılmasını yakalıyor.
+
+  Şablonlar AÇILIŞTA ayrıştırılıyor ve adları iki yönlü çiviliyor: beklenen bir
+  ad ayrıştırılmamışsa da, ayrıştırılan bir şablon hiçbir yerde çağrılmıyorsa da
+  açılış durur. Şablon adı bir dizedir; yazım hatası derlenir, lint görmez ve
+  yalnızca o sayfa açıldığında patlar.
+
+  Beş mutasyonla doğrulandı: panelin kablolaması, modül import yasağı, şablonun
+  yazıcıya akıtılması ve şablon adı denetiminin her iki yönü.
 
 - **Depo seçimi artık bir POLİTİKA taşıyor.** Sınır bu turda YAZIYA GEÇTİ ve
   aynı yayımlanmamış pencerede kapandı; hiçbir yayımlanmış sürümün bilinen

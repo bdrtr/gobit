@@ -1299,7 +1299,16 @@ var mdSatirIciKod = regexp.MustCompile("`([^`]+)`")
 // Sözcükler bir muafiyet listesi DEĞİLDİR: hangi yolun affedileceğini değil,
 // belgenin hangi BÖLÜMÜNÜN bugünkü depo hakkında iddia taşımadığını söylerler.
 // Bkz. [markdownAtiflari].
-var mdSecenekBasligiSozcukleri = []string{"seçenek", "değerlendirme"}
+//
+// Liste İKİ DİLLİDİR. ADR 0012 deponun çalışma dilini İngilizce yaptı ve yeni
+// ADR'ler İngilizce başlık taşıyor; yalnızca Türkçe sözcük tanıyan bir kural,
+// İngilizce yazılmış bir ADR'nin reddedilmiş seçeneklerini GERÇEK atıf sanar ve
+// var olmayan sembolleri kırık bildirir. Eski başlıklar listede KALIR: geçmiş
+// ADR'ler geriye dönük çevrilmez.
+var mdSecenekBasligiSozcukleri = []string{
+	"seçenek", "değerlendirme",
+	"option", "rejected", "evaluation", "considered", "alternative",
+}
 
 // markdownAtiflari tek bir belgedeki atıf adaylarını çıkarır.
 //

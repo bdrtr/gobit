@@ -14,7 +14,7 @@ import (
 //
 // # Neden bir smoke senaryosu
 //
-// Kapsam bileşim kökünde tek bir satırla verilir (korumaYigini'nin
+// Kapsam bileşim kökünde tek bir satırla verilir (guardStack'in
 // GuardOptions.OpenPrefixes alanı) ve o satırdaki bir eksiklik hiçbir şeyi
 // düşürmez: uç çalışmaya devam eder, yalnızca kotasız çalışır. Yani arıza tam
 // olarak bu deponun tekrar eden sınıfındandır — kural bir yerde tanımlı,
@@ -68,7 +68,7 @@ func TestKotaKapsamiGercekSurecte(t *testing.T) {
 
 		assert.True(t, kotayaTakilir(t, s, openAPISmokeYolu),
 			"/openapi.json hız sınırına TAKILMALI. Takılmıyorsa yol "+
-				"korumaYigini'ndeki OpenPrefixes listesinde değildir ve uç, kimlik "+
+				"guardStack'teki OpenPrefixes listesinde değildir ve uç, kimlik "+
 				"doğrulama maliyeti bile ödemeden atılabilen bir yük hâline gelir")
 	})
 

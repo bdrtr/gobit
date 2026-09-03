@@ -825,7 +825,7 @@ func modulServisleriniCoz() error {
 // Akış yalnızca bu dosyanın değişkenine yazılsaydı, testler onu çağırabilir
 // ama MAĞAZA UÇLARI çağıramazdı: cart modülünün vitrin satır uçları akışı
 // container'dan [cartwf.InteropName] adıyla çözer ve bulamazsa KAPALI
-// arızalanır. Kayıt cmd/server'daki akislariKaydet'in aynısıdır; olmasaydı
+// arızalanır. Kayıt cmd/server'daki registerWorkflows'un aynısıdır; olmasaydı
 // e2e, üretimde çalışan bir kurulumu değil yalnızca akışın kendisini sınardı.
 func sepetAkislariniKur() (*cartwf.Workflows, error) {
 	akislar, err := cartwf.FromContainer(kap)

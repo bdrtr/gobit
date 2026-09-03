@@ -8,32 +8,45 @@ import (
 	coreerrors "github.com/bdrtr/gobit/internal/core/errors"
 )
 
-// Auth kodları. İstemciler bunlara göre dallanır; mesajlar değişebilir.
+// Auth codes. Clients branch on these; the messages may change.
 const (
-	// CodeUnauthenticated kimlik sunulmadı ya da geçersiz.
+	// CodeUnauthenticated means no identity was presented, or it was invalid.
 	CodeUnauthenticated = "unauthenticated"
-	// CodeForbidden kimlik geçerli ama yetki yetmiyor.
+	// CodeForbidden means the identity is valid but the privileges are not
+	// enough.
 	CodeForbidden = "forbidden"
 )
 
-// Principal doğrulanmış çağıranın kimliğidir.
+// SchemeBearer is the scheme an [Authenticator] receives for a bearer
+// credential.
 //
-// Çekirdek, kimliğin NASIL doğrulandığını bilmez: JWT, gizli API anahtarı ya
-// da başka bir yöntem olabilir. Yalnızca yetki kararı için gereken alanları
-// taşır.
+// It is LOWER CASE, and that is not a style choice: [bearerCredential]
+// normalizes the scheme read from the header, so an authenticator never sees
+// "Bearer" from an HTTP request even when the client wrote it that way. Any
+// caller that reaches an authenticator WITHOUT going through the header — the
+// admin panel, which carries its token in a cookie — has to spell the same
+// value, and this constant is what keeps the two spellings from drifting
+// apart.
+const SchemeBearer = "bearer"
+
+// Principal is the verified caller's identity.
+//
+// The core does not know HOW the identity was verified: it may be a JWT, a
+// secret API key or something else. It only carries the fields an
+// authorization decision needs.
 type Principal struct {
-	// ID çağıranın benzersiz kimliğidir (kullanıcı ya da API anahtarı).
+	// ID is the caller's unique identity (a user or an API key).
 	ID string
-	// Kind kimliğin türüdür: "user" | "api_key".
+	// Kind is the identity's type: "user" | "api_key".
 	Kind string
-	// Scopes çağıranın yetkileridir (örn. "admin", "orders:read").
+	// Scopes are the caller's privileges (e.g. "admin", "orders:read").
 	Scopes []string
-	// SalesChannelIDs publishable anahtarın bağlı olduğu satış kanallarıdır;
-	// store yüzeyinde katalog süzmesi buna dayanır.
+	// SalesChannelIDs are the sales channels a publishable key is bound to;
+	// catalog filtering on the store surface rests on them.
 	SalesChannelIDs []string
 }
 
-// HasScope çağıranın verilen yetkiye sahip olup olmadığını bildirir.
+// HasScope reports whether the caller holds the given privilege.
 func (p Principal) HasScope(scope string) bool {
 	for _, s := range p.Scopes {
 		if s == scope || s == ScopeAdmin {
@@ -43,75 +56,83 @@ func (p Principal) HasScope(scope string) bool {
 	return false
 }
 
-// ScopeAdmin tüm yetkileri kapsayan üst yetkidir.
+// ScopeAdmin is the superior privilege covering all the others.
 const ScopeAdmin = "admin"
 
-// Authenticator gelen isteğin kimliğini çözer.
+// Authenticator resolves an incoming request's identity.
 //
-// Bu arayüz TÜKETİCİ tarafında (çekirdekte) tanımlıdır ve auth modülü onu
-// yapısal olarak karşılar (ADR 0001). Çekirdek modülleri tanımadığı için
-// (Prensip 2.4) somut uygulama container'dan adla çözülüp buraya verilir.
+// The interface is declared on the CONSUMER side (in the core) and the auth
+// module satisfies it structurally (ADR 0001). Because the core does not know
+// the modules (Principle 2.4), the concrete implementation is resolved from the
+// container by name and handed in here.
 type Authenticator interface {
-	// AuthenticateAdmin admin yüzeyinin kimliğini çözer: Bearer JWT ya da
-	// gizli API anahtarı. Kimlik geçersizse errors.Unauthorized döner.
+	// AuthenticateAdmin resolves the admin surface's identity: a Bearer JWT or
+	// a secret API key. It returns errors.Unauthorized when the identity is
+	// invalid.
+	//
+	// scheme arrives NORMALIZED to lower case; see [SchemeBearer]. An
+	// implementation should still compare case-insensitively, because it can
+	// also be called from outside the HTTP path.
 	AuthenticateAdmin(ctx context.Context, scheme, credential string) (Principal, error)
 
-	// AuthenticateStore mağaza yüzeyinin kimliğini çözer: publishable API
-	// anahtarı. Anahtar geçersizse errors.Unauthorized döner.
+	// AuthenticateStore resolves the store surface's identity: a publishable
+	// API key. It returns errors.Unauthorized when the key is invalid.
 	//
-	// Publishable anahtar bir SIR DEĞİLDİR (tarayıcıda görünür); tek işi
-	// isteği bir satış kanalına bağlamaktır.
+	// A publishable key is NOT A SECRET (it is visible in the browser); its
+	// only job is to bind the request to a sales channel.
 	AuthenticateStore(ctx context.Context, key string) (Principal, error)
 }
 
-// principalKey context'te doğrulanmış kimliği taşıyan anahtardır.
+// principalKey is the context key carrying the verified identity.
 type principalKey struct{}
 
-// WithPrincipal doğrulanmış kimliği context'e koyar.
+// WithPrincipal puts the verified identity into the context.
 func WithPrincipal(ctx context.Context, p Principal) context.Context {
 	return context.WithValue(ctx, principalKey{}, p)
 }
 
-// PrincipalFromContext context'teki doğrulanmış kimliği döner.
-// İkinci dönüş değeri false ise istek doğrulanmamıştır.
+// PrincipalFromContext returns the verified identity from the context.
+// A false second result means the request was not authenticated.
 func PrincipalFromContext(ctx context.Context) (Principal, bool) {
 	p, ok := ctx.Value(principalKey{}).(Principal)
 	return p, ok
 }
 
-// RequireAdmin admin yüzeyini korur.
+// RequireAdmin protects the admin surface.
 //
-// Authorization başlığını okur ve iki şemayı destekler:
+// It reads the Authorization header and supports two shapes:
 //
 //	Authorization: Bearer <jwt>
-//	Authorization: Bearer <gizli api anahtarı>
+//	Authorization: Bearer <secret api key>
 //
-// Şema ayrımını [Authenticator] yapar; çekirdek yalnızca başlığı ayrıştırır.
-// auth nil ise middleware TÜM istekleri reddeder: korumasız bir admin yüzeyi,
-// yanlış yapılandırmanın en pahalı hâlidir ve sessizce açık kalmamalıdır.
+// Telling the two apart is [Authenticator]'s job; the core only parses the
+// header. When auth is nil the middleware rejects EVERY request: an unprotected
+// admin surface is the most expensive form of misconfiguration and must not
+// stay quietly open.
 func RequireAdmin(auth Authenticator) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			ctx := r.Context()
 
 			if auth == nil {
-				unauthorized(ctx, w, "kimlik doğrulama yapılandırılmamış")
+				unauthorized(ctx, w, "authentication is not configured")
 				return
 			}
 
 			scheme, credential, ok := bearerCredential(r)
 			if !ok {
-				unauthorized(ctx, w, "kimlik doğrulama gerekli")
+				unauthorized(ctx, w, "authentication is required")
 				return
 			}
 
 			principal, err := auth.AuthenticateAdmin(ctx, scheme, credential)
 			if err != nil {
-				// Sebep LOGLANIR, istemciye SIZDIRILMAZ: "kullanıcı yok" ile
-				// "parola yanlış" arasındaki fark, kullanıcı sayımına yarar.
-				LoggerFromContext(ctx).WarnContext(ctx, "admin kimlik doğrulama başarısız",
+				// The reason is LOGGED, never LEAKED to the client: the
+				// difference between "no such user" and "wrong password" is
+				// what user enumeration is made of.
+				LoggerFromContext(ctx).WarnContext(ctx, "admin authentication failed",
 					"error", err, "request_id", RequestIDFromContext(ctx))
-				unauthorized(ctx, w, "kimlik doğrulama gerekli")
+				unauthorized(ctx, w, "authentication is required")
 				return
 			}
 
@@ -120,10 +141,11 @@ func RequireAdmin(auth Authenticator) func(http.Handler) http.Handler {
 	}
 }
 
-// RequireStore mağaza yüzeyini korur.
+// RequireStore protects the store surface.
 //
-// Publishable anahtar "x-publishable-api-key" başlığından okunur. Anahtar bir
-// SIR DEĞİLDİR; amacı isteği bir satış kanalına bağlamaktır, gizlilik değil.
+// The publishable key is read from the "x-publishable-api-key" header. The key
+// is NOT A SECRET; its purpose is to bind the request to a sales channel, not
+// to keep anything confidential.
 func RequireStore(auth Authenticator, header string) func(http.Handler) http.Handler {
 	if header == "" {
 		header = PublishableKeyHeader
@@ -133,21 +155,21 @@ func RequireStore(auth Authenticator, header string) func(http.Handler) http.Han
 			ctx := r.Context()
 
 			if auth == nil {
-				unauthorized(ctx, w, "kimlik doğrulama yapılandırılmamış")
+				unauthorized(ctx, w, "authentication is not configured")
 				return
 			}
 
 			key := strings.TrimSpace(r.Header.Get(header))
 			if key == "" {
-				unauthorized(ctx, w, "publishable api anahtarı gerekli")
+				unauthorized(ctx, w, "a publishable api key is required")
 				return
 			}
 
 			principal, err := auth.AuthenticateStore(ctx, key)
 			if err != nil {
-				LoggerFromContext(ctx).WarnContext(ctx, "mağaza kimlik doğrulama başarısız",
+				LoggerFromContext(ctx).WarnContext(ctx, "store authentication failed",
 					"error", err, "request_id", RequestIDFromContext(ctx))
-				unauthorized(ctx, w, "publishable api anahtarı geçersiz")
+				unauthorized(ctx, w, "the publishable api key is invalid")
 				return
 			}
 
@@ -156,14 +178,15 @@ func RequireStore(auth Authenticator, header string) func(http.Handler) http.Han
 	}
 }
 
-// PublishableKeyHeader publishable anahtarın okunduğu varsayılan başlıktır.
+// PublishableKeyHeader is the default header the publishable key is read from.
 const PublishableKeyHeader = "x-publishable-api-key"
 
-// RequireScope belirli bir yetki isteyen route'ları korur.
+// RequireScope protects routes that demand a particular privilege.
 //
-// [RequireAdmin] SONRASINDA kullanılır; kimlik yoksa 401, yetki yetmiyorsa
-// 403 döner. İki durumu ayırmak bilinçlidir: 401 "kim olduğunu söyle",
-// 403 "kim olduğunu biliyorum ama yetkin yok" demektir.
+// It is used AFTER [RequireAdmin]; with no identity it returns 401, with
+// insufficient privileges 403. Separating the two is deliberate: 401 means
+// "tell me who you are", 403 means "I know who you are but you are not
+// allowed".
 func RequireScope(scope string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -171,12 +194,12 @@ func RequireScope(scope string) func(http.Handler) http.Handler {
 
 			principal, ok := PrincipalFromContext(ctx)
 			if !ok {
-				unauthorized(ctx, w, "kimlik doğrulama gerekli")
+				unauthorized(ctx, w, "authentication is required")
 				return
 			}
 			if !principal.HasScope(scope) {
 				WriteError(ctx, w, coreerrors.Forbidden(CodeForbidden,
-					"bu işlem için %q yetkisi gerekli", scope))
+					"this operation requires the %q privilege", scope))
 				return
 			}
 
@@ -185,7 +208,10 @@ func RequireScope(scope string) func(http.Handler) http.Handler {
 	}
 }
 
-// bearerCredential Authorization başlığını şema ve kimlik bilgisine ayırır.
+// bearerCredential splits the Authorization header into scheme and credential.
+//
+// The scheme is lower-cased on the way out; see [SchemeBearer] for what that
+// commits the authenticators to.
 func bearerCredential(r *http.Request) (scheme, credential string, ok bool) {
 	raw := strings.TrimSpace(r.Header.Get("Authorization"))
 	if raw == "" {
@@ -203,10 +229,10 @@ func bearerCredential(r *http.Request) (scheme, credential string, ok bool) {
 	return strings.ToLower(scheme), credential, true
 }
 
-// unauthorized RFC 9110'a uygun 401 yanıtı yazar.
+// unauthorized writes a 401 response conforming to RFC 9110.
 //
-// WWW-Authenticate başlığı ZORUNLUDUR: istemci hangi şemanın beklendiğini
-// bilmeden doğru kimlikle tekrar deneyemez.
+// The WWW-Authenticate header is MANDATORY: without knowing which scheme is
+// expected, a client cannot retry with the right credentials.
 func unauthorized(ctx context.Context, w http.ResponseWriter, message string) {
 	w.Header().Set("WWW-Authenticate", "Bearer")
 	WriteError(ctx, w, coreerrors.Unauthorized(CodeUnauthenticated, "%s", message))

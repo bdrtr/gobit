@@ -439,7 +439,7 @@ func paylasilanOrtamKur(t *testing.T, ortam string) {
 //
 // Regresyon: kapı yalnızca APP_ENV=production içindeydi. staging çoğu zaman
 // çok örneklidir; sır boş bırakıldığında her örnek açılışta kendi rastgele
-// sırrını üretir (bkz. cmd/server jwtSirri) ve bir örnekten alınan jeton
+// sırrını üretir (bkz. cmd/server jwtSecret) ve bir örnekten alınan jeton
 // diğerinde 401 döner. Yük dengeleyicinin dağıtımına bağlı olduğu için arıza
 // aralıklıdır ve teşhisi zordur.
 func TestPaylasilanOrtamlardaImzaSirriZorunlu(t *testing.T) {

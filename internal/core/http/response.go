@@ -9,51 +9,54 @@ import (
 	coreerrors "github.com/bdrtr/gobit/internal/core/errors"
 )
 
-// contentTypeJSON JSON yanıtlarının Content-Type değeridir.
+// contentTypeJSON is the Content-Type of JSON responses.
 const contentTypeJSON = "application/json; charset=utf-8"
 
-// defaultInternalCode sınıflandırılmamış sunucu hatalarının istemciye
-// bildirilen kodudur.
+// defaultInternalCode is the code reported to the client for unclassified
+// server errors.
 const defaultInternalCode = "internal_error"
 
-// genericInternalMessage KindInternal hatalarında istemciye dönen sabit
-// mesajdır. Alttaki hatanın metni ASLA istemciye yazılmaz: SQL parçaları,
-// bağlantı dizeleri veya dosya yolları içerebilir (plan Bölüm 8).
-const genericInternalMessage = "beklenmeyen bir sunucu hatası oluştu"
+// genericInternalMessage is the fixed message returned to the client for
+// KindInternal errors. The underlying error's text is NEVER written to the
+// client: it may contain SQL fragments, connection strings or file paths
+// (plan Section 8).
+const genericInternalMessage = "an unexpected server error occurred"
 
-// fallbackErrorBody gövde kodlanamadığında yazılan sabit yanıttır.
-// Yeniden kodlama denenmediği için sonsuz döngü riski yoktur.
-const fallbackErrorBody = `{"error":{"code":"internal_error","message":"yanıt üretilemedi"}}` + "\n"
+// fallbackErrorBody is the fixed response written when the body cannot be
+// encoded. Re-encoding is not attempted, so there is no risk of an endless
+// loop.
+const fallbackErrorBody = `{"error":{"code":"internal_error","message":"the response could not be produced"}}` + "\n"
 
-// ErrorResponse hata yanıtlarının dış zarfıdır.
-// Tüm hata gövdeleri tek bir "error" anahtarı altında toplanır.
+// ErrorResponse is the outer envelope of error responses.
+// Every error body is gathered under a single "error" key.
 type ErrorResponse struct {
-	// Error hatanın ayrıntılarıdır.
+	// Error holds the details of the failure.
 	Error ErrorBody `json:"error"`
 }
 
-// ErrorBody hata zarfının içeriğidir.
+// ErrorBody is the content of the error envelope.
 type ErrorBody struct {
-	// Code makine tarafından okunabilen sabit hata kodudur (örn. "product_not_found").
+	// Code is the machine-readable, stable error code (e.g. "product_not_found").
 	Code string `json:"code"`
-	// Message insan tarafından okunabilen açıklamadır.
+	// Message is the human-readable explanation.
 	Message string `json:"message"`
-	// Details isteğe bağlı yapısal bağlamdır (örn. geçersiz alanlar).
+	// Details is optional structural context (e.g. the invalid fields).
 	Details map[string]any `json:"details,omitempty"`
-	// RequestID isteğin korelasyon kimliğidir; destek kaydını loga bağlar.
+	// RequestID is the request's correlation id; it ties a support ticket to
+	// the log.
 	RequestID string `json:"request_id,omitempty"`
 }
 
-// WriteJSON verilen değeri JSON olarak yanıta yazar.
+// WriteJSON writes the given value to the response as JSON.
 //
-// Gövde önce belleğe kodlanır; kodlama başarısız olursa status kodu henüz
-// gönderilmemiş olduğu için istemciye yarım gövde yerine 500 döner. v nil ise
-// yalnızca başlık ve status yazılır.
+// The body is encoded into memory FIRST; if encoding fails the status code has
+// not been sent yet, so the client gets a 500 rather than half a body. When v
+// is nil only the header and the status are written.
 func WriteJSON(ctx context.Context, w http.ResponseWriter, status int, v any) {
 	var buf bytes.Buffer
 	if v != nil {
 		if err := json.NewEncoder(&buf).Encode(v); err != nil {
-			LoggerFromContext(ctx).ErrorContext(ctx, "yanıt gövdesi kodlanamadı",
+			LoggerFromContext(ctx).ErrorContext(ctx, "response body could not be encoded",
 				"error", err,
 				"request_id", RequestIDFromContext(ctx),
 			)
@@ -71,23 +74,126 @@ func WriteJSON(ctx context.Context, w http.ResponseWriter, status int, v any) {
 		return
 	}
 	if _, err := buf.WriteTo(w); err != nil {
-		// Status kodu gönderildikten sonra yapılabilecek bir şey kalmaz
-		// (örn. istemci bağlantıyı kapatmıştır); yalnızca kaydedilir.
-		LoggerFromContext(ctx).ErrorContext(ctx, "yanıt gövdesi yazılamadı",
+		// Nothing can be done once the status code has gone out (the client
+		// may have closed the connection); it is only recorded.
+		LoggerFromContext(ctx).ErrorContext(ctx, "response body could not be written",
 			"error", err,
 			"request_id", RequestIDFromContext(ctx),
 		)
 	}
 }
 
-// WriteError hatayı sınıfına uygun status kodu ve tutarlı JSON zarfıyla yazar.
+// contentTypeHTML is the Content-Type of HTML responses.
+const contentTypeHTML = "text/html; charset=utf-8"
+
+// headerContentTypeOptions and nosniff stop the browser from reinterpreting the
+// body according to its own guess. JSON responses do not need it (a browser does
+// not execute them); HTML and asset responses do, and file serving writes it for
+// the same reason.
+const (
+	headerContentTypeOptions = "X-Content-Type-Options"
+	nosniff                  = "nosniff"
+)
+
+// WriteHTML writes an already-rendered HTML body to the response.
 //
-// KindInternal hatalarında alttaki hata metni istemciye sızdırılmaz: gövdeye
-// genel bir mesaj konur, gerçek hata (sarmalanan zincir dâhil) context'teki
-// logger ile kaydedilir. Diğer sınıflarda Message ve Details güvenli kabul
-// edilir; servis yazarı bu alanlara hassas veri koymaz (plan Bölüm 8).
+// # The body must be produced BEFOREHAND
 //
-// nil ya da tipli-nil hata da güvenle işlenir: 500 yazılır, panik üretilmez.
+// The signature deliberately takes a []byte and not a template: the caller
+// renders the template into memory FIRST, calls [WriteError] on failure, and
+// only reaches this function on success. In a design that streams the template
+// straight to the writer, an error arising in the MIDDLE of the template leaves
+// HALF a page carrying a 200 status: the header is already out, so neither the
+// panic recoverer nor the error writer can do anything and the failure goes
+// silent on the client. The same reasoning is why [WriteJSON] encodes into
+// memory first.
+//
+// # The status code is FREE
+//
+// Unlike [WriteJSON] there is no 2xx requirement here, and that is deliberate:
+// returning the login page to an unidentified browser with a 401 is more honest
+// than sending it somewhere else with a 303 — a redirect erases the failure
+// from the status code.
+//
+// The only user of this surface today is the admin panel (ADR 0011). The
+// framework's JSON error envelope is UNCHANGED: an API endpoint still writes
+// errors through [WriteError], and the panel's existence does not split that
+// policy into a second one anywhere.
+func WriteHTML(ctx context.Context, w http.ResponseWriter, status int, body []byte) {
+	w.Header().Set("Content-Type", contentTypeHTML)
+	w.Header().Set(headerContentTypeOptions, nosniff)
+	w.WriteHeader(status)
+
+	if len(body) == 0 {
+		return
+	}
+	if _, err := w.Write(body); err != nil {
+		// Nothing can be done once the status code has gone out.
+		LoggerFromContext(ctx).ErrorContext(ctx, "HTML body could not be written",
+			"error", err,
+			"request_id", RequestIDFromContext(ctx),
+		)
+	}
+}
+
+// WriteRedirect sends the browser to another path.
+//
+// net/http's own redirector is NOT used: it writes the body outside the core,
+// and the repository-wide rule that a response body passes through a single
+// door rejects it structurally. The implementation here has no body; a
+// redirect's body is not shown by any browser anyway.
+//
+// The status code is 303 and is not left to the caller: after a form POST, 303
+// tells the browser to "go to the target with GET" and stops a refresh from
+// resubmitting the form. That is the only legitimate reason for a redirect in
+// the panel.
+func WriteRedirect(_ context.Context, w http.ResponseWriter, target string) {
+	w.Header().Set("Location", target)
+	w.WriteHeader(http.StatusSeeOther)
+}
+
+// WriteAsset writes an embedded static asset.
+//
+// It stands apart from [WriteHTML] because of caching: assets are embedded in
+// the binary, so they do NOT change within a release and there is no reason for
+// the browser to fetch them again on every page. HTML pages, by contrast,
+// depend on the session and on data and cannot be cached; gathering the two
+// into one surface would mean writing the header that is right for one of them
+// onto the other.
+//
+// etag is the version stamp supplied by the caller; when empty no cache header
+// is written.
+func WriteAsset(ctx context.Context, w http.ResponseWriter, contentType, etag string, body []byte) {
+	w.Header().Set("Content-Type", contentType)
+	w.Header().Set(headerContentTypeOptions, nosniff)
+	if etag != "" {
+		w.Header().Set("ETag", etag)
+		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+	}
+	w.WriteHeader(http.StatusOK)
+
+	if len(body) == 0 {
+		return
+	}
+	if _, err := w.Write(body); err != nil {
+		LoggerFromContext(ctx).ErrorContext(ctx, "asset body could not be written",
+			"error", err,
+			"request_id", RequestIDFromContext(ctx),
+		)
+	}
+}
+
+// WriteError writes the error with the status code matching its kind and a
+// consistent JSON envelope.
+//
+// For KindInternal errors the underlying error text is not leaked to the
+// client: a generic message goes into the body while the real error (including
+// the wrapped chain) is recorded with the logger from the context. For the
+// other kinds Message and Details are considered safe; a service author does
+// not put sensitive data into those fields (plan Section 8).
+//
+// A nil or typed-nil error is handled safely too: a 500 is written, no panic is
+// raised.
 func WriteError(ctx context.Context, w http.ResponseWriter, err error) {
 	typed, ok := typedError(err)
 
@@ -101,7 +207,7 @@ func WriteError(ctx context.Context, w http.ResponseWriter, err error) {
 	status := policy.status
 
 	if !policy.clientSafe {
-		LoggerFromContext(ctx).ErrorContext(ctx, "istek sunucu hatasıyla sonuçlandı",
+		LoggerFromContext(ctx).ErrorContext(ctx, "request ended with a server error",
 			"error", err,
 			"code", code,
 			"status", status,
@@ -129,12 +235,12 @@ func WriteError(ctx context.Context, w http.ResponseWriter, err error) {
 	WriteJSON(ctx, w, status, newErrorResponse(ctx, code, message, details))
 }
 
-// StatusFor hatanın sınıfına karşılık gelen HTTP status kodunu döner.
+// StatusFor returns the HTTP status code corresponding to the error's kind.
 //
-// Eşleme plan Bölüm 8'de tanımlıdır. Tipli olmayan (veya nil) hatalar
-// KindInternal sayılır ve 500 döner; sınıflandırılmamış bir hata kazara
-// istemci hatası gibi raporlanmaz. Zincirde tipli-nil bir *errors.Error
-// bulunması da (bkz. typedError) aynı şekilde 500 ile sonuçlanır.
+// The mapping is defined in plan Section 8. An untyped (or nil) error counts as
+// KindInternal and yields 500, so an unclassified error is never accidentally
+// reported as a client error. Finding a typed-nil *errors.Error in the chain
+// (see typedError) ends the same way, with a 500.
 func StatusFor(err error) int {
 	kind := coreerrors.KindInternal
 	if typed, ok := typedError(err); ok {
@@ -143,12 +249,13 @@ func StatusFor(err error) int {
 	return policyForKind(kind).status
 }
 
-// typedError zincirdeki ilk *errors.Error'ı döner.
+// typedError returns the first *errors.Error in the chain.
 //
-// Bulunan işaretçi nil ise ikinci dönüş değeri false olur. Bu tuzak gerçektir:
-// errors.Wrap sarmalanacak hata nil iken (*Error)(nil) döner, bu değer error
-// arayüzüne konduğunda "err != nil" doğru çıkar ve alanlarına erişmek panik
-// üretirdi. HTTP katmanı böyle bir hatayı sınıflandırılmamış sayar.
+// When the pointer found is nil the second result is false. The trap is real:
+// errors.Wrap returns (*Error)(nil) when the error being wrapped is nil, that
+// value makes "err != nil" true once it is put into the error interface, and
+// reaching for its fields would panic. The HTTP layer treats such an error as
+// unclassified.
 func typedError(err error) (*coreerrors.Error, bool) {
 	var typed *coreerrors.Error
 	if coreerrors.As(err, &typed) && typed != nil {
@@ -157,21 +264,22 @@ func typedError(err error) (*coreerrors.Error, bool) {
 	return nil, false
 }
 
-// kindPolicy bir hata sınıfının HTTP karşılığını ve gövdesinin istemciye
-// olduğu gibi verilip verilemeyeceğini belirler.
+// kindPolicy decides an error kind's HTTP counterpart and whether its body may
+// be handed to the client as it is.
 type kindPolicy struct {
 	status int
-	// clientSafe true ise servisin yazdığı Message istemciye aynen gider.
-	// false ise mesaj maskelenir ve gerçek hata yalnızca loglanır.
+	// clientSafe true means the Message written by the service reaches the
+	// client verbatim. False means the message is masked and the real error is
+	// only logged.
 	clientSafe bool
 }
 
-// policyForKind sınıfa karşılık gelen politikayı döner.
+// policyForKind returns the policy matching the kind.
 //
-// coreerrors.Kind bir uint8'dir ve Error.Kind alanı dışa açıktır; yani çağıran
-// enum dışında bir değer kurabilir. Böyle bir değer GÜVENLİ TARAFA düşer:
-// 500 ve maskeleme. Aksi hâlde tanınmayan bir sınıf, sunucu içi ayrıntıyı
-// (DSN, sorgu, dosya yolu) istemciye sızdırırdı.
+// coreerrors.Kind is a uint8 and the Error.Kind field is exported, so a caller
+// can construct a value outside the enum. Such a value falls to the SAFE side:
+// 500 and masking. Otherwise an unrecognized kind would leak internal server
+// detail (a DSN, a query, a file path) to the client.
 func policyForKind(kind coreerrors.Kind) kindPolicy {
 	switch kind {
 	case coreerrors.KindNotFound:
@@ -195,7 +303,8 @@ func policyForKind(kind coreerrors.Kind) kindPolicy {
 	}
 }
 
-// newErrorResponse hata zarfını kurar ve context'teki istek kimliğini ekler.
+// newErrorResponse builds the error envelope and adds the request id from the
+// context.
 func newErrorResponse(ctx context.Context, code, message string, details map[string]any) ErrorResponse {
 	return ErrorResponse{
 		Error: ErrorBody{

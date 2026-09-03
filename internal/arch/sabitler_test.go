@@ -81,7 +81,7 @@ func TestSaglayiciKayitAdlariUyusuyor(t *testing.T) {
 //
 // Ayrışmanın bedeli, hiçbir ortam değişkeni verilmemiş bir kurulumun
 // AÇILMAMASI olurdu: cmd/server, seçili sağlayıcıyı kayıtta bulamayınca
-// açılışı durdurur (bkz. dosyaSaglayicisiniDogrula). Yani ayrışma sessiz
+// açılışı durdurur (bkz. verifyFileProvider). Yani ayrışma sessiz
 // değil, ama en kötü anda — hiçbir şeyi yapılandırmamış birinin ilk
 // denemesinde — patlardı.
 func TestDosyaVarsayilanSaglayicisiConfigleUyusuyor(t *testing.T) {

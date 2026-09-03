@@ -1,18 +1,22 @@
-// Command server gobit commerce framework'ünün tek binary giriş noktasıdır.
+// Command server is the single-binary entry point of the gobit commerce
+// framework.
 //
-// Akış: config yükle -> logger ve izleme kur -> container kur -> altyapı
-// servislerini (Postgres, Redis, event bus) kaydet -> eklentileri kur ->
-// modülleri bootstrap et -> eklentileri başlat -> dinle.
+// The flow: load config -> set up the logger and observability -> build the
+// container -> register the infrastructure services (Postgres, Redis, the event
+// bus) -> install the plugins -> bootstrap the modules -> start the plugins ->
+// listen.
 //
-// Bu paket, mimarinin TEK "her şeyi bilen" noktasıdır: çekirdek modülleri,
-// modüller birbirini, eklentiler de commerce modüllerini tanımaz. Kimin
-// kiminle konuşacağına dair her karar burada, açıkça verilir.
+// This package is the architecture's ONLY "knows everything" point: the core
+// does not know the modules, the modules do not know each other, and the
+// plugins do not know the commerce modules. Every decision about who talks to
+// whom is made here, explicitly.
 //
-// Tek nokta olmasının bedeli şudur: buraya EKLENMEYEN bir modül hiçbir
-// kurulumda YOKTUR — migration'ı uygulanmaz, servisi container'a girmez,
-// uçları mount edilmez — ve modülün kendi testleri bunu göremez, çünkü onlar
-// modülü kendileri kurar. Faz 8/9'un yönetim yüzeyi ve b2b'nin harcama limiti
-// tam olarak böyle kayboldu. Şart bu yüzden dışarıdan denetlenir: bkz.
+// The price of being that single point is this: a module NOT ADDED here does
+// not EXIST in any installation — its migrations are not applied, its service
+// does not enter the container, its endpoints are not mounted — and the
+// module's own tests cannot see it, because they build the module themselves.
+// The admin surface of Phase 8/9 and b2b's spending limit disappeared in
+// exactly this way. The requirement is therefore checked from the outside: see
 // internal/arch/kayit_test.go, TestHerModulBilesimKokundeKayitli.
 package main
 
@@ -27,6 +31,7 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
+	"github.com/bdrtr/gobit/internal/adminui"
 	"github.com/bdrtr/gobit/internal/core/config"
 	"github.com/bdrtr/gobit/internal/core/container"
 	"github.com/bdrtr/gobit/internal/core/db"
@@ -59,34 +64,36 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/tax"
 )
 
-// Container'daki altyapı servislerinin adları. Modüller bu adlarla çözer.
+// The names of the infrastructure services in the container. Modules resolve
+// them by these names.
 const (
 	svcDB       = "core.db"
 	svcRedis    = "core.redis"
 	svcEventBus = "core.eventbus"
-	// svcWorkflow saga yürütücüsüdür; modüller arası akışlar buradan çalışır.
+	// svcWorkflow is the saga engine; the cross-module workflows run from here.
 	svcWorkflow = "core.workflow"
-	// svcWorkflowStore yürütme durumunun kalıcı deposudur.
+	// svcWorkflowStore is the durable store of the execution state.
 	svcWorkflowStore = "core.workflow.store"
-	// svcLink Module Links servisidir; modüller link tanımlarını buradan bildirir.
+	// svcLink is the Module Links service; modules declare their link
+	// definitions through it.
 	svcLink = "core.link"
-	// svcQuery cross-module okuma katmanıdır.
+	// svcQuery is the cross-module read layer.
 	svcQuery = "core.query"
 )
 
-// version derleme sırasında -ldflags ile doldurulur (bkz. Makefile).
+// version is filled in at build time with -ldflags (see the Makefile).
 var version = "dev"
 
 func main() {
 	if err := run(); err != nil {
-		// Logger kurulmadan da hata görünür olmalı.
+		// The error must be visible even when the logger was never built.
 		fmt.Fprintf(os.Stderr, "fatal: %v\n", err)
 		os.Exit(1)
 	}
 }
 
-// run uygulamanın tüm yaşam döngüsünü yönetir ve ilk hatada geri döner.
-// main'den ayrı tutulmasının sebebi, os.Exit'in defer'ları atlamasıdır.
+// run drives the application's whole lifecycle and returns on the first error.
+// It is kept apart from main because os.Exit skips deferred calls.
 func run() error {
 	cfg, err := config.Load()
 	if err != nil {
@@ -103,19 +110,19 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	log.Info("gobit başlatılıyor",
+	log.Info("gobit is starting",
 		"version", version,
 		"env", cfg.AppEnv,
 		"log_level", cfg.LogLevel,
 		"event_bus", cfg.EventBus,
-		"eklentiler", cfg.Plugins,
+		"plugins", cfg.Plugins,
 	)
 
-	// İzleme kurulumu BAŞARISIZ OLSA BİLE uygulama açılır (ADR 0007): izleme,
-	// ürünün doğruluğu için değil görünürlüğü için vardır ve toplayıcının
-	// kesintisi mağazayı kapatmamalıdır. OTLP adresi verilmemişse hiçbir dış
-	// bağlantı denenmez.
-	izlemeKapat, err := observability.Setup(ctx, observability.Options{
+	// The application opens EVEN IF observability setup FAILS (ADR 0007):
+	// observability exists for the product's visibility, not its correctness,
+	// and an outage at the collector must not close the store. When no OTLP
+	// endpoint is given, no outbound connection is attempted at all.
+	shutdownObservability, err := observability.Setup(ctx, observability.Options{
 		Endpoint:       cfg.OTLPEndpoint,
 		Insecure:       cfg.OTLPInsecure,
 		ServiceName:    cfg.ServiceName,
@@ -126,13 +133,14 @@ func run() error {
 		Logger:         log,
 	})
 	if err != nil {
-		log.Warn("izleme kurulamadı, kapalı devam ediliyor", "error", err)
+		log.Warn("observability could not be set up, continuing without it", "error", err)
 	}
-	// Kapanış bağlamı iptal EDİLMEMİŞ olmalıdır: SIGTERM ctx'i çoktan iptal
-	// etmiş olur ve bekleyen span'lar gönderilemeden düşerdi.
+	// The shutdown context must NOT be canceled: SIGTERM will already have
+	// canceled ctx and the pending spans would be dropped before they could be
+	// sent.
 	defer func() {
-		if err := izlemeKapat(context.WithoutCancel(ctx)); err != nil {
-			log.Error("izleme kapatılamadı", "error", err)
+		if err := shutdownObservability(context.WithoutCancel(ctx)); err != nil {
+			log.Error("observability could not be shut down", "error", err)
 		}
 	}()
 
@@ -142,7 +150,8 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	// Defer'lar LIFO çalışır: önce container servisleri kapanır, sonra havuz.
+	// Deferred calls run LIFO: the container services close first, then the
+	// pool.
 	defer pool.Close()
 	defer shutdownContainer(ctx, c, cfg, log)
 
@@ -150,8 +159,8 @@ func run() error {
 		return err
 	}
 
-	// Çekirdek migration'ları modül migration'larından ÖNCE uygulanır: modüller
-	// workflow motorunun şemasının hazır olduğunu varsayabilmelidir.
+	// The core migrations are applied BEFORE the module migrations: a module
+	// must be able to assume the workflow engine's schema is ready.
 	if err := db.Migrate(ctx, cfg.DatabaseURL, pgstore.Migrations(), pgstore.MigrationOwner); err != nil {
 		return err
 	}
@@ -174,8 +183,8 @@ func run() error {
 
 	checks := map[string]corehttp.HealthCheck{"postgres": pool.Ping}
 
-	// Redis istemcisi, olay veri yolu ve koruma arka ucu tarafından PAYLAŞILIR;
-	// ikisi de bellek içiyse hiç açılmaz ve nil kalır.
+	// The Redis client is SHARED by the event bus and the guard backend; if
+	// both are in-memory it is never opened and stays nil.
 	redisClient, err := setupRedis(ctx, c, cfg, checks, log)
 	if err != nil {
 		return err
@@ -189,12 +198,18 @@ func run() error {
 		return err
 	}
 
-	// Kimlik doğrulayıcı auth modülü Register olduğunda doğar, koruma
-	// middleware'i ise router kurulurken takılmalıdır. Aradaki boşluğu
-	// gecikmeli doğrulayıcı kapatır (bkz. kurulum.go).
+	// The authenticator is born when the auth module registers, while the guard
+	// middleware has to be attached while the router is built. The deferred
+	// authenticator bridges the gap (see setup.go).
 	authn := &corehttp.DeferredAuthenticator{}
 
-	yigin, err := korumaYigini(cfg, authn, redisClient, log)
+	// The panel ring is born BEFORE the router and receives the panel AFTER: a
+	// ring cannot be added once routes are registered, and the panel waits for
+	// services resolved from the container. A request arriving before the bind
+	// is REJECTED.
+	panelRing := &adminui.Ring{}
+
+	guards, err := guardStack(cfg, authn, panelRing, redisClient, log)
 	if err != nil {
 		return err
 	}
@@ -204,69 +219,72 @@ func run() error {
 		Logger:           log,
 		ReadinessChecks:  checks,
 		TelemetryService: cfg.ServiceName,
-		Middlewares:      yigin,
+		Middlewares:      guards,
 	})
 
 	registry := module.NewRegistry(log, func(ctx context.Context, src fs.FS, owner string) error {
 		return db.Migrate(ctx, cfg.DatabaseURL, src, owner)
 	})
-	// Commerce modülleri. Sıra ÖNEMSİZDİR: registry tüm modülleri register
-	// ettikten SONRA migration ve route adımlarına geçer, dolayısıyla bir
-	// modülün handler'ı başka modülün servisini güvenle çözebilir.
-	// Faz 4: katalog
+	// The commerce modules. The ORDER DOES NOT MATTER: the registry moves on to
+	// the migration and route steps only AFTER every module has registered, so
+	// one module's handler can safely resolve another module's service.
+	// Phase 4: catalog
 	//
-	// GraphQL okuma yüzeyinin sınırları yapılandırmadan gelir: bu uçta bir
-	// isteğin maliyetini SORGUYU YAZAN belirler ve kaç seviyenin/kaç alanın
-	// kabul edilebilir olduğu, kurulumun donanımına ve katalog boyutuna göre
-	// değişir. Modül config paketini tanımadığı için (Prensip 2.4) değerler
-	// buradan parametre olarak verilir.
+	// The limits of the GraphQL read surface come from configuration: at this
+	// endpoint the cost of a request is decided by WHOEVER WRITES THE QUERY,
+	// and how many levels or how many fields are acceptable depends on the
+	// installation's hardware and catalog size. Because the module does not
+	// know the config package (Principle 2.4), the values are passed in from
+	// here as parameters.
 	registry.Add(product.New(product.Options{
 		GraphQL: graph.Options{
 			MaxDepth:      cfg.GraphQLMaxDepth,
 			MaxComplexity: cfg.GraphQLMaxComplexity,
-			// Aşağıdaki beş sınır, derinlik ve karmaşıklığın GÖREMEDİĞİ
-			// maliyetleri bağlar: aynı ağır alanın takma adlarla çoğaltılması,
-			// gerçekleşen yanıt baytı, iç gözlem selinin iki boyutu ve üssel
-			// fragment açılımı. Beşi de buradan geçirilir çünkü hepsinin
-			// operatör tarafından ayarlanabilir olması gerekir — ayarlanamayan
-			// bir sınır, kurulumu koda çatal atmaya zorlar.
+			// The five limits below bind the costs depth and complexity CANNOT
+			// SEE: the same heavy field multiplied through aliases, the
+			// realized response bytes, the two dimensions of an introspection
+			// flood, and exponential fragment expansion. All five pass through
+			// here because every one of them has to be tunable by the
+			// operator — a limit that cannot be tuned forces an installation to
+			// fork the code.
 			MaxFieldRepetition:    cfg.GraphQLMaxFieldRepetition,
 			MaxResponseBytes:      cfg.GraphQLMaxResponseBytes,
 			MaxIntrospectionRoots: cfg.GraphQLMaxIntrospectionRoots,
 			MaxIntrospectionDepth: cfg.GraphQLMaxIntrospectionDepth,
 			MaxSelections:         cfg.GraphQLMaxSelections,
-			// Alan OLUMSUZ adlandırıldığı için (sıfır değeri paketin
-			// varsayılanını, yani AÇIK iç gözlemi vermelidir) değer burada
-			// tersine çevrilir; ortam değişkeni operatöre olumlu soruyu sorar.
+			// Because the field is named NEGATIVELY (its zero value must give
+			// the package default, that is, introspection ON) the value is
+			// inverted here; the environment variable asks the operator the
+			// positive question.
 			IntrospectionDisabled: !cfg.GraphQLIntrospection,
 		},
 	}))
 	registry.Add(pricing.New(log))
 	registry.Add(inventory.New())
-	// Faz 5: sepet akışı
+	// Phase 5: the cart flow
 	registry.Add(region.New(log))
 	registry.Add(customer.New(log))
 	registry.Add(cart.New())
-	// Faz 6: ödeme ve sipariş
+	// Phase 6: payment and order
 	registry.Add(payment.New())
 	registry.Add(order.New())
-	// Faz 7: kargo, promosyon, vergi
+	// Phase 7: fulfillment, promotion, tax
 	registry.Add(fulfillment.New())
 	registry.Add(promotion.New(log))
 	registry.Add(tax.New(log))
-	// Bildirim. "order.placed" olayının İLK gerçek tüketicisidir; sipariş
-	// modülüne bağlanmaz, olayı dinler ve iletişim bilgisini "order.interop"
-	// yüzeyinden okur. Hangi sağlayıcının kullanılacağını yapılandırma seçer;
-	// adın kayıtlı olduğu, eklentiler de yüklendikten SONRA denetlenir
-	// (bkz. bildirimSaglayicisiniDogrula).
+	// Notification. It is the FIRST real consumer of the "order.placed" event;
+	// it does not bind to the order module, it listens for the event and reads
+	// the contact details from the "order.interop" surface. Which provider is
+	// used is chosen by configuration; that the name is registered is checked
+	// AFTER the plugins have been loaded too (see verifyNotificationProvider).
 	registry.Add(notification.New(notification.Options{
 		ProviderID: cfg.NotificationProvider,
 		Logger:     log,
 	}))
-	// Dosya. Yüklemenin ürettiği adres, ürün görseli akışına doğrudan takılır;
-	// modül product'a hiç dokunmaz. Sağlayıcı seçimi ve sınırlar
-	// yapılandırmadan gelir, adın kayıtlı olduğu eklentiler de yüklendikten
-	// SONRA denetlenir (bkz. dosyaSaglayicisiniDogrula).
+	// File. The URL an upload produces plugs straight into the product image
+	// flow; the module never touches product. The provider choice and the
+	// limits come from configuration, and that the name is registered is
+	// checked AFTER the plugins have been loaded too (see verifyFileProvider).
 	registry.Add(file.New(file.Options{
 		ProviderID:     cfg.FileProvider,
 		Root:           cfg.FileRoot,
@@ -274,44 +292,46 @@ func run() error {
 		AllowedTypes:   cfg.FileAllowedTypes,
 		Logger:         log,
 	}))
-	dosyaKokunuUyar(cfg, log)
-	// Faz 8: kimlik. Diğer modüllerden bağımsızdır; yalnızca çekirdek havuzunu
-	// ister ve karşılığında koruma middleware'inin ihtiyacı olan doğrulayıcıyı
-	// container'a bırakır.
+	warnAboutFileRoot(cfg, log)
+	// Phase 8: identity. It is independent of the other modules; it only asks
+	// for the core pool and, in return, leaves in the container the
+	// authenticator the guard middleware needs.
 	registry.Add(auth.New(auth.Options{
-		JWTSecret: jwtSirri(cfg, log),
+		JWTSecret: jwtSecret(cfg, log),
 		JWTTTL:    cfg.JWTTTL,
 		JWTIssuer: cfg.ServiceName,
 		Logger:    log,
 	}))
-	// Bölüm 10: B2B. Alıcının bir birey değil, harcama yetkisi sınırlı bir
-	// ÇALIŞAN olduğu kurulum. Modül başka hiçbir modüle dokunmaz; harcama
-	// kuralını "b2b.interop" adıyla container'a bırakır ve order onu KENDİ
-	// dar arayüzünden çözer (bkz. order.SpendingPolicyName).
+	// Section 10: B2B. The installation where the buyer is not an individual
+	// but an EMPLOYEE with a limited spending authority. The module touches no
+	// other module; it leaves the spending rule in the container under the name
+	// "b2b.interop" and order resolves it through ITS OWN narrow interface (see
+	// order.SpendingPolicyName).
 	//
-	// Saf B2C satan bir kurulum bu satırı SİLEBİLİR; o zaman order kuralı
-	// bulamaz ve her müşteriyi sınırsız sayar — b2b hiç yokmuş gibi olan
-	// doğru davranış budur. Ama silmek bir KOD değişikliğidir ve öyle kalması
-	// bilinçlidir: kapatan bir ortam değişkeni, yanlışlıkla kapatıldığında
-	// harcama limitini hiçbir hata üretmeden kaldırırdı — yani kurulumu
-	// sessizce bozan ayarların tam da yenisi olurdu. Kodla kapatmanın yarım
-	// kalması ise mümkün değildir: modül kayıt denetimi (internal/arch,
-	// TestHerModulBilesimKokundeKayitli) satırı silen kişiden kararı
-	// gerekçesiyle yazmasını ister.
+	// An installation selling pure B2C CAN DELETE this line; order then finds
+	// no rule and counts every customer as unlimited — which is the correct
+	// behavior, as if b2b never existed. But deleting it is a CODE change and
+	// that it stays one is deliberate: an environment variable that turned it
+	// off would, when flipped by accident, remove the spending limit without
+	// producing a single error — that is, it would be yet another setting that
+	// breaks an installation silently. Turning it off in code cannot be done
+	// halfway either: the module registration check (internal/arch,
+	// TestHerModulBilesimKokundeKayitli) asks whoever deletes the line to write
+	// the decision down with its rationale.
 	//
-	// B2C kurulumda modülü BIRAKMANIN bedeli de küçüktür ve görünürdür: iki
-	// boş tablo ve hiçbir şirket kaydı olmadığı için asla tetiklenmeyen bir
-	// harcama kuralı.
+	// The cost of KEEPING the module in a B2C installation is small and
+	// visible: two empty tables and a spending rule that never triggers because
+	// there are no company records.
 	registry.Add(b2b.New(log))
 
-	// Eklentiler modüllerden ÖNCE kurulur: eklentinin getirdiği modül de
-	// Register/migration/route döngüsünden geçebilmelidir.
-	eklentiler, err := eklentileriSec(cfg.Plugins)
+	// The plugins are installed BEFORE the modules: a module brought in by a
+	// plugin must be able to go through the Register/migration/route cycle too.
+	pluginRegistry, err := selectPlugins(cfg.Plugins)
 	if err != nil {
 		return err
 	}
-	host := coreplugin.NewHost(c, registry, bus, log, eklentiAyarlari())
-	if err := eklentiler.Install(ctx, host); err != nil {
+	host := coreplugin.NewHost(c, registry, bus, log, pluginSettings())
+	if err := pluginRegistry.Install(ctx, host); err != nil {
 		return err
 	}
 
@@ -319,83 +339,98 @@ func run() error {
 		return err
 	}
 
-	// Modüller arası akışlar ancak BURADA kurulabilir: her biri birden çok
-	// modülün yüzeyini container'dan adla çözer ve o yüzeyler Bootstrap'tan
-	// önce kayıtlı değildir. Uçlarının sahibi ise modüldür (cart), yani
-	// handler akışı ister; daire, modül tarafındaki çözümün ilk isteğe
-	// ertelenmesiyle kırılır (bkz. kurulum.go, akislariKaydet).
+	// The cross-module workflows can only be set up HERE: each of them resolves
+	// the surfaces of several modules by name from the container, and those
+	// surfaces are not registered before Bootstrap. Their endpoints, however,
+	// are owned by a module (cart), so the handler needs the workflow; the
+	// cycle is broken by deferring the module-side resolution to the first
+	// request (see setup.go, registerWorkflows).
 	//
-	// Bu satır silindiğinde sepete satır eklenemez ve sepet siparişe
-	// çevrilemez: fiyat yolu KAPALI arızalanır, yani istemcinin fiyatıyla ya
-	// da sıfır fiyatla satır yazılmaz. Faz 5-7'nin bütün akış zinciri —
-	// fiyatlandırma, indirim, vergi, ödeme, kargo, order.placed bildirimi ve
-	// b2b harcama limiti — üretim ikilisine tam olarak buradan bağlanır.
-	if err := akislariKaydet(c); err != nil {
+	// Delete this line and no line can be added to a cart and no cart can be
+	// turned into an order: the pricing path fails CLOSED, so no line is
+	// written with the client's price or with a zero price. The entire workflow
+	// chain of Phases 5-7 — pricing, discounts, tax, payment, fulfillment, the
+	// order.placed notification and the b2b spending limit — is attached to the
+	// production binary exactly here.
+	if err := registerWorkflows(c); err != nil {
 		return err
 	}
 
-	// Kimlik doğrulayıcı ancak Bootstrap'tan sonra container'dadır.
-	// Çözülemezse açılış DURUR: korumalı görünen ama her isteği reddeden bir
-	// yönetim yüzeyiyle çalışmaya devam etmek, arızayı ilk giriş denemesine
-	// kadar gizlerdi.
-	dogrulayici, err := container.Resolve[corehttp.Authenticator](c, auth.InteropName)
+	// The admin panel is set up AFTER the workflows: it resolves the read
+	// surface from the container and that surface is not registered before
+	// Bootstrap. The panel is not a module (ADR 0011), so it does not enter the
+	// registry; the check for its wiring is the branch of the registration test
+	// in internal/arch that was extended to the panel tree.
+	panel, err := registerPanel(cfg, c, router)
+	if err != nil {
+		return err
+	}
+	panelRing.Bind(panel)
+
+	// The authenticator is only in the container after Bootstrap. If it cannot
+	// be resolved, startup STOPS: carrying on with an admin surface that looks
+	// protected but rejects every request would hide the failure until the
+	// first sign-in attempt.
+	authenticator, err := container.Resolve[corehttp.Authenticator](c, auth.InteropName)
 	if err != nil {
 		return errors.Wrap(err, errors.KindOf(err), "auth_interop_missing",
-			"kimlik doğrulayıcı %q çözülemedi", auth.InteropName)
+			"the authenticator %q could not be resolved", auth.InteropName)
 	}
-	authn.Bind(dogrulayici)
+	authn.Bind(authenticator)
 
-	// İlk yönetici tohumu da Bootstrap'tan SONRA çalışır: auth servisi ancak o
-	// zaman container'dadır ve tablolar ancak o zaman göçürülmüştür. Servis DAR
-	// bir arayüzle alınır (bkz. kurulum.go), somut tipiyle değil.
+	// The first-administrator seed also runs AFTER Bootstrap: the auth service
+	// is only in the container by then and the tables are only migrated by
+	// then. The service is taken through a NARROW interface (see setup.go), not
+	// by its concrete type.
 	//
-	// Hata açılışı DURDURUR: yaratılamamış bir yönetici, yönetim yüzeyi olmayan
-	// bir sistem demektir ve bu, açılıp da hiçbir yönetim isteğini kabul
-	// etmeyen bir sunucudan çok daha erken fark edilir.
-	kullanicilar, err := container.Resolve[yoneticiKullanicilari](c, auth.ServiceName)
+	// An error STOPS startup: an administrator that could not be created means
+	// a system with no admin surface, and that is noticed far sooner than a
+	// server which opens and then accepts no admin request at all.
+	users, err := container.Resolve[adminUsers](c, auth.ServiceName)
 	if err != nil {
 		return errors.Wrap(err, errors.KindOf(err), codeBootstrapFailed,
-			"auth servisi %q çözülemedi", auth.ServiceName)
+			"the auth service %q could not be resolved", auth.ServiceName)
 	}
-	if err := tohumlaYonetici(ctx, kullanicilar, cfg, log); err != nil {
+	if err := seedAdmin(ctx, users, cfg, log); err != nil {
 		return err
 	}
 
-	// Sağlayıcı ve abonelik kayıtları modüller ayağa kalktıktan SONRA
-	// uygulanır; route'lar ise modül route'larından sonra bağlanır.
-	if err := eklentiler.Start(ctx, host); err != nil {
+	// Provider and subscription registrations are applied AFTER the modules are
+	// up; routes are bound after the module routes.
+	if err := pluginRegistry.Start(ctx, host); err != nil {
 		return err
 	}
-	// Bildirim sağlayıcısı ancak BURADA denetlenebilir: eklentilerin getirdiği
-	// sağlayıcılar Start sırasında kaydedilir ve modül Register edilirken kayıt
-	// yalnızca kutudan çıkan sağlayıcıyı içerir.
-	if err := bildirimSaglayicisiniDogrula(c, cfg.NotificationProvider); err != nil {
+	// The notification provider can only be checked HERE: providers brought by
+	// plugins are registered during Start, and when the module registers, the
+	// registry holds only the provider that ships in the box.
+	if err := verifyNotificationProvider(c, cfg.NotificationProvider); err != nil {
 		return err
 	}
-	// Dosya sağlayıcısı da aynı sebeple burada denetlenir; bilinmeyen bir ad
-	// açılışı DURDURUR.
-	if err := dosyaSaglayicisiniDogrula(c, cfg.FileProvider); err != nil {
-		return err
-	}
-
-	// Mevcut bir yolu gölgeleyen eklenti route'u AÇILIŞI DURDURUR. Hatayı
-	// yutmak, modül ucunun sessizce eklenti tarafından ele geçirildiği ya da
-	// eklentinin hiç bağlanmadığı bir kurulumla çalışmaya devam etmek olurdu;
-	// ikisi de ancak ilk isteğin yanlış yere gitmesiyle fark edilirdi.
-	if err := eklentiler.MountRoutes(router, host); err != nil {
+	// The file provider is checked here for the same reason; an unknown name
+	// STOPS startup.
+	if err := verifyFileProvider(c, cfg.FileProvider); err != nil {
 		return err
 	}
 
-	// OpenAPI şeması router ağacından ÜRETİLİR, elle yazılmaz: elle yazılan
-	// şema, ilk route değişikliğinde sessizce yalan söylemeye başlar.
-	// Uç yalnızca route DESENLERİNİ yayımlar, veri değil.
+	// A plugin route shadowing an existing path STOPS STARTUP. Swallowing the
+	// error would mean carrying on with an installation where a module endpoint
+	// has silently been taken over by a plugin, or where the plugin was never
+	// bound at all; both would only be noticed when the first request went to
+	// the wrong place.
+	if err := pluginRegistry.MountRoutes(router, host); err != nil {
+		return err
+	}
+
+	// The OpenAPI schema is GENERATED from the router tree, not written by
+	// hand: a hand-written schema starts lying silently at the first route
+	// change. The endpoint publishes only the route PATTERNS, not data.
 	//
-	// Modül listesi registry'den OKUNUR, burada ikinci bir liste tutulmaz:
-	// eklentilerin getirdiği modüller (bkz. searchpg) yalnızca registry'de
-	// görünür ve elle tutulan bir liste onları sessizce anlatmadan bırakırdı.
-	doc := belgeyiAnlat(cfg.ServiceName+" API", version, registry.Modules())
+	// The module list is READ from the registry; no second list is kept here:
+	// modules brought in by plugins (see searchpg) appear only in the registry,
+	// and a hand-maintained list would silently leave them undescribed.
+	doc := describeAPI(cfg.ServiceName+" API", version, registry.Modules())
 	router.Get(openAPIPath, doc.Handler(router))
-	semayiDenetle(ctx, doc, router, log)
+	checkSchema(ctx, doc, router, log)
 
 	srv := corehttp.NewServer(corehttp.ServerOptions{
 		Addr:              cfg.Addr(),
@@ -411,12 +446,12 @@ func run() error {
 	return srv.Run(ctx)
 }
 
-// setupRedis gerekiyorsa Redis istemcisini açar, container'a kaydeder ve
-// readiness kontrolüne ekler.
+// setupRedis opens the Redis client if it is needed, registers it in the
+// container and adds it to the readiness check.
 //
-// Gerekmiyorsa (nil, nil) döner ve HİÇBİR bağlantı denenmez: Redis'e ihtiyacı
-// olmayan bir kurulumda "bağlanamadım" uyarısı üretmek, gerçek bir arızayı
-// gürültüde boğardı.
+// If it is not needed it returns (nil, nil) and NO connection is attempted:
+// producing a "could not connect" warning in an installation that does not need
+// Redis would drown a real failure in noise.
 func setupRedis(
 	ctx context.Context,
 	c *container.Container,
@@ -425,55 +460,56 @@ func setupRedis(
 	log *slog.Logger,
 ) (*redis.Client, error) {
 	if !cfg.NeedsRedis() {
-		return nil, nil //nolint:nilnil // "Redis gerekmiyor" bir hata değildir
+		return nil, nil //nolint:nilnil // "Redis is not needed" is not an error
 	}
 
 	opt, err := redis.ParseURL(cfg.RedisURL)
 	if err != nil {
 		return nil, errors.Wrap(err, errors.KindInvalid, "redis_url_invalid",
-			"REDIS_URL çözümlenemedi")
+			"REDIS_URL could not be parsed")
 	}
 
 	client := redis.NewClient(opt)
 	if err := client.Ping(ctx).Err(); err != nil {
 		_ = client.Close()
 		return nil, errors.Wrap(err, errors.KindUnavailable, "redis_unreachable",
-			"Redis'e bağlanılamadı (%s)", opt.Addr)
+			"Redis could not be reached (%s)", opt.Addr)
 	}
 
-	// Sıra önemli: container ters kayıt sırasında kapatır, yani veri yolu
-	// istemciden ÖNCE kapanır.
+	// The order matters: the container closes in reverse registration order, so
+	// the event bus closes BEFORE the client.
 	if err := c.Provide(svcRedis, client); err != nil {
 		_ = client.Close()
 		return nil, err
 	}
 
 	checks["redis"] = func(ctx context.Context) error { return client.Ping(ctx).Err() }
-	log.InfoContext(ctx, "redis bağlandı",
+	log.InfoContext(ctx, "redis connected",
 		"addr", opt.Addr,
-		"olay_veri_yolu", cfg.EventBus == config.BackendRedis,
-		"koruma_arka_ucu", cfg.GuardBackend == config.BackendRedis,
+		"event_bus", cfg.EventBus == config.BackendRedis,
+		"guard_backend", cfg.GuardBackend == config.BackendRedis,
 	)
 
 	return client, nil
 }
 
-// setupEventBus yapılandırmaya göre olay veri yolunu kurar.
+// setupEventBus builds the event bus according to the configuration.
 //
-// Redis istemcisi PARAMETREDİR, burada açılmaz: aynı istemciyi koruma arka ucu
-// da kullanır ve iki yerde ayrı bağlantı açmak, kapanış sırasını ve sağlık
-// kontrolünü ikiye bölerdi.
+// The Redis client is a PARAMETER and is not opened here: the guard backend
+// uses the same client, and opening a separate connection in two places would
+// split the shutdown order and the health check in two.
 //
-// # Ad alanı neden BURADA veriliyor
+// # Why the namespace is given HERE
 //
-// Sıfır değerli bir [eventbus.RedisConfig] geçilseydi hem stream öneki hem
-// consumer group paketin varsayılanına düşerdi ve REDIS_KEY_PREFIX olay
-// tarafına HİÇ ulaşmazdı: koruma anahtarları ayrılmış, olaylar ayrılmamış bir
-// kurulum çıkardı. Grubun paylaşılması ikisinin daha kötüsüdür; gerekçesi
-// [eventbus.RedisConfig.WithNamespace] godoc'undadır.
+// Had a zero-valued [eventbus.RedisConfig] been passed, both the stream prefix
+// and the consumer group would fall back to the package default and
+// REDIS_KEY_PREFIX would NEVER reach the event side: the result would be an
+// installation whose guard keys are separated and whose events are not. Sharing
+// the group is the worse of the two; the rationale is in the
+// [eventbus.RedisConfig.WithNamespace] godoc.
 //
-// Tüketici adı ad alanından AYRIDIR ve süreç başına çözülür; loglanmasının
-// sebebi [eventbus.ConsumerName] godoc'undadır.
+// The consumer name is SEPARATE from the namespace and is resolved per process;
+// why it is logged is in the [eventbus.ConsumerName] godoc.
 func setupEventBus(
 	ctx context.Context,
 	cfg config.Config,
@@ -481,7 +517,7 @@ func setupEventBus(
 	log *slog.Logger,
 ) (eventbus.EventBus, error) {
 	if cfg.EventBus != config.BackendRedis {
-		olayVeriYolunuUyar(ctx, cfg, log)
+		warnAboutEventBus(ctx, cfg, log)
 
 		return eventbus.NewInMemory(log), nil
 	}
@@ -495,50 +531,50 @@ func setupEventBus(
 		return nil, err
 	}
 
-	log.InfoContext(ctx, "olay veri yolu: Redis Streams",
-		"stream_oneki", busCfg.StreamPrefix,
-		"grup", busCfg.Group,
-		"tuketici", busCfg.Consumer)
+	log.InfoContext(ctx, "event bus: Redis Streams",
+		"stream_prefix", busCfg.StreamPrefix,
+		"group", busCfg.Group,
+		"consumer", busCfg.Consumer)
 
 	return bus, nil
 }
 
-// olayVeriYolunuUyar bellek içi veri yolunun paylaşılan ortamdaki riskini
-// bildirir.
+// warnAboutEventBus reports the risk of the in-memory bus in a shared
+// environment.
 //
-// Bedeli GUARD_BACKEND=memory ile aynı sınıftadır ve o zaten uyarıyor (bkz.
-// korumaYigini); ikisinin farklı seviyede loglanması, aynı ödünün birinde
-// görünüp ötekinde görünmemesi demekti.
+// Its cost is in the same class as GUARD_BACKEND=memory's, and that one already
+// warns (see guardStack); logging the two at different levels would have meant
+// the same trade-off being visible in one and invisible in the other.
 //
-// Bellek içi veri yolu ÇALIŞIR — her örnek kendi olayını kendi işler — ama
-// KALICI DEĞİLDİR: teslim asenkrondur ve süreç çökerse ya da kapanış
-// SHUTDOWN_TIMEOUT içinde bitmezse teslim edilmemiş olaylar iz bırakmadan
-// kaybolur. Somut hâli, siparişi konmuş ama onay bildirimi hiç gitmemiş bir
-// müşteridir; hiçbir hata görünmez, hiçbir kayıt eksilmez.
+// The in-memory bus WORKS — every instance handles its own events — but it is
+// NOT DURABLE: delivery is asynchronous, and if the process crashes or shutdown
+// does not finish within SHUTDOWN_TIMEOUT, undelivered events vanish without a
+// trace. Concretely, that is a customer whose order was placed but whose
+// confirmation was never sent; no error appears and no record is missing.
 //
-// Yerel geliştirmede INFO kalır: orada tek süreç çalışır, kayıp bir olayın
-// bedeli yoktur ve her açılışta uyarı basmak gerçek bir uyarıyı gürültüde
-// boğardı.
-func olayVeriYolunuUyar(ctx context.Context, cfg config.Config, log *slog.Logger) {
+// In local development it stays at INFO: there a single process runs, a lost
+// event costs nothing, and printing a warning on every startup would drown a
+// real warning in noise.
+func warnAboutEventBus(ctx context.Context, cfg config.Config, log *slog.Logger) {
 	if !cfg.IsShared() {
-		log.InfoContext(ctx, "olay veri yolu: bellek içi (tek süreç)")
+		log.InfoContext(ctx, "event bus: in-memory (single process)")
 
 		return
 	}
 
-	log.WarnContext(ctx, "olay veri yolu: bellek içi (tek süreç)",
-		"uyari", "olaylar KALICI DEĞİLDİR: süreç çökerse ya da kapanış SHUTDOWN_TIMEOUT içinde "+
-			"tamamlanmazsa teslim edilmemiş olaylar iz bırakmadan kaybolur (örn. sipariş onayı "+
-			"bildirimi gönderilmez)",
-		"cozum", "EVENT_BUS=redis")
+	log.WarnContext(ctx, "event bus: in-memory (single process)",
+		"warning", "events are NOT DURABLE: if the process crashes or shutdown does not finish "+
+			"within SHUTDOWN_TIMEOUT, undelivered events vanish without a trace (e.g. the order "+
+			"confirmation notification is never sent)",
+		"remedy", "EVENT_BUS=redis")
 }
 
-// shutdownContainer container'daki servisleri kapatır ve hataları loglar.
+// shutdownContainer closes the services in the container and logs the errors.
 func shutdownContainer(ctx context.Context, c *container.Container, cfg config.Config, log *slog.Logger) {
 	shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), cfg.ShutdownTimeout)
 	defer cancel()
 
 	if err := c.Shutdown(shutdownCtx); err != nil {
-		log.Error("container servisleri kapatılamadı", "error", err)
+		log.Error("the container services could not be shut down", "error", err)
 	}
 }

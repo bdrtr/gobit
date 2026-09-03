@@ -277,7 +277,7 @@ saga içindedir, katalogda commit'ten sonradır ve hata dönmek çağırana
 
 `plugins/<ad>/` altında `coreplugin.Plugin` uygulayan bir paket; sözleşme
 `core/provider`'dan, kayıt noktası `coreplugin.Host`'tan alınır. Kurulum
-dosyasına (`cmd/server/kurulum.go`) katalog satırı eklenir, `PLUGINS` ile
+dosyasına (`cmd/server/setup.go`) katalog satırı eklenir, `PLUGINS` ile
 seçilir. Çekirdek ve modüller **değişmez**.
 
 Kurulum iki fazlıdır: `Install` modüllerden önce (eklentinin getirdiği modül de

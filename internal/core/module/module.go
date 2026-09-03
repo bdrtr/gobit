@@ -1,9 +1,9 @@
-// Package module commerce modüllerinin uygulaması gereken sözleşmeyi ve
-// modülleri sırayla ayağa kaldıran kaydı (registry) tanımlar.
+// Package module defines the contract commerce modules implement and the
+// registry that brings them up in order.
 //
-// Bir modül kendi modellerine, tablolarına ve servisine sahiptir; başka bir
-// modülün paketini import ETMEZ (plan Bölüm 2.1/2.4, ADR 0001). Modüller arası
-// erişim container'dan isimle çözülen servis interface'leri üzerinden olur.
+// A module owns its own models, tables and service; it does NOT import another
+// module's package (plan Sections 2.1/2.4, ADR 0001). Access between modules
+// goes through service interfaces resolved from the container by name.
 package module
 
 import (
@@ -15,24 +15,25 @@ import (
 	"github.com/bdrtr/gobit/internal/core/container"
 )
 
-// Module bir commerce modülünün çekirdeğe sunduğu sözleşmedir (plan Bölüm 5.1).
+// Module is the contract a commerce module offers the core (plan Section 5.1).
 type Module interface {
-	// Name modülün benzersiz adıdır (örn. "product"). Container'daki servis
-	// adlarında ve migration versiyon tablosunda önek olarak kullanılır.
+	// Name is the module's unique name (e.g. "product"). It is used as a
+	// prefix in the container's service names and in the migration version
+	// table.
 	Name() string
 
-	// Register modülün servislerini container'a kaydeder, link tanımlarını ve
-	// event subscriber'larını bildirir.
+	// Register registers the module's services in the container and declares
+	// its link definitions and event subscribers.
 	//
-	// DİKKAT: Bu aşamada BAŞKA modüllerin servisleri henüz kayıtlı olmayabilir.
-	// Bu yüzden başka modülün servisi burada Resolve EDİLMEMELİ; container'a
-	// tembel yapıcı verilmeli ve çözüm ilk kullanımda yapılmalıdır.
+	// CAUTION: at this stage OTHER modules' services may not be registered
+	// yet. Another module's service must therefore NOT be resolved here; give
+	// the container a lazy constructor and resolve on first use.
 	Register(ctx context.Context, c *container.Container) error
 
-	// Migrations modülün migration dosyalarını döner (genellikle embed.FS).
-	// Modülün migration'ı yoksa nil dönebilir.
+	// Migrations returns the module's migration files (usually an embed.FS).
+	// A module with no migrations may return nil.
 	Migrations() fs.FS
 
-	// Routes modülün store/admin route'larını verilen router'a bağlar.
+	// Routes binds the module's store and admin routes to the given router.
 	Routes(r chi.Router)
 }

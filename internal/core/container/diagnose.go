@@ -8,32 +8,33 @@ import (
 	"github.com/bdrtr/gobit/internal/core/errors"
 )
 
-// typeMismatch kayıtlı değerin beklenen tipi karşılamadığını anlatan hatayı
-// üretir. Mesaj kalitesi burada bilinçli olarak yüksek tutulur: ADR 0001'de
-// modüller birbirini import etmediği için uyumsuzluk yalnızca çalışma
-// zamanında, tam da burada görülür.
+// typeMismatch produces the error explaining that the registered value does not
+// satisfy the expected type. The message quality is deliberately kept high
+// here: because modules do not import each other under ADR 0001, a mismatch is
+// only seen at runtime, exactly at this point.
 func typeMismatch(name string, value any, want reflect.Type) error {
 	got := reflect.TypeOf(value)
 	return errors.Invalid(codeTypeMismatch,
-		"%q servisi %s tipinde kayıtlı; beklenen tip %s%s",
+		"the service %q is registered as type %s; the expected type is %s%s",
 		name, typeName(got), typeName(want), mismatchDetail(got, want)).
 		WithDetails(map[string]any{
-			"servis":       name,
-			"kayitli_tip":  typeName(got),
-			"beklenen_tip": typeName(want),
+			"service":         name,
+			"registered_type": typeName(got),
+			"expected_type":   typeName(want),
 		})
 }
 
-// mismatchDetail beklenen tip bir arayüzse uyumsuzluğun nedenini açıklar;
-// açıklanamıyorsa boş dize döner.
+// mismatchDetail explains the reason for the mismatch when the expected type is
+// an interface; when it cannot be explained it returns an empty string.
 func mismatchDetail(got, want reflect.Type) string {
 	if got == nil || want == nil || want.Kind() != reflect.Interface {
 		return ""
 	}
 
-	// Sık yapılan hata: metodlar işaretçi alıcılı, servis değer olarak kaydedilmiş.
+	// A common mistake: the methods have pointer receivers but the service was
+	// registered as a value.
 	if got.Kind() != reflect.Pointer && reflect.PointerTo(got).Implements(want) {
-		return fmt.Sprintf(" — %s metodları işaretçi alıcılıdır; servisi *%s olarak kaydedin",
+		return fmt.Sprintf(" — %s's methods have pointer receivers; register the service as *%s",
 			typeName(got), typeName(got))
 	}
 
@@ -42,11 +43,11 @@ func mismatchDetail(got, want reflect.Type) string {
 		m := want.Method(i)
 		gm, ok := got.MethodByName(m.Name)
 		if !ok {
-			missing = append(missing, "eksik: "+m.Name+methodSig(m.Type, false))
+			missing = append(missing, "missing: "+m.Name+methodSig(m.Type, false))
 			continue
 		}
 		if !sameSignature(gm.Type, m.Type) {
-			missing = append(missing, fmt.Sprintf("uyumsuz: %s%s (kayıtlı: %s%s)",
+			missing = append(missing, fmt.Sprintf("mismatched: %s%s (registered: %s%s)",
 				m.Name, methodSig(m.Type, false), m.Name, methodSig(gm.Type, true)))
 		}
 	}
@@ -56,8 +57,9 @@ func mismatchDetail(got, want reflect.Type) string {
 	return " — " + strings.Join(missing, ", ")
 }
 
-// sameSignature somut tipin metodu ile arayüz metodunun imzasını karşılaştırır.
-// Somut metodun ilk parametresi alıcıdır; karşılaştırmada atlanır.
+// sameSignature compares a concrete type's method with an interface method.
+// The concrete method's first parameter is the receiver; it is skipped in the
+// comparison.
 func sameSignature(withRecv, iface reflect.Type) bool {
 	if withRecv.NumIn()-1 != iface.NumIn() ||
 		withRecv.NumOut() != iface.NumOut() ||
@@ -77,8 +79,8 @@ func sameSignature(withRecv, iface reflect.Type) bool {
 	return true
 }
 
-// methodSig imzayı "(girdiler) (çıktılar)" biçiminde yazar. skipRecv true ise
-// ilk parametre (alıcı) atlanır.
+// methodSig writes the signature in "(inputs) (outputs)" form. With skipRecv
+// true the first parameter (the receiver) is skipped.
 func methodSig(t reflect.Type, skipRecv bool) string {
 	first := 0
 	if skipRecv {
@@ -115,7 +117,7 @@ func methodSig(t reflect.Type, skipRecv bool) string {
 	}
 }
 
-// typeName tipin okunabilir adını döner; nil tip "<nil>" olur.
+// typeName returns the type's readable name; a nil type becomes "<nil>".
 func typeName(t reflect.Type) string {
 	if t == nil {
 		return "<nil>"

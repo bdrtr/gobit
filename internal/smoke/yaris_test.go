@@ -39,7 +39,7 @@ const esZamanliOrnekSayisi = 3
 // vardır ve çakışma dalını da kapsar. Ama o test, çakışmanın GERÇEKTEN
 // üretildiğini kanıtlamaz: gerçek yarışı üreten şey, üç ayrı SÜRECİN aynı
 // PostgreSQL benzersizlik kısıtına aynı anda çarpmasıdır. Bu test yarışın
-// kendisini kurar; düzeltme geri alınırsa (cmd/server/kurulum.go içindeki
+// kendisini kurar; düzeltme geri alınırsa (cmd/server/setup.go içindeki
 // errors.IsConflict dalı) iki örnek açılamaz ve test düşer.
 func TestEsZamanliAcilisTekYoneticiYaratir(t *testing.T) {
 	dsn := senaryoVeritabani(t)

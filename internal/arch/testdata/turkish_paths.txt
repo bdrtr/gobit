@@ -1,0 +1,44 @@
+# Files whose PATH still contains Turkish.
+#
+# Renaming a file is a separate move from translating it, so this debt is
+# tracked separately from testdata/turkish_ledger.txt. New files must be named
+# in English; this list may only shrink.
+#
+docs/adr/0001-modul-arasi-iletisim.md
+docs/adr/0006-workflow-modul-erisimi.md
+docs/adr/0007-sertlestirme-arizada-davranis.md
+docs/adr/0008-musteri-kimligi-guven-siniri.md
+docs/adr/0009-cok-kiracililik-kurulum-siniri.md
+docs/adr/0010-depo-secim-politikasi.md
+docs/adr/0011-yonetim-paneli-dorduncu-agac.md
+internal/arch/belge_atiflari_test.go
+internal/arch/hatayolu_test.go
+internal/arch/kanal_kapsami_test.go
+internal/arch/kayit_test.go
+internal/arch/koruma_test.go
+internal/arch/sabitler_test.go
+internal/arch/tuketici_test.go
+internal/arch/yapilandirma_test.go
+internal/e2e/coklu_depo_test.go
+internal/e2e/dosya_test.go
+internal/e2e/indirim_test.go
+internal/e2e/kanal_katalogu_test.go
+internal/e2e/kanal_sepeti_test.go
+internal/e2e/kargo_test.go
+internal/e2e/sepet_akisi_test.go
+internal/e2e/sepet_toplam_test.go
+internal/e2e/sertlestirme_test.go
+internal/e2e/siparis_akisi_test.go
+internal/e2e/vergi_test.go
+internal/e2e/yetki_test.go
+internal/modules/auth/api/cikis_test.go
+internal/modules/auth/api/yetki_test.go
+internal/modules/auth/service/cikis_test.go
+internal/modules/auth/service/yetki_fakes_test.go
+internal/modules/auth/service/yetki_test.go
+internal/modules/inventory/api/yetki_test.go
+internal/modules/pricing/api/yetki_test.go
+internal/modules/product/api/describe_yonetim_internal_test.go
+internal/modules/product/api/yetki_test.go
+internal/smoke/istemci_test.go
+internal/smoke/yapilandirma_test.go

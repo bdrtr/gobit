@@ -1,9 +1,9 @@
-// Package errors gobit'in tipli hata modelini sağlar.
+// Package errors provides gobit's typed error model.
 //
-// Servisler dışarıya bu paketin ürettiği *Error değerlerini döner; HTTP katmanı
-// Kind alanını status koduna çevirir (plan Bölüm 2.7 ve Bölüm 8). Paket, stdlib
-// errors'ın As/Is/Join/New/Unwrap yardımcılarını da yeniden dışa verir; böylece
-// çağıran taraf iki ayrı errors paketi import etmek zorunda kalmaz.
+// Services return the *Error values produced by this package, and the HTTP
+// layer turns the Kind field into a status code (plan Sections 2.7 and 8). The
+// package also re-exports the stdlib errors helpers As/Is/Join/New/Unwrap, so a
+// caller never has to import two different errors packages.
 package errors
 
 import (
@@ -11,7 +11,7 @@ import (
 	"fmt"
 )
 
-// stdlib errors yardımcıları; bu paket onun yerine import edilebilsin diye.
+// The stdlib errors helpers, so this package can be imported in its place.
 var (
 	As     = stderrors.As
 	Is     = stderrors.Is
@@ -20,31 +20,37 @@ var (
 	Unwrap = stderrors.Unwrap
 )
 
-// Kind bir hatanın sınıfıdır. Sıfır değeri KindInternal'dır; böylece
-// sınıflandırılmamış bir hata kazara "bulunamadı" gibi davranmaz.
+// Kind is an error's class. Its zero value is KindInternal, so an unclassified
+// error never accidentally behaves like a "not found".
 type Kind uint8
 
-// Hata sınıfları. HTTP eşlemesi için internal/core/http paketine bakın.
+// The error classes. For the HTTP mapping see the internal/core/http package.
 const (
-	// KindInternal beklenmeyen sunucu hatasıdır (sıfır değer).
+	// KindInternal is an unexpected server error (the zero value).
 	KindInternal Kind = iota
-	// KindNotFound istenen kaynağın bulunamadığını bildirir.
+	// KindNotFound reports that the requested resource does not exist.
 	KindNotFound
-	// KindInvalid girdinin doğrulamadan geçmediğini bildirir.
+	// KindInvalid reports that the input did not pass validation.
 	KindInvalid
-	// KindConflict mevcut durumla çakışmayı bildirir (örn. tekrarlanan kayıt).
+	// KindConflict reports a clash with the current state (e.g. a duplicate
+	// record).
 	KindConflict
-	// KindUnauthorized kimlik doğrulamanın eksik veya geçersiz olduğunu bildirir.
+	// KindUnauthorized reports that authentication is missing or invalid.
 	KindUnauthorized
-	// KindForbidden kimliğin doğrulandığını ama yetkinin yetmediğini bildirir.
+	// KindForbidden reports that the identity is verified but the privileges
+	// are not enough.
 	KindForbidden
-	// KindUnavailable bir alt sistemin geçici olarak erişilemez olduğunu bildirir.
+	// KindUnavailable reports that a subsystem is temporarily unreachable.
 	KindUnavailable
-	// KindTooManyRequests istemcinin hız sınırını aştığını bildirir.
+	// KindTooManyRequests reports that the client exceeded the rate limit.
 	KindTooManyRequests
 )
 
-// String Kind'ın okunabilir adını döner.
+// String returns the Kind's readable name.
+//
+// These strings are part of the WIRE CONTRACT, not prose: they appear in a
+// response body as the fallback error code when a call gave none, and clients
+// branch on them. They are never translated (ADR 0012, decision 4).
 func (k Kind) String() string {
 	switch k {
 	case KindNotFound:
@@ -68,22 +74,24 @@ func (k Kind) String() string {
 	}
 }
 
-// Error gobit'in tipli hatasıdır.
+// Error is gobit's typed error.
 type Error struct {
-	// Kind hatanın sınıfıdır; taşıma katmanı buna göre status kodu seçer.
+	// Kind is the error's class; the transport layer picks the status code
+	// from it.
 	Kind Kind
-	// Code makine tarafından okunabilen sabit koddur (örn. "product_not_found").
-	// İstemciler buna göre dallanabilir; Message'ın aksine değişmez sayılır.
+	// Code is the machine-readable, stable code (e.g. "product_not_found").
+	// Clients may branch on it; unlike Message it is considered immutable.
 	Code string
-	// Message insan tarafından okunabilen açıklamadır. Hassas veri içermemelidir.
+	// Message is the human-readable explanation. It must contain no sensitive
+	// data.
 	Message string
-	// Details isteğe bağlı yapısal bağlamdır (örn. hangi alanın geçersiz olduğu).
+	// Details is optional structural context (e.g. which field was invalid).
 	Details map[string]any
-	// err sarmalanan alttaki hatadır; Unwrap ile erişilir.
+	// err is the wrapped underlying error; it is reached through Unwrap.
 	err error
 }
 
-// Error error arayüzünü karşılar.
+// Error satisfies the error interface.
 func (e *Error) Error() string {
 	if e == nil {
 		return "<nil>"
@@ -98,7 +106,7 @@ func (e *Error) Error() string {
 	return msg
 }
 
-// Unwrap sarmalanan hatayı döner; errors.Is/As zinciri için gereklidir.
+// Unwrap returns the wrapped error; the errors.Is/As chain needs it.
 func (e *Error) Unwrap() error {
 	if e == nil {
 		return nil
@@ -106,8 +114,8 @@ func (e *Error) Unwrap() error {
 	return e.err
 }
 
-// WithDetails hataya yapısal bağlam ekleyip aynı hatayı döner.
-// Details nil ise oluşturulur; var olan anahtarlar ezilir.
+// WithDetails adds structural context to the error and returns the same error.
+// Details is created when nil; existing keys are overwritten.
 func (e *Error) WithDetails(kv map[string]any) *Error {
 	if e == nil {
 		return nil
@@ -121,7 +129,7 @@ func (e *Error) WithDetails(kv map[string]any) *Error {
 	return e
 }
 
-// newError ortak yapıcıdır.
+// newError is the shared constructor.
 func newError(kind Kind, code, format string, a ...any) *Error {
 	return &Error{
 		Kind:    kind,
@@ -130,48 +138,50 @@ func newError(kind Kind, code, format string, a ...any) *Error {
 	}
 }
 
-// NotFound istenen kaynağın bulunamadığını bildiren hata üretir.
+// NotFound builds an error reporting that the requested resource does not
+// exist.
 func NotFound(code, format string, a ...any) *Error {
 	return newError(KindNotFound, code, format, a...)
 }
 
-// Invalid girdinin doğrulamadan geçmediğini bildiren hata üretir.
+// Invalid builds an error reporting that the input did not pass validation.
 func Invalid(code, format string, a ...any) *Error {
 	return newError(KindInvalid, code, format, a...)
 }
 
-// Conflict mevcut durumla çakışmayı bildiren hata üretir.
+// Conflict builds an error reporting a clash with the current state.
 func Conflict(code, format string, a ...any) *Error {
 	return newError(KindConflict, code, format, a...)
 }
 
-// Unauthorized kimlik doğrulamanın eksik veya geçersiz olduğunu bildirir.
+// Unauthorized reports that authentication is missing or invalid.
 func Unauthorized(code, format string, a ...any) *Error {
 	return newError(KindUnauthorized, code, format, a...)
 }
 
-// Forbidden kimliğin doğrulandığını ama yetkinin yetmediğini bildirir.
+// Forbidden reports that the identity is verified but the privileges are not
+// enough.
 func Forbidden(code, format string, a ...any) *Error {
 	return newError(KindForbidden, code, format, a...)
 }
 
-// TooManyRequests hız sınırının aşıldığını bildiren bir hata kurar.
+// TooManyRequests builds an error reporting that the rate limit was exceeded.
 func TooManyRequests(code, format string, a ...any) *Error {
 	return newError(KindTooManyRequests, code, format, a...)
 }
 
-// Unavailable bir alt sistemin geçici olarak erişilemez olduğunu bildirir.
+// Unavailable reports that a subsystem is temporarily unreachable.
 func Unavailable(code, format string, a ...any) *Error {
 	return newError(KindUnavailable, code, format, a...)
 }
 
-// Internal beklenmeyen sunucu hatasını bildirir.
+// Internal reports an unexpected server error.
 func Internal(code, format string, a ...any) *Error {
 	return newError(KindInternal, code, format, a...)
 }
 
-// Wrap var olan bir hatayı tipli hataya sarar. err nil ise nil döner;
-// böylece çağıran tarafta ayrıca nil kontrolü gerekmez.
+// Wrap wraps an existing error in a typed error. It returns nil when err is
+// nil, so the caller needs no separate nil check.
 func Wrap(err error, kind Kind, code, format string, a ...any) *Error {
 	if err == nil {
 		return nil
@@ -181,8 +191,8 @@ func Wrap(err error, kind Kind, code, format string, a ...any) *Error {
 	return e
 }
 
-// KindOf zincirdeki ilk *Error'ın Kind'ını döner.
-// Zincirde tipli hata yoksa KindInternal döner (güvenli varsayılan).
+// KindOf returns the Kind of the first *Error in the chain.
+// With no typed error in the chain it returns KindInternal (the safe default).
 func KindOf(err error) Kind {
 	var e *Error
 	if stderrors.As(err, &e) {
@@ -191,7 +201,7 @@ func KindOf(err error) Kind {
 	return KindInternal
 }
 
-// CodeOf zincirdeki ilk *Error'ın Code'unu döner; yoksa boş dize.
+// CodeOf returns the Code of the first *Error in the chain, or an empty string.
 func CodeOf(err error) string {
 	var e *Error
 	if stderrors.As(err, &e) {
@@ -200,26 +210,26 @@ func CodeOf(err error) string {
 	return ""
 }
 
-// HasKind hatanın (zincir boyunca) verilen sınıfta olup olmadığını bildirir.
-// stdlib Is ile karışmaması için ayrı adlandırılmıştır.
+// HasKind reports whether the error is of the given class (along the chain).
+// It is named separately so it is not confused with the stdlib Is.
 func HasKind(err error, kind Kind) bool {
 	return KindOf(err) == kind
 }
 
-// IsNotFound hatanın KindNotFound sınıfında olup olmadığını bildirir.
+// IsNotFound reports whether the error is of class KindNotFound.
 func IsNotFound(err error) bool { return HasKind(err, KindNotFound) }
 
-// IsInvalid hatanın KindInvalid sınıfında olup olmadığını bildirir.
+// IsInvalid reports whether the error is of class KindInvalid.
 func IsInvalid(err error) bool { return HasKind(err, KindInvalid) }
 
-// IsConflict hatanın KindConflict sınıfında olup olmadığını bildirir.
+// IsConflict reports whether the error is of class KindConflict.
 func IsConflict(err error) bool { return HasKind(err, KindConflict) }
 
-// IsUnauthorized hatanın KindUnauthorized sınıfında olup olmadığını bildirir.
+// IsUnauthorized reports whether the error is of class KindUnauthorized.
 func IsUnauthorized(err error) bool { return HasKind(err, KindUnauthorized) }
 
-// IsForbidden hatanın KindForbidden sınıfında olup olmadığını bildirir.
+// IsForbidden reports whether the error is of class KindForbidden.
 func IsForbidden(err error) bool { return HasKind(err, KindForbidden) }
 
-// IsTooManyRequests hatanın KindTooManyRequests sınıfında olup olmadığını bildirir.
+// IsTooManyRequests reports whether the error is of class KindTooManyRequests.
 func IsTooManyRequests(err error) bool { return HasKind(err, KindTooManyRequests) }
