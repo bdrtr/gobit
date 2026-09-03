@@ -12,7 +12,7 @@
 //  1. Üç örnek boş bir veritabanına aynı anda açıldığında ikisi
 //     "admin_bootstrap_failed" ile öldü (replicas:3 ile crash-loop).
 //  2. OTEL_EXPORTER_OTLP_ENDPOINT'in belirtime uyan biçimi (http://host:4317)
-//     sessizce yutuluyordu: "izleme kuruldu" loglanıyor, tek span gitmiyordu.
+//     sessizce yutuluyordu: "telemetry is set up" loglanıyor, tek span gitmiyordu.
 //  3. Metrik aralığı değişkeninin adı OpenTelemetry belirtimiyle çakışıyordu;
 //     belirtime uyan değer (60000) uygulamayı AÇILIŞTA düşürüyordu.
 //  4. make migrate-up dokuz faz önceki bir özelliği bekletiyordu.

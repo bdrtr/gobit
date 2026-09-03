@@ -55,6 +55,20 @@ Sabitlenme `1.0.0` ile olur.
   ölçüldü, yalnızca sıfır isabet verenler alındı); üçüncüsü Türkçe kökleri
   tanımlayıcıların TAM parçalarında arar.
 
+- **Smoke testlerinin beklediği log mesajları artık üretime bağlı**
+  (`TestSmokeLogAssertionsMatchProduction`). Smoke testi bir üretim log
+  satırını METİN olarak bekliyor ve ikisi arasında derleyici bağı YOK: mesajı
+  yeniden adlandırmak smoke testini derlenir, vet'lenir ve lint'lenir hâlde
+  bırakıyor, üstelik `go test ./...` onu koşmuyor bile — smoke bir build
+  etiketinin arkasında. Kırılma push'tan SONRA, CI'ın en yavaş işinde
+  görünüyor.
+
+  Bu varsayımsal değil: observability paketindeki `"izleme kuruldu"` mesajını
+  çevirmek tam olarak bu çifti kırdı ve bütün yerel kapılar yeşil kaldı.
+  Denetim, mesajın üretimde hâlâ YAZILDIĞINI kaynağa bakarak doğruluyor;
+  mesajı dışa açık bir sabite taşımak, operatöre giden bir metni paketin API
+  yüzeyine koymak olurdu.
+
 - **SOLID'in mekanik olarak ölçülebilen iki boşluğu kapandı**
   (`internal/arch/solid_test.go`). `TestResolvedTypeIsAnInterface` DIP'in
   TÜKETİM yarısını zorluyor: üretimdeki her `container.Resolve[T]` çağrı yeri

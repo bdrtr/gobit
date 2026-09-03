@@ -18,7 +18,7 @@ import (
 // OTEL_EXPORTER_OTLP_ENDPOINT'i bir URL olarak tanımlar
 // ("http://collector:4317"); Go SDK'sının WithEndpoint seçeneği ise ŞEMASIZ
 // bir "host:port" bekler. İkisi karıştırıldığında hiçbir hata çıkmaz: gRPC
-// tembel bağlanır, uygulama "izleme kuruldu" loglar ve tek bir span bile
+// tembel bağlanır, uygulama "telemetry is set up" loglar ve tek bir span bile
 // gitmez. Sessiz kayıp, ancak bir arıza incelenirken — yani en kötü anda —
 // fark edilir.
 //
@@ -47,7 +47,7 @@ import (
 // gittiğini gösteremez, yalnızca iki yazımın da açılışı geçtiğini gösterir.
 // Adresin doğru SDK seçeneğine (WithEndpoint / WithEndpointURL) çevrildiği
 // bir birim testiyle sabitlenmiştir (bkz. observability paketindeki
-// TestUcSemaliMiIkiBicimiDeAyirtEder). İş bölümü bilinçlidir: seçeneğin
+// TestEndpointHasSchemeTellsBothFormsApart). İş bölümü bilinçlidir: seçeneğin
 // doğruluğu ucuzca ve kesin biçimde orada sınanır, "uygulama bu adresle
 // gerçekten açılıyor mu" sorusu ise ancak burada cevaplanabilir.
 func TestIzlemeUcununIkiBicimiDeKabulEdilir(t *testing.T) {
@@ -73,10 +73,10 @@ func TestIzlemeUcununIkiBicimiDeKabulEdilir(t *testing.T) {
 			assert.Equal(t, http.StatusOK, kod,
 				"toplayıcı erişilemezken de hazır olmalı; gövde: %s", govde)
 
-			assert.True(t, s.gunlukIceriyorMu("izleme kuruldu"),
-				"kurulum başarılı loglanmalı; adres reddedilseydi \"izleme kurulamadı\" görürdük\n%s",
+			assert.True(t, s.gunlukIceriyorMu("telemetry is set up"),
+				"kurulum başarılı loglanmalı; adres reddedilseydi \"could not be set up\" görürdük\n%s",
 				s.gunluk())
-			assert.False(t, s.gunlukIceriyorMu("izleme kurulamadı"),
+			assert.False(t, s.gunlukIceriyorMu("observability could not be set up"),
 				"adresin bu yazımı kabul edilmeli\n%s", s.gunluk())
 			assert.True(t, s.gunlukIceriyorMu(uc),
 				"kurulum logu hangi adresin kullanıldığını söylemeli\n%s", s.gunluk())
