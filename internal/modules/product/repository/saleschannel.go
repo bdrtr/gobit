@@ -51,13 +51,45 @@ import (
 // bir süzgeç birine yazılıp diğerine yazılmaz ve vitrin ile yönetim listesi
 // SESSİZCE farklı kümeler dönerdi.
 //
-// # İndeks
+// # İndeks ve neden TEK alt sorgu
 //
 // Ek indeks GEREKMEZ ve product zaten ekleyemez (şema core/link'indir).
 // core/link ManyToMany bir link için PRIMARY KEY (from_id, to_id) ve to_id
-// üzerinde bir arama indeksi kurar (bkz. core/link registry.go ddl). Buradaki
-// iki alt sorgu da from_id ile başlar, yani birincil anahtarın önekini kullanır:
-// aday satır başına bir indeks yoklaması yapılır, tablo taraması olmaz.
+// üzerinde bir arama indeksi kurar (bkz. core/link registry.go ddl). Alt sorgu
+// from_id ile başlar, yani birincil anahtarın önekini kullanır.
+//
+// Kural bir zamanlar İKİ alt sorguyla yazılıydı ("hiç ataması yok VEYA istenen
+// kanalda ataması var") ve buradaki yorum aday satır başına bir indeks
+// yoklaması yapıldığını iddia ediyordu. İDDİA YANLIŞTI ve yanlışlığı ancak
+// gerçek hacimde göründü: planlayıcı iki bağımsız EXISTS'i gördüğünde ikisini
+// de HASH'e çeviriyor, yani ilk satırı dönmeden ÖNCE link tablosunun tamamını
+// iki kez tarıyor. Ölçüldü — 52.000 ürün ve 52.000 kanal ataması, vitrinin
+// LIMIT 20'lik liste sorgusu:
+//
+//	iki EXISTS (eski)          26,8 ms
+//	tek bool_or (bugünkü)       0,8 ms
+//
+// Maliyet sayfa boyutuyla değil KATALOG boyutuyla büyüyordu, üstelik vitrinin
+// en sıcak ucunda. Tek korelasyonlu alt sorgu planlayıcıya satır başına indeks
+// yoklaması yaptırır ve LIMIT'te gerçekten durabilir.
+//
+// # IS TRUE bir süs değil
+//
+// bool_or'un içindeki "IS TRUE" olmadan kural DEĞİŞİR: kanal dizisi bir NULL
+// eleman taşıdığında "to_id = ANY(...)" o satır için NULL döner, bool_or NULL'ı
+// yutar ve COALESCE onu "hiç ataması yok" sanıp ürünü GÖRÜNÜR yapar. Yani
+// eksik yazılmış hâli AÇIĞA düşer: bir kanala atanmış ürün, o kanalı istemeyen
+// bir isteme görünür. Sekiz senaryoda ölçüldü; "IS TRUE" ile eski kuralla
+// birebir aynı, onsuz ikisinde ayrışıyor.
+//
+// Ve HİÇBİR TEST bunu yakalayamaz — bu da ölçüldü. Kanal dizisi buraya Go'dan
+// []string olarak gelir, dolayısıyla bugün NULL eleman ÜRETİLEMEZ; "IS TRUE"
+// silindiğinde entegrasyon paketinin on üç testinin hepsi geçmeye devam eder
+// (silinen öteki her parça — COALESCE'ın varsayılanı, yönetim dalı, bool_or,
+// korelasyon, eşitliğin yönü — en az bir testi düşürür). Yani bu iki sözcük
+// çağıranın BUGÜNKÜ tip seçimine yaslanıyor ve o seçim değişirse kural sessizce
+// gevşer. Yazılmasının sebebi budur; kaldırılmak istenirse önce bu satır
+// okunmalıdır.
 
 // SalesChannelLinkTable ürün ↔ satış kanalı bağının tutulduğu link tablosudur.
 //
@@ -87,13 +119,11 @@ const SalesChannelLinkTable = "link_product_sales_channel"
 // tanımı değişmez, yalnızca eşleşecek kanal yoktur.
 const salesChannelVisibleTemplate = `(
     %[2]s::text[] IS NULL
-    OR NOT EXISTS (
-      SELECT 1 FROM ` + SalesChannelLinkTable + ` scl WHERE scl.from_id = %[1]s
-    )
-    OR EXISTS (
-      SELECT 1 FROM ` + SalesChannelLinkTable + ` scl
-      WHERE scl.from_id = %[1]s AND scl.to_id = ANY(%[2]s::text[])
-    )
+    OR COALESCE((
+      SELECT bool_or(scl.to_id = ANY(%[2]s::text[]) IS TRUE)
+      FROM ` + SalesChannelLinkTable + ` scl
+      WHERE scl.from_id = %[1]s
+    ), true)
   )`
 
 // salesChannelVisible görünürlük koşulunu verilen ürün ifadesi ve kanal

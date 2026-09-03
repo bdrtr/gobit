@@ -1351,6 +1351,20 @@ açıktır.
   kaydından okunur; hiç bölge tanımlanmamış bir kurulumda `19990 TRY (minor
   units)` görülür. Sabit 100 varsaymak JPY ve KWD gibi 0 ve 3 basamaklı para
   birimlerinde YANLIŞ tutar gösterirdi.
+- **Vitrin listesinin TOPLAM SAYACI katalog büyüdükçe pahalılaşır.**
+  `GET /store/v1/products` yanıtındaki `count` alanı, satış kanalı süzgecinin
+  uygulandığı kümenin tamamını saymak zorundadır; sayfa boyutu bunu
+  değiştirmez. Ölçüldü (52.000 ürün, 52.000 kanal ataması, yerel Postgres):
+  süzgeçsiz düz sayım **2 ms**, kanal süzgeçli sayım **79 ms**, aynı isteğin
+  geri kalan tüm SQL'i **1 ms**. Yani büyük bir katalogda vitrin isteğinin
+  neredeyse tamamı sayaçtır.
+
+  Bu bir hata değil, sayfalama sözleşmesinin bedeli: toplam sayı istenirse
+  toplam sayılır. Liste sorgusunun kendisi bu maliyeti taşımaz (ölçüldü:
+  0,14 ms), yani yavaşlayan şey yalnızca `count`'tur. Kapatmanın bugün bir
+  yolu yoktur; alan yanıt zarfının parçasıdır ve kaldırmak kırıcı olurdu.
+  Panelin ürün listesi bu bedeli ÖDEMEZ — o bilinçli olarak saymadan sayfalar
+  (`TestProductListPagesWithoutCounting`).
 - **Hata bildirimi bir İŞARETTİR, olayın kopyası değil.** `error-sentry`
   eklentisi ([ADR 0014](docs/adr/0014-error-reporting.md)) toplayıcıya arıza
   kodunu, güvenli mesajı ve `request_id`'yi gönderir; geri kalan her şey logda

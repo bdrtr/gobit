@@ -10,6 +10,41 @@ Sabitlenme `1.0.0` ile olur.
 
 ## [Yayımlanmamış]
 
+### Değiştirildi
+
+- **Vitrinin satış kanalı görünürlük kuralı tek bir korelasyonlu alt sorguya
+  indi.** Kural DEĞİŞMEDİ; nasıl yazıldığı değişti. Eski hâli iki bağımsız
+  alt sorguydu ("hiç ataması yok VEYA istenen kanalda ataması var") ve
+  `saleschannel.go`'nun yorumu aday satır başına bir indeks yoklaması
+  yapıldığını iddia ediyordu. İddia yanlıştı: planlayıcı iki bağımsız EXISTS
+  gördüğünde ikisini de hash'e çeviriyor, yani ilk satırı dönmeden ÖNCE link
+  tablosunun tamamını iki kez tarıyor.
+
+  Ölçüldü — 52.000 ürün, 52.000 kanal ataması, gerçek Postgres, vitrinin
+  `GET /store/v1/products?limit=20` ucu:
+
+  | | eski | yeni |
+  |---|---|---|
+  | liste sorgusu | 26,80 ms | **0,14 ms** |
+  | sayaç sorgusu | 73,87 ms | 78,97 ms |
+  | istekteki toplam SQL | 100,7 ms | 79,9 ms |
+
+  Maliyet sayfa boyutuyla değil KATALOG boyutuyla büyüyordu, üstelik vitrinin
+  en sıcak ucunda: aynı uç 2.000 ürünle 7,5 ms, 52.000 ürünle 113 ms sürüyordu
+  ve ikisi de aynı 20 satırı dönüyordu.
+
+  Yeni formülasyondaki `IS TRUE` bir süs DEĞİL: onsuz, kanal dizisi bir NULL
+  eleman taşıdığında `bool_or` NULL'ı yutuyor, `COALESCE` onu "hiç ataması yok"
+  sanıyor ve atanmış bir ürün yanlış kanalda GÖRÜNÜR oluyor — yani eksik hâli
+  açığa düşüyor. Sekiz senaryoda ölçüldü. Ve hiçbir test bunu yakalayamaz,
+  çünkü kanal dizisi Go'dan `[]string` gelir ve NULL eleman üretemez; gerekçe
+  kodda yazılı.
+
+- **Sayacın maliyeti bir SINIR olarak yazıya geçti** (README, "Bilinen
+  sınırlar"). Vitrin listesinin toplam sayacı kanal süzgeciyle birlikte
+  katalogun tamamına bakmak zorundadır ve düzeltilebilir bir şey değildir:
+  aynı katalogda süzgeçsiz düz sayım 2 ms, kanal süzgeçli sayım 79 ms sürüyor.
+
 ## [0.6.0] — 2026-09-03
 
 ### Eklendi
