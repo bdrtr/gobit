@@ -1,43 +1,45 @@
-// Package container gobit'in bağımlılık enjeksiyonu (DI) kabını sağlar.
+// Package container provides gobit's dependency injection container.
 //
-// Kap, servisleri ADLA tutar ve [Resolve] ile tip parametresi vererek geri
-// verir. Modüller birbirini import etmediği için (bkz. ADR 0001) bir modül,
-// ihtiyaç duyduğu dar arayüzü kendi paketinde tanımlar ve sağlayıcının somut
-// tipini buradan adla çözer.
+// The container holds services BY NAME and hands them back through [Resolve]
+// with a type parameter. Because modules do not import each other (see ADR
+// 0001), a module declares the narrow interface it needs in its own package and
+// resolves the provider's concrete type from here by name.
 //
-// # Neden samber/do değil
+// # Why not samber/do
 //
-// Plan Bölüm 3 DI için samber/do v2'yi öneriyor, Bölüm 5.1'deki sözleşme ise
-// bağlayıcı: Provide(name string, ctor any) error ve Resolve[T](c, name).
-// do v2'nin kayıt yüzeyi tip parametrelidir (ProvideNamed[T]); "any" alan bir
-// Provide'ı onun üstüne kurmak için her servisi do'ya any olarak vermek
-// gerekirdi. O anda do'nun getirdiği üç şey de elden gidiyor:
+// Plan Section 3 suggests samber/do v2 for DI, but the contract in Section 5.1
+// binds: Provide(name string, ctor any) error and Resolve[T](c, name). do v2's
+// registration surface is type-parameterized (ProvideNamed[T]); building a
+// Provide that takes "any" on top of it would mean handing every service to do
+// as any. At that moment all three things do brings are lost:
 //
-//  1. Tip bilgisi any'ye düzleştiği için do'nun hataları ADR 0001'in istediği
-//     "kayıtlı somut tip vs beklenen tip" teşhisini veremez.
-//  2. do çift kayıtta panic eder; sözleşme errors.Conflict istiyor.
-//  3. do kapatmayı kendi bağımlılık grafiğine göre yapar ve yalnızca kendi
-//     Shutdowner arayüzlerini tanır; sözleşme KAYIT sırasının tersini ve
-//     io.Closer desteğini şart koşuyor.
+//  1. With the type information flattened into any, do's errors cannot give the
+//     "registered concrete type vs expected type" diagnosis ADR 0001 wants.
+//  2. do panics on a duplicate registration; the contract wants
+//     errors.Conflict.
+//  3. do closes according to its own dependency graph and recognizes only its
+//     own Shutdowner interfaces; the contract requires the reverse of
+//     REGISTRATION order and io.Closer support.
 //
-// Geriye do'dan yalnızca mutex'li bir map kalıyordu; bu paket onu sözleşmenin
-// istediği davranışla doğrudan yazar. Dışarıya yalnızca buradaki yüzey
-// göründüğü için gövde ileride bir kütüphaneye taşınabilir.
+// What was left of do was a mutex-guarded map; this package writes that
+// directly, with the behavior the contract asks for. Because only the surface
+// here is visible from outside, the body can later move to a library.
 //
-// # Eşzamanlılık
+// # Concurrency
 //
-// Tüm metodlar goroutine-güvenlidir. Bir adın tembel yapıcısı, aynı anda 100
-// Resolve çağrılsa bile tam olarak bir kez çalışır; diğer çağıranlar sonucu
-// bekler.
+// Every method is goroutine-safe. A name's lazy constructor runs exactly once
+// even when 100 Resolve calls arrive at the same time; the other callers wait
+// for the result.
 //
-// [Container.Shutdown] kapanışla yarışan çözümleri de kapsamaya ÇALIŞIR:
-// kapanış sırasında kurulmayı bitiren bir servis, kurulumu Shutdown'a verilen
-// ctx bütçesi İÇİNDE biterse kapatılır. Bütçe dolarsa o servis kapatılmadan
-// kalır (Shutdown bunu hataya ekler); her iki durumda da çağıranına verilmez —
-// kapatılmış kap CANLI servis dağıtmaz, errors.Unavailable döner.
+// [Container.Shutdown] TRIES to cover resolutions racing with the shutdown: a
+// service that finishes being built during shutdown is closed if the build
+// finishes WITHIN the ctx budget given to Shutdown. If the budget runs out that
+// service is left unclosed (Shutdown adds it to the error); in both cases it is
+// not handed to its caller — a closed container hands out no LIVE service, it
+// returns errors.Unavailable.
 //
-// Pratikte bu, Shutdown'a verilen ctx'in en yavaş yapıcıdan uzun olması
-// gerektiği anlamına gelir.
+// In practice this means the ctx given to Shutdown has to outlast the slowest
+// constructor.
 package container
 
 import (
@@ -54,7 +56,7 @@ import (
 	"github.com/bdrtr/gobit/internal/core/errors"
 )
 
-// Hata kodları; çağıran taraf errors.CodeOf ile bunlara bakabilir.
+// The error codes; a caller can branch on them through errors.CodeOf.
 const (
 	codeInvalidName  = "container_invalid_name"
 	codeInvalidCtor  = "container_invalid_ctor"
@@ -71,82 +73,88 @@ const (
 	codeClosed       = "container_closed"
 )
 
-// defaultWaitWarn kurulmakta olan bir servisi bekleyen çağıranın uyarı
-// loglamadan önce sessizce bekleyeceği süredir. Bkz. registry.waitReady.
+// defaultWaitWarn is how long a caller waiting for a service that is being
+// built waits in silence before logging a warning. See registry.waitReady.
 const defaultWaitWarn = 5 * time.Second
 
-// Ctor tembel yapıcının imzasıdır. İlk [Resolve] çağrısında bir kez çalışır.
+// Ctor is the signature of a lazy constructor. It runs once, on the first
+// [Resolve] call.
 //
-// Yapıcı, kendi bağımlılıklarını KENDİSİNE VERİLEN *Container üzerinden
-// çözmelidir; kapanışla (closure) dıştaki container'ı kullanmak bağımlılık
-// döngüsü tespitini devre dışı bırakır. Bu durumda karşılıklı bağımlı iki
-// yapıcı birbirini süresiz bekler; bekleme uzarsa bekleme grafiğiyle birlikte
-// bir uyarı loglanır (bkz. [New] log parametresi), ama hata dönmez.
+// A constructor must resolve its own dependencies through the *Container IT IS
+// GIVEN; using the outer container through a closure disables dependency-cycle
+// detection. Two mutually dependent constructors then wait for each other
+// indefinitely; when the wait grows long a warning is logged together with the
+// wait graph (see [New]'s log parameter), but no error is returned.
 //
-// Bu imzayı tutturamayan bir işlev (örn. somut tip dönen bir yapıcı) [Provide]
-// tarafından reddedilir; sessizce hazır değer olarak kaydedilmez.
+// A function that does not match this signature (e.g. a constructor returning a
+// concrete type) is rejected by [Provide]; it is not silently registered as a
+// ready value.
 type Ctor = func(*Container) (any, error)
 
-// Shutdowner bağlam farkında kapanışı olan servislerin arayüzüdür.
-// [Container.Shutdown] bir servis hem bunu hem io.Closer'ı karşılıyorsa
-// bunu tercih eder (bağlamı iletebilmek için).
+// Shutdowner is the interface of services with a context-aware shutdown.
+// [Container.Shutdown] prefers it when a service satisfies both it and
+// io.Closer (so the context can be passed on).
 type Shutdowner interface {
 	Shutdown(ctx context.Context) error
 }
 
-// entry tek bir kayıttır. Alanları yalnızca registry.mu altında okunur/yazılır;
-// istisna, yapıcının kilit DIŞINDA çalıştırılmasıdır (bkz. resolve).
+// entry is a single registration. Its fields are read and written only under
+// registry.mu; the exception is running the constructor OUTSIDE the lock (see
+// resolve).
 type entry struct {
 	name string
-	// ctor tembel yapıcıdır; hazır değer kaydında nil olur.
+	// ctor is the lazy constructor; it is nil for a ready-value registration.
 	ctor Ctor
-	// value ve err yapıcı bittikten sonra doldurulur.
+	// value and err are filled in once the constructor has finished.
 	value any
 	err   error
-	// built true ise value/err nihaidir (hazır değerlerde kayıtta true olur).
+	// built true means value/err are final (for a ready value it is true at
+	// registration).
 	built bool
-	// building true ise bir goroutine yapıcıyı çalıştırıyor; bekleyenler
-	// ready kanalının kapanmasını bekler.
+	// building true means a goroutine is running the constructor; the waiters
+	// wait for the ready channel to close.
 	building bool
 	ready    chan struct{}
 }
 
-// registry tüm kaplar (kök ve yapıcıya verilen türevleri) tarafından paylaşılan
-// durumdur. Container değeri hafiftir; asıl durum burada tutulur.
+// registry is the state shared by every container (the root and the derived
+// ones handed to constructors). A Container value is light; the real state
+// lives here.
 type registry struct {
 	mu      sync.Mutex
 	log     *slog.Logger
 	entries map[string]*entry
-	// order kayıt sırasıdır; Shutdown bunun tersini kullanır.
+	// order is the registration order; Shutdown uses its reverse.
 	order []string
-	// blocked bekleme grafiğidir: blocked[a] kümesinde b varsa "a'nın yapıcısı
-	// b'yi bekliyor" demektir. Bir yapıcı goroutine ile aynı anda birden çok
-	// Resolve çağırabildiği için düğüm başına birden çok kenar tutulur.
-	// Döngü tespiti bu grafik üzerinde yapılır.
+	// blocked is the wait graph: b in the set blocked[a] means "a's
+	// constructor is waiting for b". Because one constructor can call several
+	// Resolves at once from goroutines, several edges are kept per node. Cycle
+	// detection runs on this graph.
 	blocked map[string]map[string]struct{}
 	closed  bool
-	// building o an KİLİT DIŞINDA çalışan yapıcı sayısıdır; Shutdown, hiçbir
-	// servisin fotoğrafın dışında kalmaması için bunların bitmesini bekler.
+	// building is the number of constructors running OUTSIDE THE LOCK right
+	// now; Shutdown waits for them to finish so no service stays out of the
+	// snapshot.
 	building int
-	// drained, Shutdown uçuştaki yapıcıları beklerken oluşturulur; sayaç
-	// sıfıra inince kapatılır.
+	// drained is created while Shutdown waits for the in-flight constructors;
+	// it is closed once the counter reaches zero.
 	drained chan struct{}
-	// waitWarn, kurulumu bekleyen çağıranın uyarı loglamadan önce beklediği
-	// süredir; testler kısaltabilsin diye alan olarak tutulur.
+	// waitWarn is how long a caller waiting for a build waits before logging a
+	// warning; it is a field so tests can shorten it.
 	waitWarn time.Duration
 }
 
-// Container adla kayıtlı servisleri tutan DI kabıdır.
+// Container is the DI container holding services registered by name.
 //
-// Sıfır değeri kullanılamaz; [New] ile oluşturulmalıdır.
+// Its zero value is unusable; build one with [New].
 type Container struct {
 	reg *registry
-	// current, bu container'ın hangi servisin yapıcısına verildiğini tutar.
-	// Kök container'da boştur; döngü tespiti bu alanla çalışır.
+	// current holds which service's constructor this container was handed to.
+	// It is empty on the root container; cycle detection works from this field.
 	current string
 }
 
-// New boş bir container üretir. log nil ise loglar atılır.
+// New produces an empty container. With log nil the logs are discarded.
 func New(log *slog.Logger) *Container {
 	if log == nil {
 		log = slog.New(slog.DiscardHandler)
@@ -159,30 +167,33 @@ func New(log *slog.Logger) *Container {
 	}}
 }
 
-// Provide bir servisi adla kaydeder.
+// Provide registers a service by name.
 //
-// ctor iki biçimden biri olabilir:
+// ctor may take one of two shapes:
 //
-//  1. Doğrudan bir değer (hazır kurulmuş servis).
-//  2. [Ctor] imzalı tembel yapıcı; ilk Resolve'da bir kez çalışır.
+//  1. A value directly (an already-built service).
+//  2. A lazy constructor with the [Ctor] signature; it runs once, on the first
+//     Resolve.
 //
-// Tembel biçim modül sırasından bağımsızlık sağlar: A modülü, B modülü henüz
-// kaydolmadan B'nin servisine bağımlı bir yapıcı kaydedebilir.
+// The lazy shape gives independence from module order: module A can register a
+// constructor depending on module B's service before B has registered.
 //
-// Aynı ad ikinci kez kaydedilirse errors.Conflict döner. Şunlar errors.Invalid
-// döner: boş ad; nil kayıt (arayüz-nil ve (*T)(nil) gibi tipli nil dahil); ilk
-// parametresi *Container olup [Ctor] imzasını tutturamayan bir işlev — böyle
-// bir işlev hazır değer sayılmaz, en yaygın yazım hatası olduğu için kayıt
-// anında reddedilir.
+// Registering the same name a second time returns errors.Conflict. These return
+// errors.Invalid: an empty name; a nil registration (including an
+// interface-nil and a typed nil such as (*T)(nil)); a function whose first
+// parameter is *Container but which does not match the [Ctor] signature — such
+// a function does not count as a ready value and, being the most common typo,
+// is rejected at registration.
 func (c *Container) Provide(name string, ctor any) error {
 	if name == "" {
-		return errors.Invalid(codeInvalidName, "servis adı boş olamaz")
+		return errors.Invalid(codeInvalidName, "a service name cannot be empty")
 	}
-	// Tipli nil de elenir: (*Pool)(nil) gibi bir değer arayüz-nil DEĞİLDİR,
-	// kaba girerse ilk kullanımda ya da kapanışta paniklerdi.
+	// A typed nil is filtered out too: a value like (*Pool)(nil) is NOT
+	// interface-nil, and once inside the container it would panic on first use
+	// or at shutdown.
 	if isNil(ctor) {
 		return errors.Invalid(codeInvalidCtor,
-			"%q için nil kayıt yapılamaz (verilen tip: %s)", name, typeName(reflect.TypeOf(ctor)))
+			"a nil registration cannot be made for %q (given type: %s)", name, typeName(reflect.TypeOf(ctor)))
 	}
 
 	r := c.reg
@@ -190,10 +201,10 @@ func (c *Container) Provide(name string, ctor any) error {
 	defer r.mu.Unlock()
 
 	if r.closed {
-		return errors.Unavailable(codeClosed, "container kapatıldı; %q kaydedilemez", name)
+		return errors.Unavailable(codeClosed, "the container is closed; %q cannot be registered", name)
 	}
 	if _, dup := r.entries[name]; dup {
-		return errors.Conflict(codeDuplicate, "%q adıyla bir servis zaten kayıtlı", name)
+		return errors.Conflict(codeDuplicate, "a service is already registered under the name %q", name)
 	}
 
 	e := &entry{name: name}
@@ -203,19 +214,19 @@ func (c *Container) Provide(name string, ctor any) error {
 	default:
 		if misusedCtor(ctor) {
 			return errors.Invalid(codeInvalidCtor,
-				"%q için verilen %s bir yapıcı gibi görünüyor ama imzası tutmuyor; beklenen imza: func(*container.Container) (any, error)",
-				name, typeName(reflect.TypeOf(ctor)))
+				"the %s given for %q looks like a constructor but its signature does not match; expected signature: func(*container.Container) (any, error)",
+				typeName(reflect.TypeOf(ctor)), name)
 		}
 		e.value, e.built = ctor, true
 	}
 
 	r.entries[name] = e
 	r.order = append(r.order, name)
-	r.log.Debug("servis kaydedildi", "servis", name, "tembel", e.ctor != nil)
+	r.log.Debug("service registered", "service", name, "lazy", e.ctor != nil)
 	return nil
 }
 
-// Has verilen adın kayıtlı olup olmadığını bildirir. Kaydı kurmaz.
+// Has reports whether the given name is registered. It does not build it.
 func (c *Container) Has(name string) bool {
 	c.reg.mu.Lock()
 	defer c.reg.mu.Unlock()
@@ -223,21 +234,23 @@ func (c *Container) Has(name string) bool {
 	return ok
 }
 
-// Names kayıtlı tüm servis adlarını sıralı olarak döner.
+// Names returns every registered service name, sorted.
 func (c *Container) Names() []string {
 	c.reg.mu.Lock()
 	defer c.reg.mu.Unlock()
 	return slices.Sorted(maps.Keys(c.reg.entries))
 }
 
-// resolve adı tipsiz olarak çözer; gerekiyorsa tembel yapıcıyı çalıştırır.
+// resolve resolves the name untyped, running the lazy constructor when needed.
 //
-// Yapıcı KİLİT TUTULMADAN çalıştırılır: yapıcının içinden yapılan Resolve
-// çağrıları da kilide ihtiyaç duyar. Kayıt, çalışma boyunca building
-// bayrağıyla korunur; aynı anda gelen diğer çağıranlar ready kanalını bekler.
+// The constructor runs WITHOUT THE LOCK HELD: the Resolve calls made from
+// inside the constructor need the lock too. The registration is protected by
+// the building flag while it runs; the other callers arriving at the same time
+// wait on the ready channel.
 //
-// Kilit her bırakılıp yeniden alındığında r.closed yeniden okunur: bu arada
-// Shutdown çağrılmış olabilir ve kapatılmış bir kap CANLI servis dağıtmamalıdır.
+// Every time the lock is released and taken again, r.closed is re-read:
+// Shutdown may have been called in the meantime, and a closed container must
+// not hand out a LIVE service.
 func (c *Container) resolve(name string) (any, error) {
 	r := c.reg
 	r.mu.Lock()
@@ -252,29 +265,30 @@ func (c *Container) resolve(name string) (any, error) {
 		known := slices.Sorted(maps.Keys(r.entries))
 		r.mu.Unlock()
 		return nil, errors.NotFound(codeNotFound,
-			"%q adıyla kayıtlı servis yok; kayıtlı adlar: %s", name, joinNames(known)).
-			WithDetails(map[string]any{"servis": name})
+			"no service is registered under the name %q; registered names: %s", name, joinNames(known)).
+			WithDetails(map[string]any{"service": name})
 	}
 
-	// Hızlı yol: kurulmuş (ya da hazır kaydedilmiş) servis.
+	// The fast path: a built (or ready-registered) service.
 	if e.built {
 		value, err := e.value, e.err
 		r.mu.Unlock()
 		return value, err
 	}
 
-	// Bu çözüm bir yapıcının içinden geliyorsa bekleme grafiğine kenar ekle.
-	// Kenar bir döngü kapatıyorsa deadlock'a girmeden hata dön.
+	// When this resolution comes from inside a constructor, add an edge to the
+	// wait graph. If the edge closes a cycle, return an error instead of
+	// deadlocking.
 	owner := c.current
 	if owner != "" {
 		if path := r.addEdge(owner, name); path != nil {
 			r.mu.Unlock()
-			return nil, errors.Conflict(codeCycle, "bağımlılık döngüsü: %s", strings.Join(path, " -> ")).
-				WithDetails(map[string]any{"dongu": path})
+			return nil, errors.Conflict(codeCycle, "dependency cycle: %s", strings.Join(path, " -> ")).
+				WithDetails(map[string]any{"cycle": path})
 		}
 	}
 
-	// Kaydı ya biz kurarız ya da kuran goroutine'i bekleriz.
+	// Either we build the registration or we wait for the goroutine that is.
 	for !e.built && e.building {
 		ready, warnAfter := e.ready, r.waitWarn
 		r.mu.Unlock()
@@ -307,53 +321,57 @@ func (c *Container) resolve(name string) (any, error) {
 	r.mu.Unlock()
 
 	if err != nil {
-		r.log.Error("servis kurulamadı", "servis", name, "hata", err)
+		r.log.Error("the service could not be built", "service", name, "error", err)
 		return nil, err
 	}
-	r.log.Debug("servis kuruldu", "servis", name)
+	r.log.Debug("service built", "service", name)
 	if closed {
-		// Kap, yapıcı kilit dışında çalışırken kapatıldı. Kayıt kurulmuş
-		// bırakılır: Shutdown, building sayacı sıfırlanana kadar beklediği
-		// için bu servis onun fotoğrafına girer ve kapatılır. Çağırana ise
-		// canlı servis değil, kapalı kap hatası döner.
+		// The container was closed while the constructor ran outside the lock.
+		// The registration is left built: because Shutdown waits until the
+		// building counter drops to zero, this service enters its snapshot and
+		// is closed. The caller, however, gets the closed-container error and
+		// not a live service.
 		return nil, errClosed(name)
 	}
 	return value, nil
 }
 
-// runCtor yapıcıyı çalıştırır; panikleri ve nil sonucu tipli hataya çevirir.
+// runCtor runs the constructor, turning panics and a nil result into typed
+// errors.
 //
-// Yapıcının hatası ÖNBELLEĞE ALINIR (çağıran resolve tarafından): kayıt bir kez
-// kurulur, bir daha denenmez. Gerekçe: (a) sözleşme "yapıcı tam bir kez çalışır"
-// diyor, tekrar deneme yan etkileri (bağlantı açma, handler kaydı) ikinci kez
-// tetikleyebilir; (b) DI hataları (eksik bağımlılık, tip uyumsuzluğu) belirlidir,
-// tekrar denemek aynı hatayı üretip asıl arıza noktasını gizler; (c) geçici
-// kaynak hataları (DB/Redis erişilemiyor) yapıcıda değil, servisin kendi
-// içinde yeniden denenmelidir — yapıcı yalnızca bağlantıyı kurar, kullanmaz.
+// The constructor's error is CACHED (by the calling resolve): a registration is
+// built once and never retried. The reasons: (a) the contract says "the
+// constructor runs exactly once", and a retry could trigger its side effects
+// (opening a connection, registering a handler) a second time; (b) DI errors (a
+// missing dependency, a type mismatch) are deterministic, and retrying produces
+// the same error while hiding the real point of failure; (c) transient resource
+// errors (the DB or Redis being unreachable) must be retried inside the service
+// itself, not in the constructor — the constructor only establishes the
+// connection, it does not use it.
 func runCtor(ctor Ctor, c *Container, name string) (value any, err error) {
 	defer func() {
 		if p := recover(); p != nil {
 			value = nil
-			err = errors.Internal(codeCtorPanic, "%q yapıcısı panikledi: %v", name, p)
+			err = errors.Internal(codeCtorPanic, "the constructor of %q panicked: %v", name, p)
 		}
 	}()
 
 	value, err = ctor(c)
 	if err != nil {
-		return nil, errors.Wrap(err, errors.KindOf(err), codeCtorFailed, "%q servisi kurulamadı", name)
+		return nil, errors.Wrap(err, errors.KindOf(err), codeCtorFailed, "the service %q could not be built", name)
 	}
-	// Tipli nil de elenir; (*Pool)(nil) arayüz-nil değildir ama servis olarak
-	// kullanılamaz.
+	// A typed nil is filtered out too; (*Pool)(nil) is not interface-nil but
+	// cannot be used as a service.
 	if isNil(value) {
 		return nil, errors.Internal(codeCtorNil,
-			"%q yapıcısı nil servis döndürdü (tip: %s)", name, typeName(reflect.TypeOf(value)))
+			"the constructor of %q returned a nil service (type: %s)", name, typeName(reflect.TypeOf(value)))
 	}
 	return value, nil
 }
 
-// isNil değerin nil olup olmadığını, tipli nil'leri de sayarak bildirir.
-// value == nil karşılaştırması yalnızca ARAYÜZ-nil'i yakalar: (*Pool)(nil) gibi
-// bir değer o karşılaştırmayı geçer ama ilk metot çağrısında panikler.
+// isNil reports whether the value is nil, counting typed nils too.
+// The comparison value == nil catches only an INTERFACE-nil: a value like
+// (*Pool)(nil) passes that comparison but panics on the first method call.
 func isNil(value any) bool {
 	if value == nil {
 		return true
@@ -368,38 +386,40 @@ func isNil(value any) bool {
 	}
 }
 
-// misusedCtor değerin, [Ctor] imzasını tutturamamış bir yapıcı olup olmadığını
-// bildirir: ilk parametresi *Container olan bir işlev hazır değer olarak
-// kaydedilmek istenmiş olamaz.
+// misusedCtor reports whether the value is a constructor that failed to match
+// the [Ctor] signature: a function whose first parameter is *Container cannot
+// have been meant as a ready value.
 func misusedCtor(value any) bool {
 	t := reflect.TypeOf(value)
 	if t.Kind() != reflect.Func {
 		return false
 	}
-	// Sıfır parametreli işlevler BİLİNÇLİ olarak değer sayılır. func() *Svc
-	// bir yapıcı yazım hatası OLABİLİR, ama işlevin kendisinin servis olduğu
-	// meşru kalıptan (func() time.Time saat servisi, kimlik üreteci vb.)
-	// ayırt edilemez. Yanlış pozitif, geçerli bir kaydı reddederdi; bu yüzden
-	// yalnızca ilk parametresi *Container olan — yani yapıcı olmaya
-	// ÇALIŞTIĞI belli olan — imzalar reddedilir.
+	// Functions with no parameters are DELIBERATELY treated as values. func()
+	// *Svc MAY be a mistyped constructor, but it cannot be told apart from the
+	// legitimate pattern where the function itself is the service (func()
+	// time.Time as a clock service, an id generator and so on). A false
+	// positive would reject a valid registration; only signatures whose first
+	// parameter is *Container — that is, the ones clearly TRYING to be a
+	// constructor — are rejected.
 	if t.NumIn() == 0 {
 		return false
 	}
 	return t.In(0) == reflect.TypeFor[*Container]()
 }
 
-// errClosed kapatılmış kapta çözüm denendiğini bildiren hatayı üretir.
+// errClosed produces the error reporting a resolution attempted on a closed
+// container.
 func errClosed(name string) error {
-	return errors.Unavailable(codeClosed, "container kapatıldı; %q çözülemez", name)
+	return errors.Unavailable(codeClosed, "the container is closed; %q cannot be resolved", name)
 }
 
-// waitReady yapıcının bitmesini bekler; bekleme warnAfter'ı aşarsa bekleme
-// grafiğiyle birlikte bir uyarı loglar ve beklemeye devam eder.
+// waitReady waits for the constructor to finish; if the wait exceeds warnAfter
+// it logs a warning together with the wait graph and keeps waiting.
 //
-// Uyarı, tespit edilemeyen döngüler içindir: kök container'ı closure ile
-// yakalayan bir yapıcı bekleme grafiğine kenar eklemez, dolayısıyla kapattığı
-// döngü görülemez ve bu bekleme sonsuza kadar sürer. Uyarı, o sessiz
-// kilitlenmeyi hiç değilse loglara taşır.
+// The warning is for cycles that cannot be detected: a constructor capturing
+// the root container in a closure adds no edge to the wait graph, so the cycle
+// it closes is invisible and this wait lasts forever. The warning at least
+// carries that silent deadlock into the logs.
 func (r *registry) waitReady(ready <-chan struct{}, name string, warnAfter time.Duration) {
 	timer := time.NewTimer(warnAfter)
 	defer timer.Stop()
@@ -414,13 +434,14 @@ func (r *registry) waitReady(ready <-chan struct{}, name string, warnAfter time.
 	graph := r.waitEdges()
 	r.mu.Unlock()
 
-	r.log.Warn("servis kurulumu uzun sürüyor; bağımlılık döngüsü olabilir",
-		"servis", name, "bekleme", warnAfter, "bekleme_grafigi", graph)
+	r.log.Warn("the service is taking a long time to build; there may be a dependency cycle",
+		"service", name, "waited", warnAfter, "wait_graph", graph)
 	<-ready
 }
 
-// buildFinished uçuştaki yapıcı sayacını azaltır; sayaç sıfıra inince Shutdown'ı
-// bekleten kanalı kapatır. Çağıran r.mu'yu tutmalıdır.
+// buildFinished decrements the in-flight constructor counter; when the counter
+// reaches zero it closes the channel Shutdown is waiting on. The caller must
+// hold r.mu.
 func (r *registry) buildFinished() {
 	r.building--
 	if r.building == 0 && r.drained != nil {
@@ -429,8 +450,8 @@ func (r *registry) buildFinished() {
 	}
 }
 
-// drainSignal uçuşta yapıcı varsa hepsi bitince kapanacak kanalı döner; yoksa
-// nil. Çağıran r.mu'yu tutmalıdır.
+// drainSignal returns a channel that closes once every in-flight constructor
+// has finished, or nil when there are none. The caller must hold r.mu.
 func (r *registry) drainSignal() <-chan struct{} {
 	if r.building == 0 {
 		return nil
@@ -441,13 +462,13 @@ func (r *registry) drainSignal() <-chan struct{} {
 	return r.drained
 }
 
-// addEdge from'un yapıcısının to'yu beklediğini kaydeder. Kenar bir döngü
-// kapatıyorsa kenar eklenmez ve döngü yolu (baştaki düğüm sonda tekrar ederek)
-// döner. Çağıran r.mu'yu tutmalıdır.
+// addEdge records that from's constructor is waiting for to. When the edge
+// closes a cycle, the edge is not added and the cycle path (with the first node
+// repeated at the end) is returned. The caller must hold r.mu.
 //
-// Bir yapıcı kendi içinden goroutine ile AYNI ANDA birden çok Resolve
-// çağırabilir; bu yüzden düğüm başına birden çok kenar tutulur ve hiçbiri
-// diğerini ezmez.
+// A constructor can call several Resolves AT THE SAME TIME from goroutines of
+// its own; several edges are therefore kept per node and none overwrites
+// another.
 func (r *registry) addEdge(from, to string) []string {
 	edges, ok := r.blocked[from]
 	if !ok {
@@ -463,8 +484,8 @@ func (r *registry) addEdge(from, to string) []string {
 	return nil
 }
 
-// removeEdge from'un to'yu beklediği kenarı siler; from'un başka beklemesi
-// varsa onlara dokunmaz. Çağıran r.mu'yu tutmalıdır.
+// removeEdge deletes the edge where from waits for to, leaving from's other
+// waits alone. The caller must hold r.mu.
 func (r *registry) removeEdge(from, to string) {
 	if from == "" {
 		return
@@ -476,9 +497,9 @@ func (r *registry) removeEdge(from, to string) {
 	}
 }
 
-// cyclePath start'tan başlayarak bekleme kenarlarını derinlik öncelikli izler;
-// yol üstündeki bir düğüme geri dönülüyorsa döngüyü (baştaki düğüm sonda tekrar
-// ederek) döner, dönülmüyorsa nil. Çağıran r.mu'yu tutmalıdır.
+// cyclePath follows the wait edges depth-first from start; when a node on the
+// path is reached again it returns the cycle (with the first node repeated at
+// the end), otherwise nil. The caller must hold r.mu.
 func (r *registry) cyclePath(start string) []string {
 	var (
 		path    []string
@@ -498,7 +519,7 @@ func (r *registry) cyclePath(start string) []string {
 		onPath[node] = true
 		path = append(path, node)
 
-		// Sıralı gezinti, aynı grafik için hep aynı yolu üretir.
+		// A sorted walk produces the same path for the same graph every time.
 		for _, next := range slices.Sorted(maps.Keys(r.blocked[node])) {
 			if found := walk(next); found != nil {
 				return found
@@ -513,8 +534,8 @@ func (r *registry) cyclePath(start string) []string {
 	return walk(start)
 }
 
-// waitEdges bekleme grafiğini "a -> b" biçiminde sıralı olarak yazar.
-// Çağıran r.mu'yu tutmalıdır.
+// waitEdges writes the wait graph in "a -> b" form, sorted.
+// The caller must hold r.mu.
 func (r *registry) waitEdges() []string {
 	edges := make([]string, 0, len(r.blocked))
 	for _, from := range slices.Sorted(maps.Keys(r.blocked)) {
@@ -525,12 +546,13 @@ func (r *registry) waitEdges() []string {
 	return edges
 }
 
-// Resolve adla kayıtlı servisi T tipinde çözer. Servis tembelse ilk çağrıda
-// kurulur.
+// Resolve resolves the service registered under name as type T. A lazy service
+// is built on the first call.
 //
-// Ad kayıtlı değilse errors.NotFound döner. Kayıtlı değer T'yi karşılamıyorsa
-// errors.Invalid döner; hata mesajı hem kayıtlı somut tipi hem beklenen T'yi,
-// T bir arayüzse eksik/uyumsuz metodları da yazar (ADR 0001).
+// When the name is not registered it returns errors.NotFound. When the
+// registered value does not satisfy T it returns errors.Invalid; the error
+// message names both the registered concrete type and the expected T, and when
+// T is an interface also the missing or mismatched methods (ADR 0001).
 func Resolve[T any](c *Container, name string) (T, error) {
 	var zero T
 
@@ -546,9 +568,8 @@ func Resolve[T any](c *Container, name string) (T, error) {
 	return typed, nil
 }
 
-// MustResolve servisi çözer ve hata durumunda panikler. Yalnızca kurulum
-// (bootstrap) yolunda, eksikliği programlama hatası sayılan servisler için
-// kullanılır.
+// MustResolve resolves the service and panics on error. It is used only on the
+// bootstrap path, for services whose absence counts as a programming error.
 func MustResolve[T any](c *Container, name string) T {
 	value, err := Resolve[T](c, name)
 	if err != nil {
@@ -557,25 +578,25 @@ func MustResolve[T any](c *Container, name string) T {
 	return value
 }
 
-// Shutdown kurulmuş servisleri KAYIT SIRASININ TERSİNE kapatır ve hataları
-// errors.Join ile birleştirir.
+// Shutdown closes the built services in the REVERSE of REGISTRATION ORDER and
+// joins the errors with errors.Join.
 //
-// Yalnızca [Shutdowner] veya io.Closer karşılayan, başarıyla kurulmuş servisler
-// kapatılır; hiç çözülmemiş tembel kayıtlar kapatmak için KURULMAZ. Çağrı
-// idempotenttir: ikinci çağrı nil döner. Kapatmadan sonra Provide ve Resolve
-// errors.Unavailable döner.
+// Only successfully built services satisfying [Shutdowner] or io.Closer are
+// closed; lazy registrations never resolved are NOT BUILT just to close them.
+// The call is idempotent: a second call returns nil. After the shutdown,
+// Provide and Resolve return errors.Unavailable.
 //
-// Kapatma HER SERVİSİ dener; tek tek arızalar kapatmayı yarıda kesmez:
+// The shutdown tries EVERY SERVICE; individual failures do not cut it short:
 //
-//   - Uçuşta (kilit dışında çalışan) yapıcılar beklenir, böylece kapanış
-//     sırasında kurulmayı bitiren bir servis kapatılmadan kalmaz. Bekleme
-//     ctx bütçesiyle sınırlıdır; SÜRESİZ bir ctx verilirse asılı bir yapıcı
-//     Shutdown'ı da bekletir.
-//   - Bir servisin Close/Shutdown çağrısı paniklerse panik hataya çevrilir ve
-//     kalan servisler kapatılmaya devam edilir.
-//   - ctx iptal edilmişse kapatma yine de yapılır (io.Closer'lar bütçeye
-//     ihtiyaç duymaz, ctx-farkındalı servisler iptali kendileri görür); iptal
-//     yalnızca birleşik hataya ek bir kayıt olarak yazılır.
+//   - In-flight constructors (running outside the lock) are waited for, so a
+//     service that finishes being built during the shutdown is not left
+//     unclosed. The wait is bounded by the ctx budget; given an UNBOUNDED ctx,
+//     a hung constructor keeps Shutdown waiting too.
+//   - When a service's Close/Shutdown call panics, the panic is turned into an
+//     error and the remaining services keep being closed.
+//   - When ctx is already canceled the shutdown still runs (io.Closers need no
+//     budget, and context-aware services see the cancellation themselves); the
+//     cancellation is only added to the joined error as an extra record.
 func (c *Container) Shutdown(ctx context.Context) error {
 	r := c.reg
 
@@ -588,7 +609,7 @@ func (c *Container) Shutdown(ctx context.Context) error {
 	drained := r.drainSignal()
 	r.mu.Unlock()
 
-	// closed=true'dan sonra yeni yapıcı başlamaz; sayaç yalnızca azalır.
+	// After closed=true no new constructor starts; the counter only goes down.
 	if drained != nil {
 		select {
 		case <-drained:
@@ -599,8 +620,9 @@ func (c *Container) Shutdown(ctx context.Context) error {
 	r.mu.Lock()
 	targets := make([]*entry, 0, len(r.order))
 	for i := len(r.order) - 1; i >= 0; i-- {
-		// e.err != nil olan kayıtlarda runCtor değeri zaten atmıştır, yani
-		// !isNil(e.value) tek başına yeterlidir; ayrıca e.err kontrolü ölü koddu.
+		// For registrations where e.err != nil, runCtor has already dropped
+		// the value, so !isNil(e.value) alone is enough; an additional e.err
+		// check was dead code.
 		if e := r.entries[r.order[i]]; e != nil && e.built && !isNil(e.value) {
 			targets = append(targets, e)
 		}
@@ -610,30 +632,31 @@ func (c *Container) Shutdown(ctx context.Context) error {
 	var errs []error
 	for _, e := range targets {
 		if err := closeService(ctx, e.value); err != nil {
-			r.log.Error("servis kapatılamadı", "servis", e.name, "hata", err)
+			r.log.Error("the service could not be closed", "service", e.name, "error", err)
 			errs = append(errs, errors.Wrap(err, errors.KindOf(err), codeShutdown,
-				"%q servisi kapatılamadı", e.name))
+				"the service %q could not be closed", e.name))
 			continue
 		}
-		r.log.Debug("servis kapatıldı", "servis", e.name)
+		r.log.Debug("service closed", "service", e.name)
 	}
 
 	if err := ctx.Err(); err != nil {
 		errs = append(errs, errors.Wrap(err, errors.KindUnavailable, codeCanceled,
-			"kapatma bağlamı iptal edildi; %d servis yine de kapatılmaya çalışıldı", len(targets)))
+			"the shutdown context was canceled; %d service(s) were closed anyway", len(targets)))
 	}
 	return errors.Join(errs...)
 }
 
-// closeService servisi uygun arayüzle kapatır; hiçbirini karşılamıyorsa nil.
+// closeService closes the service through whichever interface fits; when it
+// satisfies neither, nil.
 //
-// Servisin panikleyen kapanışı hataya çevrilir: kapatma kayıt sırasının tersine
-// yürüdüğü için ortada panikleyen tek bir servis, kendisinden önce kaydedilmiş
-// tüm servislerin kapatılmasını engellerdi.
+// A service whose shutdown panics has that panic turned into an error: because
+// closing walks the reverse of registration order, one panicking service in the
+// middle would stop every service registered before it from being closed.
 func closeService(ctx context.Context, value any) (err error) {
 	defer func() {
 		if p := recover(); p != nil {
-			err = errors.Internal(codeClosePanic, "kapanış panikledi: %v", p)
+			err = errors.Internal(codeClosePanic, "the shutdown panicked: %v", p)
 		}
 	}()
 
@@ -647,10 +670,10 @@ func closeService(ctx context.Context, value any) (err error) {
 	}
 }
 
-// joinNames ad listesini mesajda okunabilir biçimde yazar.
+// joinNames writes the name list readably for a message.
 func joinNames(names []string) string {
 	if len(names) == 0 {
-		return "(kayıt yok)"
+		return "(no registrations)"
 	}
 	return strings.Join(names, ", ")
 }

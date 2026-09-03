@@ -35,10 +35,6 @@ internal/arch/tuketici_test.go
 internal/arch/yapilandirma_test.go
 internal/core/config/config.go
 internal/core/config/config_test.go
-internal/core/container/container.go
-internal/core/container/container_test.go
-internal/core/container/diagnose.go
-internal/core/container/export_test.go
 internal/core/db/db.go
 internal/core/db/db_integration_test.go
 internal/core/db/db_test.go
@@ -48,8 +44,6 @@ internal/core/db/testdata/alpha/000002_alpha_add_label.up.sql
 internal/core/db/testdata/beta/000001_beta_init.up.sql
 internal/core/db/testdata/broken/000001_broken_init.up.sql
 internal/core/db/testdata/rollback/000001_rollback_init.up.sql
-internal/core/errors/errors.go
-internal/core/errors/errors_test.go
 internal/core/eventbus/eventbus.go
 internal/core/eventbus/eventbus_internal_test.go
 internal/core/eventbus/inmemory.go
@@ -85,11 +79,6 @@ internal/core/link/link_internal_test.go
 internal/core/link/link_test.go
 internal/core/link/registry.go
 internal/core/link/service.go
-internal/core/logger/logger.go
-internal/core/logger/logger_test.go
-internal/core/module/module.go
-internal/core/module/registry.go
-internal/core/module/registry_test.go
 internal/core/observability/observability.go
 internal/core/observability/observability_internal_test.go
 internal/core/openapi/handler_test.go
@@ -100,11 +89,6 @@ internal/core/openapi/schema_internal_test.go
 internal/core/openapi/schema_test.go
 internal/core/plugin/plugin.go
 internal/core/plugin/plugin_test.go
-internal/core/provider/file.go
-internal/core/provider/fulfillment.go
-internal/core/provider/notification.go
-internal/core/provider/payment.go
-internal/core/provider/provider.go
 internal/core/query/fakes_test.go
 internal/core/query/graph.go
 internal/core/query/query.go

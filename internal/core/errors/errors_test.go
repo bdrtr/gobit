@@ -13,106 +13,107 @@ func TestConstructorsSetKind(t *testing.T) {
 		err  *errors.Error
 		kind errors.Kind
 	}{
-		"not found":    {errors.NotFound("product_not_found", "ürün %s bulunamadı", "prod_1"), errors.KindNotFound},
-		"invalid":      {errors.Invalid("bad_qty", "adet pozitif olmalı"), errors.KindInvalid},
-		"conflict":     {errors.Conflict("dup_sku", "sku zaten var"), errors.KindConflict},
-		"unauthorized": {errors.Unauthorized("no_token", "token yok"), errors.KindUnauthorized},
-		"forbidden":    {errors.Forbidden("no_scope", "yetki yok"), errors.KindForbidden},
-		"unavailable":  {errors.Unavailable("db_down", "veritabanı erişilemez"), errors.KindUnavailable},
-		"internal":     {errors.Internal("boom", "beklenmedik"), errors.KindInternal},
+		"not found":    {errors.NotFound("product_not_found", "product %s not found", "prod_1"), errors.KindNotFound},
+		"invalid":      {errors.Invalid("bad_qty", "the quantity must be positive"), errors.KindInvalid},
+		"conflict":     {errors.Conflict("dup_sku", "the sku already exists"), errors.KindConflict},
+		"unauthorized": {errors.Unauthorized("no_token", "no token"), errors.KindUnauthorized},
+		"forbidden":    {errors.Forbidden("no_scope", "not permitted"), errors.KindForbidden},
+		"unavailable":  {errors.Unavailable("db_down", "the database is unreachable"), errors.KindUnavailable},
+		"internal":     {errors.Internal("boom", "unexpected"), errors.KindInternal},
 	}
 
 	for name, tt := range tests {
 		t.Run(name, func(t *testing.T) {
 			if tt.err.Kind != tt.kind {
-				t.Errorf("Kind = %v, beklenen %v", tt.err.Kind, tt.kind)
+				t.Errorf("Kind = %v, want %v", tt.err.Kind, tt.kind)
 			}
 			if errors.KindOf(tt.err) != tt.kind {
-				t.Errorf("KindOf() = %v, beklenen %v", errors.KindOf(tt.err), tt.kind)
+				t.Errorf("KindOf() = %v, want %v", errors.KindOf(tt.err), tt.kind)
 			}
 		})
 	}
 }
 
 func TestFormatArguments(t *testing.T) {
-	err := errors.NotFound("product_not_found", "ürün %s bulunamadı", "prod_01")
-	if got, want := err.Message, "ürün prod_01 bulunamadı"; got != want {
-		t.Errorf("Message = %q, beklenen %q", got, want)
+	err := errors.NotFound("product_not_found", "product %s not found", "prod_01")
+	if got, want := err.Message, "product prod_01 not found"; got != want {
+		t.Errorf("Message = %q, want %q", got, want)
 	}
-	if got := err.Error(); got != "product_not_found: ürün prod_01 bulunamadı" {
+	if got := err.Error(); got != "product_not_found: product prod_01 not found" {
 		t.Errorf("Error() = %q", got)
 	}
 }
 
 func TestWrapPreservesChain(t *testing.T) {
-	sentinel := stderrors.New("bağlantı reddedildi")
-	wrapped := errors.Wrap(sentinel, errors.KindUnavailable, "db_unreachable", "postgres'e bağlanılamadı")
+	sentinel := stderrors.New("connection refused")
+	wrapped := errors.Wrap(sentinel, errors.KindUnavailable, "db_unreachable", "postgres could not be reached")
 
 	if !stderrors.Is(wrapped, sentinel) {
-		t.Error("errors.Is sarmalanan hatayı bulamadı")
+		t.Error("errors.Is did not find the wrapped error")
 	}
 	if errors.KindOf(wrapped) != errors.KindUnavailable {
-		t.Errorf("KindOf() = %v, beklenen KindUnavailable", errors.KindOf(wrapped))
+		t.Errorf("KindOf() = %v, want KindUnavailable", errors.KindOf(wrapped))
 	}
-	if got := wrapped.Error(); got != "db_unreachable: postgres'e bağlanılamadı: bağlantı reddedildi" {
+	if got := wrapped.Error(); got != "db_unreachable: postgres could not be reached: connection refused" {
 		t.Errorf("Error() = %q", got)
 	}
 }
 
 func TestWrapNilReturnsNil(t *testing.T) {
-	// Çağıran tarafta ayrıca nil kontrolü gerekmesin diye.
+	// So that the caller needs no separate nil check.
 	if got := errors.Wrap(nil, errors.KindInternal, "x", "y"); got != nil {
-		t.Errorf("Wrap(nil) = %v, beklenen nil", got)
+		t.Errorf("Wrap(nil) = %v, want nil", got)
 	}
 }
 
 func TestKindOfThroughDeepChain(t *testing.T) {
-	// Tipli hata fmt.Errorf ile sarıldığında da sınıf bulunabilmeli.
-	base := errors.NotFound("cart_not_found", "sepet yok")
-	outer := fmt.Errorf("sepet toplamı hesaplanamadı: %w", base)
+	// The class must still be findable when the typed error is wrapped with
+	// fmt.Errorf.
+	base := errors.NotFound("cart_not_found", "no such cart")
+	outer := fmt.Errorf("the cart total could not be computed: %w", base)
 
 	if !errors.IsNotFound(outer) {
-		t.Error("IsNotFound derin zincirde bulamadı")
+		t.Error("IsNotFound did not find it deep in the chain")
 	}
 	if got, want := errors.CodeOf(outer), "cart_not_found"; got != want {
-		t.Errorf("CodeOf() = %q, beklenen %q", got, want)
+		t.Errorf("CodeOf() = %q, want %q", got, want)
 	}
 }
 
 func TestUntypedErrorDefaultsToInternal(t *testing.T) {
-	// Sıfır değerin KindInternal olması bilinçli: sınıflandırılmamış bir hata
-	// kazara "bulunamadı" gibi davranıp 404 dönmemeli.
-	plain := stderrors.New("düz hata")
+	// The zero value being KindInternal is deliberate: an unclassified error
+	// must not accidentally behave like a "not found" and return a 404.
+	plain := stderrors.New("a plain error")
 	if got := errors.KindOf(plain); got != errors.KindInternal {
-		t.Errorf("KindOf(düz hata) = %v, beklenen KindInternal", got)
+		t.Errorf("KindOf(a plain error) = %v, want KindInternal", got)
 	}
 	if errors.CodeOf(plain) != "" {
-		t.Errorf("CodeOf(düz hata) = %q, beklenen boş", errors.CodeOf(plain))
+		t.Errorf("CodeOf(a plain error) = %q, want empty", errors.CodeOf(plain))
 	}
 	if errors.IsNotFound(plain) {
-		t.Error("düz hata IsNotFound oldu")
+		t.Error("a plain error came back as IsNotFound")
 	}
 }
 
 func TestZeroKindIsInternal(t *testing.T) {
 	var k errors.Kind
 	if k != errors.KindInternal {
-		t.Errorf("sıfır Kind = %v, beklenen KindInternal", k)
+		t.Errorf("the zero Kind = %v, want KindInternal", k)
 	}
 	if k.String() != "internal" {
-		t.Errorf("String() = %q, beklenen %q", k.String(), "internal")
+		t.Errorf("String() = %q, want %q", k.String(), "internal")
 	}
 }
 
 func TestWithDetails(t *testing.T) {
-	err := errors.Invalid("validation_failed", "girdi geçersiz").
+	err := errors.Invalid("validation_failed", "the input is invalid").
 		WithDetails(map[string]any{"field": "quantity"}).
-		WithDetails(map[string]any{"reason": "negatif"})
+		WithDetails(map[string]any{"reason": "negative"})
 
 	if got := err.Details["field"]; got != "quantity" {
 		t.Errorf("Details[field] = %v", got)
 	}
-	if got := err.Details["reason"]; got != "negatif" {
+	if got := err.Details["reason"]; got != "negative" {
 		t.Errorf("Details[reason] = %v", got)
 	}
 }
@@ -123,10 +124,10 @@ func TestNilSafety(t *testing.T) {
 		t.Errorf("nil Error() = %q", got)
 	}
 	if e.Unwrap() != nil {
-		t.Error("nil Unwrap() nil dönmedi")
+		t.Error("nil Unwrap() did not return nil")
 	}
 	if e.WithDetails(map[string]any{"a": 1}) != nil {
-		t.Error("nil WithDetails() nil dönmedi")
+		t.Error("nil WithDetails() did not return nil")
 	}
 }
 
@@ -143,24 +144,24 @@ func TestKindString(t *testing.T) {
 	}
 	for k, want := range tests {
 		if got := k.String(); got != want {
-			t.Errorf("Kind(%d).String() = %q, beklenen %q", k, got, want)
+			t.Errorf("Kind(%d).String() = %q, want %q", k, got, want)
 		}
 	}
 }
 
 func TestStdlibHelpersReExported(t *testing.T) {
-	// core/errors, stdlib errors'ın yerine import edilebilmeli.
+	// core/errors must be importable in place of the stdlib errors.
 	a := errors.New("a")
 	b := errors.New("b")
 	joined := errors.Join(a, b)
 
 	if !errors.Is(joined, a) || !errors.Is(joined, b) {
-		t.Error("Join/Is yeniden dışa verilmemiş gibi davrandı")
+		t.Error("Join/Is behaved as if they had not been re-exported")
 	}
 
 	var target *errors.Error
-	typed := errors.Conflict("c", "çakışma")
+	typed := errors.Conflict("c", "a conflict")
 	if !errors.As(error(typed), &target) {
-		t.Error("As tipli hatayı bulamadı")
+		t.Error("As did not find the typed error")
 	}
 }

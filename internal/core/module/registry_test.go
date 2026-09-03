@@ -16,27 +16,27 @@ import (
 	"github.com/bdrtr/gobit/internal/core/module"
 )
 
-// --- dummy modül (test fixture) ---
+// --- the dummy module (test fixture) ---
 
-// greeter dummy modülün sunduğu servistir.
+// greeter is the service the dummy module offers.
 type greeter struct{ prefix string }
 
 func (g *greeter) Greet(name string) string { return g.prefix + " " + name }
 
-// Greeter dummy modülü TÜKETEN tarafın tanımlayacağı dar arayüzdür.
-// ADR 0001'in örüntüsü: tüketici arayüzü kendi paketinde tanımlar, sağlayıcının
-// somut tipi onu yapısal olarak karşılar.
+// Greeter is the narrow interface the side CONSUMING the dummy module would
+// declare. It is ADR 0001's pattern: the consumer declares the interface in its
+// own package and the provider's concrete type satisfies it structurally.
 type Greeter interface {
 	Greet(name string) string
 }
 
-// dummyModule Module sözleşmesini karşılayan test modülüdür.
+// dummyModule is the test module satisfying the Module contract.
 type dummyModule struct {
 	name       string
 	migrations fs.FS
 	registerFn func(ctx context.Context, c *container.Container) error
 
-	// çağrı izleri
+	// the call trace
 	events *[]string
 }
 
@@ -47,7 +47,7 @@ func (m *dummyModule) Register(ctx context.Context, c *container.Container) erro
 	if m.registerFn != nil {
 		return m.registerFn(ctx, c)
 	}
-	return c.Provide(m.name+".greeter", &greeter{prefix: "merhaba"})
+	return c.Provide(m.name+".greeter", &greeter{prefix: "hello"})
 }
 
 func (m *dummyModule) Migrations() fs.FS { return m.migrations }
@@ -63,10 +63,10 @@ func newDummy(name string, events *[]string) *dummyModule {
 	return &dummyModule{name: name, events: events}
 }
 
-// --- testler ---
+// --- the tests ---
 
-// TestBootstrapResolvesModuleService Faz 1 DoD'sinin çekirdeğidir:
-// dummy modül register edilip servisi container'dan çözülebiliyor mu.
+// TestBootstrapResolvesModuleService is the core of Phase 1's DoD: can a
+// dummy module be registered and its service resolved from the container.
 func TestBootstrapResolvesModuleService(t *testing.T) {
 	var events []string
 	c := container.New(nil)
@@ -78,13 +78,14 @@ func TestBootstrapResolvesModuleService(t *testing.T) {
 		t.Fatalf("Bootstrap() = %v", err)
 	}
 
-	// Tüketici, kendi tanımladığı dar arayüzle çözüyor (ADR 0001).
+	// The consumer resolves through the narrow interface it declared itself
+	// (ADR 0001).
 	g, err := container.Resolve[Greeter](c, "dummy.greeter")
 	if err != nil {
 		t.Fatalf("Resolve[Greeter]() = %v", err)
 	}
-	if got, want := g.Greet("dünya"), "merhaba dünya"; got != want {
-		t.Errorf("Greet() = %q, beklenen %q", got, want)
+	if got, want := g.Greet("world"), "hello world"; got != want {
+		t.Errorf("Greet() = %q, want %q", got, want)
 	}
 }
 
@@ -104,16 +105,16 @@ func TestBootstrapMountsRoutes(t *testing.T) {
 	router.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, beklenen 200", rec.Code)
+		t.Fatalf("status = %d, want 200", rec.Code)
 	}
 	if got := rec.Body.String(); got != "dummy-pong" {
-		t.Errorf("gövde = %q", got)
+		t.Errorf("body = %q", got)
 	}
 }
 
-// TestBootstrapOrdersAllRegistersBeforeAnyRoute sıranın bilinçli olduğunu sabitler:
-// bir modülün handler'ı başka modülün servisini güvenle çözebilsin diye TÜM
-// modüller route bağlamadan önce register olmalıdır.
+// TestBootstrapOrdersAllRegistersBeforeAnyRoute pins that the order is
+// deliberate: so that one module's handler can safely resolve another module's
+// service, ALL modules must register before any route is bound.
 func TestBootstrapOrdersAllRegistersBeforeAnyRoute(t *testing.T) {
 	var events []string
 	c := container.New(nil)
@@ -127,11 +128,11 @@ func TestBootstrapOrdersAllRegistersBeforeAnyRoute(t *testing.T) {
 
 	want := []string{"register:alpha", "register:beta", "routes:alpha", "routes:beta"}
 	if len(events) != len(want) {
-		t.Fatalf("olaylar = %v, beklenen %v", events, want)
+		t.Fatalf("events = %v, want %v", events, want)
 	}
 	for i := range want {
 		if events[i] != want[i] {
-			t.Fatalf("olaylar = %v, beklenen %v", events, want)
+			t.Fatalf("events = %v, want %v", events, want)
 		}
 	}
 }
@@ -144,14 +145,14 @@ func TestBootstrapRejectsDuplicateName(t *testing.T) {
 
 	err := reg.Bootstrap(context.Background(), container.New(nil), chi.NewRouter())
 	if err == nil {
-		t.Fatal("Bootstrap() tekrarlanan adı kabul etti")
+		t.Fatal("Bootstrap() accepted a repeated name")
 	}
 	if !errors.IsConflict(err) {
-		t.Errorf("hata sınıfı = %v, beklenen Conflict", errors.KindOf(err))
+		t.Errorf("error class = %v, want Conflict", errors.KindOf(err))
 	}
-	// Hiçbir modül register EDİLMEMELİ: doğrulama her şeyden önce gelir.
+	// NO module may register: validation comes before everything else.
 	if len(events) != 0 {
-		t.Errorf("doğrulama başarısızken modüller çalıştı: %v", events)
+		t.Errorf("the modules ran while validation was failing: %v", events)
 	}
 }
 
@@ -162,14 +163,14 @@ func TestBootstrapRejectsEmptyName(t *testing.T) {
 
 	err := reg.Bootstrap(context.Background(), container.New(nil), chi.NewRouter())
 	if !errors.IsInvalid(err) {
-		t.Errorf("hata sınıfı = %v, beklenen Invalid (%v)", errors.KindOf(err), err)
+		t.Errorf("error class = %v, want Invalid (%v)", errors.KindOf(err), err)
 	}
 }
 
 func TestBootstrapWrapsRegisterErrorWithModuleName(t *testing.T) {
 	var events []string
-	boom := errors.Unavailable("dep_down", "bağımlılık erişilemez")
-	m := newDummy("kirik", &events)
+	boom := errors.Unavailable("dep_down", "the dependency is unreachable")
+	m := newDummy("broken", &events)
 	m.registerFn = func(context.Context, *container.Container) error { return boom }
 
 	reg := module.NewRegistry(nil, nil)
@@ -177,18 +178,18 @@ func TestBootstrapWrapsRegisterErrorWithModuleName(t *testing.T) {
 
 	err := reg.Bootstrap(context.Background(), container.New(nil), chi.NewRouter())
 	if err == nil {
-		t.Fatal("Bootstrap() hata dönmeliydi")
+		t.Fatal("Bootstrap() should have returned an error")
 	}
 	if !errors.Is(err, boom) {
-		t.Error("özgün hata zincirde korunmadı")
+		t.Error("the original error was not preserved in the chain")
 	}
-	// Sınıf korunmalı ki HTTP katmanı doğru status seçsin.
+	// The class must be preserved so the HTTP layer picks the right status.
 	if errors.KindOf(err) != errors.KindUnavailable {
-		t.Errorf("sınıf = %v, beklenen Unavailable", errors.KindOf(err))
+		t.Errorf("class = %v, want Unavailable", errors.KindOf(err))
 	}
-	// Hangi modülün patladığı mesajda olmalı.
-	if got := err.Error(); !strings.Contains(got, "kirik") {
-		t.Errorf("hata mesajında modül adı yok: %q", got)
+	// Which module blew up must be in the message.
+	if got := err.Error(); !strings.Contains(got, "broken") {
+		t.Errorf("the module name is missing from the error message: %q", got)
 	}
 }
 
@@ -211,7 +212,7 @@ func TestMigrationsRunPerModuleWithOwner(t *testing.T) {
 
 	alpha := newDummy("alpha", &events)
 	alpha.migrations = fstest.MapFS{"0001_init.up.sql": &fstest.MapFile{Data: []byte("SELECT 1;")}}
-	beta := newDummy("beta", &events) // migration'ı yok -> atlanmalı
+	beta := newDummy("beta", &events) // no migrations -> must be skipped
 
 	reg := module.NewRegistry(nil, migrate)
 	reg.Add(alpha)
@@ -222,13 +223,13 @@ func TestMigrationsRunPerModuleWithOwner(t *testing.T) {
 	}
 
 	if len(calls) != 1 {
-		t.Fatalf("migrate çağrı sayısı = %d, beklenen 1 (nil migration atlanmalı)", len(calls))
+		t.Fatalf("migrate call count = %d, want 1 (a nil migration must be skipped)", len(calls))
 	}
 	if calls[0].owner != "alpha" {
-		t.Errorf("owner = %q, beklenen %q", calls[0].owner, "alpha")
+		t.Errorf("owner = %q, want %q", calls[0].owner, "alpha")
 	}
 	if len(calls[0].files) != 1 || calls[0].files[0] != "0001_init.up.sql" {
-		t.Errorf("migration dosyaları = %v", calls[0].files)
+		t.Errorf("migration files = %v", calls[0].files)
 	}
 }
 
@@ -237,11 +238,11 @@ func TestMigrateNilSkipsSilently(t *testing.T) {
 	alpha := newDummy("alpha", &events)
 	alpha.migrations = fstest.MapFS{"0001_init.up.sql": &fstest.MapFile{Data: []byte("SELECT 1;")}}
 
-	reg := module.NewRegistry(nil, nil) // migrate işlevi yok
+	reg := module.NewRegistry(nil, nil) // no migrate function
 	reg.Add(alpha)
 
 	if err := reg.Bootstrap(context.Background(), container.New(nil), chi.NewRouter()); err != nil {
-		t.Fatalf("migrate nil iken Bootstrap hata verdi: %v", err)
+		t.Fatalf("Bootstrap failed with migrate nil: %v", err)
 	}
 }
 
@@ -251,10 +252,10 @@ func TestModulesReturnsCopy(t *testing.T) {
 	reg.Add(newDummy("alpha", &events))
 
 	mods := reg.Modules()
-	mods[0] = nil // dönen dilim iç durumu bozmamalı
+	mods[0] = nil // the returned slice must not corrupt the internal state
 
 	if got := reg.Modules(); got[0] == nil {
-		t.Error("Modules() iç dilimi paylaşıyor")
+		t.Error("Modules() shares the internal slice")
 	}
 }
 
@@ -264,6 +265,6 @@ func TestBootstrapNilRouterIsSafe(t *testing.T) {
 	reg.Add(newDummy("alpha", &events))
 
 	if err := reg.Bootstrap(context.Background(), container.New(nil), nil); err != nil {
-		t.Fatalf("nil router ile Bootstrap = %v", err)
+		t.Fatalf("Bootstrap with a nil router = %v", err)
 	}
 }

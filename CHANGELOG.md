@@ -107,6 +107,15 @@ Sabitlenme `1.0.0` ile olur.
   yanıtlarının mesajları değişti (`"authentication is required"`); kodlar
   (`unauthenticated`, `forbidden`) değişmedi.
 
+- **Çekirdeğin beş paketi İngilizceye çevrildi** (ADR 0012): `internal/core/errors`,
+  `internal/core/container`, `internal/core/module`, `internal/core/provider`,
+  `internal/core/logger`. Davranış değişmedi. Değişen KULLANICIYA/OPERATÖRE
+  giden metinlerdir: container'ın teşhis mesajları (`"missing: Reserve(...)"`,
+  `"...have pointer receivers"`), modül kaydı hataları ve log anahtarları
+  (`"servis"` → `"service"`, `"tembel"` → `"lazy"`). `Kind.String()` çıktıları
+  (`not_found`, `invalid`, …) SÖZLEŞMEDİR ve değişmedi; godoc'a bu açıkça
+  yazıldı.
+
 - **Bileşim kökü ve çekirdeğin yanıt yazıcısı İngilizceye çevrildi**
   ([ADR 0012](docs/adr/0012-repository-language-and-solid.md)). `cmd/server`
   içinde `kurulum.go` → `setup.go`, `kurulum_test.go` → `setup_test.go`,

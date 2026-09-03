@@ -2,9 +2,10 @@ package container
 
 import "time"
 
-// SetWaitWarn kurulumu bekleyen çağıranın uyarı loglamadan önce bekleyeceği
-// süreyi değiştirir. Yalnızca testler içindir: bu dosya üretim derlemesine
-// girmez ve eşik container başına tutulduğu için eşzamanlı testleri etkilemez.
+// SetWaitWarn changes how long a caller waiting for a build waits before
+// logging a warning. It is for tests only: this file does not enter a
+// production build, and because the threshold is kept per container it does not
+// affect concurrent tests.
 func SetWaitWarn(c *Container, d time.Duration) {
 	c.reg.mu.Lock()
 	defer c.reg.mu.Unlock()

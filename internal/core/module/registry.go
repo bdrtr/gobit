@@ -11,23 +11,24 @@ import (
 	"github.com/bdrtr/gobit/internal/core/errors"
 )
 
-// MigrateFunc bir modülün migration'larını uygulayan işlevdir.
+// MigrateFunc is the function that applies a module's migrations.
 //
-// Registry'nin internal/core/db paketine doğrudan bağlanmaması için işlev
-// olarak dışarıdan verilir; böylece registry veritabanı olmadan test edilebilir.
-// owner, versiyon tablosunu ayırmak için kullanılan modül adıdır.
+// It is handed in from outside as a function so the Registry does not bind
+// directly to the internal/core/db package; that also makes the registry
+// testable without a database. owner is the module name used to keep the
+// version tables apart.
 type MigrateFunc func(ctx context.Context, src fs.FS, owner string) error
 
-// Registry tüm modülleri tutar ve sırayla Register/Migrate/Routes çağırır
-// (plan Bölüm 5.1).
+// Registry holds every module and calls Register/Migrate/Routes in order (plan
+// Section 5.1).
 type Registry struct {
 	modules []Module
 	migrate MigrateFunc
 	log     *slog.Logger
 }
 
-// NewRegistry boş bir modül kaydı oluşturur.
-// migrate nil ise migration adımı atlanır (testlerde kullanışlıdır).
+// NewRegistry creates an empty module registry.
+// With migrate nil the migration step is skipped (useful in tests).
 func NewRegistry(log *slog.Logger, migrate MigrateFunc) *Registry {
 	if log == nil {
 		log = slog.Default()
@@ -35,22 +36,24 @@ func NewRegistry(log *slog.Logger, migrate MigrateFunc) *Registry {
 	return &Registry{migrate: migrate, log: log}
 }
 
-// Add bir modülü kayda ekler. Modüller eklenme sırasına göre işlenir.
+// Add adds a module to the registry. Modules are processed in the order they
+// were added.
 func (r *Registry) Add(mod Module) {
 	r.modules = append(r.modules, mod)
 }
 
-// Modules kayıtlı modülleri eklenme sırasıyla döner.
+// Modules returns the registered modules in the order they were added.
 func (r *Registry) Modules() []Module {
 	return append([]Module(nil), r.modules...)
 }
 
-// Bootstrap modülleri sırayla ayağa kaldırır:
-// önce adları doğrular, sonra tüm modüllerin Register'ını, ardından
-// migration'larını, en son route'larını çalıştırır.
+// Bootstrap brings the modules up in order: it validates the names first, then
+// runs every module's Register, then their migrations, and finally their
+// routes.
 //
-// Sıra bilinçlidir: TÜM modüller Register olmadan hiçbiri route bağlamaz,
-// böylece bir modülün handler'ı başka modülün servisini güvenle çözebilir.
+// The order is deliberate: none of them binds a route before ALL of them have
+// registered, so one module's handler can safely resolve another module's
+// service.
 func (r *Registry) Bootstrap(ctx context.Context, c *container.Container, router chi.Router) error {
 	if err := r.validateNames(); err != nil {
 		return err
@@ -63,42 +66,42 @@ func (r *Registry) Bootstrap(ctx context.Context, c *container.Container, router
 	}
 	r.mountRoutes(router)
 
-	r.log.InfoContext(ctx, "modüller ayağa kaldırıldı", "sayi", len(r.modules))
+	r.log.InfoContext(ctx, "the modules are up", "count", len(r.modules))
 	return nil
 }
 
-// validateNames modül adlarının boş olmadığını ve tekrarlanmadığını doğrular.
+// validateNames checks that no module name is empty or repeated.
 func (r *Registry) validateNames() error {
 	seen := make(map[string]struct{}, len(r.modules))
 	for _, mod := range r.modules {
 		name := mod.Name()
 		if name == "" {
-			return errors.Invalid("module_name_empty", "modül adı boş olamaz")
+			return errors.Invalid("module_name_empty", "a module name cannot be empty")
 		}
 		if _, dup := seen[name]; dup {
-			return errors.Conflict("module_name_duplicate", "modül adı tekrarlandı: %s", name)
+			return errors.Conflict("module_name_duplicate", "the module name is repeated: %s", name)
 		}
 		seen[name] = struct{}{}
 	}
 	return nil
 }
 
-// registerAll her modülün servislerini container'a kaydeder.
+// registerAll registers every module's services in the container.
 func (r *Registry) registerAll(ctx context.Context, c *container.Container) error {
 	for _, mod := range r.modules {
 		if err := mod.Register(ctx, c); err != nil {
 			return errors.Wrap(err, errors.KindOf(err), "module_register_failed",
-				"%s modülü kaydedilemedi", mod.Name())
+				"the %s module could not be registered", mod.Name())
 		}
-		r.log.DebugContext(ctx, "modül kaydedildi", "modul", mod.Name())
+		r.log.DebugContext(ctx, "module registered", "module", mod.Name())
 	}
 	return nil
 }
 
-// migrateAll her modülün migration'larını kendi versiyon tablosuna uygular.
+// migrateAll applies every module's migrations to its own version table.
 func (r *Registry) migrateAll(ctx context.Context) error {
 	if r.migrate == nil {
-		r.log.DebugContext(ctx, "migration işlevi verilmedi, migration atlanıyor")
+		r.log.DebugContext(ctx, "no migration function was given, skipping migrations")
 		return nil
 	}
 	for _, mod := range r.modules {
@@ -108,14 +111,14 @@ func (r *Registry) migrateAll(ctx context.Context) error {
 		}
 		if err := r.migrate(ctx, src, mod.Name()); err != nil {
 			return errors.Wrap(err, errors.KindOf(err), "module_migrate_failed",
-				"%s modülünün migration'ları uygulanamadı", mod.Name())
+				"the %s module's migrations could not be applied", mod.Name())
 		}
-		r.log.DebugContext(ctx, "modül migration'ları uygulandı", "modul", mod.Name())
+		r.log.DebugContext(ctx, "module migrations applied", "module", mod.Name())
 	}
 	return nil
 }
 
-// mountRoutes her modülün route'larını router'a bağlar.
+// mountRoutes binds every module's routes to the router.
 func (r *Registry) mountRoutes(router chi.Router) {
 	if router == nil {
 		return

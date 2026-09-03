@@ -5,104 +5,110 @@ import (
 	"encoding/json"
 )
 
-// FulfillmentStatus bir gönderinin sağlayıcı tarafındaki durumudur.
+// FulfillmentStatus is a shipment's status on the provider side.
 type FulfillmentStatus string
 
-// Gönderi durumları.
+// The shipment statuses.
 const (
-	// FulfillmentPending gönderi oluşturuldu, henüz teslim alınmadı.
+	// FulfillmentPending means the shipment was created but not collected yet.
 	FulfillmentPending FulfillmentStatus = "pending"
-	// FulfillmentShipped kargo firması gönderiyi teslim aldı.
+	// FulfillmentShipped means the carrier has collected the shipment.
 	FulfillmentShipped FulfillmentStatus = "shipped"
-	// FulfillmentDelivered gönderi alıcıya ulaştı.
+	// FulfillmentDelivered means the shipment reached the recipient.
 	FulfillmentDelivered FulfillmentStatus = "delivered"
-	// FulfillmentCanceled gönderi iptal edildi.
+	// FulfillmentCanceled means the shipment was canceled.
 	FulfillmentCanceled FulfillmentStatus = "canceled"
 )
 
-// ShippingQuote bir kargo seçeneğinin belirli bir sepet/adres için fiyatıdır.
+// ShippingQuote is a shipping option's price for a particular cart and address.
 type ShippingQuote struct {
-	// OptionID fiyatın ait olduğu kargo seçeneğidir.
+	// OptionID is the shipping option the price belongs to.
 	OptionID string
-	// Amount kargo ücretidir, minor unit TAM SAYI (plan Bölüm 8).
+	// Amount is the shipping charge, an INTEGER in minor units (plan
+	// Section 8).
 	Amount int64
-	// CurrencyCode ISO 4217 para birimi kodudur.
+	// CurrencyCode is the ISO 4217 currency code.
 	CurrencyCode string
-	// Data sağlayıcının döndürdüğü ham veridir; çekirdek yorumlamaz.
+	// Data is the raw data returned by the provider; the core does not
+	// interpret it.
 	Data json.RawMessage
 }
 
-// QuoteInput fiyat sorgusunun girdisidir.
+// QuoteInput is the input of a price query.
 type QuoteInput struct {
-	// OptionID fiyatı sorulan kargo seçeneğidir.
+	// OptionID is the shipping option being priced.
 	OptionID string
-	// CurrencyCode beklenen para birimidir.
+	// CurrencyCode is the expected currency.
 	CurrencyCode string
-	// CountryCode teslimat ülkesidir (ISO 3166-1 alpha-2).
+	// CountryCode is the delivery country (ISO 3166-1 alpha-2).
 	CountryCode string
-	// TotalWeight gönderinin toplam ağırlığıdır (gram); bilinmiyorsa sıfır.
+	// TotalWeight is the shipment's total weight in grams; zero when unknown.
 	TotalWeight int64
-	// ItemCount gönderideki kalem adedidir.
+	// ItemCount is the number of items in the shipment.
 	ItemCount int64
-	// Data sağlayıcıya özgü serbest veridir.
+	// Data is provider-specific free-form data.
 	Data map[string]any
 }
 
-// CreateFulfillmentInput gönderi oluşturmanın girdisidir.
+// CreateFulfillmentInput is the input of creating a shipment.
 type CreateFulfillmentInput struct {
-	// Reference çağıranın kendi kaydına verdiği kimliktir (örn. fulfillment
-	// kimliği). Sağlayıcı bunu kendi tarafında saklar; mutabakatta iki sistemi
-	// eşleştiren alan budur.
+	// Reference is the identity the caller gave its own record (e.g. the
+	// fulfillment's id). The provider stores it on its side; it is the field
+	// that matches the two systems during reconciliation.
 	Reference string
-	// OptionID kullanılacak kargo seçeneğidir.
+	// OptionID is the shipping option to use.
 	OptionID string
-	// IdempotencyKey aynı gönderinin iki kez oluşturulmasını engeller.
+	// IdempotencyKey stops the same shipment from being created twice.
 	//
-	// Saga bir adımı yeniden deneyebilir (plan Bölüm 2.6); anahtar olmadan
-	// tekrar, İKİNCİ BİR KARGO ETİKETİ demek olurdu.
+	// A saga may retry a step (plan Section 2.6); without the key a retry
+	// would mean a SECOND SHIPPING LABEL.
 	IdempotencyKey string
-	// Data sağlayıcıya özgü serbest veridir (adres, kalem listesi vb.).
+	// Data is provider-specific free-form data (the address, the item list and
+	// so on).
 	Data map[string]any
 }
 
-// Fulfillment sağlayıcıda oluşturulmuş bir gönderidir.
+// Fulfillment is a shipment created at the provider.
 type Fulfillment struct {
-	// ID sağlayıcı tarafındaki gönderi kimliğidir.
+	// ID is the shipment's identity on the provider side.
 	ID string
-	// Status gönderinin güncel durumudur.
+	// Status is the shipment's current status.
 	Status FulfillmentStatus
-	// TrackingNumber ve TrackingURL takip bilgisidir; sağlayıcı vermiyorsa boş.
+	// TrackingNumber and TrackingURL are the tracking details; empty when the
+	// provider gives none.
 	TrackingNumber string
 	TrackingURL    string
-	// Data sağlayıcının döndürdüğü ham veridir.
+	// Data is the raw data returned by the provider.
 	Data json.RawMessage
 }
 
-// FulfillmentProvider bir kargo sağlayıcısının çekirdeğe sunduğu sözleşmedir
-// (plan Bölüm 5.6).
+// FulfillmentProvider is the contract a shipping provider offers the core
+// (plan Section 5.6).
 //
-// # İdempotency ve saga
+// # Idempotency and the saga
 //
-// [PaymentProvider] ile aynı kural geçerlidir: metotlar saga adımlarından
-// çağrılır ve saga bir adımı YENİDEN DENEYEBİLİR.
-//   - Create, aynı IdempotencyKey ile ikinci kez çağrıldığında YENİ gönderi
-//     oluşturmaz, mevcut olanı döner.
-//   - Cancel saga telafisidir ve İDEMPOTENT olmak zorundadır: iki kez iptal
-//     edilen bir gönderi ikinci çağrıda hata VERMEZ.
+// The same rule as [PaymentProvider]'s applies: the methods are called from
+// saga steps and a saga MAY RETRY a step.
+//   - Create, called a second time with the same IdempotencyKey, does not
+//     create a NEW shipment; it returns the existing one.
+//   - Cancel is the saga's compensation and must be IDEMPOTENT: a shipment
+//     canceled twice does NOT fail on the second call.
 //
-// # Fiyat sorgusu yan etkisizdir
+// # A price query has no side effects
 //
-// Quote hiçbir şey oluşturmaz ve tekrar çağrılabilir; sepet toplamı
-// hesaplanırken defalarca çağrılabileceği için ucuz olmalıdır.
+// Quote creates nothing and may be called again; because it can be called many
+// times while a cart total is computed, it has to be cheap.
 type FulfillmentProvider interface {
 	Provider
 
-	// Quote verilen seçenek için kargo ücretini döner. YAN ETKİSİZDİR.
+	// Quote returns the shipping charge for the given option. It has NO SIDE
+	// EFFECTS.
 	Quote(ctx context.Context, in QuoteInput) (ShippingQuote, error)
 
-	// Create sağlayıcıda bir gönderi oluşturur.
+	// Create creates a shipment at the provider.
 	Create(ctx context.Context, in CreateFulfillmentInput) (Fulfillment, error)
 
-	// Cancel gönderiyi iptal eder. Saga telafisidir; İDEMPOTENT olmalıdır.
+	// Cancel cancels the shipment. It is the saga's compensation and must be
+	// IDEMPOTENT.
 	Cancel(ctx context.Context, fulfillmentID string) error
 }

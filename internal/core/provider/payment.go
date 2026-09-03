@@ -5,105 +5,112 @@ import (
 	"encoding/json"
 )
 
-// SessionStatus bir ödeme oturumunun durumudur.
+// SessionStatus is a payment session's status on the provider side.
 type SessionStatus string
 
-// Ödeme oturumu durumları.
+// The payment session statuses.
 const (
-	// SessionPending oturum açıldı ama henüz yetkilendirilmedi.
+	// SessionPending means the session was opened but not authorized yet.
 	SessionPending SessionStatus = "pending"
-	// SessionAuthorized tutar müşterinin üzerinde BLOKE edildi; henüz çekilmedi.
+	// SessionAuthorized means the amount is HELD against the customer; it has
+	// not been taken yet.
 	SessionAuthorized SessionStatus = "authorized"
-	// SessionCaptured tutar tahsil edildi.
+	// SessionCaptured means the amount was collected.
 	SessionCaptured SessionStatus = "captured"
-	// SessionCanceled oturum iptal edildi; blokaj varsa serbest bırakıldı.
+	// SessionCanceled means the session was canceled; any hold was released.
 	SessionCanceled SessionStatus = "canceled"
-	// SessionFailed sağlayıcı işlemi reddetti.
+	// SessionFailed means the provider rejected the operation.
 	SessionFailed SessionStatus = "failed"
 )
 
-// CreateSessionInput yeni bir ödeme oturumunun girdisidir.
+// CreateSessionInput is the input of a new payment session.
 type CreateSessionInput struct {
-	// Amount tahsil edilecek tutardır, minor unit TAM SAYI (plan Bölüm 8).
+	// Amount is the amount to collect, an INTEGER in minor units (plan
+	// Section 8).
 	Amount int64
-	// CurrencyCode ISO 4217 para birimi kodudur.
+	// CurrencyCode is the ISO 4217 currency code.
 	CurrencyCode string
-	// Reference çağıranın kendi kaydına verdiği kimliktir (örn. payment
-	// collection kimliği). Sağlayıcı bunu kendi tarafında saklar; mutabakatta
-	// iki sistemi eşleştiren alan budur.
+	// Reference is the identity the caller gave its own record (e.g. the
+	// payment collection's id). The provider stores it on its side; it is the
+	// field that matches the two systems during reconciliation.
 	Reference string
-	// IdempotencyKey aynı oturumun iki kez açılmasını engeller.
+	// IdempotencyKey stops the same session from being opened twice.
 	//
-	// Saga bir adımı yeniden deneyebilir (plan Bölüm 2.6); anahtar olmadan
-	// tekrar, müşteriden İKİNCİ KEZ tahsilat denemesi anlamına gelirdi.
+	// A saga may retry a step (plan Section 2.6); without the key a retry
+	// would mean a SECOND attempt to charge the customer.
 	IdempotencyKey string
-	// Data sağlayıcıya özgü serbest veridir (kart tokenı, dönüş adresi vb.).
+	// Data is provider-specific free-form data (a card token, a return URL and
+	// so on).
 	Data map[string]any
 }
 
-// Session sağlayıcıda açılmış bir ödeme oturumudur.
+// Session is a payment session opened at the provider.
 type Session struct {
-	// ID sağlayıcı tarafındaki oturum kimliğidir.
+	// ID is the session's identity on the provider side.
 	ID string
-	// Status oturumun güncel durumudur.
+	// Status is the session's current status.
 	Status SessionStatus
-	// Amount ve CurrencyCode oturumun tutarıdır.
+	// Amount and CurrencyCode are the session's amount.
 	Amount       int64
 	CurrencyCode string
-	// Data sağlayıcının döndürdüğü ham veridir (örn. istemcinin kullanacağı
-	// client_secret). Olduğu gibi saklanır; çekirdek yorumlamaz.
+	// Data is the raw data returned by the provider (e.g. the client_secret
+	// the client will use). It is stored as it is; the core does not interpret
+	// it.
 	Data json.RawMessage
 }
 
-// AuthResult yetkilendirme denemesinin sonucudur.
+// AuthResult is the outcome of an authorization attempt.
 type AuthResult struct {
-	// Status yetkilendirme sonrası oturum durumudur.
+	// Status is the session status after authorization.
 	Status SessionStatus
-	// AuthorizedAmount bloke edilen tutardır; kısmi yetkilendirmede
-	// istenenden küçük olabilir.
+	// AuthorizedAmount is the amount held; on a partial authorization it may
+	// be smaller than the one requested.
 	AuthorizedAmount int64
-	// Data sağlayıcının döndürdüğü ham veridir.
+	// Data is the raw data returned by the provider.
 	Data json.RawMessage
-	// DeclineReason Status SessionFailed ise reddin sağlayıcı tarafındaki
-	// sebebidir. Müşteriye GÖSTERİLMEK üzere değil, teşhis içindir.
+	// DeclineReason is the provider-side reason for the refusal when Status is
+	// SessionFailed. It is for diagnosis, NOT to be shown to the customer.
 	DeclineReason string
 }
 
-// PaymentProvider bir ödeme sağlayıcısının çekirdeğe sunduğu sözleşmedir
-// (plan Bölüm 5.6).
+// PaymentProvider is the contract a payment provider offers the core (plan
+// Section 5.6).
 //
-// # İdempotency ve saga
+// # Idempotency and the saga
 //
-// Bu arayüzün metotları saga adımlarından çağrılır ve saga bir adımı YENİDEN
-// DENEYEBİLİR. Bu yüzden:
-//   - CreateSession, aynı IdempotencyKey ile ikinci kez çağrıldığında YENİ
-//     oturum açmaz, mevcut oturumu döner.
-//   - Authorize, Capture ve Refund aynı oturum üzerinde tekrar çağrılabilir
-//     olmalıdır; ikinci çağrı hata DEĞİL, mevcut durumu dönmelidir.
+// This interface's methods are called from saga steps and a saga MAY RETRY a
+// step. Therefore:
+//   - CreateSession, called a second time with the same IdempotencyKey, does
+//     NOT open a new session; it returns the existing one.
+//   - Authorize, Capture and Refund must be callable again on the same
+//     session; a second call must return the current state, NOT an error.
 //
-// Telafi (Compensate) yolu Cancel'dır ve saga şartı gereği İDEMPOTENT olmak
-// zorundadır: iki kez iptal edilen bir oturum ikinci çağrıda hata vermemelidir.
+// The compensation path is Cancel and, as the saga requires, it must be
+// IDEMPOTENT: a session canceled twice must not fail on the second call.
 type PaymentProvider interface {
 	Provider
 
-	// CreateSession sağlayıcıda bir ödeme oturumu açar.
+	// CreateSession opens a payment session at the provider.
 	CreateSession(ctx context.Context, in CreateSessionInput) (Session, error)
 
-	// Authorize tutarı müşterinin üzerinde BLOKE eder; tahsilat yapmaz.
+	// Authorize HOLDS the amount against the customer; it collects nothing.
 	//
-	// Ayrım bilinçlidir: saga siparişi oluşturduktan sonra tahsilata geçer ve
-	// arada bir adım patlarsa blokajı serbest bırakmak, çekilmiş bir tutarı
-	// iade etmekten hem hızlı hem geri dönüşsüz-olmayan bir işlemdir.
+	// The distinction is deliberate: the saga moves to collection after
+	// creating the order, and if a step in between fails, releasing a hold is
+	// both faster and less irreversible than refunding an amount already
+	// taken.
 	Authorize(ctx context.Context, sessionID string) (AuthResult, error)
 
-	// Capture bloke edilmiş tutarı tahsil eder. amount, yetkilendirilen
-	// tutardan büyük OLAMAZ; sıfır verilirse tamamı çekilir.
+	// Capture collects the held amount. amount CANNOT be larger than the
+	// authorized amount; given zero, the whole amount is taken.
 	Capture(ctx context.Context, sessionID string, amount int64) error
 
-	// Refund tahsil edilmiş tutarı iade eder. amount sıfırsa tamamı iade edilir.
+	// Refund returns a collected amount. With amount zero the whole amount is
+	// refunded.
 	Refund(ctx context.Context, sessionID string, amount int64) error
 
-	// Cancel yetkilendirilmiş ama tahsil EDİLMEMİŞ bir oturumu iptal eder ve
-	// blokajı serbest bırakır. Saga telafisi budur; İDEMPOTENT olmalıdır.
+	// Cancel cancels a session that was authorized but NOT captured and
+	// releases the hold. This is the saga's compensation; it must be
+	// IDEMPOTENT.
 	Cancel(ctx context.Context, sessionID string) error
 }

@@ -1,6 +1,6 @@
-// Package logger uygulama genelinde kullanılan slog tabanlı yapısal log
-// kurulumunu sağlar. Bilinçli olarak config paketini tanımaz; ayarlar
-// çağıran tarafından Options ile verilir.
+// Package logger provides the slog-based structured logging setup used across
+// the application. It deliberately does not know the config package; the
+// settings are handed in by the caller through Options.
 package logger
 
 import (
@@ -9,20 +9,21 @@ import (
 	"os"
 )
 
-// Options New'in üreteceği logger'ın davranışını belirler.
+// Options decides the behavior of the logger New produces.
 type Options struct {
-	// Level, altındaki kayıtların atılacağı en düşük log seviyesidir.
+	// Level is the lowest log level; records below it are dropped.
 	Level slog.Level
-	// Format çıktı biçimidir: "text" ise metin, diğer tüm değerlerde JSON.
+	// Format is the output shape: "text" gives text, every other value gives
+	// JSON.
 	Format string
-	// Output, logların yazılacağı hedeftir. Boş bırakılırsa os.Stdout kullanılır.
+	// Output is where the logs are written. Left empty, os.Stdout is used.
 	Output io.Writer
-	// AddSource true ise her kayda çağıran dosya/satır bilgisi eklenir.
-	// Üretimde maliyetli olduğu için genelde yalnızca geliştirmede açılır.
+	// AddSource true adds the calling file and line to every record. Because
+	// it is costly in production it is usually only turned on in development.
 	AddSource bool
 }
 
-// New verilen ayarlarla yapılandırılmış bir *slog.Logger üretir.
+// New produces a *slog.Logger configured with the given options.
 func New(opts Options) *slog.Logger {
 	out := opts.Output
 	if out == nil {
