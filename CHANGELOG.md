@@ -55,6 +55,11 @@ Sabitlenme `1.0.0` ile olur.
   ölçüldü, yalnızca sıfır isabet verenler alındı); üçüncüsü Türkçe kökleri
   tanımlayıcıların TAM parçalarında arar.
 
+- Dil dedektöründeki fixture, paket düzeyindeki muafiyet haritasını mutasyona
+  uğratıyordu ve aynı haritayı paralel koşan başka bir test okuyordu; `-race`
+  altında veri yarışı. Harita artık `scanSource`'a PARAMETRE olarak geçiyor:
+  paylaşılan durum kilitlenmedi, kaldırıldı.
+
 - **Smoke testlerinin beklediği log mesajları artık üretime bağlı**
   (`TestSmokeLogAssertionsMatchProduction`). Smoke testi bir üretim log
   satırını METİN olarak bekliyor ve ikisi arasında derleyici bağı YOK: mesajı

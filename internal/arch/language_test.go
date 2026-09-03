@@ -330,13 +330,20 @@ func stemHit(ident string) string {
 // The second result reports a generated file, which the caller drops: a
 // generated file's language is not editable, so flagging it would create debt
 // nobody can pay from the file itself.
-func scanSource(rel string, src []byte) (hits []turkishHit, generated bool) {
+//
+// The exemption map is a PARAMETER rather than being read from the package
+// variable, and that is not a style choice. The fixture in
+// [TestDiacriticDataExemptionsAreHonest] has to scan with an exemption in place
+// and with one absent; reaching that by mutating the package variable made two
+// parallel tests write and read the same map, and `go test -race` reported the
+// data race. A parameter removes the shared state instead of guarding it.
+func scanSource(rel string, src []byte, exemptions map[string][]string) (hits []turkishHit, generated bool) {
 	text := string(src)
 	if idx := strings.Index(text, generatedMarker); idx >= 0 && idx < 2000 {
 		return nil, true
 	}
 
-	exempt := diacriticDataExemptions[rel]
+	exempt := exemptions[rel]
 
 	for i, line := range strings.Split(text, "\n") {
 		stripped := line
@@ -554,7 +561,7 @@ func TestNoTurkishOutsideLedger(t *testing.T) {
 		src, err := os.ReadFile(filepath.Join(repoRoot, rel))
 		require.NoError(t, err)
 
-		hits, generated := scanSource(rel, src)
+		hits, generated := scanSource(rel, src, diacriticDataExemptions)
 		if generated {
 			continue
 		}
@@ -614,7 +621,7 @@ func TestLedgerIsNotStale(t *testing.T) {
 		src, err := os.ReadFile(filepath.Join(repoRoot, rel))
 		require.NoError(t, err)
 
-		hits, generated := scanSource(rel, src)
+		hits, generated := scanSource(rel, src, diacriticDataExemptions)
 		if generated {
 			t.Errorf("ledger entry STALE: %q is generated code and is never scanned.\n"+
 				"Its language comes from the file it is generated from; list that one "+
@@ -661,7 +668,7 @@ func TestDetectorIsNotBlind(t *testing.T) {
 		src, err := os.ReadFile(filepath.Join(repoRoot, rel))
 		require.NoError(t, err)
 
-		hits, gen := scanSource(rel, src)
+		hits, gen := scanSource(rel, src, diacriticDataExemptions)
 		if gen {
 			generated++
 			continue
@@ -771,7 +778,7 @@ func TestDetectorFindsPlantedTurkish(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			hits, generated := scanSource("planted.go", []byte(tc.src))
+			hits, generated := scanSource("planted.go", []byte(tc.src), diacriticDataExemptions)
 			require.False(t, generated)
 
 			lanes := make([]string, 0, len(hits))
@@ -806,7 +813,7 @@ func Rollback(modules []string) error {
 }
 `
 
-	hits, generated := scanSource("english.go", []byte(src))
+	hits, generated := scanSource("english.go", []byte(src), diacriticDataExemptions)
 	require.False(t, generated)
 	assert.Empty(t, hits, "correct English source must not be flagged: %v", hits)
 }
@@ -819,7 +826,7 @@ func TestDetectorExemptsOnlyItself(t *testing.T) {
 	src, err := os.ReadFile(filepath.Join(repoRoot, detectorFile))
 	require.NoError(t, err, "%s must exist", detectorFile)
 
-	hits, generated := scanSource(detectorFile, src)
+	hits, generated := scanSource(detectorFile, src, diacriticDataExemptions)
 	require.False(t, generated)
 	assert.NotEmpty(t, hits,
 		"%s no longer trips its own lanes, so the exemption has no reason to exist "+
@@ -865,14 +872,15 @@ func TestDiacriticDataExemptionsAreHonest(t *testing.T) {
 	}
 
 	// The mechanism itself, proven on a fixture rather than on a future entry.
+	// The fixture brings its OWN map: the package variable is never written to,
+	// so this test cannot race the ones scanning the repository in parallel.
 	const fixture = "-- ISO 3166 reference data.\n('CW', 'Curaçao'),\n"
-	hits, _ := scanSource("fixture.sql", []byte(fixture))
+
+	hits, _ := scanSource("fixture.sql", []byte(fixture), nil)
 	require.NotEmpty(t, hits, "without an exemption the fixture must be flagged")
 
-	diacriticDataExemptions["fixture.sql"] = []string{"Curaçao"}
-	t.Cleanup(func() { delete(diacriticDataExemptions, "fixture.sql") })
-
-	hits, _ = scanSource("fixture.sql", []byte(fixture))
+	hits, _ = scanSource("fixture.sql", []byte(fixture),
+		map[string][]string{"fixture.sql": {"Curaçao"}})
 	assert.Empty(t, hits, "with the exemption in place the fixture must pass: %v", hits)
 }
 
