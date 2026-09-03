@@ -14,29 +14,29 @@ import (
 	"github.com/bdrtr/gobit/internal/core/workflow"
 )
 
-// --- yeniden denenen adımın telafisi ---------------------------------------
+// --- compensating a step the engine retried ---------------------------------
 
-// TestRetriedStepSideEffectIsCompensated motorun KENDİ tetiklediği yeniden
-// denemeden sonra patlayan adımın telafi edildiğini doğrular.
+// TestRetriedStepSideEffectIsCompensated verifies that a step which blew up
+// after a retry the engine ITSELF triggered is compensated.
 func TestRetriedStepSideEffectIsCompensated(t *testing.T) {
 	rec := &recorder{}
-	dunya := map[string]bool{}
+	world := map[string]bool{}
 
 	var execID string
-	s := step(rec, "rezerve")
+	s := step(rec, "reserve")
 	s.onInvoke = func(_ context.Context, sc *workflow.StepContext) (any, error) {
 		execID = sc.ExecutionID
 		if sc.Attempt == 1 {
-			// 1. deneme yan etkiyi DÜNYAYA uyguladı, yanıt kayboldu.
-			sc.Shared["rez"] = "rez_1"
-			dunya["rez_1"] = true
-			return nil, errors.Unavailable("gecici", "yanıt kayboldu")
+			// Attempt 1 applied the side effect TO THE WORLD, the answer was lost.
+			sc.Shared["res"] = "res_1"
+			world["res_1"] = true
+			return nil, errors.Unavailable("transient", "the answer was lost")
 		}
-		return nil, errors.Unavailable("gecici", "servis kapalı")
+		return nil, errors.Unavailable("transient", "the service is down")
 	}
 	s.onCompensate = func(_ context.Context, sc *workflow.StepContext) error {
-		if id, ok := sc.Shared["rez"].(string); ok {
-			delete(dunya, id)
+		if id, ok := sc.Shared["res"].(string); ok {
+			delete(world, id)
 		}
 		return nil
 	}
@@ -45,29 +45,30 @@ func TestRetriedStepSideEffectIsCompensated(t *testing.T) {
 	eng := workflow.New(store, testLogger())
 
 	_, err := eng.Run(t.Context(),
-		workflow.Workflow{Name: "yeniden_denenen_telafi", Steps: steps(s)}, nil,
+		workflow.Workflow{Name: "retried_compensation", Steps: steps(s)}, nil,
 		workflow.WithRetry(workflow.RetryPolicy{MaxAttempts: 2}))
 
 	require.Error(t, err)
-	assert.Contains(t, rec.snapshot(), "compensate:rezerve",
-		"motor adımı yeniden denediyse patlayan adım da telafi edilmeli")
-	assert.Empty(t, dunya, "1. denemenin açtığı rezervasyon asılı kalmamalı")
+	assert.Contains(t, rec.snapshot(), "compensate:reserve",
+		"if the engine retried the step, the step that blew up has to be compensated too")
+	assert.Empty(t, world, "the reservation attempt 1 opened must not be left hanging")
 
 	exec, gerr := store.Get(t.Context(), execID)
 	require.NoError(t, gerr)
 	assert.Equal(t, workflow.StatusFailed, exec.Status,
-		"telafi başarılıysa failed doğru bir kayıttır")
+		"if the compensation succeeded, failed is the right record")
 }
 
-// TestSingleAttemptFailureIsNotCompensated tek denemede patlayan adımın telafi
-// EDİLMEDİĞİNİ doğrular: kural yalnızca motorun tetiklediği tekrar için delinir.
+// TestSingleAttemptFailureIsNotCompensated verifies that a step which blew up on
+// its ONLY attempt is NOT compensated: the rule is pierced only for a repeat the
+// engine triggered.
 func TestSingleAttemptFailureIsNotCompensated(t *testing.T) {
 	rec := &recorder{}
 
 	a := step(rec, "a")
 	b := step(rec, "b")
 	b.onInvoke = func(context.Context, *workflow.StepContext) (any, error) {
-		return nil, errors.Invalid("gecersiz", "b patladı")
+		return nil, errors.Invalid("invalid", "b blew up")
 	}
 
 	eng := workflow.New(workflow.NewMemoryStore(), testLogger())
@@ -76,23 +77,24 @@ func TestSingleAttemptFailureIsNotCompensated(t *testing.T) {
 
 	require.Error(t, err)
 	calls := rec.snapshot()
-	assert.NotContains(t, calls, "compensate:b", "tek denemede patlayan adım telafi edilmemeli")
+	assert.NotContains(t, calls, "compensate:b", "a step that blew up on its only attempt must not be compensated")
 	assert.Contains(t, calls, "compensate:a")
 }
 
-// TestRetriedStepCompensationFailureMarksExecution yeniden denenen adımın
-// telafisi de patlarsa yürütmenin compensation_failed yazıldığını doğrular.
+// TestRetriedStepCompensationFailureMarksExecution verifies that when the
+// compensation of a retried step blows up too, the execution is written as
+// compensation_failed.
 func TestRetriedStepCompensationFailureMarksExecution(t *testing.T) {
 	rec := &recorder{}
 
 	var execID string
-	s := step(rec, "rezerve")
+	s := step(rec, "reserve")
 	s.onInvoke = func(_ context.Context, sc *workflow.StepContext) (any, error) {
 		execID = sc.ExecutionID
-		return nil, errors.Unavailable("gecici", "%d. deneme patladı", sc.Attempt)
+		return nil, errors.Unavailable("transient", "attempt %d blew up", sc.Attempt)
 	}
 	s.onCompensate = func(context.Context, *workflow.StepContext) error {
-		return errors.Unavailable("gecici", "telafi de patladı")
+		return errors.Unavailable("transient", "the compensation blew up too")
 	}
 
 	store := workflow.NewMemoryStore()
@@ -109,29 +111,30 @@ func TestRetriedStepCompensationFailureMarksExecution(t *testing.T) {
 	assert.Equal(t, workflow.StatusCompensationFailed, exec.Status)
 }
 
-// --- telafi kaydı Invoke izini ezmemeli -------------------------------------
+// --- the compensation record must not overwrite the Invoke trace ------------
 
-// TestCompensationRecordKeepsInvokeOutput telafi kaydının Invoke'un çıktısını
-// ve deneme sayısını korduğunu doğrular; elle müdahale bu veriye dayanır.
+// TestCompensationRecordKeepsInvokeOutput verifies that the compensation record
+// preserves Invoke's output and attempt count; a human intervention rests on
+// exactly that data.
 func TestCompensationRecordKeepsInvokeOutput(t *testing.T) {
 	rec := &recorder{}
 
 	var execID string
 	kere := 0
-	a := step(rec, "rezerve")
+	a := step(rec, "reserve")
 	a.onInvoke = func(_ context.Context, sc *workflow.StepContext) (any, error) {
 		execID = sc.ExecutionID
 		kere++
 		if kere == 1 {
-			return nil, errors.Unavailable("gecici", "ilk deneme patladı")
+			return nil, errors.Unavailable("transient", "the first attempt blew up")
 		}
-		return map[string]string{"reservation_id": "rez_42"}, nil
+		return map[string]string{"reservation_id": "res_42"}, nil
 	}
 
 	b := step(rec, "b")
 	b.onInvoke = func(context.Context, *workflow.StepContext) (any, error) {
-		// Yeniden denenmeyen sınıf: b tek denemede patlar.
-		return nil, errors.Invalid("gecersiz", "b patladı")
+		// A non-retryable class: b blows up on its only attempt.
+		return nil, errors.Invalid("invalid", "b blew up")
 	}
 
 	store := workflow.NewMemoryStore()
@@ -147,60 +150,60 @@ func TestCompensationRecordKeepsInvokeOutput(t *testing.T) {
 
 	got := exec.Steps[0]
 	assert.Equal(t, workflow.StepCompensated, got.Status)
-	assert.JSONEq(t, `{"reservation_id":"rez_42"}`, string(got.Output),
-		"telafi kaydı Invoke'un çıktısını silmemeli")
-	assert.Equal(t, 2, got.Attempts, "Invoke'un deneme sayısı korunmalı")
+	assert.JSONEq(t, `{"reservation_id":"res_42"}`, string(got.Output),
+		"the compensation record must not erase Invoke's output")
+	assert.Equal(t, 2, got.Attempts, "Invoke's attempt count has to be preserved")
 	assert.False(t, got.StartedAt.IsZero())
 }
 
-// --- telafi bütçesi adım başınadır ------------------------------------------
+// --- the compensation budget is per step ------------------------------------
 
-// TestCompensationBudgetIsPerStep yavaş bir telafinin kendisinden ÖNCEKİ
-// adımların telafisini ölü bağlamla bırakmadığını doğrular.
+// TestCompensationBudgetIsPerStep verifies that a slow compensation does not
+// leave the compensation of the steps BEFORE it with a dead context.
 func TestCompensationBudgetIsPerStep(t *testing.T) {
 	rec := &recorder{}
 
-	var ilkTelafiHatasi error
-	a := step(rec, "hizli")
+	var firstCompensationErr error
+	a := step(rec, "fast")
 	a.onCompensate = func(ctx context.Context, _ *workflow.StepContext) error {
-		ilkTelafiHatasi = ctx.Err()
+		firstCompensationErr = ctx.Err()
 		return nil
 	}
 
-	b := step(rec, "yavas")
+	b := step(rec, "slow")
 	b.onCompensate = func(context.Context, *workflow.StepContext) error {
-		// Bağlama saygısız, yavaş bir telafi: bütçesini aşar.
+		// A slow compensation that ignores the context: it overruns its budget.
 		time.Sleep(150 * time.Millisecond)
 		return nil
 	}
 
 	c := step(rec, "c")
 	c.onInvoke = func(context.Context, *workflow.StepContext) (any, error) {
-		return nil, errors.Invalid("gecersiz", "c patladı")
+		return nil, errors.Invalid("invalid", "c blew up")
 	}
 
 	eng := workflow.New(workflow.NewMemoryStore(), testLogger())
 
-	_, err := eng.Run(t.Context(), workflow.Workflow{Name: "butce", Steps: steps(a, b, c)}, nil,
+	_, err := eng.Run(t.Context(), workflow.Workflow{Name: "budget", Steps: steps(a, b, c)}, nil,
 		workflow.WithCompensationTimeout(50*time.Millisecond))
 
 	require.Error(t, err)
-	assert.NoError(t, ilkTelafiHatasi,
-		"her telafi kendi bütçesini alır; önceki adım ölü bağlamla çağrılmamalı")
+	assert.NoError(t, firstCompensationErr,
+		"every compensation gets its own budget; the earlier step must not be called with a dead context")
 }
 
-// --- özel Retryable yüklemi panik/iptal korumasını devralır -----------------
+// --- a custom Retryable predicate inherits the panic/cancel exclusion -------
 
-// TestCustomRetryableStillSkipsPanic özel yüklem her şeyi denenebilir dese bile
-// paniğin yeniden DENENMEDİĞİNİ doğrular.
+// TestCustomRetryableStillSkipsPanic verifies that a panic is NOT retried even
+// when the custom predicate says everything is retryable.
 func TestCustomRetryableStillSkipsPanic(t *testing.T) {
 	rec := &recorder{}
-	cagri := 0
+	calls := 0
 
-	s := step(rec, "panikleyen")
+	s := step(rec, "panicking")
 	s.onInvoke = func(context.Context, *workflow.StepContext) (any, error) {
-		cagri++
-		panic("her denemede aynı çöküş")
+		calls++
+		panic("the same crash on every attempt")
 	}
 
 	eng := workflow.New(workflow.NewMemoryStore(), testLogger())
@@ -213,21 +216,22 @@ func TestCustomRetryableStillSkipsPanic(t *testing.T) {
 
 	require.Error(t, err)
 	assert.ErrorIs(t, err, workflow.ErrPanic)
-	assert.Equal(t, 1, cagri, "panik özel yüklemle de yeniden denenmemeli")
+	assert.Equal(t, 1, calls, "a panic must not be retried with a custom predicate either")
 }
 
-// TestCustomRetryableStillSkipsCanceledContext özel yüklemin iptal korumasını
-// da devraldığını doğrular.
+// TestCustomRetryableStillSkipsCanceledContext verifies that the custom
+// predicate inherits the cancellation exclusion as well.
 func TestCustomRetryableStillSkipsCanceledContext(t *testing.T) {
 	rec := &recorder{}
-	cagri := 0
+	calls := 0
 
 	s := step(rec, "iptal")
 	s.onInvoke = func(context.Context, *workflow.StepContext) (any, error) {
-		cagri++
-		// Bağımlılık iptal edilmiş bir alt bağlamla dönüyor; motorun kendi
-		// bağlamı CANLI, dolayısıyla tekrarı durduran tek şey eleme kuralıdır.
-		return nil, errors.Wrap(context.Canceled, errors.KindUnavailable, "iptal", "çağrı iptal edildi")
+		calls++
+		// The dependency returns with a canceled sub-context; the engine's own
+		// context is ALIVE, so the only thing stopping the repeat is the
+		// exclusion rule.
+		return nil, errors.Wrap(context.Canceled, errors.KindUnavailable, "canceled", "the call was canceled")
 	}
 
 	eng := workflow.New(workflow.NewMemoryStore(), testLogger())
@@ -239,159 +243,162 @@ func TestCustomRetryableStillSkipsCanceledContext(t *testing.T) {
 		}))
 
 	require.Error(t, err)
-	assert.Equal(t, 1, cagri, "iptal edilmiş bağlamda yeniden denenmemeli")
+	assert.Equal(t, 1, calls, "a canceled context must not be retried")
 }
 
-// --- ölü bağlamla gelen çağrı anahtarı yakmamalı ----------------------------
+// --- a call arriving with a dead context must not burn the key --------------
 
-// TestCanceledContextDoesNotBurnIdempotencyKey hiç adım çalışmadan iptal edilen
-// çağrının aynı anahtarı kullanılamaz hâle GETİRMEDİĞİNİ doğrular.
+// TestCanceledContextDoesNotBurnIdempotencyKey verifies that a call canceled
+// before any step ran DOES NOT make the same key unusable.
 func TestCanceledContextDoesNotBurnIdempotencyKey(t *testing.T) {
 	rec := &recorder{}
 	s := step(rec, "a")
 
 	store := workflow.NewMemoryStore()
 	eng := workflow.New(store, testLogger())
-	wf := workflow.Workflow{Name: "olu_baglam", Steps: steps(s)}
+	wf := workflow.Workflow{Name: "dead_context", Steps: steps(s)}
 
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 
-	_, err := eng.Run(ctx, wf, nil, workflow.WithIdempotencyKey("siparis-1"))
+	_, err := eng.Run(ctx, wf, nil, workflow.WithIdempotencyKey("order-1"))
 	require.Error(t, err)
-	assert.Empty(t, rec.snapshot(), "hiçbir adım çalışmış olmamalı")
+	assert.Empty(t, rec.snapshot(), "no step may have run")
 
-	out, err := eng.Run(t.Context(), wf, nil, workflow.WithIdempotencyKey("siparis-1"))
-	require.NoError(t, err, "hiç iş yapılmamışken anahtar yeniden kullanılabilmeli")
+	out, err := eng.Run(t.Context(), wf, nil, workflow.WithIdempotencyKey("order-1"))
+	require.NoError(t, err, "with no work done the key has to be reusable")
 	assert.NotNil(t, out)
 }
 
-// --- tipli nil adım ---------------------------------------------------------
+// --- a typed nil step -------------------------------------------------------
 
-// TestTypedNilStepIsRejected tipli-nil bir adımın motoru çökertmediğini doğrular.
+// TestTypedNilStepIsRejected verifies that a typed-nil step does not bring the
+// engine down.
 func TestTypedNilStepIsRejected(t *testing.T) {
 	eng := workflow.New(workflow.NewMemoryStore(), testLogger())
 
-	var bos *testStep // tipli nil: arayüz değeri nil DEĞİLDİR
-	wf := workflow.Workflow{Name: "tipli_nil", Steps: []workflow.Step{bos}}
+	var empty *testStep // a typed nil: the interface value is NOT nil
+	wf := workflow.Workflow{Name: "typed_nil", Steps: []workflow.Step{empty}}
 
 	_, err := eng.Run(t.Context(), wf, nil)
 
 	require.Error(t, err)
-	assert.True(t, errors.IsInvalid(err), "tipli nil adım geçersiz workflow'dur, panik değil")
+	assert.True(t, errors.IsInvalid(err), "a typed nil step is an invalid workflow, not a panic")
 }
 
-// --- ad ve anahtar uzunluk sınırları ----------------------------------------
+// --- name and key length limits ---------------------------------------------
 
-// TestWorkflowNameLengthIsValidated sınırı aşan adın motorda reddedildiğini
-// doğrular: kalıcı Store'un sınırına orada çarpmak yerine burada bilinir.
+// TestWorkflowNameLengthIsValidated verifies that a name over the limit is
+// rejected in the engine: better known here than by hitting the durable Store's
+// own limit down there.
 func TestWorkflowNameLengthIsValidated(t *testing.T) {
 	rec := &recorder{}
 	eng := workflow.New(workflow.NewMemoryStore(), testLogger())
 
-	uzun := ""
+	long := ""
 	for range workflow.MaxNameLen + 1 {
-		uzun += "a"
+		long += "a"
 	}
 
-	_, err := eng.Run(t.Context(), workflow.Workflow{Name: uzun, Steps: steps(step(rec, "a"))}, nil)
+	_, err := eng.Run(t.Context(), workflow.Workflow{Name: long, Steps: steps(step(rec, "a"))}, nil)
 	require.Error(t, err)
 	assert.True(t, errors.IsInvalid(err))
 
 	_, err = eng.Run(t.Context(),
-		workflow.Workflow{Name: "kisa", Steps: steps(step(rec, uzun))}, nil)
+		workflow.Workflow{Name: "kisa", Steps: steps(step(rec, long))}, nil)
 	require.Error(t, err)
-	assert.True(t, errors.IsInvalid(err), "adım adı da sınırlıdır")
+	assert.True(t, errors.IsInvalid(err), "the step name is bounded too")
 }
 
-// --- eşzamanlı bileşiğin Shared hijyeni -------------------------------------
+// --- the concurrent composite's Shared hygiene ------------------------------
 
-// TestParallelFailureDiscardsBranchWrites patlayan bir bileşikten sonra HİÇBİR
-// dalın yazmasının üst bağlamda kalmadığını doğrular.
+// TestParallelFailureDiscardsBranchWrites verifies that after a composite blows
+// up NO branch's write is left in the parent context.
 func TestParallelFailureDiscardsBranchWrites(t *testing.T) {
 	rec := &recorder{}
 
-	var gorulenRez any
-	var hayaletVarMi bool
+	var seenRes any
+	var ghostFound bool
 
-	once := step(rec, "siparis")
-	once.onInvoke = func(_ context.Context, sc *workflow.StepContext) (any, error) {
-		sc.Shared["rez"] = "orijinal"
-		return "siparis-out", nil
+	first := step(rec, "order")
+	first.onInvoke = func(_ context.Context, sc *workflow.StepContext) (any, error) {
+		sc.Shared["res"] = "original"
+		return "order-out", nil
 	}
-	once.onCompensate = func(_ context.Context, sc *workflow.StepContext) error {
-		gorulenRez = sc.Shared["rez"]
-		_, hayaletVarMi = sc.Shared["hayalet"]
+	first.onCompensate = func(_ context.Context, sc *workflow.StepContext) error {
+		seenRes = sc.Shared["res"]
+		_, ghostFound = sc.Shared["ghost"]
 		return nil
 	}
 
-	a := step(rec, "stok")
+	a := step(rec, "stock")
 	a.onInvoke = func(_ context.Context, sc *workflow.StepContext) (any, error) {
-		sc.Shared["rez"] = "dal_rezervasyonu"
+		sc.Shared["res"] = "branch_reservation"
 		return "a-out", nil
 	}
 
-	b := step(rec, "kargo")
+	b := step(rec, "shipping")
 	b.onInvoke = func(_ context.Context, sc *workflow.StepContext) (any, error) {
-		sc.Shared["hayalet"] = "var"
-		return nil, errors.Invalid("gecersiz", "kargo dalı patladı")
+		sc.Shared["ghost"] = "present"
+		return nil, errors.Invalid("invalid", "the shipping branch blew up")
 	}
 
-	par := workflow.NewParallel("cift", a, b).WithLogger(testLogger())
+	par := workflow.NewParallel("pair", a, b).WithLogger(testLogger())
 	eng := workflow.New(workflow.NewMemoryStore(), testLogger())
 
 	_, err := eng.Run(t.Context(),
-		workflow.Workflow{Name: "dal_kirlenmesi", Steps: []workflow.Step{once, par}}, nil)
+		workflow.Workflow{Name: "branch_contamination", Steps: []workflow.Step{first, par}}, nil)
 
 	require.Error(t, err)
-	assert.Equal(t, "orijinal", gorulenRez,
-		"geri alınan dalın yazması önceki adımın telafisine sızmamalı")
-	assert.False(t, hayaletVarMi, "patlayan dalın yazması üst bağlama işlenmemeli")
+	assert.Equal(t, "original", seenRes,
+		"a rolled-back branch's write must not leak into the earlier step's compensation")
+	assert.False(t, ghostFound, "the write of the branch that blew up must not be merged into the parent context")
 }
 
-// TestParallelMergeKeepsWritingBranchValue yalnızca okuyan bir dalın bayat
-// kopyasının, yazan kardeşinin değerini ezmediğini doğrular.
+// TestParallelMergeKeepsWritingBranchValue verifies that the stale copy of a
+// read-only branch does not overwrite the value its writing sibling produced.
 func TestParallelMergeKeepsWritingBranchValue(t *testing.T) {
 	rec := &recorder{}
 
-	once := step(rec, "once")
-	once.onInvoke = func(_ context.Context, sc *workflow.StepContext) (any, error) {
-		sc.Shared["rez"] = "eski"
-		return "once-out", nil
+	first := step(rec, "first")
+	first.onInvoke = func(_ context.Context, sc *workflow.StepContext) (any, error) {
+		sc.Shared["res"] = "old"
+		return "first-out", nil
 	}
 
-	yazan := step(rec, "yazan")
-	yazan.onInvoke = func(_ context.Context, sc *workflow.StepContext) (any, error) {
-		sc.Shared["rez"] = "yeni"
-		return "yazan-out", nil
+	writer := step(rec, "writer")
+	writer.onInvoke = func(_ context.Context, sc *workflow.StepContext) (any, error) {
+		sc.Shared["res"] = "new"
+		return "writer-out", nil
 	}
 
-	okuyan := step(rec, "okuyan")
-	okuyan.onInvoke = func(_ context.Context, sc *workflow.StepContext) (any, error) {
-		_ = sc.Shared["rez"] // yalnızca okur, yazmaz
-		return "okuyan-out", nil
+	reader := step(rec, "reader")
+	reader.onInvoke = func(_ context.Context, sc *workflow.StepContext) (any, error) {
+		_ = sc.Shared["res"] // reads only, never writes
+		return "reader-out", nil
 	}
 
-	var sonra any
-	son := step(rec, "sonra")
-	son.onInvoke = func(_ context.Context, sc *workflow.StepContext) (any, error) {
-		sonra = sc.Shared["rez"]
-		return "sonra-out", nil
+	var afterwards any
+	later := step(rec, "later")
+	later.onInvoke = func(_ context.Context, sc *workflow.StepContext) (any, error) {
+		afterwards = sc.Shared["res"]
+		return "later-out", nil
 	}
 
-	par := workflow.NewParallel("cift", yazan, okuyan).WithLogger(testLogger())
+	par := workflow.NewParallel("pair", writer, reader).WithLogger(testLogger())
 	eng := workflow.New(workflow.NewMemoryStore(), testLogger())
 
 	_, err := eng.Run(t.Context(),
-		workflow.Workflow{Name: "bayat_kopya", Steps: []workflow.Step{once, par, son}}, nil)
+		workflow.Workflow{Name: "stale_copy", Steps: []workflow.Step{first, par, later}}, nil)
 
 	require.NoError(t, err)
-	assert.Equal(t, "yeni", sonra,
-		"dokunmayan dalın bayat kopyası yazan dalın değerini ezmemeli")
+	assert.Equal(t, "new", afterwards,
+		"the stale copy of the branch that did not touch it must not overwrite the writing branch's value")
 }
 
-// TestParallelRollbackFailureMarksCompensationFailed bileşiğin İÇ geri alması
-// patladığında yürütmenin failed değil compensation_failed yazıldığını doğrular.
+// TestParallelRollbackFailureMarksCompensationFailed verifies that when the
+// composite's INTERNAL rollback blows up the execution is written as
+// compensation_failed rather than failed.
 func TestParallelRollbackFailureMarksCompensationFailed(t *testing.T) {
 	rec := &recorder{}
 
@@ -402,85 +409,85 @@ func TestParallelRollbackFailureMarksCompensationFailed(t *testing.T) {
 		return "a-out", nil
 	}
 	a.onCompensate = func(context.Context, *workflow.StepContext) error {
-		return errors.Unavailable("gecici", "a dalı geri alınamadı")
+		return errors.Unavailable("transient", "branch a could not be rolled back")
 	}
 
 	b := step(rec, "b")
 	b.onInvoke = func(context.Context, *workflow.StepContext) (any, error) {
-		return nil, errors.Invalid("gecersiz", "b dalı patladı")
+		return nil, errors.Invalid("invalid", "branch b blew up")
 	}
 
-	par := workflow.NewParallel("cift", a, b).WithLogger(testLogger())
+	par := workflow.NewParallel("pair", a, b).WithLogger(testLogger())
 	store := workflow.NewMemoryStore()
 	eng := workflow.New(store, testLogger())
 
 	_, err := eng.Run(t.Context(),
-		workflow.Workflow{Name: "ic_geri_alma", Steps: []workflow.Step{par}}, nil)
+		workflow.Workflow{Name: "internal_rollback", Steps: []workflow.Step{par}}, nil)
 	require.Error(t, err)
 
 	exec, gerr := store.Get(t.Context(), execID)
 	require.NoError(t, gerr)
 	assert.Equal(t, workflow.StatusCompensationFailed, exec.Status,
-		"asılı kalan dal yan etkisi failed diye yazılamaz")
+		"a branch side effect left hanging cannot be written as failed")
 }
 
-// --- Run'ın çıktı tipi ------------------------------------------------------
+// --- Run's output type ------------------------------------------------------
 
-// TestRunOutputTypeIsStable mutlu yolun ve tekrarın AYNI Go tipini döndüğünü
-// doğrular: çağıranın tip doğrulaması yarışa bağlı olamaz.
+// TestRunOutputTypeIsStable verifies that the happy path and the repeat return
+// the SAME Go type: the caller's type assertion cannot depend on a race.
 func TestRunOutputTypeIsStable(t *testing.T) {
 	rec := &recorder{}
-	wf := workflow.Workflow{Name: "tip_kararli", Steps: steps(step(rec, "a"))}
+	wf := workflow.Workflow{Name: "stable_type", Steps: steps(step(rec, "a"))}
 
 	eng := workflow.New(workflow.NewMemoryStore(), testLogger())
 
-	ilk, err := eng.Run(t.Context(), wf, nil, workflow.WithIdempotencyKey("k"))
+	first, err := eng.Run(t.Context(), wf, nil, workflow.WithIdempotencyKey("k"))
 	require.NoError(t, err)
-	tekrar, err := eng.Run(t.Context(), wf, nil, workflow.WithIdempotencyKey("k"))
+	repeat, err := eng.Run(t.Context(), wf, nil, workflow.WithIdempotencyKey("k"))
 	require.NoError(t, err)
 
-	ilkRaw, ok := ilk.(json.RawMessage)
-	require.True(t, ok, "mutlu yol da json.RawMessage dönmeli")
-	tekrarRaw, ok := tekrar.(json.RawMessage)
+	firstRaw, ok := first.(json.RawMessage)
+	require.True(t, ok, "the happy path has to return a json.RawMessage too")
+	repeatRaw, ok := repeat.(json.RawMessage)
 	require.True(t, ok)
 
-	assert.JSONEq(t, string(ilkRaw), string(tekrarRaw))
+	assert.JSONEq(t, string(firstRaw), string(repeatRaw))
 }
 
-// TestParallelRetryStartsFromCleanShared yeniden denenen bir bileşiğin
-// 2. denemesinin, geri alınmış 1. denemenin verisini GÖRMEDİĞİNİ doğrular.
+// TestParallelRetryStartsFromCleanShared verifies that attempt 2 of a retried
+// composite DOES NOT SEE the data of the rolled-back attempt 1.
 func TestParallelRetryStartsFromCleanShared(t *testing.T) {
 	rec := &recorder{}
 
-	var gorulen []any
+	var seen []any
 	a := step(rec, "a")
 	a.onInvoke = func(_ context.Context, sc *workflow.StepContext) (any, error) {
-		gorulen = append(gorulen, sc.Shared["rez"])
-		sc.Shared["rez"] = fmt.Sprintf("rez_%d", sc.Attempt)
+		seen = append(seen, sc.Shared["res"])
+		sc.Shared["res"] = fmt.Sprintf("res_%d", sc.Attempt)
 		return "a-out", nil
 	}
 
 	b := step(rec, "b")
 	b.onInvoke = func(context.Context, *workflow.StepContext) (any, error) {
-		return nil, errors.Unavailable("gecici", "b dalı patladı")
+		return nil, errors.Unavailable("transient", "branch b blew up")
 	}
 
-	par := workflow.NewParallel("cift", a, b).WithLogger(testLogger())
+	par := workflow.NewParallel("pair", a, b).WithLogger(testLogger())
 	eng := workflow.New(workflow.NewMemoryStore(), testLogger())
 
 	_, err := eng.Run(t.Context(),
-		workflow.Workflow{Name: "bilesik_tekrar", Steps: []workflow.Step{par}}, nil,
+		workflow.Workflow{Name: "composite_retry", Steps: []workflow.Step{par}}, nil,
 		workflow.WithRetry(workflow.RetryPolicy{MaxAttempts: 2}))
 
 	require.Error(t, err)
-	require.Len(t, gorulen, 2)
-	assert.Equal(t, []any{nil, nil}, gorulen,
-		"geri alınmış denemenin yazması sonraki denemeye sızmamalı")
+	require.Len(t, seen, 2)
+	assert.Equal(t, []any{nil, nil}, seen,
+		"the write of a rolled-back attempt must not leak into the next attempt")
 }
 
-// TestUncompensatedSentinelForcesCompensationFailed ErrUncompensated taşıyan bir
-// adım hatasının, telafi zinciri temiz bitse bile durumu compensation_failed
-// yaptığını doğrular.
+// TestUncompensatedSentinelForcesCompensationFailed verifies that a step error
+// carrying ErrUncompensated makes the status compensation_failed even when the
+// compensation chain finished cleanly.
 func TestUncompensatedSentinelForcesCompensationFailed(t *testing.T) {
 	rec := &recorder{}
 
@@ -491,19 +498,19 @@ func TestUncompensatedSentinelForcesCompensationFailed(t *testing.T) {
 	b := step(rec, "b")
 	b.onInvoke = func(context.Context, *workflow.StepContext) (any, error) {
 		return nil, errors.Wrap(workflow.ErrUncompensated, errors.KindInternal,
-			"asili", "b arkasında iş bıraktı")
+			"hanging", "b left work behind")
 	}
 
 	store := workflow.NewMemoryStore()
 	eng := workflow.New(store, testLogger())
 
-	_, err := eng.Run(t.Context(), workflow.Workflow{Name: "asili_yan_etki", Steps: steps(a, b)}, nil)
+	_, err := eng.Run(t.Context(), workflow.Workflow{Name: "hanging_side_effect", Steps: steps(a, b)}, nil)
 	require.Error(t, err)
 
-	assert.Contains(t, rec.snapshot(), "compensate:a", "önceki adım yine de telafi edilmeli")
+	assert.Contains(t, rec.snapshot(), "compensate:a", "the earlier step still has to be compensated")
 
 	exec, gerr := store.Get(t.Context(), execID)
 	require.NoError(t, gerr)
 	assert.Equal(t, workflow.StatusCompensationFailed, exec.Status,
-		"asılı yan etki bildiren yürütme failed diye yazılamaz")
+		"an execution reporting a hanging side effect cannot be written as failed")
 }

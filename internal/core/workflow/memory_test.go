@@ -13,8 +13,8 @@ import (
 	"github.com/bdrtr/gobit/internal/core/workflow"
 )
 
-// yeniYurutme testlerde kullanılan geçerli bir yürütme kaydı üretir.
-func yeniYurutme(id, wf, key string) *workflow.Execution {
+// newExecution produces a valid execution record for the tests.
+func newExecution(id, wf, key string) *workflow.Execution {
 	return &workflow.Execution{
 		ID:             id,
 		Workflow:       wf,
@@ -28,7 +28,7 @@ func yeniYurutme(id, wf, key string) *workflow.Execution {
 
 func TestMemoryStoreCreateAndGet(t *testing.T) {
 	s := workflow.NewMemoryStore()
-	require.NoError(t, s.Create(t.Context(), yeniYurutme("wfx_1", "wf", "k1")))
+	require.NoError(t, s.Create(t.Context(), newExecution("wfx_1", "wf", "k1")))
 
 	got, err := s.Get(t.Context(), "wfx_1")
 	require.NoError(t, err)
@@ -40,7 +40,7 @@ func TestMemoryStoreCreateAndGet(t *testing.T) {
 
 func TestMemoryStoreGetNotFound(t *testing.T) {
 	s := workflow.NewMemoryStore()
-	_, err := s.Get(t.Context(), "yok")
+	_, err := s.Get(t.Context(), "missing")
 	require.Error(t, err)
 	assert.Equal(t, errors.KindNotFound, errors.KindOf(err))
 	assert.Equal(t, workflow.CodeExecutionNotFound, errors.CodeOf(err))
@@ -56,57 +56,57 @@ func TestMemoryStoreCreateRejectsInvalid(t *testing.T) {
 
 func TestMemoryStoreDuplicateIdempotencyKeyConflicts(t *testing.T) {
 	s := workflow.NewMemoryStore()
-	require.NoError(t, s.Create(t.Context(), yeniYurutme("wfx_1", "wf", "k1")))
+	require.NoError(t, s.Create(t.Context(), newExecution("wfx_1", "wf", "k1")))
 
-	err := s.Create(t.Context(), yeniYurutme("wfx_2", "wf", "k1"))
+	err := s.Create(t.Context(), newExecution("wfx_2", "wf", "k1"))
 	require.Error(t, err)
 	assert.Equal(t, errors.KindConflict, errors.KindOf(err))
 
-	// Aynı anahtar FARKLI workflow için serbesttir.
-	require.NoError(t, s.Create(t.Context(), yeniYurutme("wfx_3", "başka_wf", "k1")))
+	// The same key is free for a DIFFERENT workflow.
+	require.NoError(t, s.Create(t.Context(), newExecution("wfx_3", "other_wf", "k1")))
 }
 
 func TestMemoryStoreDuplicateIDConflicts(t *testing.T) {
 	s := workflow.NewMemoryStore()
-	require.NoError(t, s.Create(t.Context(), yeniYurutme("wfx_1", "wf", "")))
+	require.NoError(t, s.Create(t.Context(), newExecution("wfx_1", "wf", "")))
 
-	err := s.Create(t.Context(), yeniYurutme("wfx_1", "wf", ""))
+	err := s.Create(t.Context(), newExecution("wfx_1", "wf", ""))
 	require.Error(t, err)
 	assert.Equal(t, errors.KindConflict, errors.KindOf(err))
 }
 
-// TestMemoryStoreEmptyKeysDoNotConflict anahtarsız yürütmelerin birbiriyle
-// çakışmadığını doğrular; tekillik yalnızca anahtar verilmişken zorlanır.
+// TestMemoryStoreEmptyKeysDoNotConflict verifies that keyless executions do not
+// clash with each other; uniqueness is enforced only when a key was given.
 func TestMemoryStoreEmptyKeysDoNotConflict(t *testing.T) {
 	s := workflow.NewMemoryStore()
-	require.NoError(t, s.Create(t.Context(), yeniYurutme("wfx_1", "wf", "")))
-	require.NoError(t, s.Create(t.Context(), yeniYurutme("wfx_2", "wf", "")))
-	require.NoError(t, s.Create(t.Context(), yeniYurutme("wfx_3", "wf", "")))
+	require.NoError(t, s.Create(t.Context(), newExecution("wfx_1", "wf", "")))
+	require.NoError(t, s.Create(t.Context(), newExecution("wfx_2", "wf", "")))
+	require.NoError(t, s.Create(t.Context(), newExecution("wfx_3", "wf", "")))
 
 	_, err := s.FindByIdempotencyKey(t.Context(), "wf", "")
-	require.Error(t, err, "boş anahtar hiçbir yürütmeye eşleşmemeli")
+	require.Error(t, err, "an empty key must not match any execution")
 	assert.Equal(t, errors.KindNotFound, errors.KindOf(err))
 }
 
 func TestMemoryStoreFindByIdempotencyKey(t *testing.T) {
 	s := workflow.NewMemoryStore()
-	require.NoError(t, s.Create(t.Context(), yeniYurutme("wfx_1", "wf", "k1")))
+	require.NoError(t, s.Create(t.Context(), newExecution("wfx_1", "wf", "k1")))
 
 	got, err := s.FindByIdempotencyKey(t.Context(), "wf", "k1")
 	require.NoError(t, err)
 	assert.Equal(t, "wfx_1", got.ID)
 
-	_, err = s.FindByIdempotencyKey(t.Context(), "wf", "yok")
+	_, err = s.FindByIdempotencyKey(t.Context(), "wf", "missing")
 	require.Error(t, err)
 	assert.Equal(t, errors.KindNotFound, errors.KindOf(err))
 
-	_, err = s.FindByIdempotencyKey(t.Context(), "başka", "k1")
-	require.Error(t, err, "anahtar workflow adıyla BİRLİKTE tekildir")
+	_, err = s.FindByIdempotencyKey(t.Context(), "other", "k1")
+	require.Error(t, err, "a key is unique TOGETHER WITH the workflow name")
 }
 
 func TestMemoryStoreAppendStepAddsThenUpdates(t *testing.T) {
 	s := workflow.NewMemoryStore()
-	require.NoError(t, s.Create(t.Context(), yeniYurutme("wfx_1", "wf", "")))
+	require.NoError(t, s.Create(t.Context(), newExecution("wfx_1", "wf", "")))
 
 	require.NoError(t, s.AppendStep(t.Context(), "wfx_1", workflow.StepRecord{
 		Name: "a", Index: 0, Status: workflow.StepInvoked, Attempts: 1,
@@ -119,14 +119,14 @@ func TestMemoryStoreAppendStepAddsThenUpdates(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, got.Steps, 2)
 
-	// Aynı Index yeni satır AÇMAZ, var olanı günceller.
+	// The same Index DOES NOT open a new row, it updates the existing one.
 	require.NoError(t, s.AppendStep(t.Context(), "wfx_1", workflow.StepRecord{
 		Name: "a", Index: 0, Status: workflow.StepCompensated, Attempts: 2,
 	}))
 
 	got, err = s.Get(t.Context(), "wfx_1")
 	require.NoError(t, err)
-	require.Len(t, got.Steps, 2, "aynı Index ikinci satır açmamış olmalı")
+	require.Len(t, got.Steps, 2, "the same Index must not have opened a second row")
 	assert.Equal(t, workflow.StepCompensated, got.Steps[0].Status)
 	assert.Equal(t, 2, got.Steps[0].Attempts)
 	assert.Equal(t, workflow.StepInvoked, got.Steps[1].Status)
@@ -134,14 +134,14 @@ func TestMemoryStoreAppendStepAddsThenUpdates(t *testing.T) {
 
 func TestMemoryStoreAppendStepUnknownExecution(t *testing.T) {
 	s := workflow.NewMemoryStore()
-	err := s.AppendStep(t.Context(), "yok", workflow.StepRecord{Name: "a"})
+	err := s.AppendStep(t.Context(), "missing", workflow.StepRecord{Name: "a"})
 	require.Error(t, err)
 	assert.Equal(t, errors.KindNotFound, errors.KindOf(err))
 }
 
 func TestMemoryStoreUpdateStatus(t *testing.T) {
 	s := workflow.NewMemoryStore()
-	require.NoError(t, s.Create(t.Context(), yeniYurutme("wfx_1", "wf", "")))
+	require.NoError(t, s.Create(t.Context(), newExecution("wfx_1", "wf", "")))
 
 	require.NoError(t, s.UpdateStatus(t.Context(), "wfx_1", workflow.StatusCompleted, json.RawMessage(`{"ok":true}`), ""))
 
@@ -151,20 +151,20 @@ func TestMemoryStoreUpdateStatus(t *testing.T) {
 	assert.JSONEq(t, `{"ok":true}`, string(got.Output))
 	assert.True(t, got.UpdatedAt.After(got.CreatedAt) || got.UpdatedAt.Equal(got.CreatedAt))
 
-	err = s.UpdateStatus(t.Context(), "yok", workflow.StatusFailed, nil, "hata")
+	err = s.UpdateStatus(t.Context(), "missing", workflow.StatusFailed, nil, "failure")
 	require.Error(t, err)
 	assert.Equal(t, errors.KindNotFound, errors.KindOf(err))
 }
 
-// TestMemoryStoreReturnsDeepCopies dışarı verilen değerin Store'un durumunu
-// bozamayacağını doğrular; kalıcı bir Store'da da davranış budur.
+// TestMemoryStoreReturnsDeepCopies verifies that a value handed out cannot
+// corrupt the Store's state; a durable Store behaves the same way.
 func TestMemoryStoreReturnsDeepCopies(t *testing.T) {
 	s := workflow.NewMemoryStore()
 
-	original := yeniYurutme("wfx_1", "wf", "k1")
+	original := newExecution("wfx_1", "wf", "k1")
 	require.NoError(t, s.Create(t.Context(), original))
 
-	// Çağıranın elindeki değeri değiştirmek Store'u etkilememeli.
+	// Changing the value the caller holds must not affect the Store.
 	original.Status = workflow.StatusCompleted
 	original.Input[2] = 'X'
 
@@ -174,10 +174,10 @@ func TestMemoryStoreReturnsDeepCopies(t *testing.T) {
 
 	got, err := s.Get(t.Context(), "wfx_1")
 	require.NoError(t, err)
-	assert.Equal(t, workflow.StatusRunning, got.Status, "Store kendi kopyasını tutmalı")
+	assert.Equal(t, workflow.StatusRunning, got.Status, "the Store has to keep its own copy")
 	assert.JSONEq(t, `{"n":1}`, string(got.Input))
 
-	// Store'dan alınan değeri değiştirmek de Store'u etkilememeli.
+	// Changing the value taken FROM the Store must not affect it either.
 	got.Status = workflow.StatusFailed
 	got.Steps[0].Status = workflow.StepFailed
 	got.Steps[0].Output[1] = 'X'
@@ -189,64 +189,66 @@ func TestMemoryStoreReturnsDeepCopies(t *testing.T) {
 	assert.JSONEq(t, `"ilk"`, string(again.Steps[0].Output))
 }
 
-// TestMemoryStoreClaimAbandonedTekKazanan talebin TEKELLİ olduğunu doğrular.
+// TestMemoryStoreClaimAbandonedHasOneWinner verifies that the claim is
+// EXCLUSIVE.
 //
-// Talep kurtarmanın kapısıdır: terk edilmiş kayda aynı anda varan iki süreçten
-// yalnızca biri telafi zincirini koşmalıdır. Kazanan updated_at'i damgalar,
-// dolayısıyla ikinci talep artık gördüğü ana dayanamaz ve KAYBEDER.
-func TestMemoryStoreClaimAbandonedTekKazanan(t *testing.T) {
+// The claim is recovery's gate: of two processes reaching the same abandoned
+// record at once, only one may run the compensation chain. The winner stamps
+// updated_at, so the second claim can no longer rest on the instant it saw and
+// LOSES.
+func TestMemoryStoreClaimAbandonedHasOneWinner(t *testing.T) {
 	s := workflow.NewMemoryStore()
-	talepci, ok := s.(workflow.ClaimingStore)
-	require.True(t, ok, "süreç içi depo talep yeteneğini SUNMALI")
+	claimer, ok := s.(workflow.ClaimingStore)
+	require.True(t, ok, "the in-process store MUST offer the claim capability")
 
-	eski := time.Now().UTC().Add(-time.Hour)
-	exec := yeniYurutme("wfx_talep", "idem", "k")
-	exec.CreatedAt, exec.UpdatedAt = eski, eski
+	old := time.Now().UTC().Add(-time.Hour)
+	exec := newExecution("wfx_claim", "idem", "k")
+	exec.CreatedAt, exec.UpdatedAt = old, old
 	require.NoError(t, s.Create(t.Context(), exec))
 
-	kazandi, err := talepci.ClaimAbandoned(t.Context(), "wfx_talep", eski)
+	won, err := claimer.ClaimAbandoned(t.Context(), "wfx_claim", old)
 	require.NoError(t, err)
-	assert.True(t, kazandi, "ilk talep kazanmalı")
+	assert.True(t, won, "the first claim has to win")
 
-	yine, err := talepci.ClaimAbandoned(t.Context(), "wfx_talep", eski)
+	again, err := claimer.ClaimAbandoned(t.Context(), "wfx_claim", old)
 	require.NoError(t, err)
-	assert.False(t, yine, "aynı ana dayanan ikinci talep KAYBETMELİ")
+	assert.False(t, again, "a second claim resting on the same instant MUST LOSE")
 
-	guncel, err := s.Get(t.Context(), "wfx_talep")
+	current, err := s.Get(t.Context(), "wfx_claim")
 	require.NoError(t, err)
-	assert.True(t, guncel.UpdatedAt.After(eski),
-		"kazanan talep kirayı da tazeler; yoksa kurtarma sürerken kayıt yeniden terk edilmiş görünürdü")
+	assert.True(t, current.UpdatedAt.After(old),
+		"a won claim renews the lease too; otherwise the record would look abandoned again while the recovery runs")
 }
 
-// TestMemoryStoreClaimAbandonedUcDurumlar talebin reddettiği hâlleri sabitler.
-func TestMemoryStoreClaimAbandonedUcDurumlar(t *testing.T) {
+// TestMemoryStoreClaimAbandonedEdgeCases pins the cases the claim refuses.
+func TestMemoryStoreClaimAbandonedEdgeCases(t *testing.T) {
 	s := workflow.NewMemoryStore()
-	talepci := s.(workflow.ClaimingStore) //nolint:errcheck // yetenek bir üstteki testte doğrulandı
+	claimer := s.(workflow.ClaimingStore) //nolint:errcheck // the capability is verified in the test above
 
-	eski := time.Now().UTC().Add(-time.Hour)
-	exec := yeniYurutme("wfx_uc", "idem", "k2")
-	exec.CreatedAt, exec.UpdatedAt = eski, eski
+	old := time.Now().UTC().Add(-time.Hour)
+	exec := newExecution("wfx_edge", "idem", "k2")
+	exec.CreatedAt, exec.UpdatedAt = old, old
 	require.NoError(t, s.Create(t.Context(), exec))
 
-	kazandi, err := talepci.ClaimAbandoned(t.Context(), "wfx_uc", time.Now().UTC())
+	won, err := claimer.ClaimAbandoned(t.Context(), "wfx_edge", time.Now().UTC())
 	require.NoError(t, err)
-	assert.False(t, kazandi, "başka bir ana dayanan talep kaybeder: kayıt o andan beri değişmiş")
+	assert.False(t, won, "a claim resting on another instant loses: the record changed since then")
 
-	require.NoError(t, s.UpdateStatus(t.Context(), "wfx_uc", workflow.StatusCompleted, nil, ""))
-	guncel, err := s.Get(t.Context(), "wfx_uc")
+	require.NoError(t, s.UpdateStatus(t.Context(), "wfx_edge", workflow.StatusCompleted, nil, ""))
+	current, err := s.Get(t.Context(), "wfx_edge")
 	require.NoError(t, err)
 
-	kazandi, err = talepci.ClaimAbandoned(t.Context(), "wfx_uc", guncel.UpdatedAt)
+	won, err = claimer.ClaimAbandoned(t.Context(), "wfx_edge", current.UpdatedAt)
 	require.NoError(t, err)
-	assert.False(t, kazandi, "koşmayan bir yürütme kurtarılmaz")
+	assert.False(t, won, "an execution that is not running is not recovered")
 
-	_, err = talepci.ClaimAbandoned(t.Context(), "wfx_yok", eski)
-	require.Error(t, err, "olmayan kayıt için talep HATA döner; sessiz bir 'kaybettin' arızayı gizlerdi")
+	_, err = claimer.ClaimAbandoned(t.Context(), "wfx_missing", old)
+	require.Error(t, err, "a claim on a record that is not there returns an ERROR; a silent \"you lost\" would hide the failure")
 	assert.True(t, errors.IsNotFound(err))
 }
 
-// TestMemoryStoreConcurrentUse eşzamanlı kullanımın güvenli olduğunu doğrular
-// (yarış dedektörü ile anlamlıdır).
+// TestMemoryStoreConcurrentUse verifies that concurrent use is safe (it is
+// meaningful with the race detector).
 func TestMemoryStoreConcurrentUse(t *testing.T) {
 	s := workflow.NewMemoryStore()
 
@@ -259,7 +261,7 @@ func TestMemoryStoreConcurrentUse(t *testing.T) {
 			defer wg.Done()
 
 			id := "wfx_" + string(rune('A'+i%26)) + string(rune('a'+i/26))
-			if err := s.Create(t.Context(), yeniYurutme(id, "wf", id)); err != nil {
+			if err := s.Create(t.Context(), newExecution(id, "wf", id)); err != nil {
 				return
 			}
 			_ = s.AppendStep(t.Context(), id, workflow.StepRecord{Name: "a", Index: 0, Status: workflow.StepInvoked})
