@@ -3,6 +3,8 @@ package cart
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"strings"
 
 	"github.com/bdrtr/gobit/internal/core/errors"
 )
@@ -216,22 +218,23 @@ func (w *Workflows) lineSubtotals(ctx context.Context, snap Snapshot) ([]LineTot
 		return nil, err
 	}
 
+	unitPrices, err := w.unitPrices(ctx, snap, priceSets)
+	if err != nil {
+		return nil, err
+	}
+
 	lines := make([]LineTotals, 0, len(snap.Items))
 	for i := range snap.Items {
 		item := snap.Items[i]
 
-		unitPrice, priceErr := w.unitPrice(ctx, priceSets[item.VariantID], snap, item)
-		if priceErr != nil {
-			return nil, priceErr
-		}
-		subtotal, mulErr := mulAmount(unitPrice, item.Quantity)
+		subtotal, mulErr := mulAmount(unitPrices[i], item.Quantity)
 		if mulErr != nil {
 			return nil, mulErr
 		}
 
 		lines = append(lines, LineTotals{
 			LineItemID: item.ID,
-			UnitPrice:  unitPrice,
+			UnitPrice:  unitPrices[i],
 			Subtotal:   subtotal,
 		})
 	}
@@ -311,35 +314,215 @@ func assembleTotals(snap Snapshot, lines []LineTotals, shippingTotal int64, taxS
 	return totals, nil
 }
 
-// unitPrice satırın birim fiyatını pricing'den alır.
+// priceRequest pricing modülüne giden TOPLU fiyat isteğinin JSON şemasıdır.
 //
-// Fiyat bağlamına yalnızca bölge konur; müşteri segmentinin neden dışarıda
-// kaldığı paket yorumundadır.
+// Alan adları pricing'in interop şemasıyla BİREBİR aynı olmak ZORUNDADIR: iki
+// paket birbirini import edemediği için derleyici uyumu göremez (ADR 0006'nın
+// kabul edilen bedeli) ve uyum ancak entegrasyon testiyle kanıtlanabilir
+// (bkz. internal/e2e/sepet_toplam_test.go).
 //
-// Uygun fiyat yoksa pricing errors.NotFound döner ve hata BURADA errors.Invalid
-// olarak yeniden sınıflandırılır: satır sepette DURUYOR, eksik olan onun bu
-// para birimindeki fiyatıdır. NotFound olarak geçseydi istemci "sepet/satır
-// yok" (404) okur ve gerçekte düzeltilebilir olan durumu kayıp sanardı.
-func (w *Workflows) unitPrice(ctx context.Context, priceSetID string, snap Snapshot, item SnapshotItem) (int64, error) {
-	quantity, err := quantity32(item.Quantity)
-	if err != nil {
-		return 0, err
+// Para birimi ve bağlam KALEM BAŞINA taşınmaz: bir sepetin tüm satırları aynı
+// para biriminde ve aynı bölgededir, alanı kalem başına tekrarlamak iki satırın
+// farklı bağlamla fiyatlanabildiği izlenimi verirdi.
+type priceRequest struct {
+	// CurrencyCode sepetin para birimidir (ISO 4217).
+	CurrencyCode string `json:"currency_code"`
+	// Attributes fiyat kurallarının bakacağı bağlamdır; bugün yalnızca bölge
+	// konur ve müşteri segmentinin neden dışarıda kaldığı paket yorumundadır.
+	Attributes map[string]string `json:"attributes"`
+	// Items fiyatlanacak kalemlerdir ve sepetteki satır SIRASIYLA gider.
+	Items []priceRequestItem `json:"items"`
+}
+
+// priceRequestItem toplu fiyat isteğindeki tek bir kalemin şemasıdır.
+type priceRequestItem struct {
+	// PriceSetID satırın varyantının bağlı olduğu fiyat kabıdır.
+	PriceSetID string `json:"price_set_id"`
+	// Quantity satırın GÜNCEL adedidir; fiyat kademesi buna göre seçilir.
+	Quantity int32 `json:"quantity"`
+}
+
+// priceResponse pricing modülünden dönen toplu fiyat sonucunun JSON şemasıdır.
+//
+// Bilinmeyen alanlar SESSİZCE ATLANIR (isteğin tersine): pricing şemasını
+// büyüttüğünde bu paketin aynı turda güncellenmesi gerekmemelidir. Sessizlik
+// yalnızca TANINMAYAN alanlar içindir; tanınanların taşıdığı değişmezler
+// [Workflows.unitPrices] içinde tek tek doğrulanır.
+type priceResponse struct {
+	// Items istekteki kalemlerle AYNI SIRADA ve AYNI UZUNLUKTA sonuçlardır.
+	Items []priceResponseItem `json:"items"`
+}
+
+// priceResponseItem toplu fiyat yanıtındaki tek bir kalemin şemasıdır.
+type priceResponseItem struct {
+	// Amount seçilen birim fiyattır (minor unit); Priced false ise anlamsızdır.
+	Amount int64 `json:"amount"`
+	// Priced kalem için geçerli bir fiyat BULUNUP bulunmadığını bildirir.
+	//
+	// Ayrı bir bayrak ŞARTTIR: sıfır GEÇERLİ bir fiyattır (bedava kalem gerçek
+	// bir senaryodur), dolayısıyla "tutar 0" ile "fiyat yok" tutarın kendisinden
+	// ayırt edilemez. Bayrak olmasaydı fiyatı olmayan bir varyant sepete BEDAVA
+	// girerdi.
+	Priced bool `json:"priced"`
+}
+
+// unitPrices sepetin TÜM satırlarının birim fiyatını TEK turda alır.
+//
+// Dönen dilim anlık görüntüdeki satırlarla AYNI SIRADA ve AYNI UZUNLUKTADIR;
+// [Workflows.lineSubtotals] indeksle eşler.
+//
+// # Neden toplu
+//
+// Hesap turu satır başına iki sorgu açıyordu (fiyat adayları + kuralları) ve
+// her satır ekleme kendinden önceki TÜM satırları yeniden fiyatlıyordu, yani
+// bir sepeti kurmanın maliyeti satır sayısıyla KARESEL büyüyordu. Ölçüldü
+// (bu paketin sahteleriyle, çağrılar sayılarak): 100 satırlık bir sepeti
+// kurmak 5150 fiyat çağrısı — 10.300 sorgu — ediyordu; toplu yolla aynı sepet
+// 200 çağrı ve 400 sorgudur.
+//
+// Sorgunun kendisi de ölçüldü (gobit_load, 54.000 kap, localhost TCP, yedi
+// turun en iyisi): 50 kap için kap başına yol 4,9 ms, toplu yol 0,25 ms;
+// 100 kap için 9,9 ms ve 0,33 ms. TEK kapta toplu yolun bir üstünlüğü yoktur
+// (aday sorgusu 500 turun medyanıyla 66 µs'ye karşı 77 µs; iki plan da aynı
+// kısmi indeksi tarar, dizi parametreli olan üstüne bir sıralama adımı ekler),
+// bu yüzden satır AÇILIRKEN sorulan tek fiyat hâlâ tekil metotla sorulur
+// (bkz. [Workflows.AddLineItem]).
+//
+// # Seçilen tutar DEĞİŞMEZ
+//
+// İki yol pricing'in AYNI saf seçim fonksiyonunu çalıştırır ve aynı aday
+// satırlarını görür; tek fark, toplu yolun saati bir kez okumasıdır ve bu fark
+// toplu yolun lehinedir — tam o sırada biten bir kampanya, aynı sepetin iki
+// satırını farklı dünyalardan fiyatlayamaz. Eşitlik iddiası pricing'in kendi
+// testinde kanıtlanır (TestCalculateAmountsJSONMatchesCalculateAmount).
+//
+// # Fiyatı olmayan satır
+//
+// pricing toplu yolda hata değil bayrak döner; hata sınıflandırması BURADA
+// yapılır ve tekil yoldakiyle birebir aynıdır (errors.Invalid,
+// [CodePriceUnavailable]): satır sepette DURUYOR, eksik olan onun bu para
+// birimindeki fiyatıdır. NotFound olarak geçseydi istemci "sepet/satır yok"
+// (404) okur ve gerçekte düzeltilebilir olan durumu kayıp sanardı.
+//
+// Bayrağın kazandırdığı şey burada harcanır: fiyatsız satırların HEPSİ tek
+// hatada sayılır (bkz. [priceUnavailable]), ilk fiyatsız satırda dönülmez.
+//
+// # Yanıt DOĞRULANIR
+//
+// Uzunluk ve tutar aralığı denetlenir. Sınırın öteki tarafını derleyici
+// denetlemez; hizasını kaybetmiş bir yanıt sessizce geçseydi sepetin her satırı
+// BAŞKA bir varyantın fiyatıyla yazılırdı ve hiçbir kapı bunu görmezdi.
+//
+// # İstek BÖLÜNMEZ ve bunun bir sınırı vardır
+//
+// Sepetin tüm satırları tek istekte gider. pricing'in kendi kalem tavanı
+// (MaxCalculateItems, bugün 1000) aşılırsa istek reddedilir ve o sepetin
+// toplamı HİÇ hesaplanamaz. Bugün ulaşılamaz bir durumdur: satır açan tek yol
+// [MaxLineItems] (100) tavanına tabidir ve 1000'in üstüne çıkmanın tek yolu o
+// sabiti büyütmektir — büyütülürse pricing'in tavanı da onunla birlikte
+// büyütülmelidir. Büyütmeden önce MaxCalculateItems godoc'undaki plan tablosuna
+// bakılmalı: pricing'in toplu okuması 280 ile 300 kimlik arasında indeksi
+// bırakıp tabloyu taramaya geçiyor, yani maliyet 1000'e kadar doğrusal değil.
+//
+// İstek kalem tavanına göre BÖLÜNMEZ, çünkü bölmek yukarıdaki "tek an"
+// güvencesini geri alırdı: her parça saati yeniden okur ve tam o sırada biten
+// bir kampanya sepetin ilk parçasını başka, ikinci parçasını başka bir dünyadan
+// fiyatlardı.
+func (w *Workflows) unitPrices(ctx context.Context, snap Snapshot, priceSets map[string]string) ([]int64, error) {
+	if len(snap.Items) == 0 {
+		return nil, nil
 	}
 
-	amount, err := w.prices.CalculateAmount(ctx, priceSetID, snap.CurrencyCode, quantity,
-		map[string]string{attrRegionID: snap.RegionID})
-	if err != nil {
-		if errors.IsNotFound(err) {
-			return 0, errors.Wrap(err, errors.KindInvalid, CodePriceUnavailable,
-				"%s varyantının %s para biriminde ve %d adette fiyatı yok (satır: %s)",
-				item.VariantID, snap.CurrencyCode, item.Quantity, item.ID)
+	req := priceRequest{
+		CurrencyCode: snap.CurrencyCode,
+		Attributes:   map[string]string{attrRegionID: snap.RegionID},
+		Items:        make([]priceRequestItem, 0, len(snap.Items)),
+	}
+	for i := range snap.Items {
+		quantity, err := quantity32(snap.Items[i].Quantity)
+		if err != nil {
+			return nil, err
 		}
-		return 0, err
+		req.Items = append(req.Items, priceRequestItem{
+			PriceSetID: priceSets[snap.Items[i].VariantID],
+			Quantity:   quantity,
+		})
 	}
-	if err := checkAmount("unit_price", amount, MaxAmount); err != nil {
-		return 0, err
+
+	payload, err := json.Marshal(req)
+	if err != nil {
+		return nil, errors.Wrap(err, errors.KindInternal, CodePriceResponseInvalid,
+			"toplu fiyat isteği JSON'a çevrilemedi: %s", snap.ID)
 	}
-	return amount, nil
+
+	raw, err := w.prices.CalculateAmountsJSON(ctx, payload)
+	if err != nil {
+		// Sınıf ve kod KORUNUR: pricing'in hatası tekil yolda da olduğu gibi
+		// geçer, sarmalanırsa "fiyat yok" ile "fiyat sorulamadı" ayrımı kaybolur.
+		return nil, err
+	}
+
+	var resp priceResponse
+	if err := json.Unmarshal(raw, &resp); err != nil {
+		return nil, errors.Wrap(err, errors.KindInternal, CodePriceResponseInvalid,
+			"toplu fiyat sonucu çözülemedi: %s", snap.ID)
+	}
+	if len(resp.Items) != len(snap.Items) {
+		return nil, errors.Internal(CodePriceResponseInvalid,
+			"toplu fiyat sonucu %d satır için %d kayıt döndürdü (%s)",
+			len(snap.Items), len(resp.Items), snap.ID)
+	}
+
+	var unpriced []int
+	for i := range resp.Items {
+		if !resp.Items[i].Priced {
+			unpriced = append(unpriced, i)
+		}
+	}
+	if len(unpriced) > 0 {
+		return nil, priceUnavailable(snap, unpriced)
+	}
+
+	out := make([]int64, 0, len(resp.Items))
+	for i := range resp.Items {
+		if err := checkAmount("unit_price", resp.Items[i].Amount, MaxAmount); err != nil {
+			return nil, err
+		}
+		out = append(out, resp.Items[i].Amount)
+	}
+	return out, nil
+}
+
+// priceUnavailable fiyatı olmayan satırların HEPSİNİ tek hatada bildirir.
+//
+// İlk fiyatsız satırda durup dönmek, elde olan bilgiyi ATMAK olurdu: toplu
+// yanıt satırların hepsini birden taşır, dolayısıyla iki ölü varyantı olan bir
+// sepetin sahibi ikisini de bu istekte öğrenebilir — tek tek dönseydi her
+// düzeltmeden sonra bir sonrakini keşfeder, sepetini istek istek onarırdı.
+// Toplu yolun kalem başına BAYRAK dönmesinin (hata değil) burada karşılığı
+// budur; bayrak bir tur atlatmak için değil, bu cümleyi kurabilmek içindir.
+//
+// Sınıf ve kod tekil yoldakiyle aynı kalır (errors.Invalid,
+// [CodePriceUnavailable]): satır sepette DURUYOR, eksik olan onun bu para
+// birimindeki fiyatıdır. Tek satırlık mesaj da aynen korunur — çoğul biçim
+// yalnızca gerçekten birden çok satır fiyatsızken kurulur.
+func priceUnavailable(snap Snapshot, unpriced []int) error {
+	if len(unpriced) == 1 {
+		item := snap.Items[unpriced[0]]
+		return errors.Invalid(CodePriceUnavailable,
+			"%s varyantının %s para biriminde ve %d adette fiyatı yok (satır: %s)",
+			item.VariantID, snap.CurrencyCode, item.Quantity, item.ID)
+	}
+
+	parts := make([]string, 0, len(unpriced))
+	for _, i := range unpriced {
+		item := snap.Items[i]
+		parts = append(parts, fmt.Sprintf("%s (satır: %s, adet: %d)",
+			item.VariantID, item.ID, item.Quantity))
+	}
+	return errors.Invalid(CodePriceUnavailable,
+		"%d satırın %s para biriminde fiyatı yok: %s",
+		len(unpriced), snap.CurrencyCode, strings.Join(parts, ", "))
 }
 
 // snapshot sepetin anlık görüntüsünü okur ve çözer.

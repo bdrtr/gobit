@@ -1394,6 +1394,18 @@ açıktır.
   yolu yoktur; alan yanıt zarfının parçasıdır ve kaldırmak kırıcı olurdu.
   Panelin ürün listesi bu bedeli ÖDEMEZ — o bilinçli olarak saymadan sayfalar
   (`TestProductListPagesWithoutCounting`).
+- **Sepet kurmanın YAZMA maliyeti hâlâ satır sayısının KARESİYLE büyür.** Satır
+  ekleyen her istek sepetin bütün satırlarının tutarını yeniden yazar: cart
+  modülünün `SetTotals`'ı satır başına ayrı bir UPDATE'i, sepetin kilidi altında
+  koşar. Ölçüldü (çağrılar sayılarak): 100 satırlık bir sepeti kurmak 5.050
+  satır tutarı yazımı eder. OKUMA tarafı toplu fiyat sorgusuyla doğrusala indi
+  (aynı sepet için 10.300 sorgu yerine 400), YAZMA tarafı inmedi — toplu bir
+  UPDATE (`unnest`/`VALUES`) ve cart modülünde sqlc üretimi ister.
+
+  Bugünkü koruma bir TAVANDIR: bir sepet en fazla 100 farklı satır taşır ve
+  fazlası `cart_workflow_line_limit_reached` ile reddedilir. Tavan sepetin
+  kilidi dışındaki anlık görüntüye bakar, yani eşzamanlı iki ekleme onu birkaç
+  satır aşabilir; kesin bir üst sınır değil, sınırsız büyümeyi kesen bir kapı.
 - **Kesintiye uğrayan bir ödeme, ayrılmış stoğu ELLE müdahale bekler hâlde
   bırakır.** Sepet akışı HTTP isteğinin içinde senkron koşar; süreç ortasında
   ölürse (deploy, OOM, pod tahliyesi) telafi HİÇ çalışmaz ve o ana kadar

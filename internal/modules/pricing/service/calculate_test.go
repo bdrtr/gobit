@@ -2,7 +2,9 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"math"
+	"strconv"
 	"testing"
 	"time"
 
@@ -511,4 +513,361 @@ func TestSelectSkipsPriceWithValuelessRule(t *testing.T) {
 
 	require.True(t, ok)
 	assert.Equal(t, "price_b", got.PriceID, "değersiz kurallı fiyat elenmeli")
+}
+
+// batchItem bu testlerdeki toplu fiyat isteğinin tek bir kalemidir.
+type batchItem struct {
+	setID    string
+	quantity int32
+}
+
+// batchFixture seçim kuralının HER boyutunu sınayan fiyat kapları döner: düz
+// bir taban fiyat, bir adet kademesi, tabanı yenen bir kampanya listesi,
+// yalnızca tek bir bölgeye uyan bir kural, yalnızca başka para biriminde fiyatı
+// olan bir kap ve boş bir kap.
+//
+// Aşağıdaki denklik testi ancak bu fikstür kadar değerlidir: buradaki bir kap
+// iki seçim kuralını birbirinden ayıramıyorsa test ikisi için de geçerdi.
+func batchFixture() map[string][]models.PriceCandidate {
+	return map[string][]models.PriceCandidate{
+		"pset_base": {basePrice("price_base", "TRY", 1000, 1, nil)},
+		"pset_tier": {
+			basePrice("price_wide", "TRY", 1000, 1, nil),
+			basePrice("price_tier", "TRY", 800, 10, ptr(int32(20))),
+		},
+		"pset_sale": {
+			basePrice("price_plain", "TRY", 5000, 1, nil),
+			withList(basePrice("price_sale", "TRY", 9000, 1, nil), "plist_sale",
+				activeList("plist_sale", models.PriceListSale)),
+		},
+		"pset_rule": {
+			basePrice("price_any", "TRY", 7000, 1, nil),
+			withRules(basePrice("price_region", "TRY", 6000, 1, nil),
+				models.PriceRule{Attribute: "region_id", Operator: models.OpEq, Values: []string{"reg_1"}}),
+		},
+		"pset_other_currency": {basePrice("price_usd", "USD", 100, 1, nil)},
+		"pset_empty":          {},
+	}
+}
+
+// batchRepo iki aday sorgusunu da AYNI fikstürden karşılar; iki yolu
+// karşılaştırılabilir kılan şey budur.
+func batchRepo(fixture map[string][]models.PriceCandidate) *stubRepo {
+	repo := newStubRepo()
+	repo.listCandidatesFn = func(_ context.Context, id string) ([]models.PriceCandidate, error) {
+		return fixture[id], nil
+	}
+	repo.listCandidatesBySetsFn = func(_ context.Context, ids []string) (map[string][]models.PriceCandidate, error) {
+		out := make(map[string][]models.PriceCandidate, len(ids))
+		for _, id := range ids {
+			out[id] = fixture[id]
+		}
+		return out, nil
+	}
+	repo.getPriceSetFn = func(_ context.Context, id string) (models.PriceSet, error) {
+		if _, ok := fixture[id]; !ok {
+			return models.PriceSet{}, errors.NotFound(CodeInvalidInput, "price set yok: %s", id)
+		}
+		return models.PriceSet{ID: id}, nil
+	}
+	return repo
+}
+
+// callBatch isteği kodlar, toplu yüzeyi çağırır ve yanıtı çözer.
+func callBatch(t *testing.T, svc *Service, currency string, attrs map[string]string, items []batchItem) calculateAmountsResponse {
+	t.Helper()
+
+	req := calculateAmountsRequest{CurrencyCode: currency, Attributes: attrs}
+	for _, item := range items {
+		req.Items = append(req.Items, calculateAmountsItem{PriceSetID: item.setID, Quantity: item.quantity})
+	}
+	payload, err := json.Marshal(req)
+	require.NoError(t, err)
+
+	raw, err := svc.CalculateAmountsJSON(context.Background(), payload)
+	require.NoError(t, err)
+
+	var resp calculateAmountsResponse
+	require.NoError(t, json.Unmarshal(raw, &resp))
+	return resp
+}
+
+// TestCalculateAmountsJSONMatchesCalculateAmount toplu yüzeyin, kalem başına
+// yüzeyin seçtiği tutarın AYNISINI seçtiğini kanıtlar.
+//
+// Sepet hesabının toplu okumaya geçmesi bu iddiaya dayanır: farklı bir fiyat
+// seçen toplu okuma müşteriden farklı bir tutar tahsil ederdi ve aşağıdaki
+// hiçbir denetim bunu göremezdi — toplamlar iki hâlde de kendi içinde
+// tutarlıdır.
+func TestCalculateAmountsJSONMatchesCalculateAmount(t *testing.T) {
+	fixture := batchFixture()
+	svc := newTestService(batchRepo(fixture))
+	attrs := map[string]string{"region_id": "reg_1"}
+	items := []batchItem{
+		{"pset_base", 1},
+		{"pset_tier", 10},
+		{"pset_tier", 1},
+		{"pset_sale", 3},
+		{"pset_rule", 2},
+		{"pset_other_currency", 1},
+		{"pset_empty", 1},
+		{"pset_missing", 1},
+	}
+
+	resp := callBatch(t, svc, "TRY", attrs, items)
+
+	require.Len(t, resp.Items, len(items))
+	var priced int
+	for i, item := range items {
+		amount, err := svc.CalculateAmount(context.Background(), item.setID, "TRY", item.quantity, attrs)
+		if err != nil {
+			require.True(t, errors.IsNotFound(err), "%s: %v", item.setID, err)
+			assert.False(t, resp.Items[i].Priced,
+				"%s tekil yolda fiyatsız, toplu yolda fiyatlı görünüyor", item.setID)
+			assert.Zero(t, resp.Items[i].Amount, "fiyatsız kalemin tutarı sıfırdır")
+			continue
+		}
+		priced++
+		assert.True(t, resp.Items[i].Priced, "%s tekil yolda fiyatlı", item.setID)
+		assert.Equal(t, amount, resp.Items[i].Amount, "%s (adet %d)", item.setID, item.quantity)
+	}
+	require.Equal(t, 5, priced, "fikstürün fiyatlanan kalemleri gerçekten fiyatlanmalı")
+
+	// Kademe ile kampanya listesi yanıtı GERÇEKTEN değiştirmiş olmalı; yoksa
+	// yukarıdaki denklik hiçbir şey kanıtlamayan bir fikstür için de geçerdi.
+	assert.Equal(t, int64(800), resp.Items[1].Amount, "adet kademesi seçilmeli")
+	assert.Equal(t, int64(1000), resp.Items[2].Amount, "kademe dışında geniş fiyat seçilmeli")
+	assert.Equal(t, int64(9000), resp.Items[3].Amount, "kampanya listesi taban fiyatı yenmeli")
+	assert.Equal(t, int64(6000), resp.Items[4].Amount, "bölge kuralı eşleşen fiyat seçilmeli")
+}
+
+// TestCalculateAmountsJSONWithoutAttributesMatchesCalculateAmount kural bağlamı
+// YOKKEN de iki yolun aynı yanıtı verdiğini kanıtlar: kurallı fiyat ikisinde de
+// elenmelidir.
+func TestCalculateAmountsJSONWithoutAttributesMatchesCalculateAmount(t *testing.T) {
+	fixture := batchFixture()
+	svc := newTestService(batchRepo(fixture))
+
+	resp := callBatch(t, svc, "TRY", nil, []batchItem{{"pset_rule", 2}})
+
+	amount, err := svc.CalculateAmount(context.Background(), "pset_rule", "TRY", 2, nil)
+	require.NoError(t, err)
+	require.Len(t, resp.Items, 1)
+	assert.Equal(t, amount, resp.Items[0].Amount)
+	assert.Equal(t, int64(7000), resp.Items[0].Amount, "bağlamsız istekte kurallı fiyat elenmeli")
+}
+
+// TestCalculateAmountsJSONReadsCandidatesOnce toplu yüzeyin varlık sebebini
+// kanıtlar: kalem sayısından BAĞIMSIZ olarak tek bir depo okuması.
+//
+// Kalem başına yol her kalem için iki sorgu açar (adaylar + kurallar); bu yol
+// toplamda iki tane açar. gobit_load'a karşı ölçüldü: 100 kap tek tek 9,9 ms,
+// toplu 0,33 ms (metodun godoc'una bakınız).
+func TestCalculateAmountsJSONReadsCandidatesOnce(t *testing.T) {
+	fixture := batchFixture()
+	repo := batchRepo(fixture)
+	var asked []string
+	repo.listCandidatesBySetsFn = func(_ context.Context, ids []string) (map[string][]models.PriceCandidate, error) {
+		asked = append([]string(nil), ids...)
+		out := make(map[string][]models.PriceCandidate, len(ids))
+		for _, id := range ids {
+			out[id] = fixture[id]
+		}
+		return out, nil
+	}
+	svc := newTestService(repo)
+
+	resp := callBatch(t, svc, "TRY", nil, []batchItem{
+		{"pset_base", 1}, {"pset_tier", 10}, {"pset_base", 5}, {"pset_tier", 1},
+	})
+
+	require.Len(t, resp.Items, 4)
+	assert.Equal(t, 1, repo.calls["ListPriceCandidatesBySets"], "kalem başına değil, tek okuma")
+	assert.Zero(t, repo.calls["ListPriceCandidates"], "tekil aday sorgusu kullanılmamalı")
+	assert.Equal(t, []string{"pset_base", "pset_tier"}, asked, "aynı kap iki kez sorulmamalı")
+
+	// Okumanın tekilleştirilmesi YANITI tekilleştirmemeli: aynı kap iki farklı
+	// adetle sorulduğunda iki farklı kademeye düşebilir.
+	assert.Equal(t, int64(1000), resp.Items[0].Amount)
+	assert.Equal(t, int64(800), resp.Items[1].Amount)
+	assert.Equal(t, int64(1000), resp.Items[2].Amount)
+	assert.Equal(t, int64(1000), resp.Items[3].Amount)
+}
+
+// TestCalculateAmountsJSONReadsClockOnce bir isteğin tüm kalemlerinin AYNI an
+// ile değerlendirildiğini kanıtlar.
+//
+// İsteğin ortasında biten bir kampanya, aynı sepetin iki satırını iki farklı
+// dünyadan fiyatlamamalı; saati kalem başına okumak tam olarak buna izin
+// verirdi.
+func TestCalculateAmountsJSONReadsClockOnce(t *testing.T) {
+	fixture := batchFixture()
+	var reads int
+	svc := New(batchRepo(fixture), Options{Now: func() time.Time {
+		reads++
+		return testNow
+	}})
+
+	req := calculateAmountsRequest{CurrencyCode: "TRY", Items: []calculateAmountsItem{
+		{PriceSetID: "pset_base", Quantity: 1},
+		{PriceSetID: "pset_sale", Quantity: 1},
+		{PriceSetID: "pset_tier", Quantity: 10},
+	}}
+	payload, err := json.Marshal(req)
+	require.NoError(t, err)
+
+	_, err = svc.CalculateAmountsJSON(context.Background(), payload)
+	require.NoError(t, err)
+
+	assert.Equal(t, 1, reads, "saat kalem başına değil istek başına okunur")
+}
+
+// TestCalculateAmountsJSONPreservesOrder yanıtın istekle KONUM üzerinden
+// hizalandığını kanıtlar.
+//
+// Tüketici yanıtları sepet satırlarına indeksle eşler; sırası bozulmuş bir
+// yanıt her satıra komşu varyantın fiyatını yazardı ve aşağıdaki hiçbir denetim
+// bunu yakalamazdı.
+func TestCalculateAmountsJSONPreservesOrder(t *testing.T) {
+	fixture := batchFixture()
+	svc := newTestService(batchRepo(fixture))
+
+	resp := callBatch(t, svc, "TRY", nil, []batchItem{
+		{"pset_sale", 1}, {"pset_empty", 1}, {"pset_base", 1}, {"pset_tier", 10},
+	})
+
+	require.Len(t, resp.Items, 4)
+	assert.Equal(t, []calculatedAmount{
+		{Amount: 9000, Priced: true},
+		{Amount: 0, Priced: false},
+		{Amount: 1000, Priced: true},
+		{Amount: 800, Priced: true},
+	}, resp.Items)
+}
+
+// TestCalculateAmountsJSONNormalizesCurrencyAndQuantity toplu yüzeyin girdiyi
+// kalem başına yüzeyle AYNI biçimde düzelttiğini kanıtlar: para birimi büyük
+// harfe çevrilir, adet 0 ise 1 sayılır.
+func TestCalculateAmountsJSONNormalizesCurrencyAndQuantity(t *testing.T) {
+	fixture := batchFixture()
+	svc := newTestService(batchRepo(fixture))
+
+	resp := callBatch(t, svc, "try", nil, []batchItem{{"pset_tier", 0}})
+
+	amount, err := svc.CalculateAmount(context.Background(), "pset_tier", "try", 0, nil)
+	require.NoError(t, err)
+	require.Len(t, resp.Items, 1)
+	assert.Equal(t, amount, resp.Items[0].Amount)
+	assert.Equal(t, int64(1000), resp.Items[0].Amount, "adet 0, 1 sayılır ve kademe dışında kalır")
+}
+
+// TestCalculateAmountsJSONRejectsBadRequest bozuk bir isteğin BÜTÜN olarak
+// reddedildiğini ve veritabanına hiç ulaşmadığını kanıtlar.
+//
+// Atlamak yerine reddetmek önemlidir: sessizce düşürülen bir kalem, çağırana
+// isteğinden KISA bir yanıt bırakır ve çağıranın dayandığı hizalama kaybolur.
+func TestCalculateAmountsJSONRejectsBadRequest(t *testing.T) {
+	oversized := make([]calculateAmountsItem, MaxCalculateItems+1)
+	for i := range oversized {
+		oversized[i] = calculateAmountsItem{PriceSetID: "pset_base", Quantity: 1}
+	}
+
+	tests := map[string]struct {
+		request calculateAmountsRequest
+		message string
+	}{
+		"para birimi boş": {
+			request: calculateAmountsRequest{Items: []calculateAmountsItem{{PriceSetID: "pset_base", Quantity: 1}}},
+		},
+		"kap kimliği boş": {
+			request: calculateAmountsRequest{CurrencyCode: "TRY", Items: []calculateAmountsItem{{Quantity: 1}}},
+			message: "0. kalemi",
+		},
+		"kap kimliği yanlış önekli": {
+			request: calculateAmountsRequest{CurrencyCode: "TRY", Items: []calculateAmountsItem{
+				{PriceSetID: "pset_base", Quantity: 1},
+				{PriceSetID: "price_1", Quantity: 1},
+			}},
+			message: "1. kalemi",
+		},
+		"adet negatif": {
+			request: calculateAmountsRequest{CurrencyCode: "TRY", Items: []calculateAmountsItem{
+				{PriceSetID: "pset_base", Quantity: -1},
+			}},
+			message: "0. kalemi",
+		},
+		"kalem sayısı tavanı aşıyor": {
+			request: calculateAmountsRequest{CurrencyCode: "TRY", Items: oversized},
+			message: strconv.Itoa(MaxCalculateItems),
+		},
+	}
+
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			repo := batchRepo(batchFixture())
+			payload, err := json.Marshal(tc.request)
+			require.NoError(t, err)
+
+			_, err = newTestService(repo).CalculateAmountsJSON(context.Background(), payload)
+
+			require.Error(t, err)
+			assert.Equal(t, errors.KindInvalid, errors.KindOf(err))
+			if tc.message != "" {
+				assert.Contains(t, err.Error(), tc.message, "hangi kalemin reddedildiği yazılmalı")
+			}
+			assert.Empty(t, repo.calls, "geçersiz istek depoya hiç gitmemeli")
+		})
+	}
+}
+
+// TestCalculateAmountsJSONRejectsUnreadableBody boş ya da bozuk bir gövdenin
+// boş yanıt değil TİPLİ bir hata ürettiğini kanıtlar.
+func TestCalculateAmountsJSONRejectsUnreadableBody(t *testing.T) {
+	for name, body := range map[string]json.RawMessage{
+		"boş gövde":   nil,
+		"bozuk gövde": json.RawMessage(`{"items":`),
+		"dizi gövde":  json.RawMessage(`[]`),
+	} {
+		t.Run(name, func(t *testing.T) {
+			repo := batchRepo(batchFixture())
+
+			_, err := newTestService(repo).CalculateAmountsJSON(context.Background(), body)
+
+			require.Error(t, err)
+			assert.Equal(t, errors.KindInvalid, errors.KindOf(err))
+			assert.Empty(t, repo.calls)
+		})
+	}
+}
+
+// TestCalculateAmountsJSONAcceptsEmptyItemList kalemsiz bir isteğin hata değil
+// BOŞ yanıt olduğunu kanıtlar: satırsız bir sepet geçerli bir sepettir.
+func TestCalculateAmountsJSONAcceptsEmptyItemList(t *testing.T) {
+	repo := batchRepo(batchFixture())
+	svc := newTestService(repo)
+
+	payload, err := json.Marshal(calculateAmountsRequest{CurrencyCode: "TRY"})
+	require.NoError(t, err)
+
+	raw, err := svc.CalculateAmountsJSON(context.Background(), payload)
+	require.NoError(t, err)
+
+	var resp calculateAmountsResponse
+	require.NoError(t, json.Unmarshal(raw, &resp))
+	assert.Empty(t, resp.Items)
+}
+
+// TestCalculateAmountsJSONUnconfiguredServiceFailsTyped deposu olmayan bir
+// serviste toplu yüzeyin de diğerleri gibi tipli hata verdiğini kanıtlar.
+func TestCalculateAmountsJSONUnconfiguredServiceFailsTyped(t *testing.T) {
+	payload, err := json.Marshal(calculateAmountsRequest{
+		CurrencyCode: "TRY",
+		Items:        []calculateAmountsItem{{PriceSetID: "pset_base", Quantity: 1}},
+	})
+	require.NoError(t, err)
+
+	_, err = New(nil, Options{}).CalculateAmountsJSON(context.Background(), payload)
+
+	require.Error(t, err)
+	assert.Equal(t, errors.KindUnavailable, errors.KindOf(err))
 }

@@ -98,6 +98,14 @@ const (
 	// CodePriceUnavailable varyantın sepetin para biriminde fiyatı olmadığını
 	// bildirir.
 	CodePriceUnavailable = "cart_workflow_price_unavailable"
+	// CodePriceResponseInvalid fiyat modülünün sözleşme dışı bir toplu fiyat
+	// yanıtı bildirdiğini söyler.
+	//
+	// "Fiyat yok"tan AYRIDIR: bu kod, yanıtın okunamadığını ya da istekle
+	// hizalanmadığını söyler ve hiçbir satırın tutarı güvenilir değildir.
+	CodePriceResponseInvalid = "cart_workflow_price_response_invalid"
+	// CodeCartLineLimit sepetin satır sayısı tavanına ulaştığını bildirir.
+	CodeCartLineLimit = "cart_workflow_line_limit_reached"
 	// CodeCartCompleted tamamlanmış bir sepette hesap istendiğini bildirir.
 	CodeCartCompleted = "cart_workflow_cart_completed"
 	// CodeSnapshotInvalid sepet anlık görüntüsünün okunamadığını bildirir.
@@ -226,6 +234,11 @@ type Carts interface {
 }
 
 // Prices fiyat modülünün ("pricing.service") bu paketçe kullanılan yüzeyidir.
+//
+// İki metot AYNI seçim kuralını çalıştırır ve ayrılıkları maliyet
+// gerekçesidir: tekil olan TEK fiyat sorar (satır açılırken), toplu olan bir
+// sepetin TÜM satırlarını tek turda sorar (hesap turunda). Ölçüm ve iki yolun
+// neden aynı tutarı seçtiği [Workflows.unitPrices] godoc'undadır.
 type Prices interface {
 	// CalculateAmount bir fiyat kümesinin verilen bağlamdaki BİRİM tutarını
 	// minor unit olarak döner. Uygun fiyat yoksa errors.NotFound.
@@ -235,6 +248,14 @@ type Prices interface {
 		quantity int32,
 		attributes map[string]string,
 	) (int64, error)
+
+	// CalculateAmountsJSON birden çok kabın birim tutarını TEK turda döner.
+	//
+	// İstek ve yanıt gövdelerinin şeması [priceRequest] ve [priceResponse]
+	// tiplerinde, tek yerde tanımlıdır. Yanıt istekle AYNI SIRADA ve AYNI
+	// UZUNLUKTA gelmelidir; fiyatı olmayan kalem hata değil, bayrakla
+	// bildirilen bir sonuçtur.
+	CalculateAmountsJSON(ctx context.Context, request json.RawMessage) (json.RawMessage, error)
 }
 
 // Regions bölge modülünün ("region.service") bu paketçe kullanılan yüzeyidir.

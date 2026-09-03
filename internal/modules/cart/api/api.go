@@ -182,6 +182,12 @@ const (
 // sepeti yanıta çevirmek için [Carts.GetCart] zaten yeter. Metodu yüzeyde
 // tutmak, handler'ın akışı ATLAYIP sepeti doğrudan yazabileceği bir kapıyı
 // açık bırakırdı.
+//
+// AddLineItem AYNI SEBEPLE yoktur ve bu bir eksiklik değildir: satır ekleyen uç
+// [LinePricing] akışını çağırır, çünkü fiyatı SUNUCU belirler ve akış sepetin
+// satır sayısı TAVANINI (workflows/cart içindeki MaxLineItems) uygular. Metot
+// yüzeyde dursaydı, ona bağlanacak bir handler hem fiyatlandırmayı hem tavanı
+// SESSİZCE atlardı; servis metodunun kendisi duruyor, akış onu çağırıyor.
 type Carts interface {
 	// GetCart sepeti çocuklarıyla döner.
 	GetCart(ctx context.Context, cartID string) (models.CartDetail, error)
@@ -192,8 +198,6 @@ type Carts interface {
 	// DeleteCart sepeti yumuşak siler.
 	DeleteCart(ctx context.Context, cartID string) error
 
-	// AddLineItem sepete satır ekler.
-	AddLineItem(ctx context.Context, cartID string, in service.AddLineItemInput) (models.LineItem, error)
 	// UpdateLineItemQuantity satırın adedini yazar.
 	UpdateLineItemQuantity(ctx context.Context, cartID, lineID string, quantity int64) (models.LineItem, error)
 	// RemoveLineItem satırı kaldırır.

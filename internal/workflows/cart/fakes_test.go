@@ -130,8 +130,16 @@ type stubPrices struct {
 	amounts map[string]int64
 	// fn verilirse amounts yerine bu kullanılır.
 	fn func(ctx context.Context, priceSetID, currencyCode string, quantity int32, attrs map[string]string) (int64, error)
-	// seen yapılan çağrıların bağlamını sırayla tutar.
+	// seen TEKİL fiyat çağrılarının bağlamını sırayla tutar.
 	seen []priceCall
+	// requests TOPLU fiyat çağrılarının çözülmüş gövdelerini sırayla tutar;
+	// hesap turunun tek tur attığı iddiası bununla kanıtlanır.
+	requests []priceRequest
+	// batchFn verilirse toplu yanıt tamamen bu işlevce üretilir; sözleşme dışı
+	// yanıt senaryoları için vardır.
+	batchFn func(request priceRequest) (priceResponse, error)
+	// batchErr verilirse toplu çağrı bu hatayla düşer.
+	batchErr error
 }
 
 // priceCall tek bir fiyat çağrısının kaydıdır.
@@ -164,6 +172,42 @@ func (s *stubPrices) CalculateAmount(
 			"%s için %s para biriminde fiyat yok", priceSetID, currencyCode)
 	}
 	return amount, nil
+}
+
+// CalculateAmountsJSON toplu isteği çözer, kaydeder ve şemaya uygun bir yanıt
+// döner.
+//
+// Sahte, gerçek pricing modülünün YANIT DEĞİŞMEZLERİNİ taklit eder: istekteki
+// her kalem için AYNI SIRADA bir kayıt ve fiyatı olmayan kalem için hata değil
+// bayrak. Aksi hâlde testler, üretimde asla oluşmayacak bir gövdeyle geçerdi.
+func (s *stubPrices) CalculateAmountsJSON(_ context.Context, request json.RawMessage) (json.RawMessage, error) {
+	var req priceRequest
+	if err := json.Unmarshal(request, &req); err != nil {
+		return nil, err
+	}
+	s.requests = append(s.requests, req)
+
+	if s.batchErr != nil {
+		return nil, s.batchErr
+	}
+	if s.batchFn != nil {
+		resp, err := s.batchFn(req)
+		if err != nil {
+			return nil, err
+		}
+		return json.Marshal(resp)
+	}
+
+	resp := priceResponse{Items: make([]priceResponseItem, 0, len(req.Items))}
+	for i := range req.Items {
+		amount, ok := s.amounts[req.Items[i].PriceSetID]
+		if !ok {
+			resp.Items = append(resp.Items, priceResponseItem{})
+			continue
+		}
+		resp.Items = append(resp.Items, priceResponseItem{Amount: amount, Priced: true})
+	}
+	return json.Marshal(resp)
 }
 
 // stubRegions [Regions] arayüzünün sahte uygulamasıdır.

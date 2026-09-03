@@ -7,6 +7,42 @@ import (
 	"github.com/bdrtr/gobit/internal/core/errors"
 )
 
+// MaxLineItems bir sepetin taşıyabileceği en fazla FARKLI satır sayısıdır.
+//
+// Sınır SESSİZ DEĞİLDİR ve kırpma yoktur: tavana ulaşmış bir sepete YENİ satır
+// açmak isteyen istek errors.Invalid ([CodeCartLineLimit]) ile reddedilir ve
+// mesaj hem tavanı hem sepetteki satır sayısını yazar.
+//
+// # Neden bir tavan var
+//
+// Satır ekleyen her istek sepetin TÜM satırlarını yeniden fiyatlar ve TÜM
+// satırların tutarını yeniden YAZAR, yani N satırlık bir sepeti kurmanın
+// maliyeti N ile değil N² ile büyür. Fiyat okuması toplu hâle getirilerek
+// doğrusala indirildi (bkz. [Workflows.unitPrices]) ama YAZMA tarafı hâlâ satır
+// başınadır: cart modülünün SetTotals'ı her satırın tutarını ayrı bir UPDATE
+// ile ve sepetin kilidi altında yazar. Ölçüldü (bu paketin sahteleriyle,
+// çağrılar sayılarak): 100 satırlık bir sepeti kurmak 5.050 satır tutarı
+// yazımı eder; 1.000 satırlık bir sepet 500.500 eder. Tavansız bir sepet, tek
+// bir istemcinin veritabanını meşgul edebileceği süreyi sınırsız bırakırdı.
+//
+// # Neden 100
+//
+// Değer cart modülünün sayfa boyutu tavanıyla (MaxLimit) aynıdır — tavana
+// dayanmış bir sepetin satırları o modülün TEK sayfasına sığar — ve pricing'in
+// toplu fiyat isteği tavanının (MaxCalculateItems, bugün 1000) onda biridir;
+// aradaki boşluk bilinçlidir ve aşağıdaki paragrafın konusudur.
+//
+// # Tavan yalnızca satır AÇAN yolda uygulanır
+//
+// Sepette zaten duran bir varyantı yeniden eklemek yeni satır açmaz, var olan
+// satırın adedini artırır ve tavana TAKILMAZ; takılsaydı dolu bir sepetin
+// sahibi kendi satırının adedini bile artıramazdı. Aynı gerekçeyle hesap turu,
+// adet güncellemesi ve sipariş yolu tavanı hiç sormaz: tavan KONMADAN önce
+// açılmış ve bugün 100'ün üstünde satır taşıyan bir sepet hesaplanabilir ve
+// tamamlanabilir kalmalıdır — reddetmek, müşterinin var olan sepetini
+// ödenemez hâle getirirdi.
+const MaxLineItems = 100
+
 // AddLineItemInput sepete eklenecek satırın girdisidir.
 type AddLineItemInput struct {
 	// CartID satırın ekleneceği sepettir; ZORUNLUDUR.
@@ -99,6 +135,11 @@ func (w *Workflows) AddLineItem(ctx context.Context, in AddLineItemInput) (AddLi
 		return AddLineItemResult{}, errors.Conflict(CodeCartCompleted,
 			"tamamlanmış sepete satır eklenemez: %s", in.CartID)
 	}
+	// Tavan, katalog ve fiyat okumalarından ÖNCE denetlenir: sonucu baştan belli
+	// bir istek için iki modülü meşgul etmenin anlamı yoktur.
+	if err := checkLineLimit(snap, in.VariantID); err != nil {
+		return AddLineItemResult{}, err
+	}
 
 	title, err := w.variantTitle(ctx, in.VariantID)
 	if err != nil {
@@ -140,6 +181,30 @@ func (w *Workflows) AddLineItem(ctx context.Context, in AddLineItemInput) (AddLi
 		UnitPrice:  unitPrice,
 		Totals:     totals,
 	}, nil
+}
+
+// checkLineLimit isteğin sepete YENİ bir satır açıp açmayacağını ve açacaksa
+// [MaxLineItems] tavanına sığıp sığmadığını denetler.
+//
+// Varyant sepette zaten varsa istek birleştirmedir, satır sayısını
+// DEĞİŞTİRMEZ ve tavandan muaftır; gerekçe [MaxLineItems] godoc'undadır.
+// Karşılaştırmanın kaynağı anlık görüntüdür ve görüntü ile yazma arasında
+// başka bir istek araya girebilir: tavan bu yüzden KESİN bir üst sınır değil,
+// bir sepetin sınırsız büyümesini kesen bir kapıdır — birkaç satırlık bir
+// aşımın maliyeti, satır eklemeyi sepetin kilidi altına almanın maliyetinden
+// çok daha düşüktür.
+func checkLineLimit(snap Snapshot, variantID string) error {
+	if len(snap.Items) < MaxLineItems {
+		return nil
+	}
+	for i := range snap.Items {
+		if snap.Items[i].VariantID == variantID {
+			return nil
+		}
+	}
+	return errors.Invalid(CodeCartLineLimit,
+		"sepet en fazla %d satır taşıyabilir; %s sepetinde %d satır var (var olan bir satırın adedi artırılabilir)",
+		MaxLineItems, snap.ID, len(snap.Items))
 }
 
 // totalsAfterChange sepet DEĞİŞTİKTEN sonra patlayan hesabın hatasını sarar.

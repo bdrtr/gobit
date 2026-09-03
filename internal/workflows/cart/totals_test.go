@@ -43,6 +43,7 @@ func TestCalculateTotalsBosSepet(t *testing.T) {
 
 	assert.Equal(t, Totals{Revision: 0, TaxSource: TaxSourceRegion, Lines: []LineTotals{}}, totals)
 	requireIdentity(t, totals)
+	assert.Empty(t, h.prices.requests, "satırsız sepet için pricing'e tur atılmamalı")
 }
 
 // TestCalculateTotalsSatirsizSepetteKargoToplamaGirer satırsız ama kargolu
@@ -215,11 +216,161 @@ func TestCalculateTotalsFiyatBaglamiBolgeyiTasir(t *testing.T) {
 	_, err := h.wf.CalculateTotals(context.Background(), testCartID)
 	require.NoError(t, err)
 
-	require.Len(t, h.prices.seen, 1)
-	assert.Equal(t, testPriceSetA, h.prices.seen[0].priceSetID)
-	assert.Equal(t, testCurrency, h.prices.seen[0].currencyCode)
-	assert.Equal(t, int32(4), h.prices.seen[0].quantity, "kademe seçimi için adet taşınmalı")
-	assert.Equal(t, map[string]string{attrRegionID: testRegionID}, h.prices.seen[0].attributes)
+	require.Len(t, h.prices.requests, 1)
+	req := h.prices.requests[0]
+	assert.Equal(t, testCurrency, req.CurrencyCode)
+	assert.Equal(t, map[string]string{attrRegionID: testRegionID}, req.Attributes)
+	assert.Equal(t, []priceRequestItem{{PriceSetID: testPriceSetA, Quantity: 4}}, req.Items,
+		"kademe seçimi için adet taşınmalı")
+}
+
+// TestCalculateTotalsFiyatSorgusuTopludur satır sayısı ne olursa olsun tek bir
+// fiyat turu atıldığını doğrular.
+//
+// İddia başarımın kendisidir: satır başına fiyat sorulduğunda N satırlık bir
+// sepeti kurmak N² tur ediyordu (ölçüm [Workflows.unitPrices] godoc'unda).
+// Sayı yerine ÇAĞRI SAYISI denetlenir çünkü süre ölçmek testi makineye bağlar,
+// tur sayısı ise bağlamaz.
+func TestCalculateTotalsFiyatSorgusuTopludur(t *testing.T) {
+	h := newHarness(t)
+	serveSnapshot(h.carts, snapshotOf(3, []SnapshotItem{
+		{ID: testLineA, VariantID: testVariantA, Quantity: 1},
+		{ID: testLineB, VariantID: testVariantB, Quantity: 2},
+		{ID: "li_c", VariantID: testVariantA, Quantity: 5},
+	}, nil))
+
+	totals, err := h.wf.CalculateTotals(context.Background(), testCartID)
+	require.NoError(t, err)
+
+	assert.Empty(t, h.prices.seen, "hesap turu satır başına fiyat sormamalı")
+	require.Len(t, h.prices.requests, 1, "satır sayısından bağımsız tek tur")
+	assert.Equal(t, []priceRequestItem{
+		{PriceSetID: testPriceSetA, Quantity: 1},
+		{PriceSetID: testPriceSetB, Quantity: 2},
+		{PriceSetID: testPriceSetA, Quantity: 5},
+	}, h.prices.requests[0].Items, "kalemler satır sırasında ve adetleriyle gider")
+
+	// Aynı kap iki kez sorulur ve iki satır da KENDİ adediyle fiyatlanır;
+	// kapların tekilleştirilmesi satırları birbirinin fiyatına bağlardı.
+	require.Len(t, totals.Lines, 3)
+	assert.Equal(t, int64(1000), totals.Lines[0].UnitPrice)
+	assert.Equal(t, int64(250), totals.Lines[1].UnitPrice)
+	assert.Equal(t, int64(1000), totals.Lines[2].UnitPrice)
+}
+
+// TestCalculateTotalsHizasizFiyatYanitiReddedilir istekle aynı uzunlukta
+// olmayan bir toplu yanıtın hesabı DÜŞÜRDÜĞÜNÜ doğrular.
+//
+// Sessizce geçseydi satırlar başka varyantların fiyatıyla yazılırdı: kısa bir
+// yanıt eksik satırı sıfır bırakır, uzun bir yanıt hizayı kaydırırdı ve
+// hiçbiri sepetin kimlik denetimlerine takılmazdı.
+func TestCalculateTotalsHizasizFiyatYanitiReddedilir(t *testing.T) {
+	for ad, kayit := range map[string]int{"kisa": 1, "uzun": 3} {
+		t.Run(ad, func(t *testing.T) {
+			h := newHarness(t)
+			serveSnapshot(h.carts, snapshotOf(2, []SnapshotItem{
+				{ID: testLineA, VariantID: testVariantA, Quantity: 1},
+				{ID: testLineB, VariantID: testVariantB, Quantity: 1},
+			}, nil))
+			h.prices.batchFn = func(_ priceRequest) (priceResponse, error) {
+				items := make([]priceResponseItem, kayit)
+				for i := range items {
+					items[i] = priceResponseItem{Amount: 100, Priced: true}
+				}
+				return priceResponse{Items: items}, nil
+			}
+
+			_, err := h.wf.CalculateTotals(context.Background(), testCartID)
+
+			require.Error(t, err)
+			assert.Equal(t, errors.KindInternal, errors.KindOf(err),
+				"sözleşme ihlali sunucu hatasıdır: %v", err)
+			assert.Equal(t, CodePriceResponseInvalid, errors.CodeOf(err))
+			assert.Empty(t, h.carts.written, "hizasız yanıt sepete yazılmamalı")
+		})
+	}
+}
+
+// TestCalculateTotalsFiyatiOlmayanSatirBayraklaReddedilir toplu yolun
+// "fiyat yok" bayrağını tekil yolla AYNI hataya çevirdiğini doğrular.
+//
+// Sınıfın Invalid olması şarttır: satır sepette DURUYOR, eksik olan onun bu
+// para birimindeki fiyatıdır. NotFound geçseydi istemci "sepet/satır yok"
+// okurdu.
+func TestCalculateTotalsFiyatiOlmayanSatirBayraklaReddedilir(t *testing.T) {
+	h := newHarness(t)
+	serveSnapshot(h.carts, snapshotOf(2, []SnapshotItem{
+		{ID: testLineA, VariantID: testVariantA, Quantity: 1},
+		{ID: testLineB, VariantID: testVariantB, Quantity: 7},
+	}, nil))
+	h.prices.batchFn = func(req priceRequest) (priceResponse, error) {
+		return priceResponse{Items: []priceResponseItem{
+			{Amount: 1000, Priced: true},
+			{Priced: false},
+		}}, nil
+	}
+
+	_, err := h.wf.CalculateTotals(context.Background(), testCartID)
+
+	require.Error(t, err)
+	assert.True(t, errors.IsInvalid(err), "beklenen Invalid: %v", err)
+	assert.Equal(t, CodePriceUnavailable, errors.CodeOf(err))
+	assert.Contains(t, err.Error(), testVariantB, "hangi varyantın fiyatsız olduğu yazılmalı")
+	assert.Contains(t, err.Error(), testLineB, "hangi satır olduğu yazılmalı")
+}
+
+// TestCalculateTotalsFiyatsizSatirlarinHEPSIBirHatadaSayilir birden çok fiyatsız
+// satırın TEK hatada bildirildiğini doğrular.
+//
+// Toplu yanıt satırların hepsini birden taşır; ilk fiyatsız satırda dönmek elde
+// olan bilgiyi atmak olurdu ve müşteri sepetini istek istek onarırdı. Kalem
+// başına bayrağın (hata yerine) kazandırdığı tek gözlenebilir şey budur —
+// mutasyonla doğrulandı: ilk fiyatsız satırda dönen bir uygulama bu testi
+// düşürür, diğer fiyat testlerinin hepsini geçer.
+func TestCalculateTotalsFiyatsizSatirlarinHEPSIBirHatadaSayilir(t *testing.T) {
+	h := newHarness(t)
+	serveSnapshot(h.carts, snapshotOf(2, []SnapshotItem{
+		{ID: testLineA, VariantID: testVariantA, Quantity: 1},
+		{ID: testLineB, VariantID: testVariantB, Quantity: 7},
+	}, nil))
+	h.prices.batchFn = func(_ priceRequest) (priceResponse, error) {
+		return priceResponse{Items: []priceResponseItem{{Priced: false}, {Priced: false}}}, nil
+	}
+
+	_, err := h.wf.CalculateTotals(context.Background(), testCartID)
+
+	require.Error(t, err)
+	assert.True(t, errors.IsInvalid(err), "beklenen Invalid: %v", err)
+	assert.Equal(t, CodePriceUnavailable, errors.CodeOf(err))
+	assert.Contains(t, err.Error(), testVariantA, "ilk fiyatsız varyant yazılmalı")
+	assert.Contains(t, err.Error(), testVariantB, "İKİNCİ fiyatsız varyant da yazılmalı")
+	assert.Contains(t, err.Error(), testLineA, "ilk satırın kimliği yazılmalı")
+	assert.Contains(t, err.Error(), testLineB, "ikinci satırın kimliği yazılmalı")
+}
+
+// TestCalculateTotalsAralikDisiBirimFiyatReddedilir toplu yanıttaki aralık dışı
+// bir birim fiyatın hesabı DÜŞÜRDÜĞÜNÜ doğrular.
+//
+// Denetim, veritabanının aynı tavanı zorlamasına rağmen yapılır: sınırın öteki
+// tarafını derleyici görmez ve tavanı aşan bir tutar sepete yazılırsa hata,
+// çarpımın taştığı yerde — satırın ara toplamında — günler sonra görünürdü.
+func TestCalculateTotalsAralikDisiBirimFiyatReddedilir(t *testing.T) {
+	for ad, tutar := range map[string]int64{"tavanın üstünde": MaxAmount + 1, "negatif": -1} {
+		t.Run(ad, func(t *testing.T) {
+			h := newHarness(t)
+			serveSnapshot(h.carts, snapshotOf(1,
+				[]SnapshotItem{{ID: testLineA, VariantID: testVariantA, Quantity: 1}}, nil))
+			h.prices.batchFn = func(_ priceRequest) (priceResponse, error) {
+				return priceResponse{Items: []priceResponseItem{{Amount: tutar, Priced: true}}}, nil
+			}
+
+			_, err := h.wf.CalculateTotals(context.Background(), testCartID)
+
+			require.Error(t, err)
+			assert.Equal(t, CodeAmountOverflow, errors.CodeOf(err))
+			assert.Empty(t, h.carts.written, "aralık dışı tutar sepete yazılmamalı")
+		})
+	}
 }
 
 // TestCalculateTotalsLinkSorgusuTopludur satır sayısı ne olursa olsun tek bir

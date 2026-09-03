@@ -2,6 +2,7 @@ package checkout
 
 import (
 	"context"
+	"encoding/json"
 	"log/slog"
 	"testing"
 
@@ -41,6 +42,43 @@ func (stubPricing) CalculateAmount(
 	default:
 		return 0, errUnexpected("CalculateAmount: " + priceSetID)
 	}
+}
+
+// CalculateAmountsJSON sepet hesabının TOPLU fiyat yüzeyini karşılar.
+//
+// Yanıt istekle aynı sırada ve aynı uzunluktadır; fiyatı olmayan kalem hata
+// değil bayrakla bildirilir (gerçek pricing modülünün sözleşmesi budur).
+func (s stubPricing) CalculateAmountsJSON(
+	ctx context.Context,
+	request json.RawMessage,
+) (json.RawMessage, error) {
+	var req struct {
+		Items []struct {
+			PriceSetID string `json:"price_set_id"`
+			Quantity   int32  `json:"quantity"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(request, &req); err != nil {
+		return nil, err
+	}
+
+	type item struct {
+		Amount int64 `json:"amount"`
+		Priced bool  `json:"priced"`
+	}
+	out := struct {
+		Items []item `json:"items"`
+	}{Items: make([]item, 0, len(req.Items))}
+
+	for i := range req.Items {
+		amount, err := s.CalculateAmount(ctx, req.Items[i].PriceSetID, "", req.Items[i].Quantity, nil)
+		if err != nil {
+			out.Items = append(out.Items, item{})
+			continue
+		}
+		out.Items = append(out.Items, item{Amount: amount, Priced: true})
+	}
+	return json.Marshal(out)
 }
 
 // stubRegions sepet hesabının region yüzeyini karşılar.

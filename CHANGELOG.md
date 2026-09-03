@@ -42,6 +42,42 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Eklendi
 
+- **Sepete satır sayısı TAVANI: 100** (`cart.MaxLineItems`). Tavana dayanmış
+  bir sepete YENİ satır açmak isteyen istek `409` değil `400` ile ve
+  `cart_workflow_line_limit_reached` koduyla reddedilir; mesaj hem tavanı hem
+  sepetteki satır sayısını yazar. Kırpma YOK.
+
+  Sebebi ölçülmüştür: satır ekleyen her istek sepetin tüm satırlarının tutarını
+  yeniden YAZAR (cart modülünün `SetTotals`'ı satır başına bir UPDATE, sepetin
+  kilidi altında), yani 100 satırlık bir sepeti kurmak 5.050 satır yazımı,
+  1.000 satırlık bir sepet 500.500 yazım eder. Tavansız bir sepet, tek bir
+  istemcinin veritabanını meşgul edebileceği süreyi sınırsız bırakıyordu.
+
+  Tavan yalnızca satır AÇAN yolda uygulanır: sepette zaten duran bir varyantı
+  yeniden eklemek adedi artırır ve tavana takılmaz — takılsaydı dolu bir sepetin
+  sahibi kendi satırının adedini bile artıramazdı. Hesap turu, adet güncellemesi
+  ve sipariş yolu tavanı hiç sormaz, çünkü tavan konmadan önce açılmış ve bugün
+  100'ün üstünde satır taşıyan bir sepet hesaplanabilir ve tamamlanabilir
+  kalmalıdır. Tavan bir KAPIDIR, kesin bir üst sınır değil: karşılaştırma sepet
+  kilidinin dışındaki anlık görüntüye bakar, eşzamanlı iki ekleme birkaç satır
+  aşabilir.
+
+  Tavanın dayandığı "tek kapı" iddiası uğruna `cart/api.Carts` arayüzünden
+  `AddLineItem` KALDIRILDI (kırıcı; servis metodunun kendisi duruyor ve akış
+  onu çağırıyor). Metodun hiçbir çağıranı yoktu ama arayüzde durması, ona
+  bağlanacak bir handler'ın hem sunucu tarafı fiyatlandırmayı hem tavanı
+  sessizce atlamasına açık kapı bırakıyordu — aynı gerekçeyle `CreateCart` da
+  o arayüzde yok.
+
+- **`pricing.interop` toplu fiyat yüzeyi yayımlıyor**
+  (`CalculateAmountsJSON`, kalem tavanı `MaxCalculateItems` = 1000). İstek
+  sırasını korur, kalem başına "fiyatlandı" BAYRAĞI döner (hata değil) ve
+  fiyatı olmayan kalem yüzünden isteğin tamamını düşürmez. Tavan aşılırsa istek
+  bütün olarak reddedilir; kırpmak, çağıranın sepetinin bir kısmını fiyatsız
+  bırakıp sonucu "başarılı" göstermek olurdu. Kalem sayısı 280 ile 300 arasında
+  planın indeksten tam taramaya döndüğü ölçüldü ve sabitin godoc'una yazıldı —
+  1000'e kadar maliyet doğrusal değildir.
+
 - **`SHUTDOWN_TIMEOUT` saga bütçesinden kısaysa açılışta UYARI.** Varsayılanlar
   15 saniye ve 2 dakika, yani sıradan bir deploy uçuştaki bir ödemeyi ortasından
   kesebilir. İkisi de yanlış değil — 15 saniye makul bir deploy bütçesi
@@ -183,6 +219,41 @@ Sabitlenme `1.0.0` ile olur.
   dizini eski ayarıyla kalır; uyarı bunu ve dump/restore gerektiğini söyler.
 
 ### Değiştirildi
+
+- **Sepet kurmanın fiyat okuması KARESEL büyüyordu; doğrusala indi.** Satır
+  ekleyen her istek sepetin TÜM satırlarını yeniden fiyatlıyor ve pricing'e
+  satır başına iki sorgu açıyordu, yani N satırlık bir sepeti kurmak ~1,5N²
+  gidiş-dönüş ediyordu. Ölçüldü (paketin kendi sahteleriyle, çağrılar
+  sayılarak):
+
+  | sepet | fiyat çağrısı (eski) | (yeni) | SQL sorgusu (eski) | (yeni) |
+  |---|---|---|---|---|
+  | 10 satır | 65 | 20 | 130 | 40 |
+  | 50 satır | 1 325 | 100 | 2 650 | 200 |
+  | 100 satır | 5 150 | 200 | 10 300 | 400 |
+
+  Hesap turu artık pricing'in TOPLU yüzeyini (`service.CalculateAmountsJSON`)
+  kullanıyor: kap sayısından bağımsız olarak iki sorgu. Toplu okumanın kendisi
+  zaten vardı (`ListPriceCandidatesBySets`) ve hesap yoluna hiç bağlanmamıştı.
+  Sorgunun kendisi de gerçek veriyle ölçüldü (54.000 kap): 50 kap için kap
+  başına yol 4,93 ms, toplu yol 0,25 ms; 100 kap için 9,88 ms ve 0,33 ms.
+
+  Seçilen TUTAR değişmiyor ve bu iddia testle çivili
+  (`TestCalculateAmountsJSONMatchesCalculateAmount`): iki yol pricing'in aynı
+  saf seçim fonksiyonunu aynı aday satırlarıyla çalıştırır. Tek fark toplu
+  yolun saati BİR kez okumasıdır ve fark toplu yolun lehinedir — tam o sırada
+  biten bir kampanya, aynı sepetin iki satırını farklı anlardan fiyatlayamaz.
+
+  Satır AÇILIRKEN sorulan tek fiyat hâlâ tekil metotla soruluyor: ölçüldü, tek
+  kapta toplu yolun üstünlüğü YOK (aday sorgusu 66 µs'ye karşı 77 µs) ve tekil
+  metot daha kesin bir "kap yok" hatası veriyor.
+
+- **Fiyatı olmayan satırların HEPSİ tek hatada bildiriliyor.** Toplu yanıt
+  satırların tamamını birden taşıdığı için ilk fiyatsız satırda dönmek elde
+  olan bilgiyi atmak olurdu: iki ölü varyantı olan bir sepetin sahibi ikisini
+  de bu istekte öğreniyor, sepetini istek istek onarmıyor. Hata sınıfı ve kodu
+  değişmedi (`Invalid`, `cart_workflow_price_unavailable`); tek satır fiyatsızsa
+  mesaj da aynen eskisi gibi.
 
 - **Arama sıralaması `ts_rank_cd` yerine `ts_rank` ile yapılıyor ve sıralama
   sorgusu artık sorgu başına bir kez hesaplanıyor.** Vitrinin arama ucu

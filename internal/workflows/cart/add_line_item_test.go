@@ -3,6 +3,7 @@ package cart
 import (
 	"context"
 	"encoding/json"
+	"strconv"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -263,4 +264,180 @@ func TestAddLineItemGecersizKimlikReddedilir(t *testing.T) {
 			assert.Zero(t, h.carts.snapshotCalls)
 		})
 	}
+}
+
+// tavanaKadarSatir sepeti verilen sayıda satırla doldurur.
+//
+// Satırların hepsi AYNI varyanta bakar; tavan denetimi satır SAYISINA ve
+// eklenmek istenen varyantın sepette olup olmadığına bakar, varyantların
+// çeşitliliğine değil.
+func tavanaKadarSatir(variantID string, count int) []SnapshotItem {
+	items := make([]SnapshotItem, 0, count)
+	for i := range count {
+		items = append(items, SnapshotItem{
+			ID:        "li_" + strconv.Itoa(i),
+			VariantID: variantID,
+			Quantity:  1,
+		})
+	}
+	return items
+}
+
+// TestAddLineItemSatirTavaniniAsanYeniSatiriReddeder tavana dayanmış sepette
+// YENİ bir satır açılamadığını doğrular.
+//
+// Tavan sessiz değildir: istek reddedilir, kırpılmaz ve mesaj tavanı yazar.
+func TestAddLineItemSatirTavaniniAsanYeniSatiriReddeder(t *testing.T) {
+	h := newHarness(t)
+	serveSnapshot(h.carts, snapshotOf(1, tavanaKadarSatir(testVariantA, MaxLineItems), nil))
+
+	_, err := h.wf.AddLineItem(context.Background(), AddLineItemInput{
+		CartID: testCartID, VariantID: testVariantB, Quantity: 1,
+	})
+
+	require.Error(t, err)
+	assert.True(t, errors.IsInvalid(err), "beklenen Invalid: %v", err)
+	assert.Equal(t, CodeCartLineLimit, errors.CodeOf(err))
+	assert.Contains(t, err.Error(), strconv.Itoa(MaxLineItems), "tavan operatöre görünmeli")
+	assert.Empty(t, h.catalog.specs, "sonucu belli istek katalogu meşgul etmemeli")
+	assert.Empty(t, h.prices.seen, "sonucu belli istek pricing'i meşgul etmemeli")
+	assert.Empty(t, h.carts.written)
+}
+
+// TestAddLineItemTavaninAltindaYeniSatirAcilir tavanın BİR ALTINDAKİ sepette
+// yeni satırın hâlâ açılabildiğini doğrular.
+//
+// Sınırın kendisi kadar sınırın YERİ de sözleşmedir: bir eksik karşılaştırma,
+// müşterinin ekleyebileceği son satırı sessizce reddederdi.
+func TestAddLineItemTavaninAltindaYeniSatirAcilir(t *testing.T) {
+	h := newHarness(t)
+	dolu := tavanaKadarSatir(testVariantA, MaxLineItems-1)
+	seen := recordAddLine(h.carts, testLineB)
+	serveSnapshot(h.carts,
+		snapshotOf(1, dolu, nil),
+		snapshotOf(2, append(dolu, SnapshotItem{ID: testLineB, VariantID: testVariantB, Quantity: 1}), nil),
+	)
+
+	out, err := h.wf.AddLineItem(context.Background(), AddLineItemInput{
+		CartID: testCartID, VariantID: testVariantB, Quantity: 1,
+	})
+
+	require.NoError(t, err)
+	assert.Equal(t, testLineB, out.LineItemID)
+	assert.Equal(t, 1, seen.calls)
+	assert.Len(t, out.Totals.Lines, MaxLineItems)
+}
+
+// TestAddLineItemTavandakiSepetteVarOlanSatirArtabilir tavana dayanmış bir
+// sepette BİRLEŞTİRMENİN reddedilmediğini doğrular.
+//
+// Birleştirme yeni satır açmaz; reddedilseydi dolu bir sepetin sahibi kendi
+// satırının adedini bile artıramazdı.
+func TestAddLineItemTavandakiSepetteVarOlanSatirArtabilir(t *testing.T) {
+	h := newHarness(t)
+	dolu := tavanaKadarSatir(testVariantA, MaxLineItems)
+	seen := recordAddLine(h.carts, dolu[0].ID)
+	serveSnapshot(h.carts, snapshotOf(1, dolu, nil), snapshotOf(2, dolu, nil))
+
+	out, err := h.wf.AddLineItem(context.Background(), AddLineItemInput{
+		CartID: testCartID, VariantID: testVariantA, Quantity: 2,
+	})
+
+	require.NoError(t, err)
+	assert.Equal(t, dolu[0].ID, out.LineItemID)
+	assert.Equal(t, 1, seen.calls, "birleştirme yazılmalı")
+}
+
+// TestCalculateTotalsTavanUstundekiSepetiHesaplayabilir tavan KONMADAN önce
+// açılmış, tavanın üstünde satır taşıyan bir sepetin hesabının yapılabildiğini
+// doğrular.
+//
+// Hesabın reddedilmesi, müşterinin var olan sepetini ödenemez hâle getirirdi;
+// tavan yalnızca satır AÇAN yolda uygulanır.
+func TestCalculateTotalsTavanUstundekiSepetiHesaplayabilir(t *testing.T) {
+	h := newHarness(t)
+	buyuk := tavanaKadarSatir(testVariantA, MaxLineItems+5)
+	serveSnapshot(h.carts, snapshotOf(9, buyuk, nil))
+
+	totals, err := h.wf.CalculateTotals(context.Background(), testCartID)
+
+	require.NoError(t, err)
+	assert.Len(t, totals.Lines, MaxLineItems+5)
+	assert.Equal(t, int64(1000)*int64(MaxLineItems+5), totals.Subtotal)
+	requireIdentity(t, totals)
+}
+
+// buyuyenSepet akışın gerçekten büyütebildiği bellek içi bir sepettir.
+//
+// Var olan sahteler betiklenmiş görüntüler döner; satır eklemenin MALİYETİ ise
+// ancak sepet gerçekten büyürken sayılabilir.
+type buyuyenSepet struct {
+	items    []SnapshotItem
+	revision int64
+}
+
+// buyuyenSepetDuzenegi verilen sayıda varyant tanıyan ve satır ekledikçe büyüyen
+// bir düzenek kurar.
+func buyuyenSepetDuzenegi(t *testing.T, variants int) *harness {
+	t.Helper()
+
+	h := newHarness(t)
+	state := &buyuyenSepet{}
+
+	h.carts.snapshotFn = func(_ context.Context, cartID string) (json.RawMessage, error) {
+		snap := snapshotOf(state.revision, append([]SnapshotItem(nil), state.items...), nil)
+		snap.ID = cartID
+		return json.Marshal(snap)
+	}
+	h.carts.addLineFn = func(
+		_ context.Context,
+		_ string, variantID, _ string,
+		quantity, _ int64,
+		_ json.RawMessage,
+	) (string, error) {
+		id := "li_" + strconv.Itoa(len(state.items)+1)
+		state.items = append(state.items, SnapshotItem{ID: id, VariantID: variantID, Quantity: quantity})
+		state.revision++
+		return id, nil
+	}
+
+	for i := range variants {
+		variant := "var_" + strconv.Itoa(i)
+		set := "pset_" + strconv.Itoa(i)
+		h.prices.amounts[set] = 1000
+		h.links.links[variant] = []string{set}
+		h.catalog.titles[variant] = "Ürün " + strconv.Itoa(i)
+	}
+	return h
+}
+
+// TestAddLineItemSepetKurmaMaliyetiDogrusaldir N satırlık bir sepet kurmanın
+// fiyat turu sayısının N ile büyüdüğünü doğrular.
+//
+// İddia bu değişikliğin kendisidir. Her satır ekleme, sepetin TÜM satırlarını
+// yeniden fiyatlayan bir hesap turu koşturur; fiyat satır başına sorulduğunda
+// bir sepeti kurmanın maliyeti N² idi (ölçüldü: 100 satırlık sepet için 5150
+// fiyat çağrısı). Toplu okumayla satır ekleme başına TAM İKİ tur kalır: satır
+// açılırken sorulan tek fiyat ve hesap turunun tek toplu sorusu.
+//
+// Süre değil TUR SAYISI denetlenir; süre testi makineye bağlar, tur sayısı
+// bağlamaz.
+func TestAddLineItemSepetKurmaMaliyetiDogrusaldir(t *testing.T) {
+	const satir = 25
+
+	h := buyuyenSepetDuzenegi(t, satir)
+
+	for i := range satir {
+		_, err := h.wf.AddLineItem(context.Background(), AddLineItemInput{
+			CartID: testCartID, VariantID: "var_" + strconv.Itoa(i), Quantity: 2,
+		})
+		require.NoError(t, err)
+	}
+
+	assert.Len(t, h.prices.seen, satir, "satır başına tek açılış fiyatı")
+	assert.Len(t, h.prices.requests, satir, "hesap turu başına tek toplu soru")
+
+	// Turların kaleme değil SATIR EKLEMEYE bağlı olduğu, son turun sepetin
+	// tamamını tek soruda taşımasıyla görülür.
+	assert.Len(t, h.prices.requests[satir-1].Items, satir)
 }

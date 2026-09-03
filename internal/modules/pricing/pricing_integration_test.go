@@ -12,12 +12,16 @@ package pricing_test
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/url"
 	"os"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/testcontainers/testcontainers-go"
@@ -816,4 +820,163 @@ func TestStorePricesHideDraftListsAndRules(t *testing.T) {
 	storePrices, err = svc.ListStorePrices(ctx, set.ID)
 	require.NoError(t, err)
 	assert.Len(t, storePrices, 2, "yayına alınan kampanya müşteriye görünmeli")
+}
+
+// countingTracer havuzun açtığı sorguları sayar.
+//
+// Sayaç, "toplu okuma kalem başına sorgu açmaz" iddiasının tek doğrudan
+// kanıtıdır: süre ölçmek testi makineye bağlar, sorgu sayısı bağlamaz.
+type countingTracer struct {
+	count atomic.Int64
+}
+
+// TraceQueryStart her sorgu başlangıcında sayacı artırır.
+func (c *countingTracer) TraceQueryStart(
+	ctx context.Context,
+	_ *pgx.Conn,
+	_ pgx.TraceQueryStartData,
+) context.Context {
+	c.count.Add(1)
+	return ctx
+}
+
+// TraceQueryEnd sözleşme gereği vardır; sayım başlangıçta yapılır.
+func (c *countingTracer) TraceQueryEnd(context.Context, *pgx.Conn, pgx.TraceQueryEndData) {}
+
+// newCountingService sorgularını sayan KENDİ havuzu üzerinde bir servis üretir.
+//
+// Havuz tek bağlantılıdır: çok bağlantılı bir havuzda ısınma sorguları sayıma
+// karışır ve sayı makineye göre değişirdi.
+func newCountingService(t *testing.T) (*service.Service, *countingTracer) {
+	t.Helper()
+
+	cfg, err := pgxpool.ParseConfig(testDSN)
+	require.NoError(t, err)
+	tracer := &countingTracer{}
+	cfg.ConnConfig.Tracer = tracer
+	cfg.MaxConns = 1
+
+	pool, err := pgxpool.NewWithConfig(context.Background(), cfg)
+	require.NoError(t, err)
+	t.Cleanup(pool.Close)
+
+	return service.New(repository.New(pool), service.Options{}), tracer
+}
+
+// TestCalculateAmountsJSONMatchesPerSetOnRealData toplu fiyat yolunun GERÇEK
+// sorgularla kap başına yolla AYNI tutarı seçtiğini ve kalem sayısından
+// bağımsız olarak SABİT sayıda sorgu açtığını kanıtlar.
+//
+// İki iddia da birim testiyle kanıtlanamaz: eşitlik, iki ayrı SQL'in aynı aday
+// satırlarını döndürmesine dayanır (biri "= $1", diğeri "= ANY($1)") ve sorgu
+// sayısı ancak gerçek bir havuzda sayılabilir.
+//
+// Sepet hesabının tamamı bu eşitliğe dayanır: farklı bir fiyat seçen bir toplu
+// okuma müşteriden başka bir tutar tahsil eder ve sonraki hiçbir denetim bunu
+// görmez — toplamlar iki durumda da kendi içinde tutarlıdır.
+func TestCalculateAmountsJSONMatchesPerSetOnRealData(t *testing.T) {
+	ctx := context.Background()
+	svc, tracer := newCountingService(t)
+
+	list, err := svc.CreatePriceList(ctx, service.PriceListInput{
+		Title:  "Toplu okuma kampanyası",
+		Type:   models.PriceListSale,
+		Status: models.PriceListActive,
+	})
+	require.NoError(t, err)
+
+	// Kaplar seçim kuralının her dalını taşır: taban fiyat, adet kademesi,
+	// yayındaki kampanya, bölge kuralı ve başka para birimi.
+	setIDs := make([]string, 0, 8)
+	for i := range 8 {
+		inputs := []service.PriceInput{{CurrencyCode: "TRY", Amount: int64(1000 + i)}}
+		switch i % 4 {
+		case 1:
+			inputs = append(inputs, service.PriceInput{
+				CurrencyCode: "TRY", Amount: int64(800 + i), MinQuantity: 10, MaxQuantity: ptr(int32(20)),
+			})
+		case 2:
+			inputs = append(inputs, service.PriceInput{
+				CurrencyCode: "TRY", Amount: int64(9000 + i), PriceListID: &list.ID,
+			})
+		case 3:
+			inputs = append(inputs, service.PriceInput{
+				CurrencyCode: "TRY", Amount: int64(600 + i),
+				Rules: []service.RuleInput{
+					{Attribute: "region_id", Operator: models.OpEq, Values: []string{"reg_1"}},
+				},
+			})
+			inputs = append(inputs, service.PriceInput{CurrencyCode: "USD", Amount: int64(50 + i)})
+		}
+
+		set, err := svc.CreatePriceSet(ctx, inputs)
+		require.NoError(t, err)
+		setIDs = append(setIDs, set.ID)
+	}
+
+	attrs := map[string]string{"region_id": "reg_1"}
+	type kalem struct {
+		setID    string
+		quantity int32
+	}
+	items := make([]kalem, 0, len(setIDs)+2)
+	for i, id := range setIDs {
+		items = append(items, kalem{id, int32(1 + i%15)})
+	}
+	// Aynı kap iki farklı adette ve fiyatı olmayan bir kap da isteğe girer.
+	items = append(items, kalem{setIDs[1], 12}, kalem{"pset_OLMAYAN", 1})
+
+	request := map[string]any{
+		"currency_code": "TRY",
+		"attributes":    attrs,
+		"items": func() []map[string]any {
+			out := make([]map[string]any, 0, len(items))
+			for _, item := range items {
+				out = append(out, map[string]any{"price_set_id": item.setID, "quantity": item.quantity})
+			}
+			return out
+		}(),
+	}
+	payload, err := json.Marshal(request)
+	require.NoError(t, err)
+
+	// Isınma: ilk çalıştırma bağlantıyı açar ve deyimleri hazırlar; sayım
+	// bundan sonra başlar.
+	_, err = svc.CalculateAmountsJSON(ctx, payload)
+	require.NoError(t, err)
+	_, err = svc.CalculateAmount(ctx, setIDs[0], "TRY", 1, attrs)
+	require.NoError(t, err)
+
+	before := tracer.count.Load()
+	raw, err := svc.CalculateAmountsJSON(ctx, payload)
+	require.NoError(t, err)
+	batchQueries := tracer.count.Load() - before
+
+	var resp struct {
+		Items []struct {
+			Amount int64 `json:"amount"`
+			Priced bool  `json:"priced"`
+		} `json:"items"`
+	}
+	require.NoError(t, json.Unmarshal(raw, &resp))
+	require.Len(t, resp.Items, len(items))
+
+	before = tracer.count.Load()
+	for i, item := range items {
+		amount, err := svc.CalculateAmount(ctx, item.setID, "TRY", item.quantity, attrs)
+		if err != nil {
+			require.True(t, errors.IsNotFound(err), "%s: %v", item.setID, err)
+			assert.False(t, resp.Items[i].Priced, "%s toplu yolda fiyatlı görünüyor", item.setID)
+			continue
+		}
+		require.True(t, resp.Items[i].Priced, "%s toplu yolda fiyatsız görünüyor", item.setID)
+		assert.Equal(t, amount, resp.Items[i].Amount,
+			"%s (adet %d) iki yolda farklı fiyatlandı", item.setID, item.quantity)
+	}
+	perSetQueries := tracer.count.Load() - before
+
+	assert.Equal(t, int64(2), batchQueries,
+		"toplu yol kalem sayısından bağımsız olarak iki sorgu açmalı (adaylar + kurallar)")
+	assert.Greater(t, perSetQueries, int64(2*len(items)-2),
+		"kap başına yol kalem başına en az iki sorgu açar; ölçülen: %d", perSetQueries)
 }
