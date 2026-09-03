@@ -15,9 +15,9 @@ import (
 	"github.com/bdrtr/gobit/internal/core/errors"
 )
 
-// testParola ayıklama testlerinde DSN'lere gömülen ve çıktıda ASLA
-// görünmemesi gereken sabittir.
-const testParola = "cok-gizli-parola"
+// testPassword is the constant embedded in the DSNs of the redaction tests; it
+// must NEVER appear in the output.
+const testPassword = "a-very-secret-password"
 
 func TestDefaultConfig(t *testing.T) {
 	t.Parallel()
@@ -32,8 +32,8 @@ func TestDefaultConfig(t *testing.T) {
 	assert.Equal(t, defaultMaxConnIdleTime, cfg.MaxConnIdleTime)
 	assert.Equal(t, defaultConnectTimeout, cfg.ConnectTimeout)
 
-	// Varsayılanların kendi içinde tutarlı olması, DefaultConfig'in tek
-	// başına kullanılabilir olmasının şartıdır.
+	// The defaults being consistent with each other is what makes DefaultConfig
+	// usable on its own.
 	require.NoError(t, cfg.Validate())
 }
 
@@ -47,15 +47,15 @@ func TestConfigValidate(t *testing.T) {
 		mutate  func(c *Config)
 		wantErr bool
 	}{
-		{"varsayılanlar geçerli", func(*Config) {}, false},
-		{"boş url", func(c *Config) { c.URL = "   " }, true},
-		{"sıfır MaxConns", func(c *Config) { c.MaxConns = 0 }, true},
-		{"negatif MinConns", func(c *Config) { c.MinConns = -1 }, true},
+		{"the defaults are valid", func(*Config) {}, false},
+		{"empty url", func(c *Config) { c.URL = "   " }, true},
+		{"zero MaxConns", func(c *Config) { c.MaxConns = 0 }, true},
+		{"negative MinConns", func(c *Config) { c.MinConns = -1 }, true},
 		{"MinConns > MaxConns", func(c *Config) { c.MinConns = c.MaxConns + 1 }, true},
-		{"sıfır MaxConnLifetime", func(c *Config) { c.MaxConnLifetime = 0 }, true},
-		{"sıfır MaxConnIdleTime", func(c *Config) { c.MaxConnIdleTime = 0 }, true},
+		{"zero MaxConnLifetime", func(c *Config) { c.MaxConnLifetime = 0 }, true},
+		{"zero MaxConnIdleTime", func(c *Config) { c.MaxConnIdleTime = 0 }, true},
 		{"idle > lifetime", func(c *Config) { c.MaxConnIdleTime = c.MaxConnLifetime + time.Second }, true},
-		{"sıfır ConnectTimeout", func(c *Config) { c.ConnectTimeout = 0 }, true},
+		{"zero ConnectTimeout", func(c *Config) { c.ConnectTimeout = 0 }, true},
 	}
 
 	for _, tt := range tests {
@@ -71,7 +71,7 @@ func TestConfigValidate(t *testing.T) {
 				return
 			}
 			require.Error(t, err)
-			assert.True(t, errors.IsInvalid(err), "hata sınıfı KindInvalid olmalı, %v alındı", errors.KindOf(err))
+			assert.True(t, errors.IsInvalid(err), "the error class must be KindInvalid, got %v", errors.KindOf(err))
 			assert.Equal(t, "db_config_invalid", errors.CodeOf(err))
 		})
 	}
@@ -86,42 +86,42 @@ func TestRedact(t *testing.T) {
 		want string
 	}{
 		{
-			name: "url biçimi parolayı ayıklar",
-			dsn:  "postgres://gobit:" + testParola + "@db.internal:5432/gobit?sslmode=require",
+			name: "the url form strips the password",
+			dsn:  "postgres://gobit:" + testPassword + "@db.internal:5432/gobit?sslmode=require",
 			want: "db.internal:5432/gobit",
 		},
 		{
-			name: "url biçimi portsuz",
-			dsn:  "postgres://gobit:" + testParola + "@localhost/gobit",
+			name: "the url form without a port",
+			dsn:  "postgres://gobit:" + testPassword + "@localhost/gobit",
 			want: "localhost/gobit",
 		},
 		{
-			name: "url biçimi veritabanı adı yok",
-			dsn:  "postgres://gobit:" + testParola + "@localhost:5432",
+			name: "the url form with no database name",
+			dsn:  "postgres://gobit:" + testPassword + "@localhost:5432",
 			want: "localhost:5432/" + unknownDatabase,
 		},
 		{
-			name: "sorgu parametresindeki parola da düşer",
-			dsn:  "postgres://localhost:5432/gobit?password=" + testParola,
+			name: "a password in a query parameter is dropped too",
+			dsn:  "postgres://localhost:5432/gobit?password=" + testPassword,
 			want: "localhost:5432/gobit",
 		},
 		{
-			name: "anahtar=değer biçimi",
-			dsn:  "host=db.internal port=5432 user=gobit password=" + testParola + " dbname=gobit",
+			name: "the key=value form",
+			dsn:  "host=db.internal port=5432 user=gobit password=" + testPassword + " dbname=gobit",
 			want: "db.internal:5432/gobit",
 		},
 		{
-			name: "anahtar=değer biçimi portsuz",
-			dsn:  "host=db.internal user=gobit password=" + testParola,
+			name: "the key=value form without a port",
+			dsn:  "host=db.internal user=gobit password=" + testPassword,
 			want: "db.internal/" + unknownDatabase,
 		},
 		{
-			name: "ayrıştırılamayan girdi yer tutucuya düşer",
-			dsn:  "bu bir dsn degil " + testParola,
+			name: "input that cannot be parsed falls back to the placeholder",
+			dsn:  "this is not a dsn " + testPassword,
 			want: unknownTarget,
 		},
 		{
-			name: "boş girdi",
+			name: "empty input",
 			dsn:  "",
 			want: unknownTarget,
 		},
@@ -133,26 +133,25 @@ func TestRedact(t *testing.T) {
 
 			got := Redact(tt.dsn)
 			assert.Equal(t, tt.want, got)
-			assert.NotContains(t, got, testParola, "ayıklanmış gösterim parola içeremez")
+			assert.NotContains(t, got, testPassword, "the redacted representation cannot contain the password")
 		})
 	}
 }
 
-// TestNewRejectsBadDSNWithoutLeakingPassword ağ erişimi olmadan çalışır:
-// geçersiz port pgx'in DSN ayrıştırıcısını bağlantı denemesinden ÖNCE hataya
-// düşürür.
+// TestNewRejectsBadDSNWithoutLeakingPassword runs without network access: an
+// invalid port makes pgx's DSN parser fail BEFORE any connection attempt.
 func TestNewRejectsBadDSNWithoutLeakingPassword(t *testing.T) {
 	t.Parallel()
 
-	cfg := DefaultConfig("postgres://gobit:" + testParola + "@localhost:port-degil/gobit")
+	cfg := DefaultConfig("postgres://gobit:" + testPassword + "@localhost:not-a-port/gobit")
 
 	pool, err := New(context.Background(), cfg, nil)
 
 	require.Error(t, err)
 	assert.Nil(t, pool)
-	assert.True(t, errors.IsInvalid(err), "hata sınıfı KindInvalid olmalı, %v alındı", errors.KindOf(err))
+	assert.True(t, errors.IsInvalid(err), "the error class must be KindInvalid, got %v", errors.KindOf(err))
 	assert.Equal(t, "db_dsn_invalid", errors.CodeOf(err))
-	assert.NotContains(t, err.Error(), testParola, "hata mesajı parola sızdıramaz")
+	assert.NotContains(t, err.Error(), testPassword, "the error message cannot leak the password")
 }
 
 func TestNewRejectsInvalidConfig(t *testing.T) {
@@ -166,8 +165,8 @@ func TestNewRejectsInvalidConfig(t *testing.T) {
 	assert.Equal(t, "db_config_invalid", errors.CodeOf(err))
 }
 
-// TestNilPoolMethodsAreSafe kurulum yarıda kaldığında defer edilmiş
-// Close/Ping çağrılarının panik atmamasını garanti eder.
+// TestNilPoolMethodsAreSafe guarantees that deferred Close/Ping calls do not
+// panic when the setup was cut short.
 func TestNilPoolMethodsAreSafe(t *testing.T) {
 	t.Parallel()
 
@@ -185,7 +184,7 @@ func TestNilPoolMethodsAreSafe(t *testing.T) {
 func TestMigrationsTable(t *testing.T) {
 	t.Parallel()
 
-	t.Run("geçerli sahip için tablo adı üretir", func(t *testing.T) {
+	t.Run("it produces a table name for a valid owner", func(t *testing.T) {
 		t.Parallel()
 
 		product, err := MigrationsTable("product")
@@ -198,21 +197,21 @@ func TestMigrationsTable(t *testing.T) {
 
 		beta, err := MigrationsTable("beta")
 		require.NoError(t, err)
-		// İki farklı modülün tablosu asla eşit olamaz.
+		// Two different modules' tables can never be equal.
 		assert.NotEqual(t, alpha, beta)
 	})
 
-	// Tablo adları SQL'de parametrelenemez; doğrulama bu fonksiyonun
-	// KENDİSİNDE olmazsa dışarıdan gelen bir modül adı doğrudan sorguya
-	// gömülebilir.
-	t.Run("geçersiz sahip için ad üretmez", func(t *testing.T) {
+	// Table names cannot be parameterized in SQL; without the validation being
+	// INSIDE this function, a module name from outside could be embedded
+	// straight into a query.
+	t.Run("it produces no name for an invalid owner", func(t *testing.T) {
 		t.Parallel()
 
 		bad := map[string]string{
-			"sql enjeksiyonu": `x"; DROP TABLE users; --`,
-			"boş":             "",
-			"büyük harf":      "Product",
-			"nokta":           "public.product",
+			"sql injection": `x"; DROP TABLE users; --`,
+			"empty":         "",
+			"upper case":    "Product",
+			"dot":           "public.product",
 		}
 		for name, owner := range bad {
 			t.Run(name, func(t *testing.T) {
@@ -220,7 +219,7 @@ func TestMigrationsTable(t *testing.T) {
 
 				table, err := MigrationsTable(owner)
 				require.Error(t, err)
-				assert.Empty(t, table, "geçersiz sahip için tablo adı üretilmemeli")
+				assert.Empty(t, table, "no table name may be produced for an invalid owner")
 				assert.True(t, errors.IsInvalid(err))
 				assert.Equal(t, "db_migration_owner_invalid", errors.CodeOf(err))
 			})
@@ -233,25 +232,25 @@ func TestValidateOwner(t *testing.T) {
 
 	valid := []string{"product", "p", "order_line", "tax2", "a0_9"}
 	for _, owner := range valid {
-		t.Run("geçerli/"+owner, func(t *testing.T) {
+		t.Run("valid/"+owner, func(t *testing.T) {
 			t.Parallel()
 			assert.NoError(t, validateOwner(owner))
 		})
 	}
 
 	invalid := map[string]string{
-		"boş":                 "",
-		"büyük harf":          "Product",
-		"tire":                "order-line",
-		"boşluk":              "order line",
-		"rakamla başlıyor":    "1product",
-		"alt çizgiyle başlar": "_product",
-		"sql enjeksiyonu":     `product"; DROP TABLE users; --`,
-		"nokta":               "public.product",
-		"çok uzun":            strings.Repeat("a", 41),
+		"empty":                  "",
+		"upper case":             "Product",
+		"hyphen":                 "order-line",
+		"space":                  "order line",
+		"starts with a digit":    "1product",
+		"starts with underscore": "_product",
+		"sql injection":          `product"; DROP TABLE users; --`,
+		"dot":                    "public.product",
+		"too long":               strings.Repeat("a", 41),
 	}
 	for name, owner := range invalid {
-		t.Run("geçersiz/"+name, func(t *testing.T) {
+		t.Run("invalid/"+name, func(t *testing.T) {
 			t.Parallel()
 
 			err := validateOwner(owner)
@@ -262,12 +261,12 @@ func TestValidateOwner(t *testing.T) {
 	}
 }
 
-// TestMigrateValidatesBeforeConnecting veritabanına hiç dokunmadan
-// reddedilmesi gereken girdileri doğrular.
+// TestMigrateValidatesBeforeConnecting checks the inputs that must be rejected
+// without touching the database at all.
 func TestMigrateValidatesBeforeConnecting(t *testing.T) {
 	t.Parallel()
 
-	const dsn = "postgres://gobit:" + testParola + "@localhost:5432/gobit"
+	const dsn = "postgres://gobit:" + testPassword + "@localhost:5432/gobit"
 	src := fstest.MapFS{
 		"000001_init.up.sql":   &fstest.MapFile{Data: []byte("SELECT 1;")},
 		"000001_init.down.sql": &fstest.MapFile{Data: []byte("SELECT 1;")},
@@ -279,27 +278,27 @@ func TestMigrateValidatesBeforeConnecting(t *testing.T) {
 		wantCode string
 	}{
 		{
-			name:     "geçersiz sahip",
-			call:     func(ctx context.Context) error { return Migrate(ctx, dsn, src, "Product Modülü") },
+			name:     "invalid owner",
+			call:     func(ctx context.Context) error { return Migrate(ctx, dsn, src, "Product Module") },
 			wantCode: "db_migration_owner_invalid",
 		},
 		{
-			name:     "kaynak yok",
+			name:     "no source",
 			call:     func(ctx context.Context) error { return Migrate(ctx, dsn, nil, "product") },
 			wantCode: "db_migration_source_missing",
 		},
 		{
-			name:     "desteklenmeyen şema",
+			name:     "unsupported scheme",
 			call:     func(ctx context.Context) error { return Migrate(ctx, "mysql://h/db", src, "product") },
 			wantCode: "db_dsn_unsupported",
 		},
 		{
-			name:     "geri alma da doğrulanır",
-			call:     func(ctx context.Context) error { return MigrateDown(ctx, dsn, src, "BÜYÜK", 1) },
+			name:     "the rollback is validated too",
+			call:     func(ctx context.Context) error { return MigrateDown(ctx, dsn, src, "UPPER", 1) },
 			wantCode: "db_migration_owner_invalid",
 		},
 		{
-			name:     "sürüm sorgusu da doğrulanır",
+			name:     "the version query is validated too",
 			call:     func(ctx context.Context) error { _, _, err := Version(ctx, dsn, "-"); return err },
 			wantCode: "db_migration_owner_invalid",
 		},
@@ -312,14 +311,14 @@ func TestMigrateValidatesBeforeConnecting(t *testing.T) {
 			err := tt.call(context.Background())
 			require.Error(t, err)
 			assert.Equal(t, tt.wantCode, errors.CodeOf(err))
-			assert.True(t, errors.IsInvalid(err), "hata sınıfı KindInvalid olmalı, %v alındı", errors.KindOf(err))
-			assert.NotContains(t, err.Error(), testParola, "hata mesajı parola sızdıramaz")
+			assert.True(t, errors.IsInvalid(err), "the error class must be KindInvalid, got %v", errors.KindOf(err))
+			assert.NotContains(t, err.Error(), testPassword, "the error message cannot leak the password")
 		})
 	}
 }
 
-// TestMigrateHonorsCancelledContext iptal edilmiş bir bağlamla hiçbir
-// bağlantı denemesi yapılmadığını doğrular.
+// TestMigrateHonorsCancelledContext checks that no connection is attempted
+// with a canceled context.
 func TestMigrateHonorsCancelledContext(t *testing.T) {
 	t.Parallel()
 
@@ -342,10 +341,10 @@ func TestMigrateHonorsCancelledContext(t *testing.T) {
 	assert.Equal(t, "db_migration_canceled", errors.CodeOf(verErr))
 }
 
-// TestMigrationHonorsDeadlineOnStalledServer bağlantıyı kabul edip el
-// sıkışmasını hiç tamamlamayan bir sunucuya karşı ctx sınırının GERÇEKTEN
-// uygulandığını doğrular: paketleri düşüren bir güvenlik duvarının arkasındaki
-// veritabanı da tam olarak böyle davranır.
+// TestMigrationHonorsDeadlineOnStalledServer checks that the ctx bound is
+// REALLY applied against a server that accepts the connection and never
+// completes the handshake: a database behind a firewall dropping packets
+// behaves in exactly this way.
 func TestMigrationHonorsDeadlineOnStalledServer(t *testing.T) {
 	t.Parallel()
 
@@ -355,8 +354,8 @@ func TestMigrationHonorsDeadlineOnStalledServer(t *testing.T) {
 		"000001_init.down.sql": &fstest.MapFile{Data: []byte("SELECT 1;")},
 	}
 
-	// Bağlam sınırı, çağrının dönmesi için tanınan süreden çok daha kısadır;
-	// aradaki fark testi zamanlamaya duyarsız kılar.
+	// The context bound is far shorter than the time allowed for the call to
+	// return; the gap makes the test insensitive to timing.
 	const deadline = 500 * time.Millisecond
 	const tolerance = 15 * time.Second
 
@@ -381,18 +380,18 @@ func TestMigrationHonorsDeadlineOnStalledServer(t *testing.T) {
 				require.Error(t, err)
 				assert.Equal(t, "db_migration_canceled", errors.CodeOf(err))
 				assert.True(t, errors.HasKind(err, errors.KindUnavailable),
-					"hata sınıfı KindUnavailable olmalı, %v alındı", errors.KindOf(err))
+					"the error class must be KindUnavailable, got %v", errors.KindOf(err))
 				assert.True(t, errors.Is(err, context.DeadlineExceeded))
-				assert.NotContains(t, err.Error(), testParola, "hata mesajı parola sızdıramaz")
+				assert.NotContains(t, err.Error(), testPassword, "the error message cannot leak the password")
 			case <-time.After(tolerance):
-				t.Fatalf("çağrı %s içinde dönmedi: ctx sınırı uygulanmıyor", tolerance)
+				t.Fatalf("the call did not return within %s: the ctx bound is not applied", tolerance)
 			}
 		})
 	}
 }
 
-// stalledServerDSN bağlantıyı kabul edip hiçbir yanıt vermeyen bir dinleyici
-// açar ve ona işaret eden bir DSN döner. Docker gerektirmez.
+// stalledServerDSN opens a listener that accepts the connection and never
+// answers, and returns a DSN pointing at it. It needs no Docker.
 func stalledServerDSN(t *testing.T) string {
 	t.Helper()
 
@@ -417,12 +416,13 @@ func stalledServerDSN(t *testing.T) string {
 			if acceptErr != nil {
 				return
 			}
-			// Bağlantı bilerek sessiz bırakılır; kapatma Cleanup'a aittir.
+			// The connection is left silent on purpose; closing belongs to
+			// Cleanup.
 			mu.Lock()
 			accepted = append(accepted, conn)
 			mu.Unlock()
 		}
 	}()
 
-	return "postgres://gobit:" + testParola + "@" + listener.Addr().String() + "/gobit?sslmode=disable"
+	return "postgres://gobit:" + testPassword + "@" + listener.Addr().String() + "/gobit?sslmode=disable"
 }

@@ -35,15 +35,6 @@ internal/arch/tuketici_test.go
 internal/arch/yapilandirma_test.go
 internal/core/config/config.go
 internal/core/config/config_test.go
-internal/core/db/db.go
-internal/core/db/db_integration_test.go
-internal/core/db/db_test.go
-internal/core/db/migrate.go
-internal/core/db/testdata/alpha/000001_alpha_init.up.sql
-internal/core/db/testdata/alpha/000002_alpha_add_label.up.sql
-internal/core/db/testdata/beta/000001_beta_init.up.sql
-internal/core/db/testdata/broken/000001_broken_init.up.sql
-internal/core/db/testdata/rollback/000001_rollback_init.up.sql
 internal/core/eventbus/eventbus.go
 internal/core/eventbus/eventbus_internal_test.go
 internal/core/eventbus/inmemory.go

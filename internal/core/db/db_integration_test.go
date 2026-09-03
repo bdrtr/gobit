@@ -1,8 +1,8 @@
 //go:build integration
 
-// Bu dosyadaki testler gerçek bir PostgreSQL örneği (dolayısıyla Docker)
-// gerektirir; `make test` hızlı kalsın diye `integration` etiketiyle ayrılmıştır.
-// Çalıştırmak için: make test-integration
+// The tests in this file need a real PostgreSQL instance (and therefore
+// Docker); they are separated behind the `integration` tag so `make test` stays
+// fast. To run them: make test-integration
 package db_test
 
 import (
@@ -24,9 +24,10 @@ import (
 	"github.com/bdrtr/gobit/internal/core/errors"
 )
 
-// alphaMigrations ve betaMigrations testlerde kullanılan iki sahte modülün
-// migration'larıdır. İkisi de aynı veritabanına yazar; amaç ayrı versiyon
-// tablolarının birbirini bozmadığını göstermektir (plan Bölüm 2.1/2.3).
+// alphaMigrations and betaMigrations are the migrations of the two fake
+// modules used in the tests. Both write to the same database; the point is to
+// show that separate version tables do not corrupt each other (plan Sections
+// 2.1/2.3).
 //
 //go:embed testdata/alpha
 var alphaMigrations embed.FS
@@ -34,29 +35,29 @@ var alphaMigrations embed.FS
 //go:embed testdata/beta
 var betaMigrations embed.FS
 
-// brokenMigrations kasten patlayan bir migration taşır: yürütme hatasının
-// tipli hata olarak dışarı çıktığını doğrulamak için.
+// brokenMigrations carries a deliberately failing migration, to check that an
+// execution error surfaces as a typed error.
 //
 //go:embed testdata/broken
 var brokenMigrations embed.FS
 
-// rollbackMigrations geri alma testlerinin kendi migration'larıdır;
-// alpha/beta durumundan bağımsızdır.
+// rollbackMigrations are the rollback tests' own migrations; they are
+// independent of the alpha/beta state.
 //
 //go:embed testdata/rollback
 var rollbackMigrations embed.FS
 
 const postgresImage = "postgres:16-alpine"
 
-// testDSN TestMain'in kaldırdığı konteynerin bağlantı adresidir.
+// testDSN is the connection address of the container TestMain brings up.
 var testDSN string
 
 func TestMain(m *testing.M) {
 	os.Exit(runWithPostgres(m))
 }
 
-// runWithPostgres tek bir Postgres konteyneri kaldırıp tüm testleri onun
-// üzerinde çalıştırır. os.Exit defer'ları atladığı için ayrı fonksiyondadır.
+// runWithPostgres brings up a single Postgres container and runs every test
+// against it. It is a separate function because os.Exit skips deferred calls.
 func runWithPostgres(m *testing.M) int {
 	ctx := context.Background()
 
@@ -68,26 +69,26 @@ func runWithPostgres(m *testing.M) int {
 	)
 	defer func() {
 		if termErr := testcontainers.TerminateContainer(ctr); termErr != nil {
-			fmt.Fprintf(os.Stderr, "postgres konteyneri durdurulamadı: %v\n", termErr)
+			fmt.Fprintf(os.Stderr, "the postgres container could not be stopped: %v\n", termErr)
 		}
 	}()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "postgres konteyneri başlatılamadı: %v\n", err)
+		fmt.Fprintf(os.Stderr, "the postgres container could not be started: %v\n", err)
 		return 1
 	}
 
 	testDSN, err = ctr.ConnectionString(ctx, "sslmode=disable")
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "bağlantı adresi alınamadı: %v\n", err)
+		fmt.Fprintf(os.Stderr, "the connection address could not be obtained: %v\n", err)
 		return 1
 	}
 
 	return m.Run()
 }
 
-// TestMigrateIsolatesOwners iki modülün aynı veritabanında birbirinden bağımsız
-// migration defterleri tuttuğunu baştan sona doğrular. Alt testler sıralı
-// çalışır; her biri bir öncekinin bıraktığı durumu devralır.
+// TestMigrateIsolatesOwners checks end to end that two modules keep independent
+// migration ledgers in the same database. The subtests run in order; each
+// inherits the state the previous one left behind.
 func TestMigrateIsolatesOwners(t *testing.T) {
 	ctx := context.Background()
 	pool := openPool(ctx, t)
@@ -95,35 +96,36 @@ func TestMigrateIsolatesOwners(t *testing.T) {
 	alphaSrc := migrationsFor(t, alphaMigrations, "alpha")
 	betaSrc := migrationsFor(t, betaMigrations, "beta")
 
-	t.Run("her modül kendi versiyon tablosunu oluşturur", func(t *testing.T) {
+	t.Run("each module creates its own version table", func(t *testing.T) {
 		require.NoError(t, db.Migrate(ctx, testDSN, alphaSrc, "alpha"))
 		require.NoError(t, db.Migrate(ctx, testDSN, betaSrc, "beta"))
 
 		assert.True(t, tableExists(ctx, t, pool, migrationsTable(t, "alpha")),
-			"alpha_schema_migrations oluşmalı")
+			"alpha_schema_migrations must be created")
 		assert.True(t, tableExists(ctx, t, pool, migrationsTable(t, "beta")),
-			"beta_schema_migrations oluşmalı")
+			"beta_schema_migrations must be created")
 		assert.False(t, tableExists(ctx, t, pool, "schema_migrations"),
-			"ortak schema_migrations tablosu ASLA oluşmaz; oluştuysa modüller izole değil demektir")
+			"a shared schema_migrations table is NEVER created; if it was, the modules are not isolated")
 
 		assert.True(t, tableExists(ctx, t, pool, "alpha_items"))
 		assert.True(t, tableExists(ctx, t, pool, "beta_items"))
 	})
 
-	t.Run("sürümler bağımsız ilerler", func(t *testing.T) {
+	t.Run("the versions advance independently", func(t *testing.T) {
 		alphaVersion, dirty, err := db.Version(ctx, testDSN, "alpha")
 		require.NoError(t, err)
-		assert.Equal(t, uint(2), alphaVersion, "alpha'nın iki migration'ı var")
+		assert.Equal(t, uint(2), alphaVersion, "alpha has two migrations")
 		assert.False(t, dirty)
 
 		betaVersion, dirty, err := db.Version(ctx, testDSN, "beta")
 		require.NoError(t, err)
-		assert.Equal(t, uint(1), betaVersion, "beta'nın tek migration'ı var")
+		assert.Equal(t, uint(1), betaVersion, "beta has a single migration")
 		assert.False(t, dirty)
 	})
 
-	t.Run("tekrar çalıştırmak hata vermez", func(t *testing.T) {
-		// migrate.ErrNoChange yutulmalı: idempotent açılış akışının şartı.
+	t.Run("running it again returns no error", func(t *testing.T) {
+		// migrate.ErrNoChange must be swallowed: an idempotent startup flow
+		// requires it.
 		require.NoError(t, db.Migrate(ctx, testDSN, alphaSrc, "alpha"))
 		require.NoError(t, db.Migrate(ctx, testDSN, betaSrc, "beta"))
 
@@ -132,7 +134,7 @@ func TestMigrateIsolatesOwners(t *testing.T) {
 		assert.Equal(t, uint(2), alphaVersion)
 	})
 
-	t.Run("tek adım geri alma yalnızca sahibini etkiler", func(t *testing.T) {
+	t.Run("a single-step rollback affects only its owner", func(t *testing.T) {
 		require.NoError(t, db.MigrateDown(ctx, testDSN, alphaSrc, "alpha", 1))
 
 		alphaVersion, dirty, err := db.Version(ctx, testDSN, "alpha")
@@ -141,17 +143,17 @@ func TestMigrateIsolatesOwners(t *testing.T) {
 		assert.False(t, dirty)
 
 		assert.False(t, columnExists(ctx, t, pool, "alpha_items", "label"),
-			"ikinci migration geri alındığı için label sütunu düşmeli")
+			"the label column must be gone because the second migration was rolled back")
 		assert.True(t, tableExists(ctx, t, pool, "alpha_items"),
-			"ilk migration hâlâ uygulanmış olmalı")
+			"the first migration must still be applied")
 
 		betaVersion, _, err := db.Version(ctx, testDSN, "beta")
 		require.NoError(t, err)
-		assert.Equal(t, uint(1), betaVersion, "beta, alpha'nın geri almasından etkilenmemeli")
+		assert.Equal(t, uint(1), betaVersion, "beta must not be affected by alpha's rollback")
 		assert.True(t, tableExists(ctx, t, pool, "beta_items"))
 	})
 
-	t.Run("tümünü geri alma diğer modülün tablolarına dokunmaz", func(t *testing.T) {
+	t.Run("rolling everything back does not touch the other module's tables", func(t *testing.T) {
 		require.NoError(t, db.MigrateDown(ctx, testDSN, alphaSrc, "alpha", 0))
 
 		alphaVersion, dirty, err := db.Version(ctx, testDSN, "alpha")
@@ -160,17 +162,17 @@ func TestMigrateIsolatesOwners(t *testing.T) {
 		assert.False(t, dirty)
 		assert.False(t, tableExists(ctx, t, pool, "alpha_items"))
 
-		assert.True(t, tableExists(ctx, t, pool, "beta_items"), "beta'nın verisi ayakta kalmalı")
+		assert.True(t, tableExists(ctx, t, pool, "beta_items"), "beta's data must survive")
 		betaVersion, _, err := db.Version(ctx, testDSN, "beta")
 		require.NoError(t, err)
 		assert.Equal(t, uint(1), betaVersion)
 	})
 
-	t.Run("geri alacak bir şey kalmayınca hata vermez", func(t *testing.T) {
+	t.Run("it returns no error when there is nothing left to roll back", func(t *testing.T) {
 		require.NoError(t, db.MigrateDown(ctx, testDSN, alphaSrc, "alpha", 0))
 	})
 
-	t.Run("yeniden uygulanabilir", func(t *testing.T) {
+	t.Run("it can be applied again", func(t *testing.T) {
 		require.NoError(t, db.Migrate(ctx, testDSN, alphaSrc, "alpha"))
 
 		alphaVersion, _, err := db.Version(ctx, testDSN, "alpha")
@@ -180,8 +182,8 @@ func TestMigrateIsolatesOwners(t *testing.T) {
 	})
 }
 
-// TestVersionOnUnmigratedOwner hiç migration uygulanmamış bir modülün sıfır
-// sürüm bildirdiğini doğrular.
+// TestVersionOnUnmigratedOwner checks that a module with no migration ever
+// applied reports version zero.
 func TestVersionOnUnmigratedOwner(t *testing.T) {
 	ctx := context.Background()
 
@@ -191,8 +193,8 @@ func TestVersionOnUnmigratedOwner(t *testing.T) {
 	assert.False(t, dirty)
 }
 
-// TestPoolLifecycle havuzun açılıp sağlık kontrolünden geçtiğini ve
-// kapatıldıktan sonra kullanılamadığını doğrular.
+// TestPoolLifecycle checks that the pool opens, passes the health check and
+// cannot be used after it is closed.
 func TestPoolLifecycle(t *testing.T) {
 	ctx := context.Background()
 
@@ -205,7 +207,7 @@ func TestPoolLifecycle(t *testing.T) {
 
 	require.NoError(t, pool.Ping(ctx))
 	require.NotNil(t, pool.Pool())
-	assert.NotContains(t, pool.Target(), "gobit:gobit@", "hedef gösterimi kimlik bilgisi içermemeli")
+	assert.NotContains(t, pool.Target(), "gobit:gobit@", "the target representation must contain no credentials")
 
 	var one int
 	require.NoError(t, pool.Pool().QueryRow(ctx, "SELECT 1").Scan(&one))
@@ -213,19 +215,19 @@ func TestPoolLifecycle(t *testing.T) {
 
 	pool.Close()
 
-	// Kapatılmış havuz üzerinde yapılan çağrı tipli bir hata döner.
+	// A call on a closed pool returns a typed error.
 	pingCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
 	require.Error(t, pool.Ping(pingCtx))
 }
 
-// TestNewFailsOnUnreachableDatabase erişilemeyen bir hedefin KindUnavailable
-// sınıfında ve parola sızdırmayan bir hata ürettiğini doğrular.
+// TestNewFailsOnUnreachableDatabase checks that an unreachable target produces
+// an error of class KindUnavailable that leaks no password.
 func TestNewFailsOnUnreachableDatabase(t *testing.T) {
 	ctx := context.Background()
 
-	const parola = "cok-gizli-parola"
-	cfg := db.DefaultConfig("postgres://gobit:" + parola + "@127.0.0.1:1/gobit?sslmode=disable")
+	const password = "a-very-secret-password"
+	cfg := db.DefaultConfig("postgres://gobit:" + password + "@127.0.0.1:1/gobit?sslmode=disable")
 	cfg.ConnectTimeout = 2 * time.Second
 
 	pool, err := db.New(ctx, cfg, nil)
@@ -233,40 +235,40 @@ func TestNewFailsOnUnreachableDatabase(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, pool)
 	assert.True(t, errors.HasKind(err, errors.KindUnavailable),
-		"hata sınıfı KindUnavailable olmalı, %v alındı", errors.KindOf(err))
-	assert.NotContains(t, err.Error(), parola, "hata mesajı parola sızdıramaz")
+		"the error class must be KindUnavailable, got %v", errors.KindOf(err))
+	assert.NotContains(t, err.Error(), password, "the error message cannot leak the password")
 }
 
-// TestMigrateReportsFailedMigration bozuk SQL içeren bir migration'ın tipli
-// hata ürettiğini ve versiyon defterini kirli bıraktığını doğrular. Bu, paketin
-// en kritik hata yoludur: sessizce yutulursa bozuk şema "migration başarılı"
-// loguyla üretime çıkar.
+// TestMigrateReportsFailedMigration checks that a migration containing broken
+// SQL produces a typed error and leaves the version ledger dirty. This is the
+// package's most critical error path: swallowed in silence, a broken schema
+// ships to production under a "migration succeeded" log line.
 func TestMigrateReportsFailedMigration(t *testing.T) {
 	ctx := context.Background()
 	src := migrationsFor(t, brokenMigrations, "broken")
 
 	err := db.Migrate(ctx, testDSN, src, "broken")
 
-	require.Error(t, err, "başarısız migration hata döndürmeli")
+	require.Error(t, err, "a failed migration must return an error")
 	assert.Equal(t, "db_migration_failed", errors.CodeOf(err))
 	assert.True(t, errors.HasKind(err, errors.KindInternal),
-		"hata sınıfı KindInternal olmalı, %v alındı", errors.KindOf(err))
+		"the error class must be KindInternal, got %v", errors.KindOf(err))
 
 	version, dirty, verErr := db.Version(ctx, testDSN, "broken")
 	require.NoError(t, verErr)
 	assert.Equal(t, uint(1), version)
-	assert.True(t, dirty, "yarıda kalan migration kirli bayrağı bırakmalı")
+	assert.True(t, dirty, "a half-finished migration must leave the dirty flag")
 }
 
-// TestMigrateDownWithNothingToRollBack MigrateDown'ın godoc'undaki "geri
-// alınacak migration kalmamışsa hata dönmez" sözünün steps > 0 yolunda da
-// geçerli olduğunu doğrular. golang-migrate bu iki durumu ErrNoChange DEĞİL,
-// os.ErrNotExist ve ErrShortLimit ile bildirir.
+// TestMigrateDownWithNothingToRollBack checks that MigrateDown's godoc promise
+// — "with no migrations left to roll back it returns no error" — holds on the
+// steps > 0 path as well. golang-migrate reports those two cases with
+// os.ErrNotExist and ErrShortLimit, NOT with ErrNoChange.
 func TestMigrateDownWithNothingToRollBack(t *testing.T) {
 	ctx := context.Background()
 	src := migrationsFor(t, rollbackMigrations, "rollback")
 
-	t.Run("hiç migration uygulanmamış modül", func(t *testing.T) {
+	t.Run("a module with no migration ever applied", func(t *testing.T) {
 		require.NoError(t, db.MigrateDown(ctx, testDSN, src, "rollbackfresh", 1))
 
 		version, dirty, err := db.Version(ctx, testDSN, "rollbackfresh")
@@ -275,24 +277,26 @@ func TestMigrateDownWithNothingToRollBack(t *testing.T) {
 		assert.False(t, dirty)
 	})
 
-	t.Run("mevcut olandan fazla adım", func(t *testing.T) {
+	t.Run("more steps than exist", func(t *testing.T) {
 		require.NoError(t, db.Migrate(ctx, testDSN, src, "rollbacksteps"))
 		require.NoError(t, db.MigrateDown(ctx, testDSN, src, "rollbacksteps", 5))
 
 		version, dirty, err := db.Version(ctx, testDSN, "rollbacksteps")
 		require.NoError(t, err)
-		assert.Equal(t, uint(0), version, "eldeki tüm migration'lar geri alınmalı")
+		assert.Equal(t, uint(0), version, "every migration on hand must be rolled back")
 		assert.False(t, dirty)
 	})
 }
 
-// TestMigrateReportsCancellationMidRun migration akışı ORTASINDA süresi dolan
-// bir bağlamın başarı olarak raporlanmadığını doğrular. golang-migrate zarif
-// duruşta nil döndüğü için bu, sessiz veri bozulmasına açılan bir yoldur.
+// TestMigrateReportsCancellationMidRun checks that a context running out IN THE
+// MIDDLE of a migration run is not reported as a success. Because golang-migrate
+// returns nil on a graceful stop, this is a path that opens onto silent data
+// corruption.
 func TestMigrateReportsCancellationMidRun(t *testing.T) {
 	pool := openPool(context.Background(), t)
 
-	// İlk migration bağlam sınırından uzun sürer; ikinciye sıra GELMEZ.
+	// The first migration takes longer than the context bound; the second one
+	// is NEVER reached.
 	src := fstest.MapFS{
 		"000001_slow.up.sql":     &fstest.MapFile{Data: []byte("SELECT pg_sleep(5);")},
 		"000001_slow.down.sql":   &fstest.MapFile{Data: []byte("SELECT 1;")},
@@ -307,28 +311,29 @@ func TestMigrateReportsCancellationMidRun(t *testing.T) {
 	err := db.Migrate(ctx, testDSN, src, "slowcancel")
 	elapsed := time.Since(start)
 
-	require.Error(t, err, "yarıda kesilen migration ASLA başarı olarak raporlanamaz")
+	require.Error(t, err, "a migration cut short can NEVER be reported as a success")
 	assert.Equal(t, "db_migration_canceled", errors.CodeOf(err))
 	assert.True(t, errors.HasKind(err, errors.KindUnavailable),
-		"hata sınıfı KindUnavailable olmalı, %v alındı", errors.KindOf(err))
+		"the error class must be KindUnavailable, got %v", errors.KindOf(err))
 	assert.True(t, errors.Is(err, context.DeadlineExceeded))
-	assert.Less(t, elapsed, 4*time.Second, "çağrı bağlam sınırında dönmeli")
+	assert.Less(t, elapsed, 4*time.Second, "the call must return at the context bound")
 
 	assert.False(t, tableExists(context.Background(), t, pool, "slowcancel_items"),
-		"iptalden sonraki migration uygulanmamalı")
+		"the migration after the cancellation must not be applied")
 }
 
-// TestCancellationActuallyStopsRemainingMigrations iptalin yalnızca BEKLEMEYİ
-// değil, İŞİ de durdurduğunu doğrular.
+// TestCancellationActuallyStopsRemainingMigrations checks that a cancellation
+// stops not only the WAIT but the WORK.
 //
-// Regresyon: iptal yolu işi ayrı bir goroutine'de terk edip ctx sınırında
-// dönseydi, terk edilen goroutine kalan migration'ları uygulamaya devam
-// ederdi. Çağıran "yarıda kesildi" hatası alır, ama şema arkadan tamamlanırdı.
+// Regression: had the cancellation path abandoned the work in a separate
+// goroutine and returned at the ctx bound, the abandoned goroutine would carry
+// on applying the remaining migrations. The caller would get a "cut short"
+// error while the schema completed itself behind their back.
 //
-// Senaryo bunu görünür kılacak biçimde kurulmuştur: her ifade TEK BAŞINA
-// bağlam sınırının ALTINDA kalır, dolayısıyla ifade bazlı bir zaman aşımı bu
-// akışı durduramaz. Kontrol, terk edilmiş bir goroutine'in kalan iki
-// migration'ı bitirmesine yetecek kadar BEKLENDİKTEN sonra yapılır.
+// The scenario is built to make that visible: every statement ON ITS OWN stays
+// UNDER the context bound, so a statement-level timeout cannot stop this run.
+// The check is made AFTER waiting long enough for an abandoned goroutine to
+// finish the remaining two migrations.
 func TestCancellationActuallyStopsRemainingMigrations(t *testing.T) {
 	pool := openPool(context.Background(), t)
 
@@ -345,23 +350,24 @@ func TestCancellationActuallyStopsRemainingMigrations(t *testing.T) {
 	defer cancel()
 
 	err := db.Migrate(ctx, testDSN, src, "stopafter")
-	require.Error(t, err, "yarıda kesilen migration ASLA başarı olarak raporlanamaz")
+	require.Error(t, err, "a migration cut short can NEVER be reported as a success")
 	assert.Equal(t, "db_migration_canceled", errors.CodeOf(err))
 
-	// Terk edilmiş bir goroutine kalan iki migration'ı bu süre içinde
-	// rahatlıkla bitirirdi.
+	// An abandoned goroutine would comfortably finish the remaining two
+	// migrations within this time.
 	time.Sleep(3 * time.Second)
 
 	assert.False(t, tableExists(context.Background(), t, pool, "stopafter_items"),
-		"iptal edilen migration akışı DÖNÜŞTEN SONRA da ilerlememeli")
+		"a canceled migration run must not advance AFTER RETURNING either")
 
-	// Sürüm defteri de sonraki migration'ları göstermemeli.
+	// The version ledger must not show the later migrations either.
 	version, _, verErr := db.Version(context.Background(), testDSN, "stopafter")
 	require.NoError(t, verErr)
-	assert.Less(t, version, uint(3), "iptalden sonra 3. migration kaydedilmemeli")
+	assert.Less(t, version, uint(3), "the 3rd migration must not be recorded after the cancellation")
 }
 
-// migrationsFor gömülü dosya sisteminden modülün migration klasörünü ayırır.
+// migrationsFor carves the module's migration directory out of the embedded
+// file system.
 func migrationsFor(t *testing.T, embedded embed.FS, owner string) fs.FS {
 	t.Helper()
 
@@ -370,7 +376,7 @@ func migrationsFor(t *testing.T, embedded embed.FS, owner string) fs.FS {
 	return sub
 }
 
-// migrationsTable tablo adını hata denetimiyle birlikte üretir.
+// migrationsTable produces the table name together with the error check.
 func migrationsTable(t *testing.T, owner string) string {
 	t.Helper()
 
@@ -379,7 +385,7 @@ func migrationsTable(t *testing.T, owner string) string {
 	return table
 }
 
-// openPool test süresince açık kalan bir doğrulama havuzu açar.
+// openPool opens a verification pool that stays open for the test's duration.
 func openPool(ctx context.Context, t *testing.T) *db.Pool {
 	t.Helper()
 
@@ -389,7 +395,7 @@ func openPool(ctx context.Context, t *testing.T) *db.Pool {
 	return pool
 }
 
-// tableExists public şemada verilen tablonun var olup olmadığını bildirir.
+// tableExists reports whether the given table exists in the public schema.
 func tableExists(ctx context.Context, t *testing.T, pool *db.Pool, table string) bool {
 	t.Helper()
 
@@ -403,7 +409,7 @@ func tableExists(ctx context.Context, t *testing.T, pool *db.Pool, table string)
 	return exists
 }
 
-// columnExists verilen tabloda bir sütunun var olup olmadığını bildirir.
+// columnExists reports whether a column exists in the given table.
 func columnExists(ctx context.Context, t *testing.T, pool *db.Pool, table, column string) bool {
 	t.Helper()
 

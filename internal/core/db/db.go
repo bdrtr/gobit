@@ -1,16 +1,17 @@
-// Package db PostgreSQL bağlantı havuzunu ve migration çalıştırıcısını sağlar.
+// Package db provides the PostgreSQL connection pool and the migration runner.
 //
-// Paketin iki bağımsız sorumluluğu vardır:
+// The package has two independent responsibilities:
 //
-//   - Bağlantı havuzu (Pool): pgxpool üzerine ince bir sarmalayıcı. Repository'ler
-//     ham havuza Pool.Pool() ile erişir; havuzun yaşam döngüsü bu pakette kalır.
-//   - Migration çalıştırıcısı (migrate.go): golang-migrate'i modül başına AYRI
-//     versiyon tablosuyla çalıştırır. Bu, plan Bölüm 2.1/2.3'teki modül
-//     izolasyonunun veritabanı düzeyindeki karşılığıdır.
+//   - The connection pool (Pool): a thin wrapper over pgxpool. Repositories
+//     reach the raw pool through Pool.Pool(); the pool's lifecycle stays in
+//     this package.
+//   - The migration runner (migrate.go): it runs golang-migrate with a SEPARATE
+//     version table per module. That is the database-level counterpart of the
+//     module isolation in plan Sections 2.1/2.3.
 //
-// Paket genelinde geçerli bir kural: DSN hiçbir hata mesajında, hiçbir log
-// kaydında ham hâliyle görünmez (plan Bölüm 8, "hassas veri loglanmaz"). Dışarı
-// çıkan her hedef gösterimi Redact'ten geçer.
+// A rule holds across the package: the DSN never appears raw in any error
+// message or log record (plan Section 8, "sensitive data is not logged").
+// Every target representation leaving the package goes through Redact.
 package db
 
 import (
@@ -26,7 +27,7 @@ import (
 	"github.com/bdrtr/gobit/internal/core/errors"
 )
 
-// Havuzun varsayılan ayarları; DefaultConfig bunları kullanır.
+// The pool's default settings; DefaultConfig uses them.
 const (
 	defaultMaxConns        = 10
 	defaultMinConns        = 2
@@ -35,34 +36,35 @@ const (
 	defaultConnectTimeout  = 5 * time.Second
 )
 
-// Ayıklanmış gösterimde bilinmeyen parçalar için kullanılan yer tutucular.
+// The placeholders used for unknown parts of the redacted representation.
 const (
-	unknownTarget   = "<bilinmeyen-hedef>"
-	unknownDatabase = "<veritabanı-yok>"
+	unknownTarget   = "<unknown-target>"
+	unknownDatabase = "<no-database>"
 )
 
-// Config PostgreSQL bağlantı havuzunun ayarlarıdır.
+// Config holds the settings of the PostgreSQL connection pool.
 type Config struct {
-	// URL pgx biçimindeki bağlantı adresidir
-	// (örn. postgres://kullanici:parola@host:5432/veritabani?sslmode=disable).
+	// URL is the connection address in pgx form
+	// (e.g. postgres://user:password@host:5432/database?sslmode=disable).
 	URL string
-	// MaxConns havuzun açabileceği azami bağlantı sayısıdır.
+	// MaxConns is the maximum number of connections the pool may open.
 	MaxConns int32
-	// MinConns havuzun boşta bile korumaya çalıştığı asgari bağlantı sayısıdır.
+	// MinConns is the minimum number of connections the pool tries to keep even
+	// when idle.
 	MinConns int32
-	// MaxConnLifetime bir bağlantının azami yaşam süresidir; dolduğunda bağlantı
-	// kapatılıp yenisiyle değiştirilir. Uzun ömürlü bağlantıların sunucu tarafı
-	// kaynak sızıntısını ve yük dengeleyici kopmalarını gizlemesini engeller.
+	// MaxConnLifetime is a connection's maximum lifetime; when it runs out the
+	// connection is closed and replaced. It stops long-lived connections from
+	// hiding a server-side resource leak or a load balancer dropping them.
 	MaxConnLifetime time.Duration
-	// MaxConnIdleTime bir bağlantının boşta kalabileceği azami süredir.
+	// MaxConnIdleTime is the maximum time a connection may stay idle.
 	MaxConnIdleTime time.Duration
-	// ConnectTimeout tek bir bağlantı kurulumu ve açılıştaki sağlık kontrolü için
-	// tanınan azami süredir.
+	// ConnectTimeout is the maximum time allowed for establishing a single
+	// connection and for the health check at startup.
 	ConnectTimeout time.Duration
 }
 
-// DefaultConfig verilen DSN için makul varsayılanlarla dolu bir Config döner.
-// Çağıran yalnızca değiştirmek istediği alanları ezer.
+// DefaultConfig returns a Config filled with sensible defaults for the given
+// DSN. The caller overwrites only the fields it wants to change.
 func DefaultConfig(dsn string) Config {
 	return Config{
 		URL:             dsn,
@@ -74,54 +76,56 @@ func DefaultConfig(dsn string) Config {
 	}
 }
 
-// Validate Config alanlarının kendi içinde tutarlı olduğunu doğrular.
-// New bunu otomatik çağırır; elle kurulan Config'ler için de kullanılabilir.
+// Validate checks that the Config fields are consistent with each other.
+// New calls it automatically; it can also be used for hand-built Configs.
 func (c Config) Validate() error {
 	if strings.TrimSpace(c.URL) == "" {
-		return errors.Invalid("db_config_invalid", "veritabanı adresi (URL) boş olamaz")
+		return errors.Invalid("db_config_invalid", "the database address (URL) cannot be empty")
 	}
 	if c.MaxConns < 1 {
-		return errors.Invalid("db_config_invalid", "MaxConns en az 1 olmalı, %d verildi", c.MaxConns)
+		return errors.Invalid("db_config_invalid", "MaxConns must be at least 1, got %d", c.MaxConns)
 	}
 	if c.MinConns < 0 {
-		return errors.Invalid("db_config_invalid", "MinConns negatif olamaz, %d verildi", c.MinConns)
+		return errors.Invalid("db_config_invalid", "MinConns cannot be negative, got %d", c.MinConns)
 	}
 	if c.MinConns > c.MaxConns {
 		return errors.Invalid("db_config_invalid",
-			"MinConns (%d), MaxConns'tan (%d) büyük olamaz", c.MinConns, c.MaxConns)
+			"MinConns (%d) cannot be greater than MaxConns (%d)", c.MinConns, c.MaxConns)
 	}
 	if c.MaxConnLifetime <= 0 {
 		return errors.Invalid("db_config_invalid",
-			"MaxConnLifetime pozitif olmalı, %s verildi", c.MaxConnLifetime)
+			"MaxConnLifetime must be positive, got %s", c.MaxConnLifetime)
 	}
 	if c.MaxConnIdleTime <= 0 {
 		return errors.Invalid("db_config_invalid",
-			"MaxConnIdleTime pozitif olmalı, %s verildi", c.MaxConnIdleTime)
+			"MaxConnIdleTime must be positive, got %s", c.MaxConnIdleTime)
 	}
 	if c.MaxConnIdleTime > c.MaxConnLifetime {
 		return errors.Invalid("db_config_invalid",
-			"MaxConnIdleTime (%s), MaxConnLifetime'dan (%s) büyük olamaz",
+			"MaxConnIdleTime (%s) cannot be greater than MaxConnLifetime (%s)",
 			c.MaxConnIdleTime, c.MaxConnLifetime)
 	}
 	if c.ConnectTimeout <= 0 {
 		return errors.Invalid("db_config_invalid",
-			"ConnectTimeout pozitif olmalı, %s verildi", c.ConnectTimeout)
+			"ConnectTimeout must be positive, got %s", c.ConnectTimeout)
 	}
 	return nil
 }
 
-// Pool uygulamanın paylaşılan PostgreSQL bağlantı havuzudur.
-// Eşzamanlı kullanıma güvenlidir; uygulama ömrü boyunca tek örnek yeterlidir.
+// Pool is the application's shared PostgreSQL connection pool.
+// It is safe for concurrent use; a single instance suffices for the
+// application's lifetime.
 type Pool struct {
 	pool *pgxpool.Pool
 	log  *slog.Logger
-	// target loglanması güvenli hedef gösterimidir (host/veritabanı).
+	// target is the representation of the target that is safe to log
+	// (host/database).
 	target string
 }
 
-// New verilen ayarlarla bir bağlantı havuzu açar ve veritabanının gerçekten
-// erişilebilir olduğunu doğrular. Dönen havuz kullanıldıktan sonra Close ile
-// kapatılmalıdır. log nil ise loglama yapılmaz.
+// New opens a connection pool with the given settings and verifies that the
+// database is really reachable. The pool returned must be closed with Close
+// after use. With log nil nothing is logged.
 func New(ctx context.Context, cfg Config, log *slog.Logger) (*Pool, error) {
 	if log == nil {
 		log = slog.New(slog.DiscardHandler)
@@ -134,10 +138,10 @@ func New(ctx context.Context, cfg Config, log *slog.Logger) (*Pool, error) {
 
 	pgCfg, err := pgxpool.ParseConfig(cfg.URL)
 	if err != nil {
-		// Alttaki hata metni DSN'i olduğu gibi taşıyabildiği için SARMALANMAZ;
-		// yalnızca ayıklanmış hedef gösterimi dışarı verilir.
+		// The underlying error text can carry the DSN as it is, so it is NOT
+		// WRAPPED; only the redacted target representation is handed out.
 		return nil, errors.Invalid("db_dsn_invalid",
-			"veritabanı adresi ayrıştırılamadı (hedef: %s)", target)
+			"the database address could not be parsed (target: %s)", target)
 	}
 
 	pgCfg.MaxConns = cfg.MaxConns
@@ -149,20 +153,20 @@ func New(ctx context.Context, cfg Config, log *slog.Logger) (*Pool, error) {
 	pool, err := pgxpool.NewWithConfig(ctx, pgCfg)
 	if err != nil {
 		return nil, errors.Wrap(err, errors.KindUnavailable, "db_pool_open_failed",
-			"veritabanı havuzu açılamadı (hedef: %s)", target)
+			"the database pool could not be opened (target: %s)", target)
 	}
 
-	// pgxpool bağlantıyı tembel kurar; havuzun gerçekten çalıştığını burada
-	// doğrulamazsak hata ilk isteğe kadar gizlenir.
+	// pgxpool connects lazily; without verifying here that the pool really
+	// works, the failure stays hidden until the first request.
 	pingCtx, cancel := context.WithTimeout(ctx, cfg.ConnectTimeout)
 	defer cancel()
 	if err := pool.Ping(pingCtx); err != nil {
 		pool.Close()
 		return nil, errors.Wrap(err, errors.KindUnavailable, "db_unreachable",
-			"veritabanına ulaşılamıyor (hedef: %s)", target)
+			"the database is unreachable (target: %s)", target)
 	}
 
-	log.InfoContext(ctx, "postgres bağlantı havuzu hazır",
+	log.InfoContext(ctx, "the postgres connection pool is ready",
 		slog.String("target", target),
 		slog.Int64("max_conns", int64(cfg.MaxConns)),
 		slog.Int64("min_conns", int64(cfg.MinConns)),
@@ -171,9 +175,9 @@ func New(ctx context.Context, cfg Config, log *slog.Logger) (*Pool, error) {
 	return &Pool{pool: pool, log: log, target: target}, nil
 }
 
-// Pool ham pgxpool havuzunu döner. Repository'ler sorgularını bunun üzerinden
-// çalıştırır. Dönen havuzun yaşam döngüsü sarmalayıcıya aittir; çağıran onun
-// üzerinde Close çağırmamalıdır.
+// Pool returns the raw pgxpool pool. Repositories run their queries through
+// it. The returned pool's lifecycle belongs to the wrapper; the caller must not
+// call Close on it.
 func (p *Pool) Pool() *pgxpool.Pool {
 	if p == nil {
 		return nil
@@ -181,20 +185,21 @@ func (p *Pool) Pool() *pgxpool.Pool {
 	return p.pool
 }
 
-// Ping veritabanının erişilebilir olduğunu doğrular; sağlık kontrolleri için.
+// Ping verifies the database is reachable; it is for health checks.
 func (p *Pool) Ping(ctx context.Context) error {
 	if p == nil || p.pool == nil {
-		return errors.Unavailable("db_pool_closed", "veritabanı havuzu kurulmamış")
+		return errors.Unavailable("db_pool_closed", "the database pool was never built")
 	}
 	if err := p.pool.Ping(ctx); err != nil {
 		return errors.Wrap(err, errors.KindUnavailable, "db_unreachable",
-			"veritabanına ulaşılamıyor (hedef: %s)", p.target)
+			"the database is unreachable (target: %s)", p.target)
 	}
 	return nil
 }
 
-// Target loglanması güvenli hedef gösterimini döner (host/veritabanı adı).
-// Parola ve diğer kimlik bilgileri bu gösterimde yer almaz.
+// Target returns the representation of the target that is safe to log (the
+// host and database name). The password and other credentials do not appear in
+// it.
 func (p *Pool) Target() string {
 	if p == nil {
 		return unknownTarget
@@ -202,29 +207,31 @@ func (p *Pool) Target() string {
 	return p.target
 }
 
-// Close havuzdaki tüm bağlantıları kapatır ve açık olanların bitmesini bekler.
+// Close closes every connection in the pool and waits for the open ones to
+// finish.
 //
-// pgxpool.Close bağlam almadığı ve iptal edilemediği için imza da almaz; bu,
-// plan Bölüm 8'deki "her metot context alır" kuralının bilinçli istisnasıdır.
+// Because pgxpool.Close takes no context and cannot be canceled, this signature
+// takes none either; it is a deliberate exception to plan Section 8's rule that
+// "every method takes a context".
 func (p *Pool) Close() {
 	if p == nil || p.pool == nil {
 		return
 	}
 	p.pool.Close()
-	p.log.Info("postgres bağlantı havuzu kapatıldı", slog.String("target", p.target))
+	p.log.Info("the postgres connection pool was closed", slog.String("target", p.target))
 }
 
-// Redact bir bağlantı adresinden kimlik bilgilerini ayıklayıp yalnızca host ve
-// veritabanı adını içeren, loglanması güvenli bir gösterim döner.
+// Redact strips the credentials out of a connection address and returns a
+// representation safe to log, containing only the host and the database name.
 //
-// Hem URL biçimini (postgres://kullanici:parola@host:5432/ad) hem de pgx'in
-// kabul ettiği anahtar=değer biçimini (host=... dbname=... password=...) tanır.
-// Ayrıştıramadığı girdiler için sabit bir yer tutucu döner: ham DSN hiçbir
-// koşulda geri verilmez, çünkü bu fonksiyonun tek amacı parola sızıntısını
-// yapısal olarak imkânsız kılmaktır.
+// It recognizes both the URL form (postgres://user:password@host:5432/name) and
+// the key=value form pgx accepts (host=... dbname=... password=...). For input
+// it cannot parse it returns a fixed placeholder: the raw DSN is never handed
+// back under any circumstance, because this function's only purpose is to make
+// a password leak structurally impossible.
 func Redact(dsn string) string {
 	if u, err := url.Parse(dsn); err == nil && u.Host != "" {
-		// u.User ayrı alanda durur; Host yalnızca host[:port] içerir.
+		// u.User sits in a separate field; Host holds only host[:port].
 		return u.Host + "/" + databaseOrPlaceholder(strings.TrimPrefix(u.Path, "/"))
 	}
 
@@ -252,7 +259,8 @@ func Redact(dsn string) string {
 	return host + "/" + databaseOrPlaceholder(name)
 }
 
-// databaseOrPlaceholder boş veritabanı adını okunabilir bir yer tutucuya çevirir.
+// databaseOrPlaceholder turns an empty database name into a readable
+// placeholder.
 func databaseOrPlaceholder(name string) string {
 	if name == "" {
 		return unknownDatabase

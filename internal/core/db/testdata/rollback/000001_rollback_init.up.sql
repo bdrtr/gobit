@@ -1,4 +1,4 @@
--- Geri alma testleri kendi tablolarıyla çalışır; alpha/beta durumuna dokunmaz.
+-- The rollback tests work with their own tables; they do not touch alpha/beta state.
 CREATE TABLE rollback_items (
     id TEXT PRIMARY KEY
 );

@@ -16,46 +16,49 @@ import (
 	"github.com/golang-migrate/migrate/v4/database/postgres"
 	"github.com/golang-migrate/migrate/v4/source"
 	"github.com/golang-migrate/migrate/v4/source/iofs"
-	_ "github.com/jackc/pgx/v5/stdlib" // database/sql için "pgx" sürücüsünü kaydeder
+	_ "github.com/jackc/pgx/v5/stdlib" // registers the "pgx" driver for database/sql
 
 	"github.com/bdrtr/gobit/internal/core/errors"
 )
 
 const (
-	// migrationsTableSuffix modül başına açılan versiyon tablosunun son ekidir.
+	// migrationsTableSuffix is the suffix of the per-module version table.
 	migrationsTableSuffix = "_schema_migrations"
-	// sourceName iofs sürücüsünün golang-migrate'e tanıtıldığı addır.
+	// sourceName is the name the iofs driver is registered under with
+	// golang-migrate.
 	sourceName = "iofs"
-	// databaseDriverName golang-migrate'in postgres sürücüsünün adıdır.
+	// databaseDriverName is the name of golang-migrate's postgres driver.
 	databaseDriverName = "postgres"
-	// sqlDriverName database/sql'e pgx/stdlib tarafından kaydedilen ad.
+	// sqlDriverName is the name pgx/stdlib registers with database/sql.
 	sqlDriverName = "pgx"
-	// cancelGracePeriod ctx iptal edilip bağlantı kapatıldıktan sonra çalışan
-	// işin gerçekten sonlanması için tanınan süredir. Bu süre dolarsa çağıran
-	// yine hata alır, ama goroutine'in terk edildiği AÇIKÇA raporlanır.
+	// cancelGracePeriod is the time allowed for the running work to actually
+	// stop after ctx was canceled and the connection closed. When it runs out
+	// the caller still gets an error, but that the goroutine was abandoned is
+	// reported EXPLICITLY.
 	cancelGracePeriod = 5 * time.Second
 )
 
-// ownerPattern geçerli modül adlarını tanımlar. owner doğrudan bir SQL tablo
-// adına dönüştüğü için serbest metne izin verilmez; bu, tablo adı üzerinden
-// enjeksiyonu yapısal olarak imkânsız kılar.
+// ownerPattern defines the valid module names. Because owner turns directly
+// into an SQL table name, free text is not allowed; that makes injection
+// through the table name structurally impossible.
 var ownerPattern = regexp.MustCompile(`^[a-z][a-z0-9_]{0,39}$`)
 
-// supportedSchemes migration yolunun kabul ettiği DSN şemalarıdır.
+// supportedSchemes are the DSN schemes the migration path accepts.
 var supportedSchemes = []string{"postgres", "postgresql"}
 
-// MigrationsTable owner modülüne ait versiyon tablosunun adını döner.
+// MigrationsTable returns the name of the version table belonging to the owner
+// module.
 //
-// owner BURADA doğrulanır ve geçersizse KindInvalid sınıfında bir hatayla
-// birlikte boş ad döner. Tablo adları SQL'de parametrelenemez, yani ad
-// zorunlu olarak dizge birleştirmesiyle üretilir; doğrulamanın fonksiyonun
-// KENDİSİNDE olması, dışarıdan gelen bir modül adının doğrulanmadan tablo
-// adına dönüşmesini yapısal olarak imkânsız kılar.
+// owner is validated HERE and, when invalid, an empty name is returned together
+// with a KindInvalid error. Table names cannot be parameterized in SQL, so the
+// name is necessarily produced by string concatenation; keeping the validation
+// INSIDE the function makes it structurally impossible for an unvalidated
+// module name from outside to become a table name.
 //
-// Her modül KENDİ tablosunu kullanır. Ortak bir schema_migrations tablosu
-// paylaşılsaydı, bir modülün migration'ı diğerinin versiyon defterini yeniden
-// yazar ve modüller birbirini bozardı; ayrı tablo, plan Bölüm 2.1/2.3'teki
-// modül izolasyonunun veritabanı düzeyindeki karşılığıdır.
+// Every module uses ITS OWN table. Had a shared schema_migrations table been
+// used, one module's migration would rewrite another's version ledger and the
+// modules would break each other; a separate table is the database-level
+// counterpart of the module isolation in plan Sections 2.1/2.3.
 func MigrationsTable(owner string) (string, error) {
 	if err := validateOwner(owner); err != nil {
 		return "", err
@@ -63,50 +66,52 @@ func MigrationsTable(owner string) (string, error) {
 	return owner + migrationsTableSuffix, nil
 }
 
-// validateScheme DSN'in desteklenen bir PostgreSQL şeması taşıdığını doğrular.
+// validateScheme checks that the DSN carries a supported PostgreSQL scheme.
 //
-// database/sql tembeldir: sql.Open bağlanmaz, dolayısıyla desteklenmeyen bir
-// şema ancak ilk bağlantı denemesinde ve "erişilemez" gibi yanıltıcı bir
-// sınıfla ortaya çıkardı. Şema, bağlanmadan önce burada denetlenir.
+// database/sql is lazy: sql.Open does not connect, so an unsupported scheme
+// would surface only on the first connection attempt and under a misleading
+// class such as "unreachable". The scheme is checked here, before connecting.
 func validateScheme(databaseURL string) error {
 	u, err := url.Parse(databaseURL)
 	if err != nil {
 		return errors.Wrap(err, errors.KindInvalid, "db_dsn_invalid",
-			"DSN çözümlenemedi (hedef: %s)", Redact(databaseURL))
+			"the DSN could not be parsed (target: %s)", Redact(databaseURL))
 	}
 	if !slices.Contains(supportedSchemes, u.Scheme) {
 		return errors.Invalid("db_dsn_unsupported",
-			"desteklenmeyen DSN şeması %q (beklenen: %s)", u.Scheme, strings.Join(supportedSchemes, ", "))
+			"unsupported DSN scheme %q (expected: %s)", u.Scheme, strings.Join(supportedSchemes, ", "))
 	}
 	return nil
 }
 
-// validateOwner modül adının tablo adına güvenle çevrilebileceğini doğrular.
+// validateOwner checks that the module name can safely become a table name.
 func validateOwner(owner string) error {
 	if !ownerPattern.MatchString(owner) {
 		return errors.Invalid("db_migration_owner_invalid",
-			"geçersiz modül adı %q (beklenen desen: %s)", owner, ownerPattern.String())
+			"invalid module name %q (expected pattern: %s)", owner, ownerPattern.String())
 	}
 	return nil
 }
 
-// Migrate owner modülünün bekleyen migration'larını uygular.
+// Migrate applies the owner module's pending migrations.
 //
-// Uygulanacak migration kalmamışsa hata dönmez. ctx iptal edilir veya süresi
-// dolarsa çalışan iş DURDURULUR (bkz. [session.run]) ve KindUnavailable
-// sınıfında db_migration_canceled hatası dönülür; bu durumda şemanın kısmen
-// uygulanmış olabileceği varsayılmalı ve [Version] ile denetlenmelidir.
+// With no migrations left to apply it returns no error. When ctx is canceled or
+// runs out, the running work is STOPPED (see [session.run]) and a
+// db_migration_canceled error of class KindUnavailable is returned; in that
+// case the schema must be assumed partially applied and checked with
+// [Version].
 func Migrate(ctx context.Context, databaseURL string, src fs.FS, owner string) error {
 	return runMigration(ctx, databaseURL, src, owner, "up", func(m *migrate.Migrate) error {
 		return m.Up()
 	})
 }
 
-// MigrateDown owner modülünün migration'larını geri alır.
+// MigrateDown rolls the owner module's migrations back.
 //
-// steps sıfır veya negatifse TÜM migration'lar geri alınır; pozitifse yalnızca
-// o kadar adım. Geri alınacak migration kalmamışsa hata dönmez — bu, hiç
-// migrate edilmemiş bir ortamda rollback çalıştırmanın normal sonucudur.
+// With steps zero or negative ALL migrations are rolled back; when positive,
+// only that many steps. With no migrations left to roll back it returns no
+// error — that is the normal outcome of running a rollback in an environment
+// that was never migrated.
 func MigrateDown(ctx context.Context, databaseURL string, src fs.FS, owner string, steps int) error {
 	return runMigration(ctx, databaseURL, src, owner, "down", func(m *migrate.Migrate) error {
 		if steps <= 0 {
@@ -116,10 +121,10 @@ func MigrateDown(ctx context.Context, databaseURL string, src fs.FS, owner strin
 	})
 }
 
-// asNoChange "yapacak iş yok" anlamına gelen sürücü hatalarını ErrNoChange'e
-// çevirir. golang-migrate, adım sayısı verilen geri alma yolunda hiç migration
-// uygulanmamışsa os.ErrNotExist, mevcut olandan fazla adım istenirse
-// ErrShortLimit döner; ikisi de bir arıza değildir.
+// asNoChange turns the driver errors meaning "there is nothing to do" into
+// ErrNoChange. On the step-counted rollback path golang-migrate returns
+// os.ErrNotExist when no migration was ever applied and ErrShortLimit when more
+// steps were asked for than exist; neither is a failure.
 func asNoChange(err error) error {
 	var short migrate.ErrShortLimit
 	if errors.Is(err, os.ErrNotExist) || errors.As(err, &short) {
@@ -128,18 +133,18 @@ func asNoChange(err error) error {
 	return err
 }
 
-// Version owner modülünün veritabanındaki geçerli migration sürümünü döner.
+// Version returns the owner module's current migration version in the database.
 //
-// Hiç migration uygulanmamışsa (0, false, nil) döner. dirty true ise yarıda
-// kalmış bir migration vardır; bu durumda otomatik ilerleme mümkün değildir ve
-// elle müdahale (golang-migrate force) gerekir.
+// With no migration ever applied it returns (0, false, nil). A true dirty means
+// there is a half-finished migration; automatic progress is then impossible and
+// manual intervention (golang-migrate force) is required.
 //
-// Not: golang-migrate sürücüsü versiyon tablosunu yoksa oluşturur; bu çağrı
-// bu nedenle tümüyle yan etkisiz değildir.
+// Note: the golang-migrate driver creates the version table when it is missing,
+// so this call is not entirely free of side effects.
 func Version(ctx context.Context, databaseURL, owner string) (version uint, dirty bool, err error) {
 	if err = ctx.Err(); err != nil {
 		return 0, false, errors.Wrap(err, errors.KindUnavailable, "db_migration_canceled",
-			"%s modülünün migration sürümü okunmadan iptal edildi", owner)
+			"the %s module's migration version was canceled before it could be read", owner)
 	}
 
 	s, err := openSession(ctx, databaseURL, nil, owner)
@@ -161,15 +166,16 @@ func Version(ctx context.Context, databaseURL, owner string) (version uint, dirt
 		return 0, false, runErr
 	}
 
-	// database.NilVersion (-1) "hiç migration uygulanmadı" demektir.
+	// database.NilVersion (-1) means "no migration was ever applied".
 	if current < 0 {
 		return 0, isDirty, nil
 	}
 	return uint(current), isDirty, nil
 }
 
-// runMigration girdileri doğrular, oturumu açar ve işlemi ctx sınırları içinde
-// çalıştırır. action yalnızca hata mesajında geçen okunabilir eylem adıdır.
+// runMigration validates the inputs, opens the session and runs the operation
+// within the bounds of ctx. action is only the readable action name appearing
+// in the error message.
 func runMigration(
 	ctx context.Context,
 	databaseURL string,
@@ -179,11 +185,11 @@ func runMigration(
 ) error {
 	if err := ctx.Err(); err != nil {
 		return errors.Wrap(err, errors.KindUnavailable, "db_migration_canceled",
-			"%s modülünün migration'ı (%s) başlamadan iptal edildi", owner, action)
+			"the %s module's migration (%s) was canceled before it started", owner, action)
 	}
 	if src == nil {
 		return errors.Invalid("db_migration_source_missing",
-			"%s modülü için migration kaynağı verilmedi", owner)
+			"no migration source was given for the %s module", owner)
 	}
 
 	s, err := openSession(ctx, databaseURL, src, owner)
@@ -195,10 +201,10 @@ func runMigration(
 	return s.run(ctx, action, run)
 }
 
-// session ctx'e bağlı, TEK bağlantılı bir migration oturumudur.
+// session is a migration session bound to ctx, with a SINGLE connection.
 //
-// Bağlantının tek olması zorunludur: golang-migrate'in postgres sürücüsü
-// advisory lock'u alıp bırakırken aynı bağlantıyı kullanmak zorundadır.
+// A single connection is mandatory: golang-migrate's postgres driver has to use
+// the same connection when it takes and releases the advisory lock.
 type session struct {
 	db      *sql.DB
 	conn    *sql.Conn
@@ -208,9 +214,9 @@ type session struct {
 	owner   string
 }
 
-// openSession migration için gereken bağlantıyı ve sürücüleri kurar.
-// src nil ise migrate örneği kurulmaz; yalnızca sürücü üzerinden sürüm okumak
-// isteyen çağıranlar (bkz. [Version]) için yeterlidir.
+// openSession sets up the connection and the drivers the migration needs.
+// With src nil no migrate instance is built; that is enough for callers who
+// only want to read the version through the driver (see [Version]).
 func openSession(ctx context.Context, databaseURL string, src fs.FS, owner string) (*session, error) {
 	table, err := MigrationsTable(owner)
 	if err != nil {
@@ -224,33 +230,34 @@ func openSession(ctx context.Context, databaseURL string, src fs.FS, owner strin
 	sqlDB, err := sql.Open(sqlDriverName, databaseURL)
 	if err != nil {
 		return nil, errors.Wrap(err, errors.KindInvalid, "db_migration_dsn_invalid",
-			"%s modülü için migration DSN'i çözümlenemedi (hedef: %s)", owner, Redact(databaseURL))
+			"the migration DSN for the %s module could not be parsed (target: %s)", owner, Redact(databaseURL))
 	}
 	sqlDB.SetMaxOpenConns(1)
 
 	s := &session{db: sqlDB, owner: owner}
 
-	// Conn(ctx) bağlantı kurulumunu ctx'e bağlar; erişilemeyen bir sunucuda
-	// çağrı ctx sınırında döner, işletim sistemi TCP zaman aşımını beklemez.
+	// Conn(ctx) binds establishing the connection to ctx; against an
+	// unreachable server the call returns at the ctx bound rather than waiting
+	// for the operating system's TCP timeout.
 	s.conn, err = sqlDB.Conn(ctx)
 	if err != nil {
 		s.close()
-		// Başarısızlığın sebebi ctx'in dolması ise bunu iptal olarak raporla;
-		// çağıran "sunucu erişilemez" ile "benim bütçem doldu" arasında ayrım
-		// yapabilmelidir.
+		// When the failure is caused by ctx running out, report it as a
+		// cancellation; the caller must be able to tell "the server is
+		// unreachable" from "my budget ran out".
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return nil, errors.Wrap(ctxErr, errors.KindUnavailable, "db_migration_canceled",
-				"%s modülü için migration bağlantısı kurulurken iptal edildi (hedef: %s)",
+				"establishing the migration connection for the %s module was canceled (target: %s)",
 				owner, Redact(databaseURL))
 		}
 		return nil, errors.Wrap(err, errors.KindUnavailable, "db_migration_connect_failed",
-			"%s modülü için migration bağlantısı kurulamadı (hedef: %s)", owner, Redact(databaseURL))
+			"the migration connection for the %s module could not be established (target: %s)", owner, Redact(databaseURL))
 	}
 
 	cfg := &postgres.Config{MigrationsTable: table}
 	if deadline, ok := ctx.Deadline(); ok {
-		// Savunma katmanı: bağlantı kapatma yolunun kaçırdığı bir durumda tek
-		// bir ifadenin süresiz sürmesini engeller.
+		// A defensive layer: it stops a single statement from running forever
+		// in a case the connection-closing path missed.
 		if remaining := time.Until(deadline); remaining > 0 {
 			cfg.StatementTimeout = remaining
 		}
@@ -261,11 +268,11 @@ func openSession(ctx context.Context, databaseURL string, src fs.FS, owner strin
 		s.close()
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return nil, errors.Wrap(ctxErr, errors.KindUnavailable, "db_migration_canceled",
-				"%s modülü için migration sürücüsü kurulurken iptal edildi (hedef: %s)",
+				"building the migration driver for the %s module was canceled (target: %s)",
 				owner, Redact(databaseURL))
 		}
 		return nil, errors.Wrap(err, errors.KindUnavailable, "db_migration_connect_failed",
-			"%s modülü için migration sürücüsü kurulamadı (hedef: %s)", owner, Redact(databaseURL))
+			"the migration driver for the %s module could not be built (target: %s)", owner, Redact(databaseURL))
 	}
 
 	if src == nil {
@@ -276,22 +283,23 @@ func openSession(ctx context.Context, databaseURL string, src fs.FS, owner strin
 	if err != nil {
 		s.close()
 		return nil, errors.Wrap(err, errors.KindInvalid, "db_migration_source_invalid",
-			"%s modülünün migration kaynağı okunamadı", owner)
+			"the %s module's migration source could not be read", owner)
 	}
 
 	s.migrate, err = migrate.NewWithInstance(sourceName, s.source, databaseDriverName, s.driver)
 	if err != nil {
 		s.close()
 		return nil, errors.Wrap(err, errors.KindInternal, "db_migration_init_failed",
-			"%s modülü için migration örneği kurulamadı", owner)
+			"the migration instance for the %s module could not be built", owner)
 	}
 	return s, nil
 }
 
-// close oturumun tüm kaynaklarını kapatır. Birden çok kez çağrılabilir.
+// close releases every resource of the session. It may be called more than
+// once.
 func (s *session) close() {
-	// migrate.Close kaynak ve veritabanı sürücülerini kapatır; sürücü zaten
-	// kapalıysa dönen hata anlamsızdır, bu yüzden yutulur.
+	// migrate.Close closes the source and database drivers; when the driver is
+	// already closed the error returned is meaningless, so it is swallowed.
 	if s.migrate != nil {
 		_, _ = s.migrate.Close()
 	} else if s.driver != nil {
@@ -305,19 +313,19 @@ func (s *session) close() {
 	}
 }
 
-// run işlemi ayrı bir goroutine'de çalıştırır ve ctx iptal edilirse işi
-// GERÇEKTEN durdurur.
+// run executes the operation in a separate goroutine and REALLY stops the work
+// when ctx is canceled.
 //
-// golang-migrate'in postgres sürücüsü kurulumdan sonra tüm sorgularında
-// context.Background() kullanır (Lock ise pg_advisory_lock üzerinde süresiz
-// bekler). Bu yüzden iptal iki koldan uygulanır:
+// After setup, golang-migrate's postgres driver uses context.Background() for
+// every query (and Lock waits indefinitely on pg_advisory_lock). Cancellation is
+// therefore applied from two sides:
 //
-//  1. GracefulStop ile bir sonraki migration'ın BAŞLAMASI engellenir,
-//  2. bağlantı kapatılarak UÇUŞTAKİ ifade koparılır.
+//  1. GracefulStop stops the NEXT migration from STARTING,
+//  2. closing the connection cuts off the IN-FLIGHT statement.
 //
-// Ardından işin gerçekten sonlandığı beklenir; goroutine terk edilmez.
-// Sonlanma cancelGracePeriod içinde gerçekleşmezse bu durum hata mesajında
-// açıkça belirtilir.
+// The work is then waited on until it really ends; the goroutine is not
+// abandoned. When it does not end within cancelGracePeriod, that is stated
+// explicitly in the error message.
 func (s *session) run(ctx context.Context, action string, fn func(*migrate.Migrate) error) error {
 	done := make(chan error, 1)
 	go func() { done <- fn(s.migrate) }()
@@ -327,21 +335,21 @@ func (s *session) run(ctx context.Context, action string, fn func(*migrate.Migra
 		return s.classify(err, action)
 
 	case <-ctx.Done():
-		// İş, ctx dolmadan hemen önce bitmiş olabilir; select hazır olan iki
-		// koldan rastgele birini seçer. Başarıyı iptal sanmamak için önce
-		// bakılır.
+		// The work may have finished just before ctx ran out; select picks
+		// randomly between two ready cases. It is checked first so a success is
+		// not mistaken for a cancellation.
 		select {
 		case err := <-done:
 			return s.classify(err, action)
 		default:
 		}
 
-		// Version yolunda migrate örneği kurulmaz; GracefulStop yalnızca
-		// gerçek bir migration çalışırken anlamlıdır.
+		// On the Version path no migrate instance is built; GracefulStop only
+		// means something while a real migration is running.
 		if s.migrate != nil {
 			select {
 			case s.migrate.GracefulStop <- true:
-			default: // kanal doluysa sinyal zaten verilmiş demektir
+			default: // a full channel means the signal was already sent
 			}
 		}
 		if s.conn != nil {
@@ -351,22 +359,22 @@ func (s *session) run(ctx context.Context, action string, fn func(*migrate.Migra
 		select {
 		case <-done:
 			return errors.Wrap(ctx.Err(), errors.KindUnavailable, "db_migration_canceled",
-				"%s modülünün migration'ı (%s) yarıda kesildi", s.owner, action)
+				"the %s module's migration (%s) was cut short", s.owner, action)
 		case <-time.After(cancelGracePeriod):
 			return errors.Wrap(ctx.Err(), errors.KindUnavailable, "db_migration_canceled",
-				"%s modülünün migration'ı (%s) iptal edildi ancak %s içinde durmadı",
+				"the %s module's migration (%s) was canceled but did not stop within %s",
 				s.owner, action, cancelGracePeriod)
 		}
 	}
 }
 
-// classify golang-migrate'ten dönen ham hatayı tipli hataya çevirir.
+// classify turns the raw error returned by golang-migrate into a typed error.
 func (s *session) classify(err error, action string) error {
-	// ErrNoChange bir hata değildir: uygulanacak/geri alınacak migration
-	// kalmamış olması migration runner'ının normal sonucudur.
+	// ErrNoChange is not an error: having no migration left to apply or roll
+	// back is the migration runner's normal outcome.
 	if err == nil || errors.Is(err, migrate.ErrNoChange) {
 		return nil
 	}
 	return errors.Wrap(err, errors.KindInternal, "db_migration_failed",
-		"%s modülünün migration'ı (%s) uygulanamadı", s.owner, action)
+		"the %s module's migration (%s) could not be applied", s.owner, action)
 }
