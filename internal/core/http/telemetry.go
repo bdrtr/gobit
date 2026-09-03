@@ -16,91 +16,91 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
-// tracerName bu paketin ürettiği span'ların enstrümantasyon adıdır.
+// tracerName is the instrumentation name of the spans this package produces.
 const tracerName = "github.com/bdrtr/gobit/internal/core/http"
 
-// unknownRoute eşleşen bir route deseni bulunamadığında kullanılan addır.
+// unknownRoute is the name used when no route pattern could be matched.
 //
-// Ham istek yolunu kullanmak CAZİPTİR ama yıkıcıdır: /store/v1/products/prod_01
-// gibi her kimlik ayrı bir span adı ve ayrı bir metrik serisi üretir. Birkaç
-// bin ürünle metrik deposu milyonlarca seriye çıkar ve sorgulanamaz hâle
-// gelir. Tanımlanamayan yolu tek bir kovada toplamak, kardinaliteyi
+// Using the raw request path is TEMPTING and ruinous: /store/v1/products/prod_01
+// produces a separate span name and a separate metric series for every id. With
+// a few thousand products the metric store grows to millions of series and
+// becomes unqueryable. Folding an unrecognized path into one bucket is better
 // patlatmaktan iyidir.
 const unknownRoute = "unknown"
 
-// Telemetry her isteğe bir span açar ve süre/sayı metriklerini kaydeder.
+// Telemetry opens a span per request and records duration/count metrics.
 //
-// serviceName üretilen span'lara ve HTTP metriklerine service.name özniteliği
-// olarak yazılır. Adı yalnızca OTel Resource'una bırakmak CAZİPTİR — servis
-// kimliğinin doğal yeri orasıdır — ama bu middleware GLOBAL sağlayıcıyla
-// çalışır ve [NewRouter] çağıranın observability.Setup'ı kurmuş olmasını şart
-// koşmaz; sağlayıcıyı başka bir gömücü kurduysa Resource'ta servis adı hiç
-// bulunmayabilir ve span'ın hangi servisten geldiği kaybolur. Parametre o
-// hâlde yalnızca "takılsın mı" anahtarına dönüşürdü: operatör değeri
-// değiştirir, izlemede hiçbir şey değişmezdi.
+// serviceName is written onto the produced spans and HTTP metrics as the
+// service.name attribute. Leaving the name to the OTel Resource alone is
+// TEMPTING — that is where a service identity belongs — but this middleware
+// works with the GLOBAL provider and [NewRouter] does not require its caller to
+// have set up observability.Setup; if another embedder built the provider the
+// Resource may carry no service name and which service a span came from is
+// lost. The parameter would then be a "should it be plugged in" switch: the
+// operator changes the value and nothing changes in the tracing.
 //
-// Öznitelik kardinalite açısından güvenlidir: serviceName sürecin ömrü boyunca
-// TEK bir değerdir, her seriye aynı değeri koyar ve seri sayısını çarpmaz.
-// İstek başına değişen bir değer (kimlik, ham yol) buraya ASLA konmamalıdır.
+// The attribute is safe for cardinality: serviceName is ONE value for the life
+// of the process, it puts the same value on every series and multiplies no
+// series. A value that changes per request (an id, a raw path) must NEVER go here.
 //
-// Boş ad öznitelik olarak yazılmaz: boş bir service.name, adı hiç
-// raporlamamaktan kötüdür — panolarda gerçek bir servismiş gibi duran adsız
-// bir seri açar.
+// An empty name is not written as an attribute: an empty service.name is worse
+// than not reporting a name at all — it opens a nameless series that looks like
+// a real service on a dashboard.
 //
-// İzleme kurulmamışsa OTel'in global no-op sağlayıcıları devrededir ve
-// middleware ölçülebilir bir maliyet getirmez; bu yüzden koşullu takmaya
-// gerek yoktur.
+// With tracing not set up, OTel's global no-op providers are in play and the
+// middleware costs nothing measurable; that is why there is no conditional
+// needed.
 //
-// Middleware zincirinde [RequestID]'den SONRA, route eşleşmesinden ÖNCE
-// çalışmalıdır: span adı olarak kullanılan route deseni ancak handler
-// çalıştıktan sonra bilinir, bu yüzden ad next dönüşünde güncellenir.
+// In the chain it has to run AFTER [RequestID] and BEFORE the route match: the
+// route pattern used as the span name is only known once the handler has run,
+// so the name is updated when next returns.
 func Telemetry(serviceName string) func(http.Handler) http.Handler {
 	tracer := otel.Tracer(tracerName)
 	meter := otel.Meter(tracerName)
 
-	// Servis adını bir kez özniteliğe çevir: değer sürecin ömrü boyunca
-	// sabittir, her istekte yeniden üretmek boşuna ayırma olurdu.
-	var sabitOznitelikler []attribute.KeyValue
+	// Turn the service name into an attribute once: the value is fixed for the
+	// life of the process and rebuilding it per request would be a pointless
+	var constantAttrs []attribute.KeyValue
 	if serviceName != "" {
-		sabitOznitelikler = append(sabitOznitelikler, semconv.ServiceName(serviceName))
+		constantAttrs = append(constantAttrs, semconv.ServiceName(serviceName))
 	}
 
-	// Aktif istek sayacının artışı ile azalışı AYNI öznitelik kümesini
-	// kullanmak zorundadır; ayrışırlarsa iki farklı seri oluşur, biri kalıcı
-	// olarak +1'de diğeri -1'de takılır ve "kaç istek işleniyor" panosu hiçbir
-	// zaman sıfıra dönmez. Seçeneği burada bir kez kurmak bunu yapısal olarak
+	// The increment and the decrement of the in-flight counter MUST use the SAME
+	// attribute set; if they drift apart two series appear, one stuck at +1 and
+	// the other at -1 forever, and the "how many requests are in flight"
+	// dashboard never returns to zero. Building the option once here makes that
 	// garantiler.
-	sabitOlcum := metric.WithAttributes(sabitOznitelikler...)
+	constantMeasurement := metric.WithAttributes(constantAttrs...)
 
-	// Metrik araçlarını bir kez kur. Hata yalnızca geçersiz araç adında olur;
-	// o durumda araçlar nil kalır ve kayıt sessizce atlanır — izleme
-	// kurulumundaki bir sorun istek yolunu düşürmemeli (ADR 0007).
-	sure, err := meter.Float64Histogram("http.server.request.duration",
+	// Build the metric instruments once. An error can only come from an invalid
+	// instrument name; the instruments then stay nil and recording is skipped
+	// silently — a problem in the tracing setup must not drop the request path
+	duration, err := meter.Float64Histogram("http.server.request.duration",
 		metric.WithUnit("s"),
-		metric.WithDescription("HTTP isteklerinin saniye cinsinden süresi"))
+		metric.WithDescription("the duration of HTTP requests in seconds"))
 	if err != nil {
-		slog.Default().Warn("istek süresi metriği kurulamadı", "error", err)
+		slog.Default().Warn("the request duration metric could not be built", "error", err)
 	}
 
 	aktif, err := meter.Int64UpDownCounter("http.server.active_requests",
-		metric.WithDescription("O an işlenmekte olan HTTP istekleri"))
+		metric.WithDescription("the HTTP requests being handled right now"))
 	if err != nil {
-		slog.Default().Warn("aktif istek metriği kurulamadı", "error", err)
+		slog.Default().Warn("the in-flight request metric could not be built", "error", err)
 	}
 
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			// İstemciden gelen trace bağlamını sürdür; yoksa yenisi başlar.
+			// Continue the trace context the client sent; without one a new trace starts.
 			ctx := otel.GetTextMapPropagator().Extract(
 				r.Context(), propagation.HeaderCarrier(r.Header))
 
-			// Sabit öznitelikler span BAŞLARKEN verilir; sonradan
-			// SetAttributes ile eklemek yetmezdi, çünkü örnekleyici (sampler)
-			// kararını yalnızca başlangıç özniteliklerine bakarak verir ve
-			// servis adına göre örnekleyen bir kurulum onu göremezdi.
-			spanOznitelikleri := make([]attribute.KeyValue, 0, len(sabitOznitelikler)+3)
-			spanOznitelikleri = append(spanOznitelikleri, sabitOznitelikler...)
-			spanOznitelikleri = append(spanOznitelikleri,
+			// The fixed attributes are given when the span STARTS; adding them
+			// later with SetAttributes would not do, because the sampler makes its
+			// decision from the starting attributes alone and a setup that samples
+			// by service name would not see it.
+			spanAttrs := make([]attribute.KeyValue, 0, len(constantAttrs)+3)
+			spanAttrs = append(spanAttrs, constantAttrs...)
+			spanAttrs = append(spanAttrs,
 				attribute.String("http.request.method", r.Method),
 				attribute.String("url.path", r.URL.Path),
 				attribute.String("server.address", r.Host),
@@ -108,7 +108,7 @@ func Telemetry(serviceName string) func(http.Handler) http.Handler {
 
 			ctx, span := tracer.Start(ctx, r.Method+" "+unknownRoute,
 				trace.WithSpanKind(trace.SpanKindServer),
-				trace.WithAttributes(spanOznitelikleri...))
+				trace.WithAttributes(spanAttrs...))
 			defer span.End()
 
 			if id := RequestIDFromContext(ctx); id != "" {
@@ -116,55 +116,55 @@ func Telemetry(serviceName string) func(http.Handler) http.Handler {
 			}
 
 			r = r.WithContext(ctx)
-			sarmal := &responseWriter{ResponseWriter: w, status: http.StatusOK}
+			wrapped := &responseWriter{ResponseWriter: w, status: http.StatusOK}
 
-			basla := time.Now()
+			started := time.Now()
 
 			if aktif != nil {
-				aktif.Add(ctx, 1, sabitOlcum)
-				defer aktif.Add(ctx, -1, sabitOlcum)
+				aktif.Add(ctx, 1, constantMeasurement)
+				defer aktif.Add(ctx, -1, constantMeasurement)
 			}
 
-			next.ServeHTTP(sarmal, r)
+			next.ServeHTTP(wrapped, r)
 
 			desen := routePattern(r)
 			span.SetName(r.Method + " " + desen)
 			span.SetAttributes(
 				attribute.String("http.route", desen),
-				attribute.Int("http.response.status_code", sarmal.status),
+				attribute.Int("http.response.status_code", wrapped.status),
 			)
 
-			// 5xx sunucunun kendi arızasıdır ve trace'te hata olarak görünmeli.
-			// 4xx işaretlenmez: istemcinin gönderdiği geçersiz veri, sunucunun
-			// hatası değildir ve hata oranı grafiklerini yanıltarak gerçek
-			// arızaları gürültüde boğardı.
-			if sarmal.status >= http.StatusInternalServerError {
-				span.SetStatus(codes.Error, http.StatusText(sarmal.status))
+			// A 5xx is the server's own failure and has to show as an error on the
+			// trace. A 4xx is not marked: invalid data the client sent is not the
+			// server's fault, and marking it would skew the error-rate graphs and
+			// drown the real failures in noise.
+			if wrapped.status >= http.StatusInternalServerError {
+				span.SetStatus(codes.Error, http.StatusText(wrapped.status))
 			}
 
-			if sure != nil {
-				// Öznitelikler tek bir dilimde toplanır: metric.WithAttributes
-				// kümeyi DEĞİŞTİRİR, eklemez — iki ayrı seçenek verilseydi
-				// ikincisi sabit öznitelikleri sessizce silerdi.
-				olcumOznitelikleri := make([]attribute.KeyValue, 0, len(sabitOznitelikler)+3)
-				olcumOznitelikleri = append(olcumOznitelikleri, sabitOznitelikler...)
-				olcumOznitelikleri = append(olcumOznitelikleri,
+			if duration != nil {
+				// The attributes are gathered into a single slice:
+				// metric.WithAttributes REPLACES the set rather than adding to
+				// it — with two separate options the second would silently drop
+				measurementAttrs := make([]attribute.KeyValue, 0, len(constantAttrs)+3)
+				measurementAttrs = append(measurementAttrs, constantAttrs...)
+				measurementAttrs = append(measurementAttrs,
 					attribute.String("http.request.method", r.Method),
 					attribute.String("http.route", desen),
-					attribute.Int("http.response.status_code", sarmal.status),
+					attribute.Int("http.response.status_code", wrapped.status),
 				)
 
-				sure.Record(ctx, time.Since(basla).Seconds(),
-					metric.WithAttributes(olcumOznitelikleri...))
+				duration.Record(ctx, time.Since(started).Seconds(),
+					metric.WithAttributes(measurementAttrs...))
 			}
 		})
 	}
 }
 
-// routePattern eşleşen chi route desenini döner.
+// routePattern returns the matched chi route pattern.
 //
-// Desen ancak router eşleşmeyi yaptıktan SONRA doludur; bu yüzden yalnızca
-// handler çalıştıktan sonra çağrılmalıdır.
+// The pattern is only filled once the router has matched, so it may only be
+// called after the handler has run.
 func routePattern(r *http.Request) string {
 	rctx := chi.RouteContext(r.Context())
 	if rctx == nil {
@@ -178,16 +178,16 @@ func routePattern(r *http.Request) string {
 	return unknownRoute
 }
 
-// SpanFromContext context'teki aktif span'ı döner.
+// SpanFromContext returns the active span from the context.
 //
-// İzleme kapalıyken de güvenle çağrılabilir: OTel no-op bir span döner.
+// It is safe to call with tracing off: OTel returns a no-op span.
 func SpanFromContext(ctx context.Context) trace.Span {
 	return trace.SpanFromContext(ctx)
 }
 
-// TraceIDFromContext aktif trace'in kimliğini döner; yoksa boş dize.
+// TraceIDFromContext returns the id of the active trace, or an empty string.
 //
-// Log kayıtlarına eklemek içindir: bir hata logunu trace'e bağlamanın en
+// It is meant for log records: binding an error log to its trace is the
 // ucuz yolu budur.
 func TraceIDFromContext(ctx context.Context) string {
 	sc := trace.SpanContextFromContext(ctx)

@@ -10,13 +10,13 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestMemoryLimiterZamanlaYenilenir kotanın gerçekten zamanla dolduğunu
-// doğrular.
+// TestMemoryLimiterRefillsOverTime verifies that the quota really does fill up
+// again as time passes.
 //
-// Paket İÇİ testtir: yenilenme davranışı ancak saat kontrol edilerek
-// güvenilir biçimde sınanabilir. Gerçek saatle beklemek testi hem yavaş
-// hem de CI'da kırılgan yapardı.
-func TestMemoryLimiterZamanlaYenilenir(t *testing.T) {
+// It is an IN-PACKAGE test: the refill behavior can only be exercised reliably
+// by controlling the clock. Waiting on the real clock would make the test both
+// slow and flaky in CI.
+func TestMemoryLimiterRefillsOverTime(t *testing.T) {
 	t.Parallel()
 
 	simdi := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
@@ -24,7 +24,7 @@ func TestMemoryLimiterZamanlaYenilenir(t *testing.T) {
 	require.NotNil(t, lim)
 	lim.now = func() time.Time { return simdi }
 
-	// Kotayı tüket.
+	// Spend the quota.
 	for range 2 {
 		d, err := lim.Allow(context.Background(), "k")
 		require.NoError(t, err)
@@ -35,29 +35,29 @@ func TestMemoryLimiterZamanlaYenilenir(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, d.Allowed)
 
-	// Yarım saniye: 2/2sn = 1 jeton/sn hızda 0.5 jeton birikir, yetmez.
+	// Half a second: at 2/2s = 1 token per second that is 0.5 tokens, not enough.
 	simdi = simdi.Add(500 * time.Millisecond)
 	d, err = lim.Allow(context.Background(), "k")
 	require.NoError(t, err)
-	assert.False(t, d.Allowed, "yarım jeton bir isteğe yetmemeli")
+	assert.False(t, d.Allowed, "half a token must not be enough for one request")
 
-	// Bir saniye daha: tam bir jeton birikir.
+	// One more second: a full token accumulates.
 	simdi = simdi.Add(time.Second)
 	d, err = lim.Allow(context.Background(), "k")
 	require.NoError(t, err)
-	assert.True(t, d.Allowed, "biriken jeton kullanılabilmeli")
+	assert.True(t, d.Allowed, "the accumulated token has to be usable")
 }
 
-// TestMemoryLimiterKovasiTasmaz birikimin limitin ÜSTÜNE çıkmadığını doğrular.
+// TestMemoryLimiterBucketDoesNotOverflow verifies that the refill stays UNDER the limit.
 //
-// Boşluk kasıtlı olarak PENCEREDEN KISA tutulur. Uzun bir boşluk kovayı
-// çöp toplamaya sildirir ve kota zaten sıfırlanır; o senaryoda tavan
-// kaldırılsa bile test geçerdi — yani hiçbir şey ölçmezdi. Bu testin ilk
-// hâli tam olarak bu yüzden yanlış pozitifti.
+// The gap is deliberately kept SHORTER THAN THE WINDOW. A long gap lets the
+// garbage collector delete the bucket and the quota resets anyway; in that
+// scenario the test would pass even with the ceiling removed — that is, it would
+// measure nothing. The first version of this test was a false positive for exactly that.
 //
-// 3 jeton / 1 sn ⇒ 0,9 sn'de 2,7 jeton birikir. Tavansız: 2 + 2,7 = 4,7
-// jetonla 4 istek geçerdi. Tavanlı: 3'te durur.
-func TestMemoryLimiterKovasiTasmaz(t *testing.T) {
+// 3 tokens / 1s means 2.7 tokens accumulate in 0.9s. Without a ceiling: 2 + 2.7 = 4.7
+// tokens would let 4 requests through. With the ceiling: it stops at 3.
+func TestMemoryLimiterBucketDoesNotOverflow(t *testing.T) {
 	t.Parallel()
 
 	simdi := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
@@ -69,11 +69,11 @@ func TestMemoryLimiterKovasiTasmaz(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, d.Allowed)
 
-	// Pencereden kısa bir boşluk: kova çöp toplamaya takılmaz.
+	// A gap shorter than the window: the bucket does not get garbage collected.
 	simdi = simdi.Add(900 * time.Millisecond)
-	require.Len(t, lim.buckets, 1, "kova hâlâ yaşıyor olmalı")
+	require.Len(t, lim.buckets, 1, "the bucket has to be alive still")
 
-	gecen := 0
+	passed := 0
 
 	for range 10 {
 		d, err := lim.Allow(context.Background(), "k")
@@ -83,20 +83,20 @@ func TestMemoryLimiterKovasiTasmaz(t *testing.T) {
 			break
 		}
 
-		gecen++
+		passed++
 	}
 
-	assert.Equal(t, 3, gecen, "birikim limiti aşmamalı")
+	assert.Equal(t, 3, passed, "the refill must not exceed the limit")
 }
 
-// TestMemoryLimiterUzunSessizlikKotayiTazeler pencereden uzun süre sessiz
-// kalan bir anahtarın tam kotayla döndüğünü doğrular.
+// TestMemoryLimiterLongSilenceRefreshesTheQuota verifies that a key silent for
+// longer than the window comes back with its full quota.
 //
-// Bu, [TestMemoryLimiterKovasiTasmaz] ile çelişmez: pencere boyunca sessiz
-// kalmış bir kova zaten dolmuş olurdu, dolayısıyla çöp toplamanın onu silmesi
-// kotayı DEĞİŞTİRMEZ. İki testin birlikte söylediği şudur: kova ne taşar
-// ne de hak edilmiş kotayı yutar.
-func TestMemoryLimiterUzunSessizlikKotayiTazeler(t *testing.T) {
+// It does not contradict [TestMemoryLimiterBucketDoesNotOverflow]: a bucket that
+// stayed silent for the whole window would already be full, so the garbage
+// collector deleting it DOES NOT CHANGE the quota. Together the two tests say
+// this: a bucket neither overflows nor swallows a quota that was earned.
+func TestMemoryLimiterLongSilenceRefreshesTheQuota(t *testing.T) {
 	t.Parallel()
 
 	simdi := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
@@ -112,11 +112,11 @@ func TestMemoryLimiterUzunSessizlikKotayiTazeler(t *testing.T) {
 
 	d, err := lim.Allow(context.Background(), "k")
 	require.NoError(t, err)
-	require.False(t, d.Allowed, "kota bitmiş olmalı")
+	require.False(t, d.Allowed, "the quota has to be spent")
 
 	simdi = simdi.Add(24 * time.Hour)
 
-	gecen := 0
+	passed := 0
 
 	for range 10 {
 		d, err := lim.Allow(context.Background(), "k")
@@ -126,18 +126,18 @@ func TestMemoryLimiterUzunSessizlikKotayiTazeler(t *testing.T) {
 			break
 		}
 
-		gecen++
+		passed++
 	}
 
-	assert.Equal(t, 3, gecen, "uzun sessizlikten sonra tam kota dönmeli")
+	assert.Equal(t, 3, passed, "after a long silence the full quota has to come back")
 }
 
-// TestMemoryLimiterOluKovalariTemizler bellek kullanımının anahtar sayısıyla
-// sınırsız büyümediğini doğrular.
+// TestMemoryLimiterCleansDeadBuckets verifies that memory use does not grow
+// without bound with the number of keys.
 //
-// Temizlik olmasaydı, her istekte yeni bir kaynak IP gören bir sunucu
-// belleğini tüketirdi: sınırlayıcının kendisi DoS vektörü olurdu.
-func TestMemoryLimiterOluKovalariTemizler(t *testing.T) {
+// Without the cleanup a server seeing a new source IP on every request would
+// exhaust its memory: the limiter itself would be the DoS vector.
+func TestMemoryLimiterCleansDeadBuckets(t *testing.T) {
 	t.Parallel()
 
 	simdi := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
@@ -150,23 +150,23 @@ func TestMemoryLimiterOluKovalariTemizler(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	require.Len(t, lim.buckets, 1000, "kovalar önce birikmiş olmalı")
+	require.Len(t, lim.buckets, 1000, "the buckets have to pile up first")
 
-	// gcInterval kadar ilerle ki temizlik tetiklensin; pencere de dolmuş olur.
+	// Move past gcInterval so the cleanup triggers; the window expires too.
 	simdi = simdi.Add(gcInterval + time.Second)
 
 	_, err := lim.Allow(context.Background(), "yeni")
 	require.NoError(t, err)
 
-	assert.Len(t, lim.buckets, 1, "ölü kovalar atılmalı, yalnızca yeni anahtar kalmalı")
+	assert.Len(t, lim.buckets, 1, "the dead buckets have to go, only the new key stays")
 }
 
-// TestMemoryLimiterAktifKovayiSilmez sınıra çarpmış bir istemcinin kotasının
-// temizlikle SIFIRLANMADIĞINI doğrular.
+// TestMemoryLimiterKeepsAnActiveBucket verifies that the quota of a client which
+// hit the limit is NOT RESET by the cleanup.
 //
-// Aktif kova erken silinseydi, sınırı aşan istemci her temizlik turunda taze
-// bir kota bulur ve sınır etkisiz kalırdı.
-func TestMemoryLimiterAktifKovayiSilmez(t *testing.T) {
+// Were an active bucket deleted early, a client over the limit would find a fresh
+// quota on every cleanup round and the limit would do nothing.
+func TestMemoryLimiterKeepsAnActiveBucket(t *testing.T) {
 	t.Parallel()
 
 	simdi := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
@@ -178,10 +178,10 @@ func TestMemoryLimiterAktifKovayiSilmez(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, d.Allowed)
 
-	// Temizliği tetikle ama pencere (1sa) henüz dolmasın.
+	// Trigger the cleanup, but not late enough for the window (1h) to expire.
 	simdi = simdi.Add(gcInterval + time.Second)
 
 	d, err = lim.Allow(context.Background(), "k")
 	require.NoError(t, err)
-	assert.False(t, d.Allowed, "penceresi dolmamış kova temizlikte silinmemeli")
+	assert.False(t, d.Allowed, "a bucket whose window is still open must not be cleaned")
 }

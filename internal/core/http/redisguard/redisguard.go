@@ -1,56 +1,56 @@
-// Package redisguard hız sınırlayıcının ve idempotency deposunun paylaşılan
-// (Redis tabanlı) uygulamalarını sağlar.
+// Package redisguard provides the SHARED (Redis-backed) implementations of the
+// rate limiter and the idempotency store.
 //
-// internal/core/http paketindeki bellek içi karşılıkları (MemoryLimiter,
-// MemoryIdempotencyStore) tek örnekli kurulumlar ve testler içindir. Yatay
-// ölçeklenen bir dağıtımda ikisi de bozulur, ama AYNI ŞEKİLDE değil:
+// Their in-memory counterparts in internal/core/http (MemoryLimiter,
+// MemoryIdempotencyStore) are for single-instance installations and tests. In a
+// horizontally scaled deployment both break, but NOT IN THE SAME WAY:
 //
-//   - Hız sınırı örnek sayısıyla ÇARPILIR: her örnek kendi sayacını tuttuğu
-//     için 3 örnekli bir kurulumda "dakikada 60" pratikte 180 olur. Bu bir
-//     HIZ sorunudur; sınır gevşer ama hiçbir istek yanlış işlenmez.
-//   - Idempotency koruması örnekler arasında HİÇ çalışmaz: aynı anahtarla
-//     farklı örneklere düşen iki istek iki kez işlenir, yani iki sipariş, iki
-//     tahsilat. Bu bir hız değil DOĞRULUK sorunudur ve tam da idempotency'nin
-//     var olma sebebini ortadan kaldırır.
+//   - The rate limit is MULTIPLIED by the instance count: because every
+//     instance keeps its own counter, "60 per minute" is 180 across three
+//     instances. That is a SPEED problem; the limit loosens but no request is
+//   - The idempotency protection does not work between instances AT ALL: two
+//     requests with the same key landing on different instances are handled
+//     twice — two orders, two captures. That is not a speed problem but a
+//     CORRECTNESS one, and it removes the very reason idempotency exists.
 //
-// İkisinin de çaresi paylaşılan bir sayaç/depodur; bu paket onu Redis üzerine
-// kurar. Sözleşmeler değişmez: [Limiter] corehttp.RateLimiter'ı,
-// [IdempotencyStore] corehttp.IdempotencyStore'u birebir karşılar ve
-// middleware'ler hangi uygulamanın takılı olduğunu bilmez.
+// The cure for both is a shared counter/store; this package builds it on Redis.
+// The contracts do not change: [Limiter] satisfies corehttp.RateLimiter and
+// [IdempotencyStore] satisfies corehttp.IdempotencyStore exactly, and the
+// middlewares do not know which implementation is plugged in.
 //
-// # Arıza davranışı
+// # Failure behavior
 //
-// Redis erişilemezse iki tip ZIT davranır ve bu bilinçlidir. Sınırlayıcı hata
-// döner, middleware isteği GEÇİRİR (fail-open): sınır ürünün doğruluğu için
-// değil kötüye kullanıma karşıdır, Redis'in düşmesi tüm trafiği kesmemelidir.
-// Depo da hata döner ama middleware onu istemciye YAZAR (fail-closed): kaydı
-// yazamıyorken isteği geçirmek, tekrarın ikinci kez işlenmesi demektir —
-// korumanın kapalı olduğu anda geçmek, korumayı hiç takmamakla aynıdır.
-// Bu asimetri corehttp tarafında zaten kodlanmıştır; buradaki uygulamaların
-// tek görevi hataları TİPLİ döndürmektir.
+// When Redis is unreachable the two types behave in OPPOSITE ways, and that is
+// deliberate. The limiter returns an error and the middleware LETS THE REQUEST
+// THROUGH (fail-open): the limit is not there for the product's correctness but
+// against abuse, and Redis going down must not cut all traffic. The store also
+// returns an error but the middleware WRITES it to the client (fail-closed):
+// letting a request through while the record cannot be written means a repeat is
+// handled a second time — passing at the moment the protection is off is the
+// same as never installing it. The asymmetry is already coded on the corehttp
 //
-// # Anahtar ad alanı
+// # The key namespace
 //
-// Anahtar biçimi, kuruculara verilen ad alanı önekiyle başlar:
+// A key starts with the namespace prefix given to the constructors:
 //
-//	<önek>:rl:<sınır anahtarı>          — hız sınırı sayacı
-//	<önek>:idem:<idempotency anahtarı>  — idempotency kaydı
+//	<prefix>:rl:<limit key>          — the rate limit counter
+//	<prefix>:idem:<idempotency key>  — the idempotency record
 //
-// Önek KURUCU PARAMETRESİDİR, sabit değil. İki gerekçesi var ve ikincisi
-// birincisinden çok daha ağır basar:
+// The prefix is a CONSTRUCTOR PARAMETER, not a constant. There are two reasons
+// and the second weighs far more than the first:
 //
-//   - Aynı Redis'i paylaşan başka verilerle (cache, kuyruk, oturum) karışmayı
-//     önler; operasyon "<önek>:idem:*" ile tarayabilir.
-//   - AYNI Redis'i paylaşan iki gobit KURULUMUNU (staging ile production, ya
-//     da aynı kümedeki iki mağaza) birbirinden ayırır. Sabit önekle bu iki
-//     kurulum birbirinin hız sınırı kotasını harcar — bu bir hız sorunudur —
-//     ve birbirinin idempotency kaydını OKUR: bir kurulumun yanıtı ötekinin
-//     istemcisine gider. İkincisi doğruluk sorunudur; ayrı DB/örnek zorunlu
-//     tutulsaydı çare altyapıya havale edilmiş olurdu, oysa Redis Cluster
-//     numaralı DB'leri desteklemez ve ayrı örnek para/operasyon maliyetidir.
+//   - It keeps the keys from mixing with other data sharing the same Redis
+//     (a cache, a queue, sessions); operations can scan "<prefix>:idem:*".
+//   - It separates two gobit INSTALLATIONS sharing the SAME Redis (staging and
+//     production, or two stores in one cluster). With a fixed prefix those two
+//     installations spend each other's rate limit quota — a speed problem — and
+//     READ each other's idempotency records: one installation's response goes to
+//     the other's client. The second is a correctness problem; requiring a
+//     separate DB or instance would have handed the cure to the infrastructure,
+//     and Redis Cluster supports no numbered DBs while a separate instance costs
 //
-// Önek [dogrulaOnek] ile denetlenir; ayırıcı içeren ya da boş bir önek sessizce
-// kabul EDİLMEZ.
+// The prefix is checked by [validatePrefix]; a prefix that is empty or carries
+// the separator is NOT accepted silently.
 package redisguard
 
 import (
@@ -59,63 +59,63 @@ import (
 	coreerrors "github.com/bdrtr/gobit/internal/core/errors"
 )
 
-// Anahtar bölümleri; ad alanı önekiyle birleşerek tam anahtarı kurar.
+// The key sections; joined with the namespace prefix they form the full key.
 const (
-	// ayirici anahtar bölümlerini ayıran karakterdir.
+	// separator is the character that separates the key sections.
 	//
-	// Redis'te bir dil kuralı değil GELENEKTİR: redis-cli ve çoğu izleme aracı
-	// anahtarları bu karakterden bölerek ağaç gibi gösterir, bellek raporlarını
-	// da bu ağaca göre gruplar.
-	ayirici = ":"
-	// hizSinirBolumu hız sınırı sayaçlarının bölüm adıdır.
-	hizSinirBolumu = "rl"
-	// idempotencyBolumu idempotency kayıtlarının bölüm adıdır.
-	idempotencyBolumu = "idem"
+	// In Redis it is a CONVENTION rather than a language rule: redis-cli and most
+	// monitoring tools split keys on it to show them as a tree, and group their
+	// memory reports by that tree.
+	separator = ":"
+	// rateLimitSection is the section name of the rate limit counters.
+	rateLimitSection = "rl"
+	// idempotencySection is the section name of the idempotency records.
+	idempotencySection = "idem"
 )
 
-// dogrulaOnek ad alanı önekinin biçimini denetler.
+// validatePrefix checks the shape of the namespace prefix.
 //
-// Kabul edilen: en az bir karakter, ve yalnızca ASCII harf, rakam, '-', '_',
-// '.'. Bu liste "güvenli olduğu düşünülen" karakterler değil, reddedilenlerin
-// her birinin SOMUT bir arızası olduğu için bu kadar dardır:
+// Accepted: at least one character, and only ASCII letters, digits, '-', '_'
+// and '.'. The list is this narrow not because these are the characters
+// "thought to be safe" but because every refused one has a CONCRETE failure:
 //
-//   - Boş önek anahtarı ":rl:istemci" yapar. Ad alanı yok demektir; oysa
-//     çağıran önek PARAMETRESİ vererek tam da ad alanı istediğini söylemiştir.
-//     Boşu varsayılana çevirmek daha da kötü olurdu: eksik yapılandırmayla
-//     açılan iki kurulum yine aynı ad alanına düşer, yani düzeltmeye
-//     çalıştığımız arıza sessizce geri gelir.
-//   - Ayırıcı (':') gerçek bir ÇAKIŞMA açar. "a" öneki "a:idem:<K>" yazar;
-//     "a:idem:x" öneki "a:idem:x:idem:<K2>" yazar. İstemcinin uydurduğu
-//     K = "x:idem:<K2>" ikisini AYNI anahtara düşürür — yani bir kurulumun
-//     istemcisi, öteki kurulumun kaydını kasten okuyabilir hâle gelir.
-//   - Glob imleri ('*', '?', '[') paket godoc'undaki "<önek>:idem:*" ile
-//     tarama yordamını bozar: operatörün deseni ya fazlasını siler ya
-//     hiçbirini bulmaz. İkisi de üretimde yanlış anahtarla karar vermektir.
-//   - Boşluk ve kontrol karakterleri GÖRÜNMEZDİR. Ortam dosyasından sızan tek
-//     bir sondaki boşluk, kurulumu kimsenin fark etmeyeceği biçimde BAŞKA bir
-//     ad alanına taşır: tüm sayaçlar sıfırlanır ve işlemdeki idempotency
-//     kayıtları bir anda yok sayılır.
+//   - An empty prefix makes the key ":rl:client". That means no namespace at
+//     all, while the caller asked for one by passing the prefix PARAMETER.
+//     Turning empty into a default would be worse still: two installations
+//     opened with a missing configuration would land in the same namespace
+//     again — the very failure being fixed would come back silently.
+//   - The separator (':') opens a real CLASH. The prefix "a" writes
+//     "a:idem:<K>"; the prefix "a:idem:x" writes "a:idem:x:idem:<K2>". A client
+//     inventing K = "x:idem:<K2>" lands both on the SAME key — that is, one
+//     installation's client can deliberately read the other's record.
+//   - Glob characters ('*', '?', '[') break the "<prefix>:idem:*" scan the
+//     package godoc describes: the operator's pattern either deletes too much or
+//     finds nothing. Both are deciding with the wrong key in production.
+//   - Whitespace and control characters are INVISIBLE. A single trailing space
+//     leaking out of an environment file moves the installation into ANOTHER
+//     namespace in a way nobody notices: every counter resets and the
+//     idempotency records in flight are ignored in an instant.
 //
-// ASCII DIŞI harfler de reddedilir. Redis anahtarları ikili güvenlidir, yani
-// teknik bir engel yok; ama önek insanların redis-cli çıktısında okuyup
-// eşleştirdiği bir dizedir ve görsel olarak ayırt edilemeyen karakterler
-// (örn. Kiril 'а' ile Latin 'a') iki ayrı ad alanını AYNI gösterirdi.
-func dogrulaOnek(keyPrefix string) error {
+// NON-ASCII letters are refused too. Redis keys are binary safe, so there is no
+// technical obstacle; but the prefix is a string humans read and match in
+// redis-cli output, and visually indistinguishable characters (Cyrillic 'а' next
+// to Latin 'a') would make two namespaces look like ONE.
+func validatePrefix(keyPrefix string) error {
 	if keyPrefix == "" {
-		return coreerrors.Invalid(CodeInvalidConfig, "anahtar ad alanı öneki boş olamaz")
+		return coreerrors.Invalid(CodeInvalidConfig, "the key namespace prefix cannot be empty")
 	}
 
-	if strings.ContainsFunc(keyPrefix, func(r rune) bool { return !gecerliOnekKarakteri(r) }) {
+	if strings.ContainsFunc(keyPrefix, func(r rune) bool { return !isValidPrefixChar(r) }) {
 		return coreerrors.Invalid(CodeInvalidConfig,
-			"anahtar ad alanı öneki %q geçersiz karakter içeriyor; "+
-				"yalnızca ASCII harf, rakam, '-', '_' ve '.' kabul edilir", keyPrefix)
+			"the key namespace prefix %q carries an invalid character; "+
+				"only ASCII letters, digits, '-', '_' and '.' are accepted", keyPrefix)
 	}
 
 	return nil
 }
 
-// gecerliOnekKarakteri karakterin ad alanı önekinde kullanılabildiğini bildirir.
-func gecerliOnekKarakteri(r rune) bool {
+// isValidPrefixChar reports whether the character may be used in a namespace prefix.
+func isValidPrefixChar(r rune) bool {
 	switch {
 	case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
 		return true
@@ -124,16 +124,16 @@ func gecerliOnekKarakteri(r rune) bool {
 	}
 }
 
-// Bu paketin ürettiği makine okunur hata kodları.
+// The machine-readable error codes this package produces.
 //
-// corehttp.CodeRateLimited'dan AYRIDIRLAR: o kod "sınırı aştın" der ve
-// istemcinin doğru tepkisi beklemektir; buradakiler "sınırı ölçemedim" der ve
-// istemcinin yapabileceği bir şey yoktur.
+// They are SEPARATE from corehttp.CodeRateLimited: that code says "you went over
+// the limit" and the client's right response is to wait; these say "I could not
+// measure the limit" and there is nothing the client can do.
 const (
-	// CodeRateLimiterFailed hız sınırı sayacının güncellenemediğini bildirir.
+	// CodeRateLimiterFailed reports that the rate limit counter could not be updated.
 	CodeRateLimiterFailed = "rate_limiter_unavailable"
-	// CodeIdempotencyStoreFailed idempotency deposuna erişilemediğini bildirir.
+	// CodeIdempotencyStoreFailed reports that the idempotency store is unreachable.
 	CodeIdempotencyStoreFailed = "idempotency_store_unavailable"
-	// CodeInvalidConfig kurucuya geçersiz ayar verildiğini bildirir.
+	// CodeInvalidConfig reports that the constructor was given an invalid setting.
 	CodeInvalidConfig = "redisguard_invalid_config"
 )

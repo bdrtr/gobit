@@ -10,164 +10,164 @@ import (
 	corehttp "github.com/bdrtr/gobit/internal/core/http"
 )
 
-// limitBetigi sayacı artırır ve pencerenin kalan süresini döner.
+// limitScript increments the counter and returns the time left in the window.
 //
-// Neden Lua: INCR ve PEXPIRE AYRI komut olarak gönderilirse aralarında bir şey
-// ters gidebilir (süreç ölür, bağlantı kopar, context iptal olur) ve geriye
-// TTL'siz, yani SÜRESİZ yaşayan bir sayaç kalır. O sayaç bir daha hiç
-// sıfırlanmaz: anahtar sonsuza dek bloke olur ve elle silinene kadar o istemci
-// hiçbir istek yapamaz. EVAL sunucuda tek parça çalışır; araya girilebilecek
-// bir an yoktur.
+// Why Lua: sent as SEPARATE commands, something can go wrong between INCR and
+// PEXPIRE (the process dies, the connection drops, the context is canceled) and
+// what is left behind is a counter with no TTL — one that lives FOREVER. That
+// counter never resets again: the key is blocked for good and that client can
+// make no request until somebody deletes it by hand. EVAL runs as one piece
+// on the server; there is no instant to slip into.
 //
-// Neden MULTI/EXEC değil: o da atomiktir ama komutları ARA SONUÇLARI GÖRMEDEN
-// sıraya dizer. PEXPIRE'ı "sayaç 1'e eşitse" koşuluna bağlayamayacağımız için
-// TTL'i her istekte yenilemek zorunda kalırdık; bu, sabit pencereyi hiç
-// sıfırlanmayan kayan bir pencereye çevirir ve sınıra çarpmış bir istemci
-// istek göndermeyi sürdürdüğü sürece SONSUZA DEK bloke kalır. Betik INCR'ın
-// sonucunu gördüğü için TTL'i yalnızca pencerenin ilk isteğinde kurar.
+// Why not MULTI/EXEC: it is atomic too, but it queues the commands WITHOUT
+// SEEING THE INTERMEDIATE RESULTS. Unable to make PEXPIRE conditional on "the
+// counter equals 1", we would have to refresh the TTL on every request; that
+// turns a fixed window into a sliding one that never resets, and a client that
+// hit the limit stays blocked FOREVER as long as it keeps sending. The script
+// sees INCR's result, so it sets the TTL only on the window's first request.
 //
-// PTTL'in negatif dönmesi beklenmez (sayaç her zaman TTL'le doğar); yine de
-// TTL'siz bir anahtar bulunursa onarılır. Onarmazsak yukarıdaki "sonsuza dek
-// bloke" durumu, bu kez elle SET edilmiş ya da eski bir sürümün bıraktığı bir
-// anahtar üzerinden geri gelirdi.
-var limitBetigi = redis.NewScript(`
-local sayac = redis.call('INCR', KEYS[1])
-if sayac == 1 then
+// PTTL is not expected to come back negative (a counter is always born with a
+// TTL); a key found without one is repaired anyway. Without the repair the
+// "blocked forever" case above would come back through a key SET by hand or left
+// behind by an older version.
+var limitScript = redis.NewScript(`
+local counter = redis.call('INCR', KEYS[1])
+if counter == 1 then
   redis.call('PEXPIRE', KEYS[1], ARGV[1])
 end
-local kalan = redis.call('PTTL', KEYS[1])
-if kalan < 0 then
+local remaining = redis.call('PTTL', KEYS[1])
+if remaining < 0 then
   redis.call('PEXPIRE', KEYS[1], ARGV[1])
-  kalan = tonumber(ARGV[1])
+  remaining = tonumber(ARGV[1])
 end
-return {sayac, kalan}
+return {counter, remaining}
 `)
 
-// Limiter Redis üzerinde SABİT PENCERE sayan hız sınırlayıcıdır.
+// Limiter is the rate limiter counting a FIXED WINDOW on Redis.
 //
-// Anahtar başına tek bir sayaç tutulur; sayaç ilk istekte doğar, pencere
-// süresi kadar yaşar ve süresi dolunca yok olur. Kota, sayaç yok olduğu anda
-// bir kerede yenilenir.
+// One counter is kept per key; it is born on the first request, lives for the
+// window duration and disappears when it expires. The quota returns in full the
+// counter disappears.
 //
-// # corehttp.MemoryLimiter'dan farkı
+// # How it differs from corehttp.MemoryLimiter
 //
-// Bellek içi sürüm JETON KOVASIDIR: jetonlar sürekli ve eşit hızda birikir,
-// yani kota pencere boyunca yumuşakça açılır. Sabit pencerede ise kota
-// pencerenin başında topluca açılır. Pratik farkı PENCERE SINIRINDA görülür:
-// bir istemci N. pencerenin sonunda limit kadar, N+1'in başında yine limit
-// kadar istek gönderebilir; yani çok kısa bir aralıkta 2×limit isteğe kadar
-// geçebilir. Jeton kovasında bu patlama olmaz.
+// The in-memory version is a TOKEN BUCKET: tokens accumulate continuously and at
+// an even rate, so the quota opens smoothly across the window. In a fixed window
+// the quota opens all at once at the start. The practical difference shows AT
+// THE WINDOW BOUNDARY: a client can send the full limit at the end of window N
+// and the full limit again at the start of N+1 — that is, up to 2x the limit in
+// a very short interval. A token bucket has no such burst.
 //
-// Bu takas bilerek kabul edilir: sabit pencere anahtar başına TEK bir sayaç ve
-// istek başına TEK bir gidiş-dönüş demektir. Kayan pencere (sorted set'te
-// istek zaman damgaları) sınır patlamasını yok ederdi ama anahtar başına
-// istek sayısı kadar üye saklar, her istekte O(log n) ekleme + eski üyeleri
-// kırpma yapar ve saldırı altında belleği isteklerle orantılı büyütür — yani
-// hız sınırlayıcının kendisi saldırı yüzeyi olurdu. 2× patlama, kötüye
-// kullanımı durdurmak için yeterince sıkı bir sınırdır; hassas eşik isteyen
-// uçlar zaten sınırlayıcıya değil kotaya/lisansa aittir.
+// The trade is accepted deliberately: a fixed window means ONE counter per key
+// and ONE round trip per request. A sliding window (request timestamps in a
+// sorted set) would remove the boundary burst but stores as many members per key
+// as there are requests, does an O(log n) insert plus a trim of old members on
+// every request, and grows memory in proportion to the requests under attack —
+// that is, the rate limiter itself would become the attack surface. A 2x burst
+// is a tight enough bound to stop abuse; endpoints wanting a precise threshold
+// belong to a quota or a license rather than to a limiter.
 //
-// # Anahtar biçimi
+// # The key shape
 //
-// Sayaçlar "<önek>:rl:<anahtar>" adresine yazılır; varsayılan önekle
-// "istemci-a" anahtarı "gobit:rl:istemci-a" sayacına düşer. Önek kurucudan
-// gelir ve aynı Redis'i paylaşan iki kurulumu ayıran şeydir (bkz. paket
-// godoc'u).
+// Counters are written to "<prefix>:rl:<key>"; with the default prefix the key
+// "client-a" lands on the counter "gobit:rl:client-a". The prefix comes from the
+// constructor and is what separates two installations sharing one Redis (see the
+// package godoc).
 type Limiter struct {
 	client *redis.Client
-	// onek sayaç anahtarlarının TAM önekidir (örn. "gobit:rl:").
+	// prefix is the FULL prefix of the counter keys (for example "gobit:rl:").
 	//
-	// Ad alanı önekiyle bölüm adı her istekte yeniden birleştirilmesin diye
-	// kurucuda bir kez kurulur.
-	onek string
-	// limit pencere başına izin verilen istek sayısıdır.
+	// It is built once in the constructor so the namespace prefix and the section
+	// name are not joined on every request.
+	prefix string
+	// limit is how many requests are allowed per window.
 	limit int
-	// window kotanın tamamen yenilendiği süredir.
+	// window is the period over which the quota is fully renewed.
 	window time.Duration
-	// pencereMs window'un milisaniye karşılığıdır; her istekte yeniden
-	// hesaplanmaması için kurucuda bir kez çıkarılır.
-	pencereMs int64
+	// windowMs is the window in milliseconds; it is derived once in the
+	// constructor so it is not recomputed on every request.
+	windowMs int64
 }
 
 var _ corehttp.RateLimiter = (*Limiter)(nil)
 
-// NewLimiter window süresinde limit isteğe izin veren Redis sınırlayıcısı kurar.
+// NewLimiter builds a Redis limiter allowing limit requests per window.
 //
-// keyPrefix sayaçların ad alanı önekidir; sayaçlar "<keyPrefix>:rl:<anahtar>"
-// adresine yazılır. Biçimi [dogrulaOnek] denetler ve geçersiz önek HATA döner:
-// aynı Redis'i paylaşan iki kurulumun ayrılması buna bağlıdır, sessizce
-// düzeltmek (kırpmak ya da varsayılana düşmek) iki kurulumu yine aynı sayaca
-// bindirirdi.
+// keyPrefix is the namespace prefix of the counters; they are written to
+// "<keyPrefix>:rl:<key>". [validatePrefix] checks its shape and an invalid prefix
+// is an ERROR: separating two installations sharing one Redis depends on it, and
+// fixing it silently (by trimming, or by falling back to a default) would land
+// them on the same counter again.
 //
-// client nil ya da limit/window pozitif değilse de HATA döner.
-// corehttp.NewMemoryLimiter'ın aksine nil DÖNMEZ: nil bir *Limiter,
-// corehttp.RateLimit'e arayüz olarak verildiğinde "nil olmayan ama içi nil"
-// bir arayüz değeri üretir, middleware'in limiter == nil kontrolü FALSE çıkar
-// ve ilk istekte panik olur. Kurucu zaten hata dönüyorken bu tuzağı taşımanın
-// bir gerekçesi yok; sınır istemeyen çağıran corehttp.RateLimit'e doğrudan
+// It also returns an ERROR when client is nil or limit/window is not positive.
+// Unlike corehttp.NewMemoryLimiter it does NOT return nil: a nil *Limiter handed
+// to corehttp.RateLimit as an interface produces a "non-nil interface holding
+// nil" value, the middleware's limiter == nil check comes out FALSE and the
+// first request panics. With the constructor already returning an error there is
+// no reason to carry that trap; a caller wanting no limit simply does not plug
 // nil verir.
 func NewLimiter(client *redis.Client, keyPrefix string, limit int, window time.Duration) (*Limiter, error) {
 	if client == nil {
 		return nil, coreerrors.Invalid(CodeInvalidConfig, "redis istemcisi nil olamaz")
 	}
 
-	if err := dogrulaOnek(keyPrefix); err != nil {
+	if err := validatePrefix(keyPrefix); err != nil {
 		return nil, err
 	}
 
 	if limit <= 0 {
-		return nil, coreerrors.Invalid(CodeInvalidConfig, "hız sınırı pozitif olmalı, verilen: %d", limit)
+		return nil, coreerrors.Invalid(CodeInvalidConfig, "the rate limit has to be positive, given: %d", limit)
 	}
 
 	if window <= 0 {
-		return nil, coreerrors.Invalid(CodeInvalidConfig, "hız sınırı penceresi pozitif olmalı, verilen: %s", window)
+		return nil, coreerrors.Invalid(CodeInvalidConfig, "the rate limit window has to be positive, given: %s", window)
 	}
 
 	return &Limiter{
 		client: client,
-		onek:   keyPrefix + ayirici + hizSinirBolumu + ayirici,
+		prefix: keyPrefix + separator + rateLimitSection + separator,
 		limit:  limit,
 		window: window,
-		// Redis'in en küçük çözünürlüğü milisaniyedir; daha kısa bir pencere
-		// PEXPIRE 0 ile komut hatasına dönerdi.
-		pencereMs: max(window.Milliseconds(), 1),
+		// Redis's finest resolution is the millisecond; a shorter window would
+		// turn PEXPIRE 0 into a command error.
+		windowMs: max(window.Milliseconds(), 1),
 	}, nil
 }
 
-// Allow anahtarın kotasından bir istek düşmeye çalışır.
+// Allow tries to take one request off the key's quota.
 //
-// Redis erişilemezse KindUnavailable döner; corehttp.RateLimit bu hatayı
-// loglayıp isteği geçirir (fail-open, bkz. paket godoc'u).
+// When Redis is unreachable it returns KindUnavailable; corehttp.RateLimit logs
+// that error and lets the request through (fail-open, see the package godoc).
 //
-// RetryAfter, izin verilen istekte de doldurulur: değeri pencerenin KALAN
-// süresidir, yani "kota ne zaman yenilenir" sorusunun yanıtıdır ve
-// middleware onu RateLimit-Reset başlığına yazar.
+// RetryAfter is filled in for an allowed request too: its value is the time LEFT
+// in the window, which answers "when does the quota renew" and the middleware
+// writes it into the RateLimit-Reset header.
 func (l *Limiter) Allow(ctx context.Context, key string) (corehttp.Decision, error) {
-	sonuc, err := limitBetigi.Run(ctx, l.client,
-		[]string{l.onek + key},
-		l.pencereMs,
+	result, err := limitScript.Run(ctx, l.client,
+		[]string{l.prefix + key},
+		l.windowMs,
 	).Int64Slice()
 	if err != nil {
 		return corehttp.Decision{}, coreerrors.Wrap(err, coreerrors.KindUnavailable,
-			CodeRateLimiterFailed, "hız sınırı sayacı güncellenemedi")
+			CodeRateLimiterFailed, "the rate limit counter could not be updated")
 	}
 
-	if len(sonuc) != 2 {
+	if len(result) != 2 {
 		return corehttp.Decision{}, coreerrors.Internal(CodeRateLimiterFailed,
-			"hız sınırı betiği %d değer döndürdü, 2 bekleniyordu", len(sonuc))
+			"the rate limit script returned %d values, 2 were expected", len(result))
 	}
 
-	sayac, kalanMs := sonuc[0], sonuc[1]
+	counter, kalanMs := result[0], result[1]
 
 	yenilenme := time.Duration(kalanMs) * time.Millisecond
 	if yenilenme <= 0 {
-		// Sayaç okuduğumuz anda son nefesindeydi. Sıfır süre "bekleme"
-		// demektir; istemciyi anında tekrar denemeye ve ikinci bir 429 almaya
-		// yollamamak için tam pencereye yuvarlanır.
+		// The counter was on its last breath when we read it. A zero duration
+		// means "no wait"; it is rounded up to the full window so the client is
+		// not sent to retry instantly and collect a second 429.
 		yenilenme = l.window
 	}
 
-	if sayac > int64(l.limit) {
+	if counter > int64(l.limit) {
 		return corehttp.Decision{
 			Limit:      l.limit,
 			Remaining:  0,
@@ -175,11 +175,11 @@ func (l *Limiter) Allow(ctx context.Context, key string) (corehttp.Decision, err
 		}, nil
 	}
 
-	// sayac bu dalda 1..limit aralığındadır; int'e daralması güvenlidir.
+	// counter is in the 1..limit range on this branch; narrowing to int is safe.
 	return corehttp.Decision{
 		Allowed:    true,
 		Limit:      l.limit,
-		Remaining:  l.limit - int(sayac),
+		Remaining:  l.limit - int(counter),
 		RetryAfter: yenilenme,
 	}, nil
 }

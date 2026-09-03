@@ -28,7 +28,7 @@ func TestHealthEndpoint(t *testing.T) {
 		Version string `json:"version"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
-		t.Fatalf("gövde JSON değil: %v (%s)", err, rec.Body.String())
+		t.Fatalf("the body is not JSON: %v (%s)", err, rec.Body.String())
 	}
 	if body.Status != "ok" {
 		t.Errorf("status = %q, beklenen %q", body.Status, "ok")
@@ -41,7 +41,7 @@ func TestHealthEndpoint(t *testing.T) {
 func TestUnknownRouteReturns404(t *testing.T) {
 	r := corehttp.NewRouter(corehttp.RouterOptions{Version: "dev"})
 
-	req := httptest.NewRequest(http.MethodGet, "/yok-boyle-bir-sey", http.NoBody)
+	req := httptest.NewRequest(http.MethodGet, "/no-such-path", http.NoBody)
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 

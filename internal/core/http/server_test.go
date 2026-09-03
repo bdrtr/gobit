@@ -13,7 +13,7 @@ import (
 	corehttp "github.com/bdrtr/gobit/internal/core/http"
 )
 
-// discardLogger test çıktısını kirletmemek için logları yutar.
+// discardLogger swallows the logs so the test output stays clean.
 func discardLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
@@ -31,7 +31,7 @@ func TestServerShutsDownOnContextCancel(t *testing.T) {
 	done := make(chan error, 1)
 	go func() { done <- srv.Run(ctx) }()
 
-	// Sunucunun dinlemeye başlamasına fırsat ver.
+	// Give the server a moment to start listening.
 	time.Sleep(50 * time.Millisecond)
 	cancel()
 
@@ -41,12 +41,12 @@ func TestServerShutsDownOnContextCancel(t *testing.T) {
 			t.Fatalf("Run() = %v, beklenen nil", err)
 		}
 	case <-time.After(10 * time.Second):
-		t.Fatal("Run() ctx iptalinden sonra dönmedi")
+		t.Fatal("Run() did not return after the ctx was canceled")
 	}
 }
 
 func TestServerReturnsErrorOnBusyPort(t *testing.T) {
-	// Portu önce biz tutalım; sunucu aynı adrese bağlanamamalı.
+	// Hold the port first; the server must not be able to bind the same address.
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("net.Listen: %v", err)
@@ -62,12 +62,12 @@ func TestServerReturnsErrorOnBusyPort(t *testing.T) {
 	})
 
 	if err := srv.Run(context.Background()); err == nil {
-		t.Fatal("Run() dolu portta hata dönmeliydi")
+		t.Fatal("Run() should have returned an error on a taken port")
 	}
 }
 
 func TestServerServesRequests(t *testing.T) {
-	// Sunucunun gerçekten istek karşıladığını uçtan uca doğrula.
+	// Verify end to end that the server really answers requests.
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("net.Listen: %v", err)
@@ -90,7 +90,7 @@ func TestServerServesRequests(t *testing.T) {
 	done := make(chan error, 1)
 	go func() { done <- srv.Run(ctx) }()
 
-	// Dinlemeye başlayana kadar kısa aralıklarla dene.
+	// Retry at short intervals until it starts listening.
 	var resp *http.Response
 	for range 50 {
 		resp, err = http.Get("http://" + addr + "/health")
@@ -100,7 +100,7 @@ func TestServerServesRequests(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 	}
 	if err != nil {
-		t.Fatalf("/health isteği başarısız: %v", err)
+		t.Fatalf("the /health request failed: %v", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
@@ -114,12 +114,12 @@ func TestServerServesRequests(t *testing.T) {
 	}
 }
 
-// TestServerForceClosesOnShutdownTimeout ShutdownTimeout dolduğunda açık
-// bağlantıların gerçekten koparıldığını doğrular.
+// TestServerForceClosesOnShutdownTimeout verifies that open connections are
+// really cut when ShutdownTimeout expires.
 //
-// Regresyon: Shutdown tek başına deadline dolduğunda hata döner ama aktif
-// bağlantıları KAPATMAZ. Close çağrılmadığı sürece handler ve TCP bağlantısı
-// Run döndükten sonra yaşamaya devam eder ve istemci yanıtını hatasız alırdı.
+// Regression: on its own, Shutdown returns an error when the deadline passes
+// but DOES NOT close the active connections. Unless Close is called the
+// handler and the TCP connection live on after Run returns, and the client
 func TestServerForceClosesOnShutdownTimeout(t *testing.T) {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -134,7 +134,7 @@ func TestServerForceClosesOnShutdownTimeout(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/slow", func(w http.ResponseWriter, _ *http.Request) {
 		close(handlerEntered)
-		time.Sleep(3 * time.Second) // ShutdownTimeout'tan çok daha uzun
+		time.Sleep(3 * time.Second) // far longer than the ShutdownTimeout
 		_, _ = w.Write([]byte("slow-done"))
 	})
 
@@ -174,31 +174,31 @@ func TestServerForceClosesOnShutdownTimeout(t *testing.T) {
 	case <-handlerEntered:
 	case <-time.After(10 * time.Second):
 		cancel()
-		t.Fatal("handler'a hiç girilmedi")
+		t.Fatal("the handler was never entered")
 	}
 
-	cancel() // kapanışı tetikle
+	cancel() // trigger the shutdown
 
 	select {
 	case err := <-runDone:
 		if err == nil {
-			t.Fatal("Run() nil döndü; zaman aşımında hata beklenirdi")
+			t.Fatal("Run() returned nil; an error was expected on the timeout")
 		}
 		if !strings.Contains(err.Error(), "the graceful shutdown could not finish") {
 			t.Errorf("beklenmedik hata: %v", err)
 		}
 	case <-time.After(10 * time.Second):
-		t.Fatal("Run() zaman aşımı sonrası dönmedi")
+		t.Fatal("Run() did not return after the timeout")
 	}
 
-	// Asıl iddia: bağlantı koparıldığı için istemci yanıtı ALAMAMALI.
-	// Close çağrılmasaydı istemci 3 sn sonra hatasız 200 alırdı.
+	// The real claim: because the connection was cut the client MUST NOT get a
+	// response. Without Close the client would have got a clean 200 three
 	select {
 	case err := <-clientDone:
 		if err == nil {
-			t.Error("istemci yanıtı hatasız aldı; bağlantı zorla kapatılmamış")
+			t.Error("the client got a clean response; the connection was not force-closed")
 		}
 	case <-time.After(2 * time.Second):
-		t.Error("istemci isteği ne hata verdi ne tamamlandı; bağlantı koparılmamış")
+		t.Error("the client request neither failed nor completed; the connection was not cut")
 	}
 }

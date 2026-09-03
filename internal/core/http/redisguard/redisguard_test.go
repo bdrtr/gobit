@@ -13,195 +13,195 @@ import (
 	"github.com/bdrtr/gobit/internal/core/http/redisguard"
 )
 
-// Bu dosya Redis GEREKTİRMEZ: yalnızca kurucuların hızlı başarısızlık yolunu
-// sınar. Gerçek Redis isteyen sözleşme testleri redisguard_integration_test.go
-// içindedir.
+// This file needs NO Redis: it exercises the constructors' fast-failure path
+// only. The contract tests that want a real Redis are in
+// redisguard_integration_test.go.
 
-// yapayIstemci bağlanmayan ama nil de olmayan bir Redis istemcisi üretir.
+// fakeClient produces a Redis client that never connects but is not nil either.
 //
-// go-redis bağlantıyı ilk komutta kurar; kurucuların ayar doğrulaması hiç
-// komut çalıştırmadığı için bu testler Docker'sız koşar.
-func yapayIstemci() *redis.Client {
+// go-redis opens the connection on the first command; because the constructors'
+// validation runs no command, these tests run without Docker.
+func fakeClient() *redis.Client {
 	return redis.NewClient(&redis.Options{Addr: "127.0.0.1:0"})
 }
 
-// gecerliOnek biçim denetimini geçen, bugünkü varsayılanla aynı önektir.
-const gecerliOnek = "gobit"
+// validPrefix is a prefix that passes the shape check; it is the current default.
+const validPrefix = "gobit"
 
-func TestNewLimiterGecersizAyariReddeder(t *testing.T) {
+func TestNewLimiterRefusesAnInvalidSetting(t *testing.T) {
 	t.Parallel()
 
 	durumlar := map[string]struct {
 		limit  int
 		window time.Duration
 	}{
-		"sıfır limit":            {limit: 0, window: time.Minute},
-		"negatif limit":          {limit: -1, window: time.Minute},
-		"sıfır pencere":          {limit: 10, window: 0},
-		"negatif pencere":        {limit: 10, window: -time.Second},
-		"limit ve pencere sıfır": {limit: 0, window: 0},
+		"a zero limit":    {limit: 0, window: time.Minute},
+		"negatif limit":   {limit: -1, window: time.Minute},
+		"a zero window":   {limit: 10, window: 0},
+		"negatif pencere": {limit: 10, window: -time.Second},
+		"both zero":       {limit: 0, window: 0},
 	}
 
 	for ad, d := range durumlar {
 		t.Run(ad, func(t *testing.T) {
 			t.Parallel()
 
-			lim, err := redisguard.NewLimiter(yapayIstemci(), gecerliOnek, d.limit, d.window)
+			lim, err := redisguard.NewLimiter(fakeClient(), validPrefix, d.limit, d.window)
 
-			require.Error(t, err, "geçersiz ayar hata döndürmeli")
+			require.Error(t, err, "an invalid setting has to return an error")
 			assert.Nil(t, lim)
-			assert.True(t, coreerrors.IsInvalid(err), "hata KindInvalid olmalı")
+			assert.True(t, coreerrors.IsInvalid(err), "the error has to be KindInvalid")
 			assert.Equal(t, redisguard.CodeInvalidConfig, coreerrors.CodeOf(err))
 		})
 	}
 }
 
-func TestKuruculariNilIstemciyiReddeder(t *testing.T) {
+func TestConstructorsRefuseANilClient(t *testing.T) {
 	t.Parallel()
 
-	lim, err := redisguard.NewLimiter(nil, gecerliOnek, 10, time.Minute)
-	require.Error(t, err, "nil istemci hata döndürmeli")
+	lim, err := redisguard.NewLimiter(nil, validPrefix, 10, time.Minute)
+	require.Error(t, err, "a nil client has to return an error")
 	assert.Nil(t, lim)
 	assert.Equal(t, redisguard.CodeInvalidConfig, coreerrors.CodeOf(err))
 
-	depo, err := redisguard.NewIdempotencyStore(nil, gecerliOnek, time.Hour)
-	require.Error(t, err, "nil istemci hata döndürmeli")
-	assert.Nil(t, depo)
+	store, err := redisguard.NewIdempotencyStore(nil, validPrefix, time.Hour)
+	require.Error(t, err, "a nil client has to return an error")
+	assert.Nil(t, store)
 	assert.Equal(t, redisguard.CodeInvalidConfig, coreerrors.CodeOf(err))
 }
 
-// TestNewLimiterHataDondurupNilDonmez sınırlayıcının "typed-nil" tuzağına
-// düşmediğini sabitler.
+// TestNewLimiterReturnsAnErrorRatherThanNil pins that the limiter does not fall
+// into the "typed-nil" trap.
 //
-// corehttp.NewMemoryLimiter geçersiz ayarda nil döner ve o nil doğrudan
-// corehttp.RateLimit'e verilirse arayüz değeri nil ÇIKMAZ; middleware'in
-// limiter == nil kontrolü kaçar ve ilk istekte panik olur. Bu test, Redis
-// sürümünde aynı yolun kapalı kaldığını (hata dönüp çağıranı durdurduğunu)
-// garanti eder.
-func TestNewLimiterHataDondurupNilDonmez(t *testing.T) {
+// corehttp.NewMemoryLimiter returns nil on an invalid setting, and handing that
+// nil straight to corehttp.RateLimit does NOT produce a nil interface value; the
+// middleware's limiter == nil check is missed and the first request panics. This
+// test guarantees the same path stays closed in the Redis version (it returns an
+// error and stops the caller).
+func TestNewLimiterReturnsAnErrorRatherThanNil(t *testing.T) {
 	t.Parallel()
 
-	lim, err := redisguard.NewLimiter(yapayIstemci(), gecerliOnek, 0, time.Minute)
+	lim, err := redisguard.NewLimiter(fakeClient(), validPrefix, 0, time.Minute)
 	require.Error(t, err)
 	require.Nil(t, lim)
 
-	// Çağıran hatayı yok saysaydı ne olurdu: nil *Limiter arayüze konduğunda
-	// "nil değil" görünür. Kurucunun hata dönmesi, bu değerin middleware'e
-	// hiç ulaşmamasını sağlayan tek koruma.
+	// What would happen if the caller ignored the error: a nil *Limiter put into
+	// an interface LOOKS non-nil. The constructor returning an error is the only
+	// protection keeping that value from ever reaching the middleware.
 	//
-	// Karşılaştırma testify'ın NotNil'iyle değil DİL düzeyinde yapılır:
-	// testify reflect ile bakıp içi nil olan arayüzü de "nil" sayar, oysa
-	// middleware'deki "limiter == nil" kontrolü tam olarak aşağıdaki
-	// karşılaştırmadır.
-	assert.True(t, arayuzeKoy(lim) != nil,
-		"nil *Limiter arayüzde nil GÖRÜNMEZ; kurucu bu yüzden hata döner")
+	// The comparison is made at the LANGUAGE level rather than with testify's
+	// NotNil: testify looks through reflection and counts an interface holding a
+	// nil as "nil", while the middleware's "limiter == nil" check is exactly the
+	// comparison below.
+	assert.True(t, asInterface(lim) != nil,
+		"a nil *Limiter does NOT look nil in an interface; that is why the constructor errors")
 }
 
-// arayuzeKoy verilen sınırlayıcıyı arayüz değerine sarar.
+// asInterface wraps the given limiter in an interface value.
 //
-// Ayrı fonksiyon olmasının nedeni, karşılaştırmanın çağrı yerinde sabit
-// katlanmasını engellemektir; testin ölçtüğü şey ÇALIŞMA ZAMANI davranışıdır.
-func arayuzeKoy(l *redisguard.Limiter) corehttp.RateLimiter { return l }
+// It is a separate function so the comparison is not constant-folded at the call
+// site; what the test measures is RUNTIME behavior.
+func asInterface(l *redisguard.Limiter) corehttp.RateLimiter { return l }
 
-// TestNewIdempotencyStoreGecersizTTLdeVarsayilanaDuser bellek içi depoyla
-// davranış eşitliğini sabitler.
+// TestNewIdempotencyStoreFallsBackOnAnInvalidTTL pins behavioral equality with
+// the in-memory store.
 //
-// İki depo birbirinin yerine takılabilir; aynı girdide farklı davranmaları
-// (biri varsayılana düşerken diğerinin hata dönmesi) backend değiştiren
-// kurulumda sessiz bir sürprize dönüşürdü.
-func TestNewIdempotencyStoreGecersizTTLdeVarsayilanaDuser(t *testing.T) {
+// The two stores are interchangeable; behaving differently on the same input
+// (one falling back to a default while the other errors) would become a silent
+// surprise for an installation that changed its backend.
+func TestNewIdempotencyStoreFallsBackOnAnInvalidTTL(t *testing.T) {
 	t.Parallel()
 
 	for ad, ttl := range map[string]time.Duration{
-		"sıfır":   0,
+		"zero":    0,
 		"negatif": -time.Hour,
 	} {
 		t.Run(ad, func(t *testing.T) {
 			t.Parallel()
 
-			depo, err := redisguard.NewIdempotencyStore(yapayIstemci(), gecerliOnek, ttl)
+			store, err := redisguard.NewIdempotencyStore(fakeClient(), validPrefix, ttl)
 
-			require.NoError(t, err, "geçersiz ttl varsayılana düşmeli, hata dönmemeli")
-			assert.NotNil(t, depo)
+			require.NoError(t, err, "an invalid ttl has to fall back to the default, not error")
+			assert.NotNil(t, store)
 		})
 	}
 }
 
-// TestKurucularGecersizOnegiReddeder ayırıcı içeren ya da boş bir ad alanı
-// önekinin SESSİZCE kabul edilmediğini doğrular.
+// TestConstructorsRefuseAnInvalidPrefix verifies that a namespace prefix which
+// is empty or carries the separator is not accepted SILENTLY.
 //
-// Önek, aynı Redis'i paylaşan iki kurulumu ayıran tek şeydir; sessizce
-// düzeltilen (kırpılan ya da varsayılana düşürülen) bir önek iki kurulumu yine
-// aynı ad alanına bindirir ve paketin çözmeye çalıştığı arıza — birinin
-// yanıtının ötekinin istemcisine gitmesi — geri gelir. Bu yüzden kurucu
-// düzeltmez, DURUR.
-func TestKurucularGecersizOnegiReddeder(t *testing.T) {
+// The prefix is the only thing separating two installations sharing one Redis;
+// a prefix fixed silently (trimmed, or replaced with the default) lands the two
+// installations in the same namespace again and the failure the package exists
+// to solve — one's response going to the other's client — comes back. So the
+// constructor does not fix it, it STOPS.
+func TestConstructorsRefuseAnInvalidPrefix(t *testing.T) {
 	t.Parallel()
 
 	onekler := map[string]string{
-		// Ad alanı yok demektir; oysa çağıran önek parametresi vererek tam da
-		// ad alanı istediğini söylemiştir.
-		"boş": "",
-		// Ayırıcı içeren önek gerçek bir çakışma açar: istemcinin uydurduğu bir
-		// idempotency anahtarı iki kurulumu aynı anahtara düşürebilir.
-		"ayırıcı içeren":   "gobit:staging",
-		"ayırıcıyla biten": "gobit:",
-		// Görünmez karakterler kurulumu fark edilmeden başka bir ad alanına
-		// taşır; tüm sayaçlar ve işlemdeki kayıtlar bir anda yok sayılır.
-		"sondan boşluklu": "gobit ",
-		"baştan boşluklu": " gobit",
-		"sekme içeren":    "gobit\tprod",
-		"yeni satır":      "gobit\n",
-		// Glob imleri operatörün "<önek>:idem:*" taramasını bozar.
-		"yıldız içeren":          "gobit*",
-		"köşeli parantez içeren": "gobit[1]",
-		"soru işareti içeren":    "gobit?",
-		// Görsel olarak ayırt edilemeyen karakterler iki ayrı ad alanını AYNI
-		// gösterir (buradaki 'а' Kiril'dir).
-		"latin dışı harf": "gоbit",
+		// That means no namespace at all, while the caller asked for one by
+		// passing the prefix parameter.
+		"empty": "",
+		// A prefix carrying the separator opens a real clash: an idempotency key
+		// the client invents can land two installations on the same key.
+		"carries the separator":   "gobit:staging",
+		"ends with the separator": "gobit:",
+		// Invisible characters move an installation into another namespace
+		// unnoticed; every counter and every in-flight record is ignored at once.
+		"trailing space": "gobit ",
+		"leading space":  " gobit",
+		"carries a tab":  "gobit\tprod",
+		"a newline":      "gobit\n",
+		// Glob characters break the operator's "<prefix>:idem:*" scan.
+		"carries a star":     "gobit*",
+		"carries a bracket":  "gobit[1]",
+		"carries a question": "gobit?",
+		// Visually indistinguishable characters make two namespaces look like ONE
+		// (the 'a' here is Cyrillic).
+		"a non-Latin letter": "gоbit",
 	}
 
-	for ad, onek := range onekler {
+	for ad, prefix := range onekler {
 		t.Run(ad, func(t *testing.T) {
 			t.Parallel()
 
-			lim, err := redisguard.NewLimiter(yapayIstemci(), onek, 10, time.Minute)
-			require.Error(t, err, "geçersiz önek sınırlayıcıda hata döndürmeli")
+			lim, err := redisguard.NewLimiter(fakeClient(), prefix, 10, time.Minute)
+			require.Error(t, err, "an invalid prefix has to error in the limiter")
 			assert.Nil(t, lim)
-			assert.True(t, coreerrors.IsInvalid(err), "hata KindInvalid olmalı")
+			assert.True(t, coreerrors.IsInvalid(err), "the error has to be KindInvalid")
 			assert.Equal(t, redisguard.CodeInvalidConfig, coreerrors.CodeOf(err))
 
-			depo, err := redisguard.NewIdempotencyStore(yapayIstemci(), onek, time.Hour)
-			require.Error(t, err, "geçersiz önek depoda hata döndürmeli")
-			assert.Nil(t, depo)
-			assert.True(t, coreerrors.IsInvalid(err), "hata KindInvalid olmalı")
+			store, err := redisguard.NewIdempotencyStore(fakeClient(), prefix, time.Hour)
+			require.Error(t, err, "an invalid prefix has to error in the store")
+			assert.Nil(t, store)
+			assert.True(t, coreerrors.IsInvalid(err), "the error has to be KindInvalid")
 			assert.Equal(t, redisguard.CodeInvalidConfig, coreerrors.CodeOf(err))
 		})
 	}
 }
 
-// TestKurucularGecerliOnegiKabulEder biçim denetiminin meşru kurulum adlarını
-// da kapıda tutmadığını doğrular.
+// TestConstructorsAcceptAValidPrefix verifies that the shape check does not hold
+// legitimate installation names at the door either.
 //
-// Denetim fazla sıkı olsaydı bedeli somut olurdu: operatör kurulumları
-// ayıramaz, ayıramadığı için de varsayılanda bırakır — yani reddetmek istediği
-// arızayı kendi eliyle geri getirirdi.
-func TestKurucularGecerliOnegiKabulEder(t *testing.T) {
+// Were the check too strict the cost would be concrete: the operator cannot
+// separate the installations, and because they cannot, they leave the default —
+// bringing back with their own hands the failure the check meant to refuse.
+func TestConstructorsAcceptAValidPrefix(t *testing.T) {
 	t.Parallel()
 
-	for _, onek := range []string{
+	for _, prefix := range []string{
 		"gobit", "gobit-staging", "gobit_prod", "magaza.42", "GOBIT", "g",
 	} {
-		t.Run(onek, func(t *testing.T) {
+		t.Run(prefix, func(t *testing.T) {
 			t.Parallel()
 
-			lim, err := redisguard.NewLimiter(yapayIstemci(), onek, 10, time.Minute)
-			require.NoError(t, err, "geçerli önek reddedilmemeli")
+			lim, err := redisguard.NewLimiter(fakeClient(), prefix, 10, time.Minute)
+			require.NoError(t, err, "a valid prefix must not be refused")
 			assert.NotNil(t, lim)
 
-			depo, err := redisguard.NewIdempotencyStore(yapayIstemci(), onek, time.Hour)
-			require.NoError(t, err, "geçerli önek reddedilmemeli")
-			assert.NotNil(t, depo)
+			store, err := redisguard.NewIdempotencyStore(fakeClient(), prefix, time.Hour)
+			require.NoError(t, err, "a valid prefix must not be refused")
+			assert.NotNil(t, store)
 		})
 	}
 }

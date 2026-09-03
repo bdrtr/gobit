@@ -13,132 +13,133 @@ import (
 	corehttp "github.com/bdrtr/gobit/internal/core/http"
 )
 
-// DefaultIdempotencyTTL kaydın varsayılan saklanma süresidir.
+// DefaultIdempotencyTTL is how long a record is kept by default.
 //
-// corehttp.NewMemoryIdempotencyStore'un varsayılanıyla aynıdır; iki depo
-// birbirinin yerine takılabildiği için aynı girdide farklı davranmaları
-// sinsi bir tuzak olurdu.
+// It matches corehttp.NewMemoryIdempotencyStore's default; because the two
+// stores are interchangeable, behaving differently on the same input would be a
+// treacherous trap.
 const DefaultIdempotencyTTL = 24 * time.Hour
 
-// Kaydın durumunu değerin başındaki imden okuruz.
+// The record's state is read from the mark at the start of the value.
 //
-// Durumu ayrı bir alana (örn. JSON içinde "durum") koymak, Abort'un kaydı
-// silip silmeyeceğine karar verebilmek için Lua tarafında cjson çözmeyi
-// gerektirirdi. İm, değerin ilk iki baytıdır: Abort tek bir string.sub
-// karşılaştırmasıyla "bu ayırma hâlâ işlemde mi" sorusunu yanıtlar.
+// Putting the state in a separate field (a "state" key inside the JSON, say)
+// would force the Lua side to decode cjson just to decide whether Abort may
+// delete the record. The mark is the value's first two bytes: Abort answers "is
+// this reservation still in flight" with a single string.sub comparison.
 const (
-	// imIslemde ayrılmış ama henüz tamamlanmamış kaydın imidir; ardından
-	// ayırmayı yapan isteğin parmak izi gelir.
-	imIslemde = "i:"
-	// imTamam tamamlanmış kaydın imidir; ardından JSON gövde gelir.
-	imTamam = "c:"
+	// markInFlight is the mark of a record that is reserved but not finished; the
+	// fingerprint of the request holding the reservation follows it.
+	markInFlight = "i:"
+	// markDone is the mark of a finished record; the JSON body follows it.
+	markDone = "c:"
 )
 
-// beginBetigi anahtarı ayırır ya da mevcut değeri döner.
+// beginScript reserves the key or returns the value already there.
 //
-// SET NX ayırmanın kendisini atomik yapar: iki istek aynı anda gelirse
-// yalnızca biri true alır, diğeri kaydı okur. GET'in AYNI betikte olması
-// şarttır; ayrı bir gidiş-dönüş olsaydı SET NX'in başarısız olmasıyla GET'in
-// çalışması arasında anahtarın TTL'i dolabilir, GET boş dönerdi ve "kayıt yok
-// ama ayırma da bende değil" gibi karar verilemez bir duruma düşerdik.
+// SET NX makes the reservation itself atomic: with two requests arriving at
+// once only one gets true and the other reads the record. GET being in the SAME
+// script is required; as a separate round trip the key's TTL could expire
+// between SET NX failing and GET running, GET would come back empty and we would
+// land in an undecidable state: "there is no record but I do not hold the
+// reservation".
 //
-// Yeni ayırmada BOŞ DİZE döner. Saklanan her değer bir imle ([imIslemde] ya
-// da [imTamam]) başladığı için boş dize gerçek bir kayıtla karışamaz. Lua'nın
-// false'u (yani Redis nil'i) bu iş için kullanılamazdı: GET'in boş dönmesi de
-// aynı nil'e düşer ve "ayırmayı ben aldım" ile "anahtar kayboldu" ayırt
-// edilemez olurdu — ilkini ikincisi sanmak iki isteğin birden anahtarı
-// sahiplenmesi demektir.
-var beginBetigi = redis.NewScript(`
+// A new reservation returns an EMPTY STRING. Because every stored value starts
+// with a mark ([markInFlight] or [markDone]), an empty string cannot be confused
+// with a real record. Lua's false (that is, Redis's nil) could not be used for
+// this: an empty GET falls to the same nil and "I took the reservation" could
+// not be told from "the key disappeared" — taking the first for the second lets
+// both requests own the key.
+var beginScript = redis.NewScript(`
 if redis.call('SET', KEYS[1], ARGV[1], 'PX', ARGV[2], 'NX') then
   return ''
 end
 return redis.call('GET', KEYS[1])
 `)
 
-// abortBetigi yalnızca TAMAMLANMAMIŞ bir ayırmayı siler.
+// abortScript deletes an UNFINISHED reservation only.
 //
-// Koşulsuz DEL, geç gelen bir Abort'un (örn. handler paniklediğinde çalışan
-// defer) çoktan yazılmış bir yanıtı yok etmesine izin verirdi; o kayıt
-// silinirse tekrar gelen istek baştan işlenir ve idempotency'nin engellemesi
-// gereken çift işlem tam da bu yolla olur.
-var abortBetigi = redis.NewScript(`
-local mevcut = redis.call('GET', KEYS[1])
-if mevcut and string.sub(mevcut, 1, string.len(ARGV[1])) == ARGV[1] then
+// An unconditional DEL would let a late Abort (the defer that runs when a
+// handler panics, say) destroy a response that had already been written; with
+// that record deleted a repeat request is handled from the start, and the double
+// processing idempotency exists to prevent happens by exactly that route.
+var abortScript = redis.NewScript(`
+local existing = redis.call('GET', KEYS[1])
+if existing and string.sub(existing, 1, string.len(ARGV[1])) == ARGV[1] then
   return redis.call('DEL', KEYS[1])
 end
 return 0
 `)
 
-// kayit tamamlanmış yanıtın Redis'te saklanan biçimidir.
+// record is the stored form of a finished response in Redis.
 //
-// Body []byte'tır ve encoding/json onu BASE64 olarak yazar; ~%33 yer kaybı
-// bilinçlidir. Alan string olsaydı json.Marshal geçersiz UTF-8 baytlarını
-// sessizce U+FFFD ile değiştirirdi: PDF, resim ya da protobuf döndüren bir uç
-// noktanın çalınan yanıtı BOZUK çıkardı ve bu bozulma ancak istemcide fark
-// edilirdi.
-type kayit struct {
+// Body is a []byte and encoding/json writes it as BASE64; the ~33% overhead is
+// deliberate. Were the field a string, json.Marshal would silently replace
+// invalid UTF-8 bytes with U+FFFD: the replayed response of an endpoint
+// returning a PDF, an image or protobuf would come back CORRUPTED, and the
+// corruption would only be noticed at the client.
+type record struct {
 	Status      int         `json:"status"`
 	Header      http.Header `json:"header,omitempty"`
 	Body        []byte      `json:"body,omitempty"`
 	Fingerprint string      `json:"fingerprint"`
 }
 
-// IdempotencyStore idempotency kayıtlarını Redis'te tutar.
+// IdempotencyStore keeps the idempotency records in Redis.
 //
-// Kayıt tek bir anahtarda, tek bir dizede yaşar: durum imi + (parmak izi ya
-// da JSON gövde). Ayırma ve okuma tek atomik adımdır, bu yüzden aynı anahtarla
-// aynı anda gelen iki istekten yalnızca biri işi yapar — hangi örneğe
-// düştükleri fark etmez.
+// A record lives in one key, in one string: the state mark plus either the
+// fingerprint or the JSON body. Reserving and reading are one atomic step, so of
+// two requests arriving at once with the same key only one does the work — which
+// instance they landed on makes no difference.
 //
-// # Anahtar biçimi
+// # The key shape
 //
-// Kayıtlar "<önek>:idem:<anahtar>" adresine yazılır; varsayılan önekle
-// "kiracı-1:abc" anahtarı "gobit:idem:kiracı-1:abc" kaydına düşer. Önek
-// kurucudan gelir ve aynı Redis'i paylaşan iki kurulumu ayıran şeydir (bkz.
-// paket godoc'u).
+// Records are written to "<prefix>:idem:<key>"; with the default prefix the key
+// "tenant-1:abc" lands on the record "gobit:idem:tenant-1:abc". The prefix comes
+// from the constructor and is what separates two installations sharing one Redis
+// (see the package godoc).
 //
-// Depoya gelen anahtar çağıranın kimliğiyle ad alanına alınmış hâldedir ve
-// istemciye dayatılan 255 karakterlik sınırdan uzun olabilir (bkz.
-// corehttp.IdempotencyStore godoc'u); Redis'te anahtar uzunluğu sorun
-// olmadığı için kısaltılmaz, olduğu gibi öneke eklenir. Kısaltmak (örn.
-// hash'lemek) çakışma riski getirir ve çakışan iki anahtar, iki FARKLI
-// isteğin birbirinin yanıtını görmesi demektir.
+// The key reaching the store is already namespaced with the caller's identity and
+// may be longer than the 255 characters imposed on the client (see the
+// corehttp.IdempotencyStore godoc); because key length is not a problem in Redis
+// it is not shortened but appended to the prefix as it is. Shortening it (by
+// hashing, say) would bring a collision risk, and two colliding keys mean two
+// DIFFERENT requests seeing each other's response.
 type IdempotencyStore struct {
 	client *redis.Client
-	// onek kayıt anahtarlarının TAM önekidir (örn. "gobit:idem:").
+	// prefix is the FULL prefix of the record keys (for example "gobit:idem:").
 	//
-	// Ad alanı önekiyle bölüm adı her çağrıda yeniden birleştirilmesin diye
-	// kurucuda bir kez kurulur.
-	onek string
-	// ttl kayıtların saklanma süresidir.
+	// It is built once in the constructor so the namespace prefix and the section
+	// name are not joined on every call.
+	prefix string
+	// ttl is how long the records are kept.
 	ttl time.Duration
-	// ttlMs ttl'in milisaniye karşılığıdır; betiğe her çağrıda yeniden
-	// hesaplanmasın diye kurucuda bir kez çıkarılır.
+	// ttlMs is the ttl in milliseconds; it is derived once in the constructor so
+	// the script does not have to recompute it on every call.
 	ttlMs int64
 }
 
 var _ corehttp.IdempotencyStore = (*IdempotencyStore)(nil)
 
-// NewIdempotencyStore verilen saklama süresiyle Redis tabanlı depo kurar.
+// NewIdempotencyStore builds the Redis-backed store with the given retention.
 //
-// keyPrefix kayıtların ad alanı önekidir; kayıtlar "<keyPrefix>:idem:<anahtar>"
-// adresine yazılır. Biçimi [dogrulaOnek] denetler ve geçersiz önek HATA döner.
+// keyPrefix is the namespace prefix of the records; they are written to
+// "<keyPrefix>:idem:<key>". [validatePrefix] checks its shape and an invalid
+// prefix is an ERROR.
+// Unlike the ttl the PREFIX does NOT fall back to a default, and the difference
+// is deliberate: an invalid ttl costs a record that lives longer or shorter than
+// expected, while an invalid prefix costs two installations sharing the SAME
+// namespace — that is, one's response going to the other's client. Fixing it
+// silently would bring back the very failure being fixed.
 //
-// ÖNEKTE ttl'in aksine varsayılana düşülmez ve bu ayrım bilinçlidir: geçersiz
-// bir ttl'in bedeli kaydın beklenenden uzun/kısa yaşamasıdır, geçersiz bir
-// önekin bedeli ise iki kurulumun AYNI ad alanını paylaşmasıdır — yani birinin
-// yanıtının ötekinin istemcisine gitmesi. Sessizce düzeltmek, düzeltmeye
-// çalıştığımız arızayı geri getirirdi.
-//
-// ttl sıfır ya da negatifse [DefaultIdempotencyTTL] kullanılır; bu,
-// corehttp.NewMemoryIdempotencyStore ile aynı davranıştır. client nil ise
-// hata döner.
+// With a zero or negative ttl [DefaultIdempotencyTTL] is used, which is what
+// corehttp.NewMemoryIdempotencyStore does too. With a nil client it returns an
+// error.
 func NewIdempotencyStore(client *redis.Client, keyPrefix string, ttl time.Duration) (*IdempotencyStore, error) {
 	if client == nil {
 		return nil, coreerrors.Invalid(CodeInvalidConfig, "redis istemcisi nil olamaz")
 	}
 
-	if err := dogrulaOnek(keyPrefix); err != nil {
+	if err := validatePrefix(keyPrefix); err != nil {
 		return nil, err
 	}
 
@@ -146,67 +147,67 @@ func NewIdempotencyStore(client *redis.Client, keyPrefix string, ttl time.Durati
 		ttl = DefaultIdempotencyTTL
 	}
 
-	// Redis'in en küçük çözünürlüğü milisaniyedir; daha kısa bir ttl "PX 0"
-	// ile komut hatasına dönerdi.
+	// Redis's finest resolution is the millisecond; a shorter ttl would turn
+	// "PX 0" into a command error.
 	ttl = max(ttl, time.Millisecond)
 
 	return &IdempotencyStore{
 		client: client,
-		onek:   keyPrefix + ayirici + idempotencyBolumu + ayirici,
+		prefix: keyPrefix + separator + idempotencySection + separator,
 		ttl:    ttl,
 		ttlMs:  ttl.Milliseconds(),
 	}, nil
 }
 
-// Begin anahtarı bu istek için ayırmaya çalışır.
+// Begin tries to reserve the key for this request.
 //
-// Anahtar yeniyse (nil, false, nil) döner ve anahtar "işlemde" işaretlenir;
-// tamamlanmış bir kayıt varsa (kayıt, true, nil); başka bir istek anahtarı
-// işlerken corehttp.ErrIdempotencyKeyInFlight döner.
+// For a new key it returns (nil, false, nil) and marks the key "in flight"; with
+// a finished record it returns (record, true, nil); while another request is
+// working on the key it returns corehttp.ErrIdempotencyKeyInFlight.
 //
-// fingerprint ayırma imine yazılır. Bugün hiçbir karar ona bakmaz —
-// corehttp.Idempotency parmak izini yalnızca TAMAMLANMIŞ kayıtta karşılaştırır
-// — ama "bu anahtarı hangi istek tuttu" sorusunun yanıtı üretimde bir sorunu
-// teşhis ederken tek başına redis-cli GET ile okunabilir olmalıdır.
+// fingerprint is written into the reservation mark. No decision reads it today —
+// corehttp.Idempotency compares the fingerprint on a FINISHED record only — but
+// the answer to "which request holds this key" has to be readable with a plain
+// redis-cli GET while diagnosing a problem in production.
 func (s *IdempotencyStore) Begin(
 	ctx context.Context, key, fingerprint string,
 ) (*corehttp.IdempotentResponse, bool, error) {
-	deger, err := beginBetigi.Run(ctx, s.client,
-		[]string{s.onek + key},
-		imIslemde+fingerprint,
+	value, err := beginScript.Run(ctx, s.client,
+		[]string{s.prefix + key},
+		markInFlight+fingerprint,
 		s.ttlMs,
 	).Text()
 
 	switch {
 	case coreerrors.Is(err, redis.Nil):
-		// SET NX başarısız oldu ama GET boş döndü. Betik atomik çalıştığı için
-		// bu durum beklenmez; "yeni ayırma" saymak İKİ isteğin birden anahtarı
-		// sahiplendiğini sanmasına yol açacağı için hata dönülür.
+		// SET NX failed but GET came back empty. Because the script runs
+		// atomically this is not expected; counting it as a "new reservation"
+		// would let TWO requests believe they own the key, so an error is returned.
 		return nil, false, coreerrors.Unavailable(CodeIdempotencyStoreFailed,
-			"idempotency anahtarı ne ayrılabildi ne de okunabildi")
+			"the idempotency key could neither be reserved nor read")
 	case err != nil:
 		return nil, false, coreerrors.Wrap(err, coreerrors.KindUnavailable,
-			CodeIdempotencyStoreFailed, "idempotency anahtarı ayrılamadı")
+			CodeIdempotencyStoreFailed, "the idempotency key could not be reserved")
 	}
 
 	switch {
-	case deger == "":
+	case value == "":
 		return nil, false, nil
-	case strings.HasPrefix(deger, imIslemde):
+	case strings.HasPrefix(value, markInFlight):
 		return nil, false, corehttp.ErrIdempotencyKeyInFlight
-	case !strings.HasPrefix(deger, imTamam):
-		// Anahtarı bu paketin dışında biri yazmış (önek çakışması) ya da kayıt
-		// biçimi değişmiş. Tanımadığımız bir değeri kayıt sanıp çözmeye
-		// çalışmaktansa hata dönmek doğrudur: yanlış çözülen bir kayıt,
-		// istemciye BAŞKA bir isteğin yanıtı olarak gidebilir.
+	case !strings.HasPrefix(value, markDone):
+		// Somebody outside this package wrote the key (a prefix clash) or the
+		// record format changed. Returning an error beats taking a value we do not
+		// recognize for a record and trying to decode it: a record decoded wrong
+		// can go to the client as ANOTHER request's response.
 		return nil, false, coreerrors.Internal(CodeIdempotencyStoreFailed,
-			"idempotency kaydının durum imi tanınmadı")
+			"the state mark of the idempotency record was not recognized")
 	}
 
-	var k kayit
-	if err := json.Unmarshal([]byte(strings.TrimPrefix(deger, imTamam)), &k); err != nil {
+	var k record
+	if err := json.Unmarshal([]byte(strings.TrimPrefix(value, markDone)), &k); err != nil {
 		return nil, false, coreerrors.Wrap(err, coreerrors.KindInternal,
-			CodeIdempotencyStoreFailed, "idempotency kaydı çözülemedi")
+			CodeIdempotencyStoreFailed, "the idempotency record could not be decoded")
 	}
 
 	return &corehttp.IdempotentResponse{
@@ -217,20 +218,20 @@ func (s *IdempotencyStore) Begin(
 	}, true, nil
 }
 
-// Complete işlemi biten anahtarın yanıtını kaydeder.
+// Complete stores the response of a key whose work is done.
 //
-// Ayırmanın hâlâ duruyor olması ARANMAZ, kayıt koşulsuz yazılır: handler
-// çalışmış ve yan etkileri gerçekleşmiştir, o yüzden kaydın var olması
-// ayırmanın (örn. TTL dolduğu için) kaybolmuş olmasından daha önemlidir.
+// It does NOT REQUIRE the reservation to still be there; the record is written
+// unconditionally: the handler ran and its side effects happened, so the record
+// existing matters more than the reservation having disappeared (because its TTL
 //
-// TTL kaydın yazıldığı andan itibaren yeniden başlar. İstemcinin tekrar deneme
-// penceresi, ayırmanın değil YANITIN doğduğu andan sayılmalıdır; aksi hâlde
-// uzun süren bir handler, istemciye kalan saklama süresini kendi çalışma
-// süresi kadar kısaltırdı.
+// The TTL restarts from the moment the record is written. The client's retry
+// window has to count from the moment the RESPONSE was born, not the
+// reservation; otherwise a long-running handler would shorten the client's
+// remaining retention by its own running time.
 func (s *IdempotencyStore) Complete(
 	ctx context.Context, key string, resp corehttp.IdempotentResponse,
 ) error {
-	ham, err := json.Marshal(kayit{
+	ham, err := json.Marshal(record{
 		Status:      resp.Status,
 		Header:      resp.Header,
 		Body:        resp.Body,
@@ -238,36 +239,36 @@ func (s *IdempotencyStore) Complete(
 	})
 	if err != nil {
 		return coreerrors.Wrap(err, coreerrors.KindInternal,
-			CodeIdempotencyStoreFailed, "idempotency kaydı JSON'a çevrilemedi")
+			CodeIdempotencyStoreFailed, "the idempotency record could not be turned into JSON")
 	}
 
-	if err := s.client.Set(ctx, s.onek+key, imTamam+string(ham), s.ttl).Err(); err != nil {
+	if err := s.client.Set(ctx, s.prefix+key, markDone+string(ham), s.ttl).Err(); err != nil {
 		return coreerrors.Wrap(err, coreerrors.KindUnavailable,
-			CodeIdempotencyStoreFailed, "idempotency kaydı yazılamadı")
+			CodeIdempotencyStoreFailed, "the idempotency record could not be written")
 	}
 
 	return nil
 }
 
-// Abort ayırmayı geri alır; anahtar yeniden denenebilir hâle gelir.
+// Abort releases the reservation; the key can be tried again.
 //
-// Yalnızca [imIslemde] imli değer silinir (bkz. [abortBetigi]).
+// Only a value carrying the [markInFlight] mark is deleted (see [abortScript]).
 //
-// İki ARDIŞIK ayırma birbirinden ayırt edilmez: A anahtarı ayırdıktan sonra
-// TTL dolar, B aynı anahtarı yeniden ayırır ve ardından A'nın Abort'u B'nin
-// ayırmasını siler. Bunu kapatmak, ayırma başına rastgele bir jeton üretip
+// Two CONSECUTIVE reservations cannot be told apart: A reserves the key, the TTL
+// expires, B reserves the same key and then A's Abort deletes B's reservation.
+// Closing that would need a random token per reservation, and the
 // Abort'un onu geri vermesini gerektirirdi; corehttp.IdempotencyStore'un
-// Abort(ctx, key) imzasında böyle bir jetona yer yok ve arayüzü yalnızca bu
-// uygulama için genişletmek soyutlamayı Redis'e bağlardı. Pratikte de
-// gereksizdir: durumun oluşması için TTL'in (varsayılan 24 saat) TEK BİR
-// istek daha sürerken dolması gerekir.
+// Abort(ctx, key) signature has no room for one; widening the interface for this
+// implementation alone would tie the abstraction to Redis. It is unnecessary in
+// practice too: for the case to arise the TTL (24 hours by default) has to expire
+// while ONE more request is still running.
 func (s *IdempotencyStore) Abort(ctx context.Context, key string) error {
-	if err := abortBetigi.Run(ctx, s.client,
-		[]string{s.onek + key},
-		imIslemde,
+	if err := abortScript.Run(ctx, s.client,
+		[]string{s.prefix + key},
+		markInFlight,
 	).Err(); err != nil {
 		return coreerrors.Wrap(err, coreerrors.KindUnavailable,
-			CodeIdempotencyStoreFailed, "idempotency ayırması geri alınamadı")
+			CodeIdempotencyStoreFailed, "the idempotency reservation could not be released")
 	}
 
 	return nil
