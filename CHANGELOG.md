@@ -10,6 +10,34 @@ Sabitlenme `1.0.0` ile olur.
 
 ## [Yayımlanmamış]
 
+### Değiştirildi
+
+- **Sepet satır tutarları TEK deyimle yazılıyor; sepetin kilidi satır sayısıyla
+  orantılı süre boyunca tutulmuyor.** Hesap turu satır başına bir UPDATE
+  koşuyordu ve bunu sepetin `FOR UPDATE` kilidi altında yapıyordu; kilit o
+  sepete yazan her akışı sıraya dizdiği için süre doğrudan sepetin yazma
+  kapasitesiydi. Ölçüldü (100 satırlık sepet, kilidin alınmasından son yazmanın
+  dönmesine kadar, p50): satır başına UPDATE **8,0 ms**, tek deyim **0,55 ms**;
+  10 satırda 0,28 ms, yani satır sayısıyla neredeyse hiç uzamıyor.
+
+  Ölçüm dürüst okunmalı ve godoc'lar bunu artık söylüyor: test harness'ının
+  konteyneri `fsync=off` koşuyor, dolayısıyla bu sayılar YAZMA EVRESİDİR,
+  ardından gelen commit'in WAL flush'ı değildir. Flush da aynı kilidin altında
+  ve bu değişiklik ona dokunmuyor — kalıcı bir kümede ölçüldü, satır sayısından
+  bağımsız 6,2 ms. Yani operatörün göreceği kilit süresi ~14,2 ms'den ~6,8 ms'ye
+  iner: **~2 kat**, yazma evresinin kendi içindeki 14 kat değil.
+
+  Boru hattı (pgx batch / sqlc `:batchexec`) bilerek REDDEDİLDİ ve gerekçe bir
+  sayı: aynı 100 UPDATE tek boru hattında 3,0 ms sürüyor, yani kazancın yalnızca
+  üçte ikisi. Kalan fark deyim başına ayrıştırma/planlama maliyetidir ve onu
+  ancak deyim sayısını 1'e indirmek siler.
+
+  Tutar–satır eşleşmesi API şekliyle korunuyor: kimlik tutarlarıyla AYNI değerde
+  taşınıyor (`LineItemTotals`), yani çağıran iki ayrı dilimi farklı sıralarda
+  veremez. Eksik yazılan tur sessiz geçmiyor — eşleşmeyen kimlik (silinmiş satır,
+  başka sepetin satırı) turu düşürüyor ve hata çağıranın sırasındaki İLK
+  yazılamayan satırı adlandırıyor.
+
 ## [0.7.0] — 2026-09-03
 
 ### Kırıcı değişiklikler

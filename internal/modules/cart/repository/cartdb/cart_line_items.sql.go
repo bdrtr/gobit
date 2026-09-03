@@ -249,61 +249,105 @@ func (q *Queries) SetLineItemQuantity(ctx context.Context, arg SetLineItemQuanti
 	return i, err
 }
 
-const setLineItemTotals = `-- name: SetLineItemTotals :one
-UPDATE cart_line_items
-SET unit_price     = $3,
-    subtotal       = $4,
-    discount_total = $5,
-    tax_total      = $6,
-    total          = $7,
+const setLineItemTotals = `-- name: SetLineItemTotals :many
+UPDATE cart_line_items AS li
+SET unit_price     = v.unit_price,
+    subtotal       = v.subtotal,
+    discount_total = v.discount_total,
+    tax_total      = v.tax_total,
+    total          = v.total,
     updated_at     = now()
-WHERE id = $1 AND cart_id = $2 AND deleted_at IS NULL
-RETURNING id, cart_id, variant_id, title, quantity, unit_price, subtotal, discount_total, tax_total, total, metadata, created_at, updated_at, deleted_at
+FROM ROWS FROM (
+    unnest($2::text[]),
+    unnest($3::bigint[]),
+    unnest($4::bigint[]),
+    unnest($5::bigint[]),
+    unnest($6::bigint[]),
+    unnest($7::bigint[])
+) AS v (id, unit_price, subtotal, discount_total, tax_total, total)
+WHERE li.id = v.id
+  AND li.cart_id = $1
+  AND li.deleted_at IS NULL
+RETURNING li.id
 `
 
 type SetLineItemTotalsParams struct {
-	ID            string
-	CartID        string
-	UnitPrice     int64
-	Subtotal      int64
-	DiscountTotal int64
-	TaxTotal      int64
-	Total         int64
+	CartID         string
+	LineIds        []string
+	UnitPrices     []int64
+	Subtotals      []int64
+	DiscountTotals []int64
+	TaxTotals      []int64
+	Totals         []int64
 }
 
-// SetLineItemTotals satırın PARA alanlarını workflow'un hesabıyla yazar.
+// SetLineItemTotals bir hesap turunun TÜM satır tutarlarını TEK deyimle yazar.
 //
 // Adet BURADA değişmez: adet sepet servisinin, tutarlar workflow'un verisidir.
 // İkisinin ayrı sorgularda olması, bir hesaplama turunun adedi sessizce
 // değiştirmesini yapısal olarak imkânsız kılar.
-func (q *Queries) SetLineItemTotals(ctx context.Context, arg SetLineItemTotalsParams) (CartLineItem, error) {
-	row := q.db.QueryRow(ctx, setLineItemTotals,
-		arg.ID,
+//
+// Deyim TEKTİR çünkü satır başına bir UPDATE, sepetin KİLİDİ altında koşuyordu.
+// Ölçüldü (yerel konteyner, TCP gidiş-dönüş ~30 µs, 100 satırlık sepet, kilit
+// alındıktan SON YAZMA dönene kadar geçen süre, p50): satır başına UPDATE
+// 8,0 ms, aynı UPDATE'ler tek boru hattında 3,0 ms, buradaki tek deyim
+// 0,55 ms. Kazancın yalnızca bir bölümü gidiş-dönüşten gelir; geri kalanı
+// deyim başına ayrıştırma/planlama maliyetidir ve onu ancak TEK deyim siler —
+// boru hattı (pgx batch, sqlc :batchexec) kazancın üçte ikisinde kalırdı.
+//
+// ÖLÇÜM NEYİ İÇERMİYOR: harness'ın konteyneri fsync=off ile koşar
+// (testcontainers-go postgres modülü bunu sabit yazar), yani yukarıdaki süreler
+// kilidin altındaki YAZMA EVRESİDİR, ardından gelen commit'in WAL flush'ı
+// DEĞİLDİR. Flush da aynı kilidin altındadır — kilit commit'te bırakılır — ve
+// bu değişiklik ona DOKUNMAZ: kalıcı bir kümede (fsync=on, aynı makine)
+// ölçüldü, 1 satır güncelleyen commit de 100 satır güncelleyen commit de
+// 6,2 ms. Yani gerçek kilit süresi ~14,2 ms'den ~6,8 ms'ye iner: kazanç 14 kat
+// değil ~2 kattır. 14 kat, yazma evresinin kendi içindeki orandır ve deyim
+// sayısı hakkındaki iddia odur.
+//
+// Eşleştirme dizilerin SIRASIYLA yapılır: v.id ile aynı indeksteki tutarlar
+// aynı satıra gider. Diziler tek bir döngüde kurulur (bkz. repository), bu
+// yüzden uzunlukları yapısal olarak eşittir; eşit olmasalardı ROWS FROM kısa
+// diziyi NULL ile doldurur ve NOT NULL kısıtı deyimi düşürürdü — sessiz bir
+// yanlış tutar değil, gürültülü bir hata.
+//
+// ROWS FROM (unnest(a), unnest(b), ...) çok argümanlı unnest(a, b, ...) ile
+// aynı şeydir; sqlc çok argümanlı biçimi ayrıştıramadığı için bu biçim yazıldı.
+// Ölçüldü: ikisi arasında fark yok (100 satır, p50 545 µs / 555 µs).
+//
+// cart_id JOIN'in değil WHERE'in parçasıdır: başka sepetin satırı hiçbir
+// dizide eşleşemez. Eşleşmeyen kimlik RETURNING'de görünmez ve çağıran yazılan
+// kimlikleri istenenlerle karşılaştırıp turu düşürür.
+//
+// Tekrarlanan kimlik verilmez (servis reddeder): UPDATE ... FROM aynı hedef
+// satır birden çok kaynak satırla eşleştiğinde HANGİ kaynağın kazandığını
+// tanımlamaz.
+func (q *Queries) SetLineItemTotals(ctx context.Context, arg SetLineItemTotalsParams) ([]string, error) {
+	rows, err := q.db.Query(ctx, setLineItemTotals,
 		arg.CartID,
-		arg.UnitPrice,
-		arg.Subtotal,
-		arg.DiscountTotal,
-		arg.TaxTotal,
-		arg.Total,
+		arg.LineIds,
+		arg.UnitPrices,
+		arg.Subtotals,
+		arg.DiscountTotals,
+		arg.TaxTotals,
+		arg.Totals,
 	)
-	var i CartLineItem
-	err := row.Scan(
-		&i.ID,
-		&i.CartID,
-		&i.VariantID,
-		&i.Title,
-		&i.Quantity,
-		&i.UnitPrice,
-		&i.Subtotal,
-		&i.DiscountTotal,
-		&i.TaxTotal,
-		&i.Total,
-		&i.Metadata,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-		&i.DeletedAt,
-	)
-	return i, err
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const softDeleteLineItem = `-- name: SoftDeleteLineItem :execrows

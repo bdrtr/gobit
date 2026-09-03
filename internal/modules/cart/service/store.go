@@ -77,8 +77,10 @@ type Store interface {
 	ListLineItems(ctx context.Context, cartID string) ([]models.LineItem, error)
 	// SetLineItemQuantity satırın adedini MUTLAK değerle yazar.
 	SetLineItemQuantity(ctx context.Context, cartID, lineID string, quantity int64) (models.LineItem, error)
-	// SetLineItemTotals satırın para alanlarını yazar; adede dokunmaz.
-	SetLineItemTotals(ctx context.Context, cartID, lineID string, totals models.LineTotals) (models.LineItem, error)
+	// SetLineItemTotals bir hesap turunun TÜM satır tutarlarını TEK çağrıda
+	// yazar; adede dokunmaz. Yazılamayan satır varsa NotFound döner ve hiçbiri
+	// yazılmamış sayılır (çağrı işlemin içindedir).
+	SetLineItemTotals(ctx context.Context, cartID string, lines []models.LineItemTotals) error
 	// SoftDeleteLineItem satırı yumuşak siler.
 	SoftDeleteLineItem(ctx context.Context, cartID, lineID string) error
 	// SoftDeleteLineItemsByCart sepetin tüm satırlarını yumuşak siler.

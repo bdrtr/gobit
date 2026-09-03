@@ -816,3 +816,338 @@ func TestQueryKatmaniSepetiOkur(t *testing.T) {
 	assert.Equal(t, created.ID, records[0][query.IDField])
 	assert.Equal(t, musteriID, records[0][service.FieldCustomerID])
 }
+
+// satirTutarlari bir satırın PARA alanlarını doğrudan sorguyla okur.
+//
+// Servis üzerinden değil doğrudan okunur: sınanan şey, tutarların
+// veritabanındaki hangi SATIRA yazıldığıdır ve servisin kendi okuması yazma ile
+// aynı eşleştirme varsayımını taşıdığı için bağımsız bir tanık olmazdı.
+func satirTutarlari(ctx context.Context, t *testing.T, lineID string) models.LineTotals {
+	t.Helper()
+
+	var out models.LineTotals
+	require.NoError(t, testPool.Pool().QueryRow(ctx,
+		`SELECT unit_price, subtotal, discount_total, tax_total, total
+         FROM cart_line_items WHERE id = $1`, lineID).
+		Scan(&out.UnitPrice, &out.Subtotal, &out.DiscountTotal, &out.TaxTotal, &out.Total))
+	return out
+}
+
+// TestSetTotalsHerSatiraKENDITutariniYazar toplu yazmanın tutarları DOĞRU
+// satırlarla eşleştirdiğini gerçek Postgres üzerinde doğrular.
+//
+// Toplu UPDATE altı paralel dizi gönderir (kimlikler ve beş para alanı) ve
+// eşleştirme yalnızca dizilerin SIRASINA dayanır. Sıra kayarsa hiçbir kapı
+// ötmez: sepetin ara toplamı yine satırların toplamıdır, satır kimliği
+// (total = subtotal - discount + tax) yine sağlanır, veritabanının
+// cart_line_items_totals_consistent kısıtı yine geçer. Bozulan tek şey
+// müşteriden alınan paradır.
+//
+// Fikstür bunu görünür kılar: her satırın adedi, birim fiyatı, indirimi ve
+// vergisi FARKLIDIR, yani sıranın bir adım kayması bile her satırın saklanan
+// dörtlüsünü değiştirir.
+func TestSetTotalsHerSatiraKENDITutariniYazar(t *testing.T) {
+	ctx := context.Background()
+	svc := yeniServis(t)
+	sepet := yeniSepet(ctx, t, svc)
+
+	const satirSayisi = 12
+	bekleniyor := make(map[string]models.LineTotals, satirSayisi)
+	lines := make([]service.LineTotals, 0, satirSayisi)
+	var sepetAra, sepetIndirim, sepetVergi int64
+	for i := range satirSayisi {
+		adet := int64(i + 1)
+		item, err := svc.AddLineItem(ctx, sepet.ID, service.AddLineItemInput{
+			VariantID: fmt.Sprintf("variant_ESLESME_%d", i), Title: "Ürün", Quantity: adet,
+		})
+		require.NoError(t, err)
+
+		tutar := models.LineTotals{
+			UnitPrice:     int64(100 * (i + 1)),
+			DiscountTotal: int64(3 * i),
+			TaxTotal:      int64(7 * (i + 1)),
+		}
+		tutar.Subtotal = tutar.UnitPrice * adet
+		tutar.Total = tutar.Subtotal - tutar.DiscountTotal + tutar.TaxTotal
+
+		bekleniyor[item.ID] = tutar
+		lines = append(lines, service.LineTotals{
+			LineItemID: item.ID, UnitPrice: tutar.UnitPrice, Subtotal: tutar.Subtotal,
+			DiscountTotal: tutar.DiscountTotal, TaxTotal: tutar.TaxTotal, Total: tutar.Total,
+		})
+		sepetAra += tutar.Subtotal
+		sepetIndirim += tutar.DiscountTotal
+		sepetVergi += tutar.TaxTotal
+	}
+
+	detay, err := svc.GetCart(ctx, sepet.ID)
+	require.NoError(t, err)
+	require.NoError(t, svc.SetTotals(ctx, sepet.ID, service.Totals{
+		Revision: detay.Revision,
+		Subtotal: sepetAra, DiscountTotal: sepetIndirim, TaxTotal: sepetVergi,
+		Total: sepetAra - sepetIndirim + sepetVergi,
+		Lines: lines,
+	}))
+
+	for id, tutar := range bekleniyor {
+		assert.Equal(t, tutar, satirTutarlari(ctx, t, id),
+			"satır %s kendi tutarlarını almalı", id)
+	}
+}
+
+// TestSetTotalsBuyukTutarlarTamSayiKalir en büyük izinli tutarın dizi gidiş
+// dönüşünden BOZULMADAN geçtiğini doğrular.
+//
+// Toplu yazma para alanlarını bigint[] dizileriyle taşır. Para her zaman TAM
+// SAYI minor unit'tir; dizi yolunda bir kayan nokta dönüşümü olsaydı 10^18
+// mertebesindeki bir tutar sessizce yuvarlanır ve fark ancak muhasebede
+// görünürdü. models.MaxTotal (10^18) float64'ün tam gösterebildiği aralığın
+// (2^53 ≈ 9×10^15) çok üstündedir, yani böyle bir dönüşüm burada MUTLAKA
+// görünür.
+func TestSetTotalsBuyukTutarlarTamSayiKalir(t *testing.T) {
+	ctx := context.Background()
+	svc := yeniServis(t)
+	sepet := yeniSepet(ctx, t, svc)
+
+	// MaxTotal = MaxAmount × MaxQuantity; ara toplam çarpımı da doğrulandığı
+	// için satır tam olarak bu adet ve birim fiyatla kurulur.
+	item, err := svc.AddLineItem(ctx, sepet.ID, service.AddLineItemInput{
+		VariantID: "variant_BUYUK", Title: "Pahalı", Quantity: models.MaxQuantity,
+		UnitPrice: models.MaxAmount,
+	})
+	require.NoError(t, err)
+
+	detay, err := svc.GetCart(ctx, sepet.ID)
+	require.NoError(t, err)
+	require.NoError(t, svc.SetTotals(ctx, sepet.ID, service.Totals{
+		Revision: detay.Revision,
+		Subtotal: models.MaxTotal, Total: models.MaxTotal,
+		Lines: []service.LineTotals{{
+			LineItemID: item.ID, UnitPrice: models.MaxAmount,
+			Subtotal: models.MaxTotal, Total: models.MaxTotal,
+		}},
+	}))
+
+	assert.Equal(t, models.LineTotals{
+		UnitPrice: models.MaxAmount, Subtotal: models.MaxTotal, Total: models.MaxTotal,
+	}, satirTutarlari(ctx, t, item.ID), "10^18 mertebesindeki tutar bit bit korunmalı")
+}
+
+// TestSetLineItemTotalsBaskaSepetinSatirinaYazamaz toplu yazmanın sepet
+// sınırını AŞAMADIĞINI doğrular.
+//
+// Satır başına UPDATE'te sınır sorgunun WHERE'indeydi ve satır bulunamayınca
+// NotFound dönüyordu. Toplu biçimde kimlikler bir dizi olarak gelir; cart_id
+// koşulu düşseydi ya da eşleştirmeye kaysaydı, bir sepet İÇİN yapılan hesap
+// BAŞKA bir sepetin satırına yazılabilirdi.
+//
+// Depo doğrudan çağrılır: servis satır kümesini kilit altında okuyup kapsama
+// aradığı için bu isteği zaten üretemez. Sınanan şey, servisin ALTINDAKİ
+// katmanın kendi başına güvenli olduğudur.
+func TestSetLineItemTotalsBaskaSepetinSatirinaYazamaz(t *testing.T) {
+	ctx := context.Background()
+	svc := yeniServis(t)
+	repo := repository.New(testPool.Pool())
+
+	kurban := yeniSepet(ctx, t, svc)
+	kurbanSatiri, err := svc.AddLineItem(ctx, kurban.ID, service.AddLineItemInput{
+		VariantID: "variant_KURBAN", Title: "Kurban", Quantity: 1, UnitPrice: 1000,
+	})
+	require.NoError(t, err)
+
+	digeri := yeniSepet(ctx, t, svc)
+	digeriSatiri, err := svc.AddLineItem(ctx, digeri.ID, service.AddLineItemInput{
+		VariantID: "variant_DIGERI", Title: "Diğeri", Quantity: 1, UnitPrice: 1000,
+	})
+	require.NoError(t, err)
+
+	// Yazmadan ÖNCEKİ hâl tanık olarak alınır: AddLineItem satırın ilk birim
+	// fiyatını zaten yazdığı için "hiç yazılmamış" sıfır demek değildir.
+	oncekiKurban := satirTutarlari(ctx, t, kurbanSatiri.ID)
+	oncekiDigeri := satirTutarlari(ctx, t, digeriSatiri.ID)
+
+	// Diğer sepetin turu, kurbanın satırını da yazmaya çalışıyor.
+	err = repo.WithTx(ctx, func(ctx context.Context) error {
+		return repo.SetLineItemTotals(ctx, digeri.ID, []models.LineItemTotals{
+			{LineItemID: digeriSatiri.ID, Totals: models.LineTotals{
+				UnitPrice: 4242, Subtotal: 4242, Total: 4242}},
+			{LineItemID: kurbanSatiri.ID, Totals: models.LineTotals{
+				UnitPrice: 1, Subtotal: 1, Total: 1}},
+		})
+	})
+
+	require.Error(t, err, "başka sepetin satırı yazılamamalı")
+	assert.Equal(t, errors.KindNotFound, errors.KindOf(err))
+	assert.Contains(t, err.Error(), kurbanSatiri.ID, "hata hangi satırın yazılamadığını söylemeli")
+
+	assert.Equal(t, oncekiKurban, satirTutarlari(ctx, t, kurbanSatiri.ID),
+		"kurbanın satırı DEĞİŞMEMELİ")
+	assert.Equal(t, oncekiDigeri, satirTutarlari(ctx, t, digeriSatiri.ID),
+		"tur düştüğü için çağıranın kendi satırı da yazılmamalı")
+}
+
+// TestSetLineItemTotalsEksikSatiriCAGIRAN_SIRASIYLA_Adlandirir hata mesajının
+// yazılamayan İLK satırı — çağıranın verdiği sırayla — adlandırdığını doğrular.
+//
+// Sıra bir sözleşmedir ve gerekçesi repository'deki firstUnwritten godoc'unda
+// yazılıdır (ayraçsız: sembol dışa açık değil ve bu paket onu göremez):
+// PostgreSQL
+// RETURNING sırasını garanti etmez, dolayısıyla mesajın yeniden üretilebilir
+// olmasının tek dayanağı çağıranın dilimidir. Aynı girdiye farklı mesaj veren
+// bir hata, operatörün iki arızayı ayırt etmesini imkânsız kılar.
+//
+// Testin iki eksik satırı olması ŞART: tek eksikli bir fikstürde "ilk" ile
+// "son" aynı kimliktir ve sözleşme sınanmamış olur (mutasyonla doğrulandı —
+// son eksik satırı dönen sürüm tek eksikli testleri geçiyordu).
+func TestSetLineItemTotalsEksikSatiriCAGIRAN_SIRASIYLA_Adlandirir(t *testing.T) {
+	ctx := context.Background()
+	svc := yeniServis(t)
+	repo := repository.New(testPool.Pool())
+	sepet := yeniSepet(ctx, t, svc)
+
+	kalan, err := svc.AddLineItem(ctx, sepet.ID, service.AddLineItemInput{
+		VariantID: "variant_KALAN", Title: "Kalan", Quantity: 1, UnitPrice: 1000,
+	})
+	require.NoError(t, err)
+	ilkEksik, err := svc.AddLineItem(ctx, sepet.ID, service.AddLineItemInput{
+		VariantID: "variant_EKSIK_A", Title: "Eksik A", Quantity: 1, UnitPrice: 1000,
+	})
+	require.NoError(t, err)
+	ikinciEksik, err := svc.AddLineItem(ctx, sepet.ID, service.AddLineItemInput{
+		VariantID: "variant_EKSIK_B", Title: "Eksik B", Quantity: 1, UnitPrice: 1000,
+	})
+	require.NoError(t, err)
+
+	for _, id := range []string{ilkEksik.ID, ikinciEksik.ID} {
+		_, err = testPool.Pool().Exec(ctx,
+			`UPDATE cart_line_items SET deleted_at = now() WHERE id = $1`, id)
+		require.NoError(t, err)
+	}
+
+	tutar := models.LineTotals{UnitPrice: 5000, Subtotal: 5000, Total: 5000}
+	err = repo.WithTx(ctx, func(ctx context.Context) error {
+		return repo.SetLineItemTotals(ctx, sepet.ID, []models.LineItemTotals{
+			{LineItemID: kalan.ID, Totals: tutar},
+			{LineItemID: ilkEksik.ID, Totals: tutar},
+			{LineItemID: ikinciEksik.ID, Totals: tutar},
+		})
+	})
+
+	require.Error(t, err)
+	assert.Equal(t, errors.KindNotFound, errors.KindOf(err))
+	assert.Contains(t, err.Error(), ilkEksik.ID,
+		"çağıranın sırasındaki İLK eksik satır adlandırılmalı")
+	assert.NotContains(t, err.Error(), ikinciEksik.ID,
+		"ikinci eksik satır adlandırılmamalı; mesaj tek ve yeniden üretilebilir olmalı")
+}
+
+// TestSetLineItemTotalsSatirsizTurHatasizGecer satırsız bir turun HATA
+// ÜRETMEDİĞİNİ doğrular.
+//
+// Yol ölü değildir: son satırı da kaldırılmış bir sepet yeniden fiyatlanınca
+// hesap turu sıfır satırla gelir ve o tur geçmek zorundadır — düşseydi müşteri
+// sepetini boşalttığı anda sepeti hesaplanamaz hâle gelirdi. Erken dönüş
+// mutasyonla doğrulandı: hata döndüren sürüm başka hiçbir testi düşürmüyordu.
+func TestSetLineItemTotalsSatirsizTurHatasizGecer(t *testing.T) {
+	ctx := context.Background()
+	svc := yeniServis(t)
+	repo := repository.New(testPool.Pool())
+	sepet := yeniSepet(ctx, t, svc)
+
+	require.NoError(t, repo.WithTx(ctx, func(ctx context.Context) error {
+		return repo.SetLineItemTotals(ctx, sepet.ID, nil)
+	}))
+
+	revision, _ := sepetSurumu(ctx, t, sepet.ID)
+	require.NoError(t, svc.SetTotals(ctx, sepet.ID, service.Totals{Revision: revision}),
+		"satırsız sepetin hesabı yazılabilmeli")
+}
+
+// TestSetLineItemTotalsEksikSatirTuruDusurur bir satır yazılamadığında turun
+// TAMAMEN geri alındığını doğrular.
+//
+// Toplu UPDATE eşleşmeyen kimliği sessizce ATLAR: silinmiş bir satır ya da hiç
+// olmayan bir kimlik hata üretmez, yalnızca daha az satır yazılır. Sessiz
+// kalsaydı sepetin ara toplamı ile satırlarının toplamı ayrışır ve müşteriye
+// yanlış tutar tahsil edilirdi. Bu yüzden yazılan kimlikler istenenlerle
+// karşılaştırılır ve eksik varsa işlem geri alınır.
+//
+// Kural bugün İKİNCİ savunmadır — servis satır kümesini sepetin kilidi altında
+// okur ve sepeti değiştiren her yol aynı kilidi alır — ama kilidi atlayan bir
+// yolun (doğrudan SQL, ileride eklenecek bir akış) sessiz kalmaması için burada
+// sabitlenir.
+func TestSetLineItemTotalsEksikSatirTuruDusurur(t *testing.T) {
+	ctx := context.Background()
+	svc := yeniServis(t)
+	repo := repository.New(testPool.Pool())
+	sepet := yeniSepet(ctx, t, svc)
+
+	kalan, err := svc.AddLineItem(ctx, sepet.ID, service.AddLineItemInput{
+		VariantID: "variant_KALAN", Title: "Kalan", Quantity: 1, UnitPrice: 1000,
+	})
+	require.NoError(t, err)
+	silinen, err := svc.AddLineItem(ctx, sepet.ID, service.AddLineItemInput{
+		VariantID: "variant_SILINEN", Title: "Silinen", Quantity: 1, UnitPrice: 1000,
+	})
+	require.NoError(t, err)
+
+	// Satır, servisin kilidini ATLAYARAK siliniyor: sınanan şey tam olarak
+	// böyle bir yolun sessiz kalmamasıdır.
+	_, err = testPool.Pool().Exec(ctx,
+		`UPDATE cart_line_items SET deleted_at = now() WHERE id = $1`, silinen.ID)
+	require.NoError(t, err)
+
+	// Yazmadan ÖNCEKİ hâl tanık olarak alınır: AddLineItem satırın ilk birim
+	// fiyatını zaten yazdığı için "hiç yazılmamış" sıfır demek değildir.
+	oncekiKalan := satirTutarlari(ctx, t, kalan.ID)
+
+	err = repo.WithTx(ctx, func(ctx context.Context) error {
+		return repo.SetLineItemTotals(ctx, sepet.ID, []models.LineItemTotals{
+			{LineItemID: kalan.ID, Totals: models.LineTotals{
+				UnitPrice: 5000, Subtotal: 5000, Total: 5000}},
+			{LineItemID: silinen.ID, Totals: models.LineTotals{
+				UnitPrice: 7000, Subtotal: 7000, Total: 7000}},
+		})
+	})
+
+	require.Error(t, err, "eksik yazılan tur sessiz geçmemeli")
+	assert.Equal(t, errors.KindNotFound, errors.KindOf(err))
+	assert.Contains(t, err.Error(), silinen.ID, "hata yazılamayan satırı adlandırmalı")
+
+	assert.Equal(t, oncekiKalan, satirTutarlari(ctx, t, kalan.ID),
+		"tur düştüğü için YAŞAYAN satır da yazılmamalı: ya hepsi ya hiçbiri")
+}
+
+// TestSetLineItemTotalsAyniSatiriIkiKezYazamaz aynı kimliğin bir turda iki kez
+// verilemediğini doğrular.
+//
+// UPDATE ... FROM bir hedef satır birden çok kaynak satırla eşleştiğinde HANGİ
+// kaynağın kazandığını tanımlamaz: sepet iki tutardan birini rastgele alırdı ve
+// hangisi olduğu plana bağlı olurdu. Servis bunu zaten eler; depo katmanının da
+// elemesi, deyimin tanımsız davranışını bu paketten çıkarır.
+func TestSetLineItemTotalsAyniSatiriIkiKezYazamaz(t *testing.T) {
+	ctx := context.Background()
+	svc := yeniServis(t)
+	repo := repository.New(testPool.Pool())
+	sepet := yeniSepet(ctx, t, svc)
+
+	item, err := svc.AddLineItem(ctx, sepet.ID, service.AddLineItemInput{
+		VariantID: "variant_TEKRAR", Title: "Tekrar", Quantity: 1, UnitPrice: 1000,
+	})
+	require.NoError(t, err)
+	oncekiTutar := satirTutarlari(ctx, t, item.ID)
+
+	err = repo.WithTx(ctx, func(ctx context.Context) error {
+		return repo.SetLineItemTotals(ctx, sepet.ID, []models.LineItemTotals{
+			{LineItemID: item.ID, Totals: models.LineTotals{
+				UnitPrice: 100, Subtotal: 100, Total: 100}},
+			{LineItemID: item.ID, Totals: models.LineTotals{
+				UnitPrice: 900, Subtotal: 900, Total: 900}},
+		})
+	})
+
+	require.Error(t, err, "aynı satır için iki tutar kabul edilmemeli")
+	assert.True(t, errors.IsInvalid(err), "sınıf Invalid olmalı: %v", err)
+	assert.Equal(t, oncekiTutar, satirTutarlari(ctx, t, item.ID),
+		"reddedilen tur hiçbir şey yazmamalı")
+}

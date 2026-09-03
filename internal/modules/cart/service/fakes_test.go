@@ -67,6 +67,16 @@ type fakeStore struct {
 	// bumpCalls şekil sayacının kaç kez artırıldığını sayar.
 	bumpCalls int
 
+	// setLineTotalsCalls satır tutarı YAZMA çağrılarını sayar.
+	//
+	// Sayı sözleşmenin kendisidir: bir hesap turu kaç satır taşırsa taşısın TEK
+	// yazma çağrısıdır. Sayı, sepetin kilidinin ne kadar tutulduğunun birim
+	// testinde görülebilen tek göstergesidir; satır başına döngüye dönen bir
+	// değişiklik burada yakalanır.
+	setLineTotalsCalls int
+	// setLineTotalsRows o çağrılarla yazılan toplam satır sayısıdır.
+	setLineTotalsRows int
+
 	// failCreateLineItem ayarlanırsa CreateLineItem bu hatayı döner; işlem geri
 	// alma yolunu sınamak için kullanılır.
 	failCreateLineItem error
@@ -494,27 +504,51 @@ func (f *fakeStore) SetLineItemQuantity(_ context.Context, cartID, lineID string
 	return item, nil
 }
 
-// SetLineItemTotals satırın para alanlarını yazar.
-func (f *fakeStore) SetLineItemTotals(_ context.Context, cartID, lineID string, totals models.LineTotals) (models.LineItem, error) {
+// SetLineItemTotals bir turun tüm satır tutarlarını yazar.
+//
+// Gerçek depo gibi HEPSİ YA DA HİÇBİRİ davranır: eksik bir satır bulunduğunda
+// hiçbir tutar yazılmaz. Gerçekte bunu işlemin geri alınması sağlar; sahte
+// depoda önce eşleme yapılıp sonra yazılarak aynı sonuç üretilir, yoksa birim
+// testi gerçek veritabanının vermeyeceği bir yarım yazmayı görürdü.
+//
+// setLineTotalsCalls'ı bir artırır: çağrının SAYISI sözleşmenin parçasıdır —
+// bir tur TEK yazma çağrısıdır (bkz. [Service.SetTotals]).
+func (f *fakeStore) SetLineItemTotals(_ context.Context, cartID string, lines []models.LineItemTotals) error {
 	if f.failSetLineItemTotals != nil {
-		return models.LineItem{}, f.failSetLineItemTotals
+		return f.failSetLineItemTotals
 	}
 
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
-	item, ok := f.items[lineID]
-	if !ok || item.CartID != cartID {
-		return models.LineItem{}, lineNotFound(cartID, lineID)
+	f.setLineTotalsCalls++
+	f.setLineTotalsRows += len(lines)
+
+	guncel := make([]models.LineItem, 0, len(lines))
+	gorulen := make(map[string]struct{}, len(lines))
+	for _, line := range lines {
+		if _, dup := gorulen[line.LineItemID]; dup {
+			return errors.Invalid(service.CodeTotalsInconsistent,
+				"aynı satır için birden çok tutar verildi: %s", line.LineItemID)
+		}
+		gorulen[line.LineItemID] = struct{}{}
+
+		item, ok := f.items[line.LineItemID]
+		if !ok || item.CartID != cartID {
+			return lineNotFound(cartID, line.LineItemID)
+		}
+		item.UnitPrice = line.Totals.UnitPrice
+		item.Subtotal = line.Totals.Subtotal
+		item.DiscountTotal = line.Totals.DiscountTotal
+		item.TaxTotal = line.Totals.TaxTotal
+		item.Total = line.Totals.Total
+		item.UpdatedAt = f.nextStamp()
+		guncel = append(guncel, item)
 	}
-	item.UnitPrice = totals.UnitPrice
-	item.Subtotal = totals.Subtotal
-	item.DiscountTotal = totals.DiscountTotal
-	item.TaxTotal = totals.TaxTotal
-	item.Total = totals.Total
-	item.UpdatedAt = f.nextStamp()
-	f.items[lineID] = item
-	return item, nil
+	for i := range guncel {
+		f.items[guncel[i].ID] = guncel[i]
+	}
+	return nil
 }
 
 // SoftDeleteLineItem satırı siler.

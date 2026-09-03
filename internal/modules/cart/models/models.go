@@ -257,6 +257,21 @@ func (t LineTotals) Consistent() bool {
 	return t.Total == t.Subtotal-t.DiscountTotal+t.TaxTotal
 }
 
+// LineItemTotals bir satırın KİMLİĞİNİ tutarlarıyla BİRLİKTE taşır.
+//
+// Kimlik ile tutarların aynı değerde durması bilinçlidir: bir hesap turunun
+// tamamı tek deyimle yazılır ve depo bu dilimden altı paralel dizi kurar
+// (bkz. cart_line_items.sql, SetLineItemTotals). Kimlikleri ve tutarları ayrı
+// dilimler olarak taşımak, çağıranın onları farklı sıralarda vermesini mümkün
+// kılardı: yanlış satıra yanlış tutar yazmak müşteriye yanlış tutar tahsil
+// etmektir ve aşağı akışta hiçbir kapı bunu görmez.
+type LineItemTotals struct {
+	// LineItemID tutarların yazılacağı satırdır.
+	LineItemID string
+	// Totals satırın para alanlarıdır (minor unit).
+	Totals LineTotals
+}
+
 // AddressType bir sepet adresinin türüdür.
 type AddressType string
 

@@ -2,6 +2,7 @@ package service_test
 
 import (
 	"context"
+	"strconv"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -626,4 +627,128 @@ func TestSetTotalsIndirimAraToplamiAsamaz(t *testing.T) {
 		})
 		assert.NoError(t, err, "ara toplama EŞİT indirim sınırdadır ve geçerlidir")
 	})
+}
+
+// TestSetTotalsBirTurTEKYazmaCagrisidir bir hesap turunun satır sayısından
+// BAĞIMSIZ olarak tek yazma çağrısı ürettiğini doğrular.
+//
+// Sayı bir başarım süsü değil, sepetin KİLİT süresidir: yazma sepetin
+// FOR UPDATE kilidi altında koşar ve o kilit aynı sepete yazan her akışı sıraya
+// dizer. Eskiden satır başına bir UPDATE koşuluyordu; ölçüldü (yerel konteyner,
+// 100 satır, kilidin alınmasından commit'e, p50) 8,0 ms, tek deyimle 0,55 ms.
+// Döngüye geri dönen bir değişiklik burada, gerçek veritabanı olmadan yakalanır.
+func TestSetTotalsBirTurTEKYazmaCagrisidir(t *testing.T) {
+	svc, store := yeniServis(t)
+	ctx := context.Background()
+
+	cart, err := svc.CreateCart(ctx, service.CreateCartInput{
+		RegionID: regionID, CurrencyCode: currency,
+	})
+	require.NoError(t, err)
+
+	const satirSayisi = 40
+	lines := make([]service.LineTotals, 0, satirSayisi)
+	for i := range satirSayisi {
+		item, addErr := svc.AddLineItem(ctx, cart.ID, service.AddLineItemInput{
+			VariantID: "variant_" + strconv.Itoa(i), Title: "Ürün", Quantity: 1,
+		})
+		require.NoError(t, addErr)
+		lines = append(lines, service.LineTotals{
+			LineItemID: item.ID, UnitPrice: 1000, Subtotal: 1000, Total: 1000,
+		})
+	}
+
+	detail, err := svc.GetCart(ctx, cart.ID)
+	require.NoError(t, err)
+	store.setLineTotalsCalls, store.setLineTotalsRows = 0, 0
+
+	require.NoError(t, svc.SetTotals(ctx, cart.ID, service.Totals{
+		Revision: detail.Revision,
+		Subtotal: 1000 * satirSayisi, Total: 1000 * satirSayisi,
+		Lines: lines,
+	}))
+
+	assert.Equal(t, 1, store.setLineTotalsCalls,
+		"tur kaç satır taşırsa taşısın TEK yazma çağrısı olmalı; "+
+			"satır başına çağrı kilidi satır sayısıyla orantılı tutar")
+	assert.Equal(t, satirSayisi, store.setLineTotalsRows,
+		"tek çağrı sepetin BÜTÜN satırlarını taşımalı")
+}
+
+// TestSetTotalsHerSatirKENDITutarlariniAlir tutarların satırlarla doğru
+// EŞLEŞTİĞİNİ doğrular.
+//
+// Toplu yazma altı paralel dizi gönderir ve eşleşme yalnızca dizilerin
+// SIRASINA dayanır. Sıra kayarsa sepetin ara toplamı yine tutar, kimlik
+// kontrolleri yine geçer, veritabanı kısıtları yine sağlanır — tek bozulan şey
+// müşteriden alınan paradır ve aşağı akışta bunu görecek hiçbir kapı yoktur.
+// Bu yüzden her satıra BAŞKA bir tutar dörtlüsü verilir: sıra bir adım kaysa
+// bile her satırın değeri değişir.
+func TestSetTotalsHerSatirKENDITutarlariniAlir(t *testing.T) {
+	svc, _ := yeniServis(t)
+	ctx := context.Background()
+
+	cart, err := svc.CreateCart(ctx, service.CreateCartInput{
+		RegionID: regionID, CurrencyCode: currency,
+	})
+	require.NoError(t, err)
+
+	// Her satırın adedi ve birim fiyatı FARKLI; ara toplam = adet × birim fiyat
+	// olduğu için hiçbir satırın tutar dörtlüsü bir başkasınınkiyle aynı değil.
+	const satirSayisi = 8
+	type beklenen struct {
+		id                                         string
+		unitPrice, subtotal, discount, tax, toplam int64
+	}
+	bekleniyor := make([]beklenen, 0, satirSayisi)
+	lines := make([]service.LineTotals, 0, satirSayisi)
+	var sepetAra, sepetIndirim, sepetVergi int64
+	for i := range satirSayisi {
+		adet := int64(i + 1)
+		item, addErr := svc.AddLineItem(ctx, cart.ID, service.AddLineItemInput{
+			VariantID: "variant_" + strconv.Itoa(i), Title: "Ürün", Quantity: adet,
+		})
+		require.NoError(t, addErr)
+
+		birim := int64(100 * (i + 1))
+		ara := birim * adet
+		indirim := int64(i)
+		vergi := int64(7 * (i + 1))
+		toplam := ara - indirim + vergi
+
+		bekleniyor = append(bekleniyor, beklenen{item.ID, birim, ara, indirim, vergi, toplam})
+		lines = append(lines, service.LineTotals{
+			LineItemID: item.ID, UnitPrice: birim, Subtotal: ara,
+			DiscountTotal: indirim, TaxTotal: vergi, Total: toplam,
+		})
+		sepetAra += ara
+		sepetIndirim += indirim
+		sepetVergi += vergi
+	}
+
+	detail, err := svc.GetCart(ctx, cart.ID)
+	require.NoError(t, err)
+	require.NoError(t, svc.SetTotals(ctx, cart.ID, service.Totals{
+		Revision: detail.Revision,
+		Subtotal: sepetAra, DiscountTotal: sepetIndirim, TaxTotal: sepetVergi,
+		Total: sepetAra - sepetIndirim + sepetVergi,
+		Lines: lines,
+	}))
+
+	yazilan, err := svc.GetCart(ctx, cart.ID)
+	require.NoError(t, err)
+	require.Len(t, yazilan.Items, satirSayisi)
+	saklanan := make(map[string]models.LineItem, satirSayisi)
+	for _, item := range yazilan.Items {
+		saklanan[item.ID] = item
+	}
+	for _, b := range bekleniyor {
+		item, ok := saklanan[b.id]
+		require.True(t, ok, "satır kaybolmamalı: %s", b.id)
+		assert.Equal(t, b.unitPrice, item.UnitPrice, "%s birim fiyatı", b.id)
+		assert.Equal(t, b.subtotal, item.Subtotal, "%s ara toplamı", b.id)
+		assert.Equal(t, b.discount, item.DiscountTotal, "%s indirimi", b.id)
+		assert.Equal(t, b.tax, item.TaxTotal, "%s vergisi", b.id)
+		assert.Equal(t, b.toplam, item.Total, "%s toplamı", b.id)
+	}
 }
