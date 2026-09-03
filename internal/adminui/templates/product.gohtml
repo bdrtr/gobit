@@ -1,0 +1,53 @@
+{{- /*
+product.gohtml shows one product with its variants, prices and stock.
+
+The three come from three different modules and are joined by the read layer in
+two calls; the screen itself performs no join and knows no module.
+
+Two printing decisions are visible here and both are about not lying:
+
+  - An amount marked as minor units is printed with that label. The currency's
+    scale is not two for every currency, and a screen that guessed would show a
+    wrong price confidently.
+  - A variant with no inventory item shows an em dash, not 0. Zero means "sold
+    out"; nothing tracking the variant is a different fact.
+*/ -}}
+{{ define "body" }}
+<p><a href="{{ .ProductsPath }}">← Products</a></p>
+
+<h1>{{ .Product.Title }}</h1>
+<dl>
+  <dt>Handle</dt><dd>{{ .Product.Handle }}</dd>
+  <dt>Status</dt><dd>{{ .Product.Status }}</dd>
+  <dt>Id</dt><dd>{{ .Product.ID }}</dd>
+</dl>
+
+<h2>Variants</h2>
+{{ if .Variants }}
+<table>
+  <thead>
+    <tr><th>Title</th><th>SKU</th><th>Prices</th><th>Stock</th></tr>
+  </thead>
+  <tbody>
+  {{ range .Variants }}
+    <tr>
+      <td>{{ .Title }}</td>
+      <td>{{ .SKU }}</td>
+      <td>
+        {{ if .Prices }}
+          {{ range .Prices }}
+            <span>{{ .Amount }} {{ .Currency }}{{ if .Minor }} (minor units){{ end }}</span>
+          {{ end }}
+        {{ else }}
+          <span>No price</span>
+        {{ end }}
+      </td>
+      <td>{{ if .Stock }}{{ .Stock }}{{ else }}—{{ end }}</td>
+    </tr>
+  {{ end }}
+  </tbody>
+</table>
+{{ else }}
+<p>This product has no variants.</p>
+{{ end }}
+{{ end }}

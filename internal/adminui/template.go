@@ -25,6 +25,12 @@ var templateFiles embed.FS
 // layoutFile is the outer frame every page is rendered into.
 const layoutFile = "templates/layout.gohtml"
 
+// titleKey is the data key the layout reads the page title from.
+//
+// It is a constant because the layout looks it up BY NAME: a typo in one page's
+// data map would render that page with an empty <title> and nothing would fail.
+const titleKey = "Title"
+
 // pages lists the panel pages that are looked up BY NAME at runtime.
 //
 // The list is maintained by hand, deliberately. A page name is a STRING: a typo
@@ -38,6 +44,8 @@ const layoutFile = "templates/layout.gohtml"
 var pages = []string{
 	"login.gohtml",
 	"error.gohtml",
+	"products.gohtml",
+	"product.gohtml",
 }
 
 // templateSet maps a page name to that page's parsed template set.

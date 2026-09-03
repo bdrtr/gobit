@@ -1282,13 +1282,21 @@ açıktır.
 
 **Kurulum ve işletim**
 
-- **Yönetim paneli yalnızca GİRİŞ taşır.** `/admin/ui` altındaki panel
-  ([ADR 0011](docs/adr/0011-yonetim-paneli-dorduncu-agac.md)) bugün giriş,
-  çıkış ve korumalı bir giriş noktasından ibarettir; katalog ekranları henüz
-  yoktur. Yönetimin tamamı hâlâ `/admin/v1` üzerinden, `Authorization: Bearer`
-  ile yapılır. Panelin oturum çerezi yönetim API'sinde KABUL EDİLMEZ ve bu bir
-  eksiklik değil karardır: API'nin CSRF bağışıklığı jetonun tarayıcının
-  kendiliğinden eklemediği bir başlıkta yaşamasından gelir.
+- **Yönetim paneli YALNIZCA OKUR.** `/admin/ui` altındaki panel
+  ([ADR 0011](docs/adr/0011-yonetim-paneli-dorduncu-agac.md)) giriş, çıkış ve
+  katalog ekranlarını (ürün listesi, ürün sayfasında varyant/fiyat/stok) taşır;
+  hiçbir yazma yolu yoktur. Ürün yaratmak, fiyat vermek ve stok girmek `/admin/v1`
+  üzerinden, `Authorization: Bearer` ile yapılır.
+
+  Panelin oturum çerezi yönetim API'sinde KABUL EDİLMEZ ve bu bir eksiklik
+  değil karardır: API'nin CSRF bağışıklığı jetonun tarayıcının kendiliğinden
+  eklemediği bir başlıkta yaşamasından gelir.
+
+  Katalog ekranı fiyatı, para biriminin ondalık basamak sayısı BİLİNMİYORSA
+  ham minor unit tam sayısı olarak ve bunu söyleyerek gösterir. Ölçek bölge
+  kaydından okunur; hiç bölge tanımlanmamış bir kurulumda `19990 TRY (minor
+  units)` görülür. Sabit 100 varsaymak JPY ve KWD gibi 0 ve 3 basamaklı para
+  birimlerinde YANLIŞ tutar gösterirdi.
 - **Çok kiracılılık yoktur.** Bir kiracı = bir kurulum = bir veritabanı = bir
   süreç; ayrıntı yukarıda "Tek örnek mi, birden çok mu?" başlığında, karar
   [ADR 0009](docs/adr/0009-cok-kiracililik-kurulum-siniri.md)'da.

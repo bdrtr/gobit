@@ -30,6 +30,10 @@ const (
 	LoginPath = URLPrefix + "/login"
 	// LogoutPath ends the session.
 	LogoutPath = URLPrefix + "/logout"
+	// ProductsPath is the catalog list.
+	ProductsPath = URLPrefix + "/products"
+	// ProductPath is one product's page; {id} is the product's identity.
+	ProductPath = ProductsPath + "/{id}"
 
 	// ServiceQuery is the cross-module read layer's container name.
 	ServiceQuery = "core.query"

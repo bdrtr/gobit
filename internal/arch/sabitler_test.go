@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/bdrtr/gobit/internal/adminui"
 	"github.com/bdrtr/gobit/internal/core/config"
 	coreplugin "github.com/bdrtr/gobit/internal/core/plugin"
 	coreprovider "github.com/bdrtr/gobit/internal/core/provider"
@@ -23,11 +24,13 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/file"
 	"github.com/bdrtr/gobit/internal/modules/file/local"
 	"github.com/bdrtr/gobit/internal/modules/fulfillment"
+	inventorysvc "github.com/bdrtr/gobit/internal/modules/inventory/service"
 	"github.com/bdrtr/gobit/internal/modules/notification"
 	"github.com/bdrtr/gobit/internal/modules/notification/logonly"
 	"github.com/bdrtr/gobit/internal/modules/payment"
 	"github.com/bdrtr/gobit/internal/modules/product/graph"
 	productsvc "github.com/bdrtr/gobit/internal/modules/product/service"
+	regionsvc "github.com/bdrtr/gobit/internal/modules/region/service"
 )
 
 // TestSaglayiciKayitAdlariUyusuyor eklenti paketiyle modüllerin sağlayıcı
@@ -609,4 +612,46 @@ func varsayilanSaglayiciIddiasi(t *testing.T, aile, saglayiciID, configVarsayila
 		"config'in varsayılan %s sağlayıcısı, modülün kutudan çıkan sağlayıcısı olmalı", aile)
 	assert.Equal(t, saglayiciID, modulVarsayilani,
 		"%s modülünün varsayılanı da aynı sağlayıcı olmalı", aile)
+}
+
+// TestPanelKatalogAdlariUyusuyor panelin ELLE yazdığı katalog adlarının
+// modüllerin kendi sabitleriyle aynı olduğunu doğrular.
+//
+// Panel hiçbir modülü import ETMEZ (ADR 0011) ve okuma katmanına herkes gibi
+// ADLA ulaşır (ADR 0004). Bedeli, bu adların iki yerde elle tekrarlanmasıdır ve
+// ayrışmaları SESSİZDİR: link adı değiştiği gün panel derlenir, 200 döner ve
+// yalnızca fiyat sütunu boşalır. Fark, katalog ekranına bakan biri "bu ürünün
+// fiyatı yok" sanana kadar görülmez.
+//
+// Bu test o bağı DERLEME zamanına taşır; buradaki gerekçe
+// [TestSaglayiciKayitAdlariUyusuyor]'nunkiyle birebir aynıdır ve arch paketi
+// yine tek uygun yerdir, çünkü hem paneli hem modülleri import edebilen tek
+// pakettir.
+//
+// # Bu testin KAPSAMADIĞI adlar
+//
+// Panelin kullandığı SÜZGEÇ ve ALAN adlarının çoğu (product'ın "id"/"product_id"
+// süzgeçleri, pricing'in "prices"/"amount"/"currency_code" alanları) sahibi
+// modülde dışa açık DEĞİLDİR; derleme zamanında karşılaştırılamazlar. Onların
+// tek koruması okuma katmanının kendi cevabıdır: tanınmayan bir süzgeç ya da
+// alan errors.Invalid ile reddedilir (ADR 0004) ve panel bunu "ekran okuma
+// katmanından sunmadığı bir şey istedi" diyen bir 500'e çevirir. Yani arıza
+// GÜRÜLTÜLÜDÜR ama ilk istekte görülür, derlemede değil.
+func TestPanelKatalogAdlariUyusuyor(t *testing.T) {
+	t.Parallel()
+
+	assert.Equal(t, productsvc.EntityProduct, adminui.EntityProduct,
+		"panelin ürün entity adı product modülüyle aynı olmalı")
+	assert.Equal(t, productsvc.EntityVariant, adminui.EntityVariant,
+		"panelin varyant entity adı product modülüyle aynı olmalı")
+	assert.Equal(t, regionsvc.Entity, adminui.EntityRegion,
+		"panelin bölge entity adı region modülüyle aynı olmalı")
+
+	assert.Equal(t, productsvc.LinkVariantPriceSet, adminui.LinkVariantPriceSet,
+		"panelin fiyat link adı product modülüyle aynı olmalı")
+	assert.Equal(t, productsvc.LinkVariantInventory, adminui.LinkVariantInventory,
+		"panelin stok link adı product modülüyle aynı olmalı")
+
+	assert.Equal(t, inventorysvc.FieldAvailableQuantity, adminui.FieldAvailableQuantity,
+		"panelin satılabilir adet alan adı inventory modülüyle aynı olmalı")
 }

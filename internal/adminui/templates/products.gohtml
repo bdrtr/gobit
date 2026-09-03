@@ -1,0 +1,41 @@
+{{- /*
+products.gohtml is the catalog list.
+
+The rows come from the cross-module read layer, not from a module's service: the
+panel knows no module (ADR 0011). Every field is printed as an ordinary value,
+so the template engine's escaping applies to all of them — a product title is
+operator-supplied text and the panel runs inside an administrator's session.
+
+Paging shows "next" only when the read returned one record more than the page
+holds. There is no total and no last page: a count over a growing catalog is the
+expensive half of paging and this screen does not need it.
+*/ -}}
+{{ define "body" }}
+<h1>Products</h1>
+
+{{ if .Products }}
+<table>
+  <thead>
+    <tr><th>Title</th><th>Handle</th><th>Status</th><th>Updated</th></tr>
+  </thead>
+  <tbody>
+  {{ range .Products }}
+    <tr>
+      <td><a href="{{ $.Path }}/{{ .ID }}">{{ .Title }}</a></td>
+      <td>{{ .Handle }}</td>
+      <td>{{ .Status }}</td>
+      <td>{{ if not .UpdatedAt.IsZero }}{{ .UpdatedAt.Format "2006-01-02 15:04" }}{{ end }}</td>
+    </tr>
+  {{ end }}
+  </tbody>
+</table>
+{{ else }}
+<p>No products on this page.</p>
+{{ end }}
+
+<nav>
+  {{ if .HasPrev }}<a href="{{ .Path }}?page={{ .PrevPage }}">Previous</a>{{ end }}
+  <span>Page {{ .Page }}</span>
+  {{ if .HasNext }}<a href="{{ .Path }}?page={{ .NextPage }}">Next</a>{{ end }}
+</nav>
+{{ end }}

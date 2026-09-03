@@ -15,7 +15,7 @@ import (
 // which would erase the failure from the status code.
 func (u *UI) loginPage(w http.ResponseWriter, r *http.Request, status int, message string) {
 	u.templates.render(w, r, status, "login.gohtml", map[string]any{
-		"Title":     "Sign in",
+		titleKey:    "Sign in",
 		"LoginPath": LoginPath,
 		"Error":     message,
 		"Email":     r.PostFormValue("email"),
@@ -25,7 +25,7 @@ func (u *UI) loginPage(w http.ResponseWriter, r *http.Request, status int, messa
 // errorPage writes the panel's human-readable error page.
 func (u *UI) errorPage(w http.ResponseWriter, r *http.Request, status int, title, message string) {
 	u.templates.render(w, r, status, "error.gohtml", map[string]any{
-		"Title":   title,
+		titleKey:  title,
 		"Message": message,
 	})
 }

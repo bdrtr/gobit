@@ -12,6 +12,31 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Eklendi
 
+- **Panelin katalog ekranları geldi: ürün listesi ve ürün sayfası.** Ürün
+  sayfası varyantları, fiyatlarını ve stoklarını gösteriyor — üçü üç ayrı
+  modülden, hiçbiri panel tarafından import edilmeden. Okuma katmanına herkes
+  gibi ADLA ulaşılıyor (ADR 0004) ve fiyat ile stok TEK çağrıda genişletme
+  olarak geliyor; satır başına sorgu yok.
+
+  Panel bu adları ELLE yazmak zorunda (modülleri import edemez) ve ayrışmaları
+  SESSİZDİR: link adı değiştiği gün panel derlenir, 200 döner ve yalnızca fiyat
+  sütunu boşalır. `TestPanelKatalogAdlariUyusuyor` bu bağı derleme zamanına
+  taşıyor — `TestSaglayiciKayitAdlariUyusuyor` ile aynı gerekçe, aynı yer.
+  Süzgeç ve alan adlarının çoğu sahibi modülde dışa açık olmadığı için
+  pinlenemiyor; onların koruması okuma katmanının "tanımadığım alan" reddi ve
+  bunun panelde 500'e çevrilmesi.
+
+  **Fiyat ASLA tahmin edilmiyor.** Tutar minor unit tam sayısıdır ve okunur
+  hâle getirmek para biriminin ondalık basamak sayısını gerektirir; ISO 4217'de
+  bu sayı 0 (JPY), 2 (çoğunluk) ve 3 (KWD) olabilir. Ölçek bölge kaydından
+  okunur; okunamazsa ham tam sayı gösterilir ve "minor units" diye
+  ETİKETLENİR. Sabit 100 varsaymak iki sınıfta yanlış tutarı KENDİNDEN EMİN
+  gösterirdi. Aritmetik baştan sona tam sayıda kalır (plan Bölüm 8: float
+  ASLA).
+
+  Stoğu olmayan varyant `—` gösteriyor, `0` DEĞİL: sıfır "tükendi" demektir,
+  hiç takip edilmemek başka bir olgudur.
+
 - **Yönetim paneli iskeleti: dördüncü ağaç `internal/adminui`**
   ([ADR 0011](docs/adr/0011-yonetim-paneli-dorduncu-agac.md)). Panel `/admin/ui`
   altında yaşar, sunucu tarafında HTML üretir (`html/template`, ikiliye gömülü)

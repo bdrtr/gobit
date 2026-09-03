@@ -4,6 +4,8 @@ import (
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
+
+	corehttp "github.com/bdrtr/gobit/internal/core/http"
 )
 
 // Routes binds the panel's paths to the router.
@@ -24,14 +26,16 @@ func (u *UI) Routes(r chi.Router) {
 	r.Post(LoginPath, u.submitLogin)
 	r.Post(LogoutPath, u.submitLogout)
 	r.Get(URLPrefix, u.home)
+	r.Get(ProductsPath, u.listProducts)
+	r.Get(ProductPath, u.showProduct)
 }
 
 // home is the panel's protected entry point.
 //
-// TODAY it is a placeholder: catalog screens arrive in the next round. It is
-// protected nonetheless — an unidentified request never reaches it, the guard
-// ring returns the login page with a 401.
+// It redirects to the catalog rather than rendering a page of its own. A
+// dashboard would need numbers, every number is a read the panel does not yet
+// make, and a page of empty boxes is worse than no page: it suggests the data
+// is missing rather than that the screen was never written.
 func (u *UI) home(w http.ResponseWriter, r *http.Request) {
-	u.errorPage(w, r, http.StatusOK, "Admin",
-		"The panel is under construction. Catalog screens arrive next round.")
+	corehttp.WriteRedirect(r.Context(), w, ProductsPath)
 }

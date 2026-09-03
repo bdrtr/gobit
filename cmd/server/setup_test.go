@@ -1194,8 +1194,13 @@ func TestPanelCookieIsNotAcceptedByTheAdminAPI(t *testing.T) {
 		rec := httptest.NewRecorder()
 		r.ServeHTTP(rec, withCookie(adminui.URLPrefix))
 
-		assert.Equal(t, http.StatusOK, rec.Code,
+		// The panel's entry point redirects to the catalog, so passing the
+		// guard shows up as a 303 rather than a 200. The Location is asserted
+		// as well: a 303 to somewhere else would mean the guard passed and the
+		// routing did not, and only the status would still look right.
+		require.Equal(t, http.StatusSeeOther, rec.Code,
 			"the cookie must work inside the panel tree; without this the 401 above could just as "+
 				"well come from a cookie that never worked at all")
+		assert.Equal(t, adminui.ProductsPath, rec.Header().Get("Location"))
 	})
 }
