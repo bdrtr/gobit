@@ -12,6 +12,42 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Eklendi
 
+- **Panelde fiyat ve stok düzenleme** ([ADR 0013](docs/adr/0013-panel-write-surface.md)
+  eki). Varyant sayfası bir varyantın para birimi başına taban fiyatını ve her
+  lokasyondaki fiziksel stoğunu düzenletiyor; `pricing.admin` ve
+  `inventory.admin` yüzeyleri bunun için eklendi.
+
+  Fiyat yüzeyi bir **kayıpsız oku-değiştir-yaz**. Modülün tek fiyat yazıcısı
+  YIKICI: `SetPrices` kümenin fiyatlarını değiştirmiyor, DEĞİŞTİRİYOR — girdide
+  olmayan her fiyatı siliyor. Panel ise fiyatları sorgu sağlayıcısından
+  okuyor ve o sağlayıcı kural taşıyan ve liste üzerindeki fiyatları
+  FİLTRELİYOR. İkisi birleşince, taban fiyatı düzenleyen naif bir form
+  kümedeki her kampanya fiyatını sessizce silerdi — operatör onları hiç
+  görmediği için de fark edilmezdi. Yüzey bu yüzden TÜM fiyatları okuyup
+  yalnızca birini değiştiriyor ve geri kalanını olduğu gibi geri yazıyor.
+  Bedeli yazılı: yazma fiyat kimliklerini yeniden üretiyor, ki bu kimlikler
+  yalnızca pricing'in kendi `price_rule` satırlarınca anılıyor.
+
+  Stok yüzeyi bir de OKUMA taşıyor, ki diğer ikisi taşımıyor. Sebep tercih
+  değil boşluk: sorgu sağlayıcısı kalem başına TEK bir toplam veriyor ve
+  toplamla stok düzenlenemez — operatörün hangi deponun ne tuttuğunu bilmesi
+  gerek. Kırılım sorgu katmanına eklenmedi, çünkü orada kitle vitrini de
+  içeriyor; rezerve adetler ve iç depo adları oraya ait değil.
+
+  Boş lokasyonlar da listeleniyor: yalnızca seviyesi olanları gösteren bir
+  form yeni bir depoyu HİÇ stoklayamazdı, çünkü depo ancak stoğu olduğunda
+  görünürdü — yani operatörün ulaşmaya çalıştığı durumda. Rezerve adet de
+  yazılıyor, çünkü servisin "söz verilmiş stoğun altına inemezsin" reddi
+  aksi hâlde keyfî görünürdü.
+
+  Para hesabı baştan sona TAMSAYI. Operatörün yazdığı metin ondalık kısmı
+  ÖTELENEREK (ölçeklenerek değil) minor birime çevriliyor — iki haneli bir
+  para biriminde "1.5" 150'dir, 15 değil — ve para biriminin hane sayısından
+  fazla ondalık YUVARLANMIYOR, reddediliyor: yuvarlamak operatörün yazdığı
+  fiyatı sessizce değiştirmek olurdu. Ölçek bilinmiyorsa kutu ham minor
+  birim alıyor ve form bunu SÖYLÜYOR; söylemeyen bir kutuya "199.90" yazan
+  operatör kastettiğinin yüzde birini kaydederdi.
+
 - **Panel artık YAZIYOR: ürün başlığı, handle ve durumu düzenlenebiliyor**
   ([ADR 0013](docs/adr/0013-panel-write-surface.md)). ADR 0011'in "panel okuma
   yollarını kullanır" kararı bilinçli olarak açıldı ve yerine ne konduğu

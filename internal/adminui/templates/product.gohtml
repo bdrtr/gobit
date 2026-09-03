@@ -32,7 +32,7 @@ Two printing decisions are visible here and both are about not lying:
   <tbody>
   {{ range .Variants }}
     <tr>
-      <td>{{ .Title }}</td>
+      <td><a href="{{ $.ProductsPath }}/{{ $.Product.ID }}/variants/{{ .ID }}">{{ .Title }}</a></td>
       <td>{{ .SKU }}</td>
       <td>
         {{ if .Prices }}

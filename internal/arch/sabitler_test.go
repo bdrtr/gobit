@@ -24,10 +24,12 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/file"
 	"github.com/bdrtr/gobit/internal/modules/file/local"
 	"github.com/bdrtr/gobit/internal/modules/fulfillment"
+	"github.com/bdrtr/gobit/internal/modules/inventory"
 	inventorysvc "github.com/bdrtr/gobit/internal/modules/inventory/service"
 	"github.com/bdrtr/gobit/internal/modules/notification"
 	"github.com/bdrtr/gobit/internal/modules/notification/logonly"
 	"github.com/bdrtr/gobit/internal/modules/payment"
+	"github.com/bdrtr/gobit/internal/modules/pricing"
 	"github.com/bdrtr/gobit/internal/modules/product"
 	"github.com/bdrtr/gobit/internal/modules/product/graph"
 	productmodels "github.com/bdrtr/gobit/internal/modules/product/models"
@@ -658,7 +660,11 @@ func TestPanelKatalogAdlariUyusuyor(t *testing.T) {
 		"panelin satılabilir adet alan adı inventory modülüyle aynı olmalı")
 
 	assert.Equal(t, product.AdminName, adminui.ServiceProductAdmin,
-		"panelin yazma yüzeyi adı product modülüyle aynı olmalı")
+		"panelin ürün yazma yüzeyi adı product modülüyle aynı olmalı")
+	assert.Equal(t, pricing.AdminName, adminui.ServicePricingAdmin,
+		"panelin fiyat yazma yüzeyi adı pricing modülüyle aynı olmalı")
+	assert.Equal(t, inventory.AdminName, adminui.ServiceInventoryAdmin,
+		"panelin stok yüzeyi adı inventory modülüyle aynı olmalı")
 }
 
 // TestPanelDurumSecenekleriModulunkilerleUyusuyor panelin düzenleme formunda

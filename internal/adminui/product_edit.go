@@ -151,7 +151,7 @@ func (u *UI) renderEditForm(
 		titleKey:     "Edit " + product.Title,
 		"Product":    product,
 		"Statuses":   productStatuses,
-		"Error":      message,
+		errorKey:     message,
 		"ActionPath": ProductsPath + "/" + product.ID + "/edit",
 		"CancelPath": ProductsPath + "/" + product.ID,
 	})

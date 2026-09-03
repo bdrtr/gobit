@@ -17,7 +17,7 @@ func (u *UI) loginPage(w http.ResponseWriter, r *http.Request, status int, messa
 	u.templates.render(w, r, status, "login.gohtml", map[string]any{
 		titleKey:    "Sign in",
 		"LoginPath": LoginPath,
-		"Error":     message,
+		errorKey:    message,
 		"Email":     r.PostFormValue("email"),
 	})
 }

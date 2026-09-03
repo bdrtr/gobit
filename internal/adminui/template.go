@@ -31,6 +31,13 @@ const layoutFile = "templates/layout.gohtml"
 // data map would render that page with an empty <title> and nothing would fail.
 const titleKey = "Title"
 
+// errorKey is the template key carrying a message meant for the operator.
+//
+// It is a constant for the same reason titleKey is: three pages fill it and a
+// typo in one of them would not fail, it would silently stop showing the
+// operator why their edit was refused.
+const errorKey = "Error"
+
 // pages lists the panel pages that are looked up BY NAME at runtime.
 //
 // The list is maintained by hand, deliberately. A page name is a STRING: a typo
@@ -47,6 +54,7 @@ var pages = []string{
 	"products.gohtml",
 	"product.gohtml",
 	"product_edit.gohtml",
+	"variant.gohtml",
 }
 
 // templateSet maps a page name to that page's parsed template set.

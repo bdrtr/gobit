@@ -109,9 +109,10 @@ The same flaw existed on the sign-in path since ADR 0011 and is fixed here.
 
 ## Consequences
 
-- The panel stops being read-only. Today it edits a product's title, handle and
-  status; every further write is a new method on a module's admin surface and a
-  new form, both visible in a diff.
+- The panel stops being read-only. It edits a product's title, handle and
+  status, a variant's base price per currency, and the physical stock held at
+  each location; every further write is a new method on a module's admin surface
+  and a new form, both visible in a diff.
 - `product` grows a second cross-module surface. That cost is real and is what
   its interop godoc warns about; it is paid deliberately and bounded by the
   audience check.
@@ -119,6 +120,10 @@ The same flaw existed on the sign-in path since ADR 0011 and is fixed here.
   is NOT silent: the panel resolves through its own interface, and a signature
   that no longer matches makes `container.Resolve` fail AT STARTUP with a
   message naming the missing method.
+- Editing a price REGENERATES the price ids on that set, because the write
+  underneath replaces the whole set. It is contained — a price id is referenced
+  only by pricing's own `price_rule` rows, which are rewritten with it — but it
+  is a real side effect of an edit that looks local.
 - The panel now repeats the module's status values. A value the module REMOVED
   fails loudly at the surface; a value the module ADDED would simply never
   appear in the form and no error would report it, so the list is pinned against
@@ -168,12 +173,63 @@ account takeover.
 leaves the operator exactly where they were: looking at a wrong title they
 cannot fix.
 
+## Amendment: the second and third surfaces (2026-09-03)
+
+The trigger below fired in the very next round. `pricing.admin` and
+`inventory.admin` were written for the price and stock forms, so there are now
+three. The two questions the trigger names are answered here, and the answer to
+both is no.
+
+**The surfaces are NOT generated from the service methods.** The reason is what
+the second and third turned out to be. Only `product`'s is a delegation; the
+other two exist precisely because a mechanical wrapper would have been wrong:
+
+- `pricing.SetBasePriceAmount` is a read-modify-write. The module's only price
+  writer REPLACES the set, and the panel reads through the query provider, which
+  hides prices with rules and prices on a list. A generated wrapper over
+  `SetPrices` would have deleted every campaign price on the set — silently,
+  because the operator never saw them.
+- `inventory.StockLevelsJSON` is a read the module publishes NOWHERE else. The
+  query provider exposes one total per item, and a total cannot be edited: the
+  operator has to know which warehouse holds what. The reserved quantity travels
+  with it so a refusal ("4 are promised to a sale") is explainable rather than
+  arbitrary.
+
+A generator works from a signature. Both hazards above live in the module's
+semantics, not its signatures, so the thing worth generating is the thing that
+would have been generated wrong. The surface is where a module-specific hazard
+is CONTAINED, and that is written by hand, once, next to the module that owns
+the hazard.
+
+**`.admin` does NOT become a suffix the container understands.** The name is
+already constrained — `TestAdminSurfaceHasOneAudience` fails the build if
+anything outside `internal/modules/` or `internal/adminui/` resolves one.
+Teaching the container the suffix would move that rule out of a test that can
+NAME the permitted audience and into framework behavior that cannot. The
+container has no notion of audience by design; a suffix with privileges attached
+would give it one by accident.
+
+**What did change is decision 1.** A surface may also READ. It is allowed when
+the cross-module read layer's audience is wrong for the data, not merely when it
+is inconvenient: the per-location breakdown carries reserved quantities and
+internal warehouse names, and the read layer's consumers include the storefront.
+Putting the read on the admin surface keeps its audience the same as the write's.
+A read that only saves a round trip does NOT qualify and belongs in the query
+provider with everything else.
+
+The next trigger is stated below.
+
 ## Reopening the decision
 
-Reopen when a second module needs an admin surface. Two is a pattern and three
-is a framework: at that point the question is whether the surfaces should be
-generated from the modules' own service methods rather than written by hand,
-and whether `.admin` should become a suffix the container itself understands.
+Reopen when a module's admin surface needs a method that is neither a write nor
+a read the query layer may not carry — a bulk operation, a job, anything with
+its own lifetime. All three surfaces today are request-shaped and return when
+the request does; the first one that is not makes the panel an orchestrator, and
+that is a different decision than this one.
+
+Reopen if a second consumer ever wants a `.admin` name. The audience check
+permits `internal/adminui/` and nothing else, and it is that narrowness, not the
+suffix, that makes the surface safe to grant.
 
 Reopen decision 4 if the panel ever needs a write that has no meaningful
 degraded state. Today "editing unavailable" is a complete answer; a panel whose

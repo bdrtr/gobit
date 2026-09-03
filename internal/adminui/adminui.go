@@ -53,6 +53,8 @@ const (
 	// CodeTemplateInvalid reports that a template could not be parsed or
 	// rendered.
 	CodeTemplateInvalid = "adminui_template_invalid"
+	// CodeAmountInvalid reports an amount the panel could not read.
+	CodeAmountInvalid = "adminui_amount_invalid"
 	// CodeNotBound reports that the guard ring has not been bound to a panel
 	// yet; such a request is REJECTED (see [Ring]).
 	CodeNotBound = "adminui_not_bound"
@@ -92,7 +94,14 @@ type UI struct {
 	// mandatory dependency here would make the product module a requirement for
 	// the panel to exist at all, which is the coupling the fourth tree was
 	// created to avoid.
-	products      ProductWriter
+	products ProductWriter
+	// prices is the pricing module's admin write surface; OPTIONAL, like
+	// products.
+	prices PriceWriter
+	// stock is the inventory module's admin surface; OPTIONAL, and the only
+	// one that also READS — the cross-module read layer exposes a total per
+	// item and stock is edited per location.
+	stock         StockAdmin
 	session       Session
 	authenticator corehttp.Authenticator
 	templates     *templateSet
@@ -149,10 +158,20 @@ func FromContainer(c *container.Container, secureCookie bool) (*UI, error) {
 	if err != nil {
 		return nil, err
 	}
+	prices, err := optionalService[PriceWriter](c, ServicePricingAdmin)
+	if err != nil {
+		return nil, err
+	}
+	stock, err := optionalService[StockAdmin](c, ServiceInventoryAdmin)
+	if err != nil {
+		return nil, err
+	}
 
 	return &UI{
 		catalog:       catalog,
 		products:      products,
+		prices:        prices,
+		stock:         stock,
 		session:       session,
 		authenticator: authenticator,
 		templates:     templates,

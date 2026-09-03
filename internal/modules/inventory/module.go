@@ -51,6 +51,10 @@ const (
 	InteropName = ModuleName + ".interop"
 	// ProviderName Query sağlayıcısının container'daki adıdır (ADR 0004).
 	ProviderName = service.EntityName + query.ProviderSuffix
+	// AdminName modülün YÖNETİM YAZMA yüzeyinin container'daki adıdır
+	// (ADR 0013). Yazmanın yanında bir OKUMA da taşır: sorgu sağlayıcısı
+	// lokasyon kırılımını sunmaz ve operatör toplamla stok düzenleyemez.
+	AdminName = ModuleName + ".admin"
 	// dbServiceName çekirdek veritabanı havuzunun container'daki adıdır.
 	dbServiceName = "core.db"
 )
@@ -113,6 +117,10 @@ func (m *Module) Register(ctx context.Context, c *container.Container) error {
 		return err
 	}
 	if err := c.Provide(ProviderName, service.NewQueryProvider(svc)); err != nil {
+		return err
+	}
+	// Yönetim yüzeyi AYRI bir adla kaydedilir; gerekçesi [AdminName]'de.
+	if err := c.Provide(AdminName, service.NewAdminSurface(svc)); err != nil {
 		return err
 	}
 

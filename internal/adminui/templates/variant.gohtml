@@ -1,0 +1,86 @@
+{{- /*
+variant.gohtml is where a variant's price and stock are edited.
+
+The two forms sit on one page because they are read in one place and changed in
+the same sitting; splitting them would cost a second read of the same variant.
+
+Two things are printed that a simpler page would leave out, and both exist to
+stop a rejection from looking arbitrary:
+
+  - The RESERVED quantity. Stock cannot be set below what is already promised to
+    a sale, and a form showing only the physical count would make that refusal
+    unexplainable.
+  - Whether an amount is in MINOR UNITS. When the currency's scale is unknown the
+    box takes a raw integer, and an operator typing "199.90" into it would store
+    a hundredth of what they meant.
+
+Every location is listed, including the ones holding nothing: a location that
+only appeared once it had stock could never be stocked from this form.
+*/ -}}
+{{ define "body" }}
+<p><a href="{{ .ProductPath }}">← Back to the product</a></p>
+
+<h1>{{ .Variant.Title }}</h1>
+<p>SKU: {{ if .Variant.SKU }}{{ .Variant.SKU }}{{ else }}—{{ end }}</p>
+
+{{ if .Error }}<p role="alert">{{ .Error }}</p>{{ end }}
+
+<h2>Prices</h2>
+{{ if .PriceSetID }}
+  {{ if .Prices }}
+    {{ $canEdit := .CanEdit }}
+    {{ $path := .PricePath }}
+    {{ $setID := .PriceSetID }}
+    {{ range .Prices }}
+      <form method="post" action="{{ $path }}">
+        <input type="hidden" name="price_set_id" value="{{ $setID }}">
+        <input type="hidden" name="currency" value="{{ .Currency }}">
+        <input type="hidden" name="minor" value="{{ if .Minor }}1{{ else }}0{{ end }}">
+        <label>{{ .Currency }}{{ if .Minor }} (minor units){{ end }}
+          <input type="text" name="amount" value="{{ .Amount }}" required>
+        </label>
+        <button type="submit"{{ if not $canEdit }} disabled{{ end }}>Save price</button>
+      </form>
+    {{ end }}
+  {{ else }}
+    <p>This variant's price set has no base price yet. Add one through the admin API.</p>
+  {{ end }}
+{{ else }}
+  <p>This variant is not linked to a price set.</p>
+{{ end }}
+
+<h2>Stock</h2>
+{{ if .ItemID }}
+  {{ if .Levels }}
+    {{ $canStock := .CanStock }}
+    {{ $stockPath := .StockPath }}
+    {{ $itemID := .ItemID }}
+    <table>
+      <thead>
+        <tr><th>Location</th><th>Reserved</th><th>Available</th><th>Physical</th></tr>
+      </thead>
+      <tbody>
+      {{ range .Levels }}
+        <tr>
+          <td>{{ .LocationName }}</td>
+          <td>{{ .ReservedQuantity }}</td>
+          <td>{{ .AvailableQuantity }}</td>
+          <td>
+            <form method="post" action="{{ $stockPath }}">
+              <input type="hidden" name="inventory_item_id" value="{{ $itemID }}">
+              <input type="hidden" name="location_id" value="{{ .LocationID }}">
+              <input type="number" name="quantity" value="{{ .StockedQuantity }}" min="0" required>
+              <button type="submit"{{ if not $canStock }} disabled{{ end }}>Save</button>
+            </form>
+          </td>
+        </tr>
+      {{ end }}
+      </tbody>
+    </table>
+  {{ else }}
+    <p>No stock locations were read. Create one through the admin API, or check the log.</p>
+  {{ end }}
+{{ else }}
+  <p>This variant is not linked to an inventory item.</p>
+{{ end }}
+{{ end }}
