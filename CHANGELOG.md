@@ -55,6 +55,22 @@ Sabitlenme `1.0.0` ile olur.
   ölçüldü, yalnızca sıfır isabet verenler alındı); üçüncüsü Türkçe kökleri
   tanımlayıcıların TAM parçalarında arar.
 
+- **SOLID'in mekanik olarak ölçülebilen iki boşluğu kapandı**
+  (`internal/arch/solid_test.go`). `TestResolvedTypeIsAnInterface` DIP'in
+  TÜKETİM yarısını zorluyor: üretimdeki her `container.Resolve[T]` çağrı yeri
+  bir ARAYÜZ çözmek zorunda. depguard yalnızca modüller arası import'u yasaklar;
+  çağıranın KENDİ modülünden ya da çekirdekten gelen somut bir tipe hiçbir şey
+  demiyordu. Ölçüm: 18 arayüz, 5 jenerik yardımcı ve tam bir somut aile —
+  `core.db` adıyla 16 kez çözülen `*db.Pool`, gerekçesiyle yazılı.
+  `TestLayerPurity` ise modül İÇİNDEKİ katman sınırını zorluyor: `api` pgx'i,
+  kendi `repository`'sini ve üretilmiş sqlc kodunu; `service` ise `net/http`,
+  chi ve pgx'i import edemez. Ölçüm: 15 modül, 30 dizin, 0 ihlal.
+
+  İki testin de mutasyonla bulunmuş bir kusuru var artık kapalı: taranan dizin
+  sayacı, denetlediği kural listesinin KENDİSİNDEN besleniyordu — katman adını
+  kuralda değiştirmek sıfır dizin buluyor ve her modül tek bir import
+  okunmadan geçiyordu. Sayaç artık DİSKE karşı doğrulanıyor.
+
 - **Dedektörün kendi körlüğüne karşı denetimler.** `TestDetectorIsNotBlind`
   her şeridin ayrı sayacını ve taranan her kökü pozitif tutar; taranacak
   köklerin listesi DİSKE karşı doğrulanır, çünkü listeyi kendi içinden okuyan

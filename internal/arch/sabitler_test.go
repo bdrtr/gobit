@@ -487,8 +487,8 @@ func disaAcikConfigSabitleri(t *testing.T) map[string]token.Position {
 	fset := token.NewFileSet()
 	sabitler := map[string]token.Position{}
 
-	for _, dosya := range ayristir(t, fset, filepath.Join(repoRoot, configDizini), false) {
-		for _, decl := range dosya.agac.Decls {
+	for _, dosya := range parseDir(t, fset, filepath.Join(repoRoot, configDizini), false) {
+		for _, decl := range dosya.tree.Decls {
 			gen, ok := decl.(*ast.GenDecl)
 			if !ok || (gen.Tok != token.CONST && gen.Tok != token.VAR) {
 				continue
@@ -533,16 +533,16 @@ func simetriIddiasindakiSabitler(t *testing.T) map[string]token.Position {
 	iddialar := map[string]token.Position{}
 	denetimBulundu := false
 
-	for _, dosya := range ayristir(t, fset, filepath.Join(repoRoot, archDizini), true) {
+	for _, dosya := range parseDir(t, fset, filepath.Join(repoRoot, archDizini), true) {
 		takmaAd := ""
-		for ad, yol := range dosya.importlar {
+		for ad, yol := range dosya.imports {
 			if yol == configYolu {
 				takmaAd = ad
 				break
 			}
 		}
 
-		for _, decl := range dosya.agac.Decls {
+		for _, decl := range dosya.tree.Decls {
 			fn, ok := decl.(*ast.FuncDecl)
 			if !ok || fn.Body == nil || fn.Recv != nil {
 				continue

@@ -178,7 +178,7 @@ func TestVaryantOkumalariKanalKararindanGecer(t *testing.T) {
 	taranan := 0
 
 	for _, kok := range []string{"internal/workflows", modulesDir} {
-		for _, dosya := range uretimDosyalari(t, filepath.Join(repoRoot, kok)) {
+		for _, dosya := range productionFiles(t, filepath.Join(repoRoot, kok)) {
 			taranan += varyantOkumalariniDenetle(t, dosya, kullanilan)
 		}
 	}

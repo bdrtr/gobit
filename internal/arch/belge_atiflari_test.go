@@ -1491,7 +1491,7 @@ func markdownNiteleyicileri(t *testing.T, tarama *atifTaramasi) map[string]strin
 			tablo[yerel] = yol
 		}
 	}
-	for _, mod := range modulNames(t) {
+	for _, mod := range moduleNames(t) {
 		delete(tablo, mod)
 	}
 	for ad, yol := range tablo {

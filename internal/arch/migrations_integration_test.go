@@ -58,7 +58,7 @@ func TestMigrationlarGercektenGeriAlinabilir(t *testing.T) {
 
 	kosulan := 0
 
-	for _, mod := range modulNames(t) {
+	for _, mod := range moduleNames(t) {
 		migDir := filepath.Join(repoRoot, modulesDir, mod, migrationDizinAdi)
 		entries, globErr := filepath.Glob(filepath.Join(migDir, "*.up.sql"))
 		require.NoError(t, globErr)

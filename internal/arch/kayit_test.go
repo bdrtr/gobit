@@ -32,7 +32,7 @@ const (
 	//
 	// Aşağıdaki godoc'lar aynı iki adı KISACA (module.Module, module.Registry)
 	// anar ve bağ olarak yazmaz: bu paket core/module'ü import etmez, yani kısa
-	// ad hiçbir yere çözülmez. Tam yol yalnızca burada, adın tanımlandığı
+	// ad hiçbir yere çözülmez. Tam path yalnızca burada, adın tanımlandığı
 	// yerde bir kez verilir.
 	cekirdekModulPaketi = modulePath + "/internal/core/module"
 	// akisDizini modüller arası akışların yaşadığı ağaçtır (ADR 0006). Ne
@@ -93,7 +93,7 @@ var modulSozlesmesi = map[string]struct {
 // Yazılmış ama henüz kablolanmamış bir modül gerçek bir durumdur (yarım kalmış
 // bir faz, yalnızca gömülü kullanım için düşünülmüş bir modül). Böyle bir
 // modülü kayıt DIŞI bırakmayı imkânsız kılmak, geliştiriciyi testi susturmanın
-// başka bir yolunu aramaya iterdi ve o yol her zaman daha sessiz olurdu.
+// başka bir yolunu aramaya iterdi ve o path her zaman daha sessiz olurdu.
 //
 // # Muafiyet neden BURADA
 //
@@ -117,7 +117,7 @@ var kayitDisiModuller = map[string]string{}
 // GERÇEKTEN beklediği, hatanın açılışı GERÇEKTEN durdurduğu paralel bir kurulum
 // da "açılış yolunda değil" diye düşer. Ölçüldü. Paralel açılış Go'da olağan bir
 // kalıptır ve o gün geldiğinde seçenek ikidir: denetimi susturmak ya da gerekçe
-// yazmak. Kapı olmasaydı susturmak tek yol olurdu ve susturulan bir denetim,
+// yazmak. Kapı olmasaydı susturmak tek path olurdu ve susturulan bir denetim,
 // hiç yazılmamış olandan daha kötüdür — yerinde durup güven veriyor görünür.
 //
 // # Kapıya girerken ne yazılmalı
@@ -155,12 +155,12 @@ var e2eZemininDisiModuller = map[string]string{}
 // Bugün boştur: internal/workflows'un iki paketi de bileşim kökünde kuruludur.
 var kurulmayanAkislar = map[string]string{}
 
-// ayristirilmisDosya bir Go dosyasının ayrıştırılmış hâlini ve import takma
+// parsedFile bir Go dosyasının ayrıştırılmış hâlini ve import takma
 // adlarını taşır.
-type ayristirilmisDosya struct {
-	yol       string
-	agac      *ast.File
-	importlar map[string]string
+type parsedFile struct {
+	path    string
+	tree    *ast.File
+	imports map[string]string
 }
 
 // akisKurulumu bileşim kökünde bulunan bir akış kurulumunun yeridir.
@@ -222,12 +222,12 @@ func TestHerModulBilesimKokundeKayitli(t *testing.T) {
 
 	kayitli := kayitliModulPaketleri(t, bilesimKoku, false)
 
-	for _, yol := range slices.Sorted(maps.Keys(moduller)) {
-		if _, kayitliMi := kayitli[yol]; kayitliMi {
+	for _, path := range slices.Sorted(maps.Keys(moduller)) {
+		if _, kayitliMi := kayitli[path]; kayitliMi {
 			continue
 		}
-		if gerekce, muaf := kayitDisiModuller[yol]; muaf {
-			t.Logf("%s bileşim kökünde bilinçli olarak KAYITLI DEĞİL: %s", yol, gerekce)
+		if gerekce, muaf := kayitDisiModuller[path]; muaf {
+			t.Logf("%s bileşim kökünde bilinçli olarak KAYITLI DEĞİL: %s", path, gerekce)
 			continue
 		}
 		t.Errorf("%s paketi [module.Module]'ü uyguluyor (%s) ama %s/'daki kayda EKLENMİYOR.\n"+
@@ -236,7 +236,7 @@ func TestHerModulBilesimKokundeKayitli(t *testing.T) {
 			"yeşil kaldığı için bu hiçbir yerde görünmez.\n"+
 			"Ya cmd/server/main.go'da registry.Add(...) satırını ekleyin, ya da modülü "+
 			"gerekçesiyle birlikte kayitDisiModuller haritasına yazın.",
-			yol, strings.Join(moduller[yol], ", "), bilesimKoku)
+			path, strings.Join(moduller[path], ", "), bilesimKoku)
 	}
 
 	// Ters yön denetimin KENDİ kör noktasını kapatır: bileşim kökünün
@@ -244,13 +244,13 @@ func TestHerModulBilesimKokundeKayitli(t *testing.T) {
 	// sözleşme okuması kaymış demektir. O andan sonra bu test "her modül
 	// kayıtlı" değil "gördüğüm modüller kayıtlı" derdi — yani yarın yazılan
 	// modülü sessizce kapsam dışı bırakır ve yeşil kalırdı.
-	for _, yol := range slices.Sorted(maps.Keys(modulPaketlerineSuz(kayitli))) {
-		if _, gorulduMu := moduller[yol]; !gorulduMu {
+	for _, path := range slices.Sorted(maps.Keys(modulPaketlerineSuz(kayitli))) {
+		if _, gorulduMu := moduller[path]; !gorulduMu {
 			t.Errorf("%s paketi %s/'da kayıtlı ama denetim onu [module.Module] "+
 				"uygulayan bir paket olarak GÖRMÜYOR.\n"+
 				"Kayıt bir modül olduğunu kanıtlar; denetimin görmemesi, sözleşme "+
 				"okumasının (modulSozlesmesi) gerçekle ayrıştığı anlamına gelir ve bu "+
-				"testi bundan sonra kör bırakır.", yol, bilesimKoku)
+				"testi bundan sonra kör bırakır.", path, bilesimKoku)
 		}
 	}
 
@@ -313,12 +313,12 @@ func TestKayitliHerModulE2EZemindeKurulu(t *testing.T) {
 	require.NotEmpty(t, zemin,
 		"e2e zemininde hiçbir modül kaydı bulunamadı; denetim KÖR kalmış olmalı")
 
-	for _, yol := range slices.Sorted(maps.Keys(uretim)) {
-		if _, kuruluMu := zemin[yol]; kuruluMu {
+	for _, path := range slices.Sorted(maps.Keys(uretim)) {
+		if _, kuruluMu := zemin[path]; kuruluMu {
 			continue
 		}
-		if gerekce, muaf := e2eZemininDisiModuller[yol]; muaf {
-			t.Logf("%s e2e zemininde bilinçli olarak KURULMUYOR: %s", yol, gerekce)
+		if gerekce, muaf := e2eZemininDisiModuller[path]; muaf {
+			t.Logf("%s e2e zemininde bilinçli olarak KURULMUYOR: %s", path, gerekce)
 			continue
 		}
 		t.Errorf("%s modülü %s/'da kayıtlı (%s) ama %s/ zemininde KURULMUYOR.\n"+
@@ -328,7 +328,7 @@ func TestKayitliHerModulE2EZemindeKurulu(t *testing.T) {
 			"TAKLİT karşılıklarla sınanır.\n"+
 			"Ya zemine ekleyin, ya da modülü gerekçesiyle e2eZemininDisiModuller "+
 			"haritasına yazın.",
-			yol, bilesimKoku, uretim[yol], e2eZemini)
+			path, bilesimKoku, uretim[path], e2eZemini)
 	}
 
 	// Ters yön BURADA denetlenmez ve bu bir eksiklik değil: zeminde kurulu olup
@@ -350,7 +350,7 @@ func TestKayitliHerModulE2EZemindeKurulu(t *testing.T) {
 // internal/workflows/checkout yazılmış, birim testleri yeşil, uçtan uca
 // zeminde kanıtlanmış ve bileşim köküne HİÇ bağlanmamıştı: cmd/server yalnızca
 // saga MOTORUNU kaydediyordu, iki akışın FromContainer'ını üretim kodunda
-// çağıran kimse yoktu. Yani çalışan ikilide sepeti siparişe çeviren yol
+// çağıran kimse yoktu. Yani çalışan ikilide sepeti siparişe çeviren path
 // yoktu — ödeme, kargo, checkout promosyonu, order.placed bildirimi ve b2b
 // harcama limiti erişilemezdi — üstelik README onu sunulan bir yetenek gibi
 // anlatıyordu.
@@ -445,7 +445,7 @@ func TestKayitliHerModulE2EZemindeKurulu(t *testing.T) {
 //
 // Aranan özellik "yanlış yapılandırma açılışı durdurabilir mi"dir. Uygulanan
 // şey o özellik DEĞİL, onun sözdizimsel vekilidir: "kurulum çağrısına giden
-// yol bir go ifadesinden geçiyor mu". İkisi ÖRTÜŞMEZ ve ayrışmanın iki yönü de
+// path bir go ifadesinden geçiyor mu". İkisi ÖRTÜŞMEZ ve ayrışmanın iki yönü de
 // ÖLÇÜLDÜ:
 //
 //   - YANLIŞ POZİTİF: sync.WaitGroup ya da errgroup ile paralel kurulan,
@@ -544,24 +544,24 @@ func TestHerAkisBilesimKokundeKurulu(t *testing.T) {
 	bayatGoroutineMuafiyetleriniDenetle(t, akislar, kurulan)
 
 	canli := map[string]token.Position{}
-	for yol, kurulum := range kurulan {
+	for path, kurulum := range kurulan {
 		if !kurulum.sayilmiyor {
-			canli[yol] = kurulum.konum
+			canli[path] = kurulum.konum
 		}
 	}
 
-	for _, yol := range slices.Sorted(maps.Keys(akislar)) {
-		if _, kuruluMu := canli[yol]; kuruluMu {
+	for _, path := range slices.Sorted(maps.Keys(akislar)) {
+		if _, kuruluMu := canli[path]; kuruluMu {
 			continue
 		}
 		// Bulunmuş ama sayılmamış bir kurulumun hatası, neden sayılmadığını
 		// bilen yerde çoktan verildi; burada ikinci kez ve daha kaba bir
 		// cümleyle söylemek, doğru teşhisi gürültüye gömerdi.
-		if _, bulunduMu := kurulan[yol]; bulunduMu {
+		if _, bulunduMu := kurulan[path]; bulunduMu {
 			continue
 		}
-		if gerekce, muaf := kurulmayanAkislar[yol]; muaf {
-			t.Logf("%s bileşim kökünde bilinçli olarak KURULMUYOR: %s", yol, gerekce)
+		if gerekce, muaf := kurulmayanAkislar[path]; muaf {
+			t.Logf("%s bileşim kökünde bilinçli olarak KURULMUYOR: %s", path, gerekce)
 			continue
 		}
 		t.Errorf("%s paketi container'dan kurulmak üzere yazılmış (%s) ama %s/'da "+
@@ -572,21 +572,21 @@ func TestHerAkisBilesimKokundeKurulu(t *testing.T) {
 			"testleri akışı kendisi kurduğu için bu hiçbir yerde görünmez.\n"+
 			"Ya %s/'da yapıcıyı çağırıp sonucu container'a bırakın, ya da paketi "+
 			"gerekçesiyle birlikte kurulmayanAkislar haritasına yazın.",
-			yol, strings.Join(akislar[yol], ", "), bilesimKoku, bilesimKoku)
+			path, strings.Join(akislar[path], ", "), bilesimKoku, bilesimKoku)
 	}
 
 	// Ters yön denetimin KENDİ kör noktasını kapatır: bileşim kökü bir akış
 	// paketinin yapıcısını çağırdığı hâlde denetim o pakette container alan bir
 	// yapıcı görmüyorsa, şekil okuması gerçekle ayrışmıştır. O andan sonra bu
 	// test "her akış kurulu" değil "gördüğüm akışlar kurulu" derdi.
-	for _, yol := range slices.Sorted(maps.Keys(kurulan)) {
-		if _, gorulduMu := akislar[yol]; !gorulduMu {
+	for _, path := range slices.Sorted(maps.Keys(kurulan)) {
+		if _, gorulduMu := akislar[path]; !gorulduMu {
 			t.Errorf("%s paketinin %q yapıcısı %s/'da çağrılıyor (%s) ama denetim o "+
 				"pakette container'dan kurulan bir yapıcı GÖRMÜYOR.\n"+
 				"Çağrının kendisi paketin container'dan kurulduğunu kanıtlar; denetimin "+
 				"görmemesi, şekil okumasının (dışa açık + *container.Container parametresi) "+
 				"gerçekle ayrıştığı anlamına gelir ve bu testi bundan sonra kör bırakır.",
-				yol, kurulan[yol].yapici, bilesimKoku, kurulan[yol].konum)
+				path, kurulan[path].yapici, bilesimKoku, kurulan[path].konum)
 		}
 	}
 
@@ -611,17 +611,17 @@ func bayatMuafiyetleriDenetle[T any](
 ) {
 	t.Helper()
 
-	for _, yol := range slices.Sorted(maps.Keys(muafiyetler)) {
-		if _, adayMi := aday[yol]; !adayMi {
+	for _, path := range slices.Sorted(maps.Keys(muafiyetler)) {
+		if _, adayMi := aday[path]; !adayMi {
 			t.Errorf("muafiyet BAYAT: %q artık %s değil.\n"+
 				"Paket silindiyse ya da adı değiştiyse muafiyet satırı da gitmelidir; "+
 				"kalırsa bir gün aynı adla yazılan yeni bir modülü sessizce muaf tutar.",
-				yol, adayAciklamasi)
+				path, adayAciklamasi)
 			continue
 		}
-		if konum, kayitliMi := kayitli[yol]; kayitliMi {
+		if konum, kayitliMi := kayitli[path]; kayitliMi {
 			t.Errorf("muafiyet BAYAT: %q %s/'da artık kayıtlı (%s) ama hâlâ muaf tutuluyor.\n"+
-				"Muafiyet borçtur; borç ödendiğinde satır silinmelidir.", yol, kok, konum)
+				"Muafiyet borçtur; borç ödendiğinde satır silinmelidir.", path, kok, konum)
 		}
 	}
 }
@@ -637,13 +637,13 @@ func modulUygulayanPaketler(t *testing.T) map[string][]string {
 	t.Helper()
 
 	bulunan := map[string][]string{}
-	for _, dizin := range slices.Sorted(maps.Keys(uretimPaketleri(t, filepath.Join(repoRoot, modulesDir)))) {
+	for _, dizin := range slices.Sorted(maps.Keys(productionPackages(t, filepath.Join(repoRoot, modulesDir)))) {
 		fset := token.NewFileSet()
-		dosyalar := ayristir(t, fset, dizin, false)
+		dosyalar := parseDir(t, fset, dizin, false)
 		aliciMetotlari := map[string]map[string]*ast.FuncDecl{}
 
 		for _, d := range dosyalar {
-			for _, decl := range d.agac.Decls {
+			for _, decl := range d.tree.Decls {
 				fn, ok := decl.(*ast.FuncDecl)
 				if !ok || fn.Recv == nil || len(fn.Recv.List) != 1 {
 					continue
@@ -661,8 +661,8 @@ func modulUygulayanPaketler(t *testing.T) map[string][]string {
 
 		for _, tip := range slices.Sorted(maps.Keys(aliciMetotlari)) {
 			if sozlesmeyiKarsiliyor(t, fset, dizin, tip, aliciMetotlari[tip]) {
-				yol := paketImportYolu(t, dizin)
-				bulunan[yol] = append(bulunan[yol], tip)
+				path := paketImportYolu(t, dizin)
+				bulunan[path] = append(bulunan[path], tip)
 			}
 		}
 	}
@@ -736,7 +736,7 @@ func kayitliModulPaketleri(t *testing.T, kok string, testDosyalariDahil bool) ma
 
 	dizin := filepath.Join(repoRoot, kok)
 	fset := token.NewFileSet()
-	dosyalar := ayristir(t, fset, dizin, testDosyalariDahil)
+	dosyalar := parseDir(t, fset, dizin, testDosyalariDahil)
 	require.NotEmpty(t, dosyalar, "%s içinde ayrıştırılacak Go dosyası yok", kok)
 
 	// Önce kaydın DEĞİŞKEN adları toplanır: "Add" adında bir metot her tipte
@@ -750,7 +750,7 @@ func kayitliModulPaketleri(t *testing.T, kok string, testDosyalariDahil bool) ma
 
 	kayitli := map[string]token.Position{}
 	for _, d := range dosyalar {
-		ast.Inspect(d.agac, func(n ast.Node) bool {
+		ast.Inspect(d.tree, func(n ast.Node) bool {
 			cagri, ok := n.(*ast.CallExpr)
 			if !ok {
 				return true
@@ -773,13 +773,13 @@ func kayitliModulPaketleri(t *testing.T, kok string, testDosyalariDahil bool) ma
 					"getirilmeli ya da argumaninPaketi genişletilmelidir.", konum, alici.Name)
 				return true
 			}
-			yol, bilinen := d.importlar[paketAdi]
+			path, bilinen := d.imports[paketAdi]
 			if !bilinen {
 				t.Errorf("%s: %q paketi %s dosyasının import listesinde çözülemedi",
-					konum, paketAdi, filepath.Base(d.yol))
+					konum, paketAdi, filepath.Base(d.path))
 				return true
 			}
-			kayitli[yol] = konum
+			kayitli[path] = konum
 
 			return true
 		})
@@ -794,16 +794,16 @@ func kayitliModulPaketleri(t *testing.T, kok string, testDosyalariDahil bool) ma
 // İki kaynak taranır: module.NewRegistry çağrısının atandığı değişkenler ve
 // tipi *module.Registry olan bildirimler (işlev parametreleri dâhil — e2e
 // zemini kaydı yardımcı bir işleve PARAMETRE olarak geçirir).
-func kayitDegiskenAdlari(dosyalar []ayristirilmisDosya) map[string]bool {
+func kayitDegiskenAdlari(dosyalar []parsedFile) map[string]bool {
 	adlar := map[string]bool{}
 
 	for _, d := range dosyalar {
-		ast.Inspect(d.agac, func(n ast.Node) bool {
+		ast.Inspect(d.tree, func(n ast.Node) bool {
 			switch dugum := n.(type) {
 			case *ast.AssignStmt:
 				for i, sag := range dugum.Rhs {
 					cagri, ok := sag.(*ast.CallExpr)
-					if !ok || !cekirdeginModulTipi(cagri.Fun, "NewRegistry", d.importlar) {
+					if !ok || !cekirdeginModulTipi(cagri.Fun, "NewRegistry", d.imports) {
 						continue
 					}
 					if i < len(dugum.Lhs) {
@@ -813,7 +813,7 @@ func kayitDegiskenAdlari(dosyalar []ayristirilmisDosya) map[string]bool {
 					}
 				}
 			case *ast.ValueSpec:
-				if cekirdeginModulTipi(dugum.Type, "Registry", d.importlar) {
+				if cekirdeginModulTipi(dugum.Type, "Registry", d.imports) {
 					for _, ident := range dugum.Names {
 						adlar[ident.Name] = true
 					}
@@ -821,7 +821,7 @@ func kayitDegiskenAdlari(dosyalar []ayristirilmisDosya) map[string]bool {
 				}
 				for i, deger := range dugum.Values {
 					cagri, ok := deger.(*ast.CallExpr)
-					if !ok || !cekirdeginModulTipi(cagri.Fun, "NewRegistry", d.importlar) {
+					if !ok || !cekirdeginModulTipi(cagri.Fun, "NewRegistry", d.imports) {
 						continue
 					}
 					if i < len(dugum.Names) {
@@ -829,7 +829,7 @@ func kayitDegiskenAdlari(dosyalar []ayristirilmisDosya) map[string]bool {
 					}
 				}
 			case *ast.Field:
-				if cekirdeginModulTipi(dugum.Type, "Registry", d.importlar) {
+				if cekirdeginModulTipi(dugum.Type, "Registry", d.imports) {
 					for _, ident := range dugum.Names {
 						adlar[ident.Name] = true
 					}
@@ -848,7 +848,7 @@ func kayitDegiskenAdlari(dosyalar []ayristirilmisDosya) map[string]bool {
 //
 // Takma ad haritası üzerinden çözülür, tanımlayıcı adına bakılmaz: paketi
 // "coremodule" diye import eden bir dosya da doğru tanınmalıdır.
-func cekirdeginModulTipi(ifade ast.Expr, ad string, importlar map[string]string) bool {
+func cekirdeginModulTipi(ifade ast.Expr, ad string, imports map[string]string) bool {
 	if ifade == nil {
 		return false
 	}
@@ -861,7 +861,7 @@ func cekirdeginModulTipi(ifade ast.Expr, ad string, importlar map[string]string)
 	}
 	paket, ok := sec.X.(*ast.Ident)
 
-	return ok && importlar[paket.Name] == cekirdekModulPaketi
+	return ok && imports[paket.Name] == cekirdekModulPaketi
 }
 
 // argumaninPaketi Add argümanındaki modül yapıcısının paket adını döner.
@@ -898,9 +898,9 @@ func argumaninPaketi(argumanlar []ast.Expr) (string, bool) {
 func modulPaketlerineSuz(kayitli map[string]token.Position) map[string]token.Position {
 	onek := modulePath + "/" + modulesDir + "/"
 	suzulmus := make(map[string]token.Position, len(kayitli))
-	for yol, konum := range kayitli {
-		if strings.HasPrefix(yol, onek) {
-			suzulmus[yol] = konum
+	for path, konum := range kayitli {
+		if strings.HasPrefix(path, onek) {
+			suzulmus[path] = konum
 		}
 	}
 
@@ -928,17 +928,17 @@ func containerdanKurulanAkisPaketleri(t *testing.T, dizin string) map[string][]s
 			"taşınmalıdır, yoksa denetim boşlukta yeşil kalır", dizin)
 
 	bulunan := map[string][]string{}
-	for _, dizin := range slices.Sorted(maps.Keys(uretimPaketleri(t, kok))) {
+	for _, dizin := range slices.Sorted(maps.Keys(productionPackages(t, kok))) {
 		fset := token.NewFileSet()
 
 		var yapicilar []string
-		for _, d := range ayristir(t, fset, dizin, false) {
-			for _, decl := range d.agac.Decls {
+		for _, d := range parseDir(t, fset, dizin, false) {
+			for _, decl := range d.tree.Decls {
 				fn, ok := decl.(*ast.FuncDecl)
 				if !ok || fn.Recv != nil || !fn.Name.IsExported() {
 					continue
 				}
-				if containerAlanIs(fn, d.importlar) {
+				if containerAlanIs(fn, d.imports) {
 					yapicilar = append(yapicilar, fn.Name.Name)
 				}
 			}
@@ -955,12 +955,12 @@ func containerdanKurulanAkisPaketleri(t *testing.T, dizin string) map[string][]s
 
 // containerAlanIs işlevin parametrelerinden en az birinin çekirdeğin
 // container'ı olup olmadığını söyler.
-func containerAlanIs(fn *ast.FuncDecl, importlar map[string]string) bool {
+func containerAlanIs(fn *ast.FuncDecl, imports map[string]string) bool {
 	if fn.Type.Params == nil {
 		return false
 	}
 	for _, alan := range fn.Type.Params.List {
-		if akisContainerTipi(alan.Type, importlar) {
+		if akisContainerTipi(alan.Type, imports) {
 			return true
 		}
 	}
@@ -973,7 +973,7 @@ func containerAlanIs(fn *ast.FuncDecl, importlar map[string]string) bool {
 //
 // Takma ad haritası üzerinden çözülür, tanımlayıcı adına bakılmaz: paketi
 // "corecontainer" diye import eden bir dosya da doğru tanınmalıdır.
-func akisContainerTipi(ifade ast.Expr, importlar map[string]string) bool {
+func akisContainerTipi(ifade ast.Expr, imports map[string]string) bool {
 	if yildiz, ok := ifade.(*ast.StarExpr); ok {
 		ifade = yildiz.X
 	}
@@ -983,7 +983,7 @@ func akisContainerTipi(ifade ast.Expr, importlar map[string]string) bool {
 	}
 	paket, ok := sec.X.(*ast.Ident)
 
-	return ok && importlar[paket.Name] == cekirdekContainerPaketi
+	return ok && imports[paket.Name] == cekirdekContainerPaketi
 }
 
 // bilesimKokundeKurulanAkislar verilen paketteki akış kurulumlarını döner;
@@ -1003,7 +1003,7 @@ func bilesimKokundeKurulanAkislar(t *testing.T, yapicilar map[string][]string, d
 	t.Helper()
 
 	fset := token.NewFileSet()
-	dosyalar := ayristir(t, fset, filepath.Join(repoRoot, bilesimKoku), false)
+	dosyalar := parseDir(t, fset, filepath.Join(repoRoot, bilesimKoku), false)
 	require.NotEmpty(t, dosyalar, "%s içinde ayrıştırılacak Go dosyası yok", bilesimKoku)
 
 	// Aranan ad kümesi: paketlerin GERÇEK yapıcıları ve konvansiyonel ad.
@@ -1026,9 +1026,9 @@ func bilesimKokundeKurulanAkislar(t *testing.T, yapicilar map[string][]string, d
 	kurulan := map[string]akisKurulumu{}
 
 	for _, d := range dosyalar {
-		cagrilanlar := cagriIfadeleri(d.agac)
-		goIcindekiler := goIfadesiIcindekiler(d.agac)
-		for _, decl := range d.agac.Decls {
+		cagrilanlar := cagriIfadeleri(d.tree)
+		goIcindekiler := goIfadesiIcindekiler(d.tree)
+		for _, decl := range d.tree.Decls {
 			// Paket düzeyindeki bir bildirimin (var başlatıcısı) kapsayanı
 			// yoktur; o kod her koşuda ve main()'den ÖNCE, senkron çalışır.
 			// Erişilebilirlik soruları bu yüzden yalnızca işlevler için
@@ -1045,7 +1045,7 @@ func bilesimKokundeKurulanAkislar(t *testing.T, yapicilar map[string][]string, d
 				if !ok || !adlar[sec.Sel.Name] {
 					return true
 				}
-				yol, cozuldu := akisPaketiniCoz(t, fset.Position(sec.Sel.Pos()), sec, d, kok, onek)
+				path, cozuldu := akisPaketiniCoz(t, fset.Position(sec.Sel.Pos()), sec, d, kok, onek)
 				if !cozuldu {
 					return true
 				}
@@ -1053,7 +1053,7 @@ func bilesimKokundeKurulanAkislar(t *testing.T, yapicilar map[string][]string, d
 				// yapıcısı olduğu doğrulanır. Doğrulanmasaydı, bir akış
 				// paketinin yapıcı adını paylaşan bambaşka bir işlev (örneğin
 				// bir yardımcının New'i) o paketi kurulmuş gösterirdi.
-				if !slices.Contains(yapicilar[yol], sec.Sel.Name) && sec.Sel.Name != kurulumIsaretiAdi {
+				if !slices.Contains(yapicilar[path], sec.Sel.Name) && sec.Sel.Name != kurulumIsaretiAdi {
 					return true
 				}
 
@@ -1082,10 +1082,10 @@ func bilesimKokundeKurulanAkislar(t *testing.T, yapicilar map[string][]string, d
 						"gereksizse ölü işlevi silin.",
 						kurulum.konum, sec.X, sec.Sel.Name, kapsayan)
 					kurulum.sayilmiyor = true
-				case goIcindekiler[sec] && goroutineMuaf(yol):
+				case goIcindekiler[sec] && goroutineMuaf(path):
 					// Muaf: açılış kurulumu beklediğini gerekçesiyle beyan etti.
 					kurulum.goroutineBiciminde = true
-				case !kapsayanAcilista && goroutineMuaf(yol):
+				case !kapsayanAcilista && goroutineMuaf(path):
 					// Muaf: aynı gerekçe, zincirin halkasındaki biçim için.
 					kurulum.goroutineBiciminde = true
 				case goIcindekiler[sec]:
@@ -1118,10 +1118,10 @@ func bilesimKokundeKurulanAkislar(t *testing.T, yapicilar map[string][]string, d
 				// Aynı paket için geçerli bir kurulum bulunmuşsa kusurlu olan
 				// onun yerini almaz: kusur zaten yukarıda raporlandı, kaydın
 				// işi ise "kurulu mu" sorusuna cevap vermektir.
-				if mevcut, varMi := kurulan[yol]; varMi && !mevcut.sayilmiyor {
+				if mevcut, varMi := kurulan[path]; varMi && !mevcut.sayilmiyor {
 					return true
 				}
-				kurulan[yol] = kurulum
+				kurulan[path] = kurulum
 
 				return true
 			})
@@ -1140,7 +1140,7 @@ func akisPaketiniCoz(
 	t *testing.T,
 	konum token.Position,
 	sec *ast.SelectorExpr,
-	d ayristirilmisDosya,
+	d parsedFile,
 	kok, onek string,
 ) (string, bool) {
 	t.Helper()
@@ -1154,17 +1154,17 @@ func akisPaketiniCoz(
 		return "", false
 	}
 
-	yol, bilinen := d.importlar[paket.Name]
+	path, bilinen := d.imports[paket.Name]
 	if !bilinen {
 		t.Errorf("%s: %q, %s dosyasının import listesinde çözülemedi.\n"+
 			"Yapıcı adı bir paketin değil bir DEĞERİN üzerinden kullanılıyorsa kurulumun "+
 			"hedefi okunamaz; kurulum doğrudan paket üzerinden çağrılmalıdır.",
-			konum, paket.Name, filepath.Base(d.yol))
+			konum, paket.Name, filepath.Base(d.path))
 
 		return "", false
 	}
 
-	return yol, yol == kok || strings.HasPrefix(yol, onek)
+	return path, path == kok || strings.HasPrefix(path, onek)
 }
 
 // cagriIfadeleri dosyadaki her çağrının ÇAĞRILAN ifadesini kümeler.
@@ -1172,9 +1172,9 @@ func akisPaketiniCoz(
 // Genel (generic) çağrıların "paket.Yapıcı[T](...)" biçiminde araya bir indeks
 // ifadesi girer; taban ifade de kümeye alınır, aksi hâlde böyle bir çağrı
 // "değer olarak kullanılıyor" sanılırdı.
-func cagriIfadeleri(agac *ast.File) map[ast.Expr]bool {
+func cagriIfadeleri(tree *ast.File) map[ast.Expr]bool {
 	cagrilan := map[ast.Expr]bool{}
-	ast.Inspect(agac, func(n ast.Node) bool {
+	ast.Inspect(tree, func(n ast.Node) bool {
 		cagri, ok := n.(*ast.CallExpr)
 		if !ok {
 			return true
@@ -1227,7 +1227,7 @@ type bilesimKokuErisimi struct {
 // Dar küme, adın açılış yolunda EN AZ BİR yolu olmasını arar: aynı işleve hem
 // go ifadesinin arkasından hem doğrudan gidiliyorsa açılış onu bekliyordur.
 // Canlı bir kurulumu suçlamak, denetime güveni yitirmenin en kısa yoludur.
-func maindenErisim(dosyalar []ayristirilmisDosya) bilesimKokuErisimi {
+func maindenErisim(dosyalar []parsedFile) bilesimKokuErisimi {
 	govdeler := bilesimKokuDugumleri(dosyalar)
 
 	erisim := bilesimKokuErisimi{
@@ -1293,9 +1293,9 @@ func maindenErisim(dosyalar []ayristirilmisDosya) bilesimKokuErisimi {
 // (go func() { paket.Yapıcı(c) }()) çağıran işlevi açılış yolundan ÇIKARMAZ —
 // o işleve main()'den hâlâ senkron gidilir. Leke yalnızca burada, çağrının
 // sözdizimsel yerinde görünür.
-func goIfadesiIcindekiler(agac *ast.File) map[ast.Expr]bool {
+func goIfadesiIcindekiler(tree *ast.File) map[ast.Expr]bool {
 	icerideki := map[ast.Expr]bool{}
-	ast.Inspect(agac, func(n ast.Node) bool {
+	ast.Inspect(tree, func(n ast.Node) bool {
 		goIfadesi, ok := n.(*ast.GoStmt)
 		if !ok {
 			return true
@@ -1346,10 +1346,10 @@ func goIfadesiIcindekiler(agac *ast.File) map[ast.Expr]bool {
 // bir bildirimin İÇİNDEKİ çağrı koşulsuz canlı sayılır, çünkü orada sorulan
 // soru başkadır — ifadenin kendisi koşuyor mu? Burada sorulan soru, ADIN
 // gösterdiği işlevin koşup koşmadığıdır.
-func bilesimKokuDugumleri(dosyalar []ayristirilmisDosya) map[string][]ast.Node {
+func bilesimKokuDugumleri(dosyalar []parsedFile) map[string][]ast.Node {
 	govdeler := map[string][]ast.Node{}
 	for _, d := range dosyalar {
-		for _, decl := range d.agac.Decls {
+		for _, decl := range d.tree.Decls {
 			switch tipli := decl.(type) {
 			case *ast.FuncDecl:
 				if tipli.Body != nil {
@@ -1383,9 +1383,9 @@ func bilesimKokuDugumleri(dosyalar []ayristirilmisDosya) map[string][]ast.Node {
 	return govdeler
 }
 
-// uretimPaketleri kök altındaki, en az bir üretim (_test.go olmayan) dosyası
+// productionPackages kök altındaki, en az bir üretim (_test.go olmayan) dosyası
 // bulunan dizinleri döner.
-func uretimPaketleri(t *testing.T, kok string) map[string]struct{} {
+func productionPackages(t *testing.T, kok string) map[string]struct{} {
 	t.Helper()
 
 	dizinler := map[string]struct{}{}
@@ -1399,9 +1399,9 @@ func uretimPaketleri(t *testing.T, kok string) map[string]struct{} {
 	return dizinler
 }
 
-// ayristir bir dizindeki Go dosyalarını (alt dizinlere İNMEDEN) ayrıştırır ve
+// parseDir bir dizindeki Go dosyalarını (alt dizinlere İNMEDEN) ayrıştırır ve
 // import takma adlarını çözer.
-func ayristir(t *testing.T, fset *token.FileSet, dizin string, testDosyalariDahil bool) []ayristirilmisDosya {
+func parseDir(t *testing.T, fset *token.FileSet, dizin string, testDosyalariDahil bool) []parsedFile {
 	t.Helper()
 
 	girdiler, err := os.ReadDir(dizin)
@@ -1409,7 +1409,7 @@ func ayristir(t *testing.T, fset *token.FileSet, dizin string, testDosyalariDahi
 		t.Fatalf("%s okunamadı: %v", dizin, err)
 	}
 
-	var dosyalar []ayristirilmisDosya
+	var dosyalar []parsedFile
 	for _, girdi := range girdiler {
 		ad := girdi.Name()
 		if girdi.IsDir() || !strings.HasSuffix(ad, ".go") {
@@ -1419,32 +1419,32 @@ func ayristir(t *testing.T, fset *token.FileSet, dizin string, testDosyalariDahi
 			continue
 		}
 
-		yol := filepath.Join(dizin, ad)
-		agac, parseErr := parser.ParseFile(fset, yol, nil, parser.SkipObjectResolution)
+		path := filepath.Join(dizin, ad)
+		tree, parseErr := parser.ParseFile(fset, path, nil, parser.SkipObjectResolution)
 		if parseErr != nil {
-			t.Fatalf("%s ayrıştırılamadı: %v", yol, parseErr)
+			t.Fatalf("%s ayrıştırılamadı: %v", path, parseErr)
 		}
-		dosyalar = append(dosyalar, ayristirilmisDosya{yol: yol, agac: agac, importlar: importTakmaAdlari(agac)})
+		dosyalar = append(dosyalar, parsedFile{path: path, tree: tree, imports: importAliases(tree)})
 	}
 
 	return dosyalar
 }
 
-// importTakmaAdlari dosyadaki her import'un yerel adını import yoluna eşler.
+// importAliases dosyadaki her import'un yerel adını import yoluna eşler.
 //
-// Takma ad verilmemişse yol son parçası kullanılır. Bu, paket adının dizin
+// Takma ad verilmemişse path son parçası kullanılır. Bu, paket adının dizin
 // adından farklı olduğu durumda yanılır; denetimin baktığı paketlerin hepsinde
 // ikisi aynıdır ve yanılma yalnızca bir kaydı GÖRMEMEK olur — o da çağıran
 // tarafta sessiz kalmaz, çünkü çözülemeyen paket adı hata verir.
-func importTakmaAdlari(agac *ast.File) map[string]string {
-	adlar := make(map[string]string, len(agac.Imports))
-	for _, imp := range agac.Imports {
-		yol := strings.Trim(imp.Path.Value, `"`)
-		ad := yol[strings.LastIndex(yol, "/")+1:]
+func importAliases(tree *ast.File) map[string]string {
+	adlar := make(map[string]string, len(tree.Imports))
+	for _, imp := range tree.Imports {
+		path := strings.Trim(imp.Path.Value, `"`)
+		ad := path[strings.LastIndex(path, "/")+1:]
 		if imp.Name != nil {
 			ad = imp.Name.Name
 		}
-		adlar[ad] = yol
+		adlar[ad] = path
 	}
 
 	return adlar
@@ -1492,7 +1492,7 @@ func paketImportYolu(t *testing.T, dizin string) string {
 
 	rel, err := filepath.Rel(repoRoot, dizin)
 	if err != nil {
-		t.Fatalf("%s için göreli yol hesaplanamadı: %v", dizin, err)
+		t.Fatalf("%s için göreli path hesaplanamadı: %v", dizin, err)
 	}
 
 	return modulePath + "/" + filepath.ToSlash(rel)
@@ -1524,19 +1524,19 @@ func bayatGoroutineMuafiyetleriniDenetle[T any](
 ) {
 	t.Helper()
 
-	for _, yol := range slices.Sorted(maps.Keys(acilisYolunaGirmeyenKurulumlar)) {
-		if _, akisMi := akislar[yol]; !akisMi {
+	for _, path := range slices.Sorted(maps.Keys(acilisYolunaGirmeyenKurulumlar)) {
+		if _, akisMi := akislar[path]; !akisMi {
 			t.Errorf("muafiyet BAYAT: %q artık container'dan kurulan bir akış paketi değil.\n"+
 				"Paket silindiyse ya da adı değiştiyse muafiyet satırı da gitmelidir; "+
-				"kalırsa bir gün aynı adla yazılan yeni bir paketi sessizce muaf tutar.", yol)
+				"kalırsa bir gün aynı adla yazılan yeni bir paketi sessizce muaf tutar.", path)
 			continue
 		}
-		kurulum, bulunduMu := kurulan[yol]
+		kurulum, bulunduMu := kurulan[path]
 		if !bulunduMu || !kurulum.goroutineBiciminde {
 			t.Errorf("muafiyet BAYAT: %q'nun kurulumu artık goroutine biçiminde DEĞİL, "+
 				"yani muafiyete ihtiyaç yok.\n"+
 				"Muafiyet borçtur; borç ödendiğinde satır silinmelidir. Kalırsa, kurulum "+
-				"bir gün yeniden goroutine'e alındığında denetim sessiz kalır.", yol)
+				"bir gün yeniden goroutine'e alındığında denetim sessiz kalır.", path)
 		}
 	}
 }
@@ -1592,8 +1592,8 @@ func TestPanelBilesimKokundeKurulu(t *testing.T) {
 
 	kurulan := bilesimKokundeKurulanAkislar(t, paketler, panelDizini)
 
-	for _, yol := range slices.Sorted(maps.Keys(paketler)) {
-		kurulum, kuruluMu := kurulan[yol]
+	for _, path := range slices.Sorted(maps.Keys(paketler)) {
+		kurulum, kuruluMu := kurulan[path]
 		if kuruluMu && !kurulum.sayilmiyor {
 			continue
 		}
@@ -1602,14 +1602,14 @@ func TestPanelBilesimKokundeKurulu(t *testing.T) {
 			"Kurulmayan bir panel derlenir, testleri geçer ve HİÇBİR kurulumda yoktur: "+
 			"yönetim yüzeyi diye bir şey yayımlanmaz ve bunu hiçbir birim testi "+
 			"göremez, çünkü panelin kendi testleri paneli kendisi kurar.",
-			yol, strings.Join(paketler[yol], ", "), bilesimKoku)
+			path, strings.Join(paketler[path], ", "), bilesimKoku)
 	}
 
-	for _, yol := range slices.Sorted(maps.Keys(kurulan)) {
-		if _, gorulduMu := paketler[yol]; !gorulduMu {
+	for _, path := range slices.Sorted(maps.Keys(kurulan)) {
+		if _, gorulduMu := paketler[path]; !gorulduMu {
 			t.Errorf("%s paketinin yapıcısı %s/'da çağrılıyor ama denetim o pakette "+
 				"container'dan kurulan bir yapıcı GÖRMÜYOR; şekil okuması gerçekle "+
-				"ayrışmış olmalı", yol, bilesimKoku)
+				"ayrışmış olmalı", path, bilesimKoku)
 		}
 	}
 }
@@ -1640,15 +1640,15 @@ func TestPanelModulleriImportEtmez(t *testing.T) {
 
 	onek := modulePath + "/internal/modules/"
 	for _, dosya := range dosyalar {
-		agac, err := parser.ParseFile(token.NewFileSet(), dosya, nil, parser.ImportsOnly)
+		tree, err := parser.ParseFile(token.NewFileSet(), dosya, nil, parser.ImportsOnly)
 		require.NoError(t, err, "%s ayrıştırılamadı", dosya)
 
-		for _, imp := range agac.Imports {
-			yol := strings.Trim(imp.Path.Value, `"`)
-			if strings.HasPrefix(yol, onek) {
+		for _, imp := range tree.Imports {
+			path := strings.Trim(imp.Path.Value, `"`)
+			if strings.HasPrefix(path, onek) {
 				t.Errorf("%s: panel %q modülünü import ediyor (ADR 0011).\n"+
 					"Panel modülleri tanımaz: ihtiyacı olan yüzeyi KENDİ paketinde dar bir "+
-					"arayüz olarak tanımlar ve container'dan ADLA çözer.", dosya, yol)
+					"arayüz olarak tanımlar ve container'dan ADLA çözer.", dosya, path)
 			}
 		}
 	}

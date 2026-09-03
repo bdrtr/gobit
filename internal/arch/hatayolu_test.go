@@ -242,9 +242,9 @@ func TestHTTPYuzeyleriYalnizcaApiPaketlerinde(t *testing.T) {
 	// "api dışında yüzey yok" demiş olur — oysa hiç bakmamıştır.
 	yaziciTasiyanDosya := 0
 
-	for _, mod := range modulNames(t) {
+	for _, mod := range moduleNames(t) {
 		kok := filepath.Join(repoRoot, modulesDir, mod)
-		for _, dosya := range uretimDosyalari(t, kok) {
+		for _, dosya := range productionFiles(t, kok) {
 			if !yaziciGeciyor(t, dosya) {
 				continue
 			}
@@ -610,7 +610,7 @@ func cekirdekPaketiniDenetle(t *testing.T, dizin string, kullanilan []map[string
 	t.Helper()
 
 	fset := token.NewFileSet()
-	dosyalar := uretimDosyalari(t, dizin)
+	dosyalar := productionFiles(t, dizin)
 	agaclar := make(map[string]*ast.File, len(dosyalar))
 
 	for _, dosya := range dosyalar {
@@ -658,7 +658,7 @@ func sarmalayiciTipler(t *testing.T, dizin string) map[string]bool {
 
 	adlar := map[string]bool{}
 
-	for _, dosya := range uretimDosyalari(t, dizin) {
+	for _, dosya := range productionFiles(t, dizin) {
 		agac, err := parser.ParseFile(token.NewFileSet(), dosya, nil, 0)
 		if err != nil {
 			t.Fatalf("%s ayrıştırılamadı: %v", dosya, err)
@@ -942,7 +942,7 @@ func paketiDenetle(t *testing.T, dizin string, muafiyetKullanildi []bool) {
 	t.Helper()
 
 	fset := token.NewFileSet()
-	dosyalar := uretimDosyalari(t, dizin)
+	dosyalar := productionFiles(t, dizin)
 	agaclar := make(map[string]*ast.File, len(dosyalar))
 	yerelAdlar := map[string]bool{}
 
@@ -1436,7 +1436,7 @@ func importYollari(agac *ast.File) map[string]string {
 func apiPaketleri(t *testing.T) []string {
 	t.Helper()
 	var dizinler []string
-	for _, mod := range modulNames(t) {
+	for _, mod := range moduleNames(t) {
 		dizin := filepath.Join(repoRoot, modulesDir, mod, "api")
 		if info, err := os.Stat(dizin); err == nil && info.IsDir() {
 			dizinler = append(dizinler, dizin)
@@ -1446,8 +1446,8 @@ func apiPaketleri(t *testing.T) []string {
 	return dizinler
 }
 
-// uretimDosyalari kök altındaki test OLMAYAN .go dosyalarını döner.
-func uretimDosyalari(t *testing.T, kok string) []string {
+// productionFiles kök altındaki test OLMAYAN .go dosyalarını döner.
+func productionFiles(t *testing.T, kok string) []string {
 	t.Helper()
 	var out []string
 	for _, dosya := range goFiles(t, kok) {
@@ -1477,7 +1477,7 @@ func yaziciTasiyanDosyalariDogrula(t *testing.T, paketler []string, kapsam, ipuc
 
 	bulunan := 0
 	for _, dizin := range paketler {
-		for _, dosya := range uretimDosyalari(t, dizin) {
+		for _, dosya := range productionFiles(t, dizin) {
 			if yaziciGeciyor(t, dosya) {
 				bulunan++
 			}
@@ -1520,7 +1520,7 @@ func yaziciGeciyor(t *testing.T, dosya string) bool {
 // cekirdekHataYolunuKullaniyor pakette corehttp.WriteError çağrısı arar.
 func cekirdekHataYolunuKullaniyor(t *testing.T, dizin string) bool {
 	t.Helper()
-	for _, dosya := range uretimDosyalari(t, dizin) {
+	for _, dosya := range productionFiles(t, dizin) {
 		agac, err := parser.ParseFile(token.NewFileSet(), dosya, nil, 0)
 		if err != nil {
 			t.Fatalf("%s ayrıştırılamadı: %v", dosya, err)

@@ -40,13 +40,13 @@ const (
 	migrationDizinAdi = "migrations"
 )
 
-// modulNames depodaki commerce modüllerinin adlarını döner.
+// moduleNames depodaki commerce modüllerinin adlarını döner.
 //
 // Boş sonuç KABUL EDİLMEZ: modülleri gezen denetimlerin hepsi girdi olarak bu
 // listeyi alır ve boş bir listeyle koşan bir gezinti hiçbir ihlal bulamadan
 // geçer. Hata burada verilir, çağıranlarda değil — tek yerde durunca hiçbir
 // çağıran onu eklemeyi unutamaz.
-func modulNames(t *testing.T) []string {
+func moduleNames(t *testing.T) []string {
 	t.Helper()
 	entries, err := os.ReadDir(filepath.Join(repoRoot, modulesDir))
 	if err != nil {
@@ -131,7 +131,7 @@ func goFiles(t *testing.T, root string) []string {
 // savunma hattıdır ve .golangci.yml'deki kural listesi bir modül eklenirken
 // güncellenmeyi UNUTULURSA yine de yakalar.
 func TestModullerBirbiriniImportEtmez(t *testing.T) {
-	moduller := modulNames(t)
+	moduller := moduleNames(t)
 	prefix := modulImportOneki(t)
 
 	for _, mod := range moduller {
@@ -231,7 +231,7 @@ func TestCrossModuleForeignKeyYok(t *testing.T) {
 	// foreign key bulunduğunu. Tek bir sayaç, kopan halkayı gizlerdi.
 	var okunanDosya, sahiplenilenTablo, gorulenBaglanti int
 
-	for _, mod := range modulNames(t) {
+	for _, mod := range moduleNames(t) {
 		migDir := filepath.Join(repoRoot, modulesDir, mod, migrationDizinAdi)
 		if _, err := os.Stat(migDir); err != nil {
 			continue
@@ -300,7 +300,7 @@ func TestCrossModuleForeignKeyYok(t *testing.T) {
 func TestMigrationlarGeriAlinabilir(t *testing.T) {
 	denetlenen := 0
 
-	for _, mod := range modulNames(t) {
+	for _, mod := range moduleNames(t) {
 		migDir := filepath.Join(repoRoot, modulesDir, mod, migrationDizinAdi)
 		ups, err := filepath.Glob(filepath.Join(migDir, "*.up.sql"))
 		if err != nil {
@@ -394,7 +394,7 @@ func TestParaTamSayidir(t *testing.T) {
 	// bkz. [adParcalari].
 	gorulenParaAlani := 0
 
-	for _, mod := range modulNames(t) {
+	for _, mod := range moduleNames(t) {
 		root := filepath.Join(repoRoot, modulesDir, mod)
 		for _, file := range goFiles(t, root) {
 			if strings.HasSuffix(file, "_test.go") {

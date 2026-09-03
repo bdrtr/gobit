@@ -135,11 +135,38 @@ measurement rather than flattening it:
 
 | Principle | Today | Decision |
 | --- | --- | --- |
-| **DIP** | Strongly enforced: 211 deny entries in `.golangci.yml` plus four AST tests that keep the module trees from importing each other | Keep; it is the strongest rule in the repository |
+| **DIP** | Strongly enforced on the SUPPLY side: 211 deny entries in `.golangci.yml` plus four AST tests that keep the module trees from importing each other. The CONSUMPTION side was unchecked | Keep the supply side; close the consumption side — done, see below |
 | **OCP** | Enforced on the plugin/provider axis by `TestEklentiCekirdegeDokunmadanSaglayiciEkler` | Keep |
-| **ISP** | Guaranteed **structurally** across module boundaries — a consumer that may not import the provider is forced to declare a narrow interface in primitive types — but unchecked inside a module | Enforceable; a test is worth adding |
-| **SRP** | Enforced at the macro level only (module isolation, the error-path rules). Nothing at the level of a single type | Review-level; see below |
+| **ISP** | Guaranteed **structurally** across module boundaries — a consumer that may not import the provider is forced to declare a narrow interface in primitive types — but unchecked inside a module | Partly closed by the consumption-side check below; the narrower "a resolved surface speaks only in primitive and core types" rule is still worth adding |
+| **SRP** | Enforced at the MACRO level (module isolation, the error-path rules). The layer boundary INSIDE a module was unchecked, and nothing exists at the level of a single type | Close the layer boundary — done, see below. The single-type level stays review-level |
 | **LSP** | No check at all | Review-level; see below |
+
+### The two checks that landed with this ADR
+
+`internal/arch/solid_test.go` closes the two gaps the table names, and both were
+green on the day they were written — they pin behavior the repository already
+has rather than demanding a change:
+
+- **`TestResolvedTypeIsAnInterface`** — the consumption half of DIP. Every
+  production `container.Resolve[T]` call site must resolve an INTERFACE.
+  depguard forbids the cross-module import and therefore catches another
+  module's concrete type; it says nothing about a concrete type from the
+  caller's own module or from the core. Measured: 18 interfaces, 5 generic
+  helpers and exactly one concrete family — `*db.Pool`, resolved 16 times under
+  the name `core.db`, written down with its reason.
+- **`TestLayerPurity`** — the layer boundary inside a module. A module's `api`
+  package may not import pgx, its own `repository` or generated `sqlc` code; its
+  `service` package may not import `net/http`, chi or pgx. Measured: 15 modules,
+  30 directories, 0 violations. The rules name DEPENDENCIES, not sizes: a
+  handler reaching the database skips the service layer's validation, workflow
+  and events while continuing to work, and a service holding an
+  `http.ResponseWriter` can no longer be called from a workflow or a subscriber.
+
+Both count what they scanned against the DISK rather than against their own
+rule list. A counter that reads the list it is checking falls silent together
+with that list — renaming a layer in the rule would find zero directories and
+every module would pass. That failure was found by mutating the tests, not by
+reasoning about them.
 
 For SRP-micro and LSP the decision is to write down that they are **review-level
 rules with no test**, and to say so out loud rather than let the word "SOLID"
