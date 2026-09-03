@@ -10,6 +10,33 @@ Sabitlenme `1.0.0` ile olur.
 
 ## [Yayımlanmamış]
 
+### Eklendi
+
+- **PostgreSQL'in bir SEÇENEK değil TEMEL olduğu yazıya geçti**
+  ([ADR 0015](docs/adr/0015-postgresql-cluster-contract.md)). gobit
+  PostgreSQL'i desteklemiyor, onun ÜZERİNE yazılmış — ve bu bağımlılık bugüne
+  kadar hiçbir yerde sözleşme olarak durmuyordu. Bu turda tam da bu yüzden bir
+  blocker çıktı: küme `--locale=C` ile kuruluyordu ve on dört ADR'nin hiçbiri
+  locale'den bahsetmiyordu.
+
+  ADR bağımlılığın nerede yaşadığını SAYIYOR — dizi parametreleri (`= ANY`)
+  üzerine kurulu N+1'siz okuma katmanı, iş kuralının kendisi olan kısmi tekil
+  indeksler (`UNIQUE (handle) WHERE deleted_at IS NULL`), `jsonb`,
+  `timestamptz` (235 sütun), advisory lock'lar, ve `core/link`'in HER AÇILIŞTA
+  koştuğu DDL — sonra kümenin sağlaması gerekenleri bir tabloya bağlıyor:
+  sürüm, encoding, CTYPE, uzantılar (bugün SIFIR), yetkiler, `search_path`.
+
+  Sözleşme bir PROB ile uygulanıyor, çünkü gerçek dağıtımda compose dosyasını
+  düzeltmek yetmez: RDS/Cloud SQL/Neon'da `initdb` argümanını siz seçmezsiniz.
+  Prob AD değil DAVRANIŞ sınıyor ve **bugün tek bir kontrolü var** — bu bir
+  eksiklik değil karar: tablodaki öteki satırların hepsi GÜRÜLTÜLÜ düşüyor
+  (insert reddedilir, `link.Define` patlar, sorgu "relation does not exist"
+  der), yalnızca harf katlaması doğru, boş ve sessiz bir cevap dönerek düşüyor.
+
+  İkinci bir veritabanı desteklenmeyecek ve gerekçesi ideolojik değil:
+  listenin ilk üç maddesi taşınabilir değil, üstelik ikinci lehçe deponun
+  "her kural TEK yerde tanımlı" disiplinini her değişmez için bozar.
+
 ### Düzeltildi
 
 - **ARAMA TÜRKÇE'DE SESSİZCE ÇALIŞMIYORDU.** `deploy/docker-compose.yml`

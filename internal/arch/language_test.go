@@ -213,7 +213,8 @@ const generatedMarker = "Code generated"
 // the letter class as data, so the file that DEFINES the rule would otherwise
 // be its first violation.
 //
-// The second is the database case-folding probe. Its whole subject is that a
+// The second and third are the database case-folding probe and the decision
+// record that explains it. Its whole subject is that a
 // C-locale cluster cannot fold non-ASCII case, and it cannot say so without
 // naming a pair of letters that differ only in case outside ASCII. Replacing
 // them with ASCII would make the file pass this rule and make the probe test
@@ -235,6 +236,11 @@ var diacriticDataExemptions = map[string][]string{
 	"docs/adr/0012-repository-language-and-solid.md": {"`çğıöşüÇĞİÖŞÜ`"},
 	"internal/core/db/casefold.go": {
 		"'Ç' ILIKE 'ç'", "'ÇANTA'", "'çanta'", `"çanta"`, `"Çanta"`,
+	},
+	// ADR 0015 records the same defect and has to quote the same two words to
+	// show it: the whole finding is that one of them does not match the other.
+	"docs/adr/0015-postgresql-cluster-contract.md": {
+		"`çanta`", "`Çanta`", "q=çanta", "q=Çanta",
 	},
 }
 
