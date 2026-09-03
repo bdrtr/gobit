@@ -23,6 +23,94 @@ func indexOf(calls []string, call string) int {
 	return slices.Index(calls, call)
 }
 
+// TestKurtarmaTanimiKayittakiAdimlariTasir kurtarmanın dayandığı adım adlarını
+// ve SIRASINI sabitler.
+//
+// Kurtarma, motorun kayıttaki adım ADINI tanımdakiyle karşılaştırmasına dayanır
+// (bkz. workflow.Recoverer): ad tutmazsa yarım kalmış saga HİÇ kurtarılamaz ve
+// operatörün elinde yalnızca "elle müdahale" kalır. Yani bu dizi bir kolaylık
+// değil, kurtarmanın ön koşulu.
+//
+// Adımlar tek bir yerden kuruluyor (sagaSteps) ama sıra yine de burada
+// çivileniyor: sırayı değiştiren bir düzenleme, ÇALIŞAN kurulumların yarım
+// kalmış kayıtlarını kurtarılamaz yapar — kod derlenir, testler yeşil kalır ve
+// bedel yalnızca üretimde, tam da en kötü anda ortaya çıkar.
+func TestKurtarmaTanimiKayittakiAdimlariTasir(t *testing.T) {
+	h := newHarness(t)
+
+	plan, err := json.Marshal(checkoutPlan{CartID: testCartID, CurrencyCode: testCurrency})
+	require.NoError(t, err)
+
+	wf, err := h.wf.RecoveryWorkflow(plan)
+	require.NoError(t, err)
+
+	assert.Equal(t, WorkflowName, wf.Name)
+
+	adlar := make([]string, 0, len(wf.Steps))
+	for _, adim := range wf.Steps {
+		adlar = append(adlar, adim.Name())
+	}
+	assert.Equal(t, []string{
+		StepReserveInventory,
+		StepCreateOrder,
+		StepAuthorizePayment,
+		StepCapturePayment,
+		StepClearCart,
+	}, adlar, "kurtarma tanımı, kayıttaki adımların adını ve SIRASINI taşımalı")
+}
+
+// TestKurtarmaTanimiCozulemeyenPlaniReddeder kaydın girdisi okunamıyorsa
+// kurtarmanın hiç başlamamasını sabitler.
+func TestKurtarmaTanimiCozulemeyenPlaniReddeder(t *testing.T) {
+	h := newHarness(t)
+
+	_, err := h.wf.RecoveryWorkflow(json.RawMessage(`{bozuk`))
+
+	require.Error(t, err)
+	assert.True(t, hasCode(err, CodeInvalidInput), "hata: %v", err)
+}
+
+// TestKurtarmaTanimiBosPlaniReddeder JSON'un çözülmesinin YETMEDİĞİNİ sabitler.
+//
+// `{}` de çözülür ve sepet kimliği olmayan bir planla kurulan zincir,
+// telafilerini kimliksiz çağırır: "bir şey bırakmadım" diyen ama hiçbir
+// rezervasyonu bırakmayan bir kurtarma, operatöre yarım işi TEMİZLENMİŞ gibi
+// gösterir.
+func TestKurtarmaTanimiBosPlaniReddeder(t *testing.T) {
+	h := newHarness(t)
+
+	_, err := h.wf.RecoveryWorkflow(json.RawMessage(`{}`))
+
+	require.Error(t, err)
+	assert.True(t, hasCode(err, CodeInvalidInput), "hata: %v", err)
+}
+
+// TestKurtarmaTanimiPlaniGeriKurar planın alanlarının kayıttan geri geldiğini
+// doğrular: telafiler sepet kimliğini ORADAN okur.
+func TestKurtarmaTanimiPlaniGeriKurar(t *testing.T) {
+	h := newHarness(t)
+
+	plan, err := json.Marshal(checkoutPlan{
+		CartID:       testCartID,
+		CurrencyCode: testCurrency,
+		Amount:       testAmount,
+		Lines:        []planLine{{LineItemID: "li_1", VariantID: "var_1", Quantity: 2}},
+	})
+	require.NoError(t, err)
+
+	wf, err := h.wf.RecoveryWorkflow(plan)
+	require.NoError(t, err)
+
+	rezerve, ok := wf.Steps[0].(*reserveInventoryStep)
+	require.True(t, ok, "ilk adım stok adımı olmalı")
+	assert.Equal(t, testCartID, rezerve.plan.CartID, "sepet kimliği kayıttan geri gelmeli")
+	assert.Equal(t, testAmount, rezerve.plan.Amount)
+	require.Len(t, rezerve.plan.Lines, 1)
+	assert.Equal(t, "li_1", rezerve.plan.Lines[0].LineItemID)
+	assert.Empty(t, rezerve.plan.PaymentData,
+		"ödeme verisi kayda YAZILMAZ; geri kurulan planda da bulunmamalı")
+}
+
 // TestMutluYolBesAdimiSirayaCalistirir tüm adımların çalıştığını ve sonucun
 // siparişi, tahsilatı ve kesinleşen stoğu bildirdiğini doğrular.
 func TestMutluYolBesAdimiSirayaCalistirir(t *testing.T) {

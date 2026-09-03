@@ -660,11 +660,15 @@ Usage:
   %s %-34s report every owner's schema version
   %s %-34s roll ONE owner back
   %s %-34s list executions left half-done (read only)
+  %s %-34s compensate ONE half-done execution
   %s %-34s print this text
 
 %s %s flags:
   -%-15s how many migrations to roll back (default %d, minimum 1)
   -%-15s repeat the owner name to authorize the rollback
+
+%s flags:
+  -%-15s repeat the execution id to authorize the compensation
 
 The server starts when there are NO arguments and in no other way; no
 subcommand starts one. Forward migrations stay automatic at startup —
@@ -675,8 +679,11 @@ there is deliberately no "migrate up", so a deploy cannot forget it.
 		binaryName, cmdMigrate+" "+cmdStatus,
 		binaryName, cmdMigrate+" "+cmdDown+" <owner> [flags]",
 		binaryName, stuckCommand+" [flags]",
+		binaryName, recoverCommand+" <execution-id> [flags]",
 		binaryName, cmdHelp,
 		cmdMigrate, cmdDown,
 		flagSteps+" N", defaultDownSteps,
-		flagConfirm+" OWNER")
+		flagConfirm+" OWNER",
+		recoverCommand,
+		flagConfirm+" ID")
 }

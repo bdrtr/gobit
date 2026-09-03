@@ -10,6 +10,48 @@ Sabitlenme `1.0.0` ile olur.
 
 ## [Yayımlanmamış]
 
+### Eklendi
+
+- **`gobit recover <execution-id> -confirm <execution-id>`: yarım kalmış bir
+  saga artık ELLE telafi edilebiliyor.** v0.8.0 kesintiye uğrayan ödemeyi
+  GÖRÜNÜR (`gobit stuck`) ve GERİ ALINABİLİR (kayıtlardan telafi) yapmıştı, ama
+  geri almayı yalnızca aynı anahtarla dönen bir çağıran tetikleyebiliyordu. Bu,
+  yeniden deneyen müşteriyi kapsar ve başkasını değil: terk edilmiş sepetin
+  dönen çağıranı yoktur, kayıt sonsuza dek `running` kalır ve ayırdığı stoğu
+  BIRAKACAK KİMSE olmaz. Operatörün elinde üzerinde işlem yapamadığı bir liste
+  vardı.
+
+  Motor tarafında yeni yetenek `workflow.Recoverer`: kimlikle adreslenen bir
+  yürütmenin telafi zincirini koşturur ve Invoke'u ASLA çağırmaz. İsteğe bağlı
+  arayüz (tip doğrulaması), `Executor`'a eklenen bir metot değil — sahte
+  uygulamaları kırmamak için.
+
+  **Beş reddin hepsi parayla ilgili** ve komut hiçbirini ezemez: kira
+  bildirilmemişse (kirasız, koşan saga ile terk edilmiş kayıt ayırt edilemez),
+  kayıt `running` değilse, kira DOLMAMIŞSA, talep kaybedilmişse ve verilen tanım
+  kaydın workflow adını taşımıyorsa. Kaydı olmayan engelleyici adımdaki sınır da
+  aynen duruyor: tahsilatın gerçekleşip gerçekleşmediği kayıtlardan
+  yanıtlanamaz, operatör de sağlayıcıya sormadan yanıtlayamaz.
+
+  Komutun kapısı `migrate down` ile aynı: `-confirm` kimliği tekrar etmeden
+  hiçbir şey çalışmaz. Kimlik `gobit stuck` çıktısından KOPYALANAN bir değerdir
+  ve bir satır yukarısı başka bir müşterinin saga'sıdır.
+
+  Telafi zincirinin tanımı kaydın kendi GİRDİSİNDEN kuruluyor
+  (`checkout.Workflows.RecoveryWorkflow`): adımların kurulduğu plan süreçle
+  birlikte gitmiştir ama motorun kaydında JSON olarak durur. Ödeme verisi kayda
+  yazılmadığı için geri de gelmiyor — telafi onu kullanmıyor.
+
+  Bileşim kökü tek kopya kaldı: komut, sunucunun kurduğu kablolamanın AYNISINI
+  `openApplication` üzerinden kullanıyor. İkinci bir kopya, bir modülün birine
+  eklenip ötekine eklenmediği gün ayrışırdı. Eklentilerin sıraya alınmış
+  kayıtları (`plugin.Registry.Start`) bilinçli olarak UYGULANMIYOR: bir saniye
+  sonra çıkacak süreçte olay tüketicisi başlatmak, mesajı alıp ölen bir
+  tüketiciden daha kötüsünü üretir.
+
+  Zamanlanmış süpürücü hâlâ yok ve gerekçesi
+  [ADR 0017](docs/adr/0017-recovering-abandoned-sagas-from-the-record.md)'de.
+
 ### Değiştirildi
 
 - **`internal/core/workflow` ağacında Türkçe kalmadı** (ADR 0012'nin cırcırı).

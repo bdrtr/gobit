@@ -1482,10 +1482,22 @@ açıktır.
   yüzden kaydı olmayan tahsilat adımı kurtarmayı durdurur ve karar elle
   müdahaleye kalır.
 
-  Kurtarma **tetiklenmez, denk gelinir**: kimse aynı anahtarla dönmezse kayıt
-  `running` kalır ve `gobit stuck` onu listelemeye devam eder. Zamanlanmış bir
-  süpürücü bilinçli olarak yoktur — kurtarma telafi çalıştırır, yani yan etkisi
-  olan bir iştir. Komutun kendisi hâlâ YALNIZCA OKUR.
+  **Kurtarma artık TETİKLENEBİLİYOR da:**
+  `gobit recover <execution-id> -confirm <execution-id>` bir yürütmenin telafi
+  zincirini çalıştırır. Motorun kendi kurtarması denk gelinerek olur — aynı
+  anahtarla dönen bir çağıran onu tetikler — ve bu, yeniden deneyen müşteriyi
+  kapsar, başkasını değil. Terk edilmiş sepetin dönen bir çağıranı yoktur;
+  `gobit stuck` onu listeler ve BIRAKACAK KİMSE olmazdı.
+
+  Komut, geri alınamayan öteki komutla (`migrate down`) aynı kapıyı taşıyor:
+  `-confirm` kimliği tekrar etmeden hiçbir şey çalışmaz. Motorun kendi reddleri
+  ikinci kapıdır ve komut onları EZEMEZ — canlı kira, uç durumdaki kayıt ve
+  kaydı olmayan tahsilat adımı ne yazılırsa yazılsın koşuyu durdurur.
+
+  Zamanlanmış bir süpürücü hâlâ bilinçli olarak YOK: kurtarma yan etkisi olan
+  bir iş çalıştırır ve onu izlenmeyen bir arka plan işine vermek, bu deponun
+  reddettiği "sessizce karar ver" sınıfıdır. Burada kararı İNSAN veriyor ve
+  yürütmeyi adıyla söylüyor.
 
   **Kurtarma TEKELLİDİR.** Terk edilmiş kayıt kimsenin sahipliğinde olmadığı
   için aynı anahtarla varan her çağıran onu bulur; talep olmadan hepsi telafi

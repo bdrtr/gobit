@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/base64"
+	"io/fs"
 	"log/slog"
 	"net/http"
 	"os"
@@ -22,10 +23,14 @@ import (
 	"github.com/bdrtr/gobit/internal/core/errors"
 	corehttp "github.com/bdrtr/gobit/internal/core/http"
 	"github.com/bdrtr/gobit/internal/core/http/redisguard"
+	"github.com/bdrtr/gobit/internal/core/link"
 	"github.com/bdrtr/gobit/internal/core/module"
 	"github.com/bdrtr/gobit/internal/core/openapi"
 	coreplugin "github.com/bdrtr/gobit/internal/core/plugin"
 	coreprovider "github.com/bdrtr/gobit/internal/core/provider"
+	"github.com/bdrtr/gobit/internal/core/query"
+	"github.com/bdrtr/gobit/internal/core/workflow"
+	"github.com/bdrtr/gobit/internal/core/workflow/pgstore"
 	authapi "github.com/bdrtr/gobit/internal/modules/auth/api"
 	authmodels "github.com/bdrtr/gobit/internal/modules/auth/models"
 	authservice "github.com/bdrtr/gobit/internal/modules/auth/service"
@@ -1007,4 +1012,202 @@ func warnIfShutdownIsShorterThanTheSaga(ctx context.Context, cfg config.Config, 
 		slog.String("fix", "raise SHUTDOWN_TIMEOUT above the saga budget, and raise the "+
 			"orchestrator's grace period with it, or accept the exposure knowingly"),
 	)
+}
+
+// application is everything the composition root builds: the container with
+// every module registered, the router their routes are bound to, and the
+// cross-module workflows wired on top.
+//
+// The struct exists so that a command which must NOT start a server can reach
+// the same wiring. [runRecover] is that command: recovering a half-done saga
+// runs the checkout flow's own Compensate functions, and those need the very
+// module services the server resolves. A second copy of this wiring would drift
+// the day a module was added to one and not the other — the failure class
+// TestHerModulBilesimKokundeKayitli exists for.
+type application struct {
+	// container holds every service, resolved by name (ADR 0001).
+	container *container.Container
+	// registry is the module set; its Modules() feeds the OpenAPI description.
+	registry *module.Registry
+	// router carries the module routes. A command that does not serve still
+	// gets one: the modules bind their routes during Bootstrap and there is no
+	// registration path that skips it.
+	router chi.Router
+	// plugins and host carry the plugin registrations that are APPLIED later
+	// (Registry.Start), not here.
+	plugins *coreplugin.Registry
+	host    *coreplugin.Host
+	// panelRing and authn are the two deferred bindings the server fills in
+	// after this function returns.
+	panelRing *adminui.Ring
+	authn     *corehttp.DeferredAuthenticator
+}
+
+// openApplication opens the database, brings up every module and wires the
+// workflows.
+//
+// It does everything the running server does UP TO the point where serving
+// begins, and nothing after it: the plugins' queued registrations are not
+// applied ([coreplugin.Registry.Start]), the panel is not bound, no
+// administrator is seeded and no listener is opened. Applying the plugin queue
+// here would start event-bus consumers in a process that exits a second later,
+// and a consumer that claims a message and dies is worse than one that never
+// ran.
+//
+// The returned close function releases the container services and then the
+// pool, in that order — the same order the deferred calls had.
+func openApplication(
+	ctx context.Context,
+	cfg config.Config,
+	log *slog.Logger,
+	reportSink *errorreport.Sink,
+) (*application, func(), error) {
+	c := container.New(log)
+
+	pool, err := db.New(ctx, dbConfig(cfg), log)
+	if err != nil {
+		return nil, nil, err
+	}
+	closeApp := func() {
+		shutdownContainer(ctx, c, cfg, log)
+		pool.Close()
+	}
+
+	if err := c.Provide(svcDB, pool); err != nil {
+		return nil, nil, err
+	}
+
+	// The core migrations are applied BEFORE the module migrations: a module
+	// must be able to assume the workflow engine's schema is ready.
+	//
+	// The list is READ from [coreMigrationSources] rather than written out
+	// here, because the migrate subcommands read the same list; a second
+	// literal would mean a core schema added to one of them and reported by
+	// neither the status table nor this loop.
+	for _, source := range coreMigrationSources() {
+		if err := db.Migrate(ctx, cfg.DatabaseURL, source.src, source.owner); err != nil {
+			return nil, nil, err
+		}
+	}
+
+	links := link.New(pool, log)
+	if err := c.Provide(svcLink, links); err != nil {
+		return nil, nil, err
+	}
+	if err := c.Provide(svcQuery, query.New(links, c, log)); err != nil {
+		return nil, nil, err
+	}
+
+	workflowStore := pgstore.New(pool, log)
+	if err := c.Provide(svcWorkflowStore, workflowStore); err != nil {
+		return nil, nil, err
+	}
+	if err := c.Provide(svcWorkflow, workflow.New(workflowStore, log)); err != nil {
+		return nil, nil, err
+	}
+
+	// Postgres GATES traffic and Redis does not; which side a dependency lands
+	// on is decided by what its loss does to a request, and the two answers are
+	// on [corehttp.RouterOptions.ReadinessChecks] and
+	// [corehttp.RouterOptions.DegradedChecks]. Postgres is here because there
+	// is no endpoint that answers correctly without it — every read and every
+	// write goes through this pool.
+	checks := corehttp.GatingChecks{"postgres": pool.Ping}
+	degraded := corehttp.DegradingChecks{}
+
+	// The Redis client is SHARED by the event bus and the guard backend; if
+	// both are in-memory it is never opened and stays nil.
+	redisClient, err := setupRedis(ctx, c, cfg, degraded, log)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	bus, err := setupEventBus(ctx, cfg, redisClient, log)
+	if err != nil {
+		return nil, nil, err
+	}
+	if err := c.Provide(svcEventBus, bus); err != nil {
+		return nil, nil, err
+	}
+
+	// The authenticator is born when the auth module registers, while the guard
+	// middleware has to be attached while the router is built. The deferred
+	// authenticator bridges the gap (see setup.go).
+	authn := &corehttp.DeferredAuthenticator{}
+
+	// The panel ring is born BEFORE the router and receives the panel AFTER: a
+	// ring cannot be added once routes are registered, and the panel waits for
+	// services resolved from the container. A request arriving before the bind
+	// is REJECTED.
+	panelRing := &adminui.Ring{}
+
+	guards, err := guardStack(cfg, authn, panelRing, redisClient, log)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	router := corehttp.NewRouter(corehttp.RouterOptions{
+		Version:         version,
+		Logger:          log,
+		ReadinessChecks: checks,
+		DegradedChecks:  degraded,
+		// The degrading budget is an operator's number, not a constant in the
+		// binary: a Redis across a network can be healthy and still answer
+		// slower than the default 250ms, and an installation that had to fork
+		// the binary to say so would be paying for our tidiness.
+		DegradedCheckTimeout: cfg.ReadinessDegradedTimeout,
+		TelemetryService:     cfg.ServiceName,
+		Middlewares:          guards,
+	})
+
+	registry := module.NewRegistry(log, func(ctx context.Context, src fs.FS, owner string) error {
+		return db.Migrate(ctx, cfg.DatabaseURL, src, owner)
+	})
+	registerModules(registry, cfg, log)
+
+	// The plugins are installed BEFORE the modules: a module brought in by a
+	// plugin must be able to go through the Register/migration/route cycle too.
+	pluginRegistry, host, err := installPlugins(ctx, cfg, c, registry, bus, log)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	// The reporter is bound between Install and Bootstrap, which is the only
+	// window that works. Earlier there is no plugin to provide one; later the
+	// modules have already come up, and a migration that fails takes the process
+	// down — unreported by a reporter that was still waiting for its turn.
+	if err := bindErrorReporter(c, reportSink, log); err != nil {
+		return nil, nil, err
+	}
+
+	if err := registry.Bootstrap(ctx, c, router); err != nil {
+		return nil, nil, err
+	}
+
+	// The cross-module workflows can only be set up HERE: each of them resolves
+	// the surfaces of several modules by name from the container, and those
+	// surfaces are not registered before Bootstrap. Their endpoints, however,
+	// are owned by a module (cart), so the handler needs the workflow; the
+	// cycle is broken by deferring the module-side resolution to the first
+	// request (see setup.go, registerWorkflows).
+	//
+	// Delete this line and no line can be added to a cart and no cart can be
+	// turned into an order: the pricing path fails CLOSED, so no line is
+	// written with the client's price or with a zero price. The entire workflow
+	// chain of Phases 5-7 — pricing, discounts, tax, payment, fulfillment, the
+	// order.placed notification and the b2b spending limit — is attached to the
+	// production binary exactly here.
+	if err := registerWorkflows(c); err != nil {
+		return nil, nil, err
+	}
+
+	return &application{
+		container: c,
+		registry:  registry,
+		router:    router,
+		plugins:   pluginRegistry,
+		host:      host,
+		panelRing: panelRing,
+		authn:     authn,
+	}, closeApp, nil
 }

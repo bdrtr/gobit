@@ -233,25 +233,15 @@ func (w *Workflows) CompleteCart(ctx context.Context, in CompleteCartInput) (Com
 		return CompleteCartResult{}, err
 	}
 
-	wf := workflow.Workflow{
-		Name: WorkflowName,
-		Steps: []workflow.Step{
-			&reserveInventoryStep{w: w, plan: plan},
-			&createOrderStep{w: w, plan: plan},
-			&authorizePaymentStep{w: w, plan: plan},
-			&capturePaymentStep{w: w, plan: plan},
-			&clearCartStep{w: w, plan: plan},
-		},
-	}
+	wf := workflow.Workflow{Name: WorkflowName, Steps: w.sagaSteps(plan)}
 
 	sctx, cancel := sagaContext(ctx)
 	defer cancel()
 
 	out, err := workflow.RunInto[CompleteCartResult](sctx, w.executor, wf, plan,
-		workflow.WithIdempotencyKey(IdempotencyKeyPrefix+plan.CartID),
-		workflow.WithLease(ExecutionLease),
-		workflow.WithCompensationRetry(compensationRetry()),
-		workflow.WithCompensationTimeout(CompensationTimeout),
+		append([]workflow.RunOption{
+			workflow.WithIdempotencyKey(IdempotencyKeyPrefix + plan.CartID),
+		}, RecoveryOptions()...)...,
 	)
 	if err != nil {
 		return CompleteCartResult{}, err
@@ -262,6 +252,76 @@ func (w *Workflows) CompleteCart(ctx context.Context, in CompleteCartInput) (Com
 		"amount", out.Amount, "currency_code", out.CurrencyCode,
 		"warnings", len(out.Warnings))
 	return out, nil
+}
+
+// sagaSteps saga'nın adım dizisini kurar.
+//
+// TEK kaynaktır ve bu bilinçlidir: aynı diziyi ikinci kez yazmak, kurtarma
+// yolunun ([Workflows.RecoveryWorkflow]) canlı yoldan sessizce ayrışmasına
+// kapı açardı. Motor kurtarmada adım ADLARINI kayıttakiyle karşılaştırır, yani
+// ayrışma bir arıza değil bir REDDE dönüşür: yarım kalmış saga hiç kurtarılamaz
+// (bkz. workflow.Recoverer).
+func (w *Workflows) sagaSteps(plan *checkoutPlan) []workflow.Step {
+	return []workflow.Step{
+		&reserveInventoryStep{w: w, plan: plan},
+		&createOrderStep{w: w, plan: plan},
+		&authorizePaymentStep{w: w, plan: plan},
+		&capturePaymentStep{w: w, plan: plan},
+		&clearCartStep{w: w, plan: plan},
+	}
+}
+
+// RecoveryOptions saga'nın kira ve telafi politikasını döner.
+//
+// TEK kaynaktır: canlı yol da ([Workflows.CompleteCart]) kurtarma yolu da
+// (workflow.Recoverer) aynı listeyi kullanır. İkisinin ayrışması sessiz bir
+// sınıf üretirdi — operatörün elle koşturduğu telafi, motorun kendi
+// koşturduğundan BAŞKA bir bütçeyle çalışır ve aynı sağlayıcı çağrısı bir
+// yolda zaman aşımına uğrayıp ötekinde uğramazdı.
+//
+// Kira ([ExecutionLease]) burada olmak zorunda: kurtarma, kirasız çağrıyı
+// reddeder çünkü kirasız, hâlâ koşan bir saga ile terk edilmiş kayıt ayırt
+// edilemez.
+func RecoveryOptions() []workflow.RunOption {
+	return []workflow.RunOption{
+		workflow.WithLease(ExecutionLease),
+		workflow.WithCompensationRetry(compensationRetry()),
+		workflow.WithCompensationTimeout(CompensationTimeout),
+	}
+}
+
+// RecoveryWorkflow yarım kalmış bir yürütmenin tanımını KAYDIN GİRDİSİNDEN
+// yeniden kurar.
+//
+// Kurtarma, telafi işlevlerine sahip bir workflow tanımı ister
+// (workflow.Recoverer) ama süreç öldüğünde o tanımı kuran plan da onunla
+// gitmiştir. Plan motorun kaydında JSON olarak durur; burada geri çözülür ve
+// aynı adımlar aynı sırayla kurulur.
+//
+// # Ödeme verisi geri gelmez ve gelmemelidir
+//
+// checkoutPlan.PaymentData kayda YAZILMAZ (`json:"-"`), dolayısıyla geri kurulan
+// planda boştur. Telafi onu kullanmaz — yetkilendirmenin girdisidir, geri
+// almanın değil — ve kayda yazılmaması bir güvenlik kararıdır: ödeme ayrıntısı
+// yürütme kaydında durmamalıdır.
+//
+// # Boş bir plan REDDEDİLİR
+//
+// JSON'un çözülmesi yetmez; `{}` de çözülür. Sepet kimliği olmayan bir planla
+// kurulan zincir, telafilerini kimliksiz çağırır ve "bir şey bırakmadım" diyen
+// bir kurtarma üretirdi.
+func (w *Workflows) RecoveryWorkflow(input json.RawMessage) (workflow.Workflow, error) {
+	var plan checkoutPlan
+	if err := json.Unmarshal(input, &plan); err != nil {
+		return workflow.Workflow{}, errors.Wrap(err, errors.KindInvalid, CodeInvalidInput,
+			"yürütme kaydındaki plan çözülemedi")
+	}
+	if plan.CartID == "" {
+		return workflow.Workflow{}, errors.Invalid(CodeInvalidInput,
+			"yürütme kaydındaki planda sepet kimliği yok; telafi zinciri kurulamaz")
+	}
+
+	return workflow.Workflow{Name: WorkflowName, Steps: w.sagaSteps(&plan)}, nil
 }
 
 // sagaContext saga'yı çağıranın İPTALİNDEN ayırır ve kendi süre bütçesine

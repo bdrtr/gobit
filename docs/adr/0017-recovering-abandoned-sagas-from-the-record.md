@@ -130,12 +130,29 @@ died with the process and what remains is the record's JSON. No compensation
 reads `Input` today; one that starts to must know the field carries two
 different types on the two paths.
 
-Recovery is **not triggered, it is arrived at**: it runs when a caller comes
-back with the same idempotency key. If nobody comes back the record stays
-`running` and `gobit stuck` keeps listing it. A scheduled sweeper was
-deliberately NOT added — recovery runs compensations, which are side effects,
-and handing that to a background job nobody watches is exactly the "decide
-silently" class this repository keeps refusing.
+Recovery is **arrived at, and now also asked for**. The engine's own path runs
+when a caller comes back with the same idempotency key — which covers the
+customer who retries and nothing else. An abandoned cart has no such caller, so
+the record would stay `running` forever, listed by `gobit stuck` and released by
+nobody.
+
+`gobit recover <execution-id> -confirm <execution-id>` is the hand that acts on
+that listing (`workflow.Recoverer`). It runs the compensation chain of ONE named
+execution and never calls Invoke: recovery undoes, it does not continue. The
+workflow definition it needs is rebuilt from the record's own persisted input
+(`checkout.Workflows.RecoveryWorkflow`), because the plan the steps were built
+from died with the process.
+
+Every refusal the engine makes for itself holds for the command too and none of
+them is overridable: no declared lease, a record that is not `running`, a lease
+that has not expired, a lost claim, a definition whose name does not match — and
+the boundary at an unrecorded `RecoveryBlocker`. The operator decides WHICH
+execution, never whether the engine's rules apply.
+
+A scheduled sweeper is still deliberately NOT added — recovery runs
+compensations, which are side effects, and handing that to a background job
+nobody watches is exactly the "decide silently" class this repository keeps
+refusing. Here a human decides and names the execution.
 
 ## Rejected options
 
