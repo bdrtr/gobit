@@ -9,10 +9,6 @@
 #
 CHANGELOG.md
 README.md
-cmd/server/belge_test.go
-cmd/server/kurulum.go
-cmd/server/kurulum_test.go
-cmd/server/main.go
 docs/adr/0001-modul-arasi-iletisim.md
 docs/adr/0002-di-container-el-yazmasi.md
 docs/adr/0003-migration-iptali.md
@@ -77,8 +73,6 @@ internal/core/http/redisguard/ratelimit.go
 internal/core/http/redisguard/redisguard.go
 internal/core/http/redisguard/redisguard_integration_test.go
 internal/core/http/redisguard/redisguard_test.go
-internal/core/http/response.go
-internal/core/http/response_test.go
 internal/core/http/router.go
 internal/core/http/router_test.go
 internal/core/http/server.go

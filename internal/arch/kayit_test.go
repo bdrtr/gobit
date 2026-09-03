@@ -459,7 +459,7 @@ func TestKayitliHerModulE2EZemindeKurulu(t *testing.T) {
 //     saklandığında —
 //
 //     func arkaPlanda(fn func()) { go fn() }
-//     arkaPlanda(func() { akislariKaydet(c) })
+//     arkaPlanda(func() { registerWorkflows(c) })
 //
 //     — denetim GEÇER, oysa özellik sağlanmamıştır: gerçek süreçte ölçüldü,
 //     senkron ikili kurulum hatasında "fatal" ile çıkış kodu 1 verirken bu
@@ -474,7 +474,7 @@ func TestKayitliHerModulE2EZemindeKurulu(t *testing.T) {
 // arkasına alındığında —
 //
 //	var akislariAc = false
-//	if akislariAc { akislariKaydet(c) }
+//	if akislariAc { registerWorkflows(c) }
 //
 // — çağrı grafta durmaya devam eder ve bu test GEÇER, oysa çalışan ikilide
 // sepete satır eklenemez ve sepet siparişe çevrilemez (iki uç da 500 döner:
@@ -1325,13 +1325,13 @@ func goIfadesiIcindekiler(agac *ast.File) map[ast.Expr]bool {
 // Graf yalnızca işlev gövdelerini gezdiği sürece, kurulumu bir işlev
 // DEĞİŞKENİNE almak onu denetimin gözünde ölü gösterirdi:
 //
-//	var akisKurucu = akislariKaydet   // paket düzeyi, hiçbir gövdede değil
-//	func main() { akisKurucu(c) }     // "akislariKaydet" adı hiç geçmiyor
+//	var akisKurucu = registerWorkflows   // paket düzeyi, hiçbir gövdede değil
+//	func main() { akisKurucu(c) }     // "registerWorkflows" adı hiç geçmiyor
 //
 // İkili tamamen çalışırken denetim "ÖLÜ KODDA" derdi — canlıyı ölü ilan eden
 // bir denetim ise en kötü denetimdir: susturulmayı hak ettiğine insanları HAKLI
 // olarak ikna eder. Bildirimi düğüm yapmak zinciri tamamlar (main -> akisKurucu
-// -> akislariKaydet) ve grafı, godoc'unun zaten VAAT ETTİĞİ genişliğe getirir.
+// -> registerWorkflows) ve grafı, godoc'unun zaten VAAT ETTİĞİ genişliğe getirir.
 //
 // # Neden bildirimler KÖK değil
 //

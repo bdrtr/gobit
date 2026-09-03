@@ -90,16 +90,16 @@ violation.
 
 ### 3. A file is translated whole, in a change that does nothing else
 
-Translating a file and changing its behaviour never share a commit.
+Translating a file and changing its behavior never share a commit.
 
 A half-translated file is worse than either language: the ledger cannot express
 it, and a reviewer looking at the remaining Turkish cannot tell whether it is
 left over or newly added. And a translation is large — the four files this
-decision was written alongside total 6070 lines — so a behavioural change
+decision was written alongside total 6070 lines — so a behavioral change
 buried inside one is a change nobody reads.
 
 The practical consequence is not "never touch a Turkish file". It is: fix the
-behaviour in the file's existing language, then translate the file in its own
+behavior in the file's existing language, then translate the file in its own
 commit. Touching one line of a 1655-line Turkish test does not oblige
 translating it in that change.
 

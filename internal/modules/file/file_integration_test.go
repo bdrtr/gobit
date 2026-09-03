@@ -400,7 +400,7 @@ func TestModulVarsayilanSaglayiciylaKaydolur(t *testing.T) {
 // Düşseydi kurulum "çalışıyor" görünür, ilk yeniden başlatmada tüm görseller
 // kaybolur ve ürün kayıtlarındaki adresler yerinde kalırdı. Bunun yerine
 // sağlayıcı hiç kaydedilmez; seçili sağlayıcı oysa açılış kompozisyon
-// kökünde durur (bkz. cmd/server dosyaSaglayicisiniDogrula).
+// kökünde durur (bkz. cmd/server verifyFileProvider).
 func TestKOKVERILMEZSEYerelSaglayiciKAYDEDILMEZ(t *testing.T) {
 	c := container.New(nil)
 	require.NoError(t, c.Provide("core.db", testPool))

@@ -81,6 +81,21 @@ Sabitlenme `1.0.0` ile olur.
 - Gövde yazımı taraması artık `tmpl.Execute(w, …)` biçimindeki şablon
   akıtmalarını da yakalıyor. Tarama alıcının import adına baktığı için şablon
   yazıcısına KÖRDÜ ve panel bu kör noktadan geçebilirdi.
+- **Bileşim kökü ve çekirdeğin yanıt yazıcısı İngilizceye çevrildi**
+  ([ADR 0012](docs/adr/0012-repository-language-and-solid.md)). `cmd/server`
+  içinde `kurulum.go` → `setup.go`, `kurulum_test.go` → `setup_test.go`,
+  `belge_test.go` → `docs_test.go`; `internal/core/http` içinde `response.go`
+  ve testi. Davranış değişmedi, ama açılış LOG MESAJLARI
+  ve kullanıcıya dönen genel iç hata mesajı artık İngilizce
+  (`"an unexpected server error occurred"`). Hata KODLARI değişmedi ve
+  değişmeyecek: kod makine sözleşmesidir, mesaj insan içindir.
+
+  Yeniden adlandırmalar sırasında kayıt denetimi gerçek bir tuzağı yakaladı:
+  eklenti kaydının yerel değişkenine `registry` demek, denetimin alıcıyı ADIYLA
+  tanıması yüzünden o satırı modül kaydı gibi gösteriyordu.
+
+  İçerik defteri 784 → 778, yol defteri 41 → 38.
+
 - ADR seçenek bölümü başlıklarını tanıyan liste İKİ DİLLİ oldu
   (`internal/arch/belge_atiflari_test.go`). Yalnızca Türkçe başlık tanıyan
   kural, İngilizce yazılmış bir ADR'nin REDDEDİLMİŞ seçeneklerini bugünkü depo

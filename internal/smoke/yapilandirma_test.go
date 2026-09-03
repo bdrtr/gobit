@@ -43,7 +43,7 @@ import (
 //
 // # Neyi kapsamaz
 //
-// Akış kurulumunun (cmd/server, akislariKaydet) KENDİSİNİ başarısız kılan bir
+// Akış kurulumunun (cmd/server, registerWorkflows) KENDİSİNİ başarısız kılan bir
 // yapılandırma bugün YAZILAMIYOR: akışlar yalnızca modüllerin koşulsuz
 // kaydettiği adları çözer (cart/pricing/region/customer/order/payment/... ve
 // çekirdek servisleri) ve o modüllerin kaydını hiçbir ortam değişkeni

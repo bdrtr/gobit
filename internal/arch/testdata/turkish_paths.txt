@@ -4,9 +4,6 @@
 # tracked separately from testdata/turkish_ledger.txt. New files must be named
 # in English; this list may only shrink.
 #
-cmd/server/belge_test.go
-cmd/server/kurulum.go
-cmd/server/kurulum_test.go
 docs/adr/0001-modul-arasi-iletisim.md
 docs/adr/0006-workflow-modul-erisimi.md
 docs/adr/0007-sertlestirme-arizada-davranis.md

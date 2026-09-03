@@ -220,7 +220,7 @@ type Config struct {
 	// kullanıcı olup olmadığı buradan bilinemez. Denetim bu yüzden tohum
 	// adımına aittir ve orada taze bir veritabanı + boş bu iki değişken,
 	// paylaşılan ortamlarda açılışı DURDURUR; gerekçesi cmd/server
-	// yonetimsizKurulumuBildir godoc'undadır.
+	// reportUnmanageableInstallation godoc'undadır.
 	AdminBootstrapEmail string `env:"ADMIN_BOOTSTRAP_EMAIL"`
 	// AdminBootstrapPassword ilk yönetim kullanıcısının parolasıdır.
 	//
@@ -229,7 +229,7 @@ type Config struct {
 	// [MinBootstrapPasswordLen] karakter olmalıdır.
 	//
 	// Tohum adımı yalnızca hiç kullanıcı yokken çalıştığı için (bkz. cmd/server
-	// tohumlaYonetici) bu değerin ortamda unutulması var olan bir yöneticinin
+	// seedAdmin) bu değerin ortamda unutulması var olan bir yöneticinin
 	// parolasını DEĞİŞTİRMEZ.
 	AdminBootstrapPassword string `env:"ADMIN_BOOTSTRAP_PASSWORD"`
 	// EventBus olay veri yolunun arka ucudur: inmemory | redis.
@@ -238,7 +238,7 @@ type Config struct {
 	// çökerse ya da kapanış [Config.ShutdownTimeout] içinde bitmezse teslim
 	// edilmemiş olaylar iz bırakmadan kaybolur — sipariş konulmuş, onay
 	// bildirimi hiç gitmemiştir. Paylaşılan ortamlarda bu risk açılışta
-	// UYARILIR (bkz. cmd/server olayVeriYolunuUyar); durdurulmaz, çünkü tek
+	// UYARILIR (bkz. cmd/server warnAboutEventBus); durdurulmaz, çünkü tek
 	// örnekli bir staging kurulumunda inmemory hâlâ meşru bir seçimdir ve
 	// GUARD_BACKEND=memory ile aynı ödünç verilir.
 	//
@@ -894,7 +894,7 @@ func (c Config) validateNotificationProvider() error {
 //
 // KÖKÜN KALICI OLDUĞU BURADA DENETLENMEZ ve bu bilinçlidir. Kural bir
 // doğrulama değil bir UYARIDIR: soruyu [Config.LocalFileRootIsDurable] sorar,
-// cevabı açılışta cmd/server yazar (bkz. dosyaKokunuUyar). Doğrulamaya
+// cevabı açılışta cmd/server yazar (bkz. warnAboutFileRoot). Doğrulamaya
 // konsaydı, dosya yükleme özelliğini hiç kullanmayan her paylaşılan kurulum
 // karşılığını göremediği bir ortam değişkeni vermeden açılamazdı; gerekçenin
 // tamamı o godoc'tadır. Buradaki tek iş BİÇİMDİR.
@@ -938,7 +938,7 @@ func (c Config) validateFile() error {
 // göremediği bir ortam değişkenini vermeden açılamazdı. Aynı ödünç
 // GUARD_BACKEND'de de verildi: bellek içi koruma çok örnekli dağıtımda
 // BOZUKTUR ama açılışı durdurmaz, uyarı loglanır (bkz. cmd/server
-// korumaYigini). Buradaki karar onunla tutarlıdır — ve nedeni ortaktır:
+// guardStack). Buradaki karar onunla tutarlıdır — ve nedeni ortaktır:
 // yapılandırmanın YANLIŞ olduğu kesin değildir, yalnızca RİSKLİDİR. Geçici bir
 // kök, dosyaların kalıcı olmasını istemeyen bir kurulumda (önizleme ortamı,
 // tek seferlik gösterim) bilinçli bir tercih olabilir.
@@ -1106,7 +1106,7 @@ func (c Config) validateAdminBootstrap() error {
 // Sınır KAPALIYKEN (RATE_LIMIT_PER_MINUTE <= 0) soru konusuzdur ve true döner:
 // hiç takılmamış bir sınırlayıcının anahtarı hakkında uyarmak, operatörü
 // ilgisiz bir ayara yönlendirirdi. O hâlin kendi bildirimi ayrıdır (bkz.
-// cmd/server hizSiniriniUyar).
+// cmd/server warnAboutRateLimit).
 //
 // # Neden varsayılan DEĞİŞMEDİ ve neden açılış DURMUYOR
 //
@@ -1148,7 +1148,7 @@ func (c Config) IsProduction() bool { return c.AppEnv == "production" }
 // ortamlardır.
 //
 // Somut arıza: staging çok örnekli çalışırken JWT_SECRET boş bırakılırsa her
-// örnek açılışta kendi rastgele sırrını üretir (bkz. cmd/server jwtSirri);
+// örnek açılışta kendi rastgele sırrını üretir (bkz. cmd/server jwtSecret);
 // A örneğinden alınan jeton B örneğinde 401 döner. Yük dengeleyicinin
 // dağıtımına bağlı olduğu için arıza ARALIKLIDIR ve teşhisi zordur —
 // üretime çıkmadan yakalanması gereken sınıftan bile değildir, çünkü üretimde
