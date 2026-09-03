@@ -695,6 +695,143 @@ func TestKiraBildirilmezseDavranisDegismez(t *testing.T) {
 	assert.Contains(t, err.Error(), "is still going")
 }
 
+// hepYeniden anahtarı HER Create'te dolu gösterir ve bulunan kaydı hep BAYAT
+// döndürür: yani motora iki turda da "terk edilmiş, yeniden dene" dedirtir.
+//
+// Üretimde bu, art arda iki terk edilmiş yürütmedir (ya da gerçek saga
+// süresinden kısa bildirilen bir kira): kayıt kapatılır, anahtar bırakılır ve
+// aradaki başka bir süreç aynı anahtarla YENİ bir yürütme açar; o da bayat
+// görünür.
+type hepYeniden struct {
+	workflow.Store
+
+	mu      sync.Mutex
+	updates int
+}
+
+func (s *hepYeniden) Create(context.Context, *workflow.Execution) error {
+	return errors.Conflict(workflow.CodeExecutionExists, "anahtar başkasında")
+}
+
+func (s *hepYeniden) bayat(id, wfAdi, key string) *workflow.Execution {
+	eski := time.Now().UTC().Add(-time.Hour)
+
+	return &workflow.Execution{
+		ID: id, Workflow: wfAdi, IdempotencyKey: key,
+		Status: workflow.StatusRunning, CreatedAt: eski, UpdatedAt: eski,
+	}
+}
+
+func (s *hepYeniden) FindByIdempotencyKey(_ context.Context, wfAdi, key string) (*workflow.Execution, error) {
+	return s.bayat("wfx_BASKASI", wfAdi, key), nil
+}
+
+func (s *hepYeniden) Get(_ context.Context, id string) (*workflow.Execution, error) {
+	return s.bayat(id, "idem", "sepet-cekisme"), nil
+}
+
+func (s *hepYeniden) UpdateStatus(context.Context, string, workflow.Status, json.RawMessage, string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.updates++
+
+	return nil
+}
+
+// TestIkiTurdaDaTerkEdilmisBulunanAnahtarSessizBasariDondurmez motorun
+// SÖYLEYEBİLECEĞİ EN KÖTÜ YALANI kapatır.
+//
+// Motor anahtarı açmayı en fazla iki tur dener. İkinci turda da "terk edilmiş,
+// yeniden dene" cevabı gelirse döngü biter — ve o noktada replay'in dönüş
+// değeri (nil, nil)'dir. Eskiden bu değer olduğu gibi çağırana veriliyordu:
+// hata nil, çıktı nil, ÇALIŞAN ADIM YOK. Çağıran nil hatayı "sipariş verildi"
+// diye okur; sepet akışında bunun anlamı, hiçbir siparişin açılmadığı bir
+// başarı yanıtıdır (ölçüldü: out=<nil> err=<nil> invokes=0).
+//
+// Doğru cevap bir hatadır ve sınıfı KindUnavailable'dır: sistem bozuk değil,
+// anahtar çekişmede; hiçbir adım koşmadığı için çağıran AYNI anahtarla
+// tekrarlayabilir.
+func TestIkiTurdaDaTerkEdilmisBulunanAnahtarSessizBasariDondurmez(t *testing.T) {
+	rec := &recorder{}
+	store := &hepYeniden{Store: workflow.NewMemoryStore()}
+	eng := workflow.New(store, testLogger())
+	wf := workflow.Workflow{Name: "idem", Steps: steps(step(rec, "a"))}
+
+	out, err := eng.Run(t.Context(), wf, nil,
+		workflow.WithIdempotencyKey("sepet-cekisme"), workflow.WithLease(time.Minute))
+
+	require.Error(t, err, "hiçbir adım koşmadan BAŞARI dönmek en kötü yalandır")
+	assert.Nil(t, out)
+	assert.Equal(t, errors.KindUnavailable, errors.KindOf(err),
+		"sistem bozuk değil, anahtar çekişmede: tekrar güvenlidir")
+	assert.Equal(t, workflow.CodeExecutionContended, errors.CodeOf(err))
+	assert.Empty(t, rec.snapshot(), "hiçbir adım çalıştırılmamalı")
+}
+
+// anahtarSerbestKalan ilk Create'te anahtarı DOLU, okumada ise YOK gösterir.
+//
+// Üretimdeki karşılığı iki çağıranın aynı terk edilmiş kayda aynı anda
+// varmasıdır: biri kaydı kapatıp anahtarı bırakır (telafi edilen yürütme
+// anahtarını NULL'lar), ötekinin Create'i çakışmayı çoktan almıştır ve
+// okumasına sıra geldiğinde anahtar artık yoktur.
+type anahtarSerbestKalan struct {
+	workflow.Store
+
+	mu       sync.Mutex
+	creates  int
+	bulmalar int
+}
+
+func (s *anahtarSerbestKalan) Create(ctx context.Context, exec *workflow.Execution) error {
+	s.mu.Lock()
+	s.creates++
+	ilk := s.creates == 1
+	s.mu.Unlock()
+
+	if ilk {
+		return errors.Conflict(workflow.CodeExecutionExists, "anahtar o an doluydu")
+	}
+
+	return s.Store.Create(ctx, exec)
+}
+
+func (s *anahtarSerbestKalan) FindByIdempotencyKey(_ context.Context, wfAdi, key string) (*workflow.Execution, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.bulmalar++
+
+	return nil, errors.NotFound(workflow.CodeExecutionNotFound,
+		"%q workflow'unun %q anahtarlı yürütmesi yok", wfAdi, key)
+}
+
+// TestAnahtarOkumadanOnceSerbestKalirsaYurutmeYenidenAcilir kendi kendini
+// çözen bir yarışın 500'e çevrilmesini kapatır.
+//
+// Create "anahtar dolu" dedikten sonra okuma "böyle bir yürütme yok" diyorsa,
+// iki çağrı ARASINDA anahtar bırakılmıştır. Bu olağan bir sıralamadır: telafi
+// edilen bir yürütme anahtarını bırakır ve terk edilmiş bir kaydı kapatan her
+// çağıran bunu yapar. Eskiden bu okuma hatası workflow_store_failed'e
+// sarılıyordu, yani müşteri kendi kendine çözülen bir yarış yüzünden 500
+// alıyordu (ölçüldü: aynı terk edilmiş kayda dört çağıran vardığında biri tam
+// olarak bu hatayı aldı).
+//
+// Doğru cevap yeniden AÇMAYI denemektir; anahtar artık serbesttir.
+func TestAnahtarOkumadanOnceSerbestKalirsaYurutmeYenidenAcilir(t *testing.T) {
+	rec := &recorder{}
+	store := &anahtarSerbestKalan{Store: workflow.NewMemoryStore()}
+	eng := workflow.New(store, testLogger())
+	wf := workflow.Workflow{Name: "idem", Steps: steps(step(rec, "a"))}
+
+	out, err := eng.Run(t.Context(), wf, nil,
+		workflow.WithIdempotencyKey("sepet-serbest"), workflow.WithLease(time.Minute))
+
+	require.NoError(t, err, "serbest kalmış bir anahtar yürütmeyi ENGELLEMEMELİ")
+	assert.JSONEq(t, `"a-out"`, rawOutput(t, out))
+	assert.Equal(t, []string{"invoke:a"}, rec.snapshot(), "adım gerçekten koşmalı")
+	assert.Equal(t, 2, store.creates, "ikinci tur yürütmeyi açmalı")
+	assert.Equal(t, 1, store.bulmalar)
+}
+
 // TestIdempotencyDifferentKeyRunsAgain farklı anahtarın yeni yürütme açtığını doğrular.
 func TestIdempotencyDifferentKeyRunsAgain(t *testing.T) {
 	rec := &recorder{}

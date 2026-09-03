@@ -214,6 +214,14 @@ const (
 	// CodeRecoveryFailed reports that an abandoned execution's compensation
 	// could not be rebuilt FROM THE RECORD (see [Recoverable]).
 	CodeRecoveryFailed = "workflow_recovery_failed"
+	// CodeExecutionContended reports that no execution could be opened for the
+	// key although every turn found the previous one abandoned and closed it.
+	//
+	// It names CONTENTION, not a broken state: another process opened a new
+	// execution with the same key in the meantime and that one also looked
+	// abandoned. Nothing was run, so a repeat is safe — the code is
+	// KindUnavailable exactly for that reason.
+	CodeExecutionContended = "workflow_execution_contended"
 )
 
 // ErrPanic is the sentinel error reporting that a step panicked.
@@ -269,6 +277,18 @@ type StepContext struct {
 // Implementations make two promises: Invoke either succeeds completely or leaves
 // no work behind; and Compensate undoes Invoke's side effect and runs
 // IDEMPOTENTLY (because it can be retried and called twice).
+//
+// # Compensate can be called CONCURRENTLY
+//
+// "Called twice" also means twice AT THE SAME TIME. On the recovery path
+// ([Recoverable]) the abandoned execution is not owned by anybody: every caller
+// that comes back with the same idempotency key finds it, and each one runs the
+// compensation chain (measured: four concurrent callers ran the same chain four
+// times). Compensation that is idempotent only in sequence is therefore not
+// enough — a Compensate that reads a quantity, adds to it and writes it back
+// releases the stock more than once when two copies interleave. Undoing by
+// IDENTITY (delete the reservation with this id, cancel the order with this id)
+// is safe; read-modify-write is not.
 type Step interface {
 	// Name is the step's name as it appears in the records and logs; it cannot
 	// be empty.
@@ -588,7 +608,7 @@ func (e *executor) Run(ctx context.Context, wf Workflow, input any, opts ...RunO
 	// now room to open one (see [WithLease]). The bound is deliberate — an
 	// unbounded loop could keep turning while two processes closed the same
 	// abandoned record one after the other.
-	for turn := range 2 {
+	for range 2 {
 		exec, err := e.open(ctx, wf, payload, o)
 		if err != nil {
 			return nil, err
@@ -600,15 +620,24 @@ func (e *executor) Run(ctx context.Context, wf Workflow, input any, opts ...RunO
 		// An execution opened with the same key was found; replay gives its
 		// outcome.
 		out, again, rerr := e.replay(ctx, wf, o)
-		if !again || turn == 1 {
+		if !again {
 			return out, rerr
 		}
 	}
 
-	// Landing here would mean "try again" was said on the second turn too, and
-	// the loop bound prevents that; it is here for the compiler.
-	return nil, errors.Internal(CodeStoreFailed,
-		"no execution could be opened for the %q workflow: the abandoned record did not close on the second turn either", wf.Name)
+	// "Try again" was said on the second turn too and the bound stops the loop
+	// here. The return value MUST be an error: replay's own return value is
+	// (nil, nil) on this path, and handing it back would report SUCCESS with no
+	// step having run and no output — the worst possible lie a saga engine can
+	// tell, because the caller reads a nil error as "the order was placed"
+	// (measured; the engine used to return exactly that).
+	//
+	// The class is KindUnavailable and not KindInternal: nothing is broken, the
+	// key is contended, and the caller CAN safely repeat the request with the
+	// same key.
+	return nil, errors.Unavailable(CodeExecutionContended,
+		"no execution could be opened for the %q workflow with the key %q: the key was held by an execution that looked abandoned on both turns; nothing was run, the request can be repeated",
+		wf.Name, o.idempotencyKey)
 }
 
 // open opens the execution record.
@@ -654,6 +683,20 @@ func (e *executor) replay(ctx context.Context, wf Workflow, o *runOptions) (out 
 	prev, err := e.store.FindByIdempotencyKey(sctx, wf.Name, o.idempotencyKey)
 	cancel()
 	if err != nil {
+		if errors.IsNotFound(err) {
+			// Our own Create had just said the key was taken, and now it is
+			// gone: between the two calls someone RELEASED the key — a
+			// compensated execution drops its key (see [Store.UpdateStatus]).
+			// This is an ordinary interleaving, not a Store failure; the caller
+			// tries to open again. Turning it into an error would answer a race
+			// that resolves ITSELF with a 500 (measured: two callers arriving
+			// on the same abandoned record produce exactly this).
+			e.log.WarnContext(ctx, "workflow: the idempotency key was released while it was being read, opening again",
+				attrWorkflow, wf.Name, "idempotency_key", o.idempotencyKey)
+
+			return nil, true, nil
+		}
+
 		return nil, false, errors.Wrap(err, errors.KindOf(err), CodeStoreFailed,
 			"the execution of the %q workflow with the key %q could not be read", wf.Name, o.idempotencyKey)
 	}

@@ -80,6 +80,26 @@ are called once more. That is not a new requirement: `Compensate` being
 idempotent is already the engine's contract, because a failed compensation does
 not stop the chain.
 
+**Negative, and this one IS new: recovery is not exclusive.** An abandoned
+execution belongs to nobody, so every caller that arrives with the same key
+recovers it — all of them at once. Measured with four concurrent callers on one
+abandoned record: the chain ran **four times**, concurrently. Until now the
+engine could only call a `Compensate` twice in SEQUENCE (a retry, or the
+best-effort compensation of a step that blew up); the recovery path is the first
+one that can call it twice at the same INSTANT, across processes.
+
+For this repository's own steps the cost is duplicate work and duplicate
+provider calls, not corruption: every compensation undoes by identity (release
+the reservation with this id, cancel the order with this id, void this payment
+session) and the database serializes those writes. The exposure is a step author
+who implements a read-modify-write compensation — and the contract never told
+them not to. It does now (see the `Step` godoc).
+
+Closing it properly needs a claim in the Store: an atomic compare-and-set on the
+row the "abandoned" judgement was based on, so exactly one process recovers and
+the others get "still going". That is a change to the `Store` port — a new
+method every implementation has to grow — and it is not made here.
+
 `StepContext.Input` is NOT typed on the recovery path — the original Go value
 died with the process and what remains is the record's JSON. No compensation
 reads `Input` today; one that starts to must know the field carries two

@@ -225,6 +225,46 @@ Sabitlenme `1.0.0` ile olur.
   başka sepetin satırı) turu düşürüyor ve hata çağıranın sırasındaki İLK
   yazılamayan satırı adlandırıyor.
 
+### Düzeltildi
+
+- **Motor, hiçbir adım koşmadan BAŞARI dönebiliyordu.** Yürütme açmayı en fazla
+  iki tur denerken ikinci turda da "terk edilmiş, yeniden dene" cevabı gelirse
+  döngü bitiyor ve o noktada `replay`'in dönüş değeri `(nil, nil)` oluyordu —
+  bu değer olduğu gibi çağırana veriliyordu. Ölçüldü: `out=<nil> err=<nil>
+  invokes=0`. Çağıran nil hatayı "sipariş verildi" diye okur; sepet akışında
+  bunun anlamı, hiçbir siparişin açılmadığı bir başarı yanıtıdır — bir saga
+  motorunun söyleyebileceği en kötü yalan.
+
+  Döngünün ardındaki hata artık gerçekten dönüyor ve sınıfı `KindUnavailable`
+  (503), yeni kodu `workflow_execution_contended`: sistem bozuk değil, anahtar
+  çekişmede ve hiçbir adım koşmadığı için çağıran AYNI anahtarla
+  tekrarlayabilir. Üretimde bu duruma art arda iki terk edilmiş yürütmeyle ya da
+  gerçek saga süresinden kısa bildirilen bir `WithLease` ile varılır.
+
+- **Kendi kendine çözülen bir yarış 500 dönüyordu.** `Create` "anahtar dolu"
+  dedikten sonra okuma "böyle bir yürütme yok" diyorsa, iki çağrı ARASINDA
+  anahtar bırakılmıştır — telafi edilen bir yürütme anahtarını bırakır ve terk
+  edilmiş bir kaydı kapatan her çağıran bunu yapar. Motor bu okumayı
+  `workflow_store_failed` diye sarıyordu, yani müşteri kendi kendine çözülen bir
+  yarış yüzünden 500 alıyordu (ölçüldü: aynı terk edilmiş kayda dört eşzamanlı
+  çağıran vardığında biri tam olarak bu hatayı aldı). Artık yeniden AÇMAYI
+  deniyor; anahtar zaten serbesttir.
+
+  İki arıza da aynı avda, v0.7.0 sonrası eklenen kurtarma yolunun eşzamanlılık
+  ölçümüyle bulundu; ikisi de mutasyonla kanıtlandı (eski davranış geri
+  konduğunda testler tek tek düşüyor).
+
+- **Telafinin EŞZAMANLI çağrılabildiği yazıya geçti** (davranış değişmedi).
+  Terk edilmiş kayıt kimsenin sahipliğinde olmadığı için aynı anahtarla varan
+  her çağıran onu kurtarır; dört eşzamanlı çağıranla ölçüldü, zincir DÖRT kez
+  koştu. `Step` sözleşmesi bugüne dek yalnızca "iki kez çağrılabilir" diyordu ve
+  bu SIRAYLA anlamına geliyordu. Deponun kendi adımlarında bedel yinelenen iş ve
+  yinelenen sağlayıcı çağrısıdır (her telafi KİMLİKLE geri alır), ama telafisini
+  oku-değiştir-yaz olarak yazan bir eklenti adımı stoğu birden çok kez bırakır.
+  Sözleşme artık bunu açıkça yasaklıyor; tekelliği gerçekten kurmanın yolu
+  (Store'a CAS talebi) ve neden bu turda yapılmadığı
+  [ADR 0017](docs/adr/0017-recovering-abandoned-sagas-from-the-record.md)'de.
+
 ## [0.7.0] — 2026-09-03
 
 ### Kırıcı değişiklikler

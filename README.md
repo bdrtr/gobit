@@ -1486,6 +1486,17 @@ açıktır.
   `running` kalır ve `gobit stuck` onu listelemeye devam eder. Zamanlanmış bir
   süpürücü bilinçli olarak yoktur — kurtarma telafi çalıştırır, yani yan etkisi
   olan bir iştir. Komutun kendisi hâlâ YALNIZCA OKUR.
+
+  **Kurtarma TEKELLİ DEĞİLDİR.** Terk edilmiş kayıt kimsenin sahipliğinde
+  olmadığı için aynı anahtarla varan her çağıran onu kurtarır — hepsi aynı anda
+  (dört eşzamanlı çağıranla ölçüldü: zincir DÖRT kez koştu). Bu deponun kendi
+  adımlarında bedeli yinelenen iş ve yinelenen sağlayıcı çağrısıdır, bozulma
+  değil: her telafi KİMLİKLE geri alır (şu kimlikli rezervasyonu bırak, şu
+  siparişi iptal et) ve veritabanı o yazmaları sıraya sokar. Açıkta kalan,
+  telafisini oku-değiştir-yaz olarak yazan bir eklenti adımıdır; sözleşme artık
+  bunu açıkça yasaklıyor (`workflow.Step` godoc'u). Tekelliği gerçekten kurmak
+  Store'a bir CAS talebi eklemek demektir ve o değişiklik yapılmadı
+  ([ADR 0017](docs/adr/0017-recovering-abandoned-sagas-from-the-record.md)).
 - **Hata bildirimi bir İŞARETTİR, olayın kopyası değil.** `error-sentry`
   eklentisi ([ADR 0014](docs/adr/0014-error-reporting.md)) toplayıcıya arıza
   kodunu, güvenli mesajı ve `request_id`'yi gönderir; geri kalan her şey logda
