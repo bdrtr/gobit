@@ -10,6 +10,38 @@ Sabitlenme `1.0.0` ile olur.
 
 ## [Yayımlanmamış]
 
+## [0.7.0] — 2026-09-03
+
+### Kırıcı değişiklikler
+
+Üçü de `0.x` boyunca minor sürümde meşrudur (bkz. dosyanın başı) ve üçü de
+**yükseltirken bakılacak** şeylerdir.
+
+- **`/ready` artık her bağımlılık için 503 DÖNMÜYOR.** Redis erişilemezken uç
+  `200` ve gövdede `"status": "degraded"` döner; yalnızca Postgres gibi
+  KESEN bir bağımlılık `503` üretir. 503'e alarm kuran bir kurulum Redis
+  kesintisini artık o yoldan GÖRMEZ — sinyal gövdedeki `degraded` alanı ve
+  düşen her yoklama için yazılan WARN satırıdır. Değişikliğin sebebi ve ölçümü
+  aşağıda; kararın kendisi
+  [ADR 0007](docs/adr/0007-sertlestirme-arizada-davranis.md)'de.
+- **Bir sepet en fazla 100 farklı satır taşır.** Tavana ulaşmış bir sepete YENİ
+  satır açmak isteyen istek `400` ve `cart_workflow_line_limit_reached` alır.
+  Var olan satırın adedini artırmak muaftır; tavandan ÖNCE açılmış daha büyük
+  sepetler hesaplanabilir ve ödenebilir kalır, yalnızca yeni satır alamaz.
+- **Arama sonuçlarının SIRASI değişti.** Sonuç KÜMESİ aynı; çok kelimeli bir
+  sorguda artık alan ağırlığı (başlık > anahtar > açıklama) kelime yakınlığını
+  yeniyor. Sıralamaya bağlı ekran görüntüsü testi olan istemciler etkilenir.
+
+Çerçeveyi gömen (Go) kurulumlar için üç imza değişti:
+
+- `NewMemoryIdempotencyStore` artık bayt bütçesini de alıyor (`ttl, butce`).
+- `RouterOptions.ReadinessChecks` alanının tipi `GatingChecks` oldu ve yanına
+  `DegradedChecks` geldi. Adlandırılmamış bir harita değişmezi hâlâ atanabilir;
+  adlandırılmış `map[string]HealthCheck` tipinde bir DEĞİŞKEN geçen çağıran
+  derlenmez — ve bu bilinçlidir, iki sınıfın karışmaması buna dayanıyor.
+- `cart/api.Carts` arayüzünden `AddLineItem` kaldırıldı. Servis metodunun
+  kendisi duruyor; satır ekleme akıştan geçer.
+
 ### Eklendi
 
 - **Bellek içi idempotency deposu SINIRSIZ büyüyordu; bayt bütçesi geldi**
@@ -2039,7 +2071,8 @@ yalnızca test koşarak görünmeyen üç arıza:
   yoktur; geri alma elle yapılır. İleri yön açılışta otomatiktir.
 - Yük testi süreç içidir; kapasite planı üretmez.
 
-[Yayımlanmamış]: https://github.com/bdrtr/gobit/compare/v0.6.0...HEAD
+[Yayımlanmamış]: https://github.com/bdrtr/gobit/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/bdrtr/gobit/releases/tag/v0.7.0
 [0.6.0]: https://github.com/bdrtr/gobit/releases/tag/v0.6.0
 [0.5.0]: https://github.com/bdrtr/gobit/releases/tag/v0.5.0
 [0.4.0]: https://github.com/bdrtr/gobit/releases/tag/v0.4.0

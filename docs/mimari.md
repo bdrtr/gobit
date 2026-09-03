@@ -315,7 +315,6 @@ bırakırdı — ödemede bunun bedeli paranın beklenmedik bir kuruluşa gitmes
 | Modüller arası imzalar derleme zamanında denetlenmez | Ayrışma çalışma anında görünür | Her interop yüzeyi için entegrasyon testi (mevcut kural) |
 | Oturum iptali yalnızca **toptan** | Tek cihazı düşürmek yok | jti bazlı kara liste — her istekte okunan yeni bir depo demektir |
 | Yük testi süreç içi | Kapasite planı üretmez | Gerçek dağıtımda dış yük aracı |
-| Satış kanalı bağı kuruluyor ama okunmuyor | Katalog her publishable anahtar için aynı | `product↔sales_channel` bağını bildir ve store listesini `Principal.SalesChannelIDs` ile süz |
 | Migration geri alma yüzeyi yok | `.down.sql` dosyaları çağrılamıyor | `cmd/server`'a migrate alt komutu |
 | Yetki sözlüğü modül başına iki girdi | Kaynak bazlı ayrım yok (örn. yalnızca varyant okuma) | Ayrım gerçekten gerektiğinde eklenir; şimdiden eklemek yanlış bir kesinlik hissi verirdi |
 | Bellek içi idempotency deposu bir bayt bütçesiyle sınırlı | Bütçe dolunca **en eski** kayıt düşer; o anahtarla gelen tekrar yeniden işlenir (mükerrer yan etki) | `GUARD_BACKEND=redis`, ya da daha büyük `IDEMPOTENCY_MAX_MEMORY_BYTES` |

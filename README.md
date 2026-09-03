@@ -1558,7 +1558,7 @@ make rename-module MODULE=github.com/kullanici/repo
 
 ## Sürüm
 
-Güncel sürüm: **v0.6.0**. Değişiklikler için
+Güncel sürüm: **v0.7.0**. Değişiklikler için
 [`CHANGELOG.md`](./CHANGELOG.md).
 
 - **v0.1.0** — Faz 0–9'un tamamı.
@@ -1597,6 +1597,18 @@ Güncel sürüm: **v0.6.0**. Değişiklikler için
   ([ADR 0012](docs/adr/0012-repository-language-and-solid.md)).
   **Hata MESAJLARI ve hata ayrıntı anahtarları İngilizceye çevrildi; hata
   KODLARI değişmedi.**
+- **v0.7.0** — üretime bakan tur: beş arıza, hepsi ÖLÇÜLEREK. Vitrinin iki sıcak
+  yolu düzeldi — arama eşleşen HER belgeyi `ts_rank_cd` ile puanlıyordu (52 bin
+  eşleşmede 663 ms → 25 ms) ve sepet kurmanın fiyat okuması satır sayısının
+  KARESİYLE büyüyordu (100 satırlık bir sepet 10.300 → 400 sorgu). Sınırsız iki
+  kaynak sınırlandı: PostgreSQL havuzu artık bir düğme (`DB_MAX_CONNS`), bellek
+  içi idempotency deposu bir bayt bütçesi taşıyor. `/ready` ise Redis'i KAPI
+  saymaktan vazgeçti; bir failover bütün kopyaları aynı anda trafikten
+  çıkarıyordu, yani koruma katmanının kendisi en büyük kesinti kaynağı oluyordu
+  ([ADR 0007](docs/adr/0007-sertlestirme-arizada-davranis.md) bu bölümle
+  genişletildi). **Kırıcı değişiklikler var**: `/ready` artık Redis için 503
+  dönmüyor, bir sepet en fazla 100 satır taşıyor ve arama sonuçlarının sırası
+  değişti.
 
 `0.x` boyunca **kırıcı değişiklikler minor sürümlerde gelebilir**: API yüzeyi
 henüz sabitlenmemiştir. Sabitlenme `1.0.0` ile olur.
