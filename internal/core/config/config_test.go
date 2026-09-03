@@ -25,7 +25,8 @@ var envKeys = []string{
 	"OTEL_TRACES_SAMPLER_ARG", "METRIC_EXPORT_INTERVAL",
 	"RATE_LIMIT_PER_MINUTE", "TRUSTED_PROXY_HOPS", "IDEMPOTENCY_TTL",
 	"LOG_LEVEL", "LOG_FORMAT", "SHUTDOWN_TIMEOUT", "READ_HEADER_TIMEOUT",
-	"READ_TIMEOUT", "WRITE_TIMEOUT", "IDLE_TIMEOUT", "EVENT_BUS", "EVENT_BUS_CONSUMER",
+	"READ_TIMEOUT", "WRITE_TIMEOUT", "IDLE_TIMEOUT", "READINESS_DEGRADED_TIMEOUT",
+	"EVENT_BUS", "EVENT_BUS_CONSUMER",
 	"JWT_SECRET", "JWT_TTL",
 	"ADMIN_BOOTSTRAP_EMAIL", "ADMIN_BOOTSTRAP_PASSWORD",
 	"GUARD_BACKEND", "REDIS_KEY_PREFIX", "NOTIFICATION_PROVIDER",
@@ -119,14 +120,15 @@ func TestLoadInvalidEnv(t *testing.T) {
 	tests := map[string]struct {
 		key, value string
 	}{
-		"bilinmeyen ortam":  {"APP_ENV", "staging-2"},
-		"port sıfır":        {"APP_PORT", "0"},
-		"port aralık dışı":  {"APP_PORT", "70000"},
-		"bilinmeyen seviye": {"LOG_LEVEL", "trace"},
-		"bilinmeyen biçim":  {"LOG_FORMAT", "logfmt"},
-		"bilinmeyen bus":    {"EVENT_BUS", "kafka"},
-		"negatif timeout":   {"SHUTDOWN_TIMEOUT", "-1s"},
-		"sayı olmayan port": {"APP_PORT", "abc"},
+		"bilinmeyen ortam":    {"APP_ENV", "staging-2"},
+		"port sıfır":          {"APP_PORT", "0"},
+		"port aralık dışı":    {"APP_PORT", "70000"},
+		"bilinmeyen seviye":   {"LOG_LEVEL", "trace"},
+		"bilinmeyen biçim":    {"LOG_FORMAT", "logfmt"},
+		"bilinmeyen bus":      {"EVENT_BUS", "kafka"},
+		"negatif timeout":     {"SHUTDOWN_TIMEOUT", "-1s"},
+		"sıfır probe bütçesi": {"READINESS_DEGRADED_TIMEOUT", "0s"},
+		"sayı olmayan port":   {"APP_PORT", "abc"},
 	}
 
 	for name, tt := range tests {

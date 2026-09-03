@@ -349,6 +349,21 @@ type Config struct {
 	// ShutdownTimeout, SIGTERM sonrası açık isteklerin tamamlanması için
 	// tanınan azami süredir.
 	ShutdownTimeout time.Duration `env:"SHUTDOWN_TIMEOUT" envDefault:"15s"`
+	// ReadinessDegradedTimeout, /ready ucunun DERECELENDİREN bağımlılıkları
+	// (bugün yalnızca Redis) için YOKLAMA BAŞINA bütçesidir.
+	//
+	// Derecelendiren bir yoklamanın cevabını kimse beklemiyor — örnek iki hâlde
+	// de hizmet veriyor — dolayısıyla yavaşlığının yapabileceği tek şey PROBE'u
+	// düşürmektir: erişilemez bir Redis'e atılan tek Ping 1,7 saniye sürüyor
+	// (istemci beş kez deniyor) ve kubelet'in readinessProbe.timeoutSeconds
+	// varsayılanı 1'dir, yani bütçesiz bir yoklama pod'u NotReady yapardı —
+	// ayrımın önlemek için var olduğu tam kesintiyi arka kapıdan geri getirerek.
+	//
+	// Varsayılan 250 ms'dir ve ayarlanabilir olması şarttır: Redis ağın öte
+	// yanındaysa sağlıklı bir Ping de bu bütçeyi aşabilir ve kurulum sürekli
+	// "degraded" okur. Bütçe SESSİZ DEĞİLDİR — aşıldığında /ready gövdesindeki
+	// mesaj ve WARN satırı bütçenin kendisini yazar.
+	ReadinessDegradedTimeout time.Duration `env:"READINESS_DEGRADED_TIMEOUT" envDefault:"250ms"`
 	// ReadHeaderTimeout, yalnızca istek BAŞLIKLARININ okunması için tanınan süredir.
 	ReadHeaderTimeout time.Duration `env:"READ_HEADER_TIMEOUT" envDefault:"10s"`
 	// ReadTimeout, başlık + gövdenin tamamının okunması için tanınan süredir.
@@ -639,6 +654,9 @@ func (c Config) Validate() error {
 	}
 	if c.RedisURL == "" {
 		return fmt.Errorf("config: REDIS_URL boş olamaz")
+	}
+	if c.ReadinessDegradedTimeout <= 0 {
+		return fmt.Errorf("config: READINESS_DEGRADED_TIMEOUT pozitif olmalı, %s verildi", c.ReadinessDegradedTimeout)
 	}
 	if c.ShutdownTimeout <= 0 {
 		return fmt.Errorf("config: SHUTDOWN_TIMEOUT pozitif olmalı, %s verildi", c.ShutdownTimeout)

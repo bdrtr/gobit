@@ -220,6 +220,50 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Değiştirildi
 
+- **Redis kesintisi TÜM kopyaları aynı anda trafikten çıkarıyordu.** `/ready`
+  bugüne kadar tek sınıf yoklama tanıyordu: biri düşünce 503. `GUARD_BACKEND`
+  çok örnekli her kurulumda `redis` olduğu için Redis o kümeye giriyordu ve bir
+  failover sırasında bütün pod'lar aynı saniyede NotReady oluyordu — Kubernetes
+  Service'i boşaltıyor, trafiğin kaydırılabileceği sağlıklı kopya kalmıyor,
+  kısmi bir bozulma tam bir kesintiye dönüyordu. Bu, ADR 0007'nin koruma
+  katmanları için REDDETTİĞİ "her şey için fail-closed" seçeneğinin bir kat
+  yukarısıdır; ADR o bölümle genişletildi.
+
+  Yoklamalar artık İKİ SINIF: `ReadinessChecks` düşerse 503 ve örnek trafikten
+  çıkar (Postgres), `DegradedChecks` düşerse gövdede bildirilir ama kod 200
+  kalır (Redis). Gövdedeki `status` üç ayrı değer alır — `ok`, `degraded`,
+  `unavailable` — çünkü eskiden 503 de "degraded" diyordu ve iki durum bir
+  logdan ayırt edilemiyordu.
+
+  Redis'in derecelendiren tarafa konması ÖLÇÜLDÜ (`GUARD_BACKEND=redis`, Redis
+  kapalı): vitrin katalog okuması 200, `Idempotency-Key` taşımayan yazma 200,
+  taşıyan yazma istek başına yeniden denenebilir bir 503
+  (`idempotency_store_unavailable`). Hiçbir istek yanlış işlenmiyor —
+  korunamayan tek sınıf reddedilen tek sınıf. Kapı yapmak, 200 dönen istekleri
+  de birlikte götürürdü.
+
+  İki sınıfın Go tipi de AYRIDIR (`GatingChecks`, `DegradingChecks`): bir
+  bağımlılığı taraf değiştirmek tek kelimelik, incelemede masum görünen bir
+  düzenlemedir ve her testi geçer. Adlandırılmamış bir `map[string]HealthCheck`
+  ikisine birden atanabildiği için bileşim kökünde o tipin kullanılmadığı da
+  ayrıca sınanıyor (`TestReadinessMapsUseTheNamedTypes`) — mutasyonla
+  doğrulandı: adlandırılmamış harita kullanan sürüm Redis'i kapı tarafına geri
+  koyuyor ve depodaki hiçbir test düşmüyordu.
+
+  Derecelendiren yoklamaların bütçesi ayrı ve KISA (varsayılan 250 ms,
+  `READINESS_DEGRADED_TIMEOUT`): erişilemez bir Redis'e atılan tek Ping 1,7
+  saniye sürüyor (istemci beş kez deniyor) ve kubelet'in varsayılan probe zaman
+  aşımı 1 saniye — bütçesiz bir "bozulma" yoklaması, probu düşürerek aynı
+  kesintiyi arka kapıdan geri getirirdi. Bütçe aşımı gövdede bütçeyi adıyla
+  yazar; ama bütçenin bir bedeli var ve godoc'a yazıldı: kök sebebi yok ediyor,
+  "connection refused" ile DNS hatası aynı cümleye iniyor.
+
+  Düşen her derecelendiren yoklama WARN logluyor ve satır örneğin HİZMET
+  VERMEYE DEVAM ETTİĞİNİ söylüyor: kod 200 kaldığı için orkestratörde hiçbir
+  olay üretmez, yani o satır bozulmanın tek alarm kanalıdır. Aynı ad iki sınıfa
+  birden yazılırsa kapı tarafı kazanır ve bu da açılışta bir kez uyarı olarak
+  bildirilir.
+
 - **Sepet kurmanın fiyat okuması KARESEL büyüyordu; doğrusala indi.** Satır
   ekleyen her istek sepetin TÜM satırlarını yeniden fiyatlıyor ve pricing'e
   satır başına iki sorgu açıyordu, yani N satırlık bir sepeti kurmak ~1,5N²

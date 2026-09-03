@@ -22,7 +22,33 @@ curl -s localhost:9000/ready
 
 `/health` yalnızca sürecin canlı olduğunu bildirir (liveness) ve bağımlılıkları
 sınamaz — geçici bir veritabanı kesintisi sürecin öldürülmesine yol açmamalıdır.
-`/ready` bağımlılıkları sınar ve biri düşükse **503** döner (readiness).
+
+`/ready` bağımlılıkları sınar ama hepsine AYNI OYU vermez, çünkü hazır olma bir
+yönlendirme kararıdır: soru "bu örnek istek karşılayabilir mi", "her şey yolunda
+mı" değil.
+
+| gövdedeki `status` | kod | anlamı |
+|---|---|---|
+| `ok` | 200 | her yoklama geçti |
+| `degraded` | 200 | derecelendiren bir bağımlılık düştü; **bu örnek hizmet vermeye devam ediyor** |
+| `unavailable` | 503 | trafiği KESEN bir bağımlılık düştü; örnek yük dengeleyiciden çıkarılmalı |
+
+Postgres kesendir: onsuz hiçbir uç doğru cevap vermez. Redis
+DERECELENDİRENDİR ve bu ölçülmüş bir karardır — Redis erişilemezken katalog
+okuması 200, `Idempotency-Key` taşımayan yazma 200, taşıyan yazma ise istek
+başına yeniden denenebilir bir 503 döner. Redis'i kesen tarafa koymak, TÜM
+kopyaları aynı anda trafikten çıkarırdı (hepsi aynı Redis'i paylaşır), yani
+200 dönen istekleri de birlikte götürürdü: kısmi bir bozulma tam bir kesintiye
+çevrilirdi. Aynı karar bir kat aşağıda, koruma katmanları için
+[ADR 0007](docs/adr/0007-sertlestirme-arizada-davranis.md)'de verilmiştir.
+
+Derecelendiren yoklamaların bütçesi `READINESS_DEGRADED_TIMEOUT`'tur
+(varsayılan 250 ms) ve kısa olması şarttır: erişilemez bir Redis'e atılan tek
+`PING` 1,7 saniye sürer (istemci beş kez dener) ve kubelet'in varsayılan probe
+zaman aşımı 1 saniyedir — bütçesiz bir yoklama, tam da önlemek için var olduğu
+kesintiyi probe'u düşürerek geri getirirdi. Düşen her derecelendiren yoklama
+ayrıca WARN loglar: kod 200 kaldığı için orkestratörde hiçbir olay üretmez,
+yani o satır bozulmanın TEK alarm kanalıdır.
 
 `version` alanı derleme sırasında `git describe --tags --always --dirty`
 çıktısından gömülür, yani yukarıdaki değer sizin çalışma ağacınızda farklı

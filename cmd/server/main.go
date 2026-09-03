@@ -202,11 +202,18 @@ func run() error {
 		return err
 	}
 
-	checks := map[string]corehttp.HealthCheck{"postgres": pool.Ping}
+	// Postgres GATES traffic and Redis does not; which side a dependency lands
+	// on is decided by what its loss does to a request, and the two answers are
+	// on [corehttp.RouterOptions.ReadinessChecks] and
+	// [corehttp.RouterOptions.DegradedChecks]. Postgres is here because there
+	// is no endpoint that answers correctly without it — every read and every
+	// write goes through this pool.
+	checks := corehttp.GatingChecks{"postgres": pool.Ping}
+	degraded := corehttp.DegradingChecks{}
 
 	// The Redis client is SHARED by the event bus and the guard backend; if
 	// both are in-memory it is never opened and stays nil.
-	redisClient, err := setupRedis(ctx, c, cfg, checks, log)
+	redisClient, err := setupRedis(ctx, c, cfg, degraded, log)
 	if err != nil {
 		return err
 	}
@@ -236,11 +243,17 @@ func run() error {
 	}
 
 	router := corehttp.NewRouter(corehttp.RouterOptions{
-		Version:          version,
-		Logger:           log,
-		ReadinessChecks:  checks,
-		TelemetryService: cfg.ServiceName,
-		Middlewares:      guards,
+		Version:         version,
+		Logger:          log,
+		ReadinessChecks: checks,
+		DegradedChecks:  degraded,
+		// The degrading budget is an operator's number, not a constant in the
+		// binary: a Redis across a network can be healthy and still answer
+		// slower than the default 250ms, and an installation that had to fork
+		// the binary to say so would be paying for our tidiness.
+		DegradedCheckTimeout: cfg.ReadinessDegradedTimeout,
+		TelemetryService:     cfg.ServiceName,
+		Middlewares:          guards,
 	})
 
 	registry := module.NewRegistry(log, func(ctx context.Context, src fs.FS, owner string) error {
@@ -478,16 +491,45 @@ func run() error {
 }
 
 // setupRedis opens the Redis client if it is needed, registers it in the
-// container and adds it to the readiness check.
+// container and adds it to the DEGRADING readiness checks.
 //
 // If it is not needed it returns (nil, nil) and NO connection is attempted:
 // producing a "could not connect" warning in an installation that does not need
 // Redis would drown a real failure in noise.
+//
+// # Why the probe degrades instead of gating
+//
+// Redis is degrading, not gating, and the map it is written into is the whole
+// decision — see [corehttp.RouterOptions.DegradedChecks] for why, and ADR 0007
+// for the identical decision one layer down, where the guard middlewares
+// already choose per component what a Redis failure costs.
+//
+// Both users of this client survive its loss, and neither survival is a guess:
+//
+//   - the guard backend, measured in TestRedisOutageMeasurement — catalog read
+//     200, unkeyed write 200, keyed write a retryable per-request 503;
+//   - the event bus, whose publish failure is swallowed by design at the call
+//     site (see the order service's publishOrderPlaced: the order is WRITTEN
+//     and the lost event is logged at ERROR, because failing there would make
+//     the saga compensate an order that exists).
+//
+// Registering it as a gating check would have taken every replica out of the
+// load balancer during a Redis failover — all of them at the same instant,
+// since they share this one Redis — and turned a degradation that serves 200s
+// into a storefront that serves nothing.
+//
+// The startup ping below is NOT the same decision and stays fail-closed: an
+// unreachable Redis at boot is far more likely a wrong REDIS_URL than a
+// failover, and an installation that silently ran on a guard backend it never
+// reached is precisely the "believed to work while it does not" case
+// guardStack refuses. The cost is that a pod restarting DURING an outage
+// crashloops until Redis is back; that is loud and it does not remove the
+// replicas that are already serving.
 func setupRedis(
 	ctx context.Context,
 	c *container.Container,
 	cfg config.Config,
-	checks map[string]corehttp.HealthCheck,
+	degraded corehttp.DegradingChecks,
 	log *slog.Logger,
 ) (*redis.Client, error) {
 	if !cfg.NeedsRedis() {
@@ -514,11 +556,16 @@ func setupRedis(
 		return nil, err
 	}
 
-	checks["redis"] = func(ctx context.Context) error { return client.Ping(ctx).Err() }
+	degraded["redis"] = func(ctx context.Context) error { return client.Ping(ctx).Err() }
+	// The readiness policy is logged next to the backend flags because it is
+	// the line an operator reads when deciding what a Redis alert means. Left
+	// unsaid, "the pods are still Ready" during an outage reads as a broken
+	// probe rather than the decision it is.
 	log.InfoContext(ctx, "redis connected",
 		"addr", opt.Addr,
 		"event_bus", cfg.EventBus == config.BackendRedis,
 		"guard_backend", cfg.GuardBackend == config.BackendRedis,
+		"readiness", "degrading: a Redis outage reports \"degraded\" on /ready and does NOT take this instance out of traffic",
 	)
 
 	return client, nil
