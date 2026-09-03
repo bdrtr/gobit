@@ -9,233 +9,245 @@ import (
 	"time"
 )
 
-// Status bir yürütmenin genel durumudur.
+// Status is an execution's overall state.
 //
-// Dört değer, yürütmenin dünyada bıraktığı ize göre okunmalıdır: completed
-// "iş yapıldı", failed "iş yapıldı ve GERİ ALINDI", compensation_failed ise
-// "iş yapıldı, geri alınamadı" demektir. Bu ayrım olmadan bir operatör hangi
-// yürütmeye elle dokunması gerektiğini bilemez.
+// The four values have to be read by the trace the execution left in the world:
+// completed means "the work was done", failed means "the work was done and
+// UNDONE", and compensation_failed means "the work was done and could not be
+// undone". Without that distinction an operator cannot tell which execution
+// needs a human hand.
 type Status string
 
-// Yürütme durumları.
+// The execution states.
 const (
-	// StatusRunning yürütmenin hâlâ sürdüğünü bildirir. Bir yürütme kaydı bu
-	// durumda açılır ve yalnızca uç durumlardan birine geçer.
+	// StatusRunning reports that the execution is still going. An execution
+	// record is opened in this state and moves only into one of the terminal
+	// states.
 	StatusRunning Status = "running"
-	// StatusCompleted tüm adımların başarıyla tamamlandığını bildirir.
+	// StatusCompleted reports that every step finished successfully.
 	StatusCompleted Status = "completed"
-	// StatusFailed bir adımın patladığını ve telafinin BAŞARIYLA tamamlandığını
-	// bildirir: yarım kalmış iş yoktur, sistem tutarlıdır.
+	// StatusFailed reports that a step blew up and compensation completed
+	// SUCCESSFULLY: no work is left half-done, the system is consistent.
 	//
-	// # Bu duruma geçmek idempotency anahtarını BIRAKIR
+	// # Moving into this state RELEASES the idempotency key
 	//
-	// Anlamı gereği: "telafi edildi" tam olarak "bu deneme dünyada iz
-	// bırakmadı" demektir ve anahtar da bir izdir. Bırakılmasaydı — ki bir
-	// zamanlar bırakılmıyordu — aynı anahtarla gelen her sonraki çağrı sonsuza
-	// dek 409 alırdı. Vitrinde bunun karşılığı şuydu: kartı reddedilen müşteri
-	// O SEPETİ BİR DAHA ÖDEYEMİYORDU. Anahtar sepet kimliğinden türetildiği
-	// için "yeni bir anahtar kullanın" tavsiyesinin HTTP yüzeyinde bir
-	// karşılığı da yoktu.
+	// By its meaning: "it was compensated" is exactly "this attempt left no
+	// trace in the world", and the key is a trace too. Were it not released —
+	// and once it was not — every later call with the same key would get a 409
+	// forever. In the storefront that read: a customer whose card was declined
+	// COULD NEVER PAY FOR THAT CART AGAIN. And because the key is derived from
+	// the cart id, the advice to "use a new key" had no counterpart on the HTTP
+	// surface either.
 	//
-	// Kayıt SİLİNMEZ, yalnızca anahtarı düşer: başarısız deneme denetim kaydı
-	// olarak kalır.
+	// The record is NOT deleted, only its key drops: the failed attempt stays
+	// as an audit record.
 	//
-	// Öteki uç durumların hiçbiri anahtarı bırakmaz ve bırakmamalıdır:
-	// [StatusCompleted] bıraksaydı aynı sepet iki kez tahsil edilirdi,
-	// [StatusCompensationFailed] bıraksaydı elle müdahale bekleyen yarım bir iş
-	// yeni bir denemenin üstüne binerdi.
+	// None of the other terminal states releases the key, and none should:
+	// were [StatusCompleted] to release it the same cart would be charged
+	// twice, and were [StatusCompensationFailed] to release it a new attempt
+	// would land on top of half-done work waiting for a human.
 	StatusFailed Status = "failed"
-	// StatusCompensationFailed hem adımın hem telafinin patladığını bildirir.
-	// Sistem tutarsız kalmıştır; ELLE MÜDAHALE gerekir. Bir izleme kuralı
-	// öncelikle bu durumu saymalıdır.
+	// StatusCompensationFailed reports that both the step and its compensation
+	// blew up. The system is left inconsistent; A HUMAN IS NEEDED. A monitoring
+	// rule should count this state first.
 	StatusCompensationFailed Status = "compensation_failed"
 )
 
-// StepStatus tek bir adımın son durumudur.
+// StepStatus is a single step's final state.
 type StepStatus string
 
-// Adım durumları.
+// The step states.
 const (
-	// StepInvoked adımın Invoke'unun başarıyla tamamlandığını bildirir.
+	// StepInvoked reports that the step's Invoke finished successfully.
 	StepInvoked StepStatus = "invoked"
-	// StepFailed adımın Invoke'unun patladığını bildirir. Bu adım kural olarak
-	// TELAFİ EDİLMEZ; başarısız bir Invoke'un geri alınacak bir işi yoktur.
-	// Tek istisna motorun KENDİ tetiklediği tekrardır: Attempts > 1 ise adım en
-	// iyi çaba telafi edilir ve kaydı compensated ya da compensation_failed
-	// olarak güncellenir (bkz. paket yorumu).
+	// StepFailed reports that the step's Invoke blew up. As a rule that step is
+	// NOT COMPENSATED; a failed Invoke has no work to undo. The one exception is
+	// a retry the engine ITSELF triggered: when Attempts > 1 the step is
+	// compensated on a best-effort basis and its record is updated to
+	// compensated or compensation_failed (see the package comment).
 	StepFailed StepStatus = "failed"
-	// StepCompensated adımın Compensate'inin başarıyla çalıştığını bildirir.
+	// StepCompensated reports that the step's Compensate ran successfully.
 	StepCompensated StepStatus = "compensated"
-	// StepCompensationFailed adımın Compensate'inin patladığını bildirir.
-	// Bu adımın yan etkisi sistemde ASILI kalmıştır.
+	// StepCompensationFailed reports that the step's Compensate blew up.
+	// That step's side effect is left HANGING in the system.
 	StepCompensationFailed StepStatus = "compensation_failed"
 )
 
-// Held adımın yan etkisinin dünyada HÂLÂ DURDUĞUNU bildirir.
+// Held reports that the step's side effect is STILL STANDING in the world.
 //
-// invoked "iş yapıldı ve telafi edilmedi", compensation_failed ise "iş yapıldı,
-// geri alınamadı" demektir; ikisinde de asılı bir yan etki vardır. compensated
-// geri alınmıştır, failed ise hiç iş yapmamıştır — ikisi de asılı DEĞİLDİR.
+// invoked means "the work was done and not compensated" and
+// compensation_failed means "the work was done and could not be undone"; both
+// leave a hanging side effect. compensated has been undone and failed never did
+// any work — neither is HANGING.
 //
-// Yüklem motorun terk edilmiş yürütme kararının ta kendisidir (bkz.
-// [WithLease]): kirası dolmuş bir kaydın [StatusFailed] mi yoksa
-// [StatusCompensationFailed] mi olacağına bu ayrım karar verir. Elle müdahale
-// bekleyen kayıtları LİSTELEYEN yüzey de aynı yüklemi kullanmalıdır; ayrı
-// yazılsalardı liste, motorun "iş yapılmış" saydığı bir kaydı bir gün sessizce
-// atlardı ve asılı rezervasyon görünmez kalırdı.
+// The predicate is the engine's abandoned-execution decision itself (see
+// [WithLease]): it is what decides whether a record whose lease expired becomes
+// [StatusFailed] or [StatusCompensationFailed]. The surface that LISTS the
+// records waiting for a human has to use the same predicate; written separately,
+// the listing would one day quietly skip a record the engine counts as "work
+// done" and the hanging reservation would stay invisible.
 func (s StepStatus) Held() bool {
 	return s == StepInvoked || s == StepCompensationFailed
 }
 
-// HeldStepStatuses [StepStatus.Held] doğru dönen durumların TAMAMIDIR.
+// HeldStepStatuses is EVERY state for which [StepStatus.Held] is true.
 //
-// Liste yüklemi SQL'e taşımak için vardır: veritabanı Go metodunu çağıramaz,
-// dolayısıyla süzgeç sorguya PARAMETRE olarak gider. Aynı çözüm pgstore'un
-// updateStatusSQL'inde de kullanılıyor — durum sabitinin ikinci bir kopyasını
-// SQL metnine gömmek, iki kopya ayrıştığı gün kuralı sessizce çalışmaz hâle
-// getirirdi.
+// The list exists to carry the predicate into SQL: the database cannot call a Go
+// method, so the filter goes to the query as a PARAMETER. The same solution is
+// used in pgstore's updateStatusSQL — embedding a second copy of a status
+// constant in the SQL text would quietly stop the rule from working the day the
+// two copies diverged.
 //
-// Listenin yüklemle uyumu testle denetlenir (kaynaktaki durum sabitleri
-// ayrıştırılarak); elle tutulan bir liste yeni bir adım durumu eklendiğinde
-// sessizce eksik kalırdı.
+// That the list agrees with the predicate is checked by a test (by parsing the
+// status constants out of the source); a hand-kept list would silently fall
+// short the moment a new step state was added.
 //
-// Dönen dilim her çağrıda YENİDİR: paket düzeyinde bir değişken paylaşılsaydı
-// çağıran onu sıralayarak ya da üzerine yazarak motorun kararını değiştirebilirdi.
+// The returned slice is NEW on every call: were a package-level variable shared,
+// a caller could change the engine's decision by sorting it or writing over it.
 func HeldStepStatuses() []StepStatus {
 	return []StepStatus{StepInvoked, StepCompensationFailed}
 }
 
-// Ad ve anahtar uzunluk sınırları.
+// The name and key length limits.
 //
-// Sınırlar Store SÖZLEŞMESİNİN parçasıdır. Kalıcı bir uygulama bu alanları
-// indeksler ve sınırsız bir değer orada anlaşılmaz bir sürücü hatasına
-// dönüşür; sınırın motorda durması iki şeyi sağlar — uygulamalar aynı girdide
-// aynı davranır (bellek içi Store'da geçip Postgres'te düşen bir workflow
-// olmaz) ve hata, hiçbir yan etki uygulanmadan ÖNCE çağırana döner. Motor
-// bunları Workflow.Validate ve WithIdempotencyKey içinde uygular; Store
-// uygulamaları en az bu uzunlukları KABUL ETMELİDİR.
+// The limits are part of the Store CONTRACT. A durable implementation indexes
+// these fields and an unbounded value turns into an unintelligible driver error
+// there; keeping the limit in the engine buys two things — implementations
+// behave the same on the same input (there is no workflow that passes on the
+// in-memory Store and fails on Postgres) and the error reaches the caller BEFORE
+// any side effect is applied. The engine applies them in Workflow.Validate and
+// WithIdempotencyKey; Store implementations MUST ACCEPT at least these lengths.
 const (
-	// MaxNameLen workflow ve adım adlarının bayt cinsinden üst sınırıdır.
+	// MaxNameLen is the upper bound in bytes on workflow and step names.
 	MaxNameLen = 128
-	// MaxIdempotencyKeyLen idempotency anahtarının bayt cinsinden üst sınırıdır.
+	// MaxIdempotencyKeyLen is the upper bound in bytes on the idempotency key.
 	MaxIdempotencyKeyLen = 256
 )
 
-// StepRecord tek bir adımın kalıcı izidir.
+// StepRecord is a single step's durable trace.
 type StepRecord struct {
-	// Name adımın Step.Name() ile bildirdiği adıdır.
+	// Name is the name the step reports through Step.Name().
 	Name string
-	// Index adımın workflow içindeki sırasıdır ve kaydın KİMLİĞİDİR:
-	// Store.AppendStep aynı Index'li kaydı günceller. Bir adım önce invoked,
-	// sonra compensated olarak yazıldığında aynı satır güncellenir.
+	// Index is the step's order within the workflow and is the record's
+	// IDENTITY: Store.AppendStep updates the record with the same Index. When a
+	// step is written first as invoked and then as compensated, the same row is
+	// updated.
 	Index int
-	// Status adımın son durumudur.
+	// Status is the step's final state.
 	Status StepStatus
-	// Output Invoke'un döndürdüğü değerin JSON karşılığıdır.
+	// Output is the JSON form of the value Invoke returned.
 	//
-	// Status invoked iken bu alan boş ve Failure dolu ise adım BAŞARILIYDI ama
-	// çıktısı JSON'a çevrilemedi; bkz. Executor.Run'ın kalıcılaştırma politikası.
+	// When Status is invoked and this field is empty while Failure is set, the
+	// step SUCCEEDED but its output could not be turned into JSON; see
+	// Executor.Run's persistence policy.
 	//
-	// Telafi kaydı bu alanı SİLMEZ: compensated ve compensation_failed
-	// durumlarında da Invoke'un çıktısı okunabilir kalır — elle müdahale eden
-	// operatörün ihtiyacı olan tek veri (hangi rezervasyon, hangi ödeme)
-	// buradadır.
+	// The compensation record does NOT erase this field: Invoke's output stays
+	// readable in the compensated and compensation_failed states too — the only
+	// data an operator doing manual repair needs (which reservation, which
+	// payment) is here.
 	Output json.RawMessage
-	// Failure hata mesajıdır; adım ve telafisi başarılıysa boştur.
+	// Failure is the error message; it is empty when the step and its
+	// compensation both succeeded.
 	//
-	// Invoke patladıktan sonra en iyi çaba telafi edilen bir adımda Invoke'un
-	// hatası KORUNUR; telafi de patlarsa iki mesaj ";" ile birleştirilir.
+	// On a step compensated on a best-effort basis after Invoke blew up,
+	// Invoke's error is PRESERVED; if the compensation blows up too the two
+	// messages are joined with ";".
 	Failure string
-	// Attempts adımın INVOKE denemesi sayısıdır (ilk deneme dâhil, en az 1).
-	// Telafi kaydı bu sayıyı korur; telafi denemeleri kayda değil loga yazılır.
+	// Attempts is the number of INVOKE attempts for the step (including the
+	// first, at least 1). The compensation record preserves this count;
+	// compensation attempts go to the log, not to the record.
 	Attempts int
-	// StartedAt Invoke'un ilk denemesinin başladığı andır (UTC); telafi kaydı
-	// bu anı korur.
+	// StartedAt is the instant Invoke's first attempt began (UTC); the
+	// compensation record preserves it.
 	StartedAt time.Time
-	// EndedAt kayda yazılan son işin bittiği andır (UTC): adım telafi edildiyse
-	// telafinin, edilmediyse son Invoke denemesinin bitiş anı.
+	// EndedAt is the instant the last work written to the record ended (UTC):
+	// the compensation's end if the step was compensated, otherwise the end of
+	// the last Invoke attempt.
 	EndedAt time.Time
 }
 
-// Execution tek bir workflow yürütmesinin kalıcı durumudur.
+// Execution is the durable state of one workflow run.
 type Execution struct {
-	// ID yürütmenin tekil kimliğidir ("wfx_" ön ekli, zaman sıralı).
+	// ID is the execution's unique id (prefixed with "wfx_", time-ordered).
 	ID string
-	// Workflow yürütülen workflow'un adıdır.
+	// Workflow is the name of the workflow that ran.
 	Workflow string
-	// IdempotencyKey çağıranın verdiği tekrar koruma anahtarıdır; verilmediyse
-	// boştur. Store (Workflow, IdempotencyKey) çiftinin tekilliğini yalnızca
-	// anahtar boş DEĞİLKEN zorlar.
+	// IdempotencyKey is the repeat-protection key the caller supplied; it is
+	// empty when none was given. The Store enforces uniqueness of the
+	// (Workflow, IdempotencyKey) pair only while the key is NOT empty.
 	IdempotencyKey string
-	// Status yürütmenin genel durumudur.
+	// Status is the execution's overall state.
 	Status Status
-	// Input workflow girdisinin JSON karşılığıdır.
+	// Input is the JSON form of the workflow's input.
 	Input json.RawMessage
-	// Output son adımın çıktısının JSON karşılığıdır; yalnızca completed
-	// durumunda anlamlıdır.
+	// Output is the JSON form of the last step's output; it is meaningful only
+	// in the completed state.
 	Output json.RawMessage
-	// Failure uç durumdaki hata mesajıdır; başarılı yürütmede boştur.
+	// Failure is the error message of the terminal state; it is empty on a
+	// successful run.
 	Failure string
-	// Steps adım kayıtlarıdır; yürütme sırasındadır.
+	// Steps are the step records, in execution order.
 	Steps []StepRecord
-	// CreatedAt kaydın açıldığı andır (UTC).
+	// CreatedAt is the instant the record was opened (UTC).
 	CreatedAt time.Time
-	// UpdatedAt son yazmanın anıdır (UTC).
+	// UpdatedAt is the instant of the last write (UTC).
 	UpdatedAt time.Time
 }
 
-// Store yürütme durumunu kalıcılaştırır.
+// Store persists execution state.
 //
-// Motor bu arayüzü TÜKETİCİ olarak tanımlar (ADR 0001 örüntüsü): Postgres
-// uygulaması ayrı bir pakettedir ve bu paket onu import etmez. Süreç içi
-// uygulama için bkz. NewMemoryStore.
+// The engine defines this interface as the CONSUMER (the ADR 0001 pattern): the
+// Postgres implementation is in a separate package and this package does not
+// import it. For the in-process implementation see NewMemoryStore.
 //
-// Uygulamalar eşzamanlı çağrılara güvenli olmalıdır: aynı anda birden çok
-// yürütme koşabilir ve aynı yürütmenin adımları tek goroutine'den yazılsa da
-// Get/FindByIdempotencyKey başka goroutine'lerden okunabilir.
+// Implementations have to be safe for concurrent calls: several executions can
+// run at once, and although one execution's steps are written from a single
+// goroutine, Get/FindByIdempotencyKey can be read from others.
 //
-// Ad ve anahtar alanları için uygulamalar en az MaxNameLen ve
-// MaxIdempotencyKeyLen kadarını kabul etmelidir; motor bu sınırların üstünü
-// zaten reddeder. Adların baştaki/sondaki boşluklarına ANLAM YÜKLENMEMELİDİR:
-// bir uygulama bu alanları normalleştirebilir (örn. kırpabilir) ve iki
-// uygulama aynı değeri farklı saklayabilir.
+// For the name and key fields implementations must accept at least MaxNameLen
+// and MaxIdempotencyKeyLen; the engine already rejects anything above those
+// limits. NO MEANING MAY BE ATTACHED to leading or trailing whitespace in names:
+// an implementation may normalize these fields (by trimming, say) and two
+// implementations may store the same value differently.
 type Store interface {
-	// Create yeni yürütme kaydı açar. Aynı (Workflow, IdempotencyKey) çifti
-	// zaten varsa errors.Conflict döner.
+	// Create opens a new execution record. If the same
+	// (Workflow, IdempotencyKey) pair already exists it returns errors.Conflict.
 	Create(ctx context.Context, exec *Execution) error
-	// FindByIdempotencyKey anahtara karşılık gelen yürütmeyi döner; yoksa errors.NotFound.
+	// FindByIdempotencyKey returns the execution the key belongs to, or
+	// errors.NotFound.
 	FindByIdempotencyKey(ctx context.Context, workflow, key string) (*Execution, error)
-	// AppendStep bir adım kaydını ekler ya da aynı Index'li kaydı günceller.
+	// AppendStep inserts a step record or updates the one with the same Index.
 	AppendStep(ctx context.Context, executionID string, rec StepRecord) error
-	// UpdateStatus yürütmenin son durumunu yazar.
+	// UpdateStatus writes the execution's final status.
 	//
-	// [StatusFailed] yazıldığında uygulama yürütmenin idempotency ANAHTARINI
-	// da bırakmalıdır (kaydı silmeden). Gerekçe [StatusFailed] godoc'undadır ve
-	// bu, ayrı bir metot değil aynı yazımın parçasıdır: iki ayrı yazım
-	// arasında düşen bir süreç anahtarı sonsuza dek tutulu bırakırdı — yani
-	// düzeltilen arızanın kendisini nadir bir yarış olarak geri getirirdi.
+	// When [StatusFailed] is written the implementation must also release the
+	// execution's idempotency KEY (without deleting the record). The reasoning
+	// is in the [StatusFailed] godoc, and this is part of the same write rather
+	// than a separate method: a process dying between two separate writes would
+	// leave the key held forever — that is, it would bring back the very failure
+	// that was fixed, as a rare race.
 	UpdateStatus(ctx context.Context, executionID string, status Status, output json.RawMessage, failure string) error
-	// Get yürütmeyi adımlarıyla birlikte okur; yoksa errors.NotFound.
+	// Get reads the execution together with its steps, or errors.NotFound.
 	Get(ctx context.Context, executionID string) (*Execution, error)
 }
 
-// executionIDPrefix yürütme kimliklerinin ön ekidir (plan Bölüm 8).
+// executionIDPrefix is the prefix of execution ids (plan Section 8).
 const executionIDPrefix = "wfx_"
 
-// idEncoding Crockford Base32 alfabesidir; kimlik dizgesi hem sıralanabilir
-// hem de elle okunabilir olsun diye seçilmiştir (I/L/O/U yoktur).
+// idEncoding is the Crockford Base32 alphabet, chosen so the id string is both
+// sortable and readable by a human (it has no I/L/O/U).
 var idEncoding = base32.NewEncoding("0123456789ABCDEFGHJKMNPQRSTVWXYZ").WithPadding(base32.NoPadding)
 
-// newExecutionID zaman sıralı ve tekil bir yürütme kimliği üretir.
+// newExecutionID generates a time-ordered, unique execution id.
 //
-// Yapısı ULID ile aynıdır: 48 bit milisaniye zaman damgası + 80 bit
-// kriptografik rastgelelik, Crockford Base32 ile 26 karaktere kodlanır.
-// Aynı yaklaşım eventbus'ta olay kimlikleri için de kullanılır.
+// Its shape is a ULID's: a 48-bit millisecond timestamp plus 80 bits of
+// cryptographic randomness, encoded to 26 Crockford Base32 characters. The same
+// approach is used for event ids in eventbus.
 func newExecutionID(t time.Time) string {
 	ms := t.UTC().UnixMilli()
 	if ms < 0 {
-		// 1970 öncesi bir zaman damgası yürütme için anlamlı değildir;
-		// sıralamayı bozmamak için tabana çekilir.
+		// A pre-1970 timestamp is meaningless for an execution; it is clamped
+		// to the floor so it cannot break the ordering.
 		ms = 0
 	}
 
@@ -243,12 +255,13 @@ func newExecutionID(t time.Time) string {
 	binary.BigEndian.PutUint64(stamp[:], uint64(ms))
 
 	var buf [16]byte
-	// UnixMilli 48 bite sığar; ilk iki bayt daima sıfırdır ve atılır.
+	// UnixMilli fits in 48 bits; the first two bytes are always zero and are
+	// dropped.
 	copy(buf[:6], stamp[2:])
 	if _, err := rand.Read(buf[6:]); err != nil {
-		// crypto/rand.Read hata dönmez; yine de bir gün dönerse kimlik
-		// nanosaniye çözünürlüğüne düşer — tekillik zayıflar ama yürütme
-		// başlatılamaz duruma gelmez.
+		// crypto/rand.Read does not return an error; should it ever start to,
+		// the id falls back to nanosecond resolution — uniqueness gets weaker,
+		// but starting an execution does not become impossible.
 		binary.BigEndian.PutUint64(buf[8:], uint64(t.UnixNano()))
 	}
 

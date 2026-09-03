@@ -10,23 +10,24 @@ import (
 	"github.com/bdrtr/gobit/internal/core/errors"
 )
 
-// memoryStore Store'un süreç içi, kalıcılığı olmayan uygulamasıdır.
+// memoryStore is the in-process, non-durable implementation of Store.
 type memoryStore struct {
-	// mu tüm alanları korur. Yazma yolu (Create/AppendStep/UpdateStatus) okuma
-	// yolu kadar sık olduğu için sade bir Mutex yeterlidir.
+	// mu guards every field. The write path (Create/AppendStep/UpdateStatus) is
+	// as frequent as the read path, so a plain Mutex is enough.
 	mu sync.Mutex
-	// byID yürütmeleri kimliğine göre tutar.
+	// byID holds the executions by id.
 	byID map[string]*Execution
-	// byKey (workflow, idempotency anahtarı) çiftini kimliğe eşler. Anahtar boş
-	// olan yürütmeler buraya GİRMEZ; tekillik yalnızca anahtar verilmişken zorlanır.
+	// byKey maps the (workflow, idempotency key) pair to an id. Executions with
+	// an empty key do NOT go in here; uniqueness is enforced only when a key was
+	// given.
 	byKey map[idempotencyKey]string
 }
 
-// idempotencyKey byKey haritasının bileşik anahtarıdır.
+// idempotencyKey is the composite key of the byKey map.
 //
-// Dizgeleri birleştirmek yerine yapı kullanılır: birleştirme, ayırıcı karakteri
-// içeren bir workflow adı ya da anahtar geldiğinde iki farklı çifti aynı
-// anahtara düşürebilirdi.
+// A struct is used rather than concatenating the strings: concatenation could
+// collapse two different pairs onto the same key when a workflow name or a key
+// containing the separator arrived.
 type idempotencyKey struct {
 	workflow string
 	key      string
@@ -34,19 +35,19 @@ type idempotencyKey struct {
 
 var _ Store = (*memoryStore)(nil)
 
-// NewMemoryStore süreç içi, kalıcılığı olmayan bir Store üretir.
+// NewMemoryStore produces an in-process, non-durable Store.
 //
-// Test ve geliştirme içindir: süreç ölürse tüm yürütme geçmişi kaybolur ve
-// yarım kalmış bir yürütme kurtarılamaz. Üretimde kalıcı bir Store
-// kullanılmalıdır. Eşzamanlı kullanıma güvenlidir ve dışarıya verdiği her
-// Execution DERİN KOPYADIR: çağıranın elindeki değeri değiştirmek Store'un
-// durumunu bozmaz.
+// It is for tests and development: if the process dies the whole execution
+// history is lost and a half-done execution cannot be recovered. Production has
+// to use a durable Store. It is safe for concurrent use and every Execution it
+// hands out is a DEEP COPY: changing the value the caller holds cannot corrupt
+// the Store's state.
 //
-// Bağlamı YOK SAYAR: süreç içi harita erişiminin iptalle kesilecek bir
-// beklemesi yoktur. Bunun testler için sonucu şudur — motorun bağlam
-// davranışını (örn. iptal edilmiş bağlamda yazma) sınayan testler bu Store'la
-// yanıltıcı biçimde GEÇER; öyle bir sınama, bağlamı gerçekten kullanan bir
-// sahte Store ister.
+// It IGNORES the context: in-process map access has no wait for a cancellation
+// to cut short. The consequence for tests is this — tests exercising the
+// engine's context behavior (writing under a canceled context, say) PASS
+// misleadingly against this Store; such a check needs a fake Store that really
+// uses the context.
 func NewMemoryStore() Store {
 	return &memoryStore{
 		byID:  make(map[string]*Execution),
@@ -54,43 +55,46 @@ func NewMemoryStore() Store {
 	}
 }
 
-// Create yeni yürütme kaydı açar.
+// Create opens a new execution record.
 //
-// Aynı (Workflow, IdempotencyKey) çifti zaten varsa errors.Conflict döner;
-// anahtar boşsa tekillik denetlenmez. Aynı kimlik ikinci kez kaydedilirse de
-// errors.Conflict döner.
+// If the same (Workflow, IdempotencyKey) pair already exists it returns
+// errors.Conflict; with an empty key uniqueness is not checked. Recording the
+// same id a second time returns errors.Conflict as well.
 func (s *memoryStore) Create(_ context.Context, exec *Execution) error {
 	if exec == nil {
-		return errors.Invalid(CodeInvalidWorkflow, "yürütme nil olamaz")
+		return errors.Invalid(CodeInvalidWorkflow, "the execution cannot be nil")
 	}
 	if exec.ID == "" {
-		return errors.Invalid(CodeInvalidWorkflow, "yürütme kimliği boş olamaz")
+		return errors.Invalid(CodeInvalidWorkflow, "the execution id cannot be empty")
 	}
 	if exec.Workflow == "" {
-		return errors.Invalid(CodeInvalidWorkflow, "yürütmenin workflow adı boş olamaz")
+		return errors.Invalid(CodeInvalidWorkflow, "the execution's workflow name cannot be empty")
 	}
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	if _, ok := s.byID[exec.ID]; ok {
-		return errors.Conflict(CodeExecutionExists, "%q kimlikli yürütme zaten var", exec.ID)
+		return errors.Conflict(CodeExecutionExists, "an execution with the id %q already exists", exec.ID)
 	}
 
 	k := idempotencyKey{workflow: exec.Workflow, key: exec.IdempotencyKey}
 	if exec.IdempotencyKey != "" {
 		if existing, ok := s.byKey[k]; ok {
 			return errors.Conflict(CodeExecutionExists,
-				"%q workflow'unun %q anahtarlı yürütmesi zaten var: %s", exec.Workflow, exec.IdempotencyKey, existing)
+				"the %q workflow already has an execution with the key %q: %s",
+				exec.Workflow, exec.IdempotencyKey, existing)
 		}
 		s.byKey[k] = exec.ID
 	}
 
 	s.byID[exec.ID] = cloneExecution(exec)
+
 	return nil
 }
 
-// FindByIdempotencyKey anahtara karşılık gelen yürütmeyi döner; yoksa errors.NotFound.
+// FindByIdempotencyKey returns the execution the key belongs to, or
+// errors.NotFound.
 func (s *memoryStore) FindByIdempotencyKey(_ context.Context, workflow, key string) (*Execution, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -98,24 +102,26 @@ func (s *memoryStore) FindByIdempotencyKey(_ context.Context, workflow, key stri
 	id, ok := s.byKey[idempotencyKey{workflow: workflow, key: key}]
 	if !ok {
 		return nil, errors.NotFound(CodeExecutionNotFound,
-			"%q workflow'unun %q anahtarlı yürütmesi bulunamadı", workflow, key)
+			"the %q workflow has no execution with the key %q", workflow, key)
 	}
 
 	exec, ok := s.byID[id]
 	if !ok {
-		return nil, errors.Internal(CodeStoreFailed, "%q anahtarı %q kimliğine işaret ediyor ama kayıt yok", key, id)
+		return nil, errors.Internal(CodeStoreFailed,
+			"the key %q points at the id %q but there is no such record", key, id)
 	}
+
 	return cloneExecution(exec), nil
 }
 
-// AppendStep bir adım kaydını ekler ya da aynı Index'li kaydı günceller.
+// AppendStep inserts a step record or updates the one with the same Index.
 func (s *memoryStore) AppendStep(_ context.Context, executionID string, rec StepRecord) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	exec, ok := s.byID[executionID]
 	if !ok {
-		return errors.NotFound(CodeExecutionNotFound, "%q kimlikli yürütme bulunamadı", executionID)
+		return errors.NotFound(CodeExecutionNotFound, "no execution with the id %q was found", executionID)
 	}
 
 	stored := cloneStep(rec)
@@ -126,17 +132,18 @@ func (s *memoryStore) AppendStep(_ context.Context, executionID string, rec Step
 	}
 
 	exec.UpdatedAt = time.Now().UTC()
+
 	return nil
 }
 
-// UpdateStatus yürütmenin son durumunu yazar.
+// UpdateStatus writes the execution's final status.
 func (s *memoryStore) UpdateStatus(_ context.Context, executionID string, status Status, output json.RawMessage, failure string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	exec, ok := s.byID[executionID]
 	if !ok {
-		return errors.NotFound(CodeExecutionNotFound, "%q kimlikli yürütme bulunamadı", executionID)
+		return errors.NotFound(CodeExecutionNotFound, "no execution with the id %q was found", executionID)
 	}
 
 	exec.Status = status
@@ -144,9 +151,9 @@ func (s *memoryStore) UpdateStatus(_ context.Context, executionID string, status
 	exec.Failure = failure
 	exec.UpdatedAt = time.Now().UTC()
 
-	// Telafi eksiksiz tamamlandıysa anahtar BIRAKILIR; gerekçe
-	// [StatusFailed] godoc'unda. Kayıt kalır, yalnızca anahtarı düşer —
-	// pgstore'un aynı satırı NULL'a çekmesiyle aynı davranış.
+	// If compensation completed in full the key is RELEASED; the reasoning is
+	// in the [StatusFailed] godoc. The record stays and only its key drops —
+	// the same behavior as pgstore setting that column to NULL.
 	if status == StatusFailed && exec.IdempotencyKey != "" {
 		delete(s.byKey, idempotencyKey{workflow: exec.Workflow, key: exec.IdempotencyKey})
 		exec.IdempotencyKey = ""
@@ -155,23 +162,25 @@ func (s *memoryStore) UpdateStatus(_ context.Context, executionID string, status
 	return nil
 }
 
-// Get yürütmeyi adımlarıyla birlikte okur; yoksa errors.NotFound.
+// Get reads the execution together with its steps, or errors.NotFound.
 func (s *memoryStore) Get(_ context.Context, executionID string) (*Execution, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	exec, ok := s.byID[executionID]
 	if !ok {
-		return nil, errors.NotFound(CodeExecutionNotFound, "%q kimlikli yürütme bulunamadı", executionID)
+		return nil, errors.NotFound(CodeExecutionNotFound, "no execution with the id %q was found", executionID)
 	}
+
 	return cloneExecution(exec), nil
 }
 
-// cloneExecution yürütmenin derin kopyasını üretir.
+// cloneExecution produces a deep copy of the execution.
 //
-// Kopya, Store'un durumunun dışarıdan (ya da dışarının Store tarafından)
-// değiştirilmesini engeller; kalıcı bir Store'da da davranış budur, bellek içi
-// uygulamanın onu taklit etmesi testlerin yanıltıcı biçimde geçmesini önler.
+// The copy keeps the Store's state from being changed from outside (or the
+// outside from being changed by the Store); a durable Store behaves that way
+// too, and having the in-memory implementation imitate it keeps tests from
+// passing misleadingly.
 func cloneExecution(exec *Execution) *Execution {
 	out := *exec
 	out.Input = slices.Clone(exec.Input)
@@ -183,11 +192,13 @@ func cloneExecution(exec *Execution) *Execution {
 			out.Steps[i] = cloneStep(exec.Steps[i])
 		}
 	}
+
 	return &out
 }
 
-// cloneStep adım kaydının derin kopyasını üretir.
+// cloneStep produces a deep copy of the step record.
 func cloneStep(rec StepRecord) StepRecord {
 	rec.Output = slices.Clone(rec.Output)
+
 	return rec
 }

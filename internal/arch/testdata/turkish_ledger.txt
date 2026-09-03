@@ -61,16 +61,12 @@ internal/core/openapi/schema_test.go
 internal/core/query/fakes_test.go
 internal/core/query/query_integration_test.go
 internal/core/query/query_test.go
-internal/core/workflow/memory.go
 internal/core/workflow/memory_test.go
-internal/core/workflow/options.go
-internal/core/workflow/parallel.go
 internal/core/workflow/parallel_test.go
 internal/core/workflow/pgstore/pgstore_integration_test.go
 internal/core/workflow/pgstore/pgstore_internal_test.go
 internal/core/workflow/pgstore/pgstore_test.go
 internal/core/workflow/regression_test.go
-internal/core/workflow/store.go
 internal/core/workflow/workflow.go
 internal/core/workflow/workflow_test.go
 internal/e2e/arama_test.go

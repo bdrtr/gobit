@@ -14,66 +14,68 @@ import (
 	"github.com/bdrtr/gobit/internal/core/errors"
 )
 
-// ParallelStep dallarını EŞZAMANLI yürüten bileşik adımdır.
+// ParallelStep is a composite step that runs its branches CONCURRENTLY.
 //
-// Motor açısından tek bir Step'tir: kalıcı kayıtta tek satır görünür, yeniden
-// deneme politikası dallara ayrı ayrı değil BİLEŞİĞE uygulanır ve bir dal
-// patlarsa telafi zinciri bileşiğin kendisinden değil, ondan ÖNCEKİ adımlardan
-// devam eder.
+// To the engine it is a single Step: it appears as one row in the durable
+// record, the retry policy applies to the COMPOSITE rather than to the branches
+// one by one, and if a branch blows up the compensation chain continues from the
+// steps BEFORE the composite rather than from the composite itself.
 //
-// # Bir dal patlarsa ne olur
+// # What happens when a branch blows up
 //
-// Invoke, başaran kardeş dalları KENDİ İÇİNDE geri alır ve sonra hata döner.
-// Böylece motorun "patlayan adım telafi edilmez" kuralı bozulmadan geçerli
-// kalır: bileşik adım hata döndüyse arkasında iş bırakmamıştır. Bu iç geri alma
-// sırayla ve ters dal sırasında yürür.
+// Invoke rolls the successful sibling branches back WITHIN ITSELF and then
+// returns the error. That keeps the engine's "a step that blew up is not
+// compensated" rule intact: if the composite step returned an error, it left no
+// work behind. The inner rollback goes through the same concurrent path as
+// [ParallelStep.Compensate], so each branch gets its own budget.
 //
-// İç geri alma PATLARSA bu iddia düşer: kardeş dalın yan etkisi (örn. stok
-// rezervasyonu) asılı kalmıştır. O durumda dönen hata ErrUncompensated'i sarar
-// ve motor yürütmeyi StatusFailed değil StatusCompensationFailed olarak yazar —
-// aksi hâlde kayıt "geri alındı, sistem tutarlı" derken yalan söyler ve
-// compensation_failed sayan izleme kuralı bu yürütmeyi hiç göremezdi.
+// If the inner rollback BLOWS UP that claim collapses: a sibling branch's side
+// effect (a stock reservation, say) is left hanging. In that case the returned
+// error wraps ErrUncompensated and the engine writes the execution as
+// StatusCompensationFailed rather than StatusFailed — otherwise the record would
+// lie by saying "rolled back, the system is consistent" and the monitoring rule
+// counting compensation_failed would never see this execution.
 //
-// # Shared verisi
+// # Shared data
 //
-// Dallar eşzamanlı çalıştığı için ortak bir map'e yazmaları veri yarışı olurdu.
-// Bu yüzden her dal, üst bağlamın Shared'ının KENDİ KOPYASINI görür. Birleştirme
-// iki kurala uyar:
+// Because the branches run concurrently, writing to a common map would be a data
+// race. Each branch therefore sees ITS OWN COPY of the parent context's Shared.
+// The merge follows two rules:
 //
-//   - Yazmalar YALNIZCA tüm dallar başarılı olduğunda işlenir. Bir dal bile
-//     patlarsa hiçbir dalın yazması üst bağlama geçmez; başaranlar geri
-//     alınmıştır ve geri alınmış bir rezervasyonun kimliğini sonraki adımlara
-//     (ya da önceki adımın Compensate'ine) sızdırmak, yanlış kaydı iptal
-//     ettirir.
-//   - İşlenen şey dalın kopyasının TAMAMI değil, DEĞİŞTİRDİĞİ anahtarlardır.
-//     Kopyanın tamamı geri yazılsaydı, bir anahtara hiç dokunmayan dalın bayat
-//     kopyası, o anahtarı güncelleyen kardeşinin yazmasını EZERDİ. Aynı
-//     anahtarı gerçekten değiştiren iki daldan sonraki kazanır.
+//   - Writes are applied ONLY when every branch succeeded. If even one branch
+//     blows up, no branch's writes reach the parent context; the successful ones
+//     have been rolled back, and leaking the id of a rolled-back reservation to
+//     the following steps (or to the previous step's Compensate) would have the
+//     wrong record canceled.
+//   - What is applied is not the WHOLE of the branch's copy but the keys it
+//     CHANGED. Were the whole copy written back, the stale copy of a branch that
+//     never touched a key would OVERWRITE the write of a sibling that updated it.
+//     Between two branches that really did change the same key, the later one
+//     wins.
 //
-// Kopya yüzeyseldir: bir dal Shared'daki bir map ya da slice değerini yerinde
-// değiştirirse yarış yine oluşur — dallar paylaşılan değerleri mutasyona
-// uğratmamalıdır. Dallar Shared'dan anahtar SİLEMEZ; silme üst haritaya
-// yansımaz.
+// The copy is shallow: if a branch changes a map or slice value inside Shared in
+// place the race is back — branches must not mutate shared values. Branches
+// cannot DELETE keys from Shared; a deletion is not reflected in the parent map.
 //
-// # Telafi
+// # Compensation
 //
-// Compensate tüm dalları TERS SIRADA ve SIRAYLA çağırır (eşzamanlı telafi,
-// dalların artık paylaştığı Shared üzerinde yarışa açık olurdu). Bir dalın
-// telafisi patlarsa kalanlar yine denenir; hatalar birleştirilir.
+// Compensate calls every branch. If a branch's compensation blows up the rest
+// are still attempted; the errors are joined.
 type ParallelStep struct {
 	name     string
 	branches []Step
-	// rollbackTimeout Invoke'un iç geri alması için süre bütçesidir.
+	// rollbackTimeout is the time budget for Invoke's inner rollback.
 	rollbackTimeout time.Duration
 	log             *slog.Logger
 }
 
 var _ Step = (*ParallelStep)(nil)
 
-// NewParallel verilen dalları eşzamanlı yürüten bileşik bir adım üretir.
+// NewParallel produces a composite step that runs the given branches
+// concurrently.
 //
-// name bileşiğin kayıtlarda görünen adıdır. En az bir dal verilmelidir; aksi
-// hâlde Invoke errors.Invalid döner.
+// name is the composite's name as it appears in the records. At least one branch
+// has to be given; otherwise Invoke returns errors.Invalid.
 func NewParallel(name string, branches ...Step) *ParallelStep {
 	return &ParallelStep{
 		name:            name,
@@ -82,48 +84,52 @@ func NewParallel(name string, branches ...Step) *ParallelStep {
 	}
 }
 
-// WithRollbackTimeout dal telafilerinin süre bütçesini değiştirir ve adımı döner.
+// WithRollbackTimeout changes the branch compensations' time budget and returns
+// the step.
 //
-// Bütçe DAL BAŞINADIR ve hem iç geri almada hem motorun tetiklediği telafide
-// geçerlidir. Dal telafileri EŞZAMANLI yürütüldüğü için her dal bütçesini aynı
-// anda alır; yavaş bir dal kardeşlerini aç bırakmaz. Motor telafisinde
-// bileşiğin tamamı ayrıca motorun adım bütçesiyle sınırlıdır
-// (bkz. WithCompensationTimeout) ve bu bütçe onu UZATMAZ: dal bütçesi motorun
-// kalan bütçesinden büyükse fiilen motorunki geçerlidir. Pozitif olmayan değer
-// yok sayılır.
+// The budget is PER BRANCH and applies both to the inner rollback and to the
+// compensation the engine triggers. Because branch compensations run
+// CONCURRENTLY every branch gets its budget at the same time; a slow branch does
+// not starve its siblings. In the engine's compensation the whole composite is
+// additionally bounded by the engine's step budget (see WithCompensationTimeout)
+// and this budget does not EXTEND it: if the branch budget is larger than the
+// engine's remaining budget, the engine's is what actually applies. A
+// non-positive value is ignored.
 func (p *ParallelStep) WithRollbackTimeout(d time.Duration) *ParallelStep {
 	if d > 0 {
 		p.rollbackTimeout = d
 	}
+
 	return p
 }
 
-// WithLogger bileşiğin kullanacağı log'u belirler ve adımı döner.
+// WithLogger sets the logger the composite uses and returns the step.
 //
-// Verilmezse slog.Default kullanılır. Step arayüzü log taşımadığı için bileşik
-// kendi log'unu almak zorundadır; panik yığın izleri buraya yazılır.
+// Without it slog.Default is used. Since the Step interface carries no logger,
+// the composite has to take its own; panic stack traces are written here.
 func (p *ParallelStep) WithLogger(log *slog.Logger) *ParallelStep {
 	if log != nil {
 		p.log = log
 	}
+
 	return p
 }
 
-// Name bileşiğin adını döner.
+// Name returns the composite's name.
 func (p *ParallelStep) Name() string { return p.name }
 
-// branchResult tek bir dalın sonucudur.
+// branchResult is a single branch's result.
 type branchResult struct {
 	out    any
 	shared map[string]any
 	err    error
 }
 
-// Invoke tüm dalları eşzamanlı çalıştırır.
+// Invoke runs every branch concurrently.
 //
-// Hepsi başarılı olursa çıktı, dal sırasındaki çıktıların []any dilimidir.
-// En az biri patlarsa başaran dallar geri alınır ve dal hataları (varsa geri
-// alma hataları da) birleştirilerek döner.
+// If all of them succeed the output is an []any slice of the outputs in branch
+// order. If at least one blows up the successful branches are rolled back and
+// the branch errors (plus any rollback errors) are returned joined together.
 func (p *ParallelStep) Invoke(ctx context.Context, sc *StepContext) (any, error) {
 	if err := p.validate(); err != nil {
 		return nil, err
@@ -132,8 +138,8 @@ func (p *ParallelStep) Invoke(ctx context.Context, sc *StepContext) (any, error)
 		sc.Shared = make(map[string]any)
 	}
 
-	// Dallar başlamadan önceki anlık görüntü: birleştirmede "bu dal bu anahtara
-	// dokundu mu" sorusunun yanıtı buradan gelir.
+	// The snapshot from before the branches started: it is where the answer to
+	// "did this branch touch this key" comes from during the merge.
 	snapshot := maps.Clone(sc.Shared)
 
 	results := make([]branchResult, len(p.branches))
@@ -162,18 +168,21 @@ func (p *ParallelStep) Invoke(ctx context.Context, sc *StepContext) (any, error)
 	for i, r := range results {
 		if r.err != nil {
 			failures = append(failures, errors.Wrap(r.err, errors.KindOf(r.err), CodeParallelBranchFailed,
-				"%q bileşiğinin %q dalı başarısız oldu", p.name, p.branches[i].Name()))
+				"the %q branch of the %q composite failed", p.branches[i].Name(), p.name))
+
 			continue
 		}
 		succeeded = append(succeeded, i)
 	}
 
 	if len(failures) > 0 {
-		// Hiçbir dalın yazması işlenmez: başaranlar geri alınacaktır, patlayanın
-		// yazdığı verinin ise sahibi yoktur (bkz. tip yorumu, "Shared verisi").
+		// No branch's writes are applied: the successful ones are about to be
+		// rolled back, and the data the failing one wrote has no owner (see the
+		// type comment, "Shared data").
 		if rerr := p.rollback(ctx, sc, succeeded); rerr != nil {
 			failures = append(failures, rerr)
 		}
+
 		return nil, combineBranchErrors(p.name, failures)
 	}
 
@@ -182,19 +191,20 @@ func (p *ParallelStep) Invoke(ctx context.Context, sc *StepContext) (any, error)
 		outputs[i] = r.out
 		mergeShared(sc.Shared, snapshot, r.shared)
 	}
+
 	return outputs, nil
 }
 
-// mergeShared bir dalın DEĞİŞTİRDİĞİ anahtarları üst haritaya işler.
+// mergeShared applies the keys a branch CHANGED to the parent map.
 //
-// snapshot, dallar başlamadan önceki üst haritadır. Bir anahtar orada yoksa ya
-// da dalın kopyasındaki değeri farklıysa dal ona yazmıştır; değişmemiş
-// anahtarlar hiç dokunulmaz ki bir dalın bayat kopyası kardeşinin yazmasını
-// ezmesin.
+// snapshot is the parent map from before the branches started. If a key is not
+// there, or its value in the branch's copy differs, the branch wrote to it;
+// unchanged keys are left alone so that a branch's stale copy cannot overwrite a
+// sibling's write.
 //
-// Karşılaştırma reflect.DeepEqual iledir: Shared'a konmuş bir map ya da slice
-// değerinde == operatörü PANİKLERDİ. Amaç eşitlik ölçmek değil, "dokunulmadı"
-// tespitidir.
+// The comparison uses reflect.DeepEqual: the == operator would PANIC on a map or
+// slice value placed in Shared. The aim is not to measure equality but to detect
+// "untouched".
 func mergeShared(dst, snapshot, branch map[string]any) {
 	for k, v := range branch {
 		if old, ok := snapshot[k]; ok && reflect.DeepEqual(old, v) {
@@ -204,14 +214,15 @@ func mergeShared(dst, snapshot, branch map[string]any) {
 	}
 }
 
-// Compensate tüm dalları ters sırada ve sırayla telafi eder.
+// Compensate compensates every branch.
 //
-// Normalde yalnızca Invoke'u başarıyla dönmüş bir bileşik için çağrılır; o
-// durumda tüm dallar başarılı olmuştur, bu yüzden hepsi telafi edilir. Motor
-// bileşiği yeniden denemiş ve bileşik yine patlamışsa EN İYİ ÇABA telafisinde
-// de çağrılabilir (bkz. paket yorumu); o çağrıda hiç çalışmamış ya da zaten
-// geri alınmış dallar da telafi edilir. Dal yazarının Compensate'i bu yüzden
-// idempotent olmalı ve geri alacak bir şey bulamadığında nil dönmelidir.
+// Normally it is called only for a composite whose Invoke returned successfully;
+// in that case every branch succeeded, so every one is compensated. It can also
+// be called in a BEST-EFFORT compensation when the engine retried the composite
+// and it blew up again (see the package comment); in that call, branches that
+// never ran or were already rolled back are compensated too. A branch author's
+// Compensate therefore has to be idempotent and must return nil when it finds
+// nothing to undo.
 func (p *ParallelStep) Compensate(ctx context.Context, sc *StepContext) error {
 	if err := p.validate(); err != nil {
 		return err
@@ -221,18 +232,19 @@ func (p *ParallelStep) Compensate(ctx context.Context, sc *StepContext) error {
 	for i := range p.branches {
 		all[i] = i
 	}
+
 	return p.compensateBranches(ctx, sc, all)
 }
 
-// rollback Invoke içinde başaran dalları geri alır.
+// rollback undoes the branches that succeeded inside Invoke.
 //
-// Geri alma, iptalden ETKİLENMEYEN bir bağlam üzerinde yürür: dal hatası
-// bağlam iptalinden kaynaklanıyorsa, çağıranın ölmüş bağlamıyla geri alma
-// imkânsız olurdu.
+// The rollback runs on a context that is NOT AFFECTED by cancellation: if the
+// branch error came from the context being canceled, rolling back with the
+// caller's dead context would be impossible.
 //
-// Geri alma patlarsa dönen hata ErrUncompensated'i sarar: bileşik artık
-// arkasında telafi edilmemiş iş bırakmıştır ve motor bunu görmeden yürütmeyi
-// "geri alındı" diye yazamaz.
+// If the rollback blows up the returned error wraps ErrUncompensated: the
+// composite has now left uncompensated work behind, and the engine cannot write
+// the execution as "rolled back" without seeing that.
 func (p *ParallelStep) rollback(ctx context.Context, sc *StepContext, succeeded []int) error {
 	if len(succeeded) == 0 {
 		return nil
@@ -244,29 +256,31 @@ func (p *ParallelStep) rollback(ctx context.Context, sc *StepContext, succeeded 
 	}
 
 	return errors.Wrap(errors.Join(ErrUncompensated, err), errors.KindInternal, CodeCompensationFailed,
-		"%q eşzamanlı bileşiğinin iç geri alması tamamlanamadı; ELLE MÜDAHALE gerekir", p.name)
+		"the inner rollback of the %q concurrent composite could not be completed; A HUMAN IS NEEDED", p.name)
 }
 
-// compensateBranches verilen dalları ters sırada telafi eder; hata zinciri durdurmaz.
+// compensateBranches compensates the given branches; an error does not stop the
+// rest.
 //
-// Her dal KENDİ süre bütçesini alır (bkz. WithRollbackTimeout): yavaş bir dalın
-// paylaşılan bir bütçeyi tüketip kalan dalları ölü bağlamla çağırması, geri
-// alınabilecek işleri de asılı bırakırdı.
+// Every branch gets ITS OWN time budget (see WithRollbackTimeout): a slow branch
+// consuming a shared budget and leaving the remaining branches to be called with
+// a dead context would leave work hanging that could have been undone.
 func (p *ParallelStep) compensateBranches(ctx context.Context, sc *StepContext, idx []int) error {
-	// Dal telafileri EŞZAMANLI yürütülür. Dallar birbirine sıra bağımlılığı
-	// olmadan (eşzamanlı) çalıştığı için telafileri arasında da sıra
-	// bağımlılığı yoktur; motorun ADIMLAR arası ters sıra kuralı bileşiğin
-	// İÇİNE uygulanmaz.
+	// Branch compensations run CONCURRENTLY. Since the branches themselves run
+	// without an ordering dependency (concurrently), there is no ordering
+	// dependency between their compensations either; the engine's reverse-order
+	// rule BETWEEN STEPS is not applied INSIDE the composite.
 	//
-	// Bu, sıralı yürütmenin yarattığı AÇLIK sorununu da ortadan kaldırır:
-	// sıralı yapıldığında her dal ortak ebeveyn bütçesinden türetiliyordu ve
-	// yavaş bir dalın bütçeyi tüketmesi, sırası SONRA gelen dalların ölü
-	// bağlamla çağrılmasına yol açıyordu. Eşzamanlı yürütmede her dal aynı
-	// anda kendi bütçesini alır.
+	// This also removes the STARVATION problem sequential execution created:
+	// done sequentially, every branch derived its context from a common parent
+	// budget, so a slow branch consuming it left the branches LATER in the order
+	// to be called with a dead context. Running concurrently, every branch gets
+	// its own budget at the same time.
 	//
-	// Her dal, üst haritanın KENDİ KOPYASINI görür: telafiler eşzamanlı
-	// olduğu için ortak haritaya yazmak veri yarışı olurdu. Telafi zaten
-	// Shared'a yazmak için değil, ne geri alacağını OKUMAK için erişir.
+	// Every branch sees ITS OWN COPY of the parent map: because the
+	// compensations are concurrent, writing to a common map would be a data
+	// race. A compensation reaches for Shared to READ what it has to undo
+	// anyway, not to write to it.
 	var (
 		mu       sync.Mutex
 		failures []error
@@ -293,44 +307,49 @@ func (p *ParallelStep) compensateBranches(ctx context.Context, sc *StepContext, 
 
 			mu.Lock()
 			failures = append(failures, errors.Wrap(err, errors.KindOf(err), CodeCompensationFailed,
-				"%q bileşiğinin %q dalının telafisi başarısız oldu", p.name, b.Name()))
+				"the compensation of the %q branch of the %q composite failed", b.Name(), p.name))
 			mu.Unlock()
 		}()
 	}
 	wg.Wait()
 
-	// Hata sırası deterministik olsun diye dal sırasına göre toplanır.
+	// The failures are collected in branch order so the error order is
+	// deterministic.
 	slices.SortFunc(failures, func(a, b error) int { return strings.Compare(a.Error(), b.Error()) })
+
 	return errors.Join(failures...)
 }
 
-// validate bileşiğin yürütülebilir olup olmadığını denetler.
+// validate checks whether the composite can be run.
 func (p *ParallelStep) validate() error {
 	if p.name == "" {
-		return errors.Invalid(CodeInvalidWorkflow, "eşzamanlı bileşik adımın adı boş olamaz")
+		return errors.Invalid(CodeInvalidWorkflow, "the concurrent composite step's name cannot be empty")
 	}
 	if len(p.branches) == 0 {
-		return errors.Invalid(CodeInvalidWorkflow, "%q eşzamanlı bileşiğinin hiç dalı yok", p.name)
+		return errors.Invalid(CodeInvalidWorkflow, "the %q concurrent composite has no branches", p.name)
 	}
 	for i, b := range p.branches {
 		if isNilStep(b) {
-			return errors.Invalid(CodeInvalidWorkflow, "%q eşzamanlı bileşiğinin %d. dalı nil", p.name, i)
+			return errors.Invalid(CodeInvalidWorkflow,
+				"branch %d of the %q concurrent composite is nil", i, p.name)
 		}
 		if b.Name() == "" {
-			return errors.Invalid(CodeInvalidWorkflow, "%q eşzamanlı bileşiğinin %d. dalının adı boş", p.name, i)
+			return errors.Invalid(CodeInvalidWorkflow,
+				"the name of branch %d of the %q concurrent composite is empty", i, p.name)
 		}
 	}
+
 	return nil
 }
 
-// safeCall bir dal çağrısını panik yakalayarak yürütür.
+// safeCall runs a branch call while catching panics.
 func (p *ParallelStep) safeCall(ctx context.Context, sc *StepContext, phase string, fn func() (any, error)) (out any, err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			out = nil
 			err = panicError(sc.StepName, phase, r)
 
-			p.logger().ErrorContext(ctx, "workflow: eşzamanlı dal panikledi",
+			p.logger().ErrorContext(ctx, "workflow: a concurrent branch panicked",
 				attrWorkflow, sc.Workflow, attrExecutionID, sc.ExecutionID,
 				attrStep, p.name, "branch", sc.StepName, "phase", phase,
 				"panic", r, "stack", string(debug.Stack()))
@@ -340,15 +359,16 @@ func (p *ParallelStep) safeCall(ctx context.Context, sc *StepContext, phase stri
 	return fn()
 }
 
-// logger bileşiğin log'unu döner; verilmediyse slog.Default kullanılır.
+// logger returns the composite's logger; without one, slog.Default is used.
 func (p *ParallelStep) logger() *slog.Logger {
 	if p.log != nil {
 		return p.log
 	}
+
 	return slog.Default()
 }
 
-// branchContext bir dal için StepContext türetir.
+// branchContext derives a StepContext for a branch.
 func branchContext(parent *StepContext, shared map[string]any, name string, index int) *StepContext {
 	return &StepContext{
 		Input:       parent.Input,
@@ -361,13 +381,13 @@ func branchContext(parent *StepContext, shared map[string]any, name string, inde
 	}
 }
 
-// combineBranchErrors dal hatalarını tek bir tipli hatada birleştirir.
+// combineBranchErrors joins the branch errors into a single typed error.
 //
-// Bileşiğin sınıfı, yeniden denenebilirliği DOĞRU tarafa düşürecek biçimde
-// seçilir: dallardan biri bile yeniden denenmeyecek sınıftaysa (örn. geçersiz
-// girdi) bileşiğin tamamı yeniden denenmez — o dal her denemede aynı hatayı
-// vereceği için tekrar yalnızca diğer dalların yan etkilerini boşuna yeniden
-// uygular.
+// The composite's class is chosen so that retryability falls on the RIGHT side:
+// if even one branch is of a non-retryable class (invalid input, say) the whole
+// composite is not retried — that branch would give the same error on every
+// attempt, so a repeat would only reapply the other branches' side effects for
+// nothing.
 func combineBranchErrors(name string, failures []error) error {
 	joined := errors.Join(failures...)
 
@@ -375,9 +395,11 @@ func combineBranchErrors(name string, failures []error) error {
 	for _, f := range failures {
 		if !DefaultRetryable(f) {
 			kind = errors.KindOf(f)
+
 			break
 		}
 	}
 
-	return errors.Wrap(joined, kind, CodeParallelBranchFailed, "%q eşzamanlı bileşik adımı başarısız oldu", name)
+	return errors.Wrap(joined, kind, CodeParallelBranchFailed,
+		"the %q concurrent composite step failed", name)
 }

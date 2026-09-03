@@ -123,6 +123,21 @@ Sabitlenme `1.0.0` ile olur.
   bulur. Zamanlanmış süpürücü bilinçli olarak eklenmedi — kurtarma yan etkisi
   olan bir iş çalıştırır.
 
+- **Workflow motorunun sözleşme dosyaları İngilizceye çevrildi**: `store.go`
+  (Store arayüzü, durum sabitleri, kayıt tipleri), `options.go` (RunOption'lar
+  ve yeniden deneme politikası), `memory.go` ve `parallel.go`. Defter 720
+  dosyadan 716'ya indi.
+
+  Çeviri BAYAT BİR CÜMLE ortaya çıkardı ve düzeltildi: `ParallelStep`'in tip
+  godoc'u "Compensate tüm dalları TERS SIRADA ve SIRAYLA çağırır" diyordu, oysa
+  uygulama dal telafilerini EŞZAMANLI koşuyor ve bunun gerekçesi aynı dosyanın
+  başka bir godoc'unda yazılı (sıralı yürütme, yavaş bir dalın ortak bütçeyi
+  tüketmesi yüzünden sonraki dalları ölü bağlamla çağırıyordu). İki cümle
+  birbiriyle çelişiyordu; İngilizce metin uygulamanın yaptığını yazıyor. Aynı
+  godoc'ta İKİNCİ bir kopya daha vardı ("iç geri alma sırayla ve ters dal
+  sırasında yürür") — iç geri alma da aynı eşzamanlı yola gidiyor; o da
+  düzeltildi.
+
 - **`internal/core/workflow/pgstore`'un ÜRETİM dosyaları İngilizceye çevrildi**
   (ADR 0012'nin cırcırı): `pgstore.go`, `convert.go`, `sql.go`, `ids.go`,
   `migrations.go` ve iki migration SQL'i. Defter 727 dosyadan 720'ye indi;

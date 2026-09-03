@@ -8,69 +8,71 @@ import (
 	"github.com/bdrtr/gobit/internal/core/errors"
 )
 
-// Varsayılan süre bütçeleri.
+// The default time budgets.
 const (
-	// DefaultCompensationTimeout TEK BİR telafi çağrısı için verilen varsayılan
-	// süredir; bütçe adım başınadır (bkz. WithCompensationTimeout).
+	// DefaultCompensationTimeout is the default time given to a SINGLE
+	// compensation call; the budget is per step (see WithCompensationTimeout).
 	DefaultCompensationTimeout = 30 * time.Second
-	// DefaultStoreTimeout tek bir Store çağrısı için verilen varsayılan süredir.
+	// DefaultStoreTimeout is the default time given to a single Store call.
 	DefaultStoreTimeout = 5 * time.Second
 )
 
-// RetryPolicy bir adımın kaç kez ve hangi aralıkla yeniden deneneceğini tanımlar.
+// RetryPolicy defines how many times and at what interval a step is retried.
 //
-// Sıfır değeri geçerli DEĞİLDİR; politikayı WithRetry/WithCompensationRetry
-// doğrular ve eksik alanları makul varsayılanlara çeker.
+// The zero value is NOT valid; WithRetry/WithCompensationRetry validate the
+// policy and pull the missing fields to sensible defaults.
 type RetryPolicy struct {
-	// MaxAttempts toplam deneme sayısıdır (ilk deneme dâhil). En az 1 olmalıdır;
-	// 1 "yeniden deneme yok" demektir.
+	// MaxAttempts is the total number of attempts (including the first). It has
+	// to be at least 1; 1 means "no retries".
 	MaxAttempts int
-	// Backoff ilk yeniden denemeden önceki beklemedir. 0 ise beklenmez.
+	// Backoff is the wait before the first retry. With 0 there is no wait.
 	Backoff time.Duration
-	// Multiplier her denemede beklemenin çarpanıdır. 0 veya 1 ise bekleme
-	// sabittir; 2 ikili üstel geri çekilme verir.
+	// Multiplier is what the wait is multiplied by on each attempt. With 0 or 1
+	// the wait is constant; 2 gives binary exponential backoff.
 	Multiplier float64
-	// MaxBackoff beklemenin üst sınırıdır. 0 ise sınır yoktur.
+	// MaxBackoff is the upper bound on the wait. With 0 there is no bound.
 	MaxBackoff time.Duration
-	// Retryable bir hatanın yeniden denenebilir olup olmadığını söyler.
-	// nil ise DefaultRetryable kullanılır.
+	// Retryable reports whether an error is worth retrying.
+	// With nil, DefaultRetryable is used.
 	//
-	// Yüklem KENDİ BAŞINA karar vermez: panik ve bağlam hataları ona hiç
-	// sorulmadan elenir (bkz. allow). Aksi hâlde "her hatayı dene" diyen bir
-	// yüklem, panikleyen bir Invoke'un kısmi yan etkisini her denemede yeniden
-	// uygular ve ölü bir bağlamda boşuna döner.
+	// The predicate does NOT decide ON ITS OWN: panics and context errors are
+	// ruled out without ever asking it (see allow). Otherwise a predicate
+	// saying "retry everything" would reapply the partial side effect of a
+	// panicking Invoke on every attempt and spin uselessly on a dead context.
 	Retryable func(error) bool
 }
 
-// NoRetry yeniden deneme yapmayan politikadır ve motorun VARSAYILANIDIR.
+// NoRetry is the policy that does not retry, and it is the engine's DEFAULT.
 //
-// Varsayılanın "denemesin" olması bilinçlidir: motor bir adımın Invoke'unun
-// idempotent olup olmadığını bilemez. "Kartı çek" gibi bir adımı kendiliğinden
-// yeniden denemek, hatanın yanıt yolunda (istek gitti, cevap kayboldu)
-// oluştuğu durumda yan etkiyi İKİ KEZ uygular. Bu yüzden yeniden deneme adımın
-// idempotentliğini bilen çağıranın açık kararıdır: WithRetry ile istenir.
+// The default being "do not retry" is deliberate: the engine cannot know
+// whether a step's Invoke is idempotent. Retrying a step like "charge the card"
+// on its own would apply the side effect TWICE when the error happened on the
+// response path (the request went, the answer was lost). Retrying is therefore
+// the explicit decision of a caller who knows the step is idempotent: it is
+// asked for with WithRetry.
 func NoRetry() RetryPolicy {
 	return RetryPolicy{MaxAttempts: 1}
 }
 
-// DefaultRetryable bir hatanın yeniden denenmeye değer olup olmadığını söyler.
+// DefaultRetryable reports whether an error is worth retrying.
 //
-// Sınıflandırma hatanın SEBEBİNE bakar: aynı girdiyle aynı sonucu verecek bir
-// hatayı yeniden denemek yalnızca gecikme üretir.
+// The classification looks at the error's CAUSE: retrying an error that will
+// give the same result for the same input only produces latency.
 //
 //   - KindInvalid, KindConflict, KindNotFound, KindUnauthorized, KindForbidden
-//     → DENENMEZ. Girdi, durum ya da yetki hatasıdır; adım değişmediği sürece
-//     sonuç da değişmez.
-//   - KindUnavailable → DENENİR. Tanımı gereği geçicidir.
-//   - KindInternal → DENENİR. Sınıflandırılmamış hatalar (tipli olmayan
-//     hatalar dâhil) bu sınıfa düşer ve aralarında ağ/veritabanı kesintisi
-//     gibi geçici olanlar vardır; iyimser davranmanın bedeli birkaç denemedir.
-//   - Panik → DENENMEZ. Panik bir programlama hatasıdır; tekrarı aynı çöküşü
-//     üretir ve yalnızca hata mesajını geciktirir.
-//   - context.Canceled / DeadlineExceeded → DENENMEZ. Bağlam ölmüşken
-//     yeniden denemek bütçesi olmayan bir işe girmektir.
-//   - ErrUncompensated → DENENMEZ. Adım arkasında geri alınamamış bir yan etki
-//     bırakmıştır; tekrar, o asılı işin ÜSTÜNE ikincisini koyardı.
+//     → NOT RETRIED. It is an input, state or permission error; as long as the
+//     step does not change, neither does the result.
+//   - KindUnavailable → RETRIED. By definition it is transient.
+//   - KindInternal → RETRIED. Unclassified errors (including untyped ones) fall
+//     into this class and some of them — a network or database outage — are
+//     transient; the price of optimism is a few attempts.
+//   - A panic → NOT RETRIED. A panic is a programming error; repeating it
+//     produces the same crash and only delays the error message.
+//   - context.Canceled / DeadlineExceeded → NOT RETRIED. Retrying with a dead
+//     context is starting work that has no budget.
+//   - ErrUncompensated → NOT RETRIED. The step left a side effect behind that
+//     could not be undone; a repeat would put a second one ON TOP of that
+//     hanging work.
 func DefaultRetryable(err error) bool {
 	if err == nil {
 		return false
@@ -90,12 +92,12 @@ func DefaultRetryable(err error) bool {
 	}
 }
 
-// allow hatanın politikaya göre yeniden denenebilir olup olmadığını söyler.
+// allow reports whether the error is retryable under the policy.
 //
-// Panik, bağlam ve "telafi edilmemiş yan etki" hataları özel yükleme
-// SORULMADAN elenir: bu elemeler motorun güvencesidir (bkz. paket yorumu),
-// politikanın tercihi değil. Özel yüklem yalnızca kalan hatalar için
-// danışılır.
+// Panics, context errors and "uncompensated side effect" errors are ruled out
+// WITHOUT ASKING the custom predicate: those exclusions are the engine's
+// guarantee (see the package comment), not the policy's preference. The custom
+// predicate is consulted only for the errors that remain.
 func (p RetryPolicy) allow(err error) bool {
 	if err == nil {
 		return false
@@ -110,10 +112,11 @@ func (p RetryPolicy) allow(err error) bool {
 	if p.Retryable != nil {
 		return p.Retryable(err)
 	}
+
 	return DefaultRetryable(err)
 }
 
-// backoffFor verilen denemeden sonraki beklemeyi hesaplar (attempt 1'den başlar).
+// backoffFor computes the wait after the given attempt (attempt starts at 1).
 func (p RetryPolicy) backoffFor(attempt int) time.Duration {
 	if p.Backoff <= 0 {
 		return 0
@@ -123,7 +126,8 @@ func (p RetryPolicy) backoffFor(attempt int) time.Duration {
 	if p.Multiplier > 1 && attempt > 1 {
 		d *= math.Pow(p.Multiplier, float64(attempt-1))
 	}
-	// Taşma koruması: üstel büyüme int64 sınırını aşarsa üst sınıra çekilir.
+	// Overflow guard: if exponential growth passes the int64 limit it is pulled
+	// to the ceiling.
 	if d > float64(math.MaxInt64) {
 		d = float64(math.MaxInt64)
 	}
@@ -132,31 +136,37 @@ func (p RetryPolicy) backoffFor(attempt int) time.Duration {
 	if p.MaxBackoff > 0 && out > p.MaxBackoff {
 		out = p.MaxBackoff
 	}
+
 	return out
 }
 
-// normalize politikayı doğrular ve eksik alanları varsayılana çeker.
+// normalize validates the policy and pulls the missing fields to their defaults.
 func (p RetryPolicy) normalize(what string) (RetryPolicy, error) {
 	if p.MaxAttempts < 1 {
-		return p, errors.Invalid(CodeInvalidOption, "%s: MaxAttempts en az 1 olmalı, %d verildi", what, p.MaxAttempts)
+		return p, errors.Invalid(CodeInvalidOption,
+			"%s: MaxAttempts has to be at least 1, %d was given", what, p.MaxAttempts)
 	}
 	if p.Backoff < 0 {
-		return p, errors.Invalid(CodeInvalidOption, "%s: Backoff negatif olamaz, %s verildi", what, p.Backoff)
+		return p, errors.Invalid(CodeInvalidOption,
+			"%s: Backoff cannot be negative, %s was given", what, p.Backoff)
 	}
 	if p.MaxBackoff < 0 {
-		return p, errors.Invalid(CodeInvalidOption, "%s: MaxBackoff negatif olamaz, %s verildi", what, p.MaxBackoff)
+		return p, errors.Invalid(CodeInvalidOption,
+			"%s: MaxBackoff cannot be negative, %s was given", what, p.MaxBackoff)
 	}
 	if p.Multiplier < 0 || math.IsNaN(p.Multiplier) {
-		return p, errors.Invalid(CodeInvalidOption, "%s: Multiplier negatif ya da NaN olamaz", what)
+		return p, errors.Invalid(CodeInvalidOption,
+			"%s: Multiplier cannot be negative or NaN", what)
 	}
 	if p.Multiplier < 1 {
-		// 0 (sıfır değer) sabit bekleme anlamına gelir.
+		// 0 (the zero value) means a constant wait.
 		p.Multiplier = 1
 	}
+
 	return p, nil
 }
 
-// runOptions tek bir Run çağrısının çözülmüş ayarlarıdır.
+// runOptions are the resolved settings of a single Run call.
 type runOptions struct {
 	idempotencyKey      string
 	retry               RetryPolicy
@@ -164,40 +174,42 @@ type runOptions struct {
 	compensationTimeout time.Duration
 	storeTimeout        time.Duration
 	lease               time.Duration
-	// compensationRetrySet kullanıcının telafi politikasını AYRICA verip
-	// vermediğini tutar; vermediyse telafi, adım politikasını devralır.
+	// compensationRetrySet holds whether the user gave a compensation policy
+	// SEPARATELY; if they did not, compensation inherits the step policy.
 	compensationRetrySet bool
 }
 
-// RunOption Executor.Run çağrısının davranışını değiştirir.
+// RunOption changes the behavior of an Executor.Run call.
 type RunOption func(*runOptions) error
 
-// WithIdempotencyKey yürütmeyi bir tekrar koruma anahtarına bağlar.
+// WithIdempotencyKey binds the execution to a repeat-protection key.
 //
-// Aynı workflow adı ve aynı anahtarla yapılan ikinci çağrı adımları TEKRAR
-// ÇALIŞTIRMAZ; ilk yürütmenin sonucuna göre davranır (bkz. Executor.Run).
-// Anahtar boş olamaz ve MaxIdempotencyKeyLen baytı aşamaz: sınır Store
-// sözleşmesinin parçasıdır ve burada uygulanması, kalıcı bir Store'un
-// indeksinde patlayacak bir anahtarın hiç iş yapmadan reddedilmesini sağlar.
+// A second call with the same workflow name and the same key does NOT RUN the
+// steps again; it behaves according to the first execution's outcome (see
+// Executor.Run). The key cannot be empty and cannot exceed
+// MaxIdempotencyKeyLen bytes: the limit is part of the Store contract, and
+// applying it here means a key that would blow up in a durable Store's index is
+// rejected before any work is done.
 func WithIdempotencyKey(key string) RunOption {
 	return func(o *runOptions) error {
 		if key == "" {
-			return errors.Invalid(CodeInvalidOption, "idempotency anahtarı boş olamaz")
+			return errors.Invalid(CodeInvalidOption, "the idempotency key cannot be empty")
 		}
 		if len(key) > MaxIdempotencyKeyLen {
 			return errors.Invalid(CodeInvalidOption,
-				"idempotency anahtarı en fazla %d bayt olabilir, %d bayt verildi",
+				"the idempotency key can be at most %d bytes, %d bytes were given",
 				MaxIdempotencyKeyLen, len(key))
 		}
 		o.idempotencyKey = key
+
 		return nil
 	}
 }
 
-// WithRetry adımların yeniden deneme politikasını belirler.
+// WithRetry sets the steps' retry policy.
 //
-// Telafi için ayrıca WithCompensationRetry verilmediyse telafi de bu
-// politikayı devralır.
+// Unless WithCompensationRetry is given separately, compensation inherits this
+// policy too.
 func WithRetry(p RetryPolicy) RunOption {
 	return func(o *runOptions) error {
 		np, err := p.normalize("WithRetry")
@@ -205,17 +217,18 @@ func WithRetry(p RetryPolicy) RunOption {
 			return err
 		}
 		o.retry = np
+
 		return nil
 	}
 }
 
-// WithCompensationRetry telafinin yeniden deneme politikasını ayrıca belirler.
+// WithCompensationRetry sets the compensation's retry policy separately.
 //
-// Verilmezse telafi, WithRetry ile verilen adım politikasını devralır. Ayrı
-// verilebilmesinin sebebi, iki tarafın bedelinin farklı olmasıdır: başarısız
-// bir Invoke'un bedeli yürütmenin geri alınmasıdır, başarısız bir Compensate'in
-// bedeli ELLE MÜDAHALEDİR. Bu yüzden "adımı bir kez dene ama telafide ısrar et"
-// meşru bir yapılandırmadır.
+// Without it, compensation inherits the step policy given by WithRetry. The
+// reason it can be given separately is that the two sides cost different
+// things: a failed Invoke costs the execution being rolled back, while a failed
+// Compensate costs A HUMAN'S TIME. "Try the step once but insist on the
+// compensation" is therefore a legitimate configuration.
 func WithCompensationRetry(p RetryPolicy) RunOption {
 	return func(o *runOptions) error {
 		np, err := p.normalize("WithCompensationRetry")
@@ -224,39 +237,42 @@ func WithCompensationRetry(p RetryPolicy) RunOption {
 		}
 		o.compensationRetry = np
 		o.compensationRetrySet = true
+
 		return nil
 	}
 }
 
-// WithLease bir yürütmenin MEŞRU olarak sürebileceği en uzun süreyi bildirir.
+// WithLease declares the longest an execution may LEGITIMATELY take.
 //
-// # Neden gerekli
+// # Why it is needed
 //
-// Bir yürütme kaydı "running" açılır ve uç duruma geçerek kapanır. Süreç o
-// geçişi yazamadan ölürse — deploy, OOM, pod tahliyesi, çökme — kayıt SONSUZA
-// DEK running kalır. Motorun tekrar mantığı ona bakıp "hâlâ sürüyor" der ve
-// aynı anahtarla gelen her çağrı 409 alır. Ölçüldü: üç gün önce çökmüş bir
-// yürütme hâlâ "sürüyor" diyordu ve o sepet bir daha ödenemiyordu.
+// An execution record is opened "running" and closes by moving to a terminal
+// state. If the process dies before it can write that transition — a deploy, an
+// OOM, a pod eviction, a crash — the record stays running FOREVER. The engine's
+// repeat logic looks at it and says "still running", and every call with the
+// same key gets a 409. Measured: an execution that had crashed three days
+// earlier still said "running", and that cart could never be paid for again.
 //
-// Yaşlılık tek başına kanıt değildir, kira SÜRESİ kanıttır: çağıran zaten
-// akışa sonlu bir bütçe veriyorsa (sepet akışı iki dakika), o bütçeden uzun
-// süre "running" duran bir kayıt, hiçbir sürecin tutamayacağı bir kayıttır.
-// Bu yüzden süre motorca tahmin edilmez, çağıranca BİLDİRİLİR.
+// Age alone is not proof; the LEASE is. If the caller already gives the flow a
+// finite budget (the cart flow's is two minutes), a record that has been
+// "running" for longer than that budget is a record no process can be holding.
+// That is why the duration is not guessed by the engine but DECLARED by the
+// caller.
 //
-// # Ne yapılır
+// # What is done
 //
-// Kira dolmuş bir kayıt "sürüyor" sayılmaz; ne yapıldığı adım kayıtlarına
-// bakılarak belirlenir (bkz. [Executor.Run]):
+// A record whose lease has expired does not count as "running"; what it did is
+// determined from the step records (see [Executor.Run]):
 //
-//   - Hiçbir adım iş yapmamışsa telafi edilecek bir şey yoktur: kayıt
-//     [StatusFailed] olur, anahtarını bırakır ve çağıran YENİDEN deneyebilir.
-//   - İş yapılmışsa telafi HİÇ çalışmamıştır ve yarım iş ortadadır: kayıt
-//     [StatusCompensationFailed] olur, anahtarını TUTAR ve elle müdahale
-//     gerektiğini söyler. Sessizce yeniden denemek, ayrılmış stoğun ikinci kez
-//     ayrılması demekti.
+//   - If no step did any work there is nothing to compensate: the record
+//     becomes [StatusFailed], releases its key, and the caller can RETRY.
+//   - If work was done, compensation never ran and half-done work is out there:
+//     the record becomes [StatusCompensationFailed], KEEPS its key and says a
+//     human is needed. Retrying in silence would have meant reserving the
+//     already-reserved stock a second time.
 //
-// Sıfır ya da negatif değer bu davranışı KAPATIR: kira bildirmeyen bir çağıran
-// eski davranışı alır.
+// A zero or negative value TURNS this behavior OFF: a caller that declares no
+// lease gets the old behavior.
 func WithLease(d time.Duration) RunOption {
 	return func(o *runOptions) error {
 		o.lease = d
@@ -265,40 +281,44 @@ func WithLease(d time.Duration) RunOption {
 	}
 }
 
-// WithCompensationTimeout her bir telafi çağrısı için süre bütçesi verir.
+// WithCompensationTimeout gives each compensation call a time budget.
 //
-// Bütçe ADIM BAŞINADIR: her Compensate kendi süresini alır ve bir adımın yavaş
-// telafisi kendisinden önceki adımların bütçesini yemez. Zincirin toplam
-// süresi en kötü hâlde adım sayısı × bütçedir; bu bilinçli bir takastır, çünkü
-// alternatifi (paylaşılan tek bütçe) tam da en erken ve tipik olarak en ağır
-// kaynağı tutan adımı ölü bağlamla çağırmaktı. Adımın yeniden denenen
-// telafileri de bu bütçeyi paylaşır. Varsayılanı DefaultCompensationTimeout'tur.
-// Sıfır ya da negatif verilemez: bütçesiz bir telafi, ölü bir bağımlılıkta
-// süresiz asılır.
+// The budget is PER STEP: every Compensate gets its own time and one step's slow
+// compensation does not eat the budget of the steps before it. The chain's total
+// time is at worst the step count × the budget; that is a deliberate trade,
+// because the alternative (a single shared budget) meant calling the earliest
+// step — typically the one holding the heaviest resource — with a dead context.
+// A step's retried compensations share this budget too. The default is
+// DefaultCompensationTimeout. Zero or negative cannot be given: a compensation
+// without a budget hangs indefinitely on a dead dependency.
 func WithCompensationTimeout(d time.Duration) RunOption {
 	return func(o *runOptions) error {
 		if d <= 0 {
-			return errors.Invalid(CodeInvalidOption, "telafi süresi pozitif olmalı, %s verildi", d)
+			return errors.Invalid(CodeInvalidOption,
+				"the compensation timeout has to be positive, %s was given", d)
 		}
 		o.compensationTimeout = d
+
 		return nil
 	}
 }
 
-// WithStoreTimeout tek bir Store çağrısı için süre bütçesi verir.
+// WithStoreTimeout gives a single Store call a time budget.
 //
-// Varsayılanı DefaultStoreTimeout'tur. Sıfır ya da negatif verilemez.
+// The default is DefaultStoreTimeout. Zero or negative cannot be given.
 func WithStoreTimeout(d time.Duration) RunOption {
 	return func(o *runOptions) error {
 		if d <= 0 {
-			return errors.Invalid(CodeInvalidOption, "store süresi pozitif olmalı, %s verildi", d)
+			return errors.Invalid(CodeInvalidOption,
+				"the store timeout has to be positive, %s was given", d)
 		}
 		o.storeTimeout = d
+
 		return nil
 	}
 }
 
-// newRunOptions seçenekleri sırayla uygular ve doğrulanmış ayarları döner.
+// newRunOptions applies the options in order and returns the validated settings.
 func newRunOptions(opts []RunOption) (*runOptions, error) {
 	o := &runOptions{
 		retry:               NoRetry(),
@@ -309,7 +329,7 @@ func newRunOptions(opts []RunOption) (*runOptions, error) {
 
 	for _, opt := range opts {
 		if opt == nil {
-			return nil, errors.Invalid(CodeInvalidOption, "nil RunOption verilemez")
+			return nil, errors.Invalid(CodeInvalidOption, "a nil RunOption cannot be given")
 		}
 		if err := opt(o); err != nil {
 			return nil, err
@@ -319,15 +339,18 @@ func newRunOptions(opts []RunOption) (*runOptions, error) {
 	if !o.compensationRetrySet {
 		o.compensationRetry = o.retry
 	}
+
 	return o, nil
 }
 
-// storeContext Store çağrıları için iptalden ETKİLENMEYEN, süreli bir bağlam üretir.
+// storeContext produces a time-bounded context for Store calls that is NOT
+// AFFECTED by cancellation.
 //
-// Çağıranın bağlamı iptal edilmiş olsa bile yürütmenin izi yazılabilmelidir:
-// kalıcılaştırmayı iptale bağlamak, tam da izin en çok gerektiği anda (iptal
-// edilmiş, telafi edilmiş bir yürütme) kaydı boş bırakırdı. Bütçe yine vardır;
-// erişilemez bir veritabanı yürütmeyi süresiz asamaz.
+// The execution's trace has to be writable even when the caller's context was
+// canceled: tying persistence to cancellation would leave the record empty
+// exactly when the trace is needed most (a canceled, compensated execution).
+// There is still a budget; an unreachable database cannot hang the execution
+// indefinitely.
 func (o *runOptions) storeContext(ctx context.Context) (context.Context, context.CancelFunc) {
 	return context.WithTimeout(context.WithoutCancel(ctx), o.storeTimeout)
 }
