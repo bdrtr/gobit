@@ -163,8 +163,29 @@ type IdempotencyStore interface {
 // ayırmak, anahtarı gerçekten kiracıya bağlamadan (IP taklit edilebilir, NAT
 // paylaşılır) idempotency'yi BOZARDI: mobil ağı değişip tekrar deneyen
 // istemci kendi kaydını bulamaz ve tam da korumanın işe yarayacağı anda çift
-// işlem yapardı. Anahtar alanının kiracıya ait olması gereken uçlar zaten
-// kimlik doğrulamanın ardında olmalıdır.
+// işlem yapardı.
+//
+// # Kimlik doğrulamak, ÇAĞIRANLARI AYIRMAK demek değildir
+//
+// Yukarıdaki mantık bir cümleyle biterdi — "anahtar alanının kiracıya ait
+// olması gereken uçlar kimlik doğrulamanın ardında olmalıdır" — ve o cümle
+// VİTRİNDE yanlış sonuç verir. /store/v1 kimlik doğrulamalıdır, ama çözülen
+// kimlik alışverişçinin değil MAĞAZANINDIR: publishable anahtar her tarayıcıda
+// aynıdır ve zaten gizli olmadığı [Authenticator.AuthenticateStore] godoc'unda
+// yazılıdır. Yani vitrindeki her müşteri TEK bir kovayı paylaşır ve o kovanın
+// içindeki kaydı seçen şey istemcinin seçtiği bir başlıktır.
+//
+// Vitrin bunu iki şeye borçlu olarak atlatır. Birincisi parmak izine YOLUN da
+// girmesi: sepet kapsamlı uçların yolunda sepet kimliği vardır, dolayısıyla
+// aynı anahtarı kendi sepetinde kullanan ikinci müşteri başkasının verisini
+// değil 409 alır. İkincisi, geriye kalan tek uç — sepet YARATMA — bu halkadan
+// MUAF tutulmuştur: yolu hiçbir yetenek taşımaz ve yanıtı bir yetenek ÜRETİR,
+// yani aynı anahtar + aynı gövde ile gelen ikinci müşteriye birincinin sepet
+// kimliği veriliyordu. Gerekçe ve ölçüm cmd/server'daki muafiyet listesinde.
+//
+// Buradan çıkan kural: bu middleware'i yeni bir yüzeye takarken sorulacak soru
+// "kimlik doğrulanıyor mu" değil, "çözülen kimlik ÇAĞIRANI mı yoksa çağıranın
+// bağlı olduğu KURULUMU mu adlandırıyor" olmalıdır.
 func Idempotency(store IdempotencyStore) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		if store == nil {

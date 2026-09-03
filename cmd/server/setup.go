@@ -28,6 +28,7 @@ import (
 	authapi "github.com/bdrtr/gobit/internal/modules/auth/api"
 	authmodels "github.com/bdrtr/gobit/internal/modules/auth/models"
 	authservice "github.com/bdrtr/gobit/internal/modules/auth/service"
+	cartapi "github.com/bdrtr/gobit/internal/modules/cart/api"
 	"github.com/bdrtr/gobit/internal/modules/file"
 	filelocal "github.com/bdrtr/gobit/internal/modules/file/local"
 	fileservice "github.com/bdrtr/gobit/internal/modules/file/service"
@@ -295,7 +296,30 @@ func guardStack(
 		// rationale is on the [corehttp.GuardOptions.IdempotencyExempt] field;
 		// the path is not spelled out here, it is read from the module's
 		// constant.
-		IdempotencyExempt: []string{graph.Path},
+		//
+		// Cart CREATION is exempt for a different reason, and it is a leak
+		// rather than a waste. The idempotency namespace is the caller's
+		// Principal, and on the storefront the Principal is the PUBLISHABLE
+		// KEY — the store's identity, identical for every shopper and visible
+		// in every browser. So all shoppers share one namespace, and the key
+		// that selects a record inside it is a header the CLIENT chooses.
+		//
+		// Every other storefront POST survives that, because the fingerprint
+		// includes the PATH and those paths carry the cart id: a second shopper
+		// reusing the key on their own cart gets 409 idempotency_key_reuse, not
+		// somebody else's data. Cart creation is the one endpoint whose path
+		// carries no capability and whose response CREATES one — so a second
+		// shopper sending the same key and the same body was handed the first
+		// shopper's cart id, which is a capability URL (there is no ownership
+		// check on a cart; see README's known limits). Measured, not deduced:
+		// two independent callers, `Idempotency-Key: cart-9`, identical bodies,
+		// identical cart id in both responses and `Idempotency-Replayed: true`
+		// on the second.
+		//
+		// Exempting it costs a duplicate cart when a client retries a timed-out
+		// creation. That is an abandoned row. The alternative was handing a
+		// stranger someone's cart.
+		IdempotencyExempt: []string{graph.Path, cartapi.StoreCartsPath},
 	}
 
 	if cfg.GuardBackend == config.BackendRedis {

@@ -6,6 +6,14 @@ import (
 	corehttp "github.com/bdrtr/gobit/internal/core/http"
 )
 
+// StoreCartsPath is the storefront's cart-creation endpoint.
+//
+// It is a constant because the composition root has to name it: this path is
+// EXEMPT from the idempotency ring, and the reason is written where the
+// exemption is declared (cmd/server/setup.go). Spelling it there by hand would
+// let the two drift, and the drift would restore a cross-shopper leak.
+const StoreCartsPath = "/store/v1/carts"
+
 // Yetki sözlüğü: cart'ın yönetim uçlarının istediği yetkiler.
 //
 // Adlar TÜM modüllerde aynı kalıptadır ("<modül>:read" / "<modül>:write").
@@ -58,7 +66,7 @@ func (h *Handler) Routes(r chi.Router) {
 	okuma := r.With(corehttp.RequireScope(ScopeRead))
 
 	// --- Store API (müşteri) ---
-	r.Post("/store/v1/carts", h.storeCreateCart)
+	r.Post(StoreCartsPath, h.storeCreateCart)
 	r.Get("/store/v1/carts/{id}", h.storeGetCart)
 	r.Post("/store/v1/carts/{id}", h.storeUpdateCart)
 	r.Delete("/store/v1/carts/{id}", h.storeDeleteCart)

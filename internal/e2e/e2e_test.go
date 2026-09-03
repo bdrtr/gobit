@@ -112,6 +112,7 @@ import (
 	b2bmod "github.com/bdrtr/gobit/internal/modules/b2b"
 	b2bsvc "github.com/bdrtr/gobit/internal/modules/b2b/service"
 	cartmod "github.com/bdrtr/gobit/internal/modules/cart"
+	cartapi "github.com/bdrtr/gobit/internal/modules/cart/api"
 	cartsvc "github.com/bdrtr/gobit/internal/modules/cart/service"
 	customermod "github.com/bdrtr/gobit/internal/modules/customer"
 	customersvc "github.com/bdrtr/gobit/internal/modules/customer/service"
@@ -128,6 +129,7 @@ import (
 	pricingmod "github.com/bdrtr/gobit/internal/modules/pricing"
 	pricingsvc "github.com/bdrtr/gobit/internal/modules/pricing/service"
 	productmod "github.com/bdrtr/gobit/internal/modules/product"
+	"github.com/bdrtr/gobit/internal/modules/product/graph"
 	productsvc "github.com/bdrtr/gobit/internal/modules/product/service"
 	promotionmod "github.com/bdrtr/gobit/internal/modules/promotion"
 	promotionsvc "github.com/bdrtr/gobit/internal/modules/promotion/service"
@@ -629,6 +631,13 @@ func zeminiKur(ctx context.Context) error {
 			Limiter:          corehttp.NewMemoryLimiter(testHizSiniri, time.Minute),
 			LimitKey:         corehttp.ClientIPKey,
 			IdempotencyStore: corehttp.NewMemoryIdempotencyStore(time.Hour),
+			// Muafiyet listesi ÜRETİMDEKİYLE aynı olmalı, yoksa bu dosya
+			// uçtan uca bir kurulumu değil, kendi kurduğu başka bir
+			// yapılandırmayı sınar. Fark tam olarak burada ısırdı: sepet
+			// yaratma üretimde halkadan çıkarıldığında buradaki testler
+			// eskisi gibi geçmeye devam etti ve artık var olmayan bir
+			// davranışı belgelemeye başladı.
+			IdempotencyExempt: []string{graph.Path, cartapi.StoreCartsPath},
 		}),
 	})
 

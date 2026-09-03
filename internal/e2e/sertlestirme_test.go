@@ -17,6 +17,7 @@ import (
 	corehttp "github.com/bdrtr/gobit/internal/core/http"
 	"github.com/bdrtr/gobit/internal/core/module"
 	coreplugin "github.com/bdrtr/gobit/internal/core/plugin"
+	cartapi "github.com/bdrtr/gobit/internal/modules/cart/api"
 	cartsvc "github.com/bdrtr/gobit/internal/modules/cart/service"
 	paymentmod "github.com/bdrtr/gobit/internal/modules/payment"
 	paymentsvc "github.com/bdrtr/gobit/internal/modules/payment/service"
@@ -34,21 +35,35 @@ import (
 // görmek için bir OTLP toplayıcısı ayağa kaldırmak, kanıta hiçbir şey
 // eklemeden testi ağa bağımlı kılardı.
 
-// TestIdempotencyAyniAnahtarlaTekSepetUretir idempotency middleware'inin
-// GERÇEK bir uçta çalıştığını doğrular.
+// TestSepetYaratmaBilerekOynatilmaz: aynı anahtarla gelen ikinci istek
+// birincinin sepetini DEĞİL, yeni bir sepet almalıdır.
 //
-// İddia bir başlık iddiası değil, bir VERİ iddiasıdır: ağı kopan ve isteğini
-// tekrarlayan bir istemci iki sepet değil, bir sepet almalıdır. Yalnızca
-// yanıtın aynı olduğuna bakmak yetmezdi — ikinci bir sepet yazılıp yanıtı
-// atılmış da olabilirdi.
-func TestIdempotencyAyniAnahtarlaTekSepetUretir(t *testing.T) {
+// # Bu bir gerileme değil, kapatılmış bir sızıntı
+//
+// Bu test bir zamanlar tam TERSİNİ iddia ediyordu — "ağı kopan istemci iki
+// sepet değil bir sepet almalı" — ve iddia kendi başına makuldü. Yanlış olan,
+// idempotency kaydının VİTRİNDE çağıranları ayırabildiği varsayımıydı.
+//
+// Kayıt, çağıranın kimliğiyle ad alanına alınır. /store/v1'de çözülen kimlik
+// alışverişçinin değil MAĞAZANIN kimliğidir: publishable anahtar her tarayıcıda
+// aynıdır ve gizli olmadığı çekirdeğin kendi godoc'unda yazılıdır. Yani bütün
+// müşteriler TEK kova paylaşıyordu ve kaydı seçen şey istemcinin seçtiği bir
+// başlıktı. Sepet yaratma, yolunda hiçbir yetenek TAŞIMAYAN ve yanıtında bir
+// yetenek ÜRETEN tek uçtu; aynı anahtar ve aynı gövdeyle gelen ikinci müşteri
+// birincinin sepet kimliğini alıyordu — sepette sahiplik denetimi olmadığı için
+// (bkz. README, "Bilinen sınırlar") bu, yabancıya birinin sepetini vermekti.
+//
+// Ödenen bedel: zaman aşımına uğrayan bir yaratma isteğini tekrarlayan istemci
+// iki sepet açar. Biri terk edilir. Para, stok ve müşteriye görünen hiçbir şey
+// etkilenmez.
+func TestSepetYaratmaBilerekOynatilmaz(t *testing.T) {
 	ctx := context.Background()
 
 	govde, err := json.Marshal(map[string]string{"country_code": vergiliUlke})
 	require.NoError(t, err, "sepet isteği kodlanamadı")
 
 	sepetIstegi := func() *http.Request {
-		istek := httptest.NewRequest(http.MethodPost, "/store/v1/carts", bytes.NewReader(govde))
+		istek := httptest.NewRequest(http.MethodPost, cartapi.StoreCartsPath, bytes.NewReader(govde))
 		istek.Header.Set("Content-Type", "application/json")
 		istek.Header.Set(corehttp.PublishableKeyHeader, publishableAnahtar)
 		istek.Header.Set(corehttp.IdempotencyKeyHeader, "e2e-sepet-anahtari-1")
@@ -56,34 +71,67 @@ func TestIdempotencyAyniAnahtarlaTekSepetUretir(t *testing.T) {
 		return istek
 	}
 
+	oncekiSayi := sepetSayisi(ctx, t)
+
 	ilk := httptest.NewRecorder()
 	testRouter.ServeHTTP(ilk, sepetIstegi())
-	require.Equal(t, http.StatusCreated, ilk.Code,
-		"ilk sepet isteği 201 dönmeli; gövde: %s", ilk.Body.String())
-	assert.Empty(t, ilk.Header().Get(corehttp.IdempotencyReplayedHeader),
-		"ilk istek bir tekrar oynatma değildir")
-
-	// Sayım tekrardan HEMEN ÖNCE alınır: paket testleri sırayla koştuğu için
-	// aradaki tek yazar bu testtir.
-	oncekiSayi := sepetSayisi(ctx, t)
+	require.Equal(t, http.StatusCreated, ilk.Code, "gövde: %s", ilk.Body.String())
 
 	ikinci := httptest.NewRecorder()
 	testRouter.ServeHTTP(ikinci, sepetIstegi())
-	require.Equal(t, http.StatusCreated, ikinci.Code,
-		"tekrar da 201 dönmeli; gövde: %s", ikinci.Body.String())
+	require.Equal(t, http.StatusCreated, ikinci.Code, "gövde: %s", ikinci.Body.String())
+
+	assert.Empty(t, ikinci.Header().Get(corehttp.IdempotencyReplayedHeader),
+		"sepet yaratma halkadan MUAFtır; oynatma başlığı hiç çıkmamalı")
+	assert.NotEqual(t, sepetKimliginiOku(t, ilk), sepetKimliginiOku(t, ikinci),
+		"ikinci çağıran BİRİNCİNİN sepetini almamalı; asıl iddia budur")
+	assert.Equal(t, oncekiSayi+2, sepetSayisi(ctx, t),
+		"iki istek iki sepet yazmalı; muafiyetin bedeli tam olarak budur")
+}
+
+// TestSepetKapsamliUctaIdempotencyKorunur muafiyetin YALNIZCA yaratmaya
+// dokunduğunu doğrular.
+//
+// Muafiyet tam yol eşleşmesiyle çalışır, önekle değil. Önek olsaydı
+// /store/v1/carts/{id}/complete de düşerdi ve o uç, çift SİPARİŞ üreten uçtur —
+// yani korumanın gerçekten gerektiği tek yer halkadan çıkmış olurdu.
+//
+// Bu uçlarda ad alanı sorunu da yoktur: parmak izi YOLU içerir ve yolda sepet
+// kimliği vardır, dolayısıyla aynı anahtarı kendi sepetinde kullanan ikinci
+// müşteri başkasının verisini değil 409 alır.
+func TestSepetKapsamliUctaIdempotencyKorunur(t *testing.T) {
+	sepetID, _ := sepetOlustur(t)
+
+	adresIstegi := func(anahtar string) *http.Request {
+		govde, err := json.Marshal(map[string]any{
+			"address": map[string]string{"country_code": vergiliUlke, "city": "Istanbul"},
+		})
+		require.NoError(t, err)
+
+		istek := httptest.NewRequest(http.MethodPost,
+			"/store/v1/carts/"+sepetID+"/shipping-address", bytes.NewReader(govde))
+		istek.Header.Set("Content-Type", "application/json")
+		istek.Header.Set(corehttp.PublishableKeyHeader, publishableAnahtar)
+		istek.Header.Set(corehttp.IdempotencyKeyHeader, anahtar)
+
+		return istek
+	}
+
+	ilk := httptest.NewRecorder()
+	testRouter.ServeHTTP(ilk, adresIstegi("e2e-adres-anahtari"))
+	require.Less(t, ilk.Code, http.StatusInternalServerError, "gövde: %s", ilk.Body.String())
+
+	ikinci := httptest.NewRecorder()
+	testRouter.ServeHTTP(ikinci, adresIstegi("e2e-adres-anahtari"))
+
 	assert.Equal(t, "true", ikinci.Header().Get(corehttp.IdempotencyReplayedHeader),
-		"tekrar, kaydedilmiş yanıtın oynatılması olmalı")
-	assert.JSONEq(t, ilk.Body.String(), ikinci.Body.String(),
+		"sepet kapsamlı uçta tekrar, kaydedilmiş yanıtın oynatılması olmalı")
+	assert.Equal(t, ilk.Code, ikinci.Code, "oynatılan yanıt ilkinin durumunu taşımalı")
+	// Gövde JSONEq ile değil ham karşılaştırmayla sınanır: bu uç gövdesiz de
+	// yanıtlayabilir ve JSONEq boş dizeyi "geçersiz JSON" diye düşürür — yani
+	// oynatmanın doğru çalıştığı durumda testi kırardı.
+	assert.Equal(t, ilk.Body.String(), ikinci.Body.String(),
 		"oynatılan yanıt ilkinin AYNISI olmalı")
-
-	// Asıl iddia: tekrar hiçbir şey YAZMADI.
-	assert.Equal(t, oncekiSayi, sepetSayisi(ctx, t),
-		"tekrar edilen istek ikinci bir sepet yazmamalı")
-
-	// Oynatılan yanıtın işaret ettiği sepet gerçekten var olmalı; kayıt
-	// bozulmuş bir gövdeyi çalıyor olsaydı bu adım düşerdi.
-	_, err = sepetSvc.GetCart(ctx, sepetKimliginiOku(t, ikinci))
-	require.NoError(t, err, "oynatılan yanıttaki sepet okunabilmeli")
 }
 
 // sepetSayisi veritabanındaki toplam sepet sayısını döner.
@@ -102,14 +150,22 @@ func sepetSayisi(ctx context.Context, t *testing.T) int64 {
 // Sessizce ilk yanıtı çalmak, istemcinin İKİNCİ isteğinin hiç işlenmediğini
 // gizlerdi: istemci "ikinci sepetim hazır" sanıp birincinin kimliğiyle
 // devam ederdi.
+//
+// Uç sepet YARATMA değil, sepet kapsamlı bir uçtur: yaratma halkadan muaftır
+// (bkz. [TestSepetYaratmaBilerekOynatilmaz]) ve orada anahtarın yeniden
+// kullanımı diye bir kavram kalmamıştır.
 func TestIdempotencyAyniAnahtarFarkliGovdeyiReddeder(t *testing.T) {
+	sepetID, _ := sepetOlustur(t)
 	anahtar := "e2e-sepet-anahtari-2"
 
-	istekYap := func(ulkeKodu string) *http.Request {
-		govde, err := json.Marshal(map[string]string{"country_code": ulkeKodu})
+	istekYap := func(sehir string) *http.Request {
+		govde, err := json.Marshal(map[string]any{
+			"address": map[string]string{"country_code": vergiliUlke, "city": sehir},
+		})
 		require.NoError(t, err)
 
-		istek := httptest.NewRequest(http.MethodPost, "/store/v1/carts", bytes.NewReader(govde))
+		istek := httptest.NewRequest(http.MethodPost,
+			"/store/v1/carts/"+sepetID+"/shipping-address", bytes.NewReader(govde))
 		istek.Header.Set("Content-Type", "application/json")
 		istek.Header.Set(corehttp.PublishableKeyHeader, publishableAnahtar)
 		istek.Header.Set(corehttp.IdempotencyKeyHeader, anahtar)
@@ -118,11 +174,11 @@ func TestIdempotencyAyniAnahtarFarkliGovdeyiReddeder(t *testing.T) {
 	}
 
 	ilk := httptest.NewRecorder()
-	testRouter.ServeHTTP(ilk, istekYap(vergiliUlke))
-	require.Equal(t, http.StatusCreated, ilk.Code, "gövde: %s", ilk.Body.String())
+	testRouter.ServeHTTP(ilk, istekYap("Istanbul"))
+	require.Less(t, ilk.Code, http.StatusInternalServerError, "gövde: %s", ilk.Body.String())
 
 	farkli := httptest.NewRecorder()
-	testRouter.ServeHTTP(farkli, istekYap(vergisizUlke))
+	testRouter.ServeHTTP(farkli, istekYap("Ankara"))
 	assert.Equal(t, http.StatusConflict, farkli.Code,
 		"aynı anahtar farklı gövdeyle reddedilmeli; gövde: %s", farkli.Body.String())
 }

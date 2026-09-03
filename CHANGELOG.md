@@ -10,6 +10,39 @@ Sabitlenme `1.0.0` ile olur.
 
 ## [Yayımlanmamış]
 
+### Güvenlik
+
+- **Vitrinde bir alışverişçi başkasının SEPETİNİ alabiliyordu.** Idempotency
+  kaydı çağıranın kimliğiyle ad alanına alınıyor; ama `/store/v1`'de çözülen
+  kimlik alışverişçinin değil MAĞAZANIN kimliği — publishable anahtar her
+  tarayıcıda aynı ve zaten gizli değil. Yani bütün müşteriler TEK kova
+  paylaşıyor ve kaydı seçen şey istemcinin seçtiği bir başlık.
+
+  Ölçüldü, çıkarsanmadı: iki bağımsız çağıran, `Idempotency-Key: cart-9`,
+  aynı gövde → **ikisi de aynı sepet kimliğini** aldı ve ikincinin yanıtında
+  `Idempotency-Replayed: true` vardı. Sepette sahiplik denetimi olmadığı için
+  (README, "Bilinen sınırlar") bu, yabancıya birinin sepetini vermek demek:
+  içindekiler, e-postası, adresi, ve tamamlama yetkisi.
+
+  Vitrin bunu çoğu uçta atlatıyordu, çünkü parmak izi YOLU da içeriyor ve
+  sepet kapsamlı uçların yolunda sepet kimliği var — aynı anahtarı kendi
+  sepetinde kullanan ikinci müşteri 409 alıyor. Sızıntı tam olarak yolunda
+  hiçbir yetenek TAŞIMAYAN ve yanıtında bir yetenek ÜRETEN tek uçtaydı:
+  `POST /store/v1/carts`.
+
+  O uç artık idempotency halkasından MUAF. Bedeli açık: zaman aşımına uğrayan
+  bir yaratma isteğini tekrarlayan istemci iki sepet açar, biri terk edilir.
+  Para, stok ve müşteriye görünen hiçbir şey etkilenmiyor. Muafiyet TAM YOL
+  eşleşmesiyle çalıştığı için `/carts/{id}/complete` korunmaya devam ediyor —
+  çift SİPARİŞ üreten uç odur.
+
+  Bu davranışı bir e2e testi TERSİNDEN çiviliyordu ("aynı anahtar tek sepet
+  üretir") ve iddiası kendi başına makuldü; yanlış olan, kaydın vitrinde
+  çağıranları ayırabildiği varsayımıydı. Test yeni sözleşmeyi ve kapattığı
+  sızıntıyı yazacak şekilde yeniden yazıldı. Ayrıca e2e kurulumu artık
+  üretimin muafiyet listesini KULLANIYOR: eskiden kendi listesini kurduğu için
+  üretimdeki satırı silmek hiçbir testi düşürmüyordu.
+
 ### Eklendi
 
 - **PostgreSQL'in bir SEÇENEK değil TEMEL olduğu yazıya geçti**

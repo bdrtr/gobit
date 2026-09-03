@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -25,6 +26,7 @@ import (
 	"github.com/bdrtr/gobit/internal/core/query"
 	authmodels "github.com/bdrtr/gobit/internal/modules/auth/models"
 	authservice "github.com/bdrtr/gobit/internal/modules/auth/service"
+	cartapi "github.com/bdrtr/gobit/internal/modules/cart/api"
 	"github.com/bdrtr/gobit/internal/modules/notification"
 	"github.com/bdrtr/gobit/internal/modules/product/graph"
 	"github.com/bdrtr/gobit/plugins/paymentstripe"
@@ -914,6 +916,63 @@ func (validIdentity) AuthenticateAdmin(_ context.Context, _, _ string) (corehttp
 // AuthenticateStore returns a fixed store principal.
 func (validIdentity) AuthenticateStore(_ context.Context, _ string) (corehttp.Principal, error) {
 	return corehttp.Principal{ID: "pk_1", Kind: "api_key"}, nil
+}
+
+// TestGuardStackExemptsCartCreationFromIdempotency proves the composition root
+// really carries the exemption, in the REAL stack.
+//
+// Its own e2e suite cannot prove this: that suite builds its own guard options,
+// so deleting the line from the composition root leaves every e2e test green.
+// This test is what makes the line load-bearing.
+//
+// What the exemption prevents is a cross-shopper leak rather than a waste. The
+// idempotency namespace is the caller's Principal, and on the storefront the
+// Principal is the publishable key — the STORE's identity, the same for every
+// shopper. Cart creation is the one storefront POST whose path carries no
+// capability and whose response creates one, so two shoppers sending the same
+// client-chosen key and the same body were handed the SAME cart id.
+//
+// The handler below therefore answers with a DIFFERENT body each time: with the
+// endpoint recorded, the second caller would be given the first one's answer,
+// which is exactly the leak.
+func TestGuardStackExemptsCartCreationFromIdempotency(t *testing.T) {
+	t.Parallel()
+
+	guards, err := guardStack(baseConfig(), validIdentity{}, &adminui.Ring{}, nil, discardLogger())
+	require.NoError(t, err)
+
+	created := 0
+
+	r := corehttp.NewRouter(corehttp.RouterOptions{Version: "test", Middlewares: guards})
+	r.Post(cartapi.StoreCartsPath, func(w http.ResponseWriter, _ *http.Request) {
+		created++
+		w.WriteHeader(http.StatusCreated)
+		_, _ = fmt.Fprintf(w, `{"data":{"id":"cart_%d"}}`, created)
+	})
+
+	makeRequest := func() *http.Request {
+		req := httptest.NewRequest(http.MethodPost, cartapi.StoreCartsPath,
+			strings.NewReader(`{"country_code":"tr"}`))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set(corehttp.PublishableKeyHeader, "pk_test")
+		req.Header.Set(corehttp.IdempotencyKeyHeader, "the-same-key")
+
+		return req
+	}
+
+	first := httptest.NewRecorder()
+	r.ServeHTTP(first, makeRequest())
+	require.Equal(t, http.StatusCreated, first.Code)
+
+	second := httptest.NewRecorder()
+	r.ServeHTTP(second, makeRequest())
+
+	require.Equal(t, http.StatusCreated, second.Code)
+	assert.Empty(t, second.Header().Get(corehttp.IdempotencyReplayedHeader),
+		"cart creation is not recorded, so it cannot be replayed")
+	assert.Contains(t, second.Body.String(), `"cart_2"`,
+		"the second shopper must get their OWN cart, not the first shopper's")
+	assert.Equal(t, 2, created, "both requests must reach the handler")
 }
 
 // TestGuardStackExemptsTheGraphQLEndpointFromIdempotency proves the exemption
