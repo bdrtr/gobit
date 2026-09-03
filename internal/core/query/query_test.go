@@ -452,7 +452,7 @@ func TestGraphKokSaglayiciYoksaNotFoundVeArananAdiYazar(t *testing.T) {
 	require.True(t, errors.As(err, &typed))
 	assert.Contains(t, typed.Message, "product"+query.ProviderSuffix,
 		"query'nin kendi mesajı container'da aranan adı içermeli")
-	assert.Equal(t, "product"+query.ProviderSuffix, typed.Details["aranan_ad"])
+	assert.Equal(t, "product"+query.ProviderSuffix, typed.Details["looked_up_name"])
 }
 
 func TestGraphGenisletmeSaglayicisiYoksaNotFoundVeArananAdiYazar(t *testing.T) {
@@ -473,7 +473,7 @@ func TestGraphGenisletmeSaglayicisiYoksaNotFoundVeArananAdiYazar(t *testing.T) {
 	require.True(t, errors.As(err, &typed))
 	assert.Contains(t, typed.Message, "pricing"+query.ProviderSuffix,
 		"query'nin kendi mesajı container'da aranan adı içermeli")
-	assert.Equal(t, "pricing"+query.ProviderSuffix, typed.Details["aranan_ad"])
+	assert.Equal(t, "pricing"+query.ProviderSuffix, typed.Details["looked_up_name"])
 }
 
 func TestGraphSaglayiciEntitysiUyusmuyorsaInvalidDoner(t *testing.T) {
@@ -975,7 +975,7 @@ func TestGraphHedefSaglayiciKaydiVeriYokkenDeDogrulanir(t *testing.T) {
 
 	var typed *errors.Error
 	require.True(t, errors.As(err, &typed))
-	assert.Equal(t, "variant"+query.ProviderSuffix, typed.Details["aranan_ad"])
+	assert.Equal(t, "variant"+query.ProviderSuffix, typed.Details["looked_up_name"])
 }
 
 func TestGraphKokKayitYokkenDeGenisletmeAgaciDogrulanir(t *testing.T) {

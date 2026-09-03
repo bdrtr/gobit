@@ -10,16 +10,16 @@ import (
 	"github.com/bdrtr/gobit/internal/core/link"
 )
 
-// validateSpec sorgu tanımını çekirdeğe girmeden önce doğrular.
+// validateSpec checks the query definition before it enters the core.
 func validateSpec(spec GraphSpec) error {
 	if spec.Entity == "" {
-		return errors.Invalid(codeInvalidSpec, "GraphSpec.Entity boş olamaz")
+		return errors.Invalid(codeInvalidSpec, "GraphSpec.Entity cannot be empty")
 	}
 	if spec.Limit < 0 {
-		return errors.Invalid(codeInvalidSpec, "GraphSpec.Limit negatif olamaz (verilen: %d)", spec.Limit)
+		return errors.Invalid(codeInvalidSpec, "GraphSpec.Limit cannot be negative (given: %d)", spec.Limit)
 	}
 	if spec.Offset < 0 {
-		return errors.Invalid(codeInvalidSpec, "GraphSpec.Offset negatif olamaz (verilen: %d)", spec.Offset)
+		return errors.Invalid(codeInvalidSpec, "GraphSpec.Offset cannot be negative (given: %d)", spec.Offset)
 	}
 
 	total, err := validateExpansions(spec.Expand, 0)
@@ -28,42 +28,42 @@ func validateSpec(spec GraphSpec) error {
 	}
 	if total > maxExpansions {
 		return errors.Invalid(codeInvalidSpec,
-			"genişletme sayısı %d sınırını aştı (verilen: %d)", maxExpansions, total)
+			"the number of expansions exceeded the limit of %d (given: %d)", maxExpansions, total)
 	}
 	return nil
 }
 
-// validateExpansions genişletme ağacını doğrular: boş link adı, birleştirme
-// anahtarını ezen çıktı anahtarı, aynı seviyede çakışan çıktı anahtarı ve aşırı
-// derinlik reddedilir. Dönen sayı ağaçtaki TOPLAM genişletme sayısıdır; genişlik
-// sınırını çağıran uygular.
+// validateExpansions checks the expansion tree: an empty link name, an output
+// key that overwrites the join key, an output key clashing at the same level and
+// excessive depth are all rejected. The count returned is the TOTAL number of
+// expansions in the tree; the caller applies the width limit.
 //
-// Doğrulama sağlayıcıya gidilmeden ÖNCE, ağacın tamamı için yapılır; bozuk bir
-// spec yüzünden yarım iş yapılmaz.
+// Validation runs BEFORE any provider is called, over the whole tree; a broken
+// spec never causes half the work to be done.
 func validateExpansions(exps []Expansion, depth int) (int, error) {
 	if len(exps) == 0 {
 		return 0, nil
 	}
 	if depth >= maxExpandDepth {
 		return 0, errors.Invalid(codeInvalidSpec,
-			"genişletme derinliği %d sınırını aştı", maxExpandDepth)
+			"the expansion depth exceeded the limit of %d", maxExpandDepth)
 	}
 
 	total := len(exps)
 	seen := make(map[string]struct{}, len(exps))
 	for _, exp := range exps {
 		if exp.Link == "" {
-			return 0, errors.Invalid(codeInvalidSpec, "Expansion.Link boş olamaz")
+			return 0, errors.Invalid(codeInvalidSpec, "Expansion.Link cannot be empty")
 		}
 		key := outputKey(exp)
 		if key == IDField {
 			return 0, errors.Invalid(codeInvalidSpec,
-				"genişletme çıktı anahtarı %q olamaz; %q kaydın birleştirme anahtarıdır ve üzerine yazılırsa kaydın kimliği kaybolur (%q genişletmesine As ile başka bir ad verin)",
+				"an expansion output key cannot be %q; %q is the record's join key and overwriting it loses the record's identity (give the %q expansion another name with As)",
 				IDField, IDField, exp.Link)
 		}
 		if _, dup := seen[key]; dup {
 			return 0, errors.Invalid(codeInvalidSpec,
-				"aynı seviyede %q anahtarı birden çok genişletme tarafından yazılıyor; As ile ayırın", key)
+				"the key %q is written by more than one expansion at the same level; separate them with As", key)
 		}
 		seen[key] = struct{}{}
 
@@ -76,7 +76,8 @@ func validateExpansions(exps []Expansion, depth int) (int, error) {
 	return total, nil
 }
 
-// outputKey genişletmenin sonuca yazılacağı anahtarı döner; As boşsa Link.
+// outputKey returns the key the expansion is written under; Link when As is
+// empty.
 func outputKey(exp Expansion) string {
 	if exp.As != "" {
 		return exp.As
@@ -84,23 +85,23 @@ func outputKey(exp Expansion) string {
 	return exp.Link
 }
 
-// ctxErr bağlam iptal edilmişse tipli hata döner; edilmemişse nil.
+// ctxErr returns a typed error when the context is canceled, and nil otherwise.
 //
-// Sağlayıcıya ve link servisine gitmeden ÖNCE çağrılır: iptal edilmiş bir
-// bağlamla yeni iş başlatmanın anlamı yoktur. what hangi adımın iptal edildiğini
-// mesaja yazar.
+// It is called BEFORE going to a provider or the link service: starting new work
+// with a canceled context is pointless. what names the step that was canceled in
+// the message.
 func ctxErr(ctx context.Context, what string) error {
 	if err := ctx.Err(); err != nil {
-		return errors.Wrap(err, errors.KindUnavailable, codeCanceled, "%s iptal edildi", what)
+		return errors.Wrap(err, errors.KindUnavailable, codeCanceled, "%s was canceled", what)
 	}
 	return nil
 }
 
-// fieldsWithID alan listesini kopyalar ve gerekiyorsa kimlik alanını ekler.
+// fieldsWithID copies the field list and adds the id field when it is needed.
 //
-// Liste boşsa (sağlayıcının varsayılan alanları isteniyorsa) dokunulmaz;
-// kimlik alanının varsayılan kümede bulunduğu varsayılır. Çağıranın dilimi asla
-// değiştirilmez.
+// An empty list (meaning the provider's default fields are wanted) is left
+// alone; the id field is assumed to be in the default set. The caller's slice is
+// never modified.
 func fieldsWithID(fields []string, need bool) []string {
 	if len(fields) == 0 {
 		return nil
@@ -112,19 +113,20 @@ func fieldsWithID(fields []string, need bool) []string {
 	return out
 }
 
-// collectIDs bu seviyedeki tüm kayıtların kimliklerini SIRAYI KORUYARAK ve
-// tekilleştirerek toplar; ayrıca kimlikten o kimliğe sahip kayıtlara eşleyen
-// haritayı döner.
+// collectIDs gathers the ids of every record at this level, PRESERVING ORDER
+// and de-duplicating; it also returns the map from an id to the records holding
+// it.
 //
-// Aynı kimlik birden çok kayıtta görünebilir (örn. aynı kaydın iki kez
-// listelenmesi); bu yüzden harita dilim tutar ve genişletme sonucu hepsine
-// yazılır.
+// The same id can appear in more than one record (the same record listed twice,
+// say); the map therefore holds a slice and the expansion result is written to
+// all of them.
 //
-// Kimliği okunamayan TEK bir kayıt bile tipli hata üretir. O kayıt link'e
-// sokulamadığı için genişletme anahtarını hiç almaz; atlanırsa aynı çağrıdan
-// dönen kayıtların bir kısmı anahtarı taşır bir kısmı taşımaz ve eksik veri
-// doğru sonuç gibi görünür. Kural, getirilen kayıtlar için indexByID'nin
-// uyguladığı kuralla ve paketin "kısmi sonuç yoktur" politikasıyla aynıdır.
+// A SINGLE record whose id cannot be read produces a typed error. That record
+// cannot enter the link, so it never receives the expansion key; skipping it
+// would mean some records from the same call carrying the key and others not,
+// and missing data looking like a correct result. The rule is the one indexByID
+// applies to fetched records, and it is the package's "no partial results"
+// policy.
 func collectIDs(records []Record, entity, linkName string) (ids []string, byID map[string][]Record, err error) {
 	ids = make([]string, 0, len(records))
 	byID = make(map[string][]Record, len(records))
@@ -133,7 +135,7 @@ func collectIDs(records []Record, entity, linkName string) (ids []string, byID m
 		id, ok := recordID(rec)
 		if !ok {
 			return nil, nil, errors.Internal(codeMissingID,
-				"%q genişletmesi yapılamıyor: %q kayıtlarının birinde kimlik okunamadı (%q %s)",
+				"the %q expansion cannot be made: the id of one of the %q records could not be read (%q %s)",
 				linkName, entity, IDField, recordIDProblem(rec)).
 				WithDetails(map[string]any{detailLink: linkName, detailEntity: entity, detailField: IDField})
 		}
@@ -145,17 +147,18 @@ func collectIDs(records []Record, entity, linkName string) (ids []string, byID m
 	return ids, byID, nil
 }
 
-// indexByID getirilen kayıtları kimliğe göre indeksler.
+// indexByID indexes the fetched records by id.
 //
-// Kimliği okunamayan bir kayıt üst kayda bağlanamaz; sessizce düşürmek eksik
-// veriyi doğru sonuç gibi gösterirdi, bu yüzden tipli hata döner.
+// A record whose id cannot be read cannot be attached to its parent; dropping it
+// silently would make missing data look like a correct result, so a typed error
+// is returned.
 func indexByID(records []Record, entity string) (map[string]Record, error) {
 	byID := make(map[string]Record, len(records))
 	for _, rec := range records {
 		id, ok := recordID(rec)
 		if !ok {
 			return nil, errors.Internal(codeMissingID,
-				"%q sağlayıcısının döndürdüğü bir kayıtta kimlik okunamadı (%q %s); birleştirme yapılamaz",
+				"the id of a record returned by the %q provider could not be read (%q %s); the join cannot be made",
 				entity, IDField, recordIDProblem(rec)).
 				WithDetails(map[string]any{detailEntity: entity, detailField: IDField})
 		}
@@ -164,8 +167,8 @@ func indexByID(records []Record, entity string) (map[string]Record, error) {
 	return byID, nil
 }
 
-// recordID kaydın kimliğini döner. Alan yoksa, string değilse veya boşsa
-// ikinci dönüş false olur.
+// recordID returns the record's id. The second result is false when the field
+// is absent, is not a string, or is empty.
 func recordID(rec Record) (string, bool) {
 	raw, ok := rec[IDField]
 	if !ok {
@@ -178,33 +181,35 @@ func recordID(rec Record) (string, bool) {
 	return id, true
 }
 
-// recordIDProblem kimliğin NEDEN okunamadığını mesaja yazılacak biçimde anlatır.
+// recordIDProblem explains WHY the id could not be read, in a form fit for the
+// message.
 //
-// "alan yok" ile "alan var ama tipi yanlış" ayrımı teşhis için kritiktir:
-// pgx.RowToMap ile beslenen bir sağlayıcıda uuid kolonu string değil [16]byte
-// olarak gelir ve tek başına "alan yok" diyen bir mesaj yanlış tarafı suçlar.
+// Telling "the field is absent" from "the field is there but has the wrong
+// type" is critical for diagnosis: in a provider fed by pgx.RowToMap a uuid
+// column arrives as [16]byte rather than a string, and a message that only said
+// "the field is absent" would blame the wrong side.
 func recordIDProblem(rec Record) string {
 	raw, ok := rec[IDField]
 	if !ok {
-		return "alanı yok"
+		return "field is absent"
 	}
 	if s, isString := raw.(string); isString && s == "" {
-		return "alanı boş dize"
+		return "field is an empty string"
 	}
-	return fmt.Sprintf("alanı %T tipinde, string bekleniyordu", raw)
+	return fmt.Sprintf("field is of type %T, a string was expected", raw)
 }
 
-// ownRecords sağlayıcıdan gelen kayıtların ÇAĞRIYA AİT kopyalarını üretir.
+// ownRecords produces copies of the provider's records that BELONG TO THE CALL.
 //
-// Query genişletme sonucunu kaydın içine yazar; sağlayıcı döndürdüğü haritayı
-// kendi durumuyla paylaşıyorsa bu yazma o durumu kirletir: modülün kendi
-// okumaları yabancı bir anahtar taşır, sonraki çağrılara bayat alan sızar ve iki
-// eşzamanlı Graph çağrısı aynı haritaya yazarak veri yarışı üretir. Sağlayıcı
-// sözleşmesine "kopyala" yazmak yerine sınırda kopyalamak, sağlayıcının
-// davranışından BAĞIMSIZ yapısal koruma verir.
+// Query writes the expansion result into the record; when a provider shares the
+// map it returns with its own state, that write corrupts it: the module's own
+// reads carry a foreign key, a stale field leaks into later calls, and two
+// concurrent Graph calls writing to the same map produce a data race. Copying at
+// the boundary rather than writing "copy your records" into the provider
+// contract gives structural protection INDEPENDENT of what the provider does.
 //
-// Kopya yüzeyseldir: alan değerleri paylaşılmaya devam eder, ama Query yalnızca
-// üst seviye anahtar yazar, değerlerin içine hiç dokunmaz.
+// The copy is shallow: the field values stay shared, but Query writes only
+// top-level keys and never touches the inside of a value.
 func ownRecords(records []Record) []Record {
 	out := make([]Record, len(records))
 	for i, rec := range records {
@@ -213,11 +218,12 @@ func ownRecords(records []Record) []Record {
 	return out
 }
 
-// uniqueValues link çözümünden çıkan tüm ilgili kimlikleri tekilleştirir.
+// uniqueValues de-duplicates every related id coming out of the link
+// resolution.
 //
-// Sıra belirlidir: kök kimlikler sıralanır, her birinin ilgili kimlikleri
-// geldikleri sırayla eklenir. Belirli sıra hem sağlayıcı tarafında
-// önbelleklemeyi hem testlerde doğrulamayı kolaylaştırır.
+// The order is deterministic: the root ids are sorted and each one's related ids
+// are appended in the order they arrived. A deterministic order helps both
+// caching on the provider side and assertions in tests.
 func uniqueValues(related map[string][]string) []string {
 	out := make([]string, 0, len(related))
 	seen := make(map[string]struct{}, len(related))
@@ -237,12 +243,13 @@ func uniqueValues(related map[string][]string) []string {
 	return out
 }
 
-// shape ilgili kimlikleri kardinaliteye uygun biçimde sonuç değerine çevirir.
+// shape turns the related ids into the result value the cardinality calls for.
 //
-// many true ise her zaman []Record (eşleşme yoksa BOŞ dilim, nil değil) döner;
-// false ise ilk eşleşen [Record], eşleşme yoksa nil döner. Tek kayıt yazılan
-// bir uçta birden çok bağ varsa ilki alınır — böylece kardinalitesi yanlış
-// tanımlanmış bir link sessizce dilim üretip sonucun ŞEKLİNİ değiştirmez.
+// With many true it always returns []Record (an EMPTY slice, not nil, when
+// nothing matches); with false it returns the first matching [Record], or nil.
+// On an end that writes a single record, the first of several links is taken —
+// so a link whose cardinality was declared wrongly does not silently produce a
+// slice and change the SHAPE of the result.
 func shape(ids []string, byID map[string]Record, many bool) any {
 	if !many {
 		for _, id := range ids {
@@ -262,14 +269,15 @@ func shape(ids []string, byID map[string]Record, many bool) any {
 	return out
 }
 
-// targetSide link'in hangi ucundan hangi ucuna gidileceğini çözer.
+// targetSide resolves which end of the link is traveled from and to.
 //
-// Kök entity link'in From ucundaysa ileri (reverse=false), To ucundaysa ters
-// (reverse=true) yönde gidilir. İki uç da aynı entity ise (kendine link) ileri
-// yön seçilir. Link kök entity'ye hiç dokunmuyorsa errors.KindInvalid döner.
+// When the root entity is on the link's From end the direction is forward
+// (reverse=false); on the To end it is reverse (reverse=true). When both ends
+// are the same entity (a self link) the forward direction is chosen. When the
+// link does not touch the root entity at all it returns errors.KindInvalid.
 func targetSide(def link.LinkDefinition, entity string) (target string, reverse bool, err error) {
-	// Uçlar ENTITY adıyla eşleştirilir, modül adıyla değil: bir modül birden
-	// çok entity sunabilir (bkz. link.LinkSide.Entity).
+	// The ends are matched by ENTITY name, not by module name: one module can
+	// offer several entities (see link.LinkSide.Entity).
 	from, to := def.From.EntityName(), def.To.EntityName()
 	switch {
 	case from == entity:
@@ -278,18 +286,19 @@ func targetSide(def link.LinkDefinition, entity string) (target string, reverse 
 		return from, true, nil
 	default:
 		return "", false, errors.Invalid(codeLinkMismatch,
-			"%q link'i %q entity'sine bağlanmıyor; link'in uçları: %q ve %q",
+			"the %q link does not connect to the %q entity; the link's ends are %q and %q",
 			def.Name, entity, from, to).
 			WithDetails(map[string]any{detailLink: def.Name, detailEntity: entity})
 	}
 }
 
-// writesMany genişletmenin sonuca dilim mi tek kayıt mı yazacağını bildirir.
+// writesMany reports whether the expansion writes a slice or a single record.
 //
-// Kardinalite YÖNLÜDÜR: [link.OneToMany] "bir From kaydı, birden çok To kaydı"
-// demektir. Aynı link ters yönde (To ucundan From ucuna) çözüldüğünde ilişki
-// tekildir, bu yüzden tek kayıt yazılır. [link.ManyToMany] her iki yönde de
-// dilim, [link.OneToOne] her iki yönde de tek kayıt yazar.
+// Cardinality is DIRECTIONAL: [link.OneToMany] means "one From record, many To
+// records". Resolved in the reverse direction (from the To end to the From end)
+// the same link is singular, so a single record is written. [link.ManyToMany]
+// writes a slice in both directions and [link.OneToOne] a single record in
+// both.
 func writesMany(def link.LinkDefinition, reverse bool) (bool, error) {
 	switch def.Cardinality {
 	case link.OneToOne:
@@ -300,7 +309,7 @@ func writesMany(def link.LinkDefinition, reverse bool) (bool, error) {
 		return true, nil
 	default:
 		return false, errors.Invalid(codeCardinality,
-			"%q link'inin kardinalitesi tanınmıyor: %s", def.Name, def.Cardinality).
+			"the cardinality of the %q link is not recognized: %s", def.Name, def.Cardinality).
 			WithDetails(map[string]any{detailLink: def.Name})
 	}
 }

@@ -171,7 +171,13 @@ Sabitlenme `1.0.0` ile olur.
   `internal/core/container`, `internal/core/module`, `internal/core/provider`,
   `internal/core/logger`, `internal/core/db` (migration testdata'sı dâhil),
   `internal/core/observability`, `internal/core/plugin`, ve `internal/core/http`
-  içinde `response.go`, `auth.go`, `router.go`, `server.go`, `middleware.go`. Davranış değişmedi. Değişen KULLANICIYA/OPERATÖRE
+  içinde `response.go`, `auth.go`, `router.go`, `server.go`, `middleware.go`,
+  ve `internal/core/query`'nin üretim dosyaları.
+
+  Okuma katmanının hata AYRINTI anahtarları da çevrildi
+  (`"aranan_ad"` → `"looked_up_name"`, `"alan"` → `"field"`). Bunlar hata
+  KODU değildir; kod sözleşmedir ve değişmedi. Ayrıntılar teşhis içindir ve
+  deponun dilinde yazılır. Davranış değişmedi. Değişen KULLANICIYA/OPERATÖRE
   giden metinlerdir: container'ın teşhis mesajları (`"missing: Reserve(...)"`,
   `"...have pointer receivers"`), modül kaydı hataları ve log anahtarları
   (`"servis"` → `"service"`, `"tembel"` → `"lazy"`). `Kind.String()` çıktıları

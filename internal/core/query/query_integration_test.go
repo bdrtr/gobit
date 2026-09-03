@@ -354,7 +354,7 @@ func TestGraphKayitliOlmayanSaglayiciNotFoundDoner(t *testing.T) {
 
 	var typed *errors.Error
 	require.True(t, errors.As(err, &typed))
-	assert.Equal(t, "shop_price"+query.ProviderSuffix, typed.Details["aranan_ad"])
+	assert.Equal(t, "shop_price"+query.ProviderSuffix, typed.Details["looked_up_name"])
 }
 
 func TestGraphSaglayiciHatasiTumCagriyiDusurur(t *testing.T) {

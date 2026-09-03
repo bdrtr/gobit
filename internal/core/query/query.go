@@ -1,94 +1,101 @@
-// Package query modüller arası okumayı tek çağrıya indiren sorgu katmanıdır
-// (plan Bölüm 5.3, Faz 2).
+// Package query is the read layer that reduces a cross-module read to a single
+// call (plan Section 5.3, Phase 2).
 //
-// Akış her zaman aynıdır: kök entity'nin kayıtları çekilir, link'ler üzerinden
-// ilgili kimlikler bulunur, ilgili modüllerden BATCH olarak getirilir ve sonuç
-// tek bir kayıt ağacında birleştirilir.
+// The flow is always the same: the root entity's records are fetched, the
+// related ids are found through the links, they are fetched from the related
+// modules IN BATCH, and the result is joined into one record tree.
 //
-// # Modülleri tanımadan veri çekmek
+// # Fetching data without knowing the modules
 //
-// Çekirdek, Prensip 2.4 gereği modülleri import edemez. Bu yüzden Query hangi
-// modüle sorduğunu derleme zamanında bilmez: her modül kendi [Provider]
-// uygulamasını container'a "<modül adı>.query" adıyla kaydeder, Query onu
-// ADLA çözer (bkz. ADR 0004). Arayüzü tüketen taraf (bu paket) tanımlar,
-// sağlayan modül yalnızca imzayı karşılar ve hiçbir şey import etmez
-// (bkz. ADR 0001).
+// Under Principle 2.4 the core may not import the modules. Query therefore does
+// not know at compile time which module it is asking: every module registers
+// its own [Provider] implementation in the container under
+// "<module name>.query" and Query resolves it BY NAME (see ADR 0004). The
+// consuming side (this package) declares the interface, the providing module
+// only satisfies the signature and imports nothing (see ADR 0001).
 //
-// Sağlayıcı kaydı unutulmuşsa [Query.Graph] errors.KindNotFound döner ve
-// mesaja ARANAN ADI yazar; teşhis edilebilirlik bu katmanda kritiktir.
+// When a provider registration was forgotten, [Query.Graph] returns
+// errors.KindNotFound and NAMES THE NAME it looked up; diagnosability is
+// critical at this layer.
 //
-// # N+1 yasağı
+// # The no-N+1 rule
 //
-// Genişletme başına sağlayıcıya YALNIZCA BİR çağrı yapılır. O seviyedeki tüm
-// kayıtların kimlikleri önce toplanır, link'ler tek [link.LinkService.ListMany]
-// çağrısıyla çözülür ve hedef modülden tek bir [Provider.FetchByIDs] yapılır.
-// Bu, iç içe genişletmelerde de geçerlidir: maliyet kayıt sayısıyla değil,
-// genişletme sayısıyla büyür. Yüz kök kayıt da bir kök kayıt da genişletme
-// başına aynı sayıda çağrı üretir.
+// A provider is called ONLY ONCE per expansion. The ids of every record at that
+// level are collected first, the links are resolved with one
+// [link.LinkService.ListMany] call, and one [Provider.FetchByIDs] goes to the
+// target module. The same holds at nested levels: the cost grows with the number
+// of EXPANSIONS, not with the number of records. A hundred root records and one
+// root record produce the same number of calls per expansion.
 //
-// # Birleştirme anahtarı
+// # The join key
 //
-// Query kayıtları [IDField] ("id") alanı üzerinden birleştirir: kök kaydın bu
-// alanı link tablosuna giden kimliktir, getirilen kaydın bu alanı da geri
-// eşlemede kullanılır. Sağlayıcılar birincil anahtarlarını bu adla sunmalıdır.
+// Query joins records on the [IDField] ("id") field: that field of the root
+// record is the id that goes into the link table, and the same field of a
+// fetched record is used to map back. Providers must offer their primary key
+// under this name.
 //
-// Anahtar olduğu için korunur: bir genişletmenin çıktı anahtarı [IDField]
-// OLAMAZ (errors.KindInvalid), çünkü sonuç kaydın kimliğinin üzerine yazılırdı.
-// Kimliği okunamayan bir kayıt da — alan yoksa, string değilse ya da boşsa —
-// sessizce atlanmaz; errors.KindInternal döner ve mesaj kimliğin NEDEN
-// okunamadığını (gelen tipi) yazar.
+// Being the key, it is protected: an expansion's output key CANNOT be [IDField]
+// (errors.KindInvalid), because the result would overwrite the record's
+// identity. A record whose id cannot be read — the field absent, not a string,
+// or empty — is not skipped in silence either; errors.KindInternal is returned
+// and the message says WHY it could not be read (the type that arrived).
 //
-// [link.LinkSide.Field] BİLİNÇLİ OLARAK kullanılmaz. O alan ("product_id" gibi)
-// kimliğin sahibi modüldeki anlamını bildiren üstveridir; sağlayıcı kaydında
-// böyle bir alan bulunmak zorunda değildir ve alan seçimi (Fields) yapılan bir
-// istekte sağlayıcıdan istenirse tanımadığı alan için errors.KindInvalid
-// dönerdi. Birleştirme bu yüzden tek ve öngörülebilir bir anahtara bağlanmıştır.
+// [link.LinkSide.Field] is DELIBERATELY not used. That field ("product_id" and
+// the like) is metadata declaring the id's meaning in the module that owns it;
+// a provider record need not carry such a field, and asking a provider for it
+// in a request that selects fields would return errors.KindInvalid for a field
+// it does not know. The join is therefore bound to a single, predictable key.
 //
-// # Yön
+// # Direction
 //
-// Bir genişletmede kök entity'nin link'in From ucunda olduğu VARSAYILMAZ. Yön,
-// link tanımının uçlarına bakılarak çözülür: kök entity From ucundaysa ileri
-// yönde (From -> To), To ucundaysa ters yönde (To -> From) gidilir. Link'in iki
-// ucu da kök entity değilse errors.KindInvalid döner.
+// An expansion does NOT ASSUME the root entity sits on the link's From end. The
+// direction is resolved by looking at the link definition's ends: with the root
+// entity on the From end it goes forward (From -> To), on the To end it goes
+// backward (To -> From). When neither end is the root entity it returns
+// errors.KindInvalid.
 //
-// İki yön de [link.LinkService] sözleşmesindeki TOPLU metotlarla çözülür: ileri
-// yön ListMany, ters yön ListManyByTo. Kayıt başına link sorgusu yoktur.
+// Both directions are resolved with the BATCH methods of the
+// [link.LinkService] contract: ListMany forward, ListManyByTo backward. There
+// is no link query per record.
 //
-// # Sonucun şekli
+// # The shape of the result
 //
-// Genişletmenin sonuca yazılma biçimini link'in kardinalitesi ve gidilen YÖN
-// birlikte belirler: tek kayıt yazılan bir uçta [Record] (eşleşme yoksa nil),
-// çok kayıt yazılan bir uçta []Record (eşleşme yoksa boş dilim) yazılır.
-// [link.OneToMany] yönlü bir kardinalitedir — "bir From, çok To" demektir — bu
-// yüzden ileri yönde dilim, ters yönde tek kayıt yazar.
+// How an expansion is written into the result is decided together by the link's
+// cardinality and the DIRECTION traveled: an end that writes a single record
+// gets a [Record] (nil when nothing matches), an end that writes many gets a
+// []Record (an empty slice when nothing matches). [link.OneToMany] is a
+// DIRECTIONAL cardinality — it means "one From, many To" — so it writes a slice
+// forward and a single record backward.
 //
-// # Kayıt sahipliği
+// # Record ownership
 //
-// Sağlayıcıdan gelen kayıtlar KOPYALANIR; [Query.Graph]'ın döndürdüğü ağaçtaki
-// her [Record] çağrıya aittir. Query genişletme sonucunu kaydın içine yazdığı
-// için, kopyalamayan bir sağlayıcının kendi durumu aksi hâlde kirlenirdi
-// (yabancı anahtar sızması, bayat alan, eşzamanlı çağrılarda veri yarışı).
-// Sağlayıcı kayıtlarını paylaşsa da paylaşmasa da doğru çalışır; kopya
-// yüzeyseldir, Query alan DEĞERLERİNE hiç dokunmaz.
+// The records coming from a provider are COPIED; every [Record] in the tree
+// [Query.Graph] returns belongs to the call. Because Query writes the expansion
+// result into the record, a provider that does not copy would otherwise have
+// its own state corrupted (a foreign key leaking in, a stale field, a data race
+// between concurrent calls). It works whether or not the provider shares its
+// records; the copy is shallow, and Query never touches the field VALUES.
 //
-// # Sınırlar
+// # Limits
 //
-// Bir spec en fazla [maxExpandDepth] seviye derin ve toplam [maxExpansions]
-// genişletme taşıyabilir; ikisi de errors.KindInvalid ile ve sağlayıcıya hiç
-// gidilmeden uygulanır. Genişletme ağacının link adları, yönü, kardinalitesi ve
-// hedef sağlayıcı kayıtları da VERİ GETİRİLMEDEN önce çözülür: bozuk bir sorgu
-// tanımı, üst seviye hiç kayıt getirmese bile aynı hatayı verir.
+// A spec may be at most [maxExpandDepth] levels deep and carry at most
+// [maxExpansions] expansions in total; both are enforced with
+// errors.KindInvalid and without going to a provider at all. The expansion
+// tree's link names, direction, cardinality and target provider registrations
+// are also resolved BEFORE ANY DATA IS FETCHED: a broken query definition gives
+// the same error even when the level above fetched no record.
 //
-// # Hata politikası
+// # The error policy
 //
-// Kısmi sonuç YOKTUR. Herhangi bir seviyedeki herhangi bir sağlayıcı ya da link
-// çağrısı hata verirse [Query.Graph] hata döner; eksik veriyle dolu bir kayıt
-// ağacı dönmez. Kök kayıt bulunamaması hata DEĞİLDİR; boş (nil olmayan) dilim
-// döner.
+// There are NO partial results. When any provider or link call at any level
+// fails, [Query.Graph] returns an error; it does not return a record tree
+// filled with missing data. Finding no root record is NOT an error; an empty
+// (non-nil) slice is returned.
 //
-// Alttaki hatanın sınıfı korunur. Tipsiz bir iptal (context.Canceled /
-// context.DeadlineExceeded) errors.KindUnavailable'a eşlenir; sunucu hatasıyla
-// karışmaması ve API sınırında 500 yerine 503 üretmesi içindir.
+// The underlying error's class is preserved. An untyped cancellation
+// (context.Canceled / context.DeadlineExceeded) is mapped to
+// errors.KindUnavailable, so it is not confused with a server error and
+// produces a 503 rather than a 500 at the API boundary.
 package query
 
 import (
@@ -99,114 +106,125 @@ import (
 	"github.com/bdrtr/gobit/internal/core/link"
 )
 
-// IDField sağlayıcı kayıtlarında kimliğin bulunduğu alan adıdır.
+// IDField is the name of the field holding the identity in a provider's
+// records.
 //
-// Query kayıtları link'lerle bu alan üzerinden eşleştirir. Alan seçimi yapılan
-// (Fields dolu) bir istekte genişletme de varsa Query bu alanı sağlayıcıya
-// giden alan listesine KENDİSİ ekler; dolayısıyla genişletilen kayıtlarda bu
-// alan çağıran istemese de bulunur.
+// Query matches records against links through this field. In a request that
+// selects fields (Fields non-empty) and also has expansions, Query adds this
+// field to the list sent to the provider ITSELF; so an expanded record carries
+// it even when the caller did not ask for it.
 const IDField = "id"
 
-// ProviderSuffix modüllerin sağlayıcılarını container'a kaydettiği ad ekidir.
-// Bir entity'nin sağlayıcısı "<entity><ProviderSuffix>" adıyla aranır (ADR 0004).
+// ProviderSuffix is the name suffix modules register their providers under in
+// the container. An entity's provider is looked up as
+// "<entity><ProviderSuffix>" (ADR 0004).
 const ProviderSuffix = ".query"
 
-// maxExpandDepth iç içe genişletme için üst sınırdır. Sınır, dışarıdan gelen
-// bir sorgu tanımının çekirdeği keyfi derinlikte özyinelemeye zorlamasını
-// engeller; aşılırsa errors.KindInvalid döner.
+// maxExpandDepth is the upper bound on nested expansion. The limit stops a
+// query definition coming from outside from forcing the core into recursion of
+// arbitrary depth; exceeding it returns errors.KindInvalid.
 const maxExpandDepth = 10
 
-// maxExpansions bir spec'teki TOPLAM genişletme sayısının üst sınırıdır.
+// maxExpansions is the upper bound on the TOTAL number of expansions in a spec.
 //
-// Maliyet derinlikle değil genişletme ADEDİYLE büyür: her genişletme sabit iki
-// tur üretir (bir link çözümü + bir FetchByIDs). Yalnızca derinliği sınırlamak
-// korumanın yarısıdır; sınırın altında kalan ama her seviyede onlarca kardeş
-// genişletme taşıyan tek bir istek yüzlerce gidiş-dönüş açabilirdi. Ağaçtaki
-// toplam sayı bu sınırı aşarsa errors.KindInvalid döner.
+// The cost grows with the NUMBER of expansions, not with the depth: each
+// expansion produces a fixed two round trips (one link resolution plus one
+// FetchByIDs). Limiting the depth alone is half a protection; a single request
+// staying under the depth limit while carrying dozens of sibling expansions at
+// every level could open hundreds of round trips. When the total in the tree
+// exceeds this limit, errors.KindInvalid is returned.
 const maxExpansions = 50
 
-// Record bir kaydın alan adı -> değer eşlemesidir.
+// Record is a record's field name -> value mapping.
 //
-// Gevşek tiplilik, çekirdeğin modül modellerini tanımamasının kaçınılmaz
-// bedelidir (ADR 0004); tip güvenliği API sınırında yeniden kazanılır.
+// The loose typing is the unavoidable price of the core not knowing the
+// modules' models (ADR 0004); type safety is regained at the API boundary.
 type Record map[string]any
 
-// ListOptions kök kayıtların çekilmesi için sağlayıcıya verilen seçeneklerdir.
+// ListOptions are the options given to a provider for fetching the root
+// records.
 type ListOptions struct {
-	// Fields döndürülecek alanlardır. Boş bırakılırsa sağlayıcının varsayılan
-	// alan kümesi döner.
+	// Fields are the fields to return. Left empty, the provider's default field
+	// set is returned.
 	Fields []string
-	// Filters alan adı -> beklenen değer biçiminde filtrelerdir. Yorumu
-	// sağlayıcıya aittir; desteklemediği bir filtre için sağlayıcı
-	// errors.KindInvalid dönmelidir.
+	// Filters are field name -> expected value filters. Their interpretation
+	// belongs to the provider; for a filter it does not support the provider
+	// must return errors.KindInvalid.
 	Filters map[string]any
-	// Limit döndürülecek en fazla kayıt sayısıdır; 0 sınırsız demektir.
+	// Limit is the maximum number of records to return; 0 means unlimited.
 	Limit int
-	// Offset atlanacak kayıt sayısıdır.
+	// Offset is the number of records to skip.
 	Offset int
 }
 
-// Provider bir modülün Query katmanına açtığı okuma yüzeyidir.
+// Provider is the read surface a module opens to the Query layer.
 //
-// Modül bunu Register sırasında "<modül adı>.query" adıyla container'a koyar
-// (ADR 0004). Arayüz bu pakette tanımlıdır; sağlayan modül bu paketi import
-// etmek zorunda değildir, yalnızca imzayı karşılar.
+// The module puts it into the container during Register under
+// "<module name>.query" (ADR 0004). The interface is declared in this package;
+// the providing module need not import this package, it only satisfies the
+// signature.
 //
-// Query dönen kayıtları KOPYALAR ve genişletme sonucunu kopyaya yazar; bu
-// yüzden sağlayıcı döndürdüğü haritaları kendi durumuyla paylaşabilir
-// (bkz. paket yorumundaki "Kayıt sahipliği").
+// Query COPIES the records returned and writes the expansion result into the
+// copy, so a provider may share the maps it returns with its own state (see
+// "Record ownership" in the package comment).
 type Provider interface {
-	// Entity sağlayıcının sunduğu entity adıdır (örn. "product"). Kayıt adının
-	// öneki ile aynı olmalıdır; Query bunu doğrular.
+	// Entity is the entity name the provider offers (e.g. "product"). It must
+	// match the prefix of the registration name; Query verifies it.
 	Entity() string
 
-	// List kök kayıtları döner. Query bunu YALNIZCA kök entity için çağırır.
+	// List returns the root records. Query calls it ONLY for the root entity.
 	List(ctx context.Context, opts ListOptions) ([]Record, error)
 
-	// FetchByIDs verilen kimliklere karşılık gelen kayıtları döner.
-	// Bulunamayan kimlik için kayıt DÖNMEZ; bu bir hata değildir.
-	// Query bunu link'lerden çıkan kimlik kümesiyle BATCH olarak çağırır.
+	// FetchByIDs returns the records for the given ids.
+	// For an id it cannot find it returns NO record; that is not an error.
+	// Query calls it IN BATCH with the id set coming out of the links.
 	FetchByIDs(ctx context.Context, ids []string, fields []string) ([]Record, error)
 }
 
-// Expansion bir link üzerinden yapılan tek bir genişletmedir.
+// Expansion is a single expansion made through one link.
 type Expansion struct {
-	// Link genişletmede kullanılacak link tanımının adıdır (örn. "product_price").
+	// Link is the name of the link definition to use (e.g. "product_price").
 	Link string
-	// As sonucun kök kayda hangi anahtarla yazılacağıdır; boşsa Link kullanılır.
+	// As is the key the result is written under on the root record; empty means
+	// Link is used.
 	As string
-	// Fields genişletilen kayıtlardan istenen alanlardır; boşsa sağlayıcının
-	// varsayılanı gelir.
+	// Fields are the fields wanted from the expanded records; empty gives the
+	// provider's default.
 	Fields []string
-	// Expand bu genişletmenin üstüne uygulanacak iç içe genişletmelerdir.
-	// Her seviye kendi içinde yine BATCH çözülür.
+	// Expand holds the nested expansions applied on top of this one.
+	// Each level is again resolved IN BATCH within itself.
 	Expand []Expansion
 }
 
-// GraphSpec tek bir cross-module okumanın tanımıdır.
+// GraphSpec is the definition of a single cross-module read.
 type GraphSpec struct {
-	// Entity kök entity adıdır; sağlayıcısı "<Entity>.query" adıyla aranır.
+	// Entity is the root entity name; its provider is looked up as
+	// "<Entity>.query".
 	Entity string
-	// Fields kök kayıtlardan istenen alanlardır; boşsa sağlayıcının varsayılanı.
+	// Fields are the fields wanted from the root records; empty gives the
+	// provider's default.
 	Fields []string
-	// Filters kök kayıtlara uygulanacak filtrelerdir.
+	// Filters are the filters applied to the root records.
 	Filters map[string]any
-	// Limit kök kayıt sayısı üst sınırıdır; 0 sınırsız demektir.
+	// Limit is the upper bound on the number of root records; 0 means
+	// unlimited.
 	Limit int
-	// Offset atlanacak kök kayıt sayısıdır.
+	// Offset is the number of root records to skip.
 	Offset int
-	// Expand kök kayıtlar üzerine uygulanacak genişletmelerdir.
+	// Expand holds the expansions applied on top of the root records.
 	Expand []Expansion
 }
 
-// Query modüllerden veriyi alıp link'ler üzerinden birleştiren okuma katmanıdır.
+// Query is the read layer that takes data from the modules and joins it
+// through the links.
 type Query interface {
-	// Graph spec'e göre kök kayıtları çeker ve genişletmeleri uygular.
-	// Kök kayıt yoksa boş (nil olmayan) dilim ve nil hata döner.
+	// Graph fetches the root records according to the spec and applies the
+	// expansions. With no root record it returns an empty (non-nil) slice and a
+	// nil error.
 	Graph(ctx context.Context, spec GraphSpec) ([]Record, error)
 }
 
-// resolver [Query]'nin tek uygulamasıdır.
+// resolver is [Query]'s only implementation.
 type resolver struct {
 	links link.LinkService
 	c     *container.Container
@@ -215,13 +233,13 @@ type resolver struct {
 
 var _ Query = (*resolver)(nil)
 
-// New verilen link servisi ve container üzerinde çalışan bir [Query] üretir.
+// New produces a [Query] running on the given link service and container.
 //
-// links link tanımlarını ve bağları çözer; c sağlayıcıları "<entity>.query"
-// adıyla barındırır. log nil verilirse loglar atılır.
+// links resolves the link definitions and the links themselves; c holds the
+// providers under "<entity>.query". With log nil the logs are discarded.
 //
-// links veya c nil ise bu, kurulumda değil ilk [Query.Graph] çağrısında tipli
-// bir hata olarak bildirilir; kurulum yolu panik üretmez.
+// A nil links or c is reported as a typed error on the first [Query.Graph]
+// call rather than at construction; the setup path raises no panic.
 func New(links link.LinkService, c *container.Container, log *slog.Logger) Query {
 	if log == nil {
 		log = slog.New(slog.DiscardHandler)

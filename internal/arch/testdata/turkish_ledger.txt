@@ -74,11 +74,8 @@ internal/core/openapi/schema.go
 internal/core/openapi/schema_internal_test.go
 internal/core/openapi/schema_test.go
 internal/core/query/fakes_test.go
-internal/core/query/graph.go
-internal/core/query/query.go
 internal/core/query/query_integration_test.go
 internal/core/query/query_test.go
-internal/core/query/resolve.go
 internal/core/workflow/memory.go
 internal/core/workflow/memory_test.go
 internal/core/workflow/options.go
