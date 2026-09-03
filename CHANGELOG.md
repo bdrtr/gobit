@@ -95,6 +95,34 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Değiştirildi
 
+- **Terk edilmiş bir saga'nın telafisi artık KAYITLARDAN çalıştırılıyor**
+  ([ADR 0017](docs/adr/0017-recovering-abandoned-sagas-from-the-record.md)).
+  Süreç saga'nın ortasında öldüğünde telafi hiç çalışmıyordu: ayrılan stok,
+  açılan sipariş ve ödeme oturumu ortada kalıyordu ve README'nin yazdığı gibi
+  "otomatik kurtarma YOKTU". Engel `StepContext.Shared`'ın kalıcı olmamasıydı —
+  telafi "hangi rezervasyonu iptal edeceğim" cevabını oradan okuyor.
+
+  Ölçüldü: o cevap kaybolmuş DEĞİL. Adımların Invoke çıktıları kalıcı ve telafi
+  kaydı onları silmiyor (`StepRecord.Output` godoc'u bunu zaten bir karar olarak
+  yazıyor). Eksik olan tek şey JSON'u tipli değere geri çevirmekti ve onu
+  yalnızca adımın kendisi bilir: yeni `workflow.Recoverable` arayüzü bunu
+  yapıyor. Uygulamayan adımı olan zincir bugünkü davranışı alıyor, yani arayüz
+  yetenek ekliyor, sözleşme kırmıyor. Kurtarma tamamlanınca kayıt `failed` olup
+  anahtarını BIRAKIYOR — müşteri aynı sepeti yeniden ödeyebiliyor.
+
+  **Kurtarma bir noktada bilerek DURUYOR ve orası ödeme.** Motor adım kaydını
+  Invoke döndükten SONRA yazıyor, yani tahsilatın içinde ölen süreç hiçbir iz
+  bırakmıyor; kurtarma onu "çalışmamış" sayarsa kartı çekilmiş müşterinin stoğu
+  bırakılır, anahtarı serbest kalır ve müşteri İKİNCİ KEZ tahsil edilir. Böyle
+  bir adım `workflow.RecoveryBlocker` ile işaretleniyor ve kaydı yokken
+  kendisinden öncekilerin de kurtarılmasını engelliyor. `complete_cart` için
+  sonuç: çökmenin dört noktasından üçü kurtarılıyor, tahsilat noktası elle
+  müdahalede kalıyor.
+
+  Kurtarma tetiklenmiyor, denk geliniyor: aynı anahtarla dönen bir çağıran onu
+  bulur. Zamanlanmış süpürücü bilinçli olarak eklenmedi — kurtarma yan etkisi
+  olan bir iş çalıştırır.
+
 - **`internal/core/link` ve `internal/core/eventbus` İngilizceye çevrildi**
   (ADR 0012'nin cırcırı). Türkçe defterinden 15 satır DÜŞTÜ: 742 dosyadan
   727'ye; yol defteri 38'de kaldı (iki pakette hiç yol kaydı yoktu). İki pakette

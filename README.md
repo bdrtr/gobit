@@ -1469,12 +1469,23 @@ açıktır.
   dek `running` kalır — komut o sınıfı "kirası dolmuş ve hâlâ tutulan adımı
   olan" olarak bulur.
 
-  Ama **otomatik kurtarma YOKTUR** ve komut da yalnızca OKUR: motor adım
-  çıktılarını saklıyor, `StepContext.Shared`'ı saklamıyor, dolayısıyla telafi
-  zincirini sonradan çalıştıramıyor. Asılı rezervasyonu düşürmek hâlâ bir
-  operatör işidir — hâlâ koşan bir saga'nın stoğunu bırakmak onu ikinci kez
-  ayırtacağı için bırakmayı komut üstlenmez. Listede kabuk gerekir; tarayıcıdan
-  görülebilmesi ADR 0011'in panel kararını yeniden açmayı gerektirir.
+  **Telafi artık KAYITLARDAN çalıştırılabiliyor** ([ADR 0017](docs/adr/0017-recovering-abandoned-sagas-from-the-record.md)):
+  aynı anahtarla geri dönen bir çağıran terk edilmiş yürütmeyi bulur, adımların
+  kendi kalıcı çıktılarından paylaşılan durum geri kurulur ve zincir koşar;
+  kayıt `failed` olup anahtarını bırakır, yani stok bırakılır ve müşteri
+  sepetini yeniden ödeyebilir.
+
+  **Bir noktada bilerek DURUR ve orası ödemedir.** Motor adımın kaydını Invoke
+  döndükten sonra yazar, dolayısıyla tahsilatın içinde ölen süreç hiçbir iz
+  bırakmaz; kurtarma onu "çalışmamış" sayarsa kartı çekilmiş müşterinin stoğu
+  bırakılır, anahtarı serbest kalır ve müşteri İKİNCİ KEZ tahsil edilir. Bu
+  yüzden kaydı olmayan tahsilat adımı kurtarmayı durdurur ve karar elle
+  müdahaleye kalır.
+
+  Kurtarma **tetiklenmez, denk gelinir**: kimse aynı anahtarla dönmezse kayıt
+  `running` kalır ve `gobit stuck` onu listelemeye devam eder. Zamanlanmış bir
+  süpürücü bilinçli olarak yoktur — kurtarma telafi çalıştırır, yani yan etkisi
+  olan bir iştir. Komutun kendisi hâlâ YALNIZCA OKUR.
 - **Hata bildirimi bir İŞARETTİR, olayın kopyası değil.** `error-sentry`
   eklentisi ([ADR 0014](docs/adr/0014-error-reporting.md)) toplayıcıya arıza
   kodunu, güvenli mesajı ve `request_id`'yi gönderir; geri kalan her şey logda

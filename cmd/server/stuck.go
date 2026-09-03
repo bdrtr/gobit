@@ -230,7 +230,9 @@ func writeStuck(out io.Writer, page pgstore.StuckPage, filter pgstore.StuckFilte
 	if held > 0 {
 		fmt.Fprintf(buf,
 			"A held step's side effect is still in the world; its output above names what. "+
-				"Undoing it is a manual job and this command will not do it.\n")
+				"This command will not undo it. A caller returning with the same "+
+				"idempotency key may recover it automatically (ADR 0017); an execution "+
+				"nobody returns to, or one stopped at the payment step, needs a human.\n")
 	}
 
 	_, err := io.WriteString(out, buf.String())

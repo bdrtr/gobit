@@ -155,6 +155,7 @@ import (
 	"log/slog"
 	"reflect"
 	"runtime/debug"
+	"slices"
 	"time"
 
 	"github.com/bdrtr/gobit/internal/core/errors"
@@ -192,6 +193,9 @@ const (
 	CodeExecutionNotFound = "workflow_execution_not_found"
 	// CodeExecutionExists aynı kimlikli ya da anahtarlı yürütmenin zaten var olduğunu bildirir.
 	CodeExecutionExists = "workflow_execution_exists"
+	// CodeRecoveryFailed terk edilmiş bir yürütmenin telafisinin KAYITLARDAN
+	// yeniden kurulamadığını bildirir (bkz. [Recoverable]).
+	CodeRecoveryFailed = "workflow_recovery_failed"
 )
 
 // ErrPanic bir adımın panik ettiğini bildiren gözcü (sentinel) hatadır.
@@ -253,6 +257,53 @@ type Step interface {
 	// Compensate Invoke'un yan etkisini geri alır. Yalnızca Invoke'u BAŞARIYLA
 	// dönmüş adımlar için çağrılır.
 	Compensate(ctx context.Context, sc *StepContext) error
+}
+
+// Recoverable bir adımın KENDİ kalıcı çıktısından telafi için gereken durumu
+// geri kurabildiğini bildirir.
+//
+// Motor bunu YALNIZCA terk edilmiş bir yürütmeyi kurtarırken çağırır: süreç
+// saga'nın ortasında ölünce [StepContext.Shared] onunla birlikte gider ve
+// telafi zinciri, "hangi rezervasyonu iptal edeceğim" sorusunun cevabını
+// kaybeder. Cevap kaybolmuş DEĞİLDİR — adımın Invoke'unun çıktısı kayıtta
+// durur ve telafi kaydı onu silmez (bkz. [StepRecord.Output]) — ama onu
+// Shared'daki tipli değere geri çevirmeyi yalnızca adımın kendisi bilir.
+//
+// Uygulamak İSTEĞE BAĞLIDIR ve uygulamamanın bedeli açıktır: bir adımı
+// kurtarılamayan workflow, terk edildiğinde bugünkü davranışı alır — kayıt
+// compensation_failed olur ve elle müdahale bekler. Yani arayüz bir yetenek
+// ekler, bir sözleşme kırmaz.
+//
+// output, Invoke'un kalıcılaşmış çıktısıdır ve BOŞ olabilir (adım başarılıydı
+// ama çıktısı JSON'a çevrilemedi; bkz. [StepRecord.Output]). Restore o durumda
+// hata dönmelidir: eksik durumla koşan bir telafi, geri alacağı işi bulamadan
+// "başardım" der.
+type Recoverable interface {
+	// Restore adımın kalıcı çıktısını okur ve Invoke'un [StepContext.Shared]'a
+	// yazdığı değerleri geri koyar.
+	Restore(sc *StepContext, output json.RawMessage) error
+}
+
+// RecoveryBlocker KAYDI YOKKEN "çalışmadı" sayılamayacak bir adımı işaretler.
+//
+// Motor adımın kaydını Invoke DÖNDÜKTEN SONRA yazar, dolayısıyla Invoke'un
+// ortasında ölen bir süreç o adımdan geriye HİÇBİR İZ bırakmaz. Kurtarma
+// (bkz. [Recoverable]) kayıtlara bakar, yani böyle bir adımı "hiç çalışmamış"
+// sayar — ve bu, adımın yan etkisi geri alınamaz olduğunda yanlış tarafa
+// düşmektir.
+//
+// Somut hâli checkout'un tahsilat adımıdır: kart çekilmiş ama kayıt yazılmadan
+// süreç ölmüşse, kurtarma stoğu bırakır, siparişi iptal eder ve anahtarı
+// serbest bırakır; müşteri yeniden öder ve İKİNCİ KEZ tahsil edilir. Elle
+// müdahale bunu önler çünkü insan ödeme sağlayıcısına bakabilir.
+//
+// Bu arayüzü uygulayan bir adım, KENDİSİNDEN ÖNCEKİ adımların kurtarılmasını da
+// engeller — ama yalnızca kendisi KAYITSIZ olduğunda, yani gerçekten uçuşta
+// olmuş olabileceği durumda. Kaydı varsa sonucu bilinir ve zincir normal
+// biçimde telafi edilir.
+type RecoveryBlocker interface {
+	// BlocksRecovery işaretin kendisidir; gövdesi yoktur ve çağrılmaz.
+	BlocksRecovery()
 }
 
 // Workflow adımlardan oluşan bir iş akışıdır.
@@ -640,15 +691,7 @@ func (e *executor) terkEdilmisMi(ctx context.Context, wf Workflow, prev *Executi
 	}
 
 	if isYapilmis(dolu.Steps) {
-		final := errors.Conflict(CodeExecutionFailed,
-			"%q workflow'unun %q anahtarlı yürütmesi (%s) kirası dolduğu hâlde tamamlanmamış: "+
-				"süreç iş yaptıktan sonra telafi ÇALIŞMADAN kesilmiş, ELLE MÜDAHALE gerekir",
-			wf.Name, o.idempotencyKey, prev.ID)
-		e.persistStatus(ctx, prev.ID, o, StatusCompensationFailed, nil, final.Error())
-		e.log.ErrorContext(ctx, "workflow: terk edilmiş yürütme, telafi çalışmamış; elle müdahale gerekir",
-			attrWorkflow, wf.Name, attrExecutionID, prev.ID)
-
-		return true, final
+		return e.kurtar(ctx, wf, dolu, o)
 	}
 
 	// Hiçbir adım iş yapmamış: telafi edilecek bir şey yok, anahtar bırakılır.
@@ -658,6 +701,183 @@ func (e *executor) terkEdilmisMi(ctx context.Context, wf Workflow, prev *Executi
 		attrWorkflow, wf.Name, attrExecutionID, prev.ID)
 
 	return true, nil
+}
+
+// kurtar terk edilmiş bir yürütmenin telafi zincirini KAYITLARDAN yeniden
+// çalıştırır.
+//
+// Buraya gelen kayıt şudur: süreç iş yaptıktan sonra, telafi hiç çalışmadan
+// kesilmiş. O ana kadar ayrılan stok dünyada duruyor ve kimse bırakmıyor.
+// Motor telafi işlevlerine SAHİPTİR (çağıran aynı workflow tanımıyla geldi);
+// kaybolan tek şey adımlar arası paylaşılan durumdu ve onu adımın kendi kalıcı
+// çıktısından geri kurmak [Recoverable]'ın işidir.
+//
+// # Kurtarmanın REDDEDİLDİĞİ üç durum
+//
+// Üçünde de bugünkü davranış korunur — compensation_failed ve elle müdahale —
+// çünkü yanlış durumla koşan bir telafi, geri almadığı işi geri aldım der:
+//
+//   - Kayıttaki adım, tanımdaki adımla AYNI ADI taşımıyor. İndeks kaydın
+//     kimliğidir ama workflow tanımı iki dağıtım arasında değişmiş olabilir;
+//     ad denetimi olmasaydı 2. adımın telafisi bambaşka bir adımın çıktısıyla
+//     çağrılırdı.
+//   - İş yapmış bir adım [Recoverable] uygulamıyor. Zincirin bir halkası
+//     durumunu geri kuramıyorsa zincirin tamamı güvenilmezdir.
+//   - Restore hata döndü (çıktı boş ya da şekli değişmiş).
+//   - Kaydı olmayan İLK adım bir [RecoveryBlocker]. Süreç onun içinde ölmüş
+//     olabilir ve kayıtlardan bu ayırt edilemez; bkz. [sinirDenetle].
+//
+// # sc.Input kurtarma yolunda TİPLİ DEĞİLDİR
+//
+// Normal yolda [StepContext.Input] çağıranın verdiği Go değeridir; burada o
+// değer süreçle birlikte gitti ve geriye kaydın JSON'u kaldı, yani Input bir
+// json.RawMessage'dır. Bugün hiçbir telafi Input okumuyor. Okuyacak olan, aynı
+// alanın iki yolda iki farklı tip taşıdığını bilmelidir.
+//
+// # Telafi ikinci kez koşabilir
+//
+// Kurtarma sırasında süreç yine ölürse aynı telafiler bir daha çağrılır.
+// Compensate'in idempotent olması ZATEN motorun sözleşmesidir (bir telafi
+// patladığında zincir durmaz, sonraki denemede aynı adımlar yeniden
+// telafi edilir); kurtarma yeni bir gereksinim getirmez, var olanı kullanır.
+func (e *executor) kurtar(ctx context.Context, wf Workflow, exec *Execution, o *runOptions) (bool, error) {
+	sc := &StepContext{
+		Input:       exec.Input,
+		Shared:      make(map[string]any),
+		ExecutionID: exec.ID,
+		Workflow:    wf.Name,
+	}
+
+	done, err := e.geriKur(sc, wf, exec)
+	if err != nil {
+		final := errors.Wrap(err, errors.KindConflict, CodeExecutionFailed,
+			"%q workflow'unun %q anahtarlı yürütmesi (%s) kirası dolduğu hâlde tamamlanmamış "+
+				"ve KURTARILAMADI; ELLE MÜDAHALE gerekir",
+			wf.Name, o.idempotencyKey, exec.ID)
+		e.persistStatus(ctx, exec.ID, o, StatusCompensationFailed, nil, final.Error())
+		e.log.ErrorContext(ctx, "workflow: terk edilmiş yürütme kurtarılamadı; elle müdahale gerekir",
+			attrWorkflow, wf.Name, attrExecutionID, exec.ID, attrError, err)
+
+		return true, final
+	}
+
+	e.log.WarnContext(ctx, "workflow: terk edilmiş yürütmenin telafisi kayıtlardan çalıştırılıyor",
+		attrWorkflow, wf.Name, attrExecutionID, exec.ID, "steps", len(done))
+
+	if compErr := e.compensate(ctx, sc, exec.ID, done, o); compErr != nil {
+		final := errors.Wrap(compErr, errors.KindInternal, CodeCompensationFailed,
+			"%q workflow'unun terk edilmiş yürütmesinin (%s) telafisi tamamlanamadı; "+
+				"ELLE MÜDAHALE gerekir", wf.Name, exec.ID)
+		e.persistStatus(ctx, exec.ID, o, StatusCompensationFailed, nil, final.Error())
+		e.log.ErrorContext(ctx, "workflow: kurtarma telafisi patladı; elle müdahale gerekir",
+			attrWorkflow, wf.Name, attrExecutionID, exec.ID, attrError, final)
+
+		return true, final
+	}
+
+	// Telafi eksiksiz tamamlandı: bu motorda StatusFailed'in anlamı tam olarak
+	// budur ve anahtarını bırakır, yani müşteri aynı sepeti yeniden ödeyebilir.
+	e.persistStatus(ctx, exec.ID, o, StatusFailed, nil,
+		"yürütme kirası doldu; telafi zinciri kayıtlardan çalıştırıldı ve tamamlandı")
+	e.log.WarnContext(ctx, "workflow: terk edilmiş yürütme telafi edildi, yeniden denenebilir",
+		attrWorkflow, wf.Name, attrExecutionID, exec.ID)
+
+	return true, nil
+}
+
+// geriKur kayıtlardan telafi edilecek adımları toplar ve paylaşılan durumu
+// yeniden kurar.
+//
+// Kayıtlar ARTAN sırada gezilir, çünkü Shared'ı kuran şey adımların sırasıdır:
+// sonraki bir adımın yazdığı değer öncekinin üzerine yazabilir ve ters sırada
+// gezmek o üzerine yazmayı ters çevirirdi. Telafi zincirinin kendisi TERS
+// sırada koşar ([executor.compensate]) ama o başka bir sorunun cevabıdır.
+//
+// Dönen dilim yalnızca İŞ YAPMIŞ adımları taşır ([StepStatus.Held]); Restore
+// ise çıktısı olan HER adım için çağrılır, çünkü telafi edilecek bir adımın
+// ihtiyacı olan değeri kendinden önceki başarılı bir adım yazmış olabilir.
+func (e *executor) geriKur(sc *StepContext, wf Workflow, exec *Execution) ([]doneStep, error) {
+	kayitlar := make([]StepRecord, len(exec.Steps))
+	copy(kayitlar, exec.Steps)
+	slices.SortFunc(kayitlar, func(a, b StepRecord) int { return a.Index - b.Index })
+
+	done := make([]doneStep, 0, len(kayitlar))
+	for i := range kayitlar {
+		rec := &kayitlar[i]
+		if rec.Index < 0 || rec.Index >= len(wf.Steps) {
+			return nil, errors.Internal(CodeRecoveryFailed,
+				"%d. adımın kaydı var ama workflow tanımında %d adım var; tanım değişmiş",
+				rec.Index, len(wf.Steps))
+		}
+
+		step := wf.Steps[rec.Index]
+		if step.Name() != rec.Name {
+			return nil, errors.Internal(CodeRecoveryFailed,
+				"%d. adım kayıtta %q, tanımda %q; workflow tanımı yürütmeden sonra değişmiş",
+				rec.Index, rec.Name, step.Name())
+		}
+
+		restorer, ok := step.(Recoverable)
+		if !ok {
+			if !rec.Status.Held() {
+				continue
+			}
+
+			return nil, errors.Internal(CodeRecoveryFailed,
+				"%q adımı (%d) iş yapmış ama durumunu geri kuramıyor (Recoverable değil)",
+				rec.Name, rec.Index)
+		}
+
+		if err := restorer.Restore(sc, rec.Output); err != nil {
+			return nil, errors.Wrap(err, errors.KindInternal, CodeRecoveryFailed,
+				"%q adımının (%d) durumu kayıttan geri kurulamadı", rec.Name, rec.Index)
+		}
+
+		if rec.Status.Held() {
+			done = append(done, doneStep{step: step, rec: *rec})
+		}
+	}
+
+	if len(done) == 0 {
+		return nil, errors.Internal(CodeRecoveryFailed,
+			"telafi edilecek adım bulunamadı; kayıt iş yapılmış görünüyordu")
+	}
+
+	if err := sinirDenetle(wf, kayitlar); err != nil {
+		return nil, err
+	}
+
+	return done, nil
+}
+
+// sinirDenetle sürecin, kaydı olmayan bir adımın İÇİNDE ölmüş olabileceği ve o
+// adımın bunu kaldıramayacağı durumu reddeder.
+//
+// Kayıtlı en yüksek indeks k ise süreç ya k+1'in Invoke'unun içinde ya da ona
+// hiç girmeden ölmüştür; ikisi kayıtlardan AYIRT EDİLEMEZ. k+1 bir
+// [RecoveryBlocker] ise ayırt edememenin bedeli geri alınamaz bir yan etkidir
+// ve karar elle müdahaleye bırakılır.
+//
+// Zincirin geri kalanında engelleyici bir adım olması önemli DEĞİLDİR: onların
+// kaydı vardır, yani ne yaptıkları bilinir.
+func sinirDenetle(wf Workflow, kayitlar []StepRecord) error {
+	if len(kayitlar) == 0 {
+		return nil
+	}
+
+	sonraki := kayitlar[len(kayitlar)-1].Index + 1
+	if sonraki >= len(wf.Steps) {
+		return nil
+	}
+
+	if _, engeller := wf.Steps[sonraki].(RecoveryBlocker); engeller {
+		return errors.Internal(CodeRecoveryFailed,
+			"%q adımının (%d) kaydı yok: süreç onun İÇİNDE ölmüş olabilir ve o adım "+
+				"kayıtsız çalışmamış sayılamaz; kurtarma yapılmaz",
+			wf.Steps[sonraki].Name(), sonraki)
+	}
+
+	return nil
 }
 
 // isYapilmis adım kayıtlarında GERİ ALINMAMIŞ iş olup olmadığını söyler.

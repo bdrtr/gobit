@@ -2,6 +2,7 @@ package checkout
 
 import (
 	"context"
+	"encoding/json"
 	"slices"
 	"time"
 
@@ -230,6 +231,32 @@ type reserveOutput struct {
 
 // Name adımın adını döner.
 func (s *reserveInventoryStep) Name() string { return StepReserveInventory }
+
+// Restore ayrılan rezervasyonları KAYITTAN geri kurar.
+//
+// Telafinin ihtiyacı olan tek şey rezervasyon kimlikleridir ve onlar zaten
+// adımın çıktısında kalıcı: [reserveOutput]. Bu yüzden terk edilmiş bir
+// yürütmenin stoğu, süreç öldükten sonra da bırakılabilir.
+//
+// Boş çıktı HATA döner: rezervasyon almış bir adımın çıktısı boş olamaz ve
+// sessizce boş dilim koymak, telafinin bırakacağı stoğu bulamadan "başardım"
+// demesi olurdu.
+func (s *reserveInventoryStep) Restore(sc *workflow.StepContext, output json.RawMessage) error {
+	var out reserveOutput
+	if err := json.Unmarshal(output, &out); err != nil {
+		return errors.Wrap(err, errors.KindInternal, CodeSharedStateInvalid,
+			"%q adımının çıktısı çözülemedi", StepReserveInventory)
+	}
+	if len(out.Reservations) == 0 {
+		return errors.Internal(CodeSharedStateInvalid,
+			"%q adımının kaydında hiç rezervasyon yok; telafi neyi bırakacağını bilemez",
+			StepReserveInventory)
+	}
+
+	sc.Shared[sharedReservations] = out.Reservations
+
+	return nil
+}
 
 // Invoke satır başına stok ayırır ve kimlikleri paylaşılan haritaya yazar.
 //
@@ -621,6 +648,23 @@ type createOrderOutput struct {
 // Name adımın adını döner.
 func (s *createOrderStep) Name() string { return StepCreateOrder }
 
+// Restore açılan siparişin kimliğini KAYITTAN geri kurar.
+func (s *createOrderStep) Restore(sc *workflow.StepContext, output json.RawMessage) error {
+	var out createOrderOutput
+	if err := json.Unmarshal(output, &out); err != nil {
+		return errors.Wrap(err, errors.KindInternal, CodeSharedStateInvalid,
+			"%q adımının çıktısı çözülemedi", StepCreateOrder)
+	}
+	if out.OrderID == "" {
+		return errors.Internal(CodeSharedStateInvalid,
+			"%q adımının kaydında sipariş kimliği yok", StepCreateOrder)
+	}
+
+	sc.Shared[sharedOrderID] = out.OrderID
+
+	return nil
+}
+
 // Invoke siparişi açar ve kimliğini paylaşılan haritaya yazar.
 //
 // Görüntüye idempotency anahtarı olarak YÜRÜTME kimliği konur: aynı yürütmede
@@ -723,6 +767,24 @@ type authorizeOutput struct {
 
 // Name adımın adını döner.
 func (s *authorizePaymentStep) Name() string { return StepAuthorizePayment }
+
+// Restore ödeme koleksiyonunu ve oturumunu KAYITTAN geri kurar.
+func (s *authorizePaymentStep) Restore(sc *workflow.StepContext, output json.RawMessage) error {
+	var out authorizeOutput
+	if err := json.Unmarshal(output, &out); err != nil {
+		return errors.Wrap(err, errors.KindInternal, CodeSharedStateInvalid,
+			"%q adımının çıktısı çözülemedi", StepAuthorizePayment)
+	}
+	if out.CollectionID == "" || out.SessionID == "" {
+		return errors.Internal(CodeSharedStateInvalid,
+			"%q adımının kaydında koleksiyon ya da oturum kimliği yok", StepAuthorizePayment)
+	}
+
+	sc.Shared[sharedCollectionID] = out.CollectionID
+	sc.Shared[sharedSessionID] = out.SessionID
+
+	return nil
+}
 
 // Invoke koleksiyonu açar, oturumu açar ve tutarı bloke ettirir.
 //
@@ -874,6 +936,39 @@ type captureOutput struct {
 
 // Name adımın adını döner.
 func (s *capturePaymentStep) Name() string { return StepCapturePayment }
+
+// BlocksRecovery bu adımın KAYDI YOKKEN çalışmamış sayılamayacağını bildirir.
+//
+// [capturePaymentStep.Invoke] işareti çağrıdan ÖNCE koyar, çünkü çağrıdan
+// sonraki her arıza "para gitmiş olabilir" demektir. Süreç tam orada ölürse
+// işaret de kayıt da yoktur: kartın çekilip çekilmediğini kayıtlardan bilmenin
+// yolu kalmaz. Kurtarmanın "hiç çalışmamış" varsayması, stoğu bırakıp siparişi
+// iptal etmesi ve anahtarı serbest bırakması demek olurdu — müşteri yeniden
+// öder ve İKİNCİ KEZ tahsil edilir.
+//
+// Bu, adımın kendi telafisindeki asimetrik kararın aynısıdır: şüphe hâlinde
+// ucuz olan hata seçilir ve ucuz olan, bekleyen bir siparişle elle müdahaledir.
+func (s *capturePaymentStep) BlocksRecovery() {}
+
+// Restore tahsilatın kimliğini ve "denendi" işaretini KAYITTAN geri kurar.
+//
+// Kaydın VARLIĞI, Invoke'un dönmüş olduğunu söyler; yani tahsilat denenmiştir
+// ve işaret koşulsuz konur. Kaydı olmayan bir tahsilat adımı ise kurtarmayı
+// tümden durdurur (bkz. [capturePaymentStep.BlocksRecovery]).
+func (s *capturePaymentStep) Restore(sc *workflow.StepContext, output json.RawMessage) error {
+	var out captureOutput
+	if err := json.Unmarshal(output, &out); err != nil {
+		return errors.Wrap(err, errors.KindInternal, CodeSharedStateInvalid,
+			"%q adımının çıktısı çözülemedi", StepCapturePayment)
+	}
+
+	sc.Shared[sharedCaptureAttempted] = true
+	if out.PaymentID != "" {
+		sc.Shared[sharedPaymentID] = out.PaymentID
+	}
+
+	return nil
+}
 
 // Invoke tutarı tahsil eder ve tahsilatı koleksiyondan DOĞRULAR.
 //
@@ -1113,6 +1208,16 @@ type clearCartStep struct {
 
 // Name adımın adını döner.
 func (s *clearCartStep) Name() string { return StepClearCart }
+
+// Restore HİÇBİR ŞEY yapmaz ve bu bilinçlidir.
+//
+// Adım paylaşılan haritaya yazmaz ve telafisi de ondan okumaz (telafi zaten
+// boştur: sepeti kapatmak geri alınmaz, sipariş iptal edilirse sepet yeniden
+// açılmaz). Arayüzü yine de uygulaması, kurtarmanın bu adımda DURMAMASI
+// içindir: [workflow.Recoverable] uygulamayan bir adım zincirin tamamını elle
+// müdahaleye çevirir ve buradaki durum, geri kurulacak bir şey OLMAMASIDIR —
+// geri kurulamamak değil.
+func (s *clearCartStep) Restore(_ *workflow.StepContext, _ json.RawMessage) error { return nil }
 
 // Invoke sepeti tamamlanmış damgalar, rezervasyonları onaylar ve akışın
 // sonucunu üretir.

@@ -977,6 +977,61 @@ func (a *sahteAdim) Compensate(_ context.Context, _ *workflow.StepContext) error
 	return nil
 }
 
+// kurtarilabilirAdim durumunu KENDİ kalıcı çıktısından geri kurabilen adımdır.
+//
+// Telafisi, geri kurulmuş paylaşılan durumu OKUR ve gördüğü değeri kaydeder:
+// telafinin gerçekten çalışması yetmez, DOĞRU veriyle çalıştığı da görülmelidir.
+// Kaydın çıktısından gelmeyen bir değerle çalışan telafi, geri almadığı işi
+// geri aldım der.
+type kurtarilabilirAdim struct {
+	ad        string
+	cikti     any
+	telafiler *[]string
+	// gorulen, Compensate'in paylaşılan haritada bulduğu değerdir.
+	gorulen *string
+	// restoreHatasi doluysa Restore o hatayla düşer.
+	restoreHatasi error
+}
+
+func (a *kurtarilabilirAdim) Name() string { return a.ad }
+
+func (a *kurtarilabilirAdim) Invoke(_ context.Context, sc *workflow.StepContext) (any, error) {
+	sc.Shared[a.ad] = a.cikti
+
+	return a.cikti, nil
+}
+
+func (a *kurtarilabilirAdim) Compensate(_ context.Context, sc *workflow.StepContext) error {
+	*a.telafiler = append(*a.telafiler, a.ad)
+	if a.gorulen != nil {
+		deger, _ := sc.Shared[a.ad].(string)
+		*a.gorulen = deger
+	}
+
+	return nil
+}
+
+func (a *kurtarilabilirAdim) Restore(sc *workflow.StepContext, output json.RawMessage) error {
+	if a.restoreHatasi != nil {
+		return a.restoreHatasi
+	}
+
+	var deger string
+	if err := json.Unmarshal(output, &deger); err != nil {
+		return err
+	}
+	sc.Shared[a.ad] = deger
+
+	return nil
+}
+
+// engelleyiciAdim kaydı yokken çalışmamış SAYILAMAYAN adımdır (tahsilat gibi).
+type engelleyiciAdim struct {
+	kurtarilabilirAdim
+}
+
+func (a *engelleyiciAdim) BlocksRecovery() {}
+
 // TestMotorlaBasariliKosuKaliciOlur gerçek motorun bu depoyla çalıştığını ve
 // başarılı koşunun completed olarak kalıcılaştığını doğrular (Faz 3 DoD).
 //
@@ -1125,6 +1180,182 @@ func yeniVeritabani(ctx context.Context, t *testing.T) string {
 	require.NoError(t, err)
 	u.Path = "/" + ad
 	return u.String()
+}
+
+// terkEdilmisYurutmeKur iş yapmış ama bayat bir yürütme kurar ve kimliğini döner.
+//
+// Zamanı geri almak ŞART: AppendStep yürütmenin updated_at'ini tazeler, yani
+// "adımı var VE bayat" durumu depo yüzeyinden kurulamaz. Üretim aynı duruma
+// çökerek varır.
+func terkEdilmisYurutmeKur(
+	ctx context.Context, t *testing.T, depo workflow.Store, wf workflow.Workflow,
+	anahtar, id string, kayitlar []workflow.StepRecord,
+) {
+	t.Helper()
+
+	exec := &workflow.Execution{ID: id, Workflow: wf.Name, IdempotencyKey: anahtar, Status: workflow.StatusRunning}
+	require.NoError(t, depo.Create(ctx, exec))
+	for _, kayit := range kayitlar {
+		require.NoError(t, depo.AppendStep(ctx, id, kayit))
+	}
+
+	_, err := testPool.Pool().Exec(ctx,
+		`UPDATE workflow_executions SET updated_at = now() - interval '1 hour' WHERE id = $1`, id)
+	require.NoError(t, err)
+}
+
+// TestTerkEdilmisYurutmeKayitlardanTelafiEdilir kurtarmanın kendisini kanıtlar.
+//
+// Süreç iş yaptıktan sonra ölmüşse ayrılmış stok dünyada durur ve onu bırakacak
+// tek şey telafi zinciridir. Motor telafi işlevlerine sahiptir; kaybolan tek şey
+// adımlar arası paylaşılan durumdu ve o, adımın KENDİ kalıcı çıktısından geri
+// kurulur (workflow.Recoverable).
+//
+// İki iddia birden sınanır ve ikincisi asıl olandır: telafi ÇALIŞTI, ve DOĞRU
+// veriyle çalıştı. Yalnızca "çalıştı" diyen bir test, Shared'ı boş bırakan bir
+// kurtarmayı da geçirirdi — o telafi de "bir şey bırakmadım" derdi.
+func TestTerkEdilmisYurutmeKayitlardanTelafiEdilir(t *testing.T) {
+	ctx := context.Background()
+	depo := yeniDepo()
+	motor := workflow.New(depo, nil)
+
+	telafiler := []string{}
+	var gorulen string
+	adim := &kurtarilabilirAdim{ad: "stok_rezerve", cikti: "res_1", telafiler: &telafiler, gorulen: &gorulen}
+	wf := workflow.Workflow{Name: "TestTerkEdilmisYurutmeKayitlardanTelafiEdilir", Steps: []workflow.Step{adim}}
+
+	const anahtar = "terk_kurtarilir"
+	const id = "wfx_TERK_KURTAR"
+	terkEdilmisYurutmeKur(ctx, t, depo, wf, anahtar, id, []workflow.StepRecord{{
+		Name: "stok_rezerve", Index: 0, Status: workflow.StepInvoked, Attempts: 1,
+		Output: []byte(`"res_1"`),
+	}})
+
+	_, err := motor.Run(ctx, wf, nil,
+		workflow.WithIdempotencyKey(anahtar), workflow.WithLease(time.Minute))
+	require.NoError(t, err, "kurtarılabilir bir yürütme yeniden denemeyi ENGELLEMEMELİ")
+
+	assert.Equal(t, []string{"stok_rezerve"}, telafiler,
+		"terk edilmiş yürütmenin telafisi kayıtlardan çalıştırılmalı")
+	assert.Equal(t, "res_1", gorulen,
+		"telafi, kaydın çıktısından geri kurulan değeri görmeli; boş Shared ile çalışan "+
+			"bir telafi bırakacağı rezervasyonu bulamaz")
+
+	kalici, err := depo.Get(ctx, id)
+	require.NoError(t, err)
+	assert.Equal(t, workflow.StatusFailed, kalici.Status,
+		"telafi eksiksiz tamamlandıysa durum failed'dır ve anahtar bırakılır")
+	assert.Empty(t, kalici.IdempotencyKey,
+		"anahtar bırakılmalı; müşteri aynı sepeti yeniden ödeyebilmeli")
+}
+
+// TestKurtarmaKaydiOlmayanEngelleyiciAdimdaDURUR kurtarmanın sınırını çizer ve
+// bu sınır ödeme yüzünden vardır.
+//
+// Motor adımın kaydını Invoke DÖNDÜKTEN SONRA yazar, dolayısıyla Invoke'un
+// ortasında ölen süreç o adımdan hiçbir iz bırakmaz. Kurtarma kayıtlara bakar,
+// yani böyle bir adımı "hiç çalışmamış" sayar. Tahsilat için bu, kartı çekilmiş
+// bir müşterinin stoğunun bırakılıp anahtarının serbest kalması ve İKİNCİ KEZ
+// tahsil edilmesi demektir. Adım bunu workflow.RecoveryBlocker ile bildirir ve
+// karar elle müdahaleye döner.
+func TestKurtarmaKaydiOlmayanEngelleyiciAdimdaDURUR(t *testing.T) {
+	ctx := context.Background()
+	depo := yeniDepo()
+	motor := workflow.New(depo, nil)
+
+	telafiler := []string{}
+	rezerve := &kurtarilabilirAdim{ad: "stok_rezerve", cikti: "res_1", telafiler: &telafiler}
+	tahsilat := &engelleyiciAdim{kurtarilabilirAdim: kurtarilabilirAdim{
+		ad: "tahsilat", cikti: "pay_1", telafiler: &telafiler}}
+	wf := workflow.Workflow{
+		Name:  "TestKurtarmaKaydiOlmayanEngelleyiciAdimdaDURUR",
+		Steps: []workflow.Step{rezerve, tahsilat},
+	}
+
+	const anahtar = "terk_engelleyici"
+	const id = "wfx_TERK_ENGEL"
+	// YALNIZCA ilk adımın kaydı var: süreç tahsilatın içinde ölmüş OLABİLİR.
+	terkEdilmisYurutmeKur(ctx, t, depo, wf, anahtar, id, []workflow.StepRecord{{
+		Name: "stok_rezerve", Index: 0, Status: workflow.StepInvoked, Attempts: 1,
+		Output: []byte(`"res_1"`),
+	}})
+
+	_, err := motor.Run(ctx, wf, nil,
+		workflow.WithIdempotencyKey(anahtar), workflow.WithLease(time.Minute))
+
+	require.Error(t, err)
+	assert.True(t, coreerrors.IsConflict(err), "hata: %v", err)
+	assert.Contains(t, err.Error(), "ELLE MÜDAHALE")
+	assert.Empty(t, telafiler,
+		"tahsilat uçuşta olmuş olabilir; hiçbir telafi çalıştırılmamalı")
+
+	kalici, err := depo.Get(ctx, id)
+	require.NoError(t, err)
+	assert.Equal(t, workflow.StatusCompensationFailed, kalici.Status)
+	assert.Equal(t, anahtar, kalici.IdempotencyKey,
+		"anahtar TUTULMALI; bırakmak müşterinin yeniden ödemesine ve ikinci kez "+
+			"tahsil edilmesine kapı açardı")
+}
+
+// TestKurtarmaTanimDegismisseYapilmaz iki dağıtım arasında değişen bir workflow
+// tanımına karşı korur.
+//
+// İndeks kaydın kimliğidir ama tanım değişmiş olabilir; ad denetimi olmasaydı
+// 2. adımın telafisi bambaşka bir adımın çıktısıyla çağrılırdı.
+func TestKurtarmaTanimDegismisseYapilmaz(t *testing.T) {
+	ctx := context.Background()
+	depo := yeniDepo()
+	motor := workflow.New(depo, nil)
+
+	telafiler := []string{}
+	adim := &kurtarilabilirAdim{ad: "YENI_AD", cikti: "res_1", telafiler: &telafiler}
+	wf := workflow.Workflow{Name: "TestKurtarmaTanimDegismisseYapilmaz", Steps: []workflow.Step{adim}}
+
+	const anahtar = "terk_tanim_degisti"
+	const id = "wfx_TERK_TANIM"
+	terkEdilmisYurutmeKur(ctx, t, depo, wf, anahtar, id, []workflow.StepRecord{{
+		Name: "ESKI_AD", Index: 0, Status: workflow.StepInvoked, Attempts: 1,
+		Output: []byte(`"res_1"`),
+	}})
+
+	_, err := motor.Run(ctx, wf, nil,
+		workflow.WithIdempotencyKey(anahtar), workflow.WithLease(time.Minute))
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "ELLE MÜDAHALE")
+	assert.Empty(t, telafiler, "adı tutmayan bir tanımla hiçbir telafi çalıştırılmamalı")
+}
+
+// TestKurtarmaRestorePatlarsaYapilmaz eksik durumla koşan telafiyi engeller.
+//
+// Restore, kayıttaki çıktıyı Shared'a geri koyamıyorsa (çıktı boş ya da şekli
+// değişmiş) telafi neyi geri alacağını bilemez. Sessizce boş durumla koşmak,
+// "başardım" diyen ama hiçbir şey bırakmayan bir telafi üretirdi.
+func TestKurtarmaRestorePatlarsaYapilmaz(t *testing.T) {
+	ctx := context.Background()
+	depo := yeniDepo()
+	motor := workflow.New(depo, nil)
+
+	telafiler := []string{}
+	adim := &kurtarilabilirAdim{
+		ad: "stok_rezerve", cikti: "res_1", telafiler: &telafiler,
+		restoreHatasi: coreerrors.Internal("cikti_bozuk", "çıktı çözülemedi"),
+	}
+	wf := workflow.Workflow{Name: "TestKurtarmaRestorePatlarsaYapilmaz", Steps: []workflow.Step{adim}}
+
+	const anahtar = "terk_restore_patlar"
+	const id = "wfx_TERK_RESTORE"
+	terkEdilmisYurutmeKur(ctx, t, depo, wf, anahtar, id, []workflow.StepRecord{{
+		Name: "stok_rezerve", Index: 0, Status: workflow.StepInvoked, Attempts: 1,
+		Output: []byte(`"res_1"`),
+	}})
+
+	_, err := motor.Run(ctx, wf, nil,
+		workflow.WithIdempotencyKey(anahtar), workflow.WithLease(time.Minute))
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "ELLE MÜDAHALE")
+	assert.Empty(t, telafiler, "durumu geri kurulamayan bir zincir telafi edilmemeli")
 }
 
 // TestTerkEdilmisYurutmeIsYapmissaElleMudahaleIster çökmenin TEHLİKELİ yarısını
