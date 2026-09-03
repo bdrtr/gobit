@@ -10,6 +10,46 @@ Sabitlenme `1.0.0` ile olur.
 
 ## [Yayımlanmamış]
 
+## [0.8.0] — 2026-09-04
+
+### Kırıcı değişiklikler
+
+`0.x` boyunca minor sürümde meşrudur (bkz. dosyanın başı). Üçü de HTTP
+yüzeyini değiştirmiyor; ikisi çerçeveyi GÖMEN kurulumları, biri kendi saga
+adımını YAZANLARI ilgilendiriyor.
+
+- **`cart/service.Store` portunun `SetLineItemTotals` imzası değişti.** Eski
+  imza satır başına çağrılıyordu ve güncellenen satırı döndürüyordu; yenisi bir
+  hesap turunun TÜM satır tutarlarını tek çağrıda alıyor ve yalnızca hata
+  döndürüyor:
+
+  ```go
+  // eski
+  SetLineItemTotals(ctx, cartID, lineID string, totals models.LineTotals) (models.LineItem, error)
+  // yeni
+  SetLineItemTotals(ctx, cartID string, lines []models.LineItemTotals) error
+  ```
+
+  Bu portu kendisi uygulayan bir kurulum derlenmez. Sebep bir ölçümdür ve
+  aşağıda "Değiştirildi" altında yazılı: satır başına UPDATE, sepetin kilidini
+  satır sayısıyla orantılı süre tutuyordu.
+
+- **Motorun, `pgstore`'un, `core/link`'in ve `core/eventbus`'ın hata MESAJLARI
+  İngilizce.** Hata KODLARI ve durum sabitlerinin DEĞERLERİ değişmedi — onlar
+  makine sözleşmesidir ve dokunulmadı. Etkilenen tek sınıf, mesaj METNİNE
+  bağlanmış iddialardır: bu turda deponun kendi testlerinde tam olarak böyle üç
+  bağ kırıldı ve ancak koşulunca görüldü, çünkü kod ile mesaj arasında
+  derleyici bağı yoktur. Müşteriye mesajı OLDUĞU GİBİ gösteren bir vitrin de
+  etkilenir (ADR 0012'nin cırcırı; aynı sınıf v0.6.0'da başlamıştı).
+
+- **`workflow.Step` sözleşmesi büyüdü: `Compensate` EŞZAMANLI çağrılabilir.**
+  Bugüne dek "iki kez çağrılabilir" deniyordu ve bu SIRAYLA demekti. Kurtarma
+  yolu bir Compensate'i aynı ANDA çağırabilen ilk yoldur. Bu depoda dağıtılan
+  iki depo (`NewMemoryStore`, `pgstore`) kurtarmayı tekelli yaptığı için pratikte
+  kapı kapalıdır; BAŞKA bir `workflow.Store` uygulayan kurulumda açıktır ve
+  telafisini oku-değiştir-yaz olarak yazan bir adım stoğu birden çok kez
+  bırakır. Geri alma KİMLİKLE yapılmalıdır.
+
 ### Eklendi
 
 - **`gobit stuck`: yarım kalmış saga'lar artık LİSTELENEBİLİYOR.** v0.7.0
@@ -2355,7 +2395,8 @@ yalnızca test koşarak görünmeyen üç arıza:
   yoktur; geri alma elle yapılır. İleri yön açılışta otomatiktir.
 - Yük testi süreç içidir; kapasite planı üretmez.
 
-[Yayımlanmamış]: https://github.com/bdrtr/gobit/compare/v0.7.0...HEAD
+[Yayımlanmamış]: https://github.com/bdrtr/gobit/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/bdrtr/gobit/releases/tag/v0.8.0
 [0.7.0]: https://github.com/bdrtr/gobit/releases/tag/v0.7.0
 [0.6.0]: https://github.com/bdrtr/gobit/releases/tag/v0.6.0
 [0.5.0]: https://github.com/bdrtr/gobit/releases/tag/v0.5.0

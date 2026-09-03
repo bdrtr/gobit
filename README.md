@@ -1609,7 +1609,7 @@ make rename-module MODULE=github.com/kullanici/repo
 
 ## Sürüm
 
-Güncel sürüm: **v0.7.0**. Değişiklikler için
+Güncel sürüm: **v0.8.0**. Değişiklikler için
 [`CHANGELOG.md`](./CHANGELOG.md).
 
 - **v0.1.0** — Faz 0–9'un tamamı.
@@ -1660,6 +1660,30 @@ Güncel sürüm: **v0.7.0**. Değişiklikler için
   genişletildi). **Kırıcı değişiklikler var**: `/ready` artık Redis için 503
   dönmüyor, bir sepet en fazla 100 satır taşıyor ve arama sonuçlarının sırası
   değişti.
+- **v0.8.0** — yarım kalan saga'nın turu: v0.7.0 kesintiye uğrayan bir ödemeyi
+  sessiz olmaktan çıkarmıştı, bu tur onu GÖRÜNÜR ve GERİ ALINABİLİR yaptı.
+  `gobit stuck` yarım kalmış yürütmeleri listeliyor (yalnızca okur;
+  [ADR 0016](docs/adr/0016-operator-read-surface-for-half-done-sagas.md)) ve
+  terk edilmiş bir saga'nın telafisi artık KAYITLARDAN çalışıyor
+  ([ADR 0017](docs/adr/0017-recovering-abandoned-sagas-from-the-record.md)) —
+  ayrılan stok bırakılıyor, müşteri sepetini yeniden ödeyebiliyor. Kurtarma
+  tahsilat adımında bilerek DURUYOR: kaydı olmayan bir tahsilatı "çalışmadı"
+  saymak çift tahsilat kapısıdır.
+
+  Kurtarmanın kendisi iki arıza doğurdu ve ikisi de yolu EŞZAMANLI koşturarak
+  bulundu: motor hiçbir adım koşmadan BAŞARI dönebiliyordu (ölçüldü:
+  `err=nil`, sıfır adım) ve terk edilmiş kaydı bulan her çağıran telafi
+  zincirini koşuyordu (dört eşzamanlı çağıran, dört telafi → bir). İkincisi
+  motorun kaydı kurtarmadan önce TALEP etmesiyle kapandı
+  (`workflow.ClaimingStore`, isteğe bağlı yetenek).
+
+  Yanında iki operatör yüzeyi (`gobit migrate status` / `migrate down`), iki
+  ölçülmüş hızlanma (sepet satır tutarları tek deyimle: kilit süresi ~14,2 →
+  ~6,8 ms; vitrin listesinin sayacı isteğe bağlı: 67 → 0,65 ms) ve dil
+  cırcırının dört turu (defter 742 → 715 dosya) var. **Kırıcı değişiklikler
+  var**: `cart/service.Store.SetLineItemTotals` imzası, motorun/pgstore'un
+  İngilizce hata mesajları (KODLAR değişmedi) ve `Compensate`'in artık eşzamanlı
+  çağrılabildiğini söyleyen `Step` sözleşmesi.
 
 `0.x` boyunca **kırıcı değişiklikler minor sürümlerde gelebilir**: API yüzeyi
 henüz sabitlenmemiştir. Sabitlenme `1.0.0` ile olur.
