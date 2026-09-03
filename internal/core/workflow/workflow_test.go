@@ -832,6 +832,85 @@ func TestAnahtarOkumadanOnceSerbestKalirsaYurutmeYenidenAcilir(t *testing.T) {
 	assert.Equal(t, 1, store.bulmalar)
 }
 
+// kapanisSayan uç duruma yazmaları sayar ve talep yeteneğini ELDEN GEÇİRİR.
+//
+// İkincisi kazadan değil, Go'nun kuralından: gömülü bir ARAYÜZ yalnızca kendi
+// metotlarını taşır, dolayısıyla Store'u saran her tip ClaimingStore'u sessizce
+// gizler. Bunu bilerek yazmak, sarmalayıcı yazacak olana da örnek olsun diye
+// burada duruyor.
+type kapanisSayan struct {
+	workflow.Store
+
+	mu         sync.Mutex
+	kapanislar map[string]int
+}
+
+func (s *kapanisSayan) UpdateStatus(
+	ctx context.Context, execID string, status workflow.Status, out json.RawMessage, failure string,
+) error {
+	if status == workflow.StatusFailed {
+		s.mu.Lock()
+		s.kapanislar[execID]++
+		s.mu.Unlock()
+	}
+
+	return s.Store.UpdateStatus(ctx, execID, status, out, failure)
+}
+
+func (s *kapanisSayan) ClaimAbandoned(ctx context.Context, execID string, seen time.Time) (bool, error) {
+	talepci, ok := s.Store.(workflow.ClaimingStore)
+	if !ok {
+		return true, nil
+	}
+
+	return talepci.ClaimAbandoned(ctx, execID, seen)
+}
+
+func (s *kapanisSayan) sayim(execID string) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	return s.kapanislar[execID]
+}
+
+// TestTerkEdilmisKaydiTekBirCagiranKAPATIR kurtarmanın TEKELLİ olduğunu
+// doğrular.
+//
+// Terk edilmiş kayıt kimsenin sahipliğinde değildir: aynı anahtarla dönen her
+// çağıran onu bulur ve talep olmadan HEPSİ kurtarır. İş yapmamış bir kayıtta
+// bunun bedeli yalnızca yinelenen yazmadır, ama aynı yol iş YAPILMIŞ kayıtta
+// telafi zincirini birden çok kez, aynı anda koşturur (dört eşzamanlı çağıranla
+// ölçüldü: zincir dört kez koştu). Kapı ikisi için de aynıdır, bu yüzden burada
+// sayılan şey kapanış sayısıdır.
+//
+// Sınanan değişmez: kaydı KAPATAN tek bir çağıran vardır ve saga yalnızca BİR
+// kez koşar.
+func TestTerkEdilmisKaydiTekBirCagiranKAPATIR(t *testing.T) {
+	rec := &recorder{}
+	store := &kapanisSayan{Store: workflow.NewMemoryStore(), kapanislar: map[string]int{}}
+	eng := workflow.New(store, testLogger())
+	wf := workflow.Workflow{Name: "idem", Steps: steps(step(rec, "a"))}
+
+	id := terkedilmisKayit(t, store, "sepet-yaris", time.Hour)
+
+	var wg sync.WaitGroup
+	for range 4 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			// Sınanan şey dönen hata değil, kaydın kaç kez kapatıldığı.
+			_, _ = eng.Run(t.Context(), wf, nil,
+				workflow.WithIdempotencyKey("sepet-yaris"), workflow.WithLease(time.Minute))
+		}()
+	}
+	wg.Wait()
+
+	assert.Equal(t, 1, store.sayim(id),
+		"terk edilmiş kaydı yalnızca TALEBİ KAZANAN çağıran kapatmalı")
+	assert.Equal(t, []string{"invoke:a"}, rec.snapshot(),
+		"aynı anahtarla yalnızca bir saga koşmalı")
+}
+
 // TestIdempotencyDifferentKeyRunsAgain farklı anahtarın yeni yürütme açtığını doğrular.
 func TestIdempotencyDifferentKeyRunsAgain(t *testing.T) {
 	rec := &recorder{}

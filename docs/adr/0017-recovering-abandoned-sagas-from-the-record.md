@@ -80,25 +80,43 @@ are called once more. That is not a new requirement: `Compensate` being
 idempotent is already the engine's contract, because a failed compensation does
 not stop the chain.
 
-**Negative, and this one IS new: recovery is not exclusive.** An abandoned
-execution belongs to nobody, so every caller that arrives with the same key
-recovers it — all of them at once. Measured with four concurrent callers on one
-abandoned record: the chain ran **four times**, concurrently. Until now the
+**Recovery has to be EXCLUSIVE, and the claim is what makes it so.** An
+abandoned execution belongs to nobody, so every caller that arrives with the same
+key finds it. Measured before the claim existed, with four concurrent callers on
+one abandoned record: the chain ran **four times**, concurrently. Until then the
 engine could only call a `Compensate` twice in SEQUENCE (a retry, or the
 best-effort compensation of a step that blew up); the recovery path is the first
-one that can call it twice at the same INSTANT, across processes.
+one that can call it twice at the same INSTANT, across processes — and
+`Compensate` was only ever promised to be idempotent in sequence.
 
-For this repository's own steps the cost is duplicate work and duplicate
-provider calls, not corruption: every compensation undoes by identity (release
-the reservation with this id, cancel the order with this id, void this payment
-session) and the database serializes those writes. The exposure is a step author
-who implements a read-modify-write compensation — and the contract never told
-them not to. It does now (see the `Step` godoc).
+For this repository's own steps the cost would have been duplicate work and
+duplicate provider calls rather than corruption: every compensation undoes by
+identity (release the reservation with this id, cancel the order with this id,
+void this payment session) and the database serializes those writes. The
+exposure is a step author who implements a read-modify-write compensation — and
+the contract never told them not to.
 
-Closing it properly needs a claim in the Store: an atomic compare-and-set on the
-row the "abandoned" judgement was based on, so exactly one process recovers and
-the others get "still going". That is a change to the `Store` port — a new
-method every implementation has to grow — and it is not made here.
+So the engine claims the record before recovering it: one conditional UPDATE that
+matches only while the row is still `running` AND its `updated_at` is still the
+value the "this is abandoned" judgement was based on. Winning stamps `updated_at`,
+which does double duty — it excludes the other callers and it renews the lease
+for as long as the recovery runs. A caller that LOSES the claim is not told
+"still going" but sent around the loop once more: the winner may release the key
+at any instant, and the second turn answers both endings correctly (the key is
+free → open a new execution; the winner is still working → the record it finds
+is fresh, so "still going" is the truth).
+
+The capability is OPTIONAL (`workflow.ClaimingStore`, a type assertion, the same
+shape as `Recoverable` on steps) rather than a new method on `Store`. A port
+method would break every Store written outside this repository for a guarantee
+they may not need; an optional one leaves them exactly as they were and upgrades
+the two Stores shipped here. The cost is that the guarantee is not visible in the
+`Store` type — and that a decorator embedding `Store` HIDES the capability
+silently, because an embedded interface promotes only its own methods.
+
+Measured after: the same four concurrent callers, one compensation
+(`TestKurtarmaEsZamanliCagiranlarlaTEKKEZKosar`; removing the claim puts it back
+to four).
 
 `StepContext.Input` is NOT typed on the recovery path — the original Go value
 died with the process and what remains is the record's JSON. No compensation

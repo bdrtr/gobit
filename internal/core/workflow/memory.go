@@ -33,7 +33,10 @@ type idempotencyKey struct {
 	key      string
 }
 
-var _ Store = (*memoryStore)(nil)
+var (
+	_ Store         = (*memoryStore)(nil)
+	_ ClaimingStore = (*memoryStore)(nil)
+)
 
 // NewMemoryStore produces an in-process, non-durable Store.
 //
@@ -91,6 +94,28 @@ func (s *memoryStore) Create(_ context.Context, exec *Execution) error {
 	s.byID[exec.ID] = cloneExecution(exec)
 
 	return nil
+}
+
+// ClaimAbandoned claims the execution for recovery if it is still running and
+// its UpdatedAt is unchanged.
+//
+// The whole check-and-write happens under the same lock, which is what makes it
+// atomic; in a durable Store the same thing is one conditional UPDATE.
+func (s *memoryStore) ClaimAbandoned(_ context.Context, executionID string, seen time.Time) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	exec, ok := s.byID[executionID]
+	if !ok {
+		return false, errors.NotFound(CodeExecutionNotFound, "no execution with the id %q was found", executionID)
+	}
+	if exec.Status != StatusRunning || !exec.UpdatedAt.Equal(seen) {
+		return false, nil
+	}
+
+	exec.UpdatedAt = time.Now().UTC()
+
+	return true, nil
 }
 
 // FindByIdempotencyKey returns the execution the key belongs to, or

@@ -79,7 +79,10 @@ type store struct {
 }
 
 // That store satisfies the contract is verified at compile time.
-var _ workflow.Store = (*store)(nil)
+var (
+	_ workflow.Store         = (*store)(nil)
+	_ workflow.ClaimingStore = (*store)(nil)
+)
 
 // New returns an execution store running on the given pool.
 //
@@ -353,6 +356,43 @@ func (s *store) UpdateStatus(
 	)
 
 	return nil
+}
+
+// ClaimAbandoned claims the execution for recovery and reports whether the claim
+// was won.
+//
+// The claim is a single conditional UPDATE ([claimAbandonedSQL]): it succeeds
+// only while the record is still running AND its updated_at is still the value
+// the caller saw. Winning it stamps updated_at with the current instant, which
+// both excludes the other processes and renews the lease.
+//
+// A record that is no longer there is a LOST claim, not an error: the caller's
+// question is "may I recover this", and the answer for a record that vanished is
+// no. Every other outcome an operator needs to see is in the returned error.
+func (s *store) ClaimAbandoned(ctx context.Context, executionID string, seen time.Time) (bool, error) {
+	id, err := requireText(executionID, "the execution id", maxIDLen)
+	if err != nil {
+		return false, err
+	}
+
+	pool, err := s.rawPool()
+	if err != nil {
+		return false, err
+	}
+
+	tag, err := pool.Exec(ctx, claimAbandonedSQL, id, string(workflow.StatusRunning), seen.UTC())
+	if err != nil {
+		return false, wrapDB(err, CodeQueryFailed, "execution %q could not be claimed for recovery", id)
+	}
+	if tag.RowsAffected() == 0 {
+		return false, nil
+	}
+
+	s.log.WarnContext(ctx, "workflow execution claimed for recovery",
+		slog.String(keyExecutionID, id),
+	)
+
+	return true, nil
 }
 
 // Get reads the execution together with its steps, or errors.NotFound.

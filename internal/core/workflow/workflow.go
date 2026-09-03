@@ -289,6 +289,12 @@ type StepContext struct {
 // releases the stock more than once when two copies interleave. Undoing by
 // IDENTITY (delete the reservation with this id, cancel the order with this id)
 // is safe; read-modify-write is not.
+//
+// A Store that implements [ClaimingStore] closes that window: exactly one
+// process recovers and the others are told the execution is still going. Both
+// Stores shipped with the engine do (see NewMemoryStore and the pgstore
+// package), so this requirement is left over for a Store written elsewhere —
+// and a step cannot see which Store is wired underneath it.
 type Step interface {
 	// Name is the step's name as it appears in the records and logs; it cannot
 	// be empty.
@@ -754,6 +760,15 @@ func (e *executor) judgeAbandoned(ctx context.Context, wf Workflow, prev *Execut
 		return false, nil
 	}
 
+	switch e.claimAbandoned(ctx, prev, o) {
+	case claimLost:
+		// Somebody else is recovering it; the caller tries to open again.
+		return true, nil
+	case claimUndecided:
+		return false, nil
+	case claimWon:
+	}
+
 	// The steps are read separately: the contract does not say
 	// FindByIdempotencyKey brings them, and this path is exceptional anyway.
 	sctx, cancel := o.storeContext(ctx)
@@ -967,6 +982,62 @@ func checkRecoveryBoundary(wf Workflow, records []StepRecord) error {
 
 	return nil
 }
+
+// claimAbandoned takes the abandoned record for THIS process and reports
+// whether the claim was won.
+//
+// If the Store has no claim capability the answer is "won" without a write: the
+// capability is optional ([ClaimingStore]) and its absence must not stop the
+// recovery, only leave it non-exclusive.
+//
+// A lost claim means ANOTHER process is recovering the same record right now.
+// The caller is then told "abandoned, try opening again" rather than "still
+// going": the winner may release the key at any instant, and a second turn
+// answers both endings correctly — if the key is free the caller opens a new
+// execution, and if the winner is still working the record it finds is FRESH
+// (the claim stamps UpdatedAt), so it gets an honest "still going".
+//
+// A Store error is the undecidable case and falls to the SAFE side, exactly as
+// unreadable steps do: the record is left as it stands. Claiming without being
+// able to write would let two processes compensate the same saga.
+func (e *executor) claimAbandoned(ctx context.Context, prev *Execution, o *runOptions) claimResult {
+	claimer, ok := e.store.(ClaimingStore)
+	if !ok {
+		return claimWon
+	}
+
+	sctx, cancel := o.storeContext(ctx)
+	won, err := claimer.ClaimAbandoned(sctx, prev.ID, prev.UpdatedAt)
+	cancel()
+
+	switch {
+	case err != nil:
+		e.log.ErrorContext(ctx, "workflow: an abandoned execution could not be claimed for recovery",
+			attrWorkflow, prev.Workflow, attrExecutionID, prev.ID, attrError, err)
+
+		return claimUndecided
+	case !won:
+		e.log.WarnContext(ctx, "workflow: the abandoned execution is being recovered by another process",
+			attrWorkflow, prev.Workflow, attrExecutionID, prev.ID)
+
+		return claimLost
+	default:
+		return claimWon
+	}
+}
+
+// claimResult is the outcome of a claim on an abandoned record.
+type claimResult int
+
+const (
+	// claimWon means this process recovers the record.
+	claimWon claimResult = iota
+	// claimLost means another process is already recovering it.
+	claimLost
+	// claimUndecided means the Store could not answer; the record is left as it
+	// stands and the caller is told the execution is still going.
+	claimUndecided
+)
 
 // hasHeldWork reports whether the step records hold work that was NOT UNDONE.
 //

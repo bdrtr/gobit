@@ -254,6 +254,27 @@ Sabitlenme `1.0.0` ile olur.
   ölçümüyle bulundu; ikisi de mutasyonla kanıtlandı (eski davranış geri
   konduğunda testler tek tek düşüyor).
 
+- **Kurtarma TEKELLİ oldu: terk edilmiş bir kaydı artık tek bir süreç telafi
+  ediyor.** Terk edilmiş kayıt kimsenin sahipliğinde olmadığı için aynı anahtarla
+  dönen her çağıran onu buluyordu ve HEPSİ telafi zincirini koşuyordu — dört
+  eşzamanlı çağıranla ölçüldü, zincir dört kez koştu. Motor artık kurtarmadan
+  ÖNCE kaydı talep ediyor: tek bir koşullu UPDATE, yalnızca kayıt hâlâ `running`
+  iken ve `updated_at` "bu terk edilmiş" kararının dayandığı değerken tutuyor.
+  Kazanan `updated_at`'i damgalıyor; bu hem ötekileri eliyor hem de kirayı
+  kurtarma sürdükçe tazeliyor. Ölçüm: aynı dört çağıran, TEK telafi (talep
+  kaldırıldığında dörde dönüyor).
+
+  Talebi KAYBEDEN çağırana "hâlâ sürüyor" denmiyor, döngüye bir tur daha
+  gönderiliyor: kazanan anahtarı her an bırakabilir ve ikinci tur iki sonu da
+  doğru yanıtlar — anahtar serbestse yeni yürütme açılır, kazanan hâlâ
+  çalışıyorsa bulunan kayıt TAZEDİR, yani "hâlâ sürüyor" o zaman doğrudur.
+
+  Yetenek İSTEĞE BAĞLI bir arayüzdür (`workflow.ClaimingStore`), `Store`'a
+  eklenen bir metot değil: port metodu, bu deponun dışında yazılmış her Store
+  uygulamasını kırardı. Bedeli, `Store`'u GÖMEN bir sarmalayıcının yeteneği
+  sessizce gizlemesidir (gömülü arayüz yalnızca kendi metotlarını taşır) —
+  gerekçe ve sınır [ADR 0017](docs/adr/0017-recovering-abandoned-sagas-from-the-record.md)'de.
+
 - **Telafinin EŞZAMANLI çağrılabildiği yazıya geçti** (davranış değişmedi).
   Terk edilmiş kayıt kimsenin sahipliğinde olmadığı için aynı anahtarla varan
   her çağıran onu kurtarır; dört eşzamanlı çağıranla ölçüldü, zincir DÖRT kez
@@ -261,9 +282,10 @@ Sabitlenme `1.0.0` ile olur.
   bu SIRAYLA anlamına geliyordu. Deponun kendi adımlarında bedel yinelenen iş ve
   yinelenen sağlayıcı çağrısıdır (her telafi KİMLİKLE geri alır), ama telafisini
   oku-değiştir-yaz olarak yazan bir eklenti adımı stoğu birden çok kez bırakır.
-  Sözleşme artık bunu açıkça yasaklıyor; tekelliği gerçekten kurmanın yolu
-  (Store'a CAS talebi) ve neden bu turda yapılmadığı
-  [ADR 0017](docs/adr/0017-recovering-abandoned-sagas-from-the-record.md)'de.
+  Sözleşme artık bunu açıkça yasaklıyor — ve aynı yayımlanmamış turda kapı da
+  kapandı: kurtarma tekelli oldu (yukarıdaki maddeye bakın). Yasak yine de
+  duruyor, çünkü tekelliği kuran yetenek isteğe bağlıdır ve bir adım altındaki
+  Store'un onu sunup sunmadığını GÖREMEZ.
 
 ## [0.7.0] — 2026-09-03
 

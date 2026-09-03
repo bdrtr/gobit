@@ -231,6 +231,38 @@ type Store interface {
 	Get(ctx context.Context, executionID string) (*Execution, error)
 }
 
+// ClaimingStore is an OPTIONAL Store capability: claiming an abandoned
+// execution for recovery, ATOMICALLY.
+//
+// An abandoned execution belongs to nobody: every caller that comes back with
+// the same idempotency key finds it and, without this capability, every one of
+// them runs the compensation chain — at the same time (measured: four
+// concurrent callers, four chains). A Compensate is required to be idempotent,
+// but that promise is about being called twice IN SEQUENCE; a compensation that
+// reads a quantity, adds to it and writes it back releases the stock more than
+// once when two copies interleave.
+//
+// A Store that implements this interface makes recovery EXCLUSIVE: exactly one
+// process compensates and the others are told the execution is still going. A
+// Store that does not implement it keeps the old behavior and the engine does
+// not refuse to run — the capability is checked with a type assertion, the way
+// [Recoverable] is on steps. Both Stores shipped with the engine (NewMemoryStore
+// and pgstore) implement it.
+type ClaimingStore interface {
+	// ClaimAbandoned claims the execution for recovery and reports whether the
+	// claim was WON.
+	//
+	// The claim succeeds only if the record is still [StatusRunning] AND its
+	// UpdatedAt is still seen — the very value the caller's "this is abandoned"
+	// judgement was based on. A won claim STAMPS UpdatedAt with the current
+	// instant, which does double duty: it excludes the other callers and it
+	// renews the lease for as long as the recovery runs (see [WithLease]).
+	//
+	// A lost claim is NOT an error: it returns (false, nil). An error is
+	// returned only when the Store could not carry out the write.
+	ClaimAbandoned(ctx context.Context, executionID string, seen time.Time) (bool, error)
+}
+
 // executionIDPrefix is the prefix of execution ids (plan Section 8).
 const executionIDPrefix = "wfx_"
 

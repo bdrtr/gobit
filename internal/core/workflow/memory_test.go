@@ -189,6 +189,62 @@ func TestMemoryStoreReturnsDeepCopies(t *testing.T) {
 	assert.JSONEq(t, `"ilk"`, string(again.Steps[0].Output))
 }
 
+// TestMemoryStoreClaimAbandonedTekKazanan talebin TEKELLİ olduğunu doğrular.
+//
+// Talep kurtarmanın kapısıdır: terk edilmiş kayda aynı anda varan iki süreçten
+// yalnızca biri telafi zincirini koşmalıdır. Kazanan updated_at'i damgalar,
+// dolayısıyla ikinci talep artık gördüğü ana dayanamaz ve KAYBEDER.
+func TestMemoryStoreClaimAbandonedTekKazanan(t *testing.T) {
+	s := workflow.NewMemoryStore()
+	talepci, ok := s.(workflow.ClaimingStore)
+	require.True(t, ok, "süreç içi depo talep yeteneğini SUNMALI")
+
+	eski := time.Now().UTC().Add(-time.Hour)
+	exec := yeniYurutme("wfx_talep", "idem", "k")
+	exec.CreatedAt, exec.UpdatedAt = eski, eski
+	require.NoError(t, s.Create(t.Context(), exec))
+
+	kazandi, err := talepci.ClaimAbandoned(t.Context(), "wfx_talep", eski)
+	require.NoError(t, err)
+	assert.True(t, kazandi, "ilk talep kazanmalı")
+
+	yine, err := talepci.ClaimAbandoned(t.Context(), "wfx_talep", eski)
+	require.NoError(t, err)
+	assert.False(t, yine, "aynı ana dayanan ikinci talep KAYBETMELİ")
+
+	guncel, err := s.Get(t.Context(), "wfx_talep")
+	require.NoError(t, err)
+	assert.True(t, guncel.UpdatedAt.After(eski),
+		"kazanan talep kirayı da tazeler; yoksa kurtarma sürerken kayıt yeniden terk edilmiş görünürdü")
+}
+
+// TestMemoryStoreClaimAbandonedUcDurumlar talebin reddettiği hâlleri sabitler.
+func TestMemoryStoreClaimAbandonedUcDurumlar(t *testing.T) {
+	s := workflow.NewMemoryStore()
+	talepci := s.(workflow.ClaimingStore) //nolint:errcheck // yetenek bir üstteki testte doğrulandı
+
+	eski := time.Now().UTC().Add(-time.Hour)
+	exec := yeniYurutme("wfx_uc", "idem", "k2")
+	exec.CreatedAt, exec.UpdatedAt = eski, eski
+	require.NoError(t, s.Create(t.Context(), exec))
+
+	kazandi, err := talepci.ClaimAbandoned(t.Context(), "wfx_uc", time.Now().UTC())
+	require.NoError(t, err)
+	assert.False(t, kazandi, "başka bir ana dayanan talep kaybeder: kayıt o andan beri değişmiş")
+
+	require.NoError(t, s.UpdateStatus(t.Context(), "wfx_uc", workflow.StatusCompleted, nil, ""))
+	guncel, err := s.Get(t.Context(), "wfx_uc")
+	require.NoError(t, err)
+
+	kazandi, err = talepci.ClaimAbandoned(t.Context(), "wfx_uc", guncel.UpdatedAt)
+	require.NoError(t, err)
+	assert.False(t, kazandi, "koşmayan bir yürütme kurtarılmaz")
+
+	_, err = talepci.ClaimAbandoned(t.Context(), "wfx_yok", eski)
+	require.Error(t, err, "olmayan kayıt için talep HATA döner; sessiz bir 'kaybettin' arızayı gizlerdi")
+	assert.True(t, errors.IsNotFound(err))
+}
+
 // TestMemoryStoreConcurrentUse eşzamanlı kullanımın güvenli olduğunu doğrular
 // (yarış dedektörü ile anlamlıdır).
 func TestMemoryStoreConcurrentUse(t *testing.T) {

@@ -1487,16 +1487,19 @@ açıktır.
   süpürücü bilinçli olarak yoktur — kurtarma telafi çalıştırır, yani yan etkisi
   olan bir iştir. Komutun kendisi hâlâ YALNIZCA OKUR.
 
-  **Kurtarma TEKELLİ DEĞİLDİR.** Terk edilmiş kayıt kimsenin sahipliğinde
-  olmadığı için aynı anahtarla varan her çağıran onu kurtarır — hepsi aynı anda
-  (dört eşzamanlı çağıranla ölçüldü: zincir DÖRT kez koştu). Bu deponun kendi
-  adımlarında bedeli yinelenen iş ve yinelenen sağlayıcı çağrısıdır, bozulma
-  değil: her telafi KİMLİKLE geri alır (şu kimlikli rezervasyonu bırak, şu
-  siparişi iptal et) ve veritabanı o yazmaları sıraya sokar. Açıkta kalan,
-  telafisini oku-değiştir-yaz olarak yazan bir eklenti adımıdır; sözleşme artık
-  bunu açıkça yasaklıyor (`workflow.Step` godoc'u). Tekelliği gerçekten kurmak
-  Store'a bir CAS talebi eklemek demektir ve o değişiklik yapılmadı
-  ([ADR 0017](docs/adr/0017-recovering-abandoned-sagas-from-the-record.md)).
+  **Kurtarma TEKELLİDİR.** Terk edilmiş kayıt kimsenin sahipliğinde olmadığı
+  için aynı anahtarla varan her çağıran onu bulur; talep olmadan hepsi telafi
+  zincirini koşardı (dört eşzamanlı çağıranla ölçülmüştü: zincir DÖRT kez
+  koşuyordu). Motor artık kurtarmadan ÖNCE kaydı talep ediyor: tek bir koşullu
+  UPDATE, yalnızca kayıt hâlâ `running` iken VE `updated_at` kararın dayandığı
+  değerken tutuyor. Kazanan damgayı vurunca ötekiler eleniyor ve kira kurtarma
+  boyunca tazeleniyor. Ölçüm: aynı dört çağıran, TEK telafi.
+
+  Yetenek İSTEĞE BAĞLIDIR (`workflow.ClaimingStore`); depoyu başka yerde yazmış
+  olanların sözleşmesi kırılmasın diye `Store`'a metot eklenmedi. Bunun bedeli,
+  `Store`'u GÖMEN bir sarmalayıcının yeteneği sessizce gizlemesidir — gömülü
+  arayüz yalnızca kendi metotlarını taşır. Karar
+  [ADR 0017](docs/adr/0017-recovering-abandoned-sagas-from-the-record.md)'de.
 - **Hata bildirimi bir İŞARETTİR, olayın kopyası değil.** `error-sentry`
   eklentisi ([ADR 0014](docs/adr/0014-error-reporting.md)) toplayıcıya arıza
   kodunu, güvenli mesajı ve `request_id`'yi gönderir; geri kalan her şey logda

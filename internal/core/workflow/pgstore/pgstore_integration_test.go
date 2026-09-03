@@ -22,6 +22,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -1202,6 +1203,97 @@ func terkEdilmisYurutmeKur(
 	_, err := testPool.Pool().Exec(ctx,
 		`UPDATE workflow_executions SET updated_at = now() - interval '1 hour' WHERE id = $1`, id)
 	require.NoError(t, err)
+}
+
+// sayanAdim telafi ve çağrı sayısını EŞZAMANLI koşuya dayanacak biçimde tutar.
+//
+// Ayrı bir tip olmasının sebebi kurtarilabilirAdim'ın telafileri kilitsiz bir
+// dilime yazmasıdır: sıralı testlerde doğru, eşzamanlı testte veri yarışıdır ve
+// -race onu haklı olarak düşürür.
+type sayanAdim struct {
+	ad       string
+	cikti    string
+	telafi   atomic.Int64
+	cagrilan atomic.Int64
+}
+
+func (a *sayanAdim) Name() string { return a.ad }
+
+func (a *sayanAdim) Invoke(_ context.Context, sc *workflow.StepContext) (any, error) {
+	a.cagrilan.Add(1)
+	sc.Shared[a.ad] = a.cikti
+
+	return a.cikti, nil
+}
+
+func (a *sayanAdim) Compensate(context.Context, *workflow.StepContext) error {
+	a.telafi.Add(1)
+	time.Sleep(20 * time.Millisecond) // telafi gerçek dünyada bir çağrıdır
+
+	return nil
+}
+
+func (a *sayanAdim) Restore(sc *workflow.StepContext, output json.RawMessage) error {
+	var deger string
+	if err := json.Unmarshal(output, &deger); err != nil {
+		return err
+	}
+	sc.Shared[a.ad] = deger
+
+	return nil
+}
+
+// TestKurtarmaEsZamanliCagiranlarlaTEKKEZKosar kurtarmanın TEKELLİ olduğunu
+// gerçek veritabanında kanıtlar.
+//
+// Terk edilmiş kayıt kimsenin sahipliğinde değildir: aynı anahtarla dönen her
+// çağıran onu bulur. Talep olmadan hepsi telafi zincirini koşardı — dört
+// eşzamanlı çağıranla ölçüldü, zincir DÖRT kez koşmuştu. Telafinin idempotent
+// olması bunu kurtarmaz: sözleşme "iki kez çağrılabilir" derken SIRAYLA demek
+// oluyordu, oysa burada iki kopya iç içe geçiyor.
+//
+// Tekelliği kuran şey tek bir koşullu UPDATE'tir (claimAbandonedSQL) ve o ancak
+// gerçek Postgres'te sınanabilir: ikinci süreç satır kilidinde bekler, sonra
+// WHERE'i işlenmiş değerle yeniden değerlendirir ve hiçbir satır bulmaz.
+func TestKurtarmaEsZamanliCagiranlarlaTEKKEZKosar(t *testing.T) {
+	ctx := context.Background()
+	depo := yeniDepo()
+	motor := workflow.New(depo, nil)
+
+	adim := &sayanAdim{ad: "stok_rezerve", cikti: "res_1"}
+	wf := workflow.Workflow{
+		Name:  "TestKurtarmaEsZamanliCagiranlarlaTEKKEZKosar",
+		Steps: []workflow.Step{adim},
+	}
+
+	const anahtar = "terk_es_zamanli"
+	const id = "wfx_TERK_YARIS"
+	terkEdilmisYurutmeKur(ctx, t, depo, wf, anahtar, id, []workflow.StepRecord{{
+		Name: "stok_rezerve", Index: 0, Status: workflow.StepInvoked, Attempts: 1,
+		Output: []byte(`"res_1"`),
+	}})
+
+	var wg sync.WaitGroup
+	for range 4 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			// Sınanan şey dönen hata değil, telafinin kaç kez koştuğu.
+			_, _ = motor.Run(ctx, wf, nil,
+				workflow.WithIdempotencyKey(anahtar), workflow.WithLease(time.Minute))
+		}()
+	}
+	wg.Wait()
+
+	assert.Equal(t, int64(1), adim.telafi.Load(),
+		"telafi zinciri terk edilmiş kayıt için YALNIZCA BİR KEZ koşmalı")
+
+	kalici, err := depo.Get(ctx, id)
+	require.NoError(t, err)
+	assert.Equal(t, workflow.StatusFailed, kalici.Status,
+		"kurtarma tamamlandıysa kayıt uç duruma yazılır")
+	assert.Empty(t, kalici.IdempotencyKey,
+		"telafi eksiksizse anahtar bırakılır; müşteri sepetini yeniden ödeyebilir")
 }
 
 // TestTerkEdilmisYurutmeKayitlardanTelafiEdilir kurtarmanın kendisini kanıtlar.

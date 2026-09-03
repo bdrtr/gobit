@@ -98,6 +98,26 @@ SET status = $2, output = $3, failure = $4, updated_at = now(),
     idempotency_key = CASE WHEN $5 THEN NULL ELSE idempotency_key END
 WHERE id = $1`
 
+// claimAbandonedSQL claims an abandoned execution for recovery.
+//
+// The whole decision is ONE statement, and that is the point: "read, decide,
+// write" over three round trips is exactly the race this closes. A second
+// process reaching the same row waits for the row lock, then re-evaluates the
+// WHERE with the committed value and matches nothing.
+//
+// The condition names both the status and the instant the caller's judgement
+// was based on ($3): the status alone would let a process that has been
+// recovering for an hour be claimed a second time, since the record stays
+// running the whole time.
+//
+// The status arrives as a PARAMETER and is not embedded in the text — the same
+// reasoning as [updateStatusSQL]: a second copy of the constant would quietly
+// stop matching the day the first one changed.
+const claimAbandonedSQL = `
+UPDATE workflow_executions
+SET updated_at = now()
+WHERE id = $1 AND status = $2 AND updated_at = $3`
+
 // selectExecutionSQL reads the execution together with its steps in a SINGLE
 // statement.
 //
