@@ -4,6 +4,7 @@ package smoke
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"net"
@@ -428,5 +429,85 @@ func (s *surec) gunlukBekle(metin string, sure time.Duration) {
 		}
 
 		time.Sleep(yoklamaAraligi)
+	}
+}
+
+// komutSuresi ikilinin SUNUCU OLMAYAN bir çalıştırmasına tanınan azami süredir.
+//
+// Cömerttir: `migrate status` sahip başına bir sürüm okur ve her okuma soğuk
+// açılmış bir konteynere gidip gelir. Bu sürenin yakaladığı şey yavaşlık değil,
+// asıl arızadır: SUNUCUYA dönüştüğü için hiç dönmeyen bir çalıştırma.
+const komutSuresi = 60 * time.Second
+
+// komutSonucu sunucu olmayan tek bir çalıştırmanın sonucudur.
+type komutSonucu struct {
+	cikisKodu int
+	stdout    string
+	stderr    string
+}
+
+// komutCalistir sunucu ikilisini ARGÜMANLARLA çalıştırır ve BİTMESİNİ bekler.
+//
+// Bilinçli olarak [sunucuBaslat] üzerine kurulmadı: o yardımcı süreci başlatıp
+// AYAKTA bırakır — sunucu için doğru, burada yanlış olan biçim budur. Çıkmayan
+// bir alt komut tam da yakalanmak istenen arızadır, bu yüzden bekleme
+// senaryonun hatırlamasına bırakılmaz, koşum takımının parçasıdır.
+//
+// Ortam [ortam] ile kurulur, yani sunucu senaryolarınınkiyle AYNI biçimde:
+// migrate komutları sunucunun yüklediği yapılandırmanın AYNISINI yükler ve
+// onlara başka bir ortam veren bir senaryo, üretimdeki yolu sürmüş olmazdı.
+func komutCalistir(t *testing.T, ayar ayarlar, args ...string) komutSonucu {
+	t.Helper()
+
+	ctx, iptal := context.WithTimeout(t.Context(), komutSuresi)
+	defer iptal()
+
+	var stdout, stderr gunlukTamponu
+
+	cmd := exec.CommandContext(ctx, ikiliYolu, args...)
+	cmd.Env = ortam(ayar)
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	err := cmd.Run()
+	require.NotErrorIs(t, ctx.Err(), context.DeadlineExceeded,
+		"`%s` %s içinde çıkmadı; koşmaya devam eden bir alt komut, sunucuya dönüşmüş bir "+
+			"alt komuttur\n%s", strings.Join(args, " "), komutSuresi,
+		komutSonucu{stdout: stdout.String(), stderr: stderr.String()}.gunluk())
+
+	// ProcessState'in nil olması sürecin HİÇ koşmadığı demektir (eksik ikili,
+	// bozuk ortam) ve bunu hiçbir senaryo beklemez. Sıfırdan farklı çıkış kodu
+	// ise tersine birkaç senaryonun BEKLEDİĞİ şeydir, yani tek başına err
+	// ölçüt olamaz.
+	if cmd.ProcessState == nil {
+		t.Fatalf("ikili %v argümanlarıyla çalıştırılamadı: %v\n--- stderr ---\n%s",
+			args, err, stderr.String())
+	}
+
+	return komutSonucu{
+		cikisKodu: cmd.ProcessState.ExitCode(),
+		stdout:    stdout.String(),
+		stderr:    stderr.String(),
+	}
+}
+
+// gunluk iki akışı teşhis için tek metinde birleştirir; akışların neden AYRI
+// etiketlendiği [surec.gunluk] godoc'unda yazılıdır.
+func (k komutSonucu) gunluk() string {
+	return fmt.Sprintf("--- stdout ---\n%s--- stderr ---\n%s--------------\n", k.stdout, k.stderr)
+}
+
+// hicbirSeyDinlemiyor porta bağlanan bir süreç OLMADIĞINI doğrular.
+//
+// Alt komutların sunucu başlatmadığı iddiasının tek gerçek kanıtı budur: çıkış
+// kodu bir komutun ne yaptığını değil, nasıl bittiğini söyler.
+func hicbirSeyDinlemiyor(t *testing.T, port int) {
+	t.Helper()
+
+	baglanti, err := net.DialTimeout("tcp",
+		net.JoinHostPort("127.0.0.1", strconv.Itoa(port)), istekSuresi)
+	if err == nil {
+		_ = baglanti.Close()
+		t.Fatalf("%d portunda bir şey dinliyor; alt komut SUNUCU başlatmış", port)
 	}
 }

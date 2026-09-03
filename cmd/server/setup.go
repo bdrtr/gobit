@@ -521,8 +521,14 @@ func warnAboutRateLimit(cfg config.Config, log *slog.Logger) {
 // registration invariant in internal/arch recognizes the receiver BY NAME, and
 // a plugin registry sharing the name of the module registry in main.go makes
 // this line look like a module registration to the check.
-func selectPlugins(names []string) (*coreplugin.Registry, error) {
-	plugins := coreplugin.NewRegistry(nil)
+//
+// log is a PARAMETER rather than the package default because the second caller
+// is the migrate surface, which prints a table to stdout: it was measured that
+// a nil logger here makes the registry fall back to slog's default handler and
+// write "the plugins are installed" to stderr in the middle of an operator's
+// report.
+func selectPlugins(names []string, log *slog.Logger) (*coreplugin.Registry, error) {
+	plugins := coreplugin.NewRegistry(log)
 
 	for _, name := range names {
 		name = strings.TrimSpace(name)

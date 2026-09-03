@@ -23,6 +23,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"io/fs"
 	"log/slog"
 	"os"
@@ -86,16 +87,61 @@ const (
 var version = "dev"
 
 func main() {
-	if err := run(); err != nil {
+	if err := run(os.Args[1:], os.Stdout); err != nil {
 		// The error must be visible even when the logger was never built.
 		fmt.Fprintf(os.Stderr, "fatal: %v\n", err)
 		os.Exit(1)
 	}
 }
 
-// run drives the application's whole lifecycle and returns on the first error.
+// run picks what this invocation does and is the ONLY place that can pick
+// [serve].
+//
+// # Why the dispatch is a switch and not a CLI library
+//
+// The whole surface is three verbs and two flags. A CLI framework would bring a
+// dependency, its own flag semantics and its own help renderer to replace
+// fifteen lines of standard library; the package [flag] already parses the two
+// flags [migrateDown] takes. The rule from ADR 0001 that a dependency has to
+// earn its place applies to the binary's own front door too.
+//
+// # Why starting the server has NO verb
+//
+// Before this function existed the binary parsed no arguments at all: it was
+// MEASURED that `gobit migrate status` and `gobit --help` each booted a full
+// server, applied every forward migration and listened on the configured port —
+// the operator's typo was indistinguishable from a deploy. The invariant that
+// replaces it is structural rather than careful: [serve] is called from exactly
+// one branch, the one where args is EMPTY, so no present or future subcommand
+// can reach it by falling through. An unrecognized argument is an error, never
+// a server.
+//
+// out carries the operator-facing report of the migrate commands (a status
+// table, a rollback plan). It is a parameter so the tests can read what an
+// operator would see; errors keep going to stderr through [main].
+func run(args []string, out io.Writer) error {
+	if len(args) == 0 {
+		return serve()
+	}
+
+	switch args[0] {
+	case cmdHelp, "-h", "-help", "--help":
+		return writeReport(out, usageText())
+	case cmdMigrate:
+		return runMigrate(args[1:], out)
+	default:
+		if err := writeReport(out, usageText()); err != nil {
+			return err
+		}
+
+		return errors.Invalid(codeUnknownCommand,
+			"unknown command %q; the server starts with NO arguments", args[0])
+	}
+}
+
+// serve drives the server's whole lifecycle and returns on the first error.
 // It is kept apart from main because os.Exit skips deferred calls.
-func run() error {
+func serve() error {
 	cfg, err := config.Load()
 	if err != nil {
 		return err
@@ -182,8 +228,15 @@ func run() error {
 
 	// The core migrations are applied BEFORE the module migrations: a module
 	// must be able to assume the workflow engine's schema is ready.
-	if err := db.Migrate(ctx, cfg.DatabaseURL, pgstore.Migrations(), pgstore.MigrationOwner); err != nil {
-		return err
+	//
+	// The list is READ from [coreMigrationSources] rather than written out
+	// here, because the migrate subcommands read the same list; a second
+	// literal would mean a core schema added to one of them and reported by
+	// neither the status table nor this loop.
+	for _, source := range coreMigrationSources() {
+		if err := db.Migrate(ctx, cfg.DatabaseURL, source.src, source.owner); err != nil {
+			return err
+		}
 	}
 
 	links := link.New(pool, log)
@@ -259,113 +312,12 @@ func run() error {
 	registry := module.NewRegistry(log, func(ctx context.Context, src fs.FS, owner string) error {
 		return db.Migrate(ctx, cfg.DatabaseURL, src, owner)
 	})
-	// The commerce modules. The ORDER DOES NOT MATTER: the registry moves on to
-	// the migration and route steps only AFTER every module has registered, so
-	// one module's handler can safely resolve another module's service.
-	// Phase 4: catalog
-	//
-	// The limits of the GraphQL read surface come from configuration: at this
-	// endpoint the cost of a request is decided by WHOEVER WRITES THE QUERY,
-	// and how many levels or how many fields are acceptable depends on the
-	// installation's hardware and catalog size. Because the module does not
-	// know the config package (Principle 2.4), the values are passed in from
-	// here as parameters.
-	registry.Add(product.New(product.Options{
-		GraphQL: graph.Options{
-			MaxDepth:      cfg.GraphQLMaxDepth,
-			MaxComplexity: cfg.GraphQLMaxComplexity,
-			// The five limits below bind the costs depth and complexity CANNOT
-			// SEE: the same heavy field multiplied through aliases, the
-			// realized response bytes, the two dimensions of an introspection
-			// flood, and exponential fragment expansion. All five pass through
-			// here because every one of them has to be tunable by the
-			// operator — a limit that cannot be tuned forces an installation to
-			// fork the code.
-			MaxFieldRepetition:    cfg.GraphQLMaxFieldRepetition,
-			MaxResponseBytes:      cfg.GraphQLMaxResponseBytes,
-			MaxIntrospectionRoots: cfg.GraphQLMaxIntrospectionRoots,
-			MaxIntrospectionDepth: cfg.GraphQLMaxIntrospectionDepth,
-			MaxSelections:         cfg.GraphQLMaxSelections,
-			// Because the field is named NEGATIVELY (its zero value must give
-			// the package default, that is, introspection ON) the value is
-			// inverted here; the environment variable asks the operator the
-			// positive question.
-			IntrospectionDisabled: !cfg.GraphQLIntrospection,
-		},
-	}))
-	registry.Add(pricing.New(log))
-	registry.Add(inventory.New())
-	// Phase 5: the cart flow
-	registry.Add(region.New(log))
-	registry.Add(customer.New(log))
-	registry.Add(cart.New())
-	// Phase 6: payment and order
-	registry.Add(payment.New())
-	registry.Add(order.New())
-	// Phase 7: fulfillment, promotion, tax
-	registry.Add(fulfillment.New())
-	registry.Add(promotion.New(log))
-	registry.Add(tax.New(log))
-	// Notification. It is the FIRST real consumer of the "order.placed" event;
-	// it does not bind to the order module, it listens for the event and reads
-	// the contact details from the "order.interop" surface. Which provider is
-	// used is chosen by configuration; that the name is registered is checked
-	// AFTER the plugins have been loaded too (see verifyNotificationProvider).
-	registry.Add(notification.New(notification.Options{
-		ProviderID: cfg.NotificationProvider,
-		Logger:     log,
-	}))
-	// File. The URL an upload produces plugs straight into the product image
-	// flow; the module never touches product. The provider choice and the
-	// limits come from configuration, and that the name is registered is
-	// checked AFTER the plugins have been loaded too (see verifyFileProvider).
-	registry.Add(file.New(file.Options{
-		ProviderID:     cfg.FileProvider,
-		Root:           cfg.FileRoot,
-		MaxUploadBytes: cfg.FileMaxUploadBytes,
-		AllowedTypes:   cfg.FileAllowedTypes,
-		Logger:         log,
-	}))
-	warnAboutFileRoot(cfg, log)
-	// Phase 8: identity. It is independent of the other modules; it only asks
-	// for the core pool and, in return, leaves in the container the
-	// authenticator the guard middleware needs.
-	registry.Add(auth.New(auth.Options{
-		JWTSecret: jwtSecret(cfg, log),
-		JWTTTL:    cfg.JWTTTL,
-		JWTIssuer: cfg.ServiceName,
-		Logger:    log,
-	}))
-	// Section 10: B2B. The installation where the buyer is not an individual
-	// but an EMPLOYEE with a limited spending authority. The module touches no
-	// other module; it leaves the spending rule in the container under the name
-	// "b2b.interop" and order resolves it through ITS OWN narrow interface (see
-	// order.SpendingPolicyName).
-	//
-	// An installation selling pure B2C CAN DELETE this line; order then finds
-	// no rule and counts every customer as unlimited — which is the correct
-	// behavior, as if b2b never existed. But deleting it is a CODE change and
-	// that it stays one is deliberate: an environment variable that turned it
-	// off would, when flipped by accident, remove the spending limit without
-	// producing a single error — that is, it would be yet another setting that
-	// breaks an installation silently. Turning it off in code cannot be done
-	// halfway either: the module registration check (internal/arch,
-	// TestHerModulBilesimKokundeKayitli) asks whoever deletes the line to write
-	// the decision down with its rationale.
-	//
-	// The cost of KEEPING the module in a B2C installation is small and
-	// visible: two empty tables and a spending rule that never triggers because
-	// there are no company records.
-	registry.Add(b2b.New(log))
+	registerModules(registry, cfg, log)
 
 	// The plugins are installed BEFORE the modules: a module brought in by a
 	// plugin must be able to go through the Register/migration/route cycle too.
-	pluginRegistry, err := selectPlugins(cfg.Plugins)
+	pluginRegistry, host, err := installPlugins(ctx, cfg, c, registry, bus, log)
 	if err != nil {
-		return err
-	}
-	host := coreplugin.NewHost(c, registry, bus, log, pluginSettings())
-	if err := pluginRegistry.Install(ctx, host); err != nil {
 		return err
 	}
 
@@ -488,6 +440,159 @@ func run() error {
 	})
 
 	return srv.Run(ctx)
+}
+
+// registerModules adds every commerce module this binary ships to the registry.
+//
+// # Why the list is a function and not inline in serve
+//
+// A module's migration source is reachable only through the module VALUE
+// (module.Module.Migrations), so anything that wants to speak about a module's
+// schema has to build the same modules the server builds. That second caller
+// now exists: the migrate subcommands ([migrationSources]). Keeping the
+// registrations inline in [serve] would have forced them to keep a list of
+// their own, and a module added to one list and not the other is exactly the
+// failure internal/arch TestHerModulBilesimKokundeKayitli was written for —
+// except that check reads THIS registry, so it would go on passing while
+// `migrate status` quietly stopped reporting an owner.
+//
+// Nothing here touches the database or the network: the constructors only build
+// values. That is what makes the same call safe for a command that must not
+// start a server.
+func registerModules(registry *module.Registry, cfg config.Config, log *slog.Logger) {
+	// The commerce modules. The ORDER DOES NOT MATTER: the registry moves on to
+	// the migration and route steps only AFTER every module has registered, so
+	// one module's handler can safely resolve another module's service.
+	// Phase 4: catalog
+	//
+	// The limits of the GraphQL read surface come from configuration: at this
+	// endpoint the cost of a request is decided by WHOEVER WRITES THE QUERY,
+	// and how many levels or how many fields are acceptable depends on the
+	// installation's hardware and catalog size. Because the module does not
+	// know the config package (Principle 2.4), the values are passed in from
+	// here as parameters.
+	registry.Add(product.New(product.Options{
+		GraphQL: graph.Options{
+			MaxDepth:      cfg.GraphQLMaxDepth,
+			MaxComplexity: cfg.GraphQLMaxComplexity,
+			// The five limits below bind the costs depth and complexity CANNOT
+			// SEE: the same heavy field multiplied through aliases, the
+			// realized response bytes, the two dimensions of an introspection
+			// flood, and exponential fragment expansion. All five pass through
+			// here because every one of them has to be tunable by the
+			// operator — a limit that cannot be tuned forces an installation to
+			// fork the code.
+			MaxFieldRepetition:    cfg.GraphQLMaxFieldRepetition,
+			MaxResponseBytes:      cfg.GraphQLMaxResponseBytes,
+			MaxIntrospectionRoots: cfg.GraphQLMaxIntrospectionRoots,
+			MaxIntrospectionDepth: cfg.GraphQLMaxIntrospectionDepth,
+			MaxSelections:         cfg.GraphQLMaxSelections,
+			// Because the field is named NEGATIVELY (its zero value must give
+			// the package default, that is, introspection ON) the value is
+			// inverted here; the environment variable asks the operator the
+			// positive question.
+			IntrospectionDisabled: !cfg.GraphQLIntrospection,
+		},
+	}))
+	registry.Add(pricing.New(log))
+	registry.Add(inventory.New())
+	// Phase 5: the cart flow
+	registry.Add(region.New(log))
+	registry.Add(customer.New(log))
+	registry.Add(cart.New())
+	// Phase 6: payment and order
+	registry.Add(payment.New())
+	registry.Add(order.New())
+	// Phase 7: fulfillment, promotion, tax
+	registry.Add(fulfillment.New())
+	registry.Add(promotion.New(log))
+	registry.Add(tax.New(log))
+	// Notification. It is the FIRST real consumer of the "order.placed" event;
+	// it does not bind to the order module, it listens for the event and reads
+	// the contact details from the "order.interop" surface. Which provider is
+	// used is chosen by configuration; that the name is registered is checked
+	// AFTER the plugins have been loaded too (see verifyNotificationProvider).
+	registry.Add(notification.New(notification.Options{
+		ProviderID: cfg.NotificationProvider,
+		Logger:     log,
+	}))
+	// File. The URL an upload produces plugs straight into the product image
+	// flow; the module never touches product. The provider choice and the
+	// limits come from configuration, and that the name is registered is
+	// checked AFTER the plugins have been loaded too (see verifyFileProvider).
+	registry.Add(file.New(file.Options{
+		ProviderID:     cfg.FileProvider,
+		Root:           cfg.FileRoot,
+		MaxUploadBytes: cfg.FileMaxUploadBytes,
+		AllowedTypes:   cfg.FileAllowedTypes,
+		Logger:         log,
+	}))
+	warnAboutFileRoot(cfg, log)
+	// Phase 8: identity. It is independent of the other modules; it only asks
+	// for the core pool and, in return, leaves in the container the
+	// authenticator the guard middleware needs.
+	registry.Add(auth.New(auth.Options{
+		JWTSecret: jwtSecret(cfg, log),
+		JWTTTL:    cfg.JWTTTL,
+		JWTIssuer: cfg.ServiceName,
+		Logger:    log,
+	}))
+	// Section 10: B2B. The installation where the buyer is not an individual
+	// but an EMPLOYEE with a limited spending authority. The module touches no
+	// other module; it leaves the spending rule in the container under the name
+	// "b2b.interop" and order resolves it through ITS OWN narrow interface (see
+	// order.SpendingPolicyName).
+	//
+	// An installation selling pure B2C CAN DELETE this line; order then finds
+	// no rule and counts every customer as unlimited — which is the correct
+	// behavior, as if b2b never existed. But deleting it is a CODE change and
+	// that it stays one is deliberate: an environment variable that turned it
+	// off would, when flipped by accident, remove the spending limit without
+	// producing a single error — that is, it would be yet another setting that
+	// breaks an installation silently. Turning it off in code cannot be done
+	// halfway either: the module registration check (internal/arch,
+	// TestHerModulBilesimKokundeKayitli) asks whoever deletes the line to write
+	// the decision down with its rationale.
+	//
+	// The cost of KEEPING the module in a B2C installation is small and
+	// visible: two empty tables and a spending rule that never triggers because
+	// there are no company records.
+	registry.Add(b2b.New(log))
+}
+
+// installPlugins selects the plugins named in the configuration and runs their
+// Setup phase against a host bound to registry.
+//
+// It is three lines pulled into a function for the same reason
+// [registerModules] is: a plugin may bring a MODULE OF ITS OWN, with its own
+// table and its own migration — searchpg does — and that module exists nowhere
+// but in the registry this call fills. The migrate subcommands have to see it
+// too, or `migrate status` would silently omit an owner whose schema is in the
+// database and `migrate down searchpg` would answer "unknown owner" about a
+// module the server migrates on every boot.
+//
+// Setup neither connects nor migrates: the host QUEUES the provider and
+// subscriber registrations for [github.com/bdrtr/gobit/internal/core/plugin.Registry.Start],
+// which the migrate path never calls. That is why bus may be nil there.
+func installPlugins(
+	ctx context.Context,
+	cfg config.Config,
+	c *container.Container,
+	registry *module.Registry,
+	bus eventbus.EventBus,
+	log *slog.Logger,
+) (*coreplugin.Registry, *coreplugin.Host, error) {
+	plugins, err := selectPlugins(cfg.Plugins, log)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	host := coreplugin.NewHost(c, registry, bus, log, pluginSettings())
+	if err := plugins.Install(ctx, host); err != nil {
+		return nil, nil, err
+	}
+
+	return plugins, host, nil
 }
 
 // setupRedis opens the Redis client if it is needed, registers it in the

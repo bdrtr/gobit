@@ -182,6 +182,54 @@ Container'daki ad sözlüğü:
   sistemlerin defterleri ve **yapılandırma tabloları** (yumuşak silinmiş bir
   ayar satırının etkisi, hiç var olmamış bir satırınkiyle aynıdır).
 
+### Şema yüzeyi: durum ve geri alma
+
+İleri yön **açılışta otomatiktir** ve öyle kalır: ayrı bir "migrate up" komutu
+YOKTUR, çünkü şemayı ayrı bir adımda ilerleten her kurulumda er geç "şemayı
+güncellemeyi unuttum" olur. İkilinin argümansız çalıştırılması sunucuyu
+başlatır ve bu, sunucuyu başlatmanın **tek** yoludur.
+
+Geri alma ise elle çağrılır (`cmd/server/migrate.go`):
+
+```
+gobit migrate status                     her sahibin sürümünü ve dirty durumunu bildirir
+gobit migrate down <sahip> -confirm <sahip>   TEK bir sahibi geri alır
+gobit help                               yüzeyin tamamı
+```
+
+Üç karar yazılıdır:
+
+- **Onay, sahip adının TEKRARIDIR.** `-confirm` verilmezse komut planı basar
+  (hangi sahip, hangi sürüm, kaç adım) ve **sıfırdan farklı** kodla döner.
+  Reddin kendisi kuru koşudur; planı basıp 0 dönmek, bayrağı unutan bir betiğe
+  hiç olmamış bir geri almayı başarı diye bildirirdi. Çıplak bir `-yes`
+  seçilmedi: runbook'tan kopyalanan komut satırıyla birlikte o bayrak da
+  kopyalanır ve **başka** bir sahibi onaylamış olur. `-steps` varsayılanı 1'dir
+  ve 1'in altı reddedilir; `db.MigrateDown` "adım <= 0"ı TÜMÜ diye okur.
+- **Dirty defter REDDEDİLİR ve onay bunu geçersiz kılmaz.** Dirty, önceki
+  koşumun yarıda kaldığı demektir: geçerli sürümün `.up.sql`'inin bir kısmı
+  koşmuş, bir kısmı koşmamıştır. Eşleşen `.down.sql` ise HEPSİNİN koştuğu
+  duruma göre yazılmıştır, yani onu koşturmak komutun doğrulayamayacağı bir
+  tahmindir. Hata, onarılacak tablonun adını (`<sahip>_schema_migrations`)
+  taşır; golang-migrate'in kendi mesajı taşımaz.
+- **Kapanış satırı istenen adım sayısından değil, DEFTERDEN okunur.**
+  golang-migrate istenenden az adım gidebilir; istekten üretilen bir mesaj,
+  işletmecinin inandığı ama şemanın taşımadığı bir sayı olurdu. Sürüm hiç
+  oynamadıysa komut hata döner.
+
+Alt komutlar modül listesini `cmd/server`'daki kayıttan okur; eklentinin
+getirdiği modül (`searchpg`) de dâhildir. İkinci bir liste tutulsaydı, `migrate
+status` bir gün veritabanında tabloları duran bir sahibi sessizce atlardı.
+
+`migrate status` sürümü okurken eksik olan `<sahip>_schema_migrations`
+tablosunu YARATIR (sürücünün davranışı) ve bunu raporun altında söyler; taze
+bir veritabanında komut sahip başına birer boş tablo bırakır.
+
+Kablolamanın iki kanıtı vardır: `TestOnlyAnEmptyArgumentListCanStartTheServer`
+kaynağı gezip `serve`'ün TEK bir çağrı yerinden erişildiğini denetler,
+`TestMigrateAltKomutlariSunucuBaslatmadanKosar` ise gerçek ikiliyi çalıştırıp
+alt komutun çıktığını ve portu hiç bağlamadığını gösterir.
+
 ---
 
 ## 7. İş akışları (saga)
@@ -315,7 +363,8 @@ bırakırdı — ödemede bunun bedeli paranın beklenmedik bir kuruluşa gitmes
 | Modüller arası imzalar derleme zamanında denetlenmez | Ayrışma çalışma anında görünür | Her interop yüzeyi için entegrasyon testi (mevcut kural) |
 | Oturum iptali yalnızca **toptan** | Tek cihazı düşürmek yok | jti bazlı kara liste — her istekte okunan yeni bir depo demektir |
 | Yük testi süreç içi | Kapasite planı üretmez | Gerçek dağıtımda dış yük aracı |
-| Migration geri alma yüzeyi yok | `.down.sql` dosyaları çağrılamıyor | `cmd/server`'a migrate alt komutu |
+| Geri alma TEK sahip içindir ve sırayı bilmez | Modülleri birlikte geri almak isteyen işletmeci komutu sahip başına tekrarlar; hangi sırada geri alınacağını komut söylemez | Modüller arası FK olmadığı için sıra bugün bir kısıt değil; gerçekten gerektiğinde bir sıra tanımı eklenir |
+| Yarım kalmış migration'ı ONARACAK bir komut yok | `migrate down` dirty defteri reddeder ve elle onarıma yollar; "force" yüzeyi yoktur | Bilinçli: sürümü doğru bilen tek taraf, yarım şemaya bakan insandır |
 | Yetki sözlüğü modül başına iki girdi | Kaynak bazlı ayrım yok (örn. yalnızca varyant okuma) | Ayrım gerçekten gerektiğinde eklenir; şimdiden eklemek yanlış bir kesinlik hissi verirdi |
 | Bellek içi idempotency deposu bir bayt bütçesiyle sınırlı | Bütçe dolunca **en eski** kayıt düşer; o anahtarla gelen tekrar yeniden işlenir (mükerrer yan etki) | `GUARD_BACKEND=redis`, ya da daha büyük `IDEMPOTENCY_MAX_MEMORY_BYTES` |
 

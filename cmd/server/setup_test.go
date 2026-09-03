@@ -159,7 +159,7 @@ func TestSelectPluginsUsesTheCatalog(t *testing.T) {
 	t.Run("empty list", func(t *testing.T) {
 		t.Parallel()
 
-		registry, err := selectPlugins(nil)
+		registry, err := selectPlugins(nil, discardLogger())
 		require.NoError(t, err)
 		assert.Empty(t, registry.Plugins())
 	})
@@ -167,7 +167,7 @@ func TestSelectPluginsUsesTheCatalog(t *testing.T) {
 	t.Run("recognized name", func(t *testing.T) {
 		t.Parallel()
 
-		registry, err := selectPlugins([]string{paymentstripe.Name})
+		registry, err := selectPlugins([]string{paymentstripe.Name}, discardLogger())
 		require.NoError(t, err)
 		assert.Equal(t, []string{paymentstripe.Name}, registry.Plugins())
 	})
@@ -175,7 +175,7 @@ func TestSelectPluginsUsesTheCatalog(t *testing.T) {
 	t.Run("unknown name", func(t *testing.T) {
 		t.Parallel()
 
-		_, err := selectPlugins([]string{"no-such-plugin"})
+		_, err := selectPlugins([]string{"no-such-plugin"}, discardLogger())
 		require.Error(t, err, "an unknown plugin must not be skipped silently")
 		assert.Contains(t, err.Error(), paymentstripe.Name,
 			"the error message must list the recognized names so a typo becomes visible")

@@ -12,6 +12,35 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Değiştirildi
 
+- **`gobit migrate status` ve `gobit migrate down <owner>`: migration'ların
+  operatöre açık bir yüzeyi oldu.** `.down.sql` dosyaları vardı, geri
+  alınabilirlikleri testliydi, ama onları çağıracak bir şey yoktu; geri alma
+  elle yapılıyordu. `cmd/server` argüman bile okumuyordu — `--help` bile
+  sunucuyu başlatıyordu.
+
+  Sunucu HÂLÂ argümansız çalıştırmayla başlıyor ve başka hiçbir yolla
+  başlamıyor; ileri migration açılışta otomatik kalıyor ve bilinçli olarak bir
+  `migrate up` YOK, çünkü ayrı bir komut "şemayı güncellemeyi unuttum"
+  sınıfını geri getirirdi.
+
+  Geri alma GERİ ALINAMAZ bir iştir, o yüzden kapısı var: `-confirm <owner>`
+  ile sahip adı ikinci kez yazılmadan hiçbir şey çalışmaz, varsayılan adım
+  sayısı 1'dir ve KİRLİ bir defter (yarıda kalmış bir önceki koşu) onayla bile
+  reddedilir — kirli durumu geri almak, hangi yarının uygulandığı bilinmeyen
+  bir şemayı bir adım daha bozmaktır.
+
+  Kaynak listesi İKİNCİ bir liste değil: modüller kendi migration'larını nasıl
+  kaydediyorsa komut da onları oradan topluyor, yani sunucunun uyguladığı küme
+  ile komutun gördüğü küme ayrışamaz.
+
+  **Bilinen ve ölçülmüş bir tehlike godoc'a yazıldı:** golang-migrate advisory
+  kilidi `context.Background()` ile alıyor, yani beklemeyi ne son teslim tarihi
+  ne Ctrl-C keser. Ölçüldü: bağlamı 5 saniyede dolan bir `Version()` çağrısı,
+  kilidi başkası tutarken 15 saniye sonra hâlâ dönmemişti. Bu STATUS yolunda da
+  geçerli (sürüm okumak eksik sürüm tablosunu yaratır, o da kilidi alır), yani
+  bir dağıtımın ileri migration'ı sürerken çalıştırılan `migrate status`
+  sessizce bekleyebilir.
+
 - **Vitrin listesinin toplam SAYACI artık isteğe bağlı**
   (`GET /store/v1/products?with_count=false`; GraphQL'de `count` alanını
   seçmemek yeter). Varsayılan DEĞİŞMEDİ: parametresiz istek bugünkü baytların

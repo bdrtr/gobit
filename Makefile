@@ -35,7 +35,7 @@ SQLC             := $(BIN_DIR)/sqlc
 DOTENV = set -a; [ -f .env ] && { __cagiran_ortam=$$(export -p); . ./.env; eval "$$__cagiran_ortam"; }; set +a;
 
 .DEFAULT_GOAL := help
-.PHONY: help run build test test-integration smoke load-test openapi-schema openapi-client openapi-validate lint fmt tidy gen up up-tracing down logs psql redis-cli migrate-up migrate-down tools clean rename-module
+.PHONY: help run build test test-integration smoke load-test openapi-schema openapi-client openapi-validate lint fmt tidy gen up up-tracing down logs psql redis-cli migrate-status migrate-up migrate-down tools clean rename-module
 
 help: ## Bu yardım metnini göster
 	@grep -hE '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2}'
@@ -119,26 +119,37 @@ redis-cli: ## Redis'e redis-cli ile bağlan
 
 ## --- Migration ---
 #
-# AYRI BİR KOMUT YOKTUR ve bu bilinçlidir: migration'lar uygulama AÇILIŞINDA,
-# modül başına ve golang-migrate'in kilidiyle uygulanır (bkz. core/db.Migrate
-# ve module.Registry.Bootstrap). Ayrı bir komut, "şemayı güncellemeyi unuttum"
-# hatasını mümkün kılardı — kod ile şemanın ayrı adımlarda ilerlediği her
-# kurulumda er geç olan budur.
+# İLERİ YÖN İÇİN AYRI BİR KOMUT YOKTUR ve bu bilinçlidir: migration'lar
+# uygulama AÇILIŞINDA, modül başına ve golang-migrate'in kilidiyle uygulanır
+# (bkz. core/db.Migrate ve module.Registry.Bootstrap). Ayrı bir komut, "şemayı
+# güncellemeyi unuttum" hatasını mümkün kılardı — kod ile şemanın ayrı adımlarda
+# ilerlediği her kurulumda er geç olan budur.
 #
 # Eşzamanlı açılış güvenlidir: birden çok örnek aynı anda açıldığında
 # golang-migrate'in kilidi birini geçirir, ötekiler bekler (gerçek sunucuyla
 # üç örnekle doğrulandı).
+#
+# GERİ ALMA ise ikilinin kendi alt komutudur; aşağıdaki hedefler onu sarar.
+# Sunucu hâlâ ARGÜMANSIZ çalıştırıldığında başlar ve başka hiçbir biçimde
+# başlamaz.
+
+migrate-status: ## Her sahibin şema sürümünü ve dirty durumunu bildirir
+	@$(DOTENV) go run -ldflags '$(LDFLAGS)' ./cmd/server migrate status
 
 migrate-up: ## Migration'lar açılışta otomatik uygulanır (ayrı komut yok)
 	@echo "migrate-up: ayrı bir komut YOKTUR."
 	@echo "  Migration'lar 'make run' ile açılışta, modül başına uygulanır."
 	@echo "  Yalnızca şemayı kurmak için: DATABASE_URL=... go run ./cmd/server (açıldıktan sonra durdurun)."
+	@echo "  Uygulanmış sürümleri görmek için: make migrate-status"
 
-migrate-down: ## Geri alma yolu YOK (bkz. README, bilinen sınırlar)
-	@echo "migrate-down: geri alma için bir komut YOKTUR."
-	@echo "  Her modülün .down.sql dosyaları vardır ve geri alınabilirlikleri"
-	@echo "  internal/arch TestMigrationlarGercektenGeriAlinabilir ile denetlenir,"
-	@echo "  ama bugün onları çağıracak bir yüzey yok. Geri alma elle yapılmalıdır."
+# ONAY, sahip adının TEKRARIDIR ve bu hedef onu VERMEZ: make migrate-down
+# OWNER=cart yalnızca planı basar ve sıfırdan farklı kodla döner. Onaylı hâli
+# elle yazılır, çünkü bir Makefile değişkeni onayı da beraberinde taşısaydı
+# geri alma "yanlışlıkla çalıştırılabilir" hâle gelirdi — .down.sql dosyaları
+# yarattıkları şeyi DROP eder ve satırlar geri gelmez.
+migrate-down: ## Bir modülün şemasını geri alma PLANINI basar (OWNER=<modül>)
+	@test -n "$(OWNER)" || { echo "migrate-down: OWNER=<modül> gerekir (sahipler için: make migrate-status)"; exit 2; }
+	@$(DOTENV) go run -ldflags '$(LDFLAGS)' ./cmd/server migrate down "$(OWNER)"
 
 ## --- İstemci üretimi ---
 

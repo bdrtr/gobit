@@ -1482,11 +1482,19 @@ açıktır.
 - **Çok kiracılılık yoktur.** Bir kiracı = bir kurulum = bir veritabanı = bir
   süreç; ayrıntı yukarıda "Tek örnek mi, birden çok mu?" başlığında, karar
   [ADR 0009](docs/adr/0009-cok-kiracililik-kurulum-siniri.md)'da.
-- **Migration'ların işletmeciye açık bir geri alma yolu yoktur.** Her modülün
-  `.down.sql` dosyaları vardır, geri alınabilirlikleri testle denetlenir ve
-  `internal/core/db/migrate.go` içindeki `db.MigrateDown` Go'dan çağrılabilir —
-  ama onu çağıran bir komut ya da uç YOKTUR; `make migrate-down` da bunu söyler.
-  İleri yön açılışta otomatiktir.
+- **Migration geri alma TEK sahip içindir ve sırayı BİLMEZ.** Yüzey artık var
+  (`gobit migrate status`, `gobit migrate down <sahip> -confirm <sahip>`) ve
+  ileri yön açılışta otomatik kalır. Ama komut bir sahibi geri alır, birden
+  çoğunu değil: birlikte geri alınması gereken modülleri işletmeci sırayla
+  kendisi çağırır ve hangi sıranın doğru olduğunu komut söylemez. Modüller arası
+  FK olmadığı için bugün bu bir kısıt değil.
+
+  İkinci sınır bir BEKLEYİŞTİR ve kesilemez: golang-migrate advisory kilidi
+  `context.Background()` ile alır, yani kilidi başkası tutarken ne son teslim
+  tarihi ne Ctrl-C beklemeyi keser (ölçüldü: bağlamı 5 sn'de dolan bir sürüm
+  okuması 15 sn sonra hâlâ dönmemişti). `migrate status` da sürüm okurken
+  kilidi aldığı için, süren bir dağıtımın ortasında çalıştırılan komut sessizce
+  bekleyebilir.
 - **Depo politikası bölge KAPSAMINI ve TERCİH sırasını ifade eder, başkasını
   değil.** Stok dağılımı ("en çok stoğu olan depoyu öne al"), maliyet ve sipariş
   düzeyinde karar ("tüm satırları tek depodan çıkar") İFADE EDİLEMEZ; her birinin
