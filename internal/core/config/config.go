@@ -169,6 +169,35 @@ const (
 	DefaultRedisURL    = "redis://:gobit@localhost:6379/0"                             //nolint:gosec // G101: kasıtlı yerel geliştirme varsayılanı; üretimde Validate reddeder
 )
 
+// PostgreSQL havuzunun varsayılan sınırları.
+//
+// Değerler internal/core/db'nin KENDİ varsayılanlarıyla aynıdır ve öyle
+// kalmalıdır: bu iki sabitin tek işi, havuz yapılandırılabilir hâle gelmeden
+// önceki davranışı korumaktır — ortam değişkeni vermeyen bir kurulum
+// bugünküyle birebir aynı havuzu açar. Ayrışmayı internal/arch'taki
+// TestHavuzVarsayilanlariDbIleUyusuyor düşürür.
+//
+// Tip int32'dir çünkü pgxpool'un alanı int32'dir; komşularının hepsi int
+// olduğu için bu bilinçli bir sapmadır ve gerekçesi ÖLÇÜLDÜ. int olsaydı
+// bağlama noktasında bir daraltma dönüşümü (int32(cfg.DBMaxConns)) gerekirdi
+// ve linter onu reddediyor: "G115: integer overflow conversion int -> int32".
+// Tek kaçış yolu bir nolint satırıydı, yani denetimi kapatmak; tipi tüketiciye
+// uydurmak dönüşümü hiç var etmiyor.
+//
+// Aralık dışı bir değer İKİ tipte de ayrıştırmada düşer — env kütüphanesi
+// int'i de 32 bitle sınırlıyor ("strconv.ParseInt: parsing \"2147483648\":
+// value out of range", tipi int iken ölçüldü). Yani buradaki seçim taşmayı
+// önlemiyor; taşma zaten önlenmiş, seçim yalnızca bastırılmış bir denetimi
+// önlüyor.
+const (
+	// DefaultDBMaxConns havuzun açabileceği varsayılan azami bağlantı sayısıdır.
+	DefaultDBMaxConns int32 = 10
+
+	// DefaultDBMinConns havuzun boştayken bile korumaya çalıştığı varsayılan
+	// bağlantı sayısıdır.
+	DefaultDBMinConns int32 = 2
+)
+
 // Geçerli enum değerleri; Validate bunlara göre doğrulama yapar.
 var (
 	validAppEnvs    = []string{devAppEnv, "staging", "production"}
@@ -194,6 +223,92 @@ type Config struct {
 	DatabaseURL string `env:"DATABASE_URL" envDefault:"postgres://gobit:gobit@localhost:5432/gobit?sslmode=disable"`
 	// RedisURL Redis bağlantı adresidir.
 	RedisURL string `env:"REDIS_URL" envDefault:"redis://:gobit@localhost:6379/0"`
+
+	// DBMaxConns PostgreSQL havuzunun açabileceği azami bağlantı sayısıdır.
+	//
+	// Bu sayı TEK BİR isteğin değil, TÜM SÜRECİN veritabanı eşzamanlılık
+	// tavanıdır: HTTP istekleri, workflow motoru (pgstore) ve olay tüketicisi
+	// aynı havuzdan çeker. Tavana varıldığında istek hata ALMAZ, sıraya girer —
+	// pgxpool.Acquire bir bağlantı boşalana ya da isteğin son teslim tarihi
+	// dolana kadar bekler.
+	//
+	// Tavanın kolayca gözden kaçan tarafı GraphQL'dedir: gqlgen kök alanlarını
+	// EŞZAMANLI çözer ve sayıyı SINIRLAMAZ — graphql.FieldSet.Dispatch ilkini
+	// çağıranın goroutine'inde, kalan her biri için bir tane daha açar.
+	// GRAPHQL_MAX_FIELD_REPETITION=20 ile tek bir MEŞRU vitrin belgesi 20 takma
+	// adlı "products" ve 20 takma adlı "product" taşıyabilir; yani tek istek 40
+	// eşzamanlı okuma açar ve her biri sırayla birkaç gidiş dönüş yapar.
+	//
+	// Aşağıdaki tablo 40 eşzamanlı LİSTE alanıyla ölçüldü ve bu, tek bir
+	// belgeden çıkmaz: tekrar sınırı (nesne, alan) çifti başına sayıldığı için
+	// tek belge en fazla 20 liste + 20 tekil alan verir. Yani tablo bir yük
+	// SEVİYESİDİR, "tek istek bunu yapar" değil — iki belge ya da iki eşzamanlı
+	// istemci yapar.
+	//
+	// # Ölçüm
+	//
+	// 52 bin ürünlük katalogda, gerçek vitrin sorgularıyla, 40 eşzamanlı kök
+	// alanı × 5 tur:
+	//
+	//	max_conns=10   p50 298,9 ms   813 alımın 771'i bekledi   ort. bekleme 65,3 ms
+	//	max_conns=20   p50 313,8 ms   813 alımın 740'ı bekledi   ort. bekleme 37,4 ms
+	//	max_conns=40   p50 314,4 ms   813 alımın  38'i bekledi   ort. bekleme  0,7 ms
+	//
+	// Tek başına çalışan aynı kök alanı 63,2 ms sürüyor; yani 10 bağlantıda
+	// gecikme 4,7 katına çıkıyor. Ama havuzu büyütmek onu GERİ GETİRMİYOR:
+	// veritabanı aynı kutudayken ve sorgu CPU'ya bağlıyken darboğaz havuz
+	// değil sunucunun kendisidir, havuz yalnızca kuyruğun yerini değiştirir.
+	//
+	// Bağlantının TUTULMA süresi CPU'ya değil AĞ GECİKMESİNE bağlı olduğunda —
+	// üretimde olağan olan, ayrı bir veritabanı sunucusu — tablo döner. Gecikme,
+	// bağlantı TUTULURKEN beklenerek modellendi: sunucu CPU'su harcanmaz, bir ağ
+	// atlaması havuza tam olarak bunu yapar. AYNI liste kök alanı, aynı 40'lık
+	// fan-out, gidiş dönüş başına eklenen gecikmeyle:
+	//
+	//	gecikme   max_conns=10    max_conns=40
+	//	yok       p50 306 ms      p50 368 ms
+	//	5 ms      p50 459 ms      p50 348 ms
+	//	20 ms     p50 638 ms      p50 351 ms
+	//
+	// Yani düğmenin kazandırdığı şey topolojiye bağlıdır ve LİSTE yolunda
+	// ölçülü olarak ılımlıdır: 5 ms'lik bir atlamada 1,3 kat, 20 ms'de 1,8 kat.
+	// Daha ucuz kök alanlarında etki büyür — üç gidiş dönüşlük TEKİL ürün
+	// alanında, aynı fan-out ve 5 ms gecikmeyle p50 69,2 ms'den 18,0 ms'ye iner
+	// (3,8 kat) — çünkü orada sorgunun kendisi neredeyse bedavadır ve geçen süre
+	// neredeyse tamamen bekleyiştir. İki satırı karıştırmamak gerekir: aynı
+	// düğme, aynı fan-out, farklı kök alanı.
+	//
+	// # Varsayılan neden 10 kaldı
+	//
+	// Ölçüm "büyük her zaman daha iyi" demiyor; eksik olanın SAYI DEĞİL DÜĞME
+	// olduğunu söylüyor. Varsayılanı yükseltmek her örneğin SUNUCUDAKİ bağlantı
+	// bütçesini de çarpardı: max_connections=100'lük bir kümede 40'lık havuz iki
+	// örneğe yer bırakır ve üçüncüsü "sorry, too many clients already" ile
+	// açılır. O bedel bütün kurulumlara, karşılığındaki kazanç ise yalnızca
+	// gecikmeye bağlı topolojilere düşerdi.
+	//
+	// # Neden açılışta UYARI yok
+	//
+	// "Havuz (10), GraphQL fan-out'undan (40) küçük" uyarısı DOĞRU kurulan her
+	// kurulumda çalardı: havuz tek bir belgenin değil, tüm eşzamanlı isteklerin
+	// paylaştığı bir bütçedir ve onu en kötü tek belgeye göre boyutlamak
+	// kimsenin yapmadığı bir şeydir. ADR 0015 karar 4'ün ölçütü de tutmuyor:
+	// tükenmiş havuz SESSİZ değildir — ölçüldüğünde son teslim tarihi dolan
+	// 20 isteğin 20'si de hata döndü ("context deadline exceeded"). Hata yavaş
+	// bir sorgudan ayırt edilemiyor, ama havuzun sınırları açılışta zaten
+	// loglanıyor (bkz. db.New, "the postgres connection pool is ready").
+	DBMaxConns int32 `env:"DB_MAX_CONNS" envDefault:"10"`
+
+	// DBMinConns havuzun boştayken bile korumaya çalıştığı bağlantı sayısıdır.
+	//
+	// DB_MAX_CONNS ile BİRLİKTE açılır. Tek başına açılan bir tavan yalnızca
+	// yukarı çevrilebilirdi: alt sınır 2'de sabitken DB_MAX_CONNS=1 vermek
+	// havuzun kendi doğrulamasına ("MinConns cannot be greater than MaxConns")
+	// takılır ve süreç hiç açılmaz. Küçültme uydurma bir ihtiyaç değildir —
+	// paylaşılan bir kümeye çok sayıda örnekle bağlanan kurulumun tek çaresi
+	// örnek başına havuzu daraltmaktır.
+	DBMinConns int32 `env:"DB_MIN_CONNS" envDefault:"2"`
+
 	// JWTSecret admin oturum jetonlarının imzalandığı sırdır.
 	//
 	// Varsayılanı YOKTUR ve olmamalıdır: tahmin edilebilir bir imza sırrı,
@@ -697,6 +812,9 @@ func (c Config) Validate() error {
 	if c.IdempotencyTTL <= 0 {
 		return fmt.Errorf("config: IDEMPOTENCY_TTL pozitif olmalı, %s verildi", c.IdempotencyTTL)
 	}
+	if err := c.validateDBPool(); err != nil {
+		return err
+	}
 	if err := c.validateRedisKeyPrefix(); err != nil {
 		return err
 	}
@@ -755,6 +873,34 @@ func (c Config) Validate() error {
 		if len(c.JWTSecret) < minJWTSecretLen {
 			return fmt.Errorf("config: APP_ENV=%s iken JWT_SECRET en az %d karakter olmalıdır", c.AppEnv, minJWTSecretLen)
 		}
+	}
+	return nil
+}
+
+// validateDBPool PostgreSQL havuzu sınırlarının kendi içinde tutarlı olduğunu
+// doğrular.
+//
+// Aynı üç kural internal/core/db'nin Config.Validate'inde de vardır ve tekrar
+// BİLİNÇLİDİR; gerekçe [Config.validateRedisKeyPrefix]'teki ile aynı sınıftan.
+// Buradaki kopyanın kazandırdığı somut şey ADLARDIR: db'nin hatası "MinConns
+// (5) cannot be greater than MaxConns (1)" der ve operatörün elinde MinConns
+// diye bir kol yoktur — hangi ortam değişkenini düzelteceğini bu kopya söyler.
+// db'deki kopya ise config'ten GEÇMEYEN çağıranları (testler, gömen
+// uygulamalar) korur.
+//
+// ÜST sınır konmadı; gerekçe [Config.validateGraphQL] ile aynıdır. Kümenin
+// max_connections'ını ve o kümeye kaç örneğin bağlanacağını config bilemez,
+// yani "çok büyük"ü ancak tahmin ederdi.
+func (c Config) validateDBPool() error {
+	if c.DBMaxConns < 1 {
+		return fmt.Errorf("config: DB_MAX_CONNS en az 1 olmalı, %d verildi", c.DBMaxConns)
+	}
+	if c.DBMinConns < 0 {
+		return fmt.Errorf("config: DB_MIN_CONNS negatif olamaz, %d verildi", c.DBMinConns)
+	}
+	if c.DBMinConns > c.DBMaxConns {
+		return fmt.Errorf("config: DB_MIN_CONNS (%d), DB_MAX_CONNS'tan (%d) büyük olamaz",
+			c.DBMinConns, c.DBMaxConns)
 	}
 	return nil
 }

@@ -32,6 +32,7 @@ var envKeys = []string{
 	"GUARD_BACKEND", "REDIS_KEY_PREFIX", "NOTIFICATION_PROVIDER",
 	"FILE_PROVIDER", "FILE_ROOT", "FILE_MAX_UPLOAD_BYTES", "FILE_ALLOWED_TYPES",
 	"GRAPHQL_MAX_DEPTH", "GRAPHQL_MAX_COMPLEXITY", "GRAPHQL_INTROSPECTION",
+	"DB_MAX_CONNS", "DB_MIN_CONNS",
 }
 
 // uretimJWTSirri üretim senaryolarında kullanılan 32 karakterlik imza sırrıdır.
@@ -259,6 +260,8 @@ func TestDefaultTagsMatchConstants(t *testing.T) {
 		"GraphQLMaxDepth":      strconv.Itoa(config.DefaultGraphQLMaxDepth),
 		"GraphQLMaxComplexity": strconv.Itoa(config.DefaultGraphQLMaxComplexity),
 		"GraphQLIntrospection": strconv.FormatBool(config.DefaultGraphQLIntrospection),
+		"DBMaxConns":           strconv.FormatInt(int64(config.DefaultDBMaxConns), 10),
+		"DBMinConns":           strconv.FormatInt(int64(config.DefaultDBMinConns), 10),
 	}
 
 	typ := reflect.TypeOf(config.Config{})
@@ -1082,4 +1085,118 @@ func TestGraphQLSinirlariYukseltilebilir(t *testing.T) {
 	assert.Equal(t, 25, cfg.GraphQLMaxDepth)
 	assert.Equal(t, 250000, cfg.GraphQLMaxComplexity)
 	assert.False(t, cfg.GraphQLIntrospection)
+}
+
+// TestHavuzSinirlariVarsayilanDolu ortam değişkeni verilmeyen bir kurulumun
+// havuzu DEĞİŞMEDEN açtığını doğrular.
+//
+// Düğme geriye dönük olmalıdır: bu iki değişken var olmadan önce süreç 10/2 ile
+// açılıyordu ve yükseltme, .env'ini hiç açmayan kurulumun havuzunu sessizce
+// büyütmemeli. Değerin db paketininkiyle aynı kaldığını internal/arch'taki
+// TestHavuzVarsayilanlariDbIleUyusuyor ayrıca bağlar.
+func TestHavuzSinirlariVarsayilanDolu(t *testing.T) {
+	cfg := gecerliConfig(t)
+
+	assert.Equal(t, config.DefaultDBMaxConns, cfg.DBMaxConns)
+	assert.Equal(t, config.DefaultDBMinConns, cfg.DBMinConns)
+	assert.Equal(t, int32(10), cfg.DBMaxConns,
+		"varsayılan bir karardır (bkz. DBMaxConns godoc'undaki ölçüm); sessizce değişmemeli")
+	assert.Equal(t, int32(2), cfg.DBMinConns)
+}
+
+// TestHavuzSinirlariAcilistaDogrulanir anlamsız bir havuz boyutunun uygulamayı
+// AÇILIŞTA durdurduğunu doğrular.
+//
+// Sıfır bağlantılık bir havuz "sınırsız" değil, HİÇBİR sorgunun çalışamaması
+// demektir; alt sınırın üst sınırı aşması ise pgxpool'un kendi doğrulamasına
+// takılır. İkisi de açılışta durur — ama hangi ortam değişkeninin yanlış
+// olduğunu yalnızca buradaki kapı söyleyebilir: db paketinin hatası "MinConns"
+// der ve operatörün elinde o adda bir kol yoktur.
+//
+// Aralık dışı bir sayı da sınanır: 2^31 AYRIŞTIRMADA düşer, yani havuz hiç
+// açılmaz. Bu vaka alanın TİPİNE bağlı değildir ve öyle olduğu ölçüldü — env
+// kütüphanesi int'i de 32 bitle sınırlıyor, dolayısıyla tip int'e çevrildiğinde
+// bu satır yeşil kalır. Kalması yine de doğrudur; iddiası "tip int32'dir"
+// değil, "anlamsız büyüklükte bir sayı sessizce kabul edilmez"dir.
+//
+// # Neden yalnızca ortam değişkeninin ADI beklenmiyor
+//
+// İlk yazımında bu tablo hatanın içinde "DB_MAX_CONNS" geçmesini arıyordu ve o
+// hâliyle bir mutasyonu KAÇIRDI: taban denetimi "< 1" yerine "< 0" yapıldığında
+// DB_MAX_CONNS=0 bu kez üçüncü kurala takılıyor ve onun mesajı da her iki adı
+// birden taşıdığı için test yeşil kalıyordu. Yani ad, kuralları birbirinden
+// AYIRT ETMİYOR. Beklenen metin bu yüzden kuralın kendi cümlesidir ve iki vaka
+// DB_MIN_CONNS=0 ile kurulur: üçüncü kural devre dışı kalsın da taban denetimi
+// tek başına sınansın.
+func TestHavuzSinirlariAcilistaDogrulanir(t *testing.T) {
+	tests := map[string]struct {
+		env      map[string]string
+		beklenen string
+	}{
+		"azami sıfır": {
+			map[string]string{"DB_MAX_CONNS": "0", "DB_MIN_CONNS": "0"},
+			"DB_MAX_CONNS en az 1 olmalı",
+		},
+		"azami negatif": {
+			map[string]string{"DB_MAX_CONNS": "-1", "DB_MIN_CONNS": "0"},
+			"DB_MAX_CONNS en az 1 olmalı",
+		},
+		"asgari negatif": {
+			map[string]string{"DB_MIN_CONNS": "-1"},
+			"DB_MIN_CONNS negatif olamaz",
+		},
+		"asgari azamiden büyük": {
+			map[string]string{"DB_MAX_CONNS": "4", "DB_MIN_CONNS": "5"},
+			"DB_MIN_CONNS (5), DB_MAX_CONNS'tan (4) büyük olamaz",
+		},
+		"azami sayı değil":  {map[string]string{"DB_MAX_CONNS": "çok"}, "DBMaxConns"},
+		"azami aralık dışı": {map[string]string{"DB_MAX_CONNS": "2147483648"}, "DBMaxConns"},
+	}
+
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			clearEnv(t)
+			for k, v := range tt.env {
+				t.Setenv(k, v)
+			}
+
+			_, err := config.Load()
+			require.Error(t, err, "geçersiz havuz boyutu açılışı durdurmalı (%v)", tt.env)
+			assert.Contains(t, err.Error(), tt.beklenen)
+		})
+	}
+}
+
+// TestHavuzSinirlariIkiYoneDeAyarlanabilir düğmenin gerçekten okunduğunu ve HER
+// İKİ yöne de çevrildiğini doğrular.
+//
+// Yalnızca reddeden bir kapı, her değeri reddeden bir kapıyla aynı testi
+// geçerdi; kabul eden taraf da sınanmalı. Küçültme yönü ayrıca sınanır çünkü
+// asıl kırılgan olan odur: paylaşılan bir kümeye çok sayıda örnekle bağlanan
+// kurulumun ihtiyacı havuzu DARALTMAKTIR ve alt sınır ezilemeseydi
+// DB_MAX_CONNS=1 yalnızca açılışı kıran bir değer olurdu.
+func TestHavuzSinirlariIkiYoneDeAyarlanabilir(t *testing.T) {
+	t.Run("yukarı", func(t *testing.T) {
+		clearEnv(t)
+		t.Setenv("DB_MAX_CONNS", "40")
+		t.Setenv("DB_MIN_CONNS", "8")
+
+		cfg, err := config.Load()
+		require.NoError(t, err)
+
+		assert.Equal(t, int32(40), cfg.DBMaxConns)
+		assert.Equal(t, int32(8), cfg.DBMinConns)
+	})
+
+	t.Run("aşağı", func(t *testing.T) {
+		clearEnv(t)
+		t.Setenv("DB_MAX_CONNS", "1")
+		t.Setenv("DB_MIN_CONNS", "1")
+
+		cfg, err := config.Load()
+		require.NoError(t, err)
+
+		assert.Equal(t, int32(1), cfg.DBMaxConns)
+		assert.Equal(t, int32(1), cfg.DBMinConns)
+	})
 }

@@ -17,6 +17,7 @@ import (
 	"github.com/bdrtr/gobit/internal/adminui"
 	"github.com/bdrtr/gobit/internal/core/config"
 	"github.com/bdrtr/gobit/internal/core/container"
+	"github.com/bdrtr/gobit/internal/core/db"
 	"github.com/bdrtr/gobit/internal/core/errorreport"
 	"github.com/bdrtr/gobit/internal/core/errors"
 	corehttp "github.com/bdrtr/gobit/internal/core/http"
@@ -194,6 +195,26 @@ func registerPanel(cfg config.Config, c *container.Container, router chi.Router)
 	}
 	panel.Routes(router)
 	return panel, nil
+}
+
+// dbConfig builds the connection pool settings from the configuration.
+//
+// Only the two limits the operator can set are overridden; the lifetimes and
+// the connect timeout stay at the package defaults, because nothing measured
+// has asked for them yet and a knob nobody turns is a knob nobody tests.
+//
+// Why the size does not stay hardcoded at all: the pool is the whole process's
+// database concurrency ceiling — HTTP requests, the workflow engine and the
+// event consumer all draw from it — and the right number depends on a topology
+// this repository cannot see. The measurements, the fan-out that makes the
+// ceiling easy to miss, and the reason the default is still 10 are in the
+// [config.Config.DBMaxConns] godoc.
+func dbConfig(cfg config.Config) db.Config {
+	pool := db.DefaultConfig(cfg.DatabaseURL)
+	pool.MaxConns = cfg.DBMaxConns
+	pool.MinConns = cfg.DBMinConns
+
+	return pool
 }
 
 // checkSchema builds the document ONCE at startup and reports divergences.

@@ -1,7 +1,9 @@
 package db
 
 import (
+	"bytes"
 	"context"
+	"log/slog"
 	"net"
 	"strings"
 	"sync"
@@ -152,6 +154,53 @@ func TestNewRejectsBadDSNWithoutLeakingPassword(t *testing.T) {
 	assert.True(t, errors.IsInvalid(err), "the error class must be KindInvalid, got %v", errors.KindOf(err))
 	assert.Equal(t, "db_dsn_invalid", errors.CodeOf(err))
 	assert.NotContains(t, err.Error(), testPassword, "the error message cannot leak the password")
+}
+
+// TestNewWarnsAboutIgnoredDSNPoolSettings proves a DSN that tries to size the
+// pool is reported instead of being silently discarded.
+//
+// pgxpool honors pool_max_conns; New then overwrites it from Config, so the
+// parameter configures nothing. With DB_MAX_CONNS in the operator's hands there
+// are now two plausible places to write the same number and only one of them
+// works — the other must not be quiet about it.
+func TestNewWarnsAboutIgnoredDSNPoolSettings(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+	log := slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+
+	cfg := DefaultConfig("postgres://gobit:" + testPassword +
+		"@127.0.0.1:1/gobit?sslmode=disable&pool_max_conns=40&pool_min_conns=8")
+	cfg.ConnectTimeout = 50 * time.Millisecond
+
+	// The pool cannot open against a closed port; the warning is written before
+	// that and is what this test is about.
+	_, err := New(context.Background(), cfg, log)
+	require.Error(t, err)
+
+	line := buf.String()
+	assert.Contains(t, line, "IGNORED", "the ignored parameters must be reported: %s", line)
+	assert.Contains(t, line, "pool_max_conns", "the offending key must be named: %s", line)
+	assert.Contains(t, line, "pool_min_conns", "every offending key must be named: %s", line)
+	assert.Contains(t, line, "DB_MAX_CONNS", "the line must say where the number belongs: %s", line)
+	assert.NotContains(t, line, testPassword, "the log cannot leak the password: %s", line)
+}
+
+// TestNewIsQuietWithoutDSNPoolSettings guards the other direction: an ordinary
+// address must not produce the warning, or the line becomes noise nobody reads.
+func TestNewIsQuietWithoutDSNPoolSettings(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+	log := slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+
+	cfg := DefaultConfig("postgres://gobit:" + testPassword + "@127.0.0.1:1/gobit?sslmode=disable")
+	cfg.ConnectTimeout = 50 * time.Millisecond
+
+	_, err := New(context.Background(), cfg, log)
+	require.Error(t, err)
+
+	assert.NotContains(t, buf.String(), "IGNORED", "no pool parameter was given: %s", buf.String())
 }
 
 func TestNewRejectsInvalidConfig(t *testing.T) {

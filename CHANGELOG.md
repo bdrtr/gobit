@@ -42,6 +42,44 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Eklendi
 
+- **PostgreSQL havuzunun sınırları ayarlanabilir oldu** (`DB_MAX_CONNS`,
+  varsayılan 10; `DB_MIN_CONNS`, varsayılan 2). Sayı sabit yazılıydı ve hiçbir
+  ortam değişkeni onu değiştiremiyordu; oysa havuz TEK BİR isteğin değil TÜM
+  SÜRECİN veritabanı eşzamanlılık tavanıdır — HTTP istekleri, workflow motoru ve
+  olay tüketicisi aynı havuzdan çeker.
+
+  Tavanın gözden kaçan tarafı GraphQL'de: gqlgen kök alanlarını eşzamanlı çözer
+  ve sayıyı sınırlamaz, yani `GRAPHQL_MAX_FIELD_REPETITION=20` ile tek bir meşru
+  vitrin belgesi 40 eşzamanlı okuma açabilir. Ölçüldü (52.000 ürün, gerçek
+  vitrin sorguları, 40 eşzamanlı kök alanı): 10 bağlantıda 813 alımın 771'i
+  bekliyor, ortalama bekleme 65,3 ms.
+
+  Varsayılan yine de 10 KALDI ve sebebi ölçüm: veritabanı uygulamayla aynı
+  kutudayken darboğaz havuz değil sunucunun CPU'su, büyütmek gecikmeyi geri
+  getirmiyor (p50 306 ms → 368 ms). Veritabanı ağın ötesindeyse kazandırıyor ve
+  kazanç kök alanın gidiş dönüş sayısına bağlı: liste yolunda 5 ms'lik atlamada
+  1,3 kat (459 → 348 ms), 20 ms'de 1,8 kat (638 → 351 ms); üç gidiş dönüşlük
+  tekil ürün alanında 3,8 kat (69,2 → 18,0 ms). Yani eksik olan sayı değil
+  DÜĞMEYDİ — varsayılanı yükseltmek her kurulumun küme bağlantı bütçesini
+  çarpardı, kazanç ise yalnızca gecikmeye bağlı topolojilere düşer.
+
+  Sınırların gerçekten havuza ULAŞTIĞI testli ve iki uçtan da çivili: havuz 1
+  bağlantıyla açılıp cevap veriyor (paylaşılan bir kümeye çok örnekle bağlanan
+  kurulumun godoc'ta önerilen çaresi buydu ve o güne kadar yalnızca bir yapı
+  iddiasıydı), 250'lik bir tavan da değiştirilmeden geçiyor. İkisi de sessiz
+  mutasyonlara karşı: `max(cfg.MaxConns, 4)` biçiminde bir taban ya da 64'lük
+  bir tavan, 4 ile yazılmış bir testle uyuşup açılış logunun yazdığından farklı
+  bir havuz çalıştırırdı.
+
+- **`DATABASE_URL` içindeki `pool_*` parametreleri artık açılışta UYARILIYOR.**
+  pgxpool onları okuyor, uygulama ise havuz alanlarını yapılandırmadan ezdiği
+  için `?pool_max_conns=40` hiçbir şey yapmıyordu — sessizce. Havuz sabit
+  yazılıyken zararsızdı; `DB_MAX_CONNS` var olduğu andan itibaren operatörün
+  aynı sayıyı yazabileceği iki makul yer var ve biri hiçbir işe yaramıyor.
+  Reddetmek değil uyarmak doğru: parametre ne kadar zamandır yok sayılıyorsa o
+  kadar zamandır açılan bir süreci durdurmak, önlediği sürprizden büyük bir
+  bedeldir.
+
 - **Sepete satır sayısı TAVANI: 100** (`cart.MaxLineItems`). Tavana dayanmış
   bir sepete YENİ satır açmak isteyen istek `409` değil `400` ile ve
   `cart_workflow_line_limit_reached` koduyla reddedilir; mesaj hem tavanı hem

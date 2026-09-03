@@ -6,10 +6,12 @@
 package db_test
 
 import (
+	"bytes"
 	"context"
 	"embed"
 	"fmt"
 	"io/fs"
+	"log/slog"
 	"os"
 	"testing"
 	"testing/fstest"
@@ -193,17 +195,94 @@ func TestVersionOnUnmigratedOwner(t *testing.T) {
 	assert.False(t, dirty)
 }
 
-// TestPoolLifecycle checks that the pool opens, passes the health check and
-// cannot be used after it is closed.
+// recordingLogger returns a logger that writes into the buffer it also returns.
+//
+// A text handler is used on purpose: the assertions read the rendered line, so
+// they check what an operator would actually see rather than the attributes a
+// structured capture would expose.
+func recordingLogger() (*slog.Logger, *bytes.Buffer) {
+	buf := &bytes.Buffer{}
+
+	return slog.New(slog.NewTextHandler(buf, nil)), buf
+}
+
+// TestPoolCarriesLargeLimitsUnchanged guards the ceiling from ABOVE.
+//
+// [TestPoolLifecycle] pins the bottom of the range; a cap would live at the top
+// and would be just as invisible: "if pool.MaxConns > 64 { pool.MaxConns = 64 }"
+// anywhere between the configuration and pgx passes every test written with
+// small numbers, while an operator who asked for 100 silently runs 64 and reads
+// 100 in the log. The DBMaxConns godoc argues at length that there is NO upper
+// bound — config cannot know the cluster's max_connections — so the absence of
+// one is a decision and gets a test.
+//
+// The number is a ceiling, not an allocation: MinConns stays at 1, so this opens
+// one connection and asserts on the configuration the pool is running with.
+func TestPoolCarriesLargeLimitsUnchanged(t *testing.T) {
+	ctx := context.Background()
+
+	cfg := db.DefaultConfig(testDSN)
+	cfg.MaxConns = 250
+	cfg.MinConns = 1
+
+	log, records := recordingLogger()
+
+	pool, err := db.New(ctx, cfg, log)
+	require.NoError(t, err)
+	defer pool.Close()
+
+	assert.Equal(t, int32(250), pool.Pool().Config().MaxConns,
+		"a large ceiling must reach the pool unchanged; nothing may cap it silently")
+	assert.Contains(t, records.String(), "max_conns=250",
+		"the startup log must report the ceiling the pool is running with")
+}
+
+// TestPoolLifecycle checks that the pool opens with the limits it was GIVEN,
+// passes the health check, reports those limits, and cannot be used after it is
+// closed.
+//
+// The limit assertions were added when a mutation survived: deleting
+// "pgCfg.MaxConns = cfg.MaxConns" from New left every test in this package
+// green. That line is the only thing standing between the caller's number and
+// pgx's own default of max(4, NumCPU), and losing it is invisible from the
+// outside — the pool still opens, still answers, and the startup log still
+// prints the number it was HANDED, so the log would go on reporting a ceiling
+// that is not in force. Since DB_MAX_CONNS became an operator knob, that line is
+// what the knob is made of.
+//
+// MaxConns and MinConns are both 1, and that number is chosen against the
+// failure it catches rather than for tidiness. Four would have agreed with a
+// silent floor — pgx's own default is max(4, NumCPU), so "pgCfg.MaxConns =
+// max(cfg.MaxConns, 4)" is a mutation that passes a test written at 4 while
+// running a pool four times the size the log claims. One is below every default
+// in play, so nothing can agree with it by accident.
+//
+// A pool of one is also the configuration the
+// [github.com/bdrtr/gobit/internal/core/config.Config.DBMinConns] godoc
+// recommends to an installation connecting many instances to a shared cluster.
+// Until this test it was a claim about a struct: the value was validated, and
+// no process had ever opened a pool that small. Here one does, and it answers.
 func TestPoolLifecycle(t *testing.T) {
 	ctx := context.Background()
 
 	cfg := db.DefaultConfig(testDSN)
-	cfg.MaxConns = 4
+	cfg.MaxConns = 1
 	cfg.MinConns = 1
 
-	pool, err := db.New(ctx, cfg, nil)
+	log, records := recordingLogger()
+
+	pool, err := db.New(ctx, cfg, log)
 	require.NoError(t, err)
+
+	live := pool.Pool().Config()
+	assert.Equal(t, int32(1), live.MaxConns, "the pool is not running with the MaxConns it was given")
+	assert.Equal(t, int32(1), live.MinConns, "the pool is not running with the MinConns it was given")
+
+	// The operator's only window onto the ceiling is this line; it has to carry
+	// the number that is actually in force, not the one that was requested.
+	assert.Contains(t, records.String(), "max_conns=1",
+		"the startup log must report the ceiling the pool is running with")
+	assert.Contains(t, records.String(), "min_conns=1")
 
 	require.NoError(t, pool.Ping(ctx))
 	require.NotNil(t, pool.Pool())

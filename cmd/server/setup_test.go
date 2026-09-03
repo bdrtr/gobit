@@ -3,8 +3,12 @@ package main
 import (
 	"context"
 	"fmt"
+	"go/ast"
+	"go/parser"
+	gotoken "go/token"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"slices"
 	"strings"
 	"sync"
@@ -20,6 +24,7 @@ import (
 	"github.com/bdrtr/gobit/internal/adminui"
 	"github.com/bdrtr/gobit/internal/core/config"
 	"github.com/bdrtr/gobit/internal/core/container"
+	"github.com/bdrtr/gobit/internal/core/db"
 	"github.com/bdrtr/gobit/internal/core/errors"
 	corehttp "github.com/bdrtr/gobit/internal/core/http"
 	coreprovider "github.com/bdrtr/gobit/internal/core/provider"
@@ -217,6 +222,144 @@ func TestPluginSettingsComeFromTheEnvironment(t *testing.T) {
 	settings := pluginSettings()
 
 	assert.Equal(t, "value-42", settings["GOBIT_TEST_PLUGIN_SETTING"])
+}
+
+// TestDBPoolLimitsComeFromTheConfiguration proves the operator's numbers really
+// reach the pool.
+//
+// Without this the knob could exist end to end — env tag, validation,
+// documentation — and still change nothing: the ceiling was hardcoded because
+// [db.DefaultConfig] was handed to db.New untouched, and putting that line back
+// would break no other test. The values are deliberately NOT the defaults, so a
+// build that dropped the two assignments would fail here instead of quietly
+// agreeing.
+func TestDBPoolLimitsComeFromTheConfiguration(t *testing.T) {
+	t.Parallel()
+
+	cfg := baseConfig()
+	cfg.DatabaseURL = "postgres://gobit@localhost:5432/gobit"
+	cfg.DBMaxConns = 40
+	cfg.DBMinConns = 5
+
+	pool := dbConfig(cfg)
+
+	assert.Equal(t, int32(40), pool.MaxConns)
+	assert.Equal(t, int32(5), pool.MinConns)
+	assert.Equal(t, cfg.DatabaseURL, pool.URL)
+
+	// The fields the operator cannot set must still come from the package
+	// defaults; overriding two limits must not silently zero the rest, which
+	// db.Config.Validate would then reject at startup.
+	defaults := db.DefaultConfig(cfg.DatabaseURL)
+	assert.Equal(t, defaults.ConnectTimeout, pool.ConnectTimeout)
+	assert.Equal(t, defaults.MaxConnLifetime, pool.MaxConnLifetime)
+	assert.Equal(t, defaults.MaxConnIdleTime, pool.MaxConnIdleTime)
+}
+
+// TestDBPoolCanBeTurnedDown proves the knob works in the direction that is easy
+// to leave broken.
+//
+// Turning the pool UP is the obvious use; turning it DOWN is the one an
+// installation with many instances on a shared cluster needs, and it is exactly
+// the case a single knob would have broken: with the minimum pinned at 2,
+// DB_MAX_CONNS=1 fails db.Config.Validate and the process never opens. The
+// assertion is the pool's own validation, not a field comparison, because the
+// claim is "startup survives", not "the fields were copied".
+func TestDBPoolCanBeTurnedDown(t *testing.T) {
+	t.Parallel()
+
+	cfg := baseConfig()
+	cfg.DatabaseURL = "postgres://gobit@localhost:5432/gobit"
+	cfg.DBMaxConns = 1
+	cfg.DBMinConns = 1
+
+	require.NoError(t, dbConfig(cfg).Validate())
+}
+
+// TestThePoolIsOpenedThroughTheConfiguration proves the composition root cannot
+// go back to the hardcoded pool without saying so.
+//
+// This check exists because a mutation SURVIVED the two tests above. They prove
+// [dbConfig] copies the numbers, not that anybody calls it: putting
+// "db.New(ctx, db.DefaultConfig(cfg.DatabaseURL), log)" back in main.go leaves
+// every test green, the linter silent (dbConfig is still used — by its own
+// tests) and DB_MAX_CONNS a variable the operator can set, watch the startup log
+// ignore, and never get an error about. That is the silent class this repository
+// removes rather than documents.
+//
+// The rule is stated where it can be checked: in this package, the second
+// argument of db.New is a dbConfig call. The scan reads the SOURCE rather than
+// running main, because run() opens a database and this must stay a unit test.
+func TestThePoolIsOpenedThroughTheConfiguration(t *testing.T) {
+	t.Parallel()
+
+	fset := gotoken.NewFileSet()
+
+	checked := 0
+	for _, name := range packageSources(t) {
+		file, err := parser.ParseFile(fset, name, nil, 0)
+		require.NoError(t, err)
+
+		ast.Inspect(file, func(n ast.Node) bool {
+			call, ok := n.(*ast.CallExpr)
+			if !ok || !isSelector(call.Fun, "db", "New") || len(call.Args) < 2 {
+				return true
+			}
+			checked++
+
+			inner, isCall := call.Args[1].(*ast.CallExpr)
+			builder := ""
+			if isCall {
+				if id, isIdent := inner.Fun.(*ast.Ident); isIdent {
+					builder = id.Name
+				}
+			}
+			assert.Equal(t, "dbConfig", builder,
+				"%s:%d: db.New is not being handed dbConfig(cfg).\n"+
+					"The pool limits would fall back to the package defaults and "+
+					"DB_MAX_CONNS/DB_MIN_CONNS would become variables the operator "+
+					"can set without any effect and without any error.",
+				name, fset.Position(call.Pos()).Line)
+
+			return true
+		})
+	}
+
+	require.Positive(t, checked,
+		"no db.New call was found in cmd/server, so this check is BLIND.\n"+
+			"Either the pool is opened somewhere else now — in which case the rule "+
+			"has to move with it — or the call is made through an alias this scan "+
+			"does not recognize.")
+}
+
+// packageSources lists the package's own Go files, test files excluded.
+func packageSources(t *testing.T) []string {
+	t.Helper()
+
+	entries, err := os.ReadDir(".")
+	require.NoError(t, err)
+
+	var names []string
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		names = append(names, name)
+	}
+
+	return names
+}
+
+// isSelector reports whether the expression is the "<pkg>.<name>" selector.
+func isSelector(expr ast.Expr, pkg, name string) bool {
+	sel, ok := expr.(*ast.SelectorExpr)
+	if !ok || sel.Sel.Name != name {
+		return false
+	}
+	ident, ok := sel.X.(*ast.Ident)
+
+	return ok && ident.Name == pkg
 }
 
 // discardLogger returns a logger that does not pollute the test output.

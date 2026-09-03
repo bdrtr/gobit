@@ -167,7 +167,7 @@ func run() error {
 
 	c := container.New(log)
 
-	pool, err := db.New(ctx, db.DefaultConfig(cfg.DatabaseURL), log)
+	pool, err := db.New(ctx, dbConfig(cfg), log)
 	if err != nil {
 		return err
 	}

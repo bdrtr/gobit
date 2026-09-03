@@ -144,6 +144,8 @@ func New(ctx context.Context, cfg Config, log *slog.Logger) (*Pool, error) {
 			"the database address could not be parsed (target: %s)", target)
 	}
 
+	warnAboutDSNPoolSettings(ctx, cfg.URL, log)
+
 	pgCfg.MaxConns = cfg.MaxConns
 	pgCfg.MinConns = cfg.MinConns
 	pgCfg.MaxConnLifetime = cfg.MaxConnLifetime
@@ -224,6 +226,48 @@ func (p *Pool) Close() {
 	}
 	p.pool.Close()
 	p.log.Info("the postgres connection pool was closed", slog.String("target", p.target))
+}
+
+// dsnPoolKeys are the pool settings pgxpool.ParseConfig reads out of a DSN and
+// this package then OVERWRITES from [Config].
+var dsnPoolKeys = []string{
+	"pool_max_conns",
+	"pool_min_conns",
+	"pool_min_idle_conns",
+	"pool_max_conn_lifetime",
+	"pool_max_conn_idle_time",
+	"pool_max_conn_lifetime_jitter",
+	"pool_health_check_period",
+}
+
+// warnAboutDSNPoolSettings reports a DSN that carries pool_* parameters, which
+// this package silently discards.
+//
+// pgxpool.ParseConfig honors them; [New] then assigns every one of those fields
+// from [Config], so a DATABASE_URL ending in "?pool_max_conns=40" configures
+// nothing and says nothing. That was harmless while the pool size was
+// hardcoded and nobody had a reason to write it. It stopped being harmless the
+// moment DB_MAX_CONNS existed: an operator who has just been told the pool is
+// sizeable has two plausible places to say so, and one of them is a no-op.
+//
+// It WARNS rather than refusing, by ADR 0015 decision 4's criterion: refusing
+// would stop a process that has been starting successfully for as long as the
+// parameter has been ignored, and the failure this prevents — a pool that is
+// not the size the operator asked for — is a performance surprise, not a
+// correctness one. Making it loud is what it was missing.
+func warnAboutDSNPoolSettings(ctx context.Context, dsn string, log *slog.Logger) {
+	found := make([]string, 0, len(dsnPoolKeys))
+	for _, key := range dsnPoolKeys {
+		if strings.Contains(dsn, key+"=") {
+			found = append(found, key)
+		}
+	}
+	if len(found) == 0 {
+		return
+	}
+
+	log.WarnContext(ctx, "the database address carries pool settings that are IGNORED; set DB_MAX_CONNS and DB_MIN_CONNS instead",
+		"ignored", strings.Join(found, ","), "target", Redact(dsn))
 }
 
 // Redact strips the credentials out of a connection address and returns a

@@ -16,6 +16,7 @@ import (
 
 	"github.com/bdrtr/gobit/internal/adminui"
 	"github.com/bdrtr/gobit/internal/core/config"
+	"github.com/bdrtr/gobit/internal/core/db"
 	coreplugin "github.com/bdrtr/gobit/internal/core/plugin"
 	coreprovider "github.com/bdrtr/gobit/internal/core/provider"
 	"github.com/bdrtr/gobit/internal/core/query"
@@ -145,6 +146,35 @@ func TestBildirimVarsayilanSaglayicisiConfigleUyusuyor(t *testing.T) {
 
 	varsayilanSaglayiciIddiasi(t, "bildirim", logonly.ID,
 		config.DefaultNotificationProvider, notification.DefaultProviderID)
+}
+
+// TestHavuzVarsayilanlariDbIleUyusuyor PostgreSQL havuzunun İKİ ayrı yerdeki
+// varsayılanlarının aynı olduğunu doğrular.
+//
+// Havuzu KURAN taraf internal/core/db'dir ve kendi varsayılanlarını taşır
+// (db.DefaultConfig); OKUYAN taraf config'tir ve ortam değişkeni verilmediğinde
+// kullanacağı sayıları elle tekrarlar. Tekrar zorunludur: envDefault bir struct
+// etiketidir ve Go etiketlerde sabit referansı kabul etmez.
+//
+// Ayrışmanın bedeli sessizdir ve yönü ÖNEMLİDİR. cmd/server artık her açılışta
+// config'in sayılarını havuza YAZIYOR (bkz. dbConfig), yani db'nin varsayılanı
+// sunucu için ölü koddur: ikisi ayrışırsa db.DefaultConfig'i okuyan biri —
+// entegrasyon testleri, product'ı kendi binary'sine gömen bir kurulum — sunucudan
+// BAŞKA bir havuzla çalışır ve bunu hiçbir şey söylemez. Eşitlik iddiası, iki
+// sayının "yapılandırılabilir yapmadan önceki davranış" olan ortak kökenini
+// yerinde tutar.
+//
+// db.DefaultConfig bir DSN ister; buradaki dize yalnızca imzayı doldurur, hiçbir
+// bağlantı açılmaz ve sınırlar DSN'den bağımsızdır.
+func TestHavuzVarsayilanlariDbIleUyusuyor(t *testing.T) {
+	t.Parallel()
+
+	havuz := db.DefaultConfig("postgres://gobit@localhost:5432/gobit")
+
+	assert.Equal(t, havuz.MaxConns, config.DefaultDBMaxConns,
+		"config'in DB_MAX_CONNS varsayılanı db.DefaultConfig'inkiyle aynı olmalı")
+	assert.Equal(t, havuz.MinConns, config.DefaultDBMinConns,
+		"config'in DB_MIN_CONNS varsayılanı db.DefaultConfig'inkiyle aynı olmalı")
 }
 
 // TestGraphQLSinirVarsayilanlariConfigleUyusuyor GraphQL sertleştirme
