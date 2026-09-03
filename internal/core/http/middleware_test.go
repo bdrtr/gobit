@@ -152,7 +152,7 @@ func TestRecovererPanikte500JSONDoner(t *testing.T) {
 
 	records := logRecords(t, buf)
 	require.Len(t, records, 1)
-	assert.Equal(t, "handler panikledi", records[0]["msg"])
+	assert.Equal(t, "the handler panicked", records[0]["msg"])
 	assert.Equal(t, "beklenmedik durum: gizli-detay-123", records[0]["panic"])
 	assert.Contains(t, records[0]["stack"], "panic", "yığın izi loglanmalı")
 	assert.Equal(t, "req_panik", records[0]["request_id"])
@@ -239,7 +239,7 @@ func TestRecovererYarimYanitiBozmaz(t *testing.T) {
 			assert.Equal(t, yarimGovde, rec.Body.String(),
 				"yanıt başladıktan sonra ikinci bir gövde eklenmemeli")
 			assert.Equal(t, http.StatusOK, rec.Code, "gönderilmiş status değiştirilemez")
-			assert.Contains(t, buf.String(), "handler panikledi", "panik yine de loglanmalı")
+			assert.Contains(t, buf.String(), "the handler panicked", "panik yine de loglanmalı")
 		})
 	}
 }
@@ -264,7 +264,7 @@ func TestRequestLoggerStatusVeSureyiKaydeder(t *testing.T) {
 	require.Len(t, records, 1)
 	rec := records[0]
 
-	assert.Equal(t, "istek tamamlandı", rec["msg"])
+	assert.Equal(t, "request completed", rec["msg"])
 	assert.Equal(t, http.MethodPost, rec["method"])
 	assert.Equal(t, "/store/v1/orders", rec["path"])
 	assert.InDelta(t, float64(http.StatusCreated), rec["status"], 0)
@@ -471,7 +471,7 @@ func TestRequestLoggerPanikteDeErisimKaydiYazar(t *testing.T) {
 
 		records := logRecords(t, buf)
 		require.Len(t, records, 1, "panikleyen istek de erişim logunda görünmeli")
-		assert.Equal(t, "istek tamamlandı", records[0]["msg"])
+		assert.Equal(t, "request completed", records[0]["msg"])
 		assert.Equal(t, "/patlayan", records[0]["path"])
 		assert.InDelta(t, float64(http.StatusInternalServerError), records[0]["status"], 0,
 			"yanıt hiç başlamadıysa status 500 kaydedilir")
@@ -492,7 +492,7 @@ func TestRequestLoggerPanikteDeErisimKaydiYazar(t *testing.T) {
 
 		records := logRecords(t, buf)
 		require.Len(t, records, 1, "abort edilen istek erişim logundan düşmemeli")
-		assert.Equal(t, "istek tamamlandı", records[0]["msg"])
+		assert.Equal(t, "request completed", records[0]["msg"])
 		assert.Equal(t, "/abort", records[0]["path"])
 	})
 }

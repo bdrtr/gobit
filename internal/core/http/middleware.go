@@ -16,72 +16,75 @@ import (
 	coreerrors "github.com/bdrtr/gobit/internal/core/errors"
 )
 
-// requestIDHeader istek kimliğinin taşındığı HTTP başlığıdır. Hem gelen
-// istekten okunur hem de yanıta geri yazılır; böylece istemci gördüğü hatayı
-// sunucu loglarıyla eşleştirebilir.
+// requestIDHeader is the HTTP header carrying the request id. It is read from
+// the incoming request and written back onto the response, so a client can
+// match the error it saw against the server logs.
 const requestIDHeader = "X-Request-Id"
 
-// maxRequestIDLen dışarıdan gelen istek kimliği için kabul edilen üst sınırdır.
-// Daha uzun değerler reddedilir; log satırlarını ve yanıt başlıklarını
-// şişirmek için kullanılmalarını engeller.
+// maxRequestIDLen is the upper bound accepted for a request id coming from
+// outside. Longer values are rejected; that stops them from being used to
+// inflate log lines and response headers.
 const maxRequestIDLen = 128
 
-// requestIDPrefix üretilen kimliklerin önekidir (plan Bölüm 8: prefix'li ID).
+// requestIDPrefix is the prefix of the generated ids (plan Section 8:
+// prefixed ids).
 const requestIDPrefix = "req_"
 
-// redactedPlaceholder loglarda maskelenen değerlerin yerine yazılır.
+// redactedPlaceholder is written in place of the values masked in the logs.
 const redactedPlaceholder = "REDACTED"
 
-// contextKey bu paketin context anahtarları için kullandığı özel tiptir.
-// Dışa açılmadığı için başka paketlerin anahtarlarıyla çakışamaz.
+// contextKey is the private type this package uses for its context keys.
+// Because it is unexported it cannot clash with another package's keys.
 type contextKey int
 
 const (
-	// requestIDKey context'teki istek kimliğinin anahtarıdır.
+	// requestIDKey is the key of the request id in the context.
 	requestIDKey contextKey = iota
-	// loggerKey context'teki isteğe özgü logger'ın anahtarıdır.
+	// loggerKey is the key of the request-scoped logger in the context.
 	loggerKey
 )
 
-// sensitiveQueryMarkers sorgu parametresi adının İÇİNDE geçtiğinde değerin
-// maskelenmesini gerektiren parçalardır. Bilinçli olarak geniş tutulmuştur:
-// yanlışlıkla maskelemek, yanlışlıkla sızdırmaktan ucuzdur (plan Bölüm 8).
+// sensitiveQueryMarkers are the fragments that, when they appear INSIDE a
+// query parameter's name, require the value to be masked. The list is
+// deliberately broad: masking by accident is cheaper than leaking by accident
+// (plan Section 8).
 //
-// Liste yalnızca kimlik bilgisini değil KİŞİSEL VERİYİ de kapsar. Erişim logu
-// uzun ömürlüdür ve onu görebilenlerin kümesi uygulamayı çalıştıranlardan
-// geniştir; auth modülü e-postayı bilinçli olarak loglamazken aynı değerin
-// "GET /admin/v1/users?email=..." süzgecinden erişim loguna düşmesi o kararı
-// boşa çıkarırdı.
+// The list covers not only credentials but PERSONAL DATA. An access log is
+// long-lived and the set of people who can see it is wider than the set who run
+// the application; the auth module deliberately does not log the email address,
+// and having the same value reach the access log through a
+// "GET /admin/v1/users?email=..." filter would undo that decision.
 var sensitiveQueryMarkers = []string{
-	// Kimlik bilgisi ve jetonlar.
+	// Credentials and tokens.
 	"token", "secret", "password", "passwd", "passphrase", "pwd", "key",
 	"auth", "signature", "credential", "session", "cookie", "jwt", "otp",
-	// Kişisel veri. "mail" parçası hem "email" hem "e-mail" hem de
-	// "customer_email" gibi bileşikleri yakalar; ayrıca "email" yazmak
-	// listeyi uzatır, kapsamı genişletmez.
+	// Personal data. The "mail" fragment catches "email", "e-mail" and
+	// compounds such as "customer_email"; writing "email" as well would
+	// lengthen the list without widening the coverage.
 	"mail", "posta", "phone", "telefon", "msisdn", "gsm",
 	"iban", "tckn", "vkn", "cvv", "cvc",
 }
 
-// sensitiveQueryExactKeys yalnızca TAM eşleşmede maskelenen parametre adlarıdır.
+// sensitiveQueryExactKeys are the parameter names masked only on an EXACT
+// match.
 //
-// Bu adlar alt dize olarak aranamayacak kadar kısadır: "pin" masum "shipping"
-// içinde, "tel" ise "telemetry" içinde geçer. sensitiveQueryMarkers'a
-// konsalardı erişim logunun en çok işe yarayan süzgeçlerini okunmaz hâle
-// getirirlerdi ki maskelemenin amacı logu kullanılamaz kılmak değil. Bedeli
-// bilinçlidir: "card_pin" gibi bileşik bir ad buradan yakalanmaz, böyle bir
-// parametre doğarsa sensitiveQueryMarkers'a eklenmelidir.
+// These names are too short to search for as substrings: "pin" occurs inside
+// the innocent "shipping" and "tel" inside "telemetry". Put into
+// sensitiveQueryMarkers they would make the access log's most useful filters
+// unreadable — and the point of masking is not to make the log unusable. The
+// cost is deliberate: a compound name such as "card_pin" is not caught here,
+// and if such a parameter appears it belongs in sensitiveQueryMarkers.
 var sensitiveQueryExactKeys = map[string]struct{}{
 	"pin": {},
 	"tel": {},
 }
 
-// RequestID her isteğe bir kimlik atayan middleware'dir.
+// RequestID is the middleware assigning an id to every request.
 //
-// Gelen "X-Request-Id" başlığı geçerliyse korunur (dağıtık izlemede zincirin
-// kopmaması için), aksi hâlde yeni bir kimlik üretilir. Kimlik hem context'e
-// konur (RequestIDFromContext ile okunur) hem de aynı adlı yanıt başlığına
-// yazılır.
+// A valid incoming "X-Request-Id" header is preserved (so the chain does not
+// break in distributed tracing); otherwise a new id is generated. The id is put
+// into the context (read with RequestIDFromContext) and written to the response
+// header of the same name.
 func RequestID(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id := sanitizeRequestID(r.Header.Get(requestIDHeader))
@@ -94,15 +97,16 @@ func RequestID(next http.Handler) http.Handler {
 	})
 }
 
-// WithRequestID verilen istek kimliğini context'e yerleştirir.
-// HTTP dışındaki akışlarda (worker, cron) aynı korelasyon kimliğini
-// taşımak için kullanılır.
+// WithRequestID puts the given request id into the context.
+// It is used to carry the same correlation id through non-HTTP flows (a worker,
+// a cron job).
 func WithRequestID(ctx context.Context, id string) context.Context {
 	return context.WithValue(ctx, requestIDKey, id)
 }
 
-// RequestIDFromContext context'e konmuş istek kimliğini döner.
-// Kimlik yoksa boş dize döner; çağıran ayrıca nil kontrolü yapmak zorunda değildir.
+// RequestIDFromContext returns the request id put into the context.
+// With no id it returns an empty string; the caller needs no separate nil
+// check.
 func RequestIDFromContext(ctx context.Context) string {
 	if ctx == nil {
 		return ""
@@ -111,14 +115,15 @@ func RequestIDFromContext(ctx context.Context) string {
 	return id
 }
 
-// WithLogger isteğe özgü logger'ı context'e yerleştirir.
-// WriteError ve WriteJSON, hata durumunu bu logger üzerinden raporlar.
+// WithLogger puts the request-scoped logger into the context.
+// WriteError and WriteJSON report failures through it.
 func WithLogger(ctx context.Context, log *slog.Logger) context.Context {
 	return context.WithValue(ctx, loggerKey, log)
 }
 
-// LoggerFromContext context'teki logger'ı döner.
-// Context'te logger yoksa slog varsayılanı kullanılır; dönen değer asla nil değildir.
+// LoggerFromContext returns the logger from the context.
+// With no logger in the context the slog default is used; the value returned is
+// never nil.
 func LoggerFromContext(ctx context.Context) *slog.Logger {
 	if ctx == nil {
 		return slog.Default()
@@ -129,17 +134,17 @@ func LoggerFromContext(ctx context.Context) *slog.Logger {
 	return slog.Default()
 }
 
-// Recoverer handler paniklerini yakalayan middleware üretir.
+// Recoverer produces the middleware that catches handler panics.
 //
-// Panik hâlinde yığın izi (stack trace) loglanır ve istemciye 500 JSON yanıtı
-// döner; süreç ayakta kalır. http.ErrAbortHandler paniği stdlib'in "bu isteği
-// sessizce bırak" sözleşmesidir ve olduğu gibi yeniden fırlatılır.
+// On a panic the stack trace is logged and a 500 JSON response goes to the
+// client; the process stays up. A panic with http.ErrAbortHandler is the
+// stdlib's "drop this request silently" contract and is re-raised as it is.
 //
-// Yanıt çoktan başlamışsa üstüne ikinci bir gövde yazılmaz. Bunu güvenilir
-// kılmak için Recoverer handler'a kendi sarmalayıcısını verir: "yazıldı mı"
-// bilgisi başka bir middleware'in ürettiği tipe bakılarak tahmin edilmez,
-// dolayısıyla middleware sırasından ve araya giren sarmalayıcılardan
-// bağımsızdır.
+// When the response has already started, no second body is written on top of
+// it. To make that reliable Recoverer gives the handler its own wrapper: the
+// "has it been written" fact is not guessed from a type another middleware
+// produced, so it is independent of the middleware order and of any wrapper in
+// between.
 func Recoverer(log *slog.Logger) func(http.Handler) http.Handler {
 	log = loggerOrDefault(log)
 
@@ -149,20 +154,21 @@ func Recoverer(log *slog.Logger) func(http.Handler) http.Handler {
 			r = r.WithContext(ctx)
 			rw := &responseWriter{ResponseWriter: w, status: http.StatusOK}
 
-			// ctx parametre olarak geçirilir; kapanış (closure) içinde
-			// yeniden türetilmez, böylece iptal/değer zinciri korunur.
+			// ctx is passed as a parameter rather than re-derived inside the
+			// closure, so the cancellation and value chain is preserved.
 			defer func(ctx context.Context) {
 				rec := recover()
 				if rec == nil {
 					return
 				}
 
-				// stdlib sözleşmesi: ErrAbortHandler yakalanmaz, yanıt yazılmaz.
+				// The stdlib contract: ErrAbortHandler is not caught and no
+				// response is written.
 				if err, ok := rec.(error); ok && coreerrors.Is(err, http.ErrAbortHandler) {
 					panic(rec)
 				}
 
-				log.ErrorContext(ctx, "handler panikledi",
+				log.ErrorContext(ctx, "the handler panicked",
 					"panic", fmt.Sprint(rec),
 					"stack", string(debug.Stack()),
 					"method", r.Method,
@@ -170,8 +176,9 @@ func Recoverer(log *slog.Logger) func(http.Handler) http.Handler {
 					"request_id", RequestIDFromContext(ctx),
 				)
 
-				// Yanıt çoktan başlamışsa üstüne ikinci bir gövde yazmak
-				// istemciye bozuk JSON gönderir; sadece loglayıp bırakılır.
+				// When the response has already started, writing a second body
+				// on top of it sends broken JSON to the client; it is only
+				// logged and left alone.
 				if rw.wroteHeader {
 					return
 				}
@@ -185,22 +192,24 @@ func Recoverer(log *slog.Logger) func(http.Handler) http.Handler {
 	}
 }
 
-// RequestLogger her isteği yapısal olarak loglayan middleware üretir.
+// RequestLogger produces the middleware that logs every request structurally.
 //
-// Kaydedilen alanlar: method, path, (maskelenmiş) query, status, bytes,
-// duration_ms ve request_id. Hassas veri loglanmaz (plan Bölüm 8): istek
-// başlıkları — özellikle Authorization ve Cookie — hiç okunmaz, sorgu
-// parametrelerinden jeton ya da kişisel veri taşıyan adların değerleri
-// maskelenir (bkz. redactQuery), istek ve yanıt gövdeleri log'a girmez.
+// The fields recorded: method, path, the (masked) query, status, bytes,
+// duration_ms and request_id. Sensitive data is not logged (plan Section 8):
+// the request headers — Authorization and Cookie above all — are never read,
+// the values of query parameters whose names carry a token or personal data are
+// masked (see redactQuery), and neither request nor response bodies enter the
+// log.
 //
-// path maskelenmez: rota şablonu erişim logunun temel eksenidir ve maskelenirse
-// geriye izlenebilir hiçbir şey kalmaz. Karşılığı, rotaların kişisel veriyi yol
-// parçasına koymaması ve kaynakları kimlikle adreslemesidir.
+// path is NOT masked: the route template is the access log's primary axis and
+// masking it would leave nothing traceable. The counterpart is that routes must
+// not put personal data into a path segment and must address resources by id.
 //
-// Satır defer ile yazılır: handler paniklese (veya http.ErrAbortHandler ile
-// isteği bıraksa) bile erişim kaydı kaybolmaz — izlenmesi en kritik istekler
-// tam olarak bunlardır. Yanıt hiç başlamadan zincirden bir panik geçtiyse
-// istemciye bir şey ulaşmadığı için status 500 olarak kaydedilir.
+// The line is written with defer: the access record is not lost even when the
+// handler panics (or drops the request with http.ErrAbortHandler) — and those
+// are exactly the requests most worth following. When a panic passed through
+// the chain before the response started, nothing reached the client and the
+// status is recorded as 500.
 func RequestLogger(log *slog.Logger) func(http.Handler) http.Handler {
 	log = loggerOrDefault(log)
 
@@ -218,7 +227,7 @@ func RequestLogger(log *slog.Logger) func(http.Handler) http.Handler {
 				}
 
 				elapsed := time.Since(start)
-				log.Log(ctx, levelForStatus(status), "istek tamamlandı",
+				log.Log(ctx, levelForStatus(status), "request completed",
 					"method", r.Method,
 					"path", r.URL.Path,
 					"query", redactQuery(r.URL.RawQuery),
@@ -235,11 +244,12 @@ func RequestLogger(log *slog.Logger) func(http.Handler) http.Handler {
 	}
 }
 
-// responseWriter yanıtın status kodunu ve yazılan bayt sayısını sayan
-// http.ResponseWriter sarmalayıcısıdır.
+// responseWriter is the http.ResponseWriter wrapper counting the response's
+// status code and the bytes written.
 //
-// Handler'lara olabildiğince şeffaf kalır: Unwrap ile http.ResponseController
-// yolunu, Flush ile streaming'i, Hijack ile protokol yükseltmeyi aktarır.
+// It stays as transparent to the handlers as it can: Unwrap forwards the
+// http.ResponseController path, Flush forwards streaming and Hijack forwards a
+// protocol upgrade.
 type responseWriter struct {
 	http.ResponseWriter
 	status      int
@@ -247,9 +257,9 @@ type responseWriter struct {
 	wroteHeader bool
 }
 
-// WriteHeader status kodunu kaydeder ve alttaki writer'a iletir.
-// İlk çağrıdan sonrakiler yok sayılır; stdlib'in "superfluous WriteHeader"
-// uyarısı bu sayede tetiklenmez.
+// WriteHeader records the status code and forwards it to the underlying
+// writer. Calls after the first are ignored; that is what keeps the stdlib's
+// "superfluous WriteHeader" warning from firing.
 func (w *responseWriter) WriteHeader(status int) {
 	if w.wroteHeader {
 		return
@@ -259,7 +269,7 @@ func (w *responseWriter) WriteHeader(status int) {
 	w.ResponseWriter.WriteHeader(status)
 }
 
-// Write gövdeyi yazar ve yazılan bayt sayısını biriktirir.
+// Write writes the body and accumulates the number of bytes written.
 func (w *responseWriter) Write(b []byte) (int, error) {
 	if !w.wroteHeader {
 		w.WriteHeader(http.StatusOK)
@@ -269,19 +279,20 @@ func (w *responseWriter) Write(b []byte) (int, error) {
 	return n, err
 }
 
-// Unwrap alttaki ResponseWriter'ı döner.
-// http.ResponseController bu metot sayesinde Hijack/SetDeadline gibi
-// yetenekleri sarmalayıcının ardından bulabilir.
+// Unwrap returns the underlying ResponseWriter.
+// This method is what lets http.ResponseController find capabilities such as
+// Hijack and SetDeadline behind the wrapper.
 func (w *responseWriter) Unwrap() http.ResponseWriter {
 	return w.ResponseWriter
 }
 
-// Hijack alttaki TCP bağlantısını handler'a devreder.
+// Hijack hands the underlying TCP connection over to the handler.
 //
-// websocket, protokol yükseltme ve bazı SSE kütüphaneleri http.ResponseController
-// yerine doğrudan w.(http.Hijacker) tip iddiası yapar; bu metot olmadan
-// sarmalayıcı o yeteneği gizler ve söz konusu handler'lar kırılırdı. Alttaki
-// writer hijack desteklemiyorsa http.ErrNotSupported döner.
+// WebSockets, protocol upgrades and some SSE libraries make a direct
+// w.(http.Hijacker) type assertion instead of using http.ResponseController;
+// without this method the wrapper would hide that capability and those handlers
+// would break. When the underlying writer does not support hijacking it returns
+// http.ErrNotSupported.
 func (w *responseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 	h, ok := w.ResponseWriter.(http.Hijacker)
 	if !ok {
@@ -290,35 +301,37 @@ func (w *responseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 
 	conn, buf, err := h.Hijack()
 	if err == nil {
-		// Bağlantı devralındı: artık normal yolla yanıt yazılamaz.
+		// The connection was taken over: a response can no longer be written
+		// the normal way.
 		w.wroteHeader = true
 	}
 	return conn, buf, err
 }
 
-// Flush alttaki writer'ı boşaltır; streaming (SSE) handler'ları için
-// sarmalayıcının şeffaf kalmasını sağlar.
+// Flush flushes the underlying writer; it keeps the wrapper transparent for
+// streaming (SSE) handlers.
 func (w *responseWriter) Flush() {
 	f, ok := w.ResponseWriter.(http.Flusher)
 	if !ok {
 		return
 	}
-	// Flush, başlıkların gönderilmesine yol açar; durum kaydı buna göre güncellenir.
+	// Flush causes the headers to be sent; the state record is updated
+	// accordingly.
 	w.wroteHeader = true
 	f.Flush()
 }
 
-// newRequestID kriptografik olarak rastgele yeni bir istek kimliği üretir.
+// newRequestID generates a new, cryptographically random request id.
 func newRequestID() string {
 	return requestIDPrefix + rand.Text()
 }
 
-// sanitizeRequestID dışarıdan gelen kimliği doğrular.
+// sanitizeRequestID validates an id coming from outside.
 //
-// Yalnızca yazdırılabilir ASCII ve en fazla maxRequestIDLen karakter kabul
-// edilir; kural dışı her değer boş dizeye indirgenir (fail-closed) ve çağıran
-// yerine yeni kimlik üretir. Böylece istemci ne log satırlarını ne de yanıt
-// başlığını kontrol edebilir.
+// Only printable ASCII and at most maxRequestIDLen characters are accepted;
+// every value outside the rule is reduced to an empty string (fail-closed) and
+// the caller generates a new id instead. That way the client controls neither
+// the log lines nor the response header.
 func sanitizeRequestID(v string) string {
 	v = strings.TrimSpace(v)
 	if v == "" || len(v) > maxRequestIDLen {
@@ -330,18 +343,19 @@ func sanitizeRequestID(v string) string {
 	return v
 }
 
-// redactQuery sorgu dizesini loglanabilir hâle getirir: hassas adlı
-// parametrelerin değerleri maskelenir, geri kalanı (sayfalama, filtre)
-// olduğu gibi kalır. Ayrıştırılamayan sorgu tamamen maskelenir.
+// redactQuery makes the query string loggable: the values of parameters with a
+// sensitive name are masked while the rest (pagination, filters) stays as it
+// is. A query that cannot be parsed is masked entirely.
 //
-// Maskeleme bir DENY-LIST'tir ve bedeli açıkça kabul edilir: listede olmayan
-// yeni bir hassas parametre — yarın eklenen "?recovery_hint=..." gibi —
-// maskesiz loglanır, koruma ancak adın listeye eklenmesiyle gelir. Ters
-// seçenek olan allow-list bu katmanda mümkün değildi: çekirdek modülleri
-// tanımaz (Prensip 2.4), dolayısıyla core/http hiçbir modülün süzgeç adını
-// önceden bilemez. Allow-list ya sürekli eksik kalıp her yeni uç noktanın
-// sorgusunu tümüyle maskeleyerek erişim logunu körleştirirdi ya da modülleri
-// çekirdeğe ad kaydetmeye zorlayarak bağımlılık yönünü tersine çevirirdi.
+// The masking is a DENY-LIST and its cost is accepted openly: a new sensitive
+// parameter that is not on the list — a "?recovery_hint=..." added tomorrow —
+// is logged unmasked, and the protection arrives only when the name is added.
+// The opposite option, an allow-list, was impossible at this layer: the core
+// does not know the modules (Principle 2.4), so core/http cannot know any
+// module's filter names in advance. An allow-list would either stay
+// permanently incomplete — masking every new endpoint's query in full and
+// blinding the access log — or force the modules to register names with the
+// core, reversing the direction of the dependency.
 func redactQuery(raw string) string {
 	if raw == "" {
 		return ""
@@ -364,10 +378,10 @@ func redactQuery(raw string) string {
 	return values.Encode()
 }
 
-// isSensitiveKey parametre adının hassas bir değeri taşıyıp taşımadığını bildirir.
+// isSensitiveKey reports whether a parameter name carries a sensitive value.
 //
-// Karşılaştırma küçük harfe indirgenerek yapılır: anahtar adını istemci
-// belirler ve "?Email=" ile "?EMAIL=" yazmak maskelemeyi atlatmaya yetmemeli.
+// The comparison is made in lower case: the client decides the key's name, and
+// writing "?Email=" or "?EMAIL=" must not be enough to slip past the masking.
 func isSensitiveKey(key string) bool {
 	lower := strings.ToLower(key)
 	if _, ok := sensitiveQueryExactKeys[lower]; ok {
@@ -381,8 +395,8 @@ func isSensitiveKey(key string) bool {
 	return false
 }
 
-// levelForStatus status koduna uygun log seviyesini seçer:
-// 5xx hata, 4xx uyarı, geri kalanı bilgi seviyesindedir.
+// levelForStatus picks the log level matching the status code:
+// 5xx is error, 4xx is warning and the rest is info.
 func levelForStatus(status int) slog.Level {
 	switch {
 	case status >= http.StatusInternalServerError:
@@ -394,7 +408,7 @@ func levelForStatus(status int) slog.Level {
 	}
 }
 
-// loggerOrDefault nil logger yerine slog varsayılanını koyar.
+// loggerOrDefault puts the slog default in place of a nil logger.
 func loggerOrDefault(log *slog.Logger) *slog.Logger {
 	if log == nil {
 		return slog.Default()

@@ -47,7 +47,6 @@ internal/core/http/guard.go
 internal/core/http/guard_test.go
 internal/core/http/idempotency.go
 internal/core/http/idempotency_test.go
-internal/core/http/middleware.go
 internal/core/http/middleware_test.go
 internal/core/http/ratelimit.go
 internal/core/http/ratelimit_internal_test.go
