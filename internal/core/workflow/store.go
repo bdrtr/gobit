@@ -26,6 +26,24 @@ const (
 	StatusCompleted Status = "completed"
 	// StatusFailed bir adımın patladığını ve telafinin BAŞARIYLA tamamlandığını
 	// bildirir: yarım kalmış iş yoktur, sistem tutarlıdır.
+	//
+	// # Bu duruma geçmek idempotency anahtarını BIRAKIR
+	//
+	// Anlamı gereği: "telafi edildi" tam olarak "bu deneme dünyada iz
+	// bırakmadı" demektir ve anahtar da bir izdir. Bırakılmasaydı — ki bir
+	// zamanlar bırakılmıyordu — aynı anahtarla gelen her sonraki çağrı sonsuza
+	// dek 409 alırdı. Vitrinde bunun karşılığı şuydu: kartı reddedilen müşteri
+	// O SEPETİ BİR DAHA ÖDEYEMİYORDU. Anahtar sepet kimliğinden türetildiği
+	// için "yeni bir anahtar kullanın" tavsiyesinin HTTP yüzeyinde bir
+	// karşılığı da yoktu.
+	//
+	// Kayıt SİLİNMEZ, yalnızca anahtarı düşer: başarısız deneme denetim kaydı
+	// olarak kalır.
+	//
+	// Öteki uç durumların hiçbiri anahtarı bırakmaz ve bırakmamalıdır:
+	// [StatusCompleted] bıraksaydı aynı sepet iki kez tahsil edilirdi,
+	// [StatusCompensationFailed] bıraksaydı elle müdahale bekleyen yarım bir iş
+	// yeni bir denemenin üstüne binerdi.
 	StatusFailed Status = "failed"
 	// StatusCompensationFailed hem adımın hem telafinin patladığını bildirir.
 	// Sistem tutarsız kalmıştır; ELLE MÜDAHALE gerekir. Bir izleme kuralı
@@ -156,6 +174,12 @@ type Store interface {
 	// AppendStep bir adım kaydını ekler ya da aynı Index'li kaydı günceller.
 	AppendStep(ctx context.Context, executionID string, rec StepRecord) error
 	// UpdateStatus yürütmenin son durumunu yazar.
+	//
+	// [StatusFailed] yazıldığında uygulama yürütmenin idempotency ANAHTARINI
+	// da bırakmalıdır (kaydı silmeden). Gerekçe [StatusFailed] godoc'undadır ve
+	// bu, ayrı bir metot değil aynı yazımın parçasıdır: iki ayrı yazım
+	// arasında düşen bir süreç anahtarı sonsuza dek tutulu bırakırdı — yani
+	// düzeltilen arızanın kendisini nadir bir yarış olarak geri getirirdi.
 	UpdateStatus(ctx context.Context, executionID string, status Status, output json.RawMessage, failure string) error
 	// Get yürütmeyi adımlarıyla birlikte okur; yoksa errors.NotFound.
 	Get(ctx context.Context, executionID string) (*Execution, error)

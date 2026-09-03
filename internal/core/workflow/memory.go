@@ -143,6 +143,15 @@ func (s *memoryStore) UpdateStatus(_ context.Context, executionID string, status
 	exec.Output = slices.Clone(output)
 	exec.Failure = failure
 	exec.UpdatedAt = time.Now().UTC()
+
+	// Telafi eksiksiz tamamlandıysa anahtar BIRAKILIR; gerekçe
+	// [StatusFailed] godoc'unda. Kayıt kalır, yalnızca anahtarı düşer —
+	// pgstore'un aynı satırı NULL'a çekmesiyle aynı davranış.
+	if status == StatusFailed && exec.IdempotencyKey != "" {
+		delete(s.byKey, idempotencyKey{workflow: exec.Workflow, key: exec.IdempotencyKey})
+		exec.IdempotencyKey = ""
+	}
+
 	return nil
 }
 

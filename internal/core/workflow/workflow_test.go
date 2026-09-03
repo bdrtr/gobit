@@ -484,6 +484,92 @@ func TestIdempotencyReplayDoesNotRerunSteps(t *testing.T) {
 		"tekrar çağrısı da mutlu yolla AYNI tipi döner")
 }
 
+// TestTelafiEdilenYurutmeAyniAnahtarlaTekrarDenenebilir bu motorun en pahalı
+// arızasını kapatan sözleşmedir.
+//
+// [workflow.StatusFailed] "bir adım patladı ve telafi EKSİKSİZ tamamlandı"
+// demektir: yarım kalmış iş yoktur. O hâlde denemenin idempotency anahtarı da
+// tutulmamalıdır — anahtar da bir izdir.
+//
+// Tutulduğunda ne olduğu ölçüldü: vitrinde kartı reddedilen müşteri o sepeti
+// BİR DAHA ÖDEYEMİYORDU. Anahtar sepet kimliğinden türetildiği için motorun
+// "yeniden denemek için YENİ bir anahtar kullanın" tavsiyesinin HTTP yüzeyinde
+// bir karşılığı da yoktu; sepet kalıcı olarak 409 dönüyordu.
+func TestTelafiEdilenYurutmeAyniAnahtarlaTekrarDenenebilir(t *testing.T) {
+	rec := &recorder{}
+	store := workflow.NewMemoryStore()
+	eng := workflow.New(store, testLogger())
+
+	patlasin := true
+	ikinci := &testStep{name: "b", rec: rec, onInvoke: func(context.Context, *workflow.StepContext) (any, error) {
+		if patlasin {
+			return nil, errors.Internal("declined", "ödeme reddedildi")
+		}
+
+		return "b-out", nil
+	}}
+	wf := workflow.Workflow{Name: "idem", Steps: steps(step(rec, "a"), ikinci)}
+
+	_, err := eng.Run(t.Context(), wf, nil, workflow.WithIdempotencyKey("sepet-1"))
+	require.Error(t, err, "ilk deneme başarısız olmalı")
+	require.Equal(t, []string{"invoke:a", "invoke:b", "compensate:a"}, rec.snapshot(),
+		"telafi çalışmalı; sözleşmenin dayandığı şey budur")
+
+	patlasin = false
+
+	out, err := eng.Run(t.Context(), wf, nil, workflow.WithIdempotencyKey("sepet-1"))
+	require.NoError(t, err,
+		"telafi edilmiş deneme anahtarı TUTMAMALI; müşteri aynı sepeti tekrar ödeyebilmeli")
+	assert.JSONEq(t, `"b-out"`, rawOutput(t, out))
+	assert.Equal(t, []string{"invoke:a", "invoke:b", "compensate:a", "invoke:a", "invoke:b"},
+		rec.snapshot(), "ikinci deneme adımları BAŞTAN çalıştırmalı")
+}
+
+// TestTamamlananYurutmeAnahtariBirakmaz bırakma kuralının yalnızca telafi
+// edilmiş denemeye ait olduğunu doğrular.
+//
+// Tamamlanmış bir yürütmenin anahtarı bırakılsaydı, aynı sepet İKİ KEZ tahsil
+// edilirdi — yani idempotency anahtarının var oluş sebebi ortadan kalkardı.
+func TestTamamlananYurutmeAnahtariBirakmaz(t *testing.T) {
+	rec := &recorder{}
+	eng := workflow.New(workflow.NewMemoryStore(), testLogger())
+	wf := workflow.Workflow{Name: "idem", Steps: steps(step(rec, "a"))}
+
+	_, err := eng.Run(t.Context(), wf, nil, workflow.WithIdempotencyKey("sepet-2"))
+	require.NoError(t, err)
+
+	_, err = eng.Run(t.Context(), wf, nil, workflow.WithIdempotencyKey("sepet-2"))
+	require.NoError(t, err)
+
+	assert.Equal(t, []string{"invoke:a"}, rec.snapshot(),
+		"ikinci çağrı adımı TEKRAR çalıştırmamalı")
+}
+
+// TestTelafiEdilemeyenYurutmeAnahtariBirakmaz ikinci sınırı çizer.
+//
+// Telafi tamamlanamadıysa ortada elle müdahale bekleyen YARIM bir iş vardır ve
+// anahtarın bırakılması, o yarım işin üstüne yeni bir denemenin binmesi
+// demektir. Bu yüzden bu durumda kayıt anahtarını tutar ve çağıran 409 alır.
+func TestTelafiEdilemeyenYurutmeAnahtariBirakmaz(t *testing.T) {
+	rec := &recorder{}
+	eng := workflow.New(workflow.NewMemoryStore(), testLogger())
+
+	ilk := &testStep{name: "a", rec: rec, onCompensate: func(context.Context, *workflow.StepContext) error {
+		return errors.Internal("telafi_patladi", "geri alınamadı")
+	}}
+	patlayan := &testStep{name: "b", rec: rec, onInvoke: func(context.Context, *workflow.StepContext) (any, error) {
+		return nil, errors.Internal("declined", "ödeme reddedildi")
+	}}
+	wf := workflow.Workflow{Name: "idem", Steps: steps(ilk, patlayan)}
+
+	_, err := eng.Run(t.Context(), wf, nil, workflow.WithIdempotencyKey("sepet-3"))
+	require.Error(t, err)
+
+	_, err = eng.Run(t.Context(), wf, nil, workflow.WithIdempotencyKey("sepet-3"))
+	require.Error(t, err, "telafi edilememiş yürütme anahtarı TUTMALI")
+	assert.True(t, errors.IsConflict(err), "çağıran 409 almalı; hata: %v", err)
+}
+
 // TestIdempotencyDifferentKeyRunsAgain farklı anahtarın yeni yürütme açtığını doğrular.
 func TestIdempotencyDifferentKeyRunsAgain(t *testing.T) {
 	rec := &recorder{}

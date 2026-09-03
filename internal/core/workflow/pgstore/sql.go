@@ -78,9 +78,19 @@ FROM yazilan
 WHERE e.id = yazilan.execution_id`
 
 // updateStatusSQL yürütmenin son durumunu yazar.
+// $5 idempotency anahtarının BIRAKILIP bırakılmayacağıdır.
+//
+// Karar Go tarafında verilir ve buraya boolean olarak gelir; SQL'e 'failed'
+// dizesini gömmek, durum sabitinin ikinci bir kopyasını üretirdi ve iki kopya
+// ayrıştığı gün kural sessizce çalışmaz olurdu.
+//
+// Anahtar NULL'a çekilir, SATIR SİLİNMEZ: başarısız deneme denetim kaydı olarak
+// kalmalıdır. Kısmi tekil indeks yalnızca DOLU anahtarları kapsadığı için
+// NULL'a çekilen satır bir sonraki denemenin önünü açar.
 const updateStatusSQL = `
 UPDATE workflow_executions
-SET status = $2, output = $3, failure = $4, updated_at = now()
+SET status = $2, output = $3, failure = $4, updated_at = now(),
+    idempotency_key = CASE WHEN $5 THEN NULL ELSE idempotency_key END
 WHERE id = $1`
 
 // selectExecutionSQL yürütmeyi adımlarıyla birlikte TEK ifadede okur.

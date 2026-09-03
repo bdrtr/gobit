@@ -947,11 +947,20 @@ type sahteAdim struct {
 	cikti     any
 	hata      error
 	telafiler *[]string
+	// yurutmeID doldurulursa adım, çalıştığı yürütmenin kimliğini oraya yazar.
+	//
+	// Telafi edilmiş bir yürütme idempotency anahtarını BIRAKIR (bkz.
+	// [workflow.StatusFailed]), dolayısıyla kaydına anahtardan ulaşılamaz.
+	// Kimliği adımdan almak, kaydın hâlâ orada olduğunu kanıtlamanın tek yolu.
+	yurutmeID *string
 }
 
 func (a *sahteAdim) Name() string { return a.ad }
 
-func (a *sahteAdim) Invoke(_ context.Context, _ *workflow.StepContext) (any, error) {
+func (a *sahteAdim) Invoke(_ context.Context, sc *workflow.StepContext) (any, error) {
+	if a.yurutmeID != nil {
+		*a.yurutmeID = sc.ExecutionID
+	}
 	if a.hata != nil {
 		return nil, a.hata
 	}
@@ -1018,6 +1027,7 @@ func TestMotorlaBasariliKosuKaliciOlur(t *testing.T) {
 // adımlar önce invoked, sonra compensated olarak yazılır; kayıt yine üç
 // satırdır, altı değil.
 func TestMotorlaTelafiKaliciOlur(t *testing.T) {
+	var yurutmeID string
 	ctx := context.Background()
 	depo := yeniDepo()
 	motor := workflow.New(depo, nil)
@@ -1028,7 +1038,7 @@ func TestMotorlaTelafiKaliciOlur(t *testing.T) {
 		Steps: []workflow.Step{
 			&sahteAdim{ad: "stok_rezerve", cikti: "rez_1", telafiler: &telafiler},
 			&sahteAdim{ad: "odeme_al", cikti: "pay_1", telafiler: &telafiler},
-			&sahteAdim{ad: "siparis_olustur", hata: coreerrors.Internal("patladi", "sipariş yazılamadı"), telafiler: &telafiler},
+			&sahteAdim{ad: "siparis_olustur", hata: coreerrors.Internal("patladi", "sipariş yazılamadı"), telafiler: &telafiler, yurutmeID: &yurutmeID},
 		},
 	}
 
@@ -1039,8 +1049,17 @@ func TestMotorlaTelafiKaliciOlur(t *testing.T) {
 	assert.Equal(t, []string{"odeme_al", "stok_rezerve"}, telafiler,
 		"telafi TERS sırada çalışmalı")
 
-	kalici, err := depo.FindByIdempotencyKey(ctx, wf.Name, "ord_e2e_telafi")
-	require.NoError(t, err)
+	// Telafi tamamlandıysa yürütme dünyada iz bırakmamıştır ve anahtarı da
+	// bırakılmıştır: aynı anahtarla gelen bir sonraki çağrı 409 değil YENİ bir
+	// yürütme almalıdır (bkz. [workflow.StatusFailed]).
+	_, anahtarErr := depo.FindByIdempotencyKey(ctx, wf.Name, "ord_e2e_telafi")
+	require.Error(t, anahtarErr, "telafi edilen yürütme anahtarı TUTMAMALI")
+	assert.True(t, coreerrors.IsNotFound(anahtarErr))
+
+	// Kayıt SİLİNMEZ; yalnızca anahtarı düşer. Kimliğe adımdan ulaşılır.
+	require.NotEmpty(t, yurutmeID, "adım yürütme kimliğini yazmalı")
+	kalici, err := depo.Get(ctx, yurutmeID)
+	require.NoError(t, err, "başarısız deneme denetim kaydı olarak KALMALI")
 
 	assert.Equal(t, workflow.StatusFailed, kalici.Status, "telafi tamamlandıysa durum failed olmalı")
 	assert.NotEmpty(t, kalici.Failure, "arıza açıklaması kalıcılaşmalı")

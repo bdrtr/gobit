@@ -324,7 +324,10 @@ func (s *store) UpdateStatus(
 		return err
 	}
 
-	tag, err := pool.Exec(ctx, updateStatusSQL, id, statusText, outputParam, safeText(failure))
+	// Telafi eksiksiz tamamlandıysa yürütme dünyada iz BIRAKMAMIŞTIR; anahtar
+	// da bir izdir ve bırakılır. Gerekçe [workflow.StatusFailed] godoc'unda.
+	tag, err := pool.Exec(ctx, updateStatusSQL, id, statusText, outputParam, safeText(failure),
+		status == workflow.StatusFailed)
 	if err != nil {
 		return wrapDB(err, CodeQueryFailed, "%q yürütmesinin durumu yazılamadı", id)
 	}

@@ -10,6 +10,37 @@ Sabitlenme `1.0.0` ile olur.
 
 ## [Yayımlanmamış]
 
+### Düzeltildi
+
+- **Başarısız bir ödeme sepeti KALICI olarak bozuyordu.** Kartı reddedilen
+  müşteri — gerçek bir vitrinde her on ödemenin birinde olan şey — o sepeti bir
+  daha ödeyemiyordu. Ölçüldü:
+
+  ```
+  1) manual_outcome=decline  -> payment_authorization_declined   (saga telafi etti)
+  2) geçerli ödemeyle tekrar -> 409 workflow_execution_failed
+     "...daha önce başarısız oldu ve telafi edildi; yeniden denemek için
+      YENİ bir anahtar kullanın"
+  ```
+
+  Tavsiyenin HTTP yüzeyinde bir karşılığı da yoktu: anahtar sepet kimliğinden
+  TÜRETİLİYOR (`complete_cart:<sepet>`), yani müşterinin yeni anahtar
+  verebileceği bir alan yok. Sepet içindekilerle birlikte duruyor ama satın
+  alınamıyor; müşteri sepeti sıfırdan kurmak zorunda.
+
+  Kusur anlamdaydı: bu motorda `StatusFailed` "başarısız" değil, **"başarısız
+  ve telafi EKSİKSİZ tamamlandı"** demek — yani deneme dünyada iz bırakmadı.
+  Anahtar da bir izdir. Artık o duruma geçiş anahtarı BIRAKIYOR (kaydı silmeden;
+  başarısız deneme denetim kaydı olarak kalıyor) ve aynı sepet tekrar
+  ödenebiliyor.
+
+  Sınır iki yandan çizili ve testli: `completed` anahtarı bırakmaz (yoksa aynı
+  sepet iki kez tahsil edilirdi), `compensation_failed` de bırakmaz (yoksa elle
+  müdahale bekleyen yarım bir işin üstüne yeni deneme binerdi). Bırakma, durum
+  yazımıyla AYNI ifadede yapılıyor: iki ayrı yazım arasında düşen bir süreç
+  anahtarı sonsuza dek tutulu bırakır, yani düzeltilen arızayı nadir bir yarış
+  olarak geri getirirdi.
+
 ### Güvenlik
 
 - **Vitrinde bir alışverişçi başkasının SEPETİNİ alabiliyordu.** Idempotency
