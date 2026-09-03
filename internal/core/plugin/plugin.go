@@ -1,34 +1,36 @@
-// Package plugin çekirdeğe dokunmadan yetenek ekleyen eklentileri tanımlar.
+// Package plugin defines the plugins that add capabilities without touching the
+// core.
 //
-// Bir eklenti modül, route, event subscriber ve sağlayıcı (payment,
-// fulfillment, notification, file) kaydedebilir. Bunu yaparken hiçbir commerce
-// modülünü import ETMEZ: kayıt noktalarına container'dan ADLA ulaşır ve
-// sözleşmeleri çekirdekteki [github.com/bdrtr/gobit/internal/core/provider]
-// paketinden alır (ADR 0001).
+// A plugin can register a module, routes, event subscribers and providers
+// (payment, fulfillment, notification, file). While doing so it imports NO
+// commerce module: it reaches the registration points from the container BY
+// NAME and takes the contracts from the core's
+// [github.com/bdrtr/gobit/internal/core/provider] package (ADR 0001).
 //
-// # Neden derleme zamanı eklentisi
+// # Why a compile-time plugin
 //
-// Go'nun standart [plugin] paketi (.so yükleme) burada BİLİNÇLİ olarak
-// kullanılmıyor. Nedenleri: yalnızca Linux/macOS'ta çalışır, çapraz derlemeyi
-// desteklemez, eklenti ile ana ikilinin TÜM bağımlılıklarının bit düzeyinde
-// aynı sürümde derlenmiş olmasını şart koşar ve yüklenen kod hiç boşaltılamaz.
-// Bu kısıtlar, "eklentiyi çalışırken tak" vaadini pratikte "her eklenti için
-// tüm uygulamayı yeniden derle"ye çevirir — yani derleme zamanı kaydının
-// zaten sağladığı şeye, üstüne kırılganlık ekleyerek.
+// Go's standard [plugin] package (.so loading) is DELIBERATELY not used here.
+// The reasons: it works only on Linux and macOS, does not support cross
+// compilation, requires ALL dependencies of the plugin and the main binary to
+// be built at bit-identical versions, and the loaded code can never be
+// unloaded. Those constraints turn the "plug the plugin in at runtime" promise
+// into "rebuild the whole application for every plugin" in practice — that is,
+// into what compile-time registration already gives, with added fragility on
+// top.
 //
-// Bunun yerine eklenti sıradan bir Go paketidir; uygulama onu import eder ve
-// [Registry]'ye ekler. "Çekirdeğe dokunmadan" ölçütü şöyle karşılanır:
-// eklenti eklemek yalnızca kurulum dosyasına bir satır ekler, çekirdeğin ya
-// da herhangi bir modülün kodu DEĞİŞMEZ.
+// Instead a plugin is an ordinary Go package; the application imports it and
+// adds it to the [Registry]. The "without touching the core" criterion is met
+// like this: adding a plugin adds one line to the setup file, and the code of
+// the core or of any module DOES NOT CHANGE.
 //
-// # İki faz
+// # Two phases
 //
-// Eklentiler [Registry.Install] ile kurulur, [Registry.Start] ile başlatılır.
-// Arada modüller ayağa kalkar. Bu ayrım zorunludur: eklenti bir sağlayıcıyı
-// "payment.providers" kaydına eklemek ister ama o kayıt, payment modülü
-// Register edilene kadar container'da YOKTUR. Install sırasında yapılan
-// sağlayıcı ve subscriber kayıtları bu yüzden hemen uygulanmaz, KUYRUĞA
-// alınır ve Start'ta işlenir.
+// Plugins are installed with [Registry.Install] and started with
+// [Registry.Start]. The modules come up in between. The split is mandatory: a
+// plugin wants to add a provider to the "payment.providers" registry, but that
+// registry is NOT in the container until the payment module has registered.
+// Provider and subscriber registrations made during Install are therefore not
+// applied immediately; they are QUEUED and processed at Start.
 package plugin
 
 import (
@@ -47,29 +49,33 @@ import (
 	coreprovider "github.com/bdrtr/gobit/internal/core/provider"
 )
 
-// PaymentProvidersName ödeme sağlayıcı kaydının container'daki adıdır.
+// PaymentProvidersName is the container name of the payment provider registry.
 //
-// payment modülünün ProvidersName sabitiyle aynı değeri taşır ama o paketi
-// import ETMEZ: çekirdek modülleri import edemez (Prensip 2.4). Değer bir
-// sözleşmedir; ikisinin uyumu [TestSaglayiciKayitAdlariUyusuyor] ile korunur.
+// It carries the same value as the payment module's ProvidersName constant but
+// does NOT import that package: the core may not import the modules (Principle
+// 2.4). The value is a contract; that the two agree is protected by
+// [TestSaglayiciKayitAdlariUyusuyor].
 const PaymentProvidersName = "payment.providers"
 
-// FulfillmentProvidersName kargo sağlayıcı kaydının container'daki adıdır.
+// FulfillmentProvidersName is the container name of the shipping provider
+// registry.
 const FulfillmentProvidersName = "fulfillment.providers"
 
-// NotificationProvidersName bildirim sağlayıcı kaydının container'daki adıdır.
+// NotificationProvidersName is the container name of the notification provider
+// registry.
 const NotificationProvidersName = "notification.providers"
 
-// FileProvidersName dosya sağlayıcı kaydının container'daki adıdır.
+// FileProvidersName is the container name of the file provider registry.
 //
-// Diğer üçünün aksine bu adı karşılayan bir modül HENÜZ YOKTUR: sözleşme
-// ([github.com/bdrtr/gobit/internal/core/provider.FileProvider]) ve kayıt
-// noktası, onları tüketecek modülden önce yazıldı. Bu yüzden ad şu an TEK
-// TARAFLIDIR ve [TestSaglayiciKayitAdlariUyusuyor] onun için bir iddia
-// taşıyamaz; dosya modülü geldiğinde oraya bir satır eklenmelidir.
+// Unlike the other three there is NOT YET a module satisfying this name: the
+// contract ([github.com/bdrtr/gobit/internal/core/provider.FileProvider]) and
+// the registration point were written before the module that will consume
+// them. The name is therefore ONE-SIDED for now and
+// [TestSaglayiciKayitAdlariUyusuyor] can carry no assertion for it; a line must
+// be added there when the file module arrives.
 const FileProvidersName = "file.providers"
 
-// Hata kodları.
+// The error codes.
 const (
 	codeNameEmpty       = "plugin_name_empty"
 	codeNameDuplicate   = "plugin_name_duplicate"
@@ -82,87 +88,90 @@ const (
 	codeRouteInvalid    = "plugin_route_invalid"
 )
 
-// Plugin çekirdeğe yetenek ekleyen bir eklentidir.
+// Plugin is a plugin adding a capability to the core.
 type Plugin interface {
-	// Name eklentinin benzersiz adıdır (örn. "payment-stripe").
-	// Loglarda ve hata mesajlarında kullanılır.
+	// Name is the plugin's unique name (e.g. "payment-stripe").
+	// It is used in logs and error messages.
 	Name() string
 
-	// Setup eklentinin kayıtlarını [Host] üzerinden bildirir.
+	// Setup declares the plugin's registrations through the [Host].
 	//
-	// DİKKAT: Bu aşamada modüller HENÜZ ayağa kalkmamıştır. Container'dan
-	// modül servisi çözmeye çalışmayın; [Host]'un kayıt metodları çağrıyı
-	// zaten kuyruğa alır ve doğru anda uygular.
+	// CAUTION: at this stage the modules are NOT up yet. Do not try to resolve
+	// a module service from the container; the [Host]'s registration methods
+	// already queue the call and apply it at the right moment.
 	Setup(ctx context.Context, h *Host) error
 }
 
-// paymentSink ödeme sağlayıcı kaydının bu paketin ihtiyaç duyduğu dar
-// yüzeyidir (tüketici tarafı arayüz, ADR 0001).
+// paymentSink is the narrow surface of the payment provider registry this
+// package needs (a consumer-side interface, ADR 0001).
 type paymentSink interface {
 	Register(p coreprovider.PaymentProvider) error
 }
 
-// fulfillmentSink kargo sağlayıcı kaydının dar yüzeyidir.
+// fulfillmentSink is the narrow surface of the shipping provider registry.
 type fulfillmentSink interface {
 	Register(p coreprovider.FulfillmentProvider) error
 }
 
-// notificationSink bildirim sağlayıcı kaydının dar yüzeyidir.
+// notificationSink is the narrow surface of the notification provider
+// registry.
 type notificationSink interface {
 	Register(p coreprovider.NotificationProvider) error
 }
 
-// fileSink dosya sağlayıcı kaydının dar yüzeyidir.
+// fileSink is the narrow surface of the file provider registry.
 type fileSink interface {
 	Register(p coreprovider.FileProvider) error
 }
 
-// routeKaydi bir eklentinin bağlamak istediği route işlevidir.
+// routeRegistration is the route function a plugin wants to bind.
 //
-// İşlevin yanında eklentinin adı da taşınır: çakışma hatası "hangi yol"un yanı
-// sıra "hangi eklenti" sorusunu da yanıtlayamazsa, kurulumu düzeltecek kişi
-// tüm eklentileri tek tek denemek zorunda kalır.
-type routeKaydi struct {
-	// eklenti kaydı yapan eklentinin adıdır.
-	eklenti string
-	// baglama route'ları verilen router'a kaydeder.
-	baglama func(r chi.Router)
+// The plugin's name travels alongside the function: if the conflict error
+// cannot answer "which plugin" as well as "which path", whoever has to fix the
+// installation must try every plugin one by one.
+type routeRegistration struct {
+	// plugin is the name of the plugin making the registration.
+	plugin string
+	// bind registers the routes on the given router.
+	bind func(r chi.Router)
 }
 
-// kuyrukIsi Start aşamasında uygulanacak bir kaydı temsil eder.
-type kuyrukIsi struct {
-	// aciklama hata mesajında hangi işin başarısız olduğunu söyler.
-	aciklama string
-	// uygula işi gerçekleştirir.
-	uygula func(ctx context.Context, h *Host) error
+// queuedTask represents a registration to be applied during the Start phase.
+type queuedTask struct {
+	// description says which task failed, in the error message.
+	description string
+	// apply performs the task.
+	apply func(ctx context.Context, h *Host) error
 }
 
-// Host eklentinin çekirdeğe kayıt yaptığı yüzeydir.
+// Host is the surface a plugin registers with the core through.
 //
-// Eşzamanlı kullanıma güvenli DEĞİLDİR: eklentiler sırayla kurulur.
+// It is NOT safe for concurrent use: plugins are installed in sequence.
 type Host struct {
-	// c container'dır; eklentiler kendi servislerini buraya koyabilir.
+	// c is the container; plugins may put their own services in it.
 	c *container.Container
-	// modules modül kaydıdır; eklenti modülü buraya eklenir.
+	// modules is the module registry; a plugin's module is added here.
 	modules *module.Registry
-	// bus event otobüsüdür; nil olabilir.
+	// bus is the event bus; it may be nil.
 	bus eventbus.EventBus
-	// log eklentinin adıyla etiketlenmiş logger'dır.
+	// log is the logger tagged with the plugin's name.
 	log *slog.Logger
-	// settings eklenti yapılandırmasıdır (ortam değişkenlerinden gelir).
+	// settings is the plugin configuration (it comes from the environment
+	// variables).
 	settings map[string]string
 
-	// aktif o an Setup'ı çalışan eklentinin adıdır; hata mesajları için.
-	aktif string
-	// routes eklentilerin bağlamak istediği route kayıtlarıdır.
-	routes []routeKaydi
-	// kuyruk Start'ta uygulanacak işlerdir.
-	kuyruk []kuyrukIsi
+	// active is the name of the plugin whose Setup is running; it is for the
+	// error messages.
+	active string
+	// routes are the route registrations the plugins want to bind.
+	routes []routeRegistration
+	// queue holds the tasks to be applied at Start.
+	queue []queuedTask
 }
 
-// NewHost eklentilerin kullanacağı host'u kurar.
+// NewHost builds the host the plugins will use.
 //
-// settings nil olabilir; o durumda [Host.Setting] her anahtar için false döner.
+// settings may be nil; [Host.Setting] then returns false for every key.
 func NewHost(
 	c *container.Container,
 	modules *module.Registry,
@@ -177,21 +186,21 @@ func NewHost(
 	return &Host{c: c, modules: modules, bus: bus, log: log, settings: settings}
 }
 
-// Container çekirdek container'ını döner.
+// Container returns the core container.
 //
-// Setup sırasında buradan modül servisi ÇÖZMEYİN: modüller henüz kayıtlı
-// değildir. Kendi servisinizi kaydetmek (Provide) güvenlidir.
+// Do NOT resolve a module service from it during Setup: the modules are not
+// registered yet. Registering your own service (Provide) is safe.
 func (h *Host) Container() *container.Container { return h.c }
 
-// Logger eklentinin adıyla etiketlenmiş logger'ı döner.
-func (h *Host) Logger() *slog.Logger { return h.log.With("plugin", h.aktif) }
+// Logger returns the logger tagged with the plugin's name.
+func (h *Host) Logger() *slog.Logger { return h.log.With("plugin", h.active) }
 
-// Setting eklenti yapılandırmasından bir değer okur.
+// Setting reads a value from the plugin configuration.
 //
-// Anahtar yoksa ya da değer boşsa ikinci dönüş false olur. Boş dizeyi
-// "verilmemiş" saymak bilinçlidir: ortam değişkeni tabanlı yapılandırmada
-// tanımlı ama boş bir değişken neredeyse her zaman bir yapılandırma hatasıdır
-// ve sessizce boş bir API anahtarıyla çalışmaya başlamaktan iyidir.
+// When the key is absent or the value is empty the second result is false.
+// Counting an empty string as "not given" is deliberate: in environment-variable
+// configuration a defined but empty variable is almost always a configuration
+// error, and that is better than silently starting with an empty API key.
 func (h *Host) Setting(key string) (string, bool) {
 	v, ok := h.settings[key]
 	if !ok {
@@ -203,10 +212,10 @@ func (h *Host) Setting(key string) (string, bool) {
 	return v, v != ""
 }
 
-// AddModule eklentinin getirdiği modülü kayda ekler.
+// AddModule adds the module a plugin brings to the registry.
 //
-// Modül, çekirdek modüllerle aynı yaşam döngüsünden geçer: Register,
-// migration ve route bağlama.
+// The module goes through the same lifecycle as the core modules: Register,
+// migration and route binding.
 func (h *Host) AddModule(m module.Module) {
 	if m == nil || h.modules == nil {
 		return
@@ -215,40 +224,41 @@ func (h *Host) AddModule(m module.Module) {
 	h.modules.Add(m)
 }
 
-// AddRoutes eklentinin route'larını bağlayacak işlevi kaydeder.
+// AddRoutes registers the function that will bind the plugin's routes.
 //
-// İşlev, modüllerin route'ları bağlandıktan SONRA çalıştırılır.
+// The function is run AFTER the modules' routes have been bound.
 //
-// DİKKAT: İşlev İKİ KEZ çağrılır. [Registry.MountRoutes] önce onu boş bir
-// sonda router'ında çalıştırıp hangi desenleri istediğini öğrenir, çakışma
-// yoksa gerçek router'da yeniden çalıştırır. Bu yüzden işlev yalnızca route
-// kaydı yapmalı, başka yan etkisi (sayaç artırma, bağlantı açma) olmamalıdır.
+// CAUTION: the function is called TWICE. [Registry.MountRoutes] first runs it
+// on an empty probe router to learn which patterns it wants, and, when there is
+// no conflict, runs it again on the real router. The function must therefore
+// only register routes and have no other side effect (incrementing a counter,
+// opening a connection).
 func (h *Host) AddRoutes(fn func(r chi.Router)) {
 	if fn == nil {
 		return
 	}
 
-	h.routes = append(h.routes, routeKaydi{eklenti: h.aktif, baglama: fn})
+	h.routes = append(h.routes, routeRegistration{plugin: h.active, bind: fn})
 }
 
-// RegisterPaymentProvider bir ödeme sağlayıcısını payment modülüne ekler.
+// RegisterPaymentProvider adds a payment provider to the payment module.
 //
-// Kayıt hemen değil, [Registry.Start] sırasında yapılır: payment modülü
-// Setup anında henüz ayağa kalkmamış olabilir.
+// The registration happens not immediately but during [Registry.Start]: at
+// Setup time the payment module may not be up yet.
 //
-// payment modülü hiç kayıtlı değilse Start bir HATA döner. Sessizce yok
-// saymak, "stripe eklentisi kurulu" sanılan bir kurulumun aslında hiç ödeme
-// alamaması demek olurdu.
+// When the payment module is not registered at all, Start returns an ERROR.
+// Ignoring it silently would mean an installation believed to have "the stripe
+// plugin installed" taking no payment at all.
 func (h *Host) RegisterPaymentProvider(p coreprovider.PaymentProvider) {
 	if p == nil {
 		return
 	}
 
-	ad := h.aktif
-	h.kuyruk = append(h.kuyruk, kuyrukIsi{
-		aciklama: ad + " eklentisinin ödeme sağlayıcısı (" + p.ID() + ")",
-		uygula: func(_ context.Context, host *Host) error {
-			sink, err := cozSink[paymentSink](host, PaymentProvidersName, "payment")
+	name := h.active
+	h.queue = append(h.queue, queuedTask{
+		description: "the payment provider of the " + name + " plugin (" + p.ID() + ")",
+		apply: func(_ context.Context, host *Host) error {
+			sink, err := resolveSink[paymentSink](host, PaymentProvidersName, "payment")
 			if err != nil {
 				return err
 			}
@@ -258,17 +268,18 @@ func (h *Host) RegisterPaymentProvider(p coreprovider.PaymentProvider) {
 	})
 }
 
-// RegisterFulfillmentProvider bir kargo sağlayıcısını fulfillment modülüne ekler.
+// RegisterFulfillmentProvider adds a shipping provider to the fulfillment
+// module.
 func (h *Host) RegisterFulfillmentProvider(p coreprovider.FulfillmentProvider) {
 	if p == nil {
 		return
 	}
 
-	ad := h.aktif
-	h.kuyruk = append(h.kuyruk, kuyrukIsi{
-		aciklama: ad + " eklentisinin kargo sağlayıcısı (" + p.ID() + ")",
-		uygula: func(_ context.Context, host *Host) error {
-			sink, err := cozSink[fulfillmentSink](host, FulfillmentProvidersName, "fulfillment")
+	name := h.active
+	h.queue = append(h.queue, queuedTask{
+		description: "the shipping provider of the " + name + " plugin (" + p.ID() + ")",
+		apply: func(_ context.Context, host *Host) error {
+			sink, err := resolveSink[fulfillmentSink](host, FulfillmentProvidersName, "fulfillment")
 			if err != nil {
 				return err
 			}
@@ -278,28 +289,28 @@ func (h *Host) RegisterFulfillmentProvider(p coreprovider.FulfillmentProvider) {
 	})
 }
 
-// RegisterNotificationProvider bir bildirim sağlayıcısını notification
-// modülüne ekler.
+// RegisterNotificationProvider adds a notification provider to the
+// notification module.
 //
-// Sıralama kuralı [Host.RegisterPaymentProvider] ile aynıdır ve burada daha da
-// bağlayıcıdır: bildirim modülü, sağlayıcısını "order.placed" abonesinden
-// çağırır ve o abonelik de aynı Start turunda kurulur. Kayıt Setup'ta
-// denenseydi eklenti sağlayıcısı kaydın açılmasından önce gelir ve kurulum
-// patlardı.
+// The ordering rule is [Host.RegisterPaymentProvider]'s and is even more
+// binding here: the notification module calls its provider from the
+// "order.placed" subscriber, and that subscription is set up in the same Start
+// round. Had the registration been attempted at Setup, the plugin's provider
+// would arrive before the registry was opened and the setup would blow up.
 //
-// notification modülü hiç kayıtlı değilse Start bir HATA döner; sessizce yok
-// saymak, sipariş e-postası gönderdiğini sanan bir kurulumun hiçbir müşteriye
-// ulaşmaması demek olurdu.
+// When the notification module is not registered at all, Start returns an
+// ERROR; ignoring it silently would mean an installation that believes it sends
+// order emails reaching no customer at all.
 func (h *Host) RegisterNotificationProvider(p coreprovider.NotificationProvider) {
 	if p == nil {
 		return
 	}
 
-	ad := h.aktif
-	h.kuyruk = append(h.kuyruk, kuyrukIsi{
-		aciklama: ad + " eklentisinin bildirim sağlayıcısı (" + p.ID() + ")",
-		uygula: func(_ context.Context, host *Host) error {
-			sink, err := cozSink[notificationSink](host, NotificationProvidersName, "notification")
+	name := h.active
+	h.queue = append(h.queue, queuedTask{
+		description: "the notification provider of the " + name + " plugin (" + p.ID() + ")",
+		apply: func(_ context.Context, host *Host) error {
+			sink, err := resolveSink[notificationSink](host, NotificationProvidersName, "notification")
 			if err != nil {
 				return err
 			}
@@ -309,28 +320,29 @@ func (h *Host) RegisterNotificationProvider(p coreprovider.NotificationProvider)
 	})
 }
 
-// RegisterFileProvider bir dosya sağlayıcısını file modülüne ekler.
+// RegisterFileProvider adds a file provider to the file module.
 //
-// Sıralama kuralı [Host.RegisterPaymentProvider] ile aynıdır: kayıt Setup'ta
-// değil [Registry.Start] sırasında uygulanır.
+// The ordering rule is [Host.RegisterPaymentProvider]'s: the registration is
+// applied during [Registry.Start], not at Setup.
 //
-// file modülü hiç kayıtlı değilse Start bir HATA döner. Buradaki sessiz arıza
-// diğerlerinden daha UZUN ÖMÜRLÜ olurdu: "S3 eklentisi kurulu" sanılan bir
-// kurulum yüklemeleri kabın yerel diskine yazmaya devam eder, her şey
-// çalışıyor görünür ve kayıp ancak kap yeniden başlatıldığında ortaya çıkar —
-// o an dosyalar gitmiş, veritabanında ise hiçbir şeye çıkmayan adresler
-// kalmıştır. Ödeme arızası ilk müşteri denemesinde görülür; bu, ilk yeniden
-// başlatmaya kadar görünmez.
+// When the file module is not registered at all, Start returns an ERROR. The
+// silent failure here would be LONGER-LIVED than the others: an installation
+// believed to have "the S3 plugin installed" keeps writing uploads to the
+// container's local disk, everything looks like it works, and the loss only
+// appears when the container restarts — at which point the files are gone while
+// the database still holds addresses that lead nowhere. A payment failure is
+// seen at the first customer attempt; this one stays invisible until the first
+// restart.
 func (h *Host) RegisterFileProvider(p coreprovider.FileProvider) {
 	if p == nil {
 		return
 	}
 
-	ad := h.aktif
-	h.kuyruk = append(h.kuyruk, kuyrukIsi{
-		aciklama: ad + " eklentisinin dosya sağlayıcısı (" + p.ID() + ")",
-		uygula: func(_ context.Context, host *Host) error {
-			sink, err := cozSink[fileSink](host, FileProvidersName, "file")
+	name := h.active
+	h.queue = append(h.queue, queuedTask{
+		description: "the file provider of the " + name + " plugin (" + p.ID() + ")",
+		apply: func(_ context.Context, host *Host) error {
+			sink, err := resolveSink[fileSink](host, FileProvidersName, "file")
 			if err != nil {
 				return err
 			}
@@ -340,21 +352,21 @@ func (h *Host) RegisterFileProvider(p coreprovider.FileProvider) {
 	})
 }
 
-// Subscribe eklentiyi bir event'e abone eder.
+// Subscribe subscribes the plugin to an event.
 //
-// Abonelik [Registry.Start] sırasında kurulur.
+// The subscription is set up during [Registry.Start].
 func (h *Host) Subscribe(eventName string, fn eventbus.Handler) {
 	if fn == nil {
 		return
 	}
 
-	ad := h.aktif
-	h.kuyruk = append(h.kuyruk, kuyrukIsi{
-		aciklama: ad + " eklentisinin " + eventName + " aboneliği",
-		uygula: func(_ context.Context, host *Host) error {
+	name := h.active
+	h.queue = append(h.queue, queuedTask{
+		description: "the " + eventName + " subscription of the " + name + " plugin",
+		apply: func(_ context.Context, host *Host) error {
 			if host.bus == nil {
 				return coreerrors.Invalid(codeSubscribeFailed,
-					"event otobüsü yok, %s aboneliği kurulamaz", eventName)
+					"there is no event bus, the %s subscription cannot be set up", eventName)
 			}
 
 			return host.bus.Subscribe(eventName, fn)
@@ -362,35 +374,37 @@ func (h *Host) Subscribe(eventName string, fn eventbus.Handler) {
 	})
 }
 
-// cozSink container'dan sağlayıcı kaydını istenen dar yüzeyle çözer.
+// resolveSink resolves the provider registry from the container through the
+// wanted narrow surface.
 //
-// Ayrı bir jenerik fonksiyondur çünkü metodlar tip parametresi alamaz.
-func cozSink[T any](h *Host, ad, modulAdi string) (T, error) {
-	var sifir T
+// It is a separate generic function because methods cannot take type
+// parameters.
+func resolveSink[T any](h *Host, name, moduleName string) (T, error) {
+	var zero T
 
-	if h.c == nil || !h.c.Has(ad) {
-		return sifir, coreerrors.Invalid(codeSinkMissing,
-			"%s modülü kayıtlı değil; %q container'da bulunamadı", modulAdi, ad)
+	if h.c == nil || !h.c.Has(name) {
+		return zero, coreerrors.Invalid(codeSinkMissing,
+			"the %s module is not registered; %q was not found in the container", moduleName, name)
 	}
 
-	v, err := container.Resolve[T](h.c, ad)
+	v, err := container.Resolve[T](h.c, name)
 	if err != nil {
-		return sifir, coreerrors.Wrap(err, coreerrors.KindInternal, codeSinkUnusable,
-			"%q sağlayıcı kaydı beklenen yüzeyi karşılamıyor", ad)
+		return zero, coreerrors.Wrap(err, coreerrors.KindInternal, codeSinkUnusable,
+			"the provider registry %q does not satisfy the expected surface", name)
 	}
 
 	return v, nil
 }
 
-// Registry kurulu eklentileri tutar ve iki fazda çalıştırır.
+// Registry holds the installed plugins and runs them in two phases.
 type Registry struct {
-	// log kayıt olaylarını yazar.
+	// log writes the registration events.
 	log *slog.Logger
-	// plugins kurulu eklentilerdir; sıra korunur.
+	// plugins are the installed plugins; the order is preserved.
 	plugins []Plugin
 }
 
-// NewRegistry boş bir eklenti kaydı kurar.
+// NewRegistry builds an empty plugin registry.
 func NewRegistry(log *slog.Logger) *Registry {
 	if log == nil {
 		log = slog.Default()
@@ -399,7 +413,8 @@ func NewRegistry(log *slog.Logger) *Registry {
 	return &Registry{log: log}
 }
 
-// Add bir eklentiyi kayda ekler. Kurulum sırası ekleme sırasıdır.
+// Add adds a plugin to the registry. The installation order is the order of
+// addition.
 func (r *Registry) Add(p Plugin) {
 	if p == nil {
 		return
@@ -408,183 +423,185 @@ func (r *Registry) Add(p Plugin) {
 	r.plugins = append(r.plugins, p)
 }
 
-// Plugins kurulu eklentilerin adlarını döner.
+// Plugins returns the names of the installed plugins.
 func (r *Registry) Plugins() []string {
-	adlar := make([]string, 0, len(r.plugins))
+	names := make([]string, 0, len(r.plugins))
 	for _, p := range r.plugins {
-		adlar = append(adlar, p.Name())
+		names = append(names, p.Name())
 	}
 
-	return adlar
+	return names
 }
 
-// Install her eklentinin Setup'ını çalıştırır.
+// Install runs every plugin's Setup.
 //
-// MODÜLLER AYAĞA KALKMADAN ÖNCE çağrılmalıdır: eklentinin eklediği modülün de
-// Register/migration/route döngüsünden geçebilmesi buna bağlıdır.
+// It must be called BEFORE THE MODULES COME UP: whether a module added by a
+// plugin can go through the Register/migration/route cycle depends on it.
 func (r *Registry) Install(ctx context.Context, h *Host) error {
 	if err := r.validateNames(); err != nil {
 		return err
 	}
 
 	for _, p := range r.plugins {
-		h.aktif = p.Name()
+		h.active = p.Name()
 		if err := p.Setup(ctx, h); err != nil {
-			h.aktif = ""
+			h.active = ""
 
 			return coreerrors.Wrap(err, coreerrors.KindOf(err), codeSetupFailed,
-				"%s eklentisi kurulamadı", p.Name())
+				"the %s plugin could not be installed", p.Name())
 		}
 
-		r.log.DebugContext(ctx, "eklenti kuruldu", "plugin", p.Name())
+		r.log.DebugContext(ctx, "plugin installed", "plugin", p.Name())
 	}
 
-	h.aktif = ""
+	h.active = ""
 
-	r.log.InfoContext(ctx, "eklentiler kuruldu", "sayi", len(r.plugins))
+	r.log.InfoContext(ctx, "the plugins are installed", "count", len(r.plugins))
 
 	return nil
 }
 
-// Start kuyruğa alınmış sağlayıcı ve subscriber kayıtlarını uygular.
+// Start applies the queued provider and subscriber registrations.
 //
-// MODÜLLER AYAĞA KALKTIKTAN SONRA çağrılmalıdır.
+// It must be called AFTER THE MODULES ARE UP.
 func (r *Registry) Start(ctx context.Context, h *Host) error {
-	for _, is := range h.kuyruk {
-		if err := is.uygula(ctx, h); err != nil {
+	for _, task := range h.queue {
+		if err := task.apply(ctx, h); err != nil {
 			return coreerrors.Wrap(err, coreerrors.KindOf(err), codeStartFailed,
-				"%s kaydedilemedi", is.aciklama)
+				"%s could not be registered", task.description)
 		}
 
-		r.log.DebugContext(ctx, "eklenti kaydı uygulandı", "is", is.aciklama)
+		r.log.DebugContext(ctx, "plugin registration applied", "task", task.description)
 	}
 
-	h.kuyruk = nil
+	h.queue = nil
 
 	return nil
 }
 
-// MountRoutes eklentilerin route'larını router'a bağlar.
+// MountRoutes binds the plugins' routes to the router.
 //
-// Modül route'larından SONRA çağrılmalıdır: eklentinin bir modülün yolunu
-// gölgelemesi ancak burada, mevcut ağaç okunabildiği için yakalanabilir.
+// It must be called AFTER the module routes: a plugin shadowing a module's path
+// can only be caught here, where the existing tree can be read.
 //
-// # Neden çakışma denetimi
+// # Why a conflict check
 //
-// Yalnızca "sonra çağır" demek koruma DEĞİLDİR. chi'de aynı desen ikinci kez
-// kaydedilirse handler SESSİZCE ezilir (mevcut bir yola Mount denenirse de
-// panic edilir): eklenti "/store/v1/products"u kaydettiğinde mağaza ürün
-// listesi eklentinin handler'ına düşer ve bu ancak müşteri boş liste
-// gördüğünde fark edilir. Bu yüzden her eklenti route'u önce boş bir sonda
-// router'ına kaydedilip istediği desenler [chi.Walk] ile okunur; desen zaten
-// varsa GERÇEK router'a hiç dokunulmadan tipli bir çakışma hatası dönülür.
+// Saying "call it afterwards" is NOT protection. In chi, registering the same
+// pattern a second time overwrites the handler SILENTLY (and mounting onto an
+// existing path panics): when a plugin registers "/store/v1/products" the
+// storefront's product list falls to the plugin's handler, and that is only
+// noticed when a customer sees an empty list. Every plugin route is therefore
+// first registered on an empty probe router and the patterns it wants are read
+// with [chi.Walk]; when a pattern already exists a typed conflict error is
+// returned WITHOUT the REAL router being touched at all.
 //
-// İlk çakışmada durulur ve o eklentiden sonrakiler de bağlanmaz: kısmen
-// bağlanmış bir yönetim yüzeyi, hiç açılmamış bir sunucudan daha zor teşhis
-// edilir. Çağıranın hatayı yutması hâlinde bile modül route'u korunur, çünkü
-// çakışan kayıt hiç uygulanmamıştır.
+// It stops at the first conflict and the plugins after that one are not bound
+// either: a partially bound admin surface is harder to diagnose than a server
+// that never opened. Even if the caller swallows the error the module route is
+// preserved, because the conflicting registration was never applied.
 func (r *Registry) MountRoutes(router chi.Router, h *Host) error {
 	if router == nil {
 		return nil
 	}
 
-	mevcut, err := desenleriTopla(router)
+	existing, err := collectPatterns(router)
 	if err != nil {
 		return coreerrors.Wrap(err, coreerrors.KindInternal, codeRouteInvalid,
-			"mevcut route ağacı okunamadı")
+			"the existing route tree could not be read")
 	}
 
-	for _, kayit := range h.routes {
-		istenen, err := kayit.istenenDesenler()
+	for _, registration := range h.routes {
+		wanted, err := registration.wantedPatterns()
 		if err != nil {
 			return err
 		}
 
-		for _, desen := range istenen {
-			if _, cakisiyor := mevcut[desen]; !cakisiyor {
+		for _, pattern := range wanted {
+			if _, conflicts := existing[pattern]; !conflicts {
 				continue
 			}
 
-			// Çağıran hatayı yutsa bile arıza görünür kalmalı: eklenti
-			// route'ları bağlanmadan sunucu ayağa kalkarsa tek ipucu budur.
-			r.log.Error("eklenti route çakışması", "plugin", kayit.eklenti, "route", desen)
+			// The failure must stay visible even if the caller swallows the
+			// error: when the server comes up without the plugin routes bound,
+			// this is the only clue.
+			r.log.Error("plugin route conflict", "plugin", registration.plugin, "route", pattern)
 
 			return coreerrors.Conflict(codeRouteConflict,
-				"%s eklentisi zaten kayıtlı bir yolu bağlamaya çalıştı: %s",
-				kayit.eklenti, desen)
+				"the %s plugin tried to bind a path that is already registered: %s",
+				registration.plugin, pattern)
 		}
 
-		if err := kayit.calistir(router); err != nil {
+		if err := registration.run(router); err != nil {
 			return err
 		}
 
-		for _, desen := range istenen {
-			mevcut[desen] = struct{}{}
+		for _, pattern := range wanted {
+			existing[pattern] = struct{}{}
 		}
 	}
 
 	return nil
 }
 
-// istenenDesenler route işlevinin bağlamak istediği desenleri toplar.
+// wantedPatterns collects the patterns the route function wants to bind.
 //
-// İşlev boş bir sonda router'ında çalıştırılır; gerçek router'a bu aşamada
-// DOKUNULMAZ, çünkü amaç tam da kaydın yapılıp yapılmayacağına karar
-// vermektir. Sonda router'ı chi'nin kendi ağacıdır: desenleri elle
-// ayrıştırmak, Route/Mount/Group iç içe geçtiğinde chi'nin gerçekte ürettiği
-// yollardan sapardı.
-func (k routeKaydi) istenenDesenler() ([]string, error) {
-	sonda := chi.NewRouter()
-	if err := k.calistir(sonda); err != nil {
+// The function is run on an empty probe router; the real router is NOT TOUCHED
+// at this stage, because the point is precisely to decide whether the
+// registration happens at all. The probe router is chi's own tree: parsing the
+// patterns by hand would diverge from the paths chi actually produces once
+// Route/Mount/Group are nested.
+func (k routeRegistration) wantedPatterns() ([]string, error) {
+	probe := chi.NewRouter()
+	if err := k.run(probe); err != nil {
 		return nil, err
 	}
 
-	kume, err := desenleriTopla(sonda)
+	set, err := collectPatterns(probe)
 	if err != nil {
 		return nil, coreerrors.Wrap(err, coreerrors.KindInternal, codeRouteInvalid,
-			"%s eklentisinin route'ları okunamadı", k.eklenti)
+			"the routes of the %s plugin could not be read", k.plugin)
 	}
 
-	desenler := make([]string, 0, len(kume))
-	for desen := range kume {
-		desenler = append(desenler, desen)
+	patterns := make([]string, 0, len(set))
+	for pattern := range set {
+		patterns = append(patterns, pattern)
 	}
 
-	// Harita sırası rastgeledir; sıralamadan aynı çakışma her çalıştırmada
-	// başka bir yolu suçlayabilirdi.
-	sort.Strings(desenler)
+	// Map order is random; without sorting, the same conflict could blame a
+	// different path on every run.
+	sort.Strings(patterns)
 
-	return desenler, nil
+	return patterns, nil
 }
 
-// calistir route işlevini verilen router üzerinde çalıştırır.
+// run executes the route function on the given router.
 //
-// chi geçersiz bir desende ("/" ile başlamayan yol), route'lardan sonra
-// eklenen middleware'de ya da var olan bir yola Mount denemesinde PANİK eder.
-// Panik olduğu gibi bırakılsaydı açılışta yalnızca chi'nin iç yığın izi
-// görünür, hangi eklentinin suçlu olduğu yazmazdı; burada tipli bir hataya
-// çevrilir.
-func (k routeKaydi) calistir(r chi.Router) (err error) {
+// chi PANICS on an invalid pattern (a path not starting with "/"), on
+// middleware added after the routes, and on an attempt to Mount onto an
+// existing path. Had the panic been left as it is, only chi's internal stack
+// trace would show at startup and it would not say which plugin was to blame;
+// here it is turned into a typed error.
+func (k routeRegistration) run(r chi.Router) (err error) {
 	defer func() {
 		if p := recover(); p != nil {
 			err = coreerrors.Invalid(codeRouteInvalid,
-				"%s eklentisinin route kaydı chi tarafından reddedildi: %v", k.eklenti, p)
+				"the route registration of the %s plugin was rejected by chi: %v", k.plugin, p)
 		}
 	}()
 
-	k.baglama(r)
+	k.bind(r)
 
 	return nil
 }
 
-// desenleriTopla router ağacındaki "METOD desen" anahtarlarını toplar.
-func desenleriTopla(r chi.Routes) (map[string]struct{}, error) {
-	kume := map[string]struct{}{}
+// collectPatterns collects the "METHOD pattern" keys in the router tree.
+func collectPatterns(r chi.Routes) (map[string]struct{}, error) {
+	set := map[string]struct{}{}
 
 	err := chi.Walk(r, func(
 		method, route string, _ http.Handler, _ ...func(http.Handler) http.Handler,
 	) error {
-		kume[strings.ToUpper(method)+" "+normalizeDesen(route)] = struct{}{}
+		set[strings.ToUpper(method)+" "+normalizePattern(route)] = struct{}{}
 
 		return nil
 	})
@@ -592,50 +609,49 @@ func desenleriTopla(r chi.Routes) (map[string]struct{}, error) {
 		return nil, err
 	}
 
-	return kume, nil
+	return set, nil
 }
 
-// normalizeDesen chi'nin döndürdüğü route dizesini karşılaştırılabilir hâle
-// getirir.
+// normalizePattern makes the route string chi returns comparable.
 //
-// Mount edilmiş alt router'lar "/store/v1/products/*/" gibi kalıntılar bırakır
-// ve chi mount edilen yolu hem "/x" hem "/x/" olarak servis eder. Kalıntılar
-// temizlenmezse eklentinin "/store/v1/products" kaydı modülün aynı yoluyla
-// EŞLEŞMEZ ve çakışma gözden kaçardı.
-func normalizeDesen(route string) string {
-	desen := strings.ReplaceAll(route, "/*/", "/")
-	desen = strings.TrimSuffix(desen, "/*")
+// Mounted sub-routers leave residue such as "/store/v1/products/*/", and chi
+// serves a mounted path both as "/x" and as "/x/". Without cleaning the
+// residue, a plugin's "/store/v1/products" registration would NOT MATCH the
+// module's identical path and the conflict would go unnoticed.
+func normalizePattern(route string) string {
+	pattern := strings.ReplaceAll(route, "/*/", "/")
+	pattern = strings.TrimSuffix(pattern, "/*")
 
-	if len(desen) > 1 {
-		desen = strings.TrimSuffix(desen, "/")
+	if len(pattern) > 1 {
+		pattern = strings.TrimSuffix(pattern, "/")
 	}
 
-	if desen == "" {
+	if pattern == "" {
 		return "/"
 	}
 
-	return desen
+	return pattern
 }
 
-// validateNames eklenti adlarının boş olmadığını ve tekrarlanmadığını doğrular.
+// validateNames checks that no plugin name is empty or repeated.
 //
-// Tekrarlanan ad, hangi eklentinin hangi sağlayıcıyı kaydettiğini logdan
-// izlenemez kılar; ayrıca aynı eklentinin iki kez kurulduğu bir yapılandırma
-// hatasının en olası belirtisidir.
+// A repeated name makes it impossible to follow from the log which plugin
+// registered which provider; it is also the most likely symptom of a
+// configuration error where the same plugin was installed twice.
 func (r *Registry) validateNames() error {
-	gorulen := make(map[string]struct{}, len(r.plugins))
+	seen := make(map[string]struct{}, len(r.plugins))
 
 	for _, p := range r.plugins {
-		ad := p.Name()
-		if strings.TrimSpace(ad) == "" {
-			return coreerrors.Invalid(codeNameEmpty, "eklenti adı boş olamaz")
+		name := p.Name()
+		if strings.TrimSpace(name) == "" {
+			return coreerrors.Invalid(codeNameEmpty, "a plugin name cannot be empty")
 		}
 
-		if _, dup := gorulen[ad]; dup {
-			return coreerrors.Conflict(codeNameDuplicate, "eklenti adı tekrarlandı: %s", ad)
+		if _, dup := seen[name]; dup {
+			return coreerrors.Conflict(codeNameDuplicate, "the plugin name is repeated: %s", name)
 		}
 
-		gorulen[ad] = struct{}{}
+		seen[name] = struct{}{}
 	}
 
 	return nil

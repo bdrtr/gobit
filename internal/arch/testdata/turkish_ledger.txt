@@ -70,16 +70,12 @@ internal/core/link/link_internal_test.go
 internal/core/link/link_test.go
 internal/core/link/registry.go
 internal/core/link/service.go
-internal/core/observability/observability.go
-internal/core/observability/observability_internal_test.go
 internal/core/openapi/handler_test.go
 internal/core/openapi/openapi.go
 internal/core/openapi/openapi_test.go
 internal/core/openapi/schema.go
 internal/core/openapi/schema_internal_test.go
 internal/core/openapi/schema_test.go
-internal/core/plugin/plugin.go
-internal/core/plugin/plugin_test.go
 internal/core/query/fakes_test.go
 internal/core/query/graph.go
 internal/core/query/query.go

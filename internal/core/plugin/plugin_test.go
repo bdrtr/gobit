@@ -19,114 +19,116 @@ import (
 	coreprovider "github.com/bdrtr/gobit/internal/core/provider"
 )
 
-// sahteSaglayici testlerde kullanılan en küçük ödeme sağlayıcısıdır.
-type sahteSaglayici struct{ id string }
+// fakePaymentProvider is the smallest payment provider used in the tests.
+type fakePaymentProvider struct{ id string }
 
-// ID sağlayıcının kimliğini döner.
-func (p sahteSaglayici) ID() string { return p.id }
+// ID returns the provider's identity.
+func (p fakePaymentProvider) ID() string { return p.id }
 
-// CreateSession testte çağrılmaz; arayüzü karşılamak için vardır.
-func (p sahteSaglayici) CreateSession(
+// CreateSession is never called in the tests; it exists to satisfy the interface.
+func (p fakePaymentProvider) CreateSession(
 	_ context.Context, _ coreprovider.CreateSessionInput,
 ) (coreprovider.Session, error) {
 	return coreprovider.Session{}, nil
 }
 
-// Authorize testte çağrılmaz.
-func (p sahteSaglayici) Authorize(
+// Authorize is never called in the tests.
+func (p fakePaymentProvider) Authorize(
 	_ context.Context, _ string,
 ) (coreprovider.AuthResult, error) {
 	return coreprovider.AuthResult{}, nil
 }
 
-// Capture testte çağrılmaz.
-func (p sahteSaglayici) Capture(_ context.Context, _ string, _ int64) error { return nil }
+// Capture is never called in the tests.
+func (p fakePaymentProvider) Capture(_ context.Context, _ string, _ int64) error { return nil }
 
-// Refund testte çağrılmaz.
-func (p sahteSaglayici) Refund(_ context.Context, _ string, _ int64) error { return nil }
+// Refund is never called in the tests.
+func (p fakePaymentProvider) Refund(_ context.Context, _ string, _ int64) error { return nil }
 
-// Cancel testte çağrılmaz.
-func (p sahteSaglayici) Cancel(_ context.Context, _ string) error { return nil }
+// Cancel is never called in the tests.
+func (p fakePaymentProvider) Cancel(_ context.Context, _ string) error { return nil }
 
-// sahteKayit payment modülünün sağlayıcı kaydını taklit eder.
-type sahteKayit struct {
-	kayitli []string
-	err     error
+// fakePaymentRegistry imitates the payment module's provider registry.
+type fakePaymentRegistry struct {
+	registered []string
+	err        error
 }
 
-// Register sağlayıcıyı kaydeder ya da yapılandırılmış hatayı döner.
-func (k *sahteKayit) Register(p coreprovider.PaymentProvider) error {
+// Register registers the provider or returns the configured error.
+func (k *fakePaymentRegistry) Register(p coreprovider.PaymentProvider) error {
 	if k.err != nil {
 		return k.err
 	}
 
-	k.kayitli = append(k.kayitli, p.ID())
+	k.registered = append(k.registered, p.ID())
 
 	return nil
 }
 
-// sahteBildirimSaglayici testlerde kullanılan en küçük bildirim sağlayıcısıdır.
-type sahteBildirimSaglayici struct{ id string }
+// fakeNotificationProvider is the smallest notification provider used in the
+// tests.
+type fakeNotificationProvider struct{ id string }
 
-// ID sağlayıcının kimliğini döner.
-func (p sahteBildirimSaglayici) ID() string { return p.id }
+// ID returns the provider's identity.
+func (p fakeNotificationProvider) ID() string { return p.id }
 
-// Send testte çağrılmaz; arayüzü karşılamak için vardır.
-func (p sahteBildirimSaglayici) Send(_ context.Context, _ coreprovider.Notification) error {
+// Send is never called in the tests; it exists to satisfy the interface.
+func (p fakeNotificationProvider) Send(_ context.Context, _ coreprovider.Notification) error {
 	return nil
 }
 
-// sahteBildirimKayit notification modülünün sağlayıcı kaydını taklit eder.
-type sahteBildirimKayit struct {
-	kayitli []string
+// fakeNotificationRegistry imitates the notification module's provider
+// registry.
+type fakeNotificationRegistry struct {
+	registered []string
 }
 
-// Register sağlayıcıyı kaydeder.
-func (k *sahteBildirimKayit) Register(p coreprovider.NotificationProvider) error {
-	k.kayitli = append(k.kayitli, p.ID())
+// Register registers the provider.
+func (k *fakeNotificationRegistry) Register(p coreprovider.NotificationProvider) error {
+	k.registered = append(k.registered, p.ID())
 
 	return nil
 }
 
-// sahteDosyaSaglayici testlerde kullanılan en küçük dosya sağlayıcısıdır.
-type sahteDosyaSaglayici struct{ id string }
+// fakeFileProvider is the smallest file provider used in the tests.
+type fakeFileProvider struct{ id string }
 
-// ID sağlayıcının kimliğini döner.
-func (p sahteDosyaSaglayici) ID() string { return p.id }
+// ID returns the provider's identity.
+func (p fakeFileProvider) ID() string { return p.id }
 
-// Upload testte çağrılmaz; arayüzü karşılamak için vardır.
-func (p sahteDosyaSaglayici) Upload(
+// Upload is never called in the tests; it exists to satisfy the interface.
+func (p fakeFileProvider) Upload(
 	_ context.Context, _ coreprovider.UploadInput,
 ) (coreprovider.File, error) {
 	return coreprovider.File{}, nil
 }
 
-// Delete testte çağrılmaz.
-func (p sahteDosyaSaglayici) Delete(_ context.Context, _ string) error { return nil }
+// Delete is never called in the tests.
+func (p fakeFileProvider) Delete(_ context.Context, _ string) error { return nil }
 
-// sahteDosyaKayit dosya modülünün sağlayıcı kaydını taklit eder.
-type sahteDosyaKayit struct {
-	kayitli []string
+// fakeFileRegistry imitates the file module's provider registry.
+type fakeFileRegistry struct {
+	registered []string
 }
 
-// Register sağlayıcıyı kaydeder.
-func (k *sahteDosyaKayit) Register(p coreprovider.FileProvider) error {
-	k.kayitli = append(k.kayitli, p.ID())
+// Register registers the provider.
+func (k *fakeFileRegistry) Register(p coreprovider.FileProvider) error {
+	k.registered = append(k.registered, p.ID())
 
 	return nil
 }
 
-// testEklenti Setup'ta verilen işlevi çalıştıran eklentidir.
-type testEklenti struct {
-	ad    string
+// testPlugin is a plugin that runs the function given for Setup.
+type testPlugin struct {
+	name  string
 	setup func(ctx context.Context, h *coreplugin.Host) error
 }
 
-// Name eklentinin adını döner.
-func (e testEklenti) Name() string { return e.ad }
+// Name returns the plugin's name.
+func (e testPlugin) Name() string { return e.name }
 
-// Setup yapılandırılmış işlevi çalıştırır.
-func (e testEklenti) Setup(ctx context.Context, h *coreplugin.Host) error {
+// Setup runs the configured function.
+func (e testPlugin) Setup(ctx context.Context, h *coreplugin.Host) error {
 	if e.setup == nil {
 		return nil
 	}
@@ -134,8 +136,8 @@ func (e testEklenti) Setup(ctx context.Context, h *coreplugin.Host) error {
 	return e.setup(ctx, h)
 }
 
-// kurulum test için container, kayıt ve host üçlüsünü hazırlar.
-func kurulum(t *testing.T, ayarlar map[string]string) (
+// newHost prepares the container, registry and host trio for a test.
+func newHost(t *testing.T, settings map[string]string) (
 	*container.Container, *coreplugin.Registry, *coreplugin.Host,
 ) {
 	t.Helper()
@@ -144,47 +146,48 @@ func kurulum(t *testing.T, ayarlar map[string]string) (
 	c := container.New(log)
 	t.Cleanup(func() { _ = c.Shutdown(context.Background()) })
 
-	return c, coreplugin.NewRegistry(log), coreplugin.NewHost(c, nil, nil, log, ayarlar)
+	return c, coreplugin.NewRegistry(log), coreplugin.NewHost(c, nil, nil, log, settings)
 }
 
-// TestSaglayiciKaydiStartaKadarBeklenir kaydın Setup'ta DEĞİL Start'ta
-// uygulandığını doğrular.
+// TestProviderRegistrationWaitsUntilStart proves the registration is applied at
+// Start and NOT at Setup.
 //
-// Setup'ta uygulansaydı, payment modülü henüz kayıtlı olmadığı için her
-// sağlayıcı eklentisi kurulumda patlardı; sıralamayı doğru kurmak eklentinin
-// değil çekirdeğin işidir.
-func TestSaglayiciKaydiStartaKadarBeklenir(t *testing.T) {
+// Had it been applied at Setup, every provider plugin would blow up during
+// installation because the payment module is not registered yet; getting the
+// order right is the core's job, not the plugin's.
+func TestProviderRegistrationWaitsUntilStart(t *testing.T) {
 	t.Parallel()
 
-	c, reg, h := kurulum(t, nil)
+	c, reg, h := newHost(t, nil)
 
-	reg.Add(testEklenti{ad: "stripe", setup: func(_ context.Context, h *coreplugin.Host) error {
-		h.RegisterPaymentProvider(sahteSaglayici{id: "stripe"})
+	reg.Add(testPlugin{name: "stripe", setup: func(_ context.Context, h *coreplugin.Host) error {
+		h.RegisterPaymentProvider(fakePaymentProvider{id: "stripe"})
 		return nil
 	}})
 
-	// payment modülü HENÜZ yok.
-	require.NoError(t, reg.Install(t.Context(), h), "kurulum modül olmadan da geçmeli")
+	// The payment module is NOT there yet.
+	require.NoError(t, reg.Install(t.Context(), h), "the installation must pass without the module too")
 
-	kayit := &sahteKayit{}
-	require.NoError(t, c.Provide(coreplugin.PaymentProvidersName, kayit))
+	registry := &fakePaymentRegistry{}
+	require.NoError(t, c.Provide(coreplugin.PaymentProvidersName, registry))
 
 	require.NoError(t, reg.Start(t.Context(), h))
-	assert.Equal(t, []string{"stripe"}, kayit.kayitli)
+	assert.Equal(t, []string{"stripe"}, registry.registered)
 }
 
-// TestSaglayiciKaydiModulYoksaHataDoner payment modülü hiç kayıtlı değilken
-// Start'ın SESSİZ KALMADIĞINI doğrular.
+// TestProviderRegistrationFailsWithoutTheModule proves Start does NOT STAY
+// SILENT while the payment module is not registered at all.
 //
-// Sessiz kalsaydı, "stripe eklentisi kurulu" sanılan bir kurulum hiç ödeme
-// alamaz ve bu ancak ilk müşteri denemesinde fark edilirdi.
-func TestSaglayiciKaydiModulYoksaHataDoner(t *testing.T) {
+// Had it stayed silent, an installation believed to have "the stripe plugin
+// installed" would take no payment, and that would only be noticed at the first
+// customer attempt.
+func TestProviderRegistrationFailsWithoutTheModule(t *testing.T) {
 	t.Parallel()
 
-	_, reg, h := kurulum(t, nil)
+	_, reg, h := newHost(t, nil)
 
-	reg.Add(testEklenti{ad: "stripe", setup: func(_ context.Context, h *coreplugin.Host) error {
-		h.RegisterPaymentProvider(sahteSaglayici{id: "stripe"})
+	reg.Add(testPlugin{name: "stripe", setup: func(_ context.Context, h *coreplugin.Host) error {
+		h.RegisterPaymentProvider(fakePaymentProvider{id: "stripe"})
 		return nil
 	}})
 	require.NoError(t, reg.Install(t.Context(), h))
@@ -195,66 +198,68 @@ func TestSaglayiciKaydiModulYoksaHataDoner(t *testing.T) {
 	assert.Contains(t, err.Error(), "stripe")
 }
 
-// TestSaglayiciKayitHatasiYayilir modülün kaydı reddetmesinin sessizce
-// yutulmadığını doğrular (örn. aynı kimlikle iki sağlayıcı).
-func TestSaglayiciKayitHatasiYayilir(t *testing.T) {
+// TestProviderRegistrationErrorPropagates proves the module refusing the
+// registration is not swallowed in silence (e.g. two providers with the same
+// identity).
+func TestProviderRegistrationErrorPropagates(t *testing.T) {
 	t.Parallel()
 
-	c, reg, h := kurulum(t, nil)
+	c, reg, h := newHost(t, nil)
 	require.NoError(t, c.Provide(coreplugin.PaymentProvidersName,
-		&sahteKayit{err: errors.New("aynı kimlik zaten kayıtlı")}))
+		&fakePaymentRegistry{err: errors.New("that identity is already registered")}))
 
-	reg.Add(testEklenti{ad: "stripe", setup: func(_ context.Context, h *coreplugin.Host) error {
-		h.RegisterPaymentProvider(sahteSaglayici{id: "stripe"})
+	reg.Add(testPlugin{name: "stripe", setup: func(_ context.Context, h *coreplugin.Host) error {
+		h.RegisterPaymentProvider(fakePaymentProvider{id: "stripe"})
 		return nil
 	}})
 	require.NoError(t, reg.Install(t.Context(), h))
 
 	err := reg.Start(t.Context(), h)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "aynı kimlik zaten kayıtlı")
+	assert.Contains(t, err.Error(), "that identity is already registered")
 }
 
-// TestBildirimSaglayiciKaydiStartaKadarBeklenir bildirim sağlayıcısının da
-// Setup'ta DEĞİL Start'ta kaydedildiğini doğrular.
+// TestNotificationProviderRegistrationWaitsUntilStart proves the notification
+// provider is registered at Start and NOT at Setup.
 //
-// Ödeme sağlayıcısındaki testin kopyası değildir: kuyruğa alma her sağlayıcı
-// türü için AYRI yazılmıştır ve bu tür, kaydı doğrudan uygulayan bir kısayolla
-// eklenmeye en açık olanıdır — bildirim modülü ödeme kadar erken ayağa
-// kalkmadığı için hata ancak gerçek kurulumda görülürdü.
-func TestBildirimSaglayiciKaydiStartaKadarBeklenir(t *testing.T) {
+// It is not a copy of the payment provider's test: the queueing is written
+// SEPARATELY for every provider kind, and this kind is the one most open to
+// being added with a shortcut that applies the registration directly — because
+// the notification module does not come up as early as payment, the error would
+// only be seen in a real installation.
+func TestNotificationProviderRegistrationWaitsUntilStart(t *testing.T) {
 	t.Parallel()
 
-	c, reg, h := kurulum(t, nil)
+	c, reg, h := newHost(t, nil)
 
-	reg.Add(testEklenti{ad: "postaci", setup: func(_ context.Context, h *coreplugin.Host) error {
-		h.RegisterNotificationProvider(sahteBildirimSaglayici{id: "smtp"})
+	reg.Add(testPlugin{name: "mailer", setup: func(_ context.Context, h *coreplugin.Host) error {
+		h.RegisterNotificationProvider(fakeNotificationProvider{id: "smtp"})
 		return nil
 	}})
 
-	// notification modülü HENÜZ yok.
-	require.NoError(t, reg.Install(t.Context(), h), "kurulum modül olmadan da geçmeli")
+	// The notification module is NOT there yet.
+	require.NoError(t, reg.Install(t.Context(), h), "the installation must pass without the module too")
 
-	kayit := &sahteBildirimKayit{}
-	require.NoError(t, c.Provide(coreplugin.NotificationProvidersName, kayit))
+	registry := &fakeNotificationRegistry{}
+	require.NoError(t, c.Provide(coreplugin.NotificationProvidersName, registry))
 
 	require.NoError(t, reg.Start(t.Context(), h))
-	assert.Equal(t, []string{"smtp"}, kayit.kayitli)
+	assert.Equal(t, []string{"smtp"}, registry.registered)
 }
 
-// TestBildirimSaglayiciKaydiModulYoksaHataDoner notification modülü hiç kayıtlı
-// değilken Start'ın SESSİZ KALMADIĞINI doğrular.
+// TestNotificationProviderRegistrationFailsWithoutTheModule proves Start does
+// NOT STAY SILENT while the notification module is not registered at all.
 //
-// Sessiz kalsaydı arıza ödeme sağlayıcısındakinden daha geç fark edilirdi:
-// bildirim gönderilmemesi hiçbir HTTP isteğini düşürmez, yalnızca müşteri
-// sipariş e-postasını hiç almaz.
-func TestBildirimSaglayiciKaydiModulYoksaHataDoner(t *testing.T) {
+// Had it stayed silent the failure would be noticed even later than the payment
+// provider's: a notification not being sent drops no HTTP request, the customer
+// simply never receives the order email.
+func TestNotificationProviderRegistrationFailsWithoutTheModule(t *testing.T) {
 	t.Parallel()
 
-	_, reg, h := kurulum(t, nil)
+	_, reg, h := newHost(t, nil)
 
-	reg.Add(testEklenti{ad: "postaci", setup: func(_ context.Context, h *coreplugin.Host) error {
-		h.RegisterNotificationProvider(sahteBildirimSaglayici{id: "smtp"})
+	reg.Add(testPlugin{name: "mailer", setup: func(_ context.Context, h *coreplugin.Host) error {
+		h.RegisterNotificationProvider(fakeNotificationProvider{id: "smtp"})
 		return nil
 	}})
 	require.NoError(t, reg.Install(t.Context(), h))
@@ -265,47 +270,49 @@ func TestBildirimSaglayiciKaydiModulYoksaHataDoner(t *testing.T) {
 	assert.Contains(t, err.Error(), "smtp")
 }
 
-// TestDosyaSaglayiciKaydiStartaKadarBeklenir dosya sağlayıcısının da Setup'ta
-// DEĞİL Start'ta kaydedildiğini doğrular.
+// TestFileProviderRegistrationWaitsUntilStart proves the file provider is
+// registered at Start and NOT at Setup.
 //
-// Kanıt bu tür için diğerlerinden daha GEREKLİDİR: file modülü henüz yoktur,
-// yani kayıt yolunu uçtan uca çalıştıran gerçek bir kurulum da yoktur. Kuyruğa
-// alma burada kırılırsa bugün hiçbir şey uyarmaz; arıza ancak modül yazıldığı
-// gün ilk eklentinin kurulumu patlayınca görülür ve suç, aylar önce yazılmış
-// kayıt noktasında değil yeni modülde aranır.
-func TestDosyaSaglayiciKaydiStartaKadarBeklenir(t *testing.T) {
+// The proof is MORE NECESSARY for this kind than for the others: there is no
+// file module yet, so there is no real installation exercising the registration
+// path end to end. If the queueing breaks here, nothing warns about it today;
+// the failure only appears the day the module is written and the first plugin's
+// installation blows up — and the blame is then looked for in the new module
+// rather than in a registration point written months earlier.
+func TestFileProviderRegistrationWaitsUntilStart(t *testing.T) {
 	t.Parallel()
 
-	c, reg, h := kurulum(t, nil)
+	c, reg, h := newHost(t, nil)
 
-	reg.Add(testEklenti{ad: "depo", setup: func(_ context.Context, h *coreplugin.Host) error {
-		h.RegisterFileProvider(sahteDosyaSaglayici{id: "s3"})
+	reg.Add(testPlugin{name: "storage", setup: func(_ context.Context, h *coreplugin.Host) error {
+		h.RegisterFileProvider(fakeFileProvider{id: "s3"})
 		return nil
 	}})
 
-	// file modülü HENÜZ yok.
-	require.NoError(t, reg.Install(t.Context(), h), "kurulum modül olmadan da geçmeli")
+	// The file module is NOT there yet.
+	require.NoError(t, reg.Install(t.Context(), h), "the installation must pass without the module too")
 
-	kayit := &sahteDosyaKayit{}
-	require.NoError(t, c.Provide(coreplugin.FileProvidersName, kayit))
+	registry := &fakeFileRegistry{}
+	require.NoError(t, c.Provide(coreplugin.FileProvidersName, registry))
 
 	require.NoError(t, reg.Start(t.Context(), h))
-	assert.Equal(t, []string{"s3"}, kayit.kayitli)
+	assert.Equal(t, []string{"s3"}, registry.registered)
 }
 
-// TestDosyaSaglayiciKaydiModulYoksaHataDoner file modülü hiç kayıtlı değilken
-// Start'ın SESSİZ KALMADIĞINI doğrular.
+// TestFileProviderRegistrationFailsWithoutTheModule proves Start does NOT STAY
+// SILENT while the file module is not registered at all.
 //
-// Sessiz kalsaydı yükleme yolu ayakta kalır ve dosyalar eklentinin deposuna
-// hiç ulaşmadan kabın yerel diskinde birikirdi; arıza ancak o disk silindiğinde
-// ve geriye hiçbir şeye çıkmayan adresler kaldığında görülürdü.
-func TestDosyaSaglayiciKaydiModulYoksaHataDoner(t *testing.T) {
+// Had it stayed silent the upload path would stay up and the files would pile
+// onto the container's local disk without ever reaching the plugin's store; the
+// failure would only be seen when that disk was wiped and nothing was left but
+// addresses leading nowhere.
+func TestFileProviderRegistrationFailsWithoutTheModule(t *testing.T) {
 	t.Parallel()
 
-	_, reg, h := kurulum(t, nil)
+	_, reg, h := newHost(t, nil)
 
-	reg.Add(testEklenti{ad: "depo", setup: func(_ context.Context, h *coreplugin.Host) error {
-		h.RegisterFileProvider(sahteDosyaSaglayici{id: "s3"})
+	reg.Add(testPlugin{name: "storage", setup: func(_ context.Context, h *coreplugin.Host) error {
+		h.RegisterFileProvider(fakeFileProvider{id: "s3"})
 		return nil
 	}})
 	require.NoError(t, reg.Install(t.Context(), h))
@@ -316,83 +323,82 @@ func TestDosyaSaglayiciKaydiModulYoksaHataDoner(t *testing.T) {
 	assert.Contains(t, err.Error(), "s3")
 }
 
-// TestSetupHatasiKurulumuDurdurur bir eklentinin Setup hatasının sonrakileri
-// çalıştırmadığını ve hangi eklentinin patladığını söylediğini doğrular.
-func TestSetupHatasiKurulumuDurdurur(t *testing.T) {
+// TestASetupErrorStopsTheInstallation proves one plugin's Setup error stops the
+// following ones from running and says which plugin blew up.
+func TestASetupErrorStopsTheInstallation(t *testing.T) {
 	t.Parallel()
 
-	_, reg, h := kurulum(t, nil)
+	_, reg, h := newHost(t, nil)
 
-	sonrakiCalisti := false
+	nextRan := false
 
-	reg.Add(testEklenti{ad: "bozuk", setup: func(_ context.Context, _ *coreplugin.Host) error {
-		return coreerrors.Invalid("eksik_ayar", "STRIPE_API_KEY verilmemiş")
+	reg.Add(testPlugin{name: "broken", setup: func(_ context.Context, _ *coreplugin.Host) error {
+		return coreerrors.Invalid("missing_setting", "STRIPE_API_KEY was not given")
 	}})
-	reg.Add(testEklenti{ad: "sonraki", setup: func(_ context.Context, _ *coreplugin.Host) error {
-		sonrakiCalisti = true
+	reg.Add(testPlugin{name: "next", setup: func(_ context.Context, _ *coreplugin.Host) error {
+		nextRan = true
 		return nil
 	}})
 
 	err := reg.Install(t.Context(), h)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "bozuk")
+	assert.Contains(t, err.Error(), "broken")
 	assert.Contains(t, err.Error(), "STRIPE_API_KEY")
-	assert.False(t, sonrakiCalisti, "hatalı eklentiden sonra kurulum durmalı")
+	assert.False(t, nextRan, "the installation must stop after the failing plugin")
 }
 
-// TestAyniAdliEklentiReddedilir tekrarlanan eklenti adının yakalandığını
-// doğrular.
-func TestAyniAdliEklentiReddedilir(t *testing.T) {
+// TestADuplicatePluginNameIsRejected proves a repeated plugin name is caught.
+func TestADuplicatePluginNameIsRejected(t *testing.T) {
 	t.Parallel()
 
-	_, reg, h := kurulum(t, nil)
-	reg.Add(testEklenti{ad: "stripe"})
-	reg.Add(testEklenti{ad: "stripe"})
+	_, reg, h := newHost(t, nil)
+	reg.Add(testPlugin{name: "stripe"})
+	reg.Add(testPlugin{name: "stripe"})
 
 	err := reg.Install(t.Context(), h)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "tekrarland")
+	assert.Contains(t, err.Error(), "repeated")
 }
 
-// TestBosAdliEklentiReddedilir adsız eklentinin yakalandığını doğrular.
-func TestBosAdliEklentiReddedilir(t *testing.T) {
+// TestAnEmptyPluginNameIsRejected proves a plugin with no name is caught.
+func TestAnEmptyPluginNameIsRejected(t *testing.T) {
 	t.Parallel()
 
-	_, reg, h := kurulum(t, nil)
-	reg.Add(testEklenti{ad: "   "})
+	_, reg, h := newHost(t, nil)
+	reg.Add(testPlugin{name: "   "})
 
 	err := reg.Install(t.Context(), h)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "boş")
+	assert.Contains(t, err.Error(), "empty")
 }
 
-// TestSettingBosDegeriVerilmemisSayar tanımlı ama boş bir ayarın "yok"
-// sayıldığını doğrular.
+// TestSettingCountsAnEmptyValueAsNotGiven proves a defined but empty setting
+// counts as "absent".
 //
-// Aksi hâlde boş bir API anahtarıyla çalışmaya başlanır ve arıza ancak ilk
-// gerçek çağrıda, üretimde görülürdü.
-func TestSettingBosDegeriVerilmemisSayar(t *testing.T) {
+// Otherwise the process would start with an empty API key and the failure would
+// only be seen at the first real call, in production.
+func TestSettingCountsAnEmptyValueAsNotGiven(t *testing.T) {
 	t.Parallel()
 
-	_, _, h := kurulum(t, map[string]string{
+	_, _, h := newHost(t, map[string]string{
 		"STRIPE_API_KEY": "sk_test_1",
-		"BOS":            "",
-		"SADECE_BOSLUK":  "   ",
+		"EMPTY":          "",
+		"ONLY_SPACES":    "   ",
 	})
 
 	v, ok := h.Setting("STRIPE_API_KEY")
 	assert.True(t, ok)
 	assert.Equal(t, "sk_test_1", v)
 
-	for _, k := range []string{"BOS", "SADECE_BOSLUK", "HIC_YOK"} {
+	for _, k := range []string{"EMPTY", "ONLY_SPACES", "ABSENT"} {
 		v, ok := h.Setting(k)
-		assert.False(t, ok, "%s verilmemiş sayılmalı", k)
+		assert.False(t, ok, "%s must count as not given", k)
 		assert.Empty(t, v)
 	}
 }
 
-// TestAboneStartaKadarBeklenir aboneliğin de kuyruğa alındığını doğrular.
-func TestAboneStartaKadarBeklenir(t *testing.T) {
+// TestSubscriptionWaitsUntilStart proves the subscription is queued too.
+func TestSubscriptionWaitsUntilStart(t *testing.T) {
 	t.Parallel()
 
 	log := slog.New(slog.DiscardHandler)
@@ -405,11 +411,11 @@ func TestAboneStartaKadarBeklenir(t *testing.T) {
 	reg := coreplugin.NewRegistry(log)
 	h := coreplugin.NewHost(c, nil, bus, log, nil)
 
-	geldi := make(chan string, 1)
+	received := make(chan string, 1)
 
-	reg.Add(testEklenti{ad: "izleyici", setup: func(_ context.Context, h *coreplugin.Host) error {
+	reg.Add(testPlugin{name: "watcher", setup: func(_ context.Context, h *coreplugin.Host) error {
 		h.Subscribe("order.placed", func(_ context.Context, e eventbus.Event) error {
-			geldi <- e.Name
+			received <- e.Name
 			return nil
 		})
 
@@ -423,17 +429,17 @@ func TestAboneStartaKadarBeklenir(t *testing.T) {
 		Name: "order.placed", Data: map[string]any{"id": "order_1"},
 	}))
 
-	assert.Equal(t, "order.placed", <-geldi)
+	assert.Equal(t, "order.placed", <-received)
 }
 
-// TestAboneOtobussuzHataDoner event otobüsü olmadan abone olmanın sessizce
-// başarısız OLMADIĞINI doğrular.
-func TestAboneOtobussuzHataDoner(t *testing.T) {
+// TestSubscribingWithoutABusFails proves subscribing without an event bus does
+// NOT fail silently.
+func TestSubscribingWithoutABusFails(t *testing.T) {
 	t.Parallel()
 
-	_, reg, h := kurulum(t, nil)
+	_, reg, h := newHost(t, nil)
 
-	reg.Add(testEklenti{ad: "izleyici", setup: func(_ context.Context, h *coreplugin.Host) error {
+	reg.Add(testPlugin{name: "watcher", setup: func(_ context.Context, h *coreplugin.Host) error {
 		h.Subscribe("order.placed", func(_ context.Context, _ eventbus.Event) error { return nil })
 		return nil
 	}})
@@ -444,13 +450,13 @@ func TestAboneOtobussuzHataDoner(t *testing.T) {
 	assert.Contains(t, err.Error(), "order.placed")
 }
 
-// TestRouteBaglama eklentinin route'unun gerçekten bağlandığını doğrular.
-func TestRouteBaglama(t *testing.T) {
+// TestRouteBinding proves a plugin's route is really bound.
+func TestRouteBinding(t *testing.T) {
 	t.Parallel()
 
-	_, reg, h := kurulum(t, nil)
+	_, reg, h := newHost(t, nil)
 
-	reg.Add(testEklenti{ad: "webhook", setup: func(_ context.Context, h *coreplugin.Host) error {
+	reg.Add(testPlugin{name: "webhook", setup: func(_ context.Context, h *coreplugin.Host) error {
 		h.AddRoutes(func(r chi.Router) {
 			r.Post("/hooks/stripe", func(w http.ResponseWriter, _ *http.Request) {
 				w.WriteHeader(http.StatusAccepted)
@@ -466,185 +472,189 @@ func TestRouteBaglama(t *testing.T) {
 
 	rctx := chi.NewRouteContext()
 	assert.True(t, router.Match(rctx, http.MethodPost, "/hooks/stripe"),
-		"eklenti route'u bağlanmış olmalı")
+		"the plugin route must be bound")
 }
 
-// modulRouterKur gerçek kurulumdaki gibi Mount edilmiş bir modül yüzeyi kurar.
+// newModuleRouter builds a Mounted module surface, as in a real installation.
 //
-// Doğrudan router.Get ile kaydetmek yeterli olmazdı: chi Mount'ta yolu
-// "/store/v1/products/*" biçiminde saklar ve çakışma denetiminin asıl sınavı
-// bu kalıntıyı görebilmesidir.
-func modulRouterKur(t *testing.T, yol, govde string) chi.Router {
+// Registering directly with router.Get would not be enough: on a Mount, chi
+// stores the path as "/store/v1/products/*", and seeing that residue is the
+// conflict check's real exam.
+func newModuleRouter(t *testing.T, path, body string) chi.Router {
 	t.Helper()
 
-	modul := chi.NewRouter()
-	modul.Get("/", func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write([]byte(govde))
+	sub := chi.NewRouter()
+	sub.Get("/", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(body))
 	})
 
 	router := chi.NewRouter()
-	router.Mount(yol, modul)
+	router.Mount(path, sub)
 
 	return router
 }
 
-// routeEklentisi verilen route işlevini kaydeden bir eklenti üretir.
-func routeEklentisi(ad string, fn func(r chi.Router)) testEklenti {
-	return testEklenti{ad: ad, setup: func(_ context.Context, h *coreplugin.Host) error {
+// routePlugin produces a plugin registering the given route function.
+func routePlugin(ad string, fn func(r chi.Router)) testPlugin {
+	return testPlugin{name: ad, setup: func(_ context.Context, h *coreplugin.Host) error {
 		h.AddRoutes(fn)
 
 		return nil
 	}}
 }
 
-// govdeyiOku yolu router'a sorup yanıt gövdesini döner.
-func govdeyiOku(t *testing.T, router chi.Router, metod, yol string) string {
+// readBody asks the router for the path and returns the response body.
+func readBody(t *testing.T, router chi.Router, method, path string) string {
 	t.Helper()
 
 	rec := httptest.NewRecorder()
-	router.ServeHTTP(rec, httptest.NewRequest(metod, yol, http.NoBody))
+	router.ServeHTTP(rec, httptest.NewRequest(method, path, http.NoBody))
 
 	return rec.Body.String()
 }
 
-// TestEklentiModulYolunuGolgeleyemez eklentinin modül yolunu ezmesinin ÖNCEDEN
-// yakalandığını doğrular.
+// TestAPluginCannotShadowAModulePath proves a plugin overwriting a module path
+// is caught BEFOREHAND.
 //
-// chi aynı deseni ikinci kez kaydedince handler'ı sessizce ezer; "eklentileri
-// modüllerden sonra bağla" kuralı tek başına koruma sağlamaz. Denetim olmasa
-// mağaza ürün listesi eklentinin handler'ına düşer ve arıza ancak müşteri boş
-// liste gördüğünde fark edilirdi.
-func TestEklentiModulYolunuGolgeleyemez(t *testing.T) {
+// When chi registers the same pattern a second time it overwrites the handler
+// silently; the rule "bind the plugins after the modules" is no protection on
+// its own. Without the check the storefront's product list falls to the
+// plugin's handler and the failure is only noticed when a customer sees an
+// empty list.
+func TestAPluginCannotShadowAModulePath(t *testing.T) {
 	t.Parallel()
 
-	_, reg, h := kurulum(t, nil)
-	reg.Add(routeEklentisi("kotu", func(r chi.Router) {
+	_, reg, h := newHost(t, nil)
+	reg.Add(routePlugin("greedy", func(r chi.Router) {
 		r.Get("/store/v1/products", func(w http.ResponseWriter, _ *http.Request) {
-			_, _ = w.Write([]byte("eklenti"))
+			_, _ = w.Write([]byte("plugin"))
 		})
 	}))
 	require.NoError(t, reg.Install(t.Context(), h))
 
-	router := modulRouterKur(t, "/store/v1/products", "modul")
+	router := newModuleRouter(t, "/store/v1/products", "module")
 
 	err := reg.MountRoutes(router, h)
 	require.Error(t, err)
 	assert.Equal(t, coreerrors.KindConflict, coreerrors.KindOf(err))
-	assert.Contains(t, err.Error(), "kotu", "hata hangi eklentinin suçlu olduğunu söylemeli")
+	assert.Contains(t, err.Error(), "greedy", "the error must say which plugin is to blame")
 	assert.Contains(t, err.Error(), "/store/v1/products")
 
-	assert.Equal(t, "modul", govdeyiOku(t, router, http.MethodGet, "/store/v1/products"),
-		"modülün handler'ı yerinde kalmalı")
+	assert.Equal(t, "module", readBody(t, router, http.MethodGet, "/store/v1/products"),
+		"the module's handler must stay in place")
 }
 
-// TestCakismadaSonrakiEklentiDeBaglanmaz çakışmada kurulumun durduğunu
-// doğrular.
+// TestAConflictAlsoStopsTheFollowingPlugin proves the installation stops on a
+// conflict.
 //
-// Kısmen bağlanmış bir yüzey, hiç açılmamış bir sunucudan daha zor teşhis
-// edilir: bazı eklenti uçları çalışır, bazıları 404 döner.
-func TestCakismadaSonrakiEklentiDeBaglanmaz(t *testing.T) {
+// A partially bound surface is harder to diagnose than a server that never
+// opened: some plugin endpoints work while others return 404.
+func TestAConflictAlsoStopsTheFollowingPlugin(t *testing.T) {
 	t.Parallel()
 
-	_, reg, h := kurulum(t, nil)
-	reg.Add(routeEklentisi("kotu", func(r chi.Router) {
+	_, reg, h := newHost(t, nil)
+	reg.Add(routePlugin("greedy", func(r chi.Router) {
 		r.Get("/store/v1/products", func(http.ResponseWriter, *http.Request) {})
 	}))
-	reg.Add(routeEklentisi("masum", func(r chi.Router) {
-		r.Post("/hooks/masum", func(http.ResponseWriter, *http.Request) {})
+	reg.Add(routePlugin("innocent", func(r chi.Router) {
+		r.Post("/hooks/innocent", func(http.ResponseWriter, *http.Request) {})
 	}))
 	require.NoError(t, reg.Install(t.Context(), h))
 
-	router := modulRouterKur(t, "/store/v1/products", "modul")
+	router := newModuleRouter(t, "/store/v1/products", "module")
 	require.Error(t, reg.MountRoutes(router, h))
 
-	assert.False(t, router.Match(chi.NewRouteContext(), http.MethodPost, "/hooks/masum"),
-		"çakışmadan sonraki eklenti bağlanmamalı")
+	assert.False(t, router.Match(chi.NewRouteContext(), http.MethodPost, "/hooks/innocent"),
+		"the plugin after the conflict must not be bound")
 }
 
-// TestIkiEklentiAyniYoluBaglayamaz çakışma denetiminin eklentiler ARASINDA da
-// çalıştığını doğrular.
+// TestTwoPluginsCannotBindTheSamePath proves the conflict check works BETWEEN
+// plugins too.
 //
-// İlk eklentinin route'ları gerçek router'a girdiği için ikinci eklenti onu da
-// ezebilirdi; denetim yalnızca modül yollarını korusaydı eksik olurdu.
-func TestIkiEklentiAyniYoluBaglayamaz(t *testing.T) {
+// Because the first plugin's routes enter the real router, a second plugin
+// could overwrite those as well; a check protecting only the module paths would
+// be incomplete.
+func TestTwoPluginsCannotBindTheSamePath(t *testing.T) {
 	t.Parallel()
 
-	_, reg, h := kurulum(t, nil)
-	ayniYol := func(r chi.Router) {
+	_, reg, h := newHost(t, nil)
+	samePath := func(r chi.Router) {
 		r.Post("/hooks/stripe", func(http.ResponseWriter, *http.Request) {})
 	}
-	reg.Add(routeEklentisi("ilk", ayniYol))
-	reg.Add(routeEklentisi("ikinci", ayniYol))
+	reg.Add(routePlugin("first", samePath))
+	reg.Add(routePlugin("second", samePath))
 	require.NoError(t, reg.Install(t.Context(), h))
 
 	err := reg.MountRoutes(chi.NewRouter(), h)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "ikinci", "suçlu ikinci eklenti olmalı")
+	assert.Contains(t, err.Error(), "second", "the second plugin must be the one blamed")
 	assert.Contains(t, err.Error(), "/hooks/stripe")
 }
 
-// TestFarkliMetodCakismaSayilmaz aynı yolda BAŞKA bir metodun
-// engellenmediğini doğrular.
+// TestADifferentMethodIsNotAConflict proves a DIFFERENT method on the same path
+// is not blocked.
 //
-// chi metodları ayrı tutar; POST eklemek GET'i ezmez. Denetim yalnızca yola
-// bakarsa meşru bir eklenti gereksiz yere reddedilirdi.
-func TestFarkliMetodCakismaSayilmaz(t *testing.T) {
+// chi keeps the methods apart; adding a POST does not overwrite the GET. A
+// check that looked only at the path would reject a legitimate plugin for
+// nothing.
+func TestADifferentMethodIsNotAConflict(t *testing.T) {
 	t.Parallel()
 
-	_, reg, h := kurulum(t, nil)
-	reg.Add(routeEklentisi("abonelik", func(r chi.Router) {
+	_, reg, h := newHost(t, nil)
+	reg.Add(routePlugin("subscription", func(r chi.Router) {
 		r.Post("/store/v1/products", func(w http.ResponseWriter, _ *http.Request) {
-			_, _ = w.Write([]byte("eklenti"))
+			_, _ = w.Write([]byte("plugin"))
 		})
 	}))
 	require.NoError(t, reg.Install(t.Context(), h))
 
-	router := modulRouterKur(t, "/store/v1/products", "modul")
+	router := newModuleRouter(t, "/store/v1/products", "module")
 	require.NoError(t, reg.MountRoutes(router, h))
 
-	assert.Equal(t, "modul", govdeyiOku(t, router, http.MethodGet, "/store/v1/products"))
-	assert.Equal(t, "eklenti", govdeyiOku(t, router, http.MethodPost, "/store/v1/products"))
+	assert.Equal(t, "module", readBody(t, router, http.MethodGet, "/store/v1/products"))
+	assert.Equal(t, "plugin", readBody(t, router, http.MethodPost, "/store/v1/products"))
 }
 
-// TestGecersizRouteAnlasilirHataDoner chi'nin panic'inin hataya çevrildiğini
-// doğrular.
+// TestAnInvalidRouteReturnsAReadableError proves chi's panic is turned into an
+// error.
 //
-// Panik olduğu gibi bırakılsaydı açılışta yalnızca chi'nin iç yığın izi
-// görünür, hangi eklentinin suçlu olduğu yazmazdı.
-func TestGecersizRouteAnlasilirHataDoner(t *testing.T) {
+// Had the panic been left as it is, only chi's internal stack trace would show
+// at startup and it would not say which plugin was to blame.
+func TestAnInvalidRouteReturnsAReadableError(t *testing.T) {
 	t.Parallel()
 
-	_, reg, h := kurulum(t, nil)
-	reg.Add(routeEklentisi("bozuk", func(r chi.Router) {
-		// chi "/" ile başlamayan deseni reddeder.
+	_, reg, h := newHost(t, nil)
+	reg.Add(routePlugin("broken", func(r chi.Router) {
+		// chi rejects a pattern that does not start with "/".
 		r.Get("hooks/stripe", func(http.ResponseWriter, *http.Request) {})
 	}))
 	require.NoError(t, reg.Install(t.Context(), h))
 
-	router := modulRouterKur(t, "/store/v1/products", "modul")
+	router := newModuleRouter(t, "/store/v1/products", "module")
 
 	var err error
 	require.NotPanics(t, func() { err = reg.MountRoutes(router, h) })
 	require.Error(t, err)
 	assert.Equal(t, coreerrors.KindInvalid, coreerrors.KindOf(err))
-	assert.Contains(t, err.Error(), "bozuk")
-	assert.Equal(t, "modul", govdeyiOku(t, router, http.MethodGet, "/store/v1/products"),
-		"geçersiz kayıt gerçek router'a hiç dokunmamalı")
+	assert.Contains(t, err.Error(), "broken")
+	assert.Equal(t, "module", readBody(t, router, http.MethodGet, "/store/v1/products"),
+		"an invalid registration must not touch the real router at all")
 }
 
-// TestStartIkiKezCagrilirsaTekrarKaydetmez kuyruğun boşaltıldığını doğrular.
+// TestCallingStartTwiceDoesNotRegisterAgain proves the queue is drained.
 //
-// Boşaltılmasaydı ikinci Start aynı sağlayıcıyı yeniden kaydetmeye çalışır ve
-// "aynı kimlik zaten kayıtlı" hatasıyla kurulumu düşürürdü.
-func TestStartIkiKezCagrilirsaTekrarKaydetmez(t *testing.T) {
+// Without draining, a second Start would try to register the same provider
+// again and bring the installation down with a "that identity is already
+// registered" error.
+func TestCallingStartTwiceDoesNotRegisterAgain(t *testing.T) {
 	t.Parallel()
 
-	c, reg, h := kurulum(t, nil)
-	kayit := &sahteKayit{}
-	require.NoError(t, c.Provide(coreplugin.PaymentProvidersName, kayit))
+	c, reg, h := newHost(t, nil)
+	registry := &fakePaymentRegistry{}
+	require.NoError(t, c.Provide(coreplugin.PaymentProvidersName, registry))
 
-	reg.Add(testEklenti{ad: "stripe", setup: func(_ context.Context, h *coreplugin.Host) error {
-		h.RegisterPaymentProvider(sahteSaglayici{id: "stripe"})
+	reg.Add(testPlugin{name: "stripe", setup: func(_ context.Context, h *coreplugin.Host) error {
+		h.RegisterPaymentProvider(fakePaymentProvider{id: "stripe"})
 		return nil
 	}})
 
@@ -652,16 +662,16 @@ func TestStartIkiKezCagrilirsaTekrarKaydetmez(t *testing.T) {
 	require.NoError(t, reg.Start(t.Context(), h))
 	require.NoError(t, reg.Start(t.Context(), h))
 
-	assert.Equal(t, []string{"stripe"}, kayit.kayitli, "sağlayıcı bir kez kaydedilmeli")
+	assert.Equal(t, []string{"stripe"}, registry.registered, "the provider must be registered once")
 }
 
-// TestPluginsAdlariDoner kurulu eklentilerin listelenebildiğini doğrular.
-func TestPluginsAdlariDoner(t *testing.T) {
+// TestPluginsReturnsTheNames proves the installed plugins can be listed.
+func TestPluginsReturnsTheNames(t *testing.T) {
 	t.Parallel()
 
-	_, reg, _ := kurulum(t, nil)
-	reg.Add(testEklenti{ad: "stripe"})
-	reg.Add(testEklenti{ad: "shippo"})
+	_, reg, _ := newHost(t, nil)
+	reg.Add(testPlugin{name: "stripe"})
+	reg.Add(testPlugin{name: "shippo"})
 
 	assert.Equal(t, []string{"stripe", "shippo"}, reg.Plugins())
 }

@@ -1,24 +1,28 @@
-// Package observability OpenTelemetry trace ve metrik altyapısını kurar.
+// Package observability sets up the OpenTelemetry trace and metric
+// infrastructure.
 //
-// # Kapalıysa gerçekten kapalıdır
+// # When it is off, it is really off
 //
-// Toplayıcı adresi verilmemişse hiçbir dış bağlantı denenmez ve tüm izleme
-// çağrıları OTel'in kendi no-op uygulamalarına düşer. Bu, geliştirme
-// ortamında sürekli "connection refused" gürültüsü üretmemek için bilinçli
-// bir tercihtir; toplayıcı adresi vermek AÇIK bir karardır.
+// With no collector address given, no outbound connection is attempted and
+// every telemetry call falls through to OTel's own no-op implementations. That
+// is a deliberate choice so a development environment does not produce a
+// constant "connection refused" noise; giving a collector address is an
+// EXPLICIT decision.
 //
-// # Kurulum başarısızlığı uygulamayı düşürmez
+// # A setup failure does not bring the application down
 //
-// [Setup] toplayıcıya bağlanamazsa uygulama yine de açılır ve izleme kapalı
-// kalır. Gerekçe ADR 0007'deki ile aynıdır: izleme, ürünün DOĞRULUĞU için
-// değil görünürlüğü için vardır. Toplayıcının kesintisi mağazayı kapatmamalı.
-// gRPC dışa aktarıcısı zaten tembel bağlanır, yani asıl arıza modu da
-// açılışta değil çalışma anındadır ve orada da sessizce yeniden denenir.
+// When [Setup] cannot reach the collector the application opens anyway and
+// telemetry stays off. The rationale is ADR 0007's: telemetry exists for the
+// product's visibility, not its CORRECTNESS. An outage at the collector must
+// not close the store. The gRPC exporter connects lazily anyway, so the real
+// failure mode is at runtime rather than at startup, and there it retries
+// silently.
 //
-// # Örnekleme kararı istemciye BIRAKILMAZ
+// # The sampling decision is NOT left to the client
 //
-// Gelen traceparent başlığı okunur ama "sampled" bayrağı örnekleme oranını
-// ezemez; ayrıntı ve gerekçe için bkz. [ornekleyici].
+// The incoming traceparent header is read, but its "sampled" flag cannot
+// override the sampling ratio; for the detail and the rationale see
+// [sampler].
 package observability
 
 import (
@@ -40,46 +44,49 @@ import (
 	semconv "go.opentelemetry.io/otel/semconv/v1.43.0"
 )
 
-// shutdownTimeout kapanışta HER dışa aktarıcıya AYRI AYRI tanınan süredir.
+// shutdownTimeout is the time allowed to EACH exporter SEPARATELY at shutdown.
 //
-// Kapanışta bekleyen span'ları göndermek değerlidir ama süresiz beklemek,
-// toplayıcı erişilemezken SIGTERM'i asmak demektir.
+// Sending the spans pending at shutdown is valuable, but waiting indefinitely
+// means hanging SIGTERM while the collector is unreachable.
 //
-// Sürenin sağlayıcı BAŞINA olması bilinçlidir; gerekçesi [kapanisiYurut]'ta.
+// That the budget is PER PROVIDER is deliberate; the rationale is in
+// [runShutdown].
 const shutdownTimeout = 5 * time.Second
 
-// Options izleme kurulumunun girdileridir.
+// Options are the inputs of the telemetry setup.
 type Options struct {
-	// Endpoint OTLP toplayıcısının gRPC adresidir. Boşsa izleme KAPALIDIR.
+	// Endpoint is the OTLP collector's gRPC address. When empty, telemetry is
+	// OFF.
 	Endpoint string
-	// Insecure TLS'siz bağlanılacağını bildirir.
+	// Insecure says the connection is made without TLS.
 	Insecure bool
-	// ServiceName trace ve metriklerde raporlanan servis adıdır.
+	// ServiceName is the service name reported in traces and metrics.
 	ServiceName string
-	// ServiceVersion derleme sürümüdür.
+	// ServiceVersion is the build version.
 	ServiceVersion string
-	// Environment çalışma ortamıdır (development | staging | production).
+	// Environment is the runtime environment (development | staging |
+	// production).
 	Environment string
-	// SampleRatio örneklenecek trace oranıdır (0.0 - 1.0).
+	// SampleRatio is the ratio of traces to sample (0.0 - 1.0).
 	SampleRatio float64
-	// MetricInterval metriklerin gönderilme sıklığıdır; sıfırsa 60sn.
+	// MetricInterval is how often metrics are sent; zero means 60s.
 	MetricInterval time.Duration
-	// Logger kurulum olaylarını yazar; nil ise slog.Default.
+	// Logger writes the setup events; nil means slog.Default.
 	Logger *slog.Logger
 }
 
-// ShutdownFunc izleme altyapısını kapatır.
+// ShutdownFunc closes the telemetry infrastructure.
 type ShutdownFunc func(ctx context.Context) error
 
-// Setup global tracer ve meter sağlayıcılarını kurar.
+// Setup builds the global tracer and meter providers.
 //
-// Dönen ShutdownFunc her zaman çağrılabilir (nil DÖNMEZ): izleme kapalıyken
-// bile çağıranın koşullu bir kapanış yolu yazması gerekmesin diye. Koşullu
-// kapanış, "kapalıyken nil dönüyor" ayrıntısını unutan bir çağıranda nil
-// pointer paniğine dönüşürdü.
+// The ShutdownFunc returned is always callable (it is NEVER nil), so the caller
+// never has to write a conditional shutdown path even while telemetry is off. A
+// conditional shutdown would turn into a nil pointer panic in a caller who
+// forgot the "it returns nil when off" detail.
 //
-// Hata YALNIZCA yapılandırma bozukluğunda döner; ağ erişilemezliği hata
-// değildir çünkü gRPC dışa aktarıcısı tembel bağlanır.
+// An error is returned ONLY for a broken configuration; network
+// unreachability is not an error, because the gRPC exporter connects lazily.
 func Setup(ctx context.Context, opts Options) (ShutdownFunc, error) {
 	log := opts.Logger
 	if log == nil {
@@ -87,134 +94,138 @@ func Setup(ctx context.Context, opts Options) (ShutdownFunc, error) {
 	}
 
 	if opts.Endpoint == "" {
-		log.InfoContext(ctx, "OTLP adresi verilmedi, izleme kapalı")
+		log.InfoContext(ctx, "no OTLP address was given, telemetry is off")
 
 		return noopShutdown, nil
 	}
 
-	res, err := kaynak(ctx, opts)
+	res, err := newResource(ctx, opts)
 	if err != nil {
 		return noopShutdown, err
 	}
 
-	tracerSağlayıcı, err := izSaglayici(ctx, opts, res)
+	tracerProvider, err := newTracerProvider(ctx, opts, res)
 	if err != nil {
 		return noopShutdown, err
 	}
 
-	meterSağlayıcı, err := metrikSaglayici(ctx, opts, res)
+	meterProvider, err := newMeterProvider(ctx, opts, res)
 	if err != nil {
-		// İz sağlayıcısı kuruldu ama metrik kurulamadı: yarım kurulumu
-		// bırakmak, kapanışta göndermeye çalışan yetim bir goroutine demektir.
-		_ = tracerSağlayıcı.Shutdown(ctx)
+		// The trace provider was built but the metric one could not be:
+		// leaving a half setup behind means an orphaned goroutine still trying
+		// to send at shutdown.
+		_ = tracerProvider.Shutdown(ctx)
 
 		return noopShutdown, err
 	}
 
-	otel.SetTracerProvider(tracerSağlayıcı)
-	otel.SetMeterProvider(meterSağlayıcı)
+	otel.SetTracerProvider(tracerProvider)
+	otel.SetMeterProvider(meterProvider)
 
-	// W3C TraceContext + Baggage: istemciden gelen trace başlığının
-	// sürdürülebilmesi için gereklidir. Ayarlanmazsa her servis kendi kopuk
-	// trace'ini üretir ve dağıtık izleme hiçbir şeyi birleştiremez.
+	// W3C TraceContext + Baggage: needed so the trace header coming from the
+	// client can be continued. Without it every service produces its own
+	// disconnected trace and distributed tracing joins nothing.
 	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(
 		propagation.TraceContext{},
 		propagation.Baggage{},
 	))
 
-	log.InfoContext(ctx, "izleme kuruldu",
+	log.InfoContext(ctx, "telemetry is set up",
 		"endpoint", opts.Endpoint,
 		"insecure", opts.Insecure,
-		"ornekleme_orani", opts.SampleRatio)
+		"sample_ratio", opts.SampleRatio)
 
 	return func(ctx context.Context) error {
-		return kapanisiYurut(ctx, shutdownTimeout, tracerSağlayıcı, meterSağlayıcı)
+		return runShutdown(ctx, shutdownTimeout, tracerProvider, meterProvider)
 	}, nil
 }
 
-// kapanabilir kapanışta bir dışa aktarıcıdan beklenen tek davranıştır.
+// closable is the only behavior expected from an exporter at shutdown.
 //
-// Somut SDK tipleri yerine bu arayüzle çalışmak, süre paylaşımının gerçek bir
-// toplayıcı ayağa kaldırmadan sınanabilmesi içindir.
-type kapanabilir interface {
+// Working through this interface instead of the concrete SDK types is what
+// makes the budget sharing testable without bringing a real collector up.
+type closable interface {
 	Shutdown(ctx context.Context) error
 }
 
-// kapanisiYurut sağlayıcıları PARALEL kapatır ve her birine KENDİ süresini verir.
+// runShutdown closes the providers IN PARALLEL and gives each its OWN budget.
 //
-// Önceki hâlde tek bir bağlam tracer ile meter arasında paylaşılıyordu:
-// toplayıcı erişilemezken tracer bütün bütçeyi yiyor, meter ise süresi çoktan
-// dolmuş bir bağlamla çağrılıyordu. Sonuç, kapanışta bekleyen metriklerin
-// SESSİZCE düşmesiydi — üstelik en çok ihtiyaç duyulan metrikler, sürecin son
-// anlarına ait olanlardı.
+// Previously a single context was shared between the tracer and the meter:
+// while the collector was unreachable the tracer ate the whole budget and the
+// meter was called with a context that had already expired. The result was that
+// the metrics pending at shutdown were dropped SILENTLY — and those were the
+// most needed ones, belonging to the process's final moments.
 //
-// Süreyi ikiye bölmek (her birine yarım bütçe) de starvation'ı çözerdi ama
-// yalnızca BİR sağlayıcının yavaş olduğu yaygın durumda onu boş yere yarı
-// bütçeye mahkûm ederdi. Sırayla kapatıp her birine tam süre vermek ise en
-// kötü durumda kapanışı iki katına çıkarır; iki sağlayıcı ayrı gRPC
-// bağlantıları kullandığı için beklemeyi seri hâle getirmenin bir karşılığı
-// yok. Bu yüzden paralel + sağlayıcı başına tam süre seçildi: toplam bekleme
-// yine tek bir sure ile sınırlı kalır.
-func kapanisiYurut(ctx context.Context, sure time.Duration, sağlayıcılar ...kapanabilir) error {
-	hatalar := make([]error, len(sağlayıcılar))
+// Splitting the budget in two (half each) would also solve the starvation, but
+// in the common case where only ONE provider is slow it would condemn that one
+// to half a budget for nothing. Closing them in sequence with a full budget
+// each doubles the shutdown in the worst case; because the two providers use
+// separate gRPC connections there is nothing to gain from serializing the wait.
+// Hence parallel plus a full budget per provider: the total wait still stays
+// bounded by a single budget.
+func runShutdown(ctx context.Context, budget time.Duration, providers ...closable) error {
+	failures := make([]error, len(providers))
 
 	var wg sync.WaitGroup
-	wg.Add(len(sağlayıcılar))
+	wg.Add(len(providers))
 
-	for i, s := range sağlayıcılar {
+	for i, p := range providers {
 		go func() {
 			defer wg.Done()
 
-			kctx, iptal := context.WithTimeout(ctx, sure)
-			defer iptal()
+			shutdownCtx, cancel := context.WithTimeout(ctx, budget)
+			defer cancel()
 
-			hatalar[i] = s.Shutdown(kctx)
+			failures[i] = p.Shutdown(shutdownCtx)
 		}()
 	}
 	wg.Wait()
 
-	return errors.Join(hatalar...)
+	return errors.Join(failures...)
 }
 
-// ucSemaliMi adresin bir URL şeması taşıyıp taşımadığını bildirir.
+// endpointHasScheme reports whether the address carries a URL scheme.
 //
-// OTEL_EXPORTER_OTLP_ENDPOINT, OpenTelemetry belirtiminde bir URL'dir
-// ("http://collector:4317"); Go SDK'sının WithEndpoint seçeneği ise ŞEMASIZ
-// bir "host:port" bekler. İkisi karıştırıldığında hata VERİLMEZ: gRPC tembel
-// bağlanır, kurulum "başarılı" loglanır ve span'lar SESSİZCE hiçbir yere
-// gitmez.
+// In the OpenTelemetry specification OTEL_EXPORTER_OTLP_ENDPOINT is a URL
+// ("http://collector:4317"), while the Go SDK's WithEndpoint option expects a
+// SCHEMELESS "host:port". Mixing the two produces NO error: gRPC connects
+// lazily, the setup is logged as "successful" and the spans SILENTLY go
+// nowhere.
 //
-// Sessiz kayıp gürültülü bir hatadan çok daha pahalıdır: izleme açık sanılır,
-// oysa kapalıdır ve bu ancak bir arıza incelenirken — yani en kötü anda —
-// fark edilir. Belirtimin adını ödünç alan bir değişken, belirtimin değerini
-// de kabul etmelidir; bu yüzden iki biçim de desteklenir.
-func ucSemaliMi(uc string) bool {
-	return strings.Contains(uc, "://")
+// A silent loss is far more expensive than a noisy error: telemetry is believed
+// to be on while it is off, and that is only noticed while a failure is being
+// investigated — the worst possible moment. A variable that borrows the
+// specification's name must accept the specification's value too; both forms
+// are therefore supported.
+func endpointHasScheme(endpoint string) bool {
+	return strings.Contains(endpoint, "://")
 }
 
-// izUcu iz dışa aktarıcısına adresi doğru seçenekle verir.
-func izUcu(uc string) otlptracegrpc.Option {
-	if ucSemaliMi(uc) {
-		return otlptracegrpc.WithEndpointURL(uc)
+// traceEndpoint hands the address to the trace exporter through the right
+// option.
+func traceEndpoint(endpoint string) otlptracegrpc.Option {
+	if endpointHasScheme(endpoint) {
+		return otlptracegrpc.WithEndpointURL(endpoint)
 	}
 
-	return otlptracegrpc.WithEndpoint(uc)
+	return otlptracegrpc.WithEndpoint(endpoint)
 }
 
-// metrikUcu metrik dışa aktarıcısına adresi doğru seçenekle verir.
-func metrikUcu(uc string) otlpmetricgrpc.Option {
-	if ucSemaliMi(uc) {
-		return otlpmetricgrpc.WithEndpointURL(uc)
+// metricEndpoint hands the address to the metric exporter through the right
+// option.
+func metricEndpoint(endpoint string) otlpmetricgrpc.Option {
+	if endpointHasScheme(endpoint) {
+		return otlpmetricgrpc.WithEndpointURL(endpoint)
 	}
 
-	return otlpmetricgrpc.WithEndpoint(uc)
+	return otlpmetricgrpc.WithEndpoint(endpoint)
 }
 
-// noopShutdown izleme kapalıyken kullanılan kapanış işlevidir.
+// noopShutdown is the shutdown function used while telemetry is off.
 func noopShutdown(context.Context) error { return nil }
 
-// kaynak trace ve metriklere iliştirilen servis kimliğini kurar.
-func kaynak(ctx context.Context, opts Options) (*resource.Resource, error) {
+// newResource builds the service identity attached to traces and metrics.
+func newResource(ctx context.Context, opts Options) (*resource.Resource, error) {
 	return resource.New(ctx,
 		resource.WithAttributes(
 			semconv.ServiceName(opts.ServiceName),
@@ -224,16 +235,16 @@ func kaynak(ctx context.Context, opts Options) (*resource.Resource, error) {
 	)
 }
 
-// izSaglayici OTLP dışa aktarıcılı tracer sağlayıcısını kurar.
-func izSaglayici(
+// newTracerProvider builds the tracer provider with an OTLP exporter.
+func newTracerProvider(
 	ctx context.Context, opts Options, res *resource.Resource,
 ) (*sdktrace.TracerProvider, error) {
-	cikis := []otlptracegrpc.Option{izUcu(opts.Endpoint)}
+	exporter := []otlptracegrpc.Option{traceEndpoint(opts.Endpoint)}
 	if opts.Insecure {
-		cikis = append(cikis, otlptracegrpc.WithInsecure())
+		exporter = append(exporter, otlptracegrpc.WithInsecure())
 	}
 
-	exp, err := otlptracegrpc.New(ctx, cikis...)
+	exp, err := otlptracegrpc.New(ctx, exporter...)
 	if err != nil {
 		return nil, err
 	}
@@ -241,69 +252,70 @@ func izSaglayici(
 	return sdktrace.NewTracerProvider(
 		sdktrace.WithBatcher(exp),
 		sdktrace.WithResource(res),
-		sdktrace.WithSampler(ornekleyici(opts.SampleRatio)),
+		sdktrace.WithSampler(sampler(opts.SampleRatio)),
 	), nil
 }
 
-// ornekleyici örnekleme kararını veren sampler'ı kurar.
+// sampler builds the sampler that makes the sampling decision.
 //
-// UZAK ebeveynin "sampled" bayrağı oranı EZEMEZ. traceparent başlığı halka
-// açık bir uçta tamamen istemcinin denetimindedir; ParentBased'in varsayılanı
-// olan [sdktrace.AlwaysSample] ile her isteği "örneklenmiş" işaretleyen bir
-// saldırgan OTEL_TRACES_SAMPLER_ARG=0.01 ayarını anlamsız kılar ve izleme
-// maliyetini istediği kadar şişirir. Bu yüzden uzak ebeveyn geldiğinde karar
-// yeniden AYNI oranla hesaplanır.
+// A REMOTE parent's "sampled" flag CANNOT override the ratio. On a public
+// endpoint the traceparent header is entirely under the client's control; with
+// ParentBased's default of [sdktrace.AlwaysSample], an attacker marking every
+// request "sampled" makes the OTEL_TRACES_SAMPLER_ARG=0.01 setting meaningless
+// and inflates the telemetry cost at will. When a remote parent arrives the
+// decision is therefore recomputed with the SAME ratio.
 //
-// Bu, dağıtık trace'i delik deşik ETMEZ: [sdktrace.TraceIDRatioBased] kararı
-// trace ID'nin kendisinden türetir, yani aynı oranı kullanan her servis aynı
-// trace için aynı sonuca varır. Oranların servisler arasında farklı olduğu
-// kurulumda tutarlılık zaten kaybolur; oradaki doğru çözüm oranı hizalamaktır,
-// istemciye güvenmek değil.
+// This does NOT riddle the distributed trace with holes:
+// [sdktrace.TraceIDRatioBased] derives the decision from the trace ID itself,
+// so every service using the same ratio reaches the same answer for the same
+// trace. In an installation where the ratios differ between services the
+// consistency is lost anyway; the right fix there is to align the ratios, not
+// to trust the client.
 //
-// Uzak ebeveyn örneklenmemişse hiç örneklemeyiz: üst servis kararı zaten
-// "hayır" iken bizim "evet" dememiz, hiçbir zaman tamamlanmayacak, ebeveynsiz
-// span'lar üretirdi.
+// When the remote parent was not sampled we do not sample at all: with the
+// upstream service's answer already "no", saying "yes" would produce parentless
+// spans that are never completed.
 //
-// YEREL ebeveyn için ParentBased'in varsayılanı korunur (üst span'ı izleriz):
-// aynı süreçteki alt span'a bağımsız karar verdirmek, tek bir isteğin span
-// ağacını kendi içinde parçalardı.
-func ornekleyici(oran float64) sdktrace.Sampler {
-	oransal := sdktrace.TraceIDRatioBased(oran)
+// For a LOCAL parent, ParentBased's default is kept (we follow the parent
+// span): letting a child span in the same process decide independently would
+// fragment a single request's span tree within itself.
+func sampler(ratio float64) sdktrace.Sampler {
+	ratioBased := sdktrace.TraceIDRatioBased(ratio)
 
 	return sdktrace.ParentBased(
-		oransal,
-		sdktrace.WithRemoteParentSampled(oransal),
+		ratioBased,
+		sdktrace.WithRemoteParentSampled(ratioBased),
 		sdktrace.WithRemoteParentNotSampled(sdktrace.NeverSample()),
 	)
 }
 
-// metrikSaglayici OTLP dışa aktarıcılı meter sağlayıcısını kurar.
-func metrikSaglayici(
+// newMeterProvider builds the meter provider with an OTLP exporter.
+func newMeterProvider(
 	ctx context.Context, opts Options, res *resource.Resource,
 ) (*sdkmetric.MeterProvider, error) {
-	cikis := []otlpmetricgrpc.Option{metrikUcu(opts.Endpoint)}
+	exporter := []otlpmetricgrpc.Option{metricEndpoint(opts.Endpoint)}
 	if opts.Insecure {
-		cikis = append(cikis, otlpmetricgrpc.WithInsecure())
+		exporter = append(exporter, otlpmetricgrpc.WithInsecure())
 	}
 
-	exp, err := otlpmetricgrpc.New(ctx, cikis...)
+	exp, err := otlpmetricgrpc.New(ctx, exporter...)
 	if err != nil {
 		return nil, err
 	}
 
-	aralik := opts.MetricInterval
-	if aralik <= 0 {
-		aralik = time.Minute
+	interval := opts.MetricInterval
+	if interval <= 0 {
+		interval = time.Minute
 	}
 
 	return sdkmetric.NewMeterProvider(
 		sdkmetric.WithResource(res),
 		sdkmetric.WithReader(sdkmetric.NewPeriodicReader(exp,
-			sdkmetric.WithInterval(aralik))),
+			sdkmetric.WithInterval(interval))),
 	), nil
 }
 
-// Attrs slog kayıtlarına eklenecek ortak öznitelikleri döner.
+// Attrs returns the common attributes to be added to slog records.
 func Attrs(opts Options) []attribute.KeyValue {
 	return []attribute.KeyValue{
 		semconv.ServiceName(opts.ServiceName),
