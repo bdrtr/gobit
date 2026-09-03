@@ -8,17 +8,19 @@ import (
 	"time"
 )
 
-// crockfordAlphabet newEventID'nin kullandığı kodlama alfabesidir.
+// crockfordAlphabet is the encoding alphabet newEventID uses.
 const crockfordAlphabet = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
 
-// quietLogger paket içi testlerde çıktısı atılan bir logger döner.
+// quietLogger returns a logger whose output is discarded, for the in-package
+// tests.
 func quietLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
 
 func TestNewEventIDIsUniqueWithinSameMillisecond(t *testing.T) {
-	// Zaman damgası sabit tutulur: tekilliği yalnızca rastgele bölüm sağlayabilir.
-	// Rastgelelik zayıflarsa (örn. daha az bayt doldurulursa) burada çakışma çıkar.
+	// The timestamp is held fixed: only the random part can provide
+	// uniqueness. If the randomness weakens (fewer bytes filled in, say), a
+	// collision shows up here.
 	const count = 100_000
 	when := time.Date(2026, 8, 23, 10, 0, 0, 0, time.UTC)
 
@@ -26,7 +28,7 @@ func TestNewEventIDIsUniqueWithinSameMillisecond(t *testing.T) {
 	for range count {
 		id := newEventID(when)
 		if _, dup := seen[id]; dup {
-			t.Fatalf("aynı milisaniyede tekrarlanan kimlik üretildi: %q (%d kimlik sonra)",
+			t.Fatalf("a repeated id was generated within the same millisecond: %q (after %d ids)",
 				id, len(seen))
 		}
 		seen[id] = struct{}{}
@@ -34,29 +36,29 @@ func TestNewEventIDIsUniqueWithinSameMillisecond(t *testing.T) {
 }
 
 func TestNewEventIDHasFixedLengthAndCrockfordAlphabet(t *testing.T) {
-	// 16 bayt, dolgusuz Base32 ile tam 26 karaktere kodlanır.
+	// 16 bytes encode into exactly 26 characters with padless Base32.
 	const wantLen = len(idPrefix) + 26
 
 	for range 1_000 {
 		id := newEventID(time.Now())
 		if len(id) != wantLen {
-			t.Fatalf("kimlik uzunluğu = %d (%q), beklenen %d", len(id), id, wantLen)
+			t.Fatalf("id length = %d (%q), expected %d", len(id), id, wantLen)
 		}
 		body, ok := strings.CutPrefix(id, idPrefix)
 		if !ok {
-			t.Fatalf("kimlik %q, %q önekiyle başlamıyor", id, idPrefix)
+			t.Fatalf("id %q does not start with the %q prefix", id, idPrefix)
 		}
 		for _, r := range body {
 			if !strings.ContainsRune(crockfordAlphabet, r) {
-				t.Fatalf("kimlik %q, Crockford alfabesi dışında %q karakteri içeriyor", id, r)
+				t.Fatalf("id %q holds the character %q, which is outside the Crockford alphabet", id, r)
 			}
 		}
 	}
 }
 
 func TestNewEventIDSortsLexicographicallyByTime(t *testing.T) {
-	// Sözlüksel sıra zaman sırasıyla aynı olmalı; kimlikler bu sayede
-	// veritabanında sıralanabilir birincil anahtar gibi kullanılabilir.
+	// The lexicographic order must be the same as the time order; that is what
+	// lets the ids be used like a sortable primary key in a database.
 	base := time.Date(2026, 8, 23, 10, 0, 0, 0, time.UTC)
 
 	prev := newEventID(base)
@@ -64,25 +66,25 @@ func TestNewEventIDSortsLexicographicallyByTime(t *testing.T) {
 		when := base.Add(time.Duration(i) * time.Millisecond)
 		id := newEventID(when)
 		if id <= prev {
-			t.Fatalf("%v için üretilen kimlik %q, bir önceki (%q) kimlikten sonra gelmiyor",
-				when, id, prev)
+			t.Fatalf("the id %q generated for %v does not come after the previous one (%q)",
+				id, when, prev)
 		}
 		prev = id
 	}
 }
 
 func TestNewEventIDClampsTimesBefore1970(t *testing.T) {
-	// 1970 öncesi zaman damgası negatif milisaniye verir; tabana çekilmezse
-	// kodlanan bayt dizisi taşar ve sıralama bozulur.
+	// A timestamp before 1970 gives negative milliseconds; without clamping to
+	// the floor the encoded byte sequence overflows and the ordering breaks.
 	old := newEventID(time.Date(1969, 1, 1, 0, 0, 0, 0, time.UTC))
 	epoch := newEventID(time.Unix(0, 0))
 	later := newEventID(time.Date(2026, 8, 23, 10, 0, 0, 0, time.UTC))
 
 	if len(old) != len(epoch) {
-		t.Fatalf("1970 öncesi kimlik uzunluğu = %d, beklenen %d", len(old), len(epoch))
+		t.Fatalf("the length of a pre-1970 id = %d, expected %d", len(old), len(epoch))
 	}
 	if old >= later {
-		t.Errorf("1970 öncesi kimlik %q, 2026 kimliğinden (%q) önce gelmeli", old, later)
+		t.Errorf("the pre-1970 id %q must come before the 2026 id (%q)", old, later)
 	}
 }
 
@@ -91,15 +93,15 @@ func TestNormalizeFillsIDAndTime(t *testing.T) {
 
 	e, err := normalize(Event{Name: "order.placed"})
 	if err != nil {
-		t.Fatalf("normalize hata verdi: %v", err)
+		t.Fatalf("normalize returned an error: %v", err)
 	}
 	if !strings.HasPrefix(e.ID, idPrefix) {
-		t.Errorf("ID = %q, beklenen %q önekli üretilmiş kimlik", e.ID, idPrefix)
+		t.Errorf("ID = %q, expected a generated id with the %q prefix", e.ID, idPrefix)
 	}
 	if e.OccurredAt.Before(before) {
-		t.Errorf("OccurredAt = %v, çağrı anından (%v) önce olamaz", e.OccurredAt, before)
+		t.Errorf("OccurredAt = %v, it cannot be before the moment of the call (%v)", e.OccurredAt, before)
 	}
 	if e.OccurredAt.Location() != time.UTC {
-		t.Errorf("OccurredAt konumu = %v, beklenen UTC", e.OccurredAt.Location())
+		t.Errorf("the location of OccurredAt = %v, expected UTC", e.OccurredAt.Location())
 	}
 }

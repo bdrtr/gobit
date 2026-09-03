@@ -8,27 +8,30 @@ import (
 	"github.com/bdrtr/gobit/internal/core/errors"
 )
 
-// inMemoryBus süreç içinde çalışan, kalıcılığı olmayan bir EventBus'tır.
+// inMemoryBus is an EventBus that runs inside the process and has no
+// durability.
 type inMemoryBus struct {
 	log *slog.Logger
 
-	// mu handlers ve closed alanlarını korur. RWMutex seçilmiştir çünkü
-	// Publish (okuma) sıcak yol, Subscribe (yazma) yalnızca başlangıçtadır.
+	// mu guards the handlers and closed fields. An RWMutex was chosen because
+	// Publish (a read) is the hot path while Subscribe (a write) happens only
+	// at startup.
 	mu       sync.RWMutex
 	closed   bool
 	handlers map[string][]Handler
 
-	// wg çalışan handler goroutine'lerini sayar; Shutdown bunun bitmesini bekler.
+	// wg counts the running handler goroutines; Shutdown waits for it to
+	// finish.
 	wg sync.WaitGroup
 }
 
 var _ EventBus = (*inMemoryBus)(nil)
 
-// NewInMemory süreç içinde çalışan bir EventBus üretir.
+// NewInMemory builds an EventBus that runs inside the process.
 //
-// Geliştirme, test ve tek süreçli kurulumlar içindir: olaylar kalıcı değildir,
-// süreç ölürse teslim edilmemiş olaylar kaybolur. Üretim için NewRedisStream
-// kullanılmalıdır. log nil verilirse slog.Default kullanılır.
+// It is for development, tests and single-process setups: events are not
+// durable, and undelivered events are lost if the process dies. For production
+// NewRedisStream must be used. If log is nil, slog.Default is used.
 func NewInMemory(log *slog.Logger) EventBus {
 	return &inMemoryBus{
 		log:      orDefaultLogger(log),
@@ -36,13 +39,16 @@ func NewInMemory(log *slog.Logger) EventBus {
 	}
 }
 
-// Publish olayı, adına abone olmuş tüm handler'lara asenkron olarak dağıtır.
+// Publish distributes the event asynchronously to every handler subscribed to
+// its name.
 //
-// Handler'lar beklenmez; her biri KENDİ goroutine'inde çalışır ve dönüş
-// yalnızca olayın kabul edildiğini bildirir. Bu yüzden aynı handler aynı anda
-// birden çok olayla koşabilir ve teslim sırası yayım sırasıyla aynı olmayabilir
-// (bkz. paket yorumundaki sıra ve eşzamanlılık garantileri). Abone yoksa olay
-// sessizce yutulur. Veri yolu kapatılmışsa errors.KindUnavailable döner.
+// The handlers are not waited for; each runs in its OWN goroutine and the
+// return only reports that the event was accepted. That is why the same
+// handler can run with several events at once and the delivery order may
+// differ from the publication order (see the ordering and concurrency
+// guarantees in the package comment). If there is no subscriber the event is
+// swallowed silently. If the bus was closed, errors.KindUnavailable is
+// returned.
 func (b *inMemoryBus) Publish(ctx context.Context, e Event) error {
 	e, err := normalize(e)
 	if err != nil {
@@ -61,17 +67,20 @@ func (b *inMemoryBus) Publish(ctx context.Context, e Event) error {
 		return nil
 	}
 
-	// Handler'lar çağıranın isteğinden bağımsız yaşar: ctx'in değerleri
-	// (örn. request_id) korunur, iptali devralınmaz. Aksi hâlde istek biter
-	// bitmez yan etki yarıda kesilirdi.
+	// Handlers live independently of the caller's request: the ctx's values
+	// (e.g. request_id) are preserved, its cancellation is not inherited.
+	// Otherwise the side effect would be cut short the moment the request
+	// ended.
 	//
-	// Değerlerin korunması YALNIZCA bu backend'in özelliğidir; Redis
-	// backend'inde olay süreç sınırını geçer ve yayımcının ctx'i karşıya
-	// geçmez (bkz. [Handler]). Handler'lar bu yüzden değerlere güvenemez.
+	// Preserving the values is a property of THIS backend ONLY; in the Redis
+	// backend the event crosses the process boundary and the publisher's ctx
+	// does not cross with it (see [Handler]). Handlers therefore cannot rely
+	// on the values.
 	hctx := context.WithoutCancel(ctx)
 
-	// wg.Add RLock altında yapılır; Shutdown closed'ı yazma kilidiyle işaretlediği
-	// için bu noktadan sonra sayaç artmaz ve Wait ile yarışmaz.
+	// wg.Add happens under the RLock; because Shutdown marks closed under the
+	// write lock, the counter does not grow past this point and does not race
+	// with Wait.
 	b.wg.Add(len(handlers))
 	for _, h := range handlers {
 		go func() {
@@ -83,16 +92,16 @@ func (b *inMemoryBus) Publish(ctx context.Context, e Event) error {
 	return nil
 }
 
-// Subscribe verilen olay adına bir handler bağlar.
+// Subscribe binds a handler to the given event name.
 //
-// Aynı ada birden çok kez abone olunabilir; yayımda hepsi çağrılır. Veri yolu
-// kapatılmışsa errors.KindUnavailable döner.
+// The same name can be subscribed to several times; all of them are called on
+// publication. If the bus was closed, errors.KindUnavailable is returned.
 func (b *inMemoryBus) Subscribe(eventName string, h Handler) error {
 	if eventName == "" {
-		return errors.Invalid(CodeSubscribeFailed, "abone olunacak olay adı boş olamaz")
+		return errors.Invalid(CodeSubscribeFailed, "the event name to subscribe to cannot be empty")
 	}
 	if h == nil {
-		return errors.Invalid(CodeSubscribeFailed, "%q için handler nil olamaz", eventName)
+		return errors.Invalid(CodeSubscribeFailed, "the handler for %q cannot be nil", eventName)
 	}
 
 	b.mu.Lock()
@@ -106,14 +115,15 @@ func (b *inMemoryBus) Subscribe(eventName string, h Handler) error {
 	return nil
 }
 
-// Shutdown veri yolunu kapatır ve çalışan handler'ların bitmesini bekler.
+// Shutdown closes the bus and waits for the running handlers to finish.
 //
-// Dönüşten sonra Publish ve Subscribe hata döner. Bekleme ctx ile sınırlıdır:
-// ctx bitmeden tüm handler'lar tamamlanırsa nil döner ve çalışan goroutine
-// kalmaz; süre dolarsa takılan handler'lar BEKLENMEZ ve errors.KindUnavailable
-// / CodeShutdownTimeout döner (veri yolu yine kapalıdır). Birden çok kez
-// çağrılabilir. Bir handler içinden çağrılırsa yalnızca ctx süresi dolduğunda
-// döner — Shutdown her zaman handler'ların dışından çağrılmalıdır.
+// After the return Publish and Subscribe return errors. The wait is bounded by
+// ctx: if every handler completes before the ctx expires it returns nil and no
+// goroutine is left running; if the budget runs out the stuck handlers are NOT
+// WAITED FOR and errors.KindUnavailable / CodeShutdownTimeout is returned (the
+// bus is closed either way). It can be called several times. If it is called
+// from inside a handler it only returns when the ctx budget runs out —
+// Shutdown must always be called from outside the handlers.
 func (b *inMemoryBus) Shutdown(ctx context.Context) error {
 	b.mu.Lock()
 	b.closed = true

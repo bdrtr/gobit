@@ -12,6 +12,27 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Değiştirildi
 
+- **`internal/core/link` ve `internal/core/eventbus` İngilizceye çevrildi**
+  (ADR 0012'nin cırcırı). Türkçe defterinden 15 satır DÜŞTÜ: 742 dosyadan
+  727'ye; yol defteri 38'de kaldı (iki pakette hiç yol kaydı yoktu). İki pakette
+  Türkçe harf sayısı sıfır.
+
+  Çeviri davranışı değiştirmedi ve bu iddia yapısal olarak sınandı: yorumları
+  atıp dizeleri ve tanıtıcıları normalleştiren bir AST karşılaştırması altı
+  üretim dosyasının beşini BİREBİR aynı gösteriyor. Altıncısında iki biçim
+  dizesinin operand sırası değişti — Türkçe cümlenin öğe sırası İngilizcede
+  başka — ve o sıra hiçbir kapının göremediği bir yerdi: aynı tipte üç operand
+  arasında `go vet` bir şey görmez. Sıra artık bir entegrasyon testiyle çivili
+  ve testin fikstürü de ölçüldü: adı çakışan bir GÖRÜNÜM ile DDL bir adım önce
+  düşüyor, MATERYALLEŞTİRİLMİŞ görünümle ise "başarıyla" tamamlanıp denetime
+  ulaşıyor — yani sessiz şekil budur.
+
+  Hata KODLARI değişmedi (beş üretim dosyasında birebir aynı) ve hata
+  ayrıntılarının ANAHTARLARI da artık testli: `stored` anahtarının hem varlığı
+  hem DEĞERİ sabitlendi — yalnızca varlığını sınayan bir iddia, saklanan tanım
+  yerine geleni yazan bir hatayı geçiriyordu ve operatör iki tanımı aynı
+  görürdü.
+
 - **Sepet satır tutarları TEK deyimle yazılıyor; sepetin kilidi satır sayısıyla
   orantılı süre boyunca tutulmuyor.** Hesap turu satır başına bir UPDATE
   koşuyordu ve bunu sepetin `FOR UPDATE` kilidi altında yapıyordu; kilit o

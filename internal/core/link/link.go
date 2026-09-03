@@ -1,52 +1,56 @@
-// Package link modüller arası ilişkiyi foreign key OLMADAN kuran katmandır.
+// Package link is the layer that relates modules to each other WITHOUT a
+// foreign key.
 //
-// Plan Bölüm 2.2 farklı modüllerin tabloları arasında foreign key kurulmasını
-// yasaklar: her veri tam olarak bir modüle aittir ve o modül ileride ayrı bir
-// servise çıkarılabilmelidir. Bir FK, iki modülün tablolarını aynı veritabanına
-// ve aynı yaşam döngüsüne çiviler.
+// Plan Section 2.2 forbids foreign keys between the tables of different
+// modules: every piece of data belongs to exactly one module, and that module
+// must remain extractable into a separate service later. An FK nails the two
+// modules' tables to the same database and the same lifecycle.
 //
-// Bu paket ilişkiyi ÜÇÜNCÜ bir tabloya taşır: her link kendi tablosunda yaşar
-// (örn. "link_product_price") ve o tablo hiçbir modülün tablosuna REFERENCES
-// VERMEZ. Link tablosu yalnızca iki serbest kimlik dizgesi tutar; kimliklerin
-// gerçekten var olup olmadığı sahibi modülün sorumluluğundadır ve gerekirse
-// workflow'un telafi (compensation) adımıyla temizlenir. Böylece:
+// This package moves the relation into a THIRD table: every link lives in its
+// own table (e.g. "link_product_price") and that table REFERENCES no module's
+// table. A link table holds only two free-form id strings; whether those ids
+// really exist is the owning module's responsibility and is cleaned up, when
+// needed, by the workflow's compensation step. As a result:
 //
-//   - Modüller birbirinin şemasını tanımak zorunda kalmaz.
-//   - Bir modülün tablosu bırakılıp yeniden yaratılabilir; link tablosu
-//     etkilenmez (FK olsaydı DROP engellenirdi).
-//   - İlişki, modül ayrı servise çıktığında da aynı yüzeyle çalışmaya devam
-//     eder; değişen tek şey link tablosunun nerede durduğudur.
+//   - Modules never have to know each other's schema.
+//   - A module's table can be dropped and recreated; the link table is
+//     unaffected (an FK would have blocked the DROP).
+//   - The relation keeps working through the same surface once a module moves
+//     into its own service; the only thing that changes is where the link
+//     table lives.
 //
-// # Şema neden migration dosyasında değil
+// # Why the schema is not in a migration file
 //
-// Link tabloları statik bir küme değildir: hangi linklerin var olduğunu
-// MODÜLLER açılışta [LinkService.Define] ile bildirir (plan Bölüm 5.1,
-// Module.Register) ve bir plugin kendi linkini çekirdeğe dokunmadan
-// ekleyebilmelidir. Bu yüzden şema, sabit bir migration dosyasında değil,
-// bildirim anında ve idempotent olarak (CREATE ... IF NOT EXISTS) kurulur.
-// Bildirimin kendisi tek bir işlemde ve danışma kilidi altında yürür; aynı anda
-// açılan iki süreç birbirinin DDL'iyle yarışmaz.
+// Link tables are not a static set: which links exist is declared by the
+// MODULES at startup through [LinkService.Define] (plan Section 5.1,
+// Module.Register), and a plugin must be able to add its own link without
+// touching the core. That is why the schema is built at declaration time and
+// idempotently (CREATE ... IF NOT EXISTS) rather than from a fixed migration
+// file. The declaration itself runs in a single transaction under an advisory
+// lock; two processes starting at the same time do not race on each other's
+// DDL.
 //
-// Bunun bedeli, tanımın kalıcı bir deftere (link_definitions) yazılıp her
-// açılışta karşılaştırılmasıdır: sürümler arasında sessizce değişen bir tanım
-// böyle yakalanır.
+// The price of this is that the definition is written to a durable ledger
+// (link_definitions) and compared on every startup: a definition that silently
+// changed between releases is caught that way.
 //
-// # Kardinalite veritabanı kısıtıyla zorlanır
+// # Cardinality is enforced by a database constraint
 //
-// [Cardinality] uygulama katmanında "önce oku sonra yaz" ile değil, benzersiz
-// indeksle zorlanır. Uygulama katmanı kontrolü eşzamanlı iki istek arasında
-// yarışa açıktır (ikisi de okur, ikisi de yazar); indeks yarışı veritabanının
-// kendisine bırakır ve ihlali tipli bir errors.Conflict'e çevirir.
+// [Cardinality] is enforced by a unique index, not by a "read then write"
+// check in the application layer. An application-layer check is open to a race
+// between two concurrent requests (both read, both write); the index leaves
+// the race to the database itself and turns a violation into a typed
+// errors.Conflict.
 //
-// # Tablo adı ve enjeksiyon
+// # Table names and injection
 //
-// Tablo adları SQL'de parametrelenemez; ad zorunlu olarak dizge birleştirmesiyle
-// üretilir. Bu yüzden link adı [LinkDefinition.Validate] içinde katı bir desene
-// göre doğrulanır ve tablo adı YALNIZCA [Define] anında, doğrulanmış addan bir
-// kez üretilir (bkz. [TableName]). Çalışma zamanındaki Create/Delete/List
-// yolları önceden üretilmiş ifadeleri kullanır; kullanıcıdan gelen hiçbir dizge
-// SQL metnine karışmaz. Aynı titizliğin migration tarafındaki karşılığı için
-// bkz. internal/core/db MigrationsTable.
+// Table names cannot be parameterized in SQL; the name is necessarily produced
+// by string concatenation. That is why a link name is validated against a
+// strict pattern in [LinkDefinition.Validate] and the table name is derived
+// from the validated name exactly ONCE, at [Define] time (see [TableName]).
+// The runtime Create/Delete/List paths use the pre-built statements; no string
+// coming from a caller ever reaches SQL text. For the same rigor on the
+// migration side see internal/core/db MigrationsTable.
 package link
 
 import (
@@ -58,7 +62,7 @@ import (
 	"github.com/bdrtr/gobit/internal/core/errors"
 )
 
-// Hata kodları; çağıran taraf errors.CodeOf ile bunlara bakabilir.
+// Error codes; the caller can branch on these through errors.CodeOf.
 const (
 	codeNameInvalid          = "link_name_invalid"
 	codeSideInvalid          = "link_side_invalid"
@@ -74,73 +78,76 @@ const (
 )
 
 const (
-	// tablePrefix link tablolarının ortak önekidir. Önek, link tablolarını
-	// modüllerin kendi tablolarından tek bakışta ayırır.
+	// tablePrefix is the common prefix of link tables. The prefix separates
+	// link tables from the modules' own tables at a glance.
 	tablePrefix = "link_"
-	// definitionsTable link tanımlarının kalıcı kayıt defteridir.
+	// definitionsTable is the durable ledger of link definitions.
 	definitionsTable = tablePrefix + "definitions"
-	// fromIndexSuffix ve toIndexSuffix kardinaliteyi zorlayan indekslerin
-	// adlarını üretir. Adlar hata eşlemesinde de kullanılır: PostgreSQL ihlal
-	// eden kısıtın adını bildirir, biz de hangi ucun ihlal edildiğini yazarız.
+	// fromIndexSuffix and toIndexSuffix build the names of the indexes that
+	// enforce cardinality. The names are also used in error mapping:
+	// PostgreSQL reports the name of the violated constraint, and from it we
+	// write which end was violated.
 	fromIndexSuffix = "_from_uniq"
 	toIndexSuffix   = "_to_uniq"
-	// toLookupSuffix ManyToMany'de ters yön aramasını hızlandıran benzersiz
-	// OLMAYAN indeksin sonekidir.
+	// toLookupSuffix is the suffix of the NON-unique index that speeds up the
+	// reverse-direction lookup under ManyToMany.
 	toLookupSuffix = "_to_lookup"
-	// relkindTable ve relkindIndex pg_class.relkind değerleridir.
+	// relkindTable and relkindIndex are pg_class.relkind values.
 	relkindTable = "r"
 	relkindIndex = "i"
-	// maxNameLen link adının azami uzunluğudur. PostgreSQL tanımlayıcıları 63
-	// bayta kırpar; en uzun türetilmiş ad tablePrefix + ad + toIndexSuffix
-	// (5 + 40 + 10 = 55) olduğu için 40 sınırı sessiz kırpılmayı imkânsız kılar.
+	// maxNameLen is the maximum length of a link name. PostgreSQL truncates
+	// identifiers to 63 bytes; the longest derived name is
+	// tablePrefix + name + toIndexSuffix (5 + 40 + 10 = 55), so a limit of 40
+	// makes silent truncation impossible.
 	maxNameLen = 40
-	// maxIDLen bağlanan kimliklerin azami uzunluğudur. Kimlikler benzersiz
-	// btree indekse girer; indeks girdisi ~2704 baytı aşarsa PostgreSQL anlaşılmaz
-	// bir hata verir. Sınır, bunu okunabilir bir doğrulama hatasına çevirir
-	// (plan Bölüm 8'deki önekli ULID/KSUID kimlikler ~30 karakterdir).
+	// maxIDLen is the maximum length of the linked ids. Ids go into a unique
+	// btree index; if an index entry exceeds ~2704 bytes PostgreSQL raises an
+	// obscure error. The limit turns that into a readable validation error
+	// (the prefixed ULID/KSUID ids of plan Section 8 are ~30 characters).
 	maxIDLen = 255
 )
 
-// namePattern link, modül ve alan adlarının uyması gereken desendir.
+// namePattern is the pattern link, module and field names must match.
 //
-// internal/core/db'deki modül adı deseniyle bilinçli olarak aynıdır: her ikisi
-// de doğrulanmamış bir dizgenin SQL tanımlayıcısına dönüşmesini engeller.
-// Büyük harf ve tırnak yasağı, alıntılanmamış tanımlayıcıların PostgreSQL
-// tarafından küçük harfe indirgenmesinden doğacak sürprizleri de kapatır.
+// It is deliberately identical to the module-name pattern in
+// internal/core/db: both prevent an unvalidated string from becoming an SQL
+// identifier. Forbidding uppercase letters and quotes also closes the
+// surprises that follow from PostgreSQL down-casing unquoted identifiers.
 var namePattern = regexp.MustCompile(`^[a-z][a-z0-9_]{0,` + fmt.Sprint(maxNameLen-1) + `}$`)
 
-// reservedNames link adı olarak kullanılamayacak adlardır.
+// reservedNames are the names that cannot be used as a link name.
 //
-// "definitions" adı [definitionsTable] ile aynı tabloya çözülürdü; link kendi
-// kayıt defterinin üstüne yazardı. Bu yüzden ad, defter adından TÜRETİLİR;
-// defterin adı değişirse yasak da kendiliğinden değişir.
+// The name "definitions" would resolve to the same table as
+// [definitionsTable]; a link would write over its own ledger. That is why the
+// name is DERIVED from the ledger's name; if the ledger is renamed, the ban
+// follows by itself.
 var reservedNames = []string{strings.TrimPrefix(definitionsTable, tablePrefix)}
 
-// Cardinality bir linkin kaç kayda bağlanabileceğini belirler.
+// Cardinality decides how many records a link may bind to.
 //
-// Sıfır değeri [OneToOne]'dır; yani bildirilmemiş bir kardinalite EN KATI
-// kısıtı seçer. Tersi (serbest ManyToMany) sıfır değer olsaydı, eksik bir
-// bildirim sessizce fazladan bağ oluşmasına izin verir ve hata ancak veri
-// bozulduktan sonra fark edilirdi.
+// The zero value is [OneToOne]; that is, an undeclared cardinality picks the
+// STRICTEST constraint. Were it the other way round (free ManyToMany as the
+// zero value), a missing declaration would silently allow extra links and the
+// mistake would only be noticed after the data was corrupted.
 type Cardinality uint8
 
-// Kardinalite türleri.
+// Cardinality kinds.
 const (
-	// OneToOne her iki uçta da benzersizliktir: bir fromID tek bir toID'ye,
-	// bir toID tek bir fromID'ye bağlanabilir.
+	// OneToOne is uniqueness on both ends: one fromID may bind to a single
+	// toID, and one toID to a single fromID.
 	OneToOne Cardinality = iota
-	// OneToMany bir fromID'nin çok sayıda toID'ye bağlanmasına izin verir,
-	// ama bir toID yalnızca tek bir fromID'ye bağlanabilir.
+	// OneToMany lets one fromID bind to many toIDs, but a toID may bind to
+	// only a single fromID.
 	OneToMany
-	// ManyToMany serbesttir; yalnızca (fromID, toID) çifti benzersizdir.
+	// ManyToMany is free; only the (fromID, toID) pair is unique.
 	ManyToMany
 )
 
-// String Cardinality'nin okunabilir adını döner.
+// String returns the readable name of the Cardinality.
 //
-// Bu gösterim kayıt defterine YAZILDIĞI için kararlıdır: sayısal iota değeri
-// saklansaydı, sabitlerin arasına yeni bir tür eklemek diskteki tüm tanımların
-// anlamını sessizce kaydırırdı.
+// This spelling is stable because it is WRITTEN into the ledger: had the
+// numeric iota value been stored, inserting a new kind between the constants
+// would silently shift the meaning of every definition already on disk.
 func (c Cardinality) String() string {
 	switch c {
 	case OneToOne:
@@ -154,42 +161,44 @@ func (c Cardinality) String() string {
 	}
 }
 
-// Valid değerin tanımlı bir kardinalite olup olmadığını bildirir.
+// Valid reports whether the value is a defined cardinality.
 func (c Cardinality) Valid() bool {
 	return c == OneToOne || c == OneToMany || c == ManyToMany
 }
 
-// LinkSide bir linkin tek ucudur: hangi modülün hangi alanı bağlanıyor.
+// LinkSide is one end of a link: which field of which module is being bound.
 //
-// Field, link tablosunda bir SÜTUN ADI DEĞİLDİR (bkz. [TableName] yorumları);
-// bağlanan kimliğin sahibi modüldeki karşılığını bildiren üstveridir. Query
-// katmanı (plan Bölüm 5.3, ADR 0004) kök kayıttaki hangi alanın link'e girdiğini
-// bu bilgiyle bulur.
-type LinkSide struct { //nolint:revive // ad, plan Bölüm 5.2'deki bağlayıcı sözleşmeden gelir
-	// Module ucun sahibi modülün adıdır (örn. "pricing").
+// Field is NOT A COLUMN NAME in the link table (see the [TableName] comments);
+// it is metadata naming the counterpart of the bound id in the owning module.
+// The Query layer (plan Section 5.3, ADR 0004) uses it to find which field of
+// the root record feeds the link.
+type LinkSide struct { //nolint:revive // the name comes from the binding contract in plan Section 5.2
+	// Module is the name of the module owning this end (e.g. "pricing").
 	Module string
-	// Entity bu ucun Query katmanındaki entity adıdır (örn. "price_set").
+	// Entity is this end's entity name in the Query layer (e.g. "price_set").
 	//
-	// Module'dan AYRIDIR çünkü bir modül birden çok entity sunabilir: product
-	// modülü hem "product" hem "variant" sağlayıcısı kaydeder, pricing modülünün
-	// entity'si ise "price_set"tir. Query, genişletmenin hedef sağlayıcısını
-	// "<Entity>" + query.ProviderSuffix adıyla arar; buraya modül adı yazmak
-	// çalışma zamanında errors.NotFound demektir.
+	// It is SEPARATE from Module because one module can offer several
+	// entities: the product module registers both a "product" and a "variant"
+	// provider, while the pricing module's entity is "price_set". Query looks
+	// up an expansion's target provider under the name
+	// "<Entity>" + query.ProviderSuffix; writing the module name here means an
+	// errors.NotFound at runtime.
 	//
-	// Boş bırakılırsa Module kullanılır — modülün tek entity'si kendi adıysa
-	// alan yazılmak zorunda değildir.
+	// If left empty, Module is used — a module whose only entity carries its
+	// own name does not have to fill the field in.
 	//
-	// Entity, linkin KİMLİĞİNİN parçası DEĞİLDİR ve kalıcı tanım defterine
-	// yazılmaz: link tablosunun şeması ona bağlı değildir, yalnızca süreç içi
-	// sorgu yönlendirmesini etkiler. Yanlış yazılırsa hata ilk genişletmede
-	// aranan adı içeren net bir NotFound olarak çıkar.
+	// Entity is NOT part of the link's IDENTITY and is not written to the
+	// durable definition ledger: the link table's schema does not depend on
+	// it, it only affects in-process query routing. A wrong value surfaces on
+	// the first expansion as a clear NotFound naming the name that was looked
+	// up.
 	Entity string
-	// Field o modüldeki kimlik alanının adıdır (örn. "price_set_id").
+	// Field is the name of the id field in that module (e.g. "price_set_id").
 	Field string
 }
 
-// EntityName ucun Query katmanındaki entity adını döner.
-// Entity boşsa Module'a düşer.
+// EntityName returns this end's entity name in the Query layer.
+// It falls back to Module when Entity is empty.
 func (s LinkSide) EntityName() string {
 	if s.Entity != "" {
 		return s.Entity
@@ -197,37 +206,38 @@ func (s LinkSide) EntityName() string {
 	return s.Module
 }
 
-// String ucu "modül.alan" biçiminde yazar.
+// String writes the end as "module.field".
 func (s LinkSide) String() string {
 	return s.Module + "." + s.Field
 }
 
-// LinkDefinition iki modül arasındaki bir ilişkinin bildirimidir.
+// LinkDefinition is the declaration of one relation between two modules.
 //
-// Tanım DEĞİŞMEZ sayılır: aynı adla farklı bir tanım bildirmek errors.Conflict
-// üretir (bkz. [LinkService.Define]).
-type LinkDefinition struct { //nolint:revive // ad, plan Bölüm 5.2'deki bağlayıcı sözleşmeden gelir
-	// Name linkin benzersiz adıdır (örn. "product_price"); tablo adı bundan
-	// türetilir.
+// A definition is treated as IMMUTABLE: declaring a different definition under
+// the same name produces an errors.Conflict (see [LinkService.Define]).
+type LinkDefinition struct { //nolint:revive // the name comes from the binding contract in plan Section 5.2
+	// Name is the link's unique name (e.g. "product_price"); the table name is
+	// derived from it.
 	Name string
-	// From linkin kaynak ucudur.
+	// From is the link's source end.
 	From LinkSide
-	// To linkin hedef ucudur.
+	// To is the link's target end.
 	To LinkSide
-	// Cardinality ilişkinin çokluğudur; veritabanı kısıtına çevrilir.
+	// Cardinality is the multiplicity of the relation; it is translated into a
+	// database constraint.
 	Cardinality Cardinality
 }
 
-// String tanımı hata ve log mesajlarında okunabilir biçimde yazar.
+// String writes the definition readably for error and log messages.
 func (d LinkDefinition) String() string {
 	return fmt.Sprintf("%s(%s -> %s, %s)", d.Name, d.From, d.To, d.Cardinality)
 }
 
-// Validate tanımın tutarlı ve SQL tanımlayıcısına güvenle çevrilebilir
-// olduğunu doğrular.
+// Validate checks that the definition is consistent and can be turned safely
+// into an SQL identifier.
 //
-// Geçersiz her durum errors.Invalid sınıfında döner. Doğrulama Define'ın en
-// başında çalışır; geçersiz bir ad veritabanına HİÇ ulaşmaz.
+// Every invalid case returns in the errors.Invalid class. Validation runs at
+// the very start of Define; an invalid name NEVER reaches the database.
 func (d LinkDefinition) Validate() error {
 	if err := validateName(d.Name); err != nil {
 		return err
@@ -240,83 +250,86 @@ func (d LinkDefinition) Validate() error {
 	}
 	if !d.Cardinality.Valid() {
 		return errors.Invalid(codeCardinalityInvalid,
-			"%q linkinin kardinalitesi tanımsız (%s)", d.Name, d.Cardinality)
+			"the cardinality of link %q is undefined (%s)", d.Name, d.Cardinality)
 	}
 	return nil
 }
 
-// validateName link adının tablo adına güvenle çevrilebileceğini doğrular.
+// validateName checks that a link name can be turned safely into a table name.
 func validateName(name string) error {
 	if !namePattern.MatchString(name) {
 		return errors.Invalid(codeNameInvalid,
-			"geçersiz link adı %q (beklenen desen: %s)", name, namePattern.String())
+			"invalid link name %q (expected pattern: %s)", name, namePattern.String())
 	}
 	for _, reserved := range reservedNames {
 		if name == reserved {
 			return errors.Invalid(codeNameInvalid,
-				"%q ayrılmış bir link adıdır; %s tablosuyla çakışır", name, definitionsTable)
+				"%q is a reserved link name; it collides with the %s table", name, definitionsTable)
 		}
 	}
-	// PostgreSQL'de tablolar ve indeksler AYNI ad uzayını (pg_class) paylaşır.
-	// "x_from_uniq" adlı bir link, "x" linkinin benzersizlik indeksiyle aynı
-	// ilişki adına çözülür; CREATE ... IF NOT EXISTS bu durumda hata değil
-	// NOTICE üretip ATLAR, yani kardinalite kısıtı sessizce hiç kurulmaz.
-	// Sonekler sabitlerden türetilir ki adlandırma şeması değişirse yasak da
-	// kendiliğinden değişsin.
+	// In PostgreSQL, tables and indexes share the SAME namespace (pg_class).
+	// A link named "x_from_uniq" resolves to the same relation name as the
+	// uniqueness index of link "x"; in that case CREATE ... IF NOT EXISTS
+	// raises a NOTICE rather than an error and SKIPS, meaning the cardinality
+	// constraint is silently never created. The suffixes are derived from the
+	// constants so that the ban follows a change in the naming scheme by
+	// itself.
 	for _, suffix := range []string{fromIndexSuffix, toIndexSuffix, toLookupSuffix} {
 		if strings.HasSuffix(name, suffix) {
 			return errors.Invalid(codeNameInvalid,
-				"%q adı link indeks ad uzayıyla çakışır (%q soneki ayrılmıştır)", name, suffix)
+				"the name %q collides with the link index namespace (the %q suffix is reserved)", name, suffix)
 		}
 	}
 	return nil
 }
 
-// validateSide bir ucun modül ve alan adlarını doğrular. label hata mesajında
-// hangi ucun kastedildiğini söyler.
+// validateSide validates the module and field names of one end. label says
+// which end the error message is about.
 func validateSide(side LinkSide, label string) error {
 	if !namePattern.MatchString(side.Module) {
 		return errors.Invalid(codeSideInvalid,
-			"%s ucunun modül adı geçersiz: %q (beklenen desen: %s)",
+			"the module name of the %s end is invalid: %q (expected pattern: %s)",
 			label, side.Module, namePattern.String())
 	}
 	if !namePattern.MatchString(side.Field) {
 		return errors.Invalid(codeSideInvalid,
-			"%s ucunun alan adı geçersiz: %q (beklenen desen: %s)",
+			"the field name of the %s end is invalid: %q (expected pattern: %s)",
 			label, side.Field, namePattern.String())
 	}
 	return nil
 }
 
-// validateID bağlanan bir kimliğin kullanılabilir olduğunu doğrular.
+// validateID checks that a bound id is usable.
 //
-// Kimlikler SQL'e PARAMETRE olarak gider, yani enjeksiyon riski taşımaz;
-// buradaki doğrulama anlamsız kayıtları (boş dizge, yalnızca boşluk, baş/son
-// boşluk) ve indeks sınırını aşan devasa kimlikleri erken yakalamak içindir.
-// label hata mesajında hangi ucun kastedildiğini söyler.
+// Ids reach SQL as PARAMETERS, so they carry no injection risk; the validation
+// here exists to catch meaningless records (empty string, whitespace only,
+// leading/trailing whitespace) and huge ids exceeding the index limit early.
+// label says which end the error message is about.
 //
-// Boşluklu kimlik KIRPILMAZ, reddedilir; gerekçe için bkz. [LinkService].
+// A padded id is NOT TRIMMED, it is rejected; for the reasoning see
+// [LinkService].
 func validateID(id, label string) error {
 	trimmed := strings.TrimSpace(id)
 	if trimmed == "" {
-		return errors.Invalid(codeIDInvalid, "%s boş olamaz", label)
+		return errors.Invalid(codeIDInvalid, "%s cannot be empty", label)
 	}
 	if trimmed != id {
-		return errors.Invalid(codeIDInvalid, "%s baş/son boşluk içeremez: %q", label, id)
+		return errors.Invalid(codeIDInvalid, "%s cannot carry leading/trailing whitespace: %q", label, id)
 	}
 	if len(id) > maxIDLen {
 		return errors.Invalid(codeIDInvalid,
-			"%s en fazla %d bayt olabilir, %d bayt verildi", label, maxIDLen, len(id))
+			"%s can be at most %d bytes, %d bytes were given", label, maxIDLen, len(id))
 	}
 	return nil
 }
 
-// TableName link adından tablo adını üretir.
+// TableName builds the table name from a link name.
 //
-// Ad BURADA doğrulanır ve geçersizse boş ad ile birlikte errors.Invalid döner.
-// Doğrulamanın fonksiyonun kendisinde olması, dışarıdan gelen bir adın
-// doğrulanmadan tablo adına dönüşmesini yapısal olarak imkânsız kılar
-// (internal/core/db MigrationsTable ile aynı gerekçe).
+// The name is validated HERE, and on failure an empty name is returned
+// together with errors.Invalid. Keeping the validation inside the function
+// itself makes it structurally impossible for a name from outside to become a
+// table name unvalidated (the same reasoning as internal/core/db
+// MigrationsTable).
 func TableName(name string) (string, error) {
 	if err := validateName(name); err != nil {
 		return "", err
@@ -324,72 +337,77 @@ func TableName(name string) (string, error) {
 	return tablePrefix + name, nil
 }
 
-// LinkService modüller arası bağların tanımlanmasını ve yönetilmesini sağlar
-// (plan Bölüm 5.2).
+// LinkService allows cross-module links to be declared and managed
+// (plan Section 5.2).
 //
-// Tüm metodlar goroutine-güvenlidir.
+// All methods are goroutine-safe.
 //
-// # Kimlik sözleşmesi
+// # The id contract
 //
-// Bağlanan kimlikler serbest dizgelerdir (link hiçbir modülün şemasını
-// tanımaz), ama boş olamaz, BAŞ/SON BOŞLUK İÇEREMEZ ve azami uzunluğu aşamaz;
-// ihlal errors.Invalid döner. Boşluk yasağı sessiz veri kaybını kapatır: dış
-// kaynaktan (CSV, HTTP başlığı, JSON) sonuna \n almış "var_1\n" ile kurulan
-// bir bağ, temiz "var_1" ile HİÇ okunamaz — List boş dilim döner, bu sözleşme
-// gereği hata değildir ve telafi adımının Delete'i de no-op olduğu için satır
-// kalıcı olarak yetim kalırdı. Aynı kayma "var_1" ile "var_1\n"yi iki ayrı uç
-// sayarak [OneToOne] ve [OneToMany] kısıtlarını da fiilen delerdi.
+// Bound ids are free-form strings (link knows no module's schema), but they
+// cannot be empty, CANNOT CARRY LEADING/TRAILING WHITESPACE and cannot exceed
+// the maximum length; a violation returns errors.Invalid. The whitespace ban
+// closes a silent data loss: a link created with "var_1\n", which picked up a
+// trailing newline from an external source (CSV, HTTP header, JSON), can NEVER
+// be read back with the clean "var_1" — List returns an empty slice, which is
+// not an error by contract, and since the compensation step's Delete is a
+// no-op too the row would stay orphaned forever. The same drift would also
+// effectively pierce the [OneToOne] and [OneToMany] constraints by counting
+// "var_1" and "var_1\n" as two separate ends.
 //
-// Kimlik sessizce kırpılmaz: kırpma, çağıranın gönderdiği kimlikle saklanan
-// kimliği ayırır ve fark ancak veri bozulduktan sonra görünür.
-type LinkService interface { //nolint:revive // ad, plan Bölüm 5.2'deki bağlayıcı sözleşmeden gelir
-	// Define bir link tanımını bildirir ve tablosunu (yoksa) oluşturur.
+// An id is not trimmed silently: trimming separates the id the caller sent
+// from the id we store, and the difference only becomes visible after the data
+// is corrupted.
+type LinkService interface { //nolint:revive // the name comes from the binding contract in plan Section 5.2
+	// Define declares a link definition and creates its table (if absent).
 	//
-	// Çağrı idempotenttir: aynı tanım her açılışta yeniden bildirilebilir.
-	// AYNI ADLA FARKLI bir tanım bildirilirse errors.Conflict döner — çünkü
-	// tanım değişikliği (özellikle kardinalite) var olan veriyi taşımayı
-	// gerektirir ve sessizce yapılamaz.
+	// The call is idempotent: the same definition can be redeclared on every
+	// startup. Declaring a DIFFERENT definition under the SAME NAME returns
+	// errors.Conflict — because a definition change (cardinality above all)
+	// requires migrating the existing data and cannot be done silently.
 	Define(ctx context.Context, def LinkDefinition) error
 
-	// Create fromID ile toID arasında bağ kurar.
+	// Create links fromID with toID.
 	//
-	// Aynı çift ikinci kez bağlanırsa çağrı NO-OP'tur (hata değildir): saga
-	// yeniden denemeleri aynı adımı tekrar çalıştırır ve idempotency plan
-	// Bölüm 2.6'nın şartıdır. Buna karşılık KARDİNALİTE ihlali (aynı ucun
-	// başka bir kayda bağlı olması) errors.Conflict döner; bu, yeniden deneme
-	// değil, veri hatasıdır.
+	// Linking the same pair a second time is a NO-OP (not an error): saga
+	// retries rerun the same step, and idempotency is a requirement of plan
+	// Section 2.6. A CARDINALITY violation (the same end already bound to
+	// another record), in contrast, returns errors.Conflict; that is a data
+	// error, not a retry.
 	Create(ctx context.Context, name, fromID, toID string) error
 
-	// Delete fromID ile toID arasındaki bağı kaldırır.
+	// Delete removes the link between fromID and toID.
 	//
-	// Bağ zaten yoksa çağrı NO-OP'tur: telafi (compensation) adımları
-	// başarısız bir Create'ten sonra da çalışır ve "yok" istenen sonucun ta
-	// kendisidir.
+	// If the link is already absent the call is a NO-OP: compensation steps
+	// also run after a failed Create, and "absent" is precisely the desired
+	// outcome.
 	Delete(ctx context.Context, name, fromID, toID string) error
 
-	// List fromID'ye bağlı toID'leri döner.
+	// List returns the toIDs bound to fromID.
 	//
-	// Sonuç toID'ye göre ARTAN sıralıdır; hiç bağ yoksa boş dilim döner (nil
-	// değil). Tanımlı olmayan bir link adı errors.NotFound üretir.
+	// The result is sorted ASCENDING by toID; with no links at all it returns
+	// an empty slice (not nil). An undefined link name produces
+	// errors.NotFound.
 	List(ctx context.Context, name, fromID string) ([]string, error)
 
-	// ListMany birden çok fromID'nin bağlarını TEK sorguda döner.
+	// ListMany returns the links of several fromIDs in a SINGLE query.
 	//
-	// Query katmanı (ADR 0004) genişletmeleri batch yapar; List'i kök kayıt
-	// başına çağırmak N+1 üretirdi. Dönen haritada yalnızca en az bir bağı
-	// olan fromID'ler bulunur; her dilim toID'ye göre artan sıralıdır.
+	// The Query layer (ADR 0004) batches expansions; calling List once per
+	// root record would produce an N+1. The returned map holds only the
+	// fromIDs that have at least one link; every slice is sorted ascending by
+	// toID.
 	ListMany(ctx context.Context, name string, fromIDs []string) (map[string][]string, error)
-	// ListManyByTo ters yönü toplu çözer: verilen toID'lerin her biri için
-	// bağlı fromID'leri döner.
+	// ListManyByTo resolves the reverse direction in bulk: for each of the
+	// given toIDs it returns the fromIDs bound to it.
 	//
-	// Query katmanı, genişletmenin kök entity'si link'in To ucundayken bunu
-	// kullanır. Bu olmadan ters yönlü her genişletme ya kayıt başına sorguya
-	// (N+1) düşer ya da hiç desteklenmez.
+	// The Query layer uses this when the expansion's root entity sits on the
+	// link's To end. Without it every reverse expansion either falls to a
+	// query per record (N+1) or is not supported at all.
 	ListManyByTo(ctx context.Context, name string, toIDs []string) (map[string][]string, error)
 
-	// Definition adı verilen linkin tanımını döner.
+	// Definition returns the definition of the named link.
 	//
-	// Query katmanı, bir link'in hangi modüle ve hangi alana çözüldüğünü
-	// buradan öğrenir. Tanımsız ad errors.NotFound üretir.
+	// The Query layer learns which module and which field a link resolves to
+	// from here. An undefined name produces errors.NotFound.
 	Definition(ctx context.Context, name string) (LinkDefinition, error)
 }

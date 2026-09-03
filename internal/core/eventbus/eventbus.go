@@ -1,90 +1,97 @@
-// Package eventbus modüller arası asenkron yan etkiler için olay veri yolunu
-// sağlar (plan Bölüm 1 ve 5.4).
+// Package eventbus provides the event bus for asynchronous cross-module side
+// effects (plan Sections 1 and 5.4).
 //
-// Sözleşme tek, backend değiştirilebilirdir: NewInMemory geliştirme ve test
-// için süreç içi bir veri yolu, NewRedisStream üretim için Redis Streams
-// tabanlı kalıcı bir veri yolu üretir. Ortak olan yalnızca ARAYÜZDÜR; teslim,
-// sıra, eşzamanlılık ve handler'a verilen BAĞLAM backend'e göre değişir ve
-// aşağıdaki bölümlerde tek tek tanımlanmıştır. Backend değiştirmeden önce
-// handler'ların bu garantilerin EN ZAYIFINA göre yazıldığından emin olun.
+// The contract is single, the backend is replaceable: NewInMemory builds an
+// in-process bus for development and tests, NewRedisStream a durable bus on
+// Redis Streams for production. Only the INTERFACE is common; delivery,
+// ordering, concurrency and the CONTEXT given to a handler differ per backend
+// and are defined one by one in the sections below. Before switching backends,
+// make sure the handlers were written against the WEAKEST of these guarantees.
 //
-// # Teslim semantiği
+// # Delivery semantics
 //
-// Publish asenkrondur ve handler'ları BEKLEMEZ; çağıran taraf yalnızca olayın
-// kabul edildiğini öğrenir. Bu yüzden bir handler'ın hatası çağırana geri
-// dönmez. InMemory backend'i en fazla bir kez (at-most-once) teslim eder ve
-// süreç ölürse olay kaybolur; Redis backend'i en az bir kez (at-least-once)
-// teslim eder ve süreç yeniden başladığında kaldığı yerden devam eder.
-// Handler'lar bu yüzden idempotent yazılmalıdır (plan Bölüm 2.6).
+// Publish is asynchronous and does NOT WAIT for the handlers; the caller only
+// learns that the event was accepted. That is why a handler's error never
+// comes back to the caller. The InMemory backend delivers at most once
+// (at-most-once) and the event is lost if the process dies; the Redis backend
+// delivers at least once (at-least-once) and resumes where it left off when
+// the process restarts. Handlers must therefore be written idempotently
+// (plan Section 2.6).
 //
-// # Sıra ve eşzamanlılık garantileri
+// # Ordering and concurrency guarantees
 //
-// Sözleşme tek olsa da iki backend'in eşzamanlılık davranışı AYNI DEĞİLDİR ve
-// hiçbiri teslim sırasını garanti etmez:
+// Even though the contract is single, the concurrency behavior of the two
+// backends IS NOT THE SAME, and neither of them guarantees delivery order:
 //
-//   - InMemory her handler çağrısını ayrı bir goroutine'de çalıştırır. Aynı
-//     handler aynı anda birden çok olayla koşabilir ve olaylar yayım
-//     sırasından farklı sırada teslim edilebilir.
-//   - Redis backend'i bir stream'in mesajlarını tek tüketici döngüsünde sırayla
-//     işler, ama aynı gruba birden çok süreç bağlandığında mesajlar süreçlere
-//     dağıtılır ve genel sıra yine korunmaz.
+//   - InMemory runs every handler call in a separate goroutine. The same
+//     handler can run with several events at once, and events can be delivered
+//     in an order different from the publication order.
+//   - The Redis backend processes a stream's messages in order in a single
+//     consumer loop, but when several processes join the same group the
+//     messages are distributed across the processes and the overall order is
+//     again not preserved.
 //
-// Bu yüzden handler'lar yalnızca idempotent değil, YENİDEN GİRİŞE UYGUN
-// (reentrant) da yazılmalıdır: paylaşılan durum kilitlenmeli, sıraya bağlı
-// kararlar Event.OccurredAt veya yükteki bir sürüm alanı üzerinden verilmeli,
-// "önceki olay zaten işlendi" varsayımı yapılmamalıdır. Kesin sıralı, çok
-// adımlı akışlar core/workflow'un saga motoruna aittir (plan Faz 3).
+// That is why handlers must be written not only idempotently but also
+// REENTRANTLY: shared state must be locked, order-dependent decisions must be
+// made through Event.OccurredAt or a version field in the payload, and no
+// "the previous event was already processed" assumption may be made. Strictly
+// ordered, multi-step flows belong to core/workflow's saga engine
+// (plan Phase 3).
 //
-// # Hata ve yeniden deneme politikası
+// # Error and retry policy
 //
-// Bir handler paniklerse panik yakalanır, yığın iziyle loglanır ve veri yolu
-// ayakta kalır; diğer handler'lar etkilenmez. Bir handler hata dönerse hata
-// loglanır ve olay işlenmiş sayılır — HİÇBİR backend otomatik yeniden deneme
-// YAPMAZ. Bu bilinçli bir karardır: ölü mektup kuyruğu olmadan yapılan
-// yeniden teslim, bozuk bir olayın (poison pill) tüketiciyi sonsuz döngüde
-// kilitlemesine yol açar. Yeniden deneme ve telafi gerektiren işler
-// core/workflow'un saga motoruna aittir (plan Faz 3); handler'ın kendi
-// içinde yeniden denemesi de serbesttir.
+// If a handler panics, the panic is recovered, logged with a stack trace and
+// the bus stays up; the other handlers are unaffected. If a handler returns an
+// error, the error is logged and the event counts as processed — NO backend
+// retries automatically. This is a deliberate decision: without a dead letter
+// queue, redelivery lets a broken event (a poison pill) lock the consumer in
+// an endless loop. Work needing retries and compensation belongs to
+// core/workflow's saga engine (plan Phase 3); a handler is of course free to
+// retry inside itself.
 //
-// # Bağlam ve gözlemlenebilirlik
+// # Context and observability
 //
-// Handler'a verilen ctx'in İPTAL davranışı iki backend'de aynıdır, DEĞERLERİ
-// değildir (bkz. [Handler]): InMemory olayı süreç içinde taşıdığı için
-// Publish'e verilen ctx'in değerleri handler'a ulaşır, Redis ise olayı
-// SÜREÇLER ARASI taşır ve tüketici süreç yayımcının ctx'ini hiç görmez.
+// The CANCELLATION behavior of the ctx given to a handler is the same in both
+// backends, its VALUES are not (see [Handler]): InMemory carries the event
+// inside the process, so the values of the ctx given to Publish reach the
+// handler, whereas Redis carries the event ACROSS PROCESSES and the consuming
+// process never sees the publisher's ctx.
 //
-// Bunun ölçülen bedeli bir gözlemlenebilirlik farkıdır ve BİLİNÇLİ olarak
-// kapatılmamıştır: in-memory kurulumda bir handler'ın logları yayımlayan
-// isteğin request_id'sini taşır, Redis kurulumunda TAŞIMAZ. Yani bir olayı
-// tetikleyen istek ile onun yan etkisi, üretim kurulumunda request_id
-// üzerinden birbirine bağlanamaz.
+// The measured price of this is an observability difference, and it is
+// DELIBERATELY left open: in an in-memory setup a handler's logs carry the
+// request_id of the publishing request, in a Redis setup they DO NOT. That is,
+// in a production setup the request that triggered an event and its side
+// effect cannot be tied to each other through request_id.
 //
-// Farkı kapatmak teknik olarak ucuzdur — request_id mesaja bir alan olarak
-// yazılıp tüketicide ctx'e geri konabilirdi — ama ÜÇ bedeli vardır ve
-// toplamı, kazandırdığı tek log alanından pahalıdır:
+// Closing the difference is technically cheap — request_id could be written
+// into the message as a field and put back into the ctx on the consumer side —
+// but it has THREE costs, and their sum is dearer than the single log field it
+// would earn:
 //
-//   - Veri yolu, hangi ctx değerlerinin taşınmaya değer olduğunu BİLMEK
-//     zorunda kalırdı. request_id çekirdeğin HTTP katmanının anahtarıdır;
-//     taşımak, taşıma katmanı olan bu paketi o katmana bağlar ve listeye her
-//     eklenen değer bağı büyütür.
-//   - Sonuç YARIM bir doğruluk olurdu: request_id dolu ama logger, kimlik ve
-//     izleme span'i boş bir ctx, handler yazarını "hangi değer var" diye
-//     tahmine iter. Bugünkü kural tahmine yer bırakmıyor: Redis'te HİÇBİRİ
-//     yok.
-//   - En az bir kez teslim, mesajı süreç yeniden başladıktan sonra da
-//     verebilir. O anda geri konan request_id, çoktan bitmiş bir isteğe ait
-//     olurdu; log satırı canlı bir isteğe aitmiş gibi görünür ve bu, hiç
-//     korelasyon olmamasından daha yanıltıcıdır.
+//   - The bus would have to KNOW which ctx values are worth carrying.
+//     request_id is a key of the core's HTTP layer; carrying it binds this
+//     package, which is a transport layer, to that layer, and every value
+//     added to the list grows the binding.
+//   - The result would be a HALF truth: a ctx with a filled request_id but an
+//     empty logger, identity and tracing span pushes the handler's author into
+//     guessing "which value is there". Today's rule leaves no room to guess:
+//     under Redis there is NONE.
+//   - At-least-once delivery can hand over the message after the process has
+//     restarted too. The request_id put back at that moment would belong to a
+//     request that finished long ago; the log line would look as if it
+//     belonged to a live request, and that is more misleading than having no
+//     correlation at all.
 //
-// İki backend'de de çalışan korelasyon yolu Event'in KENDİSİDİR: Event.ID
-// mesajla birlikte taşınır ve handler hatalarında zaten loglanır (event_id),
-// yayımlayan taraf isteğe bağlı olarak request_id'yi Event.Data'ya AÇIKÇA
-// koyabilir. Data, iki backend'in de taşıdığı tek şeydir.
+// The correlation path that works in both backends is the Event ITSELF:
+// Event.ID travels with the message and is already logged on handler errors
+// (event_id), and the publisher can EXPLICITLY put request_id into Event.Data.
+// Data is the only thing both backends carry.
 //
-// Bu karar, dağıtık izleme (trace context) gerçekten istendiğinde yeniden
-// açılır. O zaman taşınacak şey request_id değil W3C traceparent'tır, taşıma
-// yeri yine mesajın kendisidir ve tüketici tarafında span, kopyalanmış bir
-// değer olarak değil AÇIKÇA sürdürülür.
+// This decision is reopened the day distributed tracing (trace context) is
+// really wanted. Then the thing to carry is not request_id but the W3C
+// traceparent, the place to carry it is again the message itself, and on the
+// consumer side the span is continued EXPLICITLY rather than as a copied
+// value.
 package eventbus
 
 import (
@@ -101,86 +108,90 @@ import (
 	"github.com/bdrtr/gobit/internal/core/errors"
 )
 
-// Event veri yolunda taşınan tek bir olaydır.
+// Event is a single event carried on the bus.
 type Event struct {
-	// Name olayın "modül.eylem" biçimindeki adıdır (örn. "order.placed").
-	// Abonelikler bu ada göre eşleşir; Redis backend'inde her ad ayrı bir
-	// stream'e karşılık gelir. Boş bırakılamaz.
+	// Name is the event's name in "module.action" form (e.g. "order.placed").
+	// Subscriptions match on this name; in the Redis backend every name maps
+	// to a separate stream. It cannot be left empty.
 	Name string
 
-	// Data olayın taşıdığı yüktür. Redis backend'inde JSON'a serileştirildiği
-	// için yalnızca JSON'a çevrilebilir değerler içermelidir. Handler'lar bu
-	// haritayı SALT OKUNUR kabul etmelidir; üst düzey anahtarlar her handler
-	// için ayrı kopyalanır, iç içe değerler paylaşılmaya devam eder.
+	// Data is the payload the event carries. Because it is serialized to JSON
+	// in the Redis backend, it must hold only JSON-convertible values.
+	// Handlers must treat this map as READ ONLY; the top-level keys are copied
+	// per handler, nested values keep being shared.
 	Data map[string]any
 
-	// ID olayın tekil kimliğidir ve yayımlayan tarafından verilebilir; boş
-	// bırakılırsa zaman sıralı bir kimlik üretilir. Tüketiciler bu kimliği
-	// idempotency anahtarı olarak kullanabilir.
+	// ID is the event's unique id and may be supplied by the publisher; if it
+	// is left empty a time-ordered id is generated. Consumers can use this id
+	// as an idempotency key.
 	ID string
 
-	// OccurredAt olayın gerçekleştiği andır ve her zaman UTC'ye çevrilir.
-	// Sıfır değer verilirse Publish anı kullanılır.
+	// OccurredAt is the moment the event happened and is always converted to
+	// UTC. If the zero value is given, the moment of Publish is used.
 	OccurredAt time.Time
 }
 
-// Handler bir olayı işleyen fonksiyondur.
+// Handler is a function that processes an event.
 //
-// Verilen ctx hiçbir backend'de İPTAL DEVRALMAZ: çağıranın isteği bitse de,
-// Shutdown çağrılsa da işleme yarıda kesilmez. Ctx'in DEĞERLERİ ise backend'e
-// göre değişir:
+// The given ctx INHERITS NO CANCELLATION in any backend: processing is not cut
+// short when the caller's request ends, nor when Shutdown is called. The
+// VALUES of the ctx, however, differ per backend:
 //
-//   - InMemory: ctx, Publish'e verilen ctx'ten türetilir; istek değerleri
-//     (örn. request_id) korunur.
-//   - Redis: olay SÜREÇLER ARASI gider. Tüketici süreç yayımcının ctx'ini HİÇ
-//     görmez; handler, veri yolunun kendi kök ctx'inden türeyen ve hiçbir
-//     istek değeri TAŞIMAYAN bir ctx alır.
+//   - InMemory: the ctx is derived from the ctx given to Publish; request
+//     values (e.g. request_id) are preserved.
+//   - Redis: the event travels ACROSS PROCESSES. The consuming process NEVER
+//     sees the publisher's ctx; the handler receives a ctx derived from the
+//     bus's own root ctx that CARRIES no request value.
 //
-// Handler bu yüzden ctx'teki değerlere GÜVENMEMELİDİR. Varsayılan backend
-// in-memory olduğundan, ctx'te bir şey taşıyan tasarım testlerde ve yerel
-// geliştirmede yeşil geçer, üretimde sessizce boş okur: ihtiyaç duyulan her
-// şey Event.Data'da olmalıdır. Korelasyonun iki backend'de de çalışan hâli
-// için bkz. paket yorumundaki "Bağlam ve gözlemlenebilirlik".
+// A handler must therefore NOT RELY on the values in the ctx. Since the
+// default backend is in-memory, a design that carries something in the ctx
+// passes green in tests and in local development and reads silently empty in
+// production: everything needed must be in Event.Data. For the form of
+// correlation that works in both backends see "Context and observability" in
+// the package comment.
 //
-// Dönen hata çağırana ulaşmaz, yalnızca loglanır.
+// The returned error never reaches the caller, it is only logged.
 type Handler func(ctx context.Context, e Event) error
 
-// EventBus olay yayımlama ve abonelik sözleşmesidir.
+// EventBus is the event publication and subscription contract.
 type EventBus interface {
-	// Publish olayı yayımlar ve handler'ları beklemeden döner.
+	// Publish publishes the event and returns without waiting for the
+	// handlers.
 	Publish(ctx context.Context, e Event) error
-	// Subscribe verilen olay adına bir handler bağlar.
+	// Subscribe binds a handler to the given event name.
 	//
-	// Bilinçli olarak context.Context almaz: abonelik bir isteğe değil,
-	// sürecin ömrüne bağlıdır (plan Bölüm 5.4 imzası). Yaşam döngüsü Shutdown
-	// ile yönetilir.
+	// It deliberately takes no context.Context: a subscription is bound to the
+	// process's lifetime, not to a request (the signature of plan Section
+	// 5.4). Its lifecycle is managed through Shutdown.
 	Subscribe(eventName string, h Handler) error
-	// Shutdown veri yolunu kapatır ve çalışan handler'ların bitmesini bekler.
+	// Shutdown closes the bus and waits for the running handlers to finish.
 	//
-	// Bekleme ctx ile sınırlıdır: süre dolarsa takılan handler'lar beklenmez
-	// ve errors.KindUnavailable / CodeShutdownTimeout döner. Veri yolu her
-	// hâlükârda kapanır; dönüşten sonra Publish ve Subscribe hata döner.
-	// İmza container.Shutdowner ile uyumludur.
+	// The wait is bounded by ctx: if the budget runs out the stuck handlers
+	// are not waited for and errors.KindUnavailable / CodeShutdownTimeout is
+	// returned. The bus is closed in either case; after the return Publish and
+	// Subscribe return errors. The signature is compatible with
+	// container.Shutdowner.
 	Shutdown(ctx context.Context) error
 }
 
-// Hata kodları; çağıran taraf errors.CodeOf ile bunlara göre dallanabilir.
+// Error codes; the caller can branch on these through errors.CodeOf.
 const (
-	// CodeClosed kapatılmış bir veri yolunun kullanıldığını bildirir.
+	// CodeClosed reports that a closed bus was used.
 	CodeClosed = "eventbus_closed"
-	// CodeInvalidEvent olayın geçersiz veya serileştirilemez olduğunu bildirir.
+	// CodeInvalidEvent reports that the event is invalid or not serializable.
 	CodeInvalidEvent = "eventbus_invalid_event"
-	// CodeInvalidConfig veri yolu ayarlarının geçersiz olduğunu bildirir.
+	// CodeInvalidConfig reports that the bus configuration is invalid.
 	CodeInvalidConfig = "eventbus_invalid_config"
-	// CodePublishFailed yayımlamanın backend seviyesinde başarısız olduğunu bildirir.
+	// CodePublishFailed reports that publication failed at the backend level.
 	CodePublishFailed = "eventbus_publish_failed"
-	// CodeSubscribeFailed aboneliğin kurulamadığını bildirir.
+	// CodeSubscribeFailed reports that the subscription could not be set up.
 	CodeSubscribeFailed = "eventbus_subscribe_failed"
-	// CodeShutdownTimeout kapanış beklenirken sürenin dolduğunu bildirir.
+	// CodeShutdownTimeout reports that the budget ran out while waiting for
+	// the shutdown.
 	CodeShutdownTimeout = "eventbus_shutdown_timeout"
 )
 
-// Log kayıtlarında kullanılan sabit anahtarlar.
+// The fixed keys used in log records.
 const (
 	attrEvent   = "event"
 	attrEventID = "event_id"
@@ -188,23 +199,25 @@ const (
 	attrStream  = "stream"
 )
 
-// idPrefix üretilen olay kimliklerinin önekidir (plan Bölüm 8).
+// idPrefix is the prefix of the generated event ids (plan Section 8).
 const idPrefix = "evt_"
 
-// idEncoding Crockford Base32 alfabesiyle dolgusuz kodlamadır. Alfabe ASCII'de
-// artan sırada olduğundan kodlanmış dize, kodlanan baytlarla aynı sözlüksel
-// sırayı korur; kimlikler bu sayede zamana göre sıralanabilir kalır.
+// idEncoding is padless encoding with the Crockford Base32 alphabet. Because
+// the alphabet is in ascending order in ASCII, the encoded string keeps the
+// same lexicographic order as the bytes it encodes; that is what keeps the ids
+// sortable by time.
 var idEncoding = base32.NewEncoding("0123456789ABCDEFGHJKMNPQRSTVWXYZ").WithPadding(base32.NoPadding)
 
-// newEventID zaman sıralı ve tekil bir olay kimliği üretir.
+// newEventID generates a time-ordered and unique event id.
 //
-// Yapısı ULID ile aynıdır: 48 bit milisaniye zaman damgası + 80 bit
-// kriptografik rastgelelik, Crockford Base32 ile 26 karaktere kodlanır.
+// Its structure is the same as a ULID's: a 48-bit millisecond timestamp plus
+// 80 bits of cryptographic randomness, encoded into 26 characters with
+// Crockford Base32.
 func newEventID(t time.Time) string {
 	ms := t.UTC().UnixMilli()
 	if ms < 0 {
-		// 1970 öncesi bir zaman damgası olay için anlamlı değildir; sıralamayı
-		// bozmamak için tabana çekilir.
+		// A timestamp before 1970 is meaningless for an event; it is clamped
+		// to the floor so that the ordering is not broken.
 		ms = 0
 	}
 
@@ -212,22 +225,23 @@ func newEventID(t time.Time) string {
 	binary.BigEndian.PutUint64(stamp[:], uint64(ms))
 
 	var buf [16]byte
-	// UnixMilli 48 bite sığar; ilk iki bayt daima sıfırdır ve atılır.
+	// UnixMilli fits in 48 bits; the first two bytes are always zero and are
+	// dropped.
 	copy(buf[:6], stamp[2:])
 	if _, err := rand.Read(buf[6:]); err != nil {
-		// crypto/rand.Read hata dönmez; yine de bir gün dönerse kimlik
-		// yalnızca nanosaniye çözünürlüğüne dayanır — tekillik zayıflar ama
-		// yayımlama başarısız olmaz.
+		// crypto/rand.Read does not return an error; should it ever do so, the
+		// id rests only on nanosecond resolution — uniqueness weakens but
+		// publication does not fail.
 		binary.BigEndian.PutUint64(buf[8:], uint64(t.UnixNano()))
 	}
 
 	return idPrefix + idEncoding.EncodeToString(buf[:])
 }
 
-// normalize olayı doğrular ve boş bırakılan alanlarını doldurur.
+// normalize validates the event and fills in the fields left empty.
 func normalize(e Event) (Event, error) {
 	if e.Name == "" {
-		return Event{}, errors.Invalid(CodeInvalidEvent, "olay adı boş olamaz")
+		return Event{}, errors.Invalid(CodeInvalidEvent, "the event name cannot be empty")
 	}
 
 	if e.OccurredAt.IsZero() {
@@ -243,24 +257,24 @@ func normalize(e Event) (Event, error) {
 	return e, nil
 }
 
-// deliverable handler'a verilecek olay kopyasını üretir.
+// deliverable builds the copy of the event handed to a handler.
 //
-// Data sığ kopyalanır; böylece bir handler'ın üst düzey anahtarlarda yaptığı
-// değişiklik aynı anda çalışan diğer handler'ları etkilemez ve yarış durumuna
-// yol açmaz. İç içe değerler paylaşılmaya devam eder.
+// Data is shallow-copied, so that a change one handler makes to the top-level
+// keys does not affect the other handlers running at the same time and does
+// not cause a race. Nested values keep being shared.
 func deliverable(e Event) Event {
 	e.Data = maps.Clone(e.Data)
 	return e
 }
 
-// invokeHandler handler'ı panik ve hata güvenli biçimde çağırır.
+// invokeHandler calls the handler in a panic- and error-safe way.
 //
-// Panik yakalanıp yığın iziyle loglanır, hata yalnızca loglanır; ikisi de
-// veri yolunu durdurmaz ve yeniden denemeye yol açmaz (bkz. paket yorumu).
+// A panic is recovered and logged with a stack trace, an error is only logged;
+// neither stops the bus nor leads to a retry (see the package comment).
 func invokeHandler(ctx context.Context, log *slog.Logger, e Event, h Handler) {
 	defer func() {
 		if r := recover(); r != nil {
-			log.ErrorContext(ctx, "olay işleyicisi panikledi",
+			log.ErrorContext(ctx, "the event handler panicked",
 				attrEvent, e.Name,
 				attrEventID, e.ID,
 				"panic", r,
@@ -270,7 +284,7 @@ func invokeHandler(ctx context.Context, log *slog.Logger, e Event, h Handler) {
 	}()
 
 	if err := h(ctx, deliverable(e)); err != nil {
-		log.ErrorContext(ctx, "olay işleyicisi hata döndü",
+		log.ErrorContext(ctx, "the event handler returned an error",
 			attrEvent, e.Name,
 			attrEventID, e.ID,
 			attrError, err,
@@ -278,11 +292,11 @@ func invokeHandler(ctx context.Context, log *slog.Logger, e Event, h Handler) {
 	}
 }
 
-// awaitHandlers çalışan handler'ların bitmesini ctx ile sınırlı biçimde bekler.
+// awaitHandlers waits for the running handlers to finish, bounded by ctx.
 //
-// ctx süresi dolarsa bekleme bırakılır ve CodeShutdownTimeout kodlu tipli hata
-// döner; takılan handler'lar süreçle birlikte sonlanır. Her iki backend'in
-// Shutdown'ı bu davranışı paylaşır.
+// If the ctx budget runs out the wait is abandoned and a typed error with the
+// CodeShutdownTimeout code is returned; the stuck handlers end together with
+// the process. Both backends' Shutdown share this behavior.
 func awaitHandlers(ctx context.Context, wg *sync.WaitGroup) error {
 	done := make(chan struct{})
 	go func() {
@@ -295,23 +309,25 @@ func awaitHandlers(ctx context.Context, wg *sync.WaitGroup) error {
 		return nil
 	case <-ctx.Done():
 		return errors.Wrap(ctx.Err(), errors.KindUnavailable, CodeShutdownTimeout,
-			"olay veri yolu kapatılırken süre doldu; çalışan handler'lar beklenemedi")
+			"the budget ran out while closing the event bus; the running handlers could not be waited for")
 	}
 }
 
-// closedPublishError kapatılmış veri yolunda yayım için tipli hatayı üretir.
+// closedPublishError builds the typed error for a publication on a closed bus.
 func closedPublishError(eventName string) error {
 	return errors.Unavailable(CodeClosed,
-		"olay veri yolu kapatıldı: %q yayımlanamaz", eventName)
+		"the event bus was closed: %q cannot be published", eventName)
 }
 
-// closedSubscribeError kapatılmış veri yolunda abonelik için tipli hatayı üretir.
+// closedSubscribeError builds the typed error for a subscription on a closed
+// bus.
 func closedSubscribeError(eventName string) error {
 	return errors.Unavailable(CodeClosed,
-		"olay veri yolu kapatıldı: %q olayına abone olunamaz", eventName)
+		"the event bus was closed: cannot subscribe to the %q event", eventName)
 }
 
-// orDefaultLogger nil logger yerine sürecin varsayılan logger'ını döner.
+// orDefaultLogger returns the process's default logger in place of a nil
+// logger.
 func orDefaultLogger(log *slog.Logger) *slog.Logger {
 	if log == nil {
 		return slog.Default()

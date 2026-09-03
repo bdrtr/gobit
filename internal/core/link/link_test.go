@@ -12,8 +12,9 @@ import (
 	"github.com/bdrtr/gobit/internal/core/link"
 )
 
-// gecerliTanim testlerde başlangıç noktası olarak kullanılan geçerli tanımdır.
-func gecerliTanim() link.LinkDefinition {
+// validDefinition is the valid definition the tests use as their starting
+// point.
+func validDefinition() link.LinkDefinition {
 	return link.LinkDefinition{
 		Name:        "product_price",
 		From:        link.LinkSide{Module: "product", Field: "variant_id"},
@@ -27,10 +28,10 @@ func TestCardinalityString(t *testing.T) {
 	assert.Equal(t, "one_to_many", link.OneToMany.String())
 	assert.Equal(t, "many_to_many", link.ManyToMany.String())
 	assert.Equal(t, "unknown(9)", link.Cardinality(9).String(),
-		"tanımsız değer sessizce geçerli bir ada dönüşmemeli")
+		"an undefined value must not silently turn into a valid name")
 
-	// Sıfır değer EN KATI kısıt olmalı; aksi hâlde bildirilmemiş bir
-	// kardinalite sessizce serbest ilişkiye izin verirdi.
+	// The zero value must be the STRICTEST constraint; otherwise an undeclared
+	// cardinality would silently allow a free relation.
 	assert.Equal(t, link.OneToOne, link.Cardinality(0))
 }
 
@@ -50,12 +51,12 @@ func TestLinkSideString(t *testing.T) {
 func TestLinkDefinitionString(t *testing.T) {
 	assert.Equal(t,
 		"product_price(product.variant_id -> pricing.price_set_id, one_to_many)",
-		gecerliTanim().String())
+		validDefinition().String())
 }
 
 func TestLinkDefinitionValidateAccepts(t *testing.T) {
-	gecerli := []link.LinkDefinition{
-		gecerliTanim(),
+	valid := []link.LinkDefinition{
+		validDefinition(),
 		{
 			Name:        "a",
 			From:        link.LinkSide{Module: "a", Field: "b"},
@@ -63,9 +64,9 @@ func TestLinkDefinitionValidateAccepts(t *testing.T) {
 			Cardinality: link.OneToOne,
 		},
 		{
-			// Aynı modülün kendi içindeki ilişkisi (örn. ilişkili ürünler)
-			// geçerlidir: link tablosunda sütun adları sabit olduğu için iki
-			// ucun aynı alan adını taşıması sorun değildir.
+			// A relation of a module with itself (related products, say) is
+			// valid: because the column names in the link table are fixed, the
+			// two ends carrying the same field name is not a problem.
 			Name:        "product_related",
 			From:        link.LinkSide{Module: "product", Field: "product_id"},
 			To:          link.LinkSide{Module: "product", Field: "product_id"},
@@ -79,7 +80,7 @@ func TestLinkDefinitionValidateAccepts(t *testing.T) {
 		},
 	}
 
-	for _, def := range gecerli {
+	for _, def := range valid {
 		t.Run(def.Name, func(t *testing.T) {
 			require.NoError(t, def.Validate())
 
@@ -87,99 +88,100 @@ func TestLinkDefinitionValidateAccepts(t *testing.T) {
 			require.NoError(t, err)
 			assert.Equal(t, "link_"+def.Name, table)
 			assert.LessOrEqual(t, len(table+"_from_uniq"), 63,
-				"türetilen en uzun ad PostgreSQL tanımlayıcı sınırını geçmemeli")
+				"the longest derived name must not exceed the PostgreSQL identifier limit")
 		})
 	}
 }
 
-// TestLinkDefinitionValidateRejectsNames adın tablo adına çevrildiği tek yerin
-// doğrulamadan geçtiğini kanıtlar. Enjeksiyon denemeleri bilinçli olarak
-// listenin içindedir: bu adlar geçseydi doğrudan DDL metnine girerlerdi.
+// TestLinkDefinitionValidateRejectsNames proves that the only place a name
+// becomes a table name goes through validation. Injection attempts are in the
+// list on purpose: had these names passed, they would have gone straight into
+// DDL text.
 func TestLinkDefinitionValidateRejectsNames(t *testing.T) {
-	kotuAdlar := map[string]string{
-		"boş":                     "",
-		"noktalı virgül":          "product; DROP TABLE customers",
-		"yorum":                   "product--",
-		"tırnak":                  `product" (x int); --`,
-		"tek tırnak":              "product' OR '1'='1",
-		"parantez":                "product)",
-		"boşluk":                  "product price",
-		"tab":                     "product\tprice",
-		"satır sonu":              "product\nprice",
-		"nokta":                   "pg_catalog.pg_tables",
-		"büyük harf":              "Product",
-		"rakamla başlıyor":        "1product",
-		"alt çizgiyle başlıyor":   "_product",
-		"tire":                    "product-price",
-		"türkçe karakter":         "ürün_fiyat",
-		"yıldız":                  "*",
-		"çok uzun":                strings.Repeat("a", 41),
-		"ayrılmış (defter tablo)": "definitions",
+	badNames := map[string]string{
+		"empty":                     "",
+		"semicolon":                 "product; DROP TABLE customers",
+		"comment":                   "product--",
+		"double quote":              `product" (x int); --`,
+		"single quote":              "product' OR '1'='1",
+		"parenthesis":               "product)",
+		"space":                     "product price",
+		"tab":                       "product\tprice",
+		"newline":                   "product\nprice",
+		"dot":                       "pg_catalog.pg_tables",
+		"uppercase":                 "Product",
+		"starts with a digit":       "1product",
+		"starts with an underscore": "_product",
+		"dash":                      "product-price",
+		"non-ASCII letter":          "café_price",
+		"asterisk":                  "*",
+		"too long":                  strings.Repeat("a", 41),
+		"reserved (ledger table)":   "definitions",
 	}
 
-	for ad, name := range kotuAdlar {
-		t.Run(ad, func(t *testing.T) {
-			def := gecerliTanim()
+	for label, name := range badNames {
+		t.Run(label, func(t *testing.T) {
+			def := validDefinition()
 			def.Name = name
 
 			err := def.Validate()
 
-			require.Error(t, err, "geçersiz ad kabul edilmemeli: %q", name)
+			require.Error(t, err, "an invalid name must not be accepted: %q", name)
 			assert.True(t, errors.IsInvalid(err),
-				"hata sınıfı KindInvalid olmalı, %v alındı", errors.KindOf(err))
+				"the error class must be KindInvalid, got %v", errors.KindOf(err))
 			assert.Equal(t, "link_name_invalid", errors.CodeOf(err))
 
 			table, tableErr := link.TableName(name)
-			require.Error(t, tableErr, "TableName aynı adı reddetmeli")
-			assert.Empty(t, table, "geçersiz addan tablo adı üretilmemeli")
+			require.Error(t, tableErr, "TableName must reject the same name")
+			assert.Empty(t, table, "no table name may be built from an invalid name")
 		})
 	}
 }
 
 func TestLinkDefinitionValidateRejectsSides(t *testing.T) {
-	bozukUclar := map[string]link.LinkDefinition{
-		"From modülü boş": {
+	brokenSides := map[string]link.LinkDefinition{
+		"From module empty": {
 			Name: "x", From: link.LinkSide{Field: "a"},
 			To: link.LinkSide{Module: "b", Field: "c"},
 		},
-		"From alanı boş": {
+		"From field empty": {
 			Name: "x", From: link.LinkSide{Module: "a"},
 			To: link.LinkSide{Module: "b", Field: "c"},
 		},
-		"To modülü boş": {
+		"To module empty": {
 			Name: "x", From: link.LinkSide{Module: "a", Field: "b"},
 			To: link.LinkSide{Field: "c"},
 		},
-		"To alanı boş": {
+		"To field empty": {
 			Name: "x", From: link.LinkSide{Module: "a", Field: "b"},
 			To: link.LinkSide{Module: "c"},
 		},
-		"From modülünde enjeksiyon": {
+		"injection in the From module": {
 			Name: "x", From: link.LinkSide{Module: "a; DROP TABLE t", Field: "b"},
 			To: link.LinkSide{Module: "c", Field: "d"},
 		},
-		"To alanında enjeksiyon": {
+		"injection in the To field": {
 			Name: "x", From: link.LinkSide{Module: "a", Field: "b"},
 			To: link.LinkSide{Module: "c", Field: `d" --`},
 		},
 	}
 
-	for ad, def := range bozukUclar {
-		t.Run(ad, func(t *testing.T) {
+	for label, def := range brokenSides {
+		t.Run(label, func(t *testing.T) {
 			def.Cardinality = link.OneToOne
 
 			err := def.Validate()
 
 			require.Error(t, err)
 			assert.True(t, errors.IsInvalid(err),
-				"hata sınıfı KindInvalid olmalı, %v alındı", errors.KindOf(err))
+				"the error class must be KindInvalid, got %v", errors.KindOf(err))
 			assert.Equal(t, "link_side_invalid", errors.CodeOf(err))
 		})
 	}
 }
 
 func TestLinkDefinitionValidateRejectsUnknownCardinality(t *testing.T) {
-	def := gecerliTanim()
+	def := validDefinition()
 	def.Cardinality = link.Cardinality(7)
 
 	err := def.Validate()
@@ -189,223 +191,228 @@ func TestLinkDefinitionValidateRejectsUnknownCardinality(t *testing.T) {
 	assert.Equal(t, "link_cardinality_invalid", errors.CodeOf(err))
 }
 
-// TestUndefinedLinkIsNotFound tanımlanmamış bir link üzerinde yapılan her
-// çağrının, veritabanına hiç gitmeden teşhis edilebilir bir NotFound ürettiğini
-// doğrular. Bu kapı aynı zamanda güvenlik sınırıdır: tanımsız bir ad SQL'e
-// asla ulaşmaz.
+// TestUndefinedLinkIsNotFound verifies that every call made on an undeclared
+// link produces a diagnosable NotFound without ever going to the database.
+// This gate is also a security boundary: an undeclared name NEVER reaches SQL.
 func TestUndefinedLinkIsNotFound(t *testing.T) {
 	ctx := context.Background()
 	svc := link.New(nil, nil)
 
 	t.Run("Create", func(t *testing.T) {
-		bekleneniDogrula(t, svc.Create(ctx, "yok", "a", "b"))
+		requireNotDeclared(t, svc.Create(ctx, "absent", "a", "b"))
 	})
 	t.Run("Delete", func(t *testing.T) {
-		bekleneniDogrula(t, svc.Delete(ctx, "yok", "a", "b"))
+		requireNotDeclared(t, svc.Delete(ctx, "absent", "a", "b"))
 	})
 	t.Run("List", func(t *testing.T) {
-		ids, err := svc.List(ctx, "yok", "a")
+		ids, err := svc.List(ctx, "absent", "a")
 		assert.Nil(t, ids)
-		bekleneniDogrula(t, err)
+		requireNotDeclared(t, err)
 	})
 	t.Run("ListMany", func(t *testing.T) {
-		ids, err := svc.ListMany(ctx, "yok", []string{"a"})
+		ids, err := svc.ListMany(ctx, "absent", []string{"a"})
 		assert.Nil(t, ids)
-		bekleneniDogrula(t, err)
+		requireNotDeclared(t, err)
 	})
 	t.Run("Definition", func(t *testing.T) {
-		def, err := svc.Definition(ctx, "yok")
+		def, err := svc.Definition(ctx, "absent")
 		assert.Equal(t, link.LinkDefinition{}, def)
-		bekleneniDogrula(t, err)
+		requireNotDeclared(t, err)
 	})
 }
 
-// bekleneniDogrula tanımsız link hatasının sınıfını ve kodunu doğrular.
-func bekleneniDogrula(t *testing.T, err error) {
+// requireNotDeclared verifies the class and the code of the undeclared-link
+// error.
+func requireNotDeclared(t *testing.T, err error) {
 	t.Helper()
 
 	require.Error(t, err)
 	assert.True(t, errors.IsNotFound(err),
-		"hata sınıfı KindNotFound olmalı, %v alındı", errors.KindOf(err))
+		"the error class must be KindNotFound, got %v", errors.KindOf(err))
 	assert.Equal(t, "link_not_defined", errors.CodeOf(err))
-	assert.Contains(t, err.Error(), "tanımlı linkler", "mesaj tanımlı adları saymalı")
+	assert.Contains(t, err.Error(), "declared links", "the message must list the declared names")
 }
 
-// TestDefineWithoutPoolIsUnavailable havuzsuz bir servisin panik yerine tipli
-// hata döndürdüğünü doğrular; kurulum sırası hataları böyle görünür olur.
+// TestDefineWithoutPoolIsUnavailable verifies that a service without a pool
+// returns a typed error instead of panicking; that is how startup-order
+// mistakes become visible.
 func TestDefineWithoutPoolIsUnavailable(t *testing.T) {
-	err := link.New(nil, nil).Define(context.Background(), gecerliTanim())
+	err := link.New(nil, nil).Define(context.Background(), validDefinition())
 
 	require.Error(t, err)
 	assert.True(t, errors.HasKind(err, errors.KindUnavailable),
-		"hata sınıfı KindUnavailable olmalı, %v alındı", errors.KindOf(err))
+		"the error class must be KindUnavailable, got %v", errors.KindOf(err))
 	assert.Equal(t, "link_db_unavailable", errors.CodeOf(err))
 }
 
-// TestDefineValidatesBeforeTouchingDatabase geçersiz tanımın havuz olmadan da
-// doğrulama hatası verdiğini, yani doğrulamanın veritabanından ÖNCE çalıştığını
-// gösterir.
+// TestDefineValidatesBeforeTouchingDatabase shows that an invalid definition
+// yields a validation error even without a pool, that is, that validation runs
+// BEFORE the database.
 func TestDefineValidatesBeforeTouchingDatabase(t *testing.T) {
-	def := gecerliTanim()
+	def := validDefinition()
 	def.Name = "product; DROP TABLE customers"
 
 	err := link.New(nil, nil).Define(context.Background(), def)
 
 	require.Error(t, err)
 	assert.True(t, errors.IsInvalid(err),
-		"doğrulama hatası, havuz hatasından ÖNCE dönmeli; %v alındı", errors.KindOf(err))
+		"the validation error must come back BEFORE the pool error; got %v", errors.KindOf(err))
 	assert.Equal(t, "link_name_invalid", errors.CodeOf(err))
 }
 
-// TestListManyWithNoIDsSkipsQuery boş kümenin veritabanına hiç gitmediğini
-// gösterir: havuz olmamasına rağmen çağrı başarılıdır.
+// TestListManyWithNoIDsSkipsQuery shows that an empty set never goes to the
+// database: the call succeeds even though there is no pool.
 func TestListManyWithNoIDsSkipsQuery(t *testing.T) {
-	svc := tanimliServis(t)
+	svc := declaredService(t)
 
-	result, err := svc.ListMany(context.Background(), gecerliTanim().Name, nil)
+	result, err := svc.ListMany(context.Background(), validDefinition().Name, nil)
 
 	require.NoError(t, err)
 	assert.Empty(t, result)
 }
 
-// TestDefinitionReturnsDeclaredDefinition Query katmanının bir linkin hangi
-// modüle çözüldüğünü öğrenebildiğini doğrular (ADR 0004).
+// TestDefinitionReturnsDeclaredDefinition verifies that the Query layer can
+// learn which module a link resolves to (ADR 0004).
 func TestDefinitionReturnsDeclaredDefinition(t *testing.T) {
-	def, err := tanimliServis(t).Definition(context.Background(), gecerliTanim().Name)
+	def, err := declaredService(t).Definition(context.Background(), validDefinition().Name)
 
 	require.NoError(t, err)
-	assert.Equal(t, gecerliTanim(), def)
+	assert.Equal(t, validDefinition(), def)
 }
 
-// TestDefinitionHonorsCanceledContext bellekten okunan yolun bile bağlam
-// bütçesine uyduğunu doğrular (plan Bölüm 8).
+// TestDefinitionHonorsCanceledContext verifies that even the path served from
+// memory honors the context budget (plan Section 8).
 func TestDefinitionHonorsCanceledContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	_, err := tanimliServis(t).Definition(ctx, gecerliTanim().Name)
+	_, err := declaredService(t).Definition(ctx, validDefinition().Name)
 
 	require.Error(t, err)
 	assert.True(t, errors.HasKind(err, errors.KindUnavailable),
-		"hata sınıfı KindUnavailable olmalı, %v alındı", errors.KindOf(err))
+		"the error class must be KindUnavailable, got %v", errors.KindOf(err))
 	assert.Equal(t, "link_canceled", errors.CodeOf(err))
 	assert.True(t, errors.Is(err, context.Canceled))
 }
 
-// TestIDValidationRunsBeforeDatabase kimlik doğrulamasının havuza gitmeden
-// çalıştığını gösterir: havuzsuz serviste bile hata KindInvalid'dir.
+// TestIDValidationRunsBeforeDatabase shows that id validation runs before
+// reaching the pool: even on a pool-less service the error is KindInvalid.
 func TestIDValidationRunsBeforeDatabase(t *testing.T) {
 	ctx := context.Background()
-	name := gecerliTanim().Name
-	svc := tanimliServis(t)
-	uzunID := strings.Repeat("x", 256)
+	name := validDefinition().Name
+	svc := declaredService(t)
+	longID := strings.Repeat("x", 256)
 
-	cagrilar := map[string]func() error{
-		"Create fromID boş":      func() error { return svc.Create(ctx, name, "", "b") },
-		"Create fromID boşluk":   func() error { return svc.Create(ctx, name, "   ", "b") },
-		"Create toID boş":        func() error { return svc.Create(ctx, name, "a", "") },
-		"Create toID çok uzun":   func() error { return svc.Create(ctx, name, "a", uzunID) },
-		"Delete fromID boş":      func() error { return svc.Delete(ctx, name, "", "b") },
-		"Delete toID boş":        func() error { return svc.Delete(ctx, name, "a", "") },
-		"List fromID boş":        func() error { _, err := svc.List(ctx, name, ""); return err },
-		"ListMany fromID boş":    func() error { _, err := svc.ListMany(ctx, name, []string{"a", ""}); return err },
-		"ListMany ID çok uzun":   func() error { _, err := svc.ListMany(ctx, name, []string{uzunID}); return err },
-		"List fromID çok uzun":   func() error { _, err := svc.List(ctx, name, uzunID); return err },
-		"Create fromID çok uzun": func() error { return svc.Create(ctx, name, uzunID, "b") },
+	calls := map[string]func() error{
+		"Create fromID empty":    func() error { return svc.Create(ctx, name, "", "b") },
+		"Create fromID blank":    func() error { return svc.Create(ctx, name, "   ", "b") },
+		"Create toID empty":      func() error { return svc.Create(ctx, name, "a", "") },
+		"Create toID too long":   func() error { return svc.Create(ctx, name, "a", longID) },
+		"Delete fromID empty":    func() error { return svc.Delete(ctx, name, "", "b") },
+		"Delete toID empty":      func() error { return svc.Delete(ctx, name, "a", "") },
+		"List fromID empty":      func() error { _, err := svc.List(ctx, name, ""); return err },
+		"ListMany fromID empty":  func() error { _, err := svc.ListMany(ctx, name, []string{"a", ""}); return err },
+		"ListMany id too long":   func() error { _, err := svc.ListMany(ctx, name, []string{longID}); return err },
+		"List fromID too long":   func() error { _, err := svc.List(ctx, name, longID); return err },
+		"Create fromID too long": func() error { return svc.Create(ctx, name, longID, "b") },
 
-		// Baş/son boşluk taşıyan kimlikler: kırpılmış hâlleri boş olmadığı için
-		// eskiden doğrulamadan geçip veritabanına yazılırdı.
-		"Create fromID sonunda boşluk": func() error { return svc.Create(ctx, name, "var_1 ", "ps_1") },
-		"Create fromID başında boşluk": func() error { return svc.Create(ctx, name, " var_1", "ps_1") },
-		"Create toID satır sonu":       func() error { return svc.Create(ctx, name, "var_1", "ps_1\n") },
-		"Delete fromID sekme":          func() error { return svc.Delete(ctx, name, "var_1\t", "ps_1") },
-		"List fromID sonunda boşluk":   func() error { _, err := svc.List(ctx, name, "var_1 "); return err },
-		"ListMany ID satır sonu": func() error {
+		// Ids carrying leading/trailing whitespace: because their trimmed form
+		// is not empty, they used to pass validation and be written to the
+		// database.
+		"Create fromID trailing space": func() error { return svc.Create(ctx, name, "var_1 ", "ps_1") },
+		"Create fromID leading space":  func() error { return svc.Create(ctx, name, " var_1", "ps_1") },
+		"Create toID newline":          func() error { return svc.Create(ctx, name, "var_1", "ps_1\n") },
+		"Delete fromID tab":            func() error { return svc.Delete(ctx, name, "var_1\t", "ps_1") },
+		"List fromID trailing space":   func() error { _, err := svc.List(ctx, name, "var_1 "); return err },
+		"ListMany id newline": func() error {
 			_, err := svc.ListMany(ctx, name, []string{"var_1", "var_2\n"})
 			return err
 		},
-		"ListManyByTo ID başında boşluk": func() error {
+		"ListManyByTo id leading space": func() error {
 			_, err := svc.ListManyByTo(ctx, name, []string{" ps_1"})
 			return err
 		},
 	}
 
-	for ad, cagri := range cagrilar {
-		t.Run(ad, func(t *testing.T) {
-			err := cagri()
+	for label, call := range calls {
+		t.Run(label, func(t *testing.T) {
+			err := call()
 
 			require.Error(t, err)
 			assert.True(t, errors.IsInvalid(err),
-				"kimlik doğrulaması havuz kontrolünden ÖNCE çalışmalı; %v alındı", errors.KindOf(err))
+				"id validation must run BEFORE the pool check; got %v", errors.KindOf(err))
 			assert.Equal(t, "link_id_invalid", errors.CodeOf(err))
 		})
 	}
 }
 
-// TestPaddedIDIsRejectedNotTrimmed kimliğin sessizce KIRPILMADIĞINI, baştan
-// reddedildiğini sabitler.
+// TestPaddedIDIsRejectedNotTrimmed pins that an id is NOT TRIMMED silently but
+// rejected outright.
 //
-// Kırpma da bir seçenekti; reddetme seçildi çünkü kırpma çağıranın gönderdiği
-// kimlikle sakladığımız kimliği ayırır ve fark yalnızca veri bozulduktan sonra
-// görünür. Reddetme, kaymayı ilk çağrıda ve tipli bir hatayla bildirir.
+// Trimming was an option too; rejection was chosen because trimming separates
+// the id the caller sent from the id we store, and the difference only becomes
+// visible after the data is corrupted. Rejection reports the drift on the
+// first call and with a typed error.
 //
-// İç boşluk KISITLANMAZ: kimlik serbest bir dizgedir, kural yalnızca dış
-// kaynaktan (CSV, HTTP başlığı, JSON) bulaşan baş/son boşluğu hedefler.
+// Inner whitespace is NOT RESTRICTED: an id is a free-form string, and the
+// rule targets only the leading/trailing whitespace bleeding in from an
+// external source (CSV, HTTP header, JSON).
 func TestPaddedIDIsRejectedNotTrimmed(t *testing.T) {
 	ctx := context.Background()
-	name := gecerliTanim().Name
-	svc := tanimliServis(t)
+	name := validDefinition().Name
+	svc := declaredService(t)
 
 	err := svc.Create(ctx, name, "var_1 ", "ps_1")
 
-	require.Error(t, err, "kırpılmış hâli dolu olsa da baş/son boşluklu kimlik kabul edilmemeli")
+	require.Error(t, err, "a padded id must not be accepted even though its trimmed form is non-empty")
 	assert.True(t, errors.IsInvalid(err),
-		"boşluk kayması veri hatasıdır, yeniden denenecek bir altyapı hatası değil; %v alındı",
+		"a whitespace drift is a data error, not an infrastructure error to be retried; got %v",
 		errors.KindOf(err))
 	assert.Equal(t, "link_id_invalid", errors.CodeOf(err))
-	assert.Contains(t, err.Error(), "fromID", "hata hangi ucun kusurlu olduğunu söylemeli")
+	assert.Contains(t, err.Error(), "fromID", "the error must say which end is at fault")
 
-	// İç boşluk hâlâ geçerlidir: çağrı doğrulamayı geçip havuz kontrolüne
-	// düştüğü için hata KindUnavailable olmalı, KindInvalid değil.
-	icBosluklu := svc.Create(ctx, name, "var 1", "ps_1")
+	// Inner whitespace is still valid: because the call passes validation and
+	// falls through to the pool check, the error must be KindUnavailable and
+	// not KindInvalid.
+	innerSpace := svc.Create(ctx, name, "var 1", "ps_1")
 
-	require.Error(t, icBosluklu)
-	assert.True(t, errors.HasKind(icBosluklu, errors.KindUnavailable),
-		"iç boşluk yasaklanmamalı; %v alındı", errors.KindOf(icBosluklu))
+	require.Error(t, innerSpace)
+	assert.True(t, errors.HasKind(innerSpace, errors.KindUnavailable),
+		"inner whitespace must not be forbidden; got %v", errors.KindOf(innerSpace))
 }
 
-// TestWritePathsWithoutPoolAreUnavailable doğrulamayı geçen ama havuz
-// bulamayan çağrıların tipli KindUnavailable döndüğünü doğrular.
+// TestWritePathsWithoutPoolAreUnavailable verifies that calls which pass
+// validation but find no pool return a typed KindUnavailable.
 func TestWritePathsWithoutPoolAreUnavailable(t *testing.T) {
 	ctx := context.Background()
-	name := gecerliTanim().Name
-	svc := tanimliServis(t)
+	name := validDefinition().Name
+	svc := declaredService(t)
 
-	cagrilar := map[string]func() error{
+	calls := map[string]func() error{
 		"Create":   func() error { return svc.Create(ctx, name, "a", "b") },
 		"Delete":   func() error { return svc.Delete(ctx, name, "a", "b") },
 		"List":     func() error { _, err := svc.List(ctx, name, "a"); return err },
 		"ListMany": func() error { _, err := svc.ListMany(ctx, name, []string{"a"}); return err },
 	}
 
-	for ad, cagri := range cagrilar {
-		t.Run(ad, func(t *testing.T) {
-			err := cagri()
+	for label, call := range calls {
+		t.Run(label, func(t *testing.T) {
+			err := call()
 
 			require.Error(t, err)
 			assert.True(t, errors.HasKind(err, errors.KindUnavailable),
-				"hata sınıfı KindUnavailable olmalı, %v alındı", errors.KindOf(err))
+				"the error class must be KindUnavailable, got %v", errors.KindOf(err))
 			assert.Equal(t, "link_db_unavailable", errors.CodeOf(err))
 		})
 	}
 }
 
-// tanimliServis havuzsuz ama tanımı kayıtlı bir servis üretir; veritabanı
-// gerektirmeyen yolları sınamak için yeterlidir.
-func tanimliServis(t *testing.T) link.LinkService {
+// declaredService builds a service with no pool but with the definition
+// registered; that is enough to exercise the paths needing no database.
+func declaredService(t *testing.T) link.LinkService {
 	t.Helper()
 
 	svc := link.New(nil, nil)
-	require.NoError(t, link.DefineForTest(svc, gecerliTanim()))
+	require.NoError(t, link.DefineForTest(svc, validDefinition()))
 	return svc
 }

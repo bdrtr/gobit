@@ -12,11 +12,12 @@ import (
 	"github.com/bdrtr/gobit/internal/core/eventbus"
 )
 
-// unreachableClient hiçbir zaman bağlanmayacak bir istemci döner.
+// unreachableClient returns a client that will never connect.
 //
-// go-redis bağlantıyı ilk komutta kurduğu için, ağa çıkmadan dönen kod
-// yollarını (doğrulama, serileştirme, kapalı veri yolu) Docker olmadan test
-// etmeyi sağlar. Uçtan uca davranış redis_integration_test.go'dadır.
+// Because go-redis opens the connection on the first command, this lets the
+// code paths that never reach the network (validation, serialization, a closed
+// bus) be tested without Docker. The end-to-end behavior is in
+// redis_integration_test.go.
 func unreachableClient() *redis.Client {
 	return redis.NewClient(&redis.Options{Addr: "127.0.0.1:1"})
 }
@@ -24,16 +25,16 @@ func unreachableClient() *redis.Client {
 func TestNewRedisStreamRejectsNilClient(t *testing.T) {
 	bus, err := eventbus.NewRedisStream(nil, eventbus.RedisConfig{}, discardLogger())
 	if err == nil {
-		t.Fatal("nil istemci için hata dönmedi")
+		t.Fatal("no error was returned for a nil client")
 	}
 	if bus != nil {
-		t.Error("hata durumunda nil olmayan veri yolu döndü")
+		t.Error("a non-nil bus was returned on the error path")
 	}
 	if !errors.IsInvalid(err) {
-		t.Errorf("Kind = %v, beklenen invalid", errors.KindOf(err))
+		t.Errorf("Kind = %v, expected invalid", errors.KindOf(err))
 	}
 	if got := errors.CodeOf(err); got != eventbus.CodeInvalidConfig {
-		t.Errorf("Code = %q, beklenen %q", got, eventbus.CodeInvalidConfig)
+		t.Errorf("Code = %q, expected %q", got, eventbus.CodeInvalidConfig)
 	}
 }
 
@@ -45,13 +46,13 @@ func TestRedisConfigStreamName(t *testing.T) {
 		want  string
 	}{
 		{
-			name:  "varsayilan onek",
+			name:  "default prefix",
 			cfg:   eventbus.RedisConfig{},
 			event: "order.placed",
 			want:  eventbus.DefaultStreamPrefix + ":order.placed",
 		},
 		{
-			name:  "ozel onek",
+			name:  "custom prefix",
 			cfg:   eventbus.RedisConfig{StreamPrefix: "test:events"},
 			event: "cart.updated",
 			want:  "test:events:cart.updated",
@@ -61,117 +62,119 @@ func TestRedisConfigStreamName(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := tt.cfg.StreamName(tt.event); got != tt.want {
-				t.Errorf("StreamName(%q) = %q, beklenen %q", tt.event, got, tt.want)
+				t.Errorf("StreamName(%q) = %q, expected %q", tt.event, got, tt.want)
 			}
 		})
 	}
 }
 
-// TestWithNamespaceStreamVeGrubuBirlikteAyirir ad alanı önekinin İKİ alanı
-// birden ayırdığını doğrular.
+// TestWithNamespaceSeparatesStreamAndGroupTogether verifies that the namespace
+// prefix separates BOTH fields at once.
 //
-// Yalnızca stream öneki ayrılsaydı iki kurulum aynı consumer group'a bağlanır
-// ve bir olayı ikisinden yalnızca BİRİ alırdı — üretimin "order.placed" olayı
-// staging tarafından tüketilip yutulabilirdi. Bu test, o yarım ayrımın sessizce
-// geri gelmesini engeller.
-func TestWithNamespaceStreamVeGrubuBirlikteAyirir(t *testing.T) {
+// Had only the stream prefix been separated, the two setups would join the
+// same consumer group and only ONE of them would receive an event —
+// production's "order.placed" event could be consumed and swallowed by
+// staging. This test keeps that half-separation from silently coming back.
+func TestWithNamespaceSeparatesStreamAndGroupTogether(t *testing.T) {
 	cfg := eventbus.RedisConfig{}.WithNamespace("gobit-staging")
 
 	if got, want := cfg.StreamName("order.placed"), "gobit-staging:events:order.placed"; got != want {
-		t.Errorf("StreamName() = %q, beklenen %q", got, want)
+		t.Errorf("StreamName() = %q, expected %q", got, want)
 	}
 	if got, want := cfg.Group, "gobit-staging"; got != want {
-		t.Errorf("Group = %q, beklenen %q", got, want)
+		t.Errorf("Group = %q, expected %q", got, want)
 	}
 
-	uretim := eventbus.RedisConfig{}.WithNamespace("gobit-prod")
-	if uretim.Group == cfg.Group {
-		t.Errorf("iki ad alanı aynı consumer group'a düştü (%q); olaylar ayrılmıyor", cfg.Group)
+	production := eventbus.RedisConfig{}.WithNamespace("gobit-prod")
+	if production.Group == cfg.Group {
+		t.Errorf("two namespaces fell into the same consumer group (%q); the events are not separated", cfg.Group)
 	}
 }
 
-// TestWithNamespaceTuketiciAdinaDokunmaz ad alanının SÜREÇ kimliğini
-// ezmediğini doğrular.
+// TestWithNamespaceLeavesConsumerNameAlone verifies that the namespace does
+// not overwrite the PROCESS identity.
 //
-// İkisi ters yönde çalışır: ad alanı KURULUMLARI ayırır, tüketici adı ise aynı
-// gruptaki süreçleri. Ad alanı tüketiciye de yazılsaydı, aynı kurulumun tüm
-// örnekleri aynı tüketici adını alır ve her açılışta birbirlerinin işlemekte
-// olduğu mesajları okurdu — yani aynı olay iki kez işlenirdi.
-func TestWithNamespaceTuketiciAdinaDokunmaz(t *testing.T) {
+// The two work in opposite directions: the namespace separates SETUPS, the
+// consumer name separates the processes within one group. Had the namespace
+// been written into the consumer too, every instance of the same setup would
+// take the same consumer name and on every startup would read the messages the
+// others are processing — that is, the same event would be processed twice.
+func TestWithNamespaceLeavesConsumerNameAlone(t *testing.T) {
 	cfg := eventbus.RedisConfig{Consumer: "gobit-0"}.WithNamespace("gobit-prod")
 
 	if got, want := cfg.Consumer, "gobit-0"; got != want {
-		t.Errorf("Consumer = %q, beklenen %q", got, want)
+		t.Errorf("Consumer = %q, expected %q", got, want)
 	}
 }
 
-// TestWithNamespaceBosAdAlaniniYokSayar başsız bir anahtar üretilmediğini
-// doğrular.
+// TestWithNamespaceIgnoresEmptyNamespace verifies that no headless key is
+// built.
 //
-// Boş bir ad alanı ":events:order.placed" gibi bir anahtar verirdi: ayıracak
-// bir AD olmadan yapılmış bir ayrım, hiçbir şeyi ayırmaz ama varsayılanı da
-// bozardı.
-func TestWithNamespaceBosAdAlaniniYokSayar(t *testing.T) {
+// An empty namespace would give a key like ":events:order.placed": a
+// separation made without a NAME to separate by separates nothing, and it
+// would break the default as well.
+func TestWithNamespaceIgnoresEmptyNamespace(t *testing.T) {
 	cfg := eventbus.RedisConfig{}.WithNamespace("")
 
 	if got, want := cfg.StreamName("order.placed"), eventbus.DefaultStreamPrefix+":order.placed"; got != want {
-		t.Errorf("StreamName() = %q, beklenen %q", got, want)
+		t.Errorf("StreamName() = %q, expected %q", got, want)
 	}
 	if cfg.Group != "" {
-		t.Errorf("Group = %q, beklenen boş (varsayılana düşmeli)", cfg.Group)
+		t.Errorf("Group = %q, expected empty (it must fall back to the default)", cfg.Group)
 	}
 }
 
-// TestVarsayilanAdAlaniAyrimlaUyusuyor varsayılanların, ad alanı türetmesinin
-// bir ÖZEL DURUMU olduğunu sabitler.
+// TestDefaultsMatchNamespaceDerivation pins that the defaults are a SPECIAL
+// CASE of the namespace derivation.
 //
-// Bugüne kadarki kurulumların anahtarları "gobit:events:*" ve grubu "gobit"tir;
-// varsayılan önekle (config.DefaultRedisKeyPrefix) türetilen ad alanı bundan
-// ayrışırsa, yükseltilen bir kurulum yeni ve BOŞ bir stream ile yeni bir gruba
-// geçer — eski stream'de bekleyen olaylar orada kalır ve kimseye teslim
-// edilmez.
-func TestVarsayilanAdAlaniAyrimlaUyusuyor(t *testing.T) {
+// The keys of every setup so far are "gobit:events:*" and the group is
+// "gobit"; if the namespace derived from the default prefix
+// (config.DefaultRedisKeyPrefix) diverges from that, an upgraded setup moves
+// to a new and EMPTY stream and to a new group — the events waiting in the old
+// stream stay there and are delivered to nobody.
+func TestDefaultsMatchNamespaceDerivation(t *testing.T) {
 	cfg := eventbus.RedisConfig{}.WithNamespace(eventbus.DefaultGroup)
 
 	if got, want := cfg.StreamPrefix, eventbus.DefaultStreamPrefix; got != want {
-		t.Errorf("StreamPrefix = %q, beklenen %q", got, want)
+		t.Errorf("StreamPrefix = %q, expected %q", got, want)
 	}
 	if got, want := cfg.Group, eventbus.DefaultGroup; got != want {
-		t.Errorf("Group = %q, beklenen %q", got, want)
+		t.Errorf("Group = %q, expected %q", got, want)
 	}
 
-	// Anahtarın TARİHSEL hâli ayrıca sabitlenir: yukarıdaki iddia sabitlerin
-	// birbiriyle tutarlı olduğunu söyler, bu satır ise değerin ne olduğunu.
-	// İkisi olmadan sabitler birlikte kayabilir ve yükseltilen bir kurulum
-	// yeni, BOŞ bir stream'e geçerdi — eski stream'de bekleyen olaylar orada
-	// kalır ve kimseye teslim edilmezdi. Değer, config.DefaultRedisKeyPrefix
-	// ile eşleşir (çekirdek config'i import EDEMEZ, bkz. Prensip 2.4).
-	const tarihsel = "gobit:events:order.placed"
-	if got := cfg.StreamName("order.placed"); got != tarihsel {
-		t.Errorf("StreamName() = %q, beklenen %q (yükseltilen kurulum eski stream'ini kaybeder)",
-			got, tarihsel)
+	// The HISTORICAL form of the key is pinned separately: the assertion above
+	// says the constants are consistent with each other, this line says what
+	// the value is. Without both, the constants could drift together and an
+	// upgraded setup would move to a new, EMPTY stream — the events waiting in
+	// the old stream would stay there and be delivered to nobody. The value
+	// matches config.DefaultRedisKeyPrefix (the core CANNOT import config, see
+	// Principle 2.4).
+	const historical = "gobit:events:order.placed"
+	if got := cfg.StreamName("order.placed"); got != historical {
+		t.Errorf("StreamName() = %q, expected %q (an upgraded setup loses its old stream)",
+			got, historical)
 	}
 }
 
-// TestConsumerNameBosAdiSurecBasinaTamamlar otomatik tüketici adının GERÇEKTEN
-// üretildiğini doğrular.
+// TestConsumerNameCompletesEmptyNamePerProcess verifies that the automatic
+// consumer name is REALLY generated.
 //
-// Verilen ad korunur; boş ad süreç başına türetilir. İkincisi sessizce boş
-// kalsaydı Redis, adı boş olan tek bir tüketici görürdü ve tüm örnekler aynı
-// bekleyen listeyi paylaşırdı.
-func TestConsumerNameBosAdiSurecBasinaTamamlar(t *testing.T) {
+// A given name is preserved; an empty name is derived per process. Had the
+// latter silently stayed empty, Redis would see a single consumer whose name
+// is empty and every instance would share the same pending list.
+func TestConsumerNameCompletesEmptyNamePerProcess(t *testing.T) {
 	if got, want := eventbus.ConsumerName("gobit-0"), "gobit-0"; got != want {
-		t.Errorf("ConsumerName(%q) = %q, beklenen %q", want, got, want)
+		t.Errorf("ConsumerName(%q) = %q, expected %q", want, got, want)
 	}
 	if got := eventbus.ConsumerName(""); got == "" {
-		t.Error("ConsumerName(\"\") boş döndü; süreç başına bir ad üretmeliydi")
+		t.Error("ConsumerName(\"\") returned empty; it should have generated a per-process name")
 	}
 }
 
 func TestRedisPublishRejectsUnserializableData(t *testing.T) {
 	bus, err := eventbus.NewRedisStream(unreachableClient(), eventbus.RedisConfig{}, discardLogger())
 	if err != nil {
-		t.Fatalf("NewRedisStream hata verdi: %v", err)
+		t.Fatalf("NewRedisStream returned an error: %v", err)
 	}
 	defer func() { _ = bus.Shutdown(context.Background()) }()
 
@@ -179,23 +182,24 @@ func TestRedisPublishRejectsUnserializableData(t *testing.T) {
 		name string
 		data map[string]any
 	}{
-		{name: "fonksiyon degeri", data: map[string]any{"cb": func() {}}},
-		{name: "kanal degeri", data: map[string]any{"ch": make(chan int)}},
-		{name: "NaN", data: map[string]any{"tutar": math.NaN()}},
+		{name: "function value", data: map[string]any{"cb": func() {}}},
+		{name: "channel value", data: map[string]any{"ch": make(chan int)}},
+		{name: "NaN", data: map[string]any{"amount": math.NaN()}},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Serileştirme hatası ağa çıkılmadan, tipli hata olarak dönmeli.
+			// The serialization error must come back as a typed error without
+			// going to the network.
 			err := bus.Publish(t.Context(), eventbus.Event{Name: "order.placed", Data: tt.data})
 			if err == nil {
-				t.Fatal("serileştirilemeyen veri için Publish hata dönmedi")
+				t.Fatal("Publish returned no error for unserializable data")
 			}
 			if !errors.IsInvalid(err) {
-				t.Errorf("Kind = %v, beklenen invalid", errors.KindOf(err))
+				t.Errorf("Kind = %v, expected invalid", errors.KindOf(err))
 			}
 			if got := errors.CodeOf(err); got != eventbus.CodeInvalidEvent {
-				t.Errorf("Code = %q, beklenen %q", got, eventbus.CodeInvalidEvent)
+				t.Errorf("Code = %q, expected %q", got, eventbus.CodeInvalidEvent)
 			}
 		})
 	}
@@ -204,27 +208,27 @@ func TestRedisPublishRejectsUnserializableData(t *testing.T) {
 func TestRedisPublishRejectsEmptyName(t *testing.T) {
 	bus, err := eventbus.NewRedisStream(unreachableClient(), eventbus.RedisConfig{}, discardLogger())
 	if err != nil {
-		t.Fatalf("NewRedisStream hata verdi: %v", err)
+		t.Fatalf("NewRedisStream returned an error: %v", err)
 	}
 	defer func() { _ = bus.Shutdown(context.Background()) }()
 
 	if err := bus.Publish(t.Context(), eventbus.Event{}); !errors.IsInvalid(err) {
-		t.Errorf("boş adlı olay için hata = %v, beklenen invalid", err)
+		t.Errorf("the error for an event with an empty name = %v, expected invalid", err)
 	}
 }
 
 func TestRedisSubscribeValidates(t *testing.T) {
 	bus, err := eventbus.NewRedisStream(unreachableClient(), eventbus.RedisConfig{}, discardLogger())
 	if err != nil {
-		t.Fatalf("NewRedisStream hata verdi: %v", err)
+		t.Fatalf("NewRedisStream returned an error: %v", err)
 	}
 	defer func() { _ = bus.Shutdown(context.Background()) }()
 
 	if err := bus.Subscribe("", nil); !errors.IsInvalid(err) {
-		t.Errorf("boş olay adı için hata = %v, beklenen invalid", err)
+		t.Errorf("the error for an empty event name = %v, expected invalid", err)
 	}
 	if err := bus.Subscribe("order.placed", nil); !errors.IsInvalid(err) {
-		t.Errorf("nil handler için hata = %v, beklenen invalid", err)
+		t.Errorf("the error for a nil handler = %v, expected invalid", err)
 	}
 }
 
@@ -236,47 +240,49 @@ func TestRedisSubscribeFailsWhenRedisUnreachable(t *testing.T) {
 	})
 	bus, err := eventbus.NewRedisStream(client, eventbus.RedisConfig{}, discardLogger())
 	if err != nil {
-		t.Fatalf("NewRedisStream hata verdi: %v", err)
+		t.Fatalf("NewRedisStream returned an error: %v", err)
 	}
 	defer func() { _ = bus.Shutdown(context.Background()) }()
 
-	// Consumer group kurulamadığında abonelik sessizce başarılı sayılmamalı.
+	// When the consumer group cannot be created, the subscription must not
+	// count as silently successful.
 	err = bus.Subscribe("order.placed", func(_ context.Context, _ eventbus.Event) error { return nil })
 	if err == nil {
-		t.Fatal("erişilemeyen redis'te Subscribe hata dönmedi")
+		t.Fatal("Subscribe returned no error against an unreachable redis")
 	}
 	if !errors.HasKind(err, errors.KindUnavailable) {
-		t.Errorf("Kind = %v, beklenen unavailable", errors.KindOf(err))
+		t.Errorf("Kind = %v, expected unavailable", errors.KindOf(err))
 	}
 	if got := errors.CodeOf(err); got != eventbus.CodeSubscribeFailed {
-		t.Errorf("Code = %q, beklenen %q", got, eventbus.CodeSubscribeFailed)
+		t.Errorf("Code = %q, expected %q", got, eventbus.CodeSubscribeFailed)
 	}
 }
 
 func TestRedisClosedBusRejectsUse(t *testing.T) {
 	bus, err := eventbus.NewRedisStream(unreachableClient(), eventbus.RedisConfig{}, discardLogger())
 	if err != nil {
-		t.Fatalf("NewRedisStream hata verdi: %v", err)
+		t.Fatalf("NewRedisStream returned an error: %v", err)
 	}
 	if err := bus.Shutdown(context.Background()); err != nil {
-		t.Fatalf("Shutdown hata verdi: %v", err)
+		t.Fatalf("Shutdown returned an error: %v", err)
 	}
 
-	// Kapalı veri yolunda Publish, ağa hiç çıkmadan hata dönmeli.
+	// On a closed bus Publish must return an error without ever going to the
+	// network.
 	err = bus.Publish(t.Context(), eventbus.Event{Name: "order.placed"})
 	if got := errors.CodeOf(err); got != eventbus.CodeClosed {
-		t.Errorf("Publish Code = %q, beklenen %q (hata: %v)", got, eventbus.CodeClosed, err)
+		t.Errorf("Publish Code = %q, expected %q (error: %v)", got, eventbus.CodeClosed, err)
 	}
 	if !errors.HasKind(err, errors.KindUnavailable) {
-		t.Errorf("Publish Kind = %v, beklenen unavailable", errors.KindOf(err))
+		t.Errorf("Publish Kind = %v, expected unavailable", errors.KindOf(err))
 	}
 
 	err = bus.Subscribe("order.placed", func(_ context.Context, _ eventbus.Event) error { return nil })
 	if got := errors.CodeOf(err); got != eventbus.CodeClosed {
-		t.Errorf("Subscribe Code = %q, beklenen %q (hata: %v)", got, eventbus.CodeClosed, err)
+		t.Errorf("Subscribe Code = %q, expected %q (error: %v)", got, eventbus.CodeClosed, err)
 	}
 
 	if err := bus.Shutdown(context.Background()); err != nil {
-		t.Errorf("ikinci Shutdown hata verdi: %v", err)
+		t.Errorf("the second Shutdown returned an error: %v", err)
 	}
 }

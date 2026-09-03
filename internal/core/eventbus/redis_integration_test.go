@@ -1,7 +1,8 @@
 //go:build integration
 
-// Bu dosya gerçek bir Redis gerektirir ve yalnızca `-tags=integration` ile
-// derlenir (`make test-integration`). Böylece `make test` Docker'sız ve hızlı kalır.
+// This file needs a real Redis and is compiled only with `-tags=integration`
+// (`make test-integration`). That is what keeps `make test` fast and free of
+// Docker.
 package eventbus_test
 
 import (
@@ -19,10 +20,11 @@ import (
 	"github.com/bdrtr/gobit/internal/core/eventbus"
 )
 
-// redisImage entegrasyon testlerinde kullanılan Redis imajıdır.
+// redisImage is the Redis image used in the integration tests.
 const redisImage = "redis:7-alpine"
 
-// startRedis test süresince yaşayan bir Redis başlatır ve istemcisini döner.
+// startRedis starts a Redis living for the duration of the test and returns
+// its client.
 func startRedis(t *testing.T) *redis.Client {
 	t.Helper()
 
@@ -30,35 +32,35 @@ func startRedis(t *testing.T) *redis.Client {
 	container, err := tcredis.Run(ctx, redisImage)
 	testcontainers.CleanupContainer(t, container)
 	if err != nil {
-		t.Fatalf("redis konteyneri başlatılamadı: %v", err)
+		t.Fatalf("the redis container could not be started: %v", err)
 	}
 
 	uri, err := container.ConnectionString(ctx)
 	if err != nil {
-		t.Fatalf("bağlantı dizesi alınamadı: %v", err)
+		t.Fatalf("the connection string could not be obtained: %v", err)
 	}
 
 	opts, err := redis.ParseURL(uri)
 	if err != nil {
-		t.Fatalf("bağlantı dizesi ayrıştırılamadı: %v", err)
+		t.Fatalf("the connection string could not be parsed: %v", err)
 	}
 
 	client := redis.NewClient(opts)
 	t.Cleanup(func() { _ = client.Close() })
 
 	if err := client.Ping(ctx).Err(); err != nil {
-		t.Fatalf("redis'e ping atılamadı: %v", err)
+		t.Fatalf("redis could not be pinged: %v", err)
 	}
 	return client
 }
 
-// testConfig her test için yalıtılmış bir ayar üretir; testler birbirinin
-// stream'ini ve consumer group'unu görmez.
+// testConfig builds an isolated configuration per test; the tests do not see
+// each other's stream or consumer group.
 func testConfig(t *testing.T, consumer string) eventbus.RedisConfig {
 	t.Helper()
 	return eventbus.RedisConfig{
 		StreamPrefix: "gobit-test:" + t.Name(),
-		Group:        "grup-" + t.Name(),
+		Group:        "group-" + t.Name(),
 		Consumer:     consumer,
 		BlockTimeout: 200 * time.Millisecond,
 	}
@@ -66,11 +68,11 @@ func testConfig(t *testing.T, consumer string) eventbus.RedisConfig {
 
 func TestRedisIntegrationPublishSubscribe(t *testing.T) {
 	client := startRedis(t)
-	cfg := testConfig(t, "tuketici-1")
+	cfg := testConfig(t, "consumer-1")
 
 	bus, err := eventbus.NewRedisStream(client, cfg, discardLogger())
 	if err != nil {
-		t.Fatalf("NewRedisStream hata verdi: %v", err)
+		t.Fatalf("NewRedisStream returned an error: %v", err)
 	}
 	defer func() { _ = bus.Shutdown(context.Background()) }()
 
@@ -79,66 +81,67 @@ func TestRedisIntegrationPublishSubscribe(t *testing.T) {
 		got <- e
 		return nil
 	}); err != nil {
-		t.Fatalf("Subscribe hata verdi: %v", err)
+		t.Fatalf("Subscribe returned an error: %v", err)
 	}
 
 	when := time.Date(2026, 8, 23, 12, 30, 0, 0, time.UTC)
 	published := eventbus.Event{
 		Name:       "order.placed",
-		ID:         "evt_entegrasyon_01",
+		ID:         "evt_integration_01",
 		OccurredAt: when,
 		Data: map[string]any{
 			"order_id": "order_01",
-			"toplam":   float64(1999),
-			"kalemler": []any{"variant_01", "variant_02"},
+			"total":    float64(1999),
+			"items":    []any{"variant_01", "variant_02"},
 		},
 	}
 	if err := bus.Publish(t.Context(), published); err != nil {
-		t.Fatalf("Publish hata verdi: %v", err)
+		t.Fatalf("Publish returned an error: %v", err)
 	}
 
 	select {
 	case e := <-got:
 		if e.Name != published.Name {
-			t.Errorf("Name = %q, beklenen %q", e.Name, published.Name)
+			t.Errorf("Name = %q, expected %q", e.Name, published.Name)
 		}
 		if e.ID != published.ID {
-			t.Errorf("ID = %q, beklenen %q", e.ID, published.ID)
+			t.Errorf("ID = %q, expected %q", e.ID, published.ID)
 		}
 		if !e.OccurredAt.Equal(when) {
-			t.Errorf("OccurredAt = %v, beklenen %v", e.OccurredAt, when)
+			t.Errorf("OccurredAt = %v, expected %v", e.OccurredAt, when)
 		}
 		if e.Data["order_id"] != "order_01" {
-			t.Errorf("Data[order_id] = %v, beklenen order_01", e.Data["order_id"])
+			t.Errorf("Data[order_id] = %v, expected order_01", e.Data["order_id"])
 		}
-		if e.Data["toplam"] != float64(1999) {
-			t.Errorf("Data[toplam] = %v, beklenen 1999", e.Data["toplam"])
+		if e.Data["total"] != float64(1999) {
+			t.Errorf("Data[total] = %v, expected 1999", e.Data["total"])
 		}
-		if kalemler, ok := e.Data["kalemler"].([]any); !ok || len(kalemler) != 2 {
-			t.Errorf("Data[kalemler] = %v, beklenen 2 elemanlı dizi", e.Data["kalemler"])
+		if items, ok := e.Data["items"].([]any); !ok || len(items) != 2 {
+			t.Errorf("Data[items] = %v, expected an array of 2 elements", e.Data["items"])
 		}
 	case <-time.After(15 * time.Second):
-		t.Fatal("zaman aşımı: olay redis üzerinden teslim edilmedi")
+		t.Fatal("timed out: the event was not delivered over redis")
 	}
 }
 
 func TestRedisIntegrationDeliversEventsPublishedBeforeSubscribe(t *testing.T) {
 	client := startRedis(t)
-	cfg := testConfig(t, "tuketici-1")
+	cfg := testConfig(t, "consumer-1")
 
 	bus, err := eventbus.NewRedisStream(client, cfg, discardLogger())
 	if err != nil {
-		t.Fatalf("NewRedisStream hata verdi: %v", err)
+		t.Fatalf("NewRedisStream returned an error: %v", err)
 	}
 	defer func() { _ = bus.Shutdown(context.Background()) }()
 
-	// Abone yokken yayımlanan olay stream'de kalır; group "0"dan başladığı için
-	// sonradan gelen abone onu da alır.
+	// An event published while there is no subscriber stays in the stream;
+	// because the group starts from "0", a subscriber arriving later receives
+	// it too.
 	if err := bus.Publish(t.Context(), eventbus.Event{
 		Name: "order.placed",
-		Data: map[string]any{"order_id": "order_erken"},
+		Data: map[string]any{"order_id": "order_early"},
 	}); err != nil {
-		t.Fatalf("Publish hata verdi: %v", err)
+		t.Fatalf("Publish returned an error: %v", err)
 	}
 
 	got := make(chan eventbus.Event, 1)
@@ -146,26 +149,26 @@ func TestRedisIntegrationDeliversEventsPublishedBeforeSubscribe(t *testing.T) {
 		got <- e
 		return nil
 	}); err != nil {
-		t.Fatalf("Subscribe hata verdi: %v", err)
+		t.Fatalf("Subscribe returned an error: %v", err)
 	}
 
 	select {
 	case e := <-got:
-		if e.Data["order_id"] != "order_erken" {
-			t.Errorf("Data[order_id] = %v, beklenen order_erken", e.Data["order_id"])
+		if e.Data["order_id"] != "order_early" {
+			t.Errorf("Data[order_id] = %v, expected order_early", e.Data["order_id"])
 		}
 	case <-time.After(15 * time.Second):
-		t.Fatal("zaman aşımı: abonelik öncesi yayımlanan olay teslim edilmedi")
+		t.Fatal("timed out: the event published before the subscription was not delivered")
 	}
 }
 
 func TestRedisIntegrationAcksProcessedMessages(t *testing.T) {
 	client := startRedis(t)
-	cfg := testConfig(t, "tuketici-1")
+	cfg := testConfig(t, "consumer-1")
 
 	bus, err := eventbus.NewRedisStream(client, cfg, discardLogger())
 	if err != nil {
-		t.Fatalf("NewRedisStream hata verdi: %v", err)
+		t.Fatalf("NewRedisStream returned an error: %v", err)
 	}
 	defer func() { _ = bus.Shutdown(context.Background()) }()
 
@@ -176,15 +179,15 @@ func TestRedisIntegrationAcksProcessedMessages(t *testing.T) {
 		processed.Done()
 		return nil
 	}); err != nil {
-		t.Fatalf("Subscribe hata verdi: %v", err)
+		t.Fatalf("Subscribe returned an error: %v", err)
 	}
 
 	for i := range eventCount {
 		if err := bus.Publish(t.Context(), eventbus.Event{
 			Name: "order.placed",
-			Data: map[string]any{"sira": i},
+			Data: map[string]any{"index": i},
 		}); err != nil {
-			t.Fatalf("Publish hata verdi: %v", err)
+			t.Fatalf("Publish returned an error: %v", err)
 		}
 	}
 
@@ -196,44 +199,47 @@ func TestRedisIntegrationAcksProcessedMessages(t *testing.T) {
 	select {
 	case <-done:
 	case <-time.After(15 * time.Second):
-		t.Fatal("zaman aşımı: olaylar işlenmedi")
+		t.Fatal("timed out: the events were not processed")
 	}
 
-	// ACK istemciye asenkron gider; bekleyen liste boşalana kadar yoklanır.
+	// The ACK goes to the client asynchronously; the pending list is polled
+	// until it empties.
 	stream := cfg.StreamName("order.placed")
 	deadline := time.Now().Add(10 * time.Second)
 	for {
 		pending, err := client.XPending(t.Context(), stream, cfg.Group).Result()
 		if err != nil {
-			t.Fatalf("XPending hata verdi: %v", err)
+			t.Fatalf("XPending returned an error: %v", err)
 		}
 		if pending.Count == 0 {
 			break
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("bekleyen mesaj sayısı = %d, beklenen 0 (işlenen mesaj XACK'lenmeli)", pending.Count)
+			t.Fatalf("pending message count = %d, expected 0 (a processed message must be XACKed)", pending.Count)
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
 
-	// Stream'de mesajlar duruyor (kırpılana kadar) ama hiçbiri bekleyen değil.
+	// The messages are still in the stream (until they are trimmed) but none
+	// of them is pending.
 	length, err := client.XLen(t.Context(), stream).Result()
 	if err != nil {
-		t.Fatalf("XLen hata verdi: %v", err)
+		t.Fatalf("XLen returned an error: %v", err)
 	}
 	if length != eventCount {
-		t.Errorf("stream uzunluğu = %d, beklenen %d", length, eventCount)
+		t.Errorf("stream length = %d, expected %d", length, eventCount)
 	}
 }
 
 func TestRedisIntegrationConsumerGroupDeliversOnce(t *testing.T) {
 	client := startRedis(t)
 
-	// Aynı gruba bağlı iki ayrı tüketici: her mesaj yalnızca birine gitmeli.
-	cfgA := testConfig(t, "tuketici-a")
-	cfgB := testConfig(t, "tuketici-b")
+	// Two separate consumers joined to the same group: every message must go
+	// to only one of them.
+	cfgA := testConfig(t, "consumer-a")
+	cfgB := testConfig(t, "consumer-b")
 
-	var received sync.Map // olay kimliği -> tüketici adı
+	var received sync.Map // event id -> consumer name
 	var total atomic.Int64
 	var duplicates atomic.Int64
 
@@ -245,7 +251,7 @@ func TestRedisIntegrationConsumerGroupDeliversOnce(t *testing.T) {
 		t.Helper()
 		bus, err := eventbus.NewRedisStream(client, cfg, discardLogger())
 		if err != nil {
-			t.Fatalf("NewRedisStream hata verdi: %v", err)
+			t.Fatalf("NewRedisStream returned an error: %v", err)
 		}
 		if err := bus.Subscribe("order.placed", func(_ context.Context, e eventbus.Event) error {
 			if _, loaded := received.LoadOrStore(e.ID, cfg.Consumer); loaded {
@@ -256,7 +262,7 @@ func TestRedisIntegrationConsumerGroupDeliversOnce(t *testing.T) {
 			wg.Done()
 			return nil
 		}); err != nil {
-			t.Fatalf("Subscribe hata verdi: %v", err)
+			t.Fatalf("Subscribe returned an error: %v", err)
 		}
 		return bus
 	}
@@ -270,9 +276,9 @@ func TestRedisIntegrationConsumerGroupDeliversOnce(t *testing.T) {
 		if err := busA.Publish(t.Context(), eventbus.Event{
 			Name: "order.placed",
 			ID:   fmt.Sprintf("evt_%02d", i),
-			Data: map[string]any{"sira": i},
+			Data: map[string]any{"index": i},
 		}); err != nil {
-			t.Fatalf("Publish hata verdi: %v", err)
+			t.Fatalf("Publish returned an error: %v", err)
 		}
 	}
 
@@ -284,18 +290,18 @@ func TestRedisIntegrationConsumerGroupDeliversOnce(t *testing.T) {
 	select {
 	case <-done:
 	case <-time.After(30 * time.Second):
-		t.Fatalf("zaman aşımı: %d/%d olay teslim edildi", total.Load(), eventCount)
+		t.Fatalf("timed out: %d/%d events were delivered", total.Load(), eventCount)
 	}
 
 	if got := total.Load(); got != eventCount {
-		t.Errorf("teslim edilen tekil olay = %d, beklenen %d", got, eventCount)
+		t.Errorf("distinct events delivered = %d, expected %d", got, eventCount)
 	}
 	if got := duplicates.Load(); got != 0 {
-		t.Errorf("tekrarlı teslim = %d, beklenen 0 (consumer group mesajı bir kez vermeli)", got)
+		t.Errorf("repeated deliveries = %d, expected 0 (a consumer group must hand a message over once)", got)
 	}
 
-	// Her iki tüketici de gruptan pay almış olmalı; aksi hâlde test grubun
-	// dağıtımını değil tek tüketiciyi ölçüyor demektir.
+	// Both consumers must have taken a share of the group; otherwise the test
+	// is measuring a single consumer rather than the group's distribution.
 	consumers := make(map[string]int)
 	received.Range(func(_, value any) bool {
 		if name, ok := value.(string); ok {
@@ -303,17 +309,17 @@ func TestRedisIntegrationConsumerGroupDeliversOnce(t *testing.T) {
 		}
 		return true
 	})
-	t.Logf("tüketici dağılımı: %v", consumers)
+	t.Logf("consumer distribution: %v", consumers)
 }
 
 func TestRedisIntegrationResumesAfterRestart(t *testing.T) {
 	client := startRedis(t)
-	cfg := testConfig(t, "tuketici-kalici")
+	cfg := testConfig(t, "consumer-durable")
 
-	// Birinci süreç: iki olayı işleyip kapanıyor.
+	// The first process: it processes two events and shuts down.
 	first, err := eventbus.NewRedisStream(client, cfg, discardLogger())
 	if err != nil {
-		t.Fatalf("NewRedisStream hata verdi: %v", err)
+		t.Fatalf("NewRedisStream returned an error: %v", err)
 	}
 
 	firstBatch := make(chan string, 4)
@@ -321,40 +327,41 @@ func TestRedisIntegrationResumesAfterRestart(t *testing.T) {
 		firstBatch <- e.ID
 		return nil
 	}); err != nil {
-		t.Fatalf("Subscribe hata verdi: %v", err)
+		t.Fatalf("Subscribe returned an error: %v", err)
 	}
 
 	for _, id := range []string{"evt_01", "evt_02"} {
 		if err := first.Publish(t.Context(), eventbus.Event{Name: "order.placed", ID: id}); err != nil {
-			t.Fatalf("Publish hata verdi: %v", err)
+			t.Fatalf("Publish returned an error: %v", err)
 		}
 	}
 	for range 2 {
 		select {
 		case <-firstBatch:
 		case <-time.After(15 * time.Second):
-			t.Fatal("zaman aşımı: ilk parti işlenmedi")
+			t.Fatal("timed out: the first batch was not processed")
 		}
 	}
 	if err := first.Shutdown(context.Background()); err != nil {
-		t.Fatalf("Shutdown hata verdi: %v", err)
+		t.Fatalf("Shutdown returned an error: %v", err)
 	}
 
-	// Veri yolu kapalıyken yayımlanan olay kaybolmamalı.
+	// An event published while the bus is closed must not be lost.
 	publisher, err := eventbus.NewRedisStream(client, cfg, discardLogger())
 	if err != nil {
-		t.Fatalf("NewRedisStream hata verdi: %v", err)
+		t.Fatalf("NewRedisStream returned an error: %v", err)
 	}
 	defer func() { _ = publisher.Shutdown(context.Background()) }()
 	if err := publisher.Publish(t.Context(), eventbus.Event{Name: "order.placed", ID: "evt_03"}); err != nil {
-		t.Fatalf("Publish hata verdi: %v", err)
+		t.Fatalf("Publish returned an error: %v", err)
 	}
 
-	// İkinci süreç aynı grup ve tüketici adıyla ayağa kalkar: kaldığı yerden
-	// devam etmeli, işlenmiş olayları tekrar almamalıdır.
+	// The second process comes up with the same group and consumer name: it
+	// must resume where it left off and must not receive the processed events
+	// again.
 	second, err := eventbus.NewRedisStream(client, cfg, discardLogger())
 	if err != nil {
-		t.Fatalf("NewRedisStream hata verdi: %v", err)
+		t.Fatalf("NewRedisStream returned an error: %v", err)
 	}
 	defer func() { _ = second.Shutdown(context.Background()) }()
 
@@ -363,65 +370,65 @@ func TestRedisIntegrationResumesAfterRestart(t *testing.T) {
 		secondBatch <- e.ID
 		return nil
 	}); err != nil {
-		t.Fatalf("Subscribe hata verdi: %v", err)
+		t.Fatalf("Subscribe returned an error: %v", err)
 	}
 
 	select {
 	case id := <-secondBatch:
 		if id != "evt_03" {
-			t.Errorf("yeniden başlatma sonrası ilk olay = %q, beklenen evt_03", id)
+			t.Errorf("the first event after the restart = %q, expected evt_03", id)
 		}
 	case <-time.After(15 * time.Second):
-		t.Fatal("zaman aşımı: yeniden başlatma sonrası olay teslim edilmedi")
+		t.Fatal("timed out: no event was delivered after the restart")
 	}
 
 	select {
 	case id := <-secondBatch:
-		t.Errorf("işlenmiş olay tekrar teslim edildi: %q", id)
+		t.Errorf("a processed event was delivered again: %q", id)
 	case <-time.After(time.Second):
 	}
 }
 
 func TestRedisIntegrationHandlerPanicDoesNotStopConsumer(t *testing.T) {
 	client := startRedis(t)
-	cfg := testConfig(t, "tuketici-1")
+	cfg := testConfig(t, "consumer-1")
 
 	bus, err := eventbus.NewRedisStream(client, cfg, discardLogger())
 	if err != nil {
-		t.Fatalf("NewRedisStream hata verdi: %v", err)
+		t.Fatalf("NewRedisStream returned an error: %v", err)
 	}
 	defer func() { _ = bus.Shutdown(context.Background()) }()
 
 	delivered := make(chan string, 4)
 	if err := bus.Subscribe("order.placed", func(_ context.Context, e eventbus.Event) error {
-		if e.ID == "evt_panik" {
-			panic("handler patladı")
+		if e.ID == "evt_panic" {
+			panic("the handler blew up")
 		}
 		return nil
 	}); err != nil {
-		t.Fatalf("Subscribe hata verdi: %v", err)
+		t.Fatalf("Subscribe returned an error: %v", err)
 	}
 	if err := bus.Subscribe("order.placed", func(_ context.Context, e eventbus.Event) error {
 		delivered <- e.ID
 		return nil
 	}); err != nil {
-		t.Fatalf("Subscribe hata verdi: %v", err)
+		t.Fatalf("Subscribe returned an error: %v", err)
 	}
 
-	for _, id := range []string{"evt_panik", "evt_saglam"} {
+	for _, id := range []string{"evt_panic", "evt_intact"} {
 		if err := bus.Publish(t.Context(), eventbus.Event{Name: "order.placed", ID: id}); err != nil {
-			t.Fatalf("Publish hata verdi: %v", err)
+			t.Fatalf("Publish returned an error: %v", err)
 		}
 	}
 
-	for _, want := range []string{"evt_panik", "evt_saglam"} {
+	for _, want := range []string{"evt_panic", "evt_intact"} {
 		select {
 		case got := <-delivered:
 			if got != want {
-				t.Errorf("teslim edilen = %q, beklenen %q", got, want)
+				t.Errorf("delivered = %q, expected %q", got, want)
 			}
 		case <-time.After(15 * time.Second):
-			t.Fatalf("zaman aşımı: %q teslim edilmedi (panik tüketiciyi durdurdu)", want)
+			t.Fatalf("timed out: %q was not delivered (the panic stopped the consumer)", want)
 		}
 	}
 }

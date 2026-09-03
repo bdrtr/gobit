@@ -7,14 +7,16 @@ import (
 	"sync"
 )
 
-// linkTable tanımlanmış tek bir linkin çalışma zamanı bilgisidir: tanım, tablo
-// adı, kardinaliteyi zorlayan indeks adları ve önceden üretilmiş SQL ifadeleri.
+// linkTable is the runtime information of a single declared link: the
+// definition, the table name, the names of the indexes enforcing cardinality
+// and the pre-built SQL statements.
 //
-// İfadelerin BURADA, Define anında bir kez üretilmesi bilinçlidir: tablo adı
-// SQL'de parametrelenemediği için ifadeler dizge birleştirmesiyle kurulur ve bu
-// birleştirme yalnızca doğrulanmış bir tanımdan (bkz. [LinkDefinition.Validate])
-// beslenir. Create/Delete/List yolları hazır ifadeyi kullanır; çağıranın verdiği
-// hiçbir dizge SQL metnine karışmaz, hepsi parametre olarak gider.
+// Building the statements HERE, once at Define time, is deliberate: because a
+// table name cannot be parameterized in SQL the statements are assembled by
+// string concatenation, and that concatenation is fed ONLY from a validated
+// definition (see [LinkDefinition.Validate]). The Create/Delete/List paths use
+// the ready statement; no string given by a caller reaches SQL text, they all
+// travel as parameters.
 type linkTable struct {
 	def       LinkDefinition
 	table     string
@@ -25,17 +27,18 @@ type linkTable struct {
 	remove   string
 	list     string
 	listMany string
-	// listManyByTo ters yönü (to_id -> from_id) toplu çözer. Query katmanı,
-	// kök entity link'in To ucundayken bunu kullanır (bkz. ADR 0004).
+	// listManyByTo resolves the reverse direction (to_id -> from_id) in bulk.
+	// The Query layer uses it when the root entity sits on the link's To end
+	// (see ADR 0004).
 	listManyByTo string
-	// lookupIndex ManyToMany'de ters yön sorgusunun tablo taraması yapmasını
-	// engelleyen BENZERSİZ OLMAYAN indekstir. Diğer kardinalitelerde to_id
-	// zaten benzersiz indekslidir.
+	// lookupIndex is the NON-UNIQUE index that keeps the reverse-direction
+	// query from doing a table scan under ManyToMany. Under the other
+	// cardinalities to_id already carries a unique index.
 	lookupIndex string
 }
 
-// newLinkTable doğrulanmış bir tanımdan çalışma zamanı bilgisini üretir.
-// Çağıran, def'i daha önce doğrulamış olmalıdır.
+// newLinkTable builds the runtime information from a validated definition.
+// The caller must have validated def beforehand.
 func newLinkTable(def LinkDefinition) (*linkTable, error) {
 	table, err := TableName(def.Name)
 	if err != nil {
@@ -48,17 +51,17 @@ func newLinkTable(def LinkDefinition) (*linkTable, error) {
 		fromIndex: table + fromIndexSuffix,
 		toIndex:   table + toIndexSuffix,
 
-		// ON CONFLICT hedefi AÇIKÇA (from_id, to_id)'dir. Hedefsiz bir
-		// "ON CONFLICT DO NOTHING" kardinaliteyi zorlayan indekslerin
-		// ihlallerini de sessizce yutar; o zaman aynı kaydı iki ayrı hedefe
-		// bağlamak hata değil, sessiz bir kayıp olurdu.
+		// The ON CONFLICT target is EXPLICITLY (from_id, to_id). A targetless
+		// "ON CONFLICT DO NOTHING" would also swallow violations of the
+		// indexes enforcing cardinality; binding the same record to two
+		// different targets would then be a silent loss rather than an error.
 		insert: fmt.Sprintf(
 			`INSERT INTO %s (from_id, to_id) VALUES ($1, $2) ON CONFLICT (from_id, to_id) DO NOTHING`,
 			table),
 		remove: fmt.Sprintf(`DELETE FROM %s WHERE from_id = $1 AND to_id = $2`, table),
-		// Sıralama belirli olmalı ki API yanıtları ve testler tekrarlanabilir
-		// olsun; (from_id, to_id) birincil anahtar olduğu için to_id'ye göre
-		// sıralama TAM sıra verir (eşitlik olamaz).
+		// The ordering must be deterministic so that API responses and tests
+		// are reproducible; since (from_id, to_id) is the primary key,
+		// ordering by to_id gives a TOTAL order (there can be no ties).
 		list: fmt.Sprintf(`SELECT to_id FROM %s WHERE from_id = $1 ORDER BY to_id`, table),
 		listMany: fmt.Sprintf(
 			`SELECT from_id, to_id FROM %s WHERE from_id = ANY($1) ORDER BY from_id, to_id`, table),
@@ -68,10 +71,11 @@ func newLinkTable(def LinkDefinition) (*linkTable, error) {
 	}, nil
 }
 
-// requiredIndexes kardinaliteyi zorlayan indekslerin adlarını döner.
+// requiredIndexes returns the names of the indexes that enforce cardinality.
 //
-// [linkTable.ddl] ile AYNI switch'ten türetilir; ikisi ayrışırsa doğrulama
-// yanlış şeyi arar. Yeni bir kardinalite eklenirse her ikisi de güncellenmelidir.
+// It is derived from the SAME switch as [linkTable.ddl]; if the two drift
+// apart, the verification looks for the wrong thing. Adding a new cardinality
+// requires updating both.
 func (lt *linkTable) requiredIndexes() []string {
 	switch lt.def.Cardinality {
 	case OneToOne:
@@ -85,14 +89,15 @@ func (lt *linkTable) requiredIndexes() []string {
 	}
 }
 
-// ddl link tablosunu ve kardinalite kısıtlarını oluşturan ifadeleri döner.
+// ddl returns the statements that create the link table and its cardinality
+// constraints.
 //
-// Hepsi IF NOT EXISTS'tir: Define her açılışta yeniden çağrılır ve var olan bir
-// şemayı bulmak normal durumdur.
+// All of them are IF NOT EXISTS: Define is called again on every startup and
+// finding an existing schema is the normal case.
 //
-// Link tablosu HİÇBİR modülün tablosuna REFERENCES vermez (plan Bölüm 2.2);
-// kimlikler serbest metindir. Bağın işaret ettiği kaydın gerçekten var olması
-// sahibi modülün ve workflow telafisinin sorumluluğundadır.
+// A link table REFERENCES no module's table (plan Section 2.2); the ids are
+// free text. Whether the record a link points at really exists is the owning
+// module's and the workflow compensation's responsibility.
 func (lt *linkTable) ddl() []string {
 	stmts := []string{fmt.Sprintf(`CREATE TABLE IF NOT EXISTS %s (
 	from_id    TEXT NOT NULL,
@@ -101,53 +106,55 @@ func (lt *linkTable) ddl() []string {
 	PRIMARY KEY (from_id, to_id)
 )`, lt.table)}
 
-	// Birincil anahtar (from_id, to_id) çiftin benzersizliğini zaten verir;
-	// aşağıdaki indeksler kardinaliteyi DARALTIR.
+	// The primary key (from_id, to_id) already gives uniqueness of the pair;
+	// the indexes below NARROW the cardinality.
 	switch lt.def.Cardinality {
 	case OneToOne:
-		// Her iki uç da tek bağa sahip olabilir.
+		// Each end may hold a single link.
 		stmts = append(stmts,
 			uniqueIndexDDL(lt.fromIndex, lt.table, "from_id"),
 			uniqueIndexDDL(lt.toIndex, lt.table, "to_id"))
 	case OneToMany:
-		// Bir fromID çok toID'ye bağlanabilir; bir toID tek fromID'ye bağlıdır.
+		// One fromID may bind to many toIDs; one toID belongs to a single
+		// fromID.
 		stmts = append(stmts, uniqueIndexDDL(lt.toIndex, lt.table, "to_id"))
 	case ManyToMany:
-		// Kardinalite kısıtı yok, ama ters yön sorgusu (to_id = ANY(...))
-		// indekssiz kalırsa tablo taramasına düşer. OneToOne/OneToMany'de
-		// to_id zaten benzersiz indekslidir.
+		// There is no cardinality constraint, but the reverse-direction query
+		// (to_id = ANY(...)) would fall to a table scan without an index.
+		// Under OneToOne/OneToMany to_id already carries a unique index.
 		stmts = append(stmts, fmt.Sprintf(
 			`CREATE INDEX IF NOT EXISTS %s ON %s (to_id)`, lt.lookupIndex, lt.table))
 	}
 	return stmts
 }
 
-// uniqueIndexDDL verilen sütun üzerinde benzersiz indeks oluşturan ifadeyi üretir.
+// uniqueIndexDDL builds the statement creating a unique index on the given
+// column.
 func uniqueIndexDDL(indexName, table, column string) string {
 	return fmt.Sprintf(`CREATE UNIQUE INDEX IF NOT EXISTS %s ON %s (%s)`, indexName, table, column)
 }
 
-// definitions bildirilmiş linklerin süreç içi kayıt defteridir.
+// definitions is the in-process registry of declared links.
 //
-// Defter iki iş görür: (a) aynı adla farklı bir tanımı veritabanına gitmeden
-// yakalar, (b) Create/Delete/List çağrılarının yalnızca TANIMLI linkler
-// üzerinde çalışmasını sağlar — böylece SQL'e giren tablo adı her zaman
-// doğrulanmış bir tanımdan gelir.
+// The registry does two jobs: (a) it catches a different definition under the
+// same name without going to the database, and (b) it makes Create/Delete/List
+// calls work only on DECLARED links — so the table name that reaches SQL
+// always comes from a validated definition.
 //
-// Defterin süreç içi olması yeterli DEĞİLDİR: başka bir sürüm/süreç aynı adı
-// farklı tanımlarsa bunu ancak kalıcı defter (bkz. definitionsTable) yakalar.
-// İkisi birlikte çalışır; buradaki kopya hızlı yoldur.
+// An in-process registry is NOT ENOUGH: if another release/process declares
+// the same name differently, only the durable ledger (see definitionsTable)
+// catches it. The two work together; the copy here is the fast path.
 type definitions struct {
 	mu     sync.RWMutex
 	byName map[string]*linkTable
 }
 
-// newDefinitions boş bir kayıt defteri üretir.
+// newDefinitions builds an empty registry.
 func newDefinitions() *definitions {
 	return &definitions{byName: make(map[string]*linkTable)}
 }
 
-// lookup adı verilen linkin çalışma zamanı bilgisini döner.
+// lookup returns the runtime information of the named link.
 func (d *definitions) lookup(name string) (*linkTable, bool) {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
@@ -156,7 +163,7 @@ func (d *definitions) lookup(name string) (*linkTable, bool) {
 	return lt, ok
 }
 
-// put linki deftere yazar; var olan kaydı ezer.
+// put writes the link into the registry, overwriting an existing record.
 func (d *definitions) put(lt *linkTable) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -164,7 +171,7 @@ func (d *definitions) put(lt *linkTable) {
 	d.byName[lt.def.Name] = lt
 }
 
-// names tanımlı link adlarını sıralı döner; hata mesajlarında kullanılır.
+// names returns the declared link names sorted; it is used in error messages.
 func (d *definitions) names() []string {
 	d.mu.RLock()
 	defer d.mu.RUnlock()

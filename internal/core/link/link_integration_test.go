@@ -1,17 +1,19 @@
 //go:build integration
 
-// Bu dosyadaki testler gerçek bir PostgreSQL örneği (dolayısıyla Docker)
-// gerektirir; `make test` hızlı kalsın diye `integration` etiketiyle
-// ayrılmıştır. Çalıştırmak için: make test-integration
+// The tests in this file need a real PostgreSQL instance (and therefore
+// Docker); they are separated behind the `integration` tag so that `make test`
+// stays fast. To run them: make test-integration
 //
-// Kardinalitenin VERİTABANI KISITIYLA zorlandığı iddiası ancak burada
-// kanıtlanabilir: birim testleri yalnızca doğru DDL'in üretildiğini gösterir,
-// PostgreSQL'in o DDL'i beklendiği gibi uyguladığını göstermez.
+// The claim that cardinality is enforced BY A DATABASE CONSTRAINT can only be
+// proved here: the unit tests only show that the right DDL is produced, not
+// that PostgreSQL applies that DDL as expected.
 package link_test
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"sync"
 	"testing"
@@ -29,16 +31,16 @@ import (
 
 const postgresImage = "postgres:16-alpine"
 
-// testPool tüm testlerin paylaştığı havuzdur; testler ayrı link adları
-// kullandığı için birbirini etkilemez.
+// testPool is the pool shared by every test; because the tests use separate
+// link names they do not affect each other.
 var testPool *db.Pool
 
 func TestMain(m *testing.M) {
 	os.Exit(runWithPostgres(m))
 }
 
-// runWithPostgres tek bir Postgres konteyneri kaldırıp tüm testleri onun
-// üzerinde çalıştırır. os.Exit defer'ları atladığı için ayrı fonksiyondadır.
+// runWithPostgres brings up a single Postgres container and runs every test on
+// it. It is a separate function because os.Exit skips deferred calls.
 func runWithPostgres(m *testing.M) int {
 	ctx := context.Background()
 
@@ -50,23 +52,23 @@ func runWithPostgres(m *testing.M) int {
 	)
 	defer func() {
 		if termErr := testcontainers.TerminateContainer(ctr); termErr != nil {
-			fmt.Fprintf(os.Stderr, "postgres konteyneri durdurulamadı: %v\n", termErr)
+			fmt.Fprintf(os.Stderr, "the postgres container could not be stopped: %v\n", termErr)
 		}
 	}()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "postgres konteyneri başlatılamadı: %v\n", err)
+		fmt.Fprintf(os.Stderr, "the postgres container could not be started: %v\n", err)
 		return 1
 	}
 
 	dsn, err := ctr.ConnectionString(ctx, "sslmode=disable")
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "bağlantı adresi alınamadı: %v\n", err)
+		fmt.Fprintf(os.Stderr, "the connection address could not be obtained: %v\n", err)
 		return 1
 	}
 
 	testPool, err = db.New(ctx, db.DefaultConfig(dsn), nil)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "bağlantı havuzu açılamadı: %v\n", err)
+		fmt.Fprintf(os.Stderr, "the connection pool could not be opened: %v\n", err)
 		return 1
 	}
 	defer testPool.Close()
@@ -74,161 +76,248 @@ func runWithPostgres(m *testing.M) int {
 	return m.Run()
 }
 
-// TestDefineCreatesSchema Define'ın tabloyu, kardinalite indekslerini ve kalıcı
-// tanım kaydını oluşturduğunu doğrular.
+// TestDefineCreatesSchema verifies that Define creates the table, the
+// cardinality indexes and the durable definition record.
 func TestDefineCreatesSchema(t *testing.T) {
 	ctx := context.Background()
-	svc := yeniServis()
-	def := tanim("define_semasi", link.OneToMany)
+	svc := newLinkService()
+	def := definition("define_schema", link.OneToMany)
 
 	require.NoError(t, svc.Define(ctx, def))
 
-	table := tabloAdi(t, def.Name)
-	assert.True(t, tabloVar(ctx, t, table), "link tablosu oluşmalı")
-	for _, sutun := range []string{"from_id", "to_id", "created_at"} {
-		assert.True(t, sutunVar(ctx, t, table, sutun), "%s sütunu oluşmalı", sutun)
+	table := tableNameFor(t, def.Name)
+	assert.True(t, tableExists(ctx, t, table), "the link table must come into being")
+	for _, column := range []string{"from_id", "to_id", "created_at"} {
+		assert.True(t, columnExists(ctx, t, table, column), "the %s column must come into being", column)
 	}
 
-	assert.True(t, indeksVar(ctx, t, table, table+"_pkey"), "çift benzersizliği birincil anahtarla gelir")
-	assert.True(t, indeksVar(ctx, t, table, table+"_to_uniq"), "one_to_many to ucunu benzersiz kılar")
-	assert.False(t, indeksVar(ctx, t, table, table+"_from_uniq"), "one_to_many from ucunu KISITLAMAZ")
+	assert.True(t, indexExists(ctx, t, table, table+"_pkey"),
+		"the uniqueness of the pair comes from the primary key")
+	assert.True(t, indexExists(ctx, t, table, table+"_to_uniq"),
+		"one_to_many makes the to end unique")
+	assert.False(t, indexExists(ctx, t, table, table+"_from_uniq"),
+		"one_to_many does NOT CONSTRAIN the from end")
 
-	// Plan Bölüm 2.2: link tablosu hiçbir modülün tablosuna FK vermez.
-	assert.Zero(t, fkSayisi(ctx, t, table),
-		"link tablosunda foreign key OLAMAZ; cross-module FK yasağı budur")
+	// Plan Section 2.2: a link table gives an FK to no module's table.
+	assert.Zero(t, foreignKeyCount(ctx, t, table),
+		"a link table CANNOT hold a foreign key; that is the cross-module FK ban")
 
 	assert.Equal(t,
 		[]string{"product", "variant_id", "pricing", "price_set_id", "one_to_many"},
-		defterSatiri(ctx, t, def.Name),
-		"tanım kalıcı deftere yazılmalı")
+		ledgerRow(ctx, t, def.Name),
+		"the definition must be written to the durable ledger")
 }
 
-// TestDefineIsIdempotent aynı tanımın her açılışta yeniden bildirilebildiğini
-// doğrular; hem aynı servis hem de defteri boş YENİ bir servis üzerinden.
-func TestDefineIsIdempotent(t *testing.T) {
+// TestDefineRefusesAColliderAndSaysWhichIsWhich covers the schema-verification
+// branch that fires when the link's name is already taken by a relation of
+// another kind.
+//
+// "CREATE TABLE IF NOT EXISTS" does not error against a view of the same name,
+// it SKIPS with a notice, so without this check the cardinality constraint
+// would silently never exist. That branch had no test, and its message is the
+// one place in this package where three same-typed operands sit in one format
+// string. The translation out of Turkish (ADR 0012) reordered exactly such
+// arguments, and a wrong order there is invisible to the compiler, to go vet
+// and to every other test — measured: swapping the operands back to the
+// Turkish order leaves build, vet, the unit suite and this suite green.
+//
+// The assertion is therefore on the ORDER, not merely on the words: the
+// colliding relation is named first, its kind second, the link name last.
+func TestDefineRefusesAColliderAndSaysWhichIsWhich(t *testing.T) {
 	ctx := context.Background()
-	def := tanim("define_idempotent", link.ManyToMany)
-	svc := yeniServis()
+	svc := newLinkService()
+	// ManyToMany deliberately: it needs no cardinality index of its own, so
+	// the DDL is a single CREATE TABLE IF NOT EXISTS, which SKIPS against the
+	// view instead of failing — which is exactly the silent path this check
+	// exists to catch. With a cardinality that also creates an index, the
+	// CREATE INDEX errors first and the branch is never reached.
+	def := definition("collider", link.ManyToMany)
+	table := tableNameFor(t, def.Name)
+
+	// A MATERIALIZED view, not a plain one: a plain view rejects the index the
+	// DDL creates and the run fails one step earlier, before the check under
+	// test. A materialized view accepts indexes, so the whole DDL "succeeds"
+	// against a relation that is not a table — the silent shape.
+	_, err := testPool.Pool().Exec(ctx,
+		"CREATE MATERIALIZED VIEW "+table+
+			" AS SELECT 'a'::text AS from_id, 'b'::text AS to_id, now() AS created_at")
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, _ = testPool.Pool().Exec(context.Background(), "DROP MATERIALIZED VIEW IF EXISTS "+table)
+	})
+
+	err = svc.Define(ctx, def)
+
+	require.Error(t, err, "a name already taken by a view cannot become a link table")
+	assert.Regexp(t,
+		table+` is not a table \(relkind="m"\); the link name "`+def.Name+`" collides`,
+		err.Error(),
+		"the message must name the colliding relation, then its kind, then the link")
+}
+
+// TestDefineLogsStructuredFieldKeys pins the FIELD KEYS of the declaration log
+// record.
+//
+// The sentence of the record is prose and may be reworded — it was rewritten
+// when this package was translated out of Turkish (ADR 0012). Its field keys
+// are not prose: they are what an operator greps and what a log pipeline
+// indexes. Renaming one is silent for the compiler, and it was measured to be
+// silent for the whole package too — renaming "table" to "tbl" left both
+// `go test -race ./internal/core/link/` and this suite green. Only the
+// dashboard that stopped matching would have reported it.
+//
+// The keys are asserted through the RENDERED record rather than against the
+// constants that produce them: an assertion that a constant equals another
+// constant would still pass with the attribute dropped from the call.
+func TestDefineLogsStructuredFieldKeys(t *testing.T) {
+	ctx := context.Background()
+
+	var buf bytes.Buffer
+	svc := link.New(testPool, slog.New(slog.NewTextHandler(&buf, nil)))
+	def := definition("define_log_fields", link.OneToMany)
 
 	require.NoError(t, svc.Define(ctx, def))
-	require.NoError(t, svc.Define(ctx, def), "aynı servis aynı tanımı yeniden bildirebilmeli")
 
-	// Yeni servisin süreç içi defteri boştur; bu çağrı gerçekten veritabanına
-	// gider ve kalıcı defterle karşılaştırma yapar.
-	require.NoError(t, yeniServis().Define(ctx, def),
-		"yeniden başlatılan bir süreç aynı tanımı bildirebilmeli")
-
-	table := tabloAdi(t, def.Name)
-	assert.True(t, tabloVar(ctx, t, table))
-	assert.Equal(t, 1, defterSayisi(ctx, t, def.Name), "defterde tek satır kalmalı")
+	out := buf.String()
+	for _, field := range []string{
+		"link=" + def.Name,
+		"table=" + tableNameFor(t, def.Name),
+		"cardinality=one_to_many",
+	} {
+		assert.Contains(t, out, field,
+			"the declaration record must carry %q; an operator filters on these keys\n%s", field, out)
+	}
 }
 
-// TestDefineRejectsChangedDefinition sürümler arasında değişmiş bir tanımın
-// kalıcı defterden yakalandığını doğrular. Süreç içi defter bu durumu göremez;
-// yakalayan tek yer veritabanıdır.
+// TestDefineIsIdempotent verifies that the same definition can be redeclared
+// on every startup; both through the same service and through a NEW service
+// whose registry is empty.
+func TestDefineIsIdempotent(t *testing.T) {
+	ctx := context.Background()
+	def := definition("define_idempotent", link.ManyToMany)
+	svc := newLinkService()
+
+	require.NoError(t, svc.Define(ctx, def))
+	require.NoError(t, svc.Define(ctx, def), "the same service must be able to redeclare the same definition")
+
+	// The new service's in-process registry is empty; this call really goes to
+	// the database and compares against the durable ledger.
+	require.NoError(t, newLinkService().Define(ctx, def),
+		"a restarted process must be able to declare the same definition")
+
+	table := tableNameFor(t, def.Name)
+	assert.True(t, tableExists(ctx, t, table))
+	assert.Equal(t, 1, ledgerRowCount(ctx, t, def.Name), "a single row must remain in the ledger")
+}
+
+// TestDefineRejectsChangedDefinition verifies that a definition changed
+// between releases is caught by the durable ledger. The in-process registry
+// cannot see this case; the only place that catches it is the database.
 func TestDefineRejectsChangedDefinition(t *testing.T) {
 	ctx := context.Background()
-	def := tanim("define_degisti", link.OneToMany)
-	require.NoError(t, yeniServis().Define(ctx, def))
+	def := definition("define_changed", link.OneToMany)
+	require.NoError(t, newLinkService().Define(ctx, def))
 
-	degismis := def
-	degismis.Cardinality = link.ManyToMany
+	changed := def
+	changed.Cardinality = link.ManyToMany
 
-	// Defteri boş YENİ bir servis: çakışma yalnızca veritabanından bilinebilir.
-	err := yeniServis().Define(ctx, degismis)
+	// A NEW service with an empty registry: the conflict can only be known
+	// from the database.
+	err := newLinkService().Define(ctx, changed)
 
-	require.Error(t, err, "aynı adla farklı tanım kabul edilemez")
+	require.Error(t, err, "a different definition under the same name cannot be accepted")
 	assert.True(t, errors.IsConflict(err),
-		"hata sınıfı KindConflict olmalı, %v alındı", errors.KindOf(err))
+		"the error class must be KindConflict, got %v", errors.KindOf(err))
 	assert.Equal(t, "link_definition_conflict", errors.CodeOf(err))
-	assert.Contains(t, err.Error(), "one_to_many", "mesaj kayıtlı tanımı göstermeli")
+	assert.Contains(t, err.Error(), "one_to_many", "the message must show the stored definition")
 
-	// İşlem geri alındığı için defter ve şema DEĞİŞMEMİŞ olmalı.
-	assert.Equal(t, "one_to_many", defterSatiri(ctx, t, def.Name)[4])
-	assert.True(t, indeksVar(ctx, t, tabloAdi(t, def.Name), tabloAdi(t, def.Name)+"_to_uniq"),
-		"reddedilen bildirim var olan kısıtı kaldırmamalı")
+	// Because the transaction was rolled back, the ledger and the schema must
+	// be UNCHANGED.
+	assert.Equal(t, "one_to_many", ledgerRow(ctx, t, def.Name)[4])
+	assert.True(t, indexExists(ctx, t, tableNameFor(t, def.Name), tableNameFor(t, def.Name)+"_to_uniq"),
+		"a rejected declaration must not remove the existing constraint")
 
-	// Ucu değişen tanım da aynı biçimde reddedilir.
-	baskaUc := def
-	baskaUc.To.Module = "inventory"
-	assert.True(t, errors.IsConflict(yeniServis().Define(ctx, baskaUc)))
+	// A definition with a changed end is rejected in the same way.
+	otherEnd := def
+	otherEnd.To.Module = "inventory"
+	assert.True(t, errors.IsConflict(newLinkService().Define(ctx, otherEnd)))
 }
 
-// TestDefineIsSafeUnderConcurrency aynı anda açılan süreçlerin (burada:
-// goroutine'lerin) aynı tanımı yarışmadan bildirebildiğini doğrular. Danışma
-// kilidi olmasaydı eşzamanlı "CREATE TABLE IF NOT EXISTS" katalog düzeyinde
-// çakışırdı.
+// TestDefineIsSafeUnderConcurrency verifies that processes starting at the
+// same time (here: goroutines) can declare the same definition without racing.
+// Without the advisory lock, concurrent "CREATE TABLE IF NOT EXISTS"
+// statements would collide at the catalog level.
 func TestDefineIsSafeUnderConcurrency(t *testing.T) {
 	ctx := context.Background()
-	def := tanim("define_yaris", link.OneToOne)
+	def := definition("define_race", link.OneToOne)
 
-	const esZamanli = 8
-	hatalar := make(chan error, esZamanli)
+	const concurrency = 8
+	errs := make(chan error, concurrency)
 
 	var wg sync.WaitGroup
-	for range esZamanli {
+	for range concurrency {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			hatalar <- yeniServis().Define(ctx, def)
+			errs <- newLinkService().Define(ctx, def)
 		}()
 	}
 	wg.Wait()
-	close(hatalar)
+	close(errs)
 
-	for err := range hatalar {
-		require.NoError(t, err, "eşzamanlı bildirim çakışmadan tamamlanmalı")
+	for err := range errs {
+		require.NoError(t, err, "concurrent declarations must complete without a collision")
 	}
-	assert.Equal(t, 1, defterSayisi(ctx, t, def.Name))
-	assert.True(t, tabloVar(ctx, t, tabloAdi(t, def.Name)))
+	assert.Equal(t, 1, ledgerRowCount(ctx, t, def.Name))
+	assert.True(t, tableExists(ctx, t, tableNameFor(t, def.Name)))
 }
 
-// TestCreateListDeleteEndToEnd bağ kurma, okuma ve silme yolunu uçtan uca
-// doğrular; idempotency kararları da burada kanıtlanır.
+// TestCreateListDeleteEndToEnd verifies the create, read and delete path end to
+// end; the idempotency decisions are proved here too.
 func TestCreateListDeleteEndToEnd(t *testing.T) {
 	ctx := context.Background()
-	svc := yeniServis()
-	def := tanim("uctan_uca", link.OneToMany)
+	svc := newLinkService()
+	def := definition("end_to_end", link.OneToMany)
 	require.NoError(t, svc.Define(ctx, def))
 
-	t.Run("bağ kurulur ve okunur", func(t *testing.T) {
+	t.Run("a link is created and read back", func(t *testing.T) {
 		require.NoError(t, svc.Create(ctx, def.Name, "var_1", "ps_2"))
 		require.NoError(t, svc.Create(ctx, def.Name, "var_1", "ps_1"))
 
 		ids, err := svc.List(ctx, def.Name, "var_1")
 		require.NoError(t, err)
-		assert.Equal(t, []string{"ps_1", "ps_2"}, ids, "sonuç artan sıralı olmalı")
+		assert.Equal(t, []string{"ps_1", "ps_2"}, ids, "the result must be in ascending order")
 	})
 
-	t.Run("aynı çift ikinci kez no-op'tur", func(t *testing.T) {
-		// Saga yeniden denemeleri aynı adımı tekrar çalıştırır; bu bir hata
-		// değildir (plan Bölüm 2.6).
+	t.Run("the same pair a second time is a no-op", func(t *testing.T) {
+		// Saga retries rerun the same step; that is not an error
+		// (plan Section 2.6).
 		require.NoError(t, svc.Create(ctx, def.Name, "var_1", "ps_1"))
 
 		ids, err := svc.List(ctx, def.Name, "var_1")
 		require.NoError(t, err)
-		assert.Equal(t, []string{"ps_1", "ps_2"}, ids, "tekrar eden bağ satır çoğaltmamalı")
+		assert.Equal(t, []string{"ps_1", "ps_2"}, ids, "a repeated link must not duplicate a row")
 	})
 
-	t.Run("bağı olmayan kayıt boş dilim döner", func(t *testing.T) {
-		ids, err := svc.List(ctx, def.Name, "var_yok")
-		require.NoError(t, err, "bilinmeyen fromID hata değildir")
-		assert.NotNil(t, ids, "boş sonuç nil değil boş dilim olmalı")
+	t.Run("a record with no link returns an empty slice", func(t *testing.T) {
+		ids, err := svc.List(ctx, def.Name, "var_absent")
+		require.NoError(t, err, "an unknown fromID is not an error")
+		assert.NotNil(t, ids, "an empty result must be an empty slice, not nil")
 		assert.Empty(t, ids)
 	})
 
-	t.Run("batch okuma tek sorguda döner", func(t *testing.T) {
+	t.Run("a batch read comes back in a single query", func(t *testing.T) {
 		require.NoError(t, svc.Create(ctx, def.Name, "var_2", "ps_3"))
 
-		sonuc, err := svc.ListMany(ctx, def.Name, []string{"var_1", "var_2", "var_yok"})
+		got, err := svc.ListMany(ctx, def.Name, []string{"var_1", "var_2", "var_absent"})
 		require.NoError(t, err)
 		assert.Equal(t, map[string][]string{
 			"var_1": {"ps_1", "ps_2"},
 			"var_2": {"ps_3"},
-		}, sonuc, "bağı olmayan fromID için anahtar üretilmemeli")
+		}, got, "no key must be produced for a fromID with no link")
 	})
 
-	t.Run("silme yalnızca hedef çifti kaldırır", func(t *testing.T) {
+	t.Run("a delete removes only the target pair", func(t *testing.T) {
 		require.NoError(t, svc.Delete(ctx, def.Name, "var_1", "ps_1"))
 
 		ids, err := svc.List(ctx, def.Name, "var_1")
@@ -236,129 +325,130 @@ func TestCreateListDeleteEndToEnd(t *testing.T) {
 		assert.Equal(t, []string{"ps_2"}, ids)
 	})
 
-	t.Run("olmayan bağı silmek no-op'tur", func(t *testing.T) {
-		// Telafi (compensation) adımı başarısız bir Create'ten sonra da
-		// çalışır; "yok" istenen sonucun ta kendisidir.
+	t.Run("deleting a link that does not exist is a no-op", func(t *testing.T) {
+		// A compensation step also runs after a failed Create, and "absent" is
+		// precisely the desired outcome.
 		require.NoError(t, svc.Delete(ctx, def.Name, "var_1", "ps_1"))
-		require.NoError(t, svc.Delete(ctx, def.Name, "hic_yok", "ps_1"))
+		require.NoError(t, svc.Delete(ctx, def.Name, "var_never", "ps_1"))
 	})
 }
 
-// TestOneToOneIsEnforcedByDatabase OneToOne kardinalitesinin her iki ucu da
-// kısıtladığını ve ihlalin tipli bir çakışma olarak döndüğünü doğrular.
+// TestOneToOneIsEnforcedByDatabase verifies that the OneToOne cardinality
+// constrains both ends and that a violation comes back as a typed conflict.
 func TestOneToOneIsEnforcedByDatabase(t *testing.T) {
 	ctx := context.Background()
-	svc := yeniServis()
-	def := tanim("bire_bir", link.OneToOne)
+	svc := newLinkService()
+	def := definition("one_to_one_link", link.OneToOne)
 	require.NoError(t, svc.Define(ctx, def))
 	require.NoError(t, svc.Create(ctx, def.Name, "a", "1"))
 
-	t.Run("aynı fromID ikinci hedefe bağlanamaz", func(t *testing.T) {
-		cakismaDogrula(t, svc.Create(ctx, def.Name, "a", "2"), "a")
+	t.Run("the same fromID cannot bind to a second target", func(t *testing.T) {
+		requireCardinalityConflict(t, svc.Create(ctx, def.Name, "a", "2"), "a")
 	})
 
-	t.Run("aynı toID ikinci kaynağa bağlanamaz", func(t *testing.T) {
-		cakismaDogrula(t, svc.Create(ctx, def.Name, "b", "1"), "1")
+	t.Run("the same toID cannot bind to a second source", func(t *testing.T) {
+		requireCardinalityConflict(t, svc.Create(ctx, def.Name, "b", "1"), "1")
 	})
 
-	t.Run("aynı çift yine no-op'tur", func(t *testing.T) {
+	t.Run("the same pair is still a no-op", func(t *testing.T) {
 		require.NoError(t, svc.Create(ctx, def.Name, "a", "1"),
-			"kardinalite ihlali ile idempotent tekrar karıştırılmamalı")
+			"a cardinality violation must not be confused with an idempotent repeat")
 	})
 
-	assert.Equal(t, 1, satirSayisi(ctx, t, tabloAdi(t, def.Name)))
+	assert.Equal(t, 1, rowCount(ctx, t, tableNameFor(t, def.Name)))
 }
 
-// TestOneToManyIsEnforcedByDatabase OneToMany'de bir fromID'nin çok hedefe
-// bağlanabildiğini ama bir toID'nin tek kaynağa ait olduğunu doğrular.
+// TestOneToManyIsEnforcedByDatabase verifies that under OneToMany a fromID can
+// bind to many targets while a toID belongs to a single source.
 func TestOneToManyIsEnforcedByDatabase(t *testing.T) {
 	ctx := context.Background()
-	svc := yeniServis()
-	def := tanim("bire_cok", link.OneToMany)
+	svc := newLinkService()
+	def := definition("one_to_many_link", link.OneToMany)
 	require.NoError(t, svc.Define(ctx, def))
 
 	require.NoError(t, svc.Create(ctx, def.Name, "a", "1"))
-	require.NoError(t, svc.Create(ctx, def.Name, "a", "2"), "bir kaynak çok hedefe bağlanabilir")
+	require.NoError(t, svc.Create(ctx, def.Name, "a", "2"), "one source may bind to many targets")
 
-	cakismaDogrula(t, svc.Create(ctx, def.Name, "b", "1"), "1")
+	requireCardinalityConflict(t, svc.Create(ctx, def.Name, "b", "1"), "1")
 
 	ids, err := svc.List(ctx, def.Name, "a")
 	require.NoError(t, err)
 	assert.Equal(t, []string{"1", "2"}, ids)
-	assert.Equal(t, 2, satirSayisi(ctx, t, tabloAdi(t, def.Name)))
+	assert.Equal(t, 2, rowCount(ctx, t, tableNameFor(t, def.Name)))
 }
 
-// TestManyToManyAllowsSharedIDs ManyToMany'de yalnızca çiftin benzersiz
-// olduğunu ve aynı çiftin ikinci kez eklenmesinin satır çoğaltmadığını
-// doğrular.
+// TestManyToManyAllowsSharedIDs verifies that under ManyToMany only the pair
+// is unique and that adding the same pair a second time does not duplicate a
+// row.
 func TestManyToManyAllowsSharedIDs(t *testing.T) {
 	ctx := context.Background()
-	svc := yeniServis()
-	def := tanim("cok_coka", link.ManyToMany)
+	svc := newLinkService()
+	def := definition("many_to_many_link", link.ManyToMany)
 	require.NoError(t, svc.Define(ctx, def))
 
 	require.NoError(t, svc.Create(ctx, def.Name, "a", "1"))
 	require.NoError(t, svc.Create(ctx, def.Name, "a", "2"))
 	require.NoError(t, svc.Create(ctx, def.Name, "b", "1"))
-	require.NoError(t, svc.Create(ctx, def.Name, "a", "1"), "aynı çift no-op'tur, hata değil")
+	require.NoError(t, svc.Create(ctx, def.Name, "a", "1"), "the same pair is a no-op, not an error")
 
-	assert.Equal(t, 3, satirSayisi(ctx, t, tabloAdi(t, def.Name)),
-		"tekrarlanan çift satır çoğaltmamalı")
+	assert.Equal(t, 3, rowCount(ctx, t, tableNameFor(t, def.Name)),
+		"a repeated pair must not duplicate a row")
 
 	ids, err := svc.List(ctx, def.Name, "a")
 	require.NoError(t, err)
 	assert.Equal(t, []string{"1", "2"}, ids)
 }
 
-// TestListOrderIsDeterministic sıralamanın ekleme sırasından bağımsız ve
-// tekrarlanabilir olduğunu doğrular; API yanıtları ve testler buna dayanır.
+// TestListOrderIsDeterministic verifies that the ordering is independent of
+// the insertion order and reproducible; API responses and tests rely on it.
 func TestListOrderIsDeterministic(t *testing.T) {
 	ctx := context.Background()
-	svc := yeniServis()
-	def := tanim("siralama", link.ManyToMany)
+	svc := newLinkService()
+	def := definition("ordering", link.ManyToMany)
 	require.NoError(t, svc.Define(ctx, def))
 
-	// Ekleme sırası kasten karışık.
+	// The insertion order is deliberately shuffled.
 	for _, id := range []string{"ps_30", "ps_10", "ps_20", "ps_02", "ps_01"} {
 		require.NoError(t, svc.Create(ctx, def.Name, "var_1", id))
 	}
-	beklenen := []string{"ps_01", "ps_02", "ps_10", "ps_20", "ps_30"}
+	want := []string{"ps_01", "ps_02", "ps_10", "ps_20", "ps_30"}
 
 	for range 5 {
 		ids, err := svc.List(ctx, def.Name, "var_1")
 		require.NoError(t, err)
-		assert.Equal(t, beklenen, ids)
+		assert.Equal(t, want, ids)
 	}
 
-	sonuc, err := svc.ListMany(ctx, def.Name, []string{"var_1"})
+	got, err := svc.ListMany(ctx, def.Name, []string{"var_1"})
 	require.NoError(t, err)
-	assert.Equal(t, beklenen, sonuc["var_1"], "batch okuma da aynı sırayı vermeli")
+	assert.Equal(t, want, got["var_1"], "the batch read must give the same order")
 }
 
-// TestCanceledContextIsReportedAsUnavailable iptal edilmiş bir bağlamın
-// "veritabanı bozuk" gibi değil, iptal olarak raporlandığını doğrular.
+// TestCanceledContextIsReportedAsUnavailable verifies that a canceled context
+// is reported as a cancellation and not as "the database is broken".
 func TestCanceledContextIsReportedAsUnavailable(t *testing.T) {
 	ctx := context.Background()
-	svc := yeniServis()
-	def := tanim("iptal", link.ManyToMany)
+	svc := newLinkService()
+	def := definition("cancellation", link.ManyToMany)
 	require.NoError(t, svc.Define(ctx, def))
 
-	iptalli, cancel := context.WithCancel(ctx)
+	canceledCtx, cancel := context.WithCancel(ctx)
 	cancel()
 
-	err := svc.Create(iptalli, def.Name, "a", "1")
+	err := svc.Create(canceledCtx, def.Name, "a", "1")
 
 	require.Error(t, err)
 	assert.True(t, errors.HasKind(err, errors.KindUnavailable),
-		"hata sınıfı KindUnavailable olmalı, %v alındı", errors.KindOf(err))
+		"the error class must be KindUnavailable, got %v", errors.KindOf(err))
 	assert.Equal(t, "link_canceled", errors.CodeOf(err))
-	assert.Zero(t, satirSayisi(ctx, t, tabloAdi(t, def.Name)))
+	assert.Zero(t, rowCount(ctx, t, tableNameFor(t, def.Name)))
 }
 
-// --- yardımcılar ---
+// --- helpers ---
 
-// tanim testler için verilen ad ve kardinaliteyle bir tanım üretir.
-func tanim(name string, c link.Cardinality) link.LinkDefinition {
+// definition builds a definition with the given name and cardinality for the
+// tests.
+func definition(name string, c link.Cardinality) link.LinkDefinition {
 	return link.LinkDefinition{
 		Name:        name,
 		From:        link.LinkSide{Module: "product", Field: "variant_id"},
@@ -367,14 +457,14 @@ func tanim(name string, c link.Cardinality) link.LinkDefinition {
 	}
 }
 
-// yeniServis süreç içi defteri BOŞ, yeni bir servis üretir; böylece kalıcı
-// defter yolu gerçekten sınanır.
-func yeniServis() link.LinkService {
+// newLinkService builds a new service whose in-process registry is EMPTY, so
+// that the durable-ledger path is really exercised.
+func newLinkService() link.LinkService {
 	return link.New(testPool, nil)
 }
 
-// tabloAdi link adından tablo adını hata denetimiyle üretir.
-func tabloAdi(t *testing.T, name string) string {
+// tableNameFor builds the table name from a link name with error checking.
+func tableNameFor(t *testing.T, name string) string {
 	t.Helper()
 
 	table, err := link.TableName(name)
@@ -382,23 +472,24 @@ func tabloAdi(t *testing.T, name string) string {
 	return table
 }
 
-// cakismaDogrula kardinalite ihlalinin tipli ve okunabilir olduğunu doğrular.
-func cakismaDogrula(t *testing.T, err error, doluUc string) {
+// requireCardinalityConflict verifies that a cardinality violation is typed
+// and readable.
+func requireCardinalityConflict(t *testing.T, err error, takenID string) {
 	t.Helper()
 
-	require.Error(t, err, "kardinalite ihlali sessizce geçilemez")
+	require.Error(t, err, "a cardinality violation cannot pass silently")
 	assert.True(t, errors.IsConflict(err),
-		"hata sınıfı KindConflict olmalı, %v alındı", errors.KindOf(err))
+		"the error class must be KindConflict, got %v", errors.KindOf(err))
 	assert.Equal(t, "link_cardinality_violation", errors.CodeOf(err))
-	assert.Contains(t, err.Error(), doluUc, "mesaj hangi kimliğin dolu olduğunu yazmalı")
+	assert.Contains(t, err.Error(), takenID, "the message must write which id is taken")
 }
 
-// tabloVar public şemada verilen tablonun var olup olmadığını bildirir.
-func tabloVar(ctx context.Context, t *testing.T, table string) bool {
+// tableExists reports whether the given table exists in the public schema.
+func tableExists(ctx context.Context, t *testing.T, table string) bool {
 	t.Helper()
 
 	var exists bool
-	sorgula(ctx, t, `
+	queryOne(ctx, t, `
 		SELECT EXISTS (
 			SELECT 1 FROM information_schema.tables
 			WHERE table_schema = 'public' AND table_name = $1
@@ -406,12 +497,12 @@ func tabloVar(ctx context.Context, t *testing.T, table string) bool {
 	return exists
 }
 
-// sutunVar verilen tabloda bir sütunun var olup olmadığını bildirir.
-func sutunVar(ctx context.Context, t *testing.T, table, column string) bool {
+// columnExists reports whether a column exists in the given table.
+func columnExists(ctx context.Context, t *testing.T, table, column string) bool {
 	t.Helper()
 
 	var exists bool
-	sorgula(ctx, t, `
+	queryOne(ctx, t, `
 		SELECT EXISTS (
 			SELECT 1 FROM information_schema.columns
 			WHERE table_schema = 'public' AND table_name = $1 AND column_name = $2
@@ -419,12 +510,12 @@ func sutunVar(ctx context.Context, t *testing.T, table, column string) bool {
 	return exists
 }
 
-// indeksVar verilen tabloda bir indeksin var olup olmadığını bildirir.
-func indeksVar(ctx context.Context, t *testing.T, table, index string) bool {
+// indexExists reports whether an index exists on the given table.
+func indexExists(ctx context.Context, t *testing.T, table, index string) bool {
 	t.Helper()
 
 	var exists bool
-	sorgula(ctx, t, `
+	queryOne(ctx, t, `
 		SELECT EXISTS (
 			SELECT 1 FROM pg_indexes
 			WHERE schemaname = 'public' AND tablename = $1 AND indexname = $2
@@ -432,13 +523,13 @@ func indeksVar(ctx context.Context, t *testing.T, table, index string) bool {
 	return exists
 }
 
-// fkSayisi tablodaki foreign key kısıtlarının sayısını döner; her zaman sıfır
-// olmalıdır (plan Bölüm 2.2).
-func fkSayisi(ctx context.Context, t *testing.T, table string) int {
+// foreignKeyCount returns the number of foreign key constraints on the table;
+// it must always be zero (plan Section 2.2).
+func foreignKeyCount(ctx context.Context, t *testing.T, table string) int {
 	t.Helper()
 
 	var count int
-	sorgula(ctx, t, `
+	queryOne(ctx, t, `
 		SELECT count(*) FROM pg_constraint c
 		JOIN pg_class rel ON rel.oid = c.conrelid
 		JOIN pg_namespace ns ON ns.oid = rel.relnamespace
@@ -447,27 +538,27 @@ func fkSayisi(ctx context.Context, t *testing.T, table string) int {
 	return count
 }
 
-// satirSayisi link tablosundaki satır sayısını döner.
-func satirSayisi(ctx context.Context, t *testing.T, table string) int {
+// rowCount returns the number of rows in the link table.
+func rowCount(ctx context.Context, t *testing.T, table string) int {
 	t.Helper()
 
 	var count int
-	// Tablo adı testin kendi ürettiği doğrulanmış addır.
-	sorgula(ctx, t, fmt.Sprintf("SELECT count(*) FROM %s", table), nil, &count)
+	// The table name is the validated name the test itself produced.
+	queryOne(ctx, t, fmt.Sprintf("SELECT count(*) FROM %s", table), nil, &count)
 	return count
 }
 
-// defterSayisi kalıcı defterdeki satır sayısını döner.
-func defterSayisi(ctx context.Context, t *testing.T, name string) int {
+// ledgerRowCount returns the number of rows in the durable ledger.
+func ledgerRowCount(ctx context.Context, t *testing.T, name string) int {
 	t.Helper()
 
 	var count int
-	sorgula(ctx, t, `SELECT count(*) FROM link_definitions WHERE name = $1`, []any{name}, &count)
+	queryOne(ctx, t, `SELECT count(*) FROM link_definitions WHERE name = $1`, []any{name}, &count)
 	return count
 }
 
-// defterSatiri kalıcı defterdeki tanımı alan sırasıyla döner.
-func defterSatiri(ctx context.Context, t *testing.T, name string) []string {
+// ledgerRow returns the definition in the durable ledger in field order.
+func ledgerRow(ctx context.Context, t *testing.T, name string) []string {
 	t.Helper()
 
 	var fromModule, fromField, toModule, toField, cardinality string
@@ -478,8 +569,8 @@ func defterSatiri(ctx context.Context, t *testing.T, name string) []string {
 	return []string{fromModule, fromField, toModule, toField, cardinality}
 }
 
-// sorgula tek değerli bir doğrulama sorgusu çalıştırır.
-func sorgula(ctx context.Context, t *testing.T, sql string, args []any, dest any) {
+// queryOne runs a single-valued verification query.
+func queryOne(ctx context.Context, t *testing.T, sql string, args []any, dest any) {
 	t.Helper()
 
 	queryCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
@@ -488,40 +579,41 @@ func sorgula(ctx context.Context, t *testing.T, sql string, args []any, dest any
 	require.NoError(t, testPool.Pool().QueryRow(queryCtx, sql, args...).Scan(dest))
 }
 
-// TestDefineRejectsIndexNamespaceCollision PostgreSQL'in tablo ve indeksleri
-// AYNI ad uzayında (pg_class) tutmasından doğan sessiz bozulmayı kapatan iki
-// katmanı da doğrular.
+// TestDefineRejectsIndexNamespaceCollision verifies both layers that close the
+// silent breakage arising from PostgreSQL keeping tables and indexes in the
+// SAME namespace (pg_class).
 //
-// Regresyon: "x_from_uniq" adlı bir link tanımlandığında, "x" linkinin
-// benzersizlik indeksi aynı ilişki adına çözülüyordu.
-// "CREATE UNIQUE INDEX IF NOT EXISTS" bu durumda hata DEĞİL, NOTICE üretip
-// ATLIYOR — yani Define başarı dönüyor, tanım deftere yazılıyor, ama
-// kardinalite kısıtı veritabanında HİÇ KURULMUYOR. Bozulma ancak veri
-// kirlendikten sonra fark edilirdi.
+// Regression: when a link named "x_from_uniq" was declared, the uniqueness
+// index of link "x" resolved to the same relation name.
+// "CREATE UNIQUE INDEX IF NOT EXISTS" does NOT error in that case; it raises a
+// NOTICE and SKIPS — that is, Define returns success, the definition is
+// written to the ledger, but the cardinality constraint is NEVER CREATED in
+// the database. The breakage would only be noticed after the data was
+// corrupted.
 func TestDefineRejectsIndexNamespaceCollision(t *testing.T) {
-	svc := yeniServis()
+	svc := newLinkService()
 	ctx := t.Context()
 
-	t.Run("indeks sonekli ad reddedilir", func(t *testing.T) {
-		for _, name := range []string{"cakisma_from_uniq", "cakisma_to_uniq", "cakisma_to_lookup"} {
-			err := svc.Define(ctx, tanim(name, link.ManyToMany))
-			require.Error(t, err, "%q kabul edildi", name)
-			assert.True(t, errors.IsInvalid(err), "%q için sınıf Invalid olmalı, gelen: %v", name, err)
+	t.Run("a name with an index suffix is rejected", func(t *testing.T) {
+		for _, name := range []string{"collision_from_uniq", "collision_to_uniq", "collision_to_lookup"} {
+			err := svc.Define(ctx, definition(name, link.ManyToMany))
+			require.Error(t, err, "%q was accepted", name)
+			assert.True(t, errors.IsInvalid(err), "the class for %q must be Invalid, got: %v", name, err)
 		}
 	})
 
-	t.Run("dis kaynakli ad cakismasi DDL sonrasi yakalanir", func(t *testing.T) {
-		// Link API'sinin dışında, doğrudan veritabanında link_<ad> adında bir
-		// INDEKS oluştur. Ad doğrulaması bunu göremez; yakalayan katman
-		// verifySchema olmalıdır.
+	t.Run("an externally created name collision is caught after the DDL", func(t *testing.T) {
+		// Outside the link API, create an INDEX named link_<name> directly in
+		// the database. Name validation cannot see this; the layer that must
+		// catch it is verifySchema.
 		pool := testPool.Pool()
-		_, err := pool.Exec(ctx, `CREATE TABLE IF NOT EXISTS cakisma_tasiyici (id TEXT)`)
+		_, err := pool.Exec(ctx, `CREATE TABLE IF NOT EXISTS collision_carrier (id TEXT)`)
 		require.NoError(t, err)
-		_, err = pool.Exec(ctx, `CREATE INDEX IF NOT EXISTS link_disaridan ON cakisma_tasiyici (id)`)
+		_, err = pool.Exec(ctx, `CREATE INDEX IF NOT EXISTS link_external ON collision_carrier (id)`)
 		require.NoError(t, err)
 
-		err = svc.Define(ctx, tanim("disaridan", link.OneToOne))
-		require.Error(t, err, "link_disaridan bir INDEKS iken Define başarı dönmemeli")
-		assert.Contains(t, err.Error(), "disaridan")
+		err = svc.Define(ctx, definition("external", link.OneToOne))
+		require.Error(t, err, "Define must not return success while link_external is an INDEX")
+		assert.Contains(t, err.Error(), "external")
 	})
 }

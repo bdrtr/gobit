@@ -16,23 +16,26 @@ import (
 	"github.com/bdrtr/gobit/internal/core/errors"
 )
 
-// testEventName paket içi testlerde kullanılan olay adıdır.
+// testEventName is the event name used in the in-package tests.
 const testEventName = "order.placed"
 
-// fakeRead betiklenmiş tek bir XREADGROUP turudur; err verilirse tur hata döner.
+// fakeRead is a single scripted XREADGROUP round; if err is given the round
+// returns that error.
 type fakeRead struct {
 	streams []redis.XStream
 	err     error
 }
 
-// fakeStreamClient streamClient'ı süreç içinde taklit eder.
+// fakeStreamClient imitates streamClient inside the process.
 //
-// XReadGroup betiklenmiş turları sırayla döner; betik tükendiğinde çağrı ctx
-// iptal edilene kadar bloklanır, böylece tüketici döngüsü boşa dönmez. İstenen
-// imler, ACK'lenen kimlikler ve yazılan mesajlar kaydedilir.
+// XReadGroup returns the scripted rounds in order; once the script is
+// exhausted the call blocks until the ctx is canceled, so that the consumer
+// loop does not spin. The requested cursors, the ACKed ids and the written
+// messages are recorded.
 type fakeStreamClient struct {
-	// onGroupCreate nil değilse XGroupCreateMkStream yerine çağrılır; testler
-	// grup kurulumunu yavaşlatmak veya hata döndürmek için kullanır.
+	// onGroupCreate is called instead of XGroupCreateMkStream when it is
+	// non-nil; the tests use it to slow the group setup down or to make it
+	// fail.
 	onGroupCreate func(ctx context.Context) error
 
 	mu      sync.Mutex
@@ -41,14 +44,15 @@ type fakeStreamClient struct {
 	acked   []string
 	added   []*redis.XAddArgs
 
-	// drained betiklenmiş son tur da servis edildiğinde kapanır.
+	// drained closes once the last scripted round has been served too.
 	drained     chan struct{}
 	drainedOnce sync.Once
 }
 
 var _ streamClient = (*fakeStreamClient)(nil)
 
-// newFakeStreamClient verilen turları sırayla dönen bir taklit istemci üretir.
+// newFakeStreamClient builds a fake client returning the given rounds in
+// order.
 func newFakeStreamClient(reads ...fakeRead) *fakeStreamClient {
 	f := &fakeStreamClient{reads: reads, drained: make(chan struct{})}
 	if len(reads) == 0 {
@@ -99,7 +103,8 @@ func (f *fakeStreamClient) XReadGroup(ctx context.Context, a *redis.XReadGroupAr
 
 	switch {
 	case !scripted:
-		// Betik bitti: veri yolu kapanana kadar blokla, meşgul döngü kurma.
+		// The script is over: block until the bus closes, do not set up a busy
+		// loop.
 		<-ctx.Done()
 		cmd.SetErr(ctx.Err())
 	case next.err != nil:
@@ -121,43 +126,43 @@ func (f *fakeStreamClient) XAck(ctx context.Context, _, _ string, ids ...string)
 	return cmd
 }
 
-// requestedCursors XReadGroup'a verilen imleri sırayla döner.
+// requestedCursors returns the cursors given to XReadGroup in order.
 func (f *fakeStreamClient) requestedCursors() []string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return slices.Clone(f.cursors)
 }
 
-// ackedIDs ACK'lenen mesaj kimliklerini döner.
+// ackedIDs returns the ACKed message ids.
 func (f *fakeStreamClient) ackedIDs() []string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return slices.Clone(f.acked)
 }
 
-// addedArgs XAdd'e verilen argümanları sırayla döner.
+// addedArgs returns the arguments given to XAdd in order.
 func (f *fakeStreamClient) addedArgs() []*redis.XAddArgs {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return slices.Clone(f.added)
 }
 
-// fakeConfig taklit istemciyle kullanılan yalıtılmış ayarı döner.
+// fakeConfig returns the isolated configuration used with the fake client.
 func fakeConfig() RedisConfig {
 	return RedisConfig{
 		StreamPrefix: "test:events",
-		Group:        "test-grup",
-		Consumer:     "test-tuketici",
+		Group:        "test-group",
+		Consumer:     "test-consumer",
 		BlockTimeout: 10 * time.Millisecond,
 	}
 }
 
-// scriptedRead tek bir stream'den mesaj dönen bir tur üretir.
+// scriptedRead builds a round returning messages from a single stream.
 func scriptedRead(stream string, msgs ...redis.XMessage) fakeRead {
 	return fakeRead{streams: []redis.XStream{{Stream: stream, Messages: msgs}}}
 }
 
-// eventMessage yayımlanmış bir olayın stream karşılığını üretir.
+// eventMessage builds the stream counterpart of a published event.
 func eventMessage(msgID, eventID, name string, when time.Time, data string) redis.XMessage {
 	return redis.XMessage{
 		ID: msgID,
@@ -170,21 +175,22 @@ func eventMessage(msgID, eventID, name string, when time.Time, data string) redi
 	}
 }
 
-// waitClosed kanalın kapanmasını bekler; kapanmazsa testi düşürür.
-func waitClosed(t *testing.T, ch <-chan struct{}, mesaj string) {
+// waitClosed waits for the channel to close; if it does not, it fails the
+// test.
+func waitClosed(t *testing.T, ch <-chan struct{}, message string) {
 	t.Helper()
 	select {
 	case <-ch:
 	case <-time.After(5 * time.Second):
-		t.Fatalf("zaman aşımı: %s", mesaj)
+		t.Fatalf("timed out: %s", message)
 	}
 }
 
-// shutdownBus veri yolunu kapatır ve hata dönerse testi düşürür.
+// shutdownBus closes the bus and fails the test if it returns an error.
 func shutdownBus(t *testing.T, b *redisBus) {
 	t.Helper()
 	if err := b.Shutdown(context.Background()); err != nil {
-		t.Fatalf("Shutdown hata verdi: %v", err)
+		t.Fatalf("Shutdown returned an error: %v", err)
 	}
 }
 
@@ -201,20 +207,20 @@ func TestDecodeMessage(t *testing.T) {
 		wantData map[string]any
 	}{
 		{
-			name: "tam mesaj",
+			name: "complete message",
 			values: map[string]any{
 				fieldID:         "evt_01",
 				fieldName:       "order.paid",
 				fieldOccurredAt: when.Format(time.RFC3339Nano),
-				fieldData:       `{"order_id":"order_01","toplam":1999}`,
+				fieldData:       `{"order_id":"order_01","total":1999}`,
 			},
 			wantName: "order.paid",
 			wantID:   "evt_01",
 			wantTime: when,
-			wantData: map[string]any{"order_id": "order_01", "toplam": float64(1999)},
+			wantData: map[string]any{"order_id": "order_01", "total": float64(1999)},
 		},
 		{
-			name: "ad alani yoksa yedek ad kullanilir",
+			name: "the fallback name is used when the name field is absent",
 			values: map[string]any{
 				fieldID:   "evt_02",
 				fieldData: `{"order_id":"order_02"}`,
@@ -224,30 +230,31 @@ func TestDecodeMessage(t *testing.T) {
 			wantData: map[string]any{"order_id": "order_02"},
 		},
 		{
-			name:     "veri alani yok",
+			name:     "no data field",
 			values:   map[string]any{fieldID: "evt_03"},
 			wantName: testEventName,
 			wantID:   "evt_03",
 		},
 		{
-			// Redis, bekleyen listede duran ama kırpılmış girdiyi alansız döner.
-			name:    "alansiz mesaj (tombstone)",
+			// Redis returns an entry that sits in the pending list but was
+			// trimmed away without fields.
+			name:    "message without fields (tombstone)",
 			values:  nil,
 			wantErr: true,
 		},
 		{
-			name:    "bos alan haritasi",
+			name:    "empty field map",
 			values:  map[string]any{},
 			wantErr: true,
 		},
 		{
-			name:    "bozuk occurred_at",
-			values:  map[string]any{fieldID: "evt_04", fieldOccurredAt: "dun"},
+			name:    "malformed occurred_at",
+			values:  map[string]any{fieldID: "evt_04", fieldOccurredAt: "yesterday"},
 			wantErr: true,
 		},
 		{
-			name:    "bozuk json veri",
-			values:  map[string]any{fieldID: "evt_05", fieldData: "{bozuk"},
+			name:    "malformed json data",
+			values:  map[string]any{fieldID: "evt_05", fieldData: "{malformed"},
 			wantErr: true,
 		},
 	}
@@ -258,31 +265,31 @@ func TestDecodeMessage(t *testing.T) {
 
 			if tt.wantErr {
 				if err == nil {
-					t.Fatalf("hata beklendi, olay döndü: %+v", got)
+					t.Fatalf("an error was expected, an event came back: %+v", got)
 				}
 				if !errors.IsInvalid(err) {
-					t.Errorf("Kind = %v, beklenen invalid", errors.KindOf(err))
+					t.Errorf("Kind = %v, expected invalid", errors.KindOf(err))
 				}
 				if code := errors.CodeOf(err); code != CodeInvalidEvent {
-					t.Errorf("Code = %q, beklenen %q", code, CodeInvalidEvent)
+					t.Errorf("Code = %q, expected %q", code, CodeInvalidEvent)
 				}
 				return
 			}
 
 			if err != nil {
-				t.Fatalf("decodeMessage hata verdi: %v", err)
+				t.Fatalf("decodeMessage returned an error: %v", err)
 			}
 			if got.Name != tt.wantName {
-				t.Errorf("Name = %q, beklenen %q", got.Name, tt.wantName)
+				t.Errorf("Name = %q, expected %q", got.Name, tt.wantName)
 			}
 			if got.ID != tt.wantID {
-				t.Errorf("ID = %q, beklenen %q", got.ID, tt.wantID)
+				t.Errorf("ID = %q, expected %q", got.ID, tt.wantID)
 			}
 			if !got.OccurredAt.Equal(tt.wantTime) {
-				t.Errorf("OccurredAt = %v, beklenen %v", got.OccurredAt, tt.wantTime)
+				t.Errorf("OccurredAt = %v, expected %v", got.OccurredAt, tt.wantTime)
 			}
 			if !maps.Equal(got.Data, tt.wantData) {
-				t.Errorf("Data = %v, beklenen %v", got.Data, tt.wantData)
+				t.Errorf("Data = %v, expected %v", got.Data, tt.wantData)
 			}
 		})
 	}
@@ -291,36 +298,36 @@ func TestDecodeMessage(t *testing.T) {
 func TestMessagesOf(t *testing.T) {
 	first := redis.XMessage{ID: "1-0", Values: map[string]any{fieldID: "evt_01"}}
 	res := []redis.XStream{
-		{Stream: "baska:stream", Messages: []redis.XMessage{{ID: "9-0"}}},
+		{Stream: "other:stream", Messages: []redis.XMessage{{ID: "9-0"}}},
 		{Stream: "test:events:order.placed", Messages: []redis.XMessage{first}},
 	}
 
 	got := messagesOf(res, "test:events:order.placed")
 	if len(got) != 1 || got[0].ID != "1-0" {
-		t.Errorf("messagesOf = %v, beklenen yalnızca 1-0 mesajı", got)
+		t.Errorf("messagesOf = %v, expected only the 1-0 message", got)
 	}
-	if got := messagesOf(res, "yok:stream"); got != nil {
-		t.Errorf("eşleşmeyen stream için messagesOf = %v, beklenen nil", got)
+	if got := messagesOf(res, "missing:stream"); got != nil {
+		t.Errorf("messagesOf for a non-matching stream = %v, expected nil", got)
 	}
 	if got := messagesOf(nil, "test:events:order.placed"); got != nil {
-		t.Errorf("boş yanıt için messagesOf = %v, beklenen nil", got)
+		t.Errorf("messagesOf for an empty response = %v, expected nil", got)
 	}
 }
 
 func TestStringField(t *testing.T) {
-	values := map[string]any{"metin": "deger", "sayi": 42}
+	values := map[string]any{"text": "value", "number": 42}
 
-	if got := stringField(values, "metin"); got != "deger" {
-		t.Errorf("stringField(metin) = %q, beklenen deger", got)
+	if got := stringField(values, "text"); got != "value" {
+		t.Errorf("stringField(text) = %q, expected value", got)
 	}
-	if got := stringField(values, "sayi"); got != "" {
-		t.Errorf("dize olmayan alan için stringField = %q, beklenen boş", got)
+	if got := stringField(values, "number"); got != "" {
+		t.Errorf("stringField for a non-string field = %q, expected empty", got)
 	}
-	if got := stringField(values, "yok"); got != "" {
-		t.Errorf("olmayan alan için stringField = %q, beklenen boş", got)
+	if got := stringField(values, "missing"); got != "" {
+		t.Errorf("stringField for an absent field = %q, expected empty", got)
 	}
-	if got := stringField(nil, "metin"); got != "" {
-		t.Errorf("nil harita için stringField = %q, beklenen boş", got)
+	if got := stringField(nil, "text"); got != "" {
+		t.Errorf("stringField for a nil map = %q, expected empty", got)
 	}
 }
 
@@ -330,12 +337,12 @@ func TestConsumeReadsPendingListBeforeNewMessages(t *testing.T) {
 	when := time.Date(2026, 8, 23, 12, 30, 0, 0, time.UTC)
 
 	fake := newFakeStreamClient(
-		// 1. tur: yeniden başlatmadan kalan bekleyen mesaj.
-		scriptedRead(stream, eventMessage("1-1", "evt_bekleyen", testEventName, when, `{}`)),
-		// 2. tur: bekleyen liste tükendi.
+		// Round 1: a pending message left over from a restart.
+		scriptedRead(stream, eventMessage("1-1", "evt_pending", testEventName, when, `{}`)),
+		// Round 2: the pending list is drained.
 		scriptedRead(stream),
-		// 3. tur: artık yalnızca yeni mesajlar.
-		scriptedRead(stream, eventMessage("2-1", "evt_yeni", testEventName, when, `{}`)),
+		// Round 3: from now on only new messages.
+		scriptedRead(stream, eventMessage("2-1", "evt_new", testEventName, when, `{}`)),
 	)
 
 	bus := newRedisBus(fake, cfg, quietLogger())
@@ -345,21 +352,22 @@ func TestConsumeReadsPendingListBeforeNewMessages(t *testing.T) {
 		seen <- e.ID
 		return nil
 	}); err != nil {
-		t.Fatalf("Subscribe hata verdi: %v", err)
+		t.Fatalf("Subscribe returned an error: %v", err)
 	}
 
-	waitClosed(t, fake.drained, "betiklenmiş turlar tüketilmedi")
+	waitClosed(t, fake.drained, "the scripted rounds were not consumed")
 	shutdownBus(t, bus)
 
-	// Tüketim, süreç yeniden başladığında BEKLEYEN listeden başlamalı; liste
-	// sayfalanarak ilerlemeli ve tükendiğinde ">" imine geçmelidir.
+	// When the process restarts, consumption must start from the PENDING list;
+	// the list must be paged through and, once drained, must switch to the ">"
+	// marker.
 	cursors := fake.requestedCursors()
 	if len(cursors) < 3 {
-		t.Fatalf("istenen imler = %v, en az 3 tur beklendi", cursors)
+		t.Fatalf("requested cursors = %v, at least 3 rounds were expected", cursors)
 	}
 	want := []string{cursorPending, "1-1", cursorNew}
 	if !slices.Equal(cursors[:3], want) {
-		t.Errorf("istenen imler = %v, beklenen %v", cursors[:3], want)
+		t.Errorf("requested cursors = %v, expected %v", cursors[:3], want)
 	}
 
 	close(seen)
@@ -367,8 +375,8 @@ func TestConsumeReadsPendingListBeforeNewMessages(t *testing.T) {
 	for id := range seen {
 		got = append(got, id)
 	}
-	if !slices.Equal(got, []string{"evt_bekleyen", "evt_yeni"}) {
-		t.Errorf("teslim edilen kimlikler = %v, beklenen [evt_bekleyen evt_yeni]", got)
+	if !slices.Equal(got, []string{"evt_pending", "evt_new"}) {
+		t.Errorf("delivered ids = %v, expected [evt_pending evt_new]", got)
 	}
 }
 
@@ -379,7 +387,7 @@ func TestConsumeDeliversDecodedEventAndAcks(t *testing.T) {
 
 	fake := newFakeStreamClient(
 		scriptedRead(stream, eventMessage("5-0", "evt_01", "order.paid", when,
-			`{"order_id":"order_01","toplam":1999,"kalemler":["a","b"]}`)),
+			`{"order_id":"order_01","total":1999,"items":["a","b"]}`)),
 	)
 	bus := newRedisBus(fake, cfg, quietLogger())
 
@@ -388,54 +396,55 @@ func TestConsumeDeliversDecodedEventAndAcks(t *testing.T) {
 		got <- e
 		return nil
 	}); err != nil {
-		t.Fatalf("Subscribe hata verdi: %v", err)
+		t.Fatalf("Subscribe returned an error: %v", err)
 	}
 
-	waitClosed(t, fake.drained, "mesaj hiç okunmadı")
+	waitClosed(t, fake.drained, "the message was never read")
 	shutdownBus(t, bus)
 
 	select {
 	case e := <-got:
 		if e.Name != "order.paid" {
-			t.Errorf("Name = %q, beklenen order.paid (mesajdaki ad yedeği ezmeli)", e.Name)
+			t.Errorf("Name = %q, expected order.paid (the name in the message must beat the fallback)", e.Name)
 		}
 		if e.ID != "evt_01" {
-			t.Errorf("ID = %q, beklenen evt_01", e.ID)
+			t.Errorf("ID = %q, expected evt_01", e.ID)
 		}
 		if !e.OccurredAt.Equal(when) {
-			t.Errorf("OccurredAt = %v, beklenen %v", e.OccurredAt, when)
+			t.Errorf("OccurredAt = %v, expected %v", e.OccurredAt, when)
 		}
 		if e.Data["order_id"] != "order_01" {
-			t.Errorf("Data[order_id] = %v, beklenen order_01", e.Data["order_id"])
+			t.Errorf("Data[order_id] = %v, expected order_01", e.Data["order_id"])
 		}
-		if e.Data["toplam"] != float64(1999) {
-			t.Errorf("Data[toplam] = %v, beklenen 1999 (yük sessizce boşalmamalı)", e.Data["toplam"])
+		if e.Data["total"] != float64(1999) {
+			t.Errorf("Data[total] = %v, expected 1999 (the payload must not silently empty out)", e.Data["total"])
 		}
-		if kalemler, ok := e.Data["kalemler"].([]any); !ok || len(kalemler) != 2 {
-			t.Errorf("Data[kalemler] = %v, beklenen 2 elemanlı dizi", e.Data["kalemler"])
+		if items, ok := e.Data["items"].([]any); !ok || len(items) != 2 {
+			t.Errorf("Data[items] = %v, expected an array of 2 elements", e.Data["items"])
 		}
 	default:
-		t.Fatal("olay handler'a hiç ulaşmadı")
+		t.Fatal("the event never reached the handler")
 	}
 
 	if acked := fake.ackedIDs(); !slices.Equal(acked, []string{"5-0"}) {
-		t.Errorf("ACK'lenen kimlikler = %v, beklenen [5-0]", acked)
+		t.Errorf("ACKed ids = %v, expected [5-0]", acked)
 	}
 }
 
-// TestConsumeHandlerCtxCarriesNoPublisherValues Redis backend'inin [Handler]
-// sözleşmesindeki ctx davranışını sabitler.
+// TestConsumeHandlerCtxCarriesNoPublisherValues pins the Redis backend's ctx
+// behavior from the [Handler] contract.
 //
-// Bu backend'de olay SÜREÇ SINIRINI geçer: tüketici yayımcının ctx'ini hiç
-// görmez, yani yayımcı ctx'e ne koyarsa koysun handler'a ulaşmaz. In-memory
-// backend'in aynı noktadaki davranışı TAM TERSİDİR
-// (bkz. TestInMemoryHandlerContextSurvivesCallerCancel) ve varsayılan backend
-// o olduğu için, fark ancak burada yazılıysa görülebilir — aksi hâlde ctx'te
-// bir şey taşıyan tasarım testlerde yeşil geçip üretimde sessizce boş okur.
+// In this backend the event crosses the PROCESS BOUNDARY: the consumer never
+// sees the publisher's ctx, so whatever the publisher puts into the ctx does
+// not reach the handler. The in-memory backend's behavior at the same point is
+// THE EXACT OPPOSITE (see TestInMemoryHandlerContextSurvivesCallerCancel), and
+// because the default backend is that one, the difference can only be seen if
+// it is written down here — otherwise a design carrying something in the ctx
+// passes green in tests and reads silently empty in production.
 //
-// Mesajın ALAN KÜMESİ de sabitlenir: yayımcının ctx'inden hiçbir şey
-// serileştirilmez. Alan eklemek yasak değildir ama bu test ile [Handler]
-// godoc'u BİRLİKTE değişmelidir; ikisinin ayrışması bu borcun ta kendisiydi.
+// The message's FIELD SET is pinned too: nothing from the publisher's ctx is
+// serialized. Adding a field is not forbidden, but this test and the [Handler]
+// godoc must change TOGETHER; the two drifting apart was precisely this debt.
 func TestConsumeHandlerCtxCarriesNoPublisherValues(t *testing.T) {
 	type ctxKey struct{}
 
@@ -453,47 +462,48 @@ func TestConsumeHandlerCtxCarriesNoPublisherValues(t *testing.T) {
 		got <- ctx
 		return nil
 	}); err != nil {
-		t.Fatalf("Subscribe hata verdi: %v", err)
+		t.Fatalf("Subscribe returned an error: %v", err)
 	}
 
-	// Yayımcı ctx'inde bir istek değeri taşıyor; ne mesaja ne handler'a geçmeli.
-	yayimCtx := context.WithValue(t.Context(), ctxKey{}, "req_01")
-	if err := bus.Publish(yayimCtx, Event{Name: testEventName}); err != nil {
-		t.Fatalf("Publish hata verdi: %v", err)
+	// The publisher carries a request value in its ctx; it must reach neither
+	// the message nor the handler.
+	publishCtx := context.WithValue(t.Context(), ctxKey{}, "req_01")
+	if err := bus.Publish(publishCtx, Event{Name: testEventName}); err != nil {
+		t.Fatalf("Publish returned an error: %v", err)
 	}
 
-	waitClosed(t, fake.drained, "mesaj hiç okunmadı")
+	waitClosed(t, fake.drained, "the message was never read")
 	shutdownBus(t, bus)
 
 	select {
 	case hctx := <-got:
 		if v := hctx.Value(ctxKey{}); v != nil {
-			t.Errorf("handler ctx'i yayımcının değerini taşıyor (%v); tüketici süreç "+
-				"yayımcının ctx'ini göremez, godoc bunu vaat etmemeli", v)
+			t.Errorf("the handler ctx carries the publisher's value (%v); the consuming process "+
+				"cannot see the publisher's ctx, and the godoc must not promise it", v)
 		}
 		if err := hctx.Err(); err != nil {
-			t.Errorf("handler ctx'i iptal edilmiş: %v (Shutdown işlemeyi yarıda kesmemeli)", err)
+			t.Errorf("the handler ctx was canceled: %v (Shutdown must not cut processing short)", err)
 		}
 	default:
-		t.Fatal("olay handler'a hiç ulaşmadı")
+		t.Fatal("the event never reached the handler")
 	}
 
-	eklenen := fake.addedArgs()
-	if len(eklenen) != 1 {
-		t.Fatalf("XAdd çağrı sayısı = %d, beklenen 1", len(eklenen))
+	added := fake.addedArgs()
+	if len(added) != 1 {
+		t.Fatalf("XAdd call count = %d, expected 1", len(added))
 	}
 
-	degerler, ok := eklenen[0].Values.(map[string]any)
+	values, ok := added[0].Values.(map[string]any)
 	if !ok {
-		t.Fatalf("XAdd değerleri %T tipinde; map[string]any bekleniyordu", eklenen[0].Values)
+		t.Fatalf("the XAdd values have type %T; map[string]any was expected", added[0].Values)
 	}
 
-	beklenen := []string{fieldID, fieldName, fieldOccurredAt, fieldData}
-	slices.Sort(beklenen)
+	want := []string{fieldID, fieldName, fieldOccurredAt, fieldData}
+	slices.Sort(want)
 
-	if alanlar := slices.Sorted(maps.Keys(degerler)); !slices.Equal(alanlar, beklenen) {
-		t.Errorf("mesaj alanları = %v, beklenen %v (yayımcının ctx'inden hiçbir şey "+
-			"serileştirilmez; alan eklendiyse Handler godoc'u da değişmeli)", alanlar, beklenen)
+	if fields := slices.Sorted(maps.Keys(values)); !slices.Equal(fields, want) {
+		t.Errorf("message fields = %v, expected %v (nothing from the publisher's ctx is "+
+			"serialized; if a field was added, the Handler godoc must change too)", fields, want)
 	}
 }
 
@@ -502,13 +512,13 @@ func TestConsumeDoesNotDeliverTombstoneMessage(t *testing.T) {
 	stream := cfg.StreamName(testEventName)
 	when := time.Date(2026, 8, 23, 12, 30, 0, 0, time.UTC)
 
-	// Kırpılmış/silinmiş bir stream girdisi bekleyen listede kalır ve go-redis
-	// tarafından alansız bir XMessage olarak dönülür.
+	// A trimmed/deleted stream entry stays in the pending list and is returned
+	// by go-redis as an XMessage without fields.
 	tombstone := redis.XMessage{ID: "7-0", Values: nil}
 
 	fake := newFakeStreamClient(
 		scriptedRead(stream, tombstone,
-			eventMessage("7-1", "evt_saglam", testEventName, when, `{"order_id":"order_01"}`)),
+			eventMessage("7-1", "evt_intact", testEventName, when, `{"order_id":"order_01"}`)),
 	)
 
 	var buf bytes.Buffer
@@ -520,25 +530,26 @@ func TestConsumeDoesNotDeliverTombstoneMessage(t *testing.T) {
 		seen <- e
 		return nil
 	}); err != nil {
-		t.Fatalf("Subscribe hata verdi: %v", err)
+		t.Fatalf("Subscribe returned an error: %v", err)
 	}
 
-	waitClosed(t, fake.drained, "mesajlar hiç okunmadı")
+	waitClosed(t, fake.drained, "the messages were never read")
 	shutdownBus(t, bus)
 
 	if got := len(seen); got != 1 {
-		t.Fatalf("handler çağrı sayısı = %d, beklenen 1 (tombstone teslim edilmemeli)", got)
+		t.Fatalf("handler call count = %d, expected 1 (a tombstone must not be delivered)", got)
 	}
-	if e := <-seen; e.ID != "evt_saglam" {
-		t.Errorf("teslim edilen olay = %+v, beklenen yalnızca evt_saglam", e)
+	if e := <-seen; e.ID != "evt_intact" {
+		t.Errorf("the delivered event = %+v, expected only evt_intact", e)
 	}
 
-	// Tombstone yine de ACK'lenmeli; aksi hâlde bekleyen listede sonsuza kalır.
+	// The tombstone must still be ACKed; otherwise it stays in the pending
+	// list forever.
 	if acked := fake.ackedIDs(); !slices.Equal(acked, []string{"7-0", "7-1"}) {
-		t.Errorf("ACK'lenen kimlikler = %v, beklenen [7-0 7-1]", acked)
+		t.Errorf("ACKed ids = %v, expected [7-0 7-1]", acked)
 	}
-	if out := buf.String(); !strings.Contains(out, "çözülemedi") {
-		t.Errorf("çözülemeyen mesaj loglanmadı; log çıktısı: %s", out)
+	if out := buf.String(); !strings.Contains(out, "could not be decoded") {
+		t.Errorf("the undecodable message was not logged; log output: %s", out)
 	}
 }
 
@@ -548,7 +559,7 @@ func TestConsumeContinuesAfterReadError(t *testing.T) {
 	when := time.Date(2026, 8, 23, 12, 30, 0, 0, time.UTC)
 
 	fake := newFakeStreamClient(
-		fakeRead{err: errors.New("redis düştü")},
+		fakeRead{err: errors.New("redis went down")},
 		scriptedRead(stream, eventMessage("3-0", "evt_01", testEventName, when, `{}`)),
 	)
 
@@ -561,22 +572,22 @@ func TestConsumeContinuesAfterReadError(t *testing.T) {
 		got <- e.ID
 		return nil
 	}); err != nil {
-		t.Fatalf("Subscribe hata verdi: %v", err)
+		t.Fatalf("Subscribe returned an error: %v", err)
 	}
 
-	waitClosed(t, fake.drained, "okuma hatasından sonra tüketim sürmedi")
+	waitClosed(t, fake.drained, "consumption did not continue after the read error")
 	shutdownBus(t, bus)
 
 	select {
 	case id := <-got:
 		if id != "evt_01" {
-			t.Errorf("teslim edilen kimlik = %q, beklenen evt_01", id)
+			t.Errorf("the delivered id = %q, expected evt_01", id)
 		}
 	default:
-		t.Error("okuma hatasından sonraki mesaj teslim edilmedi")
+		t.Error("the message after the read error was not delivered")
 	}
-	if out := buf.String(); !strings.Contains(out, "okunamadı") {
-		t.Errorf("okuma hatası loglanmadı; log çıktısı: %s", out)
+	if out := buf.String(); !strings.Contains(out, "could not be read") {
+		t.Errorf("the read error was not logged; log output: %s", out)
 	}
 }
 
@@ -597,8 +608,9 @@ func TestSubscribeDoesNotBlockPublishWhileCreatingGroup(t *testing.T) {
 		subscribed <- bus.Subscribe(testEventName, func(context.Context, Event) error { return nil })
 	}()
 
-	// Consumer group kurulumu (gerçek bir ağ turu) sürerken yayım denenir.
-	waitClosed(t, entered, "consumer group kurulumu başlamadı")
+	// A publication is attempted while the consumer group setup (a real
+	// network round trip) is in flight.
+	waitClosed(t, entered, "the consumer group setup did not start")
 
 	published := make(chan error, 1)
 	go func() {
@@ -608,15 +620,15 @@ func TestSubscribeDoesNotBlockPublishWhileCreatingGroup(t *testing.T) {
 	select {
 	case err := <-published:
 		if err != nil {
-			t.Fatalf("Publish hata verdi: %v", err)
+			t.Fatalf("Publish returned an error: %v", err)
 		}
 	case <-time.After(2 * time.Second):
-		t.Fatal("Subscribe consumer group kurarken Publish bloklandı")
+		t.Fatal("Publish blocked while Subscribe was creating the consumer group")
 	}
 
 	close(release)
 	if err := <-subscribed; err != nil {
-		t.Fatalf("Subscribe hata verdi: %v", err)
+		t.Fatalf("Subscribe returned an error: %v", err)
 	}
 	shutdownBus(t, bus)
 }
@@ -624,7 +636,7 @@ func TestSubscribeDoesNotBlockPublishWhileCreatingGroup(t *testing.T) {
 func TestSubscribeFailsWhenGroupCannotBeCreated(t *testing.T) {
 	fake := newFakeStreamClient()
 	fake.onGroupCreate = func(context.Context) error {
-		return errors.New("bağlantı reddedildi")
+		return errors.New("connection refused")
 	}
 
 	bus := newRedisBus(fake, fakeConfig(), quietLogger())
@@ -632,18 +644,18 @@ func TestSubscribeFailsWhenGroupCannotBeCreated(t *testing.T) {
 
 	err := bus.Subscribe(testEventName, func(context.Context, Event) error { return nil })
 	if err == nil {
-		t.Fatal("grup kurulamadığında Subscribe hata dönmedi")
+		t.Fatal("Subscribe returned no error when the group could not be created")
 	}
 	if !errors.HasKind(err, errors.KindUnavailable) {
-		t.Errorf("Kind = %v, beklenen unavailable", errors.KindOf(err))
+		t.Errorf("Kind = %v, expected unavailable", errors.KindOf(err))
 	}
 	if code := errors.CodeOf(err); code != CodeSubscribeFailed {
-		t.Errorf("Code = %q, beklenen %q", code, CodeSubscribeFailed)
+		t.Errorf("Code = %q, expected %q", code, CodeSubscribeFailed)
 	}
 
-	// Başarısız kurulumdan sonra tüketici döngüsü başlamamış olmalı.
+	// After a failed setup the consumer loop must not have started.
 	if cursors := fake.requestedCursors(); len(cursors) != 0 {
-		t.Errorf("istenen imler = %v, beklenen boş (döngü başlamamalıydı)", cursors)
+		t.Errorf("requested cursors = %v, expected empty (the loop should not have started)", cursors)
 	}
 }
 
@@ -666,11 +678,11 @@ func TestRedisShutdownReturnsWhenContextExpires(t *testing.T) {
 		<-release
 		return nil
 	}); err != nil {
-		t.Fatalf("Subscribe hata verdi: %v", err)
+		t.Fatalf("Subscribe returned an error: %v", err)
 	}
-	waitClosed(t, entered, "handler hiç başlamadı")
+	waitClosed(t, entered, "the handler never started")
 
-	// Takılan handler kapanışı sonsuza dek kilitlememeli.
+	// A stuck handler must not lock the shutdown forever.
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
 
@@ -679,18 +691,18 @@ func TestRedisShutdownReturnsWhenContextExpires(t *testing.T) {
 	elapsed := time.Since(start)
 
 	if err == nil {
-		t.Fatal("takılı handler'a rağmen Shutdown nil döndü")
+		t.Fatal("Shutdown returned nil despite the stuck handler")
 	}
 	if !errors.HasKind(err, errors.KindUnavailable) {
-		t.Errorf("Kind = %v, beklenen unavailable", errors.KindOf(err))
+		t.Errorf("Kind = %v, expected unavailable", errors.KindOf(err))
 	}
 	if code := errors.CodeOf(err); code != CodeShutdownTimeout {
-		t.Errorf("Code = %q, beklenen %q", code, CodeShutdownTimeout)
+		t.Errorf("Code = %q, expected %q", code, CodeShutdownTimeout)
 	}
 	if elapsed > 5*time.Second {
-		t.Errorf("Shutdown %v sürdü; ctx süresiyle sınırlı olmalıydı", elapsed)
+		t.Errorf("Shutdown took %v; it should have been bounded by the ctx budget", elapsed)
 	}
 	if !bus.isClosed() {
-		t.Error("zaman aşımından sonra veri yolu kapalı sayılmalı")
+		t.Error("after the timeout the bus must count as closed")
 	}
 }
