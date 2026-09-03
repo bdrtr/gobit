@@ -67,7 +67,6 @@ internal/core/workflow/pgstore/pgstore_integration_test.go
 internal/core/workflow/pgstore/pgstore_internal_test.go
 internal/core/workflow/pgstore/pgstore_test.go
 internal/core/workflow/regression_test.go
-internal/core/workflow/workflow.go
 internal/core/workflow/workflow_test.go
 internal/e2e/arama_test.go
 internal/e2e/b2b_test.go

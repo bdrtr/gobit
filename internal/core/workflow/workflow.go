@@ -1,152 +1,163 @@
-// Package workflow modüller arası çok adımlı işlemleri yürüten saga motorudur
-// (plan Bölüm 5.5, Faz 3).
+// Package workflow is the saga engine that runs multi-step operations across
+// modules (plan Section 5.5, Phase 3).
 //
-// Bir workflow, sırayla çalışan adımlardan oluşur. Her adımın bir Invoke'u ve
-// onun geri alımı olan bir Compensate'i vardır. Motor adımları sırayla yürütür;
-// biri patlarsa O ANA KADAR BAŞARILI olmuş adımların Compensate'lerini TERS
-// SIRADA çağırır. Dağıtık bir işlemin (2PC) yerini tutan şey budur: modüller
-// ayrı tablolara, ileride ayrı servislere sahip olduğu için tek bir veritabanı
-// işlemiyle sarılamazlar (plan Bölüm 2.2, 2.3).
+// A workflow is made of steps that run in order. Every step has an Invoke and a
+// Compensate that undoes it. The engine runs the steps in order; if one blows up
+// it calls the Compensate of the steps that SUCCEEDED UP TO THAT POINT, in
+// REVERSE ORDER. That is what stands in for a distributed transaction (2PC):
+// because the modules own separate tables — and one day separate services — they
+// cannot be wrapped in a single database transaction (plan Sections 2.2, 2.3).
 //
-// # Patlayan adım telafi EDİLMEZ — tek istisnası motorun kendi tekrarıdır
+// # A step that blows up is NOT compensated — the one exception is the engine's own retry
 //
-// Telafi zinciri kural olarak Invoke'u BAŞARIYLA dönmüş adımlarla sınırlıdır.
-// Patlayan adımın kendisi telafi edilmez: Invoke hata döndüyse geri alınacak
-// bir iş yoktur ve olmayan bir işi geri almaya çalışmak, yarım kalmış durumu
-// daha da bozar (örn. hiç yaratılmamış bir rezervasyonu "iptal etmek", var olan
-// başka bir rezervasyonu iptal edebilir). Tek denemede patlayan bir adım için
-// bedel adım yazarına düşer: Invoke'u ya tümüyle başarılı olmalı ya da KENDİ
-// İÇİNDE temiz bırakmalıdır.
+// As a rule the compensation chain is limited to the steps whose Invoke returned
+// SUCCESSFULLY. The step that blew up is not compensated: if Invoke returned an
+// error there is no work to undo, and trying to undo work that was never done
+// makes the half-finished state worse (for instance "canceling" a reservation
+// that was never created can cancel a different, real one). For a step that
+// blows up on its only attempt the cost falls to the step's author: its Invoke
+// has to either succeed completely or leave things clean BY ITSELF.
 //
-// Kuralın TEK İSTİSNASI motorun KENDİ tetiklediği yeniden denemedir. Adım
-// birden çok kez denendiyse (kayıtta Attempts > 1) patlayan adım da EN İYİ
-// ÇABA ile telafi edilir ve telafi zincirinin BAŞINA konur. Gerekçe: yeniden
-// denemenin var olma sebebi tam da "istek gitti, yanıt kayboldu" durumudur ve
-// o durumda 1. deneme yan etkiyi DÜNYAYA UYGULAMIŞTIR. Onu geri almayan bir
-// motor, yürütmeyi StatusFailed (= "iş yapıldı ve GERİ ALINDI") diye yazarken
-// yalan söyler; gerçek bir siparişte bu, kimsenin göremediği yetim bir
-// rezervasyondur. Tekrarı adım değil MOTOR başlattığı için bedelini de motor
-// üstlenir. Çağrı sözleşmeye göre güvenlidir: Compensate zaten IDEMPOTENT
-// olmak ve iki kez çağrılabilmek zorundadır (bkz. Step). Bunun adım yazarına
-// getirdiği tek şart açıktır — Compensate, yan etkinin HİÇ uygulanmamış
-// olabileceği durumda da doğru davranmalı, yani geri alacak bir şey
-// bulamadığında no-op yapıp nil dönmelidir.
+// The rule's ONE EXCEPTION is a retry the engine ITSELF triggered. If the step
+// was attempted more than once (Attempts > 1 in the record) the step that blew up
+// is compensated too, on a BEST-EFFORT basis, and is placed at the HEAD of the
+// compensation chain. The reasoning: the whole reason retrying exists is the
+// "the request went, the answer was lost" case, and in that case attempt 1 DID
+// APPLY the side effect to the world. An engine that does not undo it lies when
+// it writes the execution as StatusFailed (= "the work was done and UNDONE"); in
+// a real order that is an orphaned reservation nobody can see. Since the ENGINE
+// rather than the step started the repeat, the engine also takes on its cost.
+// The call is safe by contract: Compensate already has to be IDEMPOTENT and
+// callable twice (see Step). The single requirement this puts on a step author
+// is explicit — Compensate has to behave correctly even when the side effect may
+// NEVER have been applied, that is, it has to no-op and return nil when it finds
+// nothing to undo.
 //
-// Diğer seçenekler neden seçilmedi: yürütmeyi failed yerine ayrı bir "kirli"
-// duruma yazmak yan etkiyi GERİ ALMAZ, yalnızca bildirir — üstelik en iyi çaba
-// telafi patlarsa motor zaten StatusCompensationFailed yazar, yani o seçeneğin
-// verdiği izleme sinyali bunun içinde vardır. "Adım yazarı temiz bıraksın"
-// demek ise yetmez: adım, motorun kaçıncı denemesinde olduğunu bilse bile
-// tekrarı o istememiştir.
+// Why the other options were not chosen: writing the execution into a separate
+// "dirty" state instead of failed does NOT UNDO the side effect, it only reports
+// it — and besides, if the best-effort compensation blows up the engine already
+// writes StatusCompensationFailed, so the monitoring signal that option would
+// give is contained in this one. And "let the step author leave things clean" is
+// not enough: even if a step knew which of the engine's attempts it was on, it
+// was not the one that asked for the repeat.
 //
-// # Asılı yan etkiyi bildiren adımlar
+// # Steps that report a hanging side effect
 //
-// Kendi içinde geri alma yapan bileşik adımlar (bkz. ParallelStep) geri alma
-// patladığında arkalarında telafi EDİLMEMİŞ iş bırakır. Böyle bir adım
-// hatasını ErrUncompensated ile sarmalıdır: motor gözcüyü hata zincirinde
-// görürse, telafi zinciri eksiksiz tamamlanmış olsa bile yürütmeyi
-// StatusFailed değil StatusCompensationFailed olarak yazar.
+// Composite steps that roll back internally (see ParallelStep) leave
+// UNCOMPENSATED work behind when their rollback blows up. Such a step has to
+// wrap its error with ErrUncompensated: if the engine sees that sentinel in the
+// error chain it writes the execution as StatusCompensationFailed rather than
+// StatusFailed, even when the compensation chain itself completed in full.
 //
-// # Telafi hatası zinciri DURDURMAZ
+// # A compensation error does NOT STOP the chain
 //
-// Telafi sırasında bir Compensate patlarsa kalan telafiler YİNE DE denenir.
-// Sebep basittir: 3. adımın telafisinin patlaması, 1. adımın telafisinin
-// çalışmaması için bir gerekçe değildir; zinciri orada kesmek, geri
-// alınabilecek işleri de asılı bırakır. Hatalar errors.Join ile birleştirilir
-// ve yürütme StatusCompensationFailed olur — bu durum ELLE MÜDAHALE ister ve
-// izlemenin öncelikle saydığı şey olmalıdır.
+// If a Compensate blows up during compensation the remaining ones are STILL
+// attempted. The reason is simple: step 3's compensation failing is no argument
+// for step 1's compensation not running; cutting the chain there would leave
+// work hanging that could have been undone. The errors are joined with
+// errors.Join and the execution becomes StatusCompensationFailed — that state
+// NEEDS A HUMAN and should be the first thing monitoring counts.
 //
-// # Yeniden deneme
+// # Retrying
 //
-// Yeniden deneme adım başınadır ve VARSAYILAN OLARAK KAPALIDIR (bkz. NoRetry);
-// WithRetry ile açılır. Hangi hataların denenebilir olduğu için bkz.
-// DefaultRetryable. Telafi de yeniden denenir: telafi hatasının bedeli elle
-// müdahale olduğu için, geçici bir arızada ısrar etmek Invoke'ta ısrar
-// etmekten daha değerlidir. Telafi politikası ayrıca verilmediyse adım
-// politikasını devralır (bkz. WithCompensationRetry).
+// Retrying is per step and is OFF BY DEFAULT (see NoRetry); WithRetry turns it
+// on. For which errors are retryable see DefaultRetryable. Compensation is
+// retried too: because a compensation failure costs a human's time, insisting
+// through a transient failure is worth more there than insisting on Invoke. If
+// no compensation policy is given separately it inherits the step's policy (see
+// WithCompensationRetry).
 //
-// Panik ve bağlam hataları, RetryPolicy.Retryable ile ÖZEL bir yüklem
-// verilmiş olsa bile yeniden denenmez; eleme yüklemden önce ve koşulsuz
-// uygulanır (bkz. RetryPolicy.Retryable).
+// Panics and context errors are not retried even when a CUSTOM predicate was
+// given through RetryPolicy.Retryable; the exclusion is applied before the
+// predicate and unconditionally (see RetryPolicy.Retryable).
 //
-// # Idempotency-key
+// # Idempotency key
 //
-// WithIdempotencyKey verilen bir yürütme, (workflow adı, anahtar) çiftiyle
-// Store'da tekildir. İkinci çağrının davranışı ilk yürütmenin durumuna bağlıdır
-// ve Executor.Run'da tek tek belgelenmiştir. Tekillik "önce oku sonra yaz" ile
-// değil, doğrudan Store.Create'in Conflict dönüşüyle kurulur; okuma-yazma
-// arasındaki yarışa açık bir kontrol, iki eşzamanlı isteğin ikisini de
-// çalıştırabilirdi.
+// An execution given WithIdempotencyKey is unique in the Store by the
+// (workflow name, key) pair. A second call's behavior depends on the first
+// execution's state and is documented one by one in Executor.Run. Uniqueness is
+// established not by "read first, then write" but directly by Store.Create
+// returning Conflict; a check open to the race between the read and the write
+// could have run both of two concurrent requests.
 //
-// Bağlam çağrı ANINDA ölüyse (istemci bağlantıyı kesmiştir) motor kaydı HİÇ
-// AÇMAZ ve hemen hata döner. Sebep: anahtarın var olma sebebi, istemcinin
-// zaman aşımından sonra AYNI anahtarla güvenle tekrar denemesidir; hiçbir adım
-// çalışmamışken kaydı açıp uç duruma yazmak, o anahtarı kalıcı olarak yakar ve
-// istemci sonsuza dek Conflict alır. Denetim yarışı tümüyle kapatmaz — bağlam
-// kayıt açıldıktan hemen sonra da ölebilir — ama yaygın olan durumu, yani
-// çağrıya ölü gelen bağlamı kesin olarak karşılar.
+// If the context is already dead AT THE MOMENT of the call (the client hung up)
+// the engine does NOT OPEN the record at all and returns an error immediately.
+// The reason: the whole point of the key is that the client can safely retry
+// with the SAME key after a timeout; opening the record and writing it to a
+// terminal state while no step has run burns that key permanently and the client
+// gets Conflict forever. The check does not close the race entirely — the
+// context can die right after the record is opened — but it definitively covers
+// the common case, a context that is dead on arrival.
 //
-// # Kalıcılaştırma politikası (Store hatalarında ne olur)
+// # Persistence policy (what happens on Store errors)
 //
-// Store hataları TEK TİP ele alınmaz; ölçü, hatanın yan etkiyi iki kez
-// uygulama riski taşıyıp taşımadığıdır:
+// Store errors are NOT handled uniformly; the measure is whether the error
+// carries the risk of applying the side effect twice:
 //
-//   - Create ve FindByIdempotencyKey hataları YÜRÜTMEYİ DÜŞÜRÜR. İkisi de
-//     tekrar korumasının kapısıdır: kaydı açamadan ya da var olan yürütmenin
-//     sonucunu okuyamadan adımları çalıştırmak, aynı işi ikinci kez yapma
-//     riskini kabul etmek olurdu. Hiçbir adım çalışmadan hata döner.
-//   - AppendStep ve UpdateStatus hataları LOGLANIR ve yürütme DEVAM EDER.
-//     Bu noktada adımın yan etkisi ZATEN DÜNYAYA UYGULANMIŞTIR; kayıt onun
-//     kendisi değil, izidir. Defter tutulamadı diye başarılı bir iş akışını
-//     geri almak, muhasebe arızasını müşteriye görünen bir arızaya çevirir —
-//     üstelik geri alma kayıtları da aynı bozuk Store'a yazılacaktır. Telafi
-//     için gereken "hangi adımlar başarılı oldu" bilgisi motorun BELLEĞİNDE
-//     tutulur, Store'dan okunmaz; bu yüzden Store çökse de telafi doğru çalışır.
+//   - Create and FindByIdempotencyKey errors DROP THE EXECUTION. Both are the
+//     gate of the repeat protection: running the steps without being able to
+//     open the record, or without being able to read an existing execution's
+//     outcome, would mean accepting the risk of doing the same work a second
+//     time. The error is returned with no step having run.
+//   - AppendStep and UpdateStatus errors are LOGGED and the execution CONTINUES.
+//     At that point the step's side effect has ALREADY BEEN APPLIED to the
+//     world; the record is not the thing itself, it is its trace. Rolling back a
+//     successful flow because the ledger could not be kept turns a bookkeeping
+//     failure into one the customer can see — and the rollback records would go
+//     to the same broken Store anyway. The "which steps succeeded" information
+//     the compensation needs is held in the engine's MEMORY, not read from the
+//     Store; that is why compensation works correctly even when the Store is
+//     down.
 //
-// Kabul edilen bedel, izin delik kalmasıdır: UpdateStatus yazılamazsa yürütme
-// Store'da running görünmeye devam eder ve aynı anahtarla yapılan bir sonraki
-// çağrı Conflict alır. Bu yön bilinçli seçilmiştir — yanlış tarafa düşmek
-// (çıktıyı hiç çalışmamış gibi göstermek) işi ikinci kez yaptırırdı. Her
-// başarısız Store yazması ERROR seviyesinde, yürütme kimliğiyle loglanır.
+// The accepted cost is a hole in the trace: if UpdateStatus cannot be written
+// the execution goes on looking running in the Store and the next call with the
+// same key gets Conflict. That direction was chosen deliberately — falling the
+// other way (presenting the output as though nothing had run) would have the
+// work done a second time. Every failed Store write is logged at ERROR with the
+// execution id.
 //
-// # Bağlam iptali
+// # Context cancellation
 //
-// ctx çağrı ANINDA ölüyse yürütme hiç başlamaz (bkz. Executor.Run). Yürütme
-// başladıktan sonra iptal edilirse durur ve o ana kadarki adımlar YİNE DE
-// telafi edilir. Telafi iptal edilmiş bir bağlamla çalışamayacağı için motor
-// context.WithoutCancel ile türetilmiş, kendi süre bütçesi olan ayrı bir
-// bağlam kullanır (bkz. WithCompensationTimeout). Bütçe ADIM BAŞINADIR: tek
-// bir paylaşılan bütçe, zincirin sonundaki yavaş bir telafiyle tükendiğinde
-// geriye kalan — ve tipik olarak EN AĞIR kaynağı tutan, en erken — adımları
-// ölü bir bağlamla çağırırdı. Aynı gerekçeyle Store yazmaları da iptalden
-// etkilenmez (bkz. WithStoreTimeout).
+// If ctx is already dead AT THE MOMENT of the call the execution never starts
+// (see Executor.Run). If it is canceled after the execution began, the run stops
+// and the steps up to that point are STILL compensated. Because compensation
+// cannot run with a canceled context, the engine uses a separate context derived
+// with context.WithoutCancel that has its own time budget (see
+// WithCompensationTimeout). The budget is PER STEP: a single shared budget,
+// exhausted by a slow compensation at the end of the chain, would call the
+// remaining — and typically EARLIEST, heaviest-resource-holding — steps with a
+// dead context. Store writes are unaffected by cancellation for the same reason
+// (see WithStoreTimeout).
 //
-// # Panik
+// # Panics
 //
-// Bir adımın Invoke ya da Compensate'inde çıkan panik motoru çökertmez:
-// yakalanır, yığın iziyle loglanır ve ErrPanic'i saran tipli bir hataya
-// çevrilir. Panik sonrası akış normal hata akışıyla aynıdır — Invoke panikledi
-// ise telafi başlar, Compensate panikledi ise zincir kalan adımlarla sürer.
-// Panik yeniden DENENMEZ (bkz. DefaultRetryable).
+// A panic in a step's Invoke or Compensate does not bring the engine down: it is
+// caught, logged with its stack trace, and turned into a typed error wrapping
+// ErrPanic. The flow after a panic is the same as the normal error flow — if
+// Invoke panicked compensation begins, if Compensate panicked the chain
+// continues with the remaining steps. A panic is NOT RETRIED (see
+// DefaultRetryable).
 //
-// Adım tanımının kendisinden gelen panikler de motoru çökertmez: tipli-nil bir
-// adım (nil işaretçi taşıyan, ama nil OLMAYAN arayüz değeri) Name() çağrılmadan
-// önce Workflow.Validate'te yakalanır ve errors.Invalid'e çevrilir.
+// Panics coming from the workflow definition itself do not bring the engine down
+// either: a typed-nil step (an interface value carrying a nil pointer but not
+// itself nil) is caught in Workflow.Validate before Name() is called and turned
+// into errors.Invalid.
 //
-// # Serileştirme
+// # Serialization
 //
-// Girdi, çıktı ve adım çıktıları Store'a JSON olarak yazılır. Girdi JSON'a
-// çevrilemiyorsa yürütme HİÇ BAŞLAMAZ (errors.Invalid) — henüz yan etki
-// yokken hatayı erken vermek bedavadır. Adım çıktısı çevrilemiyorsa adım
-// başarılı sayılır, olay loglanır ve kayıtta Output boş, Failure açıklama
-// dolu kalır: o noktada yan etki uygulanmıştır, serileştirme ayrıntısı için
-// geri alınamaz.
+// The input, the output and the step outputs are written to the Store as JSON.
+// If the input cannot be turned into JSON the execution NEVER STARTS
+// (errors.Invalid) — raising the error early, while there is no side effect yet,
+// is free. If a step's output cannot be converted the step counts as successful,
+// the event is logged, and the record keeps an empty Output with a filled-in
+// Failure description: at that point the side effect has been applied and cannot
+// be undone over a serialization detail.
 //
-// Executor.Run'ın çıktısı HER İKİ YOLDA da json.RawMessage'dır: hem adımların
-// çalıştığı mutlu yolda hem idempotency tekrarında. Tip kararlılığı çağıranın
-// tip doğrulamasının yarışa bağlı olmaması içindir — tekrar yolunda çıktı
-// Store'dan okunur ve Go tipi orada zaten kaybolmuştur. Tipli okuma için
-// bkz. RunInto.
+// Executor.Run's output is a json.RawMessage ON BOTH PATHS: on the happy path
+// where the steps ran and on an idempotency repeat. That type stability is so
+// the caller's type assertion does not depend on a race — on the repeat path the
+// output is read from the Store, where the Go type has already been lost. For
+// typed reading see RunInto.
 package workflow
 
 import (
@@ -161,208 +172,222 @@ import (
 	"github.com/bdrtr/gobit/internal/core/errors"
 )
 
-// Hata kodları. Çağıran taraf bunlara göre dallanabilir.
+// The error codes. The caller can branch on them.
 const (
-	// CodeInvalidWorkflow workflow tanımının geçersiz olduğunu bildirir.
+	// CodeInvalidWorkflow reports that the workflow definition is invalid.
 	CodeInvalidWorkflow = "workflow_invalid"
-	// CodeInvalidOption bir RunOption'ın geçersiz olduğunu bildirir.
+	// CodeInvalidOption reports that a RunOption is invalid.
 	CodeInvalidOption = "workflow_invalid_option"
-	// CodeInvalidOutput yürütme çıktısının istenen tipe çevrilemediğini bildirir.
+	// CodeInvalidOutput reports that the execution output could not be
+	// converted to the requested type.
 	CodeInvalidOutput = "workflow_invalid_output"
-	// CodeStepFailed bir adımın patladığını ve telafinin tamamlandığını bildirir.
+	// CodeStepFailed reports that a step blew up and compensation completed.
 	//
-	// YEDEK koddur: adım hatası kendi kodunu taşıyorsa O korunur ve bu kod hiç
-	// görünmez (bkz. [stepFailureCode]). Kodsuz bir adım hatası — tipsiz bir
-	// stdlib hatası — için geriye kalan tek ad budur.
+	// It is a FALLBACK code: if the step's error carries its own code THAT one
+	// is preserved and this one never appears (see [stepFailureCode]). For a
+	// step error with no code — an untyped stdlib error — this is the only name
+	// left.
 	CodeStepFailed = "workflow_step_failed"
-	// CodeStepPanicked bir adımın panik ettiğini bildirir.
+	// CodeStepPanicked reports that a step panicked.
 	CodeStepPanicked = "workflow_step_panicked"
-	// CodeParallelBranchFailed bir ParallelStep dalının patladığını bildirir.
+	// CodeParallelBranchFailed reports that a ParallelStep branch blew up.
 	CodeParallelBranchFailed = "workflow_parallel_branch_failed"
-	// CodeCompensationFailed telafinin tamamlanamadığını bildirir; elle müdahale gerekir.
+	// CodeCompensationFailed reports that compensation could not be completed;
+	// a human is needed.
 	CodeCompensationFailed = "workflow_compensation_failed"
-	// CodeCanceled yürütmenin bağlam iptali yüzünden durduğunu bildirir.
+	// CodeCanceled reports that the execution stopped because the context was
+	// canceled.
 	CodeCanceled = "workflow_canceled"
-	// CodeStoreFailed kalıcılaştırma katmanının hata döndüğünü bildirir.
+	// CodeStoreFailed reports that the persistence layer returned an error.
 	CodeStoreFailed = "workflow_store_failed"
-	// CodeExecutionRunning aynı anahtarlı bir yürütmenin hâlâ sürdüğünü bildirir.
+	// CodeExecutionRunning reports that an execution with the same key is still
+	// going.
 	CodeExecutionRunning = "workflow_execution_running"
-	// CodeExecutionFailed aynı anahtarlı bir yürütmenin daha önce patladığını bildirir.
+	// CodeExecutionFailed reports that an execution with the same key blew up
+	// earlier.
 	CodeExecutionFailed = "workflow_execution_failed"
-	// CodeExecutionNotFound istenen yürütmenin bulunamadığını bildirir.
+	// CodeExecutionNotFound reports that the requested execution was not found.
 	CodeExecutionNotFound = "workflow_execution_not_found"
-	// CodeExecutionExists aynı kimlikli ya da anahtarlı yürütmenin zaten var olduğunu bildirir.
+	// CodeExecutionExists reports that an execution with the same id or key
+	// already exists.
 	CodeExecutionExists = "workflow_execution_exists"
-	// CodeRecoveryFailed terk edilmiş bir yürütmenin telafisinin KAYITLARDAN
-	// yeniden kurulamadığını bildirir (bkz. [Recoverable]).
+	// CodeRecoveryFailed reports that an abandoned execution's compensation
+	// could not be rebuilt FROM THE RECORD (see [Recoverable]).
 	CodeRecoveryFailed = "workflow_recovery_failed"
 )
 
-// ErrPanic bir adımın panik ettiğini bildiren gözcü (sentinel) hatadır.
+// ErrPanic is the sentinel error reporting that a step panicked.
 //
-// Motorun ürettiği panik hatası bunu sarar; çağıran errors.Is(err, ErrPanic)
-// ile programlama hatasını geçici arızadan ayırabilir.
-var ErrPanic = errors.New("adım panikledi")
+// The panic error the engine produces wraps it; with errors.Is(err, ErrPanic)
+// the caller can tell a programming error from a transient failure.
+var ErrPanic = errors.New("the step panicked")
 
-// ErrUncompensated bir adımın GERİ ALINAMAMIŞ yan etki bıraktığını bildiren
-// gözcü (sentinel) hatadır.
+// ErrUncompensated is the sentinel error reporting that a step left a side
+// effect that COULD NOT BE UNDONE.
 //
-// Kendi içinde geri alma yapan adımlar (bkz. ParallelStep) geri alma
-// patladığında hatalarını bununla sarar. Motor gözcüyü adım hatasının
-// zincirinde görürse, telafi zinciri eksiksiz tamamlansa bile yürütmeyi
-// StatusCompensationFailed olarak yazar: StatusFailed "iş yapıldı ve GERİ
-// ALINDI" demektir ve asılı bir yan etki varken o kayıt yalan olurdu.
-var ErrUncompensated = errors.New("adımın telafi edilmemiş yan etkisi var")
+// Steps that roll back internally (see ParallelStep) wrap their error with it
+// when the rollback blows up. If the engine sees the sentinel in a step error's
+// chain it writes the execution as StatusCompensationFailed even when the
+// compensation chain completed in full: StatusFailed means "the work was done
+// and UNDONE", and with a side effect still hanging that record would be a lie.
+var ErrUncompensated = errors.New("the step has an uncompensated side effect")
 
-// StepContext bir adımın yürütme sırasında gördüğü bağlamdır.
+// StepContext is the context a step sees while it runs.
 type StepContext struct {
-	// Input workflow'a verilen girdidir; tüm adımlar aynı değeri görür.
+	// Input is the input given to the workflow; every step sees the same value.
 	Input any
 
-	// Shared adımlar arası veri taşıyan haritadır. Adımlar buraya yazar,
-	// sonraki adımlar okur. TELAFİ SIRASINDA DA aynı harita geçirilir;
-	// bir Compensate, kendi Invoke'unun yazdığı değeri buradan bulur
-	// (örn. "hangi rezervasyonu iptal edeceğim").
+	// Shared is the map that carries data between steps. Steps write to it and
+	// later steps read from it. The same map is passed DURING COMPENSATION too;
+	// a Compensate finds the value its own Invoke wrote here (for instance
+	// "which reservation am I canceling").
 	//
-	// Harita ardışık adımlar arasında kilitsiz kullanılır çünkü motor adımları
-	// tek goroutine'de sırayla çağırır. Eşzamanlı dallar için bkz. ParallelStep.
+	// The map is used without a lock between consecutive steps because the
+	// engine calls the steps in order on a single goroutine. For concurrent
+	// branches see ParallelStep.
 	Shared map[string]any
 
-	// ExecutionID yürütmenin kimliğidir; adımlar bunu kendi idempotency
-	// anahtarları olarak kullanabilir.
+	// ExecutionID is the execution's id; steps can use it as their own
+	// idempotency key.
 	ExecutionID string
-	// Workflow yürütülen workflow'un adıdır.
+	// Workflow is the name of the workflow that is running.
 	Workflow string
-	// StepName o an çalışan adımın adıdır; motor her çağrıdan önce yazar.
+	// StepName is the name of the step currently running; the engine writes it
+	// before every call.
 	StepName string
-	// StepIndex o an çalışan adımın sırasıdır; motor her çağrıdan önce yazar.
+	// StepIndex is the order of the step currently running; the engine writes it
+	// before every call.
 	StepIndex int
-	// Attempt o an çalışan denemenin sırasıdır (1'den başlar); motor her
-	// çağrıdan önce yazar. Adım, ilk denemeyle yeniden denemeyi buna göre
-	// ayırt edebilir.
+	// Attempt is the number of the attempt currently running (starting at 1);
+	// the engine writes it before every call. A step can tell a first attempt
+	// from a retry by it.
 	Attempt int
 }
 
-// Step workflow'un tek bir adımıdır.
+// Step is a single step of a workflow.
 //
-// Uygulamalar iki söz verir: Invoke ya tümüyle başarılı olur ya da arkasında
-// iş bırakmaz; Compensate ise Invoke'un yan etkisini geri alır ve IDEMPOTENT
-// çalışır (yeniden denenebildiği ve iki kez çağrılabildiği için).
+// Implementations make two promises: Invoke either succeeds completely or leaves
+// no work behind; and Compensate undoes Invoke's side effect and runs
+// IDEMPOTENTLY (because it can be retried and called twice).
 type Step interface {
-	// Name adımın kayıtlarda ve loglarda görünen adıdır; boş olamaz.
+	// Name is the step's name as it appears in the records and logs; it cannot
+	// be empty.
 	Name() string
-	// Invoke adımın işini yapar ve çıktısını döner. Çıktı Store'a JSON olarak
-	// yazılır; son adımın çıktısı workflow'un çıktısıdır.
+	// Invoke does the step's work and returns its output. The output is written
+	// to the Store as JSON; the last step's output is the workflow's output.
 	Invoke(ctx context.Context, sc *StepContext) (output any, err error)
-	// Compensate Invoke'un yan etkisini geri alır. Yalnızca Invoke'u BAŞARIYLA
-	// dönmüş adımlar için çağrılır.
+	// Compensate undoes Invoke's side effect. It is called only for steps whose
+	// Invoke returned SUCCESSFULLY.
 	Compensate(ctx context.Context, sc *StepContext) error
 }
 
-// Recoverable bir adımın KENDİ kalıcı çıktısından telafi için gereken durumu
-// geri kurabildiğini bildirir.
+// Recoverable reports that a step can rebuild the state its compensation needs
+// from ITS OWN persisted output.
 //
-// Motor bunu YALNIZCA terk edilmiş bir yürütmeyi kurtarırken çağırır: süreç
-// saga'nın ortasında ölünce [StepContext.Shared] onunla birlikte gider ve
-// telafi zinciri, "hangi rezervasyonu iptal edeceğim" sorusunun cevabını
-// kaybeder. Cevap kaybolmuş DEĞİLDİR — adımın Invoke'unun çıktısı kayıtta
-// durur ve telafi kaydı onu silmez (bkz. [StepRecord.Output]) — ama onu
-// Shared'daki tipli değere geri çevirmeyi yalnızca adımın kendisi bilir.
+// The engine calls it ONLY while recovering an abandoned execution: when the
+// process dies in the middle of a saga [StepContext.Shared] goes with it and the
+// compensation chain loses the answer to "which reservation am I canceling".
+// The answer is NOT lost — the step's Invoke output stands in the record and the
+// compensation record does not erase it (see [StepRecord.Output]) — but only the
+// step itself knows how to turn it back into the typed value in Shared.
 //
-// Uygulamak İSTEĞE BAĞLIDIR ve uygulamamanın bedeli açıktır: bir adımı
-// kurtarılamayan workflow, terk edildiğinde bugünkü davranışı alır — kayıt
-// compensation_failed olur ve elle müdahale bekler. Yani arayüz bir yetenek
-// ekler, bir sözleşme kırmaz.
+// Implementing it is OPTIONAL and the cost of not doing so is plain: a workflow
+// with one unrecoverable step gets today's behavior when it is abandoned — the
+// record becomes compensation_failed and waits for a human. The interface adds a
+// capability; it does not break a contract.
 //
-// output, Invoke'un kalıcılaşmış çıktısıdır ve BOŞ olabilir (adım başarılıydı
-// ama çıktısı JSON'a çevrilemedi; bkz. [StepRecord.Output]). Restore o durumda
-// hata dönmelidir: eksik durumla koşan bir telafi, geri alacağı işi bulamadan
-// "başardım" der.
+// output is Invoke's persisted output and it can be EMPTY (the step succeeded
+// but its output could not be turned into JSON; see [StepRecord.Output]).
+// Restore has to return an error in that case: a compensation running on missing
+// state says "done" without finding the work it was supposed to undo.
 type Recoverable interface {
-	// Restore adımın kalıcı çıktısını okur ve Invoke'un [StepContext.Shared]'a
-	// yazdığı değerleri geri koyar.
+	// Restore reads the step's persisted output and puts back the values Invoke
+	// wrote into [StepContext.Shared].
 	Restore(sc *StepContext, output json.RawMessage) error
 }
 
-// RecoveryBlocker KAYDI YOKKEN "çalışmadı" sayılamayacak bir adımı işaretler.
+// RecoveryBlocker marks a step that cannot be assumed "did not run" WHILE IT HAS
+// NO RECORD.
 //
-// Motor adımın kaydını Invoke DÖNDÜKTEN SONRA yazar, dolayısıyla Invoke'un
-// ortasında ölen bir süreç o adımdan geriye HİÇBİR İZ bırakmaz. Kurtarma
-// (bkz. [Recoverable]) kayıtlara bakar, yani böyle bir adımı "hiç çalışmamış"
-// sayar — ve bu, adımın yan etkisi geri alınamaz olduğunda yanlış tarafa
-// düşmektir.
+// The engine writes a step's record AFTER Invoke RETURNS, so a process dying in
+// the middle of Invoke leaves NO TRACE of that step. Recovery (see
+// [Recoverable]) looks at the records, so it takes such a step as "never ran" —
+// and that is falling on the wrong side when the step's side effect cannot be
+// undone.
 //
-// Somut hâli checkout'un tahsilat adımıdır: kart çekilmiş ama kayıt yazılmadan
-// süreç ölmüşse, kurtarma stoğu bırakır, siparişi iptal eder ve anahtarı
-// serbest bırakır; müşteri yeniden öder ve İKİNCİ KEZ tahsil edilir. Elle
-// müdahale bunu önler çünkü insan ödeme sağlayıcısına bakabilir.
+// Its concrete case is checkout's capture step: if the card was charged but the
+// process died before the record was written, recovery releases the stock,
+// cancels the order and frees the key; the customer pays again and is charged
+// TWICE. A human prevents that because a person can look at the payment
+// provider.
 //
-// Bu arayüzü uygulayan bir adım, KENDİSİNDEN ÖNCEKİ adımların kurtarılmasını da
-// engeller — ama yalnızca kendisi KAYITSIZ olduğunda, yani gerçekten uçuşta
-// olmuş olabileceği durumda. Kaydı varsa sonucu bilinir ve zincir normal
-// biçimde telafi edilir.
+// A step implementing this interface also blocks the recovery of the steps
+// BEFORE it — but only while it has NO RECORD, that is, in the case where it
+// really might have been in flight. If it has a record its outcome is known and
+// the chain is compensated normally.
 type RecoveryBlocker interface {
-	// BlocksRecovery işaretin kendisidir; gövdesi yoktur ve çağrılmaz.
+	// BlocksRecovery is the mark itself; it has no body and is never called.
 	BlocksRecovery()
 }
 
-// Workflow adımlardan oluşan bir iş akışıdır.
+// Workflow is a flow made of steps.
 type Workflow struct {
-	// Name workflow'un adıdır; Store'da idempotency anahtarıyla birlikte
-	// tekilliği tanımlar. Boş olamaz.
+	// Name is the workflow's name; together with the idempotency key it defines
+	// uniqueness in the Store. It cannot be empty.
 	Name string
-	// Steps sırayla yürütülecek adımlardır; en az bir adım olmalıdır.
-	// Aynı ada sahip adımlar serbesttir: kayıtlarda kimlik, ad değil Index'tir.
+	// Steps are the steps to run in order; there has to be at least one. Steps
+	// with the same name are allowed: in the records the identity is the Index,
+	// not the name.
 	Steps []Step
 }
 
-// Validate workflow tanımının yürütülebilir olup olmadığını denetler.
+// Validate checks whether the workflow definition can be run.
 //
-// Ad uzunlukları da burada denetlenir (bkz. MaxNameLen): sınır Store
-// sözleşmesinin parçasıdır ve motorda uygulanması, kalıcı bir Store'da
-// patlayacak bir yürütmenin HİÇ başlamamasını sağlar — bellek içi Store'da
-// geçip Postgres'te düşen bir workflow olmaz.
+// The name lengths are checked here too (see MaxNameLen): the limit is part of
+// the Store contract, and applying it in the engine means an execution that
+// would blow up in a durable Store NEVER starts — there is no workflow that
+// passes on the in-memory Store and fails on Postgres.
 //
-// nil denetimi TİPLİ NİL'i de kapsar (bkz. isNilStep): arayüz değeri nil
-// olmasa da içindeki işaretçi nil olabilir ve öyle bir değerde Name()
-// çağırmak motoru çökertirdi.
+// The nil check covers a TYPED NIL too (see isNilStep): the interface value may
+// not be nil while the pointer inside it is, and calling Name() on such a value
+// would bring the engine down.
 func (w Workflow) Validate() error {
 	if w.Name == "" {
-		return errors.Invalid(CodeInvalidWorkflow, "workflow adı boş olamaz")
+		return errors.Invalid(CodeInvalidWorkflow, "the workflow name cannot be empty")
 	}
 	if len(w.Name) > MaxNameLen {
 		return errors.Invalid(CodeInvalidWorkflow,
-			"workflow adı en fazla %d bayt olabilir, %d bayt verildi", MaxNameLen, len(w.Name))
+			"the workflow name can be at most %d bytes, %d bytes were given", MaxNameLen, len(w.Name))
 	}
 	if len(w.Steps) == 0 {
-		return errors.Invalid(CodeInvalidWorkflow, "%q workflow'unda hiç adım yok", w.Name)
+		return errors.Invalid(CodeInvalidWorkflow, "the %q workflow has no steps", w.Name)
 	}
 
 	for i, s := range w.Steps {
 		if isNilStep(s) {
-			return errors.Invalid(CodeInvalidWorkflow, "%q workflow'unun %d. adımı nil", w.Name, i)
+			return errors.Invalid(CodeInvalidWorkflow, "step %d of the %q workflow is nil", i, w.Name)
 		}
 
 		name := s.Name()
 		if name == "" {
-			return errors.Invalid(CodeInvalidWorkflow, "%q workflow'unun %d. adımının adı boş", w.Name, i)
+			return errors.Invalid(CodeInvalidWorkflow, "the name of step %d of the %q workflow is empty", i, w.Name)
 		}
 		if len(name) > MaxNameLen {
 			return errors.Invalid(CodeInvalidWorkflow,
-				"%q workflow'unun %d. adımının adı en fazla %d bayt olabilir, %d bayt verildi",
-				w.Name, i, MaxNameLen, len(name))
+				"the name of step %d of the %q workflow can be at most %d bytes, %d bytes were given",
+				i, w.Name, MaxNameLen, len(name))
 		}
 	}
 	return nil
 }
 
-// isNilStep bir adımın nil ya da TİPLİ NİL olup olmadığını söyler.
+// isNilStep reports whether a step is nil or a TYPED NIL.
 //
-// Arayüz değeri, içinde nil bir işaretçi taşırken bile nil DEĞİLDİR: bir
-// eklentinin adım yapıcısı hata durumunda (*myStep)(nil) dönerse s == nil
-// denetimi geçer ve s.Name() nil işaretçi çözümlemesiyle panikler. Panik
-// motoru çökertmeden önce reflect ile yakalanır; bedeli tanım başına tek bir
-// yansıma çağrısıdır.
+// An interface value is NOT nil even while it carries a nil pointer inside: if a
+// plugin's step constructor returns (*myStep)(nil) on an error, the s == nil
+// check passes and s.Name() panics on a nil pointer dereference. The panic is
+// caught with reflect before it can bring the engine down; the price is a single
+// reflection call per definition.
 func isNilStep(s Step) bool {
 	if s == nil {
 		return true
@@ -378,22 +403,24 @@ func isNilStep(s Step) bool {
 	}
 }
 
-// Executor bir workflow'u yürüten motordur.
+// Executor is the engine that runs a workflow.
 type Executor interface {
-	// Run adımları sırayla yürütür; bir adım patlarsa o ana kadar başarılı
-	// adımların Compensate'lerini ters sırada çalıştırır ve durumu persist eder.
-	// Çıktı her yolda json.RawMessage'dır; tipli okuma için bkz. RunInto.
+	// Run runs the steps in order; if a step blows up it runs the Compensate of
+	// the steps that succeeded up to that point, in reverse order, and persists
+	// the state. The output is a json.RawMessage on every path; for typed
+	// reading see RunInto.
 	Run(ctx context.Context, wf Workflow, input any, opts ...RunOption) (any, error)
 }
 
-// RunInto workflow'u yürütür ve çıktısını T'ye çözer.
+// RunInto runs the workflow and decodes its output into T.
 //
-// Executor.Run'ın çıktısı json.RawMessage'dır ama imzasındaki any bunu
-// derleyiciden gizler; bu yardımcı, çıktının tipini çağrı yerinde sözleşmeye
-// bağlar. Çıktı boşsa (son adım nil döndüyse ya da çıktı JSON'a çevrilemediyse)
-// T'nin sıfır değeri ve nil hata döner: yürütme başarılıdır, okunacak bir şey
-// yoktur. Çözümleme patlarsa hata errors.Invalid'dir — yürütme O NOKTADA
-// TAMAMLANMIŞTIR, başarısız olan yalnızca okumadır.
+// Executor.Run's output is a json.RawMessage, but the any in its signature hides
+// that from the compiler; this helper binds the output's type to the contract at
+// the call site. If the output is empty (the last step returned nil, or the
+// output could not be turned into JSON) it returns T's zero value and a nil
+// error: the execution succeeded, there is nothing to read. If decoding blows up
+// the error is errors.Invalid — the execution IS COMPLETE AT THAT POINT and only
+// the read failed.
 func RunInto[T any](ctx context.Context, e Executor, wf Workflow, input any, opts ...RunOption) (T, error) {
 	var out T
 
@@ -405,19 +432,19 @@ func RunInto[T any](ctx context.Context, e Executor, wf Workflow, input any, opt
 	payload, ok := raw.(json.RawMessage)
 	if !ok {
 		return out, errors.Internal(CodeInvalidOutput,
-			"%q workflow'unun çıktısı json.RawMessage değil: %T", wf.Name, raw)
+			"the output of the %q workflow is not a json.RawMessage: %T", wf.Name, raw)
 	}
 	if len(payload) == 0 {
 		return out, nil
 	}
 	if uerr := json.Unmarshal(payload, &out); uerr != nil {
 		return out, errors.Wrap(uerr, errors.KindInvalid, CodeInvalidOutput,
-			"%q workflow'unun çıktısı %T tipine çevrilemedi", wf.Name, out)
+			"the output of the %q workflow could not be converted to %T", wf.Name, out)
 	}
 	return out, nil
 }
 
-// executor Executor'ın tek uygulamasıdır.
+// executor is Executor's only implementation.
 type executor struct {
 	store Store
 	log   *slog.Logger
@@ -425,7 +452,7 @@ type executor struct {
 
 var _ Executor = (*executor)(nil)
 
-// Log alan adları; tüm kayıtlarda aynı anahtarlar kullanılır.
+// The log field names; the same keys are used in every record.
 const (
 	attrWorkflow    = "workflow"
 	attrExecutionID = "execution_id"
@@ -435,33 +462,35 @@ const (
 	attrError       = "error"
 )
 
-// New verilen Store üzerine bir saga motoru kurar.
+// New builds a saga engine on the given Store.
 //
-// log nil verilirse slog.Default kullanılır. store nil verilirse motor kurulur
-// ama ÇALIŞMAZ: kurulum ERROR olarak loglanır ve her Run errors.Invalid ile
-// reddedilir. Eksik Store'da sessizce süreç içi bir depoya düşmek, idempotency
-// korumasını süreç sınırına indirir — yanlış kablolanmış iki replika aynı
-// anahtarla aynı ödemeyi çeker ve bunun tek izi bir uyarı satırı olurdu.
-// Süreç içi depo bu yüzden ÇAĞIRANIN açık kararıdır (bkz. NewInMemory).
+// With a nil log, slog.Default is used. With a nil store the engine is built but
+// DOES NOT RUN: the setup is logged at ERROR and every Run is rejected with
+// errors.Invalid. Falling back silently to an in-process store on a missing
+// Store would pull the idempotency protection down to the process boundary — two
+// misconfigured replicas would charge the same payment with the same key, and
+// the only trace of it would be one warning line. An in-process store is
+// therefore the CALLER'S explicit decision (see NewInMemory).
 //
-// Reddin kurulumda değil ilk Run'da hata olarak dönmesinin sebebi imzadır:
-// Executor döndüren bir yapıcının hata kanalı yoktur ve eksik bağımlılık
-// yüzünden panik atmak, kablolamayı bir arıza sinyaline değil çökmeye çevirir.
+// The rejection surfaces as an error on the first Run rather than at
+// construction because of the signature: a constructor returning an Executor has
+// no error channel, and panicking over a missing dependency turns a wiring
+// mistake into a crash rather than a failure signal.
 func New(store Store, log *slog.Logger) Executor {
 	if log == nil {
 		log = slog.Default()
 	}
 	if store == nil {
-		log.Error("workflow: Store verilmedi; motor kuruldu ama her Run reddedilecek — süreç içi depo için NewInMemory kullanın")
+		log.Error("workflow: no Store was given; the engine is built but every Run will be rejected — use NewInMemory for an in-process store")
 	}
 	return &executor{store: store, log: log}
 }
 
-// NewInMemory süreç içi, kalıcılığı olmayan bir depo üzerine motor kurar.
+// NewInMemory builds an engine on an in-process, non-durable store.
 //
-// Test ve geliştirme içindir ve adı gereği AÇIK bir karardır: süreç ölürse
-// yürütme geçmişi kaybolur, birden çok replikada ise idempotency yalnızca tek
-// süreç içinde geçerlidir. Üretim için New kullanılmalıdır.
+// It is for tests and development and, as its name says, an EXPLICIT decision:
+// if the process dies the execution history is lost, and across several replicas
+// idempotency holds only within a single process. Production has to use New.
 func NewInMemory(log *slog.Logger) Executor {
 	if log == nil {
 		log = slog.Default()
@@ -469,64 +498,67 @@ func NewInMemory(log *slog.Logger) Executor {
 	return &executor{store: NewMemoryStore(), log: log}
 }
 
-// doneStep telafi zincirine giren bir adımdır.
+// doneStep is a step that enters the compensation chain.
 //
-// rec, adımın Invoke kaydıdır: telafi kaydı aynı Index'i GÜNCELLEDİĞİ için
-// (bkz. Store.AppendStep) çıktı ve deneme bilgisi ancak burada taşınırsa
-// korunur.
+// rec is the step's Invoke record: because the compensation record UPDATES the
+// same Index (see Store.AppendStep), the output and attempt information survives
+// only if it is carried here.
 type doneStep struct {
 	step Step
 	rec  StepRecord
-	// bestEffort adımın Invoke'unun PATLADIĞINI ama motorun onu birden çok kez
-	// denemiş olması yüzünden yine de telafi edileceğini bildirir.
+	// bestEffort reports that the step's Invoke BLEW UP but that it will be
+	// compensated anyway, because the engine attempted it more than once.
 	bestEffort bool
 }
 
-// Run adımları sırayla yürütür ve yürütme durumunu kalıcılaştırır.
+// Run runs the steps in order and persists the execution state.
 //
-// Dönüş değeri son adımın çıktısının json.RawMessage karşılığıdır (tipli okuma
-// için bkz. RunInto). Bir adım patlarsa o ana kadar başarılı olmuş adımlar
-// TERS SIRADA telafi edilir; patlayan adımın kendisi yalnızca MOTOR onu birden
-// çok kez denediyse en iyi çaba olarak telafi edilir (bkz. paket yorumu).
-// Telafi eksiksiz tamamlanırsa yürütme StatusFailed, telafinin kendisi
-// patlarsa ya da adım hatası ErrUncompensated taşıyorsa
-// StatusCompensationFailed olarak yazılır; ikinci durumda dönen hata hem adım
-// hatasını hem telafi hatalarını errors.Join ile taşır ve KindInternal'dır.
+// The return value is the json.RawMessage form of the last step's output (for
+// typed reading see RunInto). If a step blows up, the steps that succeeded up to
+// that point are compensated in REVERSE ORDER; the step that blew up is
+// compensated on a best-effort basis only if the ENGINE attempted it more than
+// once (see the package comment). If compensation completes in full the
+// execution is written as StatusFailed; if the compensation itself blows up, or
+// the step error carries ErrUncompensated, it is written as
+// StatusCompensationFailed — and in that second case the returned error carries
+// both the step error and the compensation errors through errors.Join and is
+// KindInternal.
 //
-// Bağlam çağrı anında zaten iptal edilmişse hiçbir kayıt AÇILMAZ ve
-// errors.Unavailable döner: hiç iş yapılmadan idempotency anahtarını yakmak,
-// anahtarın var olma sebebini tersine çevirirdi. Motor Store olmadan
-// kurulmuşsa hiçbir adım çalıştırılmaz ve errors.Invalid döner (bkz. New).
+// If the context was already canceled at the moment of the call NO record is
+// OPENED and errors.Unavailable is returned: burning the idempotency key with no
+// work done would invert the very reason the key exists. If the engine was built
+// without a Store no step runs and errors.Invalid is returned (see New).
 //
-// Dönen hatanın sınıfı (Kind), yürütme [StatusFailed] yazıldıysa PATLAYAN
-// ADIMIN sınıfını korur; böylece HTTP katmanı geçersiz girdiyi 422, çakışmayı
-// 409 olarak haritalamaya devam edebilir. [StatusCompensationFailed] ve asılı
-// yan etki bildiren ([ErrUncompensated]) durumlarda sınıf KindInternal'a
-// yükseltilir: geride temizlenmemiş iş varken çağırana "girdin geçersizdi"
-// demek yanıltıcı olurdu.
+// The Kind of the returned error preserves the class of the STEP THAT BLEW UP
+// when the execution was written [StatusFailed]; that way the HTTP layer can go
+// on mapping invalid input to 422 and a conflict to 409. In the
+// [StatusCompensationFailed] case, and when a hanging side effect is reported
+// ([ErrUncompensated]), the class is raised to KindInternal: telling the caller
+// "your input was invalid" while uncleaned work is left behind would mislead.
 //
-// WithIdempotencyKey verilmişse aynı anahtarla yapılan ikinci çağrı adımları
-// TEKRAR ÇALIŞTIRMAZ ve ilk yürütmenin durumuna göre davranır:
+// If WithIdempotencyKey was given, a second call with the same key
+// DOES NOT RUN THE STEPS AGAIN and behaves according to the first execution's state:
 //
-//   - completed → ilk yürütmenin ÇIKTISI döner. Çıktı Store'dan okunur; Go tipi
-//     kalıcılaştırmada kaybolduğu için json.RawMessage'dır. Mutlu yol da aynı
-//     tipi döndürür, böylece çağıranın tip doğrulaması hangi yola düştüğüne
-//     BAĞLI DEĞİLDİR.
-//   - running → errors.Conflict. Aynı iş hâlâ uçuştadır; ikinci bir kopyasını
-//     başlatmak tam da anahtarın engellemek için var olduğu şeydir.
-//   - failed → errors.Conflict. Yürütme geri alınmış olsa bile motor kendiliğinden
-//     TEKRARLAMAZ: anahtar bir denemenin SONUCUNU adlandırır, sonsuz bir
-//     tekrar hakkını değil. Aynı anahtarla sessizce yeniden çalıştırmak, ilk
-//     denemenin yan etkilerinin gerçekten geri alındığı VARSAYIMINA dayanırdı;
-//     telafi ise en iyi çabadır. Yeniden denemek çağıranın açık kararıdır ve
-//     YENİ bir anahtar ister — böylece "bu iş kaç kez denendi" sorusu Store'dan
-//     yanıtlanabilir kalır.
-//   - compensation_failed → errors.Conflict. Sistem tutarsızdır; elle müdahale
-//     edilmeden üstüne yeni bir yürütme koymak hasarı büyütür.
+//   - completed → the first execution's OUTPUT is returned. The output is read
+//     from the Store, so it is a json.RawMessage because the Go type was lost in
+//     persistence. The happy path returns the same type, so the caller's type
+//     assertion DOES NOT DEPEND on which path it landed on.
+//   - running → errors.Conflict. The same work is still in flight; starting a
+//     second copy of it is exactly what the key exists to prevent.
+//   - failed → errors.Conflict. Even though the execution was rolled back the
+//     engine does NOT REPEAT it on its own: a key names the OUTCOME of an
+//     attempt, not a right to endless repeats. Running it again in silence with
+//     the same key would rest on the ASSUMPTION that the first attempt's side
+//     effects really were undone, and compensation is best-effort. Retrying is
+//     the caller's explicit decision and needs a NEW key — which keeps "how many
+//     times was this work attempted" answerable from the Store.
+//   - compensation_failed → errors.Conflict. The system is inconsistent; putting
+//     a new execution on top of it without a human first makes the damage
+//     bigger.
 func (e *executor) Run(ctx context.Context, wf Workflow, input any, opts ...RunOption) (any, error) {
 	if e.store == nil {
 		return nil, errors.Invalid(CodeInvalidOption,
-			"workflow motoru Store olmadan kuruldu; kalıcı bir Store verin ya da süreç içi depo için NewInMemory kullanın")
+			"the workflow engine was built without a Store; give it a durable Store, or use NewInMemory for an in-process one")
 	}
 
 	o, err := newRunOptions(opts)
@@ -537,25 +569,26 @@ func (e *executor) Run(ctx context.Context, wf Workflow, input any, opts ...RunO
 		return nil, verr
 	}
 	if cerr := ctx.Err(); cerr != nil {
-		// Bağlam çağrıya ölü geldi: kayıt AÇILMAZ. Açılsaydı hiçbir adım
-		// çalışmadan uç duruma yazılır ve idempotency anahtarı kalıcı olarak
-		// yanardı (bkz. paket yorumu, "Idempotency-key").
+		// The context arrived at the call dead: the record is NOT OPENED. Were it
+		// opened it would be written to a terminal state with no step having run
+		// and the idempotency key would be burned permanently (see the package
+		// comment, "Idempotency key").
 		return nil, errors.Wrap(cerr, errors.KindUnavailable, CodeCanceled,
-			"%q workflow'u başlatılmadı: bağlam çağrı anında zaten iptal edilmişti", wf.Name)
+			"the %q workflow was not started: the context was already canceled at the moment of the call", wf.Name)
 	}
 
 	payload, merr := json.Marshal(input)
 	if merr != nil {
 		return nil, errors.Wrap(merr, errors.KindInvalid, CodeInvalidWorkflow,
-			"%q workflow'unun girdisi JSON'a çevrilemedi", wf.Name)
+			"the input of the %q workflow could not be turned into JSON", wf.Name)
 	}
 
-	// Döngü EN FAZLA iki tur döner ve ikinci tur yalnızca tek bir sebeple
-	// gerçekleşir: terk edilmiş bir kayıt kapatılıp anahtarını bıraktı, yani
-	// artık açılabilecek bir yer var (bkz. [WithLease]). Sınır bilinçli —
-	// sınırsız bir döngü, iki sürecin aynı terk edilmiş kaydı sırayla
-	// kapatmasıyla dönmeye devam edebilirdi.
-	for tur := range 2 {
+	// The loop turns AT MOST twice, and the second turn happens for exactly one
+	// reason: an abandoned record was closed and released its key, so there is
+	// now room to open one (see [WithLease]). The bound is deliberate — an
+	// unbounded loop could keep turning while two processes closed the same
+	// abandoned record one after the other.
+	for turn := range 2 {
 		exec, err := e.open(ctx, wf, payload, o)
 		if err != nil {
 			return nil, err
@@ -564,24 +597,25 @@ func (e *executor) Run(ctx context.Context, wf Workflow, input any, opts ...RunO
 			return e.execute(ctx, wf, input, exec, o)
 		}
 
-		// Aynı anahtarla açılmış bir yürütme bulundu; sonucunu replay verir.
-		out, yeniden, rerr := e.replay(ctx, wf, o)
-		if !yeniden || tur == 1 {
+		// An execution opened with the same key was found; replay gives its
+		// outcome.
+		out, again, rerr := e.replay(ctx, wf, o)
+		if !again || turn == 1 {
 			return out, rerr
 		}
 	}
 
-	// Buraya düşmek, ikinci turda da "yeniden dene" denmesi demektir ve döngü
-	// sınırı onu engeller; derleyici için gereklidir.
+	// Landing here would mean "try again" was said on the second turn too, and
+	// the loop bound prevents that; it is here for the compiler.
 	return nil, errors.Internal(CodeStoreFailed,
-		"%q workflow'u için yürütme açılamadı: terk edilmiş kayıt ikinci turda da kapanmadı", wf.Name)
+		"no execution could be opened for the %q workflow: the abandoned record did not close on the second turn either", wf.Name)
 }
 
-// open yürütme kaydını açar.
+// open opens the execution record.
 //
-// Aynı anahtarlı bir kayıt zaten varsa (nil, nil) döner; çağıran replay'e
-// gider. Diğer Store hataları yürütmeyi düşürür: tekrar korumasının kapısı
-// buradadır.
+// If a record with the same key already exists it returns (nil, nil) and the
+// caller goes to replay. Other Store errors drop the execution: this is the gate
+// of the repeat protection.
 func (e *executor) open(ctx context.Context, wf Workflow, payload json.RawMessage, o *runOptions) (*Execution, error) {
 	now := time.Now().UTC()
 	exec := &Execution{
@@ -605,142 +639,150 @@ func (e *executor) open(ctx context.Context, wf Workflow, payload json.RawMessag
 		return nil, nil
 	default:
 		return nil, errors.Wrap(err, errors.KindOf(err), CodeStoreFailed,
-			"%q workflow'u için yürütme kaydı açılamadı", wf.Name)
+			"the execution record for the %q workflow could not be opened", wf.Name)
 	}
 }
 
-// replay aynı idempotency anahtarıyla açılmış yürütmenin sonucunu döner.
+// replay returns the outcome of the execution opened with the same idempotency
+// key.
 //
-// İkinci sonuç ("yeniden") true ise kayıt TERK EDİLMİŞ bulunup kapatılmış ve
-// anahtarını bırakmıştır; çağıran yeni bir yürütme açmayı denemelidir. O
-// durumda ilk iki sonuç anlamsızdır.
-func (e *executor) replay(ctx context.Context, wf Workflow, o *runOptions) (out any, yeniden bool, err error) {
+// If the second result ("again") is true the record was found ABANDONED, was
+// closed and released its key; the caller should try to open a new execution. In
+// that case the first two results are meaningless.
+func (e *executor) replay(ctx context.Context, wf Workflow, o *runOptions) (out any, again bool, err error) {
 	sctx, cancel := o.storeContext(ctx)
 	prev, err := e.store.FindByIdempotencyKey(sctx, wf.Name, o.idempotencyKey)
 	cancel()
 	if err != nil {
 		return nil, false, errors.Wrap(err, errors.KindOf(err), CodeStoreFailed,
-			"%q workflow'unun %q anahtarlı yürütmesi okunamadı", wf.Name, o.idempotencyKey)
+			"the execution of the %q workflow with the key %q could not be read", wf.Name, o.idempotencyKey)
 	}
 	if prev == nil {
-		// Sözleşme ihlali: hata yoksa kayıt dolu olmalıdır. Store ayrı bir
-		// pakette yazıldığı için motor bunu nil çözümlemesiyle değil, tipli
-		// hatayla karşılar.
+		// A contract violation: with no error the record has to be filled in.
+		// Because the Store is written in a separate package the engine meets
+		// this with a typed error rather than a nil dereference.
 		return nil, false, errors.Internal(CodeStoreFailed,
-			"Store %q workflow'unun %q anahtarı için hatasız nil kayıt döndürdü", wf.Name, o.idempotencyKey)
+			"the Store returned a nil record with no error for the %q key of the %q workflow", o.idempotencyKey, wf.Name)
 	}
 
 	switch prev.Status {
 	case StatusCompleted:
-		e.log.Info("workflow: idempotency anahtarı eşleşti, adımlar tekrar çalıştırılmadı",
+		e.log.Info("workflow: the idempotency key matched, the steps were not run again",
 			attrWorkflow, wf.Name, attrExecutionID, prev.ID)
 		return prev.Output, false, nil
 	case StatusRunning:
-		// Kirası dolmuş bir kayıt "sürüyor" değildir; ne olduğu adım
-		// kayıtlarından belirlenir (bkz. [WithLease]).
-		terk, terkErr := e.terkEdilmisMi(ctx, wf, prev, o)
+		// A record whose lease has expired is not "running"; what it did is
+		// determined from the step records (see [WithLease]).
+		abandoned, aerr := e.judgeAbandoned(ctx, wf, prev, o)
 		switch {
-		case terkErr != nil:
-			return nil, false, terkErr
-		case terk:
+		case aerr != nil:
+			return nil, false, aerr
+		case abandoned:
 			return nil, true, nil
 		}
 
 		return nil, false, errors.Conflict(CodeExecutionRunning,
-			"%q workflow'unun %q anahtarlı yürütmesi (%s) hâlâ sürüyor", wf.Name, o.idempotencyKey, prev.ID)
+			"the execution of the %q workflow with the key %q (%s) is still going", wf.Name, o.idempotencyKey, prev.ID)
 	case StatusFailed:
 		return nil, false, errors.Conflict(CodeExecutionFailed,
-			"%q workflow'unun %q anahtarlı yürütmesi (%s) daha önce başarısız oldu ve telafi edildi; yeniden denemek için YENİ bir anahtar kullanın: %s",
+			"the execution of the %q workflow with the key %q (%s) failed earlier and was compensated; use a NEW key to try again: %s",
 			wf.Name, o.idempotencyKey, prev.ID, prev.Failure)
 	case StatusCompensationFailed:
 		return nil, false, errors.Conflict(CodeExecutionFailed,
-			"%q workflow'unun %q anahtarlı yürütmesi (%s) telafi edilemedi; elle müdahale gerekir: %s",
+			"the execution of the %q workflow with the key %q (%s) could not be compensated; a human is needed: %s",
 			wf.Name, o.idempotencyKey, prev.ID, prev.Failure)
 	default:
 		return nil, false, errors.Internal(CodeStoreFailed,
-			"%q yürütmesi bilinmeyen durumda: %q", prev.ID, prev.Status)
+			"execution %q is in an unknown state: %q", prev.ID, prev.Status)
 	}
 }
 
-// terkEdilmisMi kira süresi dolmuş bir "running" kaydı uç duruma taşır.
+// judgeAbandoned moves a "running" record whose lease has expired into a
+// terminal state.
 //
-// İlk sonuç, çağıranın YENİ bir yürütme açabileceğini bildirir (kayıt
-// [StatusFailed] oldu ve anahtarını bıraktı). İkinci sonuç dolu ise çağıran onu
-// döndürmelidir; kayıt [StatusCompensationFailed] olmuştur ve elle müdahale
-// bekler. İkisi de boşsa kayıt gerçekten sürüyordur.
+// The first result reports that the caller can open a NEW execution (the record
+// became [StatusFailed] and released its key). If the second result is set the
+// caller should return it; the record became [StatusCompensationFailed] and is
+// waiting for a human. If both are empty the record really is still running.
 //
-// Gerekçe ve karar tablosu [WithLease] godoc'undadır.
-func (e *executor) terkEdilmisMi(ctx context.Context, wf Workflow, prev *Execution, o *runOptions) (bool, error) {
+// The reasoning and the decision table are in the [WithLease] godoc.
+func (e *executor) judgeAbandoned(ctx context.Context, wf Workflow, prev *Execution, o *runOptions) (bool, error) {
 	if o.lease <= 0 || time.Since(prev.UpdatedAt) <= o.lease {
 		return false, nil
 	}
 
-	// Adımlar ayrıca okunur: FindByIdempotencyKey'in onları getirmesi
-	// sözleşmede yazmıyor ve bu yol zaten istisnai.
+	// The steps are read separately: the contract does not say
+	// FindByIdempotencyKey brings them, and this path is exceptional anyway.
 	sctx, cancel := o.storeContext(ctx)
-	dolu, err := e.store.Get(sctx, prev.ID)
+	full, err := e.store.Get(sctx, prev.ID)
 	cancel()
 	if err != nil {
-		// Adımlar okunamıyorsa terk edildiğine KARAR VERİLEMEZ; kayıt olduğu
-		// gibi bırakılır ve çağıran "hâlâ sürüyor" alır. Yanlış tarafa düşmek
-		// (iş yapılmışken yeniden denemek) ayrılmış stoğu ikiye katlardı.
-		e.log.ErrorContext(ctx, "workflow: kirası dolmuş yürütmenin adımları okunamadı",
+		// If the steps cannot be read, whether it was abandoned CANNOT BE
+		// DECIDED; the record is left as it stands and the caller gets "still
+		// going". Falling the other way (retrying while work was done) would
+		// double the reserved stock.
+		e.log.ErrorContext(ctx, "workflow: the steps of an execution whose lease expired could not be read",
 			attrWorkflow, wf.Name, attrExecutionID, prev.ID, attrError, err)
 
 		return false, nil
 	}
 
-	if isYapilmis(dolu.Steps) {
-		return e.kurtar(ctx, wf, dolu, o)
+	if hasHeldWork(full.Steps) {
+		return e.recoverExecution(ctx, wf, full, o)
 	}
 
-	// Hiçbir adım iş yapmamış: telafi edilecek bir şey yok, anahtar bırakılır.
+	// No step did any work: there is nothing to compensate, so the key is
+	// released.
 	e.persistStatus(ctx, prev.ID, o, StatusFailed, nil,
-		"yürütme kirası doldu ve hiçbir adım iş yapmamıştı; terk edilmiş sayıldı")
-	e.log.WarnContext(ctx, "workflow: terk edilmiş yürütme kapatıldı, yeniden denenebilir",
+		"the execution's lease expired and no step had done any work; it was taken as abandoned")
+	e.log.WarnContext(ctx, "workflow: an abandoned execution was closed and can be retried",
 		attrWorkflow, wf.Name, attrExecutionID, prev.ID)
 
 	return true, nil
 }
 
-// kurtar terk edilmiş bir yürütmenin telafi zincirini KAYITLARDAN yeniden
-// çalıştırır.
+// recoverExecution runs an abandoned execution's compensation chain again FROM
+// THE RECORD.
 //
-// Buraya gelen kayıt şudur: süreç iş yaptıktan sonra, telafi hiç çalışmadan
-// kesilmiş. O ana kadar ayrılan stok dünyada duruyor ve kimse bırakmıyor.
-// Motor telafi işlevlerine SAHİPTİR (çağıran aynı workflow tanımıyla geldi);
-// kaybolan tek şey adımlar arası paylaşılan durumdu ve onu adımın kendi kalıcı
-// çıktısından geri kurmak [Recoverable]'ın işidir.
+// The record that arrives here is this: the process was cut off after doing work
+// and before compensation ever ran. The stock reserved up to that point is
+// standing in the world and nobody is releasing it. The engine HAS the
+// compensation functions (the caller came with the same workflow definition);
+// the only thing lost was the state shared between steps, and rebuilding that
+// from the step's own persisted output is [Recoverable]'s job.
 //
-// # Kurtarmanın REDDEDİLDİĞİ üç durum
+// # The four cases where recovery is REFUSED
 //
-// Üçünde de bugünkü davranış korunur — compensation_failed ve elle müdahale —
-// çünkü yanlış durumla koşan bir telafi, geri almadığı işi geri aldım der:
+// In all four today's behavior is kept — compensation_failed and a human —
+// because a compensation running on the wrong state says it undid work it did
+// not:
 //
-//   - Kayıttaki adım, tanımdaki adımla AYNI ADI taşımıyor. İndeks kaydın
-//     kimliğidir ama workflow tanımı iki dağıtım arasında değişmiş olabilir;
-//     ad denetimi olmasaydı 2. adımın telafisi bambaşka bir adımın çıktısıyla
-//     çağrılırdı.
-//   - İş yapmış bir adım [Recoverable] uygulamıyor. Zincirin bir halkası
-//     durumunu geri kuramıyorsa zincirin tamamı güvenilmezdir.
-//   - Restore hata döndü (çıktı boş ya da şekli değişmiş).
-//   - Kaydı olmayan İLK adım bir [RecoveryBlocker]. Süreç onun içinde ölmüş
-//     olabilir ve kayıtlardan bu ayırt edilemez; bkz. [sinirDenetle].
+//   - The step in the record does not carry the SAME NAME as the one in the
+//     definition. The index is the record's identity, but the workflow
+//     definition may have changed between two deploys; without the name check,
+//     step 2's compensation would be called with an entirely different step's
+//     output.
+//   - A step that did work does not implement [Recoverable]. If one link of the
+//     chain cannot rebuild its state, the whole chain is untrustworthy.
+//   - Restore returned an error (the output is empty or its shape changed).
+//   - The FIRST step with no record is a [RecoveryBlocker]. The process may have
+//     died inside it and the records cannot tell; see [checkRecoveryBoundary].
 //
-// # sc.Input kurtarma yolunda TİPLİ DEĞİLDİR
+// # sc.Input is NOT TYPED on the recovery path
 //
-// Normal yolda [StepContext.Input] çağıranın verdiği Go değeridir; burada o
-// değer süreçle birlikte gitti ve geriye kaydın JSON'u kaldı, yani Input bir
-// json.RawMessage'dır. Bugün hiçbir telafi Input okumuyor. Okuyacak olan, aynı
-// alanın iki yolda iki farklı tip taşıdığını bilmelidir.
+// On the normal path [StepContext.Input] is the Go value the caller gave; here
+// that value went with the process and what remains is the record's JSON, so
+// Input is a json.RawMessage. No compensation reads Input today. One that starts
+// to has to know the same field carries two different types on the two paths.
 //
-// # Telafi ikinci kez koşabilir
+// # Compensation can run a second time
 //
-// Kurtarma sırasında süreç yine ölürse aynı telafiler bir daha çağrılır.
-// Compensate'in idempotent olması ZATEN motorun sözleşmesidir (bir telafi
-// patladığında zincir durmaz, sonraki denemede aynı adımlar yeniden
-// telafi edilir); kurtarma yeni bir gereksinim getirmez, var olanı kullanır.
-func (e *executor) kurtar(ctx context.Context, wf Workflow, exec *Execution, o *runOptions) (bool, error) {
+// If the process dies again during recovery the same compensations are called
+// once more. Compensate being idempotent is ALREADY the engine's contract (when
+// a compensation blows up the chain does not stop, and on the next attempt the
+// same steps are compensated again); recovery brings no new requirement, it uses
+// the existing one.
+func (e *executor) recoverExecution(ctx context.Context, wf Workflow, exec *Execution, o *runOptions) (bool, error) {
 	sc := &StepContext{
 		Input:       exec.Input,
 		Shared:      make(map[string]any),
@@ -748,72 +790,75 @@ func (e *executor) kurtar(ctx context.Context, wf Workflow, exec *Execution, o *
 		Workflow:    wf.Name,
 	}
 
-	done, err := e.geriKur(sc, wf, exec)
+	done, err := e.rebuildChain(sc, wf, exec)
 	if err != nil {
 		final := errors.Wrap(err, errors.KindConflict, CodeExecutionFailed,
-			"%q workflow'unun %q anahtarlı yürütmesi (%s) kirası dolduğu hâlde tamamlanmamış "+
-				"ve KURTARILAMADI; ELLE MÜDAHALE gerekir",
+			"the execution of the %q workflow with the key %q (%s) was left unfinished with an "+
+				"expired lease and COULD NOT BE RECOVERED; A HUMAN IS NEEDED",
 			wf.Name, o.idempotencyKey, exec.ID)
 		e.persistStatus(ctx, exec.ID, o, StatusCompensationFailed, nil, final.Error())
-		e.log.ErrorContext(ctx, "workflow: terk edilmiş yürütme kurtarılamadı; elle müdahale gerekir",
+		e.log.ErrorContext(ctx, "workflow: an abandoned execution could not be recovered; a human is needed",
 			attrWorkflow, wf.Name, attrExecutionID, exec.ID, attrError, err)
 
 		return true, final
 	}
 
-	e.log.WarnContext(ctx, "workflow: terk edilmiş yürütmenin telafisi kayıtlardan çalıştırılıyor",
+	e.log.WarnContext(ctx, "workflow: running an abandoned execution's compensation from the record",
 		attrWorkflow, wf.Name, attrExecutionID, exec.ID, "steps", len(done))
 
 	if compErr := e.compensate(ctx, sc, exec.ID, done, o); compErr != nil {
 		final := errors.Wrap(compErr, errors.KindInternal, CodeCompensationFailed,
-			"%q workflow'unun terk edilmiş yürütmesinin (%s) telafisi tamamlanamadı; "+
-				"ELLE MÜDAHALE gerekir", wf.Name, exec.ID)
+			"the compensation of the abandoned execution (%s) of the %q workflow could not be "+
+				"completed; A HUMAN IS NEEDED", exec.ID, wf.Name)
 		e.persistStatus(ctx, exec.ID, o, StatusCompensationFailed, nil, final.Error())
-		e.log.ErrorContext(ctx, "workflow: kurtarma telafisi patladı; elle müdahale gerekir",
+		e.log.ErrorContext(ctx, "workflow: the recovery compensation blew up; a human is needed",
 			attrWorkflow, wf.Name, attrExecutionID, exec.ID, attrError, final)
 
 		return true, final
 	}
 
-	// Telafi eksiksiz tamamlandı: bu motorda StatusFailed'in anlamı tam olarak
-	// budur ve anahtarını bırakır, yani müşteri aynı sepeti yeniden ödeyebilir.
+	// Compensation completed in full: that is exactly what StatusFailed means in
+	// this engine, and it releases the key, so the customer can pay for the same
+	// cart again.
 	e.persistStatus(ctx, exec.ID, o, StatusFailed, nil,
-		"yürütme kirası doldu; telafi zinciri kayıtlardan çalıştırıldı ve tamamlandı")
-	e.log.WarnContext(ctx, "workflow: terk edilmiş yürütme telafi edildi, yeniden denenebilir",
+		"the execution's lease expired; the compensation chain was run from the record and completed")
+	e.log.WarnContext(ctx, "workflow: an abandoned execution was compensated and can be retried",
 		attrWorkflow, wf.Name, attrExecutionID, exec.ID)
 
 	return true, nil
 }
 
-// geriKur kayıtlardan telafi edilecek adımları toplar ve paylaşılan durumu
-// yeniden kurar.
+// rebuildChain collects the steps to compensate from the records and rebuilds
+// the shared state.
 //
-// Kayıtlar ARTAN sırada gezilir, çünkü Shared'ı kuran şey adımların sırasıdır:
-// sonraki bir adımın yazdığı değer öncekinin üzerine yazabilir ve ters sırada
-// gezmek o üzerine yazmayı ters çevirirdi. Telafi zincirinin kendisi TERS
-// sırada koşar ([executor.compensate]) ama o başka bir sorunun cevabıdır.
+// The records are walked in ASCENDING order, because what builds Shared is the
+// order of the steps: a later step's write can overwrite an earlier one's, and
+// walking in reverse would invert that overwrite. The compensation chain itself
+// runs in REVERSE order ([executor.compensate]), but that answers a different
+// question.
 //
-// Dönen dilim yalnızca İŞ YAPMIŞ adımları taşır ([StepStatus.Held]); Restore
-// ise çıktısı olan HER adım için çağrılır, çünkü telafi edilecek bir adımın
-// ihtiyacı olan değeri kendinden önceki başarılı bir adım yazmış olabilir.
-func (e *executor) geriKur(sc *StepContext, wf Workflow, exec *Execution) ([]doneStep, error) {
-	kayitlar := make([]StepRecord, len(exec.Steps))
-	copy(kayitlar, exec.Steps)
-	slices.SortFunc(kayitlar, func(a, b StepRecord) int { return a.Index - b.Index })
+// The returned slice carries only the steps that DID WORK ([StepStatus.Held]);
+// Restore, on the other hand, is called for EVERY step that has an output,
+// because the value a step being compensated needs may have been written by a
+// successful step before it.
+func (e *executor) rebuildChain(sc *StepContext, wf Workflow, exec *Execution) ([]doneStep, error) {
+	records := make([]StepRecord, len(exec.Steps))
+	copy(records, exec.Steps)
+	slices.SortFunc(records, func(a, b StepRecord) int { return a.Index - b.Index })
 
-	done := make([]doneStep, 0, len(kayitlar))
-	for i := range kayitlar {
-		rec := &kayitlar[i]
+	done := make([]doneStep, 0, len(records))
+	for i := range records {
+		rec := &records[i]
 		if rec.Index < 0 || rec.Index >= len(wf.Steps) {
 			return nil, errors.Internal(CodeRecoveryFailed,
-				"%d. adımın kaydı var ama workflow tanımında %d adım var; tanım değişmiş",
+				"step %d has a record but the workflow definition holds %d steps; the definition has changed",
 				rec.Index, len(wf.Steps))
 		}
 
 		step := wf.Steps[rec.Index]
 		if step.Name() != rec.Name {
 			return nil, errors.Internal(CodeRecoveryFailed,
-				"%d. adım kayıtta %q, tanımda %q; workflow tanımı yürütmeden sonra değişmiş",
+				"step %d is %q in the record and %q in the definition; the workflow definition changed after the execution",
 				rec.Index, rec.Name, step.Name())
 		}
 
@@ -824,13 +869,13 @@ func (e *executor) geriKur(sc *StepContext, wf Workflow, exec *Execution) ([]don
 			}
 
 			return nil, errors.Internal(CodeRecoveryFailed,
-				"%q adımı (%d) iş yapmış ama durumunu geri kuramıyor (Recoverable değil)",
+				"the %q step (%d) did work but cannot rebuild its state (it is not Recoverable)",
 				rec.Name, rec.Index)
 		}
 
 		if err := restorer.Restore(sc, rec.Output); err != nil {
 			return nil, errors.Wrap(err, errors.KindInternal, CodeRecoveryFailed,
-				"%q adımının (%d) durumu kayıttan geri kurulamadı", rec.Name, rec.Index)
+				"the state of the %q step (%d) could not be rebuilt from the record", rec.Name, rec.Index)
 		}
 
 		if rec.Status.Held() {
@@ -840,52 +885,53 @@ func (e *executor) geriKur(sc *StepContext, wf Workflow, exec *Execution) ([]don
 
 	if len(done) == 0 {
 		return nil, errors.Internal(CodeRecoveryFailed,
-			"telafi edilecek adım bulunamadı; kayıt iş yapılmış görünüyordu")
+			"no step to compensate was found; the record looked as though work had been done")
 	}
 
-	if err := sinirDenetle(wf, kayitlar); err != nil {
+	if err := checkRecoveryBoundary(wf, records); err != nil {
 		return nil, err
 	}
 
 	return done, nil
 }
 
-// sinirDenetle sürecin, kaydı olmayan bir adımın İÇİNDE ölmüş olabileceği ve o
-// adımın bunu kaldıramayacağı durumu reddeder.
+// checkRecoveryBoundary refuses the case where the process may have died INSIDE
+// a step that has no record, and that step cannot bear the assumption.
 //
-// Kayıtlı en yüksek indeks k ise süreç ya k+1'in Invoke'unun içinde ya da ona
-// hiç girmeden ölmüştür; ikisi kayıtlardan AYIRT EDİLEMEZ. k+1 bir
-// [RecoveryBlocker] ise ayırt edememenin bedeli geri alınamaz bir yan etkidir
-// ve karar elle müdahaleye bırakılır.
+// If the highest recorded index is k, the process died either inside step k+1's
+// Invoke or without ever entering it; the records CANNOT TELL the two apart. If
+// k+1 is a [RecoveryBlocker] the price of not telling them apart is a side effect
+// that cannot be undone, and the decision is left to a human.
 //
-// Zincirin geri kalanında engelleyici bir adım olması önemli DEĞİLDİR: onların
-// kaydı vardır, yani ne yaptıkları bilinir.
-func sinirDenetle(wf Workflow, kayitlar []StepRecord) error {
-	if len(kayitlar) == 0 {
+// A blocking step anywhere else in the chain does NOT matter: those have records,
+// so what they did is known.
+func checkRecoveryBoundary(wf Workflow, records []StepRecord) error {
+	if len(records) == 0 {
 		return nil
 	}
 
-	sonraki := kayitlar[len(kayitlar)-1].Index + 1
-	if sonraki >= len(wf.Steps) {
+	next := records[len(records)-1].Index + 1
+	if next >= len(wf.Steps) {
 		return nil
 	}
 
-	if _, engeller := wf.Steps[sonraki].(RecoveryBlocker); engeller {
+	if _, blocks := wf.Steps[next].(RecoveryBlocker); blocks {
 		return errors.Internal(CodeRecoveryFailed,
-			"%q adımının (%d) kaydı yok: süreç onun İÇİNDE ölmüş olabilir ve o adım "+
-				"kayıtsız çalışmamış sayılamaz; kurtarma yapılmaz",
-			wf.Steps[sonraki].Name(), sonraki)
+			"the %q step (%d) has no record: the process may have died INSIDE it, and that "+
+				"step cannot be assumed not to have run without one; no recovery is done",
+			wf.Steps[next].Name(), next)
 	}
 
 	return nil
 }
 
-// isYapilmis adım kayıtlarında GERİ ALINMAMIŞ iş olup olmadığını söyler.
+// hasHeldWork reports whether the step records hold work that was NOT UNDONE.
 //
-// Karar tek bir yüklemdedir ([StepStatus.Held]) ve burada TEKRARLANMAZ: aynı
-// ayrımı listeleme yüzeyi de kullanıyor ve iki kopya ayrıştığı gün motor bir
-// kaydı "iş yapılmış" sayarken liste onu atlardı.
-func isYapilmis(steps []StepRecord) bool {
+// The decision lives in a single predicate ([StepStatus.Held]) and is NOT
+// REPEATED here: the listing surface uses the same distinction, and the day the
+// two copies diverged the engine would count a record as "work done" while the
+// listing skipped it.
+func hasHeldWork(steps []StepRecord) bool {
 	for i := range steps {
 		if steps[i].Status.Held() {
 			return true
@@ -895,7 +941,7 @@ func isYapilmis(steps []StepRecord) bool {
 	return false
 }
 
-// execute adımları sırayla yürütür ve sonucu kalıcılaştırır.
+// execute runs the steps in order and persists the result.
 func (e *executor) execute(ctx context.Context, wf Workflow, input any, exec *Execution, o *runOptions) (any, error) {
 	sc := &StepContext{
 		Input:       input,
@@ -909,10 +955,10 @@ func (e *executor) execute(ctx context.Context, wf Workflow, input any, exec *Ex
 
 	for i, s := range wf.Steps {
 		if cerr := ctx.Err(); cerr != nil {
-			// İptal adımlar ARASINDA yakalandı: yeni adım başlatılmaz, o ana
-			// kadarki adımlar telafi edilir.
+			// The cancellation was caught BETWEEN steps: no new step is started
+			// and the steps up to this point are compensated.
 			cause := errors.Wrap(cerr, errors.KindUnavailable, CodeCanceled,
-				"%q workflow'u %d. adımdan önce iptal edildi", wf.Name, i)
+				"the %q workflow was canceled before step %d", wf.Name, i)
 			return e.unwind(ctx, sc, exec, done, o, cause)
 		}
 
@@ -934,20 +980,21 @@ func (e *executor) execute(ctx context.Context, wf Workflow, input any, exec *Ex
 				EndedAt:   ended,
 			}
 			e.persistStep(ctx, exec.ID, o, rec)
-			e.log.ErrorContext(ctx, "workflow: adım başarısız, telafi başlıyor",
+			e.log.ErrorContext(ctx, "workflow: a step failed, compensation is starting",
 				attrWorkflow, wf.Name, attrExecutionID, exec.ID,
 				attrStep, name, attrStepIndex, i, attrAttempt, attempts, attrError, serr)
 
 			if attempts > 1 {
-				// Motor adımı KENDİ kararıyla birden çok kez denedi: ilk
-				// denemenin yan etkisi dünyaya uygulanmış olabilir. Adım,
-				// telafi zincirinin başına en iyi çaba olarak eklenir
-				// (bkz. paket yorumu).
+				// The engine attempted the step more than once on ITS OWN
+				// decision: the first attempt's side effect may have been
+				// applied to the world. The step is added to the head of the
+				// compensation chain on a best-effort basis (see the package
+				// comment).
 				done = append(done, doneStep{step: s, rec: rec, bestEffort: true})
 			}
 
 			cause := errors.Wrap(serr, errors.KindOf(serr), stepFailureCode(serr),
-				"%q workflow'unun %q adımı (%d) başarısız oldu", wf.Name, name, i)
+				"the %q step (%d) of the %q workflow failed", name, i, wf.Name)
 			return e.unwind(ctx, sc, exec, done, o, cause)
 		}
 
@@ -968,39 +1015,42 @@ func (e *executor) execute(ctx context.Context, wf Workflow, input any, exec *Ex
 
 	output, note := e.encode(ctx, last, exec.ID, "")
 	e.persistStatus(ctx, exec.ID, o, StatusCompleted, output, note)
-	e.log.InfoContext(ctx, "workflow: tamamlandı",
+	e.log.InfoContext(ctx, "workflow: completed",
 		attrWorkflow, wf.Name, attrExecutionID, exec.ID, "steps", len(wf.Steps))
 
 	return output, nil
 }
 
-// stepFailureCode adım hatasının dışa taşınacak kodunu seçer.
+// stepFailureCode picks the code a step error carries outward.
 //
-// Alt hata kendi kodunu taşıyorsa O korunur; taşımıyorsa [CodeStepFailed]
-// kullanılır.
+// If the underlying error carries its own code THAT one is preserved; if it does
+// not, [CodeStepFailed] is used.
 //
-// # Neden motorun kendi kodu ezmiyor
+// # Why the engine's own code does not overwrite it
 //
-// Motorun sarmalaması, hatanın SINIFINI (Kind) zaten alt hatadan devralıyordu
-// ama KODUNU kendi sabitiyle eziyordu. Sonuç, sınıfın yarısını kaybetmekti:
-// taşıma katmanı gövdeye tek bir makine okunur alan yazar (Code) ve her adım
-// hatası orada tek bir değere — "workflow_step_failed" — düzleşiyordu. Bunun
-// bedeli somuttur: B2B harcama limitini aşan bir alışveriş 409 alıyor ama
-// gövdesi, geçici bir çakışmadan ayırt edilemiyordu. Oysa 409 tam olarak
-// TEKRARIN ÇÖZMEDİĞİ sınıftır ve vitrinin müşteriye "limitiniz yetmedi"
-// demesi, "tekrar deneyin" dememesi gerekir; ayrımı yapacak veri üretiliyor,
-// yalnızca tüketiciye ulaşmıyordu.
+// The engine's wrapping already inherited the error's CLASS (Kind) from the
+// underlying error but overwrote its CODE with its own constant. The result was
+// losing half of the class: the transport layer writes a single
+// machine-readable field into the body (Code) and every step error flattened
+// there into one value — "workflow_step_failed". The cost is concrete: a
+// purchase exceeding a B2B spending limit gets a 409, but its body could not be
+// told apart from a transient conflict. And 409 is exactly the class A REPEAT
+// DOES NOT SOLVE: the storefront has to tell the customer "your limit was not
+// enough", not "try again". The data that makes the distinction was being
+// produced; it just was not reaching the consumer.
 //
-// # Yalnızca KOD taşınır
+// # Only the CODE is carried
 //
-// Mesaj ve Details sarmalanan zincirde kalır; motor kendi cümlesini (hangi
-// workflow, hangi adım, kaçıncı sıra) dışta yazmayı sürdürür. KindInternal
-// hatalarında taşıma katmanı o cümleyi ve zinciri yine maskeler, yalnızca kodu
-// yayımlar (bkz. internal/core/http.WriteError). Kod tanımı gereği sabit ve
-// makine okunurdur; sızdırdığı bir sunucu ayrıntısı yoktur.
+// The message and the Details stay in the wrapped chain; the engine goes on
+// writing its own sentence (which workflow, which step, which position) on the
+// outside. On KindInternal errors the transport layer masks that sentence and
+// the chain anyway and publishes only the code (see
+// internal/core/http.WriteError). A code is fixed and machine-readable by
+// definition; it leaks no server detail.
 //
-// Adım hatası kodsuzsa — tipsiz bir stdlib hatası — geriye motorun kendi
-// sabiti kalır: kodsuz bir gövde, istemciye hiçbir şey söylemeyen bir gövdedir.
+// If the step error has no code — an untyped stdlib error — the engine's own
+// constant is what is left: a body with no code is a body that tells the client
+// nothing.
 func stepFailureCode(err error) string {
 	if code := errors.CodeOf(err); code != "" {
 		return code
@@ -1008,13 +1058,15 @@ func stepFailureCode(err error) string {
 	return CodeStepFailed
 }
 
-// unwind telafi zincirini yürütür ve yürütmeyi uç duruma yazar.
+// unwind runs the compensation chain and writes the execution into a terminal
+// state.
 //
-// cause telafiyi tetikleyen hatadır (adım hatası ya da bağlam iptali).
-// StatusFailed yalnızca telafi eksiksiz tamamlandığında VE adım hatası
-// ErrUncompensated taşımadığında yazılır: kendi içinde geri alma yapan bir
-// adım o gözcüyle "arkamda asılı iş kaldı" der ve motorun telafi zinciri temiz
-// bitse bile kayıt "geri alındı" diyemez.
+// cause is the error that triggered the compensation (a step error or a context
+// cancellation). StatusFailed is written only when compensation completed in
+// full AND the step error does not carry ErrUncompensated: a step that rolls
+// back internally uses that sentinel to say "I left hanging work behind", and
+// even if the engine's compensation chain finished cleanly the record cannot say
+// "rolled back".
 func (e *executor) unwind(ctx context.Context, sc *StepContext, exec *Execution, done []doneStep, o *runOptions, cause error) (any, error) {
 	compErr := e.compensate(ctx, sc, exec.ID, done, o)
 
@@ -1024,30 +1076,32 @@ func (e *executor) unwind(ctx context.Context, sc *StepContext, exec *Execution,
 	}
 
 	final := errors.Wrap(errors.Join(cause, compErr), errors.KindInternal, CodeCompensationFailed,
-		"%q workflow'unun telafisi tamamlanamadı (%s); ELLE MÜDAHALE gerekir", sc.Workflow, exec.ID)
+		"the compensation of the %q workflow could not be completed (%s); A HUMAN IS NEEDED", sc.Workflow, exec.ID)
 	e.persistStatus(ctx, exec.ID, o, StatusCompensationFailed, nil, final.Error())
-	e.log.ErrorContext(ctx, "workflow: telafi tamamlanamadı, elle müdahale gerekir",
+	e.log.ErrorContext(ctx, "workflow: compensation could not be completed, a human is needed",
 		attrWorkflow, sc.Workflow, attrExecutionID, exec.ID, attrError, final)
 
 	return nil, final
 }
 
-// compensate telafi zincirini TERS SIRADA çağırır.
+// compensate calls the compensation chain in REVERSE ORDER.
 //
-// Her adım KENDİ süre bütçesini alır ve bu bütçe çağıranın bağlamının
-// iptalinden ETKİLENMEZ (context.WithoutCancel): telafinin iptal edilmiş bir
-// bağlamla çalışması imkânsızdır, oysa iptal telafinin en çok gerektiği
-// durumlardan biridir. Bütçenin adım başına olması bilinçlidir — zincirin
-// sonundaki yavaş bir telafi paylaşılan bir bütçeyi tüketseydi, geriye kalan
-// ve tipik olarak en ağır kaynağı tutan (ödeme çekimi gibi) EN ERKEN adımlar
-// ölü bir bağlamla çağrılır, bağlama saygılı her Compensate anında düşerdi.
-// Bir Compensate patlarsa zincir DURMAZ; hata biriktirilir ve kalan adımlar
-// yine denenir. Dönüş, biriken hataların errors.Join'idir.
+// Every step gets ITS OWN time budget and that budget is NOT AFFECTED by the
+// caller's context being canceled (context.WithoutCancel): a compensation cannot
+// run with a canceled context, yet cancellation is one of the cases where
+// compensation is needed most. The budget being per step is deliberate — were a
+// slow compensation at the end of the chain to consume a shared budget, the
+// remaining and typically heaviest-resource-holding (a payment capture, say)
+// EARLIEST steps would be called with a dead context and every context-respecting
+// Compensate would fail instantly. If a Compensate blows up the chain DOES NOT
+// STOP; the error is collected and the remaining steps are still attempted. The
+// return value is the errors.Join of the collected errors.
 //
-// Telafi kaydı, adımın Invoke kaydının ÜZERİNE yazılır (Store.AppendStep aynı
-// Index'i günceller) ve Output, Attempts ile StartedAt KORUNUR: elle müdahale
-// gerektiren tek durum olan compensation_failed'de operatörün ihtiyacı olan
-// tek veri, adımın hangi rezervasyonu/ödemeyi ürettiğidir.
+// The compensation record is written OVER the step's Invoke record
+// (Store.AppendStep updates the same Index) and the Output, Attempts and
+// StartedAt are PRESERVED: in compensation_failed — the one state that needs a
+// human — the only data the operator needs is which reservation or payment the
+// step produced.
 func (e *executor) compensate(ctx context.Context, sc *StepContext, execID string, done []doneStep, o *runOptions) error {
 	if len(done) == 0 {
 		return nil
@@ -1065,20 +1119,21 @@ func (e *executor) compensate(ctx context.Context, sc *StepContext, execID strin
 		ended := time.Now().UTC()
 		cancel()
 
-		// Invoke'un kaydı taşınır; yalnızca durum, hata ve bitiş anı değişir.
+		// The Invoke record is carried over; only the status, the failure and the
+		// end instant change.
 		rec := d.rec
 		rec.Status = StepCompensated
 		rec.EndedAt = ended
 
 		if err != nil {
 			wrapped := errors.Wrap(err, errors.KindOf(err), CodeCompensationFailed,
-				"%q adımının (%d) telafisi başarısız oldu", rec.Name, rec.Index)
+				"the compensation of the %q step (%d) failed", rec.Name, rec.Index)
 			failures = append(failures, wrapped)
 
 			rec.Status = StepCompensationFailed
 			rec.Failure = joinFailure(rec.Failure, wrapped.Error())
 
-			e.log.ErrorContext(ctx, "workflow: telafi başarısız, zincire devam ediliyor",
+			e.log.ErrorContext(ctx, "workflow: a compensation failed, the chain is continuing",
 				attrWorkflow, sc.Workflow, attrExecutionID, execID,
 				attrStep, rec.Name, attrStepIndex, rec.Index, attrAttempt, attempts,
 				"best_effort", d.bestEffort, attrError, err)
@@ -1090,11 +1145,11 @@ func (e *executor) compensate(ctx context.Context, sc *StepContext, execID strin
 	return errors.Join(failures...)
 }
 
-// joinFailure iki hata metnini kayıt için birleştirir.
+// joinFailure joins two error texts for the record.
 //
-// En iyi çaba telafi edilen bir adımın kaydında Invoke'un hatası zaten
-// yazılıdır; telafi de patlarsa ikisi de gerekir — biri neyin denendiğini,
-// diğeri neyin asılı kaldığını söyler.
+// In the record of a step compensated on a best-effort basis the Invoke error is
+// already written; if the compensation blows up too both are needed — one says
+// what was attempted, the other says what was left hanging.
 func joinFailure(existing, added string) string {
 	if existing == "" {
 		return added
@@ -1102,9 +1157,10 @@ func joinFailure(existing, added string) string {
 	return existing + "; " + added
 }
 
-// invokeStep bir adımın Invoke'unu politika kadar yeniden dener.
+// invokeStep retries a step's Invoke as far as the policy allows.
 //
-// Dönüşteki sayı yapılan toplam deneme sayısıdır (en az 1).
+// The number in the return value is the total count of attempts made (at least
+// 1).
 func (e *executor) invokeStep(ctx context.Context, s Step, sc *StepContext, o *runOptions) (output any, attempts int, err error) {
 	p := o.retry
 	for attempt := 1; ; attempt++ {
@@ -1118,18 +1174,19 @@ func (e *executor) invokeStep(ctx context.Context, s Step, sc *StepContext, o *r
 			return nil, attempt, serr
 		}
 
-		e.log.WarnContext(ctx, "workflow: adım başarısız, yeniden denenecek",
+		e.log.WarnContext(ctx, "workflow: a step failed, it will be retried",
 			attrWorkflow, sc.Workflow, attrExecutionID, sc.ExecutionID,
 			attrStep, sc.StepName, attrStepIndex, sc.StepIndex, attrAttempt, attempt, attrError, serr)
 
 		if werr := wait(ctx, p.backoffFor(attempt)); werr != nil {
-			// Bekleme sırasında bağlam öldü; yeni deneme başlatmanın anlamı yok.
+			// The context died during the wait; starting a new attempt is
+			// pointless.
 			return nil, attempt, serr
 		}
 	}
 }
 
-// compensateStep bir adımın Compensate'ini politika kadar yeniden dener.
+// compensateStep retries a step's Compensate as far as the policy allows.
 func (e *executor) compensateStep(ctx context.Context, s Step, sc *StepContext, o *runOptions) (attempts int, err error) {
 	p := o.compensationRetry
 	for attempt := 1; ; attempt++ {
@@ -1143,7 +1200,7 @@ func (e *executor) compensateStep(ctx context.Context, s Step, sc *StepContext, 
 			return attempt, cerr
 		}
 
-		e.log.WarnContext(ctx, "workflow: telafi başarısız, yeniden denenecek",
+		e.log.WarnContext(ctx, "workflow: a compensation failed, it will be retried",
 			attrWorkflow, sc.Workflow, attrExecutionID, sc.ExecutionID,
 			attrStep, sc.StepName, attrStepIndex, sc.StepIndex, attrAttempt, attempt, attrError, cerr)
 
@@ -1153,7 +1210,7 @@ func (e *executor) compensateStep(ctx context.Context, s Step, sc *StepContext, 
 	}
 }
 
-// safeInvoke adımın Invoke'unu panik yakalayarak çağırır.
+// safeInvoke calls the step's Invoke while catching panics.
 func (e *executor) safeInvoke(ctx context.Context, s Step, sc *StepContext) (out any, err error) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -1165,7 +1222,7 @@ func (e *executor) safeInvoke(ctx context.Context, s Step, sc *StepContext) (out
 	return s.Invoke(ctx, sc)
 }
 
-// safeCompensate adımın Compensate'ini panik yakalayarak çağırır.
+// safeCompensate calls the step's Compensate while catching panics.
 func (e *executor) safeCompensate(ctx context.Context, s Step, sc *StepContext) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -1176,12 +1233,13 @@ func (e *executor) safeCompensate(ctx context.Context, s Step, sc *StepContext) 
 	return s.Compensate(ctx, sc)
 }
 
-// recovered yakalanan paniği loglayıp tipli hataya çevirir.
+// recovered logs the caught panic and turns it into a typed error.
 //
-// Yığın izi hataya DEĞİL loga yazılır: hata metni HTTP katmanında istemciye
-// dönebilir ve yığın izi dosya yolları ile iç yapıyı sızdırır (plan Bölüm 8).
+// The stack trace is written to the log and NOT to the error: the error text can
+// go back to the client at the HTTP layer, and a stack trace leaks file paths and
+// internal structure (plan Section 8).
 func (e *executor) recovered(ctx context.Context, sc *StepContext, phase string, r any) error {
-	e.log.ErrorContext(ctx, "workflow: adım panikledi",
+	e.log.ErrorContext(ctx, "workflow: a step panicked",
 		attrWorkflow, sc.Workflow, attrExecutionID, sc.ExecutionID,
 		attrStep, sc.StepName, attrStepIndex, sc.StepIndex, "phase", phase,
 		"panic", r, "stack", string(debug.Stack()))
@@ -1189,17 +1247,17 @@ func (e *executor) recovered(ctx context.Context, sc *StepContext, phase string,
 	return panicError(sc.StepName, phase, r)
 }
 
-// panicError panik değerini ErrPanic'i saran tipli hataya çevirir.
+// panicError turns the panic value into a typed error wrapping ErrPanic.
 func panicError(step, phase string, r any) error {
 	if err, ok := r.(error); ok {
 		return errors.Wrap(errors.Join(ErrPanic, err), errors.KindInternal, CodeStepPanicked,
-			"%q adımının %s'u panikledi", step, phase)
+			"the %s of the %q step panicked", phase, step)
 	}
 	return errors.Wrap(ErrPanic, errors.KindInternal, CodeStepPanicked,
-		"%q adımının %s'u panikledi: %v", step, phase, r)
+		"the %s of the %q step panicked: %v", phase, step, r)
 }
 
-// wait verilen süre kadar bekler; bağlam ölürse erken döner.
+// wait waits for the given duration; if the context dies it returns early.
 func wait(ctx context.Context, d time.Duration) error {
 	if d <= 0 {
 		return ctx.Err()
@@ -1216,42 +1274,45 @@ func wait(ctx context.Context, d time.Duration) error {
 	}
 }
 
-// encode bir değeri JSON'a çevirir; çevrilemezse (nil, açıklama) döner.
+// encode turns a value into JSON; if it cannot be turned it returns (nil, note).
 //
-// Çevrilememek yürütmeyi DÜŞÜRMEZ: bu noktada adımın yan etkisi zaten
-// uygulanmıştır ve serileştirme ayrıntısı için geri alınamaz. Olay loglanır,
-// açıklama kayda yazılır. step boşsa çevrilen şey workflow çıktısıdır.
+// Failing to turn it DOES NOT DROP the execution: at this point the step's side
+// effect has already been applied and cannot be undone over a serialization
+// detail. The event is logged and the note is written into the record. If step is
+// empty, what is being turned is the workflow output.
 func (e *executor) encode(ctx context.Context, v any, execID, step string) (payload json.RawMessage, note string) {
 	payload, err := json.Marshal(v)
 	if err == nil {
 		return payload, ""
 	}
 
-	e.log.ErrorContext(ctx, "workflow: çıktı JSON'a çevrilemedi, kayıt çıktısız yazılıyor",
+	e.log.ErrorContext(ctx, "workflow: the output could not be turned into JSON, the record is being written without one",
 		attrExecutionID, execID, attrStep, step, attrError, err)
 
-	return nil, "çıktı JSON'a çevrilemedi: " + err.Error()
+	return nil, "the output could not be turned into JSON: " + err.Error()
 }
 
-// persistStep adım kaydını yazar; hata loglanır ve yürütme devam eder.
+// persistStep writes the step record; an error is logged and the execution goes
+// on.
 func (e *executor) persistStep(ctx context.Context, execID string, o *runOptions, rec StepRecord) {
 	sctx, cancel := o.storeContext(ctx)
 	defer cancel()
 
 	if err := e.store.AppendStep(sctx, execID, rec); err != nil {
-		e.log.ErrorContext(ctx, "workflow: adım kaydı yazılamadı, yürütme devam ediyor",
+		e.log.ErrorContext(ctx, "workflow: the step record could not be written, the execution is going on",
 			attrExecutionID, execID, attrStep, rec.Name, attrStepIndex, rec.Index,
 			"step_status", string(rec.Status), attrError, err)
 	}
 }
 
-// persistStatus yürütmenin uç durumunu yazar; hata loglanır ve sonuç değişmez.
+// persistStatus writes the execution's terminal state; an error is logged and
+// the outcome does not change.
 func (e *executor) persistStatus(ctx context.Context, execID string, o *runOptions, status Status, output json.RawMessage, failure string) {
 	sctx, cancel := o.storeContext(ctx)
 	defer cancel()
 
 	if err := e.store.UpdateStatus(sctx, execID, status, output, failure); err != nil {
-		e.log.ErrorContext(ctx, "workflow: yürütme durumu yazılamadı; kayıt Store'da running kalmış olabilir",
+		e.log.ErrorContext(ctx, "workflow: the execution status could not be written; the record may have stayed running in the Store",
 			attrExecutionID, execID, "status", string(status), attrError, err)
 	}
 }

@@ -1285,7 +1285,7 @@ func TestKurtarmaKaydiOlmayanEngelleyiciAdimdaDURUR(t *testing.T) {
 
 	require.Error(t, err)
 	assert.True(t, coreerrors.IsConflict(err), "hata: %v", err)
-	assert.Contains(t, err.Error(), "ELLE MÜDAHALE")
+	assert.Contains(t, err.Error(), "A HUMAN IS NEEDED")
 	assert.Empty(t, telafiler,
 		"tahsilat uçuşta olmuş olabilir; hiçbir telafi çalıştırılmamalı")
 
@@ -1322,7 +1322,7 @@ func TestKurtarmaTanimDegismisseYapilmaz(t *testing.T) {
 		workflow.WithIdempotencyKey(anahtar), workflow.WithLease(time.Minute))
 
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "ELLE MÜDAHALE")
+	assert.Contains(t, err.Error(), "A HUMAN IS NEEDED")
 	assert.Empty(t, telafiler, "adı tutmayan bir tanımla hiçbir telafi çalıştırılmamalı")
 }
 
@@ -1354,7 +1354,7 @@ func TestKurtarmaRestorePatlarsaYapilmaz(t *testing.T) {
 		workflow.WithIdempotencyKey(anahtar), workflow.WithLease(time.Minute))
 
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "ELLE MÜDAHALE")
+	assert.Contains(t, err.Error(), "A HUMAN IS NEEDED")
 	assert.Empty(t, telafiler, "durumu geri kurulamayan bir zincir telafi edilmemeli")
 }
 
@@ -1409,7 +1409,7 @@ func TestTerkEdilmisYurutmeIsYapmissaElleMudahaleIster(t *testing.T) {
 
 	require.Error(t, err)
 	assert.True(t, coreerrors.IsConflict(err), "hata: %v", err)
-	assert.Contains(t, err.Error(), "ELLE MÜDAHALE")
+	assert.Contains(t, err.Error(), "A HUMAN IS NEEDED")
 	assert.False(t, kosuldu, "yarım işin üstüne HİÇBİR adım çalıştırılmamalı")
 
 	kalici, err := depo.Get(ctx, exec.ID)

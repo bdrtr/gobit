@@ -617,7 +617,7 @@ func TestKirasiDolmusVeIsYapmamisYurutmeYenidenDenenebilir(t *testing.T) {
 	eski, err := store.Get(t.Context(), id)
 	require.NoError(t, err, "terk edilen kayıt SİLİNMEZ, denetim izidir")
 	assert.Equal(t, workflow.StatusFailed, eski.Status)
-	assert.Contains(t, eski.Failure, "kira")
+	assert.Contains(t, eski.Failure, "lease expired")
 }
 
 // İş YAPILMIŞ terk edilmiş yürütmenin sınavı burada değil, pgstore'un
@@ -652,7 +652,7 @@ func TestAdimlariOkunamayanTerkEdilmisYurutmeGuvenliTarafaDuser(t *testing.T) {
 		workflow.WithIdempotencyKey("sepet-terk-5"), workflow.WithLease(time.Minute))
 
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "hâlâ sürüyor",
+	assert.Contains(t, err.Error(), "is still going",
 		"adımlar okunamıyorsa terk edildiğine KARAR VERİLEMEZ")
 	assert.Empty(t, rec.snapshot(), "hiçbir adım çalıştırılmamalı")
 }
@@ -674,7 +674,7 @@ func TestKirasiDolmamisYurutmeHalaSuruyorDer(t *testing.T) {
 		workflow.WithIdempotencyKey("sepet-terk-3"), workflow.WithLease(time.Hour))
 
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "hâlâ sürüyor")
+	assert.Contains(t, err.Error(), "is still going")
 	assert.Empty(t, rec.snapshot())
 }
 
@@ -692,7 +692,7 @@ func TestKiraBildirilmezseDavranisDegismez(t *testing.T) {
 	_, err := eng.Run(t.Context(), wf, nil, workflow.WithIdempotencyKey("sepet-terk-4"))
 
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "hâlâ sürüyor")
+	assert.Contains(t, err.Error(), "is still going")
 }
 
 // TestIdempotencyDifferentKeyRunsAgain farklı anahtarın yeni yürütme açtığını doğrular.
@@ -1394,7 +1394,7 @@ func TestStepFailureKeepsUnderlyingCode(t *testing.T) {
 			"limit aşımını geçici bir arızadan ayıramaz")
 	assert.Equal(t, errors.KindConflict, errors.KindOf(err),
 		"sınıf da alt hatadan gelmeli: 409, tekrarın çözmediği sınıftır")
-	assert.Contains(t, err.Error(), "\"b\" adımı",
+	assert.Contains(t, err.Error(), "the \"b\" step",
 		"motorun kendi cümlesi (hangi workflow, hangi adım) KAYBOLMAMALI")
 
 	// Telafi zinciri kod değişikliğinden etkilenmez: a geri alınmış olmalı.

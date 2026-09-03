@@ -123,6 +123,31 @@ Sabitlenme `1.0.0` ile olur.
   bulur. Zamanlanmış süpürücü bilinçli olarak eklenmedi — kurtarma yan etkisi
   olan bir iş çalıştırır.
 
+- **Workflow motorunun KENDİSİ İngilizceye çevrildi**: `workflow.go` — paket
+  yorumu (saga sözleşmesi, telafi kuralı, idempotency anahtarı, kalıcılık
+  politikası), `Step`/`Recoverable`/`RecoveryBlocker` arayüzleri, `Executor` ve
+  motorun tüm iç yordamları. Defter 716 dosyadan 715'e indi; paketin ÜRETİM
+  kodunda Türkçe kalmadı, kalan beş dosyanın hepsi testtir.
+
+  İki TEST BAĞI kırıldı ve kırıldığı yerde düzeltildi — ikisi de mesaj METNİNE
+  bağlıydı, yani derleyici görmedi, ancak koşunca çıktı: `workflow_test.go`
+  motorun kendi cümlesinin kaybolmadığını `"b" adımı` diye arıyordu ve
+  `pgstore_integration_test.go` kurtarma reddini DÖRT yerde `ELLE MÜDAHALE`
+  diye arıyordu. Bu, çeviri turlarının tekrar eden bulgusu: mesaj metnine
+  bağlanmış iddialar, çeviriyi ancak koşarak fark ettiren tek bağ.
+
+  Çevirinin kendi tehlike sınıfı da vardı ve üç yerde denk gelindi: Türkçe
+  cümlenin öğe sırası İngilizcede DEĞİŞİYOR, dolayısıyla `%q ... %d ... %q`
+  operandları da yeniden sıralanmak zorunda ("%q workflow'unun %q adımı (%d)
+  başarısız oldu" → "the %q step (%d) of the %q workflow failed"). Aynı tipteki
+  iki operandı takas etmek derleyici için görünmezdir; `go vet` de aynı tipte
+  olduklarından susar. Üçü de çeviriyle birlikte elle sıralandı ve suite
+  koşuldu.
+
+  Davranış değişmedi: hata KODLARI (`workflow_step_failed`,
+  `workflow_recovery_failed`, …) ve durum sabitlerinin değerleri aynı — onlar
+  makine sözleşmesi. Değişen yalnızca insan okuyan metin.
+
 - **Workflow motorunun sözleşme dosyaları İngilizceye çevrildi**: `store.go`
   (Store arayüzü, durum sabitleri, kayıt tipleri), `options.go` (RunOption'lar
   ve yeniden deneme politikası), `memory.go` ve `parallel.go`. Defter 720
