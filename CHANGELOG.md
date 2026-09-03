@@ -12,6 +12,30 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Eklendi
 
+- **İKİNCİ bir hata raporlayıcı yazıldı ve ADR 0014'ün sınavı böylece koşuldu**
+  (`error-otlp`). ADR "sözleşmenin doğru ŞEKİLDE mi olduğunu yoksa yalnızca
+  Sentry'nin istediği şekil mi olduğunu ancak ikinci bir uygulama gösterir"
+  diyordu; ikinci uygulama, modeli Sentry'den en uzak olanı seçti.
+  OpenTelemetry log modelinde "issue" yok, gruplama anahtarı yok, tekilleştirme
+  yok: bir kayıt zaman, önem derecesi, gövde ve özniteliklerdir.
+
+  **`ErrorEvent` sınavdan geçti: hiçbir alan eklenmedi.** Sentry'de bir ALAN
+  olan parmak izi burada bir GELENEK oldu — hata kodu `exception.type`
+  özniteliğine gidiyor, ki bir toplayıcının hata görünümü onu gruplar. Yani
+  kod, tipe göre gruplayan bir toplayıcı için YETERLİ ve yığın izine gerek yok;
+  ADR'nin açık bıraktığı soru buydu.
+
+  Ortaya çıkan iki bulgu ADR'ye yazıldı ve ikisi de yeni birer tetik:
+  (1) iki raporlayıcının PAYLAŞTIĞI şey gövde değil YAŞAM DÖNGÜSÜ — sınırlı
+  kuyruk, tek gönderici, tekrar yok, kapanışta boşaltma; aynı doksan satır iki
+  kez elle yazıldı, üçüncüde çekirdeğe taşınmalı. (2) OTLP bir önem derecesi
+  SAYISI istiyor ve eklenti onu sabit dolduruyor; bu bugün dürüst, çünkü
+  raporlamanın tabanı ERROR. Taban oynarsa sabit yalan olur ve alan olayın
+  kendisine girmeli.
+
+  Eklenti yeni bağımlılık getirmiyor: OTLP/HTTP JSON gövdesi elle yazılıyor,
+  Sentry zarfı için verilen kararın aynısı.
+
 - **`gobit recover <execution-id> -confirm <execution-id>`: yarım kalmış bir
   saga artık ELLE telafi edilebiliyor.** v0.8.0 kesintiye uğrayan ödemeyi
   GÖRÜNÜR (`gobit stuck`) ve GERİ ALINABİLİR (kayıtlardan telafi) yapmıştı, ama

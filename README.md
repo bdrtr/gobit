@@ -849,19 +849,36 @@ modül de yaşam döngüsünden geçebilsin), `Start` modüllerden **sonra**
 (sağlayıcı kaydı ancak payment modülü ayağa kalkınca vardır). Bilinmeyen bir
 eklenti adı ya da eksik ayar açılışta hata verir.
 
-Üç eklenti üç farklı uzatma biçimini gösterir:
+Eklentiler üç farklı uzatma biçimini gösterir:
 
 | Eklenti | Ne yapar | Hangi uzatma noktaları |
 |---|---|---|
 | `payment-stripe` | **iskelet** — kayıt ve yaşam döngüsü tam çalışır, Stripe API çağrıları yapılmamıştır ve para hareketi üreten her metod açık bir "uygulanmadı" hatası döner | bir MODÜLÜN sağlayıcı kaydı |
 | `search-pg` | **gerçek özellik** — ürün olaylarını dinler, PostgreSQL tam metin indeksini taze tutar, `GET /store/v1/search` ve `POST /admin/v1/search/reindex` uçlarını açar | kendi modülü + migration'ı, olay aboneliği, kendi route'ları |
 | `error-sentry` | **gerçek özellik** — sunucu arızalarını Sentry'ye (ya da Sentry uyumlu bir toplayıcıya) bildirir | ÇEKİRDEĞİN sahip olduğu bir yuva; hiçbir modüle ihtiyaç duymaz |
+| `error-otlp` | **gerçek özellik** — aynı arızaları bir OpenTelemetry toplayıcısına LOG KAYDI olarak bildirir | aynı yuva, İKİNCİ uygulama |
 
-### Hata bildirimi (`error-sentry`)
+### Hata bildirimi (`error-sentry`, `error-otlp`)
 
 ```bash
 PLUGINS=error-sentry SENTRY_DSN=https://abc123@sentry.example.com/42 make run
+
+# ya da aynı yuvanın ikinci uygulaması:
+PLUGINS=error-otlp OTLP_LOGS_ENDPOINT=http://localhost:4318/v1/logs make run
 ```
+
+İkisi **AYNI yuvayı** doldurur (çekirdek tek raporlayıcı tutar), yani biri
+seçilir. İkinci uygulamanın var olma sebebi bir denemedir:
+[ADR 0014](docs/adr/0014-error-reporting.md) "sözleşmenin doğru şekilde olup
+olmadığını ancak ikinci bir uygulama gösterir" diyordu ve `error-otlp`, modeli
+Sentry'den en uzak olanı seçerek onu sınadı — OpenTelemetry log modelinde
+"issue" yoktur, gruplama anahtarı yoktur, her şey özniteliktir.
+
+Sonuç ADR'de yazılı; iki cümlesi buraya da düşer: `ErrorEvent`'e hiçbir alan
+EKLENMEDİ, ve Sentry'de bir ALAN olan parmak izi burada bir GELENEK oldu — hata
+kodu `exception.type` özniteliğine gidiyor ve gobit'i hiç tanımayan bir toplayıcı
+arızaları yine doğru grupluyor. **Kod, tipe göre gruplayan bir toplayıcı için
+yeterli; yığın izine gerek yok.**
 
 Bildirimin beslemesi **log**tur: `corehttp.WriteError` her sunucu hatası için,
 `Recoverer` her panik için zaten bir ERROR satırı yazıyor, dolayısıyla log
@@ -1512,10 +1529,10 @@ açıktır.
   `Store`'u GÖMEN bir sarmalayıcının yeteneği sessizce gizlemesidir — gömülü
   arayüz yalnızca kendi metotlarını taşır. Karar
   [ADR 0017](docs/adr/0017-recovering-abandoned-sagas-from-the-record.md)'de.
-- **Hata bildirimi bir İŞARETTİR, olayın kopyası değil.** `error-sentry`
-  eklentisi ([ADR 0014](docs/adr/0014-error-reporting.md)) toplayıcıya arıza
-  kodunu, güvenli mesajı ve `request_id`'yi gönderir; geri kalan her şey logda
-  kalır. Bu bilinçlidir — raporlayıcı hatanın kendisini hiç görmez, dolayısıyla
+- **Hata bildirimi bir İŞARETTİR, olayın kopyası değil.** `error-sentry` ve
+  `error-otlp` eklentileri ([ADR 0014](docs/adr/0014-error-reporting.md))
+  toplayıcıya arıza kodunu, güvenli mesajı ve `request_id`'yi gönderir; geri
+  kalan her şey logda kalır. Bu bilinçlidir — raporlayıcı hatanın kendisini hiç görmez, dolayısıyla
   sızdıramaz — ama sonucu şudur: bir raporu okuyan kişinin loga da erişimi
   olmalıdır.
 

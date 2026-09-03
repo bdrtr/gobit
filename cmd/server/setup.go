@@ -43,6 +43,7 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/product/graph"
 	cartwf "github.com/bdrtr/gobit/internal/workflows/cart"
 	checkoutwf "github.com/bdrtr/gobit/internal/workflows/checkout"
+	"github.com/bdrtr/gobit/plugins/errorotlp"
 	"github.com/bdrtr/gobit/plugins/errorsentry"
 	"github.com/bdrtr/gobit/plugins/paymentstripe"
 	"github.com/bdrtr/gobit/plugins/searchpg"
@@ -96,13 +97,19 @@ const temporarySecretBytes = 32
 // 9 DoD). Which ones are installed is chosen by the PLUGINS environment
 // variable.
 //
-// The three plugins show three different ways of extending. paymentstripe
-// registers a PROVIDER into a module's registry (the payment module's extension
-// point); searchpg brings ITS OWN MODULE — with its own table, its own migration
-// and its own routes — and opens a new endpoint (GET /store/v1/search) without
-// being named anywhere except the line below; errorsentry fills a slot the CORE
-// owns, so it needs no module to exist at all.
+// The catalog shows three different ways of extending. paymentstripe registers
+// a PROVIDER into a module's registry (the payment module's extension point);
+// searchpg brings ITS OWN MODULE — with its own table, its own migration and its
+// own routes — and opens a new endpoint (GET /store/v1/search) without being
+// named anywhere except the line below; errorsentry and errorotlp fill a slot
+// the CORE owns, so they need no module to exist at all.
+//
+// The two reporters are the SAME slot filled twice, and that is deliberate:
+// ADR 0014 said its shape could only be tested by a second implementation with
+// a different model. Installing both is not supported — the core holds one
+// reporter — and choosing between them is what the PLUGINS variable is for.
 var pluginCatalog = map[string]func() coreplugin.Plugin{
+	errorotlp.Name:     func() coreplugin.Plugin { return errorotlp.New() },
 	errorsentry.Name:   func() coreplugin.Plugin { return errorsentry.New() },
 	paymentstripe.Name: func() coreplugin.Plugin { return paymentstripe.New() },
 	searchpg.Name:      func() coreplugin.Plugin { return searchpg.New() },

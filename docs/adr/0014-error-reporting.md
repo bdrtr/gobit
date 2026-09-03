@@ -43,7 +43,8 @@ is about to start talking to a service in somebody else's datacenter.
 `provider.ErrorReporter` sits beside the four commerce provider contracts, for
 the same reason they are there: the concrete reporter is in a plugin, a plugin
 may import no module (Principle 2.4), and the code that PRODUCES failures is the
-core itself. `plugins/errorsentry` is the first implementation.
+core itself. `plugins/errorsentry` is the first implementation and `plugins/errorotlp` the
+second; the core holds ONE reporter, so an installation picks between them.
 
 It does NOT embed `provider.Provider`. The other four providers are SELECTED per
 transaction — a payment goes to the provider the order names — while a reporter
@@ -180,6 +181,59 @@ outage.
 - **Ordering across processes.** Reports are sent in the order one process
   produced them; a collector merging several instances sees whatever arrives.
 
+## What the second reporter showed
+
+This ADR named the one thing that could test it: "reopen when a second reporter
+is written." `plugins/errorotlp` is that second implementation, and it was
+chosen for the model furthest from the first. Sentry has ISSUES — a report
+carries a fingerprint and the collector groups by it. The OpenTelemetry log
+model has no issue, no grouping key and no deduplication: a record is a
+timestamp, a severity, a body and attributes, and everything else has to survive
+as an attribute or not at all.
+
+**`ErrorEvent` survived it.** Every field found a home and nothing had to be
+added to the contract. That is the first real evidence the shape is not merely
+the shape Sentry wanted.
+
+**The fingerprint turned out to be a CONVENTION, not a field.** Sentry gets a
+`fingerprint` list; OTLP offers nothing of the kind, so the only thing a
+collector's error view can group by is the semantic attribute
+`exception.type`. gobit's `Code` goes there — the same value decision 3 calls
+the fingerprint — and a collector that knows nothing about gobit then groups its
+failures correctly. **A code is enough for a collector that groups by exception
+type, and no stack is needed to get there.** That was the open question, and the
+answer holds decision 3 up.
+
+**The missing stack costs nothing in the second model either.** An ordinary
+error carries no `exception.stacktrace` and OTLP has no complaint about it; the
+attribute is simply absent, exactly as it is for a report Sentry receives. The
+one case that has a stack — a panic — is the one case that sends it.
+
+**Two attribute namespaces turned out to be Sentry's judgement, not the
+event's.** Sentry splits `tags` (indexed, low cardinality) from `extra` (not
+indexed), and the first reporter chooses which of gobit's fields go where. OTLP
+has ONE attribute space and no such choice to make. The event handing over a
+flat map of strings is therefore at the right level: each reporter decides
+indexing, and neither decision leaked into the core.
+
+**What the second model wanted and did not get: a severity NUMBER.** OTLP's
+record has `severityNumber`, and the plugin fills it with a constant, ERROR.
+That is honest today because reporting has a floor — only ERROR records are
+reported — so there is exactly one severity to send. It is also the shape of the
+next change: if the floor ever moves (reporting WARN, say), `ErrorEvent` would
+need to carry the level, and no reporter can infer it from the fields it has.
+
+**The duplication that appeared is the LIFECYCLE, not the payload.** The two
+reporters share about ninety lines that are not about Sentry or OTLP at all: a
+bounded queue that drops rather than blocking, one sender goroutine, no retries,
+a count of what a full queue refused riding the next report, and a `Close` that
+flushes. That is decisions 6, 7, 11 and 12 written out by hand, twice. It says
+the decisions are right — a second implementation reached for the same shape —
+and it says the core could carry them: a third reporter will write them a third
+time. Extracting a helper is NOT done here, because doing it while writing the
+second implementation would have made the second implementation prove itself
+against a helper built from the first one.
+
 ## Rejected options
 
 **A reporting call at every failure site.** Explicit, greppable, and wrong: it
@@ -214,10 +268,20 @@ request path and its outage inside ours.
 
 ## Reopening the decision
 
-Reopen when a second reporter is written. One implementation cannot show whether
-`ErrorEvent` is the right shape or merely the shape Sentry wanted; a second
-collector with a different model — one that groups by exception type, say —
-would be the first real test of decision 3.
+The original trigger has FIRED: `plugins/errorotlp` is the second reporter and
+what it showed is written above. The shape held; the two things it surfaced are
+the triggers that replace it.
+
+Reopen when a THIRD reporter is written, and this time to move the lifecycle
+into the core rather than to re-examine the event. Two hand-written copies of
+the same queue-drop-flush loop are a coincidence; three are a missing helper,
+and by then the shape it should have will have been demonstrated twice.
+
+Reopen when the reporting FLOOR moves. Everything reported today is an ERROR
+record, which is why `ErrorEvent` can leave severity implicit and why a reporter
+whose protocol wants a severity number can fill it with a constant. Reporting a
+second level would make that constant a lie, and the field belongs on the event
+rather than in each reporter's guess.
 
 Reopen decision 5 if a message is ever found carrying data it should not. The
 answer would not be to patch the message: it would be to stop sending free text
