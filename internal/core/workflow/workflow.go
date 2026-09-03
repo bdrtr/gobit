@@ -476,7 +476,10 @@ type executor struct {
 	log   *slog.Logger
 }
 
-var _ Executor = (*executor)(nil)
+var (
+	_ Executor  = (*executor)(nil)
+	_ Recoverer = (*executor)(nil)
+)
 
 // The log field names; the same keys are used in every record.
 const (
@@ -859,7 +862,7 @@ func (e *executor) recoverExecution(ctx context.Context, wf Workflow, exec *Exec
 		final := errors.Wrap(err, errors.KindConflict, CodeExecutionFailed,
 			"the execution of the %q workflow with the key %q (%s) was left unfinished with an "+
 				"expired lease and COULD NOT BE RECOVERED; A HUMAN IS NEEDED",
-			wf.Name, o.idempotencyKey, exec.ID)
+			wf.Name, exec.IdempotencyKey, exec.ID)
 		e.persistStatus(ctx, exec.ID, o, StatusCompensationFailed, nil, final.Error())
 		e.log.ErrorContext(ctx, "workflow: an abandoned execution could not be recovered; a human is needed",
 			attrWorkflow, wf.Name, attrExecutionID, exec.ID, attrError, err)
@@ -1044,6 +1047,126 @@ const (
 	// stands and the caller is told the execution is still going.
 	claimUndecided
 )
+
+// Recoverer is an OPTIONAL capability of the engine: running an abandoned
+// execution's compensation ON DEMAND, addressed by ID.
+//
+// The engine's own recovery path is ARRIVED AT, not triggered: it runs when a
+// caller comes back with the same idempotency key (see [WithLease]). That covers
+// the customer who retries, and nothing else. If nobody comes back — an
+// abandoned cart, a storefront that gave up — the record stays running and the
+// stock it reserved stays reserved, listed by "gobit stuck" and released by
+// nobody.
+//
+// This interface is that missing hand. It is deliberately NOT a sweeper: a
+// scheduled job that compensates on its own would decide, unwatched, to undo
+// work whose side effects are real. Here a HUMAN decides and names the
+// execution.
+//
+// The engine returned by [New] implements it; the capability is reached with a
+// type assertion, the same shape as [ClaimingStore] on stores and [Recoverable]
+// on steps.
+type Recoverer interface {
+	// Recover runs the compensation chain of the abandoned execution with this
+	// id and writes it into a terminal state.
+	//
+	// It NEVER calls Invoke: recovery undoes, it does not continue. The workflow
+	// definition is needed for its Compensate functions and its step names, and
+	// the state the compensations read is rebuilt from the steps' own persisted
+	// output ([Recoverable]).
+	Recover(ctx context.Context, wf Workflow, executionID string, opts ...RunOption) error
+}
+
+// Recover runs the compensation chain of the abandoned execution with this id.
+//
+// # What it REFUSES, and why every refusal is about money
+//
+//   - No lease was declared ([WithLease]). Without one, a saga that is STILL
+//     RUNNING cannot be told from an abandoned record, and compensating a live
+//     saga releases stock a paying customer is about to own.
+//   - The record is not [StatusRunning]. A terminal record has nothing left to
+//     undo; running the chain over it would call every Compensate a second time
+//     for no reason.
+//   - The lease has NOT expired. The saga may be in flight in another process.
+//   - The claim was lost. Another process is already recovering it
+//     ([ClaimingStore]).
+//   - The definition given does not carry the record's workflow name. A
+//     compensation chain built from another workflow would undo the wrong work.
+//
+// The boundary at an unrecorded [RecoveryBlocker] holds here too, and it is not
+// overridable: whether a capture went through cannot be answered from the
+// records, and an operator cannot answer it either without asking the payment
+// provider. The command's job is to say so, not to guess.
+//
+// A record whose lease expired while NO step held work is closed rather than
+// compensated: there is nothing to undo, and closing it releases the key.
+func (e *executor) Recover(ctx context.Context, wf Workflow, executionID string, opts ...RunOption) error {
+	if e.store == nil {
+		return errors.Invalid(CodeInvalidOption,
+			"the workflow engine was built without a Store; give it a durable Store, or use NewInMemory for an in-process one")
+	}
+
+	o, err := newRunOptions(opts)
+	if err != nil {
+		return err
+	}
+	if verr := wf.Validate(); verr != nil {
+		return verr
+	}
+	if o.lease <= 0 {
+		return errors.Invalid(CodeInvalidOption,
+			"recovering %q needs a declared lease (WithLease): without one a saga that is still running cannot be told from an abandoned record",
+			wf.Name)
+	}
+
+	sctx, cancel := o.storeContext(ctx)
+	exec, gerr := e.store.Get(sctx, executionID)
+	cancel()
+
+	switch {
+	case gerr != nil:
+		return errors.Wrap(gerr, errors.KindOf(gerr), CodeStoreFailed,
+			"the execution %q could not be read", executionID)
+	case exec == nil:
+		return errors.Internal(CodeStoreFailed,
+			"the Store returned a nil record with no error for the execution %q", executionID)
+	case exec.Workflow != wf.Name:
+		return errors.Invalid(CodeInvalidWorkflow,
+			"the execution %q belongs to the %q workflow, the definition given is %q",
+			executionID, exec.Workflow, wf.Name)
+	case exec.Status != StatusRunning:
+		return errors.Conflict(CodeExecutionFailed,
+			"the execution %q is in the %q state; only a running execution can be recovered",
+			executionID, exec.Status)
+	case time.Since(exec.UpdatedAt) <= o.lease:
+		return errors.Conflict(CodeExecutionRunning,
+			"the lease of the execution %q has not expired yet (last write %s); it may still be going",
+			executionID, exec.UpdatedAt.Format(time.RFC3339))
+	}
+
+	switch e.claimAbandoned(ctx, exec, o) {
+	case claimLost:
+		return errors.Conflict(CodeExecutionRunning,
+			"the execution %q is being recovered by another process right now", executionID)
+	case claimUndecided:
+		return errors.Unavailable(CodeStoreFailed,
+			"the execution %q could not be claimed for recovery; the Store did not answer", executionID)
+	case claimWon:
+	}
+
+	if !hasHeldWork(exec.Steps) {
+		e.persistStatus(ctx, exec.ID, o, StatusFailed, nil,
+			"the execution was closed on request: its lease had expired and no step was holding work")
+		e.log.WarnContext(ctx, "workflow: an abandoned execution was closed on request",
+			attrWorkflow, wf.Name, attrExecutionID, exec.ID)
+
+		return nil
+	}
+
+	_, rerr := e.recoverExecution(ctx, wf, exec, o)
+
+	return rerr
+}
 
 // hasHeldWork reports whether the step records hold work that was NOT UNDONE.
 //

@@ -982,6 +982,265 @@ func TestAnUndecidableRecordIsNOTClaimed(t *testing.T) {
 	assert.Empty(t, rec.snapshot())
 }
 
+// staleOnRead reports every running record as though its lease had expired.
+//
+// The state "has a step AND is stale" cannot be built through the store surface:
+// AppendStep refreshes the execution's updated_at, which is right for a saga
+// making progress. Production reaches the state by crashing; a unit test reaches
+// it by lying on the read. The claim is answered as won here because it has its
+// own tests (see TestMemoryStoreClaimAbandonedHasOneWinner) and a CAS against a
+// timestamp this wrapper invented would always lose.
+type staleOnRead struct {
+	workflow.Store
+
+	age time.Duration
+}
+
+func (s *staleOnRead) Get(ctx context.Context, execID string) (*workflow.Execution, error) {
+	exec, err := s.Store.Get(ctx, execID)
+	if exec != nil && exec.Status == workflow.StatusRunning {
+		exec.UpdatedAt = time.Now().UTC().Add(-s.age)
+	}
+
+	return exec, err
+}
+
+func (s *staleOnRead) ClaimAbandoned(context.Context, string, time.Time) (bool, error) {
+	return true, nil
+}
+
+// recoverStep is a step that can rebuild its state and records its calls.
+type recoverStep struct {
+	name          string
+	output        string
+	rec           *recorder
+	restoreFailed error
+}
+
+func (s *recoverStep) Name() string { return s.name }
+
+func (s *recoverStep) Invoke(_ context.Context, sc *workflow.StepContext) (any, error) {
+	s.rec.add("invoke:" + s.name)
+	sc.Shared[s.name] = s.output
+
+	return s.output, nil
+}
+
+func (s *recoverStep) Compensate(_ context.Context, sc *workflow.StepContext) error {
+	value, _ := sc.Shared[s.name].(string)
+	s.rec.add("compensate:" + s.name + ":" + value)
+
+	return nil
+}
+
+func (s *recoverStep) Restore(sc *workflow.StepContext, output json.RawMessage) error {
+	if s.restoreFailed != nil {
+		return s.restoreFailed
+	}
+
+	var value string
+	if err := json.Unmarshal(output, &value); err != nil {
+		return err
+	}
+	sc.Shared[s.name] = value
+
+	return nil
+}
+
+// recoverFixture opens an abandoned record that HELD work and returns the engine
+// built over a store that reports it as stale.
+func recoverFixture(t *testing.T, rec *recorder) (workflow.Recoverer, workflow.Store, string) {
+	t.Helper()
+
+	base := workflow.NewMemoryStore()
+	store := &staleOnRead{Store: base, age: time.Hour}
+	engine := workflow.New(store, testLogger())
+
+	recoverer, ok := engine.(workflow.Recoverer)
+	require.True(t, ok, "the engine MUST offer the recovery capability")
+
+	id := abandonedRecord(t, base, "cart-recover", time.Hour, workflow.StepRecord{
+		Index: 0, Name: "reserve", Status: workflow.StepInvoked, Attempts: 1,
+		Output: json.RawMessage(`"res_1"`),
+	})
+	_ = rec
+
+	return recoverer, store, id
+}
+
+// TestRecoverRunsTheChainOnDemand is the whole point of the capability: a saga
+// nobody comes back for.
+//
+// The engine's own recovery path is arrived at — it runs when a caller returns
+// with the same idempotency key. An abandoned cart has no such caller, so the
+// record stays running and the stock it reserved stays reserved. Here an
+// operator names the execution and the chain runs.
+//
+// Two claims are exercised and the second is the real one: the compensation RAN,
+// and it ran with the value rebuilt from the record ("res_1"). A compensation
+// running with an empty Shared would report success while releasing nothing.
+func TestRecoverRunsTheChainOnDemand(t *testing.T) {
+	rec := &recorder{}
+	recoverer, store, id := recoverFixture(t, rec)
+	wf := workflow.Workflow{Name: "idem", Steps: []workflow.Step{
+		&recoverStep{name: "reserve", output: "res_1", rec: rec},
+	}}
+
+	err := recoverer.Recover(t.Context(), wf, id, workflow.WithLease(time.Minute))
+
+	require.NoError(t, err)
+	assert.Equal(t, []string{"compensate:reserve:res_1"}, rec.snapshot(),
+		"the compensation has to run with the state rebuilt from the record")
+
+	stored, err := store.Get(t.Context(), id)
+	require.NoError(t, err)
+	assert.Equal(t, workflow.StatusFailed, stored.Status,
+		"a compensation that completed in full is exactly what failed means")
+	assert.Empty(t, stored.IdempotencyKey, "the key has to be released; the cart can be paid for again")
+}
+
+// TestRecoverNeedsADeclaredLease closes the refusal that costs the most.
+//
+// Without a lease a saga that is STILL RUNNING cannot be told from an abandoned
+// record, and compensating a live saga releases stock a paying customer is about
+// to own. The engine does not guess a lease on the operator's behalf.
+func TestRecoverNeedsADeclaredLease(t *testing.T) {
+	rec := &recorder{}
+	recoverer, _, id := recoverFixture(t, rec)
+	wf := workflow.Workflow{Name: "idem", Steps: []workflow.Step{
+		&recoverStep{name: "reserve", output: "res_1", rec: rec},
+	}}
+
+	err := recoverer.Recover(t.Context(), wf, id)
+
+	require.Error(t, err)
+	assert.True(t, errors.IsInvalid(err))
+	assert.Equal(t, workflow.CodeInvalidOption, errors.CodeOf(err))
+	assert.Empty(t, rec.snapshot(), "no compensation may run without a lease")
+}
+
+// TestRecoverRefusesALiveLease keeps an operator from compensating a saga that
+// is in flight in another process.
+func TestRecoverRefusesALiveLease(t *testing.T) {
+	rec := &recorder{}
+	base := workflow.NewMemoryStore()
+	engine := workflow.New(base, testLogger())
+	recoverer, ok := engine.(workflow.Recoverer)
+	require.True(t, ok)
+
+	id := abandonedRecord(t, base, "cart-live", time.Second, workflow.StepRecord{
+		Index: 0, Name: "reserve", Status: workflow.StepInvoked, Attempts: 1,
+		Output: json.RawMessage(`"res_1"`),
+	})
+	wf := workflow.Workflow{Name: "idem", Steps: []workflow.Step{
+		&recoverStep{name: "reserve", output: "res_1", rec: rec},
+	}}
+
+	err := recoverer.Recover(t.Context(), wf, id, workflow.WithLease(time.Hour))
+
+	require.Error(t, err)
+	assert.True(t, errors.IsConflict(err))
+	assert.Equal(t, workflow.CodeExecutionRunning, errors.CodeOf(err))
+	assert.Empty(t, rec.snapshot(), "a live saga must not be compensated")
+}
+
+// TestRecoverRefusesATerminalRecord verifies that a record that is already in a
+// terminal state is left alone: there is nothing to undo, and running the chain
+// over it would call every Compensate a second time for nothing.
+func TestRecoverRefusesATerminalRecord(t *testing.T) {
+	rec := &recorder{}
+	base := workflow.NewMemoryStore()
+	store := &staleOnRead{Store: base, age: time.Hour}
+	engine := workflow.New(store, testLogger())
+	recoverer, ok := engine.(workflow.Recoverer)
+	require.True(t, ok)
+
+	id := abandonedRecord(t, base, "cart-terminal", time.Hour)
+	require.NoError(t, base.UpdateStatus(t.Context(), id, workflow.StatusCompleted, nil, ""))
+
+	wf := workflow.Workflow{Name: "idem", Steps: []workflow.Step{
+		&recoverStep{name: "reserve", output: "res_1", rec: rec},
+	}}
+
+	err := recoverer.Recover(t.Context(), wf, id, workflow.WithLease(time.Minute))
+
+	require.Error(t, err)
+	assert.True(t, errors.IsConflict(err))
+	assert.Empty(t, rec.snapshot())
+}
+
+// TestRecoverRefusesAnotherWorkflowsDefinition verifies that the definition
+// given has to carry the record's workflow name.
+//
+// A compensation chain built from another workflow would undo the wrong work:
+// the step at index 0 of one saga is not the step at index 0 of another.
+func TestRecoverRefusesAnotherWorkflowsDefinition(t *testing.T) {
+	rec := &recorder{}
+	recoverer, _, id := recoverFixture(t, rec)
+	wf := workflow.Workflow{Name: "another", Steps: []workflow.Step{
+		&recoverStep{name: "reserve", output: "res_1", rec: rec},
+	}}
+
+	err := recoverer.Recover(t.Context(), wf, id, workflow.WithLease(time.Minute))
+
+	require.Error(t, err)
+	assert.True(t, errors.IsInvalid(err))
+	assert.Empty(t, rec.snapshot())
+}
+
+// TestRecoverClosesARecordThatHeldNothing verifies the other ending: the lease
+// expired but no step was holding work, so there is nothing to compensate and
+// the record is CLOSED — which releases the key.
+func TestRecoverClosesARecordThatHeldNothing(t *testing.T) {
+	rec := &recorder{}
+	base := workflow.NewMemoryStore()
+	store := &staleOnRead{Store: base, age: time.Hour}
+	engine := workflow.New(store, testLogger())
+	recoverer, ok := engine.(workflow.Recoverer)
+	require.True(t, ok)
+
+	id := abandonedRecord(t, base, "cart-empty", time.Hour)
+	wf := workflow.Workflow{Name: "idem", Steps: []workflow.Step{
+		&recoverStep{name: "reserve", output: "res_1", rec: rec},
+	}}
+
+	err := recoverer.Recover(t.Context(), wf, id, workflow.WithLease(time.Minute))
+
+	require.NoError(t, err)
+	assert.Empty(t, rec.snapshot(), "there is nothing to compensate")
+
+	stored, err := base.Get(t.Context(), id)
+	require.NoError(t, err)
+	assert.Equal(t, workflow.StatusFailed, stored.Status)
+	assert.Empty(t, stored.IdempotencyKey, "closing releases the key")
+}
+
+// TestRecoverRefusesWhenRestoreBlowsUp verifies that a chain whose state cannot
+// be rebuilt is not compensated: a compensation running on empty state reports
+// undoing work it never undid.
+func TestRecoverRefusesWhenRestoreBlowsUp(t *testing.T) {
+	rec := &recorder{}
+	recoverer, store, id := recoverFixture(t, rec)
+	wf := workflow.Workflow{Name: "idem", Steps: []workflow.Step{
+		&recoverStep{
+			name: "reserve", output: "res_1", rec: rec,
+			restoreFailed: errors.Internal("broken_output", "the output could not be decoded"),
+		},
+	}}
+
+	err := recoverer.Recover(t.Context(), wf, id, workflow.WithLease(time.Minute))
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "A HUMAN IS NEEDED")
+	assert.Empty(t, rec.snapshot())
+
+	stored, gerr := store.Get(t.Context(), id)
+	require.NoError(t, gerr)
+	assert.Equal(t, workflow.StatusCompensationFailed, stored.Status)
+	assert.Equal(t, "cart-recover", stored.IdempotencyKey,
+		"the key HAS TO BE HELD: half-finished work must not get a new attempt on top of it")
+}
+
 // TestIdempotencyDifferentKeyRunsAgain verifies that a different key opens a new
 // execution.
 func TestIdempotencyDifferentKeyRunsAgain(t *testing.T) {

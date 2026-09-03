@@ -1322,6 +1322,102 @@ func TestRecoveryRunsONCEWithConcurrentCallers(t *testing.T) {
 		"if the compensation is complete the key is released; the customer can pay for the cart again")
 }
 
+// TestRecoverOnDemandReleasesAStuckSaga proves the operator's hand against a
+// real database.
+//
+// The engine's own recovery path is arrived at: it runs when a caller comes back
+// with the same idempotency key. An abandoned cart has no such caller, so
+// without this entry point the record stays running forever, `gobit stuck` keeps
+// listing it and the stock it reserved is released by nobody.
+//
+// The claim is exercised here for real (claimAbandonedSQL against a live row),
+// which the unit tests cannot do: they have to invent a stale timestamp, and a
+// compare-and-set against an invented value could never win.
+func TestRecoverOnDemandReleasesAStuckSaga(t *testing.T) {
+	ctx := context.Background()
+	store := newStore()
+	engine := workflow.New(store, nil)
+
+	recoverer, ok := engine.(workflow.Recoverer)
+	require.True(t, ok, "the engine has to offer the recovery capability")
+
+	compensations := []string{}
+	var seen string
+	step := &recoverableStep{name: "reserve_stock", output: "res_1", compensations: &compensations, seen: &seen}
+	wf := workflow.Workflow{Name: "TestRecoverOnDemandReleasesAStuckSaga", Steps: []workflow.Step{step}}
+
+	const key = "stuck_nobody_returns"
+	const id = "wfx_STUCK_ONDEMAND"
+	buildAbandonedExecution(ctx, t, store, wf, key, id, []workflow.StepRecord{{
+		Name: "reserve_stock", Index: 0, Status: workflow.StepInvoked, Attempts: 1,
+		Output: []byte(`"res_1"`),
+	}})
+
+	err := recoverer.Recover(ctx, wf, id, workflow.WithLease(time.Minute))
+	require.NoError(t, err)
+
+	assert.Equal(t, []string{"reserve_stock"}, compensations,
+		"the compensation chain has to run on the operator's request")
+	assert.Equal(t, "res_1", seen,
+		"the compensation has to see the value rebuilt from the record's output")
+
+	stored, err := store.Get(ctx, id)
+	require.NoError(t, err)
+	assert.Equal(t, workflow.StatusFailed, stored.Status)
+	assert.Empty(t, stored.IdempotencyKey,
+		"the key has to be released; the customer can pay for the same cart again")
+
+	// A second request finds nothing to recover: the record is terminal now.
+	again := recoverer.Recover(ctx, wf, id, workflow.WithLease(time.Minute))
+	require.Error(t, again, "a terminal record must not be compensated a second time")
+	assert.True(t, coreerrors.IsConflict(again), "error: %v", again)
+	assert.Len(t, compensations, 1, "the chain must not run twice")
+}
+
+// TestRecoverOnDemandSTOPSAtABlockingStep verifies that the boundary the engine
+// draws for itself holds for the operator too, and that it is not overridable.
+//
+// Whether a capture went through cannot be answered from the records — the
+// engine writes a step's record after Invoke returns — and an operator cannot
+// answer it either without asking the payment provider. The command's job is to
+// say so, not to guess.
+func TestRecoverOnDemandSTOPSAtABlockingStep(t *testing.T) {
+	ctx := context.Background()
+	store := newStore()
+	engine := workflow.New(store, nil)
+	recoverer, ok := engine.(workflow.Recoverer)
+	require.True(t, ok)
+
+	compensations := []string{}
+	reserve := &recoverableStep{name: "reserve_stock", output: "res_1", compensations: &compensations}
+	capture := &blockingStep{recoverableStep: recoverableStep{
+		name: "capture", output: "pay_1", compensations: &compensations}}
+	wf := workflow.Workflow{
+		Name:  "TestRecoverOnDemandSTOPSAtABlockingStep",
+		Steps: []workflow.Step{reserve, capture},
+	}
+
+	const key = "stuck_blocking"
+	const id = "wfx_STUCK_BLOCKING"
+	// ONLY the first step has a record: the process MAY have died inside the
+	// capture.
+	buildAbandonedExecution(ctx, t, store, wf, key, id, []workflow.StepRecord{{
+		Name: "reserve_stock", Index: 0, Status: workflow.StepInvoked, Attempts: 1,
+		Output: []byte(`"res_1"`),
+	}})
+
+	err := recoverer.Recover(ctx, wf, id, workflow.WithLease(time.Minute))
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "A HUMAN IS NEEDED")
+	assert.Empty(t, compensations, "the capture may have been in flight; no compensation may run")
+
+	stored, gerr := store.Get(ctx, id)
+	require.NoError(t, gerr)
+	assert.Equal(t, workflow.StatusCompensationFailed, stored.Status)
+	assert.Equal(t, key, stored.IdempotencyKey, "the key has to be held")
+}
+
 // TestAbandonedExecutionIsCompensatedFromTheRecord proves the recovery itself.
 //
 // If the process died after doing work the reserved stock stands in the world
