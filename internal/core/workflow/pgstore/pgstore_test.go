@@ -15,44 +15,47 @@ import (
 	"github.com/bdrtr/gobit/internal/core/workflow/pgstore"
 )
 
-// nulKacisi JSON'da NUL karakterini yazan kaçış dizisidir: ters bölü + u0000.
-// Kaynağa kaçırılmış yazılır; kaçırılmasaydı derleyici onu gerçek NUL
-// karakterine çevirir ve sınanan durum kalmazdı.
-const nulKacisi = "\\u0000"
+// nulEscape is the escape sequence that writes a NUL character in JSON:
+// backslash + u0000. It is written escaped in the source; unescaped, the
+// compiler would turn it into a real NUL character and the case under test would
+// be gone.
+const nulEscape = "\\u0000"
 
-// gecerliYurutme testlerde kullanılan, doğrulamadan geçen bir yürütmedir.
-func gecerliYurutme() *workflow.Execution {
+// validExecution is an execution used in the tests that passes validation.
+func validExecution() *workflow.Execution {
 	return &workflow.Execution{
-		Workflow: "siparis_tamamla",
+		Workflow: "complete_order",
 		Status:   workflow.StatusRunning,
 		Input:    json.RawMessage(`{"cart_id":"cart_1"}`),
 	}
 }
 
-// gecerliAdim testlerde kullanılan, doğrulamadan geçen bir adım kaydıdır.
-func gecerliAdim() workflow.StepRecord {
+// validStep is a step record used in the tests that passes validation.
+func validStep() workflow.StepRecord {
 	return workflow.StepRecord{
-		Name:     "stok_rezerve",
+		Name:     "reserve_stock",
 		Index:    0,
 		Status:   workflow.StepInvoked,
 		Attempts: 1,
 	}
 }
 
-// TestNewSozlesmeyiKarsilar dönen değerin workflow.Store olduğunu doğrular.
-// Motor bu paketi import etmediği için uyum yalnızca burada denetlenebilir.
-func TestNewSozlesmeyiKarsilar(t *testing.T) {
+// TestNewSatisfiesTheContract verifies that the returned value is a
+// workflow.Store. Because the engine does not import this package, the fit can
+// only be checked here.
+func TestNewSatisfiesTheContract(t *testing.T) {
 	t.Parallel()
 
-	var donen any = pgstore.New(nil, nil)
+	var returned any = pgstore.New(nil, nil)
 
-	_, uyuyor := donen.(workflow.Store)
-	assert.True(t, uyuyor, "New'in döndürdüğü tip workflow.Store'u karşılamalı")
+	_, fits := returned.(workflow.Store)
+	assert.True(t, fits, "the type New returns has to satisfy workflow.Store")
 }
 
-// TestHavuzsuzDepoUnavailable havuz kurulmamışken her metodun tipli bir
-// Unavailable hatası döndüğünü doğrular; panik ya da nil işaretçi kazası olmaz.
-func TestHavuzsuzDepoUnavailable(t *testing.T) {
+// TestStoreWithoutAPoolIsUnavailable verifies that with no pool built every
+// method returns a typed Unavailable error; there is no panic and no nil pointer
+// accident.
+func TestStoreWithoutAPoolIsUnavailable(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
@@ -60,14 +63,14 @@ func TestHavuzsuzDepoUnavailable(t *testing.T) {
 
 	tests := map[string]func() error{
 		"Create": func() error {
-			return store.Create(ctx, gecerliYurutme())
+			return store.Create(ctx, validExecution())
 		},
 		"FindByIdempotencyKey": func() error {
-			_, err := store.FindByIdempotencyKey(ctx, "siparis_tamamla", "ord_1")
+			_, err := store.FindByIdempotencyKey(ctx, "complete_order", "ord_1")
 			return err
 		},
 		"AppendStep": func() error {
-			return store.AppendStep(ctx, "wfx_1", gecerliAdim())
+			return store.AppendStep(ctx, "wfx_1", validStep())
 		},
 		"UpdateStatus": func() error {
 			return store.UpdateStatus(ctx, "wfx_1", workflow.StatusCompleted, nil, "")
@@ -78,223 +81,225 @@ func TestHavuzsuzDepoUnavailable(t *testing.T) {
 		},
 	}
 
-	for ad, cagir := range tests {
-		t.Run(ad, func(t *testing.T) {
+	for name, call := range tests {
+		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 
-			err := cagir()
+			err := call()
 
 			require.Error(t, err)
 			assert.Equal(t, errors.KindUnavailable, errors.KindOf(err),
-				"havuz yokken Unavailable beklenir: %v", err)
+				"with no pool Unavailable is expected: %v", err)
 			assert.Equal(t, "workflow_store_unavailable", errors.CodeOf(err))
 		})
 	}
 }
 
-// TestGirdiDogrulamasi geçersiz girdinin veritabanına GİTMEDEN Invalid olarak
-// döndüğünü doğrular. Havuz nil olduğu için sorguya ulaşan bir çağrı
-// Unavailable dönerdi; Invalid görmek doğrulamanın önce çalıştığının kanıtıdır.
-func TestGirdiDogrulamasi(t *testing.T) {
+// TestInputValidation verifies that invalid input comes back as Invalid WITHOUT
+// GOING to the database. Because the pool is nil a call that reached the query
+// would return Unavailable; seeing Invalid is the proof that validation ran
+// first.
+func TestInputValidation(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
 	store := pgstore.New(nil, nil)
-	uzunAd := strings.Repeat("a", 200)
+	longName := strings.Repeat("a", 200)
 
 	tests := map[string]func() error{
-		"nil yürütme": func() error {
+		"nil execution": func() error {
 			return store.Create(ctx, nil)
 		},
-		"boş workflow adı": func() error {
-			exec := gecerliYurutme()
+		"empty workflow name": func() error {
+			exec := validExecution()
 			exec.Workflow = "   "
 			return store.Create(ctx, exec)
 		},
-		"aşırı uzun workflow adı": func() error {
-			exec := gecerliYurutme()
-			exec.Workflow = uzunAd
+		"overlong workflow name": func() error {
+			exec := validExecution()
+			exec.Workflow = longName
 			return store.Create(ctx, exec)
 		},
-		"aşırı uzun kimlik": func() error {
-			exec := gecerliYurutme()
+		"overlong id": func() error {
+			exec := validExecution()
 			exec.ID = strings.Repeat("x", 200)
 			return store.Create(ctx, exec)
 		},
-		"aşırı uzun idempotency anahtarı": func() error {
-			exec := gecerliYurutme()
+		"overlong idempotency key": func() error {
+			exec := validExecution()
 			exec.IdempotencyKey = strings.Repeat("k", 300)
 			return store.Create(ctx, exec)
 		},
-		"geçersiz girdi JSON'u": func() error {
-			exec := gecerliYurutme()
+		"invalid input JSON": func() error {
+			exec := validExecution()
 			exec.Input = json.RawMessage(`{bozuk`)
 			return store.Create(ctx, exec)
 		},
-		"geçersiz çıktı JSON'u": func() error {
-			exec := gecerliYurutme()
+		"invalid output JSON": func() error {
+			exec := validExecution()
 			exec.Output = json.RawMessage(`{bozuk`)
 			return store.Create(ctx, exec)
 		},
-		"yalnızca boşluktan oluşan idempotency anahtarı": func() error {
-			exec := gecerliYurutme()
+		"idempotency key made of whitespace only": func() error {
+			exec := validExecution()
 			exec.IdempotencyKey = "   "
 			return store.Create(ctx, exec)
 		},
-		"JSONB'nin çeviremediği girdi": func() error {
-			exec := gecerliYurutme()
-			exec.Input = json.RawMessage(`{"not":"a` + nulKacisi + `b"}`)
+		"input JSONB cannot convert": func() error {
+			exec := validExecution()
+			exec.Input = json.RawMessage(`{"not":"a` + nulEscape + `b"}`)
 			return store.Create(ctx, exec)
 		},
-		"NUL baytlı workflow adı": func() error {
-			exec := gecerliYurutme()
-			exec.Workflow = "siparis\x00tamamla"
+		"workflow name with a NUL byte": func() error {
+			exec := validExecution()
+			exec.Workflow = "complete\x00order"
 			return store.Create(ctx, exec)
 		},
-		"geçersiz UTF-8 taşıyan adım adı": func() error {
-			rec := gecerliAdim()
-			rec.Name = "stok\xff"
+		"step name carrying invalid UTF-8": func() error {
+			rec := validStep()
+			rec.Name = "stock\xff"
 			return store.AppendStep(ctx, "wfx_1", rec)
 		},
-		"boş anahtarla arama": func() error {
-			_, err := store.FindByIdempotencyKey(ctx, "siparis_tamamla", "  ")
+		"lookup with an empty key": func() error {
+			_, err := store.FindByIdempotencyKey(ctx, "complete_order", "  ")
 			return err
 		},
-		"boş workflow adıyla arama": func() error {
+		"lookup with an empty workflow name": func() error {
 			_, err := store.FindByIdempotencyKey(ctx, "", "ord_1")
 			return err
 		},
-		"boş kimlikle okuma": func() error {
+		"read with an empty id": func() error {
 			_, err := store.Get(ctx, "")
 			return err
 		},
-		"boş kimlikle adım yazma": func() error {
-			return store.AppendStep(ctx, "", gecerliAdim())
+		"step write with an empty id": func() error {
+			return store.AppendStep(ctx, "", validStep())
 		},
-		"adı boş adım": func() error {
-			rec := gecerliAdim()
+		"step with an empty name": func() error {
+			rec := validStep()
 			rec.Name = ""
 			return store.AppendStep(ctx, "wfx_1", rec)
 		},
-		"durumu boş adım": func() error {
-			rec := gecerliAdim()
+		"step with an empty status": func() error {
+			rec := validStep()
 			rec.Status = ""
 			return store.AppendStep(ctx, "wfx_1", rec)
 		},
-		"negatif adım sırası": func() error {
-			rec := gecerliAdim()
+		"negative step index": func() error {
+			rec := validStep()
 			rec.Index = -1
 			return store.AppendStep(ctx, "wfx_1", rec)
 		},
-		"negatif deneme sayısı": func() error {
-			rec := gecerliAdim()
+		"negative attempt count": func() error {
+			rec := validStep()
 			rec.Attempts = -3
 			return store.AppendStep(ctx, "wfx_1", rec)
 		},
-		"geçersiz adım çıktısı": func() error {
-			rec := gecerliAdim()
+		"invalid step output": func() error {
+			rec := validStep()
 			rec.Output = json.RawMessage(`[1,`)
 			return store.AppendStep(ctx, "wfx_1", rec)
 		},
-		"boş durumla güncelleme": func() error {
+		"update with an empty status": func() error {
 			return store.UpdateStatus(ctx, "wfx_1", "", nil, "")
 		},
-		"boş kimlikle güncelleme": func() error {
+		"update with an empty id": func() error {
 			return store.UpdateStatus(ctx, " ", workflow.StatusCompleted, nil, "")
 		},
-		"geçersiz çıktıyla güncelleme": func() error {
+		"update with an invalid output": func() error {
 			return store.UpdateStatus(ctx, "wfx_1", workflow.StatusCompleted, json.RawMessage(`}`), "")
 		},
 	}
 
-	for ad, cagir := range tests {
-		t.Run(ad, func(t *testing.T) {
+	for name, call := range tests {
+		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 
-			err := cagir()
+			err := call()
 
 			require.Error(t, err)
 			assert.Equal(t, errors.KindInvalid, errors.KindOf(err),
-				"doğrulama hatası Invalid olmalı: %v", err)
+				"a validation failure has to be Invalid: %v", err)
 			assert.Equal(t, "workflow_store_invalid", errors.CodeOf(err))
 		})
 	}
 }
 
-// TestGecerliGirdiDogrulamayiGecer sınır değerlerinin doğrulamayı GEÇTİĞİNİ
-// doğrular: sıfır sıra, sıfır deneme, boş anahtar, nil JSON ve sıfır zamanlar
-// geçerli girdilerdir; hata Unavailable'da (havuz yok) olmalıdır.
-func TestGecerliGirdiDogrulamayiGecer(t *testing.T) {
+// TestValidInputPassesValidation verifies that the boundary values DO PASS
+// validation: a zero index, zero attempts, an empty key, nil JSON and zero times
+// are valid inputs; the error has to come from Unavailable (no pool).
+func TestValidInputPassesValidation(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
 	store := pgstore.New(nil, nil)
 
 	tests := map[string]func() error{
-		"anahtarsız ve durumsuz yürütme": func() error {
-			return store.Create(ctx, &workflow.Execution{Workflow: "siparis_tamamla"})
+		"execution with no key and no status": func() error {
+			return store.Create(ctx, &workflow.Execution{Workflow: "complete_order"})
 		},
-		"nil JSON alanları": func() error {
+		"nil JSON fields": func() error {
 			return store.Create(ctx, &workflow.Execution{
-				Workflow: "siparis_tamamla",
+				Workflow: "complete_order",
 				Status:   workflow.StatusRunning,
 				Input:    nil,
 				Output:   nil,
 			})
 		},
-		"JSON null değeri": func() error {
+		"a JSON null value": func() error {
 			return store.Create(ctx, &workflow.Execution{
-				Workflow: "siparis_tamamla",
+				Workflow: "complete_order",
 				Input:    json.RawMessage(`null`),
 			})
 		},
-		"sıfır zamanlı adım": func() error {
-			rec := gecerliAdim()
+		"step with zero times": func() error {
+			rec := validStep()
 			rec.Attempts = 0
 			rec.StartedAt = time.Time{}
 			rec.EndedAt = time.Time{}
 			return store.AppendStep(ctx, "wfx_1", rec)
 		},
-		// Arıza açıklaması tanı metnidir: yazılamaz baytları REDDEDİLMEZ,
-		// temizlenir. Reddedilseydi yürütmenin uç durumu hiç yazılamaz, kayıt
-		// sonsuza dek "running" kalırdı.
-		"bozuk baytlar taşıyan arıza açıklaması": func() error {
-			exec := gecerliYurutme()
-			exec.Failure = "stok\x00 servisi \xff yanıt vermedi"
+		// A failure description is diagnostic text: unwritable bytes are NOT
+		// REFUSED, they are cleaned. Refusing them would mean the execution's
+		// terminal state could never be written and the record would stay
+		// "running" forever.
+		"failure description carrying broken bytes": func() error {
+			exec := validExecution()
+			exec.Failure = "the stock\x00 service \xff did not answer"
 			return store.Create(ctx, exec)
 		},
-		"bozuk baytlar taşıyan adım açıklaması": func() error {
-			rec := gecerliAdim()
-			rec.Failure = "stok\x00 servisi \xff yanıt vermedi"
+		"step description carrying broken bytes": func() error {
+			rec := validStep()
+			rec.Failure = "the stock\x00 service \xff did not answer"
 			return store.AppendStep(ctx, "wfx_1", rec)
 		},
-		"bozuk baytlar taşıyan uç durum açıklaması": func() error {
+		"terminal state description carrying broken bytes": func() error {
 			return store.UpdateStatus(ctx, "wfx_1", workflow.StatusFailed, nil,
-				"stok\x00 servisi \xff yanıt vermedi")
+				"the stock\x00 service \xff did not answer")
 		},
 	}
 
-	for ad, cagir := range tests {
-		t.Run(ad, func(t *testing.T) {
+	for name, call := range tests {
+		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 
-			err := cagir()
+			err := call()
 
 			require.Error(t, err)
 			assert.Equal(t, errors.KindUnavailable, errors.KindOf(err),
-				"geçerli girdi doğrulamayı geçmeli, hata yalnızca havuzdan gelmeli: %v", err)
+				"valid input has to pass validation, the error may only come from the pool: %v", err)
 		})
 	}
 }
 
-// TestMigrationsCagriBasinaAyniKok Migrations'ın her çağrıda aynı dosyaları
-// döndüğünü doğrular; çekirdek onu birden çok kez çağırabilir.
-func TestMigrationsCagriBasinaAyniKok(t *testing.T) {
+// TestMigrationsReturnTheSameRootPerCall verifies that Migrations returns the
+// same files on every call; the core may call it more than once.
+func TestMigrationsReturnTheSameRootPerCall(t *testing.T) {
 	t.Parallel()
 
-	ilk := pgstore.Migrations()
-	ikinci := pgstore.Migrations()
+	first := pgstore.Migrations()
+	second := pgstore.Migrations()
 
-	require.NotNil(t, ilk)
-	assert.Equal(t, ilk, ikinci)
+	require.NotNil(t, first)
+	assert.Equal(t, first, second)
 }
