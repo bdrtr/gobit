@@ -10,36 +10,6 @@ Sabitlenme `1.0.0` ile olur.
 
 ## [Yayımlanmamış]
 
-### Düzeltildi
-
-- **Ortasında kesilen bir ödeme sepeti SONSUZA DEK kilitliyordu.** Yürütme
-  kaydı "running" açılır ve uç duruma geçerek kapanır; süreç o geçişi yazamadan
-  ölürse (deploy, OOM, pod tahliyesi) kayıt sonsuza dek running kalır. Ölçüldü:
-  üç gün önce çökmüş bir yürütme hâlâ *"hâlâ sürüyor"* diyordu ve o sepet bir
-  daha ödenemiyordu.
-
-  Motor artık bir KİRA süresi kabul ediyor (`workflow.WithLease`): çağıran
-  akışının meşru olarak ne kadar sürebileceğini bildirir, ve o süreden uzun
-  süre running duran bir kayıt hiçbir sürecin tutamayacağı bir kayıttır.
-  Yaşlılık tek başına kanıt değildir, kira kanıttır — bu yüzden süre motorca
-  tahmin edilmez, çağıranca bildirilir.
-
-  Terk edilmiş bir kaydın ne yapılacağına ADIM KAYITLARINA bakılarak karar
-  verilir ve iki dal da testli:
-
-  - **Hiçbir adım iş yapmamışsa** telafi edilecek bir şey yoktur: kayıt
-    `failed` olur, anahtarını bırakır, müşteri sepetini ödeyebilir.
-  - **İş yapılmışsa** telafi hiç çalışmamıştır ve yarım iş ortadadır: kayıt
-    `compensation_failed` olur, anahtarını TUTAR, ERROR loglanır ve çağıran
-    "elle müdahale gerekir" der. Sessizce yeniden denemek, ayrılmış stoğun
-    ikinci kez ayrılması olurdu.
-  - **Adımlar okunamıyorsa** karar VERİLMEZ; kayıt olduğu gibi bırakılır. İki
-    yanlışın bedeli eşit değil: geç karar müşteriyi bekletir, erken karar
-    koşan bir saga'nın anahtarını bırakıp stoğu ikiye katlar.
-
-  `complete_cart` kirası 10 dakika: teorik üst sınır 2dk + 5×30sn = 4,5 dakika
-  ve marj bilinçli olarak iki katından fazla.
-
 ### Eklendi
 
 - **Bellek içi idempotency deposu SINIRSIZ büyüyordu; bayt bütçesi geldi**
@@ -160,71 +130,6 @@ Sabitlenme `1.0.0` ile olur.
   ödeme sağlayıcısı geçen bir zincir için makul bir tavan. Yanlış olan, bir
   kurulumun hangisini seçtiğini BİLMEMEK.
 
-### Düzeltildi
-
-- **Başarısız bir ödeme sepeti KALICI olarak bozuyordu.** Kartı reddedilen
-  müşteri — gerçek bir vitrinde her on ödemenin birinde olan şey — o sepeti bir
-  daha ödeyemiyordu. Ölçüldü:
-
-  ```
-  1) manual_outcome=decline  -> payment_authorization_declined   (saga telafi etti)
-  2) geçerli ödemeyle tekrar -> 409 workflow_execution_failed
-     "...daha önce başarısız oldu ve telafi edildi; yeniden denemek için
-      YENİ bir anahtar kullanın"
-  ```
-
-  Tavsiyenin HTTP yüzeyinde bir karşılığı da yoktu: anahtar sepet kimliğinden
-  TÜRETİLİYOR (`complete_cart:<sepet>`), yani müşterinin yeni anahtar
-  verebileceği bir alan yok. Sepet içindekilerle birlikte duruyor ama satın
-  alınamıyor; müşteri sepeti sıfırdan kurmak zorunda.
-
-  Kusur anlamdaydı: bu motorda `StatusFailed` "başarısız" değil, **"başarısız
-  ve telafi EKSİKSİZ tamamlandı"** demek — yani deneme dünyada iz bırakmadı.
-  Anahtar da bir izdir. Artık o duruma geçiş anahtarı BIRAKIYOR (kaydı silmeden;
-  başarısız deneme denetim kaydı olarak kalıyor) ve aynı sepet tekrar
-  ödenebiliyor.
-
-  Sınır iki yandan çizili ve testli: `completed` anahtarı bırakmaz (yoksa aynı
-  sepet iki kez tahsil edilirdi), `compensation_failed` de bırakmaz (yoksa elle
-  müdahale bekleyen yarım bir işin üstüne yeni deneme binerdi). Bırakma, durum
-  yazımıyla AYNI ifadede yapılıyor: iki ayrı yazım arasında düşen bir süreç
-  anahtarı sonsuza dek tutulu bırakır, yani düzeltilen arızayı nadir bir yarış
-  olarak geri getirirdi.
-
-### Güvenlik
-
-- **Vitrinde bir alışverişçi başkasının SEPETİNİ alabiliyordu.** Idempotency
-  kaydı çağıranın kimliğiyle ad alanına alınıyor; ama `/store/v1`'de çözülen
-  kimlik alışverişçinin değil MAĞAZANIN kimliği — publishable anahtar her
-  tarayıcıda aynı ve zaten gizli değil. Yani bütün müşteriler TEK kova
-  paylaşıyor ve kaydı seçen şey istemcinin seçtiği bir başlık.
-
-  Ölçüldü, çıkarsanmadı: iki bağımsız çağıran, `Idempotency-Key: cart-9`,
-  aynı gövde → **ikisi de aynı sepet kimliğini** aldı ve ikincinin yanıtında
-  `Idempotency-Replayed: true` vardı. Sepette sahiplik denetimi olmadığı için
-  (README, "Bilinen sınırlar") bu, yabancıya birinin sepetini vermek demek:
-  içindekiler, e-postası, adresi, ve tamamlama yetkisi.
-
-  Vitrin bunu çoğu uçta atlatıyordu, çünkü parmak izi YOLU da içeriyor ve
-  sepet kapsamlı uçların yolunda sepet kimliği var — aynı anahtarı kendi
-  sepetinde kullanan ikinci müşteri 409 alıyor. Sızıntı tam olarak yolunda
-  hiçbir yetenek TAŞIMAYAN ve yanıtında bir yetenek ÜRETEN tek uçtaydı:
-  `POST /store/v1/carts`.
-
-  O uç artık idempotency halkasından MUAF. Bedeli açık: zaman aşımına uğrayan
-  bir yaratma isteğini tekrarlayan istemci iki sepet açar, biri terk edilir.
-  Para, stok ve müşteriye görünen hiçbir şey etkilenmiyor. Muafiyet TAM YOL
-  eşleşmesiyle çalıştığı için `/carts/{id}/complete` korunmaya devam ediyor —
-  çift SİPARİŞ üreten uç odur.
-
-  Bu davranışı bir e2e testi TERSİNDEN çiviliyordu ("aynı anahtar tek sepet
-  üretir") ve iddiası kendi başına makuldü; yanlış olan, kaydın vitrinde
-  çağıranları ayırabildiği varsayımıydı. Test yeni sözleşmeyi ve kapattığı
-  sızıntıyı yazacak şekilde yeniden yazıldı. Ayrıca e2e kurulumu artık
-  üretimin muafiyet listesini KULLANIYOR: eskiden kendi listesini kurduğu için
-  üretimdeki satırı silmek hiçbir testi düşürmüyordu.
-
-### Eklendi
 
 - **PostgreSQL'in bir SEÇENEK değil TEMEL olduğu yazıya geçti**
   ([ADR 0015](docs/adr/0015-postgresql-cluster-contract.md)). gobit
@@ -250,48 +155,6 @@ Sabitlenme `1.0.0` ile olur.
   İkinci bir veritabanı desteklenmeyecek ve gerekçesi ideolojik değil:
   listenin ilk üç maddesi taşınabilir değil, üstelik ikinci lehçe deponun
   "her kural TEK yerde tanımlı" disiplinini her değişmez için bozar.
-
-### Düzeltildi
-
-- **ARAMA TÜRKÇE'DE SESSİZCE ÇALIŞMIYORDU.** `deploy/docker-compose.yml`
-  Postgres'i `--locale=C` ile kuruyordu ve C locale yalnızca ASCII harfleri
-  katlar. Sonuç: `"çanta"` arayan müşteri, başlığı `"Çanta"` olan ürünü
-  BULAMIYORDU. Hata yok, log yok, metrik yok — arama kutusu boş liste dönüyordu.
-
-  Bu bir eklenti sorunu DEĞİLDİ: vitrinin kendi süzgeci
-  (`title ILIKE '%' || $q || '%'`) de aynı ayara bağlı, yani hiçbir eklenti
-  kurulmamış bir kurulumda da bozuktu. Gerçek sunucuda ölçüldü:
-
-  ```
-  GET /store/v1/products?q=çanta   -> 0 sonuç
-  GET /store/v1/products?q=Çanta   -> 1 sonuç
-  ```
-
-  Düzeltme `--locale=C.UTF-8`. Aynı imajda üç kurulum ölçüldü:
-
-  | initdb | `ILIKE` | `to_tsvector` |
-  |---|---|---|
-  | `--locale=C` (eskisi) | ✗ | ✗ |
-  | `--locale=C.UTF-8` (yenisi) | ✓ | ✓ |
-  | `--locale-provider=icu` | ✓ | **✗** |
-
-  ICU'nun yarım kalması önemli: `ILIKE`'ı düzeltip arama indeksini bozuk
-  bırakıyor, yani düzeltilmiş gibi görünen bir kurulum üretiyor. C.UTF-8
-  sıralamayı da kaybettirmiyor — karşılaştırma yine bayt sırası, değişen
-  yalnızca harf katlaması.
-
-- **Açılışta artık bu sınanıyor** (`internal/core/db/casefold.go`). Havuz
-  açıldıktan sonra veritabanına iki soru sorulur — `'Ç' ILIKE 'ç'` ve
-  `to_tsvector`/`websearch_to_tsquery` eşleşmesi — ve biri bile başarısızsa
-  hangi arama yolunun etkilendiğini ve çözümün ne olduğunu söyleyen bir UYARI
-  loglanır. Açılış DURDURULMAZ: tamamen ASCII bir katalog C locale'de sorunsuz
-  çalışır ve o kurulumları reddetmek yanlış olurdu.
-
-  Locale ADI okunmuyor, DAVRANIŞ sınanıyor: ad bir vekildir ve beklenmedik ama
-  doğru bir locale yanlış raporlanırdı. İki yarı da sınanıyor, çünkü ICU
-  kurulumunda ayrışıyorlar — yalnızca `ILIKE`'a bakan bir kontrol o kuruluma
-  temiz rapor verirdi. Locale initdb ANINDA sabitlendiği için var olan bir veri
-  dizini eski ayarıyla kalır; uyarı bunu ve dump/restore gerektiğini söyler.
 
 ### Değiştirildi
 
@@ -445,6 +308,140 @@ Sabitlenme `1.0.0` ile olur.
   sınırlar"). Vitrin listesinin toplam sayacı kanal süzgeciyle birlikte
   katalogun tamamına bakmak zorundadır ve düzeltilebilir bir şey değildir:
   aynı katalogda süzgeçsiz düz sayım 2 ms, kanal süzgeçli sayım 79 ms sürüyor.
+
+### Düzeltildi
+
+- **Ortasında kesilen bir ödeme sepeti SONSUZA DEK kilitliyordu.** Yürütme
+  kaydı "running" açılır ve uç duruma geçerek kapanır; süreç o geçişi yazamadan
+  ölürse (deploy, OOM, pod tahliyesi) kayıt sonsuza dek running kalır. Ölçüldü:
+  üç gün önce çökmüş bir yürütme hâlâ *"hâlâ sürüyor"* diyordu ve o sepet bir
+  daha ödenemiyordu.
+
+  Motor artık bir KİRA süresi kabul ediyor (`workflow.WithLease`): çağıran
+  akışının meşru olarak ne kadar sürebileceğini bildirir, ve o süreden uzun
+  süre running duran bir kayıt hiçbir sürecin tutamayacağı bir kayıttır.
+  Yaşlılık tek başına kanıt değildir, kira kanıttır — bu yüzden süre motorca
+  tahmin edilmez, çağıranca bildirilir.
+
+  Terk edilmiş bir kaydın ne yapılacağına ADIM KAYITLARINA bakılarak karar
+  verilir ve iki dal da testli:
+
+  - **Hiçbir adım iş yapmamışsa** telafi edilecek bir şey yoktur: kayıt
+    `failed` olur, anahtarını bırakır, müşteri sepetini ödeyebilir.
+  - **İş yapılmışsa** telafi hiç çalışmamıştır ve yarım iş ortadadır: kayıt
+    `compensation_failed` olur, anahtarını TUTAR, ERROR loglanır ve çağıran
+    "elle müdahale gerekir" der. Sessizce yeniden denemek, ayrılmış stoğun
+    ikinci kez ayrılması olurdu.
+  - **Adımlar okunamıyorsa** karar VERİLMEZ; kayıt olduğu gibi bırakılır. İki
+    yanlışın bedeli eşit değil: geç karar müşteriyi bekletir, erken karar
+    koşan bir saga'nın anahtarını bırakıp stoğu ikiye katlar.
+
+  `complete_cart` kirası 10 dakika: teorik üst sınır 2dk + 5×30sn = 4,5 dakika
+  ve marj bilinçli olarak iki katından fazla.
+
+
+- **Başarısız bir ödeme sepeti KALICI olarak bozuyordu.** Kartı reddedilen
+  müşteri — gerçek bir vitrinde her on ödemenin birinde olan şey — o sepeti bir
+  daha ödeyemiyordu. Ölçüldü:
+
+  ```
+  1) manual_outcome=decline  -> payment_authorization_declined   (saga telafi etti)
+  2) geçerli ödemeyle tekrar -> 409 workflow_execution_failed
+     "...daha önce başarısız oldu ve telafi edildi; yeniden denemek için
+      YENİ bir anahtar kullanın"
+  ```
+
+  Tavsiyenin HTTP yüzeyinde bir karşılığı da yoktu: anahtar sepet kimliğinden
+  TÜRETİLİYOR (`complete_cart:<sepet>`), yani müşterinin yeni anahtar
+  verebileceği bir alan yok. Sepet içindekilerle birlikte duruyor ama satın
+  alınamıyor; müşteri sepeti sıfırdan kurmak zorunda.
+
+  Kusur anlamdaydı: bu motorda `StatusFailed` "başarısız" değil, **"başarısız
+  ve telafi EKSİKSİZ tamamlandı"** demek — yani deneme dünyada iz bırakmadı.
+  Anahtar da bir izdir. Artık o duruma geçiş anahtarı BIRAKIYOR (kaydı silmeden;
+  başarısız deneme denetim kaydı olarak kalıyor) ve aynı sepet tekrar
+  ödenebiliyor.
+
+  Sınır iki yandan çizili ve testli: `completed` anahtarı bırakmaz (yoksa aynı
+  sepet iki kez tahsil edilirdi), `compensation_failed` de bırakmaz (yoksa elle
+  müdahale bekleyen yarım bir işin üstüne yeni deneme binerdi). Bırakma, durum
+  yazımıyla AYNI ifadede yapılıyor: iki ayrı yazım arasında düşen bir süreç
+  anahtarı sonsuza dek tutulu bırakır, yani düzeltilen arızayı nadir bir yarış
+  olarak geri getirirdi.
+
+
+- **ARAMA TÜRKÇE'DE SESSİZCE ÇALIŞMIYORDU.** `deploy/docker-compose.yml`
+  Postgres'i `--locale=C` ile kuruyordu ve C locale yalnızca ASCII harfleri
+  katlar. Sonuç: `"çanta"` arayan müşteri, başlığı `"Çanta"` olan ürünü
+  BULAMIYORDU. Hata yok, log yok, metrik yok — arama kutusu boş liste dönüyordu.
+
+  Bu bir eklenti sorunu DEĞİLDİ: vitrinin kendi süzgeci
+  (`title ILIKE '%' || $q || '%'`) de aynı ayara bağlı, yani hiçbir eklenti
+  kurulmamış bir kurulumda da bozuktu. Gerçek sunucuda ölçüldü:
+
+  ```
+  GET /store/v1/products?q=çanta   -> 0 sonuç
+  GET /store/v1/products?q=Çanta   -> 1 sonuç
+  ```
+
+  Düzeltme `--locale=C.UTF-8`. Aynı imajda üç kurulum ölçüldü:
+
+  | initdb | `ILIKE` | `to_tsvector` |
+  |---|---|---|
+  | `--locale=C` (eskisi) | ✗ | ✗ |
+  | `--locale=C.UTF-8` (yenisi) | ✓ | ✓ |
+  | `--locale-provider=icu` | ✓ | **✗** |
+
+  ICU'nun yarım kalması önemli: `ILIKE`'ı düzeltip arama indeksini bozuk
+  bırakıyor, yani düzeltilmiş gibi görünen bir kurulum üretiyor. C.UTF-8
+  sıralamayı da kaybettirmiyor — karşılaştırma yine bayt sırası, değişen
+  yalnızca harf katlaması.
+
+- **Açılışta artık bu sınanıyor** (`internal/core/db/casefold.go`). Havuz
+  açıldıktan sonra veritabanına iki soru sorulur — `'Ç' ILIKE 'ç'` ve
+  `to_tsvector`/`websearch_to_tsquery` eşleşmesi — ve biri bile başarısızsa
+  hangi arama yolunun etkilendiğini ve çözümün ne olduğunu söyleyen bir UYARI
+  loglanır. Açılış DURDURULMAZ: tamamen ASCII bir katalog C locale'de sorunsuz
+  çalışır ve o kurulumları reddetmek yanlış olurdu.
+
+  Locale ADI okunmuyor, DAVRANIŞ sınanıyor: ad bir vekildir ve beklenmedik ama
+  doğru bir locale yanlış raporlanırdı. İki yarı da sınanıyor, çünkü ICU
+  kurulumunda ayrışıyorlar — yalnızca `ILIKE`'a bakan bir kontrol o kuruluma
+  temiz rapor verirdi. Locale initdb ANINDA sabitlendiği için var olan bir veri
+  dizini eski ayarıyla kalır; uyarı bunu ve dump/restore gerektiğini söyler.
+
+### Güvenlik
+
+- **Vitrinde bir alışverişçi başkasının SEPETİNİ alabiliyordu.** Idempotency
+  kaydı çağıranın kimliğiyle ad alanına alınıyor; ama `/store/v1`'de çözülen
+  kimlik alışverişçinin değil MAĞAZANIN kimliği — publishable anahtar her
+  tarayıcıda aynı ve zaten gizli değil. Yani bütün müşteriler TEK kova
+  paylaşıyor ve kaydı seçen şey istemcinin seçtiği bir başlık.
+
+  Ölçüldü, çıkarsanmadı: iki bağımsız çağıran, `Idempotency-Key: cart-9`,
+  aynı gövde → **ikisi de aynı sepet kimliğini** aldı ve ikincinin yanıtında
+  `Idempotency-Replayed: true` vardı. Sepette sahiplik denetimi olmadığı için
+  (README, "Bilinen sınırlar") bu, yabancıya birinin sepetini vermek demek:
+  içindekiler, e-postası, adresi, ve tamamlama yetkisi.
+
+  Vitrin bunu çoğu uçta atlatıyordu, çünkü parmak izi YOLU da içeriyor ve
+  sepet kapsamlı uçların yolunda sepet kimliği var — aynı anahtarı kendi
+  sepetinde kullanan ikinci müşteri 409 alıyor. Sızıntı tam olarak yolunda
+  hiçbir yetenek TAŞIMAYAN ve yanıtında bir yetenek ÜRETEN tek uçtaydı:
+  `POST /store/v1/carts`.
+
+  O uç artık idempotency halkasından MUAF. Bedeli açık: zaman aşımına uğrayan
+  bir yaratma isteğini tekrarlayan istemci iki sepet açar, biri terk edilir.
+  Para, stok ve müşteriye görünen hiçbir şey etkilenmiyor. Muafiyet TAM YOL
+  eşleşmesiyle çalıştığı için `/carts/{id}/complete` korunmaya devam ediyor —
+  çift SİPARİŞ üreten uç odur.
+
+  Bu davranışı bir e2e testi TERSİNDEN çiviliyordu ("aynı anahtar tek sepet
+  üretir") ve iddiası kendi başına makuldü; yanlış olan, kaydın vitrinde
+  çağıranları ayırabildiği varsayımıydı. Test yeni sözleşmeyi ve kapattığı
+  sızıntıyı yazacak şekilde yeniden yazıldı. Ayrıca e2e kurulumu artık
+  üretimin muafiyet listesini KULLANIYOR: eskiden kendi listesini kurduğu için
+  üretimdeki satırı silmek hiçbir testi düşürmüyordu.
 
 ## [0.6.0] — 2026-09-03
 
