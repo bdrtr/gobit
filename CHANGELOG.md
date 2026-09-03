@@ -10,6 +10,8 @@ Sabitlenme `1.0.0` ile olur.
 
 ## [Yayımlanmamış]
 
+## [0.6.0] — 2026-09-03
+
 ### Eklendi
 
 - **Hata bildirimi: çekirdekte sözleşme, eklentide Sentry**
@@ -1604,7 +1606,8 @@ yalnızca test koşarak görünmeyen üç arıza:
   yoktur; geri alma elle yapılır. İleri yön açılışta otomatiktir.
 - Yük testi süreç içidir; kapasite planı üretmez.
 
-[Yayımlanmamış]: https://github.com/bdrtr/gobit/compare/v0.5.0...HEAD
+[Yayımlanmamış]: https://github.com/bdrtr/gobit/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/bdrtr/gobit/releases/tag/v0.6.0
 [0.5.0]: https://github.com/bdrtr/gobit/releases/tag/v0.5.0
 [0.4.0]: https://github.com/bdrtr/gobit/releases/tag/v0.4.0
 [0.3.0]: https://github.com/bdrtr/gobit/releases/tag/v0.3.0

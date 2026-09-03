@@ -1316,13 +1316,26 @@ açıktır.
 
 **Kurulum ve işletim**
 
-- **Yönetim panelinin yazma yüzeyi TEK bir forma açıktır.** `/admin/ui`
-  altındaki panel ([ADR 0011](docs/adr/0011-yonetim-paneli-dorduncu-agac.md))
-  giriş, çıkış, katalog ekranları (ürün listesi, ürün sayfasında
-  varyant/fiyat/stok) ve **ürünün başlık/handle/durum düzenlemesini**
-  ([ADR 0013](docs/adr/0013-panel-write-surface.md)) taşır. Ürün yaratmak,
-  silmek, fiyat vermek, stok girmek ve varyant düzenlemek hâlâ `/admin/v1`
-  üzerinden, `Authorization: Bearer` ile yapılır.
+- **Yönetim paneli kataloğun DÜZENLENEBİLİR kısmını taşır, yaratılabilir
+  kısmını değil.** `/admin/ui` altındaki panel
+  ([ADR 0011](docs/adr/0011-yonetim-paneli-dorduncu-agac.md)) giriş, çıkış,
+  ürün listesi, ürün sayfası, varyant sayfası ve üç formu
+  ([ADR 0013](docs/adr/0013-panel-write-surface.md)) taşır: ürünün
+  başlık/handle/durumu, varyantın para birimi başına TABAN fiyatı ve lokasyon
+  başına FİZİKSEL stoğu.
+
+  Var olmayan bir şeyi yaratmak ve var olanı silmek hâlâ `/admin/v1` üzerinden,
+  `Authorization: Bearer` ile yapılır: ürün, varyant, fiyat kümesi, stok kalemi,
+  stok lokasyonu, bağlar. Kampanya fiyatları ve KURAL taşıyan fiyatlar da
+  panelde görünmez ve düzenlenemez — form yalnızca taban fiyatı bilir. Bu bir
+  gösterim tercihi değil: fiyat yazması kayıpsızdır ve görmediği fiyatları
+  DEĞİŞTİRMEDEN geri yazar, ama onları düzenletmez.
+
+  İki yazma sınırı daha var. Eşzamanlı düzenleme son yazana kalır: formda sürüm
+  alanı ve altında iyimser kilit yoktur. Ve bir fiyatı düzenlemek o kümedeki
+  TÜM fiyat kimliklerini yeniden üretir, çünkü altındaki yazıcı kümeyi
+  güncellemez, baştan yazar; bu kimlikler yalnızca pricing'in kendi
+  `price_rule` satırlarınca anıldığı için etki modülün içinde kalır.
 
   Her yeni yazma, ilgili modülde ilkel-tipli bir yönetim yüzeyi metodu ve
   panelde bir form demektir; ikisi de bir diff'te görünür. Panel bir modülü
@@ -1338,6 +1351,19 @@ açıktır.
   kaydından okunur; hiç bölge tanımlanmamış bir kurulumda `19990 TRY (minor
   units)` görülür. Sabit 100 varsaymak JPY ve KWD gibi 0 ve 3 basamaklı para
   birimlerinde YANLIŞ tutar gösterirdi.
+- **Hata bildirimi bir İŞARETTİR, olayın kopyası değil.** `error-sentry`
+  eklentisi ([ADR 0014](docs/adr/0014-error-reporting.md)) toplayıcıya arıza
+  kodunu, güvenli mesajı ve `request_id`'yi gönderir; geri kalan her şey logda
+  kalır. Bu bilinçlidir — raporlayıcı hatanın kendisini hiç görmez, dolayısıyla
+  sızdıramaz — ama sonucu şudur: bir raporu okuyan kişinin loga da erişimi
+  olmalıdır.
+
+  Üç somut sınır: rapor METOT ve YOL taşımaz (onları erişim logu taşır ve o
+  satır bilerek atlanır, çünkü aynı arızayı ikinci kez bildirirdi); "güvenli
+  mesaj" bir godoc sözüne dayanır ve hiçbir denetim bir çağıranın oraya
+  e-posta adresi yazmadığını MEKANİK olarak doğrulamaz; ve varsayılan izin
+  listesinde hiçbir iş kimliği yoktur, yani `user_id` gibi alanlar rapora
+  ancak kurulum onları listeye ekleyerek girer.
 - **Çok kiracılılık yoktur.** Bir kiracı = bir kurulum = bir veritabanı = bir
   süreç; ayrıntı yukarıda "Tek örnek mi, birden çok mu?" başlığında, karar
   [ADR 0009](docs/adr/0009-cok-kiracililik-kurulum-siniri.md)'da.
@@ -1426,7 +1452,7 @@ make rename-module MODULE=github.com/kullanici/repo
 
 ## Sürüm
 
-Güncel sürüm: **v0.5.0**. Değişiklikler için
+Güncel sürüm: **v0.6.0**. Değişiklikler için
 [`CHANGELOG.md`](./CHANGELOG.md).
 
 - **v0.1.0** — Faz 0–9'un tamamı.
@@ -1451,6 +1477,20 @@ Güncel sürüm: **v0.5.0**. Değişiklikler için
   `TestBelgelerdekiAtiflarCozuluyor`), satır numarasıyla atıf yasak
   (`TestBelgelerdeSatirNumarasiAtfiYok`) ve para değişmezinin kör noktası
   kapandı (`TestParaTamSayidir`). **Mağaza API'sinde kırıcı değişiklikler var.**
+- **v0.6.0** — çerçeve bir YÜZ ve bir KULAK kazandı. Yönetim paneli dördüncü bir
+  ağaç olarak geldi ([ADR 0011](docs/adr/0011-yonetim-paneli-dorduncu-agac.md)),
+  önce okudu, sonra yazmaya başladı: modül ilkel-tipli bir `<modül>.admin`
+  yüzeyi yayımlıyor ve panel onu KOŞULLU çözüyor
+  ([ADR 0013](docs/adr/0013-panel-write-surface.md)). Fiyat yazması kayıpsız
+  olmak zorundaydı, çünkü modülün tek yazıcısı yıkıcı ve panel fiyatların
+  yalnızca bir kısmını görüyor. Hata bildirimi çekirdekte bir sözleşme, eklentide
+  bir uygulama oldu ve besleme mevcut log yolundan geçiyor
+  ([ADR 0014](docs/adr/0014-error-reporting.md)); neyin ASLA gönderilmeyeceğine
+  eklenti değil çekirdek karar veriyor. Deponun çalışma dili İngilizce oldu ve
+  geçiş yalnızca küçülebilen bir deftere bağlandı
+  ([ADR 0012](docs/adr/0012-repository-language-and-solid.md)).
+  **Hata MESAJLARI ve hata ayrıntı anahtarları İngilizceye çevrildi; hata
+  KODLARI değişmedi.**
 
 `0.x` boyunca **kırıcı değişiklikler minor sürümlerde gelebilir**: API yüzeyi
 henüz sabitlenmemiştir. Sabitlenme `1.0.0` ile olur.
