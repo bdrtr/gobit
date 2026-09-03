@@ -153,7 +153,7 @@ func (s *Service) ListVariants(ctx context.Context, opts ListVariantsOptions) (L
 		}
 	}
 
-	return ListResult[models.Variant]{Items: variants, Count: count, Offset: offset, Limit: limit}, nil
+	return ListResult[models.Variant]{Items: variants, Count: &count, Offset: offset, Limit: limit}, nil
 }
 
 // UpdateVariant varyantı kısmi olarak günceller.

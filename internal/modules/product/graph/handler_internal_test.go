@@ -31,11 +31,21 @@ import (
 type sessizVitrin struct{}
 
 // ListStoreProducts boş bir liste döner.
+//
+// Sayaç, istenmişse SIFIR olarak doldurulur: şemadaki "count: Int!" nil kabul
+// etmez ve bu dosyanın belgeleri "{ products { count } }" biçimindedir — nil
+// bırakmak, önbellek iddiasını ilgisiz bir alan hatasıyla düşürürdü.
 func (sessizVitrin) ListStoreProducts(
 	_ context.Context,
-	_ service.StoreListOptions,
+	opts service.StoreListOptions,
 ) (service.ListResult[service.StoreProduct], error) {
-	return service.ListResult[service.StoreProduct]{}, nil
+	if opts.SkipCount {
+		return service.ListResult[service.StoreProduct]{}, nil
+	}
+
+	sifir := 0
+
+	return service.ListResult[service.StoreProduct]{Count: &sifir}, nil
 }
 
 // GetStoreProduct boş bir ürün döner.

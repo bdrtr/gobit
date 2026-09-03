@@ -377,7 +377,7 @@ type PaymentProvider interface {
 - **Para:** Tam sayı **minor unit** (kuruş/cent) olarak sakla; float kullanma. Para birimi ayrı alan.
 - **Zaman:** UTC, `created_at/updated_at/deleted_at` (soft delete `deleted_at` ile).
 - **Migration:** Modül başına ayrı klasör; geri-alınabilir (up/down). Cross-module FK yok.
-- **API:** Versiyonlu (`/store/v1`, `/admin/v1`); cursor-based pagination; tutarlı zarf (`{ data, count, offset, limit }`).
+- **API:** Versiyonlu (`/store/v1`, `/admin/v1`); cursor-based pagination; tutarlı zarf (`{ data, count, offset, limit }`). `count` alanı, istemci onu AÇIKÇA istemediğinde düşebilir (vitrin listesinde `?with_count=false`, GraphQL'de alanı seçmemek): alan adları ve tipleri değişmez, yalnızca hesaplanmayan sayaç zarfta yer almaz. Gerekçesi ölçüm: 52.004 ürünlük bir katalogda liste servisinin 67 ms'sinin 64 ms'si sayaçtır.
 - **Test:** Birim testleri servis seviyesinde; entegrasyon testleri gerçek Postgres/Redis ile (`testcontainers-go`); her workflow için saga (hata + compensation) testi zorunlu.
 - **Context:** Tüm servis/repository metodları `context.Context` alır.
 - **Loglama:** Yapısal (`slog`), her isteğe `request_id`, hassas veri loglanmaz.

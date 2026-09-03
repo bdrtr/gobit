@@ -5,6 +5,7 @@ package product_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -432,6 +433,65 @@ func TestStoreListingHidesDraftProducts(t *testing.T) {
 
 	rec = sys.request(t, http.MethodGet, "/store/v1/products/"+handle, "")
 	assert.Equal(t, http.StatusNotFound, rec.Code, "taslak ürün vitrinde bulunamamalı")
+}
+
+// TestStoreListingWithCountFalseKeepsPageDropsCount sayacın kapatılmasının
+// GERÇEK veritabanında sayfayı değiştirmediğini ve alanı gövdeden düşürdüğünü
+// doğrular.
+//
+// Birim testleri kararın servise ULAŞTIĞINI ve sayaç sorgusunun hiç
+// çalışmadığını kanıtlar; bu test kalan tek soruyu cevaplar: aynı süzgeci
+// paylaşan liste sorgusu, sayaç ortadan kalkınca da AYNI satırları döndürüyor
+// mu. İkisi tek bir SQL şablonundan geçtiği için (bkz.
+// repository/saleschannel.go) bunun gerçek planla sınanması gerekir.
+//
+// Ölçüm bağlamı: 52.004 ürünlük gobit_load kurulumunda sayaç isteğin SQL'inin
+// %99'udur (67,00 ms → 0,65 ms). Buradaki katalog küçüktür, yani test SÜREYİ
+// değil DAVRANIŞI sabitler — süreyi bir teste iddia ettirmek, testi makinenin
+// yüküne bağlamak olurdu.
+func TestStoreListingWithCountFalseKeepsPageDropsCount(t *testing.T) {
+	sys := newSystem(t)
+	ctx := context.Background()
+
+	svc, err := container.Resolve[*service.Service](sys.container, product.ServiceName)
+	require.NoError(t, err)
+
+	collection, err := svc.CreateCollection(ctx, service.CreateCollectionInput{
+		Title: "Sayaç " + uniqueHandle("koleksiyon"),
+	})
+	require.NoError(t, err)
+
+	for i := range 3 {
+		rec := sys.request(t, http.MethodPost, "/admin/v1/products", `{
+			"handle": "`+uniqueHandle(fmt.Sprintf("sayac-%d", i))+`",
+			"title": "Sayaç Ürünü",
+			"status": "published",
+			"collection_id": "`+collection.ID+`",
+			"variants": [{"title": "Tek"}]
+		}`)
+		require.Equal(t, http.StatusCreated, rec.Code, "gövde: %s", rec.Body.String())
+	}
+
+	yol := "/store/v1/products?limit=2&collection_id=" + collection.ID
+
+	rec := sys.request(t, http.MethodGet, yol, "")
+	require.Equal(t, http.StatusOK, rec.Code, "gövde: %s", rec.Body.String())
+
+	sayarak := jsonBody(t, rec)
+	assert.InDelta(t, float64(3), sayarak["count"], 0,
+		"varsayılan sayaç süzülmüş kümenin TAMAMINI saymalı (sayfa 2 kayıt)")
+
+	rec = sys.request(t, http.MethodGet, yol+"&with_count=false", "")
+	require.Equal(t, http.StatusOK, rec.Code, "gövde: %s", rec.Body.String())
+
+	assert.NotContains(t, rec.Body.String(), `"count"`,
+		"sayaç kapalıyken alan gövdede HİÇ olmamalı: %s", rec.Body.String())
+
+	saymadan := jsonBody(t, rec)
+	assert.Equal(t, jsonAlan[[]any](t, sayarak, "data"), jsonAlan[[]any](t, saymadan, "data"),
+		"sayacı kapatmak sayfanın İÇERİĞİNİ değiştirmemeli")
+	assert.InDelta(t, sayarak["limit"], saymadan["limit"], 0)
+	assert.InDelta(t, sayarak["offset"], saymadan["offset"], 0)
 }
 
 // TestVariantDeletionRemovesLinks silinen varyantın GERÇEK link tablosundaki

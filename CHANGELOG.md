@@ -12,6 +12,32 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Değiştirildi
 
+- **Vitrin listesinin toplam SAYACI artık isteğe bağlı**
+  (`GET /store/v1/products?with_count=false`; GraphQL'de `count` alanını
+  seçmemek yeter). Varsayılan DEĞİŞMEDİ: parametresiz istek bugünkü baytların
+  aynısını alıyor.
+
+  Sayaç ucuzlatılamadığı için isteğe bağlı yapıldı ve bu bir ölçüm sonucudur:
+  kanal süzgeci ürün başına bir alt sorgu çalıştırıyor (`SubPlan`, `loops=52004`)
+  ve sorgunun kendisi zaten indeks üstünde — `EXPLAIN` çıktısında `Heap
+  Fetches: 0`. Yani gezilecek küme küçültülemiyor, yalnızca gezilmemesi
+  sağlanabiliyor. Ölçüldü (52.004 ürün, LIMIT 20, ortanca): liste servisi
+  sayarak **67,00 ms**, saymadan **0,65 ms**; sayacın kendisi 64,07 ms.
+
+  Sayaç atlandığında zarfta `count` alanı **BULUNMAZ** — `0` dönmez, `null`
+  dönmez. `0` yalan söylerdi ("sonuç yok"), `null` ise GraphQL şemasında
+  `Int!`'i gevşetmek demekti; alanın yokluğu ise iki yüzeyde de aynı şeyi
+  söylüyor: sayılmadı.
+
+  Bir de bedava düzelen bir kusur: GraphQL'de `count` alanını hiç seçmeyen bir
+  sorgu da sayaç SQL'ini çalıştırıyordu. Artık seçim kümesine bakılıyor
+  (`@skip`/`@include` dâhil).
+
+  README'nin "Bilinen sınırlar"ındaki 79 ms bayattı; bu turda yeniden ölçüldü
+  ve satır güncellendi. Planın "tutarlı zarf" cümlesi de sayacın düşebildiğini
+  söyleyecek şekilde düzeltildi — alan adları ve tipleri değişmiyor, yalnızca
+  hesaplanmayan sayaç zarfta yer almıyor.
+
 - **`internal/core/link` ve `internal/core/eventbus` İngilizceye çevrildi**
   (ADR 0012'nin cırcırı). Türkçe defterinden 15 satır DÜŞTÜ: 742 dosyadan
   727'ye; yol defteri 38'de kaldı (iki pakette hiç yol kaydı yoktu). İki pakette

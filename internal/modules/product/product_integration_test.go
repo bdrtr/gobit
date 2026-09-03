@@ -327,7 +327,7 @@ func TestSoftDeleteHidesFromReads(t *testing.T) {
 	list, err := svc.ListProducts(ctx, service.ListProductsOptions{Handle: &handle})
 	require.NoError(t, err)
 	assert.Empty(t, list.Items, "silinen ürün listelenmemeli")
-	assert.Zero(t, list.Count, "silinen ürün sayıma girmemeli")
+	assert.Zero(t, sayac(t, list), "silinen ürün sayıma girmemeli")
 
 	// Handle serbest kalmalı.
 	again, err := svc.CreateProduct(ctx, service.CreateProductInput{
@@ -479,7 +479,7 @@ func TestListProductsPagesConsistently(t *testing.T) {
 			Offset:       offset,
 		})
 		require.NoError(t, err)
-		assert.Equal(t, total, page.Count, "count sayfadan bağımsız olmalı")
+		assert.Equal(t, total, sayac(t, page), "count sayfadan bağımsız olmalı")
 		for _, item := range page.Items {
 			_, dup := seen[item.ID]
 			assert.False(t, dup, "aynı kayıt iki sayfada görünmemeli: %s", item.ID)
@@ -562,6 +562,18 @@ func ptrBool(v bool) *bool { return &v }
 
 // ptrStatus durumun adresini döner.
 func ptrStatus(v models.Status) *models.Status { return &v }
+
+// sayac sonucun toplam sayacını döner ve SAYILDIĞINI de doğrular.
+//
+// Sayaç işaretçidir ve nil "sayılmadı" demektir (bkz. [service.ListResult]).
+// Ham dereference, sayaç bir gün sessizce kapanırsa okunabilir bir hata yerine
+// panik verirdi.
+func sayac[T any](t *testing.T, res service.ListResult[T]) int {
+	t.Helper()
+	require.NotNil(t, res.Count, "sayaç hesaplanmış olmalıydı")
+
+	return *res.Count
+}
 
 // TestUrunSutunEslemesiKaymamis elle yazılan sütun listesi ile sqlc'nin
 // ürettiği alan sırasının ayrışmadığını doğrular.

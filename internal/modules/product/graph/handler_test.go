@@ -80,7 +80,7 @@ func olcumKatalogu(adet int) service.ListResult[service.StoreProduct] {
 	}
 
 	return service.ListResult[service.StoreProduct]{
-		Items: urunler, Count: 5000, Offset: 0, Limit: adet,
+		Items: urunler, Count: ptr(5000), Offset: 0, Limit: adet,
 	}
 }
 

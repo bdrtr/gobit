@@ -4,6 +4,8 @@ import (
 	"context"
 	"strings"
 
+	"github.com/99designs/gqlgen/graphql"
+
 	coreerrors "github.com/bdrtr/gobit/internal/core/errors"
 	"github.com/bdrtr/gobit/internal/modules/product/service"
 )
@@ -70,6 +72,21 @@ type variantResolver struct{ *Resolver }
 // ""` boş bir kimlikle süzer ve hiçbir şey döndürmez, `q: ""` ise her satırı
 // eşleştiren bir ILIKE taramasını sonuca hiç dokunmadan ekler — ikisi de
 // istemcinin niyeti değildir ve ikisi de sessizdir.
+//
+// # Sayaç yalnızca İSTENİRSE hesaplanır
+//
+// GraphQL'de "count" bir alandır ve istemci onu seçmediyse yanıtta zaten
+// görünmez. Buna rağmen sorgu ÇALIŞIYORDU: `{ products { items { id } } }`
+// diyen istemci, hiç göremeyeceği bir sayı için sayaç sorgusunun bedelini
+// ödüyordu. Ölçüldü (gobit_load, 52.004 ürün, LIMIT 20, ortanca): sayaçla
+// 67,00 ms, sayaçsız 0,65 ms — yani seçilmeyen tek bir alan isteğin SQL'inin
+// %99'unu yazıyordu.
+//
+// [seciliMi] alanın seçilip seçilmediğini sorar. Bu bir SÖZLEŞME DEĞİŞİKLİĞİ
+// değildir: şemadaki "count: Int!" olduğu gibi durur ve alan seçildiğinde her
+// zaman dolu döner; değişen tek şey, seçilmeyen alanın artık iş de
+// yaptırmamasıdır. REST'in "with_count" parametresi tam olarak bu davranışın
+// sorgu dizesindeki karşılığıdır (bkz. api.Handler.storeListProducts).
 func (r *queryResolver) Products(
 	ctx context.Context,
 	limit, offset *int,
@@ -81,6 +98,7 @@ func (r *queryResolver) Products(
 		SalesChannelIDs: SalesChannelIDsFromContext(ctx),
 		Limit:           intDegeri(limit),
 		Offset:          intDegeri(offset),
+		SkipCount:       !seciliMi(ctx, alanCount),
 	})
 	if err != nil {
 		return nil, err
@@ -193,4 +211,36 @@ func intDegeri(v *int) int {
 	}
 
 	return *v
+}
+
+// alanCount ProductList'in toplam sayaç alanının ŞEMADAKİ adıdır.
+//
+// Dize olarak tekrarlanmasının sebebi, üretilen kodun bu adı bir Go sabiti
+// olarak dışa vermemesidir; şemadan silinse ya da adı değişse burası sessizce
+// eskir. Bağı schema_test.go'daki TestProductsArgumanlariServisinOkuduklari
+// kurar: StoreListOptions.SkipCount'un karşılığı olan alanın ProductList'te
+// gerçekten var olduğunu sorar, yani sessiz eskime testte düşer.
+const alanCount = "count"
+
+// seciliMi çalışmakta olan alanın seçim kümesinde ad'ın istenip istenmediğini
+// bildirir.
+//
+// gqlgen'in [graphql.FieldRequested]'ı @skip/@include yönergelerine de saygı
+// duyar — yani `count @skip(if: true)` yazan istemci de saymaz.
+//
+// # Alan bağlamı yoksa KORUMA YOKTUR ve olmamalı
+//
+// Burada bir zamanlar nil bağlamı yakalayıp "istendi" diyen bir koruma vardı;
+// gerekçesi "resolver çalıştırıcı olmadan da çağrılabilir" idi ve bu YANLIŞTI.
+// Tek çağıran üretilen koddur ve o kod resolver'a girmeden önce bağlamı
+// dereference ediyor (generated.go: fc := graphql.GetFieldContext(ctx); hemen
+// ardından fc.Args[...]), yani nil bir bağlam zaten daha yukarıda panikler.
+// Hiçbir test de resolver'ı doğrudan çağırmıyor. Dal ulaşılamazdı; mutasyonla
+// doğrulandı, cevabı false'a çevirmek hiçbir testi düşürmüyordu.
+//
+// Kaldırılması aynı zamanda GÜVENLİ olandır: koruma dururken, alan bağlamını
+// kaybeden bir refactor sessizce "her istekte say"a geri döner; korumasız hâlde
+// aynı refactor gürültüyle panikler.
+func seciliMi(ctx context.Context, ad string) bool {
+	return graphql.FieldRequested(ctx, ad)
 }

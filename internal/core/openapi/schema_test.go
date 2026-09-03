@@ -518,6 +518,40 @@ func TestListeZarfiTiptenUretilir(t *testing.T) {
 	assert.ElementsMatch(t, []string{"id", "fiyat"}, alanlar(t, d, oge))
 }
 
+// TestListeZarfiSayaciIstegeBagliOlabilir sayacı düşebilir ilan eden zarfın
+// SADECE zorunluluk listesinde ayrıldığını doğrular.
+//
+// İki iddia da gereklidir. Alanın "required"dan düşmesi, sayacı
+// kapatılabilen ucun (vitrin listesi) belgesini doğru kılar; alanın
+// "properties"te KALMASI ise düşebilirliğin yokluk anlamına gelmediğini
+// söyler — sayaç istendiğinde hâlâ tam sayıdır ve şemayı okuyan istemci onu
+// üretmelidir. Silinseydi, sayacı isteyen istemci için belge alanı hiç
+// tanımlamamış olurdu.
+//
+// [Doc.List]'in çıktısıyla karşılaştırılması bilinçlidir: gevşetmenin sadece
+// bu yüzeye ait olduğu, ikisini yan yana koymadan görülemez.
+func TestListeZarfiSayaciIstegeBagliOlabilir(t *testing.T) {
+	t.Parallel()
+
+	d := belge()
+
+	kati := d.List(zenginVaryant{})
+	gevsek := d.ListOptionalCount(zenginVaryant{})
+
+	assert.Contains(t, zorunlular(t, d, kati), "count",
+		"varsayılan zarfta sayaç zorunludur")
+	assert.NotContains(t, zorunlular(t, d, gevsek), "count",
+		"gevşek zarfta sayaç zorunlu OLMAMALI")
+
+	assert.ElementsMatch(t, []string{"data", "offset", "limit"}, zorunlular(t, d, gevsek),
+		"yalnızca sayaç gevşemeli; öteki alanlar zorunlu kalmalı")
+	assert.Equal(t, "integer", ozellik(t, d, gevsek, "count")["type"],
+		"alan şemada KALMALI: düşebilir olmak yok olmak değildir")
+
+	assert.Equal(t, ozellik(t, d, kati, "data"), ozellik(t, d, gevsek, "data"),
+		"öğe şeması iki zarfta da aynı olmalı")
+}
+
 // TestListeZarfiDilimiTekrarSarmaz List'e dilim verilse de kayıt verilse de
 // aynı zarfın çıktığını doğrular.
 //

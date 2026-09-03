@@ -1419,23 +1419,32 @@ açıktır.
   `GET /store/v1/products` yanıtındaki `count` alanı, satış kanalı süzgecinin
   uygulandığı kümenin tamamını saymak zorundadır; sayfa boyutu bunu
   değiştirmez. Ölçüldü (52.000 ürün, 52.000 kanal ataması, yerel Postgres):
-  süzgeçsiz düz sayım **2 ms**, kanal süzgeçli sayım **79 ms**, aynı isteğin
+  süzgeçsiz düz sayım **2 ms**, kanal süzgeçli sayım **64 ms**, aynı isteğin
   geri kalan tüm SQL'i **1 ms**. Yani büyük bir katalogda vitrin isteğinin
   neredeyse tamamı sayaçtır.
 
   Bu bir hata değil, sayfalama sözleşmesinin bedeli: toplam sayı istenirse
   toplam sayılır. Liste sorgusunun kendisi bu maliyeti taşımaz (ölçüldü:
-  0,14 ms), yani yavaşlayan şey yalnızca `count`'tur. Kapatmanın bugün bir
-  yolu yoktur; alan yanıt zarfının parçasıdır ve kaldırmak kırıcı olurdu.
-  Panelin ürün listesi bu bedeli ÖDEMEZ — o bilinçli olarak saymadan sayfalar
+  0,14 ms), yani yavaşlayan şey yalnızca `count`'tur.
+
+  Sayaç UCUZLATILAMIYOR ama artık İSTENMEYEBİLİR: `?with_count=false` (GraphQL'de
+  `count` alanını seçmemek) sayaç sorgusunu hiç çalıştırmaz ve zarfta `count`
+  alanı bulunmaz. Varsayılan değişmedi. Ucuzlatılamamasının sebebi ölçüldü:
+  kanal süzgeci ürün başına bir alt sorgu koşuyor ve o alt sorgu ZATEN indeks
+  üstünde (`EXPLAIN`: `Heap Fetches: 0`), yani gezilecek küme küçültülemiyor,
+  yalnızca gezilmemesi sağlanabiliyor. Panelin ürün listesi bu bedeli hiç
+  ödemez — o bilinçli olarak saymadan sayfalar
   (`TestProductListPagesWithoutCounting`).
-- **Sepet kurmanın YAZMA maliyeti hâlâ satır sayısının KARESİYLE büyür.** Satır
-  ekleyen her istek sepetin bütün satırlarının tutarını yeniden yazar: cart
-  modülünün `SetTotals`'ı satır başına ayrı bir UPDATE'i, sepetin kilidi altında
-  koşar. Ölçüldü (çağrılar sayılarak): 100 satırlık bir sepeti kurmak 5.050
-  satır tutarı yazımı eder. OKUMA tarafı toplu fiyat sorgusuyla doğrusala indi
-  (aynı sepet için 10.300 sorgu yerine 400), YAZMA tarafı inmedi — toplu bir
-  UPDATE (`unnest`/`VALUES`) ve cart modülünde sqlc üretimi ister.
+- **Sepet kurmak, satır sayısının KARESİYLE satır yazar** — ama artık karesiyle
+  DEYİM koşmaz. Satır ekleyen her istek sepetin bütün satırlarının tutarını
+  yeniden yazar, yani 100 satırlık bir sepeti kurmak hâlâ 5.050 satır tutarı
+  yazar; değişen, bunun 5.050 UPDATE yerine 100 UPDATE ile yapılmasıdır.
+  Sepetin kilidi altında geçen süre böylece satır sayısından neredeyse bağımsız
+  oldu (ölçüldü, 100 satır: yazma evresi 8,0 ms → 0,55 ms).
+
+  Kalan sınır iki yerde: yazılan SATIR sayısı hâlâ karesel, ve kilidin altındaki
+  asıl süre artık commit'in WAL flush'ıdır (kalıcı bir kümede ölçüldü, satır
+  sayısından bağımsız 6,2 ms) — onu kısaltmanın yolu bu katmanda yok.
 
   Bugünkü koruma bir TAVANDIR: bir sepet en fazla 100 farklı satır taşır ve
   fazlası `cart_workflow_line_limit_reached` ile reddedilir. Tavan sepetin

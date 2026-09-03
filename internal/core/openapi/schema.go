@@ -13,6 +13,18 @@ import (
 // semaAlanData zarfların kayıt taşıyan alanının adıdır (plan Bölüm 8).
 const semaAlanData = "data"
 
+// Liste zarfının sayfalama alanlarının adları (plan Bölüm 8).
+//
+// Sabit olmalarının sebebi tekrar değil AYRIŞMA: adlar hem "properties"
+// haritasında hem "required" listesinde geçer ve birinde düzeltilip
+// diğerinde unutulan bir ad, zorunlu ilan edilmiş ama hiç yazılmayan bir alan
+// üretirdi — şemayı satır satır okumadan görülmeyen bir yalan.
+const (
+	semaAlanCount  = "count"
+	semaAlanOffset = "offset"
+	semaAlanLimit  = "limit"
+)
+
 // codeSchemaNameConflict iki FARKLI Go tipinin aynı bileşen adını istediğini
 // bildirir.
 const codeSchemaNameConflict = "openapi_schema_name_conflict"
@@ -104,11 +116,39 @@ func (d *Doc) Item(v any) map[string]any {
 // List liste yanıt zarfının şemasını KAYIT tipinden üretir.
 //
 // Zarf biçimi plan Bölüm 8'de sabittir:
-// {semaAlanData: [...], "count": N, "offset": N, "limit": N}.
+// {semaAlanData: [...], "count": N, "offset": N, "limit": N}. Dört alanın
+// dördü de ZORUNLUDUR; sayacı isteğe bağlı olan uç için
+// [Doc.ListOptionalCount] vardır.
 func (d *Doc) List(v any) map[string]any {
 	oge := d.semaTipten(listeKaydi(reflect.TypeOf(v)), map[reflect.Type]bool{})
 
-	return listeSemasi(oge)
+	return listeSemasi(oge, true)
+}
+
+// ListOptionalCount liste zarfının şemasını, "count" alanı DÜŞEBİLİR olarak
+// üretir.
+//
+// Alan şemada durur ve tipi yine tam sayıdır; değişen tek şey, zorunlu alanlar
+// listesinde YER ALMAMASIDIR. OpenAPI'nin "olmayabilir" sözcüğü budur ve
+// üretilen istemcilerde alanı isteğe bağlı bir alana çevirir — yani çağıran,
+// sayıyı okumadan önce var olup olmadığını sormak zorunda kalır.
+//
+// # Neden ayrı bir fonksiyon
+//
+// [Doc.List]'i gevşetmek, sayacı HER ZAMAN yazan onlarca ucun belgesini de
+// yalancı yapardı: istemci üreteci onlarda da isteğe bağlı bir alan üretir ve
+// hiç oluşmayacak bir durum için kontrol yazdırırdı. Belge, ucun gerçekte ne
+// yaptığını söylemelidir; "hepsi için en gevşek şema" kolay ama yanlıştır.
+//
+// # Neden nullable DEĞİL
+//
+// Alanı "integer|null" yapmak da mümkündü ve reddedildi: sayaç kapalıyken alan
+// null olarak DEĞİL, hiç YAZILMADAN döner (bkz. product api listEnvelope) —
+// nullable yazmak, gövdede asla görünmeyecek bir değeri anlatmak olurdu.
+func (d *Doc) ListOptionalCount(v any) map[string]any {
+	oge := d.semaTipten(listeKaydi(reflect.TypeOf(v)), map[reflect.Type]bool{})
+
+	return listeSemasi(oge, false)
 }
 
 // RequestBody verilen tipten ZORUNLU bir JSON istek gövdesi tanımı üretir.
@@ -722,15 +762,25 @@ func tekilSemasi(kayit map[string]any) map[string]any {
 }
 
 // listeSemasi liste yanıt zarfını verilen öğe şemasıyla kurar.
-func listeSemasi(oge map[string]any) map[string]any {
+//
+// sayacZorunlu false ise "count" yalnızca zorunlu alanlar listesinden düşer;
+// özelliklerde ve tipinde hiçbir şey değişmez (bkz. [Doc.ListOptionalCount]).
+func listeSemasi(oge map[string]any, sayacZorunlu bool) map[string]any {
+	zorunlu := []string{semaAlanData}
+	if sayacZorunlu {
+		zorunlu = append(zorunlu, semaAlanCount)
+	}
+
+	zorunlu = append(zorunlu, semaAlanOffset, semaAlanLimit)
+
 	return map[string]any{
 		semaTip:     tipNesne,
-		semaZorunlu: []string{"data", "count", "offset", "limit"},
+		semaZorunlu: zorunlu,
 		semaOzellikler: map[string]any{
-			semaAlanData: map[string]any{semaTip: tipDizi, semaOgeler: oge},
-			"count":      map[string]any{semaTip: tipTamSayi},
-			"offset":     map[string]any{semaTip: tipTamSayi},
-			"limit":      map[string]any{semaTip: tipTamSayi},
+			semaAlanData:   map[string]any{semaTip: tipDizi, semaOgeler: oge},
+			semaAlanCount:  map[string]any{semaTip: tipTamSayi},
+			semaAlanOffset: map[string]any{semaTip: tipTamSayi},
+			semaAlanLimit:  map[string]any{semaTip: tipTamSayi},
 		},
 	}
 }

@@ -16,8 +16,40 @@ import (
 //
 // Liste ayrıca isteğin SATIŞ KANALINA göre süzülür; kanalların nereden
 // okunduğu için bkz. [salesChannelIDs].
+//
+// # with_count
+//
+// Toplam sayaç isteğe bağlıdır ve VARSAYILANI TRUE'dur: parametre verilmeyen
+// istek bugünkü yanıtın baytını bayta aynısını alır. "with_count=false"
+// diyen istek sayaç sorgusunu HİÇ çalıştırmaz ve zarfında "count" alanı
+// bulunmaz (bkz. [listEnvelope]).
+//
+// Neden bir parametre gerekiyor: sayaç, sayfa boyutundan bağımsız olarak satış
+// kanalı süzgecinin uygulandığı kümenin tamamını gezer. gobit_load üzerinde
+// ölçüldü (52.004 ürün, 52.000 kanal ataması, LIMIT 20, ortanca) — ölçülen şey
+// SERVİS ÇAĞRISIDIR (service.ListProducts), ucun tamamı değil:
+//
+//	sayarak (bugünkü varsayılan)  67,00 ms
+//	saymadan (with_count=false)    0,65 ms
+//
+// Ucun geri kalanı — varyantların fiyat ve stok zenginleştirmesi — sayaçtan
+// bağımsızdır ve with_count=false onu ATLAMAZ; ölçüldüğünde iki bacak da
+// indeks üzerinden 0,1-0,2 ms sürüyor, yani sayaçsız uç ~1 ms'dir, 0,65 değil.
+// Oran değişmiyor: büyük katalogta isteğin SQL'inin neredeyse tamamı sayaçtır
+// ve maliyeti KATALOGLA büyür, sayfa boyutuyla değil. Sayı istemcinin ilk sayfada bir kez ihtiyaç
+// duyduğu bir şeydir; sonraki her sayfada aynı sayı yeniden hesaplanır.
+//
+// Değer OKUNMAZ da yorumlanmaz: "with_count=abc" tipli bir doğrulama hatası
+// döner (bkz. [boolParam]). Sessizce varsayılana düşmek, istemcinin sayacı
+// kapattığını sanıp maliyeti ödemeye devam etmesi olurdu.
 func (h *Handler) storeListProducts(w http.ResponseWriter, r *http.Request) {
 	limit, offset, err := paging(r)
+	if err != nil {
+		corehttp.WriteError(r.Context(), w, err)
+		return
+	}
+
+	withCount, err := boolParam(r, "with_count", true)
 	if err != nil {
 		corehttp.WriteError(r.Context(), w, err)
 		return
@@ -29,6 +61,7 @@ func (h *Handler) storeListProducts(w http.ResponseWriter, r *http.Request) {
 		SalesChannelIDs: salesChannelIDs(r),
 		Limit:           limit,
 		Offset:          offset,
+		SkipCount:       !withCount,
 	})
 	if err != nil {
 		corehttp.WriteError(r.Context(), w, err)

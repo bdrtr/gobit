@@ -460,7 +460,7 @@ func TestListProductsPaging(t *testing.T) {
 	result, err := svc.ListProducts(ctx, service.ListProductsOptions{})
 	require.NoError(t, err)
 	assert.Equal(t, service.DefaultLimit, result.Limit, "limit verilmezse varsayılan kullanılmalı")
-	assert.Equal(t, 3, result.Count, "count sayfadan bağımsız toplamdır")
+	assert.Equal(t, 3, sayac(t, result), "count sayfadan bağımsız toplamdır")
 	assert.Len(t, result.Items, 3)
 
 	result, err = svc.ListProducts(ctx, service.ListProductsOptions{Limit: 5000})
@@ -469,7 +469,7 @@ func TestListProductsPaging(t *testing.T) {
 
 	result, err = svc.ListProducts(ctx, service.ListProductsOptions{Limit: 2, Offset: 2})
 	require.NoError(t, err)
-	assert.Equal(t, 3, result.Count, "count sayfalamadan etkilenmemeli")
+	assert.Equal(t, 3, sayac(t, result), "count sayfalamadan etkilenmemeli")
 	assert.Len(t, result.Items, 1)
 
 	_, err = svc.ListProducts(ctx, service.ListProductsOptions{Limit: -1})

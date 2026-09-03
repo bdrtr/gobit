@@ -108,12 +108,18 @@ func New(opts Options) (*Service, error) {
 }
 
 // ListResult sayfalı bir listenin sonucudur.
-//
-// Count, limit/offset'ten BAĞIMSIZ toplam kayıt sayısıdır; API zarfındaki
-// "count" alanının kaynağı budur.
 type ListResult[T any] struct {
-	Items  []T
-	Count  int
+	Items []T
+	// Count, limit/offset'ten BAĞIMSIZ toplam kayıt sayısıdır; API zarfındaki
+	// "count" alanının kaynağı budur.
+	//
+	// İŞARETÇİDİR ve nil "SAYILMADI" demektir — "sıfır kayıt" demek DEĞİLDİR.
+	// Sayım isteğe bağlıdır (bkz. [ListProductsOptions.SkipCount]) ve
+	// atlandığında düz bir int alanı 0 taşırdı; 0 burada bir yalandır, çünkü
+	// "eşleşen kayıt yok" cümlesinden ayırt edilemez. Ayrımı tipe taşımak,
+	// çağıranın sayıyı okumadan önce sorması gereken soruyu SORMAK ZORUNDA
+	// bırakır: nil'i düz sayı gibi kullanmak derlenmez.
+	Count  *int
 	Offset int
 	Limit  int
 }
@@ -196,6 +202,56 @@ type ListProductsOptions struct {
 	// WithRelations true ise varyantlar, seçenekler, görseller, etiketler ve
 	// kategoriler TOPLU sorgularla doldurulur (ürün başına sorgu yapılmaz).
 	WithRelations bool
+	// SkipCount true ise toplam sayaç sorgusu HİÇ ÇALIŞTIRILMAZ ve sonucun
+	// [ListResult.Count] alanı nil döner.
+	//
+	// # Neden var
+	//
+	// Sayaç, sayfa boyutundan bağımsız olarak süzülmüş KÜMENİN TAMAMINI
+	// gezmek zorundadır ve büyük katalogta isteğin bütün maliyeti odur.
+	// Ölçüldü (gobit_load: 52.004 ürün, 52.000 kanal ataması, LIMIT 20,
+	// satış kanalı süzgeci açık; 15 çağrının ortancası, Go tarafından):
+	//
+	//	repo.ListProducts                       0,26 ms
+	//	repo.CountProducts                     64,07 ms
+	//	ListProducts (liste + sayaç + bağlar)  67,00 ms
+	//	ListProducts (SkipCount ile)            0,65 ms
+	//
+	// Yani isteğin SQL'inin %99'u sayaçtır ve maliyet katalogla büyür.
+	// Sayacın planı, ürün tablosunun TAMAMINI gezip satır başına link
+	// tablosuna indeks yoklaması yapmaktır (EXPLAIN: Seq Scan on product,
+	// 52.004 satır, SubPlan 52.004 loops, 156.013 tampon).
+	//
+	// # Sayacı UCUZLATMAK önce denendi
+	//
+	// Aynı kümeyi sayan üç ayrı SQL biçimi aynı veriyle ölçüldü (psql,
+	// hazırlanmış deyim, ısıtılmış):
+	//
+	//	                        süzgeçsiz   q ile (tek eşleşme)
+	//	korelasyonlu (bugünkü)   62-71 ms         13,8 ms
+	//	iki EXISTS (hash)        43-54 ms            —
+	//	GROUP BY + hash join     33-45 ms         30,0 ms
+	//
+	// Hash biçimi süzgeçsiz durumda iki kat hızlı ama SEÇİCİ süzgeçte iki kat
+	// yavaş: link tablosunun tamamını hash'lemek sabit bir 30 ms taban
+	// koyuyor, korelasyonlu biçim ise yalnızca hayatta kalan satırlar için
+	// yokluyor. Üstelik liste sorgusu korelasyonlu biçme MECBURDUR (LIMIT'te
+	// durabilmesi ondan gelir; ölçüldü: 26,8 ms → 0,8 ms) ve kural TEK bir
+	// şablonda yaşar (bkz. repository/saleschannel.go). Biçimi ayırmak,
+	// görünürlük kuralının ikinci bir tanımı olurdu.
+	//
+	// Kalan gerçek şudur: sayım O(katalog)'dur. Hiçbir biçim onu sublineer
+	// yapmaz, çünkü "kaç tane" sorusunun cevabı kümenin tamamına bakmadan
+	// bilinemez. O yüzden çözüm sayacı hızlandırmak değil, İSTENMEDİĞİNDE
+	// HİÇ SORMAMAKTIR.
+	//
+	// # Neden bayrak OLUMSUZ yazılmış
+	//
+	// Sıfır değeri BUGÜNKÜ davranış olmalıdır. Alan "WithCount bool" olsaydı,
+	// bu tipi kullanan ve alanı bilmeyen HER çağıran sessizce saymayı bırakır
+	// ve zarfındaki sayı kaybolurdu — derleyici bir struct literalindeki eksik
+	// alanı hata saymaz. Olumsuz bayrak çirkindir ama sessiz değildir.
+	SkipCount bool
 }
 
 // CreateProduct ürün oluşturur ve alt kayıtlarıyla birlikte döner.
@@ -311,6 +367,10 @@ func (s *Service) GetProductByHandle(ctx context.Context, handle string) (models
 }
 
 // ListProducts ölçütlere uyan ürünleri sayfalı döner.
+//
+// Toplam sayaç [ListProductsOptions.SkipCount] ile KAPATILABİLİR; kapalıyken
+// sayaç sorgusu hiç çalıştırılmaz ve [ListResult.Count] nil döner. Gerekçe ve
+// ölçüm o alanın belgesindedir.
 func (s *Service) ListProducts(ctx context.Context, opts ListProductsOptions) (ListResult[models.Product], error) {
 	limit, offset, err := normalizePaging(opts.Limit, opts.Offset)
 	if err != nil {
@@ -338,10 +398,18 @@ func (s *Service) ListProducts(ctx context.Context, opts ListProductsOptions) (L
 	if err != nil {
 		return ListResult[models.Product]{}, err
 	}
-	count, err := s.repo.CountProducts(ctx, filter)
-	if err != nil {
-		return ListResult[models.Product]{}, err
+
+	var count *int
+
+	if !opts.SkipCount {
+		n, err := s.repo.CountProducts(ctx, filter)
+		if err != nil {
+			return ListResult[models.Product]{}, err
+		}
+
+		count = &n
 	}
+
 	if opts.WithRelations {
 		if err := s.attachRelations(ctx, products); err != nil {
 			return ListResult[models.Product]{}, err

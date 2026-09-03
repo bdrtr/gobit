@@ -80,6 +80,15 @@ type StoreListOptions struct {
 	SalesChannelIDs []string
 	Limit           int
 	Offset          int
+	// SkipCount true ise toplam sayaç sorgusu hiç çalıştırılmaz ve sonucun
+	// Count alanı nil döner.
+	//
+	// Anlamı, gerekçesi ve ölçümü [ListProductsOptions.SkipCount]'tadır;
+	// burada TEKRARLANMAZ. Alanın vitrin ölçütlerinde de bulunmasının sebebi
+	// şudur: kararı VEREN taraf istemcidir (REST'te "with_count" parametresi,
+	// GraphQL'de "count" alanını seçip seçmemesi) ve vitrin servisinin kendisi
+	// bir varsayılan seçemez — seçseydi, aynı kuralın ikinci bir tanımı olurdu.
+	SkipCount bool
 }
 
 // StoreProduct vitrin için hazırlanmış üründür.
@@ -133,6 +142,14 @@ type enrichment struct {
 //
 // Süzgeç [repository.Store] üzerinden VERİTABANINDA uygulanır; sayfalamayı
 // neden Go tarafında yapamayacağımız için bkz. repository/saleschannel.go.
+//
+// # Toplam sayaç isteğe bağlıdır
+//
+// Aynı süzgeç sayacı da bağlar ve o sayaç, sayfa boyutundan bağımsız olarak
+// kümenin TAMAMINI gezer: ölçüldüğünde vitrin isteğinin SQL'inin %99'udur
+// (bkz. [ListProductsOptions.SkipCount]). [StoreListOptions.SkipCount] ile
+// kapatılabilir; kapalıyken sonucun Count alanı nil döner ve bu "sıfır kayıt"
+// DEĞİL "sayılmadı" demektir.
 func (s *Service) ListStoreProducts(ctx context.Context, opts StoreListOptions) (ListResult[StoreProduct], error) {
 	published := models.StatusPublished
 	result, err := s.ListProducts(ctx, ListProductsOptions{
@@ -143,6 +160,7 @@ func (s *Service) ListStoreProducts(ctx context.Context, opts StoreListOptions) 
 		Limit:           opts.Limit,
 		Offset:          opts.Offset,
 		WithRelations:   true,
+		SkipCount:       opts.SkipCount,
 	})
 	if err != nil {
 		return ListResult[StoreProduct]{}, err

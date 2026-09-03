@@ -349,10 +349,137 @@ func TestVitrinListesiYalnizcaOkunanParametreleriAnlatir(t *testing.T) {
 	op := vitrinIslemi(t, yollar, http.MethodGet, "/store/v1/products")
 
 	adlar := parametreAdlari(t, op, "query")
-	assert.ElementsMatch(t, []string{"collection_id", "q", "limit", "offset"}, adlar,
+	assert.ElementsMatch(t, []string{"collection_id", "q", "limit", "offset", "with_count"}, adlar,
 		"parametreler storeListProducts'ın okuduklarıyla aynı olmalı")
 	assert.NotContains(t, adlar, "sales_channel_id",
 		"kanal kimlikten gelir; sorgu parametresi olarak duyurulmamalı")
+}
+
+// TestVitrinListesiSayacParametresininVarsayilaniniYazar "with_count"un
+// VARSAYILANININ belgede okunabildiğini doğrular.
+//
+// Bir maliyet anahtarının varsayılanını yazmamak, bu deponun "sessiz
+// varsayılan" yasağının tam ihlalidir: parametreyi belgede gören istemci
+// göndermediğinde ne olduğunu bilmez ve iki yönde de yanılabilir — sayacı
+// bedava sanar ya da hiç gelmediğini sanar.
+//
+// Kapatmanın SONUCU da yazılı olmalıdır: yanıt zarfında alan 0'a düşmez, null
+// olmaz, HİÇ BULUNMAZ. Bunu okumayan istemci "count" alanını doğrudan okur ve
+// JavaScript'te undefined ile hesap yapar.
+func TestVitrinListesiSayacParametresininVarsayilaniniYazar(t *testing.T) {
+	t.Parallel()
+
+	yollar, _ := vitrinBelgesi(t)
+	op := vitrinIslemi(t, yollar, http.MethodGet, "/store/v1/products")
+
+	// Büyük/küçük harf ayrımı düşürülür: metin vurgu için sözcükleri büyük
+	// yazıyor ve iddia vurguyla değil BİLGİYLE ilgili.
+	aciklama := strings.ToLower(parametreAciklamasi(t, op, "with_count"))
+
+	assert.Contains(t, aciklama, "true", "varsayılanın hangi değer olduğu yazılmalı")
+	assert.Contains(t, aciklama, "bulunmaz",
+		"kapatıldığında alanın gövdeden düştüğü yazılmalı")
+	assert.Contains(t, aciklama, "ms",
+		"parametrenin ne kazandırdığı ÖLÇÜMLE yazılmalı; sayısız bir açıklama "+
+			"okuyanı karar veremez bırakır")
+}
+
+// TestVitrinListesiSayaciZorunluAlan_Saymaz yanıt şemasının "count"u zorunlu
+// ilan ETMEDİĞİNİ doğrular.
+//
+// Zarf şeması bütün modüllerde ortaktır ve orada sayaç zorunludur; vitrin
+// listesi tek istisnadır çünkü tek kapatılabilen odur. Şema zorunlu deseydi
+// belge, "with_count=false" yanıtında var olmayan bir alanı vaat ederdi ve
+// üretilmiş bir istemci onu okurken düşerdi. Öteki uçların şeması bu testte
+// birlikte sınanır: gevşetmenin YALNIZCA bu uca ait olduğu ancak böyle
+// görülür.
+func TestVitrinListesiSayaciZorunluAlan_Saymaz(t *testing.T) {
+	t.Parallel()
+
+	yollar, bilesenler := vitrinBelgesi(t)
+
+	vitrin := listeZarfi(t, bilesenler, vitrinIslemi(t, yollar, http.MethodGet, "/store/v1/products"))
+	assert.NotContains(t, zorunluAlanlar(t, vitrin), "count",
+		"vitrin listesinde sayaç düşebilir; zorunlu ilan edilmemeli")
+	assert.Contains(t, anahtarSirala(vitrin["properties"]), "count",
+		"alan şemadan SİLİNMEMELİ; düşebilir olması yok olması demek değildir")
+
+	yonetim := listeZarfi(t, bilesenler, vitrinIslemi(t, yollar, http.MethodGet, "/admin/v1/products"))
+	assert.Contains(t, zorunluAlanlar(t, yonetim), "count",
+		"yönetim listesi her zaman sayar; onun şeması gevşetilmemeli")
+}
+
+// listeZarfi bir işlemin 200 yanıtındaki liste zarfı şemasını döner.
+func listeZarfi(t *testing.T, bilesenler, op map[string]any) map[string]any {
+	t.Helper()
+
+	yanitlar, ok := op["responses"].(map[string]any)
+	require.True(t, ok)
+
+	tanim, ok := yanitlar["200"].(map[string]any)
+	require.True(t, ok)
+
+	return semaCoz(t, bilesenler, yanitSemasi(t, tanim))
+}
+
+// zorunluAlanlar şemanın "required" listesini döner.
+func zorunluAlanlar(t *testing.T, sema map[string]any) []string {
+	t.Helper()
+
+	ham, ok := sema["required"].([]any)
+	require.True(t, ok, "şemada required olmalı: %#v", sema)
+
+	adlar := make([]string, 0, len(ham))
+
+	for _, v := range ham {
+		s, ok := v.(string)
+		require.True(t, ok)
+
+		adlar = append(adlar, s)
+	}
+
+	return adlar
+}
+
+// anahtarSirala bir JSON nesnesinin anahtarlarını döner.
+func anahtarSirala(v any) []string {
+	m, ok := v.(map[string]any)
+	if !ok {
+		return nil
+	}
+
+	adlar := make([]string, 0, len(m))
+	for ad := range m {
+		adlar = append(adlar, ad)
+	}
+
+	return adlar
+}
+
+// parametreAciklamasi işlemin verilen sorgu parametresinin açıklamasını döner.
+func parametreAciklamasi(t *testing.T, op map[string]any, ad string) string {
+	t.Helper()
+
+	params, ok := op["parameters"].([]any)
+	require.True(t, ok)
+
+	for _, ham := range params {
+		p, ok := ham.(map[string]any)
+		require.True(t, ok)
+
+		if p["name"] != ad {
+			continue
+		}
+
+		aciklama, ok := p["description"].(string)
+		require.True(t, ok, "%q parametresinin açıklaması olmalı", ad)
+
+		return aciklama
+	}
+
+	require.Failf(t, "parametre yok", "%q parametresi belgede bulunamadı", ad)
+
+	return ""
 }
 
 // TestVitrinTekilUcuYolParametresiniAnlatir yol parametresinin handle'ı da

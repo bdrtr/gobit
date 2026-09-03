@@ -77,7 +77,7 @@ func (s *Service) ListCollections(ctx context.Context, limit, offset int) (ListR
 	if err != nil {
 		return ListResult[models.Collection]{}, err
 	}
-	return ListResult[models.Collection]{Items: items, Count: count, Offset: offset, Limit: limit}, nil
+	return ListResult[models.Collection]{Items: items, Count: &count, Offset: offset, Limit: limit}, nil
 }
 
 // CreateCategory kategori oluşturur.
@@ -150,7 +150,7 @@ func (s *Service) ListCategories(ctx context.Context, opts ListCategoriesOptions
 	if err != nil {
 		return ListResult[models.Category]{}, err
 	}
-	return ListResult[models.Category]{Items: items, Count: count, Offset: offset, Limit: limit}, nil
+	return ListResult[models.Category]{Items: items, Count: &count, Offset: offset, Limit: limit}, nil
 }
 
 // CreateTag etiket oluşturur.
@@ -191,5 +191,5 @@ func (s *Service) ListTags(ctx context.Context, limit, offset int) (ListResult[m
 	if err != nil {
 		return ListResult[models.Tag]{}, err
 	}
-	return ListResult[models.Tag]{Items: items, Count: count, Offset: offset, Limit: limit}, nil
+	return ListResult[models.Tag]{Items: items, Count: &count, Offset: offset, Limit: limit}, nil
 }

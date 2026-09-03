@@ -289,3 +289,17 @@ func seedProduct(t *testing.T, svc *service.Service, handle, title string) model
 
 // ptr verilen değerin adresini döner.
 func ptr[T any](v T) *T { return &v }
+
+// sayac sonucun toplam sayacını döner ve SAYILDIĞINI de doğrular.
+//
+// Sayaç işaretçidir ve nil "sayılmadı" demektir (bkz. [service.ListResult]).
+// Testlerin ham "*res.Count" yazması iki iddiayı birbirine karıştırırdı:
+// sayının doğru olduğu ve sayacın HESAPLANDIĞI. İkincisi bir gün sessizce
+// kaybolsa — biri varsayılanı ters çevirse — ham dereference okunabilir bir
+// hata yerine panikle düşerdi.
+func sayac[T any](t *testing.T, res service.ListResult[T]) int {
+	t.Helper()
+	require.NotNil(t, res.Count, "sayaç hesaplanmış olmalıydı")
+
+	return *res.Count
+}

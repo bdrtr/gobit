@@ -180,6 +180,13 @@ func TestServisAlanlariSemadaYaDaKararliDisarida(t *testing.T) {
 // Servisin okumadığı bir argümanı şemaya koymak, istemciye çalışmayan bir
 // özellik vaat etmektir: üreteç sorguya alan koyar, çağıran doldurur, sunucu
 // sessizce yok sayar.
+//
+// Bir vitrin seçeneğinin değeri ÜÇ yerden gelebilir ve her biri ayrı bir
+// karardır: sorgu argümanından, isteğin kimliğinden ya da SEÇİM KÜMESİNDEN.
+// Üçüncüsü GraphQL'e özgüdür — istemcinin bir alanı seçip seçmemesi de bir
+// girdidir — ve bu yüzden bir argüman aramak yanlış olurdu; şemaya "sayayım
+// mı" diye bir argüman koymak, "count" alanının kendisiyle aynı soruyu ikinci
+// kez sormak olurdu.
 func TestProductsArgumanlariServisinOkuduklari(t *testing.T) {
 	t.Parallel()
 
@@ -195,6 +202,13 @@ func TestProductsArgumanlariServisinOkuduklari(t *testing.T) {
 	// İstemcinin VEREMEYECEĞİ alanlar: değerleri isteğin kimliğinden gelir.
 	kimlikten := map[string]bool{"SalesChannelIDs": true}
 
+	// Değeri SEÇİM KÜMESİNDEN gelen alanlar: karşılığı bir argüman değil,
+	// ProductList üzerindeki bir ALANDIR. Alan seçilmemişse iş de yapılmaz.
+	secimden := map[string]string{"SkipCount": "count"}
+
+	urunListesi := sema(t).Types["ProductList"]
+	require.NotNil(t, urunListesi, "ProductList tipi şemada olmalı")
+
 	var beklenen []string
 
 	for _, alan := range reflect.VisibleFields(reflect.TypeOf(service.StoreListOptions{})) {
@@ -202,10 +216,19 @@ func TestProductsArgumanlariServisinOkuduklari(t *testing.T) {
 			continue
 		}
 
+		if alanAdi, secimeBagli := secimden[alan.Name]; secimeBagli {
+			require.NotNil(t, urunListesi.Fields.ForName(alanAdi),
+				"StoreListOptions.%s kararını ProductList.%s alanının seçilmesine bağlıyor "+
+					"(bkz. graph.seciliMi); o alan şemada yok", alan.Name, alanAdi)
+
+			continue
+		}
+
 		ad, ok := karsilik[alan.Name]
 		require.True(t, ok,
-			"StoreListOptions.%s ne şema argümanı ne de kimlikten gelen bir alan olarak "+
-				"tanımlı; yeni bir seçenek eklendiyse ikisinden birine karar verilmeli", alan.Name)
+			"StoreListOptions.%s ne şema argümanı, ne kimlikten gelen, ne de seçim "+
+				"kümesinden gelen bir alan olarak tanımlı; yeni bir seçenek eklendiyse "+
+				"üçünden birine karar verilmeli", alan.Name)
 
 		beklenen = append(beklenen, ad)
 	}

@@ -131,7 +131,7 @@ func TestListStoreProductsHidesUnpublished(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, result.Items, 1, "yalnızca yayındaki ürün listelenmeli")
 	assert.Equal(t, "tisort", result.Items[0].Handle)
-	assert.Equal(t, 1, result.Count, "count da yalnızca yayındakileri saymalı")
+	assert.Equal(t, 1, sayac(t, result), "count da yalnızca yayındakileri saymalı")
 }
 
 // TestGetStoreProductByHandle vitrin ucunun handle ile de çalıştığını doğrular.
@@ -271,4 +271,71 @@ func TestListStoreProductsSkipsGraphWhenNoVariants(t *testing.T) {
 	require.Len(t, result.Items, 1)
 	assert.Empty(t, result.Items[0].Variants)
 	assert.Zero(t, graph.callCount(), "genişletilecek varyant yoksa Query'ye gidilmemeli")
+}
+
+// TestListStoreProductsSkipCountSorguyuHicCalistirmaz SkipCount'un bir
+// SÜZGEÇ değil, SORGUNUN İPTALİ olduğunu doğrular.
+//
+// İddia bilinçli olarak sonucun alanına değil DEPOYA bakar. "Count nil geldi"
+// demek yetmezdi: sayacı hesaplayıp sonucu atan bir uygulama da o iddiayı
+// geçer ve tek kazanç olan şeyi — 52.004 ürünlük katalogta 64,07 ms'lik
+// sorguyu hiç sormamayı — sessizce kaybederdi. Ölçülen kazanç sorgunun
+// yokluğundandır, alanın boşluğundan değil.
+func TestListStoreProductsSkipCountSorguyuHicCalistirmaz(t *testing.T) {
+	t.Parallel()
+
+	store := newMemStore()
+	svc := newService(t, store, newFakeLinker(), &fakeGraph{})
+	ctx := context.Background()
+
+	seedProduct(t, svc, "tisort", "Tişört")
+
+	sayan, err := svc.ListStoreProducts(ctx, service.StoreListOptions{})
+	require.NoError(t, err)
+	assert.Equal(t, 1, sayac(t, sayan), "varsayılan hâlâ saymalı")
+
+	sayarakCagri := store.callCount("CountProducts")
+	require.Positive(t, sayarakCagri, "varsayılan sayaç sorgusunu çalıştırmalı")
+
+	saymayan, err := svc.ListStoreProducts(ctx, service.StoreListOptions{SkipCount: true})
+	require.NoError(t, err)
+
+	assert.Nil(t, saymayan.Count,
+		"sayılmadıysa alan nil olmalı; 0 \"eşleşme yok\" ile karışırdı")
+	assert.Len(t, saymayan.Items, 1,
+		"sayacı kapatmak LİSTEYİ etkilememeli")
+	assert.Equal(t, sayarakCagri, store.callCount("CountProducts"),
+		"SkipCount ile sayaç sorgusu HİÇ çalıştırılmamalı")
+}
+
+// TestListStoreProductsSkipCountSayfayiAynenBirakir sayacın kapatılmasının
+// sayfadaki KAYITLARIN TAMAMINI olduğu gibi bıraktığını doğrular.
+//
+// Sayfalama, ilişkiler ve sayaç aynı çağrıdan çıkar; birini kapatmanın
+// ötekilere dokunması sessiz olurdu. Karşılaştırma bilinçli olarak handle
+// listesi değil KAYITLARIN KENDİSİDİR: yalnızca handle'lara bakan bir iddia,
+// sayaçla birlikte varyantları da düşüren bir "iyileştirmeyi" geçirirdi
+// (denendi — handle karşılaştırması hayatta kalıyor, kayıt karşılaştırması
+// düşürüyor). Vitrin ürününün asıl içeriği fiyat ve stok taşıyan
+// varyantlarıdır; onlar boşalırsa sayfa aynı görünür ama işe yaramaz.
+func TestListStoreProductsSkipCountSayfayiAynenBirakir(t *testing.T) {
+	t.Parallel()
+
+	fx := newStoreFixture(t)
+	ctx := context.Background()
+
+	sayan, err := fx.svc.ListStoreProducts(ctx, service.StoreListOptions{Limit: 1, Offset: 1})
+	require.NoError(t, err)
+	require.Len(t, sayan.Items, 1)
+	require.NotEmpty(t, sayan.Items[0].Variants,
+		"düzenek zenginleştirilmiş varyant döndürmeli; yoksa aşağıdaki iddia boşalır")
+
+	saymayan, err := fx.svc.ListStoreProducts(ctx,
+		service.StoreListOptions{Limit: 1, Offset: 1, SkipCount: true})
+	require.NoError(t, err)
+
+	assert.Equal(t, sayan.Items, saymayan.Items,
+		"sayacı kapatmak sayfanın kayıtlarını (varyant, fiyat, stok dâhil) değiştirmemeli")
+	assert.Equal(t, sayan.Limit, saymayan.Limit)
+	assert.Equal(t, sayan.Offset, saymayan.Offset)
 }

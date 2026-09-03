@@ -303,7 +303,7 @@ func (h *Handler) adminListProducts(w http.ResponseWriter, r *http.Request) {
 		corehttp.WriteError(r.Context(), w, err)
 		return
 	}
-	withRelations, err := boolParam(r, "expand")
+	withRelations, err := boolParam(r, "expand", false)
 	if err != nil {
 		corehttp.WriteError(r.Context(), w, err)
 		return
@@ -513,9 +513,15 @@ func (h *Handler) adminListOptions(w http.ResponseWriter, r *http.Request) {
 		corehttp.WriteError(r.Context(), w, err)
 		return
 	}
+
+	// Sayı BURADA doludur: uç sayfalamaz, sonucun tamamını tek sayfa gibi
+	// yazar. Sayacı boş bırakmak, sayfalanmayan bir listede "sayılmadı"
+	// demek olurdu — oysa sayı elimizde.
+	sayi := len(options)
+
 	writeList(w, r, service.ListResult[models.Option]{
 		Items:  options,
-		Count:  len(options),
+		Count:  &sayi,
 		Offset: 0,
 		Limit:  len(options),
 	})

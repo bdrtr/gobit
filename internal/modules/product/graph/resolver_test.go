@@ -40,6 +40,12 @@ type sahteVitrin struct {
 }
 
 // ListStoreProducts çağrının ölçütlerini kaydeder ve hazır sonucu döner.
+//
+// Sayaç alanında GERÇEK servisin sözleşmesi taklit edilir: SkipCount isteniyorsa
+// nil, istenmiyorsa dolu döner. Sabit bir sonuç döndürmek yetmezdi — şemadaki
+// "count: Int!" nil'i kabul etmez ve sayacı SEÇEN her test, sahte yüzünden
+// "null which the schema does not allow" hatasıyla düşerdi. Yani sahtenin
+// sözleşmeyi taşımaması, sınanan davranışla ilgisiz bir arıza üretirdi.
 func (s *sahteVitrin) ListStoreProducts(
 	_ context.Context,
 	opts service.StoreListOptions,
@@ -53,7 +59,16 @@ func (s *sahteVitrin) ListStoreProducts(
 		return service.ListResult[service.StoreProduct]{}, s.hata
 	}
 
-	return s.liste, nil
+	liste := s.liste
+
+	switch {
+	case opts.SkipCount:
+		liste.Count = nil
+	case liste.Count == nil:
+		liste.Count = ptr(len(liste.Items))
+	}
+
+	return liste, nil
 }
 
 // GetStoreProduct çağrının seçicisini ve kanallarını kaydeder.
@@ -431,4 +446,113 @@ func urunVaryantlari(t *testing.T, yanit graphqlYaniti) []any {
 	require.True(t, ok, "üründe varyant dizisi olmalı: %#v", urun)
 
 	return varyantlar
+}
+
+// ptr verilen değerin adresini döner.
+//
+// Zarftaki sayaç işaretçidir (nil "sayılmadı" demektir, bkz.
+// service.ListResult) ve sahte vitrinin döndürdüğü sabitler bu yüzden
+// adreslenmek zorundadır.
+func ptr[T any](v T) *T { return &v }
+
+// TestSecilmeyenSayacHesaplanmaz seçim kümesinin İŞ MİKTARINI belirlediğini
+// doğrular.
+//
+// Kapanan açık şuydu: "count" GraphQL'de bir alandır ve seçilmediğinde yanıtta
+// zaten görünmezdi, ama sorgu yine de koşuyordu. gobit_load'da ölçüldü —
+// 52.004 ürünlük katalogda sayaç 64,07 ms, isteğin geri kalanı 0,65 ms; yani
+// istemcinin HİÇ İSTEMEDİĞİ bir alan isteğin %99'unu yazıyordu.
+//
+// İddia yanıta değil SERVİSE geçirilen ölçüte bakar: yanıtta "count" zaten
+// yoktur (istemci seçmedi) ve ona bakan bir test, sayaç hesaplanmaya devam
+// etse bile geçerdi.
+func TestSecilmeyenSayacHesaplanmaz(t *testing.T) {
+	t.Parallel()
+
+	svc := &sahteVitrin{}
+	yanit, _ := sorgula(t, kimlikli([]string{"sc_1"}), svc,
+		`{ products { items { id } } }`)
+
+	require.Empty(t, yanit.Errors)
+	assert.True(t, svc.sonListe(t).SkipCount,
+		"seçilmeyen count için sayaç sorgusu istenmemeli")
+}
+
+// TestSecilenSayacHesaplanir alanın seçildiği durumda sayacın hâlâ
+// istendiğini ve DOLU döndüğünü doğrular.
+//
+// [TestSecilmeyenSayacHesaplanmaz] tek başına, sayacı hiçbir zaman istemeyen
+// bozuk bir uygulamayla da geçerdi. İki testin birlikte söylediği şey
+// koşulun kendisidir: iş, alan istendiğinde yapılır.
+//
+// Şemadaki "count: Int!" nil kabul etmez, yani bu test aynı zamanda sözleşme
+// ihlalinin kanıtıdır: sayaç seçilip de hesaplanmasaydı yanıt alan hatasıyla
+// dönerdi.
+func TestSecilenSayacHesaplanir(t *testing.T) {
+	t.Parallel()
+
+	svc := &sahteVitrin{liste: service.ListResult[service.StoreProduct]{
+		Items: []service.StoreProduct{{Product: models.Product{ID: "prod_1"}}},
+		Count: ptr(42),
+	}}
+
+	yanit, _ := sorgula(t, kimlikli([]string{"sc_1"}), svc,
+		`{ products { count items { id } } }`)
+
+	require.Empty(t, yanit.Errors)
+	assert.False(t, svc.sonListe(t).SkipCount, "seçilen count hesaplanmalı")
+
+	liste, ok := yanit.Data["products"].(map[string]any)
+	require.True(t, ok)
+	assert.InDelta(t, float64(42), liste["count"], 0)
+}
+
+// TestSkipEdilenSayacHesaplanmaz kararın @skip yönergesini de dinlediğini
+// doğrular.
+//
+// Yönerge sunucu tarafında UYGULANIR: `count @skip(if: true)` yazan istemci o
+// alanı yanıtta göremez, dolayısıyla onun için iş yapmak da yine boşa iştir.
+// Kendi seçim kümesini elle gezen bir uygulama bu durumu kaçırırdı; gqlgen'in
+// FieldRequested'ı kaçırmıyor ve bu test o farkı sabitler.
+func TestSkipEdilenSayacHesaplanmaz(t *testing.T) {
+	t.Parallel()
+
+	svc := &sahteVitrin{}
+	yanit, _ := sorgula(t, kimlikli([]string{"sc_1"}), svc,
+		`{ products { count @skip(if: true) items { id } } }`)
+
+	require.Empty(t, yanit.Errors)
+	assert.True(t, svc.sonListe(t).SkipCount,
+		"@skip ile atlanan alan için sayaç sorgusu istenmemeli")
+
+	liste, ok := yanit.Data["products"].(map[string]any)
+	require.True(t, ok)
+	assert.NotContains(t, liste, "count", "atlanan alan yanıtta da olmamalı")
+}
+
+// TestFragmandakiSayacHesaplanir alanın bir FRAGMAN üzerinden istenmesinin de
+// sayılmasını sağladığını doğrular.
+//
+// Üretilmiş istemciler alanları neredeyse her zaman fragman içinde ister.
+// Yalnızca doğrudan seçimlere bakan bir uygulama burada sessizce yanlış cevap
+// verirdi: sayaç hiç hesaplanmaz, şema "Int!" dediği için de yanıt alan
+// hatasıyla düşerdi — yani üretilmiş her istemci kırılırdı.
+func TestFragmandakiSayacHesaplanir(t *testing.T) {
+	t.Parallel()
+
+	svc := &sahteVitrin{liste: service.ListResult[service.StoreProduct]{
+		Items: []service.StoreProduct{{Product: models.Product{ID: "prod_1"}}},
+		Count: ptr(3),
+	}}
+
+	yanit, _ := sorgula(t, kimlikli([]string{"sc_1"}), svc,
+		`{ products { ...sayfa items { id } } } fragment sayfa on ProductList { count }`)
+
+	require.Empty(t, yanit.Errors, "%#v", yanit.Errors)
+	assert.False(t, svc.sonListe(t).SkipCount,
+		"fragman içinden istenen alan da SEÇİLMİŞTİR")
+
+	liste, ok := yanit.Data["products"].(map[string]any)
+	require.True(t, ok)
+	assert.InDelta(t, float64(3), liste["count"], 0)
 }

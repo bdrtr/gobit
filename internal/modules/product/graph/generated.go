@@ -2292,8 +2292,8 @@ func (ec *executionContext) _ProductList_count(ctx context.Context, field graphq
 			return obj.Count, nil
 		},
 		nil,
-		func(ctx context.Context, selections ast.SelectionSet, v int) graphql.Marshaler {
-			return ec.marshalNInt2int(ctx, selections, v)
+		func(ctx context.Context, selections ast.SelectionSet, v *int) graphql.Marshaler {
+			return ec.marshalNInt2ᚖint(ctx, selections, v)
 		},
 		true,
 		true,
@@ -5288,6 +5288,28 @@ func (ec *executionContext) unmarshalNInt2int32(ctx context.Context, v any) (int
 func (ec *executionContext) marshalNInt2int32(ctx context.Context, sel ast.SelectionSet, v int32) graphql.Marshaler {
 	_ = sel
 	res := graphql.MarshalInt32(v)
+	if res == graphql.Null {
+		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
+			graphql.AddErrorf(ctx, "the requested element is null which the schema does not allow")
+		}
+	}
+	return res
+}
+
+func (ec *executionContext) unmarshalNInt2ᚖint(ctx context.Context, v any) (*int, error) {
+	res, err := graphql.UnmarshalInt(v)
+	return &res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) marshalNInt2ᚖint(ctx context.Context, sel ast.SelectionSet, v *int) graphql.Marshaler {
+	if v == nil {
+		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
+			graphql.AddErrorf(ctx, "the requested element is null which the schema does not allow")
+		}
+		return graphql.Null
+	}
+	_ = sel
+	res := graphql.MarshalInt(*v)
 	if res == graphql.Null {
 		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
 			graphql.AddErrorf(ctx, "the requested element is null which the schema does not allow")

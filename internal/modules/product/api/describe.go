@@ -55,7 +55,7 @@ func Describe(d *openapi.Doc) {
 	d.Describe(http.MethodGet, "/store/v1/products", openapi.Operation{
 		Summary: "Yayındaki ürünleri fiyat ve stok bilgisiyle listeler.",
 		// Parametreler handler'ın OKUDUKLARIDIR, isteyebileceklerimiz değil:
-		// [Handler.storeListProducts] yalnızca bu dördünü okur.
+		// [Handler.storeListProducts] yalnızca bu beşini okur.
 		//
 		// "sales_channel_id" BİLİNÇLİ OLARAK YOKTUR ve eklenmemelidir: kanal
 		// isteğin publishable anahtarından gelir, sorgu dizesinden değil
@@ -70,9 +70,33 @@ func Describe(d *openapi.Doc) {
 			sorguParametresi("limit", tipTamSayi,
 				"Sayfa boyutu; verilmezse servisin varsayılanı uygulanır."),
 			sorguParametresi("offset", tipTamSayi, "Atlanacak kayıt sayısı."),
+			// Sayacın kapatılabildiğini ve varsayılanının AÇIK olduğunu
+			// istemcinin belgeden görmesi şarttır: hem sessiz bir varsayılan
+			// bırakmamak için, hem de kapatıldığında "count" alanının
+			// gövdeden düştüğünü önceden bilmesi için. Ölçüm de burada
+			// yazılıdır — parametrenin ne kazandırdığını söylemeyen bir
+			// açıklama, kimsenin kullanmayacağı bir parametre bırakır.
+			sorguParametresi("with_count", tipMantiksal,
+				"Toplam sayaç hesaplansın mı? Varsayılan: true (bugünkü davranış). "+
+					"false verilirse sayaç sorgusu hiç çalıştırılmaz ve yanıt zarfında "+
+					"\"count\" alanı BULUNMAZ — 0 dönmez, null dönmez, alan yoktur. "+
+					"Sayaç, sayfa boyutundan bağımsız olarak satış kanalı süzgecinin "+
+					"uygulandığı kümenin tamamını gezer ve maliyeti KATALOG büyüklüğüyle "+
+					"artar: 52.004 ürünlük bir katalogda ölçülen 67,00 ms'lik liste "+
+					"servisinin 64,07 ms'si sayaçtır; sayaçsız aynı çağrı 0,65 ms "+
+					"sürer (ucun kalan zenginleştirme bacakları sayaçtan bağımsızdır "+
+					"ve bu parametreyle atlanmaz). "+
+					"Toplam sayı genelde ilk sayfada bir kez gerekir, sonraki sayfalarda "+
+					"aynı sayı yeniden hesaplanır.",
+			),
 		},
 		Responses: map[string]any{
-			"200": openapi.Response("Vitrin ürünleri", d.List(service.StoreProduct{})),
+			// Zarf ŞEMASI da sayacın düşebildiğini söylemelidir: "count"
+			// burada zorunlu alan DEĞİLDİR (bkz. [openapi.Doc.ListOptionalCount]).
+			// d.List kullanılsaydı belge, with_count=false yanıtında var
+			// olmayan bir alanı zorunlu ilan ederdi.
+			"200": openapi.Response("Vitrin ürünleri",
+				d.ListOptionalCount(service.StoreProduct{})),
 		},
 	})
 

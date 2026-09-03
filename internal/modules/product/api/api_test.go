@@ -162,7 +162,7 @@ func TestListEnvelopeShape(t *testing.T) {
 		listProducts: func(_ context.Context, opts service.ListProductsOptions) (service.ListResult[models.Product], error) {
 			return service.ListResult[models.Product]{
 				Items:  []models.Product{{ID: "prod_1", Handle: "tisort", Title: "Tişört"}},
-				Count:  42,
+				Count:  ptr(42),
 				Offset: opts.Offset,
 				Limit:  opts.Limit,
 			}, nil
@@ -463,7 +463,7 @@ func TestStoreListIncludesPriceAndInventory(t *testing.T) {
 						InventoryItem: query.Record{"id": "invitem_1", "stocked_quantity": 3},
 					}},
 				}},
-				Count:  1,
+				Count:  ptr(1),
 				Limit:  opts.Limit,
 				Offset: opts.Offset,
 			}, nil
@@ -585,7 +585,7 @@ func TestGraphQLUcuVitrinServisiniCagirir(t *testing.T) {
 		) (service.ListResult[service.StoreProduct], error) {
 			return service.ListResult[service.StoreProduct]{
 				Items: []service.StoreProduct{{Product: models.Product{ID: "prod_1"}}},
-				Count: 1,
+				Count: ptr(1),
 			}, nil
 		},
 	}
@@ -616,4 +616,218 @@ func TestGraphQLUcuGETKabulEtmez(t *testing.T) {
 	rec := do(t, newRouter(&fakeCatalog{}), http.MethodGet,
 		"/store/v1/graphql?query={products{count}}", "")
 	assert.Equal(t, http.StatusMethodNotAllowed, rec.Code)
+}
+
+// ptr verilen değerin adresini döner.
+//
+// Zarftaki sayaç işaretçidir (nil "sayılmadı" demektir, bkz. service.ListResult)
+// ve sahte servislerin döndürdüğü sabitler bu yüzden adreslenmek zorundadır.
+func ptr[T any](v T) *T { return &v }
+
+// sayacIsteyen sorgu dizesindeki "with_count" kararını KAYDEDEN vitrin
+// kataloğunu ve kaydı okuyan işaretçiyi döner.
+//
+// Sahte, servisin sözleşmesini taklit eder: SkipCount istenmişse sayaç nil,
+// istenmemişse dolu döner. Sabit bir sonuç dönseydi test yalnızca handler'ın
+// zarf yazımını ölçer, kararın SERVİSE ULAŞTIĞINI hiç ölçmezdi.
+func sayacIsteyen() (katalog *fakeCatalog, atlandi *bool) {
+	atlandi = new(bool)
+	katalog = &fakeCatalog{
+		listStoreProducts: func(
+			_ context.Context, opts service.StoreListOptions,
+		) (service.ListResult[service.StoreProduct], error) {
+			*atlandi = opts.SkipCount
+
+			res := service.ListResult[service.StoreProduct]{
+				Items:  []service.StoreProduct{{Product: models.Product{ID: "prod_1"}}},
+				Limit:  opts.Limit,
+				Offset: opts.Offset,
+			}
+			if !opts.SkipCount {
+				res.Count = ptr(7)
+			}
+
+			return res, nil
+		},
+	}
+
+	return katalog, atlandi
+}
+
+// TestVitrinListesiVarsayilanSayar parametresiz isteğin bugünkü yanıtı
+// verdiğini doğrular.
+//
+// Bu testin işi geriye uyumluluktur: yeni bir anahtar eklemenin en sessiz
+// arızası, varsayılanın kaymasıdır. Kayarsa hiçbir istemci hata görmez —
+// yalnızca zarfındaki sayı kaybolur.
+func TestVitrinListesiVarsayilanSayar(t *testing.T) {
+	t.Parallel()
+
+	katalog, atlandi := sayacIsteyen()
+
+	rec := do(t, newRouter(katalog), http.MethodGet, "/store/v1/products", "")
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	assert.False(t, *atlandi, "parametre verilmeyen istek SAYMALI")
+
+	govde := decodeBody(t, rec)
+	assert.Equal(t, float64(7), govde["count"], "varsayılan yanıt sayacı taşımalı")
+	assert.Contains(t, govde, "offset")
+	assert.Contains(t, govde, "limit")
+}
+
+// TestVitrinListesiWithCountFalseAlaniDusurur sayacın kapatıldığında zarftan
+// TÜMÜYLE düştüğünü doğrular.
+//
+// İki iddia da gereklidir ve ikincisi asıl olandır: alanın 0 dönmediği YETMEZ,
+// alanın BULUNMAMASI gerekir. 0 dönen bir uygulama "eşleşen ürün yok" der ve
+// istemci sıfır sayfa hesaplar; olmayan alan ise hesabı yapılamaz kılar, yani
+// yanlış cevabı GÜRÜLTÜLÜ verir.
+func TestVitrinListesiWithCountFalseAlaniDusurur(t *testing.T) {
+	t.Parallel()
+
+	katalog, atlandi := sayacIsteyen()
+
+	rec := do(t, newRouter(katalog), http.MethodGet, "/store/v1/products?with_count=false", "")
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	assert.True(t, *atlandi, "karar servise ULAŞMALI; handler'da yutulmamalı")
+
+	govde := decodeBody(t, rec)
+	assert.NotContains(t, govde, "count",
+		"sayılmadıysa alan gövdede HİÇ olmamalı: %s", rec.Body.String())
+	assert.NotContains(t, rec.Body.String(), `"count"`,
+		"ham gövdede de bulunmamalı (null yazılmış olabilir)")
+
+	// Zarfın geri kalanı DEĞİŞMEZ: düşen tek şey sayaçtır.
+	assert.Contains(t, govde, "data")
+	assert.Contains(t, govde, "offset")
+	assert.Contains(t, govde, "limit")
+}
+
+// TestVitrinListesiSifirSayaciYAZAR "sayıldı ve sıfır çıktı" durumunun
+// alanı DÜŞÜRMEDİĞİNİ doğrular.
+//
+// İddia, alanı düşüren mekanizmanın SINIRIDIR. Zarf `*int` + omitempty
+// kullanır: omitempty işaretçilerde yalnızca nil'e bakar, dolayısıyla sıfırı
+// gösteren bir işaretçi yazılır. Alan düz bir `int` + omitempty olsaydı — ki
+// sadeleştirme niyetiyle yapılacak en olası değişiklik budur — "hiç ürün
+// eşleşmedi" yanıtı sessizce SAYAÇSIZ görünürdü ve istemci sayının
+// hesaplanmadığını sanardı. İki durum yanıtta ayırt edilebilir kalmalıdır.
+func TestVitrinListesiSifirSayaciYAZAR(t *testing.T) {
+	t.Parallel()
+
+	katalog := &fakeCatalog{
+		listStoreProducts: func(
+			_ context.Context, opts service.StoreListOptions,
+		) (service.ListResult[service.StoreProduct], error) {
+			return service.ListResult[service.StoreProduct]{
+				Count: ptr(0), Limit: opts.Limit, Offset: opts.Offset,
+			}, nil
+		},
+	}
+
+	rec := do(t, newRouter(katalog), http.MethodGet, "/store/v1/products", "")
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	govde := decodeBody(t, rec)
+	require.Contains(t, govde, "count",
+		"sıfır SAYILMIŞ bir sonuçtur; alan gövdede olmalı: %s", rec.Body.String())
+	assert.InDelta(t, float64(0), govde["count"], 0)
+}
+
+// TestVitrinListesiWithCountTrueAcikcaSayar anahtarın açık hâlinin de
+// çalıştığını doğrular.
+//
+// Varsayılanla aynı sonucu vermesi beklenir; testin değeri, "true" değerinin
+// yanlışlıkla "verilmiş ama okunamamış" sayılmadığını göstermesidir.
+func TestVitrinListesiWithCountTrueAcikcaSayar(t *testing.T) {
+	t.Parallel()
+
+	katalog, atlandi := sayacIsteyen()
+
+	rec := do(t, newRouter(katalog), http.MethodGet, "/store/v1/products?with_count=true", "")
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	assert.False(t, *atlandi)
+	assert.Equal(t, float64(7), decodeBody(t, rec)["count"])
+}
+
+// TestVitrinListesiBozukWithCountReddedilir okunamayan değerin sessizce
+// varsayılana düşmediğini doğrular.
+//
+// Sessiz düşüş, sayacı kapattığını sanan istemcinin maliyeti ödemeye devam
+// etmesi demekti — hem de bunu hiçbir yerde göremeden.
+func TestVitrinListesiBozukWithCountReddedilir(t *testing.T) {
+	t.Parallel()
+
+	katalog, _ := sayacIsteyen()
+
+	rec := do(t, newRouter(katalog), http.MethodGet, "/store/v1/products?with_count=belki", "")
+	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code, "gövde: %s", rec.Body.String())
+}
+
+// TestYonetimListesiSayaciDusmez gevşetmenin YALNIZCA vitrin listesine ait
+// olduğunu doğrular.
+//
+// Zarf tipi bütün uçlarda ortaktır; "count"u işaretçiye çevirmek, her listenin
+// alanı sessizce düşürebilmesi anlamına gelirdi. Yönetim listesi her zaman
+// sayar ve alanı her zaman yazmalıdır.
+func TestYonetimListesiSayaciDusmez(t *testing.T) {
+	t.Parallel()
+
+	katalog := &fakeCatalog{
+		listProducts: func(
+			_ context.Context, opts service.ListProductsOptions,
+		) (service.ListResult[models.Product], error) {
+			assert.False(t, opts.SkipCount, "yönetim listesi sayacı kapatmaz")
+
+			return service.ListResult[models.Product]{
+				Items:  []models.Product{{ID: "prod_1"}},
+				Count:  ptr(1),
+				Offset: opts.Offset,
+				Limit:  opts.Limit,
+			}, nil
+		},
+	}
+
+	// Vitrindeki anahtar yönetim ucunda OKUNMAZ: gönderilse bile sayaç kalır.
+	rec := do(t, newRouter(katalog), http.MethodGet, "/admin/v1/products?with_count=false", "")
+	require.Equal(t, http.StatusOK, rec.Code)
+	assert.Equal(t, float64(1), decodeBody(t, rec)["count"])
+}
+
+// TestYonetimListesiExpandVarsayilaniKapali "expand" anahtarının verilmediğinde
+// KAPALI olduğunu doğrular.
+//
+// Test, [boolParam]'ın varsayılanı çağrıya taşımasının bedelini kapatır:
+// varsayılan artık fonksiyonun gövdesinde değil çağrı satırında duruyor ve
+// oradaki tek bir sözcük ("false" → "true") derlenir, hiçbir şeyi kırmaz ve
+// yönetim listesini sessizce PAHALILAŞTIRIRDI — her istek varyantları,
+// seçenekleri, görselleri ve taksonomiyi de çekmeye başlardı. Kaydırma
+// ölçüldü: hiçbir test düşmüyordu.
+func TestYonetimListesiExpandVarsayilaniKapali(t *testing.T) {
+	t.Parallel()
+
+	var istenen []bool
+
+	katalog := &fakeCatalog{
+		listProducts: func(
+			_ context.Context, opts service.ListProductsOptions,
+		) (service.ListResult[models.Product], error) {
+			istenen = append(istenen, opts.WithRelations)
+
+			return service.ListResult[models.Product]{Count: ptr(0)}, nil
+		},
+	}
+
+	router := newRouter(katalog)
+
+	require.Equal(t, http.StatusOK, do(t, router, http.MethodGet, "/admin/v1/products", "").Code)
+	require.Equal(t, http.StatusOK,
+		do(t, router, http.MethodGet, "/admin/v1/products?expand=true", "").Code)
+
+	require.Len(t, istenen, 2)
+	assert.False(t, istenen[0], "expand verilmezse ilişkiler ÇEKİLMEMELİ")
+	assert.True(t, istenen[1], "expand=true ilişkileri çekmeli")
 }

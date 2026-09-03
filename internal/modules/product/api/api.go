@@ -81,10 +81,34 @@ var _ Catalog = (*service.Service)(nil)
 
 // listEnvelope liste yanıtlarının zarfıdır (plan Bölüm 8).
 type listEnvelope struct {
-	Data   any `json:"data"`
-	Count  int `json:"count"`
-	Offset int `json:"offset"`
-	Limit  int `json:"limit"`
+	Data any `json:"data"`
+	// Count süzgece uyan TOPLAM kayıt sayısıdır ve SAYILMADIYSA gövdeden
+	// tümüyle DÜŞER (omitempty + işaretçi).
+	//
+	// Sayımın kapatılabildiği tek uç bugün vitrin listesidir
+	// (bkz. [Handler.storeListProducts]); geri kalan her liste her zaman sayar
+	// ve alan onlarda hep yazılır — yani varsayılan yanıtın baytları
+	// DEĞİŞMEZ.
+	//
+	// # Neden 0 değil, neden null değil, neden YOK
+	//
+	// 0 bir YALANDIR: "eşleşen kayıt yok" cümlesinden ayırt edilemez ve
+	// istemci sayfa sayısını sıfır hesaplar. JSON null ise alanın TİPİNİ
+	// değiştirir (integer → integer|null) ve JavaScript'te sessizce sayıya
+	// çevrilir — `null / 20` sıfırdır, `undefined / 20` NaN'dır; yani eksik
+	// alan yanlış cevabı GÜRÜLTÜLÜ verir, null sessiz verir.
+	//
+	// Asıl gerekçe ise bu değil, SİMETRİDİR: aynı katalogun GraphQL yüzeyinde
+	// "count" istemcinin seçmediği sürece zaten yanıtta yoktur. Alanı düşürmek
+	// yeni bir biçim icat etmez, iki okuma yüzeyini aynı cümleye getirir —
+	// sayaç, İSTENDİĞİ SÜRECE vardır.
+	//
+	// Alanın düşebildiği OpenAPI belgesinde de yazılıdır: vitrin listesinin
+	// yanıt şeması "count"u zorunlu alanlar arasına KOYMAZ
+	// (bkz. openapi.Doc.ListOptionalCount).
+	Count  *int `json:"count,omitempty"`
+	Offset int  `json:"offset"`
+	Limit  int  `json:"limit"`
 }
 
 // itemEnvelope tekil yanıtların zarfıdır.
@@ -185,11 +209,18 @@ func stringParam(r *http.Request, name string) *string {
 	return &value
 }
 
-// boolParam sorgu parametresini mantıksal değer olarak okur.
-func boolParam(r *http.Request, name string) (bool, error) {
+// boolParam sorgu parametresini mantıksal değer olarak okur; yoksa
+// varsayılanı döner.
+//
+// Varsayılan ÇAĞRIDA yazılır, burada değil — [intParam] ile aynı biçim. Sabit
+// bir false varsayılanı yeterli olmayı bıraktı: "with_count" parametresinin
+// varsayılanı TRUE'dur (bkz. [Handler.storeListProducts]) ve varsayılanı
+// fonksiyonun içine gömmek, çağıranın gördüğü imzada YAZMAYAN bir kural
+// olurdu.
+func boolParam(r *http.Request, name string, fallback bool) (bool, error) {
 	raw := r.URL.Query().Get(name)
 	if raw == "" {
-		return false, nil
+		return fallback, nil
 	}
 	value, err := strconv.ParseBool(raw)
 	if err != nil {

@@ -184,6 +184,31 @@ ORDER BY created_at DESC, id DESC
 LIMIT $6::int OFFSET $7::int`
 
 // countProductsSQL ölçütlere uyan TOPLAM ürün sayısını okur.
+//
+// # Bu sorgu PAHALIDIR ve biçimi DEĞİŞTİRİLMEMELİDİR
+//
+// LIMIT'i olmadığı için planlayıcı erken duramaz: ürün tablosunun tamamını
+// gezer ve satır başına link tablosuna bir indeks yoklaması yapar. gobit_load
+// üzerinde ölçüldü (52.004 ürün, 52.000 kanal ataması):
+//
+//	Aggregate (actual 70,655 ms)
+//	  -> Seq Scan on product (rows=52.004)
+//	       Filter: ... AND COALESCE((SubPlan 1), true)
+//	       SubPlan 1 -> Index Only Scan ... (loops=52.004)
+//	  Buffers: shared hit=156.743 (bunun 156.013'ü alt sorgunun)
+//
+// Aynı kümeyi sayan iki alternatif biçim ölçüldü ve İKİSİ DE REDDEDİLDİ:
+// "iki EXISTS" 43-54 ms, "GROUP BY + hash join" 33-45 ms. Süzgeçsiz durumda
+// daha hızlılar ama link tablosunun tamamını hash'lemek sabit bir ~30 ms taban
+// koyuyor; SEÇİCİ bir süzgeçte (tek ürün eşleşen bir "q") bugünkü biçim
+// 13,8 ms, hash biçimi 30,0 ms — yani takas yön değiştiriyor. Üstelik liste
+// sorgusu bu biçme MECBURDUR (yukarıdaki "İndeks ve neden TEK alt sorgu"
+// başlığı) ve şablon ikisi arasında PAYLAŞILIR; biçimi ayırmak, görünürlük
+// kuralının ikinci bir tanımını yaratırdı.
+//
+// Sayım O(katalog)'dur ve hiçbir SQL biçimi onu sublineer yapmaz. Bu yüzden
+// çözüm burada değil ÇAĞIRANDA arandı: sayaç artık istenmediğinde hiç
+// çalıştırılmıyor (bkz. service.ListProductsOptions.SkipCount).
 var countProductsSQL = `SELECT count(*) FROM product
 ` + productFilterSQL + salesChannelVisible("product.id", "$5")
 

@@ -93,7 +93,7 @@ func TestStoreListingShowsUnassignedProductInEveryChannel(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, []string{"tisort"}, storeHandles(result.Items),
 			"atamasız ürün %v kanallarında da görünmeli", channels)
-		assert.Equal(t, 1, result.Count, "sayaç da atamasız ürünü saymalı")
+		assert.Equal(t, 1, sayac(t, result), "sayaç da atamasız ürünü saymalı")
 	}
 }
 
@@ -113,12 +113,12 @@ func TestStoreListingHidesProductFromForeignChannel(t *testing.T) {
 	visible, err := fx.svc.ListStoreProducts(ctx, service.StoreListOptions{SalesChannelIDs: []string{"sc_a"}})
 	require.NoError(t, err)
 	assert.Equal(t, []string{"tisort"}, storeHandles(visible.Items), "ürün atandığı kanalda görünmeli")
-	assert.Equal(t, 1, visible.Count)
+	assert.Equal(t, 1, sayac(t, visible))
 
 	hidden, err := fx.svc.ListStoreProducts(ctx, service.StoreListOptions{SalesChannelIDs: []string{"sc_b"}})
 	require.NoError(t, err)
 	assert.Empty(t, hidden.Items, "ürün atanmadığı kanalda GÖRÜNMEMELİ")
-	assert.Zero(t, hidden.Count, "sayaç da gizlenen ürünü saymamalı")
+	assert.Zero(t, sayac(t, hidden), "sayaç da gizlenen ürünü saymamalı")
 }
 
 // TestStoreListingShowsProductInAllAssignedChannels çoktan çoğa bağın gerçekten
@@ -206,7 +206,7 @@ func TestStoreListingFilterKeepsPagingConsistent(t *testing.T) {
 			Offset:          offset,
 		})
 		require.NoError(t, err)
-		assert.Equal(t, 4, page.Count,
+		assert.Equal(t, 4, sayac(t, page),
 			"toplam sayaç SÜZÜLMÜŞ kümeyi yansıtmalı (offset=%d)", offset)
 		for _, handle := range storeHandles(page.Items) {
 			assert.NotContains(t, hidden, handle, "yabancı kanalın ürünü hiçbir sayfada görünmemeli")
@@ -290,7 +290,7 @@ func TestStoreListingWithEmptyChannelSetShowsOnlyUnassigned(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, []string{"atanmamis"}, storeHandles(result.Items),
 		"kanalsız kimlik yalnızca atamasız ürünleri görmeli")
-	assert.Equal(t, 1, result.Count)
+	assert.Equal(t, 1, sayac(t, result))
 }
 
 // TestAdminListingIgnoresSalesChannels yönetim listelemesinin süzülmediğini
