@@ -10,6 +10,30 @@ Sabitlenme `1.0.0` ile olur.
 
 ## [Yayımlanmamış]
 
+### Değiştirildi
+
+- **`internal/core/workflow` ağacında Türkçe kalmadı** (ADR 0012'nin cırcırı).
+  Beş turda motorun kendisi, `pgstore` ve ikisinin TÜM test dosyaları çevrildi;
+  defter 715 dosyadan **708**'e indi.
+
+  Test dosyalarında çeviri üretim dosyalarından farklı bir iştir: yorumlar kadar
+  TEST VERİSİ de dile bağlıdır. Adım adları, workflow adları, idempotency
+  anahtarları, yürütme kimlikleri, hata kodları ve paylaşılan durum anahtarları
+  hep dize sabitidir; hepsi çevrildi ve doğrulamayı derleyici değil testlerin
+  kendisi yaptı (iddialar aynı dizelerden türüyor).
+
+  **Test ADLARININ çevrilmesi ek bir bağ getiriyor:** depo tüm test adlarını
+  indeksliyor (`TestBelgelerdekiAtiflarCozuluyor`) ve markdown'da ters tırnak
+  içinde anılan bir ad çözülmezse arch suite'i düşer. Bu turda iki atıf
+  güncellendi — `workflow_test.go`'nun pgstore testine yaptığı godoc atfı ve
+  ADR 0017'nin tekellik ölçümünü anan satırı.
+
+  **Üç şeritli dedektör işini gösterdi:** diyakritikler temizlendikten sonra
+  suite yeşildi ama dil testi hâlâ düşüyordu; "yok", "eski", "guncel", "talep"
+  gibi Türkçe harf taşımayan sözcükler kelime şeridinden yakalandı.
+
+  Davranış değişmedi; üretim koduna dokunulmadı.
+
 ## [0.8.0] — 2026-09-04
 
 ### Kırıcı değişiklikler
