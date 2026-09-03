@@ -163,6 +163,7 @@ type runOptions struct {
 	compensationRetry   RetryPolicy
 	compensationTimeout time.Duration
 	storeTimeout        time.Duration
+	lease               time.Duration
 	// compensationRetrySet kullanıcının telafi politikasını AYRICA verip
 	// vermediğini tutar; vermediyse telafi, adım politikasını devralır.
 	compensationRetrySet bool
@@ -223,6 +224,43 @@ func WithCompensationRetry(p RetryPolicy) RunOption {
 		}
 		o.compensationRetry = np
 		o.compensationRetrySet = true
+		return nil
+	}
+}
+
+// WithLease bir yürütmenin MEŞRU olarak sürebileceği en uzun süreyi bildirir.
+//
+// # Neden gerekli
+//
+// Bir yürütme kaydı "running" açılır ve uç duruma geçerek kapanır. Süreç o
+// geçişi yazamadan ölürse — deploy, OOM, pod tahliyesi, çökme — kayıt SONSUZA
+// DEK running kalır. Motorun tekrar mantığı ona bakıp "hâlâ sürüyor" der ve
+// aynı anahtarla gelen her çağrı 409 alır. Ölçüldü: üç gün önce çökmüş bir
+// yürütme hâlâ "sürüyor" diyordu ve o sepet bir daha ödenemiyordu.
+//
+// Yaşlılık tek başına kanıt değildir, kira SÜRESİ kanıttır: çağıran zaten
+// akışa sonlu bir bütçe veriyorsa (sepet akışı iki dakika), o bütçeden uzun
+// süre "running" duran bir kayıt, hiçbir sürecin tutamayacağı bir kayıttır.
+// Bu yüzden süre motorca tahmin edilmez, çağıranca BİLDİRİLİR.
+//
+// # Ne yapılır
+//
+// Kira dolmuş bir kayıt "sürüyor" sayılmaz; ne yapıldığı adım kayıtlarına
+// bakılarak belirlenir (bkz. [Executor.Run]):
+//
+//   - Hiçbir adım iş yapmamışsa telafi edilecek bir şey yoktur: kayıt
+//     [StatusFailed] olur, anahtarını bırakır ve çağıran YENİDEN deneyebilir.
+//   - İş yapılmışsa telafi HİÇ çalışmamıştır ve yarım iş ortadadır: kayıt
+//     [StatusCompensationFailed] olur, anahtarını TUTAR ve elle müdahale
+//     gerektiğini söyler. Sessizce yeniden denemek, ayrılmış stoğun ikinci kez
+//     ayrılması demekti.
+//
+// Sıfır ya da negatif değer bu davranışı KAPATIR: kira bildirmeyen bir çağıran
+// eski davranışı alır.
+func WithLease(d time.Duration) RunOption {
+	return func(o *runOptions) error {
+		o.lease = d
+
 		return nil
 	}
 }

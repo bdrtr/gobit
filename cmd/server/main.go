@@ -461,6 +461,8 @@ func run() error {
 	router.Get(openAPIPath, doc.Handler(router))
 	checkSchema(ctx, doc, router, log)
 
+	warnIfShutdownIsShorterThanTheSaga(ctx, cfg, log)
+
 	srv := corehttp.NewServer(corehttp.ServerOptions{
 		Addr:              cfg.Addr(),
 		Handler:           router,

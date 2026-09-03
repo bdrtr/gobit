@@ -570,6 +570,131 @@ func TestTelafiEdilemeyenYurutmeAnahtariBirakmaz(t *testing.T) {
 	assert.True(t, errors.IsConflict(err), "çağıran 409 almalı; hata: %v", err)
 }
 
+// --- terk edilmiş yürütmeler --------------------------------------------------
+
+// terkedilmisKayit verilen yaşta, "running" durumda bir yürütme kaydı açar.
+//
+// Süreç ÇÖKMESİ başka türlü taklit edilemez: çökme demek, uç durumu yazacak
+// kodun HİÇ çalışmaması demektir, dolayısıyla motoru koşturup yarıda kesmek
+// aynı durumu üretmez — kayıt bu yüzden doğrudan depoya yazılır.
+func terkedilmisKayit(t *testing.T, store workflow.Store, key string, yas time.Duration, adimlar ...workflow.StepRecord) string {
+	t.Helper()
+
+	an := time.Now().UTC().Add(-yas)
+	exec := &workflow.Execution{
+		ID: "wfx_TERK_" + key, Workflow: "idem", IdempotencyKey: key,
+		Status: workflow.StatusRunning, CreatedAt: an, UpdatedAt: an,
+	}
+	require.NoError(t, store.Create(t.Context(), exec))
+	for i := range adimlar {
+		require.NoError(t, store.AppendStep(t.Context(), exec.ID, adimlar[i]))
+	}
+
+	return exec.ID
+}
+
+// TestKirasiDolmusVeIsYapmamisYurutmeYenidenDenenebilir çökmenin en sık
+// biçimini kapatır: süreç iş yapmadan ölmüş.
+//
+// Telafi edilecek bir şey yoktur, dolayısıyla kayıt kapatılır, anahtarını
+// bırakır ve müşteri sepetini ödeyebilir. Kapatılmasaydı — ki kapatılmıyordu —
+// o sepet sonsuza dek 409 dönerdi.
+func TestKirasiDolmusVeIsYapmamisYurutmeYenidenDenenebilir(t *testing.T) {
+	rec := &recorder{}
+	store := workflow.NewMemoryStore()
+	eng := workflow.New(store, testLogger())
+	wf := workflow.Workflow{Name: "idem", Steps: steps(step(rec, "a"))}
+
+	id := terkedilmisKayit(t, store, "sepet-terk-1", time.Hour)
+
+	out, err := eng.Run(t.Context(), wf, nil,
+		workflow.WithIdempotencyKey("sepet-terk-1"), workflow.WithLease(time.Minute))
+
+	require.NoError(t, err, "terk edilmiş kayıt yeniden denemeyi ENGELLEMEMELİ")
+	assert.JSONEq(t, `"a-out"`, rawOutput(t, out))
+	assert.Equal(t, []string{"invoke:a"}, rec.snapshot(), "adımlar gerçekten çalışmalı")
+
+	eski, err := store.Get(t.Context(), id)
+	require.NoError(t, err, "terk edilen kayıt SİLİNMEZ, denetim izidir")
+	assert.Equal(t, workflow.StatusFailed, eski.Status)
+	assert.Contains(t, eski.Failure, "kira")
+}
+
+// İş YAPILMIŞ terk edilmiş yürütmenin sınavı burada değil, pgstore'un
+// entegrasyon testindedir ([TestTerkEdilmisYurutmeIsYapmissaElleMudahaleIster]).
+// Sebebi bu paketin bir eksiği değil, iki deponun ORTAK davranışı: AppendStep
+// yürütmenin updated_at'ini TAZELER — ki bu doğrudur, ilerleyen bir saga
+// kirasını canlı tutmalıdır — dolayısıyla "adımı var VE bayat" durumu depo
+// yüzeyinden kurulamaz. Üretim ona çökerek varır; test de zamanı geri alarak
+// varmalı, o da yalnızca gerçek depoda mümkün.
+
+// TestAdimlariOkunamayanTerkEdilmisYurutmeGuvenliTarafaDuser güvenli tarafa
+// düşmeyi doğrular.
+//
+// Kirası dolmuş bir kaydın ne yaptığı ancak adım kayıtlarından anlaşılır. Depo
+// onları veremiyorsa karar VERİLEMEZ, ve iki yanlışın bedeli eşit değildir:
+// "sürüyor" demek müşteriyi bekletir, "terk edilmiş, yeniden dene" demek ise
+// yarım kalmış olabilecek bir işin üstüne ikinci bir saga başlatır — yani
+// ayrılmış stoğu ikinci kez ayırır. Bu yüzden okunamayan bir kayıt olduğu gibi
+// bırakılır.
+func TestAdimlariOkunamayanTerkEdilmisYurutmeGuvenliTarafaDuser(t *testing.T) {
+	rec := &recorder{}
+	store := &brokenStore{
+		Store:  workflow.NewMemoryStore(),
+		getErr: errors.Unavailable("depo_yok", "adımlar okunamadı"),
+	}
+	eng := workflow.New(store, testLogger())
+	wf := workflow.Workflow{Name: "idem", Steps: steps(step(rec, "a"))}
+
+	terkedilmisKayit(t, store, "sepet-terk-5", time.Hour)
+
+	_, err := eng.Run(t.Context(), wf, nil,
+		workflow.WithIdempotencyKey("sepet-terk-5"), workflow.WithLease(time.Minute))
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "hâlâ sürüyor",
+		"adımlar okunamıyorsa terk edildiğine KARAR VERİLEMEZ")
+	assert.Empty(t, rec.snapshot(), "hiçbir adım çalıştırılmamalı")
+}
+
+// TestKirasiDolmamisYurutmeHalaSuruyorDer sınırın öteki yanını çizer.
+//
+// Gerçekten koşan bir yürütmeyi terk edilmiş saymak, aynı sepet için İKİNCİ bir
+// saga başlatmak demektir — yani stoğun iki kez ayrılması. Bu yüzden karar
+// yaşlılığa değil, çağıranın bildirdiği KİRA süresine dayanır.
+func TestKirasiDolmamisYurutmeHalaSuruyorDer(t *testing.T) {
+	rec := &recorder{}
+	store := workflow.NewMemoryStore()
+	eng := workflow.New(store, testLogger())
+	wf := workflow.Workflow{Name: "idem", Steps: steps(step(rec, "a"))}
+
+	terkedilmisKayit(t, store, "sepet-terk-3", time.Second)
+
+	_, err := eng.Run(t.Context(), wf, nil,
+		workflow.WithIdempotencyKey("sepet-terk-3"), workflow.WithLease(time.Hour))
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "hâlâ sürüyor")
+	assert.Empty(t, rec.snapshot())
+}
+
+// TestKiraBildirilmezseDavranisDegismez seçeneğin OPSİYONEL olduğunu doğrular.
+//
+// Kira bildirmeyen bir çağıran, akışının ne kadar sürebileceğini motora
+// söylememiş demektir; motor da onun adına tahmin etmez.
+func TestKiraBildirilmezseDavranisDegismez(t *testing.T) {
+	store := workflow.NewMemoryStore()
+	eng := workflow.New(store, testLogger())
+	wf := workflow.Workflow{Name: "idem", Steps: steps(step(&recorder{}, "a"))}
+
+	terkedilmisKayit(t, store, "sepet-terk-4", 365*24*time.Hour)
+
+	_, err := eng.Run(t.Context(), wf, nil, workflow.WithIdempotencyKey("sepet-terk-4"))
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "hâlâ sürüyor")
+}
+
 // TestIdempotencyDifferentKeyRunsAgain farklı anahtarın yeni yürütme açtığını doğrular.
 func TestIdempotencyDifferentKeyRunsAgain(t *testing.T) {
 	rec := &recorder{}
@@ -1019,6 +1144,7 @@ type brokenStore struct {
 	findErr   error
 	appendErr error
 	updateErr error
+	getErr    error
 
 	mu          sync.Mutex
 	appendCalls int
@@ -1030,6 +1156,14 @@ func (s *brokenStore) Create(ctx context.Context, exec *workflow.Execution) erro
 		return s.createErr
 	}
 	return s.Store.Create(ctx, exec)
+}
+
+func (s *brokenStore) Get(ctx context.Context, executionID string) (*workflow.Execution, error) {
+	if s.getErr != nil {
+		return nil, s.getErr
+	}
+
+	return s.Store.Get(ctx, executionID)
 }
 
 func (s *brokenStore) FindByIdempotencyKey(ctx context.Context, wf, key string) (*workflow.Execution, error) {

@@ -1378,6 +1378,22 @@ açıktır.
   yolu yoktur; alan yanıt zarfının parçasıdır ve kaldırmak kırıcı olurdu.
   Panelin ürün listesi bu bedeli ÖDEMEZ — o bilinçli olarak saymadan sayfalar
   (`TestProductListPagesWithoutCounting`).
+- **Kesintiye uğrayan bir ödeme, ayrılmış stoğu ELLE müdahale bekler hâlde
+  bırakır.** Sepet akışı HTTP isteğinin içinde senkron koşar; süreç ortasında
+  ölürse (deploy, OOM, pod tahliyesi) telafi HİÇ çalışmaz ve o ana kadar
+  ayrılmış stok `inventory_reservations` içinde asılı kalır. `SHUTDOWN_TIMEOUT`
+  varsayılanı **15 saniye**, saga bütçesi ise **2 dakika** — yani sıradan bir
+  deploy bunu üretebilir. Uygulama bu farkı açılışta UYARIR.
+
+  Artık sessiz değil: yürütmenin KİRASI dolduğunda bir sonraki deneme onu
+  kapatır ve iş yapılmışsa `compensation_failed` yazıp "elle müdahale gerekir"
+  diyerek ERROR loglar (yani hata bildirimi açıksa toplayıcıya gider). Hangi
+  rezervasyonun asılı kaldığı adım kayıtlarının `output` alanında durur.
+
+  Ama **otomatik kurtarma YOKTUR**: motor adım çıktılarını saklıyor,
+  `StepContext.Shared`'ı saklamıyor, dolayısıyla telafi zincirini sonradan
+  çalıştıramıyor. Asılı rezervasyonu düşürmek bugün bir operatör işidir ve
+  onları LİSTELEYEN bir yönetim ucu da henüz yok.
 - **Hata bildirimi bir İŞARETTİR, olayın kopyası değil.** `error-sentry`
   eklentisi ([ADR 0014](docs/adr/0014-error-reporting.md)) toplayıcıya arıza
   kodunu, güvenli mesajı ve `request_id`'yi gönderir; geri kalan her şey logda

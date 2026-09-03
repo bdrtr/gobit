@@ -907,3 +907,43 @@ func bindErrorReporter(c *container.Container, sink *errorreport.Sink, log *slog
 
 	return nil
 }
+
+// warnIfShutdownIsShorterThanTheSaga says so when a deploy can cut a checkout in
+// half.
+//
+// The checkout saga runs synchronously inside the HTTP handler, so the only
+// thing waiting for it during a graceful shutdown is the HTTP server's own
+// budget. When SHUTDOWN_TIMEOUT is shorter than the saga's budget the server
+// stops waiting, the process exits, and the saga's goroutine dies wherever it
+// was — possibly after the payment was authorized and before anything
+// compensated it.
+//
+// # Why a warning and not a refusal
+//
+// Neither number is wrong. Fifteen seconds is a sensible deploy budget and it
+// matches what orchestrators expect (Kubernetes' default grace period is 30s);
+// two minutes is a sensible ceiling for a chain that crosses three modules and
+// a payment provider. What is wrong is not KNOWING which one an installation
+// picked, and a framework that refused to start over a legitimate pair of
+// values would be making an operator's deployment decision for them.
+//
+// The residue left by a cut saga is no longer silent: the execution's lease
+// expires, the next attempt closes it, and one that had already done work is
+// marked "manual intervention required" and logged at ERROR (see
+// checkoutwf.ExecutionLease). This warning is what lets an operator see the
+// exposure BEFORE it happens rather than after.
+func warnIfShutdownIsShorterThanTheSaga(ctx context.Context, cfg config.Config, log *slog.Logger) {
+	if cfg.ShutdownTimeout >= checkoutwf.SagaTimeout {
+		return
+	}
+
+	log.WarnContext(ctx,
+		"the shutdown budget is shorter than the checkout saga's; a deploy can cut a checkout in half",
+		slog.Duration("shutdown_timeout", cfg.ShutdownTimeout),
+		slog.Duration("saga_timeout", checkoutwf.SagaTimeout),
+		slog.String("effect", "a checkout still running when the budget expires is killed where it "+
+			"stands; payment may be authorized with nothing left to compensate it"),
+		slog.String("fix", "raise SHUTDOWN_TIMEOUT above the saga budget, and raise the "+
+			"orchestrator's grace period with it, or accept the exposure knowingly"),
+	)
+}

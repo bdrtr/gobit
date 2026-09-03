@@ -52,6 +52,30 @@ const CompensationTimeout = 30 * time.Second
 // bir goroutine'i ve ayrılmış stoğu sonsuza kadar tutardı.
 const SagaTimeout = 2 * time.Minute
 
+// ExecutionLease bir complete_cart yürütmesinin MEŞRU olarak sürebileceği en
+// uzun süredir; bundan uzun süre "running" duran bir kayıt terk edilmiştir
+// (bkz. [workflow.WithLease]).
+//
+// # Neden gerekli
+//
+// Kayıt "running" açılır ve uç duruma geçerek kapanır. Süreç o geçişi yazamadan
+// ölürse — deploy, OOM, pod tahliyesi — kayıt sonsuza dek running kalır ve o
+// sepet bir daha ödenemez. Ölçüldü: üç gün önce çökmüş bir yürütme hâlâ "hâlâ
+// sürüyor" diyordu.
+//
+// Bu, kapanış bütçesiyle saga bütçesi arasındaki farkın doğrudan sonucudur:
+// SHUTDOWN_TIMEOUT varsayılanı 15 saniye, [SagaTimeout] iki dakika. Yani sıradan
+// bir deploy, uçuştaki bir ödemeyi ortasından kesebilir.
+//
+// # Neden bu kadar cömert
+//
+// Teorik üst sınır [SagaTimeout] + adım sayısı × [CompensationTimeout], yani
+// 2dk + 5×30sn = 4,5 dakika. Kira bunun iki katından fazlası seçildi, çünkü iki
+// yanlışın bedeli EŞİT DEĞİL: geç karar vermek müşteriyi bekletir, erken karar
+// vermek HÂLÂ KOŞAN bir saga'nın anahtarını bırakır ve aynı sepet için ikinci
+// bir saga başlatır — yani stok iki kez ayrılır.
+const ExecutionLease = 10 * time.Minute
+
 // CompleteCartInput sipariş tamamlama isteğinin girdisidir.
 type CompleteCartInput struct {
 	// CartID tamamlanacak sepettir; ZORUNLUDUR.
@@ -225,6 +249,7 @@ func (w *Workflows) CompleteCart(ctx context.Context, in CompleteCartInput) (Com
 
 	out, err := workflow.RunInto[CompleteCartResult](sctx, w.executor, wf, plan,
 		workflow.WithIdempotencyKey(IdempotencyKeyPrefix+plan.CartID),
+		workflow.WithLease(ExecutionLease),
 		workflow.WithCompensationRetry(compensationRetry()),
 		workflow.WithCompensationTimeout(CompensationTimeout),
 	)

@@ -953,6 +953,8 @@ type sahteAdim struct {
 	// [workflow.StatusFailed]), dolayısıyla kaydına anahtardan ulaşılamaz.
 	// Kimliği adımdan almak, kaydın hâlâ orada olduğunu kanıtlamanın tek yolu.
 	yurutmeID *string
+	// calisti doldurulursa adım, Invoke edildiğinde onu true yapar.
+	calisti *bool
 }
 
 func (a *sahteAdim) Name() string { return a.ad }
@@ -960,6 +962,9 @@ func (a *sahteAdim) Name() string { return a.ad }
 func (a *sahteAdim) Invoke(_ context.Context, sc *workflow.StepContext) (any, error) {
 	if a.yurutmeID != nil {
 		*a.yurutmeID = sc.ExecutionID
+	}
+	if a.calisti != nil {
+		*a.calisti = true
 	}
 	if a.hata != nil {
 		return nil, a.hata
@@ -1120,4 +1125,66 @@ func yeniVeritabani(ctx context.Context, t *testing.T) string {
 	require.NoError(t, err)
 	u.Path = "/" + ad
 	return u.String()
+}
+
+// TestTerkEdilmisYurutmeIsYapmissaElleMudahaleIster çökmenin TEHLİKELİ yarısını
+// gerçek depoda kanıtlar.
+//
+// # Neden burada ve bellek deposunda değil
+//
+// Kurulacak durum "adımı var VE bayat"tır ve iki deponun ORTAK davranışı onu
+// depo yüzeyinden kurulamaz kılar: AppendStep yürütmenin updated_at'ini TAZELER.
+// Bu doğrudur — ilerleyen bir saga kirasını canlı tutmalıdır — ama testin zamanı
+// geri alması gerektiği anlamına gelir, ki bunu ancak gerçek satırı güncelleyerek
+// yapabiliriz. Üretim aynı duruma ÇÖKEREK varır: süreç adımı yazdıktan sonra
+// ölür ve updated_at olduğu yerde kalır.
+//
+// # İddia
+//
+// Süreç iş yaptıktan sonra kesilmişse telafi HİÇ çalışmamıştır: ayrılmış stok ve
+// açılmış ödeme oturumu ortada durur. Sessizce yeniden denemek o stoğu İKİNCİ
+// KEZ ayırmak olurdu. Kayıt bu yüzden compensation_failed'a taşınır, anahtarını
+// TUTAR ve çağıran elle müdahale gerektiğini söyleyen bir çakışma alır.
+func TestTerkEdilmisYurutmeIsYapmissaElleMudahaleIster(t *testing.T) {
+	ctx := context.Background()
+	depo := yeniDepo()
+	motor := workflow.New(depo, nil)
+
+	var kosuldu bool
+	wf := workflow.Workflow{
+		Name: "TestTerkEdilmisYurutmeIsYapmissaElleMudahaleIster",
+		Steps: []workflow.Step{&sahteAdim{ad: "stok_rezerve", cikti: "res_1", telafiler: &[]string{},
+			calisti: &kosuldu}},
+	}
+
+	const anahtar = "terk_is_yapilmis"
+	exec := &workflow.Execution{
+		ID: "wfx_TERK_PG", Workflow: wf.Name, IdempotencyKey: anahtar,
+		Status: workflow.StatusRunning,
+	}
+	require.NoError(t, depo.Create(ctx, exec))
+	require.NoError(t, depo.AppendStep(ctx, exec.ID, workflow.StepRecord{
+		Name: "stok_rezerve", Index: 0, Status: workflow.StepInvoked, Attempts: 1,
+		Output: []byte(`"res_1"`),
+	}))
+
+	// Zamanı geri al: süreç adımı yazdıktan sonra ölmüş ve bir saat geçmiş.
+	_, err := testPool.Pool().Exec(ctx,
+		`UPDATE workflow_executions SET updated_at = now() - interval '1 hour' WHERE id = $1`, exec.ID)
+	require.NoError(t, err)
+
+	_, err = motor.Run(ctx, wf, nil,
+		workflow.WithIdempotencyKey(anahtar), workflow.WithLease(time.Minute))
+
+	require.Error(t, err)
+	assert.True(t, coreerrors.IsConflict(err), "hata: %v", err)
+	assert.Contains(t, err.Error(), "ELLE MÜDAHALE")
+	assert.False(t, kosuldu, "yarım işin üstüne HİÇBİR adım çalıştırılmamalı")
+
+	kalici, err := depo.Get(ctx, exec.ID)
+	require.NoError(t, err)
+	assert.Equal(t, workflow.StatusCompensationFailed, kalici.Status,
+		"durum olan biteni SÖYLEMELİ: iş yapıldı, telafi çalışmadı")
+	assert.Equal(t, anahtar, kalici.IdempotencyKey,
+		"anahtar TUTULMALI; bırakılsaydı yarım işin üstüne yeni bir deneme binerdi")
 }

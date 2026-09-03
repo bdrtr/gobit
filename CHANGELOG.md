@@ -12,6 +12,45 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltildi
 
+- **Ortasında kesilen bir ödeme sepeti SONSUZA DEK kilitliyordu.** Yürütme
+  kaydı "running" açılır ve uç duruma geçerek kapanır; süreç o geçişi yazamadan
+  ölürse (deploy, OOM, pod tahliyesi) kayıt sonsuza dek running kalır. Ölçüldü:
+  üç gün önce çökmüş bir yürütme hâlâ *"hâlâ sürüyor"* diyordu ve o sepet bir
+  daha ödenemiyordu.
+
+  Motor artık bir KİRA süresi kabul ediyor (`workflow.WithLease`): çağıran
+  akışının meşru olarak ne kadar sürebileceğini bildirir, ve o süreden uzun
+  süre running duran bir kayıt hiçbir sürecin tutamayacağı bir kayıttır.
+  Yaşlılık tek başına kanıt değildir, kira kanıttır — bu yüzden süre motorca
+  tahmin edilmez, çağıranca bildirilir.
+
+  Terk edilmiş bir kaydın ne yapılacağına ADIM KAYITLARINA bakılarak karar
+  verilir ve iki dal da testli:
+
+  - **Hiçbir adım iş yapmamışsa** telafi edilecek bir şey yoktur: kayıt
+    `failed` olur, anahtarını bırakır, müşteri sepetini ödeyebilir.
+  - **İş yapılmışsa** telafi hiç çalışmamıştır ve yarım iş ortadadır: kayıt
+    `compensation_failed` olur, anahtarını TUTAR, ERROR loglanır ve çağıran
+    "elle müdahale gerekir" der. Sessizce yeniden denemek, ayrılmış stoğun
+    ikinci kez ayrılması olurdu.
+  - **Adımlar okunamıyorsa** karar VERİLMEZ; kayıt olduğu gibi bırakılır. İki
+    yanlışın bedeli eşit değil: geç karar müşteriyi bekletir, erken karar
+    koşan bir saga'nın anahtarını bırakıp stoğu ikiye katlar.
+
+  `complete_cart` kirası 10 dakika: teorik üst sınır 2dk + 5×30sn = 4,5 dakika
+  ve marj bilinçli olarak iki katından fazla.
+
+### Eklendi
+
+- **`SHUTDOWN_TIMEOUT` saga bütçesinden kısaysa açılışta UYARI.** Varsayılanlar
+  15 saniye ve 2 dakika, yani sıradan bir deploy uçuştaki bir ödemeyi ortasından
+  kesebilir. İkisi de yanlış değil — 15 saniye makul bir deploy bütçesi
+  (Kubernetes'in varsayılan grace period'u 30 saniye), 2 dakika üç modül ve bir
+  ödeme sağlayıcısı geçen bir zincir için makul bir tavan. Yanlış olan, bir
+  kurulumun hangisini seçtiğini BİLMEMEK.
+
+### Düzeltildi
+
 - **Başarısız bir ödeme sepeti KALICI olarak bozuyordu.** Kartı reddedilen
   müşteri — gerçek bir vitrinde her on ödemenin birinde olan şey — o sepeti bir
   daha ödeyemiyordu. Ölçüldü:

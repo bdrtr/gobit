@@ -499,16 +499,31 @@ func (e *executor) Run(ctx context.Context, wf Workflow, input any, opts ...RunO
 			"%q workflow'unun girdisi JSON'a çevrilemedi", wf.Name)
 	}
 
-	exec, err := e.open(ctx, wf, payload, o)
-	if err != nil {
-		return nil, err
-	}
-	if exec == nil {
-		// Aynı anahtarla açılmış bir yürütme bulundu; sonucu replay verdi.
-		return e.replay(ctx, wf, o)
+	// Döngü EN FAZLA iki tur döner ve ikinci tur yalnızca tek bir sebeple
+	// gerçekleşir: terk edilmiş bir kayıt kapatılıp anahtarını bıraktı, yani
+	// artık açılabilecek bir yer var (bkz. [WithLease]). Sınır bilinçli —
+	// sınırsız bir döngü, iki sürecin aynı terk edilmiş kaydı sırayla
+	// kapatmasıyla dönmeye devam edebilirdi.
+	for tur := range 2 {
+		exec, err := e.open(ctx, wf, payload, o)
+		if err != nil {
+			return nil, err
+		}
+		if exec != nil {
+			return e.execute(ctx, wf, input, exec, o)
+		}
+
+		// Aynı anahtarla açılmış bir yürütme bulundu; sonucunu replay verir.
+		out, yeniden, rerr := e.replay(ctx, wf, o)
+		if !yeniden || tur == 1 {
+			return out, rerr
+		}
 	}
 
-	return e.execute(ctx, wf, input, exec, o)
+	// Buraya düşmek, ikinci turda da "yeniden dene" denmesi demektir ve döngü
+	// sınırı onu engeller; derleyici için gereklidir.
+	return nil, errors.Internal(CodeStoreFailed,
+		"%q workflow'u için yürütme açılamadı: terk edilmiş kayıt ikinci turda da kapanmadı", wf.Name)
 }
 
 // open yürütme kaydını açar.
@@ -544,19 +559,23 @@ func (e *executor) open(ctx context.Context, wf Workflow, payload json.RawMessag
 }
 
 // replay aynı idempotency anahtarıyla açılmış yürütmenin sonucunu döner.
-func (e *executor) replay(ctx context.Context, wf Workflow, o *runOptions) (any, error) {
+//
+// İkinci sonuç ("yeniden") true ise kayıt TERK EDİLMİŞ bulunup kapatılmış ve
+// anahtarını bırakmıştır; çağıran yeni bir yürütme açmayı denemelidir. O
+// durumda ilk iki sonuç anlamsızdır.
+func (e *executor) replay(ctx context.Context, wf Workflow, o *runOptions) (out any, yeniden bool, err error) {
 	sctx, cancel := o.storeContext(ctx)
 	prev, err := e.store.FindByIdempotencyKey(sctx, wf.Name, o.idempotencyKey)
 	cancel()
 	if err != nil {
-		return nil, errors.Wrap(err, errors.KindOf(err), CodeStoreFailed,
+		return nil, false, errors.Wrap(err, errors.KindOf(err), CodeStoreFailed,
 			"%q workflow'unun %q anahtarlı yürütmesi okunamadı", wf.Name, o.idempotencyKey)
 	}
 	if prev == nil {
 		// Sözleşme ihlali: hata yoksa kayıt dolu olmalıdır. Store ayrı bir
 		// pakette yazıldığı için motor bunu nil çözümlemesiyle değil, tipli
 		// hatayla karşılar.
-		return nil, errors.Internal(CodeStoreFailed,
+		return nil, false, errors.Internal(CodeStoreFailed,
 			"Store %q workflow'unun %q anahtarı için hatasız nil kayıt döndürdü", wf.Name, o.idempotencyKey)
 	}
 
@@ -564,22 +583,95 @@ func (e *executor) replay(ctx context.Context, wf Workflow, o *runOptions) (any,
 	case StatusCompleted:
 		e.log.Info("workflow: idempotency anahtarı eşleşti, adımlar tekrar çalıştırılmadı",
 			attrWorkflow, wf.Name, attrExecutionID, prev.ID)
-		return prev.Output, nil
+		return prev.Output, false, nil
 	case StatusRunning:
-		return nil, errors.Conflict(CodeExecutionRunning,
+		// Kirası dolmuş bir kayıt "sürüyor" değildir; ne olduğu adım
+		// kayıtlarından belirlenir (bkz. [WithLease]).
+		terk, terkErr := e.terkEdilmisMi(ctx, wf, prev, o)
+		switch {
+		case terkErr != nil:
+			return nil, false, terkErr
+		case terk:
+			return nil, true, nil
+		}
+
+		return nil, false, errors.Conflict(CodeExecutionRunning,
 			"%q workflow'unun %q anahtarlı yürütmesi (%s) hâlâ sürüyor", wf.Name, o.idempotencyKey, prev.ID)
 	case StatusFailed:
-		return nil, errors.Conflict(CodeExecutionFailed,
+		return nil, false, errors.Conflict(CodeExecutionFailed,
 			"%q workflow'unun %q anahtarlı yürütmesi (%s) daha önce başarısız oldu ve telafi edildi; yeniden denemek için YENİ bir anahtar kullanın: %s",
 			wf.Name, o.idempotencyKey, prev.ID, prev.Failure)
 	case StatusCompensationFailed:
-		return nil, errors.Conflict(CodeExecutionFailed,
+		return nil, false, errors.Conflict(CodeExecutionFailed,
 			"%q workflow'unun %q anahtarlı yürütmesi (%s) telafi edilemedi; elle müdahale gerekir: %s",
 			wf.Name, o.idempotencyKey, prev.ID, prev.Failure)
 	default:
-		return nil, errors.Internal(CodeStoreFailed,
+		return nil, false, errors.Internal(CodeStoreFailed,
 			"%q yürütmesi bilinmeyen durumda: %q", prev.ID, prev.Status)
 	}
+}
+
+// terkEdilmisMi kira süresi dolmuş bir "running" kaydı uç duruma taşır.
+//
+// İlk sonuç, çağıranın YENİ bir yürütme açabileceğini bildirir (kayıt
+// [StatusFailed] oldu ve anahtarını bıraktı). İkinci sonuç dolu ise çağıran onu
+// döndürmelidir; kayıt [StatusCompensationFailed] olmuştur ve elle müdahale
+// bekler. İkisi de boşsa kayıt gerçekten sürüyordur.
+//
+// Gerekçe ve karar tablosu [WithLease] godoc'undadır.
+func (e *executor) terkEdilmisMi(ctx context.Context, wf Workflow, prev *Execution, o *runOptions) (bool, error) {
+	if o.lease <= 0 || time.Since(prev.UpdatedAt) <= o.lease {
+		return false, nil
+	}
+
+	// Adımlar ayrıca okunur: FindByIdempotencyKey'in onları getirmesi
+	// sözleşmede yazmıyor ve bu yol zaten istisnai.
+	sctx, cancel := o.storeContext(ctx)
+	dolu, err := e.store.Get(sctx, prev.ID)
+	cancel()
+	if err != nil {
+		// Adımlar okunamıyorsa terk edildiğine KARAR VERİLEMEZ; kayıt olduğu
+		// gibi bırakılır ve çağıran "hâlâ sürüyor" alır. Yanlış tarafa düşmek
+		// (iş yapılmışken yeniden denemek) ayrılmış stoğu ikiye katlardı.
+		e.log.ErrorContext(ctx, "workflow: kirası dolmuş yürütmenin adımları okunamadı",
+			attrWorkflow, wf.Name, attrExecutionID, prev.ID, attrError, err)
+
+		return false, nil
+	}
+
+	if isYapilmis(dolu.Steps) {
+		final := errors.Conflict(CodeExecutionFailed,
+			"%q workflow'unun %q anahtarlı yürütmesi (%s) kirası dolduğu hâlde tamamlanmamış: "+
+				"süreç iş yaptıktan sonra telafi ÇALIŞMADAN kesilmiş, ELLE MÜDAHALE gerekir",
+			wf.Name, o.idempotencyKey, prev.ID)
+		e.persistStatus(ctx, prev.ID, o, StatusCompensationFailed, nil, final.Error())
+		e.log.ErrorContext(ctx, "workflow: terk edilmiş yürütme, telafi çalışmamış; elle müdahale gerekir",
+			attrWorkflow, wf.Name, attrExecutionID, prev.ID)
+
+		return true, final
+	}
+
+	// Hiçbir adım iş yapmamış: telafi edilecek bir şey yok, anahtar bırakılır.
+	e.persistStatus(ctx, prev.ID, o, StatusFailed, nil,
+		"yürütme kirası doldu ve hiçbir adım iş yapmamıştı; terk edilmiş sayıldı")
+	e.log.WarnContext(ctx, "workflow: terk edilmiş yürütme kapatıldı, yeniden denenebilir",
+		attrWorkflow, wf.Name, attrExecutionID, prev.ID)
+
+	return true, nil
+}
+
+// isYapilmis adım kayıtlarında GERİ ALINMAMIŞ iş olup olmadığını söyler.
+//
+// invoked = iş yapıldı ve telafi edilmedi. compensated ve failed geri
+// alınmıştır ya da hiç yapılmamıştır; compensation_failed ise zaten yarım iştir.
+func isYapilmis(steps []StepRecord) bool {
+	for i := range steps {
+		if steps[i].Status == StepInvoked || steps[i].Status == StepCompensationFailed {
+			return true
+		}
+	}
+
+	return false
 }
 
 // execute adımları sırayla yürütür ve sonucu kalıcılaştırır.
