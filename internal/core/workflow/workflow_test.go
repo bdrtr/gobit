@@ -633,7 +633,7 @@ func TestExpiredLeaseWithNoWorkCanBeRetried(t *testing.T) {
 
 // The exam for an abandoned execution that DID work is not here but in
 // pgstore's integration test
-// ([TestTerkEdilmisYurutmeIsYapmissaElleMudahaleIster]). The reason is not a gap
+// ([TestAbandonedExecutionThatDidWorkNeedsAHuman]). The reason is not a gap
 // in this package but a behavior BOTH stores share: AppendStep REFRESHES the
 // execution's updated_at — which is right, a saga that is making progress has to
 // keep its lease alive — so the state "has a step AND is stale" cannot be built

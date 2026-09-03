@@ -61,7 +61,6 @@ internal/core/openapi/schema_test.go
 internal/core/query/fakes_test.go
 internal/core/query/query_integration_test.go
 internal/core/query/query_test.go
-internal/core/workflow/pgstore/pgstore_integration_test.go
 internal/e2e/arama_test.go
 internal/e2e/b2b_test.go
 internal/e2e/bildirim_test.go

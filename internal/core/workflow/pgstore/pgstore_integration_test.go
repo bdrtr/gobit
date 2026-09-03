@@ -1,17 +1,18 @@
 //go:build integration
 
-// Bu dosyadaki testler gerçek bir PostgreSQL örneği (dolayısıyla Docker)
-// gerektirir; `make test` hızlı kalsın diye `integration` etiketiyle
-// ayrılmıştır. Çalıştırmak için: make test-integration
+// The tests in this file need a real PostgreSQL instance (and therefore
+// Docker); they are separated behind the `integration` tag so that `make test`
+// stays fast. To run them: make test-integration
 //
-// Buradaki iddiaların çoğu YALNIZCA gerçek veritabanında kanıtlanabilir:
-// kısmi benzersiz indeksin iki eşzamanlı Create'ten yalnızca birini geçirdiği,
-// ON CONFLICT'in aynı adımı güncellediği, JSONB'nin NULL ile JSON null'ı ayırt
-// ettiği ve migration'ın geri alınabildiği birim testinde gösterilemez.
+// Most of the claims here can be proven ONLY against a real database: that the
+// partial unique index lets exactly one of two concurrent Creates through, that
+// ON CONFLICT updates the same step, that JSONB tells SQL NULL from JSON null
+// and that the migration can be rolled back cannot be shown in a unit test.
 //
-// Dosya pgstore paketinin İÇİNDEDİR: hata eşlemesinin dayandığı kısıt adları
-// (idempotencyIndex, executionsPKConstraint) dışa açık değildir ve şemayla
-// gerçekten örtüştükleri ancak buradan katalog okunarak doğrulanabilir.
+// The file is INSIDE the pgstore package: the constraint names the error mapping
+// rests on (idempotencyIndex, executionsPKConstraint) are unexported, and that
+// they really match the schema can only be verified by reading the catalog from
+// here.
 package pgstore
 
 import (
@@ -41,22 +42,23 @@ import (
 const postgresImage = "postgres:16-alpine"
 
 var (
-	// testPool tüm testlerin paylaştığı havuzdur.
+	// testPool is the pool every test shares.
 	testPool *db.Pool
-	// testDSN aynı veritabanının bağlantı adresidir; migration yolu havuzu
-	// değil, kendi bağlantısını kullandığı için ayrıca saklanır.
+	// testDSN is the connection string of the same database; it is kept
+	// separately because the migration path uses its own connection rather than
+	// the pool.
 	testDSN string
-	// yonetimDSN yeni veritabanı açmak için kullanılan yönetim adresidir.
-	yonetimDSN string
+	// adminDSN is the administrative address used to open new databases.
+	adminDSN string
 )
 
 func TestMain(m *testing.M) {
 	os.Exit(runWithPostgres(m))
 }
 
-// runWithPostgres tek bir Postgres konteyneri kaldırır, şemayı uygular ve tüm
-// testleri onun üzerinde çalıştırır. os.Exit defer'ları atladığı için ayrı
-// fonksiyondadır.
+// runWithPostgres brings up a single Postgres container, applies the schema and
+// runs every test against it. It is a separate function because os.Exit skips
+// the defers.
 func runWithPostgres(m *testing.M) int {
 	ctx := context.Background()
 
@@ -68,29 +70,29 @@ func runWithPostgres(m *testing.M) int {
 	)
 	defer func() {
 		if termErr := testcontainers.TerminateContainer(ctr); termErr != nil {
-			fmt.Fprintf(os.Stderr, "postgres konteyneri durdurulamadı: %v\n", termErr)
+			fmt.Fprintf(os.Stderr, "the postgres container could not be stopped: %v\n", termErr)
 		}
 	}()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "postgres konteyneri başlatılamadı: %v\n", err)
+		fmt.Fprintf(os.Stderr, "the postgres container could not be started: %v\n", err)
 		return 1
 	}
 
 	testDSN, err = ctr.ConnectionString(ctx, "sslmode=disable")
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "bağlantı adresi alınamadı: %v\n", err)
+		fmt.Fprintf(os.Stderr, "the connection string could not be read: %v\n", err)
 		return 1
 	}
-	yonetimDSN = testDSN
+	adminDSN = testDSN
 
 	if err = db.Migrate(ctx, testDSN, Migrations(), MigrationOwner); err != nil {
-		fmt.Fprintf(os.Stderr, "workflow şeması uygulanamadı: %v\n", err)
+		fmt.Fprintf(os.Stderr, "the workflow schema could not be applied: %v\n", err)
 		return 1
 	}
 
 	testPool, err = db.New(ctx, db.DefaultConfig(testDSN), nil)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "bağlantı havuzu açılamadı: %v\n", err)
+		fmt.Fprintf(os.Stderr, "the connection pool could not be opened: %v\n", err)
 		return 1
 	}
 	defer testPool.Close()
@@ -98,1106 +100,1127 @@ func runWithPostgres(m *testing.M) int {
 	return m.Run()
 }
 
-// yeniDepo testin kullanacağı depoyu döner.
-func yeniDepo() workflow.Store {
+// newStore returns the store the test will use.
+func newStore() workflow.Store {
 	return New(testPool, nil)
 }
 
-// wfAdi teste özgü bir workflow adı üretir; testler aynı tabloları paylaştığı
-// için birbirlerinin kayıtlarını görmemelidir.
-func wfAdi(t *testing.T) string {
+// wfName produces a workflow name specific to the test; because the tests share
+// the same tables they must not see each other's records.
+func wfName(t *testing.T) string {
 	t.Helper()
-	ad := strings.NewReplacer("/", "_", " ", "_").Replace(t.Name())
-	if len(ad) > maxNameLen {
-		ad = ad[:maxNameLen]
+	name := strings.NewReplacer("/", "_", " ", "_").Replace(t.Name())
+	if len(name) > maxNameLen {
+		name = name[:maxNameLen]
 	}
-	return ad
+	return name
 }
 
-// acilanYurutme testin işleyeceği bir yürütme kaydı açar ve döner.
-func acilanYurutme(ctx context.Context, t *testing.T, depo workflow.Store) *workflow.Execution {
+// openedExecution opens and returns an execution record for the test to work on.
+func openedExecution(ctx context.Context, t *testing.T, store workflow.Store) *workflow.Execution {
 	t.Helper()
 	exec := &workflow.Execution{
-		Workflow: wfAdi(t),
+		Workflow: wfName(t),
 		Status:   workflow.StatusRunning,
 		Input:    json.RawMessage(`{"cart_id":"cart_1"}`),
 	}
-	require.NoError(t, depo.Create(ctx, exec))
+	require.NoError(t, store.Create(ctx, exec))
 	return exec
 }
 
-// TestMigrationUpDown şemanın uygulanabildiğini ve GERİ ALINABİLDİĞİNİ
-// doğrular (plan Bölüm 8). Kendi veritabanında çalışır: diğer testlerin
-// şemasını düşürmek onları etkilerdi.
+// TestMigrationUpDown verifies that the schema can be applied and ROLLED BACK
+// (plan Section 8). It runs in its own database: dropping the other tests'
+// schema would affect them.
 func TestMigrationUpDown(t *testing.T) {
 	ctx := context.Background()
-	dsn := yeniVeritabani(ctx, t)
+	dsn := newDatabase(ctx, t)
 
-	surum, kirli, err := db.Version(ctx, dsn, MigrationOwner)
+	version, dirty, err := db.Version(ctx, dsn, MigrationOwner)
 	require.NoError(t, err)
-	assert.Zero(t, surum, "boş veritabanında sürüm 0 olmalı")
-	assert.False(t, kirli)
+	assert.Zero(t, version, "on an empty database the version has to be 0")
+	assert.False(t, dirty)
 
 	require.NoError(t, db.Migrate(ctx, dsn, Migrations(), MigrationOwner))
 
-	assert.True(t, iliskiVar(ctx, t, dsn, "workflow_executions"), "yürütme tablosu oluşmalı")
-	assert.True(t, iliskiVar(ctx, t, dsn, "workflow_execution_steps"), "adım tablosu oluşmalı")
-	assert.True(t, iliskiVar(ctx, t, dsn, idempotencyIndex), "kısmi benzersiz indeks oluşmalı")
+	assert.True(t, relationExists(ctx, t, dsn, "workflow_executions"), "the execution table has to be created")
+	assert.True(t, relationExists(ctx, t, dsn, "workflow_execution_steps"), "the step table has to be created")
+	assert.True(t, relationExists(ctx, t, dsn, idempotencyIndex), "the partial unique index has to be created")
 
-	surum, kirli, err = db.Version(ctx, dsn, MigrationOwner)
+	version, dirty, err = db.Version(ctx, dsn, MigrationOwner)
 	require.NoError(t, err)
-	assert.Equal(t, uint(1), surum)
-	assert.False(t, kirli)
+	assert.Equal(t, uint(1), version)
+	assert.False(t, dirty)
 
 	require.NoError(t, db.MigrateDown(ctx, dsn, Migrations(), MigrationOwner, 0))
 
-	assert.False(t, iliskiVar(ctx, t, dsn, "workflow_executions"), "geri alma tabloyu düşürmeli")
-	assert.False(t, iliskiVar(ctx, t, dsn, "workflow_execution_steps"), "geri alma tabloyu düşürmeli")
+	assert.False(t, relationExists(ctx, t, dsn, "workflow_executions"), "the rollback has to drop the table")
+	assert.False(t, relationExists(ctx, t, dsn, "workflow_execution_steps"), "the rollback has to drop the table")
 
-	surum, _, err = db.Version(ctx, dsn, MigrationOwner)
+	version, _, err = db.Version(ctx, dsn, MigrationOwner)
 	require.NoError(t, err)
-	assert.Zero(t, surum, "geri alma sonrası sürüm 0 olmalı")
+	assert.Zero(t, version, "after the rollback the version has to be 0")
 }
 
-// TestKisitAdlariSemayaUyuyor hata eşlemesinin dayandığı kısıt adlarının
-// şemada GERÇEKTEN bu adlarla var olduğunu doğrular.
+// TestConstraintNamesMatchTheSchema verifies that the constraint names the error
+// mapping rests on REALLY exist in the schema under those names.
 //
-// Ad tutmasaydı createError sessizce genel dala düşer, motor idempotent
-// tekrarı CodeDuplicateKey ile tanıyamazdı; bu yüzden adlar katalogdan okunur.
-func TestKisitAdlariSemayaUyuyor(t *testing.T) {
+// If a name did not hold, createError would fall silently to the generic branch
+// and the engine could not recognize an idempotent repeat by CodeDuplicateKey;
+// that is why the names are read from the catalog.
+func TestConstraintNamesMatchTheSchema(t *testing.T) {
 	ctx := context.Background()
 
-	assert.True(t, iliskiVar(ctx, t, testDSN, idempotencyIndex),
-		"%s adlı indeks şemada olmalı", idempotencyIndex)
-	assert.True(t, iliskiVar(ctx, t, testDSN, executionsPKConstraint),
-		"%s adlı birincil anahtar şemada olmalı", executionsPKConstraint)
+	assert.True(t, relationExists(ctx, t, testDSN, idempotencyIndex),
+		"an index named %s has to exist in the schema", idempotencyIndex)
+	assert.True(t, relationExists(ctx, t, testDSN, executionsPKConstraint),
+		"a primary key named %s has to exist in the schema", executionsPKConstraint)
 }
 
-// TestCreateVeGetUctanUca kaydın açılıp aynen geri okunduğunu doğrular.
-func TestCreateVeGetUctanUca(t *testing.T) {
+// TestCreateAndGetEndToEnd verifies that the record is opened and read back
+// unchanged.
+func TestCreateAndGetEndToEnd(t *testing.T) {
 	ctx := context.Background()
-	depo := yeniDepo()
+	store := newStore()
 
 	exec := &workflow.Execution{
-		Workflow:       wfAdi(t),
+		Workflow:       wfName(t),
 		IdempotencyKey: "ord_1",
 		Status:         workflow.StatusRunning,
-		Input:          json.RawMessage(`{"cart_id":"cart_1","adet":2}`),
+		Input:          json.RawMessage(`{"cart_id":"cart_1","quantity":2}`),
 	}
-	require.NoError(t, depo.Create(ctx, exec))
+	require.NoError(t, store.Create(ctx, exec))
 
-	assert.True(t, strings.HasPrefix(exec.ID, "wfx_"), "kimlik önekli üretilmeli: %s", exec.ID)
-	assert.False(t, exec.CreatedAt.IsZero(), "CreatedAt geri yazılmalı")
-	assert.False(t, exec.UpdatedAt.IsZero(), "UpdatedAt geri yazılmalı")
-	assert.Equal(t, time.UTC, exec.CreatedAt.Location(), "zamanlar UTC olmalı")
+	assert.True(t, strings.HasPrefix(exec.ID, "wfx_"), "the id has to be produced with the prefix: %s", exec.ID)
+	assert.False(t, exec.CreatedAt.IsZero(), "CreatedAt has to be written back")
+	assert.False(t, exec.UpdatedAt.IsZero(), "UpdatedAt has to be written back")
+	assert.Equal(t, time.UTC, exec.CreatedAt.Location(), "the times have to be UTC")
 
-	okunan, err := depo.Get(ctx, exec.ID)
+	read, err := store.Get(ctx, exec.ID)
 	require.NoError(t, err)
 
-	assert.Equal(t, exec.ID, okunan.ID)
-	assert.Equal(t, exec.Workflow, okunan.Workflow)
-	assert.Equal(t, "ord_1", okunan.IdempotencyKey)
-	assert.Equal(t, workflow.StatusRunning, okunan.Status)
-	assert.JSONEq(t, `{"cart_id":"cart_1","adet":2}`, string(okunan.Input))
-	assert.Nil(t, okunan.Output, "yazılmayan çıktı NULL kalmalı")
-	assert.Empty(t, okunan.Failure)
-	assert.Empty(t, okunan.Steps, "adım yazılmadan Steps boş olmalı")
-	assert.True(t, okunan.CreatedAt.Equal(exec.CreatedAt))
-	assert.Equal(t, time.UTC, okunan.CreatedAt.Location())
+	assert.Equal(t, exec.ID, read.ID)
+	assert.Equal(t, exec.Workflow, read.Workflow)
+	assert.Equal(t, "ord_1", read.IdempotencyKey)
+	assert.Equal(t, workflow.StatusRunning, read.Status)
+	assert.JSONEq(t, `{"cart_id":"cart_1","quantity":2}`, string(read.Input))
+	assert.Nil(t, read.Output, "an output that was not written has to stay NULL")
+	assert.Empty(t, read.Failure)
+	assert.Empty(t, read.Steps, "with no step written Steps has to be empty")
+	assert.True(t, read.CreatedAt.Equal(exec.CreatedAt))
+	assert.Equal(t, time.UTC, read.CreatedAt.Location())
 }
 
-// TestCreateVerilenKimligiKorur çağıranın ürettiği kimliğin korunduğunu
-// doğrular; motor kimliği kendisi üretip Create'e verir.
-func TestCreateVerilenKimligiKorur(t *testing.T) {
+// TestCreateKeepsTheGivenID verifies that the id the caller produced is
+// preserved; the engine produces the id itself and hands it to Create.
+func TestCreateKeepsTheGivenID(t *testing.T) {
 	ctx := context.Background()
-	depo := yeniDepo()
+	store := newStore()
 
 	exec := &workflow.Execution{
-		ID:       "wfx_MOTORUNURETTIGI001",
-		Workflow: wfAdi(t),
+		ID:       "wfx_ENGINEPRODUCED001",
+		Workflow: wfName(t),
 		Status:   workflow.StatusRunning,
 	}
-	require.NoError(t, depo.Create(ctx, exec))
+	require.NoError(t, store.Create(ctx, exec))
 
-	assert.Equal(t, "wfx_MOTORUNURETTIGI001", exec.ID)
+	assert.Equal(t, "wfx_ENGINEPRODUCED001", exec.ID)
 
-	okunan, err := depo.Get(ctx, "wfx_MOTORUNURETTIGI001")
+	read, err := store.Get(ctx, "wfx_ENGINEPRODUCED001")
 	require.NoError(t, err)
-	assert.Equal(t, "wfx_MOTORUNURETTIGI001", okunan.ID)
+	assert.Equal(t, "wfx_ENGINEPRODUCED001", read.ID)
 }
 
-// TestCreateAyniKimlikCakismasi aynı kimliğin ikinci kez açılamadığını doğrular.
+// TestCreateWithTheSameIDClashes verifies that the same id cannot be opened a
+// second time.
 //
-// Hata Invalid'dir, Conflict DEĞİL: motor Conflict'i "bu istek daha önce
-// yapıldı" diye okuyup tekrar yoluna gider, oysa kimlik çakışmasında aranacak
-// bir idempotency anahtarı yoktur (bkz. createError).
-func TestCreateAyniKimlikCakismasi(t *testing.T) {
+// The error is Invalid, NOT Conflict: the engine reads Conflict as "this request
+// was made before" and goes down the replay path, while on an id clash there is
+// no idempotency key to look for (see createError).
+func TestCreateWithTheSameIDClashes(t *testing.T) {
 	ctx := context.Background()
-	depo := yeniDepo()
+	store := newStore()
 
-	ilk := &workflow.Execution{ID: "wfx_AYNIKIMLIK0001", Workflow: wfAdi(t)}
-	require.NoError(t, depo.Create(ctx, ilk))
+	first := &workflow.Execution{ID: "wfx_SAMEID00000001", Workflow: wfName(t)}
+	require.NoError(t, store.Create(ctx, first))
 
-	ikinci := &workflow.Execution{ID: "wfx_AYNIKIMLIK0001", Workflow: wfAdi(t)}
-	err := depo.Create(ctx, ikinci)
+	second := &workflow.Execution{ID: "wfx_SAMEID00000001", Workflow: wfName(t)}
+	err := store.Create(ctx, second)
 
 	require.Error(t, err)
 	assert.Equal(t, CodeDuplicateID, coreerrors.CodeOf(err))
 	assert.Equal(t, coreerrors.KindInvalid, coreerrors.KindOf(err),
-		"aynı kimlik girdi hatasıdır: %v", err)
+		"the same id is an input error: %v", err)
 	assert.False(t, coreerrors.IsConflict(err),
-		"Conflict yalnızca idempotency çakışmasına ayrılmıştır: %v", err)
+		"Conflict is reserved for the idempotency clash alone: %v", err)
 }
 
-// TestCreateBoslukAnahtarReddedilir yalnızca boşluktan oluşan idempotency
-// anahtarının SESSİZCE anahtarsıza çevrilmediğini doğrular.
+// TestCreateRefusesAWhitespaceKey verifies that an idempotency key made of
+// whitespace only is not turned into "no key" SILENTLY.
 //
-// Anahtar NULL'a çekilseydi kısmi benzersiz indeks devreye girmez, aynı
-// anahtarla ikinci ve üçüncü kayıt sorunsuz açılırdı: çağıranın istediği
-// tekrar koruması hiçbir uyarı vermeden kaybolurdu.
-func TestCreateBoslukAnahtarReddedilir(t *testing.T) {
+// Were the key pulled to NULL the partial unique index would never engage and a
+// second and third record would open with the same key: the repeat protection
+// the caller asked for would vanish without a single warning.
+func TestCreateRefusesAWhitespaceKey(t *testing.T) {
 	ctx := context.Background()
-	depo := yeniDepo()
-	ad := wfAdi(t)
+	store := newStore()
+	name := wfName(t)
 
-	for _, anahtar := range []string{" ", "   ", "\t"} {
-		err := depo.Create(ctx, &workflow.Execution{
-			Workflow: ad, IdempotencyKey: anahtar, Status: workflow.StatusRunning,
+	for _, key := range []string{" ", "   ", "\t"} {
+		err := store.Create(ctx, &workflow.Execution{
+			Workflow: name, IdempotencyKey: key, Status: workflow.StatusRunning,
 		})
 
-		require.Errorf(t, err, "%q anahtarı reddedilmeli", anahtar)
-		assert.True(t, coreerrors.IsInvalid(err), "hata Invalid olmalı: %v", err)
+		require.Errorf(t, err, "the key %q has to be refused", key)
+		assert.True(t, coreerrors.IsInvalid(err), "the error has to be Invalid: %v", err)
 	}
 
-	var adet int
+	var count int
 	require.NoError(t, testPool.Pool().QueryRow(ctx,
-		`SELECT count(*) FROM workflow_executions WHERE workflow = $1`, ad).Scan(&adet))
-	assert.Zero(t, adet, "reddedilen anahtarla kayıt AÇILMAMALI")
+		`SELECT count(*) FROM workflow_executions WHERE workflow = $1`, name).Scan(&count))
+	assert.Zero(t, count, "no record may be OPENED with a refused key")
 
-	// Okuma yolu da aynı anahtarı reddeder; iki yolun kabul kümesi aynıdır.
-	_, err := depo.FindByIdempotencyKey(ctx, ad, " ")
+	// The read path refuses the same key too; the two paths accept the same set.
+	_, err := store.FindByIdempotencyKey(ctx, name, " ")
 	require.Error(t, err)
-	assert.True(t, coreerrors.IsInvalid(err), "arama da Invalid dönmeli: %v", err)
+	assert.True(t, coreerrors.IsInvalid(err), "the lookup has to return Invalid as well: %v", err)
 }
 
-// TestCreateIdempotencyCakismasi aynı (workflow, anahtar) çiftinin ikinci kez
-// açılamadığını doğrular.
-func TestCreateIdempotencyCakismasi(t *testing.T) {
+// TestCreateIdempotencyClash verifies that the same (workflow, key) pair cannot
+// be opened a second time.
+func TestCreateIdempotencyClash(t *testing.T) {
 	ctx := context.Background()
-	depo := yeniDepo()
-	ad := wfAdi(t)
+	store := newStore()
+	name := wfName(t)
 
-	require.NoError(t, depo.Create(ctx, &workflow.Execution{
-		Workflow: ad, IdempotencyKey: "ord_1", Status: workflow.StatusRunning,
+	require.NoError(t, store.Create(ctx, &workflow.Execution{
+		Workflow: name, IdempotencyKey: "ord_1", Status: workflow.StatusRunning,
 	}))
 
-	err := depo.Create(ctx, &workflow.Execution{
-		Workflow: ad, IdempotencyKey: "ord_1", Status: workflow.StatusRunning,
+	err := store.Create(ctx, &workflow.Execution{
+		Workflow: name, IdempotencyKey: "ord_1", Status: workflow.StatusRunning,
 	})
 
 	require.Error(t, err)
-	assert.True(t, coreerrors.IsConflict(err), "idempotency çakışması Conflict olmalı: %v", err)
+	assert.True(t, coreerrors.IsConflict(err), "an idempotency clash has to be Conflict: %v", err)
 	assert.Equal(t, CodeDuplicateKey, coreerrors.CodeOf(err))
 }
 
-// TestCreateFarkliWorkflowAyniAnahtar benzersizliğin workflow'a GÖRE
-// olduğunu doğrular: aynı anahtar başka bir workflow'da serbesttir.
-func TestCreateFarkliWorkflowAyniAnahtar(t *testing.T) {
+// TestCreateSameKeyInADifferentWorkflow verifies that uniqueness is PER
+// workflow: the same key is free in another workflow.
+func TestCreateSameKeyInADifferentWorkflow(t *testing.T) {
 	ctx := context.Background()
-	depo := yeniDepo()
+	store := newStore()
 
-	require.NoError(t, depo.Create(ctx, &workflow.Execution{
-		Workflow: wfAdi(t) + "_a", IdempotencyKey: "ord_1",
+	require.NoError(t, store.Create(ctx, &workflow.Execution{
+		Workflow: wfName(t) + "_a", IdempotencyKey: "ord_1",
 	}))
-	require.NoError(t, depo.Create(ctx, &workflow.Execution{
-		Workflow: wfAdi(t) + "_b", IdempotencyKey: "ord_1",
+	require.NoError(t, store.Create(ctx, &workflow.Execution{
+		Workflow: wfName(t) + "_b", IdempotencyKey: "ord_1",
 	}))
 }
 
-// TestCreateAnahtarsizYurutmelerCakismaz anahtarsız yürütmelerin birbiriyle
-// çakışmadığını doğrular. İndeks kısmi olmasaydı ikinci çağrı düşerdi.
-func TestCreateAnahtarsizYurutmelerCakismaz(t *testing.T) {
+// TestCreateKeylessExecutionsDoNotClash verifies that keyless executions do not
+// clash with each other. If the index were not partial the second call would
+// fail.
+func TestCreateKeylessExecutionsDoNotClash(t *testing.T) {
 	ctx := context.Background()
-	depo := yeniDepo()
-	ad := wfAdi(t)
+	store := newStore()
+	name := wfName(t)
 
 	for i := range 3 {
-		exec := &workflow.Execution{Workflow: ad, Status: workflow.StatusRunning}
-		require.NoErrorf(t, depo.Create(ctx, exec), "%d. anahtarsız yürütme açılamadı", i)
+		exec := &workflow.Execution{Workflow: name, Status: workflow.StatusRunning}
+		require.NoErrorf(t, store.Create(ctx, exec), "keyless execution %d could not be opened", i)
 
-		okunan, err := depo.Get(ctx, exec.ID)
+		read, err := store.Get(ctx, exec.ID)
 		require.NoError(t, err)
-		assert.Empty(t, okunan.IdempotencyKey, "anahtarsız kayıt boş anahtarla dönmeli")
+		assert.Empty(t, read.IdempotencyKey, "a keyless record has to come back with an empty key")
 	}
 }
 
-// TestCreateEszamanliYaris iki (ve daha çok) sürecin aynı anahtarla aynı anda
-// kayıt açtığı yarışta YALNIZCA BİRİNİN başarılı olduğunu doğrular.
+// TestCreateConcurrentRace verifies that in a race where two (or more) processes
+// open a record with the same key at once EXACTLY ONE succeeds.
 //
-// Testin kanıtladığı şey "önce SELECT sonra INSERT"in yetmediğidir: goroutine'ler
-// tek bir kapıdan aynı anda salınır ve karar veritabanındaki benzersiz indekse
-// bırakılır.
-func TestCreateEszamanliYaris(t *testing.T) {
+// What the test proves is that "SELECT first, then INSERT" is not enough: the
+// goroutines are released at once through a single gate and the decision is left
+// to the unique index in the database.
+func TestCreateConcurrentRace(t *testing.T) {
 	ctx := context.Background()
-	depo := yeniDepo()
-	ad := wfAdi(t)
+	store := newStore()
+	name := wfName(t)
 
-	const yarisan = 8
-	kapi := make(chan struct{})
-	sonuclar := make([]error, yarisan)
-	kimlikler := make([]string, yarisan)
+	const racers = 8
+	gate := make(chan struct{})
+	results := make([]error, racers)
+	ids := make([]string, racers)
 
 	var wg sync.WaitGroup
-	wg.Add(yarisan)
-	for i := range yarisan {
+	wg.Add(racers)
+	for i := range racers {
 		go func() {
 			defer wg.Done()
 			exec := &workflow.Execution{
-				Workflow:       ad,
-				IdempotencyKey: "ord_yaris",
+				Workflow:       name,
+				IdempotencyKey: "ord_race",
 				Status:         workflow.StatusRunning,
-				Input:          json.RawMessage(fmt.Sprintf(`{"yarisan":%d}`, i)),
+				Input:          json.RawMessage(fmt.Sprintf(`{"racer":%d}`, i)),
 			}
-			<-kapi // hepsi aynı anda başlasın
-			sonuclar[i] = depo.Create(ctx, exec)
-			kimlikler[i] = exec.ID
+			<-gate // let them all start at once
+			results[i] = store.Create(ctx, exec)
+			ids[i] = exec.ID
 		}()
 	}
-	close(kapi)
+	close(gate)
 	wg.Wait()
 
-	var basarili, cakisan int
-	var kazananID string
-	for i, err := range sonuclar {
+	var succeeded, clashed int
+	var winnerID string
+	for i, err := range results {
 		switch {
 		case err == nil:
-			basarili++
-			kazananID = kimlikler[i]
+			succeeded++
+			winnerID = ids[i]
 		case coreerrors.IsConflict(err):
-			cakisan++
+			clashed++
 			assert.Equal(t, CodeDuplicateKey, coreerrors.CodeOf(err))
 		default:
-			t.Errorf("%d. yarışan beklenmeyen hata aldı: %v", i, err)
+			t.Errorf("racer %d got an unexpected error: %v", i, err)
 		}
 	}
 
-	assert.Equal(t, 1, basarili, "yarıştan tam bir kazanan çıkmalı")
-	assert.Equal(t, yarisan-1, cakisan, "kalan herkes Conflict almalı")
+	assert.Equal(t, 1, succeeded, "the race has to produce exactly one winner")
+	assert.Equal(t, racers-1, clashed, "everybody else has to get Conflict")
 
-	// Veritabanında da tek kayıt olmalı: sayım, kazananın gerçekten tek
-	// olduğunu hata sınıflarından bağımsız olarak doğrular.
-	var adet int
+	// There has to be a single record in the database too: the count verifies
+	// that the winner really is alone, independently of the error classes.
+	var count int
 	require.NoError(t, testPool.Pool().QueryRow(ctx,
 		`SELECT count(*) FROM workflow_executions WHERE workflow = $1 AND idempotency_key = $2`,
-		ad, "ord_yaris").Scan(&adet))
-	assert.Equal(t, 1, adet, "aynı anahtarla tek satır olmalı")
+		name, "ord_race").Scan(&count))
+	assert.Equal(t, 1, count, "there has to be a single row for the same key")
 
-	bulunan, err := depo.FindByIdempotencyKey(ctx, ad, "ord_yaris")
+	found, err := store.FindByIdempotencyKey(ctx, name, "ord_race")
 	require.NoError(t, err)
-	assert.Equal(t, kazananID, bulunan.ID, "kalıcılaşan kayıt kazananınki olmalı")
+	assert.Equal(t, winnerID, found.ID, "the record that persisted has to be the winner's")
 }
 
-// TestFindByIdempotencyKey anahtarla okumanın kaydı adımlarıyla döndürdüğünü
-// doğrular.
+// TestFindByIdempotencyKey verifies that reading by key returns the record along
+// with its steps.
 func TestFindByIdempotencyKey(t *testing.T) {
 	ctx := context.Background()
-	depo := yeniDepo()
-	ad := wfAdi(t)
+	store := newStore()
+	name := wfName(t)
 
 	exec := &workflow.Execution{
-		Workflow: ad, IdempotencyKey: "ord_bul", Status: workflow.StatusRunning,
+		Workflow: name, IdempotencyKey: "ord_find", Status: workflow.StatusRunning,
 	}
-	require.NoError(t, depo.Create(ctx, exec))
-	require.NoError(t, depo.AppendStep(ctx, exec.ID, workflow.StepRecord{
-		Name: "stok_rezerve", Index: 0, Status: workflow.StepInvoked, Attempts: 1,
+	require.NoError(t, store.Create(ctx, exec))
+	require.NoError(t, store.AppendStep(ctx, exec.ID, workflow.StepRecord{
+		Name: "reserve_stock", Index: 0, Status: workflow.StepInvoked, Attempts: 1,
 	}))
 
-	bulunan, err := depo.FindByIdempotencyKey(ctx, ad, "ord_bul")
+	found, err := store.FindByIdempotencyKey(ctx, name, "ord_find")
 
 	require.NoError(t, err)
-	assert.Equal(t, exec.ID, bulunan.ID)
-	require.Len(t, bulunan.Steps, 1, "bulunan kayıt adımlarını da taşımalı")
-	assert.Equal(t, "stok_rezerve", bulunan.Steps[0].Name)
+	assert.Equal(t, exec.ID, found.ID)
+	require.Len(t, found.Steps, 1, "the record found has to carry its steps too")
+	assert.Equal(t, "reserve_stock", found.Steps[0].Name)
 }
 
-// TestFindByIdempotencyKeyBulunamadi olmayan anahtarın NotFound döndüğünü
-// doğrular.
-func TestFindByIdempotencyKeyBulunamadi(t *testing.T) {
+// TestFindByIdempotencyKeyNotFound verifies that a key that is not there returns
+// NotFound.
+func TestFindByIdempotencyKeyNotFound(t *testing.T) {
 	ctx := context.Background()
-	depo := yeniDepo()
+	store := newStore()
 
-	_, err := depo.FindByIdempotencyKey(ctx, wfAdi(t), "hic_yazilmadi")
+	_, err := store.FindByIdempotencyKey(ctx, wfName(t), "never_written")
 
 	require.Error(t, err)
-	assert.True(t, coreerrors.IsNotFound(err), "bulunamayan kayıt NotFound olmalı: %v", err)
+	assert.True(t, coreerrors.IsNotFound(err), "a record that is not found has to be NotFound: %v", err)
 	assert.Equal(t, CodeNotFound, coreerrors.CodeOf(err))
 }
 
-// TestGetBulunamadi olmayan kimliğin NotFound döndüğünü doğrular.
-func TestGetBulunamadi(t *testing.T) {
+// TestGetNotFound verifies that an id that is not there returns NotFound.
+func TestGetNotFound(t *testing.T) {
 	ctx := context.Background()
-	depo := yeniDepo()
+	store := newStore()
 
-	_, err := depo.Get(ctx, "wfx_HICYAZILMADI0001")
+	_, err := store.Get(ctx, "wfx_NEVERWRITTEN001")
 
 	require.Error(t, err)
-	assert.True(t, coreerrors.IsNotFound(err), "bulunamayan kayıt NotFound olmalı: %v", err)
+	assert.True(t, coreerrors.IsNotFound(err), "a record that is not found has to be NotFound: %v", err)
 	assert.Equal(t, CodeNotFound, coreerrors.CodeOf(err))
 }
 
-// TestAppendStepAyniIndeksiGunceller aynı Index'e ikinci yazımın YENİ SATIR
-// AÇMADIĞINI, var olanı güncellediğini doğrular. Retry sırasında adım önce
-// invoked, sonra compensated olarak yazılır; iki satır kalsaydı yürütmenin izi
-// yanlış okunurdu.
-func TestAppendStepAyniIndeksiGunceller(t *testing.T) {
+// TestAppendStepUpdatesTheSameIndex verifies that a second write to the same
+// Index DOES NOT OPEN A NEW ROW but updates the existing one. During a retry a
+// step is written first as invoked and then as compensated; if two rows were
+// left the execution's trace would be read wrong.
+func TestAppendStepUpdatesTheSameIndex(t *testing.T) {
 	ctx := context.Background()
-	depo := yeniDepo()
-	exec := acilanYurutme(ctx, t, depo)
+	store := newStore()
+	exec := openedExecution(ctx, t, store)
 
-	baslangic := time.Now().UTC().Truncate(time.Microsecond)
-	require.NoError(t, depo.AppendStep(ctx, exec.ID, workflow.StepRecord{
-		Name:      "stok_rezerve",
+	started := time.Now().UTC().Truncate(time.Microsecond)
+	require.NoError(t, store.AppendStep(ctx, exec.ID, workflow.StepRecord{
+		Name:      "reserve_stock",
 		Index:     0,
 		Status:    workflow.StepInvoked,
-		Output:    json.RawMessage(`{"rezervasyon":"rez_1"}`),
+		Output:    json.RawMessage(`{"reservation":"res_1"}`),
 		Attempts:  1,
-		StartedAt: baslangic,
-		EndedAt:   baslangic.Add(time.Second),
+		StartedAt: started,
+		EndedAt:   started.Add(time.Second),
 	}))
 
-	bitis := baslangic.Add(2 * time.Second)
-	require.NoError(t, depo.AppendStep(ctx, exec.ID, workflow.StepRecord{
-		Name:      "stok_rezerve",
+	ended := started.Add(2 * time.Second)
+	require.NoError(t, store.AppendStep(ctx, exec.ID, workflow.StepRecord{
+		Name:      "reserve_stock",
 		Index:     0,
 		Status:    workflow.StepCompensated,
 		Output:    nil,
-		Failure:   "stok yetersiz",
+		Failure:   "not enough stock",
 		Attempts:  3,
-		StartedAt: baslangic,
-		EndedAt:   bitis,
+		StartedAt: started,
+		EndedAt:   ended,
 	}))
 
-	okunan, err := depo.Get(ctx, exec.ID)
+	read, err := store.Get(ctx, exec.ID)
 	require.NoError(t, err)
 
-	require.Len(t, okunan.Steps, 1, "ikinci yazım yeni satır eklememeli")
-	adim := okunan.Steps[0]
-	assert.Equal(t, workflow.StepCompensated, adim.Status, "durum güncellenmeli")
-	assert.Equal(t, 3, adim.Attempts, "deneme sayısı güncellenmeli")
-	assert.Equal(t, "stok yetersiz", adim.Failure)
-	assert.Nil(t, adim.Output, "nil çıktı NULL'a çekilmeli")
-	assert.True(t, adim.EndedAt.Equal(bitis), "bitiş zamanı güncellenmeli")
-	assert.Equal(t, time.UTC, adim.EndedAt.Location())
+	require.Len(t, read.Steps, 1, "the second write must not add a new row")
+	step := read.Steps[0]
+	assert.Equal(t, workflow.StepCompensated, step.Status, "the status has to be updated")
+	assert.Equal(t, 3, step.Attempts, "the attempt count has to be updated")
+	assert.Equal(t, "not enough stock", step.Failure)
+	assert.Nil(t, step.Output, "a nil output has to be pulled to NULL")
+	assert.True(t, step.EndedAt.Equal(ended), "the end time has to be updated")
+	assert.Equal(t, time.UTC, step.EndedAt.Location())
 }
 
-// TestAppendStepZamanlariKorur adım zamanlarının UTC olarak ve mikrosaniye
-// duyarlığında geri okunduğunu, sıfır zamanların sıfır kaldığını doğrular.
-func TestAppendStepZamanlariKorur(t *testing.T) {
+// TestAppendStepPreservesTheTimes verifies that the step times are read back in
+// UTC at microsecond precision and that zero times stay zero.
+func TestAppendStepPreservesTheTimes(t *testing.T) {
 	ctx := context.Background()
-	depo := yeniDepo()
-	exec := acilanYurutme(ctx, t, depo)
+	store := newStore()
+	exec := openedExecution(ctx, t, store)
 
-	yer := time.FixedZone("UTC+3", 3*60*60)
-	basladi := time.Date(2026, 8, 23, 15, 4, 5, 123456000, yer)
+	zone := time.FixedZone("UTC+3", 3*60*60)
+	started := time.Date(2026, 8, 23, 15, 4, 5, 123456000, zone)
 
-	require.NoError(t, depo.AppendStep(ctx, exec.ID, workflow.StepRecord{
-		Name: "zamanli", Index: 0, Status: workflow.StepInvoked, Attempts: 1,
-		StartedAt: basladi,
+	require.NoError(t, store.AppendStep(ctx, exec.ID, workflow.StepRecord{
+		Name: "timed", Index: 0, Status: workflow.StepInvoked, Attempts: 1,
+		StartedAt: started,
 	}))
 
-	okunan, err := depo.Get(ctx, exec.ID)
+	read, err := store.Get(ctx, exec.ID)
 	require.NoError(t, err)
-	require.Len(t, okunan.Steps, 1)
+	require.Len(t, read.Steps, 1)
 
-	adim := okunan.Steps[0]
-	assert.True(t, adim.StartedAt.Equal(basladi), "aynı an geri okunmalı")
-	assert.Equal(t, time.UTC, adim.StartedAt.Location(), "zaman UTC'ye taşınmalı")
-	assert.True(t, adim.EndedAt.IsZero(), "yazılmayan zaman sıfır kalmalı")
+	step := read.Steps[0]
+	assert.True(t, step.StartedAt.Equal(started), "the same instant has to be read back")
+	assert.Equal(t, time.UTC, step.StartedAt.Location(), "the time has to be moved to UTC")
+	assert.True(t, step.EndedAt.IsZero(), "a time that was not written has to stay zero")
 }
 
-// TestAppendStepSiraliDoner adımların Index sırasına göre döndüğünü doğrular;
-// kayıtlar bilinçli olarak KARIŞIK sırada yazılır.
-func TestAppendStepSiraliDoner(t *testing.T) {
+// TestAppendStepReturnsInOrder verifies that the steps come back in Index order;
+// the records are deliberately written in a SHUFFLED order.
+func TestAppendStepReturnsInOrder(t *testing.T) {
 	ctx := context.Background()
-	depo := yeniDepo()
-	exec := acilanYurutme(ctx, t, depo)
+	store := newStore()
+	exec := openedExecution(ctx, t, store)
 
 	for _, index := range []int{4, 0, 3, 1, 2} {
-		require.NoError(t, depo.AppendStep(ctx, exec.ID, workflow.StepRecord{
-			Name:     fmt.Sprintf("adim_%d", index),
+		require.NoError(t, store.AppendStep(ctx, exec.ID, workflow.StepRecord{
+			Name:     fmt.Sprintf("step_%d", index),
 			Index:    index,
 			Status:   workflow.StepInvoked,
 			Attempts: 1,
 		}))
 	}
 
-	okunan, err := depo.Get(ctx, exec.ID)
+	read, err := store.Get(ctx, exec.ID)
 	require.NoError(t, err)
 
-	require.Len(t, okunan.Steps, 5)
-	for i, adim := range okunan.Steps {
-		assert.Equal(t, i, adim.Index, "%d. sırada Index %d beklenir", i, i)
-		assert.Equal(t, fmt.Sprintf("adim_%d", i), adim.Name)
+	require.Len(t, read.Steps, 5)
+	for i, step := range read.Steps {
+		assert.Equal(t, i, step.Index, "at position %d Index %d is expected", i, i)
+		assert.Equal(t, fmt.Sprintf("step_%d", i), step.Name)
 	}
 }
 
-// TestAppendStepYurutmeyiTazeler adım yazmanın yürütmenin UpdatedAt'ini
-// ilerlettiğini, CreatedAt'i ise bozmadığını doğrular.
-func TestAppendStepYurutmeyiTazeler(t *testing.T) {
+// TestAppendStepRefreshesTheExecution verifies that writing a step advances the
+// execution's UpdatedAt while leaving CreatedAt alone.
+func TestAppendStepRefreshesTheExecution(t *testing.T) {
 	ctx := context.Background()
-	depo := yeniDepo()
-	exec := acilanYurutme(ctx, t, depo)
+	store := newStore()
+	exec := openedExecution(ctx, t, store)
 
-	require.NoError(t, depo.AppendStep(ctx, exec.ID, workflow.StepRecord{
-		Name: "adim", Index: 0, Status: workflow.StepInvoked, Attempts: 1,
+	require.NoError(t, store.AppendStep(ctx, exec.ID, workflow.StepRecord{
+		Name: "step", Index: 0, Status: workflow.StepInvoked, Attempts: 1,
 	}))
 
-	okunan, err := depo.Get(ctx, exec.ID)
+	read, err := store.Get(ctx, exec.ID)
 	require.NoError(t, err)
-	assert.True(t, okunan.UpdatedAt.After(exec.UpdatedAt),
-		"adım yazımı UpdatedAt'i ilerletmeli (önce %s, sonra %s)", exec.UpdatedAt, okunan.UpdatedAt)
-	assert.True(t, okunan.CreatedAt.Equal(exec.CreatedAt), "CreatedAt değişmemeli")
+	assert.True(t, read.UpdatedAt.After(exec.UpdatedAt),
+		"writing a step has to advance UpdatedAt (before %s, after %s)", exec.UpdatedAt, read.UpdatedAt)
+	assert.True(t, read.CreatedAt.Equal(exec.CreatedAt), "CreatedAt must not change")
 }
 
-// TestAppendStepOlmayanYurutme sahipsiz adım yazımının NotFound döndüğünü
-// doğrular; yabancı anahtar bunu veritabanı düzeyinde engeller.
-func TestAppendStepOlmayanYurutme(t *testing.T) {
+// TestAppendStepForAMissingExecution verifies that writing an orphan step
+// returns NotFound; the foreign key blocks it at the database level.
+func TestAppendStepForAMissingExecution(t *testing.T) {
 	ctx := context.Background()
-	depo := yeniDepo()
+	store := newStore()
 
-	err := depo.AppendStep(ctx, "wfx_OLMAYANYURUTME01", workflow.StepRecord{
-		Name: "adim", Index: 0, Status: workflow.StepInvoked, Attempts: 1,
+	err := store.AppendStep(ctx, "wfx_MISSINGEXEC0001", workflow.StepRecord{
+		Name: "step", Index: 0, Status: workflow.StepInvoked, Attempts: 1,
 	})
 
 	require.Error(t, err)
-	assert.True(t, coreerrors.IsNotFound(err), "olmayan yürütme NotFound olmalı: %v", err)
+	assert.True(t, coreerrors.IsNotFound(err), "a missing execution has to be NotFound: %v", err)
 
-	var adet int
+	var count int
 	require.NoError(t, testPool.Pool().QueryRow(ctx,
 		`SELECT count(*) FROM workflow_execution_steps WHERE execution_id = $1`,
-		"wfx_OLMAYANYURUTME01").Scan(&adet))
-	assert.Zero(t, adet, "sahipsiz adım yazılmamalı")
+		"wfx_MISSINGEXEC0001").Scan(&count))
+	assert.Zero(t, count, "an orphan step must not be written")
 }
 
-// TestUpdateStatus son durumun ve çıktının yazıldığını doğrular.
+// TestUpdateStatus verifies that the final status and the output are written.
 func TestUpdateStatus(t *testing.T) {
 	ctx := context.Background()
-	depo := yeniDepo()
-	exec := acilanYurutme(ctx, t, depo)
+	store := newStore()
+	exec := openedExecution(ctx, t, store)
 
-	require.NoError(t, depo.UpdateStatus(ctx, exec.ID,
+	require.NoError(t, store.UpdateStatus(ctx, exec.ID,
 		workflow.StatusCompleted, json.RawMessage(`{"order_id":"ord_9"}`), ""))
 
-	okunan, err := depo.Get(ctx, exec.ID)
+	read, err := store.Get(ctx, exec.ID)
 	require.NoError(t, err)
-	assert.Equal(t, workflow.StatusCompleted, okunan.Status)
-	assert.JSONEq(t, `{"order_id":"ord_9"}`, string(okunan.Output))
-	assert.Empty(t, okunan.Failure)
-	assert.True(t, okunan.UpdatedAt.After(exec.UpdatedAt), "UpdatedAt ilerlemeli")
-	assert.True(t, okunan.CreatedAt.Equal(exec.CreatedAt), "CreatedAt değişmemeli")
+	assert.Equal(t, workflow.StatusCompleted, read.Status)
+	assert.JSONEq(t, `{"order_id":"ord_9"}`, string(read.Output))
+	assert.Empty(t, read.Failure)
+	assert.True(t, read.UpdatedAt.After(exec.UpdatedAt), "UpdatedAt has to advance")
+	assert.True(t, read.CreatedAt.Equal(exec.CreatedAt), "CreatedAt must not change")
 }
 
-// TestUpdateStatusTelafiHatasi elle müdahale isteyen durumun ve arıza
-// açıklamasının kalıcılaştığını doğrular.
-func TestUpdateStatusTelafiHatasi(t *testing.T) {
+// TestUpdateStatusCompensationFailure verifies that the state needing a human
+// and its failure description are persisted.
+func TestUpdateStatusCompensationFailure(t *testing.T) {
 	ctx := context.Background()
-	depo := yeniDepo()
-	exec := acilanYurutme(ctx, t, depo)
+	store := newStore()
+	exec := openedExecution(ctx, t, store)
 
-	require.NoError(t, depo.UpdateStatus(ctx, exec.ID,
-		workflow.StatusCompensationFailed, nil, "telafi patladı: ödeme iadesi başarısız"))
+	require.NoError(t, store.UpdateStatus(ctx, exec.ID,
+		workflow.StatusCompensationFailed, nil, "the compensation blew up: the refund failed"))
 
-	okunan, err := depo.Get(ctx, exec.ID)
+	read, err := store.Get(ctx, exec.ID)
 	require.NoError(t, err)
-	assert.Equal(t, workflow.StatusCompensationFailed, okunan.Status)
-	assert.Equal(t, "telafi patladı: ödeme iadesi başarısız", okunan.Failure)
-	assert.Nil(t, okunan.Output, "nil çıktı NULL kalmalı")
+	assert.Equal(t, workflow.StatusCompensationFailed, read.Status)
+	assert.Equal(t, "the compensation blew up: the refund failed", read.Failure)
+	assert.Nil(t, read.Output, "a nil output has to stay NULL")
 }
 
-// TestUpdateStatusOlmayanYurutme olmayan kaydın güncellenemediğini doğrular.
-func TestUpdateStatusOlmayanYurutme(t *testing.T) {
+// TestUpdateStatusForAMissingExecution verifies that a record that is not there
+// cannot be updated.
+func TestUpdateStatusForAMissingExecution(t *testing.T) {
 	ctx := context.Background()
-	depo := yeniDepo()
+	store := newStore()
 
-	err := depo.UpdateStatus(ctx, "wfx_OLMAYANYURUTME02", workflow.StatusCompleted, nil, "")
+	err := store.UpdateStatus(ctx, "wfx_MISSINGEXEC0002", workflow.StatusCompleted, nil, "")
 
 	require.Error(t, err)
-	assert.True(t, coreerrors.IsNotFound(err), "olmayan yürütme NotFound olmalı: %v", err)
+	assert.True(t, coreerrors.IsNotFound(err), "a missing execution has to be NotFound: %v", err)
 	assert.Equal(t, CodeNotFound, coreerrors.CodeOf(err))
 }
 
-// TestJSONNULLVeJSONNullAyrimi "değer yok" (SQL NULL) ile "değer null"ın
-// (JSON null) hem yazma hem okuma yönünde ayrıldığını doğrular.
-func TestJSONNULLVeJSONNullAyrimi(t *testing.T) {
+// TestSQLNullAndJSONNullAreToldApart verifies that "no value" (SQL NULL) and
+// "the value is null" (JSON null) are told apart on the write and the read path
+// alike.
+func TestSQLNullAndJSONNullAreToldApart(t *testing.T) {
 	ctx := context.Background()
-	depo := yeniDepo()
-	ad := wfAdi(t)
+	store := newStore()
+	name := wfName(t)
 
-	nilExec := &workflow.Execution{Workflow: ad, Input: nil}
-	require.NoError(t, depo.Create(ctx, nilExec))
+	nilExec := &workflow.Execution{Workflow: name, Input: nil}
+	require.NoError(t, store.Create(ctx, nilExec))
 
-	nullExec := &workflow.Execution{Workflow: ad, Input: json.RawMessage(`null`)}
-	require.NoError(t, depo.Create(ctx, nullExec))
+	nullExec := &workflow.Execution{Workflow: name, Input: json.RawMessage(`null`)}
+	require.NoError(t, store.Create(ctx, nullExec))
 
-	bosExec := &workflow.Execution{Workflow: ad, Input: json.RawMessage{}}
-	require.NoError(t, depo.Create(ctx, bosExec))
+	emptyExec := &workflow.Execution{Workflow: name, Input: json.RawMessage{}}
+	require.NoError(t, store.Create(ctx, emptyExec))
 
-	okunanNil, err := depo.Get(ctx, nilExec.ID)
+	readNil, err := store.Get(ctx, nilExec.ID)
 	require.NoError(t, err)
-	assert.Nil(t, okunanNil.Input, "nil girdi NULL olarak dönmeli")
+	assert.Nil(t, readNil.Input, "a nil input has to come back as NULL")
 
-	okunanNull, err := depo.Get(ctx, nullExec.ID)
+	readNull, err := store.Get(ctx, nullExec.ID)
 	require.NoError(t, err)
-	assert.Equal(t, json.RawMessage(`null`), okunanNull.Input,
-		"JSON null değeri NULL'a çevrilmemeli")
+	assert.Equal(t, json.RawMessage(`null`), readNull.Input,
+		"a JSON null value must not be turned into NULL")
 
-	okunanBos, err := depo.Get(ctx, bosExec.ID)
+	readEmpty, err := store.Get(ctx, emptyExec.ID)
 	require.NoError(t, err)
-	assert.Nil(t, okunanBos.Input, "boş dilim NULL olarak yazılmalı")
+	assert.Nil(t, readEmpty.Input, "an empty slice has to be written as NULL")
 
-	// Sütunun gerçekten NULL olduğunu (JSON 'null' metni olmadığını) katalogdan
-	// değil, sorgudan doğrula.
-	var nilNull, nullNull bool
+	// Verify that the column really is NULL (and not the JSON text "null") from
+	// the query rather than the catalog.
+	var nilIsNull, nullIsNull bool
 	require.NoError(t, testPool.Pool().QueryRow(ctx,
-		`SELECT input IS NULL FROM workflow_executions WHERE id = $1`, nilExec.ID).Scan(&nilNull))
+		`SELECT input IS NULL FROM workflow_executions WHERE id = $1`, nilExec.ID).Scan(&nilIsNull))
 	require.NoError(t, testPool.Pool().QueryRow(ctx,
-		`SELECT input IS NULL FROM workflow_executions WHERE id = $1`, nullExec.ID).Scan(&nullNull))
-	assert.True(t, nilNull, "nil girdi sütunda NULL olmalı")
-	assert.False(t, nullNull, "JSON null sütunda NULL OLMAMALI")
+		`SELECT input IS NULL FROM workflow_executions WHERE id = $1`, nullExec.ID).Scan(&nullIsNull))
+	assert.True(t, nilIsNull, "a nil input has to be NULL in the column")
+	assert.False(t, nullIsNull, "a JSON null MUST NOT be NULL in the column")
 }
 
-// TestAdimJSONNullAyrimi adım çıktısında da aynı ayrımın korunduğunu doğrular.
-func TestAdimJSONNullAyrimi(t *testing.T) {
+// TestStepJSONNullIsToldApart verifies that the same distinction holds for the
+// step output.
+func TestStepJSONNullIsToldApart(t *testing.T) {
 	ctx := context.Background()
-	depo := yeniDepo()
-	exec := acilanYurutme(ctx, t, depo)
+	store := newStore()
+	exec := openedExecution(ctx, t, store)
 
-	require.NoError(t, depo.AppendStep(ctx, exec.ID, workflow.StepRecord{
-		Name: "nil_cikti", Index: 0, Status: workflow.StepInvoked, Attempts: 1,
+	require.NoError(t, store.AppendStep(ctx, exec.ID, workflow.StepRecord{
+		Name: "nil_output", Index: 0, Status: workflow.StepInvoked, Attempts: 1,
 	}))
-	require.NoError(t, depo.AppendStep(ctx, exec.ID, workflow.StepRecord{
-		Name: "null_cikti", Index: 1, Status: workflow.StepInvoked, Attempts: 1,
+	require.NoError(t, store.AppendStep(ctx, exec.ID, workflow.StepRecord{
+		Name: "null_output", Index: 1, Status: workflow.StepInvoked, Attempts: 1,
 		Output: json.RawMessage(`null`),
 	}))
 
-	okunan, err := depo.Get(ctx, exec.ID)
+	read, err := store.Get(ctx, exec.ID)
 	require.NoError(t, err)
-	require.Len(t, okunan.Steps, 2)
-	assert.Nil(t, okunan.Steps[0].Output, "nil adım çıktısı NULL olmalı")
-	assert.Equal(t, json.RawMessage(`null`), okunan.Steps[1].Output,
-		"JSON null adım çıktısı korunmalı")
+	require.Len(t, read.Steps, 2)
+	assert.Nil(t, read.Steps[0].Output, "a nil step output has to be NULL")
+	assert.Equal(t, json.RawMessage(`null`), read.Steps[1].Output,
+		"a JSON null step output has to be preserved")
 }
 
-// TestJSONBOlarakSaklanir alanların metin değil JSONB saklandığını doğrular:
-// JSONB sorgulanabilir, metin sorgulanamaz.
-func TestJSONBOlarakSaklanir(t *testing.T) {
+// TestFieldsAreStoredAsJSONB verifies that the fields are stored as JSONB rather
+// than text: JSONB can be queried, text cannot.
+func TestFieldsAreStoredAsJSONB(t *testing.T) {
 	ctx := context.Background()
-	depo := yeniDepo()
+	store := newStore()
 
 	exec := &workflow.Execution{
-		Workflow: wfAdi(t),
-		Input:    json.RawMessage(`{"cart_id":"cart_7","satirlar":[{"adet":2}]}`),
+		Workflow: wfName(t),
+		Input:    json.RawMessage(`{"cart_id":"cart_7","lines":[{"quantity":2}]}`),
 	}
-	require.NoError(t, depo.Create(ctx, exec))
+	require.NoError(t, store.Create(ctx, exec))
 
 	var cartID string
 	require.NoError(t, testPool.Pool().QueryRow(ctx,
 		`SELECT input->>'cart_id' FROM workflow_executions WHERE id = $1`, exec.ID).Scan(&cartID))
-	assert.Equal(t, "cart_7", cartID, "JSONB operatörleri çalışmalı")
+	assert.Equal(t, "cart_7", cartID, "the JSONB operators have to work")
 
-	var tur string
+	var columnType string
 	require.NoError(t, testPool.Pool().QueryRow(ctx,
-		`SELECT pg_typeof(input)::text FROM workflow_executions WHERE id = $1`, exec.ID).Scan(&tur))
-	assert.Equal(t, "jsonb", tur)
+		`SELECT pg_typeof(input)::text FROM workflow_executions WHERE id = $1`, exec.ID).Scan(&columnType))
+	assert.Equal(t, "jsonb", columnType)
 }
 
-// TestJSONBinReddettigiGirdiInvalid JSONB'nin saklayamadığı bir girdinin
-// tipli Invalid hatasına çevrildiğini ve kaydın hiç açılmadığını doğrular.
+// TestInputJSONBRefusesIsInvalid verifies that an input JSONB cannot store is
+// turned into a typed Invalid error and that the record is never opened.
 //
-// json.Valid bu gövdeyi geçerli sayar; PostgreSQL saymaz. Denetim olmasaydı
-// hata sürücüden sınıflandırılmamış (KindInternal) dönerdi: çağıranın verisi
-// yüzünden HTTP 500 üretilirdi.
-func TestJSONBinReddettigiGirdiInvalid(t *testing.T) {
+// json.Valid counts this body as valid; PostgreSQL does not. Without the check
+// the error would come back from the driver unclassified (KindInternal): an HTTP
+// 500 produced by the caller's own data.
+func TestInputJSONBRefusesIsInvalid(t *testing.T) {
 	ctx := context.Background()
-	depo := yeniDepo()
-	ad := wfAdi(t)
+	store := newStore()
+	name := wfName(t)
 
-	// nulEscape ters bölü + u0000'dır; kaynağa doğrudan yazılamaz.
-	girdi := json.RawMessage(`{"not":"a` + nulEscape + `b"}`)
-	require.True(t, json.Valid(girdi), "gövde json.Valid'i GEÇMELİ; vaka buna dayanıyor")
+	// nulEscape is backslash + u0000; it cannot be written into the source
+	// directly.
+	input := json.RawMessage(`{"not":"a` + nulEscape + `b"}`)
+	require.True(t, json.Valid(input), "the body has to PASS json.Valid; the case rests on it")
 
-	err := depo.Create(ctx, &workflow.Execution{Workflow: ad, Input: girdi})
+	err := store.Create(ctx, &workflow.Execution{Workflow: name, Input: input})
 
 	require.Error(t, err)
-	assert.True(t, coreerrors.IsInvalid(err), "çağıran verisi hatası Invalid olmalı: %v", err)
+	assert.True(t, coreerrors.IsInvalid(err), "an error from the caller's data has to be Invalid: %v", err)
 	assert.Equal(t, CodeInvalid, coreerrors.CodeOf(err))
 
-	var adet int
+	var count int
 	require.NoError(t, testPool.Pool().QueryRow(ctx,
-		`SELECT count(*) FROM workflow_executions WHERE workflow = $1`, ad).Scan(&adet))
-	assert.Zero(t, adet, "reddedilen girdiyle kayıt açılmamalı")
+		`SELECT count(*) FROM workflow_executions WHERE workflow = $1`, name).Scan(&count))
+	assert.Zero(t, count, "no record may be opened with a refused input")
 }
 
-// TestSQLSTATEKodlariSunucuylaUyusuyor wrapDB'nin eşlediği SQLSTATE kodlarını
-// CANLI SUNUCUYA sorarak doğrular.
+// TestSQLSTATECodesMatchTheServer verifies the SQLSTATE codes wrapDB maps by
+// asking the LIVE SERVER.
 //
-// Kodlar sabit yazılıdır; yanlış yazılsalardı eşleme sessizce genel dala düşer
-// ve çağıran verisinden doğan hata KindInternal olarak dönerdi. Burada aynı
-// arıza gerçek sunucuda üretilir ve sınıflandırması denetlenir.
-func TestSQLSTATEKodlariSunucuylaUyusuyor(t *testing.T) {
+// The codes are written as constants; had one been written wrong the mapping
+// would fall silently to the generic branch and an error born of the caller's
+// data would come back as KindInternal. Here the same failure is produced on the
+// real server and its classification is checked.
+func TestSQLSTATECodesMatchTheServer(t *testing.T) {
 	ctx := context.Background()
 
 	tests := []struct {
-		ad    string
-		sorgu string
-		deger any
-		kod   string
+		name  string
+		query string
+		value any
+		code  string
 	}{
-		{"JSONB'nin çeviremediği kaçış", `SELECT $1::jsonb`, `{"x":"` + nulEscape + `"}`, untranslatableCharacter},
-		{"metindeki NUL baytı", `SELECT $1::text`, "a\x00b", notInRepertoire},
+		{"an escape JSONB cannot convert", `SELECT $1::jsonb`, `{"x":"` + nulEscape + `"}`, untranslatableCharacter},
+		{"a NUL byte in text", `SELECT $1::text`, "a\x00b", notInRepertoire},
 	}
 
 	for _, tc := range tests {
-		t.Run(tc.ad, func(t *testing.T) {
-			_, err := testPool.Pool().Exec(ctx, tc.sorgu, tc.deger)
-			require.Error(t, err, "sunucu bu değeri reddetmeli")
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := testPool.Pool().Exec(ctx, tc.query, tc.value)
+			require.Error(t, err, "the server has to refuse this value")
 
 			var pgErr *pgconn.PgError
 			require.ErrorAs(t, err, &pgErr)
-			assert.Equal(t, tc.kod, pgErr.Code, "sabit yazılan SQLSTATE sunucununkiyle aynı olmalı")
+			assert.Equal(t, tc.code, pgErr.Code, "the SQLSTATE written as a constant has to match the server's")
 
-			sarmalanmis := wrapDB(err, CodeQueryFailed, "yürütme yazılamadı")
-			assert.True(t, coreerrors.IsInvalid(sarmalanmis),
-				"çağıran verisinden doğan hata Invalid olmalı: %v", sarmalanmis)
+			wrapped := wrapDB(err, CodeQueryFailed, "the execution could not be written")
+			assert.True(t, coreerrors.IsInvalid(wrapped),
+				"an error born of the caller's data has to be Invalid: %v", wrapped)
 
-			var tipli *coreerrors.Error
-			require.ErrorAs(t, sarmalanmis, &tipli)
-			assert.NotContains(t, tipli.Message, pgErr.Message,
-				"sürücü mesajı çağıranın verisini taşıyabilir; dışarıya verilen mesaja girmemeli")
+			var typed *coreerrors.Error
+			require.ErrorAs(t, wrapped, &typed)
+			assert.NotContains(t, typed.Message, pgErr.Message,
+				"the driver message can carry the caller's data; it must not enter the message handed outward")
 		})
 	}
 }
 
-// TestBozukAriziMetniUcDurumuEngellemez tanı metnindeki yazılamaz baytların
-// yürütmeyi "running"de ASILI BIRAKMADIĞINI doğrular.
+// TestBrokenFailureTextDoesNotBlockTheTerminalState verifies that unwritable
+// bytes in the diagnostic text DO NOT LEAVE the execution hanging in "running".
 //
-// Metin reddedilseydi uç durum hiç yazılamaz, kayıt sonsuza dek running kalır
-// ve o idempotency anahtarı bir daha kullanılamazdı (tekrar her seferinde
-// "hâlâ sürüyor" derdi). Bu yüzden açıklama reddedilmez, TEMİZLENİR.
-func TestBozukAriziMetniUcDurumuEngellemez(t *testing.T) {
+// Had the text been refused, the terminal state could never be written, the
+// record would stay running forever and that idempotency key could never be used
+// again (every repeat would say "still going"). So the description is not
+// refused, it is CLEANED.
+func TestBrokenFailureTextDoesNotBlockTheTerminalState(t *testing.T) {
 	ctx := context.Background()
-	depo := yeniDepo()
-	exec := acilanYurutme(ctx, t, depo)
+	store := newStore()
+	exec := openedExecution(ctx, t, store)
 
-	bozuk := "stok\x00 servisi \xff yanıt vermedi"
+	broken := "the stock\x00 service \xff did not answer"
 
-	require.NoError(t, depo.AppendStep(ctx, exec.ID, workflow.StepRecord{
-		Name: "stok_rezerve", Index: 0, Status: workflow.StepFailed,
-		Failure: bozuk, Attempts: 1,
-	}), "adım izi tanı metni yüzünden yazılamaz kalmamalı")
+	require.NoError(t, store.AppendStep(ctx, exec.ID, workflow.StepRecord{
+		Name: "reserve_stock", Index: 0, Status: workflow.StepFailed,
+		Failure: broken, Attempts: 1,
+	}), "the step trace must not stay unwritable because of its diagnostic text")
 
-	require.NoError(t, depo.UpdateStatus(ctx, exec.ID, workflow.StatusFailed, nil, bozuk),
-		"uç durum tanı metni yüzünden yazılamaz kalmamalı")
+	require.NoError(t, store.UpdateStatus(ctx, exec.ID, workflow.StatusFailed, nil, broken),
+		"the terminal state must not stay unwritable because of its diagnostic text")
 
-	okunan, err := depo.Get(ctx, exec.ID)
+	read, err := store.Get(ctx, exec.ID)
 	require.NoError(t, err)
 
-	assert.Equal(t, workflow.StatusFailed, okunan.Status, "kayıt running'de asılı kalmamalı")
-	assert.NotContains(t, okunan.Failure, "\x00", "NUL baytı temizlenmeli")
-	assert.Contains(t, okunan.Failure, "stok", "okunabilir kısım korunmalı")
-	assert.Contains(t, okunan.Failure, "yanıt vermedi")
-	require.Len(t, okunan.Steps, 1)
-	assert.NotContains(t, okunan.Steps[0].Failure, "\x00")
-	assert.Contains(t, okunan.Steps[0].Failure, "stok")
+	assert.Equal(t, workflow.StatusFailed, read.Status, "the record must not hang in running")
+	assert.NotContains(t, read.Failure, "\x00", "the NUL byte has to be cleaned")
+	assert.Contains(t, read.Failure, "stock", "the readable part has to be preserved")
+	assert.Contains(t, read.Failure, "did not answer")
+	require.Len(t, read.Steps, 1)
+	assert.NotContains(t, read.Steps[0].Failure, "\x00")
+	assert.Contains(t, read.Steps[0].Failure, "stock")
 }
 
-// TestGetCokAdimliYurutmeyiBozmadanOkur yürütme sütunlarının yalnızca İLK
-// satırda taranmasının okunan kaydı bozmadığını doğrular.
+// TestGetReadsAMultiStepExecutionIntact verifies that scanning the execution
+// columns on the FIRST row only does not corrupt the record that is read.
 //
-// LEFT JOIN yürütme satırını her adım için tekrar taşır; tarama sınırı kayarsa
-// (bkz. skipExecColumns) ya yürütme alanları boş kalır ya da adımlar eksilir.
-// Girdi bilinçli olarak büyüktür: tekrar tekrar ayrılan asıl yük odur.
-func TestGetCokAdimliYurutmeyiBozmadanOkur(t *testing.T) {
+// The LEFT JOIN carries the execution row again for every step; if the scan
+// boundary drifted (see skipExecColumns) either the execution fields would come
+// back empty or steps would go missing. The input is deliberately large: it is
+// the real weight that would be allocated over and over.
+func TestGetReadsAMultiStepExecutionIntact(t *testing.T) {
 	ctx := context.Background()
-	depo := yeniDepo()
+	store := newStore()
 
-	buyukGirdi := json.RawMessage(`{"dolgu":"` + strings.Repeat("g", 64*1024) + `","cart_id":"cart_9"}`)
+	largeInput := json.RawMessage(`{"filler":"` + strings.Repeat("g", 64*1024) + `","cart_id":"cart_9"}`)
 	exec := &workflow.Execution{
-		Workflow:       wfAdi(t),
-		IdempotencyKey: "ord_cok_adim",
+		Workflow:       wfName(t),
+		IdempotencyKey: "ord_many_steps",
 		Status:         workflow.StatusRunning,
-		Input:          buyukGirdi,
+		Input:          largeInput,
 	}
-	require.NoError(t, depo.Create(ctx, exec))
+	require.NoError(t, store.Create(ctx, exec))
 
-	const adimSayisi = 6
-	for i := range adimSayisi {
-		require.NoError(t, depo.AppendStep(ctx, exec.ID, workflow.StepRecord{
-			Name:     fmt.Sprintf("adim_%d", i),
+	const stepCount = 6
+	for i := range stepCount {
+		require.NoError(t, store.AppendStep(ctx, exec.ID, workflow.StepRecord{
+			Name:     fmt.Sprintf("step_%d", i),
 			Index:    i,
 			Status:   workflow.StepInvoked,
-			Output:   json.RawMessage(fmt.Sprintf(`{"sira":%d}`, i)),
+			Output:   json.RawMessage(fmt.Sprintf(`{"position":%d}`, i)),
 			Attempts: i + 1,
 		}))
 	}
 
-	for ad, oku := range map[string]func() (*workflow.Execution, error){
+	for name, read := range map[string]func() (*workflow.Execution, error){
 		"Get": func() (*workflow.Execution, error) {
-			return depo.Get(ctx, exec.ID)
+			return store.Get(ctx, exec.ID)
 		},
 		"FindByIdempotencyKey": func() (*workflow.Execution, error) {
-			return depo.FindByIdempotencyKey(ctx, exec.Workflow, "ord_cok_adim")
+			return store.FindByIdempotencyKey(ctx, exec.Workflow, "ord_many_steps")
 		},
 	} {
-		t.Run(ad, func(t *testing.T) {
-			okunan, err := oku()
+		t.Run(name, func(t *testing.T) {
+			got, err := read()
 			require.NoError(t, err)
 
-			assert.Equal(t, exec.ID, okunan.ID)
-			assert.Equal(t, exec.Workflow, okunan.Workflow)
-			assert.Equal(t, "ord_cok_adim", okunan.IdempotencyKey)
-			assert.Equal(t, workflow.StatusRunning, okunan.Status)
-			assert.JSONEq(t, string(buyukGirdi), string(okunan.Input),
-				"yürütme girdisi adım sayısından bağımsız olarak eksiksiz dönmeli")
-			assert.True(t, okunan.CreatedAt.Equal(exec.CreatedAt))
+			assert.Equal(t, exec.ID, got.ID)
+			assert.Equal(t, exec.Workflow, got.Workflow)
+			assert.Equal(t, "ord_many_steps", got.IdempotencyKey)
+			assert.Equal(t, workflow.StatusRunning, got.Status)
+			assert.JSONEq(t, string(largeInput), string(got.Input),
+				"the execution input has to come back in full regardless of the step count")
+			assert.True(t, got.CreatedAt.Equal(exec.CreatedAt))
 
-			require.Len(t, okunan.Steps, adimSayisi)
-			for i, adim := range okunan.Steps {
-				assert.Equal(t, i, adim.Index)
-				assert.Equal(t, fmt.Sprintf("adim_%d", i), adim.Name)
-				assert.JSONEq(t, fmt.Sprintf(`{"sira":%d}`, i), string(adim.Output),
-					"her adımın kendi çıktısı dönmeli")
-				assert.Equal(t, i+1, adim.Attempts)
+			require.Len(t, got.Steps, stepCount)
+			for i, step := range got.Steps {
+				assert.Equal(t, i, step.Index)
+				assert.Equal(t, fmt.Sprintf("step_%d", i), step.Name)
+				assert.JSONEq(t, fmt.Sprintf(`{"position":%d}`, i), string(step.Output),
+					"every step has to come back with its own output")
+				assert.Equal(t, i+1, step.Attempts)
 			}
 		})
 	}
 }
 
-// TestDegerlerParametreOlarakGider SQL enjeksiyonu denemesinin VERİ olarak
-// kaldığını doğrular: tırnak ve noktalı virgül içeren değerler aynen saklanır,
-// hiçbir ifade çalışmaz.
-func TestDegerlerParametreOlarakGider(t *testing.T) {
+// TestValuesTravelAsParameters verifies that an SQL injection attempt stays
+// DATA: values carrying quotes and semicolons are stored as they are and no
+// statement runs.
+func TestValuesTravelAsParameters(t *testing.T) {
 	ctx := context.Background()
-	depo := yeniDepo()
+	store := newStore()
 
-	kotu := `x'; DROP TABLE workflow_execution_steps; --`
+	hostile := `x'; DROP TABLE workflow_execution_steps; --`
 	exec := &workflow.Execution{
-		Workflow:       wfAdi(t),
-		IdempotencyKey: kotu,
+		Workflow:       wfName(t),
+		IdempotencyKey: hostile,
 		Status:         workflow.StatusRunning,
-		Failure:        kotu,
+		Failure:        hostile,
 	}
-	require.NoError(t, depo.Create(ctx, exec))
+	require.NoError(t, store.Create(ctx, exec))
 
-	require.NoError(t, depo.AppendStep(ctx, exec.ID, workflow.StepRecord{
-		Name: kotu, Index: 0, Status: workflow.StepInvoked, Attempts: 1,
+	require.NoError(t, store.AppendStep(ctx, exec.ID, workflow.StepRecord{
+		Name: hostile, Index: 0, Status: workflow.StepInvoked, Attempts: 1,
 	}))
 
-	okunan, err := depo.FindByIdempotencyKey(ctx, exec.Workflow, kotu)
+	read, err := store.FindByIdempotencyKey(ctx, exec.Workflow, hostile)
 	require.NoError(t, err)
-	assert.Equal(t, kotu, okunan.IdempotencyKey, "değer aynen saklanmalı")
-	assert.Equal(t, kotu, okunan.Failure)
-	require.Len(t, okunan.Steps, 1)
-	assert.Equal(t, kotu, okunan.Steps[0].Name)
+	assert.Equal(t, hostile, read.IdempotencyKey, "the value has to be stored as it is")
+	assert.Equal(t, hostile, read.Failure)
+	require.Len(t, read.Steps, 1)
+	assert.Equal(t, hostile, read.Steps[0].Name)
 
-	assert.True(t, iliskiVar(ctx, t, testDSN, "workflow_execution_steps"),
-		"tablo hâlâ durmalı: değerler ifade olarak yorumlanmamalı")
+	assert.True(t, relationExists(ctx, t, testDSN, "workflow_execution_steps"),
+		"the table has to still be there: values must not be interpreted as statements")
 }
 
-// TestGetIptalEdilmisBaglam iptal edilmiş bağlamın tipli Unavailable hatasına
-// çevrildiğini doğrular.
-func TestGetIptalEdilmisBaglam(t *testing.T) {
-	ctx, iptal := context.WithCancel(context.Background())
-	depo := yeniDepo()
-	iptal()
+// TestGetWithACanceledContext verifies that a canceled context is turned into a
+// typed Unavailable error.
+func TestGetWithACanceledContext(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	store := newStore()
+	cancel()
 
-	_, err := depo.Get(ctx, "wfx_HERHANGI0000001")
+	_, err := store.Get(ctx, "wfx_ANYTHING0000001")
 
 	require.Error(t, err)
 	assert.Equal(t, coreerrors.KindUnavailable, coreerrors.KindOf(err),
-		"iptal Unavailable olmalı: %v", err)
+		"a cancellation has to be Unavailable: %v", err)
 	assert.Equal(t, CodeCanceled, coreerrors.CodeOf(err))
 }
 
-// TestYurutmeSilinceAdimlarDuser ON DELETE CASCADE'in çalıştığını doğrular;
-// yürütme kaydı temizlendiğinde adımlar sahipsiz kalmamalıdır.
-func TestYurutmeSilinceAdimlarDuser(t *testing.T) {
+// TestDeletingAnExecutionDropsItsSteps verifies that ON DELETE CASCADE works;
+// when the execution record is cleaned up its steps must not be left orphaned.
+func TestDeletingAnExecutionDropsItsSteps(t *testing.T) {
 	ctx := context.Background()
-	depo := yeniDepo()
-	exec := acilanYurutme(ctx, t, depo)
+	store := newStore()
+	exec := openedExecution(ctx, t, store)
 
-	require.NoError(t, depo.AppendStep(ctx, exec.ID, workflow.StepRecord{
-		Name: "adim", Index: 0, Status: workflow.StepInvoked, Attempts: 1,
+	require.NoError(t, store.AppendStep(ctx, exec.ID, workflow.StepRecord{
+		Name: "step", Index: 0, Status: workflow.StepInvoked, Attempts: 1,
 	}))
 
 	_, err := testPool.Pool().Exec(ctx, `DELETE FROM workflow_executions WHERE id = $1`, exec.ID)
 	require.NoError(t, err)
 
-	var adet int
+	var count int
 	require.NoError(t, testPool.Pool().QueryRow(ctx,
-		`SELECT count(*) FROM workflow_execution_steps WHERE execution_id = $1`, exec.ID).Scan(&adet))
-	assert.Zero(t, adet, "yürütme silinince adımları da düşmeli")
+		`SELECT count(*) FROM workflow_execution_steps WHERE execution_id = $1`, exec.ID).Scan(&count))
+	assert.Zero(t, count, "deleting the execution has to drop its steps too")
 }
 
-// sahteAdim testte kullanılan basit bir workflow adımıdır.
+// fakeStep is a simple workflow step used in the tests.
 //
-// Telafi çağrıldığında adını paylaşılan bir dilime yazar; telafi SIRASI böylece
-// ölçülebilir hâle gelir.
-type sahteAdim struct {
-	ad        string
-	cikti     any
-	hata      error
-	telafiler *[]string
-	// yurutmeID doldurulursa adım, çalıştığı yürütmenin kimliğini oraya yazar.
+// When its compensation is called it writes its name into a shared slice; that
+// makes the compensation ORDER measurable.
+type fakeStep struct {
+	name string
+	// output is what Invoke returns when it succeeds.
+	output any
+	// failure, when set, is the error Invoke returns.
+	failure       error
+	compensations *[]string
+	// executionID, when set, receives the id of the execution the step ran in.
 	//
-	// Telafi edilmiş bir yürütme idempotency anahtarını BIRAKIR (bkz.
-	// [workflow.StatusFailed]), dolayısıyla kaydına anahtardan ulaşılamaz.
-	// Kimliği adımdan almak, kaydın hâlâ orada olduğunu kanıtlamanın tek yolu.
-	yurutmeID *string
-	// calisti doldurulursa adım, Invoke edildiğinde onu true yapar.
-	calisti *bool
+	// A compensated execution RELEASES its idempotency key (see
+	// [workflow.StatusFailed]), so its record cannot be reached through the key.
+	// Taking the id from the step is the only way to prove the record is still
+	// there.
+	executionID *string
+	// ran, when set, is set to true when the step is invoked.
+	ran *bool
 }
 
-func (a *sahteAdim) Name() string { return a.ad }
+func (a *fakeStep) Name() string { return a.name }
 
-func (a *sahteAdim) Invoke(_ context.Context, sc *workflow.StepContext) (any, error) {
-	if a.yurutmeID != nil {
-		*a.yurutmeID = sc.ExecutionID
+func (a *fakeStep) Invoke(_ context.Context, sc *workflow.StepContext) (any, error) {
+	if a.executionID != nil {
+		*a.executionID = sc.ExecutionID
 	}
-	if a.calisti != nil {
-		*a.calisti = true
+	if a.ran != nil {
+		*a.ran = true
 	}
-	if a.hata != nil {
-		return nil, a.hata
+	if a.failure != nil {
+		return nil, a.failure
 	}
-	return a.cikti, nil
+	return a.output, nil
 }
 
-func (a *sahteAdim) Compensate(_ context.Context, _ *workflow.StepContext) error {
-	*a.telafiler = append(*a.telafiler, a.ad)
+func (a *fakeStep) Compensate(_ context.Context, _ *workflow.StepContext) error {
+	*a.compensations = append(*a.compensations, a.name)
 	return nil
 }
 
-// kurtarilabilirAdim durumunu KENDİ kalıcı çıktısından geri kurabilen adımdır.
+// recoverableStep is a step that can rebuild its state from ITS OWN persisted
+// output.
 //
-// Telafisi, geri kurulmuş paylaşılan durumu OKUR ve gördüğü değeri kaydeder:
-// telafinin gerçekten çalışması yetmez, DOĞRU veriyle çalıştığı da görülmelidir.
-// Kaydın çıktısından gelmeyen bir değerle çalışan telafi, geri almadığı işi
-// geri aldım der.
-type kurtarilabilirAdim struct {
-	ad        string
-	cikti     any
-	telafiler *[]string
-	// gorulen, Compensate'in paylaşılan haritada bulduğu değerdir.
-	gorulen *string
-	// restoreHatasi doluysa Restore o hatayla düşer.
-	restoreHatasi error
+// Its compensation READS the rebuilt shared state and records the value it saw:
+// it is not enough for the compensation to run, it also has to be seen running
+// with the RIGHT data. A compensation running with a value that did not come
+// from the record's output claims to have undone work it never undid.
+type recoverableStep struct {
+	name string
+	// output is the value the step writes into Shared and returns.
+	output        any
+	compensations *[]string
+	// seen is the value Compensate found in the shared map.
+	seen *string
+	// restoreFailure, when set, is the error Restore fails with.
+	restoreFailure error
 }
 
-func (a *kurtarilabilirAdim) Name() string { return a.ad }
+func (a *recoverableStep) Name() string { return a.name }
 
-func (a *kurtarilabilirAdim) Invoke(_ context.Context, sc *workflow.StepContext) (any, error) {
-	sc.Shared[a.ad] = a.cikti
+func (a *recoverableStep) Invoke(_ context.Context, sc *workflow.StepContext) (any, error) {
+	sc.Shared[a.name] = a.output
 
-	return a.cikti, nil
+	return a.output, nil
 }
 
-func (a *kurtarilabilirAdim) Compensate(_ context.Context, sc *workflow.StepContext) error {
-	*a.telafiler = append(*a.telafiler, a.ad)
-	if a.gorulen != nil {
-		deger, _ := sc.Shared[a.ad].(string)
-		*a.gorulen = deger
+func (a *recoverableStep) Compensate(_ context.Context, sc *workflow.StepContext) error {
+	*a.compensations = append(*a.compensations, a.name)
+	if a.seen != nil {
+		value, _ := sc.Shared[a.name].(string)
+		*a.seen = value
 	}
 
 	return nil
 }
 
-func (a *kurtarilabilirAdim) Restore(sc *workflow.StepContext, output json.RawMessage) error {
-	if a.restoreHatasi != nil {
-		return a.restoreHatasi
+func (a *recoverableStep) Restore(sc *workflow.StepContext, output json.RawMessage) error {
+	if a.restoreFailure != nil {
+		return a.restoreFailure
 	}
 
-	var deger string
-	if err := json.Unmarshal(output, &deger); err != nil {
+	var value string
+	if err := json.Unmarshal(output, &value); err != nil {
 		return err
 	}
-	sc.Shared[a.ad] = deger
+	sc.Shared[a.name] = value
 
 	return nil
 }
 
-// engelleyiciAdim kaydı yokken çalışmamış SAYILAMAYAN adımdır (tahsilat gibi).
-type engelleyiciAdim struct {
-	kurtarilabilirAdim
+// blockingStep is a step that CANNOT BE TAKEN as not having run while it has no
+// record (a payment capture, say).
+type blockingStep struct {
+	recoverableStep
 }
 
-func (a *engelleyiciAdim) BlocksRecovery() {}
+func (a *blockingStep) BlocksRecovery() {}
 
-// TestMotorlaBasariliKosuKaliciOlur gerçek motorun bu depoyla çalıştığını ve
-// başarılı koşunun completed olarak kalıcılaştığını doğrular (Faz 3 DoD).
+// TestSuccessfulRunWithTheEnginePersists verifies that the real engine works
+// against this store and that a successful run is persisted as completed
+// (Phase 3 DoD).
 //
-// Motor ile depo AYRI paketlerdir ve birbirini import etmez; sözleşmenin
-// gerçekten örtüştüğü ancak ikisi birlikte koşturulunca görülür.
-func TestMotorlaBasariliKosuKaliciOlur(t *testing.T) {
+// The engine and the store are SEPARATE packages and do not import each other;
+// that the contract really fits can only be seen by running the two together.
+func TestSuccessfulRunWithTheEnginePersists(t *testing.T) {
 	ctx := context.Background()
-	depo := yeniDepo()
-	motor := workflow.New(depo, nil)
+	store := newStore()
+	engine := workflow.New(store, nil)
 
-	var telafiler []string
+	var compensations []string
 	wf := workflow.Workflow{
-		Name: wfAdi(t),
+		Name: wfName(t),
 		Steps: []workflow.Step{
-			&sahteAdim{ad: "stok_rezerve", cikti: map[string]any{"rezervasyon": "rez_1"}, telafiler: &telafiler},
-			&sahteAdim{ad: "odeme_al", cikti: map[string]any{"odeme": "pay_1"}, telafiler: &telafiler},
-			&sahteAdim{ad: "siparis_olustur", cikti: map[string]any{"order_id": "ord_9"}, telafiler: &telafiler},
+			&fakeStep{name: "reserve_stock", output: map[string]any{"reservation": "res_1"}, compensations: &compensations},
+			&fakeStep{name: "take_payment", output: map[string]any{"payment": "pay_1"}, compensations: &compensations},
+			&fakeStep{name: "create_order", output: map[string]any{"order_id": "ord_9"}, compensations: &compensations},
 		},
 	}
 
-	cikti, err := motor.Run(ctx, wf, map[string]any{"cart_id": "cart_1"},
+	output, err := engine.Run(ctx, wf, map[string]any{"cart_id": "cart_1"},
 		workflow.WithIdempotencyKey("ord_e2e"))
 
 	require.NoError(t, err)
-	ham, jsonMu := cikti.(json.RawMessage)
-	require.Truef(t, jsonMu, "Run çıktıyı json.RawMessage olarak döner, dönen tip: %T", cikti)
-	assert.JSONEq(t, `{"order_id":"ord_9"}`, string(ham))
-	assert.Empty(t, telafiler, "başarılı koşuda hiçbir telafi çalışmaz")
+	raw, isJSON := output.(json.RawMessage)
+	require.Truef(t, isJSON, "Run returns the output as a json.RawMessage, the type returned: %T", output)
+	assert.JSONEq(t, `{"order_id":"ord_9"}`, string(raw))
+	assert.Empty(t, compensations, "no compensation runs on a successful run")
 
-	kalici, err := depo.FindByIdempotencyKey(ctx, wf.Name, "ord_e2e")
+	stored, err := store.FindByIdempotencyKey(ctx, wf.Name, "ord_e2e")
 	require.NoError(t, err)
 
-	assert.Equal(t, workflow.StatusCompleted, kalici.Status, "başarılı koşu completed olmalı")
-	assert.JSONEq(t, `{"cart_id":"cart_1"}`, string(kalici.Input))
-	assert.JSONEq(t, `{"order_id":"ord_9"}`, string(kalici.Output))
-	assert.Empty(t, kalici.Failure)
+	assert.Equal(t, workflow.StatusCompleted, stored.Status, "a successful run has to be completed")
+	assert.JSONEq(t, `{"cart_id":"cart_1"}`, string(stored.Input))
+	assert.JSONEq(t, `{"order_id":"ord_9"}`, string(stored.Output))
+	assert.Empty(t, stored.Failure)
 
-	require.Len(t, kalici.Steps, 3, "üç adımın izi de kalmalı")
-	for i, adim := range kalici.Steps {
-		assert.Equal(t, i, adim.Index, "adımlar Index sırasında dönmeli")
-		assert.Equal(t, workflow.StepInvoked, adim.Status)
-		assert.GreaterOrEqual(t, adim.Attempts, 1, "deneme sayısı en az 1 olmalı")
-		assert.False(t, adim.StartedAt.IsZero(), "başlangıç zamanı yazılmalı")
-		assert.False(t, adim.EndedAt.IsZero(), "bitiş zamanı yazılmalı")
+	require.Len(t, stored.Steps, 3, "the trace of all three steps has to remain")
+	for i, step := range stored.Steps {
+		assert.Equal(t, i, step.Index, "the steps have to come back in Index order")
+		assert.Equal(t, workflow.StepInvoked, step.Status)
+		assert.GreaterOrEqual(t, step.Attempts, 1, "the attempt count has to be at least 1")
+		assert.False(t, step.StartedAt.IsZero(), "the start time has to be written")
+		assert.False(t, step.EndedAt.IsZero(), "the end time has to be written")
 	}
-	assert.Equal(t, "siparis_olustur", kalici.Steps[2].Name)
+	assert.Equal(t, "create_order", stored.Steps[2].Name)
 }
 
-// TestMotorlaTelafiKaliciOlur bir adım patladığında telafinin TERS SIRADA
-// çalıştığını ve izinin doğru kalıcılaştığını doğrular.
+// TestCompensationWithTheEnginePersists verifies that when a step blows up the
+// compensation runs in REVERSE ORDER and that its trace is persisted correctly.
 //
-// Burada AppendStep'in güncelleme yolu gerçek kullanımıyla sınanır: 0. ve 1.
-// adımlar önce invoked, sonra compensated olarak yazılır; kayıt yine üç
-// satırdır, altı değil.
-func TestMotorlaTelafiKaliciOlur(t *testing.T) {
-	var yurutmeID string
+// AppendStep's update path is exercised here in its real use: steps 0 and 1 are
+// written first as invoked and then as compensated; the record is still three
+// rows, not six.
+func TestCompensationWithTheEnginePersists(t *testing.T) {
+	var executionID string
 	ctx := context.Background()
-	depo := yeniDepo()
-	motor := workflow.New(depo, nil)
+	store := newStore()
+	engine := workflow.New(store, nil)
 
-	var telafiler []string
+	var compensations []string
 	wf := workflow.Workflow{
-		Name: wfAdi(t),
+		Name: wfName(t),
 		Steps: []workflow.Step{
-			&sahteAdim{ad: "stok_rezerve", cikti: "rez_1", telafiler: &telafiler},
-			&sahteAdim{ad: "odeme_al", cikti: "pay_1", telafiler: &telafiler},
-			&sahteAdim{ad: "siparis_olustur", hata: coreerrors.Internal("patladi", "sipariş yazılamadı"), telafiler: &telafiler, yurutmeID: &yurutmeID},
+			&fakeStep{name: "reserve_stock", output: "res_1", compensations: &compensations},
+			&fakeStep{name: "take_payment", output: "pay_1", compensations: &compensations},
+			&fakeStep{name: "create_order", failure: coreerrors.Internal("blew_up", "the order could not be written"), compensations: &compensations, executionID: &executionID},
 		},
 	}
 
-	_, err := motor.Run(ctx, wf, map[string]any{"cart_id": "cart_2"},
-		workflow.WithIdempotencyKey("ord_e2e_telafi"))
+	_, err := engine.Run(ctx, wf, map[string]any{"cart_id": "cart_2"},
+		workflow.WithIdempotencyKey("ord_e2e_compensation"))
 
 	require.Error(t, err)
-	assert.Equal(t, []string{"odeme_al", "stok_rezerve"}, telafiler,
-		"telafi TERS sırada çalışmalı")
+	assert.Equal(t, []string{"take_payment", "reserve_stock"}, compensations,
+		"the compensation has to run in REVERSE order")
 
-	// Telafi tamamlandıysa yürütme dünyada iz bırakmamıştır ve anahtarı da
-	// bırakılmıştır: aynı anahtarla gelen bir sonraki çağrı 409 değil YENİ bir
-	// yürütme almalıdır (bkz. [workflow.StatusFailed]).
-	_, anahtarErr := depo.FindByIdempotencyKey(ctx, wf.Name, "ord_e2e_telafi")
-	require.Error(t, anahtarErr, "telafi edilen yürütme anahtarı TUTMAMALI")
-	assert.True(t, coreerrors.IsNotFound(anahtarErr))
+	// If the compensation completed the execution left no trace in the world and
+	// released its key as well: the next call with the same key has to get a NEW
+	// execution rather than a 409 (see [workflow.StatusFailed]).
+	_, keyErr := store.FindByIdempotencyKey(ctx, wf.Name, "ord_e2e_compensation")
+	require.Error(t, keyErr, "a compensated execution MUST NOT hold its key")
+	assert.True(t, coreerrors.IsNotFound(keyErr))
 
-	// Kayıt SİLİNMEZ; yalnızca anahtarı düşer. Kimliğe adımdan ulaşılır.
-	require.NotEmpty(t, yurutmeID, "adım yürütme kimliğini yazmalı")
-	kalici, err := depo.Get(ctx, yurutmeID)
-	require.NoError(t, err, "başarısız deneme denetim kaydı olarak KALMALI")
+	// The record is NOT DELETED; only its key drops. The id is reached through
+	// the step.
+	require.NotEmpty(t, executionID, "the step has to write the execution id")
+	stored, err := store.Get(ctx, executionID)
+	require.NoError(t, err, "a failed attempt HAS TO REMAIN as an audit record")
 
-	assert.Equal(t, workflow.StatusFailed, kalici.Status, "telafi tamamlandıysa durum failed olmalı")
-	assert.NotEmpty(t, kalici.Failure, "arıza açıklaması kalıcılaşmalı")
+	assert.Equal(t, workflow.StatusFailed, stored.Status, "if the compensation completed the status has to be failed")
+	assert.NotEmpty(t, stored.Failure, "the failure description has to be persisted")
 
-	require.Len(t, kalici.Steps, 3, "her adım tek satır olmalı; güncelleme yeni satır açmaz")
-	assert.Equal(t, workflow.StepCompensated, kalici.Steps[0].Status)
-	assert.Equal(t, workflow.StepCompensated, kalici.Steps[1].Status)
-	assert.Equal(t, workflow.StepFailed, kalici.Steps[2].Status,
-		"patlayan adım telafi edilmez, failed kalır")
-	assert.Contains(t, kalici.Steps[2].Failure, "sipariş yazılamadı")
+	require.Len(t, stored.Steps, 3, "every step has to be a single row; an update does not open a new one")
+	assert.Equal(t, workflow.StepCompensated, stored.Steps[0].Status)
+	assert.Equal(t, workflow.StepCompensated, stored.Steps[1].Status)
+	assert.Equal(t, workflow.StepFailed, stored.Steps[2].Status,
+		"the step that blew up is not compensated, it stays failed")
+	assert.Contains(t, stored.Steps[2].Failure, "the order could not be written")
 }
 
-// iliskiVar verilen adda bir ilişkinin (tablo ya da indeks) var olup
-// olmadığını bildirir.
-func iliskiVar(ctx context.Context, t *testing.T, dsn, ad string) bool {
+// relationExists reports whether a relation (a table or an index) with the given
+// name exists.
+func relationExists(ctx context.Context, t *testing.T, dsn, name string) bool {
 	t.Helper()
 
 	conn, err := pgx.Connect(ctx, dsn)
 	require.NoError(t, err)
 	defer func() { _ = conn.Close(ctx) }()
 
-	var varMi bool
+	var exists bool
 	require.NoError(t, conn.QueryRow(ctx,
 		`SELECT EXISTS (
 			SELECT 1 FROM pg_class
 			WHERE relname = $1 AND relnamespace = current_schema()::regnamespace
-		)`, ad).Scan(&varMi))
-	return varMi
+		)`, name).Scan(&exists))
+	return exists
 }
 
-// yeniVeritabani teste özel boş bir veritabanı açar ve adresini döner.
-// Veritabanı test bitiminde düşürülür.
-func yeniVeritabani(ctx context.Context, t *testing.T) string {
+// newDatabase opens an empty database specific to the test and returns its
+// address. The database is dropped when the test ends.
+func newDatabase(ctx context.Context, t *testing.T) string {
 	t.Helper()
 
-	ad := fmt.Sprintf("gobit_wf_%d", time.Now().UnixNano())
+	name := fmt.Sprintf("gobit_wf_%d", time.Now().UnixNano())
 
-	conn, err := pgx.Connect(ctx, yonetimDSN)
+	conn, err := pgx.Connect(ctx, adminDSN)
 	require.NoError(t, err)
 	defer func() { _ = conn.Close(ctx) }()
 
-	// Veritabanı adı parametrelenemez; ad testin ürettiği sabit biçimdedir
-	// (yalnızca harf, alt çizgi ve rakam), dışarıdan veri almaz.
-	_, err = conn.Exec(ctx, `CREATE DATABASE `+ad)
+	// A database name cannot be parameterized; name is in the fixed shape the
+	// test produces (letters, underscores and digits only) and takes no data
+	// from outside.
+	_, err = conn.Exec(ctx, `CREATE DATABASE `+name)
 	require.NoError(t, err)
 
 	t.Cleanup(func() {
-		temizlik := context.Background()
-		c, cErr := pgx.Connect(temizlik, yonetimDSN)
+		cleanup := context.Background()
+		c, cErr := pgx.Connect(cleanup, adminDSN)
 		if cErr != nil {
 			return
 		}
-		defer func() { _ = c.Close(temizlik) }()
-		_, _ = c.Exec(temizlik, `DROP DATABASE IF EXISTS `+ad+` WITH (FORCE)`)
+		defer func() { _ = c.Close(cleanup) }()
+		_, _ = c.Exec(cleanup, `DROP DATABASE IF EXISTS `+name+` WITH (FORCE)`)
 	})
 
-	u, err := url.Parse(yonetimDSN)
+	u, err := url.Parse(adminDSN)
 	require.NoError(t, err)
-	u.Path = "/" + ad
+	u.Path = "/" + name
 	return u.String()
 }
 
-// terkEdilmisYurutmeKur iş yapmış ama bayat bir yürütme kurar ve kimliğini döner.
+// buildAbandonedExecution builds an execution that did work but is stale, and
+// returns its id.
 //
-// Zamanı geri almak ŞART: AppendStep yürütmenin updated_at'ini tazeler, yani
-// "adımı var VE bayat" durumu depo yüzeyinden kurulamaz. Üretim aynı duruma
-// çökerek varır.
-func terkEdilmisYurutmeKur(
-	ctx context.Context, t *testing.T, depo workflow.Store, wf workflow.Workflow,
-	anahtar, id string, kayitlar []workflow.StepRecord,
+// Winding time back is REQUIRED: AppendStep refreshes the execution's
+// updated_at, so the state "has a step AND is stale" cannot be built through the
+// store surface. Production reaches the same state by crashing.
+func buildAbandonedExecution(
+	ctx context.Context, t *testing.T, store workflow.Store, wf workflow.Workflow,
+	key, id string, records []workflow.StepRecord,
 ) {
 	t.Helper()
 
-	exec := &workflow.Execution{ID: id, Workflow: wf.Name, IdempotencyKey: anahtar, Status: workflow.StatusRunning}
-	require.NoError(t, depo.Create(ctx, exec))
-	for _, kayit := range kayitlar {
-		require.NoError(t, depo.AppendStep(ctx, id, kayit))
+	exec := &workflow.Execution{ID: id, Workflow: wf.Name, IdempotencyKey: key, Status: workflow.StatusRunning}
+	require.NoError(t, store.Create(ctx, exec))
+	for _, record := range records {
+		require.NoError(t, store.AppendStep(ctx, id, record))
 	}
 
 	_, err := testPool.Pool().Exec(ctx,
@@ -1205,71 +1228,73 @@ func terkEdilmisYurutmeKur(
 	require.NoError(t, err)
 }
 
-// sayanAdim telafi ve çağrı sayısını EŞZAMANLI koşuya dayanacak biçimde tutar.
+// countingStep keeps the compensation and call counts in a way that survives a
+// CONCURRENT run.
 //
-// Ayrı bir tip olmasının sebebi kurtarilabilirAdim'ın telafileri kilitsiz bir
-// dilime yazmasıdır: sıralı testlerde doğru, eşzamanlı testte veri yarışıdır ve
-// -race onu haklı olarak düşürür.
-type sayanAdim struct {
-	ad       string
-	cikti    string
-	telafi   atomic.Int64
-	cagrilan atomic.Int64
+// It is a separate type because recoverableStep writes its compensations into an
+// unlocked slice: right in sequential tests, a data race in a concurrent one,
+// and -race rightly fails it.
+type countingStep struct {
+	name        string
+	output      string
+	compensated atomic.Int64
+	invoked     atomic.Int64
 }
 
-func (a *sayanAdim) Name() string { return a.ad }
+func (a *countingStep) Name() string { return a.name }
 
-func (a *sayanAdim) Invoke(_ context.Context, sc *workflow.StepContext) (any, error) {
-	a.cagrilan.Add(1)
-	sc.Shared[a.ad] = a.cikti
+func (a *countingStep) Invoke(_ context.Context, sc *workflow.StepContext) (any, error) {
+	a.invoked.Add(1)
+	sc.Shared[a.name] = a.output
 
-	return a.cikti, nil
+	return a.output, nil
 }
 
-func (a *sayanAdim) Compensate(context.Context, *workflow.StepContext) error {
-	a.telafi.Add(1)
-	time.Sleep(20 * time.Millisecond) // telafi gerçek dünyada bir çağrıdır
+func (a *countingStep) Compensate(context.Context, *workflow.StepContext) error {
+	a.compensated.Add(1)
+	time.Sleep(20 * time.Millisecond) // in the real world a compensation is a call
 
 	return nil
 }
 
-func (a *sayanAdim) Restore(sc *workflow.StepContext, output json.RawMessage) error {
-	var deger string
-	if err := json.Unmarshal(output, &deger); err != nil {
+func (a *countingStep) Restore(sc *workflow.StepContext, output json.RawMessage) error {
+	var value string
+	if err := json.Unmarshal(output, &value); err != nil {
 		return err
 	}
-	sc.Shared[a.ad] = deger
+	sc.Shared[a.name] = value
 
 	return nil
 }
 
-// TestKurtarmaEsZamanliCagiranlarlaTEKKEZKosar kurtarmanın TEKELLİ olduğunu
-// gerçek veritabanında kanıtlar.
+// TestRecoveryRunsONCEWithConcurrentCallers proves against a real database that
+// recovery is EXCLUSIVE.
 //
-// Terk edilmiş kayıt kimsenin sahipliğinde değildir: aynı anahtarla dönen her
-// çağıran onu bulur. Talep olmadan hepsi telafi zincirini koşardı — dört
-// eşzamanlı çağıranla ölçüldü, zincir DÖRT kez koşmuştu. Telafinin idempotent
-// olması bunu kurtarmaz: sözleşme "iki kez çağrılabilir" derken SIRAYLA demek
-// oluyordu, oysa burada iki kopya iç içe geçiyor.
+// An abandoned record belongs to nobody: every caller that comes back with the
+// same key finds it. Without the claim all of them would run the compensation
+// chain — measured with four concurrent callers, the chain had run FOUR times.
+// Compensation being idempotent does not save it: the contract's "can be called
+// twice" meant IN SEQUENCE, while here two copies interleave.
 //
-// Tekelliği kuran şey tek bir koşullu UPDATE'tir (claimAbandonedSQL) ve o ancak
-// gerçek Postgres'te sınanabilir: ikinci süreç satır kilidinde bekler, sonra
-// WHERE'i işlenmiş değerle yeniden değerlendirir ve hiçbir satır bulmaz.
-func TestKurtarmaEsZamanliCagiranlarlaTEKKEZKosar(t *testing.T) {
+// What makes it exclusive is a single conditional UPDATE (claimAbandonedSQL) and
+// that can only be exercised against real Postgres: the second process waits on
+// the row lock, then re-evaluates the WHERE against the committed value and
+// matches nothing.
+func TestRecoveryRunsONCEWithConcurrentCallers(t *testing.T) {
 	ctx := context.Background()
-	depo := yeniDepo()
-	motor := workflow.New(depo, nil)
+	store := newStore()
+	engine := workflow.New(store, nil)
 
-	adim := &sayanAdim{ad: "stok_rezerve", cikti: "res_1"}
+	step := &countingStep{name: "reserve_stock", output: "res_1"}
 	wf := workflow.Workflow{
-		Name:  "TestKurtarmaEsZamanliCagiranlarlaTEKKEZKosar",
-		Steps: []workflow.Step{adim},
+		Name:  "TestRecoveryRunsONCEWithConcurrentCallers",
+		Steps: []workflow.Step{step},
 	}
 
-	const anahtar = "terk_es_zamanli"
-	const id = "wfx_TERK_YARIS"
-	terkEdilmisYurutmeKur(ctx, t, depo, wf, anahtar, id, []workflow.StepRecord{{
-		Name: "stok_rezerve", Index: 0, Status: workflow.StepInvoked, Attempts: 1,
+	const key = "abandoned_concurrent"
+	const id = "wfx_ABANDONED_RACE"
+	buildAbandonedExecution(ctx, t, store, wf, key, id, []workflow.StepRecord{{
+		Name: "reserve_stock", Index: 0, Status: workflow.StepInvoked, Attempts: 1,
 		Output: []byte(`"res_1"`),
 	}})
 
@@ -1278,236 +1303,246 @@ func TestKurtarmaEsZamanliCagiranlarlaTEKKEZKosar(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			// Sınanan şey dönen hata değil, telafinin kaç kez koştuğu.
-			_, _ = motor.Run(ctx, wf, nil,
-				workflow.WithIdempotencyKey(anahtar), workflow.WithLease(time.Minute))
+			// What is under test is not the returned error but how many times
+			// the compensation ran.
+			_, _ = engine.Run(ctx, wf, nil,
+				workflow.WithIdempotencyKey(key), workflow.WithLease(time.Minute))
 		}()
 	}
 	wg.Wait()
 
-	assert.Equal(t, int64(1), adim.telafi.Load(),
-		"telafi zinciri terk edilmiş kayıt için YALNIZCA BİR KEZ koşmalı")
+	assert.Equal(t, int64(1), step.compensated.Load(),
+		"the compensation chain has to run ONLY ONCE for an abandoned record")
 
-	kalici, err := depo.Get(ctx, id)
+	stored, err := store.Get(ctx, id)
 	require.NoError(t, err)
-	assert.Equal(t, workflow.StatusFailed, kalici.Status,
-		"kurtarma tamamlandıysa kayıt uç duruma yazılır")
-	assert.Empty(t, kalici.IdempotencyKey,
-		"telafi eksiksizse anahtar bırakılır; müşteri sepetini yeniden ödeyebilir")
+	assert.Equal(t, workflow.StatusFailed, stored.Status,
+		"if the recovery completed the record is written into a terminal state")
+	assert.Empty(t, stored.IdempotencyKey,
+		"if the compensation is complete the key is released; the customer can pay for the cart again")
 }
 
-// TestTerkEdilmisYurutmeKayitlardanTelafiEdilir kurtarmanın kendisini kanıtlar.
+// TestAbandonedExecutionIsCompensatedFromTheRecord proves the recovery itself.
 //
-// Süreç iş yaptıktan sonra ölmüşse ayrılmış stok dünyada durur ve onu bırakacak
-// tek şey telafi zinciridir. Motor telafi işlevlerine sahiptir; kaybolan tek şey
-// adımlar arası paylaşılan durumdu ve o, adımın KENDİ kalıcı çıktısından geri
-// kurulur (workflow.Recoverable).
+// If the process died after doing work the reserved stock stands in the world
+// and the only thing that will release it is the compensation chain. The engine
+// has the compensation functions; the only thing lost was the state shared
+// between the steps, and that is rebuilt from the step's OWN persisted output
+// (workflow.Recoverable).
 //
-// İki iddia birden sınanır ve ikincisi asıl olandır: telafi ÇALIŞTI, ve DOĞRU
-// veriyle çalıştı. Yalnızca "çalıştı" diyen bir test, Shared'ı boş bırakan bir
-// kurtarmayı da geçirirdi — o telafi de "bir şey bırakmadım" derdi.
-func TestTerkEdilmisYurutmeKayitlardanTelafiEdilir(t *testing.T) {
+// Two claims are exercised at once and the second is the real one: the
+// compensation RAN, and it ran with the RIGHT data. A test that only said "it
+// ran" would also pass a recovery that leaves Shared empty — that compensation
+// would say "I released nothing" too.
+func TestAbandonedExecutionIsCompensatedFromTheRecord(t *testing.T) {
 	ctx := context.Background()
-	depo := yeniDepo()
-	motor := workflow.New(depo, nil)
+	store := newStore()
+	engine := workflow.New(store, nil)
 
-	telafiler := []string{}
-	var gorulen string
-	adim := &kurtarilabilirAdim{ad: "stok_rezerve", cikti: "res_1", telafiler: &telafiler, gorulen: &gorulen}
-	wf := workflow.Workflow{Name: "TestTerkEdilmisYurutmeKayitlardanTelafiEdilir", Steps: []workflow.Step{adim}}
+	compensations := []string{}
+	var seen string
+	step := &recoverableStep{name: "reserve_stock", output: "res_1", compensations: &compensations, seen: &seen}
+	wf := workflow.Workflow{Name: "TestAbandonedExecutionIsCompensatedFromTheRecord", Steps: []workflow.Step{step}}
 
-	const anahtar = "terk_kurtarilir"
-	const id = "wfx_TERK_KURTAR"
-	terkEdilmisYurutmeKur(ctx, t, depo, wf, anahtar, id, []workflow.StepRecord{{
-		Name: "stok_rezerve", Index: 0, Status: workflow.StepInvoked, Attempts: 1,
+	const key = "abandoned_recovered"
+	const id = "wfx_ABANDONED_RECOVER"
+	buildAbandonedExecution(ctx, t, store, wf, key, id, []workflow.StepRecord{{
+		Name: "reserve_stock", Index: 0, Status: workflow.StepInvoked, Attempts: 1,
 		Output: []byte(`"res_1"`),
 	}})
 
-	_, err := motor.Run(ctx, wf, nil,
-		workflow.WithIdempotencyKey(anahtar), workflow.WithLease(time.Minute))
-	require.NoError(t, err, "kurtarılabilir bir yürütme yeniden denemeyi ENGELLEMEMELİ")
+	_, err := engine.Run(ctx, wf, nil,
+		workflow.WithIdempotencyKey(key), workflow.WithLease(time.Minute))
+	require.NoError(t, err, "a recoverable execution MUST NOT block a retry")
 
-	assert.Equal(t, []string{"stok_rezerve"}, telafiler,
-		"terk edilmiş yürütmenin telafisi kayıtlardan çalıştırılmalı")
-	assert.Equal(t, "res_1", gorulen,
-		"telafi, kaydın çıktısından geri kurulan değeri görmeli; boş Shared ile çalışan "+
-			"bir telafi bırakacağı rezervasyonu bulamaz")
+	assert.Equal(t, []string{"reserve_stock"}, compensations,
+		"the compensation of an abandoned execution has to be run from the records")
+	assert.Equal(t, "res_1", seen,
+		"the compensation has to see the value rebuilt from the record's output; a compensation "+
+			"running with an empty Shared cannot find the reservation it is supposed to release")
 
-	kalici, err := depo.Get(ctx, id)
+	stored, err := store.Get(ctx, id)
 	require.NoError(t, err)
-	assert.Equal(t, workflow.StatusFailed, kalici.Status,
-		"telafi eksiksiz tamamlandıysa durum failed'dır ve anahtar bırakılır")
-	assert.Empty(t, kalici.IdempotencyKey,
-		"anahtar bırakılmalı; müşteri aynı sepeti yeniden ödeyebilmeli")
+	assert.Equal(t, workflow.StatusFailed, stored.Status,
+		"if the compensation completed in full the status is failed and the key is released")
+	assert.Empty(t, stored.IdempotencyKey,
+		"the key has to be released; the customer has to be able to pay for the same cart again")
 }
 
-// TestKurtarmaKaydiOlmayanEngelleyiciAdimdaDURUR kurtarmanın sınırını çizer ve
-// bu sınır ödeme yüzünden vardır.
+// TestRecoverySTOPSAtABlockingStepWithNoRecord draws the boundary of recovery,
+// and that boundary exists because of the payment.
 //
-// Motor adımın kaydını Invoke DÖNDÜKTEN SONRA yazar, dolayısıyla Invoke'un
-// ortasında ölen süreç o adımdan hiçbir iz bırakmaz. Kurtarma kayıtlara bakar,
-// yani böyle bir adımı "hiç çalışmamış" sayar. Tahsilat için bu, kartı çekilmiş
-// bir müşterinin stoğunun bırakılıp anahtarının serbest kalması ve İKİNCİ KEZ
-// tahsil edilmesi demektir. Adım bunu workflow.RecoveryBlocker ile bildirir ve
-// karar elle müdahaleye döner.
-func TestKurtarmaKaydiOlmayanEngelleyiciAdimdaDURUR(t *testing.T) {
+// The engine writes a step's record AFTER Invoke RETURNS, so a process dying in
+// the middle of Invoke leaves no trace of that step. Recovery looks at the
+// records, so it takes such a step as "never ran". For a capture that means the
+// stock of a customer whose card was charged is released, their key is freed and
+// they are charged A SECOND TIME. A step reports this with
+// workflow.RecoveryBlocker and the decision goes back to a human.
+func TestRecoverySTOPSAtABlockingStepWithNoRecord(t *testing.T) {
 	ctx := context.Background()
-	depo := yeniDepo()
-	motor := workflow.New(depo, nil)
+	store := newStore()
+	engine := workflow.New(store, nil)
 
-	telafiler := []string{}
-	rezerve := &kurtarilabilirAdim{ad: "stok_rezerve", cikti: "res_1", telafiler: &telafiler}
-	tahsilat := &engelleyiciAdim{kurtarilabilirAdim: kurtarilabilirAdim{
-		ad: "tahsilat", cikti: "pay_1", telafiler: &telafiler}}
+	compensations := []string{}
+	reserve := &recoverableStep{name: "reserve_stock", output: "res_1", compensations: &compensations}
+	capture := &blockingStep{recoverableStep: recoverableStep{
+		name: "capture", output: "pay_1", compensations: &compensations}}
 	wf := workflow.Workflow{
-		Name:  "TestKurtarmaKaydiOlmayanEngelleyiciAdimdaDURUR",
-		Steps: []workflow.Step{rezerve, tahsilat},
+		Name:  "TestRecoverySTOPSAtABlockingStepWithNoRecord",
+		Steps: []workflow.Step{reserve, capture},
 	}
 
-	const anahtar = "terk_engelleyici"
-	const id = "wfx_TERK_ENGEL"
-	// YALNIZCA ilk adımın kaydı var: süreç tahsilatın içinde ölmüş OLABİLİR.
-	terkEdilmisYurutmeKur(ctx, t, depo, wf, anahtar, id, []workflow.StepRecord{{
-		Name: "stok_rezerve", Index: 0, Status: workflow.StepInvoked, Attempts: 1,
+	const key = "abandoned_blocking"
+	const id = "wfx_ABANDONED_BLOCK"
+	// ONLY the first step has a record: the process MAY have died inside the
+	// capture.
+	buildAbandonedExecution(ctx, t, store, wf, key, id, []workflow.StepRecord{{
+		Name: "reserve_stock", Index: 0, Status: workflow.StepInvoked, Attempts: 1,
 		Output: []byte(`"res_1"`),
 	}})
 
-	_, err := motor.Run(ctx, wf, nil,
-		workflow.WithIdempotencyKey(anahtar), workflow.WithLease(time.Minute))
+	_, err := engine.Run(ctx, wf, nil,
+		workflow.WithIdempotencyKey(key), workflow.WithLease(time.Minute))
 
 	require.Error(t, err)
-	assert.True(t, coreerrors.IsConflict(err), "hata: %v", err)
+	assert.True(t, coreerrors.IsConflict(err), "error: %v", err)
 	assert.Contains(t, err.Error(), "A HUMAN IS NEEDED")
-	assert.Empty(t, telafiler,
-		"tahsilat uçuşta olmuş olabilir; hiçbir telafi çalıştırılmamalı")
+	assert.Empty(t, compensations,
+		"the capture may have been in flight; no compensation may be run")
 
-	kalici, err := depo.Get(ctx, id)
+	stored, err := store.Get(ctx, id)
 	require.NoError(t, err)
-	assert.Equal(t, workflow.StatusCompensationFailed, kalici.Status)
-	assert.Equal(t, anahtar, kalici.IdempotencyKey,
-		"anahtar TUTULMALI; bırakmak müşterinin yeniden ödemesine ve ikinci kez "+
-			"tahsil edilmesine kapı açardı")
+	assert.Equal(t, workflow.StatusCompensationFailed, stored.Status)
+	assert.Equal(t, key, stored.IdempotencyKey,
+		"the key HAS TO BE HELD; releasing it would open the door to the customer paying "+
+			"again and being charged a second time")
 }
 
-// TestKurtarmaTanimDegismisseYapilmaz iki dağıtım arasında değişen bir workflow
-// tanımına karşı korur.
+// TestNoRecoveryWhenTheDefinitionChanged guards against a workflow definition
+// that changed between two deployments.
 //
-// İndeks kaydın kimliğidir ama tanım değişmiş olabilir; ad denetimi olmasaydı
-// 2. adımın telafisi bambaşka bir adımın çıktısıyla çağrılırdı.
-func TestKurtarmaTanimDegismisseYapilmaz(t *testing.T) {
+// The index is the record's identity, but the definition may have changed;
+// without the name check, step 2's compensation would be called with the output
+// of an entirely different step.
+func TestNoRecoveryWhenTheDefinitionChanged(t *testing.T) {
 	ctx := context.Background()
-	depo := yeniDepo()
-	motor := workflow.New(depo, nil)
+	store := newStore()
+	engine := workflow.New(store, nil)
 
-	telafiler := []string{}
-	adim := &kurtarilabilirAdim{ad: "YENI_AD", cikti: "res_1", telafiler: &telafiler}
-	wf := workflow.Workflow{Name: "TestKurtarmaTanimDegismisseYapilmaz", Steps: []workflow.Step{adim}}
+	compensations := []string{}
+	step := &recoverableStep{name: "NEW_NAME", output: "res_1", compensations: &compensations}
+	wf := workflow.Workflow{Name: "TestNoRecoveryWhenTheDefinitionChanged", Steps: []workflow.Step{step}}
 
-	const anahtar = "terk_tanim_degisti"
-	const id = "wfx_TERK_TANIM"
-	terkEdilmisYurutmeKur(ctx, t, depo, wf, anahtar, id, []workflow.StepRecord{{
-		Name: "ESKI_AD", Index: 0, Status: workflow.StepInvoked, Attempts: 1,
+	const key = "abandoned_definition_changed"
+	const id = "wfx_ABANDONED_DEF"
+	buildAbandonedExecution(ctx, t, store, wf, key, id, []workflow.StepRecord{{
+		Name: "OLD_NAME", Index: 0, Status: workflow.StepInvoked, Attempts: 1,
 		Output: []byte(`"res_1"`),
 	}})
 
-	_, err := motor.Run(ctx, wf, nil,
-		workflow.WithIdempotencyKey(anahtar), workflow.WithLease(time.Minute))
+	_, err := engine.Run(ctx, wf, nil,
+		workflow.WithIdempotencyKey(key), workflow.WithLease(time.Minute))
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "A HUMAN IS NEEDED")
-	assert.Empty(t, telafiler, "adı tutmayan bir tanımla hiçbir telafi çalıştırılmamalı")
+	assert.Empty(t, compensations, "with a definition whose name does not match, no compensation may be run")
 }
 
-// TestKurtarmaRestorePatlarsaYapilmaz eksik durumla koşan telafiyi engeller.
+// TestNoRecoveryWhenRestoreBlowsUp stops a compensation from running with
+// incomplete state.
 //
-// Restore, kayıttaki çıktıyı Shared'a geri koyamıyorsa (çıktı boş ya da şekli
-// değişmiş) telafi neyi geri alacağını bilemez. Sessizce boş durumla koşmak,
-// "başardım" diyen ama hiçbir şey bırakmayan bir telafi üretirdi.
-func TestKurtarmaRestorePatlarsaYapilmaz(t *testing.T) {
+// If Restore cannot put the record's output back into Shared (the output is
+// empty or its shape changed) the compensation cannot know what to undo. Running
+// silently with empty state would produce a compensation that says "done" while
+// releasing nothing.
+func TestNoRecoveryWhenRestoreBlowsUp(t *testing.T) {
 	ctx := context.Background()
-	depo := yeniDepo()
-	motor := workflow.New(depo, nil)
+	store := newStore()
+	engine := workflow.New(store, nil)
 
-	telafiler := []string{}
-	adim := &kurtarilabilirAdim{
-		ad: "stok_rezerve", cikti: "res_1", telafiler: &telafiler,
-		restoreHatasi: coreerrors.Internal("cikti_bozuk", "çıktı çözülemedi"),
+	compensations := []string{}
+	step := &recoverableStep{
+		name: "reserve_stock", output: "res_1", compensations: &compensations,
+		restoreFailure: coreerrors.Internal("broken_output", "the output could not be decoded"),
 	}
-	wf := workflow.Workflow{Name: "TestKurtarmaRestorePatlarsaYapilmaz", Steps: []workflow.Step{adim}}
+	wf := workflow.Workflow{Name: "TestNoRecoveryWhenRestoreBlowsUp", Steps: []workflow.Step{step}}
 
-	const anahtar = "terk_restore_patlar"
-	const id = "wfx_TERK_RESTORE"
-	terkEdilmisYurutmeKur(ctx, t, depo, wf, anahtar, id, []workflow.StepRecord{{
-		Name: "stok_rezerve", Index: 0, Status: workflow.StepInvoked, Attempts: 1,
+	const key = "abandoned_restore_fails"
+	const id = "wfx_ABANDONED_RESTORE"
+	buildAbandonedExecution(ctx, t, store, wf, key, id, []workflow.StepRecord{{
+		Name: "reserve_stock", Index: 0, Status: workflow.StepInvoked, Attempts: 1,
 		Output: []byte(`"res_1"`),
 	}})
 
-	_, err := motor.Run(ctx, wf, nil,
-		workflow.WithIdempotencyKey(anahtar), workflow.WithLease(time.Minute))
+	_, err := engine.Run(ctx, wf, nil,
+		workflow.WithIdempotencyKey(key), workflow.WithLease(time.Minute))
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "A HUMAN IS NEEDED")
-	assert.Empty(t, telafiler, "durumu geri kurulamayan bir zincir telafi edilmemeli")
+	assert.Empty(t, compensations, "a chain whose state cannot be rebuilt must not be compensated")
 }
 
-// TestTerkEdilmisYurutmeIsYapmissaElleMudahaleIster çökmenin TEHLİKELİ yarısını
-// gerçek depoda kanıtlar.
+// TestAbandonedExecutionThatDidWorkNeedsAHuman proves the DANGEROUS half of a
+// crash against the real store.
 //
-// # Neden burada ve bellek deposunda değil
+// # Why here and not in the memory store
 //
-// Kurulacak durum "adımı var VE bayat"tır ve iki deponun ORTAK davranışı onu
-// depo yüzeyinden kurulamaz kılar: AppendStep yürütmenin updated_at'ini TAZELER.
-// Bu doğrudur — ilerleyen bir saga kirasını canlı tutmalıdır — ama testin zamanı
-// geri alması gerektiği anlamına gelir, ki bunu ancak gerçek satırı güncelleyerek
-// yapabiliriz. Üretim aynı duruma ÇÖKEREK varır: süreç adımı yazdıktan sonra
-// ölür ve updated_at olduğu yerde kalır.
+// The state to build is "has a step AND is stale", and a behavior BOTH stores
+// share makes it unbuildable through the store surface: AppendStep REFRESHES the
+// execution's updated_at. That is right — a saga making progress has to keep its
+// lease alive — but it means the test has to wind time back, and that can only
+// be done by updating the real row. Production reaches the same state by
+// CRASHING: the process dies after writing the step and updated_at stays where
+// it was.
 //
-// # İddia
+// # The claim
 //
-// Süreç iş yaptıktan sonra kesilmişse telafi HİÇ çalışmamıştır: ayrılmış stok ve
-// açılmış ödeme oturumu ortada durur. Sessizce yeniden denemek o stoğu İKİNCİ
-// KEZ ayırmak olurdu. Kayıt bu yüzden compensation_failed'a taşınır, anahtarını
-// TUTAR ve çağıran elle müdahale gerektiğini söyleyen bir çakışma alır.
-func TestTerkEdilmisYurutmeIsYapmissaElleMudahaleIster(t *testing.T) {
+// If the process was cut off after doing work the compensation NEVER ran: the
+// reserved stock and the opened payment session are still out there. Retrying
+// silently would reserve that stock A SECOND TIME. So the record is moved to
+// compensation_failed, HOLDS its key, and the caller gets a conflict saying a
+// human is needed.
+func TestAbandonedExecutionThatDidWorkNeedsAHuman(t *testing.T) {
 	ctx := context.Background()
-	depo := yeniDepo()
-	motor := workflow.New(depo, nil)
+	store := newStore()
+	engine := workflow.New(store, nil)
 
-	var kosuldu bool
+	var ran bool
 	wf := workflow.Workflow{
-		Name: "TestTerkEdilmisYurutmeIsYapmissaElleMudahaleIster",
-		Steps: []workflow.Step{&sahteAdim{ad: "stok_rezerve", cikti: "res_1", telafiler: &[]string{},
-			calisti: &kosuldu}},
+		Name: "TestAbandonedExecutionThatDidWorkNeedsAHuman",
+		Steps: []workflow.Step{&fakeStep{name: "reserve_stock", output: "res_1", compensations: &[]string{},
+			ran: &ran}},
 	}
 
-	const anahtar = "terk_is_yapilmis"
+	const key = "abandoned_did_work"
 	exec := &workflow.Execution{
-		ID: "wfx_TERK_PG", Workflow: wf.Name, IdempotencyKey: anahtar,
+		ID: "wfx_ABANDONED_PG", Workflow: wf.Name, IdempotencyKey: key,
 		Status: workflow.StatusRunning,
 	}
-	require.NoError(t, depo.Create(ctx, exec))
-	require.NoError(t, depo.AppendStep(ctx, exec.ID, workflow.StepRecord{
-		Name: "stok_rezerve", Index: 0, Status: workflow.StepInvoked, Attempts: 1,
+	require.NoError(t, store.Create(ctx, exec))
+	require.NoError(t, store.AppendStep(ctx, exec.ID, workflow.StepRecord{
+		Name: "reserve_stock", Index: 0, Status: workflow.StepInvoked, Attempts: 1,
 		Output: []byte(`"res_1"`),
 	}))
 
-	// Zamanı geri al: süreç adımı yazdıktan sonra ölmüş ve bir saat geçmiş.
+	// Wind time back: the process died after writing the step and an hour has
+	// passed.
 	_, err := testPool.Pool().Exec(ctx,
 		`UPDATE workflow_executions SET updated_at = now() - interval '1 hour' WHERE id = $1`, exec.ID)
 	require.NoError(t, err)
 
-	_, err = motor.Run(ctx, wf, nil,
-		workflow.WithIdempotencyKey(anahtar), workflow.WithLease(time.Minute))
+	_, err = engine.Run(ctx, wf, nil,
+		workflow.WithIdempotencyKey(key), workflow.WithLease(time.Minute))
 
 	require.Error(t, err)
-	assert.True(t, coreerrors.IsConflict(err), "hata: %v", err)
+	assert.True(t, coreerrors.IsConflict(err), "error: %v", err)
 	assert.Contains(t, err.Error(), "A HUMAN IS NEEDED")
-	assert.False(t, kosuldu, "yarım işin üstüne HİÇBİR adım çalıştırılmamalı")
+	assert.False(t, ran, "NO step may be run on top of half-finished work")
 
-	kalici, err := depo.Get(ctx, exec.ID)
+	stored, err := store.Get(ctx, exec.ID)
 	require.NoError(t, err)
-	assert.Equal(t, workflow.StatusCompensationFailed, kalici.Status,
-		"durum olan biteni SÖYLEMELİ: iş yapıldı, telafi çalışmadı")
-	assert.Equal(t, anahtar, kalici.IdempotencyKey,
-		"anahtar TUTULMALI; bırakılsaydı yarım işin üstüne yeni bir deneme binerdi")
+	assert.Equal(t, workflow.StatusCompensationFailed, stored.Status,
+		"the status has to SAY what happened: work was done, the compensation did not run")
+	assert.Equal(t, key, stored.IdempotencyKey,
+		"the key HAS TO BE HELD; released, a new attempt would land on top of half-finished work")
 }

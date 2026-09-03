@@ -122,7 +122,7 @@ the two Stores shipped here. The cost is that the guarantee is not visible in th
 silently, because an embedded interface promotes only its own methods.
 
 Measured after: the same four concurrent callers, one compensation
-(`TestKurtarmaEsZamanliCagiranlarlaTEKKEZKosar`; removing the claim puts it back
+(`TestRecoveryRunsONCEWithConcurrentCallers`; removing the claim puts it back
 to four).
 
 `StepContext.Input` is NOT typed on the recovery path — the original Go value
