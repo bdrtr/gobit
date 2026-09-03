@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/bdrtr/gobit/internal/core/errorreport"
 	coreerrors "github.com/bdrtr/gobit/internal/core/errors"
 )
 
@@ -227,6 +228,12 @@ func RequestLogger(log *slog.Logger) func(http.Handler) http.Handler {
 				}
 
 				elapsed := time.Since(start)
+				// A server error raises this line to ERROR, and error reporting
+				// feeds on ERROR records. This line would then be the SECOND
+				// report of a failure the handler already reported with its
+				// machine code — and this one has no code, so it would file
+				// every 5xx in the application under "unclassified". The marker
+				// says so.
 				log.Log(ctx, levelForStatus(status), "request completed",
 					"method", r.Method,
 					"path", r.URL.Path,
@@ -235,6 +242,7 @@ func RequestLogger(log *slog.Logger) func(http.Handler) http.Handler {
 					"bytes", rw.bytes,
 					"duration_ms", float64(elapsed.Microseconds())/1000.0,
 					"request_id", RequestIDFromContext(ctx),
+					errorreport.KeyAlreadyReported, status >= http.StatusInternalServerError,
 				)
 			}()
 

@@ -814,12 +814,46 @@ modül de yaşam döngüsünden geçebilsin), `Start` modüllerden **sonra**
 (sağlayıcı kaydı ancak payment modülü ayağa kalkınca vardır). Bilinmeyen bir
 eklenti adı ya da eksik ayar açılışta hata verir.
 
-İki eklenti iki farklı uzatma biçimini gösterir:
+Üç eklenti üç farklı uzatma biçimini gösterir:
 
 | Eklenti | Ne yapar | Hangi uzatma noktaları |
 |---|---|---|
-| `payment-stripe` | **iskelet** — kayıt ve yaşam döngüsü tam çalışır, Stripe API çağrıları yapılmamıştır ve para hareketi üreten her metod açık bir "uygulanmadı" hatası döner | sağlayıcı kaydı |
+| `payment-stripe` | **iskelet** — kayıt ve yaşam döngüsü tam çalışır, Stripe API çağrıları yapılmamıştır ve para hareketi üreten her metod açık bir "uygulanmadı" hatası döner | bir MODÜLÜN sağlayıcı kaydı |
 | `search-pg` | **gerçek özellik** — ürün olaylarını dinler, PostgreSQL tam metin indeksini taze tutar, `GET /store/v1/search` ve `POST /admin/v1/search/reindex` uçlarını açar | kendi modülü + migration'ı, olay aboneliği, kendi route'ları |
+| `error-sentry` | **gerçek özellik** — sunucu arızalarını Sentry'ye (ya da Sentry uyumlu bir toplayıcıya) bildirir | ÇEKİRDEĞİN sahip olduğu bir yuva; hiçbir modüle ihtiyaç duymaz |
+
+### Hata bildirimi (`error-sentry`)
+
+```bash
+PLUGINS=error-sentry SENTRY_DSN=https://abc123@sentry.example.com/42 make run
+```
+
+Bildirimin beslemesi **log**tur: `corehttp.WriteError` her sunucu hatası için,
+`Recoverer` her panik için zaten bir ERROR satırı yazıyor, dolayısıyla log
+handler'ını sarmak üç kapıyı birden kapatır ve arıza üreten koda hiçbir
+yükümlülük eklemez. Unutulabilecek bir çağrı, kimsenin duymadığı bir arızadır.
+
+Rapora **ne gireceğine çekirdek karar verir** ([ADR 0014](docs/adr/0014-error-reporting.md)),
+eklenti değil:
+
+- Raporlayıcı **hatanın kendisini hiç görmez**. `provider.ErrorEvent` yalnızca
+  dize taşır. Gerçek hatayı alan bir raporlayıcı zinciri gezip orada bulduğu
+  her şeyi — bağlantı dizesi, bağlanmış sorgu parametresi — gönderebilirdi;
+  alamadığı şeyi gönderemez.
+- Öznitelikler **izin listesiyle** geçer ve elenen anahtarların **adları** yine
+  taşınır. Varsayılan listede **hiçbir iş kimliği yoktur** (`user_id`,
+  `cart_id`, `order_id`…): rapor, binadan çıkan bir kopyadır.
+- Serbest metinden yalnızca ikisi çıkar ve ikisinin de yazılı bir güvencesi
+  var: log mesajı (gobit'in kendi kaynağındaki bir değişmez) ve
+  `errors.Error.Message` (godoc'u "hassas veri içermemeli" diyor). Altındaki
+  sarılı zincir süreçte kalır.
+- Gruplama anahtarı **hata kodudur**, yığın izi değil: yığın, bir fonksiyon
+  adı değiştiğinde kayar ve aynı arıza yepyeni bir kayıt gibi görünür.
+- Kod başına dakikada en fazla üç rapor; bastırılan sayı bir sonraki raporla
+  taşınır. Bir kesinti tek bir arıza üretmez, hepsini birden üretir.
+- Log **önce** yazılır: başka bir veri merkezindeki toplayıcı, operatöre log
+  satırına mal olamaz.
+
 
 ```bash
 PLUGINS=search-pg make run

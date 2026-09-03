@@ -12,6 +12,37 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Eklendi
 
+- **Hata bildirimi: çekirdekte sözleşme, eklentide Sentry**
+  ([ADR 0014](docs/adr/0014-error-reporting.md)). `provider.ErrorReporter`
+  çekirdekte, `plugins/errorsentry` içinde uygulaması. Besleme **log**tur: her
+  arıza zaten ERROR yazıyor, dolayısıyla `logger.Options.Middleware` ile log
+  handler'ını sarmak üç kapıyı (WriteError, Recoverer, doğrudan ErrorContext)
+  birden kapatır ve arıza üreten koda hiçbir yükümlülük eklemez.
+
+  Zor kısım Sentry'yi bağlamak değil, **neyin asla gönderilmeyeceğine** karar
+  vermekti ve o karar çekirdekte duruyor:
+
+  - Raporlayıcı **hatanın kendisini hiç görmez**; olay yalnızca dize taşır.
+    Alamadığı şeyi gönderemez.
+  - Öznitelikler **izin listesiyle** geçer, elenen anahtarların adları yine
+    taşınır. Varsayılanda hiçbir iş kimliği yok.
+  - Serbest metinden yalnızca log mesajı ve `errors.Error.Message` çıkar;
+    ikisinin de yazılı güvencesi var. Sarılı zincir süreçte kalır.
+  - Gruplama anahtarı hata KODUDUR, yığın izi değil.
+  - Kod başına dakikada üç rapor; bastırılan sayı bir sonrakiyle taşınır.
+  - Log önce yazılır; panikleyen raporlayıcı süreç ömrü boyunca kapatılır;
+    gönderim hatası raporlama eşiğinin ALTINDA loglanır — üstünde loglamak
+    toplayıcı kesintisini kendi kendini büyüten bir döngüye çevirirdi.
+
+- **Erişim logunun 5xx satırı artık "zaten raporlandı" diye işaretleniyor.**
+  Bu kusuru gerçek bir toplayıcıya karşı koşarken bulduk ve hiçbir birim testi
+  gösteremezdi: bir 5xx İKİ kez loglanıyor — biri kodu taşıyan teşhis satırı,
+  öteki kod taşımayan erişim özeti — ve ikisi de ERROR. İkisini birden
+  bildirmek hacmi ikiye katlıyor, dahası uygulamadaki her sunucu hatasını
+  `unclassified` kovasına dolduruyordu; o kovanın, gerçekten sınıflandırılmamış
+  bir arıza içinde görünebilsin diye boş kalması gerekir. Üstelik o kovanın
+  hız bütçesini de harcıyordu.
+
 - **Panelde fiyat ve stok düzenleme** ([ADR 0013](docs/adr/0013-panel-write-surface.md)
   eki). Varyant sayfası bir varyantın para birimi başına taban fiyatını ve her
   lokasyondaki fiziksel stoğunu düzenletiyor; `pricing.admin` ve

@@ -477,6 +477,13 @@ func alanIfadesi(deger *ast.CompositeLit, alan string) ast.Expr {
 //     [TestSaglayiciKayitAdlariUyusuyor] zaten iddia eder.
 //   - [cekirdekAilesi]: çekirdek altyapısı (veritabanı, link, query, saga,
 //     olay veri yolu). Modül üretimi değildir.
+//   - [raporlamaAilesi]: çekirdeğin sahip olduğu TEK bir yuva — hata
+//     raporlayıcı (ADR 0014). Ötekilerden iki yönden ayrılır: modül üretimi
+//     DEĞİLDİR (eklenti doldurur) ve TEKİLDİR (kayıt noktası bir defter değil,
+//     adın kendisidir; container yinelenen adı zaten reddeder). Tüketicisi
+//     çekirdektedir ama KOŞULLUDUR — kurulum bir toplayıcı tanımlamamışsa ad
+//     hiç kaydedilmez ve cmd/server önce Has ile sorar — bu yüzden "tüketicisi
+//     var mı" denetiminin kapsamı dışındadır.
 //   - [yonetimAilesi]: modülün YÖNETİM YAZMA yüzeyi (ADR 0013). Tek tüketicisi
 //     yönetim panelidir ve o tüketici KOŞULLUDUR: panel bu adı ancak
 //     kayıtlıysa çözer, çünkü modülü kurulmamış bir kurulumda da açılabilmesi
@@ -491,6 +498,7 @@ const (
 	sorguAilesi     = ".query"
 	saglayiciAilesi = ".providers"
 	yonetimAilesi   = ".admin"
+	raporlamaAilesi = "error.reporter"
 	cekirdekAilesi  = "core."
 )
 
@@ -619,6 +627,9 @@ func (a *kaynakAgaci) saglananAdlar(t *testing.T) map[string]*kaynakDosyasi {
 // bilinenAile adın tanınan kayıt ailelerinden birine ait olup olmadığını söyler.
 func bilinenAile(ad string) bool {
 	if strings.HasPrefix(ad, cekirdekAilesi) {
+		return true
+	}
+	if ad == raporlamaAilesi {
 		return true
 	}
 	for _, sonek := range []string{interopAilesi, servisAilesi, sorguAilesi, saglayiciAilesi, yonetimAilesi} {

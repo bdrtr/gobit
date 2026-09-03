@@ -17,6 +17,7 @@ import (
 	"github.com/bdrtr/gobit/internal/adminui"
 	"github.com/bdrtr/gobit/internal/core/config"
 	"github.com/bdrtr/gobit/internal/core/container"
+	"github.com/bdrtr/gobit/internal/core/errorreport"
 	"github.com/bdrtr/gobit/internal/core/errors"
 	corehttp "github.com/bdrtr/gobit/internal/core/http"
 	"github.com/bdrtr/gobit/internal/core/http/redisguard"
@@ -35,6 +36,7 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/product/graph"
 	cartwf "github.com/bdrtr/gobit/internal/workflows/cart"
 	checkoutwf "github.com/bdrtr/gobit/internal/workflows/checkout"
+	"github.com/bdrtr/gobit/plugins/errorsentry"
 	"github.com/bdrtr/gobit/plugins/paymentstripe"
 	"github.com/bdrtr/gobit/plugins/searchpg"
 )
@@ -87,12 +89,14 @@ const temporarySecretBytes = 32
 // 9 DoD). Which ones are installed is chosen by the PLUGINS environment
 // variable.
 //
-// The two plugins show two different ways of extending. paymentstripe only
-// registers a PROVIDER (the payment module's extension point), while searchpg
-// brings ITS OWN MODULE — with its own table, its own migration and its own
-// routes. The second opens a new endpoint (GET /store/v1/search) without being
-// named anywhere except the line below.
+// The three plugins show three different ways of extending. paymentstripe
+// registers a PROVIDER into a module's registry (the payment module's extension
+// point); searchpg brings ITS OWN MODULE — with its own table, its own migration
+// and its own routes — and opens a new endpoint (GET /store/v1/search) without
+// being named anywhere except the line below; errorsentry fills a slot the CORE
+// owns, so it needs no module to exist at all.
 var pluginCatalog = map[string]func() coreplugin.Plugin{
+	errorsentry.Name:   func() coreplugin.Plugin { return errorsentry.New() },
 	paymentstripe.Name: func() coreplugin.Plugin { return paymentstripe.New() },
 	searchpg.Name:      func() coreplugin.Plugin { return searchpg.New() },
 }
@@ -848,6 +852,34 @@ func reportUnmanageableInstallation(
 			"no way to create the first administrator over HTTP; the storefront surface is closed "+
 			"too, because the publishable key is minted by an admin endpoint",
 		"remedy", "provide ADMIN_BOOTSTRAP_EMAIL and ADMIN_BOOTSTRAP_PASSWORD and restart")
+
+	return nil
+}
+
+// bindErrorReporter hands the plugin's error reporter to the sink the log
+// handler already writes to.
+//
+// Nothing is bound when no plugin registered one, and that is not an error: an
+// installation without a collector is the normal one, and the sink drops.
+//
+// A reporter registered under the name that does NOT satisfy the contract is a
+// different matter and stops startup. The alternative is a process that looks
+// configured, logs nothing about it, and reports no failure for as long as it
+// runs — the failure mode of a monitoring integration is that it is silent, so
+// the one moment it can be loud is this one.
+func bindErrorReporter(c *container.Container, sink *errorreport.Sink, log *slog.Logger) error {
+	if !c.Has(coreplugin.ErrorReporterName) {
+		return nil
+	}
+
+	reporter, err := container.Resolve[coreprovider.ErrorReporter](c, coreplugin.ErrorReporterName)
+	if err != nil {
+		return err
+	}
+	if err := sink.Bind(reporter); err != nil {
+		return err
+	}
+	log.Info("error reporting is on", "reporter", reporter.ID())
 
 	return nil
 }

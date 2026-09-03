@@ -35,6 +35,7 @@ import (
 	"github.com/bdrtr/gobit/internal/core/config"
 	"github.com/bdrtr/gobit/internal/core/container"
 	"github.com/bdrtr/gobit/internal/core/db"
+	"github.com/bdrtr/gobit/internal/core/errorreport"
 	"github.com/bdrtr/gobit/internal/core/errors"
 	"github.com/bdrtr/gobit/internal/core/eventbus"
 	corehttp "github.com/bdrtr/gobit/internal/core/http"
@@ -100,10 +101,19 @@ func run() error {
 		return err
 	}
 
+	// The sink is built BEFORE the logger and stays empty until a plugin fills
+	// it. That order is forced: the log handler has to be wired to something at
+	// the moment it is created, and the reporter arrives with a plugin, which is
+	// installed several hundred lines below. An empty sink drops, so the
+	// installation without a collector — the usual one — pays a nil check per
+	// failing request and nothing else.
+	reportSink := errorreport.NewSink()
+
 	log := logger.New(logger.Options{
-		Level:     cfg.SlogLevel(),
-		Format:    cfg.LogFormat,
-		AddSource: !cfg.IsProduction(),
+		Level:      cfg.SlogLevel(),
+		Format:     cfg.LogFormat,
+		AddSource:  !cfg.IsProduction(),
+		Middleware: errorreport.Middleware(reportSink, errorreport.Options{}),
 	})
 	slog.SetDefault(log)
 
@@ -141,6 +151,17 @@ func run() error {
 	defer func() {
 		if err := shutdownObservability(context.WithoutCancel(ctx)); err != nil {
 			log.Error("observability could not be shut down", "error", err)
+		}
+	}()
+
+	// The flush is deferred HERE, right after the sink exists, so it runs no
+	// matter which of the returns below is taken. Its own context is detached
+	// from ctx for observability's reason: SIGTERM has already canceled ctx, and
+	// the reports of the failures that ended the process are the ones most worth
+	// having.
+	defer func() {
+		if err := reportSink.Close(context.WithoutCancel(ctx)); err != nil {
+			log.Error("the error reporter could not be flushed", "error", err)
 		}
 	}()
 
@@ -332,6 +353,14 @@ func run() error {
 	}
 	host := coreplugin.NewHost(c, registry, bus, log, pluginSettings())
 	if err := pluginRegistry.Install(ctx, host); err != nil {
+		return err
+	}
+
+	// The reporter is bound between Install and Bootstrap, which is the only
+	// window that works. Earlier there is no plugin to provide one; later the
+	// modules have already come up, and a migration that fails takes the process
+	// down — unreported by a reporter that was still waiting for its turn.
+	if err := bindErrorReporter(c, reportSink, log); err != nil {
 		return err
 	}
 

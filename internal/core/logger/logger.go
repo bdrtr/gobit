@@ -21,6 +21,16 @@ type Options struct {
 	// AddSource true adds the calling file and line to every record. Because
 	// it is costly in production it is usually only turned on in development.
 	AddSource bool
+	// Middleware wraps the handler before the logger is built. Nil leaves the
+	// handler as it is.
+	//
+	// It exists so that something can observe the log without this package
+	// knowing what that something is. Error reporting is the caller today
+	// (internal/core/errorreport); had this package imported it, the logger —
+	// which everything depends on — would have gained a dependency on a
+	// collector integration, and nothing in this file would be testable without
+	// it.
+	Middleware func(slog.Handler) slog.Handler
 }
 
 // New produces a *slog.Logger configured with the given options.
@@ -40,6 +50,10 @@ func New(opts Options) *slog.Logger {
 		h = slog.NewTextHandler(out, handlerOpts)
 	} else {
 		h = slog.NewJSONHandler(out, handlerOpts)
+	}
+
+	if opts.Middleware != nil {
+		h = opts.Middleware(h)
 	}
 
 	return slog.New(h)

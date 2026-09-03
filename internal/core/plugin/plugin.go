@@ -65,6 +65,15 @@ const FulfillmentProvidersName = "fulfillment.providers"
 // registry.
 const NotificationProvidersName = "notification.providers"
 
+// ErrorReporterName is the container name of the error reporter.
+//
+// It is SINGULAR where the four above are plural, and the difference is the
+// whole shape of the thing: a payment provider is chosen per order out of a
+// registry, while there is at most ONE reporter and nothing chooses it. The
+// container refuses a duplicate name, so "at most one" is enforced by the
+// registration itself rather than by a rule somebody has to remember.
+const ErrorReporterName = "error.reporter"
+
 // FileProvidersName is the container name of the file provider registry.
 //
 // Unlike the other three there is NOT YET a module satisfying this name: the
@@ -264,6 +273,49 @@ func (h *Host) RegisterPaymentProvider(p coreprovider.PaymentProvider) {
 			}
 
 			return sink.Register(p)
+		},
+	})
+}
+
+// RegisterErrorReporter installs the plugin's error reporter.
+//
+// # Why this one is not queued
+//
+// The other four registrations wait for [Registry.Start] because they need a
+// module's registry to exist. This one needs nothing: the reporter goes into
+// the container under a name the CORE owns, and the core is already there.
+//
+// Waiting would also cost the reports worth the most. The modules come up
+// between Install and Start — migrations, schema checks, provider verification
+// — and a reporter bound at Start would watch every one of those failures go by
+// unreported, in the one phase where a failure means the process is about to
+// exit.
+//
+// A second reporter is a CONFLICT, not a replacement. The container refuses the
+// duplicate name and the error surfaces at Start naming the plugin that lost:
+// two plugins each believing they own the reporting is a misconfiguration, and
+// letting the last one win would send the failures somewhere the operator who
+// installed the first one is not looking.
+func (h *Host) RegisterErrorReporter(r coreprovider.ErrorReporter) {
+	if r == nil {
+		return
+	}
+
+	name := h.active
+	err := h.c.Provide(ErrorReporterName, r)
+	if err == nil {
+		return
+	}
+
+	// The registration already happened or already failed; the queue is used
+	// only to carry the failure to a place that can return it, since a Register
+	// method has no error to give back.
+	h.queue = append(h.queue, queuedTask{
+		description: "the error reporter of the " + name + " plugin (" + r.ID() + ")",
+		apply: func(context.Context, *Host) error {
+			return coreerrors.Wrap(err, coreerrors.KindConflict, codeSinkUnusable,
+				"the %s plugin could not register its error reporter under %q",
+				name, ErrorReporterName)
 		},
 	})
 }
