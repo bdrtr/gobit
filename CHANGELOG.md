@@ -10,7 +10,7 @@ Sabitlenme `1.0.0` ile olur.
 
 ## [Yayımlanmamış]
 
-### Değiştirildi
+### Eklendi
 
 - **`gobit stuck`: yarım kalmış saga'lar artık LİSTELENEBİLİYOR.** v0.7.0
   kesintiye uğrayan bir ödemeyi sessiz olmaktan çıkarmıştı (kirası dolan
@@ -92,6 +92,8 @@ Sabitlenme `1.0.0` ile olur.
   ve satır güncellendi. Planın "tutarlı zarf" cümlesi de sayacın düşebildiğini
   söyleyecek şekilde düzeltildi — alan adları ve tipleri değişmiyor, yalnızca
   hesaplanmayan sayaç zarfta yer almıyor.
+
+### Değiştirildi
 
 - **`internal/core/link` ve `internal/core/eventbus` İngilizceye çevrildi**
   (ADR 0012'nin cırcırı). Türkçe defterinden 15 satır DÜŞTÜ: 742 dosyadan
