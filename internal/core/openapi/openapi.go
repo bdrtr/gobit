@@ -1,31 +1,32 @@
-// Package openapi çalışan router'dan OpenAPI 3.1 şeması üretir.
+// Package openapi produces an OpenAPI 3.1 schema from the running router.
 //
-// # Neden router'dan
+// # Why from the router
 //
-// Elle yazılan bir şema kaçınılmaz olarak koddan ayrışır: bir route silinir,
-// şemada kalır; bir yol değişir, şemada eski hâliyle durur. Burada üretilen
-// yollar chi'nin GERÇEK route ağacından okunur, yani sunucunun o an
-// servis ettiği şeyle her zaman aynıdır.
+// A hand-written schema inevitably drifts from the code: a route is deleted and
+// stays in the schema; a path changes and the schema keeps the old one. The
+// paths produced here are read from chi's REAL route tree, so they are always
+// what the server is serving at that moment.
 //
-// # Gövde şemaları da türetilir
+// # The body schemas are derived too
 //
-// Yol ve metod router'dan okunduğu gibi, istek/yanıt GÖVDELERİ de Go
-// TİPLERİNDEN yansımayla türetilir (bkz. [Doc.SchemaOf]). Gerekçe aynıdır:
-// elle yazılmış bir alan listesi, DTO'ya alan eklendiği gün eksik kalır ve
-// kimse fark etmez.
+// Just as the path and the method are read from the router, the request and
+// response BODIES are derived from the Go TYPES through reflection (see
+// [Doc.SchemaOf]). The reason is the same: a hand-written field list falls
+// behind the day a field is added to the DTO and nobody notices.
 //
-// Çalışma zamanı bir handler'ın hangi tipi okuyup hangi tipi yazdığını
-// BİLEMEZ; bu bağı modül kurar. Modül kendi uçlarını [Describer] arayüzüyle
-// anlatır, [Doc.Describe] ile route'a bağlar ve gövde şemasını [Doc.Item],
-// [Doc.List], [Doc.RequestBody] ile TİPTEN üretir.
+// The runtime CANNOT KNOW which type a handler reads and which it writes; the
+// module makes that connection. A module describes its own endpoints through the
+// [Describer] interface, binds them to a route with [Doc.Describe] and produces
+// the body schema FROM THE TYPE with [Doc.Item], [Doc.List] and
+// [Doc.RequestBody].
 //
-// # Neyi kapsamaz
+// # What it does not cover
 //
-// Anlatılmamış bir uç yalnızca yol, metod, güvenlik ve ortak hata yanıtlarını
-// taşır; gövdesi olmaz. Kapsam sınırının açıkça yazılması bilinçlidir:
-// "OpenAPI üretiyoruz" deyip gövdesiz bir şema sunmak, istemci
-// geliştiricisinin şemaya güvenip yanlış alan adları göndermesine yol açardı.
-// Eksik olduğunu bilmek, eksik olduğunu sanmamaktan iyidir.
+// An endpoint that was not described carries only its path, method, security and
+// the shared error responses; it has no body. Writing the boundary down is
+// deliberate: saying "we produce OpenAPI" and serving a bodyless schema would
+// have a client developer trust the schema and send the wrong field names.
+// Knowing it is incomplete beats believing it is not.
 package openapi
 
 import (
@@ -42,229 +43,233 @@ import (
 	corehttp "github.com/bdrtr/gobit/internal/core/http"
 )
 
-// Version üretilen belgenin OpenAPI sürümüdür.
+// Version is the OpenAPI version of the produced document.
 const Version = "3.1.0"
 
-// codeDocumentUnavailable belgenin üretilemediğini bildirir.
+// codeDocumentUnavailable reports that the document could not be produced.
 //
-// İstemciye giden TEK ayrıntı budur: üretim hatasının metni çakışan tiplerin
-// PAKET YOLLARINI taşır (bkz. [Doc.cakismaBildir]) ve bu uç kimliksizdir.
-// Sebebin tamamı loga yazılır (bkz. corehttp.WriteError).
+// It is the ONLY detail that goes to the client: the text of a build error
+// carries the PACKAGE PATHS of the clashing types (see [Doc.reportClash]) and
+// this endpoint is unauthenticated. The whole reason goes to the log (see
+// corehttp.WriteError).
 const codeDocumentUnavailable = "openapi_document_unavailable"
 
-// adminPrefix admin API'sinin yol önekidir.
+// adminPrefix is the path prefix of the admin API.
 const adminPrefix = "/admin/v1"
 
-// storePrefix mağaza API'sinin yol önekidir.
+// storePrefix is the path prefix of the store API.
 const storePrefix = "/store/v1"
 
-// bearerScheme admin uçlarının güvenlik şemasının adıdır.
+// bearerScheme is the name of the admin endpoints' security scheme.
 const bearerScheme = "bearerAuth"
 
-// publishableScheme mağaza uçlarının güvenlik şemasının adıdır.
+// publishableScheme is the name of the store endpoints' security scheme.
 const publishableScheme = "publishableKey"
 
-// loginPath kimlik doğrulaması GEREKTİRMEYEN admin ucudur.
+// loginPath is the admin endpoint that needs NO authentication.
 //
-// Jetonu almanın tek yolu burasıdır; korumalı olsaydı hiç kimse giriş
-// yapamazdı. Şemada da korumasız görünmelidir, yoksa istemci üretecleri
-// jeton olmadan çağrılamaz bir metod üretir.
+// It is the only way to get a token; were it protected nobody could sign in. It
+// has to look unprotected in the schema too, or client generators produce a
+// method that cannot be called without a token.
 //
-// Korumasız olmak 401 ÜRETMEMEK demek DEĞİLDİR: hatalı e-posta/parola yine
-// 401'dir (bkz. [varsayilanYanitlar]).
+// Being unprotected does NOT mean PRODUCING NO 401: a wrong email/password is
+// still a 401 (see [defaultResponses]).
 const loginPath = adminPrefix + "/auth/login"
 
-// Operation tek bir yol+metod işleminin açıklamasıdır.
+// Operation is the description of a single path+method operation.
 type Operation struct {
-	// Summary işlemin tek satırlık özetidir.
+	// Summary is the one-line summary of the operation.
 	Summary string `json:"summary,omitempty"`
-	// Description işlemin ayrıntılı açıklamasıdır.
+	// Description is the detailed description of the operation.
 	Description string `json:"description,omitempty"`
-	// OperationID istemci üreteçlerinin metod adı olarak kullandığı kimliktir.
+	// OperationID is the id client generators use as the method name.
 	OperationID string `json:"operationId,omitempty"`
-	// Tags işlemi gruplayan etiketlerdir (genellikle modül adı).
+	// Tags are the tags grouping the operation (usually the module name).
 	Tags []string `json:"tags,omitempty"`
-	// Parameters yol ve sorgu parametreleridir.
+	// Parameters are the path and query parameters.
 	Parameters []Parameter `json:"parameters,omitempty"`
-	// RequestBody istek gövdesinin şemasıdır; nil olabilir.
+	// RequestBody is the schema of the request body; it may be nil.
 	RequestBody map[string]any `json:"requestBody,omitempty"`
-	// Responses durum kodundan yanıt tanımına eşlemedir.
+	// Responses maps a status code to a response definition.
 	Responses map[string]any `json:"responses"`
-	// Security bu işlemin güvenlik gereksinimidir.
+	// Security is this operation's security requirement.
 	//
-	// omitempty BİLİNÇLİ olarak YOKTUR. OpenAPI'de boş dizi ("security: []")
-	// "bu uç açıkça korumasız" demektir; omitempty ise boş diziyi JSON'a hiç
-	// yazmaz ve alanı olmayan bir işlem "belirtilmemiş" sayılıp kök
-	// seviyedeki varsayılan güvenliği MİRAS ALIR. Giriş ucunda kastedilen tam
-	// tersidir: jetonu veren uç jeton isteyemez. Kaydın yazılmaması, kök
-	// varsayılanın eklendiği gün giriş ucunu sessizce korumalı gösterirdi.
+	// omitempty is DELIBERATELY absent. In OpenAPI an empty array ("security: []")
+	// means "this endpoint is explicitly unprotected"; omitempty would never write
+	// the empty array to JSON and an operation without the field counts as
+	// "unspecified" and INHERITS the root-level default security. At the login
+	// endpoint the meaning intended is exactly the opposite: the endpoint that
+	// hands out the token cannot demand one. Not writing the record would silently
+	// show the login endpoint as protected the day a root default was added.
 	//
-	// nil bırakılırsa JSON'a "security": null yazılırdı; [Doc.islem] bu yüzden
-	// her işlem için alanı doldurur ve [guvenlik] hiçbir zaman nil dönmez.
+	// Left nil it would write "security": null into the JSON; [Doc.operation]
+	// therefore fills the field for every operation and [security] never returns nil.
 	Security []map[string][]string `json:"security"`
 }
 
-// Parameter bir yol ya da sorgu parametresidir.
+// Parameter is a path or a query parameter.
 type Parameter struct {
-	// Name parametrenin adıdır.
+	// Name is the parameter's name.
 	Name string `json:"name"`
-	// In parametrenin yeridir: "path" | "query" | "header".
+	// In is where the parameter sits: "path" | "query" | "header".
 	In string `json:"in"`
-	// Required parametrenin zorunlu olup olmadığıdır.
+	// Required is whether the parameter is required.
 	Required bool `json:"required"`
-	// Schema parametrenin tip şemasıdır.
+	// Schema is the parameter's type schema.
 	Schema map[string]any `json:"schema"`
-	// Description parametrenin açıklamasıdır.
+	// Description is the parameter's description.
 	Description string `json:"description,omitempty"`
 }
 
-// Doc üretilen OpenAPI belgesidir.
+// Doc is the produced OpenAPI document.
 type Doc struct {
-	// zenginlestirme "METOD YOL" anahtarından işlem ayrıntısına eşlemedir.
-	zenginlestirme map[string]Operation
-	// baslik API başlığıdır.
-	baslik string
-	// surum API sürümüdür.
-	surum string
-	// semalar Go tiplerinden türetilmiş bileşen şemalarıdır.
-	semalar map[string]any
-	// semaSahipleri her bileşen adının hangi Go tipinden türediğini tutar;
-	// ad çakışmasını yakalayan tek kayıt budur.
-	semaSahipleri map[string]reflect.Type
-	// semaCakismalari aynı bileşen adını isteyen FARKLI tiplerin raporudur.
-	semaCakismalari []string
-	// anlatimSurumu anlatım kayıtlarının kaçıncı sürümde olduğudur.
+	// enrichment maps the "METHOD PATH" key to the operation detail.
+	enrichment map[string]Operation
+	// title is the API title.
+	title string
+	// version is the API version.
+	version string
+	// schemas are the component schemas derived from the Go types.
+	schemas map[string]any
+	// schemaOwners holds which Go type every component name came from; it is the
+	// only record that catches a name clash.
+	schemaOwners map[string]reflect.Type
+	// schemaClashes is the report of DIFFERENT types wanting the same component name.
+	schemaClashes []string
+	// describeVersion is the version the description records are at.
 	//
-	// [Doc.Describe] ve bileşen kaydı ([Doc.structSemasiVeyaRef]) onu artırır;
-	// [Doc.Handler] önbelleğinin GEÇERLİLİK anahtarına girer. Anlatım API'si
-	// kurulum içindir ve TEK İPLİKLİDİR (modüller Describe'ı bileşim kökünde,
-	// sunucu dinlemeye başlamadan çağırır); üretim tarafı ise eş zamanlıdır ve
-	// bu alanı yalnızca [Doc.mu] altında OKUR.
-	anlatimSurumu uint64
-	// mu belge ÜRETİMİNİ, gorulen alanını ve önbelleği korur.
+	// [Doc.Describe] and the component registration ([Doc.structSchemaOrRef])
+	// increment it; it goes into the VALIDITY key of [Doc.Handler]'s cache. The
+	// description API is for setup and is SINGLE THREADED (modules call Describe at
+	// the composition root, before the server starts listening); the production
+	// side is concurrent and only READS this field under [Doc.mu].
+	describeVersion uint64
+	// mu guards the document BUILD, the seen field and the cache.
 	//
-	// Üretim baştan sona kilit altındadır çünkü okuma gibi görünse de
-	// DEĞİŞTİRİR: [Doc.islem] anlatılan işlemin Responses haritasına ortak
-	// hata yanıtlarını yazar. /openapi.json'a eş zamanlı iki istek gelmesi
-	// olağandır ve kilitsiz iki üretim aynı haritaya aynı anda yazardı — Go'da
-	// bu, kurtarılamayan bir çalışma zamanı hatasıdır.
+	// The build is under the lock from start to end because, while it looks like a
+	// read, it MUTATES: [Doc.operation] writes the shared error responses into the
+	// described operation's Responses map. Two concurrent requests to
+	// /openapi.json are ordinary, and two unlocked builds would write into the
+	// same map at the same time — in Go that is an unrecoverable runtime error.
 	mu sync.Mutex
-	// gorulen son üretimde bulunan route anahtarlarıdır;
-	// UnmatchedDescriptions onu okur.
-	gorulen map[string]struct{}
-	// onbellek son üretilen belgenin KODLANMIŞ hâlidir (bkz. [Doc.Handler]).
-	onbellek *onbellekGirdisi
+	// seen are the route keys found in the last build; UnmatchedDescriptions
+	// reads it.
+	seen map[string]struct{}
+	// cache is the ENCODED form of the last produced document (see [Doc.Handler]).
+	cache *cacheEntry
 }
 
-// belgeKimligi belgenin üretildiği GİRDİLERİ tek bir karşılaştırılabilir
-// değere indirger.
+// documentIdentity reduces the INPUTS the document was built from to a single
+// comparable value.
 //
-// Önbelleğin geçerliliği bir varsayıma ("ağaç artık donmuştur") değil bu
-// değere bağlanır; girdilerden biri değişirse belge yeniden üretilir.
-type belgeKimligi struct {
-	// routeKarmasi ağaçtaki "METOD YOL" çiftlerinin karmasıdır.
-	routeKarmasi uint64
-	// routeSayisi ağaçtaki route sayısıdır.
+// The cache's validity rests on this value rather than on an assumption ("the
+// tree is frozen now"); if one of the inputs changes the document is rebuilt.
+type documentIdentity struct {
+	// routeHash is the hash of the "METHOD PATH" pairs in the tree.
+	routeHash uint64
+	// routeCount is the number of routes in the tree.
 	//
-	// Karma SIRADAN BAĞIMSIZ birleştirildiği için (XOR) tek başına iki farklı
-	// kümeyi aynı değere indirebilir; sayı, bu ihtimali pratikte kapatır.
-	routeSayisi int
-	// anlatimSurumu belgenin okunduğu andaki [Doc.anlatimSurumu] değeridir.
-	anlatimSurumu uint64
+	// Because the hash is combined ORDER-INDEPENDENTLY (XOR) it could on its own
+	// reduce two different sets to the same value; the count closes that in practice.
+	routeCount int
+	// describeVersion is [Doc.describeVersion] as it stood when the document was read.
+	describeVersion uint64
 }
 
-// onbellekGirdisi üretilmiş belgeyi ve hangi girdiden üretildiğini tutar.
-type onbellekGirdisi struct {
-	// kimlik gövdenin üretildiği girdilerin kimliğidir.
-	kimlik belgeKimligi
-	// govde kodlanmış belgedir; üretim başarısızsa nil'dir.
-	govde []byte
-	// hata üretim başarısızsa saklanan hatadır.
+// cacheEntry holds the produced document and the input it came from.
+type cacheEntry struct {
+	// identity is the identity of the inputs the body was produced from.
+	identity documentIdentity
+	// body is the encoded document; it is nil when the build failed.
+	body []byte
+	// err is the error kept when the build failed.
 	//
-	// Hata da ÖNBELLEKLENİR: aynı girdiden aynı hata çıkar ve her istekte
-	// yeniden üretmek, arızalı bir belgeyi sağlamından PAHALI kılardı.
-	hata error
+	// The error is CACHED too: the same input produces the same error, and
+	// rebuilding on every request would make a broken document MORE EXPENSIVE than
+	// a sound one.
+	err error
 }
 
-// New boş bir belge kurar.
-func New(baslik, surum string) *Doc {
+// New builds an empty document.
+func New(title, version string) *Doc {
 	return &Doc{
-		zenginlestirme: make(map[string]Operation),
-		baslik:         baslik,
-		surum:          surum,
-		semalar:        make(map[string]any),
-		semaSahipleri:  make(map[string]reflect.Type),
+		enrichment:   make(map[string]Operation),
+		title:        title,
+		version:      version,
+		schemas:      make(map[string]any),
+		schemaOwners: make(map[string]reflect.Type),
 	}
 }
 
-// Describer kendi uçlarını anlatabilen modüllerin OPSİYONEL arayüzüdür.
+// Describer is the OPTIONAL interface of modules that can describe their own
+// endpoints.
 //
-// # Neden module.Module'e eklenmedi
+// # Why it was not added to module.Module
 //
-// Metodu modül sözleşmesine koymak TÜM modülleri aynı anda kıran bir
-// değişiklikti ve bedeli karşılığında hiçbir şey vermezdi: anlatılmamış bir
-// modül GEÇERLİ bir modeldir — belgede yolu, metodu ve güvenliğiyle görünür,
-// yalnızca gövdesi olmaz. Zorunlu bir metot, boş gövdeli Describe
-// uygulamalarını çoğaltmaktan başka bir şey üretmezdi.
+// Putting the method on the module contract was a change that broke EVERY module
+// at once and gave nothing for the price: an undescribed module is a VALID
+// model — it appears in the document with its path, method and security, only
+// without a body. A required method would have produced nothing but a crop of
+// empty Describe implementations.
 //
-// # Kim çağırır
+// # Who calls it
 //
-// Kompozisyon kökü (cmd/server) modül listesi üzerinden tip iddiasıyla
-// çağırır. Çekirdek çağıramaz: [Doc] modülleri tanımaz (Prensip 2.4) ve
-// modül listesini gören tek yer kurulumdur.
+// The composition root (cmd/server) calls it through a type assertion over the
+// module list. The core cannot: [Doc] does not know the modules (Principle 2.4)
+// and the only place that sees the module list is the setup.
 type Describer interface {
-	// Describe modülün uçlarını belgeye işler ([Doc.Describe] ile).
+	// Describe writes the module's endpoints into the document (with [Doc.Describe]).
 	Describe(d *Doc)
 }
 
-// Describe bir route'un işlem ayrıntılarını kaydeder.
+// Describe records the operation details of a route.
 //
-// method ve pattern, chi'de tanımlandığı gibi verilmelidir (örn.
-// "GET", "/store/v1/products/{id}"). Eşleşmeyen bir kayıt sessizce yok
-// SAYILMAZ — [Doc.Build] onu [Doc.UnmatchedDescriptions] ile raporlar; aksi
-// hâlde yolu değişmiş bir route'un açıklaması sessizce kaybolurdu.
+// method and pattern have to be given as chi defines them (for example "GET",
+// "/store/v1/products/{id}"). A record that matches nothing is NOT ignored
+// silently — [Doc.Build] reports it through [Doc.UnmatchedDescriptions];
+// otherwise the description of a route whose path changed would vanish quietly.
 //
-// Kayıt, üretilmiş belgeyi de GEÇERSİZ kılar (bkz. [Doc.Handler]): kurulumdan
-// sonra anlatılan bir uç, aksi hâlde önbellekteki eski belgede görünmezdi.
+// A record also INVALIDATES a document already built (see [Doc.Handler]): an
+// endpoint described after setup would otherwise not appear in the cached one.
 func (d *Doc) Describe(method, pattern string, op Operation) {
-	d.zenginlestirme[anahtar(method, pattern)] = op
-	d.anlatimSurumu++
+	d.enrichment[key(method, pattern)] = op
+	d.describeVersion++
 }
 
-// Build router'ı dolaşarak OpenAPI belgesini üretir.
+// Build walks the router and produces the OpenAPI document.
 //
-// Üretim baştan sona kilit altındadır; gerekçesi [Doc.mu] alanındadır.
+// The build is under the lock from start to end; the reason is on [Doc.mu].
 func (d *Doc) Build(r chi.Routes) (map[string]any, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
-	return d.uret(r)
+	return d.build(r)
 }
 
-// uret belgeyi üretir ve [Doc.mu] kilidinin TUTULDUĞUNU varsayar.
-func (d *Doc) uret(r chi.Routes) (map[string]any, error) {
-	yollar := map[string]any{}
-	gorulen := map[string]struct{}{}
+// build produces the document and ASSUMES the [Doc.mu] lock is HELD.
+func (d *Doc) build(r chi.Routes) (map[string]any, error) {
+	paths := map[string]any{}
+	seen := map[string]struct{}{}
 
 	err := chi.Walk(r, func(
 		method, route string, _ http.Handler, _ ...func(http.Handler) http.Handler,
 	) error {
-		yol := normalizeYol(route)
-		if !ilgili(yol) {
+		path := normalizePath(route)
+		if !included(path) {
 			return nil
 		}
 
-		gorulen[anahtar(method, yol)] = struct{}{}
+		seen[key(method, path)] = struct{}{}
 
-		islem := d.islem(method, yol)
+		operation := d.operation(method, path)
 
-		mevcut, _ := yollar[yol].(map[string]any)
-		if mevcut == nil {
-			mevcut = map[string]any{}
-			yollar[yol] = mevcut
+		existing, _ := paths[path].(map[string]any)
+		if existing == nil {
+			existing = map[string]any{}
+			paths[path] = existing
 		}
 
-		mevcut[strings.ToLower(method)] = islem
+		existing[strings.ToLower(method)] = operation
 
 		return nil
 	})
@@ -272,400 +277,405 @@ func (d *Doc) uret(r chi.Routes) (map[string]any, error) {
 		return nil, err
 	}
 
-	d.gorulen = gorulen
+	d.seen = seen
 
-	// Çakışma kontrolü YÜRÜYÜŞTEN SONRADIR: eşleşmeyen açıklamalar
-	// ([Doc.UnmatchedDescriptions]) çakışmadan bağımsız bir arızadır ve
-	// operatörün ikisini birden görebilmesi için gorulen yine de dolmalıdır.
-	if len(d.semaCakismalari) > 0 {
+	// The clash check comes AFTER the walk: unmatched descriptions
+	// ([Doc.UnmatchedDescriptions]) are a failure independent of a clash, and seen
+	// has to be filled anyway so the operator can see both at once.
+	if len(d.schemaClashes) > 0 {
 		return nil, errors.Invalid(codeSchemaNameConflict,
-			"OpenAPI bileşen adı çakıştı: %s", strings.Join(d.semaCakismalari, "; "))
+			"an OpenAPI component name clashed: %s", strings.Join(d.schemaClashes, "; "))
 	}
 
 	return map[string]any{
 		"openapi": Version,
 		"info": map[string]any{
-			"title":   d.baslik,
-			"version": d.surum,
+			"title":   d.title,
+			"version": d.version,
 		},
-		"paths":      yollar,
-		"components": d.bilesenler(),
+		"paths":      paths,
+		"components": d.components(),
 	}, nil
 }
 
-// UnmatchedDescriptions [Doc.Build] sırasında hiçbir route ile eşleşmeyen
-// açıklamaları döner.
+// UnmatchedDescriptions returns the descriptions that matched no route during
+// [Doc.Build].
 //
-// Boş olmayan bir sonuç, bir route'un yolu değişmiş ya da silinmiş ama
-// açıklamasının kaldığı anlamına gelir. Sessiz kalmak, belgede olmayan bir
-// ucun anlatılmasına ya da var olan bir ucun anlatılmamasına yol açardı.
+// A non-empty result means a route's path changed or was deleted while its
+// description stayed. Staying silent would lead to an endpoint that is not in the
+// document being described, or an existing one not being described.
 func (d *Doc) UnmatchedDescriptions() []string {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
-	var eksik []string
+	var missing []string
 
-	for k := range d.zenginlestirme {
-		if _, ok := d.gorulen[k]; !ok {
-			eksik = append(eksik, k)
+	for k := range d.enrichment {
+		if _, ok := d.seen[k]; !ok {
+			missing = append(missing, k)
 		}
 	}
 
-	sort.Strings(eksik)
+	sort.Strings(missing)
 
-	return eksik
+	return missing
 }
 
-// islem tek bir route için OpenAPI işlemini kurar.
-func (d *Doc) islem(method, yol string) Operation {
-	op := d.zenginlestirme[anahtar(method, yol)]
+// operation builds the OpenAPI operation for a single route.
+func (d *Doc) operation(method, path string) Operation {
+	op := d.enrichment[key(method, path)]
 
 	if op.OperationID == "" {
-		op.OperationID = islemKimligi(method, yol)
+		op.OperationID = operationID(method, path)
 	}
 
 	if len(op.Tags) == 0 {
-		if etiket := etiketten(yol); etiket != "" {
-			op.Tags = []string{etiket}
+		if tag := tagFrom(path); tag != "" {
+			op.Tags = []string{tag}
 		}
 	}
 
-	// Yol parametreleri desenden türetilir; elle yazılanlar korunur.
-	op.Parameters = birlestirParametreler(op.Parameters, yolParametreleri(yol))
+	// The path parameters are derived from the pattern; hand-written ones are kept.
+	op.Parameters = mergeParameters(op.Parameters, pathParameters(path))
 
 	if op.Responses == nil {
 		op.Responses = map[string]any{}
 	}
 
-	for kod, aciklama := range varsayilanYanitlar(yol) {
-		if _, var_ := op.Responses[kod]; !var_ {
-			op.Responses[kod] = aciklama
+	for code, description := range defaultResponses(path) {
+		if _, var_ := op.Responses[code]; !var_ {
+			op.Responses[code] = description
 		}
 	}
 
-	// Yalnızca nil doldurulur: elle verilen BOŞ dilim "bu uç açıkça korumasız"
-	// demektir ve ezilirse anlamı tersine döner.
+	// Only nil is filled in: a hand-given EMPTY slice means "this endpoint is
+	// explicitly unprotected" and overwriting it would invert the meaning.
 	if op.Security == nil {
-		op.Security = guvenlik(yol)
+		op.Security = security(path)
 	}
 
 	return op
 }
 
-// anahtar zenginleştirme haritasının anahtarını üretir.
-func anahtar(method, pattern string) string {
+// key produces the key of the enrichment map.
+func key(method, pattern string) string {
 	return strings.ToUpper(method) + " " + pattern
 }
 
-// normalizeYol chi'nin döndürdüğü route dizesini OpenAPI yoluna çevirir.
+// normalizePath turns the route string chi returns into an OpenAPI path.
 //
-// chi iç içe Mount'larda "/*" kalıntıları bırakabilir; bunlar OpenAPI'de
-// geçersizdir.
-func normalizeYol(route string) string {
-	yol := strings.ReplaceAll(route, "/*/", "/")
-	yol = strings.TrimSuffix(yol, "/*")
+// chi can leave "/*" remnants behind on nested Mounts; those are invalid in
+// OpenAPI.
+func normalizePath(route string) string {
+	path := strings.ReplaceAll(route, "/*/", "/")
+	path = strings.TrimSuffix(path, "/*")
 
-	if yol == "" {
+	if path == "" {
 		return "/"
 	}
 
-	return yol
+	return path
 }
 
-// ilgili yolun belgeye dâhil edilip edilmeyeceğini bildirir.
+// included reports whether the path goes into the document.
 //
-// Yalnızca versiyonlu API yüzeyi belgelenir; /health ve /ready operasyonel
-// uçlardır ve istemci üreteçlerinin metod üretmesi istenmez.
-func ilgili(yol string) bool {
-	return strings.HasPrefix(yol, adminPrefix) || strings.HasPrefix(yol, storePrefix)
+// Only the versioned API surface is documented; /health and /ready are
+// operational endpoints and client generators are not meant to produce methods
+// for them.
+func included(path string) bool {
+	return strings.HasPrefix(path, adminPrefix) || strings.HasPrefix(path, storePrefix)
 }
 
-// etiketten yoldan modül etiketini çıkarır (örn. "/store/v1/products" → "products").
-func etiketten(yol string) string {
-	kalan := strings.TrimPrefix(strings.TrimPrefix(yol, adminPrefix), storePrefix)
-	parcalar := strings.Split(strings.Trim(kalan, "/"), "/")
+// tagFrom extracts the module tag from the path (e.g. "/store/v1/products" → "products").
+func tagFrom(path string) string {
+	remaining := strings.TrimPrefix(strings.TrimPrefix(path, adminPrefix), storePrefix)
+	parts := strings.Split(strings.Trim(remaining, "/"), "/")
 
-	if len(parcalar) == 0 || parcalar[0] == "" {
+	if len(parts) == 0 || parts[0] == "" {
 		return ""
 	}
 
-	return parcalar[0]
+	return parts[0]
 }
 
-// islemKimligi metod ve yoldan bir operationId türetir.
-func islemKimligi(method, yol string) string {
-	temiz := strings.NewReplacer("/", "_", "{", "", "}", "", "-", "_").Replace(yol)
+// operationID derives an operationId from the method and the path.
+func operationID(method, path string) string {
+	clean := strings.NewReplacer("/", "_", "{", "", "}", "", "-", "_").Replace(path)
 
-	return strings.ToLower(method) + temiz
+	return strings.ToLower(method) + clean
 }
 
-// yolParametreleri desendeki {ad} yer tutucularını parametreye çevirir.
-func yolParametreleri(yol string) []Parameter {
+// pathParameters turns the {name} placeholders in the pattern into parameters.
+func pathParameters(path string) []Parameter {
 	var params []Parameter
 
-	for _, parca := range strings.Split(yol, "/") {
-		if !strings.HasPrefix(parca, "{") || !strings.HasSuffix(parca, "}") {
+	for _, part := range strings.Split(path, "/") {
+		if !strings.HasPrefix(part, "{") || !strings.HasSuffix(part, "}") {
 			continue
 		}
 
-		ad := strings.Trim(parca, "{}")
+		ad := strings.Trim(part, "{}")
 		params = append(params, Parameter{
 			Name:     ad,
 			In:       "path",
 			Required: true,
-			Schema:   map[string]any{semaTip: tipDize},
+			Schema:   map[string]any{schemaType: typeString},
 		})
 	}
 
 	return params
 }
 
-// birlestirParametreler elle yazılan parametreleri türetilenlerle birleştirir.
+// mergeParameters merges the hand-written parameters with the derived ones.
 //
-// Elle yazılan KAZANIR: açıklama ve örnek gibi ayrıntıları türetici üretemez.
-func birlestirParametreler(elle, turetilen []Parameter) []Parameter {
-	varOlan := make(map[string]struct{}, len(elle))
-	for _, p := range elle {
-		varOlan[p.In+":"+p.Name] = struct{}{}
+// The hand-written one WINS: a generator cannot produce details like a
+// description or an example.
+func mergeParameters(byHand, derived []Parameter) []Parameter {
+	known := make(map[string]struct{}, len(byHand))
+	for _, p := range byHand {
+		known[p.In+":"+p.Name] = struct{}{}
 	}
 
-	sonuc := append([]Parameter(nil), elle...)
+	result := append([]Parameter(nil), byHand...)
 
-	for _, p := range turetilen {
-		if _, ok := varOlan[p.In+":"+p.Name]; !ok {
-			sonuc = append(sonuc, p)
+	for _, p := range derived {
+		if _, ok := known[p.In+":"+p.Name]; !ok {
+			result = append(result, p)
 		}
 	}
 
-	return sonuc
+	return result
 }
 
-// guvenlik yola göre güvenlik gereksinimini döner.
+// security returns the security requirement for a path.
 //
-// HİÇBİR ZAMAN nil DÖNMEZ: [Operation.Security] omitempty taşımadığı için nil
-// bir dilim şemaya "security": null yazar ve bu geçersizdir. Boş dilim ise
-// hem geçerli hem anlamlıdır — "bu uç açıkça korumasız".
-func guvenlik(yol string) []map[string][]string {
+// It NEVER returns nil: because [Operation.Security] carries no omitempty, a nil
+// slice writes "security": null into the schema and that is invalid. An empty
+// slice is both valid and meaningful — "this endpoint is explicitly unprotected".
+func security(path string) []map[string][]string {
 	switch {
-	case yol == loginPath:
-		// Boş dilim ile nil FARKLIDIR: boş dilim "bu uç açıkça korumasız"
-		// demektir ve kök seviyedeki güvenliği EZER; nil "belirtilmemiş"
-		// demektir ve okuyucu kök varsayılanı miras aldığını varsayar.
+	case path == loginPath:
+		// An empty slice and nil are DIFFERENT: an empty slice means "this endpoint
+		// is explicitly unprotected" and OVERRIDES the root-level security; nil
+		// means "unspecified" and a reader assumes it inherits the root default.
 		return []map[string][]string{}
-	case strings.HasPrefix(yol, adminPrefix):
+	case strings.HasPrefix(path, adminPrefix):
 		return []map[string][]string{{bearerScheme: {}}}
-	case strings.HasPrefix(yol, storePrefix):
+	case strings.HasPrefix(path, storePrefix):
 		return []map[string][]string{{publishableScheme: {}}}
 	default:
-		// Belgeye yalnızca admin/store yolları girer ([ilgili]); buraya düşen
-		// bir yol için doğru cevap da "korumasız"dır, "belirtilmemiş" değil.
+		// Only admin/store paths enter the document ([included]); for a path
+		// landing here the right answer is "unprotected" too, not "unspecified".
 		return []map[string][]string{}
 	}
 }
 
-// JSON Schema'nın sık tekrarlanan anahtar ve tip adları.
+// The frequently repeated key and type names of JSON Schema.
 //
-// Sabit olarak tutulmalarının sebebi tekrarın kendisi değil, yazım hatasının
-// SESSİZ olmasıdır: "propertes" yazılmış bir harita anahtarı derlenir, şema
-// üretilir ve yalnızca şemayı okuyan istemci alanı bulamayınca ortaya çıkar.
+// They are constants not because of the repetition itself but because a typo is
+// SILENT: a map key written "propertes" compiles, the schema is produced, and it
+// only comes out when a client reading the schema cannot find the field.
 const (
-	semaTip          = "type"
-	semaOzellikler   = "properties"
-	semaZorunlu      = "required"
-	semaAciklama     = "description"
-	semaOgeler       = "items"
-	semaEkOzellikler = "additionalProperties"
-	semaBicim        = "format"
-	semaRef          = "$ref"
-	semaHerhangi     = "anyOf"
-	tipNesne         = "object"
-	tipDize          = "string"
-	tipTamSayi       = "integer"
-	tipSayi          = "number"
-	tipDizi          = "array"
-	tipMantiksal     = "boolean"
-	tipBos           = "null"
-	bicimTarihSaat   = "date-time"
-	bicimBayt        = "byte"
-	bicimInt32       = "int32"
-	bicimInt64       = "int64"
-	bicimFloat       = "float"
-	bicimDouble      = "double"
+	schemaType                 = "type"
+	schemaProperties           = "properties"
+	schemaRequired             = "required"
+	schemaDescription          = "description"
+	schemaItems                = "items"
+	schemaAdditionalProperties = "additionalProperties"
+	schemaFormat               = "format"
+	schemaRef                  = "$ref"
+	schemaAny                  = "anyOf"
+	typeObject                 = "object"
+	typeString                 = "string"
+	typeInteger                = "integer"
+	typeNumber                 = "number"
+	typeArray                  = "array"
+	typeBoolean                = "boolean"
+	typeNull                   = "null"
+	formatDateTime             = "date-time"
+	formatByte                 = "byte"
+	formatInt32                = "int32"
+	formatInt64                = "int64"
+	formatFloat                = "float"
+	formatDouble               = "double"
 )
 
-// Çekirdeğin kendi paylaşılan bileşenlerinin adları.
+// The names of the core's own shared components.
 //
-// Türetilen şemalarla AYNI ad alanını paylaşırlar; bu yüzden adları
-// [ayrilmisSemaAdlari] üzerinden korunur.
+// They share the SAME namespace as the derived schemas; that is why the names
+// are protected through [reservedSchemaNames].
 const (
-	semaAdiError = "Error"
-	semaAdiList  = "List"
+	schemaNameError = "Error"
+	schemaNameList  = "List"
 )
 
-// varsayilanYanitlar her uçta olabilecek ortak hata yanıtlarını döner.
+// defaultResponses returns the shared error responses every endpoint can produce.
 //
-// Giriş ucu 401'in DIŞINDA TUTULMAZ. Uç korumasızdır ama işi tam olarak
-// kimlik bilgisi doğrulamaktır ve hatalı e-posta/parolada 401 döner
-// (auth servisi errors.Unauthorized üretir). "Korumasız" ile "401 üretmez"
-// karıştırılırsa istemci üreteci giriş hatasını hiç ele almayan bir metod
-// üretir ve hatalı parola istemcide beklenmeyen bir arıza gibi görünür.
-func varsayilanYanitlar(yol string) map[string]any {
-	yanitlar := map[string]any{
-		"401": hataYaniti("Kimlik doğrulama eksik veya geçersiz"),
-		"422": hataYaniti("Girdi doğrulamadan geçmedi"),
-		"429": hataYaniti("İstek sınırı aşıldı"),
-		"500": hataYaniti("Beklenmeyen sunucu hatası"),
+// The login endpoint is NOT EXEMPTED from the 401. The endpoint is unprotected
+// but its job is exactly to verify credentials, and it returns a 401 on a wrong
+// email/password (the auth service produces errors.Unauthorized). Confusing
+// "unprotected" with "produces no 401" would have a client generator produce a
+func defaultResponses(path string) map[string]any {
+	responses := map[string]any{
+		"401": errorResponse("Authentication is missing or invalid"),
+		"422": errorResponse("The input did not pass validation"),
+		"429": errorResponse("The request limit was exceeded"),
+		"500": errorResponse("An unexpected server error"),
 	}
 
-	if yol == loginPath {
-		// Giriş ucunda 401 "jeton eksik" değil "kimlik bilgisi hatalı"dır.
-		// Başarısız denemeler arasında ayrım yapılmaz; açıklama da bu yüzden
-		// tek bir nedeni işaret etmez (bkz. auth adminLogin).
-		yanitlar["401"] = hataYaniti("E-posta ya da parola hatalı")
+	if path == loginPath {
+		// At the login endpoint a 401 is not "the token is missing" but "the
+		// credentials are wrong". Failed attempts are not told apart, so the
+		// description does not point at a single cause either (see auth adminLogin).
+		responses["401"] = errorResponse("The email or the password is wrong")
 
-		// 403 yalnızca yetkilendirme adımı OLAN uçlarda anlamlıdır; girişte
-		// henüz bir kimlik yoktur, dolayısıyla yetersiz yetki de olamaz.
-		return yanitlar
+		// A 403 is only meaningful at endpoints that HAVE an authorization step;
+		// at login there is no identity yet, so there can be no insufficient right.
+		return responses
 	}
 
-	if strings.HasPrefix(yol, adminPrefix) {
-		yanitlar["403"] = hataYaniti("Kimlik doğrulandı ama yetki yetersiz")
+	if strings.HasPrefix(path, adminPrefix) {
+		responses["403"] = errorResponse("Authenticated but the rights are not enough")
 	}
 
-	return yanitlar
+	return responses
 }
 
-// hataYaniti ortak hata zarfına atıfta bulunan bir yanıt tanımı üretir.
-func hataYaniti(aciklama string) map[string]any {
-	return Response(aciklama, refSemasi(semaAdiError))
+// errorResponse produces a response definition referring to the shared error envelope.
+func errorResponse(description string) map[string]any {
+	return Response(description, refSchema(schemaNameError))
 }
 
-// bilesenler paylaşılan şemaları, türetilmiş şemaları ve güvenlik tanımlarını
-// döner.
-func (d *Doc) bilesenler() map[string]any {
+// components returns the shared schemas, the derived schemas and the security
+// definitions.
+func (d *Doc) components() map[string]any {
 	return map[string]any{
 		"securitySchemes": map[string]any{
 			bearerScheme: map[string]any{
-				semaTip:        "http",
-				"scheme":       "bearer",
-				"bearerFormat": "JWT",
-				semaAciklama:   "Admin oturum jetonu. /admin/v1/auth/login ile alınır.",
+				schemaType:        "http",
+				"scheme":          "bearer",
+				"bearerFormat":    "JWT",
+				schemaDescription: "The admin session token. It is obtained with /admin/v1/auth/login.",
 			},
 			publishableScheme: map[string]any{
-				semaTip: "apiKey",
-				"in":    "header",
-				"name":  "x-publishable-api-key",
-				semaAciklama: "Mağaza isteğini bir satış kanalına bağlar. " +
-					"SIR DEĞİLDİR; tarayıcıda görünmesi beklenir.",
+				schemaType: "apiKey",
+				"in":       "header",
+				"name":     "x-publishable-api-key",
+				schemaDescription: "Binds the store request to a sales channel. " +
+					"It is NOT A SECRET; it is expected to be visible in the browser.",
 			},
 		},
-		"schemas": d.semaBilesenleri(),
+		"schemas": d.schemaComponents(),
 	}
 }
 
-// semaBilesenleri çekirdeğin ortak şemalarını türetilmiş şemalarla birleştirir.
+// schemaComponents merges the core's shared schemas with the derived ones.
 //
-// Türetilenler ortakları EZEMEZ: [ayrilmisSemaAdlari] çakışmayı daha
-// [Doc.SchemaOf] aşamasında yakalar ve [Doc.Build] hata döner. Burada
-// ortakların sonra yazılması ikinci savunma hattıdır — bir gün o kontrol
-// atlanırsa hata zarfının şeması yine de bozulmaz.
-func (d *Doc) semaBilesenleri() map[string]any {
-	semalar := make(map[string]any, len(d.semalar)+len(ayrilmisSemaAdlari))
+// The derived ones CANNOT overwrite the shared ones: [reservedSchemaNames]
+// catches the clash back in [Doc.SchemaOf] and [Doc.Build] returns an error.
+// The shared ones being written last here is a second line of defense — if that
+// check is ever skipped, the error envelope's schema still does not break.
+func (d *Doc) schemaComponents() map[string]any {
+	schemas := make(map[string]any, len(d.schemas)+len(reservedSchemaNames))
 
-	for ad, sema := range d.semalar {
-		semalar[ad] = sema
+	for ad, schema := range d.schemas {
+		schemas[ad] = schema
 	}
 
-	semalar[semaAdiError] = map[string]any{
-		semaTip:     tipNesne,
-		semaZorunlu: []string{"error"},
-		semaOzellikler: map[string]any{
+	schemas[schemaNameError] = map[string]any{
+		schemaType:     typeObject,
+		schemaRequired: []string{"error"},
+		schemaProperties: map[string]any{
 			"error": map[string]any{
-				semaTip:     tipNesne,
-				semaZorunlu: []string{"code", "message"},
-				semaOzellikler: map[string]any{
-					"code":       map[string]any{semaTip: tipDize},
-					"message":    map[string]any{semaTip: tipDize},
-					"request_id": map[string]any{semaTip: tipDize},
-					"details":    map[string]any{semaTip: tipNesne},
+				schemaType:     typeObject,
+				schemaRequired: []string{"code", "message"},
+				schemaProperties: map[string]any{
+					"code":       map[string]any{schemaType: typeString},
+					"message":    map[string]any{schemaType: typeString},
+					"request_id": map[string]any{schemaType: typeString},
+					"details":    map[string]any{schemaType: typeObject},
 				},
 			},
 		},
 	}
 
-	// TİPSİZ liste zarfı BİLİNÇLİ olarak yayımlanmaz.
+	// The UNTYPED list envelope is DELIBERATELY not published.
 	//
-	// Bir zamanlar "kayıt şeması bilinmeyen uçlar için" diye yazılıyordu ama
-	// hiçbir uç ona atıf yapmıyordu; gerçek bir istemci üreteci
-	// (openapi-generator) onu "kullanılmayan model" diye bildirdi ve üretilen
-	// her istemcide ölü bir sınıf olarak duruyordu.
+	// It used to be written "for endpoints whose record schema is unknown", but
+	// no endpoint referred to it; a real client generator (openapi-generator)
+	// reported it as an "unused model" and it stood as a dead class in every
+	// generated client.
 	//
-	// Anlatılmamış liste uçlarına varsayılan olarak bağlamak da cazipti ama
-	// YANLIŞ olurdu: zarf biçimi bu depoda evrensel olsa bile, bir ucun
-	// gerçekten liste döndüğü DOĞRULANMADAN şemaya yazılamaz. Doğrulanmamış
-	// bir iddia, sessizlikten kötüdür — istemci onu doğru sanır.
+	// Attaching it by default to undescribed list endpoints was tempting too but
+	// would be WRONG: even though the envelope shape is universal in this
+	// repository, it cannot be written into the schema without VERIFYING that an
+	// endpoint really returns a list. An unverified claim is worse than silence —
+	// the client takes it for the truth.
 	//
-	// Ad yine de [ayrilmisSemaAdlari] içinde KALIR: bir modülün "List" adlı
-	// DTO'su, yayımlanan sözleşmede anlamı olmayan bir genel ad üretirdi.
+	// The name still STAYS in [reservedSchemaNames]: a module's DTO named "List"
+	// would produce a generic name that means nothing in the published contract.
 
-	return semalar
+	return schemas
 }
 
-// Handler üretilen şemayı JSON olarak sunan handler'ı döner.
+// Handler returns the handler serving the produced schema as JSON.
 //
-// # Neden önbellek
+// # Why a cache
 //
-// Belge üretimi ucuz DEĞİLDİR: router ağacının tamamı gezilir, her route için
-// işlem nesnesi (parametreler, ortak yanıtlar, güvenlik) kurulur, bileşen
-// şemaları kopyalanır ve sonuç JSON'a kodlanır. Bunu her istekte yapmak,
-// küçük bir GET'i sürecin en pahalı işine çevirir — üstelik bu uç, kimlik ve
-// kota kapılarının DIŞINDA mount edilebilen bir uçtur.
+// Building the document is NOT cheap: the whole router tree is walked, an
+// operation object (parameters, shared responses, security) is built for every
+// route, the component schemas are copied and the result is encoded to JSON.
+// Doing that on every request turns a small GET into the most expensive work in
+// the process — and this endpoint can be mounted OUTSIDE the identity and quota
+// gates.
 //
-// # Neden "açılışta bir kez" değil
+// # Why not "once at startup"
 //
-// Ağacın ne zaman DONDUĞU çekirdeğin bilebileceği bir şey değildir: route'ları
-// modüller bootstrap sırasında, eklentiler ise ondan sonra bağlar
-// (bkz. plugin paketindeki Registry.MountRoutes) ve bu handler'ın hangi sırada
-// kaydedildiğine dair bir garanti YOKTUR. Açılışta bir kez üretmek, handler
-// kaydedildikten sonra bağlanan her route'u belgeden SESSİZCE düşürürdü —
-// belgenin varlık sebebi tam da bunun olmamasıdır.
+// When the tree FREEZES is not something the core can know: modules bind their
+// routes during bootstrap and plugins after that (see Registry.MountRoutes in
+// the plugin package), and there is NO guarantee about the order this handler
+// was registered in. Building once at startup would SILENTLY drop every route
+// bound after the handler was registered — and not doing that is the document's
+// whole reason to exist.
 //
-// Bu yüzden önbellek bir varsayıma değil, belgenin GİRDİLERİNE bağlanır: her
-// istek ağacın kimliğini çıkarır (yalnızca gezme; işlem kurulmaz, kodlama
-// yapılmaz) ve anlatım sürümüyle birleştirip önbellektekiyle karşılaştırır.
-// Girdi aynıysa kodlanmış gövde olduğu gibi yazılır. Kalan maliyet ağacın
-// gezilmesidir ve üretimin yanında küçüktür; karşılığında önbellek, çalışırken
-// route ekleyen bir kurulumda da doğru kalır.
+// So the cache rests not on an assumption but on the document's INPUTS: every
+// request derives the tree's identity (a walk only; no operation is built, no
+// encoding is done), combines it with the description version and compares it
+// with the cached one. With the same input the encoded body is written as it
+// is. The remaining cost is walking the tree and it is small next to the build;
+// in exchange the cache stays correct in an installation that adds routes while
+// running.
 func (d *Doc) Handler(r chi.Routes) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
-		govde, err := d.kodlanmisBelge(r)
+		body, err := d.encodedDocument(r)
 		if err != nil {
-			// Hata istemciye HAM verilmez: metni çakışan tiplerin PAKET
-			// YOLLARINI taşır ve bu uç kimliksiz çağrılabilir. KindInternal'a
-			// sarmak çekirdeğin kararını uygular — gövde ortak hata zarfıdır,
-			// mesaj maskelenir, gerçek sebep istek kimliğiyle loglanır.
+			// The error is NOT handed to the client RAW: its text carries the
+			// PACKAGE PATHS of the clashing types and this endpoint can be called
+			// without an identity. Wrapping it in KindInternal applies the core's
+			// decision — the body is the shared error envelope, the message is
+			// masked and the real reason is logged with the request id.
 			corehttp.WriteError(req.Context(), w,
 				errors.Wrap(err, errors.KindInternal, codeDocumentUnavailable,
-					"openapi belgesi üretilemedi"))
+					"the openapi document could not be produced"))
 
 			return
 		}
 
-		// Başlık ve durum kodu çekirdeğin kapısından yazılır: nil gövde
-		// WriteJSON'da "yalnızca başlık ve status" demektir, yani Content-Type
-		// kararı burada İKİNCİ kez tanımlanmaz.
+		// The header and the status code are written through the core's gate: a nil
+		// body means "headers and status only" in WriteJSON, so the Content-Type
+		// decision is not defined a SECOND time here.
 		corehttp.WriteJSON(req.Context(), w, http.StatusOK, nil)
 
-		// Gövde doğrudan yazılır çünkü ZATEN KODLANMIŞTIR. Çekirdeğin
-		// yazıcısına verilseydi (json.RawMessage ile) belge her istekte bir
-		// kez daha taranıp kopyalanırdı; ölçülen bedel, önbelleğin kazandırdığı
-		// sürenin çoğunu geri alacak kadar büyüktür.
-		if _, err := w.Write(govde); err != nil {
-			// Durum kodu çoktan gönderildi (istemci bağlantıyı kapatmış
-			// olabilir); yapılabilecek tek şey kaydetmektir — corehttp.WriteJSON
-			// de aynısını yapar.
+		// The body is written directly because it is ALREADY ENCODED. Handed to the
+		// core's writer (as a json.RawMessage) the document would be scanned and
+		// copied once more per request; the measured price is large enough to take
+		// back most of what the cache saves.
+		if _, err := w.Write(body); err != nil {
+			// The status code has already been sent (the client may have closed the
+			// connection); the only thing left to do is record it — corehttp.WriteJSON
+			// does the same.
 			corehttp.LoggerFromContext(req.Context()).ErrorContext(req.Context(),
-				"openapi belgesi yazılamadı",
+				"the openapi document could not be written",
 				"error", err,
 				"request_id", corehttp.RequestIDFromContext(req.Context()),
 			)
@@ -673,11 +683,11 @@ func (d *Doc) Handler(r chi.Routes) http.HandlerFunc {
 	}
 }
 
-// kodlanmisBelge belgeyi önbellekten döner, girdiler değiştiyse yeniden üretir.
-func (d *Doc) kodlanmisBelge(r chi.Routes) ([]byte, error) {
-	// Ağaç kilidin DIŞINDA gezilir: gezme belgeye dokunmaz ve kilit, üretimin
-	// gerçekten gerektiği ana saklanır.
-	kimlik, err := routeKimligi(r)
+// encodedDocument returns the document from the cache, rebuilding it if the inputs changed.
+func (d *Doc) encodedDocument(r chi.Routes) ([]byte, error) {
+	// The tree is walked OUTSIDE the lock: walking does not touch the document and
+	// the lock is kept for the moment the build is really needed.
+	identity, err := routeIdentity(r)
 	if err != nil {
 		return nil, err
 	}
@@ -685,92 +695,93 @@ func (d *Doc) kodlanmisBelge(r chi.Routes) ([]byte, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
-	kimlik.anlatimSurumu = d.anlatimSurumu
+	identity.describeVersion = d.describeVersion
 
-	if d.onbellek != nil && d.onbellek.kimlik == kimlik {
-		return d.onbellek.govde, d.onbellek.hata
+	if d.cache != nil && d.cache.identity == identity {
+		return d.cache.body, d.cache.err
 	}
 
-	govde, uretimHatasi := d.uretVeKodla(r)
-	d.onbellek = &onbellekGirdisi{kimlik: kimlik, govde: govde, hata: uretimHatasi}
+	body, buildError := d.buildAndEncode(r)
+	d.cache = &cacheEntry{identity: identity, body: body, err: buildError}
 
-	return govde, uretimHatasi
+	return body, buildError
 }
 
-// uretVeKodla belgeyi üretip JSON'a kodlar; kilidin TUTULDUĞUNU varsayar.
+// buildAndEncode builds the document and encodes it to JSON; it ASSUMES the lock is HELD.
 //
-// Gövde GİRİNTİLİ ve satır sonuyla biter. İkisi de önbellekten önceki
-// davranışla aynıdır ve aynı kalması bilinçlidir: belge yayımlanan bir
-// SÖZLEŞMEDİR, kaydedilmiş çıktılarla karşılaştırılır (make openapi-schema) ve
-// bir hızlandırmanın onu bayt düzeyinde değiştirmesi, değişikliği gerçek bir
-// şema değişikliğinden ayırt edilemez kılardı. Girintinin bedeli de artık
-// istek başına değil, üretim başına ödenir.
-func (d *Doc) uretVeKodla(r chi.Routes) ([]byte, error) {
-	belge, err := d.uret(r)
+// The body is INDENTED and ends with a newline. Both match the behavior from
+// before the cache and staying the same is deliberate: the document is a
+// published CONTRACT, it is compared against recorded outputs (make
+// openapi-schema), and a speed-up changing it byte for byte would make the
+// change indistinguishable from a real schema change. The price of the
+// indentation is now paid per build rather than per request.
+func (d *Doc) buildAndEncode(r chi.Routes) ([]byte, error) {
+	doc, err := d.build(r)
 	if err != nil {
 		return nil, err
 	}
 
-	govde, err := json.MarshalIndent(belge, "", "  ")
+	body, err := json.MarshalIndent(doc, "", "  ")
 	if err != nil {
 		return nil, errors.Wrap(err, errors.KindInternal, codeDocumentUnavailable,
-			"openapi belgesi kodlanamadı")
+			"the openapi document could not be encoded")
 	}
 
-	// MarshalIndent satır sonu koymaz; json.Encoder koyardı.
-	return append(govde, '\n'), nil
+	// MarshalIndent writes no newline; a json.Encoder would.
+	return append(body, '\n'), nil
 }
 
-// routeKimligi router ağacının O ANDAKİ içeriğini kimliğe indirger.
+// routeIdentity reduces the CURRENT contents of the router tree to an identity.
 //
-// Karma SIRADAN BAĞIMSIZ birleştirilir (XOR). chi'nin yürüyüş sırası bugün
-// deterministiktir ama ona bağlanmanın bedeli sessizdir: sıra bir gün
-// değişirse kimlik her istekte farklı çıkar, önbellek hiç tutmaz ve çıktı yine
-// doğru olduğu için kimse fark etmez.
-func routeKimligi(r chi.Routes) (belgeKimligi, error) {
-	var kimlik belgeKimligi
+// The hash is combined ORDER-INDEPENDENTLY (XOR). chi's walk order is
+// deterministic today, but the price of depending on it is silent: were the
+// order to change one day, the identity would differ on every request, the
+// cache would never hit and nobody would notice because the output is still
+// correct.
+func routeIdentity(r chi.Routes) (documentIdentity, error) {
+	var identity documentIdentity
 
 	err := chi.Walk(r, func(
 		method, route string, _ http.Handler, _ ...func(http.Handler) http.Handler,
 	) error {
-		karma := karmaEkle(karmaEkle(karmaBaslangici, method), route)
+		hash := addToHash(addToHash(hashSeed, method), route)
 
-		kimlik.routeKarmasi ^= karma
-		kimlik.routeSayisi++
+		identity.routeHash ^= hash
+		identity.routeCount++
 
 		return nil
 	})
 	if err != nil {
-		return belgeKimligi{}, errors.Wrap(err, errors.KindInternal, codeDocumentUnavailable,
-			"route ağacı gezilemedi")
+		return documentIdentity{}, errors.Wrap(err, errors.KindInternal, codeDocumentUnavailable,
+			"the route tree could not be walked")
 	}
 
-	return kimlik, nil
+	return identity, nil
 }
 
-// FNV-1a 64-bit karmasının sabitleri.
+// The constants of the FNV-1a 64-bit hash.
 //
-// Karma elle yazılır çünkü hash/fnv'nin arayüzü her route için bir nesne
-// AYIRIR; kimlik her istekte hesaplandığı için ayırma sayısı doğrudan route
-// sayısıyla çarpılırdı. Kriptografik güç aranmıyor: değer yalnızca "girdi
-// değişti mi" sorusuna cevap verir ve çakışma hâlinde bedel, belgenin bir kez
-// fazladan üretilmemesidir — bu yüzden sayı ([belgeKimligi.routeSayisi])
-// karmayla BİRLİKTE karşılaştırılır.
+// The hash is written by hand because hash/fnv's interface ALLOCATES an object
+// per route; since the identity is computed on every request, the allocation
+// count would be multiplied directly by the route count. No cryptographic
+// strength is wanted: the value only answers "did the input change", and the
+// price of a collision is one document not being rebuilt — which is why the
+// count ([documentIdentity.routeCount]) is compared TOGETHER with the hash.
 const (
-	karmaBaslangici uint64 = 14695981039346656037
-	karmaCarpani    uint64 = 1099511628211
+	hashSeed  uint64 = 14695981039346656037
+	hashPrime uint64 = 1099511628211
 )
 
-// karmaEkle bir dizeyi mevcut karmaya karıştırır.
-func karmaEkle(karma uint64, s string) uint64 {
+// addToHash mixes a string into the current hash.
+func addToHash(hash uint64, s string) uint64 {
 	for i := range len(s) {
-		karma ^= uint64(s[i])
-		karma *= karmaCarpani
+		hash ^= uint64(s[i])
+		hash *= hashPrime
 	}
 
-	// Ayraç: "GET" + "/a" ile "GE" + "T/a" aynı karmayı vermemelidir.
-	karma ^= uint64(' ')
-	karma *= karmaCarpani
+	// A separator: "GET" + "/a" must not give the same hash as "GE" + "T/a".
+	hash ^= uint64(' ')
+	hash *= hashPrime
 
-	return karma
+	return hash
 }

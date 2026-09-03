@@ -13,65 +13,66 @@ import (
 	coreerrors "github.com/bdrtr/gobit/internal/core/errors"
 )
 
-// CodeRateLimited hız sınırı aşıldığında dönen makine okunur hata kodudur.
+// CodeRateLimited is the machine-readable error code returned when the rate limit is exceeded.
 const CodeRateLimited = "rate_limited"
 
-// forwardedForHeader ters proxy'lerin istemci IP zincirini taşıdığı başlıktır.
+// forwardedForHeader is the header reverse proxies carry the client IP chain in.
 const forwardedForHeader = "X-Forwarded-For"
 
-// gcInterval bellek içi kovaların temizlenme sıklığıdır.
+// gcInterval is how often the in-memory buckets are swept.
 //
-// Temizlik olmazsa her yeni IP kalıcı bir kova bırakır ve bellek sınırsız
-// büyür; bu, hız sınırlayıcının kendisini bir DoS vektörüne çevirir.
+// Without the sweep every new IP leaves a permanent bucket behind and memory
+// grows without bound; that turns the rate limiter itself into a DoS vector.
 const gcInterval = time.Minute
 
-// Decision tek bir hız sınırı sorgusunun sonucudur.
+// Decision is the result of a single rate limit query.
 type Decision struct {
-	// Allowed isteğin geçirilip geçirilmeyeceğini bildirir.
+	// Allowed reports whether the request is to be let through.
 	Allowed bool
-	// Limit pencere başına izin verilen toplam istek sayısıdır.
+	// Limit is the total number of requests allowed per window.
 	Limit int
-	// Remaining bu pencerede kalan istek hakkıdır; negatif olmaz.
+	// Remaining is the request budget left in this window; it is never negative.
 	Remaining int
-	// RetryAfter yeniden denemeden önce beklenmesi gereken süredir.
-	// Allowed true iken anlamlı değildir.
+	// RetryAfter is how long to wait before trying again.
+	// It is meaningless while Allowed is true.
 	RetryAfter time.Duration
 }
 
-// RateLimiter bir anahtarın kotasını tüketmeye çalışır.
+// RateLimiter tries to consume a key's quota.
 //
-// Uygulamalar eşzamanlı çağrıya güvenli olmalıdır. Hata dönerse middleware
-// isteği GEÇİRİR: sınırlayıcının arızası (örn. Redis erişilemez) tüm trafiği
-// kesmemelidir. Bu bilinçli bir "fail-open" tercihidir ve karşılığı, arıza
-// penceresinde sınırın uygulanmamasıdır.
+// Implementations have to be safe for concurrent calls. On an error the
+// middleware LETS THE REQUEST THROUGH: a fault in the limiter (Redis being
+// unreachable, say) must not cut off all traffic. This is a deliberate
+// "fail-open" choice, and its price is that the limit is not enforced during
+// the fault window.
 type RateLimiter interface {
 	Allow(ctx context.Context, key string) (Decision, error)
 }
 
-// KeyFunc bir isteği hız sınırı anahtarına çevirir.
+// KeyFunc turns a request into a rate limit key.
 //
-// Boş dize dönerse istek sınırlanmaz.
+// An empty string means the request is not limited.
 //
-// Anahtar, isteğin KENDİSİNDEN türetilebilecek şeylerle sınırlıdır. Bu
-// middleware koruma yığınında kimlik doğrulamadan ÖNCE koşar (gerekçesi
-// [APIGuards]'ın sıra bölümünde) ve o noktada context'te henüz [Principal]
-// yoktur: çağıranın kimliğine bakan bir KeyFunc her istekte IP'ye düşer,
-// üstelik [TrustedProxyIPKey]'in proxy düzeltmesini de kaybederek. Böyle bir
-// anahtar hiçbir şeyi bölmez, yalnızca bölüyormuş gibi görünür.
+// The key is limited to what can be derived from the request ITSELF. This
+// middleware runs BEFORE authentication in the guard stack (the reasoning is in
+// [APIGuards]'s ordering section) and at that point there is no [Principal] in
+// the context yet: a KeyFunc looking at the caller's identity falls back to the
+// IP on every request, and loses [TrustedProxyIPKey]'s proxy correction while
+// doing so. Such a key partitions nothing, it only looks like it does.
 //
-// Çağıranın kimliğine göre ad alanı ayıran halka, yığında kimlikten SONRA
-// koşan tek halkadır: idempotency (bkz. [Idempotency]).
+// The ring that namespaces by the caller's identity is the only ring that runs
+// AFTER identity in the stack: idempotency (see [Idempotency]).
 type KeyFunc func(r *http.Request) string
 
-// RateLimit istekleri anahtar başına sınırlayan middleware üretir.
+// RateLimit produces middleware limiting requests per key.
 //
-// limiter nil ise middleware bir no-op'tur: hız sınırı ürünün doğruluğu için
-// değil, kötüye kullanıma karşı vardır. Yapılandırılmamış bir sınırlayıcı
-// yüzünden tüm trafiği reddetmek, korumaya çalıştığı servisi çökertmek olurdu.
-// Bu, [RequireAdmin]'in nil kimlik doğrulayıcıda HER İSTEĞİ reddetmesinin
-// tam tersidir; ikisi de kendi başarısızlık modeli için doğrudur.
+// With a nil limiter the middleware is a no-op: the rate limit exists against
+// abuse, not for the product's correctness. Rejecting all traffic over an
+// unconfigured limiter would take down the very service it is protecting. This
+// is the exact opposite of [RequireAdmin] rejecting EVERY REQUEST on a nil
+// authenticator; both are right for their own failure model.
 //
-// keyFunc nil ise [ClientIPKey] kullanılır.
+// With a nil keyFunc [ClientIPKey] is used.
 func RateLimit(limiter RateLimiter, keyFunc KeyFunc) func(http.Handler) http.Handler {
 	if keyFunc == nil {
 		keyFunc = ClientIPKey
@@ -91,9 +92,9 @@ func RateLimit(limiter RateLimiter, keyFunc KeyFunc) func(http.Handler) http.Han
 
 			d, err := limiter.Allow(r.Context(), key)
 			if err != nil {
-				// Fail-open: sınırlayıcı arızasını logla ama trafiği kesme.
+				// Fail-open: log the limiter fault but do not cut off traffic.
 				LoggerFromContext(r.Context()).WarnContext(r.Context(),
-					"hız sınırlayıcı sorgulanamadı, istek geçiriliyor",
+					"the rate limiter could not be queried, letting the request through",
 					"error", err)
 				next.ServeHTTP(w, r)
 				return
@@ -103,7 +104,7 @@ func RateLimit(limiter RateLimiter, keyFunc KeyFunc) func(http.Handler) http.Han
 			if !d.Allowed {
 				w.Header().Set("Retry-After", strconv.Itoa(retryAfterSeconds(d.RetryAfter)))
 				WriteError(r.Context(), w, coreerrors.TooManyRequests(
-					CodeRateLimited, "istek sınırı aşıldı, lütfen sonra tekrar deneyin"))
+					CodeRateLimited, "request limit exceeded, please try again later"))
 				return
 			}
 
@@ -112,10 +113,11 @@ func RateLimit(limiter RateLimiter, keyFunc KeyFunc) func(http.Handler) http.Han
 	}
 }
 
-// writeRateLimitHeaders kota durumunu yanıt başlıklarına yazar.
+// writeRateLimitHeaders writes the quota state into the response headers.
 //
-// Başlık adları RFC 9331 taslağındaki RateLimit-* ailesini izler; istemcinin
-// sınıra çarpmadan önce yavaşlayabilmesi için başarılı yanıtlarda da yazılır.
+// The header names follow the RateLimit-* family of the RFC 9331 draft; they are
+// written on successful responses too so the client can slow down before hitting
+// the limit.
 func writeRateLimitHeaders(w http.ResponseWriter, d Decision) {
 	if d.Limit <= 0 {
 		return
@@ -126,10 +128,10 @@ func writeRateLimitHeaders(w http.ResponseWriter, d Decision) {
 	w.Header().Set("RateLimit-Reset", strconv.Itoa(retryAfterSeconds(d.RetryAfter)))
 }
 
-// retryAfterSeconds süreyi yukarı yuvarlayarak saniyeye çevirir.
+// retryAfterSeconds converts the duration to seconds, rounding UP.
 //
-// Aşağı yuvarlamak, istemcinin kota dolmadan tekrar denemesine ve ikinci bir
-// 429 almasına yol açardı. En az 1 döner: "0 saniye bekle" bir bekleme değildir.
+// Rounding down would have the client retry before the quota refills and take a
+// second 429. It returns at least 1: "wait 0 seconds" is not a wait.
 func retryAfterSeconds(d time.Duration) int {
 	if d <= 0 {
 		return 1
@@ -138,42 +140,45 @@ func retryAfterSeconds(d time.Duration) int {
 	return max(int(math.Ceil(d.Seconds())), 1)
 }
 
-// ClientIPKey isteği istemcinin ağ adresine göre anahtarlar.
+// ClientIPKey keys the request by the client's network address.
 //
-// YALNIZCA r.RemoteAddr'a bakar; X-Forwarded-For gibi başlıklara BAKMAZ.
-// O başlıkları istemci uydurabilir; her istekte farklı bir değer göndermek
-// sınırı tamamen etkisiz kılardı. Ters proxy arkasındaysanız
-// [TrustedProxyIPKey] kullanın ve güvendiğiniz atlama sayısını verin.
+// It looks ONLY at r.RemoteAddr; it does NOT look at headers like
+// X-Forwarded-For. The client can make those up, and sending a different value
+// on every request would render the limit entirely useless. Behind a reverse
+// proxy use [TrustedProxyIPKey] and give it the number of hops you trust.
 func ClientIPKey(r *http.Request) string {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
-		// Port yoksa RemoteAddr'ın kendisi adrestir.
+		// Without a port RemoteAddr is the address itself.
 		return strings.TrimSpace(r.RemoteAddr)
 	}
 
 	return host
 }
 
-// TrustedProxyIPKey X-Forwarded-For zincirinden istemci IP'sini çıkarır.
+// TrustedProxyIPKey extracts the client IP from the X-Forwarded-For chain.
 //
-// hops, istekle aramızdaki GÜVENİLEN ters proxy sayısıdır. Zincir soldan sağa
-// "istemci, proxy1, proxy2, ..." diye büyür: her proxy kendisine bağlanan
-// tarafın adresini SONA ekler. Dolayısıyla en sağdaki girdi bize en yakın
-// güvenilen proxy'nin yazdığıdır ve hops güvenilen atlama varken doğrulanmış
-// en soldaki adres SAĞDAN hops. girdidir: parts[len-hops].
+// hops is the number of TRUSTED reverse proxies between us and the request. The
+// chain grows left to right as "client, proxy1, proxy2, ..." : each proxy
+// APPENDS the address of the party connecting to it. So the rightmost entry is
+// the one written by the trusted proxy closest to us, and with hops trusted hops
+// the leftmost verified address is the hops-th entry FROM THE RIGHT:
+// parts[len-hops].
 //
-// Bir eleman daha sola kaymak (parts[len-hops-1]) doğrulanmış zincirin dışına
-// çıkar ve istemcinin başlığa kendi elleriyle yazdığı girdiyi seçerdi; saldırgan
-// her istekte farklı bir sahte girdi göndererek taze kova alır ve hız sınırını
-// tamamen atlardı. Bu yüzden indeks tam olarak len-hops'tur, bir eksiği değil.
+// Shifting one element further left (parts[len-hops-1]) steps outside the
+// verified chain and would pick the entry the client wrote into the header with
+// its own hands; an attacker sending a different forged entry on every request
+// gets a fresh bucket and bypasses the rate limit entirely. That is why the
+// index is exactly len-hops, not one less.
 //
-// hops sıfır ya da negatifse başlık hiç okunmaz ve [ClientIPKey]'e düşülür;
-// "proxy arkasında değilim" durumunun güvenli karşılığı budur.
+// With hops zero or negative the header is not read at all and it falls back to
+// [ClientIPKey]; that is the safe reading of "I am not behind a proxy".
 //
-// Zincir hops'u karşılayacak kadar uzun değilse yine [ClientIPKey]'e düşülür:
-// beklenenden kısa bir zincir, ya yapılandırma yanlıştır ya da istek proxy'yi
-// atlayarak gelmiştir. Kısa zincirde istemcinin verdiği İLK girdiye düşmek,
-// anahtarı istemciye seçtirmek olurdu — o yüzden RemoteAddr'a dönülür.
+// If the chain is not long enough to cover hops it falls back to [ClientIPKey]
+// as well: a chain shorter than expected means either the configuration is wrong
+// or the request arrived bypassing the proxy. Falling back to the FIRST entry
+// the client supplied on a short chain would let the client pick the key — so it
+// returns to RemoteAddr.
 func TrustedProxyIPKey(hops int) KeyFunc {
 	return func(r *http.Request) string {
 		if hops <= 0 {
@@ -182,14 +187,14 @@ func TrustedProxyIPKey(hops int) KeyFunc {
 
 		ham := r.Header.Get(forwardedForHeader)
 		if ham == "" {
-			// strings.Split boş dizeden TEK elemanlı dilim üretir; erken dönmezsek
-			// "hiç girdi yok" durumu bir girdilik zincir gibi sayılırdı.
+			// strings.Split produces a ONE-element slice from an empty string; without
+			// the early return "no entries at all" would count as a one-entry chain.
 			return ClientIPKey(r)
 		}
 
 		parts := strings.Split(ham, ",")
 
-		// Sağdan hops. girdi: güvenilen proxy'lerin yazdığı en soldaki adres.
+		// The hops-th entry from the right: the leftmost address written by trusted proxies.
 		idx := len(parts) - hops
 		if idx < 0 {
 			return ClientIPKey(r)
@@ -204,41 +209,42 @@ func TrustedProxyIPKey(hops int) KeyFunc {
 	}
 }
 
-// bucket tek bir anahtarın jeton kovasıdır.
+// bucket is a single key's token bucket.
 type bucket struct {
-	// tokens kalan jeton sayısıdır; kesirli birikimi koruduğu için float'tır.
+	// tokens is the number of tokens left; it is a float so it keeps fractional accrual.
 	tokens float64
-	// last kovanın en son yenilendiği andır.
+	// last is the moment the bucket was last refilled.
 	last time.Time
 }
 
-// MemoryLimiter süreç belleğinde çalışan jeton kovası sınırlayıcısıdır.
+// MemoryLimiter is a token bucket limiter running in process memory.
 //
-// Tek örnekli kurulumlar ve testler içindir. Yatay ölçeklenen bir dağıtımda
-// her örnek kendi kotasını sayar; yani gerçek sınır örnek sayısıyla çarpılır.
-// Çok örnekli kurulum için paylaşılan bir sayaç (Redis) gerekir.
+// It is for single-instance installations and tests. In a horizontally scaled
+// deployment every instance counts its own quota; that is, the real limit is
+// multiplied by the instance count. A multi-instance installation needs a shared
+// counter (Redis).
 type MemoryLimiter struct {
-	// limit pencere başına izin verilen istek sayısıdır.
+	// limit is the number of requests allowed per window.
 	limit int
-	// window kotanın tamamen yenilendiği süredir.
+	// window is the period over which the quota fully refills.
 	window time.Duration
-	// refill saniye başına eklenen jeton sayısıdır.
+	// refill is the number of tokens added per second.
 	refill float64
-	// now zamanı okur; testler saati ilerletebilsin diye alandır.
+	// now reads the time; it is a field so tests can advance the clock.
 	now func() time.Time
 
 	mu sync.Mutex
-	// buckets anahtar başına kovadır; gcAt geldiğinde ölü kovalar atılır.
+	// buckets is one bucket per key; dead buckets are dropped when gcAt arrives.
 	buckets map[string]*bucket
 	gcAt    time.Time
 }
 
-// NewMemoryLimiter window süresinde limit isteğe izin veren sınırlayıcı kurar.
+// NewMemoryLimiter builds a limiter allowing limit requests over window.
 //
-// limit ya da window sıfır/negatifse nil döner: "sınırsız" bir sınırlayıcı,
-// çağıranın onu hiç takmamasıyla aynı şeydir ve [RateLimit] nil'i zaten
-// no-op olarak ele alır. Böylece "0 limit" yanlışlıkla "her şeyi reddet"e
-// dönüşmez.
+// With limit or window zero/negative it returns nil: an "unlimited" limiter is
+// the same thing as the caller never installing one, and [RateLimit] already
+// treats nil as a no-op. That way a "0 limit" does not quietly turn into
+// "reject everything".
 func NewMemoryLimiter(limit int, window time.Duration) *MemoryLimiter {
 	if limit <= 0 || window <= 0 {
 		return nil
@@ -253,9 +259,9 @@ func NewMemoryLimiter(limit int, window time.Duration) *MemoryLimiter {
 	}
 }
 
-// Allow anahtarın kotasından bir jeton düşmeye çalışır.
+// Allow tries to take a token out of the key's quota.
 //
-// Hiçbir zaman hata dönmez; imza [RateLimiter] arayüzüne uymak içindir.
+// It never returns an error; the signature is there to fit the [RateLimiter] interface.
 func (l *MemoryLimiter) Allow(_ context.Context, key string) (Decision, error) {
 	now := l.now()
 
@@ -270,19 +276,19 @@ func (l *MemoryLimiter) Allow(_ context.Context, key string) (Decision, error) {
 		l.buckets[key] = b
 	}
 
-	// Geçen süre kadar jeton ekle; kova taşmasın.
+	// Add a token for every unit of elapsed time; do not let the bucket overflow.
 	if elapsed := now.Sub(b.last).Seconds(); elapsed > 0 {
 		b.tokens = math.Min(float64(l.limit), b.tokens+elapsed*l.refill)
 		b.last = now
 	}
 
 	if b.tokens < 1 {
-		// Bir jetonun birikmesi için gereken süre.
-		eksik := 1 - b.tokens
+		// The time it takes for one token to accrue.
+		missing := 1 - b.tokens
 		return Decision{
 			Limit:      l.limit,
 			Remaining:  0,
-			RetryAfter: time.Duration(eksik / l.refill * float64(time.Second)),
+			RetryAfter: time.Duration(missing / l.refill * float64(time.Second)),
 		}, nil
 	}
 
@@ -296,10 +302,10 @@ func (l *MemoryLimiter) Allow(_ context.Context, key string) (Decision, error) {
 	}, nil
 }
 
-// collect dolmuş kovaları siler. Çağıran l.mu'yu tutuyor olmalıdır.
+// collect deletes the expired buckets. The caller must be holding l.mu.
 //
-// Bir kova ancak jetonu tamamen dolduktan sonra silinir; erken silmek,
-// sınıra çarpmış bir istemcinin anahtarını unutup kotasını sıfırlardı.
+// A bucket is deleted only after its tokens have fully refilled; deleting early
+// would forget the key of a client that hit the limit and reset its quota.
 func (l *MemoryLimiter) collect(now time.Time) {
 	if now.Before(l.gcAt) {
 		return

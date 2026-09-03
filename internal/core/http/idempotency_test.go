@@ -17,16 +17,16 @@ import (
 	corehttp "github.com/bdrtr/gobit/internal/core/http"
 )
 
-// sayanHandler kaç kez çağrıldığını sayan ve sabit yanıt dönen handler'dır.
-type sayanHandler struct {
+// countingHandler is a handler that counts how many times it was called and returns a fixed response.
+type countingHandler struct {
 	mu     sync.Mutex
 	cagri  int
 	status int
-	govde  string
+	body   string
 }
 
-// ServeHTTP çağrıyı sayar ve yapılandırılmış yanıtı yazar.
-func (h *sayanHandler) ServeHTTP(w http.ResponseWriter, _ *http.Request) {
+// ServeHTTP counts the call and writes the configured response.
+func (h *countingHandler) ServeHTTP(w http.ResponseWriter, _ *http.Request) {
 	h.mu.Lock()
 	h.cagri++
 	n := h.cagri
@@ -34,195 +34,196 @@ func (h *sayanHandler) ServeHTTP(w http.ResponseWriter, _ *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(h.status)
-	_, _ = fmt.Fprintf(w, `{"data":{"id":"order_%d"},"body":%q}`, n, h.govde)
+	_, _ = fmt.Fprintf(w, `{"data":{"id":"order_%d"},"body":%q}`, n, h.body)
 }
 
-// sayisi handler'ın çağrı sayısını güvenle okur.
-func (h *sayanHandler) sayisi() int {
+// count reads the handler's call count safely.
+func (h *countingHandler) count() int {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
 	return h.cagri
 }
 
-// postIstek verilen anahtar ve gövdeyle bir POST isteği kurar.
-func postIstek(anahtar, yol, govde string) *http.Request {
-	r := httptest.NewRequest(http.MethodPost, yol, strings.NewReader(govde))
-	if anahtar != "" {
-		r.Header.Set(corehttp.IdempotencyKeyHeader, anahtar)
+// postRequest builds a POST request with the given key and body.
+func postRequest(key, path, body string) *http.Request {
+	r := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
+	if key != "" {
+		r.Header.Set(corehttp.IdempotencyKeyHeader, key)
 	}
 
 	return r
 }
 
-// kimlikli isteği verilen çağıranın doğrulanmış kimliğiyle etiketler.
+// asPrincipal tags the request with the given caller's verified identity.
 //
-// Gerçekte bu context'i [corehttp.RequireAdmin] / [corehttp.RequireStore]
-// kurar; testte aradaki kimlik doğrulama katmanını taklit etmeye gerek yoktur.
-func kimlikli(r *http.Request, kind, id string) *http.Request {
+// In reality this context is built by [corehttp.RequireAdmin] /
+// [corehttp.RequireStore]; in a test there is no need to imitate the
+// authentication layer in between.
+func asPrincipal(r *http.Request, kind, id string) *http.Request {
 	return r.WithContext(corehttp.WithPrincipal(r.Context(),
 		corehttp.Principal{ID: id, Kind: kind}))
 }
 
-// TestIdempotencyTekrarIkinciKezCalistirmaz aynı anahtar ve gövdeyle gelen
-// ikinci isteğin handler'ı HİÇ çalıştırmadığını doğrular.
+// TestIdempotencyARetryDoesNotRunTheHandlerASecondTime verifies that a second
+// request arriving with the same key and body does NOT run the handler at all.
 //
-// Bu fazın asıl amacı budur: ağ zaman aşımından sonra tekrar denenen bir
-// ödeme isteği ikinci bir tahsilat yaratmamalıdır.
-func TestIdempotencyTekrarIkinciKezCalistirmaz(t *testing.T) {
+// This is the whole point of this phase: a payment request retried after a network
+// timeout must not create a second charge.
+func TestIdempotencyARetryDoesNotRunTheHandlerASecondTime(t *testing.T) {
 	t.Parallel()
 
-	h := &sayanHandler{status: http.StatusCreated}
+	h := &countingHandler{status: http.StatusCreated}
 	mw := corehttp.Idempotency(corehttp.NewMemoryIdempotencyStore(time.Hour, 0))(h)
 
 	w1 := httptest.NewRecorder()
-	mw.ServeHTTP(w1, postIstek("idem_1", "/store/v1/orders", `{"cart":"c1"}`))
+	mw.ServeHTTP(w1, postRequest("idem_1", "/store/v1/orders", `{"cart":"c1"}`))
 
 	w2 := httptest.NewRecorder()
-	mw.ServeHTTP(w2, postIstek("idem_1", "/store/v1/orders", `{"cart":"c1"}`))
+	mw.ServeHTTP(w2, postRequest("idem_1", "/store/v1/orders", `{"cart":"c1"}`))
 
-	assert.Equal(t, 1, h.sayisi(), "handler yalnızca bir kez çalışmalı")
+	assert.Equal(t, 1, h.count(), "the handler has to run only once")
 	assert.Equal(t, http.StatusCreated, w2.Code)
-	assert.JSONEq(t, w1.Body.String(), w2.Body.String(), "yanıt aynen çalınmalı")
+	assert.JSONEq(t, w1.Body.String(), w2.Body.String(), "the response has to be replayed as it is")
 	assert.Equal(t, "application/json; charset=utf-8", w2.Header().Get("Content-Type"))
 	assert.Empty(t, w1.Header().Get(corehttp.IdempotencyReplayedHeader),
-		"ilk yanıt tekrar olarak işaretlenmemeli")
+		"the first response must not be marked as a replay")
 	assert.Equal(t, "true", w2.Header().Get(corehttp.IdempotencyReplayedHeader))
 }
 
-// TestIdempotencyFarkliGovdeCakismaDoner aynı anahtarın FARKLI bir gövdeyle
-// kullanılmasının reddedildiğini doğrular.
+// TestIdempotencyADifferentBodyReturnsAConflict verifies that using the same key
+// with a DIFFERENT body is rejected.
 //
-// Kaydedilen yanıt sessizce çalınsaydı, istemci "B siparişini oluştur"
-// dediği hâlde A siparişinin kaydını alırdı: sessiz veri bozulması.
-func TestIdempotencyFarkliGovdeCakismaDoner(t *testing.T) {
+// Had the recorded response been replayed quietly, the client would get the record
+// of order A while saying "create order B": silent data corruption.
+func TestIdempotencyADifferentBodyReturnsAConflict(t *testing.T) {
 	t.Parallel()
 
-	h := &sayanHandler{status: http.StatusCreated}
+	h := &countingHandler{status: http.StatusCreated}
 	mw := corehttp.Idempotency(corehttp.NewMemoryIdempotencyStore(time.Hour, 0))(h)
 
 	w1 := httptest.NewRecorder()
-	mw.ServeHTTP(w1, postIstek("idem_1", "/store/v1/orders", `{"cart":"c1"}`))
+	mw.ServeHTTP(w1, postRequest("idem_1", "/store/v1/orders", `{"cart":"c1"}`))
 	require.Equal(t, http.StatusCreated, w1.Code)
 
 	w2 := httptest.NewRecorder()
-	mw.ServeHTTP(w2, postIstek("idem_1", "/store/v1/orders", `{"cart":"BASKA"}`))
+	mw.ServeHTTP(w2, postRequest("idem_1", "/store/v1/orders", `{"cart":"BASKA"}`))
 
 	assert.Equal(t, http.StatusConflict, w2.Code)
 	assert.Contains(t, w2.Body.String(), corehttp.CodeIdempotencyConflict)
-	assert.Equal(t, 1, h.sayisi(), "çakışan istek handler'a ulaşmamalı")
+	assert.Equal(t, 1, h.count(), "a conflicting request must not reach the handler")
 }
 
-// TestIdempotencyFarkliYolCakismaDoner parmak izinin gövdeyle sınırlı
-// olmadığını, yol ve sorgu dizesini de kapsadığını doğrular.
-func TestIdempotencyFarkliYolCakismaDoner(t *testing.T) {
+// TestIdempotencyADifferentPathReturnsAConflict verifies that the fingerprint is
+// not limited to the body but covers the path and the query string too.
+func TestIdempotencyADifferentPathReturnsAConflict(t *testing.T) {
 	t.Parallel()
 
 	tests := map[string]string{
-		"farklı yol":          "/store/v1/returns",
-		"farklı sorgu dizesi": "/store/v1/orders?expand=items",
+		"a different path":         "/store/v1/returns",
+		"a different query string": "/store/v1/orders?expand=items",
 	}
 
-	for name, yol := range tests {
+	for name, path := range tests {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 
-			h := &sayanHandler{status: http.StatusCreated}
+			h := &countingHandler{status: http.StatusCreated}
 			mw := corehttp.Idempotency(corehttp.NewMemoryIdempotencyStore(time.Hour, 0))(h)
 
 			w1 := httptest.NewRecorder()
-			mw.ServeHTTP(w1, postIstek("idem_1", "/store/v1/orders", `{"cart":"c1"}`))
+			mw.ServeHTTP(w1, postRequest("idem_1", "/store/v1/orders", `{"cart":"c1"}`))
 			require.Equal(t, http.StatusCreated, w1.Code)
 
 			w2 := httptest.NewRecorder()
-			mw.ServeHTTP(w2, postIstek("idem_1", yol, `{"cart":"c1"}`))
+			mw.ServeHTTP(w2, postRequest("idem_1", path, `{"cart":"c1"}`))
 
 			assert.Equal(t, http.StatusConflict, w2.Code)
 		})
 	}
 }
 
-// TestIdempotencyHandlerGovdeyiOkuyabilir parmak izi için tüketilen gövdenin
-// handler'a GERİ KONDUĞUNU doğrular.
+// TestIdempotencyTheHandlerCanReadTheBody verifies that the body consumed for
+// the fingerprint is PUT BACK for the handler.
 //
-// Konmasaydı idempotency açmak, anahtar gönderen her istemcinin gövdesini
-// boşaltır ve tüm POST'ları bozardı.
-func TestIdempotencyHandlerGovdeyiOkuyabilir(t *testing.T) {
+// Without putting it back, turning idempotency on would empty the body of every
+// client sending a key and break all POSTs.
+func TestIdempotencyTheHandlerCanReadTheBody(t *testing.T) {
 	t.Parallel()
 
-	var okunan string
+	var read string
 
 	h := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		b := make([]byte, 64)
 		n, _ := r.Body.Read(b)
-		okunan = string(b[:n])
+		read = string(b[:n])
 		w.WriteHeader(http.StatusOK)
 	})
 
 	mw := corehttp.Idempotency(corehttp.NewMemoryIdempotencyStore(time.Hour, 0))(h)
-	mw.ServeHTTP(httptest.NewRecorder(), postIstek("idem_1", "/x", `{"cart":"c1"}`))
+	mw.ServeHTTP(httptest.NewRecorder(), postRequest("idem_1", "/x", `{"cart":"c1"}`))
 
-	assert.Equal(t, `{"cart":"c1"}`, okunan, "handler gövdeyi eksiksiz okuyabilmeli")
+	assert.Equal(t, `{"cart":"c1"}`, read, "the handler has to be able to read the body in full")
 }
 
-// TestIdempotencySunucuHatasiKaydedilmez 5xx yanıtın çalınmadığını ve
-// anahtarın yeniden denenebildiğini doğrular.
+// TestIdempotencyAServerErrorIsNotRecorded verifies that a 5xx response is not
+// replayed and that the key can be retried.
 //
-// Kaydedilseydi geçici bir 500, aynı anahtarla 24 saat boyunca kalıcı bir
-// 500'e dönüşürdü: kendini onaran arıza kalıcı arızaya çevrilirdi.
-func TestIdempotencySunucuHatasiKaydedilmez(t *testing.T) {
+// Had it been recorded, a transient 500 would turn into a permanent 500 for 24
+// hours on the same key: a self-healing fault turned into a permanent one.
+func TestIdempotencyAServerErrorIsNotRecorded(t *testing.T) {
 	t.Parallel()
 
-	h := &sayanHandler{status: http.StatusInternalServerError}
+	h := &countingHandler{status: http.StatusInternalServerError}
 	mw := corehttp.Idempotency(corehttp.NewMemoryIdempotencyStore(time.Hour, 0))(h)
 
 	w1 := httptest.NewRecorder()
-	mw.ServeHTTP(w1, postIstek("idem_1", "/x", `{"a":1}`))
+	mw.ServeHTTP(w1, postRequest("idem_1", "/x", `{"a":1}`))
 	require.Equal(t, http.StatusInternalServerError, w1.Code)
 
-	// Sunucu düzeldi.
+	// The server recovered.
 	h.status = http.StatusCreated
 
 	w2 := httptest.NewRecorder()
-	mw.ServeHTTP(w2, postIstek("idem_1", "/x", `{"a":1}`))
+	mw.ServeHTTP(w2, postRequest("idem_1", "/x", `{"a":1}`))
 
-	assert.Equal(t, http.StatusCreated, w2.Code, "5xx sonrası tekrar denenebilmeli")
-	assert.Equal(t, 2, h.sayisi(), "handler ikinci kez çalışmalı")
+	assert.Equal(t, http.StatusCreated, w2.Code, "it has to be retryable after a 5xx")
+	assert.Equal(t, 2, h.count(), "the handler has to run a second time")
 	assert.Empty(t, w2.Header().Get(corehttp.IdempotencyReplayedHeader))
 }
 
-// TestIdempotencyIstemciHatasiKaydedilir 4xx yanıtın çalındığını doğrular.
+// TestIdempotencyAClientErrorIsRecorded verifies that a 4xx response is replayed.
 //
-// 4xx istemci kaynaklıdır ve tekrar denemek aynı sonucu verir; kaydetmek
-// gereksiz iş yapmaktan kurtarır ve yanıtı tutarlı kılar.
-func TestIdempotencyIstemciHatasiKaydedilir(t *testing.T) {
+// A 4xx comes from the client and retrying gives the same result; recording it
+// saves needless work and makes the response consistent.
+func TestIdempotencyAClientErrorIsRecorded(t *testing.T) {
 	t.Parallel()
 
-	h := &sayanHandler{status: http.StatusUnprocessableEntity}
+	h := &countingHandler{status: http.StatusUnprocessableEntity}
 	mw := corehttp.Idempotency(corehttp.NewMemoryIdempotencyStore(time.Hour, 0))(h)
 
-	mw.ServeHTTP(httptest.NewRecorder(), postIstek("idem_1", "/x", `{"a":1}`))
+	mw.ServeHTTP(httptest.NewRecorder(), postRequest("idem_1", "/x", `{"a":1}`))
 
 	w2 := httptest.NewRecorder()
-	mw.ServeHTTP(w2, postIstek("idem_1", "/x", `{"a":1}`))
+	mw.ServeHTTP(w2, postRequest("idem_1", "/x", `{"a":1}`))
 
 	assert.Equal(t, http.StatusUnprocessableEntity, w2.Code)
-	assert.Equal(t, 1, h.sayisi())
+	assert.Equal(t, 1, h.count())
 	assert.Equal(t, "true", w2.Header().Get(corehttp.IdempotencyReplayedHeader))
 }
 
-// TestIdempotencyPanikSonrasiTekrarDenenebilir handler panikleyince anahtarın
-// KİLİTLİ KALMADIĞINI doğrular.
+// TestIdempotencyItIsRetryableAfterAPanic verifies that the key does NOT STAY
+// LOCKED when the handler panics.
 //
-// Kilitli kalsaydı tek bir panik, o anahtarı kalıcı olarak kullanılamaz
-// yapardı: istemci ne tekrar deneyebilir ne de yanıt alabilirdi.
-func TestIdempotencyPanikSonrasiTekrarDenenebilir(t *testing.T) {
+// Had it stayed locked, a single panic would make that key permanently unusable:
+// the client could neither retry nor get a response.
+func TestIdempotencyItIsRetryableAfterAPanic(t *testing.T) {
 	t.Parallel()
 
 	patlasin := true
 	h := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		if patlasin {
-			panic("handler patladı")
+			panic("the handler blew up")
 		}
 
 		w.WriteHeader(http.StatusCreated)
@@ -231,42 +232,42 @@ func TestIdempotencyPanikSonrasiTekrarDenenebilir(t *testing.T) {
 	mw := corehttp.Idempotency(corehttp.NewMemoryIdempotencyStore(time.Hour, 0))(h)
 
 	assert.Panics(t, func() {
-		mw.ServeHTTP(httptest.NewRecorder(), postIstek("idem_1", "/x", `{"a":1}`))
+		mw.ServeHTTP(httptest.NewRecorder(), postRequest("idem_1", "/x", `{"a":1}`))
 	})
 
 	patlasin = false
 
 	w := httptest.NewRecorder()
-	mw.ServeHTTP(w, postIstek("idem_1", "/x", `{"a":1}`))
+	mw.ServeHTTP(w, postRequest("idem_1", "/x", `{"a":1}`))
 
-	assert.Equal(t, http.StatusCreated, w.Code, "panik sonrası anahtar serbest kalmalı")
+	assert.Equal(t, http.StatusCreated, w.Code, "the key has to be released after a panic")
 }
 
-// TestIdempotencyAnahtarsizIstekAkar anahtar gönderilmeyen isteğin normal
-// aktığını ve kaydedilmediğini doğrular.
-func TestIdempotencyAnahtarsizIstekAkar(t *testing.T) {
+// TestIdempotencyARequestWithoutAKeyFlows verifies that a request sent without a
+// key flows normally and is not recorded.
+func TestIdempotencyARequestWithoutAKeyFlows(t *testing.T) {
 	t.Parallel()
 
-	h := &sayanHandler{status: http.StatusCreated}
+	h := &countingHandler{status: http.StatusCreated}
 	mw := corehttp.Idempotency(corehttp.NewMemoryIdempotencyStore(time.Hour, 0))(h)
 
 	for range 3 {
 		w := httptest.NewRecorder()
-		mw.ServeHTTP(w, postIstek("", "/x", `{"a":1}`))
+		mw.ServeHTTP(w, postRequest("", "/x", `{"a":1}`))
 		require.Equal(t, http.StatusCreated, w.Code)
 	}
 
-	assert.Equal(t, 3, h.sayisi(), "anahtarsız istekler kaydedilmemeli")
+	assert.Equal(t, 3, h.count(), "requests without a key must not be recorded")
 }
 
-// TestIdempotencyGuvenliMetodlarKaydedilmez GET'in kaydedilmediğini doğrular.
+// TestIdempotencySafeMethodsAreNotRecorded verifies that a GET is not recorded.
 //
-// GET zaten idempotenttir; kaydetmek yalnızca depoyu şişirir ve yanlışlıkla
-// bayat veri servis etme riski yaratır.
-func TestIdempotencyGuvenliMetodlarKaydedilmez(t *testing.T) {
+// A GET is idempotent already; recording it only inflates the store and creates a
+// risk of serving stale data by accident.
+func TestIdempotencySafeMethodsAreNotRecorded(t *testing.T) {
 	t.Parallel()
 
-	h := &sayanHandler{status: http.StatusOK}
+	h := &countingHandler{status: http.StatusOK}
 	mw := corehttp.Idempotency(corehttp.NewMemoryIdempotencyStore(time.Hour, 0))(h)
 
 	for range 2 {
@@ -278,82 +279,82 @@ func TestIdempotencyGuvenliMetodlarKaydedilmez(t *testing.T) {
 		require.Equal(t, http.StatusOK, w.Code)
 	}
 
-	assert.Equal(t, 2, h.sayisi(), "GET kaydedilmemeli")
+	assert.Equal(t, 2, h.count(), "GET kaydedilmemeli")
 }
 
-// TestIdempotencyNilDepoNoOptur yapılandırılmamış deponun trafiği
-// kesmediğini doğrular.
-func TestIdempotencyNilDepoNoOptur(t *testing.T) {
+// TestIdempotencyANilStoreIsANoOp verifies that an unconfigured store does not
+// cut off traffic.
+func TestIdempotencyANilStoreIsANoOp(t *testing.T) {
 	t.Parallel()
 
-	h := &sayanHandler{status: http.StatusCreated}
+	h := &countingHandler{status: http.StatusCreated}
 	mw := corehttp.Idempotency(nil)(h)
 
 	w := httptest.NewRecorder()
-	mw.ServeHTTP(w, postIstek("idem_1", "/x", `{"a":1}`))
+	mw.ServeHTTP(w, postRequest("idem_1", "/x", `{"a":1}`))
 
 	assert.Equal(t, http.StatusCreated, w.Code)
-	assert.Equal(t, 1, h.sayisi())
+	assert.Equal(t, 1, h.count())
 }
 
-// TestIdempotencyCokUzunAnahtarReddedilir sınırsız anahtarın depoyu
-// şişirmesinin engellendiğini doğrular.
+// TestIdempotencyAnOverlongKeyIsRejected verifies that an unbounded key is kept
+// from inflating the store.
 //
-// Reddin KENDİ kodunu taşıması da burada kanıtlanır: "yeniden kullanım" kodu
-// dönseydi, istemcinin doğru tepkisi (yeni anahtar üretip tekrar denemek)
-// sonsuz döngü olurdu — üretilen her yeni anahtar da uzun olurdu.
-func TestIdempotencyCokUzunAnahtarReddedilir(t *testing.T) {
+// That the rejection carries its OWN code is proven here as well: had it returned
+// the "reuse" code, the client's right reaction (producing a fresh key and trying
+// again) would be an endless loop — every fresh key produced would be long too.
+func TestIdempotencyAnOverlongKeyIsRejected(t *testing.T) {
 	t.Parallel()
 
-	h := &sayanHandler{status: http.StatusCreated}
+	h := &countingHandler{status: http.StatusCreated}
 	mw := corehttp.Idempotency(corehttp.NewMemoryIdempotencyStore(time.Hour, 0))(h)
 
 	w := httptest.NewRecorder()
-	mw.ServeHTTP(w, postIstek(strings.Repeat("a", 256), "/x", `{"a":1}`))
+	mw.ServeHTTP(w, postRequest(strings.Repeat("a", 256), "/x", `{"a":1}`))
 
 	assert.Equal(t, http.StatusUnprocessableEntity, w.Code)
 	assert.Contains(t, w.Body.String(), corehttp.CodeIdempotencyKeyTooLong)
 	assert.NotContains(t, w.Body.String(), corehttp.CodeIdempotencyConflict,
-		"uzunluk reddi yeniden kullanım koduyla karıştırılmamalı")
-	assert.Zero(t, h.sayisi(), "reddedilen istek handler'a ulaşmamalı")
+		"a length rejection must not be confused with the reuse code")
+	assert.Zero(t, h.count(), "a rejected request must not reach the handler")
 }
 
-// TestIdempotencyCokBuyukGovdeReddedilir sınırsız gövde okumanın
-// engellendiğini doğrular.
+// TestIdempotencyAnOverlargeBodyIsRejected verifies that unbounded body reading
+// is prevented.
 //
-// Sınır olmasaydı tek bir istek, parmak izi çıkarmak uğruna sunucunun
-// belleğini tüketebilirdi.
-func TestIdempotencyCokBuyukGovdeReddedilir(t *testing.T) {
+// Without the limit a single request could consume the server's memory for the
+// sake of taking a fingerprint.
+func TestIdempotencyAnOverlargeBodyIsRejected(t *testing.T) {
 	t.Parallel()
 
-	h := &sayanHandler{status: http.StatusCreated}
+	h := &countingHandler{status: http.StatusCreated}
 	mw := corehttp.Idempotency(corehttp.NewMemoryIdempotencyStore(time.Hour, 0))(h)
 
 	w := httptest.NewRecorder()
-	mw.ServeHTTP(w, postIstek("idem_1", "/x", strings.Repeat("x", (1<<20)+1)))
+	mw.ServeHTTP(w, postRequest("idem_1", "/x", strings.Repeat("x", (1<<20)+1)))
 
 	assert.Equal(t, http.StatusUnprocessableEntity, w.Code)
-	// İstemcinin dallanma tutamağı KOD'dur, status değil: RFC 9110'un bu
-	// durum için ayırdığı 413'e geçmek hata sınıfı eşlemesini değiştirmeyi
-	// gerektirir ve o gün geldiğinde status değişebilir (bkz. readLimited).
+	// The client's branching handle is the CODE, not the status: moving to the 413
+	// RFC 9110 reserves for this case requires changing the error class mapping, and
+	// when that day comes the status may change (see readLimited).
 	assert.Contains(t, w.Body.String(), "body_too_large")
-	assert.Zero(t, h.sayisi())
+	assert.Zero(t, h.count())
 }
 
-// TestIdempotencyEszamanliIkinciIstekCakisir aynı anahtarla PARALEL gelen
-// ikinci isteğin beklemek yerine 409 aldığını doğrular.
+// TestIdempotencyAConcurrentSecondRequestConflicts verifies that a second request
+// arriving IN PARALLEL with the same key gets a 409 instead of waiting.
 //
-// Beklememek bilinçlidir: iki isteği sıraya sokmak, ilki yavaşsa ikincisini
-// de asardı. 409 alan istemci geri çekilip tekrar deneyebilir.
-func TestIdempotencyEszamanliIkinciIstekCakisir(t *testing.T) {
+// Not waiting is deliberate: queueing the two requests would hang the second one
+// as well if the first is slow. A client getting a 409 can back off and retry.
+func TestIdempotencyAConcurrentSecondRequestConflicts(t *testing.T) {
 	t.Parallel()
 
 	basladi := make(chan struct{})
-	devam := make(chan struct{})
+	proceed := make(chan struct{})
 
 	h := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		close(basladi)
-		<-devam
+		<-proceed
 		w.WriteHeader(http.StatusCreated)
 	})
 
@@ -363,46 +364,46 @@ func TestIdempotencyEszamanliIkinciIstekCakisir(t *testing.T) {
 
 	go func() {
 		w := httptest.NewRecorder()
-		mw.ServeHTTP(w, postIstek("idem_1", "/x", `{"a":1}`))
+		mw.ServeHTTP(w, postRequest("idem_1", "/x", `{"a":1}`))
 		ilk <- w.Code
 	}()
 
 	<-basladi
 
 	w2 := httptest.NewRecorder()
-	mw.ServeHTTP(w2, postIstek("idem_1", "/x", `{"a":1}`))
+	mw.ServeHTTP(w2, postRequest("idem_1", "/x", `{"a":1}`))
 
 	assert.Equal(t, http.StatusConflict, w2.Code)
 	assert.Contains(t, w2.Body.String(), corehttp.CodeIdempotencyInFlight)
 
-	close(devam)
+	close(proceed)
 	assert.Equal(t, http.StatusCreated, <-ilk)
 }
 
-// TestIdempotencyAnahtarlariAyirir farklı anahtarların birbirini
-// etkilemediğini doğrular.
-func TestIdempotencyAnahtarlariAyirir(t *testing.T) {
+// TestIdempotencySeparatesKeys verifies that different keys do not affect each
+// other.
+func TestIdempotencySeparatesKeys(t *testing.T) {
 	t.Parallel()
 
-	h := &sayanHandler{status: http.StatusCreated}
+	h := &countingHandler{status: http.StatusCreated}
 	mw := corehttp.Idempotency(corehttp.NewMemoryIdempotencyStore(time.Hour, 0))(h)
 
 	for _, k := range []string{"a", "b", "c"} {
 		w := httptest.NewRecorder()
-		mw.ServeHTTP(w, postIstek(k, "/x", `{"a":1}`))
+		mw.ServeHTTP(w, postRequest(k, "/x", `{"a":1}`))
 		require.Equal(t, http.StatusCreated, w.Code)
 	}
 
-	assert.Equal(t, 3, h.sayisi())
+	assert.Equal(t, 3, h.count())
 }
 
-// TestIdempotencyYarisAltindaTekCalisma yarış dedektörü altında aynı
-// anahtarla gelen çok sayıda paralel isteğin handler'ı BİRDEN FAZLA KEZ
-// çalıştırmadığını doğrular.
-func TestIdempotencyYarisAltindaTekCalisma(t *testing.T) {
+// TestIdempotencyASingleRunUnderARace verifies under the race detector that many
+// parallel requests arriving with the same key do not run the handler MORE THAN
+// ONCE.
+func TestIdempotencyASingleRunUnderARace(t *testing.T) {
 	t.Parallel()
 
-	h := &sayanHandler{status: http.StatusCreated}
+	h := &countingHandler{status: http.StatusCreated}
 	mw := corehttp.Idempotency(corehttp.NewMemoryIdempotencyStore(time.Hour, 0))(h)
 
 	var wg sync.WaitGroup
@@ -413,393 +414,393 @@ func TestIdempotencyYarisAltindaTekCalisma(t *testing.T) {
 		go func() {
 			defer wg.Done()
 
-			mw.ServeHTTP(httptest.NewRecorder(), postIstek("idem_1", "/x", `{"a":1}`))
+			mw.ServeHTTP(httptest.NewRecorder(), postRequest("idem_1", "/x", `{"a":1}`))
 		}()
 	}
 
 	wg.Wait()
 
-	assert.Equal(t, 1, h.sayisi(), "aynı anahtar yalnızca bir kez işlenmeli")
+	assert.Equal(t, 1, h.count(), "the same key has to be processed only once")
 }
 
-// patlayanDepo Complete çağrısında hata dönen sahte depodur.
-type patlayanDepo struct {
+// failingStore is a fake store returning an error on the Complete call.
+type failingStore struct {
 	ic          *corehttp.MemoryIdempotencyStore
 	completeErr error
 }
 
-// Begin çağrıyı gerçek depoya devreder.
-func (d *patlayanDepo) Begin(
+// Begin delegates the call to the real store.
+func (d *failingStore) Begin(
 	ctx context.Context, key, fp string,
 ) (*corehttp.IdempotentResponse, bool, error) {
 	return d.ic.Begin(ctx, key, fp)
 }
 
-// Complete yapılandırılmış hatayı döner ve kaydı YAZMAZ.
-func (d *patlayanDepo) Complete(
+// Complete returns the configured error and does NOT WRITE the record.
+func (d *failingStore) Complete(
 	_ context.Context, _ string, _ corehttp.IdempotentResponse,
 ) error {
 	return d.completeErr
 }
 
-// Abort çağrıyı gerçek depoya devreder.
-func (d *patlayanDepo) Abort(ctx context.Context, key string) error {
+// Abort delegates the call to the real store.
+func (d *failingStore) Abort(ctx context.Context, key string) error {
 	return d.ic.Abort(ctx, key)
 }
 
-// TestIdempotencyKayitYazilamazsaAnahtarKilitliKalmaz depo yazamadığında
-// anahtarın SERBEST bırakıldığını doğrular.
+// TestIdempotencyTheKeyIsNotLeftLockedWhenTheRecordCannotBeWritten verifies that
+// the key is RELEASED when the store cannot write.
 //
-// Serbest bırakılmasaydı anahtar sonsuza dek "işlemde" kalır ve istemci
-// ne yanıt alabilir ne tekrar deneyebilirdi: tek bir depo hatası o anahtarı
-// kalıcı olarak öldürürdü.
-func TestIdempotencyKayitYazilamazsaAnahtarKilitliKalmaz(t *testing.T) {
+// Without the release the key would stay "in flight" forever and the client could
+// neither get a response nor retry: a single store error would kill that key
+// permanently.
+func TestIdempotencyTheKeyIsNotLeftLockedWhenTheRecordCannotBeWritten(t *testing.T) {
 	t.Parallel()
 
-	depo := &patlayanDepo{
+	store := &failingStore{
 		ic:          corehttp.NewMemoryIdempotencyStore(time.Hour, 0),
-		completeErr: errors.New("depo yazılamadı"),
+		completeErr: errors.New("the store could not be written"),
 	}
 
-	h := &sayanHandler{status: http.StatusCreated}
-	mw := corehttp.Idempotency(depo)(h)
+	h := &countingHandler{status: http.StatusCreated}
+	mw := corehttp.Idempotency(store)(h)
 
 	w1 := httptest.NewRecorder()
-	mw.ServeHTTP(w1, postIstek("idem_1", "/x", `{"a":1}`))
-	require.Equal(t, http.StatusCreated, w1.Code, "yanıt istemciye yine de gitmeli")
+	mw.ServeHTTP(w1, postRequest("idem_1", "/x", `{"a":1}`))
+	require.Equal(t, http.StatusCreated, w1.Code, "the response has to reach the client anyway")
 
 	w2 := httptest.NewRecorder()
-	mw.ServeHTTP(w2, postIstek("idem_1", "/x", `{"a":1}`))
+	mw.ServeHTTP(w2, postRequest("idem_1", "/x", `{"a":1}`))
 
-	assert.NotEqual(t, http.StatusConflict, w2.Code, "anahtar kilitli kalmamalı")
+	assert.NotEqual(t, http.StatusConflict, w2.Code, "the key must not stay locked")
 	assert.Equal(t, http.StatusCreated, w2.Code)
-	assert.Equal(t, 2, h.sayisi(), "kayıt yazılamadıysa tekrar işlenmeli")
+	assert.Equal(t, 2, h.count(), "if the record could not be written it has to be processed again")
 }
 
-// TestIdempotencyCokBuyukYanitKaydedilmez tampon sınırını aşan yanıtın
-// istemciye TAM gittiğini ama kaydedilmediğini doğrular.
+// TestIdempotencyAnOverlargeResponseIsNotRecorded verifies that a response
+// exceeding the buffer limit reaches the client IN FULL but is not recorded.
 //
-// Eksik tamponu kaydedip sonra çalmak, istemciye kesik ve bozuk bir gövde
-// vermek olurdu; bu, tekrarı yeniden işlemekten çok daha kötüdür.
-func TestIdempotencyCokBuyukYanitKaydedilmez(t *testing.T) {
+// Recording a partial buffer and replaying it later would hand the client a
+// truncated, broken body; that is far worse than processing the retry again.
+func TestIdempotencyAnOverlargeResponseIsNotRecorded(t *testing.T) {
 	t.Parallel()
 
-	const boyut = (1 << 20) + 100
+	const size = (1 << 20) + 100
 
 	h := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write(make([]byte, boyut))
+		_, _ = w.Write(make([]byte, size))
 	})
 
 	mw := corehttp.Idempotency(corehttp.NewMemoryIdempotencyStore(time.Hour, 0))(h)
 
 	w1 := httptest.NewRecorder()
-	mw.ServeHTTP(w1, postIstek("idem_1", "/x", `{"a":1}`))
-	assert.Equal(t, boyut, w1.Body.Len(), "istemci tam yanıtı almalı")
+	mw.ServeHTTP(w1, postRequest("idem_1", "/x", `{"a":1}`))
+	assert.Equal(t, size, w1.Body.Len(), "the client has to get the full response")
 
 	w2 := httptest.NewRecorder()
-	mw.ServeHTTP(w2, postIstek("idem_1", "/x", `{"a":1}`))
+	mw.ServeHTTP(w2, postRequest("idem_1", "/x", `{"a":1}`))
 
 	assert.Empty(t, w2.Header().Get(corehttp.IdempotencyReplayedHeader),
-		"kaydedilmemiş yanıt çalınmamalı")
-	assert.Equal(t, boyut, w2.Body.Len(), "tekrar da tam yanıt almalı")
+		"an unrecorded response must not be replayed")
+	assert.Equal(t, size, w2.Body.Len(), "the retry has to get the full response too")
 }
 
-// TestIdempotencyButceDolunucaDusenAnahtarYenidenIslenir bellek bütçesi
-// dolduğunda DÜŞEN kaydın tekrarının handler'ı yeniden çalıştırdığını
-// doğrular.
+// TestIdempotencyADroppedKeyIsProcessedAgainOnceTheBudgetIsFull verifies that
+// when the memory budget fills up, the retry of the DROPPED record runs the
+// handler again.
 //
-// Test, sınırın BEDELİNİ görünür kılmak için vardır. "Bellek sınırlandı"
-// cümlesi bedelsiz gibi okunur; oysa bedeli, düşen anahtarla gelen tekrarın
-// ikinci bir sipariş yaratmasıdır. Bu davranış bir kaza değil bilinçli bir
-// seçimdir (bkz. corehttp.MemoryIdempotencyStore godoc'u: reddetmek yerine
-// düşürmek) ve o seçimin kanıtı yalnızca burada, middleware'in gördüğü yerde
-// verilebilir.
-func TestIdempotencyButceDolunucaDusenAnahtarYenidenIslenir(t *testing.T) {
+// The test exists to make the PRICE of the limit visible. The sentence "memory was
+// bounded" reads as if it were free; its price is that a retry arriving with a
+// dropped key creates a second order. This behavior is not an accident but a
+// deliberate choice (see the corehttp.MemoryIdempotencyStore godoc: dropping
+// rather than rejecting), and the proof of that choice can only be given here,
+// where the middleware sees it.
+func TestIdempotencyADroppedKeyIsProcessedAgainOnceTheBudgetIsFull(t *testing.T) {
 	t.Parallel()
 
-	h := &sayanHandler{status: http.StatusCreated}
-	// Bu yanıtların her biri ~937 bayta yüklenir; bütçe İKİ kaydı alır,
-	// üçüncüsü yazıldığında en eskisi düşer.
-	depo := corehttp.NewMemoryIdempotencyStore(time.Hour, 2000)
-	mw := corehttp.Idempotency(depo)(h)
+	h := &countingHandler{status: http.StatusCreated}
+	// Each of these responses is charged ~937 bytes; the budget takes TWO records,
+	// and when the third is written the oldest is dropped.
+	store := corehttp.NewMemoryIdempotencyStore(time.Hour, 2000)
+	mw := corehttp.Idempotency(store)(h)
 
-	for _, anahtar := range []string{"idem_1", "idem_2", "idem_3"} {
+	for _, key := range []string{"idem_1", "idem_2", "idem_3"} {
 		w := httptest.NewRecorder()
-		mw.ServeHTTP(w, postIstek(anahtar, "/store/v1/orders", `{"cart":"c1"}`))
+		mw.ServeHTTP(w, postRequest(key, "/store/v1/orders", `{"cart":"c1"}`))
 		require.Equal(t, http.StatusCreated, w.Code)
 	}
 
-	require.Equal(t, 3, h.sayisi())
+	require.Equal(t, 3, h.count())
 
-	// İlk anahtarın TEKRARI: kaydı düştüğü için yeniden işlenir.
+	// The RETRY of the first key: because its record was dropped it is processed again.
 	w4 := httptest.NewRecorder()
-	mw.ServeHTTP(w4, postIstek("idem_1", "/store/v1/orders", `{"cart":"c1"}`))
+	mw.ServeHTTP(w4, postRequest("idem_1", "/store/v1/orders", `{"cart":"c1"}`))
 
-	assert.Equal(t, 4, h.sayisi(), "düşen anahtarla gelen tekrar yeniden işlenir")
+	assert.Equal(t, 4, h.count(), "a retry arriving with a dropped key is processed again")
 	assert.Empty(t, w4.Header().Get(corehttp.IdempotencyReplayedHeader),
-		"düşmüş kayıt çalınmış gibi işaretlenmemeli")
+		"a dropped record must not be marked as replayed")
 
-	// Üçüncü anahtar hâlâ korunuyor: sınır TÜM korumayı kapatmaz, yalnızca en
-	// eski kaydı bırakır.
+	// The third key is still guarded: the limit does not turn the WHOLE guard off, it
+	// only lets go of the oldest record.
 	w5 := httptest.NewRecorder()
-	mw.ServeHTTP(w5, postIstek("idem_3", "/store/v1/orders", `{"cart":"c1"}`))
+	mw.ServeHTTP(w5, postRequest("idem_3", "/store/v1/orders", `{"cart":"c1"}`))
 
-	assert.Equal(t, 4, h.sayisi(), "düşmemiş kaydın tekrarı handler'ı çalıştırmamalı")
+	assert.Equal(t, 4, h.count(), "the retry of a record that was not dropped must not run the handler")
 	assert.Equal(t, "true", w5.Header().Get(corehttp.IdempotencyReplayedHeader))
 }
 
-// TestIdempotencyBaskaCagiraninYanitiCalinmaz aynı anahtarı seçen İKİ FARKLI
-// çağıranın birbirinin kaydını görmediğini doğrular.
+// TestIdempotencyAnotherCallersResponseIsNotReplayed verifies that TWO DIFFERENT
+// callers picking the same key do not see each other's record.
 //
-// İstekler bayt bayt aynı olduğu için ad alanı olmasaydı ikinci çağıran
-// birincinin yanıtını (örn. başka bir kiracının sipariş kimliğini) oynatırdı:
-// çapraz kiracı veri sızıntısı. "1", "order-1" gibi sıradan anahtarlar
-// düşünüldüğünde bu bir kenar durumu değil, beklenen durumdur.
-func TestIdempotencyBaskaCagiraninYanitiCalinmaz(t *testing.T) {
+// Because the requests are identical byte for byte, without the namespace the
+// second caller would replay the first one's response (another tenant's order id,
+// say): a cross-tenant data leak. Considering ordinary keys like "1" or "order-1",
+// this is not an edge case but the expected one.
+func TestIdempotencyAnotherCallersResponseIsNotReplayed(t *testing.T) {
 	t.Parallel()
 
-	h := &sayanHandler{status: http.StatusCreated}
+	h := &countingHandler{status: http.StatusCreated}
 	mw := corehttp.Idempotency(corehttp.NewMemoryIdempotencyStore(time.Hour, 0))(h)
 
 	w1 := httptest.NewRecorder()
-	mw.ServeHTTP(w1, kimlikli(postIstek("1", "/store/v1/orders", `{"cart":"c1"}`), "user", "usr_1"))
+	mw.ServeHTTP(w1, asPrincipal(postRequest("1", "/store/v1/orders", `{"cart":"c1"}`), "user", "usr_1"))
 	require.Equal(t, http.StatusCreated, w1.Code)
 
 	w2 := httptest.NewRecorder()
-	mw.ServeHTTP(w2, kimlikli(postIstek("1", "/store/v1/orders", `{"cart":"c1"}`), "user", "usr_2"))
+	mw.ServeHTTP(w2, asPrincipal(postRequest("1", "/store/v1/orders", `{"cart":"c1"}`), "user", "usr_2"))
 
 	assert.Equal(t, http.StatusCreated, w2.Code)
 	assert.Empty(t, w2.Header().Get(corehttp.IdempotencyReplayedHeader),
-		"ikinci çağıranın isteği bir tekrar değildir")
+		"the second caller's request is not a replay")
 	assert.NotEqual(t, w1.Body.String(), w2.Body.String(),
-		"her çağıran KENDİ yanıtını almalı")
-	assert.Equal(t, 2, h.sayisi(), "iki farklı çağıranın isteği de işlenmeli")
+		"every caller has to get THEIR OWN response")
+	assert.Equal(t, 2, h.count(), "the requests of two different callers both have to be processed")
 
-	// Birinci çağıranın kendi tekrarı hâlâ çalınmalı: ad alanı, koruduğu
-	// davranışı bozmamalıdır.
+	// The first caller's own retry still has to be replayed: the namespace must not
+	// break the behavior it is guarding.
 	w3 := httptest.NewRecorder()
-	mw.ServeHTTP(w3, kimlikli(postIstek("1", "/store/v1/orders", `{"cart":"c1"}`), "user", "usr_1"))
+	mw.ServeHTTP(w3, asPrincipal(postRequest("1", "/store/v1/orders", `{"cart":"c1"}`), "user", "usr_1"))
 
 	assert.Equal(t, "true", w3.Header().Get(corehttp.IdempotencyReplayedHeader))
 	assert.JSONEq(t, w1.Body.String(), w3.Body.String())
-	assert.Equal(t, 2, h.sayisi(), "kendi tekrarı yeniden işlenmemeli")
+	assert.Equal(t, 2, h.count(), "one's own retry must not be processed again")
 }
 
-// TestIdempotencyBaskaCagiranAnahtarAlaniniIsgalEtmez aynı anahtarı FARKLI
-// gövdeyle kullanan ikinci çağıranın 409 almadığını doğrular.
+// TestIdempotencyAnotherCallerDoesNotOccupyTheKeySpace verifies that a second
+// caller using the same key with a DIFFERENT body does not get a 409.
 //
-// Ad alanı olmasaydı bir çağıran, seçtiği anahtarla diğerinin anahtar alanını
-// işgal ederdi: karşı taraf kendi isteği için 409 alır ve o anahtarı bir daha
-// kullanamazdı.
-func TestIdempotencyBaskaCagiranAnahtarAlaniniIsgalEtmez(t *testing.T) {
+// Without the namespace one caller would occupy the other's key space with the key
+// it picked: the other side would get a 409 for its own request and could never
+// use that key again.
+func TestIdempotencyAnotherCallerDoesNotOccupyTheKeySpace(t *testing.T) {
 	t.Parallel()
 
-	h := &sayanHandler{status: http.StatusCreated}
+	h := &countingHandler{status: http.StatusCreated}
 	mw := corehttp.Idempotency(corehttp.NewMemoryIdempotencyStore(time.Hour, 0))(h)
 
 	w1 := httptest.NewRecorder()
-	mw.ServeHTTP(w1, kimlikli(postIstek("order-1", "/x", `{"cart":"c1"}`), "api_key", "ak_1"))
+	mw.ServeHTTP(w1, asPrincipal(postRequest("order-1", "/x", `{"cart":"c1"}`), "api_key", "ak_1"))
 	require.Equal(t, http.StatusCreated, w1.Code)
 
 	w2 := httptest.NewRecorder()
-	mw.ServeHTTP(w2, kimlikli(postIstek("order-1", "/x", `{"cart":"BASKA"}`), "api_key", "ak_2"))
+	mw.ServeHTTP(w2, asPrincipal(postRequest("order-1", "/x", `{"cart":"BASKA"}`), "api_key", "ak_2"))
 
-	assert.Equal(t, http.StatusCreated, w2.Code, "ikinci çağıran kendi anahtar alanında olmalı")
-	assert.Equal(t, 2, h.sayisi())
+	assert.Equal(t, http.StatusCreated, w2.Code, "the second caller has to be in their own key space")
+	assert.Equal(t, 2, h.count())
 }
 
-// TestIdempotencyAyniCagiranAyniAnahtarlaCakisir ad alanının çakışma
-// tespitini KÖRLEŞTİRMEDİĞİNİ doğrular.
+// TestIdempotencyTheSameCallerWithTheSameKeyConflicts verifies that the namespace
+// does NOT BLIND conflict detection.
 //
-// Aynı çağıran aynı anahtarı farklı bir istekle kullanıyorsa bu hâlâ bir
-// istemci hatasıdır ve 409 dönmelidir.
-func TestIdempotencyAyniCagiranAyniAnahtarlaCakisir(t *testing.T) {
+// If the same caller is using the same key with a different request, that is still
+// a client mistake and it has to return a 409.
+func TestIdempotencyTheSameCallerWithTheSameKeyConflicts(t *testing.T) {
 	t.Parallel()
 
-	h := &sayanHandler{status: http.StatusCreated}
+	h := &countingHandler{status: http.StatusCreated}
 	mw := corehttp.Idempotency(corehttp.NewMemoryIdempotencyStore(time.Hour, 0))(h)
 
 	w1 := httptest.NewRecorder()
-	mw.ServeHTTP(w1, kimlikli(postIstek("1", "/x", `{"cart":"c1"}`), "user", "usr_1"))
+	mw.ServeHTTP(w1, asPrincipal(postRequest("1", "/x", `{"cart":"c1"}`), "user", "usr_1"))
 	require.Equal(t, http.StatusCreated, w1.Code)
 
 	w2 := httptest.NewRecorder()
-	mw.ServeHTTP(w2, kimlikli(postIstek("1", "/x", `{"cart":"BASKA"}`), "user", "usr_1"))
+	mw.ServeHTTP(w2, asPrincipal(postRequest("1", "/x", `{"cart":"BASKA"}`), "user", "usr_1"))
 
 	assert.Equal(t, http.StatusConflict, w2.Code)
 	assert.Contains(t, w2.Body.String(), corehttp.CodeIdempotencyConflict)
-	assert.Equal(t, 1, h.sayisi())
+	assert.Equal(t, 1, h.count())
 }
 
-// TestIdempotencyKimliksizCagiranlarKovayiPaylasir korumasız uçtaki anonim
-// çağıranların TEK bir ad alanını paylaştığını, yani birbirinin yanıtını
-// oynatabildiğini doğrular.
+// TestIdempotencyCallersWithoutAnIdentityShareTheBucket verifies that anonymous
+// callers on an unguarded endpoint share a SINGLE namespace, that is, they can
+// replay each other's responses.
 //
-// Bu bir kusur değil, belgelenmiş bir sınırdır: anonim isteği IP'ye göre
-// ayırmak, anahtarı kiracıya bağlamadan (IP taklit edilebilir, NAT paylaşılır)
-// idempotency'yi bozardı — ağı değişip tekrar deneyen istemci kendi kaydını
-// bulamazdı. Test, davranışı sabitler ki sessizce değişmesin.
-func TestIdempotencyKimliksizCagiranlarKovayiPaylasir(t *testing.T) {
+// This is not a flaw but a documented limit: separating anonymous requests by IP
+// would break idempotency without binding the key to a tenant (an IP can be
+// spoofed, a NAT is shared) — a client retrying after its network changed would
+// not find its own record. The test pins the behavior so it cannot change quietly.
+func TestIdempotencyCallersWithoutAnIdentityShareTheBucket(t *testing.T) {
 	t.Parallel()
 
-	h := &sayanHandler{status: http.StatusCreated}
+	h := &countingHandler{status: http.StatusCreated}
 	mw := corehttp.Idempotency(corehttp.NewMemoryIdempotencyStore(time.Hour, 0))(h)
 
 	w1 := httptest.NewRecorder()
-	mw.ServeHTTP(w1, postIstek("1", "/x", `{"cart":"c1"}`))
+	mw.ServeHTTP(w1, postRequest("1", "/x", `{"cart":"c1"}`))
 	require.Equal(t, http.StatusCreated, w1.Code)
 
 	w2 := httptest.NewRecorder()
-	mw.ServeHTTP(w2, postIstek("1", "/x", `{"cart":"c1"}`))
+	mw.ServeHTTP(w2, postRequest("1", "/x", `{"cart":"c1"}`))
 
 	assert.Equal(t, "true", w2.Header().Get(corehttp.IdempotencyReplayedHeader),
-		"kimliksiz istekler ortak kovadadır")
-	assert.Equal(t, 1, h.sayisi())
+		"requests without an identity are in the common bucket")
+	assert.Equal(t, 1, h.count())
 
-	// Kimlikli çağıran o ortak kovadan etkilenmez.
+	// A caller with an identity is not affected by that common bucket.
 	w3 := httptest.NewRecorder()
-	mw.ServeHTTP(w3, kimlikli(postIstek("1", "/x", `{"cart":"c1"}`), "user", "usr_1"))
+	mw.ServeHTTP(w3, asPrincipal(postRequest("1", "/x", `{"cart":"c1"}`), "user", "usr_1"))
 
 	assert.Empty(t, w3.Header().Get(corehttp.IdempotencyReplayedHeader),
-		"kimlikli çağıran anonim kovanın kaydını oynatmamalı")
-	assert.Equal(t, 2, h.sayisi())
+		"a caller with an identity must not replay the anonymous bucket's record")
+	assert.Equal(t, 2, h.count())
 }
 
-// kapanisDurumu bir kapanış çağrısının context'inden ÇAĞRI ANINDA okunanlardır.
+// closeState is what was read AT CALL TIME from a closing call's context.
 //
-// Context'in kendisi saklanmaz: middleware kendi kurduğu context'i çağrı
-// biter bitmez iptal eder (defer), yani sonradan bakan bir test her hâlükârda
-// "iptal edilmiş" görürdü ve düzeltmeyi kanıtlayamazdı.
-type kapanisDurumu struct {
-	// cagrildi çağrının hiç yapılıp yapılmadığını bildirir.
-	cagrildi bool
-	// err çağrı anındaki ctx.Err() değeridir; nil olmalıdır.
+// The context itself is not stored: the middleware cancels the context it built as
+// soon as the call returns (defer), that is, a test looking at it afterwards would
+// see "canceled" either way and could not prove the fix.
+type closeState struct {
+	// called reports whether the call was made at all.
+	called bool
+	// err is the value of ctx.Err() at call time; it has to be nil.
 	err error
-	// sonlu context'in bir süre sınırı taşıyıp taşımadığını bildirir.
-	sonlu bool
+	// bounded reports whether the context carries a time limit.
+	bounded bool
 }
 
-// kapanisYakalayanDepo Complete/Abort'a hangi context'le gelindiğini kaydeder.
-type kapanisYakalayanDepo struct {
+// closeCapturingStore records which context Complete/Abort were reached with.
+type closeCapturingStore struct {
 	ic *corehttp.MemoryIdempotencyStore
 
 	mu       sync.Mutex
-	complete kapanisDurumu
-	abort    kapanisDurumu
+	complete closeState
+	abort    closeState
 }
 
-// Begin çağrıyı gerçek depoya devreder.
-func (d *kapanisYakalayanDepo) Begin(
+// Begin delegates the call to the real store.
+func (d *closeCapturingStore) Begin(
 	ctx context.Context, key, fp string,
 ) (*corehttp.IdempotentResponse, bool, error) {
 	return d.ic.Begin(ctx, key, fp)
 }
 
-// Complete context'in durumunu kaydeder ve yazmayı gerçek depoya devreder.
-func (d *kapanisYakalayanDepo) Complete(
+// Complete records the state of the context and delegates the write to the real store.
+func (d *closeCapturingStore) Complete(
 	ctx context.Context, key string, resp corehttp.IdempotentResponse,
 ) error {
 	d.mu.Lock()
-	d.complete = durumunuOku(ctx)
+	d.complete = readState(ctx)
 	d.mu.Unlock()
 
 	return d.ic.Complete(ctx, key, resp)
 }
 
-// Abort context'in durumunu kaydeder ve ayırmayı gerçek depoda geri alır.
-func (d *kapanisYakalayanDepo) Abort(ctx context.Context, key string) error {
+// Abort records the state of the context and undoes the reservation in the real store.
+func (d *closeCapturingStore) Abort(ctx context.Context, key string) error {
 	d.mu.Lock()
-	d.abort = durumunuOku(ctx)
+	d.abort = readState(ctx)
 	d.mu.Unlock()
 
 	return d.ic.Abort(ctx, key)
 }
 
-// kapanislar kaydedilen durumları güvenle okur.
-func (d *kapanisYakalayanDepo) kapanislar() (complete, abort kapanisDurumu) {
+// closes reads the recorded states safely.
+func (d *closeCapturingStore) closes() (complete, abort closeState) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
 	return d.complete, d.abort
 }
 
-// durumunuOku context'ten sınanacak alanları çıkarır.
-func durumunuOku(ctx context.Context) kapanisDurumu {
-	_, sonlu := ctx.Deadline()
+// readState extracts the fields to be examined from the context.
+func readState(ctx context.Context) closeState {
+	_, bounded := ctx.Deadline()
 
-	return kapanisDurumu{cagrildi: true, err: ctx.Err(), sonlu: sonlu}
+	return closeState{called: true, err: ctx.Err(), bounded: bounded}
 }
 
-// TestIdempotencyKayitIstemciKopsaDaYazilir istemci bağlantıyı kesmiş olsa
-// bile kaydın yazılabildiğini doğrular.
+// TestIdempotencyTheRecordIsWrittenEvenIfTheClientDisconnects verifies that the
+// record can be written even when the client has dropped the connection.
 //
-// İsteğin context'iyle yazsaydık, kopan bağlantı Complete'i iptal ederdi:
-// handler çalışmış (tahsilat yapılmış) olmasına rağmen kayıt oluşmaz ve
-// tekrar denemeyi ikinci bir tahsilattan koruyacak şey kaybolurdu.
-func TestIdempotencyKayitIstemciKopsaDaYazilir(t *testing.T) {
+// Had we written with the request's context, a dropped connection would cancel
+// Complete: even though the handler ran (the charge was made) no record would be
+// formed and the thing protecting the retry from a second charge would be lost.
+func TestIdempotencyTheRecordIsWrittenEvenIfTheClientDisconnects(t *testing.T) {
 	t.Parallel()
 
-	depo := &kapanisYakalayanDepo{ic: corehttp.NewMemoryIdempotencyStore(time.Hour, 0)}
+	store := &closeCapturingStore{ic: corehttp.NewMemoryIdempotencyStore(time.Hour, 0)}
 
 	ctx, iptal := context.WithCancel(t.Context())
 	h := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		// İstemci yanıt yazılırken bağlantıyı kesti.
+		// The client dropped the connection while the response was being written.
 		iptal()
 		w.WriteHeader(http.StatusCreated)
 	})
 
-	mw := corehttp.Idempotency(depo)(h)
+	mw := corehttp.Idempotency(store)(h)
 
 	w1 := httptest.NewRecorder()
-	mw.ServeHTTP(w1, postIstek("idem_1", "/x", `{"a":1}`).WithContext(ctx))
+	mw.ServeHTTP(w1, postRequest("idem_1", "/x", `{"a":1}`).WithContext(ctx))
 	require.Equal(t, http.StatusCreated, w1.Code)
 
-	complete, _ := depo.kapanislar()
-	require.True(t, complete.cagrildi, "Complete çağrılmalı")
-	assert.NoError(t, complete.err, "kapanış context'i isteğin iptalinden etkilenmemeli")
-	assert.True(t, complete.sonlu, "iptalden koparılan context süresiz kalmamalı")
+	complete, _ := store.closes()
+	require.True(t, complete.called, "Complete has to be called")
+	assert.NoError(t, complete.err, "the closing context must not be affected by the request's cancellation")
+	assert.True(t, complete.bounded, "a context cut off from cancellation must not be left unbounded")
 
-	// Kayıt gerçekten yazıldıysa tekrar oynatılır.
+	// If the record really was written it is replayed.
 	w2 := httptest.NewRecorder()
-	mw.ServeHTTP(w2, postIstek("idem_1", "/x", `{"a":1}`))
+	mw.ServeHTTP(w2, postRequest("idem_1", "/x", `{"a":1}`))
 
 	assert.Equal(t, "true", w2.Header().Get(corehttp.IdempotencyReplayedHeader))
 }
 
-// TestIdempotencyIptalIstemciKopsaDaGeriAlinir istemci bağlantıyı kesmiş olsa
-// bile ayırmanın geri alınabildiğini doğrular.
+// TestIdempotencyTheReservationIsUndoneEvenIfTheClientDisconnects verifies that
+// the reservation can be undone even when the client has dropped the connection.
 //
-// Abort iptal edilmiş bir context'le çağrılsaydı anahtar "işlemde" kilitli
-// kalırdı: istemci ne yanıt alabilir ne de tekrar deneyebilirdi.
-func TestIdempotencyIptalIstemciKopsaDaGeriAlinir(t *testing.T) {
+// Had Abort been called with a canceled context the key would stay locked "in
+// flight": the client could neither get a response nor retry.
+func TestIdempotencyTheReservationIsUndoneEvenIfTheClientDisconnects(t *testing.T) {
 	t.Parallel()
 
-	depo := &kapanisYakalayanDepo{ic: corehttp.NewMemoryIdempotencyStore(time.Hour, 0)}
+	store := &closeCapturingStore{ic: corehttp.NewMemoryIdempotencyStore(time.Hour, 0)}
 
 	ctx, iptal := context.WithCancel(t.Context())
-	h := &sayanHandler{status: http.StatusInternalServerError}
+	h := &countingHandler{status: http.StatusInternalServerError}
 
-	mw := corehttp.Idempotency(depo)(http.HandlerFunc(
+	mw := corehttp.Idempotency(store)(http.HandlerFunc(
 		func(w http.ResponseWriter, r *http.Request) {
 			iptal()
 			h.ServeHTTP(w, r)
 		}))
 
 	w1 := httptest.NewRecorder()
-	mw.ServeHTTP(w1, postIstek("idem_1", "/x", `{"a":1}`).WithContext(ctx))
+	mw.ServeHTTP(w1, postRequest("idem_1", "/x", `{"a":1}`).WithContext(ctx))
 	require.Equal(t, http.StatusInternalServerError, w1.Code)
 
-	_, abort := depo.kapanislar()
-	require.True(t, abort.cagrildi, "5xx sonrası ayırma geri alınmalı")
-	assert.NoError(t, abort.err, "kapanış context'i isteğin iptalinden etkilenmemeli")
-	assert.True(t, abort.sonlu, "iptalden koparılan context süresiz kalmamalı")
+	_, abort := store.closes()
+	require.True(t, abort.called, "the reservation has to be undone after a 5xx")
+	assert.NoError(t, abort.err, "the closing context must not be affected by the request's cancellation")
+	assert.True(t, abort.bounded, "a context cut off from cancellation must not be left unbounded")
 
-	// Ayırma gerçekten serbest bırakıldıysa anahtar tekrar denenebilir.
+	// If the reservation really was released the key can be retried.
 	h.status = http.StatusCreated
 
 	w2 := httptest.NewRecorder()
-	mw.ServeHTTP(w2, postIstek("idem_1", "/x", `{"a":1}`))
+	mw.ServeHTTP(w2, postRequest("idem_1", "/x", `{"a":1}`))
 
-	assert.Equal(t, http.StatusCreated, w2.Code, "anahtar kilitli kalmamalı")
+	assert.Equal(t, http.StatusCreated, w2.Code, "the key must not stay locked")
 }

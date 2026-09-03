@@ -12,151 +12,154 @@ import (
 	"github.com/bdrtr/gobit/internal/core/openapi"
 )
 
-// loginYolu giriş ucunun tam yoludur (auth modülündeki LoginPath ile aynı).
+// loginPath is the full path of the login endpoint (the same as LoginPath in the
+// auth module).
 //
-// Değer burada elle yazılır çünkü çekirdek testleri de modülleri import
-// EDEMEZ (Prensip 2.4); uyum, üretilen şemanın giriş ucunu tanımasıyla
-// dolaylı olarak sınanır.
-const loginYolu = "/admin/v1/auth/login"
+// The value is written by hand here because the core tests cannot import the
+// modules either (Principle 2.4); the match is exercised indirectly, by the
+// produced schema recognizing the login endpoint.
+const loginPath = "/admin/v1/auth/login"
 
-// routerKur belgelenecek uçları taşıyan bir router kurar.
-func routerKur(t *testing.T) chi.Router {
+// buildRouter builds a router carrying the endpoints to be documented.
+func buildRouter(t *testing.T) chi.Router {
 	t.Helper()
 
-	bos := func(http.ResponseWriter, *http.Request) {}
+	noop := func(http.ResponseWriter, *http.Request) {}
 
 	r := chi.NewRouter()
-	r.Post(loginYolu, bos)
-	r.Get("/admin/v1/auth/me", bos)
-	r.Get("/store/v1/products", bos)
+	r.Post(loginPath, noop)
+	r.Get("/admin/v1/auth/me", noop)
+	r.Get("/store/v1/products", noop)
 
 	return r
 }
 
-// semaUret belgeyi üretip JSON'dan geri okunmuş hâlini döner.
+// buildSchema produces the document and returns it read back from JSON.
 //
-// Doğrudan [openapi.Doc.Build] çıktısına bakmak yetmezdi: incelenen davranış
-// tam olarak alanların JSON'a YAZILIP yazılmadığıdır ve struct'a bakan bir
-// test omitempty'yi hiç görmez.
-func semaUret(t *testing.T, d *openapi.Doc, r chi.Router) map[string]any {
+// Looking at [openapi.Doc.Build]'s output directly would not do: the behavior
+// under examination is exactly whether the fields are WRITTEN to JSON, and a
+// test looking at the struct never sees omitempty.
+func buildSchema(t *testing.T, d *openapi.Doc, r chi.Router) map[string]any {
 	t.Helper()
 
-	belge, err := d.Build(r)
+	doc, err := d.Build(r)
 	require.NoError(t, err)
 
-	ham, err := json.Marshal(belge)
+	raw, err := json.Marshal(doc)
 	require.NoError(t, err)
 
-	var cozulmus map[string]any
-	require.NoError(t, json.Unmarshal(ham, &cozulmus))
+	var decoded map[string]any
+	require.NoError(t, json.Unmarshal(raw, &decoded))
 
-	return cozulmus
+	return decoded
 }
 
-// harita bir şema düğümünü map olarak döner.
-func harita(t *testing.T, deger any, ad string) map[string]any {
+// asMap returns a schema node as a map.
+func asMap(t *testing.T, value any, name string) map[string]any {
 	t.Helper()
 
-	m, ok := deger.(map[string]any)
-	require.True(t, ok, "%s bir nesne olmalı, gelen: %T", ad, deger)
+	m, ok := value.(map[string]any)
+	require.True(t, ok, "%s has to be an object, got: %T", name, value)
 
 	return m
 }
 
-// islemAl şemadan tek bir yol+metod işlemini çıkarır.
-func islemAl(t *testing.T, sema map[string]any, yol, metod string) map[string]any {
+// operationOf pulls a single path+method operation out of the schema.
+func operationOf(t *testing.T, schema map[string]any, path, method string) map[string]any {
 	t.Helper()
 
-	yollar := harita(t, sema["paths"], "paths")
-	require.Contains(t, yollar, yol)
+	paths := asMap(t, schema["paths"], "paths")
+	require.Contains(t, paths, path)
 
-	yolDugumu := harita(t, yollar[yol], yol)
-	require.Contains(t, yolDugumu, metod)
+	pathNode := asMap(t, paths[path], path)
+	require.Contains(t, pathNode, method)
 
-	return harita(t, yolDugumu[metod], yol+" "+metod)
+	return asMap(t, pathNode[method], path+" "+method)
 }
 
-// yanitlarAl işlemin yanıt kümesini döner.
-func yanitlarAl(t *testing.T, islem map[string]any) map[string]any {
+// responsesOf returns the operation's response set.
+func responsesOf(t *testing.T, operation map[string]any) map[string]any {
 	t.Helper()
 
-	return harita(t, islem["responses"], "responses")
+	return asMap(t, operation["responses"], "responses")
 }
 
-// TestGirisUcuKorumasizIsaretiSemayaYazilir boş "security" dizisinin JSON'a
-// GERÇEKTEN yazıldığını doğrular.
+// TestTheLoginEndpointsUnprotectedMarkIsWrittenToTheSchema verifies that the
+// empty "security" array REALLY is written to JSON.
 //
-// omitempty ile boş dizi hiç yazılmaz; alanı olmayan bir işlem OpenAPI'de
-// "belirtilmemiş" sayılıp kök seviyedeki güvenliği miras alır. Yani şema,
-// jetonu veren ucun jeton istediğini söyler ve istemci üreteçleri hiç
-// çağrılamayan bir login metodu üretir.
-func TestGirisUcuKorumasizIsaretiSemayaYazilir(t *testing.T) {
+// With omitempty an empty array is never written, and an operation without the
+// field counts as "unspecified" in OpenAPI and inherits the root-level security.
+// That is, the schema would say the endpoint handing out the token demands one,
+// and client generators would produce a login method that can never be called.
+func TestTheLoginEndpointsUnprotectedMarkIsWrittenToTheSchema(t *testing.T) {
 	t.Parallel()
 
-	sema := semaUret(t, openapi.New("test", "v1"), routerKur(t))
-	islem := islemAl(t, sema, loginYolu, "post")
+	schema := buildSchema(t, openapi.New("test", "v1"), buildRouter(t))
+	operation := operationOf(t, schema, loginPath, "post")
 
-	guvenlik, yazildi := islem["security"]
-	require.True(t, yazildi,
-		"\"security\" alanı yazılmalı; yazılmazsa uç korumalı sanılır")
-	assert.Equal(t, []any{}, guvenlik, "boş dizi = bu uç açıkça korumasız")
+	security, written := operation["security"]
+	require.True(t, written,
+		"the \"security\" field has to be written; without it the endpoint is taken for protected")
+	assert.Equal(t, []any{}, security, "an empty array = this endpoint is explicitly unprotected")
 }
 
-// TestKorumaliUclarinGuvenligiYazilir korumalı uçların şemasının değişmediğini
-// doğrular.
-func TestKorumaliUclarinGuvenligiYazilir(t *testing.T) {
+// TestProtectedEndpointsKeepTheirSecurity verifies that the schema of the
+// protected endpoints did not change.
+func TestProtectedEndpointsKeepTheirSecurity(t *testing.T) {
 	t.Parallel()
 
-	sema := semaUret(t, openapi.New("test", "v1"), routerKur(t))
+	schema := buildSchema(t, openapi.New("test", "v1"), buildRouter(t))
 
 	assert.Equal(t,
 		[]any{map[string]any{"bearerAuth": []any{}}},
-		islemAl(t, sema, "/admin/v1/auth/me", "get")["security"])
+		operationOf(t, schema, "/admin/v1/auth/me", "get")["security"])
 	assert.Equal(t,
 		[]any{map[string]any{"publishableKey": []any{}}},
-		islemAl(t, sema, "/store/v1/products", "get")["security"])
+		operationOf(t, schema, "/store/v1/products", "get")["security"])
 }
 
-// TestGirisUcu401YanitiniBelgeler giriş ucunun 401'ini şemaya yazdığını
-// doğrular.
+// TestTheLoginEndpointDocumentsIts401 verifies that the login endpoint writes
+// its 401 into the schema.
 //
-// Uç korumasızdır ama işi kimlik bilgisi doğrulamaktır: hatalı parola 401
-// döner. 401 belgelenmezse istemci üreteci giriş hatasını hiç ele almayan bir
-// metod üretir ve yanlış parola beklenmeyen bir arıza gibi görünür.
-func TestGirisUcu401YanitiniBelgeler(t *testing.T) {
+// The endpoint is unprotected but its job is to verify credentials: a wrong
+// password returns a 401. Undocumented, a client generator produces a method
+// that never handles a login failure and a wrong password looks like an
+// unexpected fault.
+func TestTheLoginEndpointDocumentsIts401(t *testing.T) {
 	t.Parallel()
 
-	sema := semaUret(t, openapi.New("test", "v1"), routerKur(t))
-	yanitlar := yanitlarAl(t, islemAl(t, sema, loginYolu, "post"))
+	schema := buildSchema(t, openapi.New("test", "v1"), buildRouter(t))
+	responses := responsesOf(t, operationOf(t, schema, loginPath, "post"))
 
-	require.Contains(t, yanitlar, "401", "giriş ucu hatalı parolada 401 döner")
+	require.Contains(t, responses, "401", "the login endpoint returns a 401 on a wrong password")
 	assert.Contains(t,
-		harita(t, yanitlar["401"], "401")["description"], "parola",
-		"girişte 401 \"jeton eksik\" değil \"kimlik bilgisi hatalı\" demektir")
+		asMap(t, responses["401"], "401")["description"], "password",
+		"at login a 401 means \"the credentials are wrong\", not \"the token is missing\"")
 
-	// 403 yalnızca yetkilendirme adımı olan uçlarda anlamlıdır; girişte henüz
-	// bir kimlik yoktur.
-	assert.NotContains(t, yanitlar, "403")
+	// A 403 is only meaningful at endpoints with an authorization step; at login
+	// there is no identity yet.
+	assert.NotContains(t, responses, "403")
 }
 
-// TestKorumaliAdminUcu403Belgeler yetki yanıtının korumalı uçlarda durduğunu
-// doğrular.
-func TestKorumaliAdminUcu403Belgeler(t *testing.T) {
+// TestProtectedAdminEndpointsDocument403 verifies that the authorization
+// response stays on the protected endpoints.
+func TestProtectedAdminEndpointsDocument403(t *testing.T) {
 	t.Parallel()
 
-	sema := semaUret(t, openapi.New("test", "v1"), routerKur(t))
-	yanitlar := yanitlarAl(t, islemAl(t, sema, "/admin/v1/auth/me", "get"))
+	schema := buildSchema(t, openapi.New("test", "v1"), buildRouter(t))
+	responses := responsesOf(t, operationOf(t, schema, "/admin/v1/auth/me", "get"))
 
-	assert.Contains(t, yanitlar, "401")
-	assert.Contains(t, yanitlar, "403")
+	assert.Contains(t, responses, "401")
+	assert.Contains(t, responses, "403")
 }
 
-// TestElleVerilenBosGuvenlikKorunur [openapi.Doc.Describe] ile "açıkça
-// korumasız" işaretlenen bir ucun ezilmediğini doğrular.
+// TestAHandGivenEmptySecurityIsKept verifies that an endpoint marked "explicitly
+// unprotected" with [openapi.Doc.Describe] is not overwritten.
 //
-// Ezilseydi, korumasız olduğu bilinen tek uç giriş ucuyla sınırlı kalır ve
-// eklentilerin getirdiği webhook uçları şemada yanlış anlatılırdı.
-func TestElleVerilenBosGuvenlikKorunur(t *testing.T) {
+// Were it overwritten, the only endpoint known to be unprotected would be the
+// login one and the webhook endpoints plugins bring would be described wrongly
+// in the schema.
+func TestAHandGivenEmptySecurityIsKept(t *testing.T) {
 	t.Parallel()
 
 	doc := openapi.New("test", "v1")
@@ -164,7 +167,7 @@ func TestElleVerilenBosGuvenlikKorunur(t *testing.T) {
 		Security: []map[string][]string{},
 	})
 
-	sema := semaUret(t, doc, routerKur(t))
+	schema := buildSchema(t, doc, buildRouter(t))
 
-	assert.Equal(t, []any{}, islemAl(t, sema, "/store/v1/products", "get")["security"])
+	assert.Equal(t, []any{}, operationOf(t, schema, "/store/v1/products", "get")["security"])
 }

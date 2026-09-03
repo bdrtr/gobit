@@ -934,7 +934,7 @@ func TestGuardStackReportsTheIdempotencyBudget(t *testing.T) {
 	// only one of them bounds memory. Verified by mutation: handing the
 	// constructor 0 runs the 64 MiB default while the line above still prints
 	// the configured 12345678, and every test in this repository stayed green.
-	assert.Equal(t, cfg.IdempotencyMaxMemoryBytes, memoryIdempotencyStore(cfg).Butce(),
+	assert.Equal(t, cfg.IdempotencyMaxMemoryBytes, memoryIdempotencyStore(cfg).Budget(),
 		"the configured budget must reach the store, not just the log line")
 	assert.Equal(t, "12345678", catcher.attribute(message, "budget_bytes"),
 		"the number logged must be the CONFIGURED one, not a constant")

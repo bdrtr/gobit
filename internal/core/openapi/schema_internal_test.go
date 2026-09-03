@@ -6,47 +6,47 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-// CakisanKayit ad çakışması testinin İKİ tipinden biridir; ötekini dış test
-// paketi (openapi_test) AYNI adla tanımlar.
+// ClashingRecord is one of the TWO types of the name-clash test; the other is
+// defined under the SAME name by the external test package (openapi_test).
 //
-// İki tipin iki AYRI pakette olması zorunludur: aynı pakette aynı adı taşıyan
-// iki tip zaten derlenmez, yani çakışma yalnızca paketler arasında doğar ve
-// tek dosyalık bir testle üretilemez. Dahili test dosyası bu yüzden var —
-// derleyici için openapi paketinin parçasıdır ve adı openapi_test'tekiyle
-// çakışır, ama üretim ikilisine hiç girmez.
-type CakisanKayit struct {
-	Alan string `json:"alan"`
+// The two types being in two SEPARATE packages is required: two types with the
+// same name in one package do not compile, so the clash can only arise between
+// packages and cannot be produced by a single test file. That is why the
+// internal test file exists — for the compiler it is part of the openapi
+// package and its name clashes with openapi_test's, but it never enters the
+// production binary.
+type ClashingRecord struct {
+	Field string `json:"field"`
 }
 
-// TestBilesenAdiGoAyrintisiniSizdirmaz yayımlanan bileşen adlarının Go'nun
-// dışa açma kuralına ve paket içi adlandırma alışkanlığına bağlı kalmadığını
-// doğrular.
+// TestComponentNameDoesNotLeakGoDetails verifies that the published component
+// names do not depend on Go's export rule or on a package's naming habits.
 //
-// Bileşen adı bir iç ayrıntı DEĞİL, yayımlanan sözleşmedir: istemci üreteçleri
-// ondan sınıf adı üretir ve istemci bir kez üretildikten sonra adı değiştirmek
-// kırıcıdır. Normalleştirilmeseydi aynı belgede "StoreProduct" (dışa açık) ile
-// "cartDTO" (dışa kapalı) yan yana durur, üretilen istemcide iki farklı
-// adlandırma düzeni olurdu.
-func TestBilesenAdiGoAyrintisiniSizdirmaz(t *testing.T) {
+// A component name is NOT an internal detail but a published contract: client
+// generators produce class names from it and changing the name after a client
+// has been generated is breaking. Without the normalization, "StoreProduct"
+// (exported) would stand next to "cartDTO" (unexported) in one document and the
+// generated client would carry two different naming schemes.
+func TestComponentNameDoesNotLeakGoDetails(t *testing.T) {
 	t.Parallel()
 
-	testler := map[string]struct {
-		goAdi   string
-		bekleme string
+	cases := map[string]struct {
+		goName string
+		want   string
 	}{
-		"dışa kapalı ad büyütülür":     {goAdi: "cartDTO", bekleme: "Cart"},
-		"DTO son eki atılır":           {goAdi: "addressDTO", bekleme: "Address"},
-		"dışa açık ad korunur":         {goAdi: "StoreProduct", bekleme: "StoreProduct"},
-		"istek tipleri anlamlı kalır":  {goAdi: "createCartRequest", bekleme: "CreateCartRequest"},
-		"yalnızca DTO adı yok edilmez": {goAdi: "DTO", bekleme: "DTO"},
-		"boş ad boş kalır":             {goAdi: "", bekleme: ""},
+		"an unexported name is upper-cased": {goName: "cartDTO", want: "Cart"},
+		"the DTO suffix is dropped":         {goName: "addressDTO", want: "Address"},
+		"an exported name is kept":          {goName: "StoreProduct", want: "StoreProduct"},
+		"request types stay meaningful":     {goName: "createCartRequest", want: "CreateCartRequest"},
+		"a name that is only DTO survives":  {goName: "DTO", want: "DTO"},
+		"an empty name stays empty":         {goName: "", want: ""},
 	}
 
-	for ad, tt := range testler {
-		t.Run(ad, func(t *testing.T) {
+	for name, tt := range cases {
+		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 
-			assert.Equal(t, tt.bekleme, bilesenAdi(tt.goAdi))
+			assert.Equal(t, tt.want, componentName(tt.goName))
 		})
 	}
 }

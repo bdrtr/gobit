@@ -14,59 +14,60 @@ import (
 	corehttp "github.com/bdrtr/gobit/internal/core/http"
 )
 
-// sayanLimiter çağrı sayısını tutan ve sabit karar dönen sahte sınırlayıcıdır.
-type sayanLimiter struct {
-	karar      corehttp.Decision
-	err        error
-	anahtarlar []string
+// countingLimiter is a fake limiter that keeps the call count and returns a fixed decision.
+type countingLimiter struct {
+	decision corehttp.Decision
+	err      error
+	keys     []string
 }
 
-// Allow kararı olduğu gibi döner ve gelen anahtarı kaydeder.
-func (l *sayanLimiter) Allow(_ context.Context, key string) (corehttp.Decision, error) {
-	l.anahtarlar = append(l.anahtarlar, key)
+// Allow returns the decision as it is and records the incoming key.
+func (l *countingLimiter) Allow(_ context.Context, key string) (corehttp.Decision, error) {
+	l.keys = append(l.keys, key)
 
-	return l.karar, l.err
+	return l.decision, l.err
 }
 
-// istekYap verilen uzak adres ve başlıklarla bir test isteği kurar.
-func istekYap(remoteAddr string, basliklar map[string]string) *http.Request {
+// makeRequest builds a test request with the given remote address and headers.
+func makeRequest(remoteAddr string, headers map[string]string) *http.Request {
 	r := httptest.NewRequest(http.MethodGet, "/store/v1/products", http.NoBody)
 	r.RemoteAddr = remoteAddr
 
-	for k, v := range basliklar {
+	for k, v := range headers {
 		r.Header.Set(k, v)
 	}
 
 	return r
 }
 
-// gecirenHandler çağrıldığında 200 dönen ve çağrılmayı kaydeden handler'dır.
-func gecirenHandler(cagrildi *bool) http.Handler {
+// passingHandler is a handler that returns 200 and records having been called.
+func passingHandler(called *bool) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		*cagrildi = true
+		*called = true
 		w.WriteHeader(http.StatusOK)
 	})
 }
 
-// TestRateLimitKotaBitinceCagriYapmaz sınır aşıldığında handler'ın HİÇ
-// çalışmadığını doğrular.
+// TestRateLimitDoesNotCallTheHandlerOnceTheQuotaIsGone verifies that the handler
+// does NOT run at all once the limit is exceeded.
 //
-// Yalnızca status koduna bakmak yeterli değildir: handler çalışıp yan etkisini
-// bıraktıktan sonra 429 yazılsaydı sipariş yine oluşurdu.
-func TestRateLimitKotaBitinceCagriYapmaz(t *testing.T) {
+// Looking at the status code alone is not enough: had the 429 been written after
+// the handler ran and left its side effect behind, the order would still be
+// created.
+func TestRateLimitDoesNotCallTheHandlerOnceTheQuotaIsGone(t *testing.T) {
 	t.Parallel()
 
-	lim := &sayanLimiter{karar: corehttp.Decision{
+	lim := &countingLimiter{decision: corehttp.Decision{
 		Allowed: false, Limit: 10, Remaining: 0, RetryAfter: 3 * time.Second,
 	}}
 
-	var cagrildi bool
-	h := corehttp.RateLimit(lim, nil)(gecirenHandler(&cagrildi))
+	var called bool
+	h := corehttp.RateLimit(lim, nil)(passingHandler(&called))
 
 	w := httptest.NewRecorder()
-	h.ServeHTTP(w, istekYap("203.0.113.7:1234", nil))
+	h.ServeHTTP(w, makeRequest("203.0.113.7:1234", nil))
 
-	assert.False(t, cagrildi, "sınır aşıldıysa handler hiç çalışmamalı")
+	assert.False(t, called, "with the limit exceeded the handler must not run at all")
 	assert.Equal(t, http.StatusTooManyRequests, w.Code)
 	assert.Equal(t, "3", w.Header().Get("Retry-After"))
 	assert.Equal(t, "10", w.Header().Get("RateLimit-Limit"))
@@ -74,110 +75,112 @@ func TestRateLimitKotaBitinceCagriYapmaz(t *testing.T) {
 	assert.Contains(t, w.Body.String(), "rate_limited")
 }
 
-// TestRateLimitRetryAfterYukariYuvarlar kesirli sürenin AŞAĞI değil YUKARI
-// yuvarlandığını doğrular.
+// TestRateLimitRoundsRetryAfterUp verifies that a fractional duration is rounded
+// UP, not DOWN.
 //
-// Aşağı yuvarlansaydı istemci kota dolmadan tekrar dener ve ikinci bir 429
-// alırdı; sunucu kendi tavsiyesiyle çelişirdi.
-func TestRateLimitRetryAfterYukariYuvarlar(t *testing.T) {
+// Rounded down, the client would retry before the quota refills and take a
+// second 429; the server would be contradicting its own advice.
+func TestRateLimitRoundsRetryAfterUp(t *testing.T) {
 	t.Parallel()
 
 	tests := map[string]struct {
-		sure     time.Duration
-		beklenen string
+		duration time.Duration
+		expected string
 	}{
-		"1.1 saniye":   {1100 * time.Millisecond, "2"},
-		"2.9 saniye":   {2900 * time.Millisecond, "3"},
-		"tam 2 saniye": {2 * time.Second, "2"},
-		"sıfır":        {0, "1"},
-		"negatif":      {-time.Second, "1"},
+		"1.1 seconds":       {1100 * time.Millisecond, "2"},
+		"2.9 seconds":       {2900 * time.Millisecond, "3"},
+		"exactly 2 seconds": {2 * time.Second, "2"},
+		"zero":              {0, "1"},
+		"negative":          {-time.Second, "1"},
 	}
 
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 
-			lim := &sayanLimiter{karar: corehttp.Decision{Limit: 5, RetryAfter: tc.sure}}
-			var cagrildi bool
-			h := corehttp.RateLimit(lim, nil)(gecirenHandler(&cagrildi))
+			lim := &countingLimiter{decision: corehttp.Decision{Limit: 5, RetryAfter: tc.duration}}
+			var called bool
+			h := corehttp.RateLimit(lim, nil)(passingHandler(&called))
 
 			w := httptest.NewRecorder()
-			h.ServeHTTP(w, istekYap("203.0.113.7:1234", nil))
+			h.ServeHTTP(w, makeRequest("203.0.113.7:1234", nil))
 
-			assert.Equal(t, tc.beklenen, w.Header().Get("Retry-After"))
+			assert.Equal(t, tc.expected, w.Header().Get("Retry-After"))
 		})
 	}
 }
 
-// TestRateLimitSinirlayiciArizasindaGecirir sınırlayıcı hata döndüğünde
-// isteğin GEÇTİĞİNİ doğrular.
+// TestRateLimitLetsTheRequestThroughOnALimiterFault verifies that the request
+// GOES THROUGH when the limiter returns an error.
 //
-// Redis erişilemez olduğunda tüm trafiği reddetmek, hız sınırlayıcıyı
-// tam bir kesinti kaynağına çevirirdi.
-func TestRateLimitSinirlayiciArizasindaGecirir(t *testing.T) {
+// Rejecting all traffic while Redis is unreachable would turn the rate limiter
+// into a full outage source.
+func TestRateLimitLetsTheRequestThroughOnALimiterFault(t *testing.T) {
 	t.Parallel()
 
-	lim := &sayanLimiter{err: errors.New("redis erişilemiyor")}
-	var cagrildi bool
-	h := corehttp.RateLimit(lim, nil)(gecirenHandler(&cagrildi))
+	lim := &countingLimiter{err: errors.New("redis is unreachable")}
+	var called bool
+	h := corehttp.RateLimit(lim, nil)(passingHandler(&called))
 
 	w := httptest.NewRecorder()
-	h.ServeHTTP(w, istekYap("203.0.113.7:1234", nil))
+	h.ServeHTTP(w, makeRequest("203.0.113.7:1234", nil))
 
-	assert.True(t, cagrildi, "sınırlayıcı arızası isteği kesmemeli")
+	assert.True(t, called, "a limiter fault must not cut off the request")
 	assert.Equal(t, http.StatusOK, w.Code)
 }
 
-// TestRateLimitNilSinirlayiciNoOptur yapılandırılmamış sınırlayıcının
-// trafiği kesmediğini doğrular.
-func TestRateLimitNilSinirlayiciNoOptur(t *testing.T) {
+// TestRateLimitWithANilLimiterIsANoOp verifies that an unconfigured limiter does
+// not cut off traffic.
+func TestRateLimitWithANilLimiterIsANoOp(t *testing.T) {
 	t.Parallel()
 
-	var cagrildi bool
-	h := corehttp.RateLimit(nil, nil)(gecirenHandler(&cagrildi))
+	var called bool
+	h := corehttp.RateLimit(nil, nil)(passingHandler(&called))
 
 	w := httptest.NewRecorder()
-	h.ServeHTTP(w, istekYap("203.0.113.7:1234", nil))
+	h.ServeHTTP(w, makeRequest("203.0.113.7:1234", nil))
 
-	assert.True(t, cagrildi)
+	assert.True(t, called)
 	assert.Equal(t, http.StatusOK, w.Code)
 }
 
-// TestClientIPKeyForwardedForaGuvenmez uydurulmuş X-Forwarded-For'un anahtarı
-// DEĞİŞTİRMEDİĞİNİ doğrular.
+// TestClientIPKeyDoesNotTrustForwardedFor verifies that a forged X-Forwarded-For
+// does NOT CHANGE the key.
 //
-// Bu testin koruduğu açık şudur: başlığa güvenilseydi, saldırgan her istekte
-// farklı bir X-Forwarded-For göndererek her seferinde taze bir kova alır ve
-// hız sınırını tamamen etkisiz kılardı.
-func TestClientIPKeyForwardedForaGuvenmez(t *testing.T) {
+// The hole this test guards is this: were the header trusted, an attacker
+// sending a different X-Forwarded-For on every request would get a fresh bucket
+// each time and render the rate limit entirely useless.
+func TestClientIPKeyDoesNotTrustForwardedFor(t *testing.T) {
 	t.Parallel()
 
-	lim := &sayanLimiter{karar: corehttp.Decision{Allowed: true, Limit: 100, Remaining: 99}}
-	var cagrildi bool
-	h := corehttp.RateLimit(lim, corehttp.ClientIPKey)(gecirenHandler(&cagrildi))
+	lim := &countingLimiter{decision: corehttp.Decision{Allowed: true, Limit: 100, Remaining: 99}}
+	var called bool
+	h := corehttp.RateLimit(lim, corehttp.ClientIPKey)(passingHandler(&called))
 
-	for _, sahte := range []string{"1.1.1.1", "2.2.2.2", "3.3.3.3"} {
+	for _, forged := range []string{"1.1.1.1", "2.2.2.2", "3.3.3.3"} {
 		w := httptest.NewRecorder()
-		h.ServeHTTP(w, istekYap("203.0.113.7:1234",
-			map[string]string{"X-Forwarded-For": sahte}))
+		h.ServeHTTP(w, makeRequest("203.0.113.7:1234",
+			map[string]string{"X-Forwarded-For": forged}))
 		require.Equal(t, http.StatusOK, w.Code)
 	}
 
-	assert.Equal(t, []string{"203.0.113.7", "203.0.113.7", "203.0.113.7"}, lim.anahtarlar,
-		"anahtar uydurulabilir başlıktan değil RemoteAddr'dan gelmeli")
+	assert.Equal(t, []string{"203.0.113.7", "203.0.113.7", "203.0.113.7"}, lim.keys,
+		"the key has to come from RemoteAddr, not from a forgeable header")
 }
 
-// TestTrustedProxyIPKey hops=0/1/2 için XFF'te 0/1/2/3 girdi bulunan her
-// durumda hangi adresin seçildiğini kanıtlar.
+// TestTrustedProxyIPKey proves which address is picked for hops=0/1/2 with
+// 0/1/2/3 entries in the XFF, in every combination.
 //
-// Sözleşme: zincir soldan sağa "istemci, proxy1, proxy2, ..." diye büyür, en
-// sağdaki girdiyi bize en yakın güvenilen proxy yazar. hops güvenilen atlama
-// varsa doğrulanmış adres SAĞDAN hops.'tur (parts[len-hops]). Tablo bilerek
-// tam çarpım olarak yazıldı: indeks aritmetiğindeki bir eksik/bir fazla kayma,
-// tek bir uzunlukta test edilirse fark edilmeden geçebilir.
+// The contract: the chain grows left to right as "client, proxy1, proxy2, ...",
+// and the rightmost entry is written by the trusted proxy closest to us. With
+// hops trusted hops the verified address is the hops-th FROM THE RIGHT
+// (parts[len-hops]). The table is written as a full product deliberately: an
+// off-by-one shift in the index arithmetic can pass unnoticed if it is tested at
+// a single length.
 //
-// Kısa zincirde (len < hops) RemoteAddr'a düşülür; istemcinin verdiği ilk
-// girdiye DEĞİL. Aksi hâlde istemci hop sayısını azaltarak anahtarı seçerdi.
+// On a short chain (len < hops) it falls back to RemoteAddr, NOT to the first
+// entry the client supplied. Otherwise the client could pick the key by lowering
+// the hop count.
 func TestTrustedProxyIPKey(t *testing.T) {
 	t.Parallel()
 
@@ -186,56 +189,56 @@ func TestTrustedProxyIPKey(t *testing.T) {
 	tests := map[string]struct {
 		hops     int
 		xff      string
-		beklenen string
-		neden    string
+		expected string
+		why      string
 	}{
-		// hops=0: proxy arkasında değiliz, başlık hiç okunmaz.
-		"hops 0 · 0 girdi": {0, "", remoteAddr, "başlık okunmamalı"},
-		"hops 0 · 1 girdi": {0, "1.1.1.1", remoteAddr, "başlık okunmamalı"},
-		"hops 0 · 2 girdi": {0, "1.1.1.1, 2.2.2.2", remoteAddr, "başlık okunmamalı"},
-		"hops 0 · 3 girdi": {
-			0, "1.1.1.1, 2.2.2.2, 3.3.3.3", remoteAddr, "başlık okunmamalı",
+		// hops=0: we are not behind a proxy, the header is never read.
+		"hops 0 · 0 entries": {0, "", remoteAddr, "the header must not be read"},
+		"hops 0 · 1 entry":   {0, "1.1.1.1", remoteAddr, "the header must not be read"},
+		"hops 0 · 2 entries": {0, "1.1.1.1, 2.2.2.2", remoteAddr, "the header must not be read"},
+		"hops 0 · 3 entries": {
+			0, "1.1.1.1, 2.2.2.2, 3.3.3.3", remoteAddr, "the header must not be read",
 		},
 
-		// hops=1: tek güvenilen proxy; doğrulanmış adres SON girdidir.
-		"hops 1 · 0 girdi": {1, "", remoteAddr, "zincir yok, RemoteAddr'a düşülmeli"},
-		"hops 1 · 1 girdi": {
-			1, "198.51.100.9", "198.51.100.9", "tek girdiyi güvenilen proxy yazmış",
+		// hops=1: a single trusted proxy; the verified address is the LAST entry.
+		"hops 1 · 0 entries": {1, "", remoteAddr, "no chain, it has to fall back to RemoteAddr"},
+		"hops 1 · 1 entry": {
+			1, "198.51.100.9", "198.51.100.9", "the single entry was written by the trusted proxy",
 		},
-		"hops 1 · 2 girdi": {
+		"hops 1 · 2 entries": {
 			1, "198.51.100.9, 10.0.0.1", "10.0.0.1",
-			"sağdan 1. girdi seçilmeli; soldaki istemcinin uydurması olabilir",
+			"the 1st entry from the right has to be picked; the one to its left may be the client's forgery",
 		},
-		"hops 1 · 3 girdi": {
-			1, "198.51.100.9, 10.0.0.1, 10.0.0.2", "10.0.0.2", "sağdan 1. girdi",
+		"hops 1 · 3 entries": {
+			1, "198.51.100.9, 10.0.0.1, 10.0.0.2", "10.0.0.2", "the 1st entry from the right",
 		},
 
-		// hops=2: iki güvenilen proxy; doğrulanmış adres SONDAN İKİNCİdir.
-		"hops 2 · 0 girdi": {2, "", remoteAddr, "zincir yok"},
-		"hops 2 · 1 girdi": {
+		// hops=2: two trusted proxies; the verified address is the SECOND FROM THE END.
+		"hops 2 · 0 entries": {2, "", remoteAddr, "no chain"},
+		"hops 2 · 1 entry": {
 			2, "198.51.100.9", remoteAddr,
-			"zincir beklenenden kısa; istemcinin tek girdisine güvenilmemeli",
+			"the chain is shorter than expected; the client's single entry must not be trusted",
 		},
-		"hops 2 · 2 girdi": {
+		"hops 2 · 2 entries": {
 			2, "198.51.100.9, 10.0.0.1", "198.51.100.9",
-			"zincir tam boyunda; ilk girdiyi dış proxy yazmış",
+			"the chain is exactly as long as expected; the first entry was written by the outer proxy",
 		},
-		"hops 2 · 3 girdi": {
-			2, "198.51.100.9, 10.0.0.1, 10.0.0.2", "10.0.0.1", "sağdan 2. girdi",
+		"hops 2 · 3 entries": {
+			2, "198.51.100.9, 10.0.0.1, 10.0.0.2", "10.0.0.1", "the 2nd entry from the right",
 		},
 
-		// Biçim kenarları.
-		"boşluklar kırpılır": {
-			1, "  198.51.100.9 ,   10.0.0.1   ", "10.0.0.1", "girdiler kırpılmalı",
+		// Format edges.
+		"whitespace is trimmed": {
+			1, "  198.51.100.9 ,   10.0.0.1   ", "10.0.0.1", "the entries have to be trimmed",
 		},
-		"seçilen girdi boş": {
-			2, "198.51.100.9, , 10.0.0.1", remoteAddr, "boş girdi IP değildir",
+		"the picked entry is empty": {
+			2, "198.51.100.9, , 10.0.0.1", remoteAddr, "an empty entry is not an IP",
 		},
-		"seçilen girdi geçersiz IP": {
-			1, "198.51.100.9, yok-boyle-ip", remoteAddr, "ayrıştırılamayan adrese güvenilmez",
+		"the picked entry is an invalid IP": {
+			1, "198.51.100.9, no-such-ip", remoteAddr, "an unparseable address is not trusted",
 		},
-		"IPv6 girdi": {
-			1, "198.51.100.9, 2001:db8::1", "2001:db8::1", "IPv6 de geçerli adrestir",
+		"an IPv6 entry": {
+			1, "198.51.100.9, 2001:db8::1", "2001:db8::1", "IPv6 is a valid address too",
 		},
 	}
 
@@ -243,75 +246,79 @@ func TestTrustedProxyIPKey(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 
-			basliklar := map[string]string{}
+			headers := map[string]string{}
 			if tc.xff != "" {
-				basliklar["X-Forwarded-For"] = tc.xff
+				headers["X-Forwarded-For"] = tc.xff
 			}
 
-			anahtar := corehttp.TrustedProxyIPKey(tc.hops)(
-				istekYap(remoteAddr+":1234", basliklar))
-			assert.Equal(t, tc.beklenen, anahtar, tc.neden)
+			key := corehttp.TrustedProxyIPKey(tc.hops)(
+				makeRequest(remoteAddr+":1234", headers))
+			assert.Equal(t, tc.expected, key, tc.why)
 		})
 	}
 }
 
-// TestTrustedProxyIPKeySahteGirdiAnahtariDegistirmez istemcinin X-Forwarded-For
-// başına kaç sahte girdi eklerse eklesin anahtarı DEĞİŞTİREMEDİĞİNİ doğrular.
+// TestTrustedProxyIPKeyAForgedEntryDoesNotChangeTheKey verifies that however
+// many forged entries the client puts at the head of X-Forwarded-For, it CANNOT
+// CHANGE the key.
 //
-// Korunan açık şudur: seçim indeksi bir eleman sola kayarsa (len-hops-1),
-// seçilen girdi artık güvenilen proxy'nin yazdığı değil istemcinin yazdığı olur.
-// Saldırgan her istekte farklı bir sahte girdi göndererek her seferinde taze bir
-// kova alır ve hız sınırı tamamen etkisiz kalırdı.
+// The hole this guards: were the selection index to shift one element to the
+// left (len-hops-1), the picked entry would no longer be the one written by the
+// trusted proxy but the one written by the client. An attacker sending a
+// different forged entry on every request would get a fresh bucket each time and
+// the rate limit would be entirely useless.
 //
-// Kurgu: tek güvenilen proxy (hops=1) istemcinin gönderdiği başlığın SONUNA
-// gerçek adresi (198.51.100.9) ekler; soldaki her şey istemcinin uydurmasıdır.
-func TestTrustedProxyIPKeySahteGirdiAnahtariDegistirmez(t *testing.T) {
+// The setup: a single trusted proxy (hops=1) APPENDS the real address
+// (198.51.100.9) to the header the client sent; everything to its left is the
+// client's forgery.
+func TestTrustedProxyIPKeyAForgedEntryDoesNotChangeTheKey(t *testing.T) {
 	t.Parallel()
 
-	const gercek = "198.51.100.9"
+	const trueAddr = "198.51.100.9"
 
-	anahtarla := corehttp.TrustedProxyIPKey(1)
+	keyOf := corehttp.TrustedProxyIPKey(1)
 
-	uydurmalar := []string{
+	forgeries := []string{
 		"1.1.1.1",
 		"2.2.2.2",
 		"9.9.9.9, 8.8.8.8",
 		"203.0.113.7, 1.1.1.1, 2.2.2.2, 3.3.3.3",
 	}
 
-	anahtarlar := make([]string, 0, len(uydurmalar))
-	for _, uydurma := range uydurmalar {
-		// Proxy'nin eklediği gerçek adres her zaman en sağdadır.
-		anahtarlar = append(anahtarlar, anahtarla(istekYap("10.0.0.1:1234",
-			map[string]string{"X-Forwarded-For": uydurma + ", " + gercek})))
+	keys := make([]string, 0, len(forgeries))
+	for _, forgery := range forgeries {
+		// The real address the proxy appends is always the rightmost one.
+		keys = append(keys, keyOf(makeRequest("10.0.0.1:1234",
+			map[string]string{"X-Forwarded-For": forgery + ", " + trueAddr})))
 	}
 
-	assert.Equal(t, []string{gercek, gercek, gercek, gercek}, anahtarlar,
-		"anahtar yalnızca güvenilen proxy'nin yazdığı adresten gelmeli")
+	assert.Equal(t, []string{trueAddr, trueAddr, trueAddr, trueAddr}, keys,
+		"the key has to come only from the address the trusted proxy wrote")
 }
 
-// TestTrustedProxyIPKeyKisaZincirdeRemoteAddraDuser istemcinin zinciri
-// KISALTARAK anahtarı seçemediğini doğrular.
+// TestTrustedProxyIPKeyFallsBackToRemoteAddrOnAShortChain verifies that the
+// client cannot pick the key by SHORTENING the chain.
 //
-// Sahte girdi eklemek işe yaramıyorsa saldırganın ikinci hamlesi hiç girdi
-// göndermemek ya da beklenenden az göndermektir. O durumda başlıktaki tek girdi
-// istemcinin kendi yazdığıdır; ona düşmek anahtarı yine istemciye seçtirirdi.
-func TestTrustedProxyIPKeyKisaZincirdeRemoteAddraDuser(t *testing.T) {
+// If adding forged entries does not work, the attacker's second move is to send
+// no entries at all, or fewer than expected. In that case the single entry in
+// the header is the client's own; falling back to it would again let the client
+// pick the key.
+func TestTrustedProxyIPKeyFallsBackToRemoteAddrOnAShortChain(t *testing.T) {
 	t.Parallel()
 
-	anahtarla := corehttp.TrustedProxyIPKey(2)
+	keyOf := corehttp.TrustedProxyIPKey(2)
 
-	for _, uydurma := range []string{"1.1.1.1", "2.2.2.2", "3.3.3.3"} {
-		anahtar := anahtarla(istekYap("203.0.113.7:1234",
-			map[string]string{"X-Forwarded-For": uydurma}))
-		assert.Equal(t, "203.0.113.7", anahtar,
-			"kısa zincirde RemoteAddr'a düşülmeli, istemcinin girdisine değil")
+	for _, forgery := range []string{"1.1.1.1", "2.2.2.2", "3.3.3.3"} {
+		key := keyOf(makeRequest("203.0.113.7:1234",
+			map[string]string{"X-Forwarded-For": forgery}))
+		assert.Equal(t, "203.0.113.7", key,
+			"on a short chain it has to fall back to RemoteAddr, not to the client's entry")
 	}
 }
 
-// TestMemoryLimiterKotayiTuketir kotanın tam olarak limit kadar istekte
-// bittiğini doğrular.
-func TestMemoryLimiterKotayiTuketir(t *testing.T) {
+// TestMemoryLimiterConsumesTheQuota verifies that the quota runs out after
+// exactly limit requests.
+func TestMemoryLimiterConsumesTheQuota(t *testing.T) {
 	t.Parallel()
 
 	lim := corehttp.NewMemoryLimiter(3, time.Minute)
@@ -320,19 +327,19 @@ func TestMemoryLimiterKotayiTuketir(t *testing.T) {
 	for i := range 3 {
 		d, err := lim.Allow(t.Context(), "k")
 		require.NoError(t, err)
-		assert.True(t, d.Allowed, "%d. istek geçmeliydi", i+1)
+		assert.True(t, d.Allowed, "request %d should have gone through", i+1)
 		assert.Equal(t, 3-i-1, d.Remaining)
 	}
 
 	d, err := lim.Allow(t.Context(), "k")
 	require.NoError(t, err)
-	assert.False(t, d.Allowed, "kota bittiğinde reddetmeli")
+	assert.False(t, d.Allowed, "it has to reject once the quota is gone")
 	assert.Positive(t, d.RetryAfter)
 }
 
-// TestMemoryLimiterAnahtarlariAyirir bir anahtarın kotasını tüketmenin
-// diğerini etkilemediğini doğrular.
-func TestMemoryLimiterAnahtarlariAyirir(t *testing.T) {
+// TestMemoryLimiterSeparatesKeys verifies that consuming one key's quota does
+// not affect another's.
+func TestMemoryLimiterSeparatesKeys(t *testing.T) {
 	t.Parallel()
 
 	lim := corehttp.NewMemoryLimiter(1, time.Minute)
@@ -344,16 +351,16 @@ func TestMemoryLimiterAnahtarlariAyirir(t *testing.T) {
 
 	d, err = lim.Allow(t.Context(), "a")
 	require.NoError(t, err)
-	require.False(t, d.Allowed, "a'nın kotası bitmiş olmalı")
+	require.False(t, d.Allowed, "a's quota has to be gone")
 
 	d, err = lim.Allow(t.Context(), "b")
 	require.NoError(t, err)
-	assert.True(t, d.Allowed, "b'nin kotası a'dan bağımsız olmalı")
+	assert.True(t, d.Allowed, "b's quota has to be independent of a's")
 }
 
-// TestNewMemoryLimiterGecersizYapilandirmadaNilDoner sıfır limitin "her şeyi
-// reddet" anlamına GELMEDİĞİNİ doğrular.
-func TestNewMemoryLimiterGecersizYapilandirmadaNilDoner(t *testing.T) {
+// TestNewMemoryLimiterReturnsNilOnAnInvalidConfiguration verifies that a zero
+// limit does NOT mean "reject everything".
+func TestNewMemoryLimiterReturnsNilOnAnInvalidConfiguration(t *testing.T) {
 	t.Parallel()
 
 	assert.Nil(t, corehttp.NewMemoryLimiter(0, time.Minute))
@@ -362,30 +369,31 @@ func TestNewMemoryLimiterGecersizYapilandirmadaNilDoner(t *testing.T) {
 	assert.Nil(t, corehttp.NewMemoryLimiter(10, -time.Minute))
 }
 
-// TestMemoryLimiterEszamanliKullanimdaTutarli yarış dedektörü altında toplam
-// geçen istek sayısının limiti AŞMADIĞINI doğrular.
-func TestMemoryLimiterEszamanliKullanimdaTutarli(t *testing.T) {
+// TestMemoryLimiterIsConsistentUnderConcurrentUse verifies under the race
+// detector that the total number of requests let through does NOT EXCEED the
+// limit.
+func TestMemoryLimiterIsConsistentUnderConcurrentUse(t *testing.T) {
 	t.Parallel()
 
 	const limit = 50
 	lim := corehttp.NewMemoryLimiter(limit, time.Hour)
 	require.NotNil(t, lim)
 
-	sonuc := make(chan bool, 200)
+	results := make(chan bool, 200)
 	for range 200 {
 		go func() {
-			d, err := lim.Allow(context.Background(), "ortak")
+			d, err := lim.Allow(context.Background(), "shared")
 			assert.NoError(t, err)
-			sonuc <- d.Allowed
+			results <- d.Allowed
 		}()
 	}
 
-	gecen := 0
+	passed := 0
 	for range 200 {
-		if <-sonuc {
-			gecen++
+		if <-results {
+			passed++
 		}
 	}
 
-	assert.Equal(t, limit, gecen, "eşzamanlılık kotayı aştıramamalı")
+	assert.Equal(t, limit, passed, "concurrency must not be able to exceed the quota")
 }

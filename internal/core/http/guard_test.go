@@ -18,116 +18,117 @@ import (
 	corehttp "github.com/bdrtr/gobit/internal/core/http"
 )
 
-// isaretleyen çağrıldığını bir sayaca yazan middleware üretir.
-func isaretleyen(sayac *int) func(http.Handler) http.Handler {
+// marking produces middleware that writes its own invocation into a counter.
+func marking(counter *int) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			*sayac++
+			*counter++
 			next.ServeHTTP(w, r)
 		})
 	}
 }
 
-// reddeden isteği 418 ile kesen middleware'dir; kapsam dışı kalması gereken
-// yolların gerçekten kesilmediğini status koduyla kanıtlar.
-func reddeden(next http.Handler) http.Handler {
+// rejecting is middleware that cuts the request off with a 418; it proves with
+// the status code that paths meant to be out of scope really are not cut off.
+func rejecting(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusTeapot)
 	})
 }
 
-// TestScopedYalnizcaOnekAltindaCalisir kapsam kuralının hem yakaladığı hem
-// yakalamadığı yolları tek tabloda doğrular.
+// TestScopedRunsOnlyUnderThePrefix verifies in a single table both the paths the
+// scope rule catches and the ones it does not.
 //
-// Sınır durumları bilinçlidir: "/admin/v1x" öneki paylaşıyormuş GİBİ görünür
-// ama segment sınırında değildir; oraya sızan bir koruma, tasarlanmadığı bir
-// uçta çalışırdı.
-func TestScopedYalnizcaOnekAltindaCalisir(t *testing.T) {
+// The boundary cases are deliberate: the "/admin/v1x" prefix LOOKS like it
+// shares the prefix but is not at a segment boundary; a guard leaking in there
+// would run on an endpoint it was not designed for.
+func TestScopedRunsOnlyUnderThePrefix(t *testing.T) {
 	t.Parallel()
 
-	testler := map[string]struct {
-		yol     string
-		bekleme int
+	cases := map[string]struct {
+		path     string
+		expected int
 	}{
-		"önek tam eşleşir":      {yol: "/admin/v1", bekleme: http.StatusTeapot},
-		"önek altındaki uç":     {yol: "/admin/v1/users", bekleme: http.StatusTeapot},
-		"derin yol":             {yol: "/admin/v1/users/usr_1/password", bekleme: http.StatusTeapot},
-		"benzer ama farklı ön":  {yol: "/admin/v1x/users", bekleme: http.StatusOK},
-		"başka yüzey":           {yol: "/store/v1/products", bekleme: http.StatusOK},
-		"sağlık ucu":            {yol: "/health", bekleme: http.StatusOK},
-		"önek dize olarak içte": {yol: "/x/admin/v1/users", bekleme: http.StatusOK},
+		"the prefix matches exactly":     {path: "/admin/v1", expected: http.StatusTeapot},
+		"an endpoint under the prefix":   {path: "/admin/v1/users", expected: http.StatusTeapot},
+		"a deep path":                    {path: "/admin/v1/users/usr_1/password", expected: http.StatusTeapot},
+		"a similar but different prefix": {path: "/admin/v1x/users", expected: http.StatusOK},
+		"another surface":                {path: "/store/v1/products", expected: http.StatusOK},
+		"a health endpoint":              {path: "/health", expected: http.StatusOK},
+		"the prefix inside as a string":  {path: "/x/admin/v1/users", expected: http.StatusOK},
 	}
 
-	for ad, tt := range testler {
+	for ad, tt := range cases {
 		t.Run(ad, func(t *testing.T) {
 			t.Parallel()
 
-			h := corehttp.Scoped("/admin/v1", nil, reddeden)(
+			h := corehttp.Scoped("/admin/v1", nil, rejecting)(
 				http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 					w.WriteHeader(http.StatusOK)
 				}))
 
 			w := httptest.NewRecorder()
-			h.ServeHTTP(w, httptest.NewRequest(http.MethodGet, tt.yol, http.NoBody))
+			h.ServeHTTP(w, httptest.NewRequest(http.MethodGet, tt.path, http.NoBody))
 
-			assert.Equal(t, tt.bekleme, w.Code)
+			assert.Equal(t, tt.expected, w.Code)
 		})
 	}
 }
 
-// TestScopedMuafYolMiddlewareyiAtlar giriş ucunun korumadan muaf kalabildiğini
-// doğrular. Muafiyet çalışmazsa kimse giriş yapamaz ve sistem kilitlenir.
-func TestScopedMuafYolMiddlewareyiAtlar(t *testing.T) {
+// TestScopedAnExemptPathSkipsTheMiddleware verifies that the login endpoint can
+// stay exempt from the guard. Without the exemption nobody can log in and the
+// system locks itself out.
+func TestScopedAnExemptPathSkipsTheMiddleware(t *testing.T) {
 	t.Parallel()
 
-	h := corehttp.Scoped("/admin/v1", []string{"/admin/v1/auth/login"}, reddeden)(
+	h := corehttp.Scoped("/admin/v1", []string{"/admin/v1/auth/login"}, rejecting)(
 		http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			w.WriteHeader(http.StatusOK)
 		}))
 
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/admin/v1/auth/login", http.NoBody))
-	assert.Equal(t, http.StatusOK, w.Code, "muaf yol middleware'e girmemeli")
+	assert.Equal(t, http.StatusOK, w.Code, "an exempt path must not enter the middleware")
 
 	w = httptest.NewRecorder()
 	h.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/admin/v1/auth/logout", http.NoBody))
-	assert.Equal(t, http.StatusTeapot, w.Code, "muaf olmayan komşu yol korunmalı")
+	assert.Equal(t, http.StatusTeapot, w.Code, "a neighboring non-exempt path has to stay guarded")
 }
 
-// TestScopedZinciriSirayiKorur birden çok middleware'in VERİLDİĞİ SIRAYLA
-// çalıştığını doğrular: hız sınırı kimlik doğrulamadan sonra çalışsaydı,
-// reddedilen istek de kotayı harcamış olurdu.
-func TestScopedZinciriSirayiKorur(t *testing.T) {
+// TestScopedTheChainKeepsTheOrder verifies that several middlewares run IN THE
+// ORDER GIVEN: had the rate limit run after authentication, a rejected request
+// would have spent the quota too.
+func TestScopedTheChainKeepsTheOrder(t *testing.T) {
 	t.Parallel()
 
-	var sira []string
-	kaydeden := func(ad string) func(http.Handler) http.Handler {
+	var order []string
+	recording := func(ad string) func(http.Handler) http.Handler {
 		return func(next http.Handler) http.Handler {
 			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				sira = append(sira, ad)
+				order = append(order, ad)
 				next.ServeHTTP(w, r)
 			})
 		}
 	}
 
-	h := corehttp.Scoped("/admin/v1", nil, kaydeden("bir"), kaydeden("iki"))(
+	h := corehttp.Scoped("/admin/v1", nil, recording("one"), recording("two"))(
 		http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-			sira = append(sira, "handler")
+			order = append(order, "handler")
 		}))
 
 	h.ServeHTTP(httptest.NewRecorder(),
 		httptest.NewRequest(http.MethodGet, "/admin/v1/users", http.NoBody))
 
-	assert.Equal(t, []string{"bir", "iki", "handler"}, sira)
+	assert.Equal(t, []string{"one", "two", "handler"}, order)
 }
 
-// TestScopedNilMiddlewareAtlanir yapılandırılmamış bir bileşenin nil olarak
-// verilmesinin paniğe değil, o halkanın atlanmasına yol açtığını doğrular.
-func TestScopedNilMiddlewareAtlanir(t *testing.T) {
+// TestScopedANilMiddlewareIsSkipped verifies that handing an unconfigured
+// component in as nil leads to that ring being skipped, not to a panic.
+func TestScopedANilMiddlewareIsSkipped(t *testing.T) {
 	t.Parallel()
 
-	sayac := 0
-	h := corehttp.Scoped("/admin/v1", nil, nil, isaretleyen(&sayac))(
+	counter := 0
+	h := corehttp.Scoped("/admin/v1", nil, nil, marking(&counter))(
 		http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			w.WriteHeader(http.StatusOK)
 		}))
@@ -137,17 +138,17 @@ func TestScopedNilMiddlewareAtlanir(t *testing.T) {
 		h.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/admin/v1/users", http.NoBody))
 	})
 	assert.Equal(t, http.StatusOK, w.Code)
-	assert.Equal(t, 1, sayac)
+	assert.Equal(t, 1, counter)
 }
 
-// TestScopedChiRouteDesenineDokunmaz kapsamlayıcının route eşleşmesini
-// bozmadığını doğrular: middleware isteği sarmalar ama yolu değiştirmez.
-func TestScopedChiRouteDesenineDokunmaz(t *testing.T) {
+// TestScopedDoesNotTouchTheChiRoutePattern verifies that the scoping does not
+// break route matching: the middleware wraps the request but does not change the path.
+func TestScopedDoesNotTouchTheChiRoutePattern(t *testing.T) {
 	t.Parallel()
 
-	sayac := 0
+	counter := 0
 	r := chi.NewRouter()
-	r.Use(corehttp.Scoped("/admin/v1", nil, isaretleyen(&sayac)))
+	r.Use(corehttp.Scoped("/admin/v1", nil, marking(&counter)))
 	r.Get("/admin/v1/users/{id}", func(w http.ResponseWriter, req *http.Request) {
 		_, _ = w.Write([]byte(chi.URLParam(req, "id")))
 	})
@@ -158,33 +159,33 @@ func TestScopedChiRouteDesenineDokunmaz(t *testing.T) {
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/admin/v1/users/usr_42", http.NoBody))
 	assert.Equal(t, "usr_42", w.Body.String())
-	assert.Equal(t, 1, sayac)
+	assert.Equal(t, 1, counter)
 
 	r.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/health", http.NoBody))
-	assert.Equal(t, 1, sayac, "sağlık ucu kapsam dışında kalmalı")
+	assert.Equal(t, 1, counter, "the health endpoint has to stay out of scope")
 }
 
-// sabitDogrulayici verilen kimliği dönen, hiçbir şeyi sorgulamayan
-// doğrulayıcıdır.
-type sabitDogrulayici struct {
+// fixedAuthenticator is an authenticator that returns the given identity and
+// queries nothing.
+type fixedAuthenticator struct {
 	principal corehttp.Principal
 	err       error
 }
 
-// AuthenticateAdmin sabit kimliği ya da sabit hatayı döner.
-func (d sabitDogrulayici) AuthenticateAdmin(
+// AuthenticateAdmin returns the fixed identity or the fixed error.
+func (d fixedAuthenticator) AuthenticateAdmin(
 	_ context.Context, _, _ string,
 ) (corehttp.Principal, error) {
 	return d.principal, d.err
 }
 
-// AuthenticateStore sabit kimliği ya da sabit hatayı döner.
-func (d sabitDogrulayici) AuthenticateStore(_ context.Context, _ string) (corehttp.Principal, error) {
+// AuthenticateStore returns the fixed identity or the fixed error.
+func (d fixedAuthenticator) AuthenticateStore(_ context.Context, _ string) (corehttp.Principal, error) {
 	return d.principal, d.err
 }
 
-// korumaliRouter verilen seçeneklerle üretilmiş yığını taşıyan router kurar.
-func korumaliRouter(t *testing.T, opts corehttp.GuardOptions) chi.Router {
+// guardedRouter builds a router carrying the stack produced from the given options.
+func guardedRouter(t *testing.T, opts corehttp.GuardOptions) chi.Router {
 	t.Helper()
 
 	r := corehttp.NewRouter(corehttp.RouterOptions{
@@ -202,128 +203,130 @@ func korumaliRouter(t *testing.T, opts corehttp.GuardOptions) chi.Router {
 	return r
 }
 
-// cagir verilen isteği router'a gönderir.
-func cagir(r chi.Router, istek *http.Request) *httptest.ResponseRecorder {
-	kayit := httptest.NewRecorder()
-	r.ServeHTTP(kayit, istek)
+// call sends the given request to the router.
+func call(r chi.Router, req *http.Request) *httptest.ResponseRecorder {
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
 
-	return kayit
+	return rec
 }
 
-// TestAPIGuardsHizSiniriKimlikDogrulamadanOnceCalisir yığın SIRASINI kanıtlar.
+// TestAPIGuardsTheRateLimitRunsBeforeAuthentication proves the ORDER of the stack.
 //
-// Sıra tersine dönseydi, parola deneyen bir saldırganın her isteği önce
-// kimlik doğrulama maliyetini (bcrypt + veritabanı araması) ödetir, kota
-// ancak ondan sonra düşerdi. Aşağıdaki ikinci istek 429 yerine 401 dönerdi.
-func TestAPIGuardsHizSiniriKimlikDogrulamadanOnceCalisir(t *testing.T) {
+// Were the order reversed, every request of an attacker trying passwords would
+// first make us pay the authentication cost (bcrypt + a database lookup), and
+// only then would the quota drop. The second request below would return a 401
+// instead of a 429.
+func TestAPIGuardsTheRateLimitRunsBeforeAuthentication(t *testing.T) {
 	t.Parallel()
 
-	r := korumaliRouter(t, corehttp.GuardOptions{
-		Authenticator: sabitDogrulayici{err: errors.New("geçersiz")},
+	r := guardedRouter(t, corehttp.GuardOptions{
+		Authenticator: fixedAuthenticator{err: errors.New("invalid")},
 		Limiter:       corehttp.NewMemoryLimiter(1, time.Minute),
 	})
 
-	ilk := cagir(r, httptest.NewRequest(http.MethodGet, "/store/v1/products", http.NoBody))
-	assert.Equal(t, http.StatusUnauthorized, ilk.Code,
-		"ilk istek kotayı harcar ve kimlikte reddedilir")
+	first := call(r, httptest.NewRequest(http.MethodGet, "/store/v1/products", http.NoBody))
+	assert.Equal(t, http.StatusUnauthorized, first.Code,
+		"the first request spends the quota and is rejected at identity")
 
-	ikinci := cagir(r, httptest.NewRequest(http.MethodGet, "/store/v1/products", http.NoBody))
-	assert.Equal(t, http.StatusTooManyRequests, ikinci.Code,
-		"kota bitince kimlik doğrulamaya HİÇ gidilmemeli")
-	assert.NotEmpty(t, ikinci.Header().Get("Retry-After"),
-		"429 istemciye ne zaman döneceğini söylemeli")
+	second := call(r, httptest.NewRequest(http.MethodGet, "/store/v1/products", http.NoBody))
+	assert.Equal(t, http.StatusTooManyRequests, second.Code,
+		"once the quota is gone authentication must NOT be reached at all")
+	assert.NotEmpty(t, second.Header().Get("Retry-After"),
+		"the 429 has to tell the client when to come back")
 }
 
-// TestAPIGuardsSaglikUclariniKapsamaz orkestratör yolunun yığından muaf
-// olduğunu doğrular.
+// TestAPIGuardsDoNotCoverTheHealthEndpoints verifies that the orchestrator's
+// path is exempt from the stack.
 //
-// Kapsasaydı, hız sınırına takılan bir /ready isteği süreci "sağlıksız"
-// gösterir ve orkestratör sağlıklı bir örneği trafikten çekerdi.
-func TestAPIGuardsSaglikUclariniKapsamaz(t *testing.T) {
+// Were it covered, a /ready request hitting the rate limit would show the process
+// as "unhealthy" and the orchestrator would pull a healthy instance out of traffic.
+func TestAPIGuardsDoNotCoverTheHealthEndpoints(t *testing.T) {
 	t.Parallel()
 
-	r := korumaliRouter(t, corehttp.GuardOptions{
-		Authenticator: sabitDogrulayici{err: errors.New("geçersiz")},
+	r := guardedRouter(t, corehttp.GuardOptions{
+		Authenticator: fixedAuthenticator{err: errors.New("invalid")},
 		Limiter:       corehttp.NewMemoryLimiter(1, time.Minute),
 	})
 
 	for i := range 5 {
-		kayit := cagir(r, httptest.NewRequest(http.MethodGet, "/health", http.NoBody))
-		require.Equal(t, http.StatusOK, kayit.Code, "%d. sağlık isteği geçmeli", i+1)
+		rec := call(r, httptest.NewRequest(http.MethodGet, "/health", http.NoBody))
+		require.Equal(t, http.StatusOK, rec.Code, "health request %d has to go through", i+1)
 	}
 }
 
-// TestAPIGuardsIdempotencyKimlikSonrasiCalisir yığının ÜÇÜNCÜ halkasının
-// yerini kanıtlar.
+// TestAPIGuardsIdempotencyRunsAfterIdentity proves the place of the THIRD ring
+// of the stack.
 //
-// Reddedilen bir istek idempotency anahtarını TÜKETMEMELİDİR: tüketseydi,
-// kimliğini düzeltip aynı anahtarla dönen istemciye 401 yanıtı çalınır ve
-// istek hiç çalışmazdı.
-func TestAPIGuardsIdempotencyKimlikSonrasiCalisir(t *testing.T) {
+// A rejected request MUST NOT CONSUME the idempotency key: had it consumed it,
+// the 401 response would be frozen for the client that comes back with the same
+// key after fixing its identity, and the request would never run.
+func TestAPIGuardsIdempotencyRunsAfterIdentity(t *testing.T) {
 	t.Parallel()
 
-	red := sabitDogrulayici{err: errors.New("geçersiz")}
-	kabul := sabitDogrulayici{principal: corehttp.Principal{ID: "usr_1", Kind: "user"}}
+	reject := fixedAuthenticator{err: errors.New("invalid")}
+	accept := fixedAuthenticator{principal: corehttp.Principal{ID: "usr_1", Kind: "user"}}
 
-	gecikmeli := &corehttp.DeferredAuthenticator{}
-	gecikmeli.Bind(red)
+	deferred := &corehttp.DeferredAuthenticator{}
+	deferred.Bind(reject)
 
-	r := korumaliRouter(t, corehttp.GuardOptions{
-		Authenticator:    gecikmeli,
+	r := guardedRouter(t, corehttp.GuardOptions{
+		Authenticator:    deferred,
 		IdempotencyStore: corehttp.NewMemoryIdempotencyStore(time.Hour, 0),
 	})
 
-	istekYap := func() *http.Request {
+	makeReq := func() *http.Request {
 		req := httptest.NewRequest(http.MethodPost, "/admin/v1/users", http.NoBody)
-		// Başlık HER İKİ durumda da vardır; değişen yalnızca doğrulayıcının
-		// verdiği cevaptır. Başlıksız istek kimliğe hiç varmadan reddedilir
-		// ve testin ayırt etmek istediği fark kaybolurdu.
-		req.Header.Set("Authorization", "Bearer jeton")
-		req.Header.Set(corehttp.IdempotencyKeyHeader, "ayni-anahtar")
+		// The header is there in BOTH cases; the only thing that changes is the answer
+		// the authenticator gives. A request without the header would be rejected
+		// before ever reaching identity and the difference the test wants to tell
+		// apart would be lost.
+		req.Header.Set("Authorization", "Bearer token")
+		req.Header.Set(corehttp.IdempotencyKeyHeader, "same-key")
 
 		return req
 	}
 
-	reddedilen := cagir(r, istekYap())
-	require.Equal(t, http.StatusUnauthorized, reddedilen.Code)
+	rejected := call(r, makeReq())
+	require.Equal(t, http.StatusUnauthorized, rejected.Code)
 
-	gecikmeli.Bind(kabul)
+	deferred.Bind(accept)
 
-	kabuledilen := cagir(r, istekYap())
-	assert.Equal(t, http.StatusCreated, kabuledilen.Code,
-		"401 anahtarı tüketmemeli; kimlik düzelince istek çalışmalı")
-	assert.Empty(t, kabuledilen.Header().Get(corehttp.IdempotencyReplayedHeader),
-		"ilk GERÇEK çalıştırma bir tekrar oynatma değildir")
+	accepted := call(r, makeReq())
+	assert.Equal(t, http.StatusCreated, accepted.Code,
+		"the 401 must not consume the key; once identity is fixed the request has to run")
+	assert.Empty(t, accepted.Header().Get(corehttp.IdempotencyReplayedHeader),
+		"the first REAL run is not a replay")
 
-	tekrar := cagir(r, istekYap())
+	tekrar := call(r, makeReq())
 	assert.Equal(t, http.StatusCreated, tekrar.Code)
 	assert.Equal(t, "true", tekrar.Header().Get(corehttp.IdempotencyReplayedHeader),
-		"aynı anahtarla ikinci istek kaydı oynatmalı")
+		"a second request with the same key has to replay the record")
 }
 
-// TestAPIGuardsYapilandirilmamisKimlikHerSeyiReddeder ADR 0007'nin kimlik
-// satırını doğrular: doğrulayıcı yoksa yüzey KAPALIDIR.
-func TestAPIGuardsYapilandirilmamisKimlikHerSeyiReddeder(t *testing.T) {
+// TestAPIGuardsAnUnconfiguredAuthenticatorRejectsEverything verifies ADR 0007's
+// identity line: without an authenticator the surface is CLOSED.
+func TestAPIGuardsAnUnconfiguredAuthenticatorRejectsEverything(t *testing.T) {
 	t.Parallel()
 
-	r := korumaliRouter(t, corehttp.GuardOptions{})
+	r := guardedRouter(t, corehttp.GuardOptions{})
 
-	yonetim := cagir(r, httptest.NewRequest(http.MethodPost, "/admin/v1/users", http.NoBody))
-	assert.Equal(t, http.StatusUnauthorized, yonetim.Code)
+	admin := call(r, httptest.NewRequest(http.MethodPost, "/admin/v1/users", http.NoBody))
+	assert.Equal(t, http.StatusUnauthorized, admin.Code)
 
-	magaza := cagir(r, httptest.NewRequest(http.MethodGet, "/store/v1/products", http.NoBody))
+	magaza := call(r, httptest.NewRequest(http.MethodGet, "/store/v1/products", http.NoBody))
 	assert.Equal(t, http.StatusUnauthorized, magaza.Code)
 }
 
-// TestAPIGuardsMuafYolKimlikIstemez giriş ucunun yığından geçtiğini ama
-// kimlik halkasını atladığını doğrular.
-func TestAPIGuardsMuafYolKimlikIstemez(t *testing.T) {
+// TestAPIGuardsAnExemptPathAsksForNoIdentity verifies that the login endpoint
+// goes through the stack but skips the identity ring.
+func TestAPIGuardsAnExemptPathAsksForNoIdentity(t *testing.T) {
 	t.Parallel()
 
 	r := corehttp.NewRouter(corehttp.RouterOptions{
 		Version: "test",
 		Middlewares: corehttp.APIGuards(corehttp.GuardOptions{
-			Authenticator: sabitDogrulayici{err: errors.New("geçersiz")},
+			Authenticator: fixedAuthenticator{err: errors.New("invalid")},
 			AdminExempt:   []string{"/admin/v1/auth/login"},
 			Limiter:       corehttp.NewMemoryLimiter(1, time.Minute),
 		}),
@@ -332,45 +335,46 @@ func TestAPIGuardsMuafYolKimlikIstemez(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	})
 
-	kayit := cagir(r, httptest.NewRequest(http.MethodPost, "/admin/v1/auth/login", http.NoBody))
-	assert.Equal(t, http.StatusOK, kayit.Code, "giriş ucu kimlik istememeli")
+	rec := call(r, httptest.NewRequest(http.MethodPost, "/admin/v1/auth/login", http.NoBody))
+	assert.Equal(t, http.StatusOK, rec.Code, "the login endpoint must not ask for identity")
 
-	// Muafiyet YALNIZCA kimlik halkasınadır: hız sınırı giriş ucunda da
-	// çalışmalıdır, çünkü korumasız uç tam olarak kaba kuvvetin hedefidir.
-	ikinci := cagir(r, httptest.NewRequest(http.MethodPost, "/admin/v1/auth/login", http.NoBody))
-	assert.Equal(t, http.StatusTooManyRequests, ikinci.Code,
-		"giriş ucu korumasızdır ama SINIRSIZ değildir")
+	// The exemption is ONLY from the identity ring: the rate limit has to run on the
+	// login endpoint too, because an unguarded endpoint is exactly what brute force targets.
+	second := call(r, httptest.NewRequest(http.MethodPost, "/admin/v1/auth/login", http.NoBody))
+	assert.Equal(t, http.StatusTooManyRequests, second.Code,
+		"the login endpoint is unguarded but NOT unlimited")
 }
 
-// TestDeferredAuthenticatorBaglanmadanReddeder bağlanmamış doğrulayıcının
-// sessizce geçirmediğini doğrular (ADR 0007).
-func TestDeferredAuthenticatorBaglanmadanReddeder(t *testing.T) {
+// TestDeferredAuthenticatorRejectsBeforeBinding verifies that an unbound
+// authenticator does not quietly let requests through (ADR 0007).
+func TestDeferredAuthenticatorRejectsBeforeBinding(t *testing.T) {
 	t.Parallel()
 
 	var d corehttp.DeferredAuthenticator
 
 	_, err := d.AuthenticateAdmin(context.Background(), "bearer", "x")
 	assert.True(t, coreerrors.IsUnauthorized(err),
-		"bağlanmamış doğrulayıcı kimlik doğrulama hatası dönmeli, %v döndü", err)
+		"an unbound authenticator has to return an authentication error, it returned %v", err)
 
 	_, err = d.AuthenticateStore(context.Background(), "pk_x")
 	assert.True(t, coreerrors.IsUnauthorized(err))
 }
 
-// TestAPIGuardsKimliksizOnegiDeSinirlar kimlik istemeyen bir ucun kotasız
-// OLMADIĞINI doğrular.
+// TestAPIGuardsLimitTheIdentityFreePrefixToo verifies that an endpoint asking
+// for no identity is NOT one without a quota.
 //
-// Kimlik ve kota AYRI kararlardır. Yüklenen dosyalar kimliksiz sunulur çünkü
-// vitrindeki <img> etiketi başlık gönderemez — ama her istek bir veritabanı
-// okuması ve bir disk erişimi yapar. Kotasız bırakmak, kimlik doğrulama
-// maliyeti bile ödemeden atılabilen bir yük bırakmak olurdu.
-func TestAPIGuardsKimliksizOnegiDeSinirlar(t *testing.T) {
+// Identity and quota are SEPARATE decisions. Uploaded files are served without
+// identity because the <img> tag in the storefront cannot send a header — but
+// every request does a database read and a disk access. Leaving it without a
+// quota would leave a load that can be thrown at us without even paying the
+// authentication cost.
+func TestAPIGuardsLimitTheIdentityFreePrefixToo(t *testing.T) {
 	t.Parallel()
 
 	r := corehttp.NewRouter(corehttp.RouterOptions{
 		Version: "test",
 		Middlewares: corehttp.APIGuards(corehttp.GuardOptions{
-			Authenticator: sabitDogrulayici{err: errors.New("geçersiz")},
+			Authenticator: fixedAuthenticator{err: errors.New("invalid")},
 			Limiter:       corehttp.NewMemoryLimiter(1, time.Minute),
 			OpenPrefixes:  []string{"/files"},
 		}),
@@ -379,92 +383,92 @@ func TestAPIGuardsKimliksizOnegiDeSinirlar(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	})
 
-	ilk := cagir(r, httptest.NewRequest(http.MethodGet, "/files/abc.png", http.NoBody))
-	assert.Equal(t, http.StatusOK, ilk.Code, "kimliksiz uç kimlik İSTEMEZ")
+	first := call(r, httptest.NewRequest(http.MethodGet, "/files/abc.png", http.NoBody))
+	assert.Equal(t, http.StatusOK, first.Code, "an identity-free endpoint ASKS FOR NO identity")
 
-	ikinci := cagir(r, httptest.NewRequest(http.MethodGet, "/files/abc.png", http.NoBody))
-	assert.Equal(t, http.StatusTooManyRequests, ikinci.Code,
-		"kimliksiz olmak kotasız olmak DEĞİLDİR")
+	second := call(r, httptest.NewRequest(http.MethodGet, "/files/abc.png", http.NoBody))
+	assert.Equal(t, http.StatusTooManyRequests, second.Code,
+		"being identity-free is NOT being quota-free")
 
-	// Sağlık ucu kimliksiz VE kotasızdır; kotaya takılması, orkestratörün
-	// sağlıklı bir örneği trafikten çekmesine yol açardı.
-	saglik := cagir(r, httptest.NewRequest(http.MethodGet, "/health", http.NoBody))
-	assert.Equal(t, http.StatusOK, saglik.Code, "sağlık ucu kotaya girmemeli")
+	// The health endpoint is identity-free AND quota-free; having it hit the quota
+	// would make the orchestrator pull a healthy instance out of traffic.
+	health := call(r, httptest.NewRequest(http.MethodGet, "/health", http.NoBody))
+	assert.Equal(t, http.StatusOK, health.Code, "the health endpoint must not enter the quota")
 }
 
-// TestIdempotencyAkisliGovdeyiTamponlamaz multipart bir isteğin gövdesinin
-// idempotency middleware'i tarafından okunMADIĞINI doğrular.
+// TestIdempotencyDoesNotBufferAStreamingBody verifies that the body of a
+// multipart request is NOT READ by the idempotency middleware.
 //
-// Okunsaydı iki şey birden bozulurdu: akış anlamını yitirir (aynı baytlar hem
-// bellekte hem diskte) ve middleware'in kendi 1 MiB tamponu, yükleme ucunun
-// çok daha büyük sınırından ÖNCE devreye girip istemciye yanlış sınırı
-// bildirirdi.
-func TestIdempotencyAkisliGovdeyiTamponlamaz(t *testing.T) {
+// Were it read, two things would break at once: streaming would lose its meaning
+// (the same bytes both in memory and on disk) and the middleware's own 1 MiB
+// buffer would engage BEFORE the upload endpoint's far larger limit and report
+// the wrong limit to the client.
+func TestIdempotencyDoesNotBufferAStreamingBody(t *testing.T) {
 	t.Parallel()
 
-	var okunanUzunluk int
+	var readLength int
 
 	r := corehttp.NewRouter(corehttp.RouterOptions{
 		Version: "test",
 		Middlewares: corehttp.APIGuards(corehttp.GuardOptions{
-			Authenticator:    sabitDogrulayici{principal: corehttp.Principal{ID: "usr_1", Kind: "user"}},
+			Authenticator:    fixedAuthenticator{principal: corehttp.Principal{ID: "usr_1", Kind: "user"}},
 			IdempotencyStore: corehttp.NewMemoryIdempotencyStore(time.Hour, 0),
 		}),
 	})
 	r.Post("/admin/v1/uploads", func(w http.ResponseWriter, req *http.Request) {
-		// Handler gövdeyi TAM olarak okuyabilmeli: middleware tükettiyse
-		// buraya sıfır bayt gelir.
+		// The handler has to be able to read the body IN FULL: if the middleware
+		// consumed it, zero bytes arrive here.
 		b, _ := io.ReadAll(req.Body)
-		okunanUzunluk = len(b)
+		readLength = len(b)
 
 		w.WriteHeader(http.StatusCreated)
 	})
 
-	govde := strings.Repeat("x", 4096)
-	istek := httptest.NewRequest(http.MethodPost, "/admin/v1/uploads", strings.NewReader(govde))
-	istek.Header.Set("Authorization", "Bearer jeton")
-	istek.Header.Set("Content-Type", "multipart/form-data; boundary=sinir")
-	istek.Header.Set(corehttp.IdempotencyKeyHeader, "yukleme-1")
+	body := strings.Repeat("x", 4096)
+	req := httptest.NewRequest(http.MethodPost, "/admin/v1/uploads", strings.NewReader(body))
+	req.Header.Set("Authorization", "Bearer token")
+	req.Header.Set("Content-Type", "multipart/form-data; boundary=bnd")
+	req.Header.Set(corehttp.IdempotencyKeyHeader, "upload-1")
 
-	kayit := cagir(r, istek)
+	rec := call(r, req)
 
-	require.Equal(t, http.StatusCreated, kayit.Code)
-	assert.Equal(t, len(govde), okunanUzunluk,
-		"multipart gövde handler'a TAM ulaşmalı; middleware onu tüketmemeli")
-	assert.Empty(t, kayit.Header().Get(corehttp.IdempotencyReplayedHeader),
-		"akışlı gövde kaydedilmez, dolayısıyla oynatılamaz")
+	require.Equal(t, http.StatusCreated, rec.Code)
+	assert.Equal(t, len(body), readLength,
+		"the multipart body has to reach the handler IN FULL; the middleware must not consume it")
+	assert.Empty(t, rec.Header().Get(corehttp.IdempotencyReplayedHeader),
+		"a streaming body is not recorded, so it cannot be replayed")
 }
 
-// TestAPIGuardsMuafYolIdempotencyKaydetmez muaf bir yolun yanıtının
-// SAKLANMADIĞINI ve her isteğin yeniden çalıştığını doğrular.
+// TestAPIGuardsAnExemptPathIsNotRecordedForIdempotency verifies that an exempt
+// path's response is NOT STORED and that every request runs again.
 //
-// Ölçülen arıza şuydu: yanıtını hata hâlinde de 200 ile veren bir uç (GraphQL
-// sözleşmesi böyledir) "5xx kaydedilmez" korumasının dışında kalır. Aşağıdaki
-// handler tam olarak onu taklit eder — önce 200 içinde bir hata gövdesi, sonra
-// düzelmiş bir yanıt. Muafiyet olmasaydı ikinci istek, arıza giderilmiş olsa
-// bile TTL boyunca (varsayılan 24 saat) İLK gövdeyi Idempotency-Replayed ile
-// geri alırdı.
-func TestAPIGuardsMuafYolIdempotencyKaydetmez(t *testing.T) {
+// The fault measured was this: an endpoint that answers with a 200 even in the
+// error case (that is what the GraphQL contract does) falls outside the "a 5xx is
+// not recorded" guard. The handler below imitates exactly that — first an error
+// body inside a 200, then a fixed response. Without the exemption the second
+// request would get the FIRST body back with Idempotency-Replayed for the whole
+// TTL (24 hours by default), even after the fault was fixed.
+func TestAPIGuardsAnExemptPathIsNotRecordedForIdempotency(t *testing.T) {
 	t.Parallel()
 
-	const muafYol = "/store/v1/graphql"
+	const exemptPath = "/store/v1/graphql"
 
-	arizali := true
+	faulty := true
 
 	r := corehttp.NewRouter(corehttp.RouterOptions{
 		Version: "test",
 		Middlewares: corehttp.APIGuards(corehttp.GuardOptions{
-			Authenticator:     sabitDogrulayici{principal: corehttp.Principal{ID: "pk_1", Kind: "api_key"}},
+			Authenticator:     fixedAuthenticator{principal: corehttp.Principal{ID: "pk_1", Kind: "api_key"}},
 			IdempotencyStore:  corehttp.NewMemoryIdempotencyStore(time.Hour, 0),
-			IdempotencyExempt: []string{muafYol},
+			IdempotencyExempt: []string{exemptPath},
 		}),
 	})
-	r.Post(muafYol, func(w http.ResponseWriter, _ *http.Request) {
-		// Durum kodu HER İKİ hâlde de 200; ayrımı yalnızca gövde taşır.
+	r.Post(exemptPath, func(w http.ResponseWriter, _ *http.Request) {
+		// The status code is 200 in BOTH cases; only the body carries the difference.
 		w.WriteHeader(http.StatusOK)
 
-		if arizali {
-			_, _ = w.Write([]byte(`{"errors":[{"message":"ic hata"}]}`))
+		if faulty {
+			_, _ = w.Write([]byte(`{"errors":[{"message":"internal error"}]}`))
 			return
 		}
 
@@ -475,68 +479,69 @@ func TestAPIGuardsMuafYolIdempotencyKaydetmez(t *testing.T) {
 		_, _ = w.Write([]byte(`{"data":{"id":"cart_1"}}`))
 	})
 
-	istekYap := func(yol string) *http.Request {
-		req := httptest.NewRequest(http.MethodPost, yol, strings.NewReader(`{"query":"{ products { count } }"}`))
+	makeReq := func(path string) *http.Request {
+		req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(`{"query":"{ products { count } }"}`))
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set(corehttp.PublishableKeyHeader, "pk_test")
-		req.Header.Set(corehttp.IdempotencyKeyHeader, "ayni-anahtar")
+		req.Header.Set(corehttp.IdempotencyKeyHeader, "same-key")
 
 		return req
 	}
 
-	ilk := cagir(r, istekYap(muafYol))
-	require.Equal(t, http.StatusOK, ilk.Code)
-	require.Contains(t, ilk.Body.String(), "ic hata")
+	first := call(r, makeReq(exemptPath))
+	require.Equal(t, http.StatusOK, first.Code)
+	require.Contains(t, first.Body.String(), "internal error")
 
-	arizali = false
+	faulty = false
 
-	ikinci := cagir(r, istekYap(muafYol))
-	assert.Equal(t, http.StatusOK, ikinci.Code)
-	assert.Empty(t, ikinci.Header().Get(corehttp.IdempotencyReplayedHeader),
-		"muaf yolda kayıt hiç alınmaz, dolayısıyla oynatılacak bir şey de yoktur")
-	assert.Contains(t, ikinci.Body.String(), `"count":42`,
-		"arıza giderildikten sonra istemci GÜNCEL yanıtı almalı, 24 saatlik kaydı değil")
+	second := call(r, makeReq(exemptPath))
+	assert.Equal(t, http.StatusOK, second.Code)
+	assert.Empty(t, second.Header().Get(corehttp.IdempotencyReplayedHeader),
+		"on an exempt path no record is taken at all, so there is nothing to replay either")
+	assert.Contains(t, second.Body.String(), `"count":42`,
+		"after the fault is fixed the client has to get the CURRENT response, not a 24-hour-old record")
 
-	// Muafiyet TAM YOLADIR: aynı önekteki başka bir uç kaydedilmeye devam
-	// eder. Aksi hâlde tek bir muafiyet, yüzeyin tamamının korumasını sessizce
-	// kaldırırdı.
-	sepetIlk := cagir(r, istekYap("/store/v1/carts"))
-	require.Equal(t, http.StatusOK, sepetIlk.Code)
+	// The exemption is on the FULL PATH: another endpoint under the same prefix
+	// keeps being recorded. Otherwise a single exemption would quietly remove the
+	// guard from the whole surface.
+	cartFirst := call(r, makeReq("/store/v1/carts"))
+	require.Equal(t, http.StatusOK, cartFirst.Code)
 
-	sepetIkinci := cagir(r, istekYap("/store/v1/carts"))
-	assert.Equal(t, "true", sepetIkinci.Header().Get(corehttp.IdempotencyReplayedHeader),
-		"muaf OLMAYAN uç aynı anahtarla kaydı oynatmalı")
+	cartSecond := call(r, makeReq("/store/v1/carts"))
+	assert.Equal(t, "true", cartSecond.Header().Get(corehttp.IdempotencyReplayedHeader),
+		"an endpoint that is NOT exempt has to replay the record for the same key")
 }
 
-// TestAPIGuardsMuafYolKimlikVeKotadanGecer muafiyetin KAPSAMINI çizer.
+// TestAPIGuardsAnExemptPathStillGoesThroughIdentityAndQuota draws the SCOPE of
+// the exemption.
 //
-// Muafiyet yalnızca idempotency halkasınadır. Yanlışlıkla tüm yığına
-// uygulansaydı, bir okuma ucunu kayıttan çıkarma kararı sessizce o ucu kimlik
-// doğrulamasından ve kotadan da çıkarırdı — vitrin kataloğu anahtarsız
-// okunabilir hâle gelirdi.
-func TestAPIGuardsMuafYolKimlikVeKotadanGecer(t *testing.T) {
+// The exemption is only from the idempotency ring. Applied to the whole stack by
+// accident, the decision to leave a read endpoint out of the record would quietly
+// take that endpoint out of authentication and out of the quota too — the
+// storefront catalog would become readable without a key.
+func TestAPIGuardsAnExemptPathStillGoesThroughIdentityAndQuota(t *testing.T) {
 	t.Parallel()
 
-	const muafYol = "/store/v1/graphql"
+	const exemptPath = "/store/v1/graphql"
 
 	r := corehttp.NewRouter(corehttp.RouterOptions{
 		Version: "test",
 		Middlewares: corehttp.APIGuards(corehttp.GuardOptions{
-			Authenticator:     sabitDogrulayici{err: errors.New("geçersiz")},
+			Authenticator:     fixedAuthenticator{err: errors.New("invalid")},
 			Limiter:           corehttp.NewMemoryLimiter(1, time.Minute),
 			IdempotencyStore:  corehttp.NewMemoryIdempotencyStore(time.Hour, 0),
-			IdempotencyExempt: []string{muafYol},
+			IdempotencyExempt: []string{exemptPath},
 		}),
 	})
-	r.Post(muafYol, func(w http.ResponseWriter, _ *http.Request) {
+	r.Post(exemptPath, func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
 
-	ilk := cagir(r, httptest.NewRequest(http.MethodPost, muafYol, http.NoBody))
-	assert.Equal(t, http.StatusUnauthorized, ilk.Code,
-		"idempotency muafiyeti kimlik doğrulamasını kaldırmaz")
+	first := call(r, httptest.NewRequest(http.MethodPost, exemptPath, http.NoBody))
+	assert.Equal(t, http.StatusUnauthorized, first.Code,
+		"an idempotency exemption does not remove authentication")
 
-	ikinci := cagir(r, httptest.NewRequest(http.MethodPost, muafYol, http.NoBody))
-	assert.Equal(t, http.StatusTooManyRequests, ikinci.Code,
-		"idempotency muafiyeti kotayı da kaldırmaz")
+	second := call(r, httptest.NewRequest(http.MethodPost, exemptPath, http.NoBody))
+	assert.Equal(t, http.StatusTooManyRequests, second.Code,
+		"an idempotency exemption does not remove the quota either")
 }

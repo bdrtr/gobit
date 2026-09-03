@@ -64,13 +64,13 @@ func TestMemoryStoreDropsOldestRecordWhenBudgetFills(t *testing.T) {
 	// keys of different lengths would leave the budget a byte short of full and
 	// the boundary below would not be a boundary at all.
 	sample := boundsResponse(1024)
-	charge := girdiYuku("key-a", &sample)
+	charge := entryCharge("key-a", &sample)
 	store := NewMemoryIdempotencyStore(time.Hour, 2*charge)
 
 	boundsWrite(t, ctx, store, "key-a", 1024)
 	boundsWrite(t, ctx, store, "key-b", 1024)
 
-	require.Equal(t, store.butce, store.yuk, "the two records must fill the budget EXACTLY")
+	require.Equal(t, store.budget, store.charge, "the two records must fill the budget EXACTLY")
 
 	// Nothing may be dropped while the budget is only reached, not exceeded.
 	assert.True(t, boundsReplays(t, ctx, store, "key-a"), "a full but not overflowing budget must drop nothing")
@@ -81,7 +81,7 @@ func TestMemoryStoreDropsOldestRecordWhenBudgetFills(t *testing.T) {
 	assert.False(t, boundsReplays(t, ctx, store, "key-a"), "the OLDEST record must be the one dropped")
 	assert.True(t, boundsReplays(t, ctx, store, "key-b"), "a younger record must survive")
 	assert.True(t, boundsReplays(t, ctx, store, "key-c"), "the record just written must survive")
-	assert.LessOrEqual(t, store.yuk, store.butce, "charge must stay within the budget after eviction")
+	assert.LessOrEqual(t, store.charge, store.budget, "charge must stay within the budget after eviction")
 }
 
 // TestMemoryStoreKeepsChargeAndQueueInStep proves the three structures that
@@ -105,13 +105,13 @@ func TestMemoryStoreKeepsChargeAndQueueInStep(t *testing.T) {
 	}
 
 	var want int64
-	for _, g := range store.girdi {
-		want += g.yuk
+	for _, g := range store.entry {
+		want += g.charge
 	}
 
-	assert.Equal(t, want, store.yuk, "the store's charge must equal the sum of its records")
-	assert.Equal(t, len(store.girdi), store.sira.Len(), "every record must sit in the queue exactly once")
-	assert.Equal(t, 200, len(store.girdi))
+	assert.Equal(t, want, store.charge, "the store's charge must equal the sum of its records")
+	assert.Equal(t, len(store.entry), store.queue.Len(), "every record must sit in the queue exactly once")
+	assert.Equal(t, 200, len(store.entry))
 }
 
 // TestMemoryStoreDoesNotEvictInFlightReservations pins the one entry eviction
@@ -137,7 +137,7 @@ func TestMemoryStoreDoesNotEvictInFlightReservations(t *testing.T) {
 
 	_, _, err = store.Begin(ctx, "in-flight", "0123456789abcdef0123456789abcdef")
 	assert.ErrorIs(t, err, ErrIdempotencyKeyInFlight, "an in-flight reservation must survive eviction")
-	assert.LessOrEqual(t, store.yuk, store.butce)
+	assert.LessOrEqual(t, store.charge, store.budget)
 }
 
 // TestMemoryStoreExpiryStopsAtFirstLiveRecord pins the prefix walk.
@@ -200,14 +200,14 @@ func TestMemoryStoreReleasesEverythingWhenRecordsExpire(t *testing.T) {
 		boundsWrite(t, ctx, store, "key-"+strconv.Itoa(i), 512)
 	}
 
-	require.Positive(t, store.yuk)
+	require.Positive(t, store.charge)
 
 	clock = clock.Add(2 * time.Minute)
 	require.False(t, boundsReplays(t, ctx, store, "probe"))
 
-	assert.Zero(t, store.yuk, "expired records must give their charge back")
-	assert.Equal(t, 1, len(store.girdi), "only the probe's own reservation may remain")
-	assert.Equal(t, 1, store.sira.Len())
+	assert.Zero(t, store.charge, "expired records must give their charge back")
+	assert.Equal(t, 1, len(store.entry), "only the probe's own reservation may remain")
+	assert.Equal(t, 1, store.queue.Len())
 }
 
 // TestMemoryStoreReordersARewrittenRecord pins that rewriting a record moves it
@@ -292,8 +292,8 @@ func TestMemoryStoreAbortLeavesACompletedRecordAlone(t *testing.T) {
 
 	assert.True(t, boundsReplays(t, ctx, store, "key"),
 		"a completed record must survive an abort; deleting it would let the retry run the handler again")
-	assert.Equal(t, 1, store.sira.Len(), "the record must stay in the expiry queue too")
-	assert.Positive(t, store.yuk, "the record's charge must stay on the budget")
+	assert.Equal(t, 1, store.queue.Len(), "the record must stay in the expiry queue too")
+	assert.Positive(t, store.charge, "the record's charge must stay on the budget")
 }
 
 // TestMemoryStoreAbortReleasesQueueSlot pins that an aborted reservation leaves
@@ -306,8 +306,8 @@ func TestMemoryStoreAbortReleasesQueueSlot(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, store.Abort(ctx, "key"))
 
-	assert.Empty(t, store.girdi)
-	assert.Equal(t, 0, store.sira.Len(), "an aborted reservation must leave the queue too")
+	assert.Empty(t, store.entry)
+	assert.Equal(t, 0, store.queue.Len(), "an aborted reservation must leave the queue too")
 
 	_, ok, err := store.Begin(ctx, "key", "0123456789abcdef0123456789abcdef")
 	require.NoError(t, err)
@@ -344,7 +344,7 @@ func TestMemoryStoreWarnsOnFirstEvictionThenThrottles(t *testing.T) {
 
 	// Past the throttle window the warning returns, and it reports every record
 	// dropped while it was silent.
-	clock = clock.Add(tahliyeLogAraligi)
+	clock = clock.Add(evictionLogInterval)
 	boundsWrite(t, ctx, store, "later", 1024)
 
 	second := strings.TrimPrefix(buf.String(), first)
@@ -368,7 +368,7 @@ func TestMemoryStoreWarnsOnFirstEvictionThenThrottles(t *testing.T) {
 // Begin hands the caller the STORED record and copies it after the mutex is
 // released; that is only safe because a published record is never written
 // again — Complete swaps in a new pointer rather than updating the struct in
-// place. The invariant is stated in the ayir godoc, but a sentence is not a
+// place. The invariant is stated in the reserve godoc, but a sentence is not a
 // guard: an in-place update compiles, passes every functional test in this
 // package, and corrupts a response a concurrent replay is in the middle of
 // copying.
@@ -418,46 +418,46 @@ func TestMemoryStoreReplayRacesWithARewrite(t *testing.T) {
 // terms are pinned per GROUP rather than per header because that is what was
 // measured: header nine, not header two, is what costs the next allocation.
 func TestChargeCountsEveryPartOfARecord(t *testing.T) {
-	base := girdiYuku("k", &IdempotentResponse{})
+	base := entryCharge("k", &IdempotentResponse{})
 	assert.Positive(t, base, "an empty record still occupies memory and must still be charged")
 
-	longerKey := girdiYuku("kk", &IdempotentResponse{})
+	longerKey := entryCharge("kk", &IdempotentResponse{})
 	assert.Equal(t, base+1, longerKey, "the key's own bytes must be charged")
 
-	withFingerprint := girdiYuku("k", &IdempotentResponse{Fingerprint: "abcd"})
+	withFingerprint := entryCharge("k", &IdempotentResponse{Fingerprint: "abcd"})
 	assert.Equal(t, base+4, withFingerprint)
 
-	withBody := girdiYuku("k", &IdempotentResponse{Body: bytes.Repeat([]byte("a"), 5000)})
+	withBody := entryCharge("k", &IdempotentResponse{Body: bytes.Repeat([]byte("a"), 5000)})
 	assert.Equal(t, base+5000, withBody)
 
-	oneHeader := girdiYuku("k", &IdempotentResponse{Header: http.Header{"Ab": {"c"}}})
-	assert.Greater(t, oneHeader-base, basliklarGrupYuku,
+	oneHeader := entryCharge("k", &IdempotentResponse{Header: http.Header{"Ab": {"c"}}})
+	assert.Greater(t, oneHeader-base, headerGroupCharge,
 		"a header map costs its group allocation PLUS the strings in it")
 
-	longerName := girdiYuku("k", &IdempotentResponse{Header: http.Header{"Abcdefgh": {"c"}}})
+	longerName := entryCharge("k", &IdempotentResponse{Header: http.Header{"Abcdefgh": {"c"}}})
 	assert.Equal(t, oneHeader+6, longerName, "a header NAME's bytes must be charged")
 
-	longerValue := girdiYuku("k", &IdempotentResponse{Header: http.Header{"Ab": {"cdefg"}}})
+	longerValue := entryCharge("k", &IdempotentResponse{Header: http.Header{"Ab": {"cdefg"}}})
 	assert.Equal(t, oneHeader+4, longerValue, "a header VALUE's bytes must be charged")
 
-	twoValues := girdiYuku("k", &IdempotentResponse{Header: http.Header{"Ab": {"c", "d"}}})
+	twoValues := entryCharge("k", &IdempotentResponse{Header: http.Header{"Ab": {"c", "d"}}})
 	assert.Greater(t, twoValues, oneHeader+1,
 		"a second value costs its own slot as well as its byte")
 
 	full := http.Header{}
-	for i := range basliklarGrupBoyu {
+	for i := range headerGroupSize {
 		full["Ab"+strconv.Itoa(i)] = []string{"c"}
 	}
 
-	fullGroup := girdiYuku("k", &IdempotentResponse{Header: full})
-	secondHeader := girdiYuku("k", &IdempotentResponse{
+	fullGroup := entryCharge("k", &IdempotentResponse{Header: full})
+	secondHeader := entryCharge("k", &IdempotentResponse{
 		Header: http.Header{"Ab0": {"c"}, "Ab1": {"c"}},
-	}) - girdiYuku("k", &IdempotentResponse{Header: http.Header{"Ab0": {"c"}}})
+	}) - entryCharge("k", &IdempotentResponse{Header: http.Header{"Ab0": {"c"}}})
 
 	full["Ab8"] = []string{"c"}
-	ninthHeader := girdiYuku("k", &IdempotentResponse{Header: full}) - fullGroup
+	ninthHeader := entryCharge("k", &IdempotentResponse{Header: full}) - fullGroup
 
-	assert.Equal(t, secondHeader+basliklarGrupYuku, ninthHeader,
+	assert.Equal(t, secondHeader+headerGroupCharge, ninthHeader,
 		"the ninth header must open a second group; the second must not")
 }
 
@@ -474,7 +474,7 @@ func TestBudgetDefaultAgreesWithConfiguration(t *testing.T) {
 	declared, err := strconv.ParseInt(field.Tag.Get("envDefault"), 10, 64)
 	require.NoError(t, err)
 
-	assert.Equal(t, varsayilanIdempotencyButcesi, declared,
+	assert.Equal(t, defaultIdempotencyBudget, declared,
 		"IDEMPOTENCY_MAX_MEMORY_BYTES's default must match the store's own default")
 	// The floor is not compared to a number but EXERCISED, because the number
 	// on its own says nothing: a budget equal to the largest buffered body is

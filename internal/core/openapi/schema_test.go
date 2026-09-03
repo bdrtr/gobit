@@ -12,646 +12,650 @@ import (
 	"github.com/bdrtr/gobit/internal/core/openapi"
 )
 
-// zenginVaryant gölgeleyen alanın taşıdığı ZENGİN tiptir.
-type zenginVaryant struct {
+// richVariant is the RICH type the shadowing field carries.
+type richVariant struct {
 	ID    string `json:"id"`
-	Fiyat int64  `json:"fiyat"`
+	Price int64  `json:"price"`
 }
 
-// temelKayit gömülecek olan taban tiptir.
+// baseRecord is the base type that gets embedded.
 //
-// Dışa KAPALIDIR ve bu bilinçlidir: encoding/json dışa kapalı bir tipin
-// gömülü hâlini yine tarar ve içindeki dışa açık alanları yazar. Şema da
-// yazmalıdır; yazmazsa istemci ürünün kimliğini hiç göremez.
-type temelKayit struct {
-	ID       string    `json:"id"`
-	Title    string    `json:"title"`
-	Variants []string  `json:"variants"`
-	Skipped  string    `json:"-"`
-	kapali   string    // dışa kapalı alan; şemaya GİRMEMELİ
-	Created  time.Time `json:"created_at"`
+// It is UNEXPORTED and that is deliberate: encoding/json still walks the
+// embedded form of an unexported type and writes the exported fields inside it.
+// The schema has to as well; without that the client never sees the product id.
+type baseRecord struct {
+	ID         string    `json:"id"`
+	Title      string    `json:"title"`
+	Variants   []string  `json:"variants"`
+	Skipped    string    `json:"-"`
+	unexported string    // an unexported field; it must NOT enter the schema
+	Created    time.Time `json:"created_at"`
 }
 
-// golgeleyenKayit gömülü tipin bir alanını GÖLGELER.
+// shadowingRecord SHADOWS one field of the embedded type.
 //
-// Şekil, internal/modules/product/service.StoreProduct'ın ta kendisidir:
-// gömülü kaydın Variants alanı, zenginleştirilmiş bir dilimle gölgelenir.
-// Gerçek tiple kurulan bağ internal/arch'taki testtedir; çekirdek testleri
-// modülleri import EDEMEZ (Prensip 2.4), bu yüzden şekil burada tekrarlanır.
-type golgeleyenKayit struct {
-	temelKayit
-	Variants []zenginVaryant `json:"variants"`
+// The shape is internal/modules/product/service.StoreProduct itself: the
+// embedded record's Variants field is shadowed by an enriched slice. The tie to
+// the real type is in the test in internal/arch; the core tests CANNOT import
+// the modules (Principle 2.4), so the shape is repeated here.
+type shadowingRecord struct {
+	baseRecord
+	Variants []richVariant `json:"variants"`
 }
 
-// solTaraf ve sagTaraf aynı adı AYNI derinlikte isteyen iki gömülü tiptir.
-type solTaraf struct {
-	Ortak string
+// leftSide and rightSide are two embedded types wanting the same name at the SAME depth.
+type leftSide struct {
+	Shared string
 }
 
-// sagTaraf solTaraf ile aynı alanı taşır; ikisi de etiketsizdir.
-type sagTaraf struct {
-	Ortak string
+// rightSide carries the same field as leftSide; neither is tagged.
+type rightSide struct {
+	Shared string
 }
 
-// belirsizKayit iki gömülü tipten aynı adı miras alır.
+// ambiguousRecord inherits the same name from two embedded types.
 //
-// Aday alanların derinliği de etiketliliği de eşittir; encoding/json böyle
-// bir alanı HİÇ yazmaz (kazanan yoktur) ve şema da yazmamalıdır.
-type belirsizKayit struct {
-	solTaraf
-	sagTaraf
-	Tekil string `json:"tekil"`
+// The candidate fields are equal in depth and in taggedness; encoding/json writes
+// such a field NOT AT ALL (there is no winner) and the schema must not either.
+type ambiguousRecord struct {
+	leftSide
+	rightSide
+	Single string `json:"single"`
 }
 
-// etiketliTaraf ile etiketsizTaraf AYNI JSON adını AYNI derinlikte ister ama
-// yalnızca biri etiketlidir.
+// taggedSide and untaggedSide want the SAME JSON name at the SAME depth, but
+// only one of them is tagged.
 //
-// Etiketin Go alan adından farklı olması bilinçlidir: çakışma alanın JSON
-// ADI üzerinden doğar, Go adı üzerinden değil.
-type etiketliTaraf struct {
-	Etiketli string `json:"Ortak"`
+// The tag differing from the Go field name is deliberate: the clash arises
+// through the field's JSON NAME, not through its Go name.
+type taggedSide struct {
+	Tagged string `json:"Shared"`
 }
 
-// etiketsizTaraf etiketliTaraf ile aynı JSON adını etiketsiz taşır.
-type etiketsizTaraf struct {
-	Ortak string
+// untaggedSide carries the same JSON name as taggedSide, untagged.
+type untaggedSide struct {
+	Shared string
 }
 
-// kismenBelirsizKayit eşit derinlikte tek bir ETİKETLİ aday taşır.
+// partlyAmbiguousRecord carries a single TAGGED candidate at equal depth.
 //
-// encoding/json'da etiketli aday belirsizliği çözer ve alan yazılır.
-type kismenBelirsizKayit struct {
-	etiketliTaraf
-	etiketsizTaraf
+// In encoding/json a tagged candidate resolves the ambiguity and the field is written.
+type partlyAmbiguousRecord struct {
+	taggedSide
+	untaggedSide
 }
 
-// tumTipler yansıma katmanının tanıması gereken tip ailesini toplar.
-type tumTipler struct {
-	Metin    string          `json:"metin"`
-	Uzun     int64           `json:"uzun"`
-	Kisa     int32           `json:"kisa"`
-	Ondalik  float64         `json:"ondalik"`
-	Mantik   bool            `json:"mantik"`
-	Dilim    []string        `json:"dilim"`
-	Harita   map[string]any  `json:"harita"`
-	Zaman    time.Time       `json:"zaman"`
-	Ham      json.RawMessage `json:"ham"`
-	Isaretci *string         `json:"isaretci"`
-	ZamanIsa *time.Time      `json:"zaman_isaretci"`
-	Secmeli  *int64          `json:"secmeli,omitempty"`
-	Baytlar  []byte          `json:"baytlar"`
-	IcIce    zenginVaryant   `json:"ic_ice"`
-	Skipped  string          `json:"-"`
-	kapali   string          // dışa kapalı alan; şemaya GİRMEMELİ
+// allTypes gathers the type family the reflection layer has to recognize.
+type allTypes struct {
+	Text       string          `json:"text"`
+	Long       int64           `json:"long"`
+	Short      int32           `json:"short"`
+	Decimal    float64         `json:"decimal"`
+	Flag       bool            `json:"flag"`
+	Slice      []string        `json:"slice"`
+	Map        map[string]any  `json:"map"`
+	Time       time.Time       `json:"time"`
+	Raw        json.RawMessage `json:"raw"`
+	Pointer    *string         `json:"pointer"`
+	TimePtr    *time.Time      `json:"time_ptr"`
+	Optional   *int64          `json:"optional,omitempty"`
+	Bytes      []byte          `json:"bytes"`
+	Nested     richVariant     `json:"nested"`
+	Skipped    string          `json:"-"`
+	unexported string          // an unexported field; it must NOT enter the schema
 }
 
-// dugum kendine referans veren bir tiptir; şema üreticisi burada sonsuz
-// döngüye girmemelidir.
-type dugum struct {
-	ID  string  `json:"id"`
-	Alt []dugum `json:"alt"`
-	Ust *dugum  `json:"ust"`
+// node is a self-referencing type; the schema generator must not fall into an
+// endless loop here.
+type node struct {
+	ID       string `json:"id"`
+	Children []node `json:"children"`
+	Parent   *node  `json:"parent"`
 }
 
-// CakisanKayit dahili test dosyasındaki openapi.CakisanKayit ile AYNI adı
-// taşır; ikisi ayrı paketlerdedir.
-type CakisanKayit struct {
-	BaskaAlan int `json:"baska_alan"`
+// ClashingRecord carries the SAME name as openapi.ClashingRecord in the internal
+// test file; the two are in separate packages.
+type ClashingRecord struct {
+	OtherField int `json:"other_field"`
 }
 
-// Error çekirdeğin ortak hata bileşeniyle aynı adı taşır.
+// Error carries the same name as the core's shared error component.
 type Error struct {
-	Kod string `json:"kod"`
+	Code string `json:"code"`
 }
 
-// doluTumTipler her alanı DOLU bir örnek döner.
+// filledAllTypes returns an instance with every field FILLED.
 //
-// Alanların dolu olması şart: omitempty taşıyan bir alan boşken JSON'a hiç
-// yazılmaz ve anahtar kümesi karşılaştırması onu hiç görmezdi.
-func doluTumTipler() tumTipler {
-	metin := "değer"
-	sayi := int64(7)
+// The fields being filled matters: a field carrying omitempty is not written to
+// JSON at all while empty, and the key-set comparison would never see it.
+func filledAllTypes() allTypes {
+	text := "value"
+	number := int64(7)
 	an := time.Unix(0, 0).UTC()
 
-	return tumTipler{
-		Metin:    "a",
-		Uzun:     1,
-		Kisa:     2,
-		Ondalik:  3.5,
-		Mantik:   true,
-		Dilim:    []string{"x"},
-		Harita:   map[string]any{"k": "v"},
-		Zaman:    time.Unix(0, 0).UTC(),
-		Ham:      json.RawMessage(`{"serbest":true}`),
-		Isaretci: &metin,
-		ZamanIsa: &an,
-		Secmeli:  &sayi,
-		Baytlar:  []byte{1, 2, 3},
-		IcIce:    zenginVaryant{ID: "v1", Fiyat: 100},
-		Skipped:  "yazılmamalı",
-		kapali:   "yazılmamalı",
+	return allTypes{
+		Text:       "a",
+		Long:       1,
+		Short:      2,
+		Decimal:    3.5,
+		Flag:       true,
+		Slice:      []string{"x"},
+		Map:        map[string]any{"k": "v"},
+		Time:       time.Unix(0, 0).UTC(),
+		Raw:        json.RawMessage(`{"free":true}`),
+		Pointer:    &text,
+		TimePtr:    &an,
+		Optional:   &number,
+		Bytes:      []byte{1, 2, 3},
+		Nested:     richVariant{ID: "v1", Price: 100},
+		Skipped:    "must not be written",
+		unexported: "must not be written",
 	}
 }
 
-// belge şema üretimi için boş bir belge döner.
-func belge() *openapi.Doc {
+// document returns an empty document for schema generation.
+func document() *openapi.Doc {
 	return openapi.New("test", "v1")
 }
 
-// coz "$ref" atıflarını belgedeki bileşene çözer.
+// resolve resolves "$ref" references to the component in the document.
 //
-// [openapi.Doc.SchemaOf] adlandırılmış struct'lar için atıf döner; testin
-// baktığı şey ise atfın HEDEFİDİR.
-func coz(t *testing.T, d *openapi.Doc, sema map[string]any) map[string]any {
+// [openapi.Doc.SchemaOf] returns a reference for named structs; what the test
+// looks at is the reference's TARGET.
+func resolve(t *testing.T, d *openapi.Doc, schema map[string]any) map[string]any {
 	t.Helper()
 
-	ref, refli := sema["$ref"].(string)
-	if !refli {
-		return sema
+	ref, isRef := schema["$ref"].(string)
+	if !isRef {
+		return schema
 	}
 
-	ad := strings.TrimPrefix(ref, "#/components/schemas/")
-	hedef, var_ := d.Schemas()[ad]
-	require.True(t, var_, "%q bileşeni kayıtlı olmalı", ad)
+	name := strings.TrimPrefix(ref, "#/components/schemas/")
+	target, exists := d.Schemas()[name]
+	require.True(t, exists, "the component %q has to be registered", name)
 
-	m, ok := hedef.(map[string]any)
-	require.True(t, ok, "%q bileşeni nesne olmalı", ad)
+	m, ok := target.(map[string]any)
+	require.True(t, ok, "the component %q has to be an object", name)
 
 	return m
 }
 
-// alanlar şemanın "properties" anahtar kümesini döner.
-func alanlar(t *testing.T, d *openapi.Doc, sema map[string]any) []string {
+// fieldNames returns the schema's "properties" key set.
+func fieldNames(t *testing.T, d *openapi.Doc, schema map[string]any) []string {
 	t.Helper()
 
-	ozellikler, ok := coz(t, d, sema)["properties"].(map[string]any)
-	require.True(t, ok, "şemada properties olmalı: %#v", sema)
+	properties, ok := resolve(t, d, schema)["properties"].(map[string]any)
+	require.True(t, ok, "the schema has to have properties: %#v", schema)
 
-	adlar := make([]string, 0, len(ozellikler))
-	for ad := range ozellikler {
-		adlar = append(adlar, ad)
+	names := make([]string, 0, len(properties))
+	for name := range properties {
+		names = append(names, name)
 	}
 
-	return adlar
+	return names
 }
 
-// ozellik şemanın tek bir alanının şemasını döner.
-func ozellik(t *testing.T, d *openapi.Doc, sema map[string]any, ad string) map[string]any {
+// property returns the schema of a single field.
+func property(t *testing.T, d *openapi.Doc, schema map[string]any, name string) map[string]any {
 	t.Helper()
 
-	ozellikler, ok := coz(t, d, sema)["properties"].(map[string]any)
-	require.True(t, ok, "şemada properties olmalı")
-	require.Contains(t, ozellikler, ad)
+	properties, ok := resolve(t, d, schema)["properties"].(map[string]any)
+	require.True(t, ok, "the schema has to have properties")
+	require.Contains(t, properties, name)
 
-	m, ok := ozellikler[ad].(map[string]any)
-	require.True(t, ok, "%q alanının şeması nesne olmalı", ad)
+	m, ok := properties[name].(map[string]any)
+	require.True(t, ok, "the schema of the %q field has to be an object", name)
 
 	return m
 }
 
-// zorunlular şemanın "required" listesini döner.
-func zorunlular(t *testing.T, d *openapi.Doc, sema map[string]any) []string {
+// requiredOf returns the schema's "required" list.
+func requiredOf(t *testing.T, d *openapi.Doc, schema map[string]any) []string {
 	t.Helper()
 
-	ham, var_ := coz(t, d, sema)["required"]
-	if !var_ {
+	raw, exists := resolve(t, d, schema)["required"]
+	if !exists {
 		return nil
 	}
 
-	liste, ok := ham.([]string)
-	require.True(t, ok, "required bir dize dilimi olmalı")
+	list, ok := raw.([]string)
+	require.True(t, ok, "required has to be a string slice")
 
-	return liste
+	return list
 }
 
-// jsonAnahtarlari değeri encoding/json ile kodlayıp anahtarlarını döner.
-func jsonAnahtarlari(t *testing.T, v any) []string {
+// jsonKeys encodes the value with encoding/json and returns its keys.
+func jsonKeys(t *testing.T, v any) []string {
 	t.Helper()
 
-	ham, err := json.Marshal(v)
+	raw, err := json.Marshal(v)
 	require.NoError(t, err)
 
-	var cozulmus map[string]any
-	require.NoError(t, json.Unmarshal(ham, &cozulmus))
+	var decoded map[string]any
+	require.NoError(t, json.Unmarshal(raw, &decoded))
 
-	adlar := make([]string, 0, len(cozulmus))
-	for ad := range cozulmus {
-		adlar = append(adlar, ad)
+	names := make([]string, 0, len(decoded))
+	for name := range decoded {
+		names = append(names, name)
 	}
 
-	return adlar
+	return names
 }
 
-// TestSemaAlanlariJSONIleBIREBIRAyni yansıma katmanının EN GÜÇLÜ sınavıdır.
+// TestSchemaFieldsMatchJSONEXACTLY is the reflection layer's STRONGEST exam.
 //
-// Bir örnek değer encoding/json ile kodlanır ve JSON'daki anahtar kümesi,
-// üretilen şemanın "properties" anahtar kümesiyle karşılaştırılır. Tek bir
-// iddia; etiketle ad değiştirme, "-" ile atlama, dışa kapalı alan ve
-// GÖLGELENME hatalarının hepsi buraya düşer.
+// A sample value is encoded with encoding/json and the key set in the JSON is
+// compared with the key set of the produced schema's "properties". One assertion;
+// renaming through a tag, skipping with "-", unexported fields and SHADOWING all
+// land here when they go wrong.
 //
-// Örnekler DOLU verilir: omitempty taşıyan bir alan boşken JSON'a hiç
-// yazılmaz ve boş bir örnek, şemada fazladan duran bir alanı gizlerdi.
-func TestSemaAlanlariJSONIleBIREBIRAyni(t *testing.T) {
+// The samples are given FILLED: a field carrying omitempty is not written to
+// JSON while empty, and an empty sample would hide a field left over in the schema.
+func TestSchemaFieldsMatchJSONEXACTLY(t *testing.T) {
 	t.Parallel()
 
-	ornekler := map[string]any{
-		"gölgeleyen kayıt": golgeleyenKayit{
-			temelKayit: temelKayit{
-				ID:       "p1",
-				Title:    "Tişört",
-				Variants: []string{"gölgelenen"},
-				Skipped:  "yazılmamalı",
-				kapali:   "yazılmamalı",
-				Created:  time.Unix(0, 0).UTC(),
+	examples := map[string]any{
+		"a shadowing record": shadowingRecord{
+			baseRecord: baseRecord{
+				ID:         "p1",
+				Title:      "T-shirt",
+				Variants:   []string{"shadowed"},
+				Skipped:    "must not be written",
+				unexported: "must not be written",
+				Created:    time.Unix(0, 0).UTC(),
 			},
-			Variants: []zenginVaryant{{ID: "v1", Fiyat: 100}},
+			Variants: []richVariant{{ID: "v1", Price: 100}},
 		},
-		"belirsiz gömülü alan":             belirsizKayit{Tekil: "t"},
-		"etiketli aday belirsizliği çözer": kismenBelirsizKayit{},
-		"tüm tipler":                       doluTumTipler(),
-		"kendine referans":                 dugum{ID: "kök", Alt: []dugum{{ID: "yaprak"}}},
+		"an ambiguous embedded field":    ambiguousRecord{Single: "t"},
+		"a tagged candidate resolves it": partlyAmbiguousRecord{},
+		"every type":                     filledAllTypes(),
+		"a self-reference":               node{ID: "root", Children: []node{{ID: "leaf"}}},
 	}
 
-	for ad, ornek := range ornekler {
-		t.Run(ad, func(t *testing.T) {
+	for name, example := range examples {
+		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 
-			d := belge()
+			d := document()
 
-			assert.ElementsMatch(t, jsonAnahtarlari(t, ornek), alanlar(t, d, d.SchemaOf(ornek)),
-				"şemanın alanları encoding/json'un yazdığı anahtarlarla AYNI olmalı")
+			assert.ElementsMatch(t, jsonKeys(t, example), fieldNames(t, d, d.SchemaOf(example)),
+				"the schema's fields have to match the keys encoding/json writes")
 		})
 	}
 }
 
-// TestGolgelenenAlanZenginTipiTasir gölgelenmenin yalnızca "alan tek kez
-// görünüyor" düzeyinde değil, TİP düzeyinde de doğru olduğunu doğrular.
+// TestTheShadowedFieldCarriesTheRichType verifies that shadowing is right not
+// only at the "the field appears once" level but at the TYPE level.
 //
-// Anahtar kümesi karşılaştırması burada yetmez: gölgelenen alan da gölgeleyen
-// de "variants" adını taşır, yani yanlış olanı seçmek anahtar kümesini
-// bozmaz. Yanlış seçim, istemcinin varyantları dize dizisi sanması demektir.
-func TestGolgelenenAlanZenginTipiTasir(t *testing.T) {
+// The key-set comparison is not enough here: the shadowed field and the
+// shadowing one both carry the name "variants", so picking the wrong one does
+// not break the key set. The wrong pick means the client takes the variants for
+// an array of strings.
+func TestTheShadowedFieldCarriesTheRichType(t *testing.T) {
 	t.Parallel()
 
-	d := belge()
-	sema := d.SchemaOf(golgeleyenKayit{})
+	d := document()
+	schema := d.SchemaOf(shadowingRecord{})
 
-	varyantlar := ozellik(t, d, sema, "variants")
-	assert.Equal(t, "array", varyantlar["type"])
+	variants := property(t, d, schema, "variants")
+	assert.Equal(t, "array", variants["type"])
 
-	oge, ok := varyantlar["items"].(map[string]any)
+	item, ok := variants["items"].(map[string]any)
 	require.True(t, ok)
 
-	assert.ElementsMatch(t, []string{"id", "fiyat"}, alanlar(t, d, oge),
-		"gölgeleyen alanın öğe tipi zengin varyant olmalı, gömülüdeki dize değil")
+	assert.ElementsMatch(t, []string{"id", "price"}, fieldNames(t, d, item),
+		"the item type of the shadowing field has to be the rich variant, not the embedded string")
 }
 
-// TestBelirsizGomuluAlanSemayaGirmez eşit derinlikte ve eşit etiketlilikte
-// çakışan alanın DÜŞTÜĞÜNÜ doğrular.
-func TestBelirsizGomuluAlanSemayaGirmez(t *testing.T) {
+// TestAnAmbiguousEmbeddedFieldDoesNotEnterTheSchema verifies that a field
+// clashing at equal depth and equal taggedness DROPS.
+func TestAnAmbiguousEmbeddedFieldDoesNotEnterTheSchema(t *testing.T) {
 	t.Parallel()
 
-	d := belge()
+	d := document()
 
-	assert.ElementsMatch(t, []string{"tekil"}, alanlar(t, d, d.SchemaOf(belirsizKayit{})),
-		"encoding/json belirsiz alanı yazmaz; şema da yazmamalı")
+	assert.ElementsMatch(t, []string{"single"}, fieldNames(t, d, d.SchemaOf(ambiguousRecord{})),
+		"encoding/json does not write an ambiguous field; the schema must not either")
 
-	assert.ElementsMatch(t, []string{"Ortak"}, alanlar(t, d, d.SchemaOf(kismenBelirsizKayit{})),
-		"eşit derinlikte tek etiketli aday belirsizliği çözer")
+	assert.ElementsMatch(t, []string{"Shared"}, fieldNames(t, d, d.SchemaOf(partlyAmbiguousRecord{})),
+		"a single tagged candidate at equal depth resolves the ambiguity")
 }
 
-// TestDisaKapaliVeAtlananAlanSemayaGirmez iki ayrı gizleme yolunun da
-// şemadan düştüğünü doğrular.
-func TestDisaKapaliVeAtlananAlanSemayaGirmez(t *testing.T) {
+// TestUnexportedAndSkippedFieldsDoNotEnterTheSchema verifies that both ways of
+// hiding drop out of the schema.
+func TestUnexportedAndSkippedFieldsDoNotEnterTheSchema(t *testing.T) {
 	t.Parallel()
 
-	d := belge()
-	adlar := alanlar(t, d, d.SchemaOf(doluTumTipler()))
+	d := document()
+	names := fieldNames(t, d, d.SchemaOf(filledAllTypes()))
 
-	assert.NotContains(t, adlar, "Skipped", `json:"-" alanı şemada olmamalı`)
-	assert.NotContains(t, adlar, "kapali", "dışa kapalı alan şemada olmamalı")
+	assert.NotContains(t, names, "Skipped", `a json:"-" field must not be in the schema`)
+	assert.NotContains(t, names, "unexported", "an unexported field must not be in the schema")
 }
 
-// TestZorunluAlanlarOmitemptyDisindakilerdir "required" kümesinin
-// encoding/json'un HER ZAMAN yazdığı anahtarlar olduğunu doğrular.
-func TestZorunluAlanlarOmitemptyDisindakilerdir(t *testing.T) {
+// TestRequiredFieldsAreTheOnesWithoutOmitempty verifies that the "required" set
+// is the keys encoding/json ALWAYS writes.
+func TestRequiredFieldsAreTheOnesWithoutOmitempty(t *testing.T) {
 	t.Parallel()
 
-	d := belge()
-	sema := d.SchemaOf(tumTipler{})
+	d := document()
+	schema := d.SchemaOf(allTypes{})
 
-	zorunlu := zorunlular(t, d, sema)
-	assert.Contains(t, zorunlu, "metin")
-	assert.NotContains(t, zorunlu, "secmeli", "omitempty taşıyan alan zorunlu değildir")
+	required := requiredOf(t, d, schema)
+	assert.Contains(t, required, "text")
+	assert.NotContains(t, required, "optional", "a field carrying omitempty is not required")
 
-	// Sıfır değerde omitempty alanları JSON'a hiç yazılmaz; geriye kalan
-	// anahtar kümesi tam olarak "her zaman yazılanlar"dır.
-	assert.ElementsMatch(t, jsonAnahtarlari(t, tumTipler{}), zorunlu,
-		"required, sıfır değerin JSON anahtarlarıyla aynı olmalı")
+	// At the zero value the omitempty fields are not written to JSON at all; the
+	// remaining key set is exactly "the ones always written".
+	assert.ElementsMatch(t, jsonKeys(t, allTypes{}), required,
+		"required has to match the JSON keys of the zero value")
 }
 
-// TestTemelTipEslemeleri Go tiplerinin JSON Schema karşılıklarını doğrular.
-func TestTemelTipEslemeleri(t *testing.T) {
+// TestBasicTypeMappings verifies the JSON Schema counterparts of the Go types.
+func TestBasicTypeMappings(t *testing.T) {
 	t.Parallel()
 
-	d := belge()
-	sema := d.SchemaOf(doluTumTipler())
+	d := document()
+	schema := d.SchemaOf(filledAllTypes())
 
-	beklenen := map[string]string{
-		"metin":   "string",
-		"uzun":    "integer",
-		"kisa":    "integer",
-		"ondalik": "number",
-		"mantik":  "boolean",
-		"dilim":   "array",
-		"harita":  "object",
-		"baytlar": "string", // encoding/json bayt dilimini base64 DİZE yazar
+	expected := map[string]string{
+		"text":    "string",
+		"long":    "integer",
+		"short":   "integer",
+		"decimal": "number",
+		"flag":    "boolean",
+		"slice":   "array",
+		"map":     "object",
+		"bytes":   "string", // encoding/json writes a byte slice as a base64 STRING
 	}
 
-	for ad, tip := range beklenen {
-		assert.Equal(t, tip, ozellik(t, d, sema, ad)["type"], "%q alanının tipi", ad)
+	for name, typ := range expected {
+		assert.Equal(t, typ, property(t, d, schema, name)["type"], "the type of the %q field", name)
 	}
 
-	assert.Equal(t, "int64", ozellik(t, d, sema, "uzun")["format"])
-	assert.Equal(t, "int32", ozellik(t, d, sema, "kisa")["format"])
+	assert.Equal(t, "int64", property(t, d, schema, "long")["format"])
+	assert.Equal(t, "int32", property(t, d, schema, "short")["format"])
 	assert.Equal(t, map[string]any{"type": "string"},
-		ozellik(t, d, sema, "dilim")["items"], "dilim öğesinin tipi taşınmalı")
+		property(t, d, schema, "slice")["items"], "the slice element's type has to be carried")
 }
 
-// TestZamanTarihSaatDizesidir time.Time'ın nesne değil dize olduğunu doğrular.
+// TestTimeIsADateTimeString verifies that time.Time is a string, not an object.
 //
-// time.Time'ın alanları dışa kapalıdır; yansıma onu naif okusaydı şemada BOŞ
-// bir nesne çıkardı ve istemci tarih alanına nesne göndermeyi denerdi.
-func TestZamanTarihSaatDizesidir(t *testing.T) {
+// time.Time's fields are unexported; read naively through reflection it would
+// come out as an EMPTY object in the schema and a client would try to send an
+// object into a date field.
+func TestTimeIsADateTimeString(t *testing.T) {
 	t.Parallel()
 
-	d := belge()
+	d := document()
 
 	assert.Equal(t, map[string]any{"type": "string", "format": "date-time"},
-		ozellik(t, d, d.SchemaOf(doluTumTipler()), "zaman"))
+		property(t, d, d.SchemaOf(filledAllTypes()), "time"))
 }
 
-// TestZamanIsaretcisiHemTarihHemNull *time.Time'ın hem biçimini hem null'ı
-// taşıdığını doğrular.
+// TestATimePointerCarriesBothTheFormatAndNull verifies that *time.Time carries
+// its format as well as null.
 //
-// Tuzak gerçektir: time.Time'ın MarshalJSON'ı DEĞER alıcılıdır, dolayısıyla
-// *time.Time de onu taşır. "Kendi kodlayıcısı var, şeklini bilmiyorum" diyen
-// naif bir denetim, deleted_at gibi HER modelde bulunan alanları serbest
-// şemaya düşürür ve istemci tarih alanını hiç tanımaz.
-func TestZamanIsaretcisiHemTarihHemNull(t *testing.T) {
+// The trap is real: time.Time's MarshalJSON has a VALUE receiver, so *time.Time
+// carries it too. A naive check saying "it has its own encoder, I do not know its
+// shape" drops fields like deleted_at — present in EVERY model — into a free
+// schema and the client never recognizes the date field.
+func TestATimePointerCarriesBothTheFormatAndNull(t *testing.T) {
 	t.Parallel()
 
-	d := belge()
+	d := document()
 
 	assert.Equal(t,
 		map[string]any{"type": []any{"string", "null"}, "format": "date-time"},
-		ozellik(t, d, d.SchemaOf(doluTumTipler()), "zaman_isaretci"))
+		property(t, d, d.SchemaOf(filledAllTypes()), "time_ptr"))
 }
 
-// TestHamJSONSerbestSema json.RawMessage'ın şeklinin BİLİNMEDİĞİNİ doğrular.
-func TestHamJSONSerbestSema(t *testing.T) {
+// TestRawJSONIsAFreeSchema verifies that json.RawMessage's shape is UNKNOWN.
+func TestRawJSONIsAFreeSchema(t *testing.T) {
 	t.Parallel()
 
-	d := belge()
+	d := document()
 
-	assert.Empty(t, ozellik(t, d, d.SchemaOf(doluTumTipler()), "ham"),
-		"ham JSON'un şekli tanımı gereği bilinmez; serbest şema olmalı")
+	assert.Empty(t, property(t, d, d.SchemaOf(filledAllTypes()), "raw"),
+		"the shape of raw JSON is unknown by definition; it has to be a free schema")
 }
 
-// TestIsaretciNullable işaretçi alanların null kabul ettiğini doğrular.
-func TestIsaretciNullable(t *testing.T) {
+// TestPointersAreNullable verifies that pointer fields accept null.
+func TestPointersAreNullable(t *testing.T) {
 	t.Parallel()
 
-	d := belge()
-	sema := d.SchemaOf(doluTumTipler())
+	d := document()
+	schema := d.SchemaOf(filledAllTypes())
 
-	assert.Equal(t, []any{"string", "null"}, ozellik(t, d, sema, "isaretci")["type"])
-	assert.Equal(t, "array", ozellik(t, d, sema, "dilim")["type"],
-		"dilimin nil'liği yazarın seçimi değil Go'nun sıfır değeridir; null'lanmaz")
+	assert.Equal(t, []any{"string", "null"}, property(t, d, schema, "pointer")["type"])
+	assert.Equal(t, "array", property(t, d, schema, "slice")["type"],
+		"a slice being nil is Go's zero value rather than the author's choice; it is not nullable")
 }
 
-// TestIsaretciBilesenAnyOfIleNullable bir bileşene işaretçinin nasıl
-// null'landığını doğrular.
+// TestAPointerToAComponentIsNullableThroughAnyOf verifies how a pointer to a
+// component is made nullable.
 //
-// "$ref"in yanına type yazmak JSON Schema 2020-12'de $ref ile BİRLİKTE
-// değerlendirilir ve null hiçbir şeye uymaz; doğru biçim anyOf'tur.
-func TestIsaretciBilesenAnyOfIleNullable(t *testing.T) {
+// A type written next to a "$ref" is evaluated TOGETHER with the $ref in JSON
+// Schema 2020-12 and null matches nothing; the right form is anyOf.
+func TestAPointerToAComponentIsNullableThroughAnyOf(t *testing.T) {
 	t.Parallel()
 
-	d := belge()
-	ust := ozellik(t, d, d.SchemaOf(dugum{}), "ust")
+	d := document()
+	parent := property(t, d, d.SchemaOf(node{}), "parent")
 
-	secenekler, ok := ust["anyOf"].([]any)
-	require.True(t, ok, "bileşene işaretçi anyOf ile null'lanmalı: %#v", ust)
-	assert.Contains(t, secenekler, map[string]any{"type": "null"})
+	options, ok := parent["anyOf"].([]any)
+	require.True(t, ok, "a pointer to a component has to be nullable through anyOf: %#v", parent)
+	assert.Contains(t, options, map[string]any{"type": "null"})
 }
 
-// TestOzyinelemeSonsuzDonguYapmaz kendine referans veren bir tipin şemasının
-// ÜRETİLEBİLDİĞİNİ doğrular.
+// TestRecursionDoesNotLoopForever verifies that the schema of a
+// self-referencing type CAN BE PRODUCED.
 //
-// Test, döngü hâlinde tamamlanmaz (zaman aşımına düşer); iddialar döngünün
-// $ref ile kırıldığını gösterir.
-func TestOzyinelemeSonsuzDonguYapmaz(t *testing.T) {
+// In a loop the test does not finish (it times out); the assertions show the
+// cycle was broken with a $ref.
+func TestRecursionDoesNotLoopForever(t *testing.T) {
 	t.Parallel()
 
-	d := belge()
-	sema := d.SchemaOf(dugum{})
+	d := document()
+	schema := d.SchemaOf(node{})
 
-	assert.Equal(t, "#/components/schemas/Dugum", sema["$ref"],
-		"adlandırılmış struct bileşene kaydedilip atıfla anlatılmalı")
+	assert.Equal(t, "#/components/schemas/Node", schema["$ref"],
+		"a named struct has to be registered as a component and described by a reference")
 
-	alt := ozellik(t, d, sema, "alt")
-	assert.Equal(t, map[string]any{"$ref": "#/components/schemas/Dugum"}, alt["items"],
-		"özyineleme derinlik sınırıyla değil atıfla kırılmalı")
+	children := property(t, d, schema, "children")
+	assert.Equal(t, map[string]any{"$ref": "#/components/schemas/Node"}, children["items"],
+		"the recursion has to be broken by a reference rather than by a depth limit")
 }
 
-// TestTuretilenSemalarBelgeyeYazilir bileşenlerin gerçekten belgeye girdiğini
-// doğrular.
+// TestDerivedSchemasAreWrittenIntoTheDocument verifies that the components
+// really enter the document.
 //
-// Yalnızca [openapi.Doc.SchemaOf] çıktısına bakmak yetmezdi: atıf hedefi
-// belgede yoksa şema SÖZDİZİMSEL olarak geçerli ama çözülemez olurdu.
-func TestTuretilenSemalarBelgeyeYazilir(t *testing.T) {
+// Looking at [openapi.Doc.SchemaOf]'s output alone would not do: with the
+// reference target missing from the document the schema would be SYNTACTICALLY
+// valid but unresolvable.
+func TestDerivedSchemasAreWrittenIntoTheDocument(t *testing.T) {
 	t.Parallel()
 
-	d := belge()
+	d := document()
 	d.Describe("GET", "/store/v1/products", openapi.Operation{
-		Responses: map[string]any{"200": openapi.Response("Ürünler", d.List(golgeleyenKayit{}))},
+		Responses: map[string]any{"200": openapi.Response("Products", d.List(shadowingRecord{}))},
 	})
 
-	sema := semaUret(t, d, routerKur(t))
-	semalar := harita(t, harita(t, sema["components"], "components")["schemas"], "schemas")
+	schema := buildSchema(t, d, buildRouter(t))
+	schemas := asMap(t, asMap(t, schema["components"], "components")["schemas"], "schemas")
 
-	assert.Contains(t, semalar, "GolgeleyenKayit")
-	assert.Contains(t, semalar, "ZenginVaryant")
-	assert.Contains(t, semalar, "Error", "çekirdeğin ortak hata bileşeni durmalı")
+	assert.Contains(t, schemas, "ShadowingRecord")
+	assert.Contains(t, schemas, "RichVariant")
+	assert.Contains(t, schemas, "Error", "the core's shared error component has to stay")
 }
 
-// TestTekilZarfTiptenUretilir tekil yanıt zarfının şeklini doğrular.
-func TestTekilZarfTiptenUretilir(t *testing.T) {
+// TestTheSingleEnvelopeIsProducedFromTheType verifies the single envelope's shape.
+func TestTheSingleEnvelopeIsProducedFromTheType(t *testing.T) {
 	t.Parallel()
 
-	d := belge()
-	zarf := d.Item(zenginVaryant{})
+	d := document()
+	envelope := d.Item(richVariant{})
 
-	assert.Equal(t, "object", zarf["type"])
-	assert.Equal(t, []string{"data"}, zarf["required"])
-	assert.ElementsMatch(t, []string{"id", "fiyat"}, alanlar(t, d, ozellik(t, d, zarf, "data")))
+	assert.Equal(t, "object", envelope["type"])
+	assert.Equal(t, []string{"data"}, envelope["required"])
+	assert.ElementsMatch(t, []string{"id", "price"}, fieldNames(t, d, property(t, d, envelope, "data")))
 }
 
-// TestListeZarfiTiptenUretilir liste zarfının sayfalama alanlarını ve öğe
-// tipini doğrular.
-func TestListeZarfiTiptenUretilir(t *testing.T) {
+// TestTheListEnvelopeIsProducedFromTheType verifies the list envelope's
+// pagination fields and item type.
+func TestTheListEnvelopeIsProducedFromTheType(t *testing.T) {
 	t.Parallel()
 
-	d := belge()
-	zarf := d.List(zenginVaryant{})
+	d := document()
+	envelope := d.List(richVariant{})
 
 	assert.ElementsMatch(t,
-		[]string{"data", "count", "offset", "limit"}, zorunlular(t, d, zarf))
-	assert.Equal(t, "integer", ozellik(t, d, zarf, "count")["type"])
+		[]string{"data", "count", "offset", "limit"}, requiredOf(t, d, envelope))
+	assert.Equal(t, "integer", property(t, d, envelope, "count")["type"])
 
-	veri := ozellik(t, d, zarf, "data")
-	assert.Equal(t, "array", veri["type"])
+	data := property(t, d, envelope, "data")
+	assert.Equal(t, "array", data["type"])
 
-	oge, ok := veri["items"].(map[string]any)
+	item, ok := data["items"].(map[string]any)
 	require.True(t, ok)
-	assert.ElementsMatch(t, []string{"id", "fiyat"}, alanlar(t, d, oge))
+	assert.ElementsMatch(t, []string{"id", "price"}, fieldNames(t, d, item))
 }
 
-// TestListeZarfiSayaciIstegeBagliOlabilir sayacı düşebilir ilan eden zarfın
-// SADECE zorunluluk listesinde ayrıldığını doğrular.
+// TestTheListEnvelopesCountCanBeOptional verifies that an envelope declaring the
+// counter droppable differs ONLY in the required list.
 //
-// İki iddia da gereklidir. Alanın "required"dan düşmesi, sayacı
-// kapatılabilen ucun (vitrin listesi) belgesini doğru kılar; alanın
-// "properties"te KALMASI ise düşebilirliğin yokluk anlamına gelmediğini
-// söyler — sayaç istendiğinde hâlâ tam sayıdır ve şemayı okuyan istemci onu
-// üretmelidir. Silinseydi, sayacı isteyen istemci için belge alanı hiç
-// tanımlamamış olurdu.
+// Both assertions are needed. The field dropping out of "required" makes the
+// documentation of the endpoint whose counter can be turned off (the storefront
+// list) correct; the field STAYING in "properties" says that being droppable does
+// not mean being absent — with the counter asked for it is still an integer and a
+// client reading the schema has to produce it. Deleted, the document would define
+// no field at all for the client that wants the counter.
 //
-// [Doc.List]'in çıktısıyla karşılaştırılması bilinçlidir: gevşetmenin sadece
-// bu yüzeye ait olduğu, ikisini yan yana koymadan görülemez.
-func TestListeZarfiSayaciIstegeBagliOlabilir(t *testing.T) {
+// Comparing it with [Doc.List]'s output is deliberate: that the loosening belongs
+// to this surface alone cannot be seen without putting the two side by side.
+func TestTheListEnvelopesCountCanBeOptional(t *testing.T) {
 	t.Parallel()
 
-	d := belge()
+	d := document()
 
-	kati := d.List(zenginVaryant{})
-	gevsek := d.ListOptionalCount(zenginVaryant{})
+	strict := d.List(richVariant{})
+	loose := d.ListOptionalCount(richVariant{})
 
-	assert.Contains(t, zorunlular(t, d, kati), "count",
-		"varsayılan zarfta sayaç zorunludur")
-	assert.NotContains(t, zorunlular(t, d, gevsek), "count",
-		"gevşek zarfta sayaç zorunlu OLMAMALI")
+	assert.Contains(t, requiredOf(t, d, strict), "count",
+		"in the default envelope the counter is required")
+	assert.NotContains(t, requiredOf(t, d, loose), "count",
+		"in the loose envelope the counter MUST NOT be required")
 
-	assert.ElementsMatch(t, []string{"data", "offset", "limit"}, zorunlular(t, d, gevsek),
-		"yalnızca sayaç gevşemeli; öteki alanlar zorunlu kalmalı")
-	assert.Equal(t, "integer", ozellik(t, d, gevsek, "count")["type"],
-		"alan şemada KALMALI: düşebilir olmak yok olmak değildir")
+	assert.ElementsMatch(t, []string{"data", "offset", "limit"}, requiredOf(t, d, loose),
+		"only the counter may loosen; the other fields stay required")
+	assert.Equal(t, "integer", property(t, d, loose, "count")["type"],
+		"the field has to STAY in the schema: being droppable is not being absent")
 
-	assert.Equal(t, ozellik(t, d, kati, "data"), ozellik(t, d, gevsek, "data"),
-		"öğe şeması iki zarfta da aynı olmalı")
+	assert.Equal(t, property(t, d, strict, "data"), property(t, d, loose, "data"),
+		"the item schema has to be the same in both envelopes")
 }
 
-// TestListeZarfiDilimiTekrarSarmaz List'e dilim verilse de kayıt verilse de
-// aynı zarfın çıktığını doğrular.
+// TestTheListEnvelopeDoesNotWrapASliceTwice verifies that the same envelope
+// comes out whether List is given a slice or a record.
 //
-// Tekrar sarsaydı belgede "dizi dizisi" oluşurdu ve bunu kimse şemayı satır
-// satır okumadan fark etmezdi.
-func TestListeZarfiDilimiTekrarSarmaz(t *testing.T) {
+// Wrapping twice would produce an "array of arrays" in the document and nobody
+// would notice that without reading the schema line by line.
+func TestTheListEnvelopeDoesNotWrapASliceTwice(t *testing.T) {
 	t.Parallel()
 
-	d := belge()
+	d := document()
 
-	assert.Equal(t, d.List(zenginVaryant{}), d.List([]zenginVaryant{}))
+	assert.Equal(t, d.List(richVariant{}), d.List([]richVariant{}))
 }
 
-// TestIstekGovdesiTiptenUretilir requestBody tanımının şeklini doğrular.
-func TestIstekGovdesiTiptenUretilir(t *testing.T) {
+// TestTheRequestBodyIsProducedFromTheType verifies the requestBody definition's shape.
+func TestTheRequestBodyIsProducedFromTheType(t *testing.T) {
 	t.Parallel()
 
-	d := belge()
-	govde := d.RequestBody(zenginVaryant{})
+	d := document()
+	body := d.RequestBody(richVariant{})
 
-	assert.Equal(t, true, govde["required"])
+	assert.Equal(t, true, body["required"])
 
-	icerik := harita(t, govde["content"], "content")
-	tip := harita(t, icerik["application/json"], "application/json")
+	content := asMap(t, body["content"], "content")
+	typ := asMap(t, content["application/json"], "application/json")
 
-	assert.Equal(t, map[string]any{"$ref": "#/components/schemas/ZenginVaryant"}, tip["schema"])
+	assert.Equal(t, map[string]any{"$ref": "#/components/schemas/RichVariant"}, typ["schema"])
 }
 
-// TestAyniAdiIsteyenIkiTipBelgeyiDurdurur ad çakışmasının SESSİZ kalmadığını
-// doğrular.
+// TestTwoTypesWantingTheSameNameStopTheDocument verifies that a name clash does
+// not stay SILENT.
 //
-// Sessizce ezmek en kötü sonuçtu: iki uçtan birinin gövdesi yanlış anlatılır
-// ve bu, ancak istemci yanlış alan gönderdiğinde anlaşılırdı.
-func TestAyniAdiIsteyenIkiTipBelgeyiDurdurur(t *testing.T) {
+// Overwriting silently was the worst outcome: the body of one of two endpoints
+// would be described wrongly, and that would only come out when a client sent
+// the wrong field.
+func TestTwoTypesWantingTheSameNameStopTheDocument(t *testing.T) {
 	t.Parallel()
 
-	d := belge()
-	d.SchemaOf(openapi.CakisanKayit{})
-	d.SchemaOf(CakisanKayit{})
+	d := document()
+	d.SchemaOf(openapi.ClashingRecord{})
+	d.SchemaOf(ClashingRecord{})
 
-	_, err := d.Build(routerKur(t))
-	require.Error(t, err, "iki farklı tip aynı bileşen adını alamaz")
-	assert.Contains(t, err.Error(), "CakisanKayit")
+	_, err := d.Build(buildRouter(t))
+	require.Error(t, err, "two different types cannot take the same component name")
+	assert.Contains(t, err.Error(), "ClashingRecord")
 }
 
-// TestCekirdekBilesenAdiKorunur ortak "Error" bileşeninin bir modül tipiyle
-// ezilemediğini doğrular.
-func TestCekirdekBilesenAdiKorunur(t *testing.T) {
+// TestTheCoreComponentNameIsProtected verifies that the shared "Error" component
+// cannot be overwritten by a module type.
+func TestTheCoreComponentNameIsProtected(t *testing.T) {
 	t.Parallel()
 
-	d := belge()
+	d := document()
 	d.SchemaOf(Error{})
 
-	_, err := d.Build(routerKur(t))
-	require.Error(t, err, "çekirdeğin ortak bileşen adı türetilen şemayla ezilemez")
+	_, err := d.Build(buildRouter(t))
+	require.Error(t, err, "the core's shared component name cannot be overwritten by a derived schema")
 	assert.Contains(t, err.Error(), "Error")
 }
 
-// TestAnlatilmisUcunGovdesiSemayaYazilir uçtan uca akışı doğrular: modülün
-// anlattığı gövde, üretilen belgede gerçekten görünmelidir.
+// TestTheBodyOfADescribedEndpointIsWrittenIntoTheSchema verifies the end-to-end
+// flow: the body a module described really has to appear in the produced document.
 //
-// Bu testin varlık sebebi bir bulgudur: şema sözdizimsel olarak geçerliydi
-// ama ANLAMSAL olarak boştu — hiçbir uçta requestBody ya da 2xx yanıt yoktu
-// ve bir istemci üreteci ondan her şeyi 'any' olan metotlar üretirdi.
-func TestAnlatilmisUcunGovdesiSemayaYazilir(t *testing.T) {
+// This test exists because of a finding: the schema was syntactically valid but
+// SEMANTICALLY empty — no endpoint had a requestBody or a 2xx response, and a
+// client generator would produce methods where everything was 'any'.
+func TestTheBodyOfADescribedEndpointIsWrittenIntoTheSchema(t *testing.T) {
 	t.Parallel()
 
-	d := belge()
+	d := document()
 	d.Describe("GET", "/store/v1/products", openapi.Operation{
-		Summary:     "Vitrin ürünlerini listeler",
-		RequestBody: d.RequestBody(zenginVaryant{}),
+		Summary:     "Lists the storefront products",
+		RequestBody: d.RequestBody(richVariant{}),
 		Responses: map[string]any{
-			"200": openapi.Response("Ürün listesi", d.List(golgeleyenKayit{})),
+			"200": openapi.Response("The product list", d.List(shadowingRecord{})),
 		},
 	})
 
-	islem := islemAl(t, semaUret(t, d, routerKur(t)), "/store/v1/products", "get")
+	operation := operationOf(t, buildSchema(t, d, buildRouter(t)), "/store/v1/products", "get")
 
-	require.Contains(t, islem, "requestBody")
-	require.Contains(t, yanitlarAl(t, islem), "200")
+	require.Contains(t, operation, "requestBody")
+	require.Contains(t, responsesOf(t, operation), "200")
 }
 
-// TestAnlatilmamisUcSemadaKalir Describer uygulamayan bir modülün ucunun
-// belgeden DÜŞMEDİĞİNİ doğrular.
+// TestAnUndescribedEndpointStaysInTheSchema verifies that the endpoint of a
+// module not implementing Describer does NOT DROP out of the document.
 //
-// [openapi.Describer] opsiyoneldir; anlatılmamış bir uç yolu, metodu ve
-// güvenliğiyle görünmeye devam etmeli, yalnızca gövdesi olmamalıdır.
-func TestAnlatilmamisUcSemadaKalir(t *testing.T) {
+// [openapi.Describer] is optional; an undescribed endpoint has to go on appearing
+// with its path, method and security, only without a body.
+func TestAnUndescribedEndpointStaysInTheSchema(t *testing.T) {
 	t.Parallel()
 
-	islem := islemAl(t, semaUret(t, belge(), routerKur(t)), "/store/v1/products", "get")
+	operation := operationOf(t, buildSchema(t, document(), buildRouter(t)), "/store/v1/products", "get")
 
-	assert.NotContains(t, islem, "requestBody")
-	assert.Contains(t, yanitlarAl(t, islem), "401", "ortak hata yanıtları yine durmalı")
+	assert.NotContains(t, operation, "requestBody")
+	assert.Contains(t, responsesOf(t, operation), "401", "the shared error responses have to stay")
 }
 
-// TestSemaOfNilDegerSerbest tipi olmayan bir değerin şemasının hiçbir şey
-// İDDİA ETMEDİĞİNİ doğrular.
-func TestSemaOfNilDegerSerbest(t *testing.T) {
+// TestSchemaOfANilValueIsFree verifies that the schema of a value with no type
+// CLAIMS NOTHING.
+func TestSchemaOfANilValueIsFree(t *testing.T) {
 	t.Parallel()
 
-	assert.Empty(t, belge().SchemaOf(nil))
+	assert.Empty(t, document().SchemaOf(nil))
 }

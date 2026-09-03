@@ -9,78 +9,77 @@ import (
 	coreerrors "github.com/bdrtr/gobit/internal/core/errors"
 )
 
-// Scoped bir middleware yığınını YALNIZCA belirli bir yol öneki altında
-// çalıştırır.
+// Scoped runs a middleware stack ONLY under a given path prefix.
 //
-// # Neden gerekli
+// # Why it is needed
 //
-// Modüller route'larını TAM YOLLA ve TEK bir router üzerine kaydeder
-// (bkz. herhangi bir modülün api.Handler.Routes): "/admin/v1" için alt router
-// açmak, aynı deseni ikinci kez mount eden ikinci modülde chi'yi panikletirdi.
-// Bunun bedeli, chi'nin doğal kapsamlama aracının (Route/Group) elden
-// gitmesidir: r.Use ile eklenen middleware TÜM isteklere, /health ve /ready
-// dâhil, uygulanır.
+// Modules register their routes with their FULL PATH and on a SINGLE router
+// (see any module's api.Handler.Routes): opening a sub-router for "/admin/v1"
+// would make chi panic on the second module mounting the same pattern. The price
+// is that chi's natural scoping tool (Route/Group) is lost: middleware added
+// with r.Use applies to ALL requests, /health and /ready included.
 //
-// Scoped o bedeli öder: kapsam, router ağacında değil middleware'in kendi
-// içinde kurulur.
+// Scoped pays that price: the scope is established inside the middleware itself,
+// not in the router tree.
 //
 //	router.Use(corehttp.Scoped("/admin/v1", []string{authapi.LoginPath},
 //	    corehttp.RequireAdmin(auth)))
 //
-// # Eşleşme kuralı
+// # The matching rule
 //
-// Önek SEGMENT sınırında eşleşir: "/admin/v1" yalnızca "/admin/v1" ve
-// "/admin/v1/..." yollarını yakalar, "/admin/v1x" yakalanmaz. Aksi hâlde
-// yeni bir "/admin/v1x" öneki sessizce korumaya girer ve orada tanımlanmış
-// hiçbir uç, tasarlanmadığı bir middleware'den geçerdi.
+// The prefix matches at a SEGMENT boundary: "/admin/v1" catches only "/admin/v1"
+// and "/admin/v1/..." , never "/admin/v1x". Otherwise a new "/admin/v1x" prefix
+// would silently come under the guard and every endpoint defined there would
+// pass through middleware it was not designed for.
 //
-// # Neden r.URL.Path
+// # Why r.URL.Path
 //
-// chi, yönlendirmeyi RawPath doluysa onun üzerinden yapar; biz Path (çözülmüş
-// hâl) üzerinden bakarız. Fark yalnızca kodlanmış istekte ortaya çıkar
-// (örn. "/admin%2Fv1/users"): Path korumayı DEVREYE sokar, chi ise route'u
-// bulamayıp 404 döner. Yani ayrışma her zaman KORUMA LEHİNEDİR.
+// chi routes over RawPath when it is filled; we look at Path (the decoded form).
+// The difference only shows up on an encoded request (say "/admin%2Fv1/users"):
+// Path TURNS the guard ON, while chi cannot find the route and returns a 404. So
+// the divergence is always IN THE GUARD'S FAVOR.
 //
 // # exempt
 //
-// exempt, önek altında olmasına rağmen middleware'den MUAF tutulacak tam
-// yollardır (örn. giriş ucu: kimliği doğrulanacak istek, kimliği daha yeni
-// kuracaktır). Eşleşme tam yol üzerindendir; metoda bakmaz — muaf bir yolun
-// tanımsız metodu zaten router tarafından reddedilir.
+// exempt are the full paths that are EXEMPT from the middleware even though they
+// sit under the prefix (the login endpoint, say: the request whose identity is to
+// be verified is the very one that establishes it). The match is on the full
+// path; it does not look at the method — an undefined method on an exempt path is
+// rejected by the router anyway.
 func Scoped(prefix string, exempt []string, mws ...func(http.Handler) http.Handler) func(http.Handler) http.Handler {
-	muaf := make(map[string]struct{}, len(exempt))
-	for _, yol := range exempt {
-		muaf[yol] = struct{}{}
+	exemptSet := make(map[string]struct{}, len(exempt))
+	for _, path := range exempt {
+		exemptSet[path] = struct{}{}
 	}
 
 	return func(next http.Handler) http.Handler {
-		// Zincir bir kez kurulur; her istekte yeniden sarmalamak, aynı işi
-		// istek başına tekrarlamak olurdu.
-		korumali := next
+		// The chain is built once; wrapping it again on every request would repeat
+		// the same work per request.
+		guarded := next
 		for i := len(mws) - 1; i >= 0; i-- {
 			if mws[i] == nil {
 				continue
 			}
-			korumali = mws[i](korumali)
+			guarded = mws[i](guarded)
 		}
 
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if !kapsamda(r.URL.Path, prefix) {
+			if !inScope(r.URL.Path, prefix) {
 				next.ServeHTTP(w, r)
 				return
 			}
-			if _, ok := muaf[r.URL.Path]; ok {
+			if _, ok := exemptSet[r.URL.Path]; ok {
 				next.ServeHTTP(w, r)
 				return
 			}
 
-			korumali.ServeHTTP(w, r)
+			guarded.ServeHTTP(w, r)
 		})
 	}
 }
 
-// kapsamda yolun öneği segment sınırında taşıyıp taşımadığını bildirir.
-func kapsamda(path, prefix string) bool {
+// inScope reports whether the path carries the prefix at a segment boundary.
+func inScope(path, prefix string) bool {
 	if prefix == "" || prefix == "/" {
 		return true
 	}
@@ -90,103 +89,104 @@ func kapsamda(path, prefix string) bool {
 	return path == prefix || strings.HasPrefix(path, prefix+"/")
 }
 
-// GuardOptions [APIGuards] yığınının girdileridir.
+// GuardOptions are the inputs of the [APIGuards] stack.
 type GuardOptions struct {
-	// Authenticator kimlikleri çözer. nil ise koruma yine takılır ve TÜM
-	// istekleri reddeder (ADR 0007): korumasız bir yönetim yüzeyi, sessizce
-	// açık kalmaktansa gürültüyle kapalı kalmalıdır.
+	// Authenticator resolves identities. With nil the guard is still installed and
+	// rejects ALL requests (ADR 0007): an unguarded admin surface should stay
+	// noisily closed rather than quietly open.
 	Authenticator Authenticator
-	// AdminPrefix yönetim yüzeyinin yol önekidir; boşsa [DefaultAdminPrefix].
+	// AdminPrefix is the path prefix of the admin surface; empty means [DefaultAdminPrefix].
 	AdminPrefix string
-	// StorePrefix mağaza yüzeyinin yol önekidir; boşsa [DefaultStorePrefix].
+	// StorePrefix is the path prefix of the store surface; empty means [DefaultStorePrefix].
 	StorePrefix string
-	// AdminExempt yönetim yüzeyinde kimlik doğrulamadan MUAF tutulacak tam
-	// yollardır — pratikte yalnızca giriş ucu.
+	// AdminExempt are the full paths on the admin surface that are EXEMPT from
+	// authentication — in practice only the login endpoint.
 	//
-	// Çekirdek bu yolu kendisi BİLEMEZ: auth bir modüldür ve çekirdek
-	// modülleri import edemez (Prensip 2.4). Yol, uygulamayı kuran taraftan
-	// parametre olarak gelir.
+	// The core CANNOT KNOW this path itself: auth is a module and the core cannot
+	// import modules (Principle 2.4). The path arrives as a parameter from the side
+	// building the application.
 	AdminExempt []string
-	// Limiter hız sınırlayıcıdır; nil ise hız sınırı takılmaz.
+	// Limiter is the rate limiter; with nil no rate limit is installed.
 	Limiter RateLimiter
-	// LimitKey istemciyi tanımlayan anahtarı üretir; nil ise [ClientIPKey].
+	// LimitKey produces the key identifying the client; nil means [ClientIPKey].
 	//
-	// Çağıranın KİMLİĞİNE bakan bir işlev buraya uymaz: bu halka kimlikten
-	// önce koşar (aşağıdaki sıraya bkz.) ve o noktada context'te [Principal]
-	// yoktur. Tam gerekçe [KeyFunc] godoc'undadır.
+	// A function looking at the caller's IDENTITY does not fit here: this ring runs
+	// before identity (see the ordering below) and at that point there is no
+	// [Principal] in the context. The full reasoning is in [KeyFunc]'s godoc.
 	LimitKey KeyFunc
-	// IdempotencyStore idempotency kayıtlarının deposudur; nil ise
-	// idempotency takılmaz.
+	// IdempotencyStore is the store of the idempotency records; with nil no
+	// idempotency is installed.
 	IdempotencyStore IdempotencyStore
-	// IdempotencyExempt idempotency halkasından MUAF tutulacak tam yollardır.
+	// IdempotencyExempt are the full paths EXEMPT from the idempotency ring.
 	//
-	// [Idempotency]'nin "geçici arızayı kalıcıya çevirme" koruması yalnızca
-	// HTTP DURUMUNA bakar: 5xx kaydedilmez, gerisi kaydedilir. Yanıtını hata
-	// hâlinde de 200 ile veren bir yüzeyde o koruma HİÇ devreye girmez ve
-	// geçici bir iç hata TTL boyunca (varsayılan 24 saat) çalınır — arıza
-	// giderilse bile istemci aynı hata gövdesini almaya devam eder. Bu alan,
-	// böyle bir ucu yığına hiç sokmamanın yoludur.
+	// [Idempotency]'s "turning a transient fault into a permanent one" guard looks
+	// only at the HTTP STATUS: a 5xx is not recorded, everything else is. On a
+	// surface that answers with a 200 even in the error case that guard NEVER
+	// engages, and a transient internal error is frozen for the whole TTL (24 hours
+	// by default) — the client keeps getting the same error body even after the
+	// fault is fixed. This field is the way to keep such an endpoint out of the
+	// stack entirely.
 	//
-	// Muafiyet en çok OKUMA yüzeylerine yakışır: idempotency kaydının işi yan
-	// etkiyi (tahsilat, sipariş) ikinci kez üretmemektir ve okuma ucunda
-	// üretecek yan etki yoktur — kayıt yalnızca bayat veri saklar. Bir okuma
-	// ucu POST olduğu için (gövdesinde sorgu taşıyan GraphQL gibi) yığına
-	// takılıyorsa, oraya ait olan şey muafiyettir.
+	// The exemption fits READ surfaces best: the job of an idempotency record is not
+	// to produce the side effect (a charge, an order) a second time, and a read
+	// endpoint has no side effect to produce — the record only holds stale data. If
+	// a read endpoint ends up in the stack because it is a POST (GraphQL carrying
+	// its query in the body, say), the exemption is what belongs there.
 	//
-	// Çekirdek bu yolu kendisi BİLEMEZ: uç bir modülde yaşar ve çekirdek
-	// modülleri import edemez (Prensip 2.4). Yol, [GuardOptions.AdminExempt]
-	// gibi, uygulamayı kuran taraftan parametre olarak gelir.
+	// The core CANNOT KNOW this path itself: the endpoint lives in a module and the
+	// core cannot import modules (Principle 2.4). The path arrives as a parameter
+	// from the side building the application, just like [GuardOptions.AdminExempt].
 	//
-	// Muafiyet YALNIZCA idempotency halkasınadır: yol hız sınırından ve
-	// kimlikten geçmeye devam eder.
+	// The exemption is ONLY from the idempotency ring: the path keeps going through
+	// the rate limit and through identity.
 	IdempotencyExempt []string
-	// PublishableKeyHeader publishable anahtarın okunacağı başlıktır; boşsa
-	// [PublishableKeyHeader].
+	// PublishableKeyHeader is the header the publishable key is read from; empty
+	// means [PublishableKeyHeader].
 	PublishableKeyHeader string
-	// OpenPrefixes kimlik İSTEMEYEN ama yine de hız sınırına tabi olması
-	// gereken yol önekleridir (örn. yüklenen dosyaların sunulduğu "/files").
+	// OpenPrefixes are the path prefixes that do NOT ASK for identity but still have
+	// to be subject to the rate limit (the "/files" prefix serving uploaded files,
+	// say).
 	//
-	// Kimlik ve kota AYRI kararlardır. Bir uç, istemcisi başlık gönderemediği
-	// için kimliksiz olabilir (vitrindeki <img>), ama bu onun bedava olduğu
-	// anlamına gelmez: her istek bir veritabanı okuması ya da disk erişimi
-	// yapıyorsa, kotasızlık kimlik doğrulama maliyeti bile ödemeden atılabilen
-	// bir yük demektir.
+	// Identity and quota are SEPARATE decisions. An endpoint may be identity-free
+	// because its client cannot send a header (an <img> in the storefront), but that
+	// does not mean it is free of charge: if every request does a database read or a
+	// disk access, having no quota means a load that can be thrown at us without
+	// even paying the authentication cost.
 	//
-	// Sağlık uçları BURAYA KONMAZ: orkestratörün gördüğü yolun kotaya takılması,
-	// sağlıklı bir örneği trafikten çektirirdi.
+	// Health endpoints do NOT GO HERE: having the path the orchestrator watches hit
+	// the quota would pull a healthy instance out of traffic.
 	OpenPrefixes []string
 }
 
-// Varsayılan API önekleri.
+// The default API prefixes.
 const (
-	// DefaultAdminPrefix yönetim yüzeyinin yol önekidir.
+	// DefaultAdminPrefix is the path prefix of the admin surface.
 	DefaultAdminPrefix = "/admin/v1"
-	// DefaultStorePrefix mağaza yüzeyinin yol önekidir.
+	// DefaultStorePrefix is the path prefix of the store surface.
 	DefaultStorePrefix = "/store/v1"
 )
 
-// APIGuards iki API yüzeyini koruyan middleware yığınını sırayla üretir.
+// APIGuards produces, in order, the middleware stack guarding the two API surfaces.
 //
-// Yığın [RouterOptions.Middlewares] alanına verilir. Sağlık uçları
-// (/health, /ready) hiçbir önekle eşleşmediği için yığından etkilenmez.
+// The stack is handed to the [RouterOptions.Middlewares] field. The health
+// endpoints (/health, /ready) match no prefix, so the stack does not touch them.
 //
-// # Sıra
+// # The order
 //
-//  1. HIZ SINIRI — kimlik doğrulamadan ÖNCE. Aksi hâlde parola deneyen bir
-//     saldırgan her denemede kimlik doğrulama maliyetini (bcrypt + veritabanı
-//     araması) ödetir, kotası ancak ondan sonra düşerdi. Sınır önce çalışınca
-//     reddedilen istek neredeyse bedava olur.
-//  2. KİMLİK — giriş ucu hariç tüm yönetim yüzeyi, publishable anahtar
-//     olmadan tüm mağaza yüzeyi reddedilir.
-//  3. IDEMPOTENCY — kimlikten SONRA. Kayıt anahtarı çağıranın kimliğiyle
-//     birlikte tutulur (bkz. [Idempotency]); kimlik henüz çözülmemişken
-//     çalışsaydı iki farklı çağıranın aynı anahtarı çakışırdı.
-//     [GuardOptions.IdempotencyExempt] yolları bu halkayı — YALNIZCA bu
-//     halkayı — atlar.
+//  1. RATE LIMIT — BEFORE authentication. Otherwise an attacker trying passwords
+//     would make us pay the authentication cost (bcrypt + a database lookup) on
+//     every attempt, and only then have their quota drop. With the limit running
+//     first a rejected request is almost free.
+//  2. IDENTITY — the whole admin surface except the login endpoint, and the whole
+//     store surface without a publishable key, is rejected.
+//  3. IDEMPOTENCY — AFTER identity. The record key is held together with the
+//     caller's identity (see [Idempotency]); had it run while identity was still
+//     unresolved, the same key from two different callers would collide.
+//     [GuardOptions.IdempotencyExempt] paths skip this ring — and ONLY this ring.
 //
-// Bu fonksiyonun çekirdekte durmasının sebebi, sıranın TEK bir yerde
-// yazılmasıdır: uygulama ile uçtan uca testler aynı yığını kurar, yani test
-// ettiğimiz koruma üretimdekinin ta kendisidir.
+// The reason this function stands in the core is that the order is written in a
+// SINGLE place: the application and the end-to-end tests build the same stack,
+// that is, the guard we test is the very one in production.
 func APIGuards(opts GuardOptions) []func(http.Handler) http.Handler {
 	admin := opts.AdminPrefix
 	if admin == "" {
@@ -198,7 +198,7 @@ func APIGuards(opts GuardOptions) []func(http.Handler) http.Handler {
 		store = DefaultStorePrefix
 	}
 
-	yigin := make([]func(http.Handler) http.Handler, 0, 6)
+	stack := make([]func(http.Handler) http.Handler, 0, 6)
 
 	if opts.Limiter != nil {
 		anahtar := opts.LimitKey
@@ -206,99 +206,100 @@ func APIGuards(opts GuardOptions) []func(http.Handler) http.Handler {
 			anahtar = ClientIPKey
 		}
 
-		sinir := RateLimit(opts.Limiter, anahtar)
-		yigin = append(yigin, Scoped(admin, nil, sinir), Scoped(store, nil, sinir))
+		limit := RateLimit(opts.Limiter, anahtar)
+		stack = append(stack, Scoped(admin, nil, limit), Scoped(store, nil, limit))
 
-		// KİMLİKSİZ önekler de sınırlanır.
+		// IDENTITY-FREE prefixes are limited too.
 		//
-		// Kimliksiz olmak "korumasız" demek DEĞİLDİR: kimlik istemeyen bir uç,
-		// tam da bu yüzden kotası olmayan bir uç olmamalıdır. Dosya sunumu
-		// örnektir — vitrindeki <img> etiketi başlık gönderemez, dolayısıyla uç
-		// kimliksizdir; ama her istek bir veritabanı okuması yapar ve
-		// sınırsızlık, kimlik doğrulama maliyeti ödemeden atılabilen bir yük
-		// demektir.
+		// Being identity-free does NOT mean "unguarded": an endpoint that asks for no
+		// identity is, for that very reason, not one that should have no quota. File
+		// serving is the example — the <img> tag in the storefront cannot send a
+		// header, so the endpoint is identity-free; but every request does a database
+		// read, and having no limit means a load that can be thrown at us without
+		// paying the authentication cost.
 		for _, onek := range opts.OpenPrefixes {
-			yigin = append(yigin, Scoped(onek, nil, sinir))
+			stack = append(stack, Scoped(onek, nil, limit))
 		}
 	}
 
-	yigin = append(yigin,
+	stack = append(stack,
 		Scoped(admin, opts.AdminExempt, RequireAdmin(opts.Authenticator)),
 		Scoped(store, nil, RequireStore(opts.Authenticator, opts.PublishableKeyHeader)),
 	)
 
 	if opts.IdempotencyStore != nil {
 		idem := Idempotency(opts.IdempotencyStore)
-		// Muaf listesi iki önek için de AYNIDIR: bir yol zaten yalnızca birinin
-		// altındadır, listeyi ikiye bölmek çağırana anlamsız bir karar
-		// sordurmak olurdu.
-		yigin = append(yigin,
+		// The exempt list is the SAME for both prefixes: a path sits under only one of
+		// them anyway, and splitting the list in two would make the caller answer a
+		// meaningless question.
+		stack = append(stack,
 			Scoped(admin, opts.IdempotencyExempt, idem),
 			Scoped(store, opts.IdempotencyExempt, idem))
 	}
 
-	return yigin
+	return stack
 }
 
-// codeAuthNotBound kimlik doğrulayıcının henüz bağlanmadığını bildirir.
+// codeAuthNotBound reports that the authenticator has not been bound yet.
 const codeAuthNotBound = "auth_not_bound"
 
-// DeferredAuthenticator kimlik doğrulayıcıyı SONRADAN bağlanabilir kılar.
+// DeferredAuthenticator makes the authenticator bindable LATER.
 //
-// # Neden gerekli
+// # Why it is needed
 //
-// Koruma middleware'i router kurulurken takılmalıdır — chi, route
-// kaydedildikten sonra r.Use çağrılmasını panikle reddeder. Kimlik
-// doğrulayıcı ise auth modülü Register olduğunda, yani modül bootstrap'ı
-// SIRASINDA doğar. İki an aynı değildir ve router, modüllerin route'larını
-// alabilmek için bootstrap'tan önce var olmak zorundadır.
+// The guard middleware has to be installed while the router is being built — chi
+// rejects an r.Use called after a route is registered, with a panic. The
+// authenticator, on the other hand, is born when the auth module Registers, that
+// is DURING module bootstrap. The two moments are not the same, and the router
+// has to exist before bootstrap in order to receive the modules' routes.
 //
-// Bu tip aradaki boşluğu kapatır: router kurulurken takılır, doğrulayıcı
-// hazır olunca [DeferredAuthenticator.Bind] ile doldurulur.
+// This type closes the gap in between: it is installed while the router is being
+// built and filled in with [DeferredAuthenticator.Bind] once the authenticator is
+// ready.
 //
-// # Bağlanmadan gelen istek
+// # A request arriving before the binding
 //
-// REDDEDİLİR (ADR 0007). Korumasız bir yönetim yüzeyi, sessizce açık
-// kalmaktansa gürültüyle kapalı kalmalıdır. Uygulamayı kuran tarafın
-// bootstrap'tan hemen sonra bağlaması ve bağlayamazsa açılışı durdurması
-// beklenir; bu 401, o sözleşmenin unutulduğu durumda son savunmadır.
+// It is REJECTED (ADR 0007). An unguarded admin surface should stay noisily
+// closed rather than quietly open. The side building the application is expected
+// to bind right after bootstrap and to stop startup if it cannot; this 401 is the
+// last line of defense for the case where that contract is forgotten.
 //
-// Eşzamanlı kullanıma güvenlidir: bağlama bir kez, okuma her istekte olur.
+// It is safe for concurrent use: the binding happens once, the read on every request.
 type DeferredAuthenticator struct {
-	// deger her zaman bir authnHolder tutar; atomic.Value tek bir somut tip
-	// ister ve arayüz değerini doğrudan saklamak dinamik tip değiştiğinde
-	// panik üretirdi.
-	deger atomic.Value
+	// value always holds an authnHolder; atomic.Value wants a single concrete type
+	// and storing the interface value directly would panic when the dynamic type
+	// changed.
+	value atomic.Value
 }
 
-// authnHolder arayüz değerini atomic.Value için tek bir somut tipe sarar.
+// authnHolder wraps the interface value in a single concrete type for atomic.Value.
 type authnHolder struct {
-	iç Authenticator
+	inner Authenticator
 }
 
 var _ Authenticator = (*DeferredAuthenticator)(nil)
 
-// Bind gerçek doğrulayıcıyı yerine koyar.
+// Bind puts the real authenticator in place.
 func (d *DeferredAuthenticator) Bind(a Authenticator) {
-	d.deger.Store(authnHolder{iç: a})
+	d.value.Store(authnHolder{inner: a})
 }
 
-// coz bağlanmış doğrulayıcıyı döner; bağlanmamışsa hata.
-func (d *DeferredAuthenticator) coz() (Authenticator, error) {
-	h, ok := d.deger.Load().(authnHolder)
-	if !ok || h.iç == nil {
+// resolve returns the bound authenticator; an error if it is not bound.
+func (d *DeferredAuthenticator) resolve() (Authenticator, error) {
+	h, ok := d.value.Load().(authnHolder)
+	if !ok || h.inner == nil {
 		return nil, coreerrors.Unauthorized(codeAuthNotBound,
-			"kimlik doğrulayıcı henüz bağlanmadı")
+			"the authenticator has not been bound yet")
 	}
 
-	return h.iç, nil
+	return h.inner, nil
 }
 
-// AuthenticateAdmin çağrıyı bağlı doğrulayıcıya iletir.
+// AuthenticateAdmin forwards the call to the bound authenticator.
 func (d *DeferredAuthenticator) AuthenticateAdmin(
 	ctx context.Context, scheme, credential string,
 ) (Principal, error) {
-	a, err := d.coz()
+	a, err := d.resolve()
 	if err != nil {
 		return Principal{}, err
 	}
@@ -306,9 +307,9 @@ func (d *DeferredAuthenticator) AuthenticateAdmin(
 	return a.AuthenticateAdmin(ctx, scheme, credential)
 }
 
-// AuthenticateStore çağrıyı bağlı doğrulayıcıya iletir.
+// AuthenticateStore forwards the call to the bound authenticator.
 func (d *DeferredAuthenticator) AuthenticateStore(ctx context.Context, key string) (Principal, error) {
-	a, err := d.coz()
+	a, err := d.resolve()
 	if err != nil {
 		return Principal{}, err
 	}

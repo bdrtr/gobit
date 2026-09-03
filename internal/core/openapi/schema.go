@@ -10,148 +10,153 @@ import (
 	"unicode"
 )
 
-// semaAlanData zarfların kayıt taşıyan alanının adıdır (plan Bölüm 8).
-const semaAlanData = "data"
+// schemaFieldData is the name of the envelopes' record-carrying field (plan Section 8).
+const schemaFieldData = "data"
 
-// Liste zarfının sayfalama alanlarının adları (plan Bölüm 8).
+// The names of the list envelope's pagination fields (plan Section 8).
 //
-// Sabit olmalarının sebebi tekrar değil AYRIŞMA: adlar hem "properties"
-// haritasında hem "required" listesinde geçer ve birinde düzeltilip
-// diğerinde unutulan bir ad, zorunlu ilan edilmiş ama hiç yazılmayan bir alan
-// üretirdi — şemayı satır satır okumadan görülmeyen bir yalan.
+// They are constants not to avoid repetition but to avoid DRIFT: the names
+// appear both in the "properties" map and in the "required" list, and a name
+// fixed in one and forgotten in the other would produce a field declared
+// required and never written — a lie invisible without reading the schema line
+// by line.
 const (
-	semaAlanCount  = "count"
-	semaAlanOffset = "offset"
-	semaAlanLimit  = "limit"
+	schemaFieldCount  = "count"
+	schemaFieldOffset = "offset"
+	schemaFieldLimit  = "limit"
 )
 
-// codeSchemaNameConflict iki FARKLI Go tipinin aynı bileşen adını istediğini
-// bildirir.
+// codeSchemaNameConflict reports that two DIFFERENT Go types want the same
+// component name.
 const codeSchemaNameConflict = "openapi_schema_name_conflict"
 
-// Yansımayla tanınması gereken tipler.
+// The types that have to be recognized through reflection.
 //
-// Paket düzeyinde tutulmalarının sebebi maliyet değil, tekrarın kendisidir:
-// [reflect.TypeOf] çağrısını her alanda yeniden yazmak, birinde yanlış tip
-// yazıldığında SESSİZ kalırdı.
+// They are kept at package level not for cost but because of the repetition
+// itself: writing the [reflect.TypeOf] call out again in every field would stay
+// SILENT when one of them named the wrong type.
 var (
-	// zamanTipi time.Time'ın yansıma tipidir.
-	zamanTipi = reflect.TypeOf(time.Time{})
-	// hamJSONTipi json.RawMessage'ın yansıma tipidir.
-	hamJSONTipi = reflect.TypeOf(json.RawMessage(nil))
-	// marshalerTipi json.Marshaler arayüzünün yansıma tipidir.
-	marshalerTipi = reflect.TypeOf((*json.Marshaler)(nil)).Elem()
-	// metinMarshalerTipi encoding.TextMarshaler arayüzünün yansıma tipidir.
-	metinMarshalerTipi = reflect.TypeOf((*encoding.TextMarshaler)(nil)).Elem()
+	// timeType is time.Time's reflect type.
+	timeType = reflect.TypeOf(time.Time{})
+	// rawJSONType is json.RawMessage's reflect type.
+	rawJSONType = reflect.TypeOf(json.RawMessage(nil))
+	// marshalerType is the reflect type of the json.Marshaler interface.
+	marshalerType = reflect.TypeOf((*json.Marshaler)(nil)).Elem()
+	// textMarshalerType is the reflect type of the encoding.TextMarshaler interface.
+	textMarshalerType = reflect.TypeOf((*encoding.TextMarshaler)(nil)).Elem()
 )
 
-// ayrilmisSemaAdlari çekirdeğin kendi bileşenlerinin adlarıdır.
+// reservedSchemaNames are the names of the core's own components.
 //
-// Türetilen bir şema bu adlardan birini alsaydı ORTAK hata zarfının ya da
-// liste zarfının şemasını sessizce ezerdi: belgedeki her uç aynı "Error"
-// bileşenine atıf yapar, yani tek bir modülün "Error" adlı DTO'su TÜM hata
-// yanıtlarını yanlış anlatırdı.
-var ayrilmisSemaAdlari = map[string]struct{}{
-	semaAdiError: {},
-	semaAdiList:  {},
+// Were a derived schema to take one of them it would silently overwrite the
+// schema of the SHARED error envelope or of the list envelope: every endpoint in
+// the document refers to the same "Error" component, so one module's DTO named
+// "Error" would describe EVERY error response wrongly.
+var reservedSchemaNames = map[string]struct{}{
+	schemaNameError: {},
+	schemaNameList:  {},
 }
 
-// SchemaOf verilen değerin Go TİPİNDEN JSON Schema üretir.
+// SchemaOf produces a JSON Schema from the Go TYPE of the given value.
 //
-// # Neden yansıma
+// # Why reflection
 //
-// Gerekçe [Doc.Build]'inkiyle aynıdır: elle yazılan bir alan listesi, DTO'ya
-// alan eklendiği gün eksik kalır ve kimse fark etmez. Tel üzerinde ne
-// gönderildiğini bilen tek şey encoding/json'dur; bu yüzden şema, onun
-// DAVRANIŞINDAN türetilir — json etiketi, gölgelenme, omitempty ve dışa
-// kapalı alan kuralları burada birebir taklit edilir. Taklidin eksik olduğu
-// yerde şema, hiç şema olmamasından KÖTÜDÜR: istemci, doğru sandığı bir alan
-// adını gönderir.
+// The reason is [Doc.Build]'s: a hand-written field list falls behind the day a
+// field is added to the DTO and nobody notices. The only thing that knows what
+// goes on the wire is encoding/json, so the schema is derived from its
+// BEHAVIOR — the json tag, shadowing, omitempty and the unexported-field rules
+// are imitated here exactly. Where the imitation is incomplete a schema is WORSE
+// than no schema: the client sends a field name it believed was right.
 //
-// # Adlandırılmış struct'lar bileşendir
+// # Named structs are components
 //
-// Adı olan bir struct components/schemas altına kaydedilir ve burada yalnızca
-// "$ref" döner. İki sebebi var. Birincisi ÖZYİNELEME: kendine referans veren
-// bir tip (örn. kategori ağacı) satır içi yazılsaydı üretici sonsuz döngüye
-// girerdi. Derinlik sınırı da bir çözümdü ama kestiği yerde "her şey serbest"
-// yazmak zorunda kalırdı ve bu, tipli bir alanı istemci üretecinde 'any'
-// yapardı — yani tam olarak kaçınmaya çalıştığımız yalan. $ref, sınırı hiç
-// koymadan döngüyü kırar. İkincisi TEKRAR: aynı DTO yirmi uçta geçtiğinde
-// belgede bir kez görünür ve istemci üreteci tek bir sınıf üretir.
+// A struct with a name is registered under components/schemas and only a "$ref"
+// is returned here. There are two reasons. The first is RECURSION: a
+// self-referencing type (a category tree, say) written inline would send the
+// generator into an endless loop. A depth limit was an option too, but where it
+// cut it would have to write "anything goes", and that turns a typed field into
+// 'any' in a client generator — precisely the lie being avoided. A $ref breaks
+// the cycle without any limit at all. The second is REPETITION: a DTO appearing
+// at twenty endpoints shows up once in the document and the client generator
+// produces a single class.
 //
-// # Bilinen sınır
+// # A known limit
 //
-// json etiketindeki ",string" seçeneği (sayıyı JSON DİZESİ olarak yazar)
-// taklit EDİLMEZ; böyle bir alan şemada sayı görünür. Bu depoda hiç
-// kullanılmıyor ve her ek dal yanlış olabilecek bir yer daha demek. Sınırın
-// yazılması bilinçlidir: eksik olduğunu bilmek, eksik olduğunu sanmamaktan
-// iyidir.
+// The ",string" option in a json tag (writing a number as a JSON STRING) is NOT
+// imitated; such a field appears as a number in the schema. It is used nowhere
+// in this repository and every extra branch is one more place that can be wrong.
+// Writing the limit down is deliberate: knowing it is missing beats believing it
+// is not.
 func (d *Doc) SchemaOf(v any) map[string]any {
-	return d.semaTipten(reflect.TypeOf(v), map[reflect.Type]bool{})
+	return d.schemaOfType(reflect.TypeOf(v), map[reflect.Type]bool{})
 }
 
-// Schemas türetilmiş bileşen şemalarını döner.
+// Schemas returns the derived component schemas.
 //
-// [Doc.Build] bunları components/schemas altına yazar; ayrıca dışa
-// verilmelerinin sebebi [Doc.SchemaOf]'un bir "$ref" döndürmesidir — atfın
-// hedefini görmek isteyen çağıranın (ve testin) haritayı okuyabilmesi gerekir.
+// [Doc.Build] writes them under components/schemas; they are also exported
+// because [Doc.SchemaOf] returns a "$ref" — a caller (and a test) wanting to see
+// what the reference points at has to be able to read the map.
 func (d *Doc) Schemas() map[string]any {
-	kopya := make(map[string]any, len(d.semalar))
-	for ad, sema := range d.semalar {
-		kopya[ad] = sema
+	duplicate := make(map[string]any, len(d.schemas))
+	for name, schema := range d.schemas {
+		duplicate[name] = schema
 	}
 
-	return kopya
+	return duplicate
 }
 
-// Item tekil yanıt zarfının şemasını KAYIT tipinden üretir.
+// Item produces the schema of the single-object response envelope from the
+// RECORD type.
 //
-// Zarf biçimi plan Bölüm 8'de sabittir: {semaAlanData: <kayıt>}. Her modülün kendi
-// zarfını elle yazması, biçim bir gün değiştiğinde ötekilerin sessizce
-// eskimesi demekti.
+// The envelope shape is fixed in plan Section 8: {schemaFieldData: <record>}.
+// Every module writing its own envelope meant the others going stale silently
+// the day the shape changed.
 func (d *Doc) Item(v any) map[string]any {
-	return tekilSemasi(d.SchemaOf(v))
+	return itemSchema(d.SchemaOf(v))
 }
 
-// List liste yanıt zarfının şemasını KAYIT tipinden üretir.
+// List produces the schema of the list response envelope from the RECORD type.
 //
-// Zarf biçimi plan Bölüm 8'de sabittir:
-// {semaAlanData: [...], "count": N, "offset": N, "limit": N}. Dört alanın
-// dördü de ZORUNLUDUR; sayacı isteğe bağlı olan uç için
-// [Doc.ListOptionalCount] vardır.
+// The envelope shape is fixed in plan Section 8:
+// {schemaFieldData: [...], "count": N, "offset": N, "limit": N}. All four fields
+// are REQUIRED; for the endpoint whose counter is optional there is
+// [Doc.ListOptionalCount].
 func (d *Doc) List(v any) map[string]any {
-	oge := d.semaTipten(listeKaydi(reflect.TypeOf(v)), map[reflect.Type]bool{})
+	oge := d.schemaOfType(listRecord(reflect.TypeOf(v)), map[reflect.Type]bool{})
 
-	return listeSemasi(oge, true)
+	return listSchema(oge, true)
 }
 
-// ListOptionalCount liste zarfının şemasını, "count" alanı DÜŞEBİLİR olarak
-// üretir.
+// ListOptionalCount produces the list envelope's schema with the "count" field
+// as one that MAY BE ABSENT.
 //
-// Alan şemada durur ve tipi yine tam sayıdır; değişen tek şey, zorunlu alanlar
-// listesinde YER ALMAMASIDIR. OpenAPI'nin "olmayabilir" sözcüğü budur ve
-// üretilen istemcilerde alanı isteğe bağlı bir alana çevirir — yani çağıran,
-// sayıyı okumadan önce var olup olmadığını sormak zorunda kalır.
+// The field stays in the schema and its type is still an integer; the only thing
+// that changes is that it is NOT IN the required list. That is OpenAPI's word
+// for "may not be there", and it turns the field into an optional one in the
+// generated clients — that is, the caller has to ask whether the number exists
+// before reading it.
 //
-// # Neden ayrı bir fonksiyon
+// # Why a separate function
 //
-// [Doc.List]'i gevşetmek, sayacı HER ZAMAN yazan onlarca ucun belgesini de
-// yalancı yapardı: istemci üreteci onlarda da isteğe bağlı bir alan üretir ve
-// hiç oluşmayacak bir durum için kontrol yazdırırdı. Belge, ucun gerçekte ne
-// yaptığını söylemelidir; "hepsi için en gevşek şema" kolay ama yanlıştır.
+// Loosening [Doc.List] would make the documentation of the dozens of endpoints
+// that ALWAYS write the counter a lie too: the client generator would produce an
+// optional field there as well and make people write a check for a case that
+// never happens. The document has to say what the endpoint really does; "the
+// loosest schema for all" is easy and wrong.
 //
-// # Neden nullable DEĞİL
+// # Why NOT nullable
 //
-// Alanı "integer|null" yapmak da mümkündü ve reddedildi: sayaç kapalıyken alan
-// null olarak DEĞİL, hiç YAZILMADAN döner (bkz. product api listEnvelope) —
-// nullable yazmak, gövdede asla görünmeyecek bir değeri anlatmak olurdu.
+// Making the field "integer|null" was possible and was refused: with the counter
+// off the field comes back NOT as null but not WRITTEN at all (see the product
+// api listEnvelope) — writing nullable would describe a value that never appears
+// in the body.
 func (d *Doc) ListOptionalCount(v any) map[string]any {
-	oge := d.semaTipten(listeKaydi(reflect.TypeOf(v)), map[reflect.Type]bool{})
+	oge := d.schemaOfType(listRecord(reflect.TypeOf(v)), map[reflect.Type]bool{})
 
-	return listeSemasi(oge, false)
+	return listSchema(oge, false)
 }
 
-// RequestBody verilen tipten ZORUNLU bir JSON istek gövdesi tanımı üretir.
+// RequestBody produces a REQUIRED JSON request body definition from the given type.
 func (d *Doc) RequestBody(v any) map[string]any {
 	return map[string]any{
 		"required": true,
@@ -161,190 +166,190 @@ func (d *Doc) RequestBody(v any) map[string]any {
 	}
 }
 
-// Response verilen şemayla bir JSON yanıt tanımı üretir.
+// Response produces a JSON response definition with the given schema.
 //
-// [Doc.Item] ve [Doc.List] ile birlikte kullanılır; ayrı durmasının sebebi
-// aynı zarfın farklı durum kodlarıyla (200/201) anlatılabilmesidir.
-func Response(aciklama string, sema map[string]any) map[string]any {
+// It is used together with [Doc.Item] and [Doc.List]; it stands apart so the
+// same envelope can be described with different status codes (200/201).
+func Response(description string, schema map[string]any) map[string]any {
 	return map[string]any{
-		semaAciklama: aciklama,
+		schemaDescription: description,
 		"content": map[string]any{
-			"application/json": map[string]any{"schema": sema},
+			"application/json": map[string]any{"schema": schema},
 		},
 	}
 }
 
-// listeKaydi [Doc.List]'e verilen değerin KAYIT tipini döner.
+// listRecord returns the RECORD type of the value given to [Doc.List].
 //
-// Hem List(Product{}) hem List([]Product{}) aynı şeyi anlatır. İkinci biçim
-// olduğu gibi kullanılsaydı dilim şeması bir kez daha diziye sarılır ve
-// belgede "dizi dizisi" çıkardı; bu, kimse şemayı satır satır okumadan fark
-// edilmezdi. Bayt dilimi DIŞARIDADIR: encoding/json onu base64 DİZE olarak
-// yazar, dizi olarak değil.
-func listeKaydi(t reflect.Type) reflect.Type {
+// Both List(Product{}) and List([]Product{}) say the same thing. Used as it is,
+// the second form would wrap the slice schema in another array and the document
+// would carry an "array of arrays"; nobody would notice that without reading the
+// schema line by line. A byte slice is OUTSIDE this: encoding/json writes it as
+// a base64 STRING, not as an array.
+func listRecord(t reflect.Type) reflect.Type {
 	if t == nil {
 		return nil
 	}
 
-	if k := t.Kind(); (k == reflect.Slice || k == reflect.Array) && !baytDilimi(t) {
+	if k := t.Kind(); (k == reflect.Slice || k == reflect.Array) && !isByteSlice(t) {
 		return t.Elem()
 	}
 
 	return t
 }
 
-// semaTipten tek bir tipin şemasını üretir.
+// schemaOfType produces the schema of a single type.
 //
-// izlenen, O ANDAKİ özyineleme yolundaki tipleri tutar ve yalnızca $ref'e
-// konamayan (struct olmayan) kendine referanslı tipler için gerekir; struct
-// döngüleri bileşen kaydıyla zaten kırılır (bkz. [Doc.SchemaOf]).
-func (d *Doc) semaTipten(t reflect.Type, izlenen map[reflect.Type]bool) map[string]any {
+// seen holds the types on the CURRENT recursion path and is needed only for
+// self-referencing types that cannot go into a $ref (non-structs); struct cycles
+// are already broken by the component registration (see [Doc.SchemaOf]).
+func (d *Doc) schemaOfType(t reflect.Type, seen map[reflect.Type]bool) map[string]any {
 	if t == nil {
-		// Tipi olmayan bir değer (nil arayüz) hakkında söylenebilecek doğru
-		// şey yoktur; serbest şema "bilmiyorum" demenin dürüst yoludur.
+		// There is nothing true to say about a value with no type (a nil
+		// interface); a free schema is the honest way of saying "I do not know".
 		return map[string]any{}
 	}
 
-	// İşaretçi ÖNCE ele alınır. Aşağıdaki kodlayıcı denetimi işaretçiyi de
-	// yakalardı ve sonuç YANLIŞ olurdu: time.Time'ın MarshalJSON'ı DEĞER
-	// alıcılıdır, dolayısıyla *time.Time de onu taşır ve "şekli bilinmiyor"
-	// denip serbest şema yazılırdı. Oysa *time.Time tel üzerinde ya RFC 3339
-	// dizesi ya null'dır ve ikisi de söylenebilir.
+	// A pointer is handled FIRST. The encoder check below would catch the
+	// pointer too and the result would be WRONG: time.Time's MarshalJSON has a
+	// VALUE receiver, so *time.Time carries it as well and we would say "the
+	// shape is unknown" and write a free schema. But on the wire *time.Time is
+	// either an RFC 3339 string or null, and both can be stated.
 	if t.Kind() == reflect.Pointer {
-		return d.isaretciSemasi(t, izlenen)
+		return d.pointerSchema(t, seen)
 	}
 
 	switch {
-	case t == zamanTipi:
-		// time.Time'ın alanları dışa kapalıdır; yansıma onu BOŞ nesne sanırdı.
-		// Tel üzerinde ise RFC 3339 dizesidir.
-		return map[string]any{semaTip: tipDize, semaBicim: bicimTarihSaat}
-	case t == hamJSONTipi:
-		// Ham JSON'un şekli tanımı gereği bilinmez.
+	case t == timeType:
+		// time.Time's fields are unexported; reflection would take it for an
+		// EMPTY object. On the wire it is an RFC 3339 string.
+		return map[string]any{schemaType: typeString, schemaFormat: formatDateTime}
+	case t == rawJSONType:
+		// The shape of raw JSON is unknown by definition.
 		return map[string]any{}
-	case t.Implements(marshalerTipi):
-		// Tip kendi kodlayıcısını taşıyorsa alanlarını okumak YALAN olurdu:
-		// MarshalJSON istediği her şeyi yazabilir.
+	case t.Implements(marshalerType):
+		// If a type carries its own encoder, reading its fields would be a LIE:
+		// MarshalJSON can write whatever it likes.
 		//
-		// İşaretçi ALICILI bir MarshalJSON değer tipinde aranmaz; encoding/json
-		// de adreslenemeyen bir değerde onu çağırmaz (klasik tuzak), yani şema
-		// tel üzerindeki davranışla aynı kalır.
+		// A MarshalJSON with a POINTER receiver is not looked for on a value type;
+		// encoding/json does not call it on an unaddressable value either (the
+		// classic trap), so the schema stays the same as the behavior on the wire.
 		return map[string]any{}
-	case t.Implements(metinMarshalerTipi):
-		// TextMarshaler taşıyan bir tip JSON'a DİZE olarak yazılır.
-		return map[string]any{semaTip: tipDize}
+	case t.Implements(textMarshalerType):
+		// A type carrying TextMarshaler is written to JSON as a STRING.
+		return map[string]any{schemaType: typeString}
 	}
 
 	if k := t.Kind(); k == reflect.Slice || k == reflect.Array || k == reflect.Map {
-		if izlenen[t] {
-			// Kendine referans veren adlandırılmış bir dilim/harita bileşene
-			// konamaz (bileşenler struct'lar içindir) ve satır içi yazılırsa
-			// sonsuz döngüye girer. Serbest şema, "buradan sonrası kendini
-			// tekrar ediyor" demenin en dürüst yoludur.
+		if seen[t] {
+			// A self-referencing named slice/map cannot go into a component
+			// (components are for structs) and written inline it would recurse
+			// forever. A free schema is the most honest way of saying "from here
+			// on it repeats itself".
 			return map[string]any{}
 		}
 
-		izlenen[t] = true
-		defer delete(izlenen, t)
+		seen[t] = true
+		defer delete(seen, t)
 	}
 
-	return d.semaKinden(t, izlenen)
+	return d.schemaOfKind(t, seen)
 }
 
-// isaretciSemasi işaretçi tipinin şemasını üretir.
+// pointerSchema produces the schema of a pointer type.
 //
-// Kodlayıcı YALNIZCA işaretçide varsa (işaretçi alıcılı MarshalJSON) öğeye
-// inmek yalan olurdu: encoding/json böyle bir alanda gerçekten o kodlayıcıyı
-// çağırır ve tel üzerindeki biçimi buradan bilemeyiz.
-func (d *Doc) isaretciSemasi(t reflect.Type, izlenen map[reflect.Type]bool) map[string]any {
+// When the encoder is ONLY on the pointer (a MarshalJSON with a pointer
+// receiver), descending to the element would be a lie: on such a field
+// encoding/json really does call that encoder and we cannot know its wire shape
+// from here.
+func (d *Doc) pointerSchema(t reflect.Type, seen map[reflect.Type]bool) map[string]any {
 	oge := t.Elem()
 
-	if ozelKodlayici(t) && !ozelKodlayici(oge) {
+	if hasCustomEncoder(t) && !hasCustomEncoder(oge) {
 		return map[string]any{}
 	}
 
-	if izlenen[t] {
+	if seen[t] {
 		return map[string]any{}
 	}
 
-	izlenen[t] = true
-	defer delete(izlenen, t)
+	seen[t] = true
+	defer delete(seen, t)
 
-	return bosDegerli(d.semaTipten(oge, izlenen))
+	return nullable(d.schemaOfType(oge, seen))
 }
 
-// ozelKodlayici tipin JSON biçimini KENDİSİNİN belirleyip belirlemediğini
-// bildirir.
-func ozelKodlayici(t reflect.Type) bool {
-	return t.Implements(marshalerTipi) || t.Implements(metinMarshalerTipi)
+// hasCustomEncoder reports whether the type decides its own JSON shape.
+func hasCustomEncoder(t reflect.Type) bool {
+	return t.Implements(marshalerType) || t.Implements(textMarshalerType)
 }
 
-// semaKinden tipin Go türüne (Kind) göre şemasını üretir.
-func (d *Doc) semaKinden(t reflect.Type, izlenen map[reflect.Type]bool) map[string]any {
+// schemaOfKind produces a type's schema from its Go Kind.
+func (d *Doc) schemaOfKind(t reflect.Type, seen map[reflect.Type]bool) map[string]any {
 	switch t.Kind() {
 	case reflect.Bool:
-		return map[string]any{semaTip: tipMantiksal}
+		return map[string]any{schemaType: typeBoolean}
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
 		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
-		return tamSayiSemasi(t)
+		return integerSchema(t)
 	case reflect.Float32:
-		return map[string]any{semaTip: tipSayi, semaBicim: bicimFloat}
+		return map[string]any{schemaType: typeNumber, schemaFormat: formatFloat}
 	case reflect.Float64:
-		return map[string]any{semaTip: tipSayi, semaBicim: bicimDouble}
+		return map[string]any{schemaType: typeNumber, schemaFormat: formatDouble}
 	case reflect.String:
-		return map[string]any{semaTip: tipDize}
+		return map[string]any{schemaType: typeString}
 	case reflect.Slice, reflect.Array:
-		if baytDilimi(t) {
-			// encoding/json bayt dilimini base64 DİZE yazar; "dizi" demek,
-			// istemcinin sayı listesi beklemesine yol açardı.
-			return map[string]any{semaTip: tipDize, semaBicim: bicimBayt}
+		if isByteSlice(t) {
+			// encoding/json writes a byte slice as a base64 STRING; saying "array"
+			// would have the client expect a list of numbers.
+			return map[string]any{schemaType: typeString, schemaFormat: formatByte}
 		}
 
-		return map[string]any{semaTip: tipDizi, semaOgeler: d.semaTipten(t.Elem(), izlenen)}
+		return map[string]any{schemaType: typeArray, schemaItems: d.schemaOfType(t.Elem(), seen)}
 	case reflect.Map:
-		// Anahtar tipi şemaya girmez: JSON nesne anahtarı her zaman dizedir ve
-		// encoding/json sayısal/TextMarshaler anahtarları da dizeye çevirir.
+		// The key type does not enter the schema: a JSON object key is always a
+		// string and encoding/json turns numeric/TextMarshaler keys into strings too.
 		return map[string]any{
-			semaTip:          tipNesne,
-			semaEkOzellikler: d.semaTipten(t.Elem(), izlenen),
+			schemaType:                 typeObject,
+			schemaAdditionalProperties: d.schemaOfType(t.Elem(), seen),
 		}
 	case reflect.Struct:
-		return d.structSemasiVeyaRef(t, izlenen)
+		return d.structSchemaOrRef(t, seen)
 	case reflect.Pointer:
-		return bosDegerli(d.semaTipten(t.Elem(), izlenen))
+		return nullable(d.schemaOfType(t.Elem(), seen))
 	case reflect.Interface:
 		return map[string]any{}
 	case reflect.Invalid, reflect.Complex64, reflect.Complex128, reflect.Chan,
 		reflect.Func, reflect.UnsafePointer:
-		// encoding/json bu tipleri kodlayamaz; şemanın yapabileceği tek doğru
-		// şey bir şey İDDİA ETMEMEKTİR.
+		// encoding/json cannot encode these types; the only true thing a schema
+		// can do is CLAIM NOTHING.
 		return map[string]any{}
 	default:
 		return map[string]any{}
 	}
 }
 
-// tamSayiSemasi tam sayı tipinin şemasını genişliğiyle birlikte döner.
+// integerSchema returns an integer type's schema along with its width.
 //
-// Genişlik ("format") bilgi amaçlı değildir: int64 bir JSON sayısıdır ve
-// JavaScript onu 2^53'ten sonra SESSİZCE bozar. İstemci üreteçleri format'ı
-// görünce 64 bitlik bir tip (long, BigInt) seçer.
-func tamSayiSemasi(t reflect.Type) map[string]any {
-	sema := map[string]any{semaTip: tipTamSayi}
+// The width ("format") is not decoration: an int64 is a JSON number and
+// JavaScript breaks it SILENTLY past 2^53. Seeing the format, client generators
+// pick a 64-bit type (long, BigInt).
+func integerSchema(t reflect.Type) map[string]any {
+	schema := map[string]any{schemaType: typeInteger}
 
 	switch t.Bits() {
 	case 32:
-		sema[semaBicim] = bicimInt32
+		schema[schemaFormat] = formatInt32
 	case 64:
-		sema[semaBicim] = bicimInt64
+		schema[schemaFormat] = formatInt64
 	}
 
-	return sema
+	return schema
 }
 
-// baytDilimi tipin encoding/json tarafından base64 DİZE yazılan bir bayt
-// dilimi olup olmadığını bildirir.
-func baytDilimi(t reflect.Type) bool {
+// isByteSlice reports whether the type is a byte slice, which encoding/json
+// writes as a base64 STRING.
+func isByteSlice(t reflect.Type) bool {
 	if t.Kind() != reflect.Slice {
 		return false
 	}
@@ -354,373 +359,374 @@ func baytDilimi(t reflect.Type) bool {
 		return false
 	}
 
-	// Öğe tipinin kendi kodlayıcısı varsa encoding/json base64'e düşmez,
-	// diziyi öğe öğe yazar.
-	return !oge.Implements(marshalerTipi) && !oge.Implements(metinMarshalerTipi)
+	// If the element type has its own encoder, encoding/json does not fall to
+	// base64 and writes the array element by element.
+	return !oge.Implements(marshalerType) && !oge.Implements(textMarshalerType)
 }
 
-// bosDegerli şemaya JSON null'ını ekler.
+// nullable adds JSON null to the schema.
 //
-// İşaretçi tipinin nil olabilmesi bir kaza değil, yazarın seçimidir: alanı
-// işaretçi yapmanın tek sebebi "yok olabilir" demektir. Dilim ve haritalar
-// BİLİNÇLİ olarak null'lanmaz; onların nil'liği Go'nun sıfır değerinden gelen
-// bir kazadır ve API sözleşmesi onları BOŞ sayar. Takas açıkça kabul
-// ediliyor: nil bırakılmış bir dilim alanı tel üzerinde null olur ve şema
-// bunu söylemez — karşılığında "her liste null olabilir" dalını her istemciye
-// yazdırmamış oluruz.
-func bosDegerli(sema map[string]any) map[string]any {
-	if len(sema) == 0 {
-		// Serbest şema null'ı zaten kabul eder.
-		return sema
+// A pointer type being able to be nil is not an accident but the author's
+// choice: the only reason to make a field a pointer is to say "it may be
+// absent". Slices and maps are DELIBERATELY not made nullable; their nilness is
+// an accident of Go's zero value and the API contract counts them as EMPTY. The
+// trade is accepted openly: a slice field left nil comes out as null on the wire
+// and the schema does not say so — in exchange we do not make every client write
+// a "any list may be null" branch.
+func nullable(schema map[string]any) map[string]any {
+	if len(schema) == 0 {
+		// A free schema already accepts null.
+		return schema
 	}
 
-	if _, refli := sema[semaRef]; refli {
-		// "$ref"in yanına type yazmak JSON Schema 2020-12'de $ref ile
-		// BİRLİKTE değerlendirilir: null hem hedef şemaya hem type'a uymak
-		// zorunda kalır ve hiçbir değer geçemez. Doğrusu anyOf'tur.
-		return map[string]any{semaHerhangi: []any{sema, map[string]any{semaTip: tipBos}}}
+	if _, isRef := schema[schemaRef]; isRef {
+		// A type written next to a "$ref" is evaluated TOGETHER with the $ref in
+		// JSON Schema 2020-12: null would have to match both the target schema and
+		// the type, and no value could pass. The right form is anyOf.
+		return map[string]any{schemaAny: []any{schema, map[string]any{schemaType: typeNull}}}
 	}
 
-	switch tip := sema[semaTip].(type) {
+	switch typ := schema[schemaType].(type) {
 	case string:
-		sema[semaTip] = []any{tip, tipBos}
+		schema[schemaType] = []any{typ, typeNull}
 	case []any:
-		for _, mevcut := range tip {
-			if mevcut == tipBos {
-				return sema
+		for _, existing := range typ {
+			if existing == typeNull {
+				return schema
 			}
 		}
 
-		sema[semaTip] = append(tip, tipBos)
+		schema[schemaType] = append(typ, typeNull)
 	}
 
-	return sema
+	return schema
 }
 
-// bilesenAdi Go tip adını YAYIMLANAN şema bileşeni adına çevirir.
+// componentName turns a Go type name into the PUBLISHED schema component name.
 //
-// # Neden Go adı olduğu gibi kullanılamaz
+// # Why the Go name cannot be used as it is
 //
-// Bileşen adı bir İÇ AYRINTI DEĞİL, YAYIMLANAN SÖZLEŞMEDİR: istemci üreteçleri
-// ondan sınıf adı üretir ve bir kez istemci üretildikten sonra adı değiştirmek
-// kırıcıdır. Go adı olduğu gibi kullanılsaydı sözleşme, Go'nun dışa açma
-// kuralına ve paket içi adlandırma alışkanlığına bağlı kalırdı: aynı belgede
-// "StoreProduct" (models paketinden, dışa açık) ile "cartDTO" (api paketinden,
-// dışa kapalı) yan yana dururdu. Üretilen istemcide bir sınıf StoreProduct,
-// öteki cartDTO olurdu — aynı API'nin iki farklı adlandırma düzeni.
+// A component name is NOT AN INTERNAL DETAIL but a PUBLISHED CONTRACT: client
+// generators produce class names from it, and once a client has been generated
+// changing the name is breaking. Used as it is, the contract would depend on
+// Go's export rule and on a package's naming habits: "StoreProduct" (from the
+// models package, exported) would stand next to "cartDTO" (from the api package,
+// unexported) in the same document. In the generated client one class would be
+// StoreProduct and the other cartDTO — two different naming schemes for one API.
 //
-// İki normalleştirme yapılır ve ikisi de KAYIPSIZDIR:
+// Two normalizations are made and both are LOSSLESS:
 //
-//   - Baş harf büyütülür: dışa kapalı olmak bir Go kavramıdır, HTTP
-//     sözleşmesinin değil.
-//   - Sondaki "DTO" atılır: taşıma nesnesi olmak da bir Go kavramıdır.
-//     İstemci "Cart" ister, "cartDTO" değil.
+//   - The first letter is upper-cased: being unexported is a Go concept, not an
+//     HTTP contract one.
+//   - A trailing "DTO" is dropped: being a transfer object is a Go concept too.
+//     A client wants "Cart", not "cartDTO".
 //
-// Çakışma riski vardır (örn. hem "cartDTO" hem "Cart" tipi olsaydı ikisi de
-// "Cart" isterdi) ve SESSİZ DEĞİLDİR: [Doc.cakismaBildir] iki tipin aynı adı
-// istediğini bildirir ve belge üretimi hata döner. Sessiz ezilme, bir DTO'nun
-// şemasının başka bir tiple anlatılması demek olurdu.
-func bilesenAdi(goAdi string) string {
-	if goAdi == "" {
+// There is a clash risk (were there both a "cartDTO" and a "Cart" type, both
+// would want "Cart") and it is NOT SILENT: [Doc.reportClash] reports that two
+// types want the same name and building the document returns an error. A silent
+// overwrite would mean one DTO's schema describing another type.
+func componentName(goTypeName string) string {
+	if goTypeName == "" {
 		return ""
 	}
 
-	ad := strings.TrimSuffix(goAdi, "DTO")
-	if ad == "" {
-		// Adı yalnızca "DTO" olan bir tip; kırpma onu yok ederdi.
-		ad = goAdi
+	name := strings.TrimSuffix(goTypeName, "DTO")
+	if name == "" {
+		// A type named just "DTO"; trimming would erase it.
+		name = goTypeName
 	}
 
-	r := []rune(ad)
+	r := []rune(name)
 	r[0] = unicode.ToUpper(r[0])
 
 	return string(r)
 }
 
-// structSemasiVeyaRef adlandırılmış struct'ı bileşene kaydedip "$ref" döner.
-func (d *Doc) structSemasiVeyaRef(t reflect.Type, izlenen map[reflect.Type]bool) map[string]any {
-	ad := bilesenAdi(t.Name())
-	if ad == "" {
-		// Anonim struct'ın adı yoktur, bileşene konamaz — ama KENDİNE de
-		// referans veremez, dolayısıyla satır içi yazmak güvenlidir.
-		return d.structSemasi(t, izlenen)
+// structSchemaOrRef registers a named struct as a component and returns a "$ref".
+func (d *Doc) structSchemaOrRef(t reflect.Type, seen map[reflect.Type]bool) map[string]any {
+	name := componentName(t.Name())
+	if name == "" {
+		// An anonymous struct has no name and cannot go into a component — but it
+		// cannot reference ITSELF either, so writing it inline is safe.
+		return d.structSchema(t, seen)
 	}
 
-	if _, ayrilmis := ayrilmisSemaAdlari[ad]; ayrilmis {
-		d.cakismaBildir(ad + " adı çekirdeğin ortak bileşenine ait; " + t.PkgPath() + " bu adı kullanamaz")
+	if _, reserved := reservedSchemaNames[name]; reserved {
+		d.reportClash(name + " belongs to the core's shared component; " + t.PkgPath() + " cannot use this name")
 
 		return map[string]any{}
 	}
 
-	if sahip, kayitli := d.semaSahipleri[ad]; kayitli {
-		if sahip != t {
-			d.cakismaBildir(ad + " adını iki tip istiyor: " + sahip.PkgPath() + " ve " + t.PkgPath())
+	if owner, registered := d.schemaOwners[name]; registered {
+		if owner != t {
+			d.reportClash("two types want the name " + name + ": " + owner.PkgPath() + " and " + t.PkgPath())
 
 			return map[string]any{}
 		}
 
-		return refSemasi(ad)
+		return refSchema(name)
 	}
 
-	// Kayıt, alanlara İNMEDEN ÖNCE yapılır: kendine referans veren bir tip
-	// aşağıda yeniden buraya geldiğinde adı bulur ve $ref ile döner. Sıra ters
-	// olsaydı özyineleme hiç bitmezdi.
-	d.semaSahipleri[ad] = t
-	d.semalar[ad] = map[string]any{}
-	d.semalar[ad] = d.structSemasi(t, izlenen)
-	// Bileşen kümesi belgenin ikinci girdisidir; üretilmiş bir belge artık
-	// eksik kalmıştır (bkz. [Doc.Handler]).
-	d.anlatimSurumu++
+	// The registration happens BEFORE descending into the fields: when a
+	// self-referencing type arrives back here it finds the name and returns a
+	// $ref. In the other order the recursion would never end.
+	d.schemaOwners[name] = t
+	d.schemas[name] = map[string]any{}
+	d.schemas[name] = d.structSchema(t, seen)
+	// The component set is the document's second input; a document already built
+	// is now incomplete (see [Doc.Handler]).
+	d.describeVersion++
 
-	return refSemasi(ad)
+	return refSchema(name)
 }
 
-// structSemasi struct'ın alanlarından nesne şemasını kurar.
-func (d *Doc) structSemasi(t reflect.Type, izlenen map[reflect.Type]bool) map[string]any {
-	ozellikler := map[string]any{}
+// structSchema builds the object schema from the struct's fields.
+func (d *Doc) structSchema(t reflect.Type, seen map[reflect.Type]bool) map[string]any {
+	properties := map[string]any{}
 
-	var zorunlu []string
+	var required []string
 
-	for _, a := range jsonAlanlari(t) {
-		ozellikler[a.ad] = d.semaTipten(a.tip, izlenen)
+	for _, a := range jsonFields(t) {
+		properties[a.name] = d.schemaOfType(a.typ, seen)
 
-		if !a.atlanabilir {
-			zorunlu = append(zorunlu, a.ad)
+		if !a.optional {
+			required = append(required, a.name)
 		}
 	}
 
-	sema := map[string]any{semaTip: tipNesne, semaOzellikler: ozellikler}
+	schema := map[string]any{schemaType: typeObject, schemaProperties: properties}
 
-	if len(zorunlu) > 0 {
-		sort.Strings(zorunlu)
-		sema[semaZorunlu] = zorunlu
+	if len(required) > 0 {
+		sort.Strings(required)
+		schema[schemaRequired] = required
 	}
 
-	return sema
+	return schema
 }
 
-// cakismaBildir bir bileşen adı çakışmasını kaydeder.
+// reportClash records a component name clash.
 //
-// Çakışma [Doc.Build]'i BAŞARISIZ kılar; sessizce ezmek, iki uçtan birinin
-// şemasının yanlış olması ve bunun ancak istemci yanlış alan gönderdiğinde
-// anlaşılması demekti.
-func (d *Doc) cakismaBildir(mesaj string) {
-	for _, mevcut := range d.semaCakismalari {
-		if mevcut == mesaj {
+// A clash makes [Doc.Build] FAIL; overwriting silently would mean one of two
+// endpoints having the wrong schema, and that being noticed only when a client
+// sent the wrong field.
+func (d *Doc) reportClash(message string) {
+	for _, existing := range d.schemaClashes {
+		if existing == message {
 			return
 		}
 	}
 
-	d.semaCakismalari = append(d.semaCakismalari, mesaj)
-	// Çakışma belgeyi üretilemez kılar; önbellekteki sağlam belge artık
-	// GEÇERSİZDİR (bkz. [Doc.Handler]).
-	d.anlatimSurumu++
+	d.schemaClashes = append(d.schemaClashes, message)
+	// A clash makes the document unbuildable; the sound document in the cache is
+	// now INVALID (see [Doc.Handler]).
+	d.describeVersion++
 }
 
-// refSemasi bir bileşene atıf şeması üretir.
-func refSemasi(ad string) map[string]any {
-	return map[string]any{semaRef: "#/components/schemas/" + ad}
+// refSchema produces a schema referring to a component.
+func refSchema(name string) map[string]any {
+	return map[string]any{schemaRef: "#/components/schemas/" + name}
 }
 
-// alan bir struct alanının şema üretimi için gereken bilgisidir.
-type alan struct {
-	// ad alanın JSON'daki adıdır.
-	ad string
-	// tip alanın Go tipidir (işaretçi sarmalayıcısı KORUNUR; nullable ondan
-	// türer).
-	tip reflect.Type
-	// derinlik alanın gömülme derinliğidir; gölgelenmede sığ olan kazanır.
-	derinlik int
-	// etiketli alanın json etiketiyle ADLANDIRILMIŞ olduğunu bildirir; aynı
-	// derinlikte etiketli olan etiketsizi yener.
-	etiketli bool
-	// atlanabilir alanın JSON'dan düşebileceğini bildirir (omitempty/omitzero).
-	atlanabilir bool
+// field is what schema generation needs to know about a struct field.
+type field struct {
+	// name is the field's name in JSON.
+	name string
+	// typ is the field's Go type (the pointer wrapper is KEPT; nullable derives
+	// from it).
+	typ reflect.Type
+	// depth is how deeply the field is embedded; the shallower wins on shadowing.
+	depth int
+	// tagged reports that the field was NAMED by a json tag; at equal depth a
+	// tagged field beats an untagged one.
+	tagged bool
+	// optional reports that the field may drop out of the JSON (omitempty/omitzero).
+	optional bool
 }
 
-// jsonAlanlari encoding/json'un bir struct için ÜRETECEĞİ alan kümesini döner.
+// jsonFields returns the field set encoding/json WOULD PRODUCE for a struct.
 //
-// Uygulama encoding/json'un typeFields algoritmasını izler ve iki kuralı
-// birebir taşır:
+// The implementation follows encoding/json's typeFields algorithm and carries
+// two of its rules exactly:
 //
-//   - GÖMÜLÜ struct'ların alanları düzleştirilir (json etiketiyle
-//     adlandırılmış gömülü alan ise düz bir alandır, düzleştirilmez).
-//   - GÖLGELENME: aynı ada sahip alanlardan SIĞ olanı kazanır; eşit
-//     derinlikte tek bir etiketli varsa o kazanır, yoksa hepsi DÜŞER.
+//   - The fields of EMBEDDED structs are flattened (an embedded field named by a
+//     json tag is a plain field and is not flattened).
+//   - SHADOWING: of two fields with the same name the SHALLOWER wins; at equal
+//     depth a single tagged one wins, otherwise they ALL DROP.
 //
-// İkinci kural bu paketin varlık sebebine dokunur: service.StoreProduct
-// gömülü Product'ın Variants alanını gölgeler ve encoding/json yalnızca
-// gölgeleyeni yazar. Şema gölgelenen alanı yazsaydı, istemci üreteci ürün
-// varyantlarını YANLIŞ tiple üretirdi.
-func jsonAlanlari(t reflect.Type) []alan {
-	toplayici := &alanToplayici{sonrakiSayim: map[reflect.Type]int{}}
+// The second rule touches this package's reason to exist: service.StoreProduct
+// shadows the embedded Product's Variants field and encoding/json writes only
+// the shadowing one. Were the schema to write the shadowed field, a client
+// generator would produce the product variants with the WRONG type.
+func jsonFields(t reflect.Type) []field {
+	collector := &fieldCollector{nextCount: map[reflect.Type]int{}}
 
-	gorulen := map[reflect.Type]bool{}
-	gecerli := []reflect.Type{}
-	sonraki := []reflect.Type{t}
+	seen := map[reflect.Type]bool{}
+	valid := []reflect.Type{}
+	next := []reflect.Type{t}
 
-	// sayim ATAMASIZ bildirilir: döngünün ilk turu onu toplayıcının haritasıyla
-	// takas eder, yani buraya konan her değer okunmadan atılırdı.
-	// encoding/json'un aynı algoritmasında da bildirim atamasızdır.
-	var sayim map[reflect.Type]int
+	// count is declared WITHOUT an assignment: the loop's first turn swaps it
+	// with the collector's map, so any value put here would be thrown away
+	// unread. The declaration is assignment-free in encoding/json's own
+	// algorithm too.
+	var count map[reflect.Type]int
 
-	for derinlik := 0; len(sonraki) > 0; derinlik++ {
-		gecerli, sonraki = sonraki, gecerli[:0]
-		sayim, toplayici.sonrakiSayim = toplayici.sonrakiSayim, map[reflect.Type]int{}
-		toplayici.sonraki = sonraki
+	for depth := 0; len(next) > 0; depth++ {
+		valid, next = next, valid[:0]
+		count, collector.nextCount = collector.nextCount, map[reflect.Type]int{}
+		collector.next = next
 
-		for _, tip := range gecerli {
-			if gorulen[tip] {
+		for _, typ := range valid {
+			if seen[typ] {
 				continue
 			}
 
-			gorulen[tip] = true
-			toplayici.tara(tip, derinlik, sayim[tip])
+			seen[typ] = true
+			collector.walk(typ, depth, count[typ])
 		}
 
-		sonraki = toplayici.sonraki
+		next = collector.next
 	}
 
-	return golgelenmemisler(toplayici.bulunan)
+	return unshadowed(collector.found)
 }
 
-// alanToplayici gömülü struct taramasının bir seviyedeki durumudur.
-type alanToplayici struct {
-	// bulunan o ana kadar toplanmış alanlardır (henüz gölgelenme uygulanmadan).
-	bulunan []alan
-	// sonraki bir sonraki seviyede taranacak gömülü struct tipleridir.
-	sonraki []reflect.Type
-	// sonrakiSayim bir gömülü tipe bu seviyeden kaç yoldan ulaşıldığını tutar.
-	sonrakiSayim map[reflect.Type]int
+// fieldCollector is the state of one level of the embedded-struct walk.
+type fieldCollector struct {
+	// found are the fields gathered so far (before shadowing is applied).
+	found []field
+	// next are the embedded struct types to walk at the next level.
+	next []reflect.Type
+	// nextCount holds how many paths from this level reach an embedded type.
+	nextCount map[reflect.Type]int
 }
 
-// tara tek bir struct'ın alanlarını toplar ve gömülüleri kuyruğa alır.
+// walk gathers one struct's fields and queues its embedded ones.
 //
-// tekrar, bu tipe BİR ÖNCEKİ seviyeden kaç ayrı yoldan ulaşıldığıdır.
-func (c *alanToplayici) tara(t reflect.Type, derinlik, tekrar int) {
+// repeats is how many separate paths reached this type from the PREVIOUS level.
+func (c *fieldCollector) walk(t reflect.Type, depth, repeats int) {
 	for i := 0; i < t.NumField(); i++ {
 		sf := t.Field(i)
 
-		gomuluTip := sf.Type
-		if gomuluTip.Kind() == reflect.Pointer {
-			gomuluTip = gomuluTip.Elem()
+		embeddedType := sf.Type
+		if embeddedType.Kind() == reflect.Pointer {
+			embeddedType = embeddedType.Elem()
 		}
 
-		if !alanGorunur(sf, gomuluTip) {
+		if !fieldVisible(sf, embeddedType) {
 			continue
 		}
 
-		etiket := sf.Tag.Get("json")
-		if etiket == "-" {
+		tag := sf.Tag.Get("json")
+		if tag == "-" {
 			continue
 		}
 
-		ad, secenekler, _ := strings.Cut(etiket, ",")
-		if !gecerliEtiketAdi(ad) {
-			ad = ""
+		name, options, _ := strings.Cut(tag, ",")
+		if !isValidTagName(name) {
+			name = ""
 		}
 
-		// Adı olan ya da struct OLMAYAN gömülü alan, düz bir alandır.
-		if ad != "" || !sf.Anonymous || gomuluTip.Kind() != reflect.Struct {
-			etiketli := ad != ""
-			if ad == "" {
-				ad = sf.Name
+		// An embedded field with a name, or one that is NOT a struct, is a plain field.
+		if name != "" || !sf.Anonymous || embeddedType.Kind() != reflect.Struct {
+			tagged := name != ""
+			if name == "" {
+				name = sf.Name
 			}
 
-			c.bulunan = append(c.bulunan, alan{
-				ad:          ad,
-				tip:         sf.Type,
-				derinlik:    derinlik,
-				etiketli:    etiketli,
-				atlanabilir: secenekVar(secenekler, "omitempty") || secenekVar(secenekler, "omitzero"),
+			c.found = append(c.found, field{
+				name:     name,
+				typ:      sf.Type,
+				depth:    depth,
+				tagged:   tagged,
+				optional: hasOption(options, "omitempty") || hasOption(options, "omitzero"),
 			})
 
-			// Aynı gömülü tipe bu seviyede birden çok yoldan ulaşıldıysa alan
-			// da birden çok kez görünür; kopyayı eklemek yok etme kuralının
-			// (bkz. [golgelenmemisler]) belirsizliği görmesini sağlar.
-			if tekrar > 1 {
-				c.bulunan = append(c.bulunan, c.bulunan[len(c.bulunan)-1])
+			// If the same embedded type was reached by several paths at this level
+			// the field shows up several times too; adding the copy lets the
+			// dropping rule (see [unshadowed]) see the ambiguity.
+			if repeats > 1 {
+				c.found = append(c.found, c.found[len(c.found)-1])
 			}
 
 			continue
 		}
 
-		c.sonrakiSayim[gomuluTip]++
-		if c.sonrakiSayim[gomuluTip] == 1 {
-			c.sonraki = append(c.sonraki, gomuluTip)
+		c.nextCount[embeddedType]++
+		if c.nextCount[embeddedType] == 1 {
+			c.next = append(c.next, embeddedType)
 		}
 	}
 }
 
-// alanGorunur alanın encoding/json tarafından ele alınıp alınmadığını bildirir.
+// fieldVisible reports whether encoding/json handles the field at all.
 //
-// Dışa kapalı alanlar yazılmaz — TEK istisnası dışa kapalı bir tipin GÖMÜLÜ
-// hâlidir: encoding/json onun içindeki dışa AÇIK alanları yazar, dolayısıyla
-// şema da yazmalıdır.
-func alanGorunur(sf reflect.StructField, gomuluTip reflect.Type) bool {
+// Unexported fields are not written — the ONLY exception is the EMBEDDED form of
+// an unexported type: encoding/json writes the EXPORTED fields inside it, so the
+// schema has to as well.
+func fieldVisible(sf reflect.StructField, embeddedType reflect.Type) bool {
 	if sf.Anonymous {
-		return sf.IsExported() || gomuluTip.Kind() == reflect.Struct
+		return sf.IsExported() || embeddedType.Kind() == reflect.Struct
 	}
 
 	return sf.IsExported()
 }
 
-// golgelenmemisler aynı adı isteyen alanlardan kazananı seçer.
-func golgelenmemisler(bulunan []alan) []alan {
-	sort.Slice(bulunan, func(i, j int) bool {
-		a, b := bulunan[i], bulunan[j]
+// unshadowed picks the winner among fields wanting the same name.
+func unshadowed(found []field) []field {
+	sort.Slice(found, func(i, j int) bool {
+		a, b := found[i], found[j]
 
-		if a.ad != b.ad {
-			return a.ad < b.ad
+		if a.name != b.name {
+			return a.name < b.name
 		}
 
-		if a.derinlik != b.derinlik {
-			return a.derinlik < b.derinlik
+		if a.depth != b.depth {
+			return a.depth < b.depth
 		}
 
-		return a.etiketli && !b.etiketli
+		return a.tagged && !b.tagged
 	})
 
-	var sonuc []alan
+	var result []field
 
-	for i := 0; i < len(bulunan); {
+	for i := 0; i < len(found); {
 		j := i + 1
-		for j < len(bulunan) && bulunan[j].ad == bulunan[i].ad {
+		for j < len(found) && found[j].name == found[i].name {
 			j++
 		}
 
-		if kazanan, ok := baskinAlan(bulunan[i:j]); ok {
-			sonuc = append(sonuc, kazanan)
+		if winner, ok := dominantField(found[i:j]); ok {
+			result = append(result, winner)
 		}
 
 		i = j
 	}
 
-	return sonuc
+	return result
 }
 
-// baskinAlan aynı adlı adaylardan kazananı döner.
+// dominantField returns the winner among candidates with the same name.
 //
-// Adaylar sığdan derine, eşit derinlikte önce etiketli olacak şekilde
-// sıralıdır. İlk iki aday hem derinlikte hem etiketlilikte eşitse kazanan
-// YOKTUR: encoding/json belirsiz kalan böyle bir alanı HİÇ yazmaz ve şema da
-// yazmamalıdır.
-func baskinAlan(adaylar []alan) (alan, bool) {
-	if len(adaylar) > 1 &&
-		adaylar[0].derinlik == adaylar[1].derinlik &&
-		adaylar[0].etiketli == adaylar[1].etiketli {
-		return alan{}, false
+// The candidates are sorted shallow to deep, and at equal depth the tagged ones
+// first. If the first two candidates tie on both depth and taggedness there is
+// NO winner: encoding/json writes such an ambiguous field NOT AT ALL, and the
+// schema must not either.
+func dominantField(candidates []field) (field, bool) {
+	if len(candidates) > 1 &&
+		candidates[0].depth == candidates[1].depth &&
+		candidates[0].tagged == candidates[1].tagged {
+		return field{}, false
 	}
 
-	return adaylar[0], true
+	return candidates[0], true
 }
 
-// gecerliEtiketAdi json etiketindeki adın encoding/json tarafından kabul
-// edilip edilmediğini bildirir.
+// isValidTagName reports whether the name in a json tag is accepted by
+// encoding/json.
 //
-// Kabul edilmeyen bir ad YOK SAYILIR ve alan Go adıyla yazılır; şemanın da
-// aynı şeyi yapması gerekir.
-func gecerliEtiketAdi(s string) bool {
+// A name that is not accepted is IGNORED and the field is written under its Go
+// name; the schema has to do the same.
+func isValidTagName(s string) bool {
 	if s == "" {
 		return false
 	}
@@ -728,7 +734,7 @@ func gecerliEtiketAdi(s string) bool {
 	for _, c := range s {
 		switch {
 		case strings.ContainsRune("!#$%&()*+-./:;<=>?@[]^_{|}~ ", c):
-			// encoding/json'un açıkça izin verdiği noktalama.
+			// The punctuation encoding/json explicitly allows.
 		case !unicode.IsLetter(c) && !unicode.IsDigit(c):
 			return false
 		}
@@ -737,14 +743,14 @@ func gecerliEtiketAdi(s string) bool {
 	return true
 }
 
-// secenekVar json etiketinin seçenek listesinde bir seçeneğin bulunup
-// bulunmadığını bildirir.
-func secenekVar(secenekler, ad string) bool {
-	for secenekler != "" {
+// hasOption reports whether an option is present in the option list of a json
+// tag.
+func hasOption(options, name string) bool {
+	for options != "" {
 		var s string
 
-		s, secenekler, _ = strings.Cut(secenekler, ",")
-		if s == ad {
+		s, options, _ = strings.Cut(options, ",")
+		if s == name {
 			return true
 		}
 	}
@@ -752,35 +758,35 @@ func secenekVar(secenekler, ad string) bool {
 	return false
 }
 
-// tekilSemasi tekil yanıt zarfını verilen kayıt şemasıyla kurar.
-func tekilSemasi(kayit map[string]any) map[string]any {
+// itemSchema builds the single-object response envelope with the given record schema.
+func itemSchema(rec map[string]any) map[string]any {
 	return map[string]any{
-		semaTip:        tipNesne,
-		semaZorunlu:    []string{semaAlanData},
-		semaOzellikler: map[string]any{semaAlanData: kayit},
+		schemaType:       typeObject,
+		schemaRequired:   []string{schemaFieldData},
+		schemaProperties: map[string]any{schemaFieldData: rec},
 	}
 }
 
-// listeSemasi liste yanıt zarfını verilen öğe şemasıyla kurar.
+// listSchema builds the list response envelope with the given item schema.
 //
-// sayacZorunlu false ise "count" yalnızca zorunlu alanlar listesinden düşer;
-// özelliklerde ve tipinde hiçbir şey değişmez (bkz. [Doc.ListOptionalCount]).
-func listeSemasi(oge map[string]any, sayacZorunlu bool) map[string]any {
-	zorunlu := []string{semaAlanData}
-	if sayacZorunlu {
-		zorunlu = append(zorunlu, semaAlanCount)
+// With countRequired false, "count" only drops out of the required list; nothing
+// changes in the properties or in its type (see [Doc.ListOptionalCount]).
+func listSchema(oge map[string]any, countRequired bool) map[string]any {
+	required := []string{schemaFieldData}
+	if countRequired {
+		required = append(required, schemaFieldCount)
 	}
 
-	zorunlu = append(zorunlu, semaAlanOffset, semaAlanLimit)
+	required = append(required, schemaFieldOffset, schemaFieldLimit)
 
 	return map[string]any{
-		semaTip:     tipNesne,
-		semaZorunlu: zorunlu,
-		semaOzellikler: map[string]any{
-			semaAlanData:   map[string]any{semaTip: tipDizi, semaOgeler: oge},
-			semaAlanCount:  map[string]any{semaTip: tipTamSayi},
-			semaAlanOffset: map[string]any{semaTip: tipTamSayi},
-			semaAlanLimit:  map[string]any{semaTip: tipTamSayi},
+		schemaType:     typeObject,
+		schemaRequired: required,
+		schemaProperties: map[string]any{
+			schemaFieldData:   map[string]any{schemaType: typeArray, schemaItems: oge},
+			schemaFieldCount:  map[string]any{schemaType: typeInteger},
+			schemaFieldOffset: map[string]any{schemaType: typeInteger},
+			schemaFieldLimit:  map[string]any{schemaType: typeInteger},
 		},
 	}
 }

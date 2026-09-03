@@ -22,76 +22,76 @@ import (
 	corehttp "github.com/bdrtr/gobit/internal/core/http"
 )
 
-// izleyiciKur span'ları belleğe toplayan bir tracer sağlayıcısı kurar ve
-// global sağlayıcıyı test süresince onunla değiştirir.
+// setUpTracer sets up a tracer provider collecting spans in memory and swaps the
+// global provider for it for the duration of the test.
 //
-// Global durumu değiştirdiği için bu testler PARALEL DEĞİLDİR.
-func izleyiciKur(t *testing.T) *tracetest.SpanRecorder {
+// Because it changes global state these tests are NOT PARALLEL.
+func setUpTracer(t *testing.T) *tracetest.SpanRecorder {
 	t.Helper()
 
-	kayit := tracetest.NewSpanRecorder()
-	tp := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(kayit))
+	recorder := tracetest.NewSpanRecorder()
+	tp := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
 
-	onceki := otel.GetTracerProvider()
+	previous := otel.GetTracerProvider()
 	otel.SetTracerProvider(tp)
 
 	t.Cleanup(func() {
-		otel.SetTracerProvider(onceki)
+		otel.SetTracerProvider(previous)
 		_ = tp.Shutdown(t.Context())
 	})
 
-	return kayit
+	return recorder
 }
 
-// olcerKur metrikleri belleğe toplayan bir meter sağlayıcısı kurar ve global
-// sağlayıcıyı test süresince onunla değiştirir.
+// setUpMeter sets up a meter provider collecting metrics in memory and swaps the
+// global provider for it for the duration of the test.
 //
-// Router'dan ÖNCE çağrılmalıdır: [corehttp.Telemetry] metrik araçlarını
-// middleware kurulurken bir kez oluşturur ve sonradan takılan bir sağlayıcıyı
-// görmez.
+// It has to be called BEFORE the router: [corehttp.Telemetry] creates the metric
+// instruments once while the middleware is being built and does not see a
+// provider installed later.
 //
-// Global durumu değiştirdiği için bu testler PARALEL DEĞİLDİR.
-func olcerKur(t *testing.T) *sdkmetric.ManualReader {
+// Because it changes global state these tests are NOT PARALLEL.
+func setUpMeter(t *testing.T) *sdkmetric.ManualReader {
 	t.Helper()
 
 	okuyucu := sdkmetric.NewManualReader()
 	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(okuyucu))
 
-	onceki := otel.GetMeterProvider()
+	previous := otel.GetMeterProvider()
 	otel.SetMeterProvider(mp)
 
 	t.Cleanup(func() {
-		otel.SetMeterProvider(onceki)
-		// t.Context() temizlik sırasında zaten iptal edilmiştir; Shutdown'ın
-		// dışa aktarmayı tamamlayabilmesi için canlı bir bağlam gerekir.
+		otel.SetMeterProvider(previous)
+		// t.Context() has already been canceled during cleanup; Shutdown needs a live
+		// context to be able to finish the export.
 		_ = mp.Shutdown(context.Background())
 	})
 
 	return okuyucu
 }
 
-// oznitelik span'dan bir özniteliği okur.
-func oznitelik(t *testing.T, s sdktrace.ReadOnlySpan, anahtar string) attribute.Value {
+// attributeOf reads one attribute off a span.
+func attributeOf(t *testing.T, s sdktrace.ReadOnlySpan, key string) attribute.Value {
 	t.Helper()
 
 	for _, kv := range s.Attributes() {
-		if string(kv.Key) == anahtar {
+		if string(kv.Key) == key {
 			return kv.Value
 		}
 	}
 
-	t.Fatalf("%q özniteliği bulunamadı", anahtar)
+	t.Fatalf("the %q attribute was not found", key)
 
 	return attribute.Value{}
 }
 
-// oznitelikVar span'da bir özniteliğin bulunup bulunmadığını söyler.
+// hasAttribute says whether an attribute is present on the span.
 //
-// [oznitelik] yokluğu testi düşürdüğü için "olmamalı" iddialarında
-// kullanılamaz; bu yardımcı o boşluğu kapatır.
-func oznitelikVar(s sdktrace.ReadOnlySpan, anahtar string) bool {
+// [attributeOf] fails the test on absence, so it cannot be used in "must not be
+// there" assertions; this helper closes that gap.
+func hasAttribute(s sdktrace.ReadOnlySpan, key string) bool {
 	for _, kv := range s.Attributes() {
-		if string(kv.Key) == anahtar {
+		if string(kv.Key) == key {
 			return true
 		}
 	}
@@ -99,84 +99,84 @@ func oznitelikVar(s sdktrace.ReadOnlySpan, anahtar string) bool {
 	return false
 }
 
-// metrikVerisi toplanan metrikler içinden verilen adlı metriğin verisini
-// döner; metrik yoksa testi düşürür.
-func metrikVerisi(t *testing.T, rm *metricdata.ResourceMetrics, ad string) metricdata.Aggregation {
+// metricData returns the data of the metric with the given name out of the
+// collected metrics; it fails the test if the metric is not there.
+func metricData(t *testing.T, rm *metricdata.ResourceMetrics, name string) metricdata.Aggregation {
 	t.Helper()
 
-	for _, kapsam := range rm.ScopeMetrics {
-		for _, m := range kapsam.Metrics {
-			if m.Name == ad {
+	for _, scope := range rm.ScopeMetrics {
+		for _, m := range scope.Metrics {
+			if m.Name == name {
 				return m.Data
 			}
 		}
 	}
 
-	t.Fatalf("%q metriği bulunamadı", ad)
+	t.Fatalf("the %q metric was not found", name)
 
 	return nil
 }
 
-// histogramNoktalari verilen adlı histogram metriğinin veri noktalarını döner.
-func histogramNoktalari(
-	t *testing.T, rm *metricdata.ResourceMetrics, ad string,
+// histogramPoints returns the data points of the histogram metric with the given name.
+func histogramPoints(
+	t *testing.T, rm *metricdata.ResourceMetrics, name string,
 ) []metricdata.HistogramDataPoint[float64] {
 	t.Helper()
 
-	h, ok := metrikVerisi(t, rm, ad).(metricdata.Histogram[float64])
-	require.True(t, ok, "%q bir histogram olmalı", ad)
+	h, ok := metricData(t, rm, name).(metricdata.Histogram[float64])
+	require.True(t, ok, "%q has to be a histogram", name)
 
 	return h.DataPoints
 }
 
-// toplamNoktalari verilen adlı sayaç metriğinin veri noktalarını döner.
-func toplamNoktalari(
-	t *testing.T, rm *metricdata.ResourceMetrics, ad string,
+// sumPoints returns the data points of the counter metric with the given name.
+func sumPoints(
+	t *testing.T, rm *metricdata.ResourceMetrics, name string,
 ) []metricdata.DataPoint[int64] {
 	t.Helper()
 
-	s, ok := metrikVerisi(t, rm, ad).(metricdata.Sum[int64])
-	require.True(t, ok, "%q bir sayaç olmalı", ad)
+	s, ok := metricData(t, rm, name).(metricdata.Sum[int64])
+	require.True(t, ok, "%q has to be a counter", name)
 
 	return s.DataPoints
 }
 
-// routerKur telemetri middleware'i takılı bir chi router'ı kurar.
-func routerKur(t *testing.T) chi.Router {
+// setUpRouter builds a chi router with the telemetry middleware installed.
+func setUpRouter(t *testing.T) chi.Router {
 	t.Helper()
 
-	return routerKurAdli(t, "gobit-test")
+	return setUpRouterNamed(t, "gobit-test")
 }
 
-// routerKurAdli verilen servis adıyla telemetri middleware'i takılı bir chi
-// router'ı kurar.
-func routerKurAdli(t *testing.T, servisAdi string) chi.Router {
+// setUpRouterNamed builds a chi router with the telemetry middleware installed
+// under the given service name.
+func setUpRouterNamed(t *testing.T, serviceName string) chi.Router {
 	t.Helper()
 
 	r := chi.NewRouter()
-	r.Use(corehttp.Telemetry(servisAdi))
+	r.Use(corehttp.Telemetry(serviceName))
 	r.Get("/store/v1/products/{id}", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
 	r.Get("/store/v1/patlat", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 	})
-	r.Get("/store/v1/gecersiz", func(w http.ResponseWriter, _ *http.Request) {
+	r.Get("/store/v1/invalid", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusUnprocessableEntity)
 	})
 
 	return r
 }
 
-// TestTelemetrySpanAdiKimlikIcermez span adının ham yolu DEĞİL route desenini
-// kullandığını doğrular.
+// TestTelemetryTheSpanNameCarriesNoIdentity verifies that the span name uses the
+// route pattern, NOT the raw path.
 //
-// Bu testin koruduğu şey kardinalite patlamasıdır: ham yol kullanılsaydı her
-// ürün kimliği ayrı bir span adı ve ayrı bir metrik serisi üretir, birkaç bin
-// ürünle metrik deposu sorgulanamaz hâle gelirdi.
-func TestTelemetrySpanAdiKimlikIcermez(t *testing.T) {
-	kayit := izleyiciKur(t)
-	r := routerKur(t)
+// What this test guards is a cardinality explosion: were the raw path used, every
+// product id would produce its own span name and its own metric series, and with
+// a few thousand products the metric store would become unqueryable.
+func TestTelemetryTheSpanNameCarriesNoIdentity(t *testing.T) {
+	recorder := setUpTracer(t)
+	r := setUpRouter(t)
 
 	for _, id := range []string{"prod_01", "prod_02", "prod_03"} {
 		w := httptest.NewRecorder()
@@ -185,117 +185,116 @@ func TestTelemetrySpanAdiKimlikIcermez(t *testing.T) {
 		require.Equal(t, http.StatusOK, w.Code)
 	}
 
-	spanlar := kayit.Ended()
-	require.Len(t, spanlar, 3)
+	spans := recorder.Ended()
+	require.Len(t, spans, 3)
 
-	adlar := map[string]int{}
-	for _, s := range spanlar {
-		adlar[s.Name()]++
-		assert.NotContains(t, s.Name(), "prod_", "span adı kimlik içermemeli")
+	names := map[string]int{}
+	for _, s := range spans {
+		names[s.Name()]++
+		assert.NotContains(t, s.Name(), "prod_", "the span name must not carry an identity")
 	}
 
-	assert.Equal(t, map[string]int{"GET /store/v1/products/{id}": 3}, adlar,
-		"üç farklı kimlik TEK bir span adına düşmeli")
+	assert.Equal(t, map[string]int{"GET /store/v1/products/{id}": 3}, names,
+		"three different ids have to fall into a SINGLE span name")
 }
 
-// TestTelemetryHamYolOznitelikteKalir kimliğin span adından çıkarılmasının
-// bilgiyi KAYBETTİRMEDİĞİNİ doğrular.
+// TestTelemetryTheRawPathStaysInAnAttribute verifies that taking the id out of
+// the span name does NOT LOSE the information.
 //
-// Ham yol bir öznitelik olarak durur: öznitelikler kardinaliteyi metrik
-// serilerine taşımaz, tekil bir span'ı incelerken ise hangi kaydın istendiği
-// hâlâ görülebilir.
-func TestTelemetryHamYolOznitelikteKalir(t *testing.T) {
-	kayit := izleyiciKur(t)
-	r := routerKur(t)
+// The raw path stays as an attribute: attributes do not carry cardinality into
+// the metric series, while looking at a single span still shows which record was
+// asked for.
+func TestTelemetryTheRawPathStaysInAnAttribute(t *testing.T) {
+	recorder := setUpTracer(t)
+	r := setUpRouter(t)
 
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet,
 		"/store/v1/products/prod_42", http.NoBody))
 
-	spanlar := kayit.Ended()
-	require.Len(t, spanlar, 1)
+	spans := recorder.Ended()
+	require.Len(t, spans, 1)
 
 	assert.Equal(t, "/store/v1/products/prod_42",
-		oznitelik(t, spanlar[0], "url.path").AsString())
+		attributeOf(t, spans[0], "url.path").AsString())
 	assert.Equal(t, "/store/v1/products/{id}",
-		oznitelik(t, spanlar[0], "http.route").AsString())
+		attributeOf(t, spans[0], "http.route").AsString())
 }
 
-// TestTelemetrySunucuHatasiSpaniIsaretler 5xx'in span'da hata olarak
-// göründüğünü doğrular.
-func TestTelemetrySunucuHatasiSpaniIsaretler(t *testing.T) {
-	kayit := izleyiciKur(t)
-	r := routerKur(t)
+// TestTelemetryAServerErrorMarksTheSpan verifies that a 5xx shows up as an error
+// on the span.
+func TestTelemetryAServerErrorMarksTheSpan(t *testing.T) {
+	recorder := setUpTracer(t)
+	r := setUpRouter(t)
 
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/store/v1/patlat", http.NoBody))
 	require.Equal(t, http.StatusInternalServerError, w.Code)
 
-	spanlar := kayit.Ended()
-	require.Len(t, spanlar, 1)
-	assert.Equal(t, codes.Error, spanlar[0].Status().Code)
+	spans := recorder.Ended()
+	require.Len(t, spans, 1)
+	assert.Equal(t, codes.Error, spans[0].Status().Code)
 	assert.EqualValues(t, http.StatusInternalServerError,
-		oznitelik(t, spanlar[0], "http.response.status_code").AsInt64())
+		attributeOf(t, spans[0], "http.response.status_code").AsInt64())
 }
 
-// TestTelemetryIstemciHatasiSpaniIsaretlemez 4xx'in hata SAYILMADIĞINI
-// doğrular.
+// TestTelemetryAClientErrorDoesNotMarkTheSpan verifies that a 4xx does NOT COUNT
+// as an error.
 //
-// İstemcinin gönderdiği geçersiz veri sunucunun hatası değildir; hata olarak
-// işaretlemek hata oranı grafiklerini yanıltır ve gerçek arızaları gürültüde
-// boğardı.
-func TestTelemetryIstemciHatasiSpaniIsaretlemez(t *testing.T) {
-	kayit := izleyiciKur(t)
-	r := routerKur(t)
+// Invalid data sent by the client is not the server's fault; marking it as an
+// error would mislead the error rate charts and drown real faults in noise.
+func TestTelemetryAClientErrorDoesNotMarkTheSpan(t *testing.T) {
+	recorder := setUpTracer(t)
+	r := setUpRouter(t)
 
 	w := httptest.NewRecorder()
-	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/store/v1/gecersiz", http.NoBody))
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/store/v1/invalid", http.NoBody))
 	require.Equal(t, http.StatusUnprocessableEntity, w.Code)
 
-	spanlar := kayit.Ended()
-	require.Len(t, spanlar, 1)
-	assert.Equal(t, codes.Unset, spanlar[0].Status().Code,
-		"4xx sunucu hatası olarak işaretlenmemeli")
+	spans := recorder.Ended()
+	require.Len(t, spans, 1)
+	assert.Equal(t, codes.Unset, spans[0].Status().Code,
+		"a 4xx must not be marked as a server error")
 }
 
-// TestTelemetryEslesmeyenYolTekKovadaToplanir 404'lerin kardinaliteyi
-// patlatmadığını doğrular.
+// TestTelemetryAnUnmatchedPathCollectsInASingleBucket verifies that 404s do not
+// blow up cardinality.
 //
-// En kritik durum budur: bir tarayıcı ya da bot rastgele yollar denediğinde
-// her biri ayrı span adı üretseydi, metrik deposunu doldurmak için tek bir
-// saldırgan yeterdi.
-func TestTelemetryEslesmeyenYolTekKovadaToplanir(t *testing.T) {
-	kayit := izleyiciKur(t)
-	r := routerKur(t)
+// This is the most critical case: if every random path a crawler or a bot tries
+// produced its own span name, a single attacker would be enough to fill the
+// metric store.
+func TestTelemetryAnUnmatchedPathCollectsInASingleBucket(t *testing.T) {
+	recorder := setUpTracer(t)
+	r := setUpRouter(t)
 
-	for _, yol := range []string{"/rastgele/1", "/rastgele/2", "/bambaska"} {
+	for _, path := range []string{"/rastgele/1", "/rastgele/2", "/bambaska"} {
 		w := httptest.NewRecorder()
-		r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, yol, http.NoBody))
+		r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, path, http.NoBody))
 		require.Equal(t, http.StatusNotFound, w.Code)
 	}
 
-	adlar := map[string]int{}
-	for _, s := range kayit.Ended() {
-		adlar[s.Name()]++
+	names := map[string]int{}
+	for _, s := range recorder.Ended() {
+		names[s.Name()]++
 	}
 
-	assert.Len(t, adlar, 1, "eşleşmeyen yollar tek bir span adında toplanmalı")
+	assert.Len(t, names, 1, "unmatched paths have to collect into a single span name")
 }
 
-// TestTelemetryGelenTraceBaglamiSurdurulur W3C traceparent başlığının
-// izlendiğini doğrular.
+// TestTelemetryAnIncomingTraceContextIsContinued verifies that the W3C
+// traceparent header is followed.
 //
-// Sürdürülmezse her servis kendi kopuk trace'ini üretir ve dağıtık izleme
-// hiçbir isteği uçtan uca gösteremez.
-func TestTelemetryGelenTraceBaglamiSurdurulur(t *testing.T) {
-	kayit := izleyiciKur(t)
+// Without continuing it every service produces its own broken trace and
+// distributed tracing cannot show any request end to end.
+func TestTelemetryAnIncomingTraceContextIsContinued(t *testing.T) {
+	recorder := setUpTracer(t)
 
-	onceki := otel.GetTextMapPropagator()
+	previous := otel.GetTextMapPropagator()
 	otel.SetTextMapPropagator(propagator())
 
-	t.Cleanup(func() { otel.SetTextMapPropagator(onceki) })
+	t.Cleanup(func() { otel.SetTextMapPropagator(previous) })
 
-	r := routerKur(t)
+	r := setUpRouter(t)
 
 	const traceID = "4bf92f3577b34da6a3ce929d0e0e4736"
 
@@ -304,69 +303,69 @@ func TestTelemetryGelenTraceBaglamiSurdurulur(t *testing.T) {
 
 	r.ServeHTTP(httptest.NewRecorder(), req)
 
-	spanlar := kayit.Ended()
-	require.Len(t, spanlar, 1)
-	assert.Equal(t, traceID, spanlar[0].SpanContext().TraceID().String(),
-		"gelen trace kimliği sürdürülmeli")
-	assert.True(t, spanlar[0].Parent().IsValid(), "span'ın ebeveyni olmalı")
+	spans := recorder.Ended()
+	require.Len(t, spans, 1)
+	assert.Equal(t, traceID, spans[0].SpanContext().TraceID().String(),
+		"the incoming trace id has to be continued")
+	assert.True(t, spans[0].Parent().IsValid(), "the span has to have a parent")
 }
 
-// TestTelemetryServisAdiSpanaYazilir [corehttp.Telemetry]'ye verilen servis
-// adının span özniteliklerine düştüğünü doğrular.
+// TestTelemetryTheServiceNameIsWrittenToTheSpan verifies that the service name
+// given to [corehttp.Telemetry] lands in the span attributes.
 //
-// Parametre bir zamanlar gövdede HİÇ kullanılmıyordu; belge ise adın izlemede
-// raporlandığını söylüyordu. Sessiz tuzak buydu: operatör
-// RouterOptions.TelemetryService'i değiştirir, izlemede hiçbir şey değişmezdi.
-// Bu test o bağı canlı tutar.
-func TestTelemetryServisAdiSpanaYazilir(t *testing.T) {
-	kayit := izleyiciKur(t)
-	r := routerKurAdli(t, "gobit-magaza")
+// The parameter was at one time NOT USED at all in the body, while the
+// documentation said the name was reported in tracing. That was the silent trap:
+// the operator would change RouterOptions.TelemetryService and nothing in tracing
+// would change. This test keeps that link alive.
+func TestTelemetryTheServiceNameIsWrittenToTheSpan(t *testing.T) {
+	recorder := setUpTracer(t)
+	r := setUpRouterNamed(t, "gobit-magaza")
 
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet,
 		"/store/v1/products/prod_1", http.NoBody))
 	require.Equal(t, http.StatusOK, w.Code)
 
-	spanlar := kayit.Ended()
-	require.Len(t, spanlar, 1)
+	spans := recorder.Ended()
+	require.Len(t, spans, 1)
 	assert.Equal(t, "gobit-magaza",
-		oznitelik(t, spanlar[0], string(semconv.ServiceNameKey)).AsString())
+		attributeOf(t, spans[0], string(semconv.ServiceNameKey)).AsString())
 }
 
-// TestTelemetryBosServisAdiOznitelikYazmaz boş adın span'a boş bir
-// service.name yazmadığını doğrular.
+// TestTelemetryAnEmptyServiceNameWritesNoAttribute verifies that an empty name
+// does not write an empty service.name onto the span.
 //
-// Boş bir öznitelik, adı hiç raporlamamaktan kötüdür: panolarda gerçek bir
-// servismiş gibi duran adsız bir seri açar ve iki farklı kurulumun ölçümleri
-// aynı kovada birikir.
-func TestTelemetryBosServisAdiOznitelikYazmaz(t *testing.T) {
-	kayit := izleyiciKur(t)
-	r := routerKurAdli(t, "")
+// An empty attribute is worse than not reporting the name at all: it opens a
+// nameless series on the dashboards that looks like a real service, and the
+// measurements of two different installations pile up in the same bucket.
+func TestTelemetryAnEmptyServiceNameWritesNoAttribute(t *testing.T) {
+	recorder := setUpTracer(t)
+	r := setUpRouterNamed(t, "")
 
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet,
 		"/store/v1/products/prod_1", http.NoBody))
 	require.Equal(t, http.StatusOK, w.Code)
 
-	spanlar := kayit.Ended()
-	require.Len(t, spanlar, 1)
-	assert.False(t, oznitelikVar(spanlar[0], string(semconv.ServiceNameKey)),
-		"boş servis adı öznitelik olarak yazılmamalı")
+	spans := recorder.Ended()
+	require.Len(t, spans, 1)
+	assert.False(t, hasAttribute(spans[0], string(semconv.ServiceNameKey)),
+		"an empty service name must not be written as an attribute")
 	assert.Equal(t, "/store/v1/products/{id}",
-		oznitelik(t, spanlar[0], "http.route").AsString(),
-		"servis adı olmasa da diğer öznitelikler yazılmalı")
+		attributeOf(t, spans[0], "http.route").AsString(),
+		"the other attributes have to be written even without a service name")
 }
 
-// TestTelemetryServisAdiMetrigeYazilirVeSeriCogaltmaz servis adının süre
-// metriğinin özniteliklerinde yer aldığını, ama seri sayısını
-// ÇOĞALTMADIĞINI doğrular.
+// TestTelemetryTheServiceNameIsWrittenToTheMetricWithoutMultiplyingSeries
+// verifies that the service name is among the attributes of the duration metric
+// but does NOT MULTIPLY the number of series.
 //
-// Kardinalite güvenliğinin kanıtı budur: ad süreç ömrü boyunca sabit olduğu
-// için üç istek hâlâ TEK bir seriye düşer. İstek başına değişen bir değer
-// eklenseydi bu iddia anında kırılırdı.
-func TestTelemetryServisAdiMetrigeYazilirVeSeriCogaltmaz(t *testing.T) {
-	okuyucu := olcerKur(t)
-	r := routerKurAdli(t, "gobit-magaza")
+// This is the proof of cardinality safety: because the name is constant over the
+// process lifetime, three requests still fall into a SINGLE series. Had a value
+// that changes per request been added, this assertion would break at once.
+func TestTelemetryTheServiceNameIsWrittenToTheMetricWithoutMultiplyingSeries(t *testing.T) {
+	okuyucu := setUpMeter(t)
+	r := setUpRouterNamed(t, "gobit-magaza")
 
 	for _, id := range []string{"prod_01", "prod_02", "prod_03"} {
 		w := httptest.NewRecorder()
@@ -378,25 +377,25 @@ func TestTelemetryServisAdiMetrigeYazilirVeSeriCogaltmaz(t *testing.T) {
 	var rm metricdata.ResourceMetrics
 	require.NoError(t, okuyucu.Collect(t.Context(), &rm))
 
-	noktalar := histogramNoktalari(t, &rm, "http.server.request.duration")
-	require.Len(t, noktalar, 1, "sabit servis adı seri sayısını çoğaltmamalı")
-	assert.EqualValues(t, 3, noktalar[0].Count)
+	points := histogramPoints(t, &rm, "http.server.request.duration")
+	require.Len(t, points, 1, "a constant service name must not multiply the number of series")
+	assert.EqualValues(t, 3, points[0].Count)
 
-	deger, ok := noktalar[0].Attributes.Value(semconv.ServiceNameKey)
-	require.True(t, ok, "süre metriğinde service.name bulunmalı")
-	assert.Equal(t, "gobit-magaza", deger.AsString())
+	value, ok := points[0].Attributes.Value(semconv.ServiceNameKey)
+	require.True(t, ok, "service.name has to be on the duration metric")
+	assert.Equal(t, "gobit-magaza", value.AsString())
 }
 
-// TestTelemetryAktifIstekSayaciSifiraDoner sayacın istekler bittiğinde sıfıra
-// döndüğünü doğrular.
+// TestTelemetryTheInFlightCounterReturnsToZero verifies that the counter goes
+// back to zero once the requests are over.
 //
-// Servis adı özniteliği eklendikten sonra gerçek bir tuzak doğdu: artış ile
-// azalış farklı öznitelik kümeleri kullansaydı iki ayrı seri oluşur, biri
-// kalıcı olarak +3'te diğeri -3'te takılırdı ve "kaç istek işleniyor" panosu
-// hiçbir zaman doğruya dönmezdi.
-func TestTelemetryAktifIstekSayaciSifiraDoner(t *testing.T) {
-	okuyucu := olcerKur(t)
-	r := routerKurAdli(t, "gobit-magaza")
+// A real trap was born after the service name attribute was added: had the
+// increment and the decrement used different attribute sets, two separate series
+// would form, one stuck permanently at +3 and the other at -3, and the "how many
+// requests are in flight" dashboard would never come back to the truth.
+func TestTelemetryTheInFlightCounterReturnsToZero(t *testing.T) {
+	okuyucu := setUpMeter(t)
+	r := setUpRouterNamed(t, "gobit-magaza")
 
 	for range 3 {
 		w := httptest.NewRecorder()
@@ -408,16 +407,16 @@ func TestTelemetryAktifIstekSayaciSifiraDoner(t *testing.T) {
 	var rm metricdata.ResourceMetrics
 	require.NoError(t, okuyucu.Collect(t.Context(), &rm))
 
-	noktalar := toplamNoktalari(t, &rm, "http.server.active_requests")
-	require.Len(t, noktalar, 1, "artış ve azalış TEK bir seride toplanmalı")
-	assert.EqualValues(t, 0, noktalar[0].Value, "biten istek sayacı sıfıra dönmeli")
+	points := sumPoints(t, &rm, "http.server.active_requests")
+	require.Len(t, points, 1, "the increment and the decrement have to collect into a SINGLE series")
+	assert.EqualValues(t, 0, points[0].Value, "the counter of finished requests has to return to zero")
 
-	deger, ok := noktalar[0].Attributes.Value(semconv.ServiceNameKey)
-	require.True(t, ok, "aktif istek sayacında service.name bulunmalı")
-	assert.Equal(t, "gobit-magaza", deger.AsString())
+	value, ok := points[0].Attributes.Value(semconv.ServiceNameKey)
+	require.True(t, ok, "service.name has to be on the in-flight request counter")
+	assert.Equal(t, "gobit-magaza", value.AsString())
 }
 
-// propagator testlerde kullanılan W3C TraceContext yayıcısıdır.
+// propagator is the W3C TraceContext propagator used in the tests.
 func propagator() propagation.TextMapPropagator {
 	return propagation.NewCompositeTextMapPropagator(
 		propagation.TraceContext{}, propagation.Baggage{})
