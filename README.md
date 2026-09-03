@@ -1364,6 +1364,22 @@ açıktır.
   dump/restore ister. Kendi Postgres'inizi getiriyorsanız kümenin CTYPE'ı
   UTF-8 farkında bir locale olmalıdır; ICU sağlayıcısı YETMEZ — `ILIKE`'ı
   düzeltir, arama indeksini bozuk bırakır.
+- **Arama, eşleşen HER belgeyi puanlar; maliyet katalogla doğrusal büyür.**
+  GIN indeksi `ORDER BY`'ı karşılayamaz, dolayısıyla tek bir sayfa dönmek için
+  eşleşen satırların TAMAMI okunur ve puanlanır. Ölçüldü (52.000 belgelik
+  indeks, kataloğun tamamında geçen bir kelime, LIMIT 20): sıralama eskiden
+  **663 ms** sürüyordu, bugün **24 ms** sürüyor ve bunun **24 ms**'si
+  eşleşme taramasının kendisidir — yani sıralamadan kazanılacak bir şey
+  kalmadı, kalan maliyet taramadır ve 500.000 ürünlük bir katalogda aynı kelime
+  yarım saniyeye çıkar. Altına inmek indeksin sıralamayı da karşılaması (RUM)
+  demektir; zorunlu bir EXTENSION eklemek
+  [ADR 0015](docs/adr/0015-postgresql-cluster-contract.md)'in tarihli
+  kararıdır ve tek satırlık bir hızlanma olarak alınamaz.
+
+  İkinci sınır sıradadır: **hariç tutma alaka taşımaz.** Puanlama sorgunun
+  olumlu kısmıyla yapılır, yani `gomlek -mavi` yine alakaya göre sıralanır; ama
+  YALNIZCA hariç tutmadan oluşan bir sorgu (`-mavi`) sıralanacak hiçbir olumlu
+  sinyal bırakmaz ve sonuçlar indekslenme sırasında gelir.
 - **Vitrin listesinin TOPLAM SAYACI katalog büyüdükçe pahalılaşır.**
   `GET /store/v1/products` yanıtındaki `count` alanı, satış kanalı süzgecinin
   uygulandığı kümenin tamamını saymak zorundadır; sayfa boyutu bunu

@@ -3,8 +3,9 @@
 // # Arama motoru DIŞ BİR SERVİS DEĞİLDİR
 //
 // İndeks ve sorgu PostgreSQL'in tam metin aramasıdır: belge bir tsvector
-// sütununda yaşar, eşleşme GIN indeksiyle bulunur, sıralama ts_rank_cd ile
-// yapılır. Meilisearch/OpenSearch bilinçli olarak SEÇİLMEDİ — ikisi de yeni bir
+// sütununda yaşar, eşleşme GIN indeksiyle bulunur, sıralama ts_rank ile
+// yapılır (neden ts_rank_cd değil: bkz. [searchSQL], ölçümle birlikte).
+// Meilisearch/OpenSearch bilinçli olarak SEÇİLMEDİ — ikisi de yeni bir
 // dış bağımlılık, yeni bir compose servisi, yeni bir sağlık kontrolü ve yeni
 // bir "indeks ile veritabanı ayrıştı" arıza sınıfı getirirdi. Zaten var olan
 // PostgreSQL, ölçek büyümeden önce GERÇEK bir arama verir.

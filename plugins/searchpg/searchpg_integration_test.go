@@ -23,6 +23,7 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -168,6 +169,151 @@ func TestAlakaSiralamasiAgirliklariKullanir(t *testing.T) {
 	require.Len(t, ids, 3, "üç kayıt da eşleşmeli")
 	assert.Equal(t, "prod_baslik", ids[0], "başlık eşleşmesi (A) en önde olmalı")
 	assert.Equal(t, "prod_metin", ids[2], "açıklama eşleşmesi (C) en arkada olmalı")
+}
+
+// TestSiralamaAgirligiYakinliktanOndeTutar çok kelimeli bir sorguda ALAN
+// AĞIRLIĞININ kelime yakınlığını yendiğini doğrular.
+//
+// İki fikstür de "mavi" ve "gomlek" kelimelerinin ikisini birden taşır; fark
+// nerede taşıdıklarıdır. prod_baslik ikisini de BAŞLIĞINDA (A) ama aralarında
+// dört kelimeyle taşır, prod_anahtar ise ANAHTAR alanında (B) yan yana. Sıra
+// bu yüzden sıralama fonksiyonunu AYIRT EDER ve testin varlık sebebi budur:
+//
+//	ts_rank    -> prod_baslik (0,915) > prod_anahtar (0,396)
+//	ts_rank_cd -> prod_anahtar (0,4)  > prod_baslik (0,2)
+//
+// [searchSQL] ts_rank kullanır: ts_rank_cd, eşleşen HER belge için ~12 µs
+// harcıyor ve 52 bin eşleşmeli bir sorguyu 663 ms'ye çıkarıyordu (ölçüm
+// [searchSQL] belgesindedir). Bu test o kararı davranışla sabitler — sıralama
+// ts_rank_cd'ye geri dönerse burada kırılır — ve aynı anda vazgeçilen şeyi de
+// yazar: yakınlık artık bir sinyal değildir, ağırlık her zaman öndedir.
+func TestSiralamaAgirligiYakinliktanOndeTutar(t *testing.T) {
+	i := gercekIndeks(t)
+
+	yaz(t, i,
+		belge{urunID: "prod_baslik", baslik: "Mavi ceket pantolon ayakkabi ve gomlek"},
+		belge{urunID: "prod_anahtar", baslik: "Terlik", anahtar: "mavi gomlek"},
+	)
+
+	ids, err := i.Search(t.Context(), "mavi gomlek", 10, 0)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"prod_baslik", "prod_anahtar"}, ids,
+		"başlıkta (A) geçen ürün, anahtar alanında (B) yan yana geçen üründen önce gelmeli")
+}
+
+// TestAciklamaUzunluguSiralamayiDegistirmez uzun açıklamalı bir ürünün, aynı
+// başlık eşleşmesine sahip kısa açıklamalı bir üründen GERİYE DÜŞMEDİĞİNİ
+// doğrular.
+//
+// [searchSQL] ts_rank'i normalizasyon argümanı OLMADAN çağırır, yani belge
+// uzunluğu skora hiç girmez. Argüman eklemek tek karakterlik bir değişikliktir
+// ve sessizce başka bir alaka modeli kurar: ts_rank(..., 2) skoru belge
+// uzunluğuna böler ve aşağıdaki iki üründen uzun açıklamalıyı 0,608'den
+// 0,043'e düşürür — kataloğunu ayrıntılı yazan satıcı, aynı ürün için
+// aramada geriye düşerdi. İki fikstürün eşleşmesi de YALNIZCA başlıktadır,
+// dolayısıyla normalizasyon olmadan skorlar birebir eşittir ve sırayı
+// product_id belirler.
+func TestAciklamaUzunluguSiralamayiDegistirmez(t *testing.T) {
+	i := gercekIndeks(t)
+
+	yaz(t, i,
+		belge{
+			urunID: "prod_a_uzun",
+			baslik: "Sneaker",
+			metin: "bu urunun aciklamasi uzundur ve pek cok kelime tasir " +
+				"katalogda ayrintili anlatilmistir",
+		},
+		belge{urunID: "prod_b_kisa", baslik: "Sneaker"},
+	)
+
+	ids, err := i.Search(t.Context(), "sneaker", 10, 0)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"prod_a_uzun", "prod_b_kisa"}, ids,
+		"eşit başlık eşleşmesinde sırayı belge uzunluğu değil product_id belirlemeli")
+}
+
+// TestHaricTutmaSiralamayiKorur "- ile hariç tut" sorgusunda sıralamanın ALAKAYA
+// göre kaldığını doğrular.
+//
+// ts_rank, içinde olumsuzlama taşıyan bir sorguda HER belgeye 0 verir (ölçüm
+// [searchSQL] belgesindedir). Sıralama ham sorguyla yapılsaydı skorlar eşitlenir
+// ve sıra product_id'ye, yani indekslenme sırasına düşerdi. Fikstür bunu GÖRÜNÜR
+// kılmak için kurulmuştur: alaka sırası (başlık önce) product_id sırasının
+// TERSİDİR, dolayısıyla skor çöktüğünde test düşer.
+//
+//	querytree ile        prod_b_baslik 0,6079 > prod_a_metin 0,1216
+//	querytree olmadan    ikisi de 0,0000 -> sıra product_id
+//
+// prod_c_mavi elemenin hâlâ çalıştığını gösterir: sıralama olumlu kısımla
+// yapılırken hariç tutma WHERE'de kalır.
+func TestHaricTutmaSiralamayiKorur(t *testing.T) {
+	i := gercekIndeks(t)
+
+	yaz(t, i,
+		belge{urunID: "prod_a_metin", baslik: "Terlik", metin: "bu urun gomlek ile giyilir"},
+		belge{urunID: "prod_b_baslik", baslik: "Gomlek"},
+		belge{urunID: "prod_c_mavi", baslik: "Mavi gomlek"},
+	)
+
+	ids, err := i.Search(t.Context(), "gomlek -mavi", 10, 0)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"prod_b_baslik", "prod_a_metin"}, ids,
+		"hariç tutmalı sorguda da başlık (A) eşleşmesi açıklama (C) eşleşmesinden önce gelmeli")
+}
+
+// TestYalnizcaHaricTutmaSorgusuCalisir yalnızca hariç tutmadan oluşan bir
+// sorgunun hata ÜRETMEDİĞİNİ ve elemeyi yaptığını doğrular.
+//
+// Sıralama ifadesi bu sorguda querytree'den 'T' alır — sıralanacak olumlu sinyal
+// yoktur — ve sıra product_id'ye düşer. Test o sınırı DAVRANIŞLA yazar: sonuç
+// kümesi doğrudur, sırası indekslenme sırasıdır ve bu bilinen bir sınırdır
+// (bkz. [searchSQL]). Ayrıca 'T' metninin tsquery'ye çevrilmesi bir sözdizimi
+// hatası üretseydi, arama kutusuna "-mavi" yazan alışverişçi 500 alırdı; bu
+// testin ikinci işi odur.
+func TestYalnizcaHaricTutmaSorgusuCalisir(t *testing.T) {
+	i := gercekIndeks(t)
+
+	yaz(t, i,
+		belge{urunID: "prod_1", baslik: "Gomlek"},
+		belge{urunID: "prod_2", baslik: "Mavi gomlek"},
+		belge{urunID: "prod_3", baslik: "Terlik"},
+	)
+
+	ids, err := i.Search(t.Context(), "-mavi", 10, 0)
+	require.NoError(t, err, "hariç tutma sorgusu hata üretmemeli")
+	assert.Equal(t, []string{"prod_1", "prod_3"}, ids,
+		"mavi geçen ürün elenmeli, kalanlar product_id sırasında gelmeli")
+}
+
+// TestSiralamaIfadesiSorguBasinaBirKezHesaplanir sıralama sorgusunun SKALER ALT
+// SORGU olarak kaldığını plan üzerinden doğrular.
+//
+// Karar HIZ içindir ve sonucu DEĞİŞTİRMEZ: alt sorgu kaldırılıp ifade satır
+// içine alınsa da her belge aynı skoru alır, dolayısıyla sıralamayı sınayan
+// hiçbir test bunu göremez (mutasyonla doğrulandı: alt sorguyu kaldıran değişim
+// paketteki tüm testleri geçiyordu). Görünür olduğu tek yer plandır: alt sorgu
+// InitPlan'a çevrilir ve sorgu başına bir kez hesaplanır, satır içi ifade ise
+// genel planda satır başına yeniden ayrıştırılır (52 bin eşleşmede 25,4 ms'ye
+// karşı 46,7 ms; ölçüm [searchSQL] belgesindedir).
+func TestSiralamaIfadesiSorguBasinaBirKezHesaplanir(t *testing.T) {
+	i := gercekIndeks(t)
+	yaz(t, i, belge{urunID: "prod_1", baslik: "Gomlek"})
+
+	rows, err := testPool.Pool().Query(t.Context(), "EXPLAIN (COSTS OFF) "+searchSQL, "gomlek", 10, 0)
+	require.NoError(t, err)
+	defer rows.Close()
+
+	var plan strings.Builder
+	for rows.Next() {
+		var satir string
+		require.NoError(t, rows.Scan(&satir))
+		plan.WriteString(satir)
+		plan.WriteString("\n")
+	}
+	require.NoError(t, rows.Err())
+
+	assert.Contains(t, plan.String(), "InitPlan",
+		"sıralama sorgusu InitPlan olmalı; satır içine alınırsa genel planda satır başına hesaplanır:\n%s", plan.String())
 }
 
 // TestSayfalamaDeterministiktir eşit alakalı kayıtların sayfalar arasında

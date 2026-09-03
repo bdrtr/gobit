@@ -184,6 +184,45 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Değiştirildi
 
+- **Arama sıralaması `ts_rank_cd` yerine `ts_rank` ile yapılıyor ve sıralama
+  sorgusu artık sorgu başına bir kez hesaplanıyor.** Vitrinin arama ucu
+  eşleşen HER belgeyi puanlamak zorundadır (GIN indeksi `ORDER BY`'ı
+  karşılayamaz), dolayısıyla puanlama fonksiyonunun satır başına bedeli
+  doğrudan ucun bedelidir. Ölçüldü (52.000 belgelik indeks, ~92 lexeme'lik
+  belgeler, LIMIT 20):
+
+  | eşleşme | ts_rank_cd | ts_rank | yalnızca eşleşme |
+  |---|---|---|---|
+  | 1 002 | 13,7 ms | 1,4 ms | 1,1 ms |
+  | 10 400 | 148,0 ms | 23,0 ms | 21,7 ms |
+  | 52 000 | 663,0 ms | 24,7 ms | 23,8 ms |
+
+  Fark `ts_rank_cd`'nin belge başına ~12 µs'lik bedelidir ve planlayıcı bunu
+  GÖREMEZ: `pg_proc.procost` her iki fonksiyon için de 1'dir. Kataloğun
+  tamamında geçen tek bir kelime, varsayılan 600 istek/dakika kotasıyla
+  saniyede 6,6 çekirdek yakıyordu.
+
+  Sıralama GÖZLENEBİLİR biçimde değişti: `ts_rank_cd` kelime yakınlığını alan
+  ağırlığının ÜSTÜNE koyabiliyordu, `ts_rank` koyamaz. "mavi gomlek"
+  sorgusunda iki kelimeyi anahtar alanında (B) yan yana taşıyan ürün, ikisini
+  de başlığında (A) taşıyan üründen önce geliyordu; artık başlık kazanıyor.
+  İndeksin ağırlıklara ayrılmış olmasının sebebi budur, yani bu düzeltmedir.
+  Yakınlık tamamen kaybolmadı — ölçüldü, iki kelime arasındaki boşluk 0'dan
+  6'ya çıkarken skor 0,9910'dan 0,7615'e iniyor — yalnızca ağırlığı yenemez
+  oldu.
+
+  Sıralama **sorgunun olumlu kısmıyla** yapılıyor (`querytree`): `ts_rank`
+  olumsuzlama taşıyan bir sorguda HER belgeye 0 verir, yani `gomlek -mavi`
+  yazan alışverişçinin sonuçları alakaya göre değil indekslenme sırasına göre
+  gelirdi — üstelik `-` desteği `websearch_to_tsquery`'yi seçmenin gerekçesi
+  sayılırken. Yalnızca hariç tutmadan oluşan bir sorgu (`-mavi`) sıralanacak
+  olumlu sinyal bırakmaz; o durumda sıra `product_id`'dir ve bu README'nin
+  "Bilinen sınırlar" bölümünde yazılıdır.
+
+  Sıralama ifadesi skaler alt sorgudur. pgx altıncı çalıştırmadan sonra genel
+  plana geçebilir ve genel planda ifade sabite katlanmaz, satır başına
+  yeniden ayrıştırılırdı: 52.000 eşleşmede 46,7 ms'ye karşı 25,4 ms.
+
 - **Vitrinin satış kanalı görünürlük kuralı tek bir korelasyonlu alt sorguya
   indi.** Kural DEĞİŞMEDİ; nasıl yazıldığı değişti. Eski hâli iki bağımsız
   alt sorguydu ("hiç ataması yok VEYA istenen kanalda ataması var") ve
