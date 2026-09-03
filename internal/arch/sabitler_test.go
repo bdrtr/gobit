@@ -430,6 +430,13 @@ var simetrisizConfigSabitleri = map[string]string{
 
 	"DefaultRedisURL": `Gerekçe DefaultDatabaseURL ile aynıdır: eşi compose ` +
 		`dosyası ve .env.example'dır, Go tarafında bir modül sabiti değil.`,
+
+	"MinIdempotencyMemoryBytes": `Eşi corehttp'nin DIŞA AÇIK OLMAYAN ` +
+		`maxIdempotentBodyBytes sabitidir (tamponlanan azami yanıt gövdesi) ve ` +
+		`internal/arch onu göremez. Zincir orada kapatıldı: corehttp'nin ` +
+		`TestBudgetDefaultAgreesWithConfiguration testi iki sabiti KARŞILAŞTIRIR, ` +
+		`yani ayrışma o testi düşürür. Sınırı buraya kopyalamak iddiayı ` +
+		`güçlendirmez, yalnızca ayrışabilecek üçüncü bir kopya üretirdi.`,
 }
 
 // TestConfigSabitleriSimetriIddiasinaBagli config'in dışa açık HER sabitinin

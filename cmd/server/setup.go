@@ -245,6 +245,22 @@ func checkSchema(ctx context.Context, doc *openapi.Doc, r chi.Routes, log *slog.
 	}
 }
 
+// memoryIdempotencyStore builds the in-memory idempotency store from the
+// configuration.
+//
+// It takes the whole configuration and no separate numbers, which is the entire
+// point: the store's byte budget bounds a correctness guarantee — when it fills,
+// a retry is processed a second time — and the startup line next to it reports
+// cfg.IdempotencyMaxMemoryBytes whether or not that number ever reached the
+// store. Measured by mutation: a call site handing the constructor 0 runs the
+// 64 MiB default while the log still prints the configured value, and every
+// test in this repository stayed green. With the construction behind a
+// cfg-only function there is no argument left for a call site to get wrong, and
+// the function itself is asserted in setup_test.go.
+func memoryIdempotencyStore(cfg config.Config) *corehttp.MemoryIdempotencyStore {
+	return corehttp.NewMemoryIdempotencyStore(cfg.IdempotencyTTL, cfg.IdempotencyMaxMemoryBytes)
+}
+
 // guardStack builds the application's guard middlewares from the
 // configuration.
 //
@@ -265,6 +281,12 @@ func checkSchema(ctx context.Context, doc *openapi.Doc, r chi.Routes, log *slog.
 // If Redis is selected the client is MANDATORY and startup stops without it: "I
 // asked for a shared store but silently ran on the in-memory one" is exactly
 // the case where the guard is believed to work while it does not.
+//
+// The in-memory store is bounded by a byte BUDGET
+// (IDEMPOTENCY_MAX_MEMORY_BYTES) and drops its oldest record when the budget
+// fills; the trade and the measurements are on
+// [corehttp.MemoryIdempotencyStore]. The number is logged here on every start
+// because it bounds a guarantee, not a cost.
 //
 // The key namespace prefix (REDIS_KEY_PREFIX) also passes through here and is
 // the only thing separating two installations that share the SAME Redis; the
@@ -373,7 +395,19 @@ func guardStack(
 		return withPanelRing(opts, panel), nil
 	}
 
-	opts.IdempotencyStore = corehttp.NewMemoryIdempotencyStore(cfg.IdempotencyTTL)
+	opts.IdempotencyStore = memoryIdempotencyStore(cfg)
+
+	// The memory budget is logged on EVERY start, not only in a shared
+	// environment. It bounds a correctness guarantee rather than a cost: when
+	// the budget fills, the oldest record is dropped and a retry carrying that
+	// key is processed a second time. An operator who never saw the number has
+	// no way to tell that outcome apart from a bug, and no way to know which
+	// knob moves it.
+	log.Info("idempotency store: in-memory",
+		"budget_bytes", cfg.IdempotencyMaxMemoryBytes,
+		"ttl", cfg.IdempotencyTTL,
+		"when_full", "the oldest record is dropped and a retry with that key is processed AGAIN",
+		"remedy", "GUARD_BACKEND=redis or a larger IDEMPOTENCY_MAX_MEMORY_BYTES")
 
 	// NewMemoryLimiter returns nil when the limit is not positive (the rate
 	// limit is off). Assigning that straight to the interface field would turn

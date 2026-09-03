@@ -318,9 +318,19 @@ bırakırdı — ödemede bunun bedeli paranın beklenmedik bir kuruluşa gitmes
 | Satış kanalı bağı kuruluyor ama okunmuyor | Katalog her publishable anahtar için aynı | `product↔sales_channel` bağını bildir ve store listesini `Principal.SalesChannelIDs` ile süz |
 | Migration geri alma yüzeyi yok | `.down.sql` dosyaları çağrılamıyor | `cmd/server`'a migrate alt komutu |
 | Yetki sözlüğü modül başına iki girdi | Kaynak bazlı ayrım yok (örn. yalnızca varyant okuma) | Ayrım gerçekten gerektiğinde eklenir; şimdiden eklemek yanlış bir kesinlik hissi verirdi |
+| Bellek içi idempotency deposu bir bayt bütçesiyle sınırlı | Bütçe dolunca **en eski** kayıt düşer; o anahtarla gelen tekrar yeniden işlenir (mükerrer yan etki) | `GUARD_BACKEND=redis`, ya da daha büyük `IDEMPOTENCY_MAX_MEMORY_BYTES` |
 
 Çok örneklilik artık bir sınır değil bir **ayardır**: `GUARD_BACKEND=redis` hız
 sınırını ve idempotency deposunu paylaşılan hâle getirir (bkz.
 `internal/core/http/redisguard`). Varsayılan `memory` bilinçlidir — tek örnekli
 geliştirme kurulumu Redis istememelidir — ama paylaşılan bir ortamda açılışta
 uyarı üretir.
+
+Bellek içi deponun bütçesi (`IDEMPOTENCY_MAX_MEMORY_BYTES`, varsayılan 64 MiB)
+tablodaki satırın sebebidir: bütçesiz hâlde tek sınır TTL'di ve kaydı açan
+anahtarı İSTEMCİ seçtiği için o sınır büyümeyi hiçbir yerde durdurmuyordu
+(ölçüm: 64 KiB gövdeli 10.000 kayıt 630,69 MiB). Bütçe dolunca yeni isteği
+reddetmek yerine en eski kaydın düşürülmesi bilinçli bir seçimdir — reddetmek,
+uydurma anahtarlar gönderen tek bir istemciye mağazanın tüm mutasyon trafiğini
+kapatma imkânı verirdi. Tahliye WARN loglanır ve bütçe her açılışta yazılır;
+gerekçenin tamamı `corehttp.MemoryIdempotencyStore` godoc'undadır.

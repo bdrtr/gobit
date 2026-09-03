@@ -630,7 +630,7 @@ func zeminiKur(ctx context.Context) error {
 			AdminExempt:      []string{authapi.LoginPath},
 			Limiter:          corehttp.NewMemoryLimiter(testHizSiniri, time.Minute),
 			LimitKey:         corehttp.ClientIPKey,
-			IdempotencyStore: corehttp.NewMemoryIdempotencyStore(time.Hour),
+			IdempotencyStore: corehttp.NewMemoryIdempotencyStore(time.Hour, 0),
 			// Muafiyet listesi ÜRETİMDEKİYLE aynı olmalı, yoksa bu dosya
 			// uçtan uca bir kurulumu değil, kendi kurduğu başka bir
 			// yapılandırmayı sınar. Fark tam olarak burada ısırdı: sepet

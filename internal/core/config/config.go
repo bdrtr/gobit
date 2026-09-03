@@ -23,6 +23,28 @@ const minJWTSecretLen = 32
 // devAppEnv sırların ve TLS zorunluluğunun GEVŞETİLDİĞİ tek ortamdır.
 const devAppEnv = "development"
 
+// MinIdempotencyMemoryBytes [Config.IdempotencyMaxMemoryBytes] için kabul
+// edilen en küçük değerdir.
+//
+// Reddedilen şey küçük bir sayı değil, SESSİZCE İŞLEVSİZ bir yapılandırmadır:
+// bütçe tek bir azami boy yanıtı taşıyamıyorsa, o yanıt yazıldığı anda bütçeyi
+// aşar ve hemen kendisi düşürülür — koruma büyük yanıtlar için hiçbir hata
+// vermeden kapanmış olur.
+//
+// Sınır bu yüzden corehttp'nin tamponladığı azami gövdeyle (1 MiB) EŞİT DEĞİL,
+// ONUN İKİ KATIDIR. Eşit olsaydı sınırın kendisi tam da yasakladığı durum
+// olurdu ve bu ölçüldü: 1 MiB bütçeye 1 MiB'lık bir yanıt yazıldığında depo
+// kaydı anında düşürüyor (yük 0'a iniyor, kayıt oynatılamıyor), çünkü kaydın
+// bedeli gövdenin yanında anahtarı (255 karaktere kadar), parmak izini,
+// başlıklarını ve yapısal maliyetini de taşır. İki kat, o defterin tamamını
+// karşılayan ve yuvarlak olan ilk değerdir; sığdığı ARTIK BİR DAVRANIŞ TESTİYLE
+// çivilidir (corehttp'de TestBudgetDefaultAgreesWithConfiguration).
+//
+// Değer corehttp'den içe aktarılmaz: config hiçbir taşıma katmanına bağlı
+// DEĞİLDİR ve o bağı kurmak, ayarların HTTP'ye bağlanması demek olurdu. İki
+// sabitin birlikte hareket etmesi corehttp tarafındaki testle sabitlenmiştir.
+const MinIdempotencyMemoryBytes int64 = 2 << 20
+
 // BackendRedis paylaşılan Redis arka ucunun adıdır.
 //
 // Hem [Config.EventBus] hem [Config.GuardBackend] bu değeri alabilir ve ikisi
@@ -553,6 +575,23 @@ type Config struct {
 	TrustedProxyHops int `env:"TRUSTED_PROXY_HOPS" envDefault:"0"`
 	// IdempotencyTTL idempotency kayıtlarının saklanma süresidir.
 	IdempotencyTTL time.Duration `env:"IDEMPOTENCY_TTL" envDefault:"24h"`
+	// IdempotencyMaxMemoryBytes BELLEK İÇİ idempotency deposunun tamamlanmış
+	// kayıtlar için harcayabileceği bayt bütçesidir.
+	//
+	// Yalnızca GUARD_BACKEND=memory'de okunur; redis arka ucunda kayıtları ve
+	// belleği Redis yönetir.
+	//
+	// Bütçe DOLUNCA depo en eski kaydı DÜŞÜRÜR ve düşen anahtarla gelen bir
+	// tekrar yeniden işlenir — yani mükerrer bir yan etki. Ödünün tamamı ve
+	// neden düşürmenin reddetmeye tercih edildiği corehttp paketindeki
+	// MemoryIdempotencyStore godoc'undadır. Sınır sessiz değildir: tahliye
+	// WARN loglanır ve bütçe her açılışta yazılır.
+	//
+	// Bütçesiz hâlde tek sınır TTL'ydi ve o sınır büyümeyi durdurmuyordu;
+	// ölçüm (aynı godoc): 64 KiB gövdeli 10.000 kayıt 630,69 MiB, 1 MiB
+	// gövdeli 1.000 kayıt 999,58 MiB tutuyordu ve kaydı açan anahtarı İSTEMCİ
+	// seçer.
+	IdempotencyMaxMemoryBytes int64 `env:"IDEMPOTENCY_MAX_MEMORY_BYTES" envDefault:"67108864"`
 	// GuardBackend hız sınırı ve idempotency deposunun arka ucudur:
 	// memory | redis.
 	//
@@ -814,6 +853,11 @@ func (c Config) Validate() error {
 	}
 	if err := c.validateDBPool(); err != nil {
 		return err
+	}
+	if c.IdempotencyMaxMemoryBytes < MinIdempotencyMemoryBytes {
+		return fmt.Errorf(
+			"config: IDEMPOTENCY_MAX_MEMORY_BYTES en az %d olmalı (tamponlanan azami yanıt gövdesi), %d verildi",
+			MinIdempotencyMemoryBytes, c.IdempotencyMaxMemoryBytes)
 	}
 	if err := c.validateRedisKeyPrefix(); err != nil {
 		return err

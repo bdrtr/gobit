@@ -904,6 +904,56 @@ func TestGuardStackStopsWhenRedisIsChosenWithoutAClient(t *testing.T) {
 	assert.Contains(t, err.Error(), "GUARD_BACKEND")
 }
 
+// TestGuardStackReportsTheIdempotencyBudget proves the in-memory store's cap
+// reaches the startup log.
+//
+// The budget bounds a GUARANTEE rather than a cost: once it fills, the oldest
+// record is dropped and a retry carrying that key runs the handler a SECOND
+// time. An operator who never saw the number cannot tell that duplicate apart
+// from a bug, and cannot know which knob moves it. Deleting the line would
+// break nothing else in the process, which is exactly why it is pinned here.
+//
+// The Redis backend must NOT print it: there the records live in Redis and a
+// number describing a store that was not built would be a lie.
+func TestGuardStackReportsTheIdempotencyBudget(t *testing.T) {
+	t.Parallel()
+
+	const message = "idempotency store: in-memory"
+
+	cfg := baseConfig()
+	cfg.IdempotencyMaxMemoryBytes = 12345678
+	catcher := &recordCatcher{}
+
+	_, err := guardStack(cfg, validIdentity{}, &adminui.Ring{}, nil, catcher.logger())
+
+	require.NoError(t, err)
+	assert.Contains(t, catcher.messages(slog.LevelInfo), message,
+		"a cap nobody can see is indistinguishable from a bug when it fires")
+
+	// The logged number and the number in force are two different facts, and
+	// only one of them bounds memory. Verified by mutation: handing the
+	// constructor 0 runs the 64 MiB default while the line above still prints
+	// the configured 12345678, and every test in this repository stayed green.
+	assert.Equal(t, cfg.IdempotencyMaxMemoryBytes, memoryIdempotencyStore(cfg).Butce(),
+		"the configured budget must reach the store, not just the log line")
+	assert.Equal(t, "12345678", catcher.attribute(message, "budget_bytes"),
+		"the number logged must be the CONFIGURED one, not a constant")
+	assert.Contains(t, catcher.attribute(message, "remedy"), "IDEMPOTENCY_MAX_MEMORY_BYTES")
+	assert.Contains(t, catcher.attribute(message, "when_full"), "AGAIN",
+		"the log must name the consequence, not just the number")
+
+	shared := baseConfig()
+	shared.GuardBackend = config.BackendRedis
+	shared.RedisKeyPrefix = "gobit-staging"
+	sharedCatcher := &recordCatcher{}
+
+	_, err = guardStack(shared, validIdentity{}, &adminui.Ring{}, unconnectedRedis(), sharedCatcher.logger())
+
+	require.NoError(t, err)
+	assert.NotContains(t, sharedCatcher.messages(slog.LevelInfo), message,
+		"the redis backend must not report a budget that binds nothing")
+}
+
 // TestSeedAdminSwallowsTheConcurrentRace proves that several instances opening
 // against an empty database AT THE SAME TIME does not bring startup down.
 //

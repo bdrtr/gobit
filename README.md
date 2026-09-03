@@ -719,10 +719,19 @@ Karar ve reddedilen seçenekler:
 | Bileşen | Ayar | Yapılandırılmamışsa |
 |---|---|---|
 | Hız sınırı | `RATE_LIMIT_PER_MINUTE`, `TRUSTED_PROXY_HOPS` | no-op (geçirir) |
-| Idempotency | `IDEMPOTENCY_TTL` | no-op (geçirir) |
+| Idempotency | `IDEMPOTENCY_TTL`, `IDEMPOTENCY_MAX_MEMORY_BYTES` | no-op (geçirir) |
 | Kimlik | `JWT_SECRET` | **her isteği reddeder** |
 
 Neden aynı kural değil: bkz. [ADR 0007](docs/adr/0007-sertlestirme-arizada-davranis.md).
+
+`GUARD_BACKEND=memory` iken idempotency kayıtları **bir bayt bütçesiyle**
+sınırlıdır (`IDEMPOTENCY_MAX_MEMORY_BYTES`, varsayılan 64 MiB). Bütçe dolunca en
+ESKİ kayıt düşer ve o anahtarla gelen bir tekrar YENİDEN işlenir — yani mükerrer
+bir yan etki. Bu bilinçli bir takas: bütçe dolunca yeni isteği reddetmek,
+uydurma anahtar gönderen tek bir istemciye mağazanın tüm yazma trafiğini
+kapatma imkânı verirdi, çünkü anahtarı istemci seçer. Tahliye WARN loglanır ve
+bütçe her açılışta yazılır. Bütçesiz hâlde tek sınır TTL'di ve büyümeyi hiçbir
+yerde durdurmuyordu (ölçüldü: 64 KiB gövdeli 10.000 kayıt 630,69 MiB).
 
 `Idempotency-Key` başlığı taşıyan bir POST/PUT/PATCH/DELETE bir kez işlenir;
 tekrar aynı yanıtı `Idempotency-Replayed: true` ile alır. Aynı anahtarla

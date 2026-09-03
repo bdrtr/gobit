@@ -270,7 +270,7 @@ func TestAPIGuardsIdempotencyKimlikSonrasiCalisir(t *testing.T) {
 
 	r := korumaliRouter(t, corehttp.GuardOptions{
 		Authenticator:    gecikmeli,
-		IdempotencyStore: corehttp.NewMemoryIdempotencyStore(time.Hour),
+		IdempotencyStore: corehttp.NewMemoryIdempotencyStore(time.Hour, 0),
 	})
 
 	istekYap := func() *http.Request {
@@ -408,7 +408,7 @@ func TestIdempotencyAkisliGovdeyiTamponlamaz(t *testing.T) {
 		Version: "test",
 		Middlewares: corehttp.APIGuards(corehttp.GuardOptions{
 			Authenticator:    sabitDogrulayici{principal: corehttp.Principal{ID: "usr_1", Kind: "user"}},
-			IdempotencyStore: corehttp.NewMemoryIdempotencyStore(time.Hour),
+			IdempotencyStore: corehttp.NewMemoryIdempotencyStore(time.Hour, 0),
 		}),
 	})
 	r.Post("/admin/v1/uploads", func(w http.ResponseWriter, req *http.Request) {
@@ -455,7 +455,7 @@ func TestAPIGuardsMuafYolIdempotencyKaydetmez(t *testing.T) {
 		Version: "test",
 		Middlewares: corehttp.APIGuards(corehttp.GuardOptions{
 			Authenticator:     sabitDogrulayici{principal: corehttp.Principal{ID: "pk_1", Kind: "api_key"}},
-			IdempotencyStore:  corehttp.NewMemoryIdempotencyStore(time.Hour),
+			IdempotencyStore:  corehttp.NewMemoryIdempotencyStore(time.Hour, 0),
 			IdempotencyExempt: []string{muafYol},
 		}),
 	})
@@ -524,7 +524,7 @@ func TestAPIGuardsMuafYolKimlikVeKotadanGecer(t *testing.T) {
 		Middlewares: corehttp.APIGuards(corehttp.GuardOptions{
 			Authenticator:     sabitDogrulayici{err: errors.New("geçersiz")},
 			Limiter:           corehttp.NewMemoryLimiter(1, time.Minute),
-			IdempotencyStore:  corehttp.NewMemoryIdempotencyStore(time.Hour),
+			IdempotencyStore:  corehttp.NewMemoryIdempotencyStore(time.Hour, 0),
 			IdempotencyExempt: []string{muafYol},
 		}),
 	})

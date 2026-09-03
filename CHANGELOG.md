@@ -42,6 +42,43 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Eklendi
 
+- **Bellek içi idempotency deposu SINIRSIZ büyüyordu; bayt bütçesi geldi**
+  (`IDEMPOTENCY_MAX_MEMORY_BYTES`, varsayılan 64 MiB). Depo her mutasyon isteği
+  için yanıt gövdesiyle birlikte bir kayıt tutuyor, kaydı açan anahtarı İSTEMCİ
+  seçiyor ve tek sınır 24 saatlik TTL'di. Ölçüldü (runtime.MemStats, GC
+  sonrası): 1 KiB gövdeli 10.000 kayıt 15,51 MiB, 64 KiB gövdeli 10.000 kayıt
+  630,69 MiB, 1 MiB gövdeli 1.000 kayıt 999,58 MiB tutuyordu; 50.000 kayıt
+  yazılıp saat 23 saat ilerletildiğinde düşen kayıt sayısı SIFIRDI — TTL
+  büyümeyi hiçbir yerde durdurmuyordu. `GUARD_BACKEND` varsayılanı `memory` ve
+  `Validate` üretimde `redis` şart koşmuyor, yani sıradan bir üretim dağıtımı bu
+  depoyu çalıştırıyor.
+
+  Bütçe dolunca en ESKİ kayıt düşüyor. Reddetmek daha kötüydü: anahtarı istemci
+  seçtiği için uydurma anahtarlarla gelen tek bir istemci mağazanın tüm mutasyon
+  trafiğini kapatabilirdi — bellek arızası, tetiklemesi bedava bir erişim
+  arızasına dönerdi. Düşürmenin bedeli, o anahtarla gelen tekrarın yeniden
+  işlenmesidir ve bu TTL'in zaten ödediği bedelin aynısıdır; tahliye o silmeyi
+  ERKENE alır, en eski kayıt da korumasından geriye en az kalmış olandır.
+  Sessiz değil: ilk tahliye her zaman, sonrası dakikada bir WARN loglanıyor,
+  bütçe her açılışta yazılıyor, README ve `docs/mimari.md` sınırı adıyla anıyor.
+
+  Kayıtlar artık haritanın yanında süreye göre sıralı bir listede duruyor.
+  Eski süre-dolumu TÜM haritayı tarıyordu ve tarama sürecin TEK idempotency
+  kilidini tutarken koşuyordu: 1.000.000 kayıtta 50,3 ms, 100.000 kayıtta
+  2,13 ms. Artık yalnızca süresi dolan ÖN EK dolaşılıyor: aynı iki harita
+  boyunda 188 ns ve 164 ns. Bu, taramayı dakikada bire kısan sapmayı da
+  gereksiz kıldı — o kısıntı, süresi dolmuş bir kaydın bir dakikaya kadar
+  OYNATILMAYA devam etmesi demekti, yani TTL'in söylediğinden uzun bir koruma.
+  Yanıt kopyası ve muhasebe kilidin DIŞINA çıkarıldı: 1 MiB gövdeli eşzamanlı
+  oynatma 50,1-52,7 µs'ten 34,5-40,8 µs'e indi.
+
+  **Kabul edilen en küçük bütçe 1 MiB'tan 2 MiB'a çıkarıldı.** Tabanın gerekçesi
+  "tek bir azami boy yanıt sığmalı"ydı ama 1 MiB'ta sığmıyordu ve bu ölçüldü:
+  1 MiB bütçeye yazılan 1 MiB'lık yanıt anında düşüyor, çünkü kaydın bedeli
+  gövdenin yanında anahtarı, parmak izini ve yapısal maliyeti de taşıyor. Yani
+  taban, tam olarak yasakladığı sessiz-işlevsiz yapılandırmayı KABUL ediyordu.
+  Sabit eşitliği sınayan test, davranışı sınayan bir testle değiştirildi.
+
 - **PostgreSQL havuzunun sınırları ayarlanabilir oldu** (`DB_MAX_CONNS`,
   varsayılan 10; `DB_MIN_CONNS`, varsayılan 2). Sayı sabit yazılıydı ve hiçbir
   ortam değişkeni onu değiştiremiyordu; oysa havuz TEK BİR isteğin değil TÜM

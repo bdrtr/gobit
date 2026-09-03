@@ -24,6 +24,7 @@ var envKeys = []string{
 	"OTEL_EXPORTER_OTLP_ENDPOINT", "OTEL_EXPORTER_OTLP_INSECURE", "OTEL_SERVICE_NAME",
 	"OTEL_TRACES_SAMPLER_ARG", "METRIC_EXPORT_INTERVAL",
 	"RATE_LIMIT_PER_MINUTE", "TRUSTED_PROXY_HOPS", "IDEMPOTENCY_TTL",
+	"IDEMPOTENCY_MAX_MEMORY_BYTES",
 	"LOG_LEVEL", "LOG_FORMAT", "SHUTDOWN_TIMEOUT", "READ_HEADER_TIMEOUT",
 	"READ_TIMEOUT", "WRITE_TIMEOUT", "IDLE_TIMEOUT", "READINESS_DEGRADED_TIMEOUT",
 	"EVENT_BUS", "EVENT_BUS_CONSUMER",
@@ -366,6 +367,18 @@ func TestValidateYeniAyarlariDogrular(t *testing.T) {
 		"servis adı boş":               func(c *config.Config) { c.ServiceName = "" },
 		"proxy atlaması negatif":       func(c *config.Config) { c.TrustedProxyHops = -1 },
 		"idempotency TTL sıfır":        func(c *config.Config) { c.IdempotencyTTL = 0 },
+		"idempotency bütçesi sıfır": func(c *config.Config) {
+			c.IdempotencyMaxMemoryBytes = 0
+		},
+		"idempotency bütçesi negatif": func(c *config.Config) {
+			c.IdempotencyMaxMemoryBytes = -1
+		},
+		// Tek bir azami boy kaydı taşıyamayan bütçe, koruma açık görünürken
+		// büyük yanıtlar için sessizce kapalı olması demektir; sayı geçerli
+		// göründüğü için en sinsi değer budur.
+		"idempotency bütçesi tabanın altında": func(c *config.Config) {
+			c.IdempotencyMaxMemoryBytes = config.MinIdempotencyMemoryBytes - 1
+		},
 	}
 
 	for name, boz := range tests {
@@ -385,6 +398,9 @@ func TestValidateYeniAyarlariDogrular(t *testing.T) {
 		"örnekleme oranı bir":   func(c *config.Config) { c.TraceSampleRatio = 1 },
 		"proxy atlaması sıfır":  func(c *config.Config) { c.TrustedProxyHops = 0 },
 		"hız sınırı sıfır":      func(c *config.Config) { c.RateLimitPerMinute = 0 },
+		"idempotency bütçesi tam tabanda": func(c *config.Config) {
+			c.IdempotencyMaxMemoryBytes = config.MinIdempotencyMemoryBytes
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			cfg := base

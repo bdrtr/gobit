@@ -73,7 +73,7 @@ func TestIdempotencyTekrarIkinciKezCalistirmaz(t *testing.T) {
 	t.Parallel()
 
 	h := &sayanHandler{status: http.StatusCreated}
-	mw := corehttp.Idempotency(corehttp.NewMemoryIdempotencyStore(time.Hour))(h)
+	mw := corehttp.Idempotency(corehttp.NewMemoryIdempotencyStore(time.Hour, 0))(h)
 
 	w1 := httptest.NewRecorder()
 	mw.ServeHTTP(w1, postIstek("idem_1", "/store/v1/orders", `{"cart":"c1"}`))
@@ -99,7 +99,7 @@ func TestIdempotencyFarkliGovdeCakismaDoner(t *testing.T) {
 	t.Parallel()
 
 	h := &sayanHandler{status: http.StatusCreated}
-	mw := corehttp.Idempotency(corehttp.NewMemoryIdempotencyStore(time.Hour))(h)
+	mw := corehttp.Idempotency(corehttp.NewMemoryIdempotencyStore(time.Hour, 0))(h)
 
 	w1 := httptest.NewRecorder()
 	mw.ServeHTTP(w1, postIstek("idem_1", "/store/v1/orders", `{"cart":"c1"}`))
@@ -128,7 +128,7 @@ func TestIdempotencyFarkliYolCakismaDoner(t *testing.T) {
 			t.Parallel()
 
 			h := &sayanHandler{status: http.StatusCreated}
-			mw := corehttp.Idempotency(corehttp.NewMemoryIdempotencyStore(time.Hour))(h)
+			mw := corehttp.Idempotency(corehttp.NewMemoryIdempotencyStore(time.Hour, 0))(h)
 
 			w1 := httptest.NewRecorder()
 			mw.ServeHTTP(w1, postIstek("idem_1", "/store/v1/orders", `{"cart":"c1"}`))
@@ -159,7 +159,7 @@ func TestIdempotencyHandlerGovdeyiOkuyabilir(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	})
 
-	mw := corehttp.Idempotency(corehttp.NewMemoryIdempotencyStore(time.Hour))(h)
+	mw := corehttp.Idempotency(corehttp.NewMemoryIdempotencyStore(time.Hour, 0))(h)
 	mw.ServeHTTP(httptest.NewRecorder(), postIstek("idem_1", "/x", `{"cart":"c1"}`))
 
 	assert.Equal(t, `{"cart":"c1"}`, okunan, "handler gövdeyi eksiksiz okuyabilmeli")
@@ -174,7 +174,7 @@ func TestIdempotencySunucuHatasiKaydedilmez(t *testing.T) {
 	t.Parallel()
 
 	h := &sayanHandler{status: http.StatusInternalServerError}
-	mw := corehttp.Idempotency(corehttp.NewMemoryIdempotencyStore(time.Hour))(h)
+	mw := corehttp.Idempotency(corehttp.NewMemoryIdempotencyStore(time.Hour, 0))(h)
 
 	w1 := httptest.NewRecorder()
 	mw.ServeHTTP(w1, postIstek("idem_1", "/x", `{"a":1}`))
@@ -199,7 +199,7 @@ func TestIdempotencyIstemciHatasiKaydedilir(t *testing.T) {
 	t.Parallel()
 
 	h := &sayanHandler{status: http.StatusUnprocessableEntity}
-	mw := corehttp.Idempotency(corehttp.NewMemoryIdempotencyStore(time.Hour))(h)
+	mw := corehttp.Idempotency(corehttp.NewMemoryIdempotencyStore(time.Hour, 0))(h)
 
 	mw.ServeHTTP(httptest.NewRecorder(), postIstek("idem_1", "/x", `{"a":1}`))
 
@@ -228,7 +228,7 @@ func TestIdempotencyPanikSonrasiTekrarDenenebilir(t *testing.T) {
 		w.WriteHeader(http.StatusCreated)
 	})
 
-	mw := corehttp.Idempotency(corehttp.NewMemoryIdempotencyStore(time.Hour))(h)
+	mw := corehttp.Idempotency(corehttp.NewMemoryIdempotencyStore(time.Hour, 0))(h)
 
 	assert.Panics(t, func() {
 		mw.ServeHTTP(httptest.NewRecorder(), postIstek("idem_1", "/x", `{"a":1}`))
@@ -248,7 +248,7 @@ func TestIdempotencyAnahtarsizIstekAkar(t *testing.T) {
 	t.Parallel()
 
 	h := &sayanHandler{status: http.StatusCreated}
-	mw := corehttp.Idempotency(corehttp.NewMemoryIdempotencyStore(time.Hour))(h)
+	mw := corehttp.Idempotency(corehttp.NewMemoryIdempotencyStore(time.Hour, 0))(h)
 
 	for range 3 {
 		w := httptest.NewRecorder()
@@ -267,7 +267,7 @@ func TestIdempotencyGuvenliMetodlarKaydedilmez(t *testing.T) {
 	t.Parallel()
 
 	h := &sayanHandler{status: http.StatusOK}
-	mw := corehttp.Idempotency(corehttp.NewMemoryIdempotencyStore(time.Hour))(h)
+	mw := corehttp.Idempotency(corehttp.NewMemoryIdempotencyStore(time.Hour, 0))(h)
 
 	for range 2 {
 		r := httptest.NewRequest(http.MethodGet, "/x", http.NoBody)
@@ -306,7 +306,7 @@ func TestIdempotencyCokUzunAnahtarReddedilir(t *testing.T) {
 	t.Parallel()
 
 	h := &sayanHandler{status: http.StatusCreated}
-	mw := corehttp.Idempotency(corehttp.NewMemoryIdempotencyStore(time.Hour))(h)
+	mw := corehttp.Idempotency(corehttp.NewMemoryIdempotencyStore(time.Hour, 0))(h)
 
 	w := httptest.NewRecorder()
 	mw.ServeHTTP(w, postIstek(strings.Repeat("a", 256), "/x", `{"a":1}`))
@@ -327,7 +327,7 @@ func TestIdempotencyCokBuyukGovdeReddedilir(t *testing.T) {
 	t.Parallel()
 
 	h := &sayanHandler{status: http.StatusCreated}
-	mw := corehttp.Idempotency(corehttp.NewMemoryIdempotencyStore(time.Hour))(h)
+	mw := corehttp.Idempotency(corehttp.NewMemoryIdempotencyStore(time.Hour, 0))(h)
 
 	w := httptest.NewRecorder()
 	mw.ServeHTTP(w, postIstek("idem_1", "/x", strings.Repeat("x", (1<<20)+1)))
@@ -357,7 +357,7 @@ func TestIdempotencyEszamanliIkinciIstekCakisir(t *testing.T) {
 		w.WriteHeader(http.StatusCreated)
 	})
 
-	mw := corehttp.Idempotency(corehttp.NewMemoryIdempotencyStore(time.Hour))(h)
+	mw := corehttp.Idempotency(corehttp.NewMemoryIdempotencyStore(time.Hour, 0))(h)
 
 	ilk := make(chan int, 1)
 
@@ -385,7 +385,7 @@ func TestIdempotencyAnahtarlariAyirir(t *testing.T) {
 	t.Parallel()
 
 	h := &sayanHandler{status: http.StatusCreated}
-	mw := corehttp.Idempotency(corehttp.NewMemoryIdempotencyStore(time.Hour))(h)
+	mw := corehttp.Idempotency(corehttp.NewMemoryIdempotencyStore(time.Hour, 0))(h)
 
 	for _, k := range []string{"a", "b", "c"} {
 		w := httptest.NewRecorder()
@@ -403,7 +403,7 @@ func TestIdempotencyYarisAltindaTekCalisma(t *testing.T) {
 	t.Parallel()
 
 	h := &sayanHandler{status: http.StatusCreated}
-	mw := corehttp.Idempotency(corehttp.NewMemoryIdempotencyStore(time.Hour))(h)
+	mw := corehttp.Idempotency(corehttp.NewMemoryIdempotencyStore(time.Hour, 0))(h)
 
 	var wg sync.WaitGroup
 
@@ -457,7 +457,7 @@ func TestIdempotencyKayitYazilamazsaAnahtarKilitliKalmaz(t *testing.T) {
 	t.Parallel()
 
 	depo := &patlayanDepo{
-		ic:          corehttp.NewMemoryIdempotencyStore(time.Hour),
+		ic:          corehttp.NewMemoryIdempotencyStore(time.Hour, 0),
 		completeErr: errors.New("depo yazılamadı"),
 	}
 
@@ -491,7 +491,7 @@ func TestIdempotencyCokBuyukYanitKaydedilmez(t *testing.T) {
 		_, _ = w.Write(make([]byte, boyut))
 	})
 
-	mw := corehttp.Idempotency(corehttp.NewMemoryIdempotencyStore(time.Hour))(h)
+	mw := corehttp.Idempotency(corehttp.NewMemoryIdempotencyStore(time.Hour, 0))(h)
 
 	w1 := httptest.NewRecorder()
 	mw.ServeHTTP(w1, postIstek("idem_1", "/x", `{"a":1}`))
@@ -505,6 +505,50 @@ func TestIdempotencyCokBuyukYanitKaydedilmez(t *testing.T) {
 	assert.Equal(t, boyut, w2.Body.Len(), "tekrar da tam yanıt almalı")
 }
 
+// TestIdempotencyButceDolunucaDusenAnahtarYenidenIslenir bellek bütçesi
+// dolduğunda DÜŞEN kaydın tekrarının handler'ı yeniden çalıştırdığını
+// doğrular.
+//
+// Test, sınırın BEDELİNİ görünür kılmak için vardır. "Bellek sınırlandı"
+// cümlesi bedelsiz gibi okunur; oysa bedeli, düşen anahtarla gelen tekrarın
+// ikinci bir sipariş yaratmasıdır. Bu davranış bir kaza değil bilinçli bir
+// seçimdir (bkz. corehttp.MemoryIdempotencyStore godoc'u: reddetmek yerine
+// düşürmek) ve o seçimin kanıtı yalnızca burada, middleware'in gördüğü yerde
+// verilebilir.
+func TestIdempotencyButceDolunucaDusenAnahtarYenidenIslenir(t *testing.T) {
+	t.Parallel()
+
+	h := &sayanHandler{status: http.StatusCreated}
+	// Bu yanıtların her biri ~937 bayta yüklenir; bütçe İKİ kaydı alır,
+	// üçüncüsü yazıldığında en eskisi düşer.
+	depo := corehttp.NewMemoryIdempotencyStore(time.Hour, 2000)
+	mw := corehttp.Idempotency(depo)(h)
+
+	for _, anahtar := range []string{"idem_1", "idem_2", "idem_3"} {
+		w := httptest.NewRecorder()
+		mw.ServeHTTP(w, postIstek(anahtar, "/store/v1/orders", `{"cart":"c1"}`))
+		require.Equal(t, http.StatusCreated, w.Code)
+	}
+
+	require.Equal(t, 3, h.sayisi())
+
+	// İlk anahtarın TEKRARI: kaydı düştüğü için yeniden işlenir.
+	w4 := httptest.NewRecorder()
+	mw.ServeHTTP(w4, postIstek("idem_1", "/store/v1/orders", `{"cart":"c1"}`))
+
+	assert.Equal(t, 4, h.sayisi(), "düşen anahtarla gelen tekrar yeniden işlenir")
+	assert.Empty(t, w4.Header().Get(corehttp.IdempotencyReplayedHeader),
+		"düşmüş kayıt çalınmış gibi işaretlenmemeli")
+
+	// Üçüncü anahtar hâlâ korunuyor: sınır TÜM korumayı kapatmaz, yalnızca en
+	// eski kaydı bırakır.
+	w5 := httptest.NewRecorder()
+	mw.ServeHTTP(w5, postIstek("idem_3", "/store/v1/orders", `{"cart":"c1"}`))
+
+	assert.Equal(t, 4, h.sayisi(), "düşmemiş kaydın tekrarı handler'ı çalıştırmamalı")
+	assert.Equal(t, "true", w5.Header().Get(corehttp.IdempotencyReplayedHeader))
+}
+
 // TestIdempotencyBaskaCagiraninYanitiCalinmaz aynı anahtarı seçen İKİ FARKLI
 // çağıranın birbirinin kaydını görmediğini doğrular.
 //
@@ -516,7 +560,7 @@ func TestIdempotencyBaskaCagiraninYanitiCalinmaz(t *testing.T) {
 	t.Parallel()
 
 	h := &sayanHandler{status: http.StatusCreated}
-	mw := corehttp.Idempotency(corehttp.NewMemoryIdempotencyStore(time.Hour))(h)
+	mw := corehttp.Idempotency(corehttp.NewMemoryIdempotencyStore(time.Hour, 0))(h)
 
 	w1 := httptest.NewRecorder()
 	mw.ServeHTTP(w1, kimlikli(postIstek("1", "/store/v1/orders", `{"cart":"c1"}`), "user", "usr_1"))
@@ -552,7 +596,7 @@ func TestIdempotencyBaskaCagiranAnahtarAlaniniIsgalEtmez(t *testing.T) {
 	t.Parallel()
 
 	h := &sayanHandler{status: http.StatusCreated}
-	mw := corehttp.Idempotency(corehttp.NewMemoryIdempotencyStore(time.Hour))(h)
+	mw := corehttp.Idempotency(corehttp.NewMemoryIdempotencyStore(time.Hour, 0))(h)
 
 	w1 := httptest.NewRecorder()
 	mw.ServeHTTP(w1, kimlikli(postIstek("order-1", "/x", `{"cart":"c1"}`), "api_key", "ak_1"))
@@ -574,7 +618,7 @@ func TestIdempotencyAyniCagiranAyniAnahtarlaCakisir(t *testing.T) {
 	t.Parallel()
 
 	h := &sayanHandler{status: http.StatusCreated}
-	mw := corehttp.Idempotency(corehttp.NewMemoryIdempotencyStore(time.Hour))(h)
+	mw := corehttp.Idempotency(corehttp.NewMemoryIdempotencyStore(time.Hour, 0))(h)
 
 	w1 := httptest.NewRecorder()
 	mw.ServeHTTP(w1, kimlikli(postIstek("1", "/x", `{"cart":"c1"}`), "user", "usr_1"))
@@ -600,7 +644,7 @@ func TestIdempotencyKimliksizCagiranlarKovayiPaylasir(t *testing.T) {
 	t.Parallel()
 
 	h := &sayanHandler{status: http.StatusCreated}
-	mw := corehttp.Idempotency(corehttp.NewMemoryIdempotencyStore(time.Hour))(h)
+	mw := corehttp.Idempotency(corehttp.NewMemoryIdempotencyStore(time.Hour, 0))(h)
 
 	w1 := httptest.NewRecorder()
 	mw.ServeHTTP(w1, postIstek("1", "/x", `{"cart":"c1"}`))
@@ -696,7 +740,7 @@ func durumunuOku(ctx context.Context) kapanisDurumu {
 func TestIdempotencyKayitIstemciKopsaDaYazilir(t *testing.T) {
 	t.Parallel()
 
-	depo := &kapanisYakalayanDepo{ic: corehttp.NewMemoryIdempotencyStore(time.Hour)}
+	depo := &kapanisYakalayanDepo{ic: corehttp.NewMemoryIdempotencyStore(time.Hour, 0)}
 
 	ctx, iptal := context.WithCancel(t.Context())
 	h := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -731,7 +775,7 @@ func TestIdempotencyKayitIstemciKopsaDaYazilir(t *testing.T) {
 func TestIdempotencyIptalIstemciKopsaDaGeriAlinir(t *testing.T) {
 	t.Parallel()
 
-	depo := &kapanisYakalayanDepo{ic: corehttp.NewMemoryIdempotencyStore(time.Hour)}
+	depo := &kapanisYakalayanDepo{ic: corehttp.NewMemoryIdempotencyStore(time.Hour, 0)}
 
 	ctx, iptal := context.WithCancel(t.Context())
 	h := &sayanHandler{status: http.StatusInternalServerError}
