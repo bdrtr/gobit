@@ -1,14 +1,14 @@
 //go:build integration
 
-// Bu dosyadaki testler gerçek bir PostgreSQL örneği (dolayısıyla Docker)
-// gerektirir; `make test` hızlı kalsın diye `integration` etiketiyle
-// ayrılmıştır. Çalıştırmak için: make test-integration
+// The tests in this file need a real PostgreSQL instance (and therefore
+// Docker); they are separated behind the `integration` tag so that `make test`
+// stays fast. To run them: make test-integration
 //
-// Birim testleri sahte bir link servisiyle çalışır ve yalnızca Query'nin
-// mantığını kanıtlar. Buradaki testler GERÇEK link servisiyle (Postgres'te
-// yaşayan link tabloları) uçtan uca akışı doğrular: iki dummy modül, gerçek
-// link tanımı, gerçek bağlar, container'dan adla çözülen sağlayıcılar. Faz 2'nin
-// "iki dummy modül ile uçtan uca doğrula" maddesinin karşılığı budur.
+// The unit tests run against a fake link service and prove Query's logic alone.
+// The tests here verify the end-to-end flow against the REAL link service (link
+// tables living in Postgres): two dummy modules, a real link definition, real
+// links, providers resolved from the container by name. This is what Phase 2's
+// "verify end to end with two dummy modules" item asks for.
 package query_test
 
 import (
@@ -36,12 +36,12 @@ import (
 
 const postgresImage = "postgres:16-alpine"
 
-// testPool tüm entegrasyon testlerinin paylaştığı havuzdur.
+// testPool is the pool every integration test shares.
 var testPool *db.Pool
 
-// Entegrasyon testlerinde kullanılan link tanımları. İki dummy modül arasında
-// hem çok uçlu hem tek uçlu bir ilişki kurulur; böylece şeklin kardinaliteden
-// geldiği gerçek veritabanı üzerinde de doğrulanır.
+// The link definitions used in the integration tests. Between the two dummy
+// modules both a many-ended and a single-ended relation is built, so that the
+// shape coming from the cardinality is verified against a real database too.
 var (
 	itemPrice = link.LinkDefinition{
 		Name:        "item_price",
@@ -61,8 +61,8 @@ func TestMain(m *testing.M) {
 	os.Exit(runWithPostgres(m))
 }
 
-// runWithPostgres tek bir Postgres konteyneri kaldırıp tüm testleri onun
-// üzerinde çalıştırır. os.Exit defer'ları atladığı için ayrı fonksiyondadır.
+// runWithPostgres brings up a single Postgres container and runs every test
+// against it. It is a separate function because os.Exit skips the defers.
 func runWithPostgres(m *testing.M) int {
 	ctx := context.Background()
 
@@ -74,23 +74,23 @@ func runWithPostgres(m *testing.M) int {
 	)
 	defer func() {
 		if termErr := testcontainers.TerminateContainer(ctr); termErr != nil {
-			fmt.Fprintf(os.Stderr, "postgres konteyneri durdurulamadı: %v\n", termErr)
+			fmt.Fprintf(os.Stderr, "the postgres container could not be stopped: %v\n", termErr)
 		}
 	}()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "postgres konteyneri başlatılamadı: %v\n", err)
+		fmt.Fprintf(os.Stderr, "the postgres container could not be started: %v\n", err)
 		return 1
 	}
 
 	dsn, err := ctr.ConnectionString(ctx, "sslmode=disable")
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "bağlantı adresi alınamadı: %v\n", err)
+		fmt.Fprintf(os.Stderr, "the connection string could not be read: %v\n", err)
 		return 1
 	}
 
 	testPool, err = db.New(ctx, db.DefaultConfig(dsn), nil)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "havuz kurulamadı: %v\n", err)
+		fmt.Fprintf(os.Stderr, "the pool could not be built: %v\n", err)
 		return 1
 	}
 	defer testPool.Close()
@@ -98,15 +98,15 @@ func runWithPostgres(m *testing.M) int {
 	return m.Run()
 }
 
-// --- dummy modüller ---------------------------------------------------------
+// --- the dummy modules ------------------------------------------------------
 
-// dummyModule entegrasyon testlerindeki bir commerce modülünü temsil eder:
-// yalnızca KENDİ tablosunu okur (Prensip 2.1) ve container'a "<entity>.query"
-// adıyla konan query.Provider yüzeyini karşılar (ADR 0004).
+// dummyModule stands for a commerce module in the integration tests: it reads
+// ITS OWN table only (Principle 2.1) and satisfies the query.Provider surface
+// put into the container under "<entity>.query" (ADR 0004).
 //
-// Sağlayıcı, gerçek bir modül repository'si gibi tek SQL sorgusuyla batch
-// okuma yapar; çağrı sayaçları N+1 iddiasını gerçek veritabanı üzerinde de
-// kanıtlar.
+// The provider does a batch read with a single SQL statement, like a real
+// module's repository; the call counters prove the N+1 claim against a real
+// database as well.
 type dummyModule struct {
 	entity string
 	table  string
@@ -118,8 +118,8 @@ type dummyModule struct {
 
 var _ query.Provider = (*dummyModule)(nil)
 
-// yeniModul verilen entity için tabloyu sıfırdan oluşturur ve modülü döner.
-func yeniModul(t *testing.T, entity, kolonlar string) *dummyModule {
+// newModule creates the table for the given entity from scratch and returns the module.
+func newModule(t *testing.T, entity, kolonlar string) *dummyModule {
 	t.Helper()
 
 	m := &dummyModule{entity: entity, table: "dummy_" + entity, pool: testPool.Pool()}
@@ -133,36 +133,36 @@ func yeniModul(t *testing.T, entity, kolonlar string) *dummyModule {
 	return m
 }
 
-// ekle modülün tablosuna tek bir kayıt yazar.
-func (m *dummyModule) ekle(t *testing.T, kolonlar string, degerler ...any) {
+// insert writes a single record into the module's table.
+func (m *dummyModule) insert(t *testing.T, kolonlar string, values ...any) {
 	t.Helper()
 
-	yer := make([]string, len(degerler))
-	for i := range degerler {
-		yer[i] = fmt.Sprintf("$%d", i+1)
+	placeholders := make([]string, len(values))
+	for i := range values {
+		placeholders[i] = fmt.Sprintf("$%d", i+1)
 	}
 	_, err := m.pool.Exec(t.Context(),
-		fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s)", m.table, kolonlar, strings.Join(yer, ", ")),
-		degerler...)
+		fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s)", m.table, kolonlar, strings.Join(placeholders, ", ")),
+		values...)
 	require.NoError(t, err)
 }
 
-// Entity modülün sunduğu entity adını döner.
+// Entity returns the entity name the module serves.
 func (m *dummyModule) Entity() string { return m.entity }
 
-// List kök kayıtları döner; yalnızca "status" filtresini tanır.
+// List returns the root records; it recognizes the "status" filter only.
 func (m *dummyModule) List(ctx context.Context, opts query.ListOptions) ([]query.Record, error) {
 	m.listCalls.Add(1)
 
 	sql := "SELECT * FROM " + m.table
 	args := make([]any, 0, 1)
-	for alan, deger := range opts.Filters {
-		if alan != "status" {
-			// ADR 0004: desteklenmeyen alan sağlayıcı tarafından reddedilir.
+	for field, value := range opts.Filters {
+		if field != "status" {
+			// ADR 0004: an unsupported field is refused by the provider.
 			return nil, errors.Invalid("dummy_unknown_filter",
-				"%q sağlayıcısı %q filtresini desteklemiyor", m.entity, alan)
+				"the %q provider does not support the %q filter", m.entity, field)
 		}
-		args = append(args, deger)
+		args = append(args, value)
 		sql += fmt.Sprintf(" WHERE status = $%d", len(args))
 	}
 	sql += " ORDER BY id"
@@ -173,38 +173,38 @@ func (m *dummyModule) List(ctx context.Context, opts query.ListOptions) ([]query
 		sql += fmt.Sprintf(" OFFSET %d", opts.Offset)
 	}
 
-	return m.sorgula(ctx, sql, opts.Fields, args...)
+	return m.query(ctx, sql, opts.Fields, args...)
 }
 
-// FetchByIDs verilen kimliklerin kayıtlarını TEK sorguda döner.
+// FetchByIDs returns the records of the given ids in ONE query.
 func (m *dummyModule) FetchByIDs(ctx context.Context, ids, fields []string) ([]query.Record, error) {
 	m.fetchCalls.Add(1)
 
-	return m.sorgula(ctx, "SELECT * FROM "+m.table+" WHERE id = ANY($1)", fields, ids)
+	return m.query(ctx, "SELECT * FROM "+m.table+" WHERE id = ANY($1)", fields, ids)
 }
 
-// sorgula sorguyu çalıştırır ve satırları alan seçimini uygulayarak Record'a çevirir.
-func (m *dummyModule) sorgula(ctx context.Context, sql string, fields []string, args ...any) ([]query.Record, error) {
+// query runs the query and turns the rows into Records, applying the field selection.
+func (m *dummyModule) query(ctx context.Context, sql string, fields []string, args ...any) ([]query.Record, error) {
 	rows, err := m.pool.Query(ctx, sql, args...)
 	if err != nil {
 		return nil, errors.Wrap(err, errors.KindUnavailable, "dummy_query_failed",
-			"%q sağlayıcısı sorgulanamadı", m.entity)
+			"the %q provider could not be queried", m.entity)
 	}
 
-	satirlar, err := pgx.CollectRows(rows, pgx.RowToMap)
+	collected, err := pgx.CollectRows(rows, pgx.RowToMap)
 	if err != nil {
 		return nil, errors.Wrap(err, errors.KindUnavailable, "dummy_scan_failed",
-			"%q sağlayıcısının satırları okunamadı", m.entity)
+			"the rows of the %q provider could not be read", m.entity)
 	}
 
-	out := make([]query.Record, 0, len(satirlar))
-	for _, satir := range satirlar {
-		rec := make(query.Record, len(satir))
-		for alan, deger := range satir {
-			if len(fields) > 0 && !slices.Contains(fields, alan) {
+	out := make([]query.Record, 0, len(collected))
+	for _, row := range collected {
+		rec := make(query.Record, len(row))
+		for field, value := range row {
+			if len(fields) > 0 && !slices.Contains(fields, field) {
 				continue
 			}
-			rec[alan] = deger
+			rec[field] = value
 		}
 		out = append(out, rec)
 	}
@@ -213,10 +213,10 @@ func (m *dummyModule) sorgula(ctx context.Context, sql string, fields []string, 
 
 // --- testler ----------------------------------------------------------------
 
-func TestGraphUctanUcaIkiDummyModul(t *testing.T) {
+func TestGraphEndToEndWithTwoDummyModules(t *testing.T) {
 	ctx := t.Context()
 
-	items, prices, links := kurulum(t)
+	items, prices, links := setUp(t)
 
 	c := container.New(nil)
 	require.NoError(t, c.Provide(items.Entity()+query.ProviderSuffix, items))
@@ -234,50 +234,50 @@ func TestGraphUctanUcaIkiDummyModul(t *testing.T) {
 		},
 	})
 	require.NoError(t, err)
-	require.Len(t, got, 2, "yalnızca yayımlanmış kayıtlar dönmeli")
+	require.Len(t, got, 2, "only the published records may come back")
 
-	// Kök: seçilen alan + birleştirme için eklenen kimlik.
+	// The root: the selected field plus the id added for the join.
 	assert.Equal(t, "item_1", got[0]["id"])
-	assert.Equal(t, "Tişört", got[0]["title"])
-	assert.NotContains(t, got[0], "status", "seçilmeyen alan dönmemeli")
+	assert.Equal(t, "T-shirt", got[0]["title"])
+	assert.NotContains(t, got[0], "status", "an unselected field must not come back")
 
-	// OneToMany: dilim, link'in sıralamasına göre.
+	// OneToMany: a slice, in the link's order.
 	fiyatlar, ok := got[0]["fiyatlar"].([]query.Record)
-	require.Truef(t, ok, "OneToMany dilim yazmalı; gelen tip: %T", got[0]["fiyatlar"])
+	require.Truef(t, ok, "OneToMany has to write a slice; the type that arrived: %T", got[0]["prices"])
 	require.Len(t, fiyatlar, 2)
 	assert.Equal(t, "price_1", fiyatlar[0]["id"])
 	assert.Equal(t, int64(1990), fiyatlar[0]["amount"])
 	assert.Equal(t, "TRY", fiyatlar[0]["currency"])
 	assert.Equal(t, "price_2", fiyatlar[1]["id"])
 
-	// OneToOne: tek kayıt, bağı olmayan kökte nil.
+	// OneToOne: a single record, nil on a root with no link.
 	ana, ok := got[0]["ana_fiyat"].(query.Record)
-	require.Truef(t, ok, "OneToOne tek kayıt yazmalı; gelen tip: %T", got[0]["ana_fiyat"])
+	require.Truef(t, ok, "OneToOne has to write a single record; the type that arrived: %T", got[0]["main_price"])
 	assert.Equal(t, "price_1", ana["id"])
 
 	ikinci, ok := got[1]["fiyatlar"].([]query.Record)
 	require.True(t, ok)
 	require.Len(t, ikinci, 1)
 	assert.Equal(t, "price_3", ikinci[0]["id"])
-	assert.Nil(t, got[1]["ana_fiyat"], "bağı olmayan kökte tek uçlu genişletme nil olmalı")
+	assert.Nil(t, got[1]["main_price"], "a single-ended expansion has to be nil on a root with no link")
 
-	// N+1 yok: genişletme başına tek sorgu, kök için tek List.
+	// No N+1: one query per expansion, one List for the root.
 	assert.Equal(t, int64(1), items.listCalls.Load())
 	assert.Zero(t, items.fetchCalls.Load())
 	assert.Equal(t, int64(2), prices.fetchCalls.Load(),
-		"iki genişletme, iki batch sorgu; kayıt başına sorgu yapılmamalı")
+		"two expansions, two batch queries; there must be no query per record")
 }
 
-// TestGraphTersYonGercekLinkServisiyleCalisir kök entity link'in TO ucundayken
-// genişletmenin çalıştığını doğrular.
+// TestGraphResolvesTheReverseDirectionWithTheRealLinkService verifies that the
+// expansion works while the root entity sits at the TO end of the link.
 //
-// Regresyon: link ve query paketleri ayrı ajanlar tarafından yazıldığında
-// LinkService yalnızca From->To yönünü sunuyor, Query ise ters yön için somut
-// tipte olmayan bir yüzey (ListManyByTo) arıyordu. Sahte servisle yazılan birim
-// testleri geçiyor, GERÇEK servisle her ters yönlü genişletme düşüyordu.
-// ListManyByTo artık LinkService sözleşmesinin parçasıdır.
-func TestGraphTersYonGercekLinkServisiyleCalisir(t *testing.T) {
-	items, prices, links := kurulum(t)
+// Regression: when the link and query packages were written by separate agents,
+// LinkService offered the From->To direction only while Query looked for a
+// surface that was not on the concrete type (ListManyByTo). The unit tests
+// written against the fake service passed while every reverse expansion failed
+// against the REAL one. ListManyByTo is part of the LinkService contract now.
+func TestGraphResolvesTheReverseDirectionWithTheRealLinkService(t *testing.T) {
+	items, prices, links := setUp(t)
 
 	c := container.New(nil)
 	require.NoError(t, c.Provide(items.Entity()+query.ProviderSuffix, items))
@@ -285,41 +285,41 @@ func TestGraphTersYonGercekLinkServisiyleCalisir(t *testing.T) {
 
 	q := query.New(links, c, nil)
 
-	// Kök entity link'in TO ucunda: fiyattan ürüne doğru çözülüyor.
+	// The root entity sits at the link's TO end: it resolves from price to product.
 	got, err := q.Graph(t.Context(), query.GraphSpec{
 		Entity: "shop_price",
-		Expand: []query.Expansion{{Link: "item_price", As: "urun"}},
+		Expand: []query.Expansion{{Link: "item_price", As: "product"}},
 	})
 	require.NoError(t, err)
-	require.NotEmpty(t, got, "ters yönlü genişletme sonuç döndürmeli")
+	require.NotEmpty(t, got, "a reverse expansion has to return results")
 
-	// En az bir fiyatın bağlı olduğu ürün gelmiş olmalı.
-	var bagliOlan query.Record
+	// At least one price's product has to have come back.
+	var linked query.Record
 	for _, rec := range got {
-		if urun, ok := rec["urun"]; ok && urun != nil {
-			bagliOlan = rec
+		if product, ok := rec["product"]; ok && product != nil {
+			linked = rec
 			break
 		}
 	}
-	require.NotNil(t, bagliOlan, "bağlı en az bir fiyat kaydı bekleniyordu")
+	require.NotNil(t, linked, "at least one linked price record was expected")
 
-	urunler, ok := bagliOlan["urun"].([]query.Record)
+	urunler, ok := linked["product"].([]query.Record)
 	if ok {
 		require.NotEmpty(t, urunler)
 		assert.Contains(t, urunler[0], "id")
 	} else {
-		urun, tekil := bagliOlan["urun"].(query.Record)
-		require.True(t, tekil, "genişletme Record veya []Record olmalı, gelen: %T", bagliOlan["urun"])
-		assert.Contains(t, urun, "id")
+		product, single := linked["product"].(query.Record)
+		require.True(t, single, "an expansion has to be a Record or []Record, got: %T", linked["product"])
+		assert.Contains(t, product, "id")
 	}
 
-	// N+1 yok: ters yön de tek batch.
+	// No N+1: the reverse direction is one batch too.
 	assert.Equal(t, int64(1), items.fetchCalls.Load(),
-		"ters yönde de kayıt başına değil, tek batch çağrı yapılmalı")
+		"the reverse direction has to make one batch call as well, not one per record")
 }
 
-func TestGraphGercekLinkServisindeBilinmeyenLinkNotFoundDoner(t *testing.T) {
-	items, prices, links := kurulum(t)
+func TestGraphReturnsNotFoundForAnUnknownLinkWithTheRealService(t *testing.T) {
+	items, prices, links := setUp(t)
 
 	c := container.New(nil)
 	require.NoError(t, c.Provide(items.Entity()+query.ProviderSuffix, items))
@@ -332,12 +332,12 @@ func TestGraphGercekLinkServisindeBilinmeyenLinkNotFoundDoner(t *testing.T) {
 		Expand: []query.Expansion{{Link: "tanimsiz_link"}},
 	})
 	require.Error(t, err)
-	assert.True(t, errors.IsNotFound(err), "beklenen sınıf NotFound, gelen: %v", err)
+	assert.True(t, errors.IsNotFound(err), "the expected class is NotFound, got: %v", err)
 	assert.Contains(t, err.Error(), "tanimsiz_link")
 }
 
-func TestGraphKayitliOlmayanSaglayiciNotFoundDoner(t *testing.T) {
-	items, _, links := kurulum(t)
+func TestGraphReturnsNotFoundForAnUnregisteredProvider(t *testing.T) {
+	items, _, links := setUp(t)
 
 	// shop_price.query bilerek kaydedilmiyor.
 	c := container.New(nil)
@@ -350,15 +350,15 @@ func TestGraphKayitliOlmayanSaglayiciNotFoundDoner(t *testing.T) {
 		Expand: []query.Expansion{{Link: "item_price"}},
 	})
 	require.Error(t, err)
-	assert.True(t, errors.IsNotFound(err), "beklenen sınıf NotFound, gelen: %v", err)
+	assert.True(t, errors.IsNotFound(err), "the expected class is NotFound, got: %v", err)
 
 	var typed *errors.Error
 	require.True(t, errors.As(err, &typed))
 	assert.Equal(t, "shop_price"+query.ProviderSuffix, typed.Details["looked_up_name"])
 }
 
-func TestGraphSaglayiciHatasiTumCagriyiDusurur(t *testing.T) {
-	items, prices, links := kurulum(t)
+func TestGraphAProviderErrorDropsTheWholeCall(t *testing.T) {
+	items, prices, links := setUp(t)
 
 	c := container.New(nil)
 	require.NoError(t, c.Provide(items.Entity()+query.ProviderSuffix, items))
@@ -366,7 +366,7 @@ func TestGraphSaglayiciHatasiTumCagriyiDusurur(t *testing.T) {
 
 	q := query.New(links, c, nil)
 
-	// Sağlayıcı tanımadığı filtreyi reddeder (ADR 0004); Query bunu yutmamalı.
+	// The provider refuses a filter it does not know (ADR 0004); Query must not swallow it.
 	got, err := q.Graph(t.Context(), query.GraphSpec{
 		Entity:  "shop_item",
 		Filters: map[string]any{"bilinmeyen_alan": "x"},
@@ -374,35 +374,36 @@ func TestGraphSaglayiciHatasiTumCagriyiDusurur(t *testing.T) {
 	})
 	require.Error(t, err)
 	assert.Nil(t, got)
-	assert.True(t, errors.IsInvalid(err), "sağlayıcının hata sınıfı korunmalı, gelen: %v", err)
-	assert.Zero(t, prices.fetchCalls.Load(), "kök başarısızsa genişletmeye geçilmemeli")
+	assert.True(t, errors.IsInvalid(err), "the provider's error class has to be preserved, got: %v", err)
+	assert.Zero(t, prices.fetchCalls.Load(), "with the root failing the expansion must not be reached")
 }
 
-// --- yardımcılar ------------------------------------------------------------
+// --- helpers ----------------------------------------------------------------
 
-// kurulum iki dummy modülü, verilerini ve gerçek link servisini hazırlar.
+// setUp prepares the two dummy modules, their data and the real link service.
 //
-// Modül tabloları her çağrıda sıfırdan kurulur; link tabloları Define'dan sonra
-// boşaltılır. Böylece testler birbirinden ve önceki koşulardan bağımsızdır.
-func kurulum(t *testing.T) (items, prices *dummyModule, links link.LinkService) {
+// The module tables are built from scratch on every call; the link tables are
+// emptied after Define. That keeps the tests independent of each other and of
+// earlier runs.
+func setUp(t *testing.T) (items, prices *dummyModule, links link.LinkService) {
 	t.Helper()
 	ctx := t.Context()
 
-	items = yeniModul(t, "shop_item", "title TEXT NOT NULL, status TEXT NOT NULL")
-	prices = yeniModul(t, "shop_price", "amount BIGINT NOT NULL, currency TEXT NOT NULL")
+	items = newModule(t, "shop_item", "title TEXT NOT NULL, status TEXT NOT NULL")
+	prices = newModule(t, "shop_price", "amount BIGINT NOT NULL, currency TEXT NOT NULL")
 
-	items.ekle(t, "id, title, status", "item_1", "Tişört", "published")
-	items.ekle(t, "id, title, status", "item_2", "Şapka", "published")
-	items.ekle(t, "id, title, status", "item_3", "Taslak", "draft")
+	items.insert(t, "id, title, status", "item_1", "T-shirt", "published")
+	items.insert(t, "id, title, status", "item_2", "Hat", "published")
+	items.insert(t, "id, title, status", "item_3", "Taslak", "draft")
 
-	prices.ekle(t, "id, amount, currency", "price_1", int64(1990), "TRY")
-	prices.ekle(t, "id, amount, currency", "price_2", int64(2490), "TRY")
-	prices.ekle(t, "id, amount, currency", "price_3", int64(3990), "TRY")
+	prices.insert(t, "id, amount, currency", "price_1", int64(1990), "TRY")
+	prices.insert(t, "id, amount, currency", "price_2", int64(2490), "TRY")
+	prices.insert(t, "id, amount, currency", "price_3", int64(3990), "TRY")
 
 	links = link.New(testPool, nil)
 	require.NoError(t, links.Define(ctx, itemPrice))
 	require.NoError(t, links.Define(ctx, itemMainPrice))
-	baglariTemizle(t, itemPrice.Name, itemMainPrice.Name)
+	clearLinks(t, itemPrice.Name, itemMainPrice.Name)
 
 	require.NoError(t, links.Create(ctx, itemPrice.Name, "item_1", "price_1"))
 	require.NoError(t, links.Create(ctx, itemPrice.Name, "item_1", "price_2"))
@@ -412,8 +413,8 @@ func kurulum(t *testing.T) (items, prices *dummyModule, links link.LinkService) 
 	return items, prices, links
 }
 
-// baglariTemizle verilen link tablolarını boşaltır.
-func baglariTemizle(t *testing.T, names ...string) {
+// clearLinks empties the given link tables.
+func clearLinks(t *testing.T, names ...string) {
 	t.Helper()
 
 	for _, name := range names {

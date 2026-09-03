@@ -14,24 +14,24 @@ import (
 	"github.com/bdrtr/gobit/internal/core/query"
 )
 
-// Testlerde kullanılan link tanımları. Adlar ve uçlar plan Bölüm 6'daki
-// "önemli linkler" listesine sadıktır.
+// The link definitions used in the tests. The names and ends stay faithful to
+// the "important links" list in plan Section 6.
 var (
-	// productVariant bir ürünün varyantlarına bağlar: bir ürün, çok varyant.
+	// productVariant links a product to its variants: one product, many variants.
 	productVariant = link.LinkDefinition{
 		Name:        "product_variant",
 		From:        link.LinkSide{Module: "product", Field: "product_id"},
 		To:          link.LinkSide{Module: "variant", Field: "variant_id"},
 		Cardinality: link.OneToMany,
 	}
-	// variantPrice bir varyantı tek bir fiyat kümesine bağlar.
+	// variantPrice links a variant to a single price set.
 	variantPrice = link.LinkDefinition{
 		Name:        "variant_price",
 		From:        link.LinkSide{Module: "variant", Field: "variant_id"},
 		To:          link.LinkSide{Module: "pricing", Field: "price_set_id"},
 		Cardinality: link.OneToOne,
 	}
-	// productChannel bir ürünü satış kanallarına bağlar: çoktan çoğa.
+	// productChannel links a product to sales channels: many to many.
 	productChannel = link.LinkDefinition{
 		Name:        "product_channel",
 		From:        link.LinkSide{Module: "product", Field: "product_id"},
@@ -40,13 +40,13 @@ var (
 	}
 )
 
-// --- kök çekme --------------------------------------------------------------
+// --- fetching the root ------------------------------------------------------
 
-func TestGraphKokKayitlariCekerVeAlanSeciminiIletir(t *testing.T) {
+func TestGraphFetchesTheRootRecordsAndPassesTheFieldSelection(t *testing.T) {
 	products := newProvider("product",
-		query.Record{"id": "prod_1", "title": "Kırmızı Tişört", "gizli": "a"},
-		query.Record{"id": "prod_2", "title": "Mavi Tişört", "gizli": "b"},
-		query.Record{"id": "prod_3", "title": "Yeşil Tişört", "gizli": "c"},
+		query.Record{"id": "prod_1", "title": "Red T-shirt", "hidden": "a"},
+		query.Record{"id": "prod_2", "title": "Blue T-shirt", "hidden": "b"},
+		query.Record{"id": "prod_3", "title": "Green T-shirt", "hidden": "c"},
 	)
 	q := query.New(newLinks(), newContainer(t, products), nil)
 
@@ -60,29 +60,29 @@ func TestGraphKokKayitlariCekerVeAlanSeciminiIletir(t *testing.T) {
 	require.NoError(t, err)
 
 	require.Len(t, got, 1)
-	assert.Equal(t, query.Record{"title": "Mavi Tişört"}, got[0])
+	assert.Equal(t, query.Record{"title": "Blue T-shirt"}, got[0])
 
 	opts := products.opts()
 	assert.Equal(t, []string{"title"}, opts.Fields,
-		"genişletme yokken kimlik alanı eklenmemeli")
+		"with no expansion the id field must not be added")
 	assert.Equal(t, map[string]any{"status": "published"}, opts.Filters)
 	assert.Equal(t, 1, opts.Limit)
 	assert.Equal(t, 1, opts.Offset)
 	assert.Equal(t, providerCalls{list: 1}, products.calls())
 }
 
-func TestGraphKokKayitYoksaBosDilimDoner(t *testing.T) {
+func TestGraphReturnsAnEmptySliceWithNoRootRecord(t *testing.T) {
 	products := newProvider("product")
 	q := query.New(newLinks(), newContainer(t, products), nil)
 
 	got, err := q.Graph(t.Context(), query.GraphSpec{Entity: "product"})
 	require.NoError(t, err)
-	require.NotNil(t, got, "kök kayıt yokken nil değil boş dilim dönmeli")
+	require.NotNil(t, got, "with no root record an empty slice has to come back, not nil")
 	assert.Empty(t, got)
 }
 
-func TestGraphGenisletmeVarkenKimlikAlaniEklenir(t *testing.T) {
-	products := newProvider("product", query.Record{"id": "prod_1", "title": "Tişört"})
+func TestGraphAddsTheIDFieldWhenThereIsAnExpansion(t *testing.T) {
+	products := newProvider("product", query.Record{"id": "prod_1", "title": "T-shirt"})
 	prices := newProvider("pricing", query.Record{"id": "pset_1", "amount": 1990})
 
 	links := newLinks(variantPrice, link.LinkDefinition{
@@ -103,11 +103,11 @@ func TestGraphGenisletmeVarkenKimlikAlaniEklenir(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Equal(t, []string{"title", "id"}, products.opts().Fields,
-		"birleştirme için kimlik alanı kök alan listesine eklenmeli")
+		"the id field has to be added to the root field list for the join")
 
 	_, fields := prices.fetchArgs()
 	assert.Equal(t, []string{"amount", "id"}, fields,
-		"birleştirme için kimlik alanı genişletme alan listesine de eklenmeli")
+		"the id field has to be added to the expansion field list for the join too")
 
 	require.Len(t, got, 1)
 	assert.Equal(t, "prod_1", got[0]["id"])
@@ -116,9 +116,9 @@ func TestGraphGenisletmeVarkenKimlikAlaniEklenir(t *testing.T) {
 	assert.Equal(t, query.Record{"id": "pset_1", "amount": 1990}, price)
 }
 
-// --- kardinalite ve şekil ---------------------------------------------------
+// --- cardinality and shape --------------------------------------------------
 
-func TestGraphOneToOneGenisletmeTekKayitYazar(t *testing.T) {
+func TestGraphOneToOneWritesASingleRecord(t *testing.T) {
 	variants := newProvider("variant", query.Record{"id": "var_1", "sku": "TS-M"})
 	prices := newProvider("pricing", query.Record{"id": "pset_1", "amount": 1990})
 
@@ -133,11 +133,11 @@ func TestGraphOneToOneGenisletmeTekKayitYazar(t *testing.T) {
 	require.Len(t, got, 1)
 
 	price, ok := got[0]["variant_price"].(query.Record)
-	require.Truef(t, ok, "OneToOne genişletmesi tek kayıt yazmalı; gelen tip: %T", got[0]["variant_price"])
+	require.Truef(t, ok, "a OneToOne expansion has to write a single record; the type that arrived: %T", got[0]["variant_price"])
 	assert.Equal(t, "pset_1", price["id"])
 }
 
-func TestGraphOneToManyGenisletmeDilimYazar(t *testing.T) {
+func TestGraphOneToManyWritesASlice(t *testing.T) {
 	products := newProvider("product", query.Record{"id": "prod_1"})
 	variants := newProvider("variant",
 		query.Record{"id": "var_1", "sku": "TS-S"},
@@ -155,13 +155,13 @@ func TestGraphOneToManyGenisletmeDilimYazar(t *testing.T) {
 	require.Len(t, got, 1)
 
 	list, ok := got[0]["product_variant"].([]query.Record)
-	require.Truef(t, ok, "OneToMany genişletmesi dilim yazmalı; gelen tip: %T", got[0]["product_variant"])
+	require.Truef(t, ok, "a OneToMany expansion has to write a slice; the type that arrived: %T", got[0]["product_variant"])
 	require.Len(t, list, 2)
 	assert.Equal(t, "var_1", list[0]["id"])
 	assert.Equal(t, "var_2", list[1]["id"])
 }
 
-func TestGraphManyToManyGenisletmeDilimYazar(t *testing.T) {
+func TestGraphManyToManyWritesASlice(t *testing.T) {
 	products := newProvider("product", query.Record{"id": "prod_1"})
 	channels := newProvider("channel",
 		query.Record{"id": "sc_web"},
@@ -179,11 +179,11 @@ func TestGraphManyToManyGenisletmeDilimYazar(t *testing.T) {
 	require.Len(t, got, 1)
 
 	list, ok := got[0]["product_channel"].([]query.Record)
-	require.Truef(t, ok, "ManyToMany genişletmesi dilim yazmalı; gelen tip: %T", got[0]["product_channel"])
+	require.Truef(t, ok, "a ManyToMany expansion has to write a slice; the type that arrived: %T", got[0]["product_channel"])
 	assert.Len(t, list, 2)
 }
 
-func TestGraphEslesmeYokkenSekilKorunur(t *testing.T) {
+func TestGraphKeepsTheShapeWithNoMatch(t *testing.T) {
 	products := newProvider("product", query.Record{"id": "prod_1"})
 	variants := newProvider("variant")
 	prices := newProvider("pricing")
@@ -207,21 +207,21 @@ func TestGraphEslesmeYokkenSekilKorunur(t *testing.T) {
 	require.Len(t, got, 1)
 
 	list, ok := got[0]["product_variant"].([]query.Record)
-	require.Truef(t, ok, "çok uçlu genişletme eşleşme yokken de dilim yazmalı; gelen tip: %T",
+	require.Truef(t, ok, "a many-ended expansion has to write a slice even with no match; the type that arrived: %T",
 		got[0]["product_variant"])
-	assert.Empty(t, list, "dilim boş olmalı ama nil olmamalı")
+	assert.Empty(t, list, "the slice has to be empty but not nil")
 	assert.NotNil(t, list)
 
 	require.Contains(t, got[0], "product_price")
-	assert.Nil(t, got[0]["product_price"], "tek uçlu genişletme eşleşme yokken nil yazmalı")
+	assert.Nil(t, got[0]["product_price"], "a single-ended expansion has to write nil with no match")
 
-	assert.Zero(t, variants.calls().fetch, "ilgili kimlik yokken sağlayıcıya hiç gidilmemeli")
-	assert.Zero(t, prices.calls().fetch, "ilgili kimlik yokken sağlayıcıya hiç gidilmemeli")
+	assert.Zero(t, variants.calls().fetch, "with no related id the provider must not be reached at all")
+	assert.Zero(t, prices.calls().fetch, "with no related id the provider must not be reached at all")
 }
 
-// --- çıktı anahtarı ---------------------------------------------------------
+// --- the output key ---------------------------------------------------------
 
-func TestGraphAsBosIkenAnahtarLinkAdidir(t *testing.T) {
+func TestGraphUsesTheLinkNameAsTheKeyWhenAsIsEmpty(t *testing.T) {
 	variants := newProvider("variant", query.Record{"id": "var_1"})
 	prices := newProvider("pricing", query.Record{"id": "pset_1"})
 
@@ -234,10 +234,10 @@ func TestGraphAsBosIkenAnahtarLinkAdidir(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.Len(t, got, 1)
-	assert.Contains(t, got[0], "variant_price", "As boşken anahtar link adı olmalı")
+	assert.Contains(t, got[0], "variant_price", "with As empty the key has to be the link name")
 }
 
-func TestGraphAsDoluykenAnahtarAsDegeridir(t *testing.T) {
+func TestGraphUsesAsAsTheKeyWhenItIsSet(t *testing.T) {
 	variants := newProvider("variant", query.Record{"id": "var_1"})
 	prices := newProvider("pricing", query.Record{"id": "pset_1"})
 
@@ -246,20 +246,20 @@ func TestGraphAsDoluykenAnahtarAsDegeridir(t *testing.T) {
 
 	got, err := q.Graph(t.Context(), query.GraphSpec{
 		Entity: "variant",
-		Expand: []query.Expansion{{Link: "variant_price", As: "fiyat"}},
+		Expand: []query.Expansion{{Link: "variant_price", As: "price"}},
 	})
 	require.NoError(t, err)
 	require.Len(t, got, 1)
-	assert.Contains(t, got[0], "fiyat")
-	assert.NotContains(t, got[0], "variant_price", "As verildiğinde link adı anahtar olmamalı")
+	assert.Contains(t, got[0], "price")
+	assert.NotContains(t, got[0], "variant_price", "with As given the link name must not be the key")
 }
 
-// --- iç içe genişletme ------------------------------------------------------
+// --- nested expansion -------------------------------------------------------
 
-func TestGraphIcIceGenisletmeIkiSeviye(t *testing.T) {
+func TestGraphNestedExpansionTwoLevels(t *testing.T) {
 	products := newProvider("product",
-		query.Record{"id": "prod_1", "title": "Tişört"},
-		query.Record{"id": "prod_2", "title": "Şapka"},
+		query.Record{"id": "prod_1", "title": "T-shirt"},
+		query.Record{"id": "prod_2", "title": "Hat"},
 	)
 	variants := newProvider("variant",
 		query.Record{"id": "var_1", "sku": "TS-S"},
@@ -284,7 +284,7 @@ func TestGraphIcIceGenisletmeIkiSeviye(t *testing.T) {
 		Expand: []query.Expansion{{
 			Link:   "product_variant",
 			As:     "varyantlar",
-			Expand: []query.Expansion{{Link: "variant_price", As: "fiyat"}},
+			Expand: []query.Expansion{{Link: "variant_price", As: "price"}},
 		}},
 	})
 	require.NoError(t, err)
@@ -294,43 +294,43 @@ func TestGraphIcIceGenisletmeIkiSeviye(t *testing.T) {
 	require.True(t, ok)
 	require.Len(t, first, 2)
 
-	price, ok := first[0]["fiyat"].(query.Record)
-	require.Truef(t, ok, "iç içe OneToOne tek kayıt yazmalı; gelen tip: %T", first[0]["fiyat"])
+	price, ok := first[0]["price"].(query.Record)
+	require.Truef(t, ok, "a nested OneToOne has to write a single record; the type that arrived: %T", first[0]["price"])
 	assert.Equal(t, 1990, price["amount"])
-	assert.Nil(t, first[1]["fiyat"], "bağı olmayan varyantın fiyatı nil olmalı")
+	assert.Nil(t, first[1]["price"], "the price of a variant with no link has to be nil")
 
 	second, ok := got[1]["varyantlar"].([]query.Record)
 	require.True(t, ok)
 	require.Len(t, second, 1)
-	price, ok = second[0]["fiyat"].(query.Record)
+	price, ok = second[0]["price"].(query.Record)
 	require.True(t, ok)
 	assert.Equal(t, 2990, price["amount"])
 
-	// Her seviye kendi içinde tek çağrıyla çözülmeli.
+	// Every level has to resolve within itself in a single call.
 	assert.Equal(t, providerCalls{list: 1}, products.calls())
 	assert.Equal(t, providerCalls{fetch: 1}, variants.calls())
 	assert.Equal(t, providerCalls{fetch: 1}, prices.calls())
-	assert.Equal(t, int64(2), links.listManyCalls.Load(), "genişletme başına tek link turu")
+	assert.Equal(t, int64(2), links.listManyCalls.Load(), "one link round per expansion")
 }
 
-// --- N+1 yok ----------------------------------------------------------------
+// --- no N+1 -----------------------------------------------------------------
 
-func TestGraphN1Yapmaz(t *testing.T) {
+func TestGraphDoesNoNPlusOne(t *testing.T) {
 	const (
-		kokSayisi     = 100
-		varyantSayisi = 2
+		rootCount    = 100
+		variantCount = 2
 	)
 
 	links := newLinks(productVariant, variantPrice)
-	productRecords := make([]query.Record, 0, kokSayisi)
-	variantRecords := make([]query.Record, 0, kokSayisi*varyantSayisi)
-	priceRecords := make([]query.Record, 0, kokSayisi*varyantSayisi)
+	productRecords := make([]query.Record, 0, rootCount)
+	variantRecords := make([]query.Record, 0, rootCount*variantCount)
+	priceRecords := make([]query.Record, 0, rootCount*variantCount)
 
-	for i := range kokSayisi {
+	for i := range rootCount {
 		productID := fmt.Sprintf("prod_%03d", i)
 		productRecords = append(productRecords, query.Record{"id": productID})
 
-		for j := range varyantSayisi {
+		for j := range variantCount {
 			variantID := fmt.Sprintf("var_%03d_%d", i, j)
 			priceID := fmt.Sprintf("pset_%03d_%d", i, j)
 
@@ -356,44 +356,44 @@ func TestGraphN1Yapmaz(t *testing.T) {
 		}},
 	})
 	require.NoError(t, err)
-	require.Len(t, got, kokSayisi)
+	require.Len(t, got, rootCount)
 
-	// Asıl iddia: kayıt sayısından BAĞIMSIZ olarak genişletme başına tek çağrı.
+	// The real claim: one call per expansion, INDEPENDENT of the record count.
 	assert.Equal(t, providerCalls{list: 1}, products.calls(),
-		"kök sağlayıcıya tek List çağrısı yapılmalı")
+		"the root provider has to get a single List call")
 	assert.Equal(t, providerCalls{fetch: 1}, variants.calls(),
-		"%d kök kayıt için variant sağlayıcısına tek FetchByIDs yapılmalı", kokSayisi)
+		"the variant provider has to get a single FetchByIDs for %d root records", rootCount)
 	assert.Equal(t, providerCalls{fetch: 1}, prices.calls(),
-		"%d varyant için pricing sağlayıcısına tek FetchByIDs yapılmalı", kokSayisi*varyantSayisi)
+		"the pricing provider has to get a single FetchByIDs for %d variants", rootCount*variantCount)
 	assert.Equal(t, int64(2), links.listManyCalls.Load(),
-		"link'ler genişletme başına tek turda çözülmeli")
-	assert.Zero(t, links.listCalls.Load(), "kimlik başına List çağrılmamalı")
+		"the links have to resolve in one round per expansion")
+	assert.Zero(t, links.listCalls.Load(), "List must not be called per id")
 
-	// Tek çağrı gerçekten TÜM kimlikleri taşımalı; aksi hâlde sayaç yanıltır.
+	// The single call really has to carry EVERY id; otherwise the counter misleads.
 	variantIDs, _ := variants.fetchArgs()
-	assert.Len(t, variantIDs, kokSayisi*varyantSayisi)
+	assert.Len(t, variantIDs, rootCount*variantCount)
 	priceIDs, _ := prices.fetchArgs()
-	assert.Len(t, priceIDs, kokSayisi*varyantSayisi)
+	assert.Len(t, priceIDs, rootCount*variantCount)
 
-	// Veri de doğru birleşmiş olmalı.
-	last, ok := got[kokSayisi-1]["product_variant"].([]query.Record)
+	// The data has to be joined correctly too.
+	last, ok := got[rootCount-1]["product_variant"].([]query.Record)
 	require.True(t, ok)
-	require.Len(t, last, varyantSayisi)
+	require.Len(t, last, variantCount)
 	price, ok := last[0]["variant_price"].(query.Record)
 	require.True(t, ok)
-	assert.Equal(t, 100*kokSayisi, price["amount"])
+	assert.Equal(t, 100*rootCount, price["amount"])
 }
 
-// --- yön --------------------------------------------------------------------
+// --- direction --------------------------------------------------------------
 
-func TestGraphTersYonToplukCozumleTekKayitYazar(t *testing.T) {
+func TestGraphReverseDirectionWritesASingleRecordFromTheBulkResolve(t *testing.T) {
 	variants := newProvider("variant",
 		query.Record{"id": "var_1"},
 		query.Record{"id": "var_3"},
 	)
 	products := newProvider("product",
-		query.Record{"id": "prod_1", "title": "Tişört"},
-		query.Record{"id": "prod_2", "title": "Şapka"},
+		query.Record{"id": "prod_1", "title": "T-shirt"},
+		query.Record{"id": "prod_2", "title": "Hat"},
 	)
 
 	links := newReverseLinks(productVariant)
@@ -402,27 +402,27 @@ func TestGraphTersYonToplukCozumleTekKayitYazar(t *testing.T) {
 
 	q := query.New(links, newContainer(t, variants, products), nil)
 
-	// Kök entity link'in TO ucunda; çözüm ters yönde yapılmalı.
+	// The root entity sits at the link's TO end; it has to resolve in reverse.
 	got, err := q.Graph(t.Context(), query.GraphSpec{
 		Entity: "variant",
-		Expand: []query.Expansion{{Link: "product_variant", As: "urun"}},
+		Expand: []query.Expansion{{Link: "product_variant", As: "product"}},
 	})
 	require.NoError(t, err)
 	require.Len(t, got, 2)
 
-	first, ok := got[0]["urun"].(query.Record)
-	require.Truef(t, ok, "OneToMany ters yönde tek kayıt yazmalı; gelen tip: %T", got[0]["urun"])
+	first, ok := got[0]["product"].(query.Record)
+	require.Truef(t, ok, "a reverse OneToMany has to write a single record; the type that arrived: %T", got[0]["product"])
 	assert.Equal(t, "prod_1", first["id"])
 
-	second, ok := got[1]["urun"].(query.Record)
+	second, ok := got[1]["product"].(query.Record)
 	require.True(t, ok)
 	assert.Equal(t, "prod_2", second["id"])
 
-	assert.Equal(t, int64(1), links.listManyByToCalls.Load(), "ters yön de tek turda çözülmeli")
+	assert.Equal(t, int64(1), links.listManyByToCalls.Load(), "the reverse direction has to resolve in one round too")
 	assert.Equal(t, providerCalls{fetch: 1}, products.calls())
 }
 
-func TestGraphLinkKokEntityyeBaglanmiyorsaInvalidDoner(t *testing.T) {
+func TestGraphReturnsInvalidWhenTheLinkDoesNotTouchTheRootEntity(t *testing.T) {
 	orders := newProvider("order", query.Record{"id": "order_1"})
 	q := query.New(newLinks(productVariant), newContainer(t, orders), nil)
 
@@ -431,31 +431,31 @@ func TestGraphLinkKokEntityyeBaglanmiyorsaInvalidDoner(t *testing.T) {
 		Expand: []query.Expansion{{Link: "product_variant"}},
 	})
 	require.Error(t, err)
-	assert.True(t, errors.IsInvalid(err), "beklenen sınıf Invalid, gelen: %v", err)
+	assert.True(t, errors.IsInvalid(err), "the expected class is Invalid, got: %v", err)
 	assert.Contains(t, err.Error(), "order")
 	assert.Contains(t, err.Error(), "product_variant")
 }
 
-// --- teşhis edilebilir hatalar ----------------------------------------------
+// --- diagnosable errors -----------------------------------------------------
 
-func TestGraphKokSaglayiciYoksaNotFoundVeArananAdiYazar(t *testing.T) {
+func TestGraphReturnsNotFoundAndNamesTheLookupWhenTheRootProviderIsMissing(t *testing.T) {
 	q := query.New(newLinks(), container.New(nil), nil)
 
 	got, err := q.Graph(t.Context(), query.GraphSpec{Entity: "product"})
 	require.Error(t, err)
 	assert.Nil(t, got)
-	assert.True(t, errors.IsNotFound(err), "beklenen sınıf NotFound, gelen: %v", err)
+	assert.True(t, errors.IsNotFound(err), "the expected class is NotFound, got: %v", err)
 
-	// Aranan ad, ALTTAKİ container hatasından değil query'nin KENDİ mesajından
-	// okunmalı (ADR 0004); bu yüzden en dıştaki tipli hataya bakılır.
+	// The name looked for has to be readable from query's OWN message rather than
+	// from the container error UNDERNEATH (ADR 0004); hence the outermost typed error.
 	var typed *errors.Error
 	require.True(t, errors.As(err, &typed))
 	assert.Contains(t, typed.Message, "product"+query.ProviderSuffix,
-		"query'nin kendi mesajı container'da aranan adı içermeli")
+		"query's own message has to carry the name looked up in the container")
 	assert.Equal(t, "product"+query.ProviderSuffix, typed.Details["looked_up_name"])
 }
 
-func TestGraphGenisletmeSaglayicisiYoksaNotFoundVeArananAdiYazar(t *testing.T) {
+func TestGraphReturnsNotFoundAndNamesTheLookupWhenTheExpansionProviderIsMissing(t *testing.T) {
 	variants := newProvider("variant", query.Record{"id": "var_1"})
 	links := newLinks(variantPrice).connect("variant_price", "var_1", "pset_1")
 
@@ -467,45 +467,47 @@ func TestGraphGenisletmeSaglayicisiYoksaNotFoundVeArananAdiYazar(t *testing.T) {
 		Expand: []query.Expansion{{Link: "variant_price"}},
 	})
 	require.Error(t, err)
-	assert.True(t, errors.IsNotFound(err), "beklenen sınıf NotFound, gelen: %v", err)
+	assert.True(t, errors.IsNotFound(err), "the expected class is NotFound, got: %v", err)
 
 	var typed *errors.Error
 	require.True(t, errors.As(err, &typed))
 	assert.Contains(t, typed.Message, "pricing"+query.ProviderSuffix,
-		"query'nin kendi mesajı container'da aranan adı içermeli")
+		"query's own message has to carry the name looked up in the container")
 	assert.Equal(t, "pricing"+query.ProviderSuffix, typed.Details["looked_up_name"])
 }
 
-func TestGraphSaglayiciEntitysiUyusmuyorsaInvalidDoner(t *testing.T) {
+func TestGraphReturnsInvalidWhenTheProviderServesAnotherEntity(t *testing.T) {
 	c := container.New(nil)
-	require.NoError(t, c.Provide("product"+query.ProviderSuffix, newProvider("urun")))
+	// The provider under "product.query" serves ANOTHER entity; the mismatch is
+	// the point of the test.
+	require.NoError(t, c.Provide("product"+query.ProviderSuffix, newProvider("widget")))
 
 	q := query.New(newLinks(), c, nil)
 
 	_, err := q.Graph(t.Context(), query.GraphSpec{Entity: "product"})
 	require.Error(t, err)
-	assert.True(t, errors.IsInvalid(err), "beklenen sınıf Invalid, gelen: %v", err)
-	assert.Contains(t, err.Error(), "urun")
+	assert.True(t, errors.IsInvalid(err), "the expected class is Invalid, got: %v", err)
+	assert.Contains(t, err.Error(), "product")
 	assert.Contains(t, err.Error(), "product"+query.ProviderSuffix)
 }
 
-func TestGraphBilinmeyenLinkAdiNotFoundDoner(t *testing.T) {
+func TestGraphReturnsNotFoundForAnUnknownLinkName(t *testing.T) {
 	products := newProvider("product", query.Record{"id": "prod_1"})
 	q := query.New(newLinks(), newContainer(t, products), nil)
 
 	got, err := q.Graph(t.Context(), query.GraphSpec{
 		Entity: "product",
-		Expand: []query.Expansion{{Link: "yok_boyle_link"}},
+		Expand: []query.Expansion{{Link: "no_such_link"}},
 	})
 	require.Error(t, err)
 	assert.Nil(t, got)
-	assert.True(t, errors.IsNotFound(err), "beklenen sınıf NotFound, gelen: %v", err)
-	assert.Contains(t, err.Error(), "yok_boyle_link")
+	assert.True(t, errors.IsNotFound(err), "the expected class is NotFound, got: %v", err)
+	assert.Contains(t, err.Error(), "no_such_link")
 }
 
-func TestGraphKokSaglayiciHatasiTumCagriyiDusurur(t *testing.T) {
+func TestGraphARootProviderErrorDropsTheWholeCall(t *testing.T) {
 	products := newProvider("product", query.Record{"id": "prod_1"})
-	products.listErr = errors.Unavailable("product_down", "product modülü kapalı")
+	products.listErr = errors.Unavailable("product_down", "the product module is down")
 
 	q := query.New(newLinks(), newContainer(t, products), nil)
 
@@ -513,13 +515,13 @@ func TestGraphKokSaglayiciHatasiTumCagriyiDusurur(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, got)
 	assert.True(t, errors.HasKind(err, errors.KindUnavailable),
-		"alttaki hatanın sınıfı korunmalı, gelen: %v", err)
+		"the class of the underlying error has to be preserved, got: %v", err)
 }
 
-func TestGraphGenisletmeSaglayiciHatasiKismiSonucDondurmez(t *testing.T) {
-	products := newProvider("product", query.Record{"id": "prod_1", "title": "Tişört"})
+func TestGraphAnExpansionProviderErrorReturnsNoPartialResult(t *testing.T) {
+	products := newProvider("product", query.Record{"id": "prod_1", "title": "T-shirt"})
 	variants := newProvider("variant", query.Record{"id": "var_1"})
-	variants.fetchErr = errors.Unavailable("variant_down", "variant modülü kapalı")
+	variants.fetchErr = errors.Unavailable("variant_down", "the variant module is down")
 
 	links := newLinks(productVariant).connect("product_variant", "prod_1", "var_1")
 	q := query.New(links, newContainer(t, products, variants), nil)
@@ -529,18 +531,18 @@ func TestGraphGenisletmeSaglayiciHatasiKismiSonucDondurmez(t *testing.T) {
 		Expand: []query.Expansion{{Link: "product_variant"}},
 	})
 	require.Error(t, err)
-	assert.Nil(t, got, "kök kayıtlar çekilmiş olsa bile kısmi sonuç dönmemeli")
+	assert.Nil(t, got, "no partial result may come back even though the root records were fetched")
 	assert.True(t, errors.HasKind(err, errors.KindUnavailable),
-		"alttaki hatanın sınıfı korunmalı, gelen: %v", err)
+		"the class of the underlying error has to be preserved, got: %v", err)
 	assert.Contains(t, err.Error(), "variant")
 }
 
-func TestGraphLinkHatasiTumCagriyiDusurur(t *testing.T) {
+func TestGraphALinkErrorDropsTheWholeCall(t *testing.T) {
 	products := newProvider("product", query.Record{"id": "prod_1"})
 	variants := newProvider("variant", query.Record{"id": "var_1"})
 
 	links := newLinks(productVariant).connect("product_variant", "prod_1", "var_1")
-	links.listErr = errors.Unavailable("link_db_down", "link tablosuna erişilemiyor")
+	links.listErr = errors.Unavailable("link_db_down", "the link table is unreachable")
 
 	q := query.New(links, newContainer(t, products, variants), nil)
 
@@ -550,12 +552,12 @@ func TestGraphLinkHatasiTumCagriyiDusurur(t *testing.T) {
 	})
 	require.Error(t, err)
 	assert.True(t, errors.HasKind(err, errors.KindUnavailable), "gelen: %v", err)
-	assert.Zero(t, variants.calls().fetch, "link çözülemediyse sağlayıcıya gidilmemeli")
+	assert.Zero(t, variants.calls().fetch, "with the link unresolved the provider must not be reached")
 }
 
-// --- bağlam -----------------------------------------------------------------
+// --- the context ------------------------------------------------------------
 
-func TestGraphIptalEdilmisBaglamdaErkenCikar(t *testing.T) {
+func TestGraphReturnsEarlyUnderACanceledContext(t *testing.T) {
 	products := newProvider("product", query.Record{"id": "prod_1"})
 	q := query.New(newLinks(), newContainer(t, products), nil)
 
@@ -567,15 +569,15 @@ func TestGraphIptalEdilmisBaglamdaErkenCikar(t *testing.T) {
 	assert.Nil(t, got)
 	assert.ErrorIs(t, err, context.Canceled)
 	assert.True(t, errors.HasKind(err, errors.KindUnavailable), "gelen: %v", err)
-	assert.Zero(t, products.calls().list, "iptal edilmiş bağlamda sağlayıcıya hiç gidilmemeli")
+	assert.Zero(t, products.calls().list, "under a canceled context the provider must not be reached at all")
 }
 
-func TestGraphBaglamGenisletmedenOnceIptalEdilirse(t *testing.T) {
+func TestGraphWhenTheContextIsCanceledBeforeTheExpansion(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 
 	products := newProvider("product", query.Record{"id": "prod_1"})
 	variants := newProvider("variant", query.Record{"id": "var_1"})
-	// Kök listeleme bittikten hemen sonra bağlam iptal edilir.
+	// The context is canceled right after the root listing finishes.
 	products.afterList = cancel
 
 	links := newLinks(productVariant).connect("product_variant", "prod_1", "var_1")
@@ -587,17 +589,18 @@ func TestGraphBaglamGenisletmedenOnceIptalEdilirse(t *testing.T) {
 	})
 	require.Error(t, err)
 	assert.ErrorIs(t, err, context.Canceled)
-	// Tanım okuma PLANLAMA aşamasının parçasıdır ve plan bilinçli olarak kök
-	// List'ten ÖNCE çalışır (bozuk spec, kök sorgusunun maliyetini ödemeden
-	// hata versin diye). Bu yüzden tanım bir kez okunmuş olabilir; önemli olan
-	// iptalden SONRA hiçbir bağ çözümü ve genişletme getirmesi yapılmamasıdır.
+	// Reading the definition is part of the PLANNING phase, and the plan
+	// deliberately runs BEFORE the root List (so a broken spec errors without
+	// paying for the root query). The definition may therefore have been read
+	// once; what matters is that no link resolution and no expansion fetch
+	// happens AFTER the cancellation.
 	assert.Zero(t, links.listManyCalls.Load(), "iptalden sonra link servisine gidilmemeli")
-	assert.Zero(t, variants.calls().fetch, "iptalden sonra genişletme sağlayıcısına gidilmemeli")
+	assert.Zero(t, variants.calls().fetch, "the expansion provider must not be reached after a cancellation")
 }
 
-// --- spec doğrulama ---------------------------------------------------------
+// --- spec validation --------------------------------------------------------
 
-func TestGraphGecersizSpecReddedilir(t *testing.T) {
+func TestGraphRefusesAnInvalidSpec(t *testing.T) {
 	products := newProvider("product", query.Record{"id": "prod_1"})
 	q := query.New(newLinks(productVariant), newContainer(t, products), nil)
 
@@ -629,18 +632,18 @@ func TestGraphGecersizSpecReddedilir(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			_, err := q.Graph(t.Context(), spec)
 			require.Error(t, err)
-			assert.True(t, errors.IsInvalid(err), "beklenen sınıf Invalid, gelen: %v", err)
+			assert.True(t, errors.IsInvalid(err), "the expected class is Invalid, got: %v", err)
 		})
 	}
 
-	assert.Zero(t, products.calls().list, "geçersiz spec sağlayıcıya hiç gitmemeli")
+	assert.Zero(t, products.calls().list, "an invalid spec must not reach the provider at all")
 }
 
-func TestGraphAsiriDerinGenisletmeReddedilir(t *testing.T) {
+func TestGraphRefusesAnOverlyDeepExpansion(t *testing.T) {
 	products := newProvider("product", query.Record{"id": "prod_1"})
 	q := query.New(newLinks(productVariant), newContainer(t, products), nil)
 
-	// En içteki genişletmeden başlayıp dışa doğru 12 seviye kurulur.
+	// Twelve levels are built from the innermost expansion outwards.
 	exp := query.Expansion{Link: "product_variant"}
 	for i := range 11 {
 		exp = query.Expansion{
@@ -655,13 +658,13 @@ func TestGraphAsiriDerinGenisletmeReddedilir(t *testing.T) {
 		Expand: []query.Expansion{exp},
 	})
 	require.Error(t, err)
-	assert.True(t, errors.IsInvalid(err), "beklenen sınıf Invalid, gelen: %v", err)
+	assert.True(t, errors.IsInvalid(err), "the expected class is Invalid, got: %v", err)
 	assert.Zero(t, products.calls().list)
 }
 
-// --- sağlayıcı sözleşme ihlali ----------------------------------------------
+// --- a provider breaking the contract ---------------------------------------
 
-func TestGraphKimliksizKokKayitGenisletilemez(t *testing.T) {
+func TestGraphCannotExpandARootRecordWithNoID(t *testing.T) {
 	products := newProvider("product")
 	products.order = []string{""}
 	products.records = map[string]query.Record{"": {"title": "kimliksiz"}}
@@ -678,10 +681,10 @@ func TestGraphKimliksizKokKayitGenisletilemez(t *testing.T) {
 	assert.Contains(t, err.Error(), query.IDField)
 }
 
-func TestGraphKimliksizGenisletmeKaydiHataDondurur(t *testing.T) {
+func TestGraphReturnsAnErrorForAnExpansionRecordWithNoID(t *testing.T) {
 	products := newProvider("product", query.Record{"id": "prod_1"})
 	variants := newProvider("variant")
-	// Sağlayıcı kimliksiz bir kayıt döndürüyor; birleştirme yapılamaz.
+	// The provider returns a record with no id; the join cannot be made.
 	variants.order = []string{"var_1"}
 	variants.records = map[string]query.Record{"var_1": {"sku": "TS-M"}}
 
@@ -697,9 +700,9 @@ func TestGraphKimliksizGenisletmeKaydiHataDondurur(t *testing.T) {
 	assert.Contains(t, err.Error(), query.IDField)
 }
 
-// --- kurulum hataları -------------------------------------------------------
+// --- setup errors -----------------------------------------------------------
 
-func TestGraphContainersizKurulumTipliHataDoner(t *testing.T) {
+func TestGraphReturnsATypedErrorWithNoContainer(t *testing.T) {
 	q := query.New(newLinks(), nil, nil)
 
 	_, err := q.Graph(t.Context(), query.GraphSpec{Entity: "product"})
@@ -708,11 +711,11 @@ func TestGraphContainersizKurulumTipliHataDoner(t *testing.T) {
 	assert.Contains(t, err.Error(), "product"+query.ProviderSuffix)
 }
 
-func TestGraphLinkServissizKurulumGenisletmedeHataDoner(t *testing.T) {
+func TestGraphReturnsAnErrorOnExpansionWithNoLinkService(t *testing.T) {
 	products := newProvider("product", query.Record{"id": "prod_1"})
 	q := query.New(nil, newContainer(t, products), nil)
 
-	// Genişletme yoksa link servisine hiç ihtiyaç duyulmaz.
+	// With no expansion the link service is never needed.
 	got, err := q.Graph(t.Context(), query.GraphSpec{Entity: "product"})
 	require.NoError(t, err)
 	assert.Len(t, got, 1)
@@ -725,29 +728,29 @@ func TestGraphLinkServissizKurulumGenisletmedeHataDoner(t *testing.T) {
 	assert.True(t, errors.HasKind(err, errors.KindInternal), "gelen: %v", err)
 }
 
-// --- birleştirme anahtarının korunması --------------------------------------
+// --- preserving the join key ------------------------------------------------
 
-func TestGraphCiktiAnahtariKokKimliginiEzemez(t *testing.T) {
-	products := newProvider("product", query.Record{"id": "prod_1", "title": "Tişört"})
+func TestGraphTheOutputKeyCannotOverwriteTheRootID(t *testing.T) {
+	products := newProvider("product", query.Record{"id": "prod_1", "title": "T-shirt"})
 	variants := newProvider("variant", query.Record{"id": "var_1"})
 
 	links := newLinks(productVariant).connect("product_variant", "prod_1", "var_1")
 	q := query.New(links, newContainer(t, products, variants), nil)
 
-	// As "id" olsaydı genişletme sonucu kök kaydın kimliğinin ÜZERİNE yazılır ve
-	// çağıran kaydı tanıyamaz olurdu; ayrıca sonraki genişletmeler birleştirme
-	// anahtarını okuyamazdı.
+	// Were As "id", the expansion result would be written OVER the root record's
+	// id and the caller could no longer recognize the record; the later
+	// expansions could not read the join key either.
 	_, err := q.Graph(t.Context(), query.GraphSpec{
 		Entity: "product",
 		Expand: []query.Expansion{{Link: "product_variant", As: query.IDField}},
 	})
 	require.Error(t, err)
-	assert.True(t, errors.IsInvalid(err), "beklenen sınıf Invalid, gelen: %v", err)
+	assert.True(t, errors.IsInvalid(err), "the expected class is Invalid, got: %v", err)
 	assert.Contains(t, err.Error(), query.IDField)
-	assert.Zero(t, products.calls().list, "geçersiz spec sağlayıcıya hiç gitmemeli")
+	assert.Zero(t, products.calls().list, "an invalid spec must not reach the provider at all")
 }
 
-func TestGraphIcIceCiktiAnahtariKimligiEzemez(t *testing.T) {
+func TestGraphANestedOutputKeyCannotOverwriteTheID(t *testing.T) {
 	products := newProvider("product", query.Record{"id": "prod_1"})
 	variants := newProvider("variant", query.Record{"id": "var_1"})
 	prices := newProvider("pricing", query.Record{"id": "pset_1"})
@@ -763,11 +766,11 @@ func TestGraphIcIceCiktiAnahtariKimligiEzemez(t *testing.T) {
 		}},
 	})
 	require.Error(t, err)
-	assert.True(t, errors.IsInvalid(err), "beklenen sınıf Invalid, gelen: %v", err)
+	assert.True(t, errors.IsInvalid(err), "the expected class is Invalid, got: %v", err)
 	assert.Zero(t, products.calls().list)
 }
 
-func TestGraphKimligiOkunamayanKokKayitSessizceAtlanmaz(t *testing.T) {
+func TestGraphARootRecordWithAnUnreadableIDIsNotSkippedSilently(t *testing.T) {
 	products := newProvider("product")
 	products.order = []string{"prod_1", "kimliksiz"}
 	products.records = map[string]query.Record{
@@ -779,23 +782,23 @@ func TestGraphKimligiOkunamayanKokKayitSessizceAtlanmaz(t *testing.T) {
 	links := newLinks(productVariant).connect("product_variant", "prod_1", "var_1")
 	q := query.New(links, newContainer(t, products, variants), nil)
 
-	// Atlanan kayıt genişletme anahtarını HİÇ almaz; sonuç dilimi heterojen
-	// kalır ve eksik veri doğru sonuç gibi görünür. Politika kısmi sonuç
-	// dönmemektir.
+	// A skipped record NEVER gets the expansion key; the result slice stays
+	// heterogeneous and missing data looks like a correct result. The policy is
+	// to return no partial result.
 	got, err := q.Graph(t.Context(), query.GraphSpec{
 		Entity: "product",
 		Expand: []query.Expansion{{Link: "product_variant"}},
 	})
-	require.Error(t, err, "kimliği okunamayan kök kayıt sessizce genişletme dışı bırakılmamalı")
-	assert.Nil(t, got, "kısmi sonuç dönmemeli")
+	require.Error(t, err, "a root record whose id cannot be read must not be silently left out of the expansion")
+	assert.Nil(t, got, "no partial result may come back")
 	assert.True(t, errors.HasKind(err, errors.KindInternal), "gelen: %v", err)
 	assert.Contains(t, err.Error(), query.IDField)
 }
 
-func TestGraphKimlikAlaniStringDegilseMesajTipiYazar(t *testing.T) {
+func TestGraphNamesTheTypeWhenTheIDFieldIsNotAString(t *testing.T) {
 	products := newProvider("product")
 	products.order = []string{"uuid"}
-	// pgx.RowToMap ile beslenen bir sağlayıcıda uuid kolonu böyle gelir.
+	// This is how a uuid column arrives from a provider fed by pgx.RowToMap.
 	products.records = map[string]query.Record{"uuid": {"id": [16]byte{1}, "title": "uuid kimlik"}}
 	variants := newProvider("variant", query.Record{"id": "var_1"})
 
@@ -807,13 +810,13 @@ func TestGraphKimlikAlaniStringDegilseMesajTipiYazar(t *testing.T) {
 	})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), fmt.Sprintf("%T", [16]byte{}),
-		"alan VAR ama tipi yanlışken mesaj gelen tipi yazmalı; yoksa hata yanlış tarafı suçlar")
+		"with the field PRESENT but of the wrong type the message has to name the type that arrived; otherwise the error blames the wrong side")
 }
 
-// --- kayıt sahipliği --------------------------------------------------------
+// --- record ownership -------------------------------------------------------
 
-func TestGraphSaglayicininKayitlariniKirletmez(t *testing.T) {
-	products := newSharingProvider("product", query.Record{"id": "prod_1", "title": "Tişört"})
+func TestGraphDoesNotCorruptTheProvidersRecords(t *testing.T) {
+	products := newSharingProvider("product", query.Record{"id": "prod_1", "title": "T-shirt"})
 	variants := newSharingProvider("variant", query.Record{"id": "var_1", "sku": "TS-M"})
 	prices := newSharingProvider("pricing", query.Record{"id": "pset_1", "amount": 1990})
 
@@ -837,24 +840,24 @@ func TestGraphSaglayicininKayitlariniKirletmez(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.Len(t, got, 1)
-	require.Contains(t, got[0], "product_variant", "genişletme gerçekten yapılmış olmalı")
+	require.Contains(t, got[0], "product_variant", "the expansion really has to have happened")
 
-	// Sağlayıcı kayıtlarını kopyalamıyor; Query kendi kopyasına yazmalı ki
-	// modülün durumu kirlenmesin (bayat alan sızması ve eşzamanlı çağrılarda
-	// veri yarışı buradan doğar).
-	assert.Equal(t, query.Record{"id": "prod_1", "title": "Tişört"}, products.records[0],
-		"kök sağlayıcının kaydına genişletme anahtarı yazılmamalı")
+	// The provider does not copy its records; Query has to write into its own copy
+	// so the module's state is not corrupted (a stale field leaking and a data
+	// race on concurrent calls are born here).
+	assert.Equal(t, query.Record{"id": "prod_1", "title": "T-shirt"}, products.records[0],
+		"the expansion key must not be written into the root provider's record")
 	assert.Equal(t, query.Record{"id": "var_1", "sku": "TS-M"}, variants.records[0],
-		"genişletme sağlayıcısının kaydına iç içe genişletme anahtarı yazılmamalı")
+		"the nested expansion key must not be written into the expansion provider's record")
 	assert.Equal(t, query.Record{"id": "pset_1", "amount": 1990}, prices.records[0])
 }
 
-// --- iptal sınıflandırması --------------------------------------------------
+// --- cancellation classification --------------------------------------------
 
-func TestGraphHamBaglamHatasiUnavailableDoner(t *testing.T) {
-	// Sağlayıcı ve link servisi TİPSİZ context hatası dönebilir (pgx'in doğrudan
-	// döndürdüğü hata budur). Bu hata KindInternal'a düşerse API sınırında 503
-	// yerine mesajı bastırılmış bir 500 üretilir.
+func TestGraphReturnsUnavailableForARawContextError(t *testing.T) {
+	// A provider and a link service may return an UNTYPED context error (that is
+	// what pgx returns directly). If that error falls to KindInternal, the API
+	// boundary produces a 500 with a masked message instead of a 503.
 	t.Run("kok list", func(t *testing.T) {
 		products := newProvider("product", query.Record{"id": "prod_1"})
 		products.listErr = context.DeadlineExceeded
@@ -863,7 +866,7 @@ func TestGraphHamBaglamHatasiUnavailableDoner(t *testing.T) {
 		_, err := q.Graph(t.Context(), query.GraphSpec{Entity: "product"})
 		require.Error(t, err)
 		assert.True(t, errors.HasKind(err, errors.KindUnavailable),
-			"beklenen sınıf Unavailable, gelen: %v (%v)", errors.KindOf(err), err)
+			"the expected class is Unavailable, got: %v (%v)", errors.KindOf(err), err)
 		assert.ErrorIs(t, err, context.DeadlineExceeded)
 	})
 
@@ -881,7 +884,7 @@ func TestGraphHamBaglamHatasiUnavailableDoner(t *testing.T) {
 		})
 		require.Error(t, err)
 		assert.True(t, errors.HasKind(err, errors.KindUnavailable),
-			"beklenen sınıf Unavailable, gelen: %v (%v)", errors.KindOf(err), err)
+			"the expected class is Unavailable, got: %v (%v)", errors.KindOf(err), err)
 		assert.ErrorIs(t, err, context.Canceled)
 	})
 
@@ -899,7 +902,7 @@ func TestGraphHamBaglamHatasiUnavailableDoner(t *testing.T) {
 		})
 		require.Error(t, err)
 		assert.True(t, errors.HasKind(err, errors.KindUnavailable),
-			"beklenen sınıf Unavailable, gelen: %v (%v)", errors.KindOf(err), err)
+			"the expected class is Unavailable, got: %v (%v)", errors.KindOf(err), err)
 		assert.ErrorIs(t, err, context.DeadlineExceeded)
 	})
 
@@ -917,12 +920,12 @@ func TestGraphHamBaglamHatasiUnavailableDoner(t *testing.T) {
 		})
 		require.Error(t, err)
 		assert.True(t, errors.HasKind(err, errors.KindUnavailable),
-			"beklenen sınıf Unavailable, gelen: %v (%v)", errors.KindOf(err), err)
+			"the expected class is Unavailable, got: %v (%v)", errors.KindOf(err), err)
 		assert.ErrorIs(t, err, context.Canceled)
 	})
 
 	t.Run("tipli hata sinifi korunur", func(t *testing.T) {
-		// İptal ayrımı, sağlayıcının BİLİNÇLİ olarak verdiği sınıfı ezmemeli.
+		// The cancellation split must not overwrite the class a provider gave DELIBERATELY.
 		products := newProvider("product", query.Record{"id": "prod_1"})
 		products.listErr = errors.Invalid("product_bad_filter", "bilinmeyen filtre")
 		q := query.New(newLinks(), newContainer(t, products), nil)
@@ -933,15 +936,15 @@ func TestGraphHamBaglamHatasiUnavailableDoner(t *testing.T) {
 	})
 }
 
-// --- veriden bağımsız doğrulama ---------------------------------------------
+// --- validation independent of the data -------------------------------------
 
-func TestGraphIcIceGenisletmeVeriYokkenDeDogrulanir(t *testing.T) {
+func TestGraphValidatesANestedExpansionEvenWithNoData(t *testing.T) {
 	products := newProvider("product", query.Record{"id": "prod_1"})
 	variants := newProvider("variant", query.Record{"id": "var_1"})
 	channels := newProvider("channel", query.Record{"id": "sc_web"})
 
-	// Hiç bağ yok: üst seviye genişletme boş dilim üretir. product_channel
-	// link'i product <-> channel arasındadır, variant'a BAĞLANMAZ.
+	// There is no link at all: the top-level expansion produces an empty slice.
+	// The product_channel link is between product and channel, it does NOT link to variant.
 	links := newLinks(productVariant, productChannel)
 	q := query.New(links, newContainer(t, products, variants, channels), nil)
 
@@ -952,17 +955,17 @@ func TestGraphIcIceGenisletmeVeriYokkenDeDogrulanir(t *testing.T) {
 			Expand: []query.Expansion{{Link: "product_channel"}},
 		}},
 	})
-	require.Error(t, err, "alt seviye spec hatası, üst seviye veri getirmese de raporlanmalı")
-	assert.True(t, errors.IsInvalid(err), "beklenen sınıf Invalid, gelen: %v", err)
+	require.Error(t, err, "a spec error at a lower level has to be reported even when the level above fetches no data")
+	assert.True(t, errors.IsInvalid(err), "the expected class is Invalid, got: %v", err)
 	assert.Contains(t, err.Error(), "product_channel")
 	assert.Contains(t, err.Error(), "variant")
 }
 
-func TestGraphHedefSaglayiciKaydiVeriYokkenDeDogrulanir(t *testing.T) {
+func TestGraphValidatesTheTargetProviderRegistrationEvenWithNoData(t *testing.T) {
 	products := newProvider("product", query.Record{"id": "prod_1"})
 
-	// variant.query bilerek kaydedilmiyor ve hiç bağ yok: eski davranışta
-	// unutulmuş kayıt veri boşken sessiz kalıyordu.
+	// variant.query is deliberately not registered and there is no link at all:
+	// in the old behavior a forgotten registration stayed silent while the data was empty.
 	links := newLinks(productVariant)
 	q := query.New(links, newContainer(t, products), nil)
 
@@ -970,34 +973,34 @@ func TestGraphHedefSaglayiciKaydiVeriYokkenDeDogrulanir(t *testing.T) {
 		Entity: "product",
 		Expand: []query.Expansion{{Link: "product_variant"}},
 	})
-	require.Error(t, err, "kayıtlı olmayan hedef sağlayıcı veri boşken de bildirilmeli")
-	assert.True(t, errors.IsNotFound(err), "beklenen sınıf NotFound, gelen: %v", err)
+	require.Error(t, err, "a target provider that is not registered has to be reported even with no data")
+	assert.True(t, errors.IsNotFound(err), "the expected class is NotFound, got: %v", err)
 
 	var typed *errors.Error
 	require.True(t, errors.As(err, &typed))
 	assert.Equal(t, "variant"+query.ProviderSuffix, typed.Details["looked_up_name"])
 }
 
-func TestGraphKokKayitYokkenDeGenisletmeAgaciDogrulanir(t *testing.T) {
+func TestGraphValidatesTheExpansionTreeEvenWithNoRootRecord(t *testing.T) {
 	products := newProvider("product")
 	q := query.New(newLinks(productVariant), newContainer(t, products, newProvider("variant")), nil)
 
 	got, err := q.Graph(t.Context(), query.GraphSpec{
 		Entity: "product",
-		Expand: []query.Expansion{{Link: "yok_boyle_link"}},
+		Expand: []query.Expansion{{Link: "no_such_link"}},
 	})
-	require.Error(t, err, "kök kayıt yokken de bozuk genişletme tanımı raporlanmalı")
+	require.Error(t, err, "a broken expansion definition has to be reported even with no root record")
 	assert.Nil(t, got)
-	assert.True(t, errors.IsNotFound(err), "beklenen sınıf NotFound, gelen: %v", err)
-	assert.Contains(t, err.Error(), "yok_boyle_link")
+	assert.True(t, errors.IsNotFound(err), "the expected class is NotFound, got: %v", err)
+	assert.Contains(t, err.Error(), "no_such_link")
 }
 
-// --- genişlik sınırı --------------------------------------------------------
+// --- the width limit --------------------------------------------------------
 
-func TestGraphCokGenisGenisletmeReddedilir(t *testing.T) {
-	// Derinlik sınırının ALTINDA kalan ama çok sayıda genişletme taşıyan bir
-	// spec de tek istekte yüzlerce gidiş-dönüş açar; maliyet derinlikle değil
-	// genişletme adediyle büyür.
+func TestGraphRefusesAnOverlyWideExpansion(t *testing.T) {
+	// A spec staying UNDER the depth limit but carrying many expansions opens
+	// hundreds of round trips in one request too; the cost grows with the number
+	// of expansions rather than with the depth.
 	t.Run("tek seviye", func(t *testing.T) {
 		products := newProvider("product", query.Record{"id": "prod_1"})
 		q := query.New(newLinks(productVariant), newContainer(t, products), nil)
@@ -1009,16 +1012,16 @@ func TestGraphCokGenisGenisletmeReddedilir(t *testing.T) {
 
 		_, err := q.Graph(t.Context(), query.GraphSpec{Entity: "product", Expand: exps})
 		require.Error(t, err)
-		assert.True(t, errors.IsInvalid(err), "beklenen sınıf Invalid, gelen: %v", err)
-		assert.Zero(t, products.calls().list, "geçersiz spec sağlayıcıya hiç gitmemeli")
+		assert.True(t, errors.IsInvalid(err), "the expected class is Invalid, got: %v", err)
+		assert.Zero(t, products.calls().list, "an invalid spec must not reach the provider at all")
 	})
 
 	t.Run("ic ice", func(t *testing.T) {
 		products := newProvider("product", query.Record{"id": "prod_1"})
 		q := query.New(newLinks(productVariant), newContainer(t, products), nil)
 
-		// 3 seviye, her seviyede 4 kardeş: 4 + 16 + 64 = 84 genişletme.
-		// Derinlik sınırı (10) bu spec'i durdurmaz.
+		// 3 levels, 4 siblings at each: 4 + 16 + 64 = 84 expansions.
+		// The depth limit (10) does not stop this spec.
 		var derinlestir func(kalan int) []query.Expansion
 		derinlestir = func(kalan int) []query.Expansion {
 			if kalan == 0 {
@@ -1040,21 +1043,20 @@ func TestGraphCokGenisGenisletmeReddedilir(t *testing.T) {
 			Expand: derinlestir(3),
 		})
 		require.Error(t, err)
-		assert.True(t, errors.IsInvalid(err), "beklenen sınıf Invalid, gelen: %v", err)
+		assert.True(t, errors.IsInvalid(err), "the expected class is Invalid, got: %v", err)
 		assert.Zero(t, products.calls().list)
 	})
 }
 
-// TestGraphBozukSpecKokSorgusunuOdetmez genişletme planının kök veriyi
-// getirmeden ÖNCE çözüldüğünü doğrular.
+// TestGraphABrokenSpecDoesNotChargeForTheRootQuery verifies that the expansion
+// plan is resolved BEFORE the root data is fetched.
 //
-// Regresyon: plan, kök List çağrısından SONRA çalışıyordu. İki sonucu vardı:
-// (1) bilinmeyen bir link adı taşıyan sorgu, hata vermeden önce tam bir kök
-// sorgusunun maliyetini ödetiyordu; (2) daha ciddisi, sağlayıcıdan gelen
-// geçici bir hata deterministik spec hatasını MASKELİYORDU — "veritabanı
-// erişilemez" hatası, aslında düzeltilmesi gereken bir yazım hatasını
-// gizliyordu.
-func TestGraphBozukSpecKokSorgusunuOdetmez(t *testing.T) {
+// Regression: the plan ran AFTER the root List call. That had two consequences:
+// (1) a query carrying an unknown link name paid for a full root query before
+// erroring; (2) more seriously, a transient error from the provider MASKED the
+// deterministic spec error — a "the database is unreachable" error hid what was
+// really a typo waiting to be fixed.
+func TestGraphABrokenSpecDoesNotChargeForTheRootQuery(t *testing.T) {
 	t.Run("bilinmeyen link kok sorgusu yapilmadan reddedilir", func(t *testing.T) {
 		products := newProvider("product", query.Record{"id": "prod_1"})
 		links := newLinks(productVariant)
@@ -1062,30 +1064,30 @@ func TestGraphBozukSpecKokSorgusunuOdetmez(t *testing.T) {
 
 		_, err := q.Graph(t.Context(), query.GraphSpec{
 			Entity: "product",
-			Expand: []query.Expansion{{Link: "yok_boyle_link"}},
+			Expand: []query.Expansion{{Link: "no_such_link"}},
 		})
 		require.Error(t, err)
 		assert.Zero(t, products.calls().list,
-			"bozuk spec, kök sorgusunun maliyetini ödetmemeli")
+			"a broken spec must not charge for the root query")
 	})
 
 	t.Run("saglayici hatasi spec hatasini maskelemez", func(t *testing.T) {
 		products := newProvider("product", query.Record{"id": "prod_1"})
-		// Kök sağlayıcı da bozuk: eskiden bu hata öne geçip link hatasını
-		// gizliyordu.
-		products.listErr = errors.Unavailable("db_down", "veritabanı erişilemez")
+		// The root provider is broken too: this error used to come first and hide
+		// the link error.
+		products.listErr = errors.Unavailable("db_down", "the database is unreachable")
 
 		links := newLinks(productVariant)
 		q := query.New(links, newContainer(t, products), nil)
 
 		_, err := q.Graph(t.Context(), query.GraphSpec{
 			Entity: "product",
-			Expand: []query.Expansion{{Link: "yok_boyle_link"}},
+			Expand: []query.Expansion{{Link: "no_such_link"}},
 		})
 		require.Error(t, err)
 		assert.NotContains(t, err.Error(), "db_down",
-			"deterministik spec hatası, geçici sağlayıcı hatasının arkasında gizlenmemeli")
-		assert.Contains(t, err.Error(), "yok_boyle_link",
-			"hata hangi link adının bulunamadığını yazmalı")
+			"a deterministic spec error must not hide behind a transient provider error")
+		assert.Contains(t, err.Error(), "no_such_link",
+			"the error has to name which link was not found")
 	})
 }
