@@ -195,11 +195,7 @@ func (u *UI) showProduct(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	products, err := u.catalog.Graph(r.Context(), query.GraphSpec{
-		Entity:  EntityProduct,
-		Filters: map[string]any{filterID: []string{id}},
-		Limit:   1,
-	})
+	products, err := u.catalog.Graph(r.Context(), productByID(id))
 	if err != nil {
 		u.catalogFailure(w, r, err, "The product could not be read.")
 		return
@@ -242,7 +238,33 @@ func (u *UI) showProduct(w http.ResponseWriter, r *http.Request) {
 		"Product":      product,
 		"Variants":     rows,
 		"ProductsPath": ProductsPath,
+		"EditPath":     ProductsPath + "/" + product.ID + "/edit",
 	})
+}
+
+// unexpectedFailure renders the panel's own error page for a failure the
+// operator cannot act on, and logs the real cause.
+//
+// # Why not corehttp.WriteError
+//
+// That writer produces the framework's JSON envelope, which is right for an API
+// endpoint and wrong here: the panel's client is a BROWSER that navigated to
+// this path, and answering it with JSON makes the failure unreadable to the one
+// person who could do something about it. The split is the same one
+// error.gohtml describes — the envelope stands beside the panel's page, it is
+// not replaced by it.
+//
+// The underlying message is NOT shown. The framework treats a non-Internal
+// message as client-safe because a service author wrote it, but that promise was
+// made about API clients; a panel page is read by an operator who cannot tell a
+// leaked connection string from a diagnosis. The real error goes to the log.
+func (u *UI) unexpectedFailure(w http.ResponseWriter, r *http.Request, err error, title string) {
+	corehttp.LoggerFromContext(r.Context()).ErrorContext(r.Context(),
+		"the panel could not complete the request",
+		"error", err, "path", r.URL.Path)
+
+	u.errorPage(w, r, corehttp.StatusFor(err), title,
+		"The request could not be completed. The reason is in the server log.")
 }
 
 // catalogFailure turns a read-layer failure into a page the operator can act
@@ -318,6 +340,18 @@ func (u *UI) currencyScales(ctx context.Context) map[string]int {
 	}
 
 	return scales
+}
+
+// productByID is the spec that reads one product.
+//
+// The list, the detail page and the edit form share it so the three screens
+// cannot start reading the same product differently.
+func productByID(id string) query.GraphSpec {
+	return query.GraphSpec{
+		Entity:  EntityProduct,
+		Filters: map[string]any{filterID: []string{id}},
+		Limit:   1,
+	}
 }
 
 // productRowOf turns a product record into a row.

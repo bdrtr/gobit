@@ -51,9 +51,10 @@ func (u *UI) showLogin(w http.ResponseWriter, r *http.Request) {
 //
 // The service says "email or password is incorrect" and does not reveal which
 // accounts exist; having the panel improve on that would undo the decision.
-// Unexpected failures (an unreachable database) are not leaked to the user
-// either: anything whose class is not Unauthorized goes to core's error path
-// and is masked there.
+// An unexpected failure (an unreachable database) is not leaked either: anything
+// whose class is neither Unauthorized nor Invalid becomes the panel's own error
+// page and the real cause goes to the log — see [UI.unexpectedFailure] for why
+// the JSON envelope is wrong on a path a browser navigated to.
 func (u *UI) submitLogin(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
 		u.loginPage(w, r, http.StatusBadRequest, "The form could not be read.")
@@ -66,7 +67,7 @@ func (u *UI) submitLogin(w http.ResponseWriter, r *http.Request) {
 			u.loginPage(w, r, http.StatusUnauthorized, "Email or password is incorrect.")
 			return
 		}
-		corehttp.WriteError(r.Context(), w, err)
+		u.unexpectedFailure(w, r, err, "Sign-in unavailable")
 		return
 	}
 

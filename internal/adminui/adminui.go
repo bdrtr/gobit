@@ -84,7 +84,15 @@ type Session interface {
 
 // UI is the admin panel. It is safe for concurrent use.
 type UI struct {
-	catalog       Catalog
+	catalog Catalog
+	// products is the product module's admin write surface.
+	//
+	// It is OPTIONAL and nil when the module is not registered: the panel then
+	// shows the catalog and refuses to edit, rather than refusing to start. A
+	// mandatory dependency here would make the product module a requirement for
+	// the panel to exist at all, which is the coupling the fourth tree was
+	// created to avoid.
+	products      ProductWriter
 	session       Session
 	authenticator corehttp.Authenticator
 	templates     *templateSet
@@ -133,8 +141,18 @@ func FromContainer(c *container.Container, secureCookie bool) (*UI, error) {
 		return nil, err
 	}
 
+	// The write surface is resolved OPTIONALLY: an installation without the
+	// product module still gets a panel, and the edit form answers 503 with a
+	// sentence naming the reason. Treating it like the others would turn a
+	// removable module into a hard requirement of the panel.
+	products, err := optionalService[ProductWriter](c, ServiceProductAdmin)
+	if err != nil {
+		return nil, err
+	}
+
 	return &UI{
 		catalog:       catalog,
+		products:      products,
 		session:       session,
 		authenticator: authenticator,
 		templates:     templates,
@@ -156,4 +174,20 @@ func resolveService[T any](c *container.Container, name string) (T, error) {
 			"admin panel could not resolve service %q", name)
 	}
 	return value, nil
+}
+
+// optionalService resolves a service the panel can live without.
+//
+// An ABSENT name gives the zero value and no error: the module was not
+// installed, which is a legitimate configuration and not a failure. A name that
+// IS registered but whose surface does not match still fails, and fails at
+// startup — that is a wiring mistake, and silently degrading it would leave the
+// panel showing "editing unavailable" while the module sat right there.
+func optionalService[T any](c *container.Container, name string) (T, error) {
+	var zero T
+	if c == nil || !c.Has(name) {
+		return zero, nil
+	}
+
+	return resolveService[T](c, name)
 }

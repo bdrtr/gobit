@@ -12,6 +12,41 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Eklendi
 
+- **Panel artık YAZIYOR: ürün başlığı, handle ve durumu düzenlenebiliyor**
+  ([ADR 0013](docs/adr/0013-panel-write-surface.md)). ADR 0011'in "panel okuma
+  yollarını kullanır" kararı bilinçli olarak açıldı ve yerine ne konduğu
+  yazıldı.
+
+  Okuma katmanı GENERİKTİ; yazmanın karşılığı yok. Product servisinin metodu
+  modülün kendi tiplerini taşıyor (`UpdateProductInput`, `models.Status`) ve
+  panel onları adlandıramaz — adlandırdığı an KENDİ paketinde tanımlı BAŞKA bir
+  tip olurlar. Bu yüzden modül ilkel-tipli dar bir **yönetim yazma yüzeyi**
+  yayımlıyor ve container'a `product.admin` adıyla, interop'tan AYRI
+  kaydediliyor.
+
+  Ayrım bir dosyalama tercihi değil: interop'un godoc'u dar kalmaya söz veriyor
+  ve kitlesini sayıyor (başka modüller, akışlar, eklentiler). Oraya bir yazma
+  metodu eklemek, bir düzenleme formunun yan etkisi olarak HER EKLENTİYE
+  katalogu yeniden yazma yetkisi verirdi. `TestAdminSurfaceHasOneAudience` adı
+  gerçek kılıyor: `.admin` ile biten bir adı, sahibi modül ve panel dışında
+  hiçbir üretim dosyası anamaz.
+
+  Yazma SERVİSTEN geçiyor, depodan değil: handle tekilliği ve
+  `product.updated` olayı orada. Sessiz olan yarısı (olay) ayrıca iddia
+  ediliyor — gürültülü olan (handle çakışması) yoksa ikisinin de kanıtı
+  sayılırdı.
+
+  Yüzey KOŞULLU çözülüyor: product modülü kurulu olmayan bir kurulumda panel
+  yine açılıyor ve düzenleme formu sebebini söyleyen bir 503 dönüyor.
+
+- **Panelin beklenmeyen arızada tarayıcıya JSON zarfı yazması düzeltildi.**
+  Kusur giriş yolunda ADR 0011'den beri vardı: `corehttp.WriteError` çerçevenin
+  JSON zarfını yazıyor, bu bir API istemcisi için doğru ama bu yola TARAYICI
+  gelmiş oluyor. Üstelik zarf, Internal olmayan sınıfların mesajını olduğu gibi
+  geçiriyor — o söz API istemcileri için verilmişti; panel sayfasını okuyan
+  operatör sızmış bir bağlantı dizesini teşhisten ayıramaz. Artık panelin kendi
+  hata sayfası dönüyor, gerçek sebep loga gidiyor.
+
 - **Panelin katalog ekranları geldi: ürün listesi ve ürün sayfası.** Ürün
   sayfası varyantları, fiyatlarını ve stoklarını gösteriyor — üçü üç ayrı
   modülden, hiçbiri panel tarafından import edilmeden. Okuma katmanına herkes

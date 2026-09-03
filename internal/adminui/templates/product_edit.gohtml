@@ -1,0 +1,42 @@
+{{- /*
+product_edit.gohtml is the panel's only WRITE form (ADR 0013).
+
+Two things about it are load-bearing:
+
+  - The method is POST and the target is inside the panel tree. That is what
+    puts the request through the panel's origin check, which has no exemption
+    for state-changing requests: SameSite=Strict closes most of CSRF and the
+    Origin header closes the subdomain case it leaves open.
+  - There is no hidden token field. The protection is the cookie's scope plus
+    the origin check, not a token the page has to generate, store and print —
+    the decision and its rejected alternative are in ADR 0011.
+
+The status is a <select> over the values the module accepts. A free text field
+would send the operator's typo to the module and answer with a rejection they
+could have been spared.
+*/ -}}
+{{ define "body" }}
+<p><a href="{{ .CancelPath }}">← Back to the product</a></p>
+
+<h1>Edit product</h1>
+{{ if .Error }}<p role="alert">{{ .Error }}</p>{{ end }}
+
+<form method="post" action="{{ .ActionPath }}">
+  <label>Title
+    <input type="text" name="title" value="{{ .Product.Title }}" required>
+  </label>
+  <label>Handle
+    <input type="text" name="handle" value="{{ .Product.Handle }}" required>
+  </label>
+  <label>Status
+    <select name="status">
+      {{ $current := .Product.Status }}
+      {{ range .Statuses }}
+        <option value="{{ . }}"{{ if eq . $current }} selected{{ end }}>{{ . }}</option>
+      {{ end }}
+    </select>
+  </label>
+  <button type="submit">Save</button>
+  <a href="{{ .CancelPath }}">Cancel</a>
+</form>
+{{ end }}

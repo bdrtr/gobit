@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -511,4 +512,93 @@ func planted(fragment string) string {
 	}
 
 	return fragment
+}
+
+// adminSurfaceSuffix is the container-name suffix reserved for the admin write
+// surfaces (ADR 0013).
+const adminSurfaceSuffix = ".admin"
+
+// adminSurfaceAudience are the trees allowed to name an admin write surface.
+//
+// Two entries and both are load-bearing. The owning module registers the name;
+// the panel resolves it. Anyone else naming it — a workflow, a plugin, another
+// module — would be writing the catalog through a surface that exists for a
+// human operator, and the separation from interop would become a comment
+// rather than a rule.
+var adminSurfaceAudience = []string{
+	"internal/modules/",
+	"internal/adminui/",
+}
+
+// TestAdminSurfaceHasOneAudience proves the write surfaces stay reserved for
+// the panel and their owning module.
+//
+// # Why the name alone is not enough
+//
+// ADR 0013 splits the admin write surface from interop so that a plugin cannot
+// rewrite the catalog. Nothing in the container enforces that split: any holder
+// of the container can resolve any name. Without this check, "product.admin is
+// for the panel" would be a sentence in a godoc and the first workflow that
+// found it convenient would make it false — silently, because resolving a
+// registered name succeeds.
+//
+// # What it does NOT prove
+//
+// It reads NAMES, not intent. A module that registered its write surface under
+// a name not ending in the reserved suffix would be invisible here, and so
+// would a caller that built the name at runtime by concatenation. The check is
+// a floor under the rule, and ADR 0013 says so.
+func TestAdminSurfaceHasOneAudience(t *testing.T) {
+	t.Parallel()
+
+	mentions := 0
+
+	for _, root := range []string{"internal", "cmd", "plugins"} {
+		for _, path := range productionFiles(t, filepath.Join(repoRoot, root)) {
+			rel, err := filepath.Rel(repoRoot, path)
+			require.NoError(t, err)
+			rel = filepath.ToSlash(rel)
+
+			raw, readErr := os.ReadFile(path)
+			require.NoError(t, readErr)
+
+			fset := token.NewFileSet()
+			file, parseErr := parser.ParseFile(fset, path, raw, parser.SkipObjectResolution)
+			require.NoError(t, parseErr, "%s could not be parsed", rel)
+
+			ast.Inspect(file, func(n ast.Node) bool {
+				lit, ok := n.(*ast.BasicLit)
+				if !ok || lit.Kind != token.STRING {
+					return true
+				}
+				value, unquoteErr := strconv.Unquote(lit.Value)
+				if unquoteErr != nil || !strings.HasSuffix(value, adminSurfaceSuffix) {
+					return true
+				}
+				mentions++
+
+				allowed := slices.ContainsFunc(adminSurfaceAudience, func(prefix string) bool {
+					return strings.HasPrefix(rel, prefix)
+				})
+				if allowed {
+					return true
+				}
+
+				t.Errorf("%s: %q names an admin write surface.\n"+
+					"Those surfaces exist for the admin panel and are registered by the module "+
+					"that owns them (ADR 0013); they were deliberately kept OUT of interop so a "+
+					"plugin or a workflow could not rewrite the catalog through them. Resolving "+
+					"one from here succeeds at runtime, which is exactly why it is checked "+
+					"here.", fset.Position(lit.Pos()), value)
+
+				return true
+			})
+		}
+	}
+
+	assert.Positive(t, mentions,
+		"no admin surface name was found anywhere.\n"+
+			"Either the suffix changed — in which case adminSurfaceSuffix must follow it — or "+
+			"the scan is broken; in both cases this check is BLIND and every caller is "+
+			"allowed.")
 }

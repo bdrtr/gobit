@@ -1170,6 +1170,28 @@ func TestPanelCookieIsNotAcceptedByTheAdminAPI(t *testing.T) {
 				"WIRED — and an unwired ring fails nothing on its own")
 	})
 
+	t.Run("a cross-site product edit is rejected", func(t *testing.T) {
+		t.Parallel()
+
+		// The login form is not the only state-changing path any more. This
+		// case exists because the origin ring is scoped to a PREFIX, not to a
+		// list of paths: a new write route added under the panel prefix is
+		// protected automatically, and this assertion is what proves that
+		// sentence rather than assuming it.
+		req := httptest.NewRequest(http.MethodPost,
+			adminui.ProductsPath+"/prod_1/edit",
+			strings.NewReader("title=Coffee&handle=coffee&status=draft"))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.Header.Set("Origin", "https://another.example")
+		req.AddCookie(&http.Cookie{Name: adminui.CookieName, Value: token})
+		rec := httptest.NewRecorder()
+		r.ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusForbidden, rec.Code,
+			"a write path under the panel prefix must be covered by the origin ring even "+
+				"though nobody added it to a list")
+	})
+
 	t.Run("a same-origin form submission passes the origin ring", func(t *testing.T) {
 		t.Parallel()
 

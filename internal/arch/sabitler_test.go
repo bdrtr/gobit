@@ -28,7 +28,9 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/notification"
 	"github.com/bdrtr/gobit/internal/modules/notification/logonly"
 	"github.com/bdrtr/gobit/internal/modules/payment"
+	"github.com/bdrtr/gobit/internal/modules/product"
 	"github.com/bdrtr/gobit/internal/modules/product/graph"
+	productmodels "github.com/bdrtr/gobit/internal/modules/product/models"
 	productsvc "github.com/bdrtr/gobit/internal/modules/product/service"
 	regionsvc "github.com/bdrtr/gobit/internal/modules/region/service"
 )
@@ -654,4 +656,37 @@ func TestPanelKatalogAdlariUyusuyor(t *testing.T) {
 
 	assert.Equal(t, inventorysvc.FieldAvailableQuantity, adminui.FieldAvailableQuantity,
 		"panelin satılabilir adet alan adı inventory modülüyle aynı olmalı")
+
+	assert.Equal(t, product.AdminName, adminui.ServiceProductAdmin,
+		"panelin yazma yüzeyi adı product modülüyle aynı olmalı")
+}
+
+// TestPanelDurumSecenekleriModulunkilerleUyusuyor panelin düzenleme formunda
+// sunduğu durumların modülün KABUL ETTİKLERİYLE aynı olduğunu doğrular.
+//
+// İki yönde de ayrışabilir ve iki yön de farklı biçimde arızalanır:
+//
+//   - Panelde OLUP modülde olmayan bir durum: operatör seçer, yazma yüzeyi
+//     reddeder, form hata mesajıyla geri gelir. Gürültülü ve düzeltilebilir.
+//   - Modülde OLUP panelde olmayan bir durum: form onu hiç göstermez, operatör
+//     o duruma geçemez ve HİÇBİR hata görmez. Yeteneğin var olduğunu bile
+//     bilemez.
+//
+// İkincisi bu testin asıl sebebidir: sessiz olan odur.
+func TestPanelDurumSecenekleriModulunkilerleUyusuyor(t *testing.T) {
+	t.Parallel()
+
+	modulunkiler := []string{
+		productmodels.StatusDraft.String(),
+		productmodels.StatusPublished.String(),
+		productmodels.StatusArchived.String(),
+	}
+
+	assert.ElementsMatch(t, modulunkiler, adminui.ProductStatuses(),
+		"panelin durum listesi modülün kabul ettikleriyle birebir aynı olmalı")
+
+	for _, durum := range adminui.ProductStatuses() {
+		assert.True(t, productmodels.Status(durum).Valid(),
+			"panel %q durumunu sunuyor ama modül onu geçerli saymıyor", durum)
+	}
 }

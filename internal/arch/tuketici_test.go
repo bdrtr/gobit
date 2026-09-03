@@ -477,11 +477,20 @@ func alanIfadesi(deger *ast.CompositeLit, alan string) ast.Expr {
 //     [TestSaglayiciKayitAdlariUyusuyor] zaten iddia eder.
 //   - [cekirdekAilesi]: çekirdek altyapısı (veritabanı, link, query, saga,
 //     olay veri yolu). Modül üretimi değildir.
+//   - [yonetimAilesi]: modülün YÖNETİM YAZMA yüzeyi (ADR 0013). Tek tüketicisi
+//     yönetim panelidir ve o tüketici KOŞULLUDUR: panel bu adı ancak
+//     kayıtlıysa çözer, çünkü modülü kurulmamış bir kurulumda da açılabilmesi
+//     gerekir. Bu yüzden "tüketicisi var mı" denetiminin KAPSAMI DIŞINDADIR —
+//     kapsama alınsaydı koşullu çözümü zorunlu bir bağa çevirirdi. Ailenin
+//     asıl kısıtı başka: bu adı KİMİN anabileceği
+//     [TestAdminSurfaceHasOneAudience] ile sınırlıdır, panelin adı modülün
+//     sabitiyle tutuyor mu sorusu [TestPanelKatalogAdlariUyusuyor] ile.
 const (
 	interopAilesi   = ".interop"
 	servisAilesi    = ".service"
 	sorguAilesi     = ".query"
 	saglayiciAilesi = ".providers"
+	yonetimAilesi   = ".admin"
 	cekirdekAilesi  = "core."
 )
 
@@ -612,7 +621,7 @@ func bilinenAile(ad string) bool {
 	if strings.HasPrefix(ad, cekirdekAilesi) {
 		return true
 	}
-	for _, sonek := range []string{interopAilesi, servisAilesi, sorguAilesi, saglayiciAilesi} {
+	for _, sonek := range []string{interopAilesi, servisAilesi, sorguAilesi, saglayiciAilesi, yonetimAilesi} {
 		if strings.HasSuffix(ad, sonek) {
 			return true
 		}

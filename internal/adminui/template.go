@@ -46,6 +46,7 @@ var pages = []string{
 	"error.gohtml",
 	"products.gohtml",
 	"product.gohtml",
+	"product_edit.gohtml",
 }
 
 // templateSet maps a page name to that page's parsed template set.

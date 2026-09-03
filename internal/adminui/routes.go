@@ -28,6 +28,8 @@ func (u *UI) Routes(r chi.Router) {
 	r.Get(URLPrefix, u.home)
 	r.Get(ProductsPath, u.listProducts)
 	r.Get(ProductPath, u.showProduct)
+	r.Get(ProductEditPath, u.editProduct)
+	r.Post(ProductEditPath, u.submitProductEdit)
 }
 
 // home is the panel's protected entry point.

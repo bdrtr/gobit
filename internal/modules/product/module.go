@@ -75,6 +75,15 @@ const ServiceName = Name + ".service"
 // tanımladıkları dar arayüzle okuyabilir.
 const InteropName = Name + ".interop"
 
+// AdminName modülün YÖNETİM YAZMA yüzeyinin container'daki adıdır (ADR 0013).
+//
+// Interop'tan AYRI bir addır ve ayrım bilinçlidir: interop, başka modüllerin,
+// akışların ve eklentilerin katalogu OKUDUĞU yüzeydir ve godoc'u dar kalmaya
+// söz verir; oraya bir yazma metodu eklemek her eklentiye katalogu yeniden
+// yazma yetkisi verirdi. Bu adın tek kitlesi yönetim panelidir ve BU KISIT
+// belgelenmekle kalmaz, internal/arch'ta denetlenir.
+const AdminName = Name + ".admin"
+
 // Hata kodları.
 const (
 	codeSetupFailed = "product_module_setup_failed"
@@ -204,6 +213,11 @@ func (m *Module) Register(ctx context.Context, c *container.Container) error {
 	// product'ın zengin tipleriyle konuşur, bu yüzey ise yalnızca ilkel
 	// tiplerle (ADR 0006).
 	if err := c.Provide(InteropName, service.NewInterop(svc)); err != nil {
+		return err
+	}
+	// Yönetim yazma yüzeyi de AYRI bir adla kaydedilir; gerekçesi
+	// [AdminName]'de ve ADR 0013'te.
+	if err := c.Provide(AdminName, service.NewAdminSurface(svc)); err != nil {
 		return err
 	}
 	// Sağlayıcı adları "<entity>.query" biçimindedir; Query onları bu adla

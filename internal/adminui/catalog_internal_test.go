@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -418,4 +419,206 @@ func TestCatalogSpellsTheNamesTheProvidersUse(t *testing.T) {
 	require.True(t, ok, "the region entity must be read for the currency scales")
 	assert.Contains(t, regions.Fields, "currency")
 	assert.True(t, strings.HasPrefix(EntityRegion, "region"))
+}
+
+// fakeProductWriter is the module's admin write surface in memory.
+type fakeProductWriter struct {
+	err error
+
+	calls int
+	id    string
+	title string
+	// handle and status are recorded so a test can prove the form's values
+	// reach the surface unchanged.
+	handle string
+	status string
+}
+
+func (f *fakeProductWriter) UpdateProductBasics(_ context.Context, id, title, handle, status string) error {
+	f.calls++
+	f.id, f.title, f.handle, f.status = id, title, handle, status
+
+	return f.err
+}
+
+// newEditPanel builds a panel with both a read layer and a write surface.
+func newEditPanel(t *testing.T, catalog Catalog, writer ProductWriter) *UI {
+	t.Helper()
+
+	panel := newCatalogPanel(t, catalog)
+	panel.products = writer
+
+	return panel
+}
+
+// editRouter mounts the edit routes alongside the catalog ones.
+func editRouter(panel *UI) chi.Router {
+	r := catalogRouter(panel)
+	r.Get(ProductEditPath, panel.editProduct)
+	r.Post(ProductEditPath, panel.submitProductEdit)
+
+	return r
+}
+
+// postEdit submits the edit form.
+func postEdit(panel *UI, id string, form url.Values) *httptest.ResponseRecorder {
+	req := httptest.NewRequest(http.MethodPost, ProductsPath+"/"+id+"/edit",
+		strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	editRouter(panel).ServeHTTP(rec, req)
+
+	return rec
+}
+
+// editCatalog is a read layer holding one product.
+func editCatalog() *fakeCatalog {
+	return &fakeCatalog{byEntity: map[string][]query.Record{
+		EntityProduct: {{"id": "prod_1", "title": "Coffee", "handle": "coffee", "status": "draft"}},
+	}}
+}
+
+// TestEditFormShowsTheStoredValues proves the form opens with what is stored.
+func TestEditFormShowsTheStoredValues(t *testing.T) {
+	t.Parallel()
+
+	panel := newEditPanel(t, editCatalog(), &fakeProductWriter{})
+
+	rec := httptest.NewRecorder()
+	editRouter(panel).ServeHTTP(rec,
+		httptest.NewRequest(http.MethodGet, ProductsPath+"/prod_1/edit", http.NoBody))
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	body := rec.Body.String()
+	assert.Contains(t, body, `value="Coffee"`)
+	assert.Contains(t, body, `value="coffee"`)
+	assert.Contains(t, body, `<option value="draft" selected>`,
+		"the stored status must be the selected one")
+	assert.Contains(t, body, `<option value="archived">`,
+		"every status the module accepts must be offered")
+}
+
+// TestSubmittingTheEditReachesTheWriteSurface proves the form's values arrive
+// unchanged and the browser is redirected.
+//
+// The redirect matters as much as the write: rendering the result here would
+// leave the POST in the history, and a refresh would apply the same edit twice.
+func TestSubmittingTheEditReachesTheWriteSurface(t *testing.T) {
+	t.Parallel()
+
+	writer := &fakeProductWriter{}
+	panel := newEditPanel(t, editCatalog(), writer)
+
+	rec := postEdit(panel, "prod_1", url.Values{
+		"title":  {"Filter Coffee"},
+		"handle": {"filter-coffee"},
+		"status": {"published"},
+	})
+
+	require.Equal(t, http.StatusSeeOther, rec.Code)
+	assert.Equal(t, ProductsPath+"/prod_1", rec.Header().Get("Location"))
+
+	require.Equal(t, 1, writer.calls, "the write surface must be called exactly once")
+	assert.Equal(t, "prod_1", writer.id)
+	assert.Equal(t, "Filter Coffee", writer.title)
+	assert.Equal(t, "filter-coffee", writer.handle)
+	assert.Equal(t, "published", writer.status)
+}
+
+// TestARejectedEditComesBackWithTheTypedValues proves a refusal re-renders the
+// form rather than redirecting.
+//
+// Redirecting on failure would throw away what the operator typed and show a
+// message with no field to fix. The status code is 422 and not 200: the request
+// was understood and refused, and saying so in the status is what makes the
+// failure visible to anything but a human.
+func TestARejectedEditComesBackWithTheTypedValues(t *testing.T) {
+	t.Parallel()
+
+	writer := &fakeProductWriter{
+		err: errors.Conflict("product_handle_taken", "that handle is already used by another product"),
+	}
+	panel := newEditPanel(t, editCatalog(), writer)
+
+	rec := postEdit(panel, "prod_1", url.Values{
+		"title":  {"Filter Coffee"},
+		"handle": {"coffee"},
+		"status": {"published"},
+	})
+
+	require.Equal(t, http.StatusUnprocessableEntity, rec.Code)
+	body := rec.Body.String()
+	assert.Contains(t, body, "that handle is already used by another product",
+		"the service's own message must be shown; it is the only thing that says what to fix")
+	assert.Contains(t, body, `value="Filter Coffee"`,
+		"what the operator typed must come back, not what is stored")
+	assert.Contains(t, body, `<option value="published" selected>`)
+}
+
+// TestAnUnexpectedFailureIsNotShownToTheOperator proves only a rejection the
+// operator can act on reaches the page.
+//
+// An Invalid or Conflict message is written by a service author and is
+// client-safe by the framework's own rule. Anything else can carry a query, a
+// provider name or a database address, so it goes through the core's error path
+// and is masked there.
+func TestAnUnexpectedFailureIsNotShownToTheOperator(t *testing.T) {
+	t.Parallel()
+
+	writer := &fakeProductWriter{
+		err: errors.Unavailable("db_down", "dial tcp 10.0.0.5:5432: connection refused"),
+	}
+	panel := newEditPanel(t, editCatalog(), writer)
+
+	rec := postEdit(panel, "prod_1", url.Values{
+		"title": {"Filter Coffee"}, "handle": {"filter-coffee"}, "status": {"published"},
+	})
+
+	assert.Equal(t, http.StatusServiceUnavailable, rec.Code)
+	assert.NotContains(t, rec.Body.String(), "10.0.0.5",
+		"the underlying error must not reach the page")
+	assert.NotContains(t, rec.Body.String(), "connection refused")
+}
+
+// TestEditingIsUnavailableWithoutTheModule proves a panel with no write surface
+// says so instead of panicking.
+//
+// The write surface is resolved OPTIONALLY: an installation without the product
+// module still gets a panel. Treating it as mandatory would turn a removable
+// module into a requirement of the panel itself.
+func TestEditingIsUnavailableWithoutTheModule(t *testing.T) {
+	t.Parallel()
+
+	panel := newEditPanel(t, editCatalog(), nil)
+
+	rec := postEdit(panel, "prod_1", url.Values{
+		"title": {"Filter Coffee"}, "handle": {"filter-coffee"}, "status": {"published"},
+	})
+
+	assert.Equal(t, http.StatusServiceUnavailable, rec.Code)
+	assert.Contains(t, rec.Body.String(), "not registered")
+}
+
+// TestEditFormEscapesOperatorText proves the form's values are escaped.
+//
+// An edit form prints back exactly the text somebody typed, which makes it the
+// most direct XSS surface in the panel — and the panel runs inside an
+// administrator's session.
+func TestEditFormEscapesOperatorText(t *testing.T) {
+	t.Parallel()
+
+	writer := &fakeProductWriter{err: errors.Invalid("bad", "no")}
+	panel := newEditPanel(t, editCatalog(), writer)
+
+	rec := postEdit(panel, "prod_1", url.Values{
+		"title":  {`"><script>alert('admin')</script>`},
+		"handle": {"coffee"},
+		"status": {"draft"},
+	})
+
+	body := rec.Body.String()
+	assert.NotContains(t, body, "<script>", "the typed title must not be printed as a raw tag")
+	assert.NotContains(t, body, "ZgotmplZ",
+		"the engine failed to resolve a context: escaping LOOKS like it worked but the "+
+			"data is silently removed")
 }

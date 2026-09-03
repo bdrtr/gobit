@@ -1282,11 +1282,18 @@ açıktır.
 
 **Kurulum ve işletim**
 
-- **Yönetim paneli YALNIZCA OKUR.** `/admin/ui` altındaki panel
-  ([ADR 0011](docs/adr/0011-yonetim-paneli-dorduncu-agac.md)) giriş, çıkış ve
-  katalog ekranlarını (ürün listesi, ürün sayfasında varyant/fiyat/stok) taşır;
-  hiçbir yazma yolu yoktur. Ürün yaratmak, fiyat vermek ve stok girmek `/admin/v1`
+- **Yönetim panelinin yazma yüzeyi TEK bir forma açıktır.** `/admin/ui`
+  altındaki panel ([ADR 0011](docs/adr/0011-yonetim-paneli-dorduncu-agac.md))
+  giriş, çıkış, katalog ekranları (ürün listesi, ürün sayfasında
+  varyant/fiyat/stok) ve **ürünün başlık/handle/durum düzenlemesini**
+  ([ADR 0013](docs/adr/0013-panel-write-surface.md)) taşır. Ürün yaratmak,
+  silmek, fiyat vermek, stok girmek ve varyant düzenlemek hâlâ `/admin/v1`
   üzerinden, `Authorization: Bearer` ile yapılır.
+
+  Her yeni yazma, ilgili modülde ilkel-tipli bir yönetim yüzeyi metodu ve
+  panelde bir form demektir; ikisi de bir diff'te görünür. Panel bir modülü
+  import etmez, bu yüzden yazma yolu modülün yayımladığı yüzeyden geçmek
+  zorundadır.
 
   Panelin oturum çerezi yönetim API'sinde KABUL EDİLMEZ ve bu bir eksiklik
   değil karardır: API'nin CSRF bağışıklığı jetonun tarayıcının kendiliğinden

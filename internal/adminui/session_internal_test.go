@@ -336,3 +336,33 @@ func TestUnboundRingRejects(t *testing.T) {
 		"the body must carry the panel's own code so the operator can tell an unbound "+
 			"ring from a rejected credential")
 }
+
+// TestAnUnexpectedSignInFailureIsAPageNotJSON proves the panel answers a
+// browser with a page even when the failure is not a rejection.
+//
+// The framework's JSON envelope is right for an API endpoint and wrong here:
+// this path was navigated to by a BROWSER, and JSON makes the failure
+// unreadable to the one person who could act on it. The message of the
+// underlying error is not shown either — the framework calls a non-Internal
+// message client-safe because a service author wrote it, but that promise was
+// made about API clients.
+func TestAnUnexpectedSignInFailureIsAPageNotJSON(t *testing.T) {
+	t.Parallel()
+
+	panel := newTestPanel(t,
+		&fakeSession{err: errors.Unavailable("db_down", "dial tcp 10.0.0.5:5432: connection refused")},
+		fakeAuthenticator{}, false)
+
+	req := httptest.NewRequest(http.MethodPost, LoginPath,
+		strings.NewReader("email=a@example.com&password=secret"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	panel.submitLogin(rec, req)
+
+	assert.Equal(t, http.StatusServiceUnavailable, rec.Code)
+	body := rec.Body.String()
+	assert.Contains(t, body, "<html", "a browser must get a page, not a JSON envelope")
+	assert.NotContains(t, body, `"error"`, "the JSON envelope must not be written here")
+	assert.NotContains(t, body, "10.0.0.5", "the underlying error must not reach the page")
+	assert.Nil(t, sessionCookie(rec), "a failed sign-in writes no cookie")
+}
