@@ -13,8 +13,27 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-gobit}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-gobit}
       POSTGRES_DB: ${POSTGRES_DB:-gobit}
-      # Deterministik sıralama ve karşılaştırma için.
-      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
+      # CTYPE C.UTF-8, COLLATE ise bayt sırası olarak kalır.
+      #
+      # Sıralamanın deterministik olması için burada bir zamanlar "--locale=C"
+      # yazıyordu ve o ayar ARAMAYI SESSİZCE BOZUYORDU: C locale yalnızca ASCII
+      # harfleri katlar, dolayısıyla "çanta" arayan müşteri "Çanta" başlıklı
+      # ürünü BULAMIYORDU — hata yok, log yok, boş liste var. Hem vitrinin kendi
+      # `title ILIKE '%q%'` süzgeci hem search-pg eklentisinin to_tsvector'ü
+      # kümenin CTYPE'ına bağlıdır.
+      #
+      # Ölçüldü (aynı imaj, üç kurulum):
+      #   --locale=C                       ILIKE ✗   to_tsvector ✗
+      #   --locale=C.UTF-8                 ILIKE ✓   to_tsvector ✓
+      #   --locale=C --locale-provider=icu ILIKE ✓   to_tsvector ✗   (yarım çözüm)
+      #
+      # C.UTF-8 sıralamayı kaybettirmez: karşılaştırma yine bayt sırasıdır,
+      # değişen yalnızca harf katlamasıdır.
+      #
+      # DİKKAT: locale initdb ANINDA sabitlenir. Var olan bir veri dizini eski
+      # ayarıyla kalır; düzeltmek dump/restore ister. Uygulama açılışta bunu
+      # sınar ve bozuksa uyarır (internal/core/db/casefold.go).
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C.UTF-8"
     ports:
       - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
     volumes:

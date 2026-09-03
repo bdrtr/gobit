@@ -1351,6 +1351,19 @@ açıktır.
   kaydından okunur; hiç bölge tanımlanmamış bir kurulumda `19990 TRY (minor
   units)` görülür. Sabit 100 varsaymak JPY ve KWD gibi 0 ve 3 basamaklı para
   birimlerinde YANLIŞ tutar gösterirdi.
+- **Arama, veritabanı kümesinin CTYPE ayarına bağlıdır ve bu ayar initdb
+  anında sabitlenir.** Hem vitrinin kendi `?q=` süzgeci (`title ILIKE`) hem
+  `search-pg` eklentisinin indeksi (`to_tsvector`) harf katlamasını
+  PostgreSQL'e bırakır. `--locale=C` ile kurulmuş bir küme yalnızca ASCII
+  katlar, yani `"çanta"` araması `"Çanta"` başlıklı ürünü BULMAZ — hatasız,
+  sessizce.
+
+  `deploy/docker-compose.yml` artık `--locale=C.UTF-8` kullanıyor ve uygulama
+  açılışta durumu sınayıp bozuksa uyarıyor. Ama **var olan bir veri dizini
+  eski locale'iyle kalır**: `--locale=C` ile kurulmuş bir kurulumu düzeltmek
+  dump/restore ister. Kendi Postgres'inizi getiriyorsanız kümenin CTYPE'ı
+  UTF-8 farkında bir locale olmalıdır; ICU sağlayıcısı YETMEZ — `ILIKE`'ı
+  düzeltir, arama indeksini bozuk bırakır.
 - **Vitrin listesinin TOPLAM SAYACI katalog büyüdükçe pahalılaşır.**
   `GET /store/v1/products` yanıtındaki `count` alanı, satış kanalı süzgecinin
   uygulandığı kümenin tamamını saymak zorundadır; sayfa boyutu bunu

@@ -166,6 +166,11 @@ func New(ctx context.Context, cfg Config, log *slog.Logger) (*Pool, error) {
 			"the database is unreachable (target: %s)", target)
 	}
 
+	// The case-folding probe runs here, on a pool that has just answered a
+	// Ping, so it costs one extra round trip at startup and nothing per
+	// request. See casefold.go for what it protects.
+	checkCaseFolding(ctx, pool, log)
+
 	log.InfoContext(ctx, "the postgres connection pool is ready",
 		slog.String("target", target),
 		slog.Int64("max_conns", int64(cfg.MaxConns)),

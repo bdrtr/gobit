@@ -10,6 +10,48 @@ Sabitlenme `1.0.0` ile olur.
 
 ## [Yayımlanmamış]
 
+### Düzeltildi
+
+- **ARAMA TÜRKÇE'DE SESSİZCE ÇALIŞMIYORDU.** `deploy/docker-compose.yml`
+  Postgres'i `--locale=C` ile kuruyordu ve C locale yalnızca ASCII harfleri
+  katlar. Sonuç: `"çanta"` arayan müşteri, başlığı `"Çanta"` olan ürünü
+  BULAMIYORDU. Hata yok, log yok, metrik yok — arama kutusu boş liste dönüyordu.
+
+  Bu bir eklenti sorunu DEĞİLDİ: vitrinin kendi süzgeci
+  (`title ILIKE '%' || $q || '%'`) de aynı ayara bağlı, yani hiçbir eklenti
+  kurulmamış bir kurulumda da bozuktu. Gerçek sunucuda ölçüldü:
+
+  ```
+  GET /store/v1/products?q=çanta   -> 0 sonuç
+  GET /store/v1/products?q=Çanta   -> 1 sonuç
+  ```
+
+  Düzeltme `--locale=C.UTF-8`. Aynı imajda üç kurulum ölçüldü:
+
+  | initdb | `ILIKE` | `to_tsvector` |
+  |---|---|---|
+  | `--locale=C` (eskisi) | ✗ | ✗ |
+  | `--locale=C.UTF-8` (yenisi) | ✓ | ✓ |
+  | `--locale-provider=icu` | ✓ | **✗** |
+
+  ICU'nun yarım kalması önemli: `ILIKE`'ı düzeltip arama indeksini bozuk
+  bırakıyor, yani düzeltilmiş gibi görünen bir kurulum üretiyor. C.UTF-8
+  sıralamayı da kaybettirmiyor — karşılaştırma yine bayt sırası, değişen
+  yalnızca harf katlaması.
+
+- **Açılışta artık bu sınanıyor** (`internal/core/db/casefold.go`). Havuz
+  açıldıktan sonra veritabanına iki soru sorulur — `'Ç' ILIKE 'ç'` ve
+  `to_tsvector`/`websearch_to_tsquery` eşleşmesi — ve biri bile başarısızsa
+  hangi arama yolunun etkilendiğini ve çözümün ne olduğunu söyleyen bir UYARI
+  loglanır. Açılış DURDURULMAZ: tamamen ASCII bir katalog C locale'de sorunsuz
+  çalışır ve o kurulumları reddetmek yanlış olurdu.
+
+  Locale ADI okunmuyor, DAVRANIŞ sınanıyor: ad bir vekildir ve beklenmedik ama
+  doğru bir locale yanlış raporlanırdı. İki yarı da sınanıyor, çünkü ICU
+  kurulumunda ayrışıyorlar — yalnızca `ILIKE`'a bakan bir kontrol o kuruluma
+  temiz rapor verirdi. Locale initdb ANINDA sabitlendiği için var olan bir veri
+  dizini eski ayarıyla kalır; uyarı bunu ve dump/restore gerektiğini söyler.
+
 ### Değiştirildi
 
 - **Vitrinin satış kanalı görünürlük kuralı tek bir korelasyonlu alt sorguya

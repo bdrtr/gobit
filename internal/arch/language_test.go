@@ -209,9 +209,16 @@ const generatedMarker = "Code generated"
 //
 // # Who is in it, and who is not yet
 //
-// Only one entry today, and it is this rule's own decision record: ADR 0012
-// quotes the letter class as data, so the file that DEFINES the rule would
-// otherwise be its first violation.
+// Two entries. The first is this rule's own decision record: ADR 0012 quotes
+// the letter class as data, so the file that DEFINES the rule would otherwise
+// be its first violation.
+//
+// The second is the database case-folding probe. Its whole subject is that a
+// C-locale cluster cannot fold non-ASCII case, and it cannot say so without
+// naming a pair of letters that differ only in case outside ASCII. Replacing
+// them with ASCII would make the file pass this rule and make the probe test
+// nothing — the ASCII pair folds on every cluster, which is exactly the false
+// all-clear the probe exists to prevent.
 //
 // Three more files hold legitimate Turkish letters and are absent on purpose —
 // each still contains Turkish PROSE as well, so the ledger already covers them
@@ -226,6 +233,9 @@ const generatedMarker = "Code generated"
 //     purpose
 var diacriticDataExemptions = map[string][]string{
 	"docs/adr/0012-repository-language-and-solid.md": {"`çğıöşüÇĞİÖŞÜ`"},
+	"internal/core/db/casefold.go": {
+		"'Ç' ILIKE 'ç'", "'ÇANTA'", "'çanta'", `"çanta"`, `"Çanta"`,
+	},
 }
 
 // turkishHit is one lane firing on one line.
