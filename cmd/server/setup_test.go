@@ -22,6 +22,7 @@ import (
 	"github.com/bdrtr/gobit/internal/core/errors"
 	corehttp "github.com/bdrtr/gobit/internal/core/http"
 	coreprovider "github.com/bdrtr/gobit/internal/core/provider"
+	"github.com/bdrtr/gobit/internal/core/query"
 	authmodels "github.com/bdrtr/gobit/internal/modules/auth/models"
 	authservice "github.com/bdrtr/gobit/internal/modules/auth/service"
 	"github.com/bdrtr/gobit/internal/modules/notification"
@@ -972,4 +973,229 @@ func TestGuardStackExemptsTheGraphQLEndpointFromIdempotency(t *testing.T) {
 		"the GraphQL endpoint is not recorded, so it cannot be replayed")
 	assert.Contains(t, second.Body.String(), `"count":42`,
 		"once the failure is fixed the client must get the CURRENT response")
+}
+
+// panelIdentity accepts exactly one token and rejects everything else.
+//
+// [validIdentity] accepts every request, which is the right fake for the tests
+// whose subject is a ring further down the stack. It is the WRONG fake here:
+// the claim below is that a request WITHOUT a header is refused, and an
+// authenticator that says yes to everything would make that claim pass no
+// matter how the guard behaved.
+type panelIdentity struct{ token string }
+
+// AuthenticateAdmin accepts only the Bearer scheme and the known token.
+func (p panelIdentity) AuthenticateAdmin(_ context.Context, scheme, token string) (corehttp.Principal, error) {
+	if scheme != corehttp.SchemeBearer || token != p.token {
+		return corehttp.Principal{}, errors.Unauthorized("auth_invalid_token", "invalid token")
+	}
+
+	return corehttp.Principal{ID: "usr_panel", Kind: "user"}, nil
+}
+
+// AuthenticateStore is never reached by these tests.
+func (p panelIdentity) AuthenticateStore(_ context.Context, _ string) (corehttp.Principal, error) {
+	return corehttp.Principal{}, errors.Unauthorized("auth_invalid_key", "invalid key")
+}
+
+// panelCatalog is the panel's read surface; the tests below never read.
+type panelCatalog struct{}
+
+func (panelCatalog) Graph(context.Context, query.GraphSpec) ([]query.Record, error) {
+	return nil, nil
+}
+
+// panelSession is the panel's identity surface.
+//
+// It accepts ONE pair of credentials and returns the same token the
+// authenticator recognizes, so the sign-in path can be exercised end to end
+// through the real guard stack.
+type panelSession struct {
+	email    string
+	password string
+	token    string
+}
+
+func (p panelSession) Login(_ context.Context, email, password string) (string, time.Time, error) {
+	if email != p.email || password != p.password {
+		return "", time.Time{}, errors.Unauthorized("auth_invalid_credentials", "invalid credentials")
+	}
+
+	return p.token, time.Now().Add(time.Hour), nil
+}
+
+func (p panelSession) Logout(context.Context, string, string) (time.Time, error) {
+	return time.Time{}, nil
+}
+
+// TestPanelCookieIsNotAcceptedByTheAdminAPI is the load-bearing claim of ADR
+// 0011 and the reason the panel has its own tree at all.
+//
+// The admin API's CSRF immunity does not come from a defense. It comes from the
+// token living in a header the browser never attaches BY ITSELF: a form posted
+// from another site carries the victim's cookies but cannot set an
+// Authorization header. The moment the panel's session cookie were also
+// accepted at /admin/v1, that property would be gone and EVERY admin endpoint —
+// every write, every deletion — would enter a new attack surface, with nothing
+// failing to announce it.
+//
+// The claim is exercised on the REAL stack, not on a hand-built middleware
+// chain, because what is being asserted is a property of the SCOPING: guard
+// scope matches on a segment boundary, /admin/ui is not under /admin/v1, and
+// the panel's identity ring is attached only to the panel prefix. A test that
+// rebuilt the chain would be asserting its own copy.
+//
+// The third case is what makes the first two mean anything. Without it a 401
+// from the API prefix would also be satisfied by a cookie that simply never
+// worked anywhere, and the test would keep passing after the panel had stopped
+// authenticating altogether.
+func TestPanelCookieIsNotAcceptedByTheAdminAPI(t *testing.T) {
+	t.Parallel()
+
+	const token = "a-valid-admin-token"
+
+	identity := panelIdentity{token: token}
+
+	c := container.New(discardLogger())
+	require.NoError(t, c.Provide(adminui.ServiceQuery, panelCatalog{}))
+	require.NoError(t, c.Provide(adminui.ServiceAuth, panelSession{
+		email:    "operator@example.com",
+		password: "a-long-enough-password",
+		token:    token,
+	}))
+	require.NoError(t, c.Provide(adminui.InteropAuth, identity))
+
+	panel, err := adminui.FromContainer(c, false)
+	require.NoError(t, err)
+
+	ring := &adminui.Ring{}
+	ring.Bind(panel)
+
+	guards, err := guardStack(baseConfig(), identity, ring, nil, discardLogger())
+	require.NoError(t, err)
+
+	r := corehttp.NewRouter(corehttp.RouterOptions{Version: "test", Middlewares: guards})
+	r.Get("/admin/v1/users", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	panel.Routes(r)
+
+	withCookie := func(path string) *http.Request {
+		req := httptest.NewRequest(http.MethodGet, path, http.NoBody)
+		req.AddCookie(&http.Cookie{Name: adminui.CookieName, Value: token})
+
+		return req
+	}
+
+	t.Run("the cookie does not open the admin API", func(t *testing.T) {
+		t.Parallel()
+
+		rec := httptest.NewRecorder()
+		r.ServeHTTP(rec, withCookie("/admin/v1/users"))
+
+		assert.Equal(t, http.StatusUnauthorized, rec.Code,
+			"the admin API must read ONLY the Authorization header; the moment it accepts the "+
+				"panel cookie, its CSRF immunity is gone")
+	})
+
+	t.Run("the header opens the admin API", func(t *testing.T) {
+		t.Parallel()
+
+		req := httptest.NewRequest(http.MethodGet, "/admin/v1/users", http.NoBody)
+		req.Header.Set("Authorization", "Bearer "+token)
+		rec := httptest.NewRecorder()
+		r.ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusOK, rec.Code,
+			"the same token must still work through the header; otherwise the case above proves "+
+				"nothing but a broken token")
+	})
+
+	t.Run("signing in needs no identity of its own", func(t *testing.T) {
+		t.Parallel()
+
+		req := httptest.NewRequest(http.MethodPost, adminui.LoginPath,
+			strings.NewReader("email=operator@example.com&password=a-long-enough-password"))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.Header.Set("Origin", "http://"+req.Host)
+		rec := httptest.NewRecorder()
+		r.ServeHTTP(rec, req)
+
+		// This is what the exemption on the identity ring costs when it is
+		// dropped: the ring would demand a cookie from the very request that is
+		// about to establish one, and NOBODY could ever sign in. The failure
+		// would not look like a bug — the login page would simply come back
+		// again, with a 401, forever.
+		require.Equal(t, http.StatusSeeOther, rec.Code,
+			"a correct sign-in must be able to pass the identity ring without a cookie")
+		assert.Equal(t, adminui.URLPrefix, rec.Header().Get("Location"))
+
+		cookies := rec.Result().Cookies()
+		var session *http.Cookie
+		for _, ck := range cookies {
+			if ck.Name == adminui.CookieName {
+				session = ck
+			}
+		}
+		require.NotNil(t, session, "sign-in must write the session cookie")
+		assert.Equal(t, adminui.URLPrefix, session.Path,
+			"the cookie's path must be pinned to the panel tree; that pin is what keeps the admin "+
+				"API's CSRF immunity intact")
+	})
+
+	t.Run("the panel is closed without the cookie", func(t *testing.T) {
+		t.Parallel()
+
+		rec := httptest.NewRecorder()
+		r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, adminui.URLPrefix, http.NoBody))
+
+		assert.Equal(t, http.StatusUnauthorized, rec.Code,
+			"the panel prefix is in OpenPrefixes so it enters the core's stack for the QUOTA, not "+
+				"for identity; if its own ring is not attached the tree opens with no identity at all")
+	})
+
+	t.Run("a cross-site form submission is rejected", func(t *testing.T) {
+		t.Parallel()
+
+		req := httptest.NewRequest(http.MethodPost, adminui.LoginPath,
+			strings.NewReader("email=a@example.com&password=x"))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.Header.Set("Origin", "https://another.example")
+		rec := httptest.NewRecorder()
+		r.ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusForbidden, rec.Code,
+			"CSRF's second layer must be attached AT THE COMPOSITION ROOT. That the middleware "+
+				"itself works is proven in the adminui package; what is proven here is that it is "+
+				"WIRED — and an unwired ring fails nothing on its own")
+	})
+
+	t.Run("a same-origin form submission passes the origin ring", func(t *testing.T) {
+		t.Parallel()
+
+		req := httptest.NewRequest(http.MethodPost, adminui.LoginPath,
+			strings.NewReader("email=a@example.com&password=x"))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.Header.Set("Origin", "http://"+req.Host)
+		rec := httptest.NewRecorder()
+		r.ServeHTTP(rec, req)
+
+		// The credentials are wrong, so the login page comes back with a 401.
+		// The point is the 403 above NOT appearing: a ring that rejected
+		// everything would pass the previous case just as well.
+		assert.Equal(t, http.StatusUnauthorized, rec.Code,
+			"a request from the panel's own origin must pass the origin ring and reach the "+
+				"identity service")
+	})
+
+	t.Run("the cookie opens the panel", func(t *testing.T) {
+		t.Parallel()
+
+		rec := httptest.NewRecorder()
+		r.ServeHTTP(rec, withCookie(adminui.URLPrefix))
+
+		assert.Equal(t, http.StatusOK, rec.Code,
+			"the cookie must work inside the panel tree; without this the 401 above could just as "+
+				"well come from a cookie that never worked at all")
+	})
 }

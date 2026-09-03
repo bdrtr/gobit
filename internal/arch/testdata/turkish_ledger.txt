@@ -58,7 +58,6 @@ internal/core/eventbus/redis.go
 internal/core/eventbus/redis_integration_test.go
 internal/core/eventbus/redis_internal_test.go
 internal/core/eventbus/redis_test.go
-internal/core/http/auth.go
 internal/core/http/guard.go
 internal/core/http/guard_test.go
 internal/core/http/idempotency.go

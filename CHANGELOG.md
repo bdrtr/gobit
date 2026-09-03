@@ -81,6 +81,32 @@ Sabitlenme `1.0.0` ile olur.
 - Gövde yazımı taraması artık `tmpl.Execute(w, …)` biçimindeki şablon
   akıtmalarını da yakalıyor. Tarama alıcının import adına baktığı için şablon
   yazıcısına KÖRDÜ ve panel bu kör noktadan geçebilirdi.
+- **Panel çerezinin `/admin/v1`'de KABUL EDİLMEDİĞİ artık bir değişmez**
+  (`TestPanelCookieIsNotAcceptedByTheAdminAPI`). ADR 0011'in taşıyıcı iddiası
+  buydu ve bugüne kadar hiçbir test onu tutmuyordu: yönetim API'sinin CSRF
+  bağışıklığı bir savunmadan değil, jetonun tarayıcının KENDİLİĞİNDEN
+  eklemediği bir başlıkta yaşamasından geliyor. İddia GERÇEK koruma yığınında
+  sınanıyor, elle kurulmuş bir zincirde değil — çünkü kanıtlanan şey KAPSAMIN
+  bir özelliği.
+
+  Test yazılırken dört mutasyon sağ kaldı ve dördü de testteki gerçek
+  boşluklardı: çerezle panelin açılması, halka hiç takılı değilken de
+  geçiyordu (panel öneki kotalar için zaten açık); köken halkasının TAKILI
+  olduğunu hiçbir şey kanıtlamıyordu; giriş yolunun kimlik muafiyetini
+  kaldırmak hiçbir testi düşürmüyordu — oysa bedeli "kimse giriş yapamaz"dır
+  ve arıza bir hataya bile benzemez, giriş sayfası 401'le geri gelir.
+
+- **`corehttp.SchemeBearer`.** Çekirdek, `Authorization` başlığından okuduğu
+  şemayı KÜÇÜK HARFE indirip doğrulayıcıya öyle veriyor; panel ise jetonu
+  çerezde taşıdığı için başlıktan hiç geçmiyor ve şemayı elle yazıyordu. İki
+  yazım bugün yalnızca auth modülünün büyük/küçük harf duyarsız
+  karşılaştırması sayesinde çalışıyordu. Sözleşme artık `Authenticator`
+  arayüzünde yazılı ve iki taraf da aynı sabiti kullanıyor.
+
+- `internal/core/http/auth.go` İngilizceye çevrildi. Kimlik doğrulama
+  yanıtlarının mesajları değişti (`"authentication is required"`); kodlar
+  (`unauthenticated`, `forbidden`) değişmedi.
+
 - **Bileşim kökü ve çekirdeğin yanıt yazıcısı İngilizceye çevrildi**
   ([ADR 0012](docs/adr/0012-repository-language-and-solid.md)). `cmd/server`
   içinde `kurulum.go` → `setup.go`, `kurulum_test.go` → `setup_test.go`,
@@ -94,7 +120,7 @@ Sabitlenme `1.0.0` ile olur.
   eklenti kaydının yerel değişkenine `registry` demek, denetimin alıcıyı ADIYLA
   tanıması yüzünden o satırı modül kaydı gibi gösteriyordu.
 
-  İçerik defteri 784 → 778, yol defteri 41 → 38.
+  İçerik defteri 784 → 777, yol defteri 41 → 38.
 
 - ADR seçenek bölümü başlıklarını tanıyan liste İKİ DİLLİ oldu
   (`internal/arch/belge_atiflari_test.go`). Yalnızca Türkçe başlık tanıyan

@@ -45,7 +45,12 @@ func (u *UI) Protect(next http.Handler) http.Handler {
 			return
 		}
 
-		principal, err := u.authenticator.AuthenticateAdmin(r.Context(), "Bearer", token)
+		// The scheme comes from the core's constant, not a literal: a request
+		// arriving over the header reaches the authenticator with its scheme
+		// LOWER-CASED, and the panel — which never touches the header — has to
+		// spell the same value. Two spellings of the same word would work today
+		// only because the auth module happens to compare case-insensitively.
+		principal, err := u.authenticator.AuthenticateAdmin(r.Context(), corehttp.SchemeBearer, token)
 		if err != nil {
 			// The cookie exists but is invalid: expired, or the secret changed.
 			// It must be dropped, otherwise the browser keeps sending the same
