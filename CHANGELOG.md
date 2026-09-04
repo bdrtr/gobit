@@ -12,6 +12,65 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Eklendi
 
+- **Zamanlanmış iş geldi** (`internal/core/job`) — ama planladığımın onda biri
+  kadarıyla, ve asıl değeri kodda değil ÖLÇÜMDE.
+
+  Yol haritası bu maddeyi "4 tüketici" diye yazmıştı. 22 ajanlı tasarım turu
+  dördünü de çürüttü ve ölçüm doğrulandı: `payout` gobit'te **sıfır dosyada**
+  geçiyor; reddedilen başvuru kavramı yok (b2b'de yalnızca `b2b_company` ve
+  `b2b_company_employee`); kampanya süresi zaten OKUMA anında uygulanıyor
+  (`campaignUsable(candidate, in.At)`) — durum çeviren bir iş gözlenebilir
+  hiçbir şeyi değiştirmezdi; ve terk edilmiş sepet kurtarma **eksik değil,
+  reddedilmiş** — dört ayrı yerde yazılı. Yani dördü de ADR 0009'un sınavını
+  geçmiyordu, ve inşa etmek deponun kendi adını koyduğu ikinci hata sınıfını
+  çekirdeğe koymak olurdu.
+
+  **Kararı mümkün kılan şey mevcut yasağın İÇİNDEKİ ayrım.** ADR 0017 *eylemi*
+  yasaklıyor: kurtarma telafi koşturur, telafi yan etkidir, zamanlanmış bir iş
+  bunu izlenmeden yapardı. ADR 0016 ise öteki yarıyı açıkça sahipsiz bırakmış:
+  *"Bu bir anlık görüntü, uyarı değil. Kimseye sepetin takıldığı söylenmiyor."*
+  `stuck.go` bunun bedelini de yazmış: o kayıt "sonsuza dek running kalır, stok
+  tutar ve hiçbir şey tarafından anılmaz". Tutulan iş ayrılmış stoktur —
+  ergonomi değil doğruluk maliyeti.
+
+  Dolayısıyla tek iş var: **`sagawatch`**, ve yalnızca RAPOR eder. Hiçbir şeye
+  dokunmaz. Onarım hâlâ `gobit recover <id> -confirm`, bakan bir insanın işi;
+  değişen tek şey, insanın artık bakılacak bir şey olduğunu ÖĞRENMESİ.
+
+  **Seçim satırla, canlılık kilitle.** İkisi farklı soru yanıtladığı için ikisi
+  birden. Yalnız kilit eşzamanlılığı engeller ama SIKLIĞI değil: üç kopya farklı
+  fazlarda tikleyip günlük bir işi gecede üç kez koşar — ve arıza kopya
+  ekledikçe kötüleşir. Yalnız lease ise asılıyı ölüden ayıramaz: takılmış ama
+  canlı süreç kalp atışı gönderip listede en sağlıklı satır olur. Üstelik
+  gobit'in lease'inin **deposu yok** — yürütme şemasında lease sütunu, sahip
+  alanı, kalp atışı ve süpürücü yok; `WithLease` çağıran tarafta `updated_at`
+  üzerine bir yüklem.
+
+  Oturum kapsamlı advisory lock'ın hiç ayarı yok: arka uç çıkar, PostgreSQL
+  kilidi zamanlayıcısız toplar. Gerçek Postgres'e karşı kanıtlandı — kilidi
+  tutan bağlantı kapatıldığında kilit serbest kalıyor.
+
+  **Occurrence epoch'a bağlı**, sürecin başlangıcına değil; seçimin tamamı bu.
+  Dakikalar arayla açılmış iki kopya AYNI anı hesaplamazsa aynı satır için
+  yarışmaz ve her kopya her işi koşar. Mutasyonla kanıtlandı.
+
+  **Anahtar sınıfı 2, ve sınıf süs değil.** Sınıf 0'ı golang-migrate bütünüyle
+  işgal ediyor (uint32) ve kendi kilidini `context.Background()` üzerinde
+  bekliyor — yani sınırsız VE iptal edilemez bir bekleme. İşin adının çıplak
+  hash'i o aralığa düşerdi ve açılıştaki bir migration'ı kimsenin
+  kesemeyeceği bir beklemede kilitleyebilirdi. Bu da mutasyonla kanıtlandı.
+
+  16 goroutine gerçek Postgres'te aynı occurrence'ı talep ediyor: tam olarak
+  biri kazanıyor. Sahte depoyla kanıtlanamayacak tek iddia buydu.
+
+  `gobit jobs` uç değil alt komut — "dün gece koştu mu" sorusu olay anında
+  terminalden sorulur, yönetim API'sinin kendisi bozuk olabilir. Liste koşanı
+  ölenden ayıramaz ve bunu SÖYLER ("unfinished (running now, or the process
+  died)") — tahmin etmez; ayıran şey kilittir.
+
+  Karar ADR 0019'da, reddedilen altı seçenekle birlikte. `Host.RegisterJob`
+  ertelendi: kaydedilecek eklenti işi sıfırken o da aynı hata sınıfı.
+
 - **PayTR ile ödeme geldi** (`payment-paytr` eklentisi) — ve web push'la
   **aynı bulguya** çıktı, ters yönden.
 

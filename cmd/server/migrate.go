@@ -17,6 +17,7 @@ import (
 	"github.com/bdrtr/gobit/internal/core/container"
 	"github.com/bdrtr/gobit/internal/core/db"
 	"github.com/bdrtr/gobit/internal/core/errors"
+	"github.com/bdrtr/gobit/internal/core/job/jobpg"
 	"github.com/bdrtr/gobit/internal/core/module"
 	"github.com/bdrtr/gobit/internal/core/workflow/pgstore"
 )
@@ -89,6 +90,7 @@ type migrationSource struct {
 func coreMigrationSources() []migrationSource {
 	return []migrationSource{
 		{owner: pgstore.MigrationOwner, src: pgstore.Migrations()},
+		{owner: jobpg.MigrationOwner, src: jobpg.Migrations()},
 	}
 }
 
@@ -661,6 +663,7 @@ Usage:
   %s %-34s roll ONE owner back
   %s %-34s list executions left half-done (read only)
   %s %-34s compensate ONE half-done execution
+  %s %-34s report each scheduled job's last run
   %s %-34s print this text
 
 %s %s flags:
@@ -680,6 +683,7 @@ there is deliberately no "migrate up", so a deploy cannot forget it.
 		binaryName, cmdMigrate+" "+cmdDown+" <owner> [flags]",
 		binaryName, stuckCommand+" [flags]",
 		binaryName, recoverCommand+" <execution-id> [flags]",
+		binaryName, jobsCommand,
 		binaryName, cmdHelp,
 		cmdMigrate, cmdDown,
 		flagSteps+" N", defaultDownSteps,

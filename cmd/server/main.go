@@ -134,6 +134,8 @@ func run(args []string, out io.Writer) error {
 		return runStuck(args[1:], out)
 	case recoverCommand:
 		return runRecover(args[1:], out)
+	case jobsCommand:
+		return runJobs(args[1:], out)
 	default:
 		if err := writeReport(out, usageText()); err != nil {
 			return err
@@ -303,6 +305,21 @@ func serve() error {
 	checkSchema(ctx, doc, router, log)
 
 	warnIfShutdownIsShorterThanTheSaga(ctx, cfg, log)
+
+	// The job runner is started HERE and not in openApplication: the migrate,
+	// stuck and recover subcommands build the same application and must not
+	// begin running scheduled work as a side effect of an operator reading
+	// something.
+	//
+	// Stop() is deferred rather than left to the context, because the runner
+	// waits for the pass it is in the middle of. Without it a shutdown could
+	// close the pool underneath a job that is still writing.
+	jobs, stopJobs, err := startJobs(ctx, c, cfg, log)
+	if err != nil {
+		return err
+	}
+	defer stopJobs()
+	_ = jobs
 
 	srv := corehttp.NewServer(corehttp.ServerOptions{
 		Addr:              cfg.Addr(),
