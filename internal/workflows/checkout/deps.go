@@ -345,6 +345,14 @@ type Orders interface {
 	// CancelOrder cancels the order; it is the SAGA COMPENSATION and it is
 	// IDEMPOTENT. Canceling a completed order returns errors.Conflict.
 	CancelOrder(ctx context.Context, orderID, reason string) error
+
+	// SetOrderSummaryTotals records on the order how much was collected and how
+	// much was refunded.
+	//
+	// The write is a MERGE — for each field the larger of the recorded and the
+	// reported value is kept — so calling it twice cannot shrink a total and the
+	// call is safe to repeat.
+	SetOrderSummaryTotals(ctx context.Context, orderID string, paidTotal, refundedTotal int64) error
 }
 
 // Payments is the surface of the payment module ("payment.interop") used by

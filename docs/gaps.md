@@ -361,7 +361,18 @@ the next reader sees a decision instead of a wait.
    Not in the README's known-limits list and not refused by any ADR — this one
    is simply unnoticed, which makes it the most urgent item in this file.
 
-2. **No order knows what was paid on it.** `SetOrderSummaryTotals`
+2. ~~**No order knows what was paid on it.**~~ **HALF CLOSED 2026-09-05,
+   ADR 0022.** The checkout saga now reads the payment collection after the
+   capture and records its amounts on the order, so `paid_total` is right from
+   the moment of checkout.
+
+   **The refund half is still open.** Refunds are made through the payment
+   module's own admin API, which has no order-side caller, so a refund made
+   later never reaches the summary — and the B2B consequence below is therefore
+   NOT fixed. It needs either payment events (the module publishes none) or an
+   admin flow that writes both sides.
+
+   The original finding: `SetOrderSummaryTotals`
    (`order/service/summary.go`) has a service method, a repository method and
    a generated query — and NO production caller. The checkout saga never calls
    it (`grep` over `internal/workflows/` returns nothing). Every real order

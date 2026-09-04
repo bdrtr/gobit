@@ -12,6 +12,54 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Eklendi
 
+- **Sipariş artık üzerine ne ödendiğini biliyor** (ADR 0022) — `paid_total` her
+  gerçek siparişte sıfırdı.
+
+  `SetOrderSummaryTotals`'ın servis metodu, depo metodu ve üretilmiş sorgusu
+  vardı; ÜRETİM ÇAĞIRANI YOKTU. Metot taslak da değil — godoc'u yazımın neden
+  MERGE olduğunu (at-least-once bir çağıran toplamı küçültememeli), küçülen bir
+  raporun neden hata değil yok sayıldığını (hata, aboneyi sonsuz denemeye
+  sokardı), neden siparişin kilidi altında koştuğunu ve fazla tahsilatın neden
+  kırpılmadığını tek tek savunuyor. Kimin çağıracağını bile yazmış: "complete_cart
+  akışı ya da ödeme olaylarını dinleyen bir abone". İkisi de yoktu.
+
+  Sonuç her siparişe ulaşıyordu: `paid_total: 0`, `outstanding: <tüm tutar>` —
+  hem yönetim hem vitrin okumasında. **Operatör ödenmiş siparişi ödenmemişten
+  ayıramıyordu**, ki bir sipariş hakkında sorulan ilk soru budur.
+
+  Yazım `clearCartStep`'in içinde, PİVOT SONRASI: hata saga'yı düşürmüyor, ERROR
+  loglanıp `Warnings`'e yazılıyor. Para hareket etmiş ve sipariş verilmişken hata
+  dönmek, başarılı bir akış için müşteriye başarısızlık göstermek olurdu.
+  `CompleteCartResult` artık `PaymentTotalsRecorded` taşıyor.
+
+  Yazılan sayı PLANIN değil KOLEKSİYONUN: sağlayıcı istenenden azını tahsil
+  edebilir, fazla tahsilat gerçek bir olgudur, ve aynı koleksiyona karşı çoktan
+  bir iade durabilir. Ödeme modülünün kendi rakamını yazmak, sayıyı
+  karşılaştırmaya değer kılan şey — özeti koleksiyonuyla uyuşmayan sipariş o
+  zaman gerçek bir ayrışmadır.
+
+  **Yarısı hâlâ açık ve bunu söylemek kararın parçası:** iadeler ödeme modülünün
+  kendi yönetim API'sinden yapılıyor ve sipariş tarafında çağıranı yok, yani
+  SONRADAN yapılan bir iade özete hiç ulaşmıyor. Bunun adı konmuş bir kurbanı
+  var: B2B harcama penceresi `order_summaries.refunded_total`'ı düşüyor, dolayısıyla
+  **iade edilmiş bir B2B siparişi çalışanın bütçesini hâlâ geri vermiyor.**
+
+  Bir e2e testi `PaidTotal == 0`'ı BİLEREK doğruluyordu ve yorumu gerçek bir
+  karşı-argüman taşıyordu: "aynı anda iki yerde tutulan bir ödenen tutar
+  ayrışabilir". Cevaplandı, atlanmadı. Çoğaltma zaten kararlaştırılmıştı —
+  `order_summaries` tablosu o sütunlarla var, `SetOrderSummaryTotals` onları
+  doldurmak için yazılmış, ve B2B harcama penceresi `refunded_total`'ı ZATEN
+  okuyor; eksik olan karar değil, yazandı. Özet TÜRETİLMİŞ bir rapor, koleksiyon
+  hakikat kaynağı olarak kalıyor. Ayrışma da iki rakam olmasının yarattığı bir
+  risk değil, iki rakam olduğu için GÖRÜLEBİLİR hâle gelen bir durum — ADR
+  0020'nin oturum ile sağlayıcı için kurduğu argümanın aynısı.
+
+  Abone seçeneği neden seçilmedi: ödeme modülü HİÇ olay yayımlamıyor. Ödeme için
+  bir olay yüzeyi kurmak bundan büyük bir karar ve önce "ödeme olayı ne taşır"
+  sorusunu yanıtlamak gerekir. O gün geldiğinde bu karar geçersizleşir — abone
+  daha iyi bir ev, çünkü siparişin bütün ömrünü kapsar ve iade boşluğunun
+  ihtiyacı tam olarak budur.
+
 - **Alışverişçi artık kendi kargo fiyatını belirleyemiyor** (ADR 0021) — bu bir
   özellik değil, sömürülebilir bir açığın kapatılması.
 

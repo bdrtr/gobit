@@ -176,6 +176,13 @@ type CompleteCartResult struct {
 	Amount int64 `json:"amount"`
 	// ReservationIDs are the reservations allocated to the order.
 	ReservationIDs []string `json:"reservation_ids"`
+	// PaymentTotalsRecorded reports whether what was collected was written onto
+	// the order.
+	//
+	// FALSE does not mean the money did not move — it means the order does not
+	// SAY it moved, and will read as unpaid until a human repairs it. See the
+	// Warnings field for what went wrong.
+	PaymentTotalsRecorded bool `json:"payment_totals_recorded"`
 	// CartCompleted reports whether the cart was stamped completed.
 	CartCompleted bool `json:"cart_completed"`
 	// ReservationsConfirmed reports whether the reservations were

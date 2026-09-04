@@ -400,6 +400,18 @@ type stubOrders struct {
 	placed []orderSnapshot
 	// canceled holds the identifiers of the canceled orders.
 	canceled []string
+
+	// summaryFn is the scripted SetOrderSummaryTotals behavior.
+	summaryFn func(ctx context.Context, orderID string, paidTotal, refundedTotal int64) error
+	// summaries keeps, in order, the totals reported onto each order.
+	summaries []reportedTotals
+}
+
+// reportedTotals is one SetOrderSummaryTotals call.
+type reportedTotals struct {
+	orderID       string
+	paidTotal     int64
+	refundedTotal int64
 }
 
 // PlaceOrderJSON decodes the incoming body, records it and returns the scripted
@@ -427,6 +439,24 @@ func (s *stubOrders) CancelOrder(ctx context.Context, orderID, reason string) er
 		return nil
 	}
 	return s.cancelFn(ctx, orderID, reason)
+}
+
+// SetOrderSummaryTotals records the reported totals and applies the scripted
+// behavior.
+func (s *stubOrders) SetOrderSummaryTotals(
+	ctx context.Context, orderID string, paidTotal, refundedTotal int64,
+) error {
+	s.rec.add("order:summary")
+	s.summaries = append(s.summaries, reportedTotals{
+		orderID:       orderID,
+		paidTotal:     paidTotal,
+		refundedTotal: refundedTotal,
+	})
+	if s.summaryFn == nil {
+		return nil
+	}
+
+	return s.summaryFn(ctx, orderID, paidTotal, refundedTotal)
 }
 
 // stubPayments is the implementation of the [Payments] interface that the tests

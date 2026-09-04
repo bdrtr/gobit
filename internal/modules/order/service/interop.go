@@ -207,6 +207,39 @@ func (i *Interop) CancelOrder(ctx context.Context, orderID, reason string) error
 	return i.svc.CancelOrder(ctx, orderID, reason)
 }
 
+// SetOrderSummaryTotals records on the order how much of it was collected and
+// how much was refunded.
+//
+// # Why it is on this surface at all
+//
+// The order module cannot ask the payment module and must not (Principle
+// 2.1/2.4). The side that knows the outcome of a collection is the checkout
+// flow, which holds both identifiers, and this is how it hands the answer back.
+//
+// # The write is a MERGE, so the caller need not care about order
+//
+// For each field the LARGER of the recorded and the reported value is kept, so
+// a late or repeated report cannot shrink a total; the reasoning is in
+// [Service.SetOrderSummaryTotals]. That is what makes this safe to call from a
+// place that may run twice — a retried saga step, or one day a subscriber fed
+// by an at-least-once bus.
+//
+// # It reports nothing back
+//
+// The written summary is not returned. The caller is a flow that has already
+// decided what happened; handing it the row would invite a second decision made
+// from a value it did not compute.
+func (i *Interop) SetOrderSummaryTotals(
+	ctx context.Context, orderID string, paidTotal, refundedTotal int64,
+) error {
+	_, err := i.svc.SetOrderSummaryTotals(ctx, orderID, SummaryTotalsInput{
+		PaidTotal:     paidTotal,
+		RefundedTotal: refundedTotal,
+	})
+
+	return err
+}
+
 // CompleteOrder stamps the order as completed.
 //
 // It is NOT idempotent: a second call returns errors.Conflict (for the

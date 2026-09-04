@@ -147,7 +147,12 @@ func TestHappyPathRunsTheFiveStepsInOrder(t *testing.T) {
 		"payment:session",
 		"payment:authorize",
 		"payment:capture",
+		// The first read VERIFIES the capture; the second MEASURES it for the
+		// order summary. They are separate calls on purpose (see
+		// clearCartStep.recordPaymentTotals).
 		"payment:read_collection",
+		"payment:read_collection",
+		"order:summary",
 		"cart:complete",
 		"inventory:confirm:res_" + testLineA,
 		"inventory:confirm:res_" + testLineB,
@@ -1748,4 +1753,104 @@ func TestADuplicateLocationRankingIsNotAccepted(t *testing.T) {
 
 	assert.Zero(t, h.rec.count("inventory:reserve:"+testLineA),
 		"a duplicated ranking is NEVER tried; the check runs BEFORE the reservation")
+}
+
+// TestTheOrderRecordsWhatWasCollected is the reason the summary write exists.
+//
+// Until this landed, `SetOrderSummaryTotals` had a service method, a repository
+// method and a generated query — and no production caller. Every real order
+// therefore reported paid_total: 0 and outstanding: <the whole total> on both
+// the admin and the storefront read, so an operator could not tell a paid order
+// from an unpaid one.
+func TestTheOrderRecordsWhatWasCollected(t *testing.T) {
+	h := newHarness(t)
+
+	out, err := h.wf.CompleteCart(context.Background(), h.input())
+	require.NoError(t, err)
+
+	assert.True(t, out.PaymentTotalsRecorded)
+	require.Len(t, h.orders.summaries, 1)
+	assert.Equal(t, testOrderID, h.orders.summaries[0].orderID)
+	assert.Equal(t, testAmount, h.orders.summaries[0].paidTotal)
+	assert.Zero(t, h.orders.summaries[0].refundedTotal)
+}
+
+// TestTheRecordedTotalsAreThePAYMENTMODULEs proves the numbers are measured
+// rather than assumed.
+//
+// The saga knows what it ASKED to capture. What it writes has to be what the
+// collection actually holds: a provider may capture less than was asked, and a
+// refund may already stand against the same collection.
+func TestTheRecordedTotalsAreThePAYMENTMODULEs(t *testing.T) {
+	h := newHarness(t)
+	h.payments.collectionFn = func(
+		_ context.Context, _ string,
+	) (string, int64, int64, int64, int64, error) {
+		// Captured MORE than the plan (an over-collection is a real fact) and a
+		// refund already recorded against it.
+		return "captured", testAmount, testAmount, testAmount + 500, 200, nil
+	}
+
+	out, err := h.wf.CompleteCart(context.Background(), h.input())
+	require.NoError(t, err)
+
+	assert.True(t, out.PaymentTotalsRecorded)
+	require.Len(t, h.orders.summaries, 1)
+	assert.Equal(t, testAmount+500, h.orders.summaries[0].paidTotal,
+		"the paid total has to be the collection's, not the plan's")
+	assert.Equal(t, int64(200), h.orders.summaries[0].refundedTotal,
+		"a refund standing against the collection has to be carried too")
+}
+
+// TestAFailedSummaryWriteDoesNotROLLBACKAPaidOrder is the discipline the step
+// runs under, and it is the whole reason this write lives after the pivot.
+//
+// The money has moved and the order has been placed. Returning an error here
+// would write the execution failed and show the customer a failure for a flow
+// that succeeded. The fault is reported instead: an ERROR line, a warning in
+// the result, and the flag left false.
+func TestAFailedSummaryWriteDoesNotROLLBACKAPaidOrder(t *testing.T) {
+	h := newHarness(t)
+	h.orders.summaryFn = func(_ context.Context, _ string, _, _ int64) error {
+		return errors.New("the order module is unreachable")
+	}
+
+	out, err := h.wf.CompleteCart(context.Background(), h.input())
+	require.NoError(t, err, "a bookkeeping failure must not fail a paid order")
+
+	assert.False(t, out.PaymentTotalsRecorded)
+	assert.NotEmpty(t, out.Warnings)
+	assert.Contains(t, strings.Join(out.Warnings, " "), "could not be recorded on the order")
+
+	// The order still stands: nothing was canceled.
+	assert.Empty(t, h.orders.canceled)
+	// And the rest of the finalization still ran.
+	assert.True(t, out.CartCompleted)
+}
+
+// TestAnUnreadableCollectionIsAlsoOnlyAWarning covers the other half of the
+// same path: the failure can come from the read rather than from the write.
+func TestAnUnreadableCollectionIsAlsoOnlyAWarning(t *testing.T) {
+	h := newHarness(t)
+	reads := 0
+	h.payments.collectionFn = func(
+		_ context.Context, _ string,
+	) (string, int64, int64, int64, int64, error) {
+		reads++
+		if reads == 1 {
+			// The capture step's verification still has to pass, otherwise the
+			// saga fails before it ever reaches the summary.
+			return "captured", testAmount, testAmount, testAmount, 0, nil
+		}
+
+		return "", 0, 0, 0, 0, errors.New("the payment module is unreachable")
+	}
+
+	out, err := h.wf.CompleteCart(context.Background(), h.input())
+	require.NoError(t, err)
+
+	assert.False(t, out.PaymentTotalsRecorded)
+	assert.NotEmpty(t, out.Warnings)
+	assert.Empty(t, h.orders.summaries, "nothing may be written from an unread collection")
+	assert.Empty(t, h.orders.canceled)
 }

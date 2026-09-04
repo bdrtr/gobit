@@ -180,14 +180,28 @@ func TestCartToOrderHappyPath(t *testing.T) {
 	require.Equal(t, happyTax, line.TaxTotal, "the line tax must be the same as the cart line's")
 	require.Equal(t, happyTotal, line.Total, "the line total must be the same as the cart line's")
 
-	// The summary is DELIBERATELY empty: complete_cart's order surface
-	// (checkoutwf.Orders) has no method that writes a summary, and the trace of the
-	// amount captured is in the payment collection. A "paid total" kept in two places
-	// at once could diverge; reconciling the order with the payment is the job of the
-	// plan's Phase 7+.
-	require.Equal(t, int64(0), order.Summary.PaidTotal,
-		"the order summary is NOT WRITTEN in this workflow; a value other than zero shows that "+
-			"the trace of the payment has started being kept in two places at once")
+	// The summary IS written, and it carries what the payment collection actually
+	// holds (ADR 0022). Until that landed this assertion read the opposite way,
+	// on the argument that a "paid total" kept in two places at once could
+	// diverge and that reconciling the two was Phase 7+ work.
+	//
+	// That argument was answered rather than dropped, and the answer is in three
+	// parts. The duplication was already decided: order_summaries exists as a
+	// table with these columns, SetOrderSummaryTotals was written to fill them,
+	// and the B2B spending window already READS refunded_total from it. What was
+	// missing was never the decision, it was the writer. The summary is a
+	// DERIVED report and the collection stays the source of truth, which is why
+	// the number written here is the collection's own and not the plan's. And
+	// divergence is not a risk created by having two figures — it is a condition
+	// that becomes DETECTABLE because there are two, which is the same argument
+	// ADR 0020 makes about a session and its provider.
+	//
+	// The phase the old comment deferred to no longer exists.
+	require.Equal(t, happyTotal, order.Summary.PaidTotal,
+		"the order has to record what was collected on it; zero here means an operator "+
+			"cannot tell a paid order from an unpaid one")
+	require.Zero(t, order.Summary.RefundedTotal,
+		"nothing was refunded in this flow")
 
 	// The order's customer and region are in THEIR OWN columns; that is the only place
 	// they are carried from cart to order, and filtering is done from exactly those

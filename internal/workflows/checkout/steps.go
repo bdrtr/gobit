@@ -1261,7 +1261,24 @@ func (s *capturePaymentStep) Compensate(ctx context.Context, sc *workflow.StepCo
 		paymentID, s.plan.Amount, s.plan.CurrencyCode)
 }
 
-// clearCartStep closes the cart and finalizes the reservations.
+// clearCartStep is the saga's post-pivot bookkeeping: it records on the order
+// what was collected, closes the cart and finalizes the reservations.
+//
+// # Why the payment totals are recorded HERE and not in their own step
+//
+// Three reasons, and the third is the one that decides it.
+//
+// The work belongs to this category: it runs AFTER the pivot, so its failure
+// must not fail the saga, and this step is where that discipline already lives.
+//
+// A step of its own would change the saga's step NAME LIST, and recovery
+// compares those names against the record — so every saga in flight at the
+// moment of deployment would become unrecoverable (see
+// [Workflows.sagaSteps]).
+//
+// And the warning has to reach the caller. [CompleteCartResult] is produced by
+// this step and carries the Warnings field; a middle step could log its failure
+// but could not put it in the answer.
 type clearCartStep struct {
 	w    *Workflows
 	plan *checkoutPlan
@@ -1331,6 +1348,23 @@ func (s *clearCartStep) Invoke(ctx context.Context, sc *workflow.StepContext) (a
 		return nil, err
 	}
 
+	// The money is recorded FIRST, before the cart and the reservations. All
+	// three are best-effort here, so the order among them is a priority
+	// ordering: of the three facts, the one whose absence is worst is what was
+	// paid. An order that reads "nothing collected" is one an operator will
+	// treat as unpaid.
+	if totalsErr := s.recordPaymentTotals(ctx, result.OrderID, result.PaymentCollectionID); totalsErr != nil {
+		s.w.log.ErrorContext(ctx,
+			"the collected amount could not be recorded on the order; the order is VALID and PAID "+
+				"but reads as unpaid, manual repair is required",
+			"cart_id", s.plan.CartID, "order_id", result.OrderID,
+			"payment_collection_id", result.PaymentCollectionID, "error", totalsErr)
+		result.Warnings = append(result.Warnings,
+			"the collected amount could not be recorded on the order: "+totalsErr.Error())
+	} else {
+		result.PaymentTotalsRecorded = true
+	}
+
 	if markErr := s.w.carts.MarkCompleted(ctx, s.plan.CartID); markErr != nil {
 		s.w.log.ErrorContext(ctx, "the cart could not be stamped completed; the order is VALID, manual repair is required",
 			"cart_id", s.plan.CartID, "order_id", result.OrderID, "error", markErr)
@@ -1356,6 +1390,38 @@ func (s *clearCartStep) Invoke(ctx context.Context, sc *workflow.StepContext) (a
 	result.ReservationsConfirmed = confirmed
 
 	return result, nil
+}
+
+// recordPaymentTotals reads the collection's amounts and writes them onto the
+// order.
+//
+// # Why the collection is read AGAIN
+//
+// The capture step reads it too, three steps earlier, and this is deliberately
+// a second read rather than a carried value.
+//
+// The reason is RECOVERY. This step can run in a recovery where the capture
+// step did not re-execute — its work is already recorded — so a carried number
+// would have to survive in the execution record, which means teaching
+// [captureOutput] a money field for the sake of saving one call.
+//
+// The second reason is that the capture step's read is a VERIFICATION, not a
+// measurement: it compares against the amount known LOCALLY on purpose, and it
+// discards the refunded amount because verification does not need it. Reusing
+// its numbers here would tie what an order says it was paid to a check that
+// exists to answer a different question.
+//
+// What is written is therefore the payment module's own figure, which is also
+// what makes the pairing meaningful: an order summary that disagrees with its
+// collection is a real divergence rather than two systems telling different
+// stories about the same event.
+func (s *clearCartStep) recordPaymentTotals(ctx context.Context, orderID, collectionID string) error {
+	_, _, _, captured, refunded, err := s.w.payments.Collection(ctx, collectionID)
+	if err != nil {
+		return err
+	}
+
+	return s.w.orders.SetOrderSummaryTotals(ctx, orderID, captured, refunded)
 }
 
 // Compensate does nothing.
