@@ -100,6 +100,38 @@ Sabitlenme `1.0.0` ile olur.
 
   Davranış değişmedi; üretim koduna dokunulmadı.
 
+- **`internal/core` ağacında Türkçe kalmadı** (ADR 0012'nin cırcırı). Workflow
+  turunun ardından gelen dört turda `core/http`'nin kalan dosyaları,
+  `redisguard`, `core/query`, `core/openapi` ve `core/config` çevrildi; defter
+  708 dosyadan **680**'e indi ve defterde artık `internal/core/` ile başlayan
+  TEK BİR satır yok. Kalan borç `internal/modules/*`, `internal/e2e`,
+  `internal/arch`'ın kendi testleri ve ADR 0001-0011'de.
+
+  Çeviri, tanımlayıcıları da taşıdığı için paket sınırını iki yerde aştı:
+  `MemoryIdempotencyStore.Butce()` erişimcisi `Budget()` oldu (bileşim kökü onu
+  sınıyor, `cmd/server/setup_test.go` da güncellendi) ve `config`'in hata
+  metinleri İngilizceye geçince `internal/smoke/graphql_test.go`'nun iddia
+  dizesi yenilendi. İkinci dosya defterde ve Türkçe KALIYOR — çevrilen yalnızca
+  aradığı metin.
+
+  **Çeviri turu üç gerçek sapma buldu**, üçü de yalnızca metni taşırken:
+
+  - `openapi` paketinde bir godoc tanımından KOPMUŞTU. `alan` tipinin godoc'u
+    zaten İngilizce yazılmıştı ("field is what schema generation needs…"), yani
+    `TestGodocBicimi`'nin "godoc, bağlandığı tanımın ADIYLA başlar" kuralını tip
+    Türkçe adını taşıdığı sürece sağlayamıyordu. Tip `field` oldu.
+  - `middleware_test.go`'nun "ascii dışı" vakası `kimlik-ışık` değeriyle
+    kuruluydu. Düz çeviri değeri saf ASCII'ye çevirip testi SESSİZCE anlamsız
+    kılıyordu: reddedilmesi beklenen değer artık geçerli bir istek kimliği.
+    Vaka ASCII olmayan bir değerle yeniden kuruldu.
+  - `config.go`'da Türkçe cümlenin sırası `fmt.Errorf`'un argüman sırasını
+    belirliyordu; İngilizcesi ters sıraya gidince `go vet` "%d has arg
+    c.AppEnv of wrong type string" dedi.
+
+  Davranış değişmedi; ölçüm tablolarındaki sayılar ve birimler korundu, yalnızca
+  ondalık ayracı virgülden noktaya çevrildi (298,9 ms → 298.9 ms) — İngilizce
+  metinde virgül binlik ayracı okunur ve ölçüm üç basamak kayardı.
+
 ## [0.8.0] — 2026-09-04
 
 ### Kırıcı değişiklikler
