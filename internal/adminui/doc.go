@@ -21,9 +21,24 @@
 // layer through a narrow interface resolved from the container BY NAME (ADR
 // 0001/0004/0006); the cart workflow is the proven example of the same pattern.
 //
-// Today it only READS. Catalog writes are deliberately deferred: no module
-// exposes an admin-facing narrow surface, and opening one means adding
-// compiler-unchecked contracts to three modules (ADR 0011, Decision 6).
+// It reads through that interface and writes through THREE narrow surfaces, each
+// published by its owning module and registered under a name of its own:
+// "product.admin" (product basics), "pricing.admin" (a variant's price) and
+// "inventory.admin" (a variant's stock). Only primitives cross those
+// boundaries, and every one goes through the owning SERVICE rather than its
+// repository, so the uniqueness checks run and the module's events are
+// published (ADR 0013).
+//
+// The write surfaces are resolved OPTIONALLY. An installation without the
+// product module still gets a panel; the edit form answers 503 with a sentence
+// naming the reason. A name that IS registered but whose surface does not match
+// fails at STARTUP, because that is a wiring mistake rather than a missing
+// module.
+//
+// The panel's read and write surface together covers ONE of the fifteen
+// modules. Nothing here is a general admin surface, and no module gets an
+// admin-facing contract until a panel screen needs it: an unused
+// compiler-unchecked contract is the error class ADR 0009 names.
 //
 // # Response bodies go through core's writer
 //
