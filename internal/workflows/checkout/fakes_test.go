@@ -18,7 +18,7 @@ import (
 	cartwf "github.com/bdrtr/gobit/internal/workflows/cart"
 )
 
-// Testlerde tekrarlanan kimlik ve kod sabitleri.
+// Identifier and code constants repeated across the tests.
 const (
 	testCartID       = "cart_1"
 	testRegionID     = "reg_tr"
@@ -34,8 +34,8 @@ const (
 	testItemB        = "inv_b"
 	testPriceSetA    = "pset_a"
 	testPriceSetB    = "pset_b"
-	testTitleA       = "Kırmızı Tişört"
-	testTitleB       = "Mavi Şapka"
+	testTitleA       = "Red T-Shirt"
+	testTitleB       = "Blue Hat"
 	testOrderID      = "order_1"
 	testCollectionID = "pcol_1"
 	testSessionID    = "pses_1"
@@ -44,42 +44,43 @@ const (
 	testAmount       = int64(3000)
 )
 
-// Satır başına lokasyon seçimini sınayan testlerin depoları.
+// Warehouses of the tests that exercise per-line location selection.
 //
-// Üç tanedir çünkü iki depo yetmez: seçilen aday listede ne İLK ne SON sırada
-// olabilmelidir, aksi hâlde "ilk adayı al" ya da "son adayı al" diyen bir
-// uygulama da testi geçerdi.
+// There are three of them because two warehouses are not enough: the chosen
+// candidate must be able to be neither FIRST nor LAST in the list, otherwise an
+// implementation saying "take the first candidate" or "take the last candidate"
+// would pass the test too.
 const (
 	testLocationEast  = "sloc_east"
 	testLocationNorth = "sloc_north"
 	testLocationWest  = "sloc_west"
 )
 
-// TestMain testlerin varsayılan logger'ını susturur.
+// TestMain silences the tests' default logger.
 //
-// [FromContainer] kurulum logger'ını slog.Default'tan alır (uygulama açılışta
-// onu kurar); test çıktısının okunabilir kalması için varsayılan burada
-// atılır.
+// [FromContainer] takes its setup logger from slog.Default (the application
+// installs it at startup); the default is discarded here so that the test output
+// stays readable.
 func TestMain(m *testing.M) {
 	slog.SetDefault(slog.New(slog.DiscardHandler))
 	os.Exit(m.Run())
 }
 
-// errUnexpected betiklenmemiş bir sahte çağrısının hatasıdır.
+// errUnexpected is the error of an unscripted fake call.
 //
-// Sahte, betiklenmemiş bir yüzeye dokunulduğunda SESSİZ KALMAZ: sıfır değer
-// dönseydi, "bu akış o modülü hiç çağırmamalı" iddiası test yeşilken sessizce
-// çürüyebilirdi.
+// The fake DOES NOT STAY SILENT when an unscripted surface is touched: had it
+// returned the zero value, the claim "this workflow must never call that module"
+// could rot silently while the test stayed green.
 func errUnexpected(what string) error {
-	return errors.Internal("test_unexpected_call", "beklenmeyen sahte çağrısı: %s", what)
+	return errors.Internal("test_unexpected_call", "unexpected fake call: %s", what)
 }
 
-// hasCode hata ZİNCİRİNDE verilen kodun bulunup bulunmadığını söyler.
+// hasCode reports whether the given code is found in the error CHAIN.
 //
-// Motor, adımın hatasını kendi koduyla (workflow_step_failed) sarar;
-// errors.CodeOf ise yalnızca EN DIŞTAKİ kodu görür. Adımın kendi kodunu
-// sınayabilmek için zincir dolaşılır ve errors.Join ile birleşmiş dallar da
-// izlenir.
+// The engine wraps the step's error with its own code (workflow_step_failed),
+// while errors.CodeOf sees only the OUTERMOST code. To be able to assert on the
+// step's own code the chain is walked, and branches joined by errors.Join are
+// followed too.
 func hasCode(err error, code string) bool {
 	if err == nil {
 		return false
@@ -98,30 +99,31 @@ func hasCode(err error, code string) bool {
 	return hasCode(errors.Unwrap(err), code)
 }
 
-// recorder modül çağrılarını GELİŞ SIRASINDA kaydeder.
+// recorder records the module calls IN ARRIVAL ORDER.
 //
-// Telafinin TERS SIRADA çalıştığı iddiası ancak sırayla kanıtlanabilir; sayaç
-// tutmak "çalıştı mı" sorusunu yanıtlar ama "ne zaman" sorusunu yanıtlamaz.
+// The claim that compensation runs in REVERSE ORDER can only be proven by the
+// order; keeping a counter answers the question "did it run" but it does not
+// answer the question "when".
 type recorder struct {
 	mu    sync.Mutex
 	calls []string
 }
 
-// add bir çağrıyı kaydeder.
+// add records one call.
 func (r *recorder) add(call string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.calls = append(r.calls, call)
 }
 
-// snapshot kaydedilen çağrıların kopyasını döner.
+// snapshot returns a copy of the recorded calls.
 func (r *recorder) snapshot() []string {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return append([]string(nil), r.calls...)
 }
 
-// count verilen çağrının kaç kez yapıldığını döner.
+// count returns how many times the given call was made.
 func (r *recorder) count(call string) int {
 	var n int
 	for _, seen := range r.snapshot() {
@@ -132,10 +134,12 @@ func (r *recorder) count(call string) int {
 	return n
 }
 
-// stubCarts [Carts] arayüzünün testlerde betiklenebilen uygulamasıdır.
+// stubCarts is the implementation of the [Carts] interface that the tests can
+// script.
 //
-// Tip aynı zamanda sepet akışlarının ([cartwf.Carts]) yüzeyini de karşılar;
-// [FromContainer] testi "cart.interop" adına TEK bir değer koyabilsin diye.
+// The type also satisfies the surface of the cart workflows ([cartwf.Carts]), so
+// that the [FromContainer] test can register a SINGLE value under the name
+// "cart.interop".
 type stubCarts struct {
 	rec *recorder
 
@@ -144,7 +148,7 @@ type stubCarts struct {
 	setTotalsFn     func(ctx context.Context, cartID string) error
 }
 
-// CartSnapshotJSON betiklenen anlık görüntüyü döner.
+// CartSnapshotJSON returns the scripted snapshot.
 func (s *stubCarts) CartSnapshotJSON(ctx context.Context, cartID string) (json.RawMessage, error) {
 	s.rec.add("cart:snapshot")
 	if s.snapshotFn == nil {
@@ -153,7 +157,7 @@ func (s *stubCarts) CartSnapshotJSON(ctx context.Context, cartID string) (json.R
 	return s.snapshotFn(ctx, cartID)
 }
 
-// MarkCompleted sepeti tamamlanmış damgalar.
+// MarkCompleted stamps the cart as completed.
 func (s *stubCarts) MarkCompleted(ctx context.Context, cartID string) error {
 	s.rec.add("cart:complete")
 	if s.markCompletedFn == nil {
@@ -162,34 +166,36 @@ func (s *stubCarts) MarkCompleted(ctx context.Context, cartID string) error {
 	return s.markCompletedFn(ctx, cartID)
 }
 
-// OpenCart sepet akışlarının yüzeyini tamamlar; bu paket onu çağırmaz.
+// OpenCart completes the surface of the cart workflows; this package never calls
+// it.
 func (s *stubCarts) OpenCart(
 	_ context.Context, _, _, _, _ string, _ json.RawMessage,
 ) (string, error) {
 	return "", errUnexpected("OpenCart")
 }
 
-// AddCartLineItem sepet akışlarının yüzeyini tamamlar; bu paket onu çağırmaz.
+// AddCartLineItem completes the surface of the cart workflows; this package
+// never calls it.
 func (s *stubCarts) AddCartLineItem(
 	_ context.Context, _, _, _ string, _, _ int64, _ json.RawMessage,
 ) (string, error) {
 	return "", errUnexpected("AddCartLineItem")
 }
 
-// SetCartLineItemQuantity sepet akışlarının yüzeyini tamamlar.
+// SetCartLineItemQuantity completes the surface of the cart workflows.
 func (s *stubCarts) SetCartLineItemQuantity(_ context.Context, _, _ string, _ int64) error {
 	return errUnexpected("SetCartLineItemQuantity")
 }
 
-// RemoveLineItem sepet akışlarının yüzeyini tamamlar.
+// RemoveLineItem completes the surface of the cart workflows.
 func (s *stubCarts) RemoveLineItem(_ context.Context, _, _ string) error {
 	return errUnexpected("RemoveLineItem")
 }
 
-// SetCartTotalsJSON sepet akışlarının yüzeyini tamamlar.
+// SetCartTotalsJSON completes the surface of the cart workflows.
 //
-// Yalnızca GERÇEK sepet hesabının koştuğu testte betiklenir; bu paket sepete
-// toplam yazmaz.
+// It is scripted only in the test where the REAL cart calculation runs; this
+// package does not write totals onto the cart.
 func (s *stubCarts) SetCartTotalsJSON(ctx context.Context, cartID string, _ json.RawMessage) error {
 	s.rec.add("cart:set_totals")
 	if s.setTotalsFn == nil {
@@ -198,14 +204,15 @@ func (s *stubCarts) SetCartTotalsJSON(ctx context.Context, cartID string, _ json
 	return s.setTotalsFn(ctx, cartID)
 }
 
-// stubTotals [CartTotals] arayüzünün testlerde betiklenebilen uygulamasıdır.
+// stubTotals is the implementation of the [CartTotals] interface that the tests
+// can script.
 type stubTotals struct {
 	rec *recorder
 
 	calculateFn func(ctx context.Context, cartID string) (cartwf.Totals, error)
 }
 
-// CalculateTotals betiklenen hesabı döner.
+// CalculateTotals returns the scripted calculation.
 func (s *stubTotals) CalculateTotals(ctx context.Context, cartID string) (cartwf.Totals, error) {
 	s.rec.add("totals:calculate")
 	if s.calculateFn == nil {
@@ -214,7 +221,8 @@ func (s *stubTotals) CalculateTotals(ctx context.Context, cartID string) (cartwf
 	return s.calculateFn(ctx, cartID)
 }
 
-// stubInventory [Inventory] arayüzünün testlerde betiklenebilen uygulamasıdır.
+// stubInventory is the implementation of the [Inventory] interface that the
+// tests can script.
 type stubInventory struct {
 	rec *recorder
 
@@ -223,15 +231,15 @@ type stubInventory struct {
 	releaseFn   func(ctx context.Context, reservationID string) error
 	confirmFn   func(ctx context.Context, reservationID string) error
 
-	// reserved Reserve çağrılarının ARGÜMANLARINI geliş sırasında tutar.
+	// reserved keeps the ARGUMENTS of the Reserve calls in arrival order.
 	//
-	// recorder yalnızca "hangi çağrı ne zaman" sorusunu yanıtlar; satır başına
-	// lokasyon seçimi ise "hangi satır HANGİ depodan" sorusunu sordurur ve
-	// cevabı yalnızca argümanlarda vardır.
+	// recorder answers only the question "which call, when"; per-line location
+	// selection, on the other hand, raises the question "which line, from WHICH
+	// warehouse", and the answer lives only in the arguments.
 	reserved []reservedCall
 }
 
-// reservedCall tek bir Reserve çağrısının argümanlarıdır.
+// reservedCall holds the arguments of a single Reserve call.
 type reservedCall struct {
 	LineItemID string
 	ItemID     string
@@ -239,10 +247,11 @@ type reservedCall struct {
 	Quantity   int64
 }
 
-// LocationsWithStock betiklenen aday lokasyon listesini döner.
+// LocationsWithStock returns the scripted candidate location list.
 //
-// Varsayılanı YOKTUR: lokasyonu çağıranın bildirdiği akış bu yüzeye HİÇ
-// dokunmamalıdır ve sessiz bir varsayılan, o iddiayı test yeşilken çürütürdü.
+// It has NO default: a flow whose location the caller declares must NEVER touch
+// this surface, and a silent default would rot that claim while the test stayed
+// green.
 func (s *stubInventory) LocationsWithStock(
 	ctx context.Context,
 	itemID string,
@@ -255,7 +264,7 @@ func (s *stubInventory) LocationsWithStock(
 	return s.locationsFn(ctx, itemID, quantity)
 }
 
-// Reserve betiklenen ayırma davranışını uygular.
+// Reserve applies the scripted reservation behavior.
 func (s *stubInventory) Reserve(
 	ctx context.Context,
 	itemID, locationID string,
@@ -275,7 +284,7 @@ func (s *stubInventory) Reserve(
 	return s.reserveFn(ctx, itemID, locationID, quantity, lineItemID)
 }
 
-// ReleaseReservation betiklenen geri bırakma davranışını uygular.
+// ReleaseReservation applies the scripted release behavior.
 func (s *stubInventory) ReleaseReservation(ctx context.Context, reservationID string) error {
 	s.rec.add("inventory:release:" + reservationID)
 	if s.releaseFn == nil {
@@ -284,7 +293,7 @@ func (s *stubInventory) ReleaseReservation(ctx context.Context, reservationID st
 	return s.releaseFn(ctx, reservationID)
 }
 
-// ConfirmReservation betiklenen kesinleştirme davranışını uygular.
+// ConfirmReservation applies the scripted confirmation behavior.
 func (s *stubInventory) ConfirmReservation(ctx context.Context, reservationID string) error {
 	s.rec.add("inventory:confirm:" + reservationID)
 	if s.confirmFn == nil {
@@ -293,30 +302,31 @@ func (s *stubInventory) ConfirmReservation(ctx context.Context, reservationID st
 	return s.confirmFn(ctx, reservationID)
 }
 
-// stubFulfillment [Fulfillment] arayüzünün testlerde betiklenebilen
-// uygulamasıdır.
+// stubFulfillment is the implementation of the [Fulfillment] interface that the
+// tests can script.
 type stubFulfillment struct {
 	rec *recorder
 
 	rankFn func(ctx context.Context, destinationRegionID string, candidateLocationIDs []string) ([]string, error)
 
-	// offered RankLocations'a geçen aday listelerini sırayla tutar.
+	// offered keeps, in order, the candidate lists passed to RankLocations.
 	//
-	// Adayların stok modülünden GELDİĞİ gibi geçtiği ancak böyle
-	// kanıtlanabilir: checkout listeyi süzse ya da sıralasa akış yine
-	// "çalışır" görünürdü, oysa o an tercih sırasını checkout belirlemiş
-	// olurdu.
+	// That the candidates are handed over exactly as they COME from the
+	// inventory module can only be proven this way: if checkout filtered or
+	// sorted the list, the workflow would still look like it "works", yet at
+	// that point it would be checkout that had decided the preference order.
 	offered [][]string
 
-	// offeredRegions RankLocations'a geçen hedef bölgeleri sırayla tutar.
+	// offeredRegions keeps, in order, the destination regions passed to
+	// RankLocations.
 	//
-	// Politikanın girdisinin PLANDAN geldiği ancak böyle kanıtlanabilir: boş
-	// bir bölge geçirilse gerçek modül isteği düşürürdü, ama sahte modül
-	// düşürmez ve akış yeşil kalırdı.
+	// That the policy's input comes from the PLAN can only be proven this way:
+	// if an empty region were passed, the real module would reject the request,
+	// but the fake module does not, and the workflow would stay green.
 	offeredRegions []string
 }
 
-// RankLocations betiklenen sıralama davranışını uygular.
+// RankLocations applies the scripted ranking behavior.
 func (s *stubFulfillment) RankLocations(
 	ctx context.Context,
 	destinationRegionID string,
@@ -331,36 +341,38 @@ func (s *stubFulfillment) RankLocations(
 	return s.rankFn(ctx, destinationRegionID, candidateLocationIDs)
 }
 
-// rankByGreatestID adayları kimliği EN BÜYÜK olan başta olacak şekilde dizen
-// bir kargo yüzeyi davranışıdır.
+// rankByGreatestID is a fulfillment surface behavior that orders the candidates
+// so that the one with the GREATEST identifier comes first.
 //
-// Gerçek modülün EŞİTLİK BOZMA kuralı (en küçük kimlik önce) BİLİNÇLİ OLARAK
-// tersine çevrilmiştir: sırayı kargo modülünün kurduğu ancak böyle
-// kanıtlanabilir. Gerçek kuralı taklit eden bir sahteyle, adayları kendi sıraya
-// dizen bir checkout da yeşil kalırdı.
+// The real module's TIE-BREAKING rule (smallest identifier first) is reversed
+// DELIBERATELY: only this way can it be proven that the fulfillment module is
+// the one that establishes the order. With a fake imitating the real rule, a
+// checkout that ordered the candidates on its own would stay green too.
 //
-// Hedef bölge KULLANILMAZ: bu sahte politikayı taklit etmez, politikanın
-// checkout'ta OLMADIĞINI kanıtlar.
+// The destination region is NOT USED: this fake does not imitate the policy, it
+// proves that the policy is NOT in checkout.
 func rankByGreatestID(_ context.Context, _ string, candidateLocationIDs []string) ([]string, error) {
-	sirali := slices.Clone(candidateLocationIDs)
-	slices.SortFunc(sirali, func(a, b string) int { return strings.Compare(b, a) })
-	return sirali, nil
+	sorted := slices.Clone(candidateLocationIDs)
+	slices.SortFunc(sorted, func(a, b string) int { return strings.Compare(b, a) })
+	return sorted, nil
 }
 
-// stubOrders [Orders] arayüzünün testlerde betiklenebilen uygulamasıdır.
+// stubOrders is the implementation of the [Orders] interface that the tests can
+// script.
 type stubOrders struct {
 	rec *recorder
 
 	placeFn  func(ctx context.Context, snapshot json.RawMessage) (string, error)
 	cancelFn func(ctx context.Context, orderID, reason string) error
 
-	// placed PlaceOrderJSON'a geçen çözülmüş görüntüleri sırayla tutar.
+	// placed keeps, in order, the decoded snapshots passed to PlaceOrderJSON.
 	placed []orderSnapshot
-	// canceled iptal edilen sipariş kimlikleridir.
+	// canceled holds the identifiers of the canceled orders.
 	canceled []string
 }
 
-// PlaceOrderJSON gelen gövdeyi çözer, kaydeder ve betiklenen sonucu döner.
+// PlaceOrderJSON decodes the incoming body, records it and returns the scripted
+// result.
 func (s *stubOrders) PlaceOrderJSON(ctx context.Context, snapshot json.RawMessage) (string, error) {
 	s.rec.add("order:place")
 
@@ -376,7 +388,7 @@ func (s *stubOrders) PlaceOrderJSON(ctx context.Context, snapshot json.RawMessag
 	return s.placeFn(ctx, snapshot)
 }
 
-// CancelOrder betiklenen iptal davranışını uygular.
+// CancelOrder applies the scripted cancellation behavior.
 func (s *stubOrders) CancelOrder(ctx context.Context, orderID, reason string) error {
 	s.rec.add("order:cancel")
 	s.canceled = append(s.canceled, orderID)
@@ -386,7 +398,8 @@ func (s *stubOrders) CancelOrder(ctx context.Context, orderID, reason string) er
 	return s.cancelFn(ctx, orderID, reason)
 }
 
-// stubPayments [Payments] arayüzünün testlerde betiklenebilen uygulamasıdır.
+// stubPayments is the implementation of the [Payments] interface that the tests
+// can script.
 type stubPayments struct {
 	rec *recorder
 
@@ -397,13 +410,13 @@ type stubPayments struct {
 	cancelFn           func(ctx context.Context, sessionID string) error
 	collectionFn       func(ctx context.Context, collectionID string) (string, int64, int64, int64, int64, error)
 
-	// captureAmounts Capture'a geçen tutarları sırayla tutar.
+	// captureAmounts keeps, in order, the amounts passed to Capture.
 	captureAmounts []int64
-	// sessionData OpenSessionWithData'ya geçen gövdeleri sırayla tutar.
+	// sessionData keeps, in order, the bodies passed to OpenSessionWithData.
 	sessionData []string
 }
 
-// CreateCollection betiklenen koleksiyon açma davranışını uygular.
+// CreateCollection applies the scripted collection-opening behavior.
 func (s *stubPayments) CreateCollection(
 	ctx context.Context,
 	reference, currencyCode string,
@@ -416,7 +429,7 @@ func (s *stubPayments) CreateCollection(
 	return s.createCollectionFn(ctx, reference, currencyCode, amount)
 }
 
-// OpenSessionWithData betiklenen oturum açma davranışını uygular.
+// OpenSessionWithData applies the scripted session-opening behavior.
 func (s *stubPayments) OpenSessionWithData(
 	ctx context.Context,
 	collectionID, providerID, idempotencyKey string,
@@ -430,7 +443,7 @@ func (s *stubPayments) OpenSessionWithData(
 	return s.openSessionFn(ctx, collectionID, providerID, idempotencyKey, data)
 }
 
-// Authorize betiklenen yetkilendirme davranışını uygular.
+// Authorize applies the scripted authorization behavior.
 func (s *stubPayments) Authorize(ctx context.Context, sessionID string) (status string, authorized int64, err error) {
 	s.rec.add("payment:authorize")
 	if s.authorizeFn == nil {
@@ -439,7 +452,7 @@ func (s *stubPayments) Authorize(ctx context.Context, sessionID string) (status 
 	return s.authorizeFn(ctx, sessionID)
 }
 
-// Capture betiklenen tahsilat davranışını uygular.
+// Capture applies the scripted capture behavior.
 func (s *stubPayments) Capture(ctx context.Context, sessionID string, amount int64) (string, error) {
 	s.rec.add("payment:capture")
 	s.captureAmounts = append(s.captureAmounts, amount)
@@ -449,7 +462,7 @@ func (s *stubPayments) Capture(ctx context.Context, sessionID string, amount int
 	return s.captureFn(ctx, sessionID, amount)
 }
 
-// Cancel betiklenen iptal davranışını uygular.
+// Cancel applies the scripted cancellation behavior.
 func (s *stubPayments) Cancel(ctx context.Context, sessionID string) error {
 	s.rec.add("payment:cancel")
 	if s.cancelFn == nil {
@@ -458,9 +471,9 @@ func (s *stubPayments) Cancel(ctx context.Context, sessionID string) error {
 	return s.cancelFn(ctx, sessionID)
 }
 
-// Collection betiklenen koleksiyon okumasını uygular.
+// Collection applies the scripted collection read.
 //
-//nolint:gocritic // Sonuç sayısı [Payments.Collection] imzasından gelir; sahte onu birebir karşılamak zorunda.
+//nolint:gocritic // The result count comes from the [Payments.Collection] signature; the fake has to match it exactly.
 func (s *stubPayments) Collection(ctx context.Context, collectionID string) (
 	status string,
 	amount, authorized, captured, refunded int64,
@@ -473,14 +486,15 @@ func (s *stubPayments) Collection(ctx context.Context, collectionID string) (
 	return s.collectionFn(ctx, collectionID)
 }
 
-// stubLinks [Links] arayüzünün testlerde betiklenebilen uygulamasıdır.
+// stubLinks is the implementation of the [Links] interface that the tests can
+// script.
 type stubLinks struct {
 	rec *recorder
 
 	listManyFn func(ctx context.Context, name string, fromIDs []string) (map[string][]string, error)
 }
 
-// ListMany betiklenen bağ okumasını uygular.
+// ListMany applies the scripted link read.
 func (s *stubLinks) ListMany(ctx context.Context, name string, fromIDs []string) (map[string][]string, error) {
 	s.rec.add("link:list_many:" + name)
 	if s.listManyFn == nil {
@@ -489,14 +503,15 @@ func (s *stubLinks) ListMany(ctx context.Context, name string, fromIDs []string)
 	return s.listManyFn(ctx, name, fromIDs)
 }
 
-// stubCatalog [Catalog] arayüzünün testlerde betiklenebilen uygulamasıdır.
+// stubCatalog is the implementation of the [Catalog] interface that the tests
+// can script.
 type stubCatalog struct {
 	rec *recorder
 
 	graphFn func(ctx context.Context, spec query.GraphSpec) ([]query.Record, error)
 }
 
-// Graph betiklenen katalog okumasını uygular.
+// Graph applies the scripted catalog read.
 func (s *stubCatalog) Graph(ctx context.Context, spec query.GraphSpec) ([]query.Record, error) {
 	s.rec.add("catalog:graph")
 	if s.graphFn == nil {
@@ -505,7 +520,8 @@ func (s *stubCatalog) Graph(ctx context.Context, spec query.GraphSpec) ([]query.
 	return s.graphFn(ctx, spec)
 }
 
-// harness bir testin ihtiyaç duyduğu tüm sahteleri ve kurulu akışı taşır.
+// harness carries every fake a test needs together with the workflow built on
+// them.
 type harness struct {
 	rec         *recorder
 	carts       *stubCarts
@@ -519,11 +535,11 @@ type harness struct {
 	wf          *Workflows
 }
 
-// newHarness MUTLU YOL'a ayarlanmış sahtelerle bir akış kurar.
+// newHarness builds a workflow with the fakes tuned to the HAPPY PATH.
 //
-// Her test yalnızca değiştirmek istediği davranışı yeniden betikler; geri kalan
-// her şey çalışır durumdadır. Motor süreç içidir (workflow.NewInMemory):
-// idempotency koruması testin süresince geçerlidir ve veritabanı gerekmez.
+// Each test re-scripts only the behavior it wants to change; everything else is
+// in working order. The engine is in-process (workflow.NewInMemory): idempotency
+// protection holds for the duration of the test and no database is needed.
 func newHarness(t *testing.T) *harness {
 	t.Helper()
 
@@ -558,10 +574,11 @@ func newHarness(t *testing.T) *harness {
 	return h
 }
 
-// input mutlu yolun girdisini döner.
+// input returns the happy path's input.
 //
-// Lokasyon DOLUDUR: mutlu yol, alanın opsiyonel hâle gelmesinden önceki
-// davranışı korur ve satır başına seçimi sınayan testler onu tek tek boşaltır.
+// The location is FILLED IN: the happy path preserves the behavior from before
+// the field became optional, and the tests that exercise per-line selection
+// empty it one by one.
 func (h *harness) input() CompleteCartInput {
 	return CompleteCartInput{
 		CartID:            testCartID,
@@ -571,7 +588,7 @@ func (h *harness) input() CompleteCartInput {
 	}
 }
 
-// defaultSnapshot iki satırlı bir sepetin anlık görüntüsünü döner.
+// defaultSnapshot returns the snapshot of a two-line cart.
 func defaultSnapshot(_ context.Context, cartID string) (json.RawMessage, error) {
 	return json.Marshal(Snapshot{
 		ID:           cartID,
@@ -586,9 +603,9 @@ func defaultSnapshot(_ context.Context, cartID string) (json.RawMessage, error) 
 	})
 }
 
-// defaultTotals anlık görüntüyle TUTARLI bir hesap döner.
+// defaultTotals returns a calculation CONSISTENT with the snapshot.
 //
-// Toplamlar sepetin kimliğini sağlar: 2500 - 0 + 500 + 0 = 3000.
+// The totals satisfy the cart identity: 2500 - 0 + 500 + 0 = 3000.
 func defaultTotals(_ context.Context, _ string) (cartwf.Totals, error) {
 	return cartwf.Totals{
 		Revision:      testRevision,
@@ -604,13 +621,13 @@ func defaultTotals(_ context.Context, _ string) (cartwf.Totals, error) {
 	}, nil
 }
 
-// linkVariantPriceSet sepet hesabının kullandığı fiyat bağının adıdır.
+// linkVariantPriceSet is the name of the price link the cart calculation uses.
 //
-// Bu paket onu ÇÖZMEZ; sabit yalnızca gerçek sepet hesabının koştuğu testte
-// bağ sağlayıcısının doğru adı görmesi için vardır.
+// This package does NOT resolve it; the constant exists only so that the link
+// provider sees the right name in the test where the real cart calculation runs.
 const linkVariantPriceSet = "product_variant_price_set"
 
-// defaultLinks varyantları stok kalemlerine ve fiyat kümelerine bağlar.
+// defaultLinks links the variants to inventory items and to price sets.
 func defaultLinks(_ context.Context, name string, _ []string) (map[string][]string, error) {
 	switch name {
 	case LinkVariantInventory:
@@ -628,7 +645,7 @@ func defaultLinks(_ context.Context, name string, _ []string) (map[string][]stri
 	}
 }
 
-// defaultCatalog varyantların başlıklarını döner.
+// defaultCatalog returns the titles of the variants.
 func defaultCatalog(_ context.Context, _ query.GraphSpec) ([]query.Record, error) {
 	return []query.Record{
 		{query.IDField: testVariantA, FieldTitle: testTitleA},

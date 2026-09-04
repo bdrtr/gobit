@@ -7,53 +7,55 @@ import (
 	"github.com/bdrtr/gobit/internal/core/errors"
 )
 
-// Tutar, adet ve oran sınırları.
+// Amount, quantity and rate limits.
 //
-// Sınırlar cart ve pricing modüllerindekilerle bilinçli olarak AYNIDIR; iki
-// taraf birbirini import etmediği için değerler burada tekrarlanır (ADR 0001'in
-// kabul edilen bedeli). Aynı olmaları şart değil, YETERLİ olmaları şarttır:
-// buradaki tavan modülünkinden büyük olsaydı, bu paketin geçirdiği bir tutar
-// modülde reddedilir ve hata hesabın sonunda çıkardı.
+// The limits are deliberately THE SAME as the ones in the cart and pricing
+// modules; because the two sides do not import each other, the values are
+// repeated here (the accepted price of ADR 0001). They do not have to be the
+// same, they have to be SUFFICIENT: were the ceiling here larger than the
+// module's, an amount this package let through would be rejected in the module
+// and the error would surface at the end of the computation.
 //
-// Sınırlar keyfi değildir: satır ara toplamı birim fiyat × adettir ve bu çarpım
-// int64'e SIĞMALIDIR. MaxAmount × MaxQuantity = 10^12 × 10^6 = 10^18 <
-// 9.22 × 10^18 olduğu için taşma yapısal olarak imkânsızdır.
+// The limits are not arbitrary: a line's subtotal is the unit price x the
+// quantity and that product MUST FIT in an int64. Because MaxAmount x
+// MaxQuantity = 10^12 x 10^6 = 10^18 < 9.22 x 10^18, overflow is structurally
+// impossible.
 const (
-	// MinQuantity bir satırın en küçük adedidir.
+	// MinQuantity is the smallest quantity of a line.
 	MinQuantity int64 = 1
-	// MaxQuantity bir satırın en büyük adedidir.
+	// MaxQuantity is the largest quantity of a line.
 	MaxQuantity int64 = 1_000_000
-	// MaxAmount izin verilen en büyük birim tutardır (minor unit).
+	// MaxAmount is the largest permitted unit amount (minor unit).
 	MaxAmount int64 = 1_000_000_000_000
-	// MaxTotal bir toplam alanının en büyük değeridir (minor unit).
+	// MaxTotal is the largest value of a total field (minor unit).
 	MaxTotal = MaxAmount * MaxQuantity
-	// BpsScale baz puan ölçeğidir: 10000 baz puan = %100.
+	// BpsScale is the basis point scale: 10000 basis points = 100%.
 	BpsScale int64 = 10_000
-	// MaxTaxRateBps izin verilen en büyük vergi oranıdır (%100).
+	// MaxTaxRateBps is the largest permitted tax rate (100%).
 	MaxTaxRateBps int32 = 10_000
-	// maxIDLen dışarıdan gelen kimlikler için üst sınırdır; core/link ve cart
-	// modülü de aynı sınırı uygular.
+	// maxIDLen is the upper bound for ids arriving from outside; core/link and
+	// the cart module apply the same limit.
 	maxIDLen = 255
 )
 
-// addAmount iki tutarı TAŞMADAN toplar.
+// addAmount adds two amounts WITHOUT OVERFLOW.
 //
-// Toplam [MaxTotal]'ı aşarsa hata döner. Taşan bir toplama sessizce NEGATİF bir
-// tutar üretir ve negatif toplam, cart'ın tutarlılık kontrolünü yanlışlıkla
-// geçebilirdi.
+// It returns an error when the sum exceeds [MaxTotal]. An overflowing addition
+// silently produces a NEGATIVE amount, and a negative total could accidentally
+// pass the cart's consistency check.
 func addAmount(a, b int64) (int64, error) {
 	if a < 0 || b < 0 {
 		return 0, errors.Internal(CodeAmountOverflow,
-			"tutarlar negatif olamaz: %d + %d", a, b)
+			"the amounts cannot be negative: %d + %d", a, b)
 	}
 	if a > MaxTotal-b {
 		return 0, errors.Invalid(CodeAmountOverflow,
-			"tutar toplamı sınırı aşıyor: %d + %d > %d", a, b, MaxTotal)
+			"the amount total exceeds the limit: %d + %d > %d", a, b, MaxTotal)
 	}
 	return a + b, nil
 }
 
-// mulAmount birim fiyatı adetle TAŞMADAN çarpar.
+// mulAmount multiplies a unit price by a quantity WITHOUT OVERFLOW.
 func mulAmount(unitPrice, quantity int64) (int64, error) {
 	if unitPrice < 0 || quantity < 0 {
 		return 0, errors.Internal(CodeAmountOverflow,
@@ -69,31 +71,31 @@ func mulAmount(unitPrice, quantity int64) (int64, error) {
 	return unitPrice * quantity, nil
 }
 
-// taxOf verilen taban üzerinden baz puan oranıyla vergiyi hesaplar.
+// taxOf computes the tax over the given base with a basis point rate.
 //
-// Sonuç AŞAĞI yuvarlanır; gerekçesi ve verginin tabanının ne olduğu paket
-// yorumundaki "Vergi sözleşmesi" başlığındadır.
+// The result is rounded DOWN; the reasoning, and what the base of the tax is,
+// live under the "Tax contract" heading of the package comment.
 //
-// # Neden önce bölünüyor
+// # Why the division comes first
 //
-// Doğrudan base × rate hesabı taşardı: taban en fazla [MaxTotal] (10^18) ve
-// oran en fazla 10^4 olduğu için çarpım 10^22'ye kadar çıkar, int64 ise
-// 9.22 × 10^18'de biter. Bölmeyi öne almak sonucu DEĞİŞTİRMEZ — base = q ×
-// 10000 + r yazılırsa base × rate / 10000 = q × rate + (r × rate) / 10000'dir
-// ve q × rate zaten tam sayı olduğu için aşağı yuvarlama yalnızca ikinci terime
-// düşer. Her iki terim de int64'e rahatça sığar (q × rate ≤ 10^18,
-// r × rate < 10^8).
+// Computing base x rate directly would overflow: because the base is at most
+// [MaxTotal] (10^18) and the rate at most 10^4, the product climbs up to 10^22,
+// while an int64 ends at 9.22 x 10^18. Moving the division first DOES NOT
+// CHANGE the result — writing base = q x 10000 + r gives base x rate / 10000 =
+// q x rate + (r x rate) / 10000, and because q x rate is already a whole
+// number, the rounding down falls on the second term only. Both terms fit
+// comfortably in an int64 (q x rate <= 10^18, r x rate < 10^8).
 func taxOf(base int64, rateBps int32) (int64, error) {
 	if base < 0 {
-		return 0, errors.Internal(CodeAmountOverflow, "vergi tabanı negatif olamaz: %d", base)
+		return 0, errors.Internal(CodeAmountOverflow, "the tax base cannot be negative: %d", base)
 	}
 	if base > MaxTotal {
 		return 0, errors.Invalid(CodeAmountOverflow,
-			"vergi tabanı sınırı aşıyor: %d > %d", base, MaxTotal)
+			"the tax base exceeds the limit: %d > %d", base, MaxTotal)
 	}
 	if rateBps < 0 || rateBps > MaxTaxRateBps {
 		return 0, errors.Internal(CodeTaxRateInvalid,
-			"vergi oranı [0, %d] baz puan aralığında olmalı, %d bildirildi", MaxTaxRateBps, rateBps)
+			"the tax rate must be in the range [0, %d] basis points, %d was reported", MaxTaxRateBps, rateBps)
 	}
 	if base == 0 || rateBps == 0 {
 		return 0, nil
@@ -105,30 +107,32 @@ func taxOf(base int64, rateBps int32) (int64, error) {
 	return whole + remainder, nil
 }
 
-// quantity32 sepet adedini pricing'in beklediği int32'ye çevirir.
+// quantity32 converts a cart quantity to the int32 that pricing expects.
 //
-// Çevrim ancak sınır denetiminden SONRA yapılır: [MaxQuantity] (10^6)
-// int32'nin tavanının çok altındadır, dolayısıyla denetimi geçen her değer
-// kayıpsız sığar. Denetimsiz bir çevrim, milyarlık bir adedi sessizce küçük
-// (hatta negatif) bir sayıya indirir ve fiyat kademesini yanlış seçerdi.
+// The conversion happens only AFTER the bounds check: [MaxQuantity] (10^6) is
+// far below the ceiling of an int32, so every value that passes the check fits
+// without loss. An unchecked conversion would silently cut a quantity in the
+// billions down to a small (or even negative) number and would pick the wrong
+// price tier.
 func quantity32(quantity int64) (int32, error) {
 	if quantity < MinQuantity || quantity > MaxQuantity {
 		return 0, errors.Invalid(CodeInvalidInput,
-			"adet [%d, %d] aralığında olmalı, %d verildi", MinQuantity, MaxQuantity, quantity)
+			"the quantity must be in the range [%d, %d], %d was given", MinQuantity, MaxQuantity, quantity)
 	}
 	if quantity > math.MaxInt32 {
-		// Ulaşılamaz: MaxQuantity zaten çok daha küçüktür. Denetim, sabitin
-		// ileride büyütülmesi hâlinde çevrimin sessizce bozulmamasını sağlar.
+		// Unreachable: MaxQuantity is already far smaller. The check makes sure
+		// the conversion does not break silently should the constant be raised
+		// later.
 		return 0, errors.Internal(CodeAmountOverflow,
-			"adet int32'ye sığmıyor: %d", quantity)
+			"the quantity does not fit in an int32: %d", quantity)
 	}
 	return int32(quantity), nil
 }
 
-// checkAmount bir tutarın izin verilen aralıkta olduğunu doğrular.
+// checkAmount verifies that an amount is within the permitted range.
 func checkAmount(label string, value, upper int64) error {
 	if value < 0 {
-		return errors.Invalid(CodeAmountOverflow, "%s negatif olamaz: %d", label, value)
+		return errors.Invalid(CodeAmountOverflow, "%s cannot be negative: %d", label, value)
 	}
 	if value > upper {
 		return errors.Invalid(CodeAmountOverflow,
@@ -137,11 +141,12 @@ func checkAmount(label string, value, upper int64) error {
 	return nil
 }
 
-// requireID dışarıdan gelen bir kimliğin kullanılabilir olduğunu doğrular.
+// requireID verifies that an id arriving from outside is usable.
 //
-// Kimlik KIRPILMAZ, reddedilir: kırpma çağıranın gönderdiği kimlikle saklanan
-// kimliği ayırır ve fark ancak veri bozulduktan sonra görünür. Aynı sözleşme
-// core/link ve cart modülünde de geçerlidir.
+// The id is NOT TRIMMED, it is rejected: trimming separates the id the caller
+// sent from the id that gets stored, and the difference only becomes visible
+// after the data is corrupted. The same contract holds in core/link and in the
+// cart module.
 func requireID(label, value string) error {
 	if value == "" {
 		return errors.Invalid(CodeInvalidInput, "%s cannot be empty", label)

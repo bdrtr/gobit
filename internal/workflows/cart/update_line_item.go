@@ -6,77 +6,83 @@ import (
 	"github.com/bdrtr/gobit/internal/core/errors"
 )
 
-// UpdateLineItemInput satır adedi güncellemesinin girdisidir.
+// UpdateLineItemInput is the input of a line quantity update.
 type UpdateLineItemInput struct {
-	// CartID satırın ait olduğu sepettir; ZORUNLUDUR.
+	// CartID is the cart the line belongs to; it is REQUIRED.
 	CartID string
-	// LineItemID güncellenecek satırdır; ZORUNLUDUR.
+	// LineItemID is the line to be updated; it is REQUIRED.
 	LineItemID string
-	// Quantity satırın YENİ adedidir (mutlak değer, eklenecek değil).
+	// Quantity is the line's NEW quantity (an absolute value, not one to add).
 	//
-	// Sıfır verilirse satır KALDIRILIR; negatif değer reddedilir. Gerekçe
-	// [Workflows.UpdateLineItem] godoc'undadır.
+	// If zero is given the line is REMOVED; a negative value is rejected. The
+	// rationale is in the [Workflows.UpdateLineItem] godoc.
 	Quantity int64
 }
 
-// UpdateLineItemResult güncellemenin ve yeniden hesaplanan toplamların
-// sonucudur.
+// UpdateLineItemResult is the result of the update and of the recalculated
+// totals.
 type UpdateLineItemResult struct {
-	// LineItemID güncellenen (ya da kaldırılan) satırdır.
+	// LineItemID is the line that was updated (or removed).
 	LineItemID string
-	// Quantity satırın yeni adedidir; satır kaldırıldıysa sıfırdır.
+	// Quantity is the line's new quantity; it is zero if the line was removed.
 	Quantity int64
-	// Removed satırın kaldırılıp kaldırılmadığını bildirir.
+	// Removed reports whether the line was removed.
 	Removed bool
-	// Totals güncellemeden sonraki sepet toplamlarıdır.
+	// Totals are the cart totals after the update.
 	Totals Totals
 }
 
-// UpdateLineItem satırın adedini yazar (ya da satırı kaldırır) ve toplamları
-// yeniden hesaplar.
+// UpdateLineItem writes the line's quantity (or removes the line) and
+// recalculates the totals.
 //
-// # Sıfır adet satırı KALDIRIR
+// # A quantity of zero REMOVES the line
 //
-// Karar bilinçlidir ve cart modülünün kararıyla ÇELİŞMEZ; onu tamamlar. Modülün
-// UpdateLineItemQuantity metodu sıfırı reddeder, çünkü orası mutlak değer yazan
-// bir SETTER'dır ve adet alanına yanlışlıkla sıfır gönderen bir programlama
-// hatasının sessizce veri silmesi kabul edilemez. Bu akış ise vitrinin niyet
-// katmanıdır: her sepet arayüzünde adet seçiciyi sıfıra indirmek "bunu
-// kaldır" demektir.
+// The decision is deliberate and DOES NOT CONTRADICT the cart module's
+// decision; it completes it. The module's UpdateLineItemQuantity method rejects
+// zero, because that place is a SETTER writing an absolute value and it is
+// unacceptable for a programming error that accidentally sends zero into the
+// quantity field to silently delete data. This flow, on the other hand, is the
+// storefront's intent layer: in every cart interface, dropping the quantity
+// picker to zero means "remove this".
 //
-// Bu yüzden niyet burada AÇIKÇA çevrilir — sıfır görünce ayrı bir kaldırma
-// çağrısı yapılır, modülün kuralı gevşetilmez ve sonuç [UpdateLineItemResult.Removed]
-// ile çağırana BİLDİRİLİR. Alternatif, her vitrinin bu dallanmayı kendi
-// yazmasıydı; her biri "kaldırdıktan sonra toplamları yeniden hesapla"
-// kısmını farklı biçimde unuturdu.
+// That is why the intent is translated EXPLICITLY here — when zero is seen a
+// separate removal call is made, the module's rule is not relaxed, and the
+// result is REPORTED to the caller with [UpdateLineItemResult.Removed]. The
+// alternative was every storefront writing this branch itself; each one would
+// have forgotten the "recalculate the totals after removing" part in a
+// different way.
 //
-// Negatif adet reddedilir (errors.Invalid): negatif adedin hiçbir niyeti
-// yoktur ve sıfıra yuvarlanması, işaret hatası taşıyan bir isteğe satır
-// sildirirdi.
+// A negative quantity is rejected (errors.Invalid): a negative quantity has no
+// intent whatsoever, and rounding it to zero would make a request carrying a
+// sign error delete a line.
 //
-// # Satış kanalı kapsamı burada YENİDEN sorulmaz
+// # The sales channel scope is NOT asked again here
 //
-// Kapsam denetimi giriş kapısındadır ([Workflows.AddLineItem]): kimliğin
-// kanallarında görünmeyen bir varyant sepete HİÇ giremez. Bu metot yeni varyant
-// sokamaz, yalnızca sepette ZATEN duran bir satırın adedini yazar.
+// The scope check is at the entry gate ([Workflows.AddLineItem]): a variant that
+// does not appear in the identity's channels can NEVER enter the cart. This
+// method cannot slip a new variant in, it only writes the quantity of a line
+// ALREADY sitting in the cart.
 //
-// Bunun ölçülmüş bir sonucu vardır ve saklanmıyor: bir ürün sepete girdikten
-// SONRA yönetim ucundan başka bir kanala taşınırsa, müşteri o satırın adedini
-// artırmaya ve sepeti tamamlamaya devam edebilir. Aynı varyantı yeniden EKLEMEK
-// ise reddedilir (404) — giriş kapısı kapalıdır.
+// That has a measured consequence and it is not being hidden: if a product is
+// moved to another channel from the admin end AFTER it entered the cart, the
+// customer can keep increasing that line's quantity and completing the cart.
+// ADDING the same variant again, however, is rejected (404) — the entry gate is
+// closed.
 //
-// Bu bir açık değil, sepetin ANLIK GÖRÜNTÜ olmasının sonucudur ve bilinçlidir:
-// alternatifi, bir yöneticinin katalog düzenlemesinin müşterilerin dolu
-// sepetlerini ödenemez kılmasıdır. Saldırganın eline geçen bir şey de yoktur —
-// satırın sepete girebilmesi için o an kapsamda olması GEREKMİŞTİR ve taşımayı
-// yapan taraf saldırgan değil operatördür. Kapsamı satır ömrü boyunca sürekli
-// dayatmak isteyen bir kurulum, kapsam kontrolünü tamamlama adımına da koymayı
-// seçebilir; o zaman ödenecek bedel yukarıdaki cümledir.
+// This is not a hole, it is the consequence of the cart being a SNAPSHOT, and it
+// is deliberate: the alternative is an administrator's catalog edit making
+// customers' full carts impossible to pay for. There is also nothing an attacker
+// gains from it — for the line to be able to enter the cart it MUST HAVE been in
+// scope at that moment, and the party doing the move is not an attacker but the
+// operator. An installation that wants the scope enforced continuously
+// throughout the line's lifetime may choose to put the scope check on the
+// completion step as well; the price paid then is the sentence above.
 //
-// # Toplam hesabı patlarsa
+// # If the totals calculation blows up
 //
-// Adet YAZILMIŞTIR ve geri alınmaz; hata [CodeTotalsAfterChange] koduyla
-// sarılır. Gerekçe [Workflows.AddLineItem] ile aynıdır.
+// The quantity HAS BEEN WRITTEN and is not taken back; the error is wrapped with
+// the [CodeTotalsAfterChange] code. The rationale is the same as
+// [Workflows.AddLineItem]'s.
 func (w *Workflows) UpdateLineItem(ctx context.Context, in UpdateLineItemInput) (UpdateLineItemResult, error) {
 	if err := requireID("cart_id", in.CartID); err != nil {
 		return UpdateLineItemResult{}, err
@@ -86,7 +92,7 @@ func (w *Workflows) UpdateLineItem(ctx context.Context, in UpdateLineItemInput) 
 	}
 	if in.Quantity < 0 {
 		return UpdateLineItemResult{}, errors.Invalid(CodeInvalidInput,
-			"adet negatif olamaz: %d (satırı kaldırmak için 0 verin)", in.Quantity)
+			"the quantity cannot be negative: %d (give 0 to remove the line)", in.Quantity)
 	}
 	if in.Quantity > MaxQuantity {
 		return UpdateLineItemResult{}, errors.Invalid(CodeInvalidInput,
@@ -104,9 +110,9 @@ func (w *Workflows) UpdateLineItem(ctx context.Context, in UpdateLineItemInput) 
 		return UpdateLineItemResult{}, err
 	}
 
-	what := "satır adedi güncellendi"
+	what := "line quantity updated"
 	if removed {
-		what = "satır kaldırıldı"
+		what = "line removed"
 	}
 
 	totals, err := w.CalculateTotals(ctx, in.CartID)

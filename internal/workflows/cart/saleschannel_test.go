@@ -12,31 +12,31 @@ import (
 	"github.com/bdrtr/gobit/internal/core/query"
 )
 
-// Testlerde kullanılan satış kanalı kimlikleri.
+// Sales channel IDs used in the tests.
 const (
 	testChannelA = "sc_a"
 	testChannelB = "sc_b"
 )
 
-// magazaContext verilen kanallara bağlı bir publishable anahtar kimliği taşıyan
-// context üretir.
+// storefrontContext produces a context carrying a publishable key principal bound to
+// the given channels.
 //
-// Kimlik, üretimde corehttp.RequireStore tarafından konur; burada elle
-// konmasının sebebi, sınanan şeyin akışın KİMLİKTEN okuması olmasıdır — kimliği
-// nereye kimin koyduğu HTTP katmanının işidir ve uçtan uca testte kanıtlanır
-// (bkz. internal/e2e/kanal_sepeti_test.go).
-func magazaContext(channels []string) context.Context {
+// In production the principal is placed by corehttp.RequireStore; the reason it is
+// placed by hand here is that what is under test is the workflow READING FROM THE
+// PRINCIPAL — who puts the principal where is the HTTP layer's job and is proven in
+// the end-to-end test (see internal/e2e/kanal_sepeti_test.go).
+func storefrontContext(channels []string) context.Context {
 	return corehttp.WithPrincipal(context.Background(), corehttp.Principal{
 		ID:   "apk_test",
 		Kind: "api_key",
-		// Yetki listesi BOŞTUR: publishable anahtar yetki taşımaz ve kanal
-		// kapsamı bir yetki denetimi DEĞİL, kimliğin kapsamıdır.
+		// The scope list is EMPTY: a publishable key carries no scopes, and channel
+		// scoping is NOT a permission check but the scope of the principal itself.
 		SalesChannelIDs: channels,
 	})
 }
 
-// katalogSorgusu sahte kataloğa giden TEK varyant sorgusunu döner.
-func katalogSorgusu(t *testing.T, h *harness) query.GraphSpec {
+// catalogQuery returns the ONE variant query that went to the fake catalog.
+func catalogQuery(t *testing.T, h *harness) query.GraphSpec {
 	t.Helper()
 
 	for _, spec := range h.catalog.specs {
@@ -45,16 +45,17 @@ func katalogSorgusu(t *testing.T, h *harness) query.GraphSpec {
 		}
 	}
 
-	t.Fatalf("katalogdan hiç varyant sorgusu geçmedi; görülen sorgular: %v", h.catalog.specs)
+	t.Fatalf("no variant query reached the catalog; queries seen: %v", h.catalog.specs)
 	return query.GraphSpec{}
 }
 
-// satirEkle sepete satır ekler; yazılan satırı ve akışın hatasını döner.
+// addLine adds a line to the cart; it returns the line that was written and the
+// workflow's error.
 //
-// Yazma kaydı da dönüyor çünkü bu dosyadaki iddiaların yarısı satırın
-// YAZILMADIĞI üzerinedir; hatayı görmek yetmez — hata dönerken satırı yazmış
-// bir akış da testi geçerdi.
-func satirEkle(t *testing.T, h *harness, ctx context.Context, variantID string) (*addedLine, error) {
+// The write record is returned too because half the assertions in this file are about
+// the line NOT BEING WRITTEN; seeing the error is not enough — a workflow that returns
+// an error while still writing the line would also pass the test.
+func addLine(t *testing.T, h *harness, ctx context.Context, variantID string) (*addedLine, error) {
 	t.Helper()
 
 	serveSnapshot(h.carts,
@@ -71,126 +72,129 @@ func satirEkle(t *testing.T, h *harness, ctx context.Context, variantID string) 
 	return seen, err
 }
 
-// TestKatalogSorgusuKanallariKimliktenOkur üç kimlik durumunun katalog
-// sorgusuna nasıl yansıdığını doğrular.
+// TestTheCatalogQueryReadsChannelsFromThePrincipal verifies how three principal states
+// are reflected into the catalog query.
 //
-// Üç durum okuma yüzeyindekiyle AYNI olmak zorundadır
-// (bkz. saleschannel.go ve product/graph.SalesChannelIDsFromContext); farklı
-// davranan bir yazma yolu, kapsamı yüzeylerden birinde delik bırakır. Burada
-// sınanan şey davranışın kendisi değil, sorguya KONAN değerdir: kuralı
-// uygulayan taraf product modülüdür ve ona doğru soruyu sormak bu akışın tek
-// sorumluluğudur.
-func TestKatalogSorgusuKanallariKimliktenOkur(t *testing.T) {
-	testler := map[string]struct {
+// The three states must be the SAME as the ones on the read surface
+// (see saleschannel.go and product/graph.SalesChannelIDsFromContext); a write path that
+// behaves differently leaves a hole in the scoping on one of the surfaces. What is
+// tested here is not the behavior itself but the value PUT INTO the query: the side
+// that enforces the rule is the product module, and asking it the right question is
+// this workflow's only responsibility.
+func TestTheCatalogQueryReadsChannelsFromThePrincipal(t *testing.T) {
+	cases := map[string]struct {
 		ctx       func() context.Context
-		suzgecVar bool
-		kanallar  []string
+		hasFilter bool
+		channels  []string
 	}{
-		"kimlik yok -> süzgeç YOK": {
+		"no principal -> NO filter": {
 			ctx:       context.Background,
-			suzgecVar: false,
+			hasFilter: false,
 		},
-		"kanalsız kimlik -> BOŞ KÜME": {
-			ctx:       func() context.Context { return magazaContext(nil) },
-			suzgecVar: true,
-			kanallar:  []string{},
+		"principal without channels -> EMPTY SET": {
+			ctx:       func() context.Context { return storefrontContext(nil) },
+			hasFilter: true,
+			channels:  []string{},
 		},
-		"kanallı kimlik -> o kanallar": {
-			ctx:       func() context.Context { return magazaContext([]string{testChannelA, testChannelB}) },
-			suzgecVar: true,
-			kanallar:  []string{testChannelA, testChannelB},
+		"principal with channels -> those channels": {
+			ctx:       func() context.Context { return storefrontContext([]string{testChannelA, testChannelB}) },
+			hasFilter: true,
+			channels:  []string{testChannelA, testChannelB},
 		},
 	}
 
-	for ad, tt := range testler {
-		t.Run(ad, func(t *testing.T) {
+	for name, tt := range cases {
+		t.Run(name, func(t *testing.T) {
 			h := newHarness(t)
-			_, err := satirEkle(t, h, tt.ctx(), testVariantA)
+			_, err := addLine(t, h, tt.ctx(), testVariantA)
 			require.NoError(t, err)
 
-			spec := katalogSorgusu(t, h)
-			ham, sorguda := spec.Filters[FilterSalesChannelIDs]
+			spec := catalogQuery(t, h)
+			raw, inQuery := spec.Filters[FilterSalesChannelIDs]
 
-			if !tt.suzgecVar {
-				assert.False(t, sorguda,
-					"kimliksiz istekte kanal süzgeci HİÇ konmamalı; konsaydı auth'suz "+
-						"bir kurulumda sepet hiçbir varyantı bulamazdı")
+			if !tt.hasFilter {
+				assert.False(t, inQuery,
+					"a request without a principal must NEVER get a channel filter; if it did, "+
+						"a setup without auth could not find any variant for the cart")
 				return
 			}
 
-			require.True(t, sorguda,
-				"kimlikli istekte kanal süzgeci konmalı; konmazsa yazma yolu kapsamsız kalır")
-			assert.Equal(t, tt.kanallar, ham,
-				"süzgeç kimliğin kanallarını BİREBİR taşımalı")
-			assert.NotNil(t, ham,
-				"boş küme nil DEĞİLDİR: nil 'süzme yok' demektir ve kanalsız bir "+
-					"anahtara tüm kanalların katalogunu açardı")
+			require.True(t, inQuery,
+				"a request with a principal must get a channel filter; without it the write path stays unscoped")
+			assert.Equal(t, tt.channels, raw,
+				"the filter must carry the principal's channels EXACTLY")
+			assert.NotNil(t, raw,
+				"the empty set is NOT nil: nil means 'no filtering' and would open the catalog "+
+					"of every channel to a key with no channels")
 		})
 	}
 }
 
-// TestKapsamDisiVaryantSepeteGiremez kapsam dışı bir varyant için satırın HİÇ
-// yazılmadığını doğrular.
+// TestAnOutOfScopeVariantCannotEnterTheCart verifies that for an out-of-scope variant
+// the line is NEVER written.
 //
-// Katalog kaydı döndürmediğinde akışın devam edip başlıksız bir satır yazması
-// ya da hatayı yutması, kapsamı yalnızca teşhis mesajına indirgerdi.
-func TestKapsamDisiVaryantSepeteGiremez(t *testing.T) {
+// If the workflow carried on and wrote a titleless line when the catalog returned no
+// record, or swallowed the error, scoping would be reduced to a mere diagnostic
+// message.
+func TestAnOutOfScopeVariantCannotEnterTheCart(t *testing.T) {
 	h := newHarness(t)
 	h.catalog.scopedOut = map[string]bool{testVariantA: true}
 
-	seen, err := satirEkle(t, h, magazaContext([]string{testChannelB}), testVariantA)
+	seen, err := addLine(t, h, storefrontContext([]string{testChannelB}), testVariantA)
 
 	require.Error(t, err)
 	assert.True(t, errors.IsNotFound(err),
-		"kapsam dışı varyant BULUNAMADI sınıfında olmalı; hata: %v", err)
+		"an out-of-scope variant must be in the NOT FOUND class; error: %v", err)
 	assert.Equal(t, 0, seen.calls,
-		"kapsam dışı varyant için sepete satır YAZILMAMALI")
+		"no cart line may be WRITTEN for an out-of-scope variant")
 }
 
-// TestKapsamDisiVaryantVarliginiEleVermez kapsam dışı varyantın hatasının, hiç
-// var olmayan bir varyantınkinden AYIRT EDİLEMEDİĞİNİ doğrular.
+// TestAnOutOfScopeVariantDoesNotRevealItsExistence verifies that the error for an
+// out-of-scope variant is INDISTINGUISHABLE from the error for a variant that does not
+// exist at all.
 //
-// Ayırt edilebilseydi gizleme delinirdi: elindeki herhangi bir publishable
-// anahtarla gelen bir rakip, varyant kimliklerini deneyerek hangilerinin BAŞKA
-// bir kanalda satıldığını öğrenirdi. Okuma yüzeyi aynı kararı verir ve aynı
-// iddia orada da vardır (bkz. e2e TestAHiddenProductDoesNotRevealItselfViaTheErrorCode).
+// If it were distinguishable, the hiding would be punctured: a competitor arriving with
+// any publishable key in hand would learn, by trying variant IDs, which of them are sold
+// in ANOTHER channel. The read surface makes the same decision and the same assertion
+// lives there too (see e2e TestAHiddenProductDoesNotRevealItselfViaTheErrorCode).
 //
-// Karşılaştırma hem KODU hem MESAJI kapsar; burada ikisi de aynı olabilir,
-// çünkü iki mesaj da yalnızca istenen kimliği yankılar.
-func TestKapsamDisiVaryantVarliginiEleVermez(t *testing.T) {
-	ctx := magazaContext([]string{testChannelB})
+// The comparison covers both the CODE and the MESSAGE; here the two may be identical,
+// because both messages only echo the requested ID.
+func TestAnOutOfScopeVariantDoesNotRevealItsExistence(t *testing.T) {
+	ctx := storefrontContext([]string{testChannelB})
 
-	gizlenen := newHarness(t)
-	gizlenen.catalog.scopedOut = map[string]bool{testVariantA: true}
-	_, gizliHata := satirEkle(t, gizlenen, ctx, testVariantA)
-	require.Error(t, gizliHata)
+	hidden := newHarness(t)
+	hidden.catalog.scopedOut = map[string]bool{testVariantA: true}
+	_, hiddenErr := addLine(t, hidden, ctx, testVariantA)
+	require.Error(t, hiddenErr)
 
-	olmayan := newHarness(t)
-	delete(olmayan.catalog.titles, testVariantA)
-	_, olmayanHata := satirEkle(t, olmayan, ctx, testVariantA)
-	require.Error(t, olmayanHata)
+	missing := newHarness(t)
+	delete(missing.catalog.titles, testVariantA)
+	_, missingErr := addLine(t, missing, ctx, testVariantA)
+	require.Error(t, missingErr)
 
-	assert.Equal(t, errors.CodeOf(olmayanHata), errors.CodeOf(gizliHata),
-		"kapsam dışı varyant ile olmayan varyant AYNI hata kodunu dönmeli")
-	assert.Equal(t, errors.KindOf(olmayanHata), errors.KindOf(gizliHata),
-		"iki durumun hata SINIFI da aynı olmalı; sınıf istemcinin kararını değiştirir")
-	assert.Equal(t, olmayanHata.Error(), gizliHata.Error(),
-		"mesajlar da ayrışmamalı; ayrıştıkları gün fark bir sızıntı kanalı olur")
+	assert.Equal(t, errors.CodeOf(missingErr), errors.CodeOf(hiddenErr),
+		"an out-of-scope variant and a nonexistent variant must return the SAME error code")
+	assert.Equal(t, errors.KindOf(missingErr), errors.KindOf(hiddenErr),
+		"the error CLASS of the two cases must match too; the class changes the client's decision")
+	assert.Equal(t, missingErr.Error(), hiddenErr.Error(),
+		"the messages must not diverge either; the day they do, the difference becomes a leak channel")
 }
 
-// TestKendiKanalindakiVaryantSepeteGirer kapsam denetiminin HER ŞEYİ reddeden
-// bir kapı olmadığını doğrular.
+// TestAVariantInItsOwnChannelEntersTheCart verifies that the scope check is not a gate
+// that rejects EVERYTHING.
 //
-// Bu iddia olmadan diğer testler değersizdir: katalog okumasını tümüyle bozan
-// bir değişiklik de "kapsam dışı varyant eklenemiyor" testini geçirirdi.
-func TestKendiKanalindakiVaryantSepeteGirer(t *testing.T) {
+// Without this assertion the other tests are worthless: a change that breaks the
+// catalog read entirely would also pass the "an out-of-scope variant cannot be added"
+// test.
+func TestAVariantInItsOwnChannelEntersTheCart(t *testing.T) {
 	h := newHarness(t)
-	// Katalog bu varyantı isteğin kapsamında SAYAR; kapsam dışı senaryosuyla
-	// aradaki tek fark budur.
-	seen, err := satirEkle(t, h, magazaContext([]string{testChannelA}), testVariantA)
+	// The catalog COUNTS this variant as within the request's scope; that is the only
+	// difference from the out-of-scope scenario.
+	seen, err := addLine(t, h, storefrontContext([]string{testChannelA}), testVariantA)
 
 	require.NoError(t, err)
-	assert.Equal(t, 1, seen.calls, "kendi kanalındaki varyant sepete girmeli")
-	assert.Equal(t, "Kırmızı Tişört / M", seen.title,
-		"başlık yine katalogdan kopyalanmalı; kapsam denetimi okumayı bozmamalı")
+	assert.Equal(t, 1, seen.calls, "a variant in its own channel must enter the cart")
+	assert.Equal(t, "Red T-Shirt / M", seen.title,
+		"the title must still be copied from the catalog; the scope check must not break the read")
 }

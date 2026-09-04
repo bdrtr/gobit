@@ -7,114 +7,127 @@ import (
 	"github.com/bdrtr/gobit/internal/core/errors"
 )
 
-// MaxLineItems bir sepetin taşıyabileceği en fazla FARKLI satır sayısıdır.
+// MaxLineItems is the largest number of DISTINCT lines a cart may carry.
 //
-// Sınır SESSİZ DEĞİLDİR ve kırpma yoktur: tavana ulaşmış bir sepete YENİ satır
-// açmak isteyen istek errors.Invalid ([CodeCartLineLimit]) ile reddedilir ve
-// mesaj hem tavanı hem sepetteki satır sayısını yazar.
+// The limit IS NOT SILENT and there is no truncation: a request that wants to
+// open a NEW line on a cart that has reached the ceiling is rejected with
+// errors.Invalid ([CodeCartLineLimit]) and the message writes both the ceiling
+// and the number of lines in the cart.
 //
-// # Neden bir tavan var
+// # Why there is a ceiling
 //
-// Satır ekleyen her istek sepetin TÜM satırlarını yeniden fiyatlar ve TÜM
-// satırların tutarını yeniden YAZAR, yani N satırlık bir sepeti kurmanın
-// maliyeti N ile değil N² ile büyür. Fiyat okuması toplu hâle getirilerek
-// doğrusala indirildi (bkz. [Workflows.unitPrices]) ama YAZMA tarafı hâlâ satır
-// başınadır: cart modülünün SetTotals'ı her satırın tutarını ayrı bir UPDATE
-// ile ve sepetin kilidi altında yazar. Ölçüldü (bu paketin sahteleriyle,
-// çağrılar sayılarak): 100 satırlık bir sepeti kurmak 5.050 satır tutarı
-// yazımı eder; 1.000 satırlık bir sepet 500.500 eder. Tavansız bir sepet, tek
-// bir istemcinin veritabanını meşgul edebileceği süreyi sınırsız bırakırdı.
+// Every request that adds a line reprices ALL the cart's lines and REWRITES the
+// amount of ALL of them, so the cost of building an N-line cart grows not with
+// N but with N². The price read was made bulk and brought down to linear (see
+// [Workflows.unitPrices]) but the WRITE side is still per line: the cart
+// module's SetTotals writes each line's amount with a separate UPDATE and under
+// the cart's lock. Measured (with this package's fakes, by counting the calls):
+// building a 100-line cart costs 5,050 line amount writes; a 1,000-line cart
+// costs 500,500. A cart with no ceiling would leave the time a single client
+// can keep the database busy unbounded.
 //
-// # Neden 100
+// # Why 100
 //
-// Değer cart modülünün sayfa boyutu tavanıyla (MaxLimit) aynıdır — tavana
-// dayanmış bir sepetin satırları o modülün TEK sayfasına sığar — ve pricing'in
-// toplu fiyat isteği tavanının (MaxCalculateItems, bugün 1000) onda biridir;
-// aradaki boşluk bilinçlidir ve aşağıdaki paragrafın konusudur.
+// The value is the same as the cart module's page size ceiling (MaxLimit) — the
+// lines of a cart pressed against the ceiling fit on a SINGLE page of that
+// module — and is one tenth of pricing's bulk price request ceiling
+// (MaxCalculateItems, 1000 today); the gap between the two is deliberate and is
+// the subject of the paragraph below.
 //
-// # Tavan yalnızca satır AÇAN yolda uygulanır
+// # The ceiling is applied only on the path that OPENS a line
 //
-// Sepette zaten duran bir varyantı yeniden eklemek yeni satır açmaz, var olan
-// satırın adedini artırır ve tavana TAKILMAZ; takılsaydı dolu bir sepetin
-// sahibi kendi satırının adedini bile artıramazdı. Aynı gerekçeyle hesap turu,
-// adet güncellemesi ve sipariş yolu tavanı hiç sormaz: tavan KONMADAN önce
-// açılmış ve bugün 100'ün üstünde satır taşıyan bir sepet hesaplanabilir ve
-// tamamlanabilir kalmalıdır — reddetmek, müşterinin var olan sepetini
-// ödenemez hâle getirirdi.
+// Adding a variant already sitting in the cart again does not open a new line,
+// it increases the quantity of the existing line and DOES NOT HIT the ceiling;
+// had it hit, the owner of a full cart could not even increase the quantity of
+// their own line. For the same reason the calculation round, the quantity
+// update and the order path never ask the ceiling: a cart opened BEFORE the
+// ceiling was put in place, and carrying more than 100 lines today, must stay
+// calculable and completable — rejecting it would render the customer's
+// existing cart unpayable.
 const MaxLineItems = 100
 
-// AddLineItemInput sepete eklenecek satırın girdisidir.
+// AddLineItemInput is the input of the line to be added to the cart.
 type AddLineItemInput struct {
-	// CartID satırın ekleneceği sepettir; ZORUNLUDUR.
+	// CartID is the cart the line will be added to; it is MANDATORY.
 	CartID string
-	// VariantID eklenecek ürün varyantıdır; ZORUNLUDUR.
+	// VariantID is the product variant to be added; it is MANDATORY.
 	VariantID string
-	// Quantity eklenecek adettir; POZİTİF olmalıdır.
+	// Quantity is the quantity to be added; it must be POSITIVE.
 	//
-	// Değer MUTLAK değil EKLENECEK adettir: aynı varyant sepette zaten varsa
-	// yeni satır açılmaz, var olan satırın adedi bu kadar ARTAR.
+	// The value is not the ABSOLUTE quantity but the quantity TO BE ADDED: if
+	// the same variant is already in the cart no new line is opened, the
+	// quantity of the existing line INCREASES by this much.
 	Quantity int64
-	// Metadata satıra iliştirilecek serbest JSON nesnesidir; OPSİYONELDİR.
+	// Metadata is the free-form JSON object to attach to the line; it is
+	// OPTIONAL.
 	//
-	// Akış onu okumaz ve hesaba katmaz; yalnızca sepet modülüne taşır. Alan,
-	// vitrinin satır başına niyetini (hediye notu, kişiselleştirme) tutar ve
-	// satırı açan tek yol bu akış olduğu için başka bir taşıyıcısı yoktur.
+	// The flow does not read it and does not take it into account; it only
+	// carries it to the cart module. The field holds the storefront's per-line
+	// intent (a gift note, personalization) and, since this flow is the only
+	// path that opens a line, it has no other carrier.
 	//
-	// Birleştirmede YAZILMAZ: aynı varyant sepette zaten varsa cart modülü
-	// yalnızca adedi artırır ve var olan satırın metadata'sını korur
-	// (bkz. cart servisindeki AddLineItem).
+	// It IS NOT WRITTEN on a merge: if the same variant is already in the cart
+	// the cart module only increases the quantity and preserves the existing
+	// line's metadata (see AddLineItem in the cart service).
 	Metadata json.RawMessage
 }
 
-// AddLineItemResult eklenen satırın ve yeniden hesaplanan toplamların
-// sonucudur.
+// AddLineItemResult is the result of the added line and of the recalculated
+// totals.
 type AddLineItemResult struct {
-	// LineItemID eklenen (ya da adedi artırılan) satırın kimliğidir.
+	// LineItemID is the id of the line that was added (or whose quantity was
+	// increased).
 	LineItemID string
-	// VariantID satırın gösterdiği varyanttır.
+	// VariantID is the variant the line points at.
 	VariantID string
-	// Title satırın katalogdan kopyalanan başlığıdır.
+	// Title is the line's title copied from the catalog.
 	Title string
-	// UnitPrice satır AÇILIRKEN yazılan birim fiyattır.
+	// UnitPrice is the unit price written WHILE the line was being opened.
 	//
-	// Nihai fiyat değildir: satır açıldıktan sonra koşan hesap turu, sepetin
-	// SON hâlindeki adede göre fiyatı yeniden seçer ve satıra onu yazar. İkisi
-	// yalnızca birleştirme olduğunda ayrışır (bkz. [Workflows.AddLineItem]).
+	// It is not the final price: the calculation round that runs after the line
+	// is opened selects the price again according to the LAST quantity in the
+	// cart and writes that one to the line. The two diverge only when there is
+	// a merge (see [Workflows.AddLineItem]).
 	UnitPrice int64
-	// Totals satır eklendikten sonraki sepet toplamlarıdır.
+	// Totals are the cart totals after the line was added.
 	Totals Totals
 }
 
-// AddLineItem varyantın fiyatını bulur, satırı ekler ve toplamları yeniden
-// hesaplar.
+// AddLineItem finds the variant's price, adds the line and recalculates the
+// totals.
 //
-// Sıra: sepetin para birimi okunur -> varyantın başlığı katalogdan alınır ->
-// varyantın fiyat kümesi link üzerinden bulunur -> birim fiyat pricing'den
-// hesaplanır -> satır yazılır -> [Workflows.CalculateTotals] koşar.
+// The order: the cart's currency is read -> the variant's title is taken from
+// the catalog -> the variant's price set is found over the link -> the unit
+// price is calculated from pricing -> the line is written ->
+// [Workflows.CalculateTotals] runs.
 //
-// # Fiyatı olmayan varyant
+// # A variant with no price
 //
-// Reddedilir (errors.Invalid); gerekçe [Workflows.priceSetsFor] godoc'undadır.
-// Fiyat kümesi var ama sepetin para biriminde geçerli fiyat yoksa hata yine
-// errors.Invalid'dir ve mesaj para birimini yazar.
+// It is rejected (errors.Invalid); the rationale is in the
+// [Workflows.priceSetsFor] godoc. If the price set exists but there is no valid
+// price in the cart's currency the error is again errors.Invalid and the
+// message writes the currency.
 //
-// # Birleştirme ve fiyat kademesi
+// # Merging and the price tier
 //
-// Aynı varyant sepette zaten varsa cart modülü yeni satır açmaz, adedi artırır.
-// Bu durumda BURADA hesaplanan birim fiyat eklenen adede aittir ve birleşmiş
-// adede ait olmayabilir — pricing fiyatı adet aralığına göre seçer, yani 3 + 2
-// birleşince satır "5+" kademesine geçebilir. Fark önemsizdir çünkü satır
-// yazıldıktan hemen sonra koşan hesap turu TÜM satırları sepetteki GÜNCEL
-// adetle yeniden fiyatlar; buradaki değer yalnızca satırın açılış değeridir ve
-// hiçbir zaman müşteriye gösterilen tutar olmaz.
+// If the same variant is already in the cart the cart module does not open a
+// new line, it increases the quantity. In that case the unit price calculated
+// HERE belongs to the quantity being added and may not belong to the merged
+// quantity — pricing selects the price according to the quantity range, that
+// is, once 3 + 2 merge the line may move into the "5+" tier. The difference is
+// immaterial because the calculation round that runs right after the line is
+// written reprices ALL the lines with the CURRENT quantity in the cart; the
+// value here is only the line's opening value and is never the amount shown to
+// the customer.
 //
-// # Toplam hesabı patlarsa
+// # If the totals calculation blows up
 //
-// Satır YAZILMIŞTIR ve geri alınmaz. Hata [CodeTotalsAfterChange] koduyla
-// sarılarak dönülür; sepet, cart modelinin tanıdığı "bayat toplam" durumunda
-// kalır ve o sepetin sipariş olması ayrıca reddedilir. Satırı silmek, geçici
-// bir pricing/region arızası yüzünden müşterinin isteğini yok etmek olurdu
-// (bkz. paket yorumu, "Neden hiçbir akış saga değil").
+// The line HAS BEEN WRITTEN and is not taken back. The error is returned
+// wrapped with the [CodeTotalsAfterChange] code; the cart stays in the "stale
+// totals" state the cart model recognizes, and that cart becoming an order is
+// separately rejected. Deleting the line would mean destroying the customer's
+// request because of a temporary pricing/region fault (see the package comment,
+// "Why none of the flows is a saga").
 func (w *Workflows) AddLineItem(ctx context.Context, in AddLineItemInput) (AddLineItemResult, error) {
 	if err := requireID("cart_id", in.CartID); err != nil {
 		return AddLineItemResult{}, err
@@ -133,10 +146,11 @@ func (w *Workflows) AddLineItem(ctx context.Context, in AddLineItemInput) (AddLi
 	}
 	if snap.Completed {
 		return AddLineItemResult{}, errors.Conflict(CodeCartCompleted,
-			"tamamlanmış sepete satır eklenemez: %s", in.CartID)
+			"no line can be added to a completed cart: %s", in.CartID)
 	}
-	// Tavan, katalog ve fiyat okumalarından ÖNCE denetlenir: sonucu baştan belli
-	// bir istek için iki modülü meşgul etmenin anlamı yoktur.
+	// The ceiling is checked BEFORE the catalog and price reads: there is no
+	// point in keeping two modules busy for a request whose outcome is known in
+	// advance.
 	if err := checkLineLimit(snap, in.VariantID); err != nil {
 		return AddLineItemResult{}, err
 	}
@@ -155,7 +169,7 @@ func (w *Workflows) AddLineItem(ctx context.Context, in AddLineItemInput) (AddLi
 	if err != nil {
 		if errors.IsNotFound(err) {
 			return AddLineItemResult{}, errors.Wrap(err, errors.KindInvalid, CodePriceUnavailable,
-				"%s varyantının %s para biriminde ve %d adette fiyatı yok",
+				"variant %s has no price in currency %s at quantity %d",
 				in.VariantID, snap.CurrencyCode, in.Quantity)
 		}
 		return AddLineItemResult{}, err
@@ -171,7 +185,7 @@ func (w *Workflows) AddLineItem(ctx context.Context, in AddLineItemInput) (AddLi
 
 	totals, err := w.CalculateTotals(ctx, in.CartID)
 	if err != nil {
-		return AddLineItemResult{}, totalsAfterChange(err, in.CartID, "satır eklendi")
+		return AddLineItemResult{}, totalsAfterChange(err, in.CartID, "line added")
 	}
 
 	return AddLineItemResult{
@@ -183,16 +197,16 @@ func (w *Workflows) AddLineItem(ctx context.Context, in AddLineItemInput) (AddLi
 	}, nil
 }
 
-// checkLineLimit isteğin sepete YENİ bir satır açıp açmayacağını ve açacaksa
-// [MaxLineItems] tavanına sığıp sığmadığını denetler.
+// checkLineLimit checks whether the request will open a NEW line in the cart
+// and, if it will, whether it fits within the [MaxLineItems] ceiling.
 //
-// Varyant sepette zaten varsa istek birleştirmedir, satır sayısını
-// DEĞİŞTİRMEZ ve tavandan muaftır; gerekçe [MaxLineItems] godoc'undadır.
-// Karşılaştırmanın kaynağı anlık görüntüdür ve görüntü ile yazma arasında
-// başka bir istek araya girebilir: tavan bu yüzden KESİN bir üst sınır değil,
-// bir sepetin sınırsız büyümesini kesen bir kapıdır — birkaç satırlık bir
-// aşımın maliyeti, satır eklemeyi sepetin kilidi altına almanın maliyetinden
-// çok daha düşüktür.
+// If the variant is already in the cart the request is a merge, it DOES NOT
+// CHANGE the number of lines and is exempt from the ceiling; the rationale is
+// in the [MaxLineItems] godoc. The source of the comparison is the snapshot and
+// another request can slip in between the snapshot and the write: the ceiling
+// is therefore not an EXACT upper bound but a gate that cuts off a cart's
+// unbounded growth — the cost of an overshoot of a few lines is far lower than
+// the cost of taking line addition under the cart's lock.
 func checkLineLimit(snap Snapshot, variantID string) error {
 	if len(snap.Items) < MaxLineItems {
 		return nil
@@ -203,19 +217,21 @@ func checkLineLimit(snap Snapshot, variantID string) error {
 		}
 	}
 	return errors.Invalid(CodeCartLineLimit,
-		"sepet en fazla %d satır taşıyabilir; %s sepetinde %d satır var (var olan bir satırın adedi artırılabilir)",
+		"a cart can carry at most %d lines; cart %s has %d lines (the quantity of an existing line can be increased)",
 		MaxLineItems, snap.ID, len(snap.Items))
 }
 
-// totalsAfterChange sepet DEĞİŞTİKTEN sonra patlayan hesabın hatasını sarar.
+// totalsAfterChange wraps the error of the calculation that blew up AFTER the
+// cart CHANGED.
 //
-// Sarmalama, çağıranın iki durumu ayırt edebilmesi içindir: istek reddedildi
-// (sepet değişmedi) ile istek uygulandı ama tutar hesaplanamadı. İkincisinde
-// isteği tekrarlamak satırı İKİNCİ KEZ eklerdi; doğru davranış yalnızca hesabı
-// yeniden çalıştırmaktır. Hatanın SINIFI korunur ki durum koduna çeviren
-// katman doğru kodu yazsın.
+// The wrapping is there so that the caller can tell two states apart: the
+// request was rejected (the cart did not change) versus the request was applied
+// but the amount could not be calculated. In the second case repeating the
+// request would add the line a SECOND TIME; the correct behavior is only to run
+// the calculation again. The error's KIND is preserved so that the layer
+// translating it into a status code writes the right one.
 func totalsAfterChange(err error, cartID, what string) error {
 	return errors.Wrap(err, errors.KindOf(err), CodeTotalsAfterChange,
-		"%s (%s) ama toplamlar hesaplanamadı; sepetin toplamları bayat, hesap yeniden çalıştırılmalı",
+		"%s (%s) but the totals could not be calculated; the cart's totals are stale, the calculation has to be run again",
 		what, cartID)
 }

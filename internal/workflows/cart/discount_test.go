@@ -10,9 +10,10 @@ import (
 	"github.com/bdrtr/gobit/internal/core/errors"
 )
 
-// twoLineCart iki satırlı bir anlık görüntü üretir (A: 2 adet, B: 3 adet).
+// twoLineCart produces a two-line snapshot (A: 2 units, B: 3 units).
 //
-// Ara toplamlar 2000 ve 750'dir; testlerin çoğu bu iki sayı üzerinden konuşur.
+// The subtotals are 2000 and 750; most of the tests speak in terms of these two
+// numbers.
 func twoLineCart(revision int64) Snapshot {
 	return snapshotOf(revision, []SnapshotItem{
 		{ID: testLineA, VariantID: testVariantA, Quantity: 2},
@@ -20,9 +21,9 @@ func twoLineCart(revision int64) Snapshot {
 	}, nil)
 }
 
-// TestCalculateTotalsIndirimSatirlaraVeSepeteYazilir promotion'ın kalem başına
-// verdiği indirimin hem satırlara hem sepete işlendiğini doğrular.
-func TestCalculateTotalsIndirimSatirlaraVeSepeteYazilir(t *testing.T) {
+// TestCalculateTotalsDiscountWrittenOntoLinesAndCart verifies that the per-item
+// discount promotion gives is written onto both the lines and the cart.
+func TestCalculateTotalsDiscountWrittenOntoLinesAndCart(t *testing.T) {
 	h := newModuleHarness(t)
 	h.discounts.perLine = map[string]int64{testLineA: 500, testLineB: 100}
 	serveSnapshot(h.carts, twoLineCart(1))
@@ -36,7 +37,7 @@ func TestCalculateTotalsIndirimSatirlaraVeSepeteYazilir(t *testing.T) {
 	assert.Equal(t, int64(600), totals.DiscountTotal)
 	assert.Equal(t, int64(2750), totals.Subtotal)
 
-	// Vergi indirim SONRASI tabandan: (2000-500)×%20 = 300, (750-100)×%20 = 130.
+	// Tax comes off the POST-DISCOUNT base: (2000-500) x 20% = 300, (750-100) x 20% = 130.
 	assert.Equal(t, int64(300), totals.Lines[0].TaxTotal)
 	assert.Equal(t, int64(130), totals.Lines[1].TaxTotal)
 	assert.Equal(t, int64(430), totals.TaxTotal)
@@ -44,13 +45,13 @@ func TestCalculateTotalsIndirimSatirlaraVeSepeteYazilir(t *testing.T) {
 	requireIdentity(t, totals)
 }
 
-// TestCalculateTotalsVergiTabaniIndirimSonrasidir tabanın indirim ÖNCESİ
-// tutar olmadığını AYIRT EDİCİ biçimde kanıtlar.
+// TestCalculateTotalsTaxBaseIsPostDiscount proves in a DISCRIMINATING way that the
+// base is not the PRE-DISCOUNT amount.
 //
-// İndirim öncesi taban vergilenseydi vergi 400 çıkardı; sonrası vergilendiğinde
-// 300'dür. İki sayının farkı, sözleşmenin hangi dalının uygulandığını tek
-// başına gösterir.
-func TestCalculateTotalsVergiTabaniIndirimSonrasidir(t *testing.T) {
+// Had the pre-discount base been taxed the tax would have come out 400; when the
+// post-discount base is taxed it is 300. The difference between the two numbers
+// shows on its own which branch of the contract was applied.
+func TestCalculateTotalsTaxBaseIsPostDiscount(t *testing.T) {
 	h := newModuleHarness(t)
 	h.discounts.perLine = map[string]int64{testLineA: 500}
 	serveSnapshot(h.carts, snapshotOf(1,
@@ -62,39 +63,40 @@ func TestCalculateTotalsVergiTabaniIndirimSonrasidir(t *testing.T) {
 	require.Len(t, h.taxes.requests, 1)
 	require.Len(t, h.taxes.requests[0].Items, 1)
 	assert.Equal(t, int64(1500), h.taxes.requests[0].Items[0].Amount,
-		"vergi tabanı satır ara toplamı EKSİ satır indirimidir")
+		"the tax base is the line subtotal MINUS the line discount")
 
 	assert.Equal(t, int64(300), totals.TaxTotal)
-	assert.NotEqual(t, int64(400), totals.TaxTotal, "indirim öncesi taban vergilenmemeli")
+	assert.NotEqual(t, int64(400), totals.TaxTotal, "the pre-discount base must not be taxed")
 	requireIdentity(t, totals)
 }
 
-// TestCalculateTotalsPromotionKayitsizsaIndirimSifir promotion yüzeyi
-// kayıtlı değilken hesabın DÜŞMEDİĞİNİ ve indirimin sıfır kaldığını doğrular.
-func TestCalculateTotalsPromotionKayitsizsaIndirimSifir(t *testing.T) {
+// TestCalculateTotalsDiscountZeroWhenPromotionUnregistered verifies that the
+// calculation DOES NOT FALL OVER while the promotion surface is not registered and
+// that the discount stays zero.
+func TestCalculateTotalsDiscountZeroWhenPromotionUnregistered(t *testing.T) {
 	h := newHarnessWith(t, nil, newStubTaxes())
 	serveSnapshot(h.carts, twoLineCart(1))
 
 	totals, err := h.wf.CalculateTotals(context.Background(), testCartID)
 	require.NoError(t, err)
 
-	assert.Zero(t, totals.DiscountTotal, "promotion yoksa indirim üretecek kaynak da yoktur")
+	assert.Zero(t, totals.DiscountTotal, "with no promotion there is no source to produce a discount either")
 	for _, line := range totals.Lines {
 		assert.Zero(t, line.DiscountTotal)
 	}
-	// Vitrin çalışmaya devam eder: vergi ve toplam hesaplanmıştır.
+	// The storefront keeps working: the tax and the total have been calculated.
 	assert.Equal(t, int64(550), totals.TaxTotal)
 	assert.Equal(t, int64(3300), totals.Total)
 	requireIdentity(t, totals)
 }
 
-// TestCalculateTotalsIndirimIstegininSekli promotion'a giden gövdenin
-// sözleşmeye uyduğunu doğrular.
+// TestCalculateTotalsDiscountRequestShape verifies that the body going to promotion
+// obeys the contract.
 //
-// Gövdeyi tek tek denetlemek gereklidir: karşı taraf bilinmeyen alanı REDDEDER,
-// eksik alanı ise sessizce sıfır sayar ve sessiz olan hâl testsiz kalırsa
-// üretimde indirimsiz bir sepet olarak görünür.
-func TestCalculateTotalsIndirimIstegininSekli(t *testing.T) {
+// Inspecting the body field by field is necessary: the other side REJECTS an
+// unknown field, but silently counts a missing one as zero, and the silent case,
+// left untested, shows up in production as a cart with no discount.
+func TestCalculateTotalsDiscountRequestShape(t *testing.T) {
 	h := newModuleHarness(t)
 	serveSnapshot(h.carts, twoLineCart(1))
 
@@ -111,17 +113,18 @@ func TestCalculateTotalsIndirimIstegininSekli(t *testing.T) {
 		Amount:     2000,
 		Quantity:   2,
 		Attributes: map[string]string{attrVariantID: testVariantA},
-	}, req.Items[0], "kalem tutarı İNDİRİM ÖNCESİ ara toplamdır ve adet kademe için taşınır")
-	assert.Equal(t, testLineB, req.Items[1].ID, "sıra sepetin sırasıdır")
+	}, req.Items[0], "the item amount is the PRE-DISCOUNT subtotal and the quantity is carried for tiering")
+	assert.Equal(t, testLineB, req.Items[1].ID, "the order is the cart's order")
 }
 
-// TestCalculateTotalsKuponKoduGonderilmez sepette kupon alanı olmadığı için
-// hiçbir kodun gönderilmediğini SABİTLER.
+// TestCalculateTotalsNoCouponCodeIsSent PINS the fact that no code at all is sent
+// because the cart has no coupon field.
 //
-// Karar paket yorumundaki "Kupon kodları" başlığındadır: yalnızca OTOMATİK
-// promosyonlar uygulanır. Test o kararın bekçisidir — biri CalculateTotals'a
-// kod parametresi eklerse burası düşer ve kararın yeniden verilmesi gerekir.
-func TestCalculateTotalsKuponKoduGonderilmez(t *testing.T) {
+// The decision is under the "Coupon codes" heading in the package comment: only
+// AUTOMATIC promotions are applied. The test is the guard of that decision — if
+// someone adds a code parameter to CalculateTotals this test falls over and the
+// decision has to be taken again.
+func TestCalculateTotalsNoCouponCodeIsSent(t *testing.T) {
 	h := newModuleHarness(t)
 	serveSnapshot(h.carts, twoLineCart(1))
 
@@ -130,16 +133,16 @@ func TestCalculateTotalsKuponKoduGonderilmez(t *testing.T) {
 
 	require.Len(t, h.discounts.requests, 1)
 	assert.Empty(t, h.discounts.requests[0].Codes)
-	assert.Empty(t, h.discounts.requests[0].At, "hesap anı DAİMA şimdidir")
+	assert.Empty(t, h.discounts.requests[0].At, "the instant of the calculation is ALWAYS now")
 }
 
-// TestCalculateTotalsKargoIndirimeGonderilmez kargo yöntemlerinin promotion'a
-// hiç gitmediğini doğrular.
+// TestCalculateTotalsShippingIsNotSentToDiscount verifies that shipping methods
+// never go to promotion.
 //
-// Gerekçe [Workflows.discountRequestFor] godoc'undadır: [Totals] şeması kargo
-// indirimini taşıyamaz ve sepet indirimine katmak cart'ın "indirim ara toplamı
-// aşamaz" kuralını ihlal edebilirdi.
-func TestCalculateTotalsKargoIndirimeGonderilmez(t *testing.T) {
+// The rationale is in the [Workflows.discountRequestFor] godoc: the [Totals] schema
+// cannot carry a shipping discount, and folding it into the cart discount could
+// violate cart's "a discount cannot exceed the subtotal" rule.
+func TestCalculateTotalsShippingIsNotSentToDiscount(t *testing.T) {
 	h := newModuleHarness(t)
 	serveSnapshot(h.carts, snapshotOf(1,
 		[]SnapshotItem{{ID: testLineA, VariantID: testVariantA, Quantity: 1}},
@@ -150,25 +153,25 @@ func TestCalculateTotalsKargoIndirimeGonderilmez(t *testing.T) {
 
 	require.Len(t, h.discounts.requests, 1)
 	assert.Empty(t, h.discounts.requests[0].ShippingMethods)
-	assert.Equal(t, int64(4990), totals.ShippingTotal, "kargo indirimsiz geçer")
+	assert.Equal(t, int64(4990), totals.ShippingTotal, "shipping passes through undiscounted")
 	requireIdentity(t, totals)
 }
 
-// TestCalculateTotalsIndirimAraToplamiAsamaz satır tutarını aşan bir indirimin
-// sessizce kabul edilmediğini doğrular.
+// TestCalculateTotalsDiscountCannotExceedSubtotal verifies that a discount
+// exceeding the line amount is not silently accepted.
 //
-// promotion bunu zaten vaat eder; test, vaadin BOZULDUĞU durumda hesabın
-// düştüğünü sabitler. Kabul edilseydi satırın toplamı negatife düşer ve cart
-// modülünün tutarlılık kontrolü ancak yazma anında devreye girerdi.
-func TestCalculateTotalsIndirimAraToplamiAsamaz(t *testing.T) {
+// promotion already promises this; the test pins that the calculation FALLS OVER
+// when the promise is BROKEN. Were it accepted the line's total would drop below
+// zero and the cart module's consistency check would only kick in at write time.
+func TestCalculateTotalsDiscountCannotExceedSubtotal(t *testing.T) {
 	h := newModuleHarness(t)
 	h.discounts.fn = func(req discountRequest) (discountResponse, error) {
-		asiri := req.Items[0].Amount + 1
+		excessive := req.Items[0].Amount + 1
 		return discountResponse{
 			CurrencyCode:       req.CurrencyCode,
-			Items:              []discountLine{{ID: req.Items[0].ID, Amount: asiri}},
-			ItemsDiscountTotal: asiri,
-			DiscountTotal:      asiri,
+			Items:              []discountLine{{ID: req.Items[0].ID, Amount: excessive}},
+			ItemsDiscountTotal: excessive,
+			DiscountTotal:      excessive,
 		}, nil
 	}
 	serveSnapshot(h.carts, snapshotOf(1,
@@ -177,14 +180,14 @@ func TestCalculateTotalsIndirimAraToplamiAsamaz(t *testing.T) {
 	_, err := h.wf.CalculateTotals(context.Background(), testCartID)
 	require.Error(t, err)
 	assert.Equal(t, CodeDiscountInvalid, errors.CodeOf(err))
-	assert.Empty(t, h.carts.written, "sözleşme dışı indirimle hiçbir şey yazılmamalı")
+	assert.Empty(t, h.carts.written, "nothing must be written with an out-of-contract discount")
 }
 
-// TestCalculateTotalsBozukIndirimSonucuReddedilir promotion'ın sözleşmeyi
-// çiğneyen yanıtlarının hesaba girmediğini doğrular.
-func TestCalculateTotalsBozukIndirimSonucuReddedilir(t *testing.T) {
+// TestCalculateTotalsCorruptDiscountResultRejected verifies that responses from
+// promotion which break the contract do not enter the calculation.
+func TestCalculateTotalsCorruptDiscountResultRejected(t *testing.T) {
 	tests := map[string]func(req discountRequest) (discountResponse, error){
-		"sıra korunmadı": func(req discountRequest) (discountResponse, error) {
+		"order not preserved": func(req discountRequest) (discountResponse, error) {
 			return discountResponse{
 				CurrencyCode: req.CurrencyCode,
 				Items: []discountLine{
@@ -193,13 +196,13 @@ func TestCalculateTotalsBozukIndirimSonucuReddedilir(t *testing.T) {
 				},
 			}, nil
 		},
-		"satır eksik": func(req discountRequest) (discountResponse, error) {
+		"line missing": func(req discountRequest) (discountResponse, error) {
 			return discountResponse{
 				CurrencyCode: req.CurrencyCode,
 				Items:        []discountLine{{ID: req.Items[0].ID, Amount: 0}},
 			}, nil
 		},
-		"toplam satırlarla uyuşmuyor": func(req discountRequest) (discountResponse, error) {
+		"total does not match the lines": func(req discountRequest) (discountResponse, error) {
 			return discountResponse{
 				CurrencyCode:       req.CurrencyCode,
 				Items:              []discountLine{{ID: req.Items[0].ID}, {ID: req.Items[1].ID}},
@@ -207,14 +210,14 @@ func TestCalculateTotalsBozukIndirimSonucuReddedilir(t *testing.T) {
 				DiscountTotal:      100,
 			}, nil
 		},
-		"gönderilmeyen kargoya indirim": func(req discountRequest) (discountResponse, error) {
+		"discount on shipping that was not sent": func(req discountRequest) (discountResponse, error) {
 			return discountResponse{
 				CurrencyCode:          req.CurrencyCode,
 				Items:                 []discountLine{{ID: req.Items[0].ID}, {ID: req.Items[1].ID}},
 				ShippingDiscountTotal: 50,
 			}, nil
 		},
-		"başka para birimi": func(req discountRequest) (discountResponse, error) {
+		"different currency": func(req discountRequest) (discountResponse, error) {
 			return discountResponse{
 				CurrencyCode: "EUR",
 				Items:        []discountLine{{ID: req.Items[0].ID}, {ID: req.Items[1].ID}},
@@ -236,14 +239,14 @@ func TestCalculateTotalsBozukIndirimSonucuReddedilir(t *testing.T) {
 	}
 }
 
-// TestCalculateTotalsIndirimHatasiSinifiKorunur promotion'ın hata SINIFININ
-// yolda Internal'a çevrilmediğini doğrular.
+// TestCalculateTotalsDiscountErrorKindPreserved verifies that promotion's error
+// KIND is not turned into Internal along the way.
 //
-// Sınıf korunmazsa düzeltilebilir bir kablolama hatası (örn. sözleşme dışı
-// istek) istemciye sunucu arızası olarak ulaşır ve kimse düzeltmeye kalkmaz.
-func TestCalculateTotalsIndirimHatasiSinifiKorunur(t *testing.T) {
+// If the kind is not preserved a fixable wiring error (e.g. an out-of-contract
+// request) reaches the client as a server fault and nobody sets out to fix it.
+func TestCalculateTotalsDiscountErrorKindPreserved(t *testing.T) {
 	h := newModuleHarness(t)
-	h.discounts.err = errors.Invalid("promotion_interop_request_invalid", "istek çözümlenemedi")
+	h.discounts.err = errors.Invalid("promotion_interop_request_invalid", "the request could not be parsed")
 	serveSnapshot(h.carts, twoLineCart(1))
 
 	_, err := h.wf.CalculateTotals(context.Background(), testCartID)
@@ -251,15 +254,15 @@ func TestCalculateTotalsIndirimHatasiSinifiKorunur(t *testing.T) {
 	assert.True(t, errors.IsInvalid(err))
 	assert.Equal(t, CodeDiscountFailed, errors.CodeOf(err))
 	assert.Empty(t, h.carts.written)
-	assert.Zero(t, h.taxes.calls, "indirim düştüyse vergi hiç çağrılmamalı")
+	assert.Zero(t, h.taxes.calls, "if the discount failed the tax must not be called at all")
 }
 
-// TestCalculateTotalsIndirimliSepetteSigmaTutar Σ kimliklerinin indirim ve
-// vergi gerçek değerler taşırken de sağlandığını doğrular.
+// TestCalculateTotalsSigmaHoldsOnDiscountedCart verifies that the Σ identities hold
+// while the discount and the tax carry real values too.
 //
-// Faz 5'te iki alan da sıfırdı ve kimlikler kendiliğinden sağlanıyordu; bu
-// test onların ilk kez GERÇEKTEN sınandığı yerdir.
-func TestCalculateTotalsIndirimliSepetteSigmaTutar(t *testing.T) {
+// In Phase 5 both fields were zero and the identities held by themselves; this test
+// is where they are REALLY exercised for the first time.
+func TestCalculateTotalsSigmaHoldsOnDiscountedCart(t *testing.T) {
 	h := newModuleHarness(t)
 	h.discounts.perLine = map[string]int64{testLineA: 333, testLineB: 77}
 	serveSnapshot(h.carts, twoLineCart(9))
@@ -267,35 +270,35 @@ func TestCalculateTotalsIndirimliSepetteSigmaTutar(t *testing.T) {
 	totals, err := h.wf.CalculateTotals(context.Background(), testCartID)
 	require.NoError(t, err)
 
-	var indirimToplami, vergiToplami int64
+	var discountSum, taxSum int64
 	for _, line := range totals.Lines {
-		indirimToplami += line.DiscountTotal
-		vergiToplami += line.TaxTotal
+		discountSum += line.DiscountTotal
+		taxSum += line.TaxTotal
 	}
-	assert.Equal(t, indirimToplami, totals.DiscountTotal, "Σ satır indirimi = sepet indirimi")
-	assert.Equal(t, vergiToplami, totals.TaxTotal, "Σ satır vergisi = sepet vergisi")
+	assert.Equal(t, discountSum, totals.DiscountTotal, "Σ line discount = cart discount")
+	assert.Equal(t, taxSum, totals.TaxTotal, "Σ line tax = cart tax")
 	requireIdentity(t, totals)
 
 	require.Len(t, h.carts.written, 1)
-	assert.Equal(t, totals, h.carts.written[0], "sepete yazılan gövde dönen sonuçla aynıdır")
+	assert.Equal(t, totals, h.carts.written[0], "the body written onto the cart is the same as the returned result")
 }
 
-// TestCalculateTotalsIndirimTasmayiYakalar taşan bir indirim toplamının
-// sessizce negatife dönmediğini ve taşmanın VERGİDEN ÖNCE yakalandığını
-// doğrular.
+// TestCalculateTotalsDiscountCatchesOverflow verifies that an overflowing discount
+// total does not silently turn negative and that the overflow is caught BEFORE THE
+// TAX.
 //
-// İki satırın da indirimi tavana yakın olduğunda toplamları int64'ü aşar;
-// denetimsiz bir toplama negatif bir "indirim" üretir ve negatif indirim,
-// sepetin toplamını sınırsız BÜYÜTÜRDÜ. Taşmanın indirim adımında yakalanması
-// ayrıca şunu sağlar: sözleşme dışı büyüklükteki bir sepet tax modülüne hiç
-// gönderilmez ve oradaki taban denetimine boşuna çarpmaz.
-func TestCalculateTotalsIndirimTasmayiYakalar(t *testing.T) {
+// When the discount on both lines is near the ceiling their sum exceeds int64; an
+// unchecked addition produces a negative "discount", and a negative discount would
+// GROW the cart's total without bound. Catching the overflow at the discount step
+// also ensures this: a cart of out-of-contract magnitude is never sent to the tax
+// module and does not needlessly hit the base check over there.
+func TestCalculateTotalsDiscountCatchesOverflow(t *testing.T) {
 	h := newModuleHarness(t)
 	h.prices.amounts[testPriceSetA] = MaxAmount
 	h.prices.amounts[testPriceSetB] = MaxAmount
 	h.discounts.fn = func(req discountRequest) (discountResponse, error) {
-		// Her satır kendi ara toplamı kadar indirilir: tek tek geçerli,
-		// toplamları [MaxTotal] üstü.
+		// Each line is discounted by its own subtotal: valid one by one, their
+		// sum above [MaxTotal].
 		items := make([]discountLine, 0, len(req.Items))
 		var sum int64
 		for i := range req.Items {
@@ -318,5 +321,5 @@ func TestCalculateTotalsIndirimTasmayiYakalar(t *testing.T) {
 	_, err := h.wf.computeTotals(context.Background(), snap)
 	require.Error(t, err)
 	assert.Equal(t, CodeAmountOverflow, errors.CodeOf(err))
-	assert.Zero(t, h.taxes.calls, "taşan sepet vergi modülüne gönderilmemeli")
+	assert.Zero(t, h.taxes.calls, "an overflowing cart must not be sent to the tax module")
 }

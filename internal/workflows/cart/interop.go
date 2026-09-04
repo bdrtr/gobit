@@ -5,74 +5,77 @@ import (
 	"encoding/json"
 )
 
-// InteropName sepet akışlarının container'daki adıdır (ADR 0001/0006).
+// InteropName is the name of the cart workflows in the container (ADR 0001/0006).
 //
-// Adı bu paket bildirir ama kaydı BİLEŞİM KÖKÜ yapar (cmd/server): akışlar
-// kendi bağımlılıklarını yine container'dan çözer ve ancak tüm modüller
-// Register olduktan SONRA kurulabilirler — bir modülün Register'ında kurulmaya
-// çalışılsalardı henüz var olmayan servisleri arıyor olurlardı.
+// This package declares the name but the COMPOSITION ROOT performs the
+// registration (cmd/server): the workflows resolve their own dependencies from the
+// container as well and can only be built AFTER every module has Registered — had
+// they been built inside some module's Register they would have been looking for
+// services that do not exist yet.
 //
-// Tüketici cart MODÜLÜDÜR: vitrinin sepet açma ve satır uçlarının sahibi odur
-// ve akışı bu adla çözer (bkz. cart modülündeki CartFlowsName). Modül bu
-// paketi import edemediği için ad orada DİZE olarak tekrarlanır; tekrarın
-// bedeli izolasyonun kabul edilen bedelidir ve yazım hatası sessiz kalmaz —
-// ad çözülemezse sepet açma ve satır ekleme uçları KAPALI arızalanır.
+// The consumer is the cart MODULE: it owns the storefront's cart-opening and line
+// item endpoints and resolves the flow under this name (see CartFlowsName in the
+// cart module). Because the module cannot import this package, the name is
+// repeated there as a STRING; the price of that repetition is the accepted price
+// of isolation, and a typo does not stay silent — if the name does not resolve,
+// the cart-opening and line-item endpoints fail CLOSED.
 const InteropName = "workflows.cart.interop"
 
-// Interop sepet akışlarını modüller arası İLKEL yüzeye çevirir.
+// Interop turns the cart workflows into a PRIMITIVE cross-module surface.
 //
-// # Neden ayrı bir tip
+// # Why a separate type
 //
-// [Workflows]'un imzaları bu paketin kendi tiplerini kullanır
-// ([AddLineItemInput], [Totals] …) ve o tipleri hiçbir modül ADLANDIRAMAZ:
-// modüller internal/workflows'u import etmez (ADR 0006, her iki yönde de).
-// Tüketici tarafında tanımlanan dar bir arayüzün yapısal olarak
-// karşılanabilmesi için imzaların yalnızca İLKEL ve stdlib tiplerinden
-// oluşması gerekir; bu tip tam olarak o çeviriyi yapar ve başka hiçbir şey
-// yapmaz. Modüllerin interop.go dosyalarıyla aynı örüntüdür.
+// [Workflows]'s signatures use this package's own types ([AddLineItemInput],
+// [Totals] …) and no module can NAME those types: modules do not import
+// internal/workflows (ADR 0006, in both directions). For a narrow interface
+// declared on the consumer side to be satisfied structurally, the signatures must
+// consist of PRIMITIVE and stdlib types only; this type performs exactly that
+// translation and nothing else. It is the same pattern as the modules' interop.go
+// files.
 //
-// # Neden akışların TAMAMI değil
+// # Why not ALL of the workflows
 //
-// Yüzey yalnızca vitrinin HTTP ucu olan üç akışı taşır.
-// [Workflows.CalculateTotals] burada YOKTUR ve olmayacaktır: HTTP'ye açılan bir
-// yetenek değildir — hesabı istemcinin istediği anda çalıştırmak, tutarı
-// istemcinin zamanlamasına bağlardı. Kullanılmayan bir metodu buraya yazmak,
-// tüketicisi olmayan bir sözleşme üretmek olurdu.
+// The surface carries only the three workflows that are the storefront's HTTP
+// endpoints. [Workflows.CalculateTotals] is NOT here and will not be: it is not a
+// capability that gets exposed over HTTP — running the computation at the moment
+// the client asks for it would tie the amount to the client's timing. Writing an
+// unused method here would mean producing a contract with no consumer.
 //
-// [Workflows.CreateCart] bir süre bu gerekçeyle DIŞARIDA kaldı: sepet açma
-// ucu sepet modülünün kendi servisine bağlıydı. O bağ, ucun bölgeyi
-// İSTEMCİDEN alması demekti ve akışın ülkeden bölge türetmesini atlıyordu;
-// yüzeyin üçüncü metodu ([Interop.OpenCartForCountry]) tam olarak o atlamayı
-// kapatmak için eklendi.
+// [Workflows.CreateCart] stayed OUT for a while on that same ground: the
+// cart-opening endpoint was wired to the cart module's own service. That wiring
+// meant the endpoint took the region FROM THE CLIENT and skipped the workflow's
+// derivation of the region from the country; the surface's third method
+// ([Interop.OpenCartForCountry]) was added precisely to close that skip.
 type Interop struct {
 	w *Workflows
 }
 
-// NewInterop verilen akışlar için modüller arası yüzeyi kurar.
+// NewInterop builds the cross-module surface for the given workflows.
 func NewInterop(w *Workflows) *Interop { return &Interop{w: w} }
 
-// OpenCartForCountry ülke kodundan bölgeyi çözüp sepeti açar ve sepetin
-// KİMLİĞİNİ döner.
+// OpenCartForCountry resolves the region from the country code, opens the cart and
+// returns the cart's ID.
 //
-// Bölgeyi ve para birimini ÇAĞIRAN VERMEZ: ikisi de countryCode'dan bu akış
-// tarafından türetilir (bkz. [Workflows.CreateCart]). Yüzeyin bölge parametresi
-// olmaması bilinçlidir ve bu metodun var oluş sebebidir — parametre olsaydı
-// çağıranın onu doldurmasının önünde hiçbir şey kalmazdı, oysa müşterinin ifade
-// ettiği şey bir ÜLKEDİR ve bölge onun sunucudaki karşılığıdır. Aynı boşluk
-// [Interop.AddPricedLineItem]'daki fiyat parametresinin yokluğudur.
+// The CALLER DOES NOT SUPPLY the region and the currency: both are derived from
+// countryCode by this workflow (see [Workflows.CreateCart]). The surface having no
+// region parameter is deliberate and is the reason this method exists — had there
+// been a parameter, nothing would have stood in the way of the caller filling it
+// in, whereas what the customer expresses is a COUNTRY and the region is its
+// counterpart on the server. The same gap is the absence of the price parameter in
+// [Interop.AddPricedLineItem].
 //
-// customerID boş bırakılırsa sepet MİSAFİRE aittir. metadata sepete
-// iliştirilecek serbest JSON nesnesidir; boş bırakılabilir.
+// If customerID is left empty the cart belongs to a GUEST. metadata is the free
+// JSON object to attach to the cart; it may be left empty.
 //
-// Yalnızca kimlik döner: sepetin kendisi bu yüzeyin taşıyabileceğinden zengin
-// bir kayıttır ve çağıran onu zaten kendi servisinden okuyabilir. Aynı seçim
-// [Interop.AddPricedLineItem]'da da yapılmıştır.
+// Only the ID is returned: the cart itself is a record richer than this surface
+// can carry, and the caller can already read it from its own service. The same
+// choice is made in [Interop.AddPricedLineItem].
 func (i *Interop) OpenCartForCountry(
 	ctx context.Context,
 	countryCode, customerID, email string,
 	metadata json.RawMessage,
 ) (string, error) {
-	sonuc, err := i.w.CreateCart(ctx, CreateCartInput{
+	result, err := i.w.CreateCart(ctx, CreateCartInput{
 		CountryCode: countryCode,
 		CustomerID:  customerID,
 		Email:       email,
@@ -81,29 +84,30 @@ func (i *Interop) OpenCartForCountry(
 	if err != nil {
 		return "", err
 	}
-	return sonuc.CartID, nil
+	return result.CartID, nil
 }
 
-// AddPricedLineItem sepete satır ekler ve satırın KİMLİĞİNİ döner.
+// AddPricedLineItem adds a line to the cart and returns the line's ID.
 //
-// Birim fiyatı ÇAĞIRAN VERMEZ: fiyat, varyantın fiyat kümesinden ve sepetin
-// para biriminden bu akış tarafından belirlenir (bkz. [Workflows.AddLineItem]).
-// Yüzeyin fiyat parametresi olmaması bilinçlidir ve bu değişikliğin çekirdek
-// gerekçesidir — parametre olsaydı, çağıranın onu doldurmasının önünde hiçbir
-// şey kalmazdı.
+// The CALLER DOES NOT SUPPLY the unit price: the price is determined by this
+// workflow from the variant's price set and the cart's currency (see
+// [Workflows.AddLineItem]). The surface having no price parameter is deliberate
+// and is the core rationale of this change — had there been a parameter, nothing
+// would have stood in the way of the caller filling it in.
 //
-// metadata satıra iliştirilecek serbest JSON nesnesidir; boş bırakılabilir.
+// metadata is the free JSON object to attach to the line; it may be left empty.
 //
-// Satır eklendikten sonra sepet toplamları YENİDEN HESAPLANIR. Hesap patlarsa
-// satır yazılmış olarak kalır ve hata [CodeTotalsAfterChange] koduyla döner;
-// çağıran isteği TEKRARLAMAMALIDIR (satır ikinci kez eklenirdi).
+// After the line is added the cart totals are RECOMPUTED. If the computation blows
+// up, the line stays written and the error is returned with the
+// [CodeTotalsAfterChange] code; the caller MUST NOT REPEAT the request (the line
+// would be added a second time).
 func (i *Interop) AddPricedLineItem(
 	ctx context.Context,
 	cartID, variantID string,
 	quantity int64,
 	metadata json.RawMessage,
 ) (string, error) {
-	sonuc, err := i.w.AddLineItem(ctx, AddLineItemInput{
+	result, err := i.w.AddLineItem(ctx, AddLineItemInput{
 		CartID:    cartID,
 		VariantID: variantID,
 		Quantity:  quantity,
@@ -112,24 +116,26 @@ func (i *Interop) AddPricedLineItem(
 	if err != nil {
 		return "", err
 	}
-	return sonuc.LineItemID, nil
+	return result.LineItemID, nil
 }
 
-// SetLineItemQuantity satırın adedini MUTLAK değerle yazar ve toplamları
-// yeniden hesaplar; satırın kaldırılıp kaldırılmadığını bildirir.
+// SetLineItemQuantity writes the line's quantity as an ABSOLUTE value and
+// recomputes the totals; it reports whether the line was removed.
 //
-// Sıfır adet satırı KALDIRIR ve dönen ilk değer bunu söyler; gerekçe
-// [Workflows.UpdateLineItem] godoc'undadır. Negatif adet reddedilir.
+// A quantity of zero REMOVES the line and the first returned value says so; the
+// rationale is in the [Workflows.UpdateLineItem] godoc. A negative quantity is
+// rejected.
 //
-// Adet değiştiğinde fiyat da değişebilir (pricing fiyatı adet aralığına göre
-// seçer), bu yüzden yeniden hesap bir kolaylık değil GEREKLİLİKTİR: adedi
-// yazıp hesabı çalıştırmamak, satırı eski kademenin fiyatıyla bırakırdı.
+// When the quantity changes the price can change as well (pricing picks the price
+// by quantity range), which is why the recomputation is not a convenience but a
+// NECESSITY: writing the quantity without running the computation would leave the
+// line at the old tier's price.
 func (i *Interop) SetLineItemQuantity(
 	ctx context.Context,
 	cartID, lineItemID string,
 	quantity int64,
 ) (bool, error) {
-	sonuc, err := i.w.UpdateLineItem(ctx, UpdateLineItemInput{
+	result, err := i.w.UpdateLineItem(ctx, UpdateLineItemInput{
 		CartID:     cartID,
 		LineItemID: lineItemID,
 		Quantity:   quantity,
@@ -137,5 +143,5 @@ func (i *Interop) SetLineItemQuantity(
 	if err != nil {
 		return false, err
 	}
-	return sonuc.Removed, nil
+	return result.Removed, nil
 }

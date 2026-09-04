@@ -11,9 +11,9 @@ import (
 	"github.com/bdrtr/gobit/internal/core/errors"
 )
 
-// TestUpdateLineItemAdediYazarVeToplamlariYeniler pozitif adedin sepete
-// yazıldığını ve hesabın koştuğunu doğrular.
-func TestUpdateLineItemAdediYazarVeToplamlariYeniler(t *testing.T) {
+// TestUpdateLineItemWritesQuantityAndRecomputesTotals verifies that a positive quantity
+// is written to the cart and that the totals calculation runs.
+func TestUpdateLineItemWritesQuantityAndRecomputesTotals(t *testing.T) {
 	h := newHarness(t)
 	serveSnapshot(h.carts,
 		snapshotOf(4, []SnapshotItem{{ID: testLineA, VariantID: testVariantA, Quantity: 5}}, nil))
@@ -36,9 +36,9 @@ func TestUpdateLineItemAdediYazarVeToplamlariYeniler(t *testing.T) {
 	requireIdentity(t, out.Totals)
 }
 
-// TestUpdateLineItemSifirAdetSatiriKaldirir sıfırın "kaldır" niyetine
-// çevrildiğini ve bunun çağırana BİLDİRİLDİĞİNİ doğrular.
-func TestUpdateLineItemSifirAdetSatiriKaldirir(t *testing.T) {
+// TestUpdateLineItemZeroQuantityRemovesLine verifies that zero is translated into a
+// "remove" intent and that this is REPORTED back to the caller.
+func TestUpdateLineItemZeroQuantityRemovesLine(t *testing.T) {
 	h := newHarness(t)
 	serveSnapshot(h.carts,
 		snapshotOf(6, []SnapshotItem{{ID: testLineB, VariantID: testVariantB, Quantity: 2}}, nil))
@@ -52,17 +52,17 @@ func TestUpdateLineItemSifirAdetSatiriKaldirir(t *testing.T) {
 
 	assert.True(t, out.Removed)
 	assert.Zero(t, out.Quantity)
-	assert.Equal(t, []string{testLineA}, h.carts.removed, "kaldırma AYRI çağrıyla yapılır")
-	assert.Empty(t, h.carts.quantities, "sıfır adet sepete YAZILMAZ")
+	assert.Equal(t, []string{testLineA}, h.carts.removed, "removal happens through a SEPARATE call")
+	assert.Empty(t, h.carts.quantities, "a zero quantity is NOT written to the cart")
 
-	// Kalan satır yeniden fiyatlanır: 250 × 2 = 500, %20 vergi 100.
+	// The remaining line is repriced: 250 x 2 = 500, 20% tax 100.
 	assert.Equal(t, int64(500), out.Totals.Subtotal)
 	assert.Equal(t, int64(600), out.Totals.Total)
 	requireIdentity(t, out.Totals)
 }
 
-// TestUpdateLineItemSonSatirKaldirilinca toplamların sıfırlandığını doğrular.
-func TestUpdateLineItemSonSatirKaldirilinca(t *testing.T) {
+// TestUpdateLineItemZeroesTotalsWhenLastLineRemoved verifies that totals are zeroed.
+func TestUpdateLineItemZeroesTotalsWhenLastLineRemoved(t *testing.T) {
 	h := newHarness(t)
 	serveSnapshot(h.carts, snapshotOf(7, nil, nil))
 
@@ -75,12 +75,12 @@ func TestUpdateLineItemSonSatirKaldirilinca(t *testing.T) {
 	assert.Equal(t, Totals{Revision: 7, TaxSource: TaxSourceRegion, Lines: []LineTotals{}}, out.Totals)
 }
 
-// TestUpdateLineItemNegatifAdetReddedilir negatif adedin satır SİLMEDİĞİNİ
-// doğrular.
+// TestUpdateLineItemRejectsNegativeQuantity verifies that a negative quantity does NOT
+// delete the line.
 //
-// Sıfır "kaldır" demektir, negatif ise hiçbir niyeti olmayan bir işaret
-// hatasıdır; sıfıra yuvarlanması, o hatanın veri silmesi olurdu.
-func TestUpdateLineItemNegatifAdetReddedilir(t *testing.T) {
+// Zero means "remove", while a negative value is a sign error with no intent behind it;
+// rounding it to zero would let that error delete data.
+func TestUpdateLineItemRejectsNegativeQuantity(t *testing.T) {
 	h := newHarness(t)
 
 	_, err := h.wf.UpdateLineItem(context.Background(), UpdateLineItemInput{
@@ -89,14 +89,14 @@ func TestUpdateLineItemNegatifAdetReddedilir(t *testing.T) {
 	require.Error(t, err)
 	assert.True(t, errors.IsInvalid(err))
 	assert.Equal(t, CodeInvalidInput, errors.CodeOf(err))
-	assert.Empty(t, h.carts.removed, "negatif adet satırı SİLMEMELİ")
+	assert.Empty(t, h.carts.removed, "a negative quantity must NOT delete the line")
 	assert.Empty(t, h.carts.quantities)
 	assert.Zero(t, h.carts.snapshotCalls)
 }
 
-// TestUpdateLineItemTavaninUstundekiAdetReddedilir adet tavanının sepete
-// gitmeden uygulandığını doğrular.
-func TestUpdateLineItemTavaninUstundekiAdetReddedilir(t *testing.T) {
+// TestUpdateLineItemRejectsQuantityAboveCap verifies that the quantity cap is enforced
+// before the request reaches the cart.
+func TestUpdateLineItemRejectsQuantityAboveCap(t *testing.T) {
 	h := newHarness(t)
 
 	_, err := h.wf.UpdateLineItem(context.Background(), UpdateLineItemInput{
@@ -107,12 +107,12 @@ func TestUpdateLineItemTavaninUstundekiAdetReddedilir(t *testing.T) {
 	assert.Empty(t, h.carts.quantities)
 }
 
-// TestUpdateLineItemYazmaHatasiToplamiDenemez adet yazılamadıysa hesabın hiç
-// koşmadığını doğrular.
-func TestUpdateLineItemYazmaHatasiToplamiDenemez(t *testing.T) {
+// TestUpdateLineItemWriteFailureDoesNotAttemptTotals verifies that when the quantity
+// cannot be written the calculation never runs at all.
+func TestUpdateLineItemWriteFailureDoesNotAttemptTotals(t *testing.T) {
 	h := newHarness(t)
 	h.carts.setQtyFn = func(_ context.Context, _, lineItemID string, _ int64) error {
-		return errors.NotFound("cart_line_item_not_found", "satır sepette yok: %s", lineItemID)
+		return errors.NotFound("cart_line_item_not_found", "line item not in cart: %s", lineItemID)
 	}
 
 	_, err := h.wf.UpdateLineItem(context.Background(), UpdateLineItemInput{
@@ -121,18 +121,18 @@ func TestUpdateLineItemYazmaHatasiToplamiDenemez(t *testing.T) {
 	require.Error(t, err)
 	assert.True(t, errors.IsNotFound(err))
 	assert.NotEqual(t, CodeTotalsAfterChange, errors.CodeOf(err),
-		"sepet DEĞİŞMEDİ; hata 'uygulandı ama hesaplanamadı' olarak etiketlenmemeli")
+		"the cart did NOT change; the error must not be tagged 'applied but not computed'")
 	assert.Zero(t, h.carts.snapshotCalls)
 }
 
-// TestUpdateLineItemToplamPatlarsaAdetKALIR ikinci yazmanın patlamasının adet
-// değişikliğini geri ALMADIĞINI doğrular.
-func TestUpdateLineItemToplamPatlarsaAdetKALIR(t *testing.T) {
+// TestUpdateLineItemQuantityRemainsWhenTotalsFail verifies that a failure of the second
+// write does NOT roll back the quantity change.
+func TestUpdateLineItemQuantityRemainsWhenTotalsFail(t *testing.T) {
 	h := newHarness(t)
 	serveSnapshot(h.carts,
 		snapshotOf(4, []SnapshotItem{{ID: testLineA, VariantID: testVariantA, Quantity: 2}}, nil))
 	h.carts.setTotalsFn = func(_ context.Context, _ string, _ json.RawMessage) error {
-		return errors.Unavailable("cart_db_unavailable", "veritabanı erişilemez")
+		return errors.Unavailable("cart_db_unavailable", "database unavailable")
 	}
 
 	_, err := h.wf.UpdateLineItem(context.Background(), UpdateLineItemInput{
@@ -140,15 +140,15 @@ func TestUpdateLineItemToplamPatlarsaAdetKALIR(t *testing.T) {
 	})
 	require.Error(t, err)
 	assert.Equal(t, CodeTotalsAfterChange, errors.CodeOf(err))
-	assert.Equal(t, map[string]int64{testLineA: 2}, h.carts.quantities, "adet geri alınmaz")
+	assert.Equal(t, map[string]int64{testLineA: 2}, h.carts.quantities, "the quantity is not rolled back")
 }
 
-// TestUpdateLineItemGecersizKimlikReddedilir biçimsiz kimliğin hiçbir modüle
-// ulaşmadığını doğrular.
-func TestUpdateLineItemGecersizKimlikReddedilir(t *testing.T) {
+// TestUpdateLineItemRejectsInvalidIDs verifies that a malformed ID never reaches any
+// module.
+func TestUpdateLineItemRejectsInvalidIDs(t *testing.T) {
 	tests := map[string]UpdateLineItemInput{
-		"sepet boş": {LineItemID: testLineA, Quantity: 1},
-		"satır boş": {CartID: testCartID, Quantity: 1},
+		"cart id empty":      {LineItemID: testLineA, Quantity: 1},
+		"line item id empty": {CartID: testCartID, Quantity: 1},
 	}
 
 	for name, in := range tests {

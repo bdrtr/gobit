@@ -11,8 +11,8 @@ import (
 	"github.com/bdrtr/gobit/internal/core/errors"
 )
 
-// recordOpenCart sahte sepet servisini, açılan sepetin argümanlarını
-// kaydedecek biçimde betikler.
+// recordOpenCart scripts the fake cart service so that it records the arguments
+// of the cart that gets opened.
 func recordOpenCart(carts *stubCarts, cartID string) *[]string {
 	seen := &[]string{}
 	carts.openCartFn = func(
@@ -24,9 +24,9 @@ func recordOpenCart(carts *stubCarts, cartID string) *[]string {
 	return seen
 }
 
-// TestCreateCartMisafir misafir sepetinin customer modülüne HİÇ dokunmadan
-// açıldığını doğrular.
-func TestCreateCartMisafir(t *testing.T) {
+// TestCreateCartGuestSkipsCustomerModule verifies that a guest cart is opened
+// WITHOUT touching the customer module at all.
+func TestCreateCartGuestSkipsCustomerModule(t *testing.T) {
 	h := newHarness(t)
 	seen := recordOpenCart(h.carts, testCartID)
 
@@ -40,12 +40,12 @@ func TestCreateCartMisafir(t *testing.T) {
 		Guest:        true,
 	}, out)
 	assert.Equal(t, []string{testRegionID, testCurrency, "", ""}, *seen)
-	assert.Zero(t, h.customers.calls, "misafir akışı customer servisine bağımlı olmamalı")
+	assert.Zero(t, h.customers.calls, "the guest flow must not depend on the customer service")
 }
 
-// TestCreateCartMisafirEpostaTasinir misafir sepetinin verilen e-postayla
-// açıldığını doğrular.
-func TestCreateCartMisafirEpostaTasinir(t *testing.T) {
+// TestCreateCartGuestCarriesGivenEmail verifies that a guest cart is opened with
+// the e-mail that was given.
+func TestCreateCartGuestCarriesGivenEmail(t *testing.T) {
 	h := newHarness(t)
 	seen := recordOpenCart(h.carts, testCartID)
 
@@ -60,9 +60,10 @@ func TestCreateCartMisafirEpostaTasinir(t *testing.T) {
 	assert.True(t, out.Guest)
 }
 
-// TestCreateCartKayitliMusteri kayıtlı müşteri sepetinin müşteriye bağlandığını
-// ve e-postanın müşteri kaydından geldiğini doğrular.
-func TestCreateCartKayitliMusteri(t *testing.T) {
+// TestCreateCartRegisteredCustomerUsesStoredEmail verifies that the cart of a
+// registered customer is linked to that customer and that the e-mail comes from
+// the customer record.
+func TestCreateCartRegisteredCustomerUsesStoredEmail(t *testing.T) {
 	h := newHarness(t)
 	seen := recordOpenCart(h.carts, testCartID)
 
@@ -74,33 +75,34 @@ func TestCreateCartKayitliMusteri(t *testing.T) {
 
 	assert.False(t, out.Guest)
 	assert.Equal(t, testCustomerID, out.CustomerID)
-	assert.Equal(t, "kayitli@example.com", out.Email)
-	assert.Equal(t, []string{testRegionID, testCurrency, testCustomerID, "kayitli@example.com"}, *seen)
+	assert.Equal(t, "registered@example.com", out.Email)
+	assert.Equal(t, []string{testRegionID, testCurrency, testCustomerID, "registered@example.com"}, *seen)
 }
 
-// TestCreateCartVerilenEpostaMusterininkiniEzmez çağıranın e-postasının
-// korunduğunu doğrular.
+// TestCreateCartKeepsGivenEmailOverCustomerRecord verifies that the caller's
+// e-mail is preserved.
 //
-// Sepetin adresi, o siparişin gönderileceği adrestir; müşteri defterindeki
-// güncel adresle EZİLMESİ, müşterinin bu sipariş için bilinçli olarak girdiği
-// adresi sessizce atmak olurdu.
-func TestCreateCartVerilenEpostaMusterininkiniEzmez(t *testing.T) {
+// The cart's address is the address that this order will be shipped to;
+// OVERWRITING it with the current address in the customer ledger would mean
+// silently throwing away the address the customer deliberately entered for this
+// order.
+func TestCreateCartKeepsGivenEmailOverCustomerRecord(t *testing.T) {
 	h := newHarness(t)
 	recordOpenCart(h.carts, testCartID)
 
 	out, err := h.wf.CreateCart(context.Background(), CreateCartInput{
 		CountryCode: "TR",
 		CustomerID:  testCustomerID,
-		Email:       "bu-siparis@example.com",
+		Email:       "this-order@example.com",
 	})
 	require.NoError(t, err)
 
-	assert.Equal(t, "bu-siparis@example.com", out.Email)
+	assert.Equal(t, "this-order@example.com", out.Email)
 }
 
-// TestCreateCartBilinmeyenMusteriReddedilir var olmayan müşteriye sepet
-// açılmadığını doğrular.
-func TestCreateCartBilinmeyenMusteriReddedilir(t *testing.T) {
+// TestCreateCartRejectsUnknownCustomer verifies that no cart is opened for a
+// customer that does not exist.
+func TestCreateCartRejectsUnknownCustomer(t *testing.T) {
 	h := newHarness(t)
 	opened := false
 	h.carts.openCartFn = func(_ context.Context, _, _, _, _ string, _ json.RawMessage) (string, error) {
@@ -110,16 +112,16 @@ func TestCreateCartBilinmeyenMusteriReddedilir(t *testing.T) {
 
 	_, err := h.wf.CreateCart(context.Background(), CreateCartInput{
 		CountryCode: "TR",
-		CustomerID:  "cust_yok",
+		CustomerID:  "cust_missing",
 	})
 	require.Error(t, err)
 	assert.True(t, errors.IsNotFound(err))
-	assert.False(t, opened, "doğrulama düşerse sepet hiç açılmamalı")
+	assert.False(t, opened, "if validation fails the cart must never be opened")
 }
 
-// TestCreateCartBilinmeyenUlkeReddedilir bölgesi olmayan ülkede sepet
-// açılmadığını doğrular.
-func TestCreateCartBilinmeyenUlkeReddedilir(t *testing.T) {
+// TestCreateCartRejectsUnknownCountry verifies that no cart is opened in a
+// country that has no region.
+func TestCreateCartRejectsUnknownCountry(t *testing.T) {
 	h := newHarness(t)
 
 	_, err := h.wf.CreateCart(context.Background(), CreateCartInput{CountryCode: "ZZ"})
@@ -127,12 +129,12 @@ func TestCreateCartBilinmeyenUlkeReddedilir(t *testing.T) {
 	assert.True(t, errors.IsNotFound(err))
 }
 
-// TestCreateCartGecersizGirdiReddedilir biçimsiz girdinin hiçbir modüle
-// ulaşmadığını doğrular.
-func TestCreateCartGecersizGirdiReddedilir(t *testing.T) {
+// TestCreateCartRejectsInvalidInput verifies that malformed input reaches no
+// module at all.
+func TestCreateCartRejectsInvalidInput(t *testing.T) {
 	tests := map[string]CreateCartInput{
-		"ülke boş":              {CountryCode: "   "},
-		"müşteri boşluk içerir": {CountryCode: "TR", CustomerID: " cust_1"},
+		"country empty":                {CountryCode: "   "},
+		"customer contains whitespace": {CountryCode: "TR", CustomerID: " cust_1"},
 	}
 
 	for name, in := range tests {
@@ -148,44 +150,44 @@ func TestCreateCartGecersizGirdiReddedilir(t *testing.T) {
 	}
 }
 
-// TestCreateCartMetadataOlduguGibiTasinir sepete iliştirilen serbest verinin
-// akış tarafından DEĞİŞTİRİLMEDEN geçtiğini doğrular.
+// TestCreateCartCarriesMetadataUnchanged verifies that the free-form data
+// attached to the cart passes through the workflow UNMODIFIED.
 //
-// Alan, bölge ve para biriminden ayrı bir sınıftadır: gerçekten çağıranın
-// kendi verisidir ve türetilecek bir karşılığı yoktur. Akışın onu okuması ya
-// da yeniden kodlaması, vitrinin gönderdiği gövdeyi sessizce değiştirebilecek
-// tek yer olurdu; iddia tam da bunun olmadığıdır. Aynı karar satır
-// metadata'sında da verilmişti.
-func TestCreateCartMetadataOlduguGibiTasinir(t *testing.T) {
+// The field is in a class of its own, apart from the region and the currency: it
+// really is the caller's own data and there is nothing to derive it from. The
+// workflow reading or re-encoding it would be the only place that could silently
+// change the body the storefront sent; the assertion is precisely that this does
+// not happen. The same decision was taken for line item metadata as well.
+func TestCreateCartCarriesMetadataUnchanged(t *testing.T) {
 	h := newHarness(t)
 
-	beklenen := json.RawMessage(`{"kaynak":"vitrin"}`)
-	var gelen json.RawMessage
+	want := json.RawMessage(`{"source":"storefront"}`)
+	var got json.RawMessage
 	h.carts.openCartFn = func(
 		_ context.Context, _, _, _, _ string, metadata json.RawMessage,
 	) (string, error) {
-		gelen = metadata
+		got = metadata
 		return testCartID, nil
 	}
 
 	_, err := h.wf.CreateCart(context.Background(), CreateCartInput{
 		CountryCode: "TR",
-		Metadata:    beklenen,
+		Metadata:    want,
 	})
 	require.NoError(t, err)
 
-	assert.JSONEq(t, string(beklenen), string(gelen),
-		"metadata sepete olduğu gibi ulaşmalı")
+	assert.JSONEq(t, string(want), string(got),
+		"metadata must reach the cart as it was given")
 }
 
-// TestOpenCartForCountryBolgeyiTuretir modüller arası yüzeyin bölgeyi ÜLKEDEN
-// çözdüğünü ve dışarıya yalnızca kimlik verdiğini doğrular.
+// TestOpenCartForCountryDerivesRegion verifies that the cross-module surface
+// resolves the region FROM THE COUNTRY and hands out nothing but the identifier.
 //
-// Yüzeyin bölge parametresi YOKTUR ve bu, sepet açma ucunun akışa
-// bağlanmasının çekirdek gerekçesidir: parametre olsaydı çağıranın (yani
-// vitrin ucunun) onu istemciden gelen bir değerle doldurmasının önünde hiçbir
-// şey kalmazdı.
-func TestOpenCartForCountryBolgeyiTuretir(t *testing.T) {
+// The surface HAS NO region parameter, and that is the core justification for
+// wiring the cart-opening endpoint through the workflow: if there were such a
+// parameter, nothing would stop the caller (that is, the storefront endpoint)
+// from filling it with a value that came from the client.
+func TestOpenCartForCountryDerivesRegion(t *testing.T) {
 	h := newHarness(t)
 	seen := recordOpenCart(h.carts, testCartID)
 
@@ -195,16 +197,16 @@ func TestOpenCartForCountryBolgeyiTuretir(t *testing.T) {
 
 	assert.Equal(t, testCartID, cartID)
 	assert.Equal(t, []string{testRegionID, testCurrency, "", "misafir@example.com"}, *seen,
-		"bölge ve para birimi ÜLKEDEN türetilmeli")
+		"the region and the currency must be derived FROM THE COUNTRY")
 }
 
-// TestOpenCartForCountryBilinmeyenUlkedeSepetAcmaz yüzeyin hatayı yutmadığını
-// doğrular.
+// TestOpenCartForCountryOpensNoCartForUnknownCountry verifies that the surface
+// does not swallow the error.
 //
-// İddia kimliğin boş dönmesinden ibaret değildir: sepet HİÇ açılmamalıdır.
-// Bölgesi olmayan bir ülkede "bir şekilde" sepet açmak, bölgeyi bir
-// varsayılana düşürmekle aynı kapıya çıkardı.
-func TestOpenCartForCountryBilinmeyenUlkedeSepetAcmaz(t *testing.T) {
+// The assertion is not merely that the identifier comes back empty: the cart must
+// NOT be opened at all. Opening a cart "somehow" in a country that has no region
+// would come out at the same door as falling back to a default region.
+func TestOpenCartForCountryOpensNoCartForUnknownCountry(t *testing.T) {
 	h := newHarness(t)
 	opened := false
 	h.carts.openCartFn = func(_ context.Context, _, _, _, _ string, _ json.RawMessage) (string, error) {
@@ -216,5 +218,5 @@ func TestOpenCartForCountryBilinmeyenUlkedeSepetAcmaz(t *testing.T) {
 	require.Error(t, err)
 	assert.True(t, errors.IsNotFound(err))
 	assert.Empty(t, cartID)
-	assert.False(t, opened, "bölgesi olmayan ülkede sepet YAZILMAMALI")
+	assert.False(t, opened, "no cart must be WRITTEN in a country that has no region")
 }

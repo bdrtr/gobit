@@ -14,20 +14,20 @@ import (
 	"github.com/bdrtr/gobit/internal/core/workflow"
 )
 
-// Sepet hesabının container'dan çözdüğü servis adları.
+// Service names that the cart totals resolve from the container.
 //
-// Bu paket onları ADLA çözmez; adlar yalnızca [FromContainer]'ın kurduğu sepet
-// hesabının bağımlılıklarını kaydetmek için gerekir.
+// This package does not resolve them BY NAME; the names are needed only to
+// register the dependencies of the cart totals that [FromContainer] builds.
 const (
 	svcPricing  = "pricing.service"
 	svcRegion   = "region.service"
 	svcCustomer = "customer.service"
 )
 
-// stubPricing sepet hesabının pricing yüzeyini karşılar.
+// stubPricing satisfies the pricing surface of the cart totals.
 type stubPricing struct{}
 
-// CalculateAmount fiyat kümesinin birim tutarını döner.
+// CalculateAmount returns the unit amount of the price set.
 func (stubPricing) CalculateAmount(
 	_ context.Context,
 	priceSetID, _ string,
@@ -44,10 +44,11 @@ func (stubPricing) CalculateAmount(
 	}
 }
 
-// CalculateAmountsJSON sepet hesabının TOPLU fiyat yüzeyini karşılar.
+// CalculateAmountsJSON satisfies the BULK pricing surface of the cart totals.
 //
-// Yanıt istekle aynı sırada ve aynı uzunluktadır; fiyatı olmayan kalem hata
-// değil bayrakla bildirilir (gerçek pricing modülünün sözleşmesi budur).
+// The response is in the same order and at the same length as the request; an
+// item with no price is reported not as an error but with a flag (that is the
+// contract of the real pricing module).
 func (s stubPricing) CalculateAmountsJSON(
 	ctx context.Context,
 	request json.RawMessage,
@@ -81,33 +82,33 @@ func (s stubPricing) CalculateAmountsJSON(
 	return json.Marshal(out)
 }
 
-// stubRegions sepet hesabının region yüzeyini karşılar.
+// stubRegions satisfies the region surface of the cart totals.
 type stubRegions struct{}
 
-// RegionIDForCountry bu akışta çağrılmaz.
+// RegionIDForCountry is not called in this flow.
 func (stubRegions) RegionIDForCountry(_ context.Context, _ string) (string, error) {
 	return "", errUnexpected("RegionIDForCountry")
 }
 
-// RegionCurrency bu akışta çağrılmaz.
+// RegionCurrency is not called in this flow.
 func (stubRegions) RegionCurrency(_ context.Context, _ string) (code string, decimalDigits int32, err error) {
 	return "", 0, errUnexpected("RegionCurrency")
 }
 
-// RegionTax %20'lik otomatik vergiyi bildirir.
+// RegionTax reports the automatic 20% tax.
 func (stubRegions) RegionTax(_ context.Context, _ string) (rateBps int32, automatic bool, err error) {
 	return 2000, true, nil
 }
 
-// stubCustomers sepet hesabının customer yüzeyini karşılar.
+// stubCustomers satisfies the customer surface of the cart totals.
 type stubCustomers struct{}
 
-// CustomerEmail bu akışta çağrılmaz.
+// CustomerEmail is not called in this flow.
 func (stubCustomers) CustomerEmail(_ context.Context, _ string) (string, error) {
 	return "", errUnexpected("CustomerEmail")
 }
 
-// provideCheckout container'a bu akışın kendi yüzeylerini kaydeder.
+// provideCheckout registers this workflow's own surfaces in the container.
 func provideCheckout(t *testing.T, c *container.Container, h *harness) {
 	t.Helper()
 
@@ -121,7 +122,8 @@ func provideCheckout(t *testing.T, c *container.Container, h *harness) {
 	require.NoError(t, c.Provide(ServiceWorkflow, workflow.NewInMemory(slog.New(slog.DiscardHandler))))
 }
 
-// provideCartTotals container'a sepet hesabının bağımlılıklarını kaydeder.
+// provideCartTotals registers the dependencies of the cart totals in the
+// container.
 func provideCartTotals(t *testing.T, c *container.Container) {
 	t.Helper()
 
@@ -130,14 +132,15 @@ func provideCartTotals(t *testing.T, c *container.Container) {
 	require.NoError(t, c.Provide(svcCustomer, stubCustomers{}))
 }
 
-// TestFromContainerAdlaCozer bağımlılıkların container'dan ADLA çözüldüğünü ve
-// çözülen akışın uçtan uca çalıştığını doğrular (ADR 0006).
+// TestFromContainerResolvesByName verifies that the dependencies are resolved
+// from the container BY NAME and that the resolved workflow runs end to end
+// (ADR 0006).
 //
-// Test aynı zamanda paketler arası TEK derleme zamanı bağını sınar: hesabı
-// üreten GERÇEK sepet akışıdır (sahtesi değil) ve ürettiği satır tutarları
-// siparişe olduğu gibi geçer. Sepet %20 vergili iki satır taşır; hesap 2500 +
-// 500 = 3000 üretmelidir.
-func TestFromContainerAdlaCozer(t *testing.T) {
+// The test also exercises the SINGLE compile-time bond between the packages:
+// what produces the totals is the REAL cart flow (not a fake of it) and the
+// line amounts it produces pass into the order as they are. The cart carries
+// two lines with 20% tax; the totals must produce 2500 + 500 = 3000.
+func TestFromContainerResolvesByName(t *testing.T) {
 	h := newHarness(t)
 	h.carts.setTotalsFn = func(context.Context, string) error { return nil }
 
@@ -158,13 +161,13 @@ func TestFromContainerAdlaCozer(t *testing.T) {
 	assert.Equal(t, int64(1000), h.orders.placed[0].Items[0].UnitPrice)
 }
 
-// TestFromContainerEksikServisiBildirir kayıtsız bir adın teşhis edilebilir
-// hata ürettiğini doğrular.
+// TestFromContainerReportsMissingService verifies that an unregistered name
+// produces a diagnosable error.
 //
-// ADR 0006'nın kabul edilen bedeli budur: uyumsuzluk derleme zamanında değil,
-// çözüm anında yakalanır — o yüzden hata HANGİ adın aranıp bulunamadığını
-// yazmalıdır.
-func TestFromContainerEksikServisiBildirir(t *testing.T) {
+// This is the accepted price of ADR 0006: the mismatch is caught not at compile
+// time but at resolution time — so the error must write down WHICH name was
+// looked up and not found.
+func TestFromContainerReportsMissingService(t *testing.T) {
 	h := newHarness(t)
 	c := container.New(nil)
 	require.NoError(t, c.Provide(ServiceCart, h.carts))
@@ -176,16 +179,17 @@ func TestFromContainerEksikServisiBildirir(t *testing.T) {
 	assert.Contains(t, err.Error(), ServiceInventory)
 }
 
-// TestFromContainerUyumsuzTipiBildirir kayıtlı ama yüzeyi karşılamayan bir
-// servisin sessizce kabul edilmediğini doğrular.
-func TestFromContainerUyumsuzTipiBildirir(t *testing.T) {
+// TestFromContainerReportsIncompatibleType verifies that a service which is
+// registered but does not satisfy the surface is not accepted silently.
+func TestFromContainerReportsIncompatibleType(t *testing.T) {
 	h := newHarness(t)
 	c := container.New(nil)
 
 	require.NoError(t, c.Provide(ServiceCart, h.carts))
 	require.NoError(t, c.Provide(ServiceInventory, h.inventory))
 	require.NoError(t, c.Provide(ServiceFulfillment, h.fulfillment))
-	// "order.interop" adına [Orders] yüzeyini KARŞILAMAYAN bir değer konur.
+	// A value that does NOT satisfy the [Orders] surface is put under the name
+	// "order.interop".
 	require.NoError(t, c.Provide(ServiceOrder, h.links))
 	require.NoError(t, c.Provide(ServicePayment, h.payments))
 	require.NoError(t, c.Provide(ServiceLink, h.links))
@@ -199,9 +203,9 @@ func TestFromContainerUyumsuzTipiBildirir(t *testing.T) {
 	assert.Contains(t, err.Error(), ServiceOrder)
 }
 
-// TestFromContainerSepetHesabiniKuramazsaBildirir hesabın bağımlılıkları eksik
-// olduğunda hatanın anlaşılır olduğunu doğrular.
-func TestFromContainerSepetHesabiniKuramazsaBildirir(t *testing.T) {
+// TestFromContainerReportsUnbuildableCartTotals verifies that the error is
+// understandable when the dependencies of the totals are missing.
+func TestFromContainerReportsUnbuildableCartTotals(t *testing.T) {
 	h := newHarness(t)
 	c := container.New(nil)
 	provideCheckout(t, c, h)
@@ -212,17 +216,17 @@ func TestFromContainerSepetHesabiniKuramazsaBildirir(t *testing.T) {
 	assert.Contains(t, err.Error(), "could not build the cart totals")
 }
 
-// TestFromContainerContainersizReddedilir nil container'ın panik değil hata
-// ürettiğini doğrular.
-func TestFromContainerContainersizReddedilir(t *testing.T) {
+// TestFromContainerRejectsNilContainer verifies that a nil container produces
+// an error rather than a panic.
+func TestFromContainerRejectsNilContainer(t *testing.T) {
 	_, err := FromContainer(nil)
 	require.Error(t, err)
 	assert.Equal(t, CodeNotReady, errors.CodeOf(err))
 }
 
-// TestNewEksikBagimliligiReddeder eksik bir yüzeyin KURULUM anında hata
-// verdiğini doğrular.
-func TestNewEksikBagimliligiReddeder(t *testing.T) {
+// TestNewRejectsMissingDependency verifies that a missing surface fails at
+// SETUP time.
+func TestNewRejectsMissingDependency(t *testing.T) {
 	full := func(h *harness) Deps {
 		return Deps{
 			Carts:       h.carts,
@@ -263,9 +267,9 @@ func TestNewEksikBagimliligiReddeder(t *testing.T) {
 	}
 }
 
-// TestNewLoggersizKurulabilir logger verilmediğinde akışın yine çalıştığını
-// doğrular.
-func TestNewLoggersizKurulabilir(t *testing.T) {
+// TestNewBuildsWithoutLogger verifies that the workflow still runs when no
+// logger is given.
+func TestNewBuildsWithoutLogger(t *testing.T) {
 	h := newHarness(t)
 
 	wf, err := New(Deps{

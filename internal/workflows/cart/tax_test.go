@@ -11,26 +11,27 @@ import (
 	"github.com/bdrtr/gobit/internal/core/query"
 )
 
-// TestCalculateTotalsVergiTaxModulundenGelir tax yüzeyi kayıtlıyken verginin
-// oradan hesaplandığını ve kaynağın sonuçta bildirildiğini doğrular.
-func TestCalculateTotalsVergiTaxModulundenGelir(t *testing.T) {
+// TestCalculateTotalsTaxComesFromTaxModule verifies that when the tax surface is
+// registered the tax is computed there and that the source is reported in the
+// result.
+func TestCalculateTotalsTaxComesFromTaxModule(t *testing.T) {
 	h := newModuleHarness(t)
-	h.taxes.rateBps = 1000 // %10; region sahtesi %20 taşır ve karışması ayırt edilebilir.
+	h.taxes.rateBps = 1000 // 10%; the region fake carries 20% so a mix-up is visible.
 	serveSnapshot(h.carts, twoLineCart(1))
 
 	totals, err := h.wf.CalculateTotals(context.Background(), testCartID)
 	require.NoError(t, err)
 
 	assert.Equal(t, TaxSourceTax, totals.TaxSource)
-	assert.Equal(t, int64(275), totals.TaxTotal, "2000×%10 + 750×%10")
-	assert.NotEqual(t, int64(550), totals.TaxTotal, "region'ın %20 oranı kullanılmamalı")
+	assert.Equal(t, int64(275), totals.TaxTotal, "2000 x 10% + 750 x 10%")
+	assert.NotEqual(t, int64(550), totals.TaxTotal, "the region's 20% rate must not be used")
 	assert.Equal(t, 1, h.taxes.calls)
 	requireIdentity(t, totals)
 }
 
-// TestCalculateTotalsVergiIstegininSekli tax'a giden gövdenin sözleşmeye
-// uyduğunu doğrular.
-func TestCalculateTotalsVergiIstegininSekli(t *testing.T) {
+// TestCalculateTotalsTaxRequestShape verifies that the body going to tax conforms
+// to the contract.
+func TestCalculateTotalsTaxRequestShape(t *testing.T) {
 	h := newModuleHarness(t)
 	serveSnapshot(h.carts, snapshotOf(1,
 		[]SnapshotItem{{ID: testLineA, VariantID: testVariantA, Quantity: 2}},
@@ -41,17 +42,17 @@ func TestCalculateTotalsVergiIstegininSekli(t *testing.T) {
 
 	require.Len(t, h.taxes.requests, 1)
 	req := h.taxes.requests[0]
-	assert.Equal(t, "TR", req.CountryCode, "ülke bölgenin ülkesinden gelir")
-	assert.Empty(t, req.ProvinceCode, "sepet eyalet taşımaz")
+	assert.Equal(t, "TR", req.CountryCode, "the country comes from the region's country")
+	assert.Empty(t, req.ProvinceCode, "the cart carries no province")
 	require.Len(t, req.Items, 1)
 	assert.Equal(t, taxRequestItem{ID: testLineA, Amount: 2000}, req.Items[0])
 	assert.Equal(t, taxRequestShipping{Amount: 4990, Taxable: false}, req.Shipping,
-		"kargo tutarı bildirilir ama tabana GİRMEZ")
+		"the shipping amount is reported but does NOT enter the base")
 }
 
-// TestCalculateTotalsKargoModulYolundaDaVergilenmez kargonun tax modülü
-// yolunda da vergi tabanına girmediğini doğrular.
-func TestCalculateTotalsKargoModulYolundaDaVergilenmez(t *testing.T) {
+// TestCalculateTotalsShippingUntaxedOnModulePathToo verifies that shipping does not
+// enter the tax base on the tax module path either.
+func TestCalculateTotalsShippingUntaxedOnModulePathToo(t *testing.T) {
 	h := newModuleHarness(t)
 	serveSnapshot(h.carts, snapshotOf(1,
 		[]SnapshotItem{{ID: testLineA, VariantID: testVariantA, Quantity: 1}},
@@ -60,18 +61,18 @@ func TestCalculateTotalsKargoModulYolundaDaVergilenmez(t *testing.T) {
 	totals, err := h.wf.CalculateTotals(context.Background(), testCartID)
 	require.NoError(t, err)
 
-	assert.Equal(t, int64(200), totals.TaxTotal, "yalnızca 1000'lik mal vergilenir")
+	assert.Equal(t, int64(200), totals.TaxTotal, "only the 1000 worth of goods is taxed")
 	assert.Equal(t, int64(6200), totals.Total)
 	requireIdentity(t, totals)
 }
 
-// TestCalculateTotalsTaxKayitsizsaRegionaDuser tax yüzeyi kayıtlı değilken
-// verginin SIFIRA düşmediğini, region'ın oranıyla hesaplandığını ve kaynağın
-// bildirildiğini doğrular.
+// TestCalculateTotalsFallsBackToRegionWhenTaxUnregistered verifies that when the tax
+// surface is not registered the tax does not drop to ZERO, that it is computed with
+// the region's rate and that the source is reported.
 //
-// Karar [Workflows.applyTaxes] godoc'undadır: eksik vergi satıcının cebinden
-// sessizce çıkar; region, Faz 5'in hâlâ geçerli yetkilisidir.
-func TestCalculateTotalsTaxKayitsizsaRegionaDuser(t *testing.T) {
+// The decision is in the [Workflows.applyTaxes] godoc: a missing tax silently comes
+// out of the merchant's pocket; the region is Phase 5's still-valid authority.
+func TestCalculateTotalsFallsBackToRegionWhenTaxUnregistered(t *testing.T) {
 	h := newHarnessWith(t, &stubDiscounts{perLine: map[string]int64{}}, nil)
 	serveSnapshot(h.carts, twoLineCart(1))
 
@@ -79,31 +80,31 @@ func TestCalculateTotalsTaxKayitsizsaRegionaDuser(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Equal(t, TaxSourceRegion, totals.TaxSource)
-	assert.Equal(t, int64(550), totals.TaxTotal, "region'ın %20 oranı")
+	assert.Equal(t, int64(550), totals.TaxTotal, "the region's 20% rate")
 	requireIdentity(t, totals)
 }
 
-// TestCalculateTotalsUlkeCozulemezseRegionaDuser bölgenin tek bir ülkeye
-// çözülemediği durumlarda tax'a HİÇ SORULMADIĞINI ve region'a düşüldüğünü
-// doğrular.
+// TestCalculateTotalsFallsBackToRegionWhenCountryUnresolvable verifies that when the
+// region cannot be resolved to a single country tax is NEVER ASKED and the region is
+// fallen back to.
 //
-// Ayrım [Workflows.countryForRegion] godoc'undadır: hangi yargı bölgesinin
-// sorulacağı bilinmiyorsa cevabı olmayan bir otorite, önceki otoriteyi
-// devirmez.
-func TestCalculateTotalsUlkeCozulemezseRegionaDuser(t *testing.T) {
+// The distinction is in the [Workflows.countryForRegion] godoc: if it is not known
+// which jurisdiction to ask about, an authority that has no answer does not overthrow
+// the previous authority.
+func TestCalculateTotalsFallsBackToRegionWhenCountryUnresolvable(t *testing.T) {
 	tests := map[string]func(h *harness){
-		"bölge birden çok ülkeye bağlı": func(h *harness) {
+		"region is bound to more than one country": func(h *harness) {
 			h.catalog.countries[testRegionID] = []string{"TR", "DE"}
 		},
-		"bölgeye bağlı ülke yok": func(h *harness) {
+		"no country is bound to the region": func(h *harness) {
 			h.catalog.countries[testRegionID] = nil
 		},
-		"bölge Query'de bulunamadı": func(h *harness) {
+		"region not found in Query": func(h *harness) {
 			delete(h.catalog.countries, testRegionID)
 		},
-		"bölge sağlayıcısı kayıtlı değil": func(h *harness) {
+		"region provider is not registered": func(h *harness) {
 			h.catalog.regionErr = errors.NotFound(codeProviderNotFound,
-				"%q sağlayıcısı kayıtlı değil", EntityRegion+query.ProviderSuffix)
+				"the %q provider is not registered", EntityRegion+query.ProviderSuffix)
 		},
 	}
 
@@ -117,22 +118,22 @@ func TestCalculateTotalsUlkeCozulemezseRegionaDuser(t *testing.T) {
 			require.NoError(t, err)
 
 			assert.Equal(t, TaxSourceRegion, totals.TaxSource)
-			assert.Equal(t, int64(550), totals.TaxTotal, "region'ın %20 oranı")
-			assert.Zero(t, h.taxes.calls, "ülke bilinmeden tax çağrılmamalı")
+			assert.Equal(t, int64(550), totals.TaxTotal, "the region's 20% rate")
+			assert.Zero(t, h.taxes.calls, "tax must not be called without a known country")
 			requireIdentity(t, totals)
 		})
 	}
 }
 
-// TestCalculateTotalsBolgeOkunamazsaHataDoner Query katmanının GEÇİCİ bir
-// arızasının sessizce kaynak değiştirmediğini doğrular.
+// TestCalculateTotalsReturnsErrorWhenRegionUnreadable verifies that a TRANSIENT
+// failure of the Query layer does not silently change the source.
 //
-// Kayıtsız bir sağlayıcı ile erişilemeyen bir veritabanı aynı kapıdan
-// geçseydi, bir kesinti boyunca tüm sepetler sessizce region oranıyla
-// vergilenir ve kimse fark etmezdi.
-func TestCalculateTotalsBolgeOkunamazsaHataDoner(t *testing.T) {
+// If an unregistered provider and an unreachable database went through the same
+// gate, every cart would silently be taxed with the region rate for the duration of
+// an outage and nobody would notice.
+func TestCalculateTotalsReturnsErrorWhenRegionUnreadable(t *testing.T) {
 	h := newModuleHarness(t)
-	h.catalog.regionErr = errors.Unavailable("query_provider_failed", "veritabanı erişilemez")
+	h.catalog.regionErr = errors.Unavailable("query_provider_failed", "the database is unreachable")
 	serveSnapshot(h.carts, twoLineCart(1))
 
 	_, err := h.wf.CalculateTotals(context.Background(), testCartID)
@@ -142,14 +143,13 @@ func TestCalculateTotalsBolgeOkunamazsaHataDoner(t *testing.T) {
 	assert.Empty(t, h.carts.written)
 }
 
-// TestCalculateTotalsVergiBolgesiYapilandirilmamis tax'ın "bu ülkenin vergi
-// bölgesi yok" cevabının OLDUĞU GİBİ kabul edildiğini ve region'a
-// DÜŞÜLMEDİĞİNİ doğrular.
+// TestCalculateTotalsTaxRegionUnconfigured verifies that tax's "this country has no
+// tax region" answer is accepted AS IS and that the region is NOT fallen back to.
 //
-// Sıfır verginin sebebi sonuçta okunur: [TaxSourceTaxUnconfigured] ile
-// [TaxSourceTax] arasındaki fark, "oran sıfırdı" ile "yapılandırma yoktu"
-// arasındaki farktır.
-func TestCalculateTotalsVergiBolgesiYapilandirilmamis(t *testing.T) {
+// The reason for a zero tax is readable in the result: the difference between
+// [TaxSourceTaxUnconfigured] and [TaxSourceTax] is the difference between "the rate
+// was zero" and "there was no configuration".
+func TestCalculateTotalsTaxRegionUnconfigured(t *testing.T) {
 	h := newModuleHarness(t)
 	h.taxes.regionFound = false
 	serveSnapshot(h.carts, twoLineCart(1))
@@ -159,18 +159,19 @@ func TestCalculateTotalsVergiBolgesiYapilandirilmamis(t *testing.T) {
 
 	assert.Equal(t, TaxSourceTaxUnconfigured, totals.TaxSource)
 	assert.Zero(t, totals.TaxTotal)
-	assert.NotEqual(t, int64(550), totals.TaxTotal, "region'ın oranına geri DÜŞÜLMEZ")
+	assert.NotEqual(t, int64(550), totals.TaxTotal, "there is NO falling back to the region's rate")
 	assert.Equal(t, 1, h.taxes.calls)
 	requireIdentity(t, totals)
 }
 
-// TestCalculateTotalsVergiKurusArtigiSatirdaKalir aşağı yuvarlamanın satır
-// başına yapıldığını ve artığın başka bir satıra TAŞINMADIĞINI kanıtlar.
+// TestCalculateTotalsTaxRoundingRemainderStaysOnTheLine proves that rounding down is
+// done per line and that the remainder is NOT CARRIED to another line.
 //
-// Satır tabanları 999 ve 750, oran %18,5: satır başına 184 + 138 = 322. Sepet
-// tabanı (1749) tek seferde vergilenseydi 323 çıkardı. Aradaki 1 minor unit,
-// doğduğu satırlarda düşen artıktır ve müşteri lehinedir.
-func TestCalculateTotalsVergiKurusArtigiSatirdaKalir(t *testing.T) {
+// The line bases are 999 and 750 and the rate is 18.5%: per line 184 + 138 = 322. If
+// the cart base (1749) were taxed in one go it would come out as 323. The 1 minor
+// unit in between is the remainder dropped on the lines it was born on, and it is in
+// the customer's favor.
+func TestCalculateTotalsTaxRoundingRemainderStaysOnTheLine(t *testing.T) {
 	h := newModuleHarness(t)
 	h.taxes.rateBps = 1850
 	h.discounts.perLine = map[string]int64{testLineA: 1}
@@ -183,18 +184,18 @@ func TestCalculateTotalsVergiKurusArtigiSatirdaKalir(t *testing.T) {
 	require.NoError(t, err)
 
 	require.Len(t, totals.Lines, 2)
-	assert.Equal(t, int64(184), totals.Lines[0].TaxTotal, "999 × %18,5 = 184,815 -> 184")
-	assert.Equal(t, int64(138), totals.Lines[1].TaxTotal, "750 × %18,5 = 138,75 -> 138")
+	assert.Equal(t, int64(184), totals.Lines[0].TaxTotal, "999 x 18.5% = 184.815 -> 184")
+	assert.Equal(t, int64(138), totals.Lines[1].TaxTotal, "750 x 18.5% = 138.75 -> 138")
 	assert.Equal(t, int64(322), totals.TaxTotal)
-	assert.NotEqual(t, int64(323), totals.TaxTotal, "sepet tabanı tek seferde vergilenmemeli")
+	assert.NotEqual(t, int64(323), totals.TaxTotal, "the cart base must not be taxed in one go")
 	requireIdentity(t, totals)
 }
 
-// TestCalculateTotalsBozukVergiSonucuReddedilir tax'ın sözleşmeyi çiğneyen
-// yanıtlarının hesaba girmediğini doğrular.
-func TestCalculateTotalsBozukVergiSonucuReddedilir(t *testing.T) {
+// TestCalculateTotalsRejectsMalformedTaxResult verifies that tax responses breaking
+// the contract do not enter the calculation.
+func TestCalculateTotalsRejectsMalformedTaxResult(t *testing.T) {
 	tests := map[string]func(req taxRequest) (taxResponse, error){
-		"sıra korunmadı": func(req taxRequest) (taxResponse, error) {
+		"order not preserved": func(req taxRequest) (taxResponse, error) {
 			return taxResponse{
 				RegionFound: true,
 				Items: []taxResponseLine{
@@ -203,13 +204,13 @@ func TestCalculateTotalsBozukVergiSonucuReddedilir(t *testing.T) {
 				},
 			}, nil
 		},
-		"satır eksik": func(req taxRequest) (taxResponse, error) {
+		"line missing": func(req taxRequest) (taxResponse, error) {
 			return taxResponse{
 				RegionFound: true,
 				Items:       []taxResponseLine{{ID: req.Items[0].ID, TaxableAmount: req.Items[0].Amount}},
 			}, nil
 		},
-		"taban gönderilenden farklı": func(req taxRequest) (taxResponse, error) {
+		"base differs from what was sent": func(req taxRequest) (taxResponse, error) {
 			return taxResponse{
 				RegionFound: true,
 				Items: []taxResponseLine{
@@ -218,18 +219,18 @@ func TestCalculateTotalsBozukVergiSonucuReddedilir(t *testing.T) {
 				},
 			}, nil
 		},
-		"vergi tabanı aşıyor": func(req taxRequest) (taxResponse, error) {
-			asiri := req.Items[0].Amount + 1
+		"tax exceeds the base": func(req taxRequest) (taxResponse, error) {
+			excess := req.Items[0].Amount + 1
 			return taxResponse{
 				RegionFound: true,
-				TaxTotal:    asiri,
+				TaxTotal:    excess,
 				Items: []taxResponseLine{
-					{ID: req.Items[0].ID, TaxableAmount: req.Items[0].Amount, TaxAmount: asiri},
+					{ID: req.Items[0].ID, TaxableAmount: req.Items[0].Amount, TaxAmount: excess},
 					{ID: req.Items[1].ID, TaxableAmount: req.Items[1].Amount},
 				},
 			}, nil
 		},
-		"toplam satırlarla uyuşmuyor": func(req taxRequest) (taxResponse, error) {
+		"total does not match the lines": func(req taxRequest) (taxResponse, error) {
 			return taxResponse{
 				RegionFound: true,
 				TaxTotal:    100,
@@ -239,7 +240,7 @@ func TestCalculateTotalsBozukVergiSonucuReddedilir(t *testing.T) {
 				},
 			}, nil
 		},
-		"istenmeyen kargo vergisi": func(req taxRequest) (taxResponse, error) {
+		"unrequested shipping tax": func(req taxRequest) (taxResponse, error) {
 			return taxResponse{
 				RegionFound: true,
 				TaxTotal:    7,
@@ -266,9 +267,9 @@ func TestCalculateTotalsBozukVergiSonucuReddedilir(t *testing.T) {
 	}
 }
 
-// TestCalculateTotalsVergiHatasiSinifiKorunur tax'ın hata SINIFININ yolda
-// Internal'a çevrilmediğini doğrular.
-func TestCalculateTotalsVergiHatasiSinifiKorunur(t *testing.T) {
+// TestCalculateTotalsTaxErrorKindIsPreserved verifies that tax's error KIND is not
+// turned into Internal along the way.
+func TestCalculateTotalsTaxErrorKindIsPreserved(t *testing.T) {
 	h := newModuleHarness(t)
 	h.taxes.err = errors.Unavailable("tax_unconfigured", "the tax service is not configured")
 	serveSnapshot(h.carts, twoLineCart(1))
@@ -277,38 +278,38 @@ func TestCalculateTotalsVergiHatasiSinifiKorunur(t *testing.T) {
 	require.Error(t, err)
 	assert.Equal(t, errors.KindUnavailable, errors.KindOf(err))
 	assert.Equal(t, CodeTaxFailed, errors.CodeOf(err))
-	assert.Empty(t, h.carts.written, "vergi hesaplanamadıysa bayat bir toplam yazılmamalı")
+	assert.Empty(t, h.carts.written, "if the tax could not be computed no stale total must be written")
 }
 
-// TestCountryCodes ülke alt kayıtlarının üç şekilde de okunabildiğini
-// doğrular.
+// TestCountryCodes verifies that the country sub-records can be read in all three
+// shapes.
 //
-// Şekil, Query katmanından geçerken değişebilir (sağlayıcı []map[string]any
-// yazar, bir JSON turu []any'ye çevirir); tek bir tip iddiası kodu sessizce
-// yutar ve bölge "ülkesiz" görünürdü.
+// The shape can change on the way through the Query layer (the provider writes
+// []map[string]any, a JSON round trip turns it into []any); a single type assertion
+// would silently swallow the code and the region would look "countryless".
 func TestCountryCodes(t *testing.T) {
 	tests := map[string]struct {
 		value any
 		want  []string
 	}{
-		"sağlayıcı şekli": {
+		"provider shape": {
 			value: []map[string]any{{FieldCode: "TR"}, {FieldCode: "DE"}},
 			want:  []string{"TR", "DE"},
 		},
-		"query kaydı": {
+		"query record": {
 			value: []query.Record{{FieldCode: "TR"}},
 			want:  []string{"TR"},
 		},
-		"JSON turundan geçmiş": {
+		"passed through a JSON round trip": {
 			value: []any{map[string]any{FieldCode: "TR"}},
 			want:  []string{"TR"},
 		},
-		"kodsuz alt kayıt atlanır": {
-			value: []map[string]any{{"name": "Türkiye"}, {FieldCode: ""}},
+		"sub-record without a code is skipped": {
+			value: []map[string]any{{"name": "Turkey"}, {FieldCode: ""}},
 			want:  []string{},
 		},
-		"tanınmayan şekil": {value: "TR", want: nil},
-		"alan yok":         {value: nil, want: nil},
+		"unrecognized shape": {value: "TR", want: nil},
+		"field absent":       {value: nil, want: nil},
 	}
 
 	for name, tc := range tests {
@@ -318,27 +319,27 @@ func TestCountryCodes(t *testing.T) {
 	}
 }
 
-// TestCalculateTotalsBolgeSorgusuTekVeDar bölge sorgusunun tek kayıt ve tek
-// alan istediğini doğrular.
+// TestCalculateTotalsRegionQueryIsSingleAndNarrow verifies that the region query
+// asks for a single record and a single field.
 //
-// Alan seçimi yapılmasaydı sağlayıcı bölgenin tüm alanlarını (ve para birimi
-// alt kaydını) toplamak için fazladan sorgu koştururdu; hesap her tur çalışır.
-func TestCalculateTotalsBolgeSorgusuTekVeDar(t *testing.T) {
+// Without field selection the provider would run extra queries to gather all of the
+// region's fields (and the currency sub-record); the calculation runs on every round.
+func TestCalculateTotalsRegionQueryIsSingleAndNarrow(t *testing.T) {
 	h := newModuleHarness(t)
 	serveSnapshot(h.carts, twoLineCart(1))
 
 	_, err := h.wf.CalculateTotals(context.Background(), testCartID)
 	require.NoError(t, err)
 
-	var bolgeSpecs []query.GraphSpec
+	var regionSpecs []query.GraphSpec
 	for _, spec := range h.catalog.specs {
 		if spec.Entity == EntityRegion {
-			bolgeSpecs = append(bolgeSpecs, spec)
+			regionSpecs = append(regionSpecs, spec)
 		}
 	}
-	require.Len(t, bolgeSpecs, 1, "hesap turu başına tek bölge sorgusu")
-	assert.Equal(t, []string{query.IDField, FieldCountries}, bolgeSpecs[0].Fields)
-	assert.Equal(t, map[string]any{query.IDField: testRegionID}, bolgeSpecs[0].Filters)
-	assert.Equal(t, 1, bolgeSpecs[0].Limit)
-	assert.Empty(t, bolgeSpecs[0].Expand, "genişletme istenmez")
+	require.Len(t, regionSpecs, 1, "a single region query per calculation round")
+	assert.Equal(t, []string{query.IDField, FieldCountries}, regionSpecs[0].Fields)
+	assert.Equal(t, map[string]any{query.IDField: testRegionID}, regionSpecs[0].Filters)
+	assert.Equal(t, 1, regionSpecs[0].Limit)
+	assert.Empty(t, regionSpecs[0].Expand, "no expansion is requested")
 }

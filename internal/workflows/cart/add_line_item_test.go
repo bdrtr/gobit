@@ -12,7 +12,7 @@ import (
 	"github.com/bdrtr/gobit/internal/core/errors"
 )
 
-// addedLine sahte sepete yazılan satırın argümanlarıdır.
+// addedLine holds the arguments of the line written to the fake cart.
 type addedLine struct {
 	cartID    string
 	variantID string
@@ -23,8 +23,8 @@ type addedLine struct {
 	calls     int
 }
 
-// recordAddLine sahte sepet servisini, eklenen satırı kaydedecek biçimde
-// betikler.
+// recordAddLine scripts the fake cart service so that it records the added
+// line.
 func recordAddLine(carts *stubCarts, lineID string) *addedLine {
 	seen := &addedLine{}
 	carts.addLineFn = func(
@@ -41,8 +41,9 @@ func recordAddLine(carts *stubCarts, lineID string) *addedLine {
 	return seen
 }
 
-// TestAddLineItemFiyatiBulurVeToplamlariYeniler mutlu yolu uçtan uca doğrular.
-func TestAddLineItemFiyatiBulurVeToplamlariYeniler(t *testing.T) {
+// TestAddLineItemResolvesPriceAndRefreshesTotals verifies the happy path end to
+// end.
+func TestAddLineItemResolvesPriceAndRefreshesTotals(t *testing.T) {
 	h := newHarness(t)
 	seen := recordAddLine(h.carts, testLineA)
 	serveSnapshot(h.carts,
@@ -58,19 +59,19 @@ func TestAddLineItemFiyatiBulurVeToplamlariYeniler(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Equal(t, testLineA, out.LineItemID)
-	assert.Equal(t, "Kırmızı Tişört / M", out.Title, "başlık katalogdan kopyalanır")
+	assert.Equal(t, "Red T-Shirt / M", out.Title, "the title is copied from the catalog")
 	assert.Equal(t, int64(1000), out.UnitPrice)
 
 	assert.Equal(t, addedLine{
 		cartID:    testCartID,
 		variantID: testVariantA,
-		title:     "Kırmızı Tişört / M",
+		title:     "Red T-Shirt / M",
 		quantity:  3,
 		unitPrice: 1000,
 		calls:     1,
 	}, *seen)
 
-	// Satır yazıldıktan sonra hesap koşar: 1000 × 3 = 3000, %20 vergi 600.
+	// The totals run once the line is written: 1000 x 3 = 3000, 20% tax 600.
 	assert.Equal(t, int64(3000), out.Totals.Subtotal)
 	assert.Equal(t, int64(600), out.Totals.TaxTotal)
 	assert.Equal(t, int64(3600), out.Totals.Total)
@@ -79,14 +80,15 @@ func TestAddLineItemFiyatiBulurVeToplamlariYeniler(t *testing.T) {
 	require.Len(t, h.carts.written, 1)
 }
 
-// TestAddLineItemMetadataOlduguGibiTasinir satır metadata'sının akış
-// tarafından OKUNMADAN taşındığını doğrular.
+// TestAddLineItemCarriesMetadataUnchanged verifies that the line metadata is
+// carried through WITHOUT being read by the workflow.
 //
-// Akış onu hesaba katmaz ve katmamalıdır; ama taşımak zorundadır: satırı açan
-// tek yol bu akıştır ve taşınmasaydı vitrinin gönderdiği alan sessizce
-// düşerdi — "gönderildiği sanılan ama uygulanmayan ayar" tam olarak bu API'nin
-// tanımadığı alanları reddetme sebebidir.
-func TestAddLineItemMetadataOlduguGibiTasinir(t *testing.T) {
+// The workflow does not take it into account and must not; but it is obliged to
+// carry it: this workflow is the only path that opens a line, and had it not
+// been carried, the field the storefront sent would be silently dropped — "the
+// setting believed to be sent but never applied" is exactly why this API
+// rejects the fields it does not recognize.
+func TestAddLineItemCarriesMetadataUnchanged(t *testing.T) {
 	h := newHarness(t)
 	seen := recordAddLine(h.carts, testLineA)
 	serveSnapshot(h.carts,
@@ -98,16 +100,16 @@ func TestAddLineItemMetadataOlduguGibiTasinir(t *testing.T) {
 		CartID:    testCartID,
 		VariantID: testVariantA,
 		Quantity:  1,
-		Metadata:  json.RawMessage(`{"not":"hediye paketi"}`),
+		Metadata:  json.RawMessage(`{"note":"gift wrap"}`),
 	})
 	require.NoError(t, err)
 
-	assert.JSONEq(t, `{"not":"hediye paketi"}`, string(seen.metadata))
+	assert.JSONEq(t, `{"note":"gift wrap"}`, string(seen.metadata))
 }
 
-// TestAddLineItemFiyatBaglamiAdediTasir açılış fiyatının istenen adede göre
-// seçildiğini doğrular (kademeli fiyatlandırma).
-func TestAddLineItemFiyatBaglamiAdediTasir(t *testing.T) {
+// TestAddLineItemPriceContextCarriesQuantity verifies that the opening price is
+// picked according to the requested quantity (tiered pricing).
+func TestAddLineItemPriceContextCarriesQuantity(t *testing.T) {
 	h := newHarness(t)
 	recordAddLine(h.carts, testLineA)
 	serveSnapshot(h.carts,
@@ -125,9 +127,9 @@ func TestAddLineItemFiyatBaglamiAdediTasir(t *testing.T) {
 	assert.Equal(t, map[string]string{attrRegionID: testRegionID}, h.prices.seen[0].attributes)
 }
 
-// TestAddLineItemFiyatiOlmayanVaryantReddedilir fiyat kümesi olmayan varyantın
-// sepete GİRMEDİĞİNİ doğrular.
-func TestAddLineItemFiyatiOlmayanVaryantReddedilir(t *testing.T) {
+// TestAddLineItemRejectsUnpricedVariant verifies that a variant with no price
+// set DOES NOT ENTER the cart.
+func TestAddLineItemRejectsUnpricedVariant(t *testing.T) {
 	h := newHarness(t)
 	delete(h.links.links, testVariantA)
 	seen := recordAddLine(h.carts, testLineA)
@@ -139,12 +141,12 @@ func TestAddLineItemFiyatiOlmayanVaryantReddedilir(t *testing.T) {
 	require.Error(t, err)
 	assert.True(t, errors.IsInvalid(err))
 	assert.Equal(t, CodeVariantNotPriced, errors.CodeOf(err))
-	assert.Zero(t, seen.calls, "fiyatı olmayan ürün sepete yazılmamalı")
+	assert.Zero(t, seen.calls, "a product with no price must not be written to the cart")
 }
 
-// TestAddLineItemParaBirimindeFiyatYoksaReddedilir kümesi olan ama sepetin
-// para biriminde fiyatı olmayan varyantın reddedildiğini doğrular.
-func TestAddLineItemParaBirimindeFiyatYoksaReddedilir(t *testing.T) {
+// TestAddLineItemRejectsVariantWithNoPriceInCurrency verifies that a variant
+// which has a price set but no price in the cart's currency is rejected.
+func TestAddLineItemRejectsVariantWithNoPriceInCurrency(t *testing.T) {
 	h := newHarness(t)
 	delete(h.prices.amounts, testPriceSetA)
 	seen := recordAddLine(h.carts, testLineA)
@@ -159,11 +161,12 @@ func TestAddLineItemParaBirimindeFiyatYoksaReddedilir(t *testing.T) {
 	assert.Zero(t, seen.calls)
 }
 
-// TestAddLineItemBilinmeyenVaryantReddedilir katalogda olmayan varyantın
-// yetim bir fiyat bağı üzerinden sepete giremeyeceğini doğrular.
-func TestAddLineItemBilinmeyenVaryantReddedilir(t *testing.T) {
+// TestAddLineItemRejectsUnknownVariant verifies that a variant that is not in
+// the catalog cannot enter the cart through an orphaned price link.
+func TestAddLineItemRejectsUnknownVariant(t *testing.T) {
 	h := newHarness(t)
-	// Varyant silinmiş ama fiyat bağı temizlenememiş: yetim bağ senaryosu.
+	// The variant was deleted but its price link could not be cleaned up: the
+	// orphaned link scenario.
 	delete(h.catalog.titles, testVariantA)
 	seen := recordAddLine(h.carts, testLineA)
 	serveSnapshot(h.carts, snapshotOf(0, nil, nil))
@@ -177,9 +180,9 @@ func TestAddLineItemBilinmeyenVaryantReddedilir(t *testing.T) {
 	assert.Zero(t, seen.calls)
 }
 
-// TestAddLineItemTamamlanmisSepetiReddeder kapanmış sepete satır
-// eklenemediğini doğrular.
-func TestAddLineItemTamamlanmisSepetiReddeder(t *testing.T) {
+// TestAddLineItemRejectsCompletedCart verifies that no line can be added to a
+// closed cart.
+func TestAddLineItemRejectsCompletedCart(t *testing.T) {
 	h := newHarness(t)
 	seen := recordAddLine(h.carts, testLineA)
 	snap := snapshotOf(2, nil, nil)
@@ -193,17 +196,17 @@ func TestAddLineItemTamamlanmisSepetiReddeder(t *testing.T) {
 	assert.True(t, errors.IsConflict(err))
 	assert.Equal(t, CodeCartCompleted, errors.CodeOf(err))
 	assert.Zero(t, seen.calls)
-	assert.Empty(t, h.prices.seen, "sonucu belli bir istek için pricing çağrılmamalı")
+	assert.Empty(t, h.prices.seen, "pricing must not be called for a decided request")
 }
 
-// TestAddLineItemGecersizAdetReddedilir adet sınırlarının sepete gitmeden
-// uygulandığını doğrular.
-func TestAddLineItemGecersizAdetReddedilir(t *testing.T) {
+// TestAddLineItemRejectsInvalidQuantity verifies that the quantity bounds are
+// applied before reaching the cart.
+func TestAddLineItemRejectsInvalidQuantity(t *testing.T) {
 	tests := map[string]int64{
-		"sıfır":            0,
-		"negatif":          -1,
-		"tavanın üstünde":  MaxQuantity + 1,
-		"aşırı büyük adet": 1 << 40,
+		"zero":                  0,
+		"negative":              -1,
+		"above the ceiling":     MaxQuantity + 1,
+		"absurdly large amount": 1 << 40,
 	}
 
 	for name, quantity := range tests {
@@ -217,14 +220,14 @@ func TestAddLineItemGecersizAdetReddedilir(t *testing.T) {
 			require.Error(t, err)
 			assert.True(t, errors.IsInvalid(err))
 			assert.Zero(t, seen.calls)
-			assert.Zero(t, h.carts.snapshotCalls, "girdi hatası için sepet okunmamalı")
+			assert.Zero(t, h.carts.snapshotCalls, "the cart must not be read for an input error")
 		})
 	}
 }
 
-// TestAddLineItemToplamPatlarsaSatirKALIR ikinci yazmanın patlamasının satırı
-// geri ALMADIĞINI ve hatanın ayırt edilebilir olduğunu doğrular.
-func TestAddLineItemToplamPatlarsaSatirKALIR(t *testing.T) {
+// TestAddLineItemLineSTAYSWhenTotalsFail verifies that a failure of the second
+// write DOES NOT roll the line back and that the error is distinguishable.
+func TestAddLineItemLineSTAYSWhenTotalsFail(t *testing.T) {
 	h := newHarness(t)
 	seen := recordAddLine(h.carts, testLineA)
 	serveSnapshot(h.carts,
@@ -232,7 +235,7 @@ func TestAddLineItemToplamPatlarsaSatirKALIR(t *testing.T) {
 		snapshotOf(1, []SnapshotItem{{ID: testLineA, VariantID: testVariantA, Quantity: 1}}, nil),
 	)
 	h.carts.setTotalsFn = func(_ context.Context, _ string, _ json.RawMessage) error {
-		return errors.Unavailable("cart_db_unavailable", "veritabanı erişilemez")
+		return errors.Unavailable("cart_db_unavailable", "database unreachable")
 	}
 
 	_, err := h.wf.AddLineItem(context.Background(), AddLineItemInput{
@@ -240,18 +243,18 @@ func TestAddLineItemToplamPatlarsaSatirKALIR(t *testing.T) {
 	})
 	require.Error(t, err)
 	assert.Equal(t, CodeTotalsAfterChange, errors.CodeOf(err),
-		"çağıran, isteğin UYGULANDIĞINI ama hesabın düştüğünü ayırt edebilmeli")
-	assert.Equal(t, 1, seen.calls, "satır eklendi ve geri alınmadı")
-	assert.Empty(t, h.carts.removed, "telafi olarak satır silinmemeli")
+		"the caller must tell that the request WAS APPLIED but the totals fell over")
+	assert.Equal(t, 1, seen.calls, "the line was added and not rolled back")
+	assert.Empty(t, h.carts.removed, "no line must be deleted as compensation")
 }
 
-// TestAddLineItemGecersizKimlikReddedilir biçimsiz kimliğin hiçbir modüle
-// ulaşmadığını doğrular.
-func TestAddLineItemGecersizKimlikReddedilir(t *testing.T) {
+// TestAddLineItemRejectsMalformedIdentifier verifies that a malformed
+// identifier reaches no module.
+func TestAddLineItemRejectsMalformedIdentifier(t *testing.T) {
 	tests := map[string]AddLineItemInput{
-		"sepet boş":            {VariantID: testVariantA, Quantity: 1},
-		"varyant boş":          {CartID: testCartID, Quantity: 1},
-		"varyant boşluk taşır": {CartID: testCartID, VariantID: "var_a\n", Quantity: 1},
+		"empty cart":                 {VariantID: testVariantA, Quantity: 1},
+		"empty variant":              {CartID: testCartID, Quantity: 1},
+		"variant carries whitespace": {CartID: testCartID, VariantID: "var_a\n", Quantity: 1},
 	}
 
 	for name, in := range tests {
@@ -266,12 +269,12 @@ func TestAddLineItemGecersizKimlikReddedilir(t *testing.T) {
 	}
 }
 
-// tavanaKadarSatir sepeti verilen sayıda satırla doldurur.
+// linesUpToCeiling fills the cart with the given number of lines.
 //
-// Satırların hepsi AYNI varyanta bakar; tavan denetimi satır SAYISINA ve
-// eklenmek istenen varyantın sepette olup olmadığına bakar, varyantların
-// çeşitliliğine değil.
-func tavanaKadarSatir(variantID string, count int) []SnapshotItem {
+// All of the lines look at the SAME variant; the ceiling check looks at the
+// line COUNT and at whether the variant to be added is already in the cart, not
+// at the variety of the variants.
+func linesUpToCeiling(variantID string, count int) []SnapshotItem {
 	items := make([]SnapshotItem, 0, count)
 	for i := range count {
 		items = append(items, SnapshotItem{
@@ -283,39 +286,41 @@ func tavanaKadarSatir(variantID string, count int) []SnapshotItem {
 	return items
 }
 
-// TestAddLineItemSatirTavaniniAsanYeniSatiriReddeder tavana dayanmış sepette
-// YENİ bir satır açılamadığını doğrular.
+// TestAddLineItemRejectsNewLineBeyondTheLineCeiling verifies that NO new line
+// can be opened on a cart that has reached the ceiling.
 //
-// Tavan sessiz değildir: istek reddedilir, kırpılmaz ve mesaj tavanı yazar.
-func TestAddLineItemSatirTavaniniAsanYeniSatiriReddeder(t *testing.T) {
+// The ceiling is not silent: the request is rejected, it is not clamped, and
+// the message writes the ceiling out.
+func TestAddLineItemRejectsNewLineBeyondTheLineCeiling(t *testing.T) {
 	h := newHarness(t)
-	serveSnapshot(h.carts, snapshotOf(1, tavanaKadarSatir(testVariantA, MaxLineItems), nil))
+	serveSnapshot(h.carts, snapshotOf(1, linesUpToCeiling(testVariantA, MaxLineItems), nil))
 
 	_, err := h.wf.AddLineItem(context.Background(), AddLineItemInput{
 		CartID: testCartID, VariantID: testVariantB, Quantity: 1,
 	})
 
 	require.Error(t, err)
-	assert.True(t, errors.IsInvalid(err), "beklenen Invalid: %v", err)
+	assert.True(t, errors.IsInvalid(err), "expected Invalid: %v", err)
 	assert.Equal(t, CodeCartLineLimit, errors.CodeOf(err))
-	assert.Contains(t, err.Error(), strconv.Itoa(MaxLineItems), "tavan operatöre görünmeli")
-	assert.Empty(t, h.catalog.specs, "sonucu belli istek katalogu meşgul etmemeli")
-	assert.Empty(t, h.prices.seen, "sonucu belli istek pricing'i meşgul etmemeli")
+	assert.Contains(t, err.Error(), strconv.Itoa(MaxLineItems), "the ceiling must be visible to the operator")
+	assert.Empty(t, h.catalog.specs, "a decided request must not busy the catalog")
+	assert.Empty(t, h.prices.seen, "a decided request must not busy pricing")
 	assert.Empty(t, h.carts.written)
 }
 
-// TestAddLineItemTavaninAltindaYeniSatirAcilir tavanın BİR ALTINDAKİ sepette
-// yeni satırın hâlâ açılabildiğini doğrular.
+// TestAddLineItemOpensANewLineJustBelowTheCeiling verifies that on a cart ONE
+// BELOW the ceiling a new line can still be opened.
 //
-// Sınırın kendisi kadar sınırın YERİ de sözleşmedir: bir eksik karşılaştırma,
-// müşterinin ekleyebileceği son satırı sessizce reddederdi.
-func TestAddLineItemTavaninAltindaYeniSatirAcilir(t *testing.T) {
+// The PLACE of the bound is as much a contract as the bound itself: an
+// off-by-one comparison would silently reject the last line the customer is
+// allowed to add.
+func TestAddLineItemOpensANewLineJustBelowTheCeiling(t *testing.T) {
 	h := newHarness(t)
-	dolu := tavanaKadarSatir(testVariantA, MaxLineItems-1)
+	full := linesUpToCeiling(testVariantA, MaxLineItems-1)
 	seen := recordAddLine(h.carts, testLineB)
 	serveSnapshot(h.carts,
-		snapshotOf(1, dolu, nil),
-		snapshotOf(2, append(dolu, SnapshotItem{ID: testLineB, VariantID: testVariantB, Quantity: 1}), nil),
+		snapshotOf(1, full, nil),
+		snapshotOf(2, append(full, SnapshotItem{ID: testLineB, VariantID: testVariantB, Quantity: 1}), nil),
 	)
 
 	out, err := h.wf.AddLineItem(context.Background(), AddLineItemInput{
@@ -328,36 +333,36 @@ func TestAddLineItemTavaninAltindaYeniSatirAcilir(t *testing.T) {
 	assert.Len(t, out.Totals.Lines, MaxLineItems)
 }
 
-// TestAddLineItemTavandakiSepetteVarOlanSatirArtabilir tavana dayanmış bir
-// sepette BİRLEŞTİRMENİN reddedilmediğini doğrular.
+// TestAddLineItemGrowsAnExistingLineOnACartAtTheCeiling verifies that MERGING
+// is not rejected on a cart that has reached the ceiling.
 //
-// Birleştirme yeni satır açmaz; reddedilseydi dolu bir sepetin sahibi kendi
-// satırının adedini bile artıramazdı.
-func TestAddLineItemTavandakiSepetteVarOlanSatirArtabilir(t *testing.T) {
+// A merge opens no new line; had it been rejected, the owner of a full cart
+// could not even raise the quantity of their own line.
+func TestAddLineItemGrowsAnExistingLineOnACartAtTheCeiling(t *testing.T) {
 	h := newHarness(t)
-	dolu := tavanaKadarSatir(testVariantA, MaxLineItems)
-	seen := recordAddLine(h.carts, dolu[0].ID)
-	serveSnapshot(h.carts, snapshotOf(1, dolu, nil), snapshotOf(2, dolu, nil))
+	full := linesUpToCeiling(testVariantA, MaxLineItems)
+	seen := recordAddLine(h.carts, full[0].ID)
+	serveSnapshot(h.carts, snapshotOf(1, full, nil), snapshotOf(2, full, nil))
 
 	out, err := h.wf.AddLineItem(context.Background(), AddLineItemInput{
 		CartID: testCartID, VariantID: testVariantA, Quantity: 2,
 	})
 
 	require.NoError(t, err)
-	assert.Equal(t, dolu[0].ID, out.LineItemID)
-	assert.Equal(t, 1, seen.calls, "birleştirme yazılmalı")
+	assert.Equal(t, full[0].ID, out.LineItemID)
+	assert.Equal(t, 1, seen.calls, "the merge must be written")
 }
 
-// TestCalculateTotalsTavanUstundekiSepetiHesaplayabilir tavan KONMADAN önce
-// açılmış, tavanın üstünde satır taşıyan bir sepetin hesabının yapılabildiğini
-// doğrular.
+// TestCalculateTotalsCanComputeACartAboveTheCeiling verifies that a cart which
+// was opened BEFORE the ceiling was put in place, and carries more lines than
+// the ceiling, can still have its totals computed.
 //
-// Hesabın reddedilmesi, müşterinin var olan sepetini ödenemez hâle getirirdi;
-// tavan yalnızca satır AÇAN yolda uygulanır.
-func TestCalculateTotalsTavanUstundekiSepetiHesaplayabilir(t *testing.T) {
+// Rejecting the computation would make the customer's existing cart unpayable;
+// the ceiling is applied only on the path that OPENS a line.
+func TestCalculateTotalsCanComputeACartAboveTheCeiling(t *testing.T) {
 	h := newHarness(t)
-	buyuk := tavanaKadarSatir(testVariantA, MaxLineItems+5)
-	serveSnapshot(h.carts, snapshotOf(9, buyuk, nil))
+	large := linesUpToCeiling(testVariantA, MaxLineItems+5)
+	serveSnapshot(h.carts, snapshotOf(9, large, nil))
 
 	totals, err := h.wf.CalculateTotals(context.Background(), testCartID)
 
@@ -367,22 +372,22 @@ func TestCalculateTotalsTavanUstundekiSepetiHesaplayabilir(t *testing.T) {
 	requireIdentity(t, totals)
 }
 
-// buyuyenSepet akışın gerçekten büyütebildiği bellek içi bir sepettir.
+// growingCart is an in-memory cart the workflow can genuinely grow.
 //
-// Var olan sahteler betiklenmiş görüntüler döner; satır eklemenin MALİYETİ ise
-// ancak sepet gerçekten büyürken sayılabilir.
-type buyuyenSepet struct {
+// The existing fakes return scripted snapshots; the COST of adding a line,
+// however, can only be counted while the cart actually grows.
+type growingCart struct {
 	items    []SnapshotItem
 	revision int64
 }
 
-// buyuyenSepetDuzenegi verilen sayıda varyant tanıyan ve satır ekledikçe büyüyen
-// bir düzenek kurar.
-func buyuyenSepetDuzenegi(t *testing.T, variants int) *harness {
+// growingCartHarness sets up a harness that knows the given number of variants
+// and grows as lines are added.
+func growingCartHarness(t *testing.T, variants int) *harness {
 	t.Helper()
 
 	h := newHarness(t)
-	state := &buyuyenSepet{}
+	state := &growingCart{}
 
 	h.carts.snapshotFn = func(_ context.Context, cartID string) (json.RawMessage, error) {
 		snap := snapshotOf(state.revision, append([]SnapshotItem(nil), state.items...), nil)
@@ -406,38 +411,39 @@ func buyuyenSepetDuzenegi(t *testing.T, variants int) *harness {
 		set := "pset_" + strconv.Itoa(i)
 		h.prices.amounts[set] = 1000
 		h.links.links[variant] = []string{set}
-		h.catalog.titles[variant] = "Ürün " + strconv.Itoa(i)
+		h.catalog.titles[variant] = "Product " + strconv.Itoa(i)
 	}
 	return h
 }
 
-// TestAddLineItemSepetKurmaMaliyetiDogrusaldir N satırlık bir sepet kurmanın
-// fiyat turu sayısının N ile büyüdüğünü doğrular.
+// TestAddLineItemCartBuildCostIsLinear verifies that the number of price round
+// trips for building an N-line cart grows with N.
 //
-// İddia bu değişikliğin kendisidir. Her satır ekleme, sepetin TÜM satırlarını
-// yeniden fiyatlayan bir hesap turu koşturur; fiyat satır başına sorulduğunda
-// bir sepeti kurmanın maliyeti N² idi (ölçüldü: 100 satırlık sepet için 5150
-// fiyat çağrısı). Toplu okumayla satır ekleme başına TAM İKİ tur kalır: satır
-// açılırken sorulan tek fiyat ve hesap turunun tek toplu sorusu.
+// The claim is this change itself. Every line addition runs a totals round that
+// reprices ALL of the cart's lines; when the price was asked per line, the cost
+// of building a cart was N² (measured: 5150 price calls for a 100-line cart).
+// With the batched read, exactly TWO round trips per line addition remain: the
+// single price asked while the line is opened, and the single batched question
+// of the totals round.
 //
-// Süre değil TUR SAYISI denetlenir; süre testi makineye bağlar, tur sayısı
-// bağlamaz.
-func TestAddLineItemSepetKurmaMaliyetiDogrusaldir(t *testing.T) {
-	const satir = 25
+// It is not the DURATION but the ROUND TRIP COUNT that is checked; a duration
+// test binds to the machine, a round trip count does not.
+func TestAddLineItemCartBuildCostIsLinear(t *testing.T) {
+	const lineCount = 25
 
-	h := buyuyenSepetDuzenegi(t, satir)
+	h := growingCartHarness(t, lineCount)
 
-	for i := range satir {
+	for i := range lineCount {
 		_, err := h.wf.AddLineItem(context.Background(), AddLineItemInput{
 			CartID: testCartID, VariantID: "var_" + strconv.Itoa(i), Quantity: 2,
 		})
 		require.NoError(t, err)
 	}
 
-	assert.Len(t, h.prices.seen, satir, "satır başına tek açılış fiyatı")
-	assert.Len(t, h.prices.requests, satir, "hesap turu başına tek toplu soru")
+	assert.Len(t, h.prices.seen, lineCount, "a single opening price per line")
+	assert.Len(t, h.prices.requests, lineCount, "a single batched question per totals round")
 
-	// Turların kaleme değil SATIR EKLEMEYE bağlı olduğu, son turun sepetin
-	// tamamını tek soruda taşımasıyla görülür.
-	assert.Len(t, h.prices.requests[satir-1].Items, satir)
+	// That the round trips are bound to LINE ADDITION and not to the line item
+	// is seen in the last round carrying the whole cart in a single question.
+	assert.Len(t, h.prices.requests[lineCount-1].Items, lineCount)
 }

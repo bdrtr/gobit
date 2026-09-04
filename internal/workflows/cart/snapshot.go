@@ -6,71 +6,78 @@ import (
 	"github.com/bdrtr/gobit/internal/core/errors"
 )
 
-// Snapshot bir hesap turunun DAYANDIĞI sepet şeklidir.
+// Snapshot is the shape of the cart a calculation round IS BASED ON.
 //
-// Tip, [Carts.CartSnapshotJSON] gövdesinin şemasıdır: sepet modülü bu alanları
-// üretir, bu paket okur. Şema BİLİNÇLİ OLARAK dardır — hesaba giren ne varsa
-// odur ve fazlası yoktur. Tanınmayan alanlar sessizce atlanır ki sepet
-// modülü şemayı büyüttüğünde bu paketin güncellenmesi gerekmesin.
+// The type is the schema of the [Carts.CartSnapshotJSON] body: the cart module
+// produces these fields, this package reads them. The schema is DELIBERATELY
+// narrow — it is whatever enters the calculation and nothing more. Unrecognized
+// fields are silently skipped so that this package need not be updated when the
+// cart module grows the schema.
 //
-// Görüntü TEK OKUMADA alınır ve tutarlıdır: satırlar, kargo yöntemleri ve
-// [Snapshot.Revision] aynı ana aittir. Alan başına ayrı çağrılar olsaydı
-// araya giren bir değişiklik, satırları bir şekilden, revision'ı başka bir
-// şekilden okumaya yol açar ve hesap sessizce yanlış damgalanırdı.
+// The snapshot is taken in a SINGLE READ and is consistent: the lines, the
+// shipping methods and [Snapshot.Revision] belong to the same instant. Were
+// there separate calls per field, a change slipping in between would lead to
+// reading the lines from one shape and the revision from another, and the
+// calculation would silently be stamped wrong.
 type Snapshot struct {
-	// ID sepetin kimliğidir.
+	// ID is the identity of the cart.
 	ID string `json:"id"`
-	// RegionID sepetin bölgesidir; vergi oranı ve fiyat bağlamı buradan gelir.
+	// RegionID is the region of the cart; the tax rate and the price context
+	// come from it.
 	RegionID string `json:"region_id"`
-	// CustomerID sepetin sahibidir; boşsa sepet misafire aittir.
+	// CustomerID is the owner of the cart; when empty the cart belongs to a guest.
 	CustomerID string `json:"customer_id"`
-	// CurrencyCode sepetin para birimidir (ISO 4217).
+	// CurrencyCode is the currency of the cart (ISO 4217).
 	CurrencyCode string `json:"currency_code"`
-	// Revision sepetin şekil sayacıdır; hesabın damgası budur.
+	// Revision is the shape counter of the cart; it is the stamp of the calculation.
 	Revision int64 `json:"revision"`
-	// Completed sepetin tamamlanmış olup olmadığını bildirir.
+	// Completed reports whether the cart has been completed.
 	Completed bool `json:"completed"`
-	// Items sepetin satırlarıdır.
+	// Items are the lines of the cart.
 	Items []SnapshotItem `json:"items"`
-	// ShippingMethods sepete seçilmiş kargo yöntemleridir.
+	// ShippingMethods are the shipping methods chosen for the cart.
 	ShippingMethods []SnapshotShippingMethod `json:"shipping_methods"`
 
-	// KUPON KODLARI BURAYA GELECEK. Sepet modülü kupon alanı kazandığında
-	// şemaya bir "promotion_codes []string" alanı eklenir ve
-	// [Workflows.discountRequestFor] onu isteğin "codes" dizisine geçirir;
-	// başka hiçbir yer değişmez. Alan bugün YOKTUR çünkü sepet kodu saklamaz
-	// ve saklanmayan bir kodun hesaba girmesi, aynı sepetin toplamını hangi
-	// uçtan geçildiğine bağlı kılardı (bkz. paket yorumu, "Kupon kodları").
+	// THE COUPON CODES WILL COME HERE. When the cart module grows a coupon
+	// field, a "promotion_codes []string" field is added to the schema and
+	// [Workflows.discountRequestFor] passes it into the request's "codes"
+	// array; nothing else changes. The field DOES NOT EXIST today because the
+	// cart does not store a code, and an unstored code entering the calculation
+	// would make the total of the same cart depend on which endpoint it went
+	// through (see the package comment, "Coupon codes").
 }
 
-// SnapshotItem bir sepet satırının hesaba giren alanlarıdır.
+// SnapshotItem is the set of fields of a cart line that enter the calculation.
 //
-// Satırın SAKLI tutarları burada YOKTUR ve olmamalıdır: her hesap turu fiyatı
-// pricing'den yeniden alır. Saklı tutarı okuyup güvenmek, katalogda değişen
-// bir fiyatın sepette sonsuza kadar donması demek olurdu.
+// The STORED amounts of the line are NOT here and must not be: every calculation
+// round fetches the price from pricing again. Reading a stored amount and
+// trusting it would mean that a price that changed in the catalog stays frozen in
+// the cart forever.
 type SnapshotItem struct {
-	// ID satırın kimliğidir.
+	// ID is the identity of the line.
 	ID string `json:"id"`
-	// VariantID satırın gösterdiği ürün varyantıdır.
+	// VariantID is the product variant the line points at.
 	VariantID string `json:"variant_id"`
-	// Quantity satırdaki adettir.
+	// Quantity is the count on the line.
 	Quantity int64 `json:"quantity"`
 }
 
-// SnapshotShippingMethod bir kargo yönteminin hesaba giren alanlarıdır.
+// SnapshotShippingMethod is the set of fields of a shipping method that enter
+// the calculation.
 type SnapshotShippingMethod struct {
-	// ID yöntemin kimliğidir.
+	// ID is the identity of the method.
 	ID string `json:"id"`
-	// Amount kargo tutarıdır (minor unit).
+	// Amount is the shipping amount (minor unit).
 	Amount int64 `json:"amount"`
 }
 
-// VariantIDs satırların varyant kimliklerini TEKRARSIZ ve satır sırasında
-// döner.
+// VariantIDs returns the variant identities of the lines WITHOUT DUPLICATES and
+// in line order.
 //
-// Sıra korunur ki toplu link sorgusunun girdisi (dolayısıyla üretilen hata
-// mesajları) yeniden üretilebilir olsun; tekrarsızlık ise aynı varyanttan iki
-// satır bulunan bir sepette link sorgusunu gereksiz büyütmemek içindir.
+// The order is preserved so that the input of the bulk link query (and therefore
+// the error messages it produces) stays reproducible; the deduplication is there
+// so that a cart holding two lines of the same variant does not grow the link
+// query needlessly.
 func (s Snapshot) VariantIDs() []string {
 	seen := make(map[string]struct{}, len(s.Items))
 	out := make([]string, 0, len(s.Items))
@@ -85,22 +92,23 @@ func (s Snapshot) VariantIDs() []string {
 	return out
 }
 
-// decodeSnapshot sepet modülünden gelen gövdeyi çözer ve DOĞRULAR.
+// decodeSnapshot decodes the body coming from the cart module and VALIDATES it.
 //
-// Doğrulama, gövdenin sepet modülünden gelmesine rağmen yapılır: bu sınır
-// derleyicinin denetleyemediği tek sınırdır (ADR 0006'nın kabul edilen bedeli)
-// ve bozuk bir alan sessizce hesabın içine girerse hata, sepetin tutarında
-// günler sonra görünürdü. Bozuk gövde errors.Internal'dır — çağıranın
-// düzeltebileceği bir şey yoktur, sağlayıcı sözleşmeyi çiğnemiştir.
+// The validation is done even though the body comes from the cart module: this
+// boundary is the only one the compiler cannot check (the accepted price of
+// ADR 0006) and if a broken field silently entered the calculation, the fault
+// would show up in the cart's total days later. A broken body is an
+// errors.Internal — there is nothing the caller can fix, the provider has
+// violated the contract.
 func decodeSnapshot(cartID string, payload json.RawMessage) (Snapshot, error) {
 	var snap Snapshot
 	if len(payload) == 0 {
 		return Snapshot{}, errors.Internal(CodeSnapshotInvalid,
-			"sepet anlık görüntüsü boş geldi: %s", cartID)
+			"cart snapshot came back empty: %s", cartID)
 	}
 	if err := json.Unmarshal(payload, &snap); err != nil {
 		return Snapshot{}, errors.Wrap(err, errors.KindInternal, CodeSnapshotInvalid,
-			"sepet anlık görüntüsü çözülemedi: %s", cartID)
+			"cart snapshot could not be decoded: %s", cartID)
 	}
 	if err := snap.validate(cartID); err != nil {
 		return Snapshot{}, err
@@ -108,21 +116,22 @@ func decodeSnapshot(cartID string, payload json.RawMessage) (Snapshot, error) {
 	return snap, nil
 }
 
-// validate anlık görüntünün hesaba girebilecek durumda olduğunu doğrular.
+// validate verifies that the snapshot is in a state that can enter the
+// calculation.
 func (s Snapshot) validate(cartID string) error {
 	if s.ID != cartID {
 		return errors.Internal(CodeSnapshotInvalid,
-			"anlık görüntü başka bir sepete ait: istenen %s, gelen %q", cartID, s.ID)
+			"snapshot belongs to another cart: requested %s, received %q", cartID, s.ID)
 	}
 	if s.RegionID == "" {
-		return errors.Internal(CodeSnapshotInvalid, "sepetin bölgesi boş: %s", cartID)
+		return errors.Internal(CodeSnapshotInvalid, "cart region is empty: %s", cartID)
 	}
 	if s.CurrencyCode == "" {
-		return errors.Internal(CodeSnapshotInvalid, "sepetin para birimi boş: %s", cartID)
+		return errors.Internal(CodeSnapshotInvalid, "cart currency is empty: %s", cartID)
 	}
 	if s.Revision < 0 {
 		return errors.Internal(CodeSnapshotInvalid,
-			"sepetin şekil sayacı negatif: %s (%d)", cartID, s.Revision)
+			"the cart shape counter is negative: %s (%d)", cartID, s.Revision)
 	}
 
 	for i := range s.Items {
@@ -134,25 +143,26 @@ func (s Snapshot) validate(cartID string) error {
 		method := s.ShippingMethods[i]
 		if method.Amount < 0 || method.Amount > MaxAmount {
 			return errors.Internal(CodeSnapshotInvalid,
-				"kargo tutarı [0, %d] aralığında olmalı: %s (%q -> %d)",
+				"the shipping amount must be in the range [0, %d]: %s (%q -> %d)",
 				MaxAmount, cartID, method.ID, method.Amount)
 		}
 	}
 	return nil
 }
 
-// validate tek bir satırın hesaba girebilecek durumda olduğunu doğrular.
+// validate verifies that a single line is in a state that can enter the
+// calculation.
 func (i SnapshotItem) validate(cartID string) error {
 	if i.ID == "" {
-		return errors.Internal(CodeSnapshotInvalid, "sepette kimliksiz satır var: %s", cartID)
+		return errors.Internal(CodeSnapshotInvalid, "cart has a line without an identity: %s", cartID)
 	}
 	if i.VariantID == "" {
 		return errors.Internal(CodeSnapshotInvalid,
-			"satırın varyantı boş: %s (%q)", cartID, i.ID)
+			"line variant is empty: %s (%q)", cartID, i.ID)
 	}
 	if i.Quantity < MinQuantity || i.Quantity > MaxQuantity {
 		return errors.Internal(CodeSnapshotInvalid,
-			"satır adedi [%d, %d] aralığında olmalı: %s (%q -> %d)",
+			"the line quantity must be in the range [%d, %d]: %s (%q -> %d)",
 			MinQuantity, MaxQuantity, cartID, i.ID, i.Quantity)
 	}
 	return nil

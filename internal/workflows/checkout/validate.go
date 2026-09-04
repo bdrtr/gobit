@@ -7,47 +7,49 @@ import (
 	"github.com/bdrtr/gobit/internal/core/workflow"
 )
 
-// Tutar ve adet sınırları.
+// Amount and quantity limits.
 //
-// Sınırlar cart, order ve payment modüllerindekilerle bilinçli olarak
-// UYUMLUDUR; taraflar birbirini import etmediği için değerler burada
-// tekrarlanır (ADR 0001'in kabul edilen bedeli). Aynı olmaları şart değil,
-// YETERLİ olmaları şarttır: buradaki tavan modülünkinden büyük olsaydı, bu
-// paketin geçirdiği bir tutar modülde reddedilir ve hata ancak stok
-// ayrıldıktan sonra çıkardı.
+// The limits are deliberately CONSISTENT with the ones in the cart, order and
+// payment modules; because the sides do not import each other the values are
+// repeated here (the accepted price of ADR 0001). They do not have to be
+// identical, they have to be SUFFICIENT: were the ceiling here larger than the
+// module's, an amount this package let through would be rejected by the module and
+// the error would only surface after the stock had been reserved.
 //
-// Sınırlar keyfi değildir: satır ara toplamı birim fiyat × adettir ve bu çarpım
-// int64'e SIĞMALIDIR. MaxAmount × MaxQuantity = 10^12 × 10^6 = 10^18 <
-// 9.22 × 10^18 olduğu için taşma yapısal olarak imkânsızdır.
+// The limits are not arbitrary: a line subtotal is the unit price x the quantity
+// and that product MUST FIT into an int64. Because MaxAmount x MaxQuantity =
+// 10^12 x 10^6 = 10^18 < 9.22 x 10^18, an overflow is structurally impossible.
 const (
-	// MinQuantity bir satırın en küçük adedidir.
+	// MinQuantity is the smallest quantity of a line.
 	MinQuantity int64 = 1
-	// MaxQuantity bir satırın en büyük adedidir.
+	// MaxQuantity is the largest quantity of a line.
 	MaxQuantity int64 = 1_000_000
-	// MaxAmount izin verilen en büyük birim tutardır (minor unit).
+	// MaxAmount is the largest unit amount allowed (minor unit).
 	MaxAmount int64 = 1_000_000_000_000
-	// MaxTotal bir toplam alanının en büyük değeridir (minor unit).
+	// MaxTotal is the largest value of a total field (minor unit).
 	MaxTotal = MaxAmount * MaxQuantity
-	// maxIDLen dışarıdan gelen kimlikler için üst sınırdır; core/link, cart ve
-	// order modülleri de aynı sınırı uygular.
+	// maxIDLen is the upper bound for identifiers that come from the outside; the
+	// core/link, cart and order modules apply the same limit.
 	maxIDLen = 255
 )
 
-// MaxCartIDLen bu akışın kabul ettiği en uzun sepet kimliğidir.
+// MaxCartIDLen is the longest cart identifier this workflow accepts.
 //
-// Sınır idempotency anahtarından gelir: anahtar [IdempotencyKeyPrefix] ile
-// sepet kimliğinin birleşimidir ve motor onu MaxIdempotencyKeyLen baytla
-// sınırlar. Kimliği burada reddetmek, hiçbir yan etki uygulanmadan ve anlaşılır
-// bir mesajla dönmeyi sağlar; sınırın motorda yakalanması ise "idempotency
-// anahtarı çok uzun" gibi, çağıranın gönderdiği alanla ilgisi kurulamayan bir
-// hata üretirdi.
+// The limit comes from the idempotency key: the key is the concatenation of
+// [IdempotencyKeyPrefix] and the cart identifier, and the engine bounds it at
+// MaxIdempotencyKeyLen bytes. Rejecting the identifier here makes it possible to
+// return with no side effect applied and with an understandable message; letting
+// the limit be caught by the engine would instead produce an error such as "the
+// idempotency key is too long", one that cannot be related to the field the caller
+// sent.
 const MaxCartIDLen = workflow.MaxIdempotencyKeyLen - len(IdempotencyKeyPrefix)
 
-// requireID dışarıdan gelen bir kimliğin kullanılabilir olduğunu doğrular.
+// requireID verifies that an identifier coming from the outside is usable.
 //
-// Kimlik KIRPILMAZ, reddedilir: kırpma çağıranın gönderdiği kimlikle saklanan
-// kimliği ayırır ve fark ancak veri bozulduktan sonra görünür. Aynı sözleşme
-// core/link, cart ve order modüllerinde de geçerlidir.
+// The identifier is NOT TRIMMED, it is rejected: trimming separates the identifier
+// the caller sent from the one that is stored, and the difference only becomes
+// visible after the data has been corrupted. The same contract holds in the
+// core/link, cart and order modules.
 func requireID(label, value string, upper int) error {
 	if value == "" {
 		return errors.Invalid(CodeInvalidInput, "%s cannot be empty", label)
@@ -62,10 +64,10 @@ func requireID(label, value string, upper int) error {
 	return nil
 }
 
-// checkAmount bir tutarın izin verilen aralıkta olduğunu doğrular.
+// checkAmount verifies that an amount is within the allowed range.
 func checkAmount(label string, value, upper int64) error {
 	if value < 0 {
-		return errors.Internal(CodeAmountInvalid, "%s negatif olamaz: %d", label, value)
+		return errors.Internal(CodeAmountInvalid, "%s cannot be negative: %d", label, value)
 	}
 	if value > upper {
 		return errors.Internal(CodeAmountInvalid,
@@ -74,9 +76,10 @@ func checkAmount(label string, value, upper int64) error {
 	return nil
 }
 
-// mulAmount birim fiyatı adetle TAŞMADAN çarpar.
+// mulAmount multiplies a unit price by a quantity WITHOUT OVERFLOW.
 //
-// Çarpım yalnızca hesabın DOĞRULANMASI için yapılır; tutarı bu paket üretmez.
+// The product is computed only to VERIFY the arithmetic; this package does not
+// produce the amount.
 func mulAmount(unitPrice, quantity int64) (int64, error) {
 	if unitPrice < 0 || quantity < 0 {
 		return 0, errors.Internal(CodeAmountInvalid,
@@ -92,14 +95,14 @@ func mulAmount(unitPrice, quantity int64) (int64, error) {
 	return unitPrice * quantity, nil
 }
 
-// addAmount iki tutarı TAŞMADAN toplar.
+// addAmount adds two amounts WITHOUT OVERFLOW.
 func addAmount(a, b int64) (int64, error) {
 	if a < 0 || b < 0 {
-		return 0, errors.Internal(CodeAmountInvalid, "tutarlar negatif olamaz: %d + %d", a, b)
+		return 0, errors.Internal(CodeAmountInvalid, "the amounts cannot be negative: %d + %d", a, b)
 	}
 	if a > MaxTotal-b {
 		return 0, errors.Internal(CodeAmountInvalid,
-			"tutar toplamı sınırı aşıyor: %d + %d > %d", a, b, MaxTotal)
+			"the amount total exceeds the limit: %d + %d > %d", a, b, MaxTotal)
 	}
 	return a + b, nil
 }

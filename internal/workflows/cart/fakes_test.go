@@ -11,7 +11,7 @@ import (
 	"github.com/bdrtr/gobit/internal/core/query"
 )
 
-// Testlerde tekrarlanan kimlik ve kod sabitleri.
+// Identity and code constants repeated across the tests.
 const (
 	testCartID     = "cart_1"
 	testRegionID   = "reg_tr"
@@ -25,16 +25,17 @@ const (
 	testLineB      = "li_b"
 )
 
-// errUnexpected betiklenmemiş bir sahte çağrısının hatasıdır.
+// errUnexpected is the error of an unscripted fake call.
 //
-// Sahte, betiklenmemiş bir yüzeye dokunulduğunda SESSİZ KALMAZ: sıfır değer
-// dönseydi, "bu akış o modülü hiç çağırmamalı" iddiası test yeşilken sessizce
-// çürüyebilirdi.
+// The fake DOES NOT STAY SILENT when an unscripted surface is touched: had it
+// returned the zero value, the claim "this workflow must never call that
+// module" could rot silently while the test stayed green.
 func errUnexpected(what string) error {
-	return errors.Internal("test_unexpected_call", "beklenmeyen sahte çağrısı: %s", what)
+	return errors.Internal("test_unexpected_call", "unexpected fake call: %s", what)
 }
 
-// stubCarts [Carts] arayüzünün testlerde betiklenebilen uygulamasıdır.
+// stubCarts is the implementation of the [Carts] interface that the tests can
+// script.
 type stubCarts struct {
 	openCartFn  func(ctx context.Context, regionID, currencyCode, customerID, email string, metadata json.RawMessage) (string, error)
 	snapshotFn  func(ctx context.Context, cartID string) (json.RawMessage, error)
@@ -43,22 +44,22 @@ type stubCarts struct {
 	removeFn    func(ctx context.Context, cartID, lineItemID string) error
 	setTotalsFn func(ctx context.Context, cartID string, totals json.RawMessage) error
 
-	// written SetCartTotalsJSON'a geçen çözülmüş toplamları sırayla tutar.
+	// written holds, in order, the decoded totals passed to SetCartTotalsJSON.
 	written []Totals
-	// snapshotCalls anlık görüntünün kaç kez okunduğunu sayar; yeniden deneme
-	// iddiası bununla kanıtlanır.
+	// snapshotCalls counts how many times the snapshot was read; the retry
+	// claim is proven with it.
 	snapshotCalls int
-	// removed ve quantities yazma yolunun hangisinin seçildiğini kaydeder.
+	// removed and quantities record which of the write paths was chosen.
 	removed    []string
 	quantities map[string]int64
 }
 
-// newStubCarts boş bir sahte sepet servisi üretir.
+// newStubCarts produces an empty fake cart service.
 func newStubCarts() *stubCarts {
 	return &stubCarts{quantities: map[string]int64{}}
 }
 
-// OpenCart betiklenen sepet açma davranışını uygular.
+// OpenCart applies the scripted cart-opening behavior.
 func (s *stubCarts) OpenCart(
 	ctx context.Context,
 	regionID, currencyCode, customerID, email string,
@@ -70,7 +71,7 @@ func (s *stubCarts) OpenCart(
 	return s.openCartFn(ctx, regionID, currencyCode, customerID, email, metadata)
 }
 
-// CartSnapshotJSON betiklenen anlık görüntüyü döner ve çağrıyı sayar.
+// CartSnapshotJSON returns the scripted snapshot and counts the call.
 func (s *stubCarts) CartSnapshotJSON(ctx context.Context, cartID string) (json.RawMessage, error) {
 	s.snapshotCalls++
 	if s.snapshotFn == nil {
@@ -79,7 +80,7 @@ func (s *stubCarts) CartSnapshotJSON(ctx context.Context, cartID string) (json.R
 	return s.snapshotFn(ctx, cartID)
 }
 
-// AddCartLineItem betiklenen satır ekleme davranışını uygular.
+// AddCartLineItem applies the scripted line-item adding behavior.
 func (s *stubCarts) AddCartLineItem(
 	ctx context.Context,
 	cartID, variantID, title string,
@@ -92,7 +93,7 @@ func (s *stubCarts) AddCartLineItem(
 	return s.addLineFn(ctx, cartID, variantID, title, quantity, unitPrice, metadata)
 }
 
-// SetCartLineItemQuantity betiklenen adet yazma davranışını uygular.
+// SetCartLineItemQuantity applies the scripted quantity-writing behavior.
 func (s *stubCarts) SetCartLineItemQuantity(ctx context.Context, cartID, lineItemID string, quantity int64) error {
 	s.quantities[lineItemID] = quantity
 	if s.setQtyFn == nil {
@@ -101,7 +102,7 @@ func (s *stubCarts) SetCartLineItemQuantity(ctx context.Context, cartID, lineIte
 	return s.setQtyFn(ctx, cartID, lineItemID, quantity)
 }
 
-// RemoveLineItem betiklenen satır kaldırma davranışını uygular.
+// RemoveLineItem applies the scripted line-item removing behavior.
 func (s *stubCarts) RemoveLineItem(ctx context.Context, cartID, lineItemID string) error {
 	s.removed = append(s.removed, lineItemID)
 	if s.removeFn == nil {
@@ -110,7 +111,8 @@ func (s *stubCarts) RemoveLineItem(ctx context.Context, cartID, lineItemID strin
 	return s.removeFn(ctx, cartID, lineItemID)
 }
 
-// SetCartTotalsJSON gelen gövdeyi çözer, kaydeder ve betiklenen sonucu döner.
+// SetCartTotalsJSON decodes the incoming body, records it and returns the
+// scripted result.
 func (s *stubCarts) SetCartTotalsJSON(ctx context.Context, cartID string, totals json.RawMessage) error {
 	var decoded Totals
 	if err := json.Unmarshal(totals, &decoded); err != nil {
@@ -124,25 +126,26 @@ func (s *stubCarts) SetCartTotalsJSON(ctx context.Context, cartID string, totals
 	return s.setTotalsFn(ctx, cartID, totals)
 }
 
-// stubPrices [Prices] arayüzünün sahte uygulamasıdır.
+// stubPrices is the fake implementation of the [Prices] interface.
 type stubPrices struct {
-	// amounts fiyat kümesi -> birim tutar eşlemesidir.
+	// amounts is a price set -> unit amount mapping.
 	amounts map[string]int64
-	// fn verilirse amounts yerine bu kullanılır.
+	// fn is used instead of amounts when it is given.
 	fn func(ctx context.Context, priceSetID, currencyCode string, quantity int32, attrs map[string]string) (int64, error)
-	// seen TEKİL fiyat çağrılarının bağlamını sırayla tutar.
+	// seen holds, in order, the context of the SINGLE price calls.
 	seen []priceCall
-	// requests TOPLU fiyat çağrılarının çözülmüş gövdelerini sırayla tutar;
-	// hesap turunun tek tur attığı iddiası bununla kanıtlanır.
+	// requests holds, in order, the decoded bodies of the BATCH price calls;
+	// the claim that the pricing pass makes a single round trip is proven with
+	// it.
 	requests []priceRequest
-	// batchFn verilirse toplu yanıt tamamen bu işlevce üretilir; sözleşme dışı
-	// yanıt senaryoları için vardır.
+	// batchFn, when given, produces the batch response entirely; it is there
+	// for out-of-contract response scenarios.
 	batchFn func(request priceRequest) (priceResponse, error)
-	// batchErr verilirse toplu çağrı bu hatayla düşer.
+	// batchErr, when given, makes the batch call fail with this error.
 	batchErr error
 }
 
-// priceCall tek bir fiyat çağrısının kaydıdır.
+// priceCall is the record of a single price call.
 type priceCall struct {
 	priceSetID   string
 	currencyCode string
@@ -150,7 +153,7 @@ type priceCall struct {
 	attributes   map[string]string
 }
 
-// CalculateAmount betiklenen birim fiyatı döner.
+// CalculateAmount returns the scripted unit price.
 func (s *stubPrices) CalculateAmount(
 	ctx context.Context,
 	priceSetID, currencyCode string,
@@ -169,17 +172,18 @@ func (s *stubPrices) CalculateAmount(
 	amount, ok := s.amounts[priceSetID]
 	if !ok {
 		return 0, errors.NotFound("price_not_calculable",
-			"%s için %s para biriminde fiyat yok", priceSetID, currencyCode)
+			"no price for %s in the %s currency", priceSetID, currencyCode)
 	}
 	return amount, nil
 }
 
-// CalculateAmountsJSON toplu isteği çözer, kaydeder ve şemaya uygun bir yanıt
-// döner.
+// CalculateAmountsJSON decodes the batch request, records it and returns a
+// schema-conforming response.
 //
-// Sahte, gerçek pricing modülünün YANIT DEĞİŞMEZLERİNİ taklit eder: istekteki
-// her kalem için AYNI SIRADA bir kayıt ve fiyatı olmayan kalem için hata değil
-// bayrak. Aksi hâlde testler, üretimde asla oluşmayacak bir gövdeyle geçerdi.
+// The fake imitates the RESPONSE INVARIANTS of the real pricing module: one
+// record IN THE SAME ORDER for every item in the request, and a flag rather
+// than an error for an item that has no price. Otherwise the tests would pass
+// with a body that never comes about in production.
 func (s *stubPrices) CalculateAmountsJSON(_ context.Context, request json.RawMessage) (json.RawMessage, error) {
 	var req priceRequest
 	if err := json.Unmarshal(request, &req); err != nil {
@@ -210,7 +214,7 @@ func (s *stubPrices) CalculateAmountsJSON(_ context.Context, request json.RawMes
 	return json.Marshal(resp)
 }
 
-// stubRegions [Regions] arayüzünün sahte uygulamasıdır.
+// stubRegions is the fake implementation of the [Regions] interface.
 type stubRegions struct {
 	regionByCountry map[string]string
 	currency        string
@@ -222,7 +226,7 @@ type stubRegions struct {
 	taxErr          error
 }
 
-// newStubRegions %20 otomatik vergili varsayılan bir bölge sahtesi üretir.
+// newStubRegions produces a default region fake with 20% automatic tax.
 func newStubRegions() *stubRegions {
 	return &stubRegions{
 		regionByCountry: map[string]string{"TR": testRegionID},
@@ -233,19 +237,19 @@ func newStubRegions() *stubRegions {
 	}
 }
 
-// RegionIDForCountry ülke kodundan bölge kimliğini döner.
+// RegionIDForCountry returns the region ID for the country code.
 func (s *stubRegions) RegionIDForCountry(_ context.Context, countryCode string) (string, error) {
 	if s.regionErr != nil {
 		return "", s.regionErr
 	}
 	id, ok := s.regionByCountry[countryCode]
 	if !ok {
-		return "", errors.NotFound("region_not_found", "%q ülkesinin bölgesi yok", countryCode)
+		return "", errors.NotFound("region_not_found", "country %q has no region", countryCode)
 	}
 	return id, nil
 }
 
-// RegionCurrency bölgenin para birimini ve ondalık basamağını döner.
+// RegionCurrency returns the region's currency and decimal digits.
 func (s *stubRegions) RegionCurrency(_ context.Context, _ string) (code string, decimalDigits int32, err error) {
 	if s.currencyErr != nil {
 		return "", 0, s.currencyErr
@@ -253,7 +257,7 @@ func (s *stubRegions) RegionCurrency(_ context.Context, _ string) (code string, 
 	return s.currency, s.decimalDigits, nil
 }
 
-// RegionTax bölgenin vergi oranını ve otomatiklik bayrağını döner.
+// RegionTax returns the region's tax rate and its automatic flag.
 func (s *stubRegions) RegionTax(_ context.Context, _ string) (rateBps int32, automatic bool, err error) {
 	if s.taxErr != nil {
 		return 0, false, s.taxErr
@@ -261,33 +265,34 @@ func (s *stubRegions) RegionTax(_ context.Context, _ string) (rateBps int32, aut
 	return s.rateBps, s.automatic, nil
 }
 
-// stubCustomers [Customers] arayüzünün sahte uygulamasıdır.
+// stubCustomers is the fake implementation of the [Customers] interface.
 type stubCustomers struct {
 	emails map[string]string
 	calls  int
 }
 
-// CustomerEmail müşterinin e-postasını döner; müşteri yoksa NotFound.
+// CustomerEmail returns the customer's e-mail; NotFound when there is no such
+// customer.
 func (s *stubCustomers) CustomerEmail(_ context.Context, customerID string) (string, error) {
 	s.calls++
 	email, ok := s.emails[customerID]
 	if !ok {
-		return "", errors.NotFound("customer_not_found", "müşteri yok: %s", customerID)
+		return "", errors.NotFound("customer_not_found", "no such customer: %s", customerID)
 	}
 	return email, nil
 }
 
-// stubLinks [Links] arayüzünün sahte uygulamasıdır.
+// stubLinks is the fake implementation of the [Links] interface.
 type stubLinks struct {
-	// links varyant -> fiyat kümesi kimlikleri eşlemesidir.
+	// links is a variant -> price set IDs mapping.
 	links map[string][]string
 	err   error
-	// batches her çağrıda istenen kaynak kimlikleri tutar; toplu sorgu
-	// iddiası bununla kanıtlanır.
+	// batches holds the source IDs asked for on every call; the batched-query
+	// claim is proven with it.
 	batches [][]string
 }
 
-// ListMany verilen kaynak kimliklerin bağlarını döner.
+// ListMany returns the links of the given source IDs.
 func (s *stubLinks) ListMany(_ context.Context, _ string, fromIDs []string) (map[string][]string, error) {
 	s.batches = append(s.batches, append([]string(nil), fromIDs...))
 	if s.err != nil {
@@ -303,32 +308,34 @@ func (s *stubLinks) ListMany(_ context.Context, _ string, fromIDs []string) (map
 	return out, nil
 }
 
-// stubCatalog [Catalog] arayüzünün sahte uygulamasıdır.
+// stubCatalog is the fake implementation of the [Catalog] interface.
 //
-// İki entity'ye cevap verir: varyantlar (başlık) ve bölgeler (ülke kodları).
-// İkisi tek sahtede durur çünkü gerçekte de tek bir yüzeydir ("core.query");
-// ayırmak, akışın iki ayrı bağımlılığı varmış izlenimi verirdi.
+// It answers two entities: variants (title) and regions (country codes). The
+// two sit in a single fake because in reality they are a single surface too
+// ("core.query"); splitting them would give the impression that the workflow
+// has two separate dependencies.
 type stubCatalog struct {
-	// titles varyant -> başlık eşlemesidir.
+	// titles is a variant -> title mapping.
 	titles map[string]string
-	// countries bölge -> ülke kodları eşlemesidir.
+	// countries is a region -> country codes mapping.
 	countries map[string][]string
-	// scopedOut, kanal süzgeci TAŞIYAN bir sorguda kayıt DÖNDÜRÜLMEYECEK
-	// varyantlardır.
+	// scopedOut holds the variants for which NO RECORD IS RETURNED on a query
+	// that CARRIES the channel filter.
 	//
-	// Sahte, satış kanalı kuralını yeniden UYGULAMAZ — o kural product
-	// modülünün SQL'indedir ve burada tekrarlanması, testin gerçek yüzeyle
-	// ayrışabilen ikinci bir tanımı sınaması olurdu. Bunun yerine sahte,
-	// sağlayıcının VERECEĞİ CEVABI betikler: "bu varyant bu isteğin
-	// kapsamında değil" cevabı, Query katmanında boş sonuç demektir.
+	// The fake DOES NOT re-IMPLEMENT the sales channel rule — that rule lives
+	// in the product module's SQL, and repeating it here would make the test
+	// exercise a second definition that can drift away from the real surface.
+	// Instead the fake scripts the ANSWER THE PROVIDER WOULD GIVE: the answer
+	// "this variant is not within the scope of this request" means an empty
+	// result at the Query layer.
 	scopedOut map[string]bool
-	// regionErr verilirse bölge sorgusu bu hatayla düşer.
+	// regionErr, when given, makes the region query fail with this error.
 	regionErr error
 	err       error
 	specs     []query.GraphSpec
 }
 
-// Graph varyant ya da bölge kayıtlarını döner.
+// Graph returns variant or region records.
 func (s *stubCatalog) Graph(_ context.Context, spec query.GraphSpec) ([]query.Record, error) {
 	s.specs = append(s.specs, spec)
 	if spec.Entity == EntityRegion {
@@ -340,7 +347,7 @@ func (s *stubCatalog) Graph(_ context.Context, spec query.GraphSpec) ([]query.Re
 
 	id, ok := spec.Filters[query.IDField].(string)
 	if !ok {
-		return nil, errors.Invalid("test_bad_filter", "kimlik filtresi dizge değil")
+		return nil, errors.Invalid("test_bad_filter", "the ID filter is not a string")
 	}
 	if _, scoped := spec.Filters[FilterSalesChannelIDs]; scoped && s.scopedOut[id] {
 		return []query.Record{}, nil
@@ -352,7 +359,7 @@ func (s *stubCatalog) Graph(_ context.Context, spec query.GraphSpec) ([]query.Re
 	return []query.Record{{query.IDField: id, FieldTitle: title}}, nil
 }
 
-// regionRecords bölge kaydını ülke alt kayıtlarıyla döner.
+// regionRecords returns the region record along with its country sub-records.
 func (s *stubCatalog) regionRecords(spec query.GraphSpec) ([]query.Record, error) {
 	if s.regionErr != nil {
 		return nil, s.regionErr
@@ -360,7 +367,7 @@ func (s *stubCatalog) regionRecords(spec query.GraphSpec) ([]query.Record, error
 
 	id, ok := spec.Filters[query.IDField].(string)
 	if !ok {
-		return nil, errors.Invalid("test_bad_filter", "kimlik filtresi dizge değil")
+		return nil, errors.Invalid("test_bad_filter", "the ID filter is not a string")
 	}
 	codes, ok := s.countries[id]
 	if !ok {
@@ -374,7 +381,7 @@ func (s *stubCatalog) regionRecords(spec query.GraphSpec) ([]query.Record, error
 	return []query.Record{{query.IDField: id, FieldCountries: records}}, nil
 }
 
-// harness bir testin sahte bağımlılıklarını ve kurulmuş akışlarını taşır.
+// harness carries a test's fake dependencies and its constructed workflows.
 type harness struct {
 	carts     *stubCarts
 	prices    *stubPrices
@@ -387,25 +394,26 @@ type harness struct {
 	wf        *Workflows
 }
 
-// newHarness promotion ve tax yüzeyleri KAYITSIZ bir düzenek kurar.
+// newHarness builds a harness with the promotion and tax surfaces UNREGISTERED.
 //
-// Varsayılanın degrade yol olması bilinçlidir: Faz 5'te yazılmış testlerin
-// tamamı bu düzenekle koşar ve hiçbiri değişmez, yani devralmanın var olan
-// davranışı bozmadığı her koşuda yeniden kanıtlanır. İki modüllü düzenek için
-// bkz. [newModuleHarness].
+// The default being the degraded path is deliberate: every one of the tests
+// written in Phase 5 runs on this harness and none of them changes, that is,
+// the takeover not breaking the existing behavior is proven anew on every run.
+// For the two-module harness see [newModuleHarness].
 func newHarness(t *testing.T) *harness {
 	t.Helper()
 	return newHarnessWith(t, nil, nil)
 }
 
-// newModuleHarness promotion ve tax yüzeyleri KAYITLI bir düzenek kurar.
+// newModuleHarness builds a harness with the promotion and tax surfaces
+// REGISTERED.
 func newModuleHarness(t *testing.T) *harness {
 	t.Helper()
 	return newHarnessWith(t, &stubDiscounts{perLine: map[string]int64{}}, newStubTaxes())
 }
 
-// newHarnessWith verilen opsiyonel yüzeylerle bir düzenek kurar; nil verilen
-// yüzey kayıtsız sayılır.
+// newHarnessWith builds a harness with the given optional surfaces; a surface
+// given as nil counts as unregistered.
 func newHarnessWith(t *testing.T, discounts *stubDiscounts, taxes *stubTaxes) *harness {
 	t.Helper()
 
@@ -413,7 +421,7 @@ func newHarnessWith(t *testing.T, discounts *stubDiscounts, taxes *stubTaxes) *h
 		carts:     newStubCarts(),
 		prices:    &stubPrices{amounts: map[string]int64{testPriceSetA: 1000, testPriceSetB: 250}},
 		regions:   newStubRegions(),
-		customers: &stubCustomers{emails: map[string]string{testCustomerID: "kayitli@example.com"}},
+		customers: &stubCustomers{emails: map[string]string{testCustomerID: "registered@example.com"}},
 		discounts: discounts,
 		taxes:     taxes,
 		links: &stubLinks{links: map[string][]string{
@@ -422,8 +430,8 @@ func newHarnessWith(t *testing.T, discounts *stubDiscounts, taxes *stubTaxes) *h
 		}},
 		catalog: &stubCatalog{
 			titles: map[string]string{
-				testVariantA: "Kırmızı Tişört / M",
-				testVariantB: "Mavi Çorap",
+				testVariantA: "Red T-Shirt / M",
+				testVariantB: "Blue Socks",
 			},
 			countries: map[string][]string{testRegionID: {"TR"}},
 		},
@@ -437,9 +445,10 @@ func newHarnessWith(t *testing.T, discounts *stubDiscounts, taxes *stubTaxes) *h
 		Links:     h.links,
 		Catalog:   h.catalog,
 	}
-	// nil arayüz DEĞERİ ile nil arayüz TİPİ farkı: h.discounts nil bir
-	// *stubDiscounts ise Deps.Discounts alanına konduğunda arayüz artık nil
-	// OLMAZ ve degradasyon yolu hiç çalışmazdı.
+	// The difference between a nil interface VALUE and a nil interface TYPE:
+	// if h.discounts is a nil *stubDiscounts, once it is put into the
+	// Deps.Discounts field the interface is NO LONGER nil and the degradation
+	// path would never run.
 	if discounts != nil {
 		deps.Discounts = discounts
 	}
@@ -453,7 +462,7 @@ func newHarnessWith(t *testing.T, discounts *stubDiscounts, taxes *stubTaxes) *h
 	return h
 }
 
-// snapshotOf verilen alanlarla bir sepet anlık görüntüsü üretir.
+// snapshotOf produces a cart snapshot with the given fields.
 func snapshotOf(revision int64, items []SnapshotItem, methods []SnapshotShippingMethod) Snapshot {
 	return Snapshot{
 		ID:              testCartID,
@@ -465,8 +474,8 @@ func snapshotOf(revision int64, items []SnapshotItem, methods []SnapshotShipping
 	}
 }
 
-// serveSnapshot sahte sepeti, verilen görüntüleri SIRAYLA dönecek biçimde
-// betikler; son görüntü tükendikten sonra yine sonuncusu döner.
+// serveSnapshot scripts the fake cart so that it returns the given snapshots
+// IN ORDER; once the last snapshot is used up it keeps returning that last one.
 func serveSnapshot(carts *stubCarts, snaps ...Snapshot) {
 	carts.snapshotFn = func(_ context.Context, cartID string) (json.RawMessage, error) {
 		index := carts.snapshotCalls - 1
@@ -479,28 +488,29 @@ func serveSnapshot(carts *stubCarts, snaps ...Snapshot) {
 	}
 }
 
-// stubDiscounts [Discounts] arayüzünün sahte uygulamasıdır.
+// stubDiscounts is the fake implementation of the [Discounts] interface.
 //
-// Varsayılan davranışı "hiç promosyon yok"tur: her satır için sıfır indirim
-// döner. Sahte, gerçek promotion modülünün YANIT DEĞİŞMEZLERİNİ taklit eder
-// (istekteki her satır için aynı sırada bir kayıt, tutarlı toplamlar); aksi
-// hâlde testler, üretimde asla oluşmayacak bir gövdeyle geçerdi.
+// Its default behavior is "no promotion at all": it returns a zero discount
+// for every line. The fake imitates the RESPONSE INVARIANTS of the real
+// promotion module (one record in the same order for every line in the
+// request, consistent totals); otherwise the tests would pass with a body that
+// never comes about in production.
 type stubDiscounts struct {
-	// perLine satır kimliği -> indirim eşlemesidir.
+	// perLine is a line ID -> discount mapping.
 	perLine map[string]int64
-	// fn verilirse gövde tamamen bu işlevce üretilir; bozuk yanıt senaryoları
-	// için vardır.
+	// fn, when given, produces the body entirely; it is there for malformed
+	// response scenarios.
 	fn func(request discountRequest) (discountResponse, error)
-	// err verilirse çağrı bu hatayla düşer.
+	// err, when given, makes the call fail with this error.
 	err error
-	// requests yapılan çağrıların çözülmüş gövdelerini sırayla tutar.
+	// requests holds, in order, the decoded bodies of the calls that were made.
 	requests []discountRequest
-	// calls çağrı sayısıdır.
+	// calls is the number of calls.
 	calls int
 }
 
-// ComputeDiscountsJSON isteği çözer, betiklenen indirimi uygular ve şemaya
-// uygun bir yanıt döner.
+// ComputeDiscountsJSON decodes the request, applies the scripted discount and
+// returns a schema-conforming response.
 func (s *stubDiscounts) ComputeDiscountsJSON(_ context.Context, request json.RawMessage) (json.RawMessage, error) {
 	s.calls++
 
@@ -537,33 +547,33 @@ func (s *stubDiscounts) ComputeDiscountsJSON(_ context.Context, request json.Raw
 	return json.Marshal(resp)
 }
 
-// stubTaxes [Taxes] arayüzünün sahte uygulamasıdır.
+// stubTaxes is the fake implementation of the [Taxes] interface.
 //
-// Varsayılan davranışı, ülkeye bakmaksızın tek bir baz puan oranını KALEM
-// BAŞINA ve AŞAĞI yuvarlayarak uygulamaktır; gerçek tax modülünün yerel
-// sağlayıcısı da aynı aritmetiği kullanır.
+// Its default behavior is to apply a single basis-point rate PER ITEM and
+// rounding DOWN, without looking at the country; the local provider of the
+// real tax module uses the same arithmetic as well.
 type stubTaxes struct {
-	// rateBps uygulanacak orandır (baz puan).
+	// rateBps is the rate to apply (basis points).
 	rateBps int32
-	// regionFound ülkenin vergi bölgesinin bulunup bulunmadığını bildirir.
+	// regionFound reports whether the country's tax region was found.
 	regionFound bool
-	// fn verilirse gövde tamamen bu işlevce üretilir.
+	// fn, when given, produces the body entirely.
 	fn func(request taxRequest) (taxResponse, error)
-	// err verilirse çağrı bu hatayla düşer.
+	// err, when given, makes the call fail with this error.
 	err error
-	// requests yapılan çağrıların çözülmüş gövdelerini sırayla tutar.
+	// requests holds, in order, the decoded bodies of the calls that were made.
 	requests []taxRequest
-	// calls çağrı sayısıdır.
+	// calls is the number of calls.
 	calls int
 }
 
-// newStubTaxes %20 oranlı, bölgesi bulunmuş bir vergi sahtesi üretir.
+// newStubTaxes produces a tax fake with a 20% rate whose region was found.
 func newStubTaxes() *stubTaxes {
 	return &stubTaxes{rateBps: 2000, regionFound: true}
 }
 
-// CalculateTaxJSON isteği çözer, betiklenen oranı uygular ve şemaya uygun bir
-// yanıt döner.
+// CalculateTaxJSON decodes the request, applies the scripted rate and returns
+// a schema-conforming response.
 func (s *stubTaxes) CalculateTaxJSON(_ context.Context, request json.RawMessage) (json.RawMessage, error) {
 	s.calls++
 
