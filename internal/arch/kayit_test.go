@@ -35,13 +35,13 @@ const (
 	// ad hiçbir yere çözülmez. Tam path yalnızca burada, adın tanımlandığı
 	// yerde bir kez verilir.
 	cekirdekModulPaketi = modulePath + "/internal/core/module"
-	// akisDizini modüller arası akışların yaşadığı ağaçtır (ADR 0006). Ne
+	// workflowsDirName modüller arası akışların yaşadığı ağaçtır (ADR 0006). Ne
 	// çekirdektir ne de modül: depguard kuralları internal/modules içindir,
 	// modül kayıt denetimi de internal/modules altını gezer — yani bu ağacı
 	// bugüne kadar HİÇBİR kablolama kuralı kapsamıyordu.
-	akisDizini = "internal/workflows"
+	workflowsDirName = "internal/workflows"
 	// panelDizini yönetim panelinin yaşadığı ağaçtır (ADR 0011) ve
-	// [akisDizini] ile AYNI boşluğu paylaşır: ne çekirdek ne modül olduğu için
+	// [workflowsDirName] ile AYNI boşluğu paylaşır: ne çekirdek ne modül olduğu için
 	// hiçbir kablolama kuralı onu kendiliğinden kapsamaz.
 	//
 	// Ağaç bu turda açıldı ve boşluğu AÇILDIĞI ANDA kapatıldı: kaydı olmayan
@@ -522,10 +522,10 @@ func TestKayitliHerModulE2EZemindeKurulu(t *testing.T) {
 func TestHerAkisBilesimKokundeKurulu(t *testing.T) {
 	t.Parallel()
 
-	akislar := containerdanKurulanAkisPaketleri(t, akisDizini)
+	akislar := containerdanKurulanAkisPaketleri(t, workflowsDirName)
 	require.NotEmpty(t, akislar,
 		"%s altında container'dan kurulan hiçbir paket bulunamadı; denetim KÖR kalmış "+
-			"olmalı (yapıcılar artık *container.Container almıyor mu?)", akisDizini)
+			"olmalı (yapıcılar artık *container.Container almıyor mu?)", workflowsDirName)
 
 	konvansiyonYasiyor := false
 	for _, yapicilar := range akislar {
@@ -540,7 +540,7 @@ func TestHerAkisBilesimKokundeKurulu(t *testing.T) {
 			"kökünün kurduğu ama denetimin göremediği bir paket sessizce kapsam dışı kalır.",
 		kurulumIsaretiAdi)
 
-	kurulan := bilesimKokundeKurulanAkislar(t, akislar, akisDizini)
+	kurulan := bilesimKokundeKurulanAkislar(t, akislar, workflowsDirName)
 	bayatGoroutineMuafiyetleriniDenetle(t, akislar, kurulan)
 
 	canli := map[string]token.Position{}

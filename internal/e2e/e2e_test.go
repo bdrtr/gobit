@@ -38,7 +38,7 @@
 //
 // ADR 0006, internal/workflows altındaki HİÇBİR paketin internal/modules'ü
 // import etmesine izin vermez ve internal/arch'taki
-// TestWorkflowlarModulleriImportEtmez bunu dosya sisteminde denetler — test
+// TestWorkflowsDoNotImportModules bunu dosya sisteminde denetler — test
 // dosyaları dahil. Bu paketin işi ise tam tersidir: gerçek modülleri kurmak,
 // gerçek migration'ları uygulamak ve akışları o zeminin üstünde koşturmak.
 // İkisi aynı ağaçta yaşayamaz, bu yüzden paket internal/e2e altındadır ve

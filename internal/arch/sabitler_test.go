@@ -312,18 +312,18 @@ func TestEklentilerModulleriImportEtmez(t *testing.T) {
 
 	// Ağaç yoksa denetim ATLANMAZ, DÜŞER: bu testin tek girdisi eklenti
 	// kaynağıdır ve atlanan bir koşu, yasağın hâlâ zorlandığı izlenimini verir.
-	root := filepath.Join(repoRoot, eklentilerYolu)
+	root := filepath.Join(repoRoot, pluginsPath)
 	require.DirExists(t, root,
 		"%s ağacı YOK; eklentilerin modül import etmediğini gezecek bir dosya kalmaz.\n"+
 			"depguard kuralları bu ağacı KAPSAMIYOR, yani tarama sustuğunda kuralı "+
-			"zorlayan başka hiçbir şey kalmaz.", eklentilerYolu)
+			"zorlayan başka hiçbir şey kalmaz.", pluginsPath)
 
 	dosyalar := goFiles(t, root)
 	require.NotEmpty(t, dosyalar,
 		"%s altında hiç Go dosyası YOK; dizin duruyor ama gezilecek bir şey bırakmamış. "+
-			"İhlal ancak bir dosyanın import listesinde bulunabilir.", eklentilerYolu)
+			"İhlal ancak bir dosyanın import listesinde bulunabilir.", pluginsPath)
 
-	prefix := modulImportOneki(t)
+	prefix := modulePrefix(t)
 
 	for _, file := range dosyalar {
 		parsed, err := parser.ParseFile(token.NewFileSet(), file, nil, parser.ImportsOnly)
@@ -425,7 +425,7 @@ var simetrisizConfigSabitleri = map[string]string{
 	"DefaultDatabaseURL": `Eşi bir Go paketi değil, deploy/docker-compose.yml ` +
 		`ve .env.example'dır. Zincir zaten kapalı: sabit ile envDefault etiketini ` +
 		`config paketinin TestDefaultTagsMatchConstants'ı, etiketi de ` +
-		`TestOrtamOrnegiConfigVarsayilanlariylaUyusuyor bağlar. Buraya ikinci bir ` +
+		`TestTheEnvExampleAgreesWithTheConfigDefaults bağlar. Buraya ikinci bir ` +
 		`kopya yazmak iddiayı güçlendirmez, yalnızca bir yerde daha tutar.`,
 
 	"DefaultRedisURL": `Gerekçe DefaultDatabaseURL ile aynıdır: eşi compose ` +

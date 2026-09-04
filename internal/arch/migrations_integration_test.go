@@ -23,7 +23,7 @@ const postgresImage = "postgres:16-alpine"
 // TestMigrationsCanReallyBeRolledBack runs every module's migrations up -> down
 // -> up on a REAL PostgreSQL.
 //
-// Why a separate gate: [TestMigrationlarGeriAlinabilir] only checks that the
+// Why a separate gate: [TestMigrationsCanBeRolledBack] only checks that the
 // .down.sql file EXISTS. In Phase 5 a bug went through exactly that hole — the
 // region module's seed rollback stood syntactically but blew up with a foreign key
 // violation when run, leaving golang-migrate's version ledger "dirty". Because

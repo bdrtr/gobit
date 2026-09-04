@@ -118,7 +118,7 @@ Sabitlenme `1.0.0` ile olur.
 
   - `openapi` paketinde bir godoc tanımından KOPMUŞTU. `alan` tipinin godoc'u
     zaten İngilizce yazılmıştı ("field is what schema generation needs…"), yani
-    `TestGodocBicimi`'nin "godoc, bağlandığı tanımın ADIYLA başlar" kuralını tip
+    `TestGodocFormat`'nin "godoc, bağlandığı tanımın ADIYLA başlar" kuralını tip
     Türkçe adını taşıdığı sürece sağlayamıyordu. Tip `field` oldu.
   - `middleware_test.go`'nun "ascii dışı" vakası `kimlik-ışık` değeriyle
     kuruluydu. Düz çeviri değeri saf ASCII'ye çevirip testi SESSİZCE anlamsız
@@ -1487,7 +1487,7 @@ adımını YAZANLARI ilgilendiriyor.
   yazıyordu, oysa `.golangci.yml` bugün 15 modülün her biri için 14 yasak
   taşıyor (sayıldı: 15 kural, 210 `deny` girdisi, hiçbiri eksik değil). Sayı
   düzeltildi ve listenin elle tutulduğu, ama unutulması hâlinde kuralın
-  denetimsiz KALMADIĞI yazıldı — `TestModullerBirbiriniImportEtmez` modül
+  denetimsiz KALMADIĞI yazıldı — `TestModulesDoNotImportEachOther` modül
   ağacını gezer, `.golangci.yml`'den haberi yoktur.
 
 - README, müşteri oturumunu "Faz 8" diye anıyordu; aynı belgenin "Faz durumu"

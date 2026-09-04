@@ -13,7 +13,7 @@
 // İhtiyaç duyduğu her yüzey burada DAR bir arayüz olarak tanımlıdır ([Carts],
 // [Prices], [Regions], [Customers], [Discounts], [Taxes], [Links], [Catalog])
 // ve somut servis container'dan ADLA çözülür (bkz. [FromContainer]). Kural
-// internal/arch'taki TestWorkflowlarModulleriImportEtmez ile denetlenir.
+// internal/arch'taki TestWorkflowsDoNotImportModules ile denetlenir.
 //
 // Sekiz yüzeyin altısı ZORUNLUDUR; [Discounts] ve [Taxes] opsiyoneldir ve
 // kayıtlı olmadıklarında hesap degrade bir yolda sürer (bkz. "İndirim" ve

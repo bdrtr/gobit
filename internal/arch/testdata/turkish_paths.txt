@@ -16,7 +16,6 @@ internal/arch/hatayolu_test.go
 internal/arch/kayit_test.go
 internal/arch/sabitler_test.go
 internal/arch/tuketici_test.go
-internal/arch/yapilandirma_test.go
 internal/e2e/coklu_depo_test.go
 internal/e2e/dosya_test.go
 internal/e2e/indirim_test.go

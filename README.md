@@ -85,7 +85,7 @@ Tüm ayarlar ortam değişkeninden okunur (12-factor). Varsayılanlar
 alanın `.env.example`'da yazdığını, oradaki değerin de `envDefault` ile aynı
 olduğunu doğrular. Ters yön de denetlenir — belgede duran ama ne uygulamanın, ne
 compose'un, ne de bir eklentinin okuduğu bir değişken bırakılamaz
-(`internal/arch/yapilandirma_test.go`). Bilinçli tek ayrışma `LOG_FORMAT`'tır:
+(`internal/arch/configuration_test.go`). Bilinçli tek ayrışma `LOG_FORMAT`'tır:
 kodun varsayılanı `json`, bu dosyanınki `text`; gerekçesi testte yazılıdır ve
 ayrışma ortadan kalkarsa test kaydın **silinmesini** ister.
 
@@ -163,7 +163,7 @@ derleme öncesi denetlenir:
 Yeni modül eklerken `.golangci.yml` içindeki `depguard.rules` listesini de
 güncelleyin. Liste **elle** tutulur ama güncellenmesi unutulursa kural
 denetimsiz kalmaz: `internal/arch` içindeki
-`TestModullerBirbiriniImportEtmez` modül ağacını gezip gerçek import
+`TestModulesDoNotImportEachOther` modül ağacını gezip gerçek import
 grafiğine bakar ve o listeden haberi yoktur.
 
 ### Mimari testler: yapıyı gezerler, liste tutmazlar
@@ -180,9 +180,9 @@ için uygular — yarın eklenen vaka sessizce dışarıda kalır.
 | `TestInteropYuzeylerininTuketicisiVar` | Kaydedilen her `*.interop` çözülüyor | Ölü sözleşme; `Host.AddModule` hiç çağrılmıyordu |
 | `TestOlayKonularininAbonesiVar` | Yayımlanan her konunun abonesi var | `order.placed` uzun süre abonesizdi ve olay hiçbir şey yapmıyordu |
 | `TestLinkTanimlariGeziliyor` | Bildirilen her bağ **okunuyor** | Satış kanalı bağı yazılıyor, hiç okunmuyordu. Bu test ilk koşuşunda **dört ölü bağ** buldu (bkz. CHANGELOG) |
-| `TestOrtamOrnegiConfigVarsayilanlariylaUyusuyor` | Her `env` etiketi `.env.example`'da ve varsayılanı aynı | `.env.example` "aşağıdaki **iki** sınır" diyordu, yedi taneydi |
-| `TestOrtamOrnegindeSahipsizDegiskenYok` | `.env.example`'da karşılığı olmayan değişken yok | Silinen ayarın belgede kalması, operatöre çalışmayan bir kol vaat eder |
-| `TestBelgelerdekiEklentiAdlariGercek` | Belgelerdeki eklenti adları kayıtlı adlar | README, eklentiyi dizin adıyla (tireli kayıt adı yerine) çağıran bir komut örneği veriyordu; kopyalayan kurulum açılışta "bilinmeyen eklenti" ile duruyordu |
+| `TestTheEnvExampleAgreesWithTheConfigDefaults` | Her `env` etiketi `.env.example`'da ve varsayılanı aynı | `.env.example` "aşağıdaki **iki** sınır" diyordu, yedi taneydi |
+| `TestNoVariableInTheEnvExampleIsOrphaned` | `.env.example`'da karşılığı olmayan değişken yok | Silinen ayarın belgede kalması, operatöre çalışmayan bir kol vaat eder |
+| `TestThePluginNamesInTheDocsAreReal` | Belgelerdeki eklenti adları kayıtlı adlar | README, eklentiyi dizin adıyla (tireli kayıt adı yerine) çağıran bir komut örneği veriyordu; kopyalayan kurulum açılışta "bilinmeyen eklenti" ile duruyordu |
 | `TestHataYanitlariTekYerdenYazilir` | Hata gövdesi yalnızca `corehttp.WriteError`'dan | GraphQL sunucusu kuralı tekrar etmeye çalışıp ayrıştı; DSN+parola istemciye ulaştı, loglanmadı |
 | `TestGraphQLSinirVarsayilanlariConfigleUyusuyor` | `graph.Options`'ın her `Max*` alanının çekirdekte karşılığı var | Beş sertleştirme sınırının ortam değişkeni yoktu; operatör onları ayarlayamıyordu |
 | `TestVariantReadsGoThroughTheChannelDecision` | Query'den `variant` okuyan her fonksiyon satış kanalı kapsamı hakkında **görünür bir karar** verir | Kapsam okuma yüzeyinde uygulanıyor, sepete ekleme yolunda uygulanmıyordu: B kanalının anahtarıyla A kanalının varyantı satın alınabiliyordu |
@@ -1662,7 +1662,7 @@ Güncel sürüm: **v0.8.0**. Değişiklikler için
   markdown atıfları çözülüyor (`TestGodocBaglariCozuluyor`,
   `TestBelgelerdekiAtiflarCozuluyor`), satır numarasıyla atıf yasak
   (`TestBelgelerdeSatirNumarasiAtfiYok`) ve para değişmezinin kör noktası
-  kapandı (`TestParaTamSayidir`). **Mağaza API'sinde kırıcı değişiklikler var.**
+  kapandı (`TestMoneyIsAnInteger`). **Mağaza API'sinde kırıcı değişiklikler var.**
 - **v0.6.0** — çerçeve bir YÜZ ve bir KULAK kazandı. Yönetim paneli dördüncü bir
   ağaç olarak geldi ([ADR 0011](docs/adr/0011-yonetim-paneli-dorduncu-agac.md)),
   önce okudu, sonra yazmaya başladı: modül ilkel-tipli bir `<modül>.admin`

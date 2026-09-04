@@ -25,7 +25,7 @@
 // İhtiyaç duyduğu her yüzey burada DAR bir arayüz olarak tanımlıdır ([Carts],
 // [Inventory], [Fulfillment], [Orders], [Payments], [Links], [Catalog]) ve
 // somut servis container'dan ADLA çözülür (bkz. [FromContainer]). Kural
-// internal/arch'taki TestWorkflowlarModulleriImportEtmez ile denetlenir.
+// internal/arch'taki TestWorkflowsDoNotImportModules ile denetlenir.
 //
 // Arayüzlerin imzaları yalnızca ilkel ve stdlib tipleri kullanır; sebebi Go'nun
 // yapısal uyum kuralıdır (ADR 0001). Bileşik veri (sepetin anlık şekli,

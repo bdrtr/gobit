@@ -1,13 +1,13 @@
-// Package arch_test mimari değişmezleri OTOMATİK olarak denetler.
+// Package arch_test checks the architectural invariants AUTOMATICALLY.
 //
-// Buradaki testler üretim kodu içermez; depoyu tarayıp plan Bölüm 2'deki
-// Mimari Prensipleri ve Bölüm 8'deki konvansiyonları zorlar.
+// The tests here contain no production code; they scan the repository and enforce
+// the Architectural Principles of plan Section 2 and the conventions of Section 8.
 //
-// Neden burada: bu ihlaller daha önce her fazda inceleme bulgusu olarak
-// çıktı ve elle düzeltildi. Bir kural inceleme turunda yakalanıyorsa, testte
-// yakalanabilir demektir; testte yakalanınca da bir daha hiç yazılmaz.
-// golangci-lint'in yakalayamadığı iki sınıf özellikle burada: unexported
-// godoc biçimi ve SQL dosyalarındaki cross-module foreign key.
+// Why here: these violations used to come up as review findings in every phase and
+// were fixed by hand. If a rule is caught in a review round it can be caught in a
+// test; and once it is caught in a test it is never written again. Two classes
+// golangci-lint cannot catch are here in particular: unexported godoc format and
+// cross-module foreign keys in SQL files.
 package arch_test
 
 import (
@@ -28,29 +28,29 @@ const (
 	modulePath = "github.com/bdrtr/gobit"
 	repoRoot   = "../.."
 	modulesDir = "internal/modules"
-	// gomodYoluAdi deponun modül yolunu BİLDİREN dosyadır; [modulImportOneki]
-	// elle tekrarlanan [modulePath] sabitini oradan doğrular.
-	gomodYoluAdi = "go.mod"
-	// migrationsDirName modül migration'larının yaşadığı alt dizindir.
+	// goModFileName is the file DECLARING the repository's module path;
+	// [modulePrefix] validates the hand-repeated [modulePath] constant against it.
+	goModFileName = "go.mod"
+	// migrationsDirName is the subdirectory the module migrations live in.
 	//
-	// Sabit tek yerde durur çünkü ÜÇ denetim (cross-module FK, up/down çifti ve
-	// entegrasyon koşusu) aynı dizin adını arar: ad kaydığında üçü de dosya
-	// bulamaz ve üçü de hiçbir şey bulamadan geçerdi. Adın hâlâ tuttuğu, her
-	// üçünde de bulunan dosya SAYISIYLA doğrulanır.
+	// The constant sits in one place because THREE checks (cross-module FK, the
+	// up/down pair and the integration run) look for the same directory name: when the
+	// name drifts, all three find no file and all three pass having found nothing.
+	// That the name still holds is validated by the file COUNT found in each of them.
 	migrationsDirName = "migrations"
 )
 
-// moduleNames depodaki commerce modüllerinin adlarını döner.
+// moduleNames returns the names of the commerce modules in the repository.
 //
-// Boş sonuç KABUL EDİLMEZ: modülleri gezen denetimlerin hepsi girdi olarak bu
-// listeyi alır ve boş bir listeyle koşan bir gezinti hiçbir ihlal bulamadan
-// geçer. Hata burada verilir, çağıranlarda değil — tek yerde durunca hiçbir
-// çağıran onu eklemeyi unutamaz.
+// An empty result is NOT ACCEPTED: every check walking the modules takes this list
+// as its input, and a walk running on an empty list passes without finding any
+// violation. The error is given here rather than in the callers — sitting in one
+// place, no caller can forget to add it.
 func moduleNames(t *testing.T) []string {
 	t.Helper()
 	entries, err := os.ReadDir(filepath.Join(repoRoot, modulesDir))
 	if err != nil {
-		t.Fatalf("modüller okunamadı: %v", err)
+		t.Fatalf("the modules could not be read: %v", err)
 	}
 	var names []string
 	for _, e := range entries {
@@ -60,53 +60,54 @@ func moduleNames(t *testing.T) []string {
 	}
 
 	require.NotEmpty(t, names,
-		"%s altında hiç modül dizini YOK; modülleri gezen her denetim (import "+
-			"izolasyonu, cross-module FK, migration çifti, para tam sayısı, HTTP yüzeyi) "+
-			"boş bir küme üzerinde koşar ve hiçbir şey bulamadan geçer.\n"+
-			"Modüller başka bir ağaca taşındıysa modulesDir de taşınmalıdır; taşınmazsa "+
-			"denetim kalkmış olmaz, yalnızca KÖR kalır — ve kör bir denetim, olmayan bir "+
-			"denetimden daha kötüdür.", modulesDir)
+		"there is NO module directory under %s; every check walking the modules (import "+
+			"isolation, cross-module FK, the migration pair, the money integer, the HTTP "+
+			"surface) runs on an empty set and passes having found nothing.\n"+
+			"If the modules moved to another tree, modulesDir has to move too; if it does "+
+			"not, the check is not removed, it only goes BLIND — and a blind check is worse "+
+			"than no check at all.", modulesDir)
 
 	return names
 }
 
-// modulImportOneki modül paketlerinin import yolu önekini döner ve önekin
-// dayandığı [modulePath] sabitinin go.mod'daki modül yoluyla hâlâ uyuştuğunu
-// doğrular.
+// modulePrefix returns the import path prefix of the module packages and verifies
+// that the [modulePath] constant it rests on still agrees with the module path in
+// go.mod.
 //
-// Önek elle tekrarlanmış bir sabittir ve üç import değişmezi de (modül,
-// workflow, eklenti) TAMAMEN ona bağlıdır: karşılaştırma "bu import bizim
-// modül yolumuzla başlıyor mu" sorusudur. go.mod'daki yol değiştiği gün önek
-// hiçbir import'la eşleşmez, üç denetim de hiçbir ihlal bulamaz ve ÜÇÜ BİRDEN
-// sessizce yeşil kalır — kural kalkmış olmaz, yalnızca denetimi biter.
+// The prefix is a hand-repeated constant and all three import invariants (module,
+// workflow, plugin) depend on it ENTIRELY: the comparison is the question "does this
+// import start with our module path". On the day the path in go.mod changes the
+// prefix matches no import at all, all three checks find no violation and ALL THREE
+// stay silently green — the rule is not removed, only its check is over.
 //
-// Ne GARANTİ ETMEZ: önekin doğru olması, taramanın doğru dosyaları gezdiğini
-// göstermez; dosya kümesinin boş kalmadığını çağıranlar ayrıca doğrular.
-func modulImportOneki(t *testing.T) string {
+// What it does NOT GUARANTEE: the prefix being right does not show that the scan
+// walks the right files; that the file set does not stay empty is verified
+// separately by the callers.
+func modulePrefix(t *testing.T) string {
 	t.Helper()
 
-	ham, err := os.ReadFile(filepath.Join(repoRoot, gomodYoluAdi))
-	require.NoError(t, err, "%s okunamadı", gomodYoluAdi)
+	ham, err := os.ReadFile(filepath.Join(repoRoot, goModFileName))
+	require.NoError(t, err, "%s could not be read", goModFileName)
 
-	bildirilen := ""
-	for _, satir := range strings.Split(string(ham), "\n") {
-		if kalan, bulundu := strings.CutPrefix(strings.TrimSpace(satir), "module "); bulundu {
-			bildirilen = strings.TrimSpace(kalan)
+	declared := ""
+	for _, line := range strings.Split(string(ham), "\n") {
+		if kalan, bulundu := strings.CutPrefix(strings.TrimSpace(line), "module "); bulundu {
+			declared = strings.TrimSpace(kalan)
 			break
 		}
 	}
 
-	require.Equal(t, bildirilen, modulePath,
-		"modulePath sabiti (%q) %s'un bildirdiği modül yolundan (%q) AYRIŞMIŞ.\n"+
-			"Import taramaları ihlali bu önekle eşleşerek bulur; önek tutmadığında "+
-			"hiçbir import ihlal sayılmaz ve modül/workflow/eklenti izolasyon "+
-			"denetimlerinin ÜÇÜ BİRDEN boşlukta yeşil kalır. Sabit go.mod ile birlikte "+
-			"güncellenmelidir.", modulePath, gomodYoluAdi, bildirilen)
+	require.Equal(t, declared, modulePath,
+		"the modulePath constant (%q) has DRIFTED from the module path %s declares (%q).\n"+
+			"The import scans find a violation by matching this prefix; when the prefix does "+
+			"not hold, no import counts as a violation and ALL THREE of the "+
+			"module/workflow/plugin isolation checks stay green in a vacuum. The constant "+
+			"has to be updated together with go.mod.", modulePath, goModFileName, declared)
 
 	return modulePath + "/" + modulesDir + "/"
 }
 
-// goFiles verilen kök altındaki tüm .go dosyalarını döner.
+// goFiles returns all the .go files under the given root.
 func goFiles(t *testing.T, root string) []string {
 	t.Helper()
 	var out []string
@@ -120,26 +121,26 @@ func goFiles(t *testing.T, root string) []string {
 		return nil
 	})
 	if err != nil {
-		t.Fatalf("%s taranamadı: %v", root, err)
+		t.Fatalf("%s could not be scanned: %v", root, err)
 	}
 	return out
 }
 
-// TestModullerBirbiriniImportEtmez Prensip 2.1/2.4 ve ADR 0001'i zorlar.
+// TestModulesDoNotImportEachOther enforces Principle 2.1/2.4 and ADR 0001.
 //
-// depguard aynı kuralı golangci-lint tarafında da uyguluyor; bu test ikinci
-// savunma hattıdır ve .golangci.yml'deki kural listesi bir modül eklenirken
-// güncellenmeyi UNUTULURSA yine de yakalar.
-func TestModullerBirbiriniImportEtmez(t *testing.T) {
-	moduller := moduleNames(t)
-	prefix := modulImportOneki(t)
+// depguard applies the same rule on the golangci-lint side; this test is the second
+// line of defense and catches it anyway if the rule list in .golangci.yml is
+// FORGOTTEN while a module is being added.
+func TestModulesDoNotImportEachOther(t *testing.T) {
+	modules := moduleNames(t)
+	prefix := modulePrefix(t)
 
-	for _, mod := range moduller {
+	for _, mod := range modules {
 		root := filepath.Join(repoRoot, modulesDir, mod)
 		for _, file := range goFiles(t, root) {
 			parsed, err := parser.ParseFile(token.NewFileSet(), file, nil, parser.ImportsOnly)
 			if err != nil {
-				t.Fatalf("%s ayrıştırılamadı: %v", file, err)
+				t.Fatalf("%s could not be parsed: %v", file, err)
 			}
 			for _, imp := range parsed.Imports {
 				path := strings.Trim(imp.Path.Value, `"`)
@@ -148,88 +149,90 @@ func TestModullerBirbiriniImportEtmez(t *testing.T) {
 				}
 				other := strings.SplitN(strings.TrimPrefix(path, prefix), "/", 2)[0]
 				if other != mod {
-					t.Errorf("%s: %q modülü %q modülünü import ediyor (Prensip 2.4 / ADR 0001).\n"+
-						"Erişim, tüketicinin KENDİ paketinde tanımladığı dar arayüz ve container'dan "+
-						"adla çözüm üzerinden olmalı.", file, mod, other)
+					t.Errorf("%s: module %q imports module %q (Principle 2.4 / ADR 0001).\n"+
+						"Access has to go through the narrow interface the consumer defines in ITS "+
+						"OWN package and through name resolution from the container.", file, mod, other)
 				}
 			}
 		}
 	}
 }
 
-// TestWorkflowlarModulleriImportEtmez ADR 0006'yı zorlar.
+// TestWorkflowsDoNotImportModules enforces ADR 0006.
 //
-// internal/workflows çekirdek değildir (Prensip 2.4 onu bağlamaz) ve modül de
-// değildir (depguard kuralları internal/modules içindir), yani hiçbir mevcut
-// kural onu kısıtlamaz. Ama modülleri doğrudan import etseydi tüm modülleri
-// tanıyan tek bir düğüme dönüşür, gerçek veritabanı olmadan test edilemez ve
-// bir modülü ayrı servise çıkarmak workflow'ları derleme zamanında kırardı.
+// internal/workflows is not the core (Principle 2.4 does not bind it) and is not a
+// module either (the depguard rules are for internal/modules), that is, no existing
+// rule restricts it. But had it imported the modules directly it would turn into a
+// single node knowing every module, could not be tested without a real database,
+// and taking one module out into a separate service would break the workflows at
+// compile time.
 //
-// Erişim, workflow'un KENDİ paketinde tanımladığı dar arayüz ve container'dan
-// adla çözüm üzerinden olmalıdır.
-func TestWorkflowlarModulleriImportEtmez(t *testing.T) {
-	// Ağaç yoksa denetim ATLANMAZ, DÜŞER: atlanan bir test koşu çıktısında
-	// geçmiş gibi durur ve ADR 0006 o andan sonra denetimsiz kalır. Yol
-	// [akisDizini] üzerinden alınır ki ağaç taşındığında iki denetim birden
-	// (kablolama ve import yasağı) aynı sabitten haberdar olsun.
-	root := filepath.Join(repoRoot, akisDizini)
+// Access has to go through the narrow interface the workflow defines in ITS OWN
+// package and through name resolution from the container.
+func TestWorkflowsDoNotImportModules(t *testing.T) {
+	// If the tree is missing the check is NOT SKIPPED, it FAILS: a skipped test looks
+	// like a passing one in the run output and ADR 0006 is left unchecked from that
+	// moment on. The path is taken through [workflowsDirName] so that when the tree
+	// moves, two checks at once (the wiring and the import ban) hear about it from the
+	// same constant.
+	root := filepath.Join(repoRoot, workflowsDirName)
 	require.DirExists(t, root,
-		"%s ağacı YOK; ADR 0006'nın import yasağını gezecek bir dosya kalmaz ve denetim "+
-			"boşlukta yeşil kalır. Ağaç taşındıysa akisDizini de taşınmalıdır.", akisDizini)
+		"the %s tree is MISSING; no file is left for ADR 0006's import ban to walk and the "+
+			"check stays green in a vacuum. If the tree moved, workflowsDirName has to move too.", workflowsDirName)
 
-	dosyalar := goFiles(t, root)
-	require.NotEmpty(t, dosyalar,
-		"%s altında hiç Go dosyası YOK; dizin duruyor ama gezilecek bir şey bırakmamış.\n"+
-			"Denetim ihlali ancak bir dosyanın import listesinde bulabilir; boş bir dosya "+
-			"kümesi, kuralın kalktığını değil KÖR kaldığını gösterir.", akisDizini)
+	files := goFiles(t, root)
+	require.NotEmpty(t, files,
+		"there is NO Go file under %s; the directory stands but has left nothing to walk.\n"+
+			"The check can only find a violation in a file's import list; an empty file set "+
+			"shows not that the rule was removed but that it went BLIND.", workflowsDirName)
 
-	prefix := modulImportOneki(t)
-	for _, file := range dosyalar {
+	prefix := modulePrefix(t)
+	for _, file := range files {
 		parsed, err := parser.ParseFile(token.NewFileSet(), file, nil, parser.ImportsOnly)
 		if err != nil {
-			t.Fatalf("%s ayrıştırılamadı: %v", file, err)
+			t.Fatalf("%s could not be parsed: %v", file, err)
 		}
 		for _, imp := range parsed.Imports {
 			path := strings.Trim(imp.Path.Value, `"`)
 			if strings.HasPrefix(path, prefix) {
-				t.Errorf("%s: workflow %q modülünü import ediyor (ADR 0006).\n"+
-					"Workflow, ihtiyaç duyduğu DAR yüzeyi kendi paketinde tanımlamalı ve "+
-					"somut servisi container'dan ADLA çözmelidir.",
+				t.Errorf("%s: the workflow imports module %q (ADR 0006).\n"+
+					"A workflow has to define the NARROW surface it needs in its own package and "+
+					"resolve the concrete service from the container BY NAME.",
 					file, strings.TrimPrefix(path, prefix))
 			}
 		}
 	}
 }
 
-// createTableRe ve referencesRe migration dosyalarındaki tablo bildirimlerini
-// ve foreign key hedeflerini yakalar.
+// createTableRe and referencesRe catch the table declarations and the foreign key
+// targets in the migration files.
 var (
 	createTableRe = regexp.MustCompile(`(?is)CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?"?([a-z_][a-z0-9_]*)"?`)
 	referencesRe  = regexp.MustCompile(`(?is)REFERENCES\s+"?([a-z_][a-z0-9_]*)"?`)
-	// sqlYorumRe satır ve blok yorumlarını yakalar. Yorumlar taramadan ÖNCE
-	// silinir: "-- başka modülün tablosuna REFERENCES verilmez" gibi bir açıklama
-	// aksi hâlde ihlal sanılırdı.
-	sqlSatirYorumRe = regexp.MustCompile(`--[^\n]*`)
-	sqlBlokYorumRe  = regexp.MustCompile(`(?s)/\*.*?\*/`)
+	// sqlCommentRe catches line and block comments. The comments are stripped BEFORE
+	// the scan: an explanation like "-- no REFERENCES to another module's table" would
+	// otherwise be taken for a violation.
+	sqlLineCommentRe = regexp.MustCompile(`--[^\n]*`)
+	sqlBlokYorumRe   = regexp.MustCompile(`(?s)/\*.*?\*/`)
 )
 
-// sqlYorumlariSil SQL gövdesinden yorumları çıkarır.
-func sqlYorumlariSil(body string) string {
+// stripSQLComments removes the comments from an SQL body.
+func stripSQLComments(body string) string {
 	body = sqlBlokYorumRe.ReplaceAllString(body, " ")
-	return sqlSatirYorumRe.ReplaceAllString(body, " ")
+	return sqlLineCommentRe.ReplaceAllString(body, " ")
 }
 
-// TestCrossModuleForeignKeyYok Prensip 2.2'yi zorlar.
+// TestThereIsNoCrossModuleForeignKey enforces Principle 2.2.
 //
-// Bir modülün migration'ı yalnızca KENDİ oluşturduğu tablolara foreign key
-// verebilir. Başka bir modülün tablosuna REFERENCES vermek, modülü ayrı bir
-// servise çıkarmayı imkânsız kılar ve ilişkinin Module Links yerine
-// veritabanı kısıtıyla kurulması demektir.
-func TestCrossModuleForeignKeyYok(t *testing.T) {
-	// Üç sayaç, gezintinin ÜÇ ayrı halkasını ayrı ayrı kanıtlar: dosyaların
-	// bulunduğunu, tablo sahipliğinin okunabildiğini ve karşılaştırılacak bir
-	// foreign key bulunduğunu. Tek bir sayaç, kopan halkayı gizlerdi.
-	var okunanDosya, sahiplenilenTablo, gorulenBaglanti int
+// A module's migration may only give a foreign key to the tables IT CREATED itself.
+// Giving a REFERENCES to another module's table makes taking the module out into a
+// separate service impossible, and means the relation is formed with a database
+// constraint instead of Module Links.
+func TestThereIsNoCrossModuleForeignKey(t *testing.T) {
+	// Three counters prove THREE separate links of the walk separately: that the files
+	// were found, that table ownership could be read, and that a foreign key to compare
+	// was found. A single counter would hide the link that broke.
+	var filesRead, tablesOwned, linksSeen int
 
 	for _, mod := range moduleNames(t) {
 		migDir := filepath.Join(repoRoot, modulesDir, mod, migrationsDirName)
@@ -239,127 +242,129 @@ func TestCrossModuleForeignKeyYok(t *testing.T) {
 
 		sqls, err := filepath.Glob(filepath.Join(migDir, "*.sql"))
 		if err != nil {
-			t.Fatalf("%s taranamadı: %v", migDir, err)
+			t.Fatalf("%s could not be scanned: %v", migDir, err)
 		}
-		okunanDosya += len(sqls)
+		filesRead += len(sqls)
 
-		// Önce modülün SAHİP olduğu tabloları topla.
+		// First collect the tables the module OWNS.
 		owned := map[string]bool{}
 		var bodies []string
 		for _, f := range sqls {
 			raw, readErr := os.ReadFile(f)
 			if readErr != nil {
-				t.Fatalf("%s okunamadı: %v", f, readErr)
+				t.Fatalf("%s could not be read: %v", f, readErr)
 			}
-			body := sqlYorumlariSil(string(raw))
+			body := stripSQLComments(string(raw))
 			bodies = append(bodies, body)
 			for _, m := range createTableRe.FindAllStringSubmatch(body, -1) {
 				owned[strings.ToLower(m[1])] = true
-				sahiplenilenTablo++
+				tablesOwned++
 			}
 		}
 
 		for i, body := range bodies {
 			for _, m := range referencesRe.FindAllStringSubmatch(body, -1) {
 				target := strings.ToLower(m[1])
-				gorulenBaglanti++
+				linksSeen++
 				if !owned[target] {
-					t.Errorf("%s: %q modülü kendi sahibi OLMADIĞI %q tablosuna REFERENCES veriyor "+
-						"(Prensip 2.2: cross-module FK yasak; ilişki Module Links ile kurulur).",
+					t.Errorf("%s: module %q gives a REFERENCES to table %q which it does NOT own "+
+						"(Principle 2.2: a cross-module FK is forbidden; the relation is formed with Module Links).",
 						sqls[i], mod, target)
 				}
 			}
 		}
 	}
 
-	require.Positive(t, okunanDosya,
-		"hiçbir modülde SQL dosyası bulunamadı; denetim KÖR kalmış olmalı — migration'lar "+
-			"%q dışında bir dizinde ya da .sql dışında bir uzantıda tutuluyor olabilir. "+
-			"Dosya bulamayan bir tarama her ihlali onaylar.", migrationsDirName)
-	// Bu üçlünün ORTASI diğer ikisinden farklı iş görür ve farkı yazmak gerekir:
-	// sahiplik kümesi boşaldığında denetim SUSMAZ, tersine her REFERENCES'ı ihlal
-	// sanıp bir yanlış suçlama yığını üretir. Satırın değeri o yığının SEBEBİNİ
-	// adıyla söylemesidir — sebebi görünmeyen bir yanlış suçlama yığını, insanları
-	// denetimi susturmaya ikna eder.
-	require.Positive(t, sahiplenilenTablo,
-		"taranan SQL'lerde hiç CREATE TABLE bulunamadı; sahiplik okuması KÖR kalmış olmalı "+
-			"(createTableRe bugünkü DDL biçimini artık tanımıyor olabilir).\n"+
-			"Yukarıdaki \"kendi sahibi olmadığı tabloya REFERENCES veriyor\" bulgularının "+
-			"hepsi bu yüzden çıkmış olabilir: hiçbir tablo SAHİPLENİLMEDİĞİNDE her bağ "+
-			"cross-module görünür.")
-	require.Positive(t, gorulenBaglanti,
-		"taranan SQL'lerde hiç REFERENCES bulunamadı; foreign key okuması KÖR kalmış olmalı "+
-			"(referencesRe eşleşmiyor ya da ilişkiler artık ALTER TABLE ... ADD CONSTRAINT "+
+	require.Positive(t, filesRead,
+		"no SQL file was found in any module; the check must have gone BLIND — the "+
+			"migrations may be kept in a directory other than %q or with an extension other than .sql. "+
+			"A scan that finds no file approves every violation.", migrationsDirName)
+	// The MIDDLE one of these three does a different job from the other two and the
+	// difference has to be written down: when the ownership set empties out the check
+	// does NOT FALL SILENT, on the contrary it takes every REFERENCES for a violation
+	// and produces a pile of false accusations. The value of the line is that it names
+	// the REASON for that pile — a pile of false accusations whose reason is not
+	// visible talks people into silencing the check.
+	require.Positive(t, tablesOwned,
+		"no CREATE TABLE was found in the scanned SQL; the ownership read must have gone BLIND "+
+			"(createTableRe may no longer recognize today's DDL form).\n"+
+			"All the \"gives a REFERENCES to a table it does not own\" findings above may "+
+			"have come out for this reason: when NO table is OWNED, every link looks "+
+			"cross-module.")
+	require.Positive(t, linksSeen,
+		"no REFERENCES was found in the scanned SQL; the foreign key read must have gone BLIND "+
+			"(referencesRe does not match, or the relations are now formed with ALTER TABLE ... ADD CONSTRAINT "+
 			"ile kuruluyor olabilir).\n"+
-			"Depo gerçekten tüm foreign key'lerini bıraktıysa bu denetimin kapsamı da "+
-			"yeniden yazılmalıdır; sessizce yeşil kalması, yasağın hâlâ zorlandığı "+
+			"If the repository really did drop all its foreign keys, the scope of this check "+
+			"has to be rewritten as well; staying silently green would be a claim that the ban "+
 			"izlenimini verir.")
 }
 
-// TestMigrationlarGeriAlinabilir plan Bölüm 8'deki up/down şartını zorlar.
-func TestMigrationlarGeriAlinabilir(t *testing.T) {
+// TestMigrationsCanBeRolledBack enforces the up/down requirement of plan Section 8.
+func TestMigrationsCanBeRolledBack(t *testing.T) {
 	denetlenen := 0
 
 	for _, mod := range moduleNames(t) {
 		migDir := filepath.Join(repoRoot, modulesDir, mod, migrationsDirName)
 		ups, err := filepath.Glob(filepath.Join(migDir, "*.up.sql"))
 		if err != nil {
-			t.Fatalf("%s taranamadı: %v", migDir, err)
+			t.Fatalf("%s could not be scanned: %v", migDir, err)
 		}
 		denetlenen += len(ups)
 		for _, up := range ups {
 			down := strings.TrimSuffix(up, ".up.sql") + ".down.sql"
 			if _, statErr := os.Stat(down); statErr != nil {
-				t.Errorf("%s: down çifti yok (%s). Plan Bölüm 8 migration'ların geri "+
-					"alınabilir olmasını şart koşuyor.", up, filepath.Base(down))
+				t.Errorf("%s: no down pair (%s). Plan Section 8 requires migrations to be "+
+					"reversible.", up, filepath.Base(down))
 			}
 		}
 	}
 
-	// Glob eşleşme bulamadığında HATA DÖNMEZ, boş liste döner: dizin adı ya da
-	// dosya adlandırması kaydığında bu test hiçbir çift aramadan geçerdi.
+	// When Glob finds no match it does NOT RETURN AN ERROR, it returns an empty list:
+	// when the directory name or the file naming drifts, this test would pass without
+	// looking for a single pair.
 	require.Positive(t, denetlenen,
-		"hiçbir modülde *.up.sql bulunamadı; denetim KÖR kalmış olmalı — migration'lar "+
-			"%q dizini dışına taşınmış ya da adlandırma \".up.sql\" kalıbından çıkmış "+
-			"olabilir.\nDown çifti aranmayan bir migration, geri alınamadığını ancak "+
-			"üretimde söyler.", migrationsDirName)
+		"no *.up.sql was found in any module; the check must have gone BLIND — the "+
+			"migrations may have been moved outside the %q directory or the naming may have "+
+			"left the \".up.sql\" pattern.\nA migration whose down pair is never looked for "+
+			"says it cannot be rolled back only in production.", migrationsDirName)
 }
 
-// paraSozcukleri bir alan adının para tuttuğunu düşündüren sözcüklerdir.
+// moneyWords are the words suggesting that a field name holds money.
 //
-// Ad, camelCase/snake_case parçalarına AYRILARAK denenir; baştan bağlı bir
-// kalıp kullanılmaz. Gerekçe ölçülmüş bir kör noktadır: önceki kalıp
-// "^(amount|price|…)" biçimindeydi ve "UnitPrice", "NetAmount",
-// "OriginalPrice" gibi ÖN EKLİ adlarla eşleşmiyordu — yani o adlara konan
-// float bir alan denetimden sessizce geçerdi.
+// The name is tried SPLIT into its camelCase/snake_case parts; no pattern anchored
+// at the start is used. The reason is a measured blind spot: the previous pattern
+// was of the form "^(amount|price|…)" and did not match PREFIXED names such as
+// "UnitPrice", "NetAmount", "OriginalPrice" — that is, a float field on those names
+// would pass the check silently.
 //
-// Sözcük SINIRI aranır, alt dize değil: "Discountable" (bool) bir para alanı
-// değildir ve "discount" alt dizesi yüzünden yakalanmamalıdır.
-var paraSozcukleri = map[string]bool{
+// A word BOUNDARY is looked for, not a substring: "Discountable" (a bool) is not a
+// money field and must not be caught because of the "discount" substring.
+var moneyWords = map[string]bool{
 	"amount": true, "price": true, "total": true, "subtotal": true,
 	"cost": true, "fee": true, "discount": true, "tax": true, "shipping": true,
 }
 
-// paraAdiMi bir alan adının para tuttuğunu düşündürüp düşündürmediğini söyler.
-func paraAdiMi(ad string) bool {
-	for _, sozcuk := range adParcalari(ad) {
-		if paraSozcukleri[sozcuk] {
+// isMoneyName says whether a field name suggests that it holds money.
+func isMoneyName(ad string) bool {
+	for _, sozcuk := range nameParts(ad) {
+		if moneyWords[sozcuk] {
 			return true
 		}
 	}
 	return false
 }
 
-// adParcalari bir Go alan adını küçük harfli sözcüklerine ayırır.
+// nameParts splits a Go field name into its lower-cased words.
 //
-// Hem camelCase ("UnitPrice" -> unit, price) hem snake_case ("unit_price")
-// ele alınır; ardışık büyük harfler ("URLTotal") tek parça sayılmaz, çünkü
-// kısaltmayı bölmek "u", "r", "l" gibi anlamsız parçalar üretirdi.
-func adParcalari(ad string) []string {
+// Both camelCase ("UnitPrice" -> unit, price) and snake_case ("unit_price") are
+// handled; consecutive capitals ("URLTotal") are not counted as separate parts,
+// because splitting an acronym would produce meaningless parts like "u", "r", "l".
+func nameParts(ad string) []string {
 	var parcalar []string
 	var kelime strings.Builder
 
-	bitir := func() {
+	end := func() {
 		if kelime.Len() > 0 {
 			parcalar = append(parcalar, strings.ToLower(kelime.String()))
 			kelime.Reset()
@@ -368,31 +373,32 @@ func adParcalari(ad string) []string {
 	for i, r := range ad {
 		switch {
 		case r == '_':
-			bitir()
+			end()
 		case unicode.IsUpper(r) && i > 0 && !unicode.IsUpper(rune(ad[i-1])):
-			bitir()
+			end()
 			kelime.WriteRune(r)
 		default:
 			kelime.WriteRune(r)
 		}
 	}
-	bitir()
+	end()
 
 	return parcalar
 }
 
-// TestParaTamSayidir plan Bölüm 8'i zorlar: para minor unit TAM SAYI saklanır.
+// TestMoneyIsAnInteger enforces plan Section 8: money is stored as an INTEGER in
+// minor units.
 //
-// Kayan noktalı para, toplama sırasında sessiz yuvarlama hatası üretir ve
-// hatayı ancak mutabakat sırasında görürsünüz.
-func TestParaTamSayidir(t *testing.T) {
-	// Sayaç, ADI para gibi görünen alanları sayar — tipine bakmadan. Ölçülen
-	// şey ihlal değil, GÖRÜŞ ALANIDIR: adlandırma bir gün kalıbın tanımadığı
-	// bir biçime geçerse (örn. para alanları "Money" son ekiyle yazılmaya
-	// başlarsa) bu tarama hiçbir alana bakmaz ve float bir para alanı sessizce
-	// geçerdi. Ön ekli adlar (UnitPrice, NetAmount) artık KAPSAMDADIR;
-	// bkz. [adParcalari].
-	gorulenParaAlani := 0
+// Floating point money produces silent rounding errors while summing, and you see
+// the error only at reconciliation time.
+func TestMoneyIsAnInteger(t *testing.T) {
+	// The counter counts the fields whose NAME looks like money — without looking at
+	// the type. What is measured is not violations but the FIELD OF VIEW: if the naming
+	// moves one day to a form the pattern does not recognize (if money fields start
+	// being written with a "Money" suffix, say), this scan looks at no field at all and
+	// a float money field would pass silently. Prefixed names (UnitPrice, NetAmount)
+	// are now IN SCOPE; see [nameParts].
+	moneyFieldsSeen := 0
 
 	for _, mod := range moduleNames(t) {
 		root := filepath.Join(repoRoot, modulesDir, mod)
@@ -403,7 +409,7 @@ func TestParaTamSayidir(t *testing.T) {
 			fset := token.NewFileSet()
 			parsed, err := parser.ParseFile(fset, file, nil, 0)
 			if err != nil {
-				t.Fatalf("%s ayrıştırılamadı: %v", file, err)
+				t.Fatalf("%s could not be parsed: %v", file, err)
 			}
 
 			ast.Inspect(parsed, func(n ast.Node) bool {
@@ -414,15 +420,15 @@ func TestParaTamSayidir(t *testing.T) {
 				for _, f := range st.Fields.List {
 					ident, tipliAd := f.Type.(*ast.Ident)
 					for _, name := range f.Names {
-						if !paraAdiMi(name.Name) {
+						if !isMoneyName(name.Name) {
 							continue
 						}
-						gorulenParaAlani++
+						moneyFieldsSeen++
 						if !tipliAd || (ident.Name != "float32" && ident.Name != "float64") {
 							continue
 						}
-						t.Errorf("%s:%d: %q alanı %s tipinde. Plan Bölüm 8: para TAM SAYI "+
-							"minor unit (kuruş/cent) olarak saklanır, float ASLA.",
+						t.Errorf("%s:%d: the %q field is of type %s. Plan Section 8: money is stored "+
+							"as an INTEGER in minor units (kurus/cent), NEVER as a float.",
 							file, fset.Position(name.Pos()).Line, name.Name, ident.Name)
 					}
 				}
@@ -431,30 +437,30 @@ func TestParaTamSayidir(t *testing.T) {
 		}
 	}
 
-	require.Positive(t, gorulenParaAlani,
-		"modüllerde para gibi adlandırılmış TEK BİR alan bile bulunamadı; "+
-			"denetim KÖR kalmış olmalı.\n"+
-			"Kalıp ada BAŞTAN bağlıdır (^amount|price|total…), yani adlandırma ön ekli "+
-			"biçime kaydığında (UnitPrice, NetAmount) hiçbir alanı görmez ve float bir "+
-			"para alanı sessizce geçer. Kalıp depodaki adlandırmayla birlikte "+
-			"güncellenmelidir.")
+	require.Positive(t, moneyFieldsSeen,
+		"not a SINGLE field named like money was found in the modules; "+
+			"the check must have gone BLIND.\n"+
+			"The pattern is anchored at the START of the name (^amount|price|total…), that is, "+
+			"when the naming drifts to a prefixed form (UnitPrice, NetAmount) it sees no field "+
+			"at all and a float money field passes silently. The pattern has to be updated "+
+			"together with the naming in the repository.")
 }
 
-// godocVirgul bir godoc ilk satırının addan hemen sonra virgülle devam edip
-// etmediğini yakalar.
-var godocVirgul = regexp.MustCompile(`^// ([A-Za-z_][A-Za-z0-9_]*), `)
+// godocComma catches whether a godoc first line continues with a comma right after
+// the name.
+var godocComma = regexp.MustCompile(`^// ([A-Za-z_][A-Za-z0-9_]*), `)
 
-// TestGodocBicimi godoc'un tanımlayıcı adıyla başlayıp virgülsüz devam etmesini
-// zorlar.
+// TestGodocFormat enforces that a godoc starts with the identifier's name and
+// continues without a comma.
 //
-// revive'ın "exported" kuralı yalnızca DIŞA AÇIK tanımlayıcıları denetler;
-// unexported olanlarda aynı hata sessizce kalır. Bu test ikisini de kapsar ve
-// ayrıca godoc bloğunun YANLIŞ tanımlayıcıya bağlanmasını yakalar — bloğun ilk
-// satırındaki ad, bağlandığı tanımın adıyla eşleşmiyorsa hata verir.
-func TestGodocBicimi(t *testing.T) {
-	// Denetlenen birim godoc'lu TANIMDIR, dosya değil: dosyalar yerinde
-	// dururken de kapsam boşalabilir (üretilmiş kod eleği genişlerse, ya da
-	// godoc'lar tanımdan koparsa doc alanı nil kalır).
+// revive's "exported" rule only checks EXPORTED identifiers; on unexported ones the
+// same mistake stays silent. This test covers both, and additionally catches a godoc
+// block being attached to the WRONG identifier — if the name on the block's first
+// line does not match the name of the definition it is attached to, it errors.
+func TestGodocFormat(t *testing.T) {
+	// The unit being checked is the DEFINITION with a godoc, not the file: the scope
+	// can empty out while the files stay in place (if the generated-code sieve widens,
+	// or if the godocs come loose from their definitions and the doc field stays nil).
 	denetlenenTanim := 0
 
 	roots := []string{
@@ -467,9 +473,9 @@ func TestGodocBicimi(t *testing.T) {
 			fset := token.NewFileSet()
 			parsed, err := parser.ParseFile(fset, file, nil, parser.ParseComments)
 			if err != nil {
-				t.Fatalf("%s ayrıştırılamadı: %v", file, err)
+				t.Fatalf("%s could not be parsed: %v", file, err)
 			}
-			// Üretilmiş kod (sqlc) bu kuralın dışındadır.
+			// Generated code (sqlc) is outside this rule.
 			if len(parsed.Comments) > 0 && strings.Contains(parsed.Comments[0].Text(), "Code generated by") {
 				continue
 			}
@@ -495,29 +501,30 @@ func TestGodocBicimi(t *testing.T) {
 						}
 					}
 				}
-				// "var _ Iface = (*T)(nil)" deyiminin adı "_"dır; godoc'u doğal
-				// olarak bir adı değil, doğrulanan sözleşmeyi anlatır.
+				// The name of the "var _ Iface = (*T)(nil)" idiom is "_"; its godoc naturally
+				// describes not a name but the contract being verified.
 				if doc == nil || name == "" || name == "_" || len(doc.List) == 0 {
 					continue
 				}
 				denetlenenTanim++
 
 				first := doc.List[0].Text
-				if m := godocVirgul.FindStringSubmatch(first); m != nil {
-					t.Errorf("%s:%d: godoc ilk satırı %q — addan hemen sonra VİRGÜL var.\n"+
-						"Doğrusu: \"// %s ...\". revive bu kuralı yalnızca dışa açık "+
-						"tanımlayıcılarda uyguluyor.",
+				if m := godocComma.FindStringSubmatch(first); m != nil {
+					t.Errorf("%s:%d: the godoc first line is %q — there is a COMMA right after the name.\n"+
+						"The right form: \"// %s ...\". revive applies this rule only to exported "+
+						"identifiers.",
 						file, fset.Position(doc.List[0].Pos()).Line, strings.TrimSpace(first), m[1])
 					continue
 				}
-				// Bloğun bağlandığı tanımın adıyla başlamıyorsa, büyük ihtimalle
-				// godoc yanlış tanımlayıcıya yapışmıştır.
+				// If it does not start with the name of the definition it is attached to, the
+				// godoc has most likely stuck to the wrong identifier.
 				prefix := "// " + name
 				if !strings.HasPrefix(first, prefix) && !strings.HasPrefix(first, "// Package ") &&
 					!strings.HasPrefix(first, "//nolint") && !strings.HasPrefix(first, "//go:") {
-					t.Errorf("%s:%d: %q tanımının godoc'u %q ile başlıyor.\n"+
-						"godoc bloğu bağlandığı tanımın ADIYLA başlamalı; bu blok büyük "+
-						"olasılıkla araya boş satır konmadığı için yanlış tanıma yapışmış.",
+					t.Errorf("%s:%d: the godoc of the %q definition starts with %q.\n"+
+						"A godoc block has to start with the NAME of the definition it is attached "+
+						"to; this block has most likely stuck to the wrong definition because no "+
+						"blank line was put in between.",
 						file, fset.Position(doc.List[0].Pos()).Line, name, strings.TrimSpace(first))
 				}
 			}
@@ -525,10 +532,10 @@ func TestGodocBicimi(t *testing.T) {
 	}
 
 	require.Positive(t, denetlenenTanim,
-		"internal/ ve cmd/ altında godoc'u denetlenen TEK BİR tanım bile bulunamadı; "+
-			"denetim KÖR kalmış olmalı.\n"+
-			"Olası sebepler: kaynak bu iki kökün dışına taşındı, ayrıştırma yorumsuz "+
-			"yapılıyor (parser.ParseComments düştü) ya da \"Code generated by\" eleği tüm "+
-			"dosyaları kapsıyor. revive unexported tanımlara bakmadığı için bu tarama "+
-			"sustuğunda o sınıfı denetleyen başka hiçbir şey kalmaz.")
+		"not a SINGLE definition with a checked godoc was found under internal/ and cmd/; "+
+			"the check must have gone BLIND.\n"+
+			"Possible reasons: the sources moved outside these two roots, the parsing is done "+
+			"without comments (parser.ParseComments dropped), or the \"Code generated by\" "+
+			"sieve covers all the files. Because revive does not look at unexported "+
+			"definitions, nothing else checks that class when this scan falls silent.")
 }

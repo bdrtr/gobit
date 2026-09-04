@@ -22,13 +22,11 @@ docs/adr/0010-depo-secim-politikasi.md
 docs/adr/0011-yonetim-paneli-dorduncu-agac.md
 docs/mimari.md
 go-commerce-framework-plan.md
-internal/arch/arch_test.go
 internal/arch/belge_atiflari_test.go
 internal/arch/hatayolu_test.go
 internal/arch/kayit_test.go
 internal/arch/sabitler_test.go
 internal/arch/tuketici_test.go
-internal/arch/yapilandirma_test.go
 internal/e2e/arama_test.go
 internal/e2e/b2b_test.go
 internal/e2e/bildirim_test.go
