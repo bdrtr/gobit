@@ -282,8 +282,8 @@ func isVariantEntity(lit *ast.CompositeLit) bool {
 		if !ok {
 			continue
 		}
-		anahtar, ok := kv.Key.(*ast.Ident)
-		if !ok || anahtar.Name != "Entity" {
+		keyIdent, ok := kv.Key.(*ast.Ident)
+		if !ok || keyIdent.Name != "Entity" {
 			continue
 		}
 

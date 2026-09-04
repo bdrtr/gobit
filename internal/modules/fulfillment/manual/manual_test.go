@@ -275,7 +275,7 @@ func TestCreateIsIdempotent(t *testing.T) {
 	input := coreprovider.CreateFulfillmentInput{
 		Reference:      "ful_1",
 		OptionID:       "sopt_1",
-		IdempotencyKey: "anahtar-1",
+		IdempotencyKey: "key-1",
 	}
 
 	first, err := provider.Create(context.Background(), input)
@@ -295,12 +295,12 @@ func TestCreateSameKeyDifferentBodyConflicts(t *testing.T) {
 
 	provider, _ := newProvider()
 	_, err := provider.Create(context.Background(), coreprovider.CreateFulfillmentInput{
-		Reference: "ful_1", OptionID: "sopt_1", IdempotencyKey: "anahtar-1",
+		Reference: "ful_1", OptionID: "sopt_1", IdempotencyKey: "key-1",
 	})
 	require.NoError(t, err)
 
 	_, err = provider.Create(context.Background(), coreprovider.CreateFulfillmentInput{
-		Reference: "ful_2", OptionID: "sopt_1", IdempotencyKey: "anahtar-1",
+		Reference: "ful_2", OptionID: "sopt_1", IdempotencyKey: "key-1",
 	})
 	require.Error(t, err)
 	assert.True(t, errors.IsConflict(err), "the error must be errors.Conflict: %v", err)
@@ -320,12 +320,12 @@ func TestCreateSameKeyDifferentOptionConflicts(t *testing.T) {
 
 	provider, _ := newProvider()
 	_, err := provider.Create(context.Background(), coreprovider.CreateFulfillmentInput{
-		Reference: "ful_1", OptionID: "sopt_1", IdempotencyKey: "anahtar-1",
+		Reference: "ful_1", OptionID: "sopt_1", IdempotencyKey: "key-1",
 	})
 	require.NoError(t, err)
 
 	_, err = provider.Create(context.Background(), coreprovider.CreateFulfillmentInput{
-		Reference: "ful_1", OptionID: "sopt_2", IdempotencyKey: "anahtar-1",
+		Reference: "ful_1", OptionID: "sopt_2", IdempotencyKey: "key-1",
 	})
 	require.Error(t, err)
 	assert.True(t, errors.IsConflict(err), "the error must be errors.Conflict: %v", err)
@@ -353,7 +353,7 @@ func TestCreateConcurrentProducesOneShipment(t *testing.T) {
 			defer finished.Done()
 			start.Wait()
 			ful, err := provider.Create(context.Background(), coreprovider.CreateFulfillmentInput{
-				Reference: "ful_1", OptionID: "sopt_1", IdempotencyKey: "anahtar-yaris",
+				Reference: "ful_1", OptionID: "sopt_1", IdempotencyKey: "key-race",
 			})
 			ids[i], errs[i] = ful.ID, err
 		}()
@@ -379,7 +379,7 @@ func TestCreateFailureInjection(t *testing.T) {
 	_, err := provider.Create(context.Background(), coreprovider.CreateFulfillmentInput{
 		Reference:      "ful_1",
 		OptionID:       "sopt_1",
-		IdempotencyKey: "anahtar-1",
+		IdempotencyKey: "key-1",
 		Data:           map[string]any{manual.DataKeyOutcome: manual.OutcomeError},
 	})
 	require.Error(t, err)
@@ -399,15 +399,15 @@ func TestCreateAcceptsTrackingDetails(t *testing.T) {
 	ful, err := provider.Create(context.Background(), coreprovider.CreateFulfillmentInput{
 		Reference:      "ful_1",
 		OptionID:       "sopt_1",
-		IdempotencyKey: "anahtar-1",
+		IdempotencyKey: "key-1",
 		Data: map[string]any{
 			manual.DataKeyTrackingNumber: "TK-42",
-			manual.DataKeyTrackingURL:    "https://kargo.example/TK-42",
+			manual.DataKeyTrackingURL:    "https://carrier.example/TK-42",
 		},
 	})
 	require.NoError(t, err)
 	assert.Equal(t, "TK-42", ful.TrackingNumber)
-	assert.Equal(t, "https://kargo.example/TK-42", ful.TrackingURL)
+	assert.Equal(t, "https://carrier.example/TK-42", ful.TrackingURL)
 
 	stored, err := provider.GetShipment(context.Background(), ful.ID)
 	require.NoError(t, err)
@@ -445,7 +445,7 @@ func TestCancelIsIdempotent(t *testing.T) {
 
 	provider, store := newProvider()
 	ful, err := provider.Create(context.Background(), coreprovider.CreateFulfillmentInput{
-		Reference: "ful_1", OptionID: "sopt_1", IdempotencyKey: "anahtar-1",
+		Reference: "ful_1", OptionID: "sopt_1", IdempotencyKey: "key-1",
 	})
 	require.NoError(t, err)
 
@@ -485,7 +485,7 @@ func TestCancelPreservesTrackingDetails(t *testing.T) {
 
 	provider, _ := newProvider()
 	ful, err := provider.Create(context.Background(), coreprovider.CreateFulfillmentInput{
-		Reference: "ful_1", OptionID: "sopt_1", IdempotencyKey: "anahtar-1",
+		Reference: "ful_1", OptionID: "sopt_1", IdempotencyKey: "key-1",
 		Data: map[string]any{manual.DataKeyTrackingNumber: "TK-42"},
 	})
 	require.NoError(t, err)

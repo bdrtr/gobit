@@ -1270,8 +1270,8 @@ doğrulayan bir yüzey sunmaz; sunması gereken taraf gömen uygulamadır. Karar
 tamamı, reddedilen seçenekleri ve gömen uygulamaya düşen işin listesi
 [ADR 0008](docs/adr/0008-musteri-kimligi-guven-siniri.md)'dedir. Sınırın
 bugünkü yeri `order`'da iki testle sabitlenmiştir
-(`TestMisafirSiparisindeHarcamaKuraliHicSorulmaz`,
-`TestHarcamaKuraliBeyanEdilenMusteriyeUygulanir`); ikisi de bir yeteneği değil
+(`TestTrustBoundaryGuestOrderIsNeverAskedForTheSpendingRule`,
+`TestTheSpendingRuleIsAppliedToTheDeclaredCustomer`); ikisi de bir yeteneği değil
 bir kararı korur ve kimlik doğrulama geldiğinde **düşmeleri beklenir**.
 
 Kuralın ne işe yaradığı bu koşulla birlikte okunmalıdır: kimliğin doğrulandığı

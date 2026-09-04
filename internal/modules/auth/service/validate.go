@@ -9,55 +9,60 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/auth/models"
 )
 
-// maxIDLen kabul edilen kimlik uzunluğu üst sınırıdır. Kimlikler link
-// tablosundaki benzersiz indekse de girdiği için sınır orayla uyumlu tutulur.
+// maxIDLen is the upper bound of the accepted identifier length. Since
+// identifiers also go into the unique index on the link table, the bound is
+// kept in line with that one.
 const maxIDLen = 255
 
-// normalizeEmail e-postayı doğrular ve saklama biçimine çevirir.
+// normalizeEmail validates the email address and converts it into its storage
+// form.
 //
-// Doğrulama BİLİNÇLİ OLARAK dardır: tam bir RFC 5322 ayrıştırıcısı yazmak
-// yerine yalnızca "tek @ var, iki yanı da dolu, alan adında nokta var, boşluk
-// yok" denetlenir. Daha katı bir desen geçerli ama alışılmadık adresleri
-// (artı işaretli, tireli, uzun TLD'li) reddeder ve kullanıcıyı hesap açamaz
-// hâle getirirdi; daha gevşek bir desen ise migration'daki CHECK kısıtına
-// takılıp istemciye anlamsız bir veritabanı hatası döndürürdü. Desen o kısıtla
-// birebir aynı gereksinimi ifade eder.
+// The validation is DELIBERATELY narrow: instead of writing a full RFC 5322
+// parser, only "there is a single @, both sides are filled, the domain contains
+// a dot, there is no whitespace" is checked. A stricter pattern would reject
+// valid but unusual addresses (with a plus sign, with a dash, with a long TLD)
+// and would leave the user unable to open an account; a looser pattern, on the
+// other hand, would get caught by the CHECK constraint in the migration and
+// return a meaningless database error to the client. The pattern expresses
+// exactly the same requirement as that constraint.
 func normalizeEmail(email string) (string, error) {
 	normalized := models.NormalizeEmail(email)
 	if normalized == "" {
-		return "", errors.Invalid(CodeInvalidInput, "e-posta boş olamaz")
+		return "", errors.Invalid(CodeInvalidInput, "the email address cannot be empty")
 	}
 	if len(normalized) > models.MaxEmailLen {
 		return "", errors.Invalid(CodeInvalidInput,
-			"e-posta en fazla %d bayt olabilir, %d bayt verildi", models.MaxEmailLen, len(normalized))
+			"the email address can be at most %d bytes, %d bytes given", models.MaxEmailLen, len(normalized))
 	}
 	if strings.ContainsFunc(normalized, unicode.IsSpace) {
-		return "", errors.Invalid(CodeInvalidInput, "e-posta boşluk içeremez: %q", email)
+		return "", errors.Invalid(CodeInvalidInput, "the email address cannot contain whitespace: %q", email)
 	}
 
 	local, domain, found := strings.Cut(normalized, "@")
 	if !found || local == "" || domain == "" {
 		return "", errors.Invalid(CodeInvalidInput,
-			"e-posta \"ad@alan.uzanti\" biçiminde olmalı, %q verildi", email)
+			"the email address has to be in the \"name@domain.tld\" form, %q given", email)
 	}
 	if strings.Contains(domain, "@") {
 		return "", errors.Invalid(CodeInvalidInput,
-			"e-posta birden çok @ içeremez, %q verildi", email)
+			"the email address cannot contain more than one @, %q given", email)
 	}
-	// Alan adında en az bir nokta aranır ve nokta uçlarda olamaz: "a@b" ile
-	// "a@b." arasındaki fark, ikincisinin hiçbir zaman teslim edilememesidir.
+	// At least one dot is looked for in the domain and the dot cannot be at
+	// either end: the difference between "a@b" and "a@b." is that the second one
+	// can never be delivered to.
 	if !strings.Contains(domain, ".") || strings.HasPrefix(domain, ".") || strings.HasSuffix(domain, ".") {
 		return "", errors.Invalid(CodeInvalidInput,
-			"e-posta alan adı geçersiz, %q verildi", email)
+			"the email domain is invalid, %q given", email)
 	}
 	return normalized, nil
 }
 
-// requireID kimliğin boş olmadığını, önekini ve uzunluğunu doğrular.
+// requireID validates that the identifier is not empty, and validates its
+// prefix and its length.
 //
-// Önek denetimi ucuz bir tip güvenliğidir: bir kanal kimliğinin kullanıcı
-// kimliği yerine geçirilmesi veritabanına hiç gitmeden yakalanır ve hata,
-// "bulunamadı" yerine ne beklendiğini söyler.
+// The prefix check is cheap type safety: a channel identifier passed where a
+// user identifier was expected is caught without going to the database at all,
+// and the error says what was expected instead of "not found".
 func requireID(id, prefix, label string) error {
 	if id == "" {
 		return errors.Invalid(CodeInvalidInput, "%s cannot be empty", label)
@@ -67,31 +72,31 @@ func requireID(id, prefix, label string) error {
 	}
 	if len(id) > maxIDLen {
 		return errors.Invalid(CodeInvalidInput,
-			"%s en fazla %d bayt olabilir, %d bayt verildi", label, maxIDLen, len(id))
+			"%s can be at most %d bytes, %d bytes given", label, maxIDLen, len(id))
 	}
 	if !strings.HasPrefix(id, prefix) {
 		return errors.Invalid(CodeInvalidInput,
-			"%s %q önekiyle başlamalı, %q verildi", label, prefix, id)
+			"%s has to start with the %q prefix, %q given", label, prefix, id)
 	}
 	return nil
 }
 
-// normalizePaging sayfalama parametrelerini uygulanabilir değerlere çevirir.
+// normalizePaging converts the paging parameters into applicable values.
 //
-// Limit 0 verilirse varsayılan uygulanır. Negatif limit/offset ve [MaxLimit]'i
-// aşan limit ise DÜZELTİLMEZ, reddedilir: sessizce kırpılan bir limit
-// istemciye sayfa boyunu yanlış bildirir ve sayfalama döngüsü aynı kayıtları
-// tekrar okur.
+// If a limit of 0 is given the default is applied. A negative limit/offset and
+// a limit exceeding [MaxLimit], on the other hand, ARE NOT CORRECTED, they are
+// rejected: a silently clipped limit reports the page size to the client wrong
+// and the paging loop reads the same records over again.
 func normalizePaging(limit, offset int64) (outLimit, outOffset int64, err error) {
 	if limit < 0 {
-		return 0, 0, errors.Invalid(CodeInvalidInput, "limit negatif olamaz, %d verildi", limit)
+		return 0, 0, errors.Invalid(CodeInvalidInput, "the limit cannot be negative, %d given", limit)
 	}
 	if offset < 0 {
-		return 0, 0, errors.Invalid(CodeInvalidInput, "offset negatif olamaz, %d verildi", offset)
+		return 0, 0, errors.Invalid(CodeInvalidInput, "the offset cannot be negative, %d given", offset)
 	}
 	if limit > MaxLimit {
 		return 0, 0, errors.Invalid(CodeInvalidInput,
-			"limit en fazla %d olabilir, %d verildi", MaxLimit, limit)
+			"the limit can be at most %d, %d given", MaxLimit, limit)
 	}
 	if limit == 0 {
 		limit = DefaultLimit
@@ -99,16 +104,16 @@ func normalizePaging(limit, offset int64) (outLimit, outOffset int64, err error)
 	return limit, offset, nil
 }
 
-// checkLen bir metin alanının uzunluk sınırını doğrular.
+// checkLen validates the length bound of a text field.
 func checkLen(label, value string, limit int) error {
 	if len(value) > limit {
 		return errors.Invalid(CodeInvalidInput,
-			"%s en fazla %d bayt olabilir, %d bayt verildi", label, limit, len(value))
+			"%s can be at most %d bytes, %d bytes given", label, limit, len(value))
 	}
 	return nil
 }
 
-// requireText bir metin alanının dolu olduğunu doğrular.
+// requireText validates that a text field is filled in.
 func requireText(label, value string) error {
 	if strings.TrimSpace(value) == "" {
 		return errors.Invalid(CodeInvalidInput, "%s cannot be empty", label)
@@ -116,30 +121,31 @@ func requireText(label, value string) error {
 	return nil
 }
 
-// normalizeScopes yetki listesini doğrular, kırpar ve tekrarları eler.
+// normalizeScopes validates the scope list, trims it and eliminates duplicates.
 //
-// nil dilim "yetki verilmedi" demektir ve olduğu gibi döner; çağıran bunu
-// varsayılana çevirir. Boş olmayan bir dilimdeki boş ad ise REDDEDİLİR:
-// veritabanındaki CHECK kısıtı da aynı şeyi söyler ve istemcinin oraya
-// takılıp anlamsız bir kısıt hatası görmesi gereksizdir.
+// A nil slice means "no scopes were given" and is returned as it is; the caller
+// turns that into the default. An empty name inside a non-empty slice, on the
+// other hand, is REJECTED: the CHECK constraint in the database says the same
+// thing, and there is no point in the client getting caught by it and seeing a
+// meaningless constraint error.
 func normalizeScopes(scopes []string) ([]string, error) {
 	if scopes == nil {
 		return nil, nil
 	}
 	if len(scopes) > models.MaxScopeCount {
 		return nil, errors.Invalid(CodeInvalidInput,
-			"en fazla %d yetki verilebilir, %d verildi", models.MaxScopeCount, len(scopes))
+			"at most %d scopes can be given, %d given", models.MaxScopeCount, len(scopes))
 	}
 
 	out := make([]string, 0, len(scopes))
 	for _, scope := range scopes {
 		trimmed := strings.TrimSpace(scope)
 		if trimmed == "" {
-			return nil, errors.Invalid(CodeInvalidInput, "yetki adı boş olamaz")
+			return nil, errors.Invalid(CodeInvalidInput, "a scope name cannot be empty")
 		}
 		if len(trimmed) > models.MaxScopeLen {
 			return nil, errors.Invalid(CodeInvalidInput,
-				"yetki adı en fazla %d bayt olabilir, %q verildi", models.MaxScopeLen, trimmed)
+				"a scope name can be at most %d bytes, %q given", models.MaxScopeLen, trimmed)
 		}
 		if !slices.Contains(out, trimmed) {
 			out = append(out, trimmed)
@@ -148,45 +154,47 @@ func normalizeScopes(scopes []string) ([]string, error) {
 	return out, nil
 }
 
-// Parola politikası sınırları.
+// The bounds of the password policy.
 //
-// Politika bilinçli olarak UZUNLUĞA dayanır, bileşime değil: NIST SP 800-63B,
-// "en az bir büyük harf, bir rakam, bir simge" türü kuralların kullanıcıyı
-// tahmin edilebilir kalıplara ("Parola1!") ittiğini ve gerçek entropiyi
-// artırmadığını söyler. Uzunluk ise doğrudan arama uzayını büyütür.
+// The policy deliberately rests on LENGTH, not on composition: NIST SP 800-63B
+// says that rules of the "at least one upper case letter, one digit, one
+// symbol" kind push the user into predictable patterns ("Password1!") and do
+// not increase the real entropy. Length, on the other hand, grows the search
+// space directly.
 const (
-	// MinPasswordLen kabul edilen en kısa parola uzunluğudur (bayt).
+	// MinPasswordLen is the shortest accepted password length (in bytes).
 	//
-	// Yönetim kullanıcısı için 12 seçilmiştir: bu hesap tüm mağazayı yönetir
-	// ve tek bir sızıntının bedeli en yüksek olan hesaptır.
+	// 12 was chosen for the admin user: this account administers the whole store
+	// and it is the account whose single leak costs the most.
 	MinPasswordLen = 12
-	// MaxPasswordLen kabul edilen en uzun parola uzunluğudur (bayt).
+	// MaxPasswordLen is the longest accepted password length (in bytes).
 	//
-	// 72, bcrypt algoritmasının işlediği azami anahtar uzunluğudur. Sınır
-	// AÇIKÇA uygulanır: bcrypt.GenerateFromPassword daha uzununu reddeder ve
-	// o hata istemciye ham hâliyle gitseydi, kullanıcı parolasının neden
-	// kabul edilmediğini anlamazdı. Sessizce KIRPMAK ise daha kötüsü olurdu —
-	// 80 karakterlik bir parolanın ilk 72 karakteri yeterli sanılırdı.
+	// 72 is the largest key length the bcrypt algorithm processes. The bound is
+	// enforced EXPLICITLY: bcrypt.GenerateFromPassword rejects anything longer
+	// and, had that error gone to the client in its raw form, the user would not
+	// understand why their password was not accepted. CLIPPING it silently would
+	// be worse still — the first 72 characters of an 80-character password would
+	// be taken for the whole of it.
 	MaxPasswordLen = 72
 )
 
-// validatePassword parola politikasını uygular.
+// validatePassword enforces the password policy.
 //
-// PAROLA HATA MESAJINDA GEÇMEZ: yalnızca uzunluğu bildirilir. Hata mesajları
-// log'a düşer ve bir gün destek kaydına kopyalanır; parolanın kendisi o
-// yolculuğa hiç çıkmamalıdır.
+// THE PASSWORD DOES NOT APPEAR IN THE ERROR MESSAGE: only its length is
+// reported. Error messages fall into the log and one day get copied into a
+// support ticket; the password itself must never set out on that journey.
 func validatePassword(password string) error {
 	if len(password) < MinPasswordLen {
 		return errors.Invalid(CodeWeakPassword,
-			"parola en az %d karakter olmalı, %d karakter verildi", MinPasswordLen, len(password))
+			"the password has to be at least %d characters, %d characters given", MinPasswordLen, len(password))
 	}
 	if len(password) > MaxPasswordLen {
 		return errors.Invalid(CodeWeakPassword,
-			"parola en fazla %d bayt olabilir (bcrypt sınırı), %d bayt verildi",
+			"the password can be at most %d bytes (the bcrypt limit), %d bytes given",
 			MaxPasswordLen, len(password))
 	}
 	if strings.TrimSpace(password) == "" {
-		return errors.Invalid(CodeWeakPassword, "parola yalnızca boşluktan oluşamaz")
+		return errors.Invalid(CodeWeakPassword, "the password cannot consist only of whitespace")
 	}
 	return nil
 }

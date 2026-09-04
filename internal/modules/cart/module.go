@@ -1,58 +1,60 @@
-// Package cart sepet modülüdür (plan Bölüm 6, Faz 5).
+// Package cart is the cart module (plan Section 6, Phase 5).
 //
-// Sorumluluğu tek cümleyle: bir sepetin NEYE sahip olduğunu bilmek — hangi
-// bölgede, kimin adına, hangi satırlarla, hangi adresi ve kargo yöntemiyle.
-// Modül Cart, LineItem, CartAddress ve ShippingMethod verisinin TEK yazma
-// yetkilisidir (Prensip 2.3).
+// Its responsibility in one sentence: to know WHAT a cart holds — in which
+// region, on whose behalf, with which lines, with which address and shipping
+// method. The module is the SOLE writer of Cart, LineItem, CartAddress and
+// ShippingMethod data (Principle 2.3).
 //
-// # Neyi bilmez
+// # What it does not know
 //
-// Sepetin NE KADAR TUTTUĞUNU hesaplamaz. Fiyat pricing'in, vergi region/tax'ın
-// verisidir; ikisini bir araya getiren akış calculate_totals WORKFLOW'udur
-// (plan Bölüm 2.5, ADR 0006). Bu modül hiçbir fiyat/vergi kaynağını çağırmaz;
-// toplamları yalnızca [service.Service.SetTotals] ile alır, DOĞRULAR ve saklar.
+// It does not compute HOW MUCH the cart COMES TO. The price is pricing's data,
+// the tax region/tax's; the flow that brings the two together is the
+// calculate_totals WORKFLOW (plan Section 2.5, ADR 0006). This module calls no
+// price/tax source; it only receives the totals through
+// [service.Service.SetTotals], VALIDATES them and stores them.
 //
-// Modül başka HİÇBİR modülü import etmez (Prensip 2.1/2.4, ADR 0001; kural
-// .golangci.yml içindeki depguard ve internal/arch testleriyle zorlanır).
-// region_id, customer_id ve variant_id başka modüllerin kimlikleridir; serbest
-// metin olarak saklanır ve foreign key verilmez (Prensip 2.2).
+// The module imports NO other module (Principle 2.1/2.4, ADR 0001; the rule is
+// enforced by depguard in .golangci.yml and by the internal/arch tests).
+// region_id, customer_id and variant_id are other modules' ids; they are stored
+// as free text and no foreign key is given (Principle 2.2).
 //
-// # Dışarıya açtığı yüzeyler
+// # The surfaces it exposes
 //
-//   - "cart.service" — modüller arası çağrılar ve workflow'lar için servis.
-//   - "cart.interop" — akışların kullandığı İLKEL yüzey (ADR 0006).
-//     complete_cart saga'sı sepeti buradan kapatır.
-//   - "cart.query" — Query katmanına açılan okuma sağlayıcısı (ADR 0004).
-//   - /store/v1/carts … — müşteri API'si (sepeti kuran, değiştiren ve
-//     SİPARİŞE ÇEVİREN yüzey).
-//   - /admin/v1/carts — yönetim API'si (YALNIZCA okuma).
+//   - "cart.service" — the service for cross-module calls and workflows.
+//   - "cart.interop" — the PRIMITIVE surface the flows use (ADR 0006). The
+//     complete_cart saga closes the cart through it.
+//   - "cart.query" — the read provider opened to the Query layer (ADR 0004).
+//   - /store/v1/carts … — the customer API (the surface that builds the cart,
+//     changes it and TURNS IT INTO AN ORDER).
+//   - /admin/v1/carts — the admin API (READ ONLY).
 //
-// # Kullandığı akışlar
+// # The flows it uses
 //
-// Vitrinin YAZAN uçlarının tamamı — sepet açma, satır ekleme, satır adedi
-// güncelleme ve sepeti tamamlama — modüller arası AKIŞLARA devredilmiştir;
-// modül onları container'dan [CartFlowsName] ve [CartCompletionName]
-// adlarıyla, KENDİ paketinde tanımladığı dar arayüzlerle çözer
-// (ADR 0001/0006). Gerekçe: sepetin bölgesi region'ın, satırın fiyatı
-// pricing'in, başlığı kataloğun, sipariş ise order + payment + inventory'nin
-// verisidir ve bu modül hiçbirini bilmez.
+// All of the storefront's WRITING endpoints — opening a cart, adding a line,
+// updating a line's quantity and completing the cart — have been delegated to
+// cross-module FLOWS; the module resolves them from the container under the
+// names [CartFlowsName] and [CartCompletionName], through narrow interfaces it
+// defines in ITS OWN package (ADR 0001/0006). The rationale: the cart's region
+// is region's data, the line's price pricing's, its title the catalog's, and
+// the order order + payment + inventory's, and this module knows none of them.
 //
-// Her üç yol da KAPALI arızalanır: akış çözülemezse sepet açılmaz, satır
-// eklenmez, sipariş oluşmaz (bkz. [cartOpening], [linePricing] ve
-// [cartCompletion]).
+// All three paths fail CLOSED: if the flow cannot be resolved, no cart is
+// opened, no line is added, no order is created (see [cartOpening],
+// [linePricing] and [cartCompletion]).
 //
-// # Kullandığı modül yüzeyi
+// # The module surface it uses
 //
-// Yoktur. Bir tane vardı — BÖLGE — ve sepetin para birimini ondan okuyordu;
-// bugün o türetmeyi sepet açma akışı yapıyor, dolayısıyla modülün başka bir
-// modülü adla çözdüğü tek yer de kapandı.
+// There is none. There was one — the REGION — and the cart read its currency
+// from it; today the cart-opening flow makes that derivation, so the single
+// place where the module resolved another module by name is closed too.
 //
-// # Bildirdiği linkler
+// # The links it declares
 //
-// Yoktur. Sepetin bölgesi ve müşterisi KENDİ SÜTUNLARINDA durur ve her okuma o
-// sütunlardan yapılır; aynı ilişkiyi bir de link tablosunda tutmak satır
-// yazardı, bakım maliyeti doğururdu ve hiçbir okumaya hizmet etmezdi
-// (bkz. CHANGELOG, "cart_customer/cart_region kaldırıldı").
+// There are none. The cart's region and its customer stand in THEIR OWN
+// COLUMNS and every read is made from those columns; holding the same relation
+// in a link table as well would write a row, would create maintenance cost and
+// would serve no read at all (see the CHANGELOG, "cart_customer/cart_region
+// removed").
 package cart
 
 import (
@@ -76,114 +78,120 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/cart/service"
 )
 
-// ModuleName modülün adıdır; container adlarının ve migration sürüm defterinin
-// önekidir.
+// ModuleName is the module's name; it is the prefix of the container names and
+// of the migration version ledger.
 const ModuleName = "cart"
 
-// ServiceName modül servisinin container'daki adıdır.
+// ServiceName is the module service's name in the container.
 //
-// Başka modüller ve workflow'lar (ADR 0001/0006 gereği bu paketi import
-// ETMEDEN) sepet servisine bu adla ulaşır ve KENDİ paketlerinde tanımladıkları
-// dar bir arayüzle kullanır.
+// Other modules and workflows reach the cart service under this name (WITHOUT
+// importing this package, as ADR 0001/0006 requires) and use it through a
+// narrow interface they define in THEIR OWN packages.
 const ServiceName = ModuleName + ".service"
 
-// InteropName modüller arası ilkel yüzeyin container'daki adıdır (ADR 0006).
+// InteropName is the cross-module primitive surface's name in the container
+// (ADR 0006).
 //
-// Servisin kendisinden AYRI kaydedilir: servis cart'ın zengin tipleriyle
-// konuşur, bu yüzey yalnızca ilkel ve stdlib tipleriyle. Sepet akışları onu
-// kendi tanımladıkları dar arayüzle çözer.
+// It is registered SEPARATELY from the service itself: the service speaks in
+// cart's rich types, this surface only in primitive and stdlib types. The cart
+// flows resolve it with the narrow interface they define themselves.
 const InteropName = ModuleName + ".interop"
 
-// ProviderName Query sağlayıcısının container'daki adıdır (ADR 0004).
+// ProviderName is the Query provider's name in the container (ADR 0004).
 const ProviderName = service.EntityName + query.ProviderSuffix
 
-// CartFlowsName sepet akışlarının container'daki adıdır (ADR 0001/0006).
+// CartFlowsName is the cart flows' name in the container (ADR 0001/0006).
 //
-// TEK bir ad İKİ dar arayüzü besler ([api.CartOpening] ve [api.LinePricing]):
-// ikisini de aynı kayıt, sepet akışlarının modüller arası yüzeyi karşılar.
-// Sabitin adı bu yüzden akışın ADIDIR, arayüzlerden birininki değil — "sepet
-// açma" da o kayıttan çözüldüğü hâlde "LinePricingName" demek, kodun
-// söylediğiyle yaptığını ayırırdı.
+// ONE name feeds TWO narrow interfaces ([api.CartOpening] and
+// [api.LinePricing]): both are satisfied by the same registration, the cart
+// flows' cross-module surface. The constant's name is therefore the FLOW's
+// name, not that of one of the interfaces — calling it "LinePricingName" while
+// "opening a cart" is resolved from that same registration would separate what
+// the code says from what it does.
 //
-// Ad internal/workflows/cart paketinindir ve burada DİZE olarak tekrarlanır;
-// modüller workflow paketlerini import edemez (ADR 0006 her iki yönde de) ve
-// tekrarın bedeli izolasyonun kabul edilen bedelidir. Aynı örüntü order
-// modülünün SpendingPolicyName sabitinde de kullanılır.
+// The name belongs to the internal/workflows/cart package and is repeated here
+// as a STRING; modules cannot import workflow packages (ADR 0006, in both
+// directions) and the price of the repetition is the accepted price of
+// isolation. The same pattern is used in the order module's SpendingPolicyName
+// constant.
 //
-// Yazım hatası SESSİZ KALMAZ ve b2b'dekinin tersine bir degradasyona da yol
-// açmaz: ad çözülemezse sepet açma ve satır ekleme uçları kapalı arızalanır
-// (bkz. [cartOpening] ve [linePricing]). Adın tek doğruluk kaynağı sepet
-// akışlarının InteropName sabitidir.
+// A typo does NOT STAY SILENT and, unlike b2b's, does not lead to a degradation
+// either: if the name cannot be resolved, the cart-opening and line-adding
+// endpoints fail closed (see [cartOpening] and [linePricing]). The single
+// source of truth for the name is the cart flows' InteropName constant.
 const CartFlowsName = "workflows.cart.interop"
 
-// CartCompletionName sepet tamamlama akışının container'daki adıdır
+// CartCompletionName is the cart completion flow's name in the container
 // (ADR 0001/0006).
 //
-// Ad internal/workflows/checkout paketinindir ve aynı gerekçeyle burada
-// tekrarlanır; adın tek doğruluk kaynağı o paketin InteropName sabitidir.
+// The name belongs to the internal/workflows/checkout package and is repeated
+// here for the same reason; the single source of truth for the name is that
+// package's InteropName constant.
 const CartCompletionName = "workflows.checkout.interop"
 
-// svcDB veritabanı havuzunun container'daki adıdır.
+// svcDB is the database pool's name in the container.
 const svcDB = "core.db"
 
-// codeSetupFailed modülün kablolanamadığını bildiren hata kodudur.
+// codeSetupFailed is the error code reporting that the module could not be
+// wired.
 const codeSetupFailed = "cart_module_setup_failed"
 
 //go:embed migrations/*.sql
 var migrationFiles embed.FS
 
-// migrationsRoot gömülü dosyaların "migrations/" öneki soyulmuş hâlidir:
-// db.Migrate kaynağı kökten okur.
+// migrationsRoot is the embedded files with the "migrations/" prefix stripped:
+// db.Migrate reads the source from the root.
 var migrationsRoot = mustSub(migrationFiles, "migrations")
 
-// Module cart modülünün çekirdeğe sunduğu uygulamadır.
+// Module is the application the cart module offers the core.
 type Module struct {
 	svc     *service.Service
 	handler *api.Handler
 }
 
-// Çekirdek sözleşmesinin karşılandığı derleme zamanında sabitlenir.
+// That the core's contract is satisfied is pinned down at compile time.
 var _ module.Module = (*Module)(nil)
 
-// Belgeyi anlatabildiği de derleme zamanında sabitlenir.
+// That it can describe itself for the document is pinned down at compile time
+// too.
 //
-// [openapi.Describer] OPSİYONEL bir arayüzdür ve kompozisyon kökü onu TİP
-// İDDİASIYLA arar; metot adı ya da imzası kayarsa hiçbir şey derlemede
-// kırılmaz, yalnızca sepetin uçları belgeden sessizce düşerdi. Bu satır o
-// sessizliği kapatır.
+// [openapi.Describer] is an OPTIONAL interface and the composition root looks
+// for it with a TYPE ASSERTION; should the method name or signature drift,
+// nothing would break at compile time — only the cart's endpoints would
+// silently fall out of the document. This line closes that silence.
 var _ openapi.Describer = (*Module)(nil)
 
-// New kaydedilmeye hazır bir cart modülü üretir.
+// New produces a cart module ready to be registered.
 //
-// Bağımlılıklar burada değil Register sırasında çözülür: container o ana kadar
-// çekirdek servisleri kurmuş olmayabilir.
+// Dependencies are resolved during Register, not here: until that moment the
+// container may not have set up the core services.
 func New() *Module {
 	return &Module{}
 }
 
-// Name modülün benzersiz adını döner.
+// Name returns the module's unique name.
 func (m *Module) Name() string { return ModuleName }
 
-// Migrations modülün migration dosyalarını döner.
+// Migrations returns the module's migration files.
 func (m *Module) Migrations() fs.FS { return migrationsRoot }
 
-// Register servisi ve Query sağlayıcısını container'a kaydeder.
+// Register registers the service and the Query provider with the container.
 //
-// Yalnızca ÇEKİRDEK servisler çözülür; başka modüllerin servisleri bu aşamada
-// henüz kayıtlı olmayabilir (bkz. module.Module belgesi). core.db modüller
-// ayağa kalkmadan önce main.go'da hazır değer olarak kaydedildiği için burada
-// çözülmesi güvenlidir ve eksikliği modülün hiç çalışamayacağı bir kurulum
-// hatasıdır — sessizce ertelenmez.
+// Only CORE services are resolved; other modules' services may not be
+// registered yet at this stage (see the module.Module documentation). Because
+// core.db is registered in main.go as a ready value before the modules come up,
+// resolving it here is safe, and its absence is a setup error that makes the
+// module unable to run at all — it is not silently deferred.
 func (m *Module) Register(ctx context.Context, c *container.Container) error {
 	pool, err := container.Resolve[*db.Pool](c, svcDB)
 	if err != nil {
 		return errors.Wrap(err, errors.KindOf(err), codeSetupFailed,
-			"%s modülü veritabanı havuzunu çözemedi (%q)", ModuleName, svcDB)
+			"the %s module could not resolve the database pool (%q)", ModuleName, svcDB)
 	}
 
-	// Uygulama açılışta slog.SetDefault ile yapılandırılmış logger'ı kurar;
-	// modül ayrı bir logger kaydı aramaz.
-	log := slog.Default().With("modul", ModuleName)
+	// The application configures the logger with slog.SetDefault at startup;
+	// the module does not look for a separate logger registration.
+	log := slog.Default().With("module", ModuleName)
 
 	svc, err := service.New(service.Options{
 		Repo:   repository.New(pool.Pool()),
@@ -191,17 +199,17 @@ func (m *Module) Register(ctx context.Context, c *container.Container) error {
 	})
 	if err != nil {
 		return errors.Wrap(err, errors.KindOf(err), codeSetupFailed,
-			"%s servisi kurulamadı", ModuleName)
+			"the %s service could not be set up", ModuleName)
 	}
 
 	if err := c.Provide(ServiceName, svc); err != nil {
 		return err
 	}
-	// Sağlayıcı adı "<entity>.query" biçimindedir; Query onu bu adla arar ve
-	// Entity() ile adın örtüştüğünü doğrular (ADR 0004).
-	// Modüller arası yüzey AYRI bir adla kaydedilir: servisin kendisi cart'ın
-	// zengin tipleriyle konuşur, bu yüzey ise yalnızca ilkel tiplerle (ADR 0006).
-	// Sepet akışları onu kendi dar arayüzleriyle çözer.
+	// The provider name has the form "<entity>.query"; Query looks it up under
+	// that name and verifies with Entity() that the name matches (ADR 0004).
+	// The cross-module surface is registered under a SEPARATE name: the service
+	// itself speaks in cart's rich types, this surface only in primitive types
+	// (ADR 0006). The cart flows resolve it with their own narrow interfaces.
 	if err := c.Provide(InteropName, service.NewInterop(svc)); err != nil {
 		return err
 	}
@@ -210,92 +218,99 @@ func (m *Module) Register(ctx context.Context, c *container.Container) error {
 	}
 
 	m.svc = svc
-	// Akışlar bu aşamada HENÜZ KAYITLI DEĞİLDİR ve olamazlar: akış, tüm
-	// modüllerin servislerini container'dan çözerek kurulur, yani Register
-	// döngüsünün TAMAMI bittikten sonra doğar. Handler ise akışa ihtiyaç duyar.
-	// Bağımlılık dairesi, çözümü İSTEK ANINA erteleyerek kırılır
-	// (bkz. [cartOpening], [linePricing] ve [cartCompletion]); aynı kalıbı
-	// order modülü harcama limiti kuralı için uygular.
+	// The flows are NOT REGISTERED YET at this stage, and they cannot be: a flow
+	// is set up by resolving all modules' services from the container, that is,
+	// it is born after the WHOLE Register loop has finished. The handler, on the
+	// other hand, needs the flow. The dependency circle is broken by deferring
+	// the resolution to REQUEST TIME (see [cartOpening], [linePricing] and
+	// [cartCompletion]); the order module applies the same pattern for its
+	// spending limit rule.
 	//
 	m.handler = api.New(svc, api.Flows{
 		Opening:  &cartOpening{c: c, log: log},
 		Pricing:  &linePricing{c: c, log: log},
 		Checkout: &cartCompletion{c: c, log: log},
 	})
-	slog.Default().DebugContext(ctx, "cart modülü kaydedildi",
-		"servis", ServiceName, "saglayici", ProviderName)
+	slog.Default().DebugContext(ctx, "cart module registered",
+		"service", ServiceName, "provider", ProviderName)
 	return nil
 }
 
-// Routes modülün store ve admin uçlarını router'a bağlar.
+// Routes mounts the module's store and admin endpoints on the router.
 //
-// Register çalışmadıysa hiçbir uç bağlanmaz: servisi olmayan bir handler'ın
-// ilk istekte panik üretmesindense ucun hiç var olmaması yeğdir.
+// If Register did not run, no endpoint is mounted: rather than a handler
+// without a service panicking on the first request, it is better for the
+// endpoint not to exist at all.
 func (m *Module) Routes(r chi.Router) {
 	if m.handler == nil {
-		slog.Default().Warn("cart modülü Register edilmeden Routes çağrıldı, route bağlanmadı")
+		slog.Default().Warn("Routes was called on the cart module without Register, no route was mounted")
 		return
 	}
 	m.handler.Routes(r)
 }
 
-// Describe modülün vitrin ve yönetim uçlarını OpenAPI belgesine işler.
+// Describe writes the module's storefront and admin endpoints into the OpenAPI
+// document.
 //
-// Anlatımın kendisi [api.Describe]'dedir: gövde şemaları o paketin dışa kapalı
-// DTO'larından türetilir ve tipleri yalnızca belge uğruna dışa açmak modülün
-// yüzeyini genişletirdi.
+// The description itself lives in [api.Describe]: the body schemas are derived
+// from that package's unexported DTOs, and exporting those types only for the
+// sake of the document would widen the module's surface.
 //
-// [Module.Routes]'un tersine Register kontrolü YOKTUR ve gerekmez: şema
-// tiplerden gelir, servisten değil. Kontrol koymak, kurulmamış bir modülün
-// belgesini de sessizce boşaltırdı.
+// Unlike [Module.Routes] there is NO Register check, and none is needed: the
+// schema comes from the types, not from the service. Putting a check there
+// would silently empty the document of an unregistered module too.
 func (m *Module) Describe(d *openapi.Doc) { api.Describe(d) }
 
-// Service modülün servisini döner; Register çağrılmadıysa nil'dir.
+// Service returns the module's service; it is nil if Register was not called.
 //
-// Testler ve gömülü kullanım içindir; normal akışta servis container'dan
-// [ServiceName] adıyla çözülür.
+// It is meant for tests and embedded use; in the normal flow the service is
+// resolved from the container under the name [ServiceName].
 func (m *Module) Service() *service.Service { return m.svc }
 
-// mustSub alt dizini açar; açılamazsa panikler.
+// mustSub opens the subdirectory; it panics if it cannot be opened.
 //
-// Panik burada güvenlidir: dizin adı derleme zamanında sabittir ve go:embed
-// dosyaların varlığını zaten derleme zamanında doğrulamıştır. Yine de sessizce
-// nil dönmek, modülün migration'sız (yani tablosuz) ayağa kalkması demek
-// olurdu; kurulum hatası açıkça patlamalıdır.
+// The panic is safe here: the directory name is constant at compile time and
+// the embed directive has already verified at compile time that the files
+// exist. Returning nil silently would nevertheless mean the module coming up
+// without migrations (that is, without tables); a setup error must blow up
+// openly.
 func mustSub(files embed.FS, dir string) fs.FS {
 	sub, err := fs.Sub(files, dir)
 	if err != nil {
-		panic("cart: gömülü migration dizini açılamadı: " + err.Error())
+		panic("cart: could not open the embedded migrations directory: " + err.Error())
 	}
 	return sub
 }
 
-// linePricing satır fiyatlandırma akışını İLK KULLANIMDA çözen sarmalayıcıdır.
+// linePricing is the wrapper that resolves the line pricing flow ON FIRST USE.
 //
-// # Neden tembel
+// # Why lazy
 //
-// [module.Module] sözleşmesi Register sırasında başka modüllerin servislerinin
-// henüz kayıtlı olmayabileceğini söyler. Buradaki bağımlılık daha da geç
-// doğar: akış, TÜM modüllerin yüzeylerini container'dan çözerek kurulur, yani
-// Register döngüsü bittikten sonra — oysa handler Register sırasında kurulur.
-// Daire, çözümü ilk isteğe erteleyerek kırılır. Kayıt sırası böylece
-// önemsizleşir ve bileşim kökü akışları modüllerden SONRA kaydedebilir.
+// The [module.Module] contract says that during Register other modules'
+// services may not be registered yet. The dependency here is born even later:
+// the flow is set up by resolving ALL modules' surfaces from the container,
+// that is, after the Register loop has finished — whereas the handler is set up
+// during Register. The circle is broken by deferring the resolution to the
+// first request. Registration order thus becomes irrelevant and the composition
+// root can register the flows AFTER the modules.
 //
-// # Neden KAPALI arızalanıyor
+// # Why it fails CLOSED
 //
-// Bu, order modülünün harcama limiti sarmalayıcısının (spendingPolicy)
-// TERSİDİR ve fark bilinçlidir. Orada ad kayıtlı değilse doğru cevap "limit
-// yok"tur: b2b kurulu olmayan bir mağazada harcama limiti diye bir kavram
-// yoktur. Burada ad kayıtlı değilse doğru cevap "fiyat yok" DEĞİLDİR —
-// fiyatı olmayan bir satırı sepete yazmak (ne istemcinin gönderdiği tutarla,
-// ne sıfırla) sessizce bedava mal satmak olurdu. Tek doğru sonuç, satırın HİÇ
-// EKLENMEMESİDİR; bu yüzden çözülemeyen ad da, yüzeyi karşılamayan kayıtlı bir
-// tip de HATA döndürür ve uç kapanır.
+// This is the OPPOSITE of the order module's spending limit wrapper
+// (spendingPolicy), and the difference is deliberate. There, if the name is not
+// registered the right answer is "no limit": in a store where b2b is not
+// installed there is no such concept as a spending limit. Here, if the name is
+// not registered the right answer is NOT "no price" — writing a line without a
+// price into the cart (neither with the amount the client sent, nor with zero)
+// would be selling goods for free, silently. The only right outcome is for the
+// line NOT TO BE ADDED AT ALL; this is why an unresolvable name, and equally a
+// registered type that does not satisfy the surface, returns an ERROR and the
+// endpoint closes.
 //
-// Karar BİR KEZ verilir ve saklanır. Akışlar açılışta, ilk isteğten önce
-// kaydedilir; ilk çözümde bulunmayan bir ad sonraki isteklerde de
-// bulunmayacaktır ve her istekte yeniden denemek aynı hatayı sonsuza kadar
-// tekrar üretmekten başka bir şey yapmazdı.
+// The decision is made ONCE and stored. The flows are registered at startup,
+// before the first request; a name that was not found at the first resolution
+// will not be found on the later requests either, and retrying on every request
+// would do nothing but reproduce the same error forever.
 type linePricing struct {
 	c    *container.Container
 	log  *slog.Logger
@@ -304,11 +319,11 @@ type linePricing struct {
 	err  error
 }
 
-// Sarmalayıcının handler'ın beklediği yüzeyi karşıladığı derleme zamanında
-// sabitlenir.
+// That the wrapper satisfies the surface the handler expects is pinned down at
+// compile time.
 var _ api.LinePricing = (*linePricing)(nil)
 
-// AddPricedLineItem sepete satır ekler ve satırın kimliğini döner.
+// AddPricedLineItem adds a line to the cart and returns the line's id.
 func (p *linePricing) AddPricedLineItem(
 	ctx context.Context,
 	cartID, variantID string,
@@ -322,8 +337,8 @@ func (p *linePricing) AddPricedLineItem(
 	return p.svc.AddPricedLineItem(ctx, cartID, variantID, quantity, metadata)
 }
 
-// SetLineItemQuantity satırın adedini yazar ve satırın kaldırılıp
-// kaldırılmadığını bildirir.
+// SetLineItemQuantity writes the line's quantity and reports whether the line
+// was removed.
 func (p *linePricing) SetLineItemQuantity(
 	ctx context.Context,
 	cartID, lineItemID string,
@@ -336,43 +351,49 @@ func (p *linePricing) SetLineItemQuantity(
 	return p.svc.SetLineItemQuantity(ctx, cartID, lineItemID, quantity)
 }
 
-// resolve akışı container'dan çözer; sonucu bir kez saklar.
+// resolve resolves the flow from the container; it stores the result once.
 //
-// # Hata sınıfı container'dan DEVRALINMAZ
+// # The error kind is NOT INHERITED from the container
 //
-// Sarmalama sınıfı sabit [errors.KindInternal]'dır; container'ın kendi sınıfı
-// (kayıtsız ad → KindNotFound, yanlış tipte kayıt → KindInvalid) olduğu gibi
-// geçirilmez. Sebep, o sınıfların hatanın MUHATABINI yanlış göstermesidir:
-// ikisi de istemcinin düzeltebileceği bir şey değil, SUNUCU YAPILANDIRMASI
-// arızasıdır.
+// The wrapping kind is the constant [errors.KindInternal]; the container's own
+// kind (unregistered name → KindNotFound, registration of the wrong type →
+// KindInvalid) is not passed through as is. The reason is that those kinds
+// point at the wrong PARTY for the error: neither is something the client could
+// fix, both are a SERVER CONFIGURATION failure.
 //
-// Devralınsaydı satır ekleme ucu 404 dönerdi. Üç ayrı bedeli vardır: istemciye
-// "böyle bir uç yok" der ve vitrini var olmayan bir yolu aramaya iter, 5xx
-// üzerinden kurulmuş uyarı zinciri hiç çalmaz, ara katmanlar da 404'ü
-// önbelleğe alıp arızayı kurulum düzeldikten SONRA da sürdürebilir. Yanlış
-// tipte kayıt ise 422 ile "gövden geçersiz" derdi; gövde kusursuz olsa bile.
+// Had it been inherited, the line-adding endpoint would return 404. That has
+// three separate costs: it tells the client "there is no such endpoint" and
+// pushes the storefront into looking for a path that does not exist, the alert
+// chain built on 5xx never rings, and intermediate layers can cache the 404 and
+// keep the failure alive even AFTER the setup is fixed. A registration of the
+// wrong type would say "your body is invalid" with 422; even when the body is
+// flawless.
 //
-// Operatörün ihtiyacı olan metin (hangi ad çözülemedi, neyin imkânsız olduğu)
-// hatada KORUNUR ve istemciye sızmaz: taşıma katmanı KindInternal gövdelerini
-// maskeler, gerçek zinciri yalnızca loga yazar (bkz. corehttp.WriteError).
-// İstemcinin gördüğü tek makine okunur alan [codeSetupFailed] kalır.
+// The text the operator needs (which name could not be resolved, what became
+// impossible) is PRESERVED in the error and does not leak to the client: the
+// transport layer masks KindInternal bodies and writes the real chain only to
+// the log (see corehttp.WriteError). The only machine-readable field the client
+// sees remains [codeSetupFailed].
 func (p *linePricing) resolve(ctx context.Context) {
 	svc, err := container.Resolve[api.LinePricing](p.c, CartFlowsName)
 	if err != nil {
 		p.err = errors.Wrap(err, errors.KindInternal, codeSetupFailed,
-			"%s modülü satır fiyatlandırma akışını çözemedi (%q); fiyatı sunucu "+
-				"belirlemeden satır eklenemez", ModuleName, CartFlowsName)
+			"the %s module could not resolve the line pricing flow (%q); a line "+
+				"cannot be added without the server determining the price",
+			ModuleName, CartFlowsName)
 		return
 	}
 	p.svc = svc
-	p.log.InfoContext(ctx, "satır fiyatlandırma akışı bağlandı", "akis", CartFlowsName)
+	p.log.InfoContext(ctx, "line pricing flow bound", "flow", CartFlowsName)
 }
 
-// cartCompletion sepet tamamlama akışını İLK KULLANIMDA çözen sarmalayıcıdır.
+// cartCompletion is the wrapper that resolves the cart completion flow ON FIRST
+// USE.
 //
-// Tembelliğin ve kapalı arızalanmanın gerekçesi [linePricing] ile aynıdır;
-// burada daha da açıktır: akış yoksa sipariş, ödeme ve stok rezervasyonu da
-// yoktur ve "sepeti tamamlandı say" diye bir kestirme yol olamaz.
+// The rationale for the laziness and for failing closed is the same as
+// [linePricing]'s; here it is even plainer: if there is no flow there is no
+// order, no payment and no stock reservation either, and there can be no
+// shortcut called "consider the cart completed".
 type cartCompletion struct {
 	c    *container.Container
 	log  *slog.Logger
@@ -381,11 +402,11 @@ type cartCompletion struct {
 	err  error
 }
 
-// Sarmalayıcının handler'ın beklediği yüzeyi karşıladığı derleme zamanında
-// sabitlenir.
+// That the wrapper satisfies the surface the handler expects is pinned down at
+// compile time.
 var _ api.CartCompletion = (*cartCompletion)(nil)
 
-// CompleteCartJSON sepeti siparişe çevirir.
+// CompleteCartJSON turns the cart into an order.
 func (p *cartCompletion) CompleteCartJSON(ctx context.Context, request json.RawMessage) (json.RawMessage, error) {
 	p.once.Do(func() { p.resolve(ctx) })
 	if p.err != nil {
@@ -394,35 +415,37 @@ func (p *cartCompletion) CompleteCartJSON(ctx context.Context, request json.RawM
 	return p.svc.CompleteCartJSON(ctx, request)
 }
 
-// resolve akışı container'dan çözer; sonucu bir kez saklar.
+// resolve resolves the flow from the container; it stores the result once.
 //
-// Hata sınıfının container'dan devralınmama gerekçesi [linePricing.resolve]
-// godoc'undadır ve burada da aynen geçerlidir.
+// The rationale for not inheriting the error kind from the container is in the
+// [linePricing.resolve] godoc and holds here word for word.
 func (p *cartCompletion) resolve(ctx context.Context) {
 	svc, err := container.Resolve[api.CartCompletion](p.c, CartCompletionName)
 	if err != nil {
 		p.err = errors.Wrap(err, errors.KindInternal, codeSetupFailed,
-			"%s modülü sepet tamamlama akışını çözemedi (%q)", ModuleName, CartCompletionName)
+			"the %s module could not resolve the cart completion flow (%q)",
+			ModuleName, CartCompletionName)
 		return
 	}
 	p.svc = svc
-	p.log.InfoContext(ctx, "sepet tamamlama akışı bağlandı", "akis", CartCompletionName)
+	p.log.InfoContext(ctx, "cart completion flow bound", "flow", CartCompletionName)
 }
 
-// cartOpening sepet açma akışını İLK KULLANIMDA çözen sarmalayıcıdır.
+// cartOpening is the wrapper that resolves the cart opening flow ON FIRST USE.
 //
-// Tembelliğin gerekçesi [linePricing] ile aynıdır ve kapalı arızalanmanınki de
-// aynı yöndedir: akış yoksa doğru cevap "bölgesiz sepet" ya da "istemcinin
-// dediği bölge" DEĞİLDİR. Sepetin bölgesi vergi oranını, ondan türetilen para
-// birimi de hangi fiyat listesinin uygulanacağını seçer; ikisini de bir
-// varsayılana düşürmek, kapatılan yetki kapısını geri açardı. Sepet HİÇ
-// AÇILMAZ.
+// The rationale for the laziness is the same as [linePricing]'s and the one for
+// failing closed points the same way: if there is no flow, the right answer is
+// NOT "a cart without a region" or "the region the client named". The cart's
+// region selects the tax rate, and the currency derived from it selects which
+// price list is applied; dropping either to a default would reopen the
+// authorization gate that was closed. The cart is NOT OPENED AT ALL.
 //
-// Sarmalayıcı [linePricing] ile AYNI adı çözer ([CartFlowsName]) ama ayrı bir
-// tiptir: iki uç iki farklı dar arayüz görür ve tek bir sarmalayıcıya
-// indirilseydi handler, satır fiyatlandırmayı da sepet açmayı da tek bir
-// yüzeyin arkasında görürdü — oysa arayüzün dar olması tam olarak "bu uç
-// hangi yeteneği kullanıyor" sorusunun cevabıdır.
+// The wrapper resolves the SAME name as [linePricing] ([CartFlowsName]) but is
+// a separate type: the two endpoints see two different narrow interfaces, and
+// had they been reduced to a single wrapper the handler would see both line
+// pricing and cart opening behind one surface — whereas an interface being
+// narrow is exactly the answer to the question "which capability does this
+// endpoint use".
 type cartOpening struct {
 	c    *container.Container
 	log  *slog.Logger
@@ -431,11 +454,11 @@ type cartOpening struct {
 	err  error
 }
 
-// Sarmalayıcının handler'ın beklediği yüzeyi karşıladığı derleme zamanında
-// sabitlenir.
+// That the wrapper satisfies the surface the handler expects is pinned down at
+// compile time.
 var _ api.CartOpening = (*cartOpening)(nil)
 
-// OpenCartForCountry sepeti açar ve kimliğini döner.
+// OpenCartForCountry opens the cart and returns its id.
 func (p *cartOpening) OpenCartForCountry(
 	ctx context.Context,
 	countryCode, customerID, email string,
@@ -448,18 +471,19 @@ func (p *cartOpening) OpenCartForCountry(
 	return p.svc.OpenCartForCountry(ctx, countryCode, customerID, email, metadata)
 }
 
-// resolve akışı container'dan çözer; sonucu bir kez saklar.
+// resolve resolves the flow from the container; it stores the result once.
 //
-// Hata sınıfının container'dan devralınmama gerekçesi [linePricing.resolve]
-// godoc'undadır ve burada da aynen geçerlidir.
+// The rationale for not inheriting the error kind from the container is in the
+// [linePricing.resolve] godoc and holds here word for word.
 func (p *cartOpening) resolve(ctx context.Context) {
 	svc, err := container.Resolve[api.CartOpening](p.c, CartFlowsName)
 	if err != nil {
 		p.err = errors.Wrap(err, errors.KindInternal, codeSetupFailed,
-			"%s modülü sepet açma akışını çözemedi (%q); bölge ülkeden "+
-				"türetilemeden sepet açılamaz", ModuleName, CartFlowsName)
+			"the %s module could not resolve the cart opening flow (%q); a cart "+
+				"cannot be opened without the region being derived from the country",
+			ModuleName, CartFlowsName)
 		return
 	}
 	p.svc = svc
-	p.log.InfoContext(ctx, "sepet açma akışı bağlandı", "akis", CartFlowsName)
+	p.log.InfoContext(ctx, "cart opening flow bound", "flow", CartFlowsName)
 }

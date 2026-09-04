@@ -13,134 +13,136 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/order/service"
 )
 
-// TestCreateReturnKayitAcarVeListeler iade iskeletinin temel akışını doğrular.
-func TestCreateReturnKayitAcarVeListeler(t *testing.T) {
+// TestCreateReturnOpensARecordAndListsIt validates the basic flow of the return
+// skeleton.
+func TestCreateReturnOpensARecordAndListsIt(t *testing.T) {
 	ctx := context.Background()
-	o := yeniOrtam(t)
+	e := newEnv(t)
 
-	siparis, err := o.svc.CreateOrder(ctx, gecerliGirdi())
+	order, err := e.svc.CreateOrder(ctx, validInput())
 	require.NoError(t, err)
 
-	iade, err := o.svc.CreateReturn(ctx, service.CreateReturnInput{
-		OrderID:      siparis.ID,
+	returned, err := e.svc.CreateReturn(ctx, service.CreateReturnInput{
+		OrderID:      order.ID,
 		RefundAmount: 3600,
-		Reason:       "beden uymadı",
-		Metadata:     map[string]any{"kanal": "destek"},
+		Reason:       "the size did not fit",
+		Metadata:     map[string]any{"channel": "support"},
 	})
 	require.NoError(t, err)
-	assert.True(t, strings.HasPrefix(iade.ID, models.ReturnIDPrefix))
-	assert.Equal(t, models.ReturnRequested, iade.Status,
-		"iade bir TALEP olarak doğmalı")
-	assert.Equal(t, int64(3600), iade.RefundAmount)
+	assert.True(t, strings.HasPrefix(returned.ID, models.ReturnIDPrefix))
+	assert.Equal(t, models.ReturnRequested, returned.Status,
+		"a return has to be born as a REQUEST")
+	assert.Equal(t, int64(3600), returned.RefundAmount)
 
-	okunan, err := o.svc.GetReturn(ctx, iade.ID)
+	readBack, err := e.svc.GetReturn(ctx, returned.ID)
 	require.NoError(t, err)
-	assert.Equal(t, iade.ID, okunan.ID)
+	assert.Equal(t, returned.ID, readBack.ID)
 
-	kayitlar, sayi, err := o.svc.ListReturns(ctx, siparis.ID, service.Page{})
+	records, count, err := e.svc.ListReturns(ctx, order.ID, service.Page{})
 	require.NoError(t, err)
-	assert.Equal(t, int64(1), sayi)
-	require.Len(t, kayitlar, 1)
-	assert.Equal(t, iade.ID, kayitlar[0].ID)
+	assert.Equal(t, int64(1), count)
+	require.Len(t, records, 1)
+	assert.Equal(t, returned.ID, records[0].ID)
 }
 
-// TestSatisSonrasiTutariSiparisToplaminiAsamaz iade/hasar kaydının tutarının
-// siparişe BAĞLANDIĞINI doğrular.
+// TestAfterSalesAmountCannotExceedTheOrderTotal validates that the amount of the
+// return/claim record IS TIED to the order.
 //
-// Aralık kontrolü (0..MaxTotal) tek başına yetmez: toplamı 6100 olan bir
-// siparişe milyonluk bir iade kaydı açılabilirdi. Kayıt bugün para hareketi
-// doğurmuyor, ama iade akışı sonraki fazda bu tutarı okuyacak ve hata ancak
-// para geri ödenmeye çalışıldığında — kaydın açılmasından çok sonra —
-// görünecekti.
-func TestSatisSonrasiTutariSiparisToplaminiAsamaz(t *testing.T) {
+// The range check (0..MaxTotal) is not enough on its own: a return record worth
+// millions could be opened on an order whose total is 6100. The record does not
+// produce a money movement today, but the return flow will read this amount in
+// the next phase and the mistake would only show up when the money was about to
+// be paid back — that is, long after the record was opened.
+func TestAfterSalesAmountCannotExceedTheOrderTotal(t *testing.T) {
 	ctx := context.Background()
-	o := yeniOrtam(t)
+	e := newEnv(t)
 
-	siparis, err := o.svc.CreateOrder(ctx, gecerliGirdi())
+	order, err := e.svc.CreateOrder(ctx, validInput())
 	require.NoError(t, err)
-	require.Equal(t, int64(6100), siparis.Total)
+	require.Equal(t, int64(6100), order.Total)
 
-	_, err = o.svc.CreateReturn(ctx, service.CreateReturnInput{
-		OrderID:      siparis.ID,
-		RefundAmount: siparis.Total + 1,
+	_, err = e.svc.CreateReturn(ctx, service.CreateReturnInput{
+		OrderID:      order.ID,
+		RefundAmount: order.Total + 1,
 	})
-	require.Error(t, err, "sipariş toplamını aşan iade kaydı açılamamalı")
+	require.Error(t, err, "a return record exceeding the order total must not be openable")
 	assert.Equal(t, errors.KindInvalid, errors.KindOf(err))
 	assert.Equal(t, service.CodeRefundExceedsOrder, errors.CodeOf(err))
 
-	_, err = o.svc.CreateClaim(ctx, service.CreateClaimInput{
-		OrderID:      siparis.ID,
+	_, err = e.svc.CreateClaim(ctx, service.CreateClaimInput{
+		OrderID:      order.ID,
 		Type:         models.ClaimRefund,
-		RefundAmount: siparis.Total + 1,
+		RefundAmount: order.Total + 1,
 	})
-	require.Error(t, err, "sipariş toplamını aşan hasar kaydı açılamamalı")
+	require.Error(t, err, "a claim record exceeding the order total must not be openable")
 	assert.Equal(t, service.CodeRefundExceedsOrder, errors.CodeOf(err))
 
-	// Tam toplam kadar iade GEÇERLİDİR: sınır dışlayıcı değildir.
-	tam, err := o.svc.CreateReturn(ctx, service.CreateReturnInput{
-		OrderID:      siparis.ID,
-		RefundAmount: siparis.Total,
+	// A return of exactly the total IS VALID: the bound is not exclusive.
+	full, err := e.svc.CreateReturn(ctx, service.CreateReturnInput{
+		OrderID:      order.ID,
+		RefundAmount: order.Total,
 	})
 	require.NoError(t, err)
-	assert.Equal(t, siparis.Total, tam.RefundAmount)
+	assert.Equal(t, order.Total, full.RefundAmount)
 
-	// Hiçbir kayıt yazılmamış olmalı: reddedilen iki çağrıdan geriye yalnızca
-	// geçerli olan kalır.
-	_, sayi, err := o.svc.ListReturns(ctx, siparis.ID, service.Page{})
+	// No record must have been written: out of the two rejected calls only the
+	// valid one is left behind.
+	_, count, err := e.svc.ListReturns(ctx, order.ID, service.Page{})
 	require.NoError(t, err)
-	assert.Equal(t, int64(1), sayi)
+	assert.Equal(t, int64(1), count)
 }
 
-// TestCreateExchangeNegatifFarkKabulEder değişim farkının iki yönde de
-// doğabildiğini doğrular.
+// TestCreateExchangeAcceptsANegativeDifference validates that the difference of
+// an exchange can arise in both directions.
 //
-// Negatif fark "müşteriye ödenecek" demektir; reddetmek, ucuz bir ürünle
-// yapılan değişimi kaydedilemez kılardı.
-func TestCreateExchangeNegatifFarkKabulEder(t *testing.T) {
+// A negative difference means "to be paid to the customer"; rejecting it would
+// make an exchange done with a cheaper product impossible to record.
+func TestCreateExchangeAcceptsANegativeDifference(t *testing.T) {
 	ctx := context.Background()
-	o := yeniOrtam(t)
+	e := newEnv(t)
 
-	siparis, err := o.svc.CreateOrder(ctx, gecerliGirdi())
+	order, err := e.svc.CreateOrder(ctx, validInput())
 	require.NoError(t, err)
 
-	degisim, err := o.svc.CreateExchange(ctx, service.CreateExchangeInput{
-		OrderID:       siparis.ID,
+	exchange, err := e.svc.CreateExchange(ctx, service.CreateExchangeInput{
+		OrderID:       order.ID,
 		DifferenceDue: -500,
-		Note:          "daha ucuz modelle değişim",
+		Note:          "an exchange with a cheaper model",
 	})
 	require.NoError(t, err)
-	assert.Equal(t, int64(-500), degisim.DifferenceDue)
-	assert.Equal(t, models.ExchangeRequested, degisim.Status)
+	assert.Equal(t, int64(-500), exchange.DifferenceDue)
+	assert.Equal(t, models.ExchangeRequested, exchange.Status)
 
-	kayitlar, sayi, err := o.svc.ListExchanges(ctx, siparis.ID, service.Page{})
+	records, count, err := e.svc.ListExchanges(ctx, order.ID, service.Page{})
 	require.NoError(t, err)
-	assert.Equal(t, int64(1), sayi)
-	require.Len(t, kayitlar, 1)
-	assert.Equal(t, degisim.ID, kayitlar[0].ID)
+	assert.Equal(t, int64(1), count)
+	require.Len(t, records, 1)
+	assert.Equal(t, exchange.ID, records[0].ID)
 }
 
-// TestCreateClaimTurunuDogrular hasar kaydı türünün kurallarını doğrular.
-func TestCreateClaimTurunuDogrular(t *testing.T) {
+// TestCreateClaimValidatesTheType validates the rules of the claim record type.
+func TestCreateClaimValidatesTheType(t *testing.T) {
 	ctx := context.Background()
-	o := yeniOrtam(t)
+	e := newEnv(t)
 
-	siparis, err := o.svc.CreateOrder(ctx, gecerliGirdi())
+	order, err := e.svc.CreateOrder(ctx, validInput())
 	require.NoError(t, err)
 
-	iadeli, err := o.svc.CreateClaim(ctx, service.CreateClaimInput{
-		OrderID:      siparis.ID,
+	refundClaim, err := e.svc.CreateClaim(ctx, service.CreateClaimInput{
+		OrderID:      order.ID,
 		Type:         models.ClaimRefund,
 		RefundAmount: 1200,
-		Reason:       "kırık geldi",
+		Reason:       "it arrived broken",
 	})
 	require.NoError(t, err)
-	assert.Equal(t, models.ClaimRequested, iadeli.Status)
-	assert.True(t, strings.HasPrefix(iadeli.ID, models.ClaimIDPrefix))
+	assert.Equal(t, models.ClaimRequested, refundClaim.Status)
+	assert.True(t, strings.HasPrefix(refundClaim.ID, models.ClaimIDPrefix))
 
-	// Yerine yenisi gönderilen talepte iade edilecek para YOKTUR; dolu bir
-	// tutar müşterinin hem malı hem parayı aldığı sessiz bir çift ödeme olurdu.
-	_, err = o.svc.CreateClaim(ctx, service.CreateClaimInput{
-		OrderID:      siparis.ID,
+	// On a claim whose goods are sent again there is NO money to refund; a
+	// filled-in amount would be a silent double payment where the customer
+	// receives both the goods and the money.
+	_, err = e.svc.CreateClaim(ctx, service.CreateClaimInput{
+		OrderID:      order.ID,
 		Type:         models.ClaimReplace,
 		RefundAmount: 1200,
 	})
@@ -148,47 +150,47 @@ func TestCreateClaimTurunuDogrular(t *testing.T) {
 	assert.Equal(t, errors.KindInvalid, errors.KindOf(err))
 	assert.Contains(t, err.Error(), "refund_amount")
 
-	_, err = o.svc.CreateClaim(ctx, service.CreateClaimInput{
-		OrderID: siparis.ID,
-		Type:    models.ClaimType("iade"),
+	_, err = e.svc.CreateClaim(ctx, service.CreateClaimInput{
+		OrderID: order.ID,
+		Type:    models.ClaimType("credit"),
 	})
-	require.Error(t, err, "tanımsız tür reddedilmeli")
+	require.Error(t, err, "an undefined type has to be rejected")
 	assert.Equal(t, errors.KindInvalid, errors.KindOf(err))
 }
 
-// TestSatisSonrasiKayitlariIptalEdilmisSiparisteAcilamaz iptal edilmiş
-// siparişte iade/değişim/hasar kaydı açılamadığını doğrular.
+// TestAfterSalesRecordsCannotBeOpenedOnACanceledOrder validates that a
+// return/exchange/claim record cannot be opened on a canceled order.
 //
-// İptal edilmiş siparişte teslim edilmiş mal yoktur: iade edilecek, değişecek
-// ya da hasar görecek bir şey de yoktur.
-func TestSatisSonrasiKayitlariIptalEdilmisSiparisteAcilamaz(t *testing.T) {
+// On a canceled order there are no delivered goods: there is nothing to return,
+// to exchange or to be damaged either.
+func TestAfterSalesRecordsCannotBeOpenedOnACanceledOrder(t *testing.T) {
 	ctx := context.Background()
-	o := yeniOrtam(t)
+	e := newEnv(t)
 
-	siparis, err := o.svc.CreateOrder(ctx, gecerliGirdi())
+	order, err := e.svc.CreateOrder(ctx, validInput())
 	require.NoError(t, err)
-	require.NoError(t, o.svc.CancelOrder(ctx, siparis.ID, "ödeme reddedildi"))
+	require.NoError(t, e.svc.CancelOrder(ctx, order.ID, "the payment was declined"))
 
-	testler := map[string]func() error{
-		"iade": func() error {
-			_, err := o.svc.CreateReturn(ctx, service.CreateReturnInput{OrderID: siparis.ID})
+	cases := map[string]func() error{
+		"return": func() error {
+			_, err := e.svc.CreateReturn(ctx, service.CreateReturnInput{OrderID: order.ID})
 			return err
 		},
-		"değişim": func() error {
-			_, err := o.svc.CreateExchange(ctx, service.CreateExchangeInput{OrderID: siparis.ID})
+		"exchange": func() error {
+			_, err := e.svc.CreateExchange(ctx, service.CreateExchangeInput{OrderID: order.ID})
 			return err
 		},
-		"hasar": func() error {
-			_, err := o.svc.CreateClaim(ctx, service.CreateClaimInput{
-				OrderID: siparis.ID, Type: models.ClaimRefund,
+		"claim": func() error {
+			_, err := e.svc.CreateClaim(ctx, service.CreateClaimInput{
+				OrderID: order.ID, Type: models.ClaimRefund,
 			})
 			return err
 		},
 	}
 
-	for ad, cagir := range testler {
-		t.Run(ad, func(t *testing.T) {
-			err := cagir()
+	for name, call := range cases {
+		t.Run(name, func(t *testing.T) {
+			err := call()
 
 			require.Error(t, err)
 			assert.Equal(t, errors.KindConflict, errors.KindOf(err))
@@ -196,54 +198,55 @@ func TestSatisSonrasiKayitlariIptalEdilmisSiparisteAcilamaz(t *testing.T) {
 		})
 	}
 
-	kayitlar, sayi, err := o.svc.ListReturns(ctx, siparis.ID, service.Page{})
+	records, count, err := e.svc.ListReturns(ctx, order.ID, service.Page{})
 	require.NoError(t, err)
-	assert.Zero(t, sayi)
-	assert.Empty(t, kayitlar)
+	assert.Zero(t, count)
+	assert.Empty(t, records)
 }
 
-// TestSatisSonrasiKayitlariSiparisKilidiniAlir kontrolün YARIŞSIZ yapıldığını
-// doğrular.
+// TestAfterSalesRecordsTakeTheOrderLock validates that the check is done
+// RACE-FREE.
 //
-// Kilitsiz bir kontrol yalnızca "o an" doğru olurdu: kontrol ile yazma arasında
-// sipariş iptal edilebilir ve kayıt iptal edilmiş bir siparişe bağlanabilirdi.
-func TestSatisSonrasiKayitlariSiparisKilidiniAlir(t *testing.T) {
+// A lockless check would only be true "at that moment": between the check and
+// the write the order could be canceled and the record could end up attached to
+// a canceled order.
+func TestAfterSalesRecordsTakeTheOrderLock(t *testing.T) {
 	ctx := context.Background()
-	o := yeniOrtam(t)
+	e := newEnv(t)
 
-	siparis, err := o.svc.CreateOrder(ctx, gecerliGirdi())
+	order, err := e.svc.CreateOrder(ctx, validInput())
 	require.NoError(t, err)
 
-	_, err = o.svc.CreateReturn(ctx, service.CreateReturnInput{OrderID: siparis.ID})
+	_, err = e.svc.CreateReturn(ctx, service.CreateReturnInput{OrderID: order.ID})
 	require.NoError(t, err)
 
-	assert.Contains(t, o.store.lockedOrders, siparis.ID,
-		"iade kaydı siparişin kilidini almalı")
+	assert.Contains(t, e.store.lockedOrders, order.ID,
+		"the return record has to take the lock of the order")
 }
 
-// TestSatisSonrasiKayitlariOlmayanSiparisteNotFound eksik siparişte NotFound
-// döndüğünü doğrular.
-func TestSatisSonrasiKayitlariOlmayanSiparisteNotFound(t *testing.T) {
+// TestAfterSalesRecordsNotFoundOnAMissingOrder validates that a missing order
+// returns NotFound.
+func TestAfterSalesRecordsNotFoundOnAMissingOrder(t *testing.T) {
 	ctx := context.Background()
-	o := yeniOrtam(t)
+	e := newEnv(t)
 
-	_, err := o.svc.CreateReturn(ctx, service.CreateReturnInput{OrderID: "order_YOK"})
+	_, err := e.svc.CreateReturn(ctx, service.CreateReturnInput{OrderID: "order_MISSING"})
 
 	require.Error(t, err)
 	assert.Equal(t, errors.KindNotFound, errors.KindOf(err))
 }
 
-// TestSatisSonrasiListelemeSayfalamaDogrular sayfalama parametrelerinin
-// doğrulandığını gösterir.
-func TestSatisSonrasiListelemeSayfalamaDogrular(t *testing.T) {
+// TestAfterSalesListingValidatesThePagination shows that the pagination
+// parameters are validated.
+func TestAfterSalesListingValidatesThePagination(t *testing.T) {
 	ctx := context.Background()
-	o := yeniOrtam(t)
+	e := newEnv(t)
 
-	_, _, err := o.svc.ListClaims(ctx, "", service.Page{})
-	require.Error(t, err, "boş sipariş kimliği reddedilmeli")
+	_, _, err := e.svc.ListClaims(ctx, "", service.Page{})
+	require.Error(t, err, "an empty order identifier has to be rejected")
 	assert.Equal(t, errors.KindInvalid, errors.KindOf(err))
 
-	_, _, err = o.svc.ListExchanges(ctx, "order_X", service.Page{Limit: -1})
-	require.Error(t, err, "negatif limit reddedilmeli")
+	_, _, err = e.svc.ListExchanges(ctx, "order_X", service.Page{Limit: -1})
+	require.Error(t, err, "a negative limit has to be rejected")
 	assert.Equal(t, errors.KindInvalid, errors.KindOf(err))
 }

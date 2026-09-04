@@ -1,20 +1,22 @@
-// Package repository auth modülünün veritabanı erişim katmanıdır.
+// Package repository is the database access layer of the auth module.
 //
-// sqlc'nin ürettiği authdb paketi bu paketin İÇİNDE kalır: dışarıya yalnızca
-// [models] domain tipleri verilir, pgtype hiçbir imzada görünmez. Bu sınır
-// bilinçlidir — servis ve API katmanları depolama ayrıntısına bağlanmaz ve
-// üretilen kod yeniden üretildiğinde yalnızca bu paket etkilenir.
+// The authdb package that sqlc generates stays INSIDE this package: only the
+// [models] domain types are handed outward, and pgtype appears in no signature.
+// This boundary is deliberate — the service and API layers do not bind to a
+// storage detail, and when the generated code is regenerated only this package
+// is affected.
 //
-// Ham hatalar da sınırı geçmez: pgx.ErrNoRows ve PostgreSQL kısıt ihlalleri
-// burada internal/core/errors'ın tipli hatalarına çevrilir, böylece HTTP katmanı
-// status kodunu doğru seçer (plan Bölüm 2.7).
+// Raw errors do not cross the boundary either: pgx.ErrNoRows and PostgreSQL
+// constraint violations are converted here into the typed errors of
+// internal/core/errors, so that the HTTP layer picks the status code correctly
+// (plan Section 2.7).
 //
-// # Sırlar
+// # Secrets
 //
-// Bu paket iki sır sütunu okur: auth_identity.password_hash ve
-// api_key.token_hash. İkisi de HASH'tir, düz metin değildir; yine de hiçbir
-// hata mesajına, log satırına ya da kısıt açıklamasına KONMAZ. Hata
-// mesajlarında kullanılan tek tanımlayıcı kayıt kimliğidir.
+// This package reads two secret columns: auth_identity.password_hash and
+// api_key.token_hash. Both are HASHES, not plain text; even so, neither is EVER
+// put into an error message, a log line or a constraint description. The only
+// identifier used in error messages is the record id.
 package repository
 
 import (
@@ -34,56 +36,56 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/auth/repository/authdb"
 )
 
-// Hata kodları; çağıran taraf errors.CodeOf ile bunlara bakabilir.
+// Error codes; the caller can look them up with errors.CodeOf.
 const (
-	// CodeUserNotFound istenen kullanıcının bulunamadığını bildirir.
+	// CodeUserNotFound reports that the requested user was not found.
 	CodeUserNotFound = "auth_user_not_found"
-	// CodeIdentityNotFound istenen kimlik kaydının bulunamadığını bildirir.
+	// CodeIdentityNotFound reports that the requested identity record was not found.
 	CodeIdentityNotFound = "auth_identity_not_found"
-	// CodeAPIKeyNotFound istenen API anahtarının bulunamadığını bildirir.
-	CodeAPIKeyNotFound = "auth_api_key_not_found" //nolint:gosec // G101: kimlik bilgisi değil, sabit hata KODU
-	// CodeSalesChannelNotFound istenen satış kanalının bulunamadığını bildirir.
+	// CodeAPIKeyNotFound reports that the requested API key was not found.
+	CodeAPIKeyNotFound = "auth_api_key_not_found" //nolint:gosec // G101: not a credential, a constant error CODE
+	// CodeSalesChannelNotFound reports that the requested sales channel was not found.
 	CodeSalesChannelNotFound = "auth_sales_channel_not_found"
-	// CodeAlreadyRevoked anahtarın zaten iptal edilmiş olduğunu bildirir.
+	// CodeAlreadyRevoked reports that the key has already been revoked.
 	CodeAlreadyRevoked = "auth_api_key_already_revoked"
-	// CodeConstraintViolation veritabanı kısıtının ihlal edildiğini bildirir.
+	// CodeConstraintViolation reports that a database constraint was violated.
 	CodeConstraintViolation = "auth_constraint_violation"
-	// CodeDuplicate benzersizlik ihlalini bildirir (örn. kayıtlı e-posta).
+	// CodeDuplicate reports a uniqueness violation (e.g. a registered email).
 	CodeDuplicate = "auth_duplicate"
-	// CodeEmailTaken e-postanın başka bir kullanıcıda olduğunu bildirir.
+	// CodeEmailTaken reports that the email belongs to another user.
 	CodeEmailTaken = "auth_email_taken"
-	// CodeChannelNameTaken kanal adının kullanıldığını bildirir.
+	// CodeChannelNameTaken reports that the channel name is in use.
 	CodeChannelNameTaken = "auth_sales_channel_name_taken"
-	// CodeMetadataInvalid metadata alanının çözümlenemediğini bildirir.
+	// CodeMetadataInvalid reports that the metadata field could not be parsed.
 	CodeMetadataInvalid = "auth_metadata_invalid"
-	// CodeQueryFailed beklenmeyen bir veritabanı hatasını bildirir.
+	// CodeQueryFailed reports an unexpected database error.
 	CodeQueryFailed = "auth_query_failed"
-	// CodeCanceled bağlam iptalini bildirir.
+	// CodeCanceled reports a context cancellation.
 	CodeCanceled = "auth_canceled"
-	// CodeTxFailed işlem (transaction) yönetiminin başarısızlığını bildirir.
+	// CodeTxFailed reports a failure of transaction management.
 	CodeTxFailed = "auth_tx_failed"
 )
 
-// Benzersiz indekslerin adları.
+// Names of the unique indexes.
 //
-// Adlar hata sınıflandırmasında kullanılır: bir benzersizlik ihlalinin hangi
-// kuraldan geldiği yalnızca kısıt adından okunabilir ve çağıran "e-posta
-// kullanımda" ile "kanal adı kullanımda" arasını ancak böyle ayırabilir.
+// The names are used in error classification: which rule a uniqueness violation
+// came from can only be read off the constraint name, and only that way can the
+// caller tell "email taken" from "channel name taken".
 const (
-	// IndexUserEmail canlı kullanıcıların e-posta benzersizliğidir.
+	// IndexUserEmail is the email uniqueness of live users.
 	IndexUserEmail = "auth_user_email_uniq"
-	// IndexIdentityProvider bir sağlayıcıdaki kimliğin benzersizliğidir.
+	// IndexIdentityProvider is the uniqueness of an identity within a provider.
 	IndexIdentityProvider = "auth_identity_provider_uniq"
-	// IndexIdentityUserProvider kullanıcı başına sağlayıcı başına TEK kimlik
-	// kuralıdır.
+	// IndexIdentityUserProvider is the ONE identity per user per provider
+	// rule.
 	IndexIdentityUserProvider = "auth_identity_user_provider_uniq"
-	// IndexChannelName satış kanalı adlarının benzersizliğidir.
+	// IndexChannelName is the uniqueness of sales channel names.
 	IndexChannelName = "sales_channel_name_uniq"
-	// IndexTokenHash API anahtarı özetinin benzersizliğidir.
-	IndexTokenHash = "api_key_token_hash_uniq" //nolint:gosec // G101: kimlik bilgisi değil, veritabanı İNDEKS adı
+	// IndexTokenHash is the uniqueness of the API key hash.
+	IndexTokenHash = "api_key_token_hash_uniq" //nolint:gosec // G101: not a credential, a database INDEX name
 )
 
-// PostgreSQL SQLSTATE kodları (ihtiyaç duyulanlar).
+// PostgreSQL SQLSTATE codes (the ones we need).
 const (
 	sqlstateCheckViolation      = "23514"
 	sqlstateUniqueViolation     = "23505"
@@ -91,26 +93,28 @@ const (
 	sqlstateNotNullViolation    = "23502"
 )
 
-// sqlstateDataException "veri istisnası" SINIFININ önekidir (22xxx).
+// sqlstateDataException is the prefix of the "data exception" CLASS (22xxx).
 //
-// Sınıf tek tek kodlarla değil ÖNEKLE tanınır ve bu bilinçlidir: sınıfın
-// tamamı İSTEMCİNİN gönderdiği değerden doğar — metin sütuna sığmadı (22001),
-// değer hedef tipe çevrilemedi (22P02), jsonb'ye NUL kaçışı kondu (22P05),
-// metinde sunucu kodlamasında karşılığı olmayan bayt var (22021). Kodlar elle
-// sayılsaydı liste er geç eksik kalır, eksik kalan kod KindInternal'a düşer ve
-// istemcinin yazdığı bozuk bir alan 500 üretirdi; doğru cevap 422'dir.
+// The class is recognized by its PREFIX rather than by individual codes, and
+// that is deliberate: the whole class is born from a value the CLIENT sent —
+// the text did not fit the column (22001), the value could not be converted to
+// the target type (22P02), a NUL escape was put into jsonb (22P05), the text
+// carries a byte with no counterpart in the server encoding (22021). Had the
+// codes been counted by hand, the list would sooner or later fall short, the
+// missing code would land in KindInternal, and a malformed field written by the
+// client would produce a 500; the right answer is 422.
 const sqlstateDataException = "22"
 
-// Repo auth tablolarına erişimi sağlar. Eşzamanlı kullanıma güvenlidir.
+// Repo provides access to the auth tables. It is safe for concurrent use.
 type Repo struct {
 	pool *pgxpool.Pool
 	q    *authdb.Queries
 }
 
-// New verilen havuz üzerinde çalışan bir depo üretir.
+// New produces a repository working on the given pool.
 //
-// pool nil ise bu, kurulumda değil ilk çağrıda tipli bir hata olarak bildirilir;
-// kurulum yolu panik üretmez.
+// If pool is nil, this is reported as a typed error on the first call rather
+// than at construction time; the construction path produces no panic.
 func New(pool *pgxpool.Pool) *Repo {
 	r := &Repo{pool: pool}
 	if pool != nil {
@@ -119,20 +123,22 @@ func New(pool *pgxpool.Pool) *Repo {
 	return r
 }
 
-// ready havuzun kullanılabilir olduğunu doğrular.
+// ready verifies that the pool is usable.
 func (r *Repo) ready() error {
 	if r == nil || r.pool == nil || r.q == nil {
-		return errors.Unavailable(CodeQueryFailed, "auth veritabanı havuzu kurulmamış")
+		return errors.Unavailable(CodeQueryFailed, "auth database pool is not set up")
 	}
 	return nil
 }
 
-// inTx fn'i tek bir işlemde çalıştırır; fn hata dönerse işlem GERİ ALINIR.
+// inTx runs fn in a single transaction; if fn returns an error the transaction
+// is ROLLED BACK.
 //
-// Atomiklik iki yerde zorunludur: kullanıcı + kimlik kaydının birlikte
-// oluşturulmasında (kimliksiz bir kullanıcı hiç giriş yapamaz, kullanıcısız bir
-// kimlik ise sahipsiz kalır) ve e-posta değişiminde (kullanıcı satırı yeni
-// adresi, kimlik satırı eskisini gösterirse giriş kopar).
+// Atomicity is mandatory in two places: when the user and the identity record
+// are created together (a user without an identity can never log in, and an
+// identity without a user is left orphaned) and on an email change (if the user
+// row shows the new address while the identity row shows the old one, login
+// breaks).
 func (r *Repo) inTx(ctx context.Context, fn func(q *authdb.Queries) error) error {
 	if err := r.ready(); err != nil {
 		return err
@@ -140,10 +146,10 @@ func (r *Repo) inTx(ctx context.Context, fn func(q *authdb.Queries) error) error
 
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
-		return wrapDB(err, "işlem başlatılamadı")
+		return wrapDB(err, "could not begin transaction")
 	}
-	// Rollback, Commit'ten sonra çağrıldığında pgx.ErrTxClosed döner ve
-	// yok sayılır; bu, başarılı yolda da defer'ın güvenle kalmasını sağlar.
+	// When Rollback is called after Commit it returns pgx.ErrTxClosed and is
+	// ignored; this lets the defer stay safely in place on the success path too.
 	defer func() { _ = tx.Rollback(ctx) }()
 
 	if err := fn(r.q.WithTx(tx)); err != nil {
@@ -151,17 +157,17 @@ func (r *Repo) inTx(ctx context.Context, fn func(q *authdb.Queries) error) error
 	}
 
 	if err := tx.Commit(ctx); err != nil {
-		return wrapDB(err, "işlem tamamlanamadı")
+		return wrapDB(err, "could not commit transaction")
 	}
 	return nil
 }
 
-// wrapDB ham bir veritabanı hatasını tipli hataya çevirir.
+// wrapDB converts a raw database error into a typed error.
 //
-// Sınıflandırma bilinçlidir: kısıt ihlali ve veri istisnası İSTEMCİ hatasıdır
-// (422), benzersizlik ihlali çakışmadır (409), iptal geçici erişilemezliktir
-// (503); geri kalan her şey sunucu hatasıdır ve mesajı istemciye SIZDIRILMAZ
-// (bkz. core/http).
+// The classification is deliberate: a constraint violation and a data exception
+// are CLIENT errors (422), a uniqueness violation is a conflict (409), a
+// cancellation is temporary unavailability (503); everything else is a server
+// error and its message is NOT LEAKED to the client (see core/http).
 func wrapDB(err error, format string, a ...any) error {
 	if err == nil {
 		return nil
@@ -175,7 +181,7 @@ func wrapDB(err error, format string, a ...any) error {
 
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) {
-		message := kisitli(sprintf(format, a...), pgErr.ConstraintName)
+		message := withConstraint(sprintf(format, a...), pgErr.ConstraintName)
 		switch {
 		case pgErr.Code == sqlstateUniqueViolation:
 			return errors.Wrap(err, errors.KindConflict, CodeDuplicate, "%s", message)
@@ -190,24 +196,26 @@ func wrapDB(err error, format string, a ...any) error {
 	return errors.Wrap(err, errors.KindInternal, CodeQueryFailed, format, a...)
 }
 
-// kisitli mesaja kısıt adını YALNIZCA varsa ekler.
+// withConstraint appends the constraint name to the message ONLY when there is
+// one.
 //
-// Veri istisnalarında (22xxx) kısıt adı boştur: hata bir kuralın değil, bir
-// DEĞERİN reddidir. Ad koşulsuz eklenseydi mesaj "… (kısıt: )" diye biterdi ve
-// hatayı okuyan kişi olmayan bir kısıtı aramaya çıkardı.
-func kisitli(message, constraint string) string {
+// On data exceptions (22xxx) the constraint name is empty: the error is the
+// rejection of a VALUE, not of a rule. Had the name been appended
+// unconditionally, the message would end with "… (constraint: )" and whoever
+// read the error would go looking for a constraint that does not exist.
+func withConstraint(message, constraint string) string {
 	if constraint == "" {
 		return message
 	}
-	return fmt.Sprintf("%s (kısıt: %s)", message, constraint)
+	return fmt.Sprintf("%s (constraint: %s)", message, constraint)
 }
 
-// ConstraintName hatanın hangi veritabanı kısıtından geldiğini döner; kısıt
-// bilgisi yoksa boş dize.
+// ConstraintName returns which database constraint the error came from; the
+// empty string when there is no constraint information.
 //
-// Servis bunu benzersizlik ihlalinin GEREKÇESİNİ ayırt etmek için kullanır:
-// aynı SQLSTATE altında "e-posta kullanımda" ile "kanal adı kullanımda"
-// birbirinden yalnızca kısıt adıyla ayrılır.
+// The service uses this to tell apart the REASON for a uniqueness violation:
+// under the same SQLSTATE, "email taken" and "channel name taken" are separated
+// by nothing but the constraint name.
 func ConstraintName(err error) string {
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) {
@@ -216,7 +224,8 @@ func ConstraintName(err error) string {
 	return ""
 }
 
-// notFoundOr pgx.ErrNoRows'u NotFound'a, diğer her şeyi wrapDB'ye çevirir.
+// notFoundOr converts pgx.ErrNoRows into NotFound and everything else through
+// wrapDB.
 func notFoundOr(err error, code, format string, a ...any) error {
 	if err == nil {
 		return nil
@@ -227,10 +236,11 @@ func notFoundOr(err error, code, format string, a ...any) error {
 	return wrapDB(err, format, a...)
 }
 
-// sprintf hata mesajını bir kez biçimlendirir.
+// sprintf formats the error message exactly once.
 //
-// Argümansız çağrılarda format DEĞİŞTİRİLMEDEN döner; aksi hâlde mesajdaki bir
-// yüzde işareti (örn. "%!d(MISSING)") kullanıcıya bozuk metin olarak giderdi.
+// On calls without arguments the format is returned UNCHANGED; otherwise a
+// percent sign in the message (e.g. "%!d(MISSING)") would reach the user as
+// broken text.
 func sprintf(format string, a ...any) string {
 	if len(a) == 0 {
 		return format
@@ -238,12 +248,12 @@ func sprintf(format string, a ...any) string {
 	return fmt.Sprintf(format, a...)
 }
 
-// toInt32 sayfalama değerini sorgunun beklediği int32'ye GÜVENLE daraltır.
+// toInt32 narrows a pagination value SAFELY to the int32 the query expects.
 //
-// Negatif değer sıfıra, int32'yi aşan değer üst sınıra çekilir: aksi hâlde
-// daraltma sessizce işaret değiştirir ve "LIMIT -2147483648" gibi bir sorgu
-// üretirdi. Sınır kontrolü çağıranın doğrulamasına bırakılmaz; burası son
-// savunmadır.
+// A negative value is clamped to zero and a value exceeding int32 to the upper
+// bound: otherwise the narrowing would silently flip the sign and produce a
+// query like "LIMIT -2147483648". The bound check is not left to the caller's
+// validation; this is the last line of defense.
 func toInt32(n int64) int32 {
 	switch {
 	case n < 0:
@@ -255,11 +265,11 @@ func toInt32(n int64) int32 {
 	}
 }
 
-// toTime NULL olmayan bir zaman damgasını UTC time.Time'a çevirir.
+// toTime converts a non-NULL timestamp into a UTC time.Time.
 //
-// Geçersiz (NULL) damga sıfır zaman döner: NOT NULL sütunlarda bu durum
-// oluşamaz, oluşursa da sıfır zaman panik üretmeyen ve testte göze batan bir
-// değerdir.
+// An invalid (NULL) timestamp returns the zero time: on NOT NULL columns this
+// cannot happen, and if it does, the zero time is a value that produces no
+// panic and stands out in a test.
 func toTime(ts pgtype.Timestamptz) time.Time {
 	if !ts.Valid {
 		return time.Time{}
@@ -267,7 +277,7 @@ func toTime(ts pgtype.Timestamptz) time.Time {
 	return ts.Time.UTC()
 }
 
-// toTimePtr NULL olabilen bir zaman damgasını *time.Time'a çevirir.
+// toTimePtr converts a nullable timestamp into a *time.Time.
 func toTimePtr(ts pgtype.Timestamptz) *time.Time {
 	if !ts.Valid {
 		return nil
@@ -276,15 +286,15 @@ func toTimePtr(ts pgtype.Timestamptz) *time.Time {
 	return &t
 }
 
-// fromTime bir zamanı NOT NULL damgaya çevirir; daima UTC yazılır.
+// fromTime converts a time into a NOT NULL timestamp; UTC is always written.
 func fromTime(t time.Time) pgtype.Timestamptz {
 	return pgtype.Timestamptz{Time: t.UTC(), Valid: true}
 }
 
-// toMetadata jsonb sütununu haritaya çevirir.
+// toMetadata converts the jsonb column into a map.
 //
-// Boş ya da JSON null değer nil harita döner; böylece API yanıtında
-// "metadata": null yerine alan hiç görünmez (omitempty).
+// An empty or JSON null value returns a nil map; that way the API response
+// shows no field at all instead of "metadata": null (omitempty).
 func toMetadata(raw []byte) (map[string]any, error) {
 	if len(raw) == 0 || string(raw) == "null" {
 		return nil, nil
@@ -292,7 +302,7 @@ func toMetadata(raw []byte) (map[string]any, error) {
 	var out map[string]any
 	if err := json.Unmarshal(raw, &out); err != nil {
 		return nil, errors.Wrap(err, errors.KindInternal, CodeMetadataInvalid,
-			"metadata alanı çözümlenemedi")
+			"the metadata field could not be parsed")
 	}
 	if len(out) == 0 {
 		return nil, nil
@@ -300,10 +310,11 @@ func toMetadata(raw []byte) (map[string]any, error) {
 	return out, nil
 }
 
-// fromMetadata haritayı jsonb sütununa yazılacak bayta çevirir.
+// fromMetadata converts the map into the bytes to be written to the jsonb
+// column.
 //
-// nil harita boş nesneye ('{}') çevrilir: sütun NOT NULL'dur ve "metadata yok"
-// ile "metadata boş" arasında saklamada bir fark yoktur.
+// A nil map is converted to the empty object ('{}'): the column is NOT NULL and
+// in storage there is no difference between "no metadata" and "empty metadata".
 func fromMetadata(m map[string]any) ([]byte, error) {
 	if len(m) == 0 {
 		return []byte("{}"), nil
@@ -311,15 +322,15 @@ func fromMetadata(m map[string]any) ([]byte, error) {
 	raw, err := json.Marshal(m)
 	if err != nil {
 		return nil, errors.Wrap(err, errors.KindInvalid, CodeMetadataInvalid,
-			"metadata alanı JSON'a çevrilemedi")
+			"the metadata field could not be converted to JSON")
 	}
 	return raw, nil
 }
 
-// patchMetadata kısmi güncelleme için metadata parametresini üretir.
+// patchMetadata produces the metadata parameter for a partial update.
 //
-// nil harita SQL NULL'a çevrilir; COALESCE onu görünce sütunu OLDUĞU GİBİ
-// bırakır. Boş olmayan harita ise gerçek bir yazımdır.
+// A nil map is converted to SQL NULL; when COALESCE sees it, it leaves the
+// column AS IT IS. A non-empty map, on the other hand, is a real write.
 func patchMetadata(m map[string]any) ([]byte, error) {
 	if m == nil {
 		return nil, nil

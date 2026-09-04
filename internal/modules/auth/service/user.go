@@ -7,53 +7,56 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/auth/models"
 )
 
-// CreateUserInput bir yönetim kullanıcısının yazma girdisidir.
+// CreateUserInput is the write input of an admin user.
 //
-// DÜZ PAROLA BU YAPIDA YOKTUR ve bilinçlidir: girdi yapıları log'a, hata
-// bağlamına ve testlerin çıktısına "%+v" ile düşer. Parola
-// [Service.CreateUser]'a AYRI bir parametre olarak verilir, hiçbir yapıya
-// konmaz ve hash'lendikten sonra bırakılır.
+// THE PLAINTEXT PASSWORD IS NOT IN THIS STRUCT and that is deliberate: input
+// structs fall into the log, into the error context and into the output of
+// tests through "%+v". The password is given to [Service.CreateUser] as a
+// SEPARATE parameter, is put into no struct and is dropped once it has been
+// hashed.
 type CreateUserInput struct {
-	// Email kullanıcının e-postasıdır; zorunludur, küçük harfe normalize
-	// edilerek saklanır ve giriş kimliği olarak da kullanılır.
+	// Email is the user's email address; it is required, it is stored
+	// normalized to lower case and it is used as the login identity as well.
 	Email string
-	// FirstName kullanıcının adıdır; boş bırakılabilir.
+	// FirstName is the user's first name; it may be left empty.
 	FirstName string
-	// LastName kullanıcının soyadıdır; boş bırakılabilir.
+	// LastName is the user's last name; it may be left empty.
 	LastName string
-	// AvatarURL profil görselinin adresidir; boş bırakılabilir.
+	// AvatarURL is the address of the profile image; it may be left empty.
 	AvatarURL string
-	// Scopes kullanıcının yetkileridir.
+	// Scopes are the user's privileges.
 	//
-	// nil verilirse [models.ScopeAdmin] uygulanır: yönetim kullanıcısının
-	// varsayılanı tam yetkidir. BOŞ ama nil olmayan dilim ise gerçek bir
-	// istektir ve yetkisiz bir kullanıcı üretir — giriş yapabilir ve kendi
-	// kimliğini (GET /admin/v1/auth/me) okuyabilir, başka hiçbir yönetim
-	// ucuna erişemez. İki durumu ayırmak, "yetki alanını unuttum" ile
-	// "yetkisiz olsun" arasındaki farkı korur.
+	// If nil is given [models.ScopeAdmin] is applied: the default for an admin
+	// user is full privilege. An EMPTY but non-nil slice, on the other hand, is
+	// a real request and produces a user with no scope — it can log in and read
+	// its own identity (GET /admin/v1/auth/me), but can reach no other admin
+	// endpoint. Separating the two cases preserves the difference between "I
+	// forgot the scope field" and "let it have no scope".
 	//
-	// Çağıranın kendisinde olmayan bir yetki verilemez
-	// (bkz. [requireGrantableScopes]).
+	// A scope the caller does not have itself cannot be granted (see
+	// [requireGrantableScopes]).
 	Scopes []string
-	// Metadata serbest yapısal bağlamdır; boş bırakılabilir.
+	// Metadata is free structured context; it may be left empty.
 	Metadata map[string]any
 }
 
-// CreateUser yeni bir yönetim kullanıcısı oluşturur.
+// CreateUser creates a new admin user.
 //
-// password boş DEĞİLSE kullanıcı ve giriş kimliği TEK İŞLEMDE yazılır: parolası
-// atanamamış bir yönetim kullanıcısı hiç giriş yapamaz ve bunu ancak ilk giriş
-// denemesinde fark edersiniz. password boşsa yalnızca kullanıcı yazılır ve
-// parola sonradan [Service.SetPassword] ile atanır.
+// If password IS NOT empty the user and the login identity are written IN A
+// SINGLE TRANSACTION: an admin user whose password could not be assigned can
+// never log in and you only notice it on the first login attempt. If password
+// is empty only the user is written and the password is assigned later with
+// [Service.SetPassword].
 //
-// Düz parola bu çağrının içinde yaşar: doğrulanır, hash'lenir ve bir daha
-// kullanılmaz. Ne loglanır ne de hata mesajında geçer.
+// The plaintext password lives inside this call: it is validated, it is hashed
+// and it is never used again. It is neither logged nor does it appear in an
+// error message.
 //
-// Yeni kullanıcı, ÇAĞIRANIN KENDİSİNDE OLMAYAN bir yetkiyi alamaz
-// (bkz. [requireGrantableScopes]): alabilseydi dar yetkili bir yönetici
-// kendine tam yetkili bir kullanıcı yaratıp onunla giriş yapardı.
+// The new user cannot receive a scope THE CALLER DOES NOT HAVE ITSELF (see
+// [requireGrantableScopes]): could it, a narrowly scoped administrator would
+// create a fully privileged user for itself and log in with it.
 //
-// E-posta zaten kullanılıyorsa errors.Conflict döner.
+// If the email address is already in use errors.Conflict is returned.
 func (s *Service) CreateUser(
 	ctx context.Context,
 	in CreateUserInput,
@@ -77,9 +80,9 @@ func (s *Service) CreateUser(
 	if scopes == nil {
 		scopes = []string{models.ScopeAdmin}
 	}
-	// Denetim varsayılan uygulandıktan SONRA yapılır: yetki alanını hiç
-	// doldurmayan bir istek tam yetkili bir kullanıcı doğurur ve "vermedim"
-	// demek, vermemiş olmaya yetmez.
+	// The check is made AFTER the default has been applied: a request that does
+	// not fill the scope field in at all gives birth to a fully privileged user,
+	// and saying "I did not grant it" is not enough to have not granted it.
 	if err := requireGrantableScopes(ctx, scopes); err != nil {
 		return models.User{}, err
 	}
@@ -117,31 +120,33 @@ func (s *Service) CreateUser(
 		return models.User{}, err
 	}
 
-	// E-posta hassas veridir ve loglanmaz (plan Bölüm 8); kimlik ve parola
-	// durumu bir çağrının izini sürmeye yeter.
-	s.log.InfoContext(ctx, "yönetim kullanıcısı oluşturuldu",
+	// The email address is sensitive data and is not logged (plan Section 8);
+	// the identifier and the password state are enough to trace a call.
+	s.log.InfoContext(ctx, "admin user created",
 		slog.String("user_id", created.ID),
-		slog.Bool("parola_atandi", identity != nil),
+		slog.Bool("password_assigned", identity != nil),
 	)
 	return created, nil
 }
 
-// GetUser kimliğe göre kullanıcı döner; yoksa errors.NotFound.
+// GetUser returns the user with the given identifier; errors.NotFound if there
+// is none.
 func (s *Service) GetUser(ctx context.Context, id string) (models.User, error) {
 	if err := s.ready(); err != nil {
 		return models.User{}, err
 	}
-	if err := requireID(id, models.UserIDPrefix, "kullanıcı kimliği"); err != nil {
+	if err := requireID(id, models.UserIDPrefix, "the user identifier"); err != nil {
 		return models.User{}, err
 	}
 	return s.repo.GetUser(ctx, id)
 }
 
-// GetUserByEmail e-postaya göre kullanıcı döner; yoksa errors.NotFound.
+// GetUserByEmail returns the user with the given email address;
+// errors.NotFound if there is none.
 //
-// Bu metot YÖNETİM yüzeyi içindir. Giriş akışı onu KULLANMAZ: giriş, "yok" ile
-// "parola yanlış" arasındaki farkı dışarı sızdırmamak için kendi dalını
-// yürütür (bkz. [Service.Login]).
+// This method is for the ADMIN surface. The login flow DOES NOT USE it: in
+// order not to leak the difference between "no such user" and "wrong password"
+// to the outside, the login runs its own branch (see [Service.Login]).
 func (s *Service) GetUserByEmail(ctx context.Context, email string) (models.User, error) {
 	if err := s.ready(); err != nil {
 		return models.User{}, err
@@ -153,19 +158,20 @@ func (s *Service) GetUserByEmail(ctx context.Context, email string) (models.User
 	return s.repo.GetUserByEmail(ctx, normalized)
 }
 
-// ListUsersInput kullanıcı listelemesinin girdisidir.
+// ListUsersInput is the input of a user listing.
 type ListUsersInput struct {
-	// Email verilirse yalnızca bu e-postaya sahip kullanıcı döner.
+	// Email, if given, restricts the result to the user with this email
+	// address.
 	Email *string
-	// Scope verilirse yalnızca bu yetkiye sahip kullanıcılar döner.
+	// Scope, if given, restricts the result to users holding this scope.
 	Scope *string
-	// Limit sayfa boyudur; 0 ise [DefaultLimit] uygulanır.
+	// Limit is the page size; [DefaultLimit] is applied if it is 0.
 	Limit int64
-	// Offset atlanacak kayıt sayısıdır.
+	// Offset is the number of records to skip.
 	Offset int64
 }
 
-// ListUsers süzgeçlenmiş ve sayfalanmış kullanıcı listesini döner.
+// ListUsers returns the filtered and paginated list of users.
 func (s *Service) ListUsers(ctx context.Context, in ListUsersInput) (Page[models.User], error) {
 	if err := s.ready(); err != nil {
 		return Page[models.User]{}, err
@@ -199,45 +205,48 @@ func (s *Service) ListUsers(ctx context.Context, in ListUsersInput) (Page[models
 	return Page[models.User]{Items: items, Count: total, Limit: limit, Offset: offset}, nil
 }
 
-// UpdateUserInput bir kullanıcının kısmi güncelleme girdisidir.
+// UpdateUserInput is the partial update input of a user.
 //
-// nil alan "dokunma", dolu alan "bu değeri yaz" demektir. Parola BURADA
-// DEĞİŞTİRİLEMEZ: parola ayrı bir işlemdir ([Service.SetPassword]) ve profil
-// güncellemesiyle aynı gövdeye konsaydı, adını değiştiren bir isteğin yanlışlıkla
-// parolayı da sıfırlaması mümkün olurdu.
+// A nil field means "do not touch", a filled field means "write this value".
+// THE PASSWORD CANNOT BE CHANGED HERE: the password is a separate operation
+// ([Service.SetPassword]) and had it been put into the same body as the profile
+// update, a request that changes a name could accidentally reset the password
+// as well.
 type UpdateUserInput struct {
-	// Email yeni e-postadır; giriş kimliği de bununla birlikte güncellenir.
+	// Email is the new email address; the login identity is updated along with
+	// it.
 	Email *string
-	// FirstName yeni addır.
+	// FirstName is the new first name.
 	FirstName *string
-	// LastName yeni soyaddır.
+	// LastName is the new last name.
 	LastName *string
-	// AvatarURL yeni avatar adresidir.
+	// AvatarURL is the new avatar address.
 	AvatarURL *string
-	// Scopes yeni yetki listesidir; nil ise dokunulmaz, boş dilim tüm
-	// yetkileri KALDIRIR.
+	// Scopes is the new scope list; if nil it is not touched, an empty slice
+	// REMOVES all scopes.
 	//
-	// Çağıranın kendisinde olmayan bir yetki verilemez
-	// (bkz. [requireGrantableScopes]). Yetki KALDIRMAK serbesttir: dar bir
-	// listeye inmek yükseltme değildir.
+	// A scope the caller does not have itself cannot be granted (see
+	// [requireGrantableScopes]). REMOVING a scope is allowed: coming down to a
+	// narrower list is not an escalation.
 	Scopes []string
-	// Metadata yeni metadata haritasıdır; sütunun tamamını değiştirir.
+	// Metadata is the new metadata map; it replaces the whole column.
 	Metadata map[string]any
 }
 
-// UpdateUser kullanıcının verilen alanlarını günceller.
+// UpdateUser updates the given fields of the user.
 //
-// E-posta değişiyorsa giriş kimliği de aynı işlemde güncellenir; aksi hâlde
-// kullanıcı yeni adresiyle giriş yapamazdı. E-posta başka bir kullanıcıdaysa
-// errors.Conflict döner.
+// If the email address changes the login identity is updated in the same
+// transaction; otherwise the user could not log in with their new address. If
+// the email address belongs to another user errors.Conflict is returned.
 //
-// Yetki listesi ÇAĞIRANIN KENDİSİNİ AŞAMAZ (bkz. [requireGrantableScopes]):
-// aşabilseydi dar yetkili bir kimlik, kendi kaydını güncelleyip admin olurdu.
+// The scope list CANNOT EXCEED THE CALLER'S OWN (see
+// [requireGrantableScopes]): could it, a narrowly scoped identity would update
+// its own record and become admin.
 func (s *Service) UpdateUser(ctx context.Context, id string, in UpdateUserInput) (models.User, error) {
 	if err := s.ready(); err != nil {
 		return models.User{}, err
 	}
-	if err := requireID(id, models.UserIDPrefix, "kullanıcı kimliği"); err != nil {
+	if err := requireID(id, models.UserIDPrefix, "the user identifier"); err != nil {
 		return models.User{}, err
 	}
 
@@ -270,55 +279,56 @@ func (s *Service) UpdateUser(ctx context.Context, id string, in UpdateUserInput)
 	return s.repo.UpdateUser(ctx, id, patch, s.clock())
 }
 
-// DeleteUser kullanıcıyı ve giriş kimliklerini soft delete ile siler.
+// DeleteUser soft deletes the user and their login identities.
 //
-// Kimlikler de silinir; canlı kalsalardı kullanıcı SİLİNDİKTEN SONRA DA giriş
-// yapabilirdi. Daha önce üretilmiş bir oturum jetonu ise imzası geçerli olduğu
-// hâlde kabul EDİLMEZ: kimlik doğrulama her istekte kullanıcının hâlâ var
-// olduğunu sorar (bkz. interop.go).
+// The identities are deleted as well; had they stayed alive the user could log
+// in EVEN AFTER BEING DELETED. A session token produced earlier IS NOT ACCEPTED
+// either, even though its signature is valid: authentication asks on every
+// request whether the user still exists (see interop.go).
 func (s *Service) DeleteUser(ctx context.Context, id string) error {
 	if err := s.ready(); err != nil {
 		return err
 	}
-	if err := requireID(id, models.UserIDPrefix, "kullanıcı kimliği"); err != nil {
+	if err := requireID(id, models.UserIDPrefix, "the user identifier"); err != nil {
 		return err
 	}
 	if err := s.repo.DeleteUser(ctx, id, s.clock()); err != nil {
 		return err
 	}
 
-	s.log.InfoContext(ctx, "yönetim kullanıcısı silindi", slog.String("user_id", id))
+	s.log.InfoContext(ctx, "admin user deleted", slog.String("user_id", id))
 	return nil
 }
 
-// validateUserFields kullanıcı metin alanlarının uzunluk sınırlarını doğrular.
+// validateUserFields validates the length bounds of the user's text fields.
 func validateUserFields(firstName, lastName, avatarURL string) error {
-	if err := checkLen("ad", firstName, models.MaxNameLen); err != nil {
+	if err := checkLen("the first name", firstName, models.MaxNameLen); err != nil {
 		return err
 	}
-	if err := checkLen("soyad", lastName, models.MaxNameLen); err != nil {
+	if err := checkLen("the last name", lastName, models.MaxNameLen); err != nil {
 		return err
 	}
-	return checkLen("avatar adresi", avatarURL, models.MaxURLLen)
+	return checkLen("the avatar address", avatarURL, models.MaxURLLen)
 }
 
-// validateUserPatch kısmi güncellemedeki alanları doğrular.
+// validateUserPatch validates the fields in a partial update.
 //
-// nil alanlar atlanır: "dokunma" ile "boş yaz" ayrımı korunur ve verilmeyen
-// bir alan için uzunluk hatası üretilmez.
+// nil fields are skipped: the distinction between "do not touch" and "write
+// empty" is preserved and no length error is produced for a field that was not
+// given.
 func validateUserPatch(patch models.UserPatch) error {
 	if patch.FirstName != nil {
-		if err := checkLen("ad", *patch.FirstName, models.MaxNameLen); err != nil {
+		if err := checkLen("the first name", *patch.FirstName, models.MaxNameLen); err != nil {
 			return err
 		}
 	}
 	if patch.LastName != nil {
-		if err := checkLen("soyad", *patch.LastName, models.MaxNameLen); err != nil {
+		if err := checkLen("the last name", *patch.LastName, models.MaxNameLen); err != nil {
 			return err
 		}
 	}
 	if patch.AvatarURL != nil {
-		if err := checkLen("avatar adresi", *patch.AvatarURL, models.MaxURLLen); err != nil {
+		if err := checkLen("the avatar address", *patch.AvatarURL, models.MaxURLLen); err != nil {
 			return err
 		}
 	}

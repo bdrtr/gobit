@@ -366,7 +366,7 @@ func (f *reverseLinks) ListManyByTo(ctx context.Context, name string, toIDs []st
 	return f.reverseByTo(name, toIDs), nil
 }
 
-// --- ortak kurulum ----------------------------------------------------------
+// --- shared setup ----------------------------------------------------------
 
 // newContainer registers the given providers under "<entity>.query" (ADR 0004).
 func newContainer(t *testing.T, providers ...*fakeProvider) *container.Container {

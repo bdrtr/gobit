@@ -1,28 +1,30 @@
--- auth modülünün şeması (plan Faz 8, Bölüm 6).
+-- Schema of the auth module (plan Phase 8, Section 6).
 --
--- Tablolar YALNIZCA bu modüle aittir. Prensip 2.2 gereği başka bir modülün
--- tablosuna REFERENCES verilmez; modülün KENDİ tabloları arasındaki foreign
--- key'ler serbesttir ve kullanılır.
+-- The tables belong ONLY to this module. Per Principle 2.2 no REFERENCES is
+-- given to another module's table; foreign keys BETWEEN the module's OWN tables
+-- are free and are used.
 --
--- Zaman sütunları TIMESTAMPTZ'dir ve daima UTC yazılır; silme SOFT'tur
--- (deleted_at) ve tüm okuma sorguları deleted_at IS NULL filtresi uygular.
+-- Time columns are TIMESTAMPTZ and are always written in UTC; deletion is SOFT
+-- (deleted_at) and every read query applies the deleted_at IS NULL filter.
 --
--- GÜVENLİK NOTU: bu şemada iki sütun sır taşır ve ikisi de HASH saklar,
--- düz metin ASLA yazılmaz: auth_identity.password_hash (bcrypt) ve
--- api_key.token_hash (SHA-256). Gerekçeleri ilgili tabloların üstündedir.
+-- SECURITY NOTE: two columns in this schema carry a secret and both store a
+-- HASH, plain text is NEVER written: auth_identity.password_hash (bcrypt) and
+-- api_key.token_hash (SHA-256). Their rationales are above the tables concerned.
 
--- auth_user bir YÖNETİM kullanıcısıdır (admin paneline giren kişi).
+-- auth_user is an ADMINISTRATION user (the person who logs in to the admin
+-- panel).
 --
--- Tablo adı "user" DEĞİLDİR: PostgreSQL'de user ayrılmış bir anahtar kelimedir
--- ve her sorguda tırnaklanmak zorunda kalırdı.
+-- The table is NOT named "user": in PostgreSQL user is a reserved keyword and
+-- would have to be quoted in every query.
 --
--- Müşteriyle karıştırılmamalıdır: mağazadan alışveriş yapan kişi customer
--- modülünün verisidir, buradaki kayıt yönetim yüzeyine erişen personeldir.
--- İki kavramın ayrı modüllerde durması bilinçlidir; bir müşterinin admin
--- yetkisi kazanması diye bir yol yoktur.
+-- It must not be confused with the customer: the person shopping in the store
+-- is data of the customer module, whereas the record here is the staff member
+-- who accesses the administration surface. Keeping the two concepts in separate
+-- modules is deliberate; there is no path by which a customer gains admin
+-- privileges.
 --
--- PAROLA BURADA DEĞİLDİR: kimlik doğrulama yöntemi auth_identity tablosunda
--- tutulur (gerekçe orada).
+-- THE PASSWORD IS NOT HERE: the authentication method is kept in the
+-- auth_identity table (the rationale is there).
 CREATE TABLE IF NOT EXISTS auth_user (
     id         TEXT PRIMARY KEY,
     email      TEXT        NOT NULL,
@@ -40,29 +42,30 @@ CREATE TABLE IF NOT EXISTS auth_user (
     CONSTRAINT auth_user_scopes_check      CHECK (array_position(scopes, '') IS NULL)
 );
 
--- E-posta CANLI kullanıcılar arasında benzersizdir.
+-- The e-mail is unique among LIVE users.
 --
--- Benzersizlik giriş akışının ön şartıdır: "e-posta + parola" ile giren bir
--- kullanıcı için iki eşleşen satır olsaydı, giriş hangi kimliği vereceğini
--- bilemezdi. deleted_at IS NULL koşulu silinen bir kullanıcının e-postasını
--- yeniden kullanılabilir bırakır.
+-- Uniqueness is a precondition of the login flow: if there were two matching
+-- rows for a user logging in with "e-mail + password", login could not know
+-- which identity to hand out. The deleted_at IS NULL condition leaves a deleted
+-- user's e-mail reusable.
 CREATE UNIQUE INDEX IF NOT EXISTS auth_user_email_uniq
     ON auth_user (email)
     WHERE deleted_at IS NULL;
 
--- auth_identity bir kullanıcının TEK bir kimlik doğrulama yöntemidir.
+-- auth_identity is a SINGLE authentication method of a user.
 --
--- Neden auth_user'dan ayrı: bir kullanıcının birden çok giriş yolu olabilir.
--- Bugün yalnızca "emailpass" (e-posta + parola) vardır; yarın OAuth eklendiğinde
--- AYNI kullanıcıya ikinci bir satır bağlanır ve kullanıcı kaydına dokunulmaz.
--- Parola sütunu auth_user'da olsaydı, parolasız (yalnızca OAuth) bir kullanıcı
--- ifade edilemez ya da boş parola ile temsil edilirdi.
+-- Why separate from auth_user: a user can have more than one way to log in.
+-- Today there is only "emailpass" (e-mail + password); tomorrow, when OAuth is
+-- added, a second row is attached to the SAME user and the user record is not
+-- touched. Had the password column been on auth_user, a user without a password
+-- (OAuth only) could not be expressed, or would be represented with an empty
+-- password.
 --
--- password_hash BCRYPT çıktısıdır; düz parola ASLA yazılmaz, ASLA loglanmaz.
--- bcrypt maliyet parametresi hash'in İÇİNDE saklanır: maliyet ileride
--- artırıldığında eski hash'ler kendi maliyetleriyle doğrulanmaya devam eder.
--- Parolası olmayan (örn. yalnızca OAuth) kimlikte sütun boştur ve giriş
--- REDDEDİLİR.
+-- password_hash is BCRYPT output; the plain password is NEVER written, NEVER
+-- logged. The bcrypt cost parameter is stored INSIDE the hash: when the cost is
+-- raised later, old hashes keep being verified with their own cost. On an
+-- identity that has no password (e.g. OAuth only) the column is empty and login
+-- is REFUSED.
 CREATE TABLE IF NOT EXISTS auth_identity (
     id                TEXT PRIMARY KEY,
     user_id           TEXT        NOT NULL REFERENCES auth_user(id) ON DELETE CASCADE,
@@ -81,40 +84,43 @@ CREATE TABLE IF NOT EXISTS auth_identity (
     CONSTRAINT auth_identity_attempts_check  CHECK (failed_attempts >= 0)
 );
 
--- Bir sağlayıcıdaki bir kimlik EN FAZLA BİR kullanıcıya bağlanır.
+-- An identity at one provider is bound to AT MOST ONE user.
 --
--- Koşul olmasaydı aynı e-posta iki kullanıcıya "emailpass" kimliği olarak
--- bağlanabilir ve giriş iki farklı kişiyi eşleştirirdi.
+-- Without the condition the same e-mail could be bound to two users as an
+-- "emailpass" identity and login would match two different people.
 CREATE UNIQUE INDEX IF NOT EXISTS auth_identity_provider_uniq
     ON auth_identity (provider, provider_identity)
     WHERE deleted_at IS NULL;
 
--- Bir kullanıcının bir sağlayıcıda EN FAZLA BİR kimliği olur.
+-- A user has AT MOST ONE identity at one provider.
 --
--- Üstteki indeks TERS yönü kapatır (bir sağlayıcıdaki kimlik iki kullanıcıya
--- bağlanamaz) ama aynı kullanıcıya aynı sağlayıcıdan İKİNCİ bir satır
--- açılmasını engellemez. Kod bunun olmadığını varsayar: kimlik
--- (user_id, provider) ile TEK satır olarak okunur ve parola doğrulaması,
--- başarısız deneme sayacı ile kilit hep o satıra yazılır. İki satır olsaydı
--- hangisinin okunacağı sorgunun sırasına kalırdı: parola değişikliği yalnızca
--- birine yazılır, öteki eski parolayla açık kalır ve deneme sayacı ikiye
--- bölündüğü için kilit eşiği sessizce iki katına çıkardı.
+-- The index above closes the REVERSE direction (an identity at one provider
+-- cannot be bound to two users) but does not prevent a SECOND row from being
+-- opened for the same user from the same provider. The code assumes this does
+-- not happen: the identity is read as a SINGLE row by (user_id, provider), and
+-- password verification, the failed-attempt counter and the lock are always
+-- written to that row. Were there two rows, which one is read would be left to
+-- the query's ordering: a password change is written to only one of them, the
+-- other stays open with the old password, and because the attempt counter is
+-- split in two the lock threshold would silently double.
 --
--- Kısmi koşul (deleted_at IS NULL) silinen bir kimliğin yerine yenisinin
--- açılabilmesi içindir; şemadaki diğer benzersizlikler de aynı kuralı izler.
+-- The partial condition (deleted_at IS NULL) is there so that a new identity
+-- can be opened in place of a deleted one; the other uniqueness rules in the
+-- schema follow the same rule.
 --
--- Ayrı bir user_id indeksi TUTULMAZ: bu indeks user_id ÖNEKİYLE de aranabilir,
--- ikincisi yalnızca her yazımda ödenen fazladan bir maliyet olurdu.
+-- A separate user_id index is NOT KEPT: this index can also be searched by the
+-- user_id PREFIX, and a second one would only be an extra cost paid on every
+-- write.
 CREATE UNIQUE INDEX IF NOT EXISTS auth_identity_user_provider_uniq
     ON auth_identity (user_id, provider)
     WHERE deleted_at IS NULL;
 
--- sales_channel bir satış kanalıdır (örn. "Web", "Mobil uygulama", "Bayi").
+-- sales_channel is a sales channel (e.g. "Web", "Mobile app", "Dealer").
 --
--- Publishable API anahtarları kanallara bağlanır ve mağaza isteği hangi
--- kanaldan geldiğini bu bağdan öğrenir. Katalog süzmesi (hangi ürün hangi
--- kanalda görünür) product ↔ sales_channel linkiyle kurulur ve auth o linki
--- hiç görmez (Prensip 2.2).
+-- Publishable API keys are bound to channels, and a storefront request learns
+-- which channel it came from through that binding. Catalog filtering (which
+-- product is visible in which channel) is established with the product ↔
+-- sales_channel link, and auth never sees that link (Principle 2.2).
 CREATE TABLE IF NOT EXISTS sales_channel (
     id          TEXT PRIMARY KEY,
     name        TEXT        NOT NULL,
@@ -128,30 +134,34 @@ CREATE TABLE IF NOT EXISTS sales_channel (
     CONSTRAINT sales_channel_name_len_check CHECK (length(name) <= 255)
 );
 
--- Kanal adı CANLI kanallar arasında benzersizdir; silinen adın yeniden
--- kullanılabilmesi için koşul deleted_at IS NULL'dır.
+-- The channel name is unique among LIVE channels; so that a deleted name can be
+-- reused, the condition is deleted_at IS NULL.
 CREATE UNIQUE INDEX IF NOT EXISTS sales_channel_name_uniq
     ON sales_channel (name)
     WHERE deleted_at IS NULL;
 
--- api_key bir makine kimliğidir; iki TÜRÜ vardır ve ikisi aynı şey DEĞİLDİR.
+-- api_key is a machine identity; it has two KINDS and they are NOT the same
+-- thing.
 --
---   secret      — yönetim yüzeyine erişen SIRDIR. Sunucuda saklanır,
---                 tarayıcıya asla verilmez, sızması admin erişimi demektir.
---   publishable — SIR DEĞİLDİR. Tarayıcıda görünür, tek işi isteği bir satış
---                 kanalına bağlamaktır; hiçbir yetki taşımaz.
+--   secret      — the SECRET that accesses the administration surface. It is
+--                 kept on the server, never handed to the browser; its leak
+--                 means admin access.
+--   publishable — NOT A SECRET. It is visible in the browser, its only job is
+--                 to bind the request to a sales channel; it carries no
+--                 privilege.
 --
--- Anahtarın KENDİSİ saklanmaz, yalnızca token_hash (SHA-256, hex) saklanır.
--- Neden bcrypt değil: anahtar bizim ürettiğimiz 256 bitlik rastgele bir
--- dizedir, sözlük saldırısına açık bir insan parolası değildir; yavaş hash'in
--- koruduğu şey (çevrimdışı kaba kuvvet) burada zaten imkânsızdır. Buna karşılık
--- bu hash HER İSTEKTE hesaplanır ve bcrypt her admin isteğine ~250 ms eklerdi.
--- Ayrıca bcrypt'in satır başına tuzu, anahtarı bulmak için TÜM tabloyu taramayı
--- gerektirirdi; SHA-256 tek ve indekslenebilir bir aramadır.
+-- The key ITSELF is not stored, only token_hash (SHA-256, hex) is stored.
+-- Why not bcrypt: the key is a 256-bit random string that we generate ourselves,
+-- not a human password open to a dictionary attack; what the slow hash protects
+-- against (offline brute force) is already impossible here. In return, this hash
+-- is computed on EVERY REQUEST and bcrypt would add ~250 ms to every admin
+-- request. Moreover bcrypt's per-row salt would require scanning the WHOLE table
+-- to find the key; SHA-256 is a single, indexable lookup.
 --
--- created_by anahtarı üretenin kimliğidir ve foreign key TAŞIMAZ: değer bir
--- kullanıcı kimliği ("user_…") olabileceği gibi başka bir gizli anahtarın
--- kimliği ("apikey_…") de olabilir, yani tek bir tabloya işaret etmez.
+-- created_by is the identity of whoever generated the key and it CARRIES NO
+-- foreign key: the value can be a user identifier ("user_…") just as well as the
+-- identifier of another secret key ("apikey_…"), that is, it does not point at a
+-- single table.
 CREATE TABLE IF NOT EXISTS api_key (
     id           TEXT PRIMARY KEY,
     type         TEXT        NOT NULL,
@@ -173,12 +183,12 @@ CREATE TABLE IF NOT EXISTS api_key (
     CONSTRAINT api_key_scopes_check     CHECK (array_position(scopes, '') IS NULL)
 );
 
--- token_hash benzersizdir ve bu indeks KISMİ DEĞİLDİR.
+-- token_hash is unique and this index is NOT PARTIAL.
 --
--- deleted_at ya da revoked_at koşulu eklenseydi, iptal edilmiş bir anahtarın
--- hash'i yeniden kullanılabilir hâle gelirdi. Anahtar 256 bit rastgele
--- olduğundan çakışma pratikte imkânsızdır; indeks bu yüzden bir kısıt değil,
--- üretecin bozulduğunu ANINDA gösteren bir alarmdır.
+-- Had a deleted_at or revoked_at condition been added, the hash of a revoked key
+-- would become reusable. Since the key is 256 random bits, a collision is
+-- practically impossible; the index is therefore not a constraint but an alarm
+-- that shows INSTANTLY that the generator is broken.
 CREATE UNIQUE INDEX IF NOT EXISTS api_key_token_hash_uniq
     ON api_key (token_hash);
 
@@ -186,12 +196,13 @@ CREATE INDEX IF NOT EXISTS api_key_type_idx
     ON api_key (type)
     WHERE deleted_at IS NULL;
 
--- api_key_sales_channel publishable anahtar ile satış kanalı arasındaki
--- ÇOKA-ÇOK bağdır.
+-- api_key_sales_channel is the MANY-TO-MANY link between a publishable key and
+-- a sales channel.
 --
--- Bileşik birincil anahtar aynı bağın iki kez kurulmasını engeller; bağ
--- kümedir, çokluk taşımaz. İki tablo da bu modüle ait olduğu için foreign
--- key serbesttir (Prensip 2.2 yalnızca MODÜLLER ARASI FK'yi yasaklar).
+-- The composite primary key prevents the same link from being established
+-- twice; the link is a set, it carries no multiplicity. Since both tables belong
+-- to this module the foreign key is free (Principle 2.2 forbids only
+-- CROSS-MODULE FKs).
 CREATE TABLE IF NOT EXISTS api_key_sales_channel (
     api_key_id       TEXT        NOT NULL REFERENCES api_key(id) ON DELETE CASCADE,
     sales_channel_id TEXT        NOT NULL REFERENCES sales_channel(id) ON DELETE CASCADE,
@@ -199,7 +210,7 @@ CREATE TABLE IF NOT EXISTS api_key_sales_channel (
     PRIMARY KEY (api_key_id, sales_channel_id)
 );
 
--- Bir kanala bağlı anahtarları listelemek birincil anahtarın ÖNEKİNİ
--- kullanamaz; ters yön için ayrı indeks gerekir.
+-- Listing the keys bound to a channel cannot use the PREFIX of the primary key;
+-- the reverse direction needs its own index.
 CREATE INDEX IF NOT EXISTS api_key_sales_channel_channel_idx
     ON api_key_sales_channel (sales_channel_id);

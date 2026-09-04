@@ -1,63 +1,66 @@
--- cart modülünün şeması (plan Faz 5).
+-- Schema of the cart module (plan Phase 5).
 --
--- Sahiplik: buradaki dört tablo YALNIZCA cart modülüne aittir. Modül İÇİ
--- foreign key'ler serbesttir ve kullanılır (satırlar, adresler ve kargo
--- yöntemleri sepete ON DELETE CASCADE ile bağlıdır); başka bir modülün
--- tablosuna REFERENCES VERİLMEZ (Prensip 2.2 — cross-module FK yasağı).
--- Bu yüzden carts.region_id, carts.customer_id ve cart_line_items.variant_id
--- serbest METİNDİR: ilişki Module Links üzerinden kurulur.
+-- Ownership: the four tables here belong ONLY to the cart module. Foreign keys
+-- INSIDE the module are free to use and are used (line items, addresses and
+-- shipping methods hang off the cart with ON DELETE CASCADE); no REFERENCES IS
+-- GIVEN to another module's table (Principle 2.2 — the cross-module FK ban).
+-- That is why carts.region_id, carts.customer_id and cart_line_items.variant_id
+-- are free TEXT: the relation is established through Module Links.
 --
--- Para: TÜM tutarlar BIGINT ve minor unit'tir (kuruş/cent); para birimi ayrı
--- sütunda durur (plan Bölüm 8). Kayan nokta hiçbir yerde kullanılmaz.
+-- Money: ALL amounts are BIGINT and in the minor unit (cents); the currency
+-- lives in a separate column (plan Section 8). Floating point is used nowhere.
 --
--- Zaman: tüm damgalar timestamptz (UTC). Silme yumuşaktır (deleted_at) ve tüm
--- okuma sorguları deleted_at IS NULL süzer.
+-- Time: every stamp is timestamptz (UTC). Deletion is soft (deleted_at) and all
+-- read queries filter deleted_at IS NULL.
 
--- carts bir alışveriş sepetidir.
+-- carts is a shopping cart.
 --
--- customer_id NULL olabilir: misafir sepeti kimliği olmayan bir müşteriye
--- aittir ve e-posta ile takip edilir.
+-- customer_id may be NULL: a guest cart belongs to a customer that has no
+-- identity and is tracked by e-mail.
 --
--- TOPLAM ALANLARI (subtotal, discount_total, tax_total, shipping_total, total)
--- bu modül tarafından HESAPLANMAZ. Hesap, fiyatı pricing'den ve vergiyi
--- tax/region'dan alan calculate_totals WORKFLOW'una aittir (plan Bölüm 2.5,
--- ADR 0006); modül yalnızca SAKLAR ve DOĞRULAR. Doğrulamanın veritabanı
--- düzeyindeki karşılığı carts_totals_consistent kısıtıdır: kimlik bozulduğunda
--- satır hiç yazılmaz. Servis aynı kontrolü daha okunabilir bir hatayla önce
--- yapar; buradaki kısıt son savunmadır ve doğrudan SQL ile yapılan bir
--- müdahaleyi de kapsar.
+-- THE TOTAL FIELDS (subtotal, discount_total, tax_total, shipping_total, total)
+-- are NOT COMPUTED by this module. The computation belongs to the
+-- calculate_totals WORKFLOW, which takes the price from pricing and the tax
+-- from tax/region (plan Section 2.5, ADR 0006); the module only STORES and
+-- VALIDATES. The database-level counterpart of that validation is the
+-- carts_totals_consistent constraint: when the identity breaks, the row is
+-- never written at all. The service performs the same check first with a more
+-- readable error; the constraint here is the last line of defense and it also
+-- covers an intervention made directly through SQL.
 --
--- revision / totals_revision BAYAT TOPLAMI GÖRÜNÜR KILAR. Sepetin şeklini
--- değiştiren her işlem (satır ekleme/güncelleme/silme, adres yazma, kargo
--- yöntemi ekleme/kaldırma) revision'ı bir artırır; toplamları yazan
--- calculate_totals ise totals_revision'a o anki revision'ı damgalar. İkisi
--- eşitse toplamlar sepetin GÜNCEL şekline aittir. Alternatifler kötüydü:
--- bayat toplamı sessizce saklamak müşteriye yanlış tutar göstermek, toplamları
--- sıfırlamak ise "bedava" demekti. Burada bayatlık ne gizlenir ne uydurulur —
--- okunabilir bir olgudur ve Faz 6'daki complete_cart bayat sepeti reddedebilir.
+-- revision / totals_revision MAKE A STALE TOTAL VISIBLE. Every operation that
+-- changes the shape of the cart (adding/updating/deleting a line item, writing
+-- an address, adding/removing a shipping method) increments revision by one;
+-- calculate_totals, which writes the totals, stamps the revision of that moment
+-- onto totals_revision. If the two are equal, the totals belong to the CURRENT
+-- shape of the cart. The alternatives were bad: silently keeping a stale total
+-- means showing the customer a wrong amount, and zeroing the totals means
+-- saying "free". Here staleness is neither hidden nor invented — it is a
+-- readable fact, and complete_cart in Phase 6 can reject a stale cart.
 CREATE TABLE IF NOT EXISTS carts (
     id              TEXT        PRIMARY KEY,
-    -- region_id region modülünün kimliğidir; FK YOKTUR (Prensip 2.2).
+    -- region_id is the region module's identity; there is NO FK (Principle 2.2).
     region_id       TEXT        NOT NULL,
-    -- customer_id customer modülünün kimliğidir; NULL ise sepet misafirindir.
+    -- customer_id is the customer module's identity; NULL means a guest cart.
     customer_id     TEXT,
     email           TEXT,
-    -- currency_code ISO 4217 kodudur ve BÜYÜK harf saklanır. Değeri region'dan
-    -- KOPYALAYAN taraf workflow'dur; cart modülü region'ı çağırmaz.
+    -- currency_code is the ISO 4217 code and is stored in UPPER case. The side
+    -- that COPIES the value from the region is the workflow; the cart module
+    -- does not call region.
     currency_code   TEXT        NOT NULL,
     subtotal        BIGINT      NOT NULL DEFAULT 0,
     discount_total  BIGINT      NOT NULL DEFAULT 0,
     tax_total       BIGINT      NOT NULL DEFAULT 0,
     shipping_total  BIGINT      NOT NULL DEFAULT 0,
     total           BIGINT      NOT NULL DEFAULT 0,
-    -- revision sepetin şekil sayacıdır; toplamları etkileyen her yapısal
-    -- değişiklikte artar.
+    -- revision is the cart's shape counter; it increases on every structural
+    -- change that affects the totals.
     revision        BIGINT      NOT NULL DEFAULT 0,
-    -- totals_revision toplamların hangi şekil için hesaplandığını damgalar.
+    -- totals_revision stamps which shape the totals were computed for.
     totals_revision BIGINT      NOT NULL DEFAULT 0,
     metadata        JSONB       NOT NULL DEFAULT '{}'::jsonb,
-    -- completed_at dolu ise sepet DEĞİŞTİRİLEMEZ; sipariş geçmişinin dayandığı
-    -- kayıt odur.
+    -- If completed_at is set the cart is IMMUTABLE; it is the record the order
+    -- history rests on.
     completed_at    TIMESTAMPTZ,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -71,7 +74,7 @@ CREATE TABLE IF NOT EXISTS carts (
     CONSTRAINT carts_totals_consistent
         CHECK (total = subtotal - discount_total + tax_total + shipping_total),
     CONSTRAINT carts_revision_nonneg       CHECK (revision >= 0),
-    -- Toplamlar HENÜZ OLMAYAN bir şekil için damgalanamaz.
+    -- Totals cannot be stamped for a shape that DOES NOT EXIST YET.
     CONSTRAINT carts_totals_revision_range
         CHECK (totals_revision >= 0 AND totals_revision <= revision)
 );
@@ -88,16 +91,16 @@ CREATE INDEX IF NOT EXISTS carts_region_idx
     ON carts (region_id)
     WHERE deleted_at IS NULL;
 
--- cart_line_items sepetteki bir satırdır.
+-- cart_line_items is a line in the cart.
 --
--- variant_id product modülünün kimliğidir ve FOREIGN KEY DEĞİLDİR (Prensip
--- 2.2): sepet, katalog silinse bile kendi geçmişini taşımaya devam eder.
--- Bu yüzden title ve unit_price de KOPYALANIR; varyantın adı sonradan
--- değişse de sepette görülen ad değişmez.
+-- variant_id is the product module's identity and IS NOT A FOREIGN KEY
+-- (Principle 2.2): the cart keeps carrying its own history even if the catalog
+-- is deleted. That is why title and unit_price are COPIED too; even if the
+-- variant's name changes later, the name seen in the cart does not change.
 CREATE TABLE IF NOT EXISTS cart_line_items (
     id             TEXT        PRIMARY KEY,
     cart_id        TEXT        NOT NULL REFERENCES carts (id) ON DELETE CASCADE,
-    -- variant_id product modülünün kimliğidir; FK YOKTUR (Prensip 2.2).
+    -- variant_id is the product module's identity; there is NO FK (Principle 2.2).
     variant_id     TEXT        NOT NULL,
     title          TEXT        NOT NULL,
     quantity       BIGINT      NOT NULL,
@@ -121,10 +124,11 @@ CREATE TABLE IF NOT EXISTS cart_line_items (
         CHECK (total = subtotal - discount_total + tax_total)
 );
 
--- Bir varyant bir sepette EN FAZLA BİR satırda bulunur: aynı varyant ikinci kez
--- eklendiğinde yeni satır açılmaz, var olan satırın adedi artar (bkz.
--- service.AddLineItem). Kısıt bu kararın yapısal karşılığıdır — eşzamanlı iki
--- ekleme sepetin satır kilidini atlatsa bile ikinci satır açılamaz.
+-- A variant appears in AT MOST ONE line of a cart: when the same variant is
+-- added a second time no new line is opened, the quantity of the existing line
+-- increases (see service.AddLineItem). The constraint is the structural
+-- counterpart of that decision — even if two concurrent additions slip past the
+-- cart's row lock, a second line cannot be opened.
 CREATE UNIQUE INDEX IF NOT EXISTS cart_line_items_cart_variant_uniq
     ON cart_line_items (cart_id, variant_id)
     WHERE deleted_at IS NULL;
@@ -133,18 +137,20 @@ CREATE INDEX IF NOT EXISTS cart_line_items_cart_idx
     ON cart_line_items (cart_id, created_at, id)
     WHERE deleted_at IS NULL;
 
--- cart_addresses sepetin kargo/fatura adresidir.
+-- cart_addresses is the cart's shipping/billing address.
 --
--- Adres, customer modülündeki adresten KOPYALANIR ve sepet kendi kopyasını
--- tutar. Müşteri adres defterindeki kaydını sonradan değiştirdiğinde ya da
--- sildiğinde geçmiş sepet (ve ondan doğan sipariş) bozulmaz. source_address_id
--- yalnızca kökeni belgeler; FOREIGN KEY DEĞİLDİR ve okuma için kullanılmaz.
+-- The address is COPIED from the address in the customer module and the cart
+-- keeps its own copy. When the customer later changes or deletes the record in
+-- their address book, the past cart (and the order born out of it) is not
+-- broken. source_address_id only documents the origin; IT IS NOT A FOREIGN KEY
+-- and is not used for reads.
 CREATE TABLE IF NOT EXISTS cart_addresses (
     id                TEXT        PRIMARY KEY,
     cart_id           TEXT        NOT NULL REFERENCES carts (id) ON DELETE CASCADE,
-    -- address_type 'shipping' ya da 'billing'dir.
+    -- address_type is either 'shipping' or 'billing'.
     address_type      TEXT        NOT NULL,
-    -- source_address_id kopyalandığı customer adresinin kimliğidir; FK YOKTUR.
+    -- source_address_id is the identity of the customer address it was copied
+    -- from; there is NO FK.
     source_address_id TEXT,
     first_name        TEXT,
     last_name         TEXT,
@@ -165,22 +171,22 @@ CREATE TABLE IF NOT EXISTS cart_addresses (
         CHECK (address_type IN ('shipping', 'billing'))
 );
 
--- Sepet başına her türden EN FAZLA BİR yaşayan adres bulunur.
+-- There is AT MOST ONE living address of each type per cart.
 CREATE UNIQUE INDEX IF NOT EXISTS cart_addresses_cart_type_uniq
     ON cart_addresses (cart_id, address_type)
     WHERE deleted_at IS NULL;
 
--- cart_shipping_methods sepete seçilmiş kargo yöntemidir.
+-- cart_shipping_methods is the shipping method selected for the cart.
 --
--- shipping_option_id fulfillment modülünün kimliğidir (Faz 7) ve FOREIGN KEY
--- DEĞİLDİR; Faz 5'te seçenek kataloğu henüz yoktur, bu yüzden NULL olabilir.
--- amount minor unit'tir ve sepetin shipping_total'ına workflow tarafından
--- toplanır; bu tablo toplamı kendi yazmaz.
+-- shipping_option_id is the fulfillment module's identity (Phase 7) and IS NOT
+-- A FOREIGN KEY; in Phase 5 the option catalog does not exist yet, so it may be
+-- NULL. amount is in the minor unit and is summed into the cart's
+-- shipping_total by the workflow; this table does not write the total itself.
 CREATE TABLE IF NOT EXISTS cart_shipping_methods (
     id                 TEXT        PRIMARY KEY,
     cart_id            TEXT        NOT NULL REFERENCES carts (id) ON DELETE CASCADE,
     name               TEXT        NOT NULL,
-    -- shipping_option_id fulfillment modülünün kimliğidir; FK YOKTUR.
+    -- shipping_option_id is the fulfillment module's identity; there is NO FK.
     shipping_option_id TEXT,
     amount             BIGINT      NOT NULL DEFAULT 0,
     data               JSONB       NOT NULL DEFAULT '{}'::jsonb,
@@ -191,9 +197,9 @@ CREATE TABLE IF NOT EXISTS cart_shipping_methods (
     CONSTRAINT cart_shipping_methods_amount_nonneg CHECK (amount >= 0)
 );
 
--- Aynı kargo seçeneği bir sepete iki kez eklenemez. Seçeneksiz (NULL) yöntemler
--- kısıtın dışındadır: NULL'lar benzersiz indekste birbirine eşit sayılmaz ve
--- Faz 7'ye kadar tüm yöntemler seçeneksizdir.
+-- The same shipping option cannot be added to a cart twice. Methods without an
+-- option (NULL) are outside the constraint: NULLs are not counted as equal to
+-- each other in a unique index, and until Phase 7 every method is optionless.
 CREATE UNIQUE INDEX IF NOT EXISTS cart_shipping_methods_cart_option_uniq
     ON cart_shipping_methods (cart_id, shipping_option_id)
     WHERE shipping_option_id IS NOT NULL AND deleted_at IS NULL;

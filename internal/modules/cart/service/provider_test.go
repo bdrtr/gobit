@@ -12,13 +12,15 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/cart/service"
 )
 
-// TestProviderEntityAdiSablonaUyar sağlayıcının sunduğu entity adının,
-// container'a kaydedildiği adın öneki olduğunu doğrular.
+// TestProviderEntityNameMatchesTheRegistrationTemplate verifies that the entity
+// name the provider offers is the prefix of the name it is registered in the
+// container under.
 //
-// Query sağlayıcıyı "<entity>.query" adıyla arar ve Entity() ile örtüşmeyi
-// DOĞRULAR (ADR 0004); iki ad ayrışırsa hata çalışma zamanına kalır.
-func TestProviderEntityAdiSablonaUyar(t *testing.T) {
-	svc, _ := yeniServis(t)
+// Query looks the provider up by the name "<entity>.query" and VALIDATES the
+// overlap with Entity() (ADR 0004); if the two names drift apart, the error is
+// left to runtime.
+func TestProviderEntityNameMatchesTheRegistrationTemplate(t *testing.T) {
+	svc, _ := newService(t)
 
 	provider := service.NewQueryProvider(svc)
 
@@ -26,10 +28,10 @@ func TestProviderEntityAdiSablonaUyar(t *testing.T) {
 	assert.Equal(t, "cart.query", provider.Entity()+query.ProviderSuffix)
 }
 
-// TestProviderListKayitDoner listelemenin kayıt döndürdüğünü ve birleştirme
-// anahtarını (id) taşıdığını doğrular.
-func TestProviderListKayitDoner(t *testing.T) {
-	svc, _ := yeniServis(t)
+// TestProviderListReturnsRecords verifies that the listing returns records and
+// that they carry the join key (id).
+func TestProviderListReturnsRecords(t *testing.T) {
+	svc, _ := newService(t)
 	ctx := context.Background()
 	cart, err := svc.CreateCart(ctx, service.CreateCartInput{
 		RegionID: regionID, CustomerID: customerID, CurrencyCode: currency,
@@ -50,17 +52,17 @@ func TestProviderListKayitDoner(t *testing.T) {
 	assert.Nil(t, records[0][service.FieldCompletedAt])
 }
 
-// TestProviderBayatToplamiBildirir toplamların bayat olduğunun sağlayıcı
-// kaydında GÖRÜNDÜĞÜNÜ doğrular.
+// TestProviderReportsStaleTotals verifies that the totals being stale IS VISIBLE
+// in the provider's record.
 //
-// Bayatlık toplamlarla birlikte sunulmasaydı, cross-module bir okuma eski bir
-// tutarı güncel sanırdı.
-func TestProviderBayatToplamiBildirir(t *testing.T) {
-	svc, _ := yeniServis(t)
+// Had the staleness not been offered together with the totals, a cross-module
+// read would take an old amount for a current one.
+func TestProviderReportsStaleTotals(t *testing.T) {
+	svc, _ := newService(t)
 	ctx := context.Background()
-	cart := yeniSepet(ctx, t, svc)
+	cart := newCart(ctx, t, svc)
 	_, err := svc.AddLineItem(ctx, cart.ID, service.AddLineItemInput{
-		VariantID: variantA, Title: "Tişört", Quantity: 1,
+		VariantID: variantA, Title: "T-shirt", Quantity: 1,
 	})
 	require.NoError(t, err)
 	provider := service.NewQueryProvider(svc)
@@ -74,12 +76,12 @@ func TestProviderBayatToplamiBildirir(t *testing.T) {
 	assert.Equal(t, int64(0), records[0][service.FieldTotal])
 }
 
-// TestProviderAlanSecimiUygulanir istenen alan kümesinin birebir döndüğünü
-// doğrular.
-func TestProviderAlanSecimiUygulanir(t *testing.T) {
-	svc, _ := yeniServis(t)
+// TestProviderAppliesTheFieldSelection verifies that the requested set of fields
+// comes back exactly.
+func TestProviderAppliesTheFieldSelection(t *testing.T) {
+	svc, _ := newService(t)
 	ctx := context.Background()
-	cart := yeniSepet(ctx, t, svc)
+	cart := newCart(ctx, t, svc)
 	provider := service.NewQueryProvider(svc)
 
 	records, err := provider.FetchByIDs(ctx, []string{cart.ID},
@@ -87,31 +89,31 @@ func TestProviderAlanSecimiUygulanir(t *testing.T) {
 
 	require.NoError(t, err)
 	require.Len(t, records, 1)
-	assert.Len(t, records[0], 2, "yalnızca istenen alanlar dönmeli")
+	assert.Len(t, records[0], 2, "only the requested fields must come back")
 	assert.Contains(t, records[0], query.IDField)
 	assert.Contains(t, records[0], service.FieldCurrencyCode)
 }
 
-// TestProviderTanimsizAlanReddedilir sunulmayan bir alanın errors.Invalid ile
-// reddedildiğini doğrular (ADR 0004).
-func TestProviderTanimsizAlanReddedilir(t *testing.T) {
-	svc, _ := yeniServis(t)
+// TestProviderRejectsAnUndefinedField verifies that a field that is not offered
+// is rejected with errors.Invalid (ADR 0004).
+func TestProviderRejectsAnUndefinedField(t *testing.T) {
+	svc, _ := newService(t)
 	ctx := context.Background()
 	provider := service.NewQueryProvider(svc)
 
-	_, err := provider.List(ctx, query.ListOptions{Fields: []string{"gizli_alan"}})
+	_, err := provider.List(ctx, query.ListOptions{Fields: []string{"hidden_field"}})
 	require.Error(t, err)
 	assert.Equal(t, errors.KindInvalid, errors.KindOf(err))
 
-	_, err = provider.FetchByIDs(ctx, []string{"cart_X"}, []string{"gizli_alan"})
+	_, err = provider.FetchByIDs(ctx, []string{"cart_X"}, []string{"hidden_field"})
 	require.Error(t, err)
 	assert.Equal(t, errors.KindInvalid, errors.KindOf(err))
 }
 
-// TestProviderFiltreleriUygular desteklenen filtrelerin çalıştığını,
-// desteklenmeyenin reddedildiğini doğrular.
-func TestProviderFiltreleriUygular(t *testing.T) {
-	svc, _ := yeniServis(t)
+// TestProviderAppliesTheFilters verifies that the supported filters work and
+// that an unsupported one is rejected.
+func TestProviderAppliesTheFilters(t *testing.T) {
+	svc, _ := newService(t)
 	ctx := context.Background()
 	provider := service.NewQueryProvider(svc)
 
@@ -139,23 +141,24 @@ func TestProviderFiltreleriUygular(t *testing.T) {
 	_, err = provider.List(ctx, query.ListOptions{
 		Filters: map[string]any{"email": "a@b.c"},
 	})
-	require.Error(t, err, "desteklenmeyen filtre reddedilmeli")
+	require.Error(t, err, "an unsupported filter must be rejected")
 	assert.Equal(t, errors.KindInvalid, errors.KindOf(err))
 
 	_, err = provider.List(ctx, query.ListOptions{
-		Filters: map[string]any{service.FieldCompleted: "evet"},
+		Filters: map[string]any{service.FieldCompleted: "yes"},
 	})
-	require.Error(t, err, "yanlış tipli filtre reddedilmeli")
+	require.Error(t, err, "a filter with the wrong type must be rejected")
 	assert.Equal(t, errors.KindInvalid, errors.KindOf(err))
 }
 
-// TestProviderSinirsizIstekTavanaKirpilir çekirdeğin "0 = sınırsız"
-// sözleşmesinin sağlayıcı tavanına çevrildiğini doğrular.
+// TestProviderClampsAnUnlimitedRequestToTheCeiling verifies that the core's
+// "0 = unlimited" contract is turned into the provider's ceiling.
 //
-// Sınırsız bir kök sorgu tüm sepet tablosunu belleğe alırdı; kırpma sessizdir
-// ve hata dönmez, çünkü limit burada istemci girdisi değil sorgu tanımıdır.
-func TestProviderSinirsizIstekTavanaKirpilir(t *testing.T) {
-	svc, _ := yeniServis(t)
+// An unlimited root query would pull the whole cart table into memory; the
+// clamping is silent and returns no error, because the limit here is not client
+// input but a query definition.
+func TestProviderClampsAnUnlimitedRequestToTheCeiling(t *testing.T) {
+	svc, _ := newService(t)
 	ctx := context.Background()
 	provider := service.NewQueryProvider(svc)
 
@@ -168,30 +171,31 @@ func TestProviderSinirsizIstekTavanaKirpilir(t *testing.T) {
 
 	for _, limit := range []int{0, -5, int(service.MaxLimit) + 1000} {
 		records, err := provider.List(ctx, query.ListOptions{Limit: limit})
-		require.NoError(t, err, "limit %d hata üretmemeli", limit)
+		require.NoError(t, err, "the limit %d must not produce an error", limit)
 		assert.Len(t, records, 3)
 	}
 }
 
-// TestProviderBulunamayanKimlikHataDegil eksik kimliğin kayıt döndürmediğini
-// ama hata da üretmediğini doğrular (ADR 0004 sözleşmesi).
-func TestProviderBulunamayanKimlikHataDegil(t *testing.T) {
-	svc, _ := yeniServis(t)
+// TestProviderMissingIdentifierIsNotAnError verifies that a missing identifier
+// returns no record but does not produce an error either (the ADR 0004
+// contract).
+func TestProviderMissingIdentifierIsNotAnError(t *testing.T) {
+	svc, _ := newService(t)
 	ctx := context.Background()
-	cart := yeniSepet(ctx, t, svc)
+	cart := newCart(ctx, t, svc)
 	provider := service.NewQueryProvider(svc)
 
-	records, err := provider.FetchByIDs(ctx, []string{cart.ID, "cart_YOK"}, nil)
+	records, err := provider.FetchByIDs(ctx, []string{cart.ID, "cart_MISSING"}, nil)
 
 	require.NoError(t, err)
 	require.Len(t, records, 1)
 	assert.Equal(t, cart.ID, records[0][query.IDField])
 }
 
-// TestProviderBosKimlikListesiBosDilim boş kimlik listesinin boş (nil olmayan)
-// dilim döndürdüğünü doğrular.
-func TestProviderBosKimlikListesiBosDilim(t *testing.T) {
-	svc, _ := yeniServis(t)
+// TestProviderEmptyIdentifierListReturnsAnEmptySlice verifies that an empty
+// identifier list returns an empty (non-nil) slice.
+func TestProviderEmptyIdentifierListReturnsAnEmptySlice(t *testing.T) {
+	svc, _ := newService(t)
 	provider := service.NewQueryProvider(svc)
 
 	records, err := provider.FetchByIDs(context.Background(), nil, nil)

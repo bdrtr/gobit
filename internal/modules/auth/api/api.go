@@ -1,44 +1,49 @@
-// Package api auth modülünün HTTP yüzeyidir.
+// Package api is the auth module's HTTP surface.
 //
-// Modülün tüm uçları /admin/v1 altındadır; auth'un vitrin (/store/v1) ucu
-// YOKTUR. Mağaza tarafındaki karşılığı bir uç değil, publishable anahtarı
-// okuyan corehttp.RequireStore middleware'idir.
+// Every endpoint of the module lives under /admin/v1; auth has NO storefront
+// (/store/v1) endpoint. Its counterpart on the store side is not an endpoint
+// but the corehttp.RequireStore middleware that reads the publishable key.
 //
-// # Uçlar
+// # Endpoints
 //
-// Kimlik uçları (yetki İSTEMEZ, bkz. [Handler.Routes]):
+// Identity endpoints (they ASK FOR NO scope, see [Handler.Routes]):
 //
-//   - POST /admin/v1/auth/login — jeton üretir; TEK KORUMASIZ uçtur.
-//   - GET /admin/v1/auth/me — doğrulanmış çağıranın kimliğini geri okur.
-//   - POST /admin/v1/auth/logout — çağıranın TÜM oturumlarını düşürür; tek
-//     cihaz seçilemez (bkz. [Handler.adminLogout]).
+//   - POST /admin/v1/auth/login — produces a token; it is the ONLY UNPROTECTED
+//     endpoint.
+//   - GET /admin/v1/auth/me — reads back the identity of the authenticated
+//     caller.
+//   - POST /admin/v1/auth/logout — drops ALL of the caller's sessions; a single
+//     device cannot be picked (see [Handler.adminLogout]).
 //
-// Kaynak uçları ([ScopeRead] ya da [ScopeWrite] ister):
+// Resource endpoints (they ask for [ScopeRead] or [ScopeWrite]):
 //
 //   - /admin/v1/users, /admin/v1/users/{id}/password
-//   - /admin/v1/api-keys, /admin/v1/api-keys/{id}/revoke ve kanal bağları
+//   - /admin/v1/api-keys, /admin/v1/api-keys/{id}/revoke and the channel links
 //   - /admin/v1/sales-channels
 //
-// # KORUMASIZ UÇ: POST /admin/v1/auth/login
+// # UNPROTECTED ENDPOINT: POST /admin/v1/auth/login
 //
-// Giriş ucu doğası gereği KORUMASIZDIR: kimlik doğrulaması yapılacak olan
-// istektir, kimliği daha yeni kuracaktır. Yönetim yüzeyine corehttp.RequireAdmin
-// bağlanırken bu uç DIŞARIDA BIRAKILMALIDIR; korumaya alınırsa kimse giriş
-// yapamaz ve sistem kilitlenir.
+// The login endpoint is UNPROTECTED by its very nature: it is the request that
+// is going to be authenticated, it is only about to establish the identity.
+// When corehttp.RequireAdmin is attached to the admin surface this endpoint
+// MUST BE LEFT OUT; if it is taken under protection nobody can log in and the
+// system locks itself out.
 //
-// Kimlik middleware'inin bağlanması bu modülün DEĞİL, router'ı kuran tarafın
-// işidir; muafiyet de orada tanımlanır. YETKİ ise burada, uç uç zorlanır
-// (bkz. [Handler.Routes] ve [ScopeRead], [ScopeWrite]).
+// Attaching the identity middleware is NOT this module's job but the job of
+// whoever builds the router; the exemption is defined there as well.
+// AUTHORIZATION, on the other hand, is enforced here, endpoint by endpoint
+// (see [Handler.Routes] and [ScopeRead], [ScopeWrite]).
 //
-// # Sırlar
+// # Secrets
 //
-// Bu paketten dışarı çıkan tek düz sır, anahtar oluşturma yanıtındaki
-// [createAPIKeyResponse.Key] alanıdır ve bir kez döner. Parola hiçbir yanıtta
-// GEÇMEZ; istek gövdesindeki parola alanı [secret] tipiyle taşınır ve o tip
-// loglandığında maskelenir.
+// The only plaintext secret that leaves this package is the
+// [createAPIKeyResponse.Key] field of the key creation response, and it is
+// returned once. A password NEVER PASSES through any response; the password
+// field in the request body travels as the [secret] type and that type is
+// masked when logged.
 //
-// Handler'lar status kodu SEÇMEZ: servis tipli hata döner, corehttp.WriteError
-// onu status koduna çevirir (plan Bölüm 2.7).
+// Handlers DO NOT PICK the status code: the service returns a typed error and
+// corehttp.WriteError turns it into a status code (plan Section 2.7).
 package api
 
 import (
@@ -59,231 +64,244 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/auth/service"
 )
 
-// maxBodyBytes tek bir istek gövdesinin azami boyutudur. Sınırsız bir gövde,
-// tek istekle belleği tüketmenin en ucuz yoludur.
+// maxBodyBytes is the upper bound of a single request body. An unbounded body
+// is the cheapest way to exhaust memory with a single request.
 const maxBodyBytes int64 = 1 << 20 // 1 MiB
 
-// codeInvalidBody istek gövdesi ya da parametresi çözümlenemediğinde dönen
-// hata kodudur.
+// codeInvalidBody is the error code returned when the request body or a
+// parameter cannot be parsed.
 const codeInvalidBody = "auth_invalid_body"
 
-// Yol parametrelerinin adları.
+// The names of the path parameters.
 const (
 	paramID        = "id"
 	paramChannelID = "sales_channel_id"
 )
 
-// secret istek gövdesindeki düz parolayı taşıyan dize tipidir.
+// secret is the string type that carries the plaintext password of the request
+// body.
 //
-// Tek işi KAZA ile loglanmayı engellemektir: bir istek yapısı "%v", "%+v" ya
-// da slog ile kaydedildiğinde bu alan maskelenmiş görünür. Değerin kendisine
-// ulaşmak için açık bir string dönüşümü gerekir ve o dönüşüm kodda göze
-// batar — tam da istenen budur.
+// Its only job is to prevent being logged BY ACCIDENT: when a request struct is
+// recorded with "%v", "%+v" or with slog, this field shows up masked. Reaching
+// the value itself takes an explicit string conversion and that conversion
+// stands out in the code — which is exactly what is wanted.
 type secret string
 
-// String maskelenmiş gösterimi döner.
+// String returns the masked representation.
 func (s secret) String() string { return "REDACTED" }
 
-// LogValue slog çıktısında maskelenmiş değeri döner.
+// LogValue returns the masked value in slog output.
 func (s secret) LogValue() slog.Value { return slog.StringValue("REDACTED") }
 
-// Auth handler'ların servisten ihtiyaç duyduğu yüzeydir.
+// Auth is the surface the handlers need from the service.
 //
-// Dar tutulması testleri sadeleştirir: HTTP davranışı, gerçek bir veritabanı
-// olmadan birkaç satırlık bir sahte ile doğrulanabilir.
+// Keeping it narrow simplifies the tests: the HTTP behavior can be verified
+// with a fake a few lines long, without a real database.
 type Auth interface {
-	// Login e-posta ve parolayla oturum jetonu üretir.
+	// Login produces a session token from an email and a password.
 	Login(ctx context.Context, email, password string) (string, time.Time, error)
-	// Logout çağıranın TÜM oturumlarını düşürür ve iptal anını döner.
+	// Logout drops ALL of the caller's sessions and returns the revocation
+	// moment.
 	//
-	// Kimliğin TÜRÜ de geçirilir: bir API anahtarının oturumu yoktur ve o
-	// çağrı tipli bir hata ile reddedilir (bkz. service.Service.Logout).
+	// The KIND of the identity is passed too: an API key has no session and
+	// such a call is rejected with a typed error (see service.Service.Logout).
 	Logout(ctx context.Context, principalID, principalKind string) (time.Time, error)
 
-	// CreateUser yeni bir yönetim kullanıcısı oluşturur; password boş olabilir.
+	// CreateUser creates a new admin user; password may be empty.
 	CreateUser(ctx context.Context, in service.CreateUserInput, password string) (models.User, error)
-	// GetUser kullanıcıyı kimliğiyle döner.
+	// GetUser returns the user by their identifier.
 	GetUser(ctx context.Context, id string) (models.User, error)
-	// ListUsers kullanıcıları süzer ve sayfalar.
+	// ListUsers filters and pages the users.
 	ListUsers(ctx context.Context, in service.ListUsersInput) (service.Page[models.User], error)
-	// UpdateUser kullanıcının verilen alanlarını günceller.
+	// UpdateUser updates the given fields of the user.
 	UpdateUser(ctx context.Context, id string, in service.UpdateUserInput) (models.User, error)
-	// DeleteUser kullanıcıyı yumuşak siler.
+	// DeleteUser soft-deletes the user.
 	DeleteUser(ctx context.Context, id string) error
-	// SetPassword kullanıcının parolasını belirler.
+	// SetPassword assigns the user's password.
 	SetPassword(ctx context.Context, userID, password string) error
 
-	// CreateAPIKey yeni bir API anahtarı üretir ve düz metnini bir kez döner.
+	// CreateAPIKey produces a new API key and returns its plaintext once.
 	CreateAPIKey(ctx context.Context, in service.CreateAPIKeyInput) (models.APIKey, string, error)
-	// GetAPIKey anahtarı kimliğiyle döner.
+	// GetAPIKey returns the key by its identifier.
 	GetAPIKey(ctx context.Context, id string) (models.APIKey, error)
-	// ListAPIKeys anahtarları süzer ve sayfalar.
+	// ListAPIKeys filters and pages the keys.
 	ListAPIKeys(ctx context.Context, in service.ListAPIKeysInput) (service.Page[models.APIKey], error)
-	// RevokeAPIKey anahtarı iptal eder.
+	// RevokeAPIKey revokes the key.
 	RevokeAPIKey(ctx context.Context, id, revokedBy string) (models.APIKey, error)
-	// DeleteAPIKey anahtarı yumuşak siler.
+	// DeleteAPIKey soft-deletes the key.
 	DeleteAPIKey(ctx context.Context, id string) error
-	// LinkSalesChannel publishable anahtarı bir satış kanalına bağlar.
+	// LinkSalesChannel attaches the publishable key to a sales channel.
 	LinkSalesChannel(ctx context.Context, apiKeyID, channelID string) error
-	// UnlinkSalesChannel bağı kaldırır.
+	// UnlinkSalesChannel removes the link.
 	UnlinkSalesChannel(ctx context.Context, apiKeyID, channelID string) error
-	// SalesChannelsOfAPIKey anahtarın bağlı olduğu kanalları döner.
+	// SalesChannelsOfAPIKey returns the channels the key is attached to.
 	SalesChannelsOfAPIKey(ctx context.Context, apiKeyID string) ([]models.SalesChannel, error)
 
-	// CreateSalesChannel yeni bir satış kanalı oluşturur.
+	// CreateSalesChannel creates a new sales channel.
 	CreateSalesChannel(ctx context.Context, in service.SalesChannelInput) (models.SalesChannel, error)
-	// GetSalesChannel kanalı kimliğiyle döner.
+	// GetSalesChannel returns the channel by its identifier.
 	GetSalesChannel(ctx context.Context, id string) (models.SalesChannel, error)
-	// ListSalesChannels kanalları süzer ve sayfalar.
+	// ListSalesChannels filters and pages the channels.
 	ListSalesChannels(ctx context.Context, in service.ListSalesChannelsInput) (service.Page[models.SalesChannel], error)
-	// UpdateSalesChannel kanalın verilen alanlarını günceller.
+	// UpdateSalesChannel updates the given fields of the channel.
 	UpdateSalesChannel(ctx context.Context, id string, in service.UpdateSalesChannelInput) (models.SalesChannel, error)
-	// DeleteSalesChannel kanalı yumuşak siler.
+	// DeleteSalesChannel soft-deletes the channel.
 	DeleteSalesChannel(ctx context.Context, id string) error
 }
 
-// Handler auth modülünün HTTP handler kümesidir.
+// Handler is the auth module's set of HTTP handlers.
 type Handler struct {
 	svc Auth
 }
 
-// New verilen servis üzerinde çalışan handler kümesini üretir.
+// New produces the set of handlers that works on the given service.
 func New(svc Auth) *Handler {
 	return &Handler{svc: svc}
 }
 
-// LoginPath giriş ucunun tam yoludur.
+// LoginPath is the full path of the login endpoint.
 //
-// Sabit olarak yayımlanması, router'ı kuran tarafın KORUMASIZ bırakacağı yolu
-// elle yazmak zorunda kalmaması içindir: yol değişirse istisna da onunla
-// birlikte değişir ve bir gün sessizce korumaya alınıp sistemi kilitlemez.
+// It is published as a constant so that whoever builds the router does not have
+// to hand-write the path they leave UNPROTECTED: if the path changes the
+// exception changes along with it and does not one day silently fall under
+// protection and lock the system out.
 const LoginPath = "/admin/v1/auth/login"
 
-// Yetki sözlüğü: auth'un yönetim uçlarının istediği yetkiler.
+// The scope dictionary: the scopes auth's admin endpoints ask for.
 //
-// Sözlük BİLİNÇLİ OLARAK iki girdiden ibarettir. Kaynak başına ayrı yetki
-// ("users:read", "api_keys:write" …) tanımlamak listeyi büyütür ama bugün
-// verilebilecek hiçbir yeni kararı mümkün kılmaz: yetkiyi dağıtan tek yer bu
-// modüldür ve dağıtılmayan bir yetki adı, ilk kez verildiği gün ne işe
-// yaradığı kimsenin bilmediği bir addır. Ayrım gerçekten gerektiğinde
-// eklenir; şimdiden eklenirse yalnızca yanlış bir kesinlik hissi verir.
+// The dictionary DELIBERATELY consists of two entries. Defining a separate
+// scope per resource ("users:read", "api_keys:write" …) grows the list but
+// makes no new decision possible today: this module is the only place that
+// hands scopes out, and a scope name that is never handed out is a name nobody
+// knows the purpose of on the day it is first granted. The distinction gets
+// added when it is genuinely needed; added ahead of time it only gives a false
+// sense of precision.
 const (
-	// ScopeRead auth'un yönetim yüzeyindeki OKUMA uçlarının istediği yetkidir.
+	// ScopeRead is the scope the READ endpoints of auth's admin surface ask
+	// for.
 	//
-	// Kullanıcı kayıtlarını, API anahtarlarının MASKELENMİŞ gösterimlerini ve
-	// satış kanallarını okumaya yeter; hiçbir yazma ucunu açmaz. Ayrıca
-	// verilmesi tam yetkili kimlikler için gerekmez: corehttp.ScopeAdmin
-	// taşıyan bir çağıran bunu da karşılar (bkz. corehttp.Principal.HasScope).
+	// It is enough to read user records, the MASKED representations of API keys
+	// and the sales channels; it opens no write endpoint. Granting it is also
+	// unnecessary for fully privileged identities: a caller carrying
+	// corehttp.ScopeAdmin satisfies this one too (see
+	// corehttp.Principal.HasScope).
 	ScopeRead = "auth:read"
 
-	// ScopeWrite auth'un yönetim yüzeyindeki YAZMA uçlarının istediği
-	// yetkidir; corehttp.ScopeAdmin'in ta kendisidir.
+	// ScopeWrite is the scope the WRITE endpoints of auth's admin surface ask
+	// for; it is corehttp.ScopeAdmin itself.
 	//
-	// Daha dar bir "auth:write" TANIMLANMAMIŞTIR ve bu bir eksiklik değildir:
-	// bu uçlarda yazılan şeyin kendisi yetkidir — kullanıcının yetkisi,
-	// anahtarın yetkisi, anahtarın göreceği satış kanalı. Yetki yazabilen bir
-	// kimlik tek istekte kendini admin yapabileceği için zaten admindir; ayrı
-	// bir ad, gerçekte var olmayan bir sınırı varmış gibi gösterirdi.
+	// A narrower "auth:write" IS NOT DEFINED and this is not a shortcoming:
+	// what is written at these endpoints is scope itself — a user's scope, a
+	// key's scope, the sales channel a key will see. An identity that can write
+	// scope is already an admin, since it can make itself one in a single
+	// request; a separate name would have made a boundary that does not really
+	// exist look as if it did.
 	ScopeWrite = corehttp.ScopeAdmin
 )
 
-// Routes auth'un yönetim route'larını router'a bağlar.
+// Routes attaches auth's admin routes to the router.
 //
-// Route'lar chi'nin Route/Mount yardımcılarıyla DEĞİL, tam yollarla kaydedilir:
-// /admin/v1 önekini birden çok modül paylaşır ve aynı öneki iki kez Mount etmek
-// chi'de panik üretirdi. Tam yol kaydı aynı ağaca yan yana yazar.
+// The routes are registered with full paths and NOT with chi's Route/Mount
+// helpers: the /admin/v1 prefix is shared by more than one module and mounting
+// the same prefix twice would make chi panic. Full-path registration writes
+// them side by side into the same tree.
 //
-// # KORUMA
+// # PROTECTION
 //
-// İki katman vardır ve ikisi de gereklidir:
+// There are two layers and both of them are necessary:
 //
-//  1. KİMLİK — [LoginPath] DIŞINDAKİ tüm uçlar corehttp.RequireAdmin ile
-//     korunur. O middleware bu modülde değil, router'ı kuran tarafta takılır
-//     (bkz. corehttp.APIGuards); muafiyet listesi de oradadır.
-//  2. YETKİ — uçlar BURADA, uç uç corehttp.RequireScope ile işaretlenir:
-//     okuma uçları [ScopeRead], yazma uçları [ScopeWrite] ister.
+//  1. IDENTITY — every endpoint OTHER THAN [LoginPath] is protected with
+//     corehttp.RequireAdmin. That middleware is attached not in this module but
+//     on the side that builds the router (see corehttp.APIGuards); the
+//     exemption list lives there too.
+//  2. AUTHORIZATION — the endpoints are marked HERE, one by one, with
+//     corehttp.RequireScope: read endpoints ask for [ScopeRead], write
+//     endpoints for [ScopeWrite].
 //
-// İkinci katman olmasaydı kimlik doğrulama yetkilendirmenin yerine geçerdi.
-// Somut bedeli şudur: yalnızca "orders:read" taşıyan bir gizli anahtar ya da
-// yetkisi hiç olmayan bir kullanıcı POST /admin/v1/api-keys çağırıp kendine
-// tam yetkili bir anahtar üretebilirdi — tek istekte yetki yükseltme. Aynı
-// yükseltme servis katmanında ikinci kez engellenir (bkz.
-// service.CreateAPIKey), çünkü buradaki harita bir gün gevşetilebilir.
+// Without the second layer authentication would take the place of
+// authorization. The concrete cost is this: a secret key carrying only
+// "orders:read", or a user with no scope at all, could call POST
+// /admin/v1/api-keys and produce a fully privileged key for itself — privilege
+// escalation in a single request. The same escalation is blocked a second time
+// in the service layer (see service.CreateAPIKey), because the map here may one
+// day be loosened.
 //
-// Kimlik uçları yetki İSTEMEZ: [LoginPath] kimliği daha yeni kuracaktır,
-// GET /admin/v1/auth/me kurulmuş kimliğin kendisini geri okur,
-// POST /admin/v1/auth/logout ise onu sonlandırır. Kimlik ucuna yetki koymak,
-// yetkisiz bir çağıranın kim olduğunu bile öğrenememesi demek olurdu ve bu,
-// hiçbir şeyi korumadan hata ayıklamayı imkânsızlaştırırdı. Çıkış ucuna yetki
-// koymak ise daha kötüsünü yapardı: yetkisi geri alınmış bir yöneticinin
-// elindeki jeton, süresi dolana kadar kapatılamaz hâle gelirdi.
+// Identity endpoints ASK FOR NO scope: [LoginPath] is only about to establish
+// the identity, GET /admin/v1/auth/me reads the established identity itself
+// back, and POST /admin/v1/auth/logout ends it. Putting a scope on an identity
+// endpoint would mean that a caller without scope could not even learn who they
+// are, and that would make debugging impossible while protecting nothing.
+// Putting a scope on the logout endpoint would do something worse: the token in
+// the hands of an admin whose scope had been taken away would become impossible
+// to close until it expired.
 func (h *Handler) Routes(r chi.Router) {
-	okuma := r.With(corehttp.RequireScope(ScopeRead))
-	yazma := r.With(corehttp.RequireScope(ScopeWrite))
+	read := r.With(corehttp.RequireScope(ScopeRead))
+	write := r.With(corehttp.RequireScope(ScopeWrite))
 
-	// --- kimlik (login KORUMASIZ, /me ve /logout yalnızca KİMLİK ister) ---
+	// --- identity (login UNPROTECTED, /me and /logout ask for IDENTITY only) ---
 	r.Post(LoginPath, h.adminLogin)
 	r.Get("/admin/v1/auth/me", h.adminWhoami)
 	r.Post("/admin/v1/auth/logout", h.adminLogout)
 
-	// --- kullanıcılar ---
-	yazma.Post("/admin/v1/users", h.adminCreateUser)
-	okuma.Get("/admin/v1/users", h.adminListUsers)
-	okuma.Get("/admin/v1/users/{id}", h.adminGetUser)
-	yazma.Put("/admin/v1/users/{id}", h.adminUpdateUser)
-	yazma.Delete("/admin/v1/users/{id}", h.adminDeleteUser)
-	yazma.Post("/admin/v1/users/{id}/password", h.adminSetPassword)
+	// --- users ---
+	write.Post("/admin/v1/users", h.adminCreateUser)
+	read.Get("/admin/v1/users", h.adminListUsers)
+	read.Get("/admin/v1/users/{id}", h.adminGetUser)
+	write.Put("/admin/v1/users/{id}", h.adminUpdateUser)
+	write.Delete("/admin/v1/users/{id}", h.adminDeleteUser)
+	write.Post("/admin/v1/users/{id}/password", h.adminSetPassword)
 
-	// --- api anahtarları ---
-	yazma.Post("/admin/v1/api-keys", h.adminCreateAPIKey)
-	okuma.Get("/admin/v1/api-keys", h.adminListAPIKeys)
-	okuma.Get("/admin/v1/api-keys/{id}", h.adminGetAPIKey)
-	yazma.Delete("/admin/v1/api-keys/{id}", h.adminDeleteAPIKey)
-	yazma.Post("/admin/v1/api-keys/{id}/revoke", h.adminRevokeAPIKey)
-	okuma.Get("/admin/v1/api-keys/{id}/sales-channels", h.adminListKeyChannels)
-	yazma.Post("/admin/v1/api-keys/{id}/sales-channels", h.adminLinkKeyChannel)
-	yazma.Delete("/admin/v1/api-keys/{id}/sales-channels/{sales_channel_id}", h.adminUnlinkKeyChannel)
+	// --- api keys ---
+	write.Post("/admin/v1/api-keys", h.adminCreateAPIKey)
+	read.Get("/admin/v1/api-keys", h.adminListAPIKeys)
+	read.Get("/admin/v1/api-keys/{id}", h.adminGetAPIKey)
+	write.Delete("/admin/v1/api-keys/{id}", h.adminDeleteAPIKey)
+	write.Post("/admin/v1/api-keys/{id}/revoke", h.adminRevokeAPIKey)
+	read.Get("/admin/v1/api-keys/{id}/sales-channels", h.adminListKeyChannels)
+	write.Post("/admin/v1/api-keys/{id}/sales-channels", h.adminLinkKeyChannel)
+	write.Delete("/admin/v1/api-keys/{id}/sales-channels/{sales_channel_id}", h.adminUnlinkKeyChannel)
 
-	// --- satış kanalları ---
+	// --- sales channels ---
 	//
-	// Kanal kaydı katalog verisi gibi görünür ama yetki verisidir: bir
-	// publishable anahtarın hangi kataloğu göreceğini kanal bağı belirler.
-	// Bu yüzden yazma tarafı da [ScopeWrite] ister.
-	yazma.Post("/admin/v1/sales-channels", h.adminCreateSalesChannel)
-	okuma.Get("/admin/v1/sales-channels", h.adminListSalesChannels)
-	okuma.Get("/admin/v1/sales-channels/{id}", h.adminGetSalesChannel)
-	yazma.Put("/admin/v1/sales-channels/{id}", h.adminUpdateSalesChannel)
-	yazma.Delete("/admin/v1/sales-channels/{id}", h.adminDeleteSalesChannel)
+	// A channel record looks like catalog data but it is authorization data:
+	// which catalog a publishable key gets to see is decided by the channel
+	// link. That is why the write side asks for [ScopeWrite] too.
+	write.Post("/admin/v1/sales-channels", h.adminCreateSalesChannel)
+	read.Get("/admin/v1/sales-channels", h.adminListSalesChannels)
+	read.Get("/admin/v1/sales-channels/{id}", h.adminGetSalesChannel)
+	write.Put("/admin/v1/sales-channels/{id}", h.adminUpdateSalesChannel)
+	write.Delete("/admin/v1/sales-channels/{id}", h.adminDeleteSalesChannel)
 }
 
-// itemEnvelope tekil yanıtların zarfıdır (plan Bölüm 8).
+// itemEnvelope is the envelope of single-record responses (plan Section 8).
 type itemEnvelope struct {
-	// Data tek kaydın gövdesidir.
+	// Data is the body of the single record.
 	Data any `json:"data"`
 }
 
-// listEnvelope liste yanıtlarının zarfıdır (plan Bölüm 8).
+// listEnvelope is the envelope of list responses (plan Section 8).
 type listEnvelope struct {
-	// Data geçerli sayfadaki kayıtlardır.
+	// Data are the records on the current page.
 	Data any `json:"data"`
-	// Count filtreye uyan TOPLAM kayıt sayısıdır.
+	// Count is the TOTAL number of records matching the filter.
 	Count int64 `json:"count"`
-	// Offset uygulanan atlama sayısıdır.
+	// Offset is the number of skipped records that was applied.
 	Offset int64 `json:"offset"`
-	// Limit uygulanan sayfa boyudur.
+	// Limit is the page size that was applied.
 	Limit int64 `json:"limit"`
 }
 
-// writeItem tekil yanıtı zarfıyla yazar.
+// writeItem writes a single-record response with its envelope.
 func writeItem(w http.ResponseWriter, r *http.Request, status int, data any) {
 	corehttp.WriteJSON(r.Context(), w, status, itemEnvelope{Data: data})
 }
 
-// writeItems sayfalanmamış bir listeyi zarfıyla yazar.
+// writeItems writes an unpaged list with its envelope.
 //
-// Limit, dönen kayıt sayısına EŞİTTİR ve [service.MaxLimit] ile KIRPILMAZ:
-// burada sayfa yoktur, tek sayfa tüm kayıtlardır. Kırpılsaydı istemci sayfa
-// boyunu yanlış sanıp sayfalama döngüsüne girerdi.
+// Limit is EQUAL to the number of returned records and is NOT CLAMPED with
+// [service.MaxLimit]: there is no page here, the single page is all of the
+// records. Had it been clamped the client would have mistaken the page size and
+// entered a paging loop.
 func writeItems[T any](w http.ResponseWriter, r *http.Request, items []T) {
 	if items == nil {
 		items = []T{}
@@ -297,7 +315,7 @@ func writeItems[T any](w http.ResponseWriter, r *http.Request, items []T) {
 	})
 }
 
-// writePage servis sayfasını liste zarfıyla yazar.
+// writePage writes the service page with the list envelope.
 func writePage[S any, T any](w http.ResponseWriter, r *http.Request, page service.Page[S], convert func(S) T) {
 	items := make([]T, 0, len(page.Items))
 	for _, item := range page.Items {
@@ -311,7 +329,8 @@ func writePage[S any, T any](w http.ResponseWriter, r *http.Request, page servic
 	})
 }
 
-// convertAll bir dilimi DTO dilimine çevirir; nil dilim boş dilime döner.
+// convertAll converts a slice into a DTO slice; a nil slice turns into an empty
+// slice.
 func convertAll[S any, T any](items []S, convert func(S) T) []T {
 	out := make([]T, 0, len(items))
 	for _, item := range items {
@@ -320,11 +339,11 @@ func convertAll[S any, T any](items []S, convert func(S) T) []T {
 	return out
 }
 
-// decodeBody istek gövdesini hedefe çözer.
+// decodeBody decodes the request body into the destination.
 //
-// Bilinmeyen alanlar REDDEDİLİR: sessizce yok sayılan bir alan, istemcinin
-// gönderdiğini sandığı bir değerin hiç yazılmaması demektir. Gövde boyutu da
-// sınırlıdır; aşılırsa çözümleme hatası olarak döner.
+// Unknown fields are REJECTED: a silently ignored field means a value the client
+// believes it sent is never written. The body size is bounded too; if the bound
+// is exceeded it comes back as a parse error.
 func decodeBody(w http.ResponseWriter, r *http.Request, dst any) error {
 	reader := http.MaxBytesReader(w, r.Body, maxBodyBytes)
 	dec := json.NewDecoder(reader)
@@ -332,34 +351,38 @@ func decodeBody(w http.ResponseWriter, r *http.Request, dst any) error {
 
 	if err := dec.Decode(dst); err != nil {
 		if errors.Is(err, io.EOF) {
-			return coreerrors.Invalid(codeInvalidBody, "istek gövdesi boş olamaz")
+			return coreerrors.Invalid(codeInvalidBody, "request body cannot be empty")
 		}
-		// Çözümleme hatasının metni GÖVDEDEN ALINTI İÇEREBİLİR ve giriş
-		// isteğinin gövdesinde parola vardır. Bu yüzden alttaki hata
-		// sarmalanır ama mesajı YAZILMAZ; ayrıntı yalnızca log'a düşer.
+		// The text of the parse error MAY CONTAIN A QUOTE FROM THE BODY and the
+		// body of the login request holds a password. The underlying error is
+		// therefore wrapped but its message IS NOT WRITTEN; the detail only
+		// lands in the log.
 		return coreerrors.Wrap(err, coreerrors.KindInvalid, codeInvalidBody,
-			"istek gövdesi çözümlenemedi")
+			"request body could not be parsed")
 	}
 
-	// Tek bir JSON belgesi beklenir; arkasından gelen ikinci belge sessizce
-	// yok sayılırsa istemci gönderdiğinin işlendiğini sanırdı.
+	// A single JSON document is expected; were a second document following it
+	// silently ignored, the client would believe what it sent had been
+	// processed.
 	if err := dec.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
-		return coreerrors.Invalid(codeInvalidBody, "istek gövdesi tek bir JSON belgesi olmalı")
+		return coreerrors.Invalid(codeInvalidBody,
+			"request body has to be a single JSON document")
 	}
 	return nil
 }
 
-// pathParam yol parametresini okur.
+// pathParam reads a path parameter.
 func pathParam(r *http.Request, name string) string {
 	return chi.URLParam(r, name)
 }
 
-// actorID isteği yapan kimliği döner; kimlik yoksa boş dize.
+// actorID returns the identity making the request; the empty string if there is
+// no identity.
 //
-// Denetim alanlarını (created_by, revoked_by) doldurur. Kimlik ÇEKİRDEKTEN
-// gelir (corehttp.RequireAdmin onu context'e koyar); istemcinin gövdede
-// bildirdiği bir değer KULLANILMAZ — kullanılsaydı denetim kaydını istemci
-// yazardı.
+// It fills the audit fields (created_by, revoked_by). The identity comes FROM
+// THE CORE (corehttp.RequireAdmin puts it into the context); a value the client
+// declares in the body IS NOT USED — had it been used, the client would be the
+// one writing the audit record.
 func actorID(ctx context.Context) string {
 	principal, ok := corehttp.PrincipalFromContext(ctx)
 	if !ok {
@@ -368,11 +391,12 @@ func actorID(ctx context.Context) string {
 	return principal.ID
 }
 
-// pageParams sorgu dizesinden sayfalama parametrelerini okur.
+// pageParams reads the paging parameters from the query string.
 //
-// Eksik parametre sıfır döner ve servis varsayılanı uygular; SAYIYA
-// ÇEVRİLEMEYEN bir değer ise hata döner — sessizce sıfıra düşmek, istemcinin
-// istediği sayfa yerine ilk sayfayı almasına yol açardı.
+// A missing parameter returns zero and the service applies its default; a value
+// that CANNOT BE CONVERTED to a number returns an error instead — silently
+// falling back to zero would have made the client get the first page rather
+// than the page it asked for.
 func pageParams(r *http.Request) (limit, offset int64, err error) {
 	limit, err = intParam(r, "limit")
 	if err != nil {
@@ -385,7 +409,8 @@ func pageParams(r *http.Request) (limit, offset int64, err error) {
 	return limit, offset, nil
 }
 
-// intParam tek bir sayısal sorgu parametresini okur; yoksa sıfır döner.
+// intParam reads a single numeric query parameter; returns zero if it is
+// absent.
 func intParam(r *http.Request, name string) (int64, error) {
 	raw := r.URL.Query().Get(name)
 	if raw == "" {
@@ -394,15 +419,16 @@ func intParam(r *http.Request, name string) (int64, error) {
 	value, err := strconv.ParseInt(raw, 10, 64)
 	if err != nil {
 		return 0, coreerrors.Invalid(codeInvalidBody,
-			"%q parametresi tam sayı olmalı, %q verildi", name, raw)
+			"the %q parameter has to be an integer, %q given", name, raw)
 	}
 	return value, nil
 }
 
-// boolParam bir mantıksal sorgu parametresini okur; yoksa nil döner.
+// boolParam reads a boolean query parameter; returns nil if it is absent.
 //
-// nil ile false arasındaki fark burada anlamlıdır: "is_disabled=false" etkin
-// kanalları süzer, parametrenin hiç verilmemesi ise süzmez.
+// The difference between nil and false is meaningful here: "is_disabled=false"
+// filters for enabled channels, whereas not giving the parameter at all filters
+// nothing.
 func boolParam(r *http.Request, name string) (*bool, error) {
 	raw := r.URL.Query().Get(name)
 	if raw == "" {
@@ -411,12 +437,12 @@ func boolParam(r *http.Request, name string) (*bool, error) {
 	value, err := strconv.ParseBool(raw)
 	if err != nil {
 		return nil, coreerrors.Invalid(codeInvalidBody,
-			"%q parametresi mantıksal (true/false) olmalı, %q verildi", name, raw)
+			"the %q parameter has to be a boolean (true/false), %q given", name, raw)
 	}
 	return &value, nil
 }
 
-// stringParam bir metin sorgu parametresini okur; yoksa nil döner.
+// stringParam reads a text query parameter; returns nil if it is absent.
 func stringParam(r *http.Request, name string) *string {
 	raw := r.URL.Query().Get(name)
 	if raw == "" {

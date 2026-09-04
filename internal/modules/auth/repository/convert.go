@@ -7,10 +7,11 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/auth/repository/authdb"
 )
 
-// Bu dosya üretilmiş satır tiplerini domain modellerine çevirir. Dönüşüm tek
-// yerde durur ki sqlc yeniden üretildiğinde yalnızca burası değişsin.
+// This file converts the generated row types into domain models. The conversion
+// lives in a single place so that when sqlc is regenerated only this file
+// changes.
 
-// toUser bir kullanıcı satırını domain modeline çevirir.
+// toUser converts a user row into the domain model.
 func toUser(row authdb.AuthUser) (models.User, error) {
 	meta, err := toMetadata(row.Metadata)
 	if err != nil {
@@ -30,11 +31,11 @@ func toUser(row authdb.AuthUser) (models.User, error) {
 	}, nil
 }
 
-// toUsers bir kullanıcı satırı dilimini domain modellerine çevirir.
+// toUsers converts a slice of user rows into domain models.
 func toUsers(rows []authdb.AuthUser) ([]models.User, error) {
 	out := make([]models.User, 0, len(rows))
-	// Dizin ile dolaşılır: satır tipleri büyüktür ve değerle dolaşmak her
-	// turda yüzlerce baytı kopyalardı.
+	// Iterated by index: the row types are large and iterating by value would
+	// copy hundreds of bytes on every turn.
 	for i := range rows {
 		user, err := toUser(rows[i])
 		if err != nil {
@@ -45,10 +46,10 @@ func toUsers(rows []authdb.AuthUser) ([]models.User, error) {
 	return out, nil
 }
 
-// toIdentity bir kimlik satırını domain modeline çevirir.
+// toIdentity converts an identity row into the domain model.
 //
-// PasswordHash alanı OLDUĞU GİBİ taşınır; servis onu yalnızca bcrypt
-// karşılaştırmasına verir.
+// The PasswordHash field is carried over AS IT IS; the service hands it to the
+// bcrypt comparison and nowhere else.
 func toIdentity(row authdb.AuthIdentity) (models.AuthIdentity, error) {
 	meta, err := toMetadata(row.Metadata)
 	if err != nil {
@@ -70,11 +71,11 @@ func toIdentity(row authdb.AuthIdentity) (models.AuthIdentity, error) {
 	}, nil
 }
 
-// toIdentities bir kimlik satırı dilimini domain modellerine çevirir.
+// toIdentities converts a slice of identity rows into domain models.
 func toIdentities(rows []authdb.AuthIdentity) ([]models.AuthIdentity, error) {
 	out := make([]models.AuthIdentity, 0, len(rows))
-	// Dizin ile dolaşılır: satır tipleri büyüktür ve değerle dolaşmak her
-	// turda yüzlerce baytı kopyalardı.
+	// Iterated by index: the row types are large and iterating by value would
+	// copy hundreds of bytes on every turn.
 	for i := range rows {
 		identity, err := toIdentity(rows[i])
 		if err != nil {
@@ -85,7 +86,7 @@ func toIdentities(rows []authdb.AuthIdentity) ([]models.AuthIdentity, error) {
 	return out, nil
 }
 
-// toAPIKey bir anahtar satırını domain modeline çevirir.
+// toAPIKey converts a key row into the domain model.
 func toAPIKey(row authdb.ApiKey) models.APIKey {
 	return models.APIKey{
 		ID:         row.ID,
@@ -104,18 +105,18 @@ func toAPIKey(row authdb.ApiKey) models.APIKey {
 	}
 }
 
-// toAPIKeys bir anahtar satırı dilimini domain modellerine çevirir.
+// toAPIKeys converts a slice of key rows into domain models.
 func toAPIKeys(rows []authdb.ApiKey) []models.APIKey {
 	out := make([]models.APIKey, 0, len(rows))
-	// Dizin ile dolaşılır: satır tipleri büyüktür ve değerle dolaşmak her
-	// turda yüzlerce baytı kopyalardı.
+	// Iterated by index: the row types are large and iterating by value would
+	// copy hundreds of bytes on every turn.
 	for i := range rows {
 		out = append(out, toAPIKey(rows[i]))
 	}
 	return out
 }
 
-// toSalesChannel bir kanal satırını domain modeline çevirir.
+// toSalesChannel converts a channel row into the domain model.
 func toSalesChannel(row authdb.SalesChannel) (models.SalesChannel, error) {
 	meta, err := toMetadata(row.Metadata)
 	if err != nil {
@@ -133,11 +134,11 @@ func toSalesChannel(row authdb.SalesChannel) (models.SalesChannel, error) {
 	}, nil
 }
 
-// toSalesChannels bir kanal satırı dilimini domain modellerine çevirir.
+// toSalesChannels converts a slice of channel rows into domain models.
 func toSalesChannels(rows []authdb.SalesChannel) ([]models.SalesChannel, error) {
 	out := make([]models.SalesChannel, 0, len(rows))
-	// Dizin ile dolaşılır: satır tipleri büyüktür ve değerle dolaşmak her
-	// turda yüzlerce baytı kopyalardı.
+	// Iterated by index: the row types are large and iterating by value would
+	// copy hundreds of bytes on every turn.
 	for i := range rows {
 		channel, err := toSalesChannel(rows[i])
 		if err != nil {
@@ -148,11 +149,11 @@ func toSalesChannels(rows []authdb.SalesChannel) ([]models.SalesChannel, error) 
 	return out, nil
 }
 
-// scopes yetki dilimini modele hazırlar.
+// scopes prepares the scope slice for the model.
 //
-// Boş sütun için nil DEĞİL boş dilim döner ve dilim KOPYALANIR: domain
-// nesnesi üretilmiş satırın arka dizisini paylaşırsa, birinin üzerinde
-// yapılan bir düzenleme diğerinde görünürdü.
+// For an empty column it returns an empty slice and NOT nil, and the slice is
+// COPIED: if the domain object shared the backing array of the generated row,
+// an edit made on one of them would show up in the other.
 func scopes(values []string) []string {
 	if len(values) == 0 {
 		return []string{}

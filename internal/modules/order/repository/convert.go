@@ -13,15 +13,16 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/order/repository/orderdb"
 )
 
-// Bu dosya pgtype <-> domain modeli dönüşümlerinin ve sürücü hatası
-// sınıflandırmasının TEK yeridir.
+// This file is the SINGLE place for the pgtype <-> domain model conversions
+// and for the classification of driver errors.
 //
-// Sınırın burada olması bilinçlidir: sürücüye özgü tipler (pgtype.Timestamptz,
-// jsonb için []byte, *pgconn.PgError) repository'nin dışına ÇIKMAZ. Servis ve
-// API katmanı time.Time, map[string]any ve core/errors tipli hatalarını görür.
+// The boundary sitting here is deliberate: driver-specific types
+// (pgtype.Timestamptz, []byte for jsonb, *pgconn.PgError) DO NOT LEAVE the
+// repository. The service and the API layer see time.Time, map[string]any and
+// errors typed by core/errors.
 
-// Hata kodları. Çağıran taraf errors.CodeOf ile bunlara bakabilir; API katmanı
-// da aynı kodları istemciye geçirir.
+// Error codes. The caller can look these up with errors.CodeOf; the API layer
+// passes the same codes on to the client.
 const (
 	codeOrderNotFound      = "order_not_found"
 	codeSummaryNotFound    = "order_summary_not_found"
@@ -43,8 +44,8 @@ const (
 	codeConcurrentUpdate   = "order_concurrent_update"
 )
 
-// Kısıt adları; sürücü hatasını anlamlı bir tipli hataya çevirmek için
-// kullanılır. Adlar migration'daki adlarla BİREBİR aynıdır.
+// Constraint names; used to convert a driver error into a meaningful typed
+// error. The names are EXACTLY the same as the names in the migration.
 const (
 	constraintOrdersPK            = "orders_pkey"
 	constraintDisplayIDUniq       = "orders_display_id_uniq"
@@ -58,19 +59,19 @@ const (
 	constraintRefundWithinPaid    = "order_summaries_refund_within_paid"
 	constraintOrdersCanceledStamp = "orders_canceled_stamp"
 	constraintOrdersCompleteStamp = "orders_completed_stamp"
-	// constraintStatusSuffix durum kümesini zorlayan tüm CHECK kısıtlarının
-	// ortak sonekidir (orders_status_valid, order_returns_status_valid …);
-	// tek tek saymak yerine sonekle tanınırlar.
+	// constraintStatusSuffix is the common suffix of every CHECK constraint that
+	// enforces a status set (orders_status_valid, order_returns_status_valid …);
+	// instead of listing them one by one, they are recognized by the suffix.
 	constraintStatusSuffix = "_status_valid"
-	// constraintNonnegSuffix negatif para yasağı koyan tüm CHECK kısıtlarının
-	// ortak sonekidir.
+	// constraintNonnegSuffix is the common suffix of every CHECK constraint that
+	// forbids negative money.
 	constraintNonnegSuffix = "_nonneg"
-	// constraintOrderFKSuffix siparişe bağlanan tüm çocuk tablolarının foreign
-	// key adlarının ortak sonekidir.
+	// constraintOrderFKSuffix is the common suffix of the foreign key names of
+	// every child table that links to the order.
 	constraintOrderFKSuffix = "_order_id_fkey"
 )
 
-// PostgreSQL SQLSTATE kodları.
+// PostgreSQL SQLSTATE codes.
 const (
 	sqlStateUniqueViolation     = "23505"
 	sqlStateForeignKeyViolation = "23503"
@@ -78,12 +79,13 @@ const (
 	sqlStateDeadlockDetected    = "40P01"
 )
 
-// classify sürücü hatasını tipli hataya çevirir.
+// classify converts a driver error into a typed error.
 //
-// Benzersizlik, foreign key ve CHECK ihlalleri istemcinin (ya da workflow'un)
-// düzeltebileceği durumlardır; sınıflandırılmazsa hepsi 500 olarak görünür ve
-// gerçek sebep yalnızca logda kalırdı. Kilitlenme (deadlock) de aynı sebeple
-// ayrı ele alınır: işlemin kendisinde bir yanlışlık yoktur, YENİDEN DENENEBİLİR.
+// Uniqueness, foreign key and CHECK violations are situations the client (or
+// the workflow) can correct; left unclassified they would all show up as 500
+// and the real cause would stay in the log alone. A deadlock is handled
+// separately for the same reason: there is nothing wrong with the operation
+// itself, it CAN BE RETRIED.
 func classify(err error, code, format string, a ...any) error {
 	var pgErr *pgconn.PgError
 	if !errors.As(err, &pgErr) {
@@ -94,82 +96,84 @@ func classify(err error, code, format string, a ...any) error {
 	case sqlStateUniqueViolation:
 		return classifyUnique(err, pgErr.ConstraintName, code, format, a...)
 	case sqlStateForeignKeyViolation:
-		// Satır, özet ya da iade kaydı OLMAYAN bir siparişe bağlanamaz.
+		// A line, a summary or a return record cannot be linked to an order that
+		// DOES NOT EXIST.
 		if strings.HasSuffix(pgErr.ConstraintName, constraintOrderFKSuffix) {
-			return errors.Wrap(err, errors.KindNotFound, codeOrderNotFound, "sipariş bulunamadı")
+			return errors.Wrap(err, errors.KindNotFound, codeOrderNotFound, "order not found")
 		}
 	case sqlStateCheckViolation:
 		return classifyCheck(err, pgErr.ConstraintName, code, format, a...)
 	case sqlStateDeadlockDetected:
-		// Kilit sırası tekleştirildiği için normal akışlarda oluşmaz; burası
-		// son savunmadır. İşlem geri alınmıştır, aynı istek olduğu gibi
-		// yeniden denenebilir — bu yüzden Internal (500) değil Conflict.
+		// Because the lock ordering is uniform this does not occur in normal
+		// flows; this is the last line of defense. The transaction has been rolled
+		// back, the same request can be retried as it is — which is why this is
+		// Conflict and not Internal (500).
 		return errors.Wrap(err, errors.KindConflict, codeConcurrentUpdate,
-			"eşzamanlı bir işlemle çakışıldı; istek yeniden denenebilir")
+			"conflicted with a concurrent transaction; the request can be retried")
 	}
 	return errors.Wrap(err, errors.KindInternal, code, format, a...)
 }
 
-// classifyUnique benzersizlik ihlallerini tipli hataya çevirir.
+// classifyUnique converts uniqueness violations into typed errors.
 func classifyUnique(err error, constraint, code, format string, a ...any) error {
 	switch constraint {
 	case constraintDisplayIDUniq:
-		// Sequence çakışmaz; buraya düşmek sequence'ın elle geri sarıldığı
-		// (setval) ya da bir kaydın kopyalandığı anlamına gelir. Sipariş
-		// yazılmadan yakalanması bu kısıtın var oluş sebebidir.
+		// A sequence does not collide; landing here means the sequence was rewound
+		// by hand (setval) or that a record was copied. Catching it before the
+		// order is written is the reason this constraint exists.
 		return errors.Wrap(err, errors.KindConflict, codeDisplayIDTaken,
-			"sipariş numarası zaten kullanılıyor; display_id sequence'ı elle değiştirilmiş olabilir")
+			"the order number is already in use; the display_id sequence may have been changed by hand")
 	case constraintIdempotencyUniq:
 		return errors.Wrap(err, errors.KindConflict, codeIdempotencyReplay,
-			"bu idempotency anahtarıyla bir sipariş zaten var")
+			"an order with this idempotency key already exists")
 	case constraintSummaryOrderUniq:
 		return errors.Wrap(err, errors.KindConflict, codeSummaryExists,
-			"siparişin özeti zaten var")
+			"the order already has a summary")
 	case constraintOrdersPK:
 		return errors.Wrap(err, errors.KindConflict, codeOrderExists,
-			"bu kimlikle bir sipariş zaten var")
+			"an order with this identifier already exists")
 	}
 	return errors.Wrap(err, errors.KindInternal, code, format, a...)
 }
 
-// classifyCheck CHECK kısıtı ihlallerini tipli hataya çevirir.
+// classifyCheck converts CHECK constraint violations into typed errors.
 //
-// Toplam kimliği ihlali ayrı tutulur: servis aynı kontrolü daha okunabilir bir
-// hatayla ÖNCE yapar, buraya düşmesi kontrolün atlandığı (ya da doğrudan SQL
-// müdahalesi olduğu) anlamına gelir ve mesaj bunu söylemelidir.
+// The totals identity violation is kept apart: the service does the same check
+// FIRST with a more readable error, so landing here means the check was skipped
+// (or that SQL was applied directly) and the message must say so.
 func classifyCheck(err error, constraint, code, format string, a ...any) error {
 	switch {
 	case constraint == constraintOrderTotals:
 		return errors.Wrap(err, errors.KindInvalid, codeTotalsInconsistent,
-			"sipariş toplamları tutarsız: total = subtotal - discount_total + tax_total + shipping_total olmalı")
+			"order totals are inconsistent: total = subtotal - discount_total + tax_total + shipping_total must hold")
 	case constraint == constraintLineTotals:
 		return errors.Wrap(err, errors.KindInvalid, codeTotalsInconsistent,
-			"satır toplamları tutarsız: total = subtotal - discount_total + tax_total olmalı")
+			"line totals are inconsistent: total = subtotal - discount_total + tax_total must hold")
 	case constraint == constraintOrderDiscount, constraint == constraintLineDiscount:
 		return errors.Wrap(err, errors.KindInvalid, codeTotalsInconsistent,
-			"indirim ara toplamı aşamaz (kısıt: %s)", constraint)
+			"the discount cannot exceed the subtotal (constraint: %s)", constraint)
 	case constraint == constraintLineQtyPositive:
 		return errors.Wrap(err, errors.KindInvalid, codeAmountOutOfRange,
-			"satır adedi pozitif olmalı")
+			"the line quantity must be positive")
 	case constraint == constraintRefundWithinPaid:
 		return errors.Wrap(err, errors.KindInvalid, codeAmountOutOfRange,
-			"iade edilen tutar tahsil edilen tutarı aşamaz")
+			"the refunded amount cannot exceed the amount collected")
 	case constraint == constraintOrdersCanceledStamp, constraint == constraintOrdersCompleteStamp:
-		// Durum ile damganın ayrışması yalnızca doğrudan SQL müdahalesiyle
-		// mümkündür; servisin hiçbir yolu bu kısıtı ihlal edemez.
+		// The status and the stamp can only diverge through direct SQL
+		// intervention; no path in the service can violate this constraint.
 		return errors.Wrap(err, errors.KindInternal, codeInconsistentState,
-			"sipariş durumu ile zaman damgası tutarsız (kısıt: %s)", constraint)
+			"the order status and the timestamp are inconsistent (constraint: %s)", constraint)
 	case strings.HasSuffix(constraint, constraintStatusSuffix):
 		return errors.Wrap(err, errors.KindInvalid, codeStatusInvalid,
-			"tanımsız durum değeri (kısıt: %s)", constraint)
+			"undefined status value (constraint: %s)", constraint)
 	case strings.HasSuffix(constraint, constraintNonnegSuffix):
 		return errors.Wrap(err, errors.KindInvalid, codeAmountOutOfRange,
-			"tutar negatif olamaz (kısıt: %s)", constraint)
+			"the amount cannot be negative (constraint: %s)", constraint)
 	}
 	return errors.Wrap(err, errors.KindInternal, code, format, a...)
 }
 
-// nullString boş dizeyi SQL NULL'a çevirir.
+// nullString converts an empty string to SQL NULL.
 func nullString(s string) *string {
 	if s == "" {
 		return nil
@@ -177,7 +181,7 @@ func nullString(s string) *string {
 	return &s
 }
 
-// stringValue SQL NULL'ı boş dizeye çevirir.
+// stringValue converts SQL NULL to an empty string.
 func stringValue(p *string) string {
 	if p == nil {
 		return ""
@@ -185,10 +189,10 @@ func stringValue(p *string) string {
 	return *p
 }
 
-// toTime timestamptz değerini UTC time.Time'a çevirir.
+// toTime converts a timestamptz value to a UTC time.Time.
 //
-// Geçersiz (NULL) değer sıfır zaman döner: NOT NULL sütunlarda bu durum
-// oluşmaz, dolayısıyla sıfır zaman görülmesi veri bozukluğunun işaretidir.
+// An invalid (NULL) value returns the zero time: in NOT NULL columns that case
+// does not arise, so seeing the zero time is the sign of corrupted data.
 func toTime(ts pgtype.Timestamptz) time.Time {
 	if !ts.Valid {
 		return time.Time{}
@@ -196,7 +200,7 @@ func toTime(ts pgtype.Timestamptz) time.Time {
 	return ts.Time.UTC()
 }
 
-// toTimePtr nullable timestamptz değerini *time.Time'a çevirir.
+// toTimePtr converts a nullable timestamptz value to a *time.Time.
 func toTimePtr(ts pgtype.Timestamptz) *time.Time {
 	if !ts.Valid {
 		return nil
@@ -205,10 +209,10 @@ func toTimePtr(ts pgtype.Timestamptz) *time.Time {
 	return &t
 }
 
-// toJSONMap jsonb sütununu haritaya çevirir.
+// toJSONMap converts a jsonb column to a map.
 //
-// Boş ya da JSON null değer nil harita döner; böylece API yanıtında
-// "metadata": null yerine alan hiç görünmez (omitempty).
+// An empty or JSON null value returns a nil map; that way the field does not
+// appear at all in the API response instead of "metadata": null (omitempty).
 func toJSONMap(raw []byte) (map[string]any, error) {
 	if len(raw) == 0 || string(raw) == "null" {
 		return nil, nil
@@ -216,7 +220,7 @@ func toJSONMap(raw []byte) (map[string]any, error) {
 	var out map[string]any
 	if err := json.Unmarshal(raw, &out); err != nil {
 		return nil, errors.Wrap(err, errors.KindInternal, codeMetadataInvalid,
-			"JSON alanı çözümlenemedi")
+			"could not decode JSON field")
 	}
 	if len(out) == 0 {
 		return nil, nil
@@ -224,10 +228,11 @@ func toJSONMap(raw []byte) (map[string]any, error) {
 	return out, nil
 }
 
-// fromJSONMap haritayı jsonb sütununa yazılacak bayta çevirir.
+// fromJSONMap converts a map to the bytes to be written into a jsonb column.
 //
-// nil harita boş nesneye ('{}') çevrilir: sütun NOT NULL'dur ve "veri yok" ile
-// "veri boş" ayrımı bu modülde bir şey ifade etmez.
+// A nil map is converted to an empty object ('{}'): the column is NOT NULL and
+// the distinction between "no data" and "empty data" means nothing in this
+// module.
 func fromJSONMap(m map[string]any) ([]byte, error) {
 	if len(m) == 0 {
 		return []byte("{}"), nil
@@ -235,12 +240,12 @@ func fromJSONMap(m map[string]any) ([]byte, error) {
 	raw, err := json.Marshal(m)
 	if err != nil {
 		return nil, errors.Wrap(err, errors.KindInvalid, codeMetadataInvalid,
-			"JSON alanı kodlanamadı")
+			"could not encode JSON field")
 	}
 	return raw, nil
 }
 
-// toOrder veritabanı satırını domain modeline çevirir.
+// toOrder converts a database row into the domain model.
 func toOrder(row orderdb.Order) (models.Order, error) {
 	meta, err := toJSONMap(row.Metadata)
 	if err != nil {
@@ -272,11 +277,11 @@ func toOrder(row orderdb.Order) (models.Order, error) {
 	}, nil
 }
 
-// toOrders satır dilimini domain modeli dilimine çevirir.
+// toOrders converts a row slice into a domain model slice.
 func toOrders(rows []orderdb.Order) ([]models.Order, error) {
 	out := make([]models.Order, 0, len(rows))
-	// Döngü indeksle gezilir: satır yapıları büyüktür ve değerle kopyalamak
-	// her tur birkaç yüz baytı boşuna taşır.
+	// The loop walks by index: the row structs are large and copying them by
+	// value would move a few hundred bytes for nothing on every pass.
 	for i := range rows {
 		order, err := toOrder(rows[i])
 		if err != nil {
@@ -287,7 +292,7 @@ func toOrders(rows []orderdb.Order) ([]models.Order, error) {
 	return out, nil
 }
 
-// toLineItem veritabanı satırını domain modeline çevirir.
+// toLineItem converts a database row into the domain model.
 func toLineItem(row orderdb.OrderLineItem) (models.OrderLineItem, error) {
 	meta, err := toJSONMap(row.Metadata)
 	if err != nil {
@@ -310,7 +315,7 @@ func toLineItem(row orderdb.OrderLineItem) (models.OrderLineItem, error) {
 	}, nil
 }
 
-// toLineItems satır dilimini domain modeli dilimine çevirir.
+// toLineItems converts a row slice into a domain model slice.
 func toLineItems(rows []orderdb.OrderLineItem) ([]models.OrderLineItem, error) {
 	out := make([]models.OrderLineItem, 0, len(rows))
 	for i := range rows {
@@ -323,7 +328,7 @@ func toLineItems(rows []orderdb.OrderLineItem) ([]models.OrderLineItem, error) {
 	return out, nil
 }
 
-// toSummary veritabanı satırını domain modeline çevirir.
+// toSummary converts a database row into the domain model.
 func toSummary(row orderdb.OrderSummary) models.OrderSummary {
 	return models.OrderSummary{
 		ID:            row.ID,
@@ -335,7 +340,7 @@ func toSummary(row orderdb.OrderSummary) models.OrderSummary {
 	}
 }
 
-// toReturn veritabanı satırını domain modeline çevirir.
+// toReturn converts a database row into the domain model.
 func toReturn(row orderdb.OrderReturn) (models.Return, error) {
 	meta, err := toJSONMap(row.Metadata)
 	if err != nil {
@@ -356,7 +361,7 @@ func toReturn(row orderdb.OrderReturn) (models.Return, error) {
 	}, nil
 }
 
-// toReturns satır dilimini domain modeli dilimine çevirir.
+// toReturns converts a row slice into a domain model slice.
 func toReturns(rows []orderdb.OrderReturn) ([]models.Return, error) {
 	out := make([]models.Return, 0, len(rows))
 	for i := range rows {
@@ -369,7 +374,7 @@ func toReturns(rows []orderdb.OrderReturn) ([]models.Return, error) {
 	return out, nil
 }
 
-// toExchange veritabanı satırını domain modeline çevirir.
+// toExchange converts a database row into the domain model.
 func toExchange(row orderdb.OrderExchange) (models.Exchange, error) {
 	meta, err := toJSONMap(row.Metadata)
 	if err != nil {
@@ -389,7 +394,7 @@ func toExchange(row orderdb.OrderExchange) (models.Exchange, error) {
 	}, nil
 }
 
-// toExchanges satır dilimini domain modeli dilimine çevirir.
+// toExchanges converts a row slice into a domain model slice.
 func toExchanges(rows []orderdb.OrderExchange) ([]models.Exchange, error) {
 	out := make([]models.Exchange, 0, len(rows))
 	for i := range rows {
@@ -402,7 +407,7 @@ func toExchanges(rows []orderdb.OrderExchange) ([]models.Exchange, error) {
 	return out, nil
 }
 
-// toClaim veritabanı satırını domain modeline çevirir.
+// toClaim converts a database row into the domain model.
 func toClaim(row orderdb.OrderClaim) (models.Claim, error) {
 	meta, err := toJSONMap(row.Metadata)
 	if err != nil {
@@ -424,7 +429,7 @@ func toClaim(row orderdb.OrderClaim) (models.Claim, error) {
 	}, nil
 }
 
-// toClaims satır dilimini domain modeli dilimine çevirir.
+// toClaims converts a row slice into a domain model slice.
 func toClaims(rows []orderdb.OrderClaim) ([]models.Claim, error) {
 	out := make([]models.Claim, 0, len(rows))
 	for i := range rows {

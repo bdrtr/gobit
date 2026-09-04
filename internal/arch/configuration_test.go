@@ -336,11 +336,11 @@ func pluginRegistryNames(t *testing.T) map[string]bool {
 			return nil
 		}
 		fset := token.NewFileSet()
-		ayrisik, ayristirmaHatasi := parser.ParseFile(fset, path, nil, 0)
-		if ayristirmaHatasi != nil {
-			return ayristirmaHatasi
+		parsed, parseErr := parser.ParseFile(fset, path, nil, 0)
+		if parseErr != nil {
+			return parseErr
 		}
-		for _, decl := range ayrisik.Decls {
+		for _, decl := range parsed.Decls {
 			gen, ok := decl.(*ast.GenDecl)
 			if !ok || gen.Tok != token.CONST {
 				continue

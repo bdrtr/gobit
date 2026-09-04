@@ -15,16 +15,18 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/order/service"
 )
 
-// txMarkerKey sahte deponun "işlem içindeyiz" işaretidir.
+// txMarkerKey is the fake store's "we are inside a transaction" marker.
 type txMarkerKey struct{}
 
-// readSnapshotKey salt-okunur işlemin anlık görüntüsünün context anahtarıdır.
+// readSnapshotKey is the context key of the snapshot of a read-only
+// transaction.
 type readSnapshotKey struct{}
 
-// fakeSnapshot sahte deponun bir andaki tam hâlidir.
+// fakeSnapshot is the complete state of the fake store at one moment.
 //
-// Hem salt-okunur işlemin görüntüsü hem de yazan işlemin geri alma noktası bu
-// tiple taşınır; ikisi de "deponun o andaki kopyası"dır.
+// Both the view of a read-only transaction and the rollback point of a writing
+// transaction are carried with this type; both are "the copy of the store at
+// that moment".
 type fakeSnapshot struct {
 	orders    map[string]models.Order
 	items     map[string]models.OrderLineItem
@@ -34,30 +36,35 @@ type fakeSnapshot struct {
 	claims    map[string]models.Claim
 }
 
-// fakeStore service.Store'un bellek içi karşılığıdır.
+// fakeStore is the in-memory counterpart of service.Store.
 //
-// # Neyi taklit eder, neyi ETMEZ
+// # What it imitates and what it DOES NOT
 //
-// Sahte yalnızca VERİTABANININ yaptığı şeyleri taklit eder:
+// The fake only imitates the things THE DATABASE does:
 //
-//  1. display_id'yi DEPO üretir (IDENTITY sütununun karşılığı). Servis
-//     numarayı kendi üretmeye kalksaydı testler bunu görürdü.
-//  2. Kilit alan metot işlem DIŞINDA çağrılırsa hata döner.
-//  3. İşlem hatayla biterse yazılanlar GERİ ALINIR.
-//  4. idempotency_key benzersizliği: migration'daki kısmi benzersiz indeksin
-//     karşılığı; yumuşak silinmiş kayıtlar kısıtın dışındadır.
-//  5. Durum geçişi sorgularının WHERE koşulu: beklenen durumda olmayan bir
-//     siparişte hiçbir satır etkilenmez ve Conflict döner.
-//  6. Özet tutarlarının GREATEST ile birleştirilmesi: sorgu kayıtlı değerle
-//     bildirilen değerin BÜYÜĞÜNÜ saklar.
-//  7. Foreign key: olmayan bir siparişe çocuk kayıt bağlanamaz.
-//  8. Salt-okunur işlemin ANLIK GÖRÜNTÜSÜ (REPEATABLE READ karşılığı).
+//  1. display_id is produced by the STORE (the counterpart of the IDENTITY
+//     column). Had the service tried to produce the number itself, the tests
+//     would see it.
+//  2. A method that takes a lock returns an error if it is called OUTSIDE a
+//     transaction.
+//  3. If the transaction ends with an error what was written is ROLLED BACK.
+//  4. The uniqueness of idempotency_key: the counterpart of the partial unique
+//     index in the migration; soft-deleted records are outside the constraint.
+//  5. The WHERE condition of the status transition queries: on an order that is
+//     not in the expected status no row is affected and a Conflict is returned.
+//  6. The merging of the summary amounts with GREATEST: the query keeps the
+//     LARGER of the recorded value and the reported value.
+//  7. Foreign key: a child record cannot be attached to an order that does not
+//     exist.
+//  8. The SNAPSHOT of a read-only transaction (the counterpart of REPEATABLE
+//     READ).
 //
-// SERVİSİN sorumluluğundaki hiçbir kural burada TEKRARLANMAZ: sahte toplam
-// kimliğini doğrulamaz, iptal edilmiş siparişe iade kaydı açmayı engellemez ve
-// "zaten iptal edilmiş" durumunu sessizce başarı saymaz. Aksi hâlde ilgili
-// testler, servisten o kontrol silinse bile geçerdi — testin kanıtladığı şey
-// sahtenin davranışı olurdu.
+// No rule that is THE SERVICE's responsibility is REPEATED here: the fake does
+// not validate the total identity, does not prevent a return record from being
+// opened on a canceled order and does not silently count the "already canceled"
+// case as a success. Otherwise the related tests would pass even if that check
+// were deleted from the service — what the test proved would be the behavior of
+// the fake.
 type fakeStore struct {
 	mu        sync.Mutex
 	orders    map[string]models.Order
@@ -67,43 +74,44 @@ type fakeStore struct {
 	exchanges map[string]models.Exchange
 	claims    map[string]models.Claim
 
-	// seq eklenen kayıtlara artan bir zaman damgası verir; listeleme sırasının
-	// deterministik olması buna dayanır.
+	// seq gives the added records an increasing timestamp; the listing order
+	// being deterministic rests on this.
 	seq int
-	// displaySeq sipariş numarasının sequence'ıdır ve 1'den başlar.
+	// displaySeq is the sequence of the order number and it starts at 1.
 	displaySeq int64
-	// forceDisplayID ayarlanırsa üretilen numara bu olur. Bozuk bir sequence'ı
-	// (ya da doğrudan SQL müdahalesini) taklit eder.
+	// forceDisplayID, when it is set, makes the produced number be this one. It
+	// imitates a broken sequence (or a direct SQL intervention).
 	forceDisplayID *int64
 
-	// lockedOrders kilitlenen siparişleri SIRASIYLA kaydeder. Kilit alınıp
-	// alınmadığı bir eşzamanlılık sözleşmesidir ve gerçek veritabanında ihlali
-	// ancak yarış altında görünür; burada doğrudan okunabilir.
+	// lockedOrders records the locked orders IN ORDER. Whether a lock was taken
+	// is a concurrency contract and in a real database its violation only shows
+	// up under a race; here it can be read directly.
 	lockedOrders []string
 
-	// spendingLocks harcama kilidi alınan müşterileri SIRASIYLA kaydeder.
+	// spendingLocks records the customers whose spending lock was taken IN
+	// ORDER.
 	spendingLocks []string
-	// spendingSums harcama toplamının kaç kez okunduğunu sayar. Limiti olmayan
-	// bir müşteride SIFIR kalmalıdır: kuralı olmayan siparişe ek bir sorgu
-	// yüklemek bedelsiz değildir.
+	// spendingSums counts how many times the spend sum was read. On a customer
+	// without a limit it has to stay ZERO: loading an extra query onto an order
+	// that has no rule is not free.
 	spendingSums int
 
-	// failCreateLineItem ayarlanırsa CreateLineItem bu hatayı döner; işlem geri
-	// alma yolunu sınamak için kullanılır.
+	// failCreateLineItem, when it is set, makes CreateLineItem return this
+	// error; it is used to exercise the transaction rollback path.
 	failCreateLineItem error
-	// failCreateSummary ayarlanırsa CreateSummary bu hatayı döner.
+	// failCreateSummary, when it is set, makes CreateSummary return this error.
 	failCreateSummary error
 
-	// hookCreateOrder ayarlanırsa CreateOrder'ın BAŞINDA BİR KEZ çağrılır ve
-	// ardından temizlenir.
+	// hookCreateOrder, when it is set, is called ONCE at the BEGINNING of
+	// CreateOrder and is cleared afterwards.
 	//
-	// İdempotent çağrıların YARIŞINI kurmak için vardır: gerçek veritabanında
-	// "iki çağrı da anahtarı bulamadı, ikisi de yazmaya kalktı" durumu
-	// zamanlamaya bağlıdır ve testte deterministik üretilemez.
+	// It exists to set up the RACE of idempotent calls: in a real database the
+	// "both calls failed to find the key, both attempted to write" situation
+	// depends on timing and cannot be produced deterministically in a test.
 	hookCreateOrder func()
 }
 
-// newFakeStore boş bir sahte depo üretir.
+// newFakeStore produces an empty fake store.
 func newFakeStore() *fakeStore {
 	return &fakeStore{
 		orders:    map[string]models.Order{},
@@ -115,17 +123,18 @@ func newFakeStore() *fakeStore {
 	}
 }
 
-// Sahte deponun servisin beklediği yüzeyi karşıladığı derleme zamanında
-// doğrulanır.
+// That the fake store satisfies the surface the service expects is verified at
+// compile time.
 var _ service.Store = (*fakeStore)(nil)
 
-// nextStamp sıradaki artan zaman damgasını üretir. Çağıran kilidi tutmalıdır.
+// nextStamp produces the next increasing timestamp. The caller has to hold the
+// lock.
 func (f *fakeStore) nextStamp() time.Time {
 	f.seq++
 	return time.Unix(0, 0).UTC().Add(time.Duration(f.seq) * time.Millisecond)
 }
 
-// snapshot deponun o andaki kopyasını alır.
+// snapshot takes the copy of the store at that moment.
 func (f *fakeStore) snapshot() fakeSnapshot {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -139,18 +148,19 @@ func (f *fakeStore) snapshot() fakeSnapshot {
 	}
 }
 
-// WithTx fn'i "işlem" içinde çalıştırır; hata dönerse İŞLEMİN KENDİ yazdıkları
-// geri alınır.
+// WithTx runs fn inside a "transaction"; if it returns an error what THE
+// TRANSACTION ITSELF wrote is rolled back.
 //
-// Geri alma, deponun tamamını bir kopyaya döndürerek DEĞİL, işlem sırasında
-// yapılan her yazma için tutulan geri alma kaydını ters sırada çalıştırarak
-// yapılır. Fark önemlidir: toptan kopya, işlem sürerken BAŞKA bir işlemin
-// yazdıklarını da silerdi ve eşzamanlı senaryolar (örn. idempotent çağrı
-// yarışı) gerçek veritabanında olmayan bir biçimde bozulurdu.
+// The rollback is done NOT by reverting the whole store to a copy but by
+// running, in reverse order, the undo record kept for every write made during
+// the transaction. The difference matters: a wholesale copy would also erase
+// what ANOTHER transaction wrote while this one was running, and concurrent
+// scenarios (the race of idempotent calls, for instance) would break in a way
+// that does not happen in a real database.
 //
-// [fakeStore.displaySeq] BİLİNÇLİ OLARAK geri alınmaz: PostgreSQL'de de
-// sequence işlemle birlikte geri sarılmaz, geri alınan bir INSERT numarayı
-// tüketir.
+// [fakeStore.displaySeq] is DELIBERATELY not rolled back: in PostgreSQL a
+// sequence is not rewound together with the transaction either, a rolled back
+// INSERT consumes the number.
 func (f *fakeStore) WithTx(ctx context.Context, fn func(ctx context.Context) error) error {
 	if _, ok := ctx.Value(txMarkerKey{}).(*txState); ok {
 		return fn(ctx)
@@ -168,24 +178,25 @@ func (f *fakeStore) WithTx(ctx context.Context, fn func(ctx context.Context) err
 	return nil
 }
 
-// txState bir işlemin geri alma kaydıdır.
+// txState is the undo record of a transaction.
 type txState struct {
-	// undos yapılan yazmaların geri alıcılarıdır; ters sırada çalıştırılır.
+	// undos are the undoers of the writes that were made; they are run in
+	// reverse order.
 	undos []func()
 }
 
-// recordUndo bir yazmanın geri alıcısını işleme kaydeder.
+// recordUndo records the undoer of a write into the transaction.
 //
-// İşlem dışındaki yazmalar geri alınamaz; gerçek veritabanında da işlemsiz bir
-// INSERT anında kalıcıdır.
+// Writes outside a transaction cannot be undone; in a real database an INSERT
+// without a transaction is durable immediately too.
 func (f *fakeStore) recordUndo(ctx context.Context, undo func()) {
 	if state, ok := ctx.Value(txMarkerKey{}).(*txState); ok {
 		state.undos = append(state.undos, undo)
 	}
 }
 
-// undoEntry bir harita girdisinin YAZMADAN ÖNCEKİ hâlini geri yükleyen
-// kapanışı üretir.
+// undoEntry produces the closure that restores the state of a map entry AS IT
+// WAS BEFORE THE WRITE.
 func undoEntry[V any](m map[string]V, key string) func() {
 	prev, existed := m[key]
 	return func() {
@@ -197,7 +208,7 @@ func undoEntry[V any](m map[string]V, key string) func() {
 	}
 }
 
-// WithReadTx fn'i tek anlık görüntülü bir okuma içinde çalıştırır.
+// WithReadTx runs fn inside a read with a single snapshot.
 func (f *fakeStore) WithReadTx(ctx context.Context, fn func(ctx context.Context) error) error {
 	if _, inTx := ctx.Value(txMarkerKey{}).(*txState); inTx || ctx.Value(readSnapshotKey{}) != nil {
 		return fn(ctx)
@@ -206,8 +217,8 @@ func (f *fakeStore) WithReadTx(ctx context.Context, fn func(ctx context.Context)
 	return fn(context.WithValue(ctx, readSnapshotKey{}, &snapshot))
 }
 
-// view okumanın göreceği durumu döner: salt-okunur işlemdeyse görüntüyü,
-// değilse canlı hâli.
+// view returns the state the read will see: the snapshot when it is inside a
+// read-only transaction, the live state otherwise.
 func (f *fakeStore) view(ctx context.Context) fakeSnapshot {
 	if snapshot, ok := ctx.Value(readSnapshotKey{}).(*fakeSnapshot); ok {
 		return *snapshot
@@ -215,22 +226,23 @@ func (f *fakeStore) view(ctx context.Context) fakeSnapshot {
 	return f.snapshot()
 }
 
-// requireTx kilit alan metotların işlem içinde çağrıldığını doğrular.
+// requireTx verifies that the methods taking a lock are called inside a
+// transaction.
 func requireTx(ctx context.Context, op string) error {
 	if _, ok := ctx.Value(txMarkerKey{}).(*txState); !ok {
-		return errors.Internal("fake_tx_required", "%s işlem içinde çağrılmalı", op)
+		return errors.Internal("fake_tx_required", "%s has to be called inside a transaction", op)
 	}
 	return nil
 }
 
-// notFound eksik sipariş hatasıdır.
+// notFound is the error of a missing order.
 func notFound(id string) error {
-	return errors.NotFound("order_not_found", "sipariş bulunamadı: %s", id)
+	return errors.NotFound("order_not_found", "the order was not found: %s", id)
 }
 
-// --- siparişler --------------------------------------------------------------
+// --- orders ------------------------------------------------------------------
 
-// CreateOrder yeni bir sipariş yazar ve numarasını DEPO üretir.
+// CreateOrder writes a new order and its number is produced by the STORE.
 func (f *fakeStore) CreateOrder(ctx context.Context, order models.Order) (models.Order, error) {
 	if hook := f.takeCreateHook(); hook != nil {
 		hook()
@@ -240,12 +252,12 @@ func (f *fakeStore) CreateOrder(ctx context.Context, order models.Order) (models
 	defer f.mu.Unlock()
 
 	if order.IdempotencyKey != "" {
-		// Döngü ANAHTARLA gezilir: sipariş yapısı büyüktür ve değerle
-		// kopyalamak her tur birkaç yüz baytı boşuna taşır.
+		// The loop is walked BY KEY: the order structure is large and copying it
+		// by value would carry a few hundred bytes for nothing on every turn.
 		for id := range f.orders {
 			if f.orders[id].DeletedAt == nil && f.orders[id].IdempotencyKey == order.IdempotencyKey {
 				return models.Order{}, errors.Conflict("order_idempotency_key_taken",
-					"bu idempotency anahtarıyla bir sipariş zaten var")
+					"an order with this idempotency key already exists")
 			}
 		}
 	}
@@ -264,7 +276,7 @@ func (f *fakeStore) CreateOrder(ctx context.Context, order models.Order) (models
 	return order, nil
 }
 
-// takeCreateHook varsa kancayı alır ve temizler.
+// takeCreateHook takes the hook if there is one and clears it.
 func (f *fakeStore) takeCreateHook() func() {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -273,7 +285,7 @@ func (f *fakeStore) takeCreateHook() func() {
 	return hook
 }
 
-// GetOrder siparişi kimliğiyle döner.
+// GetOrder returns the order by its identifier.
 func (f *fakeStore) GetOrder(ctx context.Context, id string) (models.Order, error) {
 	order, ok := f.view(ctx).orders[id]
 	if !ok || order.DeletedAt != nil {
@@ -282,7 +294,7 @@ func (f *fakeStore) GetOrder(ctx context.Context, id string) (models.Order, erro
 	return order, nil
 }
 
-// GetOrderByDisplayID siparişi numarasıyla döner.
+// GetOrderByDisplayID returns the order by its number.
 func (f *fakeStore) GetOrderByDisplayID(ctx context.Context, displayID int64) (models.Order, error) {
 	snapshot := f.view(ctx)
 	for id := range snapshot.orders {
@@ -290,10 +302,10 @@ func (f *fakeStore) GetOrderByDisplayID(ctx context.Context, displayID int64) (m
 			return snapshot.orders[id], nil
 		}
 	}
-	return models.Order{}, errors.NotFound("order_not_found", "sipariş bulunamadı: #%d", displayID)
+	return models.Order{}, errors.NotFound("order_not_found", "the order was not found: #%d", displayID)
 }
 
-// GetOrderByIdempotencyKey anahtarla açılmış siparişi döner.
+// GetOrderByIdempotencyKey returns the order opened with the key.
 func (f *fakeStore) GetOrderByIdempotencyKey(ctx context.Context, key string) (models.Order, error) {
 	snapshot := f.view(ctx)
 	for id := range snapshot.orders {
@@ -303,10 +315,10 @@ func (f *fakeStore) GetOrderByIdempotencyKey(ctx context.Context, key string) (m
 		}
 	}
 	return models.Order{}, errors.NotFound("order_not_found",
-		"bu idempotency anahtarıyla sipariş bulunamadı")
+		"no order was found with this idempotency key")
 }
 
-// LockOrder siparişi kilitler; yalnızca işlem içinde çağrılabilir.
+// LockOrder locks the order; it can only be called inside a transaction.
 func (f *fakeStore) LockOrder(ctx context.Context, id string) (models.Order, error) {
 	if err := requireTx(ctx, "LockOrder"); err != nil {
 		return models.Order{}, err
@@ -323,7 +335,7 @@ func (f *fakeStore) LockOrder(ctx context.Context, id string) (models.Order, err
 	return order, nil
 }
 
-// ListOrders siparişleri filtreleyip sayfalar.
+// ListOrders filters and pages the orders.
 func (f *fakeStore) ListOrders(ctx context.Context, filter models.OrderFilter) ([]models.Order, int64, error) {
 	snapshot := f.view(ctx)
 	matched := make([]models.Order, 0, len(snapshot.orders))
@@ -342,7 +354,7 @@ func (f *fakeStore) ListOrders(ctx context.Context, filter models.OrderFilter) (
 		}
 		matched = append(matched, snapshot.orders[id])
 	}
-	// created_at DESC, id DESC — sorgudaki sıralamanın aynısı.
+	// created_at DESC, id DESC — the same ordering as in the query.
 	slices.SortFunc(matched, func(a, b models.Order) int {
 		if !a.CreatedAt.Equal(b.CreatedAt) {
 			return b.CreatedAt.Compare(a.CreatedAt)
@@ -358,7 +370,7 @@ func (f *fakeStore) ListOrders(ctx context.Context, filter models.OrderFilter) (
 	return slices.Clone(matched[filter.Offset:end]), total, nil
 }
 
-// OrdersByIDs kimlik kümesini döner.
+// OrdersByIDs returns the set of identifiers.
 func (f *fakeStore) OrdersByIDs(ctx context.Context, ids []string) ([]models.Order, error) {
 	snapshot := f.view(ctx)
 	out := make([]models.Order, 0, len(ids))
@@ -370,22 +382,24 @@ func (f *fakeStore) OrdersByIDs(ctx context.Context, ids []string) ([]models.Ord
 	return out, nil
 }
 
-// CancelOrder siparişi iptal eder; yalnızca 'pending' durumda etki eder.
+// CancelOrder cancels the order; it only takes effect in the 'pending' status.
 func (f *fakeStore) CancelOrder(ctx context.Context, id, reason string) (models.Order, error) {
 	return f.applyStatus(ctx, id, models.OrderPending, models.OrderCanceled, reason)
 }
 
-// CompleteOrder siparişi tamamlar; yalnızca 'pending' durumda etki eder.
+// CompleteOrder completes the order; it only takes effect in the 'pending'
+// status.
 func (f *fakeStore) CompleteOrder(ctx context.Context, id string) (models.Order, error) {
 	return f.applyStatus(ctx, id, models.OrderPending, models.OrderCompleted, "")
 }
 
-// ArchiveOrder siparişi arşivler; yalnızca 'completed' durumda etki eder.
+// ArchiveOrder archives the order; it only takes effect in the 'completed'
+// status.
 func (f *fakeStore) ArchiveOrder(ctx context.Context, id string) (models.Order, error) {
 	return f.applyStatus(ctx, id, models.OrderCompleted, models.OrderArchived, "")
 }
 
-// applyStatus durum geçiş sorgularının WHERE koşulunu taklit eder.
+// applyStatus imitates the WHERE condition of the status transition queries.
 func (f *fakeStore) applyStatus(ctx context.Context, id string, required, next models.OrderStatus, reason string) (models.Order, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -393,7 +407,7 @@ func (f *fakeStore) applyStatus(ctx context.Context, id string, required, next m
 	order, ok := f.orders[id]
 	if !ok || order.DeletedAt != nil || order.Status != required {
 		return models.Order{}, errors.Conflict("order_state_changed",
-			"geçiş uygulanamadı: siparişin durumu beklenenden farklı (%s)", id)
+			"the transition could not be applied: the status of the order differs from the expected one (%s)", id)
 	}
 
 	stamp := f.nextStamp()
@@ -406,16 +420,16 @@ func (f *fakeStore) applyStatus(ctx context.Context, id string, required, next m
 	case models.OrderCompleted:
 		order.CompletedAt = &stamp
 	case models.OrderArchived, models.OrderPending:
-		// Damga değişmez.
+		// The stamp does not change.
 	}
 	f.recordUndo(ctx, undoEntry(f.orders, id))
 	f.orders[id] = order
 	return order, nil
 }
 
-// --- satırlar ----------------------------------------------------------------
+// --- lines -------------------------------------------------------------------
 
-// CreateLineItem yeni bir sipariş satırı yazar.
+// CreateLineItem writes a new order line.
 func (f *fakeStore) CreateLineItem(ctx context.Context, item models.OrderLineItem) (models.OrderLineItem, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -434,7 +448,7 @@ func (f *fakeStore) CreateLineItem(ctx context.Context, item models.OrderLineIte
 	return item, nil
 }
 
-// ListLineItems siparişin satırlarını oluşturulma sırasıyla döner.
+// ListLineItems returns the lines of the order in creation order.
 func (f *fakeStore) ListLineItems(ctx context.Context, orderID string) ([]models.OrderLineItem, error) {
 	snapshot := f.view(ctx)
 	out := make([]models.OrderLineItem, 0)
@@ -449,9 +463,9 @@ func (f *fakeStore) ListLineItems(ctx context.Context, orderID string) ([]models
 	return out, nil
 }
 
-// --- özet --------------------------------------------------------------------
+// --- summary -----------------------------------------------------------------
 
-// CreateSummary siparişin özetini açar.
+// CreateSummary opens the summary of the order.
 func (f *fakeStore) CreateSummary(ctx context.Context, summary models.OrderSummary) (models.OrderSummary, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -464,7 +478,7 @@ func (f *fakeStore) CreateSummary(ctx context.Context, summary models.OrderSumma
 	}
 	if _, exists := f.summaries[summary.OrderID]; exists {
 		return models.OrderSummary{}, errors.Conflict("order_summary_exists",
-			"siparişin özeti zaten var")
+			"the summary of the order already exists")
 	}
 	stamp := f.nextStamp()
 	summary.CreatedAt = stamp
@@ -474,20 +488,20 @@ func (f *fakeStore) CreateSummary(ctx context.Context, summary models.OrderSumma
 	return summary, nil
 }
 
-// GetSummary siparişin özetini döner.
+// GetSummary returns the summary of the order.
 func (f *fakeStore) GetSummary(ctx context.Context, orderID string) (models.OrderSummary, error) {
 	summary, ok := f.view(ctx).summaries[orderID]
 	if !ok {
 		return models.OrderSummary{}, errors.NotFound("order_summary_not_found",
-			"sipariş özeti bulunamadı: %s", orderID)
+			"the summary of the order was not found: %s", orderID)
 	}
 	return summary, nil
 }
 
-// SetSummaryTotals özet tutarlarını GREATEST ile birleştirir.
+// SetSummaryTotals merges the summary amounts with GREATEST.
 //
-// Birleştirme sorgunun kendisindedir (queries/order_summaries.sql), yani
-// veritabanının davranışıdır ve sahte onu taklit eder.
+// The merging is in the query itself (queries/order_summaries.sql), that is, it
+// is the behavior of the database and the fake imitates it.
 func (f *fakeStore) SetSummaryTotals(ctx context.Context, orderID string, paid, refunded int64) (models.OrderSummary, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -495,7 +509,7 @@ func (f *fakeStore) SetSummaryTotals(ctx context.Context, orderID string, paid, 
 	summary, ok := f.summaries[orderID]
 	if !ok {
 		return models.OrderSummary{}, errors.NotFound("order_summary_not_found",
-			"sipariş özeti bulunamadı: %s", orderID)
+			"the summary of the order was not found: %s", orderID)
 	}
 	summary.PaidTotal = max(summary.PaidTotal, paid)
 	summary.RefundedTotal = max(summary.RefundedTotal, refunded)
@@ -505,9 +519,9 @@ func (f *fakeStore) SetSummaryTotals(ctx context.Context, orderID string, paid, 
 	return summary, nil
 }
 
-// --- iade / değişim / hasar --------------------------------------------------
+// --- return / exchange / claim -----------------------------------------------
 
-// CreateReturn iade kaydı yazar.
+// CreateReturn writes a return record.
 func (f *fakeStore) CreateReturn(ctx context.Context, ret models.Return) (models.Return, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -523,17 +537,17 @@ func (f *fakeStore) CreateReturn(ctx context.Context, ret models.Return) (models
 	return ret, nil
 }
 
-// GetReturn iade kaydını döner.
+// GetReturn returns the return record.
 func (f *fakeStore) GetReturn(ctx context.Context, id string) (models.Return, error) {
 	ret, ok := f.view(ctx).returns[id]
 	if !ok {
 		return models.Return{}, errors.NotFound("order_return_not_found",
-			"iade kaydı bulunamadı: %s", id)
+			"the return record was not found: %s", id)
 	}
 	return ret, nil
 }
 
-// ListReturns siparişin iade kayıtlarını sayfalar.
+// ListReturns pages the return records of the order.
 func (f *fakeStore) ListReturns(ctx context.Context, filter models.ChildFilter) ([]models.Return, int64, error) {
 	snapshot := f.view(ctx)
 	matched := make([]models.Return, 0)
@@ -552,7 +566,7 @@ func (f *fakeStore) ListReturns(ctx context.Context, filter models.ChildFilter) 
 	return matched[filter.Offset:min(filter.Offset+filter.Limit, total)], total, nil
 }
 
-// CreateExchange değişim kaydı yazar.
+// CreateExchange writes an exchange record.
 func (f *fakeStore) CreateExchange(ctx context.Context, exchange models.Exchange) (models.Exchange, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -568,17 +582,17 @@ func (f *fakeStore) CreateExchange(ctx context.Context, exchange models.Exchange
 	return exchange, nil
 }
 
-// GetExchange değişim kaydını döner.
+// GetExchange returns the exchange record.
 func (f *fakeStore) GetExchange(ctx context.Context, id string) (models.Exchange, error) {
 	exchange, ok := f.view(ctx).exchanges[id]
 	if !ok {
 		return models.Exchange{}, errors.NotFound("order_exchange_not_found",
-			"değişim kaydı bulunamadı: %s", id)
+			"the exchange record was not found: %s", id)
 	}
 	return exchange, nil
 }
 
-// ListExchanges siparişin değişim kayıtlarını sayfalar.
+// ListExchanges pages the exchange records of the order.
 func (f *fakeStore) ListExchanges(ctx context.Context, filter models.ChildFilter) ([]models.Exchange, int64, error) {
 	snapshot := f.view(ctx)
 	matched := make([]models.Exchange, 0)
@@ -597,7 +611,7 @@ func (f *fakeStore) ListExchanges(ctx context.Context, filter models.ChildFilter
 	return matched[filter.Offset:min(filter.Offset+filter.Limit, total)], total, nil
 }
 
-// CreateClaim hasar kaydı yazar.
+// CreateClaim writes a claim record.
 func (f *fakeStore) CreateClaim(ctx context.Context, claim models.Claim) (models.Claim, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -613,17 +627,17 @@ func (f *fakeStore) CreateClaim(ctx context.Context, claim models.Claim) (models
 	return claim, nil
 }
 
-// GetClaim hasar kaydını döner.
+// GetClaim returns the claim record.
 func (f *fakeStore) GetClaim(ctx context.Context, id string) (models.Claim, error) {
 	claim, ok := f.view(ctx).claims[id]
 	if !ok {
 		return models.Claim{}, errors.NotFound("order_claim_not_found",
-			"hasar kaydı bulunamadı: %s", id)
+			"the claim record was not found: %s", id)
 	}
 	return claim, nil
 }
 
-// ListClaims siparişin hasar kayıtlarını sayfalar.
+// ListClaims pages the claim records of the order.
 func (f *fakeStore) ListClaims(ctx context.Context, filter models.ChildFilter) ([]models.Claim, int64, error) {
 	snapshot := f.view(ctx)
 	matched := make([]models.Claim, 0)
@@ -642,25 +656,25 @@ func (f *fakeStore) ListClaims(ctx context.Context, filter models.ChildFilter) (
 	return matched[filter.Offset:min(filter.Offset+filter.Limit, total)], total, nil
 }
 
-// --- olay veri yolu ----------------------------------------------------------
+// --- event bus ---------------------------------------------------------------
 
-// fakeBus service.EventPublisher'ın bellek içi karşılığıdır.
+// fakeBus is the in-memory counterpart of service.EventPublisher.
 type fakeBus struct {
 	mu sync.Mutex
-	// published yayımlanan olayları SIRASIYLA tutar.
+	// published holds the published events IN ORDER.
 	published []eventbus.Event
-	// failErr ayarlanırsa Publish bu hatayı döner.
+	// failErr, when it is set, makes Publish return this error.
 	failErr error
 }
 
-// Sahte veri yolunun servisin beklediği yüzeyi karşıladığı derleme zamanında
-// doğrulanır.
+// That the fake bus satisfies the surface the service expects is verified at
+// compile time.
 var _ service.EventPublisher = (*fakeBus)(nil)
 
-// newFakeBus boş bir sahte veri yolu üretir.
+// newFakeBus produces an empty fake bus.
 func newFakeBus() *fakeBus { return &fakeBus{} }
 
-// Publish olayı kaydeder.
+// Publish records the event.
 func (b *fakeBus) Publish(_ context.Context, e eventbus.Event) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -672,21 +686,21 @@ func (b *fakeBus) Publish(_ context.Context, e eventbus.Event) error {
 	return nil
 }
 
-// events yayımlanan olayların anlık kopyasını döner.
+// events returns an instant copy of the published events.
 func (b *fakeBus) events() []eventbus.Event {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return slices.Clone(b.published)
 }
 
-// --- harcama ------------------------------------------------------------------
+// --- spending ------------------------------------------------------------------
 
-// LockCustomerSpending müşterinin harcama kilidini alır.
+// LockCustomerSpending takes the spending lock of the customer.
 //
-// Sahte, gerçek kilidin TEK gözlemlenebilir sözleşmesini taklit eder: işlem
-// dışında çağrılırsa hata döner. Kilidin GERÇEKTEN serileştirdiği ancak eş
-// zamanlı goroutine'lerle ve gerçek bir veritabanıyla kanıtlanabilir
-// (bkz. order_integration_test.go).
+// The fake imitates the ONLY observable contract of the real lock: it returns an
+// error if it is called outside a transaction. That the lock REALLY serializes
+// can only be proven with concurrent goroutines and a real database (see
+// order_integration_test.go).
 func (f *fakeStore) LockCustomerSpending(ctx context.Context, customerID string) error {
 	if err := requireTx(ctx, "LockCustomerSpending"); err != nil {
 		return err
@@ -698,11 +712,11 @@ func (f *fakeStore) LockCustomerSpending(ctx context.Context, customerID string)
 	return nil
 }
 
-// SumCustomerSpend müşterinin pencere içindeki harcamasını döner.
+// SumCustomerSpend returns the customer's spend within the window.
 //
-// queries/spending.sql'in kurallarını taklit eder: iptal edilmiş ve yumuşak
-// silinmiş siparişler toplama girmez, iade edilen tutar düşülür, para birimi
-// birebir eşleşir ve pencerenin alt ucu DÂHİLDİR.
+// It imitates the rules of queries/spending.sql: canceled and soft-deleted
+// orders do not enter the sum, the refunded amount is subtracted, the currency
+// matches exactly and the lower end of the window IS INCLUDED.
 func (f *fakeStore) SumCustomerSpend(
 	ctx context.Context,
 	customerID, currencyCode string,
@@ -714,7 +728,7 @@ func (f *fakeStore) SumCustomerSpend(
 	f.spendingSums++
 	f.mu.Unlock()
 
-	var toplam int64
+	var total int64
 	for id := range snapshot.orders {
 		order := snapshot.orders[id]
 		switch {
@@ -727,18 +741,19 @@ func (f *fakeStore) SumCustomerSpend(
 		if windowStart != nil && order.PlacedAt.Before(*windowStart) {
 			continue
 		}
-		toplam += order.Total - snapshot.summaries[id].RefundedTotal
+		total += order.Total - snapshot.summaries[id].RefundedTotal
 	}
-	return toplam, nil
+	return total, nil
 }
 
-// seedOrder depoya doğrudan bir sipariş yazar ve PLACED_AT'ini çağıranın
-// verdiği ana sabitler.
+// seedOrder writes an order into the store directly and fixes its PLACED_AT to
+// the moment the caller gives.
 //
-// [fakeStore.CreateOrder] zamanı kendi damgalar (gerçek veritabanının now()
-// karşılığı) ve o damga 1970'e yakındır; pencere sınırlarını sınayan testler
-// ise siparişin ne zaman verildiğini SEÇEBİLMELİDİR. Servisin hiçbir kuralı
-// atlanmaz: bu yol yalnızca GEÇMİŞ veriyi kurar, sınanan çağrı yine servistir.
+// [fakeStore.CreateOrder] stamps the time itself (the counterpart of the real
+// database's now()) and that stamp is close to 1970; the tests that exercise the
+// window boundaries, on the other hand, HAVE TO BE ABLE TO CHOOSE when the order
+// was placed. No rule of the service is skipped: this path only sets up PAST
+// data, the call under test is still the service.
 func (f *fakeStore) seedOrder(order models.Order) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -755,7 +770,7 @@ func (f *fakeStore) seedOrder(order models.Order) {
 	f.orders[order.ID] = order
 }
 
-// seedRefund depodaki bir siparişin iade edilen tutarını yazar.
+// seedRefund writes the refunded amount of an order in the store.
 func (f *fakeStore) seedRefund(orderID string, refunded int64) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -768,45 +783,49 @@ func (f *fakeStore) seedRefund(orderID string, refunded int64) {
 	}
 }
 
-// spendingLockCount alınan harcama kilidi sayısını döner.
+// spendingLockCount returns the number of spending locks that were taken.
 func (f *fakeStore) spendingLockCount() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return len(f.spendingLocks)
 }
 
-// spendingSumCount yapılan harcama toplamı okumasının sayısını döner.
+// spendingSumCount returns the number of spend sum reads that were made.
 func (f *fakeStore) spendingSumCount() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.spendingSums
 }
 
-// fakeSpendingPolicy service.SpendingPolicy'nin bellek içi karşılığıdır.
+// fakeSpendingPolicy is the in-memory counterpart of service.SpendingPolicy.
 //
-// Gerçek sağlayıcı b2b modülüdür ve bu paket onu import EDEMEZ; sahte, sınırın
-// yalnızca JSON şemasını taklit eder. Şemanın iki tarafta AYNI olduğu bu
-// testlerle kanıtlanamaz — o, entegrasyon testinin işidir.
+// The real provider is the b2b module and this package CANNOT import it; the
+// fake only imitates the JSON schema of the boundary. That the schema is THE
+// SAME on the two sides cannot be proven by these tests — that is the job of the
+// integration test.
 type fakeSpendingPolicy struct {
 	mu sync.Mutex
-	// payload dönecek gövdedir; boşsa "kural yok" gövdesi dönülür.
+	// payload is the body to be returned; when it is empty the "no rule" body is
+	// returned.
 	payload json.RawMessage
-	// empty doğruysa çağrı BOŞ gövde döner ve payload yok sayılır.
+	// empty, when it is true, makes the call return an EMPTY body and the
+	// payload is ignored.
 	//
-	// Ayrı bir bayraktır çünkü boş dilim ile "ayarlanmamış" Go'da aynı şeye
-	// çözülür; ayrım olmasaydı, sağlayıcının hiç gövde döndürmediği durum
-	// sınanamazdı.
+	// It is a separate flag because an empty slice and "not set" resolve to the
+	// same thing in Go; without the distinction the case where the provider
+	// returns no body at all could not be exercised.
 	empty bool
-	// err ayarlanırsa çağrı bu hatayı döner.
+	// err, when it is set, makes the call return this error.
 	err error
-	// asked sorulan müşteri kimliklerini SIRASIYLA kaydeder.
+	// asked records the customer identifiers that were asked about IN ORDER.
 	asked []string
 }
 
-// Sahtenin servisin beklediği yüzeyi karşıladığı derleme zamanında doğrulanır.
+// That the fake satisfies the surface the service expects is verified at compile
+// time.
 var _ service.SpendingPolicy = (*fakeSpendingPolicy)(nil)
 
-// SpendingLimitJSON kurulmuş cevabı döner ve çağrıyı kaydeder.
+// SpendingLimitJSON returns the prepared answer and records the call.
 func (p *fakeSpendingPolicy) SpendingLimitJSON(_ context.Context, customerID string) (json.RawMessage, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -824,7 +843,7 @@ func (p *fakeSpendingPolicy) SpendingLimitJSON(_ context.Context, customerID str
 	return p.payload, nil
 }
 
-// calls sorulan müşteri kimliklerinin kopyasını döner.
+// calls returns a copy of the customer identifiers that were asked about.
 func (p *fakeSpendingPolicy) calls() []string {
 	p.mu.Lock()
 	defer p.mu.Unlock()

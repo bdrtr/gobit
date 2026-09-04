@@ -9,20 +9,21 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/auth/service"
 )
 
-// --- kimlik -------------------------------------------------------------------
+// --- identity -----------------------------------------------------------------
 
-// adminLogin e-posta ve parolayla oturum jetonu üretir
+// adminLogin produces a session token from an email and a password
 // (POST /admin/v1/auth/login).
 //
-// # BU UÇ KORUMASIZDIR
+// # THIS ENDPOINT IS UNPROTECTED
 //
-// Kimlik doğrulaması yapılacak istektir; kimliği daha yeni kuracaktır.
-// Yönetim yüzeyine corehttp.RequireAdmin bağlanırken [LoginPath] DIŞARIDA
-// BIRAKILMALIDIR — korunursa kimse giriş yapamaz ve sistem kilitlenir.
+// It is the request that is going to be authenticated; it is only about to
+// establish the identity. When corehttp.RequireAdmin is attached to the admin
+// surface, [LoginPath] MUST BE LEFT OUT — if it is protected nobody can log in
+// and the system locks itself out.
 //
-// Başarısız her deneme AYNI hatayı ve kabaca aynı süreyi üretir; ayrım
-// yapılsaydı yanıtın kendisi "bu e-posta kayıtlı" bilgisini verirdi
-// (bkz. service.Service.Login).
+// Every failed attempt produces the SAME error and roughly the same duration;
+// had a distinction been made, the response itself would have handed out the
+// information "this email is registered" (see service.Service.Login).
 func (h *Handler) adminLogin(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -32,8 +33,8 @@ func (h *Handler) adminLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Düz parola yalnızca burada açık dizeye çevrilir; dönüşümün göze batması
-	// bilinçlidir (bkz. [secret]).
+	// The plaintext password is converted to a plain string only here; the
+	// conversion standing out is deliberate (see [secret]).
 	token, expiresAt, err := h.svc.Login(ctx, req.Email, string(req.Password))
 	if err != nil {
 		corehttp.WriteError(ctx, w, err)
@@ -47,24 +48,27 @@ func (h *Handler) adminLogin(w http.ResponseWriter, r *http.Request) {
 	}})
 }
 
-// adminWhoami doğrulanmış çağıranın kimliğini döner (GET /admin/v1/auth/me).
+// adminWhoami returns the identity of the authenticated caller
+// (GET /admin/v1/auth/me).
 //
-// Kimlik ÇEKİRDEKTEN gelir: corehttp.RequireAdmin onu context'e koyar. Bu uç
-// bu yüzden korumanın gerçekten bağlı olduğunun da kanıtıdır — koruma yoksa
-// kimlik de olmaz ve 401 döner.
+// The identity comes FROM THE CORE: corehttp.RequireAdmin puts it into the
+// context. This endpoint is therefore also the proof that the protection is
+// really attached — with no protection there is no identity either and a 401 is
+// returned.
 //
-// # BU UÇ YETKİ İSTEMEZ
+// # THIS ENDPOINT ASKS FOR NO SCOPE
 //
-// Kimlik yeterlidir: uç, çağıranın ZATEN sahip olduğu yetkileri geri okur.
-// Yetki isteseydi, yetkisiz bir kullanıcı neye yetkili olmadığını da
-// öğrenemez ve 403'ün nedenini kendi kimliğine bakarak göremezdi.
+// Identity is enough: the endpoint reads back the scopes the caller ALREADY
+// holds. Had it asked for a scope, a caller without scope could not even learn
+// what they are not entitled to, and could not see the reason for their 403 by
+// looking at their own identity.
 func (h *Handler) adminWhoami(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
 	principal, ok := corehttp.PrincipalFromContext(ctx)
 	if !ok {
 		corehttp.WriteError(ctx, w, coreerrors.Unauthorized(
-			corehttp.CodeUnauthenticated, "kimlik doğrulama gerekli"))
+			corehttp.CodeUnauthenticated, "authentication is required"))
 		return
 	}
 
@@ -76,42 +80,45 @@ func (h *Handler) adminWhoami(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// adminLogout çağıranın oturumlarını kapatır (POST /admin/v1/auth/logout).
+// adminLogout closes the caller's sessions (POST /admin/v1/auth/logout).
 //
-// # ÇAĞIRANIN TÜM OTURUMLARI DÜŞER
+// # ALL OF THE CALLER'S SESSIONS DROP
 //
-// Uç bir cihazı değil, çağıranın bütün oturumlarını kapatır: telefonundan
-// çıkan yönetici dizüstündeki oturumunu da kapatmış olur. Tek cihazı düşürmek
-// yoktur ve bugün olamaz da — bunun için jti bazlı bir kara liste, yani her
-// istekte okunan yeni bir depo gerekirdi (bkz. service.Service.Logout).
+// The endpoint closes not one device but all of the caller's sessions: an admin
+// logging out from their phone has closed their session on the laptop too.
+// Dropping a single device does not exist and cannot exist today either — that
+// would take a jti-based deny list, that is, a new store read on every request
+// (see service.Service.Logout).
 //
-// # BU UÇ YETKİ İSTEMEZ
+// # THIS ENDPOINT ASKS FOR NO SCOPE
 //
-// Kendi oturumunu kapatmak bir ayrıcalık değildir. Yetki isteseydi, yetkisi
-// geri alınmış bir yöneticinin jetonu süresi dolana kadar kapatılamazdı.
+// Closing your own session is not a privilege. Had it asked for a scope, the
+// token of an admin whose scope had been taken away could not be closed until
+// it expired.
 //
-// # YANIT: 200 ve gövde, 204 DEĞİL
+// # RESPONSE: 200 and a body, NOT 204
 //
-// Gövdesiz bir 204 idiomatik olurdu ama burada eksik kalırdı: çağıran "bu
-// cihazdan çıktım" sanırken sunucu HEPSİNİ kapatmıştır ve status kodu bunu
-// söyleyemez. Gövde iki şeyi açıkça bildirir: iptalin TOPTAN olduğu
-// ([logoutResponse.AllSessions]) ve dayandığı AN ([logoutResponse.RevokedAt]);
-// ikincisi, istemcinin elinde kalmış bir jetonun artık geçersiz olduğunu
-// deneme-yanılmadan görmesini sağlar.
+// A bodyless 204 would have been idiomatic but would have fallen short here:
+// the caller believes "I logged out of this device" while the server has closed
+// ALL OF THEM, and a status code cannot say that. The body states two things
+// explicitly: that the revocation is WHOLESALE ([logoutResponse.AllSessions])
+// and the MOMENT it rests on ([logoutResponse.RevokedAt]); the second lets the
+// client see without trial and error that a token still in its hands is now
+// invalid.
 //
-// API anahtarıyla çağrılırsa istek tipli bir hata ile reddedilir: anahtarın
-// oturumu yoktur ve sessizce 2xx dönmek, anahtarın kapatıldığı yanılgısını
-// bırakırdı (bkz. service.Service.Logout).
+// If it is called with an API key the request is rejected with a typed error:
+// a key has no session, and silently returning a 2xx would have left the
+// illusion that the key had been closed (see service.Service.Logout).
 func (h *Handler) adminLogout(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
-	// Kimlik ÇEKİRDEKTEN gelir; kimin çıkış yapacağı istemcinin gövdede
-	// bildirdiği bir değerden okunsaydı, uç başkasının oturumunu kapatmanın
-	// yolu olurdu.
+	// The identity comes FROM THE CORE; had who logs out been read from a value
+	// the client declares in the body, the endpoint would have been the way to
+	// close somebody else's session.
 	principal, ok := corehttp.PrincipalFromContext(ctx)
 	if !ok {
 		corehttp.WriteError(ctx, w, coreerrors.Unauthorized(
-			corehttp.CodeUnauthenticated, "kimlik doğrulama gerekli"))
+			corehttp.CodeUnauthenticated, "authentication is required"))
 		return
 	}
 
@@ -127,16 +134,16 @@ func (h *Handler) adminLogout(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// --- kullanıcılar -------------------------------------------------------------
+// --- users --------------------------------------------------------------------
 
-// adminCreateUser yeni bir yönetim kullanıcısı oluşturur
-// (POST /admin/v1/users).
+// adminCreateUser creates a new admin user (POST /admin/v1/users).
 //
-// Gövdedeki parola boş bırakılabilir; o durumda kullanıcı parolasız oluşturulur
-// ve giriş yapabilmesi için önce POST /admin/v1/users/{id}/password çağrılır.
+// The password in the body may be left empty; the user is then created without
+// a password and POST /admin/v1/users/{id}/password has to be called first
+// before they can log in.
 //
-// Uç [ScopeWrite] ister; ayrıca istenen yetkiler çağıranınkileri AŞAMAZ
-// (bkz. service.CreateUser).
+// The endpoint asks for [ScopeWrite]; furthermore the requested scopes CANNOT
+// EXCEED the caller's own (see service.CreateUser).
 func (h *Handler) adminCreateUser(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -154,10 +161,10 @@ func (h *Handler) adminCreateUser(w http.ResponseWriter, r *http.Request) {
 	writeItem(w, r, http.StatusCreated, toUserDTO(created))
 }
 
-// adminListUsers kullanıcıları süzerek ve sayfalayarak listeler
+// adminListUsers lists the users, filtering and paging them
 // (GET /admin/v1/users).
 //
-// Süzgeçler: email, scope.
+// Filters: email, scope.
 func (h *Handler) adminListUsers(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -180,7 +187,7 @@ func (h *Handler) adminListUsers(w http.ResponseWriter, r *http.Request) {
 	writePage(w, r, page, toUserDTO)
 }
 
-// adminGetUser tek bir kullanıcıyı döner (GET /admin/v1/users/{id}).
+// adminGetUser returns a single user (GET /admin/v1/users/{id}).
 func (h *Handler) adminGetUser(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -192,11 +199,11 @@ func (h *Handler) adminGetUser(w http.ResponseWriter, r *http.Request) {
 	writeItem(w, r, http.StatusOK, toUserDTO(user))
 }
 
-// adminUpdateUser kullanıcının verilen alanlarını günceller
+// adminUpdateUser updates the given fields of the user
 // (PUT /admin/v1/users/{id}).
 //
-// Uç [ScopeWrite] ister; gövdedeki yetki listesi çağıranınkileri AŞAMAZ
-// (bkz. service.UpdateUser).
+// The endpoint asks for [ScopeWrite]; the scope list in the body CANNOT EXCEED
+// the caller's own (see service.UpdateUser).
 func (h *Handler) adminUpdateUser(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -214,7 +221,7 @@ func (h *Handler) adminUpdateUser(w http.ResponseWriter, r *http.Request) {
 	writeItem(w, r, http.StatusOK, toUserDTO(updated))
 }
 
-// adminDeleteUser kullanıcıyı ve giriş kimliklerini yumuşak siler
+// adminDeleteUser soft-deletes the user and their login credentials
 // (DELETE /admin/v1/users/{id}).
 func (h *Handler) adminDeleteUser(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
@@ -226,14 +233,15 @@ func (h *Handler) adminDeleteUser(w http.ResponseWriter, r *http.Request) {
 	corehttp.WriteJSON(ctx, w, http.StatusNoContent, nil)
 }
 
-// adminSetPassword kullanıcının parolasını belirler
+// adminSetPassword assigns the user's password
 // (POST /admin/v1/users/{id}/password).
 //
-// Uç ayrıdır: profil güncellemesiyle aynı gövdeye konsaydı, adını değiştiren
-// bir isteğin yanlışlıkla parolayı da sıfırlaması mümkün olurdu.
+// The endpoint is separate: had it been put into the same body as the profile
+// update, it would have been possible for a request changing a name to reset
+// the password by accident.
 //
-// Yanıt GÖVDESİZDİR (204): parolayla ilgili hiçbir şeyi geri yazmanın anlamı
-// yoktur.
+// The response HAS NO BODY (204): there is no point in writing anything
+// password-related back.
 func (h *Handler) adminSetPassword(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -250,17 +258,18 @@ func (h *Handler) adminSetPassword(w http.ResponseWriter, r *http.Request) {
 	corehttp.WriteJSON(ctx, w, http.StatusNoContent, nil)
 }
 
-// --- api anahtarları ----------------------------------------------------------
+// --- api keys -----------------------------------------------------------------
 
-// adminCreateAPIKey yeni bir API anahtarı üretir (POST /admin/v1/api-keys).
+// adminCreateAPIKey produces a new API key (POST /admin/v1/api-keys).
 //
-// DÜZ ANAHTAR YALNIZCA BU YANITTA döner ve bir daha hiçbir uçtan okunamaz.
-// created_by alanı gövdeden DEĞİL, doğrulanmış kimlikten doldurulur; aksi
-// hâlde denetim kaydını istemci yazardı.
+// THE PLAINTEXT KEY IS RETURNED ONLY IN THIS RESPONSE and can never again be
+// read from any endpoint. The created_by field is filled NOT from the body but
+// from the authenticated identity; otherwise the client would be the one
+// writing the audit record.
 //
-// Uç [ScopeWrite] ister; gövdedeki yetki listesi çağıranınkileri AŞAMAZ
-// (bkz. service.CreateAPIKey). İkisi birlikte, bu ucun yetki yükseltme
-// aracına dönüşmesini engeller.
+// The endpoint asks for [ScopeWrite]; the scope list in the body CANNOT EXCEED
+// the caller's own (see service.CreateAPIKey). Together the two prevent this
+// endpoint from turning into a privilege escalation tool.
 func (h *Handler) adminCreateAPIKey(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -288,11 +297,11 @@ func (h *Handler) adminCreateAPIKey(w http.ResponseWriter, r *http.Request) {
 	}})
 }
 
-// adminListAPIKeys anahtarları süzerek ve sayfalayarak listeler
+// adminListAPIKeys lists the keys, filtering and paging them
 // (GET /admin/v1/api-keys).
 //
-// Süzgeçler: type, revoked. Yanıtta düz anahtar YOKTUR; yalnızca maskelenmiş
-// gösterim vardır.
+// Filters: type, revoked. There is NO plaintext key in the response; only the
+// masked representation is there.
 func (h *Handler) adminListAPIKeys(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -326,7 +335,7 @@ func (h *Handler) adminListAPIKeys(w http.ResponseWriter, r *http.Request) {
 	writePage(w, r, page, toAPIKeyDTO)
 }
 
-// adminGetAPIKey tek bir anahtarı döner (GET /admin/v1/api-keys/{id}).
+// adminGetAPIKey returns a single key (GET /admin/v1/api-keys/{id}).
 func (h *Handler) adminGetAPIKey(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -338,11 +347,11 @@ func (h *Handler) adminGetAPIKey(w http.ResponseWriter, r *http.Request) {
 	writeItem(w, r, http.StatusOK, toAPIKeyDTO(key))
 }
 
-// adminRevokeAPIKey anahtarı iptal eder
+// adminRevokeAPIKey revokes the key
 // (POST /admin/v1/api-keys/{id}/revoke).
 //
-// İptal SİLME DEĞİLDİR: kayıt listede kalır ve ne zaman, kim tarafından
-// kapatıldığı görünür. Zaten iptalli bir anahtarda 409 döner.
+// REVOCATION IS NOT DELETION: the record stays in the list and when and by whom
+// it was closed remains visible. On an already revoked key a 409 is returned.
 func (h *Handler) adminRevokeAPIKey(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -354,11 +363,11 @@ func (h *Handler) adminRevokeAPIKey(w http.ResponseWriter, r *http.Request) {
 	writeItem(w, r, http.StatusOK, toAPIKeyDTO(revoked))
 }
 
-// adminDeleteAPIKey anahtarı yumuşak siler
+// adminDeleteAPIKey soft-deletes the key
 // (DELETE /admin/v1/api-keys/{id}).
 //
-// Sızıntı sonrası tercih edilmesi gereken işlem iptaldir; silme, yanlışlıkla
-// oluşturulmuş bir kaydı temizlemek içindir.
+// After a leak the operation to prefer is revocation; deletion is for cleaning
+// up a record that was created by mistake.
 func (h *Handler) adminDeleteAPIKey(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -369,11 +378,11 @@ func (h *Handler) adminDeleteAPIKey(w http.ResponseWriter, r *http.Request) {
 	corehttp.WriteJSON(ctx, w, http.StatusNoContent, nil)
 }
 
-// adminListKeyChannels anahtarın bağlı olduğu kanalları döner
+// adminListKeyChannels returns the channels the key is attached to
 // (GET /admin/v1/api-keys/{id}/sales-channels).
 //
-// Devre dışı kanallar da listelenir: yönetim yüzeyi bağı olduğu gibi
-// göstermelidir.
+// Disabled channels are listed too: the admin surface has to show the link as
+// it is.
 func (h *Handler) adminListKeyChannels(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -385,7 +394,7 @@ func (h *Handler) adminListKeyChannels(w http.ResponseWriter, r *http.Request) {
 	writeItems(w, r, convertAll(channels, toSalesChannelDTO))
 }
 
-// adminLinkKeyChannel publishable anahtarı bir satış kanalına bağlar
+// adminLinkKeyChannel attaches the publishable key to a sales channel
 // (POST /admin/v1/api-keys/{id}/sales-channels).
 func (h *Handler) adminLinkKeyChannel(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
@@ -402,8 +411,8 @@ func (h *Handler) adminLinkKeyChannel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Bağ kurulduktan sonra GÜNCEL liste döner: istemcinin ikinci bir istek
-	// yapmasına gerek kalmaz.
+	// Once the link is established the CURRENT list is returned: the client is
+	// spared having to make a second request.
 	channels, err := h.svc.SalesChannelsOfAPIKey(ctx, keyID)
 	if err != nil {
 		corehttp.WriteError(ctx, w, err)
@@ -412,7 +421,7 @@ func (h *Handler) adminLinkKeyChannel(w http.ResponseWriter, r *http.Request) {
 	writeItems(w, r, convertAll(channels, toSalesChannelDTO))
 }
 
-// adminUnlinkKeyChannel bağı kaldırır
+// adminUnlinkKeyChannel removes the link
 // (DELETE /admin/v1/api-keys/{id}/sales-channels/{sales_channel_id}).
 func (h *Handler) adminUnlinkKeyChannel(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
@@ -426,9 +435,9 @@ func (h *Handler) adminUnlinkKeyChannel(w http.ResponseWriter, r *http.Request) 
 	corehttp.WriteJSON(ctx, w, http.StatusNoContent, nil)
 }
 
-// --- satış kanalları ----------------------------------------------------------
+// --- sales channels -----------------------------------------------------------
 
-// adminCreateSalesChannel yeni bir satış kanalı oluşturur
+// adminCreateSalesChannel creates a new sales channel
 // (POST /admin/v1/sales-channels).
 func (h *Handler) adminCreateSalesChannel(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
@@ -452,10 +461,10 @@ func (h *Handler) adminCreateSalesChannel(w http.ResponseWriter, r *http.Request
 	writeItem(w, r, http.StatusCreated, toSalesChannelDTO(created))
 }
 
-// adminListSalesChannels kanalları süzerek ve sayfalayarak listeler
+// adminListSalesChannels lists the channels, filtering and paging them
 // (GET /admin/v1/sales-channels).
 //
-// Süzgeçler: name, is_disabled.
+// Filters: name, is_disabled.
 func (h *Handler) adminListSalesChannels(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -483,7 +492,7 @@ func (h *Handler) adminListSalesChannels(w http.ResponseWriter, r *http.Request)
 	writePage(w, r, page, toSalesChannelDTO)
 }
 
-// adminGetSalesChannel tek bir kanalı döner
+// adminGetSalesChannel returns a single channel
 // (GET /admin/v1/sales-channels/{id}).
 func (h *Handler) adminGetSalesChannel(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
@@ -496,7 +505,7 @@ func (h *Handler) adminGetSalesChannel(w http.ResponseWriter, r *http.Request) {
 	writeItem(w, r, http.StatusOK, toSalesChannelDTO(channel))
 }
 
-// adminUpdateSalesChannel kanalın verilen alanlarını günceller
+// adminUpdateSalesChannel updates the given fields of the channel
 // (PUT /admin/v1/sales-channels/{id}).
 func (h *Handler) adminUpdateSalesChannel(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
@@ -520,7 +529,7 @@ func (h *Handler) adminUpdateSalesChannel(w http.ResponseWriter, r *http.Request
 	writeItem(w, r, http.StatusOK, toSalesChannelDTO(updated))
 }
 
-// adminDeleteSalesChannel kanalı yumuşak siler ve anahtar bağlarını kaldırır
+// adminDeleteSalesChannel soft-deletes the channel and removes the key links
 // (DELETE /admin/v1/sales-channels/{id}).
 func (h *Handler) adminDeleteSalesChannel(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()

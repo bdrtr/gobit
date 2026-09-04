@@ -1,8 +1,9 @@
--- carts sorguları.
+-- carts queries.
 --
--- Her okuma deleted_at IS NULL süzer (plan Bölüm 8: silme yumuşaktır).
--- Yazan sorgular ayrıca completed_at IS NULL şartı taşır: tamamlanmış sepet
--- DEĞİŞMEZDİR ve bu, servis kontrolünün yanında ikinci kapıdır.
+-- Every read filters on deleted_at IS NULL (plan Section 8: deletion is soft).
+-- The writing queries carry a completed_at IS NULL condition as well: a
+-- completed cart is IMMUTABLE, and this is the second gate beside the service's
+-- check.
 
 -- name: CreateCart :one
 INSERT INTO carts (
@@ -14,12 +15,14 @@ RETURNING *;
 SELECT * FROM carts
 WHERE id = $1 AND deleted_at IS NULL;
 
--- LockCart sepeti işlem boyunca kilitler ve güncel hâlini döner.
+-- LockCart locks the cart for the whole transaction and returns its current
+-- state.
 --
--- SEPETİ DEĞİŞTİREN HER AKIŞ BUNUNLA BAŞLAR. Kilit iki şeyi birden sağlar:
--- eşzamanlı iki AddLineItem sepetin satırlarını bozamaz (ikincisi birincinin
--- yazdığı satırı görür, yeni satır yerine adedi artırır) ve "tamamlanmış mı"
--- kontrolü ile yazma arasına başka bir işlem giremez.
+-- EVERY FLOW THAT CHANGES THE CART STARTS WITH IT. The lock provides two things
+-- at once: two concurrent AddLineItem calls cannot corrupt the lines of the cart
+-- (the second one sees the line the first wrote and raises the quantity instead
+-- of adding a new line), and no other transaction can slip in between the "is it
+-- completed" check and the write.
 -- name: LockCart :one
 SELECT * FROM carts
 WHERE id = $1 AND deleted_at IS NULL
@@ -35,12 +38,13 @@ WHERE deleted_at IS NULL
 ORDER BY created_at DESC, id DESC
 LIMIT sqlc.arg('row_limit')::bigint OFFSET sqlc.arg('row_offset')::bigint;
 
--- CountCarts sayfalama zarfının toplam sayısını verir ve ListCarts ile AYNI
--- filtreleri uygular; ikisi birlikte değiştirilmelidir.
+-- CountCarts gives the total count of the pagination envelope and applies the
+-- SAME filters as ListCarts; the two must be changed together.
 --
--- Toplam, satırlarla birlikte dönen bir pencere fonksiyonundan okunamaz:
--- aralık dışı bir sayfada hiç satır dönmez, pencere değerlendirilmez ve toplam
--- 0 görünürdü. Toplam sayfanın değil FİLTRENİN sayısıdır.
+-- The total cannot be read from a window function returned together with the
+-- rows: on an out-of-range page no row comes back at all, the window is not
+-- evaluated and the total would look like 0. The total is the count of the
+-- FILTER, not of the page.
 -- name: CountCarts :one
 SELECT COUNT(*) FROM carts
 WHERE deleted_at IS NULL
@@ -49,18 +53,19 @@ WHERE deleted_at IS NULL
   AND (sqlc.narg('completed')::boolean IS NULL
        OR (completed_at IS NOT NULL) = sqlc.narg('completed')::boolean);
 
--- GetCartsByIDs Query katmanının FetchByIDs çağrısını TEK turda karşılar;
--- kimlik başına sorgu (N+1) yapılmaz.
+-- GetCartsByIDs serves the Query layer's FetchByIDs call in ONE round; no per-id
+-- query (N+1) is made.
 -- name: GetCartsByIDs :many
 SELECT * FROM carts
 WHERE id = ANY (sqlc.arg('ids')::text[]) AND deleted_at IS NULL
 ORDER BY id;
 
--- UpdateCartContact sepetin e-postasını ve müşterisini MUTLAK değerle yazar.
+-- UpdateCartContact writes the cart's email and customer as ABSOLUTE values.
 --
--- Misafir sepetin kayıtlı müşteriye devri ve ödeme adımında toplanan e-posta
--- bu sorgudan geçer. Kimin kime devredilebileceği kararı SERVİSİNDİR (dolu bir
--- müşteriyi başkasıyla değiştirmek reddedilir); buradaki sorgu yalnızca yazar.
+-- The handover of a guest cart to a registered customer and the email collected
+-- at the checkout step both go through this query. The decision of who may be
+-- handed over to whom belongs to the SERVICE (replacing a customer that is
+-- already set with another one is rejected); the query here only writes.
 -- name: UpdateCartContact :one
 UPDATE carts
 SET email       = $2,
@@ -69,8 +74,8 @@ SET email       = $2,
 WHERE id = $1 AND deleted_at IS NULL AND completed_at IS NULL
 RETURNING *;
 
--- UpdateCartTotals workflow'un hesapladığı toplamları yazar ve toplamların
--- hangi şekil için hesaplandığını damgalar.
+-- UpdateCartTotals writes the totals the workflow calculated and stamps which
+-- shape the totals were calculated for.
 -- name: UpdateCartTotals :one
 UPDATE carts
 SET subtotal        = $2,
@@ -83,20 +88,20 @@ SET subtotal        = $2,
 WHERE id = $1 AND deleted_at IS NULL AND completed_at IS NULL
 RETURNING *;
 
--- BumpCartRevision sepetin şekil sayacını bir artırır; toplamları etkileyen
--- her yapısal değişiklikten sonra AYNI işlemde çağrılır.
+-- BumpCartRevision raises the cart's shape counter by one; it is called in the
+-- SAME transaction after every structural change that affects the totals.
 -- name: BumpCartRevision :one
 UPDATE carts
 SET revision = revision + 1, updated_at = now()
 WHERE id = $1 AND deleted_at IS NULL AND completed_at IS NULL
 RETURNING *;
 
--- MarkCartCompleted sepeti tamamlanmış olarak damgalar.
+-- MarkCartCompleted stamps the cart as completed.
 --
--- completed_at IS NULL şartı bilinçlidir: aynı sepeti ikinci kez tamamlamak
--- hiçbir satırı etkilemez ve çağıran bunu ayırt edebilir. Servis kilidi zaten
--- yarışı kapatır; buradaki şart doğrudan SQL ile yapılan bir müdahaleyi de
--- kapsayan ikinci kapıdır.
+-- The completed_at IS NULL condition is deliberate: completing the same cart a
+-- second time affects no row and the caller can tell that apart. The service
+-- lock already closes the race; the condition here is the second gate, one that
+-- covers an intervention made directly through SQL as well.
 -- name: MarkCartCompleted :one
 UPDATE carts
 SET completed_at = now(), updated_at = now()

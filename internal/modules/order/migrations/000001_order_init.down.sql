@@ -1,9 +1,10 @@
--- 000001_order_init'in geri alınması.
+-- Rollback of 000001_order_init.
 --
--- Tablolar bağımlılık sırasının TERSİNDE düşürülür: önce orders'a referans
--- veren tablolar, sonra orders. İndeksler tabloyla birlikte düşer, ayrıca DROP
--- edilmez. display_id'nin IDENTITY sequence'ı da sütuna ait olduğu için
--- orders ile birlikte düşer; ayrı bir DROP SEQUENCE gerekmez.
+-- The tables are dropped in the REVERSE of dependency order: first the tables
+-- that reference orders, then orders. Indexes drop together with the table and
+-- are not DROPped separately. display_id's IDENTITY sequence belongs to the
+-- column as well, so it falls together with orders; a separate DROP SEQUENCE is
+-- not needed.
 
 DROP TABLE IF EXISTS order_claims;
 DROP TABLE IF EXISTS order_exchanges;

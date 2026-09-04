@@ -1,5 +1,5 @@
--- auth şemasının geri alınması. Sıra, foreign key bağımlılıklarının tersidir:
--- önce bağımlı tablolar düşer.
+-- Rollback of the auth schema. The order is the reverse of the foreign key
+-- dependencies: the dependent tables drop first.
 DROP INDEX IF EXISTS api_key_sales_channel_channel_idx;
 DROP TABLE IF EXISTS api_key_sales_channel;
 

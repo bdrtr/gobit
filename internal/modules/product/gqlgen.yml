@@ -1,29 +1,33 @@
-# gqlgen yapılandırması — product modülünün GraphQL vitrin yüzeyi.
+# gqlgen configuration — the product module's GraphQL storefront surface.
 #
-# Konum, sqlc.yaml ile aynı gerekçedir: kod üretimi MODÜL BAŞINA yapılandırılır
-# ve yapılandırma, ürettiği kodun yanında durur.
+# The location has the same rationale as sqlc.yaml: code generation is
+# configured PER MODULE, and the configuration stands next to the code it
+# produces.
 #
-# DİKKAT: buradaki yollar üretecin ÇALIŞMA DİZİNİNE görelidir, bu dosyaya
-# değil. Depo kökünden `--config internal/modules/product/gqlgen.yml` ile
-# çalıştırmak HATA VERMEZ; sessizce boş bir şema okur ve kökte bir graph/
-# dizini üretir. `make gen` bu yüzden modül dizinine girerek çalıştırır.
+# CAUTION: the paths here are relative to the generator's WORKING DIRECTORY,
+# not to this file. Running it from the repository root with
+# `--config internal/modules/product/gqlgen.yml` DOES NOT FAIL; it silently
+# reads an empty schema and produces a graph/ directory at the root. This is
+# why `make gen` runs it after entering the module directory.
 #
-# Üreteç sürümü BURADA PİNLENMEZ ve bu bilinçlidir: `make gen` üreteci
-# `go tool gqlgen` ile, yani go.mod'daki sürümle çalıştırır. İkinci bir pin
-# (Makefile'da bir GQLGEN_VERSION) üretecin sürümüyle çalışma zamanı
-# kütüphanesinin sürümünü AYRI iki yere yazmak olurdu; ayrıştıkları gün
-# üretilen kod, kendisini çalıştıran kütüphaneyle uyuşmaz ve hata derleme
-# zamanında değil, imzası değişmiş bir yardımcı fonksiyonda ortaya çıkar.
+# The generator version is NOT PINNED HERE and that is deliberate: `make gen`
+# runs the generator with `go tool gqlgen`, that is, with the version in
+# go.mod. A second pin (a GQLGEN_VERSION in the Makefile) would mean writing
+# the generator's version and the runtime library's version in TWO SEPARATE
+# places; the day they drift, the generated code does not match the library
+# running it, and the failure shows up not at compile time but in a helper
+# function whose signature has changed.
 
 schema:
   - graph/schema.graphqls
 
-# Üretilen kod, ELLE YAZILAN resolver'la AYNI pakette ama AYRI dosyalardadır.
+# The generated code sits in the SAME package as the HAND-WRITTEN resolver but
+# in SEPARATE files.
 #
-# Ayrı bir paket denenmedi çünkü model bağlamaları (aşağıda) bu paketin
-# tiplerine bakar: üretilen kod ayrı bir pakette olsaydı, o paket ProductList
-# için buraya, burası da üretilen exec için oraya bakar ve import döngüsü
-# oluşurdu.
+# A separate package was not attempted because the model bindings (below) look
+# at this package's types: were the generated code in a separate package, that
+# package would look here for ProductList and this one would look there for the
+# generated exec, and an import cycle would form.
 exec:
   filename: graph/generated.go
   package: graph
@@ -32,36 +36,38 @@ model:
   filename: graph/models_gen.go
   package: graph
 
-# "resolver:" bloğu BİLİNÇLİ OLARAK YOKTUR.
+# The "resolver:" block is DELIBERATELY ABSENT.
 #
-# Blok verilseydi gqlgen resolver dosyalarını da ÜRETİR ve her üretimde
-# yeniden yazardı; o dosyalar hem üretilmiş hem elle düzenlenen melez
-# dosyalardır. Bu depoda üretilen kod düzenlenmez (bkz. repository/productdb).
-# Bu yüzden resolver'lar tümüyle elle yazılır (graph/resolver.go) ve üretilen
-# ResolverRoot arayüzünü karşılarlar: şema ile resolver arasındaki imza
-# kayması DERLEME zamanında görünür.
+# Had the block been given, gqlgen would ALSO GENERATE the resolver files and
+# rewrite them at every generation; those files are hybrids, both generated and
+# hand-edited. In this repository generated code is not edited (see
+# repository/productdb). This is why the resolvers are written entirely by hand
+# (graph/resolver.go) and satisfy the generated ResolverRoot interface: a
+# signature drift between the schema and the resolver is visible at COMPILE
+# time.
 
-# Dizi öğeleri İŞARETÇİ TAŞIMAZ.
+# Slice elements CARRY NO POINTER.
 #
-# Servis []service.StoreProduct döner, []*service.StoreProduct değil; bu ayar
-# olmadan üretilen kod işaretçi dilimi bekler, bağlama başarısız olur ve her
-# liste alanı gereksiz yere resolver'a düşerdi.
+# The service returns []service.StoreProduct, not []*service.StoreProduct;
+# without this setting the generated code expects a pointer slice, the binding
+# fails and every list field would needlessly fall through to a resolver.
 omit_slice_element_pointers: true
 
-# Üretimden sonra "go mod tidy" ÇALIŞTIRILMAZ: bu deponun tidy'si ayrı bir
-# hedeftir (make tidy) ve kod üretiminin go.mod'u sessizce değiştirmesi,
-# `make gen` diff'ini okuyanı şaşırtır.
+# "go mod tidy" is NOT RUN after generation: this repository's tidy is a
+# separate target (make tidy), and code generation silently changing go.mod
+# would surprise whoever reads the `make gen` diff.
 skip_mod_tidy: true
 
 models:
-  # Şema tipleri modülün GERÇEK tiplerine bağlanır; ayrı bir GraphQL model
-  # katmanı ÜRETİLMEZ.
+  # Schema types are bound to the module's REAL types; a separate GraphQL model
+  # layer is NOT GENERATED.
   #
-  # Üretilen modeller + elle yazılmış bir dönüştürücü de mümkündü ve
-  # REDDEDİLDİ: dönüştürücü, "vitrin ürünü nedir" sorusunun İKİNCİ tanımı
-  # olurdu ve servise eklenen bir alan orada sessizce unutulduğunda hiçbir
-  # şey kırılmazdı — bu deponun her hatası tam olarak bu sınıftandı. Doğrudan
-  # bağlama ile servisin alan adı değiştiği an üretim DERLENMEZ.
+  # Generated models plus a hand-written converter was also possible and was
+  # REJECTED: the converter would be the SECOND definition of the question
+  # "what is a storefront product", and nothing would break when a field added
+  # to the service was silently forgotten there — every bug in this repository
+  # was exactly of that class. With direct binding, the moment the service's
+  # field name changes, the generation DOES NOT COMPILE.
   Product:
     model: github.com/bdrtr/gobit/internal/modules/product/service.StoreProduct
   Variant:
@@ -79,8 +85,8 @@ models:
   Category:
     model: github.com/bdrtr/gobit/internal/modules/product/models.Category
 
-  # JSON, gqlgen'in map[string]any taşıyan hazır skalarıdır; adı şemada
-  # istemciye daha çok şey söylediği için değiştirildi ("Map" bir Go tipinin
-  # adıdır, bir sözleşmenin değil).
+  # JSON is gqlgen's ready-made scalar carrying map[string]any; the name was
+  # changed because in the schema it tells the client more ("Map" is the name of
+  # a Go type, not of a contract).
   JSON:
     model: github.com/99designs/gqlgen/graphql.Map

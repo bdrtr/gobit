@@ -38,10 +38,10 @@ type CreateOrderReturnParams struct {
 	Metadata     []byte
 }
 
-// order_returns sorguları (iade iskeleti; plan Bölüm 6).
+// order_returns queries (return skeleton; plan Section 6).
 //
-// Faz 6 yalnızca oluşturma ve listeleme sunar; iade iş akışı sonraki fazlara
-// aittir.
+// Phase 6 offers only creation and listing; the return workflow belongs to the
+// later phases.
 func (q *Queries) CreateOrderReturn(ctx context.Context, arg CreateOrderReturnParams) (OrderReturn, error) {
 	row := q.db.QueryRow(ctx, createOrderReturn,
 		arg.ID,

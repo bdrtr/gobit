@@ -11,12 +11,12 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/auth/repository/authdb"
 )
 
-// GetIdentity kullanıcının bir sağlayıcıdaki giriş kimliğini döner; yoksa
-// errors.NotFound.
+// GetIdentity returns the user's login identity for a provider; errors.NotFound
+// when there is none.
 //
-// Dönen kayıt password_hash İÇERİR. Değer bu paketin dışına çıkar ama yalnızca
-// bcrypt karşılaştırmasına gider; hiçbir log satırına, hata mesajına ya da API
-// yanıtına konmaz.
+// The returned record DOES CONTAIN password_hash. The value leaves this package
+// but goes only to the bcrypt comparison; it is put into no log line, no error
+// message and no API response.
 func (r *Repo) GetIdentity(ctx context.Context, userID, provider string) (models.AuthIdentity, error) {
 	if err := r.ready(); err != nil {
 		return models.AuthIdentity{}, err
@@ -28,26 +28,28 @@ func (r *Repo) GetIdentity(ctx context.Context, userID, provider string) (models
 	})
 	if err != nil {
 		return models.AuthIdentity{}, notFoundOr(err, CodeIdentityNotFound,
-			"%s kullanıcısının %q kimliği bulunamadı", userID, provider)
+			"user %s has no %q identity", userID, provider)
 	}
 	return toIdentity(row)
 }
 
-// SetPasswordHash kullanıcının parola hash'ini yazar; kimlik yoksa OLUŞTURUR.
+// SetPasswordHash writes the user's password hash; it CREATES the identity when
+// there is none.
 //
-// Neden tek metot: "parola ata" isteği, kullanıcının daha önce parolası olup
-// olmamasına göre farklı davranmamalıdır. İki ayrı metot olsaydı çağıran her
-// seferinde önce varlık sorgusu yapar ve o sorgu ile yazma arasındaki boşlukta
-// iki eşzamanlı istek iki kimlik satırı üretmeye çalışırdı; ikincisi
-// benzersizlik indeksine takılır ve istemciye anlamsız bir çakışma dönerdi.
+// Why a single method: a "set password" request must not behave differently
+// depending on whether the user already had a password. With two separate
+// methods the caller would run an existence query first every time, and in the
+// gap between that query and the write two concurrent requests would try to
+// create two identity rows; the second one would hit the uniqueness index and a
+// meaningless conflict would be returned to the client.
 //
-// Hash'in kendisi ne loglanır ne de hata mesajına konur.
+// The hash itself is neither logged nor put into an error message.
 //
-// Yazma, kaydın updated_at değerini now'a taşır. Bu sütun bu tabloda basit bir
-// denetim alanı DEĞİLDİR: servis, ondan önce üretilmiş oturum jetonlarını
-// reddeder (bkz. queries/identities.sql dosya başı ve service/session.go,
-// sessionAnchor). Yani bu çağrı kullanıcının açık oturumlarını da kapatır;
-// oturumları parolaya dokunmadan kapatmak için [Repo.RevokeSessions] vardır.
+// The write moves the record's updated_at to now. In this table that column is
+// NOT a plain audit field: the service rejects session tokens minted before it
+// (see the head of queries/identities.sql and service/session.go,
+// sessionAnchor). So this call also closes the user's open sessions; to close
+// the sessions without touching the password there is [Repo.RevokeSessions].
 func (r *Repo) SetPasswordHash(
 	ctx context.Context,
 	userID, provider, providerIdentity, hash string,
@@ -72,7 +74,7 @@ func (r *Repo) SetPasswordHash(
 			})
 			if upErr != nil {
 				return notFoundOr(upErr, CodeIdentityNotFound,
-					"kimlik kaydı bulunamadı: %s", existing.ID)
+					"identity record not found: %s", existing.ID)
 			}
 			identity, upErr = toIdentity(row)
 			return upErr
@@ -92,13 +94,13 @@ func (r *Repo) SetPasswordHash(
 				CreatedAt:        fromTime(now),
 			})
 			if insErr != nil {
-				return classifyUserWrite(insErr, providerIdentity, "kimlik kaydı oluşturulamadı")
+				return classifyUserWrite(insErr, providerIdentity, "could not create identity record")
 			}
 			identity, insErr = toIdentity(row)
 			return insErr
 
 		default:
-			return wrapDB(err, "kimlik kaydı okunamadı")
+			return wrapDB(err, "could not read the identity record")
 		}
 	})
 	if txErr != nil {
@@ -107,32 +109,32 @@ func (r *Repo) SetPasswordHash(
 	return identity, nil
 }
 
-// RevokeSessions kullanıcının BÜTÜN sağlayıcılarındaki oturum çapasını now
-// anına taşır ve AÇIK OTURUMLARININ TAMAMINI düşürür.
+// RevokeSessions moves the session anchor of ALL of the user's providers to the
+// now moment and drops ALL OF THEIR OPEN SESSIONS.
 //
-// Yazılan tek sütun updated_at'tir. O sütun bu tabloda bir denetim alanı
-// DEĞİLDİR: servis, ondan önce üretilmiş oturum jetonlarını reddeder
-// (bkz. queries/identities.sql dosya başı ve service/session.go,
-// sessionAnchor). Çıkışın tamamı bu yazmadır; düşürülecek bir "oturum kaydı"
-// yoktur, düşen şey jetonların geçerliliğidir.
+// The only column written is updated_at. In this table that column is NOT an
+// audit field: the service rejects session tokens minted before it (see the
+// head of queries/identities.sql and service/session.go, sessionAnchor). Logout
+// is entirely this write; there is no "session record" to drop, what drops is
+// the validity of the tokens.
 //
-// # Sağlayıcı PARAMETRE DEĞİLDİR
+// # The provider is NOT A PARAMETER
 //
-// Tablo sağlayıcı başına satır tutar ((user_id, provider) benzersizliği) ve
-// çağıranın "hangi sağlayıcıdan çıkılıyor" diye bir seçimi yoktur: satırların
-// hepsi ilerletilir ve ilerletilenler dönülür. Tek sağlayıcı seçilebilseydi,
-// ileride OAuth eklendiği gün çıkış o sağlayıcının jetonlarını düşürmez ve
-// bunu sessizce yapardı. Bugün canlı sağlayıcı bir tane olduğu için dönen
-// dilim tek elemanlıdır; değişen şey davranış değil, ikinci satırın eklendiği
-// günkü davranıştır.
+// The table keeps one row per provider ((user_id, provider) uniqueness) and the
+// caller has no choice of "which provider is being logged out of": all of the
+// rows are advanced and the advanced ones are returned. Had a single provider
+// been selectable, the day OAuth is added logout would not drop that provider's
+// tokens, and it would do so silently. Today there is a single live provider,
+// so the returned slice has one element; what changes is not the behavior but
+// the behavior on the day the second row is added.
 //
-// Parola ve kilit sayaçları KORUNUR: çıkış yapmak parolayı değiştirmez ve
-// sayaç sıfırlansaydı çıkış ucu, giriş kilidini temizlemenin yolu olurdu
-// (gerekçe queries/identities.sql).
+// The password and the lock counters are PRESERVED: logging out does not change
+// the password, and had the counter been reset the logout endpoint would become
+// the way to clear the login lock (rationale in queries/identities.sql).
 //
-// Kullanıcının hiç canlı kimliği yoksa errors.NotFound döner; boş dilimle
-// başarılı dönmek, hiçbir şey düşürmeyen bir çıkışı başarı gibi göstermek
-// olurdu.
+// If the user has no live identity at all, errors.NotFound is returned;
+// returning success with an empty slice would present a logout that dropped
+// nothing as a success.
 func (r *Repo) RevokeSessions(
 	ctx context.Context,
 	userID string,
@@ -147,29 +149,31 @@ func (r *Repo) RevokeSessions(
 		UpdatedAt: fromTime(now),
 	})
 	if err != nil {
-		return nil, wrapDB(err, "%s kullanıcısının oturumları kapatılamadı", userID)
+		return nil, wrapDB(err, "could not close the sessions of user %s", userID)
 	}
 	if len(rows) == 0 {
-		// Çok satırlı UPDATE pgx.ErrNoRows ÜRETMEZ, boş dilim döner; "satır
-		// yok" durumu bu yüzden elle sınanır. notFoundOr'a bırakılsaydı
-		// kimliksiz kullanıcının çıkışı sessizce başarılı olurdu.
+		// A multi-row UPDATE does NOT produce pgx.ErrNoRows, it returns an
+		// empty slice; the "no rows" case is therefore checked by hand. Left to
+		// notFoundOr, the logout of a user without an identity would silently
+		// succeed.
 		return nil, errors.NotFound(CodeIdentityNotFound,
-			"%s kullanıcısının hiç giriş kimliği yok", userID)
+			"user %s has no login identity at all", userID)
 	}
 	return toIdentities(rows)
 }
 
-// SessionAnchor kullanıcının EN YENİ oturum çapasını döner; hiç kimliği yoksa
-// errors.NotFound.
+// SessionAnchor returns the user's MOST RECENT session anchor; errors.NotFound
+// when the user has no identity at all.
 //
-// Dönen değer TEK BİR sağlayıcınınki değildir: kullanıcının bütün kimlikleri
-// arasından en ileri olanıdır (gerekçe queries/identities.sql,
-// GetSessionAnchor). Çıkış hepsini birden ilerlettiği için bu iki uç aynı
-// kuralı uygular; ayrışsalardı çıkışın yazdığı çapa okunmaz olurdu.
+// The returned value is not that of a SINGLE provider: it is the furthest one
+// among all of the user's identities (rationale in queries/identities.sql,
+// GetSessionAnchor). Because logout advances all of them at once, these two
+// endpoints apply the same rule; had they diverged, the anchor written by
+// logout would never be read.
 //
-// Kimlik satırı DÖNMEZ, yalnızca zaman damgası döner: çağıranın ihtiyacı olan
-// tek şey budur ve satırın tamamını vermek, password_hash'i hiç gerekmeyen bir
-// yolda repository sınırının dışına taşırdı.
+// The identity row is NOT returned, only the timestamp: that is the only thing
+// the caller needs, and handing over the whole row would carry password_hash
+// outside the repository boundary on a path that never needs it.
 func (r *Repo) SessionAnchor(ctx context.Context, userID string) (time.Time, error) {
 	if err := r.ready(); err != nil {
 		return time.Time{}, err
@@ -178,21 +182,23 @@ func (r *Repo) SessionAnchor(ctx context.Context, userID string) (time.Time, err
 	anchor, err := r.q.GetSessionAnchor(ctx, userID)
 	if err != nil {
 		return time.Time{}, notFoundOr(err, CodeIdentityNotFound,
-			"%s kullanıcısının hiç giriş kimliği yok", userID)
+			"user %s has no login identity at all", userID)
 	}
 	return toTime(anchor), nil
 }
 
-// RegisterLoginFailure başarısız bir giriş denemesini ATOMİK olarak sayar ve
-// eşiğe ulaşıldığında kimliği lockUntil anına kadar kilitler.
+// RegisterLoginFailure counts a failed login attempt ATOMICALLY and locks the
+// identity until the lockUntil moment once the threshold is reached.
 //
-// Artırmanın SQL'de yapılması bir tercih değil, zorunluluktur: sayı burada
-// okunup geri yazılsaydı aynı anda gelen yüzlerce deneme hepsi aynı değeri
-// okur ve kilit hiç devreye girmezdi (bkz. queries/identities.sql).
+// Doing the increment in SQL is not a preference but a necessity: had the
+// number been read here and written back, hundreds of attempts arriving at the
+// same time would all read the same value and the lock would never engage (see
+// queries/identities.sql).
 //
-// Sayaç yazılırken updated_at'e DOKUNULMAZ: o sütun oturum iptalinin çapasıdır
-// ve ilerleseydi tek bir başarısız deneme kurbanın bütün oturumlarını
-// düşürürdü (gerekçe queries/identities.sql dosya başında).
+// While the counter is written, updated_at is LEFT UNTOUCHED: that column is
+// the anchor of session revocation, and had it advanced, a single failed
+// attempt would drop all of the victim's sessions (rationale at the head of
+// queries/identities.sql).
 func (r *Repo) RegisterLoginFailure(
 	ctx context.Context,
 	identityID string,
@@ -211,17 +217,17 @@ func (r *Repo) RegisterLoginFailure(
 	})
 	if err != nil {
 		return models.AuthIdentity{}, notFoundOr(err, CodeIdentityNotFound,
-			"kimlik kaydı bulunamadı: %s", identityID)
+			"identity record not found: %s", identityID)
 	}
 	return toIdentity(row)
 }
 
-// RegisterLoginSuccess başarılı girişte deneme sayacını ve kilidi temizler,
-// son giriş anını yazar.
+// RegisterLoginSuccess clears the attempt counter and the lock on a successful
+// login and writes the moment of the last login.
 //
-// updated_at burada da ilerlemez: yeni bir giriş, kullanıcının diğer
-// cihazlardaki oturumlarını kapatmamalıdır (gerekçe queries/identities.sql
-// dosya başında).
+// updated_at does not advance here either: a new login must not close the
+// user's sessions on other devices (rationale at the head of
+// queries/identities.sql).
 func (r *Repo) RegisterLoginSuccess(ctx context.Context, identityID string, now time.Time) error {
 	if err := r.ready(); err != nil {
 		return err
@@ -231,7 +237,7 @@ func (r *Repo) RegisterLoginSuccess(ctx context.Context, identityID string, now 
 		ID:          identityID,
 		LastLoginAt: fromTime(now),
 	}); err != nil {
-		return wrapDB(err, "giriş kaydı güncellenemedi")
+		return wrapDB(err, "could not update the login record")
 	}
 	return nil
 }

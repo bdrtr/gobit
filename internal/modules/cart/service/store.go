@@ -6,99 +6,110 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/cart/models"
 )
 
-// Store servisin ihtiyaç duyduğu kalıcılık yüzeyidir.
+// Store is the persistence surface the service needs.
 //
-// Arayüz TÜKETEN tarafta, yani burada tanımlıdır (ADR 0001'in örüntüsü). Servis
-// repository paketini import ETMEZ; somut depo bu imzaları yapısal olarak
-// karşılar ve bağlantı module.go'da kurulur. Böylece birim testleri gerçek bir
-// veritabanı olmadan, birkaç yüz satırlık bir sahte depo ile yazılabilir.
+// The interface is defined on the CONSUMING side, that is, here (ADR 0001's
+// pattern). The service DOES NOT import the repository package; the concrete
+// store satisfies these signatures structurally and the wiring is done in
+// module.go. That way the unit tests can be written without a real database,
+// with a fake store of a few hundred lines.
 //
-// # İşlem sınırı
+// # Transaction boundary
 //
-// [Store.WithTx] verilen işlevi tek bir veritabanı işleminde çalıştırır ve
-// işlemi işlevin aldığı context ile taşır. Bu yüzden işlem içindeki her çağrı
-// İŞLEVE VERİLEN ctx ile yapılmalıdır; dıştaki ctx kullanılırsa o çağrı işlemin
-// dışında kalır ve atomiklik sessizce kaybolur.
+// [Store.WithTx] runs the given function in a single database transaction and
+// carries the transaction with the context the function receives. That is why
+// every call inside the transaction must be made with THE CTX GIVEN TO THE
+// FUNCTION; if the outer ctx is used, that call falls outside the transaction
+// and the atomicity is silently lost.
 //
-// [Store.LockCart] sepeti işlem sonuna kadar kilitler ve yalnızca
-// [Store.WithTx] içinde çağrılabilir. Sepeti değiştiren her akış okumasını bu
-// metotla yapar: kilitsiz okunan bir sepet yazma anında bayat olabilir ve iki
-// eşzamanlı ekleme aynı varyant için iki satır açabilirdi.
+// [Store.LockCart] locks the cart until the end of the transaction and can only
+// be called inside [Store.WithTx]. Every flow that changes the cart does its
+// read with this method: a cart read without a lock can be stale at the moment
+// of the write, and two concurrent additions could open two lines for the same
+// variant.
 //
-// [Store.WithReadTx] yazmayan ama BİRDEN ÇOK sorgu yapan okumalar içindir
-// (bkz. [Service.GetCart]). Kilit almaz; verdiği tek garanti, içindeki tüm
-// sorguların sepetin AYNI hâlini görmesidir. Ayrı bir metot olmasının sebebi
-// yalıtım düzeyidir: PostgreSQL'in varsayılan READ COMMITTED düzeyinde her
-// DEYİM kendi anlık görüntüsünü alır, yani sorguları sıradan bir işleme sarmak
-// yırtık görünümü ENGELLEMEZ; engelleyen şey REPEATABLE READ'dir.
+// [Store.WithReadTx] is for reads that do not write but make MORE THAN ONE query
+// (see [Service.GetCart]). It takes no lock; the only guarantee it gives is that
+// all of the queries inside it see the SAME state of the cart. The reason it is
+// a separate method is the isolation level: at PostgreSQL's default READ
+// COMMITTED level every STATEMENT takes its own snapshot, that is, wrapping the
+// queries in an ordinary transaction DOES NOT PREVENT the torn view; what
+// prevents it is REPEATABLE READ.
 //
-// # Kilit sırası
+// # Lock order
 //
-// Kilit HER AKIŞTA aynı sırada alınır: önce SEPET, sonra çocuk satırlar.
-// Çocuklar ayrıca kilitlenmez — sepet kilidi zaten o sepetin tüm yazma
-// yollarını seri hâle getirir ve tek kilit, sıranın ters dönmesini (dolayısıyla
-// kilitlenmeyi) imkânsız kılar.
+// The lock is taken in the same order IN EVERY FLOW: first the CART, then the
+// child lines. The children are not locked separately — the cart lock already
+// serializes all of the write paths of that cart, and a single lock makes it
+// impossible for the order to be reversed (and therefore for a deadlock to
+// happen).
 type Store interface {
-	// WithTx fn'i tek bir işlemde çalıştırır; fn hata dönerse işlem geri alınır.
+	// WithTx runs fn in a single transaction; if fn returns an error the
+	// transaction is rolled back.
 	WithTx(ctx context.Context, fn func(ctx context.Context) error) error
-	// WithReadTx fn'i salt-okunur ve TEK ANLIK GÖRÜNTÜLÜ bir işlemde çalıştırır.
+	// WithReadTx runs fn in a read-only transaction with a SINGLE SNAPSHOT.
 	WithReadTx(ctx context.Context, fn func(ctx context.Context) error) error
 
-	// CreateCart yeni bir sepet kaydeder.
+	// CreateCart records a new cart.
 	CreateCart(ctx context.Context, cart models.Cart) (models.Cart, error)
-	// GetCart sepeti kimliğiyle döner; yoksa NotFound.
+	// GetCart returns the cart by its identifier; NotFound if there is none.
 	GetCart(ctx context.Context, id string) (models.Cart, error)
-	// LockCart sepeti işlem boyunca kilitler ve güncel hâlini döner.
+	// LockCart locks the cart for the duration of the transaction and returns
+	// its current state.
 	LockCart(ctx context.Context, id string) (models.Cart, error)
-	// ListCarts sepetleri filtreleyip sayfalar; ikinci değer toplam sayıdır.
+	// ListCarts filters and paginates the carts; the second value is the total
+	// count.
 	ListCarts(ctx context.Context, filter models.CartFilter) ([]models.Cart, int64, error)
-	// CartsByIDs kimlik kümesini TEK sorguda getirir (N+1 yok).
+	// CartsByIDs fetches a set of identifiers in a SINGLE query (no N+1).
 	CartsByIDs(ctx context.Context, ids []string) ([]models.Cart, error)
-	// UpdateCartContact sepetin e-posta ve müşteri alanlarını MUTLAK değerle
-	// yazar.
+	// UpdateCartContact writes the cart's email and customer fields as ABSOLUTE
+	// values.
 	UpdateCartContact(ctx context.Context, id string, contact models.CartContact) (models.Cart, error)
-	// UpdateCartTotals toplamları yazar ve hangi şekil için hesaplandıklarını
-	// damgalar.
+	// UpdateCartTotals writes the totals and stamps which shape they were
+	// calculated for.
 	UpdateCartTotals(ctx context.Context, id string, totals models.CartTotals) (models.Cart, error)
-	// BumpCartRevision sepetin şekil sayacını bir artırır.
+	// BumpCartRevision increments the cart's shape counter by one.
 	BumpCartRevision(ctx context.Context, id string) (models.Cart, error)
-	// MarkCartCompleted sepeti tamamlanmış olarak damgalar.
+	// MarkCartCompleted stamps the cart as completed.
 	MarkCartCompleted(ctx context.Context, id string) (models.Cart, error)
-	// SoftDeleteCart sepeti yumuşak siler.
+	// SoftDeleteCart soft deletes the cart.
 	SoftDeleteCart(ctx context.Context, id string) error
 
-	// CreateLineItem yeni bir sepet satırı kaydeder.
+	// CreateLineItem records a new cart line.
 	CreateLineItem(ctx context.Context, item models.LineItem) (models.LineItem, error)
-	// GetLineItem satırı kimliğiyle döner; başka sepetin satırı NotFound'dur.
+	// GetLineItem returns the line by its identifier; another cart's line is
+	// NotFound.
 	GetLineItem(ctx context.Context, cartID, lineID string) (models.LineItem, error)
-	// GetLineItemByVariant sepetteki varyantın yaşayan satırını döner.
+	// GetLineItemByVariant returns the living line of the variant in the cart.
 	GetLineItemByVariant(ctx context.Context, cartID, variantID string) (models.LineItem, error)
-	// ListLineItems sepetin satırlarını oluşturulma sırasıyla döner.
+	// ListLineItems returns the cart's lines in creation order.
 	ListLineItems(ctx context.Context, cartID string) ([]models.LineItem, error)
-	// SetLineItemQuantity satırın adedini MUTLAK değerle yazar.
+	// SetLineItemQuantity writes the line's quantity as an ABSOLUTE value.
 	SetLineItemQuantity(ctx context.Context, cartID, lineID string, quantity int64) (models.LineItem, error)
-	// SetLineItemTotals bir hesap turunun TÜM satır tutarlarını TEK çağrıda
-	// yazar; adede dokunmaz. Yazılamayan satır varsa NotFound döner ve hiçbiri
-	// yazılmamış sayılır (çağrı işlemin içindedir).
+	// SetLineItemTotals writes ALL of the line amounts of one calculation round
+	// in a SINGLE call; it does not touch the quantities. If there is a line
+	// that cannot be written, NotFound is returned and none of them count as
+	// written (the call is inside the transaction).
 	SetLineItemTotals(ctx context.Context, cartID string, lines []models.LineItemTotals) error
-	// SoftDeleteLineItem satırı yumuşak siler.
+	// SoftDeleteLineItem soft deletes the line.
 	SoftDeleteLineItem(ctx context.Context, cartID, lineID string) error
-	// SoftDeleteLineItemsByCart sepetin tüm satırlarını yumuşak siler.
+	// SoftDeleteLineItemsByCart soft deletes all of the cart's lines.
 	SoftDeleteLineItemsByCart(ctx context.Context, cartID string) error
 
-	// UpsertCartAddress sepetin verilen türdeki adresini yazar.
+	// UpsertCartAddress writes the cart's address of the given type.
 	UpsertCartAddress(ctx context.Context, addr models.CartAddress) (models.CartAddress, error)
-	// ListCartAddresses sepetin adreslerini döner.
+	// ListCartAddresses returns the cart's addresses.
 	ListCartAddresses(ctx context.Context, cartID string) ([]models.CartAddress, error)
-	// SoftDeleteCartAddressesByCart sepetin tüm adreslerini yumuşak siler.
+	// SoftDeleteCartAddressesByCart soft deletes all of the cart's addresses.
 	SoftDeleteCartAddressesByCart(ctx context.Context, cartID string) error
 
-	// CreateShippingMethod sepete bir kargo yöntemi ekler.
+	// CreateShippingMethod adds a shipping method to the cart.
 	CreateShippingMethod(ctx context.Context, method models.ShippingMethod) (models.ShippingMethod, error)
-	// ListShippingMethods sepetin kargo yöntemlerini döner.
+	// ListShippingMethods returns the cart's shipping methods.
 	ListShippingMethods(ctx context.Context, cartID string) ([]models.ShippingMethod, error)
-	// SoftDeleteShippingMethod kargo yöntemini yumuşak siler.
+	// SoftDeleteShippingMethod soft deletes the shipping method.
 	SoftDeleteShippingMethod(ctx context.Context, cartID, methodID string) error
-	// SoftDeleteShippingMethodsByCart sepetin tüm kargo yöntemlerini siler.
+	// SoftDeleteShippingMethodsByCart deletes all of the cart's shipping
+	// methods.
 	SoftDeleteShippingMethodsByCart(ctx context.Context, cartID string) error
 }

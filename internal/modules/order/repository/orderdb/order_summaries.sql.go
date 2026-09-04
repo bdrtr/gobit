@@ -21,10 +21,10 @@ type CreateOrderSummaryParams struct {
 	OrderID string
 }
 
-// order_summaries sorguları.
+// order_summaries queries.
 //
-// Özet siparişle BİRLİKTE ve sıfırlanmış olarak doğar; "özeti olmayan sipariş"
-// diye bir durum yoktur.
+// A summary is born TOGETHER WITH the order and zeroed out; there is no such
+// thing as "an order without a summary".
 func (q *Queries) CreateOrderSummary(ctx context.Context, arg CreateOrderSummaryParams) (OrderSummary, error) {
 	row := q.db.QueryRow(ctx, createOrderSummary, arg.ID, arg.OrderID)
 	var i OrderSummary
@@ -73,22 +73,23 @@ type SetOrderSummaryTotalsParams struct {
 	RefundedTotal int64
 }
 
-// SetOrderSummaryTotals ödenen ve iade edilen KÜMÜLATİF tutarları birleştirir.
+// SetOrderSummaryTotals merges the CUMULATIVE paid and refunded amounts.
 //
-// Artımlı (paid_total = paid_total + $2) bir yazma seçilmedi: ödeme olayları
-// en az bir kez teslim edilir (bkz. core/eventbus) ve tekrarlanan bir olay
-// artımlı yazmada tutarı İKİ KEZ eklerdi.
+// An incremental write (paid_total = paid_total + $2) was not chosen: payment
+// events are delivered at least once (see core/eventbus) and a repeated event
+// would add the amount TWICE under an incremental write.
 //
-// Ama düz mutlak yazma da (paid_total = $2) yetmez: en-az-bir-kez teslim SIRA
-// garantisi VERMEZ. Gecikmiş bir tahsilat olayı yeniden işlendiğinde, daha
-// sonra kaydedilmiş bir iadeyi sıfıra yazar ve kimse hata görmezdi. Bu yüzden
-// yazma GREATEST ile birleştirilir: iki tutar da siparişin ÖMÜR BOYU
-// toplamlarıdır ve yalnızca BÜYÜYEBİLİR. Sonuç hem idempotent (aynı değer
-// ikinci kez zararsız) hem de SIRADAN BAĞIMSIZDIR — hangi sırayla gelirse
-// gelsin aynı yere yakınsar ve kaydedilmiş hiçbir tutar kaybolmaz.
+// But a plain absolute write (paid_total = $2) is not enough either: at-least-once
+// delivery gives NO ORDERING guarantee. When a delayed capture event is
+// reprocessed, it would write a refund that was recorded later back to zero and
+// nobody would see an error. That is why the write is merged with GREATEST: both
+// amounts are the order's LIFETIME totals and can only GROW. The result is both
+// idempotent (the same value a second time is harmless) and INDEPENDENT OF ORDER
+// — whichever order they arrive in, it converges to the same place and no
+// recorded amount is lost.
 //
-// Birleştirme order_summaries_refund_within_paid kısıtını KIRAMAZ: her iki
-// girdi de refunded <= paid sağlıyorsa max(r1,r2) <= max(p1,p2) da sağlanır.
+// The merge CANNOT BREAK the order_summaries_refund_within_paid constraint: if
+// both inputs satisfy refunded <= paid, then max(r1,r2) <= max(p1,p2) holds too.
 func (q *Queries) SetOrderSummaryTotals(ctx context.Context, arg SetOrderSummaryTotalsParams) (OrderSummary, error) {
 	row := q.db.QueryRow(ctx, setOrderSummaryTotals, arg.OrderID, arg.PaidTotal, arg.RefundedTotal)
 	var i OrderSummary

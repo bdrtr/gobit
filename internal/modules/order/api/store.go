@@ -6,26 +6,28 @@ import (
 	corehttp "github.com/bdrtr/gobit/internal/core/http"
 )
 
-// Müşteri tarafı YALNIZCA OKUR.
+// The customer side ONLY READS.
 //
-// Siparişi değiştiren tek taraf yönetim ve workflow'lardır; müşterinin sipariş
-// üzerinde yapabileceği işlemler (iptal talebi, iade talebi) kendi iş
-// akışlarıyla sonraki fazlarda gelir. Bugün bir istemciye durum geçişi açmak,
-// ödemesi alınmış bir siparişin müşteri tarafından kapatılabilmesi demek olurdu.
+// The only parties that change an order are administration and the workflows;
+// the operations a customer can perform on an order (cancellation request,
+// return request) arrive with their own workflows in later phases. Opening a
+// status transition to a client today would mean that an order whose payment
+// had already been captured could be closed by the customer.
 
-// storeGetOrder müşterinin siparişini satırları ve özetiyle döner.
+// storeGetOrder returns the customer's order with its line items and summary.
 //
-// # Yetkilendirme
+// # Authorization
 //
-// Siparişin İSTEĞİ YAPAN müşteriye ait olduğunun doğrulanması BURADA YAPILMAZ;
-// auth modülü ve gerçek middleware Faz 8'in işidir (plan Faz 8). O gelene kadar
-// uç, sipariş kimliğini bilen herkese açıktır.
+// Verifying that the order belongs to the REQUESTING customer IS NOT DONE
+// HERE; the auth module and the real middleware are Phase 8's work (plan
+// Phase 8). Until that arrives the endpoint is open to anyone who knows the
+// order id.
 //
-// Eksiklik gizlenmiyor, BEYAN EDİLİYOR: kimliğin kendisi tahmin edilemez
-// (26 karakterlik rastgele gövde) olduğu için bu bir "herkese açık liste"
-// değildir, ama tahmin edilemezlik yetkilendirme yerine geçmez. Bu yüzden
-// müşteri tarafında LİSTE ucu yoktur — bir liste ucu, tek bir kimliği bilmeyi
-// tüm siparişleri okumaya çevirirdi.
+// The gap is not being hidden, it is being DECLARED: because the id itself is
+// unguessable (a 26-character random body) this is not a "public listing", but
+// unguessability is no substitute for authorization. This is why there is no
+// LIST endpoint on the customer side — a list endpoint would turn knowing a
+// single id into reading every order.
 func (h *Handler) storeGetOrder(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 

@@ -132,7 +132,7 @@ func TestRecovererReturnsA500JSONOnAPanic(t *testing.T) {
 
 	log, buf := testLogger()
 	h := corehttp.RequestID(corehttp.Recoverer(log)(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
-		panic("beklenmedik durum: secret-detay-123")
+		panic("unexpected state: secret-detay-123")
 	})))
 
 	req := httptest.NewRequest(http.MethodGet, "/patlayan", http.NoBody)
@@ -153,7 +153,7 @@ func TestRecovererReturnsA500JSONOnAPanic(t *testing.T) {
 	records := logRecords(t, buf)
 	require.Len(t, records, 1)
 	assert.Equal(t, "the handler panicked", records[0]["msg"])
-	assert.Equal(t, "beklenmedik durum: secret-detay-123", records[0]["panic"])
+	assert.Equal(t, "unexpected state: secret-detay-123", records[0]["panic"])
 	assert.Contains(t, records[0]["stack"], "panic", "the stack trace has to be logged")
 	assert.Equal(t, "req_panik", records[0]["request_id"])
 
@@ -397,25 +397,25 @@ func TestRequestLoggerMasksSensitiveQueryKeys(t *testing.T) {
 		masked bool
 	}{
 		// Personal data.
-		"e-posta":                  {key: "email", masked: true},
+		"an e-mail":                {key: "email", masked: true},
 		"an upper-cased e-mail":    {key: "EMail", masked: true},
 		"a compound e-mail filter": {key: "customer_email", masked: true},
-		"telefon":                  {key: "phone", masked: true},
+		"a phone":                  {key: "phone", masked: true},
 		"a Turkish phone":          {key: "telefon", masked: true},
 		"a short phone":            {key: "tel", masked: true},
-		"tc kimlik no":             {key: "tckn", masked: true},
+		"a national id number":     {key: "tckn", masked: true},
 		"a card verification code": {key: "card_cvv", masked: true},
-		// Kimlik bilgisi ve jetonlar.
-		"parola":                  {key: "password", masked: true},
+		// Credentials and tokens.
+		"a password":              {key: "password", masked: true},
 		"an upper-cased password": {key: "PASSWORD", masked: true},
-		"jeton":                   {key: "access_token", masked: true},
+		"a token":                 {key: "access_token", masked: true},
 		"an api key":              {key: "api_key", masked: true},
-		"imza":                    {key: "X-Signature", masked: true},
+		"a signature":             {key: "X-Signature", masked: true},
 		// Deny-list: unrecognized, innocent names pass through for observability.
-		"sayfalama":       {key: "limit", masked: false},
+		"pagination":      {key: "limit", masked: false},
 		"sorting":         {key: "sort", masked: false},
 		"a status filter": {key: "status", masked: false},
-		"bilinmeyen key":  {key: "renk", masked: false},
+		"an unknown key":  {key: "renk", masked: false},
 		// "pin" appears inside "shipping": because short names are not searched for as
 		// substrings, the shipping filter has to stay readable.
 		"a shipping filter": {key: "shipping", masked: false},

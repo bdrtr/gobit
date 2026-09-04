@@ -38,7 +38,7 @@ func TestServerShutsDownOnContextCancel(t *testing.T) {
 	select {
 	case err := <-done:
 		if err != nil {
-			t.Fatalf("Run() = %v, beklenen nil", err)
+			t.Fatalf("Run() = %v, expected nil", err)
 		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("Run() did not return after the ctx was canceled")
@@ -105,12 +105,12 @@ func TestServerServesRequests(t *testing.T) {
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
-		t.Errorf("status = %d, beklenen 200", resp.StatusCode)
+		t.Errorf("status = %d, expected 200", resp.StatusCode)
 	}
 
 	cancel()
 	if err := <-done; err != nil {
-		t.Errorf("Run() = %v, beklenen nil", err)
+		t.Errorf("Run() = %v, expected nil", err)
 	}
 }
 
@@ -185,7 +185,7 @@ func TestServerForceClosesOnShutdownTimeout(t *testing.T) {
 			t.Fatal("Run() returned nil; an error was expected on the timeout")
 		}
 		if !strings.Contains(err.Error(), "the graceful shutdown could not finish") {
-			t.Errorf("beklenmedik hata: %v", err)
+			t.Errorf("unexpected error: %v", err)
 		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("Run() did not return after the timeout")

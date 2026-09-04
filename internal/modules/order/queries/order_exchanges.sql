@@ -1,4 +1,4 @@
--- order_exchanges sorguları (değişim iskeleti; plan Bölüm 6).
+-- order_exchanges queries (exchange skeleton; plan Section 6).
 
 -- name: CreateOrderExchange :one
 INSERT INTO order_exchanges (id, order_id, status, difference_due, note, metadata)

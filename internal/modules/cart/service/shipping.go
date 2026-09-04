@@ -7,30 +7,32 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/cart/models"
 )
 
-// AddShippingMethodInput sepete eklenecek kargo yönteminin alanlarıdır.
+// AddShippingMethodInput holds the fields of the shipping method to be added to
+// the cart.
 type AddShippingMethodInput struct {
-	// Name yöntemin görünen adıdır; ZORUNLUDUR.
+	// Name is the method's display name; it is REQUIRED.
 	Name string
-	// ShippingOptionID fulfillment modülündeki seçeneğin kimliğidir;
-	// OPSİYONELDİR (Faz 7'de seçenek kataloğu gelecek) ve foreign key değildir.
+	// ShippingOptionID is the identifier of the option in the fulfillment
+	// module; it is OPTIONAL (the option catalog arrives in Phase 7) and it is
+	// not a foreign key.
 	ShippingOptionID string
-	// Amount kargo tutarıdır (minor unit); negatif olamaz.
+	// Amount is the shipping amount (minor unit); it cannot be negative.
 	Amount int64
-	// Data sağlayıcıya özgü serbest veridir.
+	// Data is provider-specific free-form data.
 	Data map[string]any
 }
 
-// AddShippingMethod sepete bir kargo yöntemi ekler.
+// AddShippingMethod adds a shipping method to the cart.
 //
-// Bir sepette birden çok yöntem bulunabilir (farklı kargo profilleri ayrı
-// gönderi demektir), ama AYNI kargo seçeneği ikinci kez eklenemez: tekrar,
-// aynı gönderinin iki kez ücretlendirilmesi olurdu ve
-// cart_shipping_methods_cart_option_uniq indeksi bunu errors.Conflict'e
-// çevirir. Seçeneksiz (Faz 5) yöntemler kısıtın dışındadır.
+// A cart may hold more than one method (different shipping profiles mean
+// separate shipments), but the SAME shipping option cannot be added a second
+// time: a repeat would mean charging the same shipment twice, and the
+// cart_shipping_methods_cart_option_uniq index turns that into errors.Conflict.
+// Methods without an option (Phase 5) are outside the constraint.
 //
-// Tutar sepetin shipping_total'ına BURADA toplanmaz; toplama calculate_totals
-// workflow'unun işidir (bkz. [Service.SetTotals]). Ekleme yalnızca sepetin
-// şekil sayacını artırır ve toplamları bayat işaretler.
+// The amount is NOT added into the cart's shipping_total HERE; the summing is
+// the calculate_totals workflow's job (see [Service.SetTotals]). The addition
+// only increments the cart's shape counter and marks the totals stale.
 func (s *Service) AddShippingMethod(ctx context.Context, cartID string, in AddShippingMethodInput) (models.ShippingMethod, error) {
 	name := strings.TrimSpace(in.Name)
 	if err := requireText("name", name); err != nil {
@@ -64,8 +66,8 @@ func (s *Service) AddShippingMethod(ctx context.Context, cartID string, in AddSh
 	return method, nil
 }
 
-// RemoveShippingMethod kargo yöntemini sepetten kaldırır (yumuşak silme).
-// Yöntem sepette yoksa errors.NotFound döner.
+// RemoveShippingMethod removes the shipping method from the cart (soft delete).
+// If the method is not in the cart, errors.NotFound is returned.
 func (s *Service) RemoveShippingMethod(ctx context.Context, cartID, methodID string) error {
 	if err := requireID("shipping_method_id", methodID); err != nil {
 		return err

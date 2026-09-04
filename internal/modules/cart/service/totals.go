@@ -8,152 +8,166 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/cart/models"
 )
 
-// Totals workflow'un hesapladığı sepet toplamlarıdır.
+// Totals are the cart totals the workflow calculated.
 //
-// Tüm alanlar TAM SAYI minor unit'tir (plan Bölüm 8). DiscountTotal POZİTİF
-// verilir ve toplamdan düşülür; negatif bir indirim, indirim değil zamdır.
+// All of the fields are WHOLE NUMBERS in the minor unit (plan Section 8).
+// DiscountTotal is given as a POSITIVE number and is subtracted from the total;
+// a negative discount is not a discount but a surcharge.
 type Totals struct {
-	// Revision hesabın DAYANDIĞI sepet şeklidir ([models.Cart.Revision]);
-	// ZORUNLUDUR.
+	// Revision is the cart shape the calculation RESTS ON
+	// ([models.Cart.Revision]); it is REQUIRED.
 	//
-	// Workflow sepeti okur, hesabını KİLİDİN DIŞINDA yapar ve sonucu bu metotla
-	// yazar; okuma ile yazma arasında sepet değişmiş olabilir. Bu alan, hesabın
-	// hangi şekle ait olduğunu çağıranın BEYAN ETMESİNİ zorunlu kılar
-	// (bkz. [Service.SetTotals]).
+	// The workflow reads the cart, does its calculation OUTSIDE THE LOCK and
+	// writes the result with this method; the cart may have changed between the
+	// read and the write. This field forces the caller to DECLARE which shape
+	// the calculation belongs to (see [Service.SetTotals]).
 	//
-	// Varsayılan sıfır GEÇERLİ bir değerdir — hiç değiştirilmemiş bir sepetin
-	// şeklidir — bu yüzden "verilmedi" diye yorumlanmaz ve eski davranışa
-	// düşülmez: alanı doldurmayı unutan bir çağıran, sepet değişmişse hata alır.
+	// The default zero is a VALID value — it is the shape of a cart that has
+	// never been changed — so it is not interpreted as "not given" and there is
+	// no fallback to the old behavior: a caller who forgets to fill the field in
+	// gets an error if the cart has changed.
 	Revision int64
-	// Subtotal satır ara toplamlarının toplamıdır.
+	// Subtotal is the sum of the line subtotals.
 	Subtotal int64
-	// DiscountTotal toplam indirimdir; pozitif verilir.
+	// DiscountTotal is the total discount; it is given as a positive number.
 	DiscountTotal int64
-	// TaxTotal toplam vergidir.
+	// TaxTotal is the total tax.
 	TaxTotal int64
-	// ShippingTotal toplam kargo tutarıdır.
+	// ShippingTotal is the total shipping amount.
 	ShippingTotal int64
-	// Total ödenecek tutardır:
+	// Total is the amount payable:
 	// Subtotal - DiscountTotal + TaxTotal + ShippingTotal.
 	Total int64
-	// Lines satır başına hesaplanan tutarlardır ve sepetin TÜM satırlarını
-	// KAPSAMALIDIR; her satır TAM BİR KEZ verilir.
+	// Lines are the amounts calculated per line and they MUST COVER ALL of the
+	// cart's lines; each line is given EXACTLY ONCE.
 	//
-	// Eksik bırakılan satır kabul EDİLMEZ (bkz. [Service.SetTotals]). Satırsız
-	// bir sepette bu alan boş kalır; "yalnızca kargoyu yaz" çağrısı ancak o
-	// durumda satırsız yapılabilir.
+	// A line left out is NOT accepted (see [Service.SetTotals]). On a cart
+	// without lines this field stays empty; only in that case can a "write the
+	// shipping only" call be made without lines.
 	Lines []LineTotals
 }
 
-// LineTotals tek bir sepet satırının hesaplanan tutarlarıdır.
+// LineTotals are the calculated amounts of a single cart line.
 //
-// Adet BURADA YOKTUR: adet sepet servisinin, tutarlar workflow'un verisidir.
-// Ayrılık bilinçlidir — bir hesaplama turu adedi sessizce değiştiremez.
+// The quantity IS NOT HERE: the quantity is the cart service's data, the amounts
+// are the workflow's. The separation is deliberate — a calculation round cannot
+// silently change the quantity.
 type LineTotals struct {
-	// LineItemID tutarların ait olduğu satırdır; ZORUNLUDUR.
+	// LineItemID is the line the amounts belong to; it is REQUIRED.
 	LineItemID string
-	// UnitPrice birim fiyattır (minor unit).
+	// UnitPrice is the unit price (minor unit).
 	UnitPrice int64
-	// Subtotal satırın ara toplamıdır: UnitPrice × Quantity.
+	// Subtotal is the line's subtotal: UnitPrice x Quantity.
 	Subtotal int64
-	// DiscountTotal satıra düşen indirimdir; pozitif verilir.
+	// DiscountTotal is the discount falling on the line; it is given as a
+	// positive number.
 	DiscountTotal int64
-	// TaxTotal satıra düşen vergidir.
+	// TaxTotal is the tax falling on the line.
 	TaxTotal int64
-	// Total satırın toplamıdır: Subtotal - DiscountTotal + TaxTotal.
+	// Total is the line's total: Subtotal - DiscountTotal + TaxTotal.
 	Total int64
 }
 
-// SetTotals workflow'un hesapladığı toplamları sepete yazar.
+// SetTotals writes the totals the workflow calculated to the cart.
 //
-// Bu metot, cart modülünün calculate_totals workflow'una açtığı TEK yazma
-// yüzeyidir. Modül fiyatı ya da vergiyi kendisi hesaplamaz (ADR 0006); burada
-// yaptığı şey, gelen sonucun BİR BÜTÜN OLARAK tutarlı olduğunu doğrulamak ve
-// tutarlıysa saklamaktır.
+// This method is the ONLY write surface the cart module opens to the
+// calculate_totals workflow. The module does not calculate the price or the tax
+// itself (ADR 0006); what it does here is to validate that the incoming result
+// is consistent AS A WHOLE and, if it is, to store it.
 //
-// # Çağrı TAM BİR HESAP TURUDUR
+// # A call IS A COMPLETE CALCULATION ROUND
 //
-// SetTotals kısmi güncelleme kabul etmez: [Totals.Lines] sepetin O ANDAKİ tüm
-// satırlarını kapsamalıdır. Sözleşme bilinçli olarak bu kadar dardır, çünkü
-// alternatifi sessizce yanlış tutar üretiyordu: eksik bırakılan satırın SAKLI
-// tutarları olduğu gibi korunuyordu ve yeni açılmış bir satırın saklı ara
-// toplamı SIFIRDIR ([Service.AddLineItem] yalnızca adet ve ilk birim fiyatı
-// yazar). Yani "satırları göndermeyi unutmak" — workflow'un yapabileceği en
-// olası hata — fiyatlanmamış bir sepeti `Subtotal: 0, Total: 0` ile TUTARLI
-// gösteriyor, sepet 0 tutarla tamamlanabiliyordu. Kapsama zorunluluğu bu yolu
-// kapatır: her satır, tutarını çağıranın AÇIKÇA beyan etmesiyle yazılır ve
-// beyan edilen her satır çarpım kontrolünden geçer.
+// SetTotals does not accept a partial update: [Totals.Lines] must cover all of
+// the cart's lines AT THAT MOMENT. The contract is deliberately this narrow,
+// because the alternative was silently producing wrong amounts: the STORED
+// amounts of a line left out were being preserved as they were, and the stored
+// subtotal of a newly opened line is ZERO ([Service.AddLineItem] writes only the
+// quantity and the first unit price). That is, "forgetting to send the lines" —
+// the most likely mistake the workflow can make — was showing an unpriced cart
+// as CONSISTENT with `Subtotal: 0, Total: 0`, and the cart could be completed
+// with a total of 0. The coverage requirement closes that path: every line is
+// written by the caller EXPLICITLY declaring its amount, and every declared line
+// goes through the multiplication check.
 //
-// Bedeli, "yalnızca kargoyu güncelle" gibi bir kısa yolun olmamasıdır. Bedel
-// gerçekte yoktur: sepetin şeklini değiştiren her işlem toplamları zaten
-// bayatlatır ([models.Cart.TotalsStale]) ve calculate_totals'ın baştan
-// koşmasını gerektirir; workflow zaten her turda tüm satırları fiyatlar.
+// The price of this is that there is no shortcut like "update the shipping
+// only". The price does not really exist: every operation that changes the
+// cart's shape already makes the totals stale ([models.Cart.TotalsStale]) and
+// requires calculate_totals to run from the start; the workflow prices all of
+// the lines on every round anyway.
 //
-// # Hesabın dayandığı şekli ÇAĞIRAN bildirir
+// # THE CALLER declares the shape the calculation rests on
 //
-// [Totals.Revision] zorunludur ve sepetin yazma anındaki şekliyle BİREBİR
-// eşleşmelidir; eşleşmezse errors.Conflict (CodeTotalsStale) döner ve hiçbir
-// şey yazılmaz. Damga da çağıranın bildirdiği şekille atılır.
+// [Totals.Revision] is required and it must match the cart's shape at the moment
+// of the write EXACTLY; if it does not match, errors.Conflict (CodeTotalsStale)
+// is returned and nothing is written. The stamp is applied with the shape the
+// caller declared as well.
 //
-// Sebep, hesabın kilidin DIŞINDA yapılmasıdır: workflow önce sepeti okur, sonra
-// pricing ve tax'ı çağırır, en sonunda buraya yazar. Damga yazma anındaki
-// şekilden alınsaydı, okuma ile yazma arasında sepete satır eklenmesi ya da
-// kargo yöntemi seçilmesi BAYAT bir hesabı GÜNCEL diye damgalardı;
-// [Service.MarkCompleted]'ın bayatlık kapısı da açılır ve müşteri sepetindeki
-// maldan azını öderdi. Şekli çağıranın bildirmesiyle o tur reddedilir ve
-// workflow yeniden hesaplar.
+// The reason is that the calculation is done OUTSIDE the lock: the workflow
+// first reads the cart, then calls pricing and tax, and writes here at the very
+// end. Had the stamp been taken from the shape at the moment of the write, a
+// line being added to the cart or a shipping method being chosen between the
+// read and the write would stamp a STALE calculation as CURRENT;
+// [Service.MarkCompleted]'s staleness gate would open too and the customer would
+// pay less than the goods in their cart. With the caller declaring the shape,
+// that round is rejected and the workflow recalculates.
 //
-// # Doğrulama katmanları
+// # Validation layers
 //
-// Sıra ucuzdan pahalıya doğrudur; kilit yalnızca gerekli olduğu kadar tutulur.
+// The order runs from cheap to expensive; the lock is held only as long as it
+// needs to be.
 //
-//  1. Aralık: her tutar negatif olamaz ve üst sınırı aşamaz (taşma koruması).
-//  2. Sepet kimliği: Total = Subtotal - DiscountTotal + TaxTotal + ShippingTotal.
-//     Sağlanmazsa errors.Invalid; workflow'daki bir hesap hatası veritabanına
-//     SESSİZCE yazılamaz.
-//  3. Şekil: [Totals.Revision] sepetin güncel şekline eşit olmalı.
-//  4. Kapsama: sepetin her satırı TAM BİR KEZ verilmiş olmalı; bilinmeyen,
-//     tekrarlanan ya da atlanan satır reddedilir.
-//  5. Satır ara toplamı: Subtotal = UnitPrice × Quantity. Adet sepetin kendi
-//     verisi olduğu için bu çarpımı doğrulayabilen tek yer burasıdır; yanlış
-//     adetle fiyatlanmış bir satır başka hiçbir kapıda yakalanmazdı.
-//  6. Satır kimliği: her satır için Total = Subtotal - DiscountTotal + TaxTotal.
-//  7. Sepet ara toplamı: Subtotal, satırların ara toplamlarının TOPLAMIDIR.
-//     İndirim ve vergi sepet düzeyinde de doğabileceği için (kampanya, kargo
-//     vergisi) yalnızca ara toplam bu kurala tabidir.
+//  1. Range: no amount can be negative and none can exceed the upper bound
+//     (overflow protection).
+//  2. Cart identity: Total = Subtotal - DiscountTotal + TaxTotal + ShippingTotal.
+//     If it does not hold, errors.Invalid; a calculation error in the workflow
+//     cannot be written to the database SILENTLY.
+//  3. Shape: [Totals.Revision] must equal the cart's current shape.
+//  4. Coverage: every line of the cart must have been given EXACTLY ONCE; an
+//     unknown, repeated or skipped line is rejected.
+//  5. Line subtotal: Subtotal = UnitPrice x Quantity. Because the quantity is
+//     the cart's own data, this is the only place that can validate this
+//     multiplication; a line priced with the wrong quantity would be caught at
+//     no other gate.
+//  6. Line identity: for every line, Total = Subtotal - DiscountTotal + TaxTotal.
+//  7. Cart subtotal: Subtotal is the SUM of the line subtotals. Because the
+//     discount and the tax can also arise at the cart level (a campaign,
+//     shipping tax), only the subtotal is subject to this rule.
 //
-// Doğrulamanın tamamı YAZMADAN ÖNCE yapılır: kısmen yazılmış bir hesap turu
-// yoktur. Yazma tek bir işlemde ve sepetin kilidi altında gerçekleşir.
+// All of the validation is done BEFORE THE WRITE: there is no partially written
+// calculation round. The write happens in a single transaction and under the
+// cart's lock.
 //
-// # Yazma TEK deyimdir
+// # The write is a SINGLE statement
 //
-// Satır tutarlarının tamamı [Store.SetLineItemTotals]'a tek çağrıyla verilir ve
-// tek UPDATE olur. Eskiden satır başına bir UPDATE koşuluyordu ve bu, sepetin
-// kilidini satır sayısıyla DOĞRU ORANTILI süre boyunca tutuyordu: kilit o
-// sepete yazan HER akışı sıraya dizdiği için, süre doğrudan sepetin yazma
-// kapasitesidir.
+// All of the line amounts are given to [Store.SetLineItemTotals] in one call and
+// become a single UPDATE. It used to run one UPDATE per line, and that held the
+// cart's lock for a duration DIRECTLY PROPORTIONAL to the number of lines:
+// because the lock queues up EVERY flow that writes to that cart, the duration
+// is directly the cart's write capacity.
 //
-// Ölçüldü (yerel konteyner, TCP gidiş-dönüş ~30 µs, 100 satırlık sepet, kilidin
-// alınmasından SON YAZMANIN dönmesine kadar, p50): satır başına UPDATE 8,0 ms,
-// tek deyim 0,55 ms. Satır sayısı, tavana kadar
-// (workflows/cart.MaxLineItems, bugün 100) artık kilit süresini neredeyse hiç
-// uzatmıyor: 10 satırda 0,28 ms, 100 satırda 0,55 ms.
+// Measured (local container, TCP round trip ~30 µs, a 100-line cart, from the
+// taking of the lock to the return of the LAST WRITE, p50): one UPDATE per line
+// 8.0 ms, a single statement 0.55 ms. The number of lines, up to the ceiling
+// (workflows/cart.MaxLineItems, today 100), now barely lengthens the lock
+// duration at all: 0.28 ms at 10 lines, 0.55 ms at 100 lines.
 //
-// Bu sayılar COMMIT'İN WAL FLUSH'INI İÇERMEZ ve içermedikleri söylenmezse
-// yanıltır: test harness'ının konteyneri fsync=off ile koşuyor. Flush da aynı
-// kilidin altındadır (kilit commit'te bırakılır) ve bu değişiklik ona
-// dokunmaz — kalıcı bir kümede ölçüldü, satır sayısından bağımsız olarak
-// 6,2 ms. Dolayısıyla operatörün göreceği kilit süresi ~14,2 ms'den ~6,8 ms'ye
-// iner: ~2 kat. 14 kat yalnızca yazma evresinin kendi içindeki orandır.
+// These numbers DO NOT INCLUDE THE COMMIT'S WAL FLUSH, and they mislead unless
+// that is stated: the test harness's container runs with fsync=off. The flush is
+// under the same lock too (the lock is released at commit) and this change does
+// not touch it — measured on a durable cluster, 6.2 ms independently of the
+// number of lines. Therefore the lock duration an operator would see goes down
+// from ~14.2 ms to ~6.8 ms: ~2x. The 14x is only the ratio inside the write
+// phase itself.
 //
-// Sepetin kurulma maliyeti yine de satır sayısının KARESİYLE büyür — her ekleme
-// tüm satırları yeniden fiyatlar ve yeniden yazar — ama büyüyen şey artık
-// deyim sayısı değil, tek deyimin dizi boyudur: 100 satırlık bir sepeti kurmak
-// 5.050 UPDATE yerine 100 UPDATE eder. Ölçüldü (aynı fsync=off harness'ı): o
-// sepeti kurmanın SetTotals toplamı 548 ms'den 86 ms'ye indi; kalıcı bir
-// kümede her turun üstüne bir flush bineceği için oran buradan küçüktür.
+// The cost of building the cart still grows with the SQUARE of the number of
+// lines — every addition re-prices and rewrites all of the lines — but what
+// grows is no longer the number of statements, it is the array size of the
+// single statement: building a 100-line cart makes 100 UPDATEs instead of 5,050.
+// Measured (the same fsync=off harness): the SetTotals total of building that
+// cart went down from 548 ms to 86 ms; because on a durable cluster a flush
+// would ride on top of every round, the ratio there is smaller than this one.
 //
-// Tamamlanmış sepete yazılamaz: errors.Conflict döner.
+// A completed cart cannot be written to: errors.Conflict is returned.
 func (s *Service) SetTotals(ctx context.Context, cartID string, in Totals) error {
 	if err := requireID("cart_id", cartID); err != nil {
 		return err
@@ -172,7 +186,7 @@ func (s *Service) SetTotals(ctx context.Context, cartID string, in Totals) error
 		}
 		if cart.Revision != in.Revision {
 			return errors.Conflict(CodeTotalsStale,
-				"hesap sepetin güncel şekline ait değil: hesap %d için yapılmış, sepet %d; calculate_totals yeniden çalıştırılmalı",
+				"the calculation does not belong to the cart's current shape: it was made for %d, the cart is at %d; calculate_totals must be run again",
 				in.Revision, cart.Revision)
 		}
 
@@ -190,7 +204,7 @@ func (s *Service) SetTotals(ctx context.Context, cartID string, in Totals) error
 		}
 		if in.Subtotal != sum {
 			return errors.Invalid(CodeTotalsInconsistent,
-				"sepetin ara toplamı satırların ara toplamlarına eşit olmalı: %d verildi, satırlar %d ediyor",
+				"the cart subtotal must equal the sum of the line subtotals: %d given, the lines come to %d",
 				in.Subtotal, sum)
 		}
 
@@ -210,13 +224,14 @@ func (s *Service) SetTotals(ctx context.Context, cartID string, in Totals) error
 	})
 }
 
-// storeLineTotals servis girdisini deponun beklediği çifte çevirir.
+// storeLineTotals converts the service input into the pair the store expects.
 //
-// Kimlik ile tutarlar TEK yapıda taşınır ve dönüşüm tek döngüde yapılır:
-// kimlikleri ve tutarları ayrı dilimlere bölen bir imza, sıraların ayrışmasına
-// ve yanlış satıra yanlış tutar yazılmasına izin verirdi. Yazma tarafında bunu
-// yakalayacak hiçbir kapı yoktur — sepet toplamı yine tutarlı görünür, yalnızca
-// müşteriden alınan para yanlış olur.
+// The identifier and the amounts are carried in a SINGLE struct and the
+// conversion is done in a single loop: a signature that split the identifiers
+// and the amounts into separate slices would allow the orders to drift apart and
+// the wrong amount to be written to the wrong line. There is no gate on the write
+// side that would catch this — the cart total still looks consistent, only the
+// money taken from the customer is wrong.
 func storeLineTotals(lines []LineTotals) []models.LineItemTotals {
 	out := make([]models.LineItemTotals, len(lines))
 	for i, line := range lines {
@@ -234,15 +249,16 @@ func storeLineTotals(lines []LineTotals) []models.LineItemTotals {
 	return out
 }
 
-// validateCartTotals sepet düzeyindeki tutarların aralığını ve kimliğini
-// doğrular.
+// validateCartTotals validates the range and the identity of the cart-level
+// amounts.
 //
-// Kilit alınmadan ÖNCE çağrılır: kendi içinde tutarsız bir istek için sepeti
-// kilitlemenin anlamı yoktur ve kilit süresi boşuna uzardı.
+// It is called BEFORE the lock is taken: there is no point in locking the cart
+// for a request that is inconsistent with itself, and the lock duration would be
+// lengthened for nothing.
 func validateCartTotals(in Totals) error {
 	if in.Revision < 0 {
 		return errors.Invalid(CodeInvalidInput,
-			"revision negatif olamaz: %d", in.Revision)
+			"revision cannot be negative: %d", in.Revision)
 	}
 	for _, field := range []struct {
 		label string
@@ -259,42 +275,42 @@ func validateCartTotals(in Totals) error {
 		}
 	}
 
-	// İndirim ara toplamı AŞAMAZ.
+	// The discount CANNOT EXCEED the subtotal.
 	//
-	// Kimlik kontrolü (aşağıda) tek başına yetmez: aşırı bir indirim, vergi ve
-	// kargo tarafından yutulduğunda kimlik SAĞLANIR ve toplam negatif bile
-	// olmaz. Örnek: subtotal=1000, discount=3000, shipping=2500 -> total=500.
-	// Müşteri 1000'lik mala 2500'lük kargoyla birlikte 500 öder ve ne servis
-	// ne de carts_totals_consistent kısıtı bunu görür.
+	// The identity check (below) does not suffice on its own: when an excessive
+	// discount is swallowed by the tax and the shipping, the identity HOLDS and
+	// the total does not even go negative. Example: subtotal=1000,
+	// discount=3000, shipping=2500 -> total=500. The customer pays 500 for 1000
+	// worth of goods together with 2500 worth of shipping, and neither the
+	// service nor the carts_totals_consistent constraint sees it.
 	//
-	// Kargo indirimi bu kuralın DIŞINDADIR: kargoyu indirmek isteyen akış
-	// shipping_total'ı düşürerek yapar, indirimi şişirerek değil.
+	// A shipping discount is OUTSIDE this rule: a flow that wants to discount the
+	// shipping does it by lowering shipping_total, not by inflating the discount.
 	if in.DiscountTotal > in.Subtotal {
 		return errors.Invalid(CodeTotalsInconsistent,
-			"indirim ara toplamı aşamaz: discount_total=%d, subtotal=%d",
+			"the discount cannot exceed the subtotal: discount_total=%d, subtotal=%d",
 			in.DiscountTotal, in.Subtotal)
 	}
 
 	expected := in.Subtotal - in.DiscountTotal + in.TaxTotal + in.ShippingTotal
 	if in.Total != expected {
 		return errors.Invalid(CodeTotalsInconsistent,
-			"sepet toplamı tutarsız: total=%d verildi, subtotal(%d) - discount_total(%d) + tax_total(%d) + shipping_total(%d) = %d",
+			"the cart total is inconsistent: total=%d given, subtotal(%d) - discount_total(%d) + tax_total(%d) + shipping_total(%d) = %d",
 			in.Total, in.Subtotal, in.DiscountTotal, in.TaxTotal, in.ShippingTotal, expected)
 	}
 	return nil
 }
 
-// applyLineTotals verilen satır tutarlarını saklı satırlara UYGULAR ve
-// sonucu döner; hiçbir şey yazmaz.
+// applyLineTotals APPLIES the given line amounts to the stored lines and returns
+// the result; it writes nothing.
 //
-// Dönen dilim, yazma yapılsaydı satırların alacağı ara toplamları taşır; sepet
-// ara toplamı kontrolü bunun üzerinden yapılır.
+// The returned slice carries the subtotals the lines would take had the write
+// been done; the cart subtotal check is made over it.
 //
-// Satır kümesi TAM eşleşmelidir: bilinmeyen, tekrarlanan ya da tutarı hiç
-// verilmemiş bir satır burada yakalanır — yazma başlamadan önce. Atlanan
-// satırın reddedilmesi sözleşmenin özüdür; saklı tutarına güvenmek,
-// fiyatlanmamış bir satırı sıfır tutarla geçerli sayardı
-// (bkz. [Service.SetTotals]).
+// The line set must match EXACTLY: an unknown or repeated line, or one whose
+// amount was never given, is caught here — before the write begins. Rejecting a
+// skipped line is the essence of the contract; trusting its stored amount would
+// count an unpriced line as valid with a zero amount (see [Service.SetTotals]).
 func applyLineTotals(stored []models.LineItem, updates []LineTotals) ([]models.LineItem, error) {
 	byID := make(map[string]int, len(stored))
 	for i := range stored {
@@ -311,14 +327,14 @@ func applyLineTotals(stored []models.LineItem, updates []LineTotals) ([]models.L
 		}
 		if _, dup := seen[line.LineItemID]; dup {
 			return nil, errors.Invalid(CodeTotalsInconsistent,
-				"aynı satır için birden çok tutar verildi: %s", line.LineItemID)
+				"more than one amount was given for the same line: %s", line.LineItemID)
 		}
 		seen[line.LineItemID] = struct{}{}
 
 		idx, ok := byID[line.LineItemID]
 		if !ok {
 			return nil, errors.NotFound(CodeLineItemNotFound,
-				"tutar yazılacak satır sepette yok: %s", line.LineItemID)
+				"the line the amount is to be written to is not in the cart: %s", line.LineItemID)
 		}
 		if err := validateLineTotals(line, applied[idx].Quantity); err != nil {
 			return nil, err
@@ -331,20 +347,21 @@ func applyLineTotals(stored []models.LineItem, updates []LineTotals) ([]models.L
 		applied[idx].Total = line.Total
 	}
 
-	// Bilinmeyen ve tekrarlanan kimlikler yukarıda elendiği için, sayıların
-	// eşitliği kapsamanın TAM olduğunu söyler.
+	// Because the unknown and the repeated identifiers were eliminated above, the
+	// equality of the counts tells us that the coverage is COMPLETE.
 	if len(seen) != len(stored) {
 		return nil, errors.Invalid(CodeTotalsInconsistent,
-			"hesap sepetin TÜM satırlarını kapsamalı; tutarı verilmeyen satırlar: %s",
+			"the calculation must cover ALL of the cart's lines; the lines with no amount given: %s",
 			strings.Join(missingIDs(stored, seen), ", "))
 	}
 	return applied, nil
 }
 
-// missingIDs tutarı verilmemiş satırların kimliklerini saklı sıralarıyla döner.
+// missingIDs returns the identifiers of the lines whose amount was not given, in
+// their stored order.
 //
-// Sıranın saklı listeden gelmesi hatayı yeniden üretilebilir kılar: harita
-// üzerinde dönmek aynı girdide farklı sıralı mesajlar üretirdi.
+// The order coming from the stored list makes the error reproducible: walking
+// over a map would produce differently ordered messages for the same input.
 func missingIDs(stored []models.LineItem, seen map[string]struct{}) []string {
 	out := make([]string, 0, len(stored)-len(seen))
 	for i := range stored {
@@ -355,7 +372,7 @@ func missingIDs(stored []models.LineItem, seen map[string]struct{}) []string {
 	return out
 }
 
-// validateLineTotals tek bir satırın tutarlarını doğrular.
+// validateLineTotals validates the amounts of a single line.
 func validateLineTotals(line LineTotals, quantity int64) error {
 	if err := checkAmount("unit_price", line.UnitPrice, models.MaxAmount); err != nil {
 		return err
@@ -380,33 +397,34 @@ func validateLineTotals(line LineTotals, quantity int64) error {
 	}
 	if line.Subtotal != expectedSubtotal {
 		return errors.Invalid(CodeTotalsInconsistent,
-			"satır ara toplamı tutarsız (%s): subtotal=%d verildi, unit_price(%d) × quantity(%d) = %d",
+			"the line subtotal is inconsistent (%s): subtotal=%d given, unit_price(%d) x quantity(%d) = %d",
 			line.LineItemID, line.Subtotal, line.UnitPrice, quantity, expectedSubtotal)
 	}
 
-	// Satır düzeyinde de indirim ara toplamı aşamaz; sepet düzeyindekiyle aynı
-	// gerekçe (vergi, aşırı indirimi yutup kimliği sağlar hâle getirebilir).
+	// At the line level too the discount cannot exceed the subtotal; the same
+	// rationale as at the cart level (the tax can swallow an excessive discount
+	// and make the identity hold).
 	if line.DiscountTotal > line.Subtotal {
 		return errors.Invalid(CodeTotalsInconsistent,
-			"satır indirimi ara toplamı aşamaz (%s): discount_total=%d, subtotal=%d",
+			"the line discount cannot exceed the subtotal (%s): discount_total=%d, subtotal=%d",
 			line.LineItemID, line.DiscountTotal, line.Subtotal)
 	}
 
 	expectedTotal := line.Subtotal - line.DiscountTotal + line.TaxTotal
 	if line.Total != expectedTotal {
 		return errors.Invalid(CodeTotalsInconsistent,
-			"satır toplamı tutarsız (%s): total=%d verildi, subtotal(%d) - discount_total(%d) + tax_total(%d) = %d",
+			"the line total is inconsistent (%s): total=%d given, subtotal(%d) - discount_total(%d) + tax_total(%d) = %d",
 			line.LineItemID, line.Total, line.Subtotal, line.DiscountTotal, line.TaxTotal, expectedTotal)
 	}
 	return nil
 }
 
-// multiplyAmount birim fiyat ile adedi TAŞMADAN çarpar.
+// multiplyAmount multiplies the unit price by the quantity WITHOUT OVERFLOW.
 //
-// Çarpanlar servis doğrulamasından geçtiğinde sonuç zaten [models.MaxTotal]
-// altındadır; kontrol, doğrudan SQL ile yazılmış anormal bir adede karşı son
-// savunmadır. Taşan bir çarpım sessizce negatif bir ara toplam üretir ve
-// tutarlılık kontrolünü YANLIŞLIKLA geçebilirdi.
+// When the factors have passed the service validation the result is already
+// below [models.MaxTotal]; the check is the last defense against an abnormal
+// quantity written directly with SQL. An overflowing multiplication silently
+// produces a negative subtotal and could pass the consistency check BY MISTAKE.
 func multiplyAmount(unitPrice, quantity int64) (int64, error) {
 	if unitPrice == 0 || quantity == 0 {
 		return 0, nil
@@ -422,20 +440,20 @@ func multiplyAmount(unitPrice, quantity int64) (int64, error) {
 	return unitPrice * quantity, nil
 }
 
-// sumSubtotals satırların ara toplamlarını TAŞMADAN toplar.
+// sumSubtotals sums the line subtotals WITHOUT OVERFLOW.
 func sumSubtotals(lines []models.LineItem) (int64, error) {
 	var sum int64
-	// Döngü indeksle gezilir: satır yapısı büyüktür ve değerle kopyalamak her
-	// tur birkaç yüz baytı boşuna taşır.
+	// The loop is walked by index: the line struct is large and copying it by
+	// value would carry a few hundred bytes for nothing on every turn.
 	for i := range lines {
 		subtotal := lines[i].Subtotal
 		if subtotal < 0 {
 			return 0, errors.Invalid(CodeTotalsInconsistent,
-				"satır ara toplamı negatif: %s (%d)", lines[i].ID, subtotal)
+				"the line subtotal is negative: %s (%d)", lines[i].ID, subtotal)
 		}
 		if sum > models.MaxTotal-subtotal {
 			return 0, errors.Invalid(CodeTotalsInconsistent,
-				"satırların ara toplamı sınırı aşıyor (%d)", models.MaxTotal)
+				"the sum of the line subtotals exceeds the limit (%d)", models.MaxTotal)
 		}
 		sum += subtotal
 	}

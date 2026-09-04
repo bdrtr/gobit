@@ -78,6 +78,68 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Değiştirildi
 
+- **`cart`, `order` ve `auth` modüllerinde Türkçe kalmadı** (ADR 0012'nin
+  cırcırı). Doksan beş dosya, paket başına bir ajan olmak üzere on sekiz ajanla
+  iki aşamada çevrildi; içerik defteri 397 dosyadan **302**'ye, yol defteri 16
+  satırdan **9**'a indi.
+
+  **Çeviri biriminin DOSYA değil PAKET olması, merkezî bir adımı tümüyle
+  kaldırdı.** Önceki turlarda paylaşılan tanımlayıcılar dalgadan ÖNCE merkezden
+  yeniden adlandırılmak zorundaydı, çünkü aynı adı iki ajan farklı İngilizceye
+  çevirebiliyordu. Paylaşılan ad, tanımı gereği bir Go paketinin içinde yaşar;
+  birimi pakete çekince o sınıf çakışma imkânsızlaştı ve dalga öncesi tur
+  gerekmedi.
+
+  Yedi test dosyası da yeniden adlandırıldı (`yetki_test.go` →
+  `authorization_test.go`, `cikis_test.go` → `logout_test.go`,
+  `describe_yonetim_internal_test.go` → `describe_admin_internal_test.go`).
+  README'nin `order`'daki iki teste yaptığı atıf, adlar değiştiği için
+  güncellendi; kırılmayı `TestTheTestsMentionedInTheDocsAreReal` yakaladı.
+
+- **Cırcırın GÖREMEDİĞİ bir borç sınıfı bulundu ve kapatıldı: diyakritiksiz
+  Türkçe.** Üç şeritli dedektör Türkçe harfleri, kelime listesini ve AST
+  TANIYICILARINI tarıyor; bir yorum ya da dize sabiti içinde `"limit negatif
+  olamaz: %d"` gibi tümü ASCII yazılmış Türkçe üç şeridin de dışında kalıyor.
+  Sonuç: dedektöre göre TEMİZ olan, dolayısıyla deftere hiç girmeyen, dolayısıyla
+  hiçbir ajana atanmayan dosyalar Türkçe taşımaya devam ediyordu.
+
+  Ölçüldü: defterin temiz saydığı 204 dosyada 508 aday satır; yüksek güvenli
+  sözcüklere daraltıldığında **23 dosyada 100 gerçek satır**. Hepsi çevrildi.
+  Bunların içinde `internal/core/query`, `internal/core/http`,
+  `internal/core/config` ve `internal/modules/fulfillment` gibi ÖNCEKİ TURLARDA
+  "tümüyle İngilizce" ilan edilmiş ağaçlar da vardı — yani ilan, dedektörün
+  körlüğü kadar doğruydu.
+
+  Aynı sınıfın ikinci yüzü: `internal/modules/{file,inventory,notification}`
+  altındaki `Page.normalize` metinleri de bu yolla görünmezdi. Modülleri henüz
+  çevrilmediği için deftere de girmiyorlardı; kendi turları geldiğinde de
+  girmeyeceklerdi. Merkezden çevrildiler.
+
+- **Dedektörün kök listesinden silinmiş bir kök geri kondu.** `turkishStems`
+  içindeki `"ayristir"` girdisi, `5b0778c`'de bir tanımlayıcı yeniden
+  adlandırmasıyla `"parseDir"` hâline gelmişti: liste KAYNAK değil VERİ, ve
+  toplu yeniden adlandırma onu sessizce yedi. Suite yeşil kaldığı için kimse
+  görmedi. Körlüğün bedeli ölçülebilir — `internal/arch/configuration_test.go`
+  o günden beri `ayrisik`/`ayristirmaHatasi` tanımlayıcılarını taşıyordu ve
+  dosya "çevrildi" sayılmıştı. Aynı sınıfın üçüncü tekrarı (öncekiler:
+  `denetim` → `auditCtx`, `gunlukBekle` → `waitForLog`).
+
+- **Cırcırın dışında kalan 19 YAML dosyası çevrildi.** Dedektör `.go`, `.sql`,
+  `.gohtml`, `.md` ve `.graphqls` tarıyor; YAML hiç taranmıyor, dolayısıyla bu
+  borç defterde HİÇ görünmüyordu. On beş `sqlc.yaml`, `gqlgen.yml`,
+  `.golangci.yml`, `.github/workflows/ci.yml` ve `deploy/docker-compose.yml`.
+
+  `.golangci.yml`'de 211 `depguard` `desc:` dizesi ve 16 kural adı çevrildi;
+  kural SAYISI korundu (`solid_test.go` godoc'u 211'i anıyor). CI iş adları da
+  çevrildi (`Entegrasyon` → `Integration`); `main` korumasız olduğu için
+  gerekli statü kontrolü kırılmadı — bakıldı, varsayılmadı.
+
+  İki dize BİLİNÇLİ olarak Türkçe bırakıldı, çünkü ikisi de VERİ: compose
+  dosyasındaki `"çanta"`/`"Çanta"` çifti C locale'in harf katlamasını gösteren
+  örneğin ta kendisi, `misspell` istisna listesi (`paralel`, `mamal`, `adres`)
+  ise davranış taşıyan bir liste — girdi düşürmek çeviri değil davranış
+  değişikliğidir ve cırcır sıfıra indiği güne aittir.
+
 - **`internal/core/workflow` ağacında Türkçe kalmadı** (ADR 0012'nin cırcırı).
   Beş turda motorun kendisi, `pgstore` ve ikisinin TÜM test dosyaları çevrildi;
   defter 715 dosyadan **708**'e indi.

@@ -1,64 +1,68 @@
-// Package order sipariş modülüdür (plan Bölüm 6, Faz 6).
+// Package order is the order module (plan Section 6, Phase 6).
 //
-// Sorumluluğu tek cümleyle: bir siparişin NE olduğunu kalıcı olarak bilmek —
-// hangi numarayla, hangi bölgede, kimin adına, hangi satırlarla ve hangi
-// tutarla verildiği. Modül Order, OrderLineItem, OrderSummary, Return, Exchange
-// ve Claim verisinin TEK yazma yetkilisidir (Prensip 2.3).
+// Its responsibility in one sentence: to know permanently WHAT an order is —
+// under which number, in which region, on whose behalf, with which lines and at
+// which amount it was placed. The module is the SOLE writer of Order,
+// OrderLineItem, OrderSummary, Return, Exchange and Claim data (Principle 2.3).
 //
-// # Neyi bilmez
+// # What it does not know
 //
-// Sepeti bilmez. [service.Service.CreateOrder]'a verilen girdi sepetin ANLIK
-// GÖRÜNTÜSÜDÜR: satırlar ve toplamlar hesaplanmış hâlde gelir. Görüntüyü kuran
-// akış complete_cart WORKFLOW'udur (plan Bölüm 2.5, ADR 0006); bu modül cart'ı
-// çağırmaz ve import etmez.
+// It does not know the cart. The input given to [service.Service.CreateOrder]
+// is the cart's SNAPSHOT: the lines and the totals arrive already computed. The
+// flow that builds the snapshot is the complete_cart WORKFLOW (plan Section
+// 2.5, ADR 0006); this module does not call cart and does not import it.
 //
-// Ödemeyi de bilmez: tahsil edilen ve iade edilen tutar OrderSummary üzerinden,
-// ödeme sonucunu bilen akış tarafından yazılır.
+// It does not know payment either: the captured and the refunded amount are
+// written over OrderSummary, by the flow that knows the payment result.
 //
-// Harcama LİMİTİNİ de bilmez: limit b2b modülünün verisidir ve bu modüle
-// [SpendingPolicyName] adıyla çözülen dar bir yüzeyden gelir. Bildiği şey
-// HARCAMANIN kendisidir — verilmiş siparişlerin toplamı — ve limiti o toplama
-// uygulayan taraf bu yüzden burasıdır; kural, siparişin yazıldığı işlemin
-// içinde uygulandığında yarışa kapanır (bkz. [service.SpendingPolicy]).
-// Bağımlılık OPSİYONELDİR: b2b kurulu değilse hiçbir limit uygulanmaz.
+// It does not know the spending LIMIT either: the limit is the b2b module's
+// data and it reaches this module over a narrow surface resolved under the name
+// [SpendingPolicyName]. What it does know is SPENDING itself — the total of the
+// orders that were placed — and this is why the side that applies the limit to
+// that total is here; the rule closes against the race when it is applied
+// INSIDE the transaction the order is written in (see [service.SpendingPolicy]).
+// The dependency is OPTIONAL: if b2b is not installed, no limit is applied.
 //
-// SİPARİŞİ KİMİN VERDİĞİNİ de bilmez ve öğrenemez. customer_id bu modüle
-// vitrinin BEYANI olarak gelir; mağaza yüzeyinin kimliği bir satış kanalıdır,
-// bir müşteri değil. Harcama limiti o beyana bağlı olduğu için kural
-// müşterisini beyan etmeyen alışverişe UYGULANMAZ — bir açık değil, çerçevenin
-// gömen uygulamaya bıraktığı bir SORUMLULUKTUR ve ADR 0008'de karara
-// bağlanmıştır.
+// It does not know WHO PLACED THE ORDER either, and it cannot find out.
+// customer_id reaches this module as the storefront's CLAIM; the identity of a
+// store surface is a sales channel, not a customer. Because the spending limit
+// hangs on that claim, the rule is NOT APPLIED to a purchase that does not
+// declare its customer — not a hole, but a RESPONSIBILITY the framework leaves
+// to the embedding application, and it is settled in ADR 0008.
 //
-// Modül başka HİÇBİR modülü import etmez (Prensip 2.1/2.4, ADR 0001; kural
-// .golangci.yml içindeki depguard ve internal/arch testleriyle zorlanır).
-// region_id, customer_id, cart_id ve variant_id başka modüllerin kimlikleridir;
-// serbest metin olarak saklanır ve foreign key verilmez (Prensip 2.2).
+// The module imports NO other module (Principle 2.1/2.4, ADR 0001; the rule is
+// enforced by depguard in .golangci.yml and by the internal/arch tests).
+// region_id, customer_id, cart_id and variant_id are other modules' ids; they
+// are stored as free text and are given no foreign key (Principle 2.2).
 //
-// # Dışarıya açtığı yüzeyler
+// # The surfaces it exposes
 //
-//   - "order.service" — modül içi kullanım ve zengin tiplerle okuma.
-//   - "order.interop" — saga'nın ve "order.placed" abonelerinin kullandığı
-//     İLKEL yüzey (ADR 0006). complete_cart siparişi buradan açar ve telafide
-//     buradan iptal eder; bildirim tarafı, olayda BULUNMAYAN e-postayı
-//     [service.Interop.OrderContactJSON] ile buradan okur.
-//   - "order.query" — Query katmanına açılan okuma sağlayıcısı (ADR 0004).
-//   - /admin/v1/orders … — yönetim API'si (okuma + durum geçişleri).
-//   - /store/v1/orders/{id} — müşteri API'si (YALNIZCA okuma).
+//   - "order.service" — in-module use and reading with rich types.
+//   - "order.interop" — the PRIMITIVE surface the saga and the "order.placed"
+//     subscribers use (ADR 0006). complete_cart opens the order here and
+//     cancels it here in compensation; the notification side reads the e-mail
+//     that is NOT in the event here, with [service.Interop.OrderContactJSON].
+//   - "order.query" — the read provider opened to the Query layer (ADR 0004).
+//   - /admin/v1/orders … — the admin API (reads + status transitions).
+//   - /store/v1/orders/{id} — the customer API (READ only).
 //
-// # Yayımladığı olaylar
+// # The events it publishes
 //
-// "order.placed" — sipariş oluşturulduğunda (plan Faz 6 DoD). Yükü ve yayım
-// politikası için bkz. [service.EventOrderPlaced] ve service/events.go.
+// "order.placed" — when an order is created (plan Phase 6 DoD). For its payload
+// and its publication policy see [service.EventOrderPlaced] and
+// service/events.go.
 //
-// # Bildirdiği linkler
+// # The links it declares
 //
-// Yoktur. Siparişin bölgesi ve müşterisi KENDİ SÜTUNLARINDA durur ve her okuma
-// o sütunlardan yapılır (bkz. queries/orders.sql); aynı ilişkiyi bir de link
-// tablosunda tutmak satır yazardı, bakım maliyeti doğururdu ve hiçbir okumaya
-// hizmet etmezdi (bkz. CHANGELOG, "order_customer/order_region kaldırıldı").
-// "order_payment" ve "order_fulfillment" bağlarının sahibi de bu modül
-// değildir: bir link tanımı yalnızca BİR kez bildirilebilir (ADR 0005) ve
-// tanımı, bağın taşıdığı kaydı yazan taraf — payment, fulfillment — bildirir.
+// None. An order's region and customer stand IN THEIR OWN COLUMNS and every
+// read is made from those columns (see queries/orders.sql); holding the same
+// relation in a link table as well would have written a row, would have caused
+// maintenance cost and would have served no read (see the CHANGELOG,
+// "order_customer/order_region removed"). The "order_payment" and
+// "order_fulfillment" bindings are not owned by this module either: a link
+// definition can be declared only ONCE (ADR 0005), and the definition is
+// declared by the side that writes the record the binding carries — payment,
+// fulfillment.
 package order
 
 import (
@@ -82,216 +86,228 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/order/service"
 )
 
-// ModuleName modülün adıdır; container adlarının ve migration sürüm defterinin
-// önekidir.
+// ModuleName is the module's name; it is the prefix of the container names and
+// of the migration version ledger.
 const ModuleName = "order"
 
-// ServiceName modül servisinin container'daki adıdır.
+// ServiceName is the module service's name in the container.
 //
-// Başka modüller ve workflow'lar (ADR 0001/0006 gereği bu paketi import
-// ETMEDEN) sipariş servisine bu adla ulaşır ve KENDİ paketlerinde tanımladıkları
-// dar bir arayüzle kullanır.
+// Other modules and workflows reach the order service under this name (WITHOUT
+// importing this package, as ADR 0001/0006 requires) and use it through a
+// narrow interface they define in THEIR OWN packages.
 const ServiceName = ModuleName + ".service"
 
-// InteropName modüller arası ilkel yüzeyin container'daki adıdır (ADR 0006).
+// InteropName is the cross-module primitive surface's name in the container
+// (ADR 0006).
 //
-// Servisin kendisinden AYRI kaydedilir: servis order'ın zengin tipleriyle
-// konuşur, bu yüzey yalnızca ilkel ve stdlib tipleriyle. complete_cart saga'sı
-// onu kendi tanımladığı dar arayüzle çözer.
+// It is registered SEPARATELY from the service itself: the service speaks in
+// order's rich types, this surface only in primitive and stdlib types. The
+// complete_cart saga resolves it with the narrow interface it defines itself.
 const InteropName = ModuleName + ".interop"
 
-// ProviderName Query sağlayıcısının container'daki adıdır (ADR 0004).
+// ProviderName is the Query provider's name in the container (ADR 0004).
 const ProviderName = service.EntityName + query.ProviderSuffix
 
-// Container'da çözülen çekirdek servislerin adları.
+// The names of the core services resolved from the container.
 const (
 	svcDB       = "core.db"
 	svcEventBus = "core.eventbus"
 )
 
-// SpendingPolicyName harcama limiti kuralını yayımlayan servisin container'daki
-// adıdır (ADR 0001).
+// SpendingPolicyName is the container name of the service that publishes the
+// spending limit rule (ADR 0001).
 //
-// Ad b2b modülünündür ve burada DİZE olarak tekrarlanır; modüller birbirini
-// import edemez (Prensip 2.4) ve tekrarın bedeli izolasyonun kabul edilen
-// bedelidir. Yazım hatası sessiz kalmaz: ad çözülemezse modül b2b'nin hiç
-// kurulmadığı sonucuna varır ve limit uygulanmaz — bu yüzden ad değişirse
-// [spendingPolicy] belgesindeki "kurulu değil" dalı yanlış tetiklenir. Adın tek
-// doğruluk kaynağı b2b modülünün InteropName sabitidir.
+// The name belongs to the b2b module and is repeated here as a STRING; modules
+// cannot import each other (Principle 2.4) and the price of the repetition is
+// the accepted price of isolation. A typo does not stay silent: if the name
+// cannot be resolved, the module concludes that b2b was never installed and no
+// limit is applied — which is why, should the name change, the "not installed"
+// branch in the [spendingPolicy] documentation would fire wrongly. The single
+// source of truth for the name is the b2b module's InteropName constant.
 const SpendingPolicyName = "b2b.interop"
 
-// codeSetupFailed modülün kablolanamadığını bildiren hata kodudur.
+// codeSetupFailed is the error code reporting that the module could not be
+// wired.
 const codeSetupFailed = "order_module_setup_failed"
 
 //go:embed migrations/*.sql
 var migrationFiles embed.FS
 
-// migrationsRoot gömülü dosyaların "migrations/" öneki soyulmuş hâlidir:
-// db.Migrate kaynağı kökten okur.
+// migrationsRoot is the embedded files with the "migrations/" prefix stripped:
+// db.Migrate reads the source from the root.
 var migrationsRoot = mustSub(migrationFiles, "migrations")
 
-// Module order modülünün çekirdeğe sunduğu uygulamadır.
+// Module is the application the order module offers the core.
 type Module struct {
 	svc     *service.Service
 	handler *api.Handler
 }
 
-// Çekirdek sözleşmesinin karşılandığı derleme zamanında sabitlenir.
+// That the core's contract is satisfied is pinned down at compile time.
 var _ module.Module = (*Module)(nil)
 
-// Belgeyi anlatabildiği de derleme zamanında sabitlenir.
+// That it can describe itself for the document is pinned down at compile time
+// too.
 //
-// [openapi.Describer] OPSİYONEL bir arayüzdür ve kompozisyon kökü onu TİP
-// İDDİASIYLA arar; metot adı ya da imzası kayarsa hiçbir şey derlemede
-// kırılmaz, yalnızca siparişin uçları belgeden sessizce düşerdi. Bu satır o
-// sessizliği kapatır.
+// [openapi.Describer] is an OPTIONAL interface and the composition root looks
+// for it with a TYPE ASSERTION; should the method name or signature drift,
+// nothing would break at compile time — only the order endpoints would silently
+// fall out of the document. This line closes that silence.
 var _ openapi.Describer = (*Module)(nil)
 
-// New kaydedilmeye hazır bir order modülü üretir.
+// New produces an order module ready to be registered.
 //
-// Bağımlılıklar burada değil Register sırasında çözülür: container o ana kadar
-// çekirdek servisleri kurmuş olmayabilir.
+// Dependencies are resolved during Register, not here: until that moment the
+// container may not have set up the core services.
 func New() *Module {
 	return &Module{}
 }
 
-// Name modülün benzersiz adını döner.
+// Name returns the module's unique name.
 func (m *Module) Name() string { return ModuleName }
 
-// Migrations modülün migration dosyalarını döner.
+// Migrations returns the module's migration files.
 func (m *Module) Migrations() fs.FS { return migrationsRoot }
 
-// Register servisi, interop yüzeyini ve Query sağlayıcısını container'a
-// kaydeder.
+// Register registers the service, the interop surface and the Query provider
+// with the container.
 //
-// Yalnızca ÇEKİRDEK servisler çözülür; başka modüllerin servisleri bu aşamada
-// henüz kayıtlı olmayabilir (bkz. module.Module belgesi). core.db ve core.eventbus
-// modüller ayağa kalkmadan önce main.go'da hazır değer olarak kaydedildiği için
-// burada çözülmeleri güvenlidir ve eksiklikleri modülün hiç çalışamayacağı bir
-// kurulum hatasıdır — sessizce ertelenmez.
+// Only CORE services are resolved; other modules' services may not be
+// registered yet at this stage (see the module.Module documentation). Because
+// core.db and core.eventbus are registered in main.go as ready values before
+// the modules come up, resolving them here is safe, and their absence is a
+// setup error that makes the module unable to run at all — it is not silently
+// deferred.
 func (m *Module) Register(ctx context.Context, c *container.Container) error {
 	pool, err := container.Resolve[*db.Pool](c, svcDB)
 	if err != nil {
 		return errors.Wrap(err, errors.KindOf(err), codeSetupFailed,
-			"%s modülü veritabanı havuzunu çözemedi (%q)", ModuleName, svcDB)
+			"the %s module could not resolve the database pool (%q)", ModuleName, svcDB)
 	}
-	// Dar arayüzle çözülür: modül yalnızca YAYIMLAR, abone olmaz ve veri yolunu
-	// kapatmaz (bkz. service.EventPublisher).
+	// It is resolved through a narrow interface: the module only PUBLISHES, it
+	// does not subscribe and does not close the bus (see service.EventPublisher).
 	bus, err := container.Resolve[service.EventPublisher](c, svcEventBus)
 	if err != nil {
 		return errors.Wrap(err, errors.KindOf(err), codeSetupFailed,
-			"%s modülü olay veri yolunu çözemedi (%q)", ModuleName, svcEventBus)
+			"the %s module could not resolve the event bus (%q)", ModuleName, svcEventBus)
 	}
 
-	// Uygulama açılışta slog.SetDefault ile yapılandırılmış logger'ı kurar;
-	// modül ayrı bir logger kaydı aramaz.
-	log := slog.Default().With("modul", ModuleName)
+	// At startup the application sets up the logger configured with
+	// slog.SetDefault; the module does not look for a separate logger
+	// registration.
+	log := slog.Default().With("module", ModuleName)
 
 	svc, err := service.New(service.Options{
 		Repo:   repository.New(pool.Pool()),
 		Events: bus,
-		// Harcama kuralının sağlayıcısı BAŞKA bir modüldür ve bu aşamada henüz
-		// kayıtlı olmayabilir; çözüm ilk kullanıma bırakılır
-		// (bkz. [spendingPolicy] ve module.Module belgesi).
+		// The spending rule's provider is ANOTHER module and may not be
+		// registered yet at this stage; the resolution is deferred to first use
+		// (see [spendingPolicy] and the module.Module documentation).
 		Spending: &spendingPolicy{c: c, log: log},
 		Logger:   log,
 	})
 	if err != nil {
 		return errors.Wrap(err, errors.KindOf(err), codeSetupFailed,
-			"%s servisi kurulamadı", ModuleName)
+			"the %s service could not be set up", ModuleName)
 	}
 
 	if err := c.Provide(ServiceName, svc); err != nil {
 		return err
 	}
-	// Modüller arası yüzey AYRI bir adla kaydedilir: servisin kendisi order'ın
-	// zengin tipleriyle konuşur, bu yüzey ise yalnızca ilkel tiplerle (ADR 0006).
+	// The cross-module surface is registered under a SEPARATE name: the service
+	// itself speaks in order's rich types, this surface only in primitive types
+	// (ADR 0006).
 	if err := c.Provide(InteropName, service.NewInterop(svc)); err != nil {
 		return err
 	}
-	// Sağlayıcı adı "<entity>.query" biçimindedir; Query onu bu adla arar ve
-	// Entity() ile adın örtüştüğünü doğrular (ADR 0004).
+	// The provider name has the form "<entity>.query"; Query looks it up under
+	// that name and verifies with Entity() that the name matches (ADR 0004).
 	if err := c.Provide(ProviderName, service.NewQueryProvider(svc)); err != nil {
 		return err
 	}
 
 	m.svc = svc
 	m.handler = api.New(svc)
-	slog.Default().DebugContext(ctx, "order modülü kaydedildi",
-		"servis", ServiceName, "interop", InteropName, "saglayici", ProviderName)
+	slog.Default().DebugContext(ctx, "order module registered",
+		"service", ServiceName, "interop", InteropName, "provider", ProviderName)
 	return nil
 }
 
-// Routes modülün store ve admin uçlarını router'a bağlar.
+// Routes mounts the module's store and admin endpoints on the router.
 //
-// Register çalışmadıysa hiçbir uç bağlanmaz: servisi olmayan bir handler'ın
-// ilk istekte panik üretmesindense ucun hiç var olmaması yeğdir.
+// If Register did not run, no endpoint is mounted: rather than a handler
+// without a service panicking on the first request, it is better for the
+// endpoint not to exist at all.
 func (m *Module) Routes(r chi.Router) {
 	if m.handler == nil {
-		slog.Default().Warn("order modülü Register edilmeden Routes çağrıldı, route bağlanmadı")
+		slog.Default().Warn("Routes was called on the order module without Register, no route was mounted")
 		return
 	}
 	m.handler.Routes(r)
 }
 
-// Describe modülün yönetim uçlarını OpenAPI belgesine işler.
+// Describe writes the module's admin endpoints into the OpenAPI document.
 //
-// Anlatımın kendisi [api.Describe]'dedir: gövde şemaları o paketin dışa kapalı
-// DTO'larından türetilir ve tipleri yalnızca belge uğruna dışa açmak modülün
-// yüzeyini genişletirdi. Hangi uçların anlatılmadığı ve NEDEN anlatılmadığı da
-// orada yazılıdır.
+// The description itself lives in [api.Describe]: the body schemas are derived
+// from that package's unexported DTOs, and exporting those types only for the
+// sake of the document would widen the module's surface. Which endpoints are
+// not described and WHY they are not described is written there too.
 //
-// [Module.Routes]'un tersine Register kontrolü YOKTUR ve gerekmez: şema
-// tiplerden gelir, servisten değil. Kontrol koymak, kurulmamış bir modülün
-// belgesini de sessizce boşaltırdı.
+// Unlike [Module.Routes] there is NO Register check, and none is needed: the
+// schema comes from the types, not from the service. Putting a check there
+// would silently empty the document of an unregistered module too.
 func (m *Module) Describe(d *openapi.Doc) { api.Describe(d) }
 
-// Service modülün servisini döner; Register çağrılmadıysa nil'dir.
+// Service returns the module's service; it is nil if Register was not called.
 //
-// Testler ve gömülü kullanım içindir; normal akışta servis container'dan
-// [ServiceName] adıyla çözülür.
+// It is meant for tests and embedded use; in the normal flow the service is
+// resolved from the container under the name [ServiceName].
 func (m *Module) Service() *service.Service { return m.svc }
 
-// mustSub alt dizini açar; açılamazsa panikler.
+// mustSub opens the subdirectory; it panics if it cannot be opened.
 //
-// Panik burada güvenlidir: dizin adı derleme zamanında sabittir ve go:embed
-// dosyaların varlığını zaten derleme zamanında doğrulamıştır. Yine de sessizce
-// nil dönmek, modülün migration'sız (yani tablosuz) ayağa kalkması demek
-// olurdu; kurulum hatası açıkça patlamalıdır.
+// The panic is safe here: the directory name is constant at compile time and
+// the embed directive has already verified at compile time that the files
+// exist. Returning nil silently would nevertheless mean the module coming up
+// without migrations (that is, without tables); a setup error must blow up
+// openly.
 func mustSub(files embed.FS, dir string) fs.FS {
 	sub, err := fs.Sub(files, dir)
 	if err != nil {
-		panic("order: gömülü migration dizini açılamadı: " + err.Error())
+		panic("order: could not open the embedded migrations directory: " + err.Error())
 	}
 	return sub
 }
 
-// spendingPolicy harcama kuralı sağlayıcısını İLK KULLANIMDA çözen
-// sarmalayıcıdır.
+// spendingPolicy is the wrapper that resolves the spending rule provider ON
+// FIRST USE.
 //
-// # Neden tembel
+// # Why lazily
 //
-// [module.Module] sözleşmesi Register sırasında BAŞKA modüllerin servislerinin
-// henüz kayıtlı olmayabileceğini söyler ve çözümü ilk kullanıma bırakmayı
-// şart koşar. Kayıt sırası da bu yüzden önemsizdir: b2b modülü order'dan sonra
-// eklenmiş olsa bile ilk sipariş açıldığında çoktan kayıtlıdır.
+// The [module.Module] contract says that other modules' services may not be
+// registered yet during Register, and it requires the resolution to be deferred
+// to first use. This is also why the registration order does not matter: even
+// if the b2b module was added after order, by the time the first order is
+// opened it has long been registered.
 //
-// # Neden OPSİYONEL
+// # Why OPTIONAL
 //
-// [SpendingPolicyName] hiç kayıtlı değilse b2b modülü kurulu değildir; o
-// kurulumda "harcama limiti" diye bir kavram yoktur ve doğru cevap kuralsız
-// bir kuraldır. Bu, [emptySpendingRule] gövdesiyle verilir — servise nil
-// vermek yerine sabit bir cevap dönmek, "politika yok" durumunu servisin
-// dallanması gereken bir hâl olmaktan çıkarır.
+// If [SpendingPolicyName] is not registered at all, the b2b module is not
+// installed; in that setup there is no such concept as a "spending limit" and
+// the right answer is a rule without a rule. This is given by the
+// [emptySpendingRule] body — returning a constant answer instead of handing the
+// service a nil keeps "there is no policy" from being a state the service has
+// to branch on.
 //
-// # Ama SESSİZCE devre dışı KALMAZ
+// # But it does NOT go SILENTLY out of service
 //
-// Ad kayıtlı AMA beklenen yüzeyi karşılamıyorsa hata döner ve sipariş açılmaz.
-// Bu ayrım önemlidir: "b2b kurulu değil" bir kurulum kararıdır, "b2b kurulu ama
-// yüzeyi tanınmıyor" ise bir kablolama hatasıdır ve onu sessizce limitsiz
-// alışverişe çevirmek, kuralın en çok gerektiği kurulumda kapanması demek
-// olurdu. Karar BİR KEZ verilir ve saklanır; her siparişte yeniden çözmek aynı
-// hatayı sonsuza kadar tekrar üretmekten başka bir şey yapmazdı.
+// If the name IS registered but does not satisfy the expected surface, an error
+// is returned and no order is opened. This distinction matters: "b2b is not
+// installed" is a setup decision, whereas "b2b is installed but its surface is
+// not recognized" is a wiring error, and silently turning that into unlimited
+// purchasing would mean the rule shutting down in exactly the setup that needs
+// it most. The decision is made ONCE and stored; resolving it again on every
+// order would do nothing but reproduce the same error forever.
 type spendingPolicy struct {
 	c    *container.Container
 	log  *slog.Logger
@@ -300,17 +316,18 @@ type spendingPolicy struct {
 	err  error
 }
 
-// emptySpendingRule "bu müşterinin harcama kuralı yok" cevabının gövdesidir.
+// emptySpendingRule is the body of the answer "this customer has no spending
+// rule".
 //
-// Şema service.SpendingPolicy belgesinde tanımlıdır; "limited" alanı false
-// olduğunda diğer alanlar okunmaz.
+// The schema is defined in the service.SpendingPolicy documentation; when the
+// "limited" field is false the other fields are not read.
 var emptySpendingRule = json.RawMessage(`{"limited":false}`)
 
-// Sarmalayıcının servisin beklediği yüzeyi karşıladığı derleme zamanında
-// sabitlenir.
+// That the wrapper satisfies the surface the service expects is pinned down at
+// compile time.
 var _ service.SpendingPolicy = (*spendingPolicy)(nil)
 
-// SpendingLimitJSON müşterinin harcama kuralını döner.
+// SpendingLimitJSON returns the customer's spending rule.
 func (p *spendingPolicy) SpendingLimitJSON(ctx context.Context, customerID string) (json.RawMessage, error) {
 	p.once.Do(func() { p.resolve(ctx) })
 	if p.err != nil {
@@ -322,27 +339,28 @@ func (p *spendingPolicy) SpendingLimitJSON(ctx context.Context, customerID strin
 	return p.svc.SpendingLimitJSON(ctx, customerID)
 }
 
-// resolve sağlayıcıyı container'dan çözer; sonucu bir kez saklar.
+// resolve resolves the provider from the container; it stores the result once.
 //
-// Kalan dal (ad kayıtlı ama yüzeyi tanınmıyor) KindInternal'a çevrilir;
-// container'ın kendi sınıfı — yanlış tipte kayıt için KindInvalid — olduğu gibi
-// geçirilmez. Devralınsaydı sipariş açan uç 422 ile "gövden geçersiz" derdi,
-// oysa gövde kusursuz olsa da istek aynı sonucu alırdı: arıza SUNUCU
-// YAPILANDIRMASINDADIR. Aynı gerekçe cart modülünün akış sarmalayıcılarında da
-// yazılıdır.
+// The remaining branch (the name is registered but its surface is not
+// recognized) is turned into KindInternal; the container's own kind — KindInvalid
+// for a registration of the wrong type — is not passed through as it is. Were it
+// inherited, the endpoint opening the order would say "your body is invalid"
+// with a 422, whereas the request would get the same result even with a flawless
+// body: the fault is in the SERVER CONFIGURATION. The same rationale is written
+// in the cart module's flow wrappers too.
 func (p *spendingPolicy) resolve(ctx context.Context) {
 	svc, err := container.Resolve[service.SpendingPolicy](p.c, SpendingPolicyName)
 	switch {
 	case err == nil:
 		p.svc = svc
-		p.log.InfoContext(ctx, "harcama limiti kuralı bağlandı",
-			"saglayici", SpendingPolicyName)
+		p.log.InfoContext(ctx, "spending limit rule bound",
+			"provider", SpendingPolicyName)
 	case errors.IsNotFound(err):
-		// Kurulumda b2b modülü yok: limit kavramı da yok.
-		p.log.DebugContext(ctx, "harcama limiti sağlayıcısı kayıtlı değil, limit uygulanmayacak",
-			"saglayici", SpendingPolicyName)
+		// The b2b module is not in the setup: neither is the concept of a limit.
+		p.log.DebugContext(ctx, "the spending limit provider is not registered, no limit will be applied",
+			"provider", SpendingPolicyName)
 	default:
 		p.err = errors.Wrap(err, errors.KindInternal, codeSetupFailed,
-			"%s modülü harcama kuralı sağlayıcısını çözemedi (%q)", ModuleName, SpendingPolicyName)
+			"the %s module could not resolve the spending rule provider (%q)", ModuleName, SpendingPolicyName)
 	}
 }

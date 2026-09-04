@@ -1,9 +1,9 @@
--- order_line_items sorguları.
+-- order_line_items queries.
 --
--- Sipariş satırları YAZILDIKTAN SONRA DEĞİŞMEZ: sipariş, "o an ne satıldı"
--- sorusunun kalıcı yanıtıdır ve satırın adedini ya da tutarını sonradan
--- düzeltmek o yanıtı bozmak olurdu. Bu yüzden burada UPDATE sorgusu YOKTUR;
--- düzeltme yolu iade/değişim kayıtlarıdır.
+-- Order lines ARE IMMUTABLE ONCE WRITTEN: an order is the permanent answer to
+-- the question "what was sold at that moment", and correcting a line's quantity
+-- or amount afterwards would corrupt that answer. That is why there is NO UPDATE
+-- query here; the path to a correction is a return/exchange record.
 
 -- name: CreateOrderLineItem :one
 INSERT INTO order_line_items (

@@ -132,12 +132,12 @@ func TestInputValidation(t *testing.T) {
 		},
 		"invalid input JSON": func() error {
 			exec := validExecution()
-			exec.Input = json.RawMessage(`{bozuk`)
+			exec.Input = json.RawMessage(`{malformed`)
 			return store.Create(ctx, exec)
 		},
 		"invalid output JSON": func() error {
 			exec := validExecution()
-			exec.Output = json.RawMessage(`{bozuk`)
+			exec.Output = json.RawMessage(`{malformed`)
 			return store.Create(ctx, exec)
 		},
 		"idempotency key made of whitespace only": func() error {

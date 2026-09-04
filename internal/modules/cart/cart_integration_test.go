@@ -1,15 +1,15 @@
 //go:build integration
 
-// Bu dosyadaki testler gerçek bir PostgreSQL örneği (dolayısıyla Docker)
-// gerektirir; `make test` hızlı kalsın diye `integration` etiketiyle
-// ayrılmıştır. Çalıştırmak için: make test-integration
+// The tests in this file need a real PostgreSQL instance (and therefore
+// Docker); they are separated behind the `integration` tag so that `make test`
+// stays fast. To run them: make test-integration
 //
-// Birim testleri sahte bir depo ile servisin KARARLARINI kanıtlar. Buradaki
-// testler kararların dayandığı ZEMİNİ kanıtlar: migration'ın geri
-// alınabildiğini, kısıtların gerçekten uygulandığını ve eşzamanlılık
-// iddiasının veritabanı düzeyinde tuttuğunu.
-// Özellikle "eşzamanlı AddLineItem satırları bozmaz" iddiası yalnızca burada,
-// gerçek goroutine'lerle gerçek satır kilitleri üzerinde sınanabilir.
+// The unit tests prove the service's DECISIONS against a fake repository. The
+// tests here prove the GROUND those decisions rest on: that the migration can
+// be rolled back, that the constraints really are enforced, and that the
+// concurrency claim holds at the database level.
+// In particular, the claim that "concurrent AddLineItem does not corrupt the
+// lines" can only be exercised here, over real goroutines and real row locks.
 package cart_test
 
 import (
@@ -29,7 +29,7 @@ import (
 	"github.com/bdrtr/gobit/internal/core/errors"
 	"github.com/bdrtr/gobit/internal/core/link"
 	"github.com/bdrtr/gobit/internal/core/query"
-	"github.com/bdrtr/gobit/internal/modules/cart"
+	cartmod "github.com/bdrtr/gobit/internal/modules/cart"
 	"github.com/bdrtr/gobit/internal/modules/cart/models"
 	"github.com/bdrtr/gobit/internal/modules/cart/repository"
 	"github.com/bdrtr/gobit/internal/modules/cart/service"
@@ -37,14 +37,14 @@ import (
 
 const postgresImage = "postgres:16-alpine"
 
-// modulTablolari modülün sahip olduğu tablolardır; migration testleri bu
-// listeyi kullanır.
-var modulTablolari = []string{
+// moduleTables are the tables the module owns; the migration tests use this
+// list.
+var moduleTables = []string{
 	"carts", "cart_line_items", "cart_addresses", "cart_shipping_methods",
 }
 
-// Test verisinde kullanılan sabitler. Bölge ve müşteri kimlikleri BAŞKA
-// modüllere aittir; bu modül onların varlığını doğrulamaz (Prensip 2.2).
+// Constants used in the test data. The region and customer ids belong to OTHER
+// modules; this module does not verify their existence (Principle 2.2).
 const (
 	testRegionID   = "reg_TEST"
 	testCustomerID = "cust_TEST"
@@ -52,9 +52,9 @@ const (
 )
 
 var (
-	// testPool tüm testlerin paylaştığı havuzdur.
+	// testPool is the pool all the tests share.
 	testPool *db.Pool
-	// testDSN migration çağrıları için bağlantı adresidir.
+	// testDSN is the connection address for the migration calls.
 	testDSN string
 )
 
@@ -62,8 +62,8 @@ func TestMain(m *testing.M) {
 	os.Exit(runWithPostgres(m))
 }
 
-// runWithPostgres tek bir Postgres konteyneri kaldırıp tüm testleri onun
-// üzerinde çalıştırır. os.Exit defer'ları atladığı için ayrı fonksiyondadır.
+// runWithPostgres brings up a single Postgres container and runs all the tests
+// on it. It is a separate function because os.Exit skips defers.
 func runWithPostgres(m *testing.M) int {
 	ctx := context.Background()
 
@@ -75,41 +75,41 @@ func runWithPostgres(m *testing.M) int {
 	)
 	defer func() {
 		if termErr := testcontainers.TerminateContainer(ctr); termErr != nil {
-			fmt.Fprintf(os.Stderr, "postgres konteyneri durdurulamadı: %v\n", termErr)
+			fmt.Fprintf(os.Stderr, "the postgres container could not be stopped: %v\n", termErr)
 		}
 	}()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "postgres konteyneri başlatılamadı: %v\n", err)
+		fmt.Fprintf(os.Stderr, "the postgres container could not be started: %v\n", err)
 		return 1
 	}
 
 	testDSN, err = ctr.ConnectionString(ctx, "sslmode=disable")
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "bağlantı adresi alınamadı: %v\n", err)
+		fmt.Fprintf(os.Stderr, "the connection address could not be obtained: %v\n", err)
 		return 1
 	}
 
 	cfg := db.DefaultConfig(testDSN)
-	// Eşzamanlılık testi onlarca goroutine'i aynı anda koşturur; her işlem bir
-	// bağlantı tuttuğu için havuz varsayılandan geniş açılır.
+	// The concurrency test runs dozens of goroutines at once; because every
+	// transaction holds a connection, the pool is opened wider than the default.
 	cfg.MaxConns = 24
 	testPool, err = db.New(ctx, cfg, nil)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "bağlantı havuzu açılamadı: %v\n", err)
+		fmt.Fprintf(os.Stderr, "the connection pool could not be opened: %v\n", err)
 		return 1
 	}
 	defer testPool.Close()
 
-	if err := db.Migrate(ctx, testDSN, cart.New().Migrations(), cart.ModuleName); err != nil {
-		fmt.Fprintf(os.Stderr, "migration uygulanamadı: %v\n", err)
+	if err := db.Migrate(ctx, testDSN, cartmod.New().Migrations(), cartmod.ModuleName); err != nil {
+		fmt.Fprintf(os.Stderr, "the migration could not be applied: %v\n", err)
 		return 1
 	}
 
 	return m.Run()
 }
 
-// yeniServis gerçek depo üzerinde çalışan bir servis kurar.
-func yeniServis(t *testing.T) *service.Service {
+// newService sets up a service running on a real repository.
+func newService(t *testing.T) *service.Service {
 	t.Helper()
 
 	svc, err := service.New(service.Options{Repo: repository.New(testPool.Pool())})
@@ -117,20 +117,20 @@ func yeniServis(t *testing.T) *service.Service {
 	return svc
 }
 
-// yeniSepet test için misafir sepeti oluşturur.
-func yeniSepet(ctx context.Context, t *testing.T, svc *service.Service) models.Cart {
+// newCart creates a guest cart for the test.
+func newCart(ctx context.Context, t *testing.T, svc *service.Service) models.Cart {
 	t.Helper()
 
-	sepet, err := svc.CreateCart(ctx, service.CreateCartInput{
+	cart, err := svc.CreateCart(ctx, service.CreateCartInput{
 		RegionID:     testRegionID,
 		CurrencyCode: testCurrency,
 	})
 	require.NoError(t, err)
-	return sepet
+	return cart
 }
 
-// tabloVar tablonun veritabanında olup olmadığını bildirir.
-func tabloVar(ctx context.Context, t *testing.T, table string) bool {
+// tableExists reports whether the table is present in the database.
+func tableExists(ctx context.Context, t *testing.T, table string) bool {
 	t.Helper()
 
 	var exists bool
@@ -144,39 +144,39 @@ func tabloVar(ctx context.Context, t *testing.T, table string) bool {
 	return exists
 }
 
-// TestMigrationGeriAlinabilir migration'ın uygulanıp geri alınabildiğini
-// doğrular (plan Bölüm 8: up/down çiftleri, geri alınabilir).
-func TestMigrationGeriAlinabilir(t *testing.T) {
+// TestMigrationCanBeRolledBack verifies that the migration can be applied and
+// rolled back (plan Section 8: up/down pairs, reversible).
+func TestMigrationCanBeRolledBack(t *testing.T) {
 	ctx := context.Background()
-	src := cart.New().Migrations()
+	src := cartmod.New().Migrations()
 
-	for _, table := range modulTablolari {
-		require.True(t, tabloVar(ctx, t, table), "%s başlangıçta var olmalı", table)
+	for _, table := range moduleTables {
+		require.True(t, tableExists(ctx, t, table), "%s must exist at the start", table)
 	}
 
-	require.NoError(t, db.MigrateDown(ctx, testDSN, src, cart.ModuleName, 0))
-	for _, table := range modulTablolari {
-		assert.False(t, tabloVar(ctx, t, table), "%s geri alma sonrası kalmamalı", table)
+	require.NoError(t, db.MigrateDown(ctx, testDSN, src, cartmod.ModuleName, 0))
+	for _, table := range moduleTables {
+		assert.False(t, tableExists(ctx, t, table), "%s must not remain after the rollback", table)
 	}
 
-	require.NoError(t, db.Migrate(ctx, testDSN, src, cart.ModuleName))
-	for _, table := range modulTablolari {
-		assert.True(t, tabloVar(ctx, t, table), "%s yeniden uygulanmalı", table)
+	require.NoError(t, db.Migrate(ctx, testDSN, src, cartmod.ModuleName))
+	for _, table := range moduleTables {
+		assert.True(t, tableExists(ctx, t, table), "%s must be applied again", table)
 	}
 
-	version, dirty, err := db.Version(ctx, testDSN, cart.ModuleName)
+	version, dirty, err := db.Version(ctx, testDSN, cartmod.ModuleName)
 	require.NoError(t, err)
-	assert.False(t, dirty, "yarıda kalmış migration olmamalı")
+	assert.False(t, dirty, "there must be no half-finished migration")
 	assert.Equal(t, uint(1), version)
 }
 
-// TestCrossModuleForeignKeyYok modülün tablolarındaki TÜM foreign key'lerin
-// yine modülün kendi tablolarına gittiğini doğrular (Prensip 2.2).
+// TestNoCrossModuleForeignKeys verifies that ALL the foreign keys in the
+// module's tables go to the module's own tables again (Principle 2.2).
 //
-// Özellikle cart_line_items.variant_id (product), carts.region_id (region) ve
-// carts.customer_id (customer) başka modüllerin kimlikleridir ve foreign key
-// OLAMAZ; bu test o kuralın şemada gerçekten tutulduğunu gösterir.
-func TestCrossModuleForeignKeyYok(t *testing.T) {
+// In particular cart_line_items.variant_id (product), carts.region_id (region)
+// and carts.customer_id (customer) are other modules' ids and CANNOT be foreign
+// keys; this test shows that the rule really holds in the schema.
+func TestNoCrossModuleForeignKeys(t *testing.T) {
 	ctx := context.Background()
 
 	rows, err := testPool.Pool().Query(ctx,
@@ -184,74 +184,74 @@ func TestCrossModuleForeignKeyYok(t *testing.T) {
          FROM pg_constraint c
          JOIN pg_class src ON src.oid = c.conrelid
          JOIN pg_class tgt ON tgt.oid = c.confrelid
-         WHERE c.contype = 'f' AND src.relname = ANY($1)`, modulTablolari)
+         WHERE c.contype = 'f' AND src.relname = ANY($1)`, moduleTables)
 	require.NoError(t, err)
 	defer rows.Close()
 
-	sahipli := make(map[string]struct{}, len(modulTablolari))
-	for _, table := range modulTablolari {
-		sahipli[table] = struct{}{}
+	owned := make(map[string]struct{}, len(moduleTables))
+	for _, table := range moduleTables {
+		owned[table] = struct{}{}
 	}
 
-	var sayi int
+	var count int
 	for rows.Next() {
 		var name, src, tgt string
 		require.NoError(t, rows.Scan(&name, &src, &tgt))
-		assert.Contains(t, sahipli, tgt,
-			"%s kısıtı modül dışına referans veriyor (%s -> %s)", name, src, tgt)
-		sayi++
+		assert.Contains(t, owned, tgt,
+			"the %s constraint references outside the module (%s -> %s)", name, src, tgt)
+		count++
 	}
 	require.NoError(t, rows.Err())
-	assert.Positive(t, sayi, "modül içi foreign key'ler kullanılmalı")
+	assert.Positive(t, count, "in-module foreign keys must be used")
 }
 
-// TestSepetYasamDongusu sepetin uçtan uca akışını doğrular: oluştur -> satır
-// ekle -> adet güncelle -> adresi yaz -> kargo ekle -> toplamları yaz ->
-// tamamla.
-func TestSepetYasamDongusu(t *testing.T) {
+// TestCartLifecycle verifies the cart's end-to-end flow: create -> add line ->
+// update quantity -> write address -> add shipping -> write totals ->
+// complete.
+func TestCartLifecycle(t *testing.T) {
 	ctx := context.Background()
-	svc := yeniServis(t)
+	svc := newService(t)
 
-	sepet, err := svc.CreateCart(ctx, service.CreateCartInput{
+	cart, err := svc.CreateCart(ctx, service.CreateCartInput{
 		RegionID:     testRegionID,
 		CustomerID:   testCustomerID,
-		Email:        "Musteri@Ornek.COM",
+		Email:        "Customer@Example.COM",
 		CurrencyCode: "try",
-		Metadata:     map[string]any{"kanal": "web"},
+		Metadata:     map[string]any{"channel": "web"},
 	})
 	require.NoError(t, err)
-	assert.Equal(t, "TRY", sepet.CurrencyCode)
-	assert.Equal(t, "musteri@ornek.com", sepet.Email)
-	assert.Equal(t, "UTC", sepet.CreatedAt.Location().String(), "zaman UTC olmalı")
-	assert.Equal(t, map[string]any{"kanal": "web"}, sepet.Metadata)
-	assert.False(t, sepet.TotalsStale())
+	assert.Equal(t, "TRY", cart.CurrencyCode)
+	assert.Equal(t, "customer@example.com", cart.Email)
+	assert.Equal(t, "UTC", cart.CreatedAt.Location().String(), "the time must be UTC")
+	assert.Equal(t, map[string]any{"channel": "web"}, cart.Metadata)
+	assert.False(t, cart.TotalsStale())
 
-	item, err := svc.AddLineItem(ctx, sepet.ID, service.AddLineItemInput{
-		VariantID: "variant_A", Title: "Kırmızı Tişört", Quantity: 2, UnitPrice: 1000,
+	item, err := svc.AddLineItem(ctx, cart.ID, service.AddLineItemInput{
+		VariantID: "variant_A", Title: "Red T-Shirt", Quantity: 2, UnitPrice: 1000,
 	})
 	require.NoError(t, err)
 	assert.Equal(t, int64(2), item.Quantity)
 
-	item, err = svc.UpdateLineItemQuantity(ctx, sepet.ID, item.ID, 3)
+	item, err = svc.UpdateLineItemQuantity(ctx, cart.ID, item.ID, 3)
 	require.NoError(t, err)
 	assert.Equal(t, int64(3), item.Quantity)
 
-	_, err = svc.SetShippingAddress(ctx, sepet.ID, service.AddressInput{
-		FirstName: "Ayşe", LastName: "Yılmaz", Address1: "Bağdat Cad. 1",
-		City: "İstanbul", CountryCode: "tr", PostalCode: "34000",
+	_, err = svc.SetShippingAddress(ctx, cart.ID, service.AddressInput{
+		FirstName: "Alice", LastName: "Smith", Address1: "1 Main Street",
+		City: "Istanbul", CountryCode: "tr", PostalCode: "34000",
 	})
 	require.NoError(t, err)
-	_, err = svc.SetBillingAddress(ctx, sepet.ID, service.AddressInput{
-		FirstName: "Ayşe", City: "Ankara", CountryCode: "TR",
-	})
-	require.NoError(t, err)
-
-	method, err := svc.AddShippingMethod(ctx, sepet.ID, service.AddShippingMethodInput{
-		Name: "Standart Kargo", Amount: 2500, Data: map[string]any{"sube": "Kadıköy"},
+	_, err = svc.SetBillingAddress(ctx, cart.ID, service.AddressInput{
+		FirstName: "Alice", City: "Ankara", CountryCode: "TR",
 	})
 	require.NoError(t, err)
 
-	detail, err := svc.GetCart(ctx, sepet.ID)
+	method, err := svc.AddShippingMethod(ctx, cart.ID, service.AddShippingMethodInput{
+		Name: "Standard Shipping", Amount: 2500, Data: map[string]any{"branch": "Kadikoy"},
+	})
+	require.NoError(t, err)
+
+	detail, err := svc.GetCart(ctx, cart.ID)
 	require.NoError(t, err)
 	require.Len(t, detail.Items, 1)
 	require.NotNil(t, detail.ShippingAddress)
@@ -259,13 +259,14 @@ func TestSepetYasamDongusu(t *testing.T) {
 	assert.Equal(t, "TR", detail.ShippingAddress.CountryCode)
 	assert.Equal(t, "Ankara", detail.BillingAddress.City)
 	require.Len(t, detail.ShippingMethods, 1)
-	assert.Equal(t, map[string]any{"sube": "Kadıköy"}, detail.ShippingMethods[0].Data)
-	assert.True(t, detail.TotalsStale(), "hesaplanmadan önce toplamlar bayat olmalı")
+	assert.Equal(t, map[string]any{"branch": "Kadikoy"}, detail.ShippingMethods[0].Data)
+	assert.True(t, detail.TotalsStale(), "before being calculated the totals must be stale")
 
-	// Toplamlar: 3 × 1000 = 3000 ara toplam, %20 vergi 600, kargo 2500.
-	// Hesabın dayandığı şekil ÇAĞIRANDAN gelir; workflow da tam olarak böyle
-	// yapar: önce okur, sonra hesabı okuduğu şekille birlikte yazar.
-	require.NoError(t, svc.SetTotals(ctx, sepet.ID, service.Totals{
+	// The totals: 3 x 1000 = 3000 subtotal, 20% tax 600, shipping 2500.
+	// The shape the calculation rests on comes FROM THE CALLER; the workflow
+	// does exactly this: it reads first, then writes the calculation together
+	// with the shape it read.
+	require.NoError(t, svc.SetTotals(ctx, cart.ID, service.Totals{
 		Revision: detail.Revision,
 		Subtotal: 3000, TaxTotal: 600, ShippingTotal: 2500, Total: 6100,
 		Lines: []service.LineTotals{
@@ -273,31 +274,32 @@ func TestSepetYasamDongusu(t *testing.T) {
 		},
 	}))
 
-	detail, err = svc.GetCart(ctx, sepet.ID)
+	detail, err = svc.GetCart(ctx, cart.ID)
 	require.NoError(t, err)
 	assert.Equal(t, int64(6100), detail.Total)
 	assert.True(t, detail.TotalsConsistent())
 	assert.False(t, detail.TotalsStale())
 	assert.Equal(t, int64(3600), detail.Items[0].Total)
 
-	completed, err := svc.MarkCompleted(ctx, sepet.ID)
+	completed, err := svc.MarkCompleted(ctx, cart.ID)
 	require.NoError(t, err)
 	require.True(t, completed.Completed())
 	assert.Equal(t, "UTC", completed.CompletedAt.Location().String())
 
-	// Tamamlanmış sepet artık değiştirilemez.
-	err = svc.RemoveShippingMethod(ctx, sepet.ID, method.ID)
+	// A completed cart can no longer be changed.
+	err = svc.RemoveShippingMethod(ctx, cart.ID, method.ID)
 	require.Error(t, err)
 	assert.True(t, errors.IsConflict(err),
-		"tamamlanmış sepette kargo yöntemi kaldırılamamalı, aldığı: %v", err)
+		"a shipping method must not be removable on a completed cart, got: %v", err)
 }
 
-// sepetSurumu sepetin veritabanındaki şekil ve toplam sayaçlarını okur.
+// cartRevisions reads the cart's shape and totals counters from the database.
 //
-// Servis üzerinden değil DOĞRUDAN sorguyla okunur: damganın gerçekten hangi
-// değerle yazıldığı burada sınanan şeydir ve servisin kendi okuması aynı
-// varsayımı taşıdığı için bağımsız bir tanık olmazdı.
-func sepetSurumu(ctx context.Context, t *testing.T, cartID string) (revision, totalsRevision int64) {
+// They are read with a DIRECT query rather than through the service: what is
+// under test here is which value the stamp was really written with, and the
+// service's own read would carry the same assumption, so it would not be an
+// independent witness.
+func cartRevisions(ctx context.Context, t *testing.T, cartID string) (revision, totalsRevision int64) {
 	t.Helper()
 
 	require.NoError(t, testPool.Pool().QueryRow(ctx,
@@ -306,446 +308,455 @@ func sepetSurumu(ctx context.Context, t *testing.T, cartID string) (revision, to
 	return revision, totalsRevision
 }
 
-// TestSetTotalsFiyatlanmamisSatirGercekVeritabanindaReddedilir hesabın sepetin
-// TÜM satırlarını kapsaması gerektiğini gerçek Postgres üzerinde doğrular.
+// TestSetTotalsRejectsUnpricedLineOnTheRealDatabase verifies on real Postgres
+// that the calculation must cover ALL of the cart's lines.
 //
-// Sözleşmenin en pahalı ihlali budur: satırları göndermeyi unutan bir hesap
-// turu, sepetin saklı satır tutarları sıfır olduğu için "subtotal 0, total 0"
-// ile TUTARLI görünür. Kapsama zorunlu olmasaydı sepet gerçekten 0 tutarla
-// yazılır ve MarkCompleted'dan da geçerdi.
-func TestSetTotalsFiyatlanmamisSatirGercekVeritabanindaReddedilir(t *testing.T) {
+// This is the costliest violation of the contract: a calculation round that
+// forgets to send the lines looks CONSISTENT with "subtotal 0, total 0",
+// because the cart's stored line amounts are zero. Were the coverage not
+// mandatory, the cart would really be written with a total of 0 and would pass
+// MarkCompleted too.
+func TestSetTotalsRejectsUnpricedLineOnTheRealDatabase(t *testing.T) {
 	ctx := context.Background()
-	svc := yeniServis(t)
-	sepet := yeniSepet(ctx, t, svc)
+	svc := newService(t)
+	cart := newCart(ctx, t, svc)
 
-	item, err := svc.AddLineItem(ctx, sepet.ID, service.AddLineItemInput{
-		VariantID: "variant_FIYATSIZ", Title: "Tişört", Quantity: 3, UnitPrice: 100000,
+	item, err := svc.AddLineItem(ctx, cart.ID, service.AddLineItemInput{
+		VariantID: "variant_UNPRICED", Title: "T-Shirt", Quantity: 3, UnitPrice: 100000,
 	})
 	require.NoError(t, err)
-	revision, totalsRevision := sepetSurumu(ctx, t, sepet.ID)
-	require.NotEqual(t, revision, totalsRevision, "hesaplanmamış sepet bayattır")
+	revision, totalsRevision := cartRevisions(ctx, t, cart.ID)
+	require.NotEqual(t, revision, totalsRevision, "an uncalculated cart is stale")
 
-	err = svc.SetTotals(ctx, sepet.ID, service.Totals{Revision: revision})
+	err = svc.SetTotals(ctx, cart.ID, service.Totals{Revision: revision})
 
-	require.Error(t, err, "fiyatlanmamış satırı atlayan hesap kabul edilmemeli")
+	require.Error(t, err, "a calculation that skips an unpriced line must not be accepted")
 	assert.Equal(t, errors.KindInvalid, errors.KindOf(err))
 	assert.Equal(t, service.CodeTotalsInconsistent, errors.CodeOf(err))
 	assert.Contains(t, err.Error(), item.ID)
 
-	// Ne toplam ne damga yazılmış olmalı.
-	yeniRevision, yeniTotalsRevision := sepetSurumu(ctx, t, sepet.ID)
-	assert.Equal(t, revision, yeniRevision)
-	assert.Equal(t, totalsRevision, yeniTotalsRevision, "reddedilen tur damga atmamalı")
+	// Neither the totals nor the stamp must have been written.
+	newRevision, newTotalsRevision := cartRevisions(ctx, t, cart.ID)
+	assert.Equal(t, revision, newRevision)
+	assert.Equal(t, totalsRevision, newTotalsRevision, "a rejected round must not stamp")
 
-	_, err = svc.MarkCompleted(ctx, sepet.ID)
-	require.Error(t, err, "fiyatlanmamış sepet tamamlanamamalı")
+	_, err = svc.MarkCompleted(ctx, cart.ID)
+	require.Error(t, err, "an unpriced cart must not be completable")
 	assert.Equal(t, service.CodeTotalsStale, errors.CodeOf(err))
 
-	// Satırların tutarı verilince aynı tur geçer.
-	require.NoError(t, svc.SetTotals(ctx, sepet.ID, service.Totals{
+	// Once the lines' amounts are given, the same round passes.
+	require.NoError(t, svc.SetTotals(ctx, cart.ID, service.Totals{
 		Revision: revision, Subtotal: 300000, Total: 300000,
 		Lines: []service.LineTotals{
 			{LineItemID: item.ID, UnitPrice: 100000, Subtotal: 300000, Total: 300000},
 		},
 	}))
-	_, yeniTotalsRevision = sepetSurumu(ctx, t, sepet.ID)
-	assert.Equal(t, revision, yeniTotalsRevision, "damga hesabın dayandığı şekille atılmalı")
+	_, newTotalsRevision = cartRevisions(ctx, t, cart.ID)
+	assert.Equal(t, revision, newTotalsRevision,
+		"the stamp must be made with the shape the calculation rests on")
 }
 
-// TestSetTotalsBayatHesapGercekVeritabanindaReddedilir hesabın dayandığı sepet
-// şeklinin ÇAĞIRANDAN alındığını gerçek Postgres üzerinde doğrular.
+// TestSetTotalsRejectsStaleCalculationOnTheRealDatabase verifies on real
+// Postgres that the cart shape the calculation rests on is taken FROM THE
+// CALLER.
 //
-// Senaryo, cart.go'nun savunduğunu iddia ettiği yarıştır: workflow sepeti okur,
-// hesabını KİLİDİN DIŞINDA yapar, bu arada müşteri sepete satır ekler ve
-// workflow bayat sonucu yazar. Damga yazma anındaki şekilden alınsaydı bayat
-// hesap GÜNCEL diye damgalanır, MarkCompleted'ın bayatlık kapısı açılır ve
-// müşteri sepetindeki maldan azını öderdi.
-func TestSetTotalsBayatHesapGercekVeritabanindaReddedilir(t *testing.T) {
+// The scenario is the race cart.go claims to defend against: the workflow reads
+// the cart, makes its calculation OUTSIDE THE LOCK, meanwhile the customer adds
+// a line to the cart, and the workflow writes the stale result. Were the stamp
+// taken from the shape at write time, the stale calculation would be stamped as
+// CURRENT, MarkCompleted's staleness gate would open and the customer would pay
+// for less than what is in their cart.
+func TestSetTotalsRejectsStaleCalculationOnTheRealDatabase(t *testing.T) {
 	ctx := context.Background()
-	svc := yeniServis(t)
-	sepet := yeniSepet(ctx, t, svc)
+	svc := newService(t)
+	cart := newCart(ctx, t, svc)
 
-	ilk, err := svc.AddLineItem(ctx, sepet.ID, service.AddLineItemInput{
-		VariantID: "variant_BAYAT_A", Title: "Tişört", Quantity: 1,
+	first, err := svc.AddLineItem(ctx, cart.ID, service.AddLineItemInput{
+		VariantID: "variant_STALE_A", Title: "T-Shirt", Quantity: 1,
 	})
 	require.NoError(t, err)
 
-	// Workflow okur ve hesabını BU şekle göre yapar.
-	hesaplanan, err := svc.GetCart(ctx, sepet.ID)
+	// The workflow reads and makes its calculation according to THIS shape.
+	calculated, err := svc.GetCart(ctx, cart.ID)
 	require.NoError(t, err)
 
-	// Müşteri araya girer: ikinci satır eklenir.
-	_, err = svc.AddLineItem(ctx, sepet.ID, service.AddLineItemInput{
-		VariantID: "variant_BAYAT_B", Title: "Pantolon", Quantity: 1,
+	// The customer cuts in: a second line is added.
+	_, err = svc.AddLineItem(ctx, cart.ID, service.AddLineItemInput{
+		VariantID: "variant_STALE_B", Title: "Trousers", Quantity: 1,
 	})
 	require.NoError(t, err)
 
-	err = svc.SetTotals(ctx, sepet.ID, service.Totals{
-		Revision: hesaplanan.Revision, Subtotal: 1000, Total: 1000,
+	err = svc.SetTotals(ctx, cart.ID, service.Totals{
+		Revision: calculated.Revision, Subtotal: 1000, Total: 1000,
 		Lines: []service.LineTotals{
-			{LineItemID: ilk.ID, UnitPrice: 1000, Subtotal: 1000, Total: 1000},
+			{LineItemID: first.ID, UnitPrice: 1000, Subtotal: 1000, Total: 1000},
 		},
 	})
 
-	require.Error(t, err, "bayat hesap kabul edilmemeli")
+	require.Error(t, err, "a stale calculation must not be accepted")
 	assert.Equal(t, errors.KindConflict, errors.KindOf(err))
 	assert.Equal(t, service.CodeTotalsStale, errors.CodeOf(err))
 
-	revision, totalsRevision := sepetSurumu(ctx, t, sepet.ID)
+	revision, totalsRevision := cartRevisions(ctx, t, cart.ID)
 	assert.Equal(t, int64(2), revision)
-	assert.NotEqual(t, revision, totalsRevision, "bayat hesap sepeti TAZE damgalamamalı")
+	assert.NotEqual(t, revision, totalsRevision,
+		"a stale calculation must not stamp the cart as FRESH")
 
-	_, err = svc.MarkCompleted(ctx, sepet.ID)
-	require.Error(t, err, "bayat sepet tamamlanamamalı")
+	_, err = svc.MarkCompleted(ctx, cart.ID)
+	require.Error(t, err, "a stale cart must not be completable")
 	assert.Equal(t, service.CodeTotalsStale, errors.CodeOf(err))
 
-	// Workflow yeniden okuyup yeniden hesaplayınca tur kabul edilir.
-	guncel, err := svc.GetCart(ctx, sepet.ID)
+	// Once the workflow reads again and recalculates, the round is accepted.
+	current, err := svc.GetCart(ctx, cart.ID)
 	require.NoError(t, err)
-	require.NoError(t, svc.SetTotals(ctx, sepet.ID, service.Totals{
-		Revision: guncel.Revision, Subtotal: 1500, Total: 1500,
+	require.NoError(t, svc.SetTotals(ctx, cart.ID, service.Totals{
+		Revision: current.Revision, Subtotal: 1500, Total: 1500,
 		Lines: []service.LineTotals{
-			{LineItemID: guncel.Items[0].ID, UnitPrice: 1000, Subtotal: 1000, Total: 1000},
-			{LineItemID: guncel.Items[1].ID, UnitPrice: 500, Subtotal: 500, Total: 500},
+			{LineItemID: current.Items[0].ID, UnitPrice: 1000, Subtotal: 1000, Total: 1000},
+			{LineItemID: current.Items[1].ID, UnitPrice: 500, Subtotal: 500, Total: 500},
 		},
 	}))
-	_, err = svc.MarkCompleted(ctx, sepet.ID)
+	_, err = svc.MarkCompleted(ctx, cart.ID)
 	require.NoError(t, err)
 }
 
-// TestMarkCompletedSatirsizSepetiReddeder satırsız bir sepetin
-// tamamlanamadığını doğrular.
+// TestMarkCompletedRejectsCartWithoutLines verifies that a cart without lines
+// cannot be completed.
 //
-// Kural, "toplamlar HİÇ hesaplanmadı" deliğini de kapatır: yeni bir sepette
-// revision ve totals_revision'ın ikisi de sıfırdır, yani bayatlık ölçütü
-// sessizdir. Satır eklemek sayacı mutlaka artırdığı için, sayaçları eşit ve
-// SATIRLI bir sepette hesap gerçekten koşmuştur; geriye yalnızca hiç
-// dokunulmamış (ve zorunlu olarak satırsız) sepet kalır.
-func TestMarkCompletedSatirsizSepetiReddeder(t *testing.T) {
+// The rule also closes the "the totals were NEVER calculated" hole: in a new
+// cart both revision and totals_revision are zero, that is, the staleness
+// criterion is silent. Because adding a line always increments the counter, in
+// a cart whose counters are equal and that HAS LINES the calculation really did
+// run; what remains is only the cart that was never touched (and is therefore
+// necessarily without lines).
+func TestMarkCompletedRejectsCartWithoutLines(t *testing.T) {
 	ctx := context.Background()
-	svc := yeniServis(t)
-	sepet := yeniSepet(ctx, t, svc)
+	svc := newService(t)
+	cart := newCart(ctx, t, svc)
 
-	revision, totalsRevision := sepetSurumu(ctx, t, sepet.ID)
-	require.Equal(t, revision, totalsRevision, "yeni sepette bayatlık ölçütü sessizdir")
+	revision, totalsRevision := cartRevisions(ctx, t, cart.ID)
+	require.Equal(t, revision, totalsRevision,
+		"in a new cart the staleness criterion is silent")
 
-	_, err := svc.MarkCompleted(ctx, sepet.ID)
+	_, err := svc.MarkCompleted(ctx, cart.ID)
 
-	require.Error(t, err, "hiç hesaplanmamış sepet tamamlanamamalı")
+	require.Error(t, err, "a cart that was never calculated must not be completable")
 	assert.Equal(t, errors.KindConflict, errors.KindOf(err))
 	assert.Equal(t, service.CodeCartEmpty, errors.CodeOf(err))
 
-	var tamamlandi bool
+	var completed bool
 	require.NoError(t, testPool.Pool().QueryRow(ctx,
-		`SELECT completed_at IS NOT NULL FROM carts WHERE id = $1`, sepet.ID).Scan(&tamamlandi))
-	assert.False(t, tamamlandi, "reddedilen tamamlama damga atmamalı")
+		`SELECT completed_at IS NOT NULL FROM carts WHERE id = $1`, cart.ID).Scan(&completed))
+	assert.False(t, completed, "a rejected completion must not stamp")
 }
 
-// TestUpdateCartMisafirSepetiMusteriyeDevreder misafir sepetin kayıtlı
-// müşteriye devrini ve devrin ardından müşteri süzgecinde göründüğünü
-// doğrular.
-func TestUpdateCartMisafirSepetiMusteriyeDevreder(t *testing.T) {
+// TestUpdateCartTransfersGuestCartToCustomer verifies the transfer of a guest
+// cart to a registered customer and that after the transfer it shows up in the
+// customer filter.
+func TestUpdateCartTransfersGuestCartToCustomer(t *testing.T) {
 	ctx := context.Background()
-	svc := yeniServis(t)
-	sepet := yeniSepet(ctx, t, svc)
-	require.True(t, sepet.Guest())
+	svc := newService(t)
+	cart := newCart(ctx, t, svc)
+	require.True(t, cart.Guest())
 
-	_, err := svc.AddLineItem(ctx, sepet.ID, service.AddLineItemInput{
-		VariantID: "variant_DEVIR", Title: "Tişört", Quantity: 1,
+	_, err := svc.AddLineItem(ctx, cart.ID, service.AddLineItemInput{
+		VariantID: "variant_TRANSFER", Title: "T-Shirt", Quantity: 1,
 	})
 	require.NoError(t, err)
 
-	musteriID := "cust_DEVIR_" + models.NewCartID()
-	posta := "Devir@Ornek.COM"
-	guncel, err := svc.UpdateCart(ctx, sepet.ID, service.UpdateCartInput{
-		Email: &posta, CustomerID: musteriID,
+	customerID := "cust_TRANSFER_" + models.NewCartID()
+	email := "Transfer@Example.COM"
+	updated, err := svc.UpdateCart(ctx, cart.ID, service.UpdateCartInput{
+		Email: &email, CustomerID: customerID,
 	})
 
 	require.NoError(t, err)
-	assert.Equal(t, "devir@ornek.com", guncel.Email)
-	assert.Equal(t, musteriID, guncel.CustomerID)
+	assert.Equal(t, "transfer@example.com", updated.Email)
+	assert.Equal(t, customerID, updated.CustomerID)
 
-	// Sepet artık müşteri süzgecinde görünür ve satırlarını korumuştur.
-	_, count, err := svc.ListCarts(ctx, service.ListCartsInput{CustomerID: &musteriID})
+	// The cart now shows up in the customer filter and has kept its lines.
+	_, count, err := svc.ListCarts(ctx, service.ListCartsInput{CustomerID: &customerID})
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), count)
 
-	detail, err := svc.GetCart(ctx, sepet.ID)
+	detail, err := svc.GetCart(ctx, cart.ID)
 	require.NoError(t, err)
-	require.Len(t, detail.Items, 1, "devir satırları kaybetmemeli")
+	require.Len(t, detail.Items, 1, "the transfer must not lose the lines")
 
-	// Sepet BAŞKA bir müşteriye geçirilemez.
-	_, err = svc.UpdateCart(ctx, sepet.ID, service.UpdateCartInput{CustomerID: "cust_BASKA"})
+	// The cart cannot be handed over to ANOTHER customer.
+	_, err = svc.UpdateCart(ctx, cart.ID, service.UpdateCartInput{CustomerID: "cust_OTHER"})
 	require.Error(t, err)
 	assert.Equal(t, errors.KindConflict, errors.KindOf(err))
 	assert.Equal(t, service.CodeCustomerMismatch, errors.CodeOf(err))
 }
 
-// TestMisafirVeKayitliMusteriSepeti iki senaryonun da çalıştığını ve
-// birbirinden ayırt edilebildiğini doğrular.
-func TestMisafirVeKayitliMusteriSepeti(t *testing.T) {
+// TestGuestAndRegisteredCustomerCarts verifies that both scenarios work and can
+// be told apart from each other.
+func TestGuestAndRegisteredCustomerCarts(t *testing.T) {
 	ctx := context.Background()
-	svc := yeniServis(t)
+	svc := newService(t)
 
-	misafir, err := svc.CreateCart(ctx, service.CreateCartInput{
-		RegionID: testRegionID, CurrencyCode: testCurrency, Email: "misafir@ornek.com",
+	guest, err := svc.CreateCart(ctx, service.CreateCartInput{
+		RegionID: testRegionID, CurrencyCode: testCurrency, Email: "guest@example.com",
 	})
 	require.NoError(t, err)
-	assert.True(t, misafir.Guest())
+	assert.True(t, guest.Guest())
 
-	musteriID := "cust_" + misafir.ID
-	kayitli, err := svc.CreateCart(ctx, service.CreateCartInput{
-		RegionID: testRegionID, CustomerID: musteriID, CurrencyCode: testCurrency,
+	customerID := "cust_" + guest.ID
+	registered, err := svc.CreateCart(ctx, service.CreateCartInput{
+		RegionID: testRegionID, CustomerID: customerID, CurrencyCode: testCurrency,
 	})
 	require.NoError(t, err)
-	assert.False(t, kayitli.Guest())
+	assert.False(t, registered.Guest())
 
-	// Misafir sepetinin müşteri sütunu BOŞ kalır; kayıtlı sepetinki dolar.
-	assert.Empty(t, misafir.CustomerID, "misafir sepetinin müşterisi olmamalı")
-	assert.Equal(t, musteriID, kayitli.CustomerID)
+	// The guest cart's customer column stays EMPTY; the registered one's fills.
+	assert.Empty(t, guest.CustomerID, "a guest cart must have no customer")
+	assert.Equal(t, customerID, registered.CustomerID)
 
-	// Süzgeç ikisini ayırır.
-	_, count, err := svc.ListCarts(ctx, service.ListCartsInput{CustomerID: &musteriID})
+	// The filter separates the two.
+	_, count, err := svc.ListCarts(ctx, service.ListCartsInput{CustomerID: &customerID})
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), count)
 }
 
-// TestAyniBolgedeCokSepetAcilabilir bir bölge ve müşteri için birden çok
-// sepet açılabildiğini doğrular.
+// TestManyCartsCanBeOpenedInTheSameRegion verifies that more than one cart can
+// be opened for a region and a customer.
 //
-// Bu, sepetin tabiatıdır: bir müşterinin zaman içinde birden çok sepeti olur ve
-// bir bölgede binlerce sepet bulunur. Şemanın herhangi bir yerinde bölge ya da
-// müşteri başına TEKİLLİK dayatan bir indeks bu testi düşürür.
-func TestAyniBolgedeCokSepetAcilabilir(t *testing.T) {
+// This is the cart's nature: a customer has more than one cart over time, and a
+// region holds thousands of carts. An index anywhere in the schema imposing
+// UNIQUENESS per region or per customer brings this test down.
+func TestManyCartsCanBeOpenedInTheSameRegion(t *testing.T) {
 	ctx := context.Background()
-	svc := yeniServis(t)
-	musteriID := "cust_COK_" + models.NewCartID()
+	svc := newService(t)
+	customerID := "cust_MANY_" + models.NewCartID()
 
 	for range 3 {
 		_, err := svc.CreateCart(ctx, service.CreateCartInput{
-			RegionID: testRegionID, CustomerID: musteriID, CurrencyCode: testCurrency,
+			RegionID: testRegionID, CustomerID: customerID, CurrencyCode: testCurrency,
 		})
-		require.NoError(t, err, "aynı bölge ve müşteri için ikinci sepet açılabilmeli")
+		require.NoError(t, err,
+			"a second cart must be openable for the same region and customer")
 	}
 
-	_, count, err := svc.ListCarts(ctx, service.ListCartsInput{CustomerID: &musteriID})
+	_, count, err := svc.ListCarts(ctx, service.ListCartsInput{CustomerID: &customerID})
 	require.NoError(t, err)
 	assert.Equal(t, int64(3), count)
 }
 
-// TestEszamanliAddLineItemSatirlariBozmaz aynı sepete aynı anda yapılan
-// eklemelerin satırları bozmadığını doğrular.
+// TestConcurrentAddLineItemDoesNotCorruptLines verifies that additions made to
+// the same cart at the same time do not corrupt the lines.
 //
-// Aynı varyant için yarışan çağrılar TEK satır üretmeli ve adetler
-// KAYBOLMADAN toplanmalıdır. Sepet kilidi olmasaydı iki çağrı da "satır yok"
-// okur, ikisi de INSERT dener ve biri benzersiz indekse çarpardı (ya da indeks
-// olmasaydı iki satır oluşurdu).
-func TestEszamanliAddLineItemSatirlariBozmaz(t *testing.T) {
+// Racing calls for the same variant must produce ONE line and the quantities
+// must add up WITHOUT BEING LOST. Without the cart lock both calls would read
+// "no line", both would try an INSERT and one would hit the unique index (or,
+// had there been no index, two lines would be created).
+func TestConcurrentAddLineItemDoesNotCorruptLines(t *testing.T) {
 	ctx := context.Background()
-	svc := yeniServis(t)
-	sepet := yeniSepet(ctx, t, svc)
+	svc := newService(t)
+	cart := newCart(ctx, t, svc)
 
-	const yarismaci = 12
-	basla := make(chan struct{})
-	sonuclar := make([]error, yarismaci)
+	const racers = 12
+	start := make(chan struct{})
+	results := make([]error, racers)
 
 	var wg sync.WaitGroup
-	for i := range yarismaci {
+	for i := range racers {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			<-basla
-			_, err := svc.AddLineItem(ctx, sepet.ID, service.AddLineItemInput{
-				VariantID: "variant_YARIS", Title: "Tişört", Quantity: 1, UnitPrice: 1000,
+			<-start
+			_, err := svc.AddLineItem(ctx, cart.ID, service.AddLineItemInput{
+				VariantID: "variant_RACE", Title: "T-Shirt", Quantity: 1, UnitPrice: 1000,
 			})
-			sonuclar[i] = err
+			results[i] = err
 		}(i)
 	}
-	close(basla)
+	close(start)
 	wg.Wait()
 
-	for i, err := range sonuclar {
-		require.NoError(t, err, "eşzamanlı ekleme %d hata vermemeli", i)
+	for i, err := range results {
+		require.NoError(t, err, "concurrent addition %d must not error", i)
 	}
 
-	detail, err := svc.GetCart(ctx, sepet.ID)
+	detail, err := svc.GetCart(ctx, cart.ID)
 	require.NoError(t, err)
-	require.Len(t, detail.Items, 1, "aynı varyant tek satırda toplanmalı")
-	assert.Equal(t, int64(yarismaci), detail.Items[0].Quantity,
-		"hiçbir adet kaybolmamalı")
-	assert.Equal(t, int64(yarismaci), detail.Revision,
-		"her yapısal değişiklik şekil sayacını bir artırmalı")
+	require.Len(t, detail.Items, 1, "the same variant must be collected on one line")
+	assert.Equal(t, int64(racers), detail.Items[0].Quantity,
+		"no quantity must be lost")
+	assert.Equal(t, int64(racers), detail.Revision,
+		"every structural change must increment the shape counter by one")
 }
 
-// TestEszamanliFarkliVaryantEklemesi farklı varyantların eşzamanlı eklenmesinin
-// hepsini kaydettiğini doğrular.
-func TestEszamanliFarkliVaryantEklemesi(t *testing.T) {
+// TestConcurrentDifferentVariantAdditions verifies that concurrent additions of
+// different variants record all of them.
+func TestConcurrentDifferentVariantAdditions(t *testing.T) {
 	ctx := context.Background()
-	svc := yeniServis(t)
-	sepet := yeniSepet(ctx, t, svc)
+	svc := newService(t)
+	cart := newCart(ctx, t, svc)
 
-	const yarismaci = 10
-	basla := make(chan struct{})
-	sonuclar := make([]error, yarismaci)
+	const racers = 10
+	start := make(chan struct{})
+	results := make([]error, racers)
 
 	var wg sync.WaitGroup
-	for i := range yarismaci {
+	for i := range racers {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			<-basla
-			_, err := svc.AddLineItem(ctx, sepet.ID, service.AddLineItemInput{
+			<-start
+			_, err := svc.AddLineItem(ctx, cart.ID, service.AddLineItemInput{
 				VariantID: fmt.Sprintf("variant_%02d", i),
-				Title:     fmt.Sprintf("Ürün %d", i),
+				Title:     fmt.Sprintf("Product %d", i),
 				Quantity:  int64(i + 1),
 			})
-			sonuclar[i] = err
+			results[i] = err
 		}(i)
 	}
-	close(basla)
+	close(start)
 	wg.Wait()
 
-	for i, err := range sonuclar {
-		require.NoError(t, err, "eşzamanlı ekleme %d hata vermemeli", i)
+	for i, err := range results {
+		require.NoError(t, err, "concurrent addition %d must not error", i)
 	}
 
-	detail, err := svc.GetCart(ctx, sepet.ID)
+	detail, err := svc.GetCart(ctx, cart.ID)
 	require.NoError(t, err)
-	assert.Len(t, detail.Items, yarismaci, "her varyant kendi satırını almalı")
+	assert.Len(t, detail.Items, racers, "every variant must get its own line")
 }
 
-// TestTamamlanmisSepeteYazmaReddedilir tamamlanmış bir sepette tüm yazma
-// yollarının veritabanı düzeyinde de reddedildiğini doğrular.
-func TestTamamlanmisSepeteYazmaReddedilir(t *testing.T) {
+// TestWritingToCompletedCartIsRejected verifies that on a completed cart all
+// the write paths are rejected at the database level too.
+func TestWritingToCompletedCartIsRejected(t *testing.T) {
 	ctx := context.Background()
-	svc := yeniServis(t)
-	sepet := yeniSepet(ctx, t, svc)
+	svc := newService(t)
+	cart := newCart(ctx, t, svc)
 
-	item, err := svc.AddLineItem(ctx, sepet.ID, service.AddLineItemInput{
-		VariantID: "variant_TAMAM", Title: "Tişört", Quantity: 1,
+	item, err := svc.AddLineItem(ctx, cart.ID, service.AddLineItemInput{
+		VariantID: "variant_DONE", Title: "T-Shirt", Quantity: 1,
 	})
 	require.NoError(t, err)
-	guncel, err := svc.GetCart(ctx, sepet.ID)
+	current, err := svc.GetCart(ctx, cart.ID)
 	require.NoError(t, err)
-	require.NoError(t, svc.SetTotals(ctx, sepet.ID, service.Totals{
-		Revision: guncel.Revision,
+	require.NoError(t, svc.SetTotals(ctx, cart.ID, service.Totals{
+		Revision: current.Revision,
 		Subtotal: 1500, Total: 1500,
 		Lines: []service.LineTotals{
 			{LineItemID: item.ID, UnitPrice: 1500, Subtotal: 1500, Total: 1500},
 		},
 	}))
-	_, err = svc.MarkCompleted(ctx, sepet.ID)
+	_, err = svc.MarkCompleted(ctx, cart.ID)
 	require.NoError(t, err)
 
-	yazmalar := map[string]func() error{
+	writes := map[string]func() error{
 		"AddLineItem": func() error {
-			_, err := svc.AddLineItem(ctx, sepet.ID, service.AddLineItemInput{
-				VariantID: "variant_BASKA", Title: "Pantolon", Quantity: 1,
+			_, err := svc.AddLineItem(ctx, cart.ID, service.AddLineItemInput{
+				VariantID: "variant_OTHER", Title: "Trousers", Quantity: 1,
 			})
 			return err
 		},
 		"UpdateLineItemQuantity": func() error {
-			_, err := svc.UpdateLineItemQuantity(ctx, sepet.ID, item.ID, 5)
+			_, err := svc.UpdateLineItemQuantity(ctx, cart.ID, item.ID, 5)
 			return err
 		},
-		"RemoveLineItem": func() error { return svc.RemoveLineItem(ctx, sepet.ID, item.ID) },
+		"RemoveLineItem": func() error { return svc.RemoveLineItem(ctx, cart.ID, item.ID) },
 		"SetShippingAddress": func() error {
-			_, e := svc.SetShippingAddress(ctx, sepet.ID, service.AddressInput{City: "İzmir"})
+			_, e := svc.SetShippingAddress(ctx, cart.ID, service.AddressInput{City: "Izmir"})
 			return e
 		},
 		"AddShippingMethod": func() error {
-			_, e := svc.AddShippingMethod(ctx, sepet.ID, service.AddShippingMethodInput{Name: "Hızlı"})
+			_, e := svc.AddShippingMethod(ctx, cart.ID, service.AddShippingMethodInput{Name: "Express"})
 			return e
 		},
 		"SetTotals": func() error {
-			return svc.SetTotals(ctx, sepet.ID, service.Totals{
-				Revision: guncel.Revision, Subtotal: 1500, Total: 1500,
+			return svc.SetTotals(ctx, cart.ID, service.Totals{
+				Revision: current.Revision, Subtotal: 1500, Total: 1500,
 			})
 		},
-		"DeleteCart":    func() error { return svc.DeleteCart(ctx, sepet.ID) },
-		"MarkCompleted": func() error { _, e := svc.MarkCompleted(ctx, sepet.ID); return e },
+		"DeleteCart":    func() error { return svc.DeleteCart(ctx, cart.ID) },
+		"MarkCompleted": func() error { _, e := svc.MarkCompleted(ctx, cart.ID); return e },
 	}
 
-	for ad, yazma := range yazmalar {
-		t.Run(ad, func(t *testing.T) {
-			err := yazma()
-			require.Error(t, err, "%s tamamlanmış sepette hata dönmeli", ad)
+	for name, write := range writes {
+		t.Run(name, func(t *testing.T) {
+			err := write()
+			require.Error(t, err, "%s must return an error on a completed cart", name)
 			assert.Equal(t, errors.KindConflict, errors.KindOf(err),
-				"%s Conflict dönmeli, aldığı: %v", ad, err)
+				"%s must return Conflict, got: %v", name, err)
 		})
 	}
 
-	detail, err := svc.GetCart(ctx, sepet.ID)
+	detail, err := svc.GetCart(ctx, cart.ID)
 	require.NoError(t, err)
 	require.Len(t, detail.Items, 1)
-	assert.Equal(t, int64(1), detail.Items[0].Quantity, "sepet gerçekten değişmemeli")
+	assert.Equal(t, int64(1), detail.Items[0].Quantity, "the cart really must not change")
 	assert.Equal(t, int64(1500), detail.Total)
 }
 
-// TestVeritabaniToplamKimliginiZorlar toplam kimliğinin veritabanı kısıtıyla da
-// korunduğunu doğrular.
+// TestDatabaseEnforcesTotalsIdentity verifies that the totals identity is
+// protected by a database constraint too.
 //
-// Servis aynı kontrolü daha okunabilir bir hatayla önce yapar; buradaki kısıt
-// SON SAVUNMADIR ve doğrudan SQL ile yapılan bir müdahaleyi de kapsar.
-func TestVeritabaniToplamKimliginiZorlar(t *testing.T) {
+// The service makes the same check first, with a more readable error; the
+// constraint here is the LAST DEFENSE and it also covers an intervention made
+// directly with SQL.
+func TestDatabaseEnforcesTotalsIdentity(t *testing.T) {
 	ctx := context.Background()
-	svc := yeniServis(t)
-	sepet := yeniSepet(ctx, t, svc)
+	svc := newService(t)
+	cart := newCart(ctx, t, svc)
 
 	_, err := testPool.Pool().Exec(ctx,
-		`UPDATE carts SET subtotal = 1000, total = 999 WHERE id = $1`, sepet.ID)
+		`UPDATE carts SET subtotal = 1000, total = 999 WHERE id = $1`, cart.ID)
 
-	require.Error(t, err, "kimliği bozan doğrudan güncelleme reddedilmeli")
+	require.Error(t, err, "a direct update that breaks the identity must be rejected")
 	assert.Contains(t, err.Error(), "carts_totals_consistent")
 }
 
-// TestVeritabaniSatirBenzersizligiZorlar aynı varyanttan ikinci satırın
-// veritabanı düzeyinde de açılamadığını doğrular.
-func TestVeritabaniSatirBenzersizligiZorlar(t *testing.T) {
+// TestDatabaseEnforcesLineUniqueness verifies that a second line for the same
+// variant cannot be opened at the database level either.
+func TestDatabaseEnforcesLineUniqueness(t *testing.T) {
 	ctx := context.Background()
-	svc := yeniServis(t)
-	sepet := yeniSepet(ctx, t, svc)
+	svc := newService(t)
+	cart := newCart(ctx, t, svc)
 
-	_, err := svc.AddLineItem(ctx, sepet.ID, service.AddLineItemInput{
-		VariantID: "variant_UNIQ", Title: "Tişört", Quantity: 1,
+	_, err := svc.AddLineItem(ctx, cart.ID, service.AddLineItemInput{
+		VariantID: "variant_UNIQ", Title: "T-Shirt", Quantity: 1,
 	})
 	require.NoError(t, err)
 
 	_, err = testPool.Pool().Exec(ctx,
 		`INSERT INTO cart_line_items (id, cart_id, variant_id, title, quantity)
-         VALUES ($1, $2, 'variant_UNIQ', 'Kopya', 1)`,
-		models.NewLineItemID(), sepet.ID)
+         VALUES ($1, $2, 'variant_UNIQ', 'Copy', 1)`,
+		models.NewLineItemID(), cart.ID)
 
-	require.Error(t, err, "aynı varyant için ikinci satır açılamamalı")
+	require.Error(t, err, "a second line for the same variant must not be openable")
 	assert.Contains(t, err.Error(), "cart_line_items_cart_variant_uniq")
 }
 
-// TestYumusakSilmeOkumalaridanDuser yumuşak silinen sepetin okunmadığını
-// doğrular (plan Bölüm 8).
-func TestYumusakSilmeOkumalaridanDuser(t *testing.T) {
+// TestSoftDeleteDropsOutOfReads verifies that a soft-deleted cart is not read
+// (plan Section 8).
+func TestSoftDeleteDropsOutOfReads(t *testing.T) {
 	ctx := context.Background()
-	svc := yeniServis(t)
-	sepet := yeniSepet(ctx, t, svc)
+	svc := newService(t)
+	cart := newCart(ctx, t, svc)
 
-	require.NoError(t, svc.DeleteCart(ctx, sepet.ID))
+	require.NoError(t, svc.DeleteCart(ctx, cart.ID))
 
-	_, err := svc.GetCart(ctx, sepet.ID)
+	_, err := svc.GetCart(ctx, cart.ID)
 	assert.Equal(t, errors.KindNotFound, errors.KindOf(err))
 
-	carts, err := svc.ListCartsByIDs(ctx, []string{sepet.ID})
+	carts, err := svc.ListCartsByIDs(ctx, []string{cart.ID})
 	require.NoError(t, err)
-	assert.Empty(t, carts, "silinen sepet toplu okumada da görünmemeli")
+	assert.Empty(t, carts, "a deleted cart must not show up in the bulk read either")
 
-	// Satır fiziksel olarak DURUYOR olmalı: silme yumuşaktır.
-	var silinmis bool
+	// The row must PHYSICALLY still be there: the deletion is soft.
+	var deleted bool
 	require.NoError(t, testPool.Pool().QueryRow(ctx,
-		`SELECT deleted_at IS NOT NULL FROM carts WHERE id = $1`, sepet.ID).Scan(&silinmis))
-	assert.True(t, silinmis)
+		`SELECT deleted_at IS NOT NULL FROM carts WHERE id = $1`, cart.ID).Scan(&deleted))
+	assert.True(t, deleted)
 }
 
-// TestModuleRegisterContaineraBaglar Register'ın sözleşmedeki iki şeyi de
-// yaptığını doğrular: servis kaydı ve Query sağlayıcısı.
-func TestModuleRegisterContaineraBaglar(t *testing.T) {
+// TestModuleRegisterBindsToTheContainer verifies that Register does both of the
+// things in the contract: registering the service and the Query provider.
+func TestModuleRegisterBindsToTheContainer(t *testing.T) {
 	ctx := context.Background()
 
 	c := container.New(nil)
@@ -756,19 +767,19 @@ func TestModuleRegisterContaineraBaglar(t *testing.T) {
 	require.NoError(t, c.Provide("core.link", links))
 	require.NoError(t, c.Provide("core.query", query.New(links, c, nil)))
 
-	mod := cart.New()
+	mod := cartmod.New()
 	require.NoError(t, mod.Register(ctx, c))
 
-	svc, err := container.Resolve[*service.Service](c, cart.ServiceName)
-	require.NoError(t, err, "servis %q adıyla çözülebilmeli", cart.ServiceName)
+	svc, err := container.Resolve[*service.Service](c, cartmod.ServiceName)
+	require.NoError(t, err, "the service must be resolvable under the name %q", cartmod.ServiceName)
 	require.NotNil(t, svc)
 
-	provider, err := container.Resolve[query.Provider](c, cart.ProviderName)
-	require.NoError(t, err, "sağlayıcı %q adıyla çözülebilmeli", cart.ProviderName)
+	provider, err := container.Resolve[query.Provider](c, cartmod.ProviderName)
+	require.NoError(t, err, "the provider must be resolvable under the name %q", cartmod.ProviderName)
 	assert.Equal(t, service.EntityName, provider.Entity(),
-		"sağlayıcı adının öneki Entity() ile örtüşmeli (ADR 0004)")
+		"the provider name's prefix must match Entity() (ADR 0004)")
 
-	// Kaydedilen servis gerçekten çalışmalı.
+	// The registered service really must work.
 	created, err := svc.CreateCart(ctx, service.CreateCartInput{
 		RegionID: testRegionID, CurrencyCode: testCurrency,
 	})
@@ -780,9 +791,9 @@ func TestModuleRegisterContaineraBaglar(t *testing.T) {
 	assert.Equal(t, created.ID, records[0][query.IDField])
 }
 
-// TestQueryKatmaniSepetiOkur gerçek Query katmanının sepet sağlayıcısını
-// bulabildiğini doğrular.
-func TestQueryKatmaniSepetiOkur(t *testing.T) {
+// TestQueryLayerReadsTheCart verifies that the real Query layer can find the
+// cart provider.
+func TestQueryLayerReadsTheCart(t *testing.T) {
 	ctx := context.Background()
 
 	c := container.New(nil)
@@ -794,35 +805,36 @@ func TestQueryKatmaniSepetiOkur(t *testing.T) {
 	graph := query.New(links, c, nil)
 	require.NoError(t, c.Provide("core.query", graph))
 
-	mod := cart.New()
+	mod := cartmod.New()
 	require.NoError(t, mod.Register(ctx, c))
 
 	svc := mod.Service()
 	require.NotNil(t, svc)
-	musteriID := "cust_QUERY_" + models.NewCartID()
+	customerID := "cust_QUERY_" + models.NewCartID()
 	created, err := svc.CreateCart(ctx, service.CreateCartInput{
-		RegionID: testRegionID, CustomerID: musteriID, CurrencyCode: testCurrency,
+		RegionID: testRegionID, CustomerID: customerID, CurrencyCode: testCurrency,
 	})
 	require.NoError(t, err)
 
 	records, err := graph.Graph(ctx, query.GraphSpec{
 		Entity:  service.EntityName,
 		Fields:  []string{query.IDField, service.FieldCustomerID, service.FieldTotal},
-		Filters: map[string]any{service.FieldCustomerID: musteriID},
+		Filters: map[string]any{service.FieldCustomerID: customerID},
 	})
 
 	require.NoError(t, err)
 	require.Len(t, records, 1)
 	assert.Equal(t, created.ID, records[0][query.IDField])
-	assert.Equal(t, musteriID, records[0][service.FieldCustomerID])
+	assert.Equal(t, customerID, records[0][service.FieldCustomerID])
 }
 
-// satirTutarlari bir satırın PARA alanlarını doğrudan sorguyla okur.
+// lineAmounts reads a line's MONEY fields with a direct query.
 //
-// Servis üzerinden değil doğrudan okunur: sınanan şey, tutarların
-// veritabanındaki hangi SATIRA yazıldığıdır ve servisin kendi okuması yazma ile
-// aynı eşleştirme varsayımını taşıdığı için bağımsız bir tanık olmazdı.
-func satirTutarlari(ctx context.Context, t *testing.T, lineID string) models.LineTotals {
+// They are read directly rather than through the service: what is under test is
+// which ROW in the database the amounts were written to, and the service's own
+// read carries the same mapping assumption as the write, so it would not be an
+// independent witness.
+func lineAmounts(ctx context.Context, t *testing.T, lineID string) models.LineTotals {
 	t.Helper()
 
 	var out models.LineTotals
@@ -833,94 +845,95 @@ func satirTutarlari(ctx context.Context, t *testing.T, lineID string) models.Lin
 	return out
 }
 
-// TestSetTotalsHerSatiraKENDITutariniYazar toplu yazmanın tutarları DOĞRU
-// satırlarla eşleştirdiğini gerçek Postgres üzerinde doğrular.
+// TestSetTotalsWritesEachLineITSOWNAmounts verifies on real Postgres that the
+// bulk write matches the amounts with the RIGHT lines.
 //
-// Toplu UPDATE altı paralel dizi gönderir (kimlikler ve beş para alanı) ve
-// eşleştirme yalnızca dizilerin SIRASINA dayanır. Sıra kayarsa hiçbir kapı
-// ötmez: sepetin ara toplamı yine satırların toplamıdır, satır kimliği
-// (total = subtotal - discount + tax) yine sağlanır, veritabanının
-// cart_line_items_totals_consistent kısıtı yine geçer. Bozulan tek şey
-// müşteriden alınan paradır.
+// The bulk UPDATE sends six parallel arrays (the ids and five money fields) and
+// the matching rests only on the ORDER of the arrays. If the order slips, no
+// gate makes a sound: the cart's subtotal is still the sum of the lines, the
+// line identity (total = subtotal - discount + tax) still holds, and the
+// database's cart_line_items_totals_consistent constraint still passes. The
+// only thing that breaks is the money taken from the customer.
 //
-// Fikstür bunu görünür kılar: her satırın adedi, birim fiyatı, indirimi ve
-// vergisi FARKLIDIR, yani sıranın bir adım kayması bile her satırın saklanan
-// dörtlüsünü değiştirir.
-func TestSetTotalsHerSatiraKENDITutariniYazar(t *testing.T) {
+// The fixture makes this visible: every line's quantity, unit price, discount
+// and tax are DIFFERENT, so even a one-step slip in the order changes every
+// line's stored quadruple.
+func TestSetTotalsWritesEachLineITSOWNAmounts(t *testing.T) {
 	ctx := context.Background()
-	svc := yeniServis(t)
-	sepet := yeniSepet(ctx, t, svc)
+	svc := newService(t)
+	cart := newCart(ctx, t, svc)
 
-	const satirSayisi = 12
-	bekleniyor := make(map[string]models.LineTotals, satirSayisi)
-	lines := make([]service.LineTotals, 0, satirSayisi)
-	var sepetAra, sepetIndirim, sepetVergi int64
-	for i := range satirSayisi {
-		adet := int64(i + 1)
-		item, err := svc.AddLineItem(ctx, sepet.ID, service.AddLineItemInput{
-			VariantID: fmt.Sprintf("variant_ESLESME_%d", i), Title: "Ürün", Quantity: adet,
+	const lineCount = 12
+	expected := make(map[string]models.LineTotals, lineCount)
+	lines := make([]service.LineTotals, 0, lineCount)
+	var cartSubtotal, cartDiscount, cartTax int64
+	for i := range lineCount {
+		quantity := int64(i + 1)
+		item, err := svc.AddLineItem(ctx, cart.ID, service.AddLineItemInput{
+			VariantID: fmt.Sprintf("variant_MATCH_%d", i), Title: "Product", Quantity: quantity,
 		})
 		require.NoError(t, err)
 
-		tutar := models.LineTotals{
+		amounts := models.LineTotals{
 			UnitPrice:     int64(100 * (i + 1)),
 			DiscountTotal: int64(3 * i),
 			TaxTotal:      int64(7 * (i + 1)),
 		}
-		tutar.Subtotal = tutar.UnitPrice * adet
-		tutar.Total = tutar.Subtotal - tutar.DiscountTotal + tutar.TaxTotal
+		amounts.Subtotal = amounts.UnitPrice * quantity
+		amounts.Total = amounts.Subtotal - amounts.DiscountTotal + amounts.TaxTotal
 
-		bekleniyor[item.ID] = tutar
+		expected[item.ID] = amounts
 		lines = append(lines, service.LineTotals{
-			LineItemID: item.ID, UnitPrice: tutar.UnitPrice, Subtotal: tutar.Subtotal,
-			DiscountTotal: tutar.DiscountTotal, TaxTotal: tutar.TaxTotal, Total: tutar.Total,
+			LineItemID: item.ID, UnitPrice: amounts.UnitPrice, Subtotal: amounts.Subtotal,
+			DiscountTotal: amounts.DiscountTotal, TaxTotal: amounts.TaxTotal, Total: amounts.Total,
 		})
-		sepetAra += tutar.Subtotal
-		sepetIndirim += tutar.DiscountTotal
-		sepetVergi += tutar.TaxTotal
+		cartSubtotal += amounts.Subtotal
+		cartDiscount += amounts.DiscountTotal
+		cartTax += amounts.TaxTotal
 	}
 
-	detay, err := svc.GetCart(ctx, sepet.ID)
+	detail, err := svc.GetCart(ctx, cart.ID)
 	require.NoError(t, err)
-	require.NoError(t, svc.SetTotals(ctx, sepet.ID, service.Totals{
-		Revision: detay.Revision,
-		Subtotal: sepetAra, DiscountTotal: sepetIndirim, TaxTotal: sepetVergi,
-		Total: sepetAra - sepetIndirim + sepetVergi,
+	require.NoError(t, svc.SetTotals(ctx, cart.ID, service.Totals{
+		Revision: detail.Revision,
+		Subtotal: cartSubtotal, DiscountTotal: cartDiscount, TaxTotal: cartTax,
+		Total: cartSubtotal - cartDiscount + cartTax,
 		Lines: lines,
 	}))
 
-	for id, tutar := range bekleniyor {
-		assert.Equal(t, tutar, satirTutarlari(ctx, t, id),
-			"satır %s kendi tutarlarını almalı", id)
+	for id, amounts := range expected {
+		assert.Equal(t, amounts, lineAmounts(ctx, t, id),
+			"line %s must get its own amounts", id)
 	}
 }
 
-// TestSetTotalsBuyukTutarlarTamSayiKalir en büyük izinli tutarın dizi gidiş
-// dönüşünden BOZULMADAN geçtiğini doğrular.
+// TestSetTotalsKeepsLargeAmountsExact verifies that the largest permitted
+// amount comes back from the array round trip UNCORRUPTED.
 //
-// Toplu yazma para alanlarını bigint[] dizileriyle taşır. Para her zaman TAM
-// SAYI minor unit'tir; dizi yolunda bir kayan nokta dönüşümü olsaydı 10^18
-// mertebesindeki bir tutar sessizce yuvarlanır ve fark ancak muhasebede
-// görünürdü. models.MaxTotal (10^18) float64'ün tam gösterebildiği aralığın
-// (2^53 ≈ 9×10^15) çok üstündedir, yani böyle bir dönüşüm burada MUTLAKA
-// görünür.
-func TestSetTotalsBuyukTutarlarTamSayiKalir(t *testing.T) {
+// The bulk write carries the money fields in bigint[] arrays. Money is always
+// an INTEGER minor unit; were there a floating point conversion on the array
+// path, an amount on the order of 10^18 would be silently rounded and the
+// difference would only show up in the accounting. models.MaxTotal (10^18) is
+// far above the range float64 can represent exactly (2^53 ≈ 9x10^15), so such a
+// conversion MUST become visible here.
+func TestSetTotalsKeepsLargeAmountsExact(t *testing.T) {
 	ctx := context.Background()
-	svc := yeniServis(t)
-	sepet := yeniSepet(ctx, t, svc)
+	svc := newService(t)
+	cart := newCart(ctx, t, svc)
 
-	// MaxTotal = MaxAmount × MaxQuantity; ara toplam çarpımı da doğrulandığı
-	// için satır tam olarak bu adet ve birim fiyatla kurulur.
-	item, err := svc.AddLineItem(ctx, sepet.ID, service.AddLineItemInput{
-		VariantID: "variant_BUYUK", Title: "Pahalı", Quantity: models.MaxQuantity,
+	// MaxTotal = MaxAmount x MaxQuantity; because the subtotal's product is
+	// validated too, the line is set up with exactly this quantity and unit
+	// price.
+	item, err := svc.AddLineItem(ctx, cart.ID, service.AddLineItemInput{
+		VariantID: "variant_LARGE", Title: "Expensive", Quantity: models.MaxQuantity,
 		UnitPrice: models.MaxAmount,
 	})
 	require.NoError(t, err)
 
-	detay, err := svc.GetCart(ctx, sepet.ID)
+	detail, err := svc.GetCart(ctx, cart.ID)
 	require.NoError(t, err)
-	require.NoError(t, svc.SetTotals(ctx, sepet.ID, service.Totals{
-		Revision: detay.Revision,
+	require.NoError(t, svc.SetTotals(ctx, cart.ID, service.Totals{
+		Revision: detail.Revision,
 		Subtotal: models.MaxTotal, Total: models.MaxTotal,
 		Lines: []service.LineTotals{{
 			LineItemID: item.ID, UnitPrice: models.MaxAmount,
@@ -930,215 +943,225 @@ func TestSetTotalsBuyukTutarlarTamSayiKalir(t *testing.T) {
 
 	assert.Equal(t, models.LineTotals{
 		UnitPrice: models.MaxAmount, Subtotal: models.MaxTotal, Total: models.MaxTotal,
-	}, satirTutarlari(ctx, t, item.ID), "10^18 mertebesindeki tutar bit bit korunmalı")
+	}, lineAmounts(ctx, t, item.ID),
+		"an amount on the order of 10^18 must be preserved bit for bit")
 }
 
-// TestSetLineItemTotalsBaskaSepetinSatirinaYazamaz toplu yazmanın sepet
-// sınırını AŞAMADIĞINI doğrular.
+// TestSetLineItemTotalsCannotWriteAnotherCartsLine verifies that the bulk write
+// CANNOT CROSS the cart boundary.
 //
-// Satır başına UPDATE'te sınır sorgunun WHERE'indeydi ve satır bulunamayınca
-// NotFound dönüyordu. Toplu biçimde kimlikler bir dizi olarak gelir; cart_id
-// koşulu düşseydi ya da eşleştirmeye kaysaydı, bir sepet İÇİN yapılan hesap
-// BAŞKA bir sepetin satırına yazılabilirdi.
+// In the per-line UPDATE the boundary was in the query's WHERE and, when the
+// line was not found, NotFound was returned. In the bulk form the ids arrive as
+// an array; had the cart_id condition fallen away or slipped into the matching,
+// a calculation made FOR one cart could be written to ANOTHER cart's line.
 //
-// Depo doğrudan çağrılır: servis satır kümesini kilit altında okuyup kapsama
-// aradığı için bu isteği zaten üretemez. Sınanan şey, servisin ALTINDAKİ
-// katmanın kendi başına güvenli olduğudur.
-func TestSetLineItemTotalsBaskaSepetinSatirinaYazamaz(t *testing.T) {
+// The repository is called directly: because the service reads the line set
+// under the lock and looks for coverage, it cannot produce this request at all.
+// What is under test is that the layer BELOW the service is safe on its own.
+func TestSetLineItemTotalsCannotWriteAnotherCartsLine(t *testing.T) {
 	ctx := context.Background()
-	svc := yeniServis(t)
+	svc := newService(t)
 	repo := repository.New(testPool.Pool())
 
-	kurban := yeniSepet(ctx, t, svc)
-	kurbanSatiri, err := svc.AddLineItem(ctx, kurban.ID, service.AddLineItemInput{
-		VariantID: "variant_KURBAN", Title: "Kurban", Quantity: 1, UnitPrice: 1000,
+	victim := newCart(ctx, t, svc)
+	victimLine, err := svc.AddLineItem(ctx, victim.ID, service.AddLineItemInput{
+		VariantID: "variant_VICTIM", Title: "Victim", Quantity: 1, UnitPrice: 1000,
 	})
 	require.NoError(t, err)
 
-	digeri := yeniSepet(ctx, t, svc)
-	digeriSatiri, err := svc.AddLineItem(ctx, digeri.ID, service.AddLineItemInput{
-		VariantID: "variant_DIGERI", Title: "Diğeri", Quantity: 1, UnitPrice: 1000,
+	other := newCart(ctx, t, svc)
+	otherLine, err := svc.AddLineItem(ctx, other.ID, service.AddLineItemInput{
+		VariantID: "variant_OTHER", Title: "Other", Quantity: 1, UnitPrice: 1000,
 	})
 	require.NoError(t, err)
 
-	// Yazmadan ÖNCEKİ hâl tanık olarak alınır: AddLineItem satırın ilk birim
-	// fiyatını zaten yazdığı için "hiç yazılmamış" sıfır demek değildir.
-	oncekiKurban := satirTutarlari(ctx, t, kurbanSatiri.ID)
-	oncekiDigeri := satirTutarlari(ctx, t, digeriSatiri.ID)
+	// The state BEFORE the write is taken as a witness: because AddLineItem
+	// already writes the line's first unit price, "never written" does not mean
+	// zero.
+	victimBefore := lineAmounts(ctx, t, victimLine.ID)
+	otherBefore := lineAmounts(ctx, t, otherLine.ID)
 
-	// Diğer sepetin turu, kurbanın satırını da yazmaya çalışıyor.
+	// The other cart's round is trying to write the victim's line too.
 	err = repo.WithTx(ctx, func(ctx context.Context) error {
-		return repo.SetLineItemTotals(ctx, digeri.ID, []models.LineItemTotals{
-			{LineItemID: digeriSatiri.ID, Totals: models.LineTotals{
+		return repo.SetLineItemTotals(ctx, other.ID, []models.LineItemTotals{
+			{LineItemID: otherLine.ID, Totals: models.LineTotals{
 				UnitPrice: 4242, Subtotal: 4242, Total: 4242}},
-			{LineItemID: kurbanSatiri.ID, Totals: models.LineTotals{
+			{LineItemID: victimLine.ID, Totals: models.LineTotals{
 				UnitPrice: 1, Subtotal: 1, Total: 1}},
 		})
 	})
 
-	require.Error(t, err, "başka sepetin satırı yazılamamalı")
+	require.Error(t, err, "another cart's line must not be writable")
 	assert.Equal(t, errors.KindNotFound, errors.KindOf(err))
-	assert.Contains(t, err.Error(), kurbanSatiri.ID, "hata hangi satırın yazılamadığını söylemeli")
+	assert.Contains(t, err.Error(), victimLine.ID,
+		"the error must say which line could not be written")
 
-	assert.Equal(t, oncekiKurban, satirTutarlari(ctx, t, kurbanSatiri.ID),
-		"kurbanın satırı DEĞİŞMEMELİ")
-	assert.Equal(t, oncekiDigeri, satirTutarlari(ctx, t, digeriSatiri.ID),
-		"tur düştüğü için çağıranın kendi satırı da yazılmamalı")
+	assert.Equal(t, victimBefore, lineAmounts(ctx, t, victimLine.ID),
+		"the victim's line MUST NOT CHANGE")
+	assert.Equal(t, otherBefore, lineAmounts(ctx, t, otherLine.ID),
+		"because the round fell, the caller's own line must not be written either")
 }
 
-// TestSetLineItemTotalsEksikSatiriCAGIRAN_SIRASIYLA_Adlandirir hata mesajının
-// yazılamayan İLK satırı — çağıranın verdiği sırayla — adlandırdığını doğrular.
+// TestSetLineItemTotalsNamesMissingLineIn_CALLER_Order verifies that the error
+// message names the FIRST line that could not be written — in the order the
+// caller gave.
 //
-// Sıra bir sözleşmedir ve gerekçesi repository'deki firstUnwritten godoc'unda
-// yazılıdır (ayraçsız: sembol dışa açık değil ve bu paket onu göremez):
-// PostgreSQL
-// RETURNING sırasını garanti etmez, dolayısıyla mesajın yeniden üretilebilir
-// olmasının tek dayanağı çağıranın dilimidir. Aynı girdiye farklı mesaj veren
-// bir hata, operatörün iki arızayı ayırt etmesini imkânsız kılar.
+// The order is a contract and its rationale is written in the firstUnwritten
+// godoc in repository (without brackets: the symbol is unexported and this
+// package cannot see it): PostgreSQL does not guarantee RETURNING order, so the
+// only ground for the message being reproducible is the caller's slice. An
+// error that gives a different message for the same input makes it impossible
+// for the operator to tell two failures apart.
 //
-// Testin iki eksik satırı olması ŞART: tek eksikli bir fikstürde "ilk" ile
-// "son" aynı kimliktir ve sözleşme sınanmamış olur (mutasyonla doğrulandı —
-// son eksik satırı dönen sürüm tek eksikli testleri geçiyordu).
-func TestSetLineItemTotalsEksikSatiriCAGIRAN_SIRASIYLA_Adlandirir(t *testing.T) {
+// It is ESSENTIAL that the test has two missing lines: in a fixture with a
+// single missing line, "first" and "last" are the same id and the contract goes
+// unexercised (verified by mutation — the version returning the last missing
+// line passed the single-missing tests).
+func TestSetLineItemTotalsNamesMissingLineIn_CALLER_Order(t *testing.T) {
 	ctx := context.Background()
-	svc := yeniServis(t)
+	svc := newService(t)
 	repo := repository.New(testPool.Pool())
-	sepet := yeniSepet(ctx, t, svc)
+	cart := newCart(ctx, t, svc)
 
-	kalan, err := svc.AddLineItem(ctx, sepet.ID, service.AddLineItemInput{
-		VariantID: "variant_KALAN", Title: "Kalan", Quantity: 1, UnitPrice: 1000,
+	remaining, err := svc.AddLineItem(ctx, cart.ID, service.AddLineItemInput{
+		VariantID: "variant_REMAINING", Title: "Remaining", Quantity: 1, UnitPrice: 1000,
 	})
 	require.NoError(t, err)
-	ilkEksik, err := svc.AddLineItem(ctx, sepet.ID, service.AddLineItemInput{
-		VariantID: "variant_EKSIK_A", Title: "Eksik A", Quantity: 1, UnitPrice: 1000,
+	firstMissing, err := svc.AddLineItem(ctx, cart.ID, service.AddLineItemInput{
+		VariantID: "variant_MISSING_A", Title: "Missing A", Quantity: 1, UnitPrice: 1000,
 	})
 	require.NoError(t, err)
-	ikinciEksik, err := svc.AddLineItem(ctx, sepet.ID, service.AddLineItemInput{
-		VariantID: "variant_EKSIK_B", Title: "Eksik B", Quantity: 1, UnitPrice: 1000,
+	secondMissing, err := svc.AddLineItem(ctx, cart.ID, service.AddLineItemInput{
+		VariantID: "variant_MISSING_B", Title: "Missing B", Quantity: 1, UnitPrice: 1000,
 	})
 	require.NoError(t, err)
 
-	for _, id := range []string{ilkEksik.ID, ikinciEksik.ID} {
+	for _, id := range []string{firstMissing.ID, secondMissing.ID} {
 		_, err = testPool.Pool().Exec(ctx,
 			`UPDATE cart_line_items SET deleted_at = now() WHERE id = $1`, id)
 		require.NoError(t, err)
 	}
 
-	tutar := models.LineTotals{UnitPrice: 5000, Subtotal: 5000, Total: 5000}
+	amounts := models.LineTotals{UnitPrice: 5000, Subtotal: 5000, Total: 5000}
 	err = repo.WithTx(ctx, func(ctx context.Context) error {
-		return repo.SetLineItemTotals(ctx, sepet.ID, []models.LineItemTotals{
-			{LineItemID: kalan.ID, Totals: tutar},
-			{LineItemID: ilkEksik.ID, Totals: tutar},
-			{LineItemID: ikinciEksik.ID, Totals: tutar},
+		return repo.SetLineItemTotals(ctx, cart.ID, []models.LineItemTotals{
+			{LineItemID: remaining.ID, Totals: amounts},
+			{LineItemID: firstMissing.ID, Totals: amounts},
+			{LineItemID: secondMissing.ID, Totals: amounts},
 		})
 	})
 
 	require.Error(t, err)
 	assert.Equal(t, errors.KindNotFound, errors.KindOf(err))
-	assert.Contains(t, err.Error(), ilkEksik.ID,
-		"çağıranın sırasındaki İLK eksik satır adlandırılmalı")
-	assert.NotContains(t, err.Error(), ikinciEksik.ID,
-		"ikinci eksik satır adlandırılmamalı; mesaj tek ve yeniden üretilebilir olmalı")
+	assert.Contains(t, err.Error(), firstMissing.ID,
+		"the FIRST missing line in the caller's order must be named")
+	assert.NotContains(t, err.Error(), secondMissing.ID,
+		"the second missing line must not be named; the message must be single and reproducible")
 }
 
-// TestSetLineItemTotalsSatirsizTurHatasizGecer satırsız bir turun HATA
-// ÜRETMEDİĞİNİ doğrular.
+// TestSetLineItemTotalsPassesWithoutErrorForALinelessRound verifies that a
+// round without lines DOES NOT PRODUCE AN ERROR.
 //
-// Yol ölü değildir: son satırı da kaldırılmış bir sepet yeniden fiyatlanınca
-// hesap turu sıfır satırla gelir ve o tur geçmek zorundadır — düşseydi müşteri
-// sepetini boşalttığı anda sepeti hesaplanamaz hâle gelirdi. Erken dönüş
-// mutasyonla doğrulandı: hata döndüren sürüm başka hiçbir testi düşürmüyordu.
-func TestSetLineItemTotalsSatirsizTurHatasizGecer(t *testing.T) {
+// The path is not dead: when a cart whose last line has also been removed is
+// priced again, the calculation round arrives with zero lines and that round
+// has to pass — had it fallen, the cart would become uncalculable the moment
+// the customer emptied it. The early return was verified by mutation: the
+// version returning an error brought no other test down.
+func TestSetLineItemTotalsPassesWithoutErrorForALinelessRound(t *testing.T) {
 	ctx := context.Background()
-	svc := yeniServis(t)
+	svc := newService(t)
 	repo := repository.New(testPool.Pool())
-	sepet := yeniSepet(ctx, t, svc)
+	cart := newCart(ctx, t, svc)
 
 	require.NoError(t, repo.WithTx(ctx, func(ctx context.Context) error {
-		return repo.SetLineItemTotals(ctx, sepet.ID, nil)
+		return repo.SetLineItemTotals(ctx, cart.ID, nil)
 	}))
 
-	revision, _ := sepetSurumu(ctx, t, sepet.ID)
-	require.NoError(t, svc.SetTotals(ctx, sepet.ID, service.Totals{Revision: revision}),
-		"satırsız sepetin hesabı yazılabilmeli")
+	revision, _ := cartRevisions(ctx, t, cart.ID)
+	require.NoError(t, svc.SetTotals(ctx, cart.ID, service.Totals{Revision: revision}),
+		"the calculation of a cart without lines must be writable")
 }
 
-// TestSetLineItemTotalsEksikSatirTuruDusurur bir satır yazılamadığında turun
-// TAMAMEN geri alındığını doğrular.
+// TestSetLineItemTotalsDropsTheRoundOnAMissingLine verifies that when one line
+// cannot be written, the round is rolled back COMPLETELY.
 //
-// Toplu UPDATE eşleşmeyen kimliği sessizce ATLAR: silinmiş bir satır ya da hiç
-// olmayan bir kimlik hata üretmez, yalnızca daha az satır yazılır. Sessiz
-// kalsaydı sepetin ara toplamı ile satırlarının toplamı ayrışır ve müşteriye
-// yanlış tutar tahsil edilirdi. Bu yüzden yazılan kimlikler istenenlerle
-// karşılaştırılır ve eksik varsa işlem geri alınır.
+// The bulk UPDATE silently SKIPS an id that does not match: a deleted line or
+// an id that never existed produces no error, only fewer lines are written. Had
+// it stayed silent, the cart's subtotal and the sum of its lines would diverge
+// and the customer would be charged the wrong amount. This is why the written
+// ids are compared against the requested ones and, if any are missing, the
+// transaction is rolled back.
 //
-// Kural bugün İKİNCİ savunmadır — servis satır kümesini sepetin kilidi altında
-// okur ve sepeti değiştiren her yol aynı kilidi alır — ama kilidi atlayan bir
-// yolun (doğrudan SQL, ileride eklenecek bir akış) sessiz kalmaması için burada
-// sabitlenir.
-func TestSetLineItemTotalsEksikSatirTuruDusurur(t *testing.T) {
+// The rule is the SECOND defense today — the service reads the line set under
+// the cart's lock and every path that changes the cart takes the same lock —
+// but it is pinned down here so that a path bypassing the lock (direct SQL, a
+// flow to be added later) does not stay silent.
+func TestSetLineItemTotalsDropsTheRoundOnAMissingLine(t *testing.T) {
 	ctx := context.Background()
-	svc := yeniServis(t)
+	svc := newService(t)
 	repo := repository.New(testPool.Pool())
-	sepet := yeniSepet(ctx, t, svc)
+	cart := newCart(ctx, t, svc)
 
-	kalan, err := svc.AddLineItem(ctx, sepet.ID, service.AddLineItemInput{
-		VariantID: "variant_KALAN", Title: "Kalan", Quantity: 1, UnitPrice: 1000,
+	remaining, err := svc.AddLineItem(ctx, cart.ID, service.AddLineItemInput{
+		VariantID: "variant_REMAINING", Title: "Remaining", Quantity: 1, UnitPrice: 1000,
 	})
 	require.NoError(t, err)
-	silinen, err := svc.AddLineItem(ctx, sepet.ID, service.AddLineItemInput{
-		VariantID: "variant_SILINEN", Title: "Silinen", Quantity: 1, UnitPrice: 1000,
+	removed, err := svc.AddLineItem(ctx, cart.ID, service.AddLineItemInput{
+		VariantID: "variant_DELETED", Title: "Deleted", Quantity: 1, UnitPrice: 1000,
 	})
 	require.NoError(t, err)
 
-	// Satır, servisin kilidini ATLAYARAK siliniyor: sınanan şey tam olarak
-	// böyle bir yolun sessiz kalmamasıdır.
+	// The line is deleted BYPASSING the service's lock: what is under test is
+	// exactly that such a path does not stay silent.
 	_, err = testPool.Pool().Exec(ctx,
-		`UPDATE cart_line_items SET deleted_at = now() WHERE id = $1`, silinen.ID)
+		`UPDATE cart_line_items SET deleted_at = now() WHERE id = $1`, removed.ID)
 	require.NoError(t, err)
 
-	// Yazmadan ÖNCEKİ hâl tanık olarak alınır: AddLineItem satırın ilk birim
-	// fiyatını zaten yazdığı için "hiç yazılmamış" sıfır demek değildir.
-	oncekiKalan := satirTutarlari(ctx, t, kalan.ID)
+	// The state BEFORE the write is taken as a witness: because AddLineItem
+	// already writes the line's first unit price, "never written" does not mean
+	// zero.
+	remainingBefore := lineAmounts(ctx, t, remaining.ID)
 
 	err = repo.WithTx(ctx, func(ctx context.Context) error {
-		return repo.SetLineItemTotals(ctx, sepet.ID, []models.LineItemTotals{
-			{LineItemID: kalan.ID, Totals: models.LineTotals{
+		return repo.SetLineItemTotals(ctx, cart.ID, []models.LineItemTotals{
+			{LineItemID: remaining.ID, Totals: models.LineTotals{
 				UnitPrice: 5000, Subtotal: 5000, Total: 5000}},
-			{LineItemID: silinen.ID, Totals: models.LineTotals{
+			{LineItemID: removed.ID, Totals: models.LineTotals{
 				UnitPrice: 7000, Subtotal: 7000, Total: 7000}},
 		})
 	})
 
-	require.Error(t, err, "eksik yazılan tur sessiz geçmemeli")
+	require.Error(t, err, "a round written incompletely must not pass silently")
 	assert.Equal(t, errors.KindNotFound, errors.KindOf(err))
-	assert.Contains(t, err.Error(), silinen.ID, "hata yazılamayan satırı adlandırmalı")
+	assert.Contains(t, err.Error(), removed.ID,
+		"the error must name the line that could not be written")
 
-	assert.Equal(t, oncekiKalan, satirTutarlari(ctx, t, kalan.ID),
-		"tur düştüğü için YAŞAYAN satır da yazılmamalı: ya hepsi ya hiçbiri")
+	assert.Equal(t, remainingBefore, lineAmounts(ctx, t, remaining.ID),
+		"because the round fell, the SURVIVING line must not be written either: all or nothing")
 }
 
-// TestSetLineItemTotalsAyniSatiriIkiKezYazamaz aynı kimliğin bir turda iki kez
-// verilemediğini doğrular.
+// TestSetLineItemTotalsCannotWriteTheSameLineTwice verifies that the same id
+// cannot be given twice in one round.
 //
-// UPDATE ... FROM bir hedef satır birden çok kaynak satırla eşleştiğinde HANGİ
-// kaynağın kazandığını tanımlamaz: sepet iki tutardan birini rastgele alırdı ve
-// hangisi olduğu plana bağlı olurdu. Servis bunu zaten eler; depo katmanının da
-// elemesi, deyimin tanımsız davranışını bu paketten çıkarır.
-func TestSetLineItemTotalsAyniSatiriIkiKezYazamaz(t *testing.T) {
+// UPDATE ... FROM does not define WHICH source wins when one target row matches
+// more than one source row: the cart would take one of the two amounts at
+// random and which one it was would depend on the plan. The service already
+// filters this out; the repository layer filtering it too takes the statement's
+// undefined behavior out of this package.
+func TestSetLineItemTotalsCannotWriteTheSameLineTwice(t *testing.T) {
 	ctx := context.Background()
-	svc := yeniServis(t)
+	svc := newService(t)
 	repo := repository.New(testPool.Pool())
-	sepet := yeniSepet(ctx, t, svc)
+	cart := newCart(ctx, t, svc)
 
-	item, err := svc.AddLineItem(ctx, sepet.ID, service.AddLineItemInput{
-		VariantID: "variant_TEKRAR", Title: "Tekrar", Quantity: 1, UnitPrice: 1000,
+	item, err := svc.AddLineItem(ctx, cart.ID, service.AddLineItemInput{
+		VariantID: "variant_REPEAT", Title: "Repeat", Quantity: 1, UnitPrice: 1000,
 	})
 	require.NoError(t, err)
-	oncekiTutar := satirTutarlari(ctx, t, item.ID)
+	before := lineAmounts(ctx, t, item.ID)
 
 	err = repo.WithTx(ctx, func(ctx context.Context) error {
-		return repo.SetLineItemTotals(ctx, sepet.ID, []models.LineItemTotals{
+		return repo.SetLineItemTotals(ctx, cart.ID, []models.LineItemTotals{
 			{LineItemID: item.ID, Totals: models.LineTotals{
 				UnitPrice: 100, Subtotal: 100, Total: 100}},
 			{LineItemID: item.ID, Totals: models.LineTotals{
@@ -1146,8 +1169,8 @@ func TestSetLineItemTotalsAyniSatiriIkiKezYazamaz(t *testing.T) {
 		})
 	})
 
-	require.Error(t, err, "aynı satır için iki tutar kabul edilmemeli")
-	assert.True(t, errors.IsInvalid(err), "sınıf Invalid olmalı: %v", err)
-	assert.Equal(t, oncekiTutar, satirTutarlari(ctx, t, item.ID),
-		"reddedilen tur hiçbir şey yazmamalı")
+	require.Error(t, err, "two amounts for the same line must not be accepted")
+	assert.True(t, errors.IsInvalid(err), "the kind must be Invalid: %v", err)
+	assert.Equal(t, before, lineAmounts(ctx, t, item.ID),
+		"a rejected round must write nothing")
 }

@@ -1,15 +1,16 @@
--- orders sorguları.
+-- orders queries.
 --
--- Her okuma deleted_at IS NULL süzer (plan Bölüm 8: silme yumuşaktır).
--- Durum değiştiren sorgular ayrıca BEKLENEN DURUMU şart koşar; bu, servisin
--- kilit altındaki kontrolünün yanında ikinci kapıdır ve doğrudan SQL ile
--- yapılan bir müdahaleyi de kapsar.
+-- Every read filters on deleted_at IS NULL (plan Section 8: deletion is soft).
+-- State-changing queries additionally require the EXPECTED STATE; this is the
+-- second gate next to the service's check under the lock, and it covers an
+-- intervention made directly through SQL as well.
 
--- CreateOrder yeni bir sipariş yazar.
+-- CreateOrder writes a new order.
 --
--- display_id sütunu BİLİNÇLİ OLARAK listede yoktur: GENERATED ALWAYS AS
--- IDENTITY sütununa açık değer yazılamaz ve numarayı sequence üretir.
--- Eşzamanlı iki INSERT'in aynı numarayı alması bu yüzden imkânsızdır.
+-- The display_id column is DELIBERATELY absent from the list: an explicit value
+-- cannot be written to a GENERATED ALWAYS AS IDENTITY column, and the sequence
+-- produces the number. That is why it is impossible for two concurrent INSERTs
+-- to get the same number.
 -- name: CreateOrder :one
 INSERT INTO orders (
     id, status, region_id, customer_id, email, currency_code,
@@ -32,20 +33,21 @@ WHERE id = $1 AND deleted_at IS NULL;
 SELECT * FROM orders
 WHERE display_id = $1 AND deleted_at IS NULL;
 
--- GetOrderByIdempotencyKey aynı anahtarla açılmış siparişi döner.
+-- GetOrderByIdempotencyKey returns the order opened with the same key.
 --
--- Yeniden denenen bir saga adımı buradan mevcut siparişi bulur ve ikinci bir
--- sipariş açmaz (Prensip 2.6).
+-- A retried saga step finds the existing order here and does not open a second
+-- order (Principle 2.6).
 -- name: GetOrderByIdempotencyKey :one
 SELECT * FROM orders
 WHERE idempotency_key = $1 AND deleted_at IS NULL;
 
--- LockOrder siparişi işlem boyunca kilitler ve güncel hâlini döner.
+-- LockOrder locks the order for the duration of the transaction and returns its
+-- current form.
 --
--- DURUM DEĞİŞTİREN HER AKIŞ BUNUNLA BAŞLAR. Kilit, "durumu oku" ile "durumu
--- yaz" arasına başka bir işlemin girmesini engeller: aksi hâlde eşzamanlı bir
--- CancelOrder ve CompleteOrder ikisi de siparişi 'pending' görüp ikisi de
--- yazmaya kalkardı.
+-- EVERY STATE-CHANGING FLOW STARTS WITH THIS. The lock prevents another
+-- transaction from stepping in between "read the state" and "write the state":
+-- otherwise a concurrent CancelOrder and CompleteOrder would both see the order
+-- as 'pending' and both would set out to write.
 -- name: LockOrder :one
 SELECT * FROM orders
 WHERE id = $1 AND deleted_at IS NULL
@@ -60,12 +62,13 @@ WHERE deleted_at IS NULL
 ORDER BY created_at DESC, id DESC
 LIMIT sqlc.arg('row_limit')::bigint OFFSET sqlc.arg('row_offset')::bigint;
 
--- CountOrders sayfalama zarfının toplam sayısını verir ve ListOrders ile AYNI
--- filtreleri uygular; ikisi birlikte değiştirilmelidir.
+-- CountOrders gives the total count of the pagination envelope and applies the
+-- SAME filters as ListOrders; the two must be changed together.
 --
--- Toplam, satırlarla birlikte dönen bir pencere fonksiyonundan okunamaz:
--- aralık dışı bir sayfada hiç satır dönmez, pencere değerlendirilmez ve toplam
--- 0 görünürdü. Toplam sayfanın değil FİLTRENİN sayısıdır.
+-- The total cannot be read from a window function returned along with the rows:
+-- on an out-of-range page no rows come back at all, the window is not evaluated
+-- and the total would appear as 0. The total is the count of the FILTER, not of
+-- the page.
 -- name: CountOrders :one
 SELECT COUNT(*) FROM orders
 WHERE deleted_at IS NULL
@@ -73,19 +76,19 @@ WHERE deleted_at IS NULL
   AND (sqlc.narg('region_id')::text IS NULL OR region_id = sqlc.narg('region_id')::text)
   AND (sqlc.narg('status')::text IS NULL OR status = sqlc.narg('status')::text);
 
--- GetOrdersByIDs Query katmanının FetchByIDs çağrısını TEK turda karşılar;
--- kimlik başına sorgu (N+1) yapılmaz.
+-- GetOrdersByIDs satisfies the Query layer's FetchByIDs call in a SINGLE round
+-- trip; no per-ID query (N+1) is made.
 -- name: GetOrdersByIDs :many
 SELECT * FROM orders
 WHERE id = ANY (sqlc.arg('ids')::text[]) AND deleted_at IS NULL
 ORDER BY id;
 
--- CancelOrder siparişi iptal eder ve iptal anını damgalar.
+-- CancelOrder cancels the order and stamps the moment of cancellation.
 --
--- status = 'pending' şartı bilinçlidir: tamamlanmış ya da arşivlenmiş bir
--- sipariş buradan iptal EDİLEMEZ. Zaten iptal edilmiş bir siparişte de hiçbir
--- satır etkilenmez; çağıran bunu ayırt eder ve idempotent davranır
--- (bkz. service.Service.CancelOrder).
+-- The status = 'pending' condition is deliberate: a completed or archived order
+-- CANNOT be canceled from here. On an already canceled order no row is affected
+-- either; the caller tells this apart and behaves idempotently
+-- (see service.Service.CancelOrder).
 -- name: CancelOrder :one
 UPDATE orders
 SET status        = 'canceled',
@@ -95,7 +98,7 @@ SET status        = 'canceled',
 WHERE id = $1 AND deleted_at IS NULL AND status = 'pending'
 RETURNING *;
 
--- CompleteOrder siparişi tamamlanmış olarak damgalar.
+-- CompleteOrder stamps the order as completed.
 -- name: CompleteOrder :one
 UPDATE orders
 SET status       = 'completed',
@@ -104,10 +107,10 @@ SET status       = 'completed',
 WHERE id = $1 AND deleted_at IS NULL AND status = 'pending'
 RETURNING *;
 
--- ArchiveOrder tamamlanmış bir siparişi arşive alır.
+-- ArchiveOrder takes a completed order into the archive.
 --
--- completed_at'e DOKUNULMAZ: arşivleme siparişin tamamlanma anını değiştirmez,
--- yalnızca onu günlük listelerin dışına çıkarır.
+-- completed_at IS NOT TOUCHED: archiving does not change the order's moment of
+-- completion, it only moves it out of the day-to-day lists.
 -- name: ArchiveOrder :one
 UPDATE orders
 SET status     = 'archived',

@@ -11,10 +11,10 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/auth/repository/authdb"
 )
 
-// CreateSalesChannel yeni bir satış kanalı yazar.
+// CreateSalesChannel writes a new sales channel.
 //
-// Ad zaten kullanılıyorsa errors.Conflict döner; kural veritabanındaki kısmi
-// benzersiz indekstedir (bkz. [IndexChannelName]).
+// If the name is already in use, errors.Conflict is returned; the rule lives in
+// the partial unique index in the database (see [IndexChannelName]).
 func (r *Repo) CreateSalesChannel(ctx context.Context, c models.SalesChannel) (models.SalesChannel, error) {
 	if err := r.ready(); err != nil {
 		return models.SalesChannel{}, err
@@ -34,12 +34,12 @@ func (r *Repo) CreateSalesChannel(ctx context.Context, c models.SalesChannel) (m
 		CreatedAt:   fromTime(c.CreatedAt),
 	})
 	if err != nil {
-		return models.SalesChannel{}, classifyChannelWrite(err, c.Name, "satış kanalı oluşturulamadı")
+		return models.SalesChannel{}, classifyChannelWrite(err, c.Name, "could not create sales channel")
 	}
 	return toSalesChannel(row)
 }
 
-// GetSalesChannel kimliğe göre kanal döner; yoksa errors.NotFound.
+// GetSalesChannel returns the channel by id; errors.NotFound when there is none.
 func (r *Repo) GetSalesChannel(ctx context.Context, id string) (models.SalesChannel, error) {
 	if err := r.ready(); err != nil {
 		return models.SalesChannel{}, err
@@ -48,13 +48,13 @@ func (r *Repo) GetSalesChannel(ctx context.Context, id string) (models.SalesChan
 	row, err := r.q.GetSalesChannel(ctx, id)
 	if err != nil {
 		return models.SalesChannel{}, notFoundOr(err, CodeSalesChannelNotFound,
-			"satış kanalı bulunamadı: %s", id)
+			"sales channel not found: %s", id)
 	}
 	return toSalesChannel(row)
 }
 
-// ListSalesChannels süzgeçlenmiş ve sayfalanmış kanal listesini, filtreye uyan
-// TOPLAM kayıt sayısıyla birlikte döner.
+// ListSalesChannels returns the filtered and paginated channel list together
+// with the TOTAL number of records matching the filter.
 func (r *Repo) ListSalesChannels(
 	ctx context.Context,
 	filter models.SalesChannelFilter,
@@ -71,7 +71,7 @@ func (r *Repo) ListSalesChannels(
 		Off:        toInt32(offset),
 	})
 	if err != nil {
-		return nil, 0, wrapDB(err, "satış kanalı listesi alınamadı")
+		return nil, 0, wrapDB(err, "could not read the sales channel list")
 	}
 
 	total, err := r.q.CountSalesChannels(ctx, authdb.CountSalesChannelsParams{
@@ -79,7 +79,7 @@ func (r *Repo) ListSalesChannels(
 		IsDisabled: filter.IsDisabled,
 	})
 	if err != nil {
-		return nil, 0, wrapDB(err, "satış kanalı sayısı alınamadı")
+		return nil, 0, wrapDB(err, "could not read the sales channel count")
 	}
 
 	channels, err := toSalesChannels(rows)
@@ -89,8 +89,9 @@ func (r *Repo) ListSalesChannels(
 	return channels, total, nil
 }
 
-// GetSalesChannelsByIDs verilen kimliklere karşılık gelen kanalları TEK
-// sorguda döner. Bulunamayan kimlik için kayıt dönmez; bu bir hata değildir.
+// GetSalesChannelsByIDs returns the channels matching the given ids in a SINGLE
+// query. No record is returned for an id that is not found; that is not an
+// error.
 func (r *Repo) GetSalesChannelsByIDs(ctx context.Context, ids []string) ([]models.SalesChannel, error) {
 	if err := r.ready(); err != nil {
 		return nil, err
@@ -101,12 +102,12 @@ func (r *Repo) GetSalesChannelsByIDs(ctx context.Context, ids []string) ([]model
 
 	rows, err := r.q.ListSalesChannelsByIDs(ctx, ids)
 	if err != nil {
-		return nil, wrapDB(err, "satış kanalları alınamadı")
+		return nil, wrapDB(err, "could not read the sales channels")
 	}
 	return toSalesChannels(rows)
 }
 
-// UpdateSalesChannel kanalın verilen alanlarını günceller.
+// UpdateSalesChannel updates the given fields of the channel.
 func (r *Repo) UpdateSalesChannel(
 	ctx context.Context,
 	id string,
@@ -133,19 +134,19 @@ func (r *Repo) UpdateSalesChannel(
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return models.SalesChannel{}, errors.NotFound(CodeSalesChannelNotFound,
-				"satış kanalı bulunamadı: %s", id)
+				"sales channel not found: %s", id)
 		}
 		return models.SalesChannel{}, classifyChannelWrite(err, derefOr(patch.Name),
-			"satış kanalı güncellenemedi")
+			"could not update sales channel")
 	}
 	return toSalesChannel(row)
 }
 
-// DeleteSalesChannel kanalı yumuşak siler ve anahtar bağlarını kaldırır.
+// DeleteSalesChannel soft-deletes the channel and removes the key links.
 //
-// Bağlar AYNI işlemde silinir: yumuşak silme bir UPDATE olduğu için foreign
-// key CASCADE devreye girmez ve publishable anahtarlar silinmiş bir kanala
-// bağlı kalırdı.
+// The links are deleted in the SAME transaction: because a soft delete is an
+// UPDATE, the foreign key CASCADE does not engage and publishable keys would
+// stay linked to a deleted channel.
 func (r *Repo) DeleteSalesChannel(ctx context.Context, id string, now time.Time) error {
 	if err := r.ready(); err != nil {
 		return err
@@ -156,23 +157,23 @@ func (r *Repo) DeleteSalesChannel(ctx context.Context, id string, now time.Time)
 			ID:        id,
 			DeletedAt: fromTime(now),
 		}); err != nil {
-			return notFoundOr(err, CodeSalesChannelNotFound, "satış kanalı bulunamadı: %s", id)
+			return notFoundOr(err, CodeSalesChannelNotFound, "sales channel not found: %s", id)
 		}
 		if err := q.DeleteLinksOfSalesChannel(ctx, id); err != nil {
-			return wrapDB(err, "satış kanalının anahtar bağları silinemedi")
+			return wrapDB(err, "could not delete the key links of the sales channel")
 		}
 		return nil
 	})
 }
 
-// classifyChannelWrite bir yazma hatasını ad çakışması bakımından sınıflar.
+// classifyChannelWrite classifies a write error with respect to name conflicts.
 func classifyChannelWrite(err error, name, message string) error {
 	if err == nil {
 		return nil
 	}
 	if ConstraintName(err) == IndexChannelName {
 		return errors.Wrap(err, errors.KindConflict, CodeChannelNameTaken,
-			"%q adlı bir satış kanalı zaten var", name)
+			"a sales channel named %q already exists", name)
 	}
 	return wrapDB(err, "%s", message)
 }

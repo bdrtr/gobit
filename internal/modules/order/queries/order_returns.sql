@@ -1,7 +1,7 @@
--- order_returns sorguları (iade iskeleti; plan Bölüm 6).
+-- order_returns queries (return skeleton; plan Section 6).
 --
--- Faz 6 yalnızca oluşturma ve listeleme sunar; iade iş akışı sonraki fazlara
--- aittir.
+-- Phase 6 offers only creation and listing; the return workflow belongs to the
+-- later phases.
 
 -- name: CreateOrderReturn :one
 INSERT INTO order_returns (id, order_id, status, refund_amount, reason, note, metadata)

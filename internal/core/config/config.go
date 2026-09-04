@@ -852,7 +852,7 @@ func (c Config) Validate() error {
 		return fmt.Errorf("config: OTEL_SERVICE_NAME cannot be empty")
 	}
 	if c.TrustedProxyHops < 0 {
-		return fmt.Errorf("config: TRUSTED_PROXY_HOPS negatif olamaz, %d verildi", c.TrustedProxyHops)
+		return fmt.Errorf("config: TRUSTED_PROXY_HOPS cannot be negative, %d was given", c.TrustedProxyHops)
 	}
 	if c.IdempotencyTTL <= 0 {
 		return fmt.Errorf("config: IDEMPOTENCY_TTL has to be positive, %s given", c.IdempotencyTTL)
@@ -909,7 +909,7 @@ func (c Config) Validate() error {
 		// unencrypted makes them listenable on the network. Even if staging's traffic is
 		// counted as "not real", its network and its tokens are real.
 		if c.OTLPEndpoint != "" && c.OTLPInsecure {
-			return fmt.Errorf("config: APP_ENV=%s iken OTEL_EXPORTER_OTLP_INSECURE=true olamaz", c.AppEnv)
+			return fmt.Errorf("config: OTEL_EXPORTER_OTLP_INSECURE=true is not allowed while APP_ENV=%s", c.AppEnv)
 		}
 		// An empty signing secret is two separate faults: a fixed secret means anybody
 		// can mint themselves an admin token, while a generated random one means tokens
@@ -941,7 +941,7 @@ func (c Config) validateDBPool() error {
 		return fmt.Errorf("config: DB_MAX_CONNS has to be at least 1, %d given", c.DBMaxConns)
 	}
 	if c.DBMinConns < 0 {
-		return fmt.Errorf("config: DB_MIN_CONNS negatif olamaz, %d verildi", c.DBMinConns)
+		return fmt.Errorf("config: DB_MIN_CONNS cannot be negative, %d was given", c.DBMinConns)
 	}
 	if c.DBMinConns > c.DBMaxConns {
 		return fmt.Errorf("config: DB_MIN_CONNS (%d) cannot be greater than DB_MAX_CONNS (%d)",

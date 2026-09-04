@@ -39,7 +39,7 @@ type CreateOrderClaimParams struct {
 	Metadata     []byte
 }
 
-// order_claims sorguları (hasar/eksik kaydı iskeleti; plan Bölüm 6).
+// order_claims queries (damage/shortage record skeleton; plan Section 6).
 func (q *Queries) CreateOrderClaim(ctx context.Context, arg CreateOrderClaimParams) (OrderClaim, error) {
 	row := q.db.QueryRow(ctx, createOrderClaim,
 		arg.ID,

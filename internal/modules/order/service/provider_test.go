@@ -13,57 +13,58 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/order/service"
 )
 
-// TestQueryProviderEntityAdi sağlayıcının kaydedildiği adla örtüştüğünü
-// doğrular.
+// TestQueryProviderEntityName validates that the provider matches the name it is
+// registered under.
 //
-// Query sağlayıcıyı "<entity>.query" adıyla arar ve Entity() ile adın
-// örtüştüğünü denetler (ADR 0004); ikisinin ayrışması çalışma zamanında
-// NotFound demek olurdu.
-func TestQueryProviderEntityAdi(t *testing.T) {
-	o := yeniOrtam(t)
+// Query looks the provider up under the name "<entity>.query" and checks that
+// the name matches Entity() (ADR 0004); the two diverging would mean a NotFound
+// at run time.
+func TestQueryProviderEntityName(t *testing.T) {
+	e := newEnv(t)
 
-	assert.Equal(t, service.EntityName, service.NewQueryProvider(o.svc).Entity())
+	assert.Equal(t, service.EntityName, service.NewQueryProvider(e.svc).Entity())
 	assert.Equal(t, "order", service.EntityName)
 }
 
-// TestQueryProviderAlanlariUretir istenen alanların üretildiğini doğrular.
-func TestQueryProviderAlanlariUretir(t *testing.T) {
+// TestQueryProviderProducesTheRequestedFields validates that the requested
+// fields are produced.
+func TestQueryProviderProducesTheRequestedFields(t *testing.T) {
 	ctx := context.Background()
-	o := yeniOrtam(t)
-	p := service.NewQueryProvider(o.svc)
+	e := newEnv(t)
+	p := service.NewQueryProvider(e.svc)
 
-	siparis, err := o.svc.CreateOrder(ctx, gecerliGirdi())
+	order, err := e.svc.CreateOrder(ctx, validInput())
 	require.NoError(t, err)
 
-	kayitlar, err := p.List(ctx, query.ListOptions{
+	records, err := p.List(ctx, query.ListOptions{
 		Fields: []string{service.FieldID, service.FieldDisplayID, service.FieldStatus, service.FieldTotal},
 	})
 	require.NoError(t, err)
-	require.Len(t, kayitlar, 1)
+	require.Len(t, records, 1)
 
 	assert.Equal(t, query.Record{
-		service.FieldID:        siparis.ID,
-		service.FieldDisplayID: siparis.DisplayID,
+		service.FieldID:        order.ID,
+		service.FieldDisplayID: order.DisplayID,
 		service.FieldStatus:    models.OrderPending.String(),
 		service.FieldTotal:     int64(6100),
-	}, kayitlar[0])
+	}, records[0])
 }
 
-// TestQueryProviderAlansizIstekTumAlanlariDoner alan seçilmeyen istekte
-// varsayılan kümenin döndüğünü doğrular.
-func TestQueryProviderAlansizIstekTumAlanlariDoner(t *testing.T) {
+// TestQueryProviderARequestWithoutFieldsReturnsAllFields validates that the
+// default set is returned when no field is selected.
+func TestQueryProviderARequestWithoutFieldsReturnsAllFields(t *testing.T) {
 	ctx := context.Background()
-	o := yeniOrtam(t)
-	p := service.NewQueryProvider(o.svc)
+	e := newEnv(t)
+	p := service.NewQueryProvider(e.svc)
 
-	_, err := o.svc.CreateOrder(ctx, gecerliGirdi())
+	_, err := e.svc.CreateOrder(ctx, validInput())
 	require.NoError(t, err)
 
-	kayitlar, err := p.List(ctx, query.ListOptions{})
+	records, err := p.List(ctx, query.ListOptions{})
 	require.NoError(t, err)
-	require.Len(t, kayitlar, 1)
+	require.Len(t, records, 1)
 
-	for _, alan := range []string{
+	for _, field := range []string{
 		service.FieldID, service.FieldDisplayID, service.FieldStatus,
 		service.FieldRegionID, service.FieldCustomerID, service.FieldEmail,
 		service.FieldCurrencyCode, service.FieldCartID, service.FieldSubtotal,
@@ -71,107 +72,108 @@ func TestQueryProviderAlansizIstekTumAlanlariDoner(t *testing.T) {
 		service.FieldTotal, service.FieldPlacedAt, service.FieldCompletedAt,
 		service.FieldCanceledAt, service.FieldCreatedAt, service.FieldUpdatedAt,
 	} {
-		assert.Contains(t, kayitlar[0], alan)
+		assert.Contains(t, records[0], field)
 	}
-	assert.Nil(t, kayitlar[0][service.FieldCompletedAt],
-		"tamamlanmamış siparişte damga nil olmalı")
+	assert.Nil(t, records[0][service.FieldCompletedAt],
+		"on an order that is not completed the stamp has to be nil")
 }
 
-// TestQueryProviderTanimsizAlaniReddeder sunulmayan alanın Invalid ile
-// reddedildiğini doğrular (ADR 0004).
-func TestQueryProviderTanimsizAlaniReddeder(t *testing.T) {
+// TestQueryProviderRejectsAnUndefinedField validates that a field that is not
+// offered is rejected with Invalid (ADR 0004).
+func TestQueryProviderRejectsAnUndefinedField(t *testing.T) {
 	ctx := context.Background()
-	o := yeniOrtam(t)
-	p := service.NewQueryProvider(o.svc)
+	e := newEnv(t)
+	p := service.NewQueryProvider(e.svc)
 
 	_, err := p.List(ctx, query.ListOptions{Fields: []string{"cancel_reason"}})
 	require.Error(t, err)
 	assert.Equal(t, errors.KindInvalid, errors.KindOf(err))
 
-	_, err = p.FetchByIDs(ctx, []string{"order_1"}, []string{"gizli_alan"})
+	_, err = p.FetchByIDs(ctx, []string{"order_1"}, []string{"hidden_field"})
 	require.Error(t, err)
 	assert.Equal(t, errors.KindInvalid, errors.KindOf(err))
 }
 
-// TestQueryProviderFiltreleri desteklenen ve desteklenmeyen filtreleri
-// doğrular.
-func TestQueryProviderFiltreleri(t *testing.T) {
+// TestQueryProviderFilters validates the supported and the unsupported filters.
+func TestQueryProviderFilters(t *testing.T) {
 	ctx := context.Background()
-	o := yeniOrtam(t)
-	p := service.NewQueryProvider(o.svc)
+	e := newEnv(t)
+	p := service.NewQueryProvider(e.svc)
 
-	misafir := gecerliGirdi()
-	misafir.CustomerID = ""
-	_, err := o.svc.CreateOrder(ctx, misafir)
+	guest := validInput()
+	guest.CustomerID = ""
+	_, err := e.svc.CreateOrder(ctx, guest)
 	require.NoError(t, err)
-	_, err = o.svc.CreateOrder(ctx, gecerliGirdi())
+	_, err = e.svc.CreateOrder(ctx, validInput())
 	require.NoError(t, err)
 
-	kayitlar, err := p.List(ctx, query.ListOptions{
+	records, err := p.List(ctx, query.ListOptions{
 		Filters: map[string]any{service.FieldCustomerID: testCustomerID},
 		Fields:  []string{service.FieldID},
 	})
 	require.NoError(t, err)
-	assert.Len(t, kayitlar, 1)
+	assert.Len(t, records, 1)
 
-	kayitlar, err = p.List(ctx, query.ListOptions{
+	records, err = p.List(ctx, query.ListOptions{
 		Filters: map[string]any{service.FieldStatus: models.OrderPending.String()},
 		Fields:  []string{service.FieldID},
 	})
 	require.NoError(t, err)
-	assert.Len(t, kayitlar, 2)
+	assert.Len(t, records, 2)
 
 	_, err = p.List(ctx, query.ListOptions{
 		Filters: map[string]any{service.FieldCustomerID: 42},
 	})
-	require.Error(t, err, "yanlış tipli filtre reddedilmeli")
+	require.Error(t, err, "a filter with the wrong type has to be rejected")
 	assert.Equal(t, errors.KindInvalid, errors.KindOf(err))
 
 	_, err = p.List(ctx, query.ListOptions{
 		Filters: map[string]any{"email": "a@b.com"},
 	})
-	require.Error(t, err, "desteklenmeyen filtre reddedilmeli")
+	require.Error(t, err, "an unsupported filter has to be rejected")
 	assert.Equal(t, errors.KindInvalid, errors.KindOf(err))
 }
 
-// TestQueryProviderFetchByIDsBatchOkur toplu okumanın davranışını doğrular.
+// TestQueryProviderFetchByIDsReadsInBatch validates the behavior of the batch
+// read.
 //
-// Bulunamayan kimlik HATA DEĞİLDİR; yalnızca kayıt dönmez (ADR 0004).
-func TestQueryProviderFetchByIDsBatchOkur(t *testing.T) {
+// An identifier that is not found IS NOT AN ERROR; it simply returns no record
+// (ADR 0004).
+func TestQueryProviderFetchByIDsReadsInBatch(t *testing.T) {
 	ctx := context.Background()
-	o := yeniOrtam(t)
-	p := service.NewQueryProvider(o.svc)
+	e := newEnv(t)
+	p := service.NewQueryProvider(e.svc)
 
-	siparis, err := o.svc.CreateOrder(ctx, gecerliGirdi())
+	order, err := e.svc.CreateOrder(ctx, validInput())
 	require.NoError(t, err)
 
-	kayitlar, err := p.FetchByIDs(ctx, []string{siparis.ID, "order_YOK"}, []string{service.FieldID})
+	records, err := p.FetchByIDs(ctx, []string{order.ID, "order_MISSING"}, []string{service.FieldID})
 	require.NoError(t, err)
-	require.Len(t, kayitlar, 1)
-	assert.Equal(t, siparis.ID, kayitlar[0][service.FieldID])
+	require.Len(t, records, 1)
+	assert.Equal(t, order.ID, records[0][service.FieldID])
 
-	bos, err := p.FetchByIDs(ctx, nil, nil)
+	empty, err := p.FetchByIDs(ctx, nil, nil)
 	require.NoError(t, err)
-	assert.Empty(t, bos)
+	assert.Empty(t, empty)
 }
 
-// TestQueryProviderSinirsizIstegiTavanaKirpar çekirdeğin "0 = sınırsız"
-// sözleşmesinin sağlayıcı tavanına indirildiğini doğrular.
+// TestQueryProviderClipsAnUnlimitedRequestToTheCeiling validates that the core's
+// "0 = unlimited" contract is brought down to the provider's ceiling.
 //
-// Sınırsız bir kök sorgu tüm sipariş tablosunu belleğe alırdı. İstek
-// reddedilmez, KIRPILIR: çağıran açıkça "hepsini istiyorum" demiştir ve
-// alabileceğinin en fazlasını almalıdır.
-func TestQueryProviderSinirsizIstegiTavanaKirpar(t *testing.T) {
+// An unlimited root query would take the whole order table into memory. The
+// request is not rejected, it is CLIPPED: the caller explicitly said "I want all
+// of them" and has to get the most it can get.
+func TestQueryProviderClipsAnUnlimitedRequestToTheCeiling(t *testing.T) {
 	ctx := context.Background()
-	o := yeniOrtam(t)
-	p := service.NewQueryProvider(o.svc)
+	e := newEnv(t)
+	p := service.NewQueryProvider(e.svc)
 
-	_, err := o.svc.CreateOrder(ctx, gecerliGirdi())
+	_, err := e.svc.CreateOrder(ctx, validInput())
 	require.NoError(t, err)
 
 	for _, limit := range []int{0, -5, int(service.MaxLimit) + 1000} {
-		kayitlar, err := p.List(ctx, query.ListOptions{Limit: limit, Fields: []string{service.FieldID}})
-		require.NoError(t, err, "limit=%d reddedilmemeli", limit)
-		assert.Len(t, kayitlar, 1)
+		records, err := p.List(ctx, query.ListOptions{Limit: limit, Fields: []string{service.FieldID}})
+		require.NoError(t, err, "limit=%d must not be rejected", limit)
+		assert.Len(t, records, 1)
 	}
 }

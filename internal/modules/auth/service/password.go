@@ -12,138 +12,145 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/auth/models"
 )
 
-// Bu dosya modülün parola kararlarını taşır.
+// This file carries the module's password decisions.
 //
-// # Neden bcrypt (argon2id değil)
+// # Why bcrypt (and not argon2id)
 //
-// İkisi de kabul edilebilir seçimlerdir; bcrypt üç somut nedenle seçilmiştir:
+// Both are acceptable choices; bcrypt was picked for three concrete reasons:
 //
-//  1. Maliyet parametresi hash'in İÇİNDE kodludur. Donanım hızlandıkça
-//     maliyet artırılır ve eski hash'ler geçersiz OLMAZ — her hash kendi
-//     maliyetiyle doğrulanır, kullanıcı bir sonraki girişinde sessizce yeni
-//     maliyete taşınabilir. argon2id'nin x/crypto'daki API'si ham bayt döner;
-//     tuz ve üç parametre (bellek, tur, paralellik) ELLE kodlanıp ayrıştırılmak
-//     zorundadır. O kodlama bu modülün yazacağı ve bir daha hiç
-//     değiştiremeyeceği bir biçim olurdu; hatası da sessiz olurdu.
-//  2. Doğrulama tek çağrıdır ve tuz yönetimi kütüphanededir; elle tuz üreten
-//     her satır, bir gün sabit tuz yazma riskidir.
-//  3. bcrypt'in bilinen sınırı (72 bayt) AÇIKÇA uygulanır (bkz.
-//     [MaxPasswordLen]); argon2id'nin böyle bir sınırı yoktur ama onun yerine
-//     bellek parametresini yanlış seçmenin sessiz riski gelir.
+//  1. The cost parameter is encoded INSIDE the hash. As hardware gets faster
+//     the cost is raised and old hashes DO NOT become invalid — every hash is
+//     verified with its own cost, and the user can be silently carried over to
+//     the new cost on their next login. The argon2id API in x/crypto returns
+//     raw bytes; the salt and the three parameters (memory, rounds,
+//     parallelism) have to be encoded and parsed BY HAND. That encoding would
+//     be a format this module writes and can then never change again; its
+//     mistakes would be silent too.
+//  2. Verification is a single call and salt management lives in the library;
+//     every line that produces a salt by hand is a risk of writing a fixed salt
+//     one day.
+//  3. The known limit of bcrypt (72 bytes) is enforced EXPLICITLY (see
+//     [MaxPasswordLen]); argon2id has no such limit, but in its place comes the
+//     silent risk of picking the memory parameter wrong.
 //
-// argon2id'nin GPU'ya karşı üstünlüğü gerçektir; bu modül için belirleyici
-// olmamasının nedeni, parolaların yalnızca YÖNETİM kullanıcılarına ait olması
-// ve sayılarının onlarla ölçülmesidir. Karar ileride değiştirilirse
-// [Service.SetPassword] ile [Service.Login] tek dokunma noktasıdır.
+// The superiority of argon2id against GPUs is real; the reason it is not
+// decisive for this module is that the passwords belong only to ADMIN users and
+// that their number is counted in tens. Should the decision ever be changed,
+// [Service.SetPassword] and [Service.Login] are the single point of contact.
 //
-// # Neden kilit var (ve neden kısa)
+// # Why there is a lock (and why it is short)
 //
-// Art arda başarısız denemede kimlik [Options.LoginLockDuration] süresince
-// kilitlenir. Karar ikili bir tercihtir:
+// After consecutive failed attempts the identity is locked for
+// [Options.LoginLockDuration]. The decision is a choice between two evils:
 //
-//   - Hiç sayaç olmasaydı saldırgan, bilinen bir admin e-postasına karşı
-//     yalnızca bcrypt hızıyla sınırlı olurdu; maliyet 12'de çekirdek başına
-//     ~4 deneme/saniye, günde yüz binlerce deneme eder. Zayıf bir parola için
-//     bu yeterlidir.
-//   - Kalıcı kilit ise hedefli bir hizmet dışı bırakma aracıdır: saldırgan
-//     admin'in e-postasını bilirse hesabı süresiz kapatabilirdi.
+//   - Had there been no counter at all, an attacker working against a known
+//     admin email address would be limited only by the speed of bcrypt; at cost
+//     12 that is ~4 attempts/second per core, which comes to hundreds of
+//     thousands of attempts a day. For a weak password that is enough.
+//   - A permanent lock, on the other hand, is a targeted denial-of-service
+//     tool: an attacker who knows the admin's email address could keep the
+//     account closed indefinitely.
 //
-// Bu yüzden kilit KISA ve KENDİLİĞİNDEN AÇILIR; yönetici müdahalesi
-// gerektirmez. Kilit hesap başınadır; IP başına hız sınırı BU MODÜLÜN İŞİ
-// DEĞİLDİR ve Faz 9'un "rate limiting" middleware'ine bırakılmıştır — ikisi
-// birbirinin yerine geçmez, tamamlar.
+// This is why the lock is SHORT and OPENS BY ITSELF; it requires no
+// administrator intervention. The lock is per account; a per-IP rate limit IS
+// NOT THIS MODULE'S JOB and has been left to Phase 9's "rate limiting"
+// middleware — the two do not replace each other, they complete each other.
 //
-// Kilitli hesap, kilitsiz bir yanlış paroladan AYIRT EDİLEMEZ: aynı hata, aynı
-// süre. "Hesabınız kilitli" demek, hesabın var olduğunu doğrulamak olurdu.
-// Yönetici durumu log'dan görür.
+// A locked account IS INDISTINGUISHABLE from a wrong password with no lock: the
+// same error, the same duration. Saying "your account is locked" would be
+// confirming that the account exists. The administrator sees the situation in
+// the log.
 
-// dummyPassword zamanlama eşitliği için kullanılan sabit kukla parolasıdır.
+// dummyPassword is the fixed dummy password used for timing equality.
 //
-// Bu bir kimlik bilgisi DEĞİLDİR: hiçbir hesaba ait değildir, hiçbir yere
-// yazılmaz ve tek işi bcrypt karşılaştırmasının süresini üretmektir.
-const dummyPassword = "gobit-kukla-parola-zamanlama-esitligi-icin" //nolint:gosec // G101: hesaba ait olmayan, yalnızca zamanlama için kullanılan sabit
+// THIS IS NOT A CREDENTIAL: it belongs to no account, it is written nowhere,
+// and its only job is to produce the duration of a bcrypt comparison.
+const dummyPassword = "gobit-dummy-password-for-timing-equality"
 
-// newDummyHash verilen maliyette bir kukla hash üreticisi kurar.
+// newDummyHash sets up a dummy hash producer at the given cost.
 //
-// Üretim TEMBELDİR (sync.OnceValue): maliyet 12'de bir bcrypt ~250 ms sürer ve
-// bunu her servis kurulumunda ödemek, açılışı ve her birim testini yavaşlatırdı.
-// Bedeli, ilk "kullanıcı yok" denemesinin bir kez daha yavaş olmasıdır; tek
-// seferlik bu sapma hiçbir hesabın varlığını ele vermez.
+// Production is LAZY (sync.OnceValue): at cost 12 one bcrypt run takes ~250 ms
+// and paying that on every service setup would slow down both startup and every
+// unit test. The price is that the first "no such user" attempt is slow one
+// more time; this one-off deviation gives away the existence of no account.
 func newDummyHash(cost int) func() []byte {
 	return sync.OnceValue(func() []byte {
 		hash, err := bcrypt.GenerateFromPassword([]byte(dummyPassword), cost)
 		if err != nil {
-			// [New] maliyeti aralık içine çektiği için buraya düşülmez;
-			// düşülürse [Service.equalizeTiming] eşdeğer maliyetli bir yola
-			// geçer, sessizce hızlanmaz.
+			// Since [New] pulls the cost into range this branch is not reached;
+			// if it is, [Service.equalizeTiming] switches to a path of
+			// equivalent cost, it does not silently speed up.
 			return nil
 		}
 		return hash
 	})
 }
 
-// equalizeTiming kimlik bulunamadığında da bir bcrypt turu çalıştırır.
+// equalizeTiming runs a bcrypt round even when the identity could not be found.
 //
-// Zamanlama eşitliğinin tamamı buradadır: "kullanıcı yok", "kimlik yok",
-// "parola atanmamış" ve "hesap kilitli" dallarının hepsi bu çağrıyı yapar,
-// böylece dört durum da gerçek bir parola karşılaştırması kadar sürer.
-// Yapılmasaydı, yanıt süresi "bu e-posta kayıtlı mı?" sorusunun cevabı olur ve
-// saldırgan yönetici e-postalarını sayabilirdi.
+// The whole of the timing equality is here: the "no such user", "no identity",
+// "no password assigned" and "account locked" branches all make this call, so
+// that all four cases take as long as a real password comparison. Had it not
+// been done, the response time would be the answer to the question "is this
+// email registered?" and an attacker could enumerate the admin addresses.
 //
-// Sonuç bilinçli olarak YOK SAYILIR; çağıranın dalı zaten bellidir.
+// The result is IGNORED deliberately; the caller's branch is already decided.
 func (s *Service) equalizeTiming(password string) {
 	if hash := s.dummyHash(); len(hash) > 0 {
 		_ = bcrypt.CompareHashAndPassword(hash, []byte(password))
 		return
 	}
-	// Kukla hash üretilemediyse eşdeğer maliyetli ikinci yol: üretim de
-	// doğrulama da aynı sayıda bcrypt turu çalıştırır.
+	// If the dummy hash could not be produced, a second path of equivalent cost:
+	// production and verification both run the same number of bcrypt rounds.
 	_, _ = bcrypt.GenerateFromPassword([]byte(dummyPassword), s.cost)
 }
 
-// hashPassword parolayı yapılandırılmış maliyette bcrypt ile hash'ler.
+// hashPassword hashes the password with bcrypt at the configured cost.
 //
-// Hata mesajında parola GEÇMEZ.
+// The password DOES NOT APPEAR in the error message.
 func (s *Service) hashPassword(password string) (string, error) {
 	hash, err := bcrypt.GenerateFromPassword([]byte(password), s.cost)
 	if err != nil {
 		return "", errors.Wrap(err, errors.KindInternal, CodeWeakPassword,
-			"parola hash'lenemedi")
+			"the password could not be hashed")
 	}
 	return string(hash), nil
 }
 
-// SetPassword kullanıcının parolasını belirler; giriş kimliği yoksa oluşturur.
+// SetPassword sets the user's password; it creates the login identity if there
+// is none.
 //
-// Parola politikası [validatePassword] ile uygulanır. Düz parola yalnızca bu
-// çağrının içinde yaşar: hash'lenir, hash saklanır ve parolanın kendisi hiçbir
-// yapıya, log satırına ya da hata mesajına geçmez.
+// The password policy is enforced by [validatePassword]. The plaintext password
+// lives only inside this call: it is hashed, the hash is stored and the
+// password itself passes into no struct, no log line and no error message.
 //
-// Başarılı çağrı kilit sayaçlarını da sıfırlar: parolasını değiştiren
-// kullanıcı, eski parolayla yapılmış denemelerin bıraktığı kilitle
-// karşılaşmamalıdır.
+// A successful call also resets the lock counters: a user who changes their
+// password should not run into the lock left behind by attempts made with the
+// old password.
 //
-// # Mevcut oturumlar DÜŞER
+// # Existing sessions DROP
 //
-// Yazma, kimliğin [sessionAnchor] değerini bu ana taşır ve daha önce üretilmiş
-// oturum jetonları bir sonraki isteklerinde reddedilir
-// (bkz. [Service.principalFromToken]). Bu, parola değişiminin yan etkisi değil
-// AMACIDIR: sızmış bir yönetici jetonu, parola değişmemişse süresi dolana
-// kadar geçerli kalırdı.
+// The write carries the identity's [sessionAnchor] value up to this moment and
+// session tokens produced earlier are rejected on their next requests (see
+// [Service.principalFromToken]). This is not a side effect of the password
+// change but its PURPOSE: a leaked admin token would stay valid until it
+// expired if the password had not changed.
 //
-// İlerletilen satır YALNIZCA [models.ProviderEmailPass] kimliğininkidir; parola
-// o kimliğin bilgisidir ve başka sağlayıcıların satırlarında karşılığı yoktur.
-// Yine de düşen oturumlar HEPSİDİR, çünkü doğrulama çapayı sağlayıcıya göre
-// seçmez: kullanıcının en yeni çapasını okur. Bu yüzden çıkışın aksine burada
-// bütün satırlara dokunmak gerekmez.
+// The row that is advanced is ONLY that of the [models.ProviderEmailPass]
+// identity; the password is that identity's information and it has no
+// counterpart in the rows of other providers. The sessions that drop are still
+// ALL of them, because verification does not pick the anchor by provider: it
+// reads the user's newest anchor. This is why, unlike logout, there is no need
+// to touch every row here.
 //
-// Oturumları kapatmak için parolayı değiştirmek GEREKMEZ: aynı çapayı
-// kimlik bilgisine dokunmadan ilerleten uç [Service.Logout]'tur.
+// Changing the password IS NOT NECESSARY in order to close sessions: the
+// endpoint that advances the same anchor without touching the credential is
+// [Service.Logout].
 func (s *Service) SetPassword(ctx context.Context, userID, password string) error {
 	if err := s.ready(); err != nil {
 		return err
 	}
-	if err := requireID(userID, models.UserIDPrefix, "kullanıcı kimliği"); err != nil {
+	if err := requireID(userID, models.UserIDPrefix, "the user identifier"); err != nil {
 		return err
 	}
 	if err := validatePassword(password); err != nil {
@@ -166,54 +173,58 @@ func (s *Service) SetPassword(ctx context.Context, userID, password string) erro
 		return err
 	}
 
-	s.log.InfoContext(ctx, "kullanıcı parolası güncellendi",
+	s.log.InfoContext(ctx, "user password updated",
 		slog.String("user_id", user.ID),
 	)
 	return nil
 }
 
-// Login e-posta ve parolayla kimlik doğrular ve bir oturum jetonu üretir.
+// Login authenticates with an email address and a password and produces a
+// session token.
 //
-// # Tek hata, tek süre
+// # One error, one duration
 //
-// Başarısız her yol AYNI hatayı ([CodeInvalidCredentials]) ve KABACA AYNI
-// süreyi üretir:
+// Every failing path produces THE SAME error ([CodeInvalidCredentials]) and
+// ROUGHLY THE SAME duration:
 //
-//	kullanıcı yok · giriş kimliği yok · parola atanmamış · hesap kilitli ·
-//	parola yanlış
+//	no such user · no login identity · no password assigned · account locked ·
+//	wrong password
 //
-// Ayrım yapılsaydı, yanıtın kendisi "bu e-posta kayıtlı" bilgisini verirdi ve
-// saldırgan önce geçerli yönetici adreslerini toplar, sonra yalnızca onlara
-// yüklenirdi. Süre eşitliği [Service.equalizeTiming] ile sağlanır; gerçek
-// gerekçe yalnızca LOG'a yazılır ve istemciye gitmez.
+// Had a distinction been made, the response itself would hand over the
+// information "this email is registered" and the attacker would first collect
+// the valid admin addresses and then bear down on those alone. The duration
+// equality is provided by [Service.equalizeTiming]; the real reason is written
+// only to the LOG and does not go to the client.
 //
-// Süre eşitliği kabaca sağlanır: dallar arasında bir veritabanı sorgusu
-// farkı kalabilir, ama o fark (sub-milisaniye) süreye hâkim olan bcrypt
-// turunun (yüz milisaniyeler) yanında ölçülemez.
+// The duration equality is provided roughly: a difference of one database query
+// may remain between the branches, but that difference (sub-millisecond) is
+// immeasurable next to the bcrypt round (hundreds of milliseconds) that
+// dominates the duration.
 //
-// # Dönüş
+// # Return
 //
-// Jeton ve son kullanma anı döner. Jeton bir SIRDIR; çağıran onu loglamamalı,
-// yalnızca yanıt gövdesinde iletmelidir.
+// The token and the expiry moment are returned. The token IS A SECRET; the
+// caller must not log it, only pass it on in the response body.
 func (s *Service) Login(ctx context.Context, email, password string) (string, time.Time, error) {
 	if err := s.ready(); err != nil {
 		return "", time.Time{}, err
 	}
-	// Boş girdi bir hesap sorusu DEĞİL, istemci hatasıdır; ayrı hata dönmesi
-	// hiçbir hesabın varlığını ele vermez.
+	// Empty input IS NOT a question about an account, it is a client error;
+	// returning a separate error gives away the existence of no account.
 	if email == "" || password == "" {
 		return "", time.Time{}, errors.Invalid(CodeInvalidInput,
-			"e-posta ve parola zorunludur")
+			"the email address and the password are required")
 	}
 
 	normalized, err := normalizeEmail(email)
 	if err != nil {
-		// Biçimi bozuk bir e-posta hiçbir hesapla eşleşemez; yine de kimlik
-		// bilgisi hatası olarak ve eşit sürede döner, çünkü bu yol bir hesap
-		// SORGUSUDUR ve biçim hatası ile "yok" arasındaki fark saldırgana
-		// hangi adreslerin denenmeye değer olduğunu söylerdi.
+		// A malformed email address can match no account; it still returns as a
+		// credentials error and in an equal duration, because this path is a
+		// QUERY ABOUT AN ACCOUNT and the difference between a format error and
+		// "no such account" would tell the attacker which addresses are worth
+		// trying.
 		s.equalizeTiming(password)
-		return "", time.Time{}, s.failLogin(ctx, "e-posta biçimi geçersiz", "")
+		return "", time.Time{}, s.failLogin(ctx, "the email format is invalid", "")
 	}
 
 	user, err := s.repo.GetUserByEmail(ctx, normalized)
@@ -222,7 +233,7 @@ func (s *Service) Login(ctx context.Context, email, password string) (string, ti
 			return "", time.Time{}, err
 		}
 		s.equalizeTiming(password)
-		return "", time.Time{}, s.failLogin(ctx, "kullanıcı bulunamadı", "")
+		return "", time.Time{}, s.failLogin(ctx, "the user was not found", "")
 	}
 
 	identity, err := s.repo.GetIdentity(ctx, user.ID, models.ProviderEmailPass)
@@ -231,34 +242,34 @@ func (s *Service) Login(ctx context.Context, email, password string) (string, ti
 			return "", time.Time{}, err
 		}
 		s.equalizeTiming(password)
-		return "", time.Time{}, s.failLogin(ctx, "giriş kimliği yok", user.ID)
+		return "", time.Time{}, s.failLogin(ctx, "there is no login identity", user.ID)
 	}
 
 	now := s.clock()
 	if identity.IsLocked(now) {
 		s.equalizeTiming(password)
-		return "", time.Time{}, s.failLogin(ctx, "hesap geçici olarak kilitli", user.ID)
+		return "", time.Time{}, s.failLogin(ctx, "the account is temporarily locked", user.ID)
 	}
 	if identity.PasswordHash == "" {
-		// Parolası atanmamış bir kimlik (örn. yalnızca OAuth) parola ile
-		// giremez. Boş hash'i bcrypt'e vermek "hash çok kısa" hatası döndürür
-		// ve o dal ÖLÇÜLEBİLİR biçimde hızlıdır.
+		// An identity with no password assigned (e.g. OAuth only) cannot log in
+		// with a password. Handing the empty hash to bcrypt returns a "hash too
+		// short" error and that branch is MEASURABLY fast.
 		s.equalizeTiming(password)
-		return "", time.Time{}, s.failLogin(ctx, "parola atanmamış", user.ID)
+		return "", time.Time{}, s.failLogin(ctx, "no password has been assigned", user.ID)
 	}
 
 	if cmpErr := bcrypt.CompareHashAndPassword(
 		[]byte(identity.PasswordHash), []byte(password),
 	); cmpErr != nil {
 		s.registerFailure(ctx, identity.ID, now)
-		return "", time.Time{}, s.failLogin(ctx, "parola eşleşmedi", user.ID)
+		return "", time.Time{}, s.failLogin(ctx, "the password did not match", user.ID)
 	}
 
 	if err := s.repo.RegisterLoginSuccess(ctx, identity.ID, now); err != nil {
-		// Sayaç temizlenemediyse giriş yine de geçerlidir; kullanıcıyı
-		// içeri almamak, sayaç yazımının geçici bir hatası yüzünden yönetimi
-		// kilitlemek olurdu. Durum loglanır.
-		s.log.WarnContext(ctx, "başarılı giriş kaydedilemedi",
+		// If the counter could not be cleared the login is still valid; not
+		// letting the user in would mean locking the administration out because
+		// of a temporary failure of a counter write. The situation is logged.
+		s.log.WarnContext(ctx, "the successful login could not be recorded",
 			slog.String("user_id", user.ID), slog.Any("error", err))
 	}
 
@@ -267,41 +278,43 @@ func (s *Service) Login(ctx context.Context, email, password string) (string, ti
 		return "", time.Time{}, err
 	}
 
-	s.log.InfoContext(ctx, "yönetim girişi başarılı",
+	s.log.InfoContext(ctx, "admin login succeeded",
 		slog.String("user_id", user.ID),
 	)
 	return token, expiresAt, nil
 }
 
-// failLogin başarısız girişin gerekçesini LOGLAR ve genel hatayı döner.
+// failLogin LOGS the reason of a failed login and returns the generic error.
 //
-// Gerekçe istemciye gitmez; e-posta ve parola log'a da yazılmaz (plan Bölüm 8:
-// hassas veri loglanmaz). Kullanıcı biliniyorsa yalnızca kimliği yazılır.
+// The reason does not go to the client; the email address and the password are
+// not written to the log either (plan Section 8: sensitive data is not logged).
+// If the user is known only their identifier is written.
 func (s *Service) failLogin(ctx context.Context, reason, userID string) error {
 	attrs := []any{slog.String("reason", reason)}
 	if userID != "" {
 		attrs = append(attrs, slog.String("user_id", userID))
 	}
-	s.log.WarnContext(ctx, "yönetim girişi reddedildi", attrs...)
+	s.log.WarnContext(ctx, "admin login rejected", attrs...)
 
-	return errors.Unauthorized(CodeInvalidCredentials, "e-posta ya da parola hatalı")
+	return errors.Unauthorized(CodeInvalidCredentials, "the email address or the password is wrong")
 }
 
-// registerFailure başarısız denemeyi sayar; sayım hatası girişi etkilemez.
+// registerFailure counts the failed attempt; a counting error does not affect
+// the login.
 //
-// Sayaç yazılamazsa istek yine de reddedilir — sayaç bir koruma katmanıdır,
-// doğruluğun kaynağı değil.
+// If the counter cannot be written the request is still rejected — the counter
+// is a layer of protection, not the source of truth.
 func (s *Service) registerFailure(ctx context.Context, identityID string, now time.Time) {
 	identity, err := s.repo.RegisterLoginFailure(
 		ctx, identityID, s.threshold, now.Add(s.lockFor), now,
 	)
 	if err != nil {
-		s.log.WarnContext(ctx, "başarısız giriş sayacı güncellenemedi",
+		s.log.WarnContext(ctx, "the failed login counter could not be updated",
 			slog.String("identity_id", identityID), slog.Any("error", err))
 		return
 	}
 	if identity.IsLocked(now) {
-		s.log.WarnContext(ctx, "hesap geçici olarak kilitlendi",
+		s.log.WarnContext(ctx, "the account has been temporarily locked",
 			slog.String("user_id", identity.UserID),
 			slog.Int("failed_attempts", identity.FailedAttempts),
 			slog.Time("locked_until", *identity.LockedUntil),

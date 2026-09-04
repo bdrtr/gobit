@@ -1,55 +1,60 @@
-// Package auth kimlik modülüdür (plan Bölüm 6, Faz 8).
+// Package auth is the identity module (plan Section 6, Phase 8).
 //
-// Sorumluluğu tek cümleyle: bir isteğin KİMDEN geldiğini ve NEYE yetkili
-// olduğunu söylemek. Modül User (yönetim kullanıcısı), AuthIdentity, ApiKey ve
-// SalesChannel verisinin TEK yazma yetkilisidir (Prensip 2.3).
+// Its responsibility in one sentence: to say WHOM a request comes from and
+// WHAT it is authorized for. The module is the SOLE writer of the User (the
+// admin user), AuthIdentity, ApiKey and SalesChannel data (Principle 2.3).
 //
-// # Müşteri değil, yönetici
+// # An administrator, not a customer
 //
-// Buradaki "user" mağazadan alışveriş yapan kişi DEĞİLDİR; o, customer
-// modülünün verisidir. İki kavramın ayrı modüllerde durması bilinçlidir: bir
-// müşterinin yönetim yetkisi kazanması diye bir yol yoktur ve iki tablo hiçbir
-// yerde birleşmez.
+// The "user" here is NOT the person shopping in the store; that person is
+// the customer module's data. Keeping the two concepts in separate modules
+// is deliberate: there is no path along which a customer gains admin
+// authority, and the two tables are joined nowhere.
 //
-// # Dışarıya açtığı yüzeyler
+// # The surfaces it opens to the outside
 //
-//   - "auth.interop" — çekirdeğin corehttp.Authenticator arayüzünü YAPISAL
-//     olarak karşılayan kimlik doğrulayıcı. Çekirdek onu ADLA çözer ve auth'u
-//     import etmez (ADR 0001).
-//   - "auth.service" — modüller arası ilkel çağrı yüzeyi (bkz.
+//   - "auth.interop" — the authenticator that satisfies the core's
+//     corehttp.Authenticator interface STRUCTURALLY. The core resolves it BY
+//     NAME and does not import auth (ADR 0001).
+//   - "auth.service" — the cross-module primitive call surface (see
 //     internal/modules/auth/service, interop.go).
-//   - "sales_channel.query" — Query katmanına açılan okuma sağlayıcısı
-//     (ADR 0004). Kullanıcılar ve API anahtarları BU YÜZEYE AÇILMAZ.
+//   - "sales_channel.query" — the read provider opened to the Query layer
+//     (ADR 0004). Users and API keys are NOT OPENED ON THIS SURFACE.
 //   - /admin/v1/auth/login, /admin/v1/auth/me, /admin/v1/auth/logout,
-//     /admin/v1/users, /admin/v1/api-keys, /admin/v1/sales-channels —
-//     yönetim API'si.
+//     /admin/v1/users, /admin/v1/api-keys, /admin/v1/sales-channels — the
+//     admin API.
 //
-// # Oturum kapatma TOPTANDIR
+// # Logging out is WHOLESALE
 //
-// POST /admin/v1/auth/logout çağıranın BÜTÜN oturumlarını düşürür; tek cihaz
-// seçilemez. Jeton durum tutmaz ve tek bir jetonu geçersizleştirmek jti bazlı
-// bir kara liste (yeni bir depo) isterdi; onun yerine kimlik başına tutulan
-// tek bir zaman çapası ilerletilir ve ondan önce üretilmiş tüm jetonlar birden
-// düşer (bkz. internal/modules/auth/service, session.go).
+// POST /admin/v1/auth/logout drops ALL of the caller's sessions; a single
+// device cannot be picked. The token holds no state, and invalidating a
+// single token would have wanted a jti-based blacklist (a new repository);
+// instead a single time anchor kept per identity is advanced and every token
+// minted before it drops at once (see internal/modules/auth/service,
+// session.go).
 //
-// # KORUMASIZ UÇ
+// # AN UNPROTECTED ENDPOINT
 //
-// POST /admin/v1/auth/login doğası gereği korumasızdır ve router'ı kuran taraf
-// corehttp.RequireAdmin'i bağlarken bu yolu DIŞARIDA BIRAKMALIDIR. Yol,
-// api.LoginPath sabitiyle yayımlanır; elle yazılmamalıdır.
+// POST /admin/v1/auth/login is unprotected by its very nature, and whoever
+// wires the router MUST LEAVE this path OUT while mounting
+// corehttp.RequireAdmin. The path is published by the api.LoginPath
+// constant; it must not be written by hand.
 //
-// # Sır ve ömür PARAMETREDİR
+// # The secret and the lifetime ARE PARAMETERS
 //
-// Modül internal/core/config paketini tanımaz: JWT sırrı ve ömrü [Options] ile
-// dışarıdan verilir ve uygulamayı kuran taraf (cmd/server) onları
-// yapılandırmadan okuyup buraya geçirir. Sır boşsa [Module.Register] HATA
-// DÖNER — imzasız bir yönetim yüzeyiyle açılmaktansa açılmamak doğrudur.
+// The module does not know the internal/core/config package: the JWT secret
+// and its lifetime are given from outside through [Options], and whoever
+// wires the application (cmd/server) reads them from the configuration and
+// passes them here. If the secret is empty [Module.Register] RETURNS AN
+// ERROR — not opening at all is right, rather than opening with an unsigned
+// admin surface.
 //
-// # Link'i bildiren tarafa not
+// # A note to whoever declares the link
 //
-// Query, bir genişletmenin hedef sağlayıcısını link tanımının UCUNDAKİ MODÜL
-// ADINDAN bulur (hedef ad + ".query" aranır). auth ucu ENTITY ADIYLA
-// yazılmalıdır ve bu ad modül adından FARKLIDIR:
+// Query finds the target provider of an expansion FROM THE MODULE NAME AT
+// THE END of the link definition (the target name + ".query" is looked up).
+// The auth end has to be written WITH THE ENTITY NAME, and that name is
+// DIFFERENT from the module name:
 //
 //	link.LinkDefinition{
 //	    Name:        "product_sales_channel",
@@ -58,7 +63,7 @@
 //	    Cardinality: link.ManyToMany,
 //	}
 //
-// Sağlayıcı adı [ProviderName] sabitinden okunmalıdır.
+// The provider name has to be read from the [ProviderName] constant.
 package auth
 
 import (
@@ -81,78 +86,85 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/auth/service"
 )
 
-// Container'daki adlar.
+// The names in the container.
 const (
-	// ModuleName modülün benzersiz adıdır; migration versiyon tablosunun öneki
-	// de budur.
+	// ModuleName is the module's unique name; it is also the prefix of the
+	// migration version table.
 	ModuleName = "auth"
-	// ServiceName servisin container'daki adıdır. Tüketici modüller onu bu adla
-	// ve KENDİ tanımladıkları dar arayüzle çözer (ADR 0001).
+	// ServiceName is the name of the service in the container. Consuming
+	// modules resolve it under this name and through the narrow interface
+	// they define THEMSELVES (ADR 0001).
 	ServiceName = ModuleName + ".service"
-	// InteropName kimlik doğrulayıcının container'daki adıdır.
+	// InteropName is the name of the authenticator in the container.
 	//
-	// Çekirdek corehttp.Authenticator'ı bu adla çözer; adın çekirdekte
-	// yazılabilmesi için modülün import edilmesi GEREKMEZ (Prensip 2.4).
+	// The core resolves corehttp.Authenticator under this name; for the name
+	// to be written in the core, importing the module is NOT NEEDED
+	// (Principle 2.4).
 	InteropName = ModuleName + ".interop"
-	// ProviderName query sağlayıcısının container'daki adıdır (ADR 0004).
+	// ProviderName is the name of the query provider in the container
+	// (ADR 0004).
 	//
-	// Ad MODÜL adından değil ENTITY adından türer: sağlayıcı "sales_channel"
-	// entity'sini sunar.
+	// The name derives NOT from the MODULE name but from the ENTITY name:
+	// the provider serves the "sales_channel" entity.
 	ProviderName = service.Entity + query.ProviderSuffix
-	// dbServiceName çekirdek veritabanı havuzunun container'daki adıdır.
+	// dbServiceName is the name of the core database pool in the container.
 	dbServiceName = "core.db"
 )
 
-// codeSetupFailed modül kurulumunun başarısız olduğunu bildirir.
+// codeSetupFailed reports that the module's setup failed.
 const codeSetupFailed = "auth_module_setup_failed"
 
-// codeSecretMissing JWT imza sırrının verilmediğini bildirir.
-const codeSecretMissing = "auth_jwt_secret_missing" //nolint:gosec // G101: kimlik bilgisi değil, istemciye dönen sabit hata KODU
+// codeSecretMissing reports that the JWT signing secret was not given.
+const codeSecretMissing = "auth_jwt_secret_missing" //nolint:gosec // G101: not a credential but a constant error CODE returned to the client
 
-// minSecretLenWarn altında uyarı loglanan sır uzunluğudur.
+// minSecretLenWarn is the secret length below which a warning is logged.
 //
-// HS256 için sır, çıktı uzunluğu kadar (32 bayt) entropi taşımalıdır; daha
-// kısası kaba kuvvetle bulunabilir. Kısa sır burada REDDEDİLMEZ — üretim kapısı
-// internal/core/config, Validate içindedir ve yerel geliştirmede kısa bir sırla
-// çalışmak pratiktir. Ama sessiz de geçilmez.
+// For HS256 the secret has to carry as much entropy as the output length
+// (32 bytes); anything shorter can be found by brute force. A short secret
+// is NOT REJECTED here — the production gate is in internal/core/config,
+// inside Validate, and working with a short secret in local development is
+// practical. But it is not passed over silently either.
 const minSecretLenWarn = 32
 
 //go:embed migrations/*.sql
 var migrationsFS embed.FS
 
-// migrationsRoot gömülü dosyaların "migrations/" öneki soyulmuş hâlidir:
-// golang-migrate kaynağı KÖKTEN okur ve embed.FS dosyaları klasör adıyla
-// birlikte taşırdı.
+// migrationsRoot is the embedded files with the "migrations/" prefix
+// stripped: the golang-migrate source reads FROM THE ROOT and embed.FS would
+// have carried the files together with the folder name.
 var migrationsRoot = mustSub(migrationsFS, "migrations")
 
-// Options auth modülünün kurulum ayarlarıdır.
+// Options holds the setup settings of the auth module.
 //
-// JWT sırrı ve ömrü BURADAN gelir: modül internal/core/config paketini
-// tanımaz ve container'da da config kayıtlı değildir, bu yüzden değerler
-// uygulamayı kuran taraftan PARAMETRE olarak alınır.
+// The JWT secret and its lifetime come FROM HERE: the module does not know
+// the internal/core/config package and config is not registered in the
+// container either, which is why the values are taken AS A PARAMETER from
+// whoever wires the application.
 type Options struct {
-	// JWTSecret oturum jetonlarının HS256 ile imzalandığı sırdır; ZORUNLUDUR.
+	// JWTSecret is the secret with which session tokens are signed using
+	// HS256; it is MANDATORY.
 	//
-	// Boş bırakılırsa [Module.Register] hata döner. ASLA loglanmaz.
+	// If left empty [Module.Register] returns an error. It is NEVER logged.
 	JWTSecret string
-	// JWTTTL oturum jetonunun ömrüdür; 0 ise service.DefaultJWTTTL.
+	// JWTTTL is the lifetime of the session token; if 0,
+	// service.DefaultJWTTTL.
 	JWTTTL time.Duration
-	// JWTIssuer jetonun "iss" iddiasıdır; boş ise service.DefaultIssuer.
+	// JWTIssuer is the token's "iss" claim; if empty, service.DefaultIssuer.
 	JWTIssuer string
-	// BcryptCost parola hash'inin maliyet parametresidir; 0 ise
-	// service.DefaultBcryptCost. Donanım hızlandıkça artırılmalıdır.
+	// BcryptCost is the cost parameter of the password hash; if 0,
+	// service.DefaultBcryptCost. It has to be raised as hardware gets faster.
 	BcryptCost int
-	// LoginFailureThreshold kilidi tetikleyen art arda başarısız deneme
-	// sayısıdır; 0 ise service.DefaultLoginFailureThreshold.
+	// LoginFailureThreshold is the number of consecutive failed attempts that
+	// triggers the lock; if 0, service.DefaultLoginFailureThreshold.
 	LoginFailureThreshold int
-	// LoginLockDuration kilidin süresidir; 0 ise
+	// LoginLockDuration is the duration of the lock; if 0,
 	// service.DefaultLoginLockDuration.
 	LoginLockDuration time.Duration
-	// Logger yapısal log hedefidir; nil ise loglar atılır.
+	// Logger is the structured log target; if nil, the logs are discarded.
 	Logger *slog.Logger
 }
 
-// Module auth modülünün [module.Module] uygulamasıdır.
+// Module is the auth module's implementation of [module.Module].
 type Module struct {
 	opts    Options
 	svc     *service.Service
@@ -162,19 +174,20 @@ type Module struct {
 
 var _ module.Module = (*Module)(nil)
 
-// Belgeyi anlatabildiği de derleme zamanında sabitlenir.
+// That it can describe itself in the document is pinned at compile time too.
 //
-// [openapi.Describer] OPSİYONEL bir arayüzdür ve kompozisyon kökü onu TİP
-// İDDİASIYLA arar; metot adı ya da imzası kayarsa hiçbir şey derlemede
-// kırılmaz, yalnızca auth'un uçları belgeden sessizce düşerdi. Bedeli
-// yönetim istemcisinin gövdesiz kalması olurdu: kullanıcı ve anahtar
-// oluşturan uçlar, ne gönderileceği bilinmeyen metotlara dönüşürdü.
+// [openapi.Describer] is an OPTIONAL interface and the composition root looks
+// for it WITH A TYPE ASSERTION; if the method name or its signature drifts,
+// nothing breaks at compile time, only auth's endpoints would silently drop
+// out of the document. The price would be the admin client left without a
+// body: the endpoints that create users and keys would turn into methods
+// whose payload is unknown.
 var _ openapi.Describer = (*Module)(nil)
 
-// New kurulmamış bir auth modülü üretir; servis [Module.Register] içinde
-// kurulur.
+// New produces an auth module that is not set up; the service is set up
+// inside [Module.Register].
 //
-// Ana uygulama bunu şöyle çağırır:
+// The main application calls it like this:
 //
 //	registry.Add(auth.New(auth.Options{
 //	    JWTSecret: cfg.JWTSecret,
@@ -189,41 +202,43 @@ func New(opts Options) *Module {
 	return &Module{opts: opts, log: log}
 }
 
-// Name modülün adını döner.
+// Name returns the module's name.
 func (m *Module) Name() string { return ModuleName }
 
-// Migrations modülün migration dosyalarını döner.
+// Migrations returns the module's migration files.
 func (m *Module) Migrations() fs.FS { return migrationsRoot }
 
-// Register servisi, kimlik doğrulayıcıyı ve query sağlayıcısını container'a
-// kaydeder.
+// Register registers the service, the authenticator and the query provider
+// in the container.
 //
-// auth hiçbir MODÜLÜN servisine ihtiyaç duymaz; yalnızca çekirdek havuzunu
-// çözer. Havuz Bootstrap'tan ÖNCE kaydedildiği için burada doğrudan çözmek
-// güvenlidir.
+// auth needs NO MODULE's service; it resolves only the core pool. Because
+// the pool is registered BEFORE Bootstrap, resolving it directly here is
+// safe.
 //
-// İmza sırrı boşsa kurulum HATA ile durur. Gerekçe: sırsız bir auth modülü
-// giriş yapılamayan ama korumalı görünen bir yönetim yüzeyi üretirdi; hata
-// açılışta görünür, sessiz kurulum ise ilk giriş denemesinde ortaya çıkardı.
-// Yerel geliştirmede auth modülü hiç kaydedilmezse uygulama sırsız da açılır
-// (bkz. internal/core/config, JWTSecret).
+// If the signing secret is empty the setup stops WITH AN ERROR. The
+// rationale: an auth module without a secret would produce an admin surface
+// that cannot be logged into but looks protected; the error is visible at
+// startup, while a silent setup would have surfaced on the first login
+// attempt. In local development, if the auth module is not registered at
+// all, the application opens without a secret too (see internal/core/config,
+// JWTSecret).
 func (m *Module) Register(ctx context.Context, c *container.Container) error {
 	if m.opts.JWTSecret == "" {
 		return errors.Invalid(codeSecretMissing,
-			"%s modülü JWT imza sırrı olmadan kaydedilemez; JWT_SECRET ayarlanmalı", ModuleName)
+			"the %s module cannot be registered without a JWT signing secret; JWT_SECRET has to be set", ModuleName)
 	}
 	if len(m.opts.JWTSecret) < minSecretLenWarn {
-		// Sır loglanmaz; yalnızca uzunluğu bildirilir.
-		m.log.WarnContext(ctx, "auth: JWT imza sırrı kısa",
-			slog.Int("uzunluk", len(m.opts.JWTSecret)),
-			slog.Int("onerilen_en_az", minSecretLenWarn),
+		// The secret is not logged; only its length is reported.
+		m.log.WarnContext(ctx, "auth: JWT signing secret is short",
+			slog.Int("length", len(m.opts.JWTSecret)),
+			slog.Int("recommended_min", minSecretLenWarn),
 		)
 	}
 
 	pool, err := container.Resolve[*db.Pool](c, dbServiceName)
 	if err != nil {
 		return errors.Wrap(err, errors.KindOf(err), codeSetupFailed,
-			"%s modülü %q servisini çözemedi", ModuleName, dbServiceName)
+			"the %s module could not resolve the %q service", ModuleName, dbServiceName)
 	}
 
 	repo := repository.New(pool.Pool())
@@ -248,21 +263,21 @@ func (m *Module) Register(ctx context.Context, c *container.Container) error {
 		return err
 	}
 
-	m.log.InfoContext(ctx, "auth modülü kaydedildi",
-		slog.String("servis", ServiceName),
-		slog.String("kimlik_dogrulayici", InteropName),
-		slog.String("saglayici", ProviderName),
-		slog.String("korumasiz_uc", api.LoginPath),
+	m.log.InfoContext(ctx, "auth module registered",
+		slog.String("service", ServiceName),
+		slog.String("authenticator", InteropName),
+		slog.String("provider", ProviderName),
+		slog.String("unprotected_endpoint", api.LoginPath),
 	)
 	return nil
 }
 
-// Routes modülün yönetim route'larını router'a bağlar.
+// Routes mounts the module's admin routes on the router.
 //
-// Register'dan SONRA çağrılır (bkz. module.Registry.Bootstrap); handler bu
-// yüzden kurulmuş olur. Yine de nil kontrolü vardır: Register hata verip
-// Bootstrap yarıda kesilirse Routes hiç çağrılmaz, ama modül elle kullanılırsa
-// panik yerine sessiz bir no-op daha güvenlidir.
+// It is called AFTER Register (see module.Registry.Bootstrap); the handler
+// is set up by then. There is a nil check all the same: if Register errors
+// and Bootstrap is cut short, Routes is never called, but if the module is
+// used by hand a silent no-op is safer than a panic.
 func (m *Module) Routes(r chi.Router) {
 	if m.handler == nil {
 		return
@@ -270,32 +285,35 @@ func (m *Module) Routes(r chi.Router) {
 	m.handler.Routes(r)
 }
 
-// Describe modülün yönetim uçlarını OpenAPI belgesine işler.
+// Describe writes the module's admin endpoints into the OpenAPI document.
 //
-// Anlatımın kendisi [api.Describe]'dedir: gövde şemaları o paketin dışa kapalı
-// DTO'larından türetilir ve tipleri yalnızca belge uğruna dışa açmak modülün
-// yüzeyini genişletirdi.
+// The description itself is in [api.Describe]: the body schemas are derived
+// from that package's unexported DTOs, and exporting the types merely for
+// the sake of the document would have widened the module's surface.
 //
-// [Module.Routes]'un tersine handler kontrolü YOKTUR ve gerekmez: şema
-// tiplerden gelir, servisten değil. Kontrol koymak, kurulmamış bir modülün
-// belgesini de sessizce boşaltırdı.
+// Unlike [Module.Routes] there is NO handler check, and none is needed: the
+// schema comes from the types, not from the service. Putting a check there
+// would have silently emptied the document of a module that was not set up
+// too.
 func (m *Module) Describe(d *openapi.Doc) { api.Describe(d) }
 
-// Service kurulmuş servisi döner; Register çağrılmadıysa nil.
+// Service returns the service that was set up; nil if Register was not
+// called.
 //
-// Modülü doğrudan kullanan testler ve gömen uygulamalar içindir; normal akışta
-// servis container'dan [ServiceName] adıyla çözülür.
+// It is for the tests that use the module directly and for the applications
+// that embed it; in the normal flow the service is resolved from the
+// container under the name [ServiceName].
 func (m *Module) Service() *service.Service { return m.svc }
 
-// mustSub gömülü dosya sisteminin alt ağacını açar.
+// mustSub opens the subtree of the embedded file system.
 //
-// Yol derleme zamanında sabittir; buraya düşmek migrations klasörünün
-// gömülmediği anlamına gelir ve sessiz geçilemez — migration'sız açılan bir
-// modül, tabloları olmadan çalışmaya başlardı.
+// The path is constant at compile time; landing here means the migrations
+// folder was not embedded and it cannot be passed over silently — a module
+// opened without migrations would start working without its tables.
 func mustSub(fsys fs.FS, dir string) fs.FS {
 	sub, err := fs.Sub(fsys, dir)
 	if err != nil {
-		panic("auth: migration kaynağı açılamadı: " + err.Error())
+		panic("auth: could not open the migration source: " + err.Error())
 	}
 	return sub
 }

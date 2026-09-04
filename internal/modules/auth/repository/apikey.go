@@ -11,28 +11,30 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/auth/repository/authdb"
 )
 
-// CreateAPIKey kanal bağı OLMAYAN bir API anahtarı kaydı yazar.
+// CreateAPIKey writes an API key record with NO channel link.
 //
-// Yazılan tek sır alanı [models.APIKey.TokenHash]'tir; düz metin bu imzada
-// GEÇMEZ ve veritabanına hiç ulaşmaz.
+// The only secret field written is [models.APIKey.TokenHash]; the plain text
+// does NOT PASS through this signature and never reaches the database.
 //
-// Kanallara bağlanacak bir publishable anahtar için
-// [Repo.CreateAPIKeyWithChannels] kullanılmalıdır; gerekçe orada.
+// For a publishable key that will be linked to channels,
+// [Repo.CreateAPIKeyWithChannels] must be used; the rationale is there.
 func (r *Repo) CreateAPIKey(ctx context.Context, k models.APIKey) (models.APIKey, error) {
 	return r.CreateAPIKeyWithChannels(ctx, k, nil)
 }
 
-// CreateAPIKeyWithChannels anahtarı ve satış kanalı bağlarını TEK işlemde yazar.
+// CreateAPIKeyWithChannels writes the key and its sales channel links in a
+// SINGLE transaction.
 //
-// Atomiklik burada bir incelik değil, geri alınamazlığın gereğidir: yazım iki
-// ayrı işleme bölünseydi ve bağlardan biri hata verseydi, ortada düz metni
-// ÇAĞIRANA HİÇ ULAŞMAMIŞ bir anahtar satırı kalırdı. O satır kimseye
-// verilmediği için kullanılamaz, düz metni bir daha üretilemediği için de
-// tamamlanamaz — yalnızca elle temizlenebilecek bir çöp kayıttır. İşlem geri
-// alındığında ise geriye hiçbir şey kalmaz.
+// Atomicity here is not a nicety but a requirement of irreversibility: had the
+// write been split into two separate transactions and had one of the links
+// failed, what would be left behind is a key row whose plain text NEVER REACHED
+// THE CALLER. That row is unusable because it was given to nobody, and it
+// cannot be completed because its plain text can never be produced again — it
+// is a garbage record that can only be cleaned up by hand. When the transaction
+// is rolled back, on the other hand, nothing is left behind.
 //
-// Bağ kurulurken kanalın CANLI olması aranır (bkz. queries/sales_channels.sql,
-// LockLiveSalesChannel).
+// While the link is made, the channel is required to be LIVE (see
+// queries/sales_channels.sql, LockLiveSalesChannel).
 func (r *Repo) CreateAPIKeyWithChannels(
 	ctx context.Context,
 	k models.APIKey,
@@ -42,22 +44,23 @@ func (r *Repo) CreateAPIKeyWithChannels(
 		return models.APIKey{}, err
 	}
 	if len(channelIDs) == 0 {
-		// Tek ifade zaten kendi başına atomiktir; burada işlem açmak yalnızca
-		// her anahtar yazımına fazladan bir BEGIN/COMMIT turu eklerdi.
-		return anahtarYaz(ctx, r.q, k)
+		// A single statement is already atomic on its own; opening a
+		// transaction here would only add an extra BEGIN/COMMIT round to every
+		// key write.
+		return insertKey(ctx, r.q, k)
 	}
 
 	var created models.APIKey
 	if err := r.inTx(ctx, func(q *authdb.Queries) error {
 		var err error
-		if created, err = anahtarYaz(ctx, q, k); err != nil {
+		if created, err = insertKey(ctx, q, k); err != nil {
 			return err
 		}
 		for _, channelID := range channelIDs {
-			// Bağın zamanı anahtarın oluşturma anıdır: ikisi tek işlemde
-			// yazıldığı için ayrı bir "şimdi" okumak yalnızca aynı olayı iki
-			// farklı damgayla gösterirdi.
-			if err := kanalaBagla(ctx, q, created.ID, channelID, k.CreatedAt); err != nil {
+			// The time of the link is the key's creation moment: because the
+			// two are written in one transaction, reading a separate "now"
+			// would only show the same event with two different timestamps.
+			if err := linkChannel(ctx, q, created.ID, channelID, k.CreatedAt); err != nil {
 				return err
 			}
 		}
@@ -68,8 +71,8 @@ func (r *Repo) CreateAPIKeyWithChannels(
 	return created, nil
 }
 
-// anahtarYaz anahtar satırını yazar; çağıranın işlemi içinde de çalışabilir.
-func anahtarYaz(ctx context.Context, q *authdb.Queries, k models.APIKey) (models.APIKey, error) {
+// insertKey writes the key row; it can also run inside the caller's transaction.
+func insertKey(ctx context.Context, q *authdb.Queries, k models.APIKey) (models.APIKey, error) {
 	row, err := q.InsertAPIKey(ctx, authdb.InsertAPIKeyParams{
 		ID:        k.ID,
 		Type:      k.Type.String(),
@@ -82,17 +85,17 @@ func anahtarYaz(ctx context.Context, q *authdb.Queries, k models.APIKey) (models
 	})
 	if err != nil {
 		if ConstraintName(err) == IndexTokenHash {
-			// Buraya düşmek 256 bitlik üretecin çakıştığı anlamına gelir;
-			// pratikte imkânsızdır ve sessiz geçilemez.
+			// Landing here means the 256-bit generator collided; in practice
+			// that is impossible, and it cannot be passed over silently.
 			return models.APIKey{}, errors.Wrap(err, errors.KindConflict, CodeDuplicate,
-				"api anahtarı özeti zaten kayıtlı: %s", k.ID)
+				"the api key hash is already recorded: %s", k.ID)
 		}
-		return models.APIKey{}, wrapDB(err, "api anahtarı oluşturulamadı")
+		return models.APIKey{}, wrapDB(err, "could not create api key")
 	}
 	return toAPIKey(row), nil
 }
 
-// GetAPIKey kimliğe göre anahtar döner; yoksa errors.NotFound.
+// GetAPIKey returns the key by id; errors.NotFound when there is none.
 func (r *Repo) GetAPIKey(ctx context.Context, id string) (models.APIKey, error) {
 	if err := r.ready(); err != nil {
 		return models.APIKey{}, err
@@ -100,20 +103,20 @@ func (r *Repo) GetAPIKey(ctx context.Context, id string) (models.APIKey, error) 
 
 	row, err := r.q.GetAPIKey(ctx, id)
 	if err != nil {
-		return models.APIKey{}, notFoundOr(err, CodeAPIKeyNotFound, "api anahtarı bulunamadı: %s", id)
+		return models.APIKey{}, notFoundOr(err, CodeAPIKeyNotFound, "api key not found: %s", id)
 	}
 	return toAPIKey(row), nil
 }
 
-// GetAPIKeyByHash verilen özete karşılık gelen anahtarı döner; yoksa
-// errors.NotFound.
+// GetAPIKeyByHash returns the key matching the given hash; errors.NotFound when
+// there is none.
 //
-// İPTAL EDİLMİŞ anahtarlar da döner: iptalin ayrı ve açık bir dal olması,
-// "iptal edilmiş anahtar reddedilir" iddiasının testle kanıtlanabilmesi
-// içindir (bkz. queries/api_keys.sql).
+// REVOKED keys are returned as well: keeping revocation a separate and explicit
+// branch is what makes the claim "a revoked key is rejected" provable by a test
+// (see queries/api_keys.sql).
 //
-// Hata mesajında özet GEÇMEZ; sızması zararsız olsa da bir sır alanının log'a
-// düşmesi alışkanlık hâline gelmemelidir.
+// The hash DOES NOT APPEAR in the error message; even though leaking it would
+// be harmless, letting a secret field land in a log must not become a habit.
 func (r *Repo) GetAPIKeyByHash(ctx context.Context, tokenHash string) (models.APIKey, error) {
 	if err := r.ready(); err != nil {
 		return models.APIKey{}, err
@@ -121,13 +124,13 @@ func (r *Repo) GetAPIKeyByHash(ctx context.Context, tokenHash string) (models.AP
 
 	row, err := r.q.GetAPIKeyByHash(ctx, tokenHash)
 	if err != nil {
-		return models.APIKey{}, notFoundOr(err, CodeAPIKeyNotFound, "api anahtarı bulunamadı")
+		return models.APIKey{}, notFoundOr(err, CodeAPIKeyNotFound, "api key not found")
 	}
 	return toAPIKey(row), nil
 }
 
-// ListAPIKeys süzgeçlenmiş ve sayfalanmış anahtar listesini, filtreye uyan
-// TOPLAM kayıt sayısıyla birlikte döner.
+// ListAPIKeys returns the filtered and paginated key list together with the
+// TOTAL number of records matching the filter.
 func (r *Repo) ListAPIKeys(
 	ctx context.Context,
 	filter models.APIKeyFilter,
@@ -150,7 +153,7 @@ func (r *Repo) ListAPIKeys(
 		Off:     toInt32(offset),
 	})
 	if err != nil {
-		return nil, 0, wrapDB(err, "api anahtarı listesi alınamadı")
+		return nil, 0, wrapDB(err, "could not read the api key list")
 	}
 
 	total, err := r.q.CountAPIKeys(ctx, authdb.CountAPIKeysParams{
@@ -158,15 +161,17 @@ func (r *Repo) ListAPIKeys(
 		Revoked: filter.Revoked,
 	})
 	if err != nil {
-		return nil, 0, wrapDB(err, "api anahtarı sayısı alınamadı")
+		return nil, 0, wrapDB(err, "could not read the api key count")
 	}
 	return toAPIKeys(rows), total, nil
 }
 
-// RevokeAPIKey anahtarı iptal eder; zaten iptalliyse errors.Conflict döner.
+// RevokeAPIKey revokes the key; if it is already revoked, errors.Conflict is
+// returned.
 //
-// Zaten iptalli bir anahtarda sessiz no-op dönmek, iptal zamanının ikinci
-// çağrıyla kaymasına ya da çağıranın "iptal ettim" sanmasına yol açardı.
+// Returning a silent no-op on an already revoked key would either let the
+// revocation time shift with the second call or make the caller believe "I
+// revoked it".
 func (r *Repo) RevokeAPIKey(
 	ctx context.Context,
 	id, revokedBy string,
@@ -185,25 +190,26 @@ func (r *Repo) RevokeAPIKey(
 		return toAPIKey(row), nil
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
-		return models.APIKey{}, wrapDB(err, "api anahtarı iptal edilemedi")
+		return models.APIKey{}, wrapDB(err, "could not revoke api key")
 	}
 
-	// Satır dönmedi: anahtar ya yok ya da zaten iptal edilmiş. İkisini ayırmak
-	// için kaydı okuruz; ayrım olmadan çağıran "yok" ile "zaten kapalı"
-	// arasında seçim yapamazdı.
+	// No row came back: the key either does not exist or has already been
+	// revoked. To tell the two apart we read the record; without the
+	// distinction the caller could not choose between "not there" and "already
+	// closed".
 	existing, getErr := r.GetAPIKey(ctx, id)
 	if getErr != nil {
 		return models.APIKey{}, getErr
 	}
 	return models.APIKey{}, errors.Conflict(CodeAlreadyRevoked,
-		"api anahtarı zaten iptal edilmiş: %s", existing.ID)
+		"api key has already been revoked: %s", existing.ID)
 }
 
-// DeleteAPIKey anahtarı yumuşak siler ve satış kanalı bağlarını kaldırır.
+// DeleteAPIKey soft-deletes the key and removes its sales channel links.
 //
-// Bağlar AYNI işlemde silinir: yumuşak silme bir UPDATE olduğu için foreign
-// key CASCADE devreye girmez ve bağ satırları silinmiş bir anahtarı kanala
-// bağlı göstermeye devam ederdi.
+// The links are deleted in the SAME transaction: because a soft delete is an
+// UPDATE, the foreign key CASCADE does not engage and the link rows would keep
+// showing a deleted key as linked to a channel.
 func (r *Repo) DeleteAPIKey(ctx context.Context, id string, now time.Time) error {
 	if err := r.ready(); err != nil {
 		return err
@@ -214,20 +220,20 @@ func (r *Repo) DeleteAPIKey(ctx context.Context, id string, now time.Time) error
 			ID:        id,
 			DeletedAt: fromTime(now),
 		}); err != nil {
-			return notFoundOr(err, CodeAPIKeyNotFound, "api anahtarı bulunamadı: %s", id)
+			return notFoundOr(err, CodeAPIKeyNotFound, "api key not found: %s", id)
 		}
 		if err := q.DeleteLinksOfAPIKey(ctx, id); err != nil {
-			return wrapDB(err, "api anahtarının kanal bağları silinemedi")
+			return wrapDB(err, "could not delete the channel links of the api key")
 		}
 		return nil
 	})
 }
 
-// MarkAPIKeyUsed anahtarın son kullanım anını YAKLAŞIK olarak günceller.
+// MarkAPIKeyUsed updates the key's last-use moment APPROXIMATELY.
 //
-// staleBefore eşiği yazmayı seyreltir: sütun her istekte yazılsaydı sıcak bir
-// publishable anahtar üzerinde kimlik doğrulama tek satıra yazan bir darboğaza
-// dönüşürdü (bkz. queries/api_keys.sql).
+// The staleBefore threshold thins out the write: had the column been written on
+// every request, authentication on a hot publishable key would turn into a
+// bottleneck writing to a single row (see queries/api_keys.sql).
 func (r *Repo) MarkAPIKeyUsed(ctx context.Context, id string, usedAt, staleBefore time.Time) error {
 	if err := r.ready(); err != nil {
 		return err
@@ -238,36 +244,37 @@ func (r *Repo) MarkAPIKeyUsed(ctx context.Context, id string, usedAt, staleBefor
 		UsedAt:      fromTime(usedAt),
 		StaleBefore: fromTime(staleBefore),
 	}); err != nil {
-		return wrapDB(err, "api anahtarının kullanım anı güncellenemedi")
+		return wrapDB(err, "could not update the last-use moment of the api key")
 	}
 	return nil
 }
 
-// LinkSalesChannel publishable anahtarı bir satış kanalına bağlar.
+// LinkSalesChannel links a publishable key to a sales channel.
 //
-// Aynı bağın tekrarı hata DEĞİLDİR (bağ kümedir). Var olmayan bir anahtar
-// foreign key ihlaliyle errors.Invalid, var olmayan ya da yumuşak silinmiş bir
-// kanal errors.NotFound döner.
+// Repeating the same link is NOT an error (a link is a set). A key that does
+// not exist returns errors.Invalid through a foreign key violation, and a
+// channel that does not exist or has been soft-deleted returns errors.NotFound.
 func (r *Repo) LinkSalesChannel(ctx context.Context, apiKeyID, channelID string, now time.Time) error {
 	if err := r.ready(); err != nil {
 		return err
 	}
 
-	// Denetim ve yazım TEK işlemdedir: kanalın canlılığı ayrı bir turda
-	// sorulsaydı, arada yapılan bir yumuşak silme yine ölü bir bağ bırakırdı.
+	// The check and the write are in a SINGLE transaction: had the liveness of
+	// the channel been asked in a separate round, a soft delete performed in
+	// between would still leave a dead link behind.
 	return r.inTx(ctx, func(q *authdb.Queries) error {
-		return kanalaBagla(ctx, q, apiKeyID, channelID, now)
+		return linkChannel(ctx, q, apiKeyID, channelID, now)
 	})
 }
 
-// kanalaBagla bağı, kanalın CANLI olduğunu doğrulayarak yazar.
+// linkChannel writes the link after verifying that the channel is LIVE.
 //
-// Foreign key tek başına yetmez: yumuşak silinmiş bir kanalın satırı yerinde
-// durduğu için FK'yi geçer, ama okuma sorguları onu süzer. Böyle bir bağ
-// kurulsaydı publishable anahtar ÖLÜ DOĞARDI — bağlı görünür, hiçbir kanala
-// ulaşamaz ve mağaza kimliği kuramazdı (bkz. queries/sales_channels.sql,
-// LockLiveSalesChannel).
-func kanalaBagla(
+// The foreign key alone is not enough: because the row of a soft-deleted
+// channel stays in place, it passes the FK, but the read queries filter it out.
+// Had such a link been made, the publishable key would be BORN DEAD — it looks
+// linked, reaches no channel at all and could not establish a store identity
+// (see queries/sales_channels.sql, LockLiveSalesChannel).
+func linkChannel(
 	ctx context.Context,
 	q *authdb.Queries,
 	apiKeyID, channelID string,
@@ -275,22 +282,22 @@ func kanalaBagla(
 ) error {
 	if _, err := q.LockLiveSalesChannel(ctx, channelID); err != nil {
 		return notFoundOr(err, CodeSalesChannelNotFound,
-			"satış kanalı bulunamadı: %s", channelID)
+			"sales channel not found: %s", channelID)
 	}
 	if err := q.LinkAPIKeySalesChannel(ctx, authdb.LinkAPIKeySalesChannelParams{
 		ApiKeyID:       apiKeyID,
 		SalesChannelID: channelID,
 		CreatedAt:      fromTime(now),
 	}); err != nil {
-		return wrapDB(err, "api anahtarı %s kanalına bağlanamadı", channelID)
+		return wrapDB(err, "the api key could not be linked to channel %s", channelID)
 	}
 	return nil
 }
 
-// UnlinkSalesChannel bağı kaldırır; bağ yoksa errors.NotFound.
+// UnlinkSalesChannel removes the link; errors.NotFound when there is no link.
 //
-// Var olmayan bir bağı kaldırmayı sessizce başarı saymak, çağırana yanlış
-// kanalın adını yazdığını hiç söylemezdi.
+// Silently counting the removal of a link that does not exist as a success
+// would never tell the caller that they wrote the wrong channel name.
 func (r *Repo) UnlinkSalesChannel(ctx context.Context, apiKeyID, channelID string) error {
 	if err := r.ready(); err != nil {
 		return err
@@ -301,19 +308,19 @@ func (r *Repo) UnlinkSalesChannel(ctx context.Context, apiKeyID, channelID strin
 		SalesChannelID: channelID,
 	})
 	if err != nil {
-		return wrapDB(err, "api anahtarının kanal bağı kaldırılamadı")
+		return wrapDB(err, "could not remove the channel link of the api key")
 	}
 	if affected == 0 {
 		return errors.NotFound(CodeSalesChannelNotFound,
-			"%s anahtarı %s kanalına bağlı değil", apiKeyID, channelID)
+			"key %s is not linked to channel %s", apiKeyID, channelID)
 	}
 	return nil
 }
 
-// ChannelIDsOfKey anahtarın bağlı olduğu ETKİN kanalların kimliklerini döner.
+// ChannelIDsOfKey returns the ids of the ACTIVE channels the key is linked to.
 //
-// Devre dışı ve silinmiş kanallar süzülür; mağaza kimliği bu listeden kurulur
-// ve devre dışı bir kanalın kataloğu görünmemelidir.
+// Disabled and deleted channels are filtered out; the store identity is built
+// from this list and the catalog of a disabled channel must not be visible.
 func (r *Repo) ChannelIDsOfKey(ctx context.Context, apiKeyID string) ([]string, error) {
 	if err := r.ready(); err != nil {
 		return nil, err
@@ -321,15 +328,15 @@ func (r *Repo) ChannelIDsOfKey(ctx context.Context, apiKeyID string) ([]string, 
 
 	ids, err := r.q.ListChannelIDsForKey(ctx, apiKeyID)
 	if err != nil {
-		return nil, wrapDB(err, "api anahtarının kanalları alınamadı")
+		return nil, wrapDB(err, "could not read the channels of the api key")
 	}
 	return ids, nil
 }
 
-// ChannelsOfKey anahtarın bağlı olduğu kanalların TAMAMINI döner.
+// ChannelsOfKey returns ALL of the channels the key is linked to.
 //
-// Devre dışı kanallar da dâhildir: yönetim yüzeyi bağı olduğu gibi göstermeli,
-// bir kanalın devre dışı olduğunu gizlememelidir.
+// Disabled channels are included as well: the admin surface must show the link
+// as it is and must not hide that a channel is disabled.
 func (r *Repo) ChannelsOfKey(ctx context.Context, apiKeyID string) ([]models.SalesChannel, error) {
 	if err := r.ready(); err != nil {
 		return nil, err
@@ -337,7 +344,7 @@ func (r *Repo) ChannelsOfKey(ctx context.Context, apiKeyID string) ([]models.Sal
 
 	rows, err := r.q.ListChannelsForKey(ctx, apiKeyID)
 	if err != nil {
-		return nil, wrapDB(err, "api anahtarının kanalları alınamadı")
+		return nil, wrapDB(err, "could not read the channels of the api key")
 	}
 	return toSalesChannels(rows)
 }

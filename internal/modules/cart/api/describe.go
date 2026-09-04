@@ -6,238 +6,247 @@ import (
 	"github.com/bdrtr/gobit/internal/core/openapi"
 )
 
-// Parametre şemalarında geçen JSON Schema adları.
+// The JSON Schema names appearing in the parameter schemas.
 //
-// Çekirdeğin karşılıkları dışa kapalıdır ve burada tekrarlanmalarının sebebi
-// maliyet değil SESSİZLİK: "strig" yazılmış bir tip adı derlenir, belge
-// üretilir ve yalnızca şemayı okuyan istemci parametreyi yanlış tiple
-// ürettiğinde ortaya çıkar.
+// The core's counterparts are unexported and the reason they are repeated here
+// is not cost but SILENCE: a type name written as "strig" compiles, the document
+// is produced, and it only surfaces when the client reading the schema produces
+// the parameter with the wrong type.
 const (
-	semaTip      = "type"
-	tipDize      = "string"
-	tipTamSayi   = "integer"
-	tipMantiksal = "boolean"
+	schemaType  = "type"
+	typeString  = "string"
+	typeInteger = "integer"
+	typeBoolean = "boolean"
 )
 
-// Describe cart'ın uçlarını OpenAPI belgesine işler.
+// Describe records cart's endpoints into the OpenAPI document.
 //
-// # Neden bu pakette
+// # Why it is in this package
 //
-// Anlatılan gövdeler bu paketin DIŞA KAPALI DTO'larıdır (createCartRequest,
-// cartDTO …) ve şema onlardan yansımayla türetilir. Tipleri anlatabilmek için
-// dışa açmak, yalnızca belge üretmek uğruna modülün yüzeyini genişletmek
-// olurdu: dışa açık bir tip sözleşmedir ve dışarıdan kurulabilir hâle gelirdi.
-// Modülün [openapi.Describer] uygulaması bu yüzden buraya delege eder.
+// The bodies being described are this package's UNEXPORTED DTOs
+// (createCartRequest, cartDTO …) and the schema is derived from them by
+// reflection. Exporting the types in order to be able to describe them would
+// mean widening the module's surface merely for the sake of producing a
+// document: an exported type is a contract and would become constructible from
+// the outside. That is why the module's [openapi.Describer] implementation
+// delegates here.
 //
-// # Neden paket düzeyinde bir fonksiyon
+// # Why a package-level function
 //
-// Anlatım hiçbir çalışma zamanı durumuna bakmaz — şema TİPLERDEN gelir. Metodu
-// [Handler]'a bağlamak, belgenin servis kurulmuş olmasına bağlı OLDUĞUNU
-// söylerdi; oysa Register hiç çalışmamışken de belge üretilebilir ve
-// üretilmelidir.
+// The description looks at no run-time state — the schema comes from the TYPES.
+// Attaching the method to [Handler] would say the document DEPENDED on the
+// service having been set up; whereas the document can be produced, and has to
+// be producible, even when Register has never run.
 //
-// # İki yüzey de anlatılır
+// # Both surfaces are described
 //
-// Vitrin uçları bir mağaza istemcisinin (storefront, SDK), /admin/v1 uçları
-// yönetim panelinin ihtiyacıdır. Yönetim yüzeyi YALNIZCA OKUMADIR (bkz.
-// admin.go); anlatımı da bu yüzden hiçbir istek gövdesi taşımaz — gövdesi
-// olmayan bir yazma ucu değil, gövdesi OLMAYAN bir okuma ucu anlatılır.
+// The storefront endpoints are the need of a store client (storefront, SDK), the
+// /admin/v1 endpoints that of the admin panel. The admin surface is READ ONLY
+// (see admin.go); that is why its description carries no request body at all —
+// what is described is not a write endpoint without a body but a read endpoint
+// that HAS no body.
 //
-// # Bilinen sınır: istek gövdelerinin "required" kümesi GENİŞTİR
+// # A known limit: the "required" set of the request bodies is TOO WIDE
 //
-// Çekirdek "required"ı encoding/json'un HER ZAMAN yazdığı alanlardan türetir
-// ([openapi.Doc.SchemaOf]) ve bu, YANIT gövdeleri için doğru cevaptır. İstek
-// gövdesinde ise "required" istemcinin GÖNDERMEK ZORUNDA olduğu alan demektir
-// ve bunu tip bilemez: bu paketin istek DTO'ları omitempty taşımadığı için
-// hepsi zorunlu görünür — örneğin POST /store/v1/carts, misafir sepetinde boş
-// bırakılan customer_id ve email'i de ister. Alan ADLARI ve TİPLERİ doğrudur,
-// yani şema yanlış bir alan uydurmaz; yalnızca fazla şey ister. Sınırın
-// yazılması bilinçlidir: eksik olduğunu bilmek, eksik olduğunu sanmamaktan
-// iyidir. Doğru çözüm ÇEKİRDEKTEDİR (istek gövdeleri için ayrı bir "required"
-// politikası); tag'lere omitempty serpiştirmek zorunluluğu servisin
-// doğrulamasından json etiketine taşır ve ikisi sessizce ayrışırdı.
+// The core derives "required" from the fields encoding/json ALWAYS writes
+// ([openapi.Doc.SchemaOf]) and that is the correct answer for RESPONSE bodies.
+// On a request body, however, "required" means the field the client HAS TO SEND
+// and the type cannot know that: because this package's request DTOs carry no
+// omitempty, they all look mandatory — for example POST /store/v1/carts asks for
+// the customer_id and the email that are left empty on a guest cart too. The
+// field NAMES and TYPES are correct, that is, the schema does not invent a wrong
+// field; it merely asks for too much. Writing the limit down is deliberate:
+// knowing that it is missing is better than believing it is not. The correct fix
+// is IN THE CORE (a separate "required" policy for request bodies); sprinkling
+// omitempty over the tags would move the requirement from the service's
+// validation to the json tag and the two would drift apart silently.
 //
-// # Sorgu parametresini yalnızca yönetim listesi okur
+// # Only the admin list reads a query parameter
 //
-// Vitrin sepeti uçlarının hiçbiri sorgu dizesine bakmaz (bkz. store.go) ve
-// şemaları da parametre duyurmaz; sorgu dizesini okuyan TEK uç
-// GET /admin/v1/carts'tır (bkz. admin.go ve [parsePage]). Okunmayan bir
-// parametreyi şemaya yazmak, istemciye ÇALIŞMAYAN bir özellik vaat etmek
-// olurdu: istemci üreteci metoda bir argüman koyar, çağıran onu doldurur ve
-// sunucu sessizce yok sayar.
+// None of the storefront cart endpoints look at the query string (see store.go)
+// and their schemas announce no parameter either; the ONLY endpoint that reads
+// the query string is GET /admin/v1/carts (see admin.go and [parsePage]).
+// Writing a parameter that is not read into the schema would mean promising the
+// client a feature that DOES NOT WORK: the client generator puts an argument on
+// the method, the caller fills it in and the server silently ignores it.
 func Describe(d *openapi.Doc) {
 	d.Describe(http.MethodPost, "/store/v1/carts", openapi.Operation{
-		Summary:     "Yeni sepet açar; bölgeyi ve para birimini ülkeden sunucu türetir.",
+		Summary:     "Opens a new cart; the server derives the region and the currency from the country.",
 		RequestBody: d.RequestBody(createCartRequest{}),
 		Responses: map[string]any{
-			"201": openapi.Response("Oluşturulan sepet", d.Item(cartDTO{})),
+			"201": openapi.Response("The created cart", d.Item(cartDTO{})),
 		},
 	})
 
 	d.Describe(http.MethodGet, "/store/v1/carts/{id}", openapi.Operation{
-		Summary: "Sepeti satırları, adresleri ve kargo yöntemleriyle döner.",
+		Summary: "Returns the cart with its line items, addresses and shipping methods.",
 		Responses: map[string]any{
-			"200": openapi.Response("Sepet ve çocukları", d.Item(cartDetailDTO{})),
+			"200": openapi.Response("The cart and its children", d.Item(cartDetailDTO{})),
 		},
 	})
 
 	d.Describe(http.MethodPost, "/store/v1/carts/{id}", openapi.Operation{
-		Summary:     "Sepetin e-postasını ve müşterisini günceller.",
+		Summary:     "Updates the cart's email and customer.",
 		RequestBody: d.RequestBody(updateCartRequest{}),
 		Responses: map[string]any{
-			"200": openapi.Response("Güncellenen sepet", d.Item(cartDTO{})),
+			"200": openapi.Response("The updated cart", d.Item(cartDTO{})),
 		},
 	})
 
 	d.Describe(http.MethodDelete, "/store/v1/carts/{id}", openapi.Operation{
-		Summary: "Sepeti siler.",
+		Summary: "Deletes the cart.",
 		Responses: map[string]any{
-			"204": bosYanit("Sepet silindi"),
+			"204": emptyResponse("The cart was deleted"),
 		},
 	})
 
 	d.Describe(http.MethodPost, "/store/v1/carts/{id}/complete", openapi.Operation{
-		Summary:     "Sepeti siparişe çevirir: stok ayrılır, ödeme tahsil edilir, sepet kapanır.",
+		Summary:     "Turns the cart into an order: stock is reserved, the payment is captured, the cart is closed.",
 		RequestBody: d.RequestBody(completeCartRequest{}),
 		Responses: map[string]any{
-			"200": openapi.Response("Oluşan sipariş ve tahsil edilen tutar", d.Item(completeCartDTO{})),
+			"200": openapi.Response("The resulting order and the captured amount", d.Item(completeCartDTO{})),
 		},
 	})
 
-	describeSatirlar(d)
-	describeAdresler(d)
-	describeKargo(d)
-	describeYonetim(d)
+	describeLineItems(d)
+	describeAddresses(d)
+	describeShipping(d)
+	describeAdmin(d)
 }
 
-// describeSatirlar sepet satırı uçlarını anlatır.
-func describeSatirlar(d *openapi.Doc) {
+// describeLineItems describes the cart line item endpoints.
+func describeLineItems(d *openapi.Doc) {
 	d.Describe(http.MethodPost, "/store/v1/carts/{id}/line-items", openapi.Operation{
-		Summary:     "Sepete satır ekler; birim fiyatı ve başlığı sunucu belirler.",
+		Summary:     "Adds a line item to the cart; the server decides the unit price and the title.",
 		RequestBody: d.RequestBody(addLineItemRequest{}),
 		Responses: map[string]any{
-			"201": openapi.Response("Eklenen satır", d.Item(lineItemDTO{})),
+			"201": openapi.Response("The added line item", d.Item(lineItemDTO{})),
 		},
 	})
 
-	// Adet güncelleme İKİ başarılı sonuç üretir: satır kaldığında 200 ve
-	// kaydını, SIFIR adetle kaldırıldığında gövdesiz 204. İkincisini yazmamak,
-	// istemci üretecine gövde bekleyen tek bir dönüş tipi ürettirirdi ve o
-	// istemci 204'te boş gövdeyi çözmeye çalışırdı.
+	// A quantity update produces TWO successful outcomes: a 200 with its record
+	// when the line item stays, and a bodyless 204 when it is removed with a
+	// quantity of ZERO. Not writing the second one down would make the client
+	// generator produce a single return type that expects a body, and that client
+	// would try to decode the empty body of the 204.
 	d.Describe(http.MethodPatch, "/store/v1/carts/{id}/line-items/{line_item_id}", openapi.Operation{
-		Summary:     "Sepet satırının adedini günceller; sıfır adet satırı kaldırır.",
+		Summary:     "Updates the cart line item's quantity; a quantity of zero removes the line item.",
 		RequestBody: d.RequestBody(updateLineItemRequest{}),
 		Responses: map[string]any{
-			"200": openapi.Response("Güncellenen satır", d.Item(lineItemDTO{})),
-			"204": bosYanit("Adet sıfır verildi, satır kaldırıldı"),
+			"200": openapi.Response("The updated line item", d.Item(lineItemDTO{})),
+			"204": emptyResponse("A quantity of zero was given, the line item was removed"),
 		},
 	})
 
 	d.Describe(http.MethodDelete, "/store/v1/carts/{id}/line-items/{line_item_id}", openapi.Operation{
-		Summary: "Sepet satırını kaldırır.",
+		Summary: "Removes the cart line item.",
 		Responses: map[string]any{
-			"204": bosYanit("Satır kaldırıldı"),
+			"204": emptyResponse("The line item was removed"),
 		},
 	})
 }
 
-// describeAdresler sepet adresi uçlarını anlatır.
+// describeAddresses describes the cart address endpoints.
 //
-// İki uç AYNI gövdeyi ([addressRequest]) ve AYNI kaydı ([addressDTO]) taşır;
-// ayıran tek şey adresin türüdür ve o, yanıttaki "type" alanında görünür.
-func describeAdresler(d *openapi.Doc) {
+// The two endpoints carry the SAME body ([addressRequest]) and the SAME record
+// ([addressDTO]); the only thing separating them is the address's type and that
+// shows up in the response's "type" field.
+func describeAddresses(d *openapi.Doc) {
 	d.Describe(http.MethodPut, "/store/v1/carts/{id}/shipping-address", openapi.Operation{
-		Summary:     "Sepetin kargo adresini yazar.",
+		Summary:     "Writes the cart's shipping address.",
 		RequestBody: d.RequestBody(addressRequest{}),
 		Responses: map[string]any{
-			"200": openapi.Response("Yazılan kargo adresi", d.Item(addressDTO{})),
+			"200": openapi.Response("The written shipping address", d.Item(addressDTO{})),
 		},
 	})
 
 	d.Describe(http.MethodPut, "/store/v1/carts/{id}/billing-address", openapi.Operation{
-		Summary:     "Sepetin fatura adresini yazar.",
+		Summary:     "Writes the cart's billing address.",
 		RequestBody: d.RequestBody(addressRequest{}),
 		Responses: map[string]any{
-			"200": openapi.Response("Yazılan fatura adresi", d.Item(addressDTO{})),
+			"200": openapi.Response("The written billing address", d.Item(addressDTO{})),
 		},
 	})
 }
 
-// describeKargo kargo yöntemi uçlarını anlatır.
-func describeKargo(d *openapi.Doc) {
+// describeShipping describes the shipping method endpoints.
+func describeShipping(d *openapi.Doc) {
 	d.Describe(http.MethodPost, "/store/v1/carts/{id}/shipping-methods", openapi.Operation{
-		Summary:     "Sepete kargo yöntemi ekler.",
+		Summary:     "Adds a shipping method to the cart.",
 		RequestBody: d.RequestBody(addShippingMethodRequest{}),
 		Responses: map[string]any{
-			"201": openapi.Response("Eklenen kargo yöntemi", d.Item(shippingMethodDTO{})),
+			"201": openapi.Response("The added shipping method", d.Item(shippingMethodDTO{})),
 		},
 	})
 
 	d.Describe(http.MethodDelete, "/store/v1/carts/{id}/shipping-methods/{shipping_method_id}",
 		openapi.Operation{
-			Summary: "Kargo yöntemini sepetten kaldırır.",
+			Summary: "Removes the shipping method from the cart.",
 			Responses: map[string]any{
-				"204": bosYanit("Kargo yöntemi kaldırıldı"),
+				"204": emptyResponse("The shipping method was removed"),
 			},
 		})
 }
 
-// describeYonetim /admin/v1 sepet uçlarını anlatır.
+// describeAdmin describes the /admin/v1 cart endpoints.
 //
-// Yüzey YALNIZCA OKUMADIR (bkz. admin.go), dolayısıyla hiçbir uçta requestBody
-// yoktur. Bunu "eksik anlatım" sanmamak için burada yazılıyor: sepeti
-// değiştiren tek taraf müşteridir ve yönetimde bir yazma ucu YOKTUR.
-func describeYonetim(d *openapi.Doc) {
+// The surface is READ ONLY (see admin.go), therefore no endpoint has a
+// requestBody. It is written here so that this is not taken for a "missing
+// description": the only party that changes the cart is the customer and there
+// is NO write endpoint on the admin side.
+func describeAdmin(d *openapi.Doc) {
 	d.Describe(http.MethodGet, "/admin/v1/carts", openapi.Operation{
-		Summary: "Sepetleri müşteri, bölge ve tamamlanma durumuna göre sayfalar.",
-		// Parametreler [Handler.adminListCarts]'ın OKUDUKLARIDIR; başkası
-		// eklenirse istemciye çalışmayan bir süzgeç vaat edilmiş olurdu.
+		Summary: "Pages the carts by customer, region and completion state.",
+		// The parameters are the ONES [Handler.adminListCarts] READS; adding
+		// another one would mean promising the client a filter that does not work.
 		Parameters: []openapi.Parameter{
-			sorguParametresi("customer_id", tipDize,
-				"Sepetleri tek bir müşteriyle sınırlar."),
-			sorguParametresi("region_id", tipDize,
-				"Sepetleri tek bir bölgeyle sınırlar."),
-			sorguParametresi("completed", tipMantiksal,
-				"true yalnızca tamamlanmış, false yalnızca açık sepetleri döner."),
-			sorguParametresi("limit", tipTamSayi,
-				"Sayfa boyutu; verilmezse servisin varsayılanı uygulanır."),
-			sorguParametresi("offset", tipTamSayi, "Atlanacak kayıt sayısı."),
+			queryParameter("customer_id", typeString,
+				"Limits the carts to a single customer."),
+			queryParameter("region_id", typeString,
+				"Limits the carts to a single region."),
+			queryParameter("completed", typeBoolean,
+				"true returns only completed carts, false only open ones."),
+			queryParameter("limit", typeInteger,
+				"Page size; if it is not given the service's default is applied."),
+			queryParameter("offset", typeInteger, "Number of records to skip."),
 		},
 		Responses: map[string]any{
-			// Kayıt [cartDetailDTO] DEĞİL [cartDTO]'dur: liste ucu satırları,
-			// adresleri ve kargo yöntemlerini YÜKLEMEZ (N+1'e açardı). Detay
-			// şemasını yazmak, istemciye hiç dolmayacak alanlar vaat etmek olurdu.
-			"200": openapi.Response("Sepet sayfası", d.List(cartDTO{})),
+			// The record is NOT [cartDetailDTO] but [cartDTO]: the list endpoint
+			// does NOT LOAD the line items, the addresses and the shipping methods
+			// (that would open it up to N+1). Writing the detail schema would mean
+			// promising the client fields that are never filled in.
+			"200": openapi.Response("A page of carts", d.List(cartDTO{})),
 		},
 	})
 
 	d.Describe(http.MethodGet, "/admin/v1/carts/{id}", openapi.Operation{
-		Summary: "Tek bir sepeti satırları, adresleri ve kargo yöntemleriyle döner.",
+		Summary: "Returns a single cart with its line items, addresses and shipping methods.",
 		Responses: map[string]any{
-			"200": openapi.Response("Sepet ve çocukları", d.Item(cartDetailDTO{})),
+			"200": openapi.Response("The cart and its children", d.Item(cartDetailDTO{})),
 		},
 	})
 }
 
-// sorguParametresi sorgu dizesinden okunan bir parametreyi tanımlar.
+// queryParameter defines a parameter read from the query string.
 //
-// Hiçbiri zorunlu DEĞİLDİR: verilmediğinde handler varsayılanla devam eder
-// (bkz. [parsePage] ve [Handler.adminListCarts]).
-func sorguParametresi(ad, tip, aciklama string) openapi.Parameter {
+// None of them is mandatory: when one is not given the handler carries on with
+// the default (see [parsePage] and [Handler.adminListCarts]).
+func queryParameter(name, valueType, description string) openapi.Parameter {
 	return openapi.Parameter{
-		Name:        ad,
+		Name:        name,
 		In:          "query",
-		Schema:      map[string]any{semaTip: tip},
-		Description: aciklama,
+		Schema:      map[string]any{schemaType: valueType},
+		Description: description,
 	}
 }
 
-// bosYanit GÖVDESİZ bir yanıt tanımı üretir.
+// emptyResponse produces a BODYLESS response definition.
 //
-// [openapi.Response] her zaman bir gövde şeması yazar; 204'ün gövdesi ise
-// YOKTUR (bkz. store.go, corehttp.WriteJSON'a nil verilen çağrılar). Boş bir
-// şema yazmak "bir şey dönüyor ama şekli bilinmiyor" demek olurdu ve istemci
-// üreteci okunacak bir gövde bekleyen bir metot üretirdi.
-func bosYanit(aciklama string) map[string]any {
-	return map[string]any{"description": aciklama}
+// [openapi.Response] always writes a body schema; a 204, on the other hand, HAS
+// no body (see store.go, the calls that pass nil to corehttp.WriteJSON). Writing
+// an empty schema would mean saying "something is returned but its shape is
+// unknown" and the client generator would produce a method that expects a body
+// to read.
+func emptyResponse(description string) map[string]any {
+	return map[string]any{"description": description}
 }

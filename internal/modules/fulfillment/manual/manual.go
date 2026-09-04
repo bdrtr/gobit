@@ -348,7 +348,7 @@ func (p *Provider) Create(
 			existing.Reference, existing.OptionID, reference, optionID)
 	}
 	p.log.DebugContext(ctx, "manual provider returned the existing shipment",
-		"gonderi", existing.ID, "anahtar", key)
+		"shipment", existing.ID, "key", key)
 	return toProviderFulfillment(existing), nil
 }
 

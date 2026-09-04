@@ -1,74 +1,77 @@
--- order modülünün şeması (plan Faz 6).
+-- Schema of the order module (plan Phase 6).
 --
--- Sahiplik: buradaki altı tablo YALNIZCA order modülüne aittir. Modül İÇİ
--- foreign key'ler serbesttir ve kullanılır (satırlar, özet, iade/değişim/hasar
--- kayıtları siparişe ON DELETE CASCADE ile bağlıdır); başka bir modülün
--- tablosuna REFERENCES VERİLMEZ (Prensip 2.2 — cross-module FK yasağı).
--- Bu yüzden orders.region_id, orders.customer_id, orders.cart_id ve
--- order_line_items.variant_id serbest METİNDİR: ilişki Module Links üzerinden
--- kurulur.
+-- Ownership: the six tables here belong ONLY to the order module. Intra-module
+-- foreign keys are free and are used (the line items, the summary and the
+-- return/exchange/claim records are bound to the order with ON DELETE CASCADE);
+-- NO REFERENCES IS GIVEN to another module's table (Principle 2.2 — the
+-- cross-module FK ban). That is why orders.region_id, orders.customer_id,
+-- orders.cart_id and order_line_items.variant_id are free TEXT: the relation is
+-- established over Module Links.
 --
--- Para: TÜM tutarlar BIGINT ve minor unit'tir (kuruş/cent); para birimi ayrı
--- sütunda durur (plan Bölüm 8). Kayan nokta hiçbir yerde kullanılmaz.
+-- Money: ALL amounts are BIGINT and in minor units (cents); the currency sits in
+-- a separate column (plan Section 8). Floating point is used nowhere.
 --
--- Zaman: tüm damgalar timestamptz (UTC). Silme yumuşaktır (deleted_at) ve
--- orders/order_line_items okuma sorguları deleted_at IS NULL süzer. Faz 6'da
--- siparişi SİLEN bir yüzey yoktur.
+-- Time: every stamp is timestamptz (UTC). Deletion is soft (deleted_at) and the
+-- orders/order_line_items read queries apply the deleted_at IS NULL filter. In
+-- Phase 6 there is NO surface that DELETES an order.
 --
--- DİKKAT — order_summaries BU KURALIN DIŞINDADIR: tabloda deleted_at sütunu
--- YOKTUR ve GetOrderSummary siparişin canlılığını hiç sorgulamaz. Bugün zararsız
--- olmasının tek sebebi silen bir yüzeyin bulunmamasıdır. Siparişe yumuşak silme
--- GELDİĞİNDE bu sorgu da bağlanmalıdır (JOIN orders + deleted_at IS NULL),
--- aksi hâlde GetOrder NotFound derken GetOrderSummary dolu kayıt döner.
+-- CAUTION — order_summaries IS OUTSIDE THIS RULE: the table HAS NO deleted_at
+-- column and GetOrderSummary never asks whether the order is alive. The only
+-- reason this is harmless today is that no deleting surface exists. WHEN soft
+-- deletion arrives for the order, this query must be bound too (JOIN orders +
+-- deleted_at IS NULL); otherwise GetOrder says NotFound while GetOrderSummary
+-- returns a populated record.
 
--- orders bir siparişdir.
+-- orders is an order.
 --
--- # display_id neden veritabanı üretir
+-- # Why the database produces display_id
 --
--- display_id müşteriye gösterilen, insan okunur ARTAN sayıdır ("1042 numaralı
--- siparişiniz"). Uygulama katmanında "en büyüğü oku, bir ekle, yaz" ile
--- üretilseydi iki eşzamanlı sipariş AYNI numarayı alırdı: okuma ile yazma
--- arasında ikinci işlem araya girer ve iki satır da aynı MAX+1 değerini
--- hesaplardı. Satır kilidi de yetmezdi — kilitlenecek ORTAK bir satır yoktur,
--- ikisi de YENİ satır açar.
+-- display_id is the human-readable INCREASING number shown to the customer
+-- ("your order number 1042"). Had it been produced in the application layer with
+-- "read the largest, add one, write it", two concurrent orders would take the
+-- SAME number: between the read and the write the second operation steps in and
+-- both rows would compute the same MAX+1 value. A row lock would not have been
+-- enough either — there is no COMMON row to lock, both of them open a NEW row.
 --
--- Bu yüzden numarayı IDENTITY sütunu (yani bir sequence) üretir. Sequence
--- işlemin dışında, atomik olarak ilerler; iki eşzamanlı INSERT birbirinin
--- değerini göremez ve aynı sayıyı alamaz. GENERATED ALWAYS seçilmiştir:
--- BY DEFAULT olsaydı bir INSERT sütunu açıkça yazıp sequence'ı atlayabilir ve
--- garantiyi delerdi. orders_display_id_uniq ise son savunmadır — sequence
--- elle geri sarılsa (setval) bile çakışma satır yazılmadan yakalanır.
+-- That is why an IDENTITY column (that is, a sequence) produces the number. The
+-- sequence advances atomically, outside the transaction; two concurrent INSERTs
+-- cannot see each other's value and cannot take the same number. GENERATED
+-- ALWAYS is the chosen form: had it been BY DEFAULT, an INSERT could write the
+-- column explicitly, skip the sequence and pierce the guarantee.
+-- orders_display_id_uniq is then the last defense — even if the sequence is
+-- rewound by hand (setval), the collision is caught before a row is written.
 --
--- Sequence sütunla birlikte doğar ve DROP TABLE ile birlikte düşer; ayrı bir
--- CREATE/DROP SEQUENCE gerekmez.
+-- The sequence is born together with the column and falls together with DROP
+-- TABLE; a separate CREATE/DROP SEQUENCE is not needed.
 --
--- # Toplam alanları
+-- # Total fields
 --
--- Sipariş toplamları sepetin ANLIK GÖRÜNTÜSÜNDEN kopyalanır ve bir daha
--- değişmez: sipariş, "o an ne satıldı ve ne kadar tutardı" sorusunun kalıcı
--- yanıtıdır. Kimlik kısıtı (orders_totals_consistent) bir saga adımının yanlış
--- hesabının sessizce siparişe yazılmasını engeller; servis aynı kontrolü daha
--- okunabilir bir hatayla önce yapar, buradaki kısıt son savunmadır ve doğrudan
--- SQL ile yapılan müdahaleyi de kapsar.
+-- The order totals are copied from the cart's SNAPSHOT and never change again:
+-- the order is the permanent answer to the question "what was sold at that
+-- moment and what did it come to". The identity constraint
+-- (orders_totals_consistent) prevents a saga step's wrong arithmetic from being
+-- silently written to the order; the service performs the same check earlier
+-- with a more readable error, and the constraint here is the last defense —
+-- it also covers an intervention made directly with SQL.
 CREATE TABLE IF NOT EXISTS orders (
     id              TEXT        PRIMARY KEY,
-    -- display_id müşteriye gösterilen, insan okunur ARTAN numaradır.
+    -- display_id is the human-readable INCREASING number shown to the customer.
     display_id      BIGINT      NOT NULL GENERATED ALWAYS AS IDENTITY,
-    -- status siparişin yaşam döngüsündeki yeridir.
+    -- status is the order's place in its lifecycle.
     status          TEXT        NOT NULL DEFAULT 'pending',
-    -- region_id region modülünün kimliğidir; FK YOKTUR (Prensip 2.2).
+    -- region_id is the region module's id; there is NO FK (Principle 2.2).
     region_id       TEXT        NOT NULL,
-    -- customer_id customer modülünün kimliğidir; NULL ise sipariş MİSAFİRE aittir.
+    -- customer_id is the customer module's id; if NULL the order is a GUEST's.
     customer_id     TEXT,
     email           TEXT,
-    -- currency_code ISO 4217 kodudur ve BÜYÜK harf saklanır.
+    -- currency_code is the ISO 4217 code and is stored in UPPERCASE.
     currency_code   TEXT        NOT NULL,
-    -- cart_id siparişin doğduğu sepettir; cart modülünün kimliğidir ve FK
-    -- DEĞİLDİR. Yalnızca KÖKENİ belgeler; okuma için kullanılmaz.
+    -- cart_id is the cart the order was born from; it is the cart module's id
+    -- and is NOT an FK. It documents only the ORIGIN; it is not used for reads.
     cart_id         TEXT,
-    -- idempotency_key aynı siparişin iki kez yazılmasını engeller (Prensip 2.6).
-    -- Saga bir adımı yeniden deneyebilir; anahtar olmadan tekrar, müşteriye
-    -- İKİNCİ BİR SİPARİŞ açmak demek olurdu.
+    -- idempotency_key prevents the same order from being written twice
+    -- (Principle 2.6). A saga may retry a step; without the key a retry would
+    -- have meant opening a SECOND ORDER for the customer.
     idempotency_key TEXT,
     subtotal        BIGINT      NOT NULL DEFAULT 0,
     discount_total  BIGINT      NOT NULL DEFAULT 0,
@@ -76,7 +79,8 @@ CREATE TABLE IF NOT EXISTS orders (
     shipping_total  BIGINT      NOT NULL DEFAULT 0,
     total           BIGINT      NOT NULL DEFAULT 0,
     metadata        JSONB       NOT NULL DEFAULT '{}'::jsonb,
-    -- placed_at siparişin verildiği andır; sipariş kaydının doğum anıdır.
+    -- placed_at is the moment the order was placed; the birth moment of the
+    -- order record.
     placed_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
     completed_at    TIMESTAMPTZ,
     canceled_at     TIMESTAMPTZ,
@@ -94,21 +98,22 @@ CREATE TABLE IF NOT EXISTS orders (
     CONSTRAINT orders_total_nonneg          CHECK (total >= 0),
     CONSTRAINT orders_totals_consistent
         CHECK (total = subtotal - discount_total + tax_total + shipping_total),
-    -- İndirim ara toplamı AŞAMAZ: aşsaydı müşteri satın aldığı maldan fazlasını
-    -- geri kazanır, vergi ve kargo indirimle karşılanırdı.
+    -- The discount CANNOT EXCEED the subtotal: had it exceeded, the customer
+    -- would win back more than the goods they bought, and the tax and the
+    -- shipping would be covered by the discount.
     CONSTRAINT orders_discount_within_subtotal
         CHECK (discount_total <= subtotal),
-    -- Durum ile damga birbirinin AYNASIDIR; ikisinin ayrışması, iptal edilmiş
-    -- görünen ama iptal anı olmayan (ya da tersi) bir kayıt demekti.
+    -- The status and the stamp are each other's MIRROR; their divergence meant a
+    -- record that looks canceled but has no cancellation moment (or the reverse).
     CONSTRAINT orders_canceled_stamp
         CHECK ((status = 'canceled') = (canceled_at IS NOT NULL)),
     CONSTRAINT orders_completed_stamp
         CHECK ((status IN ('completed', 'archived')) = (completed_at IS NOT NULL))
 );
 
--- display_id benzersizliği SON SAVUNMADIR: sequence zaten çakışmaz, ama
--- sequence elle geri sarılırsa (setval) ya da bir kayıt kopyalanırsa aynı
--- numara ikinci kez yazılamaz.
+-- display_id uniqueness is the LAST DEFENSE: the sequence already does not
+-- collide, but if the sequence is rewound by hand (setval) or a record is
+-- copied, the same number cannot be written a second time.
 CREATE UNIQUE INDEX IF NOT EXISTS orders_display_id_uniq
     ON orders (display_id);
 
@@ -132,29 +137,30 @@ CREATE INDEX IF NOT EXISTS orders_cart_idx
     ON orders (cart_id)
     WHERE cart_id IS NOT NULL AND deleted_at IS NULL;
 
--- Aynı idempotency anahtarıyla İKİNCİ bir sipariş açılamaz. Yumuşak silinmiş
--- sipariş kısıtın dışındadır: silinen bir siparişin anahtarı yeniden
--- kullanılabilmelidir, aksi hâlde silme işlemi anahtarı sonsuza dek tüketirdi.
+-- A SECOND order cannot be opened with the same idempotency key. A soft-deleted
+-- order is outside the constraint: the key of a deleted order must be reusable
+-- again, otherwise the delete operation would consume the key forever.
 CREATE UNIQUE INDEX IF NOT EXISTS orders_idempotency_key_uniq
     ON orders (idempotency_key)
     WHERE idempotency_key IS NOT NULL AND deleted_at IS NULL;
 
--- order_line_items siparişteki bir satırdır.
+-- order_line_items is a line in the order.
 --
--- variant_id product modülünün kimliğidir ve FOREIGN KEY DEĞİLDİR (Prensip
--- 2.2). title ve unit_price de KOPYALANIR: katalog sonradan değişse (ya da
--- varyant silinse) bile faturada görülen ad ve tutar değişmez.
+-- variant_id is the product module's id and is NOT a FOREIGN KEY (Principle
+-- 2.2). title and unit_price are COPIED as well: even if the catalog changes
+-- later (or the variant is deleted), the name and the amount seen on the invoice
+-- do not change.
 --
--- (order_id, variant_id) üzerinde benzersizlik kısıtı BİLİNÇLİ OLARAK YOKTUR
--- (sepette vardır). Sipariş tarihsel bir kayıttır ve sonraki fazlarda değişim
--- (exchange) aynı varyant için ikinci bir satır ekleyebilir; sepetteki "aynı
--- varyant tek satır" kuralı ise sepetin düzenlenebilir olmasından doğar.
--- Aynı siparişin iki kez yazılmasına karşı koruma satır düzeyinde değil,
--- orders_idempotency_key_uniq ile sipariş düzeyindedir.
+-- A uniqueness constraint on (order_id, variant_id) is DELIBERATELY ABSENT (the
+-- cart has one). An order is a historical record and in later phases an exchange
+-- may add a second line for the same variant; the cart's "one line per variant"
+-- rule, on the other hand, arises from the cart being editable. The protection
+-- against the same order being written twice is not at the line level but at the
+-- order level, with orders_idempotency_key_uniq.
 CREATE TABLE IF NOT EXISTS order_line_items (
     id             TEXT        PRIMARY KEY,
     order_id       TEXT        NOT NULL REFERENCES orders (id) ON DELETE CASCADE,
-    -- variant_id product modülünün kimliğidir; FK YOKTUR (Prensip 2.2).
+    -- variant_id is the product module's id; there is NO FK (Principle 2.2).
     variant_id     TEXT        NOT NULL,
     title          TEXT        NOT NULL,
     quantity       BIGINT      NOT NULL,
@@ -174,7 +180,7 @@ CREATE TABLE IF NOT EXISTS order_line_items (
     CONSTRAINT order_line_items_discount_total_nonneg CHECK (discount_total >= 0),
     CONSTRAINT order_line_items_tax_total_nonneg      CHECK (tax_total >= 0),
     CONSTRAINT order_line_items_total_nonneg          CHECK (total >= 0),
-    -- Kargo satır düzeyinde yoktur; kargo siparişin tamamına aittir.
+    -- Shipping does not exist at the line level; it belongs to the whole order.
     CONSTRAINT order_line_items_totals_consistent
         CHECK (total = subtotal - discount_total + tax_total),
     CONSTRAINT order_line_items_discount_within_subtotal
@@ -185,49 +191,51 @@ CREATE INDEX IF NOT EXISTS order_line_items_order_idx
     ON order_line_items (order_id, created_at, id)
     WHERE deleted_at IS NULL;
 
--- order_summaries siparişin ödenen/iade edilen/kalan tutar özetidir.
+-- order_summaries is the order's paid/refunded/outstanding amount summary.
 --
--- Sipariş başına TEK satırdır ve siparişle birlikte sıfırlanmış olarak doğar:
--- "özeti olmayan sipariş" diye bir durum yoktur, dolayısıyla okuyan taraf
--- NULL ile sıfırı ayırt etmek zorunda kalmaz.
+-- It is a SINGLE row per order and is born zeroed together with the order:
+-- there is no such state as "an order without a summary", so the reading side is
+-- not forced to tell NULL apart from zero.
 --
--- KALAN tutar sütun olarak SAKLANMAZ; total - (paid_total - refunded_total)
--- olarak okunur (bkz. models.OrderSummary.Outstanding). Saklansaydı üç
--- sütunun birbiriyle tutarlılığını ayrı bir kısıtla korumak gerekirdi ve
--- türetilmiş bir değerin bayatlaması mümkün olurdu.
+-- The OUTSTANDING amount is NOT STORED as a column; it is read as
+-- total - (paid_total - refunded_total) (see models.OrderSummary.Outstanding).
+-- Had it been stored, the consistency of the three columns with one another
+-- would have to be protected by a separate constraint, and a derived value could
+-- go stale.
 --
--- Ödeme tutarını YAZAN taraf payment modülü DEĞİLDİR: iki modül birbirini
--- tanımaz (Prensip 2.1). Yazma, ödeme sonucunu bilen workflow ya da bir olay
--- abonesi üzerinden bu modülün servisine gelir.
+-- The side that WRITES the paid amount is NOT the payment module: the two
+-- modules do not know each other (Principle 2.1). The write reaches this
+-- module's service over the workflow that knows the payment result, or over an
+-- event subscriber.
 CREATE TABLE IF NOT EXISTS order_summaries (
     id             TEXT        PRIMARY KEY,
     order_id       TEXT        NOT NULL UNIQUE REFERENCES orders (id) ON DELETE CASCADE,
-    -- paid_total siparişe karşılık TAHSİL EDİLEN toplam tutardır (minor unit).
+    -- paid_total is the total amount CAPTURED against the order (minor unit).
     paid_total     BIGINT      NOT NULL DEFAULT 0,
-    -- refunded_total müşteriye GERİ ÖDENEN toplam tutardır (minor unit).
+    -- refunded_total is the total amount PAID BACK to the customer (minor unit).
     refunded_total BIGINT      NOT NULL DEFAULT 0,
     created_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
 
     CONSTRAINT order_summaries_paid_total_nonneg     CHECK (paid_total >= 0),
     CONSTRAINT order_summaries_refunded_total_nonneg CHECK (refunded_total >= 0),
-    -- Tahsil edilmemiş bir tutar iade EDİLEMEZ.
+    -- An amount that was never captured CANNOT be refunded.
     CONSTRAINT order_summaries_refund_within_paid
         CHECK (refunded_total <= paid_total)
 );
 
--- order_returns bir iade kaydının İSKELETİDİR (plan Bölüm 6).
+-- order_returns is the SKELETON of a return record (plan Section 6).
 --
--- Faz 6 yalnızca kaydı ve temel CRUD'ını kurar; iade iş akışı (satır bazlı
--- iade, stok geri alma, ödeme iadesi) sonraki fazlara aittir. Bu yüzden satır
--- bazlı çocuk tablosu HENÜZ YOKTUR: iş akışı yazılmadan tasarlanan bir çocuk
--- şeması, akış geldiğinde büyük olasılıkla değişecek ve geri alınması gereken
--- bir migration bırakacaktı.
+-- Phase 6 sets up only the record and its basic CRUD; the return workflow
+-- (line-based return, stock restoration, payment refund) belongs to later
+-- phases. That is why a line-based child table IS NOT THERE YET: a child schema
+-- designed before the workflow is written would most likely change when the flow
+-- arrives, and would leave behind a migration that has to be rolled back.
 CREATE TABLE IF NOT EXISTS order_returns (
     id            TEXT        PRIMARY KEY,
     order_id      TEXT        NOT NULL REFERENCES orders (id) ON DELETE CASCADE,
     status        TEXT        NOT NULL DEFAULT 'requested',
-    -- refund_amount iade edilmesi planlanan tutardır (minor unit).
+    -- refund_amount is the amount planned to be refunded (minor unit).
     refund_amount BIGINT      NOT NULL DEFAULT 0,
     reason        TEXT,
     note          TEXT,
@@ -247,16 +255,18 @@ CREATE INDEX IF NOT EXISTS order_returns_order_idx
     ON order_returns (order_id, created_at DESC, id DESC)
     WHERE deleted_at IS NULL;
 
--- order_exchanges bir değişim kaydının İSKELETİDİR (plan Bölüm 6).
+-- order_exchanges is the SKELETON of an exchange record (plan Section 6).
 --
--- difference_due NEGATİF OLABİLİR ve bu yüzden nonneg kısıtı YOKTUR: değişimde
--- fark müşteriden tahsil edilebileceği gibi müşteriye de ödenebilir. Tutar yine
--- TAM SAYI minor unit'tir (plan Bölüm 8); işaret yönü belirtir, ölçeği değil.
+-- difference_due CAN BE NEGATIVE and that is why it has no nonneg constraint: in
+-- an exchange the difference may be captured from the customer just as it may be
+-- paid to the customer. The amount is still an INTEGER minor unit (plan
+-- Section 8); the sign states the direction, not the scale.
 CREATE TABLE IF NOT EXISTS order_exchanges (
     id             TEXT        PRIMARY KEY,
     order_id       TEXT        NOT NULL REFERENCES orders (id) ON DELETE CASCADE,
     status         TEXT        NOT NULL DEFAULT 'requested',
-    -- difference_due pozitifse müşteri öder, negatifse müşteriye ödenir.
+    -- difference_due is paid by the customer when positive, and to the customer
+    -- when negative.
     difference_due BIGINT      NOT NULL DEFAULT 0,
     note           TEXT,
     metadata       JSONB       NOT NULL DEFAULT '{}'::jsonb,
@@ -274,16 +284,16 @@ CREATE INDEX IF NOT EXISTS order_exchanges_order_idx
     ON order_exchanges (order_id, created_at DESC, id DESC)
     WHERE deleted_at IS NULL;
 
--- order_claims bir hasar/eksik kaydının İSKELETİDİR (plan Bölüm 6).
+-- order_claims is the SKELETON of a damage/shortage record (plan Section 6).
 --
--- claim_type talebin nasıl karşılanacağını söyler: 'refund' para iadesi,
--- 'replace' ürünün yenisiyle değiştirilmesi.
+-- claim_type says how the claim will be met: 'refund' is a money refund,
+-- 'replace' is replacing the product with a new one.
 CREATE TABLE IF NOT EXISTS order_claims (
     id            TEXT        PRIMARY KEY,
     order_id      TEXT        NOT NULL REFERENCES orders (id) ON DELETE CASCADE,
     claim_type    TEXT        NOT NULL,
     status        TEXT        NOT NULL DEFAULT 'requested',
-    -- refund_amount claim_type = 'refund' iken iade edilecek tutardır.
+    -- refund_amount is the amount to refund when claim_type = 'refund'.
     refund_amount BIGINT      NOT NULL DEFAULT 0,
     reason        TEXT,
     note          TEXT,

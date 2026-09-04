@@ -9,17 +9,18 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/cart/service"
 )
 
-// Yönetim tarafı YALNIZCA OKUR.
+// The admin side is READ ONLY.
 //
-// Sepeti değiştiren tek taraf müşteridir; yönetim panelinden yapılan bir
-// düzeltme, müşterinin gördüğü tutarı arkasından değiştirmek olurdu. Sipariş
-// düzeltmeleri Faz 6'daki order modülünün (Return/Exchange/Claim) işidir.
+// The only party that changes the cart is the customer; a correction made from
+// the admin panel would mean changing the amount the customer saw behind their
+// back. Order corrections are the job of the order module (Return/Exchange/
+// Claim) in Phase 6.
 
-// adminListCarts sepetleri sayfalayarak döner.
+// adminListCarts returns the carts in pages.
 //
-// Desteklenen süzgeçler: customer_id, region_id ve completed. Satırlar
-// YÜKLENMEZ; sayfa başına onlarca sepetin çocuklarını getirmek listeyi N+1'e
-// açardı. Tek sepetin ayrıntısı /admin/v1/carts/{id} ile alınır.
+// Supported filters: customer_id, region_id and completed. The rows are NOT
+// LOADED; fetching the children of dozens of carts per page would open the list
+// up to N+1. The detail of a single cart is taken with /admin/v1/carts/{id}.
 func (h *Handler) adminListCarts(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -40,7 +41,7 @@ func (h *Handler) adminListCarts(w http.ResponseWriter, r *http.Request) {
 		flag, parseErr := strconv.ParseBool(raw)
 		if parseErr != nil {
 			corehttp.WriteError(ctx, w, coreerrors.Invalid(codeInvalidRequest,
-				"completed mantıksal bir değer olmalı: %q", raw))
+				"completed has to be a boolean value: %q", raw))
 			return
 		}
 		in.Completed = &flag
@@ -53,8 +54,8 @@ func (h *Handler) adminListCarts(w http.ResponseWriter, r *http.Request) {
 	}
 
 	data := make([]cartDTO, 0, len(carts))
-	// Döngü indeksle gezilir: sepet yapısı büyüktür ve değerle kopyalamak her
-	// tur birkaç yüz baytı boşuna taşır.
+	// The loop is walked by index: the cart struct is large and copying it by
+	// value would carry a few hundred bytes needlessly on every turn.
 	for i := range carts {
 		data = append(data, toCartDTO(carts[i]))
 	}
@@ -66,7 +67,7 @@ func (h *Handler) adminListCarts(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// adminGetCart sepeti çocuklarıyla döner.
+// adminGetCart returns the cart with its children.
 func (h *Handler) adminGetCart(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 

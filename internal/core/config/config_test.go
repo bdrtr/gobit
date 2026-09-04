@@ -59,7 +59,7 @@ func TestLoadDefaults(t *testing.T) {
 	// With an empty environment the defaults have to agree with docker-compose.
 	cfg, err := config.Load()
 	if err != nil {
-		t.Fatalf("Load() beklenmedik wantErr: %v", err)
+		t.Fatalf("Load() unexpected wantErr: %v", err)
 	}
 
 	if cfg.AppEnv != "development" {
@@ -99,7 +99,7 @@ func TestLoadFromEnv(t *testing.T) {
 
 	cfg, err := config.Load()
 	if err != nil {
-		t.Fatalf("Load() beklenmedik wantErr: %v", err)
+		t.Fatalf("Load() unexpected wantErr: %v", err)
 	}
 
 	if !cfg.IsProduction() {
@@ -122,12 +122,12 @@ func TestLoadInvalidEnv(t *testing.T) {
 	tests := map[string]struct {
 		key, value string
 	}{
-		"bilinmeyen environment": {"APP_ENV", "staging-2"},
+		"an unknown environment": {"APP_ENV", "staging-2"},
 		"a zero port":            {"APP_PORT", "0"},
 		"a port out of range":    {"APP_PORT", "70000"},
-		"bilinmeyen seviye":      {"LOG_LEVEL", "trace"},
+		"an unknown level":       {"LOG_LEVEL", "trace"},
 		"an unknown format":      {"LOG_FORMAT", "logfmt"},
-		"bilinmeyen bus":         {"EVENT_BUS", "kafka"},
+		"an unknown bus":         {"EVENT_BUS", "kafka"},
 		"negatif timeout":        {"SHUTDOWN_TIMEOUT", "-1s"},
 		"a zero probe budget":    {"READINESS_DEGRADED_TIMEOUT", "0s"},
 		"a non-numeric port":     {"APP_PORT", "abc"},
@@ -193,11 +193,11 @@ func TestValidateRejectsEmptyURLs(t *testing.T) {
 func TestProductionRejectsLocalDefaults(t *testing.T) {
 	tests := map[string]func(t *testing.T){
 		"env hic set edilmemis": func(t *testing.T) {},
-		"env bos string": func(t *testing.T) {
+		"an empty env string": func(t *testing.T) {
 			t.Setenv("DATABASE_URL", "")
 			t.Setenv("REDIS_URL", "")
 		},
-		"acikca varsayilanla ayni": func(t *testing.T) {
+		"explicitly the same as the default": func(t *testing.T) {
 			t.Setenv("DATABASE_URL", config.DefaultDatabaseURL)
 			t.Setenv("REDIS_URL", config.DefaultRedisURL)
 		},
@@ -1164,7 +1164,7 @@ func TestThePoolLimitsAreValidatedAtStartup(t *testing.T) {
 		},
 		"asgari negatif": {
 			map[string]string{"DB_MIN_CONNS": "-1"},
-			"DB_MIN_CONNS negatif olamaz",
+			"DB_MIN_CONNS cannot be negative",
 		},
 		"the minimum greater than the maximum": {
 			map[string]string{"DB_MAX_CONNS": "4", "DB_MIN_CONNS": "5"},

@@ -14,95 +14,95 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/order/service"
 )
 
-// anlikGoruntu testlerde kullanılan geçerli sipariş görüntüsüdür.
+// snapshotJSON is the valid order snapshot used in the tests.
 //
-// Gövde ELLE YAZILMIŞTIR ve interop'un kendi tiplerinden ÜRETİLMEZ. Sebep
-// budur: şema modüller arası bir sözleşmedir ve tüketici (complete_cart
-// workflow'u) bu JSON'u kendi paketinde kurar. Görüntüyü interop'un tipinden
-// üretseydik, bir alan adı değiştiğinde test de onunla birlikte değişir ve
-// sözleşmenin bozulduğunu HİÇBİR test görmezdi.
-const anlikGoruntu = `{
+// The body IS WRITTEN BY HAND and is NOT PRODUCED from interop's own types. The
+// reason is this: the schema is a cross-module contract and the consumer (the
+// complete_cart workflow) builds this JSON in its own package. Had we produced
+// the snapshot from interop's type, the test would change together with a field
+// name and NO test would see that the contract was broken.
+const snapshotJSON = `{
   "cart_id":         "cart_TEST",
   "region_id":       "reg_TEST",
   "customer_id":     "cus_TEST",
-  "email":           "Musteri@Ornek.COM",
+  "email":           "Customer@Example.COM",
   "currency_code":   "try",
-  "idempotency_key": "wf_ADIM_1",
+  "idempotency_key": "wf_STEP_1",
   "subtotal":        3000,
   "discount_total":  0,
   "tax_total":       600,
   "shipping_total":  2500,
   "total":           6100,
-  "metadata":        {"kanal": "web"},
+  "metadata":        {"channel": "web"},
   "items": [
     {
       "variant_id":     "variant_TEST",
-      "title":          "Kırmızı Tişört",
+      "title":          "Red T-Shirt",
       "quantity":       3,
       "unit_price":     1000,
       "subtotal":       3000,
       "discount_total": 0,
       "tax_total":      600,
       "total":          3600,
-      "metadata":       {"satir": 1}
+      "metadata":       {"line": 1}
     }
   ]
 }`
 
-// TestPlaceOrderJSONSemayiOkur anlık görüntü şemasının BİREBİR beklendiği gibi
-// çözüldüğünü doğrular.
+// TestPlaceOrderJSONReadsTheSchema validates that the snapshot schema is parsed
+// EXACTLY as expected.
 //
-// Bu test şemanın tek derleme zamanı DIŞI güvencesidir: order modülü workflow
-// paketini import edemediği için derleyici alan adlarındaki bir kaymayı
-// göremez (ADR 0001/0006).
-func TestPlaceOrderJSONSemayiOkur(t *testing.T) {
+// This test is the only guarantee of the schema OUTSIDE compile time: because
+// the order module cannot import the workflow package, the compiler cannot see a
+// shift in the field names (ADR 0001/0006).
+func TestPlaceOrderJSONReadsTheSchema(t *testing.T) {
 	ctx := context.Background()
-	o := yeniOrtam(t)
-	interop := service.NewInterop(o.svc)
+	e := newEnv(t)
+	interop := service.NewInterop(e.svc)
 
-	siparisID, err := interop.PlaceOrderJSON(ctx, json.RawMessage(anlikGoruntu))
+	orderID, err := interop.PlaceOrderJSON(ctx, json.RawMessage(snapshotJSON))
 	require.NoError(t, err)
-	require.NotEmpty(t, siparisID)
+	require.NotEmpty(t, orderID)
 
-	detay, err := o.svc.GetOrder(ctx, siparisID)
+	detail, err := e.svc.GetOrder(ctx, orderID)
 	require.NoError(t, err)
 
-	assert.Equal(t, "reg_TEST", detay.RegionID)
-	assert.Equal(t, "cus_TEST", detay.CustomerID)
-	assert.Equal(t, "cart_TEST", detay.CartID)
-	assert.Equal(t, "musteri@ornek.com", detay.Email)
-	assert.Equal(t, "TRY", detay.CurrencyCode)
-	assert.Equal(t, "wf_ADIM_1", detay.IdempotencyKey)
-	assert.Equal(t, int64(3000), detay.Subtotal)
-	assert.Equal(t, int64(600), detay.TaxTotal)
-	assert.Equal(t, int64(2500), detay.ShippingTotal)
-	assert.Equal(t, int64(6100), detay.Total)
-	assert.Equal(t, map[string]any{"kanal": "web"}, detay.Metadata)
+	assert.Equal(t, "reg_TEST", detail.RegionID)
+	assert.Equal(t, "cus_TEST", detail.CustomerID)
+	assert.Equal(t, "cart_TEST", detail.CartID)
+	assert.Equal(t, "customer@example.com", detail.Email)
+	assert.Equal(t, "TRY", detail.CurrencyCode)
+	assert.Equal(t, "wf_STEP_1", detail.IdempotencyKey)
+	assert.Equal(t, int64(3000), detail.Subtotal)
+	assert.Equal(t, int64(600), detail.TaxTotal)
+	assert.Equal(t, int64(2500), detail.ShippingTotal)
+	assert.Equal(t, int64(6100), detail.Total)
+	assert.Equal(t, map[string]any{"channel": "web"}, detail.Metadata)
 
-	require.Len(t, detay.Items, 1)
-	satir := detay.Items[0]
-	assert.Equal(t, "variant_TEST", satir.VariantID)
-	assert.Equal(t, "Kırmızı Tişört", satir.Title)
-	assert.Equal(t, int64(3), satir.Quantity)
-	assert.Equal(t, int64(1000), satir.UnitPrice)
-	assert.Equal(t, int64(3000), satir.Subtotal)
-	assert.Equal(t, int64(600), satir.TaxTotal)
-	assert.Equal(t, int64(3600), satir.Total)
-	assert.Equal(t, map[string]any{"satir": float64(1)}, satir.Metadata)
+	require.Len(t, detail.Items, 1)
+	line := detail.Items[0]
+	assert.Equal(t, "variant_TEST", line.VariantID)
+	assert.Equal(t, "Red T-Shirt", line.Title)
+	assert.Equal(t, int64(3), line.Quantity)
+	assert.Equal(t, int64(1000), line.UnitPrice)
+	assert.Equal(t, int64(3000), line.Subtotal)
+	assert.Equal(t, int64(600), line.TaxTotal)
+	assert.Equal(t, int64(3600), line.Total)
+	assert.Equal(t, map[string]any{"line": float64(1)}, line.Metadata)
 }
 
-// TestPlaceOrderJSONBilinmeyenAlaniYokSayar tüketicinin daha GENİŞ bir görüntü
-// geçirebildiğini doğrular.
+// TestPlaceOrderJSONIgnoresUnknownFields validates that the consumer can pass a
+// WIDER snapshot.
 //
-// Katı çözümleme, tüketici tarafına yeni bir alan eklendiğinde bu modülü de
-// değiştirmeyi zorunlu kılar ve iki paketi derleme zamanı bağımlılığı olmadan
-// birbirine kilitlerdi.
-func TestPlaceOrderJSONBilinmeyenAlaniYokSayar(t *testing.T) {
+// Strict parsing would make changing this module mandatory whenever a new field
+// was added on the consumer's side and would lock the two packages to each other
+// without a compile time dependency.
+func TestPlaceOrderJSONIgnoresUnknownFields(t *testing.T) {
 	ctx := context.Background()
-	o := yeniOrtam(t)
-	interop := service.NewInterop(o.svc)
+	e := newEnv(t)
+	interop := service.NewInterop(e.svc)
 
-	genis := `{
+	wide := `{
       "region_id": "reg_TEST", "currency_code": "TRY",
       "revision": 7, "completed": true,
       "shipping_methods": [{"id": "csm_1", "amount": 2500}],
@@ -112,18 +112,18 @@ func TestPlaceOrderJSONBilinmeyenAlaniYokSayar(t *testing.T) {
                  "line_item_id": "li_1"}]
     }`
 
-	siparisID, err := interop.PlaceOrderJSON(ctx, json.RawMessage(genis))
+	orderID, err := interop.PlaceOrderJSON(ctx, json.RawMessage(wide))
 
-	require.NoError(t, err, "bilinmeyen alanlar görüntüyü reddetmemeli")
-	assert.NotEmpty(t, siparisID)
+	require.NoError(t, err, "unknown fields must not make the snapshot rejected")
+	assert.NotEmpty(t, orderID)
 }
 
-// TestPlaceOrderJSONBozukGovdeyiReddeder çözülemeyen gövdenin Invalid
-// döndüğünü doğrular.
-func TestPlaceOrderJSONBozukGovdeyiReddeder(t *testing.T) {
+// TestPlaceOrderJSONRejectsAMalformedBody validates that an unparseable body
+// returns Invalid.
+func TestPlaceOrderJSONRejectsAMalformedBody(t *testing.T) {
 	ctx := context.Background()
-	o := yeniOrtam(t)
-	interop := service.NewInterop(o.svc)
+	e := newEnv(t)
+	interop := service.NewInterop(e.svc)
 
 	_, err := interop.PlaceOrderJSON(ctx, json.RawMessage(`{"region_id":`))
 
@@ -132,12 +132,12 @@ func TestPlaceOrderJSONBozukGovdeyiReddeder(t *testing.T) {
 	assert.Equal(t, service.CodeInteropSnapshotInvalid, errors.CodeOf(err))
 }
 
-// TestPlaceOrderJSONEksikZorunluAlaniReddeder eksik alanların yok sayılmadığını
-// doğrular.
-func TestPlaceOrderJSONEksikZorunluAlaniReddeder(t *testing.T) {
+// TestPlaceOrderJSONRejectsAMissingRequiredField validates that missing fields
+// are not ignored.
+func TestPlaceOrderJSONRejectsAMissingRequiredField(t *testing.T) {
 	ctx := context.Background()
-	o := yeniOrtam(t)
-	interop := service.NewInterop(o.svc)
+	e := newEnv(t)
+	interop := service.NewInterop(e.svc)
 
 	_, err := interop.PlaceOrderJSON(ctx, json.RawMessage(`{"currency_code": "TRY"}`))
 
@@ -145,179 +145,184 @@ func TestPlaceOrderJSONEksikZorunluAlaniReddeder(t *testing.T) {
 	assert.Equal(t, errors.KindInvalid, errors.KindOf(err))
 }
 
-// TestInteropPlaceOrderIdempotenttir aynı görüntünün ikinci kez gönderilmesinin
-// yeni sipariş açmadığını doğrular.
+// TestInteropPlaceOrderIsIdempotent validates that sending the same snapshot a
+// second time does not open a new order.
 //
-// Saga bir adımı yeniden deneyebilir; anahtar olmadan tekrar, müşteriye İKİNCİ
-// BİR SİPARİŞ açmak demek olurdu.
-func TestInteropPlaceOrderIdempotenttir(t *testing.T) {
+// A saga can retry a step; without a key a repeat would mean opening a SECOND
+// ORDER for the customer.
+func TestInteropPlaceOrderIsIdempotent(t *testing.T) {
 	ctx := context.Background()
-	o := yeniOrtam(t)
-	interop := service.NewInterop(o.svc)
+	e := newEnv(t)
+	interop := service.NewInterop(e.svc)
 
-	ilk, err := interop.PlaceOrderJSON(ctx, json.RawMessage(anlikGoruntu))
+	first, err := interop.PlaceOrderJSON(ctx, json.RawMessage(snapshotJSON))
 	require.NoError(t, err)
-	ikinci, err := interop.PlaceOrderJSON(ctx, json.RawMessage(anlikGoruntu))
+	second, err := interop.PlaceOrderJSON(ctx, json.RawMessage(snapshotJSON))
 	require.NoError(t, err)
 
-	assert.Equal(t, ilk, ikinci)
-	_, sayi, err := o.svc.ListOrders(ctx, service.ListOrdersInput{})
+	assert.Equal(t, first, second)
+	_, count, err := e.svc.ListOrders(ctx, service.ListOrdersInput{})
 	require.NoError(t, err)
-	assert.Equal(t, int64(1), sayi)
+	assert.Equal(t, int64(1), count)
 }
 
-// TestInteropCancelOrderIdempotenttir saga telafisinin ilkel yüzeyden de iki
-// kez çağrılabildiğini doğrular.
-func TestInteropCancelOrderIdempotenttir(t *testing.T) {
+// TestInteropCancelOrderIsIdempotent validates that the saga compensation can be
+// called twice from the primitive surface too.
+func TestInteropCancelOrderIsIdempotent(t *testing.T) {
 	ctx := context.Background()
-	o := yeniOrtam(t)
-	interop := service.NewInterop(o.svc)
+	e := newEnv(t)
+	interop := service.NewInterop(e.svc)
 
-	siparisID, err := interop.PlaceOrderJSON(ctx, json.RawMessage(anlikGoruntu))
+	orderID, err := interop.PlaceOrderJSON(ctx, json.RawMessage(snapshotJSON))
 	require.NoError(t, err)
 
-	require.NoError(t, interop.CancelOrder(ctx, siparisID, "ödeme reddedildi"))
-	require.NoError(t, interop.CancelOrder(ctx, siparisID, "telafi tekrarı"))
+	require.NoError(t, interop.CancelOrder(ctx, orderID, "the payment was declined"))
+	require.NoError(t, interop.CancelOrder(ctx, orderID, "a repeat of the compensation"))
 
-	detay, err := o.svc.GetOrder(ctx, siparisID)
+	detail, err := e.svc.GetOrder(ctx, orderID)
 	require.NoError(t, err)
-	assert.Equal(t, models.OrderCanceled, detay.Status)
+	assert.Equal(t, models.OrderCanceled, detail.Status)
 }
 
-// TestInteropCompleteOrderTelafiDegildir tamamlamanın ikinci çağrıda hata
-// döndüğünü doğrular.
-func TestInteropCompleteOrderTelafiDegildir(t *testing.T) {
+// TestInteropCompleteOrderIsNotACompensation validates that completing returns
+// an error on the second call.
+func TestInteropCompleteOrderIsNotACompensation(t *testing.T) {
 	ctx := context.Background()
-	o := yeniOrtam(t)
-	interop := service.NewInterop(o.svc)
+	e := newEnv(t)
+	interop := service.NewInterop(e.svc)
 
-	siparisID, err := interop.PlaceOrderJSON(ctx, json.RawMessage(anlikGoruntu))
+	orderID, err := interop.PlaceOrderJSON(ctx, json.RawMessage(snapshotJSON))
 	require.NoError(t, err)
 
-	require.NoError(t, interop.CompleteOrder(ctx, siparisID))
-	err = interop.CompleteOrder(ctx, siparisID)
+	require.NoError(t, interop.CompleteOrder(ctx, orderID))
+	err = interop.CompleteOrder(ctx, orderID)
 
 	require.Error(t, err)
 	assert.Equal(t, errors.KindConflict, errors.KindOf(err))
 }
 
-// TestOrderContactJSONAlanlariDoldurur bildirim yüzeyinin şemasını ve
-// değerlerini doğrular.
+// TestOrderContactJSONFillsTheFields validates the schema and the values of the
+// notification surface.
 //
-// Gövde map[string]string içine çözülür: bu, "TÜM değerler dizedir"
-// sözleşmesinin tek kanıtıdır. Alanlardan biri sayı olarak yazılsaydı çözümleme
-// burada DÜŞERDİ; hedef tipe map[string]any dense aynı kayma sessizce geçerdi.
-func TestOrderContactJSONAlanlariDoldurur(t *testing.T) {
+// The body is decoded into a map[string]string: this is the only proof of the
+// "ALL the values are strings" contract. Had one of the fields been written as a
+// number the parsing would FALL OVER here; if the target type were a
+// map[string]any the same shift would pass silently.
+func TestOrderContactJSONFillsTheFields(t *testing.T) {
 	ctx := context.Background()
-	o := yeniOrtam(t)
-	interop := service.NewInterop(o.svc)
+	e := newEnv(t)
+	interop := service.NewInterop(e.svc)
 
-	in := gecerliGirdi()
+	in := validInput()
 	in.Items = append(in.Items, service.CreateOrderItemInput{
-		VariantID: "variant_IKINCI", Title: "Mavi Kupa",
+		VariantID: "variant_SECOND", Title: "Blue Mug",
 		Quantity: 1, UnitPrice: 500, Subtotal: 500, TaxTotal: 100, Total: 600,
 	})
 	in.Subtotal = 3500
 	in.TaxTotal = 700
 	in.Total = 6700
-	siparis, err := o.svc.CreateOrder(ctx, in)
+	order, err := e.svc.CreateOrder(ctx, in)
 	require.NoError(t, err)
 
-	govde, err := interop.OrderContactJSON(ctx, siparis.ID)
+	body, err := interop.OrderContactJSON(ctx, order.ID)
 	require.NoError(t, err)
 
-	var alanlar map[string]string
-	require.NoError(t, json.Unmarshal(govde, &alanlar),
-		"yükün TÜM değerleri dize olmalı")
+	var fields map[string]string
+	require.NoError(t, json.Unmarshal(body, &fields),
+		"ALL the values of the payload have to be strings")
 
 	assert.Equal(t, map[string]string{
-		"order_id":      siparis.ID,
-		"display_id":    strconv.FormatInt(siparis.DisplayID, 10),
-		"email":         "musteri@ornek.com",
+		"order_id":      order.ID,
+		"display_id":    strconv.FormatInt(order.DisplayID, 10),
+		"email":         "customer@example.com",
 		"currency_code": "TRY",
 		"total":         "6700",
 		"item_count":    "2",
-	}, alanlar)
+	}, fields)
 }
 
-// TestOrderContactJSONOlayYukuyleAyniAdlariKullanir yüzeyin ve "order.placed"
-// olayının aynı alanları AYNI adla taşıdığını doğrular.
+// TestOrderContactJSONUsesTheSameNamesAsTheEventPayload validates that the
+// surface and the "order.placed" event carry the same fields UNDER THE SAME
+// NAME.
 //
-// Abone ikisini yan yana kullanır: order_id olaydan, gerisi buradan gelir.
-// Adlardan biri kayarsa abone alanı bulamaz ve eksiklik ancak bildirim
-// gönderilemediğinde — yani üretimde — görünürdü.
-func TestOrderContactJSONOlayYukuyleAyniAdlariKullanir(t *testing.T) {
+// The subscriber uses the two side by side: the order_id comes from the event,
+// the rest from here. If one of the names shifted the subscriber could not find
+// the field and the gap would only show up when the notification could not be
+// sent — that is, in production.
+func TestOrderContactJSONUsesTheSameNamesAsTheEventPayload(t *testing.T) {
 	ctx := context.Background()
-	o := yeniOrtam(t)
-	interop := service.NewInterop(o.svc)
+	e := newEnv(t)
+	interop := service.NewInterop(e.svc)
 
-	siparis, err := o.svc.CreateOrder(ctx, gecerliGirdi())
+	order, err := e.svc.CreateOrder(ctx, validInput())
 	require.NoError(t, err)
 
-	govde, err := interop.OrderContactJSON(ctx, siparis.ID)
+	body, err := interop.OrderContactJSON(ctx, order.ID)
 	require.NoError(t, err)
-	var alanlar map[string]string
-	require.NoError(t, json.Unmarshal(govde, &alanlar))
+	var fields map[string]string
+	require.NoError(t, json.Unmarshal(body, &fields))
 
-	olaylar := o.bus.events()
-	require.Len(t, olaylar, 1)
-	olay := olaylar[0]
-	for _, alan := range []string{
+	events := e.bus.events()
+	require.Len(t, events, 1)
+	event := events[0]
+	for _, field := range []string{
 		service.EventFieldOrderID,
 		service.EventFieldDisplayID,
 		service.EventFieldCurrencyCode,
 		service.EventFieldTotal,
 		service.EventFieldItemCount,
 	} {
-		require.Contains(t, alanlar, alan, "yüzey olay yükündeki alanı taşımalı")
-		assert.Equal(t, olay.Data[alan], alanlar[alan],
-			"%q alanı olayla aynı değeri taşımalı", alan)
+		require.Contains(t, fields, field, "the surface has to carry the field of the event payload")
+		assert.Equal(t, event.Data[field], fields[field],
+			"the %q field has to carry the same value as the event", field)
 	}
 }
 
-// TestOrderContactJSONEpostasizSiparisteBosDoner adressiz siparişin hata
-// DEĞİL, boş bir alan döndürdüğünü doğrular.
+// TestOrderContactJSONReturnsAnEmptyFieldForAnOrderWithoutAnEmail validates that
+// an order without an address returns NOT an error but an empty field.
 //
-// Abone için "gönderilecek adres yok" kalıcı bir durumdur ve atlanmalıdır;
-// hata dönmek onu yeniden denenecek bir arızadan ayırt edilemez hâle
-// getirirdi (gerekçe: [service.Interop.OrderContactJSON]).
-func TestOrderContactJSONEpostasizSiparisteBosDoner(t *testing.T) {
+// For the subscriber "there is no address to send to" is a permanent state and
+// it has to be skipped; returning an error would make it impossible to tell
+// apart from a fault that will be retried (rationale:
+// [service.Interop.OrderContactJSON]).
+func TestOrderContactJSONReturnsAnEmptyFieldForAnOrderWithoutAnEmail(t *testing.T) {
 	ctx := context.Background()
-	o := yeniOrtam(t)
-	interop := service.NewInterop(o.svc)
+	e := newEnv(t)
+	interop := service.NewInterop(e.svc)
 
-	in := gecerliGirdi()
+	in := validInput()
 	in.Email = ""
-	siparis, err := o.svc.CreateOrder(ctx, in)
+	order, err := e.svc.CreateOrder(ctx, in)
 	require.NoError(t, err)
 
-	govde, err := interop.OrderContactJSON(ctx, siparis.ID)
+	body, err := interop.OrderContactJSON(ctx, order.ID)
 	require.NoError(t, err)
 
-	var alanlar map[string]string
-	require.NoError(t, json.Unmarshal(govde, &alanlar))
-	require.Contains(t, alanlar, "email", "alan gövdeden DÜŞMEMELİ")
-	assert.Empty(t, alanlar["email"])
+	var fields map[string]string
+	require.NoError(t, json.Unmarshal(body, &fields))
+	require.Contains(t, fields, "email", "the field MUST NOT FALL out of the body")
+	assert.Empty(t, fields["email"])
 }
 
-// TestOrderContactJSONOlmayanSipariste NotFound döndüğünü doğrular.
-func TestOrderContactJSONOlmayanSipariste(t *testing.T) {
+// TestOrderContactJSONNotFoundOnAMissingOrder validates that NotFound is
+// returned.
+func TestOrderContactJSONNotFoundOnAMissingOrder(t *testing.T) {
 	ctx := context.Background()
-	o := yeniOrtam(t)
-	interop := service.NewInterop(o.svc)
+	e := newEnv(t)
+	interop := service.NewInterop(e.svc)
 
-	_, err := interop.OrderContactJSON(ctx, "order_YOK")
+	_, err := interop.OrderContactJSON(ctx, "order_MISSING")
 
 	require.Error(t, err)
-	assert.True(t, errors.IsNotFound(err), "aldığı: %v", err)
+	assert.True(t, errors.IsNotFound(err), "got: %v", err)
 }
 
-// TestOrderContactJSONBosKimligiReddeder boş kimliğin veritabanına hiç
-// gitmeden Invalid döndüğünü doğrular.
-func TestOrderContactJSONBosKimligiReddeder(t *testing.T) {
+// TestOrderContactJSONRejectsAnEmptyID validates that an empty identifier
+// returns Invalid without going to the database at all.
+func TestOrderContactJSONRejectsAnEmptyID(t *testing.T) {
 	ctx := context.Background()
-	o := yeniOrtam(t)
-	interop := service.NewInterop(o.svc)
+	e := newEnv(t)
+	interop := service.NewInterop(e.svc)
 
 	_, err := interop.OrderContactJSON(ctx, "")
 

@@ -1,29 +1,30 @@
-// Package repository cart modülünün veritabanı erişimidir.
+// Package repository is the cart module's database access.
 //
-// SADECE bu modülün tablolarına dokunur (plan Bölüm 4). sqlc üretimi kod
-// repository/cartdb altındadır ve elle düzenlenmez; bu paket onun üstüne iki
-// şey ekler:
+// It touches ONLY this module's tables (plan Section 4). The sqlc generated code
+// lives under repository/cartdb and is not edited by hand; this package adds two
+// things on top of it:
 //
-//   - Çeviri: pgtype ve üretilmiş satır tipleri BU PAKETİN DIŞINA ÇIKMAZ,
-//     models tiplerine çevrilir (bkz. convert.go).
-//   - Sınıflandırma: sürücü hataları core/errors tipli hatalarına çevrilir;
-//     satır bulunamaması NotFound, benzersizlik ihlali Conflict, kimlik
-//     ihlali Invalid olur.
+//   - Conversion: pgtype and the generated row types DO NOT LEAVE THIS PACKAGE,
+//     they are converted to models types (see convert.go).
+//   - Classification: driver errors are converted to core/errors typed errors; a
+//     missing row becomes NotFound, a uniqueness violation Conflict, an identity
+//     violation Invalid.
 //
-// # İşlem (transaction) taşınması
+// # Carrying the transaction
 //
-// [Repository.WithTx] bir işlem açar ve onu CONTEXT'e koyar; işlem boyunca
-// çağrılan tüm repository metodları o context'i aldıkları sürece aynı işlemde
-// çalışır. Bunun alternatifi, işlem tutamağını taşıyan ayrı bir arayüz tipini
-// metot imzalarına koymaktı; o durumda servis kendi paketinde tanımladığı dar
-// arayüzle bu paketi YAPISAL OLARAK eşleştiremezdi — Go'da imzadaki adlandırılmış
-// tipler birebir aynı olmak zorundadır, yani servis repository'yi import etmek
-// zorunda kalırdı (ADR 0001 bunu yasaklar). Context ile taşımak imzaları iki
-// tarafın da paylaştığı tiplere (context.Context, models.*) indirger.
+// [Repository.WithTx] opens a transaction and puts it into the CONTEXT; every
+// repository method called during that transaction runs in the same transaction
+// as long as it receives that context. The alternative was to put a separate
+// interface type carrying the transaction handle into the method signatures; in
+// that case the service could not match this package STRUCTURALLY with the narrow
+// interface it declares in its own package — in Go the named types in a signature
+// have to be identical, meaning the service would have been forced to import the
+// repository (ADR 0001 forbids that). Carrying it in the context reduces the
+// signatures to the types both sides share (context.Context, models.*).
 //
-// [Repository.LockCart] işlem DIŞINDA çağrılırsa hata döner: FOR UPDATE kilidi
-// işlem bitince serbest kalacağı için, işlemsiz bir kilit sessizce hiçbir şeyi
-// korumazdı.
+// [Repository.LockCart] returns an error if it is called OUTSIDE a transaction:
+// since a FOR UPDATE lock is released once the transaction ends, a lock without a
+// transaction would silently protect nothing.
 package repository
 
 import (
@@ -38,37 +39,38 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/cart/repository/cartdb"
 )
 
-// rollbackTimeout iptal edilmiş bir bağlamda geri almaya tanınan süredir.
-// Geri alma, çağıranın ctx'i dolmuş olsa da denenmelidir; aksi hâlde işlem
-// bağlantı havuza dönene kadar açık kalırdı.
+// rollbackTimeout is the time granted to a rollback on a canceled context. The
+// rollback has to be attempted even when the caller's ctx has expired; otherwise
+// the transaction would stay open until the connection returns to the pool.
 const rollbackTimeout = 5 * time.Second
 
-// txKeyType context anahtarının tipidir; dışarıdan üretilemesin diye dışa
-// açık değildir.
+// txKeyType is the type of the context key; it is unexported so that it cannot be
+// produced from outside.
 type txKeyType struct{}
 
-// txKey işlem tutamağının context'teki anahtarıdır.
+// txKey is the transaction handle's key in the context.
 var txKey = txKeyType{}
 
-// Repository cart tablolarına erişimdir. Eşzamanlı kullanıma güvenlidir.
+// Repository is the access to the cart tables. It is safe for concurrent use.
 type Repository struct {
 	pool *pgxpool.Pool
 }
 
-// New verilen havuz üzerinde çalışan bir Repository üretir.
+// New builds a Repository running on the given pool.
 func New(pool *pgxpool.Pool) *Repository {
 	return &Repository{pool: pool}
 }
 
-// WithTx fn'i tek bir veritabanı işleminde çalıştırır.
+// WithTx runs fn in a single database transaction.
 //
-// fn'e verilen context işlemi taşır; o context ile çağrılan tüm repository
-// metodları aynı işlemde koşar. fn hata dönerse ya da panikler ise işlem geri
-// alınır, hata (panikte panik) yukarı verilir.
+// The context given to fn carries the transaction; every repository method called
+// with that context runs in the same transaction. If fn returns an error or
+// panics, the transaction is rolled back and the error (on a panic, the panic) is
+// handed upward.
 //
-// Çağrı iç içe gelirse yeni bir işlem AÇILMAZ, var olan kullanılır: iç içe
-// işlem açmak PostgreSQL'de savepoint demektir ve dıştaki işlemin atomikliği
-// konusunda yanıltıcı bir güven verirdi.
+// If the calls nest, a new transaction is NOT opened, the existing one is used:
+// opening a nested transaction means a savepoint in PostgreSQL and would give
+// misleading confidence about the outer transaction's atomicity.
 func (r *Repository) WithTx(ctx context.Context, fn func(ctx context.Context) error) error {
 	if _, ok := txFromContext(ctx); ok {
 		return fn(ctx)
@@ -76,7 +78,7 @@ func (r *Repository) WithTx(ctx context.Context, fn func(ctx context.Context) er
 
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
-		return classify(err, "cart_tx_begin_failed", "işlem başlatılamadı")
+		return classify(err, "cart_tx_begin_failed", "the transaction could not be started")
 	}
 
 	committed := false
@@ -84,8 +86,9 @@ func (r *Repository) WithTx(ctx context.Context, fn func(ctx context.Context) er
 		if committed {
 			return
 		}
-		// Bağlamdan bağımsız kısa ömürlü bir context kullanılır: çağıranın
-		// ctx'i iptal edilmişse onunla yapılan geri alma da anında düşerdi.
+		// A short-lived context detached from the caller's is used: if the
+		// caller's ctx has been canceled, a rollback made with it would fail
+		// immediately as well.
 		rollbackCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), rollbackTimeout)
 		defer cancel()
 		_ = tx.Rollback(rollbackCtx)
@@ -96,31 +99,33 @@ func (r *Repository) WithTx(ctx context.Context, fn func(ctx context.Context) er
 	}
 
 	if err := tx.Commit(ctx); err != nil {
-		return classify(err, "cart_tx_commit_failed", "işlem tamamlanamadı")
+		return classify(err, "cart_tx_commit_failed", "the transaction could not be committed")
 	}
 	committed = true
 	return nil
 }
 
-// WithReadTx fn'i salt-okunur ve REPEATABLE READ bir işlemde çalıştırır.
+// WithReadTx runs fn in a read-only, REPEATABLE READ transaction.
 //
-// Birden çok sorgusu olan bir OKUMA yolu içindir (servisin GetCart'ı sepeti,
-// satırları, adresleri ve kargo yöntemlerini ayrı sorgularla getirir):
-// sorguların hepsi sepetin AYNI hâlini görsün diye. Kilit alınmaz.
+// It is meant for a READ path that has more than one query (the service's GetCart
+// fetches the cart, the line items, the addresses and the shipping methods with
+// separate queries): so that all the queries see the SAME state of the cart. No
+// lock is taken.
 //
-// # Neden REPEATABLE READ
+// # Why REPEATABLE READ
 //
-// PostgreSQL'in varsayılanı READ COMMITTED'dır ve orada anlık görüntü İŞLEM
-// başına değil DEYİM başına alınır; sorguları sıradan bir işleme sarmak yırtık
-// görünümü engellemezdi. Görüntüyü işlemin ilk deyiminde dondurup sonuna kadar
-// koruyan düzey REPEATABLE READ'dir. Salt-okunur işaretlenmesi de bilinçlidir:
-// bu yolun yanlışlıkla yazması veritabanı tarafından engellenir ve yazma
-// düzeyinde REPEATABLE READ'in getireceği serileştirme hataları hiç doğmaz.
+// PostgreSQL's default is READ COMMITTED and there the snapshot is taken per
+// STATEMENT, not per TRANSACTION; wrapping the queries in an ordinary transaction
+// would not have prevented a torn view. The level that freezes the view at the
+// transaction's first statement and keeps it to the end is REPEATABLE READ.
+// Marking it read-only is deliberate too: a write on this path by mistake is
+// blocked by the database, and the serialization errors REPEATABLE READ would
+// bring at the write level never arise at all.
 //
-// İşlem zaten açıksa yeni bir tane AÇILMAZ, var olan kullanılır: bu yol bir
-// yazma işleminin içinden çağrıldığında, o işlemin görüntüsü zaten tutarlıdır
-// ve dıştaki işlemin yalıtım düzeyini içeriden değiştirmeye çalışmak hata
-// verirdi.
+// If a transaction is already open a new one is NOT opened, the existing one
+// is used: when this path is called from inside a write transaction, that
+// transaction's view is already consistent, and trying to change the outer
+// transaction's isolation level from the inside would raise an error.
 func (r *Repository) WithReadTx(ctx context.Context, fn func(ctx context.Context) error) error {
 	if _, ok := txFromContext(ctx); ok {
 		return fn(ctx)
@@ -131,29 +136,31 @@ func (r *Repository) WithReadTx(ctx context.Context, fn func(ctx context.Context
 		AccessMode: pgx.ReadOnly,
 	})
 	if err != nil {
-		return classify(err, "cart_tx_begin_failed", "salt-okunur işlem başlatılamadı")
+		return classify(err, "cart_tx_begin_failed", "the read-only transaction could not be started")
 	}
 	defer func() {
-		// Bağlamdan bağımsız kısa ömürlü bir context kullanılır: çağıranın
-		// ctx'i iptal edilmişse onunla yapılan geri alma da anında düşerdi.
+		// A short-lived context detached from the caller's is used: if the
+		// caller's ctx has been canceled, a rollback made with it would fail
+		// immediately as well.
 		rollbackCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), rollbackTimeout)
 		defer cancel()
-		// Salt-okunur işlemde yazılacak bir şey yoktur; commit ile rollback
-		// aynı kapıya çıkar ve rollback iptal edilmiş bir bağlamda da çalışır.
+		// In a read-only transaction there is nothing to write; commit and
+		// rollback come to the same thing and rollback also works on a canceled
+		// context.
 		_ = tx.Rollback(rollbackCtx)
 	}()
 
 	return fn(context.WithValue(ctx, txKey, tx))
 }
 
-// txFromContext context'teki işlem tutamağını döner.
+// txFromContext returns the transaction handle in the context.
 func txFromContext(ctx context.Context) (pgx.Tx, bool) {
 	tx, ok := ctx.Value(txKey).(pgx.Tx)
 	return tx, ok
 }
 
-// queries context'e uygun sorgu kümesini döner: işlem varsa ona, yoksa havuza
-// bağlı olanı.
+// queries returns the query set matching the context: the one bound to the
+// transaction if there is one, otherwise the one bound to the pool.
 func (r *Repository) queries(ctx context.Context) *cartdb.Queries {
 	if tx, ok := txFromContext(ctx); ok {
 		return cartdb.New(tx)
@@ -161,23 +168,24 @@ func (r *Repository) queries(ctx context.Context) *cartdb.Queries {
 	return cartdb.New(r.pool)
 }
 
-// requireTx kilit alan metotların işlem içinde çağrıldığını doğrular.
+// requireTx verifies that the lock-taking methods are called inside a
+// transaction.
 func requireTx(ctx context.Context, op string) error {
 	if _, ok := txFromContext(ctx); !ok {
 		return errors.Internal(codeTxRequired,
-			"%s işlem (transaction) içinde çağrılmalı; işlemsiz bir FOR UPDATE kilidi hiçbir şeyi korumaz", op)
+			"%s has to be called inside a transaction; a FOR UPDATE lock without a transaction protects nothing", op)
 	}
 	return nil
 }
 
-// cartNotFound eksik sepet için ortak hatayı üretir.
+// cartNotFound builds the shared error for a missing cart.
 func cartNotFound(id string) error {
-	return errors.NotFound(codeCartNotFound, "sepet bulunamadı: %s", id)
+	return errors.NotFound(codeCartNotFound, "cart not found: %s", id)
 }
 
-// --- sepetler ----------------------------------------------------------------
+// --- carts -------------------------------------------------------------------
 
-// CreateCart yeni bir sepet kaydeder.
+// CreateCart records a new cart.
 func (r *Repository) CreateCart(ctx context.Context, cart models.Cart) (models.Cart, error) {
 	meta, err := fromJSONMap(cart.Metadata)
 	if err != nil {
@@ -193,28 +201,29 @@ func (r *Repository) CreateCart(ctx context.Context, cart models.Cart) (models.C
 		Metadata:     meta,
 	})
 	if err != nil {
-		return models.Cart{}, classify(err, codeQueryFailed, "sepet oluşturulamadı")
+		return models.Cart{}, classify(err, codeQueryFailed, "the cart could not be created")
 	}
 	return toCart(row)
 }
 
-// GetCart sepeti kimliğiyle döner; yoksa NotFound.
+// GetCart returns the cart by its ID; NotFound if there is none.
 func (r *Repository) GetCart(ctx context.Context, id string) (models.Cart, error) {
 	row, err := r.queries(ctx).GetCart(ctx, id)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return models.Cart{}, cartNotFound(id)
 		}
-		return models.Cart{}, classify(err, codeQueryFailed, "sepet okunamadı")
+		return models.Cart{}, classify(err, codeQueryFailed, "the cart could not be read")
 	}
 	return toCart(row)
 }
 
-// LockCart sepeti işlem boyunca kilitler ve güncel hâlini döner.
+// LockCart locks the cart for the duration of the transaction and returns its
+// current state.
 //
-// Sepeti değiştiren HER akış bununla başlar; kilit sırası tektir ve her akışta
-// aynıdır (önce sepet, sonra çocuk satırlar). Sepet yoksa NotFound; işlem
-// dışında çağrılırsa hata döner.
+// EVERY flow that changes the cart starts with this; the lock order is single and
+// the same in every flow (the cart first, then the child rows). NotFound if the
+// cart does not exist; an error if it is called outside a transaction.
 func (r *Repository) LockCart(ctx context.Context, id string) (models.Cart, error) {
 	if err := requireTx(ctx, "LockCart"); err != nil {
 		return models.Cart{}, err
@@ -224,18 +233,19 @@ func (r *Repository) LockCart(ctx context.Context, id string) (models.Cart, erro
 		if errors.Is(err, pgx.ErrNoRows) {
 			return models.Cart{}, cartNotFound(id)
 		}
-		return models.Cart{}, classify(err, codeQueryFailed, "sepet kilitlenemedi")
+		return models.Cart{}, classify(err, codeQueryFailed, "the cart could not be locked")
 	}
 	return toCart(row)
 }
 
-// ListCarts sepetleri filtreleyerek ve sayfalayarak döner.
+// ListCarts returns carts filtered and paginated.
 //
-// İkinci dönüş değeri sayfaya değil, filtreye uyan TÜM satırlara ait sayıdır.
-// Toplam AYRI bir sorgudan gelir ve listeyle aynı filtreleri uygular; sayfa
-// aralık dışında olsa ve hiç satır dönmese de doğrudur. İki sorgu arasında
-// yazılan bir satır toplamı bir değiştirebilir: toplam, sayfalama zarfının
-// bilgilendirici alanıdır, işlem kararı ona dayandırılmaz.
+// The second return value is the count of ALL the rows matching the filter, not
+// of the page. The total comes from a SEPARATE query and applies the same filters
+// as the list; it is correct even when the page is out of range and no row comes
+// back. A row written between the two queries can change the total by one: the
+// total is the informative field of the pagination envelope, no decision about an
+// operation is based on it.
 func (r *Repository) ListCarts(ctx context.Context, filter models.CartFilter) ([]models.Cart, int64, error) {
 	rows, err := r.queries(ctx).ListCarts(ctx, cartdb.ListCartsParams{
 		CustomerID: filter.CustomerID,
@@ -245,7 +255,7 @@ func (r *Repository) ListCarts(ctx context.Context, filter models.CartFilter) ([
 		RowOffset:  filter.Offset,
 	})
 	if err != nil {
-		return nil, 0, classify(err, codeQueryFailed, "sepetler listelenemedi")
+		return nil, 0, classify(err, codeQueryFailed, "the carts could not be listed")
 	}
 
 	total, err := r.queries(ctx).CountCarts(ctx, cartdb.CountCartsParams{
@@ -254,7 +264,7 @@ func (r *Repository) ListCarts(ctx context.Context, filter models.CartFilter) ([
 		Completed:  filter.Completed,
 	})
 	if err != nil {
-		return nil, 0, classify(err, codeQueryFailed, "sepetler sayılamadı")
+		return nil, 0, classify(err, codeQueryFailed, "the carts could not be counted")
 	}
 
 	carts, err := toCarts(rows)
@@ -264,27 +274,29 @@ func (r *Repository) ListCarts(ctx context.Context, filter models.CartFilter) ([
 	return carts, total, nil
 }
 
-// CartsByIDs verilen kimliklerin sepetlerini TEK sorguda döner.
-// Bulunamayan kimlik için satır dönmez; bu bir hata değildir.
+// CartsByIDs returns the carts of the given IDs in a SINGLE query.
+// No row comes back for an ID that is not found; that is not an error.
 func (r *Repository) CartsByIDs(ctx context.Context, ids []string) ([]models.Cart, error) {
 	if len(ids) == 0 {
 		return []models.Cart{}, nil
 	}
 	rows, err := r.queries(ctx).GetCartsByIDs(ctx, ids)
 	if err != nil {
-		return nil, classify(err, codeQueryFailed, "sepetler okunamadı")
+		return nil, classify(err, codeQueryFailed, "the carts could not be read")
 	}
 	return toCarts(rows)
 }
 
-// UpdateCartContact sepetin e-posta ve müşteri alanlarını MUTLAK değerle yazar.
+// UpdateCartContact writes the cart's email and customer fields with ABSOLUTE
+// values.
 //
-// Boş dize NULL olarak saklanır: "e-postası yok" ile "e-postası boş metin"
-// veritabanında iki ayrı durum olsaydı, aynı sepet iki farklı sorguda farklı
-// görünürdü.
+// The empty string is stored as NULL: if "has no email" and "has an empty text as
+// email" were two separate states in the database, the same cart would look
+// different in two different queries.
 //
-// Sepet yoksa, silinmişse ya da TAMAMLANMIŞSA satır güncellenmez; sorgunun
-// WHERE'i tamamlanmış sepeti dışarıda bırakır ve bu durumda Conflict döner.
+// If the cart does not exist, has been deleted or is COMPLETED, no row is
+// updated; the query's WHERE leaves a completed cart out and in that case
+// Conflict is returned.
 func (r *Repository) UpdateCartContact(ctx context.Context, id string, contact models.CartContact) (models.Cart, error) {
 	row, err := r.queries(ctx).UpdateCartContact(ctx, cartdb.UpdateCartContactParams{
 		ID:         id,
@@ -293,18 +305,19 @@ func (r *Repository) UpdateCartContact(ctx context.Context, id string, contact m
 	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return models.Cart{}, r.writeBlocked(ctx, id, "sepet güncellenemedi")
+			return models.Cart{}, r.writeBlocked(ctx, id, "the cart could not be updated")
 		}
-		return models.Cart{}, classify(err, codeQueryFailed, "sepetin iletişim alanları güncellenemedi")
+		return models.Cart{}, classify(err, codeQueryFailed, "the cart's contact fields could not be updated")
 	}
 	return toCart(row)
 }
 
-// UpdateCartTotals sepetin toplam alanlarını yazar ve hangi şekil için
-// hesaplandıklarını damgalar.
+// UpdateCartTotals writes the cart's totals fields and stamps which shape they
+// were calculated for.
 //
-// Sepet yoksa, silinmişse ya da TAMAMLANMIŞSA satır güncellenmez; sorgunun
-// WHERE'i tamamlanmış sepeti dışarıda bırakır ve bu durumda Conflict döner.
+// If the cart does not exist, has been deleted or is COMPLETED, no row is
+// updated; the query's WHERE leaves a completed cart out and in that case
+// Conflict is returned.
 func (r *Repository) UpdateCartTotals(ctx context.Context, id string, totals models.CartTotals) (models.Cart, error) {
 	row, err := r.queries(ctx).UpdateCartTotals(ctx, cartdb.UpdateCartTotalsParams{
 		ID:             id,
@@ -317,49 +330,50 @@ func (r *Repository) UpdateCartTotals(ctx context.Context, id string, totals mod
 	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return models.Cart{}, r.writeBlocked(ctx, id, "toplamlar yazılamadı")
+			return models.Cart{}, r.writeBlocked(ctx, id, "the totals could not be written")
 		}
-		return models.Cart{}, classify(err, codeQueryFailed, "sepet toplamları güncellenemedi")
+		return models.Cart{}, classify(err, codeQueryFailed, "the cart totals could not be updated")
 	}
 	return toCart(row)
 }
 
-// BumpCartRevision sepetin şekil sayacını bir artırır.
+// BumpCartRevision raises the cart's shape counter by one.
 //
-// Toplamları etkileyen her yapısal değişiklikten sonra AYNI işlemde çağrılır;
-// böylece toplamların bayatladığı [models.Cart.TotalsStale] ile okunabilir olur.
+// It is called in the SAME transaction after every structural change that affects
+// the totals; that way the totals having gone stale becomes readable with
+// [models.Cart.TotalsStale].
 func (r *Repository) BumpCartRevision(ctx context.Context, id string) (models.Cart, error) {
 	row, err := r.queries(ctx).BumpCartRevision(ctx, id)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return models.Cart{}, r.writeBlocked(ctx, id, "sepet güncellenemedi")
+			return models.Cart{}, r.writeBlocked(ctx, id, "the cart could not be updated")
 		}
-		return models.Cart{}, classify(err, codeQueryFailed, "sepet sürümü artırılamadı")
+		return models.Cart{}, classify(err, codeQueryFailed, "the cart revision could not be raised")
 	}
 	return toCart(row)
 }
 
-// MarkCartCompleted sepeti tamamlanmış olarak damgalar.
+// MarkCartCompleted stamps the cart as completed.
 //
-// Sepet zaten tamamlanmışsa satır güncellenmez ve Conflict döner: aynı sepetten
-// ikinci bir sipariş doğamaz.
+// If the cart is already completed no row is updated and Conflict is returned: a
+// second order cannot be born out of the same cart.
 func (r *Repository) MarkCartCompleted(ctx context.Context, id string) (models.Cart, error) {
 	row, err := r.queries(ctx).MarkCartCompleted(ctx, id)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return models.Cart{}, r.writeBlocked(ctx, id, "sepet tamamlanamadı")
+			return models.Cart{}, r.writeBlocked(ctx, id, "the cart could not be completed")
 		}
-		return models.Cart{}, classify(err, codeQueryFailed, "sepet tamamlanamadı")
+		return models.Cart{}, classify(err, codeQueryFailed, "the cart could not be completed")
 	}
 	return toCart(row)
 }
 
-// SoftDeleteCart sepeti yumuşak siler; sepet yoksa ya da zaten silinmişse
-// NotFound döner.
+// SoftDeleteCart soft-deletes the cart; it returns NotFound if the cart does not
+// exist or is already deleted.
 func (r *Repository) SoftDeleteCart(ctx context.Context, id string) error {
 	affected, err := r.queries(ctx).SoftDeleteCart(ctx, id)
 	if err != nil {
-		return classify(err, codeQueryFailed, "sepet silinemedi")
+		return classify(err, codeQueryFailed, "the cart could not be deleted")
 	}
 	if affected == 0 {
 		return cartNotFound(id)
@@ -367,12 +381,13 @@ func (r *Repository) SoftDeleteCart(ctx context.Context, id string) error {
 	return nil
 }
 
-// writeBlocked yazan bir sorgunun hiç satır etkilememesinin SEBEBİNİ okur.
+// writeBlocked reads the REASON why a writing query affected no row at all.
 //
-// Sorguların WHERE'i "silinmemiş VE tamamlanmamış" der; sıfır satır iki farklı
-// duruma karşılık gelir ve ikisi farklı hata sınıfıdır (404 vs 409). Sebebi
-// yazmadan tek bir hata dönmek, çağıranın "sepet yok" ile "sepet kapandı"
-// arasında ayrım yapmasını imkânsız kılardı.
+// The queries' WHERE says "not deleted AND not completed"; zero rows corresponds
+// to two different situations and the two are different error classes (404 vs
+// 409). Returning a single error without reading the reason would have made it
+// impossible for the caller to tell "the cart does not exist" from "the cart is
+// closed".
 func (r *Repository) writeBlocked(ctx context.Context, id, what string) error {
 	cart, err := r.GetCart(ctx, id)
 	if err != nil {
@@ -380,17 +395,17 @@ func (r *Repository) writeBlocked(ctx context.Context, id, what string) error {
 	}
 	if cart.Completed() {
 		return errors.Conflict(codeCartCompleted,
-			"%s: sepet tamamlanmış ve değiştirilemez (%s)", what, id)
+			"%s: the cart is completed and cannot be changed (%s)", what, id)
 	}
-	// Satır duruyor, silinmemiş ve tamamlanmamış: aradaki tek fark eşzamanlı
-	// bir işlemin kaydı değiştirmiş olmasıdır. Yeniden denenebilir.
+	// The row is there, not deleted and not completed: the only difference left
+	// is that a concurrent operation has changed the record. It can be retried.
 	return errors.Conflict(codeConcurrentUpdate,
-		"%s: sepet eşzamanlı olarak değişti, istek yeniden denenebilir (%s)", what, id)
+		"%s: the cart changed concurrently, the request can be retried (%s)", what, id)
 }
 
-// --- satırlar ----------------------------------------------------------------
+// --- line items --------------------------------------------------------------
 
-// CreateLineItem yeni bir sepet satırı kaydeder.
+// CreateLineItem records a new cart line item.
 func (r *Repository) CreateLineItem(ctx context.Context, item models.LineItem) (models.LineItem, error) {
 	meta, err := fromJSONMap(item.Metadata)
 	if err != nil {
@@ -407,15 +422,15 @@ func (r *Repository) CreateLineItem(ctx context.Context, item models.LineItem) (
 		Metadata:  meta,
 	})
 	if err != nil {
-		return models.LineItem{}, classify(err, codeQueryFailed, "sepet satırı oluşturulamadı")
+		return models.LineItem{}, classify(err, codeQueryFailed, "the cart line item could not be created")
 	}
 	return toLineItem(row)
 }
 
-// GetLineItem satırı kimliğiyle döner; yoksa NotFound.
+// GetLineItem returns the line item by its ID; NotFound if there is none.
 //
-// Sepet kimliği de şarttır: başka bir sepetin satırı, kimliği bilinse bile
-// okunamaz.
+// The cart ID is required as well: another cart's line item cannot be read even
+// when its ID is known.
 func (r *Repository) GetLineItem(ctx context.Context, cartID, lineID string) (models.LineItem, error) {
 	row, err := r.queries(ctx).GetLineItem(ctx, cartdb.GetLineItemParams{
 		ID:     lineID,
@@ -425,13 +440,13 @@ func (r *Repository) GetLineItem(ctx context.Context, cartID, lineID string) (mo
 		if errors.Is(err, pgx.ErrNoRows) {
 			return models.LineItem{}, lineItemNotFound(cartID, lineID)
 		}
-		return models.LineItem{}, classify(err, codeQueryFailed, "sepet satırı okunamadı")
+		return models.LineItem{}, classify(err, codeQueryFailed, "the cart line item could not be read")
 	}
 	return toLineItem(row)
 }
 
-// GetLineItemByVariant sepetteki varyantın yaşayan satırını döner; yoksa
-// NotFound.
+// GetLineItemByVariant returns the living line item of the variant in the cart;
+// NotFound if there is none.
 func (r *Repository) GetLineItemByVariant(ctx context.Context, cartID, variantID string) (models.LineItem, error) {
 	row, err := r.queries(ctx).GetLineItemByVariant(ctx, cartdb.GetLineItemByVariantParams{
 		CartID:    cartID,
@@ -440,39 +455,40 @@ func (r *Repository) GetLineItemByVariant(ctx context.Context, cartID, variantID
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return models.LineItem{}, errors.NotFound(codeLineItemNotFound,
-				"sepette bu varyanttan satır yok (sepet: %s, varyant: %s)", cartID, variantID)
+				"the cart has no line item for this variant (cart: %s, variant: %s)", cartID, variantID)
 		}
-		return models.LineItem{}, classify(err, codeQueryFailed, "sepet satırı okunamadı")
+		return models.LineItem{}, classify(err, codeQueryFailed, "the cart line item could not be read")
 	}
 	return toLineItem(row)
 }
 
-// ListLineItems sepetin satırlarını oluşturulma sırasıyla döner.
+// ListLineItems returns the cart's line items in creation order.
 func (r *Repository) ListLineItems(ctx context.Context, cartID string) ([]models.LineItem, error) {
 	rows, err := r.queries(ctx).ListLineItems(ctx, cartID)
 	if err != nil {
-		return nil, classify(err, codeQueryFailed, "sepet satırları listelenemedi")
+		return nil, classify(err, codeQueryFailed, "the cart line items could not be listed")
 	}
 	return toLineItems(rows)
 }
 
-// LineItemsByCartIDs birden çok sepetin satırlarını TEK sorguda döner (N+1 yok).
+// LineItemsByCartIDs returns the line items of several carts in a SINGLE query
+// (no N+1).
 func (r *Repository) LineItemsByCartIDs(ctx context.Context, cartIDs []string) ([]models.LineItem, error) {
 	if len(cartIDs) == 0 {
 		return []models.LineItem{}, nil
 	}
 	rows, err := r.queries(ctx).ListLineItemsByCartIDs(ctx, cartIDs)
 	if err != nil {
-		return nil, classify(err, codeQueryFailed, "sepet satırları listelenemedi")
+		return nil, classify(err, codeQueryFailed, "the cart line items could not be listed")
 	}
 	return toLineItems(rows)
 }
 
-// SetLineItemQuantity satırın adedini MUTLAK değerle yazar.
+// SetLineItemQuantity writes the line item's quantity with an ABSOLUTE value.
 //
-// Artımlı (quantity = quantity + n) bir güncelleme kasten kullanılmaz: yeni
-// değer, kilit altında okunan değerden hesaplanır ve kararı veren kodun gördüğü
-// sayı ile yazılan sayı aynı olur.
+// An incremental update (quantity = quantity + n) is deliberately not used: the
+// new value is calculated from the value read under the lock, and the number the
+// deciding code saw is the same as the number written.
 func (r *Repository) SetLineItemQuantity(ctx context.Context, cartID, lineID string, quantity int64) (models.LineItem, error) {
 	row, err := r.queries(ctx).SetLineItemQuantity(ctx, cartdb.SetLineItemQuantityParams{
 		ID:       lineID,
@@ -483,55 +499,59 @@ func (r *Repository) SetLineItemQuantity(ctx context.Context, cartID, lineID str
 		if errors.Is(err, pgx.ErrNoRows) {
 			return models.LineItem{}, lineItemNotFound(cartID, lineID)
 		}
-		return models.LineItem{}, classify(err, codeQueryFailed, "sepet satırının adedi güncellenemedi")
+		return models.LineItem{}, classify(err, codeQueryFailed, "the cart line item's quantity could not be updated")
 	}
 	return toLineItem(row)
 }
 
-// SetLineItemTotals bir hesap turunun TÜM satır tutarlarını TEK deyimle yazar;
-// adede dokunmaz.
+// SetLineItemTotals writes ALL the line amounts of one calculation round in a
+// SINGLE statement; it does not touch the quantity.
 //
-// # Neden tek deyim
+// # Why a single statement
 //
-// Yazma, sepetin kilidi altında ve tek işlemde olur; satır başına bir UPDATE
-// koşmak kilidi satır sayısıyla DOĞRU ORANTILI süre boyunca tutuyordu. Ölçüldü
-// (yerel konteyner, TCP gidiş-dönüş ~30 µs, 100 satırlık sepet, kilidin
-// alınmasından SON YAZMANIN dönmesine kadar, p50): satır başına UPDATE 8,0 ms,
-// buradaki tek deyim 0,55 ms — yazma evresinde 14 kat. Aynı UPDATE'leri tek
-// boru hattında göndermek (pgx batch) 3,0 ms'de kalıyordu, yani kazancın %63'ü;
-// kalan farkı ancak deyim sayısını 1'e indirmek veriyor.
+// The write happens under the cart's lock and in a single transaction; running
+// one UPDATE per line held the lock for a time DIRECTLY PROPORTIONAL to the
+// number of lines. It was measured (local container, TCP round trip ~30 µs,
+// 100-line cart, from the taking of the lock to the return of the LAST WRITE,
+// p50): one UPDATE per line 8.0 ms, the single statement here 0.55 ms — 14x in
+// the write phase. Sending the same UPDATEs down a single pipeline (pgx batch)
+// stayed at 3.0 ms, that is 63% of the gain; only bringing the statement count
+// down to 1 gives the rest.
 //
-// Sayılar commit'in WAL flush'ını İÇERMEZ (harness fsync=off koşar) ve flush da
-// aynı kilidin altındadır: kalıcı bir kümede 6,2 ms ve bu değişiklik ona
-// dokunmaz, yani uçtan uca kazanç ~2 kattır. Ayrım
-// [github.com/bdrtr/gobit/internal/modules/cart/service.Service.SetTotals]
-// godoc'unda ayrıntılı.
+// The numbers DO NOT INCLUDE the commit's WAL flush (the harness runs fsync=off)
+// and that flush is under the same lock: on a durable cluster it is 6.2 ms and
+// this change does not touch it, so the end-to-end gain is ~2x. The distinction
+// is detailed in the
+// [github.com/bdrtr/gobit/internal/modules/cart/service.Service.SetTotals] godoc.
 //
-// Dizi boyutu için AYRI bir tavan YOKTUR ve konmadı: çağıran sepetin bütün
-// satırlarını vermek zorunda olduğu için (bkz. service.SetTotals) boyut sepetin
-// satır sayısıdır ve onu workflows/cart.MaxLineItems (bugün 100) sınırlar.
+// There is NO SEPARATE ceiling for the slice size and none was added: since the
+// caller has to give all of the cart's line items (see service.SetTotals) the
+// size is the cart's line item count and workflows/cart.MaxLineItems (100 today)
+// bounds that.
 //
-// # Eksik yazma turu DÜŞÜRÜR
+// # A missing write round DROPS everything
 //
-// Deyim, kimliği eşleşmeyen satırı sessizce ATLAR: silinmiş bir satır, hiç
-// olmayan bir kimlik ya da BAŞKA SEPETİN satırı hiçbir şey yazmaz (cart_id
-// WHERE'dedir). Bu yüzden yazılan kimlikler istenenlerle karşılaştırılır ve
-// eksik varsa NotFound dönülür — işlem geri alınır, sepet ya tamamen yeni
-// tutarları alır ya da hiçbirini. Sessizce eksik yazmak, sepetin ara toplamıyla
-// satırlarının toplamını ayırır ve müşteriye yanlış tutar tahsil edilirdi.
+// The statement silently SKIPS a line whose ID does not match: a deleted line, an
+// ID that never existed or ANOTHER CART'S line writes nothing (cart_id is in the
+// WHERE). That is why the written IDs are compared with the requested ones and
+// NotFound is returned if any is missing — the transaction is rolled back and the
+// cart either takes all of the new amounts or none of them. Writing silently
+// incomplete would split the cart's subtotal from the sum of its lines and the
+// customer would be charged the wrong amount.
 //
-// Kural bugün İKİNCİ savunmadır: servis satır kümesini kilit altında okuyup tam
-// kapsama arar ve sepeti değiştiren her yol aynı kilidi alır, yani okuma ile
-// yazma arasında satır kaybolamaz. Buradaki kontrol, kilidi atlayan bir yolun
-// (doğrudan SQL, ileride eklenecek bir akış) sessiz kalmasını engeller.
+// The rule is the SECOND line of defense today: the service reads the line set
+// under the lock and looks for full coverage, and every path that changes the
+// cart takes the same lock, so a line cannot disappear between the read and the
+// write. The check here keeps a path that skips the lock (direct SQL, a flow to
+// be added later) from staying silent.
 func (r *Repository) SetLineItemTotals(ctx context.Context, cartID string, lines []models.LineItemTotals) error {
 	if len(lines) == 0 {
 		return nil
 	}
 
-	// Diziler TEK döngüde kurulur: uzunlukların eşitliği ve indekslerin
-	// hizası burada yapısal olarak garanti edilir. Ayrı döngüler, bir tutarı
-	// başka bir satırla eşleştirme ihtimalini geri getirirdi.
+	// The slices are built in a SINGLE loop: the equality of the lengths and the
+	// alignment of the indices are structurally guaranteed here. Separate loops
+	// would bring back the possibility of pairing an amount with another line.
 	arg := cartdb.SetLineItemTotalsParams{
 		CartID:         cartID,
 		LineIds:        make([]string, len(lines)),
@@ -541,18 +561,19 @@ func (r *Repository) SetLineItemTotals(ctx context.Context, cartID string, lines
 		TaxTotals:      make([]int64, len(lines)),
 		Totals:         make([]int64, len(lines)),
 	}
-	istenen := make(map[string]struct{}, len(lines))
+	requested := make(map[string]struct{}, len(lines))
 	for i, line := range lines {
-		// Aynı kimlik iki kez verilemez: UPDATE ... FROM bir hedef satır
-		// birden çok kaynak satırla eşleştiğinde HANGİ tutarın kazandığını
-		// tanımlamaz, yani sepet iki tutardan birini rastgele alırdı. Servis
-		// bunu zaten eler; burada elenmesi, deyimin tanımsız davranışını
-		// depodan çıkarır ve doğrudan çağıran bir testi de korur.
-		if _, dup := istenen[line.LineItemID]; dup {
+		// The same ID cannot be given twice: UPDATE ... FROM does not define
+		// WHICH amount wins when one target row matches several source rows, so
+		// the cart would take one of the two amounts at random. The service
+		// already weeds this out; weeding it out here takes the statement's
+		// undefined behavior out of the store and also protects a test that
+		// calls directly.
+		if _, dup := requested[line.LineItemID]; dup {
 			return errors.Invalid(codeTotalsInconsistent,
-				"aynı satır için birden çok tutar verildi: %s", line.LineItemID)
+				"more than one amount was given for the same line: %s", line.LineItemID)
 		}
-		istenen[line.LineItemID] = struct{}{}
+		requested[line.LineItemID] = struct{}{}
 
 		arg.LineIds[i] = line.LineItemID
 		arg.UnitPrices[i] = line.Totals.UnitPrice
@@ -564,7 +585,7 @@ func (r *Repository) SetLineItemTotals(ctx context.Context, cartID string, lines
 
 	written, err := r.queries(ctx).SetLineItemTotals(ctx, arg)
 	if err != nil {
-		return classify(err, codeQueryFailed, "sepet satırlarının tutarları güncellenemedi")
+		return classify(err, codeQueryFailed, "the amounts of the cart line items could not be updated")
 	}
 	if len(written) != len(lines) {
 		return lineItemNotFound(cartID, firstUnwritten(lines, written))
@@ -572,37 +593,38 @@ func (r *Repository) SetLineItemTotals(ctx context.Context, cartID string, lines
 	return nil
 }
 
-// firstUnwritten yazılmayan İLK satırın kimliğini çağıranın verdiği sırayla
-// döner.
+// firstUnwritten returns the ID of the FIRST line not written, in the order the
+// caller gave.
 //
-// Sıra çağıranın dilimindendir, RETURNING'in değil: PostgreSQL RETURNING
-// sırasını garanti etmez ve harita üzerinde dönmek aynı girdide farklı hata
-// mesajları üretirdi. Mesajın yeniden üretilebilir olması, operatörün iki
-// farklı arızayı ayırt edebilmesi demektir.
+// The order comes from the caller's slice, not from RETURNING: PostgreSQL does
+// not guarantee the RETURNING order and walking over a map would produce
+// different error messages for the same input. The message being reproducible
+// means the operator is able to tell two different failures apart.
 //
-// Kimlikler tekrarsız olduğu için (yukarıda elenir) sayı eşitsizliği en az bir
-// kimliğin yazılmadığı anlamına gelir; döngü daima bir kimlik bulur.
+// Since the IDs carry no duplicates (they are weeded out above) a count mismatch
+// means at least one ID was not written; the loop always finds an ID.
 func firstUnwritten(lines []models.LineItemTotals, written []string) string {
-	yazilan := make(map[string]struct{}, len(written))
+	writtenIDs := make(map[string]struct{}, len(written))
 	for _, id := range written {
-		yazilan[id] = struct{}{}
+		writtenIDs[id] = struct{}{}
 	}
 	for _, line := range lines {
-		if _, ok := yazilan[line.LineItemID]; !ok {
+		if _, ok := writtenIDs[line.LineItemID]; !ok {
 			return line.LineItemID
 		}
 	}
 	return ""
 }
 
-// SoftDeleteLineItem satırı yumuşak siler; satır yoksa NotFound döner.
+// SoftDeleteLineItem soft-deletes the line item; it returns NotFound if there is
+// no such line.
 func (r *Repository) SoftDeleteLineItem(ctx context.Context, cartID, lineID string) error {
 	affected, err := r.queries(ctx).SoftDeleteLineItem(ctx, cartdb.SoftDeleteLineItemParams{
 		ID:     lineID,
 		CartID: cartID,
 	})
 	if err != nil {
-		return classify(err, codeQueryFailed, "sepet satırı silinemedi")
+		return classify(err, codeQueryFailed, "the cart line item could not be deleted")
 	}
 	if affected == 0 {
 		return lineItemNotFound(cartID, lineID)
@@ -610,27 +632,28 @@ func (r *Repository) SoftDeleteLineItem(ctx context.Context, cartID, lineID stri
 	return nil
 }
 
-// SoftDeleteLineItemsByCart sepetin tüm satırlarını yumuşak siler.
+// SoftDeleteLineItemsByCart soft-deletes all of the cart's line items.
 func (r *Repository) SoftDeleteLineItemsByCart(ctx context.Context, cartID string) error {
 	if err := r.queries(ctx).SoftDeleteLineItemsByCart(ctx, cartID); err != nil {
-		return classify(err, codeQueryFailed, "sepet satırları silinemedi")
+		return classify(err, codeQueryFailed, "the cart line items could not be deleted")
 	}
 	return nil
 }
 
-// lineItemNotFound eksik satır için ortak hatayı üretir.
+// lineItemNotFound builds the shared error for a missing line item.
 func lineItemNotFound(cartID, lineID string) error {
 	return errors.NotFound(codeLineItemNotFound,
-		"sepet satırı bulunamadı (sepet: %s, satır: %s)", cartID, lineID)
+		"cart line item not found (cart: %s, line: %s)", cartID, lineID)
 }
 
-// --- adresler ----------------------------------------------------------------
+// --- addresses ---------------------------------------------------------------
 
-// UpsertCartAddress sepetin verilen türdeki adresini yazar; varsa üzerine yazar.
+// UpsertCartAddress writes the cart's address of the given type; it overwrites an
+// existing one.
 //
-// Kimlik yalnızca YENİ satır için kullanılır; var olan kayıt güncellenirken
-// kimliği KORUNUR. Kimliğin sabit kalması, adrese verilen bir referansın
-// (log kaydı, sipariş kopyası) düzeltmeden sonra da geçerli kalması demektir.
+// The ID is used only for a NEW row; while an existing record is updated its ID
+// is KEPT. The ID staying stable means that a reference given to the address (a
+// log record, an order copy) stays valid after a correction as well.
 func (r *Repository) UpsertCartAddress(ctx context.Context, addr models.CartAddress) (models.CartAddress, error) {
 	meta, err := fromJSONMap(addr.Metadata)
 	if err != nil {
@@ -655,16 +678,16 @@ func (r *Repository) UpsertCartAddress(ctx context.Context, addr models.CartAddr
 		Metadata:        meta,
 	})
 	if err != nil {
-		return models.CartAddress{}, classify(err, codeQueryFailed, "sepet adresi yazılamadı")
+		return models.CartAddress{}, classify(err, codeQueryFailed, "the cart address could not be written")
 	}
 	return toCartAddress(row)
 }
 
-// ListCartAddresses sepetin adreslerini döner (tür sırasıyla).
+// ListCartAddresses returns the cart's addresses (in type order).
 func (r *Repository) ListCartAddresses(ctx context.Context, cartID string) ([]models.CartAddress, error) {
 	rows, err := r.queries(ctx).ListCartAddresses(ctx, cartID)
 	if err != nil {
-		return nil, classify(err, codeQueryFailed, "sepet adresleri listelenemedi")
+		return nil, classify(err, codeQueryFailed, "the cart addresses could not be listed")
 	}
 
 	out := make([]models.CartAddress, 0, len(rows))
@@ -678,17 +701,17 @@ func (r *Repository) ListCartAddresses(ctx context.Context, cartID string) ([]mo
 	return out, nil
 }
 
-// SoftDeleteCartAddressesByCart sepetin tüm adreslerini yumuşak siler.
+// SoftDeleteCartAddressesByCart soft-deletes all of the cart's addresses.
 func (r *Repository) SoftDeleteCartAddressesByCart(ctx context.Context, cartID string) error {
 	if err := r.queries(ctx).SoftDeleteCartAddressesByCart(ctx, cartID); err != nil {
-		return classify(err, codeQueryFailed, "sepet adresleri silinemedi")
+		return classify(err, codeQueryFailed, "the cart addresses could not be deleted")
 	}
 	return nil
 }
 
-// --- kargo yöntemleri --------------------------------------------------------
+// --- shipping methods --------------------------------------------------------
 
-// CreateShippingMethod sepete bir kargo yöntemi ekler.
+// CreateShippingMethod adds a shipping method to the cart.
 func (r *Repository) CreateShippingMethod(ctx context.Context, method models.ShippingMethod) (models.ShippingMethod, error) {
 	data, err := fromJSONMap(method.Data)
 	if err != nil {
@@ -704,12 +727,13 @@ func (r *Repository) CreateShippingMethod(ctx context.Context, method models.Shi
 		Data:             data,
 	})
 	if err != nil {
-		return models.ShippingMethod{}, classify(err, codeQueryFailed, "kargo yöntemi eklenemedi")
+		return models.ShippingMethod{}, classify(err, codeQueryFailed, "the shipping method could not be added")
 	}
 	return toShippingMethod(row)
 }
 
-// GetShippingMethod kargo yöntemini kimliğiyle döner; yoksa NotFound.
+// GetShippingMethod returns the shipping method by its ID; NotFound if there is
+// none.
 func (r *Repository) GetShippingMethod(ctx context.Context, cartID, methodID string) (models.ShippingMethod, error) {
 	row, err := r.queries(ctx).GetShippingMethod(ctx, cartdb.GetShippingMethodParams{
 		ID:     methodID,
@@ -719,16 +743,16 @@ func (r *Repository) GetShippingMethod(ctx context.Context, cartID, methodID str
 		if errors.Is(err, pgx.ErrNoRows) {
 			return models.ShippingMethod{}, shippingMethodNotFound(cartID, methodID)
 		}
-		return models.ShippingMethod{}, classify(err, codeQueryFailed, "kargo yöntemi okunamadı")
+		return models.ShippingMethod{}, classify(err, codeQueryFailed, "the shipping method could not be read")
 	}
 	return toShippingMethod(row)
 }
 
-// ListShippingMethods sepetin kargo yöntemlerini döner.
+// ListShippingMethods returns the cart's shipping methods.
 func (r *Repository) ListShippingMethods(ctx context.Context, cartID string) ([]models.ShippingMethod, error) {
 	rows, err := r.queries(ctx).ListShippingMethods(ctx, cartID)
 	if err != nil {
-		return nil, classify(err, codeQueryFailed, "kargo yöntemleri listelenemedi")
+		return nil, classify(err, codeQueryFailed, "the shipping methods could not be listed")
 	}
 
 	out := make([]models.ShippingMethod, 0, len(rows))
@@ -742,14 +766,15 @@ func (r *Repository) ListShippingMethods(ctx context.Context, cartID string) ([]
 	return out, nil
 }
 
-// SoftDeleteShippingMethod kargo yöntemini yumuşak siler; yoksa NotFound döner.
+// SoftDeleteShippingMethod soft-deletes the shipping method; it returns NotFound
+// if there is none.
 func (r *Repository) SoftDeleteShippingMethod(ctx context.Context, cartID, methodID string) error {
 	affected, err := r.queries(ctx).SoftDeleteShippingMethod(ctx, cartdb.SoftDeleteShippingMethodParams{
 		ID:     methodID,
 		CartID: cartID,
 	})
 	if err != nil {
-		return classify(err, codeQueryFailed, "kargo yöntemi kaldırılamadı")
+		return classify(err, codeQueryFailed, "the shipping method could not be removed")
 	}
 	if affected == 0 {
 		return shippingMethodNotFound(cartID, methodID)
@@ -757,16 +782,17 @@ func (r *Repository) SoftDeleteShippingMethod(ctx context.Context, cartID, metho
 	return nil
 }
 
-// SoftDeleteShippingMethodsByCart sepetin tüm kargo yöntemlerini yumuşak siler.
+// SoftDeleteShippingMethodsByCart soft-deletes all of the cart's shipping
+// methods.
 func (r *Repository) SoftDeleteShippingMethodsByCart(ctx context.Context, cartID string) error {
 	if err := r.queries(ctx).SoftDeleteShippingMethodsByCart(ctx, cartID); err != nil {
-		return classify(err, codeQueryFailed, "kargo yöntemleri silinemedi")
+		return classify(err, codeQueryFailed, "the shipping methods could not be deleted")
 	}
 	return nil
 }
 
-// shippingMethodNotFound eksik kargo yöntemi için ortak hatayı üretir.
+// shippingMethodNotFound builds the shared error for a missing shipping method.
 func shippingMethodNotFound(cartID, methodID string) error {
 	return errors.NotFound(codeShippingNotFound,
-		"kargo yöntemi bulunamadı (sepet: %s, yöntem: %s)", cartID, methodID)
+		"shipping method not found (cart: %s, method: %s)", cartID, methodID)
 }

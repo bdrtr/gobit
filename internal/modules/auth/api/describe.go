@@ -7,442 +7,463 @@ import (
 	"github.com/bdrtr/gobit/internal/core/openapi"
 )
 
-// Şema ve parametre tanımlarında geçen JSON Schema adları.
+// The JSON Schema names that appear in the schema and parameter definitions.
 //
-// Çekirdeğin karşılıkları dışa kapalıdır; burada tekrarlanmalarının sebebi
-// maliyet değil SESSİZLİK: "strig" yazılmış bir tip adı derlenir, belge
-// üretilir ve yalnızca şemayı okuyan istemci alanı yanlış tiple ürettiğinde
-// ortaya çıkar.
+// The core's own counterparts are unexported; the reason they are repeated here
+// is not cost but SILENCE: a type name written as "strig" compiles, the
+// documentation gets produced, and it only surfaces when the client reading the
+// schema produces the field with the wrong type.
 const (
-	semaTip        = "type"
-	semaBicim      = "format"
-	semaOzellikler = "properties"
-	semaRef        = "$ref"
-	tipDize        = "string"
-	tipTamSayi     = "integer"
-	tipMantiksal   = "boolean"
+	schemaType       = "type"
+	schemaFormat     = "format"
+	schemaProperties = "properties"
+	schemaRef        = "$ref"
+	typeString       = "string"
+	typeInteger      = "integer"
+	typeBoolean      = "boolean"
 )
 
-// refOneki bileşen şemalarına yapılan atıfların yol önekidir.
-const refOneki = "#/components/schemas/"
+// refPrefix is the path prefix of the references made to component schemas.
+const refPrefix = "#/components/schemas/"
 
-// İstek gövdesi tanımında JSON şemasına giden yol.
+// The path leading to the JSON schema in a request body definition.
 const (
-	govdeIcerik = "content"
-	govdeTur    = "application/json"
-	govdeSema   = "schema"
+	bodyContent   = "content"
+	bodyMediaType = "application/json"
+	bodySchema    = "schema"
 )
 
-// Parola alanının adı ve biçimi.
+// The name and the format of the password field.
 const (
-	// alanParola düz parolanın istek gövdelerindeki JSON adıdır.
-	alanParola = "password"
-	// bicimParola JSON Schema'nın parola BİÇİMİDİR; alan adıyla aynı olması
-	// rastlantıdır, bağ değildir.
-	bicimParola = "password"
+	// fieldPassword is the JSON name of the plaintext password in the request
+	// bodies.
+	fieldPassword = "password"
+	// formatPassword is JSON Schema's password FORMAT; that it is identical to
+	// the field name is a coincidence, not a link.
+	formatPassword = "password"
 )
 
-// Describe auth'un YÖNETİM uçlarını OpenAPI belgesine işler.
+// Describe writes auth's ADMIN endpoints into the OpenAPI document.
 //
-// # Neden bu pakette
+// # Why in this package
 //
-// Anlatılan gövdeler bu paketin DIŞA KAPALI DTO'larıdır (loginRequest,
-// userDTO …) ve şema onlardan yansımayla türetilir. Tipleri anlatabilmek için
-// dışa açmak, yalnızca belge üretmek uğruna modülün yüzeyini genişletmek
-// olurdu: dışa açık bir tip sözleşmedir ve dışarıdan kurulabilir hâle
-// gelirdi. Sorgu parametreleri de handler'ın GERÇEKTEN okuduklarıdır ve o
-// okuma bu paketteki admin.go ile [pageParams] içindedir; anlatım başka bir
-// pakette dursaydı ikisi sessizce ayrışırdı. Modülün [openapi.Describer]
-// uygulaması bu yüzden buraya delege eder.
+// The bodies being described are this package's UNEXPORTED DTOs (loginRequest,
+// userDTO …) and the schema is derived from them by reflection. Exporting the
+// types in order to be able to describe them would have meant widening the
+// module's surface merely for the sake of producing documentation: an exported
+// type is a contract and would have become constructible from the outside. The
+// query parameters, too, are the ones the handler REALLY reads, and that
+// reading lives in this package's admin.go and [pageParams]; had the
+// description sat in another package the two would have drifted apart
+// silently. That is why the module's [openapi.Describer] implementation
+// delegates here.
 //
-// # Neden paket düzeyinde bir fonksiyon
+// # Why a package-level function
 //
-// Anlatım hiçbir çalışma zamanı durumuna bakmaz — şema TİPLERDEN gelir. Metodu
-// [Handler]'a bağlamak, belgenin servis kurulmuş olmasına bağlı OLDUĞUNU
-// söylerdi; oysa Register hiç çalışmamışken de belge üretilebilir ve
-// üretilmelidir.
+// The description looks at no run-time state — the schema comes FROM THE TYPES.
+// Attaching the method to [Handler] would have said the documentation DEPENDS
+// on the service having been built; whereas the document can and must be
+// produced even when Register has never run.
 //
-// # Yalnızca /admin/v1 vardır
+// # There is only /admin/v1
 //
-// auth'un vitrin ucu YOKTUR; mağaza tarafındaki karşılığı bir uç değil,
-// publishable anahtarı okuyan corehttp.RequireStore middleware'idir.
+// auth has NO storefront endpoint; its counterpart on the store side is not an
+// endpoint but the corehttp.RequireStore middleware that reads the publishable
+// key.
 //
-// # GÜVENLİK: parola şemada nasıl görünür
+// # SECURITY: how the password appears in the schema
 //
-// Parola alanları istek şemasında GÖRÜNÜR — istemci onu göndermek zorundadır
-// ve alanın adını bilmelidir — ama format: "password" ile işaretlenir (bkz.
-// [parolaliGovde]). Yanıt şemalarında parola HİÇ GEÇMEZ ve geçemez: yanıt
-// gövdeleri [userDTO] gibi ayrı tiplerden türer ve o tiplerde parola alanı
-// yoktur.
+// The password fields APPEAR in the request schema — the client has to send it
+// and has to know the field's name — but are marked with format: "password"
+// (see [passwordBody]). In the response schemas a password NEVER APPEARS and
+// cannot appear: the response bodies derive from separate types such as
+// [userDTO] and those types have no password field.
 //
-// # GÜVENLİK: giriş ucunun korumasızlığı BURADA YAZILMAZ
+// # SECURITY: the login endpoint's unprotectedness IS NOT WRITTEN HERE
 //
-// [LoginPath] işleminde Security alanı BİLİNÇLİ OLARAK boş bırakılır. Çekirdek
-// giriş yolunu tanır ve oraya "açıkça korumasız" anlamına gelen boş dizi yazar
-// (bkz. internal/core/openapi, guvenlik). Buraya elle bir değer yazmak kararı
-// iki yere kopyalardı; ikisi ayrıştığı gün jetonu veren uç şemada jeton ister
-// görünür ve istemci üreteci hiç çağrılamayan bir metot üretirdi.
+// In the [LoginPath] operation the Security field is DELIBERATELY left empty.
+// The core recognizes the login path and writes the empty array there, which
+// means "explicitly unprotected" (see internal/core/openapi, security). Writing
+// a value here by hand would have copied the decision into two places; the day
+// the two drifted apart, the endpoint that hands out the token would appear in
+// the schema as asking for a token and the client generator would produce a
+// method that can never be called.
 //
-// # Bilinen sınır: istek gövdelerinin "required" kümesi GENİŞTİR
+// # Known limit: the "required" set of the request bodies is TOO WIDE
 //
-// Çekirdek "required"ı encoding/json'un HER ZAMAN yazdığı alanlardan türetir
-// ([openapi.Doc.SchemaOf]) ve bu, YANIT gövdeleri için doğru cevaptır. İstek
-// gövdesinde ise "required" istemcinin GÖNDERMEK ZORUNDA olduğu alan demektir
-// ve bunu tip bilemez: bu paketin istek DTO'ları omitempty taşımadığı için
-// hepsi zorunlu görünür — örneğin POST /admin/v1/users, boş bırakılabilen
-// parolayı da ister. Alan ADLARI ve TİPLERİ doğrudur, yani şema yanlış bir
-// alan uydurmaz; yalnızca fazla şey ister. Doğru çözüm ÇEKİRDEKTEDİR (istek
-// gövdeleri için ayrı bir "required" politikası); tag'lere omitempty
-// serpiştirmek zorunluluğu servisin doğrulamasından json etiketine taşır ve
-// ikisi sessizce ayrışırdı.
+// The core derives "required" from the fields encoding/json ALWAYS writes
+// ([openapi.Doc.SchemaOf]) and that is the right answer for RESPONSE bodies. In
+// a request body, however, "required" means a field the client MUST SEND and a
+// type cannot know that: because this package's request DTOs carry no
+// omitempty, all of them look mandatory — POST /admin/v1/users, for example,
+// asks for the password that may be left empty as well. The field NAMES and
+// TYPES are correct, that is, the schema invents no wrong field; it merely asks
+// for too much. The right fix is IN THE CORE (a separate "required" policy for
+// request bodies); sprinkling omitempty over the tags would move the obligation
+// from the service's validation to the json tag and the two would drift apart
+// silently.
 func Describe(d *openapi.Doc) {
-	describeKimlik(d)
-	describeKullanicilar(d)
-	describeAnahtarlar(d)
-	describeKanallar(d)
+	describeIdentity(d)
+	describeUsers(d)
+	describeAPIKeys(d)
+	describeSalesChannels(d)
 }
 
-// describeKimlik giriş, kimlik okuma ve çıkış uçlarını anlatır.
-func describeKimlik(d *openapi.Doc) {
+// describeIdentity describes the login, identity read and logout endpoints.
+func describeIdentity(d *openapi.Doc) {
 	d.Describe(http.MethodPost, LoginPath, openapi.Operation{
-		Summary: "E-posta ve parolayla yönetim oturumu jetonu üretir.",
-		Description: "Jetonu almanın tek yolu budur ve uç KORUMASIZDIR. " +
-			"Hatalı e-posta ile hatalı parola AYNI 401'i döner; ayrım yapılsaydı " +
-			"yanıtın kendisi 'bu e-posta kayıtlı' bilgisini verirdi.",
-		RequestBody: parolaliGovde(d, loginRequest{}),
+		Summary: "Produces an admin session token from an email and a password.",
+		Description: "This is the only way to obtain a token and the endpoint is " +
+			"UNPROTECTED. A wrong email and a wrong password return the SAME 401; had " +
+			"a distinction been made, the response itself would have handed out the " +
+			"information 'this email is registered'.",
+		RequestBody: passwordBody(d, loginRequest{}),
 		Responses: map[string]any{
-			"200": openapi.Response("Oturum jetonu, türü ve son kullanma anı",
+			"200": openapi.Response("The session token, its type and its expiry moment",
 				d.Item(loginResponse{})),
 		},
 	})
 
 	d.Describe(http.MethodGet, "/admin/v1/auth/me", openapi.Operation{
-		Summary: "Doğrulanmış çağıranın kimliğini ve yetkilerini döner.",
+		Summary: "Returns the authenticated caller's identity and scopes.",
 		Responses: map[string]any{
-			"200": openapi.Response("Çağıranın kimliği", d.Item(principalResponse{})),
+			"200": openapi.Response("The caller's identity", d.Item(principalResponse{})),
 		},
 	})
 
 	d.Describe(http.MethodPost, "/admin/v1/auth/logout", openapi.Operation{
-		Summary: "Çağıranın TÜM oturumlarını kapatır.",
-		Description: "İptal TOPTANDIR: telefonundan çıkan yönetici dizüstündeki " +
-			"oturumunu da kapatmış olur. Yanıt 204 değil 200'dür, çünkü status " +
-			"kodu iptalin kapsamını ve dayandığı anı söyleyemez.",
-		// Uç gövde OKUMAZ: kimin çıkacağını jetondan bilir (bkz.
-		// [Handler.adminLogout]). Şemaya gövde yazmak hem okunmayan bir alan
-		// vaat etmek hem de "kimin oturumu" sorusunun gövdeden sorulabileceğini
-		// ima etmek olurdu.
+		Summary: "Closes ALL of the caller's sessions.",
+		Description: "The revocation is WHOLESALE: an admin logging out from their " +
+			"phone has closed their session on the laptop too. The response is 200 and " +
+			"not 204, because a status code cannot say the scope of the revocation and " +
+			"the moment it rests on.",
+		// The endpoint READS NO BODY: it knows who is logging out from the token
+		// (see [Handler.adminLogout]). Writing a body into the schema would both
+		// promise a field that is never read and imply that the question "whose
+		// session" can be asked from the body.
 		Responses: map[string]any{
-			"200": openapi.Response("İptalin kapsamı ve anı", d.Item(logoutResponse{})),
+			"200": openapi.Response("The scope and the moment of the revocation",
+				d.Item(logoutResponse{})),
 		},
 	})
 }
 
-// describeKullanicilar yönetim kullanıcısı uçlarını anlatır.
-func describeKullanicilar(d *openapi.Doc) {
+// describeUsers describes the admin user endpoints.
+func describeUsers(d *openapi.Doc) {
 	d.Describe(http.MethodPost, "/admin/v1/users", openapi.Operation{
-		Summary: "Yeni bir yönetim kullanıcısı oluşturur.",
-		Description: "Gövdedeki parola boş bırakılabilir; o durumda kullanıcı " +
-			"parolasız oluşturulur ve giriş yapabilmesi için önce " +
-			"POST /admin/v1/users/{id}/password çağrılır. İstenen yetkiler " +
-			"çağıranınkileri AŞAMAZ. Yanıtta parola GEÇMEZ.",
-		RequestBody: parolaliGovde(d, createUserRequest{}),
+		Summary: "Creates a new admin user.",
+		Description: "The password in the body may be left empty; the user is then " +
+			"created without a password and POST /admin/v1/users/{id}/password has to " +
+			"be called first before they can log in. The requested scopes CANNOT " +
+			"EXCEED the caller's own. No password APPEARS in the response.",
+		RequestBody: passwordBody(d, createUserRequest{}),
 		Responses: map[string]any{
-			"201": openapi.Response("Oluşturulan kullanıcı", d.Item(userDTO{})),
+			"201": openapi.Response("The created user", d.Item(userDTO{})),
 		},
 	})
 
 	d.Describe(http.MethodGet, "/admin/v1/users", openapi.Operation{
-		Summary: "Yönetim kullanıcılarını süzerek ve sayfalayarak listeler.",
-		// Parametreler handler'ın OKUDUKLARIDIR, isteyebileceklerimiz değil:
-		// [Handler.adminListUsers] yalnızca bu dördünü okur.
-		Parameters: append(sayfaParametreleri(),
-			sorguParametresi("email", tipDize, "Kullanıcıları tek bir e-postayla sınırlar."),
-			sorguParametresi("scope", tipDize, "Verilen yetkiyi taşıyan kullanıcıları döner."),
+		Summary: "Lists the admin users, filtering and paging them.",
+		// The parameters are the ones the handler READS, not the ones we could
+		// wish for: [Handler.adminListUsers] reads only these four.
+		Parameters: append(pageParameters(),
+			queryParameter("email", typeString, "Limits the users to a single email."),
+			queryParameter("scope", typeString, "Returns the users carrying the given scope."),
 		),
 		Responses: map[string]any{
-			"200": openapi.Response("Kullanıcı sayfası", d.List(userDTO{})),
+			"200": openapi.Response("A page of users", d.List(userDTO{})),
 		},
 	})
 
 	d.Describe(http.MethodGet, "/admin/v1/users/{id}", openapi.Operation{
-		Summary: "Tek bir yönetim kullanıcısını döner.",
+		Summary: "Returns a single admin user.",
 		Responses: map[string]any{
-			"200": openapi.Response("Kullanıcı", d.Item(userDTO{})),
+			"200": openapi.Response("The user", d.Item(userDTO{})),
 		},
 	})
 
 	d.Describe(http.MethodPut, "/admin/v1/users/{id}", openapi.Operation{
-		Summary: "Kullanıcının verilen alanlarını günceller.",
-		// Gövdede parola YOKTUR ve bu bilinçlidir (bkz. [updateUserRequest]):
-		// aynı gövdede olsaydı, adını güncelleyen bir isteğin yanlışlıkla
-		// parolayı da değiştirmesi mümkün olurdu.
+		Summary: "Updates the given fields of the user.",
+		// There is NO password in the body and this is deliberate (see
+		// [updateUserRequest]): had it been in the same body, it would have been
+		// possible for a request updating a name to change the password by
+		// accident.
 		RequestBody: d.RequestBody(updateUserRequest{}),
 		Responses: map[string]any{
-			"200": openapi.Response("Güncellenen kullanıcı", d.Item(userDTO{})),
+			"200": openapi.Response("The updated user", d.Item(userDTO{})),
 		},
 	})
 
 	d.Describe(http.MethodDelete, "/admin/v1/users/{id}", openapi.Operation{
-		Summary: "Kullanıcıyı ve giriş kimliklerini yumuşak siler.",
+		Summary: "Soft-deletes the user and their login credentials.",
 		Responses: map[string]any{
-			"204": bosYanit("Kullanıcı silindi"),
+			"204": emptyResponse("The user was deleted"),
 		},
 	})
 
 	d.Describe(http.MethodPost, "/admin/v1/users/{id}/password", openapi.Operation{
-		Summary: "Kullanıcının parolasını belirler.",
-		Description: "Uç ayrıdır: profil güncellemesiyle aynı gövdeye konsaydı, " +
-			"adını değiştiren bir isteğin yanlışlıkla parolayı da sıfırlaması " +
-			"mümkün olurdu. Yanıt GÖVDESİZDİR; parolayla ilgili hiçbir şeyi geri " +
-			"yazmanın anlamı yoktur.",
-		RequestBody: parolaliGovde(d, setPasswordRequest{}),
+		Summary: "Assigns the user's password.",
+		Description: "The endpoint is separate: had it been put into the same body " +
+			"as the profile update, it would have been possible for a request changing " +
+			"a name to reset the password by accident. The response HAS NO BODY; there " +
+			"is no point in writing anything password-related back.",
+		RequestBody: passwordBody(d, setPasswordRequest{}),
 		Responses: map[string]any{
-			"204": bosYanit("Parola değiştirildi"),
+			"204": emptyResponse("The password was changed"),
 		},
 	})
 }
 
-// describeAnahtarlar API anahtarı ve kanal bağı uçlarını anlatır.
-func describeAnahtarlar(d *openapi.Doc) {
+// describeAPIKeys describes the API key and channel link endpoints.
+func describeAPIKeys(d *openapi.Doc) {
 	d.Describe(http.MethodPost, "/admin/v1/api-keys", openapi.Operation{
-		Summary: "Yeni bir API anahtarı üretir ve düz metnini BİR KEZ döner.",
-		Description: "Düz anahtar YALNIZCA bu yanıtın \"key\" alanında döner ve " +
-			"bir daha hiçbir uçtan okunamaz: saklama yalnızca özet üzerinden " +
-			"yapılır. İstemci değeri şimdi saklamazsa anahtar kaybolur ve tek " +
-			"çare iptal edip yenisini üretmektir. Diğer tüm uçlar anahtarın " +
-			"yalnızca maskelenmiş gösterimini (\"redacted\") döner. " +
-			"created_by gövdeden değil doğrulanmış kimlikten doldurulur; " +
-			"istenen yetkiler çağıranınkileri AŞAMAZ.",
+		Summary: "Produces a new API key and returns its plaintext ONCE.",
+		Description: "The plaintext key is returned ONLY in this response's \"key\" " +
+			"field and can never again be read from any endpoint: storage is done over " +
+			"the digest alone. If the client does not store the value now the key is " +
+			"lost and the only remedy is to revoke it and produce a new one. Every " +
+			"other endpoint returns only the masked representation (\"redacted\") of " +
+			"the key. created_by is filled not from the body but from the " +
+			"authenticated identity; the requested scopes CANNOT EXCEED the caller's " +
+			"own.",
 		RequestBody: d.RequestBody(createAPIKeyRequest{}),
 		Responses: map[string]any{
 			"201": openapi.Response(
-				"Anahtar kaydı ve DÜZ metni; düz metin bir daha dönmez",
+				"The key record and its PLAINTEXT; the plaintext is never returned again",
 				d.Item(createAPIKeyResponse{})),
 		},
 	})
 
 	d.Describe(http.MethodGet, "/admin/v1/api-keys", openapi.Operation{
-		Summary: "API anahtarlarını süzerek ve sayfalayarak listeler.",
-		Parameters: append(sayfaParametreleri(),
-			sorguParametresi("type", tipDize,
-				"Anahtar türü: \"publishable\" ya da \"secret\"."),
-			sorguParametresi("revoked", tipMantiksal,
-				"true yalnızca iptallileri, false yalnızca etkinleri döner."),
+		Summary: "Lists the API keys, filtering and paging them.",
+		Parameters: append(pageParameters(),
+			queryParameter("type", typeString,
+				"The key's type: \"publishable\" or \"secret\"."),
+			queryParameter("revoked", typeBoolean,
+				"true returns only the revoked ones, false only the active ones."),
 		),
 		Responses: map[string]any{
-			"200": openapi.Response("Anahtar sayfası; düz metin İÇERMEZ",
+			"200": openapi.Response("A page of keys; it CONTAINS NO plaintext",
 				d.List(apiKeyDTO{})),
 		},
 	})
 
 	d.Describe(http.MethodGet, "/admin/v1/api-keys/{id}", openapi.Operation{
-		Summary: "Tek bir API anahtarını döner; düz metin İÇERMEZ.",
+		Summary: "Returns a single API key; it CONTAINS NO plaintext.",
 		Responses: map[string]any{
-			"200": openapi.Response("Anahtar kaydı", d.Item(apiKeyDTO{})),
+			"200": openapi.Response("The key record", d.Item(apiKeyDTO{})),
 		},
 	})
 
 	d.Describe(http.MethodDelete, "/admin/v1/api-keys/{id}", openapi.Operation{
-		Summary: "API anahtarını yumuşak siler.",
-		Description: "Sızıntı sonrası tercih edilmesi gereken işlem iptaldir " +
-			"(POST /admin/v1/api-keys/{id}/revoke); silme, yanlışlıkla " +
-			"oluşturulmuş bir kaydı temizlemek içindir.",
+		Summary: "Soft-deletes the API key.",
+		Description: "After a leak the operation to prefer is revocation " +
+			"(POST /admin/v1/api-keys/{id}/revoke); deletion is for cleaning up a " +
+			"record that was created by mistake.",
 		Responses: map[string]any{
-			"204": bosYanit("Anahtar silindi"),
+			"204": emptyResponse("The key was deleted"),
 		},
 	})
 
 	d.Describe(http.MethodPost, "/admin/v1/api-keys/{id}/revoke", openapi.Operation{
-		Summary: "API anahtarını iptal eder.",
-		Description: "İptal SİLME DEĞİLDİR: kayıt listede kalır ve ne zaman, kim " +
-			"tarafından kapatıldığı görünür. Zaten iptalli bir anahtarda 409 döner.",
-		// Uç gövde OKUMAZ: iptal edilecek anahtarı yoldan, iptali yapanı
-		// jetondan bilir (bkz. [Handler.adminRevokeAPIKey]).
+		Summary: "Revokes the API key.",
+		Description: "REVOCATION IS NOT DELETION: the record stays in the list and " +
+			"when and by whom it was closed remains visible. On an already revoked key " +
+			"a 409 is returned.",
+		// The endpoint READS NO BODY: it knows the key to be revoked from the
+		// path and who is revoking it from the token (see
+		// [Handler.adminRevokeAPIKey]).
 		Responses: map[string]any{
-			"200": openapi.Response("İptal edilmiş anahtar kaydı", d.Item(apiKeyDTO{})),
+			"200": openapi.Response("The revoked key record", d.Item(apiKeyDTO{})),
 		},
 	})
 
 	d.Describe(http.MethodGet, "/admin/v1/api-keys/{id}/sales-channels", openapi.Operation{
-		Summary: "Anahtarın bağlı olduğu satış kanallarını döner.",
-		// Sorgu parametresi YOKTUR: uç sayfalamaz, tek sayfada tüm bağları
-		// yazar (bkz. [writeItems]). limit/offset duyurmak, sunucunun sessizce
-		// yok sayacağı bir özellik vaat etmek olurdu.
+		Summary: "Returns the sales channels the key is attached to.",
+		// There is NO query parameter: the endpoint does not page, it writes all
+		// the links on a single page (see [writeItems]). Announcing
+		// limit/offset would have meant promising a feature the server silently
+		// ignores.
 		Responses: map[string]any{
-			"200": openapi.Response("Bağlı kanallar; devre dışı olanlar da listelenir",
+			"200": openapi.Response("The attached channels; the disabled ones are listed too",
 				d.List(salesChannelDTO{})),
 		},
 	})
 
 	d.Describe(http.MethodPost, "/admin/v1/api-keys/{id}/sales-channels", openapi.Operation{
-		Summary:     "Publishable anahtarı bir satış kanalına bağlar.",
+		Summary:     "Attaches the publishable key to a sales channel.",
 		RequestBody: d.RequestBody(linkChannelRequest{}),
-		// Yanıt 201 DEĞİL 200'dür ve TEKİL değil LİSTEDİR: bağ kurulduktan
-		// sonra anahtarın GÜNCEL kanal listesi döner (bkz.
-		// [Handler.adminLinkKeyChannel]). 201 yazmak istemci üretecinde yanlış
-		// dallanma, tekil zarf yazmak da okunamayan bir gövde üretirdi.
+		// The response is 200 and NOT 201, and it is a LIST rather than a single
+		// record: once the link is established the key's CURRENT channel list is
+		// returned (see [Handler.adminLinkKeyChannel]). Writing 201 would
+		// produce a wrong branch in the client generator, and writing a single
+		// envelope would produce a body that cannot be read.
 		Responses: map[string]any{
-			"200": openapi.Response("Bağ kurulduktan sonraki güncel kanal listesi",
+			"200": openapi.Response("The current channel list after the link was established",
 				d.List(salesChannelDTO{})),
 		},
 	})
 
 	d.Describe(http.MethodDelete, "/admin/v1/api-keys/{id}/sales-channels/{sales_channel_id}",
 		openapi.Operation{
-			Summary: "Anahtar ile satış kanalı arasındaki bağı kaldırır.",
+			Summary: "Removes the link between the key and the sales channel.",
 			Responses: map[string]any{
-				"204": bosYanit("Bağ kaldırıldı"),
+				"204": emptyResponse("The link was removed"),
 			},
 		})
 }
 
-// describeKanallar satış kanalı uçlarını anlatır.
+// describeSalesChannels describes the sales channel endpoints.
 //
-// # Bileşen adı ÇAKIŞMASI çözüldü
+// # A component name CLASH was resolved
 //
-// Bu modülün [salesChannelRequest] tipi kanalın KENDİSİNİ oluşturur; product
-// modülünde de aynı Go adını taşıyan bir tip vardı ama o, ürünü bir kanala
-// BAĞLAR. İki farklı şey aynı yayımlanan bileşen adını ("SalesChannelRequest")
-// isteyince [openapi.Doc.Build] hata döner ve belgenin TAMAMI üretilemez —
-// yalnızca o uç değil, /openapi.json'ın kendisi 500 olur.
+// This module's [salesChannelRequest] type creates the channel ITSELF; the
+// product module had a type carrying the same Go name as well, but that one
+// ATTACHES a product to a channel. When two different things ask for the same
+// published component name ("SalesChannelRequest"), [openapi.Doc.Build] returns
+// an error and the WHOLE document cannot be produced — not just that endpoint,
+// but /openapi.json itself becomes a 500.
 //
-// Çözüm product tarafındaki tipi gerçekte ne olduğuna göre adlandırmaktı
-// (linkSalesChannelRequest). Bileşen adı yayımlanan sözleşmedir; Go adlandırma
-// tesadüfünün onu belirlemesine izin verilmez.
-func describeKanallar(d *openapi.Doc) {
+// The fix was to name the type on the product side after what it really is
+// (linkSalesChannelRequest). A component name is the published contract; a Go
+// naming coincidence is not allowed to decide it.
+func describeSalesChannels(d *openapi.Doc) {
 	d.Describe(http.MethodPost, "/admin/v1/sales-channels", openapi.Operation{
-		Summary:     "Yeni satış kanalı oluşturur.",
+		Summary:     "Creates a new sales channel.",
 		RequestBody: d.RequestBody(salesChannelRequest{}),
 		Responses: map[string]any{
-			"201": openapi.Response("Oluşturulan kanal", d.Item(salesChannelDTO{})),
+			"201": openapi.Response("The created channel", d.Item(salesChannelDTO{})),
 		},
 	})
 
 	d.Describe(http.MethodGet, "/admin/v1/sales-channels", openapi.Operation{
-		Summary: "Satış kanallarını süzerek ve sayfalayarak listeler.",
-		Parameters: append(sayfaParametreleri(),
-			sorguParametresi("name", tipDize, "Kanalları ada göre süzer."),
-			sorguParametresi("is_disabled", tipMantiksal,
-				"Verilmezse süzme yapılmaz; false yalnızca etkin kanalları döner."),
+		Summary: "Lists the sales channels, filtering and paging them.",
+		Parameters: append(pageParameters(),
+			queryParameter("name", typeString, "Filters the channels by name."),
+			queryParameter("is_disabled", typeBoolean,
+				"If it is not given no filtering happens; false returns only the enabled channels."),
 		),
 		Responses: map[string]any{
-			"200": openapi.Response("Kanal sayfası", d.List(salesChannelDTO{})),
+			"200": openapi.Response("A page of channels", d.List(salesChannelDTO{})),
 		},
 	})
 
 	d.Describe(http.MethodGet, "/admin/v1/sales-channels/{id}", openapi.Operation{
-		Summary: "Tek bir satış kanalını döner.",
+		Summary: "Returns a single sales channel.",
 		Responses: map[string]any{
-			"200": openapi.Response("Kanal", d.Item(salesChannelDTO{})),
+			"200": openapi.Response("The channel", d.Item(salesChannelDTO{})),
 		},
 	})
 
 	d.Describe(http.MethodPut, "/admin/v1/sales-channels/{id}", openapi.Operation{
-		Summary:     "Satış kanalının verilen alanlarını günceller.",
+		Summary:     "Updates the given fields of the sales channel.",
 		RequestBody: d.RequestBody(updateSalesChannelRequest{}),
 		Responses: map[string]any{
-			"200": openapi.Response("Güncellenen kanal", d.Item(salesChannelDTO{})),
+			"200": openapi.Response("The updated channel", d.Item(salesChannelDTO{})),
 		},
 	})
 
 	d.Describe(http.MethodDelete, "/admin/v1/sales-channels/{id}", openapi.Operation{
-		Summary: "Satış kanalını yumuşak siler ve anahtar bağlarını kaldırır.",
+		Summary: "Soft-deletes the sales channel and removes the key links.",
 		Responses: map[string]any{
-			"204": bosYanit("Kanal silindi"),
+			"204": emptyResponse("The channel was deleted"),
 		},
 	})
 }
 
-// parolaliGovde parola taşıyan istek gövdesini DTO'dan türetir ve parola
-// alanını format: "password" ile işaretler.
+// passwordBody derives the password-carrying request body from the DTO and
+// marks the password field with format: "password".
 //
-// # Neden sonradan işaretleniyor
+// # Why it is marked afterwards
 //
-// Çekirdek şemayı Go TİPİNDEN türetir ve [secret] tel üzerinde sıradan bir
-// dizedir; "bu bir paroladır" bilgisini tip taşımaz. Çekirdeğe bir kanca
-// eklemek auth'un kavramını çekirdeğe taşırdı (Prensip 2.4), bu yüzden işaret
-// türetilen şemanın ÜZERİNE, burada yazılır.
+// The core derives the schema FROM THE GO TYPE and [secret] is an ordinary
+// string on the wire; the type does not carry the information "this is a
+// password". Adding a hook to the core would have moved auth's concept into the
+// core (Principle 2.4), so the mark is written ON TOP of the derived schema,
+// here.
 //
-// # İşaretin karşılığı
+// # What the mark buys
 //
-// format: "password" bir doğrulama değil GÖSTERİM sözleşmesidir: istemci
-// üreteçleri ve şema görüntüleyiciler alanı maskeler, örnek istek üreten
-// araçlar onu ekrana açık yazmaz. İşaretsiz bırakılan bir parola, e-posta ile
-// aynı görünen sıradan bir dizedir.
+// format: "password" is not a validation but a PRESENTATION contract: client
+// generators and schema viewers mask the field, and tools producing sample
+// requests do not print it in the clear. A password left unmarked is an
+// ordinary string that looks just like an email.
 //
-// # Neden BİLEŞENE yazmak güvenlidir
+// # Why writing to the COMPONENT is safe
 //
-// İşaret [openapi.Doc.Schemas] üzerinden bileşenin kendisine işlenir. Harita
-// üst seviyede kopyalanır ama bileşen şemaları PAYLAŞILAN haritalardır ve
-// yazma onlara işler. Bileşene yazmak doğrudur çünkü parola taşıyan üç tip de
-// YALNIZCA istek gövdesidir; hiçbir yanıt onlara atıf yapmaz. Bağ incedir ve
-// bilinçli olarak testle kilitlenir (describe_internal_test.go): çekirdek bir
-// gün derin kopya dönerse test düşer, şema sessizce işaretsiz kalmaz.
-func parolaliGovde(d *openapi.Doc, govdeTipi any) map[string]any {
-	govde := d.RequestBody(govdeTipi)
+// The mark is written into the component itself through [openapi.Doc.Schemas].
+// The map is copied at the top level, but component schemas are SHARED maps and
+// the write lands on them. Writing to the component is correct because all
+// three password-carrying types are ONLY request bodies; no response refers to
+// them. The coupling is subtle and is deliberately locked down by a test
+// (describe_internal_test.go): if the core one day returns a deep copy the test
+// falls over, and the schema is not left silently unmarked.
+func passwordBody(d *openapi.Doc, bodyType any) map[string]any {
+	body := d.RequestBody(bodyType)
 
-	sema := altHarita(govde, govdeIcerik, govdeTur, govdeSema)
+	schema := subMap(body, bodyContent, bodyMediaType, bodySchema)
 
-	ref, _ := sema[semaRef].(string)
-	bilesen, _ := d.Schemas()[strings.TrimPrefix(ref, refOneki)].(map[string]any)
+	ref, _ := schema[schemaRef].(string)
+	component, _ := d.Schemas()[strings.TrimPrefix(ref, refPrefix)].(map[string]any)
 
-	if parola := altHarita(bilesen, semaOzellikler, alanParola); parola != nil {
-		parola[semaBicim] = bicimParola
+	if password := subMap(component, schemaProperties, fieldPassword); password != nil {
+		password[schemaFormat] = formatPassword
 	}
 
-	return govde
+	return body
 }
 
-// altHarita iç içe haritalarda bir yolu izler; yol kırılırsa nil döner.
+// subMap follows a path through nested maps; returns nil if the path breaks.
 //
-// nil kök de güvenlidir: Go'da nil haritadan okumak sıfır değer verir ve yol
-// ilk adımda kesilir.
-func altHarita(kok map[string]any, yol ...string) map[string]any {
-	dugum := kok
+// A nil root is safe too: in Go, reading from a nil map gives the zero value and
+// the path is cut at the first step.
+func subMap(root map[string]any, path ...string) map[string]any {
+	node := root
 
-	for _, ad := range yol {
-		alt, ok := dugum[ad].(map[string]any)
+	for _, name := range path {
+		child, ok := node[name].(map[string]any)
 		if !ok {
 			return nil
 		}
 
-		dugum = alt
+		node = child
 	}
 
-	return dugum
+	return node
 }
 
-// sayfaParametreleri sayfalama parametrelerini döner.
+// pageParameters returns the paging parameters.
 //
-// İkisi de ZORUNLU DEĞİLDİR: verilmediklerinde servis varsayılanı uygulanır
-// (bkz. [pageParams]). Ortak bir yardımcıya alınmalarının sebebi tekrarın
-// kendisi değil, açıklamaların ayrışmasıdır — üç liste ucunda elle
-// yazılsalardı biri değiştiğinde ötekiler sessizce eskirdi.
-func sayfaParametreleri() []openapi.Parameter {
+// Neither of them IS MANDATORY: when they are not given the service's default
+// is applied (see [pageParams]). The reason they were pulled into a shared
+// helper is not the repetition itself but the drifting apart of the
+// descriptions — had they been hand-written at three list endpoints, the others
+// would silently go stale the day one of them changed.
+func pageParameters() []openapi.Parameter {
 	return []openapi.Parameter{
-		sorguParametresi("limit", tipTamSayi,
-			"Sayfa boyutu; verilmezse servisin varsayılanı uygulanır."),
-		sorguParametresi("offset", tipTamSayi, "Atlanacak kayıt sayısı."),
+		queryParameter("limit", typeInteger,
+			"The page size; if it is not given the service's default is applied."),
+		queryParameter("offset", typeInteger, "The number of records to skip."),
 	}
 }
 
-// sorguParametresi sorgu dizesinden okunan bir parametreyi tanımlar.
-func sorguParametresi(ad, tip, aciklama string) openapi.Parameter {
+// queryParameter defines a parameter that is read from the query string.
+func queryParameter(name, typ, description string) openapi.Parameter {
 	return openapi.Parameter{
-		Name:        ad,
+		Name:        name,
 		In:          "query",
-		Schema:      map[string]any{semaTip: tip},
-		Description: aciklama,
+		Schema:      map[string]any{schemaType: typ},
+		Description: description,
 	}
 }
 
-// bosYanit GÖVDESİZ bir yanıt tanımı üretir.
+// emptyResponse produces a BODYLESS response definition.
 //
-// [openapi.Response] her zaman bir gövde şeması yazar; 204'ün gövdesi ise
-// YOKTUR (bkz. admin.go, corehttp.WriteJSON'a nil verilen çağrılar). Boş bir
-// şema yazmak "bir şey dönüyor ama şekli bilinmiyor" demek olurdu ve istemci
-// üreteci okunacak bir gövde bekleyen bir metot üretirdi.
-func bosYanit(aciklama string) map[string]any {
-	return map[string]any{"description": aciklama}
+// [openapi.Response] always writes a body schema, whereas a 204 HAS NO body
+// (see admin.go, the calls that hand nil to corehttp.WriteJSON). Writing an
+// empty schema would have meant "something is returned but its shape is
+// unknown" and the client generator would have produced a method expecting a
+// body to read.
+func emptyResponse(description string) map[string]any {
+	return map[string]any{"description": description}
 }

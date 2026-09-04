@@ -1,4 +1,4 @@
--- cart_shipping_methods sorguları.
+-- cart_shipping_methods queries.
 
 -- name: CreateShippingMethod :one
 INSERT INTO cart_shipping_methods (

@@ -9,71 +9,74 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/auth/models"
 )
 
-// Bu dosya bir oturumun ne zaman ve NASIL düştüğünü tanımlar.
+// This file defines when and HOW a session drops.
 //
-// # Oturum kaydı YOKTUR
+// # THERE IS NO SESSION RECORD
 //
-// Jeton durum tutmaz: sunucuda "açık oturumlar" diye bir tablo yoktur ve
-// üretilmiş TEK bir jetonu geçersizleştirmenin yolu da yoktur. Bunun için
-// jetona bir "jti" konması ve her isteğin okuduğu, süresi dolan kayıtları
-// düzenli temizlenen bir kara liste deposu tutulması gerekirdi — jetonun
-// durumsuz olmasından vazgeçmek demek olan bu bedel, bugün karşılığında
-// hiçbir yeni yetenek vermiyor (bkz. [Service.Logout]).
+// The token holds no state: there is no table called "open sessions" on the
+// server and there is no way to invalidate a SINGLE token that has been
+// produced. Doing that would require putting a "jti" into the token and keeping
+// a blacklist store that every request reads and whose expired records are
+// cleaned up regularly — that price, which means giving up the token being
+// stateless, buys no new capability today (see [Service.Logout]).
 //
-// Onun yerine kimlik başına TEK bir zaman damgası tutulur: [sessionAnchor].
-// Bir jeton, çapadan önce üretildiyse reddedilir. Bu yüzden iptal her zaman
-// TOPTANDIR — çapa ilerlediğinde kullanıcının bütün cihazlarındaki jetonlar
-// aynı anda düşer.
+// Instead, a SINGLE timestamp is kept per identity: [sessionAnchor]. A token is
+// rejected if it was produced before the anchor. This is why revocation is
+// always WHOLESALE — when the anchor moves forward, the tokens on all of the
+// user's devices drop at the same moment.
 //
-// # Çapa KİMLİK başınadır, kullanıcı başına değil
+// # The anchor is per IDENTITY, not per user
 //
-// auth_identity tablosu sağlayıcı başına satır tutar, dolayısıyla bir
-// kullanıcının birden çok çapası olabilir. İki uç da bu çokluğu görür ve AYNI
-// kuralı uygular: çıkış hepsini birden ilerletir ([Service.Logout]), jeton
-// doğrulaması ise en YENİ olanı okur ([latestAnchor], Repository.SessionAnchor).
-// Yalnızca biri sağlayıcıya göre seçseydi öteki boşa çalışırdı — çıkışın
-// yazdığı çapa hiç okunmaz ya da okunan çapa hiç yazılmaz olurdu.
+// The auth_identity table keeps a row per provider, so a user can have more
+// than one anchor. Both ends see this multiplicity and apply THE SAME rule:
+// logout advances all of them ([Service.Logout]), while token verification
+// reads the NEWEST one ([latestAnchor], Repository.SessionAnchor). Had only one
+// of them selected by provider the other would run for nothing — either the
+// anchor logout writes would never be read, or the anchor that is read would
+// never be written.
 //
-// # Çapayı yalnızca SAHİBİNİN İRADESİ ilerletir
+// # Only THE OWNER'S OWN WILL advances the anchor
 //
-// İki iş çapayı ilerletir ve ikisi de hesap sahibinin bilerek yaptığı
-// işlerdir: parola değişimi ([Service.SetPassword]) ve çıkış
-// ([Service.Logout]). Giriş sayaçları çapaya DOKUNMAZ; dokunsalardı tek bir
-// hatalı giriş denemesi kurbanın tüm oturumlarını düşüren hedefli bir hizmet
-// dışı bırakma aracı olurdu (gerekçe queries/identities.sql).
+// Two operations advance the anchor and both of them are things the account
+// owner does knowingly: a password change ([Service.SetPassword]) and a logout
+// ([Service.Logout]). The login counters DO NOT TOUCH the anchor; had they done
+// so, a single failed login attempt would be a targeted denial-of-service tool
+// dropping all of the victim's sessions (the reasoning is in
+// queries/identities.sql).
 
-// sessionAnchor kimliğin oturum çapasını döner: bu andan ÖNCE üretilmiş
-// jetonlar geçersizdir.
+// sessionAnchor returns the identity's session anchor: tokens produced BEFORE
+// this moment are invalid.
 //
-// # Neden updated_at
+// # Why updated_at
 //
-// Tabloda ayrı bir "sessions_revoked_at" sütunu YOKTUR ve gerekmez: bu tabloda
-// updated_at zaten yalnızca çapayı ilerletmesi gereken iki yazmada
-// (UpdatePasswordHash, RevokeSessions) hareket eder. Giriş sayaçlarını yazan
-// sorgular ona bilerek dokunmaz.
+// There is NO separate "sessions_revoked_at" column on the table and none is
+// needed: in this table updated_at already moves only in the two writes that
+// have to advance the anchor (UpdatePasswordHash, RevokeSessions). The queries
+// that write the login counters deliberately do not touch it.
 //
-// Fonksiyon tek satırdır ama bir SÖZLEŞMEYİ adlandırır: sütun seçimi ileride
-// değişirse (örneğin gerçekten ayrı bir sütun eklenirse) dokunulacak tek yer
-// burasıdır.
+// The function is a single line but it names A CONTRACT: should the choice of
+// column change later on (if, for example, a separate column really is added),
+// this is the only place to touch.
 func sessionAnchor(identity models.AuthIdentity) time.Time {
 	return identity.UpdatedAt
 }
 
-// latestAnchor kimlik kümesinin EN YENİ oturum çapasını döner; küme boşsa sıfır
-// zaman.
+// latestAnchor returns the NEWEST session anchor of a set of identities; the
+// zero time if the set is empty.
 //
-// EN YENİ olan seçilir, en eski değil. Çapalar sağlayıcı başına ilerler ve
-// hepsi birlikte ilerlemez: parola değişimi yalnızca emailpass satırını yazar.
-// En eskiyi almak, hiç ilerlemeyen tek bir satırın iptalin tamamını etkisiz
-// bırakması demek olurdu. Aynı seçim okuma tarafında SQL'de yapılır
-// (queries/identities.sql, GetSessionAnchor); iki uç aynı kuralı uygular.
+// The NEWEST one is picked, not the oldest. Anchors advance per provider and
+// they do not all advance together: a password change writes only the emailpass
+// row. Taking the oldest would mean a single row that never advances rendering
+// the whole revocation ineffective. The same choice is made on the reading side
+// in SQL (queries/identities.sql, GetSessionAnchor); the two ends apply the
+// same rule.
 //
-// Boş küme çağıranın eleyeceği bir durumdur: kimliği olmayan kullanıcının
-// çıkışı depo katmanında errors.NotFound ile reddedilir.
+// An empty set is a case for the caller to eliminate: the logout of a user who
+// has no identity is rejected in the repository layer with errors.NotFound.
 func latestAnchor(identities []models.AuthIdentity) time.Time {
 	var latest time.Time
-	// Dizin ile dolaşılır: [models.AuthIdentity] büyük bir yapıdır ve değerle
-	// dolaşmak her turda gereksiz kopya üretirdi.
+	// Iteration goes over the index: [models.AuthIdentity] is a large struct and
+	// iterating by value would produce a needless copy on every round.
 	for i := range identities {
 		if anchor := sessionAnchor(identities[i]); anchor.After(latest) {
 			latest = anchor
@@ -82,91 +85,98 @@ func latestAnchor(identities []models.AuthIdentity) time.Time {
 	return latest
 }
 
-// Logout çağıranın oturumlarını kapatır ve iptalin dayandığı anı döner.
+// Logout closes the caller's sessions and returns the moment the revocation
+// rests on.
 //
-// # TÜM oturumlar düşer; tek cihaz seçilemez
+// # ALL sessions drop; a single device cannot be picked
 //
-// Bu uç bir cihazı DEĞİL, çağıranın bütün oturumlarını kapatır: telefondan
-// çıkış yapan yönetici, dizüstündeki oturumunu da kapatmış olur. Sınır
-// gerçektir ve gizlenmemelidir — "çıkış yaptım" sanan kullanıcının aslında ne
-// yaptığını bilmesi gerekir.
+// This endpoint closes NOT one device but all of the caller's sessions: an
+// administrator logging out from their phone has also closed the session on
+// their laptop. The limit is real and must not be hidden — a user who thinks "I
+// logged out" needs to know what they actually did.
 //
-// Tek cihazı düşürmek EKLENMEMİŞTİR çünkü jeton durumsuzdur: "şu jetonu
-// düşür" demek, jti bazlı bir kara liste, yani her istekte okunan ve süresi
-// dolmuş kayıtları temizlenen YENİ BİR DEPO demektir. Bugünkü ihtiyaç —
-// "cihazımı kaybettim, her yerden çıkış yap" — toptan iptalle zaten
-// karşılanıyor; ayrım gerçekten gerektiğinde eklenir (bkz. dosya başı).
+// Dropping a single device HAS NOT BEEN ADDED because the token is stateless:
+// saying "drop that token" means a jti-based blacklist, that is, A NEW STORE
+// that is read on every request and whose expired records are cleaned up. The
+// need of today — "I lost my device, log me out everywhere" — is already met by
+// wholesale revocation; the distinction will be added when it is really needed
+// (see the head of the file).
 //
-// # TÜM sağlayıcılar düşer
+// # ALL providers drop
 //
-// Çapa kullanıcının BÜTÜN kimlik satırlarında ilerletilir, yalnızca
-// [models.ProviderEmailPass] olanda değil. Bugün gözlemlenebilir bir fark
-// YOKTUR: tek sağlayıcı odur, dolayısıyla ilerletilen satır sayısı birdir ve
-// uç aynı yanıtı verir. Kazanılan şey gelecekteki sessiz açığın kapanmasıdır —
-// OAuth eklendiği gün tek bir sağlayıcı seçen bir çıkış, öteki sağlayıcıdan
-// alınmış jetonları DÜŞÜRMEZ ve bunu haber vermeden yapardı: 204 alan
-// kullanıcı hâlâ oturumda kalırdı.
+// The anchor is advanced on ALL of the user's identity rows, not only on the
+// [models.ProviderEmailPass] one. There is NO observable difference today: that
+// is the only provider, so the number of advanced rows is one and the endpoint
+// gives the same answer. What is gained is the closing of a future silent hole
+// — the day OAuth is added, a logout that picks a single provider WOULD NOT
+// DROP the tokens obtained from the other provider, and it would do so without
+// saying anything: the user who received a 204 would still be logged in.
 //
-// Zincirin öteki ucu da aynı kuralı uygular: jeton doğrulanırken çapa tek bir
-// sağlayıcıdan değil, kullanıcının en yeni kimliğinden okunur
-// (bkz. [Service.principalFromToken]). Yalnızca burası değişseydi yazılan
-// fazladan çapa hiç okunmaz ve değişiklik hiçbir işe yaramazdı.
+// The other end of the chain applies the same rule: when a token is verified,
+// the anchor is read not from a single provider but from the user's newest
+// identity (see [Service.principalFromToken]). Had only this side changed, the
+// extra anchor that is written would never be read and the change would be good
+// for nothing.
 //
-// # Yalnızca KİMLİK ister
+// # It requires ONLY AN IDENTITY
 //
-// Kendi oturumunu kapatmak bir ayrıcalık değildir: yetkisi hiç olmayan bir
-// kullanıcı da çıkış yapabilmelidir. Uca yetki konsaydı, yetkisi geri alınmış
-// bir yöneticinin elindeki jeton süresi dolana kadar kapatılamaz hâle
-// gelirdi — yani yetkiyi kaybetmek oturumu da kapatılamaz yapardı.
+// Closing one's own session is not a privilege: a user with no scopes at all
+// must be able to log out too. Had a scope been put on the endpoint, the token
+// in the hands of an administrator whose scopes had been taken back would
+// become impossible to close until it expired — that is, losing one's scopes
+// would also make one's session impossible to close.
 //
-// # API anahtarı çıkış YAPAMAZ
+// # An API key CANNOT log out
 //
-// Çağıran bir API anahtarıysa istek tipli bir hata ile reddedilir
-// ([CodeNoSession]). Anahtarın oturumu yoktur: jetonla değil, kalıcı bir sırla
-// gelir ve o sır bu çağrıdan sonra da çalışmaya devam ederdi. Sessizce
-// başarılı dönmek, çağırana anahtarın kapatıldığı YANILGISINI bırakırdı;
-// anahtarı kapatmanın yolu POST /admin/v1/api-keys/{id}/revoke ucudur.
+// If the caller is an API key the request is rejected with a typed error
+// ([CodeNoSession]). A key has no session: it arrives not with a token but with
+// a permanent secret, and that secret would keep working after this call too.
+// Returning success in silence would leave the caller with the ILLUSION that
+// the key had been closed; the way to close a key is the
+// POST /admin/v1/api-keys/{id}/revoke endpoint.
 //
-// # Sınır durumu
+// # The edge case
 //
-// Karşılaştırma saniye çözünürlüklüdür: çıkışla AYNI saniyede üretilmiş bir
-// jeton hayatta kalır (gerekçe [parsedToken.issuedBefore]). Ters tercih,
-// çıkıştan hemen sonra yeniden giriş yapan kullanıcının TAZE jetonunu
-// düşürürdü. Kabul edilen bedel, çıkışın etkisinin en fazla o saniyenin sonuna
-// kadar gecikmesidir; 12 saatlik jeton ömrünün yanında ölçülemez.
+// The comparison has second resolution: a token produced in the SAME second as
+// the logout survives (the reasoning is in [parsedToken.issuedBefore]). The
+// opposite choice would drop the FRESH token of a user who logs back in
+// immediately after logging out. The accepted price is that the effect of the
+// logout is delayed by at most the end of that second; next to the 12-hour
+// token lifetime that is immeasurable.
 //
-// Dönen an, kimliğe YAZILAN çapadır: istemci elindeki bir jetonun bu andan
-// önce mi üretildiğini kendisi görebilir.
+// The returned moment is the anchor WRITTEN to the identity: the client can see
+// for itself whether a token in its hands was produced before this moment.
 func (s *Service) Logout(ctx context.Context, principalID, principalKind string) (time.Time, error) {
 	if err := s.ready(); err != nil {
 		return time.Time{}, err
 	}
 	if principalKind != PrincipalKindUser {
 		return time.Time{}, errors.Invalid(CodeNoSession,
-			"%q türündeki çağıranın kapatılabilecek bir oturumu yok; "+
-				"api anahtarı POST /admin/v1/api-keys/{id}/revoke ucundan iptal edilir",
+			"a caller of kind %q has no session that could be closed; "+
+				"an api key is revoked from the POST /admin/v1/api-keys/{id}/revoke endpoint",
 			principalKind)
 	}
-	if err := requireID(principalID, models.UserIDPrefix, "kullanıcı kimliği"); err != nil {
+	if err := requireID(principalID, models.UserIDPrefix, "the user identifier"); err != nil {
 		return time.Time{}, err
 	}
 
-	// Hiç kimlik kaydı yoksa errors.NotFound döner. Bu yol normalde
-	// imkânsızdır: çağıranın jetonu, çapası okunarak doğrulanmıştır
-	// (bkz. [Service.principalFromToken]). Yine de sessizce başarılı DÖNÜLMEZ —
-	// dönülseydi, çıkışın hiçbir şey yazmadığı bir arıza (silinmiş kimlik)
-	// 204 yanıtının arkasında görünmez kalırdı.
+	// If there is no identity record at all errors.NotFound is returned. This
+	// path is normally impossible: the caller's token was verified by reading
+	// its anchor (see [Service.principalFromToken]). Even so, success IS NOT
+	// RETURNED in silence — had it been, a fault in which the logout wrote
+	// nothing (a deleted identity) would stay invisible behind a 204 response.
 	identities, err := s.repo.RevokeSessions(ctx, principalID, s.clock())
 	if err != nil {
 		return time.Time{}, err
 	}
 
 	revokedAt := latestAnchor(identities)
-	s.log.InfoContext(ctx, "yönetim oturumları kapatıldı",
+	s.log.InfoContext(ctx, "admin sessions closed",
 		slog.String("user_id", principalID),
 		slog.Time("revoked_at", revokedAt),
-		// Kaç kimliğin ilerletildiği loglanır: ikinci bir sağlayıcı eklendiği
-		// gün çıkışın gerçekten hepsine dokunduğu ancak buradan görülür.
+		// How many identities were advanced is logged: the day a second provider
+		// is added, this is the only place the logout really touching all of them
+		// can be seen from.
 		slog.Int("identity_count", len(identities)),
 	)
 	return revokedAt, nil

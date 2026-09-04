@@ -7,42 +7,43 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/cart/models"
 )
 
-// CreateCartInput yeni bir sepetin alanlarıdır.
+// CreateCartInput holds the fields of a new cart.
 type CreateCartInput struct {
-	// RegionID sepetin bölgesidir; ZORUNLUDUR. Bölgenin gerçekten var olduğu
-	// BURADA doğrulanmaz: region modülünü tanıyan taraf workflow'dur
-	// (ADR 0001/0006).
+	// RegionID is the cart's region; it is REQUIRED. That the region really
+	// exists is NOT validated HERE: the side that knows the region module is the
+	// workflow (ADR 0001/0006).
 	RegionID string
-	// CustomerID sepetin sahibidir; OPSİYONELDİR. Boş bırakılırsa sepet
-	// MİSAFİRE aittir.
+	// CustomerID is the cart's owner; it is OPTIONAL. If it is left empty the
+	// cart belongs to a GUEST.
 	CustomerID string
-	// Email sepetin iletişim adresidir; opsiyoneldir.
+	// Email is the cart's contact address; it is optional.
 	Email string
-	// CurrencyCode ISO 4217 kodudur; ZORUNLUDUR.
+	// CurrencyCode is the ISO 4217 code; it is REQUIRED.
 	//
-	// Para birimi bölgenin verisidir ve bölgeden KOPYALANIR. Kopyanın sepette
-	// durmasının sebebi tarihseldir: bölge para birimini sonradan
-	// değiştirirse, açık sepetlerin tutarları sessizce başka bir para biriminde
-	// okunmamalıdır.
+	// The currency is the region's data and it is COPIED from the region. The
+	// reason the copy sits on the cart is historical: if the region changes its
+	// currency later, the amounts of the open carts must not silently be read in
+	// another currency.
 	//
-	// Kopyalayan taraf HER ZAMAN SUNUCUDUR ve bu servisin DIŞINDADIR:
-	// create_cart workflow'u ülke kodundan hem bölgeyi hem para birimini
-	// çözer ve vitrin ucu da o akıştan geçer. Servis bu soruyu kendisi
-	// soramaz — region modülünü çağırmaz (ADR 0006) — ve bu yüzden yalnızca
-	// kodun BİÇİMİNİ doğrular. Alan bir zamanlar vitrin gövdesinden, yani
-	// İSTEMCİDEN geliyordu; kaldırılma gerekçesi api.createCartRequest
-	// godoc'unda yazılıdır.
+	// The side that does the copying is ALWAYS THE SERVER and it is OUTSIDE this
+	// service: the create_cart workflow resolves both the region and the
+	// currency from the country code, and the storefront end goes through that
+	// flow too. The service cannot ask this question itself — it does not call
+	// the region module (ADR 0006) — and that is why it only validates the SHAPE
+	// of the code. The field once came from the storefront body, that is, FROM
+	// THE CLIENT; the rationale for its removal is written in the
+	// api.createCartRequest godoc.
 	CurrencyCode string
-	// Metadata çağıranın serbest ek verisidir.
+	// Metadata is the caller's free-form extra data.
 	Metadata map[string]any
 }
 
-// CreateCart yeni bir sepet oluşturur.
+// CreateCart creates a new cart.
 //
-// Sepetin bölgesi ve (varsa) müşterisi KENDİ SÜTUNLARINDA durur
-// (carts.region_id / carts.customer_id) ve ikisi de sepet satırıyla AYNI
-// INSERT'te yazılır. Bu yüzden yarım kalmış bir sepet yoktur: satır ya bölgesi
-// ve sahibiyle birlikte doğar ya da hiç doğmaz.
+// The cart's region and (if there is one) its customer sit IN THEIR OWN COLUMNS
+// (carts.region_id / carts.customer_id) and both are written in the SAME INSERT
+// as the cart row. That is why there is no half-formed cart: the row is either
+// born together with its region and its owner or it is not born at all.
 func (s *Service) CreateCart(ctx context.Context, in CreateCartInput) (models.Cart, error) {
 	if err := requireID("region_id", in.RegionID); err != nil {
 		return models.Cart{}, err
@@ -75,23 +76,25 @@ func (s *Service) CreateCart(ctx context.Context, in CreateCartInput) (models.Ca
 	return cart, nil
 }
 
-// GetCart sepeti satırları, adresleri ve kargo yöntemleriyle birlikte döner.
+// GetCart returns the cart together with its lines, addresses and shipping
+// methods.
 //
-// Çocuklar ÜÇ sabit sorguyla getirilir; satır ya da kayıt sayısı ne olursa olsun
-// sorgu sayısı değişmez (N+1 yoktur). Sepet yoksa ya da yumuşak silinmişse
-// errors.NotFound döner.
+// The children are fetched with THREE fixed queries; whatever the number of
+// lines or records, the number of queries does not change (there is no N+1). If
+// the cart does not exist or has been soft deleted, errors.NotFound is returned.
 //
-// # Neden salt-okunur işlem
+// # Why a read-only transaction
 //
-// Dört sorgu TEK ANLIK GÖRÜNTÜ üzerinde koşar ([Store.WithReadTx]). Kilit
-// alınmaz; sağlanan tek şey, dördünün de sepetin AYNI hâlini görmesidir.
-// İşlemsiz hâlinde her sorgu havuzdan başka bir bağlantı ve başka bir anlık
-// görüntü alabiliyordu: araya giren bir [Service.AddLineItem] ya da
-// [Service.SetTotals], sepet başlığı YENİ toplamları taşırken satır listesinin
-// ESKİ hâlini döndürebiliyor ve müşteriye "toplam 3000 ama tek satır 1000" gibi
-// kendi içinde tutarsız bir sepet gösterilebiliyordu. Yazma yolları kilitli
-// olduğu için veri bozulmuyordu; YIRTILAN yalnızca okuma görünümüydü, ama
-// müşterinin ödeme sayfasında gördüğü şey odur.
+// The four queries run on a SINGLE SNAPSHOT ([Store.WithReadTx]). No lock is
+// taken; the only thing provided is that all four see the SAME state of the
+// cart. Without the transaction, each query could take another connection from
+// the pool and another snapshot: an intervening [Service.AddLineItem] or
+// [Service.SetTotals] could make the cart header carry the NEW totals while the
+// line list returned its OLD state, and the customer could be shown a cart that
+// is inconsistent with itself, like "the total is 3000 but the single line is
+// 1000". The data was not being corrupted because the write paths are locked;
+// what was TEARING was only the read view — but that is what the customer sees
+// on the checkout page.
 func (s *Service) GetCart(ctx context.Context, cartID string) (models.CartDetail, error) {
 	if err := requireID("cart_id", cartID); err != nil {
 		return models.CartDetail{}, err
@@ -134,46 +137,50 @@ func (s *Service) GetCart(ctx context.Context, cartID string) (models.CartDetail
 	return detail, nil
 }
 
-// UpdateCartInput sepetin iletişim ve sahiplik alanlarının güncellemesidir.
+// UpdateCartInput is the update of the cart's contact and ownership fields.
 //
-// İki alanın biçimi bilinçli olarak FARKLIDIR ve fark sözleşmeyi anlatır:
-// e-posta düzeltilebilir ve temizlenebilir, sahiplik ise yalnızca KURULABİLİR.
+// The shape of the two fields is deliberately DIFFERENT, and the difference
+// tells the contract: the email can be corrected and cleared, whereas ownership
+// can only be ESTABLISHED.
 type UpdateCartInput struct {
-	// Email nil ise e-postaya DOKUNULMAZ; boş dize verilirse temizlenir.
+	// Email being nil means the email IS NOT TOUCHED; an empty string clears it.
 	//
-	// İşaretçi olmasının sebebi budur: "alanı gönderme" ile "alanı boşalt" ayrı
-	// niyetlerdir ve ikisini tek boş dizeye indirgemek, gövdesinde e-posta
-	// taşımayan her isteğin sepetin e-postasını sessizce silmesi olurdu.
+	// That is the reason it is a pointer: "do not send the field" and "empty the
+	// field" are separate intents, and reducing the two to a single empty string
+	// would mean that every request that does not carry an email in its body
+	// silently deletes the cart's email.
 	Email *string
-	// CustomerID boş ise müşteriye DOKUNULMAZ; doluysa MİSAFİR sepeti o
-	// müşteriye devredilir.
+	// CustomerID being empty means the customer IS NOT TOUCHED; if it is filled,
+	// a GUEST cart is handed over to that customer.
 	//
-	// İşaretçi DEĞİLDİR, çünkü "boşalt" geçerli bir niyet değildir: sahipliği
-	// geri almak, sepeti kimin açtığını kaybetmek olurdu. Dolu bir sepeti
-	// BAŞKA bir müşteriye devretmek de reddedilir (errors.Conflict); iki farklı
-	// müşterinin aynı sepeti sahiplenmesi, sipariş kime yazılacağı sorusunu
-	// yanıtsız bırakırdı.
+	// It IS NOT a pointer, because "empty it" is not a valid intent: taking the
+	// ownership back would mean losing who opened the cart. Handing a cart that
+	// already has an owner over to ANOTHER customer is rejected as well
+	// (errors.Conflict); two different customers owning the same cart would
+	// leave the question of who the order is written to unanswered.
 	CustomerID string
 }
 
-// UpdateCart sepetin e-postasını ve/veya müşterisini günceller.
+// UpdateCart updates the cart's email and/or its customer.
 //
-// Gerçek akış bunu gerektirir: müşteri sepeti MİSAFİR olarak açar, e-postasını
-// ödeme adımında girer ve/veya araya giriş yapar. Bu yol olmadan sepetin baştan
-// kurulması gerekirdi ve satırlar kaybolurdu; üstelik complete_cart siparişin
-// iletişim adresini sepetten okuduğu için eksiklik oraya taşınırdı.
+// The real flow requires this: the customer opens the cart as a GUEST, enters
+// their email at the checkout step and/or signs in along the way. Without this
+// path the cart would have to be built from scratch and the lines would be lost;
+// on top of that, because complete_cart reads the order's contact address from
+// the cart, the gap would be carried over there.
 //
-// # Neden toplamları bayatlatır
+// # Why it makes the totals stale
 //
-// Çağrı [Service.mutate] çerçevesinde koşar, yani sepetin şekil sayacını
-// ARTIRIR ve toplamları bayat hâle getirir. Sebep sahiplik değişimidir: fiyat
-// müşteri grubuna, vergi ise muafiyete göre değişebilir ve sepetin sahibi
-// değiştikten sonra eski hesap artık o sepetin hesabı değildir. Hangisinin
-// gerçekten değiştiğini bilen taraf pricing/tax'tır, cart değil (ADR 0006); bu
-// yüzden karar temkinli verilir — bir tur fazladan hesaplamak, yanlış tutarla
-// sipariş yazmaktan ucuzdur.
+// The call runs in the [Service.mutate] frame, that is, it INCREMENTS the cart's
+// shape counter and makes the totals stale. The reason is the change of
+// ownership: the price can change by customer group and the tax by exemption,
+// and once the cart's owner has changed the old calculation is no longer that
+// cart's calculation. The side that knows which of them really changed is
+// pricing/tax, not cart (ADR 0006); that is why the decision is made
+// conservatively — one extra calculation round is cheaper than writing an order
+// with the wrong amount.
 //
-// Tamamlanmış sepete yazılamaz: errors.Conflict döner.
+// A completed cart cannot be written to: errors.Conflict is returned.
 func (s *Service) UpdateCart(ctx context.Context, cartID string, in UpdateCartInput) (models.Cart, error) {
 	var email *string
 	if in.Email != nil {
@@ -190,7 +197,7 @@ func (s *Service) UpdateCart(ctx context.Context, cartID string, in UpdateCartIn
 	}
 	if email == nil && in.CustomerID == "" {
 		return models.Cart{}, errors.Invalid(CodeInvalidInput,
-			"no field was given to update: email ya da customer_id gerekli")
+			"no field was given to update: email or customer_id is required")
 	}
 
 	updated, err := s.mutate(ctx, cartID, func(ctx context.Context, cart models.Cart) error {
@@ -201,7 +208,7 @@ func (s *Service) UpdateCart(ctx context.Context, cartID string, in UpdateCartIn
 		if in.CustomerID != "" {
 			if cart.CustomerID != "" && cart.CustomerID != in.CustomerID {
 				return errors.Conflict(CodeCustomerMismatch,
-					"sepet başka bir müşteriye ait: %s (istenen: %s)", cart.CustomerID, in.CustomerID)
+					"the cart belongs to another customer: %s (requested: %s)", cart.CustomerID, in.CustomerID)
 			}
 			contact.CustomerID = in.CustomerID
 		}
@@ -215,23 +222,24 @@ func (s *Service) UpdateCart(ctx context.Context, cartID string, in UpdateCartIn
 	return updated, nil
 }
 
-// ListCartsInput sepet listelemesinin girdisidir.
+// ListCartsInput is the input of the cart listing.
 type ListCartsInput struct {
-	// CustomerID verilirse yalnızca o müşterinin sepetleri döner.
+	// CustomerID, if given, makes only that customer's carts come back.
 	CustomerID *string
-	// RegionID verilirse yalnızca o bölgenin sepetleri döner.
+	// RegionID, if given, makes only that region's carts come back.
 	RegionID *string
-	// Completed verilirse sepetler tamamlanmışlığa göre süzülür.
+	// Completed, if given, filters the carts by completeness.
 	Completed *bool
-	// Page sayfalama parametreleridir.
+	// Page holds the pagination parameters.
 	Page Page
 }
 
-// ListCarts sepetleri sayfalayarak döner (çocukları YÜKLEMEDEN).
+// ListCarts returns the carts with pagination (WITHOUT LOADING their children).
 //
-// İkinci dönüş değeri filtreye uyan TÜM satırların sayısıdır. Satırlar burada
-// yüklenmez: sayfa başına onlarca sepetin çocuklarını getirmek listeyi ağır ve
-// N+1'e açık hâle getirirdi. Çocuklar yalnızca [Service.GetCart] ile gelir.
+// The second return value is the count of ALL of the rows matching the filter.
+// The lines are not loaded here: fetching the children of dozens of carts per
+// page would make the list heavy and open to N+1. The children arrive only with
+// [Service.GetCart].
 func (s *Service) ListCarts(ctx context.Context, in ListCartsInput) ([]models.Cart, int64, error) {
 	page, err := in.Page.normalize()
 	if err != nil {
@@ -258,8 +266,9 @@ func (s *Service) ListCarts(ctx context.Context, in ListCartsInput) ([]models.Ca
 	return s.store.ListCarts(ctx, filter)
 }
 
-// ListCartsByIDs verilen kimliklerin sepetlerini TEK sorguda döner.
-// Bulunamayan kimlik için kayıt dönmez; bu bir hata değildir.
+// ListCartsByIDs returns the carts of the given identifiers in a SINGLE query.
+// No record is returned for an identifier that is not found; that is not an
+// error.
 func (s *Service) ListCartsByIDs(ctx context.Context, ids []string) ([]models.Cart, error) {
 	if len(ids) == 0 {
 		return []models.Cart{}, nil
@@ -267,10 +276,10 @@ func (s *Service) ListCartsByIDs(ctx context.Context, ids []string) ([]models.Ca
 	return s.store.CartsByIDs(ctx, ids)
 }
 
-// DeleteCart sepeti ve çocuklarını yumuşak siler.
+// DeleteCart soft deletes the cart and its children.
 //
-// TAMAMLANMIŞ sepet silinemez (errors.Conflict): siparişin dayandığı kayıt
-// odur ve silinmesi geçmişi yok etmek olurdu.
+// A COMPLETED cart cannot be deleted (errors.Conflict): it is the record the
+// order rests on and deleting it would be destroying history.
 func (s *Service) DeleteCart(ctx context.Context, cartID string) error {
 	if err := requireID("cart_id", cartID); err != nil {
 		return err
@@ -297,39 +306,41 @@ func (s *Service) DeleteCart(ctx context.Context, cartID string) error {
 	})
 }
 
-// MarkCompleted sepeti tamamlanmış olarak damgalar.
+// MarkCompleted stamps the cart as completed.
 //
-// Faz 6'daki complete_cart saga'sı bunu ÇAĞIRIR; damga atıldıktan sonra sepet
-// DEĞİŞTİRİLEMEZ ve aynı sepetten ikinci bir sipariş doğamaz.
+// The complete_cart saga in Phase 6 CALLS this; once the stamp is applied the
+// cart CANNOT BE CHANGED and no second order can be born from the same cart.
 //
-// # Neden ikinci çağrı Conflict
+// # Why a second call is a Conflict
 //
-// Tamamlanmış bir sepeti tekrar tamamlamak sessizce başarılı sayılsaydı, aynı
-// sepetin iki kez sipariş edildiği bir akış hiçbir yerde hata üretmezdi.
-// Yeniden deneme güvenliği (plan Bölüm 2.6) burada değil, workflow motorunun
-// idempotency-key'inde çözülür: BAŞARIYLA biten bir adım tekrar çalıştırılmaz.
+// If completing an already completed cart counted as silently successful, a flow
+// in which the same cart was ordered twice would produce an error nowhere. Retry
+// safety (plan Section 2.6) is solved not here but in the workflow engine's
+// idempotency key: a step that finished SUCCESSFULLY is not run again.
 //
-// # Neden satırsız sepet reddedilir
+// # Why a cart without lines is rejected
 //
-// Satırsız bir sepetten doğacak sipariş, hiçbir şeyin satılmadığı bir
-// sipariştir. Kural ayrıca ikinci bir deliği kapatır: "toplamlar HİÇ
-// hesaplanmadı" durumunu. Bayatlık ölçütü totals_revision ≠ revision'dır ve
-// yeni bir sepette ikisi de sıfır olduğu için "hiç hesaplanmadı" ile "sıfırıncı
-// şekil için hesaplandı" ayırt edilemez. Ayırt edilmesi de GEREKMEZ: sayaç
-// hiçbir yerde azalmaz ve satır eklemek onu mutlaka artırır, dolayısıyla
-// revision = totals_revision olan bir sepetin satırı varsa [Service.SetTotals]
-// o şekil için GERÇEKTEN koşmuştur. Geriye yalnızca hiç dokunulmamış (ve
-// zorunlu olarak satırsız) sepet kalır; onu da bu kapı reddeder. Alternatif,
-// şemaya "hesaplandı mı" damgası eklemekti — aynı sonucu veren, ama sürüm
-// defterini büyüten bir yol.
+// The order that would be born from a cart without lines is an order in which
+// nothing was sold. The rule also closes a second hole: the "the totals were
+// NEVER calculated" case. The staleness criterion is totals_revision ≠ revision,
+// and because both are zero on a new cart, "never calculated" and "calculated
+// for the zeroth shape" cannot be told apart. Nor do they NEED to be told apart:
+// the counter never goes down anywhere and adding a line necessarily increments
+// it, therefore if a cart with revision = totals_revision has a line then
+// [Service.SetTotals] REALLY did run for that shape. What is left is only the
+// cart that has never been touched (and is necessarily without lines); this gate
+// rejects that one as well. The alternative was to add a "was it calculated"
+// stamp to the schema — a path that gives the same result but grows the version
+// ledger.
 //
-// # Neden bayat toplam reddedilir
+// # Why stale totals are rejected
 //
-// Toplamlar sepetin güncel şekline ait değilse ([models.Cart.TotalsStale]),
-// sepet hesaplandıktan SONRA değişmiştir — ödeme sayfası açıkken sepete satır
-// eklenen klasik durum. Damga atmak, o anki yanlış tutarı sipariş tutarı hâline
-// getirirdi. Bu yüzden çağrı errors.Conflict döner ve calculate_totals'ın
-// yeniden çalıştırılmasını ister.
+// If the totals do not belong to the cart's current shape
+// ([models.Cart.TotalsStale]), the cart changed AFTER it was calculated — the
+// classic case of a line being added to the cart while the checkout page is
+// open. Applying the stamp would turn the wrong amount of that moment into the
+// order amount. That is why the call returns errors.Conflict and asks for
+// calculate_totals to be run again.
 func (s *Service) MarkCompleted(ctx context.Context, cartID string) (models.Cart, error) {
 	if err := requireID("cart_id", cartID); err != nil {
 		return models.Cart{}, err
@@ -350,11 +361,11 @@ func (s *Service) MarkCompleted(ctx context.Context, cartID string) (models.Cart
 		}
 		if len(items) == 0 {
 			return errors.Conflict(CodeCartEmpty,
-				"sepet tamamlanamaz: hiç satırı yok (%s)", cart.ID)
+				"the cart cannot be completed: it has no lines at all (%s)", cart.ID)
 		}
 		if cart.TotalsStale() {
 			return errors.Conflict(CodeTotalsStale,
-				"sepet tamamlanamaz: toplamlar güncel değil (sepet şekli %d, toplamlar %d); calculate_totals yeniden çalıştırılmalı",
+				"the cart cannot be completed: the totals are not current (cart shape %d, totals %d); calculate_totals must be run again",
 				cart.Revision, cart.TotalsRevision)
 		}
 		completed, err = s.store.MarkCartCompleted(ctx, cartID)

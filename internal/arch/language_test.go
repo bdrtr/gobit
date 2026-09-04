@@ -156,7 +156,7 @@ var safeTurkishWords = []string{
 var turkishStems = []string{
 	"ac", "adet", "adres", "agac", "akis", "akislar", "alan", "altinda", "ara",
 	"arac", "araci",
-	"arasi", "atif", "atiflar", "atla", "parseDir", "bagimli", "baglanti",
+	"arasi", "atif", "atiflar", "atla", "ayristir", "bagimli", "baglanti",
 	"basla", "baslik", "bayat", "bekle", "belge", "belgeler", "bilesim",
 	"birim", "bitir", "bolge", "bul", "butun", "buyuk", "cevap", "cikan",
 	"cikis", "cizge", "coklu", "dene", "denetim", "denetle", "depo", "devam",

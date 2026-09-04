@@ -13,11 +13,12 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/cart/service"
 )
 
-// toplamliSepet iki satırlı bir sepet kurar ve satırları döner.
+// cartWithTotals builds a cart with two lines and returns the lines.
 //
-// Fikstür bilinçlidir: satırların adetleri ve birim fiyatları FARKLIDIR, yani
-// ara toplamı yalnızca doğru çarpım ve doğru toplama tutturabilir.
-func toplamliSepet(ctx context.Context, t *testing.T, svc *service.Service) (cart models.Cart, first, second models.LineItem) {
+// The fixture is deliberate: the quantities and the unit prices of the lines are
+// DIFFERENT, that is, only the right multiplication and the right summing can
+// hit the subtotal.
+func cartWithTotals(ctx context.Context, t *testing.T, svc *service.Service) (cart models.Cart, first, second models.LineItem) {
 	t.Helper()
 
 	var err error
@@ -27,31 +28,32 @@ func toplamliSepet(ctx context.Context, t *testing.T, svc *service.Service) (car
 	require.NoError(t, err)
 
 	first, err = svc.AddLineItem(ctx, cart.ID, service.AddLineItemInput{
-		VariantID: variantA, Title: "Tişört", Quantity: 3,
+		VariantID: variantA, Title: "T-shirt", Quantity: 3,
 	})
 	require.NoError(t, err)
 	second, err = svc.AddLineItem(ctx, cart.ID, service.AddLineItemInput{
-		VariantID: variantB, Title: "Pantolon", Quantity: 2,
+		VariantID: variantB, Title: "Trousers", Quantity: 2,
 	})
 	require.NoError(t, err)
 
-	// Sepet GÜNCEL hâliyle dönülür: SetTotals hesabın dayandığı şekil sayacını
-	// çağırandan ister ve gerçek workflow da yazmadan önce sepeti okur.
+	// The cart is returned in its CURRENT state: SetTotals asks the caller for
+	// the shape counter the calculation rests on, and the real workflow reads the
+	// cart before writing as well.
 	detail, err := svc.GetCart(ctx, cart.ID)
 	require.NoError(t, err)
 
 	return detail.Cart, first, second
 }
 
-// TestSetTotalsBasariliYazarVeDamgalar tutarlı bir hesabın yazıldığını ve
-// toplamların artık bayat OLMADIĞINI doğrular.
-func TestSetTotalsBasariliYazarVeDamgalar(t *testing.T) {
-	svc, _ := yeniServis(t)
+// TestSetTotalsWritesAndStampsOnSuccess verifies that a consistent calculation
+// is written and that the totals are NO LONGER stale.
+func TestSetTotalsWritesAndStampsOnSuccess(t *testing.T) {
+	svc, _ := newService(t)
 	ctx := context.Background()
-	cart, first, second := toplamliSepet(ctx, t, svc)
+	cart, first, second := cartWithTotals(ctx, t, svc)
 
-	// 3 × 1000 = 3000, 2 × 2500 = 5000 -> ara toplam 8000.
-	// İndirim 500, vergi 1500, kargo 2000 -> toplam 11000.
+	// 3 x 1000 = 3000, 2 x 2500 = 5000 -> subtotal 8000.
+	// Discount 500, tax 1500, shipping 2000 -> total 11000.
 	err := svc.SetTotals(ctx, cart.ID, service.Totals{
 		Revision:      cart.Revision,
 		Subtotal:      8000,
@@ -75,7 +77,7 @@ func TestSetTotalsBasariliYazarVeDamgalar(t *testing.T) {
 	assert.Equal(t, int64(2000), detail.ShippingTotal)
 	assert.Equal(t, int64(11000), detail.Total)
 	assert.True(t, detail.TotalsConsistent())
-	assert.False(t, detail.TotalsStale(), "yazılan toplamlar sepetin güncel şekline ait olmalı")
+	assert.False(t, detail.TotalsStale(), "the written totals must belong to the cart's current shape")
 
 	require.Len(t, detail.Items, 2)
 	assert.Equal(t, int64(1000), detail.Items[0].UnitPrice)
@@ -83,44 +85,44 @@ func TestSetTotalsBasariliYazarVeDamgalar(t *testing.T) {
 	assert.Equal(t, int64(5310), detail.Items[1].Total)
 }
 
-// TestSetTotalsSepetKimliginiZorlar sepet toplam kimliğini sağlamayan bir
-// hesabın reddedildiğini doğrular.
+// TestSetTotalsEnforcesTheCartIdentity verifies that a calculation that does not
+// satisfy the cart total identity is rejected.
 //
-// Bu, SetTotals'ın var oluş sebebidir: workflow'daki bir hesap hatası sessizce
-// veritabanına yazılamaz.
-func TestSetTotalsSepetKimliginiZorlar(t *testing.T) {
-	svc, _ := yeniServis(t)
+// This is SetTotals's reason for existing: a calculation error in the workflow
+// cannot be written to the database silently.
+func TestSetTotalsEnforcesTheCartIdentity(t *testing.T) {
+	svc, _ := newService(t)
 	ctx := context.Background()
-	cart, first, second := toplamliSepet(ctx, t, svc)
+	cart, first, second := cartWithTotals(ctx, t, svc)
 
-	tutarli := []service.LineTotals{
+	consistent := []service.LineTotals{
 		{LineItemID: first.ID, UnitPrice: 1000, Subtotal: 3000, Total: 3000},
 		{LineItemID: second.ID, UnitPrice: 2500, Subtotal: 5000, Total: 5000},
 	}
 
-	testler := map[string]service.Totals{
-		"toplam eksik": {
+	cases := map[string]service.Totals{
+		"the total is short": {
 			Revision: cart.Revision,
 			Subtotal: 8000, DiscountTotal: 500, TaxTotal: 1500, ShippingTotal: 2000,
-			Total: 10999, Lines: tutarli,
+			Total: 10999, Lines: consistent,
 		},
-		"indirim eklenmiş": {
+		"the discount was added instead of subtracted": {
 			Revision: cart.Revision,
-			Subtotal: 8000, DiscountTotal: 500, Total: 8500, Lines: tutarli,
+			Subtotal: 8000, DiscountTotal: 500, Total: 8500, Lines: consistent,
 		},
-		"vergi unutulmuş": {
+		"the tax was forgotten": {
 			Revision: cart.Revision,
-			Subtotal: 8000, TaxTotal: 1440, Total: 8000, Lines: tutarli,
+			Subtotal: 8000, TaxTotal: 1440, Total: 8000, Lines: consistent,
 		},
-		"kargo unutulmuş": {
+		"the shipping was forgotten": {
 			Revision: cart.Revision,
-			Subtotal: 8000, ShippingTotal: 2000, Total: 8000, Lines: tutarli,
+			Subtotal: 8000, ShippingTotal: 2000, Total: 8000, Lines: consistent,
 		},
 	}
 
-	for ad, girdi := range testler {
-		t.Run(ad, func(t *testing.T) {
-			err := svc.SetTotals(ctx, cart.ID, girdi)
+	for name, input := range cases {
+		t.Run(name, func(t *testing.T) {
+			err := svc.SetTotals(ctx, cart.ID, input)
 
 			require.Error(t, err)
 			assert.Equal(t, errors.KindInvalid, errors.KindOf(err))
@@ -130,22 +132,22 @@ func TestSetTotalsSepetKimliginiZorlar(t *testing.T) {
 
 	detail, err := svc.GetCart(ctx, cart.ID)
 	require.NoError(t, err)
-	assert.Zero(t, detail.Total, "reddedilen hesap yazılmamalı")
-	assert.Zero(t, detail.Items[0].UnitPrice, "reddedilen hesap satırlara da yazılmamalı")
+	assert.Zero(t, detail.Total, "a rejected calculation must not be written")
+	assert.Zero(t, detail.Items[0].UnitPrice, "a rejected calculation must not be written to the lines either")
 }
 
-// TestSetTotalsSatirKimliginiZorlar satır toplam kimliğini sağlamayan bir
-// hesabın reddedildiğini doğrular.
-func TestSetTotalsSatirKimliginiZorlar(t *testing.T) {
-	svc, _ := yeniServis(t)
+// TestSetTotalsEnforcesTheLineIdentity verifies that a calculation that does not
+// satisfy the line total identity is rejected.
+func TestSetTotalsEnforcesTheLineIdentity(t *testing.T) {
+	svc, _ := newService(t)
 	ctx := context.Background()
-	cart, first, second := toplamliSepet(ctx, t, svc)
+	cart, first, second := cartWithTotals(ctx, t, svc)
 
 	err := svc.SetTotals(ctx, cart.ID, service.Totals{
 		Revision: cart.Revision,
 		Subtotal: 8000, Total: 8000,
 		Lines: []service.LineTotals{
-			// 3000 - 100 + 200 = 3100 olmalı, 3000 verildi.
+			// It should be 3000 - 100 + 200 = 3100, 3000 was given.
 			{LineItemID: first.ID, UnitPrice: 1000, Subtotal: 3000, DiscountTotal: 100, TaxTotal: 200, Total: 3000},
 			{LineItemID: second.ID, UnitPrice: 2500, Subtotal: 5000, Total: 5000},
 		},
@@ -156,22 +158,23 @@ func TestSetTotalsSatirKimliginiZorlar(t *testing.T) {
 	assert.Equal(t, service.CodeTotalsInconsistent, errors.CodeOf(err))
 }
 
-// TestSetTotalsSatirAraToplamiCarpimiZorlar satır ara toplamının birim fiyat ×
-// adet olduğunu doğrular.
+// TestSetTotalsEnforcesTheLineSubtotalMultiplication verifies that the line
+// subtotal is the unit price x the quantity.
 //
-// Adet sepetin KENDİ verisidir; bu çarpımı doğrulayabilen tek yer burasıdır.
-// Yanlış adetle fiyatlanmış bir satır başka hiçbir kapıda yakalanmazdı.
-func TestSetTotalsSatirAraToplamiCarpimiZorlar(t *testing.T) {
-	svc, _ := yeniServis(t)
+// The quantity is the cart's OWN data; this is the only place that can validate
+// this multiplication. A line priced with the wrong quantity would be caught at
+// no other gate.
+func TestSetTotalsEnforcesTheLineSubtotalMultiplication(t *testing.T) {
+	svc, _ := newService(t)
 	ctx := context.Background()
-	cart, first, second := toplamliSepet(ctx, t, svc)
+	cart, first, second := cartWithTotals(ctx, t, svc)
 
 	err := svc.SetTotals(ctx, cart.ID, service.Totals{
 		Revision: cart.Revision,
 		Subtotal: 6000, Total: 6000,
 		Lines: []service.LineTotals{
-			// Satırın adedi 3; 1000 × 3 = 3000 olmalı, 1000 verilmiş
-			// (adet 1 sanılmış).
+			// The line's quantity is 3; it should be 1000 x 3 = 3000, 1000 was
+			// given (the quantity was assumed to be 1).
 			{LineItemID: first.ID, UnitPrice: 1000, Subtotal: 1000, Total: 1000},
 			{LineItemID: second.ID, UnitPrice: 2500, Subtotal: 5000, Total: 5000},
 		},
@@ -179,19 +182,19 @@ func TestSetTotalsSatirAraToplamiCarpimiZorlar(t *testing.T) {
 
 	require.Error(t, err)
 	assert.Equal(t, errors.KindInvalid, errors.KindOf(err))
-	assert.Contains(t, err.Error(), "quantity", "hata hangi çarpımın tutmadığını yazmalı")
+	assert.Contains(t, err.Error(), "quantity", "the error must say which multiplication did not hold")
 }
 
-// TestSetTotalsAraToplamSatirlarinToplamiOlmali sepet ara toplamının
-// satırların ara toplamlarına eşit olmasını zorladığını doğrular.
-func TestSetTotalsAraToplamSatirlarinToplamiOlmali(t *testing.T) {
-	svc, _ := yeniServis(t)
+// TestSetTotalsSubtotalMustBeTheSumOfTheLines verifies that the cart subtotal is
+// forced to equal the sum of the line subtotals.
+func TestSetTotalsSubtotalMustBeTheSumOfTheLines(t *testing.T) {
+	svc, _ := newService(t)
 	ctx := context.Background()
-	cart, first, second := toplamliSepet(ctx, t, svc)
+	cart, first, second := cartWithTotals(ctx, t, svc)
 
 	err := svc.SetTotals(ctx, cart.ID, service.Totals{
 		Revision: cart.Revision,
-		// Satırlar 3000 + 5000 = 8000 ediyor; 7999 verildi.
+		// The lines come to 3000 + 5000 = 8000; 7999 was given.
 		Subtotal: 7999, Total: 7999,
 		Lines: []service.LineTotals{
 			{LineItemID: first.ID, UnitPrice: 1000, Subtotal: 3000, Total: 3000},
@@ -204,59 +207,61 @@ func TestSetTotalsAraToplamSatirlarinToplamiOlmali(t *testing.T) {
 	assert.Equal(t, service.CodeTotalsInconsistent, errors.CodeOf(err))
 }
 
-// TestSetTotalsFiyatlanmamisSatirSifirTutarlaGecemez sepetin TÜM satırlarının
-// kapsanmasının zorunlu olduğunu doğrular.
+// TestSetTotalsAnUnpricedLineCannotPassWithAZeroAmount verifies that covering
+// ALL of the cart's lines is mandatory.
 //
-// Kapsama zorunlu olmasaydı, tutarı verilmeyen satırın SAKLI değerleri
-// korunurdu; yeni açılmış bir satırın saklı ara toplamı ise SIFIRDIR. Yani
-// satırları göndermeyi unutan bir hesap turu, 300000 tutarındaki bir sepeti
-// "subtotal 0, total 0" ile TUTARLI gösterir ve sepet bedavaya tamamlanırdı.
-func TestSetTotalsFiyatlanmamisSatirSifirTutarlaGecemez(t *testing.T) {
-	svc, _ := yeniServis(t)
+// Had the coverage not been mandatory, the STORED values of a line whose amount
+// was not given would be preserved; and the stored subtotal of a newly opened
+// line is ZERO. That is, a calculation round that forgets to send the lines
+// shows a cart worth 300000 as CONSISTENT with "subtotal 0, total 0" and the
+// cart would be completed for free.
+func TestSetTotalsAnUnpricedLineCannotPassWithAZeroAmount(t *testing.T) {
+	svc, _ := newService(t)
 	ctx := context.Background()
-	cart := yeniSepet(ctx, t, svc)
+	cart := newCart(ctx, t, svc)
 
 	item, err := svc.AddLineItem(ctx, cart.ID, service.AddLineItemInput{
-		VariantID: variantA, Title: "Tişört", Quantity: 3, UnitPrice: 100000,
+		VariantID: variantA, Title: "T-shirt", Quantity: 3, UnitPrice: 100000,
 	})
 	require.NoError(t, err)
-	guncel, err := svc.GetCart(ctx, cart.ID)
+	current, err := svc.GetCart(ctx, cart.ID)
 	require.NoError(t, err)
 
 	err = svc.SetTotals(ctx, cart.ID, service.Totals{
-		Revision: guncel.Revision, Subtotal: 0, Total: 0,
+		Revision: current.Revision, Subtotal: 0, Total: 0,
 	})
 
-	require.Error(t, err, "fiyatlanmamış satırı atlayan hesap kabul edilmemeli")
+	require.Error(t, err, "a calculation that skips an unpriced line must not be accepted")
 	assert.Equal(t, errors.KindInvalid, errors.KindOf(err))
 	assert.Equal(t, service.CodeTotalsInconsistent, errors.CodeOf(err))
-	assert.Contains(t, err.Error(), item.ID, "hata hangi satırın atlandığını yazmalı")
+	assert.Contains(t, err.Error(), item.ID, "the error must say which line was skipped")
 
 	detail, err := svc.GetCart(ctx, cart.ID)
 	require.NoError(t, err)
-	assert.True(t, detail.TotalsStale(), "reddedilen tur sepeti taze damgalamamalı")
+	assert.True(t, detail.TotalsStale(), "a rejected round must not stamp the cart fresh")
 }
 
-// TestSetTotalsAdetDegistiktenSonraSatirsizYazmaReddedilir adet değişiminden
-// sonra satırları göndermeyen bir hesabın reddedildiğini doğrular.
+// TestSetTotalsRejectsALinelessWriteAfterAQuantityChange verifies that a
+// calculation that does not send the lines after a quantity change is rejected.
 //
-// Senaryo gerçektir: satır BİR KEZ doğru fiyatlanır, sonra müşteri adedi
-// artırır ve yeni hesap turu satırları göndermeyi unutur. Saklı tutarlara
-// güvenilseydi Σ değişmediği için hesap tutarlı görünür, sepet 10 adetlik malı
-// 1 adet fiyatına TAZE damgayla tamamlardı.
-func TestSetTotalsAdetDegistiktenSonraSatirsizYazmaReddedilir(t *testing.T) {
-	svc, _ := yeniServis(t)
+// The scenario is real: the line is priced correctly ONCE, then the customer
+// increases the quantity and the new calculation round forgets to send the
+// lines. Had the stored amounts been trusted, the calculation would look
+// consistent because Σ did not change, and the cart would be completed with a
+// FRESH stamp, charging 1 item's price for 10 items of goods.
+func TestSetTotalsRejectsALinelessWriteAfterAQuantityChange(t *testing.T) {
+	svc, _ := newService(t)
 	ctx := context.Background()
-	cart := yeniSepet(ctx, t, svc)
+	cart := newCart(ctx, t, svc)
 
 	item, err := svc.AddLineItem(ctx, cart.ID, service.AddLineItemInput{
-		VariantID: variantA, Title: "Tişört", Quantity: 1,
+		VariantID: variantA, Title: "T-shirt", Quantity: 1,
 	})
 	require.NoError(t, err)
-	guncel, err := svc.GetCart(ctx, cart.ID)
+	current, err := svc.GetCart(ctx, cart.ID)
 	require.NoError(t, err)
 	require.NoError(t, svc.SetTotals(ctx, cart.ID, service.Totals{
-		Revision: guncel.Revision, Subtotal: 1000, Total: 1000,
+		Revision: current.Revision, Subtotal: 1000, Total: 1000,
 		Lines: []service.LineTotals{
 			{LineItemID: item.ID, UnitPrice: 1000, Subtotal: 1000, Total: 1000},
 		},
@@ -264,11 +269,11 @@ func TestSetTotalsAdetDegistiktenSonraSatirsizYazmaReddedilir(t *testing.T) {
 
 	_, err = svc.UpdateLineItemQuantity(ctx, cart.ID, item.ID, 10)
 	require.NoError(t, err)
-	guncel, err = svc.GetCart(ctx, cart.ID)
+	current, err = svc.GetCart(ctx, cart.ID)
 	require.NoError(t, err)
 
 	err = svc.SetTotals(ctx, cart.ID, service.Totals{
-		Revision: guncel.Revision, Subtotal: 1000, ShippingTotal: 500, Total: 1500,
+		Revision: current.Revision, Subtotal: 1000, ShippingTotal: 500, Total: 1500,
 	})
 
 	require.Error(t, err)
@@ -277,39 +282,40 @@ func TestSetTotalsAdetDegistiktenSonraSatirsizYazmaReddedilir(t *testing.T) {
 
 	detail, err := svc.GetCart(ctx, cart.ID)
 	require.NoError(t, err)
-	assert.True(t, detail.TotalsStale(), "reddedilen tur sepeti taze damgalamamalı")
-	assert.Equal(t, int64(1000), detail.Total, "önceki geçerli hesap korunmalı")
+	assert.True(t, detail.TotalsStale(), "a rejected round must not stamp the cart fresh")
+	assert.Equal(t, int64(1000), detail.Total, "the previous valid calculation must be preserved")
 }
 
-// TestSetTotalsKargoGuncellemesiDeTumSatirlariIster kısmi güncellemenin hiçbir
-// biçiminin kabul edilmediğini doğrular.
+// TestSetTotalsAShippingUpdateAlsoRequiresAllTheLines verifies that no form of
+// partial update is accepted.
 //
-// "Yalnızca kargoyu yaz" makul görünen ama sözleşmeyi delen çağrıdır: aynı
-// kapıdan fiyatlanmamış satır da geçer. Kargo değişimi zaten sepetin şeklini
-// değiştirir ve hesabın baştan koşmasını gerektirir.
-func TestSetTotalsKargoGuncellemesiDeTumSatirlariIster(t *testing.T) {
-	svc, _ := yeniServis(t)
+// "Write the shipping only" is the call that looks reasonable but pierces the
+// contract: an unpriced line goes through the same door. A shipping change
+// already changes the cart's shape and requires the calculation to run from the
+// start.
+func TestSetTotalsAShippingUpdateAlsoRequiresAllTheLines(t *testing.T) {
+	svc, _ := newService(t)
 	ctx := context.Background()
-	cart, first, second := toplamliSepet(ctx, t, svc)
+	cart, first, second := cartWithTotals(ctx, t, svc)
 
-	tumSatirlar := []service.LineTotals{
+	allLines := []service.LineTotals{
 		{LineItemID: first.ID, UnitPrice: 1000, Subtotal: 3000, Total: 3000},
 		{LineItemID: second.ID, UnitPrice: 2500, Subtotal: 5000, Total: 5000},
 	}
 	require.NoError(t, svc.SetTotals(ctx, cart.ID, service.Totals{
-		Revision: cart.Revision, Subtotal: 8000, Total: 8000, Lines: tumSatirlar,
+		Revision: cart.Revision, Subtotal: 8000, Total: 8000, Lines: allLines,
 	}))
 
 	err := svc.SetTotals(ctx, cart.ID, service.Totals{
 		Revision: cart.Revision, Subtotal: 8000, ShippingTotal: 2000, Total: 10000,
 	})
-	require.Error(t, err, "satırsız kısmi güncelleme kabul edilmemeli")
+	require.Error(t, err, "a partial update without lines must not be accepted")
 	assert.Equal(t, service.CodeTotalsInconsistent, errors.CodeOf(err))
 
-	// Aynı tur satırlarla birlikte gönderilince geçer.
+	// The same round passes once it is sent together with the lines.
 	require.NoError(t, svc.SetTotals(ctx, cart.ID, service.Totals{
 		Revision: cart.Revision, Subtotal: 8000, ShippingTotal: 2000, Total: 10000,
-		Lines: tumSatirlar,
+		Lines: allLines,
 	}))
 
 	detail, err := svc.GetCart(ctx, cart.ID)
@@ -318,36 +324,37 @@ func TestSetTotalsKargoGuncellemesiDeTumSatirlariIster(t *testing.T) {
 	assert.False(t, detail.TotalsStale())
 }
 
-// TestSetTotalsBayatHesapReddedilir hesabın dayandığı sepet şekli değişmişse
-// yazmanın reddedildiğini doğrular.
+// TestSetTotalsRejectsAStaleCalculation verifies that if the cart shape the
+// calculation rests on has changed, the write is rejected.
 //
-// Bu, modülün savunduğunu iddia ettiği yarıştır: workflow sepeti okur, hesabı
-// KİLİDİN DIŞINDA yapar, araya bir satır girer ve bayat hesap yazılmak istenir.
-// Damga yazma anındaki şekilden alınsaydı bayat hesap GÜNCEL diye damgalanır,
-// MarkCompleted'ın bayatlık kapısı açılır ve müşteri sepetindeki maldan azını
-// öderdi.
-func TestSetTotalsBayatHesapReddedilir(t *testing.T) {
-	svc, _ := yeniServis(t)
+// This is the race the module claims to defend against: the workflow reads the
+// cart, does the calculation OUTSIDE THE LOCK, a line comes in between, and the
+// stale calculation is offered for writing. Had the stamp been taken from the
+// shape at the moment of the write, the stale calculation would be stamped as
+// CURRENT, MarkCompleted's staleness gate would open and the customer would pay
+// less than the goods in their cart.
+func TestSetTotalsRejectsAStaleCalculation(t *testing.T) {
+	svc, _ := newService(t)
 	ctx := context.Background()
-	cart := yeniSepet(ctx, t, svc)
+	cart := newCart(ctx, t, svc)
 
 	a, err := svc.AddLineItem(ctx, cart.ID, service.AddLineItemInput{
 		VariantID: variantA, Title: "A", Quantity: 1,
 	})
 	require.NoError(t, err)
 
-	// Workflow sepeti okur ve hesabını bu şekle göre yapar.
-	hesaplanan, err := svc.GetCart(ctx, cart.ID)
+	// The workflow reads the cart and does its calculation for this shape.
+	calculated, err := svc.GetCart(ctx, cart.ID)
 	require.NoError(t, err)
 
-	// Araya ikinci satır girer.
+	// A second line comes in between.
 	_, err = svc.AddLineItem(ctx, cart.ID, service.AddLineItemInput{
 		VariantID: variantB, Title: "B", Quantity: 1,
 	})
 	require.NoError(t, err)
 
 	err = svc.SetTotals(ctx, cart.ID, service.Totals{
-		Revision: hesaplanan.Revision, Subtotal: 1000, Total: 1000,
+		Revision: calculated.Revision, Subtotal: 1000, Total: 1000,
 		Lines: []service.LineTotals{
 			{LineItemID: a.ID, UnitPrice: 1000, Subtotal: 1000, Total: 1000},
 		},
@@ -359,60 +366,63 @@ func TestSetTotalsBayatHesapReddedilir(t *testing.T) {
 
 	detail, err := svc.GetCart(ctx, cart.ID)
 	require.NoError(t, err)
-	assert.Zero(t, detail.Total, "bayat hesap yazılmamalı")
-	assert.True(t, detail.TotalsStale(), "sepet bayat kalmalı")
+	assert.Zero(t, detail.Total, "a stale calculation must not be written")
+	assert.True(t, detail.TotalsStale(), "the cart must stay stale")
 
 	_, err = svc.MarkCompleted(ctx, cart.ID)
-	require.Error(t, err, "bayat sepet tamamlanamamalı")
+	require.Error(t, err, "a stale cart must not be completable")
 	assert.Equal(t, service.CodeTotalsStale, errors.CodeOf(err))
 }
 
-// TestSetTotalsSatirDisiDegisiklikDeYakalanir satır kümesi
-// değişmeden de yarışın yakalandığını doğrular.
+// TestSetTotalsCatchesAChangeOutsideTheLinesToo verifies that the race is caught
+// even when the line set does not change.
 //
-// Kargo yöntemi eklemek satırlara dokunmaz; kapsama kontrolü bu turu geçerdi.
-// Yakalayan tek şey, hesabın dayandığı şeklin çağırandan alınmasıdır.
-func TestSetTotalsSatirDisiDegisiklikDeYakalanir(t *testing.T) {
-	svc, _ := yeniServis(t)
+// Adding a shipping method does not touch the lines; the coverage check would
+// let this round through. The only thing that catches it is that the shape the
+// calculation rests on is taken from the caller.
+func TestSetTotalsCatchesAChangeOutsideTheLinesToo(t *testing.T) {
+	svc, _ := newService(t)
 	ctx := context.Background()
-	cart := yeniSepet(ctx, t, svc)
+	cart := newCart(ctx, t, svc)
 
 	item, err := svc.AddLineItem(ctx, cart.ID, service.AddLineItemInput{
-		VariantID: variantA, Title: "Tişört", Quantity: 1,
+		VariantID: variantA, Title: "T-shirt", Quantity: 1,
 	})
 	require.NoError(t, err)
-	hesaplanan, err := svc.GetCart(ctx, cart.ID)
+	calculated, err := svc.GetCart(ctx, cart.ID)
 	require.NoError(t, err)
 
-	// Müşteri hesap sürerken kargo yöntemi seçer; satır kümesi AYNI kalır.
+	// The customer picks a shipping method while the calculation is running; the
+	// line set stays THE SAME.
 	_, err = svc.AddShippingMethod(ctx, cart.ID, service.AddShippingMethodInput{
-		Name: "Standart", Amount: 2500,
+		Name: "Standard", Amount: 2500,
 	})
 	require.NoError(t, err)
 
 	err = svc.SetTotals(ctx, cart.ID, service.Totals{
-		Revision: hesaplanan.Revision, Subtotal: 1000, Total: 1000,
+		Revision: calculated.Revision, Subtotal: 1000, Total: 1000,
 		Lines: []service.LineTotals{
 			{LineItemID: item.ID, UnitPrice: 1000, Subtotal: 1000, Total: 1000},
 		},
 	})
 
-	require.Error(t, err, "kargosu ödenmemiş bayat hesap kabul edilmemeli")
+	require.Error(t, err, "a stale calculation whose shipping is not paid must not be accepted")
 	assert.Equal(t, errors.KindConflict, errors.KindOf(err))
 	assert.Equal(t, service.CodeTotalsStale, errors.CodeOf(err))
 }
 
-// TestSetTotalsSifirSurumEskiDavranisaDusmez doldurulmayan Revision alanının
-// "verilmedi" sayılmadığını doğrular.
+// TestSetTotalsAZeroRevisionDoesNotFallBackToTheOldBehavior verifies that a
+// Revision field that was not filled in does not count as "not given".
 //
-// Sıfır GERÇEK bir şekil değeridir (hiç değiştirilmemiş sepet). Geçiş kolaylığı
-// için sıfırda eski davranışa düşülseydi, alanı doldurmayı unutan her çağıran
-// tam da kapatılmak istenen yarışı geri getirirdi.
-func TestSetTotalsSifirSurumEskiDavranisaDusmez(t *testing.T) {
-	svc, _ := yeniServis(t)
+// Zero is a REAL shape value (a cart that has never been changed). Had there
+// been a fallback to the old behavior at zero for the sake of an easy migration,
+// every caller who forgot to fill the field in would bring back exactly the race
+// that was meant to be closed.
+func TestSetTotalsAZeroRevisionDoesNotFallBackToTheOldBehavior(t *testing.T) {
+	svc, _ := newService(t)
 	ctx := context.Background()
-	cart, first, second := toplamliSepet(ctx, t, svc)
-	require.Positive(t, cart.Revision, "fikstür sepeti değiştirmiş olmalı")
+	cart, first, second := cartWithTotals(ctx, t, svc)
+	require.Positive(t, cart.Revision, "the fixture must have changed the cart")
 
 	err := svc.SetTotals(ctx, cart.ID, service.Totals{
 		Subtotal: 8000, Total: 8000,
@@ -426,12 +436,12 @@ func TestSetTotalsSifirSurumEskiDavranisaDusmez(t *testing.T) {
 	assert.Equal(t, service.CodeTotalsStale, errors.CodeOf(err))
 }
 
-// TestSetTotalsBosSepetteAraToplamSifirOlmali satırsız bir sepette sıfırdan
-// farklı bir ara toplamın reddedildiğini doğrular.
-func TestSetTotalsBosSepetteAraToplamSifirOlmali(t *testing.T) {
-	svc, _ := yeniServis(t)
+// TestSetTotalsSubtotalMustBeZeroOnAnEmptyCart verifies that on a cart without
+// lines a subtotal different from zero is rejected.
+func TestSetTotalsSubtotalMustBeZeroOnAnEmptyCart(t *testing.T) {
+	svc, _ := newService(t)
 	ctx := context.Background()
-	cart := yeniSepet(ctx, t, svc)
+	cart := newCart(ctx, t, svc)
 
 	err := svc.SetTotals(ctx, cart.ID, service.Totals{Subtotal: 100, Total: 100})
 
@@ -440,22 +450,22 @@ func TestSetTotalsBosSepetteAraToplamSifirOlmali(t *testing.T) {
 
 	require.NoError(t, svc.SetTotals(ctx, cart.ID, service.Totals{
 		ShippingTotal: 2500, Total: 2500,
-	}), "satırsız sepete yalnızca kargo yazılabilmeli")
+	}), "it must be possible to write only the shipping to a cart without lines")
 }
 
-// TestSetTotalsBilinmeyenSatirReddedilir başka bir sepetin (ya da olmayan bir)
-// satırının tutarının yazılamayacağını doğrular.
-func TestSetTotalsBilinmeyenSatirReddedilir(t *testing.T) {
-	svc, _ := yeniServis(t)
+// TestSetTotalsRejectsAnUnknownLine verifies that the amount of another cart's
+// line (or of a line that does not exist) cannot be written.
+func TestSetTotalsRejectsAnUnknownLine(t *testing.T) {
+	svc, _ := newService(t)
 	ctx := context.Background()
-	cart, first, _ := toplamliSepet(ctx, t, svc)
+	cart, first, _ := cartWithTotals(ctx, t, svc)
 
 	err := svc.SetTotals(ctx, cart.ID, service.Totals{
 		Revision: cart.Revision,
 		Subtotal: 3000, Total: 3000,
 		Lines: []service.LineTotals{
 			{LineItemID: first.ID, UnitPrice: 1000, Subtotal: 3000, Total: 3000},
-			{LineItemID: "li_BASKA", UnitPrice: 100, Subtotal: 100, Total: 100},
+			{LineItemID: "li_OTHER", UnitPrice: 100, Subtotal: 100, Total: 100},
 		},
 	})
 
@@ -464,15 +474,15 @@ func TestSetTotalsBilinmeyenSatirReddedilir(t *testing.T) {
 	assert.Equal(t, service.CodeLineItemNotFound, errors.CodeOf(err))
 }
 
-// TestSetTotalsTekrarlananSatirReddedilir aynı satır için iki tutar
-// verilmesinin reddedildiğini doğrular.
+// TestSetTotalsRejectsARepeatedLine verifies that giving two amounts for the
+// same line is rejected.
 //
-// Sessizce sonuncusu kazansaydı, birbirini ezen iki hesap arasındaki fark
-// yalnızca sıraya bağlı olurdu.
-func TestSetTotalsTekrarlananSatirReddedilir(t *testing.T) {
-	svc, _ := yeniServis(t)
+// Had the last one silently won, the difference between two calculations
+// overwriting each other would depend on the order alone.
+func TestSetTotalsRejectsARepeatedLine(t *testing.T) {
+	svc, _ := newService(t)
 	ctx := context.Background()
-	cart, first, second := toplamliSepet(ctx, t, svc)
+	cart, first, second := cartWithTotals(ctx, t, svc)
 
 	err := svc.SetTotals(ctx, cart.ID, service.Totals{
 		Revision: cart.Revision,
@@ -488,24 +498,24 @@ func TestSetTotalsTekrarlananSatirReddedilir(t *testing.T) {
 	assert.Equal(t, errors.KindInvalid, errors.KindOf(err))
 }
 
-// TestSetTotalsNegatifTutarReddedilir negatif toplamların reddedildiğini
-// doğrular.
-func TestSetTotalsNegatifTutarReddedilir(t *testing.T) {
-	svc, _ := yeniServis(t)
+// TestSetTotalsRejectsANegativeAmount verifies that negative totals are
+// rejected.
+func TestSetTotalsRejectsANegativeAmount(t *testing.T) {
+	svc, _ := newService(t)
 	ctx := context.Background()
-	cart := yeniSepet(ctx, t, svc)
+	cart := newCart(ctx, t, svc)
 
-	testler := map[string]service.Totals{
-		"negatif ara toplam": {Subtotal: -1, Total: -1},
-		"negatif indirim":    {DiscountTotal: -100, Total: 100},
-		"negatif vergi":      {TaxTotal: -100, Total: -100},
-		"negatif kargo":      {ShippingTotal: -100, Total: -100},
-		"negatif toplam":     {Total: -1},
+	cases := map[string]service.Totals{
+		"negative subtotal": {Subtotal: -1, Total: -1},
+		"negative discount": {DiscountTotal: -100, Total: 100},
+		"negative tax":      {TaxTotal: -100, Total: -100},
+		"negative shipping": {ShippingTotal: -100, Total: -100},
+		"negative total":    {Total: -1},
 	}
 
-	for ad, girdi := range testler {
-		t.Run(ad, func(t *testing.T) {
-			err := svc.SetTotals(ctx, cart.ID, girdi)
+	for name, input := range cases {
+		t.Run(name, func(t *testing.T) {
+			err := svc.SetTotals(ctx, cart.ID, input)
 
 			require.Error(t, err)
 			assert.Equal(t, errors.KindInvalid, errors.KindOf(err))
@@ -513,12 +523,13 @@ func TestSetTotalsNegatifTutarReddedilir(t *testing.T) {
 	}
 }
 
-// TestSetTotalsTavaniAsanTutarReddedilir üst sınırı aşan tutarların
-// reddedildiğini doğrular; sınır taşmayı yapısal olarak imkânsız kılar.
-func TestSetTotalsTavaniAsanTutarReddedilir(t *testing.T) {
-	svc, _ := yeniServis(t)
+// TestSetTotalsRejectsAnAmountAboveTheCeiling verifies that amounts exceeding
+// the upper bound are rejected; the bound makes overflow structurally
+// impossible.
+func TestSetTotalsRejectsAnAmountAboveTheCeiling(t *testing.T) {
+	svc, _ := newService(t)
 	ctx := context.Background()
-	cart := yeniSepet(ctx, t, svc)
+	cart := newCart(ctx, t, svc)
 
 	err := svc.SetTotals(ctx, cart.ID, service.Totals{
 		ShippingTotal: models.MaxTotal + 1,
@@ -529,16 +540,16 @@ func TestSetTotalsTavaniAsanTutarReddedilir(t *testing.T) {
 	assert.Equal(t, errors.KindInvalid, errors.KindOf(err))
 }
 
-// TestSetTotalsHataHalindeHicbirSatirYazilmaz satır yazımı sırasında hata
-// çıkarsa daha önce yazılanların GERİ ALINDIĞINI doğrular.
+// TestSetTotalsWritesNoLineOnError verifies that if an error comes up while the
+// lines are being written, what was written earlier IS ROLLED BACK.
 //
-// Kısmen yazılmış bir hesap turu, sepetin ara toplamı ile satırlarının
-// birbirini tutmadığı bir duruma yol açardı.
-func TestSetTotalsHataHalindeHicbirSatirYazilmaz(t *testing.T) {
-	svc, store := yeniServis(t)
+// A partially written calculation round would lead to a state in which the
+// cart's subtotal and its lines do not agree with each other.
+func TestSetTotalsWritesNoLineOnError(t *testing.T) {
+	svc, store := newService(t)
 	ctx := context.Background()
-	cart, first, second := toplamliSepet(ctx, t, svc)
-	store.failSetLineItemTotals = errors.Internal("cart_query_failed", "veritabanı düştü")
+	cart, first, second := cartWithTotals(ctx, t, svc)
+	store.failSetLineItemTotals = errors.Internal("cart_query_failed", "the database went down")
 
 	err := svc.SetTotals(ctx, cart.ID, service.Totals{
 		Revision: cart.Revision,
@@ -552,70 +563,73 @@ func TestSetTotalsHataHalindeHicbirSatirYazilmaz(t *testing.T) {
 	require.Error(t, err)
 	detail, getErr := svc.GetCart(ctx, cart.ID)
 	require.NoError(t, getErr)
-	assert.Zero(t, detail.Subtotal, "sepet toplamı yazılmamalı")
+	assert.Zero(t, detail.Subtotal, "the cart total must not be written")
 	for _, item := range detail.Items {
-		assert.Zero(t, item.Subtotal, "hiçbir satır yazılmamalı")
+		assert.Zero(t, item.Subtotal, "no line must be written")
 	}
 }
 
-// TestSetTotalsOlmayanSepetNotFound olmayan bir sepete yazmanın NotFound
-// döndürdüğünü doğrular.
-func TestSetTotalsOlmayanSepetNotFound(t *testing.T) {
-	svc, _ := yeniServis(t)
+// TestSetTotalsMissingCartReturnsNotFound verifies that writing to a cart that
+// does not exist returns NotFound.
+func TestSetTotalsMissingCartReturnsNotFound(t *testing.T) {
+	svc, _ := newService(t)
 
-	err := svc.SetTotals(context.Background(), "cart_YOK", service.Totals{})
+	err := svc.SetTotals(context.Background(), "cart_MISSING", service.Totals{})
 
 	require.Error(t, err)
 	assert.Equal(t, errors.KindNotFound, errors.KindOf(err))
 }
 
-// TestSetTotalsIndirimAraToplamiAsamaz aşırı indirimin vergi/kargo tarafından
-// YUTULARAK kimlik kontrolünden geçmesini engelleyen kuralı sabitler.
+// TestSetTotalsDiscountCannotExceedTheSubtotal pins down the rule that prevents
+// an excessive discount from passing the identity check by being SWALLOWED by
+// the tax/shipping.
 //
-// Regresyon: doğrulama yalnızca (a) aralık ve (b) kimlik
-// (total = subtotal - discount + tax + shipping) kontrol ediyordu. Aşırı bir
-// indirim kargo tarafından yutulduğunda kimlik SAĞLANIR ve toplam negatif bile
-// olmaz: subtotal=1000, discount=3000, shipping=2500 -> total=500 kabul
-// ediliyordu. Müşteri 1000'lik mala 2500'lük kargoyla birlikte 500 öder ve ne
-// servis ne de carts_totals_consistent kısıtı bunu görürdü.
-func TestSetTotalsIndirimAraToplamiAsamaz(t *testing.T) {
-	svc, _ := yeniServis(t)
+// Regression: the validation was checking only (a) the range and (b) the
+// identity (total = subtotal - discount + tax + shipping). When an excessive
+// discount is swallowed by the shipping, the identity HOLDS and the total does
+// not even go negative: subtotal=1000, discount=3000, shipping=2500 -> total=500
+// was being accepted. The customer pays 500 for 1000 worth of goods together
+// with 2500 worth of shipping, and neither the service nor the
+// carts_totals_consistent constraint would see it.
+func TestSetTotalsDiscountCannotExceedTheSubtotal(t *testing.T) {
+	svc, _ := newService(t)
 	ctx := context.Background()
-	cart, first, second := toplamliSepet(ctx, t, svc)
+	cart, first, second := cartWithTotals(ctx, t, svc)
 
-	tutarli := []service.LineTotals{
+	consistent := []service.LineTotals{
 		{LineItemID: first.ID, UnitPrice: 1000, Subtotal: 3000, Total: 3000},
 		{LineItemID: second.ID, UnitPrice: 2500, Subtotal: 5000, Total: 5000},
 	}
 
-	t.Run("sepet duzeyinde asiri indirim reddedilir", func(t *testing.T) {
+	t.Run("an excessive discount at the cart level is rejected", func(t *testing.T) {
 		err := svc.SetTotals(ctx, cart.ID, service.Totals{
 			Revision: cart.Revision,
 			Subtotal: 8000, DiscountTotal: 20000, ShippingTotal: 15000,
-			Total: 3000, // kimlik SAĞLANIYOR: 8000 - 20000 + 0 + 15000 = 3000
-			Lines: tutarli,
+			Total: 3000, // the identity HOLDS: 8000 - 20000 + 0 + 15000 = 3000
+			Lines: consistent,
 		})
-		require.Error(t, err, "kimlik sağlansa da indirim ara toplamı aşamaz")
-		assert.True(t, errors.IsInvalid(err), "sınıf Invalid olmalı: %v", err)
-		assert.Contains(t, err.Error(), "indirim")
+		require.Error(t, err, "the discount cannot exceed the subtotal even if the identity holds")
+		assert.True(t, errors.IsInvalid(err), "the kind must be Invalid: %v", err)
+		assert.Contains(t, err.Error(), "discount")
 	})
 
-	t.Run("satir duzeyinde asiri indirim reddedilir", func(t *testing.T) {
+	t.Run("an excessive discount at the line level is rejected", func(t *testing.T) {
 		err := svc.SetTotals(ctx, cart.ID, service.Totals{
 			Revision: cart.Revision,
 			Subtotal: 8000, Total: 8000,
 			Lines: []service.LineTotals{
-				// 3000'lik satıra 9000 indirim; vergi yutuyor, kimlik sağlanıyor.
+				// A discount of 9000 on a line of 3000; the tax swallows it and
+				// the identity holds.
 				{LineItemID: first.ID, UnitPrice: 1000, Subtotal: 3000,
 					DiscountTotal: 9000, TaxTotal: 9000, Total: 3000},
 				{LineItemID: second.ID, UnitPrice: 2500, Subtotal: 5000, Total: 5000},
 			},
 		})
-		require.Error(t, err, "satır indirimi de ara toplamı aşamaz")
-		assert.True(t, errors.IsInvalid(err), "sınıf Invalid olmalı: %v", err)
+		require.Error(t, err, "the line discount cannot exceed the subtotal either")
+		assert.True(t, errors.IsInvalid(err), "the kind must be Invalid: %v", err)
 	})
 
-	t.Run("ara toplama esit indirim gecerlidir", func(t *testing.T) {
+	t.Run("a discount equal to the subtotal is valid", func(t *testing.T) {
 		err := svc.SetTotals(ctx, cart.ID, service.Totals{
 			Revision: cart.Revision,
 			Subtotal: 8000, DiscountTotal: 8000, ShippingTotal: 2000,
@@ -625,20 +639,21 @@ func TestSetTotalsIndirimAraToplamiAsamaz(t *testing.T) {
 				{LineItemID: second.ID, UnitPrice: 2500, Subtotal: 5000, DiscountTotal: 5000, Total: 0},
 			},
 		})
-		assert.NoError(t, err, "ara toplama EŞİT indirim sınırdadır ve geçerlidir")
+		assert.NoError(t, err, "a discount EQUAL to the subtotal is at the boundary and is valid")
 	})
 }
 
-// TestSetTotalsBirTurTEKYazmaCagrisidir bir hesap turunun satır sayısından
-// BAĞIMSIZ olarak tek yazma çağrısı ürettiğini doğrular.
+// TestSetTotalsOneRoundIsASingleWriteCall verifies that one calculation round
+// produces a single write call INDEPENDENTLY of the number of lines.
 //
-// Sayı bir başarım süsü değil, sepetin KİLİT süresidir: yazma sepetin
-// FOR UPDATE kilidi altında koşar ve o kilit aynı sepete yazan her akışı sıraya
-// dizer. Eskiden satır başına bir UPDATE koşuluyordu; ölçüldü (yerel konteyner,
-// 100 satır, kilidin alınmasından commit'e, p50) 8,0 ms, tek deyimle 0,55 ms.
-// Döngüye geri dönen bir değişiklik burada, gerçek veritabanı olmadan yakalanır.
-func TestSetTotalsBirTurTEKYazmaCagrisidir(t *testing.T) {
-	svc, store := yeniServis(t)
+// The number is not a performance ornament, it is the cart's LOCK duration: the
+// write runs under the cart's FOR UPDATE lock and that lock queues up every flow
+// that writes to the same cart. It used to run one UPDATE per line; measured
+// (local container, 100 lines, from the taking of the lock to the commit, p50)
+// 8.0 ms, with a single statement 0.55 ms. A change that goes back to the loop is
+// caught here, without a real database.
+func TestSetTotalsOneRoundIsASingleWriteCall(t *testing.T) {
+	svc, store := newService(t)
 	ctx := context.Background()
 
 	cart, err := svc.CreateCart(ctx, service.CreateCartInput{
@@ -646,11 +661,11 @@ func TestSetTotalsBirTurTEKYazmaCagrisidir(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	const satirSayisi = 40
-	lines := make([]service.LineTotals, 0, satirSayisi)
-	for i := range satirSayisi {
+	const lineCount = 40
+	lines := make([]service.LineTotals, 0, lineCount)
+	for i := range lineCount {
 		item, addErr := svc.AddLineItem(ctx, cart.ID, service.AddLineItemInput{
-			VariantID: "variant_" + strconv.Itoa(i), Title: "Ürün", Quantity: 1,
+			VariantID: "variant_" + strconv.Itoa(i), Title: "Product", Quantity: 1,
 		})
 		require.NoError(t, addErr)
 		lines = append(lines, service.LineTotals{
@@ -664,28 +679,29 @@ func TestSetTotalsBirTurTEKYazmaCagrisidir(t *testing.T) {
 
 	require.NoError(t, svc.SetTotals(ctx, cart.ID, service.Totals{
 		Revision: detail.Revision,
-		Subtotal: 1000 * satirSayisi, Total: 1000 * satirSayisi,
+		Subtotal: 1000 * lineCount, Total: 1000 * lineCount,
 		Lines: lines,
 	}))
 
 	assert.Equal(t, 1, store.setLineTotalsCalls,
-		"tur kaç satır taşırsa taşısın TEK yazma çağrısı olmalı; "+
-			"satır başına çağrı kilidi satır sayısıyla orantılı tutar")
-	assert.Equal(t, satirSayisi, store.setLineTotalsRows,
-		"tek çağrı sepetin BÜTÜN satırlarını taşımalı")
+		"however many lines the round carries there must be a SINGLE write call; "+
+			"a call per line holds the lock proportionally to the number of lines")
+	assert.Equal(t, lineCount, store.setLineTotalsRows,
+		"the single call must carry ALL of the cart's lines")
 }
 
-// TestSetTotalsHerSatirKENDITutarlariniAlir tutarların satırlarla doğru
-// EŞLEŞTİĞİNİ doğrular.
+// TestSetTotalsEachLineGetsItsOwnAmounts verifies that the amounts MATCH the
+// lines correctly.
 //
-// Toplu yazma altı paralel dizi gönderir ve eşleşme yalnızca dizilerin
-// SIRASINA dayanır. Sıra kayarsa sepetin ara toplamı yine tutar, kimlik
-// kontrolleri yine geçer, veritabanı kısıtları yine sağlanır — tek bozulan şey
-// müşteriden alınan paradır ve aşağı akışta bunu görecek hiçbir kapı yoktur.
-// Bu yüzden her satıra BAŞKA bir tutar dörtlüsü verilir: sıra bir adım kaysa
-// bile her satırın değeri değişir.
-func TestSetTotalsHerSatirKENDITutarlariniAlir(t *testing.T) {
-	svc, _ := yeniServis(t)
+// The bulk write sends six parallel arrays and the matching rests only on the
+// ORDER of the arrays. If the order shifts, the cart's subtotal still holds, the
+// identity checks still pass, the database constraints are still satisfied — the
+// only thing that breaks is the money taken from the customer, and there is no
+// gate downstream that would see it. That is why every line is given a DIFFERENT
+// quadruple of amounts: even if the order shifts by one step, the value of every
+// line changes.
+func TestSetTotalsEachLineGetsItsOwnAmounts(t *testing.T) {
+	svc, _ := newService(t)
 	ctx := context.Background()
 
 	cart, err := svc.CreateCart(ctx, service.CreateCartInput{
@@ -693,62 +709,63 @@ func TestSetTotalsHerSatirKENDITutarlariniAlir(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	// Her satırın adedi ve birim fiyatı FARKLI; ara toplam = adet × birim fiyat
-	// olduğu için hiçbir satırın tutar dörtlüsü bir başkasınınkiyle aynı değil.
-	const satirSayisi = 8
-	type beklenen struct {
-		id                                         string
-		unitPrice, subtotal, discount, tax, toplam int64
+	// The quantity and the unit price of every line are DIFFERENT; because the
+	// subtotal = quantity x unit price, no line's quadruple of amounts is the
+	// same as another's.
+	const lineCount = 8
+	type expectation struct {
+		id                                            string
+		unitPrice, subtotal, discount, tax, lineTotal int64
 	}
-	bekleniyor := make([]beklenen, 0, satirSayisi)
-	lines := make([]service.LineTotals, 0, satirSayisi)
-	var sepetAra, sepetIndirim, sepetVergi int64
-	for i := range satirSayisi {
-		adet := int64(i + 1)
+	expectations := make([]expectation, 0, lineCount)
+	lines := make([]service.LineTotals, 0, lineCount)
+	var cartSubtotal, cartDiscount, cartTax int64
+	for i := range lineCount {
+		quantity := int64(i + 1)
 		item, addErr := svc.AddLineItem(ctx, cart.ID, service.AddLineItemInput{
-			VariantID: "variant_" + strconv.Itoa(i), Title: "Ürün", Quantity: adet,
+			VariantID: "variant_" + strconv.Itoa(i), Title: "Product", Quantity: quantity,
 		})
 		require.NoError(t, addErr)
 
-		birim := int64(100 * (i + 1))
-		ara := birim * adet
-		indirim := int64(i)
-		vergi := int64(7 * (i + 1))
-		toplam := ara - indirim + vergi
+		unitPrice := int64(100 * (i + 1))
+		subtotal := unitPrice * quantity
+		discount := int64(i)
+		tax := int64(7 * (i + 1))
+		lineTotal := subtotal - discount + tax
 
-		bekleniyor = append(bekleniyor, beklenen{item.ID, birim, ara, indirim, vergi, toplam})
+		expectations = append(expectations, expectation{item.ID, unitPrice, subtotal, discount, tax, lineTotal})
 		lines = append(lines, service.LineTotals{
-			LineItemID: item.ID, UnitPrice: birim, Subtotal: ara,
-			DiscountTotal: indirim, TaxTotal: vergi, Total: toplam,
+			LineItemID: item.ID, UnitPrice: unitPrice, Subtotal: subtotal,
+			DiscountTotal: discount, TaxTotal: tax, Total: lineTotal,
 		})
-		sepetAra += ara
-		sepetIndirim += indirim
-		sepetVergi += vergi
+		cartSubtotal += subtotal
+		cartDiscount += discount
+		cartTax += tax
 	}
 
 	detail, err := svc.GetCart(ctx, cart.ID)
 	require.NoError(t, err)
 	require.NoError(t, svc.SetTotals(ctx, cart.ID, service.Totals{
 		Revision: detail.Revision,
-		Subtotal: sepetAra, DiscountTotal: sepetIndirim, TaxTotal: sepetVergi,
-		Total: sepetAra - sepetIndirim + sepetVergi,
+		Subtotal: cartSubtotal, DiscountTotal: cartDiscount, TaxTotal: cartTax,
+		Total: cartSubtotal - cartDiscount + cartTax,
 		Lines: lines,
 	}))
 
-	yazilan, err := svc.GetCart(ctx, cart.ID)
+	written, err := svc.GetCart(ctx, cart.ID)
 	require.NoError(t, err)
-	require.Len(t, yazilan.Items, satirSayisi)
-	saklanan := make(map[string]models.LineItem, satirSayisi)
-	for _, item := range yazilan.Items {
-		saklanan[item.ID] = item
+	require.Len(t, written.Items, lineCount)
+	stored := make(map[string]models.LineItem, lineCount)
+	for _, item := range written.Items {
+		stored[item.ID] = item
 	}
-	for _, b := range bekleniyor {
-		item, ok := saklanan[b.id]
-		require.True(t, ok, "satır kaybolmamalı: %s", b.id)
-		assert.Equal(t, b.unitPrice, item.UnitPrice, "%s birim fiyatı", b.id)
-		assert.Equal(t, b.subtotal, item.Subtotal, "%s ara toplamı", b.id)
-		assert.Equal(t, b.discount, item.DiscountTotal, "%s indirimi", b.id)
-		assert.Equal(t, b.tax, item.TaxTotal, "%s vergisi", b.id)
-		assert.Equal(t, b.toplam, item.Total, "%s toplamı", b.id)
+	for _, want := range expectations {
+		item, ok := stored[want.id]
+		require.True(t, ok, "the line must not be lost: %s", want.id)
+		assert.Equal(t, want.unitPrice, item.UnitPrice, "%s unit price", want.id)
+		assert.Equal(t, want.subtotal, item.Subtotal, "%s subtotal", want.id)
+		assert.Equal(t, want.discount, item.DiscountTotal, "%s discount", want.id)
+		assert.Equal(t, want.tax, item.TaxTotal, "%s tax", want.id)
+		assert.Equal(t, want.lineTotal, item.Total, "%s total", want.id)
 	}
 }

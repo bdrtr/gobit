@@ -73,14 +73,15 @@ SELECT id, type, title, token_hash, redacted, scopes, created_by, last_used_at, 
 WHERE token_hash = $1 AND deleted_at IS NULL
 `
 
-// GetAPIKeyByHash gelen anahtarın özetine karşılık gelen kaydı döner.
+// GetAPIKeyByHash returns the record matching the incoming key's hash.
 //
-// İPTAL EDİLMİŞ anahtarlar burada SÜZÜLMEZ. Kararın nedeni: kaydı okuyup
-// "iptal edilmiş" diye reddetmek ile hiç bulamamak arasında ölçülebilir bir
-// süre farkı olmasın diye değil — iptalin servis tarafında ayrı ve AÇIK bir
-// dal olması, o dalın testle kanıtlanabilmesi içindir. Sorgu iptali süzseydi,
-// "iptal edilmiş anahtar reddedilir" iddiası "bulunamadı" ile karışır ve bir
-// gün süzgeç düştüğünde hiçbir test bunu yakalamazdı.
+// REVOKED keys are NOT filtered out here. The reason for that decision is not
+// to keep a measurable timing difference from opening up between reading the
+// record and rejecting it as "revoked" and never finding it at all — it is so
+// that revocation is a separate and EXPLICIT branch on the service side, one
+// that can be proven by a test. Had the query filtered revocation out, the
+// claim "a revoked key is rejected" would blur into "not found", and the day
+// the filter fell away no test would catch it.
 func (q *Queries) GetAPIKeyByHash(ctx context.Context, tokenHash string) (ApiKey, error) {
 	row := q.db.QueryRow(ctx, getAPIKeyByHash, tokenHash)
 	var i ApiKey
@@ -122,8 +123,8 @@ type InsertAPIKeyParams struct {
 	CreatedAt pgtype.Timestamptz
 }
 
-// api_key sorguları. Anahtarın DÜZ METNİ hiçbir sorguda geçmez; yalnızca
-// token_hash saklanır ve aranır (gerekçe: migrations/000001_auth_init.up.sql).
+// api_key queries. The key's PLAINTEXT appears in no query; only token_hash
+// is stored and searched (rationale: migrations/000001_auth_init.up.sql).
 func (q *Queries) InsertAPIKey(ctx context.Context, arg InsertAPIKeyParams) (ApiKey, error) {
 	row := q.db.QueryRow(ctx, insertAPIKey,
 		arg.ID,
@@ -166,10 +167,10 @@ type LinkAPIKeySalesChannelParams struct {
 	CreatedAt      pgtype.Timestamptz
 }
 
-// LinkAPIKeySalesChannel publishable anahtarı bir satış kanalına bağlar.
+// LinkAPIKeySalesChannel links a publishable key to a sales channel.
 //
-// ON CONFLICT DO NOTHING bağın KÜME olmasının karşılığıdır: aynı bağın iki kez
-// kurulması bir hata değil, tekrardır.
+// ON CONFLICT DO NOTHING is the counterpart of the link being a SET:
+// establishing the same link twice is not an error, it is a repeat.
 func (q *Queries) LinkAPIKeySalesChannel(ctx context.Context, arg LinkAPIKeySalesChannelParams) error {
 	_, err := q.db.Exec(ctx, linkAPIKeySalesChannel, arg.ApiKeyID, arg.SalesChannelID, arg.CreatedAt)
 	return err
@@ -239,11 +240,12 @@ WHERE l.api_key_id = $1 AND c.deleted_at IS NULL AND NOT c.is_disabled
 ORDER BY l.sales_channel_id
 `
 
-// ListChannelIDsForKey anahtarın bağlı olduğu ETKİN kanalların kimliklerini
-// döner.
+// ListChannelIDsForKey returns the IDs of the ACTIVE channels the key is
+// linked to.
 //
-// Devre dışı ve silinmiş kanallar burada süzülür: mağaza kimliği bu listeden
-// kurulur ve devre dışı bir kanalın kataloğu görünmemelidir.
+// Disabled and deleted channels are filtered out here: the storefront identity
+// is built from this list, and a disabled channel's catalog must not be
+// visible.
 func (q *Queries) ListChannelIDsForKey(ctx context.Context, apiKeyID string) ([]string, error) {
 	rows, err := q.db.Query(ctx, listChannelIDsForKey, apiKeyID)
 	if err != nil {
@@ -271,10 +273,10 @@ WHERE l.api_key_id = $1 AND c.deleted_at IS NULL
 ORDER BY c.name, c.id
 `
 
-// ListChannelsForKey anahtarın bağlı olduğu kanalların TAMAMINI döner.
+// ListChannelsForKey returns ALL of the channels the key is linked to.
 //
-// Devre dışı kanallar da dâhildir: yönetim yüzeyi bağı olduğu gibi göstermeli,
-// bir kanalın devre dışı olduğunu gizlememelidir.
+// Disabled channels are included as well: the admin surface must show the link
+// as it is, it must not hide that a channel is disabled.
 func (q *Queries) ListChannelsForKey(ctx context.Context, apiKeyID string) ([]SalesChannel, error) {
 	rows, err := q.db.Query(ctx, listChannelsForKey, apiKeyID)
 	if err != nil {
@@ -318,13 +320,13 @@ type MarkAPIKeyUsedParams struct {
 	StaleBefore pgtype.Timestamptz
 }
 
-// MarkAPIKeyUsed son kullanım anını günceller.
+// MarkAPIKeyUsed updates the moment of last use.
 //
-// WHERE koşulundaki eşik bilinçlidir: bu sütun her istekte yazılsaydı, sıcak
-// bir publishable anahtar üzerinde her mağaza isteği aynı satıra yazmaya
-// çalışır ve kimlik doğrulama bir yazma darboğazına dönüşürdü. Eşik sayesinde
-// yazma anahtar başına en fazla pencere başına bir kez olur; sütunun değeri
-// YAKLAŞIKTIR ve öyle belgelenmiştir.
+// The threshold in the WHERE condition is deliberate: were this column written
+// on every request, every storefront request on a hot publishable key would
+// try to write the same row and authentication would turn into a write
+// bottleneck. Thanks to the threshold the write happens at most once per
+// window per key; the column's value is APPROXIMATE and is documented as such.
 func (q *Queries) MarkAPIKeyUsed(ctx context.Context, arg MarkAPIKeyUsedParams) error {
 	_, err := q.db.Exec(ctx, markAPIKeyUsed, arg.UsedAt, arg.ID, arg.StaleBefore)
 	return err
@@ -345,12 +347,13 @@ type RevokeAPIKeyParams struct {
 	RevokedBy string
 }
 
-// RevokeAPIKey anahtarı iptal eder.
+// RevokeAPIKey revokes the key.
 //
-// revoked_at IS NULL koşulu şarttır: zaten iptal edilmiş bir anahtarı yeniden
-// iptal etmek sessiz bir no-op olurdu ve iptal zamanı ikinci çağrıyla
-// KAYARDI — denetim kaydı, anahtarın gerçekte ne zaman kapatıldığını
-// gösteremezdi. Koşul tutmazsa satır dönmez ve servis durumu ayırt eder.
+// The revoked_at IS NULL condition is essential: revoking an already revoked
+// key a second time would be a silent no-op, and the revocation time would
+// DRIFT with that second call — the audit record could not show when the key
+// was really closed. When the condition does not hold no row is returned and
+// the service tells the two cases apart.
 func (q *Queries) RevokeAPIKey(ctx context.Context, arg RevokeAPIKeyParams) (ApiKey, error) {
 	row := q.db.QueryRow(ctx, revokeAPIKey, arg.ID, arg.RevokedAt, arg.RevokedBy)
 	var i ApiKey

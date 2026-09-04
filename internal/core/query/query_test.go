@@ -551,7 +551,7 @@ func TestGraphALinkErrorDropsTheWholeCall(t *testing.T) {
 		Expand: []query.Expansion{{Link: "product_variant"}},
 	})
 	require.Error(t, err)
-	assert.True(t, errors.HasKind(err, errors.KindUnavailable), "gelen: %v", err)
+	assert.True(t, errors.HasKind(err, errors.KindUnavailable), "got: %v", err)
 	assert.Zero(t, variants.calls().fetch, "with the link unresolved the provider must not be reached")
 }
 
@@ -568,7 +568,7 @@ func TestGraphReturnsEarlyUnderACanceledContext(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, got)
 	assert.ErrorIs(t, err, context.Canceled)
-	assert.True(t, errors.HasKind(err, errors.KindUnavailable), "gelen: %v", err)
+	assert.True(t, errors.HasKind(err, errors.KindUnavailable), "got: %v", err)
 	assert.Zero(t, products.calls().list, "under a canceled context the provider must not be reached at all")
 }
 
@@ -594,7 +594,7 @@ func TestGraphWhenTheContextIsCanceledBeforeTheExpansion(t *testing.T) {
 	// paying for the root query). The definition may therefore have been read
 	// once; what matters is that no link resolution and no expansion fetch
 	// happens AFTER the cancellation.
-	assert.Zero(t, links.listManyCalls.Load(), "iptalden sonra link servisine gidilmemeli")
+	assert.Zero(t, links.listManyCalls.Load(), "the link service must not be reached after a cancellation")
 	assert.Zero(t, variants.calls().fetch, "the expansion provider must not be reached after a cancellation")
 }
 
@@ -605,21 +605,21 @@ func TestGraphRefusesAnInvalidSpec(t *testing.T) {
 	q := query.New(newLinks(productVariant), newContainer(t, products), nil)
 
 	tests := map[string]query.GraphSpec{
-		"bos entity":     {Entity: ""},
-		"negatif limit":  {Entity: "product", Limit: -1},
-		"negatif offset": {Entity: "product", Offset: -1},
-		"bos link adi": {
+		"an empty entity": {Entity: ""},
+		"negatif limit":   {Entity: "product", Limit: -1},
+		"negatif offset":  {Entity: "product", Offset: -1},
+		"an empty link name": {
 			Entity: "product",
 			Expand: []query.Expansion{{Link: ""}},
 		},
-		"cakisan anahtar": {
+		"a clashing key": {
 			Entity: "product",
 			Expand: []query.Expansion{
 				{Link: "product_variant"},
 				{Link: "product_channel", As: "product_variant"},
 			},
 		},
-		"ic ice bos link adi": {
+		"a nested empty link name": {
 			Entity: "product",
 			Expand: []query.Expansion{{
 				Link:   "product_variant",
@@ -677,7 +677,7 @@ func TestGraphCannotExpandARootRecordWithNoID(t *testing.T) {
 		Expand: []query.Expansion{{Link: "product_variant"}},
 	})
 	require.Error(t, err)
-	assert.True(t, errors.HasKind(err, errors.KindInternal), "gelen: %v", err)
+	assert.True(t, errors.HasKind(err, errors.KindInternal), "got: %v", err)
 	assert.Contains(t, err.Error(), query.IDField)
 }
 
@@ -696,7 +696,7 @@ func TestGraphReturnsAnErrorForAnExpansionRecordWithNoID(t *testing.T) {
 		Expand: []query.Expansion{{Link: "product_variant"}},
 	})
 	require.Error(t, err)
-	assert.True(t, errors.HasKind(err, errors.KindInternal), "gelen: %v", err)
+	assert.True(t, errors.HasKind(err, errors.KindInternal), "got: %v", err)
 	assert.Contains(t, err.Error(), query.IDField)
 }
 
@@ -707,7 +707,7 @@ func TestGraphReturnsATypedErrorWithNoContainer(t *testing.T) {
 
 	_, err := q.Graph(t.Context(), query.GraphSpec{Entity: "product"})
 	require.Error(t, err)
-	assert.True(t, errors.HasKind(err, errors.KindInternal), "gelen: %v", err)
+	assert.True(t, errors.HasKind(err, errors.KindInternal), "got: %v", err)
 	assert.Contains(t, err.Error(), "product"+query.ProviderSuffix)
 }
 
@@ -725,7 +725,7 @@ func TestGraphReturnsAnErrorOnExpansionWithNoLinkService(t *testing.T) {
 		Expand: []query.Expansion{{Link: "product_variant"}},
 	})
 	require.Error(t, err)
-	assert.True(t, errors.HasKind(err, errors.KindInternal), "gelen: %v", err)
+	assert.True(t, errors.HasKind(err, errors.KindInternal), "got: %v", err)
 }
 
 // --- preserving the join key ------------------------------------------------
@@ -791,7 +791,7 @@ func TestGraphARootRecordWithAnUnreadableIDIsNotSkippedSilently(t *testing.T) {
 	})
 	require.Error(t, err, "a root record whose id cannot be read must not be silently left out of the expansion")
 	assert.Nil(t, got, "no partial result may come back")
-	assert.True(t, errors.HasKind(err, errors.KindInternal), "gelen: %v", err)
+	assert.True(t, errors.HasKind(err, errors.KindInternal), "got: %v", err)
 	assert.Contains(t, err.Error(), query.IDField)
 }
 
@@ -799,7 +799,7 @@ func TestGraphNamesTheTypeWhenTheIDFieldIsNotAString(t *testing.T) {
 	products := newProvider("product")
 	products.order = []string{"uuid"}
 	// This is how a uuid column arrives from a provider fed by pgx.RowToMap.
-	products.records = map[string]query.Record{"uuid": {"id": [16]byte{1}, "title": "uuid kimlik"}}
+	products.records = map[string]query.Record{"uuid": {"id": [16]byte{1}, "title": "a uuid identity"}}
 	variants := newProvider("variant", query.Record{"id": "var_1"})
 
 	q := query.New(newLinks(productVariant), newContainer(t, products, variants), nil)
@@ -924,15 +924,15 @@ func TestGraphReturnsUnavailableForARawContextError(t *testing.T) {
 		assert.ErrorIs(t, err, context.Canceled)
 	})
 
-	t.Run("tipli hata sinifi korunur", func(t *testing.T) {
+	t.Run("a typed error class is preserved", func(t *testing.T) {
 		// The cancellation split must not overwrite the class a provider gave DELIBERATELY.
 		products := newProvider("product", query.Record{"id": "prod_1"})
-		products.listErr = errors.Invalid("product_bad_filter", "bilinmeyen filtre")
+		products.listErr = errors.Invalid("product_bad_filter", "unknown filter")
 		q := query.New(newLinks(), newContainer(t, products), nil)
 
 		_, err := q.Graph(t.Context(), query.GraphSpec{Entity: "product"})
 		require.Error(t, err)
-		assert.True(t, errors.IsInvalid(err), "gelen: %v", err)
+		assert.True(t, errors.IsInvalid(err), "got: %v", err)
 	})
 }
 
@@ -1057,7 +1057,7 @@ func TestGraphRefusesAnOverlyWideExpansion(t *testing.T) {
 // deterministic spec error — a "the database is unreachable" error hid what was
 // really a typo waiting to be fixed.
 func TestGraphABrokenSpecDoesNotChargeForTheRootQuery(t *testing.T) {
-	t.Run("bilinmeyen link kok sorgusu yapilmadan reddedilir", func(t *testing.T) {
+	t.Run("an unknown link is refused before the root query runs", func(t *testing.T) {
 		products := newProvider("product", query.Record{"id": "prod_1"})
 		links := newLinks(productVariant)
 		q := query.New(links, newContainer(t, products), nil)
@@ -1071,7 +1071,7 @@ func TestGraphABrokenSpecDoesNotChargeForTheRootQuery(t *testing.T) {
 			"a broken spec must not charge for the root query")
 	})
 
-	t.Run("saglayici hatasi spec hatasini maskelemez", func(t *testing.T) {
+	t.Run("a provider error does not mask a spec error", func(t *testing.T) {
 		products := newProvider("product", query.Record{"id": "prod_1"})
 		// The root provider is broken too: this error used to come first and hide
 		// the link error.

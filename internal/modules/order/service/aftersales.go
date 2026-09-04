@@ -7,57 +7,61 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/order/models"
 )
 
-// Bu dosya satış sonrası kayıtlarının (iade, değişim, hasar) İSKELETİDİR
-// (plan Bölüm 6, Faz 6 kapsamı).
+// This file is the SKELETON of the after-sales records (return, exchange,
+// claim) (plan Section 6, Phase 6 scope).
 //
-// Üçü de aynı örüntüyü paylaşır: kayıt "talep edildi" durumunda doğar,
-// listelenir ve tekil okunur. Durum geçişleri, satır bazlı iade, stoğun geri
-// alınması ve ödemenin iadesi SONRAKİ FAZLARIN işidir; bu yüzden burada geçiş
-// metodu yoktur. İskeletin şimdi kurulmasının sebebi, siparişin şemasının ve
-// API zarfının o fazda değişmek zorunda kalmamasıdır.
+// All three share the same pattern: the record is born in the "requested"
+// status, it is listed and it is read one by one. The status transitions, the
+// line-based return, taking the stock back and refunding the payment are the
+// job of the NEXT PHASES; that is why there is no transition method here. The
+// reason the skeleton is built now is that neither the order's schema nor the
+// API envelope should be forced to change in that phase.
 //
-// # Neden iptal edilmiş siparişe kayıt açılamaz
+// # Why a record cannot be opened on a canceled order
 //
-// Üç oluşturma da siparişin kilidini alır ve iptal edilmiş siparişi reddeder.
-// İptal edilmiş bir siparişte teslim edilmiş mal yoktur: iade edilecek, değişecek
-// ya da hasar görecek bir şey de yoktur. Kilit, kontrolü YARIŞSIZ kılar —
-// kilitsiz okuma ile yazma arasında sipariş iptal edilebilir ve kayıt iptal
-// edilmiş bir siparişe bağlanabilirdi.
+// All three creations take the order's lock and reject a canceled order. On a
+// canceled order there are no delivered goods: there is nothing to return, to
+// exchange or to be damaged either. The lock makes the check RACE-FREE —
+// between a lockless read and the write the order could be canceled and the
+// record could end up attached to a canceled order.
 //
-// Siparişin VARLIĞI ayrıca kontrol edilmez; kilit zaten NotFound döner.
+// The EXISTENCE of the order is not checked separately; the lock already
+// returns NotFound.
 //
-// # İade tutarının tavanı
+// # The ceiling of the refund amount
 //
-// İade/hasar kaydının tutarı siparişin TOPLAMINI aşamaz: satılmamış bir malın
-// parası geri verilemez. Kontrol kilit altında, siparişin okunmuş hâline karşı
-// yapılır (bkz. [Service.requireLiveOrder]).
+// The amount of the return/claim record cannot exceed the TOTAL of the order:
+// the money of goods that were not sold cannot be given back. The check is done
+// under the lock, against the read state of the order (see
+// [Service.requireLiveOrder]).
 //
-// Tavanın özetteki paid_total olmaması bilinçlidir: kayıt bir TALEPTİR ve
-// tahsilat henüz yazılmamışken de açılabilmelidir; ödemeyle ilişkilendirme
-// iade akışının (sonraki faz) işidir. Kural veritabanı kısıtına da
-// çevrilemez — CHECK tek satır içinde kalır, order_returns.refund_amount ile
-// orders.total FARKLI tablolardadır ve bunu zorlamanın tek yolu bir trigger
-// olurdu.
+// The ceiling not being the paid_total of the summary is deliberate: the record
+// is a REQUEST and it has to be possible to open it while the collection has
+// not been written yet; associating it with the payment is the job of the
+// return flow (the next phase). The rule cannot be translated into a database
+// constraint either — a CHECK stays within a single row,
+// order_returns.refund_amount and orders.total are in DIFFERENT tables and the
+// only way to enforce this would be a trigger.
 
-// CreateReturnInput yeni bir iade kaydının girdisidir.
+// CreateReturnInput is the input of a new return record.
 type CreateReturnInput struct {
-	// OrderID iadenin ait olduğu siparişdir; ZORUNLUDUR.
+	// OrderID is the order the return belongs to; it is REQUIRED.
 	OrderID string
-	// RefundAmount iade edilmesi planlanan tutardır (minor unit).
+	// RefundAmount is the amount planned to be refunded (minor unit).
 	RefundAmount int64
-	// Reason iade gerekçesidir; opsiyoneldir.
+	// Reason is the reason for the return; it is optional.
 	Reason string
-	// Note serbest nottur; opsiyoneldir.
+	// Note is free text; it is optional.
 	Note string
-	// Metadata çağıranın serbest ek verisidir.
+	// Metadata is the caller's free extra data.
 	Metadata map[string]any
 }
 
-// CreateReturn siparişe bir iade kaydı açar.
+// CreateReturn opens a return record on the order.
 //
-// Kayıt daima [models.ReturnRequested] durumunda doğar: iade bir TALEPTİR ve
-// alındı damgası malın gerçekten teslim alınmasıyla, sonraki fazın iş akışında
-// vurulur.
+// The record is always born in the [models.ReturnRequested] status: a return is
+// a REQUEST and the received stamp is put on it when the goods are really taken
+// back, in the workflow of the next phase.
 func (s *Service) CreateReturn(ctx context.Context, in CreateReturnInput) (models.Return, error) {
 	if err := requireID("order_id", in.OrderID); err != nil {
 		return models.Return{}, err
@@ -74,7 +78,7 @@ func (s *Service) CreateReturn(ctx context.Context, in CreateReturnInput) (model
 
 	var created models.Return
 	err := s.store.WithTx(ctx, func(ctx context.Context) error {
-		order, err := s.requireLiveOrder(ctx, in.OrderID, "iade kaydı")
+		order, err := s.requireLiveOrder(ctx, in.OrderID, "a return record")
 		if err != nil {
 			return err
 		}
@@ -98,7 +102,7 @@ func (s *Service) CreateReturn(ctx context.Context, in CreateReturnInput) (model
 	return created, nil
 }
 
-// GetReturn iade kaydını kimliğiyle döner.
+// GetReturn returns the return record by its identifier.
 func (s *Service) GetReturn(ctx context.Context, returnID string) (models.Return, error) {
 	if err := requireID("return_id", returnID); err != nil {
 		return models.Return{}, err
@@ -106,8 +110,8 @@ func (s *Service) GetReturn(ctx context.Context, returnID string) (models.Return
 	return s.store.GetReturn(ctx, returnID)
 }
 
-// ListReturns siparişin iade kayıtlarını sayfalayarak döner; ikinci değer
-// toplam sayıdır.
+// ListReturns returns the return records of the order in pages; the second
+// value is the total count.
 func (s *Service) ListReturns(ctx context.Context, orderID string, page Page) ([]models.Return, int64, error) {
 	filter, err := childFilter(orderID, page)
 	if err != nil {
@@ -116,20 +120,21 @@ func (s *Service) ListReturns(ctx context.Context, orderID string, page Page) ([
 	return s.store.ListReturns(ctx, filter)
 }
 
-// CreateExchangeInput yeni bir değişim kaydının girdisidir.
+// CreateExchangeInput is the input of a new exchange record.
 type CreateExchangeInput struct {
-	// OrderID değişimin ait olduğu siparişdir; ZORUNLUDUR.
+	// OrderID is the order the exchange belongs to; it is REQUIRED.
 	OrderID string
-	// DifferenceDue değişim farkıdır (minor unit) ve NEGATİF OLABİLİR:
-	// pozitifse fark müşteriden tahsil edilir, negatifse müşteriye ödenir.
+	// DifferenceDue is the difference of the exchange (minor unit) and IT MAY BE
+	// NEGATIVE: when positive the difference is collected from the customer,
+	// when negative it is paid to the customer.
 	DifferenceDue int64
-	// Note serbest nottur; opsiyoneldir.
+	// Note is free text; it is optional.
 	Note string
-	// Metadata çağıranın serbest ek verisidir.
+	// Metadata is the caller's free extra data.
 	Metadata map[string]any
 }
 
-// CreateExchange siparişe bir değişim kaydı açar.
+// CreateExchange opens an exchange record on the order.
 func (s *Service) CreateExchange(ctx context.Context, in CreateExchangeInput) (models.Exchange, error) {
 	if err := requireID("order_id", in.OrderID); err != nil {
 		return models.Exchange{}, err
@@ -143,7 +148,7 @@ func (s *Service) CreateExchange(ctx context.Context, in CreateExchangeInput) (m
 
 	var created models.Exchange
 	err := s.store.WithTx(ctx, func(ctx context.Context) error {
-		if _, err := s.requireLiveOrder(ctx, in.OrderID, "değişim kaydı"); err != nil {
+		if _, err := s.requireLiveOrder(ctx, in.OrderID, "an exchange record"); err != nil {
 			return err
 		}
 		var err error
@@ -163,7 +168,7 @@ func (s *Service) CreateExchange(ctx context.Context, in CreateExchangeInput) (m
 	return created, nil
 }
 
-// GetExchange değişim kaydını kimliğiyle döner.
+// GetExchange returns the exchange record by its identifier.
 func (s *Service) GetExchange(ctx context.Context, exchangeID string) (models.Exchange, error) {
 	if err := requireID("exchange_id", exchangeID); err != nil {
 		return models.Exchange{}, err
@@ -171,8 +176,8 @@ func (s *Service) GetExchange(ctx context.Context, exchangeID string) (models.Ex
 	return s.store.GetExchange(ctx, exchangeID)
 }
 
-// ListExchanges siparişin değişim kayıtlarını sayfalayarak döner; ikinci değer
-// toplam sayıdır.
+// ListExchanges returns the exchange records of the order in pages; the second
+// value is the total count.
 func (s *Service) ListExchanges(ctx context.Context, orderID string, page Page) ([]models.Exchange, int64, error) {
 	filter, err := childFilter(orderID, page)
 	if err != nil {
@@ -181,34 +186,36 @@ func (s *Service) ListExchanges(ctx context.Context, orderID string, page Page) 
 	return s.store.ListExchanges(ctx, filter)
 }
 
-// CreateClaimInput yeni bir hasar kaydının girdisidir.
+// CreateClaimInput is the input of a new claim record.
 type CreateClaimInput struct {
-	// OrderID talebin ait olduğu siparişdir; ZORUNLUDUR.
+	// OrderID is the order the claim belongs to; it is REQUIRED.
 	OrderID string
-	// Type talebin nasıl karşılanacağıdır; ZORUNLUDUR.
+	// Type is how the claim will be settled; it is REQUIRED.
 	Type models.ClaimType
-	// RefundAmount Type [models.ClaimRefund] iken iade edilecek tutardır.
+	// RefundAmount is the amount to be refunded while Type is
+	// [models.ClaimRefund].
 	RefundAmount int64
-	// Reason talebin gerekçesidir; opsiyoneldir.
+	// Reason is the reason for the claim; it is optional.
 	Reason string
-	// Note serbest nottur; opsiyoneldir.
+	// Note is free text; it is optional.
 	Note string
-	// Metadata çağıranın serbest ek verisidir.
+	// Metadata is the caller's free extra data.
 	Metadata map[string]any
 }
 
-// CreateClaim siparişe bir hasar/eksik kaydı açar.
+// CreateClaim opens a damage/shortage record on the order.
 //
-// [models.ClaimReplace] türünde bir talep için tutar SIFIR olmalıdır: yerine
-// yenisi gönderilen bir talepte iade edilecek para yoktur ve dolu bir tutar,
-// müşterinin hem malı hem parayı aldığı sessiz bir çift ödeme anlamına gelirdi.
+// For a claim of the [models.ClaimReplace] type the amount has to be ZERO: on a
+// claim whose goods are sent again there is no money to refund, and a filled-in
+// amount would mean a silent double payment where the customer receives both
+// the goods and the money.
 func (s *Service) CreateClaim(ctx context.Context, in CreateClaimInput) (models.Claim, error) {
 	if err := requireID("order_id", in.OrderID); err != nil {
 		return models.Claim{}, err
 	}
 	if !in.Type.Valid() {
 		return models.Claim{}, errors.Invalid(CodeInvalidInput,
-			"tanımsız hasar kaydı türü: %q (geçerli: %q, %q)",
+			"undefined claim record type: %q (valid: %q, %q)",
 			in.Type, models.ClaimRefund, models.ClaimReplace)
 	}
 	if err := checkAmount("refund_amount", in.RefundAmount, models.MaxTotal); err != nil {
@@ -216,7 +223,7 @@ func (s *Service) CreateClaim(ctx context.Context, in CreateClaimInput) (models.
 	}
 	if in.Type == models.ClaimReplace && in.RefundAmount != 0 {
 		return models.Claim{}, errors.Invalid(CodeInvalidInput,
-			"%q türünde talepte refund_amount sıfır olmalı: %d", models.ClaimReplace, in.RefundAmount)
+			"on a claim of the %q type refund_amount has to be zero: %d", models.ClaimReplace, in.RefundAmount)
 	}
 	if err := checkTextLen("reason", in.Reason); err != nil {
 		return models.Claim{}, err
@@ -227,7 +234,7 @@ func (s *Service) CreateClaim(ctx context.Context, in CreateClaimInput) (models.
 
 	var created models.Claim
 	err := s.store.WithTx(ctx, func(ctx context.Context) error {
-		order, err := s.requireLiveOrder(ctx, in.OrderID, "hasar kaydı")
+		order, err := s.requireLiveOrder(ctx, in.OrderID, "a claim record")
 		if err != nil {
 			return err
 		}
@@ -252,7 +259,7 @@ func (s *Service) CreateClaim(ctx context.Context, in CreateClaimInput) (models.
 	return created, nil
 }
 
-// GetClaim hasar kaydını kimliğiyle döner.
+// GetClaim returns the claim record by its identifier.
 func (s *Service) GetClaim(ctx context.Context, claimID string) (models.Claim, error) {
 	if err := requireID("claim_id", claimID); err != nil {
 		return models.Claim{}, err
@@ -260,8 +267,8 @@ func (s *Service) GetClaim(ctx context.Context, claimID string) (models.Claim, e
 	return s.store.GetClaim(ctx, claimID)
 }
 
-// ListClaims siparişin hasar kayıtlarını sayfalayarak döner; ikinci değer
-// toplam sayıdır.
+// ListClaims returns the claim records of the order in pages; the second value
+// is the total count.
 func (s *Service) ListClaims(ctx context.Context, orderID string, page Page) ([]models.Claim, int64, error) {
 	filter, err := childFilter(orderID, page)
 	if err != nil {
@@ -270,14 +277,14 @@ func (s *Service) ListClaims(ctx context.Context, orderID string, page Page) ([]
 	return s.store.ListClaims(ctx, filter)
 }
 
-// requireLiveOrder siparişi KİLİTLER, iptal edilmiş olmadığını doğrular ve
-// kilit altındaki hâlini döner.
+// requireLiveOrder LOCKS the order, verifies that it is not canceled and
+// returns its state under the lock.
 //
-// Kilit, kontrol ile kaydın yazılması arasına araya giren bir iptalin
-// girmesini engeller; kilitsiz bir kontrol yalnızca "o an" doğru olurdu.
+// The lock prevents a cancellation from slipping in between the check and the
+// writing of the record; a lockless check would only be true "at that moment".
 //
-// Siparişin DÖNÜLMESİ, tutar kontrollerinin aynı kilit altında ve aynı okunmuş
-// hâl üzerinde yapılabilmesi içindir; ikinci bir okuma bayat olabilirdi.
+// The order is RETURNED so that the amount checks can be done under the same
+// lock and on the same read state; a second read could be stale.
 func (s *Service) requireLiveOrder(ctx context.Context, orderID, what string) (models.Order, error) {
 	order, err := s.store.LockOrder(ctx, orderID)
 	if err != nil {
@@ -285,26 +292,27 @@ func (s *Service) requireLiveOrder(ctx context.Context, orderID, what string) (m
 	}
 	if order.Canceled() {
 		return models.Order{}, errors.Conflict(CodeNotPending,
-			"iptal edilmiş siparişe %s açılamaz: %s", what, orderID)
+			"%s cannot be opened on a canceled order: %s", what, orderID)
 	}
 	return order, nil
 }
 
-// checkRefundWithinOrder iade tutarının siparişin toplamını aşmadığını
-// doğrular.
+// checkRefundWithinOrder verifies that the refund amount does not exceed the
+// total of the order.
 //
-// Sıfır tutar her zaman geçerlidir: yerine yenisi gönderilen bir hasar
-// kaydında ([models.ClaimReplace]) iade edilecek para yoktur.
+// A zero amount is always valid: on a claim record whose goods are sent again
+// ([models.ClaimReplace]) there is no money to refund.
 func checkRefundWithinOrder(order models.Order, refundAmount int64) error {
 	if refundAmount > order.Total {
 		return errors.Invalid(CodeRefundExceedsOrder,
-			"iade tutarı siparişin toplamını aşamaz: refund_amount=%d, sipariş toplamı=%d (%s)",
+			"the refund amount cannot exceed the total of the order: refund_amount=%d, order total=%d (%s)",
 			refundAmount, order.Total, order.ID)
 	}
 	return nil
 }
 
-// childFilter iade/değişim/hasar listelemesinin ölçütünü doğrular ve kurar.
+// childFilter validates and builds the criteria of the return/exchange/claim
+// listing.
 func childFilter(orderID string, page Page) (models.ChildFilter, error) {
 	if err := requireID("order_id", orderID); err != nil {
 		return models.ChildFilter{}, err
@@ -320,16 +328,17 @@ func childFilter(orderID string, page Page) (models.ChildFilter, error) {
 	}, nil
 }
 
-// checkSignedAmount İŞARETLİ bir tutarın büyüklüğünü doğrular.
+// checkSignedAmount validates the magnitude of a SIGNED amount.
 //
-// [checkAmount]'tan ayrıdır çünkü negatif değeri REDDETMEZ: değişim farkı iki
-// yönde de doğabilir (bkz. [models.Exchange.DifferenceDue]). Doğrulanan şey
-// büyüklüğün sınır içinde kalmasıdır; en küçük int64 için mutlak değer
-// alınamayacağı için karşılaştırma iki uçtan ayrı yapılır.
+// It is separate from [checkAmount] because it DOES NOT REJECT a negative
+// value: the difference of an exchange can arise in both directions (see
+// [models.Exchange.DifferenceDue]). What is validated is that the magnitude
+// stays within the bound; because the absolute value of the smallest int64
+// cannot be taken, the comparison is done separately at the two ends.
 func checkSignedAmount(label string, value, upper int64) error {
 	if value > upper || value < -upper {
 		return errors.Invalid(CodeInvalidInput,
-			"%s -%d ile %d arasında olmalı: %d", label, upper, upper, value)
+			"%s has to be between -%d and %d: %d", label, upper, upper, value)
 	}
 	return nil
 }

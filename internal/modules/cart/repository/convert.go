@@ -13,15 +13,16 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/cart/repository/cartdb"
 )
 
-// Bu dosya pgtype <-> domain modeli dönüşümlerinin ve sürücü hatası
-// sınıflandırmasının TEK yeridir.
+// This file is the ONE place for pgtype <-> domain model conversions and for
+// driver error classification.
 //
-// Sınırın burada olması bilinçlidir: sürücüye özgü tipler (pgtype.Timestamptz,
-// jsonb için []byte, *pgconn.PgError) repository'nin dışına ÇIKMAZ. Servis ve
-// API katmanı time.Time, map[string]any ve core/errors tipli hatalarını görür.
+// The boundary sitting here is deliberate: driver-specific types
+// (pgtype.Timestamptz, []byte for jsonb, *pgconn.PgError) DO NOT LEAVE the
+// repository. The service and the API layer see time.Time, map[string]any and
+// core/errors typed errors.
 
-// Hata kodları. Çağıran taraf errors.CodeOf ile bunlara bakabilir; API katmanı
-// da aynı kodları istemciye geçirir.
+// Error codes. The calling side can inspect them with errors.CodeOf; the API
+// layer passes the same codes on to the client.
 const (
 	codeCartNotFound        = "cart_not_found"
 	codeLineItemNotFound    = "cart_line_item_not_found"
@@ -38,8 +39,8 @@ const (
 	codeConcurrentUpdate    = "cart_concurrent_update"
 )
 
-// Kısıt adları; sürücü hatasını anlamlı bir tipli hataya çevirmek için
-// kullanılır. Adlar migration'daki adlarla BİREBİR aynıdır.
+// Constraint names; they are used to turn a driver error into a meaningful typed
+// error. The names are EXACTLY the ones in the migration.
 const (
 	constraintLineVariantUniq = "cart_line_items_cart_variant_uniq"
 	constraintAddressTypeUniq = "cart_addresses_cart_type_uniq"
@@ -51,12 +52,13 @@ const (
 	constraintCartLineItemsFK = "cart_line_items_cart_id_fkey"
 	constraintCartAddressesFK = "cart_addresses_cart_id_fkey"
 	constraintCartShippingFK  = "cart_shipping_methods_cart_id_fkey"
-	// constraintNonnegSuffix negatif para yasağı koyan tüm CHECK kısıtlarının
-	// ortak sonekidir; tek tek saymak yerine sonekle tanınırlar.
+	// constraintNonnegSuffix is the common suffix of every CHECK constraint that
+	// bans negative money; instead of being listed one by one they are recognized
+	// by the suffix.
 	constraintNonnegSuffix = "_nonneg"
 )
 
-// PostgreSQL SQLSTATE kodları.
+// PostgreSQL SQLSTATE codes.
 const (
 	sqlStateUniqueViolation     = "23505"
 	sqlStateForeignKeyViolation = "23503"
@@ -64,12 +66,13 @@ const (
 	sqlStateDeadlockDetected    = "40P01"
 )
 
-// classify sürücü hatasını tipli hataya çevirir.
+// classify turns a driver error into a typed error.
 //
-// Benzersizlik, foreign key ve CHECK ihlalleri istemcinin (ya da workflow'un)
-// düzeltebileceği durumlardır; sınıflandırılmazsa hepsi 500 olarak görünür ve
-// gerçek sebep yalnızca logda kalırdı. Kilitlenme (deadlock) de aynı sebeple
-// ayrı ele alınır: işlemin kendisinde bir yanlışlık yoktur, YENİDEN DENENEBİLİR.
+// Uniqueness, foreign key and CHECK violations are situations the client (or the
+// workflow) can fix; unclassified, they would all appear as a 500 and the real
+// reason would stay in the log alone. A deadlock is handled separately for the
+// same reason: there is nothing wrong with the operation itself, it CAN BE
+// RETRIED.
 func classify(err error, code, format string, a ...any) error {
 	var pgErr *pgconn.PgError
 	if !errors.As(err, &pgErr) {
@@ -81,61 +84,64 @@ func classify(err error, code, format string, a ...any) error {
 		switch pgErr.ConstraintName {
 		case constraintLineVariantUniq:
 			return errors.Wrap(err, errors.KindConflict, codeLineItemExists,
-				"bu varyant sepette zaten var; adedi artırılmalı")
+				"this variant is already in the cart; its quantity should be raised")
 		case constraintAddressTypeUniq:
 			return errors.Wrap(err, errors.KindConflict, codeAddressExists,
-				"sepette bu türden bir kayıt zaten var")
+				"the cart already has a record of this type")
 		case constraintShippingOptUniq:
 			return errors.Wrap(err, errors.KindConflict, codeShippingOptionTaken,
-				"bu kargo seçeneği sepete zaten eklenmiş")
+				"this shipping option has already been added to the cart")
 		}
 	case sqlStateForeignKeyViolation:
-		// Satır, adresi ya da kargo yöntemi OLMAYAN bir sepete bağlanamaz.
+		// A line item, an address or a shipping method cannot be attached to a
+		// cart that DOES NOT EXIST.
 		switch pgErr.ConstraintName {
 		case constraintCartLineItemsFK, constraintCartAddressesFK, constraintCartShippingFK:
-			return errors.Wrap(err, errors.KindNotFound, codeCartNotFound, "sepet bulunamadı")
+			return errors.Wrap(err, errors.KindNotFound, codeCartNotFound, "cart not found")
 		}
 	case sqlStateCheckViolation:
 		return classifyCheck(err, pgErr.ConstraintName, code, format, a...)
 	case sqlStateDeadlockDetected:
-		// Kilit sırası tekleştirildiği için normal akışlarda oluşmaz; burası
-		// son savunmadır. İşlem geri alınmıştır, aynı istek olduğu gibi
-		// yeniden denenebilir — bu yüzden Internal (500) değil Conflict.
+		// Because the lock order is unified this does not arise in normal flows;
+		// this is the last line of defense. The transaction has been rolled back,
+		// the same request can be retried as it is — that is why this is Conflict
+		// and not Internal (500).
 		return errors.Wrap(err, errors.KindConflict, codeConcurrentUpdate,
-			"eşzamanlı bir işlemle çakışıldı; istek yeniden denenebilir")
+			"conflicted with a concurrent operation; the request can be retried")
 	}
 	return errors.Wrap(err, errors.KindInternal, code, format, a...)
 }
 
-// classifyCheck CHECK kısıtı ihlallerini tipli hataya çevirir.
+// classifyCheck turns CHECK constraint violations into typed errors.
 //
-// Toplam kimliği ihlali ayrı tutulur: servis aynı kontrolü daha okunabilir bir
-// hatayla ÖNCE yapar, buraya düşmesi kontrolün atlandığı (ya da doğrudan SQL
-// müdahalesi olduğu) anlamına gelir ve mesaj bunu söylemelidir.
+// The totals identity violation is kept apart: the service runs the same check
+// FIRST with a more readable error, so landing here means the check was skipped
+// (or that SQL was touched directly) and the message has to say so.
 func classifyCheck(err error, constraint, code, format string, a ...any) error {
 	switch {
 	case constraint == constraintCartTotals:
 		return errors.Wrap(err, errors.KindInvalid, codeTotalsInconsistent,
-			"sepet toplamları tutarsız: total = subtotal - discount_total + tax_total + shipping_total olmalı")
+			"cart totals are inconsistent: total = subtotal - discount_total + tax_total + shipping_total is required")
 	case constraint == constraintLineTotals:
 		return errors.Wrap(err, errors.KindInvalid, codeTotalsInconsistent,
-			"satır toplamları tutarsız: total = subtotal - discount_total + tax_total olmalı")
+			"line item totals are inconsistent: total = subtotal - discount_total + tax_total is required")
 	case constraint == constraintTotalsRevRange:
 		return errors.Wrap(err, errors.KindInvalid, codeTotalsInconsistent,
-			"toplamlar henüz olmayan bir sepet şekli için damgalanamaz")
+			"totals cannot be stamped for a cart shape that does not exist yet")
 	case constraint == constraintLineQtyPositive:
 		return errors.Wrap(err, errors.KindInvalid, codeAmountOutOfRange,
-			"satır adedi pozitif olmalı")
+			"the line item quantity must be positive")
 	case strings.HasSuffix(constraint, constraintNonnegSuffix):
-		// carts_*_nonneg, cart_line_items_*_nonneg ve
-		// cart_shipping_methods_amount_nonneg aynı sınıfa düşer: negatif para.
+		// carts_*_nonneg, cart_line_items_*_nonneg and
+		// cart_shipping_methods_amount_nonneg fall into the same class: negative
+		// money.
 		return errors.Wrap(err, errors.KindInvalid, codeAmountOutOfRange,
-			"tutar negatif olamaz (kısıt: %s)", constraint)
+			"the amount cannot be negative (constraint: %s)", constraint)
 	}
 	return errors.Wrap(err, errors.KindInternal, code, format, a...)
 }
 
-// nullString boş dizeyi SQL NULL'a çevirir.
+// nullString turns the empty string into SQL NULL.
 func nullString(s string) *string {
 	if s == "" {
 		return nil
@@ -143,7 +149,7 @@ func nullString(s string) *string {
 	return &s
 }
 
-// stringValue SQL NULL'ı boş dizeye çevirir.
+// stringValue turns SQL NULL into the empty string.
 func stringValue(p *string) string {
 	if p == nil {
 		return ""
@@ -151,10 +157,10 @@ func stringValue(p *string) string {
 	return *p
 }
 
-// toTime timestamptz değerini UTC time.Time'a çevirir.
+// toTime converts a timestamptz value into a UTC time.Time.
 //
-// Geçersiz (NULL) değer sıfır zaman döner: NOT NULL sütunlarda bu durum
-// oluşmaz, dolayısıyla sıfır zaman görülmesi veri bozukluğunun işaretidir.
+// An invalid (NULL) value returns the zero time: on NOT NULL columns this case
+// does not arise, so seeing the zero time is the sign of corrupted data.
 func toTime(ts pgtype.Timestamptz) time.Time {
 	if !ts.Valid {
 		return time.Time{}
@@ -162,7 +168,7 @@ func toTime(ts pgtype.Timestamptz) time.Time {
 	return ts.Time.UTC()
 }
 
-// toTimePtr nullable timestamptz değerini *time.Time'a çevirir.
+// toTimePtr converts a nullable timestamptz value into a *time.Time.
 func toTimePtr(ts pgtype.Timestamptz) *time.Time {
 	if !ts.Valid {
 		return nil
@@ -171,10 +177,10 @@ func toTimePtr(ts pgtype.Timestamptz) *time.Time {
 	return &t
 }
 
-// toJSONMap jsonb sütununu haritaya çevirir.
+// toJSONMap converts a jsonb column into a map.
 //
-// Boş ya da JSON null değer nil harita döner; böylece API yanıtında
-// "metadata": null yerine alan hiç görünmez (omitempty).
+// An empty or JSON null value returns a nil map; that way the API response omits
+// the field entirely (omitempty) instead of carrying "metadata": null.
 func toJSONMap(raw []byte) (map[string]any, error) {
 	if len(raw) == 0 || string(raw) == "null" {
 		return nil, nil
@@ -182,7 +188,7 @@ func toJSONMap(raw []byte) (map[string]any, error) {
 	var out map[string]any
 	if err := json.Unmarshal(raw, &out); err != nil {
 		return nil, errors.Wrap(err, errors.KindInternal, codeMetadataInvalid,
-			"JSON alanı çözümlenemedi")
+			"the JSON field could not be decoded")
 	}
 	if len(out) == 0 {
 		return nil, nil
@@ -190,10 +196,10 @@ func toJSONMap(raw []byte) (map[string]any, error) {
 	return out, nil
 }
 
-// fromJSONMap haritayı jsonb sütununa yazılacak bayta çevirir.
+// fromJSONMap converts a map into the bytes to be written to a jsonb column.
 //
-// nil harita boş nesneye ('{}') çevrilir: sütun NOT NULL'dur ve "veri yok" ile
-// "veri boş" ayrımı bu modülde bir şey ifade etmez.
+// A nil map is converted to the empty object ('{}'): the column is NOT NULL and
+// the difference between "no data" and "empty data" means nothing in this module.
 func fromJSONMap(m map[string]any) ([]byte, error) {
 	if len(m) == 0 {
 		return []byte("{}"), nil
@@ -201,12 +207,12 @@ func fromJSONMap(m map[string]any) ([]byte, error) {
 	raw, err := json.Marshal(m)
 	if err != nil {
 		return nil, errors.Wrap(err, errors.KindInvalid, codeMetadataInvalid,
-			"JSON alanı kodlanamadı")
+			"the JSON field could not be encoded")
 	}
 	return raw, nil
 }
 
-// toCart veritabanı satırını domain modeline çevirir.
+// toCart converts a database row into the domain model.
 func toCart(row cartdb.Cart) (models.Cart, error) {
 	meta, err := toJSONMap(row.Metadata)
 	if err != nil {
@@ -233,11 +239,11 @@ func toCart(row cartdb.Cart) (models.Cart, error) {
 	}, nil
 }
 
-// toCarts satır dilimini domain modeli dilimine çevirir.
+// toCarts converts a row slice into a domain model slice.
 func toCarts(rows []cartdb.Cart) ([]models.Cart, error) {
 	out := make([]models.Cart, 0, len(rows))
-	// Döngü indeksle gezilir: satır yapıları büyüktür ve değerle kopyalamak
-	// her tur birkaç yüz baytı boşuna taşır.
+	// The loop is walked by index: the row structs are large and copying them by
+	// value would haul a few hundred bytes for nothing on every turn.
 	for i := range rows {
 		cart, err := toCart(rows[i])
 		if err != nil {
@@ -248,7 +254,7 @@ func toCarts(rows []cartdb.Cart) ([]models.Cart, error) {
 	return out, nil
 }
 
-// toLineItem veritabanı satırını domain modeline çevirir.
+// toLineItem converts a database row into the domain model.
 func toLineItem(row cartdb.CartLineItem) (models.LineItem, error) {
 	meta, err := toJSONMap(row.Metadata)
 	if err != nil {
@@ -271,7 +277,7 @@ func toLineItem(row cartdb.CartLineItem) (models.LineItem, error) {
 	}, nil
 }
 
-// toLineItems satır dilimini domain modeli dilimine çevirir.
+// toLineItems converts a row slice into a domain model slice.
 func toLineItems(rows []cartdb.CartLineItem) ([]models.LineItem, error) {
 	out := make([]models.LineItem, 0, len(rows))
 	for i := range rows {
@@ -284,7 +290,7 @@ func toLineItems(rows []cartdb.CartLineItem) ([]models.LineItem, error) {
 	return out, nil
 }
 
-// toCartAddress veritabanı satırını domain modeline çevirir.
+// toCartAddress converts a database row into the domain model.
 func toCartAddress(row cartdb.CartAddress) (models.CartAddress, error) {
 	meta, err := toJSONMap(row.Metadata)
 	if err != nil {
@@ -311,7 +317,7 @@ func toCartAddress(row cartdb.CartAddress) (models.CartAddress, error) {
 	}, nil
 }
 
-// toShippingMethod veritabanı satırını domain modeline çevirir.
+// toShippingMethod converts a database row into the domain model.
 func toShippingMethod(row cartdb.CartShippingMethod) (models.ShippingMethod, error) {
 	data, err := toJSONMap(row.Data)
 	if err != nil {

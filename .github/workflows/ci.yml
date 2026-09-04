@@ -22,7 +22,7 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      - name: go.mod güncel mi
+      - name: Is go.mod up to date
         run: |
           go mod tidy
           git diff --exit-code -- go.mod go.sum
@@ -41,18 +41,19 @@ jobs:
           cache: true
       - run: go build ./...
       - run: go vet ./...
-      # -coverpkg: onsuz yalnızca test edilen paketin KENDİ kodu sayılır ve bir
-      # paketi başka paketin testi kapsadığında görünmez.
+      # -coverpkg: without it only the tested package's OWN code counts, and it
+      # becomes invisible when one package is covered by another package's test.
       - run: go test -race -coverpkg=./... -coverprofile=coverage.out -covermode=atomic ./...
-      # BU SAYI YALNIZCA BİRİM TESTLERİNİNKİDİR (~%55) ve tek başına okunursa
-      # yanıltır: depoda kapsamın büyük kısmı entegrasyon testlerinden gelir
-      # (birim + entegrasyon, -coverpkg ile ~%76). Gerçek sayı Entegrasyon
-      # işindedir; buradaki, birim testlerinin tek başına ne kadarını tuttuğudur.
-      - name: Kapsam özeti (YALNIZCA birim testleri)
+      # THIS NUMBER IS THE UNIT TESTS' ALONE (~55%) and misleads when read on its
+      # own: in this repository most of the coverage comes from the integration
+      # tests (unit + integration, ~76% with -coverpkg). The real number is in
+      # the Integration job; this one is how much the unit tests hold by
+      # themselves.
+      - name: Coverage summary (unit tests ONLY)
         run: go tool cover -func=coverage.out | tail -1
 
   integration:
-    name: Entegrasyon
+    name: Integration
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -60,27 +61,29 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      # testcontainers-go, runner'daki Docker daemon'ı kullanarak gerçek
-      # Postgres ve Redis kaldırır; ayrıca servis tanımı gerekmez.
-      - name: Entegrasyon testleri
+      # testcontainers-go brings up a real Postgres and Redis using the runner's
+      # Docker daemon; no separate service definition is needed.
+      - name: Integration tests
         run: |
           go test -race -tags=integration -count=1 -timeout 15m \
             -coverpkg=./... -coverprofile=coverage-integration.out -covermode=atomic ./...
-      # Deponun GERÇEK kapsamı budur: birim + entegrasyon, paketler arası
-      # atıfla. Test işindeki sayı yalnızca birim testlerini kapsar.
-      - name: Kapsam özeti (birim + entegrasyon)
+      # This is the repository's REAL coverage: unit + integration, with
+      # cross-package attribution. The number in the Test job covers the unit
+      # tests only.
+      - name: Coverage summary (unit + integration)
         run: go tool cover -func=coverage-integration.out | tail -1
 
-  # Smoke, Entegrasyon işine EKLENMEDİ ve bu bilinçlidir: bu testler ikiliyi
-  # derleyip gerçek süreçler başlatır, yani hem daha yavaştırlar hem de bambaşka
-  # bir arıza sınıfını kanıtlarlar — main.go'nun kablolaması, açılıştaki
-  # migration'lar, config yüklemesi ve sinyal işleme. Ayrı iş olmalarının somut
-  # karşılığı, PR sayfasında ayrı bir kırmızı: "entegrasyon düştü" ile "uygulama
-  # AÇILMIYOR" aynı satırda görünmemeli.
+  # Smoke was NOT ADDED to the Integration job and that is deliberate: these
+  # tests build the binary and start real processes, so they are both slower and
+  # they prove a completely different class of failure — main.go's wiring, the
+  # migrations at startup, config loading and signal handling. The concrete
+  # counterpart of their being a separate job is a separate red on the PR page:
+  # "integration fell" and "the application DOES NOT START" must not appear on
+  # the same line.
   #
-  # Kapsam ölçülmez: ölçülen şey kapsanan satır değil, sürecin davranışıdır ve
-  # -coverpkg burada yalnızca gürültü üretirdi (sunucu ayrı bir süreçtir,
-  # profili zaten toplanamaz).
+  # Coverage is not measured: what is measured is not the covered line but the
+  # process's behavior, and -coverpkg would produce nothing but noise here (the
+  # server is a separate process, its profile cannot be collected anyway).
   smoke:
     name: Smoke
     runs-on: ubuntu-latest
@@ -90,7 +93,7 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      # testcontainers-go, runner'daki Docker daemon'ı kullanarak gerçek
-      # Postgres ve Redis kaldırır; ayrıca servis tanımı gerekmez.
-      - name: Smoke testleri
+      # testcontainers-go brings up a real Postgres and Redis using the runner's
+      # Docker daemon; no separate service definition is needed.
+      - name: Smoke tests
         run: go test -tags=smoke -count=1 -timeout 20m ./internal/smoke/

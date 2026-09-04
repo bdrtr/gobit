@@ -1,11 +1,11 @@
-# sqlc yapılandırması — modül başına AYRI dosya.
+# sqlc configuration — a SEPARATE file per module.
 #
-# Ortak bir kök sqlc.yaml yerine modül başına config, modül izolasyonunun
-# (plan Bölüm 2.1) araç düzeyindeki karşılığıdır: bir modülün şeması ya da
-# sorguları değiştiğinde yalnızca kendi paketi yeniden üretilir ve iki modül
-# aynı dosyayı düzenlemek zorunda kalmaz.
+# A per-module config instead of a shared root sqlc.yaml is the tool-level
+# counterpart of module isolation (plan Section 2.1): when a module's schema or
+# queries change only its own package is regenerated, and two modules never have
+# to edit the same file.
 #
-# Üretmek için: make gen
+# To generate: make gen
 version: "2"
 sql:
   - engine: postgresql

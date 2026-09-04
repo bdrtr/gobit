@@ -15,8 +15,9 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/order/service"
 )
 
-// Test verisinde kullanılan sabitler. Bölge, müşteri ve varyant kimlikleri
-// BAŞKA modüllere aittir; bu modül onların varlığını doğrulamaz (Prensip 2.2).
+// The constants used in the test data. The region, customer and variant
+// identifiers belong to OTHER modules; this module does not validate their
+// existence (Principle 2.2).
 const (
 	testRegionID   = "reg_TEST"
 	testCustomerID = "cus_TEST"
@@ -24,15 +25,15 @@ const (
 	testCurrency   = "TRY"
 )
 
-// ortam bir test için kurulmuş servis ve sahtelerini taşır.
-type ortam struct {
+// env carries the service and the fakes set up for one test.
+type env struct {
 	svc   *service.Service
 	store *fakeStore
 	bus   *fakeBus
 }
 
-// yeniOrtam sahte bağımlılıklarla kurulmuş bir servis üretir.
-func yeniOrtam(t *testing.T) ortam {
+// newEnv produces a service built with fake dependencies.
+func newEnv(t *testing.T) env {
 	t.Helper()
 
 	store := newFakeStore()
@@ -41,20 +42,20 @@ func yeniOrtam(t *testing.T) ortam {
 	svc, err := service.New(service.Options{Repo: store, Events: bus})
 	require.NoError(t, err)
 
-	return ortam{svc: svc, store: store, bus: bus}
+	return env{svc: svc, store: store, bus: bus}
 }
 
-// gecerliGirdi tutarlı bir sipariş girdisi üretir.
+// validInput produces a consistent order input.
 //
-// Rakamlar bilinçli olarak "gerçekçi"dir: 3 × 1000 = 3000 ara toplam, %20 vergi
-// 600, kargo 2500 -> toplam 6100. Testler bu tabanı bozarak tek tek kuralları
-// sınar; her testin kendi girdisini kurması, hangi alanın DEĞİŞTİRİLDİĞİNİ
-// görünmez kılardı.
-func gecerliGirdi() service.CreateOrderInput {
+// The numbers are deliberately "realistic": 3 x 1000 = 3000 subtotal, 20% tax
+// 600, shipping 2500 -> total 6100. The tests exercise the rules one by one by
+// breaking this base; every test building its own input would make it invisible
+// WHICH field was CHANGED.
+func validInput() service.CreateOrderInput {
 	return service.CreateOrderInput{
 		RegionID:      testRegionID,
 		CustomerID:    testCustomerID,
-		Email:         "Musteri@Ornek.COM",
+		Email:         "Customer@Example.COM",
 		CurrencyCode:  "try",
 		CartID:        "cart_TEST",
 		Subtotal:      3000,
@@ -62,11 +63,11 @@ func gecerliGirdi() service.CreateOrderInput {
 		TaxTotal:      600,
 		ShippingTotal: 2500,
 		Total:         6100,
-		Metadata:      map[string]any{"kanal": "web"},
+		Metadata:      map[string]any{"channel": "web"},
 		Items: []service.CreateOrderItemInput{
 			{
 				VariantID: testVariantID,
-				Title:     "Kırmızı Tişört",
+				Title:     "Red T-Shirt",
 				Quantity:  3,
 				UnitPrice: 1000,
 				Subtotal:  3000,
@@ -77,179 +78,180 @@ func gecerliGirdi() service.CreateOrderInput {
 	}
 }
 
-// TestCreateOrderSiparisiSatirlariniVeOzetiniYazar mutlu yolu doğrular.
-func TestCreateOrderSiparisiSatirlariniVeOzetiniYazar(t *testing.T) {
+// TestCreateOrderWritesTheOrderItsLinesAndItsSummary validates the happy path.
+func TestCreateOrderWritesTheOrderItsLinesAndItsSummary(t *testing.T) {
 	ctx := context.Background()
-	o := yeniOrtam(t)
+	e := newEnv(t)
 
-	siparis, err := o.svc.CreateOrder(ctx, gecerliGirdi())
+	order, err := e.svc.CreateOrder(ctx, validInput())
 	require.NoError(t, err)
 
-	assert.True(t, strings.HasPrefix(siparis.ID, models.OrderIDPrefix))
-	assert.Equal(t, models.OrderPending, siparis.Status)
-	assert.Equal(t, "TRY", siparis.CurrencyCode, "para birimi büyük harfe çevrilmeli")
-	assert.Equal(t, "musteri@ornek.com", siparis.Email, "e-posta küçük harfe çevrilmeli")
-	assert.Equal(t, int64(6100), siparis.Total)
+	assert.True(t, strings.HasPrefix(order.ID, models.OrderIDPrefix))
+	assert.Equal(t, models.OrderPending, order.Status)
+	assert.Equal(t, "TRY", order.CurrencyCode, "the currency has to be folded to upper case")
+	assert.Equal(t, "customer@example.com", order.Email, "the e-mail has to be folded to lower case")
+	assert.Equal(t, int64(6100), order.Total)
 
-	// Numarayı DEPO üretir; servis kendi üretmez.
-	assert.Equal(t, int64(1), siparis.DisplayID)
+	// The number is produced by the STORE; the service does not produce it.
+	assert.Equal(t, int64(1), order.DisplayID)
 
-	detay, err := o.svc.GetOrder(ctx, siparis.ID)
+	detail, err := e.svc.GetOrder(ctx, order.ID)
 	require.NoError(t, err)
-	require.Len(t, detay.Items, 1)
-	assert.Equal(t, testVariantID, detay.Items[0].VariantID)
-	assert.Equal(t, int64(3600), detay.Items[0].Total)
-	assert.True(t, strings.HasPrefix(detay.Items[0].ID, models.LineItemIDPrefix))
+	require.Len(t, detail.Items, 1)
+	assert.Equal(t, testVariantID, detail.Items[0].VariantID)
+	assert.Equal(t, int64(3600), detail.Items[0].Total)
+	assert.True(t, strings.HasPrefix(detail.Items[0].ID, models.LineItemIDPrefix))
 
-	// Özet siparişle birlikte ve SIFIRLANMIŞ doğar.
-	assert.Equal(t, siparis.ID, detay.Summary.OrderID)
-	assert.Equal(t, int64(0), detay.Summary.PaidTotal)
-	assert.Equal(t, int64(6100), detay.Summary.Outstanding(detay.Total))
+	// The summary is born together with the order and ZEROED.
+	assert.Equal(t, order.ID, detail.Summary.OrderID)
+	assert.Equal(t, int64(0), detail.Summary.PaidTotal)
+	assert.Equal(t, int64(6100), detail.Summary.Outstanding(detail.Total))
 }
 
-// TestCreateOrderIkinciSiparisSonrakiNumarayiAlir numaranın ARTAN olduğunu
-// doğrular.
-func TestCreateOrderIkinciSiparisSonrakiNumarayiAlir(t *testing.T) {
+// TestCreateOrderSecondOrderTakesTheNextNumber validates that the number is
+// INCREASING.
+func TestCreateOrderSecondOrderTakesTheNextNumber(t *testing.T) {
 	ctx := context.Background()
-	o := yeniOrtam(t)
+	e := newEnv(t)
 
-	ilk, err := o.svc.CreateOrder(ctx, gecerliGirdi())
+	first, err := e.svc.CreateOrder(ctx, validInput())
 	require.NoError(t, err)
-	ikinci, err := o.svc.CreateOrder(ctx, gecerliGirdi())
+	second, err := e.svc.CreateOrder(ctx, validInput())
 	require.NoError(t, err)
 
-	assert.Equal(t, int64(1), ilk.DisplayID)
-	assert.Equal(t, int64(2), ikinci.DisplayID)
-	assert.NotEqual(t, ilk.ID, ikinci.ID)
+	assert.Equal(t, int64(1), first.DisplayID)
+	assert.Equal(t, int64(2), second.DisplayID)
+	assert.NotEqual(t, first.ID, second.ID)
 }
 
-// TestCreateOrderTutarsizGirdiyiReddeder toplam doğrulamasının her katmanını
-// tek tek sınar.
+// TestCreateOrderRejectsInconsistentInput exercises every layer of the total
+// validation one by one.
 //
-// Her satır TEK bir alanı bozar: hangi kuralın hangi girdiyi yakaladığı
-// böylece okunur. Girdinin tamamı geçerli tabandan türetildiği için, bir
-// kontrol kaldırılırsa YALNIZCA onun satırı düşer.
-func TestCreateOrderTutarsizGirdiyiReddeder(t *testing.T) {
-	testler := map[string]struct {
-		boz  func(in *service.CreateOrderInput)
-		kod  string
-		icer string
+// Every row breaks ONE single field: which rule catches which input becomes
+// readable this way. Because the whole input is derived from the valid base, if
+// a check is removed ONLY its own row falls.
+func TestCreateOrderRejectsInconsistentInput(t *testing.T) {
+	cases := map[string]struct {
+		corrupt  func(in *service.CreateOrderInput)
+		code     string
+		contains string
 	}{
-		"sipariş toplamı kimliği tutmuyor": {
-			boz:  func(in *service.CreateOrderInput) { in.Total = 6099 },
-			kod:  service.CodeTotalsInconsistent,
-			icer: "sipariş toplamı tutarsız",
+		"the identity of the order total does not hold": {
+			corrupt:  func(in *service.CreateOrderInput) { in.Total = 6099 },
+			code:     service.CodeTotalsInconsistent,
+			contains: "the order total is inconsistent",
 		},
-		"indirim ara toplamı aşıyor ama kimlik sağlanıyor": {
+		"the discount exceeds the subtotal but the identity holds": {
 			// subtotal=3000, discount=4000, tax=600, shipping=2500 -> total=2100.
-			// Kimlik SAĞLANIR; yakalayan tek şey indirim sınırıdır.
-			boz: func(in *service.CreateOrderInput) {
+			// The identity HOLDS; the only thing that catches it is the discount
+			// bound.
+			corrupt: func(in *service.CreateOrderInput) {
 				in.DiscountTotal = 4000
 				in.Total = 2100
 			},
-			kod:  service.CodeTotalsInconsistent,
-			icer: "indirim ara toplamı aşamaz",
+			code:     service.CodeTotalsInconsistent,
+			contains: "the discount cannot exceed the subtotal",
 		},
-		"satır ara toplamı adetle çarpımı tutmuyor": {
-			boz: func(in *service.CreateOrderInput) {
+		"the line subtotal does not match the product with the quantity": {
+			corrupt: func(in *service.CreateOrderInput) {
 				in.Items[0].Quantity = 2
 			},
-			kod:  service.CodeTotalsInconsistent,
-			icer: "satır ara toplamı tutarsız",
+			code:     service.CodeTotalsInconsistent,
+			contains: "the line subtotal is inconsistent",
 		},
-		"satır toplamı kimliği tutmuyor": {
-			boz: func(in *service.CreateOrderInput) {
+		"the identity of the line total does not hold": {
+			corrupt: func(in *service.CreateOrderInput) {
 				in.Items[0].Total = 3599
 			},
-			kod:  service.CodeTotalsInconsistent,
-			icer: "satır toplamı tutarsız",
+			code:     service.CodeTotalsInconsistent,
+			contains: "the line total is inconsistent",
 		},
-		"satır indirimi ara toplamı aşıyor": {
-			boz: func(in *service.CreateOrderInput) {
+		"the line discount exceeds the subtotal": {
+			corrupt: func(in *service.CreateOrderInput) {
 				in.Items[0].DiscountTotal = 4000
 				in.Items[0].Total = -400 + 600 // subtotal - discount + tax
 			},
-			kod:  service.CodeTotalsInconsistent,
-			icer: "ara toplamı aşamaz",
+			code:     service.CodeTotalsInconsistent,
+			contains: "cannot exceed the subtotal",
 		},
-		"sipariş ara toplamı satırların toplamına eşit değil": {
-			// Satırları göndermeyi "unutan" hesabın karşılığı: tek satır 1000
-			// eder ama sipariş 3000 iddia eder.
-			boz: func(in *service.CreateOrderInput) {
+		"the order subtotal is not equal to the sum of the lines": {
+			// The counterpart of a computation that "forgets" to send the lines:
+			// the single line adds up to 1000 but the order claims 3000.
+			corrupt: func(in *service.CreateOrderInput) {
 				in.Items[0].Quantity = 1
 				in.Items[0].Subtotal = 1000
 				in.Items[0].TaxTotal = 600
 				in.Items[0].Total = 1600
 			},
-			kod:  service.CodeTotalsInconsistent,
-			icer: "satırların ara toplamlarına eşit olmalı",
+			code:     service.CodeTotalsInconsistent,
+			contains: "the sum of the line subtotals",
 		},
-		"satırsız sipariş": {
-			boz:  func(in *service.CreateOrderInput) { in.Items = nil },
-			kod:  service.CodeOrderEmpty,
-			icer: "en az bir satır",
+		"an order without lines": {
+			corrupt:  func(in *service.CreateOrderInput) { in.Items = nil },
+			code:     service.CodeOrderEmpty,
+			contains: "at least one line",
 		},
-		"negatif toplam": {
-			boz:  func(in *service.CreateOrderInput) { in.Total = -1; in.Subtotal = -1 },
-			kod:  service.CodeInvalidInput,
-			icer: "negatif olamaz",
+		"a negative total": {
+			corrupt:  func(in *service.CreateOrderInput) { in.Total = -1; in.Subtotal = -1 },
+			code:     service.CodeInvalidInput,
+			contains: "cannot be negative",
 		},
 	}
 
-	for ad, tc := range testler {
-		t.Run(ad, func(t *testing.T) {
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
 			ctx := context.Background()
-			o := yeniOrtam(t)
+			e := newEnv(t)
 
-			in := gecerliGirdi()
-			tc.boz(&in)
+			in := validInput()
+			tc.corrupt(&in)
 
-			_, err := o.svc.CreateOrder(ctx, in)
+			_, err := e.svc.CreateOrder(ctx, in)
 
-			require.Error(t, err, "tutarsız girdi kabul edilmemeli")
+			require.Error(t, err, "an inconsistent input must not be accepted")
 			assert.Equal(t, errors.KindInvalid, errors.KindOf(err))
-			assert.Equal(t, tc.kod, errors.CodeOf(err))
-			assert.Contains(t, err.Error(), tc.icer)
+			assert.Equal(t, tc.code, errors.CodeOf(err))
+			assert.Contains(t, err.Error(), tc.contains)
 
-			// Reddedilen istek HİÇBİR ŞEY yazmamalı.
-			siparisler, sayi, listErr := o.svc.ListOrders(ctx, service.ListOrdersInput{})
+			// A rejected request must write NOTHING.
+			orders, count, listErr := e.svc.ListOrders(ctx, service.ListOrdersInput{})
 			require.NoError(t, listErr)
-			assert.Zero(t, sayi)
-			assert.Empty(t, siparisler)
-			assert.Empty(t, o.bus.events(), "reddedilen istek olay yayımlamamalı")
+			assert.Zero(t, count)
+			assert.Empty(t, orders)
+			assert.Empty(t, e.bus.events(), "a rejected request must not publish an event")
 		})
 	}
 }
 
-// TestCreateOrderZorunluAlanlariDogrular kimlik ve kod alanlarının
-// doğrulandığını gösterir.
-func TestCreateOrderZorunluAlanlariDogrular(t *testing.T) {
-	testler := map[string]func(in *service.CreateOrderInput){
-		"bölge boş":              func(in *service.CreateOrderInput) { in.RegionID = "" },
-		"para birimi boş":        func(in *service.CreateOrderInput) { in.CurrencyCode = "" },
-		"para birimi harf değil": func(in *service.CreateOrderInput) { in.CurrencyCode = "TR1" },
-		"e-posta bozuk":          func(in *service.CreateOrderInput) { in.Email = "musteri" },
-		"satır varyantı boş":     func(in *service.CreateOrderInput) { in.Items[0].VariantID = "" },
-		"satır başlığı boş":      func(in *service.CreateOrderInput) { in.Items[0].Title = "" },
-		"adet sıfır": func(in *service.CreateOrderInput) {
+// TestCreateOrderValidatesTheRequiredFields shows that the identifier and code
+// fields are validated.
+func TestCreateOrderValidatesTheRequiredFields(t *testing.T) {
+	cases := map[string]func(in *service.CreateOrderInput){
+		"an empty region":                func(in *service.CreateOrderInput) { in.RegionID = "" },
+		"an empty currency":              func(in *service.CreateOrderInput) { in.CurrencyCode = "" },
+		"a currency that is not letters": func(in *service.CreateOrderInput) { in.CurrencyCode = "TR1" },
+		"a malformed e-mail":             func(in *service.CreateOrderInput) { in.Email = "customer" },
+		"an empty line variant":          func(in *service.CreateOrderInput) { in.Items[0].VariantID = "" },
+		"an empty line title":            func(in *service.CreateOrderInput) { in.Items[0].Title = "" },
+		"a zero quantity": func(in *service.CreateOrderInput) {
 			in.Items[0].Quantity = 0
 			in.Items[0].Subtotal = 0
 			in.Items[0].TaxTotal = 0
 			in.Items[0].Total = 0
 			in.Subtotal, in.TaxTotal, in.Total = 0, 0, 2500
 		},
-		"customer id boşluklu": func(in *service.CreateOrderInput) { in.CustomerID = " cus_1" },
+		"a customer id with whitespace": func(in *service.CreateOrderInput) { in.CustomerID = " cus_1" },
 	}
 
-	for ad, boz := range testler {
-		t.Run(ad, func(t *testing.T) {
+	for name, corrupt := range cases {
+		t.Run(name, func(t *testing.T) {
 			ctx := context.Background()
-			o := yeniOrtam(t)
+			e := newEnv(t)
 
-			in := gecerliGirdi()
-			boz(&in)
+			in := validInput()
+			corrupt(&in)
 
-			_, err := o.svc.CreateOrder(ctx, in)
+			_, err := e.svc.CreateOrder(ctx, in)
 
 			require.Error(t, err)
 			assert.Equal(t, errors.KindInvalid, errors.KindOf(err))
@@ -257,559 +259,571 @@ func TestCreateOrderZorunluAlanlariDogrular(t *testing.T) {
 	}
 }
 
-// TestCreateOrderBolgeVeMusteriyiSutunaYazar siparişin bölgesinin ve
-// müşterisinin KENDİ SÜTUNLARINDA durduğunu doğrular.
+// TestCreateOrderWritesTheRegionAndTheCustomerIntoTheirColumns validates that
+// the region and the customer of the order stand IN THEIR OWN COLUMNS.
 //
-// İlişkinin tek yeri budur: sipariş bir de link tablosuna yazılmaz ve bu iddia
-// o kararın bekçisidir — ikinci bir kopya eklenirse sütun ile bağ ayrışabilir.
-func TestCreateOrderBolgeVeMusteriyiSutunaYazar(t *testing.T) {
+// That is the only place of the relation: the order is not written into a link
+// table as well and this claim is the guard of that decision — if a second copy
+// were added, the column and the link could diverge.
+func TestCreateOrderWritesTheRegionAndTheCustomerIntoTheirColumns(t *testing.T) {
 	ctx := context.Background()
-	o := yeniOrtam(t)
+	e := newEnv(t)
 
-	siparis, err := o.svc.CreateOrder(ctx, gecerliGirdi())
+	order, err := e.svc.CreateOrder(ctx, validInput())
 	require.NoError(t, err)
 
-	assert.Equal(t, testRegionID, siparis.RegionID)
-	assert.Equal(t, testCustomerID, siparis.CustomerID)
+	assert.Equal(t, testRegionID, order.RegionID)
+	assert.Equal(t, testCustomerID, order.CustomerID)
 }
 
-// TestCreateOrderMisafirSiparisiMusterisizAcilir customer id verilmeyen
-// siparişin MİSAFİR olarak açıldığını doğrular.
-func TestCreateOrderMisafirSiparisiMusterisizAcilir(t *testing.T) {
+// TestCreateOrderGuestOrderIsOpenedWithoutACustomer validates that an order
+// given without a customer id is opened as a GUEST order.
+func TestCreateOrderGuestOrderIsOpenedWithoutACustomer(t *testing.T) {
 	ctx := context.Background()
-	o := yeniOrtam(t)
+	e := newEnv(t)
 
-	in := gecerliGirdi()
+	in := validInput()
 	in.CustomerID = ""
 
-	siparis, err := o.svc.CreateOrder(ctx, in)
+	order, err := e.svc.CreateOrder(ctx, in)
 	require.NoError(t, err)
 
-	assert.True(t, siparis.Guest())
-	assert.Empty(t, siparis.CustomerID)
-	assert.Equal(t, testRegionID, siparis.RegionID)
+	assert.True(t, order.Guest())
+	assert.Empty(t, order.CustomerID)
+	assert.Equal(t, testRegionID, order.RegionID)
 }
 
-// TestCreateOrderNumarasizSiparisiGeriAlir depo kullanılabilir bir numara
-// vermezse siparişin yazılı kalmadığını doğrular.
+// TestCreateOrderRollsBackAnOrderWithoutANumber validates that if the store does
+// not give a usable number the order does not stay written.
 //
-// Numarasız sipariş, müşterinin hiçbir yerde bulamayacağı bir siparişdir.
-func TestCreateOrderNumarasizSiparisiGeriAlir(t *testing.T) {
+// An order without a number is an order the customer will not be able to find
+// anywhere.
+func TestCreateOrderRollsBackAnOrderWithoutANumber(t *testing.T) {
 	ctx := context.Background()
-	o := yeniOrtam(t)
-	bozukNumara := int64(0)
-	o.store.forceDisplayID = &bozukNumara
+	e := newEnv(t)
+	brokenNumber := int64(0)
+	e.store.forceDisplayID = &brokenNumber
 
-	_, err := o.svc.CreateOrder(ctx, gecerliGirdi())
+	_, err := e.svc.CreateOrder(ctx, validInput())
 
 	require.Error(t, err)
 	assert.Equal(t, errors.KindInternal, errors.KindOf(err))
 	assert.Equal(t, service.CodeDisplayIDInvalid, errors.CodeOf(err))
 
-	_, sayi, listErr := o.svc.ListOrders(ctx, service.ListOrdersInput{})
+	_, count, listErr := e.svc.ListOrders(ctx, service.ListOrdersInput{})
 	require.NoError(t, listErr)
-	assert.Zero(t, sayi, "numarasız sipariş geri alınmalı")
-	assert.Empty(t, o.bus.events())
+	assert.Zero(t, count, "an order without a number has to be rolled back")
+	assert.Empty(t, e.bus.events())
 }
 
-// TestCreateOrderSatirYazilamazsaHicbirSeyYazilmaz siparişin ve satırlarının
-// TEK işlemde yazıldığını doğrular.
-func TestCreateOrderSatirYazilamazsaHicbirSeyYazilmaz(t *testing.T) {
+// TestCreateOrderWritesNothingWhenALineCannotBeWritten validates that the order
+// and its lines are written in a SINGLE transaction.
+func TestCreateOrderWritesNothingWhenALineCannotBeWritten(t *testing.T) {
 	ctx := context.Background()
-	o := yeniOrtam(t)
-	o.store.failCreateLineItem = errors.Internal("depo_patladi", "satır yazılamadı")
+	e := newEnv(t)
+	e.store.failCreateLineItem = errors.Internal("store_failed", "the line could not be written")
 
-	_, err := o.svc.CreateOrder(ctx, gecerliGirdi())
+	_, err := e.svc.CreateOrder(ctx, validInput())
 
 	require.Error(t, err)
-	_, sayi, listErr := o.svc.ListOrders(ctx, service.ListOrdersInput{})
+	_, count, listErr := e.svc.ListOrders(ctx, service.ListOrdersInput{})
 	require.NoError(t, listErr)
-	assert.Zero(t, sayi, "satır yazılamayınca sipariş de yazılmamalı")
-	assert.Empty(t, o.bus.events())
+	assert.Zero(t, count, "when the line cannot be written the order must not be written either")
+	assert.Empty(t, e.bus.events())
 }
 
-// TestCreateOrderIdempotencyAnahtariIkinciSiparisiEngeller aynı anahtarla
-// yapılan ikinci çağrının MEVCUT siparişi döndürdüğünü doğrular.
-func TestCreateOrderIdempotencyAnahtariIkinciSiparisiEngeller(t *testing.T) {
+// TestCreateOrderIdempotencyKeyBlocksASecondOrder validates that a second call
+// made with the same key returns the EXISTING order.
+func TestCreateOrderIdempotencyKeyBlocksASecondOrder(t *testing.T) {
 	ctx := context.Background()
-	o := yeniOrtam(t)
+	e := newEnv(t)
 
-	in := gecerliGirdi()
-	in.IdempotencyKey = "wf_ADIM_1"
+	in := validInput()
+	in.IdempotencyKey = "wf_STEP_1"
 
-	ilk, err := o.svc.CreateOrder(ctx, in)
+	first, err := e.svc.CreateOrder(ctx, in)
 	require.NoError(t, err)
 
-	ikinci, err := o.svc.CreateOrder(ctx, in)
-	require.NoError(t, err, "aynı anahtarla ikinci çağrı hata vermemeli")
+	second, err := e.svc.CreateOrder(ctx, in)
+	require.NoError(t, err, "a second call with the same key must not return an error")
 
-	assert.Equal(t, ilk.ID, ikinci.ID)
-	assert.Equal(t, ilk.DisplayID, ikinci.DisplayID)
+	assert.Equal(t, first.ID, second.ID)
+	assert.Equal(t, first.DisplayID, second.DisplayID)
 
-	_, sayi, listErr := o.svc.ListOrders(ctx, service.ListOrdersInput{})
+	_, count, listErr := e.svc.ListOrders(ctx, service.ListOrdersInput{})
 	require.NoError(t, listErr)
-	assert.Equal(t, int64(1), sayi, "ikinci çağrı yeni sipariş açmamalı")
-	assert.Len(t, o.bus.events(), 1, "ikinci çağrı ikinci olay yayımlamamalı")
+	assert.Equal(t, int64(1), count, "the second call must not open a new order")
+	assert.Len(t, e.bus.events(), 1, "the second call must not publish a second event")
 }
 
-// TestCreateOrderEszamanliIdempotentCagriYarisiKaybedeniDeCevaplar veritabanı
-// benzersizlik ihlaliyle dönen çağrının da mevcut siparişi döndürdüğünü
-// doğrular.
+// TestCreateOrderConcurrentIdempotentCallAnswersTheRaceLoserToo validates that
+// the call returning with a database uniqueness violation also returns the
+// existing order.
 //
-// Senaryo, ucuz yolun (önce ara) yakalayamadığı YARIŞTIR: iki çağrı da anahtarı
-// bulamaz, ikisi de yazmaya kalkar ve indeks ikincisini reddeder. Yarış
-// zamanlamaya bağlı olduğu için sahte deponun kancasıyla deterministik
-// kurulur.
-func TestCreateOrderEszamanliIdempotentCagriYarisiKaybedeniDeCevaplar(t *testing.T) {
+// The scenario is the RACE the cheap path (look up first) cannot catch: neither
+// call finds the key, both attempt to write and the index rejects the second
+// one. Because the race depends on timing, it is set up deterministically with
+// the hook of the fake store.
+func TestCreateOrderConcurrentIdempotentCallAnswersTheRaceLoserToo(t *testing.T) {
 	ctx := context.Background()
-	o := yeniOrtam(t)
+	e := newEnv(t)
 
-	in := gecerliGirdi()
-	in.IdempotencyKey = "wf_ADIM_1"
+	in := validInput()
+	in.IdempotencyKey = "wf_STEP_1"
 
-	// Kancanın kendisi rakip çağrıyı yapar: bizim çağrımız anahtarı bulamadan
-	// yola çıkar, tam yazacakken rakip kaydı oluşur ve indeks bizi reddeder.
-	var rakip models.Order
-	o.store.hookCreateOrder = func() {
-		var hataRakip error
-		rakip, hataRakip = o.svc.CreateOrder(ctx, in)
-		require.NoError(t, hataRakip)
+	// The hook itself makes the rival call: our call sets off without finding
+	// the key, and just as it is about to write the rival's record comes into
+	// being and the index rejects us.
+	var rival models.Order
+	e.store.hookCreateOrder = func() {
+		var rivalErr error
+		rival, rivalErr = e.svc.CreateOrder(ctx, in)
+		require.NoError(t, rivalErr)
 	}
 
-	sonuc, err := o.svc.CreateOrder(ctx, in)
+	result, err := e.svc.CreateOrder(ctx, in)
 
-	require.NoError(t, err, "yarışı kaybeden çağrı hata değil mevcut siparişi dönmeli")
-	assert.Equal(t, rakip.ID, sonuc.ID)
+	require.NoError(t, err, "the call that loses the race has to return the existing order, not an error")
+	assert.Equal(t, rival.ID, result.ID)
 
-	_, sayi, listErr := o.svc.ListOrders(ctx, service.ListOrdersInput{})
+	_, count, listErr := e.svc.ListOrders(ctx, service.ListOrdersInput{})
 	require.NoError(t, listErr)
-	assert.Equal(t, int64(1), sayi)
+	assert.Equal(t, int64(1), count)
 }
 
-// TestCreateOrderAnahtarsizCagriHerSeferindeYeniSiparisAcar idempotency
-// anahtarının OPSİYONEL olduğunu ve verilmediğinde koruma sağlamadığını
-// gösterir.
-func TestCreateOrderAnahtarsizCagriHerSeferindeYeniSiparisAcar(t *testing.T) {
+// TestCreateOrderCallWithoutAKeyOpensANewOrderEveryTime shows that the
+// idempotency key is OPTIONAL and that it gives no protection when it is not
+// given.
+func TestCreateOrderCallWithoutAKeyOpensANewOrderEveryTime(t *testing.T) {
 	ctx := context.Background()
-	o := yeniOrtam(t)
+	e := newEnv(t)
 
-	ilk, err := o.svc.CreateOrder(ctx, gecerliGirdi())
+	first, err := e.svc.CreateOrder(ctx, validInput())
 	require.NoError(t, err)
-	ikinci, err := o.svc.CreateOrder(ctx, gecerliGirdi())
+	second, err := e.svc.CreateOrder(ctx, validInput())
 	require.NoError(t, err)
 
-	assert.NotEqual(t, ilk.ID, ikinci.ID)
-	_, sayi, listErr := o.svc.ListOrders(ctx, service.ListOrdersInput{})
+	assert.NotEqual(t, first.ID, second.ID)
+	_, count, listErr := e.svc.ListOrders(ctx, service.ListOrdersInput{})
 	require.NoError(t, listErr)
-	assert.Equal(t, int64(2), sayi)
+	assert.Equal(t, int64(2), count)
 }
 
-// TestCreateOrderPlacedOlayiYayimlar DoD şartını doğrular: sipariş
-// oluşturulduğunda "order.placed" yayımlanır ve yükü gerekli alanları taşır.
-func TestCreateOrderPlacedOlayiYayimlar(t *testing.T) {
+// TestCreateOrderPublishesThePlacedEvent validates the DoD requirement: when an
+// order is created "order.placed" is published and its payload carries the
+// necessary fields.
+func TestCreateOrderPublishesThePlacedEvent(t *testing.T) {
 	ctx := context.Background()
-	o := yeniOrtam(t)
+	e := newEnv(t)
 
-	siparis, err := o.svc.CreateOrder(ctx, gecerliGirdi())
+	order, err := e.svc.CreateOrder(ctx, validInput())
 	require.NoError(t, err)
 
-	olaylar := o.bus.events()
-	require.Len(t, olaylar, 1)
-	assert.Equal(t, service.EventOrderPlaced, olaylar[0].Name)
+	events := e.bus.events()
+	require.Len(t, events, 1)
+	assert.Equal(t, service.EventOrderPlaced, events[0].Name)
 
-	veri := olaylar[0].Data
-	assert.Equal(t, siparis.ID, veri[service.EventFieldOrderID])
-	assert.Equal(t, "1", veri[service.EventFieldDisplayID])
-	assert.Equal(t, "6100", veri[service.EventFieldTotal])
-	assert.Equal(t, siparis.CurrencyCode, veri[service.EventFieldCurrencyCode])
-	assert.Equal(t, siparis.CustomerID, veri[service.EventFieldCustomerID])
-	assert.Equal(t, siparis.RegionID, veri[service.EventFieldRegionID])
-	assert.Equal(t, models.OrderPending.String(), veri[service.EventFieldStatus])
-	assert.Equal(t, "1", veri[service.EventFieldItemCount])
+	data := events[0].Data
+	assert.Equal(t, order.ID, data[service.EventFieldOrderID])
+	assert.Equal(t, "1", data[service.EventFieldDisplayID])
+	assert.Equal(t, "6100", data[service.EventFieldTotal])
+	assert.Equal(t, order.CurrencyCode, data[service.EventFieldCurrencyCode])
+	assert.Equal(t, order.CustomerID, data[service.EventFieldCustomerID])
+	assert.Equal(t, order.RegionID, data[service.EventFieldRegionID])
+	assert.Equal(t, models.OrderPending.String(), data[service.EventFieldStatus])
+	assert.Equal(t, "1", data[service.EventFieldItemCount])
 
-	// E-posta olaya KONMAZ: olaylar kalıcı bir akışa yazılır ve kişisel veri
-	// orada gereksiz yere yayılırdı.
-	assert.NotContains(t, veri, "email")
+	// The e-mail IS NOT PUT into the event: events are written to a durable
+	// stream and personal data would spread there needlessly.
+	assert.NotContains(t, data, "email")
 }
 
-// TestOrderPlacedYukuJSONTuruDegistirmez olay yükünün üretim veri yolundan
-// geçtiğinde TİP ve DEĞER değiştirmediğini doğrular.
+// TestOrderPlacedPayloadDoesNotChangeTypeThroughJSON validates that the event
+// payload changes neither TYPE nor VALUE when it goes through the production
+// data bus.
 //
-// Üretimdeki Redis Streams backend'i Data'yı json.Marshal ile yazar ve okurken
-// map[string]any içine çözer (bkz. core/eventbus redis.go). JSON'un tek sayı
-// tipi olduğu için int64 olarak konan her alan aboneye float64 olarak ulaşırdı:
-// sözleşmeye göre yazılmış bir abone geliştirmede (InMemory) çalışır, üretimde
-// düşerdi ve 2^53 üstündeki tutarlar sessizce yuvarlanırdı — yani para float
-// üzerinden geçerdi (plan Bölüm 8: float ASLA).
+// The Redis Streams backend in production writes Data with json.Marshal and
+// decodes it into a map[string]any when reading (see core/eventbus redis.go).
+// Because JSON has a single number type, every field put in as an int64 would
+// reach the subscriber as a float64: a subscriber written according to the
+// contract would work in development (InMemory) and fall over in production, and
+// amounts above 2^53 would be rounded silently — that is, money would travel
+// over a float (plan Section 8: float NEVER).
 //
-// Test o dönüşümü BİREBİR taklit eder ve iki şeyi ister: her değer string
-// KALMALI ve tutar TAM olarak geri okunabilmelidir.
-func TestOrderPlacedYukuJSONTuruDegistirmez(t *testing.T) {
+// The test imitates that conversion EXACTLY and asks for two things: every value
+// HAS TO STAY a string and the amount has to be readable back EXACTLY.
+func TestOrderPlacedPayloadDoesNotChangeTypeThroughJSON(t *testing.T) {
 	ctx := context.Background()
-	o := yeniOrtam(t)
+	e := newEnv(t)
 
-	// 2^53'ün üstünde bir tutar: float64'e uğrayan bir yol burada yuvarlar.
-	const buyukTutar int64 = 9_007_199_254_740_993
+	// An amount above 2^53: a path that passes through a float64 rounds here.
+	const largeAmount int64 = 9_007_199_254_740_993
 
-	in := gecerliGirdi()
-	in.ShippingTotal = buyukTutar - 3600
-	in.Total = buyukTutar
-	siparis, err := o.svc.CreateOrder(ctx, in)
+	in := validInput()
+	in.ShippingTotal = largeAmount - 3600
+	in.Total = largeAmount
+	order, err := e.svc.CreateOrder(ctx, in)
 	require.NoError(t, err)
 
-	olaylar := o.bus.events()
-	require.Len(t, olaylar, 1)
+	events := e.bus.events()
+	require.Len(t, events, 1)
 
-	ham, err := json.Marshal(olaylar[0].Data)
+	raw, err := json.Marshal(events[0].Data)
 	require.NoError(t, err)
-	var teslim map[string]any
-	require.NoError(t, json.Unmarshal(ham, &teslim))
+	var delivered map[string]any
+	require.NoError(t, json.Unmarshal(raw, &delivered))
 
-	for anahtar, deger := range teslim {
-		assert.IsType(t, "", deger,
-			"%q alanı veri yolundan geçince dize kalmalı", anahtar)
+	for key, value := range delivered {
+		assert.IsType(t, "", value,
+			"the %q field has to stay a string once it goes through the data bus", key)
 	}
 
-	hamTutar, ok := teslim[service.EventFieldTotal].(string)
-	require.True(t, ok, "tutar dize olarak taşınmalı")
-	okunan, err := strconv.ParseInt(hamTutar, 10, 64)
+	rawAmount, ok := delivered[service.EventFieldTotal].(string)
+	require.True(t, ok, "the amount has to be carried as a string")
+	readBack, err := strconv.ParseInt(rawAmount, 10, 64)
 	require.NoError(t, err)
-	assert.Equal(t, siparis.Total, okunan, "tutar yuvarlanmadan geri okunabilmeli")
-	assert.Equal(t, buyukTutar, okunan)
+	assert.Equal(t, order.Total, readBack, "the amount has to be readable back without rounding")
+	assert.Equal(t, largeAmount, readBack)
 }
 
-// TestCreateOrderOlayYayimiDusersaSiparisYazilmisKalir yayım hatasının
-// siparişi düşürmediğini doğrular.
+// TestCreateOrderKeepsTheOrderWhenTheEventPublishingFails validates that a
+// publishing failure does not drop the order.
 //
-// Karar bilinçlidir: sipariş KAYITTIR, olay ise duyurudur. Veri yolunun bir
-// saniyelik erişilemezliği yüzünden ödemesi alınmış bir siparişi geri almak,
-// korumaya çalıştığı şeyden pahalı bir kayıp olurdu.
-func TestCreateOrderOlayYayimiDusersaSiparisYazilmisKalir(t *testing.T) {
+// The decision is deliberate: the order is a RECORD, whereas the event is an
+// announcement. Rolling back an order whose payment was taken because of a
+// one-second unavailability of the data bus would be a more expensive loss than
+// the thing it tries to protect.
+func TestCreateOrderKeepsTheOrderWhenTheEventPublishingFails(t *testing.T) {
 	ctx := context.Background()
-	o := yeniOrtam(t)
-	o.bus.failErr = errors.Unavailable("eventbus_publish_failed", "veri yolu erişilemez")
+	e := newEnv(t)
+	e.bus.failErr = errors.Unavailable("eventbus_publish_failed", "the data bus is unreachable")
 
-	siparis, err := o.svc.CreateOrder(ctx, gecerliGirdi())
+	order, err := e.svc.CreateOrder(ctx, validInput())
 
-	require.NoError(t, err, "olay yayımı hatası siparişi düşürmemeli")
-	assert.NotEmpty(t, siparis.ID)
+	require.NoError(t, err, "an event publishing failure must not drop the order")
+	assert.NotEmpty(t, order.ID)
 
-	okunan, getErr := o.svc.GetOrder(ctx, siparis.ID)
-	require.NoError(t, getErr, "sipariş yazılmış olmalı")
-	assert.Equal(t, siparis.ID, okunan.ID)
+	readBack, getErr := e.svc.GetOrder(ctx, order.ID)
+	require.NoError(t, getErr, "the order has to be written")
+	assert.Equal(t, order.ID, readBack.ID)
 }
 
-// TestCancelOrderIdempotenttir saga telafisinin ikinci kez çağrılabildiğini
-// doğrular (DoD şartı).
-func TestCancelOrderIdempotenttir(t *testing.T) {
+// TestCancelOrderIsIdempotent validates that the saga compensation can be called
+// a second time (a DoD requirement).
+func TestCancelOrderIsIdempotent(t *testing.T) {
 	ctx := context.Background()
-	o := yeniOrtam(t)
+	e := newEnv(t)
 
-	siparis, err := o.svc.CreateOrder(ctx, gecerliGirdi())
+	order, err := e.svc.CreateOrder(ctx, validInput())
 	require.NoError(t, err)
 
-	require.NoError(t, o.svc.CancelOrder(ctx, siparis.ID, "ödeme reddedildi"))
-	require.NoError(t, o.svc.CancelOrder(ctx, siparis.ID, "telafi tekrarı"),
-		"ikinci iptal hata vermemeli")
+	require.NoError(t, e.svc.CancelOrder(ctx, order.ID, "the payment was declined"))
+	require.NoError(t, e.svc.CancelOrder(ctx, order.ID, "a repeat of the compensation"),
+		"the second cancellation must not return an error")
 
-	iptal, err := o.svc.GetOrder(ctx, siparis.ID)
+	canceled, err := e.svc.GetOrder(ctx, order.ID)
 	require.NoError(t, err)
-	assert.Equal(t, models.OrderCanceled, iptal.Status)
-	require.NotNil(t, iptal.CanceledAt)
-	assert.Equal(t, "ödeme reddedildi", iptal.CancelReason,
-		"ilk iptalin gerekçesi korunmalı; iptal gerçekte orada olmuştur")
+	assert.Equal(t, models.OrderCanceled, canceled.Status)
+	require.NotNil(t, canceled.CanceledAt)
+	assert.Equal(t, "the payment was declined", canceled.CancelReason,
+		"the reason of the first cancellation has to be preserved; the cancellation really happened there")
 }
 
-// TestCancelOrderKilitAlir iptalin siparişin satır kilidini aldığını doğrular.
+// TestCancelOrderTakesTheLock validates that the cancellation takes the row lock
+// of the order.
 //
-// Kilit bir EŞZAMANLILIK sözleşmesidir: kilitsiz bir "durumu oku, durumu yaz"
-// akışında eşzamanlı bir iptal ile tamamlama birbirini ezerdi. Gerçek
-// veritabanında ihlal ancak yarış altında görünür; burada doğrudan okunur.
-func TestCancelOrderKilitAlir(t *testing.T) {
+// The lock is a CONCURRENCY contract: in a lockless "read the status, write the
+// status" flow a concurrent cancellation and completion would overwrite each
+// other. In a real database the violation only shows up under a race; here it is
+// read directly.
+func TestCancelOrderTakesTheLock(t *testing.T) {
 	ctx := context.Background()
-	o := yeniOrtam(t)
+	e := newEnv(t)
 
-	siparis, err := o.svc.CreateOrder(ctx, gecerliGirdi())
+	order, err := e.svc.CreateOrder(ctx, validInput())
 	require.NoError(t, err)
-	require.NoError(t, o.svc.CancelOrder(ctx, siparis.ID, ""))
+	require.NoError(t, e.svc.CancelOrder(ctx, order.ID, ""))
 
-	assert.Contains(t, o.store.lockedOrders, siparis.ID,
-		"iptal siparişin kilidini almalı")
+	assert.Contains(t, e.store.lockedOrders, order.ID,
+		"the cancellation has to take the lock of the order")
 }
 
-// TestCancelOrderTamamlanmisSiparisteConflict tamamlanmış siparişin iptal
-// edilemediğini doğrular.
+// TestCancelOrderConflictsOnACompletedOrder validates that a completed order
+// cannot be canceled.
 //
-// Tamamlanmış siparişin ödemesi tahsil edilmiştir; "iptal" damgası tahsil
-// edilmiş tutarı hiçbir siparişe bağlı olmayan bir tutar hâline getirirdi.
-func TestCancelOrderTamamlanmisSiparisteConflict(t *testing.T) {
+// The payment of a completed order has been collected; a "canceled" stamp would
+// turn a collected amount into an amount that is not tied to any order.
+func TestCancelOrderConflictsOnACompletedOrder(t *testing.T) {
 	ctx := context.Background()
-	o := yeniOrtam(t)
+	e := newEnv(t)
 
-	siparis, err := o.svc.CreateOrder(ctx, gecerliGirdi())
+	order, err := e.svc.CreateOrder(ctx, validInput())
 	require.NoError(t, err)
-	_, err = o.svc.CompleteOrder(ctx, siparis.ID)
+	_, err = e.svc.CompleteOrder(ctx, order.ID)
 	require.NoError(t, err)
 
-	err = o.svc.CancelOrder(ctx, siparis.ID, "vazgeçildi")
+	err = e.svc.CancelOrder(ctx, order.ID, "given up on")
 
 	require.Error(t, err)
 	assert.Equal(t, errors.KindConflict, errors.KindOf(err))
 	assert.Equal(t, service.CodeNotPending, errors.CodeOf(err))
-	assert.Contains(t, err.Error(), "iade/değişim")
+	assert.Contains(t, err.Error(), "return/exchange")
 
-	guncel, err := o.svc.GetOrder(ctx, siparis.ID)
+	current, err := e.svc.GetOrder(ctx, order.ID)
 	require.NoError(t, err)
-	assert.Equal(t, models.OrderCompleted, guncel.Status, "durum değişmemeli")
+	assert.Equal(t, models.OrderCompleted, current.Status, "the status must not change")
 }
 
-// TestCancelOrderOlmayanSiparisNotFound eksik siparişin NotFound döndüğünü
-// doğrular.
-func TestCancelOrderOlmayanSiparisNotFound(t *testing.T) {
+// TestCancelOrderNotFoundOnAMissingOrder validates that a missing order returns
+// NotFound.
+func TestCancelOrderNotFoundOnAMissingOrder(t *testing.T) {
 	ctx := context.Background()
-	o := yeniOrtam(t)
+	e := newEnv(t)
 
-	err := o.svc.CancelOrder(ctx, "order_YOK", "")
+	err := e.svc.CancelOrder(ctx, "order_MISSING", "")
 
 	require.Error(t, err)
 	assert.Equal(t, errors.KindNotFound, errors.KindOf(err))
 }
 
-// TestCompleteOrderIkinciCagridaConflict tamamlamanın idempotent OLMADIĞINI
-// doğrular.
+// TestCompleteOrderConflictsOnTheSecondCall validates that completing is NOT
+// idempotent.
 //
-// İptalin aksine tamamlama bir telafi değil, ileri yönlü bir adımdır. Sessizce
-// başarı saymak, aynı siparişin iki kez kapatıldığı bir akışı görünmez kılardı.
-func TestCompleteOrderIkinciCagridaConflict(t *testing.T) {
+// Unlike the cancellation, completing is not a compensation but a forward step.
+// Counting it silently as a success would make a flow in which the same order is
+// closed twice invisible.
+func TestCompleteOrderConflictsOnTheSecondCall(t *testing.T) {
 	ctx := context.Background()
-	o := yeniOrtam(t)
+	e := newEnv(t)
 
-	siparis, err := o.svc.CreateOrder(ctx, gecerliGirdi())
+	order, err := e.svc.CreateOrder(ctx, validInput())
 	require.NoError(t, err)
 
-	tamamlanan, err := o.svc.CompleteOrder(ctx, siparis.ID)
+	completed, err := e.svc.CompleteOrder(ctx, order.ID)
 	require.NoError(t, err)
-	assert.Equal(t, models.OrderCompleted, tamamlanan.Status)
-	require.NotNil(t, tamamlanan.CompletedAt)
+	assert.Equal(t, models.OrderCompleted, completed.Status)
+	require.NotNil(t, completed.CompletedAt)
 
-	_, err = o.svc.CompleteOrder(ctx, siparis.ID)
+	_, err = e.svc.CompleteOrder(ctx, order.ID)
 
-	require.Error(t, err, "ikinci tamamlama hata dönmeli")
+	require.Error(t, err, "the second completion has to return an error")
 	assert.Equal(t, errors.KindConflict, errors.KindOf(err))
 	assert.Equal(t, service.CodeNotPending, errors.CodeOf(err))
 }
 
-// TestCompleteOrderIptalEdilmisSiparisteConflict iptalin DURAK olduğunu
-// doğrular.
-func TestCompleteOrderIptalEdilmisSiparisteConflict(t *testing.T) {
+// TestCompleteOrderConflictsOnACanceledOrder validates that a cancellation is
+// TERMINAL.
+func TestCompleteOrderConflictsOnACanceledOrder(t *testing.T) {
 	ctx := context.Background()
-	o := yeniOrtam(t)
+	e := newEnv(t)
 
-	siparis, err := o.svc.CreateOrder(ctx, gecerliGirdi())
+	order, err := e.svc.CreateOrder(ctx, validInput())
 	require.NoError(t, err)
-	require.NoError(t, o.svc.CancelOrder(ctx, siparis.ID, "stok yok"))
+	require.NoError(t, e.svc.CancelOrder(ctx, order.ID, "out of stock"))
 
-	_, err = o.svc.CompleteOrder(ctx, siparis.ID)
+	_, err = e.svc.CompleteOrder(ctx, order.ID)
 
 	require.Error(t, err)
 	assert.Equal(t, errors.KindConflict, errors.KindOf(err))
 }
 
-// TestArchiveOrderYalnizcaTamamlanmisSiparisi arşivlemenin ön koşulunu
-// doğrular.
-func TestArchiveOrderYalnizcaTamamlanmisSiparisi(t *testing.T) {
+// TestArchiveOrderOnlyAcceptsACompletedOrder validates the precondition of
+// archiving.
+func TestArchiveOrderOnlyAcceptsACompletedOrder(t *testing.T) {
 	ctx := context.Background()
-	o := yeniOrtam(t)
+	e := newEnv(t)
 
-	siparis, err := o.svc.CreateOrder(ctx, gecerliGirdi())
+	order, err := e.svc.CreateOrder(ctx, validInput())
 	require.NoError(t, err)
 
-	_, err = o.svc.ArchiveOrder(ctx, siparis.ID)
-	require.Error(t, err, "tamamlanmamış sipariş arşivlenememeli")
+	_, err = e.svc.ArchiveOrder(ctx, order.ID)
+	require.Error(t, err, "an order that is not completed must not be archivable")
 	assert.Equal(t, errors.KindConflict, errors.KindOf(err))
 	assert.Equal(t, service.CodeNotCompleted, errors.CodeOf(err))
 
-	tamamlanan, err := o.svc.CompleteOrder(ctx, siparis.ID)
+	completed, err := e.svc.CompleteOrder(ctx, order.ID)
 	require.NoError(t, err)
 
-	arsivlenen, err := o.svc.ArchiveOrder(ctx, siparis.ID)
+	archived, err := e.svc.ArchiveOrder(ctx, order.ID)
 	require.NoError(t, err)
-	assert.Equal(t, models.OrderArchived, arsivlenen.Status)
-	require.NotNil(t, arsivlenen.CompletedAt)
-	assert.Equal(t, *tamamlanan.CompletedAt, *arsivlenen.CompletedAt,
-		"arşivleme tamamlanma damgasına dokunmamalı")
+	assert.Equal(t, models.OrderArchived, archived.Status)
+	require.NotNil(t, archived.CompletedAt)
+	assert.Equal(t, *completed.CompletedAt, *archived.CompletedAt,
+		"archiving must not touch the completion stamp")
 }
 
-// TestGetOrderByDisplayIDNumarayaGoreOkur destek akışının giriş kapısını
-// doğrular.
-func TestGetOrderByDisplayIDNumarayaGoreOkur(t *testing.T) {
+// TestGetOrderByDisplayIDReadsByTheNumber validates the entry gate of the
+// support flow.
+func TestGetOrderByDisplayIDReadsByTheNumber(t *testing.T) {
 	ctx := context.Background()
-	o := yeniOrtam(t)
+	e := newEnv(t)
 
-	siparis, err := o.svc.CreateOrder(ctx, gecerliGirdi())
+	order, err := e.svc.CreateOrder(ctx, validInput())
 	require.NoError(t, err)
 
-	detay, err := o.svc.GetOrderByDisplayID(ctx, siparis.DisplayID)
+	detail, err := e.svc.GetOrderByDisplayID(ctx, order.DisplayID)
 	require.NoError(t, err)
-	assert.Equal(t, siparis.ID, detay.ID)
-	require.Len(t, detay.Items, 1)
+	assert.Equal(t, order.ID, detail.ID)
+	require.Len(t, detail.Items, 1)
 
-	_, err = o.svc.GetOrderByDisplayID(ctx, 0)
+	_, err = e.svc.GetOrderByDisplayID(ctx, 0)
 	require.Error(t, err, "a zero number has to be invalid")
 	assert.Equal(t, errors.KindInvalid, errors.KindOf(err))
 
-	_, err = o.svc.GetOrderByDisplayID(ctx, 9999)
+	_, err = e.svc.GetOrderByDisplayID(ctx, 9999)
 	require.Error(t, err)
 	assert.Equal(t, errors.KindNotFound, errors.KindOf(err))
 }
 
-// TestListOrdersFiltreVeSayfalama listeleme ölçütlerini doğrular.
-func TestListOrdersFiltreVeSayfalama(t *testing.T) {
+// TestListOrdersFiltersAndPaginates validates the criteria of the listing.
+func TestListOrdersFiltersAndPaginates(t *testing.T) {
 	ctx := context.Background()
-	o := yeniOrtam(t)
+	e := newEnv(t)
 
-	misafir := gecerliGirdi()
-	misafir.CustomerID = ""
-	_, err := o.svc.CreateOrder(ctx, misafir)
+	guest := validInput()
+	guest.CustomerID = ""
+	_, err := e.svc.CreateOrder(ctx, guest)
 	require.NoError(t, err)
 
-	kayitli, err := o.svc.CreateOrder(ctx, gecerliGirdi())
+	registered, err := e.svc.CreateOrder(ctx, validInput())
 	require.NoError(t, err)
-	require.NoError(t, o.svc.CancelOrder(ctx, kayitli.ID, "test"))
+	require.NoError(t, e.svc.CancelOrder(ctx, registered.ID, "test"))
 
-	musteri := testCustomerID
-	siparisler, sayi, err := o.svc.ListOrders(ctx, service.ListOrdersInput{CustomerID: &musteri})
+	customer := testCustomerID
+	orders, count, err := e.svc.ListOrders(ctx, service.ListOrdersInput{CustomerID: &customer})
 	require.NoError(t, err)
-	assert.Equal(t, int64(1), sayi)
-	require.Len(t, siparisler, 1)
-	assert.Equal(t, kayitli.ID, siparisler[0].ID)
+	assert.Equal(t, int64(1), count)
+	require.Len(t, orders, 1)
+	assert.Equal(t, registered.ID, orders[0].ID)
 
-	iptal := models.OrderCanceled
-	_, sayi, err = o.svc.ListOrders(ctx, service.ListOrdersInput{Status: &iptal})
+	canceled := models.OrderCanceled
+	_, count, err = e.svc.ListOrders(ctx, service.ListOrdersInput{Status: &canceled})
 	require.NoError(t, err)
-	assert.Equal(t, int64(1), sayi)
+	assert.Equal(t, int64(1), count)
 
-	_, _, err = o.svc.ListOrders(ctx, service.ListOrdersInput{
+	_, _, err = e.svc.ListOrders(ctx, service.ListOrdersInput{
 		Status: func() *models.OrderStatus { s := models.OrderStatus("shipped"); return &s }(),
 	})
-	require.Error(t, err, "tanımsız durum reddedilmeli")
+	require.Error(t, err, "an undefined status has to be rejected")
 	assert.Equal(t, errors.KindInvalid, errors.KindOf(err))
 
-	_, _, err = o.svc.ListOrders(ctx, service.ListOrdersInput{
+	_, _, err = e.svc.ListOrders(ctx, service.ListOrdersInput{
 		Page: service.Page{Limit: service.MaxLimit + 1},
 	})
-	require.Error(t, err, "sayfa tavanı aşılamaz")
+	require.Error(t, err, "the page ceiling cannot be exceeded")
 }
 
-// TestSetOrderSummaryTotalsIdempotentVeSinirli özet yazımının kurallarını
-// doğrular.
-func TestSetOrderSummaryTotalsIdempotentVeSinirli(t *testing.T) {
+// TestSetOrderSummaryTotalsIsIdempotentAndBounded validates the rules of the
+// summary write.
+func TestSetOrderSummaryTotalsIsIdempotentAndBounded(t *testing.T) {
 	ctx := context.Background()
-	o := yeniOrtam(t)
+	e := newEnv(t)
 
-	siparis, err := o.svc.CreateOrder(ctx, gecerliGirdi())
+	order, err := e.svc.CreateOrder(ctx, validInput())
 	require.NoError(t, err)
 
-	ozet, err := o.svc.SetOrderSummaryTotals(ctx, siparis.ID,
+	summary, err := e.svc.SetOrderSummaryTotals(ctx, order.ID,
 		service.SummaryTotalsInput{PaidTotal: 6100})
 	require.NoError(t, err)
-	assert.Equal(t, int64(6100), ozet.PaidTotal)
-	assert.Equal(t, int64(0), ozet.Outstanding(siparis.Total))
+	assert.Equal(t, int64(6100), summary.PaidTotal)
+	assert.Equal(t, int64(0), summary.Outstanding(order.Total))
 
-	// Aynı değerin ikinci kez yazılması zararsızdır: mutlak yazma tekrarlanan
-	// ödeme olaylarını idempotent kılar.
-	tekrar, err := o.svc.SetOrderSummaryTotals(ctx, siparis.ID,
+	// Writing the same value a second time is harmless: an absolute write makes
+	// repeated payment events idempotent.
+	repeat, err := e.svc.SetOrderSummaryTotals(ctx, order.ID,
 		service.SummaryTotalsInput{PaidTotal: 6100})
 	require.NoError(t, err)
-	assert.Equal(t, int64(6100), tekrar.PaidTotal)
+	assert.Equal(t, int64(6100), repeat.PaidTotal)
 
-	// Fazla tahsilat REDDEDİLMEZ; kalan negatif görünür.
-	fazla, err := o.svc.SetOrderSummaryTotals(ctx, siparis.ID,
+	// Overcollection IS NOT REJECTED; the outstanding amount shows as negative.
+	overpaid, err := e.svc.SetOrderSummaryTotals(ctx, order.ID,
 		service.SummaryTotalsInput{PaidTotal: 6500})
 	require.NoError(t, err)
-	assert.Equal(t, int64(-400), fazla.Outstanding(siparis.Total))
+	assert.Equal(t, int64(-400), overpaid.Outstanding(order.Total))
 
-	// Tahsil edilmemiş tutar iade edilemez.
-	_, err = o.svc.SetOrderSummaryTotals(ctx, siparis.ID,
+	// An amount that was not collected cannot be refunded.
+	_, err = e.svc.SetOrderSummaryTotals(ctx, order.ID,
 		service.SummaryTotalsInput{PaidTotal: 100, RefundedTotal: 200})
 	require.Error(t, err)
 	assert.Equal(t, errors.KindInvalid, errors.KindOf(err))
 	assert.Equal(t, service.CodeSummaryInvalid, errors.CodeOf(err))
 }
 
-// TestSetOrderSummaryTotalsGecikmisBildirimIadeyiSilmez özet yazımının
-// SIRADAN BAĞIMSIZ olduğunu doğrular.
+// TestSetOrderSummaryTotalsALateReportDoesNotEraseTheRefund validates that the
+// summary write is ORDER INDEPENDENT.
 //
-// Ödeme olayları en az bir kez teslim edilir ve SIRA GARANTİSİ YOKTUR. Üzerine
-// yazan bir uçta, gecikmiş bir tahsilat olayının yeniden işlenmesi kendisinden
-// sonra kaydedilmiş bir iadeyi sıfırlardı: çağrı hatasız döner, kayıtlı para
-// kaybolurdu ve order_summaries_refund_within_paid kısıtı da bir ARALIK
-// kontrolü olduğu için tetiklenmezdi.
-func TestSetOrderSummaryTotalsGecikmisBildirimIadeyiSilmez(t *testing.T) {
+// Payment events are delivered at least once and THERE IS NO ORDERING GUARANTEE.
+// On an overwriting endpoint the reprocessing of a late collection event would
+// zero out a refund recorded after it: the call would return without an error,
+// the recorded money would disappear and the
+// order_summaries_refund_within_paid constraint would not fire either because it
+// is a RANGE check.
+func TestSetOrderSummaryTotalsALateReportDoesNotEraseTheRefund(t *testing.T) {
 	ctx := context.Background()
-	o := yeniOrtam(t)
+	e := newEnv(t)
 
-	siparis, err := o.svc.CreateOrder(ctx, gecerliGirdi())
+	order, err := e.svc.CreateOrder(ctx, validInput())
 	require.NoError(t, err)
 
-	_, err = o.svc.SetOrderSummaryTotals(ctx, siparis.ID,
+	_, err = e.svc.SetOrderSummaryTotals(ctx, order.ID,
 		service.SummaryTotalsInput{PaidTotal: 6100})
 	require.NoError(t, err)
 
-	_, err = o.svc.SetOrderSummaryTotals(ctx, siparis.ID,
+	_, err = e.svc.SetOrderSummaryTotals(ctx, order.ID,
 		service.SummaryTotalsInput{PaidTotal: 6100, RefundedTotal: 1000})
 	require.NoError(t, err)
 
-	// Gecikmiş tahsilat olayı yeniden işleniyor: iadeyi bilmiyor.
-	gecikmis, err := o.svc.SetOrderSummaryTotals(ctx, siparis.ID,
+	// A late collection event is being reprocessed: it does not know the refund.
+	late, err := e.svc.SetOrderSummaryTotals(ctx, order.ID,
 		service.SummaryTotalsInput{PaidTotal: 6100, RefundedTotal: 0})
-	require.NoError(t, err, "gecikmiş teslim hata değil, yok sayma olmalı")
-	assert.Equal(t, int64(1000), gecikmis.RefundedTotal,
-		"kaydedilmiş iade gecikmiş bir bildirimle silinemez")
-	assert.Equal(t, int64(6100), gecikmis.PaidTotal)
+	require.NoError(t, err, "a late delivery has to be ignored, not an error")
+	assert.Equal(t, int64(1000), late.RefundedTotal,
+		"a recorded refund cannot be erased by a late report")
+	assert.Equal(t, int64(6100), late.PaidTotal)
 
-	okunan, err := o.svc.GetOrderSummary(ctx, siparis.ID)
+	readBack, err := e.svc.GetOrderSummary(ctx, order.ID)
 	require.NoError(t, err)
-	assert.Equal(t, int64(1000), okunan.RefundedTotal)
+	assert.Equal(t, int64(1000), readBack.RefundedTotal)
 
-	// Para yazan yol da siparişin kilidini alır; modülün geri kalanıyla aynı
-	// eşzamanlılık disiplinine tabidir.
-	assert.Contains(t, o.store.lockedOrders, siparis.ID,
-		"özet yazımı siparişin kilidini almalı")
+	// The path that writes money takes the lock of the order too; it is subject
+	// to the same concurrency discipline as the rest of the module.
+	assert.Contains(t, e.store.lockedOrders, order.ID,
+		"the summary write has to take the lock of the order")
 }
 
-// TestSetOrderSummaryTotalsOlmayanSiparisNotFound özet yazımının SİPARİŞİN
-// varlığını doğruladığını gösterir.
+// TestSetOrderSummaryTotalsNotFoundOnAMissingOrder shows that the summary write
+// validates the existence OF THE ORDER.
 //
-// Kontrol özet satırına değil siparişe bakar: kilitsiz bir yazmada eksik bir
-// sipariş "özet bulunamadı" gibi görünür ve hatanın hangi kaydı işaret ettiği
-// kaybolurdu.
-func TestSetOrderSummaryTotalsOlmayanSiparisNotFound(t *testing.T) {
+// The check looks at the order, not at the summary row: in a lockless write a
+// missing order would look like "the summary was not found" and which record the
+// error points at would be lost.
+func TestSetOrderSummaryTotalsNotFoundOnAMissingOrder(t *testing.T) {
 	ctx := context.Background()
-	o := yeniOrtam(t)
+	e := newEnv(t)
 
-	_, err := o.svc.SetOrderSummaryTotals(ctx, "order_YOK",
+	_, err := e.svc.SetOrderSummaryTotals(ctx, "order_MISSING",
 		service.SummaryTotalsInput{PaidTotal: 100})
 
 	require.Error(t, err)
-	assert.True(t, errors.IsNotFound(err), "aldığı: %v", err)
-	assert.Contains(t, o.store.lockedOrders, "order_YOK",
-		"varlık kontrolü siparişin kilidiyle yapılmalı")
+	assert.True(t, errors.IsNotFound(err), "got: %v", err)
+	assert.Contains(t, e.store.lockedOrders, "order_MISSING",
+		"the existence check has to be done with the lock of the order")
 }
 
-// TestNewEksikBagimlilikliKurulumuReddeder servisin eksik bağımlılıkla
-// kurulamadığını doğrular.
+// TestNewRejectsASetupWithAMissingDependency validates that the service cannot
+// be built with a missing dependency.
 //
-// Özellikle olay veri yolu: opsiyonel olsaydı, kaydı unutulmuş bir kurulumda
-// sipariş sessizce yazılır ama "order.placed" hiç yayımlanmazdı.
-func TestNewEksikBagimlilikliKurulumuReddeder(t *testing.T) {
-	testler := map[string]service.Options{
-		"depo yok":      {Events: newFakeBus()},
-		"veri yolu yok": {Repo: newFakeStore()},
+// The event bus in particular: had it been optional, in an installation where
+// registering it was forgotten the order would be written silently but
+// "order.placed" would never be published.
+func TestNewRejectsASetupWithAMissingDependency(t *testing.T) {
+	cases := map[string]service.Options{
+		"no store":    {Events: newFakeBus()},
+		"no data bus": {Repo: newFakeStore()},
 	}
 
-	for ad, opts := range testler {
-		t.Run(ad, func(t *testing.T) {
+	for name, opts := range cases {
+		t.Run(name, func(t *testing.T) {
 			_, err := service.New(opts)
 
 			require.Error(t, err)

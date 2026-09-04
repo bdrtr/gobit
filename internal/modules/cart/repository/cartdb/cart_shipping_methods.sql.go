@@ -26,7 +26,7 @@ type CreateShippingMethodParams struct {
 	Data             []byte
 }
 
-// cart_shipping_methods sorguları.
+// cart_shipping_methods queries.
 func (q *Queries) CreateShippingMethod(ctx context.Context, arg CreateShippingMethodParams) (CartShippingMethod, error) {
 	row := q.db.QueryRow(ctx, createShippingMethod,
 		arg.ID,

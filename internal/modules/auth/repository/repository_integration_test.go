@@ -1,15 +1,16 @@
 //go:build integration
 
-// Bu dosyadaki testler gerçek bir PostgreSQL örneği (dolayısıyla Docker)
-// gerektirir; `make test` hızlı kalsın diye `integration` etiketiyle
-// ayrılmıştır. Çalıştırmak için: make test-integration
+// The tests in this file require a real PostgreSQL instance (and therefore
+// Docker); they are kept behind the `integration` tag so that `make test` stays
+// fast. To run them: make test-integration
 //
-// Paket içi birim testi ([TestWrapDBSQLSTATESiniflariniAyirir]) hata
-// sınıflandırmasının KARARINI kanıtlar. Buradaki testler kararın dayandığı
-// ZEMİNİ kanıtlar: şemadaki benzersizliklerin gerçekten uygulandığını,
-// yumuşak silinmiş bir kanala bağ kurulamadığını, anahtar + bağ yazımının tek
-// işlem olduğunu ve PostgreSQL'in gerçekten beklenen SQLSTATE'i ürettiğini.
-// Hiçbiri sahte bir sürücüyle sınanamaz.
+// The in-package unit test ([TestWrapDBSeparatesSQLSTATEClasses]) proves the
+// DECISION of the error classification. The tests here prove the GROUND that
+// decision stands on: that the uniqueness rules in the schema are really
+// enforced, that no link can be made to a soft-deleted channel, that the key
+// and its links are written in a single transaction, and that PostgreSQL really
+// produces the expected SQLSTATE. None of these can be tested with a fake
+// driver.
 package repository_test
 
 import (
@@ -36,15 +37,15 @@ import (
 
 const postgresImage = "postgres:16-alpine"
 
-// testPool tüm testlerin paylaştığı havuzdur.
+// testPool is the pool shared by all of the tests.
 var testPool *db.Pool
 
 func TestMain(m *testing.M) {
 	os.Exit(runWithPostgres(m))
 }
 
-// runWithPostgres tek bir Postgres konteyneri kaldırıp tüm testleri onun
-// üzerinde çalıştırır. os.Exit defer'ları atladığı için ayrı fonksiyondadır.
+// runWithPostgres brings up a single Postgres container and runs all of the
+// tests on it. It is a separate function because os.Exit skips defers.
 func runWithPostgres(m *testing.M) int {
 	ctx := context.Background()
 
@@ -56,55 +57,55 @@ func runWithPostgres(m *testing.M) int {
 	)
 	defer func() {
 		if termErr := testcontainers.TerminateContainer(ctr); termErr != nil {
-			fmt.Fprintf(os.Stderr, "postgres konteyneri durdurulamadı: %v\n", termErr)
+			fmt.Fprintf(os.Stderr, "could not stop the postgres container: %v\n", termErr)
 		}
 	}()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "postgres konteyneri başlatılamadı: %v\n", err)
+		fmt.Fprintf(os.Stderr, "could not start the postgres container: %v\n", err)
 		return 1
 	}
 
 	dsn, err := ctr.ConnectionString(ctx, "sslmode=disable")
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "bağlantı adresi alınamadı: %v\n", err)
+		fmt.Fprintf(os.Stderr, "could not read the connection string: %v\n", err)
 		return 1
 	}
 
 	testPool, err = db.New(ctx, db.DefaultConfig(dsn), nil)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "bağlantı havuzu açılamadı: %v\n", err)
+		fmt.Fprintf(os.Stderr, "could not open the connection pool: %v\n", err)
 		return 1
 	}
 	defer testPool.Close()
 
-	// Migration kaynağı modülün kendi embed.FS'idir: testin uyguladığı şema,
-	// sunucunun açılışta uyguladığının ta kendisidir.
+	// The migration source is the module's own embedded file system: the schema
+	// the test applies is the very one the server applies at startup.
 	if err := db.Migrate(ctx, dsn, auth.New(auth.Options{}).Migrations(), auth.ModuleName); err != nil {
-		fmt.Fprintf(os.Stderr, "migration uygulanamadı: %v\n", err)
+		fmt.Fprintf(os.Stderr, "could not apply the migrations: %v\n", err)
 		return 1
 	}
 
 	return m.Run()
 }
 
-// yeniDepo gerçek havuz üzerinde çalışan bir depo üretir.
-func yeniDepo(t *testing.T) *repository.Repo {
+// newRepo produces a repository working on the real pool.
+func newRepo(t *testing.T) *repository.Repo {
 	t.Helper()
 
 	return repository.New(testPool.Pool())
 }
 
-// yeniKullanici test için benzersiz e-postalı bir yönetim kullanıcısı yazar.
-func yeniKullanici(ctx context.Context, t *testing.T, repo *repository.Repo) models.User {
+// newUser writes an admin user with a unique email for the test.
+func newUser(ctx context.Context, t *testing.T, repo *repository.Repo) models.User {
 	t.Helper()
 
 	now := time.Now().UTC()
 	id := models.NewUserID(now)
-	// E-posta KÜÇÜK harf olmalıdır (auth_user_email_check); kimlik gövdesi
-	// Crockford Base32 olduğu için büyük harf taşır.
+	// The email must be LOWERCASE (auth_user_email_check); the body of the id
+	// carries uppercase because it is Crockford Base32.
 	user, err := repo.CreateUser(ctx, models.User{
 		ID:        id,
-		Email:     strings.ToLower("u" + id[len(models.UserIDPrefix):] + "@ornek.test"),
+		Email:     strings.ToLower("u" + id[len(models.UserIDPrefix):] + "@example.test"),
 		Scopes:    []string{models.ScopeAdmin},
 		CreatedAt: now,
 	}, nil)
@@ -113,15 +114,15 @@ func yeniKullanici(ctx context.Context, t *testing.T, repo *repository.Repo) mod
 	return user
 }
 
-// yeniKanal test için benzersiz adlı bir satış kanalı yazar.
-func yeniKanal(ctx context.Context, t *testing.T, repo *repository.Repo) models.SalesChannel {
+// newChannel writes a sales channel with a unique name for the test.
+func newChannel(ctx context.Context, t *testing.T, repo *repository.Repo) models.SalesChannel {
 	t.Helper()
 
 	now := time.Now().UTC()
 	id := models.NewSalesChannelID(now)
 	channel, err := repo.CreateSalesChannel(ctx, models.SalesChannel{
 		ID:        id,
-		Name:      "kanal " + id,
+		Name:      "channel " + id,
 		CreatedAt: now,
 	})
 	require.NoError(t, err)
@@ -129,11 +130,11 @@ func yeniKanal(ctx context.Context, t *testing.T, repo *repository.Repo) models.
 	return channel
 }
 
-// anahtarKaydi yazılmaya hazır bir publishable anahtar kaydı üretir.
+// newKeyRecord produces a publishable API key record ready to be written.
 //
-// Düz metin döndürülmez: bu testlerin hiçbiri anahtarın kendisiyle ilgilenmez,
-// yalnızca satırın yazılıp yazılmadığıyla ilgilenir.
-func anahtarKaydi(t *testing.T) models.APIKey {
+// The plain text is not returned: none of these tests is interested in the key
+// itself, only in whether the row was written.
+func newKeyRecord(t *testing.T) models.APIKey {
 	t.Helper()
 
 	plaintext, err := models.NewToken(models.APIKeyPublishable)
@@ -143,7 +144,7 @@ func anahtarKaydi(t *testing.T) models.APIKey {
 	return models.APIKey{
 		ID:        models.NewAPIKeyID(now),
 		Type:      models.APIKeyPublishable,
-		Title:     "test anahtarı " + now.Format(time.RFC3339Nano),
+		Title:     "test key " + now.Format(time.RFC3339Nano),
 		TokenHash: models.HashToken(plaintext),
 		Redacted:  models.RedactToken(plaintext),
 		Scopes:    []string{},
@@ -151,8 +152,8 @@ func anahtarKaydi(t *testing.T) models.APIKey {
 	}
 }
 
-// sayim tek sütunluk bir sayım sorgusunu çalıştırır.
-func sayim(ctx context.Context, t *testing.T, sql string, args ...any) int64 {
+// countRows runs a single-column count query.
+func countRows(ctx context.Context, t *testing.T, sql string, args ...any) int64 {
 	t.Helper()
 
 	var n int64
@@ -161,19 +162,20 @@ func sayim(ctx context.Context, t *testing.T, sql string, args ...any) int64 {
 	return n
 }
 
-// TestKullaniciBasinaSaglayiciBasinaTekKimlikVardir
-// auth_identity_user_provider_uniq indeksinin gerçekten uygulandığını
-// kanıtlar.
+// TestThereIsOneIdentityPerUserPerProvider proves that the
+// auth_identity_user_provider_uniq index is really enforced.
 //
-// Kural neden şart: kimlik (user_id, provider) ile TEK satır olarak okunur ve
-// parola, deneme sayacı ile kilit hep o satıra yazılır. İkinci bir satır
-// açılabilseydi hangisinin okunacağı belirsizleşir, kilit sayacı ikiye
-// bölünürdü. İkinci satır depo yüzeyinden açılamadığı için ham SQL ile
-// denenir: sınanan şey KODUN değil, ŞEMANIN verdiği garantidir.
-func TestKullaniciBasinaSaglayiciBasinaTekKimlikVardir(t *testing.T) {
+// Why the rule is required: the identity is read as a SINGLE row by (user_id,
+// provider), and the password, the attempt counter and the lock are always
+// written to that row. Had a second row been possible, which of them gets read
+// would become ambiguous and the lock counter would be split in two. Because a
+// second row cannot be opened through the repository surface, it is attempted
+// with raw SQL: what is tested is not the guarantee given by the CODE but the
+// one given by the SCHEMA.
+func TestThereIsOneIdentityPerUserPerProvider(t *testing.T) {
 	ctx := context.Background()
-	repo := yeniDepo(t)
-	user := yeniKullanici(ctx, t, repo)
+	repo := newRepo(t)
+	user := newUser(ctx, t, repo)
 	now := time.Now().UTC()
 
 	_, err := repo.SetPasswordHash(ctx, user.ID, models.ProviderEmailPass, user.Email, "hash-1", now)
@@ -182,8 +184,8 @@ func TestKullaniciBasinaSaglayiciBasinaTekKimlikVardir(t *testing.T) {
 	_, err = testPool.Pool().Exec(ctx,
 		`INSERT INTO auth_identity (id, user_id, provider, provider_identity)
 		 VALUES ($1, $2, $3, $4)`,
-		models.NewAuthIdentityID(now), user.ID, models.ProviderEmailPass, "ikinci-"+user.Email)
-	require.Error(t, err, "aynı kullanıcı ve sağlayıcı için ikinci kimlik yazılabildi")
+		models.NewAuthIdentityID(now), user.ID, models.ProviderEmailPass, "second-"+user.Email)
+	require.Error(t, err, "a second identity could be written for the same user and provider")
 
 	var pgErr *pgconn.PgError
 	require.True(t, errors.As(err, &pgErr))
@@ -191,244 +193,253 @@ func TestKullaniciBasinaSaglayiciBasinaTekKimlikVardir(t *testing.T) {
 	assert.Equal(t, "auth_identity_user_provider_uniq", pgErr.ConstraintName)
 }
 
-// TestParolaAtamaIkinciKimlikAcmaz [repository.Repo.SetPasswordHash]'in var
-// olan kimliği GÜNCELLEDİĞİNİ, yeni satır açmadığını kanıtlar.
+// TestSettingPasswordDoesNotOpenASecondIdentity proves that
+// [repository.Repo.SetPasswordHash] UPDATES the existing identity instead of
+// opening a new row.
 //
-// Benzersizlik kısıtının pratikteki karşılığı budur: "parola ata" çağrısı
-// tekrarlandığında kimlik sayısı sabit kalmalıdır.
-func TestParolaAtamaIkinciKimlikAcmaz(t *testing.T) {
+// That is what the uniqueness constraint amounts to in practice: when the "set
+// password" call is repeated, the number of identities must stay the same.
+func TestSettingPasswordDoesNotOpenASecondIdentity(t *testing.T) {
 	ctx := context.Background()
-	repo := yeniDepo(t)
-	user := yeniKullanici(ctx, t, repo)
+	repo := newRepo(t)
+	user := newUser(ctx, t, repo)
 	now := time.Now().UTC()
 
-	ilk, err := repo.SetPasswordHash(ctx, user.ID, models.ProviderEmailPass, user.Email, "hash-1", now)
+	first, err := repo.SetPasswordHash(ctx, user.ID, models.ProviderEmailPass, user.Email, "hash-1", now)
 	require.NoError(t, err)
 
-	ikinci, err := repo.SetPasswordHash(ctx, user.ID, models.ProviderEmailPass, user.Email, "hash-2", now.Add(time.Second))
+	second, err := repo.SetPasswordHash(ctx, user.ID, models.ProviderEmailPass, user.Email, "hash-2", now.Add(time.Second))
 	require.NoError(t, err)
 
-	assert.Equal(t, ilk.ID, ikinci.ID, "ikinci çağrı yeni kimlik açmamalı")
-	assert.Equal(t, "hash-2", ikinci.PasswordHash)
-	assert.Equal(t, int64(1), sayim(ctx,
+	assert.Equal(t, first.ID, second.ID, "the second call must not open a new identity")
+	assert.Equal(t, "hash-2", second.PasswordHash)
+	assert.Equal(t, int64(1), countRows(ctx,
 		t, `SELECT count(*) FROM auth_identity WHERE user_id = $1 AND deleted_at IS NULL`, user.ID))
 }
 
-// TestCikisCapayiIlerletirKimlikBilgisineDokunmaz
-// [repository.Repo.RevokeSessions] sorgusunun SÖZLEŞMESİNİ gerçek veritabanında
-// kanıtlar.
+// TestLogoutAdvancesTheAnchorAndLeavesCredentialsUntouched proves the CONTRACT
+// of the [repository.Repo.RevokeSessions] query on a real database.
 //
-// İkisi de aynı ölçüde şarttır:
+// Both halves matter equally:
 //
-//   - updated_at İLERLEMELİDİR — oturum iptalinin dayandığı çapa odur, yerinde
-//     kalsaydı çıkış ucu 200 döner ve hiçbir jetonu düşürmezdi.
-//   - password_hash ile kilit sayaçları YERİNDE KALMALIDIR — parola değişseydi
-//     kullanıcı bir daha giremezdi, sayaç sıfırlansaydı çıkış ucu giriş
-//     kilidini temizlemenin yolu olurdu.
+//   - updated_at MUST ADVANCE — it is the anchor session revocation rests on;
+//     had it stayed put, the logout endpoint would return 200 and drop no token
+//     at all.
+//   - password_hash and the lock counters MUST STAY PUT — had the password
+//     changed, the user could never log in again; had the counter been reset,
+//     the logout endpoint would become the way to clear the login lock.
 //
-// Sözleşme yalnızca gerçek SQL ile sınanabilir: sahte bir depo, sorgunun SET
-// listesinde ne yazdığını göremez.
-func TestCikisCapayiIlerletirKimlikBilgisineDokunmaz(t *testing.T) {
+// The contract can only be tested with real SQL: a fake repository cannot see
+// what the query writes in its SET list.
+func TestLogoutAdvancesTheAnchorAndLeavesCredentialsUntouched(t *testing.T) {
 	ctx := context.Background()
-	repo := yeniDepo(t)
-	user := yeniKullanici(ctx, t, repo)
+	repo := newRepo(t)
+	user := newUser(ctx, t, repo)
 	now := time.Now().UTC()
 
-	onceki, err := repo.SetPasswordHash(ctx, user.ID, models.ProviderEmailPass, user.Email, "hash-1", now)
+	before, err := repo.SetPasswordHash(ctx, user.ID, models.ProviderEmailPass, user.Email, "hash-1", now)
 	require.NoError(t, err)
 
-	// Kilit çıkıştan ÖNCE kurulur; korunup korunmadığı ancak gerçekten kilitli
-	// bir kayıtta görülebilir. Eşik 1'dir: tek başarısız deneme kilitler.
-	kilitli, err := repo.RegisterLoginFailure(ctx, onceki.ID, 1, now.Add(time.Minute), now)
+	// The lock is set up BEFORE the logout; whether it is preserved can only be
+	// seen on a record that is really locked. The threshold is 1: a single
+	// failed attempt locks it.
+	locked, err := repo.RegisterLoginFailure(ctx, before.ID, 1, now.Add(time.Minute), now)
 	require.NoError(t, err)
-	require.Equal(t, 1, kilitli.FailedAttempts)
-	require.True(t, kilitli.IsLocked(now), "test zemini: kayıt çıkıştan önce kilitli olmalı")
+	require.Equal(t, 1, locked.FailedAttempts)
+	require.True(t, locked.IsLocked(now), "test ground: the record must be locked before the logout")
 
-	cikis := now.Add(2 * time.Second)
-	ilerletilenler, err := repo.RevokeSessions(ctx, user.ID, cikis)
+	logout := now.Add(2 * time.Second)
+	advanced, err := repo.RevokeSessions(ctx, user.ID, logout)
 	require.NoError(t, err)
-	require.Len(t, ilerletilenler, 1, "kullanıcının tek kimliği var, tek satır dönmeli")
+	require.Len(t, advanced, 1, "the user has a single identity, a single row must come back")
 
-	sonraki := ilerletilenler[0]
-	assert.Equal(t, onceki.ID, sonraki.ID, "çıkış yeni kimlik satırı açmamalı")
-	assert.True(t, sonraki.UpdatedAt.After(onceki.UpdatedAt),
-		"oturum çapası ilerlemeli: önce %s, sonra %s", onceki.UpdatedAt, sonraki.UpdatedAt)
-	assert.Equal(t, "hash-1", sonraki.PasswordHash, "çıkış parolayı değiştirmemeli")
-	assert.Equal(t, 1, sonraki.FailedAttempts, "çıkış başarısız deneme sayacını sıfırlamamalı")
-	assert.True(t, sonraki.IsLocked(cikis),
-		"çıkış giriş kilidini kaldırmamalı; kaldırsaydı kilidi atlatmanın yolu olurdu")
+	after := advanced[0]
+	assert.Equal(t, before.ID, after.ID, "the logout must not open a new identity row")
+	assert.True(t, after.UpdatedAt.After(before.UpdatedAt),
+		"the session anchor must advance: before %s, after %s", before.UpdatedAt, after.UpdatedAt)
+	assert.Equal(t, "hash-1", after.PasswordHash, "the logout must not change the password")
+	assert.Equal(t, 1, after.FailedAttempts, "the logout must not reset the failed attempt counter")
+	assert.True(t, after.IsLocked(logout),
+		"the logout must not lift the login lock; had it done so, it would be the way to bypass the lock")
 }
 
-// TestCikisTumSaglayicilarinCapasiniIlerletir çıkış sorgusunun sağlayıcı
-// SEÇMEDİĞİNİ gerçek veritabanında kanıtlar.
+// TestLogoutAdvancesTheAnchorOfEveryProvider proves on a real database that the
+// logout query SELECTS NO provider.
 //
-// # Test neyi kanıtlar
+// # What the test proves
 //
-// İki şeyi birlikte:
+// Two things together:
 //
-//   - emailpass kimliğinin çapası eskisi gibi ilerler — bugünkü davranış
-//     korunuyor, gözlemlenebilir bir değişiklik YOKTUR (bugün canlı sağlayıcı
-//     tektir),
-//   - elle kurulmuş İKİNCİ bir sağlayıcı satırının çapası da ilerler.
+//   - the anchor of the emailpass identity advances as before — today's
+//     behavior is preserved, there is NO observable change (today there is a
+//     single live provider),
+//   - the anchor of a SECOND provider row set up by hand advances as well.
 //
-// İkincisi bugün hiçbir kullanıcı akışında görünmez; kilitlediği şey OAuth
-// eklendiği günkü davranıştır. Sorgu tek sağlayıcıyı seçseydi çıkış o
-// sağlayıcının jetonlarını düşürmez ve bunu SESSİZCE yapardı.
+// The second one appears in no user flow today; what it locks down is the
+// behavior on the day OAuth is added. Had the query selected a single provider,
+// the logout would not drop that provider's tokens and it would do so SILENTLY.
 //
-// İkinci satır ham SQL ile yazılır: depo yüzeyinin "OAuth kimliği aç" diye bir
-// ucu yoktur ve olmamalıdır. Sınanan şey KODUN değil, sorgunun ŞEMADAKİ bütün
-// satırlara dokunduğudur.
-func TestCikisTumSaglayicilarinCapasiniIlerletir(t *testing.T) {
+// The second row is written with raw SQL: the repository surface has no "open
+// an OAuth identity" endpoint and must not have one. What is tested is not the
+// CODE but that the query touches every row IN THE SCHEMA.
+func TestLogoutAdvancesTheAnchorOfEveryProvider(t *testing.T) {
 	ctx := context.Background()
-	repo := yeniDepo(t)
-	user := yeniKullanici(ctx, t, repo)
+	repo := newRepo(t)
+	user := newUser(ctx, t, repo)
 	now := time.Now().UTC()
 
 	emailpass, err := repo.SetPasswordHash(ctx, user.ID, models.ProviderEmailPass, user.Email, "hash-1", now)
 	require.NoError(t, err)
 
-	// Sağlayıcı adı ham dizedir: models paketinde yalnızca emailpass sabiti
-	// vardır ve uygulanmamış bir sağlayıcı için oraya sabit eklemek, kodun
-	// desteklemediği bir giriş yolu varmış gibi gösterirdi.
-	const ikinciSaglayici = "google"
+	// The provider name is a raw string: the models package holds only the
+	// emailpass constant, and adding a constant there for a provider that is
+	// not implemented would make it look as if there were a login path the code
+	// does not support.
+	const secondProvider = "google"
 	_, err = testPool.Pool().Exec(ctx,
 		`INSERT INTO auth_identity (id, user_id, provider, provider_identity, created_at, updated_at)
 		 VALUES ($1, $2, $3, $4, $5, $5)`,
-		models.NewAuthIdentityID(now), user.ID, ikinciSaglayici, "oauth-sub-"+user.ID, now)
-	require.NoError(t, err, "şema, sağlayıcı başına ikinci bir kimliğe izin vermeli")
+		models.NewAuthIdentityID(now), user.ID, secondProvider, "oauth-sub-"+user.ID, now)
+	require.NoError(t, err, "the schema must allow a second identity per provider")
 
-	cikis := now.Add(2 * time.Second)
-	ilerletilenler, err := repo.RevokeSessions(ctx, user.ID, cikis)
+	logout := now.Add(2 * time.Second)
+	advanced, err := repo.RevokeSessions(ctx, user.ID, logout)
 	require.NoError(t, err)
 
-	require.Len(t, ilerletilenler, 2, "çıkış her iki kimliğe de dokunmalı")
-	capalar := map[string]time.Time{}
-	for _, kimlik := range ilerletilenler {
-		capalar[kimlik.Provider] = kimlik.UpdatedAt
+	require.Len(t, advanced, 2, "the logout must touch both identities")
+	anchors := map[string]time.Time{}
+	for _, identity := range advanced {
+		anchors[identity.Provider] = identity.UpdatedAt
 	}
-	assert.True(t, capalar[models.ProviderEmailPass].After(emailpass.UpdatedAt),
-		"emailpass kimliğinin çapası ilerlemeli; bugünkü davranış korunmalı")
-	assert.True(t, capalar[ikinciSaglayici].After(now),
-		"ikinci sağlayıcının çapası da ilerlemeli — ilerlemeseydi o sağlayıcıdan "+
-			"alınmış jetonlar çıkıştan sonra da kabul edilirdi")
+	assert.True(t, anchors[models.ProviderEmailPass].After(emailpass.UpdatedAt),
+		"the anchor of the emailpass identity must advance; today's behavior must be preserved")
+	assert.True(t, anchors[secondProvider].After(now),
+		"the anchor of the second provider must advance too — had it not, tokens issued by "+
+			"that provider would still be accepted after the logout")
 
-	// Okuma tarafı da aynı yazmayı görmeli; ayrışsalardı yazılan fazladan çapa
-	// hiç okunmaz ve çıkış o sağlayıcı için etkisiz kalırdı.
-	capa, err := repo.SessionAnchor(ctx, user.ID)
+	// The read side must see the same write; had they diverged, the extra
+	// anchor written would never be read and the logout would stay ineffective
+	// for that provider.
+	anchor, err := repo.SessionAnchor(ctx, user.ID)
 	require.NoError(t, err)
-	assert.Equal(t, capalar[ikinciSaglayici], capa,
-		"okunan çapa, yazılan en yeni çapa olmalı")
+	assert.Equal(t, anchors[secondProvider], anchor,
+		"the anchor that is read must be the most recent anchor written")
 }
 
-// TestOturumCapasiEnYeniSaglayicidanOkunur okuma sorgusunun sağlayıcı
-// SEÇMEDİĞİNİ, satırların en ilerisini aldığını kanıtlar.
+// TestSessionAnchorIsReadFromTheNewestProvider proves that the read query
+// SELECTS NO provider and takes the furthest of the rows.
 //
-// Asimetri bilerek kurulur: yalnızca ikinci sağlayıcının çapası ilerletilir,
-// emailpass satırı yerinde bırakılır. Sorgu sabit bir sağlayıcıya baksaydı
-// (ya da en ESKİ çapayı alsaydı) bu ilerleme görünmez olur ve o sağlayıcıdaki
-// iptal hiçbir jetonu düşürmezdi.
-func TestOturumCapasiEnYeniSaglayicidanOkunur(t *testing.T) {
+// The asymmetry is set up on purpose: only the anchor of the second provider is
+// advanced, the emailpass row is left where it is. Had the query looked at a
+// fixed provider (or taken the OLDEST anchor), this advance would become
+// invisible and the revocation on that provider would drop no token at all.
+func TestSessionAnchorIsReadFromTheNewestProvider(t *testing.T) {
 	ctx := context.Background()
-	repo := yeniDepo(t)
-	user := yeniKullanici(ctx, t, repo)
+	repo := newRepo(t)
+	user := newUser(ctx, t, repo)
 	now := time.Now().UTC()
 
 	_, err := repo.SetPasswordHash(ctx, user.ID, models.ProviderEmailPass, user.Email, "hash-1", now)
 	require.NoError(t, err)
 
-	ileri := now.Add(time.Hour)
+	ahead := now.Add(time.Hour)
 	_, err = testPool.Pool().Exec(ctx,
 		`INSERT INTO auth_identity (id, user_id, provider, provider_identity, created_at, updated_at)
 		 VALUES ($1, $2, $3, $4, $5, $6)`,
-		models.NewAuthIdentityID(now), user.ID, "google", "oauth-sub-"+user.ID, now, ileri)
+		models.NewAuthIdentityID(now), user.ID, "google", "oauth-sub-"+user.ID, now, ahead)
 	require.NoError(t, err)
 
-	capa, err := repo.SessionAnchor(ctx, user.ID)
+	anchor, err := repo.SessionAnchor(ctx, user.ID)
 	require.NoError(t, err)
 
-	// Beklenen değer mikrosaniyeye kırpılır: timestamptz sütunu mikrosaniye
-	// çözünürlüklüdür ve Go'nun nanosaniyeleri yazmada düşer. Kırpılmasaydı
-	// iddia, sınadığı kuralla ilgisiz bir nedenle kırılırdı.
-	assert.Equal(t, ileri.Truncate(time.Microsecond), capa,
-		"çapa, sağlayıcılar arasındaki EN YENİ değer olmalı")
+	// The expected value is truncated to microseconds: the timestamptz column
+	// has microsecond resolution and Go's nanoseconds are dropped on write. Had
+	// it not been truncated, the assertion would break for a reason unrelated
+	// to the rule it tests.
+	assert.Equal(t, ahead.Truncate(time.Microsecond), anchor,
+		"the anchor must be the MOST RECENT value across the providers")
 }
 
-// TestKimliksizKullaniciCikisYapamaz giriş kimliği hiç olmayan bir kullanıcıda
-// çıkışın SESSİZCE başarılı olmadığını kanıtlar.
+// TestUserWithoutIdentityCannotLogOut proves that the logout does not succeed
+// SILENTLY for a user that has no login identity at all.
 //
-// Yazılacak satır yoksa yazılan çapa da yoktur; başarılı dönmek, hiçbir şey
-// düşürmeyen bir çıkışı başarı gibi göstermek olurdu. Denetim elle yapılır:
-// çok satırlı bir UPDATE "satır yok" diye hata ÜRETMEZ, boş küme döner.
-func TestKimliksizKullaniciCikisYapamaz(t *testing.T) {
+// If there is no row to write, there is no anchor written either; returning
+// success would present a logout that dropped nothing as a success. The check
+// is done by hand: a multi-row UPDATE does NOT raise a "no rows" error, it
+// returns an empty set.
+func TestUserWithoutIdentityCannotLogOut(t *testing.T) {
 	ctx := context.Background()
-	repo := yeniDepo(t)
-	user := yeniKullanici(ctx, t, repo)
+	repo := newRepo(t)
+	user := newUser(ctx, t, repo)
 
 	_, err := repo.RevokeSessions(ctx, user.ID, time.Now().UTC())
 
 	require.Error(t, err)
-	assert.True(t, errors.IsNotFound(err), "beklenen tür NotFound, gelen: %s", errors.KindOf(err))
+	assert.True(t, errors.IsNotFound(err), "expected kind NotFound, got: %s", errors.KindOf(err))
 	assert.Equal(t, repository.CodeIdentityNotFound, errors.CodeOf(err))
 }
 
-// TestKimliksizKullanicininCapasiOkunamaz kimliği olmayan kullanıcıda çapa
-// okumasının sessizce sıfır zaman dönmediğini kanıtlar.
+// TestAnchorOfUserWithoutIdentityCannotBeRead proves that reading the anchor of
+// a user with no identity does not silently return the zero time.
 //
-// Sıfır zaman dönseydi HER jeton ondan sonra üretilmiş sayılır ve kimliği
-// silinmiş bir kullanıcının jetonu süresi dolana kadar kabul edilirdi; yani
-// denetim, kimlik satırı silinerek atlatılabilirdi.
-func TestKimliksizKullanicininCapasiOkunamaz(t *testing.T) {
+// Had the zero time been returned, EVERY token would count as minted after it
+// and the token of a user whose identity was deleted would be accepted until it
+// expired; that is, the check could be bypassed by deleting the identity row.
+func TestAnchorOfUserWithoutIdentityCannotBeRead(t *testing.T) {
 	ctx := context.Background()
-	repo := yeniDepo(t)
-	user := yeniKullanici(ctx, t, repo)
+	repo := newRepo(t)
+	user := newUser(ctx, t, repo)
 
 	_, err := repo.SessionAnchor(ctx, user.ID)
 
 	require.Error(t, err)
-	assert.True(t, errors.IsNotFound(err), "beklenen tür NotFound, gelen: %s", errors.KindOf(err))
+	assert.True(t, errors.IsNotFound(err), "expected kind NotFound, got: %s", errors.KindOf(err))
 	assert.Equal(t, repository.CodeIdentityNotFound, errors.CodeOf(err))
 }
 
-// TestSilinmisKanalaAnahtarBaglanamaz yumuşak silinmiş bir kanala bağ
-// kurulmadığını kanıtlar.
+// TestKeyCannotBeLinkedToADeletedChannel proves that no link is made to a
+// soft-deleted channel.
 //
-// Foreign key bu durumu yakalamaz: silinen satır yerinde durur ve FK'yi geçer.
-// Bağ kurulabilseydi anahtar ÖLÜ DOĞARDI — yönetim yüzeyinde "kanala bağlı"
-// görünür, mağaza isteğinde hiçbir kanal bulamaz ve reddedilirdi.
-func TestSilinmisKanalaAnahtarBaglanamaz(t *testing.T) {
+// The foreign key does not catch this case: the deleted row stays in place and
+// passes the FK. Had the link been possible, the key would be BORN DEAD — it
+// would look "linked to a channel" on the admin surface, find no channel at all
+// on a store request and be rejected.
+func TestKeyCannotBeLinkedToADeletedChannel(t *testing.T) {
 	ctx := context.Background()
-	repo := yeniDepo(t)
-	channel := yeniKanal(ctx, t, repo)
+	repo := newRepo(t)
+	channel := newChannel(ctx, t, repo)
 	now := time.Now().UTC()
 
-	key, err := repo.CreateAPIKey(ctx, anahtarKaydi(t))
+	key, err := repo.CreateAPIKey(ctx, newKeyRecord(t))
 	require.NoError(t, err)
 	require.NoError(t, repo.DeleteSalesChannel(ctx, channel.ID, now))
 
 	err = repo.LinkSalesChannel(ctx, key.ID, channel.ID, now)
 	require.Error(t, err)
-	assert.True(t, errors.IsNotFound(err), "silinmiş kanal 'bulunamadı' olmalı, tür: %s", errors.KindOf(err))
+	assert.True(t, errors.IsNotFound(err), "a deleted channel must be 'not found', kind: %s", errors.KindOf(err))
 	assert.Equal(t, repository.CodeSalesChannelNotFound, errors.CodeOf(err))
-	assert.Equal(t, int64(0), sayim(ctx,
+	assert.Equal(t, int64(0), countRows(ctx,
 		t, `SELECT count(*) FROM api_key_sales_channel WHERE api_key_id = $1`, key.ID))
 }
 
-// TestCanliKanalaBaglanabilir denetimin doğru kapıyı kapattığını, kapıyı
-// tümden kapatmadığını kanıtlar.
+// TestKeyCanBeLinkedToALiveChannel proves that the check closes the right door
+// and does not close the door altogether.
 //
-// Devre dışı (is_disabled) kanal da bağlanabilir: devre dışı olmak silinmiş
-// olmak değildir ve yönetim yüzeyi bağı önceden kurup kanalı sonra açabilmeli.
-func TestCanliKanalaBaglanabilir(t *testing.T) {
+// A disabled (is_disabled) channel can be linked as well: being disabled is not
+// the same as being deleted, and the admin surface must be able to set up the
+// link first and enable the channel afterwards.
+func TestKeyCanBeLinkedToALiveChannel(t *testing.T) {
 	ctx := context.Background()
-	repo := yeniDepo(t)
-	channel := yeniKanal(ctx, t, repo)
+	repo := newRepo(t)
+	channel := newChannel(ctx, t, repo)
 	now := time.Now().UTC()
 
-	key, err := repo.CreateAPIKey(ctx, anahtarKaydi(t))
+	key, err := repo.CreateAPIKey(ctx, newKeyRecord(t))
 	require.NoError(t, err)
 
 	require.NoError(t, repo.LinkSalesChannel(ctx, key.ID, channel.ID, now))
-	// Aynı bağın tekrarı hata değildir: bağ kümedir, çokluk taşımaz.
+	// Repeating the same link is not an error: a link is a set, it carries no
+	// multiplicity.
 	require.NoError(t, repo.LinkSalesChannel(ctx, key.ID, channel.ID, now))
 
 	ids, err := repo.ChannelIDsOfKey(ctx, key.ID)
@@ -439,120 +450,126 @@ func TestCanliKanalaBaglanabilir(t *testing.T) {
 	_, err = repo.UpdateSalesChannel(ctx, channel.ID, models.SalesChannelPatch{IsDisabled: &disabled}, now)
 	require.NoError(t, err)
 
-	ikinciAnahtar, err := repo.CreateAPIKey(ctx, anahtarKaydi(t))
+	secondKey, err := repo.CreateAPIKey(ctx, newKeyRecord(t))
 	require.NoError(t, err)
-	assert.NoError(t, repo.LinkSalesChannel(ctx, ikinciAnahtar.ID, channel.ID, now),
-		"devre dışı kanal silinmiş sayılmamalı")
+	assert.NoError(t, repo.LinkSalesChannel(ctx, secondKey.ID, channel.ID, now),
+		"a disabled channel must not count as deleted")
 }
 
-// TestAnahtarVeBaglariTekIslemdeYazilir bağ kurulamadığında anahtar satırının
-// da KALMADIĞINI kanıtlar.
+// TestKeyAndItsLinksAreWrittenInOneTransaction proves that when a link cannot
+// be made the key row DOES NOT REMAIN either.
 //
-// Yazım iki işleme bölünseydi geriye düz metni çağırana hiç ulaşmamış bir
-// anahtar kalırdı: kimse bilmediği için kullanılamaz, düz metni bir daha
-// üretilemediği için tamamlanamaz — yalnızca elle silinecek bir çöp satır.
-func TestAnahtarVeBaglariTekIslemdeYazilir(t *testing.T) {
+// Had the write been split into two transactions, what would be left behind is
+// a key whose plain text never reached the caller: unusable because nobody
+// knows it, uncompletable because its plain text can never be produced again —
+// merely a garbage row to be deleted by hand.
+func TestKeyAndItsLinksAreWrittenInOneTransaction(t *testing.T) {
 	ctx := context.Background()
-	repo := yeniDepo(t)
-	canli := yeniKanal(ctx, t, repo)
-	olu := yeniKanal(ctx, t, repo)
-	require.NoError(t, repo.DeleteSalesChannel(ctx, olu.ID, time.Now().UTC()))
+	repo := newRepo(t)
+	live := newChannel(ctx, t, repo)
+	dead := newChannel(ctx, t, repo)
+	require.NoError(t, repo.DeleteSalesChannel(ctx, dead.ID, time.Now().UTC()))
 
-	kayit := anahtarKaydi(t)
-	_, err := repo.CreateAPIKeyWithChannels(ctx, kayit, []string{canli.ID, olu.ID})
+	record := newKeyRecord(t)
+	_, err := repo.CreateAPIKeyWithChannels(ctx, record, []string{live.ID, dead.ID})
 	require.Error(t, err)
 	assert.True(t, errors.IsNotFound(err))
 
-	// Tombstone bile kalmaz: işlem geri alındığında satır hiç var olmamıştır.
-	assert.Equal(t, int64(0), sayim(ctx,
-		t, `SELECT count(*) FROM api_key WHERE id = $1`, kayit.ID))
-	assert.Equal(t, int64(0), sayim(ctx,
-		t, `SELECT count(*) FROM api_key_sales_channel WHERE api_key_id = $1`, kayit.ID),
-		"ilk bağ da geri alınmalı")
-	_, err = repo.GetAPIKeyByHash(ctx, kayit.TokenHash)
-	assert.True(t, errors.IsNotFound(err), "geri alınan anahtar hiçbir yerden okunamamalı")
+	// Not even a tombstone remains: once the transaction is rolled back the row
+	// has never existed.
+	assert.Equal(t, int64(0), countRows(ctx,
+		t, `SELECT count(*) FROM api_key WHERE id = $1`, record.ID))
+	assert.Equal(t, int64(0), countRows(ctx,
+		t, `SELECT count(*) FROM api_key_sales_channel WHERE api_key_id = $1`, record.ID),
+		"the first link must be rolled back as well")
+	_, err = repo.GetAPIKeyByHash(ctx, record.TokenHash)
+	assert.True(t, errors.IsNotFound(err), "a rolled-back key must not be readable from anywhere")
 }
 
-// TestAnahtarVeBaglariBasariliYoldaBirlikteYazilir yazımın başarılı yolda hem
-// anahtarı hem bağları bıraktığını kanıtlar.
-func TestAnahtarVeBaglariBasariliYoldaBirlikteYazilir(t *testing.T) {
+// TestKeyAndItsLinksAreWrittenTogetherOnTheSuccessPath proves that on the
+// success path the write leaves behind both the key and the links.
+func TestKeyAndItsLinksAreWrittenTogetherOnTheSuccessPath(t *testing.T) {
 	ctx := context.Background()
-	repo := yeniDepo(t)
-	birinci := yeniKanal(ctx, t, repo)
-	ikinci := yeniKanal(ctx, t, repo)
+	repo := newRepo(t)
+	first := newChannel(ctx, t, repo)
+	second := newChannel(ctx, t, repo)
 
-	key, err := repo.CreateAPIKeyWithChannels(ctx, anahtarKaydi(t), []string{birinci.ID, ikinci.ID})
+	key, err := repo.CreateAPIKeyWithChannels(ctx, newKeyRecord(t), []string{first.ID, second.ID})
 	require.NoError(t, err)
 
 	ids, err := repo.ChannelIDsOfKey(ctx, key.ID)
 	require.NoError(t, err)
-	assert.ElementsMatch(t, []string{birinci.ID, ikinci.ID}, ids)
+	assert.ElementsMatch(t, []string{first.ID, second.ID}, ids)
 }
 
-// sadeDepo yalnızca [service.Repository] yüzeyini sunan bir sarmalayıcıdır.
+// plainRepo is a wrapper that exposes only the [service.Repository] surface.
 //
-// Gömülü arayüz yalnızca KENDİ metotlarını taşır: CreateAPIKeyWithChannels
-// dışarıda kalır ve servisin tür doğrulaması başarısız olur. Böylece işlem
-// açamayan bir depoyla çalışan TELAFİ yolu sınanabilir hâle gelir; o yol
-// olmasaydı sahte depolarla kurulan her servis testi arkasında çöp anahtar
-// bırakırdı.
-type sadeDepo struct{ service.Repository }
+// The embedded interface carries only ITS OWN methods:
+// CreateAPIKeyWithChannels stays outside and the service's type assertion
+// fails. That makes the COMPENSATION path — the one taken with a repository
+// that cannot open a transaction — testable; without that path, every service
+// test built on fake repositories would leave a garbage key behind it.
+type plainRepo struct{ service.Repository }
 
-// TestIslemsizDepodaBagKurulamazsaAnahtarGeriAlinir telafi yolunun anahtarı
-// gerçekten kaldırdığını kanıtlar.
+// TestKeyIsRolledBackWhenTheLinkFailsOnANonTransactionalRepo proves that the
+// compensation path really removes the key.
 //
-// Atomik depoda satır hiç oluşmaz; burada oluşur ve yumuşak silinir — geriye
-// hiçbir yerden okunamayan bir mezar taşı kalır. İkisi de "kimsenin eline
-// geçmemiş anahtar kullanılamaz" sözleşmesini tutar.
-func TestIslemsizDepodaBagKurulamazsaAnahtarGeriAlinir(t *testing.T) {
+// On an atomic repository the row never comes into existence; here it does come
+// into existence and is soft-deleted — what is left behind is a tombstone that
+// can be read from nowhere. Both of them keep the contract "a key that reached
+// nobody's hands cannot be used".
+func TestKeyIsRolledBackWhenTheLinkFailsOnANonTransactionalRepo(t *testing.T) {
 	ctx := context.Background()
-	repo := yeniDepo(t)
-	olu := yeniKanal(ctx, t, repo)
-	require.NoError(t, repo.DeleteSalesChannel(ctx, olu.ID, time.Now().UTC()))
+	repo := newRepo(t)
+	dead := newChannel(ctx, t, repo)
+	require.NoError(t, repo.DeleteSalesChannel(ctx, dead.ID, time.Now().UTC()))
 
-	svc := service.New(sadeDepo{repo}, service.Options{JWTSecret: "yalnizca-test-icin-kullanilan-sir"})
-	baslik := "telafi " + time.Now().UTC().Format(time.RFC3339Nano)
+	svc := service.New(plainRepo{repo}, service.Options{JWTSecret: "a-secret-used-only-for-testing"})
+	title := "compensation " + time.Now().UTC().Format(time.RFC3339Nano)
 
 	_, plaintext, err := svc.CreateAPIKey(ctx, service.CreateAPIKeyInput{
 		Type:            models.APIKeyPublishable,
-		Title:           baslik,
-		SalesChannelIDs: []string{olu.ID},
+		Title:           title,
+		SalesChannelIDs: []string{dead.ID},
 	})
 	require.Error(t, err)
 	assert.True(t, errors.IsNotFound(err))
-	assert.Empty(t, plaintext, "başarısız çağrı düz metin sızdırmamalı")
+	assert.Empty(t, plaintext, "a failed call must not leak the plain text")
 
-	assert.Equal(t, int64(0), sayim(ctx,
-		t, `SELECT count(*) FROM api_key WHERE title = $1 AND deleted_at IS NULL`, baslik),
-		"bağ kurulamayan anahtar canlı kalmamalı")
+	assert.Equal(t, int64(0), countRows(ctx,
+		t, `SELECT count(*) FROM api_key WHERE title = $1 AND deleted_at IS NULL`, title),
+		"a key whose link could not be made must not stay live")
 }
 
-// TestVeriIstisnasiIstemciHatasiUretir 22xxx sınıfının 500 değil 422 döndüğünü
-// GERÇEK sunucuda kanıtlar.
+// TestDataExceptionProducesAClientError proves on a REAL server that the 22xxx
+// class returns a 422 and not a 500.
 //
-// jsonb, metnin içindeki NUL baytının JSON kaçışını metne çeviremez ve 22P05
-// üretir. Bu değer
-// tümüyle İSTEMCİDEN gelir: metadata alanına ne yazılacağını çağıran seçer.
-// Sınıf tanınmasaydı istemcinin yazdığı bir karakter sunucu hatası olarak
-// raporlanır, çağıran da isteğini düzeltmek yerine tekrar denerdi.
-func TestVeriIstisnasiIstemciHatasiUretir(t *testing.T) {
+// jsonb cannot turn the JSON escape of a NUL byte inside text into text and
+// produces 22P05. That value comes entirely FROM THE CLIENT: the caller chooses
+// what goes into the metadata field. Had the class not been recognized, a
+// character written by the client would be reported as a server error and the
+// caller would retry instead of fixing the request.
+func TestDataExceptionProducesAClientError(t *testing.T) {
 	ctx := context.Background()
-	repo := yeniDepo(t)
+	repo := newRepo(t)
 	now := time.Now().UTC()
 
 	_, err := repo.CreateSalesChannel(ctx, models.SalesChannel{
 		ID:        models.NewSalesChannelID(now),
-		Name:      "kanal " + now.Format(time.RFC3339Nano),
-		Metadata:  map[string]any{"not": "\x00"},
+		Name:      "channel " + now.Format(time.RFC3339Nano),
+		Metadata:  map[string]any{"note": "\x00"},
 		CreatedAt: now,
 	})
 	require.Error(t, err)
 
 	var pgErr *pgconn.PgError
 	require.True(t, errors.As(err, &pgErr))
-	require.Equal(t, "22", pgErr.Code[:2], "beklenen sınıf veri istisnası (22xxx), gelen: %s", pgErr.Code)
+	require.Equal(t, "22", pgErr.Code[:2], "expected the data exception class (22xxx), got: %s", pgErr.Code)
 	assert.True(t, errors.IsInvalid(err),
-		"veri istisnası istemci hatası olmalı, tür: %s", errors.KindOf(err))
+		"a data exception must be a client error, kind: %s", errors.KindOf(err))
 	assert.Equal(t, repository.CodeConstraintViolation, errors.CodeOf(err))
-	assert.NotContains(t, err.Error(), "kısıt", "kısıt adı yokken mesaja yarım ek yapılmamalı")
+	// The suffix is searched for and not the bare word "constraint": the error
+	// CODE (auth_constraint_violation) is part of Error().
+	assert.NotContains(t, err.Error(), "(constraint:",
+		"no half suffix must be added when there is no constraint name")
 }

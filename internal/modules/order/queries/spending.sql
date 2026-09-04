@@ -1,49 +1,53 @@
--- Harcama sorguları.
+-- Spending queries.
 --
--- Bu modül harcama LİMİTİNİ bilmez (limit b2b modülünün verisidir); bildiği
--- şey HARCAMANIN kendisidir: bir müşterinin verdiği siparişlerin toplamı. Bu
--- yüzden toplam burada, veritabanında hesaplanır — satırları uygulamaya çekip
--- toplamak, dönem içinde çok sipariş vermiş bir müşteri için sınırsız büyüyen
--- bir okuma olurdu ve sayfalanmadığı için sessizce eksik toplam üretebilirdi.
+-- This module does not know the spending LIMIT (the limit is the b2b module's
+-- data); what it does know is SPENDING itself: the sum of the orders a customer
+-- has placed. That is why the sum is computed here, in the database — pulling the
+-- rows into the application and summing them there would be a read that grows
+-- without bound for a customer who placed many orders within the period, and
+-- because it is not paginated it could silently produce an incomplete total.
 
--- SumCustomerSpend müşterinin pencere içindeki harcamasını döner.
+-- SumCustomerSpend returns the customer's spending within the window.
 --
--- # Neyin toplandığı
+-- # What gets summed
 --
--- İPTAL EDİLMİŞ siparişler toplama GİRMEZ: iptal, "bu alışveriş olmadı"
--- demektir ve iptal edilen bir siparişin bütçeyi yakması, hiç satılmamış bir
--- malın harcama sayılması olurdu. Yumuşak silinmiş siparişler de girmez.
+-- CANCELED orders DO NOT ENTER the sum: a cancellation means "this purchase did
+-- not happen", and letting a canceled order burn the budget would be counting a
+-- good that was never sold as spending. Soft-deleted orders do not enter either.
 --
--- 'pending' siparişler GİRER. Sipariş, ödemesi alınmadan önce açılır ve ödeme
--- düşerse saga onu iptal eder (status = 'canceled'), yani bekleyen bir sipariş
--- ya harcamaya dönüşür ya da kendini toplamdan çıkarır. Bekleyeni saymamak,
--- ödeme sırasında açılan pencerede aynı bütçenin ikinci kez harcanmasına izin
--- verirdi.
+-- 'pending' orders DO ENTER. An order is opened before its payment is taken, and
+-- if the payment falls through the saga cancels it (status = 'canceled'), so a
+-- pending order either turns into spending or removes itself from the sum. Not
+-- counting the pending ones would allow the same budget to be spent a second time
+-- in the window that opens during payment.
 --
--- İADE EDİLEN tutar DÜŞÜLÜR: para şirkete geri döndüyse bütçe de geri
--- dönmelidir. Düşülmeseydi, tamamı iade edilmiş bir sipariş çalışanın
--- bütçesini dönem sonuna kadar kilitlerdi. Kaynak order_summaries.refunded_total
--- sütunudur ve onu yazan taraf ödeme sonucunu bilen akıştır
--- (bkz. service.Service.SetOrderSummaryTotals); iade AKIŞININ kendisi henüz
--- yoktur (plan Faz 7+), yani bugün terim pratikte sıfırdır. Yine de kuralın
--- parçasıdır: tanımı sonraya bırakmak, iade akışı geldiğinde bütçenin sessizce
--- yanlış hesaplanması demek olurdu.
+-- The REFUNDED amount IS SUBTRACTED: if the money went back to the company, the
+-- budget must come back too. Were it not subtracted, a fully refunded order would
+-- lock up the employee's budget until the end of the period. The source is the
+-- order_summaries.refunded_total column, and the side that writes it is the flow
+-- that knows the payment result (see service.Service.SetOrderSummaryTotals); the
+-- return FLOW itself does not exist yet (plan Phase 7+), so today the term is in
+-- practice zero. It is part of the rule all the same: leaving the definition for
+-- later would mean the budget being silently miscalculated once the return flow
+-- arrives.
 --
--- # Para birimi
+-- # Currency
 --
--- Toplam TEK para biriminde yapılır ve çevrim YAPILMAZ: kur bu depoda hiçbir
--- yerde yoktur ve uydurulmuş bir kurla toplanan iki tutar, yanlış olduğu hiç
--- görünmeyen bir sayı üretirdi. Farklı para birimli siparişleri bu yüzden
--- toplam GÖRMEZ; onların limite takılmadan geçmemesi, çağıran tarafın para
--- birimi denetimiyle sağlanır (bkz. service/spending.go).
+-- The sum is taken in a SINGLE currency and NO conversion is performed: an
+-- exchange rate exists nowhere in this repository, and two amounts summed with a
+-- made-up rate would produce a number whose wrongness never becomes visible. That
+-- is why the sum DOES NOT SEE orders in a different currency; keeping those from
+-- slipping past the limit is ensured by the caller's currency check
+-- (see service/spending.go).
 --
--- # Pencere
+-- # Window
 --
--- window_start NULL ise pencere yoktur ve müşterinin TÜM geçmişi toplanır
--- (b2b'de "never" periyodunun karşılığı). Doluysa alt uç DÂHİL, üst uç
--- açıktır: pencerenin başlangıcı tam olarak takvim ayının/yılının ilk anıdır ve
--- ">= " ile "> " arasındaki fark, o ana denk gelen bir siparişin hangi döneme
--- yazılacağıdır.
+-- If window_start is NULL there is no window and the customer's ENTIRE history is
+-- summed (the counterpart of the "never" period in b2b). If it is set, the lower
+-- bound is INCLUSIVE and the upper bound is open: the start of the window is
+-- exactly the first instant of the calendar month/year, and the difference between
+-- ">= " and "> " is which period an order landing on that very instant is written
+-- to.
 -- name: SumCustomerSpend :one
 SELECT COALESCE(SUM(o.total - COALESCE(s.refunded_total, 0)), 0)::bigint AS spent
 FROM orders o

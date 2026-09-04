@@ -11,11 +11,12 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/order/service"
 )
 
-// adminListOrders siparişleri sayfalayarak döner.
+// adminListOrders returns the orders paged.
 //
-// Desteklenen süzgeçler: customer_id, region_id ve status. Satırlar YÜKLENMEZ;
-// sayfa başına onlarca siparişin çocuklarını getirmek listeyi N+1'e açardı. Tek
-// siparişin ayrıntısı /admin/v1/orders/{id} ile alınır.
+// Supported filters: customer_id, region_id and status. Line items are NOT
+// LOADED; fetching the children of dozens of orders per page would open the
+// list up to N+1. The detail of a single order is fetched with
+// /admin/v1/orders/{id}.
 func (h *Handler) adminListOrders(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -44,8 +45,8 @@ func (h *Handler) adminListOrders(w http.ResponseWriter, r *http.Request) {
 	}
 
 	data := make([]orderDTO, 0, len(orders))
-	// Döngü indeksle gezilir: sipariş yapısı büyüktür ve değerle kopyalamak her
-	// tur birkaç yüz baytı boşuna taşır.
+	// The loop is walked by index: the order struct is large and copying it by
+	// value would carry a few hundred bytes for nothing on every turn.
 	for i := range orders {
 		data = append(data, toOrderDTO(orders[i]))
 	}
@@ -57,7 +58,7 @@ func (h *Handler) adminListOrders(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// adminGetOrder siparişi satırları ve özetiyle döner.
+// adminGetOrder returns the order with its line items and summary.
 func (h *Handler) adminGetOrder(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -69,17 +70,17 @@ func (h *Handler) adminGetOrder(w http.ResponseWriter, r *http.Request) {
 	corehttp.WriteJSON(ctx, w, http.StatusOK, singleEnvelope{Data: toOrderDetailDTO(detail)})
 }
 
-// cancelOrderRequest POST /admin/v1/orders/{id}/cancel gövdesidir.
+// cancelOrderRequest is the body of POST /admin/v1/orders/{id}/cancel.
 type cancelOrderRequest struct {
-	// Reason iptal gerekçesidir; opsiyoneldir.
+	// Reason is the cancellation reason; it is optional.
 	Reason string `json:"reason"`
 }
 
-// adminCancelOrder siparişi iptal eder ve güncel hâlini döner.
+// adminCancelOrder cancels the order and returns its current state.
 //
-// Çağrı İDEMPOTENTTİR: zaten iptal edilmiş bir sipariş hata değil, mevcut
-// (iptal edilmiş) hâliyle 200 döner. Gerekçe için bkz.
-// [service.Service.CancelOrder]. Tamamlanmış siparişte 409 döner.
+// The call is IDEMPOTENT: an already canceled order is not an error, it returns
+// 200 with its existing (canceled) state. For the rationale see
+// [service.Service.CancelOrder]. On a completed order it returns 409.
 func (h *Handler) adminCancelOrder(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -96,7 +97,7 @@ func (h *Handler) adminCancelOrder(w http.ResponseWriter, r *http.Request) {
 	h.writeCurrentOrder(w, r)
 }
 
-// adminCompleteOrder siparişi tamamlar ve güncel hâlini döner.
+// adminCompleteOrder completes the order and returns its current state.
 func (h *Handler) adminCompleteOrder(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -107,7 +108,7 @@ func (h *Handler) adminCompleteOrder(w http.ResponseWriter, r *http.Request) {
 	h.writeCurrentOrder(w, r)
 }
 
-// adminArchiveOrder tamamlanmış siparişi arşivler ve güncel hâlini döner.
+// adminArchiveOrder archives a completed order and returns its current state.
 func (h *Handler) adminArchiveOrder(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -118,13 +119,15 @@ func (h *Handler) adminArchiveOrder(w http.ResponseWriter, r *http.Request) {
 	h.writeCurrentOrder(w, r)
 }
 
-// writeCurrentOrder durum geçişinden sonra siparişin GÜNCEL ayrıntısını yazar.
+// writeCurrentOrder writes the CURRENT detail of the order after a status
+// transition.
 //
-// Geçiş metotlarının döndürdüğü [models.Order] yerine yeniden okunmasının iki
-// sebebi var: [service.Service.CancelOrder] idempotent olduğu için hiçbir şey
-// döndürmez (ikinci çağrıda yazma yapılmaz), ve yanıt zarfı her üç uçta da
-// AYNI olmalıdır — satırlar ve özet dâhil. Ek okuma yalnızca yönetim tarafının
-// seyrek kullanılan uçlarındadır.
+// There are two reasons for reading it again instead of using the
+// [models.Order] the transition methods return: [service.Service.CancelOrder]
+// returns nothing because it is idempotent (the second call performs no write),
+// and the response envelope has to be the SAME on all three endpoints — line
+// items and summary included. The extra read happens only on the rarely used
+// endpoints of the admin side.
 func (h *Handler) writeCurrentOrder(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -136,7 +139,7 @@ func (h *Handler) writeCurrentOrder(w http.ResponseWriter, r *http.Request) {
 	corehttp.WriteJSON(ctx, w, http.StatusOK, singleEnvelope{Data: toOrderDetailDTO(detail)})
 }
 
-// createReturnRequest POST /admin/v1/orders/{id}/returns gövdesidir.
+// createReturnRequest is the body of POST /admin/v1/orders/{id}/returns.
 type createReturnRequest struct {
 	RefundAmount int64          `json:"refund_amount"`
 	Reason       string         `json:"reason"`
@@ -144,7 +147,7 @@ type createReturnRequest struct {
 	Metadata     map[string]any `json:"metadata"`
 }
 
-// adminCreateReturn siparişe iade kaydı açar.
+// adminCreateReturn opens a return record on the order.
 func (h *Handler) adminCreateReturn(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -168,13 +171,14 @@ func (h *Handler) adminCreateReturn(w http.ResponseWriter, r *http.Request) {
 	corehttp.WriteJSON(ctx, w, http.StatusCreated, singleEnvelope{Data: toReturnDTO(ret)})
 }
 
-// adminGetReturn iade kaydını kimliğiyle döner.
+// adminGetReturn returns the return record by its id.
 //
-// Uç siparişin ALTINDA durur ({id}/returns/{returnId}) çünkü kaynak siparişe
-// aittir; kaydın kimliği zaten benzersizdir ve okuma yalnızca onunla yapılır.
-// Yoldaki sipariş kimliği kaydın gerçekten o siparişe ait olduğunun kontrolü
-// DEĞİLDİR — böyle bir kontrol Faz 8'in (auth) yetki denetimiyle birlikte
-// anlam kazanır ve bugün eklenmesi, yetki varmış izlenimi verirdi.
+// The endpoint sits UNDER the order ({id}/returns/{returnId}) because the
+// resource belongs to the order; the record's id is already unique and the read
+// is done with that alone. The order id in the path IS NOT a check that the
+// record really belongs to that order — such a check gains meaning together
+// with the scope enforcement of Phase 8 (auth), and adding it today would give
+// the impression that authorization exists.
 func (h *Handler) adminGetReturn(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -186,7 +190,7 @@ func (h *Handler) adminGetReturn(w http.ResponseWriter, r *http.Request) {
 	corehttp.WriteJSON(ctx, w, http.StatusOK, singleEnvelope{Data: toReturnDTO(ret)})
 }
 
-// adminListReturns siparişin iade kayıtlarını sayfalayarak döner.
+// adminListReturns returns the order's return records paged.
 func (h *Handler) adminListReturns(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -211,16 +215,16 @@ func (h *Handler) adminListReturns(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// createExchangeRequest POST /admin/v1/orders/{id}/exchanges gövdesidir.
+// createExchangeRequest is the body of POST /admin/v1/orders/{id}/exchanges.
 type createExchangeRequest struct {
-	// DifferenceDue pozitifse fark müşteriden tahsil edilir, negatifse
-	// müşteriye ödenir.
+	// DifferenceDue, when positive, is collected from the customer; when
+	// negative it is paid to the customer.
 	DifferenceDue int64          `json:"difference_due"`
 	Note          string         `json:"note"`
 	Metadata      map[string]any `json:"metadata"`
 }
 
-// adminCreateExchange siparişe değişim kaydı açar.
+// adminCreateExchange opens an exchange record on the order.
 func (h *Handler) adminCreateExchange(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -243,9 +247,9 @@ func (h *Handler) adminCreateExchange(w http.ResponseWriter, r *http.Request) {
 	corehttp.WriteJSON(ctx, w, http.StatusCreated, singleEnvelope{Data: toExchangeDTO(exchange)})
 }
 
-// adminGetExchange değişim kaydını kimliğiyle döner.
+// adminGetExchange returns the exchange record by its id.
 //
-// Yol ve kimlik sözleşmesi için bkz. [Handler.adminGetReturn].
+// For the path and id contract see [Handler.adminGetReturn].
 func (h *Handler) adminGetExchange(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -257,7 +261,7 @@ func (h *Handler) adminGetExchange(w http.ResponseWriter, r *http.Request) {
 	corehttp.WriteJSON(ctx, w, http.StatusOK, singleEnvelope{Data: toExchangeDTO(exchange)})
 }
 
-// adminListExchanges siparişin değişim kayıtlarını sayfalayarak döner.
+// adminListExchanges returns the order's exchange records paged.
 func (h *Handler) adminListExchanges(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -282,9 +286,9 @@ func (h *Handler) adminListExchanges(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// createClaimRequest POST /admin/v1/orders/{id}/claims gövdesidir.
+// createClaimRequest is the body of POST /admin/v1/orders/{id}/claims.
 type createClaimRequest struct {
-	// Type "refund" ya da "replace" olmalıdır.
+	// Type has to be either "refund" or "replace".
 	Type         string         `json:"type"`
 	RefundAmount int64          `json:"refund_amount"`
 	Reason       string         `json:"reason"`
@@ -292,10 +296,10 @@ type createClaimRequest struct {
 	Metadata     map[string]any `json:"metadata"`
 }
 
-// adminCreateClaim siparişe hasar/eksik kaydı açar.
+// adminCreateClaim opens a damage/shortage claim record on the order.
 //
-// Tür boş bırakılamaz: varsayılan bir tür seçmek (örn. "refund"), talebin nasıl
-// karşılanacağına istemci adına karar vermek olurdu.
+// The type cannot be left empty: picking a default type (e.g. "refund") would
+// mean deciding on the client's behalf how the request is to be met.
 func (h *Handler) adminCreateClaim(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -306,7 +310,7 @@ func (h *Handler) adminCreateClaim(w http.ResponseWriter, r *http.Request) {
 	}
 	if body.Type == "" {
 		corehttp.WriteError(ctx, w, coreerrors.Invalid(codeInvalidRequest,
-			"type boş olamaz: %q ya da %q olmalı", models.ClaimRefund, models.ClaimReplace))
+			"type cannot be empty: it has to be %q or %q", models.ClaimRefund, models.ClaimReplace))
 		return
 	}
 
@@ -325,9 +329,9 @@ func (h *Handler) adminCreateClaim(w http.ResponseWriter, r *http.Request) {
 	corehttp.WriteJSON(ctx, w, http.StatusCreated, singleEnvelope{Data: toClaimDTO(claim)})
 }
 
-// adminGetClaim hasar kaydını kimliğiyle döner.
+// adminGetClaim returns the claim record by its id.
 //
-// Yol ve kimlik sözleşmesi için bkz. [Handler.adminGetReturn].
+// For the path and id contract see [Handler.adminGetReturn].
 func (h *Handler) adminGetClaim(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -339,7 +343,7 @@ func (h *Handler) adminGetClaim(w http.ResponseWriter, r *http.Request) {
 	corehttp.WriteJSON(ctx, w, http.StatusOK, singleEnvelope{Data: toClaimDTO(claim)})
 }
 
-// adminListClaims siparişin hasar kayıtlarını sayfalayarak döner.
+// adminListClaims returns the order's claim records paged.
 func (h *Handler) adminListClaims(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 

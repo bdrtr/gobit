@@ -11,16 +11,17 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/cart/service"
 )
 
-// txMarkerKey sahte deponun "işlem içindeyiz" işaretidir.
+// txMarkerKey is the fake store's "we are inside a transaction" marker.
 type txMarkerKey struct{}
 
-// readSnapshotKey salt-okunur işlemin anlık görüntüsünün context anahtarıdır.
+// readSnapshotKey is the context key of the read-only transaction's snapshot.
 type readSnapshotKey struct{}
 
-// fakeSnapshot sahte deponun bir andaki tam hâlidir.
+// fakeSnapshot is the fake store's complete state at one moment.
 //
-// Hem salt-okunur işlemin görüntüsü hem de yazan işlemin geri alma noktası bu
-// tiple taşınır; ikisi de "deponun o andaki kopyası"dır.
+// Both the read-only transaction's view and the writing transaction's rollback
+// point are carried with this type; both of them are "the copy of the store at
+// that moment".
 type fakeSnapshot struct {
 	carts     map[string]models.Cart
 	items     map[string]models.LineItem
@@ -28,27 +29,31 @@ type fakeSnapshot struct {
 	methods   map[string]models.ShippingMethod
 }
 
-// fakeStore service.Store'un bellek içi karşılığıdır.
+// fakeStore is the in-memory counterpart of service.Store.
 //
-// # Neyi taklit eder, neyi ETMEZ
+// # What it imitates and what it DOES NOT
 //
-// Sahte yalnızca VERİTABANININ yaptığı şeyleri taklit eder:
+// The fake imitates only the things THE DATABASE does:
 //
-//  1. Kilit alan metot işlem DIŞINDA çağrılırsa hata döner. Servis bir akışta
-//     WithTx'i unutursa birim testi bunu yakalar; gerçek veritabanında bu hata
-//     ancak yarış altında görünürdü.
-//  2. İşlem hatayla biterse yazılanlar GERİ ALINIR. "Hata döndü ve hiçbir şey
-//     yazılmadı" iddiası ancak böyle sınanabilir.
-//  3. (cart_id, variant_id) benzersizliği: migration'daki kısmi benzersiz
-//     indeksin karşılığı.
-//  4. Salt-okunur işlemin ANLIK GÖRÜNTÜSÜ: [fakeStore.WithReadTx] içindeki
-//     okumalar işlemin başındaki hâli görür, araya giren yazmaları görmez —
-//     PostgreSQL'in REPEATABLE READ düzeyinin karşılığı.
+//  1. A method that takes the lock returns an error if it is called OUTSIDE a
+//     transaction. If the service forgets WithTx in a flow, the unit test
+//     catches it; in a real database that mistake would only show up under a
+//     race.
+//  2. If the transaction ends with an error, what was written IS ROLLED BACK.
+//     The claim "it returned an error and nothing was written" can only be
+//     tested this way.
+//  3. The (cart_id, variant_id) uniqueness: the counterpart of the partial
+//     unique index in the migration.
+//  4. The read-only transaction's SNAPSHOT: the reads inside
+//     [fakeStore.WithReadTx] see the state at the start of the transaction, they
+//     do not see intervening writes — the counterpart of PostgreSQL's REPEATABLE
+//     READ level.
 //
-// SERVİSİN sorumluluğundaki hiçbir kural burada TEKRARLANMAZ: sahte,
-// tamamlanmış sepete yazmayı engellemez ve toplam kimliğini doğrulamaz. Aksi
-// hâlde "servis tamamlanmış sepeti reddediyor" testi, servisten o kontrol
-// silinse bile geçerdi — testin kanıtladığı şey sahtenin davranışı olurdu.
+// No rule that is THE SERVICE's responsibility IS REPEATED here: the fake does
+// not prevent writing to a completed cart and it does not validate the totals
+// identity. Otherwise the "the service rejects a completed cart" test would pass
+// even if that check were deleted from the service — what the test proved would
+// be the fake's behavior.
 type fakeStore struct {
 	mu        sync.Mutex
 	carts     map[string]models.Cart
@@ -56,43 +61,44 @@ type fakeStore struct {
 	addresses map[string]models.CartAddress
 	methods   map[string]models.ShippingMethod
 
-	// seq eklenen çocuk kayıtlara artan bir zaman damgası verir; listeleme
-	// sırasının deterministik olması buna dayanır.
+	// seq gives the added child records an increasing timestamp; the listing
+	// order being deterministic rests on it.
 	seq int
 
-	// lockedCarts kilitlenen sepetleri SIRASIYLA kaydeder. Kilit alınıp
-	// alınmadığı bir eşzamanlılık sözleşmesidir ve gerçek veritabanında ihlali
-	// ancak yarış altında görünür; burada doğrudan okunabilir.
+	// lockedCarts records the locked carts IN ORDER. Whether the lock was taken
+	// is a concurrency contract and in a real database its violation only shows
+	// up under a race; here it can be read directly.
 	lockedCarts []string
-	// bumpCalls şekil sayacının kaç kez artırıldığını sayar.
+	// bumpCalls counts how many times the shape counter was incremented.
 	bumpCalls int
 
-	// setLineTotalsCalls satır tutarı YAZMA çağrılarını sayar.
+	// setLineTotalsCalls counts the line amount WRITE calls.
 	//
-	// Sayı sözleşmenin kendisidir: bir hesap turu kaç satır taşırsa taşısın TEK
-	// yazma çağrısıdır. Sayı, sepetin kilidinin ne kadar tutulduğunun birim
-	// testinde görülebilen tek göstergesidir; satır başına döngüye dönen bir
-	// değişiklik burada yakalanır.
+	// The number is the contract itself: however many lines a calculation round
+	// carries, it is a SINGLE write call. The number is the only indicator of how
+	// long the cart's lock is held that is visible in a unit test; a change that
+	// goes back to a loop per line is caught here.
 	setLineTotalsCalls int
-	// setLineTotalsRows o çağrılarla yazılan toplam satır sayısıdır.
+	// setLineTotalsRows is the total number of lines written by those calls.
 	setLineTotalsRows int
 
-	// failCreateLineItem ayarlanırsa CreateLineItem bu hatayı döner; işlem geri
-	// alma yolunu sınamak için kullanılır.
+	// failCreateLineItem, when it is set, makes CreateLineItem return this
+	// error; it is used to test the transaction rollback path.
 	failCreateLineItem error
-	// failSetLineItemTotals ayarlanırsa SetLineItemTotals bu hatayı döner.
+	// failSetLineItemTotals, when it is set, makes SetLineItemTotals return this
+	// error.
 	failSetLineItemTotals error
 
-	// hookListLineItems ayarlanırsa ListLineItems'ın BAŞINDA BİR KEZ çağrılır
-	// ve ardından temizlenir.
+	// hookListLineItems, when it is set, is called ONCE AT THE START of
+	// ListLineItems and is then cleared.
 	//
-	// Çok sorgulu bir okumanın ORTASINA yazma sokmak için vardır: gerçek
-	// veritabanında araya giren yazma zamanlamaya bağlıdır ve testte
-	// deterministik olarak üretilemez.
+	// It exists to slip a write INTO THE MIDDLE of a multi-query read: in a real
+	// database an intervening write depends on timing and cannot be produced
+	// deterministically in a test.
 	hookListLineItems func()
 }
 
-// newFakeStore boş bir sahte depo üretir.
+// newFakeStore produces an empty fake store.
 func newFakeStore() *fakeStore {
 	return &fakeStore{
 		carts:     map[string]models.Cart{},
@@ -102,22 +108,24 @@ func newFakeStore() *fakeStore {
 	}
 }
 
-// Sahte deponun servisin beklediği yüzeyi karşıladığı derleme zamanında
-// doğrulanır.
+// That the fake store satisfies the surface the service expects is verified at
+// compile time.
 var _ service.Store = (*fakeStore)(nil)
 
-// addressKey (sepet, tür) çiftinin harita anahtarıdır.
+// addressKey is the map key of the (cart, type) pair.
 func addressKey(cartID string, kind models.AddressType) string {
 	return cartID + "\x00" + kind.String()
 }
 
-// nextStamp sıradaki artan zaman damgasını üretir. Çağıran kilidi tutmalıdır.
+// nextStamp produces the next increasing timestamp. The caller must hold the
+// lock.
 func (f *fakeStore) nextStamp() time.Time {
 	f.seq++
 	return time.Unix(0, 0).UTC().Add(time.Duration(f.seq) * time.Millisecond)
 }
 
-// WithTx fn'i "işlem" içinde çalıştırır; hata dönerse durumu geri alır.
+// WithTx runs fn inside a "transaction"; if it returns an error it rolls the
+// state back.
 func (f *fakeStore) WithTx(ctx context.Context, fn func(ctx context.Context) error) error {
 	if ctx.Value(txMarkerKey{}) != nil {
 		return fn(ctx)
@@ -134,11 +142,12 @@ func (f *fakeStore) WithTx(ctx context.Context, fn func(ctx context.Context) err
 	return nil
 }
 
-// WithReadTx fn'i TEK ANLIK GÖRÜNTÜLÜ bir "işlem" içinde çalıştırır.
+// WithReadTx runs fn inside a "transaction" with a SINGLE SNAPSHOT.
 //
-// Görüntü işlemin başında donar ve okumalar ona bakar; araya giren bir yazma
-// bu işlemin içinde GÖRÜNMEZ. Gerçek karşılığı REPEATABLE READ'dir ve taklit
-// edilmesi şarttır: yırtık okuma tam olarak bu düzeyin yokluğunda doğar.
+// The view freezes at the start of the transaction and the reads look at it; an
+// intervening write IS NOT VISIBLE inside this transaction. Its real counterpart
+// is REPEATABLE READ and imitating it is essential: the torn read is born
+// exactly in the absence of that level.
 func (f *fakeStore) WithReadTx(ctx context.Context, fn func(ctx context.Context) error) error {
 	if ctx.Value(readSnapshotKey{}) != nil || ctx.Value(txMarkerKey{}) != nil {
 		return fn(ctx)
@@ -146,7 +155,7 @@ func (f *fakeStore) WithReadTx(ctx context.Context, fn func(ctx context.Context)
 	return fn(context.WithValue(ctx, readSnapshotKey{}, f.snapshot()))
 }
 
-// snapshot deponun o andaki tam kopyasını üretir.
+// snapshot produces a complete copy of the store at that moment.
 func (f *fakeStore) snapshot() fakeSnapshot {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -159,7 +168,8 @@ func (f *fakeStore) snapshot() fakeSnapshot {
 	}
 }
 
-// readSnapshot salt-okunur işlemin görüntüsünü döner; işlem yoksa nil.
+// readSnapshot returns the read-only transaction's view; nil if there is no
+// transaction.
 func readSnapshot(ctx context.Context) *fakeSnapshot {
 	snap, ok := ctx.Value(readSnapshotKey{}).(fakeSnapshot)
 	if !ok {
@@ -168,18 +178,20 @@ func readSnapshot(ctx context.Context) *fakeSnapshot {
 	return &snap
 }
 
-// storeView bir okumanın bakacağı haritalardır.
+// storeView holds the maps a read will look at.
 type storeView struct {
 	fakeSnapshot
-	// release okuma bitince çağrılır; canlı haritalarda kilidi bırakır.
+	// release is called when the read is done; it releases the lock on the live
+	// maps.
 	release func()
 }
 
-// view okumanın bakacağı haritaları döner.
+// view returns the maps the read will look at.
 //
-// Salt-okunur bir işlem varsa onun DONMUŞ görüntüsü verilir ve kilide gerek
-// kalmaz — kopya başka kimseyle paylaşılmaz. Yoksa canlı haritalar kilit
-// ALTINDA verilir; kilit [storeView.release] çağrılana kadar tutulur.
+// If there is a read-only transaction, its FROZEN view is given and no lock is
+// needed — the copy is not shared with anyone else. If there is none, the live
+// maps are given UNDER the lock; the lock is held until [storeView.release] is
+// called.
 func (f *fakeStore) view(ctx context.Context) storeView {
 	if snap := readSnapshot(ctx); snap != nil {
 		return storeView{fakeSnapshot: *snap, release: func() {}}
@@ -197,7 +209,7 @@ func (f *fakeStore) view(ctx context.Context) storeView {
 	}
 }
 
-// fireListLineItems ListLineItems kancasını BİR KEZ çalıştırır.
+// fireListLineItems runs the ListLineItems hook ONCE.
 func (f *fakeStore) fireListLineItems() {
 	f.mu.Lock()
 	hook := f.hookListLineItems
@@ -209,7 +221,7 @@ func (f *fakeStore) fireListLineItems() {
 	}
 }
 
-// cloneMap haritanın yüzeysel kopyasını üretir.
+// cloneMap produces a shallow copy of the map.
 func cloneMap[K comparable, V any](in map[K]V) map[K]V {
 	out := make(map[K]V, len(in))
 	for k, v := range in {
@@ -218,15 +230,16 @@ func cloneMap[K comparable, V any](in map[K]V) map[K]V {
 	return out
 }
 
-// requireTx kilit alan metotların işlem içinde çağrıldığını doğrular.
+// requireTx validates that the methods that take the lock were called inside a
+// transaction.
 func requireTx(ctx context.Context, op string) error {
 	if ctx.Value(txMarkerKey{}) == nil {
-		return errors.Internal("fake_tx_required", "%s işlem dışında çağrıldı", op)
+		return errors.Internal("fake_tx_required", "%s was called outside a transaction", op)
 	}
 	return nil
 }
 
-// CreateCart sepeti kaydeder.
+// CreateCart records the cart.
 func (f *fakeStore) CreateCart(_ context.Context, cart models.Cart) (models.Cart, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -237,19 +250,20 @@ func (f *fakeStore) CreateCart(_ context.Context, cart models.Cart) (models.Cart
 	return cart, nil
 }
 
-// GetCart sepeti döner.
+// GetCart returns the cart.
 func (f *fakeStore) GetCart(ctx context.Context, id string) (models.Cart, error) {
 	view := f.view(ctx)
 	defer view.release()
 
 	cart, ok := view.carts[id]
 	if !ok || cart.DeletedAt != nil {
-		return models.Cart{}, errors.NotFound("cart_not_found", "sepet bulunamadı: %s", id)
+		return models.Cart{}, errors.NotFound("cart_not_found", "cart not found: %s", id)
 	}
 	return cart, nil
 }
 
-// LockCart sepeti kilitler; işlem dışında çağrılırsa hata döner.
+// LockCart locks the cart; if it is called outside a transaction it returns an
+// error.
 func (f *fakeStore) LockCart(ctx context.Context, id string) (models.Cart, error) {
 	if err := requireTx(ctx, "LockCart"); err != nil {
 		return models.Cart{}, err
@@ -265,14 +279,14 @@ func (f *fakeStore) LockCart(ctx context.Context, id string) (models.Cart, error
 	return cart, nil
 }
 
-// ListCarts sepetleri süzer ve sayfalar.
+// ListCarts filters and paginates the carts.
 func (f *fakeStore) ListCarts(ctx context.Context, filter models.CartFilter) ([]models.Cart, int64, error) {
 	view := f.view(ctx)
 	defer view.release()
 
 	matched := make([]models.Cart, 0, len(view.carts))
-	// Döngüler indeksle/anahtarla gezilir: model yapıları büyüktür ve değerle
-	// kopyalamak her tur birkaç yüz baytı boşuna taşır.
+	// The loops are walked by index/key: the model structs are large and copying
+	// them by value would carry a few hundred bytes for nothing on every turn.
 	for id := range view.carts {
 		cart := view.carts[id]
 		if cart.DeletedAt != nil {
@@ -301,7 +315,7 @@ func (f *fakeStore) ListCarts(ctx context.Context, filter models.CartFilter) ([]
 	return matched[filter.Offset:end], total, nil
 }
 
-// cmpString iki dizeyi karşılaştırır.
+// cmpString compares two strings.
 func cmpString(a, b string) int {
 	switch {
 	case a < b:
@@ -313,7 +327,7 @@ func cmpString(a, b string) int {
 	}
 }
 
-// CartsByIDs kimlik kümesinin sepetlerini döner.
+// CartsByIDs returns the carts of the identifier set.
 func (f *fakeStore) CartsByIDs(ctx context.Context, ids []string) ([]models.Cart, error) {
 	view := f.view(ctx)
 	defer view.release()
@@ -328,16 +342,17 @@ func (f *fakeStore) CartsByIDs(ctx context.Context, ids []string) ([]models.Cart
 	return out, nil
 }
 
-// UpdateCartContact sepetin e-posta ve müşteri alanlarını yazar.
+// UpdateCartContact writes the cart's email and customer fields.
 //
-// Kimin kime devredilebileceği BURADA denetlenmez; o kural servisindir.
+// Who can be handed over to whom IS NOT checked HERE; that rule is the
+// service's.
 func (f *fakeStore) UpdateCartContact(_ context.Context, id string, contact models.CartContact) (models.Cart, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
 	cart, ok := f.carts[id]
 	if !ok || cart.DeletedAt != nil {
-		return models.Cart{}, errors.NotFound("cart_not_found", "sepet bulunamadı: %s", id)
+		return models.Cart{}, errors.NotFound("cart_not_found", "cart not found: %s", id)
 	}
 	cart.Email = contact.Email
 	cart.CustomerID = contact.CustomerID
@@ -346,16 +361,17 @@ func (f *fakeStore) UpdateCartContact(_ context.Context, id string, contact mode
 	return cart, nil
 }
 
-// UpdateCartTotals toplamları yazar.
+// UpdateCartTotals writes the totals.
 //
-// Toplam kimliği BURADA doğrulanmaz; o kural servisindir (bkz. tip belgesi).
+// The totals identity IS NOT validated HERE; that rule is the service's (see the
+// type's documentation).
 func (f *fakeStore) UpdateCartTotals(_ context.Context, id string, totals models.CartTotals) (models.Cart, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
 	cart, ok := f.carts[id]
 	if !ok || cart.DeletedAt != nil {
-		return models.Cart{}, errors.NotFound("cart_not_found", "sepet bulunamadı: %s", id)
+		return models.Cart{}, errors.NotFound("cart_not_found", "cart not found: %s", id)
 	}
 	cart.Subtotal = totals.Subtotal
 	cart.DiscountTotal = totals.DiscountTotal
@@ -368,14 +384,14 @@ func (f *fakeStore) UpdateCartTotals(_ context.Context, id string, totals models
 	return cart, nil
 }
 
-// BumpCartRevision şekil sayacını artırır.
+// BumpCartRevision increments the shape counter.
 func (f *fakeStore) BumpCartRevision(_ context.Context, id string) (models.Cart, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
 	cart, ok := f.carts[id]
 	if !ok || cart.DeletedAt != nil {
-		return models.Cart{}, errors.NotFound("cart_not_found", "sepet bulunamadı: %s", id)
+		return models.Cart{}, errors.NotFound("cart_not_found", "cart not found: %s", id)
 	}
 	cart.Revision++
 	cart.UpdatedAt = f.nextStamp()
@@ -384,16 +400,16 @@ func (f *fakeStore) BumpCartRevision(_ context.Context, id string) (models.Cart,
 	return cart, nil
 }
 
-// MarkCartCompleted sepeti tamamlanmış damgalar.
+// MarkCartCompleted stamps the cart as completed.
 //
-// İkinci damgayı BURADA engellemez; o kural servisindir.
+// It does not prevent the second stamp HERE; that rule is the service's.
 func (f *fakeStore) MarkCartCompleted(_ context.Context, id string) (models.Cart, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
 	cart, ok := f.carts[id]
 	if !ok || cart.DeletedAt != nil {
-		return models.Cart{}, errors.NotFound("cart_not_found", "sepet bulunamadı: %s", id)
+		return models.Cart{}, errors.NotFound("cart_not_found", "cart not found: %s", id)
 	}
 	now := f.nextStamp()
 	cart.CompletedAt = &now
@@ -402,14 +418,14 @@ func (f *fakeStore) MarkCartCompleted(_ context.Context, id string) (models.Cart
 	return cart, nil
 }
 
-// SoftDeleteCart sepeti yumuşak siler.
+// SoftDeleteCart soft deletes the cart.
 func (f *fakeStore) SoftDeleteCart(_ context.Context, id string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
 	cart, ok := f.carts[id]
 	if !ok || cart.DeletedAt != nil {
-		return errors.NotFound("cart_not_found", "sepet bulunamadı: %s", id)
+		return errors.NotFound("cart_not_found", "cart not found: %s", id)
 	}
 	now := f.nextStamp()
 	cart.DeletedAt = &now
@@ -417,7 +433,7 @@ func (f *fakeStore) SoftDeleteCart(_ context.Context, id string) error {
 	return nil
 }
 
-// CreateLineItem satırı kaydeder.
+// CreateLineItem records the line.
 func (f *fakeStore) CreateLineItem(_ context.Context, item models.LineItem) (models.LineItem, error) {
 	if f.failCreateLineItem != nil {
 		return models.LineItem{}, f.failCreateLineItem
@@ -426,12 +442,12 @@ func (f *fakeStore) CreateLineItem(_ context.Context, item models.LineItem) (mod
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
-	// (cart_id, variant_id) benzersizliği: migration'daki kısmi indeksin
-	// karşılığı.
+	// The (cart_id, variant_id) uniqueness: the counterpart of the partial index
+	// in the migration.
 	for id := range f.items {
 		if f.items[id].CartID == item.CartID && f.items[id].VariantID == item.VariantID {
 			return models.LineItem{}, errors.Conflict("cart_line_item_exists",
-				"bu varyant sepette zaten var")
+				"this variant is already in the cart")
 		}
 	}
 
@@ -441,7 +457,7 @@ func (f *fakeStore) CreateLineItem(_ context.Context, item models.LineItem) (mod
 	return item, nil
 }
 
-// GetLineItem satırı döner.
+// GetLineItem returns the line.
 func (f *fakeStore) GetLineItem(ctx context.Context, cartID, lineID string) (models.LineItem, error) {
 	view := f.view(ctx)
 	defer view.release()
@@ -453,7 +469,7 @@ func (f *fakeStore) GetLineItem(ctx context.Context, cartID, lineID string) (mod
 	return item, nil
 }
 
-// GetLineItemByVariant sepetteki varyantın satırını döner.
+// GetLineItemByVariant returns the line of the variant in the cart.
 func (f *fakeStore) GetLineItemByVariant(ctx context.Context, cartID, variantID string) (models.LineItem, error) {
 	view := f.view(ctx)
 	defer view.release()
@@ -464,10 +480,10 @@ func (f *fakeStore) GetLineItemByVariant(ctx context.Context, cartID, variantID 
 		}
 	}
 	return models.LineItem{}, errors.NotFound("cart_line_item_not_found",
-		"sepette bu varyanttan satır yok (%s / %s)", cartID, variantID)
+		"the cart has no line for this variant (%s / %s)", cartID, variantID)
 }
 
-// ListLineItems sepetin satırlarını oluşturulma sırasıyla döner.
+// ListLineItems returns the cart's lines in creation order.
 func (f *fakeStore) ListLineItems(ctx context.Context, cartID string) ([]models.LineItem, error) {
 	f.fireListLineItems()
 
@@ -489,7 +505,7 @@ func (f *fakeStore) ListLineItems(ctx context.Context, cartID string) ([]models.
 	return out, nil
 }
 
-// SetLineItemQuantity satırın adedini yazar.
+// SetLineItemQuantity writes the line's quantity.
 func (f *fakeStore) SetLineItemQuantity(_ context.Context, cartID, lineID string, quantity int64) (models.LineItem, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -504,15 +520,16 @@ func (f *fakeStore) SetLineItemQuantity(_ context.Context, cartID, lineID string
 	return item, nil
 }
 
-// SetLineItemTotals bir turun tüm satır tutarlarını yazar.
+// SetLineItemTotals writes all of the line amounts of one round.
 //
-// Gerçek depo gibi HEPSİ YA DA HİÇBİRİ davranır: eksik bir satır bulunduğunda
-// hiçbir tutar yazılmaz. Gerçekte bunu işlemin geri alınması sağlar; sahte
-// depoda önce eşleme yapılıp sonra yazılarak aynı sonuç üretilir, yoksa birim
-// testi gerçek veritabanının vermeyeceği bir yarım yazmayı görürdü.
+// Like the real store it behaves ALL OR NOTHING: when a missing line is found,
+// no amount is written. In reality the rollback of the transaction provides
+// this; in the fake store the same result is produced by matching first and
+// writing afterwards, otherwise the unit test would see a half write that the
+// real database would never give.
 //
-// setLineTotalsCalls'ı bir artırır: çağrının SAYISI sözleşmenin parçasıdır —
-// bir tur TEK yazma çağrısıdır (bkz. [Service.SetTotals]).
+// It increments setLineTotalsCalls by one: the NUMBER of calls is part of the
+// contract — one round is a SINGLE write call (see [Service.SetTotals]).
 func (f *fakeStore) SetLineItemTotals(_ context.Context, cartID string, lines []models.LineItemTotals) error {
 	if f.failSetLineItemTotals != nil {
 		return f.failSetLineItemTotals
@@ -524,14 +541,14 @@ func (f *fakeStore) SetLineItemTotals(_ context.Context, cartID string, lines []
 	f.setLineTotalsCalls++
 	f.setLineTotalsRows += len(lines)
 
-	guncel := make([]models.LineItem, 0, len(lines))
-	gorulen := make(map[string]struct{}, len(lines))
+	updated := make([]models.LineItem, 0, len(lines))
+	seen := make(map[string]struct{}, len(lines))
 	for _, line := range lines {
-		if _, dup := gorulen[line.LineItemID]; dup {
+		if _, dup := seen[line.LineItemID]; dup {
 			return errors.Invalid(service.CodeTotalsInconsistent,
-				"aynı satır için birden çok tutar verildi: %s", line.LineItemID)
+				"more than one amount was given for the same line: %s", line.LineItemID)
 		}
-		gorulen[line.LineItemID] = struct{}{}
+		seen[line.LineItemID] = struct{}{}
 
 		item, ok := f.items[line.LineItemID]
 		if !ok || item.CartID != cartID {
@@ -543,15 +560,15 @@ func (f *fakeStore) SetLineItemTotals(_ context.Context, cartID string, lines []
 		item.TaxTotal = line.Totals.TaxTotal
 		item.Total = line.Totals.Total
 		item.UpdatedAt = f.nextStamp()
-		guncel = append(guncel, item)
+		updated = append(updated, item)
 	}
-	for i := range guncel {
-		f.items[guncel[i].ID] = guncel[i]
+	for i := range updated {
+		f.items[updated[i].ID] = updated[i]
 	}
 	return nil
 }
 
-// SoftDeleteLineItem satırı siler.
+// SoftDeleteLineItem deletes the line.
 func (f *fakeStore) SoftDeleteLineItem(_ context.Context, cartID, lineID string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -564,7 +581,7 @@ func (f *fakeStore) SoftDeleteLineItem(_ context.Context, cartID, lineID string)
 	return nil
 }
 
-// SoftDeleteLineItemsByCart sepetin tüm satırlarını siler.
+// SoftDeleteLineItemsByCart deletes all of the cart's lines.
 func (f *fakeStore) SoftDeleteLineItemsByCart(_ context.Context, cartID string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -577,13 +594,14 @@ func (f *fakeStore) SoftDeleteLineItemsByCart(_ context.Context, cartID string) 
 	return nil
 }
 
-// lineNotFound eksik satır hatasını üretir.
+// lineNotFound produces the missing line error.
 func lineNotFound(cartID, lineID string) error {
 	return errors.NotFound("cart_line_item_not_found",
-		"sepet satırı bulunamadı (%s / %s)", cartID, lineID)
+		"cart line not found (%s / %s)", cartID, lineID)
 }
 
-// UpsertCartAddress adresi yazar; var olanın kimliğini KORUR.
+// UpsertCartAddress writes the address; it PRESERVES the identifier of an
+// existing one.
 func (f *fakeStore) UpsertCartAddress(_ context.Context, addr models.CartAddress) (models.CartAddress, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -601,7 +619,7 @@ func (f *fakeStore) UpsertCartAddress(_ context.Context, addr models.CartAddress
 	return addr, nil
 }
 
-// ListCartAddresses sepetin adreslerini döner.
+// ListCartAddresses returns the cart's addresses.
 func (f *fakeStore) ListCartAddresses(ctx context.Context, cartID string) ([]models.CartAddress, error) {
 	view := f.view(ctx)
 	defer view.release()
@@ -615,7 +633,7 @@ func (f *fakeStore) ListCartAddresses(ctx context.Context, cartID string) ([]mod
 	return out, nil
 }
 
-// SoftDeleteCartAddressesByCart sepetin adreslerini siler.
+// SoftDeleteCartAddressesByCart deletes the cart's addresses.
 func (f *fakeStore) SoftDeleteCartAddressesByCart(_ context.Context, cartID string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -626,7 +644,7 @@ func (f *fakeStore) SoftDeleteCartAddressesByCart(_ context.Context, cartID stri
 	return nil
 }
 
-// CreateShippingMethod kargo yöntemi ekler.
+// CreateShippingMethod adds a shipping method.
 func (f *fakeStore) CreateShippingMethod(_ context.Context, method models.ShippingMethod) (models.ShippingMethod, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -635,7 +653,7 @@ func (f *fakeStore) CreateShippingMethod(_ context.Context, method models.Shippi
 		for id := range f.methods {
 			if f.methods[id].CartID == method.CartID && f.methods[id].ShippingOptionID == method.ShippingOptionID {
 				return models.ShippingMethod{}, errors.Conflict("cart_shipping_option_already_added",
-					"bu kargo seçeneği sepete zaten eklenmiş")
+					"this shipping option has already been added to the cart")
 			}
 		}
 	}
@@ -646,7 +664,7 @@ func (f *fakeStore) CreateShippingMethod(_ context.Context, method models.Shippi
 	return method, nil
 }
 
-// ListShippingMethods sepetin kargo yöntemlerini döner.
+// ListShippingMethods returns the cart's shipping methods.
 func (f *fakeStore) ListShippingMethods(ctx context.Context, cartID string) ([]models.ShippingMethod, error) {
 	view := f.view(ctx)
 	defer view.release()
@@ -661,7 +679,7 @@ func (f *fakeStore) ListShippingMethods(ctx context.Context, cartID string) ([]m
 	return out, nil
 }
 
-// SoftDeleteShippingMethod kargo yöntemini siler.
+// SoftDeleteShippingMethod deletes the shipping method.
 func (f *fakeStore) SoftDeleteShippingMethod(_ context.Context, cartID, methodID string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -669,13 +687,13 @@ func (f *fakeStore) SoftDeleteShippingMethod(_ context.Context, cartID, methodID
 	method, ok := f.methods[methodID]
 	if !ok || method.CartID != cartID {
 		return errors.NotFound("cart_shipping_method_not_found",
-			"kargo yöntemi bulunamadı (%s / %s)", cartID, methodID)
+			"shipping method not found (%s / %s)", cartID, methodID)
 	}
 	delete(f.methods, methodID)
 	return nil
 }
 
-// SoftDeleteShippingMethodsByCart sepetin tüm kargo yöntemlerini siler.
+// SoftDeleteShippingMethodsByCart deletes all of the cart's shipping methods.
 func (f *fakeStore) SoftDeleteShippingMethodsByCart(_ context.Context, cartID string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()

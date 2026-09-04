@@ -58,10 +58,10 @@ SELECT id, email, first_name, last_name, avatar_url, scopes, metadata, created_a
 WHERE email = $1 AND deleted_at IS NULL
 `
 
-// GetUserByEmail e-postaya göre CANLI kullanıcıyı döner.
+// GetUserByEmail returns the LIVE user for an email address.
 //
-// Giriş akışının ilk adımıdır. Benzersizlik kısmi indeksle garanti altındadır,
-// bu yüzden sonuç en fazla bir satırdır.
+// It is the first step of the login flow. Uniqueness is guaranteed by a
+// partial index, so the result is at most one row.
 func (q *Queries) GetUserByEmail(ctx context.Context, email string) (AuthUser, error) {
 	row := q.db.QueryRow(ctx, getUserByEmail, email)
 	var i AuthUser
@@ -98,7 +98,7 @@ type InsertUserParams struct {
 	CreatedAt pgtype.Timestamptz
 }
 
-// auth_user sorguları. Tüm okumalar deleted_at IS NULL filtresi uygular.
+// auth_user queries. Every read applies the deleted_at IS NULL filter.
 func (q *Queries) InsertUser(ctx context.Context, arg InsertUserParams) (AuthUser, error) {
 	row := q.db.QueryRow(ctx, insertUser,
 		arg.ID,
@@ -226,12 +226,14 @@ type SoftDeleteIdentitiesOfUserParams struct {
 	DeletedAt pgtype.Timestamptz
 }
 
-// SoftDeleteIdentitiesOfUser kullanıcı silinirken kimliklerini de siler.
+// SoftDeleteIdentitiesOfUser deletes the user's identities as well when the
+// user is deleted.
 //
-// Foreign key ON DELETE CASCADE yalnızca GERÇEK silmede çalışır; yumuşak silme
-// bir UPDATE olduğu için kimlikleri kendiliğinden götürmez. Silinmiş bir
-// kullanıcının canlı kimliği geride kalsaydı, o kullanıcı SİLİNDİKTEN SONRA DA
-// giriş yapabilirdi — bu, modülün en pahalı sessiz hatası olurdu.
+// A foreign key's ON DELETE CASCADE only runs on a REAL delete; because a soft
+// delete is an UPDATE, it does not take the identities with it on its own. Had
+// a deleted user's live identity been left behind, that user could still log
+// in AFTER BEING DELETED — this would be the module's most expensive silent
+// fault.
 func (q *Queries) SoftDeleteIdentitiesOfUser(ctx context.Context, arg SoftDeleteIdentitiesOfUserParams) error {
 	_, err := q.db.Exec(ctx, softDeleteIdentitiesOfUser, arg.UserID, arg.DeletedAt)
 	return err
@@ -269,14 +271,14 @@ type SyncIdentityProviderIdentityParams struct {
 	UpdatedAt        pgtype.Timestamptz
 }
 
-// SyncIdentityProviderIdentity kullanıcının e-postası değiştiğinde giriş
-// kimliğini de günceller.
+// SyncIdentityProviderIdentity updates the login identity as well when the
+// user's email address changes.
 //
-// İkisi ayrı sütunlarda durur ama AYNI şeyi ifade eder: kullanıcının giriş
-// adresi. Senkron tutulmasalardı, e-postasını değiştiren bir kullanıcı eski
-// adresiyle giriş yapmaya devam eder ve (provider, provider_identity)
-// benzersizlik indeksi artık kimsenin kullanmadığı bir adresi işgal ederdi.
-// Çağrı, kullanıcı güncellemesiyle AYNI işlemdedir.
+// The two sit in separate columns but express the SAME thing: the user's login
+// address. Were they not kept in sync, a user who changed their email address
+// would go on logging in with the old one, and the (provider,
+// provider_identity) uniqueness index would occupy an address nobody uses any
+// more. The call is in the SAME transaction as the user update.
 func (q *Queries) SyncIdentityProviderIdentity(ctx context.Context, arg SyncIdentityProviderIdentityParams) error {
 	_, err := q.db.Exec(ctx, syncIdentityProviderIdentity,
 		arg.UserID,
@@ -311,11 +313,11 @@ type UpdateUserParams struct {
 	ID        string
 }
 
-// UpdateUser verilmeyen alanları OLDUĞU GİBİ bırakır.
+// UpdateUser leaves the fields that were not supplied AS THEY ARE.
 //
-// COALESCE ile yazılan bu kısmi güncelleme, "alan gönderilmedi" ile "alan boşa
-// çekildi" ayrımını korur: NULL parametre eski değeri saklar, boş dize gerçek
-// bir temizlemedir.
+// This partial update, written with COALESCE, preserves the distinction
+// between "the field was not sent" and "the field was cleared": a NULL
+// parameter keeps the old value, an empty string is a real clearing.
 func (q *Queries) UpdateUser(ctx context.Context, arg UpdateUserParams) (AuthUser, error) {
 	row := q.db.QueryRow(ctx, updateUser,
 		arg.Email,

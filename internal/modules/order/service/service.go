@@ -209,10 +209,10 @@ type Page struct {
 // normalize validates the pagination parameters and applies the defaults.
 func (p Page) normalize() (Page, error) {
 	if p.Limit < 0 {
-		return Page{}, errors.Invalid(CodeInvalidInput, "limit negatif olamaz: %d", p.Limit)
+		return Page{}, errors.Invalid(CodeInvalidInput, "the limit cannot be negative: %d", p.Limit)
 	}
 	if p.Offset < 0 {
-		return Page{}, errors.Invalid(CodeInvalidInput, "offset negatif olamaz: %d", p.Offset)
+		return Page{}, errors.Invalid(CodeInvalidInput, "the offset cannot be negative: %d", p.Offset)
 	}
 	if p.Limit > MaxLimit {
 		return Page{}, errors.Invalid(CodeInvalidInput,
@@ -276,7 +276,7 @@ func checkTextLen(label, value string) error {
 func checkAmount(label string, value, upper int64) error {
 	if value < models.MinAmount {
 		return errors.Invalid(CodeInvalidInput,
-			"%s negatif olamaz: %d", label, value)
+			"%s cannot be negative: %d", label, value)
 	}
 	if value > upper {
 		return errors.Invalid(CodeInvalidInput,

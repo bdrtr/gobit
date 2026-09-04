@@ -1,42 +1,46 @@
-// Package api order modülünün HTTP yüzeyidir.
+// Package api is the HTTP surface of the order module.
 //
-// İki yüzey vardır: yönetim tarafı (/admin/v1/orders …) siparişi okur ve durum
-// geçişlerini uygular, müşteri tarafı (/store/v1/orders/{id}) YALNIZCA OKUR.
+// There are two surfaces: the admin side (/admin/v1/orders …) reads the order
+// and applies status transitions, the customer side (/store/v1/orders/{id})
+// ONLY READS.
 //
-// # Yetki
+// # Scopes
 //
-// Yönetim uçları yetki İSTER ve yetki uç uç zorlanır (bkz. [Handler.Routes]):
+// The admin endpoints ASK FOR a scope and the scope is enforced endpoint by
+// endpoint (see [Handler.Routes]):
 //
-//   - [ScopeRead] ("order:read") — /admin/v1 altındaki GET uçlarını açar:
-//     sipariş listesi ve tekil sipariş, iade/değişim/hasar kayıtları.
-//   - [ScopeWrite] ("order:write") — /admin/v1 altındaki POST uçlarını açar:
-//     iptal, tamamla, arşivle ve satış sonrası kayıt oluşturma.
+//   - [ScopeRead] ("order:read") — opens the GET endpoints under /admin/v1:
+//     the order list and a single order, return/exchange/claim records.
+//   - [ScopeWrite] ("order:write") — opens the POST endpoints under /admin/v1:
+//     cancel, complete, archive and creating after-sales records.
 //
-// corehttp.ScopeAdmin ("admin") ÜST YETKİDİR; ikisini de tek başına karşılar
-// (bkz. corehttp.Principal.HasScope).
+// corehttp.ScopeAdmin ("admin") is the SUPER SCOPE; on its own it satisfies
+// both of them (see corehttp.Principal.HasScope).
 //
-// Mağaza ucuna yetki EKLENMEZ: /store/v1'in kimliği publishable anahtardır ve
-// o anahtar tanımı gereği yetki taşımaz.
+// No scope IS ADDED to the storefront endpoint: the identity of /store/v1 is
+// the publishable key and that key by definition carries no scope.
 //
-// # HTTP'ye açılmayan yüzeyler
+// # Surfaces not opened to HTTP
 //
-// [service.Service.CreateOrder] BİLİNÇLİ OLARAK route almaz. Sipariş, tutarları
-// dışarıdan verilen bir kayıttır: HTTP'ye açılsaydı bir istemci kendi
-// belirlediği toplamla — örneğin sıfır tutarla — sipariş yazabilirdi.
-// Doğrulama katmanları yalnızca girdinin KENDİ İÇİNDE tutarlı olmasını
-// sağlar, tutarların GERÇEK fiyatlara karşılık geldiğini değil; o güvenceyi
-// veren tek şey, görüntüyü sepetten ve pricing'den kuran complete_cart
-// workflow'udur (ADR 0006). Sipariş bu yüzden yalnızca "order.interop"
-// üzerinden açılır.
+// [service.Service.CreateOrder] DELIBERATELY gets no route. An order is a
+// record whose amounts are supplied from outside: had it been opened to HTTP, a
+// client could have written an order with a total it determined itself — with a
+// total of zero, for example. The validation layers only ensure that the input
+// is consistent WITHIN ITSELF, not that the amounts correspond to the REAL
+// prices; the only thing that provides that guarantee is the complete_cart
+// workflow, which builds the snapshot from the cart and from pricing (ADR
+// 0006). This is why an order is opened only through "order.interop".
 //
-// [service.Service.SetOrderSummaryTotals] de aynı sebeple route almaz: ödenen
-// tutarı bilen taraf ödeme akışıdır, istemci değil.
+// [service.Service.SetOrderSummaryTotals] gets no route for the same reason:
+// the side that knows the amount paid is the payment flow, not the client.
 //
-// Yönetim tarafından elle sipariş oluşturma (draft order) sonraki fazların
-// işidir ve geldiğinde kendi doğrulama zinciriyle gelmelidir.
+// Creating an order by hand from the admin side (draft order) is the work of
+// later phases and when it arrives it has to arrive with its own validation
+// chain.
 //
-// Handler'lar status kodu SEÇMEZ: servis core/errors tipli hatasını döner,
-// corehttp.WriteError sınıfına uygun kodu yazar (plan Bölüm 8).
+// Handlers DO NOT CHOOSE the status code: the service returns its core/errors
+// typed error and corehttp.WriteError writes the code matching its kind (plan
+// Section 8).
 package api
 
 import (
@@ -55,96 +59,98 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/order/service"
 )
 
-// maxBodyBytes istek gövdesi için üst sınırdır. Sınır olmadan tek bir istek
-// sunucunun belleğini tüketebilirdi.
+// maxBodyBytes is the upper limit for the request body. Without a limit a
+// single request could exhaust the server's memory.
 const maxBodyBytes int64 = 1 << 20 // 1 MiB
 
-// codeInvalidRequest gövde/parametre çözümlenemediğinde dönen hata kodudur.
+// codeInvalidRequest is the error code returned when the body or a parameter
+// cannot be parsed.
 const codeInvalidRequest = "order_invalid_request"
 
-// URL parametre adları.
+// URL parameter names.
 const (
-	// paramOrderID sipariş kimliğinin URL parametre adıdır.
+	// paramOrderID is the URL parameter name of the order id.
 	paramOrderID = "id"
-	// paramReturnID iade kaydı kimliğinin URL parametre adıdır.
+	// paramReturnID is the URL parameter name of the return record id.
 	paramReturnID = "returnId"
-	// paramExchangeID değişim kaydı kimliğinin URL parametre adıdır.
+	// paramExchangeID is the URL parameter name of the exchange record id.
 	paramExchangeID = "exchangeId"
-	// paramClaimID hasar kaydı kimliğinin URL parametre adıdır.
+	// paramClaimID is the URL parameter name of the claim record id.
 	paramClaimID = "claimId"
 )
 
-// Orders handler'ların servisten ihtiyaç duyduğu yüzeydir.
+// Orders is the surface the handlers need from the service.
 //
-// Dar tutulması testleri sadeleştirir: HTTP davranışı, gerçek bir veritabanı
-// olmadan birkaç yüz satırlık bir sahte ile doğrulanabilir. Yüzeyde CreateOrder
-// ve SetOrderSummaryTotals YOKTUR; ikisi de HTTP'ye açılmayan workflow
-// yüzeyidir (bkz. paket belgesi).
+// Keeping it narrow simplifies the tests: HTTP behavior can be verified with a
+// fake of a few hundred lines, without a real database. CreateOrder and
+// SetOrderSummaryTotals are NOT on the surface; both of them are the workflow
+// surface that is not opened to HTTP (see the package documentation).
 type Orders interface {
-	// GetOrder siparişi satırları ve özetiyle döner.
+	// GetOrder returns the order with its line items and summary.
 	GetOrder(ctx context.Context, orderID string) (models.OrderDetail, error)
-	// ListOrders siparişleri sayfalar.
+	// ListOrders pages the orders.
 	ListOrders(ctx context.Context, in service.ListOrdersInput) ([]models.Order, int64, error)
-	// CancelOrder siparişi iptal eder; idempotenttir.
+	// CancelOrder cancels the order; it is idempotent.
 	CancelOrder(ctx context.Context, orderID, reason string) error
-	// CompleteOrder siparişi tamamlar.
+	// CompleteOrder completes the order.
 	CompleteOrder(ctx context.Context, orderID string) (models.Order, error)
-	// ArchiveOrder tamamlanmış siparişi arşivler.
+	// ArchiveOrder archives a completed order.
 	ArchiveOrder(ctx context.Context, orderID string) (models.Order, error)
 
-	// CreateReturn siparişe iade kaydı açar.
+	// CreateReturn opens a return record on the order.
 	CreateReturn(ctx context.Context, in service.CreateReturnInput) (models.Return, error)
-	// GetReturn iade kaydını kimliğiyle döner.
+	// GetReturn returns the return record by its id.
 	GetReturn(ctx context.Context, returnID string) (models.Return, error)
-	// ListReturns siparişin iade kayıtlarını sayfalar.
+	// ListReturns pages the order's return records.
 	ListReturns(ctx context.Context, orderID string, page service.Page) ([]models.Return, int64, error)
 
-	// CreateExchange siparişe değişim kaydı açar.
+	// CreateExchange opens an exchange record on the order.
 	CreateExchange(ctx context.Context, in service.CreateExchangeInput) (models.Exchange, error)
-	// GetExchange değişim kaydını kimliğiyle döner.
+	// GetExchange returns the exchange record by its id.
 	GetExchange(ctx context.Context, exchangeID string) (models.Exchange, error)
-	// ListExchanges siparişin değişim kayıtlarını sayfalar.
+	// ListExchanges pages the order's exchange records.
 	ListExchanges(ctx context.Context, orderID string, page service.Page) ([]models.Exchange, int64, error)
 
-	// CreateClaim siparişe hasar kaydı açar.
+	// CreateClaim opens a claim record on the order.
 	CreateClaim(ctx context.Context, in service.CreateClaimInput) (models.Claim, error)
-	// GetClaim hasar kaydını kimliğiyle döner.
+	// GetClaim returns the claim record by its id.
 	GetClaim(ctx context.Context, claimID string) (models.Claim, error)
-	// ListClaims siparişin hasar kayıtlarını sayfalar.
+	// ListClaims pages the order's claim records.
 	ListClaims(ctx context.Context, orderID string, page service.Page) ([]models.Claim, int64, error)
 }
 
-// Handler order modülünün HTTP handler kümesidir.
+// Handler is the HTTP handler set of the order module.
 type Handler struct {
 	svc Orders
 }
 
-// New verilen servis üzerinde çalışan handler kümesini üretir.
+// New produces the handler set that runs over the given service.
 func New(svc Orders) *Handler {
 	return &Handler{svc: svc}
 }
 
-// --- zarflar ve DTO'lar ------------------------------------------------------
+// --- envelopes and DTOs ------------------------------------------------------
 
-// singleEnvelope tekil yanıtların zarfıdır (plan Bölüm 8).
+// singleEnvelope is the envelope of single-record responses (plan Section 8).
 type singleEnvelope struct {
-	// Data yanıtın gövdesidir.
+	// Data is the body of the response.
 	Data any `json:"data"`
 }
 
-// listEnvelope liste yanıtlarının zarfıdır (plan Bölüm 8).
+// listEnvelope is the envelope of list responses (plan Section 8).
 type listEnvelope struct {
-	// Data sayfadaki kayıtlardır.
+	// Data holds the records on the page.
 	Data any `json:"data"`
-	// Count filtreye uyan TÜM kayıtların sayısıdır; sayfadaki satır sayısı değil.
+	// Count is the number of ALL records matching the filter; not the number of
+	// rows on the page.
 	Count int64 `json:"count"`
-	// Offset atlanan kayıt sayısıdır.
+	// Offset is the number of skipped records.
 	Offset int64 `json:"offset"`
-	// Limit istenen sayfa boyutudur.
+	// Limit is the requested page size.
 	Limit int64 `json:"limit"`
 }
 
-// orderDTO siparişin dış gösterimidir.
+// orderDTO is the external representation of the order.
 type orderDTO struct {
 	ID            string         `json:"id"`
 	DisplayID     int64          `json:"display_id"`
@@ -168,14 +174,15 @@ type orderDTO struct {
 	UpdatedAt     time.Time      `json:"updated_at"`
 }
 
-// orderDetailDTO siparişin satırları ve özetiyle dış gösterimidir.
+// orderDetailDTO is the external representation of the order with its line
+// items and summary.
 type orderDetailDTO struct {
 	orderDTO
 	Items   []lineItemDTO `json:"items"`
 	Summary summaryDTO    `json:"summary"`
 }
 
-// lineItemDTO sipariş satırının dış gösterimidir.
+// lineItemDTO is the external representation of an order line item.
 type lineItemDTO struct {
 	ID            string         `json:"id"`
 	OrderID       string         `json:"order_id"`
@@ -192,11 +199,13 @@ type lineItemDTO struct {
 	UpdatedAt     time.Time      `json:"updated_at"`
 }
 
-// summaryDTO siparişin ödeme/iade özetinin dış gösterimidir.
+// summaryDTO is the external representation of the order's payment/refund
+// summary.
 //
-// Outstanding TÜRETİLMİŞ bir alandır ve tutarlarla BİRLİKTE sunulur: kalan
-// tutarı istemciye kendi hesaplattırmak, aynı formülün iki yerde yazılması ve
-// birinin yanlış olması demekti. Değer NEGATİF olabilir (fazla tahsilat).
+// Outstanding is a DERIVED field and it is presented TOGETHER with the amounts:
+// having the client compute the outstanding amount itself meant the same
+// formula being written in two places and one of them being wrong. The value
+// can be NEGATIVE (overcollection).
 type summaryDTO struct {
 	ID            string    `json:"id"`
 	OrderID       string    `json:"order_id"`
@@ -207,7 +216,7 @@ type summaryDTO struct {
 	UpdatedAt     time.Time `json:"updated_at"`
 }
 
-// returnDTO iade kaydının dış gösterimidir.
+// returnDTO is the external representation of a return record.
 type returnDTO struct {
 	ID           string         `json:"id"`
 	OrderID      string         `json:"order_id"`
@@ -222,7 +231,7 @@ type returnDTO struct {
 	UpdatedAt    time.Time      `json:"updated_at"`
 }
 
-// exchangeDTO değişim kaydının dış gösterimidir.
+// exchangeDTO is the external representation of an exchange record.
 type exchangeDTO struct {
 	ID            string         `json:"id"`
 	OrderID       string         `json:"order_id"`
@@ -236,7 +245,7 @@ type exchangeDTO struct {
 	UpdatedAt     time.Time      `json:"updated_at"`
 }
 
-// claimDTO hasar kaydının dış gösterimidir.
+// claimDTO is the external representation of a claim record.
 type claimDTO struct {
 	ID           string         `json:"id"`
 	OrderID      string         `json:"order_id"`
@@ -252,7 +261,7 @@ type claimDTO struct {
 	UpdatedAt    time.Time      `json:"updated_at"`
 }
 
-// toOrderDTO modeli dış gösterime çevirir.
+// toOrderDTO converts the model to the external representation.
 func toOrderDTO(order models.Order) orderDTO {
 	return orderDTO{
 		ID:            order.ID,
@@ -278,22 +287,23 @@ func toOrderDTO(order models.Order) orderDTO {
 	}
 }
 
-// toOrderDetailDTO siparişi satırları ve özetiyle dış gösterime çevirir.
+// toOrderDetailDTO converts the order with its line items and summary to the
+// external representation.
 func toOrderDetailDTO(detail models.OrderDetail) orderDetailDTO {
 	out := orderDetailDTO{
 		orderDTO: toOrderDTO(detail.Order),
 		Items:    make([]lineItemDTO, 0, len(detail.Items)),
 		Summary:  toSummaryDTO(detail.Summary, detail.Total),
 	}
-	// Döngü indeksle gezilir: satır yapısı büyüktür ve değerle kopyalamak her
-	// tur birkaç yüz baytı boşuna taşır.
+	// The loop is walked by index: the line item struct is large and copying it
+	// by value would carry a few hundred bytes for nothing on every turn.
 	for i := range detail.Items {
 		out.Items = append(out.Items, toLineItemDTO(detail.Items[i]))
 	}
 	return out
 }
 
-// toLineItemDTO modeli dış gösterime çevirir.
+// toLineItemDTO converts the model to the external representation.
 func toLineItemDTO(item models.OrderLineItem) lineItemDTO {
 	return lineItemDTO{
 		ID:            item.ID,
@@ -312,8 +322,8 @@ func toLineItemDTO(item models.OrderLineItem) lineItemDTO {
 	}
 }
 
-// toSummaryDTO özeti dış gösterime çevirir; kalan tutar sipariş toplamından
-// hesaplanır.
+// toSummaryDTO converts the summary to the external representation; the
+// outstanding amount is computed from the order total.
 func toSummaryDTO(summary models.OrderSummary, orderTotal int64) summaryDTO {
 	return summaryDTO{
 		ID:            summary.ID,
@@ -326,7 +336,7 @@ func toSummaryDTO(summary models.OrderSummary, orderTotal int64) summaryDTO {
 	}
 }
 
-// toReturnDTO modeli dış gösterime çevirir.
+// toReturnDTO converts the model to the external representation.
 func toReturnDTO(ret models.Return) returnDTO {
 	return returnDTO{
 		ID:           ret.ID,
@@ -343,7 +353,7 @@ func toReturnDTO(ret models.Return) returnDTO {
 	}
 }
 
-// toExchangeDTO modeli dış gösterime çevirir.
+// toExchangeDTO converts the model to the external representation.
 func toExchangeDTO(exchange models.Exchange) exchangeDTO {
 	return exchangeDTO{
 		ID:            exchange.ID,
@@ -359,7 +369,7 @@ func toExchangeDTO(exchange models.Exchange) exchangeDTO {
 	}
 }
 
-// toClaimDTO modeli dış gösterime çevirir.
+// toClaimDTO converts the model to the external representation.
 func toClaimDTO(claim models.Claim) claimDTO {
 	return claimDTO{
 		ID:           claim.ID,
@@ -377,31 +387,33 @@ func toClaimDTO(claim models.Claim) claimDTO {
 	}
 }
 
-// --- yardımcılar -------------------------------------------------------------
+// --- helpers -----------------------------------------------------------------
 
-// decodeBody istek gövdesini çözer; gövde ZORUNLUDUR.
+// decodeBody decodes the request body; the body is MANDATORY.
 func decodeBody(w http.ResponseWriter, r *http.Request, dst any) error {
 	return decodeJSON(w, r, dst, false)
 }
 
-// decodeOptionalBody gövdesi BOŞ BIRAKILABİLEN istekleri çözer.
+// decodeOptionalBody decodes requests whose body MAY BE LEFT EMPTY.
 //
-// İptal ucunda gövde yalnızca isteğe bağlı bir gerekçe taşır; boş gövdeyi hata
-// saymak, gerekçesiz iptali imkânsız kılardı. Gövde gönderilmişse [decodeJSON]
-// katılığının tamamı (bilinmeyen alan reddi dâhil) geçerlidir.
+// On the cancel endpoint the body only carries an optional reason; counting an
+// empty body as an error would have made canceling without a reason impossible.
+// If a body was sent, the whole strictness of [decodeJSON] (including the
+// rejection of unknown fields) applies.
 func decodeOptionalBody(w http.ResponseWriter, r *http.Request, dst any) error {
 	return decodeJSON(w, r, dst, true)
 }
 
-// decodeJSON istek gövdesini çözer.
+// decodeJSON decodes the request body.
 //
-// Gövde boyutu sınırlanır ve TANINMAYAN ALANLAR reddedilir: sessizce yutulan
-// bir alan, istemcinin gönderdiğini sandığı ama uygulanmayan bir ayar demektir.
+// The body size is limited and UNRECOGNIZED FIELDS are rejected: a silently
+// swallowed field means a setting the client believes it sent but which is
+// never applied.
 //
-// allowEmpty true ise hiç gövde göndermemek geçerlidir ve dst sıfır değerinde
-// kalır. Boşluk kontrolü Content-Length'e DEĞİL çözümlemenin io.EOF'una
-// bakılarak yapılır: chunked bir istekte uzunluk -1'dir ve uzunluğa bakan bir
-// kontrol o istekleri yanlış sınıflandırırdı.
+// If allowEmpty is true then sending no body at all is valid and dst stays at
+// its zero value. The emptiness check is done by looking NOT at Content-Length
+// but at the io.EOF of the decoding: in a chunked request the length is -1 and
+// a check that looked at the length would misclassify those requests.
 func decodeJSON(w http.ResponseWriter, r *http.Request, dst any, allowEmpty bool) error {
 	r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
 
@@ -412,20 +424,20 @@ func decodeJSON(w http.ResponseWriter, r *http.Request, dst any, allowEmpty bool
 			if allowEmpty {
 				return nil
 			}
-			return coreerrors.Invalid(codeInvalidRequest, "istek gövdesi boş olamaz")
+			return coreerrors.Invalid(codeInvalidRequest, "the request body cannot be empty")
 		}
 		return coreerrors.Wrap(err, coreerrors.KindInvalid, codeInvalidRequest,
-			"istek gövdesi çözümlenemedi")
+			"the request body could not be parsed")
 	}
-	// Tek bir JSON değerinden fazlası gönderilmişse bu da bir istemci hatasıdır.
+	// If more than a single JSON value was sent, that too is a client error.
 	if err := dec.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
 		return coreerrors.Invalid(codeInvalidRequest,
-			"istek gövdesi tek bir JSON nesnesi olmalı")
+			"the request body has to be a single JSON object")
 	}
 	return nil
 }
 
-// parsePage limit/offset sorgu parametrelerini çözer.
+// parsePage decodes the limit/offset query parameters.
 func parsePage(r *http.Request) (service.Page, error) {
 	limit, err := parseInt64Param(r, "limit")
 	if err != nil {
@@ -437,14 +449,15 @@ func parsePage(r *http.Request) (service.Page, error) {
 	}
 	page := service.Page{Limit: limit, Offset: offset}
 	if page.Limit == 0 {
-		// Yanıttaki limit alanının gerçekten uygulanan sınırı göstermesi için
-		// varsayılan burada da görünür kılınır.
+		// So that the limit field in the response really shows the limit that
+		// is applied, the default is made visible here as well.
 		page.Limit = service.DefaultLimit
 	}
 	return page, nil
 }
 
-// parseInt64Param bir sorgu parametresini tam sayıya çevirir; yoksa 0 döner.
+// parseInt64Param converts a query parameter to an integer; returns 0 when it
+// is absent.
 func parseInt64Param(r *http.Request, name string) (int64, error) {
 	raw := r.URL.Query().Get(name)
 	if raw == "" {
@@ -458,7 +471,7 @@ func parseInt64Param(r *http.Request, name string) (int64, error) {
 	return value, nil
 }
 
-// orderID istekten sipariş kimliğini okur.
+// orderID reads the order id from the request.
 func orderID(r *http.Request) string {
 	return chi.URLParam(r, paramOrderID)
 }

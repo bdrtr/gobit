@@ -1,13 +1,14 @@
--- cart_addresses sorguları.
+-- cart_addresses queries.
 --
--- Sepet başına her türden (shipping/billing) en fazla bir YAŞAYAN adres olur;
--- kısıt cart_addresses_cart_type_uniq indeksindedir.
+-- There is at most one LIVING address of each kind (shipping/billing) per
+-- cart; the constraint lives in the cart_addresses_cart_type_uniq index.
 
--- UpsertCartAddress adresi yazar; aynı türden bir adres varsa ÜZERİNE yazar.
+-- UpsertCartAddress writes the address; if one of the same kind exists it is
+-- OVERWRITTEN.
 --
--- Çakışma hedefi kısmi benzersiz indekstir, bu yüzden WHERE yan tümcesi
--- indeksinkiyle BİREBİR aynı olmalıdır; aksi hâlde PostgreSQL indeksi
--- çıkarsayamaz ve sorgu hata verir.
+-- The conflict target is a partial unique index, so the WHERE clause must be
+-- EXACTLY the same as the index's; otherwise PostgreSQL cannot infer the index
+-- and the query errors out.
 -- name: UpsertCartAddress :one
 INSERT INTO cart_addresses (
     id, cart_id, address_type, source_address_id,

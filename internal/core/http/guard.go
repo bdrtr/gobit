@@ -201,12 +201,12 @@ func APIGuards(opts GuardOptions) []func(http.Handler) http.Handler {
 	stack := make([]func(http.Handler) http.Handler, 0, 6)
 
 	if opts.Limiter != nil {
-		anahtar := opts.LimitKey
-		if anahtar == nil {
-			anahtar = ClientIPKey
+		limitKey := opts.LimitKey
+		if limitKey == nil {
+			limitKey = ClientIPKey
 		}
 
-		limit := RateLimit(opts.Limiter, anahtar)
+		limit := RateLimit(opts.Limiter, limitKey)
 		stack = append(stack, Scoped(admin, nil, limit), Scoped(store, nil, limit))
 
 		// IDENTITY-FREE prefixes are limited too.

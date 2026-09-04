@@ -1,7 +1,8 @@
--- 000001_cart_init'in geri alınması.
+-- Rollback of 000001_cart_init.
 --
--- Tablolar bağımlılık sırasının TERSİNDE düşürülür: önce carts'a referans veren
--- tablolar, sonra carts. İndeksler tabloyla birlikte düşer, ayrıca DROP edilmez.
+-- Tables are dropped in the REVERSE of dependency order: first the tables that
+-- reference carts, then carts. Indexes fall together with their table, they are
+-- not DROPped separately.
 
 DROP TABLE IF EXISTS cart_shipping_methods;
 DROP TABLE IF EXISTS cart_addresses;

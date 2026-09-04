@@ -19,10 +19,10 @@ import (
 func TestMemoryLimiterRefillsOverTime(t *testing.T) {
 	t.Parallel()
 
-	simdi := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	lim := NewMemoryLimiter(2, 2*time.Second)
 	require.NotNil(t, lim)
-	lim.now = func() time.Time { return simdi }
+	lim.now = func() time.Time { return now }
 
 	// Spend the quota.
 	for range 2 {
@@ -36,13 +36,13 @@ func TestMemoryLimiterRefillsOverTime(t *testing.T) {
 	require.False(t, d.Allowed)
 
 	// Half a second: at 2/2s = 1 token per second that is 0.5 tokens, not enough.
-	simdi = simdi.Add(500 * time.Millisecond)
+	now = now.Add(500 * time.Millisecond)
 	d, err = lim.Allow(context.Background(), "k")
 	require.NoError(t, err)
 	assert.False(t, d.Allowed, "half a token must not be enough for one request")
 
 	// One more second: a full token accumulates.
-	simdi = simdi.Add(time.Second)
+	now = now.Add(time.Second)
 	d, err = lim.Allow(context.Background(), "k")
 	require.NoError(t, err)
 	assert.True(t, d.Allowed, "the accumulated token has to be usable")
@@ -60,17 +60,17 @@ func TestMemoryLimiterRefillsOverTime(t *testing.T) {
 func TestMemoryLimiterBucketDoesNotOverflow(t *testing.T) {
 	t.Parallel()
 
-	simdi := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	lim := NewMemoryLimiter(3, time.Second)
 	require.NotNil(t, lim)
-	lim.now = func() time.Time { return simdi }
+	lim.now = func() time.Time { return now }
 
 	d, err := lim.Allow(context.Background(), "k")
 	require.NoError(t, err)
 	require.True(t, d.Allowed)
 
 	// A gap shorter than the window: the bucket does not get garbage collected.
-	simdi = simdi.Add(900 * time.Millisecond)
+	now = now.Add(900 * time.Millisecond)
 	require.Len(t, lim.buckets, 1, "the bucket has to be alive still")
 
 	passed := 0
@@ -99,10 +99,10 @@ func TestMemoryLimiterBucketDoesNotOverflow(t *testing.T) {
 func TestMemoryLimiterLongSilenceRefreshesTheQuota(t *testing.T) {
 	t.Parallel()
 
-	simdi := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	lim := NewMemoryLimiter(3, time.Second)
 	require.NotNil(t, lim)
-	lim.now = func() time.Time { return simdi }
+	lim.now = func() time.Time { return now }
 
 	for range 3 {
 		d, err := lim.Allow(context.Background(), "k")
@@ -114,7 +114,7 @@ func TestMemoryLimiterLongSilenceRefreshesTheQuota(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, d.Allowed, "the quota has to be spent")
 
-	simdi = simdi.Add(24 * time.Hour)
+	now = now.Add(24 * time.Hour)
 
 	passed := 0
 
@@ -140,10 +140,10 @@ func TestMemoryLimiterLongSilenceRefreshesTheQuota(t *testing.T) {
 func TestMemoryLimiterCleansDeadBuckets(t *testing.T) {
 	t.Parallel()
 
-	simdi := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	lim := NewMemoryLimiter(5, time.Second)
 	require.NotNil(t, lim)
-	lim.now = func() time.Time { return simdi }
+	lim.now = func() time.Time { return now }
 
 	for i := range 1000 {
 		_, err := lim.Allow(context.Background(), strconv.Itoa(i))
@@ -153,9 +153,9 @@ func TestMemoryLimiterCleansDeadBuckets(t *testing.T) {
 	require.Len(t, lim.buckets, 1000, "the buckets have to pile up first")
 
 	// Move past gcInterval so the cleanup triggers; the window expires too.
-	simdi = simdi.Add(gcInterval + time.Second)
+	now = now.Add(gcInterval + time.Second)
 
-	_, err := lim.Allow(context.Background(), "yeni")
+	_, err := lim.Allow(context.Background(), "fresh")
 	require.NoError(t, err)
 
 	assert.Len(t, lim.buckets, 1, "the dead buckets have to go, only the new key stays")
@@ -169,17 +169,17 @@ func TestMemoryLimiterCleansDeadBuckets(t *testing.T) {
 func TestMemoryLimiterKeepsAnActiveBucket(t *testing.T) {
 	t.Parallel()
 
-	simdi := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	lim := NewMemoryLimiter(1, time.Hour)
 	require.NotNil(t, lim)
-	lim.now = func() time.Time { return simdi }
+	lim.now = func() time.Time { return now }
 
 	d, err := lim.Allow(context.Background(), "k")
 	require.NoError(t, err)
 	require.True(t, d.Allowed)
 
 	// Trigger the cleanup, but not late enough for the window (1h) to expire.
-	simdi = simdi.Add(gcInterval + time.Second)
+	now = now.Add(gcInterval + time.Second)
 
 	d, err = lim.Allow(context.Background(), "k")
 	require.NoError(t, err)

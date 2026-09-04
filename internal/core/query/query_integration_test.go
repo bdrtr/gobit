@@ -211,7 +211,7 @@ func (m *dummyModule) query(ctx context.Context, sql string, fields []string, ar
 	return out, nil
 }
 
-// --- testler ----------------------------------------------------------------
+// --- the tests ----------------------------------------------------------------
 
 func TestGraphEndToEndWithTwoDummyModules(t *testing.T) {
 	ctx := t.Context()

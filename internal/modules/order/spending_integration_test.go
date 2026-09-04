@@ -1,14 +1,15 @@
 //go:build integration
 
-// Bu dosyadaki testler harcama limitinin ZEMİNİNİ kanıtlar: toplamı hesaplayan
-// SQL'in gerçekten pencereyi süzdüğünü, iptal edilen siparişi saymadığını,
-// iadeyi düştüğünü ve — asıl önemlisi — danışma kilidinin eşzamanlı iki
-// siparişin limiti BİRLİKTE aşmasını gerçekten engellediğini.
+// The tests in this file prove the GROUND under the spending limit: that the SQL
+// computing the total really does filter the window, that it does not count a
+// canceled order, that it deducts the refund and — most importantly — that the
+// advisory lock really does stop two concurrent orders from exceeding the limit
+// TOGETHER.
 //
-// Birim testleri (service/spending_test.go) servisin KARARLARINI sahte bir depo
-// ile kanıtlar; sahte, toplamın kurallarını taklit eder. Taklidin gerçekle
-// örtüştüğü ve kilidin gerçekten serileştirdiği ancak burada, gerçek bir
-// PostgreSQL üzerinde ve gerçek goroutine'lerle görülebilir.
+// The unit tests (service/spending_test.go) prove the service's DECISIONS with a
+// fake store; the fake imitates the rules of the total. That the imitation
+// matches reality and that the lock really serializes can only be seen here, on
+// a real PostgreSQL and with real goroutines.
 package order_test
 
 import (
@@ -29,69 +30,71 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/order/service"
 )
 
-// sabitKural her çağrıda aynı harcama kuralını dönen sağlayıcıdır.
+// fixedRule is the provider that returns the same spending rule on every call.
 //
-// Gerçek sağlayıcı b2b modülüdür ve bu paket onu import EDEMEZ (Prensip 2.4);
-// burada taklit edilen tek şey sınırın JSON ŞEMASIDIR. Şemanın iki tarafta
-// aynı olduğu bu testlerle kanıtlanamaz — b2b tarafındaki karşılığı için bkz.
+// The real provider is the b2b module and this package CANNOT import it
+// (Principle 2.4); the only thing imitated here is the limit's JSON SCHEMA. That
+// the schema is the same on both sides cannot be proved by these tests — for its
+// counterpart on the b2b side see
 // internal/modules/b2b/service/interop_test.go.
-type sabitKural struct {
+type fixedRule struct {
 	payload json.RawMessage
 }
 
-// SpendingLimitJSON kurulmuş kuralı döner.
-func (k sabitKural) SpendingLimitJSON(context.Context, string) (json.RawMessage, error) {
+// SpendingLimitJSON returns the rule it was set up with.
+func (k fixedRule) SpendingLimitJSON(context.Context, string) (json.RawMessage, error) {
 	return k.payload, nil
 }
 
-// limitKurali verilen limit ve pencereyle bir kural gövdesi üretir.
-func limitKurali(t *testing.T, limit int64, window *time.Time) json.RawMessage {
+// limitRule produces a rule body with the given limit and window.
+func limitRule(t *testing.T, limit int64, window *time.Time) json.RawMessage {
 	t.Helper()
 
-	govde := map[string]any{
+	body := map[string]any{
 		"limited":        true,
 		"spending_limit": limit,
 		"currency_code":  testCurrency,
 		"window_start":   "",
 	}
 	if window != nil {
-		govde["window_start"] = window.UTC().Format(time.RFC3339)
+		body["window_start"] = window.UTC().Format(time.RFC3339)
 	}
-	payload, err := json.Marshal(govde)
+	payload, err := json.Marshal(body)
 	require.NoError(t, err)
 	return payload
 }
 
-// limitliServis harcama kuralı bağlı, gerçek depo üzerinde çalışan bir servis
-// kurar.
-func limitliServis(t *testing.T, kural json.RawMessage) *service.Service {
+// limitedService sets up a service with the spending rule attached, running on a
+// real store.
+func limitedService(t *testing.T, rule json.RawMessage) *service.Service {
 	t.Helper()
 
 	bus := eventbus.NewInMemory(nil)
 	t.Cleanup(func() {
-		kapatmaCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		if err := bus.Shutdown(kapatmaCtx); err != nil {
-			t.Logf("olay veri yolu kapatılamadı: %v", err)
+		if err := bus.Shutdown(shutdownCtx); err != nil {
+			t.Logf("the event bus could not be shut down: %v", err)
 		}
 	})
 
 	svc, err := service.New(service.Options{
 		Repo:     repository.New(testPool.Pool()),
 		Events:   bus,
-		Spending: sabitKural{payload: kural},
+		Spending: fixedRule{payload: rule},
 	})
 	require.NoError(t, err)
 	return svc
 }
 
-// gecmisSiparisYaz depoya DOĞRUDAN bir sipariş yazar ve placed_at'ini
-// çağıranın verdiği ana sabitler.
+// writePastOrder writes an order to the store DIRECTLY and pins its placed_at to
+// the moment the caller gives.
 //
-// Servis üzerinden yazmak mümkün değildir: placed_at'i veritabanı now() ile
-// damgalar ve pencerenin DIŞINDA kalan bir sipariş başka türlü kurulamaz.
-// Sınanan kural yine servisin kuralıdır; burada kurulan yalnızca GEÇMİŞTİR.
-func gecmisSiparisYaz(ctx context.Context, t *testing.T, customerID string, total int64, placedAt time.Time) string {
+// Writing it over the service is not possible: placed_at is stamped by the
+// database with now(), and an order that stays OUTSIDE the window cannot be set
+// up any other way. The rule being exercised is still the service's rule; what is
+// set up here is only the PAST.
+func writePastOrder(ctx context.Context, t *testing.T, customerID string, total int64, placedAt time.Time) string {
 	t.Helper()
 
 	id := models.NewOrderID()
@@ -105,201 +108,207 @@ func gecmisSiparisYaz(ctx context.Context, t *testing.T, customerID string, tota
 	return id
 }
 
-// limitliGirdi verilen müşteri için 6100 tutarında bir sipariş girdisi üretir.
-func limitliGirdi(customerID string) service.CreateOrderInput {
-	girdi := gecerliGirdi()
-	girdi.CustomerID = customerID
-	return girdi
+// limitedInput produces an order input of 6100 for the given customer.
+func limitedInput(customerID string) service.CreateOrderInput {
+	input := validInput()
+	input.CustomerID = customerID
+	return input
 }
 
-// TestPencereDisindakiHarcamaGercektenSayilmaz dönemin SQL'de uygulandığını
-// doğrular.
+// TestSpendingOutsideTheWindowIsReallyNotCounted verifies that the period is
+// enforced in SQL.
 //
-// Pencereden bir gün önce verilmiş 50000'lik sipariş, limiti 10000 olan
-// çalışanı engellememelidir; pencerenin İÇİNDEKİ 5000 ise 6100'lük yeni
-// siparişle birlikte limiti aşırır. İki iddia aynı testte durur çünkü ikisi
-// aynı sorgunun iki dalıdır: yalnızca birini sınamak, süzgecin hiç
-// uygulanmadığı hâli de geçirirdi.
-func TestPencereDisindakiHarcamaGercektenSayilmaz(t *testing.T) {
+// An order of 50000 placed a day before the window must not block an employee
+// whose limit is 10000; the 5000 INSIDE the window, on the other hand, pushes
+// past the limit together with the new order of 6100. The two claims stand in the
+// same test because they are two branches of the same query: exercising only one
+// of them would also let through the case where the filter is never applied at
+// all.
+func TestSpendingOutsideTheWindowIsReallyNotCounted(t *testing.T) {
 	ctx := context.Background()
-	musteri := "cus_PENCERE"
-	pencere := time.Now().UTC().Truncate(time.Hour)
+	customer := "cus_WINDOW"
+	window := time.Now().UTC().Truncate(time.Hour)
 
-	gecmisSiparisYaz(ctx, t, musteri, 50_000, pencere.Add(-24*time.Hour))
-	svc := limitliServis(t, limitKurali(t, 10_000, &pencere))
+	writePastOrder(ctx, t, customer, 50_000, window.Add(-24*time.Hour))
+	svc := limitedService(t, limitRule(t, 10_000, &window))
 
-	// Pencere dışındaki 50000 sayılmadığı için sipariş GEÇER.
-	_, err := svc.CreateOrder(ctx, limitliGirdi(musteri))
-	require.NoError(t, err, "önceki dönemin harcaması bu dönemin bütçesini yakmamalı")
+	// Because the 50000 outside the window is not counted, the order GOES
+	// THROUGH.
+	_, err := svc.CreateOrder(ctx, limitedInput(customer))
+	require.NoError(t, err, "the previous period's spending must not burn this period's budget")
 
-	// Şimdi pencere İÇİNDE 6100 harcanmış oldu; ikinci sipariş limiti aşırır.
-	_, err = svc.CreateOrder(ctx, limitliGirdi(musteri))
+	// Now 6100 has been spent INSIDE the window; the second order pushes past the
+	// limit.
+	_, err = svc.CreateOrder(ctx, limitedInput(customer))
 	require.Error(t, err)
 	assert.Equal(t, service.CodeSpendingLimitExceeded, errors.CodeOf(err))
 }
 
-// TestPencereYokkaTumGecmisSayilir "never" periyodunun SQL karşılığını
-// doğrular.
+// TestWithoutAWindowTheWholeHistoryIsCounted verifies the SQL counterpart of the
+// "never" period.
 //
-// window_start boş geldiğinde süzgeç hiç uygulanmaz ve yıllar önceki bir
-// sipariş de toplama girer.
-func TestPencereYokkaTumGecmisSayilir(t *testing.T) {
+// When window_start arrives empty the filter is not applied at all and an order
+// from years ago enters the total as well.
+func TestWithoutAWindowTheWholeHistoryIsCounted(t *testing.T) {
 	ctx := context.Background()
-	musteri := "cus_PENCERESIZ"
+	customer := "cus_NOWINDOW"
 
-	gecmisSiparisYaz(ctx, t, musteri, 5000, time.Date(2019, time.March, 3, 0, 0, 0, 0, time.UTC))
-	svc := limitliServis(t, limitKurali(t, 10_000, nil))
+	writePastOrder(ctx, t, customer, 5000, time.Date(2019, time.March, 3, 0, 0, 0, 0, time.UTC))
+	svc := limitedService(t, limitRule(t, 10_000, nil))
 
-	_, err := svc.CreateOrder(ctx, limitliGirdi(musteri))
+	_, err := svc.CreateOrder(ctx, limitedInput(customer))
 	require.Error(t, err)
 	assert.Equal(t, service.CodeSpendingLimitExceeded, errors.CodeOf(err))
 }
 
-// TestIptalEdilenSiparisHarcamayaGirmez iptalin bütçeyi GERÇEKTEN geri
-// verdiğini doğrular.
+// TestCanceledOrderDoesNotEnterSpending verifies that a cancellation REALLY does
+// give the budget back.
 //
-// Sipariş servis üzerinden iptal edilir (status = 'canceled'), yani sınanan şey
-// sorgunun durum süzgecidir. İptal edilmiş bir sipariş bütçeyi tutsaydı, ödemesi
-// reddedilen her deneme çalışanın dönem hakkını kalıcı olarak yakardı — saga
-// başarısız bir denemeden sonra siparişi tam olarak böyle iptal eder.
-func TestIptalEdilenSiparisHarcamayaGirmez(t *testing.T) {
+// The order is canceled over the service (status = 'canceled'), that is, what is
+// exercised is the query's status filter. Had a canceled order held on to the
+// budget, every attempt whose payment was declined would permanently burn the
+// employee's period allowance — and that is exactly how the saga cancels the
+// order after a failed attempt.
+func TestCanceledOrderDoesNotEnterSpending(t *testing.T) {
 	ctx := context.Background()
-	musteri := "cus_IPTAL"
-	pencere := time.Now().UTC().Add(-time.Hour)
-	svc := limitliServis(t, limitKurali(t, 10_000, &pencere))
+	customer := "cus_CANCEL"
+	window := time.Now().UTC().Add(-time.Hour)
+	svc := limitedService(t, limitRule(t, 10_000, &window))
 
-	ilk, err := svc.CreateOrder(ctx, limitliGirdi(musteri))
+	first, err := svc.CreateOrder(ctx, limitedInput(customer))
 	require.NoError(t, err)
 
-	// İptalden ÖNCE ikinci sipariş limiti aşar.
-	_, err = svc.CreateOrder(ctx, limitliGirdi(musteri))
+	// BEFORE the cancellation the second order exceeds the limit.
+	_, err = svc.CreateOrder(ctx, limitedInput(customer))
 	require.Error(t, err)
 
-	require.NoError(t, svc.CancelOrder(ctx, ilk.ID, "ödeme reddedildi"))
+	require.NoError(t, svc.CancelOrder(ctx, first.ID, "the payment was declined"))
 
-	_, err = svc.CreateOrder(ctx, limitliGirdi(musteri))
-	assert.NoError(t, err, "iptal edilen sipariş bütçeyi bırakmalı")
+	_, err = svc.CreateOrder(ctx, limitedInput(customer))
+	assert.NoError(t, err, "a canceled order must release the budget")
 }
 
-// TestIadeEdilenTutarGercektenDusulur iadenin bütçeye geri döndüğünü
-// doğrular.
+// TestRefundedAmountIsReallyDeducted verifies that the refund comes back to the
+// budget.
 //
-// Sorgunun LEFT JOIN'i yalnızca burada, gerçek bir order_summaries satırıyla
-// sınanabilir: özeti olmayan siparişte iade sıfır sayılmalı, olan siparişte ise
-// düşülmelidir.
-func TestIadeEdilenTutarGercektenDusulur(t *testing.T) {
+// The query's LEFT JOIN can only be exercised here, with a real order_summaries
+// row: on an order without a summary the refund must count as zero, whereas on an
+// order that has one it must be deducted.
+func TestRefundedAmountIsReallyDeducted(t *testing.T) {
 	ctx := context.Background()
-	musteri := "cus_IADE"
-	pencere := time.Now().UTC().Add(-time.Hour)
-	svc := limitliServis(t, limitKurali(t, 10_000, &pencere))
+	customer := "cus_REFUND"
+	window := time.Now().UTC().Add(-time.Hour)
+	svc := limitedService(t, limitRule(t, 10_000, &window))
 
-	ilk, err := svc.CreateOrder(ctx, limitliGirdi(musteri))
+	first, err := svc.CreateOrder(ctx, limitedInput(customer))
 	require.NoError(t, err)
 
-	_, err = svc.SetOrderSummaryTotals(ctx, ilk.ID, service.SummaryTotalsInput{
+	_, err = svc.SetOrderSummaryTotals(ctx, first.ID, service.SummaryTotalsInput{
 		PaidTotal:     6100,
 		RefundedTotal: 6100,
 	})
 	require.NoError(t, err)
 
-	_, err = svc.CreateOrder(ctx, limitliGirdi(musteri))
-	assert.NoError(t, err, "tamamı iade edilmiş sipariş bütçeyi tutmamalı")
+	_, err = svc.CreateOrder(ctx, limitedInput(customer))
+	assert.NoError(t, err, "a fully refunded order must not hold on to the budget")
 }
 
-// TestEszamanliSiparislerLimitiBirlikteAsamaz kontrol ile yazma arasındaki
-// YARIŞIN kapandığını doğrular.
+// TestConcurrentOrdersCannotExceedTheLimitTogether verifies that the RACE
+// between the check and the write is closed.
 //
-// Limit tam olarak BİR siparişe yeter (6100 <= 10000 < 12200). Sekiz goroutine
-// aynı anda sipariş açmaya çalışır; kilit olmasaydı hepsi toplamı 0 okur,
-// hepsi limitin altında görür ve hepsi yazılırdı — klasik write skew. Kilit
-// altında yalnızca BİRİ geçmeli, geri kalanı limit aşımıyla düşmelidir.
+// The limit is enough for exactly ONE order (6100 <= 10000 < 12200). Eight
+// goroutines try to open an order at the same time; without the lock they would
+// all read the total as 0, all see themselves below the limit and all be written
+// — the classic write skew. Under the lock only ONE must go through, and the rest
+// must fall with a limit overrun.
 //
-// Bu iddia sahte bir depoyla kurulamaz: serileştirmeyi yapan şey PostgreSQL'in
-// pg_advisory_xact_lock'ıdır ve ancak gerçek işlemlerle görülür.
-func TestEszamanliSiparislerLimitiBirlikteAsamaz(t *testing.T) {
+// This claim cannot be set up with a fake store: the thing that serializes is
+// PostgreSQL's pg_advisory_xact_lock, and it can only be seen with real
+// transactions.
+func TestConcurrentOrdersCannotExceedTheLimitTogether(t *testing.T) {
 	ctx := context.Background()
-	musteri := "cus_YARIS"
-	pencere := time.Now().UTC().Add(-time.Hour)
-	svc := limitliServis(t, limitKurali(t, 10_000, &pencere))
+	customer := "cus_RACE"
+	window := time.Now().UTC().Add(-time.Hour)
+	svc := limitedService(t, limitRule(t, 10_000, &window))
 
-	const deneme = 8
-	var basarili, asim atomic.Int64
+	const attempts = 8
+	var succeeded, exceeded atomic.Int64
 	var wg sync.WaitGroup
-	baslat := make(chan struct{})
+	start := make(chan struct{})
 
-	wg.Add(deneme)
-	for range deneme {
+	wg.Add(attempts)
+	for range attempts {
 		go func() {
 			defer wg.Done()
-			<-baslat
+			<-start
 
-			_, err := svc.CreateOrder(ctx, limitliGirdi(musteri))
+			_, err := svc.CreateOrder(ctx, limitedInput(customer))
 			switch {
 			case err == nil:
-				basarili.Add(1)
+				succeeded.Add(1)
 			case errors.CodeOf(err) == service.CodeSpendingLimitExceeded:
-				asim.Add(1)
+				exceeded.Add(1)
 			default:
-				t.Errorf("beklenmeyen hata: %v", err)
+				t.Errorf("unexpected error: %v", err)
 			}
 		}()
 	}
-	close(baslat)
+	close(start)
 	wg.Wait()
 
-	assert.Equal(t, int64(1), basarili.Load(), "limit yalnızca BİR siparişe yetmeli")
-	assert.Equal(t, int64(deneme-1), asim.Load(), "geri kalanı limit aşımıyla düşmeli")
+	assert.Equal(t, int64(1), succeeded.Load(), "the limit must be enough for only ONE order")
+	assert.Equal(t, int64(attempts-1), exceeded.Load(), "the rest must fall with a limit overrun")
 
-	// Veritabanındaki gerçek toplam da limiti aşmamalı.
-	var toplam int64
+	// The real total in the database must not exceed the limit either.
+	var total int64
 	require.NoError(t, testPool.Pool().QueryRow(ctx,
 		`SELECT COALESCE(SUM(total), 0) FROM orders
          WHERE customer_id = $1 AND deleted_at IS NULL AND status <> 'canceled'`,
-		musteri).Scan(&toplam))
-	assert.LessOrEqual(t, toplam, int64(10_000))
+		customer).Scan(&total))
+	assert.LessOrEqual(t, total, int64(10_000))
 }
 
-// TestHarcamaKilidiFarkliMusterileriBEKLETMEZ kilidin müşteri BAŞINA
-// alındığını doğrular.
+// TestSpendingLockDoesNotHoldUpDifferentCustomers verifies that the lock is
+// taken PER CUSTOMER.
 //
-// Kilit tüm siparişleri serileştirseydi kural doğru uygulanırdı ama sipariş
-// açma yolu tek şeritli olurdu. İki farklı müşterinin eşzamanlı siparişleri bu
-// yüzden ikisi de geçmelidir.
-func TestHarcamaKilidiFarkliMusterileriBEKLETMEZ(t *testing.T) {
+// Had the lock serialized all the orders, the rule would still be applied
+// correctly but the order-opening path would have become single-lane. This is why
+// the concurrent orders of two different customers must BOTH go through.
+func TestSpendingLockDoesNotHoldUpDifferentCustomers(t *testing.T) {
 	ctx := context.Background()
-	pencere := time.Now().UTC().Add(-time.Hour)
-	svc := limitliServis(t, limitKurali(t, 10_000, &pencere))
+	window := time.Now().UTC().Add(-time.Hour)
+	svc := limitedService(t, limitRule(t, 10_000, &window))
 
 	var wg sync.WaitGroup
-	hatalar := make([]error, 2)
-	musteriler := []string{"cus_AYRI_A", "cus_AYRI_B"}
+	errs := make([]error, 2)
+	customers := []string{"cus_SEPARATE_A", "cus_SEPARATE_B"}
 
-	wg.Add(len(musteriler))
-	for i, musteri := range musteriler {
+	wg.Add(len(customers))
+	for i, customer := range customers {
 		go func() {
 			defer wg.Done()
-			_, hatalar[i] = svc.CreateOrder(ctx, limitliGirdi(musteri))
+			_, errs[i] = svc.CreateOrder(ctx, limitedInput(customer))
 		}()
 	}
 	wg.Wait()
 
-	assert.NoError(t, hatalar[0])
-	assert.NoError(t, hatalar[1])
+	assert.NoError(t, errs[0])
+	assert.NoError(t, errs[1])
 }
 
-// TestLimitsizMusteriKilitAlmaz kuralı olmayan siparişte ek maliyet
-// olmadığını doğrular.
+// TestCustomerWithoutALimitTakesNoLock verifies that there is no extra cost on an
+// order that has no rule.
 //
-// "limited": false gövdesinde ne kilit alınır ne toplam okunur; kanıtı,
-// pencereyi hiç aşmayacak kadar büyük bir geçmişin bile siparişi
-// engellememesidir.
-func TestLimitsizMusteriKilitAlmaz(t *testing.T) {
+// With a "limited": false body neither is a lock taken nor is the total read; the
+// proof is that even a history large enough never to fit the window does not
+// block the order.
+func TestCustomerWithoutALimitTakesNoLock(t *testing.T) {
 	ctx := context.Background()
-	musteri := "cus_LIMITSIZ"
+	customer := "cus_UNLIMITED"
 
-	gecmisSiparisYaz(ctx, t, musteri, 1_000_000, time.Now().UTC())
-	svc := limitliServis(t, json.RawMessage(`{"limited":false}`))
+	writePastOrder(ctx, t, customer, 1_000_000, time.Now().UTC())
+	svc := limitedService(t, json.RawMessage(`{"limited":false}`))
 
-	_, err := svc.CreateOrder(ctx, limitliGirdi(musteri))
+	_, err := svc.CreateOrder(ctx, limitedInput(customer))
 	assert.NoError(t, err)
 }

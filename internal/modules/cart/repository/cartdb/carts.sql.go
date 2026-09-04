@@ -16,8 +16,8 @@ WHERE id = $1 AND deleted_at IS NULL AND completed_at IS NULL
 RETURNING id, region_id, customer_id, email, currency_code, subtotal, discount_total, tax_total, shipping_total, total, revision, totals_revision, metadata, completed_at, created_at, updated_at, deleted_at
 `
 
-// BumpCartRevision sepetin şekil sayacını bir artırır; toplamları etkileyen
-// her yapısal değişiklikten sonra AYNI işlemde çağrılır.
+// BumpCartRevision raises the cart's shape counter by one; it is called in the
+// SAME transaction after every structural change that affects the totals.
 func (q *Queries) BumpCartRevision(ctx context.Context, id string) (Cart, error) {
 	row := q.db.QueryRow(ctx, bumpCartRevision, id)
 	var i Cart
@@ -58,12 +58,13 @@ type CountCartsParams struct {
 	Completed  *bool
 }
 
-// CountCarts sayfalama zarfının toplam sayısını verir ve ListCarts ile AYNI
-// filtreleri uygular; ikisi birlikte değiştirilmelidir.
+// CountCarts gives the total count of the pagination envelope and applies the
+// SAME filters as ListCarts; the two must be changed together.
 //
-// Toplam, satırlarla birlikte dönen bir pencere fonksiyonundan okunamaz:
-// aralık dışı bir sayfada hiç satır dönmez, pencere değerlendirilmez ve toplam
-// 0 görünürdü. Toplam sayfanın değil FİLTRENİN sayısıdır.
+// The total cannot be read from a window function returned together with the
+// rows: on an out-of-range page no row comes back at all, the window is not
+// evaluated and the total would look like 0. The total is the count of the
+// FILTER, not of the page.
 func (q *Queries) CountCarts(ctx context.Context, arg CountCartsParams) (int64, error) {
 	row := q.db.QueryRow(ctx, countCarts, arg.CustomerID, arg.RegionID, arg.Completed)
 	var count int64
@@ -88,11 +89,12 @@ type CreateCartParams struct {
 	Metadata     []byte
 }
 
-// carts sorguları.
+// carts queries.
 //
-// Her okuma deleted_at IS NULL süzer (plan Bölüm 8: silme yumuşaktır).
-// Yazan sorgular ayrıca completed_at IS NULL şartı taşır: tamamlanmış sepet
-// DEĞİŞMEZDİR ve bu, servis kontrolünün yanında ikinci kapıdır.
+// Every read filters on deleted_at IS NULL (plan Section 8: deletion is soft).
+// The writing queries carry a completed_at IS NULL condition as well: a
+// completed cart is IMMUTABLE, and this is the second gate beside the service's
+// check.
 func (q *Queries) CreateCart(ctx context.Context, arg CreateCartParams) (Cart, error) {
 	row := q.db.QueryRow(ctx, createCart,
 		arg.ID,
@@ -161,8 +163,8 @@ WHERE id = ANY ($1::text[]) AND deleted_at IS NULL
 ORDER BY id
 `
 
-// GetCartsByIDs Query katmanının FetchByIDs çağrısını TEK turda karşılar;
-// kimlik başına sorgu (N+1) yapılmaz.
+// GetCartsByIDs serves the Query layer's FetchByIDs call in ONE round; no per-id
+// query (N+1) is made.
 func (q *Queries) GetCartsByIDs(ctx context.Context, ids []string) ([]Cart, error) {
 	rows, err := q.db.Query(ctx, getCartsByIDs, ids)
 	if err != nil {
@@ -270,12 +272,14 @@ WHERE id = $1 AND deleted_at IS NULL
 FOR UPDATE
 `
 
-// LockCart sepeti işlem boyunca kilitler ve güncel hâlini döner.
+// LockCart locks the cart for the whole transaction and returns its current
+// state.
 //
-// SEPETİ DEĞİŞTİREN HER AKIŞ BUNUNLA BAŞLAR. Kilit iki şeyi birden sağlar:
-// eşzamanlı iki AddLineItem sepetin satırlarını bozamaz (ikincisi birincinin
-// yazdığı satırı görür, yeni satır yerine adedi artırır) ve "tamamlanmış mı"
-// kontrolü ile yazma arasına başka bir işlem giremez.
+// EVERY FLOW THAT CHANGES THE CART STARTS WITH IT. The lock provides two things
+// at once: two concurrent AddLineItem calls cannot corrupt the lines of the cart
+// (the second one sees the line the first wrote and raises the quantity instead
+// of adding a new line), and no other transaction can slip in between the "is it
+// completed" check and the write.
 func (q *Queries) LockCart(ctx context.Context, id string) (Cart, error) {
 	row := q.db.QueryRow(ctx, lockCart, id)
 	var i Cart
@@ -308,12 +312,12 @@ WHERE id = $1 AND deleted_at IS NULL AND completed_at IS NULL
 RETURNING id, region_id, customer_id, email, currency_code, subtotal, discount_total, tax_total, shipping_total, total, revision, totals_revision, metadata, completed_at, created_at, updated_at, deleted_at
 `
 
-// MarkCartCompleted sepeti tamamlanmış olarak damgalar.
+// MarkCartCompleted stamps the cart as completed.
 //
-// completed_at IS NULL şartı bilinçlidir: aynı sepeti ikinci kez tamamlamak
-// hiçbir satırı etkilemez ve çağıran bunu ayırt edebilir. Servis kilidi zaten
-// yarışı kapatır; buradaki şart doğrudan SQL ile yapılan bir müdahaleyi de
-// kapsayan ikinci kapıdır.
+// The completed_at IS NULL condition is deliberate: completing the same cart a
+// second time affects no row and the caller can tell that apart. The service
+// lock already closes the race; the condition here is the second gate, one that
+// covers an intervention made directly through SQL as well.
 func (q *Queries) MarkCartCompleted(ctx context.Context, id string) (Cart, error) {
 	row := q.db.QueryRow(ctx, markCartCompleted, id)
 	var i Cart
@@ -368,11 +372,12 @@ type UpdateCartContactParams struct {
 	CustomerID *string
 }
 
-// UpdateCartContact sepetin e-postasını ve müşterisini MUTLAK değerle yazar.
+// UpdateCartContact writes the cart's email and customer as ABSOLUTE values.
 //
-// Misafir sepetin kayıtlı müşteriye devri ve ödeme adımında toplanan e-posta
-// bu sorgudan geçer. Kimin kime devredilebileceği kararı SERVİSİNDİR (dolu bir
-// müşteriyi başkasıyla değiştirmek reddedilir); buradaki sorgu yalnızca yazar.
+// The handover of a guest cart to a registered customer and the email collected
+// at the checkout step both go through this query. The decision of who may be
+// handed over to whom belongs to the SERVICE (replacing a customer that is
+// already set with another one is rejected); the query here only writes.
 func (q *Queries) UpdateCartContact(ctx context.Context, arg UpdateCartContactParams) (Cart, error) {
 	row := q.db.QueryRow(ctx, updateCartContact, arg.ID, arg.Email, arg.CustomerID)
 	var i Cart
@@ -421,8 +426,8 @@ type UpdateCartTotalsParams struct {
 	TotalsRevision int64
 }
 
-// UpdateCartTotals workflow'un hesapladığı toplamları yazar ve toplamların
-// hangi şekil için hesaplandığını damgalar.
+// UpdateCartTotals writes the totals the workflow calculated and stamps which
+// shape the totals were calculated for.
 func (q *Queries) UpdateCartTotals(ctx context.Context, arg UpdateCartTotalsParams) (Cart, error) {
 	row := q.db.QueryRow(ctx, updateCartTotals,
 		arg.ID,

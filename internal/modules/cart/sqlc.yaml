@@ -1,4 +1,4 @@
-# sqlc yapılandırması — modül başına AYRI dosya (bkz. diğer modüller).
+# sqlc configuration — a SEPARATE file per module (see the other modules).
 version: "2"
 sql:
   - engine: postgresql

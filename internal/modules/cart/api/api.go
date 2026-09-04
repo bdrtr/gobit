@@ -1,121 +1,130 @@
-// Package api cart modülünün HTTP yüzeyidir.
+// Package api is the HTTP surface of the cart module.
 //
-// İki yüzey vardır: müşteri tarafı (/store/v1/carts …) sepeti kurar ve
-// değiştirir, yönetim tarafı (/admin/v1/carts) YALNIZCA OKUR. Sepet yönetim
-// panelinden değiştirilmez; sepeti değiştiren tek taraf müşteridir ve sipariş
-// düzeltmeleri Faz 6'daki order modülünün işidir.
+// There are two surfaces: the customer side (/store/v1/carts …) builds and
+// changes the cart, the admin side (/admin/v1/carts) is READ ONLY. The cart is
+// not changed from the admin panel; the only party that changes the cart is the
+// customer and order corrections are the job of the order module in Phase 6.
 //
-// # HTTP'ye açılmayan yüzeyler
+// # Surfaces not opened to HTTP
 //
-// [service.Service.SetTotals] ve [service.Service.MarkCompleted] BİLİNÇLİ
-// OLARAK route almaz. İkisi de workflow yüzeyidir: toplamları hesaplayan
-// calculate_totals ve sepeti kapatan complete_cart onları container'dan çözerek
-// çağırır (ADR 0006). HTTP'ye açılsalardı bir istemci sepetin tutarını kendi
-// yazabilir ya da ödeme yapmadan sepeti kapatabilirdi.
+// [service.Service.SetTotals] and [service.Service.MarkCompleted] DELIBERATELY
+// get no route. Both are a workflow surface: calculate_totals, which computes
+// the totals, and complete_cart, which closes the cart, resolve them from the
+// container and call them (ADR 0006). Had they been opened to HTTP, a client
+// could write the cart's amount itself or close the cart without paying.
 //
-// # Akışa devredilen uçlar
+// # Endpoints delegated to a flow
 //
-// Vitrinin YAZAN uçlarının tamamı işini KENDİ SERVİSİYLE değil, container'dan
-// adla çözülen bir AKIŞLA yapar: sepet açma ([CartOpening]), satır ekleme ve
-// satır adedi güncelleme ([LinePricing]), sepeti tamamlama ([CartCompletion]).
-// Sebep tek cümleyle şudur — bu uçların doğru çalışması cart modülünün
-// BİLMEDİĞİ verilere (bölge, para birimi, katalog başlığı, fiyat, vergi, stok,
-// ödeme) bağlıdır ve o veriler ancak modüller arası bir akışta bir araya gelir.
+// Every WRITING endpoint of the storefront does its job NOT WITH ITS OWN
+// SERVICE but with a FLOW resolved by name from the container: opening a cart
+// ([CartOpening]), adding a line item and updating a line item's quantity
+// ([LinePricing]), completing the cart ([CartCompletion]). The reason in a
+// single sentence is this — these endpoints working correctly depends on data
+// the cart module DOES NOT KNOW (region, currency, catalog title, price, tax,
+// stock, payment) and that data only comes together in a cross-module flow.
 //
-// Akışların HTTP sahibinin modül olması bilinçli bir karardır: URL'ler sepetin
-// altında kalır, bileşim köküne handler kodu girmez ve modül somut akışı değil
-// yalnızca kendi tanımladığı dar arayüzü tanır (ADR 0001'in kalıbı; aynısı
-// order modülünün b2b harcama kuralında da kullanılır).
+// The module being the HTTP owner of the flows is a deliberate decision: the
+// URLs stay under the cart, no handler code enters the composition root and the
+// module knows not the concrete flow but only the narrow interface it defines
+// itself (the pattern of ADR 0001; the same one is used in the order module's
+// b2b spending rule too).
 //
-// # Bu paket artık hiçbir MODÜL yüzeyi çözmüyor
+// # This package no longer resolves ANY MODULE surface
 //
-// Sepet açma ucu bir süre farklı çalıştı: bölgeyi gövdeden alıyor, para
-// birimini de o bölgeden okumak için region modülünün yüzeyini adla çözüyordu.
-// İki kusuru vardı. Birincisi, region_id müşterinin ifade ettiği şey DEĞİLDİR
-// — müşteri bir ÜLKE seçer ve bölge onun sunucudaki karşılığıdır; ikincisi,
-// türetmeyi zaten yapan bir akış (create_cart) varken uç onu ATLIYORDU. İkisi
-// de akışa devredilerek kapandı ve bu paketin region'a olan tek bağı da
-// böylece düştü: bölgeyi bilen taraf artık akıştır.
+// The cart-opening endpoint worked differently for a while: it took the region
+// from the body and resolved the region module's surface by name in order to
+// read the currency from that region as well. It had two defects. First,
+// region_id is NOT what the customer expresses — the customer picks a COUNTRY
+// and the region is its counterpart on the server; second, while a flow that
+// already does the derivation (create_cart) existed, the endpoint SKIPPED it.
+// Both were closed by delegating to the flow, and this package's only tie to
+// region fell away with them: the party that knows the region is the flow now.
 //
-// # Yetki
+// # Scopes
 //
-// /admin/v1 altındaki uçlar kimlikten AYRI olarak yetki ister:
+// The endpoints under /admin/v1 ask for a scope SEPARATELY from identity:
 //
-//   - [ScopeRead] ("cart:read") — GET uçlarını açar.
-//   - [ScopeWrite] ("cart:write") — yazma uçlarını açardı; cart'ın yönetim
-//     yüzeyi yalnızca okuma olduğu için bugün hiçbir route'a bağlı değildir.
+//   - [ScopeRead] ("cart:read") — opens the GET endpoints.
+//   - [ScopeWrite] ("cart:write") — would open the write endpoints; because
+//     cart's admin surface is read only, it is bound to no route today.
 //
-// corehttp.ScopeAdmin ("admin") ÜST YETKİDİR ve ikisini de karşılar; tam
-// yetkili bir kimliğe ayrıca verilmesi gerekmez.
+// corehttp.ScopeAdmin ("admin") is the SUPERIOR SCOPE and satisfies both of
+// them; it does not have to be granted separately to a fully privileged
+// identity.
 //
-// /store/v1 uçları yetki İSTEMEZ: mağaza yüzeyinin kimliği publishable
-// anahtardır ve o anahtar tanımı gereği yetki taşımaz.
+// The /store/v1 endpoints ask for NO scope: the store surface's identity is the
+// publishable key and that key by definition carries no scope.
 //
-// # Vitrin sepetlerinde SAHİPLİK
+// # OWNERSHIP on storefront carts
 //
-// /store/v1/carts/{id} altındaki hiçbir uç, isteği yapanın o sepetin sahibi
-// olduğunu doğrulamaz. Bu bir GÖZDEN KAÇMA DEĞİL, seçilmiş bir modeldir:
-// sepetin kimliği YETENEĞİN kendisidir ("yetenek URL"). Kimlik 48 bit zaman
-// damgası + 80 bit kriptografik rastgelelikten üretilir
-// (bkz. models.NewCartID); tahmin edilemez, dolayısıyla onu BİLMEK sepete
-// erişim hakkını taşımak demektir.
+// No endpoint under /store/v1/carts/{id} verifies that the requester is the
+// owner of that cart. This is NOT AN OVERSIGHT but a chosen model: the cart's id
+// is the CAPABILITY itself (a "capability URL"). The id is produced from a
+// 48-bit timestamp + 80 bits of cryptographic randomness
+// (see models.NewCartID); it is unguessable, therefore KNOWING it means
+// carrying the right of access to the cart.
 //
-// Model başsız ticarette yaygındır ve burada zorunluluktan da doğar: mağaza
-// yüzeyinin bugünkü tek kimliği publishable anahtardır ve o anahtar bir SIR
-// DEĞİLDİR — tarayıcıda durur, tek işi isteği bir satış kanalına bağlamaktır
-// (bkz. corehttp.RequireStore). Ortada müşteri OTURUMU yoktur, yani "bu sepet
-// senin mi" sorusunu soracak bir özne de yoktur. Aynı beyan sipariş modülünde
-// de yazılıdır (order/api storeGetOrder) ve gerçek yetkilendirme Faz 8'in
-// işidir.
+// The model is common in headless commerce and here it also arises out of
+// necessity: the store surface's only identity today is the publishable key and
+// that key is NOT A SECRET — it sits in the browser, its only job is to bind the
+// request to a sales channel (see corehttp.RequireStore). There is no customer
+// SESSION, that is, there is no subject to ask "is this cart yours" either. The
+// same declaration is written in the order module too (order/api storeGetOrder)
+// and real authorization is the job of Phase 8.
 //
-// Modelin bedava olmayan KURALLARI vardır ve bu paket onlara uyar:
+// The model has RULES that are not free, and this package obeys them:
 //
-//   - Vitrin tarafında LİSTE ucu YOKTUR. Bir liste ucu, tek bir kimliği
-//     bilmeyi TÜM sepetleri okumaya çevirirdi; listeleme yalnızca /admin/v1
-//     altındadır ve [ScopeRead] ister.
-//   - Sepet kimliği bir SIR gibi taşınmalıdır. Log'a, Referer başlığına ya da
-//     üçüncü taraf betiklerine sızması, erişimin kendisinin sızmasıdır.
+//   - There is NO LIST endpoint on the storefront side. A list endpoint would
+//     turn knowing a single id into reading ALL carts; listing is only under
+//     /admin/v1 and asks for [ScopeRead].
+//   - The cart id has to be carried like a SECRET. Its leaking into a log, into
+//     the Referer header or into third-party scripts is the leaking of the
+//     access itself.
 //
-// # Modelin KAPSAMADIĞI şey: customer_id
+// # What the model DOES NOT COVER: customer_id
 //
-// Yetenek URL'i "elimdeki kimliğe erişebilirim" der; "ben şu müşteriyim"
-// DEMEZ. Oysa POST /store/v1/carts ve POST /store/v1/carts/{id} gövdeleri
-// customer_id alır ve hiçbir kanıt istemez. Servis yalnızca TEK bir sınırı
-// korur: müşterisi olan bir sepet başka bir müşteriye devredilemez
-// (service.CodeCustomerMismatch). Kalan iki kapı açıktır — çağıran açtığı yeni
-// sepete başkasının customer idni yazabilir, ve kimliğini bildiği bir
-// MİSAFİR sepetini istediği müşteriye devredebilir.
+// The capability URL says "I can reach the id I hold"; it DOES NOT say "I am
+// this customer". Yet the bodies of POST /store/v1/carts and
+// POST /store/v1/carts/{id} take a customer_id and ask for no proof at all. The
+// service guards only ONE boundary: a cart that has a customer cannot be handed
+// over to another customer (service.CodeCustomerMismatch). The remaining two
+// doors are open — the caller can write somebody else's customer id into the new
+// cart it opens, and it can hand a GUEST cart whose id it knows over to any
+// customer it likes.
 //
-// Sonucu kozmetik değildir: sepetin müşterisi siparişin sahibini belirler ve
-// b2b harcama limiti O müşterinin şirket penceresinden düşülür (bkz. order
-// modülünün harcama kuralı). Yani iddia, başkasının limit penceresini
-// tüketebilir. Gerçek ikilide ölçüldü: yabancının tamamladığı alışveriş
-// hedefin penceresinden düştü ve ARDINDAN o müşterinin kendi alışverişi 409
-// aldı — yani iddia yalnızca kaçış değil, adı bilinen bir çalışanın harcama
-// hakkını YAKMA yoludur.
+// The consequence is not cosmetic: the cart's customer determines the order's
+// owner and the b2b spending limit is deducted from THAT customer's company
+// window (see the order module's spending rule). That is, the claim can consume
+// somebody else's limit window. It was measured on a real pair: the checkout a
+// stranger completed was deducted from the target's window and AFTERWARDS that
+// customer's own checkout got a 409 — that is, the claim is not merely an escape
+// but a way to BURN the spending right of an employee whose name is known.
 //
-// Üçüncü kapı ise iki kapının da altından geçer ve en ucuzudur: alanı HİÇ
-// GÖNDERMEMEK. Müşterisiz sepet misafirindir, misafir siparişinde harcama
-// kuralı SORULMAZ bile ve limit hiç uygulanmaz. Yani limitine dayanmış bir
-// çalışanın yapması gereken tek şey, gövdeden bir alanı çıkarmaktır.
-// "Kimliğini beyan et" demek de kapatmaz: POST /store/v1/customers publishable
-// anahtarla hiçbir şirkete bağlı olmayan taze bir misafir kaydı açar.
+// The third door goes underneath both of the others and is the cheapest one: NOT
+// SENDING the field AT ALL. A cart without a customer belongs to a guest, on a
+// guest order the spending rule is not even ASKED and the limit is never
+// applied. That is, the only thing an employee who has hit their limit has to do
+// is leave a field out of the body. Saying "declare your identity" does not
+// close it either: POST /store/v1/customers opens a fresh guest record bound to
+// no company with the publishable key.
 //
-// Tahmin edilemezlik bunu KAPATMAZ, çünkü korunan şey çağıranın elindeki bir
-// yetenek değil, BAŞKASI hakkında yapılmış bir iddiadır. Tek doğru kapatma
-// müşteri oturumudur (Faz 8): customer_id gövdeden alınmayı bırakır ve
-// doğrulanmış kimlikten okunur. O mekanizma bugün YOKTUR ve bu paket onu
-// uydurmaya çalışmaz; verilen karar, açığın YAZILI olmasıdır — yazılmamış bir
-// güvenlik modeli, olmayan bir güvenlik modelidir.
+// Unguessability DOES NOT CLOSE this, because the thing being guarded is not a
+// capability in the caller's hand but a claim made ABOUT SOMEBODY ELSE. The only
+// correct closure is a customer session (Phase 8): customer_id stops being taken
+// from the body and is read from the verified identity. That mechanism DOES NOT
+// EXIST today and this package does not try to invent it; the decision taken is
+// that the hole is WRITTEN DOWN — an unwritten security model is a security
+// model that does not exist.
 //
-// Sorumluluğun nerede durduğu ADR 0008'de karara bağlanmıştır: kimliği
-// doğrulamak çerçevenin değil GÖMEN UYGULAMANIN işidir ve harcama limitinin
-// hangi koşulda uygulandığı (yalnızca müşterisini BEYAN EDEN alışverişte)
-// order modülünün spendingRuleFor godoc'unda ve README'nin B2B bölümünde
-// yazılıdır.
+// Where the responsibility sits is settled in ADR 0008: verifying the identity
+// is the job not of the framework but of the EMBEDDING APPLICATION, and under
+// which condition the spending limit is applied (only on a checkout that
+// DECLARES its customer) is written in the order module's spendingRuleFor godoc
+// and in the README's B2B section.
 //
-// Handler'lar status kodu SEÇMEZ: servis core/errors tipli hatasını döner,
-// corehttp.WriteError sınıfına uygun kodu yazar (plan Bölüm 8).
+// Handlers do NOT PICK the status code: the service returns its core/errors
+// typed error and corehttp.WriteError writes the code matching its kind
+// (plan Section 8).
 package api
 
 import (
@@ -134,116 +143,125 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/cart/service"
 )
 
-// maxBodyBytes istek gövdesi için üst sınırdır. Sınır olmadan tek bir istek
-// sunucunun belleğini tüketebilirdi.
+// maxBodyBytes is the upper bound for the request body. Without a bound a
+// single request could exhaust the server's memory.
 const maxBodyBytes int64 = 1 << 20 // 1 MiB
 
-// codeInvalidRequest gövde/parametre çözümlenemediğinde dönen hata kodudur.
+// codeInvalidRequest is the error code returned when the body/parameter cannot
+// be parsed.
 const codeInvalidRequest = "cart_invalid_request"
 
-// codeFlowUnavailable bir akışın handler'a bağlanmadığını bildirir.
+// codeFlowUnavailable reports that a flow is not bound to the handler.
 //
-// İstemcinin düzeltebileceği bir şey yoktur; kod bir KURULUM arızasını
-// adlandırır ve bu yüzden Internal sınıfındadır.
+// There is nothing the client can fix; the code names a SETUP failure and is in
+// the Internal kind for that reason.
 const codeFlowUnavailable = "cart_workflow_unavailable"
 
-// codeLineItemMissing yazılan satırın hemen ardından okunamadığını bildirir.
+// codeLineItemMissing reports that the written line item could not be read back
+// right afterwards.
 const codeLineItemMissing = "cart_line_item_missing"
 
-// codeCartMissing açılan sepetin hemen ardından okunamadığını bildirir.
+// codeCartMissing reports that the opened cart could not be read back right
+// afterwards.
 //
-// [codeLineItemMissing]'den AYRI bir koddur çünkü kaybolan kayıt farklıdır ve
-// operatörün bakacağı yer de öyle: biri sepeti, diğeri satırı arar. İkisi tek
-// koda indirgenseydi teşhis logu okumadan yapılamazdı.
+// It is a code SEPARATE from [codeLineItemMissing] because the record that went
+// missing is different and so is the place the operator will look: one looks for
+// the cart, the other for the line item. Had the two been reduced to a single
+// code, the diagnosis could not be made without reading the log.
 const codeCartMissing = "cart_missing_after_create"
 
-// codeFlowResultInvalid akıştan dönen gövdenin çözülemediğini bildirir.
+// codeFlowResultInvalid reports that the body returned from the flow could not
+// be decoded.
 //
-// Sözleşmenin iki ucu birbirini import edemez (ADR 0006), yani bir alan adı
-// ayrıştığında derleyici sessiz kalır; bu kod o sessizliği çalışma zamanında
-// bozar.
+// The two ends of the contract cannot import each other (ADR 0006), that is,
+// when a field name drifts the compiler stays silent; this code breaks that
+// silence at run time.
 const codeFlowResultInvalid = "cart_workflow_result_invalid"
 
-// URL parametre adları.
+// URL parameter names.
 const (
 	paramCartID     = "id"
 	paramLineItemID = "line_item_id"
 	paramMethodID   = "shipping_method_id"
 )
 
-// Carts handler'ların servisten ihtiyaç duyduğu yüzeydir.
+// Carts is the surface the handlers need from the service.
 //
-// Dar tutulması testleri sadeleştirir: HTTP davranışı, gerçek bir veritabanı
-// olmadan birkaç yüz satırlık bir sahte ile doğrulanabilir. Yüzeyde SetTotals
-// ve MarkCompleted YOKTUR; ikisi de HTTP'ye açılmayan workflow yüzeyidir.
+// Keeping it narrow simplifies the tests: the HTTP behavior can be verified with
+// a fake of a few hundred lines, without a real database. There is NO SetTotals
+// and no MarkCompleted on the surface; both are the workflow surface that is not
+// opened to HTTP.
 //
-// CreateCart da YOKTUR ve sebebi farklıdır: sepet açma ucu servisi değil
-// [CartOpening] akışını çağırır (bölge ülkeden orada türetilir) ve yazılan
-// sepeti yanıta çevirmek için [Carts.GetCart] zaten yeter. Metodu yüzeyde
-// tutmak, handler'ın akışı ATLAYIP sepeti doğrudan yazabileceği bir kapıyı
-// açık bırakırdı.
+// CreateCart is NOT there either and the reason is a different one: the
+// cart-opening endpoint calls not the service but the [CartOpening] flow (the
+// region is derived from the country there) and [Carts.GetCart] is already
+// enough to turn the written cart into a response. Keeping the method on the
+// surface would leave open a door through which the handler could SKIP the flow
+// and write the cart directly.
 //
-// AddLineItem AYNI SEBEPLE yoktur ve bu bir eksiklik değildir: satır ekleyen uç
-// [LinePricing] akışını çağırır, çünkü fiyatı SUNUCU belirler ve akış sepetin
-// satır sayısı TAVANINI (workflows/cart içindeki MaxLineItems) uygular. Metot
-// yüzeyde dursaydı, ona bağlanacak bir handler hem fiyatlandırmayı hem tavanı
-// SESSİZCE atlardı; servis metodunun kendisi duruyor, akış onu çağırıyor.
+// AddLineItem is absent FOR THE SAME REASON and that is not a gap: the endpoint
+// that adds a line item calls the [LinePricing] flow, because the SERVER decides
+// the price and the flow applies the CEILING on the cart's line count
+// (MaxLineItems inside workflows/cart). Had the method stayed on the surface, a
+// handler bound to it would SILENTLY skip both the pricing and the ceiling; the
+// service method itself is still there, the flow calls it.
 type Carts interface {
-	// GetCart sepeti çocuklarıyla döner.
+	// GetCart returns the cart with its children.
 	GetCart(ctx context.Context, cartID string) (models.CartDetail, error)
-	// UpdateCart sepetin e-posta ve müşteri alanlarını günceller.
+	// UpdateCart updates the cart's email and customer fields.
 	UpdateCart(ctx context.Context, cartID string, in service.UpdateCartInput) (models.Cart, error)
-	// ListCarts sepetleri sayfalar.
+	// ListCarts pages the carts.
 	ListCarts(ctx context.Context, in service.ListCartsInput) ([]models.Cart, int64, error)
-	// DeleteCart sepeti yumuşak siler.
+	// DeleteCart soft deletes the cart.
 	DeleteCart(ctx context.Context, cartID string) error
 
-	// UpdateLineItemQuantity satırın adedini yazar.
+	// UpdateLineItemQuantity writes the line item's quantity.
 	UpdateLineItemQuantity(ctx context.Context, cartID, lineID string, quantity int64) (models.LineItem, error)
-	// RemoveLineItem satırı kaldırır.
+	// RemoveLineItem removes the line item.
 	RemoveLineItem(ctx context.Context, cartID, lineID string) error
 
-	// SetShippingAddress sepetin kargo adresini yazar.
+	// SetShippingAddress writes the cart's shipping address.
 	SetShippingAddress(ctx context.Context, cartID string, in service.AddressInput) (models.CartAddress, error)
-	// SetBillingAddress sepetin fatura adresini yazar.
+	// SetBillingAddress writes the cart's billing address.
 	SetBillingAddress(ctx context.Context, cartID string, in service.AddressInput) (models.CartAddress, error)
 
-	// AddShippingMethod sepete kargo yöntemi ekler.
+	// AddShippingMethod adds a shipping method to the cart.
 	AddShippingMethod(ctx context.Context, cartID string, in service.AddShippingMethodInput) (models.ShippingMethod, error)
-	// RemoveShippingMethod kargo yöntemini kaldırır.
+	// RemoveShippingMethod removes the shipping method.
 	RemoveShippingMethod(ctx context.Context, cartID, methodID string) error
 }
 
-// CartOpening sepeti AÇAN akışın bu paketçe kullanılan yüzeyidir
-// (ADR 0001/0006).
+// CartOpening is the surface used by this package of the flow that OPENS the
+// cart (ADR 0001/0006).
 //
-// # Neden burada tanımlı
+// # Why it is defined here
 //
-// Somut akış internal/workflows/cart'tadır ve bu modül onu import EDEMEZ
-// (ADR 0006 her iki yönde de geçerlidir). Kalıp [LinePricing] ile aynıdır:
-// arayüz TÜKETİCİ tarafında ve yalnızca ilkel tiplerle tanımlanır, somut tip
-// onu YAPISAL olarak karşılar ve container'dan ADLA çözülür.
+// The concrete flow is in internal/workflows/cart and this module CANNOT import
+// it (ADR 0006 holds in both directions). The pattern is the same as
+// [LinePricing]'s: the interface is defined on the CONSUMER side and only with
+// primitive types, the concrete type satisfies it STRUCTURALLY and it is
+// resolved from the container BY NAME.
 //
-// # Neden BÖLGE parametresi YOK
+// # Why there is NO REGION parameter
 //
-// Yüzeyin tamamı bu boşluk içindir ve boşluk [LinePricing]'deki fiyat
-// boşluğunun aynısıdır. Sepetin bölgesi müşterinin ÜLKESİNDEN türetilir:
-// müşteri bir ülke seçer (ya da tarayıcısı söyler), bölge onun sunucudaki
-// karşılığıdır. Buraya bir "regionID" parametresi koymak, istemciye bir İÇ
-// VARLIK KİMLİĞİ yazdırmak ve sepetin vergi oranını onun seçimine bırakmak
-// olurdu — para birimi de aynı bölgeden okunduğu için bir zamanlar tam olarak
-// bu oluyordu.
+// The whole surface exists for this gap and the gap is the same as the price gap
+// in [LinePricing]. The cart's region is derived from the customer's COUNTRY:
+// the customer picks a country (or their browser says it) and the region is its
+// counterpart on the server. Putting a "regionID" parameter here would mean
+// making the client write an INTERNAL ENTITY ID and leaving the cart's tax rate
+// to its choice — and because the currency was read from that same region, that
+// was at one point exactly what happened.
 type CartOpening interface {
-	// OpenCartForCountry sepeti açar ve sepetin KİMLİĞİNİ döner.
+	// OpenCartForCountry opens the cart and returns the cart's ID.
 	//
-	// Bölge ve para birimi SUNUCUDA belirlenir: ikisi de countryCode'dan
-	// akış tarafından çözülür. customerID boş bırakılırsa sepet misafirindir;
-	// metadata çağıranın sepete iliştirdiği serbest JSON nesnesidir ve boş
-	// bırakılabilir.
+	// The region and the currency are decided ON THE SERVER: both are resolved
+	// from countryCode by the flow. If customerID is left empty the cart belongs
+	// to a guest; metadata is the free-form JSON object the caller attaches to
+	// the cart and it can be left empty.
 	//
-	// Ülkenin bölgesi yoksa errors.NotFound, kodun biçimi bozuksa
-	// errors.Invalid döner; ikisi de region modülünün hatasıdır ve olduğu gibi
-	// geçer.
+	// If the country has no region it returns errors.NotFound, if the code is
+	// malformed errors.Invalid; both are the region module's error and pass
+	// through as they are.
 	OpenCartForCountry(
 		ctx context.Context,
 		countryCode, customerID, email string,
@@ -251,28 +269,29 @@ type CartOpening interface {
 	) (cartID string, err error)
 }
 
-// LinePricing satır fiyatını SUNUCUDA belirleyen akışın bu paketçe kullanılan
-// yüzeyidir (ADR 0001/0006).
+// LinePricing is the surface used by this package of the flow that decides the
+// line item's price ON THE SERVER (ADR 0001/0006).
 //
-// # Neden burada tanımlı
+// # Why it is defined here
 //
-// Somut akış internal/workflows/cart'tadır ve bu modül onu import EDEMEZ
-// (ADR 0006 her iki yönde de geçerlidir). Tüketici tarafında tanımlanan bu
-// arayüz, container'dan ADLA çözülen somut tip tarafından YAPISAL olarak
-// karşılanır; uyumu derleyici değil, ilk çözüm denemesi denetler.
+// The concrete flow is in internal/workflows/cart and this module CANNOT import
+// it (ADR 0006 holds in both directions). This interface, defined on the
+// consumer side, is satisfied STRUCTURALLY by the concrete type resolved from
+// the container BY NAME; the fit is checked not by the compiler but by the first
+// resolution attempt.
 //
-// # Neden fiyat parametresi YOK
+// # Why there is NO price parameter
 //
-// Yüzeyin tamamı bu boşluk içindir. Fiyat, varyantın fiyat kümesinden ve
-// sepetin para biriminden akış tarafından belirlenir; buraya bir "unitPrice"
-// parametresi koymak, kaldırılan arızayı bir katman aşağıda yeniden kurmak
-// olurdu.
+// The whole surface exists for this gap. The price is decided by the flow out of
+// the variant's price set and the cart's currency; putting a "unitPrice"
+// parameter here would mean rebuilding the removed failure one layer down.
 type LinePricing interface {
-	// AddPricedLineItem sepete satır ekler ve satırın kimliğini döner.
+	// AddPricedLineItem adds a line item to the cart and returns the line item's
+	// id.
 	//
-	// Fiyat ve başlık SUNUCUDA belirlenir: fiyat pricing'den, başlık
-	// katalogdan gelir. metadata çağıranın satıra iliştirdiği serbest JSON
-	// nesnesidir ve boş bırakılabilir.
+	// The price and the title are decided ON THE SERVER: the price comes from
+	// pricing, the title from the catalog. metadata is the free-form JSON object
+	// the caller attaches to the line item and it can be left empty.
 	AddPricedLineItem(
 		ctx context.Context,
 		cartID, variantID string,
@@ -280,10 +299,10 @@ type LinePricing interface {
 		metadata json.RawMessage,
 	) (lineItemID string, err error)
 
-	// SetLineItemQuantity satırın adedini MUTLAK değerle yazar, toplamları
-	// yeniden hesaplar ve satırın KALDIRILIP kaldırılmadığını bildirir.
+	// SetLineItemQuantity writes the line item's quantity as an ABSOLUTE value,
+	// recomputes the totals and reports whether the line item was REMOVED.
 	//
-	// Sıfır adet satırı kaldırır; negatif adet reddedilir.
+	// A zero quantity removes the line item; a negative quantity is rejected.
 	SetLineItemQuantity(
 		ctx context.Context,
 		cartID, lineItemID string,
@@ -291,121 +310,129 @@ type LinePricing interface {
 	) (removed bool, err error)
 }
 
-// CartCompletion sepeti siparişe çeviren akışın bu paketçe kullanılan
-// yüzeyidir (ADR 0001/0006).
+// CartCompletion is the surface used by this package of the flow that turns the
+// cart into an order (ADR 0001/0006).
 //
-// İmza JSON'dur çünkü akışın girdisi de çıktısı da BİLEŞİKTİR ve iki taraf
-// birbirinin tiplerini adlandıramaz; şema [completeCartFlowRequest] ve
-// [completeCartFlowResult] tiplerinde, tek yerde yazılıdır.
+// The signature is JSON because both the flow's input and its output are
+// COMPOSITE and the two sides cannot name each other's types; the schema is
+// written in one place, in the [completeCartFlowRequest] and
+// [completeCartFlowResult] types.
 type CartCompletion interface {
-	// CompleteCartJSON sepeti siparişe çevirir: stok ayrılır, sipariş açılır,
-	// ödeme yetkilendirilip tahsil edilir ve sepet kapatılır.
+	// CompleteCartJSON turns the cart into an order: stock is reserved, the order
+	// is opened, the payment is authorized and captured and the cart is closed.
 	CompleteCartJSON(ctx context.Context, request json.RawMessage) (json.RawMessage, error)
 }
 
-// Flows handler'ın akışlardan ihtiyaç duyduğu yüzeylerin kümesidir.
+// Flows is the set of surfaces the handler needs from the flows.
 //
-// Üçü de ZORUNLUDUR ve eksikliği çalışma zamanında hata üretir
-// (bkz. [Handler.opening], [Handler.pricing] ve [Handler.checkout]);
-// route'ları hiç bağlamamak bir seçenek değildi, çünkü akışlar modüllerden
-// SONRA kurulur ve Routes çağrıldığında henüz kayıtlı olmayabilirler.
+// All three are MANDATORY and their absence produces an error at run time
+// (see [Handler.opening], [Handler.pricing] and [Handler.checkout]); not binding
+// the routes at all was not an option, because the flows are set up AFTER the
+// modules and may not be registered yet when Routes is called.
 type Flows struct {
-	// Opening sepet açma akışıdır.
+	// Opening is the cart-opening flow.
 	Opening CartOpening
-	// Pricing satır fiyatlandırma akışıdır.
+	// Pricing is the line item pricing flow.
 	Pricing LinePricing
-	// Checkout sepet tamamlama akışıdır.
+	// Checkout is the cart-completion flow.
 	Checkout CartCompletion
 }
 
-// Handler cart modülünün HTTP handler kümesidir.
+// Handler is the cart module's set of HTTP handlers.
 type Handler struct {
 	svc   Carts
 	flows Flows
 }
 
-// New verilen servis ve akışlar üzerinde çalışan handler kümesini üretir.
+// New produces the set of handlers working on the given service and flows.
 //
-// Bir zamanlar üçüncü bir parametre daha vardı (bölge yüzeyi) ve sepetin para
-// birimi ondan okunurdu; bugün o türetmeyi sepet açma AKIŞI yapıyor, yani
-// handler'ın tanıdığı tek dış taraf [Flows]'tur.
+// There used to be a third parameter as well (the region surface) and the cart's
+// currency was read from it; today that derivation is done by the cart-opening
+// FLOW, that is, the only outside party the handler knows is [Flows].
 func New(svc Carts, flows Flows) *Handler {
 	return &Handler{svc: svc, flows: flows}
 }
 
-// opening sepet açma akışını döner; bağlı değilse HATA döner.
+// opening returns the cart-opening flow; if it is not bound it returns an ERROR.
 //
-// # Neden KAPALI arızalanıyor
+// # Why it fails CLOSED
 //
-// Gerekçe [Handler.pricing] ile aynı yöndedir: akış yoksa doğru cevap
-// "bölgesiz sepet" ya da "istemcinin dediği bölge" DEĞİLDİR. Sepetin bölgesi
-// vergi oranını, ondan türetilen para birimi de hangi fiyat listesinin
-// uygulanacağını seçer; ikisini de bir varsayılana düşürmek, tam olarak
-// kapatılan yetki kapısını geri açardı. Akış çözülemiyorsa sepet HİÇ AÇILMAZ.
+// The reasoning runs in the same direction as [Handler.pricing]'s: if the flow
+// is missing, the correct answer is NOT "a cart without a region" or "the region
+// the client says". The cart's region picks the tax rate and the currency
+// derived from it picks which price list is applied; dropping either to a
+// default would reopen exactly the privilege door that was closed. If the flow
+// cannot be resolved, the cart is NOT OPENED AT ALL.
 func (h *Handler) opening() (CartOpening, error) {
 	if h.flows.Opening == nil {
 		return nil, coreerrors.Internal(codeFlowUnavailable,
-			"sepet açma akışı bağlı değil; bölgeyi sunucu türetmeden sepet açılamaz")
+			"the cart-opening flow is not bound; a cart cannot be opened without the server deriving the region")
 	}
 	return h.flows.Opening, nil
 }
 
-// pricing satır fiyatlandırma akışını döner; bağlı değilse HATA döner.
+// pricing returns the line item pricing flow; if it is not bound it returns an
+// ERROR.
 //
-// # Neden KAPALI arızalanıyor
+// # Why it fails CLOSED
 //
-// Bu, order modülünün harcama limiti kuralının TERSİDİR ve fark bilinçlidir.
-// Orada sağlayıcı yoksa doğru cevap "limit yok"tur: b2b kurulmamış bir
-// mağazada harcama limiti diye bir kavram yoktur ve kuralsız devam etmek
-// kurulumun kendi kararıdır. Burada ise sağlayıcı yoksa doğru cevap "fiyat
-// yok" DEĞİLDİR — fiyatı olmayan bir satır yazmak (ne istemcinin verdiği
-// tutarla, ne sıfırla) sessizce bedava mal satmak olurdu. Eksik bir
-// fiyatlandırıcının tek doğru sonucu, satırın HİÇ EKLENMEMESİDİR.
+// This is the OPPOSITE of the order module's spending limit rule and the
+// difference is deliberate. There, if the provider is missing the correct answer
+// is "no limit": in a store where b2b is not set up there is no such concept as
+// a spending limit and carrying on without the rule is the setup's own decision.
+// Here, however, if the provider is missing the correct answer is NOT "no
+// price" — writing a line item without a price (neither with the amount the
+// client gave, nor with zero) would be silently selling goods for free. The only
+// correct outcome of a missing pricer is the line item NOT BEING ADDED AT ALL.
 func (h *Handler) pricing() (LinePricing, error) {
 	if h.flows.Pricing == nil {
 		return nil, coreerrors.Internal(codeFlowUnavailable,
-			"satır fiyatlandırma akışı bağlı değil; fiyatı sunucu belirlemeden satır eklenemez")
+			"the line pricing flow is not bound; a line item cannot be added without the server deciding the price")
 	}
 	return h.flows.Pricing, nil
 }
 
-// checkout sepet tamamlama akışını döner; bağlı değilse HATA döner.
+// checkout returns the cart-completion flow; if it is not bound it returns an
+// ERROR.
 //
-// Gerekçe [Handler.pricing] ile aynı yönde ama daha da açıktır: akış yoksa
-// sipariş, ödeme ve stok rezervasyonu da yoktur ve "sepeti tamamlandı say"
-// diye bir kestirme yol olamaz.
+// The reasoning runs in the same direction as [Handler.pricing]'s but is even
+// plainer: if the flow is missing there is no order, no payment and no stock
+// reservation either, and there can be no shortcut called "consider the cart
+// completed".
 func (h *Handler) checkout() (CartCompletion, error) {
 	if h.flows.Checkout == nil {
 		return nil, coreerrors.Internal(codeFlowUnavailable,
-			"sepet tamamlama akışı bağlı değil; sepet siparişe çevrilemez")
+			"the cart-completion flow is not bound; the cart cannot be turned into an order")
 	}
 	return h.flows.Checkout, nil
 }
 
-// --- zarflar ve DTO'lar ------------------------------------------------------
+// --- envelopes and DTOs ------------------------------------------------------
 
-// singleEnvelope tekil yanıtların zarfıdır (plan Bölüm 8).
+// singleEnvelope is the envelope of single responses (plan Section 8).
 type singleEnvelope struct {
-	// Data yanıtın gövdesidir.
+	// Data is the response's body.
 	Data any `json:"data"`
 }
 
-// listEnvelope liste yanıtlarının zarfıdır (plan Bölüm 8).
+// listEnvelope is the envelope of list responses (plan Section 8).
 type listEnvelope struct {
-	// Data sayfadaki kayıtlardır.
+	// Data is the records on the page.
 	Data any `json:"data"`
-	// Count filtreye uyan TÜM kayıtların sayısıdır; sayfadaki satır sayısı değil.
+	// Count is the number of ALL records matching the filter; not the number of
+	// rows on the page.
 	Count int64 `json:"count"`
-	// Offset atlanan kayıt sayısıdır.
+	// Offset is the number of skipped records.
 	Offset int64 `json:"offset"`
-	// Limit istenen sayfa boyutudur.
+	// Limit is the requested page size.
 	Limit int64 `json:"limit"`
 }
 
-// cartDTO sepetin dış gösterimidir.
+// cartDTO is the cart's outward representation.
 //
-// TotalsStale türetilmiş bir alandır ve toplamlarla BİRLİKTE sunulur: bayat bir
-// tutarın doğru sanılması, bu API'nin üretebileceği en pahalı hata olurdu.
+// TotalsStale is a derived field and is presented TOGETHER with the totals: a
+// stale amount being taken for a correct one would be the most expensive mistake
+// this API could produce.
 type cartDTO struct {
 	ID            string         `json:"id"`
 	RegionID      string         `json:"region_id"`
@@ -424,7 +451,7 @@ type cartDTO struct {
 	UpdatedAt     time.Time      `json:"updated_at"`
 }
 
-// cartDetailDTO sepetin çocuklarıyla birlikte dış gösterimidir.
+// cartDetailDTO is the cart's outward representation together with its children.
 type cartDetailDTO struct {
 	cartDTO
 	Items           []lineItemDTO       `json:"items"`
@@ -433,7 +460,7 @@ type cartDetailDTO struct {
 	ShippingMethods []shippingMethodDTO `json:"shipping_methods"`
 }
 
-// lineItemDTO sepet satırının dış gösterimidir.
+// lineItemDTO is the cart line item's outward representation.
 type lineItemDTO struct {
 	ID            string         `json:"id"`
 	CartID        string         `json:"cart_id"`
@@ -450,7 +477,7 @@ type lineItemDTO struct {
 	UpdatedAt     time.Time      `json:"updated_at"`
 }
 
-// addressDTO sepet adresinin dış gösterimidir.
+// addressDTO is the cart address's outward representation.
 type addressDTO struct {
 	ID              string         `json:"id"`
 	CartID          string         `json:"cart_id"`
@@ -471,7 +498,7 @@ type addressDTO struct {
 	UpdatedAt       time.Time      `json:"updated_at"`
 }
 
-// shippingMethodDTO kargo yönteminin dış gösterimidir.
+// shippingMethodDTO is the shipping method's outward representation.
 type shippingMethodDTO struct {
 	ID               string         `json:"id"`
 	CartID           string         `json:"cart_id"`
@@ -483,7 +510,7 @@ type shippingMethodDTO struct {
 	UpdatedAt        time.Time      `json:"updated_at"`
 }
 
-// toCartDTO modeli dış gösterime çevirir.
+// toCartDTO converts the model into the outward representation.
 func toCartDTO(cart models.Cart) cartDTO {
 	return cartDTO{
 		ID:            cart.ID,
@@ -504,15 +531,17 @@ func toCartDTO(cart models.Cart) cartDTO {
 	}
 }
 
-// toCartDetailDTO sepeti çocuklarıyla dış gösterime çevirir.
+// toCartDetailDTO converts the cart with its children into the outward
+// representation.
 func toCartDetailDTO(detail models.CartDetail) cartDetailDTO {
 	out := cartDetailDTO{
 		cartDTO:         toCartDTO(detail.Cart),
 		Items:           make([]lineItemDTO, 0, len(detail.Items)),
 		ShippingMethods: make([]shippingMethodDTO, 0, len(detail.ShippingMethods)),
 	}
-	// Döngüler indeksle gezilir: satır ve yöntem yapıları büyüktür ve değerle
-	// kopyalamak her tur birkaç yüz baytı boşuna taşır.
+	// The loops are walked by index: the line item and method structs are large
+	// and copying them by value would carry a few hundred bytes needlessly on
+	// every turn.
 	for i := range detail.Items {
 		out.Items = append(out.Items, toLineItemDTO(detail.Items[i]))
 	}
@@ -530,7 +559,7 @@ func toCartDetailDTO(detail models.CartDetail) cartDetailDTO {
 	return out
 }
 
-// toLineItemDTO modeli dış gösterime çevirir.
+// toLineItemDTO converts the model into the outward representation.
 func toLineItemDTO(item models.LineItem) lineItemDTO {
 	return lineItemDTO{
 		ID:            item.ID,
@@ -549,7 +578,7 @@ func toLineItemDTO(item models.LineItem) lineItemDTO {
 	}
 }
 
-// toAddressDTO modeli dış gösterime çevirir.
+// toAddressDTO converts the model into the outward representation.
 func toAddressDTO(addr models.CartAddress) addressDTO {
 	return addressDTO{
 		ID:              addr.ID,
@@ -572,7 +601,7 @@ func toAddressDTO(addr models.CartAddress) addressDTO {
 	}
 }
 
-// toShippingMethodDTO modeli dış gösterime çevirir.
+// toShippingMethodDTO converts the model into the outward representation.
 func toShippingMethodDTO(method models.ShippingMethod) shippingMethodDTO {
 	return shippingMethodDTO{
 		ID:               method.ID,
@@ -586,12 +615,12 @@ func toShippingMethodDTO(method models.ShippingMethod) shippingMethodDTO {
 	}
 }
 
-// --- yardımcılar -------------------------------------------------------------
+// --- helpers -----------------------------------------------------------------
 
-// decodeBody istek gövdesini çözer.
+// decodeBody decodes the request body.
 //
-// Gövde boyutu sınırlanır ve TANINMAYAN ALANLAR reddedilir: sessizce yutulan
-// bir alan, istemcinin gönderdiğini sandığı ama uygulanmayan bir ayar demektir.
+// The body size is limited and UNKNOWN FIELDS are rejected: a silently swallowed
+// field means a setting the client believes it sent but that is never applied.
 func decodeBody(w http.ResponseWriter, r *http.Request, dst any) error {
 	r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
 
@@ -599,20 +628,20 @@ func decodeBody(w http.ResponseWriter, r *http.Request, dst any) error {
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(dst); err != nil {
 		if errors.Is(err, io.EOF) {
-			return coreerrors.Invalid(codeInvalidRequest, "istek gövdesi boş olamaz")
+			return coreerrors.Invalid(codeInvalidRequest, "request body cannot be empty")
 		}
 		return coreerrors.Wrap(err, coreerrors.KindInvalid, codeInvalidRequest,
-			"istek gövdesi çözümlenemedi")
+			"request body could not be parsed")
 	}
-	// Tek bir JSON değerinden fazlası gönderilmişse bu da bir istemci hatasıdır.
+	// More than a single JSON value having been sent is a client error as well.
 	if err := dec.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
 		return coreerrors.Invalid(codeInvalidRequest,
-			"istek gövdesi tek bir JSON nesnesi olmalı")
+			"request body has to be a single JSON object")
 	}
 	return nil
 }
 
-// parsePage limit/offset sorgu parametrelerini çözer.
+// parsePage decodes the limit/offset query parameters.
 func parsePage(r *http.Request) (service.Page, error) {
 	limit, err := parseInt64Param(r, "limit")
 	if err != nil {
@@ -624,14 +653,15 @@ func parsePage(r *http.Request) (service.Page, error) {
 	}
 	page := service.Page{Limit: limit, Offset: offset}
 	if page.Limit == 0 {
-		// Yanıttaki limit alanının gerçekten uygulanan sınırı göstermesi için
-		// varsayılan burada da görünür kılınır.
+		// So that the response's limit field really shows the bound that is
+		// applied, the default is made visible here as well.
 		page.Limit = service.DefaultLimit
 	}
 	return page, nil
 }
 
-// parseInt64Param bir sorgu parametresini tam sayıya çevirir; yoksa 0 döner.
+// parseInt64Param converts a query parameter into an integer; if it is absent it
+// returns 0.
 func parseInt64Param(r *http.Request, name string) (int64, error) {
 	raw := r.URL.Query().Get(name)
 	if raw == "" {
@@ -645,7 +675,7 @@ func parseInt64Param(r *http.Request, name string) (int64, error) {
 	return value, nil
 }
 
-// addressRequest kargo ve fatura uçlarının ortak gövdesidir.
+// addressRequest is the common body of the shipping and billing endpoints.
 type addressRequest struct {
 	SourceAddressID string         `json:"source_address_id"`
 	FirstName       string         `json:"first_name"`
@@ -661,7 +691,7 @@ type addressRequest struct {
 	Metadata        map[string]any `json:"metadata"`
 }
 
-// toInput gövdeyi servis girdisine çevirir.
+// toInput converts the body into the service input.
 func (b addressRequest) toInput() service.AddressInput {
 	return service.AddressInput{
 		SourceAddressID: b.SourceAddressID,
@@ -679,7 +709,7 @@ func (b addressRequest) toInput() service.AddressInput {
 	}
 }
 
-// cartID istekten sepet kimliğini okur.
+// cartID reads the cart id from the request.
 func cartID(r *http.Request) string {
 	return chi.URLParam(r, paramCartID)
 }

@@ -1,15 +1,15 @@
 //go:build integration
 
-// Bu dosyadaki testler gerçek bir PostgreSQL örneği (dolayısıyla Docker)
-// gerektirir; `make test` hızlı kalsın diye `integration` etiketiyle
-// ayrılmıştır. Çalıştırmak için: make test-integration
+// The tests in this file require a real PostgreSQL instance (and therefore
+// Docker); they are separated behind the `integration` tag so that `make test`
+// stays fast. To run them: make test-integration
 //
-// Birim testleri sahte bir depo ile servisin KARARLARINI kanıtlar. Buradaki
-// testler kararların dayandığı ZEMİNİ kanıtlar: migration'ın geri
-// alınabildiğini, kısıtların gerçekten uygulandığını ve sipariş NUMARASININ
-// eşzamanlı yazmalarda gerçekten benzersiz kaldığını. Özellikle "eşzamanlı 20 sipariş aynı numarayı almaz" iddiası
-// yalnızca burada, gerçek goroutine'lerle gerçek bir sequence üzerinde
-// sınanabilir.
+// The unit tests prove the service's DECISIONS with a fake store. The tests
+// here prove the GROUND those decisions stand on: that the migration can be
+// rolled back, that the constraints really are enforced, and that an order's
+// NUMBER really stays unique under concurrent writes. The claim "20 concurrent
+// orders do not take the same number" in particular can only be exercised here,
+// with real goroutines over a real sequence.
 package order_test
 
 import (
@@ -39,21 +39,22 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/order/service"
 )
 
-// Entegrasyon testlerinde kullanılan konteyner imajları.
+// The container images used in the integration tests.
 const (
 	postgresImage = "postgres:16-alpine"
 	redisImage    = "redis:7-alpine"
 )
 
-// modulTablolari modülün sahip olduğu tablolardır; migration testleri bu
-// listeyi kullanır.
-var modulTablolari = []string{
+// moduleTables are the tables the module owns; the migration tests use this
+// list.
+var moduleTables = []string{
 	"orders", "order_line_items", "order_summaries",
 	"order_returns", "order_exchanges", "order_claims",
 }
 
-// Test verisinde kullanılan sabitler. Bölge, müşteri ve varyant kimlikleri
-// BAŞKA modüllere aittir; bu modül onların varlığını doğrulamaz (Prensip 2.2).
+// Constants used in the test data. The region, customer and variant ids belong
+// to OTHER modules; this module does not verify their existence (Principle
+// 2.2).
 const (
 	testRegionID   = "reg_TEST"
 	testCustomerID = "cus_TEST"
@@ -61,9 +62,9 @@ const (
 )
 
 var (
-	// testPool tüm testlerin paylaştığı havuzdur.
+	// testPool is the pool all the tests share.
 	testPool *db.Pool
-	// testDSN migration çağrıları için bağlantı adresidir.
+	// testDSN is the connection address for the migration calls.
 	testDSN string
 )
 
@@ -71,8 +72,8 @@ func TestMain(m *testing.M) {
 	os.Exit(runWithPostgres(m))
 }
 
-// runWithPostgres tek bir Postgres konteyneri kaldırıp tüm testleri onun
-// üzerinde çalıştırır. os.Exit defer'ları atladığı için ayrı fonksiyondadır.
+// runWithPostgres brings up a single Postgres container and runs all the tests
+// on it. It is a separate function because os.Exit skips defers.
 func runWithPostgres(m *testing.M) int {
 	ctx := context.Background()
 
@@ -84,92 +85,92 @@ func runWithPostgres(m *testing.M) int {
 	)
 	defer func() {
 		if termErr := testcontainers.TerminateContainer(ctr); termErr != nil {
-			fmt.Fprintf(os.Stderr, "postgres konteyneri durdurulamadı: %v\n", termErr)
+			fmt.Fprintf(os.Stderr, "the postgres container could not be stopped: %v\n", termErr)
 		}
 	}()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "postgres konteyneri başlatılamadı: %v\n", err)
+		fmt.Fprintf(os.Stderr, "the postgres container could not be started: %v\n", err)
 		return 1
 	}
 
 	testDSN, err = ctr.ConnectionString(ctx, "sslmode=disable")
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "bağlantı adresi alınamadı: %v\n", err)
+		fmt.Fprintf(os.Stderr, "the connection address could not be obtained: %v\n", err)
 		return 1
 	}
 
 	cfg := db.DefaultConfig(testDSN)
-	// Eşzamanlılık testi onlarca goroutine'i aynı anda koşturur; her işlem bir
-	// bağlantı tuttuğu için havuz varsayılandan geniş açılır.
+	// The concurrency test runs dozens of goroutines at once; because every
+	// transaction holds a connection, the pool is opened wider than the default.
 	cfg.MaxConns = 24
 	testPool, err = db.New(ctx, cfg, nil)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "bağlantı havuzu açılamadı: %v\n", err)
+		fmt.Fprintf(os.Stderr, "the connection pool could not be opened: %v\n", err)
 		return 1
 	}
 	defer testPool.Close()
 
 	if err := db.Migrate(ctx, testDSN, order.New().Migrations(), order.ModuleName); err != nil {
-		fmt.Fprintf(os.Stderr, "migration uygulanamadı: %v\n", err)
+		fmt.Fprintf(os.Stderr, "the migration could not be applied: %v\n", err)
 		return 1
 	}
 
 	return m.Run()
 }
 
-// yeniServis gerçek depo ve gerçek olay veri yolu üzerinde çalışan bir servis
-// kurar; ikinci dönüş değeri veri yoludur.
-func yeniServis(t *testing.T) (*service.Service, eventbus.EventBus) {
+// newService sets up a service running on a real store and a real event bus;
+// the second return value is the bus.
+func newService(t *testing.T) (*service.Service, eventbus.EventBus) {
 	t.Helper()
-	return yeniServisDepoyla(t, repository.New(testPool.Pool()))
+	return newServiceWithStore(t, repository.New(testPool.Pool()))
 }
 
-// yeniServisDepoyla verilen depo üzerinde çalışan bir servis kurar.
+// newServiceWithStore sets up a service running on the given store.
 //
-// Depo parametredir çünkü tek bir test gerçek deponun ÜSTÜNE bir sarmalayıcı
-// koyar (bkz. [aramaBariyeriDepo]); geri kalan her şey aynıdır ve iki ayrı
-// kurulum yazmak, birine eklenen bir bağımlılığın diğerinde unutulmasını davet
-// ederdi.
-func yeniServisDepoyla(t *testing.T, depo service.Store) (*service.Service, eventbus.EventBus) {
+// The store is a parameter because a single test puts a wrapper ON TOP of the
+// real store (see [lookupBarrierStore]); everything else is the same, and
+// writing two separate setups would invite a dependency added to one to be
+// forgotten in the other.
+func newServiceWithStore(t *testing.T, store service.Store) (*service.Service, eventbus.EventBus) {
 	t.Helper()
 
 	bus := eventbus.NewInMemory(nil)
 	t.Cleanup(func() {
-		kapatmaCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		if err := bus.Shutdown(kapatmaCtx); err != nil {
-			t.Logf("olay veri yolu kapatılamadı: %v", err)
+		if err := bus.Shutdown(shutdownCtx); err != nil {
+			t.Logf("the event bus could not be shut down: %v", err)
 		}
 	})
 
 	svc, err := service.New(service.Options{
-		Repo:   depo,
+		Repo:   store,
 		Events: bus,
 	})
 	require.NoError(t, err)
 	return svc, bus
 }
 
-// gecerliGirdi tutarlı bir sipariş girdisi üretir.
-func gecerliGirdi() service.CreateOrderInput {
+// validInput produces a consistent order input.
+func validInput() service.CreateOrderInput {
 	return service.CreateOrderInput{
 		RegionID:      testRegionID,
 		CustomerID:    testCustomerID,
-		Email:         "musteri@ornek.com",
+		Email:         "customer@example.com",
 		CurrencyCode:  testCurrency,
 		Subtotal:      3000,
 		TaxTotal:      600,
 		ShippingTotal: 2500,
 		Total:         6100,
 		Items: []service.CreateOrderItemInput{{
-			VariantID: "variant_A", Title: "Kırmızı Tişört",
+			VariantID: "variant_A", Title: "Red T-Shirt",
 			Quantity: 3, UnitPrice: 1000, Subtotal: 3000, TaxTotal: 600, Total: 3600,
 		}},
 	}
 }
 
-// tabloVar tablonun veritabanında olup olmadığını bildirir.
-func tabloVar(ctx context.Context, t *testing.T, table string) bool {
+// tableExists reports whether the table is present in the database.
+func tableExists(ctx context.Context, t *testing.T, table string) bool {
 	t.Helper()
 
 	var exists bool
@@ -183,43 +184,43 @@ func tabloVar(ctx context.Context, t *testing.T, table string) bool {
 	return exists
 }
 
-// TestMigrationGeriAlinabilir migration'ın uygulanıp geri alınabildiğini
-// doğrular (plan Bölüm 8: up/down çiftleri, geri alınabilir).
+// TestMigrationIsReversible verifies that the migration can be applied and
+// rolled back (plan Section 8: up/down pairs, reversible).
 //
-// Test SIRAYA duyarlıdır ve diğer testlerden önce koşmalıdır: şemayı düşürüp
-// yeniden kurar. Go testleri dosya içinde tanım sırasına göre koştuğu için
-// dosyanın başındadır.
-func TestMigrationGeriAlinabilir(t *testing.T) {
+// The test is ORDER sensitive and has to run before the others: it drops the
+// schema and sets it up again. Because Go runs the tests of a file in
+// declaration order, it stands at the top of the file.
+func TestMigrationIsReversible(t *testing.T) {
 	ctx := context.Background()
 	src := order.New().Migrations()
 
-	for _, table := range modulTablolari {
-		require.True(t, tabloVar(ctx, t, table), "%s başlangıçta var olmalı", table)
+	for _, table := range moduleTables {
+		require.True(t, tableExists(ctx, t, table), "%s must exist at the start", table)
 	}
 
 	require.NoError(t, db.MigrateDown(ctx, testDSN, src, order.ModuleName, 0))
-	for _, table := range modulTablolari {
-		assert.False(t, tabloVar(ctx, t, table), "%s geri alma sonrası kalmamalı", table)
+	for _, table := range moduleTables {
+		assert.False(t, tableExists(ctx, t, table), "%s must not remain after the rollback", table)
 	}
 
 	require.NoError(t, db.Migrate(ctx, testDSN, src, order.ModuleName))
-	for _, table := range modulTablolari {
-		assert.True(t, tabloVar(ctx, t, table), "%s yeniden uygulanmalı", table)
+	for _, table := range moduleTables {
+		assert.True(t, tableExists(ctx, t, table), "%s must be applied again", table)
 	}
 
 	version, dirty, err := db.Version(ctx, testDSN, order.ModuleName)
 	require.NoError(t, err)
-	assert.False(t, dirty, "yarıda kalmış migration olmamalı")
+	assert.False(t, dirty, "there must be no half-finished migration")
 	assert.Equal(t, uint(1), version)
 }
 
-// TestCrossModuleForeignKeyYok modülün tablolarındaki TÜM foreign key'lerin
-// yine modülün kendi tablolarına gittiğini doğrular (Prensip 2.2).
+// TestNoCrossModuleForeignKeys verifies that ALL the foreign keys in the
+// module's tables go to the module's own tables again (Principle 2.2).
 //
-// Özellikle orders.region_id (region), orders.customer_id (customer),
-// orders.cart_id (cart) ve order_line_items.variant_id (product) başka
-// modüllerin kimlikleridir ve foreign key OLAMAZ.
-func TestCrossModuleForeignKeyYok(t *testing.T) {
+// In particular orders.region_id (region), orders.customer_id (customer),
+// orders.cart_id (cart) and order_line_items.variant_id (product) are other
+// modules' ids and CANNOT be foreign keys.
+func TestNoCrossModuleForeignKeys(t *testing.T) {
 	ctx := context.Background()
 
 	rows, err := testPool.Pool().Query(ctx,
@@ -227,208 +228,210 @@ func TestCrossModuleForeignKeyYok(t *testing.T) {
          FROM pg_constraint c
          JOIN pg_class src ON src.oid = c.conrelid
          JOIN pg_class tgt ON tgt.oid = c.confrelid
-         WHERE c.contype = 'f' AND src.relname = ANY($1)`, modulTablolari)
+         WHERE c.contype = 'f' AND src.relname = ANY($1)`, moduleTables)
 	require.NoError(t, err)
 	defer rows.Close()
 
-	sahipli := make(map[string]struct{}, len(modulTablolari))
-	for _, table := range modulTablolari {
-		sahipli[table] = struct{}{}
+	owned := make(map[string]struct{}, len(moduleTables))
+	for _, table := range moduleTables {
+		owned[table] = struct{}{}
 	}
 
-	var sayi int
+	var count int
 	for rows.Next() {
 		var name, src, tgt string
 		require.NoError(t, rows.Scan(&name, &src, &tgt))
-		assert.Contains(t, sahipli, tgt,
-			"%s kısıtı modül dışına referans veriyor (%s -> %s)", name, src, tgt)
-		sayi++
+		assert.Contains(t, owned, tgt,
+			"the %s constraint references outside the module (%s -> %s)", name, src, tgt)
+		count++
 	}
 	require.NoError(t, rows.Err())
-	assert.Positive(t, sayi, "modül içi foreign key'ler kullanılmalı")
+	assert.Positive(t, count, "in-module foreign keys must be used")
 }
 
-// TestSiparisYasamDongusu siparişin uçtan uca akışını doğrular: oluştur ->
-// oku -> numarayla oku -> tamamla -> arşivle.
-func TestSiparisYasamDongusu(t *testing.T) {
+// TestOrderLifecycle verifies the order's end-to-end flow: create -> read ->
+// read by number -> complete -> archive.
+func TestOrderLifecycle(t *testing.T) {
 	ctx := context.Background()
-	svc, _ := yeniServis(t)
+	svc, _ := newService(t)
 
-	in := gecerliGirdi()
-	in.Email = "Musteri@Ornek.COM"
+	in := validInput()
+	in.Email = "Customer@Example.COM"
 	in.CurrencyCode = "try"
-	in.CartID = "cart_YASAM"
-	in.Metadata = map[string]any{"kanal": "web"}
+	in.CartID = "cart_LIFECYCLE"
+	in.Metadata = map[string]any{"channel": "web"}
 
-	siparis, err := svc.CreateOrder(ctx, in)
+	ord, err := svc.CreateOrder(ctx, in)
 	require.NoError(t, err)
-	assert.Equal(t, "TRY", siparis.CurrencyCode)
-	assert.Equal(t, "musteri@ornek.com", siparis.Email)
-	assert.Equal(t, models.OrderPending, siparis.Status)
-	assert.Positive(t, siparis.DisplayID, "numara veritabanı tarafından üretilmeli")
-	assert.Equal(t, "UTC", siparis.PlacedAt.Location().String(), "zaman UTC olmalı")
-	assert.Equal(t, map[string]any{"kanal": "web"}, siparis.Metadata)
+	assert.Equal(t, "TRY", ord.CurrencyCode)
+	assert.Equal(t, "customer@example.com", ord.Email)
+	assert.Equal(t, models.OrderPending, ord.Status)
+	assert.Positive(t, ord.DisplayID, "the number must be produced by the database")
+	assert.Equal(t, "UTC", ord.PlacedAt.Location().String(), "the time must be UTC")
+	assert.Equal(t, map[string]any{"channel": "web"}, ord.Metadata)
 
-	detay, err := svc.GetOrder(ctx, siparis.ID)
+	detail, err := svc.GetOrder(ctx, ord.ID)
 	require.NoError(t, err)
-	require.Len(t, detay.Items, 1)
-	assert.Equal(t, int64(3600), detay.Items[0].Total)
-	assert.Equal(t, siparis.ID, detay.Summary.OrderID)
-	assert.Equal(t, int64(6100), detay.Summary.Outstanding(detay.Total))
+	require.Len(t, detail.Items, 1)
+	assert.Equal(t, int64(3600), detail.Items[0].Total)
+	assert.Equal(t, ord.ID, detail.Summary.OrderID)
+	assert.Equal(t, int64(6100), detail.Summary.Outstanding(detail.Total))
 
-	numarayla, err := svc.GetOrderByDisplayID(ctx, siparis.DisplayID)
+	byNumber, err := svc.GetOrderByDisplayID(ctx, ord.DisplayID)
 	require.NoError(t, err)
-	assert.Equal(t, siparis.ID, numarayla.ID)
+	assert.Equal(t, ord.ID, byNumber.ID)
 
-	// Bölge ve müşteri siparişin KENDİ SÜTUNLARINDA durur; ilişkinin tek yeri
-	// budur.
-	assert.Equal(t, testRegionID, siparis.RegionID)
-	assert.Equal(t, testCustomerID, siparis.CustomerID)
+	// The region and the customer stand IN THE ORDER'S OWN COLUMNS; that is the
+	// only place the relation lives.
+	assert.Equal(t, testRegionID, ord.RegionID)
+	assert.Equal(t, testCustomerID, ord.CustomerID)
 
-	tamamlanan, err := svc.CompleteOrder(ctx, siparis.ID)
+	completed, err := svc.CompleteOrder(ctx, ord.ID)
 	require.NoError(t, err)
-	require.NotNil(t, tamamlanan.CompletedAt)
-	assert.Equal(t, "UTC", tamamlanan.CompletedAt.Location().String())
+	require.NotNil(t, completed.CompletedAt)
+	assert.Equal(t, "UTC", completed.CompletedAt.Location().String())
 
-	arsivlenen, err := svc.ArchiveOrder(ctx, siparis.ID)
+	archived, err := svc.ArchiveOrder(ctx, ord.ID)
 	require.NoError(t, err)
-	assert.Equal(t, models.OrderArchived, arsivlenen.Status)
+	assert.Equal(t, models.OrderArchived, archived.Status)
 
-	// Arşivlenmiş sipariş artık iptal edilemez.
-	err = svc.CancelOrder(ctx, siparis.ID, "geç kalındı")
+	// An archived order can no longer be canceled.
+	err = svc.CancelOrder(ctx, ord.ID, "too late")
 	require.Error(t, err)
-	assert.True(t, errors.IsConflict(err), "aldığı: %v", err)
+	assert.True(t, errors.IsConflict(err), "got: %v", err)
 }
 
-// TestEszamanliSiparislerinNumaralariBenzersiz DoD'nin en kritik iddiasını
-// gerçek yarış altında kanıtlar.
+// TestConcurrentOrderNumbersAreUnique proves the DoD's most critical claim
+// under a real race.
 //
-// Yirmi goroutine AYNI ANDA sipariş açar; hepsi tek bir bariyerde beklediği
-// için yazmalar gerçekten çakışır. Numaralar uygulama katmanında "en büyüğü
-// oku, bir ekle" ile üretilseydi bu testte MUTLAKA çakışma görülürdü;
-// IDENTITY sütunu (sequence) ile çakışma yapısal olarak imkânsızdır.
-func TestEszamanliSiparislerinNumaralariBenzersiz(t *testing.T) {
-	const adet = 20
+// Twenty goroutines open an order AT THE SAME TIME; because they all wait on a
+// single barrier, the writes really do collide. Had the numbers been produced
+// in the application layer with "read the largest, add one", this test would
+// INEVITABLY have shown a collision; with an IDENTITY column (a sequence) a
+// collision is structurally impossible.
+func TestConcurrentOrderNumbersAreUnique(t *testing.T) {
+	const count = 20
 
 	ctx := context.Background()
-	svc, _ := yeniServis(t)
+	svc, _ := newService(t)
 
 	var (
-		basla    sync.WaitGroup
-		bitir    sync.WaitGroup
-		sonuclar = make([]models.Order, adet)
-		hatalar  = make([]error, adet)
+		start   sync.WaitGroup
+		finish  sync.WaitGroup
+		results = make([]models.Order, count)
+		errs    = make([]error, count)
 	)
-	basla.Add(1)
-	bitir.Add(adet)
+	start.Add(1)
+	finish.Add(count)
 
-	for i := range adet {
+	for i := range count {
 		go func(idx int) {
-			defer bitir.Done()
-			basla.Wait()
+			defer finish.Done()
+			start.Wait()
 
-			in := gecerliGirdi()
-			in.CartID = fmt.Sprintf("cart_YARIS_%02d", idx)
-			sonuclar[idx], hatalar[idx] = svc.CreateOrder(ctx, in)
+			in := validInput()
+			in.CartID = fmt.Sprintf("cart_RACE_%02d", idx)
+			results[idx], errs[idx] = svc.CreateOrder(ctx, in)
 		}(i)
 	}
 
-	basla.Done()
-	bitir.Wait()
+	start.Done()
+	finish.Wait()
 
-	numaralar := make(map[int64]string, adet)
-	kimlikler := make(map[string]struct{}, adet)
-	for i := range adet {
-		require.NoError(t, hatalar[i], "%d. sipariş açılamadı", i)
+	numbers := make(map[int64]string, count)
+	ids := make(map[string]struct{}, count)
+	for i := range count {
+		require.NoError(t, errs[i], "order %d could not be opened", i)
 
-		numara := sonuclar[i].DisplayID
-		assert.True(t, models.ValidDisplayID(numara), "numara geçerli olmalı: %d", numara)
+		number := results[i].DisplayID
+		assert.True(t, models.ValidDisplayID(number), "the number must be valid: %d", number)
 
-		onceki, cakisma := numaralar[numara]
-		require.False(t, cakisma,
-			"iki sipariş aynı numarayı aldı (%d): %s ve %s", numara, onceki, sonuclar[i].ID)
-		numaralar[numara] = sonuclar[i].ID
+		previous, clash := numbers[number]
+		require.False(t, clash,
+			"two orders took the same number (%d): %s and %s", number, previous, results[i].ID)
+		numbers[number] = results[i].ID
 
-		_, kimlikCakismasi := kimlikler[sonuclar[i].ID]
-		require.False(t, kimlikCakismasi, "iki sipariş aynı kimliği aldı: %s", sonuclar[i].ID)
-		kimlikler[sonuclar[i].ID] = struct{}{}
+		_, idClash := ids[results[i].ID]
+		require.False(t, idClash, "two orders took the same id: %s", results[i].ID)
+		ids[results[i].ID] = struct{}{}
 	}
-	assert.Len(t, numaralar, adet, "tüm numaralar benzersiz olmalı")
+	assert.Len(t, numbers, count, "all the numbers must be unique")
 }
 
-// TestCancelOrderIkiKezCagrilabilir saga telafisinin idempotency'sini gerçek
-// veritabanında doğrular (DoD şartı).
-func TestCancelOrderIkiKezCagrilabilir(t *testing.T) {
+// TestCancelOrderCanBeCalledTwice verifies the idempotency of the saga
+// compensation on a real database (a DoD condition).
+func TestCancelOrderCanBeCalledTwice(t *testing.T) {
 	ctx := context.Background()
-	svc, _ := yeniServis(t)
+	svc, _ := newService(t)
 
-	siparis, err := svc.CreateOrder(ctx, gecerliGirdi())
+	ord, err := svc.CreateOrder(ctx, validInput())
 	require.NoError(t, err)
 
-	require.NoError(t, svc.CancelOrder(ctx, siparis.ID, "ödeme reddedildi"))
-	require.NoError(t, svc.CancelOrder(ctx, siparis.ID, "telafi tekrarı"),
-		"ikinci iptal hata vermemeli")
+	require.NoError(t, svc.CancelOrder(ctx, ord.ID, "the payment was declined"))
+	require.NoError(t, svc.CancelOrder(ctx, ord.ID, "compensation retry"),
+		"the second cancellation must not return an error")
 
-	iptal, err := svc.GetOrder(ctx, siparis.ID)
+	canceled, err := svc.GetOrder(ctx, ord.ID)
 	require.NoError(t, err)
-	assert.Equal(t, models.OrderCanceled, iptal.Status)
-	require.NotNil(t, iptal.CanceledAt)
-	assert.Equal(t, "ödeme reddedildi", iptal.CancelReason,
-		"ilk iptalin gerekçesi korunmalı")
+	assert.Equal(t, models.OrderCanceled, canceled.Status)
+	require.NotNil(t, canceled.CanceledAt)
+	assert.Equal(t, "the payment was declined", canceled.CancelReason,
+		"the first cancellation's reason must be preserved")
 }
 
-// TestOrderPlacedOlayiGercektenYayimlanir DoD şartını GERÇEK bir abone ile
-// doğrular.
+// TestOrderPlacedEventIsReallyPublished verifies the DoD condition with a REAL
+// subscriber.
 //
-// Birim testi sahte bir veri yolu üzerinde yayımı görür; burada sınanan şey,
-// olayın gerçek [eventbus.EventBus] üzerinden bir aboneye TESLİM edildiğidir.
-// InMemory backend'i handler'ları ayrı goroutine'lerde çalıştırır ve Publish
-// onları BEKLEMEZ; bu yüzden test kanalla bekler.
-func TestOrderPlacedOlayiGercektenYayimlanir(t *testing.T) {
+// The unit test sees the publication over a fake bus; what is exercised here is
+// that the event is DELIVERED to a subscriber over a real [eventbus.EventBus].
+// The InMemory backend runs the handlers in separate goroutines and Publish does
+// NOT WAIT for them; this is why the test waits on a channel.
+func TestOrderPlacedEventIsReallyPublished(t *testing.T) {
 	ctx := context.Background()
-	svc, bus := yeniServis(t)
+	svc, bus := newService(t)
 
-	teslim := make(chan eventbus.Event, 1)
+	delivered := make(chan eventbus.Event, 1)
 	require.NoError(t, bus.Subscribe(service.EventOrderPlaced, func(_ context.Context, e eventbus.Event) error {
-		teslim <- e
+		delivered <- e
 		return nil
 	}))
 
-	siparis, err := svc.CreateOrder(ctx, gecerliGirdi())
+	ord, err := svc.CreateOrder(ctx, validInput())
 	require.NoError(t, err)
 
 	select {
-	case olay := <-teslim:
-		assert.Equal(t, service.EventOrderPlaced, olay.Name)
-		assert.Equal(t, siparis.ID, olay.Data[service.EventFieldOrderID])
-		assert.Equal(t, strconv.FormatInt(siparis.DisplayID, 10),
-			olay.Data[service.EventFieldDisplayID])
-		assert.Equal(t, "6100", olay.Data[service.EventFieldTotal])
-		assert.Equal(t, siparis.CurrencyCode, olay.Data[service.EventFieldCurrencyCode])
-		assert.Equal(t, siparis.CustomerID, olay.Data[service.EventFieldCustomerID])
-		assert.NotEmpty(t, olay.ID, "veri yolu olaya kimlik vermeli")
+	case event := <-delivered:
+		assert.Equal(t, service.EventOrderPlaced, event.Name)
+		assert.Equal(t, ord.ID, event.Data[service.EventFieldOrderID])
+		assert.Equal(t, strconv.FormatInt(ord.DisplayID, 10),
+			event.Data[service.EventFieldDisplayID])
+		assert.Equal(t, "6100", event.Data[service.EventFieldTotal])
+		assert.Equal(t, ord.CurrencyCode, event.Data[service.EventFieldCurrencyCode])
+		assert.Equal(t, ord.CustomerID, event.Data[service.EventFieldCustomerID])
+		assert.NotEmpty(t, event.ID, "the bus must give the event an id")
 	case <-time.After(5 * time.Second):
-		t.Fatal("order.placed olayı aboneye teslim edilmedi")
+		t.Fatal("the order.placed event was not delivered to the subscriber")
 	}
 }
 
-// TestOrderPlacedOlayiRedisUzerindeTipDegistirmez olay yükünün ÜRETİM veri
-// yolunda da aynı tiple ve aynı değerle ulaştığını doğrular.
+// TestOrderPlacedEventKeepsItsTypesOverRedis verifies that the event payload
+// arrives with the same type and the same value on the PRODUCTION bus too.
 //
-// Ayrım yalnızca burada görünür: Redis Streams backend'i Data'yı json.Marshal
-// ile yazar ve okurken map[string]any içine çözer, dolayısıyla int64 olarak
-// konan bir alan aboneye float64 olarak ulaşırdı — InMemory backend'inde aynı
-// alan int64 kalırdı. Sözleşmeye göre yazılmış bir abone geliştirmede çalışır,
-// ÜRETİMDE düşerdi; üstelik 2^53 üstündeki tutarlar sessizce yuvarlanır, yani
-// para float üzerinden geçerdi (plan Bölüm 8: float ASLA).
+// The difference shows up only here: the Redis Streams backend writes Data with
+// json.Marshal and resolves it into a map[string]any when reading, so a field
+// put in as an int64 would reach the subscriber as a float64 — the same field
+// would have stayed an int64 on the InMemory backend. A subscriber written
+// against the contract would work in development and fall over IN PRODUCTION;
+// on top of that, amounts above 2^53 are silently rounded, that is, money would
+// travel over a float (plan Section 8: NEVER a float).
 //
-// Sipariş toplamı bilinçli olarak 2^53'ün üstündedir: float64'e uğrayan bir yol
-// burada değeri değiştirir.
-func TestOrderPlacedOlayiRedisUzerindeTipDegistirmez(t *testing.T) {
-	const buyukTutar int64 = 9_007_199_254_740_993
+// The order total is deliberately above 2^53: a path that goes through a float64
+// changes the value here.
+func TestOrderPlacedEventKeepsItsTypesOverRedis(t *testing.T) {
+	const largeAmount int64 = 9_007_199_254_740_993
 
 	ctx := context.Background()
-	bus := redisVeriYolu(t)
+	bus := redisEventBus(t)
 
 	svc, err := service.New(service.Options{
 		Repo:   repository.New(testPool.Pool()),
@@ -436,50 +439,50 @@ func TestOrderPlacedOlayiRedisUzerindeTipDegistirmez(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	teslim := make(chan eventbus.Event, 1)
+	delivered := make(chan eventbus.Event, 1)
 	require.NoError(t, bus.Subscribe(service.EventOrderPlaced,
 		func(_ context.Context, e eventbus.Event) error {
-			teslim <- e
+			delivered <- e
 			return nil
 		}))
 
-	in := gecerliGirdi()
-	in.ShippingTotal = buyukTutar - 3600
-	in.Total = buyukTutar
-	siparis, err := svc.CreateOrder(ctx, in)
+	in := validInput()
+	in.ShippingTotal = largeAmount - 3600
+	in.Total = largeAmount
+	ord, err := svc.CreateOrder(ctx, in)
 	require.NoError(t, err)
 
 	select {
-	case olay := <-teslim:
-		for anahtar, deger := range olay.Data {
-			assert.IsType(t, "", deger,
-				"%q alanı Redis'ten dize olarak dönmeli", anahtar)
+	case event := <-delivered:
+		for key, value := range event.Data {
+			assert.IsType(t, "", value,
+				"the %q field must come back from Redis as a string", key)
 		}
 
-		hamTutar, dize := olay.Data[service.EventFieldTotal].(string)
-		require.True(t, dize, "tutar dize olarak taşınmalı")
-		okunan, parseErr := strconv.ParseInt(hamTutar, 10, 64)
+		rawTotal, isString := event.Data[service.EventFieldTotal].(string)
+		require.True(t, isString, "the amount must travel as a string")
+		parsed, parseErr := strconv.ParseInt(rawTotal, 10, 64)
 		require.NoError(t, parseErr)
-		assert.Equal(t, siparis.Total, okunan, "tutar yuvarlanmadan geri okunmalı")
-		assert.Equal(t, buyukTutar, okunan)
+		assert.Equal(t, ord.Total, parsed, "the amount must be read back without rounding")
+		assert.Equal(t, largeAmount, parsed)
 	case <-time.After(15 * time.Second):
-		t.Fatal("order.placed olayı redis üzerinden teslim edilmedi")
+		t.Fatal("the order.placed event was not delivered over redis")
 	}
 }
 
-// redisVeriYolu test süresince yaşayan bir Redis üzerinde gerçek veri yolunu
-// kurar.
+// redisEventBus sets up the real event bus on a Redis that lives for the
+// duration of the test.
 //
-// Konteyner yalnızca bu testin ihtiyacı olduğu için TestMain'de değil, burada
-// açılır: diğer testlerin hiçbiri Redis'e dokunmaz ve paket başına ikinci bir
-// konteyner her koşuya bedel eklerdi.
-func redisVeriYolu(t *testing.T) eventbus.EventBus {
+// The container is opened here rather than in TestMain because only this test
+// needs it: none of the other tests touch Redis, and a second container per
+// package would add a cost to every run.
+func redisEventBus(t *testing.T) eventbus.EventBus {
 	t.Helper()
 
 	ctx := t.Context()
 	ctr, err := tcredis.Run(ctx, redisImage)
 	testcontainers.CleanupContainer(t, ctr)
-	require.NoError(t, err, "redis konteyneri başlatılamadı")
+	require.NoError(t, err, "the redis container could not be started")
 
 	uri, err := ctr.ConnectionString(ctx)
 	require.NoError(t, err)
@@ -492,396 +495,402 @@ func redisVeriYolu(t *testing.T) eventbus.EventBus {
 
 	bus, err := eventbus.NewRedisStream(client, eventbus.RedisConfig{
 		StreamPrefix: "gobit-test:" + t.Name(),
-		Group:        "grup-" + t.Name(),
-		Consumer:     "tuketici-1",
+		Group:        "group-" + t.Name(),
+		Consumer:     "consumer-1",
 		BlockTimeout: 200 * time.Millisecond,
 	}, nil)
 	require.NoError(t, err)
 	t.Cleanup(func() {
-		kapatmaCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		if err := bus.Shutdown(kapatmaCtx); err != nil {
-			t.Logf("redis veri yolu kapatılamadı: %v", err)
+		if err := bus.Shutdown(shutdownCtx); err != nil {
+			t.Logf("the redis event bus could not be shut down: %v", err)
 		}
 	})
 	return bus
 }
 
-// TestToplamKisitiVeritabaninda tutarsız bir toplamın veritabanı düzeyinde de
-// reddedildiğini doğrular.
+// TestTotalConstraintInTheDatabase verifies that an inconsistent total is
+// rejected at the database level too.
 //
-// Servis aynı kontrolü daha okunabilir bir hatayla önce yapar; buradaki kısıt
-// SON SAVUNMADIR ve doğrudan SQL ile yapılan müdahaleyi de kapsar.
-func TestToplamKisitiVeritabaninda(t *testing.T) {
+// The service makes the same check first, with a more readable error; the
+// constraint here is the LAST DEFENSE and it covers an intervention made
+// directly with SQL as well.
+func TestTotalConstraintInTheDatabase(t *testing.T) {
 	ctx := context.Background()
 
 	_, err := testPool.Pool().Exec(ctx,
 		`INSERT INTO orders (id, region_id, currency_code, subtotal, tax_total, shipping_total, total)
-         VALUES ('order_KISIT', $1, $2, 3000, 600, 2500, 9999)`, testRegionID, testCurrency)
+         VALUES ('order_CONSTRAINT', $1, $2, 3000, 600, 2500, 9999)`, testRegionID, testCurrency)
 
-	require.Error(t, err, "tutarsız toplam veritabanı kısıtına çarpmalı")
+	require.Error(t, err, "an inconsistent total must hit the database constraint")
 	assert.Contains(t, err.Error(), "orders_totals_consistent")
 }
 
-// TestAsiriIndirimKisitiVeritabaninda indirimin ara toplamı aşamayacağını
-// veritabanı düzeyinde doğrular.
+// TestExcessiveDiscountConstraintInTheDatabase verifies at the database level
+// that a discount cannot exceed the subtotal.
 //
-// Senaryo, kimlik kontrolünün TEK BAŞINA yetmediği durumdur: subtotal=1000,
-// discount=3000, shipping=2500 -> total=500. Kimlik SAĞLANIR ve toplam negatif
-// bile olmaz; yakalayan tek şey indirim sınırıdır.
-func TestAsiriIndirimKisitiVeritabaninda(t *testing.T) {
+// The scenario is the case where the identity check ALONE is not enough:
+// subtotal=1000, discount=3000, shipping=2500 -> total=500. The identity HOLDS
+// and the total does not even go negative; the only thing that catches it is the
+// discount bound.
+func TestExcessiveDiscountConstraintInTheDatabase(t *testing.T) {
 	ctx := context.Background()
 
 	_, err := testPool.Pool().Exec(ctx,
 		`INSERT INTO orders (id, region_id, currency_code,
                              subtotal, discount_total, tax_total, shipping_total, total)
-         VALUES ('order_INDIRIM', $1, $2, 1000, 3000, 0, 2500, 500)`, testRegionID, testCurrency)
+         VALUES ('order_DISCOUNT', $1, $2, 1000, 3000, 0, 2500, 500)`, testRegionID, testCurrency)
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "orders_discount_within_subtotal")
 }
 
-// TestNumaraBenzersizligiKisiti sequence elle geri sarılsa bile aynı numaranın
-// ikinci kez yazılamadığını doğrular.
+// TestNumberUniquenessConstraint verifies that the same number cannot be
+// written a second time even if the sequence is rewound by hand.
 //
-// display_id GENERATED ALWAYS olduğu için değer INSERT'te verilemez; kısıtı
-// sınamanın tek yolu sequence'ı geri sarmaktır — kısıtın var oluş sebebi de tam
-// olarak budur.
-func TestNumaraBenzersizligiKisiti(t *testing.T) {
+// Because display_id is GENERATED ALWAYS the value cannot be given in the
+// INSERT; the only way to exercise the constraint is to rewind the sequence —
+// and that is exactly the reason the constraint exists.
+func TestNumberUniquenessConstraint(t *testing.T) {
 	ctx := context.Background()
-	svc, _ := yeniServis(t)
+	svc, _ := newService(t)
 
-	ilk, err := svc.CreateOrder(ctx, gecerliGirdi())
+	first, err := svc.CreateOrder(ctx, validInput())
 	require.NoError(t, err)
 
-	// Sequence'ı ilk siparişin numarasını yeniden üretecek şekilde geri sar.
+	// Rewind the sequence so that it produces the first order's number again.
 	_, err = testPool.Pool().Exec(ctx,
-		`SELECT setval(pg_get_serial_sequence('orders', 'display_id'), $1, false)`, ilk.DisplayID)
+		`SELECT setval(pg_get_serial_sequence('orders', 'display_id'), $1, false)`, first.DisplayID)
 	require.NoError(t, err)
 
-	_, err = svc.CreateOrder(ctx, gecerliGirdi())
+	_, err = svc.CreateOrder(ctx, validInput())
 
-	require.Error(t, err, "aynı numara ikinci kez yazılamamalı")
-	assert.True(t, errors.IsConflict(err), "aldığı: %v", err)
+	require.Error(t, err, "the same number must not be writable a second time")
+	assert.True(t, errors.IsConflict(err), "got: %v", err)
 
-	// Sequence'ı ileri sararak sonraki testleri etkilemekten kaçın.
-	var enBuyuk int64
+	// Wind the sequence forward again to avoid affecting the later tests.
+	var highest int64
 	require.NoError(t, testPool.Pool().QueryRow(ctx,
-		`SELECT COALESCE(MAX(display_id), 0) FROM orders`).Scan(&enBuyuk))
+		`SELECT COALESCE(MAX(display_id), 0) FROM orders`).Scan(&highest))
 	_, err = testPool.Pool().Exec(ctx,
-		`SELECT setval(pg_get_serial_sequence('orders', 'display_id'), $1, true)`, enBuyuk)
+		`SELECT setval(pg_get_serial_sequence('orders', 'display_id'), $1, true)`, highest)
 	require.NoError(t, err)
 }
 
-// TestIdempotencyAnahtariArdisikCagridaUcuzYoluKullanir aynı anahtarla yapılan
-// ARDIŞIK ikinci çağrının mevcut siparişi döndürdüğünü doğrular.
+// TestIdempotencyKeyTakesTheCheapPathOnASequentialCall verifies that a SECOND,
+// SEQUENTIAL call made with the same key returns the existing order.
 //
-// Sınanan şey benzersiz İNDEKS DEĞİLDİR: ikinci çağrı CreateOrder'ın ucuz
-// yolunda (anahtarla arama) kısa devre olur ve INSERT'e hiç ulaşmaz. İndeksin
-// gerçekten yerinde olduğunu yalnızca eşzamanlı senaryo kanıtlar
-// ([TestEszamanliAyniAnahtarlaTekSiparisAcilir]); ikisi birlikte, korumanın iki
-// katmanını da kapsar.
-func TestIdempotencyAnahtariArdisikCagridaUcuzYoluKullanir(t *testing.T) {
+// What is exercised is NOT the unique INDEX: the second call short-circuits on
+// CreateOrder's cheap path (the lookup by key) and never reaches the INSERT.
+// That the index really is in place is proved only by the concurrent scenario
+// ([TestConcurrentCallsWithTheSameKeyOpenOneOrder]); together the two cover both
+// layers of the protection.
+func TestIdempotencyKeyTakesTheCheapPathOnASequentialCall(t *testing.T) {
 	ctx := context.Background()
-	svc, _ := yeniServis(t)
+	svc, _ := newService(t)
 
-	in := gecerliGirdi()
+	in := validInput()
 	in.IdempotencyKey = "wf_" + models.NewOrderID()
 
-	ilk, err := svc.CreateOrder(ctx, in)
+	first, err := svc.CreateOrder(ctx, in)
 	require.NoError(t, err)
 
-	ikinci, err := svc.CreateOrder(ctx, in)
-	require.NoError(t, err, "aynı anahtarla ikinci çağrı mevcut siparişi dönmeli")
-	assert.Equal(t, ilk.ID, ikinci.ID)
-	assert.Equal(t, ilk.DisplayID, ikinci.DisplayID)
+	second, err := svc.CreateOrder(ctx, in)
+	require.NoError(t, err, "a second call with the same key must return the existing order")
+	assert.Equal(t, first.ID, second.ID)
+	assert.Equal(t, first.DisplayID, second.DisplayID)
 }
 
-// aramaBariyeriDepo idempotency ARAMASINDAN SONRA çağrıları tek noktada
-// buluşturan depo sarmalayıcısıdır.
+// lookupBarrierStore is the store wrapper that gathers the calls at a single
+// point AFTER the idempotency LOOKUP.
 //
-// Yalnızca [TestEszamanliAyniAnahtarlaTekSiparisAcilir] içindir ve orada
-// gerekçesi anlatılan tek şeyi yapar: ucuz yolun aramasını yapan HERKESİN,
-// hiçbiri yazmaya başlamadan önce "kayıt yok" görmesini sağlar. Geri kalan tüm
-// metotlar gerçek depoya gider.
-type aramaBariyeriDepo struct {
+// It is meant only for [TestConcurrentCallsWithTheSameKeyOpenOneOrder] and it
+// does the single thing whose rationale is written there: it makes sure that
+// EVERYONE who performs the cheap path's lookup sees "no record" before any of
+// them starts writing. All the remaining methods go to the real store.
+type lookupBarrierStore struct {
 	*repository.Repository
-	// adet bariyerde buluşması beklenen çağrı sayısıdır.
-	adet int64
-	// gelen bariyere ulaşan çağrıları sayar.
-	gelen atomic.Int64
-	// serbest sonuncusu geldiğinde KAPANIR; bekleyenlerin hepsi aynı anda
-	// çözülür ve kapandıktan sonraki çağrılar hiç beklemez (yarışı kaybeden
-	// çağrının yaptığı ikinci arama gibi).
-	serbest chan struct{}
+	// count is the number of calls expected to meet at the barrier.
+	count int64
+	// arrived counts the calls that reach the barrier.
+	arrived atomic.Int64
+	// release CLOSES when the last one arrives; everyone waiting is resolved at
+	// the same moment, and the calls that come after it has closed do not wait at
+	// all (such as the second lookup made by the call that loses the race).
+	release chan struct{}
 }
 
-// GetOrderByIdempotencyKey aramayı yapar ve ilk [aramaBariyeriDepo.adet] çağrıyı
-// bariyerde bekletir.
-func (d *aramaBariyeriDepo) GetOrderByIdempotencyKey(ctx context.Context, key string) (models.Order, error) {
-	// Değişken adı paketin adını (order) GÖLGELEMEZ: gölgeleme, dosyanın
-	// ilerisinde paket adıyla yazılmış bir çağrının derlenmeyip okunmasını
-	// zorlaştırırdı.
-	siparis, err := d.Repository.GetOrderByIdempotencyKey(ctx, key)
-	if d.gelen.Add(1) == d.adet {
-		close(d.serbest)
+// GetOrderByIdempotencyKey performs the lookup and holds the first
+// [lookupBarrierStore.count] calls at the barrier.
+func (d *lookupBarrierStore) GetOrderByIdempotencyKey(ctx context.Context, key string) (models.Order, error) {
+	// The variable name does NOT SHADOW the package name (order): shadowing
+	// would make a call written with the package name further down the file fail
+	// to compile and be harder to read.
+	ord, err := d.Repository.GetOrderByIdempotencyKey(ctx, key)
+	if d.arrived.Add(1) == d.count {
+		close(d.release)
 	}
-	<-d.serbest
-	return siparis, err
+	<-d.release
+	return ord, err
 }
 
-// TestEszamanliAyniAnahtarlaTekSiparisAcilir modülün en kritik saga
-// güvencesini GERÇEK indeks üzerinde kanıtlar.
+// TestConcurrentCallsWithTheSameKeyOpenOneOrder proves the module's most
+// critical saga guarantee over the REAL index.
 //
-// On altı goroutine AYNI idempotency anahtarıyla sipariş açmaya çalışır.
-// Hepsi ucuz yolun aramasında kaydı bulamaz, hepsi yazmaya kalkar ve yalnızca
-// birinin INSERT'i geçer; kalanlar orders_idempotency_key_uniq'e çarpıp kaydı
-// yeniden okur ve AYNI siparişi döner.
+// Sixteen goroutines try to open an order with the SAME idempotency key. None of
+// them finds the record on the cheap path's lookup, all of them go on to write,
+// and only one INSERT gets through; the rest hit orders_idempotency_key_uniq,
+// read the record again and return the SAME order.
 //
-// Ardışık çağrılarla kurulan bir test bunu gösteremez: ikinci çağrı ucuz yolda
-// kısa devre olur ve INSERT'e hiç ulaşmaz, dolayısıyla indeks kaldırılsa bile
-// yeşil kalırdı. Goroutine'leri yalnızca başlangıçta buluşturmak da yetmez —
-// ölçüldü: kazanan o kadar hızlı commit ediyor ki kalanların ARAMASI kaydı
-// buluyor ve yine kimse INSERT'e ulaşmıyor, yani indeks düşürülse bile test
-// yeşil kalıyor.
+// A test built out of sequential calls cannot show this: the second call
+// short-circuits on the cheap path and never reaches the INSERT, so it would
+// stay green even if the index were removed. Meeting the goroutines only at the
+// start is not enough either — it was measured: the winner commits so fast that
+// the LOOKUP of the rest finds the record, so again nobody reaches the INSERT,
+// that is, the test stays green even if the index is dropped.
 //
-// Bu yüzden bariyer aramanın SONRASINDADIR ([aramaBariyeriDepo]): on altı
-// çağrının hepsi "kayıt yok" gördükten sonra serbest kalır ve hepsi YAZMAYA
-// gider. Senaryo artık zamanlamaya değil yapıya bağlıdır ve indeks
-// düşürüldüğünde MUTLAKA birden çok sipariş üretir.
-func TestEszamanliAyniAnahtarlaTekSiparisAcilir(t *testing.T) {
-	const adet = 16
+// This is why the barrier is AFTER the lookup ([lookupBarrierStore]): all
+// sixteen calls are released once they have seen "no record", and all of them go
+// on to WRITE. The scenario now depends on structure rather than on timing, and
+// when the index is dropped it INEVITABLY produces more than one order.
+func TestConcurrentCallsWithTheSameKeyOpenOneOrder(t *testing.T) {
+	const count = 16
 
 	ctx := context.Background()
 
-	svc, _ := yeniServisDepoyla(t, &aramaBariyeriDepo{
+	svc, _ := newServiceWithStore(t, &lookupBarrierStore{
 		Repository: repository.New(testPool.Pool()),
-		adet:       adet,
-		serbest:    make(chan struct{}),
+		count:      count,
+		release:    make(chan struct{}),
 	})
 
-	anahtar := "wf_" + models.NewOrderID()
+	key := "wf_" + models.NewOrderID()
 
 	var (
-		bitir    sync.WaitGroup
-		sonuclar = make([]models.Order, adet)
-		hatalar  = make([]error, adet)
+		finish  sync.WaitGroup
+		results = make([]models.Order, count)
+		errs    = make([]error, count)
 	)
-	bitir.Add(adet)
+	finish.Add(count)
 
-	for i := range adet {
+	for i := range count {
 		go func(idx int) {
-			defer bitir.Done()
+			defer finish.Done()
 
-			in := gecerliGirdi()
-			in.IdempotencyKey = anahtar
+			in := validInput()
+			in.IdempotencyKey = key
 			in.CartID = fmt.Sprintf("cart_IDEM_%02d", idx)
-			sonuclar[idx], hatalar[idx] = svc.CreateOrder(ctx, in)
+			results[idx], errs[idx] = svc.CreateOrder(ctx, in)
 		}(i)
 	}
 
-	bitir.Wait()
+	finish.Wait()
 
-	kimlikler := make(map[string]struct{}, adet)
-	for i := range adet {
-		require.NoError(t, hatalar[i], "%d. çağrı hata dönmemeli", i)
-		kimlikler[sonuclar[i].ID] = struct{}{}
+	ids := make(map[string]struct{}, count)
+	for i := range count {
+		require.NoError(t, errs[i], "call %d must not return an error", i)
+		ids[results[i].ID] = struct{}{}
 	}
-	assert.Len(t, kimlikler, 1, "tüm çağrılar AYNI siparişi dönmeli: %v", kimlikler)
+	assert.Len(t, ids, 1, "all the calls must return the SAME order: %v", ids)
 
-	var yazilan int64
+	var written int64
 	require.NoError(t, testPool.Pool().QueryRow(ctx,
-		`SELECT count(*) FROM orders WHERE idempotency_key = $1`, anahtar).Scan(&yazilan))
-	assert.Equal(t, int64(1), yazilan, "aynı anahtarla yalnızca tek satır yazılmalı")
+		`SELECT count(*) FROM orders WHERE idempotency_key = $1`, key).Scan(&written))
+	assert.Equal(t, int64(1), written, "only a single row must be written with the same key")
 
-	// Dönen kimlik ÇÖZÜLEBİLİR olmalı: kaybeden çağrıların döndürdüğü sipariş
-	// gerçekten vardır ve satırları da yerindedir.
-	for id := range kimlikler {
-		detay, err := svc.GetOrder(ctx, id)
-		require.NoError(t, err, "dönen kimlik çözülebilmeli")
-		assert.Len(t, detay.Items, 1)
+	// The returned id must be RESOLVABLE: the order returned by the losing calls
+	// really does exist and its lines are in place too.
+	for id := range ids {
+		detail, err := svc.GetOrder(ctx, id)
+		require.NoError(t, err, "the returned id must be resolvable")
+		assert.Len(t, detail.Items, 1)
 	}
 }
 
-// TestOzetTutarlariGecikmisBildirimdeIadeyiSilmez özet yazımının SIRADAN
-// BAĞIMSIZ olduğunu gerçek sorgu üzerinde doğrular.
+// TestSummaryTotalsDoNotEraseTheRefundOnALateNotification verifies over the real
+// query that writing the summary is INDEPENDENT OF ORDER.
 //
-// Birleştirme (GREATEST) sorgunun kendisindedir; birim testi sahtenin taklidini
-// görür, burada sınanan şey PostgreSQL'in gerçekten öyle davrandığıdır.
-func TestOzetTutarlariGecikmisBildirimdeIadeyiSilmez(t *testing.T) {
+// The merge (GREATEST) is in the query itself; the unit test sees the fake's
+// imitation, whereas what is exercised here is that PostgreSQL really does
+// behave that way.
+func TestSummaryTotalsDoNotEraseTheRefundOnALateNotification(t *testing.T) {
 	ctx := context.Background()
-	svc, _ := yeniServis(t)
+	svc, _ := newService(t)
 
-	siparis, err := svc.CreateOrder(ctx, gecerliGirdi())
+	ord, err := svc.CreateOrder(ctx, validInput())
 	require.NoError(t, err)
 
-	_, err = svc.SetOrderSummaryTotals(ctx, siparis.ID,
+	_, err = svc.SetOrderSummaryTotals(ctx, ord.ID,
 		service.SummaryTotalsInput{PaidTotal: 6100, RefundedTotal: 1000})
 	require.NoError(t, err)
 
-	// Gecikmiş tahsilat olayı yeniden işleniyor; iadeden haberi yok.
-	gecikmis, err := svc.SetOrderSummaryTotals(ctx, siparis.ID,
+	// A late capture event is being processed again; it knows nothing about the
+	// refund.
+	late, err := svc.SetOrderSummaryTotals(ctx, ord.ID,
 		service.SummaryTotalsInput{PaidTotal: 6100, RefundedTotal: 0})
 	require.NoError(t, err)
-	assert.Equal(t, int64(1000), gecikmis.RefundedTotal,
-		"kaydedilmiş iade gecikmiş bir bildirimle silinmemeli")
+	assert.Equal(t, int64(1000), late.RefundedTotal,
+		"a recorded refund must not be erased by a late notification")
 
-	var kayitli int64
+	var stored int64
 	require.NoError(t, testPool.Pool().QueryRow(ctx,
-		`SELECT refunded_total FROM order_summaries WHERE order_id = $1`, siparis.ID).Scan(&kayitli))
-	assert.Equal(t, int64(1000), kayitli)
+		`SELECT refunded_total FROM order_summaries WHERE order_id = $1`, ord.ID).Scan(&stored))
+	assert.Equal(t, int64(1000), stored)
 }
 
-// TestSatisSonrasiKayitlariGercekVeritabaninda iade/değişim/hasar iskeletinin
-// gerçek şema üzerinde çalıştığını doğrular.
-func TestSatisSonrasiKayitlariGercekVeritabaninda(t *testing.T) {
+// TestAftersalesRecordsOnTheRealDatabase verifies that the return/exchange/claim
+// skeleton works on the real schema.
+func TestAftersalesRecordsOnTheRealDatabase(t *testing.T) {
 	ctx := context.Background()
-	svc, _ := yeniServis(t)
+	svc, _ := newService(t)
 
-	siparis, err := svc.CreateOrder(ctx, gecerliGirdi())
+	ord, err := svc.CreateOrder(ctx, validInput())
 	require.NoError(t, err)
 
-	iade, err := svc.CreateReturn(ctx, service.CreateReturnInput{
-		OrderID: siparis.ID, RefundAmount: 3600, Reason: "beden uymadı",
+	returned, err := svc.CreateReturn(ctx, service.CreateReturnInput{
+		OrderID: ord.ID, RefundAmount: 3600, Reason: "the size did not fit",
 	})
 	require.NoError(t, err)
-	assert.Equal(t, models.ReturnRequested, iade.Status)
+	assert.Equal(t, models.ReturnRequested, returned.Status)
 
-	degisim, err := svc.CreateExchange(ctx, service.CreateExchangeInput{
-		OrderID: siparis.ID, DifferenceDue: -500,
+	exchange, err := svc.CreateExchange(ctx, service.CreateExchangeInput{
+		OrderID: ord.ID, DifferenceDue: -500,
 	})
 	require.NoError(t, err)
-	assert.Equal(t, int64(-500), degisim.DifferenceDue,
-		"negatif fark veritabanında da saklanabilmeli")
+	assert.Equal(t, int64(-500), exchange.DifferenceDue,
+		"a negative difference must be storable in the database too")
 
-	hasar, err := svc.CreateClaim(ctx, service.CreateClaimInput{
-		OrderID: siparis.ID, Type: models.ClaimReplace, Reason: "kırık geldi",
+	claim, err := svc.CreateClaim(ctx, service.CreateClaimInput{
+		OrderID: ord.ID, Type: models.ClaimReplace, Reason: "it arrived broken",
 	})
 	require.NoError(t, err)
-	assert.Equal(t, models.ClaimReplace, hasar.Type)
+	assert.Equal(t, models.ClaimReplace, claim.Type)
 
-	iadeler, sayi, err := svc.ListReturns(ctx, siparis.ID, service.Page{})
+	returns, count, err := svc.ListReturns(ctx, ord.ID, service.Page{})
 	require.NoError(t, err)
-	assert.Equal(t, int64(1), sayi)
-	require.Len(t, iadeler, 1)
+	assert.Equal(t, int64(1), count)
+	require.Len(t, returns, 1)
 
-	// Sipariş silinirse çocukları da düşer (modül içi ON DELETE CASCADE).
-	_, err = testPool.Pool().Exec(ctx, `DELETE FROM orders WHERE id = $1`, siparis.ID)
+	// If the order is deleted its children fall with it (in-module ON DELETE
+	// CASCADE).
+	_, err = testPool.Pool().Exec(ctx, `DELETE FROM orders WHERE id = $1`, ord.ID)
 	require.NoError(t, err)
 
-	var kalan int64
+	var remaining int64
 	require.NoError(t, testPool.Pool().QueryRow(ctx,
-		`SELECT count(*) FROM order_returns WHERE order_id = $1`, siparis.ID).Scan(&kalan))
-	assert.Zero(t, kalan, "sipariş silinince iade kaydı da düşmeli")
+		`SELECT count(*) FROM order_returns WHERE order_id = $1`, ord.ID).Scan(&remaining))
+	assert.Zero(t, remaining, "when the order is deleted the return record must fall too")
 }
 
-// TestOzetTutarlariGercekVeritabaninda özet yazımını gerçek şema üzerinde
-// doğrular.
-func TestOzetTutarlariGercekVeritabaninda(t *testing.T) {
+// TestSummaryTotalsOnTheRealDatabase verifies writing the summary on the real
+// schema.
+func TestSummaryTotalsOnTheRealDatabase(t *testing.T) {
 	ctx := context.Background()
-	svc, _ := yeniServis(t)
+	svc, _ := newService(t)
 
-	siparis, err := svc.CreateOrder(ctx, gecerliGirdi())
+	ord, err := svc.CreateOrder(ctx, validInput())
 	require.NoError(t, err)
 
-	ozet, err := svc.SetOrderSummaryTotals(ctx, siparis.ID,
+	summary, err := svc.SetOrderSummaryTotals(ctx, ord.ID,
 		service.SummaryTotalsInput{PaidTotal: 6100, RefundedTotal: 1000})
 	require.NoError(t, err)
-	assert.Equal(t, int64(6100), ozet.PaidTotal)
-	assert.Equal(t, int64(1000), ozet.RefundedTotal)
-	assert.Equal(t, int64(1000), ozet.Outstanding(siparis.Total))
+	assert.Equal(t, int64(6100), summary.PaidTotal)
+	assert.Equal(t, int64(1000), summary.RefundedTotal)
+	assert.Equal(t, int64(1000), summary.Outstanding(ord.Total))
 
-	// Tahsil edilmemiş tutarın iadesi veritabanı kısıtına da çarpar.
+	// Refunding an amount that was not captured hits the database constraint too.
 	_, err = testPool.Pool().Exec(ctx,
-		`UPDATE order_summaries SET refunded_total = paid_total + 1 WHERE order_id = $1`, siparis.ID)
+		`UPDATE order_summaries SET refunded_total = paid_total + 1 WHERE order_id = $1`, ord.ID)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "order_summaries_refund_within_paid")
 }
 
-// TestOrderContactJSONOlayAbonesineEpostayiAcar bildirim yolunu uçtan uca
-// doğrular: olay gerçek veri yolundan gelir, e-posta gerçek veritabanından
-// okunur.
+// TestOrderContactJSONOpensTheEmailToTheEventSubscriber verifies the
+// notification path end to end: the event comes from the real bus, the e-mail is
+// read from the real database.
 //
-// Kanıtlanan şey iki parçanın BİRLİKTE çalışmasıdır. "order.placed" yükü
-// kişisel veri taşımaz, dolayısıyla bildirim gönderecek abone e-postayı
-// olaydan ALAMAZ; elindeki tek şey order_id'dir ve siparişi OKUMASI gerekir.
-// Birim testi yüzeyin şemasını sahte depo üzerinde kanıtlar; burada sınanan,
-// abonenin gerçekten o kimlikle gerçek kaydı bulabildiğidir.
-func TestOrderContactJSONOlayAbonesineEpostayiAcar(t *testing.T) {
+// What is proved is that the two parts work TOGETHER. The "order.placed" payload
+// carries no personal data, so a subscriber that is going to send a notification
+// CANNOT get the e-mail from the event; all it holds is the order_id and it HAS
+// TO READ the order. The unit test proves the surface's schema over a fake
+// store; what is exercised here is that the subscriber really can find the real
+// record with that id.
+func TestOrderContactJSONOpensTheEmailToTheEventSubscriber(t *testing.T) {
 	ctx := context.Background()
-	svc, bus := yeniServis(t)
+	svc, bus := newService(t)
 	interop := service.NewInterop(svc)
 
-	teslim := make(chan eventbus.Event, 1)
+	delivered := make(chan eventbus.Event, 1)
 	require.NoError(t, bus.Subscribe(service.EventOrderPlaced, func(_ context.Context, e eventbus.Event) error {
-		teslim <- e
+		delivered <- e
 		return nil
 	}))
 
-	in := gecerliGirdi()
+	in := validInput()
 	in.Items = append(in.Items, service.CreateOrderItemInput{
-		VariantID: "variant_B", Title: "Mavi Kupa",
+		VariantID: "variant_B", Title: "Blue Mug",
 		Quantity: 1, UnitPrice: 500, Subtotal: 500, TaxTotal: 100, Total: 600,
 	})
 	in.Subtotal = 3500
 	in.TaxTotal = 700
 	in.Total = 6700
-	siparis, err := svc.CreateOrder(ctx, in)
+	ord, err := svc.CreateOrder(ctx, in)
 	require.NoError(t, err)
 
-	var olay eventbus.Event
+	var event eventbus.Event
 	select {
-	case olay = <-teslim:
+	case event = <-delivered:
 	case <-time.After(5 * time.Second):
-		t.Fatal("order.placed olayı aboneye teslim edilmedi")
+		t.Fatal("the order.placed event was not delivered to the subscriber")
 	}
-	require.NotContains(t, olay.Data, "email", "olay kişisel veri TAŞIMAMALI")
+	require.NotContains(t, event.Data, "email", "the event MUST NOT carry personal data")
 
-	siparisID, ok := olay.Data[service.EventFieldOrderID].(string)
-	require.True(t, ok, "order_id dize olarak taşınmalı")
+	orderID, ok := event.Data[service.EventFieldOrderID].(string)
+	require.True(t, ok, "order_id must travel as a string")
 
-	govde, err := interop.OrderContactJSON(ctx, siparisID)
+	body, err := interop.OrderContactJSON(ctx, orderID)
 	require.NoError(t, err)
 
-	// map[string]string sözleşmenin kendisini sınar: bir alan sayı olarak
-	// yazılsaydı çözümleme burada düşerdi.
-	var alanlar map[string]string
-	require.NoError(t, json.Unmarshal(govde, &alanlar))
+	// map[string]string exercises the contract itself: had a field been written
+	// as a number, the unmarshalling would fall over here.
+	var fields map[string]string
+	require.NoError(t, json.Unmarshal(body, &fields))
 
 	assert.Equal(t, map[string]string{
-		"order_id":      siparis.ID,
-		"display_id":    strconv.FormatInt(siparis.DisplayID, 10),
-		"email":         "musteri@ornek.com",
+		"order_id":      ord.ID,
+		"display_id":    strconv.FormatInt(ord.DisplayID, 10),
+		"email":         "customer@example.com",
 		"currency_code": testCurrency,
 		"total":         "6700",
 		"item_count":    "2",
-	}, alanlar)
+	}, fields)
 
-	// Olayın taşıdığı alanlar yüzeyle AYNI adı ve AYNI değeri taşımalı; abone
-	// ikisini yan yana kullanır.
-	for _, alan := range []string{
+	// The fields the event carries must carry the SAME name and the SAME value
+	// as the surface; a subscriber uses the two side by side.
+	for _, field := range []string{
 		service.EventFieldDisplayID,
 		service.EventFieldCurrencyCode,
 		service.EventFieldTotal,
 		service.EventFieldItemCount,
 	} {
-		assert.Equal(t, olay.Data[alan], alanlar[alan], "%q alanı olayla ayrışmamalı", alan)
+		assert.Equal(t, event.Data[field], fields[field], "the %q field must not drift from the event", field)
 	}
 }
 
-// TestOrderContactJSONOlmayanSipariste gerçek veritabanında da NotFound
-// döndüğünü doğrular.
+// TestOrderContactJSONOnAMissingOrder verifies that NotFound is returned on the
+// real database too.
 //
-// Abonenin elindeki kimlik silinmiş ya da hiç yazılmamış olabilir; ayrımın
-// hata TÜRÜYLE yapılabilmesi, bildirim tarafının "atla" ile "yeniden dene"yi
-// ayırmasının tek yoludur.
-func TestOrderContactJSONOlmayanSipariste(t *testing.T) {
+// The id the subscriber holds may have been deleted or may never have been
+// written; being able to make the distinction BY THE ERROR TYPE is the only way
+// for the notification side to tell "skip" apart from "retry".
+func TestOrderContactJSONOnAMissingOrder(t *testing.T) {
 	ctx := context.Background()
-	svc, _ := yeniServis(t)
+	svc, _ := newService(t)
 	interop := service.NewInterop(svc)
 
-	_, err := interop.OrderContactJSON(ctx, "order_OLMAYAN")
+	_, err := interop.OrderContactJSON(ctx, "order_MISSING")
 
 	require.Error(t, err)
-	assert.True(t, errors.IsNotFound(err), "aldığı: %v", err)
+	assert.True(t, errors.IsNotFound(err), "got: %v", err)
 }

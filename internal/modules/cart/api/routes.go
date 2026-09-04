@@ -14,58 +14,61 @@ import (
 // let the two drift, and the drift would restore a cross-shopper leak.
 const StoreCartsPath = "/store/v1/carts"
 
-// Yetki sözlüğü: cart'ın yönetim uçlarının istediği yetkiler.
+// The scope vocabulary: the scopes cart's admin endpoints ask for.
 //
-// Adlar TÜM modüllerde aynı kalıptadır ("<modül>:read" / "<modül>:write").
-// Her modülün kendi sözcüğünü uydurması, yetki dağıtan kişinin modül başına
-// ayrı bir sözlük ezberlemesi demek olurdu; ezberlenmeyen sözlükte yapılan
-// hata da her zaman aynı yöne düşer — fazla yetki verilir.
+// The names follow the same pattern in ALL modules ("<module>:read" /
+// "<module>:write"). Every module inventing its own word would mean the person
+// handing out scopes having to memorize a separate vocabulary per module; and
+// the mistake made with a vocabulary nobody memorizes always falls the same
+// way — too much is granted.
 const (
-	// ScopeRead cart yönetim yüzeyindeki OKUMA uçlarının istediği yetkidir.
+	// ScopeRead is the scope the READ endpoints on cart's admin surface ask for.
 	//
-	// Sepetleri listelemeye ve tek tek okumaya yeter. Tam yetkili kimliklere
-	// ayrıca verilmesi gerekmez: corehttp.ScopeAdmin taşıyan bir çağıran bunu
-	// da karşılar (bkz. corehttp.Principal.HasScope).
+	// It is enough to list carts and to read them one by one. It does not have to
+	// be granted separately to fully privileged identities: a caller carrying
+	// corehttp.ScopeAdmin satisfies this one too (see corehttp.Principal.HasScope).
 	ScopeRead = "cart:read"
 
-	// ScopeWrite cart yönetim yüzeyindeki YAZMA uçlarının istediği yetkidir.
+	// ScopeWrite is the scope the WRITE endpoints on cart's admin surface ask for.
 	//
-	// Bugün HİÇBİR route'u açmaz, çünkü cart'ın /admin/v1 yüzeyi yalnızca
-	// okumadır (bkz. [Handler.Routes]). Yine de yayımlanır: sözlük modüller
-	// arasında aynı olduğu için, yönetime bir gün yazma ucu eklendiğinde
-	// yetkinin adı O GÜN uydurulmaz. Adın o gün seçilmesi, çoktan dağıtılmış
-	// yetki listelerinin sessizce eksik kalması demek olurdu.
+	// It opens NO route today, because cart's /admin/v1 surface is read only
+	// (see [Handler.Routes]). It is published all the same: because the
+	// vocabulary is identical across modules, the day a write endpoint is added
+	// to the admin side the scope's name will not be invented ON THAT DAY.
+	// Picking the name on that day would mean the scope lists that have long
+	// since been handed out silently falling short.
 	ScopeWrite = "cart:write"
 )
 
-// Routes modülün store ve admin uçlarını router'a bağlar.
+// Routes binds the module's store and admin endpoints to the router.
 //
-// Uçlar TAM YOLLA kaydedilir; "/store/v1" ya da "/admin/v1" için alt router
-// (chi.Route/Mount) AÇILMAZ. Sebep somut: registry tüm modüllerin Routes'unu
-// AYNI router üzerinde çağırır ve chi, aynı desene ikinci kez mount edilmeyi
-// panikle reddeder. İlk modül "/store/v1"i mount etseydi, ikinci modül
-// sunucuyu açılışta düşürürdü.
+// The endpoints are registered with their FULL PATH; no sub-router
+// (chi.Route/Mount) is OPENED for "/store/v1" or "/admin/v1". The reason is
+// concrete: the registry calls the Routes of every module on the SAME router and
+// chi rejects being mounted a second time on the same pattern with a panic. Had
+// the first module mounted "/store/v1", the second module would bring the server
+// down at startup.
 //
-// # KORUMA
+// # GUARDING
 //
-// Yönetim uçlarının iki katmanı vardır ve ikisi de gereklidir:
+// The admin endpoints have two layers and both of them are necessary:
 //
-//  1. KİMLİK — corehttp.RequireAdmin. Bu modülde DEĞİL, router'ı kuran
-//     tarafta takılır (bkz. corehttp.APIGuards).
-//  2. YETKİ — BURADA, uç uç corehttp.RequireScope ile. Okuma uçları
-//     [ScopeRead] ister.
+//  1. IDENTITY — corehttp.RequireAdmin. It is attached NOT in this module but on
+//     the side that builds the router (see corehttp.APIGuards).
+//  2. SCOPE — HERE, endpoint by endpoint with corehttp.RequireScope. The read
+//     endpoints ask for [ScopeRead].
 //
-// İkinci katman olmasaydı kimlik doğrulama yetkilendirmenin yerine geçerdi:
-// yetkileri bilinçli olarak boşaltılmış bir yönetim kullanıcısı da geçerli bir
-// kimliktir ve GET /admin/v1/carts ile tüm müşterilerin sepetlerini, e-posta
-// adresleri dâhil okuyabilirdi.
+// Without the second layer, authentication would stand in for authorization: an
+// admin user whose scopes have been deliberately emptied is a valid identity too
+// and could read every customer's cart, email addresses included, with
+// GET /admin/v1/carts.
 //
-// Store uçlarına yetki EKLENMEZ: mağaza yüzeyinin kimliği publishable
-// anahtardır ve o anahtar tanımı gereği yetki TAŞIMAZ.
+// No scope is ADDED to the store endpoints: the store surface's identity is the
+// publishable key and that key by definition CARRIES no scope.
 func (h *Handler) Routes(r chi.Router) {
-	okuma := r.With(corehttp.RequireScope(ScopeRead))
+	readOnly := r.With(corehttp.RequireScope(ScopeRead))
 
-	// --- Store API (müşteri) ---
+	// --- Store API (customer) ---
 	r.Post(StoreCartsPath, h.storeCreateCart)
 	r.Get("/store/v1/carts/{id}", h.storeGetCart)
 	r.Post("/store/v1/carts/{id}", h.storeUpdateCart)
@@ -81,12 +84,13 @@ func (h *Handler) Routes(r chi.Router) {
 	r.Post("/store/v1/carts/{id}/shipping-methods", h.storeAddShippingMethod)
 	r.Delete("/store/v1/carts/{id}/shipping-methods/{shipping_method_id}", h.storeRemoveShippingMethod)
 
-	// Sepeti siparişe çeviren uç. Sepetin uçlarının sahibi bu modüldür,
-	// dolayısıyla sepeti KAPATAN uç da buradadır; bileşim kökü yalnızca akışı
-	// kurar ve container'a bırakır (bkz. [Handler.storeCompleteCart]).
+	// The endpoint that turns the cart into an order. The owner of the cart's
+	// endpoints is this module, therefore the endpoint that CLOSES the cart is
+	// here as well; the composition root only sets the flow up and leaves it to
+	// the container (see [Handler.storeCompleteCart]).
 	r.Post("/store/v1/carts/{id}/complete", h.storeCompleteCart)
 
-	// --- Admin API (yönetim, YALNIZCA OKUMA) ---
-	okuma.Get("/admin/v1/carts", h.adminListCarts)
-	okuma.Get("/admin/v1/carts/{id}", h.adminGetCart)
+	// --- Admin API (administration, READ ONLY) ---
+	readOnly.Get("/admin/v1/carts", h.adminListCarts)
+	readOnly.Get("/admin/v1/carts/{id}", h.adminGetCart)
 }

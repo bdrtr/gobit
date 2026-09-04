@@ -7,33 +7,33 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/auth/models"
 )
 
-// SalesChannelInput bir satış kanalının yazma girdisidir.
+// SalesChannelInput is the write input of a sales channel.
 type SalesChannelInput struct {
-	// Name kanalın görünen adıdır; zorunludur ve canlı kanallar arasında
-	// benzersizdir.
+	// Name is the channel's display name; it is required and it is unique among
+	// the live channels.
 	Name string
-	// Description kanalın açıklamasıdır; boş bırakılabilir.
+	// Description is the channel's description; it may be left empty.
 	Description string
-	// IsDisabled kanalın devre dışı açılmasını sağlar.
+	// IsDisabled makes the channel open disabled.
 	IsDisabled bool
-	// Metadata serbest yapısal bağlamdır; boş bırakılabilir.
+	// Metadata is free structured context; it may be left empty.
 	Metadata map[string]any
 }
 
-// CreateSalesChannel yeni bir satış kanalı oluşturur.
+// CreateSalesChannel creates a new sales channel.
 //
-// Ad zaten kullanılıyorsa errors.Conflict döner.
+// If the name is already in use errors.Conflict is returned.
 func (s *Service) CreateSalesChannel(ctx context.Context, in SalesChannelInput) (models.SalesChannel, error) {
 	if err := s.ready(); err != nil {
 		return models.SalesChannel{}, err
 	}
-	if err := requireText("satış kanalı adı", in.Name); err != nil {
+	if err := requireText("the sales channel name", in.Name); err != nil {
 		return models.SalesChannel{}, err
 	}
-	if err := checkLen("satış kanalı adı", in.Name, models.MaxNameLen); err != nil {
+	if err := checkLen("the sales channel name", in.Name, models.MaxNameLen); err != nil {
 		return models.SalesChannel{}, err
 	}
-	if err := checkLen("satış kanalı açıklaması", in.Description, models.MaxDescriptionLen); err != nil {
+	if err := checkLen("the sales channel description", in.Description, models.MaxDescriptionLen); err != nil {
 		return models.SalesChannel{}, err
 	}
 
@@ -50,36 +50,37 @@ func (s *Service) CreateSalesChannel(ctx context.Context, in SalesChannelInput) 
 		return models.SalesChannel{}, err
 	}
 
-	s.log.InfoContext(ctx, "satış kanalı oluşturuldu",
+	s.log.InfoContext(ctx, "sales channel created",
 		slog.String("sales_channel_id", created.ID),
 	)
 	return created, nil
 }
 
-// GetSalesChannel kimliğe göre kanal döner; yoksa errors.NotFound.
+// GetSalesChannel returns the channel with the given identifier;
+// errors.NotFound if there is none.
 func (s *Service) GetSalesChannel(ctx context.Context, id string) (models.SalesChannel, error) {
 	if err := s.ready(); err != nil {
 		return models.SalesChannel{}, err
 	}
-	if err := requireID(id, models.SalesChannelIDPrefix, "satış kanalı kimliği"); err != nil {
+	if err := requireID(id, models.SalesChannelIDPrefix, "the sales channel identifier"); err != nil {
 		return models.SalesChannel{}, err
 	}
 	return s.repo.GetSalesChannel(ctx, id)
 }
 
-// ListSalesChannelsInput kanal listelemesinin girdisidir.
+// ListSalesChannelsInput is the input of a channel listing.
 type ListSalesChannelsInput struct {
-	// Name verilirse yalnızca bu ada sahip kanal döner.
+	// Name, if given, restricts the result to the channel with this name.
 	Name *string
-	// IsDisabled verilirse devre dışı/etkin ayrımına göre süzer.
+	// IsDisabled, if given, filters by the disabled/enabled distinction.
 	IsDisabled *bool
-	// Limit sayfa boyudur; 0 ise [DefaultLimit] uygulanır.
+	// Limit is the page size; [DefaultLimit] is applied if it is 0.
 	Limit int64
-	// Offset atlanacak kayıt sayısıdır.
+	// Offset is the number of records to skip.
 	Offset int64
 }
 
-// ListSalesChannels süzgeçlenmiş ve sayfalanmış kanal listesini döner.
+// ListSalesChannels returns the filtered and paginated list of channels.
 func (s *Service) ListSalesChannels(
 	ctx context.Context,
 	in ListSalesChannelsInput,
@@ -103,25 +104,25 @@ func (s *Service) ListSalesChannels(
 	return Page[models.SalesChannel]{Items: items, Count: total, Limit: limit, Offset: offset}, nil
 }
 
-// UpdateSalesChannelInput bir kanalın kısmi güncelleme girdisidir.
+// UpdateSalesChannelInput is the partial update input of a channel.
 //
-// nil alan "dokunma", dolu alan "bu değeri yaz" demektir.
+// A nil field means "do not touch", a filled field means "write this value".
 type UpdateSalesChannelInput struct {
-	// Name kanalın yeni adıdır.
+	// Name is the channel's new name.
 	Name *string
-	// Description kanalın yeni açıklamasıdır.
+	// Description is the channel's new description.
 	Description *string
-	// IsDisabled kanalın yeni etkinlik durumudur.
+	// IsDisabled is the channel's new enabled state.
 	//
-	// Kanalı devre dışı bırakmak, ona bağlı publishable anahtarların o kanalı
-	// GÖRMEMESİ demektir; başka kanalı olmayan bir anahtar bu işlemden sonra
-	// mağaza kimliği kuramaz (bkz. [Service.authenticatePublishable]).
+	// Disabling a channel means the publishable keys attached to it NOT SEEING
+	// that channel; a key that has no other channel cannot establish a store
+	// identity after this operation (see [Service.authenticatePublishable]).
 	IsDisabled *bool
-	// Metadata yeni metadata haritasıdır; sütunun tamamını değiştirir.
+	// Metadata is the new metadata map; it replaces the whole column.
 	Metadata map[string]any
 }
 
-// UpdateSalesChannel kanalın verilen alanlarını günceller.
+// UpdateSalesChannel updates the given fields of the channel.
 func (s *Service) UpdateSalesChannel(
 	ctx context.Context,
 	id string,
@@ -130,19 +131,19 @@ func (s *Service) UpdateSalesChannel(
 	if err := s.ready(); err != nil {
 		return models.SalesChannel{}, err
 	}
-	if err := requireID(id, models.SalesChannelIDPrefix, "satış kanalı kimliği"); err != nil {
+	if err := requireID(id, models.SalesChannelIDPrefix, "the sales channel identifier"); err != nil {
 		return models.SalesChannel{}, err
 	}
 	if in.Name != nil {
-		if err := requireText("satış kanalı adı", *in.Name); err != nil {
+		if err := requireText("the sales channel name", *in.Name); err != nil {
 			return models.SalesChannel{}, err
 		}
-		if err := checkLen("satış kanalı adı", *in.Name, models.MaxNameLen); err != nil {
+		if err := checkLen("the sales channel name", *in.Name, models.MaxNameLen); err != nil {
 			return models.SalesChannel{}, err
 		}
 	}
 	if in.Description != nil {
-		if err := checkLen("satış kanalı açıklaması", *in.Description, models.MaxDescriptionLen); err != nil {
+		if err := checkLen("the sales channel description", *in.Description, models.MaxDescriptionLen); err != nil {
 			return models.SalesChannel{}, err
 		}
 	}
@@ -155,22 +156,22 @@ func (s *Service) UpdateSalesChannel(
 	}, s.clock())
 }
 
-// DeleteSalesChannel kanalı yumuşak siler ve anahtar bağlarını kaldırır.
+// DeleteSalesChannel soft deletes the channel and removes the key links.
 //
-// Bağların kaldırılması şarttır: yumuşak silme bir UPDATE olduğu için foreign
-// key CASCADE devreye girmez ve publishable anahtarlar silinmiş bir kanala
-// bağlı görünmeye devam ederdi.
+// Removing the links is essential: since a soft delete is an UPDATE, the
+// foreign key CASCADE does not kick in and publishable keys would keep looking
+// as though they were attached to a deleted channel.
 func (s *Service) DeleteSalesChannel(ctx context.Context, id string) error {
 	if err := s.ready(); err != nil {
 		return err
 	}
-	if err := requireID(id, models.SalesChannelIDPrefix, "satış kanalı kimliği"); err != nil {
+	if err := requireID(id, models.SalesChannelIDPrefix, "the sales channel identifier"); err != nil {
 		return err
 	}
 	if err := s.repo.DeleteSalesChannel(ctx, id, s.clock()); err != nil {
 		return err
 	}
 
-	s.log.InfoContext(ctx, "satış kanalı silindi", slog.String("sales_channel_id", id))
+	s.log.InfoContext(ctx, "sales channel deleted", slog.String("sales_channel_id", id))
 	return nil
 }

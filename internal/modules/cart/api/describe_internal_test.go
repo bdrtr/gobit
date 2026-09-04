@@ -15,20 +15,21 @@ import (
 	"github.com/bdrtr/gobit/internal/core/openapi"
 )
 
-// Test DAHİLİ pakettedir çünkü anlatılan gövdeler ([createCartRequest],
-// [cartDTO] …) dışa kapalıdır. Dışarıdan sınamanın tek yolu tipleri dışa
-// açmak olurdu; belgeyi sınamak uğruna modülün yüzeyini genişletmek, sınanan
-// şeyin kendisini bozardı.
+// The test is in the INTERNAL package because the bodies being described
+// ([createCartRequest], [cartDTO] …) are unexported. The only way to exercise
+// them from the outside would be to export the types; widening the module's
+// surface for the sake of exercising the document would break the very thing
+// being exercised.
 
-// belge Describe'ın çıktısını GERÇEK route ağacına karşı üretip JSON'dan geri
-// okunmuş hâlini döner.
+// buildDoc produces Describe's output against the REAL route tree and returns it
+// as read back from JSON.
 //
-// Doğrudan [openapi.Doc.Build] çıktısına bakmak yetmezdi: işlemler orada Go
-// struct'ıdır ve incelenen davranış tam olarak alanların JSON'a yazılıp
-// yazılmadığıdır. Router da gerçek olmalıdır — açıklama ile route'un yolu
-// ayrışırsa hata BURADA görünsün, üretimde /openapi.json'a bakan birinde
-// değil.
-func belge(t *testing.T) (yollar, bilesenler map[string]any) {
+// Looking at [openapi.Doc.Build]'s output directly would not have been enough:
+// the operations are Go structs there and the behavior under examination is
+// exactly whether the fields get written into JSON. The router has to be real
+// too — the moment the description's path drifts from the route's, let the
+// failure show up HERE, not in somebody looking at /openapi.json in production.
+func buildDoc(t *testing.T) (paths, components map[string]any) {
 	t.Helper()
 
 	doc := openapi.New("test", "v1")
@@ -37,236 +38,241 @@ func belge(t *testing.T) (yollar, bilesenler map[string]any) {
 	r := chi.NewRouter()
 	New(nil, Flows{}).Routes(r)
 
-	ham, err := doc.Build(r)
+	raw, err := doc.Build(r)
 	require.NoError(t, err)
 	require.Empty(t, doc.UnmatchedDescriptions(),
-		"anlatılan her uç bir route ile eşleşmeli; eşleşmeyen kayıt belgeye hiç girmez")
+		"every described endpoint has to match a route; an unmatched record never enters the document")
 
-	kodlanmis, err := json.Marshal(ham)
+	encoded, err := json.Marshal(raw)
 	require.NoError(t, err)
 
-	var cozulmus map[string]any
-	require.NoError(t, json.Unmarshal(kodlanmis, &cozulmus))
+	var decoded map[string]any
+	require.NoError(t, json.Unmarshal(encoded, &decoded))
 
 	var ok bool
 
-	bilesenler, ok = cozulmus["components"].(map[string]any)["schemas"].(map[string]any)
+	components, ok = decoded["components"].(map[string]any)["schemas"].(map[string]any)
 	require.True(t, ok)
 
-	yollar, ok = cozulmus["paths"].(map[string]any)
+	paths, ok = decoded["paths"].(map[string]any)
 	require.True(t, ok)
 
-	return yollar, bilesenler
+	return paths, components
 }
 
-// islem belgeden tek bir yol+metod işlemini döner.
-func islem(t *testing.T, yollar map[string]any, metod, yol string) map[string]any {
+// operation returns a single path+method operation from the document.
+func operation(t *testing.T, paths map[string]any, method, path string) map[string]any {
 	t.Helper()
 
-	yolIslemleri, ok := yollar[yol].(map[string]any)
-	require.True(t, ok, "%s belgede olmalı", yol)
+	pathOperations, ok := paths[path].(map[string]any)
+	require.True(t, ok, "%s has to be in the document", path)
 
-	op, ok := yolIslemleri[strings.ToLower(metod)].(map[string]any)
-	require.True(t, ok, "%s %s belgede olmalı", metod, yol)
+	op, ok := pathOperations[strings.ToLower(method)].(map[string]any)
+	require.True(t, ok, "%s %s has to be in the document", method, path)
 
 	return op
 }
 
-// semaCoz "$ref" atıflarını belgedeki bileşene çözer.
-func semaCoz(t *testing.T, bilesenler, sema map[string]any) map[string]any {
+// resolveSchema resolves "$ref" references to the component in the document.
+func resolveSchema(t *testing.T, components, schema map[string]any) map[string]any {
 	t.Helper()
 
-	ref, refli := sema["$ref"].(string)
-	if !refli {
-		return sema
+	ref, isRef := schema["$ref"].(string)
+	if !isRef {
+		return schema
 	}
 
-	hedef, ok := bilesenler[strings.TrimPrefix(ref, "#/components/schemas/")].(map[string]any)
-	require.True(t, ok, "%q bileşeni kayıtlı olmalı", ref)
+	target, ok := components[strings.TrimPrefix(ref, "#/components/schemas/")].(map[string]any)
+	require.True(t, ok, "the %q component has to be registered", ref)
 
-	return hedef
+	return target
 }
 
-// govdeSemasi bir yanıt ya da istek gövdesi tanımından JSON şemasını çıkarır.
-func govdeSemasi(t *testing.T, tanim map[string]any) map[string]any {
+// bodySchema extracts the JSON schema out of a response or request body
+// definition.
+func bodySchema(t *testing.T, definition map[string]any) map[string]any {
 	t.Helper()
 
-	icerik, ok := tanim["content"].(map[string]any)
-	require.True(t, ok, "gövde tanımında content olmalı: %#v", tanim)
+	content, ok := definition["content"].(map[string]any)
+	require.True(t, ok, "the body definition has to have content: %#v", definition)
 
-	json_, ok := icerik["application/json"].(map[string]any)
-	require.True(t, ok, "gövde application/json olmalı")
+	jsonContent, ok := content["application/json"].(map[string]any)
+	require.True(t, ok, "the body has to be application/json")
 
-	sema, ok := json_["schema"].(map[string]any)
-	require.True(t, ok, "gövdenin şeması olmalı")
+	schema, ok := jsonContent["schema"].(map[string]any)
+	require.True(t, ok, "the body has to have a schema")
 
-	return sema
+	return schema
 }
 
-// alanlar şemanın "properties" anahtarlarını döner.
-func alanlar(t *testing.T, bilesenler, sema map[string]any) []string {
+// fields returns the "properties" keys of the schema.
+func fields(t *testing.T, components, schema map[string]any) []string {
 	t.Helper()
 
-	ozellikler, ok := semaCoz(t, bilesenler, sema)["properties"].(map[string]any)
-	require.True(t, ok, "şemada properties olmalı: %#v", sema)
+	properties, ok := resolveSchema(t, components, schema)["properties"].(map[string]any)
+	require.True(t, ok, "the schema has to have properties: %#v", schema)
 
-	return anahtarlar(ozellikler)
+	return mapKeys(properties)
 }
 
-// zorunlular şemanın "required" listesini döner.
-func zorunlular(t *testing.T, bilesenler, sema map[string]any) []string {
+// requiredFields returns the "required" list of the schema.
+func requiredFields(t *testing.T, components, schema map[string]any) []string {
 	t.Helper()
 
-	ham, _ := semaCoz(t, bilesenler, sema)["required"].([]any)
+	raw, _ := resolveSchema(t, components, schema)["required"].([]any)
 
-	adlar := make([]string, 0, len(ham))
-	for _, ad := range ham {
-		metin, ok := ad.(string)
+	names := make([]string, 0, len(raw))
+	for _, name := range raw {
+		text, ok := name.(string)
 		require.True(t, ok)
 
-		adlar = append(adlar, metin)
+		names = append(names, text)
 	}
 
-	return adlar
+	return names
 }
 
-// anahtarlar bir haritanın anahtarlarını döner.
-func anahtarlar[T any](m map[string]T) []string {
-	adlar := make([]string, 0, len(m))
-	for ad := range m {
-		adlar = append(adlar, ad)
+// mapKeys returns the keys of a map.
+func mapKeys[T any](m map[string]T) []string {
+	names := make([]string, 0, len(m))
+	for name := range m {
+		names = append(names, name)
 	}
 
-	return adlar
+	return names
 }
 
-// jsonAnahtarlari değeri encoding/json ile kodlayıp anahtarlarını döner.
+// jsonKeys encodes the value with encoding/json and returns its keys.
 //
-// Karşılaştırmanın diğer ucu budur: şema, tel üzerinde GERÇEKTEN ne olduğunu
-// anlatmalıdır ve bunu bilen tek şey encoding/json'un kendisidir.
-func jsonAnahtarlari(t *testing.T, v any) []string {
+// This is the other end of the comparison: the schema has to describe what is
+// REALLY on the wire, and the only thing that knows that is encoding/json
+// itself.
+func jsonKeys(t *testing.T, v any) []string {
 	t.Helper()
 
-	ham, err := json.Marshal(v)
+	raw, err := json.Marshal(v)
 	require.NoError(t, err)
 
-	var cozulmus map[string]any
-	require.NoError(t, json.Unmarshal(ham, &cozulmus))
+	var decoded map[string]any
+	require.NoError(t, json.Unmarshal(raw, &decoded))
 
-	return anahtarlar(cozulmus)
+	return mapKeys(decoded)
 }
 
-// sifirDegeri verilen örneğin tipinin sıfır değerini döner.
+// zeroValue returns the zero value of the given sample's type.
 //
-// Sıfır değerde JSON'a yazılan anahtarlar tam olarak "her zaman yazılanlar"dır,
-// yani şemanın "required" kümesi. Örneği elle ikinci kez yazmak yerine tipten
-// türetilir: iki örnek arasında bir alan unutulduğunda test yanlış nedenle
-// düşerdi.
-func sifirDegeri(v any) any {
+// The keys written to JSON at the zero value are exactly "the ones always
+// written", that is, the schema's "required" set. It is derived from the type
+// rather than writing the sample out a second time by hand: had a field been
+// forgotten between the two samples, the test would fail for the wrong reason.
+func zeroValue(v any) any {
 	return reflect.New(reflect.TypeOf(v)).Elem().Interface()
 }
 
-// ucBeklentisi anlatılan tek bir vitrin ucunun sözleşmesidir.
-type ucBeklentisi struct {
-	metod string
-	yol   string
-	// durum başarılı yanıtın GERÇEK status kodudur; handler'ın yazdığı kodla
-	// aynı olmalıdır (bkz. store.go).
-	durum string
-	// istek istek gövdesinin TÜM alanlarını taşıyan örnektir; nil ise uç gövde
-	// almaz.
-	istek any
-	// yanit başarılı yanıttaki KAYDIN tüm alanlarını taşıyan örnektir; nil ise
-	// yanıtın gövdesi yoktur (204).
-	yanit any
+// endpointExpectation is the contract of a single described storefront endpoint.
+type endpointExpectation struct {
+	method string
+	path   string
+	// status is the REAL status code of the successful response; it has to be the
+	// same as the code the handler writes (see store.go).
+	status string
+	// request is a sample carrying ALL the fields of the request body; if it is
+	// nil the endpoint takes no body.
+	request any
+	// response is a sample carrying all the fields of the RECORD in the
+	// successful response; if it is nil the response has no body (204).
+	response any
 }
 
-// anahtar işlemin "METOD yol" kimliğini döner.
-func (u ucBeklentisi) anahtar() string { return u.metod + " " + u.yol }
+// key returns the operation's "METHOD path" identity.
+func (u endpointExpectation) key() string { return u.method + " " + u.path }
 
-// vitrinUclari anlatılan vitrin uçlarının beklentileridir.
+// storeEndpoints are the expectations of the described storefront endpoints.
 //
-// Örnekler DOLUDUR: omitempty taşıyan her alan sıfırdan farklı bir değer alır,
-// çünkü karşılaştırma "şemanın properties kümesi = kodlanan anahtar kümesi"
-// biçimindedir ve boş bir örnek omitempty alanları hiç yazmazdı.
-func vitrinUclari() []ucBeklentisi {
-	an := time.Now().UTC()
-	adres := addressDTO{}
+// The samples are FILLED IN: every field carrying omitempty gets a value
+// different from the zero one, because the comparison has the shape "the
+// schema's properties set = the encoded key set" and an empty sample would never
+// write the omitempty fields.
+func storeEndpoints() []endpointExpectation {
+	now := time.Now().UTC()
+	address := addressDTO{}
 
-	return []ucBeklentisi{
+	return []endpointExpectation{
 		{
-			metod: http.MethodPost, yol: "/store/v1/carts", durum: "201",
-			istek: createCartRequest{}, yanit: doluCart(an),
+			method: http.MethodPost, path: "/store/v1/carts", status: "201",
+			request: createCartRequest{}, response: filledCart(now),
 		},
 		{
-			metod: http.MethodGet, yol: "/store/v1/carts/{id}", durum: "200",
-			yanit: cartDetailDTO{
-				cartDTO:         doluCart(an),
-				ShippingAddress: &adres,
-				BillingAddress:  &adres,
+			method: http.MethodGet, path: "/store/v1/carts/{id}", status: "200",
+			response: cartDetailDTO{
+				cartDTO:         filledCart(now),
+				ShippingAddress: &address,
+				BillingAddress:  &address,
 			},
 		},
 		{
-			metod: http.MethodPost, yol: "/store/v1/carts/{id}", durum: "200",
-			istek: updateCartRequest{}, yanit: doluCart(an),
+			method: http.MethodPost, path: "/store/v1/carts/{id}", status: "200",
+			request: updateCartRequest{}, response: filledCart(now),
 		},
 		{
-			metod: http.MethodDelete, yol: "/store/v1/carts/{id}", durum: "204",
+			method: http.MethodDelete, path: "/store/v1/carts/{id}", status: "204",
 		},
 		{
-			metod: http.MethodPost, yol: "/store/v1/carts/{id}/line-items", durum: "201",
-			istek: addLineItemRequest{}, yanit: doluSatir(),
+			method: http.MethodPost, path: "/store/v1/carts/{id}/line-items", status: "201",
+			request: addLineItemRequest{}, response: filledLineItem(),
 		},
 		{
-			metod: http.MethodPatch, yol: "/store/v1/carts/{id}/line-items/{line_item_id}",
-			durum: "200",
-			istek: updateLineItemRequest{}, yanit: doluSatir(),
+			method: http.MethodPatch, path: "/store/v1/carts/{id}/line-items/{line_item_id}",
+			status:  "200",
+			request: updateLineItemRequest{}, response: filledLineItem(),
 		},
 		{
-			metod: http.MethodDelete, yol: "/store/v1/carts/{id}/line-items/{line_item_id}",
-			durum: "204",
+			method: http.MethodDelete, path: "/store/v1/carts/{id}/line-items/{line_item_id}",
+			status: "204",
 		},
 		{
-			metod: http.MethodPut, yol: "/store/v1/carts/{id}/shipping-address", durum: "200",
-			istek: addressRequest{}, yanit: doluAdres(),
+			method: http.MethodPut, path: "/store/v1/carts/{id}/shipping-address", status: "200",
+			request: addressRequest{}, response: filledAddress(),
 		},
 		{
-			metod: http.MethodPut, yol: "/store/v1/carts/{id}/billing-address", durum: "200",
-			istek: addressRequest{}, yanit: doluAdres(),
+			method: http.MethodPut, path: "/store/v1/carts/{id}/billing-address", status: "200",
+			request: addressRequest{}, response: filledAddress(),
 		},
 		{
-			metod: http.MethodPost, yol: "/store/v1/carts/{id}/shipping-methods", durum: "201",
-			istek: addShippingMethodRequest{}, yanit: doluYontem(),
+			method: http.MethodPost, path: "/store/v1/carts/{id}/shipping-methods", status: "201",
+			request: addShippingMethodRequest{}, response: filledShippingMethod(),
 		},
 		{
-			metod: http.MethodPost, yol: "/store/v1/carts/{id}/complete", durum: "200",
-			istek: completeCartRequest{}, yanit: completeCartDTO{},
+			method: http.MethodPost, path: "/store/v1/carts/{id}/complete", status: "200",
+			request: completeCartRequest{}, response: completeCartDTO{},
 		},
 		{
-			metod: http.MethodDelete,
-			yol:   "/store/v1/carts/{id}/shipping-methods/{shipping_method_id}",
-			durum: "204",
+			method: http.MethodDelete,
+			path:   "/store/v1/carts/{id}/shipping-methods/{shipping_method_id}",
+			status: "204",
 		},
 	}
 }
 
-// doluCart omitempty alanları da yazılan bir sepet kaydı üretir.
-func doluCart(an time.Time) cartDTO {
+// filledCart produces a cart record whose omitempty fields are written too.
+func filledCart(now time.Time) cartDTO {
 	return cartDTO{
 		CustomerID:  "cus_1",
 		Email:       "a@b.c",
 		Metadata:    map[string]any{"k": "v"},
-		CompletedAt: &an,
+		CompletedAt: &now,
 	}
 }
 
-// doluSatir omitempty alanları da yazılan bir satır kaydı üretir.
-func doluSatir() lineItemDTO {
+// filledLineItem produces a line item record whose omitempty fields are written
+// too.
+func filledLineItem() lineItemDTO {
 	return lineItemDTO{Metadata: map[string]any{"k": "v"}}
 }
 
-// doluAdres omitempty alanları da yazılan bir adres kaydı üretir.
-func doluAdres() addressDTO {
+// filledAddress produces an address record whose omitempty fields are written
+// too.
+func filledAddress() addressDTO {
 	return addressDTO{
 		SourceAddressID: "addr_1",
 		FirstName:       "A",
@@ -283,311 +289,318 @@ func doluAdres() addressDTO {
 	}
 }
 
-// doluYontem omitempty alanları da yazılan bir kargo yöntemi üretir.
-func doluYontem() shippingMethodDTO {
+// filledShippingMethod produces a shipping method whose omitempty fields are
+// written too.
+func filledShippingMethod() shippingMethodDTO {
 	return shippingMethodDTO{ShippingOptionID: "so_1", Data: map[string]any{"k": "v"}}
 }
 
-// TestVitrinUclariGovdeleriniAnlatir her vitrin ucunun ne ALDIĞINI ve ne
-// DÖNDÜĞÜNÜ söylediğini doğrular.
+// TestStoreEndpointsDescribeTheirBodies verifies that every storefront endpoint
+// says what it TAKES and what it RETURNS.
 //
-// Bulgunun tam karşılığı budur: gövdesiz bir şema istemciye "bu uç var ve
-// şöyle başarısız olabilir" der, ne göndereceğini söylemez; istemci üreteci de
-// her şeyi 'any' olan, dönüş tipi 'void' olan bir metot üretir.
+// That is the exact counterpart of the finding: a bodyless schema tells the
+// client "this endpoint exists and can fail like so", it does not say what to
+// send; and the client generator produces a method where everything is 'any' and
+// the return type is 'void'.
 //
-// Alan kümeleri DTO'nun encoding/json çıktısıyla karşılaştırılır, elle yazılmış
-// bir listeyle değil: elle yazılmış liste, DTO'ya alan eklendiği gün eksik
-// kalır ve test bunu görmezdi.
-func TestVitrinUclariGovdeleriniAnlatir(t *testing.T) {
+// The field sets are compared against the DTO's encoding/json output, not
+// against a hand-written list: a hand-written list falls short the day a field is
+// added to the DTO and the test would not see it.
+func TestStoreEndpointsDescribeTheirBodies(t *testing.T) {
 	t.Parallel()
 
-	yollar, bilesenler := belge(t)
+	paths, components := buildDoc(t)
 
-	for _, uc := range vitrinUclari() {
-		t.Run(uc.anahtar(), func(t *testing.T) {
+	for _, endpoint := range storeEndpoints() {
+		t.Run(endpoint.key(), func(t *testing.T) {
 			t.Parallel()
 
-			op := islem(t, yollar, uc.metod, uc.yol)
+			op := operation(t, paths, endpoint.method, endpoint.path)
 
-			istekTanimi, govdeVar := op["requestBody"].(map[string]any)
-			require.Equal(t, uc.istek != nil, govdeVar,
-				"gövde alan uçta requestBody olmalı, almayanda olmamalı")
+			requestDefinition, hasBody := op["requestBody"].(map[string]any)
+			require.Equal(t, endpoint.request != nil, hasBody,
+				"an endpoint that takes a body has to have a requestBody, one that does not must not")
 
-			if uc.istek != nil {
-				sema := govdeSemasi(t, istekTanimi)
-				assert.ElementsMatch(t, jsonAnahtarlari(t, uc.istek),
-					alanlar(t, bilesenler, sema),
-					"istek gövdesinin alanları DTO ile örtüşmeli")
+			if endpoint.request != nil {
+				schema := bodySchema(t, requestDefinition)
+				assert.ElementsMatch(t, jsonKeys(t, endpoint.request),
+					fields(t, components, schema),
+					"the request body's fields have to overlap with the DTO")
 			}
 
-			yanitlar, ok := op["responses"].(map[string]any)
+			responses, ok := op["responses"].(map[string]any)
 			require.True(t, ok)
 
-			tanim, ok := yanitlar[uc.durum].(map[string]any)
-			require.True(t, ok, "handler'ın GERÇEKTEN yazdığı kod belgelenmeli: %s", uc.durum)
+			definition, ok := responses[endpoint.status].(map[string]any)
+			require.True(t, ok, "the code the handler REALLY writes has to be documented: %s", endpoint.status)
 
-			if uc.yanit == nil {
-				assert.NotContains(t, tanim, "content",
-					"204'ün gövdesi yoktur; şema gövde vaat etmemeli")
+			if endpoint.response == nil {
+				assert.NotContains(t, definition, "content",
+					"a 204 has no body; the schema must not promise one")
 
 				return
 			}
 
-			zarf := govdeSemasi(t, tanim)
-			assert.ElementsMatch(t, []string{"data"}, alanlar(t, bilesenler, zarf),
-				"tekil yanıtlar {\"data\": …} zarfıyla döner")
+			envelope := bodySchema(t, definition)
+			assert.ElementsMatch(t, []string{"data"}, fields(t, components, envelope),
+				"single responses are returned in a {\"data\": …} envelope")
 
-			kayit := zarfKaydi(t, bilesenler, zarf)
-			assert.ElementsMatch(t, jsonAnahtarlari(t, uc.yanit), alanlar(t, bilesenler, kayit),
-				"yanıt kaydının alanları DTO ile örtüşmeli")
-			assert.ElementsMatch(t, jsonAnahtarlari(t, sifirDegeri(uc.yanit)),
-				zorunlular(t, bilesenler, kayit),
-				"required, encoding/json'un HER ZAMAN yazdığı anahtarlarla aynı olmalı")
+			record := envelopeRecord(t, components, envelope)
+			assert.ElementsMatch(t, jsonKeys(t, endpoint.response), fields(t, components, record),
+				"the response record's fields have to overlap with the DTO")
+			assert.ElementsMatch(t, jsonKeys(t, zeroValue(endpoint.response)),
+				requiredFields(t, components, record),
+				"required has to be the same as the keys encoding/json ALWAYS writes")
 		})
 	}
 }
 
-// zarfKaydi tekil zarfın "data" alanının şemasını döner.
-func zarfKaydi(t *testing.T, bilesenler, zarf map[string]any) map[string]any {
+// envelopeRecord returns the schema of the single envelope's "data" field.
+func envelopeRecord(t *testing.T, components, envelope map[string]any) map[string]any {
 	t.Helper()
 
-	ozellikler, ok := semaCoz(t, bilesenler, zarf)["properties"].(map[string]any)
+	properties, ok := resolveSchema(t, components, envelope)["properties"].(map[string]any)
 	require.True(t, ok)
 
-	kayit, ok := ozellikler["data"].(map[string]any)
+	record, ok := properties["data"].(map[string]any)
 	require.True(t, ok)
 
-	return kayit
+	return record
 }
 
-// TestVitrinUclarininTumuAnlatildi anlatılmamış bir vitrin ucu kalmadığını
-// doğrular.
+// TestEveryStoreEndpointIsDescribed verifies that no storefront endpoint has been
+// left undescribed.
 //
-// Yeni bir uç eklenip anlatılmadığında bu test düşer. Uyarı olmasaydı arıza
-// SESSİZ olurdu: uç belgede yolu ve güvenliğiyle görünür, yalnızca gövdesi
-// olmaz — yani şema "var ama ne aldığı bilinmiyor" der ve kimse fark etmez.
-func TestVitrinUclarininTumuAnlatildi(t *testing.T) {
+// When a new endpoint is added and not described, this test fails. Without the
+// warning the failure would be SILENT: the endpoint shows up in the document
+// with its path and its security, it just has no body — that is, the schema says
+// "it exists but what it takes is unknown" and nobody notices.
+func TestEveryStoreEndpointIsDescribed(t *testing.T) {
 	t.Parallel()
 
-	yollar, _ := belge(t)
+	paths, _ := buildDoc(t)
 
-	var bulunan []string
+	var found []string
 
-	for yol, islemler := range yollar {
-		if !strings.HasPrefix(yol, "/store/v1") {
+	for path, operations := range paths {
+		if !strings.HasPrefix(path, "/store/v1") {
 			continue
 		}
 
-		islemHaritasi, ok := islemler.(map[string]any)
-		require.True(t, ok, "yol girdisi metot haritası olmalı")
+		operationMap, ok := operations.(map[string]any)
+		require.True(t, ok, "the path entry has to be a method map")
 
-		for metod, ham := range islemHaritasi {
-			op, ok := ham.(map[string]any)
+		for method, raw := range operationMap {
+			op, ok := raw.(map[string]any)
 			require.True(t, ok)
 
-			assert.NotEmpty(t, op["summary"], "%s %s anlatılmalı", metod, yol)
-			bulunan = append(bulunan, strings.ToUpper(metod)+" "+yol)
+			assert.NotEmpty(t, op["summary"], "%s %s has to be described", method, path)
+			found = append(found, strings.ToUpper(method)+" "+path)
 		}
 	}
 
-	beklenen := make([]string, 0, len(vitrinUclari()))
-	for _, uc := range vitrinUclari() {
-		beklenen = append(beklenen, uc.anahtar())
+	expected := make([]string, 0, len(storeEndpoints()))
+	for _, endpoint := range storeEndpoints() {
+		expected = append(expected, endpoint.key())
 	}
 
-	assert.ElementsMatch(t, beklenen, bulunan,
-		"tabloda olmayan bir vitrin ucu sınanmamış demektir")
+	assert.ElementsMatch(t, expected, found,
+		"a storefront endpoint that is not in the table means it is not exercised")
 }
 
-// TestYonetimListesiGovdesiniAnlatir /admin/v1/carts'ın ne döndüğünü
-// söylediğini doğrular.
+// TestAdminListDescribesItsBody verifies that /admin/v1/carts says what it
+// returns.
 //
-// Kayıt tipi burada asıl mesele: uç satırları, adresleri ve kargo yöntemlerini
-// YÜKLEMEZ (bkz. [Handler.adminListCarts]). [cartDetailDTO] anlatılsaydı şema
-// hiç dolmayacak alanlar vaat eder, istemci de her yanıtta boş bir "items"
-// dizisi görüp satırların gerçekten olmadığını sanardı.
-func TestYonetimListesiGovdesiniAnlatir(t *testing.T) {
+// The record type is the real point here: the endpoint does NOT LOAD the line
+// items, the addresses and the shipping methods (see [Handler.adminListCarts]).
+// Had [cartDetailDTO] been described, the schema would promise fields that are
+// never filled in, and the client would see an empty "items" array in every
+// response and believe the line items really were not there.
+func TestAdminListDescribesItsBody(t *testing.T) {
 	t.Parallel()
 
-	yollar, bilesenler := belge(t)
-	op := islem(t, yollar, http.MethodGet, "/admin/v1/carts")
+	paths, components := buildDoc(t)
+	op := operation(t, paths, http.MethodGet, "/admin/v1/carts")
 
 	assert.NotEmpty(t, op["summary"])
 	assert.NotContains(t, op, "requestBody",
-		"cart'ın yönetim yüzeyi yalnızca okur; hiçbir ucu gövde almaz")
+		"cart's admin surface only reads; none of its endpoints takes a body")
 
-	yanitlar, ok := op["responses"].(map[string]any)
+	responses, ok := op["responses"].(map[string]any)
 	require.True(t, ok)
 
-	// Liste 200 döner (bkz. adminListCarts); başka bir kod yazmak istemci
-	// üretecinde yanlış dallanma üretirdi.
-	tanim, ok := yanitlar["200"].(map[string]any)
-	require.True(t, ok, "handler'ın GERÇEKTEN yazdığı kod belgelenmeli")
+	// The list returns 200 (see adminListCarts); writing another code would
+	// produce wrong branching in the client generator.
+	definition, ok := responses["200"].(map[string]any)
+	require.True(t, ok, "the code the handler REALLY writes has to be documented")
 
-	zarf := govdeSemasi(t, tanim)
+	envelope := bodySchema(t, definition)
 	assert.ElementsMatch(t, []string{"data", "count", "offset", "limit"},
-		alanlar(t, bilesenler, zarf), "liste zarfı plan Bölüm 8'deki biçimdir")
+		fields(t, components, envelope), "the list envelope is the shape in plan Section 8")
 
-	oge := listeOgesi(t, bilesenler, zarf)
-	kayitAlanlari := alanlar(t, bilesenler, oge)
+	item := listItemSchema(t, components, envelope)
+	recordFields := fields(t, components, item)
 
-	assert.ElementsMatch(t, jsonAnahtarlari(t, doluCart(time.Now().UTC())), kayitAlanlari,
-		"liste kaydı cartDTO ile örtüşmeli")
-	assert.NotContains(t, kayitAlanlari, "items",
-		"liste ucu satırları yüklemez; detay şeması vaat edilmemeli")
-	assert.ElementsMatch(t, jsonAnahtarlari(t, cartDTO{}),
-		zorunlular(t, bilesenler, oge),
-		"required, encoding/json'un HER ZAMAN yazdığı anahtarlarla aynı olmalı")
+	assert.ElementsMatch(t, jsonKeys(t, filledCart(time.Now().UTC())), recordFields,
+		"the list record has to overlap with cartDTO")
+	assert.NotContains(t, recordFields, "items",
+		"the list endpoint does not load the line items; the detail schema must not be promised")
+	assert.ElementsMatch(t, jsonKeys(t, cartDTO{}),
+		requiredFields(t, components, item),
+		"required has to be the same as the keys encoding/json ALWAYS writes")
 }
 
-// listeOgesi liste zarfının "data" dizisinin öğe şemasını döner.
-func listeOgesi(t *testing.T, bilesenler, zarf map[string]any) map[string]any {
+// listItemSchema returns the item schema of the list envelope's "data" array.
+func listItemSchema(t *testing.T, components, envelope map[string]any) map[string]any {
 	t.Helper()
 
-	veri := zarfKaydi(t, bilesenler, zarf)
-	assert.Equal(t, "array", veri["type"], "liste zarfının data alanı dizidir")
+	data := envelopeRecord(t, components, envelope)
+	assert.Equal(t, "array", data["type"], "the list envelope's data field is an array")
 
-	oge, ok := veri["items"].(map[string]any)
-	require.True(t, ok, "liste zarfının öğe şeması olmalı")
+	item, ok := data["items"].(map[string]any)
+	require.True(t, ok, "the list envelope has to have an item schema")
 
-	return oge
+	return item
 }
 
-// TestYonetimTekilUcuGovdesiniAnlatir /admin/v1/carts/{id}'nin sepeti
-// çocuklarıyla döndüğünü söylediğini doğrular.
-func TestYonetimTekilUcuGovdesiniAnlatir(t *testing.T) {
+// TestAdminSingleEndpointDescribesItsBody verifies that /admin/v1/carts/{id} says
+// it returns the cart with its children.
+func TestAdminSingleEndpointDescribesItsBody(t *testing.T) {
 	t.Parallel()
 
-	yollar, bilesenler := belge(t)
-	op := islem(t, yollar, http.MethodGet, "/admin/v1/carts/{id}")
+	paths, components := buildDoc(t)
+	op := operation(t, paths, http.MethodGet, "/admin/v1/carts/{id}")
 
 	assert.NotEmpty(t, op["summary"])
-	assert.NotContains(t, op, "requestBody", "okuma ucu gövde almaz")
+	assert.NotContains(t, op, "requestBody", "a read endpoint takes no body")
 
-	yanitlar, ok := op["responses"].(map[string]any)
+	responses, ok := op["responses"].(map[string]any)
 	require.True(t, ok)
 
-	tanim, ok := yanitlar["200"].(map[string]any)
-	require.True(t, ok, "handler'ın GERÇEKTEN yazdığı kod belgelenmeli")
+	definition, ok := responses["200"].(map[string]any)
+	require.True(t, ok, "the code the handler REALLY writes has to be documented")
 
-	zarf := govdeSemasi(t, tanim)
-	assert.ElementsMatch(t, []string{"data"}, alanlar(t, bilesenler, zarf),
-		"tekil yanıtlar {\"data\": …} zarfıyla döner")
+	envelope := bodySchema(t, definition)
+	assert.ElementsMatch(t, []string{"data"}, fields(t, components, envelope),
+		"single responses are returned in a {\"data\": …} envelope")
 
-	adres := addressDTO{}
-	beklenen := cartDetailDTO{
-		cartDTO:         doluCart(time.Now().UTC()),
-		ShippingAddress: &adres,
-		BillingAddress:  &adres,
+	address := addressDTO{}
+	expected := cartDetailDTO{
+		cartDTO:         filledCart(time.Now().UTC()),
+		ShippingAddress: &address,
+		BillingAddress:  &address,
 	}
 
-	kayit := zarfKaydi(t, bilesenler, zarf)
-	assert.ElementsMatch(t, jsonAnahtarlari(t, beklenen), alanlar(t, bilesenler, kayit),
-		"yanıt kaydı cartDetailDTO ile örtüşmeli")
+	record := envelopeRecord(t, components, envelope)
+	assert.ElementsMatch(t, jsonKeys(t, expected), fields(t, components, record),
+		"the response record has to overlap with cartDetailDTO")
 }
 
-// TestYonetimListesiYalnizcaOkunanParametreleriAnlatir sorgu parametrelerinin
-// handler'ın GERÇEKTEN okuduklarıyla aynı olduğunu doğrular.
+// TestAdminListDescribesOnlyTheParametersItReads verifies that the query
+// parameters are the same as the ones the handler REALLY reads.
 //
-// Sepeti sorgu dizesinden süzen TEK uç budur. Fazlası istemciye çalışmayan bir
-// süzgeç vaat etmek, eksiği ise okunan bir süzgeci istemciden gizlemek olurdu.
-func TestYonetimListesiYalnizcaOkunanParametreleriAnlatir(t *testing.T) {
+// This is the ONLY endpoint that filters carts from the query string. More would
+// mean promising the client a filter that does not work, fewer would mean hiding
+// a filter that is read from the client.
+func TestAdminListDescribesOnlyTheParametersItReads(t *testing.T) {
 	t.Parallel()
 
-	yollar, _ := belge(t)
-	op := islem(t, yollar, http.MethodGet, "/admin/v1/carts")
+	paths, _ := buildDoc(t)
+	op := operation(t, paths, http.MethodGet, "/admin/v1/carts")
 
 	assert.ElementsMatch(t,
 		[]string{"customer_id", "region_id", "completed", "limit", "offset"},
-		parametreAdlari(t, op, "query"),
-		"parametreler adminListCarts'ın okuduklarıyla aynı olmalı")
+		parameterNames(t, op, "query"),
+		"the parameters have to be the same as the ones adminListCarts reads")
 
-	tekil := islem(t, yollar, http.MethodGet, "/admin/v1/carts/{id}")
-	assert.Empty(t, parametreAdlari(t, tekil, "query"),
-		"tekil yönetim ucu sorgu dizesini okumaz")
+	single := operation(t, paths, http.MethodGet, "/admin/v1/carts/{id}")
+	assert.Empty(t, parameterNames(t, single, "query"),
+		"the single admin endpoint does not read the query string")
 }
 
-// parametreAdlari işlemin verilen yerdeki parametre adlarını döner.
-func parametreAdlari(t *testing.T, op map[string]any, yer string) []string {
+// parameterNames returns the names of the operation's parameters in the given
+// location.
+func parameterNames(t *testing.T, op map[string]any, location string) []string {
 	t.Helper()
 
 	params, _ := op["parameters"].([]any)
 
-	adlar := make([]string, 0, len(params))
+	names := make([]string, 0, len(params))
 
-	for _, ham := range params {
-		p, ok := ham.(map[string]any)
+	for _, raw := range params {
+		p, ok := raw.(map[string]any)
 		require.True(t, ok)
 
-		if p["in"] != yer {
+		if p["in"] != location {
 			continue
 		}
 
-		ad, ok := p["name"].(string)
+		name, ok := p["name"].(string)
 		require.True(t, ok)
 
-		adlar = append(adlar, ad)
+		names = append(names, name)
 	}
 
-	return adlar
+	return names
 }
 
-// TestYonetimUclarininTumuAnlatildi anlatılmamış bir yönetim ucu kalmadığını
-// doğrular.
+// TestEveryAdminEndpointIsDescribed verifies that no admin endpoint has been left
+// undescribed.
 //
-// Cart'ın yönetim yüzeyi bilinçli olarak iki uçtan ibarettir (sepeti değiştiren
-// tek taraf müşteridir); listeye üçüncü bir uç eklendiğinde bu test düşer ve
-// anlatılmadan geçmesini engeller.
-func TestYonetimUclarininTumuAnlatildi(t *testing.T) {
+// Cart's admin surface deliberately consists of two endpoints (the only party
+// that changes the cart is the customer); when a third endpoint is added to the
+// list this test fails and stops it from slipping through undescribed.
+func TestEveryAdminEndpointIsDescribed(t *testing.T) {
 	t.Parallel()
 
-	yollar, _ := belge(t)
+	paths, _ := buildDoc(t)
 
-	var bulunan []string
+	var found []string
 
-	for yol, islemler := range yollar {
-		if !strings.HasPrefix(yol, "/admin/v1") {
+	for path, operations := range paths {
+		if !strings.HasPrefix(path, "/admin/v1") {
 			continue
 		}
 
-		islemHaritasi, ok := islemler.(map[string]any)
-		require.True(t, ok, "yol girdisi metot haritası olmalı")
+		operationMap, ok := operations.(map[string]any)
+		require.True(t, ok, "the path entry has to be a method map")
 
-		for metod, ham := range islemHaritasi {
-			op, ok := ham.(map[string]any)
+		for method, raw := range operationMap {
+			op, ok := raw.(map[string]any)
 			require.True(t, ok)
 
-			assert.NotEmpty(t, op["summary"], "%s %s anlatılmalı", metod, yol)
-			bulunan = append(bulunan, strings.ToUpper(metod)+" "+yol)
+			assert.NotEmpty(t, op["summary"], "%s %s has to be described", method, path)
+			found = append(found, strings.ToUpper(method)+" "+path)
 		}
 	}
 
 	assert.ElementsMatch(t,
-		[]string{"GET /admin/v1/carts", "GET /admin/v1/carts/{id}"}, bulunan)
+		[]string{"GET /admin/v1/carts", "GET /admin/v1/carts/{id}"}, found)
 }
 
-// TestVitrinUclariSorguParametresiVaatEtmez şemanın okunmayan bir parametre
-// duyurmadığını doğrular.
+// TestStoreEndpointsPromiseNoQueryParameter verifies that the schema announces no
+// parameter that is not read.
 //
-// Vitrin sepeti handler'larının hiçbiri sorgu dizesini okumaz (bkz. store.go).
-// Şemaya yine de bir parametre yazmak, istemci üretecinin metoda argüman
-// koyması ve çağıranın onu doldurup sunucunun sessizce yok sayması demekti.
-func TestVitrinUclariSorguParametresiVaatEtmez(t *testing.T) {
+// None of the storefront cart handlers read the query string (see store.go).
+// Writing a parameter into the schema all the same meant the client generator
+// putting an argument on the method and the caller filling it in while the server
+// silently ignored it.
+func TestStoreEndpointsPromiseNoQueryParameter(t *testing.T) {
 	t.Parallel()
 
-	yollar, _ := belge(t)
+	paths, _ := buildDoc(t)
 
-	for _, uc := range vitrinUclari() {
-		op := islem(t, yollar, uc.metod, uc.yol)
+	for _, endpoint := range storeEndpoints() {
+		op := operation(t, paths, endpoint.method, endpoint.path)
 
 		params, _ := op["parameters"].([]any)
-		for _, ham := range params {
-			p, ok := ham.(map[string]any)
+		for _, raw := range params {
+			p, ok := raw.(map[string]any)
 			require.True(t, ok)
 
 			assert.Equal(t, "path", p["in"],
-				"%s yalnızca yol parametresi taşımalı; %q sorgu parametresi okunmuyor",
-				uc.anahtar(), p["name"])
+				"%s has to carry only path parameters; the %q query parameter is not read",
+				endpoint.key(), p["name"])
 		}
 	}
 }

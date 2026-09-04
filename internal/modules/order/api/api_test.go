@@ -20,11 +20,12 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/order/service"
 )
 
-// fakeOrders api.Orders'ın test karşılığıdır.
+// fakeOrders is the test counterpart of api.Orders.
 //
-// HTTP katmanının sorumluluğu dardır: gövdeyi çöz, servisi çağır, zarfı ve
-// status kodunu yaz. Sahte servis bu yüzden iş mantığı taşımaz; yalnızca
-// kaydedilen çağrıyı ve önceden ayarlanmış yanıtı döner.
+// The responsibility of the HTTP layer is narrow: decode the body, call the
+// service, write the envelope and the status code. This is why the fake service
+// carries no business logic; it only returns the recorded call and the response
+// set up in advance.
 type fakeOrders struct {
 	order    models.Order
 	detail   models.OrderDetail
@@ -35,11 +36,11 @@ type fakeOrders struct {
 	claim    models.Claim
 	returns  []models.Return
 
-	// err ayarlanırsa tüm metotlar bu hatayı döner; hata eşlemesini sınamak
-	// için kullanılır.
+	// err, when set, makes every method return this error; it is used to
+	// exercise the error mapping.
 	err error
 
-	// Son çağrının argümanları.
+	// The arguments of the last call.
 	listInput     service.ListOrdersInput
 	returnInput   service.CreateReturnInput
 	exchangeInput service.CreateExchangeInput
@@ -48,128 +49,129 @@ type fakeOrders struct {
 	gotOrderID    string
 	gotChildID    string
 	gotReason     string
-	// calls çağrılan metotları SIRASIYLA kaydeder; iptal ucunun okumayı da
-	// yaptığını doğrulamak için gerekir.
+	// calls records the called methods IN ORDER; it is needed to verify that
+	// the cancel endpoint performs the read as well.
 	calls []string
 }
 
-// Sahtenin handler'ın beklediği yüzeyi karşıladığı derleme zamanında doğrulanır.
+// That the fake satisfies the surface the handler expects is verified at
+// compile time.
 var _ api.Orders = (*fakeOrders)(nil)
 
-// kaydet çağrıyı sıraya ekler.
-func (f *fakeOrders) kaydet(name string) { f.calls = append(f.calls, name) }
+// record appends the call to the sequence.
+func (f *fakeOrders) record(name string) { f.calls = append(f.calls, name) }
 
-// GetOrder siparişi çocuklarıyla döner.
+// GetOrder returns the order with its children.
 func (f *fakeOrders) GetOrder(_ context.Context, orderID string) (models.OrderDetail, error) {
-	f.kaydet("GetOrder")
+	f.record("GetOrder")
 	f.gotOrderID = orderID
 	return f.detail, f.err
 }
 
-// ListOrders siparişleri döner.
+// ListOrders returns the orders.
 func (f *fakeOrders) ListOrders(_ context.Context, in service.ListOrdersInput) ([]models.Order, int64, error) {
-	f.kaydet("ListOrders")
+	f.record("ListOrders")
 	f.listInput = in
 	return f.orders, f.count, f.err
 }
 
-// CancelOrder siparişi iptal eder.
+// CancelOrder cancels the order.
 func (f *fakeOrders) CancelOrder(_ context.Context, orderID, reason string) error {
-	f.kaydet("CancelOrder")
+	f.record("CancelOrder")
 	f.gotOrderID = orderID
 	f.gotReason = reason
 	return f.err
 }
 
-// CompleteOrder siparişi tamamlar.
+// CompleteOrder completes the order.
 func (f *fakeOrders) CompleteOrder(_ context.Context, orderID string) (models.Order, error) {
-	f.kaydet("CompleteOrder")
+	f.record("CompleteOrder")
 	f.gotOrderID = orderID
 	return f.order, f.err
 }
 
-// ArchiveOrder siparişi arşivler.
+// ArchiveOrder archives the order.
 func (f *fakeOrders) ArchiveOrder(_ context.Context, orderID string) (models.Order, error) {
-	f.kaydet("ArchiveOrder")
+	f.record("ArchiveOrder")
 	f.gotOrderID = orderID
 	return f.order, f.err
 }
 
-// CreateReturn iade kaydı açar.
+// CreateReturn opens a return record.
 func (f *fakeOrders) CreateReturn(_ context.Context, in service.CreateReturnInput) (models.Return, error) {
-	f.kaydet("CreateReturn")
+	f.record("CreateReturn")
 	f.returnInput = in
 	return f.ret, f.err
 }
 
-// GetReturn iade kaydını döner.
+// GetReturn returns the return record.
 func (f *fakeOrders) GetReturn(_ context.Context, returnID string) (models.Return, error) {
-	f.kaydet("GetReturn")
+	f.record("GetReturn")
 	f.gotChildID = returnID
 	return f.ret, f.err
 }
 
-// ListReturns iade kayıtlarını döner.
+// ListReturns returns the return records.
 func (f *fakeOrders) ListReturns(_ context.Context, orderID string, page service.Page) ([]models.Return, int64, error) {
-	f.kaydet("ListReturns")
+	f.record("ListReturns")
 	f.gotOrderID = orderID
 	f.page = page
 	return f.returns, f.count, f.err
 }
 
-// CreateExchange değişim kaydı açar.
+// CreateExchange opens an exchange record.
 func (f *fakeOrders) CreateExchange(_ context.Context, in service.CreateExchangeInput) (models.Exchange, error) {
-	f.kaydet("CreateExchange")
+	f.record("CreateExchange")
 	f.exchangeInput = in
 	return f.exchange, f.err
 }
 
-// GetExchange değişim kaydını döner.
+// GetExchange returns the exchange record.
 func (f *fakeOrders) GetExchange(_ context.Context, exchangeID string) (models.Exchange, error) {
-	f.kaydet("GetExchange")
+	f.record("GetExchange")
 	f.gotChildID = exchangeID
 	return f.exchange, f.err
 }
 
-// ListExchanges değişim kayıtlarını döner.
+// ListExchanges returns the exchange records.
 func (f *fakeOrders) ListExchanges(_ context.Context, orderID string, page service.Page) ([]models.Exchange, int64, error) {
-	f.kaydet("ListExchanges")
+	f.record("ListExchanges")
 	f.gotOrderID = orderID
 	f.page = page
 	return nil, f.count, f.err
 }
 
-// CreateClaim hasar kaydı açar.
+// CreateClaim opens a claim record.
 func (f *fakeOrders) CreateClaim(_ context.Context, in service.CreateClaimInput) (models.Claim, error) {
-	f.kaydet("CreateClaim")
+	f.record("CreateClaim")
 	f.claimInput = in
 	return f.claim, f.err
 }
 
-// GetClaim hasar kaydını döner.
+// GetClaim returns the claim record.
 func (f *fakeOrders) GetClaim(_ context.Context, claimID string) (models.Claim, error) {
-	f.kaydet("GetClaim")
+	f.record("GetClaim")
 	f.gotChildID = claimID
 	return f.claim, f.err
 }
 
-// ListClaims hasar kayıtlarını döner.
+// ListClaims returns the claim records.
 func (f *fakeOrders) ListClaims(_ context.Context, orderID string, page service.Page) ([]models.Claim, int64, error) {
-	f.kaydet("ListClaims")
+	f.record("ListClaims")
 	f.gotOrderID = orderID
 	f.page = page
 	return nil, f.count, f.err
 }
 
-// ornekSiparis testlerde kullanılan sipariş modelidir.
-func ornekSiparis() models.Order {
+// sampleOrder is the order model used in the tests.
+func sampleOrder() models.Order {
 	return models.Order{
 		ID:            "order_1",
 		DisplayID:     1042,
 		Status:        models.OrderPending,
 		RegionID:      "reg_1",
 		CustomerID:    "cus_1",
-		Email:         "musteri@ornek.com",
+		Email:         "customer@example.com",
 		CurrencyCode:  "TRY",
 		CartID:        "cart_1",
 		Subtotal:      3000,
@@ -182,13 +184,13 @@ func ornekSiparis() models.Order {
 	}
 }
 
-// ornekDetay testlerde kullanılan sipariş ayrıntısıdır.
-func ornekDetay() models.OrderDetail {
+// sampleDetail is the order detail used in the tests.
+func sampleDetail() models.OrderDetail {
 	return models.OrderDetail{
-		Order: ornekSiparis(),
+		Order: sampleOrder(),
 		Items: []models.OrderLineItem{{
 			ID: "oli_1", OrderID: "order_1", VariantID: "variant_1",
-			Title: "Kırmızı Tişört", Quantity: 3, UnitPrice: 1000,
+			Title: "Red T-Shirt", Quantity: 3, UnitPrice: 1000,
 			Subtotal: 3000, TaxTotal: 600, Total: 3600,
 		}},
 		Summary: models.OrderSummary{
@@ -197,23 +199,24 @@ func ornekDetay() models.OrderDetail {
 	}
 }
 
-// yeniRouter sahte servisle bağlanmış bir router üretir.
-func yeniRouter(svc api.Orders) chi.Router {
+// newRouter produces a router wired to the fake service.
+func newRouter(svc api.Orders) chi.Router {
 	r := chi.NewRouter()
 	api.New(svc).Routes(r)
 	return r
 }
 
-// yonetici testlerin varsayılan kimliğidir: tam yetkili bir yönetim
-// kullanıcısı.
+// adminPrincipal is the default identity of the tests: a fully privileged admin
+// user.
 //
-// Router burada DOĞRUDAN kuruluyor, yani corehttp.RequireAdmin zincirde yok ve
-// context'e kimliği koyan kimse yok. Yönetim uçları artık
-// corehttp.RequireScope ile korunduğu için kimliksiz istek 401 döner ve
-// testlerin asıl doğruladığı davranışa (zarf, status eşlemesi, gövde çözümü)
-// hiç sıra gelmezdi. Bu yüzden kimlik testin kendisi tarafından eklenir;
-// testlerin NE doğruladığı değişmez, yalnızca eksik olan kimlik tamamlanır.
-func yonetici() corehttp.Principal {
+// The router is built DIRECTLY here, that is, corehttp.RequireAdmin is not in
+// the chain and there is nobody to put the principal into the context. Because
+// the admin endpoints are now protected with corehttp.RequireScope, a request
+// without a principal returns 401 and the behavior the tests actually verify
+// (envelope, status mapping, body decoding) would never get its turn. This is
+// why the principal is added by the test itself; WHAT the tests verify does not
+// change, only the missing identity is supplied.
+func adminPrincipal() corehttp.Principal {
 	return corehttp.Principal{
 		ID:     "user_test",
 		Kind:   "user",
@@ -221,19 +224,21 @@ func yonetici() corehttp.Principal {
 	}
 }
 
-// istek verilen yolu tam yetkili bir kimlikle çağırır ve yanıtı döner.
-func istek(t *testing.T, r chi.Router, method, path, body string) *httptest.ResponseRecorder {
+// doRequest calls the given path with a fully privileged principal and returns
+// the response.
+func doRequest(t *testing.T, r chi.Router, method, path, body string) *httptest.ResponseRecorder {
 	t.Helper()
 
-	return kimlikliIstek(t, r, method, path, body, yonetici())
+	return doRequestAs(t, r, method, path, body, adminPrincipal())
 }
 
-// kimlikliIstek verilen yolu belirtilen kimlikle çağırır ve yanıtı döner.
+// doRequestAs calls the given path with the specified principal and returns the
+// response.
 //
-// Yetki denetimini sınayan testler için ayrıdır: [istek] her zaman tam yetkili
-// çağırır, burada dar yetkili bir kimlik verilebilir.
-func kimlikliIstek(
-	t *testing.T, r chi.Router, method, path, body string, kimlik corehttp.Principal,
+// It is separate for the tests that exercise scope enforcement: [doRequest]
+// always calls fully privileged, here a narrowly scoped principal can be given.
+func doRequestAs(
+	t *testing.T, r chi.Router, method, path, body string, principal corehttp.Principal,
 ) *httptest.ResponseRecorder {
 	t.Helper()
 
@@ -244,14 +249,14 @@ func kimlikliIstek(
 		reader = strings.NewReader(body)
 	}
 	req := httptest.NewRequest(method, path, reader)
-	req = req.WithContext(corehttp.WithPrincipal(req.Context(), kimlik))
+	req = req.WithContext(corehttp.WithPrincipal(req.Context(), principal))
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 	return rec
 }
 
-// coz yanıt gövdesini haritaya çözer.
-func coz(t *testing.T, rec *httptest.ResponseRecorder) map[string]any {
+// decodeResponse decodes the response body into a map.
+func decodeResponse(t *testing.T, rec *httptest.ResponseRecorder) map[string]any {
 	t.Helper()
 
 	var out map[string]any
@@ -259,96 +264,102 @@ func coz(t *testing.T, rec *httptest.ResponseRecorder) map[string]any {
 	return out
 }
 
-// TestSiparisOlusturmaUcuYok siparişin HTTP'den açılamadığını doğrular.
+// TestOrderCreationEndpointDoesNotExist verifies that an order cannot be opened
+// over HTTP.
 //
-// Uç açık olsaydı bir istemci kendi belirlediği toplamla — örneğin sıfır
-// tutarla — sipariş yazabilirdi; tutarların GERÇEK fiyatlara karşılık geldiğini
-// yalnızca complete_cart workflow'u güvence altına alabilir.
-func TestSiparisOlusturmaUcuYok(t *testing.T) {
+// Had the endpoint been open, a client could have written an order with a total
+// it determined itself — with a total of zero, for example; that the amounts
+// correspond to the REAL prices can only be guaranteed by the complete_cart
+// workflow.
+func TestOrderCreationEndpointDoesNotExist(t *testing.T) {
 	svc := &fakeOrders{}
-	r := yeniRouter(svc)
+	r := newRouter(svc)
 
-	// /admin/v1/orders yalnızca GET tanımlıdır; POST'u chi 405 ile geri çevirir.
-	rec := istek(t, r, http.MethodPost, "/admin/v1/orders", `{"region_id":"reg_1"}`)
+	// Only GET is defined on /admin/v1/orders; chi turns the POST away with 405.
+	rec := doRequest(t, r, http.MethodPost, "/admin/v1/orders", `{"region_id":"reg_1"}`)
 	assert.Equal(t, http.StatusMethodNotAllowed, rec.Code)
 
-	// Müşteri tarafında bu yolun hiçbir metodu yoktur; sonuç 404'tür.
-	rec = istek(t, r, http.MethodPost, "/store/v1/orders", `{"region_id":"reg_1"}`)
+	// On the customer side this path has no method at all; the result is 404.
+	rec = doRequest(t, r, http.MethodPost, "/store/v1/orders", `{"region_id":"reg_1"}`)
 	assert.Equal(t, http.StatusNotFound, rec.Code)
 
-	assert.Empty(t, svc.calls, "servise hiç çağrı gitmemeli")
+	assert.Empty(t, svc.calls, "no call should reach the service")
 }
 
-// TestStoreListeUcuYok müşteri tarafında liste ucu olmadığını doğrular.
+// TestStoreListEndpointDoesNotExist verifies that there is no list endpoint on
+// the customer side.
 //
-// Liste ucu, tek bir sipariş kimliğini bilmeyi tüm siparişleri okumaya
-// çevirirdi; yetkilendirme Faz 8'e kaldığı için bu kapı bugün hiç açılmaz.
-func TestStoreListeUcuYok(t *testing.T) {
+// A list endpoint would turn knowing a single order id into reading every
+// order; because authorization is left to Phase 8, this door is not opened at
+// all today.
+func TestStoreListEndpointDoesNotExist(t *testing.T) {
 	svc := &fakeOrders{}
-	r := yeniRouter(svc)
+	r := newRouter(svc)
 
-	rec := istek(t, r, http.MethodGet, "/store/v1/orders", "")
+	rec := doRequest(t, r, http.MethodGet, "/store/v1/orders", "")
 
 	assert.Equal(t, http.StatusNotFound, rec.Code)
 	assert.Empty(t, svc.calls)
 }
 
-// TestAdminSiparisOkuma tekil okuma zarfını doğrular.
-func TestAdminSiparisOkuma(t *testing.T) {
-	svc := &fakeOrders{detail: ornekDetay()}
-	r := yeniRouter(svc)
+// TestAdminGetOrderEnvelope verifies the envelope of the single read.
+func TestAdminGetOrderEnvelope(t *testing.T) {
+	svc := &fakeOrders{detail: sampleDetail()}
+	r := newRouter(svc)
 
-	rec := istek(t, r, http.MethodGet, "/admin/v1/orders/order_1", "")
+	rec := doRequest(t, r, http.MethodGet, "/admin/v1/orders/order_1", "")
 
 	require.Equal(t, http.StatusOK, rec.Code)
 	assert.Equal(t, "order_1", svc.gotOrderID)
 
-	govde := coz(t, rec)
-	veri, ok := govde["data"].(map[string]any)
-	require.True(t, ok, "yanıt data zarfıyla dönmeli")
-	assert.Equal(t, float64(1042), veri["display_id"])
-	assert.Equal(t, "pending", veri["status"])
-	assert.Equal(t, float64(6100), veri["total"])
+	body := decodeResponse(t, rec)
+	data, ok := body["data"].(map[string]any)
+	require.True(t, ok, "the response has to come back in a data envelope")
+	assert.Equal(t, float64(1042), data["display_id"])
+	assert.Equal(t, "pending", data["status"])
+	assert.Equal(t, float64(6100), data["total"])
 
-	satirlar, ok := veri["items"].([]any)
+	items, ok := data["items"].([]any)
 	require.True(t, ok)
-	assert.Len(t, satirlar, 1)
+	assert.Len(t, items, 1)
 
-	ozet, ok := veri["summary"].(map[string]any)
+	summary, ok := data["summary"].(map[string]any)
 	require.True(t, ok)
-	assert.Equal(t, float64(6100), ozet["paid_total"])
-	assert.Equal(t, float64(0), ozet["outstanding"],
-		"kalan tutar türetilmiş olarak sunulmalı")
+	assert.Equal(t, float64(6100), summary["paid_total"])
+	assert.Equal(t, float64(0), summary["outstanding"],
+		"the outstanding amount has to be presented as derived")
 }
 
-// TestStoreSiparisOkuma müşteri ucunun aynı zarfı döndürdüğünü doğrular.
-func TestStoreSiparisOkuma(t *testing.T) {
-	svc := &fakeOrders{detail: ornekDetay()}
-	r := yeniRouter(svc)
+// TestStoreGetOrderReturnsSameEnvelope verifies that the customer endpoint
+// returns the same envelope.
+func TestStoreGetOrderReturnsSameEnvelope(t *testing.T) {
+	svc := &fakeOrders{detail: sampleDetail()}
+	r := newRouter(svc)
 
-	rec := istek(t, r, http.MethodGet, "/store/v1/orders/order_1", "")
+	rec := doRequest(t, r, http.MethodGet, "/store/v1/orders/order_1", "")
 
 	require.Equal(t, http.StatusOK, rec.Code)
 	assert.Equal(t, []string{"GetOrder"}, svc.calls)
 }
 
-// TestAdminSiparisListesi liste zarfını ve süzgeçleri doğrular (plan Bölüm 8).
-func TestAdminSiparisListesi(t *testing.T) {
-	svc := &fakeOrders{orders: []models.Order{ornekSiparis()}, count: 7}
-	r := yeniRouter(svc)
+// TestAdminListOrders verifies the list envelope and the filters (plan
+// Section 8).
+func TestAdminListOrders(t *testing.T) {
+	svc := &fakeOrders{orders: []models.Order{sampleOrder()}, count: 7}
+	r := newRouter(svc)
 
-	rec := istek(t, r, http.MethodGet,
+	rec := doRequest(t, r, http.MethodGet,
 		"/admin/v1/orders?limit=2&offset=4&customer_id=cus_1&region_id=reg_1&status=pending", "")
 
 	require.Equal(t, http.StatusOK, rec.Code)
 
-	govde := coz(t, rec)
-	assert.Equal(t, float64(7), govde["count"], "count FİLTRENİN toplamı olmalı")
-	assert.Equal(t, float64(4), govde["offset"])
-	assert.Equal(t, float64(2), govde["limit"])
-	veri, ok := govde["data"].([]any)
+	body := decodeResponse(t, rec)
+	assert.Equal(t, float64(7), body["count"], "count has to be the total of the FILTER")
+	assert.Equal(t, float64(4), body["offset"])
+	assert.Equal(t, float64(2), body["limit"])
+	data, ok := body["data"].([]any)
 	require.True(t, ok)
-	assert.Len(t, veri, 1)
+	assert.Len(t, data, 1)
 
 	require.NotNil(t, svc.listInput.CustomerID)
 	assert.Equal(t, "cus_1", *svc.listInput.CustomerID)
@@ -360,187 +371,191 @@ func TestAdminSiparisListesi(t *testing.T) {
 	assert.Equal(t, int64(4), svc.listInput.Page.Offset)
 }
 
-// TestAdminSiparisListesiVarsayilanLimit limit verilmeyen istekte yanıtın
-// GERÇEKTEN uygulanan sınırı gösterdiğini doğrular.
-func TestAdminSiparisListesiVarsayilanLimit(t *testing.T) {
+// TestAdminListOrdersDefaultLimit verifies that on a request without a limit the
+// response shows the limit that is REALLY applied.
+func TestAdminListOrdersDefaultLimit(t *testing.T) {
 	svc := &fakeOrders{}
-	r := yeniRouter(svc)
+	r := newRouter(svc)
 
-	rec := istek(t, r, http.MethodGet, "/admin/v1/orders", "")
+	rec := doRequest(t, r, http.MethodGet, "/admin/v1/orders", "")
 
 	require.Equal(t, http.StatusOK, rec.Code)
-	assert.Equal(t, float64(service.DefaultLimit), coz(t, rec)["limit"])
+	assert.Equal(t, float64(service.DefaultLimit), decodeResponse(t, rec)["limit"])
 	assert.Equal(t, service.DefaultLimit, svc.listInput.Page.Limit)
 }
 
-// TestAdminSiparisListesiBozukParametre sayısal olmayan sayfalamayı reddeder.
-func TestAdminSiparisListesiBozukParametre(t *testing.T) {
+// TestAdminListOrdersMalformedParameter rejects non-numeric paging.
+func TestAdminListOrdersMalformedParameter(t *testing.T) {
 	svc := &fakeOrders{}
-	r := yeniRouter(svc)
+	r := newRouter(svc)
 
-	rec := istek(t, r, http.MethodGet, "/admin/v1/orders?limit=cok", "")
+	rec := doRequest(t, r, http.MethodGet, "/admin/v1/orders?limit=many", "")
 
 	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code)
-	assert.Empty(t, svc.calls, "geçersiz parametrede servise gidilmemeli")
+	assert.Empty(t, svc.calls, "on an invalid parameter the service must not be reached")
 }
 
-// TestAdminIptalGovdesizCalisir gerekçesiz iptalin kabul edildiğini doğrular.
-func TestAdminIptalGovdesizCalisir(t *testing.T) {
-	svc := &fakeOrders{detail: ornekDetay()}
-	r := yeniRouter(svc)
+// TestAdminCancelWorksWithoutBody verifies that a cancel without a reason is
+// accepted.
+func TestAdminCancelWorksWithoutBody(t *testing.T) {
+	svc := &fakeOrders{detail: sampleDetail()}
+	r := newRouter(svc)
 
-	rec := istek(t, r, http.MethodPost, "/admin/v1/orders/order_1/cancel", "")
+	rec := doRequest(t, r, http.MethodPost, "/admin/v1/orders/order_1/cancel", "")
 
 	require.Equal(t, http.StatusOK, rec.Code)
 	assert.Equal(t, "", svc.gotReason)
 	assert.Equal(t, []string{"CancelOrder", "GetOrder"}, svc.calls,
-		"iptalden sonra siparişin GÜNCEL hâli okunmalı")
+		"after the cancel the CURRENT state of the order has to be read")
 }
 
-// TestAdminIptalGerekceyiGecirir gövdedeki gerekçenin servise ulaştığını
-// doğrular.
-func TestAdminIptalGerekceyiGecirir(t *testing.T) {
-	svc := &fakeOrders{detail: ornekDetay()}
-	r := yeniRouter(svc)
+// TestAdminCancelPassesReason verifies that the reason in the body reaches the
+// service.
+func TestAdminCancelPassesReason(t *testing.T) {
+	svc := &fakeOrders{detail: sampleDetail()}
+	r := newRouter(svc)
 
-	rec := istek(t, r, http.MethodPost, "/admin/v1/orders/order_1/cancel",
-		`{"reason":"ödeme reddedildi"}`)
+	rec := doRequest(t, r, http.MethodPost, "/admin/v1/orders/order_1/cancel",
+		`{"reason":"payment declined"}`)
 
 	require.Equal(t, http.StatusOK, rec.Code)
-	assert.Equal(t, "ödeme reddedildi", svc.gotReason)
+	assert.Equal(t, "payment declined", svc.gotReason)
 }
 
-// TestAdminIptalBilinmeyenAlaniReddeder sessizce yutulan alan olmadığını
-// doğrular.
-func TestAdminIptalBilinmeyenAlaniReddeder(t *testing.T) {
-	svc := &fakeOrders{detail: ornekDetay()}
-	r := yeniRouter(svc)
+// TestAdminCancelRejectsUnknownField verifies that no field is silently
+// swallowed.
+func TestAdminCancelRejectsUnknownField(t *testing.T) {
+	svc := &fakeOrders{detail: sampleDetail()}
+	r := newRouter(svc)
 
-	rec := istek(t, r, http.MethodPost, "/admin/v1/orders/order_1/cancel",
-		`{"sebep":"yazım hatası"}`)
+	rec := doRequest(t, r, http.MethodPost, "/admin/v1/orders/order_1/cancel",
+		`{"resaon":"a typo"}`)
 
 	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code)
 	assert.Empty(t, svc.calls)
 }
 
-// TestAdminTamamlaVeArsivle geçiş uçlarının servise gittiğini doğrular.
-func TestAdminTamamlaVeArsivle(t *testing.T) {
-	testler := map[string]struct {
-		yol   string
-		cagri string
+// TestAdminCompleteAndArchive verifies that the transition endpoints reach the
+// service.
+func TestAdminCompleteAndArchive(t *testing.T) {
+	cases := map[string]struct {
+		path string
+		call string
 	}{
-		"tamamla": {yol: "/admin/v1/orders/order_1/complete", cagri: "CompleteOrder"},
-		"arşivle": {yol: "/admin/v1/orders/order_1/archive", cagri: "ArchiveOrder"},
+		"complete": {path: "/admin/v1/orders/order_1/complete", call: "CompleteOrder"},
+		"archive":  {path: "/admin/v1/orders/order_1/archive", call: "ArchiveOrder"},
 	}
 
-	for ad, tc := range testler {
-		t.Run(ad, func(t *testing.T) {
-			svc := &fakeOrders{detail: ornekDetay()}
-			r := yeniRouter(svc)
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			svc := &fakeOrders{detail: sampleDetail()}
+			r := newRouter(svc)
 
-			rec := istek(t, r, http.MethodPost, tc.yol, "")
+			rec := doRequest(t, r, http.MethodPost, tc.path, "")
 
 			require.Equal(t, http.StatusOK, rec.Code)
-			assert.Equal(t, []string{tc.cagri, "GetOrder"}, svc.calls)
+			assert.Equal(t, []string{tc.call, "GetOrder"}, svc.calls)
 		})
 	}
 }
 
-// TestHataSiniflariStatusKodunaCevrilir handler'ın status kodu SEÇMEDİĞİNİ,
-// core/errors sınıfının eşlendiğini doğrular (plan Bölüm 8).
-func TestHataSiniflariStatusKodunaCevrilir(t *testing.T) {
-	testler := map[string]struct {
+// TestErrorKindsMapToStatusCodes verifies that the handler DOES NOT CHOOSE the
+// status code, that the core/errors kind is mapped (plan Section 8).
+func TestErrorKindsMapToStatusCodes(t *testing.T) {
+	cases := map[string]struct {
 		err    error
 		status int
 	}{
-		"bulunamadı": {err: errors.NotFound("order_not_found", "yok"), status: http.StatusNotFound},
-		"çakışma":    {err: errors.Conflict("order_not_pending", "olmaz"), status: http.StatusConflict},
-		"geçersiz":   {err: errors.Invalid("order_invalid_input", "hatalı"), status: http.StatusUnprocessableEntity},
-		"iç hata":    {err: errors.Internal("order_query_failed", "patladı"), status: http.StatusInternalServerError},
+		"not found": {err: errors.NotFound("order_not_found", "missing"), status: http.StatusNotFound},
+		"conflict":  {err: errors.Conflict("order_not_pending", "not allowed"), status: http.StatusConflict},
+		"invalid":   {err: errors.Invalid("order_invalid_input", "bad input"), status: http.StatusUnprocessableEntity},
+		"internal":  {err: errors.Internal("order_query_failed", "blew up"), status: http.StatusInternalServerError},
 	}
 
-	for ad, tc := range testler {
-		t.Run(ad, func(t *testing.T) {
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
 			svc := &fakeOrders{err: tc.err}
-			r := yeniRouter(svc)
+			r := newRouter(svc)
 
-			rec := istek(t, r, http.MethodGet, "/admin/v1/orders/order_1", "")
+			rec := doRequest(t, r, http.MethodGet, "/admin/v1/orders/order_1", "")
 
 			assert.Equal(t, tc.status, rec.Code)
-			govde := coz(t, rec)
-			_, ok := govde["error"].(map[string]any)
-			assert.True(t, ok, "hata gövdesi error zarfıyla dönmeli")
+			body := decodeResponse(t, rec)
+			_, ok := body["error"].(map[string]any)
+			assert.True(t, ok, "the error body has to come back in an error envelope")
 		})
 	}
 }
 
-// TestAdminIadeOlusturma iade ucunun gövdesini ve status kodunu doğrular.
-func TestAdminIadeOlusturma(t *testing.T) {
+// TestAdminCreateReturn verifies the body and the status code of the return
+// endpoint.
+func TestAdminCreateReturn(t *testing.T) {
 	svc := &fakeOrders{ret: models.Return{
 		ID: "ret_1", OrderID: "order_1", Status: models.ReturnRequested, RefundAmount: 3600,
 	}}
-	r := yeniRouter(svc)
+	r := newRouter(svc)
 
-	rec := istek(t, r, http.MethodPost, "/admin/v1/orders/order_1/returns",
-		`{"refund_amount":3600,"reason":"beden uymadı","note":"","metadata":{"kanal":"destek"}}`)
+	rec := doRequest(t, r, http.MethodPost, "/admin/v1/orders/order_1/returns",
+		`{"refund_amount":3600,"reason":"the size did not fit","note":"","metadata":{"channel":"support"}}`)
 
 	require.Equal(t, http.StatusCreated, rec.Code)
 	assert.Equal(t, "order_1", svc.returnInput.OrderID)
 	assert.Equal(t, int64(3600), svc.returnInput.RefundAmount)
-	assert.Equal(t, "beden uymadı", svc.returnInput.Reason)
-	assert.Equal(t, map[string]any{"kanal": "destek"}, svc.returnInput.Metadata)
+	assert.Equal(t, "the size did not fit", svc.returnInput.Reason)
+	assert.Equal(t, map[string]any{"channel": "support"}, svc.returnInput.Metadata)
 
-	veri, ok := coz(t, rec)["data"].(map[string]any)
+	data, ok := decodeResponse(t, rec)["data"].(map[string]any)
 	require.True(t, ok)
-	assert.Equal(t, "ret_1", veri["id"])
-	assert.Equal(t, "requested", veri["status"])
+	assert.Equal(t, "ret_1", data["id"])
+	assert.Equal(t, "requested", data["status"])
 }
 
-// TestAdminIadeListesi liste zarfını doğrular.
-func TestAdminIadeListesi(t *testing.T) {
+// TestAdminListReturns verifies the list envelope.
+func TestAdminListReturns(t *testing.T) {
 	svc := &fakeOrders{
 		returns: []models.Return{{ID: "ret_1", OrderID: "order_1", Status: models.ReturnRequested}},
 		count:   1,
 	}
-	r := yeniRouter(svc)
+	r := newRouter(svc)
 
-	rec := istek(t, r, http.MethodGet, "/admin/v1/orders/order_1/returns?limit=10", "")
+	rec := doRequest(t, r, http.MethodGet, "/admin/v1/orders/order_1/returns?limit=10", "")
 
 	require.Equal(t, http.StatusOK, rec.Code)
 	assert.Equal(t, int64(10), svc.page.Limit)
-	govde := coz(t, rec)
-	assert.Equal(t, float64(1), govde["count"])
+	body := decodeResponse(t, rec)
+	assert.Equal(t, float64(1), body["count"])
 }
 
-// TestAdminSatisSonrasiTekilOkuma üç tekil okuma ucunun kaydı kimliğiyle
-// getirdiğini doğrular.
+// TestAdminAfterSalesSingleRead verifies that the three single-read endpoints
+// fetch the record by its id.
 //
-// Yoldaki sipariş kimliği kaydın SAHİBİNİ doğrulamaz; servise yalnızca kaydın
-// kendi kimliği gider (bkz. [api.Handler.adminGetReturn] gerekçesi).
-func TestAdminSatisSonrasiTekilOkuma(t *testing.T) {
-	testler := map[string]struct {
-		yol    string
-		cagri  string
-		kimlik string
-		alan   string
-		deger  any
+// The order id in the path does not verify the OWNER of the record; only the
+// record's own id goes to the service (see the rationale of
+// [api.Handler.adminGetReturn]).
+func TestAdminAfterSalesSingleRead(t *testing.T) {
+	cases := map[string]struct {
+		path  string
+		call  string
+		id    string
+		field string
+		value any
 	}{
-		"iade": {
-			yol: "/admin/v1/orders/order_1/returns/ret_1", cagri: "GetReturn",
-			kimlik: "ret_1", alan: "status", deger: "requested",
+		"return": {
+			path: "/admin/v1/orders/order_1/returns/ret_1", call: "GetReturn",
+			id: "ret_1", field: "status", value: "requested",
 		},
-		"değişim": {
-			yol: "/admin/v1/orders/order_1/exchanges/exch_1", cagri: "GetExchange",
-			kimlik: "exch_1", alan: "difference_due", deger: float64(-500),
+		"exchange": {
+			path: "/admin/v1/orders/order_1/exchanges/exch_1", call: "GetExchange",
+			id: "exch_1", field: "difference_due", value: float64(-500),
 		},
-		"hasar": {
-			yol: "/admin/v1/orders/order_1/claims/claim_1", cagri: "GetClaim",
-			kimlik: "claim_1", alan: "type", deger: "refund",
+		"claim": {
+			path: "/admin/v1/orders/order_1/claims/claim_1", call: "GetClaim",
+			id: "claim_1", field: "type", value: "refund",
 		},
 	}
 
-	for ad, tc := range testler {
-		t.Run(ad, func(t *testing.T) {
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
 			svc := &fakeOrders{
 				ret: models.Return{
 					ID: "ret_1", OrderID: "order_1", Status: models.ReturnRequested,
@@ -554,173 +569,175 @@ func TestAdminSatisSonrasiTekilOkuma(t *testing.T) {
 					Status: models.ClaimRequested,
 				},
 			}
-			r := yeniRouter(svc)
+			r := newRouter(svc)
 
-			rec := istek(t, r, http.MethodGet, tc.yol, "")
+			rec := doRequest(t, r, http.MethodGet, tc.path, "")
 
 			require.Equal(t, http.StatusOK, rec.Code)
-			assert.Equal(t, []string{tc.cagri}, svc.calls)
-			assert.Equal(t, tc.kimlik, svc.gotChildID)
+			assert.Equal(t, []string{tc.call}, svc.calls)
+			assert.Equal(t, tc.id, svc.gotChildID)
 
-			veri, ok := coz(t, rec)["data"].(map[string]any)
+			data, ok := decodeResponse(t, rec)["data"].(map[string]any)
 			require.True(t, ok)
-			assert.Equal(t, tc.kimlik, veri["id"])
-			assert.Equal(t, tc.deger, veri[tc.alan])
+			assert.Equal(t, tc.id, data["id"])
+			assert.Equal(t, tc.value, data[tc.field])
 		})
 	}
 }
 
-// TestAdminSatisSonrasiTekilOkumaBulunamadi eksik kaydın 404 döndüğünü
-// doğrular.
-func TestAdminSatisSonrasiTekilOkumaBulunamadi(t *testing.T) {
-	svc := &fakeOrders{err: errors.NotFound("order_return_not_found", "iade kaydı bulunamadı")}
-	r := yeniRouter(svc)
+// TestAdminAfterSalesSingleReadNotFound verifies that a missing record returns
+// 404.
+func TestAdminAfterSalesSingleReadNotFound(t *testing.T) {
+	svc := &fakeOrders{err: errors.NotFound("order_return_not_found", "return record not found")}
+	r := newRouter(svc)
 
-	rec := istek(t, r, http.MethodGet, "/admin/v1/orders/order_1/returns/ret_YOK", "")
+	rec := doRequest(t, r, http.MethodGet, "/admin/v1/orders/order_1/returns/ret_MISSING", "")
 
 	assert.Equal(t, http.StatusNotFound, rec.Code)
 }
 
-// TestAdminDegisimOlusturma değişim ucunda NEGATİF farkın taşındığını doğrular.
-func TestAdminDegisimOlusturma(t *testing.T) {
+// TestAdminCreateExchange verifies that a NEGATIVE difference is carried on the
+// exchange endpoint.
+func TestAdminCreateExchange(t *testing.T) {
 	svc := &fakeOrders{exchange: models.Exchange{
 		ID: "exch_1", OrderID: "order_1", Status: models.ExchangeRequested, DifferenceDue: -500,
 	}}
-	r := yeniRouter(svc)
+	r := newRouter(svc)
 
-	rec := istek(t, r, http.MethodPost, "/admin/v1/orders/order_1/exchanges",
-		`{"difference_due":-500,"note":"ucuz modelle"}`)
+	rec := doRequest(t, r, http.MethodPost, "/admin/v1/orders/order_1/exchanges",
+		`{"difference_due":-500,"note":"with the cheaper model"}`)
 
 	require.Equal(t, http.StatusCreated, rec.Code)
 	assert.Equal(t, int64(-500), svc.exchangeInput.DifferenceDue)
 
-	veri, ok := coz(t, rec)["data"].(map[string]any)
+	data, ok := decodeResponse(t, rec)["data"].(map[string]any)
 	require.True(t, ok)
-	assert.Equal(t, float64(-500), veri["difference_due"])
+	assert.Equal(t, float64(-500), data["difference_due"])
 }
 
-// TestAdminHasarOlusturmaTuruZorunlu tür alanının boş bırakılamadığını
-// doğrular.
+// TestAdminCreateClaimRequiresType verifies that the type field cannot be left
+// empty.
 //
-// Varsayılan bir tür seçmek, talebin nasıl karşılanacağına istemci adına karar
-// vermek olurdu.
-func TestAdminHasarOlusturmaTuruZorunlu(t *testing.T) {
+// Picking a default type would mean deciding on the client's behalf how the
+// request is to be met.
+func TestAdminCreateClaimRequiresType(t *testing.T) {
 	svc := &fakeOrders{}
-	r := yeniRouter(svc)
+	r := newRouter(svc)
 
-	rec := istek(t, r, http.MethodPost, "/admin/v1/orders/order_1/claims",
+	rec := doRequest(t, r, http.MethodPost, "/admin/v1/orders/order_1/claims",
 		`{"refund_amount":100}`)
 
 	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code)
-	assert.Empty(t, svc.calls, "tür verilmeden servise gidilmemeli")
+	assert.Empty(t, svc.calls, "without a type the service must not be reached")
 }
 
-// TestAdminHasarOlusturma hasar ucunun gövdesini taşıdığını doğrular.
-func TestAdminHasarOlusturma(t *testing.T) {
+// TestAdminCreateClaim verifies that the claim endpoint carries its body.
+func TestAdminCreateClaim(t *testing.T) {
 	svc := &fakeOrders{claim: models.Claim{
 		ID: "claim_1", OrderID: "order_1", Type: models.ClaimRefund,
 		Status: models.ClaimRequested, RefundAmount: 1200,
 	}}
-	r := yeniRouter(svc)
+	r := newRouter(svc)
 
-	rec := istek(t, r, http.MethodPost, "/admin/v1/orders/order_1/claims",
-		`{"type":"refund","refund_amount":1200,"reason":"kırık geldi"}`)
+	rec := doRequest(t, r, http.MethodPost, "/admin/v1/orders/order_1/claims",
+		`{"type":"refund","refund_amount":1200,"reason":"it arrived broken"}`)
 
 	require.Equal(t, http.StatusCreated, rec.Code)
 	assert.Equal(t, models.ClaimRefund, svc.claimInput.Type)
 	assert.Equal(t, int64(1200), svc.claimInput.RefundAmount)
 
-	veri, ok := coz(t, rec)["data"].(map[string]any)
+	data, ok := decodeResponse(t, rec)["data"].(map[string]any)
 	require.True(t, ok)
-	assert.Equal(t, "refund", veri["type"])
+	assert.Equal(t, "refund", data["type"])
 }
 
-// darYetkili yalnızca [api.ScopeRead] taşıyan bir yönetim kimliği döner.
-func darYetkili() corehttp.Principal {
+// readOnlyPrincipal returns an admin identity carrying only [api.ScopeRead].
+func readOnlyPrincipal() corehttp.Principal {
 	return corehttp.Principal{
-		ID:     "user_dar",
+		ID:     "user_readonly",
 		Kind:   "user",
 		Scopes: []string{api.ScopeRead},
 	}
 }
 
-// TestDarYetkiliKimlikYazmaUcunda403Alir okuma yetkisinin yazmaya
-// yetmediğini doğrular.
+// TestReadOnlyPrincipalGets403OnWriteEndpoint verifies that the read scope does
+// not suffice for writing.
 //
-// Buradaki uç bir sipariş İPTALİDİR ve geri alınamaz: ödemesi alınmış bir
-// sipariş kapanır. Yetki denetimi olmasaydı kimlik doğrulama tek başına
-// yetkilendirme yerine geçerdi ve raporlama için verilmiş bir kimlik siparişi
-// iptal edebilirdi.
-func TestDarYetkiliKimlikYazmaUcunda403Alir(t *testing.T) {
+// The endpoint here is an order CANCELLATION and it is irreversible: an order
+// whose payment has been captured gets closed. Without scope enforcement,
+// authentication alone would stand in for authorization and an identity granted
+// for reporting could cancel the order.
+func TestReadOnlyPrincipalGets403OnWriteEndpoint(t *testing.T) {
 	svc := &fakeOrders{}
-	r := yeniRouter(svc)
+	r := newRouter(svc)
 
-	rec := kimlikliIstek(t, r, http.MethodPost, "/admin/v1/orders/order_1/cancel", "", darYetkili())
+	rec := doRequestAs(t, r, http.MethodPost, "/admin/v1/orders/order_1/cancel", "", readOnlyPrincipal())
 
 	require.Equal(t, http.StatusForbidden, rec.Code)
-	assert.Empty(t, svc.calls, "yetki yetmiyorsa servise hiç gidilmemeli")
+	assert.Empty(t, svc.calls, "when the scope is insufficient the service must not be reached at all")
 
-	hata, ok := coz(t, rec)["error"].(map[string]any)
-	require.True(t, ok, "hata zarfı bekleniyordu: %s", rec.Body.String())
-	assert.Equal(t, corehttp.CodeForbidden, hata["code"])
+	errBody, ok := decodeResponse(t, rec)["error"].(map[string]any)
+	require.True(t, ok, "an error envelope was expected: %s", rec.Body.String())
+	assert.Equal(t, corehttp.CodeForbidden, errBody["code"])
 }
 
-// TestDarYetkiliKimlikOkumaUcundaGecer aynı kimliğin okuma ucunda geçtiğini
-// doğrular.
+// TestReadOnlyPrincipalPassesOnReadEndpoint verifies that the same identity
+// passes on a read endpoint.
 //
-// Çift eşlik eden test budur: 403 dönen bir uç, yetki haritasının fazla dar
-// olmasından da kaynaklanabilirdi. Aynı kimliğin okumada geçmesi, reddin
-// yetki AYRIMINDAN geldiğini gösterir.
-func TestDarYetkiliKimlikOkumaUcundaGecer(t *testing.T) {
+// This is the test that accompanies it as a pair: an endpoint returning 403
+// could also have stemmed from the scope map being too narrow. That the same
+// identity passes on the read shows that the refusal comes from the scope
+// DISTINCTION.
+func TestReadOnlyPrincipalPassesOnReadEndpoint(t *testing.T) {
 	svc := &fakeOrders{
 		orders: []models.Order{{ID: "order_1", Status: models.OrderPending}},
 		count:  1,
 	}
-	r := yeniRouter(svc)
+	r := newRouter(svc)
 
-	rec := kimlikliIstek(t, r, http.MethodGet, "/admin/v1/orders", "", darYetkili())
+	rec := doRequestAs(t, r, http.MethodGet, "/admin/v1/orders", "", readOnlyPrincipal())
 
 	require.Equal(t, http.StatusOK, rec.Code)
 	assert.Equal(t, []string{"ListOrders"}, svc.calls)
 }
 
-// TestYetkisizKimlikYonetimUcunuAcamaz yetkileri BOŞ bırakılmış bir yönetim
-// kullanıcısının hiçbir yönetim ucuna erişemediğini doğrular.
+// TestPrincipalWithoutScopesCannotOpenAdminEndpoint verifies that an admin user
+// whose scopes were left EMPTY can reach no admin endpoint.
 //
-// Kimlik geçerlidir — giriş yapabilir, kim olduğu bilinir — ama yetkisi
-// yoktur. Bu ayrım olmasaydı yetki listesi boş bırakılan bir kullanıcı
-// "hiçbir şeye erişemez" sanılırken siparişleri okuyup kapatabilirdi.
-func TestYetkisizKimlikYonetimUcunuAcamaz(t *testing.T) {
+// The identity is valid — it can log in, it is known who it is — but it has no
+// scope. Without this distinction, a user whose scope list was left empty would
+// be believed to "reach nothing" while being able to read and close orders.
+func TestPrincipalWithoutScopesCannotOpenAdminEndpoint(t *testing.T) {
 	svc := &fakeOrders{}
-	yetkisiz := corehttp.Principal{ID: "user_bos", Kind: "user", Scopes: []string{}}
-	r := yeniRouter(svc)
+	noScopes := corehttp.Principal{ID: "user_empty", Kind: "user", Scopes: []string{}}
+	r := newRouter(svc)
 
 	for _, tc := range []struct {
-		ad     string
+		name   string
 		method string
-		yol    string
+		path   string
 	}{
-		{ad: "okuma", method: http.MethodGet, yol: "/admin/v1/orders"},
-		{ad: "yazma", method: http.MethodPost, yol: "/admin/v1/orders/order_1/complete"},
+		{name: "read", method: http.MethodGet, path: "/admin/v1/orders"},
+		{name: "write", method: http.MethodPost, path: "/admin/v1/orders/order_1/complete"},
 	} {
-		t.Run(tc.ad, func(t *testing.T) {
-			rec := kimlikliIstek(t, r, tc.method, tc.yol, "", yetkisiz)
+		t.Run(tc.name, func(t *testing.T) {
+			rec := doRequestAs(t, r, tc.method, tc.path, "", noScopes)
 
 			assert.Equal(t, http.StatusForbidden, rec.Code)
 		})
 	}
-	assert.Empty(t, svc.calls, "yetkisiz kimlik için servise hiç gidilmemeli")
+	assert.Empty(t, svc.calls, "for a principal without scopes the service must not be reached at all")
 }
 
-// TestKimliksizIstek401Alir kimliği hiç olmayan isteğin 403 DEĞİL 401
-// aldığını doğrular.
+// TestRequestWithoutPrincipalGets401 verifies that a request with no identity at
+// all gets 401, NOT 403.
 //
-// Ayrım istemci için anlamlıdır: 401 "kim olduğunu söyle" (kimlikle tekrar
-// dene), 403 "kim olduğunu biliyorum ama yetkin yok" (tekrar denemenin
-// anlamı yok) demektir.
-func TestKimliksizIstek401Alir(t *testing.T) {
+// The distinction is meaningful for the client: 401 means "tell me who you are"
+// (try again with an identity), 403 means "I know who you are but you have no
+// scope" (there is no point in trying again).
+func TestRequestWithoutPrincipalGets401(t *testing.T) {
 	svc := &fakeOrders{}
-	r := yeniRouter(svc)
+	r := newRouter(svc)
 
 	req := httptest.NewRequest(http.MethodGet, "/admin/v1/orders", strings.NewReader(""))
 	rec := httptest.NewRecorder()
@@ -730,18 +747,18 @@ func TestKimliksizIstek401Alir(t *testing.T) {
 	assert.Empty(t, svc.calls)
 }
 
-// TestMagazaUcuYetkiIstemez mağaza ucunun yetki taşımayan bir kimlikle
-// çalıştığını doğrular.
+// TestStorefrontEndpointRequiresNoScope verifies that the storefront endpoint
+// works with an identity that carries no scope.
 //
-// /store/v1'in kimliği publishable anahtardır ve o anahtar tanımı gereği yetki
-// TAŞIMAZ. Yönetim yetkisi eklerken mağaza ucunu da kapatmak, tüm vitrini
-// düşürürdü.
-func TestMagazaUcuYetkiIstemez(t *testing.T) {
+// The identity of /store/v1 is the publishable key and that key by definition
+// CARRIES NO scope. Closing the storefront endpoint too while adding the admin
+// scopes would have brought the whole storefront down.
+func TestStorefrontEndpointRequiresNoScope(t *testing.T) {
 	svc := &fakeOrders{detail: models.OrderDetail{Order: models.Order{ID: "order_1"}}}
-	magaza := corehttp.Principal{ID: "pk_1", Kind: "api_key", Scopes: []string{}}
-	r := yeniRouter(svc)
+	storefront := corehttp.Principal{ID: "pk_1", Kind: "api_key", Scopes: []string{}}
+	r := newRouter(svc)
 
-	rec := kimlikliIstek(t, r, http.MethodGet, "/store/v1/orders/order_1", "", magaza)
+	rec := doRequestAs(t, r, http.MethodGet, "/store/v1/orders/order_1", "", storefront)
 
 	require.Equal(t, http.StatusOK, rec.Code)
 	assert.Equal(t, []string{"GetOrder"}, svc.calls)

@@ -9,152 +9,157 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/auth/service"
 )
 
-// sahteAuth [api.Auth] yüzeyinin testlerdeki uygulamasıdır.
+// fakeAuth is the tests' implementation of the [api.Auth] surface.
 //
-// Sahte, İŞ MANTIĞINI taklit ETMEZ ve etmemelidir: bu dosyanın testleri yetki
-// katmanını sınar, yani handler'a HİÇ ULAŞILMAMASI gereken durumları. Her
-// çağrı sayılır ve testler "403 dönmüş ama servis yine de çalışmış" hâlini bu
-// sayaçla yakalar — yalnızca status koduna bakan bir test, hatayı yazma
-// yapıldıktan sonra döndüren bir handler'ı fark edemezdi.
-type sahteAuth struct {
-	// cagriSayisi servise ulaşan çağrıların sayısıdır.
-	cagriSayisi int
-	// sonCikisKimligi çıkış ucunun servise geçirdiği kimliktir.
-	sonCikisKimligi string
-	// sonCikisTuru çıkış ucunun servise geçirdiği kimlik TÜRÜDÜR.
+// The fake DOES NOT and must not imitate the BUSINESS LOGIC: the tests in this
+// file test the authorization layer, that is, the cases in which the handler
+// MUST NOT BE REACHED AT ALL. Every call is counted and the tests catch the "a
+// 403 was returned but the service ran anyway" state with that counter — a test
+// looking only at the status code could not notice a handler that returns the
+// error after having performed the write.
+type fakeAuth struct {
+	// callCount is the number of calls that reached the service.
+	callCount int
+	// lastLogoutPrincipalID is the identity the logout endpoint passed to the
+	// service.
+	lastLogoutPrincipalID string
+	// lastLogoutPrincipalKind is the identity KIND the logout endpoint passed
+	// to the service.
 	//
-	// Alan ayrı tutulur çünkü "api anahtarı çıkış yapamaz" kararını servis
-	// verir ve o kararı verebilmesi için türü GÖRMESİ gerekir; handler türü
-	// geçirmezse servis her çağıranı kullanıcı sanardı.
-	sonCikisTuru string
-	// cikisHatasi doluysa Logout bu hatayı döner.
-	cikisHatasi error
+	// The field is kept separate because the "an api key cannot log out"
+	// decision is the service's, and to be able to make that decision it has to
+	// SEE the kind; if the handler does not pass the kind the service would
+	// take every caller for a user.
+	lastLogoutPrincipalKind string
+	// logoutErr, when set, is the error Logout returns.
+	logoutErr error
 }
 
-var _ api.Auth = (*sahteAuth)(nil)
+var _ api.Auth = (*fakeAuth)(nil)
 
-// cikisAni sahtenin çıkış ucundan döndüğü sabit iptal anıdır.
+// logoutMoment is the fixed revocation moment the fake returns from the logout
+// endpoint.
 //
-// Sabit olması bilinçlidir: yanıt gövdesinin bu değeri OLDUĞU GİBİ taşıdığı
-// ancak bilinen bir anla doğrulanabilir.
-var cikisAni = time.Date(2026, 3, 1, 10, 0, 0, 0, time.UTC)
+// Being fixed is deliberate: that the response body carries this value AS IT IS
+// can only be verified against a known moment.
+var logoutMoment = time.Date(2026, 3, 1, 10, 0, 0, 0, time.UTC)
 
-// gecti bir servis çağrısını sayar.
-func (f *sahteAuth) gecti() { f.cagriSayisi++ }
+// hit counts one service call.
+func (f *fakeAuth) hit() { f.callCount++ }
 
-func (f *sahteAuth) Login(_ context.Context, _, _ string) (string, time.Time, error) {
-	f.gecti()
-	return "jeton", time.Unix(0, 0).UTC(), nil
+func (f *fakeAuth) Login(_ context.Context, _, _ string) (string, time.Time, error) {
+	f.hit()
+	return "token", time.Unix(0, 0).UTC(), nil
 }
 
-func (f *sahteAuth) Logout(_ context.Context, principalID, principalKind string) (time.Time, error) {
-	f.gecti()
-	f.sonCikisKimligi = principalID
-	f.sonCikisTuru = principalKind
-	if f.cikisHatasi != nil {
-		return time.Time{}, f.cikisHatasi
+func (f *fakeAuth) Logout(_ context.Context, principalID, principalKind string) (time.Time, error) {
+	f.hit()
+	f.lastLogoutPrincipalID = principalID
+	f.lastLogoutPrincipalKind = principalKind
+	if f.logoutErr != nil {
+		return time.Time{}, f.logoutErr
 	}
-	return cikisAni, nil
+	return logoutMoment, nil
 }
 
-func (f *sahteAuth) CreateUser(_ context.Context, _ service.CreateUserInput, _ string) (models.User, error) {
-	f.gecti()
+func (f *fakeAuth) CreateUser(_ context.Context, _ service.CreateUserInput, _ string) (models.User, error) {
+	f.hit()
 	return models.User{ID: "usr_1"}, nil
 }
 
-func (f *sahteAuth) GetUser(_ context.Context, id string) (models.User, error) {
-	f.gecti()
+func (f *fakeAuth) GetUser(_ context.Context, id string) (models.User, error) {
+	f.hit()
 	return models.User{ID: id}, nil
 }
 
-func (f *sahteAuth) ListUsers(_ context.Context, _ service.ListUsersInput) (service.Page[models.User], error) {
-	f.gecti()
+func (f *fakeAuth) ListUsers(_ context.Context, _ service.ListUsersInput) (service.Page[models.User], error) {
+	f.hit()
 	return service.Page[models.User]{}, nil
 }
 
-func (f *sahteAuth) UpdateUser(_ context.Context, id string, _ service.UpdateUserInput) (models.User, error) {
-	f.gecti()
+func (f *fakeAuth) UpdateUser(_ context.Context, id string, _ service.UpdateUserInput) (models.User, error) {
+	f.hit()
 	return models.User{ID: id}, nil
 }
 
-func (f *sahteAuth) DeleteUser(_ context.Context, _ string) error {
-	f.gecti()
+func (f *fakeAuth) DeleteUser(_ context.Context, _ string) error {
+	f.hit()
 	return nil
 }
 
-func (f *sahteAuth) SetPassword(_ context.Context, _, _ string) error {
-	f.gecti()
+func (f *fakeAuth) SetPassword(_ context.Context, _, _ string) error {
+	f.hit()
 	return nil
 }
 
-func (f *sahteAuth) CreateAPIKey(_ context.Context, _ service.CreateAPIKeyInput) (models.APIKey, string, error) {
-	f.gecti()
-	return models.APIKey{ID: "apk_1", Type: models.APIKeySecret}, "sk_duz", nil
+func (f *fakeAuth) CreateAPIKey(_ context.Context, _ service.CreateAPIKeyInput) (models.APIKey, string, error) {
+	f.hit()
+	return models.APIKey{ID: "apk_1", Type: models.APIKeySecret}, "sk_plain", nil
 }
 
-func (f *sahteAuth) GetAPIKey(_ context.Context, id string) (models.APIKey, error) {
-	f.gecti()
+func (f *fakeAuth) GetAPIKey(_ context.Context, id string) (models.APIKey, error) {
+	f.hit()
 	return models.APIKey{ID: id, Type: models.APIKeySecret}, nil
 }
 
-func (f *sahteAuth) ListAPIKeys(_ context.Context, _ service.ListAPIKeysInput) (service.Page[models.APIKey], error) {
-	f.gecti()
+func (f *fakeAuth) ListAPIKeys(_ context.Context, _ service.ListAPIKeysInput) (service.Page[models.APIKey], error) {
+	f.hit()
 	return service.Page[models.APIKey]{}, nil
 }
 
-func (f *sahteAuth) RevokeAPIKey(_ context.Context, id, _ string) (models.APIKey, error) {
-	f.gecti()
+func (f *fakeAuth) RevokeAPIKey(_ context.Context, id, _ string) (models.APIKey, error) {
+	f.hit()
 	return models.APIKey{ID: id, Type: models.APIKeySecret}, nil
 }
 
-func (f *sahteAuth) DeleteAPIKey(_ context.Context, _ string) error {
-	f.gecti()
+func (f *fakeAuth) DeleteAPIKey(_ context.Context, _ string) error {
+	f.hit()
 	return nil
 }
 
-func (f *sahteAuth) LinkSalesChannel(_ context.Context, _, _ string) error {
-	f.gecti()
+func (f *fakeAuth) LinkSalesChannel(_ context.Context, _, _ string) error {
+	f.hit()
 	return nil
 }
 
-func (f *sahteAuth) UnlinkSalesChannel(_ context.Context, _, _ string) error {
-	f.gecti()
+func (f *fakeAuth) UnlinkSalesChannel(_ context.Context, _, _ string) error {
+	f.hit()
 	return nil
 }
 
-func (f *sahteAuth) SalesChannelsOfAPIKey(_ context.Context, _ string) ([]models.SalesChannel, error) {
-	f.gecti()
+func (f *fakeAuth) SalesChannelsOfAPIKey(_ context.Context, _ string) ([]models.SalesChannel, error) {
+	f.hit()
 	return nil, nil
 }
 
-func (f *sahteAuth) CreateSalesChannel(_ context.Context, _ service.SalesChannelInput) (models.SalesChannel, error) {
-	f.gecti()
+func (f *fakeAuth) CreateSalesChannel(_ context.Context, _ service.SalesChannelInput) (models.SalesChannel, error) {
+	f.hit()
 	return models.SalesChannel{ID: "sc_1"}, nil
 }
 
-func (f *sahteAuth) GetSalesChannel(_ context.Context, id string) (models.SalesChannel, error) {
-	f.gecti()
+func (f *fakeAuth) GetSalesChannel(_ context.Context, id string) (models.SalesChannel, error) {
+	f.hit()
 	return models.SalesChannel{ID: id}, nil
 }
 
-func (f *sahteAuth) ListSalesChannels(
+func (f *fakeAuth) ListSalesChannels(
 	_ context.Context,
 	_ service.ListSalesChannelsInput,
 ) (service.Page[models.SalesChannel], error) {
-	f.gecti()
+	f.hit()
 	return service.Page[models.SalesChannel]{}, nil
 }
 
-func (f *sahteAuth) UpdateSalesChannel(
+func (f *fakeAuth) UpdateSalesChannel(
 	_ context.Context,
 	id string,
 	_ service.UpdateSalesChannelInput,
 ) (models.SalesChannel, error) {
-	f.gecti()
+	f.hit()
 	return models.SalesChannel{ID: id}, nil
 }
 
-func (f *sahteAuth) DeleteSalesChannel(_ context.Context, _ string) error {
-	f.gecti()
+func (f *fakeAuth) DeleteSalesChannel(_ context.Context, _ string) error {
+	f.hit()
 	return nil
 }

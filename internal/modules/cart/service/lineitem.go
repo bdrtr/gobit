@@ -8,59 +8,63 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/cart/models"
 )
 
-// AddLineItemInput sepete eklenecek satırın alanlarıdır.
+// AddLineItemInput holds the fields of the line to be added to the cart.
 type AddLineItemInput struct {
-	// VariantID eklenen ürün varyantıdır; ZORUNLUDUR. product modülüne aittir,
-	// burada varlığı doğrulanmaz (ADR 0001) ve foreign key verilmez.
+	// VariantID is the product variant being added; it is REQUIRED. It belongs
+	// to the product module, its existence is not validated here (ADR 0001) and
+	// no foreign key is given.
 	VariantID string
-	// Title satırın görünen adıdır; ZORUNLUDUR. Varyanttan KOPYALANIR: katalog
-	// sonradan değişse bile sepette görülen ad değişmez.
+	// Title is the line's display name; it is REQUIRED. It is COPIED from the
+	// variant: even if the catalog changes later, the name seen in the cart does
+	// not change.
 	Title string
-	// Quantity eklenecek adettir; POZİTİF olmalıdır.
+	// Quantity is the quantity to be added; it must be POSITIVE.
 	Quantity int64
-	// UnitPrice birim fiyattır (minor unit).
+	// UnitPrice is the unit price (minor unit).
 	//
-	// Değeri İSTEMCİ VERMEZ ve veremez: vitrin gövdesinde fiyat alanı yoktur
-	// (bkz. api paketindeki addLineItemRequest) ve satırı açan tek yol,
-	// fiyatı pricing modülünden alan add_line_item akışıdır. Burada
-	// opsiyonel görünmesi servisin bir eksikliği değil sınırıdır — modül
-	// fiyatın DOĞRU olup olmadığını bilemez, yalnızca aralığını denetler; o
-	// yüzden fiyat yetkisi çağıranın kim olduğuyla korunur ve tek çağıran
-	// akıştır.
+	// THE CLIENT DOES NOT and cannot give its value: there is no price field in
+	// the storefront body (see addLineItemRequest in the api package) and the
+	// only way to open a line is the add_line_item flow, which takes the price
+	// from the pricing module. Its looking optional here is not a shortcoming of
+	// the service but its boundary — the module cannot know whether the price is
+	// CORRECT, it only checks its range; that is why the authority over the price
+	// is guarded by WHO the caller is, and the only caller is the flow.
 	//
-	// Nihai değeri yine akış yazar: satır eklendikten hemen sonra koşan hesap
-	// turu tüm satırları güncel adetle yeniden fiyatlar ve sonucu
-	// [Service.SetTotals] ile yazar.
+	// The final value is written by the flow as well: the calculation round that
+	// runs right after the line is added re-prices all of the lines with the
+	// current quantity and writes the result with [Service.SetTotals].
 	UnitPrice int64
-	// Metadata çağıranın serbest ek verisidir.
+	// Metadata is the caller's free-form extra data.
 	Metadata map[string]any
 }
 
-// AddLineItem sepete satır ekler.
+// AddLineItem adds a line to the cart.
 //
-// # Aynı varyant ikinci kez eklenirse ne olur
+// # What happens if the same variant is added a second time
 //
-// YENİ SATIR AÇILMAZ; var olan satırın ADEDİ ARTAR. Karar üç gerekçeye dayanır:
+// A NEW LINE IS NOT OPENED; the QUANTITY of the existing line GOES UP. The
+// decision rests on three grounds:
 //
-//  1. Fiyat kademeleri. pricing modülü fiyatı adet aralığına göre seçer
-//     (min_quantity/max_quantity). Aynı varyant 3 + 2 olarak iki satıra
-//     bölünürse iki satır da "1-4" kademesinden fiyatlanır ve müşteri hak
-//     ettiği "5+" fiyatını ALAMAZ. Adet tek satırda toplanınca kademe doğru
-//     seçilir.
-//  2. Stok rezervasyonu. Faz 6'daki complete_cart satır başına rezervasyon
-//     yapar; aynı varyantın iki satırı, aynı stok için iki ayrı rezervasyon
-//     demektir ve kısmi başarı durumunda telafi karmaşıklaşır.
-//  3. Müşteri beklentisi. Sepette aynı ürünün iki kez görünmesi, ürünlerin
-//     farklı olduğu izlenimi verir.
+//  1. Price tiers. The pricing module picks the price by quantity range
+//     (min_quantity/max_quantity). If the same variant is split into two lines
+//     as 3 + 2, both lines are priced from the "1-4" tier and the customer DOES
+//     NOT GET the "5+" price they earned. When the quantity is summed into a
+//     single line, the tier is picked correctly.
+//  2. Stock reservation. complete_cart in Phase 6 makes a reservation per line;
+//     two lines of the same variant mean two separate reservations for the same
+//     stock, and the compensation gets complicated on a partial success.
+//  3. Customer expectation. The same product appearing twice in the cart gives
+//     the impression that the products are different.
 //
-// Karar veritabanı düzeyinde de zorlanır: cart_line_items_cart_variant_uniq
-// kısmi benzersiz indeksi, sepet kilidini bir şekilde atlatan bir yazma yolunun
-// bile ikinci satırı açmasını engeller.
+// The decision is enforced at the database level too: the
+// cart_line_items_cart_variant_uniq partial unique index prevents even a write
+// path that somehow gets around the cart lock from opening the second line.
 //
-// Birleştirmede yalnızca ADET taşınır; var olan satırın başlığı, birim fiyatı
-// ve metadata'sı KORUNUR. Satır başına özelleştirme (örn. aynı varyanta farklı
-// hediye notu) bu fazda desteklenmez; desteklenseydi birleştirme ölçütünün
-// varyant değil "varyant + özelleştirme" olması gerekirdi.
+// In the merge only the QUANTITY is carried over; the existing line's title,
+// unit price and metadata are PRESERVED. Per-line customization (for example a
+// different gift note on the same variant) is not supported in this phase; if it
+// were, the merge criterion would have to be "variant + customization" rather
+// than the variant.
 func (s *Service) AddLineItem(ctx context.Context, cartID string, in AddLineItemInput) (models.LineItem, error) {
 	if err := requireID("variant_id", in.VariantID); err != nil {
 		return models.LineItem{}, err
@@ -81,11 +85,12 @@ func (s *Service) AddLineItem(ctx context.Context, cartID string, in AddLineItem
 		existing, err := s.store.GetLineItemByVariant(ctx, cart.ID, in.VariantID)
 		switch {
 		case err == nil:
-			// Toplam, taşma olmadan sınanır: iki adedin toplamı int64'e sığsa
-			// bile modelin adet tavanının üstüne çıkamaz.
+			// The sum is checked without overflow: even if the sum of the two
+			// quantities fits into an int64, it cannot go over the model's
+			// quantity ceiling.
 			if existing.Quantity > models.MaxQuantity-in.Quantity {
 				return errors.Invalid(CodeInvalidInput,
-					"satır adedi birleştirildiğinde sınırı aşıyor: %d + %d > %d",
+					"the line quantity exceeds the limit once merged: %d + %d > %d",
 					existing.Quantity, in.Quantity, models.MaxQuantity)
 			}
 			item, err = s.store.SetLineItemQuantity(ctx, cart.ID, existing.ID, existing.Quantity+in.Quantity)
@@ -111,12 +116,13 @@ func (s *Service) AddLineItem(ctx context.Context, cartID string, in AddLineItem
 	return item, nil
 }
 
-// UpdateLineItemQuantity satırın adedini MUTLAK değerle yazar.
+// UpdateLineItemQuantity writes the line's quantity as an ABSOLUTE value.
 //
-// quantity sıfır ya da negatifse errors.Invalid döner; satır SİLİNMEZ. "Adedi
-// sıfır yap" ile "satırı kaldır" ayrı niyetlerdir ve ayrı metotları vardır
-// ([Service.RemoveLineItem]); birini diğerine çevirmek, adet alanına sıfır
-// gönderen bir hatanın sessizce veri silmesi demek olurdu.
+// If quantity is zero or negative, errors.Invalid is returned; the line IS NOT
+// DELETED. "Set the quantity to zero" and "remove the line" are separate
+// intents and they have separate methods ([Service.RemoveLineItem]); turning one
+// into the other would mean that a bug sending zero into the quantity field
+// silently deletes data.
 func (s *Service) UpdateLineItemQuantity(ctx context.Context, cartID, lineID string, quantity int64) (models.LineItem, error) {
 	if err := requireID("line_item_id", lineID); err != nil {
 		return models.LineItem{}, err
@@ -137,8 +143,8 @@ func (s *Service) UpdateLineItemQuantity(ctx context.Context, cartID, lineID str
 	return item, nil
 }
 
-// RemoveLineItem satırı sepetten kaldırır (yumuşak silme).
-// Satır sepette yoksa errors.NotFound döner.
+// RemoveLineItem removes the line from the cart (soft delete).
+// If the line is not in the cart, errors.NotFound is returned.
 func (s *Service) RemoveLineItem(ctx context.Context, cartID, lineID string) error {
 	if err := requireID("line_item_id", lineID); err != nil {
 		return err

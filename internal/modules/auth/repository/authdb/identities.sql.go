@@ -48,27 +48,28 @@ ORDER BY updated_at DESC
 LIMIT 1
 `
 
-// GetSessionAnchor kullanıcının EN YENİ oturum çapasını döner.
+// GetSessionAnchor returns the user's MOST RECENT session anchor.
 //
-// Jeton doğrulaması bu tek değere dayanır: "iat" bundan önceyse jeton
-// reddedilir (bkz. service/interop.go, principalFromToken).
+// Token verification rests on this single value: if "iat" is earlier than it,
+// the token is rejected (see service/interop.go, principalFromToken).
 //
-// # Neden EN YENİ (ve neden tek bir sağlayıcı değil)
+// # Why the MOST RECENT (and why not a single provider)
 //
-// Jetonun hangi sağlayıcıdan alındığını söyleyen bir iddia YOKTUR; iddia
-// olmadığı için çapa sağlayıcıya göre seçilemez. Seçilebilen iki uç vardır ve
-// en ESKİSİNİ almak yanlış olurdu: çapası hiç ilerlemeyen tek bir satır (örn.
-// parola değişimi yalnızca emailpass satırını yazar) iptalin tamamını etkisiz
-// bırakırdı. EN YENİ olan alınır — belirsizlik güvenlik lehine çözülür, bedeli
-// bir sağlayıcıdaki iptalin ötekinin jetonlarını da düşürmesidir.
+// There is NO claim saying which provider the token was taken from; with no
+// such claim, the anchor cannot be selected by provider. Two extremes can be
+// selected, and taking the OLDEST would be wrong: a single row whose anchor
+// never moves (e.g. a password change writes only the emailpass row) would
+// render the whole revocation ineffective. The MOST RECENT one is taken — the
+// ambiguity is resolved in favor of security, and the price is that a
+// revocation on one provider drops the other's tokens as well.
 //
-// Kullanıcının sağlayıcı sayısı elle ölçülür; sıralama, user_id önekiyle
-// taranan indeksten (auth_identity_user_provider_uniq) gelen bir avuç satır
-// üzerindedir.
+// A user's providers can be counted on one hand; the ordering runs over the
+// handful of rows coming from the index scanned by the user_id prefix
+// (auth_identity_user_provider_uniq).
 //
-// Canlı kimlik hiç yoksa satır dönmez: çağıran bunu errors.NotFound'a çevirir
-// ve jetonu reddeder, çünkü jetonun ne zaman geçersizleştiğini söyleyecek bir
-// değer kalmamıştır.
+// If there is no live identity at all no row is returned: the caller turns
+// that into errors.NotFound and rejects the token, because no value is left
+// that could say when the token became invalid.
 func (q *Queries) GetSessionAnchor(ctx context.Context, userID string) (pgtype.Timestamptz, error) {
 	row := q.db.QueryRow(ctx, getSessionAnchor, userID)
 	var updated_at pgtype.Timestamptz
@@ -95,31 +96,31 @@ type InsertIdentityParams struct {
 	CreatedAt        pgtype.Timestamptz
 }
 
-// auth_identity sorguları. Tüm okumalar deleted_at IS NULL filtresi uygular.
+// auth_identity queries. Every read applies the deleted_at IS NULL filter.
 //
-// DİKKAT: password_hash bu sorguların dönüş kümesindedir ve repository
-// katmanının dışına ÇIKMAZ; servis onu yalnızca bcrypt karşılaştırmasına
-// verir, hiçbir log satırına ya da hata mesajına koymaz.
+// CAUTION: password_hash is in the result set of these queries and NEVER
+// LEAVES the repository layer; the service hands it to the bcrypt comparison
+// only, and puts it in no log line and no error message.
 //
-// # updated_at bu tabloda bir GÜVENLİK ÇAPASIDIR
+// # updated_at is a SECURITY ANCHOR in this table
 //
-// Sütun burada "satır en son ne zaman yazıldı" demek DEĞİLDİR: yalnızca hesap
-// sahibinin BİLEREK yaptığı iki işte ilerler — parola değişimi
-// (UpdatePasswordHash) ve çıkış (RevokeSessions). Oturum iptali ona dayanır:
-// servis, bu andan önce üretilmiş oturum jetonlarını reddeder
-// (bkz. service/session.go, sessionAnchor).
+// Here the column does NOT mean "when was the row last written": it moves
+// forward only on the two operations the account owner performs DELIBERATELY —
+// a password change (UpdatePasswordHash) and a logout (RevokeSessions).
+// Session revocation rests on it: the service rejects session tokens produced
+// before that moment (see service/session.go, sessionAnchor).
 //
-// Bu yüzden giriş sayaçlarını yazan sorgular (RegisterLoginFailure,
-// RegisterLoginSuccess) updated_at'e DOKUNMAZ. Dokunsalardı:
+// That is why the queries writing the login counters (RegisterLoginFailure,
+// RegisterLoginSuccess) DO NOT TOUCH updated_at. Had they touched it:
 //
-//   - tek bir HATALI giriş denemesi yöneticinin bütün oturumlarını düşürürdü;
-//     saldırganın yalnızca e-postayı bilmesi yeterdi ve elinde hedefli bir
-//     hizmet dışı bırakma aracı olurdu,
-//   - ikinci bir cihazdan giriş yapmak birinci cihazın oturumunu kapatırdı.
+//   - a single FAILED login attempt would drop every session an administrator
+//     had; an attacker would only need to know the email address, and would
+//     hold a targeted denial-of-service tool,
+//   - logging in from a second device would close the first device's session.
 //
-// Aynı ayrım bu şemada zaten var: api_key.last_used_at de updated_at'i
-// kıpırdatmıyor (bkz. api_keys.sql, MarkAPIKeyUsed). Kullanım/deneme sayaçları
-// telemetridir, kaydın içeriği değildir.
+// The same distinction is already present in this schema: api_key.last_used_at
+// does not move updated_at either (see api_keys.sql, MarkAPIKeyUsed). Usage
+// and attempt counters are telemetry, not the content of the record.
 func (q *Queries) InsertIdentity(ctx context.Context, arg InsertIdentityParams) (AuthIdentity, error) {
 	row := q.db.QueryRow(ctx, insertIdentity,
 		arg.ID,
@@ -178,23 +179,24 @@ type RegisterLoginFailureParams struct {
 	ID          string
 }
 
-// RegisterLoginFailure başarısız bir giriş denemesini ATOMİK olarak sayar.
+// RegisterLoginFailure counts a failed login attempt ATOMICALLY.
 //
-// Sayaç neden SQL'de artırılıyor: sayı Go tarafında okunup geri yazılsaydı,
-// aynı anda gönderilen yüzlerce istek hepsi "0" okuyup hepsi "1" yazardı ve
-// kilit hiç devreye girmezdi. CTE'deki FOR UPDATE satırı işlem sonuna kadar
-// kilitler, böylece artırma sıralanır.
+// Why the counter is incremented in SQL: were the number read and written back
+// on the Go side, hundreds of requests sent at the same time would all read
+// "0" and all write "1", and the lock would never engage. The FOR UPDATE row
+// in the CTE locks until the end of the transaction, so the increments are
+// serialized.
 //
-// Süresi DOLMUŞ bir kilit yeni bir pencerenin başlangıcı sayılır ve sayaç 1'e
-// döner: kilidini bekleyip tekrar deneyen kullanıcı, tek bir yanlışta yeniden
-// kilitlenmemelidir.
+// An EXPIRED lock counts as the start of a new window and the counter goes
+// back to 1: a user who waited the lock out and tries again must not be locked
+// out again on a single mistake.
 //
-// AKTİF kilitte bu sorgu HİÇ çağrılmaz; servis isteği daha önce reddeder.
-// Bu yüzden "eşiğin altındaysa locked_until = NULL" dalı aktif bir kilidi
-// silemez.
+// On an ACTIVE lock this query is NEVER called; the service rejects the
+// request earlier. That is why the "locked_until = NULL if below the
+// threshold" branch cannot erase an active lock.
 //
-// updated_at'e DOKUNULMAZ: başarısız bir deneme, kurbanın açık oturumlarını
-// düşürmemelidir (dosya başındaki "güvenlik çapası" notu).
+// updated_at IS NOT TOUCHED: a failed attempt must not drop the victim's open
+// sessions (the "security anchor" note at the top of this file).
 func (q *Queries) RegisterLoginFailure(ctx context.Context, arg RegisterLoginFailureParams) (AuthIdentity, error) {
 	row := q.db.QueryRow(ctx, registerLoginFailure,
 		arg.Threshold,
@@ -233,10 +235,10 @@ type RegisterLoginSuccessParams struct {
 	LastLoginAt pgtype.Timestamptz
 }
 
-// RegisterLoginSuccess başarılı girişte sayaçları temizler.
+// RegisterLoginSuccess clears the counters on a successful login.
 //
-// updated_at'e DOKUNULMAZ: yeni bir giriş, kullanıcının başka cihazlardaki
-// oturumlarını kapatmamalıdır (dosya başındaki "güvenlik çapası" notu).
+// updated_at IS NOT TOUCHED: a new login must not close the user's sessions on
+// other devices (the "security anchor" note at the top of this file).
 func (q *Queries) RegisterLoginSuccess(ctx context.Context, arg RegisterLoginSuccessParams) error {
 	_, err := q.db.Exec(ctx, registerLoginSuccess, arg.ID, arg.LastLoginAt)
 	return err
@@ -254,38 +256,43 @@ type RevokeSessionsParams struct {
 	UpdatedAt pgtype.Timestamptz
 }
 
-// RevokeSessions oturum çapasını ilerletir; KİMLİK BİLGİSİNE DOKUNMAZ.
+// RevokeSessions moves the session anchor forward; it DOES NOT TOUCH THE
+// CREDENTIAL.
 //
-// Çıkışın tamamı bu tek yazmadır. Jeton durum tutmaz ve jti bazlı bir kara
-// liste yoktur, dolayısıyla "şu jetonu düşür" diye bir işlem YAPILAMAZ;
-// yapılabilen tek şey çapayı ileri almak, yani ondan önce üretilmiş bütün
-// jetonları birden geçersizleştirmektir (bkz. service/session.go).
+// The whole of logging out is this single write. The token holds no state and
+// there is no jti-based blocklist, so an operation that says "drop that token"
+// CANNOT be performed; the only thing that can be done is to move the anchor
+// forward, that is, to invalidate every token produced before it at once (see
+// service/session.go).
 //
-// # Sağlayıcı SEÇİLMEZ: kullanıcının BÜTÜN kimlikleri ilerletilir
+// # NO provider is SELECTED: ALL of the user's identities are moved forward
 //
-// Filtre yalnızca user_id'dir. Bu tablo sağlayıcı BAŞINA satır tutar
-// ((user_id, provider) benzersizliği) ve tek bir sağlayıcı seçilseydi, ileride
-// OAuth eklendiği gün çıkış o sağlayıcıdan alınmış jetonları düşürmez, üstelik
-// bunu SESSİZCE yapardı: uç 200 döner, "çıkış yaptım" diyen kullanıcı hâlâ
-// oturumda kalırdı. Bugün tek sağlayıcı olduğu için etkilenen satır sayısı
-// birdir ve gözlemlenebilir davranış aynıdır; değişen şey, ikinci sağlayıcının
-// eklendiği günün sessiz açık BIRAKMAMASIDIR.
+// The filter is user_id alone. This table keeps a row PER provider (the
+// (user_id, provider) uniqueness), and had a single provider been selected,
+// then the day OAuth is added logging out would not drop the tokens taken from
+// that provider — and it would fail SILENTLY: the endpoint returns 200 and the
+// user who says "I logged out" would still be in session. Today, with a single
+// provider, the number of affected rows is one and the observable behavior is
+// the same; what changes is that the day the second provider is added LEAVES
+// NO silent hole.
 //
-// Okuma tarafı da aynı kuralı uygular: jeton doğrulanırken çapa tek bir
-// sağlayıcıdan değil, kullanıcının EN YENİ kimliğinden okunur
-// (bkz. GetSessionAnchor). İkisi ayrışsaydı buradaki yazma boşa giderdi.
+// The read side applies the same rule: when a token is verified the anchor is
+// read from the user's MOST RECENT identity rather than from one single
+// provider (see GetSessionAnchor). Had the two diverged, the write here would
+// be wasted.
 //
-// password_hash'e DOKUNULMAZ: çıkış yapmak parolayı değiştirmez ve değişse
-// kullanıcı bir daha giremezdi.
+// password_hash IS NOT TOUCHED: logging out does not change the password, and
+// if it did the user could never log in again.
 //
-// failed_attempts ve locked_until'e de DOKUNULMAZ. Sıfırlansalardı çıkış ucu
-// kilidi temizlemenin yolu olurdu: kilitli hesabın elinde hâlâ geçerli bir
-// jeton varsa (kilit jetonu düşürmez) art arda "çıkış yap + yeniden dene" ile
-// sayaç sonsuza dek sıfırlanabilir, yani kilit hiç devreye girmezdi.
+// failed_attempts and locked_until ARE NOT TOUCHED either. Had they been
+// reset, the logout endpoint would become the way to clear the lock: if a
+// locked account still holds a valid token (a lock does not drop tokens), the
+// counter could be reset forever by repeating "log out + try again", so the
+// lock would never engage at all.
 //
-// Kullanıcının hiç canlı kimliği yoksa HİÇBİR satır dönmez ve çağıran bunu
-// errors.NotFound'a çevirir; sessizce başarılı dönmek, hiçbir şey düşürmeyen
-// bir çıkışı başarı gibi göstermek olurdu.
+// If the user has no live identity at all, NO row is returned and the caller
+// turns that into errors.NotFound; returning success silently would present a
+// logout that dropped nothing as a success.
 func (q *Queries) RevokeSessions(ctx context.Context, arg RevokeSessionsParams) ([]AuthIdentity, error) {
 	rows, err := q.db.Query(ctx, revokeSessions, arg.UserID, arg.UpdatedAt)
 	if err != nil {
@@ -335,14 +342,15 @@ type UpdatePasswordHashParams struct {
 	UpdatedAt    pgtype.Timestamptz
 }
 
-// UpdatePasswordHash parolayı değiştirir ve kilit sayaçlarını SIFIRLAR.
+// UpdatePasswordHash changes the password and RESETS the lockout counters.
 //
-// Sıfırlama şarttır: parolasını değiştiren kullanıcı, eski parolayla yapılmış
-// başarısız denemelerin bıraktığı kilitle karşılaşmamalıdır.
+// The reset is essential: a user who changes their password must not run into
+// the lock left behind by the failed attempts made with the old password.
 //
-// updated_at'in ilerlemesi de şarttır: MEVCUT oturum jetonlarını düşüren tek
-// şey odur (dosya başındaki "güvenlik çapası" notu). Parola değişip çapa
-// yerinde kalsaydı, sızmış bir jeton süresi dolana kadar geçerli kalırdı.
+// Moving updated_at forward is essential too: it is the only thing that drops
+// the EXISTING session tokens (the "security anchor" note at the top of this
+// file). Had the password changed while the anchor stayed where it was, a
+// leaked token would remain valid until it expired.
 func (q *Queries) UpdatePasswordHash(ctx context.Context, arg UpdatePasswordHashParams) (AuthIdentity, error) {
 	row := q.db.QueryRow(ctx, updatePasswordHash, arg.ID, arg.PasswordHash, arg.UpdatedAt)
 	var i AuthIdentity

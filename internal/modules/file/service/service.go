@@ -199,9 +199,9 @@ type Page struct {
 func (p Page) normalize() (Page, error) {
 	switch {
 	case p.Limit < 0:
-		return Page{}, errors.Invalid(CodeInvalidInput, "limit negatif olamaz: %d", p.Limit)
+		return Page{}, errors.Invalid(CodeInvalidInput, "the limit cannot be negative: %d", p.Limit)
 	case p.Offset < 0:
-		return Page{}, errors.Invalid(CodeInvalidInput, "offset negatif olamaz: %d", p.Offset)
+		return Page{}, errors.Invalid(CodeInvalidInput, "the offset cannot be negative: %d", p.Offset)
 	case p.Limit > MaxLimit:
 		return Page{}, errors.Invalid(CodeInvalidInput,
 			"the limit can be at most %d: %d", MaxLimit, p.Limit)

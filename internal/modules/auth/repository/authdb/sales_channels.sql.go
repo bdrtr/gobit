@@ -35,13 +35,15 @@ DELETE FROM api_key_sales_channel
 WHERE sales_channel_id = $1
 `
 
-// DeleteLinksOfSalesChannel kanal silinirken anahtar bağlarını da kaldırır.
+// DeleteLinksOfSalesChannel removes the key links as well when a channel is
+// deleted.
 //
-// Foreign key ON DELETE CASCADE yalnızca GERÇEK silmede çalışır; yumuşak silme
-// bir UPDATE olduğu için bağ satırları yerinde kalırdı. Bağ silinmezse,
-// silinmiş bir kanal aynı adla yeniden açıldığında eski anahtarlar sessizce
-// yeni kanala bağlı sanılabilirdi — bağ satırı kimliğe bakar ve kimlik yeni
-// olsa da bu, bağın neden kaldırıldığını unutulmaz kılar.
+// A foreign key's ON DELETE CASCADE only runs on a REAL delete; because a soft
+// delete is an UPDATE, the link rows would stay where they are. If the links
+// are not deleted, then when a deleted channel is reopened under the same name
+// the old keys could silently be taken to be linked to the new channel — the
+// link row keys on the ID, and even though the ID is new, writing this down
+// keeps the reason the link is removed from being forgotten.
 func (q *Queries) DeleteLinksOfSalesChannel(ctx context.Context, salesChannelID string) error {
 	_, err := q.db.Exec(ctx, deleteLinksOfSalesChannel, salesChannelID)
 	return err
@@ -84,7 +86,7 @@ type InsertSalesChannelParams struct {
 	CreatedAt   pgtype.Timestamptz
 }
 
-// sales_channel sorguları. Tüm okumalar deleted_at IS NULL filtresi uygular.
+// sales_channel queries. Every read applies the deleted_at IS NULL filter.
 func (q *Queries) InsertSalesChannel(ctx context.Context, arg InsertSalesChannelParams) (SalesChannel, error) {
 	row := q.db.QueryRow(ctx, insertSalesChannel,
 		arg.ID,
@@ -199,19 +201,22 @@ WHERE id = $1 AND deleted_at IS NULL
 FOR SHARE
 `
 
-// LockLiveSalesChannel kanalın CANLI olduğunu doğrular ve satırı işlem sonuna
-// kadar kilitler.
+// LockLiveSalesChannel verifies that the channel is LIVE and locks the row
+// until the end of the transaction.
 //
-// Neden yalnızca foreign key yetmiyor: FK satırın FİZİKSEL varlığına bakar,
-// yumuşak silinmiş (deleted_at dolu) bir kanal onu geçer. Oysa okuma sorguları
-// o kanalı süzer; bağ kurulsa bile anahtar ÖLÜ DOĞAR — hiçbir kanala
-// bağlanamamış publishable anahtar mağaza kimliği kuramaz ve hata ancak ilk
-// istekte, "kanal bağlıydı ama çalışmıyor" biçiminde ortaya çıkardı.
+// Why a foreign key alone is not enough: an FK looks at the PHYSICAL existence
+// of the row, and a soft-deleted channel (deleted_at set) passes it. The read
+// queries, however, filter that channel out; even if the link is established
+// the key is BORN DEAD — a publishable key that could not be attached to any
+// channel cannot build a storefront identity, and the fault would come to
+// light only on the first request, in the shape of "the channel was linked but
+// it does not work".
 //
-// FOR SHARE bilinçlidir: koşul sorgulandıktan sonra bağ yazılana kadar
-// geçen sürede kanalın yumuşak silinmesi mümkündü. Paylaşımlı kilit, silmeyi
-// yapan UPDATE'i işlem bitene kadar bekletir; bağ yazımını engellemez, çünkü
-// iki bağ yazımı birbirinin kilidiyle çakışmaz.
+// FOR SHARE is deliberate: in the time between the condition being queried and
+// the link being written, it was possible for the channel to be soft-deleted.
+// The shared lock makes the UPDATE that performs the deletion wait until the
+// transaction ends; it does not block writing the link, because two link
+// writes do not collide on each other's lock.
 func (q *Queries) LockLiveSalesChannel(ctx context.Context, id string) (string, error) {
 	row := q.db.QueryRow(ctx, lockLiveSalesChannel, id)
 	var id_2 string

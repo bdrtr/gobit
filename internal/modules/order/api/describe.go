@@ -6,64 +6,69 @@ import (
 	"github.com/bdrtr/gobit/internal/core/openapi"
 )
 
-// Parametre şemalarında geçen JSON Schema adları.
+// The JSON Schema names that appear in the parameter schemas.
 //
-// Çekirdeğin karşılıkları dışa kapalıdır ve burada tekrarlanmalarının sebebi
-// maliyet değil SESSİZLİK: "strig" yazılmış bir tip adı derlenir, belge
-// üretilir ve yalnızca şemayı okuyan istemci parametreyi yanlış tiple
-// ürettiğinde ortaya çıkar.
+// The core's counterparts are unexported, and the reason they are repeated here
+// is not cost but SILENCE: a type name written as "strig" compiles, the
+// document is produced, and it only surfaces when the client that reads the
+// schema produces the parameter with the wrong type.
 const (
-	semaTip    = "type"
-	tipDize    = "string"
-	tipTamSayi = "integer"
+	schemaType  = "type"
+	typeString  = "string"
+	typeInteger = "integer"
 )
 
-// tutarNotu gövdesinde tutar taşıyan uçların açıklamasına eklenen uyarıdır.
+// amountNote is the warning added to the description of endpoints that carry an
+// amount in their body.
 //
-// Tip şemadan zaten "integer" çıkar, ama TİP tek başına NEDENİ söylemez:
-// istemci geliştiricisi 100,50 TL'yi tam sayı olarak gönderemeyeceğini görüp
-// kuruşu yuvarlamayı deneyebilir. Birimin yazılı olması, 10050 göndermesi
-// gerektiğini söyleyen tek şeydir.
+// The type already comes out of the schema as "integer", but the TYPE on its
+// own does not state the REASON: a client developer may see that 100.50 TL
+// cannot be sent as an integer and try rounding the kurus away. Having the unit
+// written down is the only thing that says 10050 has to be sent.
 //
-// Not ALAN düzeyinde değil İŞLEM düzeyinde durur: şema Go tipinden türetilir
-// ve Go alanları açıklama taşımaz. Alan başına açıklama, çekirdeğe yeni bir
-// mekanizma (etiketten okunan description) eklemek demekti ve bu modülün işi
-// değildir.
-const tutarNotu = "Tutarlar MINOR UNIT tam sayıdır (kuruş/cent): " +
-	"100,50 TL için 10050 gönderilir; 100.50 gibi ondalıklı bir değer geçersizdir."
+// The note sits at the OPERATION level, not at the FIELD level: the schema is
+// derived from the Go type and Go fields carry no description. A per-field
+// description would have meant adding a new mechanism to the core (a
+// description read from a tag) and that is not this module's job.
+const amountNote = "Amounts are MINOR UNIT integers (kurus/cent): " +
+	"for 100.50 TL you send 10050; a fractional value such as 100.50 is invalid."
 
-// Describe order'ın YÖNETİM uçlarını OpenAPI belgesine işler.
+// Describe records order's ADMIN endpoints into the OpenAPI document.
 //
-// # Neden bu pakette
+// # Why in this package
 //
-// Anlatılan gövdeler bu paketin DIŞA KAPALI DTO'larıdır (createReturnRequest,
-// returnDTO …) ve şema onlardan yansımayla türetilir. Tipleri anlatabilmek
-// için dışa açmak, yalnızca belge üretmek uğruna modülün yüzeyini genişletmek
-// olurdu: dışa açık bir tip sözleşmedir ve dışarıdan kurulabilir hâle gelirdi.
-// Sorgu parametreleri de handler'ın GERÇEKTEN okuduklarıdır ve o okuma bu
-// paketteki admin.go ile [parsePage] içindedir; anlatım başka bir pakette
-// dursaydı ikisi sessizce ayrışırdı. Modülün [openapi.Describer] uygulaması bu
-// yüzden buraya delege eder.
+// The bodies being described are this package's UNEXPORTED DTOs
+// (createReturnRequest, returnDTO …) and the schema is derived from them by
+// reflection. Exporting the types so that they could be described would mean
+// widening the module's surface merely for the sake of producing a document: an
+// exported type is a contract and it would become constructible from outside.
+// The query parameters too are the ones the handler REALLY reads, and that
+// reading lives in this package's admin.go together with [parsePage]; had the
+// description lived in another package, the two would have drifted apart
+// silently. This is why the module's [openapi.Describer] implementation
+// delegates here.
 //
-// # Neden paket düzeyinde bir fonksiyon
+// # Why a package-level function
 //
-// Anlatım hiçbir çalışma zamanı durumuna bakmaz — şema TİPLERDEN gelir. Metodu
-// [Handler]'a bağlamak, belgenin servis kurulmuş olmasına bağlı OLDUĞUNU
-// söylerdi; oysa Register hiç çalışmamışken de belge üretilebilir ve
-// üretilmelidir.
+// The description looks at no runtime state — the schema comes from the TYPES.
+// Attaching the method to [Handler] would have said that the document DEPENDS
+// on the service having been constructed; yet the document can be produced, and
+// has to be producible, even when Register has never run.
 //
-// # ANLATILMAYAN BEŞ UÇ: "LineItem" bileşen adı ÇAKIŞIYOR
+// # FIVE ENDPOINTS LEFT UNDESCRIBED: the component name "LineItem" COLLIDES
 //
-// Şema bileşeninin adı Go tip adından türetilir (baş harf büyür, "DTO" son eki
-// atılır), yani [lineItemDTO] "LineItem" adını ister. Cart modülünün api
-// paketinde de aynı adlı bir tip vardır ve o da anlatılmıştır. İki FARKLI tip
-// aynı adı istediğinde [openapi.Doc.Build] hata döner ve belge TÜMDEN
-// üretilemez: /openapi.json 500 olur ve yalnızca bu modülün değil cart'ın
-// uçları da belgeden düşer. Yani çakışmayı görmezden gelmek, tek bir ucu değil
-// belgenin tamamını kaybetmek demektir.
+// The name of the schema component is derived from the Go type name (the first
+// letter is capitalized, the "DTO" suffix is dropped), that is, [lineItemDTO]
+// asks for the name "LineItem". The cart module's api package also has a type
+// with the same name and it is described there too. When two DIFFERENT types
+// ask for the same name, [openapi.Doc.Build] returns an error and the document
+// cannot be produced AT ALL: /openapi.json becomes a 500 and not only this
+// module's endpoints but cart's endpoints drop out of the document as well.
+// That is, ignoring the collision means losing not a single endpoint but the
+// whole document.
 //
-// [orderDetailDTO] satırlarını [lineItemDTO] ile taşır; bu yüzden onu döndüren
-// beş uç anlatılmadan BIRAKILDI:
+// [orderDetailDTO] carries its line items with [lineItemDTO]; this is why the
+// five endpoints that return it were LEFT undescribed:
 //
 //   - GET  /store/v1/orders/{id}
 //   - GET  /admin/v1/orders/{id}
@@ -71,169 +76,176 @@ const tutarNotu = "Tutarlar MINOR UNIT tam sayıdır (kuruş/cent): " +
 //   - POST /admin/v1/orders/{id}/complete
 //   - POST /admin/v1/orders/{id}/archive
 //
-// Beşi de belgede yolu, metodu ve güvenliğiyle görünür; yalnızca gövdeleri
-// olmaz. Çözüm tiplerden birini YENİDEN ADLANDIRMAKTIR ve o karar bu modülün
-// içinden verilemez: bileşen adı istemci üreteçlerinin ÜRETTİĞİ SINIF ADIDIR,
-// yani yayımlanmış sözleşmedir ve bir kez istemci üretildikten sonra
-// değiştirmek kırıcıdır. İki modülü birden ilgilendiren bir kararı tek modülün
-// içinden vermek, öteki modülün istemcisini habersiz kırardı.
+// All five appear in the document with their path, method and security; only
+// their bodies are missing. The fix is to RENAME one of the types, and that
+// decision cannot be made from inside this module: the component name is the
+// CLASS NAME that client generators PRODUCE, that is, a published contract, and
+// changing it once a client has been generated is breaking. Taking a decision
+// that concerns two modules at once from inside a single module would break the
+// other module's client without warning.
 //
-// # Anlatılmayan bir uç daha YOKTUR
+// # There is NO other undescribed endpoint
 //
-// Sipariş OLUŞTURMA ucu belgede de yoktur çünkü route'u hiç yoktur; gerekçe
-// paket belgesindedir (tutarları istemciden alan bir uç, sıfır tutarlı sipariş
-// yazılabilmesi demekti).
+// The order CREATION endpoint is absent from the document as well, because it
+// has no route at all; the rationale is in the package documentation (an
+// endpoint that takes the amounts from the client meant an order with a total
+// of zero could be written).
 //
-// # Bilinen sınır: istek gövdelerinin "required" kümesi GENİŞTİR
+// # Known limit: the "required" set of the request bodies is TOO WIDE
 //
-// Çekirdek "required"ı encoding/json'un HER ZAMAN yazdığı alanlardan türetir
-// ([openapi.Doc.SchemaOf]) ve bu, YANIT gövdeleri için doğru cevaptır. İstek
-// gövdesinde ise "required" istemcinin GÖNDERMEK ZORUNDA olduğu alan demektir
-// ve bunu tip bilemez: bu paketin istek DTO'ları omitempty taşımadığı için
-// hepsi zorunlu görünür — örneğin iade kaydı açarken opsiyonel olan "note" da
-// istenir. Alan ADLARI ve TİPLERİ doğrudur, yani şema yanlış bir alan
-// uydurmaz; yalnızca fazla şey ister. Sınırın yazılması bilinçlidir: eksik
-// olduğunu bilmek, eksik olduğunu sanmamaktan iyidir.
+// The core derives "required" from the fields encoding/json ALWAYS writes
+// ([openapi.Doc.SchemaOf]) and that is the right answer for RESPONSE bodies. In
+// a request body, however, "required" means the field the client MUST SEND, and
+// the type cannot know that: because this package's request DTOs carry no
+// omitempty, all of them look mandatory — "note", for example, which is
+// optional when opening a return record, is asked for as well. The field NAMES
+// and TYPES are correct, that is, the schema does not invent a field that does
+// not exist; it merely asks for too much. Writing the limit down is deliberate:
+// knowing that something is missing is better than not suspecting that it is.
 func Describe(d *openapi.Doc) {
 	d.Describe(http.MethodGet, "/admin/v1/orders", openapi.Operation{
-		Summary: "Siparişleri süzgeç ve sayfalamayla listeler.",
-		// Parametreler handler'ın OKUDUKLARIDIR, isteyebileceklerimiz değil:
-		// [Handler.adminListOrders] tam olarak bu beşini okur. Satırlar
-		// listede YÜKLENMEZ, bu yüzden burada "expand" gibi bir parametre de
-		// yoktur — olsaydı sunucunun yok saydığı bir özellik vaat ederdi.
+		Summary: "Lists orders with filtering and paging.",
+		// The parameters are the ones the handler READS, not the ones we could
+		// wish for: [Handler.adminListOrders] reads exactly these five. Line
+		// items are NOT LOADED in the list, which is why there is no parameter
+		// such as "expand" here either — had there been one, it would have
+		// promised a feature the server ignores.
 		Parameters: []openapi.Parameter{
-			sorguParametresi("customer_id", tipDize,
-				"Siparişleri tek bir müşteriyle sınırlar."),
-			sorguParametresi("region_id", tipDize,
-				"Siparişleri tek bir bölgeyle sınırlar."),
-			sorguParametresi("status", tipDize,
-				"Durum süzgeci: pending, completed, archived ya da canceled."),
-			sorguParametresi("limit", tipTamSayi,
-				"Sayfa boyutu; verilmezse servisin varsayılanı uygulanır."),
-			sorguParametresi("offset", tipTamSayi, "Atlanacak kayıt sayısı."),
+			queryParameter("customer_id", typeString,
+				"Limits the orders to a single customer."),
+			queryParameter("region_id", typeString,
+				"Limits the orders to a single region."),
+			queryParameter("status", typeString,
+				"Status filter: pending, completed, archived or canceled."),
+			queryParameter("limit", typeInteger,
+				"Page size; when it is not given the service's default applies."),
+			queryParameter("offset", typeInteger, "Number of records to skip."),
 		},
 		Responses: map[string]any{
-			"200": openapi.Response("Sipariş sayfası", d.List(orderDTO{})),
+			"200": openapi.Response("Page of orders", d.List(orderDTO{})),
 		},
 	})
 
-	describeIadeler(d)
-	describeDegisimler(d)
-	describeHasarlar(d)
+	describeReturns(d)
+	describeExchanges(d)
+	describeClaims(d)
 }
 
-// describeIadeler iade kaydı uçlarını anlatır.
-func describeIadeler(d *openapi.Doc) {
+// describeReturns describes the return record endpoints.
+func describeReturns(d *openapi.Doc) {
 	d.Describe(http.MethodGet, "/admin/v1/orders/{id}/returns", openapi.Operation{
-		Summary:    "Siparişin iade kayıtlarını sayfalayarak listeler.",
-		Parameters: sayfaParametreleri(),
+		Summary:    "Lists the order's return records with paging.",
+		Parameters: pageParameters(),
 		Responses: map[string]any{
-			"200": openapi.Response("İade kaydı sayfası", d.List(returnDTO{})),
+			"200": openapi.Response("Page of return records", d.List(returnDTO{})),
 		},
 	})
 
 	d.Describe(http.MethodPost, "/admin/v1/orders/{id}/returns", openapi.Operation{
-		Summary:     "Siparişe iade kaydı açar.",
-		Description: tutarNotu,
+		Summary:     "Opens a return record on the order.",
+		Description: amountNote,
 		RequestBody: d.RequestBody(createReturnRequest{}),
 		Responses: map[string]any{
-			// Handler 201 yazar (bkz. admin.go); yeni bir kayıt doğar.
-			"201": openapi.Response("Açılan iade kaydı", d.Item(returnDTO{})),
+			// The handler writes 201 (see admin.go); a new record is born.
+			"201": openapi.Response("The opened return record", d.Item(returnDTO{})),
 		},
 	})
 
 	d.Describe(http.MethodGet, "/admin/v1/orders/{id}/returns/{returnId}", openapi.Operation{
-		Summary: "İade kaydını kimliğiyle döner.",
+		Summary: "Returns the return record by its id.",
 		Responses: map[string]any{
-			"200": openapi.Response("İade kaydı", d.Item(returnDTO{})),
+			"200": openapi.Response("Return record", d.Item(returnDTO{})),
 		},
 	})
 }
 
-// describeDegisimler değişim kaydı uçlarını anlatır.
-func describeDegisimler(d *openapi.Doc) {
+// describeExchanges describes the exchange record endpoints.
+func describeExchanges(d *openapi.Doc) {
 	d.Describe(http.MethodGet, "/admin/v1/orders/{id}/exchanges", openapi.Operation{
-		Summary:    "Siparişin değişim kayıtlarını sayfalayarak listeler.",
-		Parameters: sayfaParametreleri(),
+		Summary:    "Lists the order's exchange records with paging.",
+		Parameters: pageParameters(),
 		Responses: map[string]any{
-			"200": openapi.Response("Değişim kaydı sayfası", d.List(exchangeDTO{})),
+			"200": openapi.Response("Page of exchange records", d.List(exchangeDTO{})),
 		},
 	})
 
 	d.Describe(http.MethodPost, "/admin/v1/orders/{id}/exchanges", openapi.Operation{
-		Summary: "Siparişe değişim kaydı açar.",
-		// Farkın İŞARETİ anlamlıdır ve tipten okunamaz; yazılmazsa istemci
-		// müşteriye ödenecek farkı da tahsil edilecek gibi gösterebilir.
-		Description: tutarNotu + " difference_due pozitifse fark müşteriden " +
-			"tahsil edilir, negatifse müşteriye ödenir.",
+		Summary: "Opens an exchange record on the order.",
+		// The SIGN of the difference is meaningful and cannot be read from the
+		// type; if it is not written down, a client may present a difference
+		// that is paid to the customer as if it were collected from them.
+		Description: amountNote + " When difference_due is positive the difference " +
+			"is collected from the customer, when it is negative it is paid to the customer.",
 		RequestBody: d.RequestBody(createExchangeRequest{}),
 		Responses: map[string]any{
-			"201": openapi.Response("Açılan değişim kaydı", d.Item(exchangeDTO{})),
+			"201": openapi.Response("The opened exchange record", d.Item(exchangeDTO{})),
 		},
 	})
 
 	d.Describe(http.MethodGet, "/admin/v1/orders/{id}/exchanges/{exchangeId}", openapi.Operation{
-		Summary: "Değişim kaydını kimliğiyle döner.",
+		Summary: "Returns the exchange record by its id.",
 		Responses: map[string]any{
-			"200": openapi.Response("Değişim kaydı", d.Item(exchangeDTO{})),
+			"200": openapi.Response("Exchange record", d.Item(exchangeDTO{})),
 		},
 	})
 }
 
-// describeHasarlar hasar/eksik kaydı uçlarını anlatır.
-func describeHasarlar(d *openapi.Doc) {
+// describeClaims describes the damage/shortage claim record endpoints.
+func describeClaims(d *openapi.Doc) {
 	d.Describe(http.MethodGet, "/admin/v1/orders/{id}/claims", openapi.Operation{
-		Summary:    "Siparişin hasar kayıtlarını sayfalayarak listeler.",
-		Parameters: sayfaParametreleri(),
+		Summary:    "Lists the order's claim records with paging.",
+		Parameters: pageParameters(),
 		Responses: map[string]any{
-			"200": openapi.Response("Hasar kaydı sayfası", d.List(claimDTO{})),
+			"200": openapi.Response("Page of claim records", d.List(claimDTO{})),
 		},
 	})
 
 	d.Describe(http.MethodPost, "/admin/v1/orders/{id}/claims", openapi.Operation{
-		Summary: "Siparişe hasar/eksik kaydı açar.",
-		// Tür şemada yalnızca "string"dir; kabul edilen iki değer handler'da
-		// zorlanır (bkz. [Handler.adminCreateClaim]) ve burada yazılmasaydı
-		// istemci geliştiricisi geçerli değeri deneme yanılmayla bulurdu.
-		Description: tutarNotu + " type zorunludur ve \"refund\" ya da " +
-			"\"replace\" olmalıdır; refund_amount yalnızca \"refund\" için anlamlıdır.",
+		Summary: "Opens a damage/shortage claim record on the order.",
+		// In the schema the type is only a "string"; the two accepted values
+		// are enforced in the handler (see [Handler.adminCreateClaim]) and had
+		// they not been written here, the client developer would have found the
+		// valid value by trial and error.
+		Description: amountNote + " type is mandatory and has to be \"refund\" or " +
+			"\"replace\"; refund_amount is meaningful only for \"refund\".",
 		RequestBody: d.RequestBody(createClaimRequest{}),
 		Responses: map[string]any{
-			"201": openapi.Response("Açılan hasar kaydı", d.Item(claimDTO{})),
+			"201": openapi.Response("The opened claim record", d.Item(claimDTO{})),
 		},
 	})
 
 	d.Describe(http.MethodGet, "/admin/v1/orders/{id}/claims/{claimId}", openapi.Operation{
-		Summary: "Hasar kaydını kimliğiyle döner.",
+		Summary: "Returns the claim record by its id.",
 		Responses: map[string]any{
-			"200": openapi.Response("Hasar kaydı", d.Item(claimDTO{})),
+			"200": openapi.Response("Claim record", d.Item(claimDTO{})),
 		},
 	})
 }
 
-// sayfaParametreleri [parsePage]'in okuduğu iki parametreyi döner.
+// pageParameters returns the two parameters [parsePage] reads.
 //
-// Satış sonrası listelerinin BAŞKA süzgeci yoktur: handler'lar yalnızca
-// sipariş kimliğini yoldan alır (bkz. admin.go). Buraya bir "status" süzgeci
-// yazmak, sunucunun yok sayacağı bir alan için istemci üretecine argüman
-// koydurmak olurdu.
-func sayfaParametreleri() []openapi.Parameter {
+// The after-sales lists have NO OTHER filter: the handlers take only the order
+// id from the path (see admin.go). Writing a "status" filter here would have
+// meant making the client generator put in an argument for a field the server
+// would ignore.
+func pageParameters() []openapi.Parameter {
 	return []openapi.Parameter{
-		sorguParametresi("limit", tipTamSayi,
-			"Sayfa boyutu; verilmezse servisin varsayılanı uygulanır."),
-		sorguParametresi("offset", tipTamSayi, "Atlanacak kayıt sayısı."),
+		queryParameter("limit", typeInteger,
+			"Page size; when it is not given the service's default applies."),
+		queryParameter("offset", typeInteger, "Number of records to skip."),
 	}
 }
 
-// sorguParametresi sorgu dizesinden okunan bir parametreyi tanımlar.
+// queryParameter defines a parameter that is read from the query string.
 //
-// Hiçbiri zorunlu DEĞİLDİR: verilmediğinde handler süzgeci hiç uygulamaz ya da
-// varsayılanla devam eder (bkz. [parsePage], [parseInt64Param]).
-func sorguParametresi(ad, tip, aciklama string) openapi.Parameter {
+// None of them IS mandatory: when it is not given, the handler either does not
+// apply the filter at all or continues with the default (see [parsePage],
+// [parseInt64Param]).
+func queryParameter(name, valueType, description string) openapi.Parameter {
 	return openapi.Parameter{
-		Name:        ad,
+		Name:        name,
 		In:          "query",
-		Schema:      map[string]any{semaTip: tip},
-		Description: aciklama,
+		Schema:      map[string]any{schemaType: valueType},
+		Description: description,
 	}
 }

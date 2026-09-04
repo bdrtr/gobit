@@ -15,21 +15,23 @@ import (
 	"github.com/bdrtr/gobit/internal/core/openapi"
 )
 
-// Test DAHİLİ pakettedir çünkü anlatılan gövdeler ([loginRequest], [userDTO]
-// …) dışa kapalıdır. Dışarıdan sınamanın tek yolu tipleri dışa açmak olurdu;
-// belgeyi sınamak uğruna modülün yüzeyini genişletmek, sınanan şeyin kendisini
-// bozardı. Paketin ÖTEKİ testleri (yetki, çıkış) dışa açık yüzeyi sınadığı
-// için api_test paketindedir; ikisi yan yana durabilir.
+// The test is in the INTERNAL package because the bodies being described
+// ([loginRequest], [userDTO] …) are unexported. The only way to test from the
+// outside would have been to export the types; widening the module's surface
+// for the sake of testing the documentation would have broken the very thing
+// under test. The package's OTHER tests (scopes, logout) are in the api_test
+// package because they test the exported surface; the two can stand side by
+// side.
 
-// belge Describe'ın çıktısını GERÇEK route ağacına karşı üretip JSON'dan geri
-// okunmuş hâlini döner.
+// document produces Describe's output against the REAL route tree and returns
+// it as read back from JSON.
 //
-// Doğrudan [openapi.Doc.Build] çıktısına bakmak yetmezdi: işlemler orada Go
-// struct'ıdır ve incelenen davranış tam olarak alanların JSON'a yazılıp
-// yazılmadığıdır. Router da gerçek olmalıdır — açıklama ile route'un yolu
-// ayrışırsa hata BURADA görünsün, üretimde /openapi.json'a bakan birinde
-// değil.
-func belge(t *testing.T) (yollar, bilesenler map[string]any) {
+// Looking at [openapi.Doc.Build]'s output directly would not have been enough:
+// the operations are Go structs there and the behavior under examination is
+// exactly whether the fields get written into JSON. The router has to be real
+// too — if the description and the route's path drift apart, let the fault show
+// up HERE and not in somebody looking at /openapi.json in production.
+func document(t *testing.T) (paths, components map[string]any) {
 	t.Helper()
 
 	doc := openapi.New("test", "v1")
@@ -38,660 +40,676 @@ func belge(t *testing.T) (yollar, bilesenler map[string]any) {
 	r := chi.NewRouter()
 	New(nil).Routes(r)
 
-	ham, err := doc.Build(r)
+	raw, err := doc.Build(r)
 	require.NoError(t, err)
 	require.Empty(t, doc.UnmatchedDescriptions(),
-		"anlatılan her uç bir route ile eşleşmeli; eşleşmeyen kayıt belgeye hiç girmez")
+		"every described endpoint has to match a route; an unmatched record never enters the document")
 
-	kodlanmis, err := json.Marshal(ham)
+	encoded, err := json.Marshal(raw)
 	require.NoError(t, err)
 
-	var cozulmus map[string]any
-	require.NoError(t, json.Unmarshal(kodlanmis, &cozulmus))
+	var decoded map[string]any
+	require.NoError(t, json.Unmarshal(encoded, &decoded))
 
-	bilesenSemalari, ok := cozulmus["components"].(map[string]any)
+	componentSchemas, ok := decoded["components"].(map[string]any)
 	require.True(t, ok)
 
-	bilesenler, ok = bilesenSemalari["schemas"].(map[string]any)
+	components, ok = componentSchemas["schemas"].(map[string]any)
 	require.True(t, ok)
 
-	yollar, ok = cozulmus["paths"].(map[string]any)
+	paths, ok = decoded["paths"].(map[string]any)
 	require.True(t, ok)
 
-	return yollar, bilesenler
+	return paths, components
 }
 
-// islem belgeden tek bir yol+metod işlemini döner.
-func islem(t *testing.T, yollar map[string]any, metod, yol string) map[string]any {
+// operation returns a single path+method operation from the document.
+func operation(t *testing.T, paths map[string]any, method, path string) map[string]any {
 	t.Helper()
 
-	yolIslemleri, ok := yollar[yol].(map[string]any)
-	require.True(t, ok, "%s belgede olmalı", yol)
+	pathOperations, ok := paths[path].(map[string]any)
+	require.True(t, ok, "%s has to be in the document", path)
 
-	op, ok := yolIslemleri[strings.ToLower(metod)].(map[string]any)
-	require.True(t, ok, "%s %s belgede olmalı", metod, yol)
+	op, ok := pathOperations[strings.ToLower(method)].(map[string]any)
+	require.True(t, ok, "%s %s has to be in the document", method, path)
 
 	return op
 }
 
-// semaCoz "$ref" atıflarını belgedeki bileşene çözer.
-func semaCoz(t *testing.T, bilesenler, sema map[string]any) map[string]any {
+// resolveSchema resolves "$ref" references to the component in the document.
+func resolveSchema(t *testing.T, components, schema map[string]any) map[string]any {
 	t.Helper()
 
-	ref, refli := sema[semaRef].(string)
-	if !refli {
-		return sema
+	ref, referenced := schema[schemaRef].(string)
+	if !referenced {
+		return schema
 	}
 
-	hedef, ok := bilesenler[strings.TrimPrefix(ref, refOneki)].(map[string]any)
-	require.True(t, ok, "%q bileşeni kayıtlı olmalı", ref)
+	target, ok := components[strings.TrimPrefix(ref, refPrefix)].(map[string]any)
+	require.True(t, ok, "the %q component has to be registered", ref)
 
-	return hedef
+	return target
 }
 
-// govdeSemasi bir yanıt ya da istek gövdesi tanımından JSON şemasını çıkarır.
-func govdeSemasi(t *testing.T, tanim map[string]any) map[string]any {
+// bodySchemaOf extracts the JSON schema from a response or request body
+// definition.
+func bodySchemaOf(t *testing.T, definition map[string]any) map[string]any {
 	t.Helper()
 
-	sema := altHarita(tanim, govdeIcerik, govdeTur, govdeSema)
-	require.NotNil(t, sema, "gövde tanımı application/json şeması taşımalı: %#v", tanim)
+	schema := subMap(definition, bodyContent, bodyMediaType, bodySchema)
+	require.NotNil(t, schema,
+		"the body definition has to carry an application/json schema: %#v", definition)
 
-	return sema
+	return schema
 }
 
-// alanlar şemanın "properties" anahtarlarını döner.
-func alanlar(t *testing.T, bilesenler, sema map[string]any) []string {
+// fields returns the schema's "properties" keys.
+func fields(t *testing.T, components, schema map[string]any) []string {
 	t.Helper()
 
-	ozellikler, ok := semaCoz(t, bilesenler, sema)[semaOzellikler].(map[string]any)
-	require.True(t, ok, "şemada properties olmalı: %#v", sema)
+	properties, ok := resolveSchema(t, components, schema)[schemaProperties].(map[string]any)
+	require.True(t, ok, "the schema has to have properties: %#v", schema)
 
-	return anahtarlar(ozellikler)
+	return keysOf(properties)
 }
 
-// zorunlular şemanın "required" listesini döner.
-func zorunlular(t *testing.T, bilesenler, sema map[string]any) []string {
+// requiredFields returns the schema's "required" list.
+func requiredFields(t *testing.T, components, schema map[string]any) []string {
 	t.Helper()
 
-	ham, _ := semaCoz(t, bilesenler, sema)["required"].([]any)
+	raw, _ := resolveSchema(t, components, schema)["required"].([]any)
 
-	adlar := make([]string, 0, len(ham))
+	names := make([]string, 0, len(raw))
 
-	for _, ad := range ham {
-		metin, ok := ad.(string)
+	for _, name := range raw {
+		text, ok := name.(string)
 		require.True(t, ok)
 
-		adlar = append(adlar, metin)
+		names = append(names, text)
 	}
 
-	return adlar
+	return names
 }
 
-// anahtarlar bir haritanın anahtarlarını döner.
-func anahtarlar[T any](m map[string]T) []string {
-	adlar := make([]string, 0, len(m))
-	for ad := range m {
-		adlar = append(adlar, ad)
+// keysOf returns a map's keys.
+func keysOf[T any](m map[string]T) []string {
+	names := make([]string, 0, len(m))
+	for name := range m {
+		names = append(names, name)
 	}
 
-	return adlar
+	return names
 }
 
-// jsonAnahtarlari değeri encoding/json ile kodlayıp anahtarlarını döner.
+// jsonKeys encodes the value with encoding/json and returns its keys.
 //
-// Karşılaştırmanın diğer ucu budur: şema, tel üzerinde GERÇEKTEN ne olduğunu
-// anlatmalıdır ve bunu bilen tek şey encoding/json'un kendisidir.
-func jsonAnahtarlari(t *testing.T, v any) []string {
+// This is the other end of the comparison: the schema has to describe what is
+// REALLY on the wire, and the only thing that knows that is encoding/json
+// itself.
+func jsonKeys(t *testing.T, v any) []string {
 	t.Helper()
 
-	ham, err := json.Marshal(v)
+	raw, err := json.Marshal(v)
 	require.NoError(t, err)
 
-	var cozulmus map[string]any
-	require.NoError(t, json.Unmarshal(ham, &cozulmus))
+	var decoded map[string]any
+	require.NoError(t, json.Unmarshal(raw, &decoded))
 
-	return anahtarlar(cozulmus)
+	return keysOf(decoded)
 }
 
-// sifirDegeri verilen örneğin tipinin sıfır değerini döner.
+// zeroValue returns the zero value of the given sample's type.
 //
-// Sıfır değerde JSON'a yazılan anahtarlar tam olarak "her zaman yazılanlar"dır,
-// yani şemanın "required" kümesi. Örneği elle ikinci kez yazmak yerine tipten
-// türetilir: iki örnek arasında bir alan unutulduğunda test yanlış nedenle
-// düşerdi.
-func sifirDegeri(v any) any {
+// The keys written to JSON at the zero value are exactly "the ones always
+// written", that is, the schema's "required" set. Rather than hand-writing the
+// sample a second time it is derived from the type: had a field been forgotten
+// between the two samples, the test would have fallen over for the wrong
+// reason.
+func zeroValue(v any) any {
 	return reflect.New(reflect.TypeOf(v)).Elem().Interface()
 }
 
-// ucBeklentisi anlatılan tek bir yönetim ucunun sözleşmesidir.
-type ucBeklentisi struct {
-	metod string
-	yol   string
-	// durum başarılı yanıtın GERÇEK status kodudur; handler'ın yazdığı kodla
-	// aynı olmalıdır (bkz. admin.go).
-	durum string
-	// istek istek gövdesinin TÜM alanlarını taşıyan örnektir; nil ise uç gövde
-	// OKUMAZ.
-	istek any
-	// yanit başarılı yanıttaki KAYDIN tüm alanlarını taşıyan örnektir; nil ise
-	// yanıtın gövdesi yoktur (204).
-	yanit any
-	// liste yanıtın liste zarfıyla döndüğünü bildirir.
-	liste bool
-	// sorgu handler'ın GERÇEKTEN okuduğu sorgu parametreleridir.
-	sorgu []string
+// endpointExpectation is the contract of a single described admin endpoint.
+type endpointExpectation struct {
+	method string
+	path   string
+	// status is the REAL status code of the successful response; it has to be
+	// the same as the code the handler writes (see admin.go).
+	status string
+	// request is a sample carrying ALL the fields of the request body; if nil
+	// the endpoint READS NO body.
+	request any
+	// response is a sample carrying all the fields of the RECORD in the
+	// successful response; if nil the response has no body (204).
+	response any
+	// list reports that the response comes back with the list envelope.
+	list bool
+	// query are the query parameters the handler REALLY reads.
+	query []string
 }
 
-// anahtar işlemin "METOD yol" kimliğini döner.
-func (u ucBeklentisi) anahtar() string { return u.metod + " " + u.yol }
+// key returns the operation's "METHOD path" identifier.
+func (e endpointExpectation) key() string { return e.method + " " + e.path }
 
-// sayfaSorgusu sayfalanan liste uçlarının ortak parametreleridir.
-var sayfaSorgusu = []string{"limit", "offset"}
+// pageQuery are the shared parameters of the paged list endpoints.
+var pageQuery = []string{"limit", "offset"}
 
-// yonetimUclari anlatılan yönetim uçlarının beklentileridir.
+// adminEndpoints are the expectations of the described admin endpoints.
 //
-// Örnekler DOLUDUR: omitempty taşıyan her alan sıfırdan farklı bir değer alır,
-// çünkü karşılaştırma "şemanın properties kümesi = kodlanan anahtar kümesi"
-// biçimindedir ve boş bir örnek omitempty alanları hiç yazmazdı.
-func yonetimUclari() []ucBeklentisi {
-	return []ucBeklentisi{
+// The samples are FULL: every field carrying omitempty gets a non-zero value,
+// because the comparison has the form "the schema's properties set = the set of
+// encoded keys" and an empty sample would never write the omitempty fields.
+func adminEndpoints() []endpointExpectation {
+	return []endpointExpectation{
 		{
-			metod: http.MethodPost, yol: LoginPath, durum: "200",
-			istek: loginRequest{}, yanit: loginResponse{},
+			method: http.MethodPost, path: LoginPath, status: "200",
+			request: loginRequest{}, response: loginResponse{},
 		},
 		{
-			metod: http.MethodGet, yol: "/admin/v1/auth/me", durum: "200",
-			yanit: doluKimlik(),
+			method: http.MethodGet, path: "/admin/v1/auth/me", status: "200",
+			response: fullPrincipal(),
 		},
 		{
-			metod: http.MethodPost, yol: "/admin/v1/auth/logout", durum: "200",
-			yanit: logoutResponse{},
+			method: http.MethodPost, path: "/admin/v1/auth/logout", status: "200",
+			response: logoutResponse{},
 		},
 		{
-			metod: http.MethodPost, yol: "/admin/v1/users", durum: "201",
-			istek: createUserRequest{}, yanit: doluKullanici(),
+			method: http.MethodPost, path: "/admin/v1/users", status: "201",
+			request: createUserRequest{}, response: fullUser(),
 		},
 		{
-			metod: http.MethodGet, yol: "/admin/v1/users", durum: "200",
-			yanit: doluKullanici(), liste: true,
-			sorgu: append(sayfaSorgusu, "email", "scope"),
+			method: http.MethodGet, path: "/admin/v1/users", status: "200",
+			response: fullUser(), list: true,
+			query: append(pageQuery, "email", "scope"),
 		},
 		{
-			metod: http.MethodGet, yol: "/admin/v1/users/{id}", durum: "200",
-			yanit: doluKullanici(),
+			method: http.MethodGet, path: "/admin/v1/users/{id}", status: "200",
+			response: fullUser(),
 		},
 		{
-			metod: http.MethodPut, yol: "/admin/v1/users/{id}", durum: "200",
-			istek: updateUserRequest{}, yanit: doluKullanici(),
+			method: http.MethodPut, path: "/admin/v1/users/{id}", status: "200",
+			request: updateUserRequest{}, response: fullUser(),
 		},
 		{
-			metod: http.MethodDelete, yol: "/admin/v1/users/{id}", durum: "204",
+			method: http.MethodDelete, path: "/admin/v1/users/{id}", status: "204",
 		},
 		{
-			metod: http.MethodPost, yol: "/admin/v1/users/{id}/password", durum: "204",
-			istek: setPasswordRequest{},
+			method: http.MethodPost, path: "/admin/v1/users/{id}/password", status: "204",
+			request: setPasswordRequest{},
 		},
 		{
-			metod: http.MethodPost, yol: "/admin/v1/api-keys", durum: "201",
-			istek: createAPIKeyRequest{},
-			yanit: createAPIKeyResponse{APIKey: doluAnahtar(), Key: "sk_düz"},
+			method: http.MethodPost, path: "/admin/v1/api-keys", status: "201",
+			request:  createAPIKeyRequest{},
+			response: createAPIKeyResponse{APIKey: fullAPIKey(), Key: "sk_plain"},
 		},
 		{
-			metod: http.MethodGet, yol: "/admin/v1/api-keys", durum: "200",
-			yanit: doluAnahtar(), liste: true,
-			sorgu: append(sayfaSorgusu, "type", "revoked"),
+			method: http.MethodGet, path: "/admin/v1/api-keys", status: "200",
+			response: fullAPIKey(), list: true,
+			query: append(pageQuery, "type", "revoked"),
 		},
 		{
-			metod: http.MethodGet, yol: "/admin/v1/api-keys/{id}", durum: "200",
-			yanit: doluAnahtar(),
+			method: http.MethodGet, path: "/admin/v1/api-keys/{id}", status: "200",
+			response: fullAPIKey(),
 		},
 		{
-			metod: http.MethodDelete, yol: "/admin/v1/api-keys/{id}", durum: "204",
+			method: http.MethodDelete, path: "/admin/v1/api-keys/{id}", status: "204",
 		},
 		{
-			metod: http.MethodPost, yol: "/admin/v1/api-keys/{id}/revoke", durum: "200",
-			yanit: doluAnahtar(),
+			method: http.MethodPost, path: "/admin/v1/api-keys/{id}/revoke", status: "200",
+			response: fullAPIKey(),
 		},
 		{
-			metod: http.MethodGet, yol: "/admin/v1/api-keys/{id}/sales-channels",
-			durum: "200", yanit: doluKanal(), liste: true,
+			method: http.MethodGet, path: "/admin/v1/api-keys/{id}/sales-channels",
+			status: "200", response: fullSalesChannel(), list: true,
 		},
 		{
-			metod: http.MethodPost, yol: "/admin/v1/api-keys/{id}/sales-channels",
-			durum: "200", istek: linkChannelRequest{}, yanit: doluKanal(), liste: true,
+			method: http.MethodPost, path: "/admin/v1/api-keys/{id}/sales-channels",
+			status: "200", request: linkChannelRequest{}, response: fullSalesChannel(), list: true,
 		},
 		{
-			metod: http.MethodDelete,
-			yol:   "/admin/v1/api-keys/{id}/sales-channels/{sales_channel_id}",
-			durum: "204",
+			method: http.MethodDelete,
+			path:   "/admin/v1/api-keys/{id}/sales-channels/{sales_channel_id}",
+			status: "204",
 		},
 		{
-			metod: http.MethodPost, yol: "/admin/v1/sales-channels", durum: "201",
-			istek: salesChannelRequest{}, yanit: doluKanal(),
+			method: http.MethodPost, path: "/admin/v1/sales-channels", status: "201",
+			request: salesChannelRequest{}, response: fullSalesChannel(),
 		},
 		{
-			metod: http.MethodGet, yol: "/admin/v1/sales-channels", durum: "200",
-			yanit: doluKanal(), liste: true,
-			sorgu: append(sayfaSorgusu, "name", "is_disabled"),
+			method: http.MethodGet, path: "/admin/v1/sales-channels", status: "200",
+			response: fullSalesChannel(), list: true,
+			query: append(pageQuery, "name", "is_disabled"),
 		},
 		{
-			metod: http.MethodGet, yol: "/admin/v1/sales-channels/{id}", durum: "200",
-			yanit: doluKanal(),
+			method: http.MethodGet, path: "/admin/v1/sales-channels/{id}", status: "200",
+			response: fullSalesChannel(),
 		},
 		{
-			metod: http.MethodPut, yol: "/admin/v1/sales-channels/{id}", durum: "200",
-			istek: updateSalesChannelRequest{}, yanit: doluKanal(),
+			method: http.MethodPut, path: "/admin/v1/sales-channels/{id}", status: "200",
+			request: updateSalesChannelRequest{}, response: fullSalesChannel(),
 		},
 		{
-			metod: http.MethodDelete, yol: "/admin/v1/sales-channels/{id}", durum: "204",
+			method: http.MethodDelete, path: "/admin/v1/sales-channels/{id}", status: "204",
 		},
 	}
 }
 
-// doluKimlik omitempty alanı da yazılan bir kimlik kaydı üretir.
-func doluKimlik() principalResponse {
+// fullPrincipal produces an identity record whose omitempty field is written
+// too.
+func fullPrincipal() principalResponse {
 	return principalResponse{SalesChannelIDs: []string{"sc_1"}}
 }
 
-// doluKullanici omitempty alanı da yazılan bir kullanıcı kaydı üretir.
-func doluKullanici() userDTO {
+// fullUser produces a user record whose omitempty field is written too.
+func fullUser() userDTO {
 	return userDTO{Metadata: map[string]any{"k": "v"}}
 }
 
-// doluAnahtar omitempty alanları da yazılan bir anahtar kaydı üretir.
-func doluAnahtar() apiKeyDTO {
-	an := time.Now().UTC()
+// fullAPIKey produces a key record whose omitempty fields are written too.
+func fullAPIKey() apiKeyDTO {
+	moment := time.Now().UTC()
 
 	return apiKeyDTO{
-		LastUsedAt: &an,
-		RevokedAt:  &an,
+		LastUsedAt: &moment,
+		RevokedAt:  &moment,
 		RevokedBy:  "usr_1",
 	}
 }
 
-// doluKanal omitempty alanı da yazılan bir satış kanalı kaydı üretir.
-func doluKanal() salesChannelDTO {
+// fullSalesChannel produces a sales channel record whose omitempty field is
+// written too.
+func fullSalesChannel() salesChannelDTO {
 	return salesChannelDTO{Metadata: map[string]any{"k": "v"}}
 }
 
-// TestYonetimUclariGovdeleriniAnlatir her yönetim ucunun ne ALDIĞINI ve ne
-// DÖNDÜĞÜNÜ söylediğini doğrular.
+// TestAdminEndpointsDescribeTheirBodies verifies that every admin endpoint says
+// what it TAKES and what it RETURNS.
 //
-// Bulgunun tam karşılığı budur: gövdesiz bir şema istemciye "bu uç var ve
-// şöyle başarısız olabilir" der, ne göndereceğini söylemez; istemci üreteci de
-// gövdesi olmayan, dönüş tipi 'void' olan bir metot üretir — POST
-// /admin/v1/users için bu, o istemciyle kullanıcı OLUŞTURULAMAMASI demektir.
+// This is exactly what the finding amounts to: a bodyless schema tells the
+// client "this endpoint exists and can fail like this" but does not say what to
+// send; and the client generator produces a method with no body whose return
+// type is 'void' — for POST /admin/v1/users that means no user CAN BE CREATED
+// with that client.
 //
-// Alan kümeleri DTO'nun encoding/json çıktısıyla karşılaştırılır, elle yazılmış
-// bir listeyle değil: elle yazılmış liste, DTO'ya alan eklendiği gün eksik
-// kalır ve test bunu görmezdi.
-func TestYonetimUclariGovdeleriniAnlatir(t *testing.T) {
+// The field sets are compared against the DTO's encoding/json output and not
+// against a hand-written list: a hand-written list falls short the day a field
+// is added to the DTO, and the test would not see it.
+func TestAdminEndpointsDescribeTheirBodies(t *testing.T) {
 	t.Parallel()
 
-	yollar, bilesenler := belge(t)
+	paths, components := document(t)
 
-	for _, uc := range yonetimUclari() {
-		t.Run(uc.anahtar(), func(t *testing.T) {
+	for _, ep := range adminEndpoints() {
+		t.Run(ep.key(), func(t *testing.T) {
 			t.Parallel()
 
-			op := islem(t, yollar, uc.metod, uc.yol)
-			assert.NotEmpty(t, op["summary"], "özetsiz bir işlem istemcide adsız bir metot olur")
+			op := operation(t, paths, ep.method, ep.path)
+			assert.NotEmpty(t, op["summary"],
+				"an operation without a summary becomes a nameless method in the client")
 
-			istekTanimi, govdeVar := op["requestBody"].(map[string]any)
-			require.Equal(t, uc.istek != nil, govdeVar,
-				"gövde OKUYAN uçta requestBody olmalı, okumayanda olmamalı")
+			requestDefinition, hasBody := op["requestBody"].(map[string]any)
+			require.Equal(t, ep.request != nil, hasBody,
+				"an endpoint that READS a body has to have a requestBody, one that does not must not")
 
-			if uc.istek != nil {
-				assert.Equal(t, true, istekTanimi["required"], "yazma ucunun gövdesi zorunludur")
-				assert.ElementsMatch(t, jsonAnahtarlari(t, uc.istek),
-					alanlar(t, bilesenler, govdeSemasi(t, istekTanimi)),
-					"istek gövdesinin alanları DTO ile örtüşmeli")
+			if ep.request != nil {
+				assert.Equal(t, true, requestDefinition["required"],
+					"the body of a write endpoint is mandatory")
+				assert.ElementsMatch(t, jsonKeys(t, ep.request),
+					fields(t, components, bodySchemaOf(t, requestDefinition)),
+					"the fields of the request body have to overlap with the DTO")
 			}
 
-			yanitlar, ok := op["responses"].(map[string]any)
+			responses, ok := op["responses"].(map[string]any)
 			require.True(t, ok)
 
-			tanim, ok := yanitlar[uc.durum].(map[string]any)
-			require.True(t, ok, "handler'ın GERÇEKTEN yazdığı kod belgelenmeli: %s", uc.durum)
-			assert.NotEmpty(t, tanim["description"], "yanıt açıklama taşımalı")
+			definition, ok := responses[ep.status].(map[string]any)
+			require.True(t, ok,
+				"the code the handler REALLY writes has to be documented: %s", ep.status)
+			assert.NotEmpty(t, definition["description"], "the response has to carry a description")
 
-			if uc.yanit == nil {
-				assert.NotContains(t, tanim, govdeIcerik,
-					"204'ün gövdesi yoktur; şema gövde vaat etmemeli")
+			if ep.response == nil {
+				assert.NotContains(t, definition, bodyContent,
+					"a 204 has no body; the schema must not promise one")
 
 				return
 			}
 
-			zarf := govdeSemasi(t, tanim)
-			if uc.liste {
+			envelope := bodySchemaOf(t, definition)
+			if ep.list {
 				assert.ElementsMatch(t, []string{"data", "count", "offset", "limit"},
-					alanlar(t, bilesenler, zarf), "liste zarfı plan Bölüm 8'deki biçimdir")
+					fields(t, components, envelope),
+					"the list envelope is the shape from plan Section 8")
 			} else {
-				assert.ElementsMatch(t, []string{"data"}, alanlar(t, bilesenler, zarf),
-					"tekil yanıtlar {\"data\": …} zarfıyla döner")
+				assert.ElementsMatch(t, []string{"data"}, fields(t, components, envelope),
+					"single responses come back with a {\"data\": …} envelope")
 			}
 
-			kayit := zarfKaydi(t, bilesenler, zarf, uc.liste)
-			assert.ElementsMatch(t, jsonAnahtarlari(t, uc.yanit), alanlar(t, bilesenler, kayit),
-				"yanıt kaydının alanları DTO ile örtüşmeli")
-			assert.ElementsMatch(t, jsonAnahtarlari(t, sifirDegeri(uc.yanit)),
-				zorunlular(t, bilesenler, kayit),
-				"required, encoding/json'un HER ZAMAN yazdığı anahtarlarla aynı olmalı")
+			record := envelopeRecord(t, components, envelope, ep.list)
+			assert.ElementsMatch(t, jsonKeys(t, ep.response), fields(t, components, record),
+				"the fields of the response record have to overlap with the DTO")
+			assert.ElementsMatch(t, jsonKeys(t, zeroValue(ep.response)),
+				requiredFields(t, components, record),
+				"required has to be the same as the keys encoding/json ALWAYS writes")
 		})
 	}
 }
 
-// zarfKaydi zarfın taşıdığı KAYIT şemasını döner.
+// envelopeRecord returns the RECORD schema the envelope carries.
 //
-// Liste zarfında kayıt "data"nın İÇİNDEDİR; zarfa bakıp durmak, gövdesi
-// bilinmeyen bir listeyi anlatılmış saymak olurdu.
-func zarfKaydi(t *testing.T, bilesenler, zarf map[string]any, liste bool) map[string]any {
+// In a list envelope the record is INSIDE "data"; stopping at the envelope
+// would have meant counting a list whose body is unknown as described.
+func envelopeRecord(t *testing.T, components, envelope map[string]any, list bool) map[string]any {
 	t.Helper()
 
-	ozellikler, ok := semaCoz(t, bilesenler, zarf)[semaOzellikler].(map[string]any)
+	properties, ok := resolveSchema(t, components, envelope)[schemaProperties].(map[string]any)
 	require.True(t, ok)
 
-	veri, ok := ozellikler["data"].(map[string]any)
+	data, ok := properties["data"].(map[string]any)
 	require.True(t, ok)
 
-	if !liste {
-		return veri
+	if !list {
+		return data
 	}
 
-	oge, ok := veri["items"].(map[string]any)
-	require.True(t, ok, "liste zarfının öğe şeması olmalı")
+	item, ok := data["items"].(map[string]any)
+	require.True(t, ok, "the list envelope has to have an item schema")
 
-	return oge
+	return item
 }
 
-// anlatilmayanUclar bilerek anlatılmayan uçlardır.
+// undescribedEndpoints are the endpoints deliberately left undescribed.
 //
-// BOŞTUR ve öyle kalmalıdır. Bir zamanlar POST /admin/v1/sales-channels
-// buradaydı: gövdesi "SalesChannelRequest" bileşenini isterdi ve AYNI adı
-// product modülünün bir tipi de istiyordu; iki farklı tip aynı adı istediğinde
-// belgenin TAMAMI üretilemez hâle gelir. Çakışma, product tarafındaki tipi
-// gerçekte ne olduğuna göre adlandırarak çözüldü (linkSalesChannelRequest).
+// It is EMPTY and has to stay that way. POST /admin/v1/sales-channels was here
+// once: its body asked for the "SalesChannelRequest" component and a type of
+// the product module asked for the SAME name; when two different types ask for
+// the same name the WHOLE document becomes impossible to produce. The clash was
+// resolved by naming the type on the product side after what it really is
+// (linkSalesChannelRequest).
 //
-// Liste yine de duruyor çünkü bir GÜVENLİK AĞIDIR: ileride bir uç bilerek
-// anlatılmadan bırakılırsa gerekçesi burada yazılı olmak zorunda kalır.
-// Yazılmamış bir eksiklik, bilinmeyen bir eksikliktir.
-var anlatilmayanUclar = []string{}
+// The list is still standing because it is a SAFETY NET: if an endpoint is
+// deliberately left undescribed in the future, its justification is forced to
+// be written down here. An unwritten gap is an unknown gap.
+var undescribedEndpoints = []string{}
 
-// TestYonetimUclarininTumuAnlatildi anlatılmamış bir yönetim ucu kalmadığını
-// doğrular.
+// TestEveryAdminEndpointIsDescribed verifies that no admin endpoint is left
+// undescribed.
 //
-// Yeni bir uç eklenip anlatılmadığında bu test düşer. Uyarı olmasaydı arıza
-// SESSİZ olurdu: uç belgede yolu ve güvenliğiyle görünür, yalnızca gövdesi
-// olmaz — yani şema "var ama ne aldığı bilinmiyor" der ve kimse fark etmez.
-func TestYonetimUclarininTumuAnlatildi(t *testing.T) {
+// When a new endpoint is added and not described, this test falls over. Without
+// the warning the fault would be SILENT: the endpoint shows up in the document
+// with its path and its security, it just has no body — that is, the schema
+// says "it exists but what it takes is unknown" and nobody notices.
+func TestEveryAdminEndpointIsDescribed(t *testing.T) {
 	t.Parallel()
 
-	yollar, _ := belge(t)
+	paths, _ := document(t)
 
-	var anlatilan, anlatilmayan []string
+	var described, undescribed []string
 
-	for yol, islemler := range yollar {
-		islemHaritasi, ok := islemler.(map[string]any)
-		require.True(t, ok, "yol girdisi metot haritası olmalı")
+	for path, operations := range paths {
+		operationMap, ok := operations.(map[string]any)
+		require.True(t, ok, "a path entry has to be a method map")
 
-		for metod, ham := range islemHaritasi {
-			op, ok := ham.(map[string]any)
+		for method, raw := range operationMap {
+			op, ok := raw.(map[string]any)
 			require.True(t, ok)
 
-			anahtar := strings.ToUpper(metod) + " " + yol
+			opKey := strings.ToUpper(method) + " " + path
 
 			if op["summary"] == nil {
-				// Anlatılmamış uç GEÇERLİ bir modeldir ama gövdesi de
-				// OLMAMALIDIR: özetsiz ama gövdeli bir işlem, yarım kalmış bir
-				// anlatım demek olurdu.
-				assert.NotContains(t, op, "requestBody", "%s anlatılmadı", anahtar)
+				// An undescribed endpoint is a VALID model but it MUST NOT have
+				// a body either: an operation with no summary but with a body
+				// would mean a half-finished description.
+				assert.NotContains(t, op, "requestBody", "%s was not described", opKey)
 
-				anlatilmayan = append(anlatilmayan, anahtar)
+				undescribed = append(undescribed, opKey)
 
 				continue
 			}
 
-			anlatilan = append(anlatilan, anahtar)
+			described = append(described, opKey)
 		}
 	}
 
-	beklenen := make([]string, 0, len(yonetimUclari()))
-	for _, uc := range yonetimUclari() {
-		beklenen = append(beklenen, uc.anahtar())
+	expected := make([]string, 0, len(adminEndpoints()))
+	for _, ep := range adminEndpoints() {
+		expected = append(expected, ep.key())
 	}
 
-	assert.ElementsMatch(t, beklenen, anlatilan,
-		"tabloda olmayan bir yönetim ucu sınanmamış demektir")
-	assert.ElementsMatch(t, anlatilmayanUclar, anlatilmayan,
-		"anlatılmayan uç kümesi YAZILI olmalı; sessiz bir eksik, eksik olduğu bilinmeyen eksiktir")
+	assert.ElementsMatch(t, expected, described,
+		"an admin endpoint that is not in the table means an untested one")
+	assert.ElementsMatch(t, undescribedEndpoints, undescribed,
+		"the set of undescribed endpoints has to be WRITTEN DOWN; a silent gap is a gap nobody knows about")
 }
 
-// TestYonetimUclariYalnizcaOkunanSorgulariAnlatir şemanın okunmayan bir
-// parametre duyurmadığını doğrular.
+// TestAdminEndpointsDescribeOnlyTheQueryParametersTheyRead verifies that the
+// schema announces no parameter that is never read.
 //
-// Okunmayan bir parametreyi şemaya koymak, istemciye ÇALIŞMAYAN bir özellik
-// vaat etmektir: üreteç metoda argüman koyar, çağıran doldurur, sunucu
-// sessizce yok sayar.
-func TestYonetimUclariYalnizcaOkunanSorgulariAnlatir(t *testing.T) {
+// Putting a parameter that is not read into the schema is promising the client
+// a feature that DOES NOT WORK: the generator puts an argument on the method,
+// the caller fills it in, and the server silently ignores it.
+func TestAdminEndpointsDescribeOnlyTheQueryParametersTheyRead(t *testing.T) {
 	t.Parallel()
 
-	yollar, _ := belge(t)
+	paths, _ := document(t)
 
-	for _, uc := range yonetimUclari() {
-		op := islem(t, yollar, uc.metod, uc.yol)
-		assert.ElementsMatch(t, uc.sorgu, parametreAdlari(t, op, "query"),
-			"%s parametreleri handler'ın okuduklarıyla aynı olmalı", uc.anahtar())
+	for _, ep := range adminEndpoints() {
+		op := operation(t, paths, ep.method, ep.path)
+		assert.ElementsMatch(t, ep.query, parameterNames(t, op, "query"),
+			"the parameters of %s have to be the same as the ones the handler reads", ep.key())
 	}
 }
 
-// parametreAdlari işlemin verilen yerdeki parametre adlarını döner.
-func parametreAdlari(t *testing.T, op map[string]any, yer string) []string {
+// parameterNames returns the operation's parameter names at the given location.
+func parameterNames(t *testing.T, op map[string]any, location string) []string {
 	t.Helper()
 
 	params, _ := op["parameters"].([]any)
 
-	adlar := make([]string, 0, len(params))
+	names := make([]string, 0, len(params))
 
-	for _, ham := range params {
-		p, ok := ham.(map[string]any)
+	for _, raw := range params {
+		p, ok := raw.(map[string]any)
 		require.True(t, ok)
 
-		if p["in"] != yer {
+		if p["in"] != location {
 			continue
 		}
 
-		ad, ok := p["name"].(string)
+		name, ok := p["name"].(string)
 		require.True(t, ok)
 
-		adlar = append(adlar, ad)
+		names = append(names, name)
 	}
 
-	return adlar
+	return names
 }
 
-// TestParolaAlanlariMaskeliBildirilir parolanın istek şemasında parola OLARAK
-// göründüğünü doğrular.
+// TestPasswordFieldsAreDeclaredMasked verifies that the password appears in the
+// request schema AS a password.
 //
-// İşaretsiz bir parola, e-posta ile aynı görünen sıradan bir dizedir: istemci
-// üreteci onu düz metin alanı yapar, şema görüntüleyici ekrana açık yazar ve
-// örnek istek üreten araç değeri kaydeder. Test ayrıca [parolaliGovde]'nin
-// bileşene yazmasını kilitler — çekirdek bir gün derin kopya dönerse işaret
-// sessizce kaybolmaz, burada düşer.
-func TestParolaAlanlariMaskeliBildirilir(t *testing.T) {
+// An unmarked password is an ordinary string that looks just like an email: the
+// client generator makes it a plaintext field, the schema viewer prints it in
+// the clear, and the tool producing sample requests records the value. The test
+// also locks down [passwordBody] writing into the component — if the core one
+// day returns a deep copy the mark does not disappear silently, it falls over
+// here.
+func TestPasswordFieldsAreDeclaredMasked(t *testing.T) {
 	t.Parallel()
 
-	yollar, bilesenler := belge(t)
+	paths, components := document(t)
 
-	parolaliUclar := []struct{ metod, yol string }{
+	passwordEndpoints := []struct{ method, path string }{
 		{http.MethodPost, LoginPath},
 		{http.MethodPost, "/admin/v1/users"},
 		{http.MethodPost, "/admin/v1/users/{id}/password"},
 	}
 
-	for _, uc := range parolaliUclar {
-		op := islem(t, yollar, uc.metod, uc.yol)
+	for _, ep := range passwordEndpoints {
+		op := operation(t, paths, ep.method, ep.path)
 
-		govde, ok := op["requestBody"].(map[string]any)
-		require.True(t, ok, "%s %s gövde almalı", uc.metod, uc.yol)
+		body, ok := op["requestBody"].(map[string]any)
+		require.True(t, ok, "%s %s has to take a body", ep.method, ep.path)
 
-		ozellikler, ok := semaCoz(t, bilesenler,
-			govdeSemasi(t, govde))[semaOzellikler].(map[string]any)
+		properties, ok := resolveSchema(t, components,
+			bodySchemaOf(t, body))[schemaProperties].(map[string]any)
 		require.True(t, ok)
 
-		parola, ok := ozellikler[alanParola].(map[string]any)
-		require.True(t, ok, "%s %s parola alanı taşımalı", uc.metod, uc.yol)
+		password, ok := properties[fieldPassword].(map[string]any)
+		require.True(t, ok, "%s %s has to carry a password field", ep.method, ep.path)
 
-		assert.Equal(t, tipDize, parola[semaTip], "parola tel üzerinde dizedir")
-		assert.Equal(t, bicimParola, parola[semaBicim],
-			"parola alanı format: %q ile işaretlenmeli", bicimParola)
+		assert.Equal(t, typeString, password[schemaType], "a password is a string on the wire")
+		assert.Equal(t, formatPassword, password[schemaFormat],
+			"the password field has to be marked with format: %q", formatPassword)
 	}
 }
 
-// TestYanitlarParolaTasimaz hiçbir başarılı yanıtta parola alanı
-// BULUNMADIĞINI doğrular.
+// TestResponsesCarryNoPassword verifies that NO successful response holds a
+// password field.
 //
-// İddia yanıt DTO'larının bugünkü hâline değil, ŞEMANIN TAMAMINA bakar:
-// yanıttan ulaşılabilen her bileşen taranır. Yanıt gövdesi bir gün istek
-// tipini yeniden kullansa (ya da bir DTO'ya parola alanı eklense) sızıntı
-// belgede görünür hâle gelirdi — ve belgede görünen bir alan, istemci
-// üretecinin okumaya çalışacağı bir alandır.
-func TestYanitlarParolaTasimaz(t *testing.T) {
+// The assertion looks not at the response DTOs as they are today but at the
+// WHOLE SCHEMA: every component reachable from the response is scanned. Were a
+// response body one day to reuse a request type (or a password field to be
+// added to a DTO), the leak would become visible in the document — and a field
+// visible in the document is a field the client generator will try to read.
+func TestResponsesCarryNoPassword(t *testing.T) {
 	t.Parallel()
 
-	yollar, bilesenler := belge(t)
+	paths, components := document(t)
 
-	for _, uc := range yonetimUclari() {
-		if uc.yanit == nil {
+	for _, ep := range adminEndpoints() {
+		if ep.response == nil {
 			continue
 		}
 
-		op := islem(t, yollar, uc.metod, uc.yol)
+		op := operation(t, paths, ep.method, ep.path)
 
-		yanitlar, ok := op["responses"].(map[string]any)
+		responses, ok := op["responses"].(map[string]any)
 		require.True(t, ok)
 
-		tanim, ok := yanitlar[uc.durum].(map[string]any)
+		definition, ok := responses[ep.status].(map[string]any)
 		require.True(t, ok)
 
-		ulasilan := ulasilanAlanlar(t, bilesenler, govdeSemasi(t, tanim), map[string]struct{}{})
-		assert.NotContains(t, ulasilan, alanParola,
-			"%s yanıtı parola taşımamalı", uc.anahtar())
+		reached := reachableFields(t, components, bodySchemaOf(t, definition), map[string]struct{}{})
+		assert.NotContains(t, reached, fieldPassword,
+			"the response of %s must not carry a password", ep.key())
 	}
 }
 
-// ulasilanAlanlar şemadan ulaşılabilen TÜM özellik adlarını toplar.
+// reachableFields collects ALL the property names reachable from the schema.
 //
-// gorulen, aynı bileşene ikinci kez inmeyi engeller; şemalar kendine referans
-// verebilir ve döngü testi sonsuza kadar döndürürdü.
-func ulasilanAlanlar(t *testing.T, bilesenler, sema map[string]any,
-	gorulen map[string]struct{},
+// seen prevents descending into the same component a second time; schemas can
+// refer to themselves and a cycle would make the test loop forever.
+func reachableFields(t *testing.T, components, schema map[string]any,
+	seen map[string]struct{},
 ) []string {
 	t.Helper()
 
-	if ref, refli := sema[semaRef].(string); refli {
-		if _, tekrar := gorulen[ref]; tekrar {
+	if ref, referenced := schema[schemaRef].(string); referenced {
+		if _, repeat := seen[ref]; repeat {
 			return nil
 		}
 
-		gorulen[ref] = struct{}{}
+		seen[ref] = struct{}{}
 	}
 
-	cozulmusSema := semaCoz(t, bilesenler, sema)
+	resolved := resolveSchema(t, components, schema)
 
-	var adlar []string
+	var names []string
 
-	if ozellikler, ok := cozulmusSema[semaOzellikler].(map[string]any); ok {
-		for ad, ham := range ozellikler {
-			adlar = append(adlar, ad)
+	if properties, ok := resolved[schemaProperties].(map[string]any); ok {
+		for name, raw := range properties {
+			names = append(names, name)
 
-			if alt, nesne := ham.(map[string]any); nesne {
-				adlar = append(adlar, ulasilanAlanlar(t, bilesenler, alt, gorulen)...)
+			if child, object := raw.(map[string]any); object {
+				names = append(names, reachableFields(t, components, child, seen)...)
 			}
 		}
 	}
 
-	if oge, ok := cozulmusSema["items"].(map[string]any); ok {
-		adlar = append(adlar, ulasilanAlanlar(t, bilesenler, oge, gorulen)...)
+	if item, ok := resolved["items"].(map[string]any); ok {
+		names = append(names, reachableFields(t, components, item, seen)...)
 	}
 
-	return adlar
+	return names
 }
 
-// TestDuzAnahtarinBirKezDondugunuSemaSoyler düz anahtarın ömrünün şemada
-// yazılı olduğunu doğrular.
+// TestSchemaSaysThePlaintextKeyIsReturnedOnce verifies that the lifetime of the
+// plaintext key is written down in the schema.
 //
-// Şema alanın VARLIĞINI anlatır ama tek seferlik olduğunu anlatamaz: "key"
-// sıradan bir dizedir ve istemci onu her çağrıda okuyabileceğini sanır.
-// Bilginin tek yeri açıklamadır; olmasaydı istemci geliştiricisi anahtarı
-// saklamaz ve değeri kaybederdi.
-func TestDuzAnahtarinBirKezDondugunuSemaSoyler(t *testing.T) {
+// The schema describes the EXISTENCE of the field but cannot describe that it
+// is one-shot: "key" is an ordinary string and the client believes it can read
+// it on every call. The only place for that information is the description;
+// without it the client developer would not store the key and would lose the
+// value.
+func TestSchemaSaysThePlaintextKeyIsReturnedOnce(t *testing.T) {
 	t.Parallel()
 
-	yollar, bilesenler := belge(t)
-	op := islem(t, yollar, http.MethodPost, "/admin/v1/api-keys")
+	paths, components := document(t)
+	op := operation(t, paths, http.MethodPost, "/admin/v1/api-keys")
 
-	ozet, _ := op["summary"].(string)
-	assert.Contains(t, ozet, "BİR KEZ", "özet anahtarın bir kez döndüğünü söylemeli")
+	summary, _ := op["summary"].(string)
+	assert.Contains(t, summary, "ONCE", "the summary has to say the key is returned once")
 
-	aciklama, _ := op["description"].(string)
-	assert.Contains(t, aciklama, "bir daha hiçbir uçtan okunamaz",
-		"açıklama düz anahtarın geri okunamayacağını söylemeli")
+	description, _ := op["description"].(string)
+	assert.Contains(t, description, "can never again be read from any endpoint",
+		"the description has to say the plaintext key cannot be read back")
 
-	yanitlar, ok := op["responses"].(map[string]any)
+	responses, ok := op["responses"].(map[string]any)
 	require.True(t, ok)
 
-	tanim, ok := yanitlar["201"].(map[string]any)
+	definition, ok := responses["201"].(map[string]any)
 	require.True(t, ok)
 
-	yanitAciklamasi, _ := tanim["description"].(string)
-	assert.Contains(t, yanitAciklamasi, "bir daha dönmez",
-		"yanıt açıklaması düz metnin tek seferlik olduğunu söylemeli")
+	responseDescription, _ := definition["description"].(string)
+	assert.Contains(t, responseDescription, "never returned again",
+		"the response description has to say the plaintext is one-shot")
 
-	// Düz metin YALNIZCA oluşturma yanıtındadır; okuma uçlarının kaydında
-	// maskelenmiş gösterim vardır.
-	kayit := zarfKaydi(t, bilesenler, govdeSemasi(t, tanim), false)
-	assert.ElementsMatch(t, []string{"api_key", "key"}, alanlar(t, bilesenler, kayit))
+	// The plaintext is ONLY in the creation response; the record of the read
+	// endpoints holds the masked representation.
+	record := envelopeRecord(t, components, bodySchemaOf(t, definition), false)
+	assert.ElementsMatch(t, []string{"api_key", "key"}, fields(t, components, record))
 
-	okuma := islem(t, yollar, http.MethodGet, "/admin/v1/api-keys/{id}")
+	readOp := operation(t, paths, http.MethodGet, "/admin/v1/api-keys/{id}")
 
-	okumaYanitlari, ok := okuma["responses"].(map[string]any)
+	readResponses, ok := readOp["responses"].(map[string]any)
 	require.True(t, ok)
 
-	okumaTanimi, ok := okumaYanitlari["200"].(map[string]any)
+	readDefinition, ok := readResponses["200"].(map[string]any)
 	require.True(t, ok)
 
-	okumaAlanlari := alanlar(t, bilesenler,
-		zarfKaydi(t, bilesenler, govdeSemasi(t, okumaTanimi), false))
-	assert.NotContains(t, okumaAlanlari, "key", "okuma ucu düz anahtar vaat etmemeli")
-	assert.Contains(t, okumaAlanlari, "redacted")
+	readFields := fields(t, components,
+		envelopeRecord(t, components, bodySchemaOf(t, readDefinition), false))
+	assert.NotContains(t, readFields, "key", "the read endpoint must not promise a plaintext key")
+	assert.Contains(t, readFields, "redacted")
 }
 
-// TestGirisUcuSemadaKorumasizKalir jetonu veren ucun jeton istemediğini
-// doğrular.
+// TestLoginEndpointStaysUnprotectedInTheSchema verifies that the endpoint
+// handing out the token does not ask for a token.
 //
-// Ayrım incedir ve bedeli büyüktür: alan HİÇ YAZILMASAYDI işlem
-// "belirtilmemiş" sayılır ve kök seviyedeki varsayılan güvenliği MİRAS
-// ALIRDI; istemci üreteci de giriş için jeton isteyen, yani hiç çağrılamayan
-// bir metot üretirdi. Kararı çekirdek verir ([openapi.Doc] giriş yolunu
-// tanır); buradaki iddia, anlatımın onu EZMEDİĞİDİR.
-func TestGirisUcuSemadaKorumasizKalir(t *testing.T) {
+// The distinction is subtle and its cost is large: had the field NOT BEEN
+// WRITTEN AT ALL the operation would count as "unspecified" and would INHERIT
+// the root-level default security; and the client generator would produce a
+// method that asks for a token in order to log in, that is, one that can never
+// be called. The core makes the decision ([openapi.Doc] recognizes the login
+// path); the claim here is that the description DOES NOT OVERRIDE it.
+func TestLoginEndpointStaysUnprotectedInTheSchema(t *testing.T) {
 	t.Parallel()
 
-	yollar, _ := belge(t)
+	paths, _ := document(t)
 
-	giris := islem(t, yollar, http.MethodPost, LoginPath)
+	login := operation(t, paths, http.MethodPost, LoginPath)
 
-	guvenlik, yazilmis := giris["security"]
-	require.True(t, yazilmis,
-		"giriş ucunda security alanı YAZILMIŞ olmalı; yazılmamış bir alan kök varsayılanını miras alır")
-	require.NotNil(t, guvenlik, "security null olamaz; null 'belirtilmemiş' ile aynı kapıya çıkar")
+	security, written := login["security"]
+	require.True(t, written,
+		"the security field of the login endpoint has to be WRITTEN; an unwritten field inherits the root default")
+	require.NotNil(t, security, "security cannot be null; null amounts to the same as 'unspecified'")
 
-	dizi, ok := guvenlik.([]any)
-	require.True(t, ok, "security bir dizi olmalı, %T bulundu", guvenlik)
-	assert.Empty(t, dizi, "boş dizi 'bu uç açıkça korumasız' demektir")
+	list, ok := security.([]any)
+	require.True(t, ok, "security has to be an array, %T found", security)
+	assert.Empty(t, list, "an empty array means 'this endpoint is explicitly unprotected'")
 
-	// Boş dizinin bir anlamı olması için dolusunun da görülmesi gerekir.
-	korumali := islem(t, yollar, http.MethodGet, "/admin/v1/users")
-	assert.Equal(t, []any{map[string]any{"bearerAuth": []any{}}}, korumali["security"],
-		"öteki yönetim uçları oturum jetonu istemeli")
+	// For the empty array to mean anything, a full one has to be seen as well.
+	protected := operation(t, paths, http.MethodGet, "/admin/v1/users")
+	assert.Equal(t, []any{map[string]any{"bearerAuth": []any{}}}, protected["security"],
+		"the other admin endpoints have to ask for a session token")
 }

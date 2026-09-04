@@ -1,4 +1,4 @@
--- order_claims sorguları (hasar/eksik kaydı iskeleti; plan Bölüm 6).
+-- order_claims queries (damage/shortage record skeleton; plan Section 6).
 
 -- name: CreateOrderClaim :one
 INSERT INTO order_claims (id, order_id, claim_type, status, refund_amount, reason, note, metadata)

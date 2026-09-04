@@ -1,9 +1,9 @@
 name: gobit
 
-# GÜVENLİK: Yayınlanan portlar bilinçli olarak 127.0.0.1'e bağlanmıştır.
-# 0.0.0.0'a açılsalardı, paylaşılan bir ağda (ofis/kafe WiFi) aynı alt ağdaki
-# herhangi bir cihaz Postgres'e superuser olarak bağlanabilir, Redis'e ise
-# kimlik doğrulama olmadan erişebilirdi.
+# SECURITY: the published ports are deliberately bound to 127.0.0.1. Were they
+# opened on 0.0.0.0, on a shared network (office/cafe WiFi) any device on the
+# same subnet could connect to Postgres as superuser and reach Redis with no
+# authentication at all.
 services:
   postgres:
     image: postgres:16-alpine
@@ -13,26 +13,27 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-gobit}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-gobit}
       POSTGRES_DB: ${POSTGRES_DB:-gobit}
-      # CTYPE C.UTF-8, COLLATE ise bayt sırası olarak kalır.
+      # CTYPE is C.UTF-8, while COLLATE stays byte order.
       #
-      # Sıralamanın deterministik olması için burada bir zamanlar "--locale=C"
-      # yazıyordu ve o ayar ARAMAYI SESSİZCE BOZUYORDU: C locale yalnızca ASCII
-      # harfleri katlar, dolayısıyla "çanta" arayan müşteri "Çanta" başlıklı
-      # ürünü BULAMIYORDU — hata yok, log yok, boş liste var. Hem vitrinin kendi
-      # `title ILIKE '%q%'` süzgeci hem search-pg eklentisinin to_tsvector'ü
-      # kümenin CTYPE'ına bağlıdır.
+      # This once read "--locale=C" so that ordering would be deterministic, and
+      # that setting SILENTLY BROKE SEARCH: the C locale folds ASCII letters
+      # only, so a customer searching for the Turkish word "çanta" (bag) COULD
+      # NOT FIND a product titled "Çanta" — no error, no log, just an empty
+      # list. Both the storefront's own `title ILIKE '%q%'` filter and the
+      # search-pg plugin's to_tsvector depend on the cluster's CTYPE.
       #
-      # Ölçüldü (aynı imaj, üç kurulum):
+      # Measured (same image, three setups):
       #   --locale=C                       ILIKE ✗   to_tsvector ✗
       #   --locale=C.UTF-8                 ILIKE ✓   to_tsvector ✓
-      #   --locale=C --locale-provider=icu ILIKE ✓   to_tsvector ✗   (yarım çözüm)
+      #   --locale=C --locale-provider=icu ILIKE ✓   to_tsvector ✗   (half a fix)
       #
-      # C.UTF-8 sıralamayı kaybettirmez: karşılaştırma yine bayt sırasıdır,
-      # değişen yalnızca harf katlamasıdır.
+      # C.UTF-8 does not lose the ordering: the comparison is still byte order,
+      # the only thing that changes is letter folding.
       #
-      # DİKKAT: locale initdb ANINDA sabitlenir. Var olan bir veri dizini eski
-      # ayarıyla kalır; düzeltmek dump/restore ister. Uygulama açılışta bunu
-      # sınar ve bozuksa uyarır (internal/core/db/casefold.go).
+      # CAUTION: the locale is fixed AT initdb TIME. An existing data directory
+      # keeps its old setting; fixing it requires a dump/restore. The
+      # application tests this at startup and warns when it is broken
+      # (internal/core/db/casefold.go).
       POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C.UTF-8"
     ports:
       - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
@@ -51,7 +52,7 @@ services:
     restart: unless-stopped
     environment:
       REDIS_PASSWORD: ${REDIS_PASSWORD:-gobit}
-    # Event bus (Redis Streams) için AOF kalıcılığı açık; parola zorunlu.
+    # AOF persistence is on for the event bus (Redis Streams); a password is mandatory.
     command: ["sh", "-c", "exec redis-server --appendonly yes --requirepass \"$$REDIS_PASSWORD\""]
     ports:
       - "127.0.0.1:${REDIS_PORT:-6379}:6379"
@@ -64,26 +65,28 @@ services:
       retries: 10
       start_period: 5s
 
-  # İZLEME TOPLAYICISI — bilinçli olarak PROFİL ARKASINDA.
+  # TRACE COLLECTOR — deliberately BEHIND A PROFILE.
   #
-  # `make up` bunu BAŞLATMAZ: izleme kapalıyken uygulama hiçbir dış bağlantı
-  # denemez ve geliştirme kurulumu bir toplayıcı çalıştırmak zorunda değildir.
-  # Toplayıcıyı istemek AÇIK bir karardır (bkz. `make up-tracing`).
+  # `make up` DOES NOT START it: while tracing is off the application attempts
+  # no outbound connection at all, and a development setup is not obliged to run
+  # a collector. Asking for the collector is an EXPLICIT decision (see
+  # `make up-tracing`).
   #
-  # all-in-one imajı bellek içi depo kullanır: yeniden başlatmada trace'ler
-  # kaybolur. Geliştirme ve doğrulama içindir, üretim için değildir.
+  # The all-in-one image uses an in-memory store: traces are lost on restart. It
+  # is meant for development and verification, not for production.
   #
-  # YALNIZCA TRACE KABUL EDER. Uygulama aynı uca metrik de göndermeye çalışır
-  # ve Jaeger bunu reddeder; her dışa aktarma aralığında şu satır düşer:
+  # IT ACCEPTS TRACES ONLY. The application tries to send metrics to the same
+  # endpoint too and Jaeger rejects them; at every export interval this line
+  # drops:
   #
   #   failed to upload metrics: ... unknown service ...MetricsService
   #
-  # Zararsızdır (izleme arızası uygulamayı düşürmez, bkz. ADR 0007) ama
-  # gürültülüdür. Metrik de toplamak isteyen bir kurulum, uygulamayı bir
-  # OpenTelemetry Collector'a yöneltmeli ve trace'leri oradan Jaeger'a
-  # iletmelidir. Buraya Collector koymamak bilinçlidir: bir yapılandırma
-  # dosyası daha getirir ve bu profilin tek işi "trace'ler gerçekten dışa
-  # aktarılıyor mu" sorusunu cevaplamaktır.
+  # It is harmless (a tracing failure does not bring the application down, see
+  # ADR 0007) but noisy. A setup that also wants to collect metrics should point
+  # the application at an OpenTelemetry Collector and forward the traces from
+  # there to Jaeger. Not putting a Collector here is deliberate: it would bring
+  # one more configuration file, and this profile's single job is to answer the
+  # question "are traces really being exported".
   jaeger:
     image: jaegertracing/all-in-one:1.62.0
     container_name: gobit-jaeger
@@ -92,7 +95,7 @@ services:
     environment:
       COLLECTOR_OTLP_ENABLED: "true"
     ports:
-      # 16686: web arayüzü. 4317: OTLP/gRPC — uygulamanın bağlandığı port.
+      # 16686: the web interface. 4317: OTLP/gRPC — the port the application connects to.
       - "127.0.0.1:${JAEGER_UI_PORT:-16686}:16686"
       - "127.0.0.1:${OTLP_GRPC_PORT:-4317}:4317"
 

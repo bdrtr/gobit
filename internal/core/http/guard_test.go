@@ -298,9 +298,9 @@ func TestAPIGuardsIdempotencyRunsAfterIdentity(t *testing.T) {
 	assert.Empty(t, accepted.Header().Get(corehttp.IdempotencyReplayedHeader),
 		"the first REAL run is not a replay")
 
-	tekrar := call(r, makeReq())
-	assert.Equal(t, http.StatusCreated, tekrar.Code)
-	assert.Equal(t, "true", tekrar.Header().Get(corehttp.IdempotencyReplayedHeader),
+	replay := call(r, makeReq())
+	assert.Equal(t, http.StatusCreated, replay.Code)
+	assert.Equal(t, "true", replay.Header().Get(corehttp.IdempotencyReplayedHeader),
 		"a second request with the same key has to replay the record")
 }
 

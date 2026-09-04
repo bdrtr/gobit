@@ -1,38 +1,41 @@
-// Package repository order modülünün veritabanı erişimidir.
+// Package repository is the database access of the order module.
 //
-// SADECE bu modülün tablolarına dokunur (plan Bölüm 4). sqlc üretimi kod
-// repository/orderdb altındadır ve elle düzenlenmez; bu paket onun üstüne iki
-// şey ekler:
+// It touches ONLY the tables of this module (plan Section 4). The sqlc
+// generated code is under repository/orderdb and is not edited by hand; this
+// package adds two things on top of it:
 //
-//   - Çeviri: pgtype ve üretilmiş satır tipleri BU PAKETİN DIŞINA ÇIKMAZ,
-//     models tiplerine çevrilir (bkz. convert.go).
-//   - Sınıflandırma: sürücü hataları core/errors tipli hatalarına çevrilir;
-//     satır bulunamaması NotFound, benzersizlik ihlali Conflict, kimlik
-//     ihlali Invalid olur.
+//   - Conversion: pgtype and the generated row types DO NOT LEAVE THIS
+//     PACKAGE, they are converted to models types (see convert.go).
+//   - Classification: driver errors are converted into errors typed by
+//     core/errors; a missing row becomes NotFound, a uniqueness violation
+//     Conflict, an identity violation Invalid.
 //
-// # İşlem (transaction) taşınması
+// # Carrying the transaction
 //
-// [Repository.WithTx] bir işlem açar ve onu CONTEXT'e koyar; işlem boyunca
-// çağrılan tüm repository metodları o context'i aldıkları sürece aynı işlemde
-// çalışır. Bunun alternatifi, işlem tutamağını taşıyan ayrı bir arayüz tipini
-// metot imzalarına koymaktı; o durumda servis kendi paketinde tanımladığı dar
-// arayüzle bu paketi YAPISAL OLARAK eşleştiremezdi — Go'da imzadaki adlandırılmış
-// tipler birebir aynı olmak zorundadır, yani servis repository'yi import etmek
-// zorunda kalırdı (ADR 0001 bunu yasaklar). Context ile taşımak imzaları iki
-// tarafın da paylaştığı tiplere (context.Context, models.*) indirger.
+// [Repository.WithTx] opens a transaction and puts it into the CONTEXT; every
+// repository method called during the transaction runs in that same
+// transaction as long as it receives that context. The alternative was to put
+// a separate interface type carrying the transaction handle into the method
+// signatures; in that case the service could not match this package
+// STRUCTURALLY with the narrow interface it defines in its own package — in Go
+// the named types in a signature have to be exactly the same, which means the
+// service would have had to import the repository (ADR 0001 forbids that).
+// Carrying it in the context reduces the signatures to the types both sides
+// share (context.Context, models.*).
 //
-// [Repository.LockOrder] işlem DIŞINDA çağrılırsa hata döner: FOR UPDATE kilidi
-// işlem bitince serbest kalacağı için, işlemsiz bir kilit sessizce hiçbir şeyi
-// korumazdı.
+// [Repository.LockOrder] returns an error if it is called OUTSIDE a
+// transaction: because a FOR UPDATE lock is released once the transaction
+// ends, a lock without a transaction would silently protect nothing.
 //
-// # Durum geçişleri neden burada da korunur
+// # Why the state transitions are guarded here as well
 //
-// CancelOrder / CompleteOrder / ArchiveOrder sorguları WHERE koşuluna BEKLENEN
-// DURUMU yazar. Servis aynı kontrolü kilit altında ve okunabilir bir hatayla
-// zaten yapar; buradaki koşul, doğrudan SQL ile ya da servisin kilit
-// çerçevesini atlayan bir çağrıyla yapılan geçişi de kapsayan ikinci kapıdır.
-// Hiç satır etkilenmezse Conflict döner: satır kilit altında OKUNMUŞTUR, yani
-// yokluğu değil DURUMUNUN DEĞİŞMİŞ olması tek açıklamadır.
+// The CancelOrder / CompleteOrder / ArchiveOrder queries write the EXPECTED
+// STATE into the WHERE condition. The service already does the same check
+// under the lock and with a readable error; the condition here is the second
+// gate, the one that also covers a transition made directly with SQL or with a
+// call that bypasses the service's locking frame. If no row is affected,
+// Conflict is returned: the row HAS BEEN READ under the lock, so its absence
+// is not the explanation — the only explanation is that ITS STATE HAS CHANGED.
 package repository
 
 import (
@@ -49,37 +52,39 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/order/repository/orderdb"
 )
 
-// rollbackTimeout iptal edilmiş bir bağlamda geri almaya tanınan süredir.
-// Geri alma, çağıranın ctx'i dolmuş olsa da denenmelidir; aksi hâlde işlem
-// bağlantı havuza dönene kadar açık kalırdı.
+// rollbackTimeout is the time granted to a rollback on a canceled context.
+// The rollback must be attempted even when the caller's ctx has expired;
+// otherwise the transaction would stay open until the connection returns to
+// the pool.
 const rollbackTimeout = 5 * time.Second
 
-// txKeyType context anahtarının tipidir; dışarıdan üretilemesin diye dışa
-// açık değildir.
+// txKeyType is the type of the context key; it is unexported so that it cannot
+// be produced from the outside.
 type txKeyType struct{}
 
-// txKey işlem tutamağının context'teki anahtarıdır.
+// txKey is the key of the transaction handle in the context.
 var txKey = txKeyType{}
 
-// Repository order tablolarına erişimdir. Eşzamanlı kullanıma güvenlidir.
+// Repository is the access to the order tables. It is safe for concurrent use.
 type Repository struct {
 	pool *pgxpool.Pool
 }
 
-// New verilen havuz üzerinde çalışan bir Repository üretir.
+// New produces a Repository working on the given pool.
 func New(pool *pgxpool.Pool) *Repository {
 	return &Repository{pool: pool}
 }
 
-// WithTx fn'i tek bir veritabanı işleminde çalıştırır.
+// WithTx runs fn inside a single database transaction.
 //
-// fn'e verilen context işlemi taşır; o context ile çağrılan tüm repository
-// metodları aynı işlemde koşar. fn hata dönerse ya da panikler ise işlem geri
-// alınır, hata (panikte panik) yukarı verilir.
+// The context given to fn carries the transaction; every repository method
+// called with that context runs in the same transaction. If fn returns an
+// error or panics, the transaction is rolled back and the error (on a panic,
+// the panic) is passed upwards.
 //
-// Çağrı iç içe gelirse yeni bir işlem AÇILMAZ, var olan kullanılır: iç içe
-// işlem açmak PostgreSQL'de savepoint demektir ve dıştaki işlemin atomikliği
-// konusunda yanıltıcı bir güven verirdi.
+// If the calls nest, a new transaction is NOT opened, the existing one is
+// used: opening a nested transaction means a savepoint in PostgreSQL and would
+// give misleading confidence about the atomicity of the outer transaction.
 func (r *Repository) WithTx(ctx context.Context, fn func(ctx context.Context) error) error {
 	if _, ok := txFromContext(ctx); ok {
 		return fn(ctx)
@@ -87,7 +92,7 @@ func (r *Repository) WithTx(ctx context.Context, fn func(ctx context.Context) er
 
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
-		return classify(err, "order_tx_begin_failed", "işlem başlatılamadı")
+		return classify(err, "order_tx_begin_failed", "could not begin transaction")
 	}
 
 	committed := false
@@ -95,8 +100,9 @@ func (r *Repository) WithTx(ctx context.Context, fn func(ctx context.Context) er
 		if committed {
 			return
 		}
-		// Bağlamdan bağımsız kısa ömürlü bir context kullanılır: çağıranın
-		// ctx'i iptal edilmişse onunla yapılan geri alma da anında düşerdi.
+		// A short-lived context independent of the caller's is used: if the
+		// caller's ctx has been canceled, a rollback made with it would fail
+		// instantly too.
 		rollbackCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), rollbackTimeout)
 		defer cancel()
 		_ = tx.Rollback(rollbackCtx)
@@ -107,31 +113,33 @@ func (r *Repository) WithTx(ctx context.Context, fn func(ctx context.Context) er
 	}
 
 	if err := tx.Commit(ctx); err != nil {
-		return classify(err, "order_tx_commit_failed", "işlem tamamlanamadı")
+		return classify(err, "order_tx_commit_failed", "could not commit transaction")
 	}
 	committed = true
 	return nil
 }
 
-// WithReadTx fn'i salt-okunur ve REPEATABLE READ bir işlemde çalıştırır.
+// WithReadTx runs fn in a read-only, REPEATABLE READ transaction.
 //
-// Birden çok sorgusu olan bir OKUMA yolu içindir (servisin GetOrder'ı siparişi,
-// satırları ve özeti ayrı sorgularla getirir): sorguların hepsi siparişin AYNI
-// hâlini görsün diye. Kilit alınmaz.
+// It is meant for a READ path that has more than one query (the service's
+// GetOrder fetches the order, the lines and the summary with separate
+// queries): so that all of the queries see the SAME state of the order. No
+// lock is taken.
 //
-// # Neden REPEATABLE READ
+// # Why REPEATABLE READ
 //
-// PostgreSQL'in varsayılanı READ COMMITTED'dır ve orada anlık görüntü İŞLEM
-// başına değil DEYİM başına alınır; sorguları sıradan bir işleme sarmak yırtık
-// görünümü engellemezdi. Görüntüyü işlemin ilk deyiminde dondurup sonuna kadar
-// koruyan düzey REPEATABLE READ'dir. Salt-okunur işaretlenmesi de bilinçlidir:
-// bu yolun yanlışlıkla yazması veritabanı tarafından engellenir ve yazma
-// düzeyinde REPEATABLE READ'in getireceği serileştirme hataları hiç doğmaz.
+// PostgreSQL's default is READ COMMITTED, and there the snapshot is taken per
+// STATEMENT, not per TRANSACTION; wrapping the queries in an ordinary
+// transaction would not prevent a torn view. The level that freezes the view
+// at the transaction's first statement and keeps it until the end is
+// REPEATABLE READ. Marking it read-only is deliberate as well: a write on this
+// path by mistake is blocked by the database, and the serialization errors
+// that REPEATABLE READ would bring at the write level never arise at all.
 //
-// İşlem zaten açıksa yeni bir tane AÇILMAZ, var olan kullanılır: bu yol bir
-// yazma işleminin içinden çağrıldığında, o işlemin görüntüsü zaten tutarlıdır
-// ve dıştaki işlemin yalıtım düzeyini içeriden değiştirmeye çalışmak hata
-// verirdi.
+// If a transaction is already open, a new one is NOT opened, the existing one
+// is used: when this path is called from inside a write transaction, that
+// transaction's view is already consistent, and trying to change the outer
+// transaction's isolation level from the inside would raise an error.
 func (r *Repository) WithReadTx(ctx context.Context, fn func(ctx context.Context) error) error {
 	if _, ok := txFromContext(ctx); ok {
 		return fn(ctx)
@@ -142,27 +150,28 @@ func (r *Repository) WithReadTx(ctx context.Context, fn func(ctx context.Context
 		AccessMode: pgx.ReadOnly,
 	})
 	if err != nil {
-		return classify(err, "order_tx_begin_failed", "salt-okunur işlem başlatılamadı")
+		return classify(err, "order_tx_begin_failed", "could not begin read-only transaction")
 	}
 	defer func() {
 		rollbackCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), rollbackTimeout)
 		defer cancel()
-		// Salt-okunur işlemde yazılacak bir şey yoktur; commit ile rollback
-		// aynı kapıya çıkar ve rollback iptal edilmiş bir bağlamda da çalışır.
+		// In a read-only transaction there is nothing to write; commit and
+		// rollback come to the same thing, and rollback works on a canceled
+		// context too.
 		_ = tx.Rollback(rollbackCtx)
 	}()
 
 	return fn(context.WithValue(ctx, txKey, tx))
 }
 
-// txFromContext context'teki işlem tutamağını döner.
+// txFromContext returns the transaction handle in the context.
 func txFromContext(ctx context.Context) (pgx.Tx, bool) {
 	tx, ok := ctx.Value(txKey).(pgx.Tx)
 	return tx, ok
 }
 
-// queries context'e uygun sorgu kümesini döner: işlem varsa ona, yoksa havuza
-// bağlı olanı.
+// queries returns the query set matching the context: the one bound to the
+// transaction if there is one, otherwise the one bound to the pool.
 func (r *Repository) queries(ctx context.Context) *orderdb.Queries {
 	if tx, ok := txFromContext(ctx); ok {
 		return orderdb.New(tx)
@@ -170,33 +179,34 @@ func (r *Repository) queries(ctx context.Context) *orderdb.Queries {
 	return orderdb.New(r.pool)
 }
 
-// requireTx kilit alan metotların işlem içinde çağrıldığını doğrular.
+// requireTx verifies that the locking methods are called inside a transaction.
 func requireTx(ctx context.Context, op string) error {
 	if _, ok := txFromContext(ctx); !ok {
 		return errors.Internal(codeTxRequired,
-			"%s işlem (transaction) içinde çağrılmalı; işlemsiz bir FOR UPDATE kilidi hiçbir şeyi korumaz", op)
+			"%s must be called inside a transaction; a FOR UPDATE lock without a transaction protects nothing", op)
 	}
 	return nil
 }
 
-// orderNotFound eksik sipariş için ortak hatayı üretir.
+// orderNotFound produces the common error for a missing order.
 func orderNotFound(id string) error {
-	return errors.NotFound(codeOrderNotFound, "sipariş bulunamadı: %s", id)
+	return errors.NotFound(codeOrderNotFound, "order not found: %s", id)
 }
 
-// stateChanged durum koşulu tutmayan bir geçiş için ortak hatayı üretir.
+// stateChanged produces the common error for a transition whose state
+// condition did not hold.
 func stateChanged(id, op string) error {
 	return errors.Conflict(codeStateChanged,
-		"%s uygulanamadı: siparişin durumu beklenenden farklı (%s)", op, id)
+		"%s could not be applied: the order's status differs from the expected one (%s)", op, id)
 }
 
-// --- siparişler --------------------------------------------------------------
+// --- orders ------------------------------------------------------------------
 
-// CreateOrder yeni bir sipariş kaydeder.
+// CreateOrder records a new order.
 //
-// display_id parametre olarak VERİLMEZ; değeri veritabanının IDENTITY sütunu
-// üretir ve RETURNING ile geri okunur. Eşzamanlı iki çağrının aynı numarayı
-// alması bu yüzden imkânsızdır.
+// display_id is NOT GIVEN as a parameter; its value is produced by the
+// database's IDENTITY column and read back with RETURNING. That is why it is
+// impossible for two concurrent calls to get the same number.
 func (r *Repository) CreateOrder(ctx context.Context, order models.Order) (models.Order, error) {
 	meta, err := fromJSONMap(order.Metadata)
 	if err != nil {
@@ -220,50 +230,53 @@ func (r *Repository) CreateOrder(ctx context.Context, order models.Order) (model
 		Metadata:       meta,
 	})
 	if err != nil {
-		return models.Order{}, classify(err, codeQueryFailed, "sipariş oluşturulamadı")
+		return models.Order{}, classify(err, codeQueryFailed, "could not create the order")
 	}
 	return toOrder(row)
 }
 
-// GetOrder siparişi kimliğiyle döner; yoksa NotFound.
+// GetOrder returns the order by its identifier; NotFound if there is none.
 func (r *Repository) GetOrder(ctx context.Context, id string) (models.Order, error) {
 	row, err := r.queries(ctx).GetOrder(ctx, id)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return models.Order{}, orderNotFound(id)
 		}
-		return models.Order{}, classify(err, codeQueryFailed, "sipariş okunamadı")
+		return models.Order{}, classify(err, codeQueryFailed, "could not read the order")
 	}
 	return toOrder(row)
 }
 
-// GetOrderByDisplayID siparişi insan okunur numarasıyla döner; yoksa NotFound.
+// GetOrderByDisplayID returns the order by its human-readable number; NotFound
+// if there is none.
 func (r *Repository) GetOrderByDisplayID(ctx context.Context, displayID int64) (models.Order, error) {
 	row, err := r.queries(ctx).GetOrderByDisplayID(ctx, displayID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return models.Order{}, errors.NotFound(codeOrderNotFound,
-				"sipariş bulunamadı: #%d", displayID)
+				"order not found: #%d", displayID)
 		}
-		return models.Order{}, classify(err, codeQueryFailed, "sipariş okunamadı")
+		return models.Order{}, classify(err, codeQueryFailed, "could not read the order")
 	}
 	return toOrder(row)
 }
 
-// GetOrderByIdempotencyKey anahtarla açılmış siparişi döner; yoksa NotFound.
+// GetOrderByIdempotencyKey returns the order opened with the key; NotFound if
+// there is none.
 func (r *Repository) GetOrderByIdempotencyKey(ctx context.Context, key string) (models.Order, error) {
 	row, err := r.queries(ctx).GetOrderByIdempotencyKey(ctx, &key)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return models.Order{}, errors.NotFound(codeOrderNotFound,
-				"bu idempotency anahtarıyla sipariş bulunamadı")
+				"no order found with this idempotency key")
 		}
-		return models.Order{}, classify(err, codeQueryFailed, "sipariş okunamadı")
+		return models.Order{}, classify(err, codeQueryFailed, "could not read the order")
 	}
 	return toOrder(row)
 }
 
-// LockOrder siparişi işlem boyunca kilitler ve güncel hâlini döner.
+// LockOrder locks the order for the duration of the transaction and returns
+// its current state.
 func (r *Repository) LockOrder(ctx context.Context, id string) (models.Order, error) {
 	if err := requireTx(ctx, "LockOrder"); err != nil {
 		return models.Order{}, err
@@ -273,12 +286,12 @@ func (r *Repository) LockOrder(ctx context.Context, id string) (models.Order, er
 		if errors.Is(err, pgx.ErrNoRows) {
 			return models.Order{}, orderNotFound(id)
 		}
-		return models.Order{}, classify(err, codeQueryFailed, "sipariş kilitlenemedi")
+		return models.Order{}, classify(err, codeQueryFailed, "could not lock the order")
 	}
 	return toOrder(row)
 }
 
-// ListOrders siparişleri filtreleyip sayfalar; ikinci değer toplam sayıdır.
+// ListOrders filters and pages the orders; the second value is the total count.
 func (r *Repository) ListOrders(ctx context.Context, filter models.OrderFilter) ([]models.Order, int64, error) {
 	var status *string
 	if filter.Status != nil {
@@ -294,7 +307,7 @@ func (r *Repository) ListOrders(ctx context.Context, filter models.OrderFilter) 
 		RowOffset:  filter.Offset,
 	})
 	if err != nil {
-		return nil, 0, classify(err, codeQueryFailed, "siparişler listelenemedi")
+		return nil, 0, classify(err, codeQueryFailed, "could not list the orders")
 	}
 
 	total, err := r.queries(ctx).CountOrders(ctx, orderdb.CountOrdersParams{
@@ -303,7 +316,7 @@ func (r *Repository) ListOrders(ctx context.Context, filter models.OrderFilter) 
 		Status:     status,
 	})
 	if err != nil {
-		return nil, 0, classify(err, codeQueryFailed, "siparişler sayılamadı")
+		return nil, 0, classify(err, codeQueryFailed, "could not count the orders")
 	}
 
 	orders, err := toOrders(rows)
@@ -313,22 +326,22 @@ func (r *Repository) ListOrders(ctx context.Context, filter models.OrderFilter) 
 	return orders, total, nil
 }
 
-// OrdersByIDs kimlik kümesini TEK sorguda getirir (N+1 yok).
+// OrdersByIDs fetches a set of identifiers in a SINGLE query (no N+1).
 func (r *Repository) OrdersByIDs(ctx context.Context, ids []string) ([]models.Order, error) {
 	if len(ids) == 0 {
 		return []models.Order{}, nil
 	}
 	rows, err := r.queries(ctx).GetOrdersByIDs(ctx, ids)
 	if err != nil {
-		return nil, classify(err, codeQueryFailed, "siparişler okunamadı")
+		return nil, classify(err, codeQueryFailed, "could not read the orders")
 	}
 	return toOrders(rows)
 }
 
-// CancelOrder siparişi iptal eder ve iptal anını damgalar.
+// CancelOrder cancels the order and stamps the moment of cancellation.
 //
-// Yalnızca 'pending' durumundaki sipariş iptal edilir; başka durumda hiçbir
-// satır etkilenmez ve Conflict döner (bkz. paket belgesi).
+// Only an order in the 'pending' state is canceled; in any other state no row
+// is affected and Conflict is returned (see the package documentation).
 func (r *Repository) CancelOrder(ctx context.Context, id, reason string) (models.Order, error) {
 	row, err := r.queries(ctx).CancelOrder(ctx, orderdb.CancelOrderParams{
 		ID:           id,
@@ -336,40 +349,40 @@ func (r *Repository) CancelOrder(ctx context.Context, id, reason string) (models
 	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return models.Order{}, stateChanged(id, "iptal")
+			return models.Order{}, stateChanged(id, "cancel")
 		}
-		return models.Order{}, classify(err, codeQueryFailed, "sipariş iptal edilemedi")
+		return models.Order{}, classify(err, codeQueryFailed, "could not cancel the order")
 	}
 	return toOrder(row)
 }
 
-// CompleteOrder siparişi tamamlanmış olarak damgalar.
+// CompleteOrder stamps the order as completed.
 func (r *Repository) CompleteOrder(ctx context.Context, id string) (models.Order, error) {
 	row, err := r.queries(ctx).CompleteOrder(ctx, id)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return models.Order{}, stateChanged(id, "tamamlama")
+			return models.Order{}, stateChanged(id, "completion")
 		}
-		return models.Order{}, classify(err, codeQueryFailed, "sipariş tamamlanamadı")
+		return models.Order{}, classify(err, codeQueryFailed, "could not complete the order")
 	}
 	return toOrder(row)
 }
 
-// ArchiveOrder tamamlanmış bir siparişi arşive alır.
+// ArchiveOrder moves a completed order into the archive.
 func (r *Repository) ArchiveOrder(ctx context.Context, id string) (models.Order, error) {
 	row, err := r.queries(ctx).ArchiveOrder(ctx, id)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return models.Order{}, stateChanged(id, "arşivleme")
+			return models.Order{}, stateChanged(id, "archiving")
 		}
-		return models.Order{}, classify(err, codeQueryFailed, "sipariş arşivlenemedi")
+		return models.Order{}, classify(err, codeQueryFailed, "could not archive the order")
 	}
 	return toOrder(row)
 }
 
-// --- sipariş satırları -------------------------------------------------------
+// --- order lines -------------------------------------------------------------
 
-// CreateLineItem yeni bir sipariş satırı kaydeder.
+// CreateLineItem records a new order line.
 func (r *Repository) CreateLineItem(ctx context.Context, item models.OrderLineItem) (models.OrderLineItem, error) {
 	meta, err := fromJSONMap(item.Metadata)
 	if err != nil {
@@ -390,52 +403,52 @@ func (r *Repository) CreateLineItem(ctx context.Context, item models.OrderLineIt
 		Metadata:      meta,
 	})
 	if err != nil {
-		return models.OrderLineItem{}, classify(err, codeQueryFailed, "sipariş satırı oluşturulamadı")
+		return models.OrderLineItem{}, classify(err, codeQueryFailed, "could not create the order line")
 	}
 	return toLineItem(row)
 }
 
-// ListLineItems siparişin satırlarını oluşturulma sırasıyla döner.
+// ListLineItems returns the order's lines in the order they were created.
 func (r *Repository) ListLineItems(ctx context.Context, orderID string) ([]models.OrderLineItem, error) {
 	rows, err := r.queries(ctx).ListOrderLineItems(ctx, orderID)
 	if err != nil {
-		return nil, classify(err, codeQueryFailed, "sipariş satırları okunamadı")
+		return nil, classify(err, codeQueryFailed, "could not read the order lines")
 	}
 	return toLineItems(rows)
 }
 
-// --- özet --------------------------------------------------------------------
+// --- summary -----------------------------------------------------------------
 
-// CreateSummary siparişin özet kaydını sıfırlanmış olarak açar.
+// CreateSummary opens the order's summary record with its totals zeroed.
 func (r *Repository) CreateSummary(ctx context.Context, summary models.OrderSummary) (models.OrderSummary, error) {
 	row, err := r.queries(ctx).CreateOrderSummary(ctx, orderdb.CreateOrderSummaryParams{
 		ID:      summary.ID,
 		OrderID: summary.OrderID,
 	})
 	if err != nil {
-		return models.OrderSummary{}, classify(err, codeQueryFailed, "sipariş özeti oluşturulamadı")
+		return models.OrderSummary{}, classify(err, codeQueryFailed, "could not create the order summary")
 	}
 	return toSummary(row), nil
 }
 
-// GetSummary siparişin özetini döner; yoksa NotFound.
+// GetSummary returns the order's summary; NotFound if there is none.
 func (r *Repository) GetSummary(ctx context.Context, orderID string) (models.OrderSummary, error) {
 	row, err := r.queries(ctx).GetOrderSummary(ctx, orderID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return models.OrderSummary{}, errors.NotFound(codeSummaryNotFound,
-				"sipariş özeti bulunamadı: %s", orderID)
+				"order summary not found: %s", orderID)
 		}
-		return models.OrderSummary{}, classify(err, codeQueryFailed, "sipariş özeti okunamadı")
+		return models.OrderSummary{}, classify(err, codeQueryFailed, "could not read the order summary")
 	}
 	return toSummary(row), nil
 }
 
-// SetSummaryTotals ödenen ve iade edilen kümülatif tutarları BİRLEŞTİRİR.
+// SetSummaryTotals MERGES the cumulative paid and refunded amounts.
 //
-// Birleştirme (GREATEST) sorgunun kendisindedir; gerekçesi için bkz.
-// queries/order_summaries.sql. Her iki alan da yalnızca büyür, dolayısıyla
-// gecikmiş ya da tekrarlanan bir ödeme olayı kaydedilmiş bir tutarı silemez.
+// The merge (GREATEST) is in the query itself; for the rationale see
+// queries/order_summaries.sql. Both fields only ever grow, so a delayed or
+// repeated payment event cannot erase an amount that has been recorded.
 func (r *Repository) SetSummaryTotals(ctx context.Context, orderID string, paid, refunded int64) (models.OrderSummary, error) {
 	row, err := r.queries(ctx).SetOrderSummaryTotals(ctx, orderdb.SetOrderSummaryTotalsParams{
 		OrderID:       orderID,
@@ -445,16 +458,16 @@ func (r *Repository) SetSummaryTotals(ctx context.Context, orderID string, paid,
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return models.OrderSummary{}, errors.NotFound(codeSummaryNotFound,
-				"sipariş özeti bulunamadı: %s", orderID)
+				"order summary not found: %s", orderID)
 		}
-		return models.OrderSummary{}, classify(err, codeQueryFailed, "sipariş özeti yazılamadı")
+		return models.OrderSummary{}, classify(err, codeQueryFailed, "could not write the order summary")
 	}
 	return toSummary(row), nil
 }
 
-// --- iade / değişim / hasar --------------------------------------------------
+// --- returns / exchanges / claims --------------------------------------------
 
-// CreateReturn yeni bir iade kaydı açar.
+// CreateReturn opens a new return record.
 func (r *Repository) CreateReturn(ctx context.Context, ret models.Return) (models.Return, error) {
 	meta, err := fromJSONMap(ret.Metadata)
 	if err != nil {
@@ -471,24 +484,26 @@ func (r *Repository) CreateReturn(ctx context.Context, ret models.Return) (model
 		Metadata:     meta,
 	})
 	if err != nil {
-		return models.Return{}, classify(err, codeQueryFailed, "iade kaydı oluşturulamadı")
+		return models.Return{}, classify(err, codeQueryFailed, "could not create the return record")
 	}
 	return toReturn(row)
 }
 
-// GetReturn iade kaydını kimliğiyle döner; yoksa NotFound.
+// GetReturn returns the return record by its identifier; NotFound if there is
+// none.
 func (r *Repository) GetReturn(ctx context.Context, id string) (models.Return, error) {
 	row, err := r.queries(ctx).GetOrderReturn(ctx, id)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return models.Return{}, errors.NotFound(codeReturnNotFound, "iade kaydı bulunamadı: %s", id)
+			return models.Return{}, errors.NotFound(codeReturnNotFound, "return record not found: %s", id)
 		}
-		return models.Return{}, classify(err, codeQueryFailed, "iade kaydı okunamadı")
+		return models.Return{}, classify(err, codeQueryFailed, "could not read the return record")
 	}
 	return toReturn(row)
 }
 
-// ListReturns siparişin iade kayıtlarını sayfalar; ikinci değer toplam sayıdır.
+// ListReturns pages the order's return records; the second value is the total
+// count.
 func (r *Repository) ListReturns(ctx context.Context, filter models.ChildFilter) ([]models.Return, int64, error) {
 	rows, err := r.queries(ctx).ListOrderReturns(ctx, orderdb.ListOrderReturnsParams{
 		OrderID:   filter.OrderID,
@@ -496,11 +511,11 @@ func (r *Repository) ListReturns(ctx context.Context, filter models.ChildFilter)
 		RowOffset: filter.Offset,
 	})
 	if err != nil {
-		return nil, 0, classify(err, codeQueryFailed, "iade kayıtları listelenemedi")
+		return nil, 0, classify(err, codeQueryFailed, "could not list the return records")
 	}
 	total, err := r.queries(ctx).CountOrderReturns(ctx, filter.OrderID)
 	if err != nil {
-		return nil, 0, classify(err, codeQueryFailed, "iade kayıtları sayılamadı")
+		return nil, 0, classify(err, codeQueryFailed, "could not count the return records")
 	}
 	items, err := toReturns(rows)
 	if err != nil {
@@ -509,7 +524,7 @@ func (r *Repository) ListReturns(ctx context.Context, filter models.ChildFilter)
 	return items, total, nil
 }
 
-// CreateExchange yeni bir değişim kaydı açar.
+// CreateExchange opens a new exchange record.
 func (r *Repository) CreateExchange(ctx context.Context, exchange models.Exchange) (models.Exchange, error) {
 	meta, err := fromJSONMap(exchange.Metadata)
 	if err != nil {
@@ -525,25 +540,26 @@ func (r *Repository) CreateExchange(ctx context.Context, exchange models.Exchang
 		Metadata:      meta,
 	})
 	if err != nil {
-		return models.Exchange{}, classify(err, codeQueryFailed, "değişim kaydı oluşturulamadı")
+		return models.Exchange{}, classify(err, codeQueryFailed, "could not create the exchange record")
 	}
 	return toExchange(row)
 }
 
-// GetExchange değişim kaydını kimliğiyle döner; yoksa NotFound.
+// GetExchange returns the exchange record by its identifier; NotFound if there
+// is none.
 func (r *Repository) GetExchange(ctx context.Context, id string) (models.Exchange, error) {
 	row, err := r.queries(ctx).GetOrderExchange(ctx, id)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return models.Exchange{}, errors.NotFound(codeExchangeNotFound, "değişim kaydı bulunamadı: %s", id)
+			return models.Exchange{}, errors.NotFound(codeExchangeNotFound, "exchange record not found: %s", id)
 		}
-		return models.Exchange{}, classify(err, codeQueryFailed, "değişim kaydı okunamadı")
+		return models.Exchange{}, classify(err, codeQueryFailed, "could not read the exchange record")
 	}
 	return toExchange(row)
 }
 
-// ListExchanges siparişin değişim kayıtlarını sayfalar; ikinci değer toplam
-// sayıdır.
+// ListExchanges pages the order's exchange records; the second value is the
+// total count.
 func (r *Repository) ListExchanges(ctx context.Context, filter models.ChildFilter) ([]models.Exchange, int64, error) {
 	rows, err := r.queries(ctx).ListOrderExchanges(ctx, orderdb.ListOrderExchangesParams{
 		OrderID:   filter.OrderID,
@@ -551,11 +567,11 @@ func (r *Repository) ListExchanges(ctx context.Context, filter models.ChildFilte
 		RowOffset: filter.Offset,
 	})
 	if err != nil {
-		return nil, 0, classify(err, codeQueryFailed, "değişim kayıtları listelenemedi")
+		return nil, 0, classify(err, codeQueryFailed, "could not list the exchange records")
 	}
 	total, err := r.queries(ctx).CountOrderExchanges(ctx, filter.OrderID)
 	if err != nil {
-		return nil, 0, classify(err, codeQueryFailed, "değişim kayıtları sayılamadı")
+		return nil, 0, classify(err, codeQueryFailed, "could not count the exchange records")
 	}
 	items, err := toExchanges(rows)
 	if err != nil {
@@ -564,7 +580,7 @@ func (r *Repository) ListExchanges(ctx context.Context, filter models.ChildFilte
 	return items, total, nil
 }
 
-// CreateClaim yeni bir hasar kaydı açar.
+// CreateClaim opens a new claim record.
 func (r *Repository) CreateClaim(ctx context.Context, claim models.Claim) (models.Claim, error) {
 	meta, err := fromJSONMap(claim.Metadata)
 	if err != nil {
@@ -582,24 +598,26 @@ func (r *Repository) CreateClaim(ctx context.Context, claim models.Claim) (model
 		Metadata:     meta,
 	})
 	if err != nil {
-		return models.Claim{}, classify(err, codeQueryFailed, "hasar kaydı oluşturulamadı")
+		return models.Claim{}, classify(err, codeQueryFailed, "could not create the claim record")
 	}
 	return toClaim(row)
 }
 
-// GetClaim hasar kaydını kimliğiyle döner; yoksa NotFound.
+// GetClaim returns the claim record by its identifier; NotFound if there is
+// none.
 func (r *Repository) GetClaim(ctx context.Context, id string) (models.Claim, error) {
 	row, err := r.queries(ctx).GetOrderClaim(ctx, id)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return models.Claim{}, errors.NotFound(codeClaimNotFound, "hasar kaydı bulunamadı: %s", id)
+			return models.Claim{}, errors.NotFound(codeClaimNotFound, "claim record not found: %s", id)
 		}
-		return models.Claim{}, classify(err, codeQueryFailed, "hasar kaydı okunamadı")
+		return models.Claim{}, classify(err, codeQueryFailed, "could not read the claim record")
 	}
 	return toClaim(row)
 }
 
-// ListClaims siparişin hasar kayıtlarını sayfalar; ikinci değer toplam sayıdır.
+// ListClaims pages the order's claim records; the second value is the total
+// count.
 func (r *Repository) ListClaims(ctx context.Context, filter models.ChildFilter) ([]models.Claim, int64, error) {
 	rows, err := r.queries(ctx).ListOrderClaims(ctx, orderdb.ListOrderClaimsParams{
 		OrderID:   filter.OrderID,
@@ -607,11 +625,11 @@ func (r *Repository) ListClaims(ctx context.Context, filter models.ChildFilter) 
 		RowOffset: filter.Offset,
 	})
 	if err != nil {
-		return nil, 0, classify(err, codeQueryFailed, "hasar kayıtları listelenemedi")
+		return nil, 0, classify(err, codeQueryFailed, "could not list the claim records")
 	}
 	total, err := r.queries(ctx).CountOrderClaims(ctx, filter.OrderID)
 	if err != nil {
-		return nil, 0, classify(err, codeQueryFailed, "hasar kayıtları sayılamadı")
+		return nil, 0, classify(err, codeQueryFailed, "could not count the claim records")
 	}
 	items, err := toClaims(rows)
 	if err != nil {
@@ -620,80 +638,83 @@ func (r *Repository) ListClaims(ctx context.Context, filter models.ChildFilter) 
 	return items, total, nil
 }
 
-// --- harcama ------------------------------------------------------------------
+// --- spending ----------------------------------------------------------------
 
-// advisoryLockSQL müşteri başına işlem ömürlü danışma kilidini alır.
+// advisoryLockSQL takes the transaction-lifetime advisory lock per customer.
 //
-// Kilit sqlc üzerinden ÜRETİLMEZ ve doğrudan işlem tutamağıyla çalıştırılır:
-// sorgu bu modülün hiçbir tablosuna dokunmaz, bir eşzamanlılık ilkelidir. sqlc
-// için de şema bilgisi taşımaz.
+// The lock is NOT GENERATED through sqlc and is run directly with the
+// transaction handle: the query touches none of this module's tables, it is a
+// concurrency primitive. It carries no schema information for sqlc either.
 const advisoryLockSQL = `SELECT pg_advisory_xact_lock($1)`
 
-// spendingLockClass danışma kilidinin SINIF numarasıdır ve anahtarın ÜST 32
-// bitine yazılır.
+// spendingLockClass is the CLASS number of the advisory lock and is written
+// into the UPPER 32 bits of the key.
 //
-// pg_advisory_xact_lock'un anahtar uzayı VERİTABANI GENELİNDE tektir: aynı
-// sayıyı başka bir amaçla kilitleyen bir kod, bu kilidi farkında olmadan
-// bekletirdi. Üst bitlerdeki sınıf numarası, ileride eklenecek başka bir
-// danışma kilidinin (başka bir sınıfla) bu kilitle çakışmasını imkânsız kılar.
+// The key space of pg_advisory_xact_lock is a single one ACROSS THE WHOLE
+// DATABASE: code that locks the same number for another purpose would hold
+// this lock up without being aware of it. The class number in the upper bits
+// makes it impossible for another advisory lock added later (with another
+// class) to collide with this lock.
 const spendingLockClass int64 = 1
 
-// LockCustomerSpending müşterinin harcama toplamını İŞLEM SONUNA kadar
-// kilitler.
+// LockCustomerSpending locks the customer's spend total UNTIL THE END OF THE
+// TRANSACTION.
 //
-// # Neden satır kilidi değil
+// # Why not a row lock
 //
-// Korunan şey bir SATIR değil, bir TOPLAMDIR: "bu müşterinin pencere içindeki
-// siparişlerinin toplamı". Toplamın kilitlenecek tek bir satırı yoktur ve
-// SELECT ... FOR UPDATE var olan satırları kilitler, HENÜZ YAZILMAMIŞ olanı
-// değil. İki eşzamanlı sipariş tam da bu yüzden yarışırdı: ikisi de toplamı
-// okur, ikisi de limitin altında görür, ikisi de yazar (klasik write skew).
-// Danışma kilidi bu boşluğu kapatır — kilit satırlara değil, MÜŞTERİ
-// KİMLİĞİNE bağlanır ve işlem commit edilene kadar tutulur, yani bekleyen
-// ikinci işlem toplamı birincinin yazdığı satırla birlikte okur.
+// What is protected is not a ROW but a TOTAL: "the sum of this customer's
+// orders within the window". The total has no single row to lock, and
+// SELECT ... FOR UPDATE locks the rows that exist, not the one NOT YET
+// WRITTEN. Two concurrent orders would race for exactly that reason: both read
+// the total, both see it below the limit, both write (the classic write skew).
+// The advisory lock closes that gap — the lock is bound not to rows but to the
+// CUSTOMER IDENTIFIER and is held until the transaction commits, which means
+// the waiting second transaction reads the total together with the row the
+// first one wrote.
 //
-// SERIALIZABLE yalıtım düzeyi de bu sınıf yarışı çözerdi ama bedeli, çakışan
-// işlemlerin serileştirme hatasıyla düşmesi ve çağıranın yeniden denemeyi
-// üstlenmesidir; kilit bekleyip devam eder ve mevcut hiçbir akışa yeniden
-// deneme sorumluluğu yüklemez.
+// The SERIALIZABLE isolation level would solve this class of race as well, but
+// its price is that conflicting transactions fail with a serialization error
+// and the caller takes the retry on itself; the lock waits and then carries on,
+// and puts the responsibility for retrying on no existing flow.
 //
-// # Anahtar
+// # The key
 //
-// Anahtarın üst 32 biti sınıf ([spendingLockClass]), alt 32 biti müşteri
-// kimliğinin FNV-1a özetidir. İki farklı kimliğin aynı özete düşmesi
-// mümkündür; sonucu YALNIZCA gereksiz beklemedir, yanlış sonuç değildir —
-// kilit bir doğruluk kapısıdır, kimlik değil.
+// The upper 32 bits of the key are the class ([spendingLockClass]), the lower
+// 32 bits are the FNV-1a digest of the customer identifier. It is possible for
+// two different identifiers to fall on the same digest; the consequence is ONLY
+// an unnecessary wait, not a wrong result — the lock is a correctness gate, not
+// an identity.
 //
-// Yalnızca [Repository.WithTx] içinde çağrılabilir: işlemsiz bir
-// pg_advisory_xact_lock hemen serbest kalır ve hiçbir şeyi korumaz.
+// It can only be called inside [Repository.WithTx]: a pg_advisory_xact_lock
+// without a transaction is released immediately and protects nothing.
 func (r *Repository) LockCustomerSpending(ctx context.Context, customerID string) error {
 	if err := requireTx(ctx, "LockCustomerSpending"); err != nil {
 		return err
 	}
 	tx, _ := txFromContext(ctx)
 	if _, err := tx.Exec(ctx, advisoryLockSQL, spendingLockKey(customerID)); err != nil {
-		return classify(err, codeQueryFailed, "müşterinin harcama kilidi alınamadı")
+		return classify(err, codeQueryFailed, "could not take the customer's spending lock")
 	}
 	return nil
 }
 
-// spendingLockKey customer idni danışma kilidi anahtarına çevirir.
+// spendingLockKey converts the customer id into an advisory lock key.
 //
-// Özet FNV-1a'dır: kriptografik olması gerekmez, yalnızca aynı kimlik için
-// aynı sayıyı üretmesi gerekir. uint32'den int64'e genişletme kayıpsızdır,
-// dolayısıyla anahtar süreçler ve sürümler arasında aynıdır.
+// The digest is FNV-1a: it does not need to be cryptographic, it only needs to
+// produce the same number for the same identifier. Widening from uint32 to
+// int64 is lossless, so the key is the same across processes and versions.
 func spendingLockKey(customerID string) int64 {
 	h := fnv.New32a()
-	// hash.Hash.Write hiçbir zaman hata dönmez (belgelenmiş sözleşme).
+	// hash.Hash.Write never returns an error (a documented contract).
 	_, _ = h.Write([]byte(customerID))
 	return spendingLockClass<<32 | int64(h.Sum32())
 }
 
-// SumCustomerSpend müşterinin pencere içindeki harcamasını döner.
+// SumCustomerSpend returns the customer's spend within the window.
 //
-// Neyin toplandığı (iptaller hariç, iadeler düşülür, para birimi sabit) ve
-// pencerenin sınırları queries/spending.sql belgesindedir. windowStart nil ise
-// müşterinin TÜM geçmişi toplanır.
+// What is summed (cancellations excluded, refunds deducted, currency fixed)
+// and the bounds of the window are documented in queries/spending.sql. If
+// windowStart is nil, the customer's WHOLE history is summed.
 func (r *Repository) SumCustomerSpend(
 	ctx context.Context,
 	customerID, currencyCode string,
@@ -710,7 +731,7 @@ func (r *Repository) SumCustomerSpend(
 		WindowStart:  window,
 	})
 	if err != nil {
-		return 0, classify(err, codeQueryFailed, "müşterinin harcaması okunamadı")
+		return 0, classify(err, codeQueryFailed, "could not read the customer's spend")
 	}
 	return spent, nil
 }

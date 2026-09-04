@@ -6,86 +6,93 @@ import (
 	corehttp "github.com/bdrtr/gobit/internal/core/http"
 )
 
-// Yetki sözlüğü: order'ın yönetim uçlarının istediği yetkiler.
+// Scope vocabulary: the scopes the admin endpoints of order ask for.
 //
-// Ayrım OKUMA/YAZMA üzerinedir, kaynak üzerine değil. "order_returns:write"
-// gibi kaynak başına yetkiler listeyi büyütür ama bugün verilebilecek yeni bir
-// karar üretmez: iade açabilen bir kimliğin siparişi iptal edememesi diye bir
-// ihtiyaç henüz yok ve olmayan bir ihtiyaç için tanımlanan yetki adı, ilk kez
-// verildiği gün ne işe yaradığı bilinmeyen bir addır.
+// The distinction is over READING/WRITING, not over the resource. Per-resource
+// scopes such as "order_returns:write" grow the list but produce no new
+// decision that could be made today: there is no need yet for an identity that
+// can open a return but cannot cancel the order, and a scope name defined for a
+// need that does not exist is a name whose purpose is unknown on the day it is
+// first granted.
 const (
-	// ScopeRead order yönetim yüzeyindeki OKUMA uçlarının istediği yetkidir.
+	// ScopeRead is the scope the READ endpoints of the order admin surface ask
+	// for.
 	//
-	// Siparişleri, iade/değişim/hasar kayıtlarını okumaya yeter; hiçbir durum
-	// geçişini açmaz. Tam yetkili kimliklere ayrıca verilmesi gerekmez:
-	// corehttp.ScopeAdmin taşıyan bir çağıran bunu da karşılar (bkz.
-	// corehttp.Principal.HasScope).
+	// It suffices for reading orders and return/exchange/claim records; it
+	// opens no status transition. It does not have to be granted separately to
+	// fully privileged identities: a caller carrying corehttp.ScopeAdmin
+	// satisfies this one as well (see corehttp.Principal.HasScope).
 	ScopeRead = "order:read"
 
-	// ScopeWrite order yönetim yüzeyindeki YAZMA uçlarının istediği yetkidir.
+	// ScopeWrite is the scope the WRITE endpoints of the order admin surface
+	// ask for.
 	//
-	// Durum geçişleri (iptal, tamamla, arşivle) ve satış sonrası kayıt açma
-	// bunu ister. Geçişlerin çoğu GERİ ALINAMAZ — iptal edilmiş sipariş geri
-	// açılmaz — bu yüzden okuma yetkisinden ayrılması bir biçimsellik değil,
-	// hasarın sınırıdır.
+	// Status transitions (cancel, complete, archive) and opening an after-sales
+	// record ask for it. Most of the transitions are IRREVERSIBLE — a canceled
+	// order is not reopened — which is why separating it from the read scope is
+	// not a formality, it is the limit of the damage.
 	ScopeWrite = "order:write"
 )
 
-// Routes modülün store ve admin uçlarını router'a bağlar.
+// Routes binds the module's store and admin endpoints to the router.
 //
-// Uçlar TAM YOLLA kaydedilir; "/store/v1" ya da "/admin/v1" için alt router
-// (chi.Route/Mount) AÇILMAZ. Sebep somut: registry tüm modüllerin Routes'unu
-// AYNI router üzerinde çağırır ve chi, aynı desene ikinci kez mount edilmeyi
-// panikle reddeder. İlk modül "/store/v1"i mount etseydi, ikinci modül
-// sunucuyu açılışta düşürürdü.
+// The endpoints are registered with their FULL PATH; no sub-router
+// (chi.Route/Mount) IS OPENED for "/store/v1" or "/admin/v1". The reason is
+// concrete — the registry calls the Routes of every module on the SAME router,
+// and chi refuses being mounted a second time on the same pattern with a panic.
+// Had the first module mounted "/store/v1", the second module would have
+// brought the server down at start-up.
 //
-// Sipariş OLUŞTURMA ucu bilinçli olarak yoktur; gerekçe için bkz. paket
-// belgesi.
+// The order CREATION endpoint is deliberately absent; for the rationale see the
+// package documentation.
 //
-// # KORUMA
+// # PROTECTION
 //
-// Yönetim uçları iki katmanla korunur ve ikisi de gereklidir:
+// The admin endpoints are protected by two layers and both of
+// them are necessary:
 //
-//  1. KİMLİK — corehttp.RequireAdmin, router'ı kuran tarafta takılır (bkz.
-//     corehttp.APIGuards); bu modülün işi değildir.
-//  2. YETKİ — uçlar BURADA, uç uç corehttp.RequireScope ile işaretlenir.
+//  1. IDENTITY — corehttp.RequireAdmin is attached on the side that builds the
+//     router (see corehttp.APIGuards); it is not this module's job.
+//  2. SCOPE — the endpoints are marked HERE, endpoint by endpoint, with
+//     corehttp.RequireScope.
 //
-// İkinci katman olmadan kimlik doğrulama yetkilendirmenin yerine geçerdi:
-// yetkileri BOŞ bırakılmış bir yönetim kullanıcısı giriş yapıp ödemesi alınmış
-// bir siparişi iptal edebilirdi. Kimlik "kim" sorusunu yanıtlar, "ne
-// yapabilir" sorusunu değil.
+// Without the second layer, authentication would stand in for authorization: an
+// admin user whose scopes had been left EMPTY could log in and cancel an order
+// whose payment had been captured. Identity answers the question "who", not the
+// question "what can they do".
 func (h *Handler) Routes(r chi.Router) {
-	okuma := r.With(corehttp.RequireScope(ScopeRead))
-	yazma := r.With(corehttp.RequireScope(ScopeWrite))
+	read := r.With(corehttp.RequireScope(ScopeRead))
+	write := r.With(corehttp.RequireScope(ScopeWrite))
 
-	// --- Store API (müşteri, YALNIZCA OKUMA) ---
+	// --- Store API (customer, READ ONLY) ---
 	//
-	// Mağaza yüzeyine yetki EKLENMEZ: oradaki kimlik publishable anahtardır ve
-	// o anahtar tanımı gereği yetki taşımaz. Siparişin MÜŞTERİYE AİT olduğunun
-	// doğrulanması ayrı bir iştir ve hâlâ yapılmıyor; bu bilinçli bir
-	// eksikliktir, gizlenmiş bir varsayım değil.
+	// No scope IS ADDED to the storefront surface: the identity there is the
+	// publishable key and that key by definition carries no scope. Verifying
+	// that the order BELONGS TO THE CUSTOMER is separate work and is still not
+	// done; this is a deliberate gap, not a hidden assumption.
 	r.Get("/store/v1/orders/{id}", h.storeGetOrder)
 
-	// --- Admin API (yönetim) ---
-	okuma.Get("/admin/v1/orders", h.adminListOrders)
-	okuma.Get("/admin/v1/orders/{id}", h.adminGetOrder)
+	// --- Admin API (administration) ---
+	read.Get("/admin/v1/orders", h.adminListOrders)
+	read.Get("/admin/v1/orders/{id}", h.adminGetOrder)
 
-	// Durum geçişleri POST'tur ve gövdeleri yoktur (iptal hariç): geçiş bir
-	// alan güncellemesi değil, bir EYLEMDİR ve kaynağın kendisine yapılan bir
-	// PATCH gibi görünmemelidir.
-	yazma.Post("/admin/v1/orders/{id}/cancel", h.adminCancelOrder)
-	yazma.Post("/admin/v1/orders/{id}/complete", h.adminCompleteOrder)
-	yazma.Post("/admin/v1/orders/{id}/archive", h.adminArchiveOrder)
+	// Status transitions are POSTs and have no bodies (except cancel): a
+	// transition is not a field update, it is an ACTION, and it must not look
+	// like a PATCH applied to the resource itself.
+	write.Post("/admin/v1/orders/{id}/cancel", h.adminCancelOrder)
+	write.Post("/admin/v1/orders/{id}/complete", h.adminCompleteOrder)
+	write.Post("/admin/v1/orders/{id}/archive", h.adminArchiveOrder)
 
-	// Satış sonrası kayıtları: Faz 6'da yalnızca oluştur + oku + listele.
-	// Durum geçişleri (iade alındı, değişim tamamlandı …) sonraki fazın işidir.
-	okuma.Get("/admin/v1/orders/{id}/returns", h.adminListReturns)
-	yazma.Post("/admin/v1/orders/{id}/returns", h.adminCreateReturn)
-	okuma.Get("/admin/v1/orders/{id}/returns/{returnId}", h.adminGetReturn)
-	okuma.Get("/admin/v1/orders/{id}/exchanges", h.adminListExchanges)
-	yazma.Post("/admin/v1/orders/{id}/exchanges", h.adminCreateExchange)
-	okuma.Get("/admin/v1/orders/{id}/exchanges/{exchangeId}", h.adminGetExchange)
-	okuma.Get("/admin/v1/orders/{id}/claims", h.adminListClaims)
-	yazma.Post("/admin/v1/orders/{id}/claims", h.adminCreateClaim)
-	okuma.Get("/admin/v1/orders/{id}/claims/{claimId}", h.adminGetClaim)
+	// After-sales records: in Phase 6 only create + read + list. Status
+	// transitions (return received, exchange completed …) are the next phase's
+	// work.
+	read.Get("/admin/v1/orders/{id}/returns", h.adminListReturns)
+	write.Post("/admin/v1/orders/{id}/returns", h.adminCreateReturn)
+	read.Get("/admin/v1/orders/{id}/returns/{returnId}", h.adminGetReturn)
+	read.Get("/admin/v1/orders/{id}/exchanges", h.adminListExchanges)
+	write.Post("/admin/v1/orders/{id}/exchanges", h.adminCreateExchange)
+	read.Get("/admin/v1/orders/{id}/exchanges/{exchangeId}", h.adminGetExchange)
+	read.Get("/admin/v1/orders/{id}/claims", h.adminListClaims)
+	write.Post("/admin/v1/orders/{id}/claims", h.adminCreateClaim)
+	read.Get("/admin/v1/orders/{id}/claims/{claimId}", h.adminGetClaim)
 }

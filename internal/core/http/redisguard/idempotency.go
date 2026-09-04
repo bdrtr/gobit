@@ -136,7 +136,7 @@ var _ corehttp.IdempotencyStore = (*IdempotencyStore)(nil)
 // error.
 func NewIdempotencyStore(client *redis.Client, keyPrefix string, ttl time.Duration) (*IdempotencyStore, error) {
 	if client == nil {
-		return nil, coreerrors.Invalid(CodeInvalidConfig, "redis istemcisi nil olamaz")
+		return nil, coreerrors.Invalid(CodeInvalidConfig, "the redis client cannot be nil")
 	}
 
 	if err := validatePrefix(keyPrefix); err != nil {

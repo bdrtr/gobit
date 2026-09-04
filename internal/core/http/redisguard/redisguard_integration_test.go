@@ -99,7 +99,7 @@ func TestARequestIsRefusedWhenTheQuotaIsSpent(t *testing.T) {
 
 	d, err := lim.Allow(t.Context(), "client-a")
 	require.NoError(t, err)
-	assert.False(t, d.Allowed, "quota bitince istek reddedilmeli")
+	assert.False(t, d.Allowed, "a request has to be refused once the quota is used up")
 	assert.Zero(t, d.Remaining)
 	assert.Positive(t, d.RetryAfter, "a refused request has to get a positive wait")
 	assert.LessOrEqual(t, d.RetryAfter, time.Minute, "the wait cannot exceed the window")
@@ -125,7 +125,7 @@ func TestTheQuotaRenewsWhenTheWindowExpires(t *testing.T) {
 
 	renewed, err := lim.Allow(t.Context(), "client-a")
 	require.NoError(t, err)
-	assert.True(t, renewed.Allowed, "pencere dolduktan sonra quota yenilenmeli")
+	assert.True(t, renewed.Allowed, "the quota has to renew after the window expires")
 	assert.Zero(t, renewed.Remaining, "one allowance has to come off the renewed quota too")
 }
 

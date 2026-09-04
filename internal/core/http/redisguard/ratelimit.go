@@ -108,7 +108,7 @@ var _ corehttp.RateLimiter = (*Limiter)(nil)
 // nil verir.
 func NewLimiter(client *redis.Client, keyPrefix string, limit int, window time.Duration) (*Limiter, error) {
 	if client == nil {
-		return nil, coreerrors.Invalid(CodeInvalidConfig, "redis istemcisi nil olamaz")
+		return nil, coreerrors.Invalid(CodeInvalidConfig, "the redis client cannot be nil")
 	}
 
 	if err := validatePrefix(keyPrefix); err != nil {

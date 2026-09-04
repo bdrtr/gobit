@@ -37,7 +37,7 @@ type CreateOrderExchangeParams struct {
 	Metadata      []byte
 }
 
-// order_exchanges sorguları (değişim iskeleti; plan Bölüm 6).
+// order_exchanges queries (exchange skeleton; plan Section 6).
 func (q *Queries) CreateOrderExchange(ctx context.Context, arg CreateOrderExchangeParams) (OrderExchange, error) {
 	row := q.db.QueryRow(ctx, createOrderExchange,
 		arg.ID,

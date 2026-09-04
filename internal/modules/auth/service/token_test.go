@@ -16,445 +16,454 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/auth/service"
 )
 
-// Bu dosya oturum jetonunun YAŞAM SÜRESİ dışındaki geçerlilik koşullarını
-// kanıtlar; asıl konusu parola değişiminin açık oturumları düşürmesidir.
+// This file proves the validity conditions of the session token OTHER THAN its
+// LIFETIME; its real subject is the password change dropping the open sessions.
 //
-// Jeton durum tutmaz ve bir iptal listesi yoktur: sızmış bir yönetici jetonunu
-// süresi dolmadan geri almanın TEK yolu parolayı değiştirmektir. Bu yüzden
-// aşağıdaki iddiaların hepsi bir güvenlik iddiasıdır, bir davranış tercihi
-// değil.
+// The token holds no state and there is no revocation list: the ONLY way to
+// take back a leaked admin token before it expires is to change the password.
+// This is why every one of the claims below is a security claim, not a
+// behavior preference.
 
-// Testlerin paylaştığı sabitler. Parolalar politikanın alt sınırını
-// ([service.MinPasswordLen]) aşacak uzunluktadır.
+// The constants the tests share. The passwords are long enough to exceed the
+// lower bound of the policy ([service.MinPasswordLen]).
 const (
-	oturumSir          = "test-jwt-imza-sirri"
-	oturumEposta       = "yonetici@gobit.test"
-	oturumParola       = "eski-Parola-1234"
-	oturumYeniParola   = "yeni-Parola-1234"
-	oturumYanlisParola = "yanlis-Parola-9999"
-	oturumKullaniciID  = "user_test"
-	oturumKimlikID     = "authid_test"
+	sessionSecret        = "test-jwt-signing-secret"
+	sessionEmail         = "admin@gobit.test"
+	sessionPassword      = "old-Password-1234"
+	sessionNewPassword   = "new-Password-1234"
+	sessionWrongPassword = "wrong-Password-9999"
+	sessionUserID        = "user_test"
+	sessionIdentityID    = "authid_test"
 )
 
-// oturumSaati testin ilerlettiği zaman kaynağıdır.
+// sessionClock is the time source the test advances.
 //
-// Gerçek saatle çalışmak bu dosyada mümkün DEĞİLDİR: iddiaların konusu jetonun
-// "iat" değeri ile parola değişim anı arasındaki SANİYE farkıdır ve o fark
-// gerçek saatte testin hızına bağlı olurdu.
-type oturumSaati struct {
-	an time.Time
+// Working with the real clock IS NOT POSSIBLE in this file: the subject of the
+// claims is the difference IN SECONDS between the token's "iat" value and the
+// moment of the password change, and on a real clock that difference would
+// depend on the speed of the test.
+type sessionClock struct {
+	moment time.Time
 }
 
-// simdi geçerli anı döner.
-func (s *oturumSaati) simdi() time.Time { return s.an }
+// now returns the current moment.
+func (s *sessionClock) now() time.Time { return s.moment }
 
-// ilerlet saati verilen süre kadar ileri alır.
-func (s *oturumSaati) ilerlet(d time.Duration) { s.an = s.an.Add(d) }
+// advance moves the clock forward by the given duration.
+func (s *sessionClock) advance(d time.Duration) { s.moment = s.moment.Add(d) }
 
-// oturumDeposu servisin depo yüzeyinin bellekte çalışan, TEK kullanıcılı
-// uygulamasıdır.
+// sessionRepo is the in-memory, SINGLE-USER implementation of the service's
+// repository surface.
 //
-// [service.Repository] gömülü tutulur ve yalnızca bu testlerin dokunduğu
-// metotlar yazılır: arayüz otuzdan fazla metot taşır ve hepsini elle yazmak
-// dosyayı ilgisiz gövdelerle doldururdu. Yazılmamış bir metoda dokunulursa
-// çağrı nil arayüz üzerinden PANİKLER; sessizce sıfır değer dönmez, yani
-// "bu akış oraya hiç uğramamalı" iddiası test yeşilken çürüyemez.
+// [service.Repository] is kept embedded and only the methods these tests touch
+// are written: the interface carries more than thirty methods and writing all
+// of them by hand would fill the file with irrelevant bodies. If a method that
+// was not written is touched, the call PANICS over the nil interface; it does
+// not silently return a zero value, that is, the claim "this flow must never
+// go there" cannot rot while the test is green.
 //
-// Yazma metotları ilgili SQL sorgusunun SÖZLEŞMESİNİ taklit eder; hangi
-// sorgunun updated_at'i taşıdığı bu testlerin tam konusudur
-// (bkz. queries/identities.sql).
-type oturumDeposu struct {
+// The write methods imitate the CONTRACT of the corresponding SQL query; which
+// query carries updated_at is exactly the subject of these tests (see
+// queries/identities.sql).
+type sessionRepo struct {
 	service.Repository
 
-	kullanici models.User
-	// kimlikler kullanıcının kimlik satırlarıdır: sağlayıcı başına EN FAZLA
-	// BİR tane. Dilim, tablodaki (user_id, provider) benzersizliğini taklit
-	// eder ve gerçek şemanın izin verdiği çokluğu — ikinci bir sağlayıcı —
-	// testte kurulabilir kılar.
-	kimlikler []models.AuthIdentity
-	// kimlikSilindi true ise kullanıcının hiç canlı kimliği kalmamış gibi
-	// davranılır; kimliği silinmiş bir kullanıcının jetonu senaryosu böyle
-	// kurulur.
-	kimlikSilindi bool
+	user models.User
+	// identities are the user's identity rows: AT MOST ONE per provider. The
+	// slice imitates the (user_id, provider) uniqueness on the table and makes
+	// the multiplicity the real schema allows — a second provider — set up-able
+	// in a test.
+	identities []models.AuthIdentity
+	// identityDeleted, when true, makes the repository behave as though the user
+	// has no live identity left; the scenario of a token belonging to a user
+	// whose identity was deleted is set up this way.
+	identityDeleted bool
 }
 
-// kimlik verilen sağlayıcının satırını döner; yoksa nil.
+// identity returns the row of the given provider; nil if there is none.
 //
-// İşaretçi döner çünkü çağıranların çoğu satırı YAZAR; kopya dönseydi yazma
-// depoya hiç ulaşmaz ve testler sessizce yeşil kalırdı.
-func (d *oturumDeposu) kimlik(provider string) *models.AuthIdentity {
-	if d.kimlikSilindi {
+// It returns a pointer because most of its callers WRITE to the row; had a copy
+// been returned the write would never reach the repository and the tests would
+// silently stay green.
+func (d *sessionRepo) identity(provider string) *models.AuthIdentity {
+	if d.identityDeleted {
 		return nil
 	}
-	for i := range d.kimlikler {
-		if d.kimlikler[i].Provider == provider {
-			return &d.kimlikler[i]
+	for i := range d.identities {
+		if d.identities[i].Provider == provider {
+			return &d.identities[i]
 		}
 	}
 	return nil
 }
 
-// kimlikByID verilen kimliğe sahip satırı döner; yoksa nil.
-func (d *oturumDeposu) kimlikByID(id string) *models.AuthIdentity {
-	if d.kimlikSilindi {
+// identityByID returns the row with the given identifier; nil if there is none.
+func (d *sessionRepo) identityByID(id string) *models.AuthIdentity {
+	if d.identityDeleted {
 		return nil
 	}
-	for i := range d.kimlikler {
-		if d.kimlikler[i].ID == id {
-			return &d.kimlikler[i]
+	for i := range d.identities {
+		if d.identities[i].ID == id {
+			return &d.identities[i]
 		}
 	}
 	return nil
 }
 
-// capa verilen sağlayıcının oturum çapasını döner; satır yoksa sıfır zaman.
+// anchor returns the session anchor of the given provider; the zero time if
+// there is no row.
 //
-// Testlerin iddiası tek tek satırların updated_at değerine bakar: "çıkış
-// hepsini ilerletti" ancak satır satır sorularak kanıtlanabilir.
-func (d *oturumDeposu) capa(provider string) time.Time {
-	kimlik := d.kimlik(provider)
-	if kimlik == nil {
+// The claim of the tests looks at the updated_at value of the rows one by one:
+// "the logout advanced all of them" can only be proved by asking row by row.
+func (d *sessionRepo) anchor(provider string) time.Time {
+	identity := d.identity(provider)
+	if identity == nil {
 		return time.Time{}
 	}
-	return kimlik.UpdatedAt
+	return identity.UpdatedAt
 }
 
-// GetUser kullanıcıyı döner; kimlik tutmuyorsa errors.NotFound.
-func (d *oturumDeposu) GetUser(_ context.Context, id string) (models.User, error) {
-	if id != d.kullanici.ID {
-		return models.User{}, errors.NotFound("test_kullanici_yok", "kullanıcı yok: %s", id)
+// GetUser returns the user; errors.NotFound if it holds no such identifier.
+func (d *sessionRepo) GetUser(_ context.Context, id string) (models.User, error) {
+	if id != d.user.ID {
+		return models.User{}, errors.NotFound("test_user_missing", "no such user: %s", id)
 	}
-	return d.kullanici, nil
+	return d.user, nil
 }
 
-// GetUserByEmail kullanıcıyı e-postasına göre döner; yoksa errors.NotFound.
-func (d *oturumDeposu) GetUserByEmail(_ context.Context, email string) (models.User, error) {
-	if email != d.kullanici.Email {
-		return models.User{}, errors.NotFound("test_kullanici_yok", "kullanıcı yok: %s", email)
+// GetUserByEmail returns the user by their email address; errors.NotFound if
+// there is none.
+func (d *sessionRepo) GetUserByEmail(_ context.Context, email string) (models.User, error) {
+	if email != d.user.Email {
+		return models.User{}, errors.NotFound("test_user_missing", "no such user: %s", email)
 	}
-	return d.kullanici, nil
+	return d.user, nil
 }
 
-// GetIdentity giriş kimliğini döner; yoksa errors.NotFound.
-func (d *oturumDeposu) GetIdentity(_ context.Context, userID, provider string) (models.AuthIdentity, error) {
-	kimlik := d.kimlik(provider)
-	if kimlik == nil || userID != kimlik.UserID {
-		return models.AuthIdentity{}, errors.NotFound("test_kimlik_yok",
-			"%s kullanıcısının %q kimliği yok", userID, provider)
+// GetIdentity returns the login identity; errors.NotFound if there is none.
+func (d *sessionRepo) GetIdentity(_ context.Context, userID, provider string) (models.AuthIdentity, error) {
+	identity := d.identity(provider)
+	if identity == nil || userID != identity.UserID {
+		return models.AuthIdentity{}, errors.NotFound("test_identity_missing",
+			"user %s has no %q identity", userID, provider)
 	}
-	return *kimlik, nil
+	return *identity, nil
 }
 
-// SetPasswordHash hash'i yazar, kilit sayaçlarını sıfırlar ve updated_at'i
-// ilerletir.
+// SetPasswordHash writes the hash, resets the lock counters and advances
+// updated_at.
 //
-// Yalnızca VERİLEN sağlayıcının satırına dokunur: parola emailpass kimliğinin
-// bilgisidir, öteki sağlayıcıların satırlarında karşılığı yoktur.
+// It touches only the row of the GIVEN provider: the password is the
+// information of the emailpass identity and it has no counterpart in the rows
+// of other providers.
 //
-// updated_at'in ilerlemesi UpdatePasswordHash sorgusunun sözleşmesidir ve
-// oturum iptalinin çapasıdır.
-func (d *oturumDeposu) SetPasswordHash(
+// updated_at advancing is the contract of the UpdatePasswordHash query and it
+// is the anchor of session revocation.
+func (d *sessionRepo) SetPasswordHash(
 	_ context.Context,
 	userID, provider, providerIdentity, hash string,
 	now time.Time,
 ) (models.AuthIdentity, error) {
-	kimlik := d.kimlik(provider)
-	if kimlik == nil {
-		// Gerçek depo kimlik yoksa OLUŞTURUR; sahte depo da öyle yapar, aksi
-		// hâlde "parola ata" çağrısı burada gerçekte olmayan bir hatayla
-		// düşerdi.
-		d.kimlikler = append(d.kimlikler, models.AuthIdentity{
+	identity := d.identity(provider)
+	if identity == nil {
+		// The real repository CREATES the identity if there is none; the fake
+		// repository does the same, otherwise an "assign a password" call would
+		// fail here with an error that does not really exist.
+		d.identities = append(d.identities, models.AuthIdentity{
 			ID:               "authid_" + provider,
 			UserID:           userID,
 			Provider:         provider,
 			ProviderIdentity: providerIdentity,
 			CreatedAt:        now,
 		})
-		kimlik = &d.kimlikler[len(d.kimlikler)-1]
+		identity = &d.identities[len(d.identities)-1]
 	}
-	kimlik.PasswordHash = hash
-	kimlik.FailedAttempts = 0
-	kimlik.LockedUntil = nil
-	kimlik.UpdatedAt = now
-	return *kimlik, nil
+	identity.PasswordHash = hash
+	identity.FailedAttempts = 0
+	identity.LockedUntil = nil
+	identity.UpdatedAt = now
+	return *identity, nil
 }
 
-// SessionAnchor kullanıcının EN YENİ oturum çapasını döner; canlı kimlik yoksa
-// errors.NotFound.
+// SessionAnchor returns the user's NEWEST session anchor; errors.NotFound if
+// there is no live identity.
 //
-// Sorgunun sözleşmesi budur (bkz. queries/identities.sql, GetSessionAnchor):
-// sağlayıcı seçilmez, satırların en ilerisi alınır.
-func (d *oturumDeposu) SessionAnchor(_ context.Context, userID string) (time.Time, error) {
-	if d.kimlikSilindi || userID != d.kullanici.ID || len(d.kimlikler) == 0 {
-		return time.Time{}, errors.NotFound("test_kimlik_yok",
-			"%s kullanıcısının hiç kimliği yok", userID)
+// That is the contract of the query (see queries/identities.sql,
+// GetSessionAnchor): no provider is selected, the furthest ahead of the rows is
+// taken.
+func (d *sessionRepo) SessionAnchor(_ context.Context, userID string) (time.Time, error) {
+	if d.identityDeleted || userID != d.user.ID || len(d.identities) == 0 {
+		return time.Time{}, errors.NotFound("test_identity_missing",
+			"user %s has no identity at all", userID)
 	}
 
-	var enYeni time.Time
-	for i := range d.kimlikler {
-		if d.kimlikler[i].UpdatedAt.After(enYeni) {
-			enYeni = d.kimlikler[i].UpdatedAt
+	var newest time.Time
+	for i := range d.identities {
+		if d.identities[i].UpdatedAt.After(newest) {
+			newest = d.identities[i].UpdatedAt
 		}
 	}
-	return enYeni, nil
+	return newest, nil
 }
 
-// RevokeSessions kullanıcının TÜM kimliklerinin çapasını ilerletir ve kimlik
-// bilgisine DOKUNMAZ.
+// RevokeSessions advances the anchor of ALL of the user's identities and DOES
+// NOT TOUCH the credential.
 //
-// Sorgunun sözleşmesi budur (bkz. queries/identities.sql, RevokeSessions):
-// sağlayıcı seçilmez, yalnızca updated_at yazılır; parola, sayaç ve kilit
-// alanları korunur.
-func (d *oturumDeposu) RevokeSessions(
+// That is the contract of the query (see queries/identities.sql,
+// RevokeSessions): no provider is selected, only updated_at is written; the
+// password, counter and lock fields are preserved.
+func (d *sessionRepo) RevokeSessions(
 	_ context.Context,
 	userID string,
 	now time.Time,
 ) ([]models.AuthIdentity, error) {
-	if d.kimlikSilindi || userID != d.kullanici.ID || len(d.kimlikler) == 0 {
-		return nil, errors.NotFound("test_kimlik_yok",
-			"%s kullanıcısının hiç kimliği yok", userID)
+	if d.identityDeleted || userID != d.user.ID || len(d.identities) == 0 {
+		return nil, errors.NotFound("test_identity_missing",
+			"user %s has no identity at all", userID)
 	}
 
-	ilerletilen := make([]models.AuthIdentity, 0, len(d.kimlikler))
-	for i := range d.kimlikler {
-		d.kimlikler[i].UpdatedAt = now
-		ilerletilen = append(ilerletilen, d.kimlikler[i])
+	advanced := make([]models.AuthIdentity, 0, len(d.identities))
+	for i := range d.identities {
+		d.identities[i].UpdatedAt = now
+		advanced = append(advanced, d.identities[i])
 	}
-	return ilerletilen, nil
+	return advanced, nil
 }
 
-// RegisterLoginSuccess sayaçları temizler ve son giriş anını yazar.
+// RegisterLoginSuccess clears the counters and writes the last login moment.
 //
-// updated_at'e DOKUNMAZ; sorgunun sözleşmesi budur.
-func (d *oturumDeposu) RegisterLoginSuccess(_ context.Context, identityID string, now time.Time) error {
-	kimlik := d.kimlikByID(identityID)
-	if kimlik == nil {
-		return errors.NotFound("test_kimlik_yok", "kimlik yok: %s", identityID)
+// It DOES NOT TOUCH updated_at; that is the contract of the query.
+func (d *sessionRepo) RegisterLoginSuccess(_ context.Context, identityID string, now time.Time) error {
+	identity := d.identityByID(identityID)
+	if identity == nil {
+		return errors.NotFound("test_identity_missing", "no such identity: %s", identityID)
 	}
-	kimlik.FailedAttempts = 0
-	kimlik.LockedUntil = nil
-	kimlik.LastLoginAt = &now
+	identity.FailedAttempts = 0
+	identity.LockedUntil = nil
+	identity.LastLoginAt = &now
 	return nil
 }
 
-// RegisterLoginFailure başarısız denemeyi sayar ve eşikte kilitler.
+// RegisterLoginFailure counts the failed attempt and locks at the threshold.
 //
-// updated_at'e DOKUNMAZ; sorgunun sözleşmesi budur.
-func (d *oturumDeposu) RegisterLoginFailure(
+// It DOES NOT TOUCH updated_at; that is the contract of the query.
+func (d *sessionRepo) RegisterLoginFailure(
 	_ context.Context,
 	identityID string,
 	threshold int,
 	lockUntil, _ time.Time,
 ) (models.AuthIdentity, error) {
-	kimlik := d.kimlikByID(identityID)
-	if kimlik == nil {
-		return models.AuthIdentity{}, errors.NotFound("test_kimlik_yok",
-			"kimlik yok: %s", identityID)
+	identity := d.identityByID(identityID)
+	if identity == nil {
+		return models.AuthIdentity{}, errors.NotFound("test_identity_missing",
+			"no such identity: %s", identityID)
 	}
-	kimlik.FailedAttempts++
-	if kimlik.FailedAttempts >= threshold {
-		kilit := lockUntil
-		kimlik.LockedUntil = &kilit
+	identity.FailedAttempts++
+	if identity.FailedAttempts >= threshold {
+		lock := lockUntil
+		identity.LockedUntil = &lock
 	}
-	return *kimlik, nil
+	return *identity, nil
 }
 
-// oturumKur sabit saatli bir servis, kimlik doğrulayıcısını ve sahte depoyu
-// üretir.
+// setupSession produces a service on a fixed clock, its authenticator and the
+// fake repository.
 //
-// bcrypt maliyeti en düşük değerdedir: bu dosyadaki hiçbir iddia maliyetle
-// ilgili değildir ve varsayılan maliyet her testi çeyrek saniye yavaşlatırdı.
-func oturumKur(t *testing.T) (*service.Service, *service.Interop, *oturumDeposu, *oturumSaati) {
+// The bcrypt cost is at its lowest value: no claim in this file has anything to
+// do with the cost, and the default cost would slow every test down by a
+// quarter of a second.
+func setupSession(t *testing.T) (*service.Service, *service.Interop, *sessionRepo, *sessionClock) {
 	t.Helper()
 
-	baslangic := time.Date(2026, 3, 1, 10, 0, 0, 0, time.UTC)
-	saat := &oturumSaati{an: baslangic}
+	start := time.Date(2026, 3, 1, 10, 0, 0, 0, time.UTC)
+	clock := &sessionClock{moment: start}
 
-	hash, err := bcrypt.GenerateFromPassword([]byte(oturumParola), bcrypt.MinCost)
-	require.NoError(t, err, "test parolası hash'lenemedi")
+	hash, err := bcrypt.GenerateFromPassword([]byte(sessionPassword), bcrypt.MinCost)
+	require.NoError(t, err, "the test password could not be hashed")
 
-	depo := &oturumDeposu{
-		kullanici: models.User{
-			ID:        oturumKullaniciID,
-			Email:     oturumEposta,
+	repo := &sessionRepo{
+		user: models.User{
+			ID:        sessionUserID,
+			Email:     sessionEmail,
 			Scopes:    []string{models.ScopeAdmin},
-			CreatedAt: baslangic,
-			UpdatedAt: baslangic,
+			CreatedAt: start,
+			UpdatedAt: start,
 		},
-		kimlikler: []models.AuthIdentity{{
-			ID:               oturumKimlikID,
-			UserID:           oturumKullaniciID,
+		identities: []models.AuthIdentity{{
+			ID:               sessionIdentityID,
+			UserID:           sessionUserID,
 			Provider:         models.ProviderEmailPass,
-			ProviderIdentity: oturumEposta,
+			ProviderIdentity: sessionEmail,
 			PasswordHash:     string(hash),
-			CreatedAt:        baslangic,
-			UpdatedAt:        baslangic,
+			CreatedAt:        start,
+			UpdatedAt:        start,
 		}},
 	}
 
-	svc := service.New(depo, service.Options{
-		Now:        saat.simdi,
-		JWTSecret:  oturumSir,
+	svc := service.New(repo, service.Options{
+		Now:        clock.now,
+		JWTSecret:  sessionSecret,
 		BcryptCost: bcrypt.MinCost,
 	})
-	return svc, service.NewInterop(svc), depo, saat
+	return svc, service.NewInterop(svc), repo, clock
 }
 
-// oturumJetonuAl giriş yapar ve oturum jetonunu döner.
-func oturumJetonuAl(t *testing.T, svc *service.Service, parola string) string {
+// obtainSessionToken logs in and returns the session token.
+func obtainSessionToken(t *testing.T, svc *service.Service, password string) string {
 	t.Helper()
 
-	jeton, _, err := svc.Login(context.Background(), oturumEposta, parola)
-	require.NoError(t, err, "giriş başarılı olmalı")
-	require.NotEmpty(t, jeton, "giriş jeton dönmeli")
-	return jeton
+	token, _, err := svc.Login(context.Background(), sessionEmail, password)
+	require.NoError(t, err, "the login has to succeed")
+	require.NotEmpty(t, token, "the login has to return a token")
+	return token
 }
 
-// oturumKimligiCoz jetonu yönetim yüzeyinden doğrular.
-func oturumKimligiCoz(interop *service.Interop, jeton string) (corehttp.Principal, error) {
-	return interop.AuthenticateAdmin(context.Background(), "Bearer", jeton)
+// resolveSessionPrincipal verifies the token on the admin surface.
+func resolveSessionPrincipal(interop *service.Interop, token string) (corehttp.Principal, error) {
+	return interop.AuthenticateAdmin(context.Background(), "Bearer", token)
 }
 
-// oturumRediniDogrula jetonun errors.Unauthorized ile düştüğünü doğrular.
-func oturumRediniDogrula(t *testing.T, err error, neden string) {
+// requireSessionRejected verifies that the token fell with errors.Unauthorized.
+func requireSessionRejected(t *testing.T, err error, reason string) {
 	t.Helper()
 
-	require.Error(t, err, neden)
+	require.Error(t, err, reason)
 	assert.True(t, errors.IsUnauthorized(err),
-		"%s — beklenen tür Unauthorized, gelen: %v", neden, errors.KindOf(err))
+		"%s — the expected kind is Unauthorized, got: %v", reason, errors.KindOf(err))
 	assert.Equal(t, service.CodeTokenInvalid, errors.CodeOf(err),
-		"%s — jeton reddi tek bir kodla bildirilmeli", neden)
+		"%s — a token rejection has to be reported with a single code", reason)
 }
 
-// TestParolaDegisimiOncekiJetonuReddeder parola değişiminin açık oturumları
-// düşürdüğünü kanıtlar.
+// TestPasswordChangeRejectsTheEarlierToken proves that a password change drops
+// the open sessions.
 //
-// Denetim olmasaydı sızmış bir yönetici jetonu, parola değiştirilse bile
-// [service.DefaultJWTTTL] boyunca (varsayılan 12 saat) tam yetkili kimlik
-// üretmeye devam ederdi.
-func TestParolaDegisimiOncekiJetonuReddeder(t *testing.T) {
-	svc, interop, depo, saat := oturumKur(t)
+// Without the check, a leaked admin token would keep producing a fully
+// privileged identity for [service.DefaultJWTTTL] (12 hours by default) even if
+// the password had been changed.
+func TestPasswordChangeRejectsTheEarlierToken(t *testing.T) {
+	svc, interop, repo, clock := setupSession(t)
 	ctx := context.Background()
 
-	eskiJeton := oturumJetonuAl(t, svc, oturumParola)
-	_, err := oturumKimligiCoz(interop, eskiJeton)
-	require.NoError(t, err, "jeton parola değişmeden önce kabul edilmeli")
+	oldToken := obtainSessionToken(t, svc, sessionPassword)
+	_, err := resolveSessionPrincipal(interop, oldToken)
+	require.NoError(t, err, "the token has to be accepted before the password changes")
 
-	saat.ilerlet(2 * time.Second)
-	require.NoError(t, svc.SetPassword(ctx, depo.kullanici.ID, oturumYeniParola),
-		"parola değişimi başarılı olmalı")
+	clock.advance(2 * time.Second)
+	require.NoError(t, svc.SetPassword(ctx, repo.user.ID, sessionNewPassword),
+		"the password change has to succeed")
 
-	_, err = oturumKimligiCoz(interop, eskiJeton)
-	oturumRediniDogrula(t, err, "parola değiştikten sonra eski jeton kabul edilmemeli")
+	_, err = resolveSessionPrincipal(interop, oldToken)
+	requireSessionRejected(t, err, "the old token must not be accepted after the password changed")
 
-	saat.ilerlet(time.Second)
-	yeniJeton := oturumJetonuAl(t, svc, oturumYeniParola)
-	kimlik, err := oturumKimligiCoz(interop, yeniJeton)
-	require.NoError(t, err, "değişimden SONRA alınan jeton çalışmalı")
-	assert.Equal(t, oturumKullaniciID, kimlik.ID)
-	assert.Equal(t, []string{models.ScopeAdmin}, kimlik.Scopes)
+	clock.advance(time.Second)
+	newToken := obtainSessionToken(t, svc, sessionNewPassword)
+	principal, err := resolveSessionPrincipal(interop, newToken)
+	require.NoError(t, err, "a token obtained AFTER the change has to work")
+	assert.Equal(t, sessionUserID, principal.ID)
+	assert.Equal(t, []string{models.ScopeAdmin}, principal.Scopes)
 }
 
-// TestParolaDegisimiyleAyniSaniyedeUretilenJetonGecerliKalir sınır durumundaki
-// tercihi sabitler.
+// TestTokenIssuedInTheSameSecondAsThePasswordChangeStaysValid pins down the
+// choice made in the edge case.
 //
-// "iat" saniye çözünürlüklüdür; değişimle aynı saniyede üretilen bir jetonun
-// önce mi sonra mı doğduğu jetondan okunamaz. Belirsizlik KULLANILABİLİRLİK
-// lehine çözülür (gerekçe: service/token.go, issuedBefore). Ters tercih,
-// parolasını değiştirip hemen giriş yapan kullanıcının taze jetonunu
-// düşürürdü — kurulum betiklerinin tam olarak yaptığı şey budur.
-func TestParolaDegisimiyleAyniSaniyedeUretilenJetonGecerliKalir(t *testing.T) {
-	svc, interop, depo, saat := oturumKur(t)
+// "iat" has second resolution; whether a token produced in the same second as
+// the change was born before or after it cannot be read from the token. The
+// ambiguity is resolved in favor of USABILITY (the reasoning is in
+// service/token.go, issuedBefore). The opposite choice would drop the fresh
+// token of a user who changes their password and logs in right away — which is
+// exactly what setup scripts do.
+func TestTokenIssuedInTheSameSecondAsThePasswordChangeStaysValid(t *testing.T) {
+	svc, interop, repo, clock := setupSession(t)
 	ctx := context.Background()
 
-	saat.ilerlet(500 * time.Millisecond)
-	require.NoError(t, svc.SetPassword(ctx, depo.kullanici.ID, oturumYeniParola))
+	clock.advance(500 * time.Millisecond)
+	require.NoError(t, svc.SetPassword(ctx, repo.user.ID, sessionNewPassword))
 
-	// Aynı saniyenin içinde kalınır: 10:00:00.500 → 10:00:00.900.
-	saat.ilerlet(400 * time.Millisecond)
-	jeton := oturumJetonuAl(t, svc, oturumYeniParola)
+	// We stay inside the same second: 10:00:00.500 -> 10:00:00.900.
+	clock.advance(400 * time.Millisecond)
+	token := obtainSessionToken(t, svc, sessionNewPassword)
 
-	_, err := oturumKimligiCoz(interop, jeton)
+	_, err := resolveSessionPrincipal(interop, token)
 	require.NoError(t, err,
-		"değişimle aynı saniyede üretilen jeton reddedilmemeli")
+		"a token produced in the same second as the change must not be rejected")
 }
 
-// TestBasarisizGirisDenemesiOturumuDusurmez saldırganın kurbanı dışarı
-// atamayacağını kanıtlar.
+// TestFailedLoginAttemptDoesNotDropTheSession proves that an attacker cannot
+// throw the victim out.
 //
-// Oturum iptalinin çapası kimliğin updated_at değeridir. Başarısız deneme
-// sayacı o sütunu ilerletseydi, kurbanın e-postasını bilen herkes tek bir
-// yanlış parola denemesiyle bütün oturumlarını kapatabilirdi: hedefli bir
-// hizmet dışı bırakma aracı.
-func TestBasarisizGirisDenemesiOturumuDusurmez(t *testing.T) {
-	svc, interop, _, saat := oturumKur(t)
+// The anchor of session revocation is the identity's updated_at value. Had the
+// failed attempt counter advanced that column, anyone who knows the victim's
+// email address could close all of their sessions with a single wrong password
+// attempt: a targeted denial-of-service tool.
+func TestFailedLoginAttemptDoesNotDropTheSession(t *testing.T) {
+	svc, interop, _, clock := setupSession(t)
 	ctx := context.Background()
 
-	jeton := oturumJetonuAl(t, svc, oturumParola)
+	token := obtainSessionToken(t, svc, sessionPassword)
 
-	saat.ilerlet(5 * time.Second)
-	_, _, err := svc.Login(ctx, oturumEposta, oturumYanlisParola)
-	require.Error(t, err, "yanlış parola reddedilmeli")
+	clock.advance(5 * time.Second)
+	_, _, err := svc.Login(ctx, sessionEmail, sessionWrongPassword)
+	require.Error(t, err, "a wrong password has to be rejected")
 
-	_, err = oturumKimligiCoz(interop, jeton)
-	require.NoError(t, err, "başarısız bir deneme kurbanın oturumunu kapatmamalı")
+	_, err = resolveSessionPrincipal(interop, token)
+	require.NoError(t, err, "a failed attempt must not close the victim's session")
 }
 
-// TestIkinciGirisIlkOturumuDusurmez aynı kullanıcının iki cihazda açık
-// kalabildiğini kanıtlar.
+// TestSecondLoginDoesNotDropTheFirstSession proves that the same user can stay
+// open on two devices.
 //
-// Başarılı giriş de updated_at'i ilerletseydi, ikinci cihazdan giriş yapmak
-// birincinin oturumunu sessizce kapatırdı.
-func TestIkinciGirisIlkOturumuDusurmez(t *testing.T) {
-	svc, interop, _, saat := oturumKur(t)
+// Had a successful login advanced updated_at too, logging in from a second
+// device would silently close the session of the first one.
+func TestSecondLoginDoesNotDropTheFirstSession(t *testing.T) {
+	svc, interop, _, clock := setupSession(t)
 
-	ilkJeton := oturumJetonuAl(t, svc, oturumParola)
+	firstToken := obtainSessionToken(t, svc, sessionPassword)
 
-	saat.ilerlet(5 * time.Second)
-	ikinciJeton := oturumJetonuAl(t, svc, oturumParola)
-	require.NotEqual(t, ilkJeton, ikinciJeton, "iki giriş farklı jeton üretmeli")
+	clock.advance(5 * time.Second)
+	secondToken := obtainSessionToken(t, svc, sessionPassword)
+	require.NotEqual(t, firstToken, secondToken, "two logins have to produce different tokens")
 
-	_, err := oturumKimligiCoz(interop, ilkJeton)
-	require.NoError(t, err, "ilk cihazın oturumu ikinci girişten sonra da geçerli olmalı")
+	_, err := resolveSessionPrincipal(interop, firstToken)
+	require.NoError(t, err, "the first device's session has to stay valid after the second login")
 
-	_, err = oturumKimligiCoz(interop, ikinciJeton)
-	require.NoError(t, err, "ikinci cihazın oturumu geçerli olmalı")
+	_, err = resolveSessionPrincipal(interop, secondToken)
+	require.NoError(t, err, "the second device's session has to be valid")
 }
 
-// TestUretimAniOlmayanJetonReddedilir "iat" iddiasının zorunlu olduğunu
-// kanıtlar.
+// TestTokenWithoutIssueTimeIsRejected proves that the "iat" claim is mandatory.
 //
-// Oturum iptali bu iddiaya dayanır; iddiası olmayan bir jetonun ne zaman
-// üretildiği bilinemez ve karşılaştırma yapılamaz. İmza sırrı burada bilerek
-// DOĞRU olanıdır: reddin gerekçesi imza değil, eksik iddiadır.
-func TestUretimAniOlmayanJetonReddedilir(t *testing.T) {
-	_, interop, _, saat := oturumKur(t)
+// Session revocation rests on this claim; when a token does not carry it, when
+// it was produced cannot be known and no comparison can be made. The signing
+// secret here is deliberately the RIGHT one: the reason for the rejection is
+// not the signature but the missing claim.
+func TestTokenWithoutIssueTimeIsRejected(t *testing.T) {
+	_, interop, _, clock := setupSession(t)
 
-	iddialar := jwt.MapClaims{
-		"sub":    oturumKullaniciID,
+	claims := jwt.MapClaims{
+		"sub":    sessionUserID,
 		"iss":    service.DefaultIssuer,
-		"exp":    saat.simdi().Add(time.Hour).Unix(),
+		"exp":    clock.now().Add(time.Hour).Unix(),
 		"scopes": []string{models.ScopeAdmin},
 	}
-	jeton, err := jwt.NewWithClaims(jwt.SigningMethodHS256, iddialar).SignedString([]byte(oturumSir))
-	require.NoError(t, err, "test jetonu imzalanamadı")
+	token, err := jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString([]byte(sessionSecret))
+	require.NoError(t, err, "the test token could not be signed")
 
-	_, err = oturumKimligiCoz(interop, jeton)
-	oturumRediniDogrula(t, err, "\"iat\" iddiası olmayan jeton kabul edilmemeli")
+	_, err = resolveSessionPrincipal(interop, token)
+	requireSessionRejected(t, err, "a token with no \"iat\" claim must not be accepted")
 }
 
-// TestGirisKimligiSilinmisJetonReddedilir kimliği silinmiş kullanıcının
-// jetonunun düştüğünü kanıtlar.
+// TestTokenOfDeletedLoginIdentityIsRejected proves that the token of a user
+// whose identity was deleted drops.
 //
-// Kimlik satırı yoksa jetonun ne zaman geçersizleştiğini söyleyecek bir değer
-// de yoktur; kabul etmek, denetimi kimliği silerek atlatmaya kapı bırakmak
-// olurdu.
-func TestGirisKimligiSilinmisJetonReddedilir(t *testing.T) {
-	svc, interop, depo, _ := oturumKur(t)
+// If there is no identity row there is also no value that could say when the
+// token became invalid; accepting it would leave a door open to bypassing the
+// check by deleting the identity.
+func TestTokenOfDeletedLoginIdentityIsRejected(t *testing.T) {
+	svc, interop, repo, _ := setupSession(t)
 
-	jeton := oturumJetonuAl(t, svc, oturumParola)
-	depo.kimlikSilindi = true
+	token := obtainSessionToken(t, svc, sessionPassword)
+	repo.identityDeleted = true
 
-	_, err := oturumKimligiCoz(interop, jeton)
-	oturumRediniDogrula(t, err, "giriş kimliği silinmiş kullanıcının jetonu kabul edilmemeli")
+	_, err := resolveSessionPrincipal(interop, token)
+	requireSessionRejected(t, err, "the token of a user whose login identity was deleted must not be accepted")
 }
