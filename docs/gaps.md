@@ -397,9 +397,15 @@ the next reader sees a decision instead of a wait.
    (`order_return_items`), with the across-returns quantity rule enforced under
    the order's lock.
 
-   Still open, and it is the larger half: nothing ACTS. Restocking and
-   refunding reach across modules and belong to a flow that is not built. There
-   is also still no customer-facing request surface.
+   **Restocking landed on 2026-09-05** (`internal/workflows/returns`): receiving
+   a return records where the goods arrived and puts their stock back, through
+   a flow the admin endpoint is bound to.
+
+   Still open: REFUNDING. It is deliberately not part of receiving — goods can
+   arrive damaged or incomplete, so paying the money back is a separate
+   operator decision — but the action itself does not exist yet. There is also
+   still no customer-facing request surface, and exchanges and claims can move
+   but nothing acts on them either.
 
    The original finding: Zero `UPDATE` statements
    across `order_returns.sql`, `order_exchanges.sql` and `order_claims.sql` —

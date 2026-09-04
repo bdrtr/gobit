@@ -43,7 +43,7 @@ func document(t *testing.T) (paths, components map[string]any) {
 	Describe(doc)
 
 	r := chi.NewRouter()
-	New(nil).Routes(r)
+	New(nil, nil).Routes(r)
 
 	raw, err := doc.Build(r)
 	require.NoError(t, err)

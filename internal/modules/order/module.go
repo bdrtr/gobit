@@ -115,6 +115,12 @@ const (
 	// svcQuery is the core cross-module read layer's name in the container
 	// (ADR 0004). The order reads its payment through it and only through it.
 	svcQuery = "core.query"
+	// returnFlowName is the return flow's name in the container.
+	//
+	// The value is declared by internal/workflows/returns and REPEATED here:
+	// this module cannot import that package (ADR 0006 holds in both
+	// directions).
+	returnFlowName = "workflows.returns.interop"
 )
 
 // SpendingPolicyName is the container name of the service that publishes the
@@ -240,7 +246,10 @@ func (m *Module) Register(ctx context.Context, c *container.Container) error {
 	}
 
 	m.svc = svc
-	m.handler = api.New(svc)
+	// The return flow is resolved at REQUEST TIME for the reason the spending
+	// rule is: a flow is born after the whole Register loop has finished, while
+	// the handler is built inside it.
+	m.handler = api.New(svc, &returnReceiving{c: c, log: log})
 	slog.Default().DebugContext(ctx, "order module registered",
 		"service", ServiceName, "interop", InteropName, "provider", ProviderName)
 	return nil
@@ -290,6 +299,49 @@ func mustSub(files embed.FS, dir string) fs.FS {
 		panic("order: could not open the embedded migrations directory: " + err.Error())
 	}
 	return sub
+}
+
+// returnReceiving is the wrapper that resolves the return flow ON FIRST USE.
+//
+// It fails CLOSED: without the flow a return is not received at all. Recording
+// the receipt and skipping the stock would put the goods in the warehouse and
+// leave the count saying they are not there, with a record claiming success.
+type returnReceiving struct {
+	c    *container.Container
+	log  *slog.Logger
+	once sync.Once
+	svc  api.ReturnReceiving
+	err  error
+}
+
+// That the wrapper satisfies the surface the handler expects is pinned down at
+// compile time.
+var _ api.ReturnReceiving = (*returnReceiving)(nil)
+
+// ReceiveReturn records the receipt and puts the stock back.
+func (p *returnReceiving) ReceiveReturn(
+	ctx context.Context, returnID, locationID string,
+) (restockedLines int, restockedUnits int64, warnings []string, err error) {
+	p.once.Do(func() { p.resolve(ctx) })
+	if p.err != nil {
+		return 0, 0, nil, p.err
+	}
+
+	return p.svc.ReceiveReturn(ctx, returnID, locationID)
+}
+
+// resolve looks the flow up in the container and remembers the outcome.
+func (p *returnReceiving) resolve(ctx context.Context) {
+	svc, err := container.Resolve[api.ReturnReceiving](p.c, returnFlowName)
+	if err != nil {
+		p.err = errors.Wrap(err, errors.KindInternal, codeSetupFailed,
+			"the %s module could not resolve the return flow (%q); a return cannot be "+
+				"received without the stock going back", ModuleName, returnFlowName)
+
+		return
+	}
+	p.svc = svc
+	p.log.InfoContext(ctx, "return receiving flow bound", "flow", returnFlowName)
 }
 
 // spendingPolicy is the wrapper that resolves the spending rule provider ON

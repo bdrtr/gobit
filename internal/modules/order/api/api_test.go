@@ -218,8 +218,16 @@ func sampleDetail() models.OrderDetail {
 
 // newRouter produces a router wired to the fake service.
 func newRouter(svc api.Orders) chi.Router {
+	return newRouterWithFlow(svc, &fakeReceiving{})
+}
+
+// newRouterWithFlow wires a router with the given service and return flow.
+//
+// The flow may be nil; the receive endpoint failing CLOSED without it can only
+// be exercised that way.
+func newRouterWithFlow(svc api.Orders, receiving api.ReturnReceiving) chi.Router {
 	r := chi.NewRouter()
-	api.New(svc).Routes(r)
+	api.New(svc, receiving).Routes(r)
 	return r
 }
 
@@ -833,4 +841,96 @@ func TestAnOrderWithNoPaymentIsNotTheSameAsNoOrder(t *testing.T) {
 	require.True(t, ok, rec.Body.String())
 	assert.Equal(t, "order_payment_unbound", failure["code"],
 		"the code has to say WHICH thing is missing")
+}
+
+// fakeReceiving is the return flow's stand-in.
+type fakeReceiving struct {
+	lines    int
+	units    int64
+	warnings []string
+	err      error
+
+	gotReturnID   string
+	gotLocationID string
+	calls         int
+}
+
+// ReceiveReturn records the call and returns the scripted outcome.
+func (f *fakeReceiving) ReceiveReturn(
+	_ context.Context, returnID, locationID string,
+) (restockedLines int, restockedUnits int64, warnings []string, err error) {
+	f.calls++
+	f.gotReturnID, f.gotLocationID = returnID, locationID
+	if f.err != nil {
+		return 0, 0, nil, f.err
+	}
+
+	return f.lines, f.units, f.warnings, nil
+}
+
+// TestReceivingAReturnGoesTHROUGHTheFlow is why the endpoint is not bound to
+// the service method.
+//
+// Receiving has two halves: the record says the goods arrived, the stock goes
+// back. The second reaches the inventory module, which this one does not know,
+// so an endpoint on the service would stamp the first and silently skip the
+// second.
+func TestReceivingAReturnGoesTHROUGHTheFlow(t *testing.T) {
+	flow := &fakeReceiving{lines: 2, units: 3}
+	r := newRouterWithFlow(&fakeOrders{}, flow)
+
+	rec := doRequest(t, r, http.MethodPost,
+		"/admin/v1/orders/order_1/returns/ret_1/receive", `{"location_id":"sloc_main"}`)
+
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.Equal(t, 1, flow.calls)
+	assert.Equal(t, "ret_1", flow.gotReturnID)
+	assert.Equal(t, "sloc_main", flow.gotLocationID)
+
+	payload := decodeResponse(t, rec)
+	data, ok := payload["data"].(map[string]any)
+	require.True(t, ok, rec.Body.String())
+	assert.InDelta(t, 2, data["restocked_lines"], 0.0)
+	assert.InDelta(t, 3, data["restocked_units"], 0.0)
+}
+
+// TestAReceiptWithWarningsIsStillASuccess is not a contradiction.
+//
+// The goods arrived and the record says so; something about the stock needs a
+// human. Refusing the receipt would deny a physical fact and leave the operator
+// with no record to work from.
+func TestAReceiptWithWarningsIsStillASuccess(t *testing.T) {
+	flow := &fakeReceiving{
+		lines:    1,
+		units:    1,
+		warnings: []string{"variant var_a has no inventory item; its stock was not put back"},
+	}
+	r := newRouterWithFlow(&fakeOrders{}, flow)
+
+	rec := doRequest(t, r, http.MethodPost,
+		"/admin/v1/orders/order_1/returns/ret_1/receive", `{"location_id":"sloc_main"}`)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	payload := decodeResponse(t, rec)
+	data, ok := payload["data"].(map[string]any)
+	require.True(t, ok, rec.Body.String())
+	warnings, ok := data["warnings"].([]any)
+	require.True(t, ok, "a warning must reach the operator, not only the log")
+	assert.Len(t, warnings, 1)
+}
+
+// TestAReturnIsNotReceivedWithoutTheFlow pins the fail-closed branch.
+//
+// Recording the receipt and skipping the stock would put the goods in the
+// warehouse while the count says they are not there — with a record claiming
+// the receipt succeeded.
+func TestAReturnIsNotReceivedWithoutTheFlow(t *testing.T) {
+	svc := &fakeOrders{}
+	r := newRouterWithFlow(svc, nil)
+
+	rec := doRequest(t, r, http.MethodPost,
+		"/admin/v1/orders/order_1/returns/ret_1/receive", `{"location_id":"sloc_main"}`)
+
+	assert.Equal(t, http.StatusInternalServerError, rec.Code)
+	assert.Empty(t, svc.calls, "nothing may be written when the stock cannot follow")
 }

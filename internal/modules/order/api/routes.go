@@ -90,6 +90,7 @@ func (h *Handler) Routes(r chi.Router) {
 	read.Get("/admin/v1/orders/{id}/returns", h.adminListReturns)
 	write.Post("/admin/v1/orders/{id}/returns", h.adminCreateReturn)
 	read.Get("/admin/v1/orders/{id}/returns/{returnId}", h.adminGetReturn)
+	write.Post("/admin/v1/orders/{id}/returns/{returnId}/receive", h.adminReceiveReturn)
 	read.Get("/admin/v1/orders/{id}/exchanges", h.adminListExchanges)
 	write.Post("/admin/v1/orders/{id}/exchanges", h.adminCreateExchange)
 	read.Get("/admin/v1/orders/{id}/exchanges/{exchangeId}", h.adminGetExchange)

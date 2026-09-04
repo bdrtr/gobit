@@ -240,6 +240,29 @@ func (i *Interop) SetOrderSummaryTotals(
 	return err
 }
 
+// ReturnDetailJSON returns a return with its lines and their variants.
+//
+// The schema is documented on [Service.ReturnDetailJSON]. The consumer is the
+// return flow, which needs the variant of every line coming back in order to
+// put its stock back.
+func (i *Interop) ReturnDetailJSON(ctx context.Context, returnID string) (json.RawMessage, error) {
+	return i.svc.ReturnDetailJSON(ctx, returnID)
+}
+
+// ReceiveReturn stamps the return as received at the given stock location.
+//
+// It is the RECORD half of receiving a return: it says the goods arrived and
+// where. Putting the stock back is the flow's half, because it reaches the
+// inventory module and this one does not know it.
+//
+// A second call is a no-op that KEEPS THE FIRST MOMENT, so a flow that is
+// retried does not make the record claim the goods arrived twice.
+func (i *Interop) ReceiveReturn(ctx context.Context, returnID, locationID string) error {
+	_, err := i.svc.ReceiveReturn(ctx, returnID, locationID)
+
+	return err
+}
+
 // CompleteOrder stamps the order as completed.
 //
 // It is NOT idempotent: a second call returns errors.Conflict (for the

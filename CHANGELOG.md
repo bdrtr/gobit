@@ -12,6 +12,49 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Eklendi
 
+- **İade artık EYLİYOR: teslim alınan malın stoğu geri konuyor**
+  (`internal/workflows/returns`, satış sonrası 2/3).
+
+  Satış sonrası kayıtları açılabiliyor ve okunabiliyordu, başka hiçbir şey
+  yapamıyordu; `aftersales.go` bunu yazmış ve eylemeyi "sonraki fazlara"
+  ertelemişti. O fazları içeren yol haritası kapandı.
+
+  **Mal gelmesi para iadesi DEĞİLDİR ve akış burada duruyor.** Para iadesi
+  operatörün gelen mala bakarak verdiği ayrı bir karar — mal hasarlı, eksik ya
+  da pencere dışında gelebilir — ve teslim alınca otomatik iade etmek dükkânın
+  vermesi gereken kararı çerçevenin vermesi olurdu. İkisi maliyet olarak da
+  simetrik değil: stok, paket açıldığı anda fizikî bir olgu; para ise biri
+  gönderene kadar geri alınabilir.
+
+  **Önce kayıt, sonra stok**, ve gerekçesi şu: ikisi de diğerini geri
+  alamıyor, dolayısıyla soru hangi arızanın elle bitirilebileceği. Damgalanmış
+  ama stoğu konmamış bir iade, neyin eksik olduğunu ve nereye gitmesi
+  gerektiğini YAZILI olarak söylüyor; stok eklenmiş ama kaydı olmayan bir
+  varış ise sayımı bozuyor ve malın geldiğine dair tek kanıt hiç yazılmamış
+  oluyor. "Fazlasını iddia eden kayıt" ile "kimsenin açıklayamadığı depo
+  sayımı" arasında birincisi düzeltilebilir olan.
+
+  Stok geri koyma hataları çağrıyı DÜŞÜRMÜYOR, uyarı olarak dönüyor: mal zaten
+  binada, ve hata dönmek operatöre kolisi elindeyken "teslim alma olmadı"
+  demek olurdu — üstelik çalışması gereken kayıt hiç var olmazdı. Bir satırın
+  geri konamaması diğerlerini de durdurmuyor; ayrı raflardaki ayrı ürünler,
+  bir arızayı ikiye çıkarmanın anlamı yok.
+
+  `Restock` BİLEREK idempotent değil — iki çağrı iki fizikî varış demek. Tek
+  çağrıyı garanti eden şey akışın kendisi: iade bir kez teslim alınabiliyor ve
+  akış statüyü önce kontrol edip duruyor. Yani modülün geçiş tablosu,
+  envanterin idempotent olmamasını güvenli kılıyor.
+
+  Uç servise değil AKIŞA bağlı ve kapalı arızalanıyor: akış yoksa iade hiç
+  teslim alınmıyor. Kayıt yazıp stoğu atlamak, malı depoya koyup sayımın
+  "burada değil" demesine, üstelik kaydın "başarılı" iddia etmesine yol
+  açardı — cart modülünün satır fiyatı için yazdığı kuralın aynısı.
+
+  Arch kapısı bu turda İKİ KEZ durdurdu: kaydedilmemiş akış, ve tüketicisi
+  olmayan interop. İkisi de aynı hata sınıfı ve ikisini de kod yakaladı.
+
+  Beş mutasyonun beşi de yakalandı.
+
 - **Sipariş ile ödemesi arasında artık bir yol var** (`order_payment` link'i).
 
   Koleksiyonun `Reference` alanı sepet kimliğini taşıyor, yani bir siparişten

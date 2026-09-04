@@ -130,6 +130,65 @@ func (h *Handler) adminGetOrderPayment(w http.ResponseWriter, r *http.Request) {
 	}})
 }
 
+// receiveReturnRequest is the body of the return receipt.
+//
+// It names WHERE the goods arrived and nothing else. The quantities are already
+// on the return record, and letting a request restate them would let the
+// warehouse be told something different from what was agreed.
+type receiveReturnRequest struct {
+	// LocationID is the stock location the goods arrived at; it is REQUIRED.
+	LocationID string `json:"location_id"`
+}
+
+// receiveReturnResponse reports what the receipt did.
+type receiveReturnResponse struct {
+	RestockedLines int      `json:"restocked_lines"`
+	RestockedUnits int64    `json:"restocked_units"`
+	Warnings       []string `json:"warnings,omitempty"`
+}
+
+// adminReceiveReturn records that the returned goods arrived and puts their
+// stock back.
+//
+// It goes through the FLOW rather than the service: the record half is this
+// module's, the stock half reaches inventory, and an endpoint bound to the
+// service method would stamp the first and silently skip the second.
+//
+// A 200 with warnings is a real outcome and not a contradiction: the goods
+// arrived, the record says so, and something about the stock needs a human. The
+// alternative — refusing the receipt — would deny a physical fact and leave the
+// operator with no record to work from.
+func (h *Handler) adminReceiveReturn(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	flow, err := h.returnReceiving()
+	if err != nil {
+		corehttp.WriteError(ctx, w, err)
+
+		return
+	}
+
+	var body receiveReturnRequest
+	if err := decodeBody(w, r, &body); err != nil {
+		corehttp.WriteError(ctx, w, err)
+
+		return
+	}
+
+	lines, units, warnings, err := flow.ReceiveReturn(ctx, chi.URLParam(r, paramReturnID), body.LocationID)
+	if err != nil {
+		corehttp.WriteError(ctx, w, err)
+
+		return
+	}
+
+	corehttp.WriteJSON(ctx, w, http.StatusOK, singleEnvelope{Data: receiveReturnResponse{
+		RestockedLines: lines,
+		RestockedUnits: units,
+		Warnings:       warnings,
+	}})
+}
+
 // cancelOrderRequest is the body of POST /admin/v1/orders/{id}/cancel.
 type cancelOrderRequest struct {
 	// Reason is the cancellation reason; it is optional.

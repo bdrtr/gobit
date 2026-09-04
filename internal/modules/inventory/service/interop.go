@@ -1,6 +1,10 @@
 package service
 
-import "context"
+import (
+	"context"
+
+	"github.com/bdrtr/gobit/internal/core/errors"
+)
 
 // This file is the CROSS-MODULE surface of the inventory module (ADR 0001,
 // ADR 0006).
@@ -73,6 +77,43 @@ func (i *Interop) Reserve(
 // half done.
 func (i *Interop) ReleaseReservation(ctx context.Context, reservationID string) error {
 	return i.svc.ReleaseReservation(ctx, reservationID)
+}
+
+// Restock puts stock BACK at a location.
+//
+// # Why it is not ReleaseReservation
+//
+// Releasing gives back stock that was only SET ASIDE. This is for stock that
+// was already deducted: the checkout confirmed the reservation, so the units
+// left the warehouse's count for good, and goods coming back are an addition
+// rather than the undoing of a hold. The inventory module says as much —
+// a confirmed reservation cannot be released and returns errors.Conflict.
+//
+// # Why it takes a LOCATION
+//
+// Stock lives at a location, and the returning goods arrive at one the caller
+// names. It cannot be derived from the order: the order carries no location,
+// and the warehouse that shipped is not necessarily the one the customer
+// returned to.
+//
+// # It is NOT idempotent, and it must not be
+//
+// Two calls add the stock twice, because two calls mean two physical arrivals.
+// The caller is responsible for calling it once per receipt; the return record
+// is what makes that possible, since a return can only be received once.
+func (i *Interop) Restock(
+	ctx context.Context,
+	inventoryItemID, locationID string,
+	quantity int64,
+) error {
+	if quantity <= 0 {
+		return errors.Invalid(CodeInvalidInput,
+			"the restocked quantity has to be positive: %d (item %s)", quantity, inventoryItemID)
+	}
+
+	_, err := i.svc.AdjustInventory(ctx, inventoryItemID, locationID, quantity)
+
+	return err
 }
 
 // ConfirmReservation turns the reservation into deducted stock.

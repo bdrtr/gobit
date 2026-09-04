@@ -43,6 +43,7 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/product/graph"
 	cartwf "github.com/bdrtr/gobit/internal/workflows/cart"
 	checkoutwf "github.com/bdrtr/gobit/internal/workflows/checkout"
+	returnswf "github.com/bdrtr/gobit/internal/workflows/returns"
 	"github.com/bdrtr/gobit/plugins/errorotlp"
 	"github.com/bdrtr/gobit/plugins/errorsentry"
 	"github.com/bdrtr/gobit/plugins/files3"
@@ -210,7 +211,19 @@ func registerWorkflows(c *container.Container) error {
 		return errors.Wrap(err, errors.KindOf(err), codeFlowSetupFailed,
 			"the checkout workflow could not be set up")
 	}
-	return c.Provide(checkoutwf.InteropName, checkoutwf.NewInterop(checkoutWorkflow))
+	if err := c.Provide(checkoutwf.InteropName, checkoutwf.NewInterop(checkoutWorkflow)); err != nil {
+		return err
+	}
+
+	// The return flow is set up on the same container for the same reason: it
+	// resolves its own dependency set rather than being handed one.
+	returnWorkflow, err := returnswf.FromContainer(c)
+	if err != nil {
+		return errors.Wrap(err, errors.KindOf(err), codeFlowSetupFailed,
+			"the return workflow could not be set up")
+	}
+
+	return c.Provide(returnswf.InteropName, returnswf.NewInterop(returnWorkflow))
 }
 
 // registerPanel builds the admin panel and binds its paths.

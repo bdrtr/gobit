@@ -67,6 +67,9 @@ const maxBodyBytes int64 = 1 << 20 // 1 MiB
 // cannot be parsed.
 const codeInvalidRequest = "order_invalid_request"
 
+// codeFlowUnavailable reports that a flow the endpoint needs is not bound.
+const codeFlowUnavailable = "order_workflow_unavailable"
+
 // codeOrderPaymentUnbound reports that no payment collection is bound to the
 // order.
 //
@@ -130,14 +133,59 @@ type Orders interface {
 	ListClaims(ctx context.Context, orderID string, page service.Page) ([]models.Claim, int64, error)
 }
 
-// Handler is the HTTP handler set of the order module.
-type Handler struct {
-	svc Orders
+// ReturnReceiving is the surface used by this package of the flow that RECEIVES
+// a return (ADR 0001/0006).
+//
+// # Why the endpoint does not call the service directly
+//
+// Receiving a return has two halves: the record says the goods arrived, and the
+// stock goes back. The second reaches the inventory module, which this one does
+// not know, so it belongs to a flow. Had the endpoint been bound to the service
+// method it would have stamped the record and SILENTLY skipped the restock —
+// the same shape of defect the cart module names about its line price.
+type ReturnReceiving interface {
+	// ReceiveReturn records that the goods arrived at the location and puts
+	// their stock back.
+	//
+	// warnings is non-empty when the record is right and the warehouse count is
+	// not; every entry needs a human.
+	ReceiveReturn(ctx context.Context, returnID, locationID string) (
+		restockedLines int, restockedUnits int64, warnings []string, err error,
+	)
 }
 
-// New produces the handler set that runs over the given service.
-func New(svc Orders) *Handler {
-	return &Handler{svc: svc}
+// Handler is the HTTP handler set of the order module.
+type Handler struct {
+	svc       Orders
+	receiving ReturnReceiving
+}
+
+// New produces the handler set that runs over the given service and flow.
+//
+// receiving may be nil; the endpoint that needs it then FAILS CLOSED rather
+// than falling back to the service method, because the fallback would stamp a
+// return as received and put no stock back.
+func New(svc Orders, receiving ReturnReceiving) *Handler {
+	return &Handler{svc: svc, receiving: receiving}
+}
+
+// returnReceiving returns the flow; if it is not bound it returns an ERROR.
+//
+// # Why it fails CLOSED
+//
+// The same reasoning the cart module gives about its line price. If the flow is
+// missing, the correct answer is NOT "record the receipt and skip the stock":
+// the goods would be in the warehouse and the count would say they are not,
+// with a record claiming the receipt succeeded. The only correct outcome of a
+// missing flow is the return NOT BEING RECEIVED AT ALL.
+func (h *Handler) returnReceiving() (ReturnReceiving, error) {
+	if h.receiving == nil {
+		return nil, coreerrors.Internal(codeFlowUnavailable,
+			"the return receiving flow is not bound; a return cannot be received without the "+
+				"stock going back")
+	}
+
+	return h.receiving, nil
 }
 
 // --- envelopes and DTOs ------------------------------------------------------
