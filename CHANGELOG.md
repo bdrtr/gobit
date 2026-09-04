@@ -12,6 +12,58 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Eklendi
 
+- **PayTR ile ödeme geldi** (`payment-paytr` eklentisi) — ve web push'la
+  **aynı bulguya** çıktı, ters yönden.
+
+  PayTR SÜRÜLEMEZ: müşteri PayTR'ın kendi iframe'inde öder ve sonucu bize
+  callback ile bildirir. Sözleşme ise `Authorize(ctx, sessionID)` diye soruyor —
+  "para bloke mi" — ve sağlayıcının yalnızca oturum kimliğinden cevap
+  verebilmesini bekliyor. Sürülebilen bir geçit (Stripe) API çağrısıyla cevap
+  verir; PayTR'de o cevap **callback'in yazdığı satırda** durur ve callback ile
+  soru arasındaki yeniden başlatmayı atlatmak zorundadır. Yani yine kalıcı
+  durum, yani yine kendi modülünü getiren bir eklenti. ADR 0018'in bulgusu
+  ikinci kez, başka bir sebepten doğrulandı: **sağlayıcı yuvası tek başına,
+  sorulmak yerine haber veren bir tarafı ifade edemiyor.**
+
+  **İmzalar dış vektörlere karşı kilitlendi.** Üç formül var ve ikisi bir
+  kurala, biri başkasına uyuyor: `callback` salt'ı gövdenin İÇİNE koyuyor,
+  ötekiler sona ekliyor. İkisinden kuralı öğrenen okur üçüncüyü yanlış yazar —
+  ve sonuç sessiz değil ama teşhis edilemez: her gerçek callback reddedilir,
+  PayTR aldığını saymadığı için sonsuza dek yeniden dener, logda ise imza
+  uyuşmazlığı görünür ve saldırı gibi okunur.
+
+  Beklenen değerler kendi çıktımız değil: çalışan bir PayTR entegrasyonunun
+  sabit kimliklerle bağımsız HMAC-SHA256'dan ürettiği kilitli vektörler.
+  Mutasyonla sınandı — callback "genel kurala" uydurulduğunda iki test birden
+  düşüyor.
+
+  **İki farklı tutar biçimi tek entegrasyonda:** get-token minör birim tamsayı
+  ("10000"), iade ise majör birim iki ondalıklı ("100.00"). Birini ötekinin
+  yerine göndermek yüz kat sapar, PayTR tarafından KABUL EDİLİR ve müşteriye yüz
+  kat eksik ya da fazla para döner. Dönüşüm tamsayı aritmetiğiyle yapılıyor;
+  para bu depoda float'tan geçmez (plan Bölüm 8) ve buradaki sonuç müşterinin
+  geri aldığı tutar.
+
+  **Callback'in yanıtı tam olarak `OK` olmak zorunda** — PayTR gövdeyi okuyor,
+  durum kodunu değil. Çekirdeğin JSON zarfı orada sonsuz bir yeniden deneme
+  döngüsü üretirdi. Bu yüzden o uç `internal/arch/error_path_test.go`'daki
+  muafiyet listesine gerekçesiyle yazıldı; aynı dosyadaki operatör ucu
+  çekirdekten geçiyor ve test bunu kontrol ediyor.
+
+  **Kapanmayan boşluk adıyla yazıldı:** ödeyip tarayıcıyı kapatan müşterinin
+  parası alınmış ama siparişi yoktur. Callback yalnızca kaydeder; sepeti
+  siparişe çevirmek checkout workflow'unun işi ve ödeme eklentisinin oraya
+  uzanması sipariş akışını iki yere koyardı. Bekleyenler açılışta sayılıp
+  uyarı olarak loglanıyor ve `GET /admin/v1/paytr/pending` ile listeleniyor —
+  gobit'in yarım kalmış iş için zaten kelimesi var (ADR 0016/0017).
+
+  **Yolda bir kör nokta daha:** `TestHTTPSurfacesLiveOnlyInApiPackages` ile
+  `TestNonModuleHTTPSurfacesWriteThroughTheCore` aynı muafiyet listesini
+  paylaşıyor gibi görünüyor ama biri yalnızca `internal/modules/`'ü geziyor —
+  yani bir eklenti oraya asla "görünmüyor" ve muafiyet "kullanılmıyor" diye
+  reddediliyor. Doğru liste `coreWriterExemptions`; bu, eklenti yazacak bir
+  sonraki kişinin de düşeceği tuzak.
+
 - **Tarayıcı push bildirimi geldi** (`web-push` eklentisi) — ve sağlayıcı
   yuvasına GİRMEDİ. Bu turun asıl bulgusu kodu değil, kararı değiştirdi.
 

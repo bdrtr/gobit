@@ -47,6 +47,7 @@ import (
 	"github.com/bdrtr/gobit/plugins/errorsentry"
 	"github.com/bdrtr/gobit/plugins/files3"
 	"github.com/bdrtr/gobit/plugins/notificationsmtp"
+	"github.com/bdrtr/gobit/plugins/paymentpaytr"
 	"github.com/bdrtr/gobit/plugins/paymentstripe"
 	"github.com/bdrtr/gobit/plugins/searchpg"
 	"github.com/bdrtr/gobit/plugins/webpush"
@@ -109,10 +110,12 @@ const temporarySecretBytes = 32
 // below; errorsentry and errorotlp fill a slot the CORE owns, so they need no
 // module to exist at all.
 //
-// webpush is the second of that middle kind and it is there for a reason worth
-// naming: it looked like a provider and is not one. A push destination is a set
-// of devices the framework has to have STORED, not an address a caller hands
-// over, so the notification contract cannot express it (ADR 0018).
+// webpush and paymentpaytr are the second and third of that middle kind, and
+// both are there for the same reason: each looked like a plain provider and
+// turned out to need durable state. A push destination is a set of devices the
+// framework has to have STORED, and PayTR reports the outcome of a payment by
+// posting BACK rather than answering when asked — so in both cases the provider
+// slot alone cannot express the party (ADR 0018).
 //
 // The two provider plugins are not the same kind of thing, and the difference
 // is worth naming: paymentstripe is a SKELETON that returns an error from every
@@ -131,6 +134,7 @@ var pluginCatalog = map[string]func() coreplugin.Plugin{
 	files3.Name:           func() coreplugin.Plugin { return files3.New() },
 	notificationsmtp.Name: func() coreplugin.Plugin { return notificationsmtp.New() },
 	paymentstripe.Name:    func() coreplugin.Plugin { return paymentstripe.New() },
+	paymentpaytr.Name:     func() coreplugin.Plugin { return paymentpaytr.New() },
 	searchpg.Name:         func() coreplugin.Plugin { return searchpg.New() },
 	webpush.Name:          func() coreplugin.Plugin { return webpush.New() },
 }

@@ -398,6 +398,22 @@ type coreWriterExemption struct {
 // own body but it MUST ASK the core which error may be handed to the client.
 var coreWriterExemptions = []coreWriterExemption{
 	{
+		file:     "plugins/paymentpaytr/module.go",
+		function: "answer",
+		calls:    []string{"w.WriteHeader", "w.Write"},
+		// PayTR reads the response BODY, not the status code, and treats
+		// anything other than the bare token "OK" as "not acknowledged" — then
+		// retries. A JSON envelope on that route produces an endless retry loop
+		// in which every payment stays pending while nothing reports a fault.
+		//
+		// The exemption is one FUNCTION on one route. The operator's
+		// pending-payment list in the same file writes through corehttp, which
+		// is what this test verifies rather than taking on trust.
+		reason: "the callback speaks PayTR's protocol: PayTR reads the body and retries " +
+			"anything that is not the bare token OK, so the core's JSON envelope cannot " +
+			"be used there",
+	},
+	{
 		file:     coreHTTPDir + "/idempotency.go",
 		function: "replay",
 		calls:    []string{"w.WriteHeader", "w.Write"},
