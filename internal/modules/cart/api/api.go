@@ -69,8 +69,9 @@
 // that key is NOT A SECRET — it sits in the browser, its only job is to bind the
 // request to a sales channel (see corehttp.RequireStore). There is no customer
 // SESSION, that is, there is no subject to ask "is this cart yours" either. The
-// same declaration is written in the order module too (order/api storeGetOrder)
-// and real authorization is the job of Phase 8.
+// same declaration is written in the order module too (order/api storeGetOrder),
+// and real authorization is the EMBEDDING APPLICATION's job rather than a later
+// phase of this framework's (ADR 0008).
 //
 // The model has RULES that are not free, and this package obeys them:
 //
@@ -110,9 +111,11 @@
 //
 // Unguessability DOES NOT CLOSE this, because the thing being guarded is not a
 // capability in the caller's hand but a claim made ABOUT SOMEBODY ELSE. The only
-// correct closure is a customer session (Phase 8): customer_id stops being taken
-// from the body and is read from the verified identity. That mechanism DOES NOT
-// EXIST today and this package does not try to invent it; the decision taken is
+// correct closure is a customer session: customer_id stops being taken from the
+// body and is read from the verified identity. That mechanism does not exist in
+// gobit and is not going to — the auth module that arrived in Phase 8 is ADMIN
+// identity and says so in its own package doc. This package does not try to
+// invent one either; the decision taken is
 // that the hole is WRITTEN DOWN — an unwritten security model is a security
 // model that does not exist.
 //

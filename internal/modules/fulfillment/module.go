@@ -16,9 +16,10 @@
 // module keeps providers in a registry by their ids
 // ([service.ProviderRegistry]) and resolves them BY NAME during the flow. The
 // only provider that comes in the box is the manual/test provider
-// (internal/modules/fulfillment/manual); the plugin system of Phase 9 can add
-// its own provider to the registry in the container without touching the core
-// or this module.
+// (internal/modules/fulfillment/manual). The plugin system EXISTS and a plugin
+// adds its own provider to the registry in the container without touching the
+// core or this module; the payment module's slot is filled that way
+// (plugins/paymentpaytr). No shipped plugin fills THIS one yet.
 //
 // # Saga compensation
 //
@@ -115,8 +116,9 @@ const InteropName = ModuleName + ".interop"
 
 // ProvidersName is the provider registry's name in the container.
 //
-// The plugin system of Phase 9 resolves this registry and adds its own
-// FulfillmentProvider to it; it does not need to change the module's code.
+// A plugin resolves this registry and adds its own FulfillmentProvider to it
+// without changing the module's code. Nothing in plugins/ does so yet; the
+// mechanism is the same one plugins/paymentpaytr uses for payment.
 const ProvidersName = ModuleName + ".providers"
 
 // ProviderName is the Query provider's name in the container (ADR 0004).

@@ -27,8 +27,9 @@
 //     Kayıtlar GRUP KİMLİKLERİYLE döner ki fiyat hesabının kural bağlamı tek
 //     çağrıda kurulabilsin.
 //   - /admin/v1/customers, /admin/v1/customer-groups … — yönetim API'si.
-//   - /store/v1/customers … — vitrin API'si (Faz 8'e kadar KORUMASIZ; bkz.
-//     internal/modules/customer/api paket belgesi).
+//   - /store/v1/customers … — vitrin API'si. KORUMASIZDIR ve öyle kalır:
+//     müşteri kimliğini doğrulamak gömen uygulamanın işidir (ADR 0008); bkz.
+//     internal/modules/customer/api paket belgesi.
 //
 // # Link'i bildiren tarafa not
 //

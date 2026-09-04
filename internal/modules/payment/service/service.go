@@ -284,10 +284,12 @@ func New(opts Options) (*Service, error) {
 // outside is the identifier, and the payment flows ask for the provider by
 // that identifier.
 //
-// ctx is not used today; the reason it stands in the signature is that the
-// provider registry may in the future (the Phase 9 plugin system) be fed from
-// outside the process. In this project every service method takes a context,
-// and on that day the signature must not have to change.
+// ctx is not used; the reason it stands in the signature is that the provider
+// registry may one day be fed from outside the PROCESS rather than merely from
+// outside the module. Plugins already feed it in-process (plugins/paymentpaytr),
+// which needed no context; a remote registry would. In this project every
+// service method takes a context, and on that day the signature must not have
+// to change.
 func (s *Service) ProviderIDs(_ context.Context) []string { return s.providers.IDs() }
 
 // Page holds the pagination parameters of list requests.

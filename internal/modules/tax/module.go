@@ -90,8 +90,9 @@ const (
 	InteropName = ModuleName + ".interop"
 	// ProvidersName sağlayıcı kaydının container'daki adıdır.
 	//
-	// Faz 9'daki plugin sistemi kendi vergi sağlayıcısını bu kaydı çözüp
-	// ekler; modülün kodunu değiştirmesi gerekmez.
+	// Bir eklenti kendi vergi sağlayıcısını bu kaydı çözüp ekler ve modülün
+	// kodunu değiştirmesi gerekmez. Mekanizma hazır ve ödeme yuvasında
+	// kanıtlı (plugins/paymentpaytr); bu yuvayı dolduran eklenti henüz yok.
 	ProvidersName = ModuleName + ".providers"
 	// ProviderName query sağlayıcısının container'daki adıdır (ADR 0004).
 	ProviderName = service.Entity + query.ProviderSuffix

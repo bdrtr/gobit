@@ -2,19 +2,26 @@
 //
 // İki ad alanı vardır (plan Bölüm 8): /admin/v1 yönetim, /store/v1 müşteri.
 //
-// # UYARI: store uçları Faz 8'e kadar KORUMASIZDIR
+// # UYARI: store uçlarını KORUMAK GÖMEN UYGULAMANIN İŞİDİR
 //
 // Store tarafındaki uçlar müşterinin KENDİ profilini ve adreslerini yönetir ve
-// müşteriyi yol parametresindeki kimlikle tanır. Kimlik doğrulama Faz 8'de
-// gelecektir (plan Faz 8: "store route'ları publishable key ile"); o zamana
-// kadar bu uçlara ulaşan HERKES, kimliğini bildiği bir müşterinin adını,
-// e-postasını ve adreslerini okuyabilir ve değiştirebilir.
+// müşteriyi YOL PARAMETRESİNDEKİ kimlikle tanır — yani istemcinin kendi
+// bildirdiği değerle. Bu uçlara ulaşan HERKES, kimliğini bildiği bir
+// müşterinin adını, e-postasını ve adreslerini okuyabilir ve değiştirebilir.
 //
-// Bu bilinçli bir ara durumdur, gözden kaçmış bir açık değil: uçlar Faz 5'in
-// sepet akışı için şimdi yazılır, koruma Faz 8'de auth middleware ile eklenir.
-// Faz 8'de yapılacak iş: customer idni yol parametresinden DEĞİL, oturum
-// belirtecinden almak ve [storeCustomerID] yardımcısını o kaynağa bağlamak.
-// Üretime bu hâliyle çıkılmamalıdır.
+// Bu bir ara durum DEĞİLDİR ve beklenecek bir faz yoktur. ADR 0008 kararı
+// verdi: müşteri kimliğinin doğrulanması çerçevenin değil, GÖMEN UYGULAMANIN
+// işidir; gobit sınırı çizer, belgeler ve testle sabitler. Faz 8'de gelen auth
+// modülü ADMIN kimliğidir ve kendi paket belgesinde bunu açıkça söyler:
+// "The 'user' here is NOT the person shopping in the store."
+//
+// Daha önce burada "koruma Faz 8'de auth middleware ile eklenir" yazıyordu. O
+// cümle Faz 8 geldiği anda tehlikeli hâle geldi: sürüm notunda tamamlanmış bir
+// faz gören okur, uyarının süresinin DOLDUĞUNU sanır. Dolmadı.
+//
+// Gömen uygulamaya düşen iş (ADR 0008, sonuç 3): customer id'yi yol
+// parametresinden DEĞİL kendi oturumundan almak, ikisi uyuşmazsa
+// errors.Forbidden dönmek. Bağlanacak tek yer [storeCustomerID]'dir.
 //
 // # Yetki
 //
@@ -203,7 +210,7 @@ func (h *Handler) Routes(r chi.Router) {
 	yazma.Post("/admin/v1/customer-groups/{id}/customers", h.adminAddToGroup)
 	yazma.Delete("/admin/v1/customer-groups/{id}/customers/{customer_id}", h.adminRemoveFromGroup)
 
-	// --- vitrin (Faz 8'e kadar KORUMASIZ, bkz. paket belgesi) ---
+	// --- vitrin (KORUMASI GÖMEN UYGULAMANIN İŞİ, bkz. paket belgesi) ---
 	r.Post("/store/v1/customers", h.storeRegisterGuest)
 	r.Get("/store/v1/customers/{id}", h.storeGetCustomer)
 	r.Put("/store/v1/customers/{id}", h.storeUpdateCustomer)
@@ -317,11 +324,15 @@ func pathParam(r *http.Request, name string) string {
 
 // storeCustomerID vitrin isteğinin hangi müşteriye ait olduğunu döner.
 //
-// FAZ 8 BAĞLAMA NOKTASI: kimlik ŞİMDİLİK yol parametresinden okunur, yani
-// istemcinin kendi bildirdiği değerdir ve doğrulanmaz. Auth geldiğinde bu
-// fonksiyon kimliği oturum belirtecinden almalı, yol parametresiyle
-// karşılaştırıp uyuşmazlıkta errors.Forbidden dönmelidir. Tek bir yerde
-// durması, o değişikliğin tek dosyada yapılabilmesi içindir.
+// GÖMEN UYGULAMANIN BAĞLAMA NOKTASI: kimlik yol parametresinden okunur, yani
+// istemcinin kendi bildirdiği değerdir ve gobit onu DOĞRULAMAZ (ADR 0008).
+// Vitrini koruyan taraf bu fonksiyonu kendi oturumuna bağlamalı, yol
+// parametresiyle karşılaştırmalı ve uyuşmazlıkta errors.Forbidden dönmelidir.
+// Tek bir yerde durması, o değişikliğin tek dosyada yapılabilmesi içindir.
+//
+// Bu satır bir yapılacak iş değil, bir SINIRDIR: çerçevenin kendi kimlik
+// doğrulaması (Faz 8'in auth modülü) admin tarafına aittir ve buraya
+// bağlanmaz.
 func storeCustomerID(r *http.Request) string {
 	return pathParam(r, paramID)
 }

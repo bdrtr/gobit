@@ -324,10 +324,11 @@ func New(opts Options) (*Service, error) {
 // are installed; the provider object itself does NOT LEAK out — the only thing
 // exposed is the identifier.
 //
-// ctx is unused today; the reason it stands in the signature is that the
-// provider registry may in the future (the Phase 9 plugin system) be fed from
-// outside the process. Every service method in the project takes a context and
-// the signature must not have to change on that day.
+// ctx is unused; the reason it stands in the signature is that the provider
+// registry may one day be fed from outside the PROCESS rather than merely from
+// outside the module. Plugins already feed registries in-process, which needed
+// no context; a remote registry would. Every service method in the project
+// takes a context and the signature must not have to change on that day.
 func (s *Service) ProviderIDs(_ context.Context) []string { return s.providers.IDs() }
 
 // now returns a UTC moment from the service's clock.

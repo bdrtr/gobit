@@ -11,8 +11,9 @@
 // PaymentProvider sözleşmesini karşılayan bir SAĞLAYICIDIR. Modül sağlayıcıları
 // kimlikleriyle bir kayıtta tutar ([service.ProviderRegistry]) ve akış sırasında
 // ADLA çözer. Kutudan çıkan tek sağlayıcı manuel/test sağlayıcısıdır
-// (internal/modules/payment/manual); Faz 9'daki plugin sistemi, çekirdeğe ve bu
-// modüle dokunmadan container'daki kayda kendi sağlayıcısını ekleyebilir.
+// (internal/modules/payment/manual); eklenti sistemi, çekirdeğe ve bu modüle
+// dokunmadan container'daki kayda kendi sağlayıcısını ekler — plugins/paymentpaytr
+// tam olarak bunu yapar.
 //
 // # Saga telafisi
 //
@@ -81,8 +82,8 @@ const InteropName = ModuleName + ".interop"
 
 // ProvidersName sağlayıcı kaydının container'daki adıdır.
 //
-// Faz 9'daki plugin sistemi kendi PaymentProvider'ını bu kaydı çözüp ekler;
-// modülün kodunu değiştirmesi gerekmez.
+// Bir eklenti kendi PaymentProvider'ını bu kaydı çözüp ekler ve modülün kodunu
+// değiştirmesi gerekmez; plugins/paymentpaytr bunun çalışan örneğidir.
 const ProvidersName = ModuleName + ".providers"
 
 // ProviderName Query sağlayıcısının container'daki adıdır (ADR 0004).

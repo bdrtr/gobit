@@ -9,9 +9,10 @@ import (
 
 // Bu dosyadaki uçlar müşterinin KENDİ profilini ve adreslerini yönetir.
 //
-// KORUMA YOKTUR — bkz. paket belgesindeki "UYARI: store uçları Faz 8'e kadar
-// KORUMASIZDIR". Müşteri kimliği [storeCustomerID] ile okunur ve Faz 8'de
-// oturum belirtecine bağlanacak tek nokta orasıdır.
+// KORUMA YOKTUR ve BEKLENECEK BİR FAZ DA YOK — bkz. paket belgesindeki
+// "UYARI: store uçlarını KORUMAK GÖMEN UYGULAMANIN İŞİDİR". Müşteri kimliği
+// [storeCustomerID] ile okunur; gömen uygulamanın kendi oturumuna bağlayacağı
+// tek nokta orasıdır (ADR 0008).
 
 // storeRegisterGuest misafir müşteri kaydı açar (POST /store/v1/customers).
 //

@@ -19,9 +19,12 @@ import (
 // # Authorization
 //
 // Verifying that the order belongs to the REQUESTING customer IS NOT DONE
-// HERE; the auth module and the real middleware are Phase 8's work (plan
-// Phase 8). Until that arrives the endpoint is open to anyone who knows the
-// order id.
+// HERE, and no phase of this framework is going to do it: ADR 0008 settles the
+// responsibility on the EMBEDDING APPLICATION. The auth module that arrived in
+// Phase 8 is ADMIN identity — its own package doc says the user there is not
+// the person shopping. The endpoint is open to anyone who knows the order id,
+// and it stays that way until whoever embeds gobit puts a session in front of
+// it.
 //
 // The gap is not being hidden, it is being DECLARED: because the id itself is
 // unguessable (a 26-character random body) this is not a "public listing", but

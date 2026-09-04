@@ -13,10 +13,10 @@ import (
 //
 // The module puts its own default provider (manual.Provider) in here during
 // Register and hands the registry to the container under the name
-// "fulfillment.providers". The Phase 9 plugin system can, WITHOUT TOUCHING the
-// core or this module, resolve the registry from the container and add its own
-// provider; the contract is the FulfillmentProvider interface in
-// internal/core/provider.
+// "fulfillment.providers". A plugin can, WITHOUT TOUCHING the core or this
+// module, resolve the registry from the container and add its own provider; the
+// contract is the FulfillmentProvider interface in internal/core/provider. The
+// mechanism ships and is proven on the payment slot; no plugin fills this one.
 //
 // It is safe for concurrent use: registration happens at startup, reading on
 // every request.
