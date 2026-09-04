@@ -24,7 +24,7 @@ const (
 // In production the principal is placed by corehttp.RequireStore; the reason it is
 // placed by hand here is that what is under test is the workflow READING FROM THE
 // PRINCIPAL — who puts the principal where is the HTTP layer's job and is proven in
-// the end-to-end test (see internal/e2e/kanal_sepeti_test.go).
+// the end-to-end test (see internal/e2e/channel_cart_test.go).
 func storefrontContext(channels []string) context.Context {
 	return corehttp.WithPrincipal(context.Background(), corehttp.Principal{
 		ID:   "apk_test",

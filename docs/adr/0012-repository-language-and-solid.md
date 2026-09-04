@@ -136,7 +136,7 @@ measurement rather than flattening it:
 | Principle | Today | Decision |
 | --- | --- | --- |
 | **DIP** | Strongly enforced on the SUPPLY side: 211 deny entries in `.golangci.yml` plus four AST tests that keep the module trees from importing each other. The CONSUMPTION side was unchecked | Keep the supply side; close the consumption side — done, see below |
-| **OCP** | Enforced on the plugin/provider axis by `TestEklentiCekirdegeDokunmadanSaglayiciEkler` | Keep |
+| **OCP** | Enforced on the plugin/provider axis by `TestAPluginAddsAProviderWithoutTouchingTheCore` | Keep |
 | **ISP** | Guaranteed **structurally** across module boundaries — a consumer that may not import the provider is forced to declare a narrow interface in primitive types — but unchecked inside a module | Partly closed by the consumption-side check below; the narrower "a resolved surface speaks only in primitive and core types" rule is still worth adding |
 | **SRP** | Enforced at the MACRO level (module isolation, the error-path rules). The layer boundary INSIDE a module was unchecked, and nothing exists at the level of a single type | Close the layer boundary — done, see below. The single-type level stays review-level |
 | **LSP** | No check at all | Review-level; see below |

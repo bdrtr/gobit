@@ -337,7 +337,7 @@ func assembleTotals(snap Snapshot, lines []LineTotals, shippingTotal int64, taxS
 // The field names MUST be EXACTLY the same as pricing's interop schema: because
 // the two packages cannot import each other the compiler cannot see the match
 // (the accepted cost of ADR 0006) and the match can only be proven by an
-// integration test (see internal/e2e/sepet_toplam_test.go).
+// integration test (see internal/e2e/cart_totals_test.go).
 //
 // The currency and the context are not carried PER ITEM: all the lines of a cart
 // are in the same currency and in the same region, and repeating the field per

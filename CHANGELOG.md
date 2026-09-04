@@ -1449,7 +1449,7 @@ adımını YAZANLARI ilgilendiriyor.
   bir fonksiyondu ve veritabanına hiç dokunmuyordu, yani bu yolda yeni bir
   arıza ihtimali doğdu.
 
-  Gerçek yığında ölçüldü: `internal/e2e/coklu_depo_test.go`, gerçek Postgres ve
+  Gerçek yığında ölçüldü: `internal/e2e/multi_warehouse_test.go`, gerçek Postgres ve
   gerçek modüllerle iki yeterli depo kurar, politikayı yazar ve rezervasyonun
   hangi depoda açıldığını okur. Mutasyonla doğrulandı.
 
@@ -1571,7 +1571,7 @@ adımını YAZANLARI ilgilendiriyor.
   Vitrinde gizlenen ürün sepette satılabiliyordu, yani süzgeç bir yetkilendirme
   değil bir görüntüleme tercihiydi. Gerçek yığında ölçüldü: düzeltme öncesi
   yabancı kanalın varyantı `201`, sonrasında `404` alıyor
-  (`internal/e2e/kanal_sepeti_test.go`).
+  (`internal/e2e/channel_cart_test.go`).
 
   Kural İKİNCİ KEZ YAZILMADI. Akış varyantı yine Query katmanından okur;
   eklenen tek şey, okumaya isteğin DOĞRULANMIŞ kimliğinden gelen kanalların

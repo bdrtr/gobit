@@ -1,20 +1,20 @@
-// Package e2e gerçek modüllerle uçtan uca sistem testlerini barındırır.
+// Package e2e holds the end-to-end system tests that run against the real modules.
 //
-// Paketteki testlerin TAMAMI `//go:build integration` etiketlidir: gerçek bir
-// PostgreSQL örneği (dolayısıyla Docker) gerektirirler. Çalıştırmak için:
+// EVERY test in the package is tagged `//go:build integration`: they require a real
+// PostgreSQL instance (and therefore Docker). To run them:
 // make test-integration
 //
-// Bu dosya bilinçli olarak ETİKETSİZDİR ve üretim kodu içermez. Sebebi
-// tekniktir: paketteki her dosya etiketli olsaydı, etiket verilmeden
-// derlenebilir tek bir dosya kalmaz ve `go vet ./...`, `go test ./...`,
-// `golangci-lint run ./...` gibi depo geneli komutlar bu paket için
-// "build constraints exclude all Go files" hatası verirdi.
+// This file is deliberately UNTAGGED and contains no production code. The reason is
+// technical: if every file in the package were tagged, not a single file would be
+// left that compiles without the tag, and repository-wide commands such as
+// `go vet ./...`, `go test ./...` and `golangci-lint run ./...` would fail for this
+// package with "build constraints exclude all Go files".
 //
-// # Neden internal/workflows altında değil
+// # Why this does not live under internal/workflows
 //
-// Buradaki testler GERÇEK modülleri kurar, yani internal/modules altındaki
-// paketleri import eder. ADR 0006 internal/workflows altındaki her dosyaya
-// modül import'unu yasaklar ve internal/arch bunu denetler; sistem testleri o
-// kapsamın DIŞINDA durmalıdır. Amaçları zaten modüllerle akışların birlikte
-// çalıştığını kanıtlamaktır.
+// The tests here wire up the REAL modules, which means they import packages under
+// internal/modules. ADR 0006 forbids a module import in every file under
+// internal/workflows and internal/arch enforces that; the system tests must stand
+// OUTSIDE that scope. Their whole point is to prove that the modules and the
+// workflows work together.
 package e2e

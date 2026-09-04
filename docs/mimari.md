@@ -309,7 +309,7 @@ açıdan üç nokta önemlidir:
 
 Yetki sözlüğü tek kuraldan türer — `<modül>:read` okuma, `<modül>:write` yazma,
 `admin` hepsini kapsar — ve her modülün `api` paketi kendi sabitlerini yayımlar.
-Zorlamayı eklemeyi unutan bir modül sessiz kalamaz: `internal/e2e/yetki_test.go`
+Zorlamayı eklemeyi unutan bir modül sessiz kalamaz: `internal/e2e/authorization_test.go`
 router ağacını **gezip** her `/admin/v1` ucuna yetkisiz bir jetonla gider ve 403
 bekler. Elle yazılmış bir uç listesi, listeye eklenmesi unutulan ilk uçta kör
 kalırdı — ve unutulacak uç, tam da yeni yazılmış olandır.
@@ -365,7 +365,7 @@ sağladığı şeye, üstüne kırılganlık ekleyerek.
 Modülün `api` paketi `ScopeRead = "<modül>:read"` ve
 `ScopeWrite = "<modül>:write"` sabitlerini yayımlar; `Routes` içinde okuma ve
 yazma alt router'ları `corehttp.RequireScope` ile kurulur. Unutmak sessiz
-değildir: `internal/e2e/yetki_test.go` router ağacını gezip her `/admin/v1`
+değildir: `internal/e2e/authorization_test.go` router ağacını gezip her `/admin/v1`
 ucuna yetkisiz bir jetonla gider.
 
 ### Yeni sağlayıcı (payment/fulfillment)

@@ -38,7 +38,7 @@ import (
 //
 // # Neden internal/e2e yetmiyor
 //
-// internal/e2e/vitrin_akisi_test.go aynı zinciri HTTP'den sürer ama router'ı
+// internal/e2e/storefront_flow_test.go aynı zinciri HTTP'den sürer ama router'ı
 // httptest ile kendisi kurar: cmd/server'ın kablolamasını, açılış sırasını ve
 // gerçek süreci ATLAR. Kurulumu bir bayrağın arkasına almak o testi
 // düşürmezdi — çünkü akışları o test kendi zemininde kuruyor. Buradaki süreç

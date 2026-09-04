@@ -372,7 +372,7 @@ gereklidir çünkü ilkinin haritası bir gün gevşetilebilir.
 
 Yetkisi **boş** (nil değil, boş dilim) bir kullanıcı giriş yapabilir ama
 hiçbir korumalı uçta iş yapamaz. Bu bir kaza değil sözleşmedir ve router ağacı
-gezilerek denetlenir: `internal/e2e/yetki_test.go` her `/admin/v1` ucuna
+gezilerek denetlenir: `internal/e2e/authorization_test.go` her `/admin/v1` ucuna
 yetkisiz bir jetonla gidip **403** bekler, yani zorlamayı eklemeyi unutan bir
 modül sessiz kalamaz.
 

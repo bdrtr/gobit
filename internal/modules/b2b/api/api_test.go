@@ -167,7 +167,7 @@ func TestVitrinYuzeyindeSirketKimligiYok(t *testing.T) {
 // TestYonetimUclariYetkiIster her /admin/v1 ucunun kapsam istediğini ağacı
 // gezerek doğrular.
 //
-// Bu, e2e/yetki_test.go'nun modül düzeyindeki karşılığıdır: modül henüz
+// Bu, e2e/authorization_test.go'nun modül düzeyindeki karşılığıdır: modül henüz
 // bileşim köküne bağlanmadığı için o test bu uçları görmez ve yetki zorlamasını
 // unutmak sessiz kalırdı.
 func TestYonetimUclariYetkiIster(t *testing.T) {

@@ -16,228 +16,240 @@ import (
 	checkoutwf "github.com/bdrtr/gobit/internal/workflows/checkout"
 )
 
-// Bu dosya B2B harcama limitinin GERÇEKTEN uygulandığını uçtan uca kanıtlar.
+// This file proves end to end that the B2B spending limit is REALLY enforced.
 //
-// # Neden modül testleri yetmez
+// # Why the module tests are not enough
 //
-// b2b modülünün kendi testleri limiti SAKLADIĞINI, order modülünün testleri
-// ise sahte bir kural yüzeyi verildiğinde siparişi REDDETTİĞİNİ gösterir.
-// İkisi de doğrudur ve ikisi birlikte bile asıl iddiayı kanıtlamaz: iki modül
-// birbirini import edemediği için aralarındaki sözleşme JSON'dur ve derleyici
-// onu denetlemez (bkz. [b2bsvc] interop belgesi). Alan adlarından biri
-// ayrışsaydı her iki paketin testleri de yeşil kalır, üretimde ise limit
-// SESSİZCE kalkardı — "limited" alanı çözülemeyince kural "yok" sayılırdı.
-// Bu dosya sözleşmenin iki ucunu gerçek container üzerinden birleştirir.
+// The b2b module's own tests show that it STORES the limit, and the order
+// module's tests show that it REJECTS the order when it is handed a fake rule
+// surface. Both are true, and even together they do not prove the actual
+// claim: because the two modules cannot import each other, the contract
+// between them is JSON and the compiler does not check it (see the [b2bsvc]
+// interop document). Had one of the field names drifted, both packages' tests
+// would have stayed green while in production the limit would SILENTLY have
+// gone away — with the "limited" field failing to decode, the rule would have
+// counted as "absent". This file joins the two ends of the contract over a
+// real container.
 //
-// # Kontrolün yeri
+// # Where the check lives
 //
-// Kural [ordersvc.Service.CreateOrder] içinde, siparişin yazıldığı işlemin
-// içinde uygulanır. Bunun iki sonucu vardır ve ikisi de burada sınanır:
-// complete_cart saga'sında create_order adımı authorize_payment'tan ÖNCE
-// koştuğu için reddedilen alışverişte PARA HİÇ YETKİLENDİRİLMEZ; ve kontrol
-// ile yazma aynı işlemde olduğu için iki eşzamanlı sipariş limiti birlikte
-// aşamaz.
+// The rule is enforced inside [ordersvc.Service.CreateOrder], inside the
+// transaction that writes the order. That has two consequences and both are
+// exercised here: because the create_order step of the complete_cart saga runs
+// BEFORE authorize_payment, in a rejected checkout the money is NEVER
+// authorized; and because the check and the write are in the same transaction,
+// two concurrent orders cannot exceed the limit together.
 
-// B2B senaryolarının ELLE hesaplanmış tutarları.
+// The HAND-computed amounts of the B2B scenarios.
 //
-// Bölge %20 (2000 baz puan) vergilidir ve kargo yöntemi seçilmemiştir:
+// The region is taxed at 20% (2000 basis points) and no shipping method is
+// picked:
 //
-//	50_000 × 2 = 100_000 ara toplam
-//	100_000 × %20 = 20_000 vergi
-//	100_000 - 0 + 20_000 + 0 = 120_000 genel toplam
+//	50_000 x 2 = 100_000 subtotal
+//	100_000 x 20% = 20_000 tax
+//	100_000 - 0 + 20_000 + 0 = 120_000 grand total
 const (
-	b2bBirimFiyat int64 = 50_000
-	b2bAdet       int64 = 2
-	b2bToplam     int64 = 120_000
-	// b2bStok iki siparişe yetecek kadardır: birikme senaryosu aynı çalışanla
-	// iki alışveriş yapar ve ikincisinin stok yüzünden değil LİMİT yüzünden
-	// düştüğü görülebilmelidir.
-	b2bStok int64 = 20
+	b2bUnitPrice int64 = 50_000
+	b2bQuantity  int64 = 2
+	b2bTotal     int64 = 120_000
+	// b2bStock is enough for two orders: the accumulation scenario does two
+	// checkouts with the same employee and it must be visible that the second one
+	// falls not because of stock but because of the LIMIT.
+	b2bStock int64 = 20
 )
 
-// b2bCalisan müşteriyi yeni bir şirketin çalışanı yapar ve şirketi döner.
+// b2bCalisan makes the customer an employee of a new company and returns the
+// company.
 //
-// Her senaryo KENDİ şirketini kurar: şirket paylaşılsaydı, bir senaryonun
-// limiti değiştirmesi komşu senaryonun beklentisini bozar ve testler tek
-// başına koşturulduğunda başka, birlikte koşturulduğunda başka sonuç verirdi.
+// Every scenario sets up its OWN company: were the company shared, one
+// scenario changing the limit would break the neighboring scenario's
+// expectation and the tests would give one result when run alone and another
+// when run together.
 //
-// limit nil geçilirse çalışan SINIRSIZDIR (bkz. [b2bsvc.EmployeeInput]).
+// If limit is passed as nil the employee is UNLIMITED (see
+// [b2bsvc.EmployeeInput]).
 func b2bCalisan(
 	ctx context.Context,
 	t *testing.T,
-	musteriID string,
+	customerID string,
 	limit *int64,
-	periyot b2bmodels.SpendingResetPeriod,
-) (sirketID string) {
+	period b2bmodels.SpendingResetPeriod,
+) (companyID string) {
 	t.Helper()
 
-	sirket, err := b2bSvc.CreateCompany(ctx, b2bsvc.CompanyInput{
-		Name:  "E2E B2B " + musteriID,
-		Email: "b2b-" + musteriID + "@ornek.test",
-		// Şirketin para birimi sepetin para birimiyle AYNI seçilir: farklı
-		// olsaydı kural para birimi uyuşmazlığından düşerdi ve senaryonun
-		// sınadığı şey limit değil, o kontrol olurdu (o kontrolün kendi
-		// senaryosu ayrıdır).
+	company, err := b2bSvc.CreateCompany(ctx, b2bsvc.CompanyInput{
+		Name:  "E2E B2B " + customerID,
+		Email: "b2b-" + customerID + "@example.test",
+		// The company's currency is chosen to be the SAME as the cart's: were it
+		// different, the rule would fall on a currency mismatch and what the
+		// scenario exercised would not be the limit but that check (that check
+		// has a separate scenario of its own).
 		CurrencyCode:             taxedCurrency,
-		SpendingLimitResetPeriod: string(periyot),
+		SpendingLimitResetPeriod: string(period),
 	})
-	require.NoError(t, err, "b2b şirketi kurulamadı")
+	require.NoError(t, err, "could not create the b2b company")
 
 	_, err = b2bSvc.CreateEmployee(ctx, b2bsvc.EmployeeInput{
-		CompanyID:     sirket.ID,
-		CustomerID:    musteriID,
+		CompanyID:     company.ID,
+		CustomerID:    customerID,
 		SpendingLimit: limit,
 	})
-	require.NoError(t, err, "müşteri şirkete çalışan olarak eklenemedi")
+	require.NoError(t, err, "could not add the customer to the company as an employee")
 
-	return sirket.ID
+	return company.ID
 }
 
-// b2bSepetiTamamla hazır bir B2B sepetini akışla tamamlamayı dener.
-func b2bSepetiTamamla(
+// b2bCompleteCart tries to complete a prepared B2B cart through the workflow.
+func b2bCompleteCart(
 	ctx context.Context,
 	t *testing.T,
-	sepetID, eposta string,
+	cartID, email string,
 ) (checkoutwf.CompleteCartResult, error) {
 	t.Helper()
 
 	return orderWorkflows.CompleteCart(ctx, checkoutwf.CompleteCartInput{
-		CartID:            sepetID,
+		CartID:            cartID,
 		LocationID:        stockLocationID,
 		PaymentProviderID: manual.ID,
 		PaymentData:       paymentBehavior(t, manual.OutcomeAuthorize),
-		Email:             eposta,
-		ExpectedTotal:     b2bToplam,
+		Email:             email,
+		ExpectedTotal:     b2bTotal,
 	})
 }
 
-// TestB2BLimitiAsanSiparisReddedilirVeParaCekilmez asıl iddiayı kanıtlar:
-// limitin üstündeki bir alışveriş siparişe dönüşmez VE parası çekilmez.
+// TestB2BOrderOverTheLimitIsRejectedAndNoMoneyIsTaken proves the actual claim:
+// a checkout above the limit does not turn into an order AND its money is not
+// taken.
 //
-// Paranın çekilmediğini ayrıca sınamak gereksiz görünebilir ama değildir:
-// kural order modülünde yaşar ve saga'nın adım sırası değişirse (create_order
-// authorize_payment'ın ARDINA alınırsa) test yine "sipariş yok" der ama
-// müşterinin parası çekilip iade edilmiş olurdu. Stok da aynı sebeple
-// sınanır — reddedilen alışveriş stoğu tutuyor olsaydı, limiti dolmuş bir
-// çalışan denemeye devam ederek katalogun stoğunu kilitleyebilirdi.
-func TestB2BLimitiAsanSiparisReddedilirVeParaCekilmez(t *testing.T) {
+// Checking separately that the money is not taken may look redundant, but it
+// is not: the rule lives in the order module and if the saga's step order
+// changed (if create_order were moved BEHIND authorize_payment) the test would
+// still say "no order" while the customer's money would have been taken and
+// refunded. Stock is checked for the same reason — were a rejected checkout
+// holding the stock, an employee who had used up their limit could keep trying
+// and lock up the catalog's stock.
+func TestB2BOrderOverTheLimitIsRejectedAndNoMoneyIsTaken(t *testing.T) {
 	ctx := t.Context()
 
-	musteriID, eposta := newCustomer(ctx, t)
-	varyantID, stokKalemID := newStockedVariant(ctx, t, "E2E B2B Limit Aşımı",
-		map[string]int64{taxedCurrency: b2bBirimFiyat}, b2bStok)
+	customerID, email := newCustomer(ctx, t)
+	variantID, stockItemID := newStockedVariant(ctx, t, "E2E B2B Limit Overrun",
+		map[string]int64{taxedCurrency: b2bUnitPrice}, b2bStock)
 
-	// Limit sepetin toplamının ALTINDA: 50_000 < 120_000.
+	// The limit is BELOW the cart's total: 50_000 < 120_000.
 	limit := int64(50_000)
-	b2bCalisan(ctx, t, musteriID, &limit, b2bmodels.ResetNever)
+	b2bCalisan(ctx, t, customerID, &limit, b2bmodels.ResetNever)
 
-	sepetID, _ := prepareCart(ctx, t, musteriID, varyantID, b2bAdet)
+	cartID, _ := prepareCart(ctx, t, customerID, variantID, b2bQuantity)
 
-	_, err := b2bSepetiTamamla(ctx, t, sepetID, eposta)
+	_, err := b2bCompleteCart(ctx, t, cartID, email)
 
-	require.Error(t, err, "limitin üstündeki alışveriş siparişe DÖNMEMELİ")
+	require.Error(t, err, "a checkout above the limit must NOT turn into an order")
 	require.True(t, errors.IsConflict(err),
-		"limit aşımı çakışmadır (422 değil 409): istek biçimsel olarak geçerlidir, "+
-			"reddin sebebi sistemin O ANDAKİ durumudur; gövde: %v", err)
-	// Kod DIŞTAN okunur, zincirin içinden değil: saga adım hatasını sararken
-	// alt hatanın kodunu KORUR (bkz. workflow.CodeStepFailed). Fark tüketicide
-	// görünür — taşıma katmanı gövdeye tek bir makine okunur alan yazar ve o
-	// alan motorun kendi sabitiyle dolsaydı, vitrin "limitiniz yetmedi" ile
-	// "geçici çakışma, tekrar deneyin"i ayırt edemezdi.
+		"exceeding the limit is a conflict (409, not 422): the request is formally valid, "+
+			"the reason for the rejection is the system's state AT THAT MOMENT; body: %v", err)
+	// The code is read from the OUTSIDE, not from within the chain: while
+	// wrapping a step failure the saga PRESERVES the underlying error's code (see
+	// workflow.CodeStepFailed). The difference shows up at the consumer — the
+	// transport layer writes a single machine-readable field into the body, and
+	// had that field been filled with the engine's own constant, the storefront
+	// could not have told "your limit was not enough" apart from "a temporary
+	// conflict, try again".
 	require.Equal(t, ordersvc.CodeSpendingLimitExceeded, errors.CodeOf(err),
-		"reddin kodu harcama limiti olmalı; başka bir kod, siparişin BAŞKA bir "+
-			"sebeple düştüğünü ve testin limiti hiç sınamadığını gösterir")
+		"the rejection's code must be the spending limit; another code shows that the "+
+			"order fell for ANOTHER reason and that the test never exercised the limit")
 	require.ErrorContains(t, err, checkoutwf.StepCreateOrder,
-		"redde düşen adım create_order olmalı — PARANIN ÇEKİLMEDİĞİNİN kanıtı "+
-			"budur: authorize_payment ondan SONRA gelir ve hiç koşmamıştır")
+		"the step that fell to the rejection must be create_order — that is the proof "+
+			"that THE MONEY WAS NOT TAKEN: authorize_payment comes AFTER it and never ran")
 
-	require.Equal(t, b2bStok, sellableQuantity(ctx, t, stokKalemID),
-		"reddedilen alışveriş stoğu SERBEST bırakmalı; rezervasyon adımı "+
-			"create_order'dan önce koştuğu için telafinin çalıştığının kanıtı budur")
+	require.Equal(t, b2bStock, sellableQuantity(ctx, t, stockItemID),
+		"a rejected checkout must RELEASE the stock; because the reservation step runs "+
+			"before create_order, that is the proof that the compensation ran")
 
-	sepet, err := cartSvc.GetCart(ctx, sepetID)
-	require.NoError(t, err, "reddedilen alışverişin sepeti hâlâ okunabilmeli")
-	require.Nil(t, sepet.CompletedAt,
-		"reddedilen alışverişin sepeti KAPANMAMALI; kapansaydı müşteri aynı sepetle "+
-			"tekrar deneyemez, limiti düştüğünde sepetini yeniden kurmak zorunda kalırdı")
+	cart, err := cartSvc.GetCart(ctx, cartID)
+	require.NoError(t, err, "the cart of a rejected checkout must still be readable")
+	require.Nil(t, cart.CompletedAt,
+		"the cart of a rejected checkout must NOT be closed; were it closed the customer "+
+			"could not retry with the same cart and would have to rebuild it once the limit freed up")
 }
 
-// TestB2BPencereIcindekiHarcamaBirikir limitin TEK sipariş için değil DÖNEM
-// TOPLAMI için uygulandığını kanıtlar.
+// TestB2BSpendingAccumulatesWithinTheWindow proves that the limit is enforced
+// not for a SINGLE order but for the PERIOD TOTAL.
 //
-// Bu, kuralın gerçekten sipariş verisinden hesaplandığının kanıtıdır: limit
-// yalnızca sipariş tutarıyla karşılaştırılsaydı iki alışveriş de tek tek
-// limitin altında olduğu için GEÇERDİ ve çalışan limitin iki katını
-// harcayabilirdi.
-func TestB2BPencereIcindekiHarcamaBirikir(t *testing.T) {
+// This is the proof that the rule is really computed from the order data: were
+// the limit compared only against the order's own amount, both checkouts would
+// PASS because each one on its own is below the limit, and the employee could
+// spend twice the limit.
+func TestB2BSpendingAccumulatesWithinTheWindow(t *testing.T) {
 	ctx := t.Context()
 
-	musteriID, eposta := newCustomer(ctx, t)
-	varyantID, _ := newStockedVariant(ctx, t, "E2E B2B Birikme",
-		map[string]int64{taxedCurrency: b2bBirimFiyat}, b2bStok)
+	customerID, email := newCustomer(ctx, t)
+	variantID, _ := newStockedVariant(ctx, t, "E2E B2B Accumulation",
+		map[string]int64{taxedCurrency: b2bUnitPrice}, b2bStock)
 
-	// Limit tek siparişi geçirir (120_000 ≤ 200_000) ama ikisini geçirmez
+	// The limit lets a single order through (120_000 ≤ 200_000) but not two
 	// (240_000 > 200_000).
 	limit := int64(200_000)
-	b2bCalisan(ctx, t, musteriID, &limit, b2bmodels.ResetNever)
+	b2bCalisan(ctx, t, customerID, &limit, b2bmodels.ResetNever)
 
-	ilkSepet, _ := prepareCart(ctx, t, musteriID, varyantID, b2bAdet)
-	ilk, err := b2bSepetiTamamla(ctx, t, ilkSepet, eposta)
-	require.NoError(t, err, "limitin altındaki İLK alışveriş geçmeli")
-	require.NotEmpty(t, ilk.OrderID, "ilk alışveriş sipariş üretmeli")
+	firstCart, _ := prepareCart(ctx, t, customerID, variantID, b2bQuantity)
+	first, err := b2bCompleteCart(ctx, t, firstCart, email)
+	require.NoError(t, err, "the FIRST checkout, below the limit, must pass")
+	require.NotEmpty(t, first.OrderID, "the first checkout must produce an order")
 
-	ikinciSepet, _ := prepareCart(ctx, t, musteriID, varyantID, b2bAdet)
-	_, err = b2bSepetiTamamla(ctx, t, ikinciSepet, eposta)
+	secondCart, _ := prepareCart(ctx, t, customerID, variantID, b2bQuantity)
+	_, err = b2bCompleteCart(ctx, t, secondCart, email)
 
 	require.Error(t, err,
-		"İKİNCİ alışveriş reddedilmeli: tek başına limitin altında ama dönem "+
-			"toplamı (120_000 + 120_000 = 240_000) limitin üstünde")
+		"the SECOND checkout must be rejected: on its own it is below the limit but the "+
+			"period total (120_000 + 120_000 = 240_000) is above it")
 	require.Equal(t, ordersvc.CodeSpendingLimitExceeded, errors.CodeOf(err),
-		"reddin sebebi harcama limiti olmalı; gövde: %v", err)
+		"the reason for the rejection must be the spending limit; body: %v", err)
 }
 
-// TestB2BSinirsizCalisanEtkilenmez limiti nil olan çalışanın kısıtlanmadığını
-// kanıtlar.
+// TestB2BUnlimitedEmployeeIsUnaffected proves that an employee whose limit is
+// nil is not constrained.
 //
-// nil ile 0 farklı cümlelerdir (bkz. [b2bsvc.EmployeeInput.SpendingLimit]):
-// nil "sınır yok", 0 ise "hiçbir şey harcayamaz" demektir. İkisi karışsaydı
-// limiti girilmemiş her çalışan alışveriş yapamaz hâle gelirdi.
-func TestB2BSinirsizCalisanEtkilenmez(t *testing.T) {
+// nil and 0 are different sentences (see
+// [b2bsvc.EmployeeInput.SpendingLimit]): nil means "no limit", 0 means "can
+// spend nothing at all". Were the two confused, every employee whose limit was
+// left unset would become unable to shop.
+func TestB2BUnlimitedEmployeeIsUnaffected(t *testing.T) {
 	ctx := t.Context()
 
-	musteriID, eposta := newCustomer(ctx, t)
-	varyantID, _ := newStockedVariant(ctx, t, "E2E B2B Sınırsız",
-		map[string]int64{taxedCurrency: b2bBirimFiyat}, b2bStok)
+	customerID, email := newCustomer(ctx, t)
+	variantID, _ := newStockedVariant(ctx, t, "E2E B2B Unlimited",
+		map[string]int64{taxedCurrency: b2bUnitPrice}, b2bStock)
 
-	b2bCalisan(ctx, t, musteriID, nil, b2bmodels.ResetMonthly)
+	b2bCalisan(ctx, t, customerID, nil, b2bmodels.ResetMonthly)
 
-	sepetID, _ := prepareCart(ctx, t, musteriID, varyantID, b2bAdet)
-	sonuc, err := b2bSepetiTamamla(ctx, t, sepetID, eposta)
+	cartID, _ := prepareCart(ctx, t, customerID, variantID, b2bQuantity)
+	result, err := b2bCompleteCart(ctx, t, cartID, email)
 
-	require.NoError(t, err, "limiti olmayan çalışanın alışverişi geçmeli")
-	require.NotEmpty(t, sonuc.OrderID, "sınırsız çalışan sipariş üretebilmeli")
+	require.NoError(t, err, "the checkout of an employee with no limit must pass")
+	require.NotEmpty(t, result.OrderID, "an unlimited employee must be able to produce an order")
 }
 
-// TestB2BOlmayanMusteriEtkilenmez b2b modülünün KAYITLI olmasının B2C akışını
-// değiştirmediğini kanıtlar.
+// TestNonB2BCustomerIsUnaffected proves that the b2b module being REGISTERED
+// does not change the B2C flow.
 //
-// Bu testin değeri gerileme tarafındadır: harcama kuralı order modülünde HER
-// sipariş için sorulur ve hiçbir şirketin çalışanı olmayan müşteri için
-// "kural yok" cevabının BAŞARILI sayılması gerekir. Cevap hata sayılsaydı,
-// b2b modülünü kurmak kurulumdaki bütün B2C siparişlerini düşürürdü — ve bunu
-// yalnızca b2b kayıtlıyken koşan bir test görebilir.
-func TestB2BOlmayanMusteriEtkilenmez(t *testing.T) {
+// This test's value is on the regression side: the spending rule is asked for
+// EVERY order in the order module, and for a customer who is no company's
+// employee the answer "no rule" has to count as SUCCESS. Were that answer
+// counted as an error, installing the b2b module would drop every B2C order in
+// the installation — and only a test that runs while b2b is registered can see
+// that.
+func TestNonB2BCustomerIsUnaffected(t *testing.T) {
 	ctx := t.Context()
 
-	musteriID, eposta := newCustomer(ctx, t)
-	varyantID, _ := newStockedVariant(ctx, t, "E2E B2C Etkilenmez",
-		map[string]int64{taxedCurrency: b2bBirimFiyat}, b2bStok)
+	customerID, email := newCustomer(ctx, t)
+	variantID, _ := newStockedVariant(ctx, t, "E2E B2C Unaffected",
+		map[string]int64{taxedCurrency: b2bUnitPrice}, b2bStock)
 
-	// Bilerek b2bCalisan ÇAĞRILMIYOR: müşteri hiçbir şirkete bağlı değil.
-	sepetID, _ := prepareCart(ctx, t, musteriID, varyantID, b2bAdet)
-	sonuc, err := b2bSepetiTamamla(ctx, t, sepetID, eposta)
+	// b2bCalisan is deliberately NOT CALLED: the customer belongs to no company.
+	cartID, _ := prepareCart(ctx, t, customerID, variantID, b2bQuantity)
+	result, err := b2bCompleteCart(ctx, t, cartID, email)
 
 	require.NoError(t, err,
-		"şirkete bağlı olmayan müşterinin alışverişi, b2b modülü kayıtlıyken de geçmeli")
-	require.NotEmpty(t, sonuc.OrderID, "B2C müşterisi sipariş üretebilmeli")
+		"the checkout of a customer bound to no company must pass even while the b2b module is registered")
+	require.NotEmpty(t, result.OrderID, "a B2C customer must be able to produce an order")
 }

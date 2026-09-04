@@ -321,7 +321,7 @@ type PaymentProvider interface {
 ### Faz 8 — Auth · Admin User · API Key · RBAC
 **Yapılacaklar:** Auth modülü: admin user, JWT login, publishable/secret API key, sales channel. HTTP'de gerçek auth middleware (admin route'ları korumalı, store route'ları publishable key ile).
 **DoD:** Yetkisiz istek `401`; admin login → token ile korumalı endpoint'e erişim; publishable key olmadan store API erişimi reddediliyor.
-> **Tamamlandı.** DoD `internal/e2e/kimlik_test.go` altında GERÇEK modüller,
+> **Tamamlandı.** DoD `internal/e2e/identity_test.go` altında GERÇEK modüller,
 > gerçek Postgres ve ÜRETİMDEKİ koruma yığınıyla doğrulandı. Kritik ayrım:
 > koruma modülde değil, router'ı kuran tarafta takılır — modüller route'larını
 > tam yolla düz bir router'a kaydettiği için chi'nin doğal kapsamlama aracı
@@ -334,7 +334,7 @@ type PaymentProvider interface {
 >
 > RBAC yalnızca auth'ta değil, **TÜM modüllerde** zorlanır: sözlük tek
 > kuraldan türer (`<modül>:read` / `<modül>:write`, `admin` üst yetki) ve
-> `internal/e2e/yetki_test.go` router ağacını GEZEREK 205 yönetim ucunun
+> `internal/e2e/authorization_test.go` router ağacını GEZEREK 205 yönetim ucunun
 > tamamında yetkisiz bir jetonun 403 aldığını denetler — elle yazılmış bir uç
 > listesi, eklenmesi unutulan ilk uçta kör kalırdı.
 >
@@ -357,7 +357,7 @@ type PaymentProvider interface {
 > Arıza davranışı [ADR 0007](docs/adr/0007-sertlestirme-arizada-davranis.md)
 > ile karara bağlandı: kimlik fail-closed, hız sınırı fail-open, idempotency
 > ayırmada reddeder / kayıtta anahtarı serbest bırakır. Tek tip kural YOKTUR.
-> Yük testi süreç içidir (`internal/e2e/yuk_test.go`): ölçtüğü şey mutlak
+> Yük testi süreç içidir (`internal/e2e/load_test.go`): ölçtüğü şey mutlak
 > performans değil, eşzamanlı yük altında DOĞRULUK — düşen istek, 5xx ve
 > koruma yığınındaki yarış. Kapasite planı için bir sayı üretmez.
 >

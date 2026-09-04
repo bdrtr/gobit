@@ -545,7 +545,7 @@ func TestGraphQLEndpointRejectsRequestWithoutPublishableKey(t *testing.T) {
 
 	// The secret key does not pass in the store header: had it passed, a key
 	// embedded inside storefront code would carry admin authority (see
-	// [TestGizliAnahtarMagazaBasligindaGecmez], the same claim in REST).
+	// [TestSecretKeyDoesNotPassInTheStoreHeader], the same claim in REST).
 	secret := gqlRequest(t, secretKey, gqlCatalogDocument, variables)
 	assert.Equal(t, http.StatusUnauthorized, secret.Code,
 		"the secret key should not be accepted at the GraphQL endpoint; body: %s", secret.Body.String())
