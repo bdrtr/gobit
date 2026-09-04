@@ -30,16 +30,16 @@ substitution and three genuine gaps.
 
 **Money.** No monetary field is a float anywhere. More than that, the repository
 treats float as a hazard at every JSON boundary and says so where the risk
-lives: `fulfillment/service/interop.go:61`, `order/service/interop.go:241`,
-`payment/service/interop.go:100`, `promotion/service/interop.go:156`. The
+lives: `fulfillment/service/interop.go`, `order/service/interop.go`,
+`payment/service/interop.go`, `promotion/service/interop.go`. The
 argument is always the same — an event payload decoded through `float64` loses
 cents silently — so amounts cross module boundaries as strings and are parsed to
 `int64` explicitly.
 
 **Oversell.** Guarded by row locks, not by optimistic retry:
-`inventory/queries/inventory_levels.sql:15`,
-`inventory/queries/inventory_items.sql:20`,
-`inventory/queries/inventory_reservations.sql:18`. The lock ORDER is written
+`inventory/queries/inventory_levels.sql`,
+`inventory/queries/inventory_items.sql`,
+`inventory/queries/inventory_reservations.sql`. The lock ORDER is written
 down as a contract rather than left to chance (`payment/service/service.go`
 package doc: collection → session → capture), because two flows taking the same
 two rows in opposite orders is how a deadlock is manufactured.
@@ -62,9 +62,9 @@ re-checking that key-space agreement.
 
 1. **No read cache. Nothing is cached, anywhere.**
    Redis is present and used for three things — the event bus
-   (`internal/core/eventbus/redis`), rate limiting
-   (`internal/core/http/redisguard/ratelimit`) and idempotency
-   (`internal/core/http/redisguard/idempotency`) — and for nothing else. There
+   (`internal/core/eventbus/redis.go`), rate limiting
+   (`internal/core/http/redisguard/ratelimit.go`) and idempotency
+   (`internal/core/http/redisguard/idempotency.go`) — and for nothing else. There
    is no product-detail cache, no category-listing cache, and therefore no
    invalidation path on write.
 
@@ -120,14 +120,14 @@ correctness consequences.
 
 **Product and variant model — complete.** The combination model is a real one,
 not a flattened list: `product_option`, `product_option_value` and the join
-`product_variant_option_value` (`product/migrations/000001_product_init.up.sql:122-168`)
+`product_variant_option_value` (`product/migrations/000001_product_init.up.sql`)
 express colour × size properly. SKU sits on the variant, and
 `inventory_items.sku` carries a UNIQUE index
-(`inventory/migrations/000001_inventory_init.up.sql:49`) so stock is per SKU.
+(`inventory/migrations/000001_inventory_init.up.sql`) so stock is per SKU.
 Collections, categories, tags and images are all modelled.
 
 **Idempotency — two independent layers.** An HTTP middleware
-(`internal/core/http/idempotency`, Redis-backed) and, underneath it, the payment
+(`internal/core/http/idempotency.go`, Redis-backed) and, underneath it, the payment
 module's own key with a UNIQUE index as the last line of defence
 (`payment_sessions_provider_idempotency_uniq`). The second is what makes a saga
 step safe to retry when the first is not in play.
@@ -151,7 +151,7 @@ each guarded by `requireLiveOrder`.
 
 `models.OrderStatus` has four values — `pending`, `completed`, `archived`,
 `canceled` — and transitions are enforced in code, not by convention:
-`order/service/order.go:567` goes through `s.transition(...)`, and an illegal
+`order/service/order.go` goes through `s.transition(...)`, and an illegal
 one produces `transitionError(action, orderID, required, actual)`.
 
 The states the checklist calls `paid`, `fulfilled`, `shipped` and `delivered`
@@ -176,11 +176,11 @@ or a workflow, that composes the three.
 1. **No outbox. An order can be committed and its event lost, with nothing to
    notice.**
 
-   `order/service/order.go:171-181` states the ordering honestly: the order and
+   `order/service/order.go` states the ordering honestly: the order and
    everything belonging to it commit in a single transaction, and only then is
    `order.placed` published — *"a publishing failure does not drop the order"*.
    The event bus documents its own guarantee just as honestly
-   (`internal/core/eventbus/eventbus.go:16`): in-memory is at-most-once and
+   (`internal/core/eventbus/eventbus.go`): in-memory is at-most-once and
    loses events when the process dies; Redis is at-least-once and resumes.
 
    Neither statement covers the window between the two. If the process dies
@@ -190,7 +190,7 @@ or a workflow, that composes the three.
    committed local fact whose downstream effect silently did not occur.
 
    The word "outbox" appears exactly once in the repository, as a hypothetical
-   in a comment (`cmd/server/migrate.go:87`).
+   in a comment (`cmd/server/migrate.go`).
 
    What it would touch: core, as a table plus a publisher that writes the event
    in the SAME transaction as the business write and hands it to the bus
@@ -205,7 +205,7 @@ or a workflow, that composes the three.
    happened. The only durable trace of any change is the row's `updated_at`.
 
    The words "audit record" do appear — but about workflow executions
-   (`internal/core/workflow/store.go:43`), which is a different thing: it tells
+   (`internal/core/workflow/store.go`), which is a different thing: it tells
    you a saga ran, not that a person changed a price.
 
    What it would touch: core, as a middleware plus a table, because the actor
@@ -215,7 +215,7 @@ or a workflow, that composes the three.
 
 3. **Guest cart cannot be adopted by a customer who logs in.** Line-item merge
    works (adding a variant already in the cart adds quantity —
-   `workflows/cart/add_line_item.go:203`), but there is no `AssignCustomer`,
+   `workflows/cart/add_line_item.go`), but there is no `AssignCustomer`,
    `ClaimCart` or equivalent: a guest who signs in loses their cart.
 
    This is entangled with the storefront-identity decision (ADR 0008): there is
@@ -227,7 +227,8 @@ or a workflow, that composes the three.
    slot, but no plugin fills this one, so there is no rate calculation, no label
    and no tracking from a real carrier.
 
-5. **No invoicing, and nothing for Turkish e-fatura / e-arşiv.** Every "fatura"
+5. **No invoicing, and nothing for the Turkish e-invoice regimes** (e-fatura,
+   e-arsiv). Every "fatura"
    in the codebase is a billing ADDRESS. For a shop selling in Turkey this is a
    legal requirement, not a feature — and it is the one item on the checklist
    that no part of the framework currently touches.
@@ -248,7 +249,7 @@ this behaves at scale, and one of them has already shown up as a workaround.
 
 **Connection pool is fully configurable** — `MaxConns`, `MinConns`,
 `MaxConnLifetime`, `MaxConnIdleTime` with defaults of 10/2/1h/30m
-(`internal/core/db/db.go:32-54`). Worth knowing why the settings are verified by
+(`internal/core/db/db.go`). Worth knowing why the settings are verified by
 READING THEM BACK from `pool.Pool().Config()` rather than from the config
 struct: a mutation that deleted `pgCfg.MaxConns = cfg.MaxConns` outright passed
 every test, because the startup log kept printing the CONFIGURED number while
@@ -263,9 +264,9 @@ set in a SINGLE query (no N+1)"*). Joins are written out explicitly in the
 
 **Images: no in-application resizing, and the CDN is the documented posture.**
 Nothing decodes or resizes an image anywhere. The file module states the split
-plainly (`file/service/service.go:314`: *"in an object store the file is served
+plainly (`file/service/service.go`: *"in an object store the file is served
 by the CDN, the application never…"*), `plugins/files3` says the same about the
-bucket, and `file/api/serve.go:20` sets cache headers so a CDN or reverse proxy
+bucket, and `file/api/serve.go` sets cache headers so a CDN or reverse proxy
 may legitimately store the response. The local disk provider exists for
 development and says so.
 
@@ -322,7 +323,7 @@ list that gets acted on wrongly.
 ### The pattern underneath most of them
 
 Almost every blocking gap has the same origin, and it is not neglect. Each one
-was deliberately deferred to a phase that no longer exists. `aftersales.go:12`
+was deliberately deferred to a phase that no longer exists. `aftersales.go`
 is the clearest statement of it:
 
 > The status transitions, the line-based return, taking the stock back and
@@ -340,9 +341,17 @@ the next reader sees a decision instead of a wait.
 
 ### Blocking — verified by hand
 
-1. **The shopper sets their own shipping price.**
-   `POST /store/v1/carts/{id}/shipping-methods` (`cart/api/routes.go:84`) is a
-   STOREFRONT route, and `AddShippingMethod` (`cart/service/shipping.go:36-67`)
+1. ~~**The shopper sets their own shipping price.**~~ **CLOSED 2026-09-05,
+   ADR 0021.** The storefront now names WHICH option; the price is quoted by the
+   fulfillment module from the cart's own facts, `AddShippingMethod` is off the
+   module's HTTP surface, and `amount` is gone from the request body. Left in
+   place here because the shape of the defect is the useful record: the engine
+   that produced the right number was already built with zero consumers, and the
+   rule forbidding this was already written about the LINE price.
+
+   The original finding:
+   `POST /store/v1/carts/{id}/shipping-methods` (`cart/api/routes.go`) is a
+   STOREFRONT route, and `AddShippingMethod` (`cart/service/shipping.go`)
    stores `in.Amount` verbatim — the only check is `checkAmount` against
    `models.MaxAmount`. Nothing re-quotes it against the shipping option. Post a
    real `shipping_option_id` with `amount: 0` and the order is created and
@@ -353,14 +362,14 @@ the next reader sees a decision instead of a wait.
    is simply unnoticed, which makes it the most urgent item in this file.
 
 2. **No order knows what was paid on it.** `SetOrderSummaryTotals`
-   (`order/service/summary.go:87`) has a service method, a repository method and
+   (`order/service/summary.go`) has a service method, a repository method and
    a generated query — and NO production caller. The checkout saga never calls
    it (`grep` over `internal/workflows/` returns nothing). Every real order
    therefore reports `paid_total: 0` and `outstanding: <full total>` on both the
    admin and the storefront read.
 
    The API package already documents the intended owner
-   (`order/api/api.go:86`: "both of them are the workflow['s job]") — so the
+   (`order/api/api.go`: "both of them are the workflow['s job]") — so the
    wiring is not undecided, it is unfinished. It also has a second consequence:
    the B2B spending window subtracts `order_summaries.refunded_total`, so a
    refunded B2B order never returns the employee's budget.
@@ -373,10 +382,10 @@ the next reader sees a decision instead of a wait.
    restocks and nothing refunds.
 
    Sharpened by a refusal: order editing is refused on purpose
-   (`order/models/models.go:103-109`) IN FAVOUR of this skeleton. So today there
+   (`order/models/models.go`) IN FAVOUR of this skeleton. So today there
    is no correction path of any kind.
 
-4. **Admin cancellation is a stamp.** `CancelOrder` (`order/service/order.go:502`)
+4. **Admin cancellation is a stamp.** `CancelOrder` (`order/service/order.go`)
    is documented as a SAGA COMPENSATION and does exactly that job: it writes
    `canceled_at` under a row lock. Reached from the admin route it releases no
    reservation, voids no payment and publishes no event — the order module's
@@ -384,7 +393,7 @@ the next reader sees a decision instead of a wait.
    compensation path, which this endpoint does not go through.
 
 5. **Tax is computed from inputs that were thrown away.** The tax module is
-   complete; the cart seam starves it. `workflows/cart/tax.go:248-251` builds
+   complete; the cart seam starves it. `workflows/cart/tax.go` builds
    each item with only `ID` and `Amount` — no `product_id`, no
    `product_type_id` — so every line falls through to the region's DEFAULT rate.
    A basket mixing 1% / 8% / 20% is charged 20% throughout. `ProvinceCode` is
@@ -393,9 +402,9 @@ the next reader sees a decision instead of a wait.
    rate was charged on this line" — which is what an invoice needs.
 
 6. **No CORS.** No `Access-Control` handling and no OPTIONS responder in the
-   middleware chain (`internal/core/http/router.go:198-216`). The publishable
+   middleware chain (`internal/core/http/router.go`). The publishable
    key exists precisely so it can sit in a browser
-   (`internal/core/http/auth.go:80-83`: "NOT A SECRET; it is expected to be
+   (`internal/core/http/auth.go`: "NOT A SECRET; it is expected to be
    visible") and the preflight dies before that key is ever read. ADR 0011
    rejects CORS only as a way to ship the admin panel separately, and says so
    "because it buys nothing today, not because it is impossible" — so this is a
@@ -411,4 +420,4 @@ the next reader sees a decision instead of a wait.
 `.claude/jobs/*/tasks/wgday14jh.output` for as long as that job lives. The 22
 written refusals are listed there too and must be read as decisions: customer
 identity (ADR 0008), scheduled compensation (ADR 0017), order editing
-(`order/models/models.go:103`), and a capability with no consumer (ADR 0009).
+(`order/models/models.go`), and a capability with no consumer (ADR 0009).

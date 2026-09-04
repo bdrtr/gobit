@@ -12,6 +12,51 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Eklendi
 
+- **Alışverişçi artık kendi kargo fiyatını belirleyemiyor** (ADR 0021) — bu bir
+  özellik değil, sömürülebilir bir açığın kapatılması.
+
+  `POST /store/v1/carts/{id}/shipping-methods` bir VİTRİN ucuydu ve gövdeden
+  gelen `amount`'ı olduğu gibi yazıyordu; tek denetim `MaxAmount`'tı.
+  `calculate_totals` o sayıyı topluyor, checkout planı aritmetiği doğruluyordu —
+  yani kendi içinde tutarlı ve yanlış. Geçerli bir `shipping_option_id` ile
+  `amount: 0` gönderen alışverişçinin siparişi o fiyattan oluşuyor VE tahsil
+  ediliyordu.
+
+  İki şey bunu gözden kaçmış bir hatadan daha kötü yapıyor.
+
+  **Doğru sayıyı üreten motor zaten kuruluydu ve kimse sormuyordu.**
+  `fulfillment/service.Interop.ListOptionsJSON` sepete uygun seçenekleri
+  kurallılarıyla birlikte fiyatlandırıyor ve godoc'u "yalnızca cart/order
+  akışlarınca çözülür" diyor. TÜKETİCİSİ SIFIRDI. Yani depo aynı anda iki yarıyı
+  birden taşıyordu: doğrulanmayan bir fiyat ve çağrılmayan bir doğrulayıcı.
+
+  **Bunu yasaklayan kural da zaten yazılıydı — öteki fiyat hakkında.** Cart
+  modülünün kendi API paket belgesi `AddLineItem`'ın neden yüzeyde olmadığını
+  anlatıyor: *"FİYATI SUNUCU belirler… Metot yüzeyde kalsaydı, ona bağlanan bir
+  handler hem fiyatlamayı hem tavanı SESSİZCE atlardı."* Cümlenin her kelimesi
+  kargo fiyatı için de doğru. `AddShippingMethod` yine de yüzeyde kalmıştı, ve
+  ona bağlı handler tam olarak cümlenin öngördüğü şeyi yapıyordu.
+
+  Çözüm o cümlenin ikinci kez uygulanması: yeni akış
+  `workflows/cart.Workflows.AddQuotedShippingMethod` seçeneği fulfillment'a
+  sorup TEKLİF EDİLEN tutarı yazıyor; `AddShippingMethod` cart API'sinin `Carts`
+  arayüzünden KALDIRILDI, yani hiçbir handler servise geri uzanamıyor. Teklifin
+  hesaplandığı her olgu — bölge, para birimi, ülke, ara toplam, kalem sayısı —
+  sepetin kendi kaydından okunuyor.
+
+  **KIRICI:** gövdeden `amount` ve `name` kaldırıldı. Bu API tanımadığı alanı
+  reddettiği için, hâlâ gönderen istemci 422 alıyor. Sessizce yok saymak,
+  entegratörü fiyatı hâlâ kendisinin belirlediğine inandırmak olurdu.
+
+  Akış KAPALI ARIZALANIYOR: fulfillment yüzeyi bağlı değilse yöntem eklenmiyor.
+  Vergi yüzeyiyle karşılaştırma öğretici — eksik vergi yüzeyi bölgenin oranına
+  düşer, ki bu gerçek bir kayıttan hesaplanmış gerçek bir cevaptır; eksik kargo
+  yüzeyinin öyle bir cevabı yok, tek alternatif kaynak çağıranın kendisi.
+
+  Ara toplam İNDİRİM SONRASI alınıyor, `computeTotals` ile aynı sırada: eşik
+  kuralları ("500 üstü kargo bedava") bu sayıyı okuyor ve indirim öncesini
+  vermek aynı indirimi iki kez harcamak olurdu.
+
 - **Ödeme mutabakatı** (`internal/jobs/paymentrecon`) — deponun adı konmuş tek
   tutulmamış periyodik sözü, ve para hakkında.
 

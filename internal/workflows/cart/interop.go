@@ -119,6 +119,19 @@ func (i *Interop) AddPricedLineItem(
 	return result.LineItemID, nil
 }
 
+// AddQuotedShippingMethod attaches a shipping option to the cart at the price
+// the fulfillment module quotes, and returns the method's id.
+//
+// The caller supplies WHICH option and nothing about the price; the rationale
+// is in the [Workflows.AddQuotedShippingMethod] godoc.
+func (i *Interop) AddQuotedShippingMethod(
+	ctx context.Context,
+	cartID, shippingOptionID string,
+	data json.RawMessage,
+) (string, error) {
+	return i.w.AddQuotedShippingMethod(ctx, cartID, shippingOptionID, data)
+}
+
 // SetLineItemQuantity writes the line's quantity as an ABSOLUTE value and
 // recomputes the totals; it reports whether the line was removed.
 //

@@ -230,6 +230,7 @@ func (m *Module) Register(ctx context.Context, c *container.Container) error {
 		Opening:  &cartOpening{c: c, log: log},
 		Pricing:  &linePricing{c: c, log: log},
 		Checkout: &cartCompletion{c: c, log: log},
+		Shipping: &shippingPricing{c: c, log: log},
 	})
 	slog.Default().DebugContext(ctx, "cart module registered",
 		"service", ServiceName, "provider", ProviderName)
@@ -385,6 +386,55 @@ func (p *linePricing) resolve(ctx context.Context) {
 	}
 	p.svc = svc
 	p.log.InfoContext(ctx, "line pricing flow bound", "flow", CartFlowsName)
+}
+
+// shippingPricing is the wrapper that resolves the shipping pricing flow ON
+// FIRST USE.
+//
+// The laziness and the failing closed are [linePricing]'s, about the cart's
+// other decided number. Until this flow existed the storefront handler took the
+// shipping amount out of the request body, so a shopper could name their own
+// delivery price; the flow is the only thing standing between that body and the
+// cart, which is exactly why an unresolved flow must not degrade into using it.
+type shippingPricing struct {
+	c    *container.Container
+	log  *slog.Logger
+	once sync.Once
+	svc  api.ShippingPricing
+	err  error
+}
+
+// That the wrapper satisfies the surface the handler expects is pinned down at
+// compile time.
+var _ api.ShippingPricing = (*shippingPricing)(nil)
+
+// AddQuotedShippingMethod attaches a shipping option at its quoted price.
+func (p *shippingPricing) AddQuotedShippingMethod(
+	ctx context.Context,
+	cartID, shippingOptionID string,
+	data json.RawMessage,
+) (string, error) {
+	p.once.Do(func() { p.resolve(ctx) })
+	if p.err != nil {
+		return "", p.err
+	}
+
+	return p.svc.AddQuotedShippingMethod(ctx, cartID, shippingOptionID, data)
+}
+
+// resolve looks the flow up in the container and remembers the outcome.
+func (p *shippingPricing) resolve(ctx context.Context) {
+	svc, err := container.Resolve[api.ShippingPricing](p.c, CartFlowsName)
+	if err != nil {
+		p.err = errors.Wrap(err, errors.KindInternal, codeSetupFailed,
+			"the %s module could not resolve the shipping pricing flow (%q); a shipping "+
+				"method cannot be added without the server determining the price",
+			ModuleName, CartFlowsName)
+
+		return
+	}
+	p.svc = svc
+	p.log.InfoContext(ctx, "shipping pricing flow bound", "flow", CartFlowsName)
 }
 
 // cartCompletion is the wrapper that resolves the cart completion flow ON FIRST

@@ -148,6 +148,17 @@ type stubCarts struct {
 	setTotalsFn     func(ctx context.Context, cartID string) error
 }
 
+// AddShippingMethod is never called on this path and says so.
+//
+// It exists because the cart workflows resolve the whole cart.interop surface
+// by name, so this stub has to satisfy it; the checkout saga does not add
+// shipping methods — the shopper does, before completing.
+func (s *stubCarts) AddShippingMethod(
+	_ context.Context, _, _, _ string, _ int64, _ json.RawMessage,
+) (string, error) {
+	return "", errors.New("AddShippingMethod is not part of the checkout path")
+}
+
 // CartSnapshotJSON returns the scripted snapshot.
 func (s *stubCarts) CartSnapshotJSON(ctx context.Context, cartID string) (json.RawMessage, error) {
 	s.rec.add("cart:snapshot")
@@ -307,6 +318,15 @@ func (s *stubInventory) ConfirmReservation(ctx context.Context, reservationID st
 type stubFulfillment struct {
 	rec *recorder
 
+	// listOptionsFn is the scripted shipping quote.
+	//
+	// The checkout saga does not quote shipping — the cart flows do, before the
+	// cart is completed. It is here because the container registers ONE
+	// "fulfillment.interop" and the cart workflows resolve the whole of it, so a
+	// stub missing this method makes the wiring test fail with a type mismatch
+	// rather than with anything about checkout.
+	listOptionsFn func(ctx context.Context, request json.RawMessage) (json.RawMessage, error)
+
 	rankFn func(ctx context.Context, destinationRegionID string, candidateLocationIDs []string) ([]string, error)
 
 	// offered keeps, in order, the candidate lists passed to RankLocations.
@@ -324,6 +344,17 @@ type stubFulfillment struct {
 	// if an empty region were passed, the real module would reject the request,
 	// but the fake module does not, and the workflow would stay green.
 	offeredRegions []string
+}
+
+// ListOptionsJSON applies the scripted shipping quote.
+func (s *stubFulfillment) ListOptionsJSON(
+	ctx context.Context, request json.RawMessage,
+) (json.RawMessage, error) {
+	if s.listOptionsFn == nil {
+		return nil, errors.New("ListOptionsJSON is not part of the checkout path")
+	}
+
+	return s.listOptionsFn(ctx, request)
 }
 
 // RankLocations applies the scripted ranking behavior.

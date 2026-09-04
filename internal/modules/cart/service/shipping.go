@@ -13,8 +13,12 @@ type AddShippingMethodInput struct {
 	// Name is the method's display name; it is REQUIRED.
 	Name string
 	// ShippingOptionID is the identifier of the option in the fulfillment
-	// module; it is OPTIONAL (the option catalog arrives in Phase 7) and it is
-	// not a foreign key.
+	// module. It is not a foreign key: this module cannot see that one
+	// (Principle 2.2).
+	//
+	// It is optional on THIS input because the service is also reached by the
+	// flow that quotes an option; the storefront path always carries one, and
+	// the quoting flow refuses a request without it.
 	ShippingOptionID string
 	// Amount is the shipping amount (minor unit); it cannot be negative.
 	Amount int64

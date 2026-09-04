@@ -31,6 +31,14 @@ const (
 	// IT IS OPTIONAL: if it is not registered the tax is computed with the
 	// region's rate (see [Taxes]).
 	ServiceTax = "tax.interop"
+	// ServiceFulfillment is the fulfillment module's cross-module surface.
+	//
+	// IT IS OPTIONAL to RESOLVE, but the flow that needs it FAILS CLOSED: an
+	// installation without the fulfillment module still boots, and a request to
+	// price a shipping method in that installation is refused rather than
+	// falling back to a number the caller supplied (see
+	// [Workflows.AddQuotedShippingMethod]).
+	ServiceFulfillment = "fulfillment.interop"
 	// ServiceLink is the core's Module Links service.
 	ServiceLink = "core.link"
 	// ServiceQuery is the core's cross-module read layer.
@@ -207,6 +215,24 @@ type Carts interface {
 		metadata json.RawMessage,
 	) (cartID string, err error)
 
+	// AddShippingMethod attaches a shipping method to the cart and returns THE
+	// METHOD'S ID.
+	//
+	// The amount is decided BY THE CALLER of this interface, which is why the
+	// only caller is [Workflows.AddQuotedShippingMethod] and why the cart
+	// module's HTTP surface no longer carries the underlying service method.
+	// Its counterpart in the cart service is AddShippingMethod.
+	//
+	// data is the free-form JSON object attached to the method; this package
+	// does not read it and only carries it, for the same reason it carries a
+	// line item's metadata.
+	AddShippingMethod(
+		ctx context.Context,
+		cartID, name, shippingOptionID string,
+		amount int64,
+		data json.RawMessage,
+	) (shippingMethodID string, err error)
+
 	// CartSnapshotJSON returns the shape of the cart that enters the computation
 	// in a SINGLE read.
 	//
@@ -338,6 +364,24 @@ type Taxes interface {
 	CalculateTaxJSON(ctx context.Context, request json.RawMessage) (json.RawMessage, error)
 }
 
+// Shipping is the surface used by these flows of the fulfillment module.
+//
+// It carries ONE method and only JSON, like every other cross-module surface
+// here: this package cannot import the fulfillment module (ADR 0006) and the
+// concrete type satisfies this interface structurally.
+//
+// The request and response schemas are documented on the producing side
+// (internal/modules/fulfillment/service.Interop.ListOptionsJSON). What matters
+// on this side is what that documentation guarantees: the call is IN-PROCESS,
+// so the cart's facts are taken as TRUSTED and rule-bound options ("free
+// shipping over 500") are quoted. The HTTP storefront endpoint cannot get
+// those, because it cannot verify the facts.
+type Shipping interface {
+	// ListOptionsJSON returns the shipping options eligible for a cart context
+	// together with their prices.
+	ListOptionsJSON(ctx context.Context, request json.RawMessage) (json.RawMessage, error)
+}
+
 // Links is the surface of the core's Module Links service ("core.link") that
 // this package uses.
 //
@@ -387,6 +431,15 @@ type Deps struct {
 	// and the source used IS VISIBLE in the [Totals.TaxSource] field; the
 	// rationale is in the [Workflows.applyTaxes] godoc.
 	Taxes Taxes
+	// Shipping is the fulfillment surface; IT IS OPTIONAL to supply.
+	//
+	// Optional is not the same permission it is for [Deps.Taxes]. A missing tax
+	// surface has a correct fallback (the region's rate) and the answer stays a
+	// real number. A missing shipping surface has NO fallback: the only other
+	// source for a shipping price is the caller, and taking it from there is the
+	// defect this surface exists to close. So nil here does not degrade the
+	// flow, it disables it.
+	Shipping Shipping
 	// Links is the Module Links surface; it is mandatory.
 	Links Links
 	// Catalog is the Query surface; it is mandatory.
@@ -404,6 +457,7 @@ type Workflows struct {
 	customers Customers
 	discounts Discounts
 	taxes     Taxes
+	shipping  Shipping
 	links     Links
 	catalog   Catalog
 	log       *slog.Logger
@@ -450,6 +504,7 @@ func New(deps Deps) (*Workflows, error) {
 		customers: deps.Customers,
 		discounts: deps.Discounts,
 		taxes:     deps.Taxes,
+		shipping:  deps.Shipping,
 		links:     deps.Links,
 		catalog:   deps.Catalog,
 		log:       log,
@@ -501,6 +556,10 @@ func FromContainer(c *container.Container) (*Workflows, error) {
 	if err != nil {
 		return nil, err
 	}
+	shipping, err := resolveOptional[Shipping](c, ServiceFulfillment)
+	if err != nil {
+		return nil, err
+	}
 	links, err := resolve[Links](c, ServiceLink)
 	if err != nil {
 		return nil, err
@@ -532,6 +591,7 @@ func FromContainer(c *container.Container) (*Workflows, error) {
 		Customers: customers,
 		Discounts: discounts,
 		Taxes:     taxes,
+		Shipping:  shipping,
 		Links:     links,
 		Catalog:   catalog,
 		Logger:    log,

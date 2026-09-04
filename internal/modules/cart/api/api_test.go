@@ -31,7 +31,6 @@ type fakeCarts struct {
 	detail models.CartDetail
 	item   models.LineItem
 	addr   models.CartAddress
-	method models.ShippingMethod
 	carts  []models.Cart
 	count  int64
 
@@ -40,15 +39,14 @@ type fakeCarts struct {
 	err error
 
 	// The arguments of the last call.
-	updateInput   service.UpdateCartInput
-	addInput      service.AddLineItemInput
-	addressInput  service.AddressInput
-	shippingInput service.AddShippingMethodInput
-	listInput     service.ListCartsInput
-	gotCartID     string
-	gotLineID     string
-	gotMethodID   string
-	gotQuantity   int64
+	updateInput  service.UpdateCartInput
+	addInput     service.AddLineItemInput
+	addressInput service.AddressInput
+	listInput    service.ListCartsInput
+	gotCartID    string
+	gotLineID    string
+	gotMethodID  string
+	gotQuantity  int64
 	// billing reports whether the call that wrote the last address came from the
 	// billing endpoint.
 	billing bool
@@ -112,12 +110,6 @@ func (f *fakeCarts) SetBillingAddress(_ context.Context, cartID string, in servi
 	return f.addr, f.err
 }
 
-// AddShippingMethod adds a shipping method.
-func (f *fakeCarts) AddShippingMethod(_ context.Context, cartID string, in service.AddShippingMethodInput) (models.ShippingMethod, error) {
-	f.gotCartID, f.shippingInput = cartID, in
-	return f.method, f.err
-}
-
 // RemoveShippingMethod removes the shipping method.
 func (f *fakeCarts) RemoveShippingMethod(_ context.Context, cartID, methodID string) error {
 	f.gotCartID, f.gotMethodID = cartID, methodID
@@ -163,6 +155,36 @@ func (f *fakeOpening) OpenCartForCountry(
 // not decide the price ITSELF but leaves it to the flow. The recorded arguments
 // make exactly that visible: because there is no price field in the body there is
 // no price to pass to the flow either.
+
+// fakeShipping is the shipping pricing flow's stand-in.
+//
+// It records ONLY what the handler is allowed to pass on — the cart, the option
+// and the free-form blob. There is no amount field, and that absence is the
+// assertion: if a price could reach the flow from the request, this fake would
+// have to grow a place to put it.
+type fakeShipping struct {
+	methodID string
+	err      error
+
+	gotCartID   string
+	gotOptionID string
+	gotData     json.RawMessage
+	calls       int
+}
+
+// AddQuotedShippingMethod records the call and returns the scripted id.
+func (f *fakeShipping) AddQuotedShippingMethod(
+	_ context.Context, cartID, shippingOptionID string, data json.RawMessage,
+) (string, error) {
+	f.calls++
+	f.gotCartID, f.gotOptionID, f.gotData = cartID, shippingOptionID, data
+	if f.err != nil {
+		return "", f.err
+	}
+
+	return f.methodID, nil
+}
+
 type fakePricing struct {
 	lineID  string
 	removed bool
@@ -243,6 +265,7 @@ func newServer(t *testing.T, svc *fakeCarts) http.Handler {
 		Opening:  &fakeOpening{cartID: "cart_1"},
 		Pricing:  &fakePricing{},
 		Checkout: &fakeCheckout{},
+		Shipping: &fakeShipping{methodID: "csm_1"},
 	})
 }
 
@@ -862,22 +885,95 @@ func TestAddressEndpointsLandOnSeparateMethods(t *testing.T) {
 	assert.Equal(t, "Ankara", svc.addressInput.City)
 }
 
-// TestShippingMethodEndpoints verifies that adding and removing a shipping method
-// work with the right parameters.
+// shippingServer sets up a storefront router whose cart already holds the
+// method the flow claims to have written.
+func shippingServer(t *testing.T, flow *fakeShipping) (http.Handler, *fakeCarts) {
+	t.Helper()
+
+	svc := &fakeCarts{detail: models.CartDetail{
+		Cart: models.Cart{ID: "cart_1"},
+		ShippingMethods: []models.ShippingMethod{
+			{ID: "csm_1", Name: "Standard", Amount: 2500, ShippingOptionID: "so_1"},
+		},
+	}}
+
+	return newServerWithFlows(t, svc, api.Flows{
+		Opening:  &fakeOpening{cartID: "cart_1"},
+		Pricing:  &fakePricing{},
+		Checkout: &fakeCheckout{},
+		Shipping: flow,
+	}), svc
+}
+
+// TestShippingMethodEndpoints verifies that adding and removing a shipping
+// method work, and that adding goes THROUGH THE FLOW.
 func TestShippingMethodEndpoints(t *testing.T) {
-	svc := &fakeCarts{method: models.ShippingMethod{ID: "csm_1", Name: "Standard", Amount: 2500}}
-	h := newServer(t, svc)
+	flow := &fakeShipping{methodID: "csm_1"}
+	h, svc := shippingServer(t, flow)
 
 	rec := doRequest(t, h, http.MethodPost, "/store/v1/carts/cart_1/shipping-methods",
-		`{"name":"Standard","amount":2500,"shipping_option_id":"so_1"}`)
+		`{"shipping_option_id":"so_1"}`)
 	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
-	assert.Equal(t, "Standard", svc.shippingInput.Name)
-	assert.Equal(t, int64(2500), svc.shippingInput.Amount)
-	assert.Equal(t, "so_1", svc.shippingInput.ShippingOptionID)
+
+	assert.Equal(t, 1, flow.calls)
+	assert.Equal(t, "cart_1", flow.gotCartID)
+	assert.Equal(t, "so_1", flow.gotOptionID)
+
+	// The response shows the method AS STORED, at the quoted amount.
+	payload := bodyMap(t, rec)
+	data, ok := payload["data"].(map[string]any)
+	require.True(t, ok, rec.Body.String())
+	assert.InDelta(t, 2500, data["amount"], 0.0)
+	assert.Equal(t, "Standard", data["name"])
 
 	rec = doRequest(t, h, http.MethodDelete, "/store/v1/carts/cart_1/shipping-methods/csm_1", "")
 	assert.Equal(t, http.StatusNoContent, rec.Code)
 	assert.Equal(t, "csm_1", svc.gotMethodID)
+}
+
+// TestTheShopperCannotNameTheShippingPrice is the defect this endpoint was
+// built wrong around, asserted so it cannot come back.
+//
+// Before the pricing flow existed, "amount" was a field of the request body and
+// the cart stored it verbatim: posting a real shipping_option_id with an amount
+// of zero produced an order that was created AND captured at that price. The
+// field is gone, and because this API rejects fields it does not recognize, a
+// client still sending one is told rather than quietly overridden.
+func TestTheShopperCannotNameTheShippingPrice(t *testing.T) {
+	for _, body := range []string{
+		`{"shipping_option_id":"so_1","amount":0}`,
+		`{"shipping_option_id":"so_1","amount":2500}`,
+		`{"shipping_option_id":"so_1","name":"Free delivery"}`,
+	} {
+		flow := &fakeShipping{methodID: "csm_1"}
+		h, _ := shippingServer(t, flow)
+
+		rec := doRequest(t, h, http.MethodPost, "/store/v1/carts/cart_1/shipping-methods", body)
+
+		assert.Equal(t, http.StatusUnprocessableEntity, rec.Code, body)
+		assert.Equal(t, 0, flow.calls,
+			"a rejected body must not reach the flow either: %s", body)
+	}
+}
+
+// TestAShippingMethodIsNotAddedWithoutTheFlow pins the fail-closed branch.
+//
+// A missing quoter has no safe fallback. Falling back to the request would hand
+// the price to the shopper and falling back to zero would give the delivery
+// away, so the only correct outcome is that nothing is written.
+func TestAShippingMethodIsNotAddedWithoutTheFlow(t *testing.T) {
+	svc := &fakeCarts{}
+	h := newServerWithFlows(t, svc, api.Flows{
+		Opening:  &fakeOpening{cartID: "cart_1"},
+		Pricing:  &fakePricing{},
+		Checkout: &fakeCheckout{},
+	})
+
+	rec := doRequest(t, h, http.MethodPost, "/store/v1/carts/cart_1/shipping-methods",
+		`{"shipping_option_id":"so_1"}`)
+
+	assert.Equal(t, http.StatusInternalServerError, rec.Code)
+	assert.Empty(t, svc.gotCartID, "nothing may be written when the price cannot be decided")
 }
 
 // TestAdminListEnvelope verifies that the admin list returns the list envelope

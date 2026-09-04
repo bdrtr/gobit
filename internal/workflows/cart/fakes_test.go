@@ -52,6 +52,13 @@ type stubCarts struct {
 	// removed and quantities record which of the write paths was chosen.
 	removed    []string
 	quantities map[string]int64
+	// addShippingFn is the scripted AddShippingMethod behavior.
+	addShippingFn func(
+		ctx context.Context,
+		cartID, name, shippingOptionID string,
+		amount int64,
+		data json.RawMessage,
+	) (string, error)
 }
 
 // newStubCarts produces an empty fake cart service.
@@ -91,6 +98,20 @@ func (s *stubCarts) AddCartLineItem(
 		return "", errUnexpected("AddCartLineItem")
 	}
 	return s.addLineFn(ctx, cartID, variantID, title, quantity, unitPrice, metadata)
+}
+
+// AddShippingMethod applies the scripted shipping-method behavior.
+func (s *stubCarts) AddShippingMethod(
+	ctx context.Context,
+	cartID, name, shippingOptionID string,
+	amount int64,
+	data json.RawMessage,
+) (string, error) {
+	if s.addShippingFn == nil {
+		return "", errUnexpected("AddShippingMethod")
+	}
+
+	return s.addShippingFn(ctx, cartID, name, shippingOptionID, amount, data)
 }
 
 // SetCartLineItemQuantity applies the scripted quantity-writing behavior.
@@ -308,6 +329,34 @@ func (s *stubLinks) ListMany(_ context.Context, _ string, fromIDs []string) (map
 	return out, nil
 }
 
+// stubShipping is the fake implementation of the [Shipping] interface.
+//
+// It records the request it was handed, because the point of the flow is not
+// only WHICH option it picks but which FACTS it computes the price from: the
+// cart's, never the caller's.
+type stubShipping struct {
+	options []quotedOption
+	err     error
+
+	gotRequest quoteRequest
+	calls      int
+}
+
+// ListOptionsJSON returns the scripted options.
+func (s *stubShipping) ListOptionsJSON(
+	_ context.Context, request json.RawMessage,
+) (json.RawMessage, error) {
+	s.calls++
+	if err := json.Unmarshal(request, &s.gotRequest); err != nil {
+		return nil, err
+	}
+	if s.err != nil {
+		return nil, s.err
+	}
+
+	return json.Marshal(quoteResponse{Options: s.options})
+}
+
 // stubCatalog is the fake implementation of the [Catalog] interface.
 //
 // It answers two entities: variants (title) and regions (country codes). The
@@ -389,6 +438,7 @@ type harness struct {
 	customers *stubCustomers
 	discounts *stubDiscounts
 	taxes     *stubTaxes
+	shipping  *stubShipping
 	links     *stubLinks
 	catalog   *stubCatalog
 	wf        *Workflows
@@ -424,6 +474,7 @@ func newHarnessWith(t *testing.T, discounts *stubDiscounts, taxes *stubTaxes) *h
 		customers: &stubCustomers{emails: map[string]string{testCustomerID: "registered@example.com"}},
 		discounts: discounts,
 		taxes:     taxes,
+		shipping:  &stubShipping{},
 		links: &stubLinks{links: map[string][]string{
 			testVariantA: {testPriceSetA},
 			testVariantB: {testPriceSetB},
@@ -442,6 +493,7 @@ func newHarnessWith(t *testing.T, discounts *stubDiscounts, taxes *stubTaxes) *h
 		Prices:    h.prices,
 		Regions:   h.regions,
 		Customers: h.customers,
+		Shipping:  h.shipping,
 		Links:     h.links,
 		Catalog:   h.catalog,
 	}

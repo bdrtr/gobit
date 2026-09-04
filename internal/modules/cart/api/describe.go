@@ -172,7 +172,9 @@ func describeAddresses(d *openapi.Doc) {
 // describeShipping describes the shipping method endpoints.
 func describeShipping(d *openapi.Doc) {
 	d.Describe(http.MethodPost, "/store/v1/carts/{id}/shipping-methods", openapi.Operation{
-		Summary:     "Adds a shipping method to the cart.",
+		Summary: "Adds a shipping option to the cart at the price quoted for it. " +
+			"The body names WHICH option; the amount is decided by the server and " +
+			"cannot be sent.",
 		RequestBody: d.RequestBody(addShippingMethodRequest{}),
 		Responses: map[string]any{
 			"201": openapi.Response("The added shipping method", d.Item(shippingMethodDTO{})),

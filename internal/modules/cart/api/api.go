@@ -164,6 +164,14 @@ const codeFlowUnavailable = "cart_workflow_unavailable"
 // right afterwards.
 const codeLineItemMissing = "cart_line_item_missing"
 
+// codeShippingMethodMissing reports that the written shipping method could not
+// be read back right afterwards.
+//
+// It is its OWN code rather than a reuse of [codeLineItemMissing] for the same
+// reason that one is separate from [codeCartMissing]: the record that went
+// missing names which write to go and look at.
+const codeShippingMethodMissing = "cart_shipping_method_missing"
+
 // codeCartMissing reports that the opened cart could not be read back right
 // afterwards.
 //
@@ -208,6 +216,15 @@ const (
 // (MaxLineItems inside workflows/cart). Had the method stayed on the surface, a
 // handler bound to it would SILENTLY skip both the pricing and the ceiling; the
 // service method itself is still there, the flow calls it.
+//
+// AddShippingMethod was removed for THE SAME REASON, later and after the cost
+// had been paid. It stayed on this surface while the sentence above was already
+// written about the line price, and the storefront handler passed the shopper's
+// own "amount" straight into the cart: posting a real shipping_option_id with
+// an amount of zero produced an order that was created and captured at that
+// price. The quote engine that decides the number was fully built and nothing
+// asked it. It is now reached through [ShippingPricing]; as with the line item
+// the service method still exists and the flow calls it.
 type Carts interface {
 	// GetCart returns the cart with its children.
 	GetCart(ctx context.Context, cartID string) (models.CartDetail, error)
@@ -228,8 +245,6 @@ type Carts interface {
 	// SetBillingAddress writes the cart's billing address.
 	SetBillingAddress(ctx context.Context, cartID string, in service.AddressInput) (models.CartAddress, error)
 
-	// AddShippingMethod adds a shipping method to the cart.
-	AddShippingMethod(ctx context.Context, cartID string, in service.AddShippingMethodInput) (models.ShippingMethod, error)
 	// RemoveShippingMethod removes the shipping method.
 	RemoveShippingMethod(ctx context.Context, cartID, methodID string) error
 }
@@ -313,6 +328,34 @@ type LinePricing interface {
 	) (removed bool, err error)
 }
 
+// ShippingPricing is the surface used by this package of the flow that PRICES a
+// shipping option (ADR 0001/0006).
+//
+// # Why it is defined here
+//
+// Same as [LinePricing]'s: the concrete flow is in internal/workflows/cart,
+// this module cannot import it, the interface is declared on the CONSUMER side
+// with primitive types only, and the concrete type satisfies it structurally.
+//
+// # Why there is NO AMOUNT parameter
+//
+// That absence IS the fix. The price is quoted by the fulfillment module from
+// the cart's own facts, and a parameter here would be a way for a request to
+// reach it. The two things the caller may choose — which option, and the
+// free-form data — are the two things that cannot change what is charged.
+type ShippingPricing interface {
+	// AddQuotedShippingMethod attaches a shipping option to the cart at the
+	// price quoted for it and returns the method's id.
+	//
+	// data is the free-form JSON object the caller attaches to the method; it
+	// is carried and never read.
+	AddQuotedShippingMethod(
+		ctx context.Context,
+		cartID, shippingOptionID string,
+		data json.RawMessage,
+	) (shippingMethodID string, err error)
+}
+
 // CartCompletion is the surface used by this package of the flow that turns the
 // cart into an order (ADR 0001/0006).
 //
@@ -339,6 +382,8 @@ type Flows struct {
 	Pricing LinePricing
 	// Checkout is the cart-completion flow.
 	Checkout CartCompletion
+	// Shipping is the shipping-option pricing flow.
+	Shipping ShippingPricing
 }
 
 // Handler is the cart module's set of HTTP handlers.
@@ -393,6 +438,25 @@ func (h *Handler) pricing() (LinePricing, error) {
 			"the line pricing flow is not bound; a line item cannot be added without the server deciding the price")
 	}
 	return h.flows.Pricing, nil
+}
+
+// shipping returns the shipping pricing flow; if it is not bound it returns an
+// ERROR.
+//
+// # Why it fails CLOSED
+//
+// The same reasoning as [Handler.pricing]'s, about the other number on the
+// cart. If the flow is missing the correct answer is NOT "shipping at the
+// amount the client gave" and NOT "shipping at zero": the first hands the price
+// to the shopper and the second gives the delivery away. The only correct
+// outcome of a missing quoter is the method NOT BEING ADDED AT ALL.
+func (h *Handler) shipping() (ShippingPricing, error) {
+	if h.flows.Shipping == nil {
+		return nil, coreerrors.Internal(codeFlowUnavailable,
+			"the shipping pricing flow is not bound; a shipping method cannot be added without "+
+				"the server deciding the price")
+	}
+	return h.flows.Shipping, nil
 }
 
 // checkout returns the cart-completion flow; if it is not bound it returns an

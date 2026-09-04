@@ -236,6 +236,52 @@ func (i *Interop) RemoveLineItem(ctx context.Context, cartID, lineItemID string)
 	return i.svc.RemoveLineItem(ctx, cartID, lineItemID)
 }
 
+// AddShippingMethod attaches a shipping method to the cart and returns its id.
+//
+// # The AMOUNT is the caller's, and that is only safe HERE
+//
+// This surface takes the amount as a primitive and writes it as given. That is
+// exactly the shape that must NOT be reachable from a storefront request, and
+// the reason it is safe on this surface is the same one
+// [github.com/bdrtr/gobit/internal/modules/fulfillment/service.Interop.ListOptionsJSON] states on the fulfillment side: an interop surface
+// is IN-PROCESS and is resolved only by the cart and order flows. The flow is
+// what quotes the option and decides the number; this method is how the decided
+// number is written down.
+//
+// The module's own HTTP surface deliberately does NOT expose the underlying
+// service method any more (see internal/modules/cart/api, its Carts
+// interface): a handler bound to it would let the shopper name their own
+// shipping price.
+func (i *Interop) AddShippingMethod(
+	ctx context.Context,
+	cartID, name, shippingOptionID string,
+	amount int64,
+	data json.RawMessage,
+) (string, error) {
+	// The free-form blob is decoded HERE rather than crossing as a map: an
+	// interop surface carries JSON, and turning it into the module's own type is
+	// the translation this type exists to do.
+	var blob map[string]any
+	if len(data) > 0 {
+		if err := json.Unmarshal(data, &blob); err != nil {
+			return "", errors.Wrap(err, errors.KindInvalid, CodeInteropTotalsInvalid,
+				"the shipping method data could not be parsed: %s", cartID)
+		}
+	}
+
+	method, err := i.svc.AddShippingMethod(ctx, cartID, AddShippingMethodInput{
+		Name:             name,
+		ShippingOptionID: shippingOptionID,
+		Amount:           amount,
+		Data:             blob,
+	})
+	if err != nil {
+		return "", err
+	}
+
+	return method.ID, nil
+}
+
 // SetCartTotalsJSON writes the computed totals onto the cart.
 func (i *Interop) SetCartTotalsJSON(ctx context.Context, cartID string, totals json.RawMessage) error {
 	var incoming interopTotals

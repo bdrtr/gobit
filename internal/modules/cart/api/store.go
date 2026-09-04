@@ -382,6 +382,35 @@ func (h *Handler) lineItem(ctx context.Context, cartID, lineID string) (models.L
 		"the line item was written but could not be found in the cart: %s (%s)", lineID, cartID)
 }
 
+// shippingMethod re-reads the shipping method the flow wrote.
+//
+// The reason is [Handler.lineItem]'s, applied to the other decided number: the
+// flow returns an id because a primitive surface cannot carry the module's
+// types, and the response must show the method AS WRITTEN — at the quoted
+// amount — rather than at anything this handler could assemble. That matters
+// most at exactly this endpoint, where the source of the price was just moved
+// off the request.
+//
+// If the method cannot be found the error is Internal: a record written a
+// moment ago being unreadable is not something the client can fix.
+func (h *Handler) shippingMethod(
+	ctx context.Context, cartID, methodID string,
+) (models.ShippingMethod, error) {
+	detail, err := h.svc.GetCart(ctx, cartID)
+	if err != nil {
+		return models.ShippingMethod{}, err
+	}
+	for i := range detail.ShippingMethods {
+		if detail.ShippingMethods[i].ID == methodID {
+			return detail.ShippingMethods[i], nil
+		}
+	}
+
+	return models.ShippingMethod{}, coreerrors.Internal(codeShippingMethodMissing,
+		"the shipping method was written but could not be found in the cart: %s (%s)",
+		methodID, cartID)
+}
+
 // encodeMetadata converts the free-form extra data into the JSON the flow
 // carries; an empty map returns nil.
 //
@@ -634,10 +663,16 @@ func (h *Handler) storeSetBillingAddress(w http.ResponseWriter, r *http.Request)
 }
 
 // addShippingMethodRequest is the shipping method creation body.
+// addShippingMethodRequest carries WHICH option, and nothing about the price.
+//
+// "amount" and "name" were both removed from this body, and their absence is
+// the fix rather than a simplification. The amount is quoted by the fulfillment
+// module from the cart's own facts; the name is the option's own. A request
+// still sending either now FAILS — decodeBody rejects fields it does not
+// recognize — and failing loudly is the point: an integrator who was sending an
+// amount needs to learn that it was being obeyed.
 type addShippingMethodRequest struct {
-	Name             string         `json:"name"`
 	ShippingOptionID string         `json:"shipping_option_id"`
-	Amount           int64          `json:"amount"`
 	Data             map[string]any `json:"data"`
 }
 
@@ -651,16 +686,34 @@ func (h *Handler) storeAddShippingMethod(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	method, err := h.svc.AddShippingMethod(ctx, cartID(r), service.AddShippingMethodInput{
-		Name:             body.Name,
-		ShippingOptionID: body.ShippingOptionID,
-		Amount:           body.Amount,
-		Data:             body.Data,
-	})
+	flow, err := h.shipping()
 	if err != nil {
 		corehttp.WriteError(ctx, w, err)
 		return
 	}
+
+	data, err := encodeMetadata(body.Data)
+	if err != nil {
+		corehttp.WriteError(ctx, w, err)
+		return
+	}
+
+	methodID, err := flow.AddQuotedShippingMethod(ctx, cartID(r), body.ShippingOptionID, data)
+	if err != nil {
+		corehttp.WriteError(ctx, w, err)
+		return
+	}
+
+	// The cart is re-read rather than assembled from the flow's answer. The flow
+	// returns an id on purpose — a primitive surface does not carry the module's
+	// types — and the response has to show the method as it was WRITTEN, at the
+	// quoted amount, not at anything this handler could compose.
+	method, err := h.shippingMethod(ctx, cartID(r), methodID)
+	if err != nil {
+		corehttp.WriteError(ctx, w, err)
+		return
+	}
+
 	corehttp.WriteJSON(ctx, w, http.StatusCreated, singleEnvelope{Data: toShippingMethodDTO(method)})
 }
 
