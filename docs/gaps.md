@@ -396,7 +396,18 @@ the next reader sees a decision instead of a wait.
    (`order/models/models.go`) IN FAVOUR of this skeleton. So today there
    is no correction path of any kind.
 
-4. **Admin cancellation is a stamp.** `CancelOrder` (`order/service/order.go`)
+4. ~~**Admin cancellation is a stamp.**~~ **CLOSED 2026-09-05** — but not the
+   way this finding proposed. Measurement inverted it: making the cancel release
+   stock would have been worse, because it would restock a PAID order without
+   refunding it. What the endpoint had to do was REFUSE.
+
+   The finding's own framing missed why the case was reachable at all: the saga
+   never completes the order it places, so a paid, stock-deducted order sits at
+   `pending`, and the existing "a completed order cannot be canceled" rule read
+   the STATUS as a proxy for "money was collected". The guard is now anchored to
+   the money.
+
+   The original finding: `CancelOrder` (`order/service/order.go`)
    is documented as a SAGA COMPENSATION and does exactly that job: it writes
    `canceled_at` under a row lock. Reached from the admin route it releases no
    reservation, voids no payment and publishes no event — the order module's

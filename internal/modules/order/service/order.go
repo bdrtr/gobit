@@ -499,6 +499,36 @@ func (s *Service) ListOrdersByIDs(ctx context.Context, ids []string) ([]models.O
 // 'pending': arriving here with a completed order means that the world is
 // different from what the saga assumed and that must not be swallowed silently,
 // it has to be VISIBLE.
+//
+// # Why a PAID order is a Conflict too, whatever its status
+//
+// The rule above was right and its test was wrong: it read the STATUS as a
+// proxy for "money has been collected", and that proxy does not hold. The
+// checkout saga never completes the order it places — nothing calls
+// [Service.CompleteOrder] except an admin endpoint — so an order that was paid
+// for, whose stock was deducted and whose cart was closed, sits at 'pending'
+// until an operator marks it complete.
+//
+// So the admin cancel endpoint could stamp a fully paid order canceled. Nothing
+// was refunded, nothing was restocked (the reservations were CONFIRMED at
+// checkout, which deducts the stock rather than holding it), and no event was
+// published — the money simply stopped belonging to an order, which is exactly
+// the outcome the paragraph above forbids.
+//
+// The guard is therefore anchored to the fact and not to the proxy: an order
+// with a collected amount cannot be canceled. That became possible only when
+// the order started knowing what was paid on it (ADR 0022); before that the
+// figure was always zero and this check would have been decoration.
+//
+// It does NOT block the saga's compensation. Compensation is skipped entirely
+// once a capture has been attempted (checkout.Workflows.skipAfterCapture), and
+// the summary is written after the capture — so a compensating saga always
+// arrives here with a zero total.
+//
+// The residual: an order whose money moved but whose summary was never written
+// — the saga died between the capture and the bookkeeping — still passes this
+// guard. That is the same window ADR 0020 and ADR 0022 both leave open and
+// `gobit stuck` reports; no local fact separates it from an unpaid order.
 func (s *Service) CancelOrder(ctx context.Context, orderID, reason string) error {
 	if err := requireID("order_id", orderID); err != nil {
 		return err
@@ -523,7 +553,17 @@ func (s *Service) CancelOrder(ctx context.Context, orderID, reason string) error
 				"a completed order cannot be canceled (%s, status: %s); the return/exchange path has to be used",
 				orderID, order.Status)
 		case models.OrderPending:
-			// Handled below.
+			summary, sumErr := s.store.GetSummary(ctx, orderID)
+			if sumErr != nil {
+				return sumErr
+			}
+			if summary.PaidTotal > 0 {
+				return errors.Conflict(CodeNotPending,
+					"an order with a collected amount cannot be canceled (%s, collected: %d); "+
+						"the money would stop belonging to an order and nothing would be "+
+						"restocked — the return/refund path has to be used",
+					orderID, summary.PaidTotal)
+			}
 		default:
 			return errors.Internal(CodeInconsistentState,
 				"unknown order status %q (%s)", order.Status, orderID)

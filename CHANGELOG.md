@@ -12,6 +12,41 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Eklendi
 
+- **Parası alınmış sipariş artık iptal edilemiyor** — ediliyordu, ve iptal
+  hiçbir şeyi geri almıyordu.
+
+  `CancelOrder`'ın godoc'u doğru kuralı zaten yazmıştı: *"tamamlanmış siparişin
+  parası tahsil edilmiştir; 'iptal edildi' damgası vurmak, tahsil edilmiş bir
+  tutarı hiçbir siparişe bağlı olmayan bir tutara çevirirdi."* Ama kural STATÜYE
+  bakıyordu, ve statü o olgunun vekili değil.
+
+  Ölçüm: **checkout saga'sı yerleştirdiği siparişi hiç tamamlamıyor** —
+  `CompleteOrder`'ı bir admin ucundan başka çağıran yok. Yani parası alınmış,
+  stoğu düşülmüş, sepeti kapanmış bir sipariş, operatör "tamamlandı" işaretini
+  koyana kadar `pending` oturuyor. `POST /admin/v1/orders/{id}/cancel` onu
+  damgalayabiliyordu: iade yok, stok geri gelmiyor (rezervasyonlar ödeme anında
+  ONAYLANIYOR, yani stok tutulmuyor DÜŞÜLÜYOR), olay yayımlanmıyor.
+
+  Denetim artık vekile değil OLGUYA bağlı: tahsil edilmiş tutarı olan sipariş
+  iptal edilemiyor, hata mesajı da doğru yolu adıyla söylüyor. Bu ancak ADR
+  0022'den sonra mümkün oldu — öncesinde `paid_total` her siparişte sıfırdı ve
+  bu denetim dekordan ibaret kalırdı.
+
+  Saga telafisini ENGELLEMİYOR: yakalama denendikten sonra telafi zaten
+  tümüyle atlanıyor (`skipAfterCapture`) ve özet yakalamadan SONRA yazılıyor,
+  dolayısıyla telafi eden bir saga buraya hep sıfır tutarla geliyor. Bir test
+  bunu ayrıca sabitliyor.
+
+  İade edilmiş sipariş de iptal edilemiyor ve bu bilinçli: `PaidTotal` hiç
+  küçülmüyor — iade onun yanına yazılıyor, ondan düşülmüyor — yani parası alınıp
+  tamamen iade edilmiş sipariş hâlâ tahsil edilmiş tutar taşıyor. Para iki kez
+  hareket etti ve iki hareket de o siparişe ait.
+
+  Kalan pencere yazıldı: parası hareket etmiş ama özeti hiç yazılmamış sipariş
+  (saga yakalamayla defter tutma arasında ölmüşse) bu denetimden geçiyor. ADR
+  0020 ile 0022'nin ikisinin de açık bıraktığı aynı pencere, ve `gobit stuck`
+  onu raporluyor; onu ödenmemiş bir siparişten ayıran yerel bir olgu yok.
+
 - **Vergi artık doğru girdilerden hesaplanıyor** — karışık sepet baştan sona en
   yüksek orandan vergileniyordu.
 

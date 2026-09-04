@@ -574,6 +574,83 @@ func TestCancelOrderConflictsOnACompletedOrder(t *testing.T) {
 	assert.Equal(t, models.OrderCompleted, current.Status, "the status must not change")
 }
 
+// TestAPaidOrderCannotBeCanceled is the defect this guard closes, and it lives
+// entirely inside "pending".
+//
+// The checkout saga never completes the order it places — nothing calls
+// CompleteOrder except an admin endpoint — so a fully paid order whose stock
+// was deducted and whose cart was closed sits at 'pending'. The admin cancel
+// endpoint would stamp it canceled: nothing refunded, nothing restocked, the
+// money simply no longer belonging to an order.
+func TestAPaidOrderCannotBeCanceled(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+
+	order, err := e.svc.CreateOrder(ctx, validInput())
+	require.NoError(t, err)
+
+	_, err = e.svc.SetOrderSummaryTotals(ctx, order.ID,
+		service.SummaryTotalsInput{PaidTotal: 12_000})
+	require.NoError(t, err)
+
+	err = e.svc.CancelOrder(ctx, order.ID, "the customer changed their mind")
+
+	require.Error(t, err)
+	assert.Equal(t, errors.KindConflict, errors.KindOf(err))
+	assert.Equal(t, service.CodeNotPending, errors.CodeOf(err))
+	assert.Contains(t, err.Error(), "return/refund",
+		"the message has to name the path that IS correct")
+
+	current, err := e.svc.GetOrder(ctx, order.ID)
+	require.NoError(t, err)
+	assert.Equal(t, models.OrderPending, current.Status,
+		"a paid order must keep its status; a canceled stamp is what detaches the money")
+}
+
+// TestAnUnpaidOrderIsStillCancelable keeps the guard from swallowing the case
+// it must not touch.
+//
+// CancelOrder is the create_order step's Compensate. Compensation is skipped
+// once a capture has been attempted, and the summary is written after the
+// capture — so a compensating saga always arrives with a zero total, and the
+// rollback has to keep working.
+func TestAnUnpaidOrderIsStillCancelable(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+
+	order, err := e.svc.CreateOrder(ctx, validInput())
+	require.NoError(t, err)
+
+	require.NoError(t, e.svc.CancelOrder(ctx, order.ID, "the payment was declined"))
+
+	current, err := e.svc.GetOrder(ctx, order.ID)
+	require.NoError(t, err)
+	assert.Equal(t, models.OrderCanceled, current.Status)
+}
+
+// TestARefundedOrderIsStillNotCancelable holds the edge the merge semantics
+// create.
+//
+// PaidTotal never shrinks — a refund is recorded alongside it, not subtracted
+// from it — so an order that was paid and fully refunded still carries a
+// collected amount. It must stay uncancelable: the money moved twice and both
+// movements belong to this order.
+func TestARefundedOrderIsStillNotCancelable(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+
+	order, err := e.svc.CreateOrder(ctx, validInput())
+	require.NoError(t, err)
+	_, err = e.svc.SetOrderSummaryTotals(ctx, order.ID,
+		service.SummaryTotalsInput{PaidTotal: 12_000, RefundedTotal: 12_000})
+	require.NoError(t, err)
+
+	err = e.svc.CancelOrder(ctx, order.ID, "fully refunded")
+
+	require.Error(t, err)
+	assert.Equal(t, errors.KindConflict, errors.KindOf(err))
+}
+
 // TestCancelOrderNotFoundOnAMissingOrder validates that a missing order returns
 // NotFound.
 func TestCancelOrderNotFoundOnAMissingOrder(t *testing.T) {
