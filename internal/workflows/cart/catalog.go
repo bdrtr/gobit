@@ -140,3 +140,62 @@ func (w *Workflows) variantTitle(ctx context.Context, variantID string) (string,
 	}
 	return title, nil
 }
+
+// productIDsFor maps the given variant ids to the products they belong to, in a
+// SINGLE catalog read.
+//
+// # Why the cart needs this at all
+//
+// A cart line knows its variant. Every tax rule is written about a PRODUCT. So
+// without this hop the tax request carries no product at all, and the tax
+// module — which has no way to object — falls every line through to the
+// region's DEFAULT rate. A basket mixing a 1% book, an 8% food item and a 20%
+// electronic is then charged 20% throughout, and nothing in the response says
+// so.
+//
+// # A variant missing from the answer is NOT an error
+//
+// The map simply has no entry for it, and the caller sends an empty product for
+// that line — which is the behavior every line had before this existed. The
+// alternative would be to fail a whole checkout because one variant was
+// invisible in the current sales channel, and that trades a wrong tax rate for
+// no sale at all.
+//
+// A read FAILURE is a different matter and is returned, for the reason
+// [Workflows.priceSetsFor] gives: a fault is not the same fact as an absence.
+func (w *Workflows) productIDsFor(ctx context.Context, variantIDs []string) (map[string]string, error) {
+	out := make(map[string]string, len(variantIDs))
+	if len(variantIDs) == 0 {
+		return out, nil
+	}
+
+	filters := map[string]any{FilterIDs: variantIDs}
+	if channels, apply := salesChannelFilter(ctx); apply {
+		filters[FilterSalesChannelIDs] = channels
+	}
+
+	records, err := w.catalog.Graph(ctx, query.GraphSpec{
+		Entity:  EntityVariant,
+		Fields:  []string{query.IDField, FieldProductID},
+		Filters: filters,
+		Limit:   len(variantIDs),
+	})
+	if err != nil {
+		return nil, errors.Wrap(err, errors.KindOf(err), CodeCatalogReadFailed,
+			"could not read the products of %d variants from the catalog", len(variantIDs))
+	}
+
+	for i := range records {
+		variantID, ok := records[i][query.IDField].(string)
+		if !ok || variantID == "" {
+			continue
+		}
+		productID, ok := records[i][FieldProductID].(string)
+		if !ok || productID == "" {
+			continue
+		}
+		out[variantID] = productID
+	}
+
+	return out, nil
+}

@@ -12,6 +12,32 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Eklendi
 
+- **Vergi artık doğru girdilerden hesaplanıyor** — karışık sepet baştan sona en
+  yüksek orandan vergileniyordu.
+
+  Vergi modülü eksiksiz ve kurallarını ÜRÜN üstünden eşliyor. Sepet dikişi ise
+  her kalemi yalnızca kimlik ve tutarla kuruyordu; `product_id` alanı şemada
+  vardı ve BOŞ gidiyordu, gerekçesi de "bu fazda: sepet satırı varyantı bilir,
+  ürünü bilmez". Sonuç: her satır bölgenin VARSAYILAN oranına düşüyordu. %1
+  kitap, %8 gıda ve %20 elektronik karışık bir sepet baştan sona %20 ödüyordu ve
+  yanıtta bunu söyleyen hiçbir şey yoktu.
+
+  Oysa `product_id` varyant kaydında zaten var (`variantRecord`) ve sepet akışı
+  zaten katalog okuyor. Eksik olan tek şey istemekti. Artık varyanttan ürüne
+  TEK toplu sorguyla geçiliyor — `CalculateTotals` her sepet güncellemesinde
+  koşuyor, satır başına okuma N+1 olurdu ve bir test bunu sabitliyor.
+
+  İki davranış ayrı ayrı korunuyor: kataloğun DÖNMEDİĞİ bir varyant (silinmiş ya
+  da kanal dışı) ürünsüz kalıyor ve o satır varsayılan orana düşüyor — bütün
+  ödemeyi düşürmek, tek satırdaki yanlış oranı hiç satış olmamasıyla takas
+  etmek olurdu. Katalog HATASI ise dönüyor: yokluk bir olgudur, arıza değildir,
+  ve geçici bir erişilemezlik yüzünden satırı sessizce varsayılan orana kaydırmak
+  tam olarak kaçınılan şey.
+
+  `product_type_id` boş kalmaya devam ediyor ve bu erteleme değil: gobit'te ürün
+  tipi kavramı YOK. Alan şemada duruyor çünkü vergi modülü onu kabul ediyor;
+  katalog tip kazandığı gün değer oraya yazılır, başka hiçbir şey değişmez.
+
 - **Sipariş artık üzerine ne ödendiğini biliyor** (ADR 0022) — `paid_total` her
   gerçek siparişte sıfırdı.
 

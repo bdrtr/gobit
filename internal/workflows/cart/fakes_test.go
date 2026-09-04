@@ -18,6 +18,8 @@ const (
 	testCurrency   = "TRY"
 	testCustomerID = "cust_1"
 	testVariantA   = "var_a"
+	testProductA   = "prod_a"
+	testProductB   = "prod_b"
 	testVariantB   = "var_b"
 	testPriceSetA  = "pset_a"
 	testPriceSetB  = "pset_b"
@@ -366,6 +368,12 @@ func (s *stubShipping) ListOptionsJSON(
 type stubCatalog struct {
 	// titles is a variant -> title mapping.
 	titles map[string]string
+	// products is a variant -> product mapping.
+	//
+	// A variant that is missing from here is returned WITHOUT a product field,
+	// which is how the catalog answers for a variant it knows nothing about;
+	// the tax request then carries an empty product for that line.
+	products map[string]string
 	// countries is a region -> country codes mapping.
 	countries map[string][]string
 	// scopedOut holds the variants for which NO RECORD IS RETURNED on a query
@@ -394,6 +402,14 @@ func (s *stubCatalog) Graph(_ context.Context, spec query.GraphSpec) ([]query.Re
 		return nil, s.err
 	}
 
+	// The BATCH branch: a set of variants read in one query (the plural "ids"
+	// filter). It is a separate branch rather than a generalization of the
+	// single one, because the two call sites want different fields and the fake
+	// must not answer with a field the caller did not ask for.
+	if ids, batch := spec.Filters[FilterIDs].([]string); batch {
+		return s.variantBatch(spec, ids), nil
+	}
+
 	id, ok := spec.Filters[query.IDField].(string)
 	if !ok {
 		return nil, errors.Invalid("test_bad_filter", "the ID filter is not a string")
@@ -406,6 +422,29 @@ func (s *stubCatalog) Graph(_ context.Context, spec query.GraphSpec) ([]query.Re
 		return []query.Record{}, nil
 	}
 	return []query.Record{{query.IDField: id, FieldTitle: title}}, nil
+}
+
+// variantBatch answers a batch variant read with the requested fields.
+func (s *stubCatalog) variantBatch(spec query.GraphSpec, ids []string) []query.Record {
+	_, scoped := spec.Filters[FilterSalesChannelIDs]
+
+	out := make([]query.Record, 0, len(ids))
+	for _, id := range ids {
+		if scoped && s.scopedOut[id] {
+			continue
+		}
+
+		record := query.Record{query.IDField: id}
+		if productID, known := s.products[id]; known {
+			record[FieldProductID] = productID
+		}
+		if title, known := s.titles[id]; known {
+			record[FieldTitle] = title
+		}
+		out = append(out, record)
+	}
+
+	return out
 }
 
 // regionRecords returns the region record along with its country sub-records.
@@ -483,6 +522,10 @@ func newHarnessWith(t *testing.T, discounts *stubDiscounts, taxes *stubTaxes) *h
 			titles: map[string]string{
 				testVariantA: "Red T-Shirt / M",
 				testVariantB: "Blue Socks",
+			},
+			products: map[string]string{
+				testVariantA: testProductA,
+				testVariantB: testProductB,
 			},
 			countries: map[string][]string{testRegionID: {"TR"}},
 		},

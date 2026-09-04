@@ -60,6 +60,12 @@ const (
 	EntityVariant = "variant"
 	// FieldTitle is the name of the field that holds the title in a variant record.
 	FieldTitle = "title"
+	// FieldProductID is the variant record's product field.
+	//
+	// It is the field a tax rule matches on, and the reason the cart flow reads
+	// it at all: a cart line knows its VARIANT, and every tax rule is written
+	// about a PRODUCT.
+	FieldProductID = "product_id"
 	// FilterSalesChannelIDs is the sales channel filter key of the variant query;
 	// the product module declares its definition (productsvc.FilterSalesChannelIDs).
 	//
@@ -69,6 +75,13 @@ const (
 	// errors.Invalid — not silent, but an arch test still ties the two names
 	// together.
 	FilterSalesChannelIDs = "sales_channel_ids"
+	// FilterIDs is the variant query's BATCH id filter key.
+	//
+	// The plural key exists so a set of variants can be read in ONE query; the
+	// singular [query.IDField] is for the single-row path. Reading a cart's
+	// variants one by one would put an N+1 on the totals path, which runs on
+	// every cart update.
+	FilterIDs = "ids"
 	// EntityRegion is the entity name of regions in the Query layer; the region
 	// module declares its definition.
 	EntityRegion = "region"

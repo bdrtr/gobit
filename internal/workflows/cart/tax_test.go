@@ -45,7 +45,11 @@ func TestCalculateTotalsTaxRequestShape(t *testing.T) {
 	assert.Equal(t, "TR", req.CountryCode, "the country comes from the region's country")
 	assert.Empty(t, req.ProvinceCode, "the cart carries no province")
 	require.Len(t, req.Items, 1)
-	assert.Equal(t, taxRequestItem{ID: testLineA, Amount: 2000}, req.Items[0])
+	assert.Equal(t,
+		taxRequestItem{ID: testLineA, ProductID: testProductA, Amount: 2000},
+		req.Items[0],
+		"the line has to carry its PRODUCT: every tax rule is written about one, "+
+			"and without it the module falls the line through to the region's default rate")
 	assert.Equal(t, taxRequestShipping{Amount: 4990, Taxable: false}, req.Shipping,
 		"the shipping amount is reported but does NOT enter the base")
 }
@@ -342,4 +346,107 @@ func TestCalculateTotalsRegionQueryIsSingleAndNarrow(t *testing.T) {
 	assert.Equal(t, map[string]any{query.IDField: testRegionID}, regionSpecs[0].Filters)
 	assert.Equal(t, 1, regionSpecs[0].Limit)
 	assert.Empty(t, regionSpecs[0].Expand, "no expansion is requested")
+}
+
+// TestEveryTaxedLineCarriesItsProduct is the defect this resolution was built
+// for.
+//
+// The tax module matches its rules on the product. Until the cart resolved it,
+// every line reached the module with an empty product, so a basket mixing a 1%
+// item and a 20% item was charged the region's default rate throughout — and
+// nothing in the answer said so.
+func TestEveryTaxedLineCarriesItsProduct(t *testing.T) {
+	h := newModuleHarness(t)
+	serveSnapshot(h.carts, snapshotOf(1,
+		[]SnapshotItem{
+			{ID: testLineA, VariantID: testVariantA, Quantity: 1},
+			{ID: testLineB, VariantID: testVariantB, Quantity: 1},
+		},
+		nil))
+
+	_, err := h.wf.CalculateTotals(context.Background(), testCartID)
+	require.NoError(t, err)
+
+	require.Len(t, h.taxes.requests, 1)
+	byLine := map[string]string{}
+	for _, item := range h.taxes.requests[0].Items {
+		byLine[item.ID] = item.ProductID
+	}
+
+	assert.Equal(t, testProductA, byLine[testLineA])
+	assert.Equal(t, testProductB, byLine[testLineB],
+		"two lines pointing at different products must not arrive as the same thing")
+}
+
+// TestTheProductsAreReadInONEQuery keeps an N+1 off the totals path.
+//
+// CalculateTotals runs on every cart update, so a per-line catalog read would
+// multiply with the size of the basket.
+func TestTheProductsAreReadInONEQuery(t *testing.T) {
+	h := newModuleHarness(t)
+	serveSnapshot(h.carts, snapshotOf(1,
+		[]SnapshotItem{
+			{ID: testLineA, VariantID: testVariantA, Quantity: 1},
+			{ID: testLineB, VariantID: testVariantB, Quantity: 1},
+		},
+		nil))
+
+	_, err := h.wf.CalculateTotals(context.Background(), testCartID)
+	require.NoError(t, err)
+
+	batched := 0
+	for _, spec := range h.catalog.specs {
+		if _, isBatch := spec.Filters[FilterIDs]; isBatch {
+			batched++
+		}
+	}
+	assert.Equal(t, 1, batched, "the products of a two-line cart must cost ONE query")
+}
+
+// TestAnInvisibleVariantDoesNotFailTheCheckout holds the degradation.
+//
+// A variant the catalog does not return — deleted, or outside the request's
+// sales channel — leaves its line without a product, and that line falls
+// through to the region's default rate. Failing the whole computation instead
+// would trade a wrong rate on one line for no sale at all.
+func TestAnInvisibleVariantDoesNotFailTheCheckout(t *testing.T) {
+	h := newModuleHarness(t)
+	h.catalog.products = map[string]string{testVariantA: testProductA}
+	serveSnapshot(h.carts, snapshotOf(1,
+		[]SnapshotItem{
+			{ID: testLineA, VariantID: testVariantA, Quantity: 1},
+			{ID: testLineB, VariantID: testVariantB, Quantity: 1},
+		},
+		nil))
+
+	_, err := h.wf.CalculateTotals(context.Background(), testCartID)
+	require.NoError(t, err)
+
+	require.Len(t, h.taxes.requests, 1)
+	byLine := map[string]string{}
+	for _, item := range h.taxes.requests[0].Items {
+		byLine[item.ID] = item.ProductID
+	}
+
+	assert.Equal(t, testProductA, byLine[testLineA])
+	assert.Empty(t, byLine[testLineB], "an unknown variant leaves the product empty, it does not fail")
+}
+
+// TestACatalogFAILUREStopsTheComputation is the other half of the same
+// decision.
+//
+// An absence is a fact and degrades; a FAULT is not, and must not be read as
+// "this variant has no product" — that would silently move a line onto the
+// default rate because a database was briefly unreachable.
+func TestACatalogFAILUREStopsTheComputation(t *testing.T) {
+	h := newModuleHarness(t)
+	serveSnapshot(h.carts, snapshotOf(1,
+		[]SnapshotItem{{ID: testLineA, VariantID: testVariantA, Quantity: 1}}, nil))
+	h.catalog.err = errors.Internal("catalog_down", "the catalog is unreachable")
+
+	_, err := h.wf.CalculateTotals(context.Background(), testCartID)
+
+	require.Error(t, err)
+	assert.Equal(t, CodeCatalogReadFailed, errors.CodeOf(err))
+	assert.Empty(t, h.taxes.requests, "no tax may be computed from a catalog that could not be read")
 }

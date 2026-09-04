@@ -403,7 +403,18 @@ the next reader sees a decision instead of a wait.
    only `Publish` is `order.placed`. Stock release lives on the saga's
    compensation path, which this endpoint does not go through.
 
-5. **Tax is computed from inputs that were thrown away.** The tax module is
+5. ~~**Tax is computed from inputs that were thrown away.**~~ **PARTLY CLOSED
+   2026-09-05.** The cart now resolves each line's product from the catalog in
+   one batch read and sends it, so tax rules match per product instead of every
+   line falling through to the region's default rate.
+
+   Still open on this axis: `ProvinceCode` is never sent (the cart carries no
+   province), a region holding more than one country still resolves to none, the
+   applied rate is discarded at the boundary so no order can say which rate it
+   was charged, and shipping tax is hard-wired off. `product_type_id` stays
+   empty legitimately — gobit has no product type.
+
+   The original finding: The tax module is
    complete; the cart seam starves it. `workflows/cart/tax.go` builds
    each item with only `ID` and `Amount` — no `product_id`, no
    `product_type_id` — so every line falls through to the region's DEFAULT rate.

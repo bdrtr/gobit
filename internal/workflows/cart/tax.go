@@ -77,10 +77,20 @@ type taxRequestItem struct {
 	// ID is the identity of the cart line; the tax comes back with the same
 	// identity.
 	ID string `json:"id"`
-	// ProductID is for rule matching and is EMPTY in this phase: the cart line
-	// knows the variant, it does not know the product.
+	// ProductID is what a tax rule matches on.
+	//
+	// The cart line knows its VARIANT, so the product is resolved from the
+	// catalog before the request is built ([Workflows.productIDsFor]). It is
+	// empty only for a line whose variant the catalog did not return — an
+	// invisible or deleted variant — and such a line falls through to the
+	// region's default rate rather than failing the checkout.
 	ProductID string `json:"product_id"`
-	// ProductTypeID is for rule matching and is EMPTY in this phase.
+	// ProductTypeID is for rule matching and is ALWAYS EMPTY.
+	//
+	// Not an oversight and not deferred: gobit has no product type. The field
+	// stays in the schema because the tax module accepts it and a rule written
+	// against a type is a thing that module can express; the day the catalog
+	// grows types, this is where the value goes and nothing else changes.
 	ProductTypeID string `json:"product_type_id"`
 	// Amount is the line's taxable base AFTER DISCOUNT.
 	Amount int64 `json:"amount"`
@@ -243,11 +253,31 @@ func (w *Workflows) applyModuleTax(
 	shippingTotal int64,
 	lines []LineTotals,
 ) (string, error) {
+	// The PRODUCT of each line is resolved before the request is built. A cart
+	// line knows its variant and every tax rule is written about a product, so
+	// without this the module has nothing to match on and falls every line
+	// through to the region's default rate.
+	variantIDs := make([]string, 0, len(snap.Items))
+	lineVariant := make(map[string]string, len(snap.Items))
+	for i := range snap.Items {
+		if snap.Items[i].VariantID == "" {
+			continue
+		}
+		variantIDs = append(variantIDs, snap.Items[i].VariantID)
+		lineVariant[snap.Items[i].ID] = snap.Items[i].VariantID
+	}
+
+	productIDs, err := w.productIDsFor(ctx, variantIDs)
+	if err != nil {
+		return "", err
+	}
+
 	items := make([]taxRequestItem, 0, len(lines))
 	for i := range lines {
 		items = append(items, taxRequestItem{
-			ID:     lines[i].LineItemID,
-			Amount: lines[i].Subtotal - lines[i].DiscountTotal,
+			ID:        lines[i].LineItemID,
+			ProductID: productIDs[lineVariant[lines[i].LineItemID]],
+			Amount:    lines[i].Subtotal - lines[i].DiscountTotal,
 		})
 	}
 
