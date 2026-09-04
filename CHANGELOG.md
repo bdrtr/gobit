@@ -1543,7 +1543,7 @@ adımını YAZANLARI ilgilendiriyor.
   yüzeyindeki kararın aynısı. Üç durum da okuma yüzeyiyle BİREBİR aynı ayrılır:
   kimlik yok → süzgeç uygulanmaz, kanalsız kimlik → BOŞ KÜME (yalnızca atamasız
   ürünler), kanallı kimlik → o kanallar. İki türetmenin aynı anlamı taşıdığını
-  bir arch testi çiviler (`TestKanalTuretmesiIkiYuzeydeAyniAnlamda`).
+  bir arch testi çiviler (`TestChannelDerivationMeansTheSameOnBothSurfaces`).
 
   Kapsam dışı varyant, hiç var olmayan varyantla **aynı** hatayı döner
   (`404 cart_workflow_variant_unknown`): farklı bir sınıf, başka bir kanalda
@@ -1554,7 +1554,7 @@ adımını YAZANLARI ilgilendiriyor.
   eklemedir ve sepete GİRMİŞ bir satırın, ürünü sonradan başka bir kanala
   taşıyan bir yönetici düzenlemesiyle ödenemez hâle gelmemesi verilmiş bir
   karardır. Sınır `workflows/cart/saleschannel.go`'da ve README'de yazılıdır;
-  bir arch testi (`TestVaryantOkumalariKanalKararindanGecer`) her yeni varyant
+  bir arch testi (`TestVariantReadsGoThroughTheChannelDecision`) her yeni varyant
   okumasını ya kararı vermeye ya da gerekçesini yazmaya zorlar.
 
   **Kimden ne isteniyor:** kanal ataması hiç kullanmayan kurulumlar
@@ -1655,7 +1655,7 @@ aynen geçerlidir; model değişmedi. Değişen tek şey, modelin kapsamadığı
   düzenlemesiyle müşterinin dolu sepetini ödenemez hâle getirmesiydi. Karar
   gerekçesiyle `internal/workflows/cart/saleschannel.go`'da yazılıdır ve bir
   arch testi her yeni varyant okumasını aynı kararı vermeye zorlar
-  (`TestVaryantOkumalariKanalKararindanGecer`).
+  (`TestVariantReadsGoThroughTheChannelDecision`).
 
 - **Çok kiracılılık YOKTUR ve bu bir karardır: sınır KURULUMDUR, satır değil.**
   74 tablonun hiçbirinde "bu satır kime ait" sorusunun cevabı yoktur, hiçbir

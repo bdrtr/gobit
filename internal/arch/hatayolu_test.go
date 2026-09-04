@@ -249,7 +249,7 @@ func TestHTTPYuzeyleriYalnizcaApiPaketlerinde(t *testing.T) {
 				continue
 			}
 			yaziciTasiyanDosya++
-			paket := depoYolu(filepath.Dir(dosya))
+			paket := repoPath(filepath.Dir(dosya))
 			if filepath.Base(paket) == "api" {
 				continue
 			}
@@ -567,7 +567,7 @@ func modulDisiPaketler(t *testing.T) []string {
 			continue
 		}
 
-		yol := depoYolu(dosya)
+		yol := repoPath(dosya)
 		if strings.HasPrefix(yol, modulesDir+string(filepath.Separator)) || yol == cekirdekYaziciTanimi {
 			continue
 		}
@@ -614,7 +614,7 @@ func cekirdekPaketiniDenetle(t *testing.T, dizin string, kullanilan []map[string
 	agaclar := make(map[string]*ast.File, len(dosyalar))
 
 	for _, dosya := range dosyalar {
-		if depoYolu(dosya) == cekirdekYaziciTanimi {
+		if repoPath(dosya) == cekirdekYaziciTanimi {
 			continue
 		}
 
@@ -635,7 +635,7 @@ func cekirdekPaketiniDenetle(t *testing.T, dizin string, kullanilan []map[string
 			dosya:              dosya,
 			yollar:             importYollari(agac),
 			sarmalayicilar:     sarmalayicilar,
-			cekirdekHTTPPaketi: depoYolu(dizin) == cekirdekHTTPDizini,
+			cekirdekHTTPPaketi: repoPath(dizin) == cekirdekHTTPDizini,
 			kullanildi:         kullanilan,
 		}
 
@@ -826,13 +826,13 @@ func (d *cekirdekDenetimi) ihlal(fonksiyon, kaynak string, pos token.Pos, bicim 
 
 	konum := d.fset.Position(pos)
 	d.t.Errorf("%s:%d: %s içinde "+bicim,
-		append([]any{depoYolu(d.dosya), konum.Line, fonksiyon}, args...)...)
+		append([]any{repoPath(d.dosya), konum.Line, fonksiyon}, args...)...)
 }
 
 // muafMi çağrının bu dosya ve fonksiyon için gerekçelendirilip
 // gerekçelendirilmediğini söyler.
 func (d *cekirdekDenetimi) muafMi(fonksiyon, kaynak string) bool {
-	yol := depoYolu(d.dosya)
+	yol := repoPath(d.dosya)
 
 	for i, muaf := range cekirdekYaziciMuafiyetleri {
 		if filepath.FromSlash(muaf.dosya) != yol || muaf.fonksiyon != fonksiyon {
@@ -913,7 +913,7 @@ func cekirdekYazicisiGeciyorMu(t *testing.T, dosya string) bool {
 
 	d := &cekirdekDenetimi{
 		yollar:             importYollari(agac),
-		cekirdekHTTPPaketi: depoYolu(filepath.Dir(dosya)) == cekirdekHTTPDizini,
+		cekirdekHTTPPaketi: repoPath(filepath.Dir(dosya)) == cekirdekHTTPDizini,
 	}
 
 	bulundu := false
@@ -1191,7 +1191,7 @@ func (d *denetim) muafMi(kaynak string) bool {
 	if kaynak == "" {
 		return false
 	}
-	yol := depoYolu(d.dosya)
+	yol := repoPath(d.dosya)
 	for i, muaf := range hataYoluMuafiyetleri {
 		if filepath.FromSlash(muaf.dosya) == yol && muaf.cagri == kaynak {
 			d.kullanildi[i] = true
@@ -1207,7 +1207,7 @@ func (d *denetim) muafMi(kaynak string) bool {
 func (d *denetim) hata(pos token.Pos, bicim string, args ...any) {
 	d.t.Helper()
 	konum := d.fset.Position(pos)
-	d.t.Errorf("%s:%d: "+bicim, append([]any{depoYolu(d.dosya), konum.Line}, args...)...)
+	d.t.Errorf("%s:%d: "+bicim, append([]any{repoPath(d.dosya), konum.Line}, args...)...)
 }
 
 // hedefBilgisi bir çağrının nereye gittiğini anlatır.
@@ -1550,8 +1550,8 @@ func cekirdekHataYolunuKullaniyor(t *testing.T, dizin string) bool {
 	return false
 }
 
-// depoYolu mutlak ya da göreli bir yolu depo köküne göre normalleştirir.
-func depoYolu(yol string) string {
+// repoPath mutlak ya da göreli bir yolu depo köküne göre normalleştirir.
+func repoPath(yol string) string {
 	temiz := filepath.Clean(yol)
 	kok := filepath.Clean(repoRoot) + string(filepath.Separator)
 

@@ -58,7 +58,7 @@ import (
 // Bedeli dürüstçe: bağımlılık imzada GÖRÜNMEZ. Bu yüzden yeni bir varyant
 // okumasının kanal kararını atlaması derleme hatası değildir ve internal/arch
 // altındaki bir değişmez, yapıyı gezerek o boşluğu kapatır
-// (bkz. TestVaryantOkumalariKanalKararindanGecer).
+// (bkz. TestVariantReadsGoThroughTheChannelDecision).
 //
 // # Kapsam GİRİŞTE uygulanır
 //

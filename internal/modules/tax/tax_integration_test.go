@@ -179,7 +179,7 @@ func sayim(ctx context.Context, t *testing.T, sql string, args ...any) int64 {
 // devam eder. Satırları ham SQL ile süpürmek, modülün API'siyle ULAŞILAMAZ bir
 // ön koşul kurar ve hatanın tetikleyicisini testten çıkarırdı.
 //
-// internal/arch'taki TestMigrationlarGercektenGeriAlinabilir aynı gidiş dönüşü
+// internal/arch'taki TestMigrationsCanReallyBeRolledBack aynı gidiş dönüşü
 // BOŞ şema üzerinde koşar; veriye bağlı geri alma hatası ancak burada yakalanır.
 func TestMigrationGeriAlinabilir(t *testing.T) {
 	ctx := context.Background()

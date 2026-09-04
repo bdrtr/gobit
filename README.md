@@ -185,7 +185,7 @@ için uygular — yarın eklenen vaka sessizce dışarıda kalır.
 | `TestBelgelerdekiEklentiAdlariGercek` | Belgelerdeki eklenti adları kayıtlı adlar | README, eklentiyi dizin adıyla (tireli kayıt adı yerine) çağıran bir komut örneği veriyordu; kopyalayan kurulum açılışta "bilinmeyen eklenti" ile duruyordu |
 | `TestHataYanitlariTekYerdenYazilir` | Hata gövdesi yalnızca `corehttp.WriteError`'dan | GraphQL sunucusu kuralı tekrar etmeye çalışıp ayrıştı; DSN+parola istemciye ulaştı, loglanmadı |
 | `TestGraphQLSinirVarsayilanlariConfigleUyusuyor` | `graph.Options`'ın her `Max*` alanının çekirdekte karşılığı var | Beş sertleştirme sınırının ortam değişkeni yoktu; operatör onları ayarlayamıyordu |
-| `TestVaryantOkumalariKanalKararindanGecer` | Query'den `variant` okuyan her fonksiyon satış kanalı kapsamı hakkında **görünür bir karar** verir | Kapsam okuma yüzeyinde uygulanıyor, sepete ekleme yolunda uygulanmıyordu: B kanalının anahtarıyla A kanalının varyantı satın alınabiliyordu |
+| `TestVariantReadsGoThroughTheChannelDecision` | Query'den `variant` okuyan her fonksiyon satış kanalı kapsamı hakkında **görünür bir karar** verir | Kapsam okuma yüzeyinde uygulanıyor, sepete ekleme yolunda uygulanmıyordu: B kanalının anahtarıyla A kanalının varyantı satın alınabiliyordu |
 
 Bu testlerin hepsi **mutasyonla doğrulanmıştır**: değişmez kasten bozulduğunda
 düştükleri gösterilmiştir. Düşürülemeyen bir mimari testi, olmayan bir mimari
@@ -332,7 +332,7 @@ verirdi.
 > sepeti tamamlama yolları kapsamı yeniden sormaz; sepete varyant sokabilen tek
 > yol satır eklemedir ve sepete girmiş bir satır, ürünü sonradan başka bir
 > kanala taşıyan bir düzenleme yüzünden ödenemez hâle gelmez. Kararı
-> `TestVaryantOkumalariKanalKararindanGecer` (bkz. `internal/arch`) korur: yeni
+> `TestVariantReadsGoThroughTheChannelDecision` (bkz. `internal/arch`) korur: yeni
 > bir varyant okuması ya kanal kararını verir ya da gerekçesini yazar.
 
 Katı alternatif — "ataması olmayan ürün hiçbir kanalda görünmez" — daha doğru

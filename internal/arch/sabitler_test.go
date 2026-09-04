@@ -372,14 +372,14 @@ const (
 	// sabitler var" sorusunun tek yapısal cevabı kaynağın kendisidir.
 	configDizini = "internal/core/config"
 
-	// archDizini simetri iddialarının yaşadığı test paketidir; kapsam bu
+	// archDirName simetri iddialarının yaşadığı test paketidir; kapsam bu
 	// ağaçtaki Test* gövdelerinden okunur.
 	//
 	// Yalnızca bu dosya değil TÜM paket taranır: bir iddia komşu bir dosyada
 	// yazıldığında (yapılandırma denetimleri de config'i import eder) denetim
 	// onu da görmelidir. Görmeseydi, doğru yere yazılmış bir iddia yüzünden
 	// düşer ve insanlar testi susturmak için iddiayı bu dosyaya TAŞIRDI.
-	archDizini = "internal/arch"
+	archDirName = "internal/arch"
 
 	// simetriDenetimiAdi kuralı zorlayan testin kendi adıdır ve taramanın
 	// DIŞINDA tutulur.
@@ -511,11 +511,11 @@ func TestConfigSabitleriSimetriIddiasinaBagli(t *testing.T) {
 			"YAZMAK gerekir.\n"+
 			"Yapılacak: ya %s/ altındaki bir Test* gövdesinde eşiyle karşılaştırın, "+
 			"ya da simetrisizConfigSabitleri'ne GEREKÇESİYLE ekleyin.",
-			ad, depoYolu(sabitler[ad].String()), archDizini)
+			ad, repoPath(sabitler[ad].String()), archDirName)
 	}
 
 	bayatMuafiyetleriDenetle(t, simetrisizConfigSabitleri, sabitler,
-		"config paketinin dışa açık bir sabiti", iddialar, archDizini)
+		"config paketinin dışa açık bir sabiti", iddialar, archDirName)
 }
 
 // disaAcikConfigSabitleri config paketinin dışa açık const ve var adlarını
@@ -577,7 +577,7 @@ func simetriIddiasindakiSabitler(t *testing.T) map[string]token.Position {
 	iddialar := map[string]token.Position{}
 	denetimBulundu := false
 
-	for _, dosya := range parseDir(t, fset, filepath.Join(repoRoot, archDizini), true) {
+	for _, dosya := range parseDir(t, fset, filepath.Join(repoRoot, archDirName), true) {
 		takmaAd := ""
 		for ad, yol := range dosya.imports {
 			if yol == configYolu {
@@ -626,14 +626,14 @@ func simetriIddiasindakiSabitler(t *testing.T) map[string]token.Position {
 	require.NotEmpty(t, iddialar,
 		"%s içinde hiç config.<Ad> kullanımı bulunamadı; tarama bozulmuş olmalı — "+
 			"boş bir kapsam kümesi, TÜM sabitleri iddiasız gösterip denetimi "+
-			"gürültüye boğardı", archDizini)
+			"gürültüye boğardı", archDirName)
 
 	require.True(t, denetimBulundu,
 		"%s içinde %q adında bir test YOK; simetriDenetimiAdi bayatlamış olmalı.\n"+
 			"Sabit, denetimin KENDİ adının elle tekrarıdır — yani bu dosyanın "+
 			"kapatmaya çalıştığı sınıfın bir örneği. Ad ayrıştığında dışlama boşa "+
 			"düşer ve denetim kendi gövdesindeki config kullanımlarını kapsam "+
-			"sayarak kendini sessizce onaylamaya başlar.", archDizini, simetriDenetimiAdi)
+			"sayarak kendini sessizce onaylamaya başlar.", archDirName, simetriDenetimiAdi)
 
 	return iddialar
 }

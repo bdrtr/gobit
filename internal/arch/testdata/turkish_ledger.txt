@@ -25,11 +25,7 @@ go-commerce-framework-plan.md
 internal/arch/arch_test.go
 internal/arch/belge_atiflari_test.go
 internal/arch/hatayolu_test.go
-internal/arch/kanal_kapsami_test.go
 internal/arch/kayit_test.go
-internal/arch/koruma_test.go
-internal/arch/migrations_integration_test.go
-internal/arch/openapi_sema_test.go
 internal/arch/sabitler_test.go
 internal/arch/tuketici_test.go
 internal/arch/yapilandirma_test.go

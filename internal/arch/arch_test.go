@@ -31,13 +31,13 @@ const (
 	// gomodYoluAdi deponun modül yolunu BİLDİREN dosyadır; [modulImportOneki]
 	// elle tekrarlanan [modulePath] sabitini oradan doğrular.
 	gomodYoluAdi = "go.mod"
-	// migrationDizinAdi modül migration'larının yaşadığı alt dizindir.
+	// migrationsDirName modül migration'larının yaşadığı alt dizindir.
 	//
 	// Sabit tek yerde durur çünkü ÜÇ denetim (cross-module FK, up/down çifti ve
 	// entegrasyon koşusu) aynı dizin adını arar: ad kaydığında üçü de dosya
 	// bulamaz ve üçü de hiçbir şey bulamadan geçerdi. Adın hâlâ tuttuğu, her
 	// üçünde de bulunan dosya SAYISIYLA doğrulanır.
-	migrationDizinAdi = "migrations"
+	migrationsDirName = "migrations"
 )
 
 // moduleNames depodaki commerce modüllerinin adlarını döner.
@@ -232,7 +232,7 @@ func TestCrossModuleForeignKeyYok(t *testing.T) {
 	var okunanDosya, sahiplenilenTablo, gorulenBaglanti int
 
 	for _, mod := range moduleNames(t) {
-		migDir := filepath.Join(repoRoot, modulesDir, mod, migrationDizinAdi)
+		migDir := filepath.Join(repoRoot, modulesDir, mod, migrationsDirName)
 		if _, err := os.Stat(migDir); err != nil {
 			continue
 		}
@@ -275,7 +275,7 @@ func TestCrossModuleForeignKeyYok(t *testing.T) {
 	require.Positive(t, okunanDosya,
 		"hiçbir modülde SQL dosyası bulunamadı; denetim KÖR kalmış olmalı — migration'lar "+
 			"%q dışında bir dizinde ya da .sql dışında bir uzantıda tutuluyor olabilir. "+
-			"Dosya bulamayan bir tarama her ihlali onaylar.", migrationDizinAdi)
+			"Dosya bulamayan bir tarama her ihlali onaylar.", migrationsDirName)
 	// Bu üçlünün ORTASI diğer ikisinden farklı iş görür ve farkı yazmak gerekir:
 	// sahiplik kümesi boşaldığında denetim SUSMAZ, tersine her REFERENCES'ı ihlal
 	// sanıp bir yanlış suçlama yığını üretir. Satırın değeri o yığının SEBEBİNİ
@@ -301,7 +301,7 @@ func TestMigrationlarGeriAlinabilir(t *testing.T) {
 	denetlenen := 0
 
 	for _, mod := range moduleNames(t) {
-		migDir := filepath.Join(repoRoot, modulesDir, mod, migrationDizinAdi)
+		migDir := filepath.Join(repoRoot, modulesDir, mod, migrationsDirName)
 		ups, err := filepath.Glob(filepath.Join(migDir, "*.up.sql"))
 		if err != nil {
 			t.Fatalf("%s taranamadı: %v", migDir, err)
@@ -322,7 +322,7 @@ func TestMigrationlarGeriAlinabilir(t *testing.T) {
 		"hiçbir modülde *.up.sql bulunamadı; denetim KÖR kalmış olmalı — migration'lar "+
 			"%q dizini dışına taşınmış ya da adlandırma \".up.sql\" kalıbından çıkmış "+
 			"olabilir.\nDown çifti aranmayan bir migration, geri alınamadığını ancak "+
-			"üretimde söyler.", migrationDizinAdi)
+			"üretimde söyler.", migrationsDirName)
 }
 
 // paraSozcukleri bir alan adının para tuttuğunu düşündüren sözcüklerdir.
