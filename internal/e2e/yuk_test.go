@@ -90,7 +90,7 @@ func TestTemelYukAltindaDogruKalir(t *testing.T) {
 
 			for range is {
 				istek := httptest.NewRequest(http.MethodGet, "/store/v1/products?limit=10", http.NoBody)
-				istek.Header.Set(corehttp.PublishableKeyHeader, publishableAnahtar)
+				istek.Header.Set(corehttp.PublishableKeyHeader, publishableKey)
 
 				kayit := httptest.NewRecorder()
 

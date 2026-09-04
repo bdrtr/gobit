@@ -182,7 +182,7 @@ func multipartGovde(t *testing.T, dosyaAdi, iddiaEdilenTip string, icerik []byte
 //
 // yetki BOŞ verilirse Authorization başlığı hiç EKLENMEZ; "başlık yok" ile
 // "boş başlık" farklı durumlardır ve 401 iddiası ilkini hedefler
-// (bkz. [yonetimIstegi], aynı ayrım).
+// (bkz. [adminRequest], aynı ayrım).
 func yuklemeIstegi(t *testing.T, yetki, dosyaAdi, iddiaEdilenTip string, icerik []byte) *httptest.ResponseRecorder {
 	t.Helper()
 
@@ -205,7 +205,7 @@ func yuklemeIstegi(t *testing.T, yetki, dosyaAdi, iddiaEdilenTip string, icerik 
 func dosyaYukle(t *testing.T, dosyaAdi, iddiaEdilenTip string, icerik []byte) yuklemeGorunumu {
 	t.Helper()
 
-	kayit := yuklemeIstegi(t, "Bearer "+gizliAnahtar, dosyaAdi, iddiaEdilenTip, icerik)
+	kayit := yuklemeIstegi(t, "Bearer "+secretKey, dosyaAdi, iddiaEdilenTip, icerik)
 	require.Equal(t, http.StatusCreated, kayit.Code,
 		"yükleme 201 dönmeli; gövde: %s", kayit.Body.String())
 
@@ -233,12 +233,12 @@ func adresiCagir(t *testing.T, adres string) *httptest.ResponseRecorder {
 	return kayit
 }
 
-// hataKodu bir hata yanıtındaki MAKİNE kodunu döner.
+// errorCode bir hata yanıtındaki MAKİNE kodunu döner.
 //
 // İddia status koduna değil bu koda bağlanır: status, hata SINIFINDAN
 // türetilen kaba bir işarettir (422 hem "tip yasak" hem "gövde bozuk"
 // olabilir), istemcinin gerçekten dallanacağı şey ise koddur.
-func hataKodu(t *testing.T, kayit *httptest.ResponseRecorder) string {
+func errorCode(t *testing.T, kayit *httptest.ResponseRecorder) string {
 	t.Helper()
 
 	var zarf struct {
@@ -262,8 +262,8 @@ func hataKodu(t *testing.T, kayit *httptest.ResponseRecorder) string {
 func depodakiDosyalar(t *testing.T) []string {
 	t.Helper()
 
-	girdiler, err := os.ReadDir(dosyaKoku)
-	require.NoError(t, err, "yükleme kökü okunamadı: %s", dosyaKoku)
+	girdiler, err := os.ReadDir(fileRoot)
+	require.NoError(t, err, "yükleme kökü okunamadı: %s", fileRoot)
 
 	adlar := make([]string, 0, len(girdiler))
 	for _, girdi := range girdiler {
@@ -285,8 +285,8 @@ func depodakiDosyalar(t *testing.T) []string {
 func urunOlustur(t *testing.T, gorselAdresi string) urunGorunumu {
 	t.Helper()
 
-	sira := fiksturSayaci.Add(1)
-	kayit, err := yonetimGovdeliIstek(http.MethodPost, "/admin/v1/products", map[string]any{
+	sira := fixtureCounter.Add(1)
+	kayit, err := adminRequestWithBody(http.MethodPost, "/admin/v1/products", map[string]any{
 		"handle": fmt.Sprintf("e2e-gorselli-urun-%d", sira),
 		"title":  "Görselli Ürün",
 		"status": string(productmodels.StatusPublished),
@@ -374,8 +374,8 @@ func TestYuklenenGorselUrunGorseliOlarakKullanilir(t *testing.T) {
 	// product'tan geçen kısmını hiç sınamaz ve ürün kaydı adresi kırparak
 	// (ya da kaçış karakteri ekleyerek) saklasa bile test yeşil kalırdı.
 	t.Run("ürün kaydındaki adres hâlâ içerik döndürür", func(t *testing.T) {
-		okunan := yonetimIstegi(t, http.MethodGet, "/admin/v1/products/"+urun.ID,
-			"Bearer "+gizliAnahtar)
+		okunan := adminRequest(t, http.MethodGet, "/admin/v1/products/"+urun.ID,
+			"Bearer "+secretKey)
 		require.Equal(t, http.StatusOK, okunan.Code,
 			"ürün okunmalı; gövde: %s", okunan.Body.String())
 
@@ -450,11 +450,11 @@ func TestYalanIcerikTipiyleGonderilenMetinReddedilir(t *testing.T) {
 
 			// İstemci hem başlıkta hem dosya adında "png" diyor; ikisi de
 			// birer İDDİADIR ve ikisi de yalandır.
-			kayit := yuklemeIstegi(t, "Bearer "+gizliAnahtar, senaryo.dosya, "image/png", senaryo.icerik)
+			kayit := yuklemeIstegi(t, "Bearer "+secretKey, senaryo.dosya, "image/png", senaryo.icerik)
 
 			require.Equal(t, http.StatusUnprocessableEntity, kayit.Code,
 				"%s içeriği reddedilmeli; gövde: %s", senaryo.beklTip, kayit.Body.String())
-			assert.Equal(t, filesvc.CodeTypeNotAllowed, hataKodu(t, kayit),
+			assert.Equal(t, filesvc.CodeTypeNotAllowed, errorCode(t, kayit),
 				"ret sebebi izin listesi olmalı; başka bir kod, dosyanın başka bir sebeple "+
 					"düştüğü ve tip denetiminin hiç çalışmamış olabileceği anlamına gelir")
 			assert.Equal(t, oncekiler, depodakiDosyalar(t),
@@ -485,8 +485,8 @@ func TestSilinenYuklemeninAdresiIcerikDondurmez(t *testing.T) {
 	require.Contains(t, depodakiDosyalar(t), anahtar,
 		"ön koşul: yüklenen dosya silmeden önce depoda olmalı")
 
-	silme := yonetimIstegi(t, http.MethodDelete, yuklemeYolu+"/"+yukleme.ID,
-		"Bearer "+gizliAnahtar)
+	silme := adminRequest(t, http.MethodDelete, yuklemeYolu+"/"+yukleme.ID,
+		"Bearer "+secretKey)
 	require.Equal(t, http.StatusNoContent, silme.Code,
 		"silme 204 dönmeli; gövde: %s", silme.Body.String())
 

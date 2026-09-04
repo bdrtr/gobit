@@ -27,166 +27,166 @@ import (
 	checkoutwf "github.com/bdrtr/gobit/internal/workflows/checkout"
 )
 
-// Bu dosya SİPARİŞ -> OLAY -> BİLDİRİM zincirini uçtan uca kanıtlar: sepet
-// siparişe çevrilir, order modülü "order.placed" yayımlar, notification modülü
-// olayı alır, siparişin iletişim bilgisini GERÇEK order modülünden okur,
-// sağlayıcıya gider ve denemeyi teslim günlüğüne yazar.
+// This file proves the ORDER -> EVENT -> NOTIFICATION chain end to end: a cart is
+// turned into an order, the order module publishes "order.placed", the notification
+// module receives the event, reads the order's contact details from the REAL order
+// module, goes to the provider and writes the attempt into the delivery log.
 //
-// Kanıtlanan dört iddia:
+// Four claims are proven:
 //
-//  1. Tamamlanan bir sipariş günlüğe TEK kayıt düşürür ve kaydın referansı o
-//     siparişin kimliğidir.
-//  2. Sağlayıcıya giden bildirimin ALICISI siparişin e-postasıdır — adres
-//     olayda YOKTUR, yani abone onu kayıttan okumuştur.
-//  3. Aynı sipariş için ikinci bir olay ikinci bir bildirim ÜRETMEZ.
-//  4. Günlük yönetim ucundan okunur ve kimliksiz istek 401 alır.
+//  1. A completed order drops a SINGLE record into the log and that record's
+//     reference is that order's identifier.
+//  2. The RECIPIENT of the notification that reaches the provider is the order's
+//     email — the address is NOT in the event, which means the subscriber read it
+//     from the record.
+//  3. A second event for the same order does NOT produce a second notification.
+//  4. The log is read from the admin endpoint and an unauthenticated request
+//     gets 401.
 //
-// # Neden bu test modülün kendi entegrasyon testine EK
+// # Why this test is IN ADDITION to the module's own integration test
 //
-// Bildirim modülü order'ı import EDEMEZ (Prensip 2.4); kendi testinde sipariş
-// yüzeyi taklittir ve taklit, elle yazılmış bir JSON şemasıdır. İki tarafın
-// şeması ayrışırsa (order bir alanı yeniden adlandırırsa) o test yeşil kalır ve
-// üretimde her sipariş bildirimi düşerdi. Burada iki taraf da GERÇEKTİR;
-// ayrışma yalnızca burada görülebilir.
+// The notification module CANNOT import order (Principle 2.4); in its own test the
+// order surface is a fake, and that fake is a hand-written JSON schema. If the two
+// sides' schemas diverge (if order renames a field) that test stays green and every
+// order notification would be dropped in production. Here both sides are REAL; the
+// divergence can only be seen here.
 //
-// # Sağlayıcı neden kutudan çıkan "log" DEĞİL
+// # Why the provider is NOT the out-of-the-box "log" one
 //
-// İkinci iddia — "alıcı siparişin e-postasıdır" — adresi GÖREN bir yer
-// gerektirir. Adres ise hiçbir yerde saklanmaz ve bu bilinçlidir: teslim
-// günlüğünde sütunu yoktur, "log" sağlayıcısı da onu loglamaz. Geriye tek bir
-// yer kalır — sağlayıcının kendisi. Bu yüzden zemin gönderimi bir CASUSA
-// ([bildirimSaglayiciCasusu]) yaptırır.
+// The second claim — "the recipient is the order's email" — requires a place that
+// SEES the address. The address, however, is stored nowhere, and that is
+// deliberate: the delivery log has no column for it and the "log" provider does not
+// log it either. That leaves a single place — the provider itself. This is why the
+// harness has a SPY ([notificationProviderSpy]) do the sending.
 //
-// Casus bir SAHTE MODÜL DEĞİLDİR: zincirin tamamı (abonelik, sipariş okuması,
-// kayıt açma, sağlayıcı çözümü, sonuç yazımı) üretim kodudur ve casus tam
-// olarak bir eklenti sağlayıcısının durduğu yerde durur. Kutudan çıkan "log"
-// sağlayıcısı da kayıtta KALIR; ikisi de aşağıdaki
-// TestBildirimSaglayiciKaydiVarsayilaniKorur ile doğrulanır.
+// The spy is NOT A FAKE MODULE: the whole chain (subscription, order read, opening
+// the record, resolving the provider, writing the outcome) is production code and
+// the spy stands exactly where a plugin provider would stand. The out-of-the-box
+// "log" provider REMAINS in the registry as well; both are verified by
+// TestNotificationProviderRegistryKeepsDefault below.
 //
-// Bir e-posta hiçbir yere GİTMEZ; casus yalnızca kendisine verileni tutar.
+// No email GOES anywhere; the spy only holds what it is handed.
 
-// teslimGunluguYolu teslim günlüğü listesinin yönetim ucudur.
+// deliveryLogPath is the admin endpoint of the delivery log listing.
 //
-// Yol ELLE yazılır: notification/api paketinde unexported'tır ve dışa açmanın
-// tek sebebi bu test olurdu. Asıl kanıtlanan da yolun kendisidir — istemcinin
-// bildiği adres budur.
-const teslimGunluguYolu = "/admin/v1/notifications"
+// The path is written out BY HAND: it is unexported in the notification/api package
+// and the only reason to export it would be this test. What is really being proven
+// is the path itself — this is the address the client knows.
+const deliveryLogPath = "/admin/v1/notifications"
 
-// Bildirim senaryosunun fikstür sabitleri.
+// Fixture constants of the notification scenario.
 const (
-	bildirimBirimFiyat  int64 = 30_000
-	bildirimAdet        int64 = 1
-	bildirimStok        int64 = 5
-	bildirimBeklemeSure       = 5 * time.Second
-	bildirimAralik            = 25 * time.Millisecond
+	notificationUnitPrice   int64 = 30_000
+	notificationQuantity    int64 = 1
+	notificationStock       int64 = 5
+	notificationWaitTimeout       = 5 * time.Second
+	notificationInterval          = 25 * time.Millisecond
 )
 
-// bildirimCasusuID casus sağlayıcının kimliğidir (NOTIFICATION_PROVIDER
-// karşılığı).
+// notificationSpyID is the identifier of the spy provider (the
+// NOTIFICATION_PROVIDER value).
 //
-// Ad kutudan çıkan hiçbir sağlayıcıyla çakışmaz ve "e2e" önekiyle nereden
-// geldiğini söyler: teslim günlüğünde provider_id olarak görünür ve bir
-// üretim kurulumunda görülmesi kurulumun yanlış olduğunun kanıtı olur.
-const bildirimCasusuID = "e2e-casus"
+// The name collides with no out-of-the-box provider and its "e2e" prefix says where
+// it came from: it shows up as provider_id in the delivery log, and seeing it in a
+// production installation is proof that the installation is wrong.
+const notificationSpyID = "e2e-spy"
 
-// bildirimVeriAnahtariSiparisID şablon verisindeki sipariş kimliği
-// anahtarıdır.
+// notificationDataKeyOrderID is the order identifier key in the template data.
 //
-// Ad elle tekrarlanır çünkü notification modülünün şablon veri anahtarları
-// unexported'tır ve öyle kalmalıdır: onları okuyan taraf sağlayıcıdır ve
-// sağlayıcı, adları dizeyle okuyan YABANCI koddur (çoğu zaman bir eklenti).
-// Casus da tam olarak öyle davranır; sabiti dışa açmak, testin sağlayıcıdan
-// daha ayrıcalıklı bir konumdan bakması demek olurdu.
-const bildirimVeriAnahtariSiparisID = "order_id"
+// The name is repeated by hand because the notification module's template data keys
+// are unexported and must stay that way: the side that reads them is the provider,
+// and a provider is FOREIGN code that reads the names as strings (most of the time
+// a plugin). The spy behaves exactly that way; exporting the constant would mean
+// the test looks on from a more privileged position than the provider does.
+const notificationDataKeyOrderID = "order_id"
 
-// bildirimCasusu zemindeki tek bildirim sağlayıcısıdır.
+// notificationSpy is the only notification provider in the harness.
 //
-// Örnek SÜREÇ ÖMÜRLÜDÜR ve tüm testler onu paylaşır: sağlayıcı kaydı
-// abonelikler gibi geri alınamaz, dolayısıyla test başına bir casus kaydetmek
-// ikinci testte errors.Conflict verirdi. Testler kendi bildirimlerini SİPARİŞ
-// KİMLİĞİYLE süzer.
-var bildirimCasusu = &bildirimSaglayiciCasusu{}
+// The instance is PROCESS LIFETIME and all tests share it: a provider registration
+// cannot be undone, just like a subscription, so registering a spy per test would
+// give errors.Conflict on the second test. Tests filter their own notifications BY
+// ORDER IDENTIFIER.
+var notificationSpy = &notificationProviderSpy{}
 
-// bildirimSaglayiciCasusu kendisine verilen bildirimleri tutan, hiçbir yere
-// göndermeyen bir bildirim sağlayıcısıdır.
+// notificationProviderSpy is a notification provider that holds on to the
+// notifications it is handed and sends them nowhere.
 //
-// Eşzamanlı kullanıma güvenlidir: Send bir olay işleyicisinden çağrılır ve
-// [eventbus.EventBus]'ın bellek içi backend'i her işleyiciyi kendi
-// goroutine'inde çalıştırır.
-type bildirimSaglayiciCasusu struct {
-	mu           sync.Mutex
-	yakalananlar []coreprovider.Notification
+// It is safe for concurrent use: Send is called from an event handler and
+// [eventbus.EventBus]'s in-memory backend runs every handler in its own goroutine.
+type notificationProviderSpy struct {
+	mu       sync.Mutex
+	captured []coreprovider.Notification
 }
 
-// Casusun çekirdek sözleşmesini karşıladığı derleme zamanında sabitlenir;
-// karşılamasaydı zemin kurulurken değil, burada kırılırdı.
-var _ coreprovider.NotificationProvider = (*bildirimSaglayiciCasusu)(nil)
+// That the spy satisfies the core contract is pinned at compile time; if it did
+// not, this would break here rather than while the harness is being built.
+var _ coreprovider.NotificationProvider = (*notificationProviderSpy)(nil)
 
-// ID casusun kimliğini döner.
-func (c *bildirimSaglayiciCasusu) ID() string { return bildirimCasusuID }
+// ID returns the spy's identifier.
+func (s *notificationProviderSpy) ID() string { return notificationSpyID }
 
-// Send bildirimi kaydeder ve BAŞARILI döner.
+// Send records the notification and returns SUCCESS.
 //
-// Başarı dönmek gerçek bir seçimdir: sözleşmeye göre hata dönmek "gitmedi"
-// demek değildir ve kayıt "failed" olurdu — oysa bu testlerin sınadığı yol
-// mutlu yoldur. Sağlayıcı hatasının günlüğe nasıl yazıldığı notification
-// modülünün kendi entegrasyon testindedir.
+// Returning success is a real choice: by the contract, returning an error does not
+// mean "it did not go out" and the record would be "failed" — whereas the path
+// these tests exercise is the happy path. How a provider error is written into the
+// log lives in the notification module's own integration test.
 //
-// Data KOPYALANIR: sözleşme, çağrının haritayı çağrı sonrası değiştirmeyeceğini
-// garanti etmez ve saklanan bir referans, testin sonradan değişmiş bir yükü
-// okumasına yol açabilirdi.
-func (c *bildirimSaglayiciCasusu) Send(_ context.Context, n coreprovider.Notification) error {
-	kopya := n
-	kopya.Data = maps.Clone(n.Data)
+// Data is COPIED: the contract does not guarantee that the caller will leave the
+// map alone after the call, and a stored reference could lead to the test reading a
+// payload that has changed in the meantime.
+func (s *notificationProviderSpy) Send(_ context.Context, n coreprovider.Notification) error {
+	copied := n
+	copied.Data = maps.Clone(n.Data)
 
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.yakalananlar = append(c.yakalananlar, kopya)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.captured = append(s.captured, copied)
 	return nil
 }
 
-// bildirimler verilen siparişe ait yakalanmış bildirimleri döner.
+// notificationsFor returns the captured notifications belonging to the given order.
 //
-// Süzme şablon verisindeki sipariş kimliği üzerindendir; ALICI ADRESİ
-// üzerinden süzmek, tam da kanıtlanmak istenen şeyi varsaymak olurdu.
-func (c *bildirimSaglayiciCasusu) bildirimler(siparisID string) []coreprovider.Notification {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+// The filter goes through the order identifier in the template data; filtering by
+// RECIPIENT ADDRESS would be assuming exactly the thing that is meant to be proven.
+func (s *notificationProviderSpy) notificationsFor(orderID string) []coreprovider.Notification {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 
-	var bulunan []coreprovider.Notification
-	for i := range c.yakalananlar {
-		if c.yakalananlar[i].Data[bildirimVeriAnahtariSiparisID] == siparisID {
-			bulunan = append(bulunan, c.yakalananlar[i])
+	var found []coreprovider.Notification
+	for i := range s.captured {
+		if s.captured[i].Data[notificationDataKeyOrderID] == orderID {
+			found = append(found, s.captured[i])
 		}
 	}
-	return bulunan
+	return found
 }
 
-// bildirimCasusunuKur casusu notification modülünün sağlayıcı kaydına ekler.
+// setUpNotificationSpy adds the spy to the notification module's provider registry.
 //
-// Kayıt container'dan ADLA çözülür ve modüller ayağa kalktıktan SONRA yapılır;
-// eklenti sisteminin izlediği yol da budur (coreplugin.Host'un
-// RegisterNotificationProvider'ı aynı adı çözüp aynı Register'ı çağırır).
-// Zemine test için bir EKLENTİ yazmak yerine kaydı doğrudan çözmek sınanan
-// şeyi değiştirmez ama üretimde var olmayan bir eklentiyi kurulumun içine
-// sokmaz.
+// The registry is resolved from the container BY NAME and it happens AFTER the
+// modules have come up; that is the path the plugin system follows too
+// (coreplugin.Host's RegisterNotificationProvider resolves the same name and calls
+// the same Register). Resolving the registry directly instead of writing a PLUGIN
+// into the harness for the test does not change what is being exercised, but it
+// does keep a plugin that does not exist in production out of the installation.
 //
-// Çağrı Bootstrap'tan önce yapılamaz: "notification.providers" container'a
-// modülün Register'ında konur.
-func bildirimCasusunuKur() error {
-	kayit, err := container.Resolve[*notificationsvc.ProviderRegistry](kap, notificationmod.ProvidersName)
+// The call cannot be made before Bootstrap: "notification.providers" is put into
+// the container by the module's Register.
+func setUpNotificationSpy() error {
+	registry, err := container.Resolve[*notificationsvc.ProviderRegistry](ctr, notificationmod.ProvidersName)
 	if err != nil {
 		return err
 	}
-	return kayit.Register(bildirimCasusu)
+	return registry.Register(notificationSpy)
 }
 
-// bildirimKaydi teslim günlüğü ucunun yanıt gövdesidir.
+// notificationRecord is the response body of the delivery log endpoint.
 //
-// Şema, notification modülünün DTO'sundan bağımsız olarak burada TEKRAR
-// tanımlanır: sınanan şey istemcinin gördüğü JSON'dur ve modülün tipini
-// kullanmak, alan adı değişse bile testin yeşil kalması demekti.
-type bildirimKaydi struct {
+// The schema is defined AGAIN here, independently of the notification module's DTO:
+// what is being exercised is the JSON the client sees, and using the module's type
+// would have meant the test stays green even when a field name changes.
+type notificationRecord struct {
 	ID         string `json:"id"`
 	Template   string `json:"template"`
 	Channel    string `json:"channel"`
@@ -196,325 +196,336 @@ type bildirimKaydi struct {
 	Error      string `json:"error"`
 }
 
-// bildirimleriIste yönetim ucundan bir siparişin teslim kayıtlarını okur ve
-// sorunu HATA olarak döner.
+// fetchNotifications reads an order's delivery records from the admin endpoint and
+// returns trouble as an ERROR.
 //
-// Ayrım zorunludur: require.Eventually ve require.Never koşulu AYRI BİR
-// GOROUTINE'de çalıştırır, oysa t.FailNow yalnızca testin kendi
-// goroutine'inden çağrılabilir. Bekleme içinde require kullanan bir yardımcı,
-// uç bozulduğunda testi düşürmek yerine ASKIDA bırakırdı — yani asıl arızayı
-// zaman aşımının arkasına saklardı.
-func bildirimleriIste(t *testing.T, jeton, referans string) ([]bildirimKaydi, error) {
+// The distinction is mandatory: require.Eventually and require.Never run the
+// condition in a SEPARATE GOROUTINE, whereas t.FailNow may only be called from the
+// test's own goroutine. A helper that used require inside a wait would leave the
+// test HANGING instead of failing it when the endpoint breaks — that is, it would
+// hide the real fault behind the timeout.
+func fetchNotifications(t *testing.T, token, reference string) ([]notificationRecord, error) {
 	t.Helper()
 
-	kayit := yonetimIstegi(t, http.MethodGet,
-		teslimGunluguYolu+"?reference="+referans, "Bearer "+jeton)
-	if kayit.Code != http.StatusOK {
-		return nil, fmt.Errorf("teslim günlüğü %d döndü; gövde: %s", kayit.Code, kayit.Body.String())
+	response := adminRequest(t, http.MethodGet,
+		deliveryLogPath+"?reference="+reference, "Bearer "+token)
+	if response.Code != http.StatusOK {
+		return nil, fmt.Errorf("delivery log returned %d; body: %s", response.Code, response.Body.String())
 	}
 
-	var zarf struct {
-		Data  []bildirimKaydi `json:"data"`
-		Count int64           `json:"count"`
+	var envelope struct {
+		Data  []notificationRecord `json:"data"`
+		Count int64                `json:"count"`
 	}
-	if err := json.Unmarshal(kayit.Body.Bytes(), &zarf); err != nil {
-		return nil, fmt.Errorf("yanıt çözülemedi (%w); gövde: %s", err, kayit.Body.String())
+	if err := json.Unmarshal(response.Body.Bytes(), &envelope); err != nil {
+		return nil, fmt.Errorf("response could not be decoded (%w); body: %s", err, response.Body.String())
 	}
-	if zarf.Count != int64(len(zarf.Data)) {
+	if envelope.Count != int64(len(envelope.Data)) {
 		return nil, fmt.Errorf(
-			"zarftaki sayı (%d) ile dönen kayıt sayısı (%d) bu süzgeçte örtüşmeli",
-			zarf.Count, len(zarf.Data))
+			"the count in the envelope (%d) and the number of records returned (%d) must match for this filter",
+			envelope.Count, len(envelope.Data))
 	}
 
-	return zarf.Data, nil
+	return envelope.Data, nil
 }
 
-// bildirimleriOku teslim kayıtlarını okur; okuyamazsa testi düşürür.
-func bildirimleriOku(t *testing.T, jeton, referans string) []bildirimKaydi {
+// readNotifications reads the delivery records; if it cannot, it fails the test.
+func readNotifications(t *testing.T, token, reference string) []notificationRecord {
 	t.Helper()
 
-	kayitlar, err := bildirimleriIste(t, jeton, referans)
-	require.NoError(t, err, "teslim günlüğü okunabilmeli")
-	return kayitlar
+	records, err := fetchNotifications(t, token, reference)
+	require.NoError(t, err, "the delivery log must be readable")
+	return records
 }
 
-// bildirimBekle siparişin teslim kaydı NİHAİ duruma gelene kadar bekler.
+// awaitNotification waits until the order's delivery record reaches its FINAL
+// state.
 //
-// Bekleme ZORUNLUDUR: abone [eventbus.EventBus] üzerinden tetiklenir, Publish
-// handler'ları BEKLEMEZ ve bellek içi backend her handler'ı kendi
-// goroutine'inde çalıştırır — sipariş yazılmış olsa bile bildirim kaydı henüz
-// yazılmamış olabilir.
+// The wait is MANDATORY: the subscriber is triggered over [eventbus.EventBus],
+// Publish does NOT WAIT for the handlers and the in-memory backend runs every
+// handler in its own goroutine — even when the order has been written, the
+// notification record may not have been written yet.
 //
-// Nihai duruma ("pending" olmayan) kadar beklemenin ikinci bir faydası vardır:
-// sonuç ancak sağlayıcı DÖNDÜKTEN sonra yazılır, dolayısıyla bu çağrı geri
-// döndüğünde casusun defterine bakmak yarışa açık değildir.
+// Waiting until the final state (anything other than "pending") has a second
+// benefit: the outcome is only written after the provider has RETURNED, so looking
+// at the spy's ledger once this call comes back is not open to a race.
 //
-// # Neden require.Eventually DEĞİL
+// # Why NOT require.Eventually
 //
-// Paketin geri kalanı require.Eventually kullanır; burada yetmez ve sebebi
-// tektir: koşul AYRI BİR GOROUTINE'de çalışır. Bunun iki sonucu var —
-// (1) koşulun içinde require kullanılamaz, çünkü t.FailNow yalnızca testin
-// kendi goroutine'inden çağrılabilir; (2) Eventually'nin mesaj argümanları
-// ÇAĞRI ANINDA, yani koşul hiç koşmadan önce değerlendirilir, dolayısıyla
-// koşulun gördüğü son hatayı mesaja taşımanın yolu yoktur. EventuallyWithT
-// ikisini de çözer: koşulun içindeki assert'ler biriktirilir ve zaman
-// aşımında SON turun hataları basılır. Fark teşhiste ortaya çıkar — bozuk bir
-// uç "bildirim yazılmadı" değil, döndürdüğü status ile raporlanır.
-func bildirimBekle(t *testing.T, jeton, referans string) bildirimKaydi {
+// The rest of the package uses require.Eventually; here it is not enough, and there
+// is a single reason: the condition runs in a SEPARATE GOROUTINE. That has two
+// consequences — (1) require cannot be used inside the condition, because t.FailNow
+// may only be called from the test's own goroutine; (2) Eventually's message
+// arguments are evaluated AT CALL TIME, that is before the condition has run at
+// all, so there is no way to carry the last error the condition saw into the
+// message. EventuallyWithT solves both: the assertions inside the condition are
+// collected and on timeout the failures of the LAST round are printed. The
+// difference shows up in diagnosis — a broken endpoint is reported with the status
+// it returned, not as "no notification was written".
+func awaitNotification(t *testing.T, token, reference string) notificationRecord {
 	t.Helper()
 
-	var bulunan bildirimKaydi
+	var found notificationRecord
 	require.EventuallyWithT(t, func(c *assert.CollectT) {
-		kayitlar, err := bildirimleriIste(t, jeton, referans)
-		if !assert.NoError(c, err, "teslim günlüğü okunabilmeli") {
+		records, err := fetchNotifications(t, token, reference)
+		if !assert.NoError(c, err, "the delivery log must be readable") {
 			return
 		}
-		if !assert.NotEmpty(c, kayitlar, "%s siparişi için teslim kaydı açılmalı", referans) {
-			return
-		}
-
-		// "pending" ARA durumdur: kayıt açıldı ama sonuç henüz yazılmadı.
-		// Onu nihai sanmak, testi yarışa açık hâle getirirdi.
-		if !assert.NotEqual(c, "pending", kayitlar[0].Status,
-			"kaydın sonucu yazılmalı; 'pending' kalan bir satır gönderimin sonucunun "+
-				"yazılamadığını bildirir") {
+		if !assert.NotEmpty(c, records, "a delivery record must be opened for order %s", reference) {
 			return
 		}
 
-		bulunan = kayitlar[0]
-	}, bildirimBeklemeSure, bildirimAralik,
-		"sipariş bildirimi teslim günlüğüne yazılmalı (referans %s)", referans)
+		// "pending" is an INTERMEDIATE state: the record has been opened but the
+		// outcome has not been written yet. Taking it for final would leave the
+		// test open to a race.
+		if !assert.NotEqual(c, "pending", records[0].Status,
+			"the record's outcome must be written; a row left at 'pending' reports "+
+				"that the outcome of the send could not be written") {
+			return
+		}
 
-	return bulunan
+		found = records[0]
+	}, notificationWaitTimeout, notificationInterval,
+		"the order notification must be written into the delivery log (reference %s)", reference)
+
+	return found
 }
 
-// bildirimSiparisi bildirim senaryolarının paylaştığı sipariş fikstürüdür:
-// kayıtlı bir müşteriye tek satırlık bir sepet açar ve onu siparişe çevirir.
+// notificationOrder is the order fixture the notification scenarios share: it opens
+// a single-line cart for a registered customer and turns it into an order.
 //
-// Her senaryo KENDİ siparişini kurar. Zorunludur: olaylar bellek içi veri
-// yolundan geçer ve testler sırayla koşar, dolayısıyla paylaşılan tek bir
-// sipariş ilk testte bildirilir ve ikinci test "ikinci bildirim üretilmedi"
-// iddiasını kendi kurduğu durumda değil, önceki testin artığında sınardı.
-func bildirimSiparisi(
+// Every scenario sets up its OWN order. That is mandatory: events go over the
+// in-memory bus and the tests run in sequence, so a single shared order would be
+// notified in the first test and the second test would exercise its "no second
+// notification was produced" claim on the leftovers of the previous test rather
+// than on state it set up itself.
+func notificationOrder(
 	ctx context.Context,
 	t *testing.T,
-	baslik string,
-) (siparisID, eposta string, toplam int64) {
+	title string,
+) (orderID, email string, total int64) {
 	t.Helper()
 
-	musteriID, adres := yeniMusteri(ctx, t)
-	varyantID, _ := yeniStokluVaryant(ctx, t, baslik, map[string]int64{
-		vergiliParaBirimi: bildirimBirimFiyat,
-	}, bildirimStok)
+	customerID, address := newCustomer(ctx, t)
+	variantID, _ := newStockedVariant(ctx, t, title, map[string]int64{
+		taxedCurrency: notificationUnitPrice,
+	}, notificationStock)
 
-	sepetID, toplamlar := sepetHazirla(ctx, t, musteriID, varyantID, bildirimAdet)
+	cartID, totals := prepareCart(ctx, t, customerID, variantID, notificationQuantity)
 
-	sonuc, err := siparisAkislari.CompleteCart(ctx, checkoutwf.CompleteCartInput{
-		CartID:            sepetID,
-		LocationID:        stokLokasyonID,
+	result, err := orderWorkflows.CompleteCart(ctx, checkoutwf.CompleteCartInput{
+		CartID:            cartID,
+		LocationID:        stockLocationID,
 		PaymentProviderID: manual.ID,
-		PaymentData:       odemeDavranisi(t, manual.OutcomeAuthorize),
-		Email:             adres,
-		ExpectedTotal:     toplamlar.Total,
+		PaymentData:       paymentBehavior(t, manual.OutcomeAuthorize),
+		Email:             address,
+		ExpectedTotal:     totals.Total,
 	})
-	require.NoError(t, err, "sepet siparişe çevrilebilmeli")
+	require.NoError(t, err, "the cart must be convertible into an order")
 
-	return sonuc.OrderID, adres, toplamlar.Total
+	return result.OrderID, address, totals.Total
 }
 
-// TestSiparisOnayiBildirimGunluguneYazilir tamamlanan bir siparişin teslim
-// günlüğüne TEK kayıt düşürdüğünü ve kaydın o siparişe referansladığını
-// doğrular.
+// TestOrderConfirmationIsWrittenToDeliveryLog verifies that a completed order drops
+// a SINGLE record into the delivery log and that the record references that order.
 //
-// Kaydın TEKLİĞİ ayrıca sınanır: ikinci bir kayıt, müşterinin aynı sipariş
-// için iki onay alması demektir ve zincirdeki her halka (yayım, abonelik,
-// idempotency) bunu tek başına bozabilir.
-func TestSiparisOnayiBildirimGunluguneYazilir(t *testing.T) {
+// The record's UNIQUENESS is exercised separately: a second record means the
+// customer gets two confirmations for the same order, and every link in the chain
+// (publication, subscription, idempotency) can break that on its own.
+func TestOrderConfirmationIsWrittenToDeliveryLog(t *testing.T) {
 	ctx := t.Context()
-	jeton := jetonAl(t, yoneticiEposta, yoneticiParola)
+	token := jetonAl(t, adminEmail, adminPassword)
 
-	siparisID, eposta, _ := bildirimSiparisi(ctx, t, "E2E Bildirim Ürünü")
+	orderID, email, _ := notificationOrder(ctx, t, "E2E Notification Product")
 
-	kayit := bildirimBekle(t, jeton, siparisID)
+	record := awaitNotification(t, token, orderID)
 
-	kayitlar := bildirimleriOku(t, jeton, siparisID)
-	require.Len(t, kayitlar, 1,
-		"sipariş için TEK teslim kaydı açılmalı; ikincisi müşteriye ikinci bir onay demektir")
+	records := readNotifications(t, token, orderID)
+	require.Len(t, records, 1,
+		"a SINGLE delivery record must be opened for the order; a second one means a second confirmation for the customer")
 
-	assert.Equal(t, notificationsvc.TemplateOrderPlaced, kayit.Template,
-		"şablon, tetikleyen olayın adıyla aynı olmalı")
-	assert.Equal(t, siparisID, kayit.Reference,
-		"kayıt siparişe REFERANSLA bağlanır; foreign key yoktur (Prensip 2.2)")
-	assert.Equal(t, bildirimCasusuID, kayit.ProviderID,
-		"gönderimi zeminde seçili sağlayıcı üstlenmeli")
-	assert.Equal(t, "sent", kayit.Status,
-		"sağlayıcı isteği kabul etti; 'sent' teslimi değil KABULÜ bildirir")
-	assert.Empty(t, kayit.Error)
+	assert.Equal(t, notificationsvc.TemplateOrderPlaced, record.Template,
+		"the template must carry the same name as the event that triggered it")
+	assert.Equal(t, orderID, record.Reference,
+		"the record is tied to the order BY REFERENCE; there is no foreign key (Principle 2.2)")
+	assert.Equal(t, notificationSpyID, record.ProviderID,
+		"the send must be taken on by the provider selected in the harness")
+	assert.Equal(t, "sent", record.Status,
+		"the provider accepted the request; 'sent' reports ACCEPTANCE, not delivery")
+	assert.Empty(t, record.Error)
 
-	// Kanal ve durum WIRE değerleridir; dize olarak yazılmaları bilinçlidir.
-	// Sabitle karşılaştırmak, JSON'un dışa açık sözleşmesini modülün iç
-	// adlandırmasına bağlar ve sabit yeniden adlandırıldığında test yeşil
-	// kalarak istemcileri kıran bir değişikliği geçirirdi.
-	assert.Equal(t, "email", kayit.Channel)
+	// Channel and status are WIRE values; writing them as strings is deliberate.
+	// Comparing against a constant ties the JSON's public contract to the module's
+	// internal naming, and when the constant was renamed the test would stay green
+	// and let through a change that breaks clients.
+	assert.Equal(t, "email", record.Channel)
 
-	// Adres HİÇBİR YERDE saklanmaz: yanıt gövdesi kişisel veri taşımaz
-	// (plan Bölüm 8).
-	ham, err := json.Marshal(kayit)
+	// The address is stored NOWHERE: the response body carries no personal data
+	// (plan Section 8).
+	raw, err := json.Marshal(record)
 	require.NoError(t, err)
-	assert.NotContains(t, string(ham), eposta,
-		"teslim kaydı alıcı adresini TAŞIMAMALI; adres yalnızca siparişte durur")
+	assert.NotContains(t, string(raw), email,
+		"the delivery record must NOT CARRY the recipient address; the address lives "+
+			"only on the order")
 }
 
-// TestBildirimAlicisiOlaydanDegilSiparistenOkunur sağlayıcıya giden
-// bildirimin alıcısının siparişin e-postası olduğunu doğrular.
+// TestNotificationRecipientIsReadFromOrderNotEvent verifies that the recipient of
+// the notification that goes to the provider is the order's email.
 //
-// # Asıl iddia neden olay yükünde
+// # Why the real claim is about the event payload
 //
-// "Alıcı doğru" demek tek başına zayıftır: abone adresi olay yükünden de
-// okumuş olabilirdi ve test ikisini ayırt edemezdi. Bu yüzden aynı testte
-// olayın KENDİSİ de denetlenir — yükte "email" alanı yoktur ve hiçbir değer
-// adresi taşımaz. İkisi birlikte tek bir sonuç verir: abone adresi ancak
-// "order.interop" üzerinden SİPARİŞ KAYDINDAN okumuş olabilir.
+// "The recipient is correct" is weak on its own: the subscriber could just as well
+// have read the address from the event payload, and the test could not tell the two
+// apart. This is why the same test also inspects the event ITSELF — there is no
+// "email" field in the payload and no value carries the address. Together the two
+// give a single conclusion: the subscriber can only have read the address FROM THE
+// ORDER RECORD, over "order.interop".
 //
-// Denetim aynı zamanda order modülünün kararının bekçisidir: e-posta olay
-// yüküne bilinçli olarak KONMAZ, çünkü olaylar üretimde Redis'e yazılır ve
-// orada kalıcıdır. Birisi "kolaylık olsun" diye alanı eklerse burada kırılır.
-func TestBildirimAlicisiOlaydanDegilSiparistenOkunur(t *testing.T) {
+// The inspection is at the same time the guardian of an order module decision: the
+// email is deliberately NOT PUT into the event payload, because in production
+// events are written to Redis and are durable there. If somebody adds the field
+// "for convenience", it breaks here.
+func TestNotificationRecipientIsReadFromOrderNotEvent(t *testing.T) {
 	ctx := t.Context()
-	jeton := jetonAl(t, yoneticiEposta, yoneticiParola)
+	token := jetonAl(t, adminEmail, adminPassword)
 
-	siparisID, eposta, toplam := bildirimSiparisi(ctx, t, "E2E Bildirim Alıcı Ürünü")
+	orderID, email, total := notificationOrder(ctx, t, "E2E Notification Recipient Product")
 
-	// Kaydın nihai duruma gelmesini beklemek casusun defterini de yarışsız
-	// hâle getirir: sonuç ancak sağlayıcı döndükten sonra yazılır.
-	require.Equal(t, "sent", bildirimBekle(t, jeton, siparisID).Status)
+	// Waiting for the record to reach its final state also makes the spy's ledger
+	// race-free: the outcome is only written after the provider has returned.
+	require.Equal(t, "sent", awaitNotification(t, token, orderID).Status)
 
-	gonderilenler := bildirimCasusu.bildirimler(siparisID)
-	require.Len(t, gonderilenler, 1,
-		"sağlayıcıya sipariş başına TEK bildirim gitmeli")
-	gonderilen := gonderilenler[0]
+	sent := notificationSpy.notificationsFor(orderID)
+	require.Len(t, sent, 1,
+		"exactly ONE notification must go to the provider per order")
+	notification := sent[0]
 
-	assert.Equal(t, eposta, gonderilen.To,
-		"bildirimin alıcısı siparişin e-postası olmalı; başka bir adres, abonenin "+
-			"iletişim bilgisini yanlış siparişten okuduğu anlamına gelir")
-	assert.Equal(t, coreprovider.ChannelEmail, gonderilen.Channel)
-	assert.Equal(t, notificationsvc.TemplateOrderPlaced, gonderilen.Template)
+	assert.Equal(t, email, notification.To,
+		"the notification's recipient must be the order's email; any other address "+
+			"means the subscriber read the contact details off the wrong order")
+	assert.Equal(t, coreprovider.ChannelEmail, notification.Channel)
+	assert.Equal(t, notificationsvc.TemplateOrderPlaced, notification.Template)
 
-	// Şablon verisi de KAYITTAN gelir; tutar ve satır sayısı siparişin
-	// kendisiyle örtüşmeli. Örtüşmemesi, "order.interop" yanıtının şema
-	// olarak çözülse bile YANLIŞ siparişi anlattığı anlamına gelirdi.
-	assert.Equal(t, siparisID, gonderilen.Data[bildirimVeriAnahtariSiparisID])
-	assert.Equal(t, strconv.FormatInt(toplam, 10), gonderilen.Data["total"],
-		"şablondaki tutar siparişin toplamı olmalı ve ondalıksız DİZE taşımalı")
-	assert.Equal(t, "1", gonderilen.Data["item_count"],
-		"fikstür siparişi tek satırlıdır")
+	// The template data comes FROM THE RECORD too; the amount and the line count
+	// must match the order itself. Not matching would mean that the "order.interop"
+	// response describes the WRONG order even though it decodes as the schema.
+	assert.Equal(t, orderID, notification.Data[notificationDataKeyOrderID])
+	assert.Equal(t, strconv.FormatInt(total, 10), notification.Data["total"],
+		"the amount in the template must be the order's total and must carry a STRING without decimals")
+	assert.Equal(t, "1", notification.Data["item_count"],
+		"the fixture order has a single line")
 
-	// Ve olay adresi TAŞIMAZ — yani yukarıdaki adres oradan gelemezdi.
-	olay := olayDefteri.bekle(t, siparisID)
-	assert.Equal(t, siparisID, olayAlani(t, olay, ordersvc.EventFieldOrderID),
-		"olayın aboneye verdiği bağ sipariş KİMLİĞİDİR")
+	// And the event does NOT CARRY the address — so the address above could not
+	// have come from there.
+	event := eventLog.waitFor(t, orderID)
+	assert.Equal(t, orderID, olayAlani(t, event, ordersvc.EventFieldOrderID),
+		"the tie the event gives the subscriber is the order IDENTIFIER")
 
-	_, epostaAlaniVar := olay.Data["email"]
-	assert.False(t, epostaAlaniVar,
-		"olay yükünde 'email' alanı OLMAMALI; olaylar üretimde Redis'e yazılır ve "+
-			"orada kalıcıdır (plan Bölüm 8: hassas veri taşınmaz)")
+	_, hasEmailField := event.Data["email"]
+	assert.False(t, hasEmailField,
+		"there must be NO 'email' field in the event payload; in production events are "+
+			"written to Redis and are durable there (plan Section 8: no sensitive data "+
+			"is carried)")
 
-	hamOlay, err := json.Marshal(olay.Data)
+	rawEvent, err := json.Marshal(event.Data)
 	require.NoError(t, err)
-	assert.NotContains(t, string(hamOlay), eposta,
-		"olay yükünün HİÇBİR alanı adresi taşımamalı; taşısaydı bu testin alıcı "+
-			"iddiası, adresin kayıttan okunduğunu kanıtlamazdı")
+	assert.NotContains(t, string(rawEvent), email,
+		"NO field of the event payload may carry the address; if one did, this test's "+
+			"recipient claim would not prove that the address was read from the record")
 }
 
-// TestAyniSiparisIcinIkinciOlayIkinciBildirimUretmez elle yeniden yayımlanan
-// bir olayın müşteriye ikinci bir e-posta göndermediğini doğrular.
+// TestSecondEventForSameOrderProducesNoSecondNotification verifies that a manually
+// republished event does not send the customer a second email.
 //
-// Senaryo uydurma değildir: veri yolu bugün yeniden teslim yapmasa da bir
-// operatör kaçan olayları yeniden yayımlayabilir ve Redis backend'i EN AZ BİR
-// KEZ teslim eder. Koruma teslim günlüğündeki (şablon, referans)
-// benzersizliğidir ve burada GERÇEK indeks üzerinde sınanır.
+// The scenario is not made up: even though the bus does not redeliver today, an
+// operator can republish missed events and the Redis backend delivers AT LEAST
+// ONCE. The protection is the (template, reference) uniqueness in the delivery log
+// and it is exercised here on the REAL index.
 //
-// İki ayrı iddia birlikte kurulur: günlükte ikinci KAYIT açılmaz ve casusa
-// ikinci GÖNDERİM gitmez. İkincisi asıl olandır — müşterinin gördüğü şey
-// kayıt sayısı değil, gelen e-posta sayısıdır.
-func TestAyniSiparisIcinIkinciOlayIkinciBildirimUretmez(t *testing.T) {
+// Two separate claims are set up together: no second RECORD is opened in the log
+// and no second SEND goes to the spy. The second one is the one that matters — what
+// the customer sees is not the number of records but the number of emails that
+// arrive.
+func TestSecondEventForSameOrderProducesNoSecondNotification(t *testing.T) {
 	ctx := t.Context()
-	jeton := jetonAl(t, yoneticiEposta, yoneticiParola)
+	token := jetonAl(t, adminEmail, adminPassword)
 
-	siparisID, _, _ := bildirimSiparisi(ctx, t, "E2E Mükerrer Bildirim Ürünü")
+	orderID, _, _ := notificationOrder(ctx, t, "E2E Duplicate Notification Product")
 
-	ilk := bildirimBekle(t, jeton, siparisID)
+	first := awaitNotification(t, token, orderID)
 
-	// Olay ELLE yeniden yayımlanır; yükü siparişin olayıyla aynı şekildedir.
-	veriYolu, err := container.Resolve[eventbus.EventBus](kap, svcEventBus)
-	require.NoError(t, err, "olay veri yolu çözülebilmeli")
+	// The event is republished BY HAND; its payload has the same shape as the
+	// order's own event.
+	bus, err := container.Resolve[eventbus.EventBus](ctr, svcEventBus)
+	require.NoError(t, err, "the event bus must be resolvable")
 
-	require.NoError(t, veriYolu.Publish(ctx, eventbus.Event{
+	require.NoError(t, bus.Publish(ctx, eventbus.Event{
 		Name: notificationsvc.EventOrderPlaced,
-		Data: map[string]any{ordersvc.EventFieldOrderID: siparisID},
+		Data: map[string]any{ordersvc.EventFieldOrderID: orderID},
 	}))
 
-	// İkinci olayın işlenmesi için zaman tanınır. Beklemenin kanıtladığı şey
-	// "hiçbir şey olmadı"dır; erken bakmak testi sahte yeşile çevirirdi.
+	// The second event is given time to be processed. What the wait proves is that
+	// "nothing happened"; looking too early would turn the test falsely green.
 	require.Never(t, func() bool {
-		kayitlar, err := bildirimleriIste(t, jeton, siparisID)
+		records, err := fetchNotifications(t, token, orderID)
 		if err != nil {
-			// Okuma hatası "ikinci kayıt açıldı" demek DEĞİLDİR; koşul
-			// yanlış dönerse Never yeşil kalır ve arıza aşağıdaki okumada
-			// testi düşürür.
+			// A read error does NOT MEAN "a second record was opened"; if the
+			// condition returns false, Never stays green and the fault fails the
+			// test in the read below.
 			return false
 		}
-		return len(kayitlar) > 1 || len(bildirimCasusu.bildirimler(siparisID)) > 1
-	}, time.Second, bildirimAralik,
-		"aynı sipariş için İKİNCİ bir teslim kaydı ya da ikinci bir gönderim olmamalı")
+		return len(records) > 1 || len(notificationSpy.notificationsFor(orderID)) > 1
+	}, time.Second, notificationInterval,
+		"there must be no SECOND delivery record and no second send for the same order")
 
-	kayitlar := bildirimleriOku(t, jeton, siparisID)
-	require.Len(t, kayitlar, 1)
-	assert.Equal(t, ilk.ID, kayitlar[0].ID, "ilk kayıt korunmalı")
-	assert.Len(t, bildirimCasusu.bildirimler(siparisID), 1,
-		"sağlayıcıya TEK gönderim gitmeli; ikincisi müşterinin kutusunda ikinci bir "+
-			"sipariş onayı demektir")
+	records := readNotifications(t, token, orderID)
+	require.Len(t, records, 1)
+	assert.Equal(t, first.ID, records[0].ID, "the first record must be preserved")
+	assert.Len(t, notificationSpy.notificationsFor(orderID), 1,
+		"exactly ONE send must go to the provider; a second one means a second order "+
+			"confirmation in the customer's inbox")
 }
 
-// TestTeslimGunluguKimliksizOkunamaz teslim günlüğünün korumalı olduğunu
-// doğrular.
+// TestDeliveryLogCannotBeReadUnauthenticated verifies that the delivery log is
+// protected.
 //
-// İki isteğin İKİSİ de gereklidir. 401 tek başına ucun VAR olduğunu söylemez:
-// koruma route eşleşmesinden önce çalışır, yani hiç tanımlanmamış bir yol da
-// 401 döner (bkz. kimlik_test.go). Aynı adresin geçerli jetonla 200 dönmesi,
-// reddedilen şeyin gerçekten bu uç olduğunu kanıtlar.
+// BOTH of the two requests are necessary. A 401 on its own does not say that the
+// endpoint EXISTS: the guard runs before route matching, so a path that was never
+// defined returns 401 as well (see kimlik_test.go). The same address returning 200
+// with a valid token proves that what was refused really was this endpoint.
 //
-// Günlük kişisel veri taşımaz ama hangi siparişe ne zaman bildirim gittiğini
-// gösterir; yani sipariş akışının zaman çizelgesidir ve kimliksiz okunmamalıdır.
-func TestTeslimGunluguKimliksizOkunamaz(t *testing.T) {
-	kimliksiz := yonetimIstegi(t, http.MethodGet, teslimGunluguYolu, "")
-	require.Equal(t, http.StatusUnauthorized, kimliksiz.Code,
-		"kimliksiz istek 401 dönmeli; gövde: %s", kimliksiz.Body.String())
-	assert.Equal(t, "Bearer", kimliksiz.Header().Get("WWW-Authenticate"),
-		"RFC 9110: 401 hangi şemanın beklendiğini bildirmeli")
+// The log carries no personal data but it does show which order was notified and
+// when; that is, it is the timeline of the order flow and must not be readable
+// without an identity.
+func TestDeliveryLogCannotBeReadUnauthenticated(t *testing.T) {
+	anonymous := adminRequest(t, http.MethodGet, deliveryLogPath, "")
+	require.Equal(t, http.StatusUnauthorized, anonymous.Code,
+		"an unauthenticated request must return 401; body: %s", anonymous.Body.String())
+	assert.Equal(t, "Bearer", anonymous.Header().Get("WWW-Authenticate"),
+		"RFC 9110: a 401 must report which scheme is expected")
 
-	jeton := jetonAl(t, yoneticiEposta, yoneticiParola)
-	kimlikli := yonetimIstegi(t, http.MethodGet, teslimGunluguYolu, "Bearer "+jeton)
-	require.Equal(t, http.StatusOK, kimlikli.Code,
-		"aynı adres geçerli jetonla çalışmalı; çalışmıyorsa 401 ucun varlığından değil "+
-			"yokluğundan geliyor olurdu; gövde: %s", kimlikli.Body.String())
+	token := jetonAl(t, adminEmail, adminPassword)
+	authenticated := adminRequest(t, http.MethodGet, deliveryLogPath, "Bearer "+token)
+	require.Equal(t, http.StatusOK, authenticated.Code,
+		"the same address must work with a valid token; if it does not, the 401 would be "+
+			"coming from the endpoint's absence rather than its presence; body: %s", authenticated.Body.String())
 }
 
-// TestBildirimSaglayiciKaydiVarsayilaniKorur kutudan çıkan sağlayıcının, zemin
-// başkasını seçmiş olsa bile kayıtlı kaldığını doğrular.
+// TestNotificationProviderRegistryKeepsDefault verifies that the out-of-the-box
+// provider stays registered even when the harness has selected another one.
 //
-// Test, zeminin sağlayıcıyı casusla değiştirmesinin bedelini karşılar: seçim
-// değişti diye modülün varsayılanı kaybolmamalıdır. Kayıt bir LİSTEDİR, seçim
-// değil — bir kurulum NOTIFICATION_PROVIDER'ı "log"a çevirdiğinde sağlayıcı
-// orada duruyor olmalıdır.
-func TestBildirimSaglayiciKaydiVarsayilaniKorur(t *testing.T) {
-	kayit, err := container.Resolve[*notificationsvc.ProviderRegistry](kap, notificationmod.ProvidersName)
+// The test pays the price of the harness swapping the provider for the spy: the
+// module's default must not disappear just because the selection changed. The
+// registry is a LIST, not a selection — when an installation switches
+// NOTIFICATION_PROVIDER to "log", the provider has to be sitting there.
+func TestNotificationProviderRegistryKeepsDefault(t *testing.T) {
+	registry, err := container.Resolve[*notificationsvc.ProviderRegistry](ctr, notificationmod.ProvidersName)
 	require.NoError(t, err,
-		"sağlayıcı kaydı container'da %q adıyla bulunmalı; eklentiler onu bu adla çözer",
+		"the provider registry must be found in the ctr under the name %q; plugins resolve it by that name",
 		notificationmod.ProvidersName)
 
-	assert.Contains(t, kayit.IDs(), logonly.ID,
-		"kutudan çıkan %q sağlayıcısı kayıtta kalmalı", logonly.ID)
-	assert.Contains(t, kayit.IDs(), bildirimCasusuID,
-		"zemine eklenen sağlayıcı da kayıtta olmalı; olmasaydı hiçbir bildirim gönderilemezdi")
+	assert.Contains(t, registry.IDs(), logonly.ID,
+		"the out-of-the-box %q provider must stay in the registry", logonly.ID)
+	assert.Contains(t, registry.IDs(), notificationSpyID,
+		"the provider added to the harness must be in the registry too; otherwise no notification could be sent at all")
 }

@@ -18,523 +18,544 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/payment/manual"
 )
 
-// Bu dosya akışların ÜRETİM İKİLİSİNE bağlandığını kanıtlar.
+// This file proves that the workflows are wired into the PRODUCTION BINARY.
 //
-// # Neden diğer e2e testleri yetmiyordu
+// # Why the other e2e tests were not enough
 //
-// Faz 5-7'nin bütün senaryoları akışları DOĞRUDAN çağırıyordu
-// (akislar.AddLineItem, siparisAkislari.CompleteCart). Bu, akışların doğru
-// hesap yaptığını kanıtlar ama HİÇ KİMSENİN onları çağırmadığı bir kurulumda
-// da yeşil kalır — ve tam olarak öyleydi: cmd/server yalnızca saga MOTORUNU
-// kaydediyordu, akışların kendisini üretim kodunda çağıran tek satır yoktu.
-// Çalışan ikilide sepeti siparişe çeviren yol YOKTU; ödeme, kargo, checkout
-// promosyonu, order.placed bildirimi ve b2b harcama limiti ERİŞİLEMEZDİ.
+// Every scenario in phases 5-7 called the workflows DIRECTLY
+// (workflows.AddLineItem, orderWorkflows.CompleteCart). That proves the
+// workflows compute correctly, but it also stays green in a setup where NOBODY
+// calls them — and that is exactly how it was: cmd/server registered only the
+// saga ENGINE, and there was not a single line of production code calling the
+// workflows themselves. In the running binary there was NO path turning a cart
+// into an order; payment, shipping, the checkout promotion, the order.placed
+// notification and the b2b spending limit were UNREACHABLE.
 //
-// Buradaki senaryolar bu yüzden akışa hiç dokunmaz: her adım HTTP ucundan,
-// publishable anahtarla, üretimdeki koruma yığınının içinden geçer. Bir gün
-// kayıt satırı silinirse (ya da modülün ad sabiti kayarsa) bu testler düşer;
-// akışları doğrudan çağıran testler düşmezdi.
+// The scenarios here therefore never touch a workflow: every step goes in
+// through the HTTP endpoint, with a publishable key, through the production
+// guard stack. The day the registration line is deleted (or the module's name
+// constant drifts) these tests fail; the tests calling the workflows directly
+// would not have.
 //
-// # İkinci kanıt: FİYAT YETKİSİ
+// # Second proof: PRICE AUTHORITY
 //
-// POST /store/v1/carts/{id}/line-items gövdesi "unit_price" alıyor ve cart
-// servisi onu OLDUĞU GİBİ yazıyordu; yalnızca aralık denetleniyor, doğruluğu
-// denetlenmiyordu. Vitrinin kimliği publishable anahtardır ve tarayıcıda
-// durur — yani bu, herkesin erişebildiği bir "kendi fiyatını yaz" ucuydu.
-// [TestVitrinIstemciFiyatiniReddeder] o kapının kapandığını, mutlu yol testi
-// ise fiyatın gerçekten katalogdan geldiğini gösterir.
+// The POST /store/v1/carts/{id}/line-items body accepted "unit_price" and the
+// cart service wrote it AS IT CAME; only the range was checked, its correctness
+// was not. The storefront's identity is the publishable key and it lives in the
+// browser — so this was a "write your own price" endpoint everyone could reach.
+// [TestStorefrontRejectsClientPrice] shows that door is now closed, and the
+// happy-path test shows the price really does come from the catalog.
 
-// Vitrin senaryosunun ELLE hesaplanmış tutarları.
+// The MANUALLY computed amounts of the storefront scenario.
 //
-// Bölge %20 (2000 baz puan) vergilidir ve kargo yöntemi seçilmemiştir:
+// The region is taxed at 20% (2000 basis points) and no shipping method is
+// selected:
 //
-//	32_000 × 2 = 64_000 ara toplam
-//	64_000 × %20 = 12_800 vergi
-//	64_000 - 0 + 12_800 + 0 = 76_800 genel toplam
+//	32_000 × 2 = 64_000 subtotal
+//	64_000 × 20% = 12_800 tax
+//	64_000 - 0 + 12_800 + 0 = 76_800 grand total
 const (
-	vitrinBirimFiyat    int64 = 32_000
-	vitrinAdet          int64 = 2
-	vitrinAraToplam     int64 = 64_000
-	vitrinVergi         int64 = 12_800
-	vitrinToplam        int64 = 76_800
-	vitrinBaslangicStok int64 = 5
-	// vitrinKalanStok tahsilat sonrası beklenen fiziksel adettir: 5 - 2.
-	vitrinKalanStok int64 = 3
+	storefrontUnitPrice    int64 = 32_000
+	storefrontQuantity     int64 = 2
+	storefrontSubtotal     int64 = 64_000
+	storefrontTax          int64 = 12_800
+	storefrontTotal        int64 = 76_800
+	storefrontInitialStock int64 = 5
+	// storefrontRemainingStock is the physical quantity expected after capture: 5 - 2.
+	storefrontRemainingStock int64 = 3
 )
 
-// TestVitrinSepettenSiparise sepetin ÜRETİM UÇLARINDAN geçerek siparişe
-// döndüğünü kanıtlar.
+// TestStorefrontCartBecomesOrder proves that a cart turns into an order by
+// passing through the PRODUCTION ENDPOINTS.
 //
-// Zincir tümüyle HTTP'dir: sepet aç -> satır ekle (fiyatsız) -> sepeti oku ->
-// tamamla. Ardından sonuç, modüllerin KENDİ verisinden doğrulanır — sipariş
-// gerçekten açıldı mı, para çekildi mi, stok düştü mü, sepet kapandı mı,
-// "order.placed" yayımlandı mı.
-func TestVitrinSepettenSiparise(t *testing.T) {
+// The chain is HTTP end to end: open a cart -> add a line (priceless) -> read
+// the cart -> complete. The outcome is then verified from the modules' OWN
+// data — was an order really opened, was money captured, did stock drop, was
+// the cart closed, was "order.placed" published.
+func TestStorefrontCartBecomesOrder(t *testing.T) {
 	ctx := t.Context()
 
-	musteriID, eposta := yeniMusteri(ctx, t)
-	const varyantBaslik = "E2E Vitrin Ürünü"
-	varyantID, stokKalemID := yeniStokluVaryant(ctx, t, varyantBaslik, map[string]int64{
-		vergiliParaBirimi: vitrinBirimFiyat,
-	}, vitrinBaslangicStok)
+	customerID, email := newCustomer(ctx, t)
+	const variantTitle = "E2E Storefront Product"
+	variantID, stockItemID := newStockedVariant(ctx, t, variantTitle, map[string]int64{
+		taxedCurrency: storefrontUnitPrice,
+	}, storefrontInitialStock)
 
-	sepetID := vitrinSepetiAc(t, musteriID, eposta)
+	cartID := openStorefrontCart(t, customerID, email)
 
-	// --- satır: gövdede fiyat YOK, fiyatı sunucu belirler ---
+	// --- line: NO price in the body, the server decides the price ---
 
-	ekle := vitrinIstegi(t, http.MethodPost, "/store/v1/carts/"+sepetID+"/line-items",
-		fmt.Sprintf(`{"variant_id":%q,"quantity":%d}`, varyantID, vitrinAdet))
-	require.Equal(t, http.StatusCreated, ekle.Code, "gövde: %s", ekle.Body.String())
+	added := vitrinIstegi(t, http.MethodPost, "/store/v1/carts/"+cartID+"/line-items",
+		fmt.Sprintf(`{"variant_id":%q,"quantity":%d}`, variantID, storefrontQuantity))
+	require.Equal(t, http.StatusCreated, added.Code, "body: %s", added.Body.String())
 
-	satir := vitrinVeri(t, ekle)
-	assert.InDelta(t, float64(vitrinBirimFiyat), satir["unit_price"], 0,
-		"birim fiyat KATALOGDAN gelmeli; istemci hiçbir fiyat göndermedi")
-	assert.Equal(t, varyantBaslik, satir["title"],
-		"başlık da katalogdan kopyalanmalı; istemci başlık da göndermiyor")
-	assert.InDelta(t, float64(vitrinAraToplam), satir["subtotal"], 0,
-		"satır ara toplamı hesap turunda yazılmalı")
+	line := vitrinVeri(t, added)
+	assert.InDelta(t, float64(storefrontUnitPrice), line["unit_price"], 0,
+		"the unit price must come FROM THE CATALOG; the client sent no price at all")
+	assert.Equal(t, variantTitle, line["title"],
+		"the title must be copied from the catalog too; the client sends no title either")
+	assert.InDelta(t, float64(storefrontSubtotal), line["subtotal"], 0,
+		"the line subtotal must be written during the calculation pass")
 
-	// --- sepet: toplamlar HTTP'den okunduğunda hesaplanmış ve TAZE olmalı ---
+	// --- cart: read over HTTP the totals must be computed and FRESH ---
 
-	oku := vitrinIstegi(t, http.MethodGet, "/store/v1/carts/"+sepetID, "")
-	require.Equal(t, http.StatusOK, oku.Code, "gövde: %s", oku.Body.String())
+	fetched := vitrinIstegi(t, http.MethodGet, "/store/v1/carts/"+cartID, "")
+	require.Equal(t, http.StatusOK, fetched.Code, "body: %s", fetched.Body.String())
 
-	sepet := vitrinVeri(t, oku)
-	assert.InDelta(t, float64(vitrinAraToplam), sepet["subtotal"], 0)
-	assert.InDelta(t, float64(vitrinVergi), sepet["tax_total"], 0,
-		"vergi bölgenin oranıyla hesaplanmalı; hesap turu koşmasaydı sıfır kalırdı")
-	assert.InDelta(t, float64(vitrinToplam), sepet["total"], 0)
-	assert.Equal(t, false, sepet["totals_stale"],
-		"satır eklendikten sonra toplamlar TAZE olmalı; bayat toplam sipariş edilemez")
+	cart := vitrinVeri(t, fetched)
+	assert.InDelta(t, float64(storefrontSubtotal), cart["subtotal"], 0)
+	assert.InDelta(t, float64(storefrontTax), cart["tax_total"], 0,
+		"the tax must be computed with the region's rate; had the calculation pass "+
+			"not run it would have stayed zero")
+	assert.InDelta(t, float64(storefrontTotal), cart["total"], 0)
+	assert.Equal(t, false, cart["totals_stale"],
+		"totals must be FRESH once a line has been added; a stale total cannot be ordered")
 
-	require.Equal(t, vitrinBaslangicStok, satilabilirAdet(ctx, t, stokKalemID),
-		"sepete satır eklemek stok AYIRMAMALI")
+	require.Equal(t, storefrontInitialStock, sellableQuantity(ctx, t, stockItemID),
+		"adding a line to a cart must NOT reserve stock")
 
-	// --- tamamlama ---
+	// --- completion ---
 
-	tamam := vitrinIstegi(t, http.MethodPost, "/store/v1/carts/"+sepetID+"/complete",
-		vitrinTamamlamaGovdesi(t, vitrinToplam))
-	require.Equal(t, http.StatusOK, tamam.Code, "gövde: %s", tamam.Body.String())
+	done := vitrinIstegi(t, http.MethodPost, "/store/v1/carts/"+cartID+"/complete",
+		storefrontCompletionBody(t, storefrontTotal))
+	require.Equal(t, http.StatusOK, done.Code, "body: %s", done.Body.String())
 
-	sonuc := vitrinVeri(t, tamam)
-	siparisID, _ := sonuc["order_id"].(string)
-	require.NotEmpty(t, siparisID, "yanıt siparişin kimliğini taşımalı")
-	assert.Equal(t, sepetID, sonuc["cart_id"])
-	assert.Equal(t, vergiliParaBirimi, sonuc["currency_code"])
-	assert.InDelta(t, float64(vitrinToplam), sonuc["total"], 0,
-		"tahsil edilen tutar ELLE hesaplanan genel toplam olmalı")
+	result := vitrinVeri(t, done)
+	orderID, _ := result["order_id"].(string)
+	require.NotEmpty(t, orderID, "the response must carry the order's id")
+	assert.Equal(t, cartID, result["cart_id"])
+	assert.Equal(t, taxedCurrency, result["currency_code"])
+	assert.InDelta(t, float64(storefrontTotal), result["total"], 0,
+		"the captured amount must be the MANUALLY computed grand total")
 
-	// Yanıt İÇ kimlikleri taşımaz: ödeme oturumu, koleksiyon ve rezervasyon
-	// kimlikleri mağaza istemcisinin hiçbir ucundan kullanamayacağı iç yapıdır.
-	for _, alan := range []string{
+	// The response carries no INTERNAL ids: the payment session, collection and
+	// reservation ids are internal structure the store client could not use from
+	// any endpoint.
+	for _, field := range []string{
 		"payment_id", "payment_session_id", "payment_collection_id",
 		"reservation_ids", "warnings",
 	} {
-		assert.NotContains(t, sonuc, alan, "%s vitrin yanıtında yer almamalı", alan)
+		assert.NotContains(t, result, field,
+			"%s must not appear in the storefront response", field)
 	}
 
-	// --- sonuç modüllerin KENDİ verisinden doğrulanır ---
+	// --- the outcome is verified from the modules' OWN data ---
 
-	siparis, err := siparisSvc.GetOrder(ctx, siparisID)
-	require.NoError(t, err, "oluşan sipariş sipariş modülünden okunabilmeli")
-	assert.Equal(t, ordermodels.OrderPending, siparis.Status)
-	assert.Equal(t, sepetID, siparis.CartID, "sipariş doğduğu sepeti belgelemeli")
-	assert.Equal(t, musteriID, siparis.CustomerID)
-	assert.Equal(t, vitrinAraToplam, siparis.Subtotal,
-		"siparişin ara toplamı sepetinkiyle AYNI olmalı")
-	assert.Equal(t, vitrinVergi, siparis.TaxTotal, "siparişin vergisi sepetinkiyle AYNI olmalı")
-	assert.Equal(t, vitrinToplam, siparis.Total,
-		"siparişin genel toplamı sepetinkiyle ve tahsil edilen tutarla aynı olmalı")
-	assert.Equal(t, eposta, siparis.Email,
-		"iletişim adresi SEPETTEN gelmeli; tamamlama gövdesi e-posta taşımıyor ve "+
-			"taşıyamaz — adresin tek kaynağı sepettir")
+	order, err := orderSvc.GetOrder(ctx, orderID)
+	require.NoError(t, err, "the resulting order must be readable from the order module")
+	assert.Equal(t, ordermodels.OrderPending, order.Status)
+	assert.Equal(t, cartID, order.CartID, "the order must document the cart it was born from")
+	assert.Equal(t, customerID, order.CustomerID)
+	assert.Equal(t, storefrontSubtotal, order.Subtotal,
+		"the order's subtotal must be the SAME as the cart's")
+	assert.Equal(t, storefrontTax, order.TaxTotal, "the order's tax must be the SAME as the cart's")
+	assert.Equal(t, storefrontTotal, order.Total,
+		"the order's grand total must be the same as the cart's and as the captured amount")
+	assert.Equal(t, email, order.Email,
+		"the contact address must come FROM THE CART; the completion body carries no "+
+			"e-mail address and cannot — the cart is the address's only source")
 
-	require.Len(t, siparis.Items, 1, "sepetin tek satırı siparişe tek satır olarak geçmeli")
-	assert.Equal(t, vitrinBirimFiyat, siparis.Items[0].UnitPrice,
-		"siparişteki birim fiyat da katalogdan gelen fiyat olmalı; istemcinin "+
-			"gönderebileceği bir alan hiçbir adımda yoktu")
-	assert.Equal(t, varyantBaslik, siparis.Items[0].Title,
-		"satır başlığı katalogdan kopyalanmalı")
+	require.Len(t, order.Items, 1, "the cart's single line must pass into the order as a single line")
+	assert.Equal(t, storefrontUnitPrice, order.Items[0].UnitPrice,
+		"the unit price on the order must also be the price coming from the catalog; "+
+			"there was no field the client could have sent at any step")
+	assert.Equal(t, variantTitle, order.Items[0].Title,
+		"the line title must be copied from the catalog")
 
-	kapali, err := sepetSvc.GetCart(ctx, sepetID)
+	closed, err := cartSvc.GetCart(ctx, cartID)
 	require.NoError(t, err)
-	assert.True(t, kapali.Completed(),
-		"sepet kapatılmalı; kapanmazsa aynı sepet ikinci bir siparişe kaynak olurdu")
+	assert.True(t, closed.Completed(),
+		"the cart must be closed; if it did not close, the same cart would be the source "+
+			"of a second order")
 
-	assert.Equal(t, vitrinKalanStok, satilabilirAdet(ctx, t, stokKalemID),
-		"tahsilattan sonra stok fiziksel olarak düşmeli")
+	assert.Equal(t, storefrontRemainingStock, sellableQuantity(ctx, t, stockItemID),
+		"stock must drop physically after capture")
 
-	olay := olayDefteri.bekle(t, siparisID)
-	assert.Equal(t, siparisID, olay.Data["order_id"],
-		"order.placed olayı yayımlanmalı; vitrinden verilen sipariş de bildirim üretmeli")
+	event := eventLog.waitFor(t, orderID)
+	assert.Equal(t, orderID, event.Data["order_id"],
+		"the order.placed event must be published; an order placed from the storefront "+
+			"must produce a notification too")
 }
 
-// TestVitrinIstemciFiyatiniReddeder vitrinin fiyat ve başlık KABUL ETMEDİĞİNİ
-// gerçek uçta kanıtlar.
+// TestStorefrontRejectsClientPrice proves at the real endpoint that the
+// storefront DOES NOT ACCEPT a price or a title.
 //
-// İddia iki katmanlıdır: istek reddedilmeli VE sepete hiçbir satır
-// yazılmamalı. Yalnızca status koduna bakmak yetmezdi — alan sessizce yok
-// sayılıp satır yine eklenseydi, istemci gönderdiğini sanır ve sunucu başka
-// bir fiyat yazardı.
-func TestVitrinIstemciFiyatiniReddeder(t *testing.T) {
+// The claim has two layers: the request must be rejected AND no line may be
+// written to the cart. Looking at the status code alone would not have been
+// enough — had the field been silently ignored and the line still added, the
+// client would believe what it sent while the server wrote a different price.
+func TestStorefrontRejectsClientPrice(t *testing.T) {
 	ctx := t.Context()
 
-	musteriID, eposta := yeniMusteri(ctx, t)
-	varyantID, _ := yeniStokluVaryant(ctx, t, "E2E Fiyat Yetkisi Ürünü", map[string]int64{
-		vergiliParaBirimi: vitrinBirimFiyat,
-	}, vitrinBaslangicStok)
+	customerID, email := newCustomer(ctx, t)
+	variantID, _ := newStockedVariant(ctx, t, "E2E Price Authority Product", map[string]int64{
+		taxedCurrency: storefrontUnitPrice,
+	}, storefrontInitialStock)
 
-	sepetID := vitrinSepetiAc(t, musteriID, eposta)
+	cartID := openStorefrontCart(t, customerID, email)
 
-	for ad, govde := range map[string]string{
-		"bir kuruşluk fiyat": fmt.Sprintf(`{"variant_id":%q,"quantity":1,"unit_price":1}`, varyantID),
-		"sıfır fiyat":        fmt.Sprintf(`{"variant_id":%q,"quantity":1,"unit_price":0}`, varyantID),
-		"uydurma başlık":     fmt.Sprintf(`{"variant_id":%q,"quantity":1,"title":"Bedava"}`, varyantID),
+	for name, body := range map[string]string{
+		"penny price":   fmt.Sprintf(`{"variant_id":%q,"quantity":1,"unit_price":1}`, variantID),
+		"zero price":    fmt.Sprintf(`{"variant_id":%q,"quantity":1,"unit_price":0}`, variantID),
+		"made-up title": fmt.Sprintf(`{"variant_id":%q,"quantity":1,"title":"Free"}`, variantID),
 	} {
-		t.Run(ad, func(t *testing.T) {
-			kayit := vitrinIstegi(t, http.MethodPost,
-				"/store/v1/carts/"+sepetID+"/line-items", govde)
+		t.Run(name, func(t *testing.T) {
+			rec := vitrinIstegi(t, http.MethodPost,
+				"/store/v1/carts/"+cartID+"/line-items", body)
 
-			assert.Equal(t, http.StatusUnprocessableEntity, kayit.Code,
-				"vitrin fiyat/başlık kabul etmemeli; gövde: %s", kayit.Body.String())
+			assert.Equal(t, http.StatusUnprocessableEntity, rec.Code,
+				"the storefront must not accept a price/title; body: %s", rec.Body.String())
 		})
 	}
 
-	detay, err := sepetSvc.GetCart(ctx, sepetID)
+	detail, err := cartSvc.GetCart(ctx, cartID)
 	require.NoError(t, err)
-	assert.Empty(t, detay.Items,
-		"reddedilen isteklerin hiçbiri sepete satır yazmamalı")
+	assert.Empty(t, detail.Items,
+		"none of the rejected requests may write a line to the cart")
 }
 
-// TestVitrinIstemciBolgesiniReddeder sepet AÇMA ucunun ne bölge ne para birimi
-// kabul ettiğini gerçek uçta kanıtlar.
+// TestStorefrontRejectsClientRegion proves at the real endpoint that the cart
+// OPENING endpoint accepts neither a region nor a currency.
 //
-// Sınıf [TestVitrinIstemciFiyatiniReddeder] ile aynıdır: istemcinin
-// belirlediği bir değer sunucunun kararına giriyordu.
+// The class is the same as [TestStorefrontRejectsClientPrice]: a value decided
+// by the client was entering the server's decision.
 //
-//   - currency_code, HANGİ FİYAT LİSTESİNİN uygulanacağını seçiyordu ve
-//     ayrışma reddedilmiyordu: sepet, bölgesi TRY olsa bile istemcinin dediği
-//     para biriminde açılıyor, satır da o listeden fiyatlanıyordu.
-//   - region_id, sepetin VERGİ ORANINI seçiyordu ve müşterinin ifade etmek
-//     istediği şey zaten değildi: müşteri bir ülke seçer, bölge onun
-//     sunucudaki karşılığıdır.
+//   - currency_code selected WHICH PRICE LIST would be applied and the
+//     divergence was not rejected: the cart was opened in the currency the
+//     client named even when its region was TRY, and the line was priced from
+//     that list too.
+//   - region_id selected the cart's TAX RATE and was not what the customer
+//     wanted to express in the first place: a customer picks a country, and the
+//     region is that country's counterpart on the server.
 //
-// İddia iki katmanlıdır: istek reddedilmeli VE hiçbir sepet yazılmamalı. Alan
-// sessizce yok sayılsaydı istemci gönderdiğini sanır, sunucu başka bir bölgede
-// sepet açardı.
-func TestVitrinIstemciBolgesiniReddeder(t *testing.T) {
+// The claim has two layers: the request must be rejected AND no cart may be
+// written. Had the field been silently ignored the client would believe what it
+// sent while the server opened a cart in a different region.
+func TestStorefrontRejectsClientRegion(t *testing.T) {
 	ctx := t.Context()
 
-	for ad, govde := range map[string]string{
-		// Gövdedeki para birimi bölgeninkinden BAŞKA: eskiden tam da bu istek,
-		// TRY bölgesinde EUR fiyat listesiyle bir sepet açıyordu.
-		"para birimi": fmt.Sprintf(`{"country_code":%q,"currency_code":%q}`,
-			vergiliUlke, vergisizParaBirimi),
-		"bölge": fmt.Sprintf(`{"country_code":%q,"region_id":%q}`,
-			vergiliUlke, vergisizBolgeID),
+	for name, body := range map[string]string{
+		// The currency in the body is DIFFERENT from the region's: this exact
+		// request used to open a cart in the TRY region with the EUR price list.
+		"currency": fmt.Sprintf(`{"country_code":%q,"currency_code":%q}`,
+			taxedCountry, untaxedCurrency),
+		"region": fmt.Sprintf(`{"country_code":%q,"region_id":%q}`,
+			taxedCountry, untaxedRegionID),
 	} {
-		t.Run(ad, func(t *testing.T) {
-			oncekiSayi := sepetSayisi(ctx, t)
+		t.Run(name, func(t *testing.T) {
+			priorCount := cartCount(ctx, t)
 
-			red := vitrinIstegi(t, http.MethodPost, "/store/v1/carts", govde)
+			rejected := vitrinIstegi(t, http.MethodPost, "/store/v1/carts", body)
 
-			assert.Equal(t, http.StatusUnprocessableEntity, red.Code,
-				"vitrin sunucunun türettiği alanı kabul etmemeli; gövde: %s", red.Body.String())
-			assert.Equal(t, oncekiSayi, sepetSayisi(ctx, t),
-				"reddedilen istek sepet YAZMAMALI; yazsaydı istemci gönderdiği "+
-					"değerin uygulandığını sanırdı")
+			assert.Equal(t, http.StatusUnprocessableEntity, rejected.Code,
+				"the storefront must not accept a field the server derives; body: %s",
+				rejected.Body.String())
+			assert.Equal(t, priorCount, cartCount(ctx, t),
+				"a rejected request must NOT write a cart; if it did, the client would "+
+					"believe the value it sent had been applied")
 		})
 	}
 }
 
-// TestVitrinBilinmeyenUlkedeSepetAcilmaz satış açılmamış bir ülkenin sepet
-// açtırMADIĞINI kanıtlar.
+// TestStorefrontUnknownCountryOpensNoCart proves that a country sales were
+// never opened for DOES NOT let a cart be opened.
 //
-// Bölge artık gövdeden gelmediği için "bölge var mı" sorusu "bu ülkeye satış
-// var mı" sorusuna dönüştü ve cevabı 404'tür: istemcinin düzeltebileceği bir
-// durumdur (başka bir ülke seç), sunucu arızası değil. Ülke kodunun BİÇİMİ
-// bozuksa cevap 422'dir — ikisi ayrı sorulardır ve ayrı kalmalıdır.
-func TestVitrinBilinmeyenUlkedeSepetAcilmaz(t *testing.T) {
+// Because the region no longer comes from the body, the question "does a region
+// exist" turned into "do we sell to this country", and its answer is 404: it is
+// a situation the client can fix (pick another country), not a server failure.
+// If the FORM of the country code is broken the answer is 422 — the two are
+// separate questions and must stay separate.
+func TestStorefrontUnknownCountryOpensNoCart(t *testing.T) {
 	ctx := t.Context()
 
-	for ad, senaryo := range map[string]struct {
-		govde string
-		durum int
-		neden string
+	for name, scenario := range map[string]struct {
+		body   string
+		status int
+		reason string
 	}{
-		"bölgesi olmayan ülke": {
-			govde: `{"country_code":"NL"}`, durum: http.StatusNotFound,
-			neden: "operatör o ülkeye satış açmamıştır; istemci başka bir ülke seçebilir",
+		"country without a region": {
+			body: `{"country_code":"NL"}`, status: http.StatusNotFound,
+			reason: "the operator has not opened sales to that country; the client picks another",
 		},
-		"biçimsiz ülke kodu": {
-			govde: `{"country_code":"TURKIYE"}`, durum: http.StatusUnprocessableEntity,
-			neden: "ISO 3166-1 alpha-2 olmayan kod gövde hatasıdır",
+		"malformed country code": {
+			body: `{"country_code":"TURKIYE"}`, status: http.StatusUnprocessableEntity,
+			reason: "a code that is not ISO 3166-1 alpha-2 is a body error",
 		},
-		"boş ülke kodu": {
-			govde: `{}`, durum: http.StatusUnprocessableEntity,
-			neden: "ülke zorunludur; bölgenin türetileceği başka bir kaynak yoktur",
+		"empty country code": {
+			body: `{}`, status: http.StatusUnprocessableEntity,
+			reason: "the country is mandatory; there is no other source to derive the region from",
 		},
 	} {
-		t.Run(ad, func(t *testing.T) {
-			oncekiSayi := sepetSayisi(ctx, t)
+		t.Run(name, func(t *testing.T) {
+			priorCount := cartCount(ctx, t)
 
-			red := vitrinIstegi(t, http.MethodPost, "/store/v1/carts", senaryo.govde)
+			rejected := vitrinIstegi(t, http.MethodPost, "/store/v1/carts", scenario.body)
 
-			assert.Equal(t, senaryo.durum, red.Code, "%s; gövde: %s", senaryo.neden, red.Body.String())
-			assert.Equal(t, oncekiSayi, sepetSayisi(ctx, t),
-				"bölgesi türetilemeyen bir sepet HİÇ açılmamalı")
+			assert.Equal(t, scenario.status, rejected.Code,
+				"%s; body: %s", scenario.reason, rejected.Body.String())
+			assert.Equal(t, priorCount, cartCount(ctx, t),
+				"a cart whose region cannot be derived must NOT be opened at all")
 		})
 	}
 }
 
-// TestVitrinParaBirimiBolgedenTuretilir sepetin para biriminin BÖLGEDEN
-// geldiğini ve fiyatın gerçekten o para biriminin listesinden seçildiğini
-// kanıtlar.
+// TestStorefrontCurrencyDerivedFromRegion proves that a cart's currency comes
+// FROM THE REGION and that the price really is selected from that currency's
+// list.
 //
-// İki bölge FARKLI para birimi taşır ve tek bir varyant ikisinde de
-// fiyatlıdır. Yalnızca sepetin currency_code alanına bakmak yetmezdi: alan
-// doğru yazılıp fiyat başka bir listeden okunsaydı iddia yine geçerdi. Asıl
-// kanıt, aynı varyantın iki sepette FARKLI birim fiyat almasıdır — para birimi
-// sepetin bir etiketi değil, fiyatın SEÇİCİSİDİR.
-func TestVitrinParaBirimiBolgedenTuretilir(t *testing.T) {
+// The two regions carry DIFFERENT currencies and a single variant is priced in
+// both. Looking only at the cart's currency_code field would not have been
+// enough: had the field been written correctly while the price was read from
+// another list, the claim would still have passed. The real proof is that the
+// same variant takes a DIFFERENT unit price in the two carts — the currency is
+// not a label on the cart, it is the price's SELECTOR.
+func TestStorefrontCurrencyDerivedFromRegion(t *testing.T) {
 	ctx := t.Context()
 
-	// Tutarlar bilinçli olarak birbirine yakın DEĞİLDİR: bir kayma olsaydı
-	// hangi listeden okunduğu tek bir sayıdan anlaşılsın.
+	// The amounts are deliberately NOT close to one another: should something
+	// drift, a single number should reveal which list was read.
 	const (
-		vergiliBolgeFiyat  int64 = 30_000
-		vergisizBolgeFiyat int64 = 1_100
+		taxedRegionPrice   int64 = 30_000
+		untaxedRegionPrice int64 = 1_100
 	)
 
-	musteriID, eposta := yeniMusteri(ctx, t)
-	varyantID := yeniVaryant(ctx, t, "E2E Para Birimi Ürünü", map[string]int64{
-		vergiliParaBirimi:  vergiliBolgeFiyat,
-		vergisizParaBirimi: vergisizBolgeFiyat,
+	customerID, email := newCustomer(ctx, t)
+	variantID := newVariant(ctx, t, "E2E Currency Product", map[string]int64{
+		taxedCurrency:   taxedRegionPrice,
+		untaxedCurrency: untaxedRegionPrice,
 	})
 
-	for _, senaryo := range []struct {
-		ad         string
-		ulke       string
-		paraBirimi string
-		fiyat      int64
+	for _, scenario := range []struct {
+		name     string
+		country  string
+		currency string
+		price    int64
 	}{
-		{"vergili bölge", vergiliUlke, vergiliParaBirimi, vergiliBolgeFiyat},
-		{"vergisiz bölge", vergisizUlke, vergisizParaBirimi, vergisizBolgeFiyat},
+		{"taxed region", taxedCountry, taxedCurrency, taxedRegionPrice},
+		{"untaxed region", untaxedCountry, untaxedCurrency, untaxedRegionPrice},
 	} {
-		t.Run(senaryo.ad, func(t *testing.T) {
-			sepetID := vitrinUlkeSepetiAc(t, senaryo.ulke, musteriID, eposta)
+		t.Run(scenario.name, func(t *testing.T) {
+			cartID := openStorefrontCartInCountry(t, scenario.country, customerID, email)
 
-			oku := vitrinIstegi(t, http.MethodGet, "/store/v1/carts/"+sepetID, "")
-			require.Equal(t, http.StatusOK, oku.Code, "gövde: %s", oku.Body.String())
-			assert.Equal(t, senaryo.paraBirimi, vitrinVeri(t, oku)["currency_code"],
-				"sepetin para birimi ÜLKENİN BÖLGESİNİNKİ olmalı; istemci ne bölge "+
-					"ne para birimi gönderdi")
+			fetched := vitrinIstegi(t, http.MethodGet, "/store/v1/carts/"+cartID, "")
+			require.Equal(t, http.StatusOK, fetched.Code, "body: %s", fetched.Body.String())
+			assert.Equal(t, scenario.currency, vitrinVeri(t, fetched)["currency_code"],
+				"the cart's currency must be THE COUNTRY'S REGION'S; the client sent "+
+					"neither a region nor a currency")
 
-			ekle := vitrinIstegi(t, http.MethodPost, "/store/v1/carts/"+sepetID+"/line-items",
-				fmt.Sprintf(`{"variant_id":%q,"quantity":1}`, varyantID))
-			require.Equal(t, http.StatusCreated, ekle.Code, "gövde: %s", ekle.Body.String())
+			added := vitrinIstegi(t, http.MethodPost, "/store/v1/carts/"+cartID+"/line-items",
+				fmt.Sprintf(`{"variant_id":%q,"quantity":1}`, variantID))
+			require.Equal(t, http.StatusCreated, added.Code, "body: %s", added.Body.String())
 
-			assert.InDelta(t, float64(senaryo.fiyat), vitrinVeri(t, ekle)["unit_price"], 0,
-				"birim fiyat sepetin para birimindeki listeden seçilmeli; yanlış "+
-					"liste okunsaydı müşteri başka bir ülkenin fiyatını öderdi")
+			assert.InDelta(t, float64(scenario.price), vitrinVeri(t, added)["unit_price"], 0,
+				"the unit price must be selected from the list in the cart's currency; had "+
+					"the wrong list been read the customer would pay another country's price")
 		})
 	}
 }
 
-// TestVitrinOnaylanmayanToplamdaSiparisVermez müşterinin gördüğü toplam ile
-// sunucunun hesapladığı toplam ayrıştığında HİÇBİR yan etki olmadığını
-// kanıtlar.
+// TestStorefrontPlacesNoOrderOnUnapprovedTotal proves that when the total the
+// customer saw and the total the server computes diverge there is NO side
+// effect whatsoever.
 //
-// Bu, ödeme adımının en pahalı hatasına karşı korumadır: hesap tamamlama
-// akışının başında YENİLENİR, yani katalogda değişen bir fiyat müşterinin
-// onayladığından farklı bir tutarın çekilmesine yol açabilirdi. Kontrol
-// saga'nın ilk adımından ÖNCE koştuğu için stok da ayrılmaz, sipariş de
-// açılmaz — ve sepet hâlâ tamamlanabilir durumdadır.
-func TestVitrinOnaylanmayanToplamdaSiparisVermez(t *testing.T) {
+// This is the guard against the payment step's most expensive mistake: the
+// totals are REFRESHED at the start of the completion workflow, meaning a price
+// that changed in the catalog could have led to an amount different from the
+// one the customer approved being captured. Because the check runs BEFORE the
+// saga's first step, no stock is reserved and no order is opened either — and
+// the cart is still in a completable state.
+func TestStorefrontPlacesNoOrderOnUnapprovedTotal(t *testing.T) {
 	ctx := t.Context()
 
-	musteriID, eposta := yeniMusteri(ctx, t)
-	varyantID, stokKalemID := yeniStokluVaryant(ctx, t, "E2E Onaylanan Toplam Ürünü",
-		map[string]int64{vergiliParaBirimi: vitrinBirimFiyat}, vitrinBaslangicStok)
+	customerID, email := newCustomer(ctx, t)
+	variantID, stockItemID := newStockedVariant(ctx, t, "E2E Approved Total Product",
+		map[string]int64{taxedCurrency: storefrontUnitPrice}, storefrontInitialStock)
 
-	sepetID := vitrinSepetiAc(t, musteriID, eposta)
-	ekle := vitrinIstegi(t, http.MethodPost, "/store/v1/carts/"+sepetID+"/line-items",
-		fmt.Sprintf(`{"variant_id":%q,"quantity":%d}`, varyantID, vitrinAdet))
-	require.Equal(t, http.StatusCreated, ekle.Code, "gövde: %s", ekle.Body.String())
+	cartID := openStorefrontCart(t, customerID, email)
+	added := vitrinIstegi(t, http.MethodPost, "/store/v1/carts/"+cartID+"/line-items",
+		fmt.Sprintf(`{"variant_id":%q,"quantity":%d}`, variantID, storefrontQuantity))
+	require.Equal(t, http.StatusCreated, added.Code, "body: %s", added.Body.String())
 
-	// Onaylanan toplam bir kuruş eksik: müşteri BAŞKA bir tutar görmüş demektir.
-	catisma := vitrinIstegi(t, http.MethodPost, "/store/v1/carts/"+sepetID+"/complete",
-		vitrinTamamlamaGovdesi(t, vitrinToplam-1))
-	require.Equal(t, http.StatusConflict, catisma.Code,
-		"ayrışan toplam 409 olmalı; 500 görseydi istemci yeniden denerdi, oysa "+
-			"yapması gereken müşteriye yeni tutarı onaylatmaktır. gövde: %s",
-		catisma.Body.String())
+	// The approved total is one minor unit short: the customer saw ANOTHER amount.
+	conflict := vitrinIstegi(t, http.MethodPost, "/store/v1/carts/"+cartID+"/complete",
+		storefrontCompletionBody(t, storefrontTotal-1))
+	require.Equal(t, http.StatusConflict, conflict.Code,
+		"a diverging total must be a 409; on a 500 the client would retry, whereas "+
+			"what it should do is have the customer approve the new amount. body: %s",
+		conflict.Body.String())
 
-	assert.Equal(t, vitrinBaslangicStok, satilabilirAdet(ctx, t, stokKalemID),
-		"reddedilen tamamlama stok AYIRMAMALI")
+	assert.Equal(t, storefrontInitialStock, sellableQuantity(ctx, t, stockItemID),
+		"a rejected completion must NOT reserve stock")
 
-	acik, err := sepetSvc.GetCart(ctx, sepetID)
+	open, err := cartSvc.GetCart(ctx, cartID)
 	require.NoError(t, err)
-	assert.False(t, acik.Completed(), "reddedilen tamamlama sepeti kapatmamalı")
+	assert.False(t, open.Completed(), "a rejected completion must not close the cart")
 
-	// Onaylanan toplam DOĞRU verildiğinde aynı sepet tamamlanabilmeli: reddedilen
-	// deneme akışın idempotency anahtarını YAKMAMALI.
-	tamam := vitrinIstegi(t, http.MethodPost, "/store/v1/carts/"+sepetID+"/complete",
-		vitrinTamamlamaGovdesi(t, vitrinToplam))
-	require.Equal(t, http.StatusOK, tamam.Code, "gövde: %s", tamam.Body.String())
-	assert.NotEmpty(t, vitrinVeri(t, tamam)["order_id"])
+	// When the approved total is given CORRECTLY the same cart must be completable:
+	// a rejected attempt must NOT burn the workflow's idempotency key.
+	done := vitrinIstegi(t, http.MethodPost, "/store/v1/carts/"+cartID+"/complete",
+		storefrontCompletionBody(t, storefrontTotal))
+	require.Equal(t, http.StatusOK, done.Code, "body: %s", done.Body.String())
+	assert.NotEmpty(t, vitrinVeri(t, done)["order_id"])
 }
 
-// TestVitrinOnaylananToplamZorunlu korumanın istemci tarafından
-// KAPATILAMADIĞINI doğrular.
+// TestStorefrontExpectedTotalIsMandatory verifies that the guard CANNOT BE
+// TURNED OFF by the client.
 //
-// Alan opsiyonel olsaydı onu göndermeyi unutan her istemci korumayı sessizce
-// devre dışı bırakırdı; bu deponun tekrar eden hata sınıfı tam olarak budur —
-// kural tanımlıdır, uygulandığı yer yoktur.
-func TestVitrinOnaylananToplamZorunlu(t *testing.T) {
+// Had the field been optional, every client that forgot to send it would have
+// silently disabled the guard; this repository's recurring bug class is exactly
+// that — the rule is defined, there is no place where it is enforced.
+func TestStorefrontExpectedTotalIsMandatory(t *testing.T) {
 	ctx := t.Context()
 
-	musteriID, eposta := yeniMusteri(ctx, t)
-	varyantID, _ := yeniStokluVaryant(ctx, t, "E2E Zorunlu Onay Ürünü",
-		map[string]int64{vergiliParaBirimi: vitrinBirimFiyat}, vitrinBaslangicStok)
+	customerID, email := newCustomer(ctx, t)
+	variantID, _ := newStockedVariant(ctx, t, "E2E Mandatory Approval Product",
+		map[string]int64{taxedCurrency: storefrontUnitPrice}, storefrontInitialStock)
 
-	sepetID := vitrinSepetiAc(t, musteriID, eposta)
-	ekle := vitrinIstegi(t, http.MethodPost, "/store/v1/carts/"+sepetID+"/line-items",
-		fmt.Sprintf(`{"variant_id":%q,"quantity":%d}`, varyantID, vitrinAdet))
-	require.Equal(t, http.StatusCreated, ekle.Code, "gövde: %s", ekle.Body.String())
+	cartID := openStorefrontCart(t, customerID, email)
+	added := vitrinIstegi(t, http.MethodPost, "/store/v1/carts/"+cartID+"/line-items",
+		fmt.Sprintf(`{"variant_id":%q,"quantity":%d}`, variantID, storefrontQuantity))
+	require.Equal(t, http.StatusCreated, added.Code, "body: %s", added.Body.String())
 
-	eksik := vitrinIstegi(t, http.MethodPost, "/store/v1/carts/"+sepetID+"/complete",
+	missing := vitrinIstegi(t, http.MethodPost, "/store/v1/carts/"+cartID+"/complete",
 		fmt.Sprintf(`{"payment_provider_id":%q}`, manual.ID))
-	assert.Equal(t, http.StatusUnprocessableEntity, eksik.Code,
-		"onaylanan toplam bildirilmeden sipariş verilememeli; gövde: %s", eksik.Body.String())
+	assert.Equal(t, http.StatusUnprocessableEntity, missing.Code,
+		"no order may be placed without the approved total being declared; body: %s",
+		missing.Body.String())
 
-	acik, err := sepetSvc.GetCart(ctx, sepetID)
+	open, err := cartSvc.GetCart(ctx, cartID)
 	require.NoError(t, err)
-	assert.False(t, acik.Completed())
+	assert.False(t, open.Completed())
 }
 
-// TestVitrinB2BLimitReddiSebebiniBildirir reddin SEBEBİNİN vitrine ulaştığını
-// kanıtlar.
+// TestStorefrontB2BLimitRejectionReportsReason proves that the REASON for the
+// rejection reaches the storefront.
 //
-// # Neden status kodu yetmiyor
+// # Why the status code is not enough
 //
-// Harcama limitini aşan alışveriş zaten 409 alıyordu ve para da çekilmiyordu
-// (bkz. b2b_test.go). Eksik olan tek şey, istemcinin bunu OKUYABİLMESİYDİ:
-// gövdenin kodu, saga motorunun kendi sabitiyle ("workflow_step_failed")
-// doluyordu ve "spending_limit" yanıtın hiçbir yerinde geçmiyordu; sebep
-// yalnızca sunucu logundaydı.
+// A purchase exceeding the spending limit was already getting a 409 and no
+// money was captured either (see b2b_test.go). The only thing missing was the
+// client's ability to READ it: the body's code was being filled with the saga
+// engine's own constant ("workflow_step_failed") and "spending_limit" appeared
+// nowhere in the response; the reason lived only in the server log.
 //
-// Fark davranışsaldır, kozmetik değil. 409 tam olarak TEKRARIN ÇÖZMEDİĞİ
-// sınıftır: ayırt edemeyen bir vitrin ya kullanıcıya "geçici bir hata, tekrar
-// deneyin" der ve limitini yükseltmesi gereken çalışanı boş yere döndürür, ya
-// da her 409'u kalıcı sayıp gerçekten geçici olan çakışmaları da yutar. Bu,
-// deponun tekrar eden hata sınıfının bir türevidir — kural uygulanıyor, hata
-// kodu üretiliyor, ama tüketiciye ulaşmıyor.
+// The difference is behavioural, not cosmetic. A 409 is exactly the class a
+// RETRY DOES NOT SOLVE: a storefront that cannot tell them apart either tells
+// the user "a temporary error, try again" and turns away, for nothing, the
+// employee who needs their limit raised, or treats every 409 as permanent and
+// swallows the conflicts that really were temporary. This is a variant of the
+// repository's recurring bug class — the rule is enforced, the error code is
+// produced, but it does not reach the consumer.
 //
-// Zincir tümüyle HTTP'dir ve akışa hiç dokunulmaz: kodun gövdeye kadar geldiği
-// ancak üretimdeki taşıma katmanından geçerek görülebilir.
-func TestVitrinB2BLimitReddiSebebiniBildirir(t *testing.T) {
+// The chain is HTTP end to end and no workflow is touched: that the code makes
+// it all the way into the body can only be seen by going through the production
+// transport layer.
+func TestStorefrontB2BLimitRejectionReportsReason(t *testing.T) {
 	ctx := t.Context()
 
-	musteriID, eposta := yeniMusteri(ctx, t)
-	varyantID, stokKalemID := yeniStokluVaryant(ctx, t, "E2E Vitrin B2B Limiti",
-		map[string]int64{vergiliParaBirimi: vitrinBirimFiyat}, vitrinBaslangicStok)
+	customerID, email := newCustomer(ctx, t)
+	variantID, stockItemID := newStockedVariant(ctx, t, "E2E Storefront B2B Limit",
+		map[string]int64{taxedCurrency: storefrontUnitPrice}, storefrontInitialStock)
 
-	// Limit sepetin genel toplamının ALTINDA: 1_000 < 76_800.
+	// The limit is BELOW the cart's grand total: 1_000 < 76_800.
 	limit := int64(1_000)
-	b2bCalisan(ctx, t, musteriID, &limit, b2bmodels.ResetNever)
+	b2bCalisan(ctx, t, customerID, &limit, b2bmodels.ResetNever)
 
-	sepetID := vitrinSepetiAc(t, musteriID, eposta)
-	ekle := vitrinIstegi(t, http.MethodPost, "/store/v1/carts/"+sepetID+"/line-items",
-		fmt.Sprintf(`{"variant_id":%q,"quantity":%d}`, varyantID, vitrinAdet))
-	require.Equal(t, http.StatusCreated, ekle.Code, "gövde: %s", ekle.Body.String())
+	cartID := openStorefrontCart(t, customerID, email)
+	added := vitrinIstegi(t, http.MethodPost, "/store/v1/carts/"+cartID+"/line-items",
+		fmt.Sprintf(`{"variant_id":%q,"quantity":%d}`, variantID, storefrontQuantity))
+	require.Equal(t, http.StatusCreated, added.Code, "body: %s", added.Body.String())
 
-	red := vitrinIstegi(t, http.MethodPost, "/store/v1/carts/"+sepetID+"/complete",
-		vitrinTamamlamaGovdesi(t, vitrinToplam))
+	rejected := vitrinIstegi(t, http.MethodPost, "/store/v1/carts/"+cartID+"/complete",
+		storefrontCompletionBody(t, storefrontTotal))
 
-	require.Equal(t, http.StatusConflict, red.Code,
-		"limit aşımı çakışmadır: istek biçimsel olarak geçerlidir, reddin sebebi "+
-			"sistemin O ANDAKİ durumudur. gövde: %s", red.Body.String())
-	assert.Equal(t, ordersvc.CodeSpendingLimitExceeded, hataKodu(t, red),
-		"gövdenin kodu reddin SEBEBİNİ adlandırmalı; motorun kendi sabiti "+
-			"görünüyorsa istemci limit aşımını geçici bir çakışmadan ayıramaz. "+
-			"gövde: %s", red.Body.String())
+	require.Equal(t, http.StatusConflict, rejected.Code,
+		"exceeding the limit is a conflict: the request is formally valid, the reason "+
+			"for the rejection is the system's state AT THAT MOMENT. body: %s", rejected.Body.String())
+	assert.Equal(t, ordersvc.CodeSpendingLimitExceeded, errorCode(t, rejected),
+		"the body's code must name the REASON for the rejection; if the engine's own "+
+			"constant shows up, the client cannot tell a limit overrun from a temporary "+
+			"conflict. body: %s", rejected.Body.String())
 
-	// Sebebin bildirilmesi, reddin bedelsiz olduğu iddiasını zayıflatmamalı.
-	assert.Equal(t, vitrinBaslangicStok, satilabilirAdet(ctx, t, stokKalemID),
-		"reddedilen alışveriş stoğu TUTMAMALI")
+	// Reporting the reason must not weaken the claim that the rejection is free.
+	assert.Equal(t, storefrontInitialStock, sellableQuantity(ctx, t, stockItemID),
+		"a rejected purchase must NOT hold stock")
 
-	acik, err := sepetSvc.GetCart(ctx, sepetID)
-	require.NoError(t, err, "reddedilen alışverişin sepeti hâlâ okunabilmeli")
-	assert.False(t, acik.Completed(),
-		"reddedilen alışverişin sepeti KAPANMAMALI; kapansaydı müşteri limiti "+
-			"düzeldiğinde sepetini yeniden kurmak zorunda kalırdı")
+	open, err := cartSvc.GetCart(ctx, cartID)
+	require.NoError(t, err, "the cart of a rejected purchase must still be readable")
+	assert.False(t, open.Completed(),
+		"the cart of a rejected purchase must NOT close; if it did, the customer would "+
+			"have to rebuild the cart once their limit was fixed")
 }
 
-// vitrinSepetiAc mağaza ucundan VERGİLİ ülkede bir sepet açar ve kimliğini
-// döner.
-func vitrinSepetiAc(t *testing.T, musteriID, eposta string) string {
+// openStorefrontCart opens a cart in the TAXED country from the store endpoint
+// and returns its id.
+func openStorefrontCart(t *testing.T, customerID, email string) string {
 	t.Helper()
 
-	return vitrinUlkeSepetiAc(t, vergiliUlke, musteriID, eposta)
+	return openStorefrontCartInCountry(t, taxedCountry, customerID, email)
 }
 
-// vitrinUlkeSepetiAc mağaza ucundan VERİLEN ülkede bir sepet açar ve kimliğini
-// döner.
+// openStorefrontCartInCountry opens a cart in the GIVEN country from the store
+// endpoint and returns its id.
 //
-// Gövdede ne bölge ne para birimi VARDIR ve olamaz: sunucu ikisini de ülkeden
-// türetir. Ülkenin parametre olması tam da bunu görünür kılmak içindir —
-// sepetin bölgesini (ve dolayısıyla para birimini) değiştirmenin tek yolu
-// BAŞKA bir ülke seçmektir, çünkü müşterinin ifade edebildiği tek şey odur.
-func vitrinUlkeSepetiAc(t *testing.T, ulkeKodu, musteriID, eposta string) string {
+// The body carries neither a region nor a currency, and it cannot: the server
+// derives both from the country. The country being a parameter is precisely
+// what makes that visible — the only way to change a cart's region (and
+// therefore its currency) is to pick ANOTHER country, because that is the only
+// thing the customer is able to express.
+func openStorefrontCartInCountry(t *testing.T, countryCode, customerID, email string) string {
 	t.Helper()
 
-	kayit := vitrinIstegi(t, http.MethodPost, "/store/v1/carts", fmt.Sprintf(
-		`{"country_code":%q,"customer_id":%q,"email":%q}`, ulkeKodu, musteriID, eposta))
-	require.Equal(t, http.StatusCreated, kayit.Code, "sepet açılamadı; gövde: %s", kayit.Body.String())
+	rec := vitrinIstegi(t, http.MethodPost, "/store/v1/carts", fmt.Sprintf(
+		`{"country_code":%q,"customer_id":%q,"email":%q}`, countryCode, customerID, email))
+	require.Equal(t, http.StatusCreated, rec.Code,
+		"could not open the cart; body: %s", rec.Body.String())
 
-	return sepetKimliginiOku(t, kayit)
+	return readCartID(t, rec)
 }
 
-// vitrinTamamlamaGovdesi tamamlama isteğinin gövdesini üretir.
+// storefrontCompletionBody builds the body of the completion request.
 //
-// Ödeme davranışı manuel sağlayıcının oturum verisinden gelir
-// (bkz. [odemeDavranisi]); saga'nın kendisinde hiçbir test kancası yoktur.
-// Gövdede lokasyon YOKTUR ve olamaz: hangi depodan çıkılacağı kargo kararıdır
-// ve akış onu satır başına kendisi verir.
-func vitrinTamamlamaGovdesi(t *testing.T, onaylananToplam int64) string {
+// The payment behaviour comes from the manual provider's session data (see
+// [paymentBehavior]); the saga itself has no test hook whatsoever. The body
+// carries NO location and cannot: which warehouse to ship out of is a shipping
+// decision and the workflow makes it per line itself.
+func storefrontCompletionBody(t *testing.T, approvedTotal int64) string {
 	t.Helper()
 
-	govde, err := json.Marshal(map[string]any{
+	body, err := json.Marshal(map[string]any{
 		"payment_provider_id": manual.ID,
-		"payment_data":        odemeDavranisi(t, manual.OutcomeAuthorize),
-		"expected_total":      onaylananToplam,
+		"payment_data":        paymentBehavior(t, manual.OutcomeAuthorize),
+		"expected_total":      approvedTotal,
 	})
-	require.NoError(t, err, "tamamlama gövdesi kodlanamadı")
+	require.NoError(t, err, "could not encode the completion body")
 
-	return string(govde)
+	return string(body)
 }
 
-// vitrinIstegi publishable anahtarla bir mağaza isteği yapar.
+// vitrinIstegi makes a store request with the publishable key.
 //
-// Anahtar ÜRETİMDEKİ koruma yığınından geçer: istek, korumasız bir router'a
-// değil, cmd/server'daki sırayla kurulmuş olana gider (bkz. zeminiKur).
-func vitrinIstegi(t *testing.T, metod, yol, govde string) *httptest.ResponseRecorder {
+// The key passes through the PRODUCTION guard stack: the request goes not to an
+// unguarded router but to the one assembled in the same order as in cmd/server
+// (see setUpHarness).
+func vitrinIstegi(t *testing.T, method, path, body string) *httptest.ResponseRecorder {
 	t.Helper()
 
-	return anahtarliVitrinIstegi(t, publishableAnahtar, metod, yol, govde)
+	return anahtarliVitrinIstegi(t, publishableKey, method, path, body)
 }
 
-// vitrinVeri yanıt zarfının "data" alanını nesne olarak döner.
-func vitrinVeri(t *testing.T, kayit *httptest.ResponseRecorder) map[string]any {
+// vitrinVeri returns the response envelope's "data" field as an object.
+func vitrinVeri(t *testing.T, rec *httptest.ResponseRecorder) map[string]any {
 	t.Helper()
 
-	var zarf struct {
+	var envelope struct {
 		Data map[string]any `json:"data"`
 	}
-	require.NoError(t, json.Unmarshal(kayit.Body.Bytes(), &zarf),
-		"yanıt çözülemedi; gövde: %s", kayit.Body.String())
-	require.NotNil(t, zarf.Data, "yanıt tekil zarf taşımalı; gövde: %s", kayit.Body.String())
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &envelope),
+		"could not decode the response; body: %s", rec.Body.String())
+	require.NotNil(t, envelope.Data,
+		"the response must carry a singular envelope; body: %s", rec.Body.String())
 
-	return zarf.Data
+	return envelope.Data
 }

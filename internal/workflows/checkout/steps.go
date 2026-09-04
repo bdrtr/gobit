@@ -370,7 +370,7 @@ func (s *reserveInventoryStep) locationFor(ctx context.Context, line planLine) (
 	}
 	if len(candidates) == 0 {
 		return nil, errors.Conflict(CodeReservationFailed,
-			"%s kaleminden %d adet ayrılabilecek lokasyon yok", line.InventoryItemID, line.Quantity)
+			"no location can reserve %d of item %s", line.Quantity, line.InventoryItemID)
 	}
 
 	return candidates, nil

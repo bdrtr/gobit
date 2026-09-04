@@ -69,32 +69,32 @@ const (
 func TestCokSatirliSepetToplamTutarliligi(t *testing.T) {
 	ctx := t.Context()
 
-	varyantA := yeniVaryant(ctx, t, "E2E Çok Satır A", map[string]int64{vergiliParaBirimi: cokSatirFiyatA})
-	varyantB := yeniVaryant(ctx, t, "E2E Çok Satır B", map[string]int64{vergiliParaBirimi: cokSatirFiyatB})
-	varyantC := yeniVaryant(ctx, t, "E2E Çok Satır C", map[string]int64{vergiliParaBirimi: cokSatirFiyatC})
+	varyantA := newVariant(ctx, t, "E2E Çok Satır A", map[string]int64{taxedCurrency: cokSatirFiyatA})
+	varyantB := newVariant(ctx, t, "E2E Çok Satır B", map[string]int64{taxedCurrency: cokSatirFiyatB})
+	varyantC := newVariant(ctx, t, "E2E Çok Satır C", map[string]int64{taxedCurrency: cokSatirFiyatC})
 
-	sepet, err := akislar.CreateCart(ctx, cartwf.CreateCartInput{CountryCode: vergiliUlke})
+	sepet, err := workflows.CreateCart(ctx, cartwf.CreateCartInput{CountryCode: taxedCountry})
 	require.NoError(t, err, "sepet açılabilmeli")
 
-	satirA, err := akislar.AddLineItem(ctx, cartwf.AddLineItemInput{
+	satirA, err := workflows.AddLineItem(ctx, cartwf.AddLineItemInput{
 		CartID: sepet.CartID, VariantID: varyantA, Quantity: 1,
 	})
 	require.NoError(t, err, "A satırı eklenebilmeli")
-	satirB, err := akislar.AddLineItem(ctx, cartwf.AddLineItemInput{
+	satirB, err := workflows.AddLineItem(ctx, cartwf.AddLineItemInput{
 		CartID: sepet.CartID, VariantID: varyantB, Quantity: 1,
 	})
 	require.NoError(t, err, "B satırı eklenebilmeli")
-	sonuc, err := akislar.AddLineItem(ctx, cartwf.AddLineItemInput{
+	sonuc, err := workflows.AddLineItem(ctx, cartwf.AddLineItemInput{
 		CartID: sepet.CartID, VariantID: varyantC, Quantity: 2,
 	})
 	require.NoError(t, err, "C satırı eklenebilmeli")
 
-	toplamlariDogrula(t, sonuc.Totals, beklenenToplam{
-		araToplam: cokSatirAraToplam,
-		indirim:   0,
-		vergi:     cokSatirVergi,
-		kargo:     0,
-		toplam:    cokSatirToplam,
+	assertTotals(t, sonuc.Totals, expectedTotal{
+		subtotal: cokSatirAraToplam,
+		discount: 0,
+		tax:      cokSatirVergi,
+		shipping: 0,
+		total:    cokSatirToplam,
 	}, "üç satır eklendikten sonra")
 
 	require.Len(t, sonuc.Totals.Lines, 3,
@@ -121,11 +121,11 @@ func TestCokSatirliSepetToplamTutarliligi(t *testing.T) {
 
 	// Satır başına elle hesaplanan tutarlar.
 	for _, beklenen := range []struct {
-		ad        string
-		id        string
-		birim     int64
-		araToplam int64
-		vergi     int64
+		ad       string
+		id       string
+		birim    int64
+		subtotal int64
+		tax      int64
 	}{
 		{"A", satirA.LineItemID, cokSatirFiyatA, cokSatirAraToplamA, cokSatirVergiA},
 		{"B", satirB.LineItemID, cokSatirFiyatB, cokSatirAraToplamB, cokSatirVergiB},
@@ -137,12 +137,12 @@ func TestCokSatirliSepetToplamTutarliligi(t *testing.T) {
 			"%s satırının birim fiyatı pricing'in seçtiği fiyat olmalı; her satır KENDİ "+
 				"fiyat kümesinden fiyatlanır ve kümeler karışırsa yanlış ürün ücretlendirilir",
 			beklenen.ad)
-		require.Equal(t, beklenen.araToplam, satir.Subtotal,
+		require.Equal(t, beklenen.subtotal, satir.Subtotal,
 			"%s satırının ara toplamı elle hesaplanan değere eşit olmalı", beklenen.ad)
-		require.Equal(t, beklenen.vergi, satir.TaxTotal,
+		require.Equal(t, beklenen.tax, satir.TaxTotal,
 			"%s satırının vergisi kendi tabanı üzerinden AŞAĞI yuvarlanarak hesaplanmalı",
 			beklenen.ad)
-		require.Equal(t, beklenen.araToplam+beklenen.vergi, satir.Total,
+		require.Equal(t, beklenen.subtotal+beklenen.tax, satir.Total,
 			"%s satırının toplamı subtotal - discount + tax olmalı", beklenen.ad)
 	}
 
@@ -156,11 +156,11 @@ func TestCokSatirliSepetToplamTutarliligi(t *testing.T) {
 		"yuvarlama daima MÜŞTERİ LEHİNE olmalı; yakına yuvarlama müşteriden fazla tahsil "+
 			"eder ve \"fazlası nereden geldi\" sorusunu mutabakata bırakırdı")
 
-	detay, err := sepetSvc.GetCart(ctx, sepet.CartID)
+	detay, err := cartSvc.GetCart(ctx, sepet.CartID)
 	require.NoError(t, err, "sepet modülünden okunabilmeli")
 	require.Len(t, detay.Items, 3, "üç ayrı varyant üç ayrı satır olmalı")
 	require.Equal(t, cokSatirToplam, detay.Total,
-		"saklanan genel toplam elle hesaplanan değere eşit olmalı")
+		"saklanan genel total elle hesaplanan değere eşit olmalı")
 	require.False(t, detay.TotalsStale(), "toplamlar güncel şekle damgalanmış olmalı")
 }
 
@@ -183,7 +183,7 @@ const (
 //
 // Faz 5'te sebep bölgenin bayrağıydı: automatic_taxes kapalıydı ve akış onu
 // dinliyordu. Faz 7'de vergiyi tax modülü devraldı ve bu ülkeye bir vergi
-// bölgesi kurulmadı ([vergiFiksturleriniKur]); tax "yapılandırma yok" diye
+// bölgesi kurulmadı ([setUpTaxFixtures]); tax "yapılandırma yok" diye
 // YETKİLİ bir cevap verir ve region'a geri düşülmez.
 //
 // İki sebep AYNI tutarı üretir, yani sepetin toplamı hangisinin geçerli
@@ -191,52 +191,52 @@ const (
 // bu senaryo tam da onu sınar: alan olmasaydı, devralmanın bu bölgede hiç
 // çalışmadığı da aynı sayılarla gizlenebilirdi.
 //
-// Bölgenin hâlâ sıfır OLMAYAN bir oran taşıması ([vergisizOranBps]) bir kalıntı
+// Bölgenin hâlâ sıfır OLMAYAN bir oran taşıması ([untaxedRateBps]) bir kalıntı
 // değildir: region yolu SİLİNMEDİ, geri düşüş yolu olarak duruyor ve o yola
 // düşülseydi verginin görülebilir bir değeri olurdu.
 func TestVergisizBolgedeVergiSifir(t *testing.T) {
 	ctx := t.Context()
 
-	oran, otomatik, err := bolgeSvc.RegionTax(ctx, vergisizBolgeID)
-	require.NoError(t, err, "bölgenin vergi ayarı okunabilmeli")
+	oran, otomatik, err := regionSvc.RegionTax(ctx, untaxedRegionID)
+	require.NoError(t, err, "bölgenin tax ayarı okunabilmeli")
 	require.False(t, otomatik,
 		"fikstür bölgesi otomatik vergiyi KAPALI tutmalı; Faz 5'te verginin sıfır "+
 			"çıkmasının sebebi buydu ve fikstür o hâliyle korunur")
-	require.Equal(t, vergisizOranBps, oran,
+	require.Equal(t, untaxedRateBps, oran,
 		"fikstür bölgesi sıfır OLMAYAN bir oran taşımalı; verginin sıfır çıkması oranın "+
 			"küçüklüğünden gelmemelidir")
 
-	_, bulundu, err := vergiInterop.RateForCountry(ctx, vergisizUlke)
+	_, bulundu, err := taxInterop.RateForCountry(ctx, untaxedCountry)
 	require.NoError(t, err, "tax yüzeyinden oran sorgulanabilmeli")
 	require.False(t, bulundu,
-		"%s ülkesinin tax modülünde vergi bölgesi OLMAMALI; bu senaryonun sıfırı "+
-			"yapılandırma yokluğundan gelir", vergisizUlke)
+		"%s ülkesinin tax modülünde tax bölgesi OLMAMALI; bu senaryonun sıfırı "+
+			"yapılandırma yokluğundan gelir", untaxedCountry)
 
-	varyantID := yeniVaryant(ctx, t, "E2E Vergisiz Ürün", map[string]int64{
-		vergisizParaBirimi: vergisizBirimFiyat,
+	varyantID := newVariant(ctx, t, "E2E Vergisiz Ürün", map[string]int64{
+		untaxedCurrency: vergisizBirimFiyat,
 	})
 
-	sepet, err := akislar.CreateCart(ctx, cartwf.CreateCartInput{CountryCode: vergisizUlke})
+	sepet, err := workflows.CreateCart(ctx, cartwf.CreateCartInput{CountryCode: untaxedCountry})
 	require.NoError(t, err, "vergisiz bölgede sepet açılabilmeli")
-	require.Equal(t, vergisizBolgeID, sepet.RegionID,
+	require.Equal(t, untaxedRegionID, sepet.RegionID,
 		"sepet vergisiz bölgeye bağlanmalı")
-	require.Equal(t, vergisizParaBirimi, sepet.CurrencyCode,
+	require.Equal(t, untaxedCurrency, sepet.CurrencyCode,
 		"sepetin para birimi vergisiz bölgeninkiyle aynı olmalı; farklı olsaydı fiyat hiç "+
 			"bulunamaz ve test verginin değil fiyatın yokluğunu sınardı")
 
-	eklendi, err := akislar.AddLineItem(ctx, cartwf.AddLineItemInput{
+	eklendi, err := workflows.AddLineItem(ctx, cartwf.AddLineItemInput{
 		CartID:    sepet.CartID,
 		VariantID: varyantID,
 		Quantity:  2,
 	})
 	require.NoError(t, err, "vergisiz bölgede de satır eklenebilmeli")
 
-	toplamlariDogrula(t, eklendi.Totals, beklenenToplam{
-		araToplam: vergisizAraToplam,
-		indirim:   0,
-		vergi:     0,
-		kargo:     0,
-		toplam:    vergisizToplam,
+	assertTotals(t, eklendi.Totals, expectedTotal{
+		subtotal: vergisizAraToplam,
+		discount: 0,
+		tax:      0,
+		shipping: 0,
+		total:    vergisizToplam,
 	}, "vergisiz bölgede 2 adet eklendikten sonra")
 
 	require.Equal(t, cartwf.TaxSourceTaxUnconfigured, eklendi.Totals.TaxSource,
@@ -249,7 +249,7 @@ func TestVergisizBolgedeVergiSifir(t *testing.T) {
 	require.Len(t, eklendi.Totals.Lines, 1, "tek satır beklenir")
 	require.Equal(t, int64(0), eklendi.Totals.Lines[0].TaxTotal,
 		"satır vergisi de sıfır olmalı; sepet vergisi satır vergilerinin toplamı olduğu "+
-			"için satırda kalan bir vergi sepette de görünürdü")
+			"için satırda kalan bir tax sepette de görünürdü")
 	require.Equal(t, vergisizAraToplam, eklendi.Totals.Lines[0].Total,
 		"vergisiz satırın toplamı ara toplamına eşit olmalı")
 }
@@ -268,12 +268,12 @@ func TestFiyatiOlmayanVaryantSepeteGiremez(t *testing.T) {
 
 	// Fiyat kümesi HİÇ kurulmaz: varyant "product_variant_price_set" bağına
 	// sahip değildir.
-	fiyatsizVaryant := yeniVaryant(ctx, t, "E2E Fiyatsız Ürün", nil)
+	fiyatsizVaryant := newVariant(ctx, t, "E2E Fiyatsız Ürün", nil)
 
-	sepet, err := akislar.CreateCart(ctx, cartwf.CreateCartInput{CountryCode: vergiliUlke})
+	sepet, err := workflows.CreateCart(ctx, cartwf.CreateCartInput{CountryCode: taxedCountry})
 	require.NoError(t, err, "sepet açılabilmeli")
 
-	_, err = akislar.AddLineItem(ctx, cartwf.AddLineItemInput{
+	_, err = workflows.AddLineItem(ctx, cartwf.AddLineItemInput{
 		CartID:    sepet.CartID,
 		VariantID: fiyatsizVaryant,
 		Quantity:  1,
@@ -289,7 +289,7 @@ func TestFiyatiOlmayanVaryantSepeteGiremez(t *testing.T) {
 		"hata kodu %q olmalı; istemciler mesaja değil koda göre dallanır",
 		cartwf.CodeVariantNotPriced)
 
-	detay, err := sepetSvc.GetCart(ctx, sepet.CartID)
+	detay, err := cartSvc.GetCart(ctx, sepet.CartID)
 	require.NoError(t, err, "sepet reddedilen istekten sonra da okunabilmeli")
 	require.Empty(t, detay.Items,
 		"reddedilen istek sepete DOKUNMAMALI; yarım yazılmış bir satır, müşterinin hiç "+
@@ -309,13 +309,13 @@ func TestSepetinParaBirimindeFiyatiOlmayanVaryantReddedilir(t *testing.T) {
 	ctx := t.Context()
 
 	// Fiyat yalnızca USD'de tanımlıdır; sepet ise TRY para biriminde açılacaktır.
-	yanlisParaBirimliVaryant := yeniVaryant(ctx, t, "E2E Yalnızca USD Fiyatlı Ürün",
+	yanlisParaBirimliVaryant := newVariant(ctx, t, "E2E Yalnızca USD Fiyatlı Ürün",
 		map[string]int64{"USD": 4_200})
 
-	sepet, err := akislar.CreateCart(ctx, cartwf.CreateCartInput{CountryCode: vergiliUlke})
+	sepet, err := workflows.CreateCart(ctx, cartwf.CreateCartInput{CountryCode: taxedCountry})
 	require.NoError(t, err, "sepet açılabilmeli")
 
-	_, err = akislar.AddLineItem(ctx, cartwf.AddLineItemInput{
+	_, err = workflows.AddLineItem(ctx, cartwf.AddLineItemInput{
 		CartID:    sepet.CartID,
 		VariantID: yanlisParaBirimliVaryant,
 		Quantity:  1,
@@ -344,15 +344,15 @@ func TestKargoluSepetVergiTabaninaGirmez(t *testing.T) {
 	ctx := t.Context()
 
 	const birimFiyat int64 = 10_000
-	varyantID := yeniVaryant(ctx, t, "Kargolu ürün", map[string]int64{vergiliParaBirimi: birimFiyat})
+	varyantID := newVariant(ctx, t, "Kargolu ürün", map[string]int64{taxedCurrency: birimFiyat})
 
-	sepet, err := akislar.CreateCart(ctx, cartwf.CreateCartInput{
-		CountryCode: vergiliUlke,
-		Email:       "kargo@ornek.test",
+	sepet, err := workflows.CreateCart(ctx, cartwf.CreateCartInput{
+		CountryCode: taxedCountry,
+		Email:       "shipping@ornek.test",
 	})
 	require.NoError(t, err)
 
-	_, err = akislar.AddLineItem(ctx, cartwf.AddLineItemInput{
+	_, err = workflows.AddLineItem(ctx, cartwf.AddLineItemInput{
 		CartID:    sepet.CartID,
 		VariantID: varyantID,
 		Quantity:  1,
@@ -361,38 +361,38 @@ func TestKargoluSepetVergiTabaninaGirmez(t *testing.T) {
 
 	// Kargo yöntemi sepet servisinden eklenir; akış onu anlık görüntüde görmeli.
 	const kargoTutari int64 = 4_990
-	_, err = sepetSvc.AddShippingMethod(ctx, sepet.CartID, cartsvc.AddShippingMethodInput{
-		Name:   "Standart kargo",
+	_, err = cartSvc.AddShippingMethod(ctx, sepet.CartID, cartsvc.AddShippingMethodInput{
+		Name:   "Standart shipping",
 		Amount: kargoTutari,
 	})
-	require.NoError(t, err, "kargo yöntemi eklenebilmeli")
+	require.NoError(t, err, "shipping yöntemi eklenebilmeli")
 
-	toplamlar, err := akislar.CalculateTotals(ctx, sepet.CartID)
+	toplamlar, err := workflows.CalculateTotals(ctx, sepet.CartID)
 	require.NoError(t, err)
 
 	// Beklentiler ELLE hesaplanır; üretim formülü tekrar edilmez.
 	//   ara toplam = 10.000
 	//   vergi tabanı = ara toplam (kargo HARİÇ) -> 10.000 × %20 = 2.000
 	//   toplam = 10.000 - 0 + 2.000 + 4.990 = 16.990
-	toplamlariDogrula(t, toplamlar, beklenenToplam{
-		araToplam: 10_000,
-		indirim:   0,
-		vergi:     2_000,
-		kargo:     4_990,
-		toplam:    16_990,
-	}, "kargo eklendikten sonra")
+	assertTotals(t, toplamlar, expectedTotal{
+		subtotal: 10_000,
+		discount: 0,
+		tax:      2_000,
+		shipping: 4_990,
+		total:    16_990,
+	}, "shipping eklendikten sonra")
 
 	// Sözleşmenin ASIL iddiası: kargo vergilenmiş olsaydı vergi 2.998 olurdu
 	// ((10.000 + 4.990) × %20). Bu ayrı iddia, yukarıdaki 2.000'in tesadüfen
 	// değil KARAR GEREĞİ o değer olduğunu belgeler.
 	const kargoVergilenseydi int64 = 2_998
 	require.NotEqual(t, kargoVergilenseydi, toplamlar.TaxTotal,
-		"kargo vergi tabanına GİRMEMELİ; girseydi vergi %d olurdu", kargoVergilenseydi)
+		"shipping tax tabanına GİRMEMELİ; girseydi tax %d olurdu", kargoVergilenseydi)
 
 	// Sepetten okunan toplam, akışın döndürdüğüyle birebir aynı olmalı.
-	detay, err := sepetSvc.GetCart(ctx, sepet.CartID)
+	detay, err := cartSvc.GetCart(ctx, sepet.CartID)
 	require.NoError(t, err)
 	require.Equal(t, toplamlar.ShippingTotal, detay.ShippingTotal,
-		"kargo tutarı veritabanına yazılmalı; SetTotals'ın kimlik kontrolü buna dayanır")
+		"shipping tutarı veritabanına yazılmalı; SetTotals'ın kimlik kontrolü buna dayanır")
 	require.Equal(t, toplamlar.Total, detay.Total)
 }

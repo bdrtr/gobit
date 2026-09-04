@@ -59,19 +59,19 @@ import (
 func TestSepetYaratmaBilerekOynatilmaz(t *testing.T) {
 	ctx := context.Background()
 
-	govde, err := json.Marshal(map[string]string{"country_code": vergiliUlke})
+	govde, err := json.Marshal(map[string]string{"country_code": taxedCountry})
 	require.NoError(t, err, "sepet isteği kodlanamadı")
 
 	sepetIstegi := func() *http.Request {
 		istek := httptest.NewRequest(http.MethodPost, cartapi.StoreCartsPath, bytes.NewReader(govde))
 		istek.Header.Set("Content-Type", "application/json")
-		istek.Header.Set(corehttp.PublishableKeyHeader, publishableAnahtar)
+		istek.Header.Set(corehttp.PublishableKeyHeader, publishableKey)
 		istek.Header.Set(corehttp.IdempotencyKeyHeader, "e2e-sepet-anahtari-1")
 
 		return istek
 	}
 
-	oncekiSayi := sepetSayisi(ctx, t)
+	oncekiSayi := cartCount(ctx, t)
 
 	ilk := httptest.NewRecorder()
 	testRouter.ServeHTTP(ilk, sepetIstegi())
@@ -83,9 +83,9 @@ func TestSepetYaratmaBilerekOynatilmaz(t *testing.T) {
 
 	assert.Empty(t, ikinci.Header().Get(corehttp.IdempotencyReplayedHeader),
 		"sepet yaratma halkadan MUAFtır; oynatma başlığı hiç çıkmamalı")
-	assert.NotEqual(t, sepetKimliginiOku(t, ilk), sepetKimliginiOku(t, ikinci),
+	assert.NotEqual(t, readCartID(t, ilk), readCartID(t, ikinci),
 		"ikinci çağıran BİRİNCİNİN sepetini almamalı; asıl iddia budur")
-	assert.Equal(t, oncekiSayi+2, sepetSayisi(ctx, t),
+	assert.Equal(t, oncekiSayi+2, cartCount(ctx, t),
 		"iki istek iki sepet yazmalı; muafiyetin bedeli tam olarak budur")
 }
 
@@ -100,18 +100,18 @@ func TestSepetYaratmaBilerekOynatilmaz(t *testing.T) {
 // kimliği vardır, dolayısıyla aynı anahtarı kendi sepetinde kullanan ikinci
 // müşteri başkasının verisini değil 409 alır.
 func TestSepetKapsamliUctaIdempotencyKorunur(t *testing.T) {
-	sepetID, _ := sepetOlustur(t)
+	sepetID, _ := createCart(t)
 
 	adresIstegi := func(anahtar string) *http.Request {
 		govde, err := json.Marshal(map[string]any{
-			"address": map[string]string{"country_code": vergiliUlke, "city": "Istanbul"},
+			"address": map[string]string{"country_code": taxedCountry, "city": "Istanbul"},
 		})
 		require.NoError(t, err)
 
 		istek := httptest.NewRequest(http.MethodPost,
 			"/store/v1/carts/"+sepetID+"/shipping-address", bytes.NewReader(govde))
 		istek.Header.Set("Content-Type", "application/json")
-		istek.Header.Set(corehttp.PublishableKeyHeader, publishableAnahtar)
+		istek.Header.Set(corehttp.PublishableKeyHeader, publishableKey)
 		istek.Header.Set(corehttp.IdempotencyKeyHeader, anahtar)
 
 		return istek
@@ -134,14 +134,14 @@ func TestSepetKapsamliUctaIdempotencyKorunur(t *testing.T) {
 		"oynatılan yanıt ilkinin AYNISI olmalı")
 }
 
-// sepetSayisi veritabanındaki toplam sepet sayısını döner.
-func sepetSayisi(ctx context.Context, t *testing.T) int64 {
+// cartCount veritabanındaki toplam sepet sayısını döner.
+func cartCount(ctx context.Context, t *testing.T) int64 {
 	t.Helper()
 
-	_, toplam, err := sepetSvc.ListCarts(ctx, cartsvc.ListCartsInput{})
+	_, total, err := cartSvc.ListCarts(ctx, cartsvc.ListCartsInput{})
 	require.NoError(t, err, "sepetler sayılamadı")
 
-	return toplam
+	return total
 }
 
 // TestIdempotencyAyniAnahtarFarkliGovdeyiReddeder anahtarın yeniden
@@ -155,19 +155,19 @@ func sepetSayisi(ctx context.Context, t *testing.T) int64 {
 // (bkz. [TestSepetYaratmaBilerekOynatilmaz]) ve orada anahtarın yeniden
 // kullanımı diye bir kavram kalmamıştır.
 func TestIdempotencyAyniAnahtarFarkliGovdeyiReddeder(t *testing.T) {
-	sepetID, _ := sepetOlustur(t)
+	sepetID, _ := createCart(t)
 	anahtar := "e2e-sepet-anahtari-2"
 
 	istekYap := func(sehir string) *http.Request {
 		govde, err := json.Marshal(map[string]any{
-			"address": map[string]string{"country_code": vergiliUlke, "city": sehir},
+			"address": map[string]string{"country_code": taxedCountry, "city": sehir},
 		})
 		require.NoError(t, err)
 
 		istek := httptest.NewRequest(http.MethodPost,
 			"/store/v1/carts/"+sepetID+"/shipping-address", bytes.NewReader(govde))
 		istek.Header.Set("Content-Type", "application/json")
-		istek.Header.Set(corehttp.PublishableKeyHeader, publishableAnahtar)
+		istek.Header.Set(corehttp.PublishableKeyHeader, publishableKey)
 		istek.Header.Set(corehttp.IdempotencyKeyHeader, anahtar)
 
 		return istek
@@ -243,7 +243,7 @@ func TestEklentiCekirdegeDokunmadanSaglayiciEkler(t *testing.T) {
 
 	// Host, modüllerin AYNI container'ıyla kurulur; eklentinin sağlayıcısı
 	// çalışan sisteme girer, ayrı bir kopyaya değil.
-	host := coreplugin.NewHost(kap, module.NewRegistry(nil, nil), nil, nil,
+	host := coreplugin.NewHost(ctr, module.NewRegistry(nil, nil), nil, nil,
 		map[string]string{"STRIPE_API_KEY": "sk_test_e2e"})
 
 	require.NoError(t, eklentiler.Install(ctx, host), "eklenti kurulamadı")
@@ -257,16 +257,16 @@ func TestEklentiCekirdegeDokunmadanSaglayiciEkler(t *testing.T) {
 	assert.Equal(t, paymentstripe.ProviderID, saglayici.ID())
 }
 
-// TestEklentiAyariEksikseKurulumDurur yapılandırma hatasının açılışta
+// TestSetupStopsWhenAPluginSettingIsMissing yapılandırma hatasının açılışta
 // patladığını doğrular.
 //
 // Sessizce atlansaydı, "stripe kurulu" sanılan bir mağaza hiç ödeme alamaz ve
 // bu ancak ilk müşteri denemesinde görülürdü.
-func TestEklentiAyariEksikseKurulumDurur(t *testing.T) {
+func TestSetupStopsWhenAPluginSettingIsMissing(t *testing.T) {
 	eklentiler := coreplugin.NewRegistry(nil)
 	eklentiler.Add(paymentstripe.New())
 
-	host := coreplugin.NewHost(kap, module.NewRegistry(nil, nil), nil, nil, nil)
+	host := coreplugin.NewHost(ctr, module.NewRegistry(nil, nil), nil, nil, nil)
 
 	err := eklentiler.Install(context.Background(), host)
 	require.Error(t, err, "ayarı olmayan eklenti kurulmamalı")
@@ -280,11 +280,11 @@ func TestEklentiAyariEksikseKurulumDurur(t *testing.T) {
 // Kayıt ADLA çözülür: eklenti de aynı adı kullanır ve iki adın uyumu
 // internal/arch/constants_test.go ile derleme zamanına bağlanmıştır.
 func containerSaglayicilari() (*paymentsvc.ProviderRegistry, error) {
-	return container.Resolve[*paymentsvc.ProviderRegistry](kap, paymentmod.ProvidersName)
+	return container.Resolve[*paymentsvc.ProviderRegistry](ctr, paymentmod.ProvidersName)
 }
 
-// sepetKimliginiOku bir sepet yanıtından kimliği çıkarır.
-func sepetKimliginiOku(t *testing.T, kayit *httptest.ResponseRecorder) string {
+// readCartID bir sepet yanıtından kimliği çıkarır.
+func readCartID(t *testing.T, kayit *httptest.ResponseRecorder) string {
 	t.Helper()
 
 	var zarf struct {

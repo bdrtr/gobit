@@ -20,759 +20,783 @@ import (
 	checkoutwf "github.com/bdrtr/gobit/internal/workflows/checkout"
 )
 
-// Bu dosya planın Faz 6 DoD'sini GERÇEK modüllerle kanıtlar.
+// This file proves the plan's Phase 6 DoD with the REAL modules.
 //
-// DoD tek cümleyle: "Uçtan uca sepet -> sipariş akışı test provider ile
-// çalışıyor; ödeme adımı başarısızken STOK REZERVASYONU VE SİPARİŞ GERİ
-// ALINIYOR (saga testi); order.placed eventi yayınlanıyor."
+// The DoD in one sentence: "The end-to-end cart -> order workflow works with the
+// test provider; when the payment step fails the STOCK RESERVATION AND THE ORDER
+// ARE ROLLED BACK (saga test); the order.placed event is published."
 //
-// # Neden birim testleri yetmez
+// # Why unit tests are not enough
 //
-// checkout paketinin birim testleri saga'nın kararlarını SAHTE yüzeylerle
-// sınar: "telafi çağrıldı mı", "hangi sırayla". Bunlar doğru sorulardır ama
-// tek başına Faz 6'yı kanıtlamaz, çünkü DoD'nin iddiası çağrıların yapılması
-// değil SONUCUDUR — siparişin gerçekten "canceled" olması, ayrılan stoğun
-// gerçekten satılabilir hâle dönmesi, paranın gerçekten çekilmiş olması.
-// Bunların hepsi modüllerin veritabanı işlemlerinde ve durum makinelerinde
-// yaşar; ancak gerçek modüllerle görülebilir.
+// The checkout package's unit tests probe the saga's decisions through FAKE
+// surfaces: "was the compensation called", "in which order". Those are the right
+// questions, but on their own they do not prove Phase 6, because the DoD's claim
+// is not that the calls are made but their OUTCOME — that the order really ends
+// up "canceled", that the reserved stock really becomes sellable again, that the
+// money really has been captured. All of that lives in the modules' database
+// transactions and state machines; it can only be seen with the real modules.
 //
-// # Beklenen tutarlar neden elle yazılıyor
+// # Why the expected totals are written out by hand
 //
-// Faz 5 testlerindeki gerekçenin aynısı geçerlidir (bkz. paket yorumu): her
-// senaryonun ara toplamı, vergisi ve genel toplamı testin İÇİNDE kâğıt üstünde
-// hesaplanmış SABİTLERDİR. Üretim formülünü testte tekrar etmek, aynı hatayı
-// iki yerde birden yapmak olurdu.
+// The same rationale as in the Phase 5 tests applies (see the package comment):
+// every scenario's subtotal, tax and grand total are CONSTANTS computed on paper
+// INSIDE the test. Repeating the production formula in the test would mean making
+// the same mistake in two places at once.
 //
-// # Ödeme sağlayıcısı
+// # The payment provider
 //
-// Sağlayıcı manuel/test sağlayıcısıdır (internal/modules/payment/manual) ve
-// davranışı oturum verisiyle yönlendirilir: [manual.DataKeyOutcome] anahtarı
-// yetkilendirmenin kabul mü ret mi edileceğini söyler. Veri akışa
-// [checkoutwf.CompleteCartInput.PaymentData] alanından verilir ve sağlayıcıya
-// OLDUĞU GİBİ iletilir; yani saga'nın kendisinde hiçbir test kancası yoktur.
+// The provider is the manual/test provider (internal/modules/payment/manual) and
+// its behaviour is steered by session data: the [manual.DataKeyOutcome] key says
+// whether the authorization will be accepted or declined. The data is given to the
+// workflow through the [checkoutwf.CompleteCartInput.PaymentData] field and is
+// forwarded to the provider AS IS; that is, there is no test hook in the saga
+// itself.
 
-// Mutlu yol senaryosunun ELLE hesaplanmış tutarları.
+// The happy path scenario's HAND-computed amounts.
 //
-// Bölge %20 (2000 baz puan) vergilidir ve kargo yöntemi seçilmemiştir:
+// The region is taxed at 20% (2000 basis points) and no shipping method is
+// selected:
 //
-//	45_000 × 2 = 90_000 ara toplam
-//	90_000 × %20 = 18_000 vergi
-//	90_000 - 0 + 18_000 + 0 = 108_000 genel toplam
+//	45_000 × 2 = 90_000 subtotal
+//	90_000 × 20% = 18_000 tax
+//	90_000 - 0 + 18_000 + 0 = 108_000 grand total
 const (
-	mutluBirimFiyat    int64 = 45_000
-	mutluAdet          int64 = 2
-	mutluAraToplam     int64 = 90_000
-	mutluVergi         int64 = 18_000
-	mutluToplam        int64 = 108_000
-	mutluBaslangicStok int64 = 10
-	// mutluKalanStok tahsilat sonrası beklenen fiziksel adettir: 10 - 2.
-	mutluKalanStok int64 = 8
+	happyUnitPrice    int64 = 45_000
+	happyQuantity     int64 = 2
+	happySubtotal     int64 = 90_000
+	happyTax          int64 = 18_000
+	happyTotal        int64 = 108_000
+	happyInitialStock int64 = 10
+	// happyRemainingStock is the expected physical quantity after capture: 10 - 2.
+	happyRemainingStock int64 = 8
 )
 
-// TestSepettenSipariseMutluYol Faz 6 DoD'sinin ilk yarısını uçtan uca
-// koşturur: sepet siparişe dönüşür, para çekilir, stok düşer, sepet kapanır.
+// TestCartToOrderHappyPath runs the first half of the Phase 6 DoD end to end: the
+// cart turns into an order, the money is captured, stock drops, the cart closes.
 //
-// Zincir: ürün + varyant + fiyat + stok kalemi + stok seviyesi -> sepet ->
-// satır -> hesap -> complete_cart -> sipariş + tahsilat + kesinleşmiş
-// rezervasyon + kapanmış sepet. Halkalardan biri koparsa hata burada görünür.
-func TestSepettenSipariseMutluYol(t *testing.T) {
+// The chain: product + variant + price + inventory item + stock level -> cart ->
+// line -> compute -> complete_cart -> order + capture + confirmed reservation +
+// closed cart. If one of these links breaks, the failure shows up here.
+func TestCartToOrderHappyPath(t *testing.T) {
 	ctx := t.Context()
 
-	musteriID, eposta := yeniMusteri(ctx, t)
-	const varyantBaslik = "E2E Mutlu Yol Ürünü"
-	varyantID, stokKalemID := yeniStokluVaryant(ctx, t, varyantBaslik, map[string]int64{
-		vergiliParaBirimi: mutluBirimFiyat,
-	}, mutluBaslangicStok)
+	customerID, email := newCustomer(ctx, t)
+	const variantTitle = "E2E Happy Path Product"
+	variantID, inventoryItemID := newStockedVariant(ctx, t, variantTitle, map[string]int64{
+		taxedCurrency: happyUnitPrice,
+	}, happyInitialStock)
 
-	sepetID, toplamlar := sepetHazirla(ctx, t, musteriID, varyantID, mutluAdet)
-	toplamlariDogrula(t, toplamlar, beklenenToplam{
-		araToplam: mutluAraToplam,
-		indirim:   0,
-		vergi:     mutluVergi,
-		kargo:     0,
-		toplam:    mutluToplam,
-	}, "mutlu yol sepeti hazırlandıktan sonra")
+	cartID, totals := prepareCart(ctx, t, customerID, variantID, happyQuantity)
+	assertTotals(t, totals, expectedTotal{
+		subtotal: happySubtotal,
+		discount: 0,
+		tax:      happyTax,
+		shipping: 0,
+		total:    happyTotal,
+	}, "after the happy path cart was prepared")
 
-	require.Equal(t, mutluBaslangicStok, satilabilirAdet(ctx, t, stokKalemID),
-		"sepete satır eklemek stok AYIRMAMALI; rezervasyon sipariş anında yapılır, "+
-			"aksi hâlde vazgeçilen her sepet stoğu kilitlerdi")
+	require.Equal(t, happyInitialStock, sellableQuantity(ctx, t, inventoryItemID),
+		"adding a line to the cart must NOT reserve stock; the reservation is made at "+
+			"order time, otherwise every abandoned cart would lock stock")
 
-	// --- akışın kendisi ---
+	// --- the workflow itself ---
 
-	sonuc, err := siparisAkislari.CompleteCart(ctx, checkoutwf.CompleteCartInput{
-		CartID:            sepetID,
-		LocationID:        stokLokasyonID,
+	result, err := orderWorkflows.CompleteCart(ctx, checkoutwf.CompleteCartInput{
+		CartID:            cartID,
+		LocationID:        stockLocationID,
 		PaymentProviderID: manual.ID,
-		PaymentData:       odemeDavranisi(t, manual.OutcomeAuthorize),
-		Email:             eposta,
-		ExpectedTotal:     mutluToplam,
+		PaymentData:       paymentBehavior(t, manual.OutcomeAuthorize),
+		Email:             email,
+		ExpectedTotal:     happyTotal,
 	})
-	require.NoError(t, err, "hazır bir sepet siparişe çevrilebilmeli")
+	require.NoError(t, err, "a prepared cart must be convertible into an order")
 
-	require.Equal(t, sepetID, sonuc.CartID, "sonuç siparişin doğduğu sepeti bildirmeli")
-	require.NotEmpty(t, sonuc.OrderID, "sonuç oluşan siparişin kimliğini taşımalı")
-	require.Equal(t, mutluToplam, sonuc.Amount,
-		"akışın tahsil ettiği tutar ELLE hesaplanan genel toplam olmalı; ExpectedTotal "+
-			"denetimi zaten geçtiği için buradaki sapma sonucun yanlış alanı taşıdığını gösterir")
-	require.Equal(t, vergiliParaBirimi, sonuc.CurrencyCode,
-		"tahsilat sepetin para biriminde yapılmalı")
-	require.True(t, sonuc.CartCompleted,
-		"sepet tamamlanmış damgalanmalı; damgalanmazsa aynı sepet ikinci bir siparişe "+
-			"kaynak olabilirdi")
-	require.True(t, sonuc.ReservationsConfirmed,
-		"rezervasyonlar kesinleştirilmeli; kesinleşmeyen rezervasyon stoğu 'ayrılmış' "+
-			"bırakır ve satılan mal fiziksel stoktan hiç düşmez")
-	require.Empty(t, sonuc.Warnings,
-		"mutlu yolda uyarı OLMAMALI; uyarı, pivot'tan sonra bir modülün patladığını ve "+
-			"elle onarım gerektiğini bildirir")
+	require.Equal(t, cartID, result.CartID, "the result must report the cart the order was born from")
+	require.NotEmpty(t, result.OrderID, "the result must carry the ID of the order created")
+	require.Equal(t, happyTotal, result.Amount,
+		"the amount the workflow captured must be the HAND-computed grand total; since the "+
+			"ExpectedTotal check has already passed, a divergence here shows the result carries "+
+			"the wrong field")
+	require.Equal(t, taxedCurrency, result.CurrencyCode,
+		"the capture must be made in the cart's currency")
+	require.True(t, result.CartCompleted,
+		"the cart must be stamped completed; if it were not stamped, the same cart could be "+
+			"the source of a second order")
+	require.True(t, result.ReservationsConfirmed,
+		"the reservations must be confirmed; an unconfirmed reservation leaves the stock "+
+			"'reserved' and the goods sold never drop out of physical stock at all")
+	require.Empty(t, result.Warnings,
+		"on the happy path there must be NO warning; a warning reports that a module blew up "+
+			"after the pivot and that manual repair is needed")
 
-	// --- 1) sipariş oluştu mu, toplamları sepetle AYNI mı ---
+	// --- 1) was the order created, are its totals the SAME as the cart's ---
 
-	siparis, err := siparisSvc.GetOrder(ctx, sonuc.OrderID)
-	require.NoError(t, err, "oluşan sipariş sipariş modülünden okunabilmeli")
-	require.Equal(t, ordermodels.OrderPending, siparis.Status,
-		"sipariş bu akıştan 'pending' çıkmalı; 'completed' damgası teslimatın sonucudur "+
-			"(Faz 7) ve tamamlanmış bir sipariş artık İPTAL EDİLEMEZ — saga kendi "+
-			"telafisini imkânsız kılmış olurdu")
-	require.Equal(t, sepetID, siparis.CartID,
-		"sipariş doğduğu sepeti belgelemeli; köken kaybolursa mutabakat elle yapılamaz")
-	require.Equal(t, musteriID, siparis.CustomerID,
-		"sipariş sepetin müşterisine yazılmalı")
-	require.Equal(t, eposta, siparis.Email,
-		"siparişin iletişim e-postası akışa verilen değer olmalı; sepetin e-postası "+
-			"modüller arası yüzeyde yayımlanmaz, bu yüzden ödeme adımında sorulup akışa "+
-			"verilir")
-	require.Equal(t, vergiliBolgeID, siparis.RegionID,
-		"sipariş sepetin bölgesine yazılmalı; bölge vergi oranının ve para biriminin "+
-			"bağlamıdır")
-	require.Equal(t, vergiliParaBirimi, siparis.CurrencyCode,
-		"sipariş sepetin para biriminde açılmalı")
+	order, err := orderSvc.GetOrder(ctx, result.OrderID)
+	require.NoError(t, err, "the order created must be readable from the order module")
+	require.Equal(t, ordermodels.OrderPending, order.Status,
+		"the order must come out of this workflow as 'pending'; the 'completed' stamp is the "+
+			"outcome of delivery (Phase 7) and a completed order can no longer BE CANCELED — "+
+			"the saga would have made its own compensation impossible")
+	require.Equal(t, cartID, order.CartID,
+		"the order must document the cart it was born from; if the origin is lost, "+
+			"reconciliation cannot be done by hand")
+	require.Equal(t, customerID, order.CustomerID,
+		"the order must be written to the cart's customer")
+	require.Equal(t, email, order.Email,
+		"the order's contact e-mail must be the value given to the workflow; the cart's e-mail "+
+			"is not published on the cross-module surface, which is why it is asked for at the "+
+			"payment step and given to the workflow")
+	require.Equal(t, taxedRegionID, order.RegionID,
+		"the order must be written to the cart's region; the region is the context of the tax "+
+			"rate and of the currency")
+	require.Equal(t, taxedCurrency, order.CurrencyCode,
+		"the order must be opened in the cart's currency")
 
-	require.Equal(t, mutluAraToplam, siparis.Subtotal,
-		"siparişin ara toplamı sepetinkiyle AYNI olmalı; ayrışma, müşteriye gösterilen "+
-			"tutarla faturalanan tutarın farklı olması demektir")
-	require.Equal(t, int64(0), siparis.DiscountTotal,
-		"indirim üretecek bir kaynak yokken sipariş indirim taşımamalı")
-	require.Equal(t, mutluVergi, siparis.TaxTotal,
-		"siparişin vergisi sepetinkiyle AYNI olmalı")
-	require.Equal(t, int64(0), siparis.ShippingTotal,
-		"kargo yöntemi seçilmemişken sipariş kargo tutarı taşımamalı")
-	require.Equal(t, mutluToplam, siparis.Total,
-		"siparişin genel toplamı sepetinkiyle ve TAHSİL EDİLEN tutarla aynı olmalı")
-	require.True(t, siparis.TotalsConsistent(),
-		"sipariş toplam kimliğini sağlamalı: total = subtotal - discount + tax + shipping")
+	require.Equal(t, happySubtotal, order.Subtotal,
+		"the order's subtotal must be the SAME as the cart's; a divergence means the amount "+
+			"shown to the customer differs from the amount invoiced")
+	require.Equal(t, int64(0), order.DiscountTotal,
+		"with no source producing a discount, the order must not carry a discount")
+	require.Equal(t, happyTax, order.TaxTotal,
+		"the order's tax must be the SAME as the cart's")
+	require.Equal(t, int64(0), order.ShippingTotal,
+		"with no shipping method selected, the order must not carry a shipping amount")
+	require.Equal(t, happyTotal, order.Total,
+		"the order's grand total must be the same as the cart's and as the amount CAPTURED")
+	require.True(t, order.TotalsConsistent(),
+		"the order must satisfy the totals identity: total = subtotal - discount + tax + shipping")
 
-	require.Len(t, siparis.Items, 1,
-		"sepetin tek satırı siparişe tek satır olarak geçmeli")
-	satir := siparis.Items[0]
-	require.Equal(t, varyantID, satir.VariantID, "sipariş satırı sepetteki varyantı göstermeli")
-	require.Equal(t, varyantBaslik, satir.Title,
-		"satır başlığı KATALOGDAN kopyalanmalı; katalog sonradan değişse bile faturadaki "+
-			"ad değişmemelidir")
-	require.Equal(t, mutluAdet, satir.Quantity, "sipariş satırının adedi sepettekiyle aynı olmalı")
-	require.Equal(t, mutluBirimFiyat, satir.UnitPrice,
-		"birim fiyat hesap turunda pricing'den alınan değer olmalı")
-	require.Equal(t, mutluAraToplam, satir.Subtotal, "satır ara toplamı birim fiyat × adet olmalı")
-	require.Equal(t, mutluVergi, satir.TaxTotal, "satır vergisi sepet satırınınkiyle aynı olmalı")
-	require.Equal(t, mutluToplam, satir.Total, "satır toplamı sepet satırınınkiyle aynı olmalı")
+	require.Len(t, order.Items, 1,
+		"the cart's single line must pass into the order as a single line")
+	line := order.Items[0]
+	require.Equal(t, variantID, line.VariantID, "the order line must point at the variant in the cart")
+	require.Equal(t, variantTitle, line.Title,
+		"the line title must be copied FROM THE CATALOG; even if the catalog changes later, the "+
+			"name on the invoice must not change")
+	require.Equal(t, happyQuantity, line.Quantity, "the order line's quantity must be the same as the cart's")
+	require.Equal(t, happyUnitPrice, line.UnitPrice,
+		"the unit price must be the value taken from pricing during the compute round")
+	require.Equal(t, happySubtotal, line.Subtotal, "the line subtotal must be unit price × quantity")
+	require.Equal(t, happyTax, line.TaxTotal, "the line tax must be the same as the cart line's")
+	require.Equal(t, happyTotal, line.Total, "the line total must be the same as the cart line's")
 
-	// Özet BİLİNÇLİ OLARAK boştur: complete_cart'ın sipariş yüzeyinde
-	// (checkoutwf.Orders) özet yazan bir metot yoktur ve tahsil edilen tutarın
-	// izi ödeme koleksiyonundadır. İki yerde birden tutulan bir "ödenen tutar"
-	// ayrışabilirdi; sipariş ile ödemenin mutabakatı plan Faz 7+'nın işidir.
-	require.Equal(t, int64(0), siparis.Summary.PaidTotal,
-		"sipariş özeti bu akışta YAZILMAZ; sıfırdan farklı bir değer, ödemenin izinin "+
-			"iki yerde birden tutulmaya başlandığını gösterir")
+	// The summary is DELIBERATELY empty: complete_cart's order surface
+	// (checkoutwf.Orders) has no method that writes a summary, and the trace of the
+	// amount captured is in the payment collection. A "paid total" kept in two places
+	// at once could diverge; reconciling the order with the payment is the job of the
+	// plan's Phase 7+.
+	require.Equal(t, int64(0), order.Summary.PaidTotal,
+		"the order summary is NOT WRITTEN in this workflow; a value other than zero shows that "+
+			"the trace of the payment has started being kept in two places at once")
 
-	// Siparişin müşterisi ve bölgesi KENDİ sütunlarındadır; sepetten siparişe
-	// taşınan tek yer burasıdır ve süzme de tam olarak bu sütunlardan yapılır.
-	require.Equal(t, musteriID, siparis.CustomerID,
-		"sipariş, sepetin sahibi olan müşteriye yazılmalı")
-	require.Equal(t, vergiliBolgeID, siparis.RegionID,
-		"sipariş, sepetin bölgesiyle açılmalı")
+	// The order's customer and region are in THEIR OWN columns; that is the only place
+	// they are carried from cart to order, and filtering is done from exactly those
+	// columns.
+	require.Equal(t, customerID, order.CustomerID,
+		"the order must be written to the customer who owns the cart")
+	require.Equal(t, taxedRegionID, order.RegionID,
+		"the order must be opened with the cart's region")
 
-	// --- 2) stok rezervasyonu KESİNLEŞTİ mi ---
+	// --- 2) was the stock reservation CONFIRMED ---
 
-	require.Len(t, sonuc.ReservationIDs, 1,
-		"her sepet satırı için bir rezervasyon alınmalı")
-	rezervasyon, err := stokSvc.GetReservation(ctx, sonuc.ReservationIDs[0])
-	require.NoError(t, err, "rezervasyon stok modülünden okunabilmeli")
-	require.Equal(t, inventorymodels.ReservationConfirmed, rezervasyon.Status,
-		"rezervasyon 'confirmed' olmalı: satılan mal fiziksel stoktan DÜŞÜLMÜŞ demektir. "+
-			"'active' kalsaydı stok sonsuza kadar ayrılmış görünür, hiç sevk edilmemiş "+
-			"gibi davranırdı")
-	require.Equal(t, mutluAdet, rezervasyon.Quantity,
-		"rezervasyon sepet satırının adedi kadar olmalı")
+	require.Len(t, result.ReservationIDs, 1,
+		"one reservation must be taken for each cart line")
+	reservation, err := inventorySvc.GetReservation(ctx, result.ReservationIDs[0])
+	require.NoError(t, err, "the reservation must be readable from the inventory module")
+	require.Equal(t, inventorymodels.ReservationConfirmed, reservation.Status,
+		"the reservation must be 'confirmed': it means the goods sold HAVE BEEN DEDUCTED from "+
+			"physical stock. Had it stayed 'active', the stock would look reserved forever and "+
+			"would behave as if it had never been shipped")
+	require.Equal(t, happyQuantity, reservation.Quantity,
+		"the reservation must be for the cart line's quantity")
 
-	require.Equal(t, mutluKalanStok, satilabilirAdet(ctx, t, stokKalemID),
-		"satılabilir adet sipariş kadar AZALMALI (%d - %d); azalmazsa aynı mal ikinci "+
-			"kez satılabilir", mutluBaslangicStok, mutluAdet)
-	seviye := stokSeviyesi(ctx, t, stokKalemID)
-	require.Equal(t, mutluKalanStok, seviye.StockedQuantity,
-		"FİZİKSEL adet de azalmalı: onay, ayrılan adedi stoktan düşer. Yalnızca "+
-			"satılabilir adedin düşmesi rezervasyonun hâlâ 'active' olduğu anlamına gelirdi")
-	require.Equal(t, int64(0), seviye.ReservedQuantity,
-		"onaydan sonra rezerve adet SIFIRLANMALI; kalması, aynı adedin hem düşülmüş hem "+
-			"söz verilmiş sayılması demek olurdu")
+	require.Equal(t, happyRemainingStock, sellableQuantity(ctx, t, inventoryItemID),
+		"the sellable quantity must DROP by the amount ordered (%d - %d); if it does not drop, "+
+			"the same goods can be sold a second time", happyInitialStock, happyQuantity)
+	level := stockLevel(ctx, t, inventoryItemID)
+	require.Equal(t, happyRemainingStock, level.StockedQuantity,
+		"the PHYSICAL quantity must drop too: confirmation deducts the reserved quantity from "+
+			"stock. Only the sellable quantity dropping would mean the reservation is still 'active'")
+	require.Equal(t, int64(0), level.ReservedQuantity,
+		"after confirmation the reserved quantity must be ZEROED; leaving it would mean the same "+
+			"quantity counted as both deducted and promised")
 
-	// --- 3) sepet tamamlanmış mı (ikinci yazma Conflict mi) ---
+	// --- 3) is the cart completed (is a second write a Conflict) ---
 
-	sepet, err := sepetSvc.GetCart(ctx, sepetID)
-	require.NoError(t, err, "sepet modülünden okunabilmeli")
-	require.True(t, sepet.Completed(),
-		"sepet tamamlanmış damgalanmalı")
+	cart, err := cartSvc.GetCart(ctx, cartID)
+	require.NoError(t, err, "the cart must be readable from the cart module")
+	require.True(t, cart.Completed(),
+		"the cart must be stamped completed")
 
-	_, err = akislar.AddLineItem(ctx, cartwf.AddLineItemInput{
-		CartID:    sepetID,
-		VariantID: varyantID,
+	_, err = workflows.AddLineItem(ctx, cartwf.AddLineItemInput{
+		CartID:    cartID,
+		VariantID: variantID,
 		Quantity:  1,
 	})
 	require.Error(t, err,
-		"tamamlanmış sepete satır EKLENEMEMELİ; eklenebilseydi sipariş edilmiş bir "+
-			"sepetin şekli sonradan değişir ve siparişin kökeni yalan olurdu")
+		"a line must NOT BE ADDABLE to a completed cart; if it could be added, the shape of an "+
+			"already-ordered cart would change afterwards and the order's origin would be a lie")
 	require.True(t, errors.IsConflict(err),
-		"tamamlanmış sepete yazma errors.Conflict olmalı (kod: %s); sınıf HTTP'de 409'a "+
-			"haritalanır ve istemci 'yeniden dene' ile 'bu sepet kapandı' arasını ayırır. "+
-			"Dönen hata: %v", cartwf.CodeCartCompleted, err)
+		"writing to a completed cart must be an errors.Conflict (code: %s); the class maps to 409 "+
+			"over HTTP and the client tells 'retry' apart from 'this cart is closed'. "+
+			"Returned error: %v", cartwf.CodeCartCompleted, err)
 
-	// --- 4) ödeme tahsil edildi mi ---
+	// --- 4) was the payment captured ---
 
-	require.NotEmpty(t, sonuc.PaymentID, "sonuç tahsilatın kimliğini taşımalı")
-	koleksiyon, err := odemeSvc.GetPaymentCollection(ctx, sonuc.PaymentCollectionID)
-	require.NoError(t, err, "ödeme koleksiyonu ödeme modülünden okunabilmeli")
-	require.Equal(t, sepetID, koleksiyon.Reference,
-		"koleksiyon sepeti referans almalı; referans, ödemeyi hangi işin doğurduğunun "+
-			"tek izidir")
-	require.Equal(t, mutluToplam, koleksiyon.Amount,
-		"koleksiyonun toplanması gereken tutarı siparişin toplamı olmalı")
-	require.GreaterOrEqual(t, koleksiyon.CapturedAmount, koleksiyon.Amount,
-		"TAHSİL EDİLEN tutar toplanması gerekeni KARŞILAMALI (captured >= amount). "+
-			"Kural durum dizesine değil SAYIYA bakar: kısmi tahsilatta durum yine "+
-			"'ödeme var' gibi görünebilir ve yalnızca duruma bakan bir kontrol "+
-			"ödenmemiş bir siparişi onaylardı")
-	require.Equal(t, paymentmodels.CollectionCaptured, koleksiyon.Status,
-		"koleksiyonun durumu 'captured' olmalı; durum tutarlardan TÜRETİLİR, dolayısıyla "+
-			"bu iddia türetimin de doğru çalıştığını sınar")
-	require.Equal(t, int64(0), koleksiyon.AuthorizedAmount,
-		"tahsilattan sonra bloke tutar KALMAMALI; kalsaydı aynı para hem müşterinin "+
-			"kartında bloke hem mağazada tahsil edilmiş sayılırdı")
-	require.Equal(t, int64(0), koleksiyon.RefundedAmount,
-		"mutlu yolda iade olmamalı")
+	require.NotEmpty(t, result.PaymentID, "the result must carry the ID of the capture")
+	collection, err := paymentSvc.GetPaymentCollection(ctx, result.PaymentCollectionID)
+	require.NoError(t, err, "the payment collection must be readable from the payment module")
+	require.Equal(t, cartID, collection.Reference,
+		"the collection must reference the cart; the reference is the only trace of which piece "+
+			"of work gave birth to the payment")
+	require.Equal(t, happyTotal, collection.Amount,
+		"the amount the collection has to collect must be the order's total")
+	require.GreaterOrEqual(t, collection.CapturedAmount, collection.Amount,
+		"the amount CAPTURED must COVER the amount to be collected (captured >= amount). "+
+			"The rule looks at the NUMBER, not at the status string: on a partial capture the "+
+			"status can still look like 'there is a payment' and a check that only looks at the "+
+			"status would approve an unpaid order")
+	require.Equal(t, paymentmodels.CollectionCaptured, collection.Status,
+		"the collection's status must be 'captured'; the status is DERIVED from the amounts, so "+
+			"this assertion also probes that the derivation works correctly")
+	require.Equal(t, int64(0), collection.AuthorizedAmount,
+		"after capture no held amount must REMAIN; if it did, the same money would count as both "+
+			"held on the customer's card and captured by the store")
+	require.Equal(t, int64(0), collection.RefundedAmount,
+		"on the happy path there must be no refund")
 
-	// --- 5) order.placed yayımlandı mı ---
+	// --- 5) was order.placed published ---
 
-	olay := olayDefteri.bekle(t, sonuc.OrderID)
-	require.Equal(t, sonuc.OrderID, olayAlani(t, olay, ordersvc.EventFieldOrderID),
-		"olayın yükü siparişin kimliğini taşımalı")
-	require.Equal(t, "108000", olayAlani(t, olay, ordersvc.EventFieldTotal),
-		"olayın yükü siparişin toplamını ondalıksız DİZE olarak taşımalı")
+	event := eventLog.waitFor(t, result.OrderID)
+	require.Equal(t, result.OrderID, olayAlani(t, event, ordersvc.EventFieldOrderID),
+		"the event's payload must carry the order's ID")
+	require.Equal(t, "108000", olayAlani(t, event, ordersvc.EventFieldTotal),
+		"the event's payload must carry the order's total as a STRING without decimals")
 }
 
-// Saga senaryosunun ELLE hesaplanmış tutarları.
+// The saga scenario's HAND-computed amounts.
 //
-// Fiyat, verginin AŞAĞI yuvarlandığını da görünür kılmak için seçilmiştir:
+// The price is chosen so that the tax rounding DOWN is also made visible:
 //
-//	33_333 × 3 = 99_999 ara toplam
-//	99_999 × %20 = 19_999,8 -> AŞAĞI yuvarlanır -> 19_999 vergi
-//	99_999 - 0 + 19_999 + 0 = 119_998 genel toplam
+//	33_333 × 3 = 99_999 subtotal
+//	99_999 × 20% = 19_999.8 -> rounded DOWN -> 19_999 tax
+//	99_999 - 0 + 19_999 + 0 = 119_998 grand total
 const (
-	sagaBirimFiyat    int64 = 33_333
-	sagaAdet          int64 = 3
-	sagaAraToplam     int64 = 99_999
-	sagaVergi         int64 = 19_999
-	sagaToplam        int64 = 119_998
-	sagaBaslangicStok int64 = 7
+	sagaUnitPrice    int64 = 33_333
+	sagaQuantity     int64 = 3
+	sagaSubtotal     int64 = 99_999
+	sagaTax          int64 = 19_999
+	sagaTotal        int64 = 119_998
+	sagaInitialStock int64 = 7
 )
 
-// TestOdemePatlayincaSagaGeriAlir Faz 6 DoD'sinin ÇEKİRDEĞİDİR: ödeme adımı
-// patladığında stok rezervasyonunun ve siparişin GERİ ALINDIĞINI kanıtlar.
+// TestSagaRollsBackWhenPaymentFails is the CORE of the Phase 6 DoD: it proves that
+// when the payment step blows up the stock reservation and the order ARE ROLLED
+// BACK.
 //
-// Kurgu, saga'nın en pahalı arıza noktasını seçer: rezervasyon alınmış ve
-// sipariş açılmışken ödeme reddedilir. Yani telafi zinciri BOŞ değildir; iki
-// adım ters sırada geri alınmak zorundadır. Sağlayıcı [manual.OutcomeDecline]
-// ile reddeder — bu, sağlayıcının ERİŞİLEMEMESİ değil, bilerek verdiği bir
-// RET yanıtıdır ve gerçek hayatta en sık görülen ödeme arızasıdır.
+// The setup picks the saga's most expensive failure point: the payment is declined
+// once the reservation has been taken and the order has been opened. That is, the
+// compensation chain is not EMPTY; two steps have to be undone in reverse order.
+// The provider declines with [manual.OutcomeDecline] — this is not the provider
+// being UNREACHABLE but a DECLINE response it gives deliberately, and it is the
+// most frequently seen payment failure in real life.
 //
-// Her iddia ayrı ayrı ve NEDEN önemli olduğu söylenerek yazılmıştır: bu testin
-// düşmesi "bir çağrı eksik" demek değil, "müşterinin parası alınmadan malı
-// kilitlendi ya da olmayan bir siparişi var" demektir.
-func TestOdemePatlayincaSagaGeriAlir(t *testing.T) {
+// Every assertion is written out separately and states WHY it matters: this test
+// failing does not mean "a call is missing", it means "the customer's goods were
+// locked without their money being taken, or they have an order that does not
+// exist".
+func TestSagaRollsBackWhenPaymentFails(t *testing.T) {
 	ctx := t.Context()
 
-	musteriID, eposta := yeniMusteri(ctx, t)
-	varyantID, stokKalemID := yeniStokluVaryant(ctx, t, "E2E Saga Ürünü", map[string]int64{
-		vergiliParaBirimi: sagaBirimFiyat,
-	}, sagaBaslangicStok)
+	customerID, email := newCustomer(ctx, t)
+	variantID, inventoryItemID := newStockedVariant(ctx, t, "E2E Saga Product", map[string]int64{
+		taxedCurrency: sagaUnitPrice,
+	}, sagaInitialStock)
 
-	sepetID, toplamlar := sepetHazirla(ctx, t, musteriID, varyantID, sagaAdet)
-	toplamlariDogrula(t, toplamlar, beklenenToplam{
-		araToplam: sagaAraToplam,
-		indirim:   0,
-		vergi:     sagaVergi,
-		kargo:     0,
-		toplam:    sagaToplam,
-	}, "saga sepeti hazırlandıktan sonra")
+	cartID, totals := prepareCart(ctx, t, customerID, variantID, sagaQuantity)
+	assertTotals(t, totals, expectedTotal{
+		subtotal: sagaSubtotal,
+		discount: 0,
+		tax:      sagaTax,
+		shipping: 0,
+		total:    sagaTotal,
+	}, "after the saga cart was prepared")
 
-	// Başlangıç durumu ölçülür: "geri alındı" iddiası ancak bir ÖNCESİ varsa
-	// anlamlıdır. Sabiti tekrar yazmak yerine okumak, fikstürün gerçekten
-	// beklenen stoğu kurduğunu da doğrular.
-	oncekiSatilabilir := satilabilirAdet(ctx, t, stokKalemID)
-	require.Equal(t, sagaBaslangicStok, oncekiSatilabilir,
-		"fikstür stoğu beklenen adetle kurulmuş olmalı")
-	oncekiSeviye := stokSeviyesi(ctx, t, stokKalemID)
+	// The initial state is measured: the claim "it was rolled back" is only
+	// meaningful if there is a BEFORE. Reading instead of writing the constant again
+	// also verifies that the fixture really did set up the expected stock.
+	sellableBefore := sellableQuantity(ctx, t, inventoryItemID)
+	require.Equal(t, sagaInitialStock, sellableBefore,
+		"the fixture must have set up the stock with the expected quantity")
+	levelBefore := stockLevel(ctx, t, inventoryItemID)
 
-	// --- akış PATLAMALI ---
+	// --- the workflow MUST BLOW UP ---
 
-	sonuc, err := siparisAkislari.CompleteCart(ctx, checkoutwf.CompleteCartInput{
-		CartID:            sepetID,
-		LocationID:        stokLokasyonID,
+	result, err := orderWorkflows.CompleteCart(ctx, checkoutwf.CompleteCartInput{
+		CartID:            cartID,
+		LocationID:        stockLocationID,
 		PaymentProviderID: manual.ID,
-		PaymentData:       odemeDavranisi(t, manual.OutcomeDecline),
-		Email:             eposta,
-		ExpectedTotal:     sagaToplam,
+		PaymentData:       paymentBehavior(t, manual.OutcomeDecline),
+		Email:             email,
+		ExpectedTotal:     sagaTotal,
 	})
 	require.Error(t, err,
-		"ödeme reddedilmişken akış BAŞARILI dönmemeli; dönseydi ödenmemiş bir sipariş "+
-			"sevkiyata girerdi")
-	require.Equal(t, checkoutwf.CompleteCartResult{}, sonuc,
-		"hata dönen bir akış yarım bir sonuç SIZDIRMAMALI; çağıran hatayı yok saysa bile "+
-			"elinde kullanabileceği bir sipariş kimliği olmamalıdır")
+		"with the payment declined the workflow must not return SUCCESS; if it did, an unpaid "+
+			"order would enter shipping")
+	require.Equal(t, checkoutwf.CompleteCartResult{}, result,
+		"a workflow that returns an error must NOT LEAK a half result; even if the caller ignores "+
+			"the error, it must not be left holding a usable order ID")
 
 	require.True(t, errors.IsConflict(err),
-		"ret errors.Conflict olmalı: sunucu arızası değil, dünyanın durumuyla ilgili bir "+
-			"çakışmadır ve istemci kartı değiştirip TEKRAR deneyebilir. Internal'a "+
-			"yükseltilseydi telafinin başarısız olduğu (elle müdahale gerektiren) "+
-			"durumdan ayırt edilemezdi. Dönen hata: %v", err)
+		"the decline must be an errors.Conflict: it is not a server fault but a clash with the "+
+			"state of the world, and the client can change the card and try AGAIN. Had it been "+
+			"escalated to Internal, it could not be told apart from the case where the "+
+			"compensation failed (which needs manual intervention). Returned error: %v", err)
 	require.ErrorContains(t, err, paymentsvc.CodeAuthorizationDeclined,
-		"hata zinciri RET sebebini taşımalı; taşımazsa operatör arızanın ödemede mi "+
-			"stokta mı olduğunu kayıttan okuyamaz")
+		"the error chain must carry the DECLINE reason; if it does not, the operator cannot read "+
+			"from the log whether the fault was in the payment or in the stock")
 	require.ErrorContains(t, err, checkoutwf.StepAuthorizePayment,
-		"hata zinciri PATLAYAN ADIMIN adını taşımalı; yürütme kaydına da bu ad yazılır")
+		"the error chain must carry the name of the STEP THAT BLEW UP; that name is written to "+
+			"the execution record too")
 
-	// --- 1) SİPARİŞ İPTAL EDİLDİ Mİ ---
+	// --- 1) WAS THE ORDER CANCELED ---
 	//
-	// Sipariş, ödeme adımından ÖNCE açılmıştı: create_order saga'nın ikinci
-	// adımıdır. Telafi çalışmasaydı geriye "pending" bir sipariş kalırdı —
-	// yani ödemesi hiç alınmamış bir sipariş, sevkiyat listesinde sıradaki iş
-	// gibi görünürdü. Kimlik akıştan dönmediği için sipariş müşterinin
-	// kayıtlarından okunur; bu, gerçek bir operatörün de yapacağı şeydir.
-	siparisler, _, err := siparisSvc.ListOrders(ctx, ordersvc.ListOrdersInput{CustomerID: &musteriID})
-	require.NoError(t, err, "müşterinin siparişleri okunabilmeli")
-	require.Len(t, siparisler, 1,
-		"telafi siparişi SİLMEZ, İPTAL EDER: kayıt kalmalı ki denemenin izi kaybolmasın. "+
-			"Kaydın hiç bulunmaması, siparişin yazılmadığı (yani testin yanlış adımı "+
-			"sınadığı) anlamına gelirdi")
-	iptalEdilen := siparisler[0]
-	require.Equal(t, ordermodels.OrderCanceled, iptalEdilen.Status,
-		"sipariş 'canceled' olmalı. 'pending' kalsaydı: (1) sevkiyat ekibi ödemesi "+
-			"alınmamış bir siparişi hazırlardı, (2) müşteri hesabında var olmayan bir "+
-			"sipariş görürdü, (3) raporlarda ciro olmayan bir tutar sayılırdı")
-	require.NotNil(t, iptalEdilen.CanceledAt,
-		"iptal damgası atılmalı; damga, iptalin NE ZAMAN olduğunun tek kaydıdır")
-	require.NotEmpty(t, iptalEdilen.CancelReason,
-		"iptal GEREKÇESİ yazılmalı; gerekçesiz bir iptal, müşteri sorduğunda "+
-			"cevaplanamaz bir kayıttır")
-	require.Equal(t, sagaToplam, iptalEdilen.Total,
-		"iptal siparişin TUTARINI değiştirmemeli; sipariş 'o an ne satılmak istendi' "+
-			"sorusunun kalıcı yanıtıdır ve iptal yalnızca durumunu değiştirir")
+	// The order had been opened BEFORE the payment step: create_order is the saga's
+	// second step. Had the compensation not run, a "pending" order would be left
+	// behind — that is, an order whose payment was never taken would look like the
+	// next job in the shipping queue. Since the ID is not returned by the workflow,
+	// the order is read from the customer's records; that is what a real operator
+	// would do too.
+	orders, _, err := orderSvc.ListOrders(ctx, ordersvc.ListOrdersInput{CustomerID: &customerID})
+	require.NoError(t, err, "the customer's orders must be readable")
+	require.Len(t, orders, 1,
+		"the compensation does NOT DELETE the order, it CANCELS it: the record must remain so "+
+			"that the trace of the attempt is not lost. The record not being there at all would "+
+			"mean the order was never written (that is, the test is probing the wrong step)")
+	canceled := orders[0]
+	require.Equal(t, ordermodels.OrderCanceled, canceled.Status,
+		"the order must be 'canceled'. Had it stayed 'pending': (1) the shipping team would "+
+			"prepare an order whose payment was never taken, (2) the customer would see an order "+
+			"in their account that does not exist, (3) an amount that is not revenue would be "+
+			"counted in the reports")
+	require.NotNil(t, canceled.CanceledAt,
+		"the cancellation stamp must be set; the stamp is the only record of WHEN the "+
+			"cancellation happened")
+	require.NotEmpty(t, canceled.CancelReason,
+		"the cancellation REASON must be written; a cancellation without a reason is a record "+
+			"that cannot be answered for when the customer asks")
+	require.Equal(t, sagaTotal, canceled.Total,
+		"the cancellation must not change the order's AMOUNT; the order is the permanent answer "+
+			"to the question 'what was meant to be sold at that moment' and the cancellation only "+
+			"changes its status")
 
-	// --- 2) STOK REZERVASYONU GERİ BIRAKILDI MI ---
+	// --- 2) WAS THE STOCK RESERVATION RELEASED ---
 	//
-	// Rezervasyon saga'nın İLK adımıydı, yani telafi zincirinin SONUNCUSU.
-	// Geri bırakılmasaydı, satılmamış bir mal ayrılmış kalır ve bir sonraki
-	// müşteri "stok yok" görürdü — üstelik hiçbir sipariş o stoğu tüketmemiş
-	// olduğu için hata ancak sayımda fark edilirdi.
-	require.Equal(t, oncekiSatilabilir, satilabilirAdet(ctx, t, stokKalemID),
-		"satılabilir adet ESKİ değerine dönmeli (%d). Dönmezse ayrılan stok asılı kalır "+
-			"ve satılmamış mal satılamaz hâle gelir", oncekiSatilabilir)
-	sonrakiSeviye := stokSeviyesi(ctx, t, stokKalemID)
-	require.Equal(t, oncekiSeviye.StockedQuantity, sonrakiSeviye.StockedQuantity,
-		"FİZİKSEL adet hiç değişmemeli: geri bırakma, onaylanmamış bir sözü siler; "+
-			"stoktan düşme yalnızca onayla olur")
-	require.Equal(t, int64(0), sonrakiSeviye.ReservedQuantity,
-		"rezerve adet SIFIRA dönmeli; sıfırdan farklı kalması, sözün hâlâ ayakta "+
-			"olduğu anlamına gelir")
+	// The reservation was the saga's FIRST step, so it is the LAST of the compensation
+	// chain. Had it not been released, unsold goods would stay reserved and the next
+	// customer would see "out of stock" — and since no order consumed that stock, the
+	// mistake would only be noticed at stocktaking.
+	require.Equal(t, sellableBefore, sellableQuantity(ctx, t, inventoryItemID),
+		"the sellable quantity must return to its OLD value (%d). If it does not, the reserved "+
+			"stock stays dangling and unsold goods become unsellable", sellableBefore)
+	levelAfter := stockLevel(ctx, t, inventoryItemID)
+	require.Equal(t, levelBefore.StockedQuantity, levelAfter.StockedQuantity,
+		"the PHYSICAL quantity must not change at all: releasing erases an unconfirmed promise; "+
+			"deducting from stock only happens on confirmation")
+	require.Equal(t, int64(0), levelAfter.ReservedQuantity,
+		"the reserved quantity must return to ZERO; staying different from zero means the promise "+
+			"is still standing")
 
-	rezervasyonlar, err := stokSvc.ListInventoryLevels(ctx, stokKalemID)
-	require.NoError(t, err, "stok seviyeleri okunabilmeli")
-	require.Len(t, rezervasyonlar, 1, "fikstür tek lokasyonda seviyelenmiş olmalı")
+	levels, err := inventorySvc.ListInventoryLevels(ctx, inventoryItemID)
+	require.NoError(t, err, "the stock levels must be readable")
+	require.Len(t, levels, 1, "the fixture must be levelled at a single location")
 
-	// --- 3) SEPET TAMAMLANMAMIŞ OLMALI (hâlâ değiştirilebilir) ---
+	// --- 3) THE CART MUST NOT BE COMPLETED (it is still modifiable) ---
 	//
-	// clear_cart saga'nın son adımıdır ve ödeme adımı patladığı için HİÇ
-	// çalışmadı. Sepetin açık kalması bir ayrıntı değil, akışın amacıdır:
-	// müşteri kartını değiştirip aynı sepetle yeniden deneyebilmelidir.
-	sepet, err := sepetSvc.GetCart(ctx, sepetID)
-	require.NoError(t, err, "sepet modülünden okunabilmeli")
-	require.False(t, sepet.Completed(),
-		"sepet tamamlanmış damgalanMAMALI; damgalansaydı müşteri hem ödeme yapamamış "+
-			"hem de sepetini kaybetmiş olurdu")
-	require.Len(t, sepet.Items, 1, "sepetin satırı yerinde durmalı")
-	require.Equal(t, sagaAdet, sepet.Items[0].Quantity, "sepet satırının adedi değişmemeli")
+	// clear_cart is the saga's last step and, because the payment step blew up, it did
+	// NOT run at all. The cart staying open is not a detail but the purpose of the
+	// workflow: the customer must be able to change their card and try again with the
+	// same cart.
+	cart, err := cartSvc.GetCart(ctx, cartID)
+	require.NoError(t, err, "the cart must be readable from the cart module")
+	require.False(t, cart.Completed(),
+		"the cart must NOT be stamped completed; had it been stamped, the customer would have "+
+			"both failed to pay and lost their cart")
+	require.Len(t, cart.Items, 1, "the cart's line must still be in place")
+	require.Equal(t, sagaQuantity, cart.Items[0].Quantity, "the cart line's quantity must not change")
 
-	guncel, err := akislar.UpdateLineItem(ctx, cartwf.UpdateLineItemInput{
-		CartID:     sepetID,
-		LineItemID: sepet.Items[0].ID,
+	updated, err := workflows.UpdateLineItem(ctx, cartwf.UpdateLineItemInput{
+		CartID:     cartID,
+		LineItemID: cart.Items[0].ID,
 		Quantity:   1,
 	})
 	require.NoError(t, err,
-		"sepet HÂLÂ DEĞİŞTİRİLEBİLİR olmalı; okunabilir ama yazılamaz bir sepet, "+
-			"müşteriye 'yeniden dene' demenin imkânsız olduğu bir durumdur")
-	require.Equal(t, int64(1), guncel.Quantity, "güncelleme gerçekten uygulanmalı")
+		"the cart must STILL BE MODIFIABLE; a cart that is readable but not writable is a state "+
+			"in which telling the customer to 'try again' is impossible")
+	require.Equal(t, int64(1), updated.Quantity, "the update must really be applied")
 
-	// --- 4) order.placed: GÖZLENEN davranış ---
+	// --- 4) order.placed: the OBSERVED behaviour ---
 	//
-	// Olay YAYIMLANMIŞTIR ve bu doğrudur: sipariş bir an için GERÇEKTEN
-	// oluşmuştu ve olay, olmuş bir olgunun duyurusudur. Ödeme sonradan
-	// reddedildiği için sipariş iptal edildi, ama "önce oldu sonra iptal
-	// edildi" ile "hiç olmadı" farklı şeylerdir ve olay ilkini anlatır.
+	// The event HAS BEEN PUBLISHED and that is correct: the order REALLY did come into
+	// being for a moment, and an event is the announcement of a fact that happened.
+	// Because the payment was declined afterwards the order was canceled, but "it
+	// happened and then was canceled" and "it never happened" are different things,
+	// and the event tells the first.
 	//
-	// Bunun tüketiciler için bir SONUCU vardır ve test onu belgelemek için
-	// vardır: "order.placed" tek başına "bu sipariş geçerli" anlamına GELMEZ.
-	// Aboneler (fatura, bildirim, muhasebe) siparişin güncel durumunu okumak
-	// zorundadır. Yükte durum alanı bulunması da tam bu yüzden anlamlıdır.
+	// This has a CONSEQUENCE for consumers, and the test exists to document it:
+	// "order.placed" on its own does NOT mean "this order is valid". Subscribers
+	// (invoicing, notification, accounting) are obliged to read the order's current
+	// status. That the payload contains a status field is meaningful for exactly this
+	// reason.
 	//
-	// İptali duyuran ayrı bir olay (örn. "order.canceled") bugün YOKTUR; plan
-	// Faz 6 yalnızca order.placed'ı ister. Eklendiği gün bu blok, aboneye iki
-	// olayın da geldiğini iddia edecek biçimde büyümelidir.
-	olay := olayDefteri.bekle(t, iptalEdilen.ID)
-	require.Equal(t, ordermodels.OrderPending.String(), olayAlani(t, olay, ordersvc.EventFieldStatus),
-		"olay siparişin YAYIM ANINDAKİ durumunu taşır ve o an 'pending'di; olay "+
-			"yayımlandıktan sonraki iptal yükü geriye dönük DEĞİŞTİRMEZ. Abone güncel "+
-			"durumu siparişten okumak zorundadır")
-	require.Equal(t, "119998", olayAlani(t, olay, ordersvc.EventFieldTotal),
-		"olay siparişin toplamını ondalıksız DİZE olarak taşımalı")
+	// A separate event announcing the cancellation (e.g. "order.canceled") does NOT
+	// exist today; the plan's Phase 6 only asks for order.placed. The day it is added,
+	// this block must grow to assert that both events reach the subscriber.
+	event := eventLog.waitFor(t, canceled.ID)
+	require.Equal(t, ordermodels.OrderPending.String(), olayAlani(t, event, ordersvc.EventFieldStatus),
+		"the event carries the order's status AT THE MOMENT OF PUBLICATION and at that moment it "+
+			"was 'pending'; a cancellation after the event was published does NOT retroactively "+
+			"CHANGE the payload. The subscriber is obliged to read the current status from the order")
+	require.Equal(t, "119998", olayAlani(t, event, ordersvc.EventFieldTotal),
+		"the event must carry the order's total as a STRING without decimals")
 }
 
-// order.placed senaryosunun ELLE hesaplanmış tutarları.
+// The order.placed scenario's HAND-computed amounts.
 //
-//	12_000 × 1 = 12_000 ara toplam
-//	12_000 × %20 = 2_400 vergi
-//	12_000 - 0 + 2_400 + 0 = 14_400 genel toplam
+//	12_000 × 1 = 12_000 subtotal
+//	12_000 × 20% = 2_400 tax
+//	12_000 - 0 + 2_400 + 0 = 14_400 grand total
 const (
-	olayBirimFiyat    int64 = 12_000
-	olayAdet          int64 = 1
-	olayAraToplam     int64 = 12_000
-	olayVergi         int64 = 2_400
-	olayToplam        int64 = 14_400
-	olayBaslangicStok int64 = 5
+	eventUnitPrice    int64 = 12_000
+	eventQuantity     int64 = 1
+	eventSubtotal     int64 = 12_000
+	eventTax          int64 = 2_400
+	eventTotal        int64 = 14_400
+	eventInitialStock int64 = 5
 )
 
-// TestSiparisPlacedOlayiYayimlanir Faz 6 DoD'sinin olay yarısını kanıtlar:
-// "order.placed" GERÇEKTEN yayımlanır ve yükü sözleşmedeki alanları taşır.
+// TestOrderPlacedEventIsPublished proves the event half of the Phase 6 DoD:
+// "order.placed" REALLY is published and its payload carries the fields in the
+// contract.
 //
-// Abone core.eventbus'a TestMain'de bağlanmıştır (bkz. [siparisOlayDefteri]);
-// üretimdeki veri yolunun aynısıdır ve testte hiçbir sahte yoktur. Olayın
-// yalnızca "geldiğini" görmek yetmez: her alan MODÜLLER ARASI SÖZLEŞMEDİR ve
-// eksik ya da tipi kaymış bir alan, aboneleri sessizce düşürür.
-func TestSiparisPlacedOlayiYayimlanir(t *testing.T) {
+// The subscriber is attached to core.eventbus in TestMain (see [orderEventLog]);
+// it is the very same data path as in production and there is no fake in the test.
+// Seeing only that the event "arrived" is not enough: every field is a CROSS-MODULE
+// CONTRACT, and a missing field or one whose type has drifted drops subscribers
+// silently.
+func TestOrderPlacedEventIsPublished(t *testing.T) {
 	ctx := t.Context()
 
-	musteriID, eposta := yeniMusteri(ctx, t)
-	varyantID, _ := yeniStokluVaryant(ctx, t, "E2E Olay Ürünü", map[string]int64{
-		vergiliParaBirimi: olayBirimFiyat,
-	}, olayBaslangicStok)
+	customerID, email := newCustomer(ctx, t)
+	variantID, _ := newStockedVariant(ctx, t, "E2E Event Product", map[string]int64{
+		taxedCurrency: eventUnitPrice,
+	}, eventInitialStock)
 
-	sepetID, toplamlar := sepetHazirla(ctx, t, musteriID, varyantID, olayAdet)
-	toplamlariDogrula(t, toplamlar, beklenenToplam{
-		araToplam: olayAraToplam,
-		indirim:   0,
-		vergi:     olayVergi,
-		kargo:     0,
-		toplam:    olayToplam,
-	}, "olay sepeti hazırlandıktan sonra")
+	cartID, totals := prepareCart(ctx, t, customerID, variantID, eventQuantity)
+	assertTotals(t, totals, expectedTotal{
+		subtotal: eventSubtotal,
+		discount: 0,
+		tax:      eventTax,
+		shipping: 0,
+		total:    eventTotal,
+	}, "after the event cart was prepared")
 
-	sonuc, err := siparisAkislari.CompleteCart(ctx, checkoutwf.CompleteCartInput{
-		CartID:            sepetID,
-		LocationID:        stokLokasyonID,
+	result, err := orderWorkflows.CompleteCart(ctx, checkoutwf.CompleteCartInput{
+		CartID:            cartID,
+		LocationID:        stockLocationID,
 		PaymentProviderID: manual.ID,
-		PaymentData:       odemeDavranisi(t, manual.OutcomeAuthorize),
-		Email:             eposta,
-		ExpectedTotal:     olayToplam,
+		PaymentData:       paymentBehavior(t, manual.OutcomeAuthorize),
+		Email:             email,
+		ExpectedTotal:     eventTotal,
 	})
-	require.NoError(t, err, "sepet siparişe çevrilebilmeli")
+	require.NoError(t, err, "the cart must be convertible into an order")
 
-	olay := olayDefteri.bekle(t, sonuc.OrderID)
+	event := eventLog.waitFor(t, result.OrderID)
 
-	require.Equal(t, ordersvc.EventOrderPlaced, olay.Name,
-		"olayın adı sözleşmedeki ad olmalı; Redis backend'inde ad aynı zamanda STREAM "+
-			"adıdır ve değişmesi tüm abonelerin sessizce olay almayı bırakması demektir")
-	require.NotEmpty(t, olay.ID,
-		"olayın kimliği dolu olmalı; tüketiciler onu idempotency anahtarı olarak kullanır")
-	require.False(t, olay.OccurredAt.IsZero(), "olayın gerçekleşme anı damgalanmalı")
+	require.Equal(t, ordersvc.EventOrderPlaced, event.Name,
+		"the event's name must be the name in the contract; on the Redis backend the name is "+
+			"also the STREAM name, and changing it means every subscriber silently stops "+
+			"receiving events")
+	require.NotEmpty(t, event.ID,
+		"the event's ID must be filled in; consumers use it as an idempotency key")
+	require.False(t, event.OccurredAt.IsZero(), "the moment the event occurred must be stamped")
 
-	siparis, err := siparisSvc.GetOrder(ctx, sonuc.OrderID)
-	require.NoError(t, err, "sipariş okunabilmeli")
+	order, err := orderSvc.GetOrder(ctx, result.OrderID)
+	require.NoError(t, err, "the order must be readable")
 
-	require.Equal(t, sonuc.OrderID, olayAlani(t, olay, ordersvc.EventFieldOrderID),
-		"yük siparişin kimliğini taşımalı; abonenin ayrıntıya ulaşmasının TEK yolu odur")
-	require.Equal(t, "14400", olayAlani(t, olay, ordersvc.EventFieldTotal),
-		"yük siparişin toplamını ondalıksız DİZE olarak taşımalı: %d minor unit -> %q. "+
-			"Sayı olarak taşınsaydı Redis backend'inde float64'e çözülür ve 2^53 üstü "+
-			"tutarlar sessizce yuvarlanırdı (plan Bölüm 8: float ASLA)", olayToplam, "14400")
-	require.Equal(t, ordermodels.OrderPending.String(), olayAlani(t, olay, ordersvc.EventFieldStatus),
-		"yük siparişin durumunu taşımalı")
-	require.Equal(t, vergiliBolgeID, olayAlani(t, olay, ordersvc.EventFieldRegionID),
-		"yük siparişin bölgesini taşımalı")
-	require.Equal(t, musteriID, olayAlani(t, olay, ordersvc.EventFieldCustomerID),
-		"yük siparişin müşterisini taşımalı")
-	require.Equal(t, vergiliParaBirimi, olayAlani(t, olay, ordersvc.EventFieldCurrencyCode),
-		"yük siparişin para birimini taşımalı; tutar tek başına anlamsızdır")
-	require.Equal(t, "1", olayAlani(t, olay, ordersvc.EventFieldItemCount),
-		"yük satır sayısını ondalıksız DİZE olarak taşımalı")
-	require.NotEmpty(t, olayAlani(t, olay, ordersvc.EventFieldDisplayID),
-		"yük müşteriye gösterilen sipariş numarasını taşımalı")
-	require.Equal(t, siparis.PlacedAt.UTC().Format("2006-01-02"),
-		olayAlani(t, olay, ordersvc.EventFieldPlacedAt)[:len("2006-01-02")],
-		"yükteki zaman damgası siparişin PlacedAt değerinden gelmeli")
+	require.Equal(t, result.OrderID, olayAlani(t, event, ordersvc.EventFieldOrderID),
+		"the payload must carry the order's ID; it is the ONLY way for the subscriber to reach "+
+			"the details")
+	require.Equal(t, "14400", olayAlani(t, event, ordersvc.EventFieldTotal),
+		"the payload must carry the order's total as a STRING without decimals: %d minor units "+
+			"-> %q. Had it been carried as a number, it would resolve to a float64 on the Redis "+
+			"backend and amounts above 2^53 would be silently rounded (plan Section 8: NEVER "+
+			"float)", eventTotal, "14400")
+	require.Equal(t, ordermodels.OrderPending.String(), olayAlani(t, event, ordersvc.EventFieldStatus),
+		"the payload must carry the order's status")
+	require.Equal(t, taxedRegionID, olayAlani(t, event, ordersvc.EventFieldRegionID),
+		"the payload must carry the order's region")
+	require.Equal(t, customerID, olayAlani(t, event, ordersvc.EventFieldCustomerID),
+		"the payload must carry the order's customer")
+	require.Equal(t, taxedCurrency, olayAlani(t, event, ordersvc.EventFieldCurrencyCode),
+		"the payload must carry the order's currency; the amount alone is meaningless")
+	require.Equal(t, "1", olayAlani(t, event, ordersvc.EventFieldItemCount),
+		"the payload must carry the line count as a STRING without decimals")
+	require.NotEmpty(t, olayAlani(t, event, ordersvc.EventFieldDisplayID),
+		"the payload must carry the order number shown to the customer")
+	require.Equal(t, order.PlacedAt.UTC().Format("2006-01-02"),
+		olayAlani(t, event, ordersvc.EventFieldPlacedAt)[:len("2006-01-02")],
+		"the timestamp in the payload must come from the order's PlacedAt value")
 
-	// E-posta BİLİNÇLİ OLARAK yükte yoktur: olaylar Redis'e yazılır ve orada
-	// KALICIDIR; kişisel veriyi kalıcı bir akışa koymak, siparişin kendisinde
-	// zaten duran bir bilgi için gereksiz bir yayılımdır (plan Bölüm 8).
-	require.NotContains(t, olay.Data, "email",
-		"yük e-posta TAŞIMAMALI; kalıcı bir olay akışına kişisel veri konmaz")
+	// The e-mail is DELIBERATELY absent from the payload: events are written to Redis
+	// and are PERMANENT there; putting personal data into a permanent stream is an
+	// unnecessary spread for information that already sits on the order itself (plan
+	// Section 8).
+	require.NotContains(t, event.Data, "email",
+		"the payload must NOT carry the e-mail; personal data is not put into a permanent event "+
+			"stream")
 }
 
-// Stok yetersizliği senaryosunun sabitleri.
+// The constants of the insufficient stock scenario.
 //
-// Sepetin adedi stoktan FAZLADIR; tutarların doğruluğu bu senaryonun konusu
-// değildir, çünkü akış hesabı yaptıktan sonra İLK adımda durur.
+// The cart's quantity is MORE than the stock; the correctness of the amounts is not
+// this scenario's subject, because the workflow stops at the FIRST step after doing
+// the computation.
 const (
-	yetersizBirimFiyat    int64 = 20_000
-	yetersizAdet          int64 = 5
-	yetersizBaslangicStok int64 = 2
+	insufficientUnitPrice    int64 = 20_000
+	insufficientQuantity     int64 = 5
+	insufficientInitialStock int64 = 2
 )
 
-// TestStokYetersizIkenSiparisOlusmaz stoktan fazlasını isteyen bir sepetin
-// siparişe DÖNMEDİĞİNİ doğrular.
+// TestNoOrderIsCreatedWhenStockIsInsufficient verifies that a cart asking for more
+// than the stock does NOT TURN INTO an order.
 //
-// Adım saga'nın İLKİDİR, yani telafi edilecek hiçbir şey yoktur; sınanan şey
-// akışın burada DURMASI ve arkasında hiçbir iz bırakmamasıdır. Stok kontrolü
-// ayırma çağrısının İÇİNDE, kilit altında yapılır: önceden yapılan bir "yeterli
-// mi" okuması yarışa açık bir kopya olurdu (bkz. checkoutwf.Inventory).
-func TestStokYetersizIkenSiparisOlusmaz(t *testing.T) {
+// The step is the saga's FIRST, so there is nothing to compensate; what is probed
+// is that the workflow STOPS here and leaves no trace behind it. The stock check is
+// done INSIDE the reservation call, under the lock: a "is there enough" read done
+// beforehand would be a copy open to a race (see checkoutwf.Inventory).
+func TestNoOrderIsCreatedWhenStockIsInsufficient(t *testing.T) {
 	ctx := t.Context()
 
-	musteriID, eposta := yeniMusteri(ctx, t)
-	varyantID, stokKalemID := yeniStokluVaryant(ctx, t, "E2E Yetersiz Stok Ürünü", map[string]int64{
-		vergiliParaBirimi: yetersizBirimFiyat,
-	}, yetersizBaslangicStok)
+	customerID, email := newCustomer(ctx, t)
+	variantID, inventoryItemID := newStockedVariant(ctx, t, "E2E Insufficient Stock Product", map[string]int64{
+		taxedCurrency: insufficientUnitPrice,
+	}, insufficientInitialStock)
 
-	sepetID, _ := sepetHazirla(ctx, t, musteriID, varyantID, yetersizAdet)
+	cartID, _ := prepareCart(ctx, t, customerID, variantID, insufficientQuantity)
 
-	_, err := siparisAkislari.CompleteCart(ctx, checkoutwf.CompleteCartInput{
-		CartID:            sepetID,
-		LocationID:        stokLokasyonID,
+	_, err := orderWorkflows.CompleteCart(ctx, checkoutwf.CompleteCartInput{
+		CartID:            cartID,
+		LocationID:        stockLocationID,
 		PaymentProviderID: manual.ID,
-		PaymentData:       odemeDavranisi(t, manual.OutcomeAuthorize),
-		Email:             eposta,
+		PaymentData:       paymentBehavior(t, manual.OutcomeAuthorize),
+		Email:             email,
 	})
 	require.Error(t, err,
-		"stoktan fazlası sipariş EDİLEMEMELİ; edilebilseydi mağaza teslim edemeyeceği "+
-			"bir malın parasını tahsil ederdi")
+		"more than the stock must NOT BE ORDERABLE; if it were, the store would collect money "+
+			"for goods it cannot deliver")
 	require.True(t, errors.IsConflict(err),
-		"yetersiz stok errors.Conflict olmalı: girdi geçerlidir, dünyanın durumu "+
-			"elverişsizdir ve istemci adedi düşürüp TEKRAR deneyebilir. Dönen hata: %v", err)
+		"insufficient stock must be an errors.Conflict: the input is valid, the state of the "+
+			"world is unfavourable, and the client can lower the quantity and try AGAIN. "+
+			"Returned error: %v", err)
 	require.ErrorContains(t, err, checkoutwf.StepReserveInventory,
-		"hata PATLAYAN ADIMI adlandırmalı; adım adı yürütme kaydına da yazılır ve "+
-			"operatörün gördüğü tek şeydir")
+		"the error must NAME THE STEP THAT BLEW UP; the step name is written to the execution "+
+			"record too and it is the only thing the operator sees")
 
-	// --- sipariş OLUŞMAMALI ---
-	siparisler, toplamSayi, err := siparisSvc.ListOrders(ctx, ordersvc.ListOrdersInput{CustomerID: &musteriID})
-	require.NoError(t, err, "müşterinin siparişleri okunabilmeli")
-	require.Empty(t, siparisler,
-		"sipariş HİÇ oluşmamalı: create_order, reserve_inventory'den SONRA gelir ve "+
-			"stok adımı patladığı için hiç çalışmamalıdır. İptal edilmiş bile olsa bir "+
-			"sipariş kaydı, hiç denenmemiş bir siparişin var olduğu anlamına gelirdi")
-	require.Zero(t, toplamSayi, "sayaç da sıfır olmalı")
+	// --- no order MUST BE CREATED ---
+	orders, totalCount, err := orderSvc.ListOrders(ctx, ordersvc.ListOrdersInput{CustomerID: &customerID})
+	require.NoError(t, err, "the customer's orders must be readable")
+	require.Empty(t, orders,
+		"no order must be created AT ALL: create_order comes AFTER reserve_inventory and, since "+
+			"the stock step blew up, it must not have run at all. An order record — even a "+
+			"canceled one — would mean an order that was never attempted exists")
+	require.Zero(t, totalCount, "the counter must be zero too")
 
-	// --- ödeme adımına HİÇ gidilmemeli ---
-	require.Equal(t, yetersizBaslangicStok, satilabilirAdet(ctx, t, stokKalemID),
-		"stok hiç DOKUNULMAMIŞ olmalı; kısmi bir ayırma (örneğin eldeki 2 adet) yapılıp "+
-			"bırakılsaydı, sepetin tamamı karşılanamadığı hâlde stok geçici olarak "+
-			"kilitlenirdi")
-	seviye := stokSeviyesi(ctx, t, stokKalemID)
-	require.Equal(t, int64(0), seviye.ReservedQuantity,
-		"rezerve adet sıfır kalmalı; ayırma ya TAMAMEN olur ya hiç olmaz")
+	// --- the payment step must NOT be reached at all ---
+	require.Equal(t, insufficientInitialStock, sellableQuantity(ctx, t, inventoryItemID),
+		"the stock must be COMPLETELY UNTOUCHED; had a partial reservation (say the 2 units on "+
+			"hand) been made and left, the stock would be temporarily locked even though the "+
+			"whole cart cannot be met")
+	level := stockLevel(ctx, t, inventoryItemID)
+	require.Equal(t, int64(0), level.ReservedQuantity,
+		"the reserved quantity must stay zero; a reservation either happens ENTIRELY or not at all")
 
-	sepet, err := sepetSvc.GetCart(ctx, sepetID)
-	require.NoError(t, err, "sepet okunabilmeli")
-	require.False(t, sepet.Completed(),
-		"sepet açık kalmalı; müşteri adedi düşürüp yeniden deneyebilmelidir")
+	cart, err := cartSvc.GetCart(ctx, cartID)
+	require.NoError(t, err, "the cart must be readable")
+	require.False(t, cart.Completed(),
+		"the cart must stay open; the customer must be able to lower the quantity and try again")
 }
 
-// Tekrar senaryosunun ELLE hesaplanmış tutarları.
+// The repeat scenario's HAND-computed amounts.
 //
-//	25_000 × 2 = 50_000 ara toplam
-//	50_000 × %20 = 10_000 vergi
-//	50_000 - 0 + 10_000 + 0 = 60_000 genel toplam
+//	25_000 × 2 = 50_000 subtotal
+//	50_000 × 20% = 10_000 tax
+//	50_000 - 0 + 10_000 + 0 = 60_000 grand total
 const (
-	tekrarBirimFiyat    int64 = 25_000
-	tekrarAdet          int64 = 2
-	tekrarAraToplam     int64 = 50_000
-	tekrarVergi         int64 = 10_000
-	tekrarToplam        int64 = 60_000
-	tekrarBaslangicStok int64 = 4
+	repeatUnitPrice    int64 = 25_000
+	repeatQuantity     int64 = 2
+	repeatSubtotal     int64 = 50_000
+	repeatTax          int64 = 10_000
+	repeatTotal        int64 = 60_000
+	repeatInitialStock int64 = 4
 )
 
-// TestAyniSepetIkiKezTamamlanamaz başarıyla sipariş edilmiş bir sepetin ikinci
-// kez sipariş edilemediğini doğrular ve ikinci çağrının NEREDE durduğunu
-// belgeler.
+// TestSameCartCannotBeCompletedTwice verifies that a cart that has been ordered
+// successfully cannot be ordered a second time, and documents WHERE the second call
+// stops.
 //
-// # Gözlenen davranış
+// # Observed behaviour
 //
-// İkinci çağrı saga motoruna HİÇ ULAŞMAZ. Hazırlık aşaması (prepare) motorun
-// idempotency denetiminden ÖNCE çalışır ve ilk işi hesabı yenilemektir; oysa
-// başarılı ilk yürütme sepeti tamamlanmış damgalamıştır ve cart modülü
-// tamamlanmış bir sepette hesap yapmayı reddeder. Dolayısıyla dönen hata sepet
-// hesabının çakışmasıdır (kod: cartwf.CodeCartCompleted), motorun "bu anahtar
-// zaten kullanıldı" cevabı değil.
+// The second call NEVER REACHES the saga engine. The preparation phase (prepare)
+// runs BEFORE the engine's idempotency check and its first job is to refresh the
+// computation; whereas the successful first execution has stamped the cart as
+// completed and the cart module refuses to compute on a completed cart. So the
+// error returned is the cart computation's conflict (code: cartwf.CodeCartCompleted),
+// not the engine's "this key has already been used" answer.
 //
-// # Neden bu DOĞRU davranıştır
+// # Why this is the RIGHT behaviour
 //
-// Üç savunma hattı vardır ve ikinci çağrı EN UCUZUNA çarpar:
+// There are three lines of defence and the second call hits the CHEAPEST one:
 //
-//  1. Sepet damgası (buradaki hat): hiçbir dış çağrı yapılmadan durur.
-//  2. Motorun idempotency anahtarı ("complete_cart:<sepet>"): kayıt
-//     veritabanındadır, yani İKİ REPLİKA aynı sepeti aynı anda sipariş edemez.
-//     Damga tek başına buna yetmezdi.
-//  3. Modüllerin kendi idempotency korumaları (sipariş anahtarı, ödeme oturumu
-//     anahtarı): saga bir adımı yeniden denerse ikinci bir sipariş ya da ikinci
-//     bir tahsilat doğmaz.
+//  1. The cart stamp (the line here): it stops without making any outside call.
+//  2. The engine's idempotency key ("complete_cart:<cart>"): the record is in the
+//     database, so TWO REPLICAS cannot order the same cart at the same time. The
+//     stamp alone would not have been enough for that.
+//  3. The modules' own idempotency guards (order key, payment session key): if the
+//     saga retries a step, a second order or a second capture is not born.
 //
-// Hattın ucuz olanı önce çarpması istenendir: ikinci çağrı ne stok ayırır, ne
-// sipariş açar, ne ödeme sağlayıcısına gider. Hatanın SINIFI da bu yüzden
-// önemlidir — Conflict, istemciye "bu iş zaten yapıldı" der; Internal deseydi
-// istemci gereksiz yere yeniden denerdi.
-func TestAyniSepetIkiKezTamamlanamaz(t *testing.T) {
+// The cheap line being hit first is what we want: the second call neither reserves
+// stock, nor opens an order, nor goes to the payment provider. The error's CLASS
+// matters for the same reason — Conflict tells the client "this work is already
+// done"; had it said Internal the client would have retried needlessly.
+func TestSameCartCannotBeCompletedTwice(t *testing.T) {
 	ctx := t.Context()
 
-	musteriID, eposta := yeniMusteri(ctx, t)
-	varyantID, stokKalemID := yeniStokluVaryant(ctx, t, "E2E Tekrar Ürünü", map[string]int64{
-		vergiliParaBirimi: tekrarBirimFiyat,
-	}, tekrarBaslangicStok)
+	customerID, email := newCustomer(ctx, t)
+	variantID, inventoryItemID := newStockedVariant(ctx, t, "E2E Repeat Product", map[string]int64{
+		taxedCurrency: repeatUnitPrice,
+	}, repeatInitialStock)
 
-	sepetID, toplamlar := sepetHazirla(ctx, t, musteriID, varyantID, tekrarAdet)
-	toplamlariDogrula(t, toplamlar, beklenenToplam{
-		araToplam: tekrarAraToplam,
-		indirim:   0,
-		vergi:     tekrarVergi,
-		kargo:     0,
-		toplam:    tekrarToplam,
-	}, "tekrar sepeti hazırlandıktan sonra")
+	cartID, totals := prepareCart(ctx, t, customerID, variantID, repeatQuantity)
+	assertTotals(t, totals, expectedTotal{
+		subtotal: repeatSubtotal,
+		discount: 0,
+		tax:      repeatTax,
+		shipping: 0,
+		total:    repeatTotal,
+	}, "after the repeat cart was prepared")
 
-	girdi := checkoutwf.CompleteCartInput{
-		CartID:            sepetID,
-		LocationID:        stokLokasyonID,
+	input := checkoutwf.CompleteCartInput{
+		CartID:            cartID,
+		LocationID:        stockLocationID,
 		PaymentProviderID: manual.ID,
-		PaymentData:       odemeDavranisi(t, manual.OutcomeAuthorize),
-		Email:             eposta,
-		ExpectedTotal:     tekrarToplam,
+		PaymentData:       paymentBehavior(t, manual.OutcomeAuthorize),
+		Email:             email,
+		ExpectedTotal:     repeatTotal,
 	}
 
-	ilk, err := siparisAkislari.CompleteCart(ctx, girdi)
-	require.NoError(t, err, "ilk çağrı sepeti siparişe çevirebilmeli")
-	require.True(t, ilk.CartCompleted, "ilk çağrı sepeti tamamlanmış damgalamalı")
+	first, err := orderWorkflows.CompleteCart(ctx, input)
+	require.NoError(t, err, "the first call must be able to turn the cart into an order")
+	require.True(t, first.CartCompleted, "the first call must stamp the cart completed")
 
-	// --- ikinci çağrı ---
+	// --- the second call ---
 
-	ikinci, err := siparisAkislari.CompleteCart(ctx, girdi)
+	second, err := orderWorkflows.CompleteCart(ctx, input)
 	require.Error(t, err,
-		"aynı sepet İKİNCİ KEZ sipariş edilememeli; edilebilseydi müşteriden aynı "+
-			"sepet için iki kez tahsilat yapılır ve stok iki kez düşülürdü")
-	require.Equal(t, checkoutwf.CompleteCartResult{}, ikinci,
-		"ikinci çağrı yarım bir sonuç SIZDIRMAMALI")
+		"the same cart must not be orderable a SECOND TIME; if it were, the customer would be "+
+			"charged twice for the same cart and the stock would be deducted twice")
+	require.Equal(t, checkoutwf.CompleteCartResult{}, second,
+		"the second call must NOT LEAK a half result")
 	require.True(t, errors.IsConflict(err),
-		"ikinci çağrı errors.Conflict olmalı; istemci bunu 'bu iş zaten yapıldı' diye "+
-			"okur ve yeniden denemez. Dönen hata: %v", err)
+		"the second call must be an errors.Conflict; the client reads it as 'this work is already "+
+			"done' and does not retry. Returned error: %v", err)
 	require.Equal(t, cartwf.CodeCartCompleted, errors.CodeOf(err),
-		"ikinci çağrı SEPET HESABINDA durmalı (kod: %s): hazırlık motorun idempotency "+
-			"denetiminden ÖNCE çalışır ve tamamlanmış sepette hesap yapılamaz. Kodun "+
-			"değişmesi, akışın daha pahalı bir hatta (motor ya da modül koruması) "+
-			"çarpmaya başladığını gösterir ve o hat dış çağrı yapmış olabilir. "+
-			"Dönen hata: %v", cartwf.CodeCartCompleted, err)
+		"the second call must stop AT THE CART COMPUTATION (code: %s): the preparation runs "+
+			"BEFORE the engine's idempotency check and a completed cart cannot be computed. The "+
+			"code changing shows the workflow has started hitting a more expensive line (the "+
+			"engine or a module guard) and that line may have made an outside call. "+
+			"Returned error: %v", cartwf.CodeCartCompleted, err)
 
-	// --- ikinci çağrı hiçbir yan etki bırakmamalı ---
+	// --- the second call must leave no side effect ---
 
-	siparisler, _, err := siparisSvc.ListOrders(ctx, ordersvc.ListOrdersInput{CustomerID: &musteriID})
-	require.NoError(t, err, "müşterinin siparişleri okunabilmeli")
-	require.Len(t, siparisler, 1,
-		"yalnızca TEK sipariş oluşmalı; ikinci bir sipariş, aynı sepetin iki kez "+
-			"satıldığı anlamına gelirdi")
-	require.Equal(t, ilk.OrderID, siparisler[0].ID,
-		"kalan sipariş ilk çağrının siparişi olmalı")
+	orders, _, err := orderSvc.ListOrders(ctx, ordersvc.ListOrdersInput{CustomerID: &customerID})
+	require.NoError(t, err, "the customer's orders must be readable")
+	require.Len(t, orders, 1,
+		"only ONE order must be created; a second order would mean the same cart was sold twice")
+	require.Equal(t, first.OrderID, orders[0].ID,
+		"the remaining order must be the first call's order")
 
-	require.Equal(t, tekrarBaslangicStok-tekrarAdet, satilabilirAdet(ctx, t, stokKalemID),
-		"stok yalnızca BİR KEZ düşmeli (%d - %d); ikinci bir düşüm, hiç satılmamış malı "+
-			"stoktan silerdi", tekrarBaslangicStok, tekrarAdet)
+	require.Equal(t, repeatInitialStock-repeatQuantity, sellableQuantity(ctx, t, inventoryItemID),
+		"the stock must drop ONLY ONCE (%d - %d); a second deduction would erase goods that were "+
+			"never sold from the stock", repeatInitialStock, repeatQuantity)
 
-	koleksiyon, err := odemeSvc.GetPaymentCollection(ctx, ilk.PaymentCollectionID)
-	require.NoError(t, err, "ödeme koleksiyonu okunabilmeli")
-	require.Equal(t, tekrarToplam, koleksiyon.CapturedAmount,
-		"tahsil edilen tutar TEK siparişin toplamı kadar olmalı; iki katı olsaydı "+
-			"müşteriden aynı sepet için iki kez para çekilmiş olurdu")
+	collection, err := paymentSvc.GetPaymentCollection(ctx, first.PaymentCollectionID)
+	require.NoError(t, err, "the payment collection must be readable")
+	require.Equal(t, repeatTotal, collection.CapturedAmount,
+		"the amount captured must be that of a SINGLE order's total; had it been twice as much, "+
+			"the customer would have been charged twice for the same cart")
 }
 
-// TestSiparisAkisiUretimKablolamasiylaKurulur sipariş tamamlama akışının ÜRETİM
-// kayıtlarıyla kurulabildiğini AYRICA doğrular.
+// TestOrderWorkflowBuildsFromProductionWiring verifies SEPARATELY that the order
+// completion workflow can be built from the PRODUCTION registrations.
 //
-// Diğer senaryolar akışı KULLANIR; bu test onun KURULABİLDİĞİNİ sınar ve bir
-// imza kayması olduğunda hangi yüzeyin eksik ya da uyumsuz olduğunu
-// container'ın tipli hatasıyla söyler. Ayrım önemlidir çünkü kablolama derleme
-// zamanında denetlenmez: yüzeyler adla çözülür ve modüller bu paketi (ADR 0006
-// gereği) tanımaz, dolayısıyla uyum ancak çalışma zamanında kanıtlanabilir.
-func TestSiparisAkisiUretimKablolamasiylaKurulur(t *testing.T) {
-	akis, err := checkoutwf.FromContainer(kap)
+// The other scenarios USE the workflow; this test probes that it CAN BE BUILT and,
+// when a signature drifts, tells through the container's typed error which surface
+// is missing or mismatched. The distinction matters because the wiring is not
+// checked at compile time: surfaces are resolved by name and the modules do not
+// know this package (per ADR 0006), so compatibility can only be proven at runtime.
+func TestOrderWorkflowBuildsFromProductionWiring(t *testing.T) {
+	workflow, err := checkoutwf.FromContainer(ctr)
 	require.NoError(t, err,
-		"sipariş tamamlama akışı container'daki ÜRETİM kayıtlarıyla kurulabilmeli; "+
-			"hata, hangi yüzeyin eksik olduğunu yazar")
-	require.NotNil(t, akis)
+		"the order completion workflow must be buildable from the PRODUCTION registrations in "+
+			"the ctr; the error names which surface is missing")
+	require.NotNil(t, workflow)
 }
 
-// sepetHazirla kayıtlı bir müşteriye sepet açar, tek satır ekler ve sepetin
-// kimliğiyle hesaplanmış toplamlarını döner.
+// prepareCart opens a cart for a registered customer, adds a single line and
+// returns the cart's ID along with its computed totals.
 //
-// Sepet KAYITLI müşteriye açılır çünkü Faz 6 senaryoları siparişleri müşteriye
-// göre okur: misafir siparişinin customer_id'si boştur ve testler birbirinin
-// siparişini görürdü. Sepet açma ve satır ekleme sepet AKIŞLARIYLA yapılır
-// (cart modülünün servisiyle değil), böylece fiyat ve vergi tam olarak Faz
-// 5'teki yoldan gelir.
-func sepetHazirla(
+// The cart is opened for a REGISTERED customer because the Phase 6 scenarios read
+// orders by customer: a guest order's customer_id is empty and the tests would see
+// each other's orders. Opening the cart and adding the line are done with the cart
+// WORKFLOWS (not with the cart module's service), so that price and tax come from
+// exactly the Phase 5 path.
+func prepareCart(
 	ctx context.Context,
 	t *testing.T,
-	musteriID, varyantID string,
-	adet int64,
-) (sepetID string, toplamlar cartwf.Totals) {
+	customerID, variantID string,
+	quantity int64,
+) (cartID string, totals cartwf.Totals) {
 	t.Helper()
 
-	sepet, err := akislar.CreateCart(ctx, cartwf.CreateCartInput{
-		CountryCode: vergiliUlke,
-		CustomerID:  musteriID,
+	cart, err := workflows.CreateCart(ctx, cartwf.CreateCartInput{
+		CountryCode: taxedCountry,
+		CustomerID:  customerID,
 	})
-	require.NoError(t, err, "fikstür sepeti açılamadı")
+	require.NoError(t, err, "the fixture cart could not be opened")
 
-	eklendi, err := akislar.AddLineItem(ctx, cartwf.AddLineItemInput{
-		CartID:    sepet.CartID,
-		VariantID: varyantID,
-		Quantity:  adet,
+	added, err := workflows.AddLineItem(ctx, cartwf.AddLineItemInput{
+		CartID:    cart.CartID,
+		VariantID: variantID,
+		Quantity:  quantity,
 	})
-	require.NoError(t, err, "fikstür sepetine satır eklenemedi")
+	require.NoError(t, err, "a line could not be added to the fixture cart")
 
-	return sepet.CartID, eklendi.Totals
+	return cart.CartID, added.Totals
 }
 
-// odemeDavranisi manuel sağlayıcının yetkilendirme davranışını belirleyen
-// oturum verisini üretir.
+// paymentBehavior produces the session data that determines the manual provider's
+// authorization behaviour.
 //
-// Veri akışa PaymentData olarak verilir ve sağlayıcıya OLDUĞU GİBİ iletilir;
-// saga'nın kendisinde hiçbir test kancası yoktur. Anahtar ve değerler manual
-// paketinin sabitlerinden gelir: dize olarak yazılsalardı, sağlayıcı sözleşmeyi
-// değiştirdiğinde testler derlenmeye devam eder ama sessizce VARSAYILAN
-// davranışı sınamaya başlardı.
-func odemeDavranisi(t *testing.T, sonuc string) json.RawMessage {
+// The data is given to the workflow as PaymentData and is forwarded to the provider
+// AS IS; there is no test hook in the saga itself. The key and the values come from
+// the manual package's constants: had they been written out as strings, the tests
+// would keep compiling when the provider changed the contract but would silently
+// start probing the DEFAULT behaviour.
+func paymentBehavior(t *testing.T, outcome string) json.RawMessage {
 	t.Helper()
 
-	ham, err := json.Marshal(map[string]string{manual.DataKeyOutcome: sonuc})
-	require.NoError(t, err, "ödeme davranış verisi kodlanamadı")
-	return ham
+	raw, err := json.Marshal(map[string]string{manual.DataKeyOutcome: outcome})
+	require.NoError(t, err, "the payment behaviour data could not be encoded")
+	return raw
 }

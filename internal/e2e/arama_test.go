@@ -94,7 +94,7 @@ const aramaIndeksTablosu = "searchpg_product"
 
 // Zemine kurulan eklentilerin kaydı ve host'u.
 //
-// İkisi de TestMain akışında doldurulur ([eklentileriKur]) ve iki fazda
+// İkisi de TestMain akışında doldurulur ([setUpPlugins]) ve iki fazda
 // kullanılır: kayıtlar modüllerden önce bildirilir, abonelikler ve route'lar
 // modüller ayağa kalktıktan sonra uygulanır.
 var (
@@ -102,7 +102,7 @@ var (
 	eklentiHost  *coreplugin.Host
 )
 
-// eklentileriKur eklentileri MODÜLLERDEN ÖNCE kurar.
+// setUpPlugins eklentileri MODÜLLERDEN ÖNCE kurar.
 //
 // Modül kaydı ve veri yolu dışarıdan verilir çünkü ikisi de eklentinin
 // çalışacağı GERÇEK zemindir: eklentinin getirdiği modül çekirdek modüllerle
@@ -112,24 +112,24 @@ var (
 //
 // Ayar haritası nil'dir: arama eklentisi yapılandırma İSTEMEZ (bkz. searchpg
 // paket belgesi). Ayar isteyen bir eklentinin eksik ayarla durduğu ayrıca
-// sınanır (bkz. [TestEklentiAyariEksikseKurulumDurur]).
-func eklentileriKur(ctx context.Context, moduller *module.Registry, veriYolu eventbus.EventBus) error {
+// sınanır (bkz. [TestSetupStopsWhenAPluginSettingIsMissing]).
+func setUpPlugins(ctx context.Context, moduller *module.Registry, veriYolu eventbus.EventBus) error {
 	eklentiKayit = coreplugin.NewRegistry(nil)
 	eklentiKayit.Add(searchpg.New())
 
-	eklentiHost = coreplugin.NewHost(kap, moduller, veriYolu, nil, nil)
+	eklentiHost = coreplugin.NewHost(ctr, moduller, veriYolu, nil, nil)
 
 	return eklentiKayit.Install(ctx, eklentiHost)
 }
 
-// eklentileriBaslat abonelikleri uygular ve eklenti route'larını bağlar.
+// startPlugins abonelikleri uygular ve eklenti route'larını bağlar.
 //
 // MODÜLLER AYAĞA KALKTIKTAN SONRA çağrılır; sıra üretimdekiyle aynıdır.
 // [coreplugin.Registry.MountRoutes] bu kurulumda hiçbir şey bağlamaz — arama
 // eklentisinin uçları eklenti kancasından değil, getirdiği MODÜLÜN
 // Routes'undan gelir. Yine de çağrılır: atlanması, uçları eklenti kancasıyla
 // bağlayan bir sonraki eklentinin sessizce route'suz kalması demek olurdu.
-func eklentileriBaslat(ctx context.Context) error {
+func startPlugins(ctx context.Context) error {
 	if err := eklentiKayit.Start(ctx, eklentiHost); err != nil {
 		return err
 	}
@@ -147,7 +147,7 @@ func eklentileriBaslat(ctx context.Context) error {
 // önek eşleşmesi yapmaz: "aramaimi1" sorgusu "aramaimi10" yazan ürünü BULMAZ.
 // Sayaç bu yüzden sözcükleri ayırmaya yeter.
 func aramaSozcugu() string {
-	return fmt.Sprintf("aramaimi%d", fiksturSayaci.Add(1))
+	return fmt.Sprintf("aramaimi%d", fixtureCounter.Add(1))
 }
 
 // aramaUrunu verilen sözcüğü BAŞLIĞINDA taşıyan yayında bir ürün oluşturur ve
@@ -161,8 +161,8 @@ func aramaSozcugu() string {
 func aramaUrunu(ctx context.Context, t *testing.T, sozcuk string) (urunID, handle string) {
 	t.Helper()
 
-	sira := fiksturSayaci.Add(1)
-	urun, err := urunSvc.CreateProduct(ctx, productsvc.CreateProductInput{
+	sira := fixtureCounter.Add(1)
+	urun, err := productSvc.CreateProduct(ctx, productsvc.CreateProductInput{
 		Handle: fmt.Sprintf("e2e-arama-%d", sira),
 		Title:  aramaBasligi(sozcuk),
 		Status: productmodels.StatusPublished,
@@ -343,9 +343,9 @@ func TestUrunOlayiIndekseUlasirVeAramaBulur(t *testing.T) {
 
 	urunID, handle := aramaUrunu(ctx, t, sozcuk)
 
-	aramaBekle(t, publishableAnahtar, sozcuk, urunID)
+	aramaBekle(t, publishableKey, sozcuk, urunID)
 
-	zarf := aramaSonucu(t, publishableAnahtar, sozcuk)
+	zarf := aramaSonucu(t, publishableKey, sozcuk)
 	require.Len(t, zarf.Data, 1, "arama tek kayıt döndürmeli; gövde: %+v", zarf)
 	assert.Equal(t, handle, zarf.Data[0].Handle,
 		"kayıt KATALOGTAN gelmeli: indekste kimlikten başka hiçbir şey saklanmaz, "+
@@ -369,14 +369,14 @@ func TestUrunGuncelleninceIndeksTazelenir(t *testing.T) {
 	eskiSozcuk, yeniSozcuk := aramaSozcugu(), aramaSozcugu()
 
 	urunID, _ := aramaUrunu(ctx, t, eskiSozcuk)
-	aramaBekle(t, publishableAnahtar, eskiSozcuk, urunID)
+	aramaBekle(t, publishableKey, eskiSozcuk, urunID)
 
 	yeniBaslik := aramaBasligi(yeniSozcuk)
-	_, err := urunSvc.UpdateProduct(ctx, urunID, productsvc.UpdateProductInput{Title: &yeniBaslik})
+	_, err := productSvc.UpdateProduct(ctx, urunID, productsvc.UpdateProductInput{Title: &yeniBaslik})
 	require.NoError(t, err, "ürün başlığı güncellenemedi")
 
-	aramaBekle(t, publishableAnahtar, yeniSozcuk, urunID)
-	aramaBekle(t, publishableAnahtar, eskiSozcuk)
+	aramaBekle(t, publishableKey, yeniSozcuk, urunID)
+	aramaBekle(t, publishableKey, eskiSozcuk)
 }
 
 // TestUrunSilininceIndekstenDuser silme olayının indeks satırını gerçekten
@@ -391,16 +391,16 @@ func TestUrunSilininceIndekstenDuser(t *testing.T) {
 	sozcuk := aramaSozcugu()
 
 	urunID, _ := aramaUrunu(ctx, t, sozcuk)
-	aramaBekle(t, publishableAnahtar, sozcuk, urunID)
+	aramaBekle(t, publishableKey, sozcuk, urunID)
 	require.True(t, indekstekiSatir(ctx, t, urunID),
 		"ön koşul: ürün aramada bulunduğuna göre indekste satırı olmalı")
 
-	require.NoError(t, urunSvc.DeleteProduct(ctx, urunID), "ürün silinemedi")
+	require.NoError(t, productSvc.DeleteProduct(ctx, urunID), "ürün silinemedi")
 
 	assert.True(t, yoklayarakBekle(func() bool { return !indekstekiSatir(ctx, t, urunID) }),
 		"silinen ürünün indeks satırı DÜŞMELİ; kalırsa indeks katalogla ayrışır ve "+
 			"ayrışma yalnızca satır bir gün yeniden görünür olduğunda fark edilir")
-	aramaBekle(t, publishableAnahtar, sozcuk)
+	aramaBekle(t, publishableKey, sozcuk)
 }
 
 // TestAramaKanalSuzmesiniAtlamaz aramanın katalog süzmesinin BYPASS'ı
@@ -417,12 +417,12 @@ func TestUrunSilininceIndekstenDuser(t *testing.T) {
 // kimlik üretir ve süzgeci katalog uygular. Satır dururken ürünün birinci
 // vitrinde görünmemesi, süzgecin gerçekten okuma anında çalıştığını gösterir.
 func TestAramaKanalSuzmesiniAtlamaz(t *testing.T) {
-	zemin := kanalKataloguFiksturu(t)
+	zemin := channelCatalogFixture(t)
 	ctx := t.Context()
 
 	sozcuk := aramaSozcugu()
 	urunID, _ := aramaUrunu(ctx, t, sozcuk)
-	require.NoError(t, kanalBagla(urunID, zemin.ikinciKanalID),
+	require.NoError(t, bindChannel(urunID, zemin.secondChannelID),
 		"ürün ikinci satış kanalına bağlanmalı")
 
 	// Önce ürünün KENDİ vitrininde bulunması beklenir; indeksin dolduğunun
@@ -433,7 +433,7 @@ func TestAramaKanalSuzmesiniAtlamaz(t *testing.T) {
 	assert.True(t, indekstekiSatir(ctx, t, urunID),
 		"ürün indekste OLMALI; süzgecin katalogta uygulandığı ancak satır dururken görülebilir")
 
-	birinci := aramaSonucu(t, publishableAnahtar, sozcuk)
+	birinci := aramaSonucu(t, publishableKey, sozcuk)
 	assert.Empty(t, birinci.kimlikler(),
 		"başka bir kanala atanmış ürün bu vitrinin ARAMASINDA görünmemeli; görünüyorsa "+
 			"arama, kanal süzmesinin bypass'ı olmuş demektir")
@@ -442,11 +442,11 @@ func TestAramaKanalSuzmesiniAtlamaz(t *testing.T) {
 	// Kanal SORGU DİZESİNDEN seçilemez: seçilebilseydi elindeki herhangi bir
 	// publishable anahtarla gelen istemci, başka bir vitrinin kataloğunda arama
 	// yapardı. Aynı koruma vitrin listesinde de sınanır
-	// (bkz. [TestVitrinKanaliSorguDizesindenAlmaz]); aramanın onu devralmadığı
+	// (bkz. [TestTheStorefrontDoesNotTakeTheChannelFromTheQueryString]); aramanın onu devralmadığı
 	// varsayılamaz, çünkü kanalları isteğin kimliğinden okuyan kod AYRIDIR.
-	kacamak := aramaZarfi(t, publishableAnahtar, url.Values{
+	kacamak := aramaZarfi(t, publishableKey, url.Values{
 		"q":                {sozcuk},
-		"sales_channel_id": {zemin.ikinciKanalID},
+		"sales_channel_id": {zemin.secondChannelID},
 	})
 	assert.Empty(t, kacamak.kimlikler(),
 		"sorgu dizesindeki kanal kimliği YOK SAYILMALI")
@@ -471,7 +471,7 @@ func TestAramaUcuPublishableAnahtarsizReddedilir(t *testing.T) {
 	require.Equal(t, http.StatusUnauthorized, anahtarsiz.Code,
 		"publishable anahtarsız arama reddedilmeli; gövde: %s", anahtarsiz.Body.String())
 
-	gecerli := aramaCagir(t, publishableAnahtar, sorgu)
+	gecerli := aramaCagir(t, publishableKey, sorgu)
 	assert.Equal(t, http.StatusOK, gecerli.Code,
 		"aynı adres geçerli anahtarla çalışmalı; çalışmıyorsa 401 ucun varlığından değil "+
 			"YOKLUĞUNDAN geliyor demektir; gövde: %s", gecerli.Body.String())

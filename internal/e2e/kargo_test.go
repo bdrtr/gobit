@@ -23,65 +23,72 @@ import (
 	checkoutwf "github.com/bdrtr/gobit/internal/workflows/checkout"
 )
 
-// Bu dosya planın Faz 7 DoD'sinin KARGO ayağını kanıtlar: "siparişe fulfillment
-// oluşturulabiliyor".
+// This file proves the SHIPPING leg of the plan's Phase 7 DoD: "a fulfillment
+// can be created for an order".
 //
-// İki senaryo vardır ve ikisi de fulfillment modülünün AYRI bir yüzeyinden
-// geçer:
+// There are two scenarios and both of them go through a SEPARATE surface of
+// the fulfillment module:
 //
-//   - Gönderi yaşam döngüsü, modüller arası yüzeyden ("fulfillment.interop").
-//     Sipariş saga'sı kargo adımını bugün yürütmüyor, yani bu yüzeyin üretimde
-//     hiçbir tüketicisi yok; imzalarını sabitleyen tek yer [kargoYuzeyi] dar
-//     arayüzü ve bu dosyadır.
-//   - Vitrin listelemesi, HTTP mağaza ucundan (/store/v1/shipping-options).
-//     admin_only bir seçeneğin müşteriye görünmemesi bir servis kararı değil,
-//     o ucun SABİTLEDİĞİ bir güven kararıdır (handler bayrağı sorgudan
-//     okumaz, false yazar) ve ancak uçtan geçilerek kanıtlanabilir.
+//   - The fulfillment lifecycle, through the cross-module surface
+//     ("fulfillment.interop"). The order saga does not run the shipping step
+//     today, which means this surface has no consumer whatsoever in
+//     production; the only places pinning its signatures are the
+//     [shippingSurface] narrow interface and this file.
+//   - The storefront listing, through the HTTP store endpoint
+//     (/store/v1/shipping-options). An admin_only option not being visible to
+//     the customer is not a service decision, it is a trust decision that the
+//     endpoint PINS (the handler does not read the flag from the query, it
+//     writes false) and it can only be proven by going through the endpoint.
 //
-// # Sipariş referansı bir foreign key DEĞİLDİR
+// # The order reference is NOT a foreign key
 //
-// fulfillment hiçbir modülü import etmez ve bir gönderinin hangi siparişe ait
-// olduğunu DOĞRULAMAZ (Prensip 2.2); reference serbest bir metindir. Tam da bu
-// yüzden bağın gerçekten kurulduğu ancak uçtan uca sınanabilir: modülün kendi
-// testleri "verilen metin geri döndü mü" diye sorabilir, "geri dönen metin
-// GERÇEKTEN oluşan siparişin kimliği mi" diye soramaz.
+// fulfillment imports no module and does NOT VALIDATE which order a
+// fulfillment belongs to (Principle 2.2); reference is free text. Exactly for
+// that reason the link's actually being established can only be tested end to
+// end: the module's own tests can ask "did the text that was handed in come
+// back", they cannot ask "is the text that came back REALLY the identity of
+// the order that was created".
 
-// Kargo senaryosunun ELLE hesaplanmış tutarları.
+// The MANUALLY computed amounts of the shipping scenario.
 //
-// Bölge %20 vergilidir ve sepete kargo YÖNTEMİ seçilmemiştir:
+// The region is taxed at 20% and NO shipping METHOD is selected on the cart:
 //
-//	20_000 × 1 = 20_000 ara toplam
-//	20_000 × %20 = 4_000 vergi
-//	20_000 - 0 + 4_000 + 0 = 24_000 genel toplam
+//	20_000 × 1 = 20_000 subtotal
+//	20_000 × 20% = 4_000 tax
+//	20_000 - 0 + 4_000 + 0 = 24_000 grand total
 //
-// Kargo seçeneğinin ücreti ([kargoSecenekUcreti]) sepete GİRMEZ: seçeneği
-// listelemek onu sepete eklemek değildir ve sepetin kargo toplamı yalnızca
-// SEÇİLMİŞ yöntemlerden oluşur.
+// The fee of the shipping option ([shippingOptionFee]) does NOT ENTER the
+// cart: listing an option is not adding it to the cart, and the cart's
+// shipping total is made up of SELECTED methods only.
 const (
-	kargoBirimFiyat int64 = 20_000
-	kargoAdet       int64 = 1
-	kargoAraToplam  int64 = 20_000
-	kargoVergi      int64 = 4_000
-	kargoToplam     int64 = 24_000
-	kargoStok       int64 = 5
+	shippingUnitPrice int64 = 20_000
+	shippingQuantity  int64 = 1
+	shippingSubtotal  int64 = 20_000
+	shippingTax       int64 = 4_000
+	shippingTotal     int64 = 24_000
+	shippingStock     int64 = 5
 
-	// kargoSecenekUcreti vitrine çıkan normal seçeneğin sabit ücretidir.
-	kargoSecenekUcreti int64 = 2_500
-	// kargoYonetimUcreti YALNIZCA yönetime açık seçeneğin ücretidir.
+	// shippingOptionFee is the flat fee of the normal option that reaches the
+	// storefront.
+	shippingOptionFee int64 = 2_500
+	// shippingAdminFee is the fee of the option that is open to the admin
+	// surface ONLY.
 	//
-	// Normal seçenekten UCUZ olması bilinçlidir: liste ücrete göre artan
-	// sıralıdır, yani bu seçenek vitrine sızsaydı BİRİNCİ sırada görünürdü.
-	// Pahalı olsaydı yokluğu "sıralama/sayfalama" ile de açıklanabilirdi.
-	kargoYonetimUcreti int64 = 1_500
+	// Its being CHEAPER than the normal option is deliberate: the list is
+	// sorted ascending by fee, so if this option leaked into the storefront it
+	// would show up in FIRST place. Had it been expensive, its absence could
+	// have been explained by "sorting/pagination" as well.
+	shippingAdminFee int64 = 1_500
 )
 
-// kargoSecenekIstegi [kargoYuzeyi.ListOptionsJSON] isteğinin JSON şemasıdır.
+// shippingOptionRequest is the JSON schema of the
+// [shippingSurface.ListOptionsJSON] request.
 //
-// Alan adları fulfillment'ın interop şemasıyla BİREBİR aynı olmak
-// ZORUNDADIR: karşı taraf bilinmeyen alanları REDDEDER ve iki paket birbirini
-// import edemediği için derleyici uyumu göremez (ADR 0006'nın kabul edilen
-// bedeli). Şemanın tek yerde doğrulanabildiği yer budur.
-type kargoSecenekIstegi struct {
+// The field names MUST be EXACTLY identical to fulfillment's interop schema:
+// the other side REJECTS unknown fields and, because the two packages cannot
+// import each other, the compiler cannot see the match (the accepted price of
+// ADR 0006). This is the only place where the schema can be verified.
+type shippingOptionRequest struct {
 	RegionID           string            `json:"region_id"`
 	CurrencyCode       string            `json:"currency_code"`
 	CountryCode        string            `json:"country_code"`
@@ -94,13 +101,14 @@ type kargoSecenekIstegi struct {
 	IsReturn           bool              `json:"is_return"`
 }
 
-// kargoSecenekYaniti [kargoYuzeyi.ListOptionsJSON] yanıtının JSON şemasıdır.
-type kargoSecenekYaniti struct {
-	Options []kargoSecenek `json:"options"`
+// shippingOptionResponse is the JSON schema of the
+// [shippingSurface.ListOptionsJSON] response.
+type shippingOptionResponse struct {
+	Options []shippingOption `json:"options"`
 }
 
-// kargoSecenek fiyatlanmış tek bir kargo seçeneğinin JSON şemasıdır.
-type kargoSecenek struct {
+// shippingOption is the JSON schema of a single priced shipping option.
+type shippingOption struct {
 	ID                string `json:"id"`
 	Name              string `json:"name"`
 	Amount            int64  `json:"amount"`
@@ -112,335 +120,357 @@ type kargoSecenek struct {
 	AdminOnly         bool   `json:"admin_only"`
 }
 
-// TestSiparisIcinGonderiOlusturulur Faz 7 DoD'sinin kargo ayağını uçtan uca
-// koşturur.
+// TestFulfillmentIsCreatedForOrder runs the shipping leg of the Phase 7 DoD
+// end to end.
 //
-// Zincir: sepet -> sipariş (Faz 6 akışı) -> kargo profili + seçeneği -> uygun
-// seçeneklerin listelenmesi -> gönderi -> iptal. Sipariş GERÇEKTİR: kimliği
-// uydurulmuş bir referansla açılan gönderi, "sipariş referansını taşıyor"
-// iddiasını sınamış olmazdı.
-func TestSiparisIcinGonderiOlusturulur(t *testing.T) {
+// The chain: cart -> order (the Phase 6 flow) -> shipping profile + option ->
+// listing of the eligible options -> fulfillment -> cancellation. The order is
+// REAL: a fulfillment opened with a made-up reference would not have tested
+// the claim "it carries the order reference".
+func TestFulfillmentIsCreatedForOrder(t *testing.T) {
 	ctx := t.Context()
 
-	musteriID, eposta := yeniMusteri(ctx, t)
-	varyantID, _ := yeniStokluVaryant(ctx, t, "E2E Kargolu Ürün", map[string]int64{
-		vergiliParaBirimi: kargoBirimFiyat,
-	}, kargoStok)
+	customerID, email := newCustomer(ctx, t)
+	variantID, _ := newStockedVariant(ctx, t, "E2E Shipped Product", map[string]int64{
+		taxedCurrency: shippingUnitPrice,
+	}, shippingStock)
 
-	sepetID, toplamlar := sepetHazirla(ctx, t, musteriID, varyantID, kargoAdet)
-	toplamlariDogrula(t, toplamlar, beklenenToplam{
-		araToplam: kargoAraToplam,
-		indirim:   0,
-		vergi:     kargoVergi,
-		kargo:     0,
-		toplam:    kargoToplam,
-	}, "kargo senaryosunun sepeti hazırlandıktan sonra")
+	cartID, totals := prepareCart(ctx, t, customerID, variantID, shippingQuantity)
+	assertTotals(t, totals, expectedTotal{
+		subtotal: shippingSubtotal,
+		discount: 0,
+		tax:      shippingTax,
+		shipping: 0,
+		total:    shippingTotal,
+	}, "after the cart of the shipping scenario was prepared")
 
-	siparisSonucu, err := siparisAkislari.CompleteCart(ctx, checkoutwf.CompleteCartInput{
-		CartID:            sepetID,
-		LocationID:        stokLokasyonID,
+	orderResult, err := orderWorkflows.CompleteCart(ctx, checkoutwf.CompleteCartInput{
+		CartID:            cartID,
+		LocationID:        stockLocationID,
 		PaymentProviderID: paymentmanual.ID,
-		PaymentData:       odemeDavranisi(t, paymentmanual.OutcomeAuthorize),
-		Email:             eposta,
-		ExpectedTotal:     kargoToplam,
+		PaymentData:       paymentBehavior(t, paymentmanual.OutcomeAuthorize),
+		Email:             email,
+		ExpectedTotal:     shippingTotal,
 	})
-	require.NoError(t, err, "mutlu yoldan sipariş oluşabilmeli")
-	require.NotEmpty(t, siparisSonucu.OrderID, "sipariş kimliği dönmeli")
+	require.NoError(t, err, "an order must be creatable through the happy path")
+	require.NotEmpty(t, orderResult.OrderID, "an order identity must come back")
 
-	// --- 1) sipariş için uygun kargo seçenekleri ---
+	// --- 1) eligible shipping options for the order ---
 
-	profilID := yeniKargoProfili(ctx, t, "E2E Gönderi Profili")
-	secenekID := yeniKargoSecenegi(ctx, t, profilID, "E2E Standart Kargo", kargoSecenekUcreti, false)
+	profileID := newShippingProfile(ctx, t, "E2E Fulfillment Profile")
+	optionID := newShippingOption(ctx, t, profileID, "E2E Standard Shipping", shippingOptionFee, false)
 
-	secenekler := kargoSecenekleriniListele(ctx, t, kargoSecenekIstegi{
-		RegionID:     vergiliBolgeID,
-		CurrencyCode: vergiliParaBirimi,
-		CountryCode:  vergiliUlke,
-		// Süzgeç PROFİLE göre daraltılır: aynı veritabanını paylaşan başka
-		// senaryoların seçenekleri de aynı bölgede yaşar ve süzgeçsiz bir
-		// listeleme, testin sonucunu çalışma sırasına bağlardı.
-		ShippingProfileIDs: []string{profilID},
-		Subtotal:           kargoAraToplam,
-		ItemCount:          kargoAdet,
+	options := listShippingOptions(ctx, t, shippingOptionRequest{
+		RegionID:     taxedRegionID,
+		CurrencyCode: taxedCurrency,
+		CountryCode:  taxedCountry,
+		// The filter is narrowed down by PROFILE: the options of other
+		// scenarios sharing the same database live in the same region too, and
+		// an unfiltered listing would tie the test's outcome to the run order.
+		ShippingProfileIDs: []string{profileID},
+		Subtotal:           shippingSubtotal,
+		ItemCount:          shippingQuantity,
 	})
 
-	require.Len(t, secenekler, 1,
-		"profile bağlı TEK seçenek dönmeli; başka bir sayı, süzgecin uygulanmadığını "+
-			"ya da seçeneğin uygun sayılmadığını gösterir")
-	require.Equal(t, secenekID, secenekler[0].ID, "dönen seçenek az önce kurulan olmalı")
-	require.Equal(t, kargoSecenekUcreti, secenekler[0].Amount,
-		"sabit ücretli seçeneğin ücreti kataloğa yazılan tutar olmalı")
-	require.Equal(t, vergiliParaBirimi, secenekler[0].CurrencyCode,
-		"ücret sepetin para biriminde dönmeli; başka bir para birimi, iki farklı "+
-			"birimdeki tutarların toplanması demek olurdu")
-	require.Equal(t, fulfillmentmanual.ID, secenekler[0].ProviderID,
-		"seçeneği yürütecek sağlayıcı kutudan çıkan manuel sağlayıcı olmalı")
-	require.False(t, secenekler[0].AdminOnly,
-		"vitrine açık seçenek admin_only OLMAMALI")
+	require.Len(t, options, 1,
+		"exactly ONE option bound to the profile must come back; any other number "+
+			"shows that either the filter was not applied or the option was not "+
+			"considered eligible")
+	require.Equal(t, optionID, options[0].ID, "the returned option must be the one just set up")
+	require.Equal(t, shippingOptionFee, options[0].Amount,
+		"the fee of a flat-rate option must be the amount written into the catalog")
+	require.Equal(t, taxedCurrency, options[0].CurrencyCode,
+		"the fee must come back in the cart's currency; another currency would mean "+
+			"summing up amounts stated in two different units")
+	require.Equal(t, fulfillmentmanual.ID, options[0].ProviderID,
+		"the provider that will carry out the option must be the manual provider that "+
+			"comes out of the box")
+	require.False(t, options[0].AdminOnly,
+		"an option open to the storefront must NOT be admin_only")
 
-	// --- 2) siparişe gönderi ---
+	// --- 2) fulfillment for the order ---
 
-	anahtar := "e2e-gonderi-" + siparisSonucu.OrderID
-	gonderiID, err := kargoInterop.CreateFulfillment(ctx, siparisSonucu.OrderID, secenekID, anahtar)
-	require.NoError(t, err, "siparişe gönderi açılabilmeli")
-	require.NotEmpty(t, gonderiID, "gönderi kimliği dönmeli")
+	key := "e2e-fulfillment-" + orderResult.OrderID
+	fulfillmentID, err := shippingInterop.CreateFulfillment(ctx, orderResult.OrderID, optionID, key)
+	require.NoError(t, err, "a fulfillment must be openable for the order")
+	require.NotEmpty(t, fulfillmentID, "a fulfillment identity must come back")
 
-	gonderi, err := kargoSvc.GetFulfillment(ctx, gonderiID)
-	require.NoError(t, err, "gönderi fulfillment modülünden okunabilmeli")
-	require.Equal(t, siparisSonucu.OrderID, gonderi.Reference,
-		"gönderi SİPARİŞİN kimliğini referans olarak taşımalı. fulfillment bu alanı "+
-			"doğrulamaz (foreign key değildir); yanlış ya da boş bir referans hiçbir "+
-			"kısıta takılmaz, yalnızca mutabakatı imkânsız kılar — kargo etiketi hangi "+
-			"siparişe ait olduğu bilinmeden basılmış olur")
-	require.Equal(t, secenekID, gonderi.ShippingOptionID,
-		"gönderi hangi kargo seçeneğiyle açıldığını belgelemeli")
-	require.Equal(t, fulfillmentmanual.ID, gonderi.ProviderID,
-		"gönderi seçeneğin sağlayıcısıyla açılmalı")
-	require.Equal(t, fulfillmentmodels.StatusPending, gonderi.Status,
-		"yeni gönderi 'pending' çıkmalı: kayıt açılmıştır ama kargo firması henüz "+
-			"teslim almamıştır")
-	require.NotEmpty(t, gonderi.ExternalID,
-		"sağlayıcının kendi gönderi kimliği yazılmış olmalı. Belirsiz bir sağlayıcı "+
-			"hatasından sonra iki sistemi eşleştirebilen TEK alan budur")
+	fulfillment, err := shippingSvc.GetFulfillment(ctx, fulfillmentID)
+	require.NoError(t, err, "the fulfillment must be readable from the fulfillment module")
+	require.Equal(t, orderResult.OrderID, fulfillment.Reference,
+		"the fulfillment must carry the ORDER's identity as its reference. fulfillment "+
+			"does not validate this field (it is not a foreign key); a wrong or empty "+
+			"reference trips no constraint, it merely makes reconciliation impossible — "+
+			"the shipping label ends up printed without anyone knowing which order it "+
+			"belongs to")
+	require.Equal(t, optionID, fulfillment.ShippingOptionID,
+		"the fulfillment must document which shipping option it was opened with")
+	require.Equal(t, fulfillmentmanual.ID, fulfillment.ProviderID,
+		"the fulfillment must be opened with the option's provider")
+	require.Equal(t, fulfillmentmodels.StatusPending, fulfillment.Status,
+		"a new fulfillment must come out 'pending': the record has been opened but the "+
+			"carrier has not taken delivery yet")
+	require.NotEmpty(t, fulfillment.ExternalID,
+		"the provider's own fulfillment identity must have been written. After an "+
+			"ambiguous provider error this is the ONLY field that can match the two "+
+			"systems up")
 
-	durum, err := kargoInterop.FulfillmentStatus(ctx, gonderiID)
-	require.NoError(t, err, "gönderi durumu yüzeyden okunabilmeli")
-	require.Equal(t, fulfillmentmodels.StatusPending.String(), durum,
-		"yüzeyin bildirdiği durum kaydınkiyle aynı olmalı")
+	status, err := shippingInterop.FulfillmentStatus(ctx, fulfillmentID)
+	require.NoError(t, err, "the fulfillment status must be readable from the surface")
+	require.Equal(t, fulfillmentmodels.StatusPending.String(), status,
+		"the status the surface reports must be the same as the record's")
 
-	// --- 3) gönderi oluşturma İDEMPOTENT mi ---
+	// --- 3) is fulfillment creation IDEMPOTENT ---
 
-	tekrarID, err := kargoInterop.CreateFulfillment(ctx, siparisSonucu.OrderID, secenekID, anahtar)
-	require.NoError(t, err, "aynı anahtarla ikinci çağrı hata VERMEMELİ")
-	require.Equal(t, gonderiID, tekrarID,
-		"aynı idempotency anahtarı MEVCUT gönderiyi dönmeli. Yeni bir kimlik dönmesi, "+
-			"yeniden denenen bir saga adımının İKİNCİ BİR KARGO ETİKETİ bastırdığı "+
-			"anlamına gelirdi")
+	repeatID, err := shippingInterop.CreateFulfillment(ctx, orderResult.OrderID, optionID, key)
+	require.NoError(t, err, "a second call with the same key must NOT return an error")
+	require.Equal(t, fulfillmentID, repeatID,
+		"the same idempotency key must return the EXISTING fulfillment. A new identity "+
+			"coming back would mean that a retried saga step had a SECOND SHIPPING LABEL "+
+			"printed")
 
-	referans := siparisSonucu.OrderID
-	gonderiler, adet, err := kargoSvc.ListFulfillments(ctx, fulfillmentsvc.ListFulfillmentsInput{
-		Reference: &referans,
+	reference := orderResult.OrderID
+	fulfillments, count, err := shippingSvc.ListFulfillments(ctx, fulfillmentsvc.ListFulfillmentsInput{
+		Reference: &reference,
 	})
-	require.NoError(t, err, "siparişin gönderileri listelenebilmeli")
-	require.Equal(t, int64(1), adet,
-		"siparişin defterinde TEK gönderi olmalı; ikinci bir satır, idempotency'nin "+
-			"yalnızca dönen değerde sağlandığını ve deftere fazladan yazıldığını gösterir")
-	require.Len(t, gonderiler, 1, "listelenen gönderi sayısı sayaçla tutarlı olmalı")
-	require.Equal(t, gonderiID, gonderiler[0].ID, "listelenen gönderi açılan gönderi olmalı")
+	require.NoError(t, err, "the order's fulfillments must be listable")
+	require.Equal(t, int64(1), count,
+		"there must be exactly ONE fulfillment in the order's ledger; a second row shows "+
+			"that idempotency was provided in the returned value only and that an extra "+
+			"row was written into the ledger")
+	require.Len(t, fulfillments, 1,
+		"the number of listed fulfillments must be consistent with the counter")
+	require.Equal(t, fulfillmentID, fulfillments[0].ID,
+		"the listed fulfillment must be the one that was opened")
 
-	// --- 4) iptal İDEMPOTENT mi (saga telafisi) ---
+	// --- 4) is cancellation IDEMPOTENT (saga compensation) ---
 
-	require.NoError(t, kargoInterop.CancelFulfillment(ctx, gonderiID),
-		"gönderi iptal edilebilmeli")
+	require.NoError(t, shippingInterop.CancelFulfillment(ctx, fulfillmentID),
+		"the fulfillment must be cancellable")
 
-	iptalli, err := kargoSvc.GetFulfillment(ctx, gonderiID)
-	require.NoError(t, err, "iptal edilmiş gönderi okunabilmeli")
-	require.Equal(t, fulfillmentmodels.StatusCanceled, iptalli.Status,
-		"gönderi 'canceled' olmalı; kayıt SİLİNMEZ, çünkü silinseydi ikinci bir iptal "+
-			"çağrısı 'bilinmeyen kimlik' hatası verir ve telafi tekrar çalıştırılamazdı")
-	require.NotNil(t, iptalli.CanceledAt, "iptal anı damgalanmalı")
+	canceled, err := shippingSvc.GetFulfillment(ctx, fulfillmentID)
+	require.NoError(t, err, "a canceled fulfillment must be readable")
+	require.Equal(t, fulfillmentmodels.StatusCanceled, canceled.Status,
+		"the fulfillment must be 'canceled'; the record is NOT DELETED, because had it "+
+			"been deleted a second cancellation call would return an 'unknown identity' "+
+			"error and the compensation could not be run again")
+	require.NotNil(t, canceled.CanceledAt, "the moment of cancellation must be stamped")
 
-	require.NoError(t, kargoInterop.CancelFulfillment(ctx, gonderiID),
-		"İKİNCİ iptal çağrısı da hata VERMEMELİ. Telafinin tekrar çalıştırılabilir "+
-			"olması bir tercih değil, saga'nın çalışma şartıdır: yeniden denenen bir "+
-			"geri alma zinciri aynı adımı iki kez çağırır")
+	require.NoError(t, shippingInterop.CancelFulfillment(ctx, fulfillmentID),
+		"the SECOND cancellation call must NOT return an error either. The compensation "+
+			"being re-runnable is not a preference, it is the saga's condition of "+
+			"operation: a retried rollback chain calls the same step twice")
 
-	ikinciOkuma, err := kargoSvc.GetFulfillment(ctx, gonderiID)
-	require.NoError(t, err, "ikinci iptalden sonra gönderi yine okunabilmeli")
-	require.Equal(t, fulfillmentmodels.StatusCanceled, ikinciOkuma.Status,
-		"durum 'canceled' kalmalı")
-	require.Equal(t, iptalli.CanceledAt, ikinciOkuma.CanceledAt,
-		"iptal damgası DEĞİŞMEMELİ; değişmesi, ikinci çağrının kaydı yeniden yazdığını "+
-			"ve dolayısıyla sağlayıcıya da ikinci kez gidildiğini gösterirdi")
-	require.Equal(t, iptalli.UpdatedAt, ikinciOkuma.UpdatedAt,
-		"kayıt ikinci çağrıda hiç GÜNCELLENMEMELİ. İdempotentlik 'aynı sonucu üret' "+
-			"değil, 'ikinci kez hiçbir şey yapma' demektir; aksi hâlde her yeniden "+
-			"deneme mutabakat defterine yeni bir hareket yazardı")
+	secondRead, err := shippingSvc.GetFulfillment(ctx, fulfillmentID)
+	require.NoError(t, err, "the fulfillment must still be readable after the second cancellation")
+	require.Equal(t, fulfillmentmodels.StatusCanceled, secondRead.Status,
+		"the status must stay 'canceled'")
+	require.Equal(t, canceled.CanceledAt, secondRead.CanceledAt,
+		"the cancellation stamp must NOT CHANGE; a change would show that the second "+
+			"call rewrote the record and that the provider was therefore gone to a second "+
+			"time as well")
+	require.Equal(t, canceled.UpdatedAt, secondRead.UpdatedAt,
+		"the record must not be UPDATED AT ALL on the second call. Idempotency does not "+
+			"mean 'produce the same result', it means 'do nothing the second time'; "+
+			"otherwise every retry would write a new movement into the reconciliation "+
+			"ledger")
 
-	err = kargoInterop.CancelFulfillment(ctx, fulfillmentmodels.NewFulfillmentID())
-	require.Error(t, err, "BİLİNMEYEN bir kimliğin iptali hata vermeli")
+	err = shippingInterop.CancelFulfillment(ctx, fulfillmentmodels.NewFulfillmentID())
+	require.Error(t, err, "cancelling an UNKNOWN identity must return an error")
 	require.True(t, errors.IsNotFound(err),
-		"hata NotFound olmalı, sessizce yutulmamalı. İdempotentlik 'her şeyi kabul et' "+
-			"demek değildir: iki kez iptal edilen GERÇEK bir gönderi ile hiç var olmamış "+
-			"bir kimlik farklı durumlardır ve ikincisi çağıran tarafta bir hatadır "+
-			"(alınan: %v)", err)
+		"the error must be NotFound, it must not be swallowed silently. Idempotency does "+
+			"not mean 'accept everything': a REAL fulfillment canceled twice and an "+
+			"identity that never existed are different situations, and the second one is "+
+			"a bug on the caller's side (got: %v)", err)
 }
 
-// TestMagazaYuzeyiYonetimSeceneginiGizler admin_only bir kargo seçeneğinin
-// vitrine ÇIKMADIĞINI doğrular.
+// TestStoreSurfaceHidesAdminOnlyOption verifies that an admin_only shipping
+// option does NOT REACH the storefront.
 //
-// İki seçenek aynı profile ve aynı bölgeye kurulur; tek fark admin_only
-// bayrağıdır. Yönetime özel olan bilinçli olarak DAHA UCUZDUR: liste ücrete
-// göre artan sıralı olduğu için sızsaydı birinci sırada görünürdü, yani
-// yokluğu sıralamayla açıklanamaz.
+// Two options are set up on the same profile and in the same region; the only
+// difference is the admin_only flag. The admin-only one is deliberately
+// CHEAPER: because the list is sorted ascending by fee, it would show up in
+// first place had it leaked, which means its absence cannot be explained by
+// sorting.
 //
-// Aynı bağlam iki yüzeyden sorgulanır. Mağaza ucu seçeneği HİÇ görmezken,
-// yönetim bayrağını açan modüller arası yüzey ikisini de döner; ikinci sorgu
-// olmasaydı seçeneğin vitrinde görünmemesi "gizlendi" değil "uygun bulunmadı"
-// ya da "hiç oluşmadı" ile de açıklanabilirdi.
-func TestMagazaYuzeyiYonetimSeceneginiGizler(t *testing.T) {
+// The same context is queried through two surfaces. While the store endpoint
+// does not see the option AT ALL, the cross-module surface that turns the
+// admin flag on returns both of them; without the second query, the option not
+// appearing in the storefront could have been explained by "was not found
+// eligible" or "was never created" just as well as by "was hidden".
+func TestStoreSurfaceHidesAdminOnlyOption(t *testing.T) {
 	ctx := t.Context()
 
-	profilID := yeniKargoProfili(ctx, t, "E2E Vitrin Profili")
-	vitrinID := yeniKargoSecenegi(ctx, t, profilID, "E2E Vitrin Kargosu", kargoSecenekUcreti, false)
-	yonetimID := yeniKargoSecenegi(ctx, t, profilID, "E2E Yönetim Kargosu", kargoYonetimUcreti, true)
+	profileID := newShippingProfile(ctx, t, "E2E Storefront Profile")
+	storefrontID := newShippingOption(ctx, t, profileID, "E2E Storefront Shipping", shippingOptionFee, false)
+	adminID := newShippingOption(ctx, t, profileID, "E2E Admin Shipping", shippingAdminFee, true)
 
-	sorgu := url.Values{}
-	sorgu.Set("region_id", vergiliBolgeID)
-	sorgu.Set("currency_code", vergiliParaBirimi)
-	sorgu.Set("country_code", vergiliUlke)
-	sorgu.Set("shipping_profile_id", profilID)
-	sorgu.Set("subtotal", strconv.FormatInt(kargoAraToplam, 10))
-	sorgu.Set("item_count", strconv.FormatInt(kargoAdet, 10))
+	query := url.Values{}
+	query.Set("region_id", taxedRegionID)
+	query.Set("currency_code", taxedCurrency)
+	query.Set("country_code", taxedCountry)
+	query.Set("shipping_profile_id", profileID)
+	query.Set("subtotal", strconv.FormatInt(shippingSubtotal, 10))
+	query.Set("item_count", strconv.FormatInt(shippingQuantity, 10))
 
-	vitrin := magazaKargoSecenekleri(t, sorgu)
+	storefront := storeShippingOptions(t, query)
 
-	require.Len(t, vitrin, 1,
-		"mağaza ucundan TEK seçenek dönmeli: yalnızca vitrine açık olan")
-	require.Equal(t, vitrinID, vitrin[0]["id"],
-		"dönen seçenek admin_only OLMAYAN seçenek olmalı")
-	require.Equal(t, float64(kargoSecenekUcreti), vitrin[0]["amount"],
-		"vitrindeki ücret kataloğa yazılan tutar olmalı")
+	require.Len(t, storefront, 1,
+		"exactly ONE option must come back from the store endpoint: only the one that "+
+			"is open to the storefront")
+	require.Equal(t, storefrontID, storefront[0]["id"],
+		"the returned option must be the option that is NOT admin_only")
+	require.Equal(t, float64(shippingOptionFee), storefront[0]["amount"],
+		"the fee in the storefront must be the amount written into the catalog")
 
-	for _, kayit := range vitrin {
-		require.NotEqual(t, yonetimID, kayit["id"],
-			"admin_only seçenek vitrinde GÖRÜNMEMELİ. Süzgeç SQL'dedir ve satır mağaza "+
-				"yolunda hiç okunmaz; sızması, yönetime özel bir kargo anlaşmasının "+
-				"fiyatıyla birlikte müşteriye açılması demek olurdu")
+	for _, record := range storefront {
+		require.NotEqual(t, adminID, record["id"],
+			"an admin_only option must NOT APPEAR in the storefront. The filter is in "+
+				"SQL and the row is never even read on the store path; its leaking would "+
+				"mean opening a shipping agreement reserved for the admin surface, "+
+				"together with its price, to the customer")
 	}
 
-	// Vitrin gösterimi kataloğun iç yapısını da SIZDIRMAMALI.
-	require.NotContains(t, vitrin[0], "provider_id",
-		"mağaza gösterimi sağlayıcı kimliğini taşımamalı; hangi kargo firmasıyla "+
-			"çalışıldığı mağazanın operasyonel bilgisidir")
-	require.NotContains(t, vitrin[0], "admin_only",
-		"mağaza gösterimi admin_only alanını hiç taşımamalı; alan yalnızca yönetim "+
-			"gösteriminde vardır ve iki DTO'nun ayrı olması sızıntıyı yapısal olarak "+
-			"engeller")
-	require.NotContains(t, vitrin[0], "shipping_profile_id",
-		"mağaza gösterimi profil kimliğini taşımamalı; profil kataloğun iç yapısıdır")
+	// The storefront representation must not LEAK the catalog's internals either.
+	require.NotContains(t, storefront[0], "provider_id",
+		"the store representation must not carry the provider identity; which carrier "+
+			"the shop works with is the shop's operational information")
+	require.NotContains(t, storefront[0], "admin_only",
+		"the store representation must not carry the admin_only field at all; the field "+
+			"exists in the admin representation only, and the two DTOs being separate "+
+			"prevents the leak structurally")
+	require.NotContains(t, storefront[0], "shipping_profile_id",
+		"the store representation must not carry the profile identity; the profile is "+
+			"an internal of the catalog")
 
-	// --- seçenek GERÇEKTEN var ve uygun mu: yönetim bayrağıyla aynı bağlam ---
+	// --- does the option REALLY exist and is it eligible: same context, admin flag ---
 
-	hepsi := kargoSecenekleriniListele(ctx, t, kargoSecenekIstegi{
-		RegionID:           vergiliBolgeID,
-		CurrencyCode:       vergiliParaBirimi,
-		CountryCode:        vergiliUlke,
-		ShippingProfileIDs: []string{profilID},
-		Subtotal:           kargoAraToplam,
-		ItemCount:          kargoAdet,
+	all := listShippingOptions(ctx, t, shippingOptionRequest{
+		RegionID:           taxedRegionID,
+		CurrencyCode:       taxedCurrency,
+		CountryCode:        taxedCountry,
+		ShippingProfileIDs: []string{profileID},
+		Subtotal:           shippingSubtotal,
+		ItemCount:          shippingQuantity,
 		IncludeAdminOnly:   true,
 	})
 
-	require.Len(t, hepsi, 2,
-		"yönetim bayrağı açıkken İKİ seçenek de dönmeli; dönmeseydi vitrindeki "+
-			"yokluk gizlemeyle değil, seçeneğin hiç uygun olmamasıyla açıklanırdı")
-	require.Equal(t, yonetimID, hepsi[0].ID,
-		"liste ücrete göre ARTAN sıralı olmalı ve daha ucuz olan yönetim seçeneği "+
-			"başta gelmeli; bu, seçeneğin vitrinde neden görünmediğinin sıralama ya da "+
-			"kırpma olmadığını kesinleştirir")
-	require.True(t, hepsi[0].AdminOnly, "ilk seçenek admin_only olmalı")
-	require.Equal(t, vitrinID, hepsi[1].ID, "ikinci seçenek vitrine açık olan olmalı")
-	require.False(t, hepsi[1].AdminOnly, "ikinci seçenek admin_only OLMAMALI")
+	require.Len(t, all, 2,
+		"with the admin flag on, BOTH options must come back; had they not, the absence "+
+			"in the storefront would be explained not by hiding but by the option never "+
+			"having been eligible at all")
+	require.Equal(t, adminID, all[0].ID,
+		"the list must be sorted ASCENDING by fee and the cheaper admin option must come "+
+			"first; this settles that the reason the option does not appear in the "+
+			"storefront is neither sorting nor truncation")
+	require.True(t, all[0].AdminOnly, "the first option must be admin_only")
+	require.Equal(t, storefrontID, all[1].ID,
+		"the second option must be the one that is open to the storefront")
+	require.False(t, all[1].AdminOnly, "the second option must NOT be admin_only")
 }
 
-// yeniKargoProfili test için bir kargo profili açar ve kimliğini döner.
+// newShippingProfile opens a shipping profile for the test and returns its
+// identity.
 //
-// Ad benzersizleştirilir: fulfillment aynı adla ikinci bir profili reddeder ve
-// testler tek bir veritabanını paylaşır.
-func yeniKargoProfili(ctx context.Context, t *testing.T, ad string) string {
+// The name is made unique: fulfillment rejects a second profile with the same
+// name, and the tests share a single database.
+func newShippingProfile(ctx context.Context, t *testing.T, name string) string {
 	t.Helper()
 
-	profil, err := kargoSvc.CreateShippingProfile(ctx, fulfillmentsvc.CreateProfileInput{
-		Name: fmt.Sprintf("%s %d", ad, fiksturSayaci.Add(1)),
+	profile, err := shippingSvc.CreateShippingProfile(ctx, fulfillmentsvc.CreateProfileInput{
+		Name: fmt.Sprintf("%s %d", name, fixtureCounter.Add(1)),
 	})
-	require.NoError(t, err, "fikstür kargo profili oluşturulamadı")
-	return profil.ID
+	require.NoError(t, err, "the fixture shipping profile could not be created")
+	return profile.ID
 }
 
-// yeniKargoSecenegi verilen profile SABİT ücretli bir kargo seçeneği açar ve
-// kimliğini döner.
+// newShippingOption opens a FLAT-rate shipping option on the given profile and
+// returns its identity.
 //
-// Seçenek kuralsızdır, yani koşulsuz uygundur: bu dosyanın sınadığı şey
-// uygunluk kuralları değil, admin_only süzgeci ile gönderinin yaşam
-// döngüsüdür. Kurallı bir seçenek, mağaza ucunda sepet olguları
-// doğrulanamadığı için zaten hiç listelenmezdi ve iki ayrı sebep birbirine
-// karışırdı.
-func yeniKargoSecenegi(
+// The option is ruleless, that is, it is eligible unconditionally: what this
+// file tests is not the eligibility rules but the admin_only filter together
+// with the fulfillment lifecycle. An option with rules would never have been
+// listed at the store endpoint anyway, because cart facts cannot be verified
+// there, and the two separate reasons would have got mixed up with each other.
+func newShippingOption(
 	ctx context.Context,
 	t *testing.T,
-	profilID, ad string,
-	ucret int64,
-	yalnizcaYonetim bool,
+	profileID, name string,
+	fee int64,
+	adminOnly bool,
 ) string {
 	t.Helper()
 
-	secenek, err := kargoSvc.CreateShippingOption(ctx, fulfillmentsvc.CreateOptionInput{
-		Name:              fmt.Sprintf("%s %d", ad, fiksturSayaci.Add(1)),
+	option, err := shippingSvc.CreateShippingOption(ctx, fulfillmentsvc.CreateOptionInput{
+		Name:              fmt.Sprintf("%s %d", name, fixtureCounter.Add(1)),
 		ProviderID:        fulfillmentmanual.ID,
-		ShippingProfileID: profilID,
-		Amount:            ucret,
-		CurrencyCode:      vergiliParaBirimi,
-		RegionID:          vergiliBolgeID,
-		AdminOnly:         yalnizcaYonetim,
+		ShippingProfileID: profileID,
+		Amount:            fee,
+		CurrencyCode:      taxedCurrency,
+		RegionID:          taxedRegionID,
+		AdminOnly:         adminOnly,
 	})
-	require.NoError(t, err, "fikstür kargo seçeneği oluşturulamadı")
-	return secenek.ID
+	require.NoError(t, err, "the fixture shipping option could not be created")
+	return option.ID
 }
 
-// kargoSecenekleriniListele uygun kargo seçeneklerini modüller arası yüzeyden
-// listeler.
+// listShippingOptions lists the eligible shipping options through the
+// cross-module surface.
 //
-// İstek ve yanıt, iki pakette AYRI AYRI tanımlanmış JSON şemalarıyla taşınır
-// ve karşı taraf bilinmeyen alanları REDDEDER; bir alan adı kayarsa çağrı
-// burada açık bir hatayla düşer.
-func kargoSecenekleriniListele(
+// The request and the response are carried by JSON schemas defined SEPARATELY
+// in the two packages, and the other side REJECTS unknown fields; should a
+// field name drift, the call fails right here with an explicit error.
+func listShippingOptions(
 	ctx context.Context,
 	t *testing.T,
-	istek kargoSecenekIstegi,
-) []kargoSecenek {
+	request shippingOptionRequest,
+) []shippingOption {
 	t.Helper()
 
-	govde, err := json.Marshal(istek)
-	require.NoError(t, err, "kargo seçeneği isteği kodlanamadı")
+	body, err := json.Marshal(request)
+	require.NoError(t, err, "the shipping option request could not be encoded")
 
-	ham, err := kargoInterop.ListOptionsJSON(ctx, govde)
-	require.NoError(t, err, "kargo seçenekleri listelenemedi")
+	raw, err := shippingInterop.ListOptionsJSON(ctx, body)
+	require.NoError(t, err, "the shipping options could not be listed")
 
-	var yanit kargoSecenekYaniti
-	require.NoError(t, json.Unmarshal(ham, &yanit),
-		"kargo seçeneği yanıtı çözülemedi; şema iki pakette ayrışmış olabilir")
-	return yanit.Options
+	var response shippingOptionResponse
+	require.NoError(t, json.Unmarshal(raw, &response),
+		"the shipping option response could not be decoded; the schema may have drifted "+
+			"apart in the two packages")
+	return response.Options
 }
 
-// magazaKargoSecenekleri /store/v1/shipping-options ucunu çağırır ve dönen
-// kayıtları ÇÖZÜLMEMİŞ haritalar olarak döner.
+// storeShippingOptions calls the /store/v1/shipping-options endpoint and
+// returns the records that come back as UNDECODED maps.
 //
-// Kayıtların tipli bir yapıya değil haritaya çözülmesi bilinçlidir: mağaza
-// gösteriminde hangi alanların BULUNMADIĞI da bir iddiadır ve tipli bir yapı,
-// yanıtta duran fazladan bir alanı sessizce atardı.
-func magazaKargoSecenekleri(t *testing.T, sorgu url.Values) []map[string]any {
+// Decoding the records into a map rather than into a typed struct is
+// deliberate: which fields are NOT PRESENT in the store representation is an
+// assertion too, and a typed struct would silently drop an extra field
+// standing in the response.
+func storeShippingOptions(t *testing.T, query url.Values) []map[string]any {
 	t.Helper()
 
-	istek := httptest.NewRequest(http.MethodGet,
-		"/store/v1/shipping-options?"+sorgu.Encode(), http.NoBody)
-	// Mağaza yüzeyi Faz 8'den beri publishable anahtar ister; anahtarsız
-	// istek daha router'a varmadan 401 olur (bkz. kimlik_test.go).
-	istek.Header.Set(corehttp.PublishableKeyHeader, publishableAnahtar)
-	kayit := httptest.NewRecorder()
-	testRouter.ServeHTTP(kayit, istek)
+	request := httptest.NewRequest(http.MethodGet,
+		"/store/v1/shipping-options?"+query.Encode(), http.NoBody)
+	// The store surface has been demanding a publishable key since Phase 8; a
+	// request without a key becomes a 401 before it even reaches the router
+	// (see kimlik_test.go).
+	request.Header.Set(corehttp.PublishableKeyHeader, publishableKey)
+	recorder := httptest.NewRecorder()
+	testRouter.ServeHTTP(recorder, request)
 
-	require.Equal(t, http.StatusOK, kayit.Code,
-		"mağaza ucu 200 dönmeli; gövde: %s", kayit.Body.String())
+	require.Equal(t, http.StatusOK, recorder.Code,
+		"the store endpoint must return 200; body: %s", recorder.Body.String())
 
-	var zarf struct {
+	var envelope struct {
 		Data  []map[string]any `json:"data"`
 		Count int64            `json:"count"`
 	}
-	require.NoError(t, json.Unmarshal(kayit.Body.Bytes(), &zarf),
-		"mağaza yanıtı çözülemedi; gövde: %s", kayit.Body.String())
-	require.Equal(t, int64(len(zarf.Data)), zarf.Count,
-		"zarftaki sayaç, dönen kayıt sayısıyla tutarlı olmalı")
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &envelope),
+		"the store response could not be decoded; body: %s", recorder.Body.String())
+	require.Equal(t, int64(len(envelope.Data)), envelope.Count,
+		"the counter in the envelope must be consistent with the number of returned "+
+			"records")
 
-	return zarf.Data
+	return envelope.Data
 }

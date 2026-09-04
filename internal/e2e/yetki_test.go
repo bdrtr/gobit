@@ -145,7 +145,7 @@ func TestYetkisizKimlikHicbirYonetimUcundaIsYapamaz(t *testing.T) {
 func TestYetkisizKullaniciGirisYapabilir(t *testing.T) {
 	jeton := yetkisizYoneticiJetonu(t)
 
-	kimlik := kimlikOku(t, "Bearer "+jeton)
+	kimlik := readIdentity(t, "Bearer "+jeton)
 	assert.Equal(t, authsvc.PrincipalKindUser, kimlik.Kind)
 	assert.Empty(t, kimlik.Scopes, "yetkisiz kullanıcının yetki listesi boş olmalı")
 }

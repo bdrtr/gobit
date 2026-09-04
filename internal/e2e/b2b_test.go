@@ -78,7 +78,7 @@ func b2bCalisan(
 		// olsaydı kural para birimi uyuşmazlığından düşerdi ve senaryonun
 		// sınadığı şey limit değil, o kontrol olurdu (o kontrolün kendi
 		// senaryosu ayrıdır).
-		CurrencyCode:             vergiliParaBirimi,
+		CurrencyCode:             taxedCurrency,
 		SpendingLimitResetPeriod: string(periyot),
 	})
 	require.NoError(t, err, "b2b şirketi kurulamadı")
@@ -101,11 +101,11 @@ func b2bSepetiTamamla(
 ) (checkoutwf.CompleteCartResult, error) {
 	t.Helper()
 
-	return siparisAkislari.CompleteCart(ctx, checkoutwf.CompleteCartInput{
+	return orderWorkflows.CompleteCart(ctx, checkoutwf.CompleteCartInput{
 		CartID:            sepetID,
-		LocationID:        stokLokasyonID,
+		LocationID:        stockLocationID,
 		PaymentProviderID: manual.ID,
-		PaymentData:       odemeDavranisi(t, manual.OutcomeAuthorize),
+		PaymentData:       paymentBehavior(t, manual.OutcomeAuthorize),
 		Email:             eposta,
 		ExpectedTotal:     b2bToplam,
 	})
@@ -123,15 +123,15 @@ func b2bSepetiTamamla(
 func TestB2BLimitiAsanSiparisReddedilirVeParaCekilmez(t *testing.T) {
 	ctx := t.Context()
 
-	musteriID, eposta := yeniMusteri(ctx, t)
-	varyantID, stokKalemID := yeniStokluVaryant(ctx, t, "E2E B2B Limit Aşımı",
-		map[string]int64{vergiliParaBirimi: b2bBirimFiyat}, b2bStok)
+	musteriID, eposta := newCustomer(ctx, t)
+	varyantID, stokKalemID := newStockedVariant(ctx, t, "E2E B2B Limit Aşımı",
+		map[string]int64{taxedCurrency: b2bBirimFiyat}, b2bStok)
 
 	// Limit sepetin toplamının ALTINDA: 50_000 < 120_000.
 	limit := int64(50_000)
 	b2bCalisan(ctx, t, musteriID, &limit, b2bmodels.ResetNever)
 
-	sepetID, _ := sepetHazirla(ctx, t, musteriID, varyantID, b2bAdet)
+	sepetID, _ := prepareCart(ctx, t, musteriID, varyantID, b2bAdet)
 
 	_, err := b2bSepetiTamamla(ctx, t, sepetID, eposta)
 
@@ -151,11 +151,11 @@ func TestB2BLimitiAsanSiparisReddedilirVeParaCekilmez(t *testing.T) {
 		"redde düşen adım create_order olmalı — PARANIN ÇEKİLMEDİĞİNİN kanıtı "+
 			"budur: authorize_payment ondan SONRA gelir ve hiç koşmamıştır")
 
-	require.Equal(t, b2bStok, satilabilirAdet(ctx, t, stokKalemID),
+	require.Equal(t, b2bStok, sellableQuantity(ctx, t, stokKalemID),
 		"reddedilen alışveriş stoğu SERBEST bırakmalı; rezervasyon adımı "+
 			"create_order'dan önce koştuğu için telafinin çalıştığının kanıtı budur")
 
-	sepet, err := sepetSvc.GetCart(ctx, sepetID)
+	sepet, err := cartSvc.GetCart(ctx, sepetID)
 	require.NoError(t, err, "reddedilen alışverişin sepeti hâlâ okunabilmeli")
 	require.Nil(t, sepet.CompletedAt,
 		"reddedilen alışverişin sepeti KAPANMAMALI; kapansaydı müşteri aynı sepetle "+
@@ -172,21 +172,21 @@ func TestB2BLimitiAsanSiparisReddedilirVeParaCekilmez(t *testing.T) {
 func TestB2BPencereIcindekiHarcamaBirikir(t *testing.T) {
 	ctx := t.Context()
 
-	musteriID, eposta := yeniMusteri(ctx, t)
-	varyantID, _ := yeniStokluVaryant(ctx, t, "E2E B2B Birikme",
-		map[string]int64{vergiliParaBirimi: b2bBirimFiyat}, b2bStok)
+	musteriID, eposta := newCustomer(ctx, t)
+	varyantID, _ := newStockedVariant(ctx, t, "E2E B2B Birikme",
+		map[string]int64{taxedCurrency: b2bBirimFiyat}, b2bStok)
 
 	// Limit tek siparişi geçirir (120_000 ≤ 200_000) ama ikisini geçirmez
 	// (240_000 > 200_000).
 	limit := int64(200_000)
 	b2bCalisan(ctx, t, musteriID, &limit, b2bmodels.ResetNever)
 
-	ilkSepet, _ := sepetHazirla(ctx, t, musteriID, varyantID, b2bAdet)
+	ilkSepet, _ := prepareCart(ctx, t, musteriID, varyantID, b2bAdet)
 	ilk, err := b2bSepetiTamamla(ctx, t, ilkSepet, eposta)
 	require.NoError(t, err, "limitin altındaki İLK alışveriş geçmeli")
 	require.NotEmpty(t, ilk.OrderID, "ilk alışveriş sipariş üretmeli")
 
-	ikinciSepet, _ := sepetHazirla(ctx, t, musteriID, varyantID, b2bAdet)
+	ikinciSepet, _ := prepareCart(ctx, t, musteriID, varyantID, b2bAdet)
 	_, err = b2bSepetiTamamla(ctx, t, ikinciSepet, eposta)
 
 	require.Error(t, err,
@@ -205,13 +205,13 @@ func TestB2BPencereIcindekiHarcamaBirikir(t *testing.T) {
 func TestB2BSinirsizCalisanEtkilenmez(t *testing.T) {
 	ctx := t.Context()
 
-	musteriID, eposta := yeniMusteri(ctx, t)
-	varyantID, _ := yeniStokluVaryant(ctx, t, "E2E B2B Sınırsız",
-		map[string]int64{vergiliParaBirimi: b2bBirimFiyat}, b2bStok)
+	musteriID, eposta := newCustomer(ctx, t)
+	varyantID, _ := newStockedVariant(ctx, t, "E2E B2B Sınırsız",
+		map[string]int64{taxedCurrency: b2bBirimFiyat}, b2bStok)
 
 	b2bCalisan(ctx, t, musteriID, nil, b2bmodels.ResetMonthly)
 
-	sepetID, _ := sepetHazirla(ctx, t, musteriID, varyantID, b2bAdet)
+	sepetID, _ := prepareCart(ctx, t, musteriID, varyantID, b2bAdet)
 	sonuc, err := b2bSepetiTamamla(ctx, t, sepetID, eposta)
 
 	require.NoError(t, err, "limiti olmayan çalışanın alışverişi geçmeli")
@@ -229,12 +229,12 @@ func TestB2BSinirsizCalisanEtkilenmez(t *testing.T) {
 func TestB2BOlmayanMusteriEtkilenmez(t *testing.T) {
 	ctx := t.Context()
 
-	musteriID, eposta := yeniMusteri(ctx, t)
-	varyantID, _ := yeniStokluVaryant(ctx, t, "E2E B2C Etkilenmez",
-		map[string]int64{vergiliParaBirimi: b2bBirimFiyat}, b2bStok)
+	musteriID, eposta := newCustomer(ctx, t)
+	varyantID, _ := newStockedVariant(ctx, t, "E2E B2C Etkilenmez",
+		map[string]int64{taxedCurrency: b2bBirimFiyat}, b2bStok)
 
 	// Bilerek b2bCalisan ÇAĞRILMIYOR: müşteri hiçbir şirkete bağlı değil.
-	sepetID, _ := sepetHazirla(ctx, t, musteriID, varyantID, b2bAdet)
+	sepetID, _ := prepareCart(ctx, t, musteriID, varyantID, b2bAdet)
 	sonuc, err := b2bSepetiTamamla(ctx, t, sepetID, eposta)
 
 	require.NoError(t, err,

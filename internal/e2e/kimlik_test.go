@@ -35,11 +35,11 @@ import (
 // corehttp.APIGuards); testin kanıtladığı koruma, üretimde çalışanın ta
 // kendisidir.
 
-// yonetimIstegi verilen Authorization başlığıyla bir yönetim isteği yapar.
+// adminRequest verilen Authorization başlığıyla bir yönetim isteği yapar.
 //
 // Başlık boşsa hiç eklenmez: "başlık yok" ile "boş başlık" farklı durumlardır
 // ve 401 iddiası ilkini hedefler.
-func yonetimIstegi(t *testing.T, method, yol, yetki string) *httptest.ResponseRecorder {
+func adminRequest(t *testing.T, method, yol, yetki string) *httptest.ResponseRecorder {
 	t.Helper()
 
 	istek := httptest.NewRequest(method, yol, http.NoBody)
@@ -107,11 +107,11 @@ func jetonAl(t *testing.T, eposta, parola string) string {
 	return zarf.Data.Token
 }
 
-// kimlikOku /admin/v1/auth/me ucundan doğrulanmış kimliği okur.
-func kimlikOku(t *testing.T, yetki string) principalGorunumu {
+// readIdentity /admin/v1/auth/me ucundan doğrulanmış kimliği okur.
+func readIdentity(t *testing.T, yetki string) principalGorunumu {
 	t.Helper()
 
-	kayit := yonetimIstegi(t, http.MethodGet, "/admin/v1/auth/me", yetki)
+	kayit := adminRequest(t, http.MethodGet, "/admin/v1/auth/me", yetki)
 	require.Equal(t, http.StatusOK, kayit.Code,
 		"kimlik ucu 200 dönmeli; gövde: %s", kayit.Body.String())
 
@@ -154,7 +154,7 @@ func TestYetkisizYonetimIstegiReddedilir(t *testing.T) {
 
 	for ad, tt := range testler {
 		t.Run(ad, func(t *testing.T) {
-			kayit := yonetimIstegi(t, tt.method, tt.yol, "")
+			kayit := adminRequest(t, tt.method, tt.yol, "")
 
 			assert.Equal(t, http.StatusUnauthorized, kayit.Code,
 				"kimliksiz yönetim isteği 401 dönmeli; gövde: %s", kayit.Body.String())
@@ -171,8 +171,8 @@ func TestYetkisizYonetimIstegiReddedilir(t *testing.T) {
 // saldırgan yalnızca status koduna bakarak hangi yönetim uçlarının var
 // olduğunu haritalayabilirdi. 401, var olan ve olmayan yolu ayırt ettirmez.
 func TestTanimsizYonetimYoluDaKorunur(t *testing.T) {
-	varOlan := yonetimIstegi(t, http.MethodGet, "/admin/v1/users", "")
-	olmayan := yonetimIstegi(t, http.MethodGet, "/admin/v1/kesinlikle-yok", "")
+	varOlan := adminRequest(t, http.MethodGet, "/admin/v1/users", "")
+	olmayan := adminRequest(t, http.MethodGet, "/admin/v1/kesinlikle-yok", "")
 
 	assert.Equal(t, varOlan.Code, olmayan.Code,
 		"var olan ve olmayan yönetim yolu aynı status dönmeli, aksi hâlde uç haritası sızar")
@@ -182,18 +182,18 @@ func TestTanimsizYonetimYoluDaKorunur(t *testing.T) {
 // TestYoneticiGirisiJetonlaKorumaliUcaErisir Faz 8 DoD'sinin ikinci ayağıdır:
 // giriş -> jeton -> korumalı uca erişim.
 func TestYoneticiGirisiJetonlaKorumaliUcaErisir(t *testing.T) {
-	jeton := jetonAl(t, yoneticiEposta, yoneticiParola)
+	jeton := jetonAl(t, adminEmail, adminPassword)
 
-	kimlik := kimlikOku(t, "Bearer "+jeton)
+	kimlik := readIdentity(t, "Bearer "+jeton)
 
-	assert.Equal(t, yoneticiID, kimlik.ID, "jeton, giriş yapan kullanıcıyı taşımalı")
+	assert.Equal(t, adminID, kimlik.ID, "jeton, giriş yapan kullanıcıyı taşımalı")
 	assert.Equal(t, authsvc.PrincipalKindUser, kimlik.Kind)
 	assert.Contains(t, kimlik.Scopes, corehttp.ScopeAdmin,
 		"varsayılan yönetim kullanıcısı tam yetkili olmalı")
 
 	// Jeton yalnızca kimlik ucunda değil, gerçek bir yönetim ucunda da geçerli
 	// olmalı: kimlik ucu korumadan bağımsız bir yol izleseydi test kör kalırdı.
-	kayit := yonetimIstegi(t, http.MethodGet, "/admin/v1/users", "Bearer "+jeton)
+	kayit := adminRequest(t, http.MethodGet, "/admin/v1/users", "Bearer "+jeton)
 	assert.Equal(t, http.StatusOK, kayit.Code,
 		"jetonla kullanıcı listesi okunabilmeli; gövde: %s", kayit.Body.String())
 }
@@ -201,7 +201,7 @@ func TestYoneticiGirisiJetonlaKorumaliUcaErisir(t *testing.T) {
 // TestGizliAnahtarYonetimYuzeyineErisir insan olmayan çağıranın (entegrasyon)
 // jeton almadan çalışabildiğini doğrular.
 func TestGizliAnahtarYonetimYuzeyineErisir(t *testing.T) {
-	kimlik := kimlikOku(t, "Bearer "+gizliAnahtar)
+	kimlik := readIdentity(t, "Bearer "+secretKey)
 
 	assert.Equal(t, authsvc.PrincipalKindAPIKey, kimlik.Kind)
 	assert.Contains(t, kimlik.Scopes, corehttp.ScopeAdmin)
@@ -213,21 +213,21 @@ func TestGizliAnahtarYonetimYuzeyineErisir(t *testing.T) {
 // gösterir: yalnızca "başlık var mı" kontrolü yapan bir stub bu tabloyu
 // geçemez.
 func TestGecersizKimlikBilgileriReddedilir(t *testing.T) {
-	gecerliJeton := jetonAl(t, yoneticiEposta, yoneticiParola)
+	gecerliJeton := jetonAl(t, adminEmail, adminPassword)
 
 	testler := map[string]string{
 		"boş şema":              "Bearer",
-		"yanlış şema":           "Basic " + gizliAnahtar,
+		"yanlış şema":           "Basic " + secretKey,
 		"uydurma jeton":         "Bearer uydurma.jeton.dizesi",
 		"imzası bozulmuş jeton": "Bearer " + gecerliJeton + "bozuk",
 		"uydurma gizli anahtar": "Bearer sk_" + "0123456789abcdef0123456789abcdef",
-		"publishable anahtar":   "Bearer " + publishableAnahtar,
-		"şemasız düz kimlik":    gizliAnahtar,
+		"publishable anahtar":   "Bearer " + publishableKey,
+		"şemasız düz kimlik":    secretKey,
 	}
 
 	for ad, yetki := range testler {
 		t.Run(ad, func(t *testing.T) {
-			kayit := yonetimIstegi(t, http.MethodGet, "/admin/v1/auth/me", yetki)
+			kayit := adminRequest(t, http.MethodGet, "/admin/v1/auth/me", yetki)
 
 			assert.Equal(t, http.StatusUnauthorized, kayit.Code,
 				"geçersiz kimlik 401 dönmeli; gövde: %s", kayit.Body.String())
@@ -242,7 +242,7 @@ func TestPublishableAnahtarsizMagazaIstegiReddedilir(t *testing.T) {
 	assert.Equal(t, http.StatusUnauthorized, anahtarsiz.Code,
 		"publishable anahtarsız mağaza isteği reddedilmeli; gövde: %s", anahtarsiz.Body.String())
 
-	anahtarli := magazaIstegi(t, "/store/v1/products", publishableAnahtar)
+	anahtarli := magazaIstegi(t, "/store/v1/products", publishableKey)
 	assert.Equal(t, http.StatusOK, anahtarli.Code,
 		"publishable anahtarla mağaza isteği geçmeli; gövde: %s", anahtarli.Body.String())
 }
@@ -253,7 +253,7 @@ func TestPublishableAnahtarsizMagazaIstegiReddedilir(t *testing.T) {
 // İddia güvenliktir, kolaylık değil: gizli anahtar tarayıcıda görünen bir
 // başlıkta taşınabilseydi, vitrin kodunun içine yönetim yetkisi gömülürdü.
 func TestGizliAnahtarMagazaBasligindaGecmez(t *testing.T) {
-	kayit := magazaIstegi(t, "/store/v1/products", gizliAnahtar)
+	kayit := magazaIstegi(t, "/store/v1/products", secretKey)
 
 	assert.Equal(t, http.StatusUnauthorized, kayit.Code,
 		"gizli anahtar mağaza başlığında kabul edilmemeli; gövde: %s", kayit.Body.String())
@@ -262,19 +262,19 @@ func TestGizliAnahtarMagazaBasligindaGecmez(t *testing.T) {
 // TestMagazaKimligiSatisKanaliniTasir publishable anahtarın işinin yetki
 // değil BAĞLAM olduğunu doğrular: istek bir satış kanalına bağlanır.
 func TestMagazaKimligiSatisKanaliniTasir(t *testing.T) {
-	kimlik := kimlikOku(t, "Bearer "+gizliAnahtar)
+	kimlik := readIdentity(t, "Bearer "+secretKey)
 	require.Empty(t, kimlik.SalesChannelIDs)
 
 	// Mağaza kimliği yönetim ucundan okunamaz (publishable anahtar orada
 	// geçmez), bu yüzden doğrudan doğrulayıcıya sorulur — koruma
 	// middleware'inin context'e koyduğu kimliğin ta kendisi budur.
-	dogrulayici, err := testAuthn.AuthenticateStore(context.Background(), publishableAnahtar)
+	dogrulayici, err := testAuthn.AuthenticateStore(context.Background(), publishableKey)
 	require.NoError(t, err, "publishable anahtar mağaza kimliği üretmeli")
 
 	assert.Equal(t, authsvc.PrincipalKindAPIKey, dogrulayici.Kind)
 	assert.Empty(t, dogrulayici.Scopes,
 		"publishable anahtar YETKİ TAŞIMAZ; taşısaydı tarayıcıya konan bir yönetim kimliği olurdu")
-	assert.Equal(t, []string{testKanalID}, dogrulayici.SalesChannelIDs)
+	assert.Equal(t, []string{testChannelID}, dogrulayici.SalesChannelIDs)
 }
 
 // TestIptalEdilenAnahtarReddedilir iptalin ANINDA etkili olduğunu doğrular.
@@ -287,18 +287,18 @@ func TestIptalEdilenAnahtarReddedilir(t *testing.T) {
 	kayit, duzMetin, err := authSvc.CreateAPIKey(ctx, authsvc.CreateAPIKeyInput{
 		Type:      models.APIKeySecret,
 		Title:     "iptal edilecek anahtar",
-		CreatedBy: yoneticiID,
+		CreatedBy: adminID,
 	})
 	require.NoError(t, err, "anahtar üretilemedi")
 
-	once := yonetimIstegi(t, http.MethodGet, "/admin/v1/auth/me", "Bearer "+duzMetin)
+	once := adminRequest(t, http.MethodGet, "/admin/v1/auth/me", "Bearer "+duzMetin)
 	require.Equal(t, http.StatusOK, once.Code,
 		"yeni anahtar çalışmalı; gövde: %s", once.Body.String())
 
-	_, err = authSvc.RevokeAPIKey(ctx, kayit.ID, yoneticiID)
+	_, err = authSvc.RevokeAPIKey(ctx, kayit.ID, adminID)
 	require.NoError(t, err, "anahtar iptal edilemedi")
 
-	sonra := yonetimIstegi(t, http.MethodGet, "/admin/v1/auth/me", "Bearer "+duzMetin)
+	sonra := adminRequest(t, http.MethodGet, "/admin/v1/auth/me", "Bearer "+duzMetin)
 	assert.Equal(t, http.StatusUnauthorized, sonra.Code,
 		"iptal edilen anahtar reddedilmeli; gövde: %s", sonra.Body.String())
 }
@@ -310,13 +310,13 @@ func TestIptalEdilenAnahtarReddedilir(t *testing.T) {
 func TestGirisUcuKorumadanMuafKalir(t *testing.T) {
 	// Doğru parolayla 200: uç kimlik doğrulamadan geçmiş olsaydı buraya hiç
 	// varılamazdı.
-	basarili := girisYap(t, yoneticiEposta, yoneticiParola)
+	basarili := girisYap(t, adminEmail, adminPassword)
 	assert.Equal(t, http.StatusOK, basarili.Code,
 		"giriş ucu kimlik istemeden çalışmalı; gövde: %s", basarili.Body.String())
 
 	// Yanlış parolayla da 401 döner ama bu SERVİSİN kararıdır; middleware
 	// engellemiş olsaydı gövde farklı olurdu.
-	yanlis := girisYap(t, yoneticiEposta, "yanlis-parola")
+	yanlis := girisYap(t, adminEmail, "yanlis-parola")
 	assert.Equal(t, http.StatusUnauthorized, yanlis.Code)
 }
 
@@ -326,7 +326,7 @@ func TestGirisUcuKorumadanMuafKalir(t *testing.T) {
 // Fark olsaydı, saldırgan hangi e-postaların kayıtlı olduğunu tek tek
 // öğrenebilirdi; bu, hedefli kimlik avı saldırısının ilk adımıdır.
 func TestGirisHatasiKullaniciSayimiSizdirmaz(t *testing.T) {
-	yanlisParola := girisYap(t, yoneticiEposta, "kesinlikle-yanlis")
+	yanlisParola := girisYap(t, adminEmail, "kesinlikle-yanlis")
 	olmayanKullanici := girisYap(t, "hic-boyle-biri-yok@gobit.test", "kesinlikle-yanlis")
 
 	require.Equal(t, http.StatusUnauthorized, yanlisParola.Code)
@@ -334,12 +334,12 @@ func TestGirisHatasiKullaniciSayimiSizdirmaz(t *testing.T) {
 
 	// request_id her istekte FARKLIDIR ve farklı olmalıdır; karşılaştırma
 	// ondan arındırılır. Sızıntı riski taşıyan alanlar kod ve mesajdır.
-	assert.Equal(t, hataOzu(t, yanlisParola), hataOzu(t, olmayanKullanici),
+	assert.Equal(t, errorSummary(t, yanlisParola), errorSummary(t, olmayanKullanici),
 		"iki hata gövdesi ayırt edilemez olmalı")
 }
 
-// hataOzu bir hata yanıtından kod ve mesajı çıkarır.
-func hataOzu(t *testing.T, kayit *httptest.ResponseRecorder) [2]string {
+// errorSummary bir hata yanıtından kod ve mesajı çıkarır.
+func errorSummary(t *testing.T, kayit *httptest.ResponseRecorder) [2]string {
 	t.Helper()
 
 	var zarf struct {

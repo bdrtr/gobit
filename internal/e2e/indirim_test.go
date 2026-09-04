@@ -133,41 +133,41 @@ const (
 func TestOtomatikPromosyonSepetToplaminiDusurur(t *testing.T) {
 	ctx := t.Context()
 
-	varyantA := yeniVaryant(ctx, t, "E2E İndirimli A", map[string]int64{
-		vergiliParaBirimi: indirimFiyatA,
+	varyantA := newVariant(ctx, t, "E2E İndirimli A", map[string]int64{
+		taxedCurrency: indirimFiyatA,
 	})
-	varyantB := yeniVaryant(ctx, t, "E2E İndirimli B", map[string]int64{
-		vergiliParaBirimi: indirimFiyatB,
+	varyantB := newVariant(ctx, t, "E2E İndirimli B", map[string]int64{
+		taxedCurrency: indirimFiyatB,
 	})
 
 	promosyonID := otomatikYuzdePromosyonu(ctx, t, "E2E-OTOMATIK-10", indirimOraniBps,
 		[]string{varyantA, varyantB})
 
-	sepet, err := akislar.CreateCart(ctx, cartwf.CreateCartInput{CountryCode: vergiliUlke})
+	sepet, err := workflows.CreateCart(ctx, cartwf.CreateCartInput{CountryCode: taxedCountry})
 	require.NoError(t, err, "sepet açılabilmeli")
 
-	satirA, err := akislar.AddLineItem(ctx, cartwf.AddLineItemInput{
+	satirA, err := workflows.AddLineItem(ctx, cartwf.AddLineItemInput{
 		CartID: sepet.CartID, VariantID: varyantA, Quantity: indirimAdetA,
 	})
 	require.NoError(t, err, "A satırı eklenebilmeli")
-	sonuc, err := akislar.AddLineItem(ctx, cartwf.AddLineItemInput{
+	sonuc, err := workflows.AddLineItem(ctx, cartwf.AddLineItemInput{
 		CartID: sepet.CartID, VariantID: varyantB, Quantity: indirimAdetB,
 	})
 	require.NoError(t, err, "B satırı eklenebilmeli")
 
 	// --- 1) sepetin toplamları elle hesaplanan değerlerle aynı mı ---
 
-	toplamlariDogrula(t, sonuc.Totals, beklenenToplam{
-		araToplam: indirimAraToplam,
-		indirim:   indirimToplami,
-		vergi:     indirimVergi,
-		kargo:     0,
-		toplam:    indirimGenel,
+	assertTotals(t, sonuc.Totals, expectedTotal{
+		subtotal: indirimAraToplam,
+		discount: indirimToplami,
+		tax:      indirimVergi,
+		shipping: 0,
+		total:    indirimGenel,
 	}, "otomatik promosyonlu sepette")
 
 	require.Equal(t, cartwf.TaxSourceTax, sonuc.Totals.TaxSource,
 		"vergiyi TAX modülü hesaplamış olmalı. Kaynak %q olsaydı hesap Faz 5'in "+
-			"region oranına düşmüş olurdu ve bu senaryonun vergi iddiası, devralmanın "+
+			"region oranına düşmüş olurdu ve bu senaryonun tax iddiası, devralmanın "+
 			"yapıldığını değil yapılMADIĞINI kanıtlardı",
 		cartwf.TaxSourceRegion)
 
@@ -181,7 +181,7 @@ func TestOtomatikPromosyonSepetToplaminiDusurur(t *testing.T) {
 	require.Equal(t, indirimlerinToplami, sonuc.Totals.DiscountTotal,
 		"Σ(satır indirimi) sepetin indirimine EŞİT olmalı. Sepet indirimi bağımsız bir "+
 			"hesap değil, satır indirimlerinin toplamıdır; ayrışırlarsa müşteriye "+
-			"gösterilen indirim ile satırlarda yazan indirim farklı olur ve fatura satır "+
+			"gösterilen discount ile satırlarda yazan discount farklı olur ve fatura satır "+
 			"satır açıklanamaz")
 	require.Equal(t, indirimToplami, indirimlerinToplami,
 		"satır indirimlerinin toplamı elle hesaplanan 3_246'ya eşit olmalı")
@@ -189,27 +189,27 @@ func TestOtomatikPromosyonSepetToplaminiDusurur(t *testing.T) {
 	// --- 3) satır başına indirim, vergi ve toplam ---
 
 	for _, beklenen := range []struct {
-		ad        string
-		id        string
-		araToplam int64
-		indirim   int64
-		vergi     int64
+		ad       string
+		id       string
+		subtotal int64
+		discount int64
+		tax      int64
 	}{
 		{"A", satirA.LineItemID, indirimAraToplamA, indirimSatirA, indirimVergiA},
 		{"B", sonuc.LineItemID, indirimAraToplamB, indirimSatirB, indirimVergiB},
 	} {
 		satir, bulundu := satirlar[beklenen.id]
 		require.True(t, bulundu, "%s satırının tutarları hesapta bulunmalı", beklenen.ad)
-		require.Equal(t, beklenen.araToplam, satir.Subtotal,
+		require.Equal(t, beklenen.subtotal, satir.Subtotal,
 			"%s satırının ara toplamı birim fiyat × adet olmalı", beklenen.ad)
-		require.Equal(t, beklenen.indirim, satir.DiscountTotal,
+		require.Equal(t, beklenen.discount, satir.DiscountTotal,
 			"%s satırının indirimi, satırın KENDİ ara toplamının %%10'u olmalı (aşağı "+
 				"yuvarlanmış). Sepet toplamı üzerinden hesaplanıp dağıtılsaydı kuruş artığı "+
 				"başka bir satıra kayar ve satırın indirimi kendi oranının söylediğinden "+
 				"farklı olurdu", beklenen.ad)
-		require.Equal(t, beklenen.vergi, satir.TaxTotal,
+		require.Equal(t, beklenen.tax, satir.TaxTotal,
 			"%s satırının vergisi İNDİRİM SONRASI taban üzerinden hesaplanmalı", beklenen.ad)
-		require.Equal(t, beklenen.araToplam-beklenen.indirim+beklenen.vergi, satir.Total,
+		require.Equal(t, beklenen.subtotal-beklenen.discount+beklenen.tax, satir.Total,
 			"%s satırının toplamı subtotal - discount + tax olmalı", beklenen.ad)
 		require.LessOrEqual(t, satir.DiscountTotal, satir.Subtotal,
 			"%s satırının indirimi ara toplamını ASLA aşmamalı; aşarsa satır negatif "+
@@ -218,82 +218,82 @@ func TestOtomatikPromosyonSepetToplaminiDusurur(t *testing.T) {
 
 	// --- 4) hesap sepete GERÇEKTEN yazıldı mı ---
 
-	detay, err := sepetSvc.GetCart(ctx, sepet.CartID)
+	detay, err := cartSvc.GetCart(ctx, sepet.CartID)
 	require.NoError(t, err, "sepet modülünden okunabilmeli")
 	require.Equal(t, indirimToplami, detay.DiscountTotal,
-		"indirim sepete YAZILMIŞ olmalı. Akışın döndürdüğü tutar doğru olup sepete "+
+		"discount sepete YAZILMIŞ olmalı. Akışın döndürdüğü tutar doğru olup sepete "+
 			"yazılan yanlış olsaydı, siparişi oluşturan Faz 6 saga'sı sepetin yazılı "+
 			"toplamını okuduğu için müşteri indirimsiz tutarı öderdi")
 	require.Equal(t, indirimGenel, detay.Total,
-		"saklanan genel toplam elle hesaplanan değere eşit olmalı")
+		"saklanan genel total elle hesaplanan değere eşit olmalı")
 	require.True(t, detay.TotalsConsistent(),
-		"sepet toplam kimliğini sağlamalı: total = subtotal - discount + tax + shipping")
+		"sepet total kimliğini sağlamalı: total = subtotal - discount + tax + shipping")
 	require.False(t, detay.TotalsStale(),
 		"toplamlar sepetin güncel şekline damgalanmış olmalı")
 
 	// --- 5) VERGİ TABANI indirim sonrası mı: indirimsiz aynı sepetle karşılaştır ---
 
-	kontrolVaryantA := yeniVaryant(ctx, t, "E2E İndirimsiz A", map[string]int64{
-		vergiliParaBirimi: indirimFiyatA,
+	kontrolVaryantA := newVariant(ctx, t, "E2E İndirimsiz A", map[string]int64{
+		taxedCurrency: indirimFiyatA,
 	})
-	kontrolVaryantB := yeniVaryant(ctx, t, "E2E İndirimsiz B", map[string]int64{
-		vergiliParaBirimi: indirimFiyatB,
+	kontrolVaryantB := newVariant(ctx, t, "E2E İndirimsiz B", map[string]int64{
+		taxedCurrency: indirimFiyatB,
 	})
 
-	kontrolSepet, err := akislar.CreateCart(ctx, cartwf.CreateCartInput{CountryCode: vergiliUlke})
+	kontrolSepet, err := workflows.CreateCart(ctx, cartwf.CreateCartInput{CountryCode: taxedCountry})
 	require.NoError(t, err, "kontrol sepeti açılabilmeli")
-	kontrolSatirA, err := akislar.AddLineItem(ctx, cartwf.AddLineItemInput{
+	kontrolSatirA, err := workflows.AddLineItem(ctx, cartwf.AddLineItemInput{
 		CartID: kontrolSepet.CartID, VariantID: kontrolVaryantA, Quantity: indirimAdetA,
 	})
 	require.NoError(t, err, "kontrol sepetine A satırı eklenebilmeli")
-	kontrolSonuc, err := akislar.AddLineItem(ctx, cartwf.AddLineItemInput{
+	kontrolSonuc, err := workflows.AddLineItem(ctx, cartwf.AddLineItemInput{
 		CartID: kontrolSepet.CartID, VariantID: kontrolVaryantB, Quantity: indirimAdetB,
 	})
 	require.NoError(t, err, "kontrol sepetine B satırı eklenebilmeli")
 
-	toplamlariDogrula(t, kontrolSonuc.Totals, beklenenToplam{
-		araToplam: indirimAraToplam,
-		indirim:   0,
-		vergi:     indirimsizVergi,
-		kargo:     0,
-		toplam:    indirimsizGenel,
+	assertTotals(t, kontrolSonuc.Totals, expectedTotal{
+		subtotal: indirimAraToplam,
+		discount: 0,
+		tax:      indirimsizVergi,
+		shipping: 0,
+		total:    indirimsizGenel,
 	}, "promosyonun hedeflemediği varyantlarla kurulmuş kontrol sepetinde")
 
 	require.Equal(t, indirimAraToplam, kontrolSonuc.Totals.Subtotal,
 		"kontrol sepetinin ara toplamı indirimli sepetinkiyle AYNI olmalı; aynı "+
-			"olmasaydı vergi farkı orandan değil fiyattan gelirdi ve karşılaştırma "+
+			"olmasaydı tax farkı orandan değil fiyattan gelirdi ve karşılaştırma "+
 			"hiçbir şey kanıtlamazdı")
 	require.Zero(t, kontrolSonuc.Totals.DiscountTotal,
 		"promosyonun HEDEF kuralı yalnızca kendi varyantlarını seçmeli. Sıfırdan farklı "+
-			"bir indirim, otomatik bir promosyonun bütün sepetlere sızdığını ve diğer "+
+			"bir discount, otomatik bir promosyonun bütün sepetlere sızdığını ve diğer "+
 			"senaryoların tutarlarının da bozulduğunu gösterir")
 
 	require.NotEqual(t, kontrolSonuc.Totals.TaxTotal, sonuc.Totals.TaxTotal,
-		"indirimli ve indirimsiz sepetin vergisi FARKLI olmalı. Eşit olsalardı vergi "+
-			"tabanı indirim ÖNCESİ tutar olurdu ve müşteri, hiç ödemediği paranın "+
+		"indirimli ve indirimsiz sepetin vergisi FARKLI olmalı. Eşit olsalardı tax "+
+			"tabanı discount ÖNCESİ tutar olurdu ve müşteri, hiç ödemediği paranın "+
 			"vergisini öderdi")
 	require.Equal(t, indirimVergiFarki, kontrolSonuc.Totals.TaxTotal-sonuc.Totals.TaxTotal,
-		"vergi farkı elle hesaplanan 649 olmalı: A satırında %d, B satırında %d",
+		"tax farkı elle hesaplanan 649 olmalı: A satırında %d, B satırında %d",
 		indirimVergiFarkiA, indirimVergiFarkiB)
 
 	kontrolSatirlar := satirlariEsle(t, kontrolSonuc.Totals)
 	require.Equal(t, indirimVergiFarkiA,
 		kontrolSatirlar[kontrolSatirA.LineItemID].TaxTotal-satirlar[satirA.LineItemID].TaxTotal,
-		"A satırının vergi farkı %d olmalı: 4_938 - 4_444. Fark satır satır "+
+		"A satırının tax farkı %d olmalı: 4_938 - 4_444. Fark satır satır "+
 			"açıklanabilir olmalıdır; yalnızca sepet düzeyinde tutması, tabanın bir "+
 			"satırda doğru bir satırda yanlış olduğunu gizleyebilirdi", indirimVergiFarkiA)
 	require.Equal(t, indirimVergiFarkiB,
 		kontrolSatirlar[kontrolSonuc.LineItemID].TaxTotal-satirlar[sonuc.LineItemID].TaxTotal,
-		"B satırının vergi farkı %d olmalı: 1_555 - 1_400", indirimVergiFarkiB)
+		"B satırının tax farkı %d olmalı: 1_555 - 1_400", indirimVergiFarkiB)
 
 	require.Equal(t, indirimToplami+indirimVergiFarki, indirimsizGenel-indirimGenel,
 		"iki sepetin genel toplamı arasındaki fark, indirimin KENDİSİ artı o indirimin "+
-			"düşürdüğü vergi kadar olmalı. Müşterinin cebinde kalan para budur ve iki "+
+			"düşürdüğü tax kadar olmalı. Müşterinin cebinde kalan para budur ve iki "+
 			"bileşeni de elle hesaplanabilir olmalıdır")
 
 	// --- 6) hesap kupon SAYACINI tüketmedi mi ---
 
-	promosyon, err := promosyonSvc.GetPromotion(ctx, promosyonID)
+	promosyon, err := promotionSvc.GetPromotion(ctx, promosyonID)
 	require.NoError(t, err, "promosyon promotion modülünden okunabilmeli")
 	require.Zero(t, promosyon.UsageCount,
 		"sepet hesabı promosyonun kullanım sayacını TÜKETMEMELİ. Sepet her "+
@@ -325,7 +325,7 @@ func otomatikYuzdePromosyonu(
 ) string {
 	t.Helper()
 
-	promosyon, err := promosyonSvc.CreatePromotion(ctx, promotionsvc.PromotionInput{
+	promosyon, err := promotionSvc.CreatePromotion(ctx, promotionsvc.PromotionInput{
 		Code:        kod,
 		IsAutomatic: true,
 		Status:      promotionmodels.PromotionActive,
@@ -335,7 +335,7 @@ func otomatikYuzdePromosyonu(
 		"promosyon OTOMATİK olmalı; kupon kodu isteyen bir promosyon sepet akışına hiç "+
 			"ulaşmazdı, çünkü akış kod GÖNDERMEZ (bkz. cartwf discountRequestFor)")
 
-	_, err = promosyonSvc.SetApplicationMethod(ctx, promosyon.ID, promotionsvc.ApplicationMethodInput{
+	_, err = promotionSvc.SetApplicationMethod(ctx, promosyon.ID, promotionsvc.ApplicationMethodInput{
 		Type:       promotionmodels.MethodPercentage,
 		TargetType: promotionmodels.TargetItems,
 		Allocation: promotionmodels.AllocationEach,
@@ -343,7 +343,7 @@ func otomatikYuzdePromosyonu(
 	})
 	require.NoError(t, err, "fikstür promosyonunun uygulama yöntemi yazılamadı")
 
-	_, err = promosyonSvc.AddPromotionRule(ctx, promosyon.ID, promotionsvc.RuleInput{
+	_, err = promotionSvc.AddPromotionRule(ctx, promosyon.ID, promotionsvc.RuleInput{
 		RuleType:  promotionmodels.RuleTarget,
 		Attribute: attrVaryantID,
 		Operator:  promotionmodels.OpIn,
@@ -367,7 +367,7 @@ func satirlariEsle(t *testing.T, toplamlar cartwf.Totals) map[string]cartwf.Line
 		out[toplamlar.Lines[i].LineItemID] = toplamlar.Lines[i]
 	}
 	require.Len(t, out, len(toplamlar.Lines),
-		"her satır BENZERSİZ bir kimlikle dönmeli; tekrar eden bir kimlik, indirim ve "+
+		"her satır BENZERSİZ bir kimlikle dönmeli; tekrar eden bir kimlik, discount ve "+
 			"verginin hangi satıra ait olduğunu belirsizleştirirdi")
 	return out
 }

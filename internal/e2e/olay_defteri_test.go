@@ -23,7 +23,7 @@ import (
 // olayın NE KADAR ÇABUK geldiğini değil, GELDİĞİNİ kanıtlamaktır.
 const olayBeklemeSuresi = 5 * time.Second
 
-// siparisOlayDefteri "order.placed" olaylarının test tarafındaki kaydıdır.
+// orderEventLog "order.placed" olaylarının test tarafındaki kaydıdır.
 //
 // # Neden TEK ve SÜREÇ ÖMÜRLÜ bir abone
 //
@@ -36,7 +36,7 @@ const olayBeklemeSuresi = 5 * time.Second
 //
 // Tip eşzamanlı kullanıma güvenlidir: handler'lar ayrı goroutine'lerde koşar ve
 // yazma ile okuma aynı kilidi paylaşır.
-type siparisOlayDefteri struct {
+type orderEventLog struct {
 	mu       sync.Mutex
 	kayitlar []eventbus.Event
 }
@@ -46,7 +46,7 @@ type siparisOlayDefteri struct {
 // Bağlama modüller ayağa kalkmadan ÖNCE yapılmalıdır: sonradan bağlanan bir
 // abone, kendisinden önce yayımlanmış olayları GÖREMEZ (bellek içi backend
 // geçmişi tutmaz, EN FAZLA BİR KEZ teslim eder).
-func (d *siparisOlayDefteri) abone(bus eventbus.EventBus) error {
+func (d *orderEventLog) abone(bus eventbus.EventBus) error {
 	return bus.Subscribe(ordersvc.EventOrderPlaced, func(_ context.Context, e eventbus.Event) error {
 		d.mu.Lock()
 		defer d.mu.Unlock()
@@ -59,7 +59,7 @@ func (d *siparisOlayDefteri) abone(bus eventbus.EventBus) error {
 //
 // Süzme order_id alanı üzerindendir; alanı olmayan ya da başka bir siparişe ait
 // olaylar atlanır.
-func (d *siparisOlayDefteri) olaylar(siparisID string) []eventbus.Event {
+func (d *orderEventLog) olaylar(siparisID string) []eventbus.Event {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
@@ -72,13 +72,13 @@ func (d *siparisOlayDefteri) olaylar(siparisID string) []eventbus.Event {
 	return bulunan
 }
 
-// bekle siparişin olayının gelmesini bekler ve TEK olayı döner.
+// waitFor siparişin olayının gelmesini bekler ve TEK olayı döner.
 //
 // Tekillik ayrıca sınanır: aynı sipariş için iki olay, abonelerin siparişi iki
 // kez işlemesi (örneğin iki kez bildirim göndermesi) demektir ve teslimat
 // garantisi "en fazla bir kez" olduğu için bu bir YAYIM hatasıdır, teslim
 // tekrarı değildir.
-func (d *siparisOlayDefteri) bekle(t *testing.T, siparisID string) eventbus.Event {
+func (d *orderEventLog) waitFor(t *testing.T, siparisID string) eventbus.Event {
 	t.Helper()
 
 	var bulunan []eventbus.Event

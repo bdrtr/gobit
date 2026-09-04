@@ -153,7 +153,7 @@ func TestKapsamDisiVaryantSepeteGiremez(t *testing.T) {
 // Ayırt edilebilseydi gizleme delinirdi: elindeki herhangi bir publishable
 // anahtarla gelen bir rakip, varyant kimliklerini deneyerek hangilerinin BAŞKA
 // bir kanalda satıldığını öğrenirdi. Okuma yüzeyi aynı kararı verir ve aynı
-// iddia orada da vardır (bkz. e2e TestGizlenenUrunVarliginiHataKoduylaEleVermez).
+// iddia orada da vardır (bkz. e2e TestAHiddenProductDoesNotRevealItselfViaTheErrorCode).
 //
 // Karşılaştırma hem KODU hem MESAJI kapsar; burada ikisi de aynı olabilir,
 // çünkü iki mesaj da yalnızca istenen kimliği yankılar.

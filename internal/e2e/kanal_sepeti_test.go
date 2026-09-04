@@ -52,7 +52,7 @@ import (
 
 // kanalSepeti yazma yolu senaryosunun kurulmuş zeminidir.
 type kanalSepeti struct {
-	// birinciKanalVaryant YALNIZCA [testKanalID]'ye atanmış ürünün varyantıdır.
+	// birinciKanalVaryant YALNIZCA [testChannelID]'ye atanmış ürünün varyantıdır.
 	birinciKanalVaryant string
 	// ikinciKanalVaryant YALNIZCA ikinci kanala atanmış ürünün varyantıdır.
 	ikinciKanalVaryant string
@@ -73,19 +73,19 @@ var (
 
 // kanalSepetiFiksturu üç fiyatlı varyantı ve kanal atamalarını hazırlar.
 //
-// Kurulum [kanalKataloguFiksturu] üzerine biner (ikinci kanal ve ikinci
+// Kurulum [channelCatalogFixture] üzerine biner (ikinci kanal ve ikinci
 // anahtar oradan gelir) ama KENDİ ürünlerini kurar: oradaki üç ürünün varyantı
 // ve fiyatı yoktur, sepete girecek bir varyantın ikisine de ihtiyacı vardır.
 // Aynı ürünleri fiyatlandırmak, okuma testlerinin saydığı kümeyi değiştirirdi.
 func kanalSepetiFiksturu(t *testing.T) kanalSepeti {
 	t.Helper()
 
-	zemin := kanalKataloguFiksturu(t)
+	zemin := channelCatalogFixture(t)
 
 	kanalSepetiBirKez.Do(func() {
 		// Kurulum context'i t.Context() DEĞİLDİR; gerekçe
-		// [kanalKataloguFiksturu] ile aynıdır.
-		kanalSepetiZemin, kanalSepetiHatasi = kanalSepetiKur(context.Background(), zemin.ikinciKanalID)
+		// [channelCatalogFixture] ile aynıdır.
+		kanalSepetiZemin, kanalSepetiHatasi = kanalSepetiKur(context.Background(), zemin.secondChannelID)
 	})
 	require.NoError(t, kanalSepetiHatasi, "kanal sepeti fikstürü kurulamadı")
 
@@ -93,14 +93,14 @@ func kanalSepetiFiksturu(t *testing.T) kanalSepeti {
 }
 
 // kanalSepetiKur üç varyantı kurar ve ikisini birer kanala bağlar.
-func kanalSepetiKur(ctx context.Context, ikinciKanalID string) (kanalSepeti, error) {
+func kanalSepetiKur(ctx context.Context, secondChannelID string) (kanalSepeti, error) {
 	var zemin kanalSepeti
 	var err error
 
-	if zemin.birinciKanalVaryant, err = kanalliVaryantKur(ctx, "birinci", testKanalID); err != nil {
+	if zemin.birinciKanalVaryant, err = kanalliVaryantKur(ctx, "birinci", testChannelID); err != nil {
 		return zemin, err
 	}
-	if zemin.ikinciKanalVaryant, err = kanalliVaryantKur(ctx, "ikinci", ikinciKanalID); err != nil {
+	if zemin.ikinciKanalVaryant, err = kanalliVaryantKur(ctx, "ikinci", secondChannelID); err != nil {
 		return zemin, err
 	}
 	if zemin.atamasizVaryant, err = kanalliVaryantKur(ctx, "atamasiz", ""); err != nil {
@@ -119,7 +119,7 @@ func kanalSepetiKur(ctx context.Context, ikinciKanalID string) (kanalSepeti, err
 func kanalliVaryantKur(ctx context.Context, ad, kanalID string) (string, error) {
 	handle := "e2e-kanal-sepeti-" + ad
 
-	urun, err := urunSvc.CreateProduct(ctx, productsvc.CreateProductInput{
+	urun, err := productSvc.CreateProduct(ctx, productsvc.CreateProductInput{
 		Handle: handle,
 		Title:  "E2E Kanal Sepeti " + ad,
 		Status: productmodels.StatusPublished,
@@ -128,27 +128,27 @@ func kanalliVaryantKur(ctx context.Context, ad, kanalID string) (string, error) 
 		return "", fmt.Errorf("%q ürünü kurulamadı: %w", handle, err)
 	}
 
-	varyant, err := urunSvc.CreateVariant(ctx, urun.ID, productsvc.CreateVariantInput{
+	varyant, err := productSvc.CreateVariant(ctx, urun.ID, productsvc.CreateVariantInput{
 		Title: "Tek beden",
 	})
 	if err != nil {
 		return "", fmt.Errorf("%q varyantı kurulamadı: %w", handle, err)
 	}
 
-	kume, err := fiyatSvc.CreatePriceSet(ctx, []pricingsvc.PriceInput{{
-		CurrencyCode: vergiliParaBirimi,
+	kume, err := pricingSvc.CreatePriceSet(ctx, []pricingsvc.PriceInput{{
+		CurrencyCode: taxedCurrency,
 		Amount:       1000,
 		MinQuantity:  1,
 	}})
 	if err != nil {
 		return "", fmt.Errorf("%q fiyat kümesi kurulamadı: %w", handle, err)
 	}
-	if err := urunSvc.SetVariantPriceSet(ctx, varyant.ID, kume.ID); err != nil {
+	if err := productSvc.SetVariantPriceSet(ctx, varyant.ID, kume.ID); err != nil {
 		return "", fmt.Errorf("%q fiyat bağı kurulamadı: %w", handle, err)
 	}
 
 	if kanalID != "" {
-		if err := kanalBagla(urun.ID, kanalID); err != nil {
+		if err := bindChannel(urun.ID, kanalID); err != nil {
 			return "", err
 		}
 	}
@@ -179,7 +179,7 @@ func kanalliSepetAc(t *testing.T, anahtar string) string {
 	t.Helper()
 
 	kayit := anahtarliVitrinIstegi(t, anahtar, http.MethodPost, "/store/v1/carts",
-		fmt.Sprintf(`{"country_code":%q}`, vergiliUlke))
+		fmt.Sprintf(`{"country_code":%q}`, taxedCountry))
 	require.Equal(t, http.StatusCreated, kayit.Code,
 		"sepet açılmalı; gövde: %s", kayit.Body.String())
 
@@ -227,14 +227,14 @@ func sepetSatirSayisi(t *testing.T, anahtar, sepetID string) int {
 // tercihiydi.
 func TestYabanciKanalinVaryantiSepeteEklenemez(t *testing.T) {
 	zemin := kanalSepetiFiksturu(t)
-	kanal := kanalKataloguFiksturu(t)
+	kanal := channelCatalogFixture(t)
 
-	sepetID := kanalliSepetAc(t, publishableAnahtar)
-	red := satirEklemeDene(t, publishableAnahtar, sepetID, zemin.ikinciKanalVaryant)
+	sepetID := kanalliSepetAc(t, publishableKey)
+	red := satirEklemeDene(t, publishableKey, sepetID, zemin.ikinciKanalVaryant)
 
 	assert.Equal(t, http.StatusNotFound, red.Code,
 		"başka bir kanalın varyantı sepete GİREMEMELİ; gövde: %s", red.Body.String())
-	assert.Zero(t, sepetSatirSayisi(t, publishableAnahtar, sepetID),
+	assert.Zero(t, sepetSatirSayisi(t, publishableKey, sepetID),
 		"reddedilen istek sepete satır YAZMAMALI")
 
 	// Ters yön de geçerlidir: kural tek yönlü bir engel değil, iki vitrinin
@@ -256,13 +256,13 @@ func TestYabanciKanalinVaryantiSepeteEklenemez(t *testing.T) {
 // sebebinin tam olarak KANAL olduğunu söyleyen tek gözlemdir.
 func TestKendiKanalinVaryantiSepeteEklenir(t *testing.T) {
 	zemin := kanalSepetiFiksturu(t)
-	kanal := kanalKataloguFiksturu(t)
+	kanal := channelCatalogFixture(t)
 
-	sepetID := kanalliSepetAc(t, publishableAnahtar)
-	kabul := satirEklemeDene(t, publishableAnahtar, sepetID, zemin.birinciKanalVaryant)
+	sepetID := kanalliSepetAc(t, publishableKey)
+	kabul := satirEklemeDene(t, publishableKey, sepetID, zemin.birinciKanalVaryant)
 	require.Equal(t, http.StatusCreated, kabul.Code,
 		"kendi kanalının varyantı sepete girmeli; gövde: %s", kabul.Body.String())
-	assert.Equal(t, 1, sepetSatirSayisi(t, publishableAnahtar, sepetID))
+	assert.Equal(t, 1, sepetSatirSayisi(t, publishableKey, sepetID))
 
 	// Birinci vitrinde reddedilen varyant, KENDİ vitrininde kabul edilmeli.
 	ikinciSepet := kanalliSepetAc(t, kanal.ikinciAnahtar)
@@ -281,10 +281,10 @@ func TestKendiKanalinVaryantiSepeteEklenir(t *testing.T) {
 // (bkz. TestVitrinKataloguIsteginSatisKanalinaGoreSuzulur).
 func TestAtamasizVaryantHerVitrindeSepeteGirer(t *testing.T) {
 	zemin := kanalSepetiFiksturu(t)
-	kanal := kanalKataloguFiksturu(t)
+	kanal := channelCatalogFixture(t)
 
 	for ad, anahtar := range map[string]string{
-		"birinci vitrin": publishableAnahtar,
+		"birinci vitrin": publishableKey,
 		"ikinci vitrin":  kanal.ikinciAnahtar,
 	} {
 		t.Run(ad, func(t *testing.T) {
@@ -305,19 +305,19 @@ func TestAtamasizVaryantHerVitrindeSepeteGirer(t *testing.T) {
 // Ayırt edilebilseydi gizleme delinirdi: elindeki publishable anahtarla gelen
 // bir rakip, varyant kimliklerini deneyerek hangilerinin BAŞKA bir kanalda
 // satıldığını öğrenirdi. Okuma yüzeyinde aynı iddia vardır
-// (bkz. TestGizlenenUrunVarliginiHataKoduylaEleVermez) ve karşılaştırma yine
+// (bkz. TestAHiddenProductDoesNotRevealItselfViaTheErrorCode) ve karşılaştırma yine
 // yalnızca hata KODU üzerindendir; mesaj istenen kimliği yankıladığı için iki
 // istekte zaten farklıdır.
 func TestKapsamDisiVaryantVarliginiEleVermez(t *testing.T) {
 	zemin := kanalSepetiFiksturu(t)
 
-	sepetID := kanalliSepetAc(t, publishableAnahtar)
-	gizlenen := satirEklemeDene(t, publishableAnahtar, sepetID, zemin.ikinciKanalVaryant)
-	olmayan := satirEklemeDene(t, publishableAnahtar, sepetID, "variant_e2e_hic_yok")
+	sepetID := kanalliSepetAc(t, publishableKey)
+	gizlenen := satirEklemeDene(t, publishableKey, sepetID, zemin.ikinciKanalVaryant)
+	olmayan := satirEklemeDene(t, publishableKey, sepetID, "variant_e2e_hic_yok")
 
 	require.Equal(t, http.StatusNotFound, gizlenen.Code, "gövde: %s", gizlenen.Body.String())
 	require.Equal(t, http.StatusNotFound, olmayan.Code, "gövde: %s", olmayan.Body.String())
 
-	assert.Equal(t, hataOzu(t, olmayan)[0], hataOzu(t, gizlenen)[0],
+	assert.Equal(t, errorSummary(t, olmayan)[0], errorSummary(t, gizlenen)[0],
 		"kapsam dışı varyant ile olmayan varyant AYNI hata kodunu dönmeli")
 }

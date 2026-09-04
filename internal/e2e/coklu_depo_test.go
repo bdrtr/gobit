@@ -22,891 +22,941 @@ import (
 	checkoutwf "github.com/bdrtr/gobit/internal/workflows/checkout"
 )
 
-// Bu dosya ÇOK DEPOLU sipariş tamamlamayı gerçek modüllerle, gerçek Postgres'le
-// ve gerçek saga motoruyla kanıtlar.
+// This file proves MULTI-WAREHOUSE order completion with the real modules, a
+// real Postgres and the real saga engine.
 //
-// # Neden checkout'un birim testleri yetmez
+// # Why checkout's unit tests are not enough
 //
-// checkout paketinin birim testleri lokasyon seçimini SAHTE yüzeylerle sınar:
-// "adaylar stoktan geldiği gibi geçti mi", "seçimi kargo mu yaptı". Doğru
-// sorulardır ama iddiaları çağrıların ŞEKLİDİR. Buradaki iddia ise SONUÇTUR:
-// iki satırın rezervasyonu stok modülünün defterinde GERÇEKTEN iki ayrı depoda
-// açılmış mıdır. Bir sahte, "hepsini aynı depodan ayır" diyen bir uygulamayı
-// aday listesiyle yakalayabilir; ama defterdeki adedin hangi depodan düştüğünü
-// yalnızca gerçek stok modülü söyler.
+// The checkout package's unit tests exercise location selection with FAKE
+// surfaces: "did the candidates pass through as inventory produced them", "was
+// the choice made by fulfillment". Those are the right questions, but what they
+// assert is the SHAPE of the calls. What is asserted here is the OUTCOME: were
+// the two lines' reservations REALLY opened in two separate warehouses in the
+// inventory module's ledger. A fake can catch an implementation that says
+// "reserve everything from the same warehouse" through the candidate list; but
+// only the real inventory module can say which warehouse the quantity was
+// deducted from in the ledger.
 //
-// # Depolar ve kalemler test BAŞINA kurulur
+// # Warehouses and items are set up PER TEST
 //
-// Paket testleri SIRAYLA koşar ve tek bir veritabanını paylaşır; stok seviyesi
-// (kalem, lokasyon) çiftine yazıldığı için her testin kendi kalemini kurması
-// zaten kuraldır (bkz. [yeniStokluVaryant]). Bu dosya bir adım ileri gider ve
-// DEPOLARINI da kendisi kurar: senaryolar depoların İÇERİĞİNE bakar ve
-// paylaşılan [stokLokasyonID] üzerinde çalışsalardı, aday listesi başka
-// testlerin kalemlerine değil ama başka testlerin depo kurulumuna bağımlı
-// hâle gelirdi.
+// Package tests run SEQUENTIALLY and share a single database; because a stock
+// level is written per (item, location) pair, every test setting up its own item
+// is already the rule (see [newStockedVariant]). This file goes one step further
+// and sets up its WAREHOUSES too: the scenarios look at the CONTENTS of the
+// warehouses and, had they worked on the shared [stockLocationID], the candidate
+// list would have become dependent not on other tests' items but on other tests'
+// warehouse setup.
 //
-// # Beklenen tutarlar neden elle yazılıyor
+// # Why the expected amounts are written out by hand
 //
-// Paket yorumundaki gerekçenin aynısı geçerlidir: her senaryonun ara toplamı,
-// vergisi ve genel toplamı testin İÇİNDE kâğıt üstünde hesaplanmış
-// SABİTLERDİR. Vergi satır başına ve aşağı yuvarlanarak hesaplanır.
+// The same reasoning as in the package comment holds: every scenario's subtotal,
+// tax and grand total are CONSTANTS computed on paper INSIDE the test. Tax is
+// computed per line and rounded down.
 
-// Çok depolu mutlu yol senaryosunun ELLE hesaplanmış tutarları.
+// The HAND-computed amounts of the multi-warehouse happy path scenario.
 //
-// Bölge %20 (2000 baz puan) vergilidir, kargo yöntemi seçilmemiştir ve vergi
-// SATIR BAŞINA hesaplanır:
+// The region is taxed at 20% (2000 basis points), no shipping method is chosen,
+// and tax is computed PER LINE:
 //
-//	A satırı: 7_500 × 2 = 15_000 ara toplam, 15_000 × %20 = 3_000 vergi
-//	B satırı: 11_000 × 3 = 33_000 ara toplam, 33_000 × %20 = 6_600 vergi
-//	sepet:    15_000 + 33_000 = 48_000 ara toplam
-//	          3_000 + 6_600 = 9_600 vergi
-//	          48_000 - 0 + 9_600 + 0 = 57_600 genel toplam
+//	line A: 7_500 × 2 = 15_000 subtotal, 15_000 × 20% = 3_000 tax
+//	line B: 11_000 × 3 = 33_000 subtotal, 33_000 × 20% = 6_600 tax
+//	cart:   15_000 + 33_000 = 48_000 subtotal
+//	        3_000 + 6_600 = 9_600 tax
+//	        48_000 - 0 + 9_600 + 0 = 57_600 grand total
 const (
-	cokDepoFiyatA    int64 = 7_500
-	cokDepoAdetA     int64 = 2
-	cokDepoFiyatB    int64 = 11_000
-	cokDepoAdetB     int64 = 3
-	cokDepoAraToplam int64 = 48_000
-	cokDepoVergi     int64 = 9_600
-	cokDepoToplam    int64 = 57_600
-	// cokDepoStokA ve cokDepoStokB kalemlerin TEK depolarındaki fiziksel
-	// adetleridir; ikisi de sepetin istediğinden fazladır, yani senaryonun
-	// durduğu yer stok yetersizliği DEĞİLDİR.
-	cokDepoStokA int64 = 6
-	cokDepoStokB int64 = 9
-	// cokDepoKalanA ve cokDepoKalanB tahsilat sonrası beklenen FİZİKSEL
-	// adetlerdir: 6 - 2 ve 9 - 3.
-	cokDepoKalanA int64 = 4
-	cokDepoKalanB int64 = 6
+	multiWarehousePriceA    int64 = 7_500
+	multiWarehouseQuantityA int64 = 2
+	multiWarehousePriceB    int64 = 11_000
+	multiWarehouseQuantityB int64 = 3
+	multiWarehouseSubtotal  int64 = 48_000
+	multiWarehouseTax       int64 = 9_600
+	multiWarehouseTotal     int64 = 57_600
+	// multiWarehouseStockA and multiWarehouseStockB are the PHYSICAL quantities
+	// in the items' SINGLE warehouses; both are more than the cart asks for, so
+	// the place where the scenario stops is NOT insufficient stock.
+	multiWarehouseStockA int64 = 6
+	multiWarehouseStockB int64 = 9
+	// multiWarehouseRemainingA and multiWarehouseRemainingB are the PHYSICAL
+	// quantities expected after capture: 6 - 2 and 9 - 3.
+	multiWarehouseRemainingA int64 = 4
+	multiWarehouseRemainingB int64 = 6
 )
 
-// TestLokasyonBossaSatirlarFarkliDepolardanAyrilir çok depolu bir sepetin
-// siparişe döndüğünü ve satırlarının FARKLI depolardan ayrıldığını kanıtlar.
+// TestEmptyLocationReservesLinesFromDifferentWarehouses proves that a
+// multi-warehouse cart turns into an order and that its lines are reserved from
+// DIFFERENT warehouses.
 //
-// Kurgu tek lokasyon varsayımını imkânsız kılar: A kaleminin stoğu yalnızca
-// birinci depoda, B kaleminin stoğu yalnızca ikinci depodadır. Tek bir depodan
-// ayırmaya çalışan bir uygulama satırlardan birinde MUTLAKA patlar, yani
-// "sipariş oluştu" iddiası tek başına bile bir şey söyler — ama yeterli
-// değildir ve test orada durmaz: her rezervasyon GERÇEK stok modülünden
-// okunup lokasyonu doğrulanır. Yalnızca siparişin oluştuğuna bakan bir test,
-// rezervasyonları sessizce tek depoya toplayan bir uygulamayı da geçirirdi.
+// The setup makes the single-location assumption impossible: item A's stock is
+// only in the first warehouse, item B's stock only in the second. An
+// implementation that tries to reserve from a single warehouse MUST blow up on
+// one of the lines, so even on its own the "an order was created" assertion says
+// something — but it is not enough and the test does not stop there: every
+// reservation is read from the REAL inventory module and its location is
+// verified. A test that only looked at the order being created would also let
+// through an implementation that quietly gathers the reservations into a single
+// warehouse.
 //
-// [checkoutwf.CompleteCartInput.LocationID] bilinçli olarak BOŞ verilir: bu,
-// akışa "depoyu sen belirle" demenin tek yoludur ve iş bölümü ancak o zaman
-// devreye girer — "hangi depolarda yeterli stok var" olgusunu stok modülü,
-// "hangisinden gönderelim" kararını kargo modülü verir.
-func TestLokasyonBossaSatirlarFarkliDepolardanAyrilir(t *testing.T) {
+// [checkoutwf.CompleteCartInput.LocationID] is deliberately left EMPTY: that is
+// the only way to tell the workflow "you pick the warehouse", and only then does
+// the division of labour come into play — the fact of "which warehouses hold
+// enough stock" is given by the inventory module, the decision of "which one do
+// we ship from" by the fulfillment module.
+func TestEmptyLocationReservesLinesFromDifferentWarehouses(t *testing.T) {
 	ctx := t.Context()
 
-	musteriID, eposta := yeniMusteri(ctx, t)
-	depoA := yeniDepo(ctx, t, "E2E Çok Depo A")
-	depoB := yeniDepo(ctx, t, "E2E Çok Depo B")
+	customerID, email := newCustomer(ctx, t)
+	warehouseA := newWarehouse(ctx, t, "E2E Multi Warehouse A")
+	warehouseB := newWarehouse(ctx, t, "E2E Multi Warehouse B")
 
-	varyantA, kalemA := depolaraDagilmisVaryant(ctx, t, "E2E Çok Depo Ürünü A",
-		map[string]int64{vergiliParaBirimi: cokDepoFiyatA},
-		map[string]int64{depoA: cokDepoStokA})
-	varyantB, kalemB := depolaraDagilmisVaryant(ctx, t, "E2E Çok Depo Ürünü B",
-		map[string]int64{vergiliParaBirimi: cokDepoFiyatB},
-		map[string]int64{depoB: cokDepoStokB})
+	variantA, itemA := variantAcrossWarehouses(ctx, t, "E2E Multi Warehouse Product A",
+		map[string]int64{taxedCurrency: multiWarehousePriceA},
+		map[string]int64{warehouseA: multiWarehouseStockA})
+	variantB, itemB := variantAcrossWarehouses(ctx, t, "E2E Multi Warehouse Product B",
+		map[string]int64{taxedCurrency: multiWarehousePriceB},
+		map[string]int64{warehouseB: multiWarehouseStockB})
 
-	sepetID, toplamlar := ikiSatirliSepet(ctx, t, musteriID, varyantA, cokDepoAdetA, varyantB, cokDepoAdetB)
-	toplamlariDogrula(t, toplamlar, beklenenToplam{
-		araToplam: cokDepoAraToplam,
-		indirim:   0,
-		vergi:     cokDepoVergi,
-		kargo:     0,
-		toplam:    cokDepoToplam,
-	}, "çok depolu sepet hazırlandıktan sonra")
+	cartID, totals := twoLineCart(ctx, t, customerID, variantA, multiWarehouseQuantityA, variantB, multiWarehouseQuantityB)
+	assertTotals(t, totals, expectedTotal{
+		subtotal: multiWarehouseSubtotal,
+		discount: 0,
+		tax:      multiWarehouseTax,
+		shipping: 0,
+		total:    multiWarehouseTotal,
+	}, "after the multi-warehouse cart was prepared")
 
-	// --- akışın kendisi ---
+	// --- the workflow itself ---
 
-	sonuc, err := siparisAkislari.CompleteCart(ctx, checkoutwf.CompleteCartInput{
-		CartID: sepetID,
-		// Lokasyon BİLİNÇLİ OLARAK boştur; senaryonun tamamı bu boşluğa dayanır.
+	result, err := orderWorkflows.CompleteCart(ctx, checkoutwf.CompleteCartInput{
+		CartID: cartID,
+		// The location is DELIBERATELY empty; the whole scenario rests on that emptiness.
 		LocationID:        "",
 		PaymentProviderID: manual.ID,
-		PaymentData:       odemeDavranisi(t, manual.OutcomeAuthorize),
-		Email:             eposta,
-		ExpectedTotal:     cokDepoToplam,
+		PaymentData:       paymentBehavior(t, manual.OutcomeAuthorize),
+		Email:             email,
+		ExpectedTotal:     multiWarehouseTotal,
 	})
 	require.NoError(t, err,
-		"lokasyon bildirilmeden de sipariş verilebilmeli; hata, akışın hâlâ bir "+
-			"lokasyon bildirilmesini şart koştuğunu gösterir")
-	require.NotEmpty(t, sonuc.OrderID, "sonuç oluşan siparişin kimliğini taşımalı")
-	require.True(t, sonuc.CartCompleted, "sepet tamamlanmış damgalanmalı")
-	require.True(t, sonuc.ReservationsConfirmed, "rezervasyonlar kesinleştirilmeli")
-	require.Empty(t, sonuc.Warnings,
-		"mutlu yolda uyarı OLMAMALI; uyarı, pivot'tan sonra bir modülün patladığını "+
-			"ve elle onarım gerektiğini bildirir")
+		"an order must be placeable without a location being declared; an error shows "+
+			"that the workflow still insists on a location being declared")
+	require.NotEmpty(t, result.OrderID, "the result must carry the created order's ID")
+	require.True(t, result.CartCompleted, "the cart must be stamped completed")
+	require.True(t, result.ReservationsConfirmed, "the reservations must be confirmed")
+	require.Empty(t, result.Warnings,
+		"there must be NO warning on the happy path; a warning reports that a module "+
+			"blew up after the pivot and that manual repair is needed")
 
-	// --- 1) sipariş GERÇEKTEN oluştu mu ---
+	// --- 1) was the order REALLY created ---
 
-	siparis, err := siparisSvc.GetOrder(ctx, sonuc.OrderID)
-	require.NoError(t, err, "oluşan sipariş sipariş modülünden okunabilmeli")
-	require.Equal(t, ordermodels.OrderPending, siparis.Status,
-		"sipariş bu akıştan 'pending' çıkmalı")
-	require.Equal(t, cokDepoToplam, siparis.Total,
-		"siparişin genel toplamı sepetinkiyle AYNI olmalı")
-	require.Len(t, siparis.Items, 2,
-		"sepetin İKİ satırı siparişe iki satır olarak geçmeli; satırların farklı "+
-			"depolardan ayrılması siparişin şeklini DEĞİŞTİRMEZ — depo bir sevkiyat "+
-			"ayrıntısıdır, faturanın değil")
+	order, err := orderSvc.GetOrder(ctx, result.OrderID)
+	require.NoError(t, err, "the created order must be readable from the order module")
+	require.Equal(t, ordermodels.OrderPending, order.Status,
+		"the order must come out of this workflow as 'pending'")
+	require.Equal(t, multiWarehouseTotal, order.Total,
+		"the order's grand total must be the SAME as the cart's")
+	require.Len(t, order.Items, 2,
+		"the cart's TWO lines must carry over to the order as two lines; the lines "+
+			"being reserved from different warehouses does NOT CHANGE the shape of the "+
+			"order — a warehouse is a shipping detail, not an invoicing one")
 
-	// --- 2) rezervasyonlar FARKLI depolarda mı ---
+	// --- 2) are the reservations in DIFFERENT warehouses ---
 	//
-	// Asıl iddia budur. Rezervasyonlar akışın döndürdüğü bir alandan değil,
-	// GERÇEK stok modülünden okunur: sınanan şey akışın ne söylediği değil,
-	// stok defterinde adedin hangi depodan düştüğüdür.
-	require.Len(t, sonuc.ReservationIDs, 2,
-		"her sepet satırı için bir rezervasyon alınmalı")
-	rezervasyonlar := rezervasyonlariOku(ctx, t, sonuc.ReservationIDs)
+	// This is the real assertion. The reservations are read not from a field the
+	// workflow returns but from the REAL inventory module: what is under test is
+	// not what the workflow says, but which warehouse the quantity was deducted
+	// from in the inventory ledger.
+	require.Len(t, result.ReservationIDs, 2,
+		"one reservation must be taken for each cart line")
+	reservations := readReservations(ctx, t, result.ReservationIDs)
 
-	rezA, bulunduA := rezervasyonlar[kalemA]
-	require.True(t, bulunduA, "A kaleminin rezervasyonu bulunmalı")
-	rezB, bulunduB := rezervasyonlar[kalemB]
-	require.True(t, bulunduB, "B kaleminin rezervasyonu bulunmalı")
+	resA, foundA := reservations[itemA]
+	require.True(t, foundA, "item A's reservation must be found")
+	resB, foundB := reservations[itemB]
+	require.True(t, foundB, "item B's reservation must be found")
 
-	require.Equal(t, depoA, rezA.LocationID,
-		"A satırı stoğunun BULUNDUĞU depodan ayrılmalı; başka bir depo, akışın "+
-			"adayları hiç sormadan bir lokasyon uydurduğu anlamına gelir")
-	require.Equal(t, depoB, rezB.LocationID,
-		"B satırı da kendi deposundan ayrılmalı")
-	require.NotEqual(t, rezA.LocationID, rezB.LocationID,
-		"İKİ SATIR AYNI DEPODAN AYRILMAMALI. Bu, dosyanın var oluş sebebidir: "+
-			"tek lokasyon varsayımı kaldırılmışsa bir siparişin satırları farklı "+
-			"depolardan çıkabilmelidir. Eşitlik, akışın hâlâ tek bir depo seçip "+
-			"tüm satırlara uyguladığını gösterir")
+	require.Equal(t, warehouseA, resA.LocationID,
+		"line A must be reserved from the warehouse that HOLDS its stock; another "+
+			"warehouse means the workflow invented a location without ever asking for "+
+			"candidates")
+	require.Equal(t, warehouseB, resB.LocationID,
+		"line B must be reserved from its own warehouse too")
+	require.NotEqual(t, resA.LocationID, resB.LocationID,
+		"THE TWO LINES MUST NOT BE RESERVED FROM THE SAME WAREHOUSE. This is why this "+
+			"file exists: once the single-location assumption is lifted, an order's lines "+
+			"must be able to come out of different warehouses. Equality shows that the "+
+			"workflow still picks a single warehouse and applies it to every line")
 
-	require.Equal(t, cokDepoAdetA, rezA.Quantity, "A rezervasyonu satırın adedi kadar olmalı")
-	require.Equal(t, cokDepoAdetB, rezB.Quantity, "B rezervasyonu satırın adedi kadar olmalı")
-	require.Equal(t, inventorymodels.ReservationConfirmed, rezA.Status,
-		"A rezervasyonu 'confirmed' olmalı: satılan mal fiziksel stoktan düşülmüş demektir")
-	require.Equal(t, inventorymodels.ReservationConfirmed, rezB.Status,
-		"B rezervasyonu da 'confirmed' olmalı")
+	require.Equal(t, multiWarehouseQuantityA, resA.Quantity, "reservation A must be for the line's quantity")
+	require.Equal(t, multiWarehouseQuantityB, resB.Quantity, "reservation B must be for the line's quantity")
+	require.Equal(t, inventorymodels.ReservationConfirmed, resA.Status,
+		"reservation A must be 'confirmed': it means the sold goods have been deducted from physical stock")
+	require.Equal(t, inventorymodels.ReservationConfirmed, resB.Status,
+		"reservation B must be 'confirmed' too")
 
-	// --- 3) stok defteri DEPO BAZINDA doğru mu ---
+	// --- 3) is the inventory ledger correct PER WAREHOUSE ---
 	//
-	// Satılabilir toplam tek başına yetmez: iki kalem ayrı ayrı sayıldığı için
-	// "hepsi tek depodan düştü" hatası toplamda görünmezdi. Seviyeler bu yüzden
-	// depo başına okunur.
-	seviyeA := depoSeviyesi(ctx, t, kalemA, depoA)
-	require.Equal(t, cokDepoKalanA, seviyeA.StockedQuantity,
-		"A kaleminin FİZİKSEL adedi kendi deposunda azalmalı (%d - %d)",
-		cokDepoStokA, cokDepoAdetA)
-	require.Equal(t, int64(0), seviyeA.ReservedQuantity,
-		"onaydan sonra A kaleminin rezerve adedi sıfırlanmalı")
+	// The sellable total is not enough on its own: because the two items are
+	// counted separately, an "everything was deducted from one warehouse" fault
+	// would not show up in the total. That is why the levels are read per
+	// warehouse.
+	levelA := warehouseLevel(ctx, t, itemA, warehouseA)
+	require.Equal(t, multiWarehouseRemainingA, levelA.StockedQuantity,
+		"item A's PHYSICAL quantity must go down in its own warehouse (%d - %d)",
+		multiWarehouseStockA, multiWarehouseQuantityA)
+	require.Equal(t, int64(0), levelA.ReservedQuantity,
+		"after confirmation item A's reserved quantity must be zeroed")
 
-	seviyeB := depoSeviyesi(ctx, t, kalemB, depoB)
-	require.Equal(t, cokDepoKalanB, seviyeB.StockedQuantity,
-		"B kaleminin FİZİKSEL adedi kendi deposunda azalmalı (%d - %d)",
-		cokDepoStokB, cokDepoAdetB)
-	require.Equal(t, int64(0), seviyeB.ReservedQuantity,
-		"onaydan sonra B kaleminin rezerve adedi sıfırlanmalı")
+	levelB := warehouseLevel(ctx, t, itemB, warehouseB)
+	require.Equal(t, multiWarehouseRemainingB, levelB.StockedQuantity,
+		"item B's PHYSICAL quantity must go down in its own warehouse (%d - %d)",
+		multiWarehouseStockB, multiWarehouseQuantityB)
+	require.Equal(t, int64(0), levelB.ReservedQuantity,
+		"after confirmation item B's reserved quantity must be zeroed")
 
-	// Kalemlerin BAŞKA bir depoda seviyesi hiç doğmamalı: rezervasyon var
-	// olmayan bir seviyeyi yaratamaz ve yaratsaydı stok yoktan var edilmiş
-	// olurdu.
-	require.Len(t, stokSeviyeleri(ctx, t, kalemA), 1,
-		"A kalemi yalnızca kendi deposunda seviyelenmiş kalmalı")
-	require.Len(t, stokSeviyeleri(ctx, t, kalemB), 1,
-		"B kalemi yalnızca kendi deposunda seviyelenmiş kalmalı")
+	// No level must ever come into existence for the items in ANOTHER warehouse:
+	// a reservation cannot create a level that does not exist, and had it done so
+	// stock would have been conjured out of nothing.
+	require.Len(t, stockLevels(ctx, t, itemA), 1,
+		"item A must stay levelled only in its own warehouse")
+	require.Len(t, stockLevels(ctx, t, itemB), 1,
+		"item B must stay levelled only in its own warehouse")
 }
 
-// Telafi senaryosunun sabitleri.
+// The constants of the compensation scenario.
 //
-// İlk satırın stoğu TEK depoda ve yeterlidir. İkinci satırın stoğu İKİ depoya
-// dağılmıştır ama hiçbiri tek başına yetmez: 1 + 1 = 2 < 3. Kurgu bilinçlidir
-// ve çok depolu bir kurulumda en kolay gözden kaçan durumu seçer — toplam stok
-// yeterli GÖRÜNÜR, ama rezervasyon tek bir depodan yapıldığı için sipariş
-// karşılanamaz. Toplama bakan bir uygulama burada sipariş açardı.
+// The first line's stock is in a SINGLE warehouse and is sufficient. The second
+// line's stock is spread over TWO warehouses but neither is enough on its own:
+// 1 + 1 = 2 < 3. The setup is deliberate and picks the case that is easiest to
+// miss in a multi-warehouse installation — the total stock LOOKS sufficient, but
+// because a reservation is made from a single warehouse the order cannot be
+// fulfilled. An implementation that looks at the total would have opened an
+// order here.
 //
-// Tutarlar bu senaryonun konusu değildir: akış hesabı yaptıktan sonra ilk
-// adımda, ikinci satırda durur.
+// The amounts are not the subject of this scenario: the workflow computes them
+// and then stops at the first step, on the second line.
 const (
-	telafiFiyat1          int64 = 9_000
-	telafiAdet1           int64 = 2
-	telafiStok1           int64 = 5
-	telafiFiyat2          int64 = 4_000
-	telafiAdet2           int64 = 3
-	telafiDepoBasinaStok2 int64 = 1
+	compensationPrice1             int64 = 9_000
+	compensationQuantity1          int64 = 2
+	compensationStock1             int64 = 5
+	compensationPrice2             int64 = 4_000
+	compensationQuantity2          int64 = 3
+	compensationStockPerWarehouse2 int64 = 1
 )
 
-// TestDeposuOlmayanSatirOncekiRezervasyonuBirakir hiçbir depoda yeterli stoğu
-// olmayan bir satırın siparişi düşürdüğünü VE önceki satırın rezervasyonunun
-// geri bırakıldığını kanıtlar.
+// TestLineWithNoWarehouseReleasesPreviousReservation proves that a line with no
+// warehouse holding enough stock drops the order AND that the previous line's
+// reservation is released.
 //
-// Bu, çok depoda en kolay bozulan yoldur. Tek depolu bir kurulumda ilk satır
-// zaten patlardı ve telafi edilecek bir şey olmazdı; çok depoda ise ayırma
-// satır satır ilerler ve ortasında durabilir. Geri bırakılmayan bir rezervasyon
-// burada sessizce asılı kalır: satılmamış bir mal ayrılmış görünür, hiçbir
-// sipariş onu tüketmediği için hata ancak sayımda fark edilir.
+// This is the path that breaks most easily with multiple warehouses. In a
+// single-warehouse installation the first line would already have blown up and
+// there would have been nothing to compensate; with multiple warehouses the
+// reserving walks line by line and can stop halfway. A reservation that is not
+// released hangs silently here: unsold goods look reserved, and because no order
+// consumes them the fault is only noticed at stocktaking.
 //
-// Sınanan şey "hata döndü" değil, hatanın ARDINDA BIRAKTIĞIDIR: sipariş hiç
-// açılmamalı ve ilk kalemin satılabilir adedi ESKİ değerine dönmelidir.
-func TestDeposuOlmayanSatirOncekiRezervasyonuBirakir(t *testing.T) {
+// What is under test is not "an error was returned" but WHAT THE ERROR LEFT
+// BEHIND: no order must have been opened and the first item's sellable quantity
+// must return to its OLD value.
+func TestLineWithNoWarehouseReleasesPreviousReservation(t *testing.T) {
 	ctx := t.Context()
 
-	musteriID, eposta := yeniMusteri(ctx, t)
-	depoA := yeniDepo(ctx, t, "E2E Telafi Depo A")
-	depoB := yeniDepo(ctx, t, "E2E Telafi Depo B")
+	customerID, email := newCustomer(ctx, t)
+	warehouseA := newWarehouse(ctx, t, "E2E Compensation Warehouse A")
+	warehouseB := newWarehouse(ctx, t, "E2E Compensation Warehouse B")
 
-	varyant1, kalem1 := depolaraDagilmisVaryant(ctx, t, "E2E Telafi Ürünü 1",
-		map[string]int64{vergiliParaBirimi: telafiFiyat1},
-		map[string]int64{depoA: telafiStok1})
-	// İkinci kalemin stoğu İKİ depoya dağıtılır ve hiçbiri tek başına yetmez.
-	// Kalemi hiç seviyelendirmemek de listeyi boşaltırdı ama daha zayıf bir
-	// kurgu olurdu: "stoğu hiç yok" ile "stoğu var ama hiçbir depoda yetmiyor"
-	// farklı durumlardır ve bozulan yalnızca ikincisidir.
-	varyant2, kalem2 := depolaraDagilmisVaryant(ctx, t, "E2E Telafi Ürünü 2",
-		map[string]int64{vergiliParaBirimi: telafiFiyat2},
-		map[string]int64{depoA: telafiDepoBasinaStok2, depoB: telafiDepoBasinaStok2})
+	variant1, item1 := variantAcrossWarehouses(ctx, t, "E2E Compensation Product 1",
+		map[string]int64{taxedCurrency: compensationPrice1},
+		map[string]int64{warehouseA: compensationStock1})
+	// The second item's stock is spread over TWO warehouses and neither is enough
+	// on its own. Not levelling the item at all would also have emptied the list
+	// but would have been a weaker setup: "it has no stock" and "it has stock but
+	// no warehouse has enough" are different cases, and only the second one is
+	// what breaks.
+	variant2, item2 := variantAcrossWarehouses(ctx, t, "E2E Compensation Product 2",
+		map[string]int64{taxedCurrency: compensationPrice2},
+		map[string]int64{warehouseA: compensationStockPerWarehouse2, warehouseB: compensationStockPerWarehouse2})
 
-	sepetID, _ := ikiSatirliSepet(ctx, t, musteriID, varyant1, telafiAdet1, varyant2, telafiAdet2)
+	cartID, _ := twoLineCart(ctx, t, customerID, variant1, compensationQuantity1, variant2, compensationQuantity2)
 
-	// Satır sırası bu testin ÖN KOŞULUDUR ve bu yüzden iddia edilir: "önceki
-	// satırın rezervasyonu bırakıldı" ancak karşılanabilir satır ÖNCE
-	// işlendiğinde bir şey kanıtlar. Sıra tersine dönerse akış ilk satırda
-	// durur, hiç rezervasyon almaz ve testin geri kalanı sessizce boş bir
-	// iddiaya dönüşürdü.
-	sepet, err := sepetSvc.GetCart(ctx, sepetID)
-	require.NoError(t, err, "sepet modülünden okunabilmeli")
-	require.Len(t, sepet.Items, 2, "sepette iki satır olmalı")
-	require.Equal(t, varyant1, sepet.Items[0].VariantID,
-		"karşılanabilen satır sepette İLK sırada olmalı; sepet satırları "+
-			"(created_at, id) sırasıyla okunur ve plan o sırayı devralır")
+	// The line order is this test's PRECONDITION and is therefore asserted: "the
+	// previous line's reservation was released" only proves something when the
+	// fulfillable line is processed FIRST. If the order is reversed the workflow
+	// stops on the first line, takes no reservation at all, and the rest of the
+	// test would quietly turn into an empty assertion.
+	cart, err := cartSvc.GetCart(ctx, cartID)
+	require.NoError(t, err, "the cart must be readable from the cart module")
+	require.Len(t, cart.Items, 2, "the cart must have two lines")
+	require.Equal(t, variant1, cart.Items[0].VariantID,
+		"the fulfillable line must come FIRST in the cart; cart lines are read in "+
+			"(created_at, id) order and the plan inherits that order")
 
-	oncekiSatilabilir1 := satilabilirAdet(ctx, t, kalem1)
-	require.Equal(t, telafiStok1, oncekiSatilabilir1,
-		"fikstür ilk kalemi beklenen adetle kurmuş olmalı")
-	oncekiSatilabilir2 := satilabilirAdet(ctx, t, kalem2)
-	require.Equal(t, 2*telafiDepoBasinaStok2, oncekiSatilabilir2,
-		"ikinci kalemin TOPLAM satılabilir adedi sepetin istediğinden azdır ama "+
-			"sıfır değildir; kurgunun anlamı budur")
+	previousSellable1 := sellableQuantity(ctx, t, item1)
+	require.Equal(t, compensationStock1, previousSellable1,
+		"the fixture must have set the first item up with the expected quantity")
+	previousSellable2 := sellableQuantity(ctx, t, item2)
+	require.Equal(t, 2*compensationStockPerWarehouse2, previousSellable2,
+		"the second item's TOTAL sellable quantity is less than the cart asks for but "+
+			"is not zero; that is what the setup means")
 
-	// --- akış PATLAMALI ---
+	// --- the workflow MUST BLOW UP ---
 
-	sonuc, err := siparisAkislari.CompleteCart(ctx, checkoutwf.CompleteCartInput{
-		CartID:            sepetID,
+	result, err := orderWorkflows.CompleteCart(ctx, checkoutwf.CompleteCartInput{
+		CartID:            cartID,
 		LocationID:        "",
 		PaymentProviderID: manual.ID,
-		PaymentData:       odemeDavranisi(t, manual.OutcomeAuthorize),
-		Email:             eposta,
+		PaymentData:       paymentBehavior(t, manual.OutcomeAuthorize),
+		Email:             email,
 	})
 	require.Error(t, err,
-		"hiçbir depoda karşılanamayan bir satır varken sipariş verilememeli; "+
-			"verilebilseydi mağaza teslim edemeyeceği bir malın parasını tahsil ederdi")
-	require.Equal(t, checkoutwf.CompleteCartResult{}, sonuc,
-		"hata dönen bir akış yarım bir sonuç SIZDIRMAMALI")
+		"an order must NOT BE PLACEABLE while a line cannot be fulfilled by any "+
+			"warehouse; if it were, the store would collect money for goods it cannot deliver")
+	require.Equal(t, checkoutwf.CompleteCartResult{}, result,
+		"a workflow that returns an error must NOT LEAK a half-built result")
 
 	require.True(t, errors.IsConflict(err),
-		"sonuç errors.Conflict olmalı: girdi geçerlidir, dünyanın durumu elverişsizdir "+
-			"ve istemci adedi düşürüp TEKRAR deneyebilir. Yeni bir hata sınıfı, "+
-			"istemcinin bugün stok yetersizliği için yazdığı dalı bozardı. Dönen hata: %v", err)
+		"the result must be an errors.Conflict: the input is valid, the state of the world "+
+			"is unfavourable, and the client can lower the quantity and try AGAIN. A new "+
+			"error class would break the branch the client writes today for insufficient "+
+			"stock. Returned error: %v", err)
 	require.ErrorContains(t, err, checkoutwf.StepReserveInventory,
-		"hata PATLAYAN ADIMI adlandırmalı; adım adı yürütme kaydına da yazılır")
+		"the error must NAME THE STEP THAT BLEW UP; the step name is written to the "+
+			"execution record too")
 	require.ErrorContains(t, err, checkoutwf.CodeReservationFailed,
-		"aday YOKKEN sonucu sepet akışı çıkarır ve kod onundur; korunacak bir alt kod "+
-			"yoktur çünkü hiçbir modüle sorulmamıştır")
-	require.ErrorContains(t, err, "ayrılabilecek lokasyon yok",
-		"mesaj sebebi ADLANDIRMALI. Bu iddia olmadan test, aday listesi DOLU olduğu "+
-			"hâlde politikanın hepsini elediği bir arızada da yeşil kalırdı — ikisi de "+
-			"Conflict döner ve ikisi de aynı adımda patlar, ama düzeltmeleri farklı "+
-			"yerlerdedir")
-	require.ErrorContains(t, err, kalem2,
-		"mesaj HANGİ kalemin karşılanamadığını yazmalı; ikinci kalemi adlandırması "+
-			"aynı zamanda akışın İLK satırı geçtiğinin de kanıtıdır — ilk satırda "+
-			"durulsaydı mesajda onun kimliği olurdu")
+		"when there is NO candidate the outcome is drawn by the cart workflow and the "+
+			"code is its own; there is no sub-code to preserve because no module was asked")
+	// The fragment below stays Turkish ON PURPOSE. It is produced by
+	// internal/workflows/checkout/steps.go, which is still a Turkish file in the
+	// ledger; translating the literal here would break the assertion instead of
+	// translating anything. It flips when that file is translated.
+	require.ErrorContains(t, err, "no location can reserve",
+		"the message must NAME the reason. Without this assertion the test would stay "+
+			"green in a fault where the candidate list was FULL but the policy eliminated "+
+			"all of it — both return a Conflict and both blow up at the same step, but "+
+			"their fixes are in different places")
+	require.ErrorContains(t, err, item2,
+		"the message must write down WHICH item could not be fulfilled; naming the "+
+			"second item is at the same time proof that the workflow got past the FIRST "+
+			"line — had it stopped on the first line the message would carry that one's ID")
 
-	// --- 1) sipariş HİÇ oluşmamalı ---
+	// --- 1) NO order must have been created ---
 	//
-	// create_order, reserve_inventory'den SONRA gelir; stok adımı patladığı için
-	// hiç çalışmamalıdır. İptal edilmiş bile olsa bir sipariş kaydı, hiç
-	// denenmemiş bir siparişin var olduğu anlamına gelirdi.
-	siparisler, toplamSayi, err := siparisSvc.ListOrders(ctx, ordersvc.ListOrdersInput{CustomerID: &musteriID})
-	require.NoError(t, err, "müşterinin siparişleri okunabilmeli")
-	require.Empty(t, siparisler, "sipariş HİÇ oluşmamalı")
-	require.Zero(t, toplamSayi, "sayaç da sıfır olmalı")
+	// create_order comes AFTER reserve_inventory; because the stock step blew up
+	// it must not have run at all. An order record, even a canceled one, would
+	// mean that an order that was never attempted exists.
+	orders, totalCount, err := orderSvc.ListOrders(ctx, ordersvc.ListOrdersInput{CustomerID: &customerID})
+	require.NoError(t, err, "the customer's orders must be readable")
+	require.Empty(t, orders, "NO order must have been created")
+	require.Zero(t, totalCount, "the counter must be zero too")
 
-	// --- 2) ÖNCEKİ SATIRIN REZERVASYONU BIRAKILDI MI ---
+	// --- 2) WAS THE PREVIOUS LINE'S RESERVATION RELEASED ---
 	//
-	// Testin çekirdeği burasıdır. İlk satır başarıyla ayrılmıştı; ikinci satır
-	// hiçbir depoda karşılanamayınca adım kendi temizliğini yapmak zorundadır.
-	// Yapmazsa 2 adet mal sonsuza kadar ayrılmış kalır.
-	require.Equal(t, oncekiSatilabilir1, satilabilirAdet(ctx, t, kalem1),
-		"ilk kalemin satılabilir adedi ESKİ değerine dönmeli (%d). Dönmezse ayrılan "+
-			"stok asılı kalır ve satılmamış mal satılamaz hâle gelir", oncekiSatilabilir1)
+	// This is the core of the test. The first line had been reserved
+	// successfully; once the second line cannot be fulfilled by any warehouse the
+	// step has to do its own cleanup. If it does not, 2 units of goods stay
+	// reserved forever.
+	require.Equal(t, previousSellable1, sellableQuantity(ctx, t, item1),
+		"the first item's sellable quantity must return to its OLD value (%d). If it does "+
+			"not, the reserved stock hangs and unsold goods become unsellable", previousSellable1)
 
-	seviye1 := depoSeviyesi(ctx, t, kalem1, depoA)
-	require.Equal(t, telafiStok1, seviye1.StockedQuantity,
-		"FİZİKSEL adet hiç değişmemeli: geri bırakma onaylanmamış bir sözü siler, "+
-			"stoktan düşme yalnızca onayla olur")
-	require.Equal(t, int64(0), seviye1.ReservedQuantity,
-		"ilk kalemin rezerve adedi SIFIRA dönmeli; sıfırdan farklı kalması, sözün "+
-			"hâlâ ayakta olduğu — yani telafinin çalışmadığı — anlamına gelir")
+	level1 := warehouseLevel(ctx, t, item1, warehouseA)
+	require.Equal(t, compensationStock1, level1.StockedQuantity,
+		"the PHYSICAL quantity must not change at all: releasing erases an unconfirmed "+
+			"promise, deducting from stock happens only on confirmation")
+	require.Equal(t, int64(0), level1.ReservedQuantity,
+		"the first item's reserved quantity must return to ZERO; staying different from "+
+			"zero means the promise is still standing — that is, that the compensation "+
+			"did not run")
 
-	// --- 3) ikinci kaleme HİÇ dokunulmamış olmalı ---
+	// --- 3) the second item must NOT have been touched at all ---
 	//
-	// Aday listesi boşken kısmi bir ayırma (eldeki 1 adet) denenmiş olsaydı,
-	// sepetin tamamı karşılanamadığı hâlde stok geçici olarak kilitlenirdi.
-	require.Equal(t, oncekiSatilabilir2, satilabilirAdet(ctx, t, kalem2),
-		"ikinci kalemin satılabilir adedi hiç değişmemeli; ayırma ya TAMAMEN olur "+
-			"ya hiç olmaz")
-	for _, depo := range []string{depoA, depoB} {
-		require.Equal(t, int64(0), depoSeviyesi(ctx, t, kalem2, depo).ReservedQuantity,
-			"%s deposunda ikinci kalem için rezerve adet doğmamalı", depo)
+	// Had a partial reservation (the 1 unit on hand) been attempted while the
+	// candidate list was empty, stock would have been locked temporarily even
+	// though the whole cart could not be fulfilled.
+	require.Equal(t, previousSellable2, sellableQuantity(ctx, t, item2),
+		"the second item's sellable quantity must not change at all; a reservation "+
+			"either happens COMPLETELY or does not happen")
+	for _, warehouse := range []string{warehouseA, warehouseB} {
+		require.Equal(t, int64(0), warehouseLevel(ctx, t, item2, warehouse).ReservedQuantity,
+			"no reserved quantity must come into existence for the second item in warehouse %s", warehouse)
 	}
 
-	// --- 4) sepet açık kalmalı ---
-	sepet, err = sepetSvc.GetCart(ctx, sepetID)
-	require.NoError(t, err, "sepet modülünden okunabilmeli")
-	require.False(t, sepet.Completed(),
-		"sepet tamamlanmış damgalanMAMALI; müşteri adedi düşürüp yeniden "+
-			"deneyebilmelidir")
+	// --- 4) the cart must stay open ---
+	cart, err = cartSvc.GetCart(ctx, cartID)
+	require.NoError(t, err, "the cart must be readable from the cart module")
+	require.False(t, cart.Completed(),
+		"the cart must NOT be stamped completed; the customer must be able to lower the "+
+			"quantity and try again")
 }
 
-// Bildirilen lokasyon senaryosunun ELLE hesaplanmış tutarları.
+// The HAND-computed amounts of the declared-location scenario.
 //
-//	15_000 × 2 = 30_000 ara toplam
-//	30_000 × %20 = 6_000 vergi
-//	30_000 - 0 + 6_000 + 0 = 36_000 genel toplam
+//	15_000 × 2 = 30_000 subtotal
+//	30_000 × 20% = 6_000 tax
+//	30_000 - 0 + 6_000 + 0 = 36_000 grand total
 const (
-	bildirilenFiyat          int64 = 15_000
-	bildirilenAdet           int64 = 2
-	bildirilenAraToplam      int64 = 30_000
-	bildirilenVergi          int64 = 6_000
-	bildirilenToplam         int64 = 36_000
-	bildirilenDepoBasinaStok int64 = 4
-	// bildirilenKalan tahsilat sonrası bildirilen depodaki fiziksel adettir:
-	// 4 - 2.
-	bildirilenKalan int64 = 2
+	declaredPrice             int64 = 15_000
+	declaredQuantity          int64 = 2
+	declaredSubtotal          int64 = 30_000
+	declaredTax               int64 = 6_000
+	declaredTotal             int64 = 36_000
+	declaredStockPerWarehouse int64 = 4
+	// declaredRemaining is the physical quantity in the declared warehouse after
+	// capture: 4 - 2.
+	declaredRemaining int64 = 2
 )
 
-// TestBildirilenLokasyonSecimYaptirmaz lokasyonu BİLDİREN çağrının eski
-// davranışının birebir korunduğunu kanıtlar.
+// TestDeclaredLocationSkipsSelection proves that the old behaviour of a call
+// that DECLARES a location is preserved exactly.
 //
-// Geriye uyumluluk testi, çok depolu kurulumda anlamlı olacak şekilde
-// kurgulanır: kalemin stoğu İKİ depoda da yeterlidir, yani sıralama yapılsaydı
-// gerçekten bir tercih olurdu. Bildirilen deponun DIŞINDAKİ depoya, politikanın
-// onu kesinlikle başa koyacağı bir öncelik yazılır; böylece rezervasyonun
-// bildirilen depoda açılması, akışın kargo modülüne hiç sormadığının kanıtı
-// olur.
+// The backward-compatibility test is set up so that it means something in a
+// multi-warehouse installation: the item's stock is sufficient in BOTH
+// warehouses, so had ordering been done there would genuinely have been a
+// preference. A priority that the policy would certainly put first is written
+// onto the warehouse OUTSIDE the declared one; that way the reservation being
+// opened in the declared warehouse becomes proof that the workflow never asked
+// the fulfillment module.
 //
-// Ayırt edicilik POLİTİKAYLA kurulur, kimlik sırasıyla DEĞİL. Eskiden bu test
-// "kimliği büyük olanı bildir" diyordu ve iddiası eşitliği bozan kurala
-// bağlıydı; o kural bir gün değişirse test düşmez, sessizce AYIRT EDİCİLİĞİNİ
-// kaybederdi.
+// The discriminating power is built with the POLICY, NOT with ID order. This
+// test used to say "declare the one with the larger ID" and its claim depended
+// on the tie-breaking rule; if that rule ever changed the test would not fail,
+// it would quietly lose its DISCRIMINATING POWER.
 //
-// Kurgu iki yönlü seçilir ve bu bilinçlidir: bildirilen depo, politikanın
-// ELEYECEĞİ depodur (başka bir bölgeye bağlıdır), diğeri ise politikanın başa
-// koyacağı depodur. Böylece akış kargo modülüne sorsaydı iki farklı yoldan da
-// DÜŞERDİ — tek aday olarak sorulsa eleme boş küme üretip siparişi düşürürdü,
-// iki aday olarak sorulsa diğer depo seçilirdi. Tek yönlü bir kurgu (yalnızca
-// "diğerine öncelik yaz") ikincisini yakalar ama birincisini kaçırırdı: talimat
-// yolu adayları zaten tek elemana indiriyor ve tek adayın sıralanması onu yine
-// döndürürdü.
+// The setup is chosen to cut both ways and that is deliberate: the declared
+// warehouse is the one the policy WOULD ELIMINATE (it is bound to another
+// region), and the other one is the one the policy would put first. That way,
+// had the workflow asked the fulfillment module, it would have FAILED along two
+// different paths — asked with a single candidate, elimination would have
+// produced an empty set and dropped the order; asked with two candidates, the
+// other warehouse would have been chosen. A one-way setup (only "write a
+// priority onto the other one") catches the second but would miss the first: the
+// instruction path already reduces the candidates to a single element and
+// ordering a single candidate would return it again.
 //
-// Bildirilen lokasyon bir tercih değil TALİMATTIR: belirli bir depodan çıkacak
-// bir yönetim siparişi ya da tek depolu bir kurulum, seçimin hiç yapılmamasını
-// ister.
-func TestBildirilenLokasyonSecimYaptirmaz(t *testing.T) {
+// A declared location is not a preference but an INSTRUCTION: an admin order
+// that is to leave a specific warehouse, or a single-warehouse installation,
+// wants the selection never to be made at all.
+func TestDeclaredLocationSkipsSelection(t *testing.T) {
 	ctx := t.Context()
 
-	musteriID, eposta := yeniMusteri(ctx, t)
-	depoBir := yeniDepo(ctx, t, "E2E Bildirilen Depo 1")
-	depoIki := yeniDepo(ctx, t, "E2E Bildirilen Depo 2")
+	customerID, email := newCustomer(ctx, t)
+	warehouseOne := newWarehouse(ctx, t, "E2E Declared Warehouse 1")
+	warehouseTwo := newWarehouse(ctx, t, "E2E Declared Warehouse 2")
 
-	// Bildirilen depo depoBir'dir ve politikaya göre GEÇERSİZDİR: yalnızca
-	// başka bir bölgeye hizmet eder. depoIki ise sepetin bölgesine hizmet eder
-	// ve önceliklidir. Sorulsaydı sonuç ya sipariş düşmesi ya da depoIki
-	// olurdu; ikisi de bu testi düşürür.
-	bildirilenDepo, politikaninSececegi := depoBir, depoIki
-	depoPolitikasi(ctx, t, bildirilenDepo, 0, "reg_bambaska_bir_bolge")
-	depoPolitikasi(ctx, t, politikaninSececegi, -1, vergiliBolgeID)
+	// The declared warehouse is warehouseOne and it is INVALID according to the
+	// policy: it serves only another region. warehouseTwo serves the cart's
+	// region and has priority. Had it been asked, the outcome would have been
+	// either the order dropping or warehouseTwo; both fail this test.
+	declaredWarehouse, policyWouldPick := warehouseOne, warehouseTwo
+	warehousePolicy(ctx, t, declaredWarehouse, 0, "reg_a_completely_different_region")
+	warehousePolicy(ctx, t, policyWouldPick, -1, taxedRegionID)
 
-	varyantID, stokKalemID := depolaraDagilmisVaryant(ctx, t, "E2E Bildirilen Lokasyon Ürünü",
-		map[string]int64{vergiliParaBirimi: bildirilenFiyat},
+	variantID, stockItemID := variantAcrossWarehouses(ctx, t, "E2E Declared Location Product",
+		map[string]int64{taxedCurrency: declaredPrice},
 		map[string]int64{
-			bildirilenDepo:      bildirilenDepoBasinaStok,
-			politikaninSececegi: bildirilenDepoBasinaStok,
+			declaredWarehouse: declaredStockPerWarehouse,
+			policyWouldPick:   declaredStockPerWarehouse,
 		})
 
-	sepetID, toplamlar := sepetHazirla(ctx, t, musteriID, varyantID, bildirilenAdet)
-	toplamlariDogrula(t, toplamlar, beklenenToplam{
-		araToplam: bildirilenAraToplam,
-		indirim:   0,
-		vergi:     bildirilenVergi,
-		kargo:     0,
-		toplam:    bildirilenToplam,
-	}, "bildirilen lokasyon sepeti hazırlandıktan sonra")
+	cartID, totals := prepareCart(ctx, t, customerID, variantID, declaredQuantity)
+	assertTotals(t, totals, expectedTotal{
+		subtotal: declaredSubtotal,
+		discount: 0,
+		tax:      declaredTax,
+		shipping: 0,
+		total:    declaredTotal,
+	}, "after the declared-location cart was prepared")
 
-	sonuc, err := siparisAkislari.CompleteCart(ctx, checkoutwf.CompleteCartInput{
-		CartID:            sepetID,
-		LocationID:        bildirilenDepo,
+	result, err := orderWorkflows.CompleteCart(ctx, checkoutwf.CompleteCartInput{
+		CartID:            cartID,
+		LocationID:        declaredWarehouse,
 		PaymentProviderID: manual.ID,
-		PaymentData:       odemeDavranisi(t, manual.OutcomeAuthorize),
-		Email:             eposta,
-		ExpectedTotal:     bildirilenToplam,
+		PaymentData:       paymentBehavior(t, manual.OutcomeAuthorize),
+		Email:             email,
+		ExpectedTotal:     declaredTotal,
 	})
 	require.NoError(t, err,
-		"lokasyon bildiren çağrı eskisi gibi çalışmalı; çok depo desteği eski yolu "+
-			"BOZMAMALIDIR")
-	require.True(t, sonuc.ReservationsConfirmed, "rezervasyonlar kesinleştirilmeli")
-	require.Len(t, sonuc.ReservationIDs, 1, "tek satır için tek rezervasyon alınmalı")
+		"a call that declares a location must work as it used to; multi-warehouse "+
+			"support must NOT BREAK the old path")
+	require.True(t, result.ReservationsConfirmed, "the reservations must be confirmed")
+	require.Len(t, result.ReservationIDs, 1, "a single reservation must be taken for a single line")
 
-	rezervasyon, err := stokSvc.GetReservation(ctx, sonuc.ReservationIDs[0])
-	require.NoError(t, err, "rezervasyon stok modülünden okunabilmeli")
-	require.Equal(t, bildirilenDepo, rezervasyon.LocationID,
-		"rezervasyon BİLDİRİLEN depoda açılmalı — politikaya göre GEÇERSİZ olsa bile. "+
-			"Diğer depo (%s) yeterli stok taşıyor, sepetin bölgesine hizmet ediyor ve "+
-			"önceliklidir; bildirilenin dışında bir depo, akışın çağıranın talimatını "+
-			"'aday' sayıp sessizce değiştirdiği anlamına gelir", politikaninSececegi)
+	reservation, err := inventorySvc.GetReservation(ctx, result.ReservationIDs[0])
+	require.NoError(t, err, "the reservation must be readable from the inventory module")
+	require.Equal(t, declaredWarehouse, reservation.LocationID,
+		"the reservation must be opened in the DECLARED warehouse — even though it is "+
+			"INVALID according to the policy. The other warehouse (%s) carries enough "+
+			"stock, serves the cart's region and has priority; a warehouse other than the "+
+			"declared one means the workflow treated the caller's instruction as a "+
+			"'candidate' and quietly changed it", policyWouldPick)
 
-	seviyeBildirilen := depoSeviyesi(ctx, t, stokKalemID, bildirilenDepo)
-	require.Equal(t, bildirilenKalan, seviyeBildirilen.StockedQuantity,
-		"bildirilen deponun FİZİKSEL adedi azalmalı (%d - %d)",
-		bildirilenDepoBasinaStok, bildirilenAdet)
-	require.Equal(t, int64(0), seviyeBildirilen.ReservedQuantity,
-		"onaydan sonra rezerve adet sıfırlanmalı")
+	declaredLevel := warehouseLevel(ctx, t, stockItemID, declaredWarehouse)
+	require.Equal(t, declaredRemaining, declaredLevel.StockedQuantity,
+		"the declared warehouse's PHYSICAL quantity must go down (%d - %d)",
+		declaredStockPerWarehouse, declaredQuantity)
+	require.Equal(t, int64(0), declaredLevel.ReservedQuantity,
+		"after confirmation the reserved quantity must be zeroed")
 
-	seviyeDiger := depoSeviyesi(ctx, t, stokKalemID, politikaninSececegi)
-	require.Equal(t, bildirilenDepoBasinaStok, seviyeDiger.StockedQuantity,
-		"diğer deponun stoğuna HİÇ dokunulmamalı")
-	require.Equal(t, int64(0), seviyeDiger.ReservedQuantity,
-		"diğer depoda rezerve adet doğmamalı; doğması, adedin iki depoya bölündüğü "+
-			"anlamına gelirdi")
+	otherLevel := warehouseLevel(ctx, t, stockItemID, policyWouldPick)
+	require.Equal(t, declaredStockPerWarehouse, otherLevel.StockedQuantity,
+		"the other warehouse's stock must NOT be touched at all")
+	require.Equal(t, int64(0), otherLevel.ReservedQuantity,
+		"no reserved quantity must come into existence in the other warehouse; it "+
+			"coming into existence would have meant the quantity was split across two "+
+			"warehouses")
 }
 
-// yeniDepo bir stok lokasyonu oluşturur ve kimliğini döner.
+// newWarehouse creates a stock location and returns its ID.
 //
-// Depo TestMain'de değil TEST BAŞINA kurulur ([stokLokasyonID]'nin tersine):
-// bu dosyanın senaryoları "hangi depoda ne kadar stok var" olgusuna bakar ve
-// paylaşılan bir depo, aday listesini başka testlerin kurulumuna bağımlı
-// kılardı. Ada sayaç eklenir ki aynı senaryo iki kez koşsa bile depolar
-// kayıtta ayırt edilebilsin.
+// The warehouse is set up PER TEST rather than in TestMain (unlike
+// [stockLocationID]): this file's scenarios look at the fact of "how much stock
+// is in which warehouse", and a shared warehouse would make the candidate list
+// dependent on other tests' setup. A counter is appended to the name so that the
+// warehouses stay distinguishable in the records even if the same scenario runs
+// twice.
 //
-// Ülke kodu vergili bölgeninkiyle aynıdır ama KARARA GİRMEZ: kargo politikası
-// deponun ülkesine değil, kendi şemasındaki bölge BAĞLARINA bakar ve o bağlar
-// ayrıca yazılır (bkz. [depoPolitikasi]). Fikstür yalnızca gerçekçi kalır.
-func yeniDepo(ctx context.Context, t *testing.T, ad string) string {
+// The country code is the same as the taxed region's but DOES NOT ENTER THE
+// DECISION: the shipping policy looks not at the warehouse's country but at the
+// region LINKS in its own schema, and those links are written separately (see
+// [warehousePolicy]). The fixture merely stays realistic.
+func newWarehouse(ctx context.Context, t *testing.T, name string) string {
 	t.Helper()
 
-	sira := fiksturSayaci.Add(1)
-	lokasyon, err := stokSvc.CreateStockLocation(ctx, inventorysvc.CreateStockLocationInput{
-		Name:        fmt.Sprintf("%s #%d", ad, sira),
-		CountryCode: vergiliUlke,
+	seq := fixtureCounter.Add(1)
+	location, err := inventorySvc.CreateStockLocation(ctx, inventorysvc.CreateStockLocationInput{
+		Name:        fmt.Sprintf("%s #%d", name, seq),
+		CountryCode: taxedCountry,
 	})
-	require.NoError(t, err, "fikstür deposu oluşturulamadı")
-	return lokasyon.ID
+	require.NoError(t, err, "the fixture warehouse could not be created")
+	return location.ID
 }
 
-// depolaraDagilmisVaryant fiyatı olan bir varyant kurar, stoğunu VERİLEN
-// depolara dağıtır ve varyant ile stok kaleminin kimliklerini döner.
+// variantAcrossWarehouses sets up a variant with a price, spreads its stock over
+// the GIVEN warehouses and returns the IDs of the variant and of the inventory
+// item.
 //
-// [yeniStokluVaryant]'tan tek farkı stoğun nereye yazıldığıdır: orası
-// paylaşılan tek depoyu kullanır, burası depo başına adet alır. Ayrı bir
-// fikstür olması bilinçlidir — paylaşılan fikstürü çok depolu hâle getirmek,
-// hiçbiri depolarla ilgilenmeyen onlarca senaryoyu da yeniden yazmak olurdu.
+// Its only difference from [newStockedVariant] is where the stock is written:
+// that one uses the single shared warehouse, this one takes a quantity per
+// warehouse. Being a separate fixture is deliberate — making the shared fixture
+// multi-warehouse would have meant rewriting dozens of scenarios that have no
+// interest in warehouses at all.
 //
-// Depolar KİMLİĞE göre sıralı gezilir: harita üzerinde dönmek seviyelerin
-// yazılma sırasını koşudan koşuya değiştirir ve bir arıza ayıklanamaz hâle
-// gelirdi.
-func depolaraDagilmisVaryant(
+// The warehouses are walked in ID order: ranging over the map would change the
+// order in which the levels are written from run to run and a fault would become
+// impossible to debug.
+func variantAcrossWarehouses(
 	ctx context.Context,
 	t *testing.T,
-	baslik string,
-	fiyatlar map[string]int64,
-	stoklar map[string]int64,
-) (varyantID, stokKalemID string) {
+	title string,
+	prices map[string]int64,
+	stocks map[string]int64,
+) (variantID, stockItemID string) {
 	t.Helper()
 
-	require.NotEmpty(t, stoklar,
-		"çok depolu fikstür en az bir depo istemeli; depo verilmezse kalem hiç "+
-			"seviyelenmez ve senaryo 'stoğu yok' durumunu sınamaya başlardı")
+	require.NotEmpty(t, stocks,
+		"a multi-warehouse fixture must ask for at least one warehouse; with no "+
+			"warehouse given the item is never levelled and the scenario would start "+
+			"testing the 'it has no stock' case")
 
-	varyantID = yeniVaryant(ctx, t, baslik, fiyatlar)
+	variantID = newVariant(ctx, t, title, prices)
 
-	sira := fiksturSayaci.Add(1)
-	kalem, err := stokSvc.CreateInventoryItem(ctx, inventorysvc.CreateInventoryItemInput{
-		SKU:   fmt.Sprintf("E2E-DEPO-SKU-%d", sira),
-		Title: baslik,
+	seq := fixtureCounter.Add(1)
+	item, err := inventorySvc.CreateInventoryItem(ctx, inventorysvc.CreateInventoryItemInput{
+		SKU:   fmt.Sprintf("E2E-WAREHOUSE-SKU-%d", seq),
+		Title: title,
 	})
-	require.NoError(t, err, "fikstür stok kalemi oluşturulamadı")
+	require.NoError(t, err, "the fixture inventory item could not be created")
 
-	require.NoError(t, urunSvc.SetVariantInventoryItem(ctx, varyantID, kalem.ID),
-		"varyant stok kalemine bağlanamadı; bağ olmadan akış varyantı stoksuz sayar")
+	require.NoError(t, productSvc.SetVariantInventoryItem(ctx, variantID, item.ID),
+		"the variant could not be linked to the inventory item; without the link the "+
+			"workflow treats the variant as stockless")
 
-	for _, lokasyonID := range slices.Sorted(maps.Keys(stoklar)) {
-		seviye, err := stokSvc.SetInventoryLevel(ctx, kalem.ID, lokasyonID, stoklar[lokasyonID])
-		require.NoError(t, err, "%s deposunda fikstür stok seviyesi yazılamadı", lokasyonID)
-		require.Equal(t, stoklar[lokasyonID], seviye.Available(),
-			"yeni seviyede satılabilir adet fiziksel adede eşit olmalı; eşit değilse "+
-				"fikstür daha başlarken rezerve stok taşıyor demektir")
+	for _, locationID := range slices.Sorted(maps.Keys(stocks)) {
+		level, err := inventorySvc.SetInventoryLevel(ctx, item.ID, locationID, stocks[locationID])
+		require.NoError(t, err, "the fixture stock level could not be written in warehouse %s", locationID)
+		require.Equal(t, stocks[locationID], level.Available(),
+			"in a new level the sellable quantity must equal the physical quantity; if it "+
+				"does not, the fixture is already carrying reserved stock at the outset")
 	}
 
-	return varyantID, kalem.ID
+	return variantID, item.ID
 }
 
-// ikiSatirliSepet kayıtlı bir müşteriye sepet açar, İKİ satır ekler ve sepetin
-// kimliğiyle hesaplanmış toplamlarını döner.
+// twoLineCart opens a cart for a registered customer, adds TWO lines and returns
+// the cart's ID together with its computed totals.
 //
-// [sepetHazirla] tek satır ekler; çok depolu senaryolar en az iki satır ister
-// çünkü sınanan şey satırların FARKLI depolardan ayrılabilmesidir. Satırlar
-// verilen sırayla eklenir ve sıra bir ayrıntı değildir: sepet satırları
-// (created_at, id) sırasıyla okunur, plan o sırayı devralır, dolayısıyla telafi
-// senaryosunda "önceki satır" ilk eklenen satırdır.
+// [prepareCart] adds a single line; multi-warehouse scenarios want at least two,
+// because what is under test is that the lines can be reserved from DIFFERENT
+// warehouses. The lines are added in the given order and the order is not a
+// detail: cart lines are read in (created_at, id) order, the plan inherits that
+// order, and therefore in the compensation scenario the "previous line" is the
+// first line added.
 //
-// Sepet KAYITLI müşteriye açılır; gerekçe [sepetHazirla]'dakiyle aynıdır:
-// senaryolar siparişleri müşteriye göre okur ve misafir siparişleri
-// birbirininkini görürdü.
-func ikiSatirliSepet(
+// The cart is opened for a REGISTERED customer; the reason is the same as in
+// [prepareCart]: the scenarios read orders by customer and guest orders would
+// see each other's.
+func twoLineCart(
 	ctx context.Context,
 	t *testing.T,
-	musteriID, ilkVaryantID string,
-	ilkAdet int64,
-	ikinciVaryantID string,
-	ikinciAdet int64,
-) (sepetID string, toplamlar cartwf.Totals) {
+	customerID, firstVariantID string,
+	firstQuantity int64,
+	secondVariantID string,
+	secondQuantity int64,
+) (cartID string, totals cartwf.Totals) {
 	t.Helper()
 
-	sepet, err := akislar.CreateCart(ctx, cartwf.CreateCartInput{
-		CountryCode: vergiliUlke,
-		CustomerID:  musteriID,
+	cart, err := workflows.CreateCart(ctx, cartwf.CreateCartInput{
+		CountryCode: taxedCountry,
+		CustomerID:  customerID,
 	})
-	require.NoError(t, err, "fikstür sepeti açılamadı")
+	require.NoError(t, err, "the fixture cart could not be opened")
 
-	_, err = akislar.AddLineItem(ctx, cartwf.AddLineItemInput{
-		CartID:    sepet.CartID,
-		VariantID: ilkVaryantID,
-		Quantity:  ilkAdet,
+	_, err = workflows.AddLineItem(ctx, cartwf.AddLineItemInput{
+		CartID:    cart.CartID,
+		VariantID: firstVariantID,
+		Quantity:  firstQuantity,
 	})
-	require.NoError(t, err, "fikstür sepetine ilk satır eklenemedi")
+	require.NoError(t, err, "the first line could not be added to the fixture cart")
 
-	ikinci, err := akislar.AddLineItem(ctx, cartwf.AddLineItemInput{
-		CartID:    sepet.CartID,
-		VariantID: ikinciVaryantID,
-		Quantity:  ikinciAdet,
+	second, err := workflows.AddLineItem(ctx, cartwf.AddLineItemInput{
+		CartID:    cart.CartID,
+		VariantID: secondVariantID,
+		Quantity:  secondQuantity,
 	})
-	require.NoError(t, err, "fikstür sepetine ikinci satır eklenemedi")
+	require.NoError(t, err, "the second line could not be added to the fixture cart")
 
-	return sepet.CartID, ikinci.Totals
+	return cart.CartID, second.Totals
 }
 
-// stokSeviyeleri kalemin TÜM lokasyonlardaki seviyelerini döner.
+// stockLevels returns the item's levels in ALL locations.
 //
-// [stokSeviyesi] burada kullanılamaz: o, kalemin TEK bir lokasyonda
-// seviyelendiğini şart koşar ve bu dosyanın kalemleri bilinçli olarak birden
-// çok depoya yayılır.
-func stokSeviyeleri(ctx context.Context, t *testing.T, stokKalemID string) []inventorymodels.InventoryLevel {
+// [stockLevel] cannot be used here: it requires the item to be levelled in a
+// SINGLE location, and this file's items are deliberately spread over more than
+// one warehouse.
+func stockLevels(ctx context.Context, t *testing.T, stockItemID string) []inventorymodels.InventoryLevel {
 	t.Helper()
 
-	seviyeler, err := stokSvc.ListInventoryLevels(ctx, stokKalemID)
-	require.NoError(t, err, "stok seviyeleri okunamadı")
-	return seviyeler
+	levels, err := inventorySvc.ListInventoryLevels(ctx, stockItemID)
+	require.NoError(t, err, "the stock levels could not be read")
+	return levels
 }
 
-// depoSeviyesi kalemin BELİRLİ bir depodaki seviyesini döner.
+// warehouseLevel returns the item's level in a SPECIFIC warehouse.
 //
-// Seviye aranarak bulunur, dilimin sırasına güvenilmez: sıra stok modülünün
-// sorgusuna aittir ve değişmesi, testin sessizce yanlış deponun adetlerini
-// doğrulamasına yol açardı. Seviye bulunamazsa test DÜŞER — "o depoda seviye
-// yok" ile "o depoda adet sıfır" farklı şeylerdir ve ikincisini varsaymak,
-// rezervasyonun hiç dokunmadığı bir depoyu doğrulanmış saymak olurdu.
-func depoSeviyesi(
+// The level is found by searching, the slice's order is not trusted: the order
+// belongs to the inventory module's query and a change in it would lead the test
+// to quietly verify the quantities of the wrong warehouse. If the level cannot
+// be found the test FAILS — "there is no level in that warehouse" and "the
+// quantity in that warehouse is zero" are different things, and assuming the
+// second would mean counting a warehouse the reservation never touched as
+// verified.
+func warehouseLevel(
 	ctx context.Context,
 	t *testing.T,
-	stokKalemID, lokasyonID string,
+	stockItemID, locationID string,
 ) inventorymodels.InventoryLevel {
 	t.Helper()
 
-	for _, seviye := range stokSeviyeleri(ctx, t, stokKalemID) {
-		if seviye.LocationID == lokasyonID {
-			return seviye
+	for _, level := range stockLevels(ctx, t, stockItemID) {
+		if level.LocationID == locationID {
+			return level
 		}
 	}
 
-	require.FailNow(t, "stok seviyesi bulunamadı",
-		"%s kalemi %s deposunda seviyelenmiş olmalı", stokKalemID, lokasyonID)
+	require.FailNow(t, "stock level not found",
+		"item %s must be levelled in warehouse %s", stockItemID, locationID)
 	return inventorymodels.InventoryLevel{}
 }
 
-// rezervasyonlariOku akıştan dönen rezervasyon kimliklerini GERÇEK stok
-// modülünden okur ve STOK KALEMİNE göre eşler.
+// readReservations reads the reservation IDs returned by the workflow from the
+// REAL inventory module and maps them BY INVENTORY ITEM.
 //
-// Eşleme kimliğe göre yapılır, dilimin sırasına göre değil: sıra akışın satır
-// sırasından gelir ve ona bağlı bir iddia, sıra değiştiği gün yanlış satırı
-// doğrulamış olurdu.
+// The mapping is done by ID, not by the slice's order: the order comes from the
+// workflow's line order and an assertion bound to it would have verified the
+// wrong line the day that order changed.
 //
-// Okuma stok modülünden yapılır, akışın döndürdüğü bir alandan DEĞİL: sınanan
-// iddia, rezervasyonun stok modülünün DEFTERİNDE seçilen depoda açıldığıdır.
-// Akışın kendi çıktısına bakmak yalnızca akışın ne söylediğini doğrulardı.
-func rezervasyonlariOku(
+// The reading is done from the inventory module, NOT from a field the workflow
+// returns: the claim under test is that the reservation was opened in the chosen
+// warehouse in the inventory module's LEDGER. Looking at the workflow's own
+// output would only verify what the workflow says.
+func readReservations(
 	ctx context.Context,
 	t *testing.T,
-	kimlikler []string,
+	ids []string,
 ) map[string]inventorymodels.Reservation {
 	t.Helper()
 
-	kalemBasina := make(map[string]inventorymodels.Reservation, len(kimlikler))
-	for _, kimlik := range kimlikler {
-		rezervasyon, err := stokSvc.GetReservation(ctx, kimlik)
-		require.NoError(t, err, "%s rezervasyonu stok modülünden okunamadı", kimlik)
-		_, tekrar := kalemBasina[rezervasyon.InventoryItemID]
-		require.False(t, tekrar,
-			"aynı stok kalemi için İKİ rezervasyon alınmış (%s); her sepet satırı "+
-				"tek bir rezervasyon almalı", rezervasyon.InventoryItemID)
-		kalemBasina[rezervasyon.InventoryItemID] = rezervasyon
+	byItem := make(map[string]inventorymodels.Reservation, len(ids))
+	for _, id := range ids {
+		reservation, err := inventorySvc.GetReservation(ctx, id)
+		require.NoError(t, err, "reservation %s could not be read from the inventory module", id)
+		_, duplicate := byItem[reservation.InventoryItemID]
+		require.False(t, duplicate,
+			"TWO reservations were taken for the same inventory item (%s); every cart "+
+				"line must take a single reservation", reservation.InventoryItemID)
+		byItem[reservation.InventoryItemID] = reservation
 	}
-	return kalemBasina
+	return byItem
 }
 
-// depoPolitikasi bir depoya kargo politikası yazar.
+// warehousePolicy writes a shipping policy onto a warehouse.
 //
-// Bölge listesi BOŞ verilirse depo tüm bölgelere hizmet eder; yazılan tek şey
-// önceliktir. Fikstür kargo modülünün GERÇEK servisini çağırır — politikayı
-// doğrudan tabloya yazmak, servisin doğrulamasını ve işlem sınırını atlayarak
-// üretimde oluşamayacak bir durum kurardı.
-func depoPolitikasi(ctx context.Context, t *testing.T, depoID string, oncelik int64, bolgeler ...string) {
+// If the region list is given EMPTY the warehouse serves all regions; the only
+// thing written is the priority. The fixture calls the fulfillment module's REAL
+// service — writing the policy straight into the table would skip the service's
+// validation and its transaction boundary and would set up a state that cannot
+// arise in production.
+func warehousePolicy(ctx context.Context, t *testing.T, warehouseID string, priority int64, regions ...string) {
 	t.Helper()
 
-	_, err := kargoSvc.SetShippingLocation(ctx, fulfillmentsvc.SetShippingLocationInput{
-		LocationID: depoID,
-		Priority:   oncelik,
-		RegionIDs:  bolgeler,
+	_, err := shippingSvc.SetShippingLocation(ctx, fulfillmentsvc.SetShippingLocationInput{
+		LocationID: warehouseID,
+		Priority:   priority,
+		RegionIDs:  regions,
 	})
-	require.NoError(t, err, "depo kargo politikası yazılamadı: %s", depoID)
+	require.NoError(t, err, "the warehouse shipping policy could not be written: %s", warehouseID)
 }
 
-// Politika senaryolarının ELLE hesaplanmış tutarları.
+// The HAND-computed amounts of the policy scenarios.
 //
-//	9_000 × 2 = 18_000 ara toplam
-//	18_000 × %20 = 3_600 vergi
-//	18_000 - 0 + 3_600 + 0 = 21_600 genel toplam
+//	9_000 × 2 = 18_000 subtotal
+//	18_000 × 20% = 3_600 tax
+//	18_000 - 0 + 3_600 + 0 = 21_600 grand total
 const (
-	politikaFiyat          int64 = 9_000
-	politikaAdet           int64 = 2
-	politikaAraToplam      int64 = 18_000
-	politikaVergi          int64 = 3_600
-	politikaToplam         int64 = 21_600
-	politikaDepoBasinaStok int64 = 5
-	// politikaKalan tahsilat sonrası seçilen depodaki fiziksel adettir: 5 - 2.
-	politikaKalan int64 = 3
+	policyPrice             int64 = 9_000
+	policyQuantity          int64 = 2
+	policySubtotal          int64 = 18_000
+	policyTax               int64 = 3_600
+	policyTotal             int64 = 21_600
+	policyStockPerWarehouse int64 = 5
+	// policyRemaining is the physical quantity in the chosen warehouse after
+	// capture: 5 - 2.
+	policyRemaining int64 = 3
 )
 
-// TestPolitikaOncelikliDepoyuSecer işletmecinin yazdığı ÖNCELİĞİN gerçek
-// yığında karara girdiğini kanıtlar.
+// TestPolicySelectsPrioritizedWarehouse proves that the PRIORITY written by the
+// operator enters the decision in the real stack.
 //
-// Kurgu, sonucun başka hiçbir kuralla açıklanamayacağı şekilde seçilir: iki
-// depo da yeterli stok taşır (yani stok olgusu ikisini de aday yapar), ikisi de
-// tüm bölgelere hizmet eder (yani eleme hiçbirini düşürmez) ve öncelik verilen
-// depo, eşitliği bozan kuralın (kimliği küçük olan öne) SEÇMEYECEĞİ depodur.
-// Geriye tek açıklama kalır: sıralamayı öncelik belirledi.
+// The setup is chosen so that the outcome cannot be explained by any other rule:
+// both warehouses carry enough stock (so the stock fact makes both of them
+// candidates), both serve all regions (so elimination drops neither) and the
+// warehouse given the priority is the one the tie-breaking rule (smaller ID
+// first) WOULD NOT SELECT. Only one explanation is left: the ordering was
+// determined by the priority.
 //
-// Kimlik karşılaştırması koşu sırasında yapılır. "İkinci oluşturulanın kimliği
-// büyüktür" varsayımı, kimlik üreticisi değiştiği gün testi düşürmez, sessizce
-// anlamsızlaştırırdı — o yüzden varsayım değil ÖLÇÜM kullanılır.
-func TestPolitikaOncelikliDepoyuSecer(t *testing.T) {
+// The ID comparison is made during the run. The assumption "the second one
+// created has the larger ID" would not fail the test the day the ID generator
+// changes, it would quietly make it meaningless — so a MEASUREMENT is used
+// rather than an assumption.
+func TestPolicySelectsPrioritizedWarehouse(t *testing.T) {
 	ctx := t.Context()
 
-	musteriID, eposta := yeniMusteri(ctx, t)
-	depoBir := yeniDepo(ctx, t, "E2E Politika Öncelik 1")
-	depoIki := yeniDepo(ctx, t, "E2E Politika Öncelik 2")
+	customerID, email := newCustomer(ctx, t)
+	warehouseOne := newWarehouse(ctx, t, "E2E Policy Priority 1")
+	warehouseTwo := newWarehouse(ctx, t, "E2E Policy Priority 2")
 
-	kucukKimlik, buyukKimlik := depoBir, depoIki
-	if buyukKimlik < kucukKimlik {
-		kucukKimlik, buyukKimlik = buyukKimlik, kucukKimlik
+	smallerID, largerID := warehouseOne, warehouseTwo
+	if largerID < smallerID {
+		smallerID, largerID = largerID, smallerID
 	}
 
-	// Öncelik KİMLİĞİ BÜYÜK olana yazılır: eşitliği bozan kural onu SONA
-	// koyardı, politika ise başa alır.
-	depoPolitikasi(ctx, t, buyukKimlik, -1)
+	// The priority is written onto the one with the LARGER ID: the tie-breaking
+	// rule would put it LAST, the policy pulls it first.
+	warehousePolicy(ctx, t, largerID, -1)
 
-	varyantID, stokKalemID := depolaraDagilmisVaryant(ctx, t, "E2E Politika Öncelik Ürünü",
-		map[string]int64{vergiliParaBirimi: politikaFiyat},
+	variantID, stockItemID := variantAcrossWarehouses(ctx, t, "E2E Policy Priority Product",
+		map[string]int64{taxedCurrency: policyPrice},
 		map[string]int64{
-			kucukKimlik: politikaDepoBasinaStok,
-			buyukKimlik: politikaDepoBasinaStok,
+			smallerID: policyStockPerWarehouse,
+			largerID:  policyStockPerWarehouse,
 		})
 
-	sepetID, toplamlar := sepetHazirla(ctx, t, musteriID, varyantID, politikaAdet)
-	toplamlariDogrula(t, toplamlar, beklenenToplam{
-		araToplam: politikaAraToplam,
-		indirim:   0,
-		vergi:     politikaVergi,
-		kargo:     0,
-		toplam:    politikaToplam,
-	}, "politika sepeti hazırlandıktan sonra")
+	cartID, totals := prepareCart(ctx, t, customerID, variantID, policyQuantity)
+	assertTotals(t, totals, expectedTotal{
+		subtotal: policySubtotal,
+		discount: 0,
+		tax:      policyTax,
+		shipping: 0,
+		total:    policyTotal,
+	}, "after the policy cart was prepared")
 
-	sonuc, err := siparisAkislari.CompleteCart(ctx, checkoutwf.CompleteCartInput{
-		CartID:            sepetID,
+	result, err := orderWorkflows.CompleteCart(ctx, checkoutwf.CompleteCartInput{
+		CartID:            cartID,
 		LocationID:        "",
 		PaymentProviderID: manual.ID,
-		PaymentData:       odemeDavranisi(t, manual.OutcomeAuthorize),
-		Email:             eposta,
-		ExpectedTotal:     politikaToplam,
+		PaymentData:       paymentBehavior(t, manual.OutcomeAuthorize),
+		Email:             email,
+		ExpectedTotal:     policyTotal,
 	})
-	require.NoError(t, err, "iki depo da yeterliyken sipariş verilebilmeli: %v", err)
-	require.Len(t, sonuc.ReservationIDs, 1, "tek satır için tek rezervasyon alınmalı")
+	require.NoError(t, err, "an order must be placeable while both warehouses are sufficient: %v", err)
+	require.Len(t, result.ReservationIDs, 1, "a single reservation must be taken for a single line")
 
-	rezervasyon, err := stokSvc.GetReservation(ctx, sonuc.ReservationIDs[0])
-	require.NoError(t, err, "rezervasyon stok modülünden okunabilmeli")
-	require.Equal(t, buyukKimlik, rezervasyon.LocationID,
-		"rezervasyon ÖNCELİKLİ depoda açılmalı. Kimliği küçük olan (%s) da yeterli "+
-			"stok taşıyor ve eşitliği bozan kural onu seçerdi; sonucun onun olması, "+
-			"işletmecinin yazdığı önceliğin karara hiç girmediği anlamına gelir",
-		kucukKimlik)
+	reservation, err := inventorySvc.GetReservation(ctx, result.ReservationIDs[0])
+	require.NoError(t, err, "the reservation must be readable from the inventory module")
+	require.Equal(t, largerID, reservation.LocationID,
+		"the reservation must be opened in the PRIORITIZED warehouse. The one with the "+
+			"smaller ID (%s) also carries enough stock and the tie-breaking rule would "+
+			"have selected it; the outcome being that one means the priority written by "+
+			"the operator never entered the decision at all",
+		smallerID)
 
-	seviyeSecilen := depoSeviyesi(ctx, t, stokKalemID, buyukKimlik)
-	require.Equal(t, politikaKalan, seviyeSecilen.StockedQuantity,
-		"öncelikli deponun FİZİKSEL adedi azalmalı (%d - %d)",
-		politikaDepoBasinaStok, politikaAdet)
+	selectedLevel := warehouseLevel(ctx, t, stockItemID, largerID)
+	require.Equal(t, policyRemaining, selectedLevel.StockedQuantity,
+		"the prioritized warehouse's PHYSICAL quantity must go down (%d - %d)",
+		policyStockPerWarehouse, policyQuantity)
 
-	seviyeDiger := depoSeviyesi(ctx, t, stokKalemID, kucukKimlik)
-	require.Equal(t, politikaDepoBasinaStok, seviyeDiger.StockedQuantity,
-		"diğer deponun stoğuna HİÇ dokunulmamalı")
+	otherLevel := warehouseLevel(ctx, t, stockItemID, smallerID)
+	require.Equal(t, policyStockPerWarehouse, otherLevel.StockedQuantity,
+		"the other warehouse's stock must NOT be touched at all")
 }
 
-// TestPolitikaKapsamDisiDepoyuEler bölge bağının bir KISIT olduğunu, yani
-// aday listesinden DÜŞÜRDÜĞÜNÜ kanıtlar.
+// TestPolicyEliminatesOutOfScopeWarehouse proves that the region link is a
+// CONSTRAINT, that is, that it DROPS a warehouse from the candidate list.
 //
-// Fark önemlidir ve testin kurgusu onu ölçer: elenen depo yalnızca "sona
-// atılsaydı" da sipariş yine diğerinden çıkardı, yani sonuç aynı olurdu. Bu
-// yüzden test elemeyi tek başına sınamaz; kardeşi
-// [TestHicbirDepoBolgeyeHizmetEtmezseSiparisDuser] elenmiş bir kümenin geri
-// düşülecek yer BIRAKMADIĞINI gösterir ve ikisi birlikte "kısıt" iddiasını
-// kurar.
+// The difference matters and the test's setup measures it: had the eliminated
+// warehouse merely been "pushed to the end", the order would still have come out
+// of the other one, so the outcome would have been the same. That is why this
+// test does not exercise elimination on its own; its sibling
+// [TestNoWarehouseServingTheRegionDropsTheOrder] shows that an eliminated set
+// LEAVES NO place to fall back to, and together the two establish the
+// "constraint" claim.
 //
-// Elenen depo, öncelikle BAŞA alınmış olandır: eleme sıralamadan ÖNCE
-// çalışmasaydı sonuç o depo olurdu.
-func TestPolitikaKapsamDisiDepoyuEler(t *testing.T) {
+// The eliminated warehouse is the one that has been put FIRST by priority: had
+// elimination not run BEFORE ordering, the outcome would have been that
+// warehouse.
+func TestPolicyEliminatesOutOfScopeWarehouse(t *testing.T) {
 	ctx := t.Context()
 
-	musteriID, eposta := yeniMusteri(ctx, t)
-	kapsamDisi := yeniDepo(ctx, t, "E2E Politika Kapsam Dışı")
-	kapsamIci := yeniDepo(ctx, t, "E2E Politika Kapsam İçi")
+	customerID, email := newCustomer(ctx, t)
+	outOfScope := newWarehouse(ctx, t, "E2E Policy Out Of Scope")
+	inScope := newWarehouse(ctx, t, "E2E Policy In Scope")
 
-	// Kapsam dışı depo hem ÖNCELİKLİDİR hem de başka bir bölgeye bağlıdır.
-	// Eleme çalışmasaydı öncelik onu başa koyardı.
-	depoPolitikasi(ctx, t, kapsamDisi, -5, "reg_baska_bir_bolge")
-	depoPolitikasi(ctx, t, kapsamIci, 0, vergiliBolgeID)
+	// The out-of-scope warehouse is both PRIORITIZED and bound to another region.
+	// Had elimination not run, the priority would have put it first.
+	warehousePolicy(ctx, t, outOfScope, -5, "reg_another_region")
+	warehousePolicy(ctx, t, inScope, 0, taxedRegionID)
 
-	varyantID, stokKalemID := depolaraDagilmisVaryant(ctx, t, "E2E Politika Kapsam Ürünü",
-		map[string]int64{vergiliParaBirimi: politikaFiyat},
+	variantID, stockItemID := variantAcrossWarehouses(ctx, t, "E2E Policy Scope Product",
+		map[string]int64{taxedCurrency: policyPrice},
 		map[string]int64{
-			kapsamDisi: politikaDepoBasinaStok,
-			kapsamIci:  politikaDepoBasinaStok,
+			outOfScope: policyStockPerWarehouse,
+			inScope:    policyStockPerWarehouse,
 		})
 
-	sepetID, _ := sepetHazirla(ctx, t, musteriID, varyantID, politikaAdet)
+	cartID, _ := prepareCart(ctx, t, customerID, variantID, policyQuantity)
 
-	sonuc, err := siparisAkislari.CompleteCart(ctx, checkoutwf.CompleteCartInput{
-		CartID:            sepetID,
+	result, err := orderWorkflows.CompleteCart(ctx, checkoutwf.CompleteCartInput{
+		CartID:            cartID,
 		LocationID:        "",
 		PaymentProviderID: manual.ID,
-		PaymentData:       odemeDavranisi(t, manual.OutcomeAuthorize),
-		Email:             eposta,
-		ExpectedTotal:     politikaToplam,
+		PaymentData:       paymentBehavior(t, manual.OutcomeAuthorize),
+		Email:             email,
+		ExpectedTotal:     policyTotal,
 	})
-	require.NoError(t, err, "kapsam içi depo yeterliyken sipariş verilebilmeli: %v", err)
-	require.Len(t, sonuc.ReservationIDs, 1, "tek satır için tek rezervasyon alınmalı")
+	require.NoError(t, err, "an order must be placeable while the in-scope warehouse is sufficient: %v", err)
+	require.Len(t, result.ReservationIDs, 1, "a single reservation must be taken for a single line")
 
-	rezervasyon, err := stokSvc.GetReservation(ctx, sonuc.ReservationIDs[0])
-	require.NoError(t, err, "rezervasyon stok modülünden okunabilmeli")
-	require.Equal(t, kapsamIci, rezervasyon.LocationID,
-		"rezervasyon sepetin bölgesine HİZMET EDEN depoda açılmalı. Diğer depo (%s) "+
-			"hem yeterli stok taşıyor hem de daha öncelikli; sonucun o olması, "+
-			"elemenin sıralamadan sonra çalıştığı ya da hiç çalışmadığı anlamına gelir",
-		kapsamDisi)
+	reservation, err := inventorySvc.GetReservation(ctx, result.ReservationIDs[0])
+	require.NoError(t, err, "the reservation must be readable from the inventory module")
+	require.Equal(t, inScope, reservation.LocationID,
+		"the reservation must be opened in the warehouse that SERVES the cart's region. "+
+			"The other warehouse (%s) both carries enough stock and has the higher "+
+			"priority; the outcome being that one means elimination ran after ordering or "+
+			"never ran at all",
+		outOfScope)
 
-	seviyeKapsamDisi := depoSeviyesi(ctx, t, stokKalemID, kapsamDisi)
-	require.Equal(t, politikaDepoBasinaStok, seviyeKapsamDisi.StockedQuantity,
-		"kapsam dışı deponun stoğuna HİÇ dokunulmamalı")
-	require.Equal(t, int64(0), seviyeKapsamDisi.ReservedQuantity,
-		"kapsam dışı depoda rezerve adet doğmamalı")
+	outOfScopeLevel := warehouseLevel(ctx, t, stockItemID, outOfScope)
+	require.Equal(t, policyStockPerWarehouse, outOfScopeLevel.StockedQuantity,
+		"the out-of-scope warehouse's stock must NOT be touched at all")
+	require.Equal(t, int64(0), outOfScopeLevel.ReservedQuantity,
+		"no reserved quantity must come into existence in the out-of-scope warehouse")
 }
 
-// TestHicbirDepoBolgeyeHizmetEtmezseSiparisDuser yanlış kurulmuş bir kapsamın
-// bedelini ÖLÇER: stok dolu olduğu hâlde sipariş düşer.
+// TestNoWarehouseServingTheRegionDropsTheOrder MEASURES the price of a
+// misconfigured scope: the order drops even though stock is full.
 //
-// Bu, özelliğin kabul edilmiş en ağır bedelidir ve testin görevi onu
-// gizlememektir. İki depo da fazlasıyla stokludur; tek eksik, ikisinin de
-// sepetin bölgesine bağlı OLMAMASIDIR — operatörün var olmayan bir bölge
-// kimliği yazmasıyla ya da bir bölgeyi silip yeniden açmasıyla (yeni kayıt yeni
-// kimlik alır) oluşan durum budur.
+// This is the heaviest price the feature has accepted and the test's job is not
+// to hide it. Both warehouses are more than stocked; the only thing missing is
+// that NEITHER of them is bound to the cart's region — this is the state that
+// arises when the operator writes down a region ID that does not exist, or
+// deletes a region and opens it again (a new record gets a new ID).
 //
-// Testin asıl iddiası hatanın TEŞHİS EDİLEBİLİR olmasıdır: kod, stok
-// yetersizliğininkinden farklı olmalı ve hata adayların GERÇEKTE hangi bölgelere
-// bağlı olduğunu yazmalıdır. Ölü bir bölge kimliği ancak böyle görülebilir —
-// yalnızca "hizmet eden depo yok" diyen bir hatayla operatör, kimliklerin
-// ayrıştığını fark edemezdi.
+// The test's real claim is that the error is DIAGNOSABLE: the code must be
+// different from the insufficient-stock one and the error must write down which
+// regions the candidates are ACTUALLY bound to. A dead region ID can only be
+// seen that way — with an error that only said "no warehouse serves it" the
+// operator could not have noticed that the IDs had diverged.
 //
-// İddianın SINIRI da burada yazılı olmalı: test hata NESNESİNİ okur, HTTP
-// gövdesini değil. Vitrin istemcisine yalnızca KOD ulaşır; bölge dökümünü
-// taşıyan metin sunucu logunda ve yürütme kaydında kalır.
-func TestHicbirDepoBolgeyeHizmetEtmezseSiparisDuser(t *testing.T) {
+// The LIMIT of the claim must be written down here too: the test reads the error
+// OBJECT, not the HTTP body. Only the CODE reaches the storefront client; the
+// text carrying the region listing stays in the server log and in the execution
+// record.
+func TestNoWarehouseServingTheRegionDropsTheOrder(t *testing.T) {
 	ctx := t.Context()
 
-	const oluBolge = "reg_silinmis_bolge"
+	const deadRegion = "reg_deleted_region"
 
-	musteriID, eposta := yeniMusteri(ctx, t)
-	depoBir := yeniDepo(ctx, t, "E2E Kapsamsız Depo 1")
-	depoIki := yeniDepo(ctx, t, "E2E Kapsamsız Depo 2")
+	customerID, email := newCustomer(ctx, t)
+	warehouseOne := newWarehouse(ctx, t, "E2E Scopeless Warehouse 1")
+	warehouseTwo := newWarehouse(ctx, t, "E2E Scopeless Warehouse 2")
 
-	depoPolitikasi(ctx, t, depoBir, 0, oluBolge)
-	depoPolitikasi(ctx, t, depoIki, 0, oluBolge)
+	warehousePolicy(ctx, t, warehouseOne, 0, deadRegion)
+	warehousePolicy(ctx, t, warehouseTwo, 0, deadRegion)
 
-	varyantID, stokKalemID := depolaraDagilmisVaryant(ctx, t, "E2E Kapsamsız Ürün",
-		map[string]int64{vergiliParaBirimi: politikaFiyat},
+	variantID, stockItemID := variantAcrossWarehouses(ctx, t, "E2E Scopeless Product",
+		map[string]int64{taxedCurrency: policyPrice},
 		map[string]int64{
-			depoBir: politikaDepoBasinaStok,
-			depoIki: politikaDepoBasinaStok,
+			warehouseOne: policyStockPerWarehouse,
+			warehouseTwo: policyStockPerWarehouse,
 		})
 
-	oncekiSatilabilir := satilabilirAdet(ctx, t, stokKalemID)
-	require.Equal(t, 2*politikaDepoBasinaStok, oncekiSatilabilir,
-		"kurgunun anlamı stoğun DOLU olmasıdır; senaryonun durduğu yer stok değildir")
+	previousSellable := sellableQuantity(ctx, t, stockItemID)
+	require.Equal(t, 2*policyStockPerWarehouse, previousSellable,
+		"what the setup means is that the stock is FULL; the place where the scenario "+
+			"stops is not stock")
 
-	sepetID, _ := sepetHazirla(ctx, t, musteriID, varyantID, politikaAdet)
+	cartID, _ := prepareCart(ctx, t, customerID, variantID, policyQuantity)
 
-	sonuc, err := siparisAkislari.CompleteCart(ctx, checkoutwf.CompleteCartInput{
-		CartID:            sepetID,
+	result, err := orderWorkflows.CompleteCart(ctx, checkoutwf.CompleteCartInput{
+		CartID:            cartID,
 		LocationID:        "",
 		PaymentProviderID: manual.ID,
-		PaymentData:       odemeDavranisi(t, manual.OutcomeAuthorize),
-		Email:             eposta,
-		ExpectedTotal:     politikaToplam,
+		PaymentData:       paymentBehavior(t, manual.OutcomeAuthorize),
+		Email:             email,
+		ExpectedTotal:     policyTotal,
 	})
 	require.Error(t, err,
-		"hiçbir aday sepetin bölgesine hizmet etmiyorsa sipariş verilememeli")
-	require.Equal(t, checkoutwf.CompleteCartResult{}, sonuc,
-		"hata dönen bir akış yarım bir sonuç SIZDIRMAMALI")
+		"an order must not be placeable if no candidate serves the cart's region")
+	require.Equal(t, checkoutwf.CompleteCartResult{}, result,
+		"a workflow that returns an error must NOT LEAK a half-built result")
 
 	require.True(t, errors.IsConflict(err),
-		"sınıf errors.Conflict olmalı: istekte düzeltilecek bir şey yoktur ve motorun "+
-			"varsayılan yeniden deneme yüklemi bu sınıfı DENEMEZ — elenmiş bir aday "+
-			"kümesi tekrar denemekle değişmez. Dönen hata: %v", err)
+		"the class must be errors.Conflict: there is nothing to fix in the request and "+
+			"the engine's default retry predicate DOES NOT RETRY this class — an "+
+			"eliminated candidate set does not change by being tried again. Returned "+
+			"error: %v", err)
 	require.Equal(t, fulfillmentsvc.CodeNoServiceableLocation, errors.CodeOf(err),
-		"kod, stok yetersizliğininkinden AYRI olmalı ve vitrine ULAŞMALI: adım hatası "+
-			"alt hatanın kodunu korur ve taşıma katmanı gövdeye EN DIŞTAKİ kodu yazar. "+
-			"Zinciri gezen bir iddia burada yetmezdi — kodu ezen bir sarmalamada da "+
-			"alt hatayı bulup yeşil kalırdı. Dönen hata: %v", err)
-	require.ErrorContains(t, err, oluBolge,
-		"mesaj adayların GERÇEKTE bağlı olduğu bölgeyi yazmalı; ölü bir bölge kimliği "+
-			"ancak böyle teşhis edilebilir")
-	require.ErrorContains(t, err, vergiliBolgeID,
-		"mesaj hangi bölgenin arandığını da yazmalı; iki kimliği yan yana görmeyen "+
-			"operatör ayrışmayı fark edemez")
+		"the code must be SEPARATE from the insufficient-stock one and must REACH the "+
+			"storefront: a step error preserves the sub-error's code and the transport "+
+			"layer writes the OUTERMOST code into the body. An assertion that walks the "+
+			"chain would not be enough here — it would find the sub-error and stay green "+
+			"even under a wrapping that overwrites the code. Returned error: %v", err)
+	require.ErrorContains(t, err, deadRegion,
+		"the message must write down the region the candidates are ACTUALLY bound to; "+
+			"only that way can a dead region ID be diagnosed")
+	require.ErrorContains(t, err, taxedRegionID,
+		"the message must also write down which region was being looked for; an operator "+
+			"who does not see the two IDs side by side cannot notice the divergence")
 
-	// --- ardında ne bıraktı ---
+	// --- what it left behind ---
 
-	siparisler, toplamSayi, err := siparisSvc.ListOrders(ctx, ordersvc.ListOrdersInput{CustomerID: &musteriID})
-	require.NoError(t, err, "müşterinin siparişleri okunabilmeli")
-	require.Zero(t, toplamSayi, "sipariş HİÇ oluşmamalı")
-	require.Empty(t, siparisler, "sipariş listesi boş olmalı")
+	orders, totalCount, err := orderSvc.ListOrders(ctx, ordersvc.ListOrdersInput{CustomerID: &customerID})
+	require.NoError(t, err, "the customer's orders must be readable")
+	require.Zero(t, totalCount, "NO order must have been created")
+	require.Empty(t, orders, "the order list must be empty")
 
-	require.Equal(t, oncekiSatilabilir, satilabilirAdet(ctx, t, stokKalemID),
-		"hiçbir depoda rezervasyon açılmamalı; eleme ayırmadan ÖNCE çalışır")
+	require.Equal(t, previousSellable, sellableQuantity(ctx, t, stockItemID),
+		"no reservation must be opened in any warehouse; elimination runs BEFORE reserving")
 
-	sepet, err := sepetSvc.GetCart(ctx, sepetID)
-	require.NoError(t, err, "sepet modülünden okunabilmeli")
-	require.False(t, sepet.Completed(), "sepet tamamlanmış damgalanMAMALI")
+	cart, err := cartSvc.GetCart(ctx, cartID)
+	require.NoError(t, err, "the cart must be readable from the cart module")
+	require.False(t, cart.Completed(), "the cart must NOT be stamped completed")
 }

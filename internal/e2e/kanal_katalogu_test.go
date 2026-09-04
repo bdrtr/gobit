@@ -24,281 +24,297 @@ import (
 	productsvc "github.com/bdrtr/gobit/internal/modules/product/service"
 )
 
-// Bu dosya ürün ↔ satış kanalı bağının vitrine yansımasını GERÇEK yığınla
-// kanıtlar:
+// This file proves, with the REAL stack, that the product ↔ sales channel bond
+// is reflected in the storefront:
 //
-//	İki ayrı publishable anahtarla çağrılan aynı mağaza ucu, iki FARKLI
-//	katalog döner.
+//	The same store endpoint, called with two different publishable keys,
+//	returns two DIFFERENT catalogs.
 //
-// # Neden HTTP'den geçiyor
+// # Why it goes through HTTP
 //
-// İddianın kendisi bir servis iddiası değildir. Süzgecin doğru çalışması için
-// üç ayrı katmanın hizalanması gerekir: anahtarın kanalını auth çözecek,
-// çekirdeğin koruma yığını onu context'e koyacak ve product handler'ı kanalı
-// SORGU DİZESİNDEN değil o kimlikten okuyacaktır. Servisi doğrudan çağıran bir
-// test, handler kanalı hiç okumasa bile yeşil kalırdı — süzgeç o durumda
-// üretimde HİÇ çalışmazdı ama modül testleri bunu göremezdi.
+// The claim itself is not a service claim. For the filter to work correctly
+// three separate layers have to line up: auth has to resolve the key's channel,
+// the core's protection stack has to put it into the context, and the product
+// handler has to read the channel from that identity and NOT from the QUERY
+// STRING. A test that called the service directly would stay green even if the
+// handler never read the channel at all — the filter would then NEVER run in
+// production, but the module tests could not see it.
 //
-// # Neden ikinci bir anahtar
+// # Why a second key
 //
-// Tek anahtarla "ürün görünmüyor" gözlemi tek başına hiçbir şey kanıtlamaz:
-// ürün silinmiş, taslak kalmış ya da sorgu bozulmuş da olabilir. İkinci
-// anahtarın AYNI ürünü GÖRMESİ, gizlemenin sebebinin tam olarak kanal olduğunu
-// söyleyen tek gözlemdir.
+// With a single key the observation "the product is not visible" proves nothing
+// on its own: the product may have been deleted, it may have been left as a
+// draft, or the query may be broken. The second key SEEING the SAME product is
+// the only observation that says the reason for the hiding is exactly the
+// channel.
 //
-// # Yeni ürünler paylaşılan zemini bozar mı
+// # Do new products break the shared ground
 //
-// Bozmaz: paketteki mevcut testlerin hiçbiri ürün SAYISINA dayanan bir iddia
-// içermez (durum kodlarına ve kendi kurdukları kayıtlara bakarlar). Ters yön —
-// paylaşılan zeminin BU testi bozması — gerçek bir risktir ve koleksiyon
-// yalıtımıyla kapatılır (bkz. [kanalKataloguFiksturu]).
+// They do not: none of the existing tests in the package make a claim that
+// rests on the NUMBER of products (they look at status codes and at the records
+// they set up themselves). The other direction — the shared ground breaking
+// THIS test — is a real risk, and it is closed off by collection isolation
+// (see [channelCatalogFixture]).
 
-// İkinci vitrinin fikstür sabitleri.
+// The fixture constants of the second storefront.
 //
-// Adlar ve handle'lar SABİTTİR (fikstür sayacından üretilmez): kurulum süreç
-// başına bir kez koşar ve sabit adlar, bir hata mesajında hangi kaydın
-// kastedildiğini tek bakışta okunur kılar.
+// The names and the handles are FIXED (they are not produced by the fixture
+// counter): setup runs once per process, and fixed names make it readable at a
+// glance which record an error message is talking about.
 const (
-	// ikinciKanalAdi paylaşılan fikstür kanalından ([testKanalAdi]) ayrı ikinci
-	// satış kanalının adıdır.
-	ikinciKanalAdi = "e2e-ikinci-vitrin"
-	// kanalKataloguKoleksiyonHandle üç fikstür ürününü paylaşılan katalogdan
-	// ayıran koleksiyonun handle'ıdır.
-	kanalKataloguKoleksiyonHandle = "e2e-kanal-katalogu"
+	// secondChannelName is the name of the second sales channel, separate from
+	// the shared fixture channel ([testChannelName]).
+	secondChannelName = "e2e-second-storefront"
+	// channelCatalogCollectionHandle is the handle of the collection that
+	// separates the three fixture products from the shared catalog.
+	channelCatalogCollectionHandle = "e2e-channel-catalog"
 )
 
-// kanalKataloguUrunu fikstür ürününün testin ihtiyaç duyduğu alanlarıdır.
+// channelCatalogProduct holds the fields of the fixture product that the test
+// needs.
 //
-// Handle da taşınır çünkü tekil vitrin ucu iki adresle de çağrılabilir ve
-// süzgecin YALNIZCA kimlikle çalışması, vitrin adreslerinin (handle) süzgeçsiz
-// kalması demek olurdu.
-type kanalKataloguUrunu struct {
+// The handle is carried as well, because the single-product storefront endpoint
+// can be called with either address, and a filter that worked ONLY on the
+// identity would mean the storefront addresses (the handles) were left
+// unfiltered.
+type channelCatalogProduct struct {
 	id     string
 	handle string
 }
 
-// kanalKatalogu iki vitrinli senaryonun kurulmuş zeminidir.
-type kanalKatalogu struct {
-	// ikinciKanalID [testKanalID]'den ayrı ikinci satış kanalıdır.
-	ikinciKanalID string
-	// ikinciAnahtar YALNIZCA ikinci kanala bağlı publishable anahtardır.
+// channelCatalog is the set-up ground of the two-storefront scenario.
+type channelCatalog struct {
+	// secondChannelID is the second sales channel, separate from [testChannelID].
+	secondChannelID string
+	// ikinciAnahtar is the publishable key bound ONLY to the second channel.
 	ikinciAnahtar string
-	// koleksiyonID üç ürünün de bağlı olduğu koleksiyondur.
+	// koleksiyonID is the collection all three products belong to.
 	koleksiyonID string
-	// birinciKanalUrunu yalnızca paylaşılan fikstür kanalına atanmıştır.
-	birinciKanalUrunu kanalKataloguUrunu
-	// ikinciKanalUrunu yalnızca [kanalKatalogu.ikinciKanalID]'ye atanmıştır.
-	ikinciKanalUrunu kanalKataloguUrunu
-	// atamasizUrun hiçbir kanala atanmamıştır ve kural gereği İKİSİNDE de
-	// görünmelidir.
-	atamasizUrun kanalKataloguUrunu
+	// firstChannelProduct is assigned to the shared fixture channel only.
+	firstChannelProduct channelCatalogProduct
+	// secondChannelProduct is assigned to [channelCatalog.secondChannelID] only.
+	secondChannelProduct channelCatalogProduct
+	// unassignedProduct is assigned to no channel at all and by the rule has to be
+	// visible in BOTH.
+	unassignedProduct channelCatalogProduct
 }
 
-// Fikstürün bir kez kurulması için gereken durum.
+// The state needed so that the fixture is set up only once.
 var (
-	// kanalKataloguBirKez zeminin yalnızca bir kez kurulmasını sağlar.
-	kanalKataloguBirKez sync.Once
-	// kanalKataloguZemin kurulmuş zemindir.
-	kanalKataloguZemin kanalKatalogu
-	// kanalKataloguHatasi kurulum hatasını testlere taşır.
-	kanalKataloguHatasi error
+	// channelCatalogOnce makes sure the ground is set up only once.
+	channelCatalogOnce sync.Once
+	// channelCatalogGround is the set-up ground.
+	channelCatalogGround channelCatalog
+	// channelCatalogErr carries the setup error to the tests.
+	channelCatalogErr error
 )
 
-// kanalKataloguFiksturu iki vitrinli zemini kurar ve döner.
+// channelCatalogFixture sets up the two-storefront ground and returns it.
 //
-// # Neden bir kez
+// # Why once
 //
-// Satış kanalı adı ve ürün handle'ı BENZERSİZDİR; her testte yeniden kurmak
-// ikinci çağrıda çakışırdı. Kurulum bu yüzden [sync.Once] içindedir ve hata
-// dışarı taşınır (bkz. [yetkisizYoneticiJetonu], aynı örüntü).
+// The sales channel name and the product handle are UNIQUE; setting them up
+// again in every test would collide on the second call. Setup therefore lives
+// inside a [sync.Once] and the error is carried outwards (see
+// [yetkisizYoneticiJetonu], the same pattern).
 //
-// # Neden koleksiyonla yalıtılıyor
+// # Why it is isolated with a collection
 //
-// Paylaşılan zeminde onlarca fikstür ürünü vardır ve hiçbirinin kanal ataması
-// YOKTUR; kural gereği hepsi HER vitrinde görünür. Yani "kendi kanalımla
-// süzmek" bu testi yalıtmaz — üç ürün yabancı ürünlerin arasında kaybolur ve
-// sayaç iddiası ("count" süzülmüş kümeyi yansıtıyor mu) sabit bir sayı
-// üzerinden hiç kurulamazdı. Üç ürün bu yüzden yalnızca bu dosyanın kurduğu bir
-// KOLEKSİYONA konur ve her istek collection_id ile daraltılır.
+// The shared ground holds dozens of fixture products and NONE of them has a
+// channel assignment; by the rule they all show up in EVERY storefront. So
+// "filtering by my own channel" does not isolate this test — the three products
+// would be lost among foreign products and the counter claim (does "count"
+// reflect the filtered set) could never be made against a fixed number. The
+// three products are therefore put into a COLLECTION that only this file sets
+// up, and every request is narrowed with collection_id.
 //
-// Yalıtımın bedeli yoktur, yan faydası vardır: koleksiyon süzgeci ile kanal
-// süzgeci aynı sorguda VE'lenir, dolayısıyla test aynı zamanda ikisinin
-// birbirini ezmediğini de kanıtlar. Sayaç iddiasından tümüyle vazgeçmek
-// (alternatif) görevin asıl sorusunu yanıtsız bırakırdı.
-func kanalKataloguFiksturu(t *testing.T) kanalKatalogu {
+// The isolation has no cost, and it has a side benefit: the collection filter
+// and the channel filter are ANDed in the same query, so at the same time the
+// test proves that the two do not override each other. Giving up the counter
+// claim altogether (the alternative) would have left the task's actual question
+// unanswered.
+func channelCatalogFixture(t *testing.T) channelCatalog {
 	t.Helper()
 
-	kanalKataloguBirKez.Do(func() {
-		// Kurulum context'i t.Context() DEĞİLDİR: zemin testler arasında
-		// paylaşılır ve ilk testin context'i o test bittiğinde iptal edilir.
-		// Kurulum burada tamamlansa bile o context'i saklamak, sonradan
-		// eklenecek bir adımın iptal edilmiş bir context'le koşmasına açık kapı
-		// bırakırdı.
-		kanalKataloguZemin, kanalKataloguHatasi = kanalKataloguKur(context.Background())
+	channelCatalogOnce.Do(func() {
+		// The setup context is NOT t.Context(): the ground is shared between
+		// tests and the first test's context is cancelled when that test ends.
+		// Even though setup completes here, keeping that context would leave
+		// the door open for a step added later to run with a cancelled
+		// context.
+		channelCatalogGround, channelCatalogErr = setUpChannelCatalog(context.Background())
 	})
-	require.NoError(t, kanalKataloguHatasi, "kanal kataloğu fikstürü kurulamadı")
+	require.NoError(t, channelCatalogErr, "the channel catalog fixture could not be set up")
 
-	return kanalKataloguZemin
+	return channelCatalogGround
 }
 
-// kanalKataloguKur ikinci kanalı, ikinci anahtarı ve üç ürünü hazırlar.
+// setUpChannelCatalog prepares the second channel, the second key and the three
+// products.
 //
-// Kanal ve anahtar SERVİSTEN, kanal ATAMALARI ise YÖNETİM UCUNDAN kurulur ve
-// bu ayrım bilinçlidir: ilk ikisi bu testin konusu değildir (kimlik zemini
-// zaten kurulmuştur, bkz. [kimlikFiksturunuKur]), üçüncüsü ise tam olarak
-// sınanan şeydir. Atamayı servisten yapmak, yönetim ucunun vitrinin okuduğu
-// bağın TA KENDİSİNİ yazdığını kanıtlamazdı — uç başka bir link adına yazsa
-// test yine yeşil kalırdı.
-func kanalKataloguKur(ctx context.Context) (kanalKatalogu, error) {
-	var zemin kanalKatalogu
+// The channel and the key are set up FROM THE SERVICE while the channel
+// ASSIGNMENTS are set up FROM THE ADMIN ENDPOINT, and that split is deliberate:
+// the first two are not the subject of this test (the identity ground is
+// already set up, see [setUpIdentityFixture]), whereas the third is exactly the
+// thing under test. Doing the assignment from the service would not prove that
+// the admin endpoint writes THE VERY bond the storefront reads — the endpoint
+// could write on behalf of some other link and the test would still stay green.
+func setUpChannelCatalog(ctx context.Context) (channelCatalog, error) {
+	var ground channelCatalog
 
-	kanal, err := authSvc.CreateSalesChannel(ctx, authsvc.SalesChannelInput{
-		Name:        ikinciKanalAdi,
-		Description: "uçtan uca testin ikinci vitrini",
+	channel, err := authSvc.CreateSalesChannel(ctx, authsvc.SalesChannelInput{
+		Name:        secondChannelName,
+		Description: "the second storefront of the end-to-end test",
 	})
 	if err != nil {
-		return zemin, fmt.Errorf("ikinci satış kanalı kurulamadı: %w", err)
+		return ground, fmt.Errorf("the second sales channel could not be set up: %w", err)
 	}
-	zemin.ikinciKanalID = kanal.ID
+	ground.secondChannelID = channel.ID
 
-	if _, zemin.ikinciAnahtar, err = authSvc.CreateAPIKey(ctx, authsvc.CreateAPIKeyInput{
+	if _, ground.ikinciAnahtar, err = authSvc.CreateAPIKey(ctx, authsvc.CreateAPIKeyInput{
 		Type:      models.APIKeyPublishable,
-		Title:     "e2e ikinci publishable anahtar",
-		CreatedBy: yoneticiID,
-		// Anahtar YALNIZCA ikinci kanala bağlanır; iki kanal birden taşısaydı
-		// testin tamamı anlamsızlaşırdı.
-		SalesChannelIDs: []string{kanal.ID},
+		Title:     "e2e second publishable key",
+		CreatedBy: adminID,
+		// The key is bound ONLY to the second channel; had it carried both
+		// channels at once the whole test would have become meaningless.
+		SalesChannelIDs: []string{channel.ID},
 	}); err != nil {
-		return zemin, fmt.Errorf("ikinci publishable anahtar kurulamadı: %w", err)
+		return ground, fmt.Errorf("the second publishable key could not be set up: %w", err)
 	}
 
-	koleksiyon, err := urunSvc.CreateCollection(ctx, productsvc.CreateCollectionInput{
-		Title:  "E2E Kanal Kataloğu",
-		Handle: kanalKataloguKoleksiyonHandle,
+	collection, err := productSvc.CreateCollection(ctx, productsvc.CreateCollectionInput{
+		Title:  "E2E Channel Catalog",
+		Handle: channelCatalogCollectionHandle,
 	})
 	if err != nil {
-		return zemin, fmt.Errorf("yalıtım koleksiyonu kurulamadı: %w", err)
+		return ground, fmt.Errorf("the isolation collection could not be set up: %w", err)
 	}
-	zemin.koleksiyonID = koleksiyon.ID
+	ground.koleksiyonID = collection.ID
 
-	if zemin.birinciKanalUrunu, err = kanalKataloguUrunuKur(ctx, koleksiyon.ID, "birinci"); err != nil {
-		return zemin, err
+	if ground.firstChannelProduct, err = setUpChannelCatalogProduct(ctx, collection.ID, "first"); err != nil {
+		return ground, err
 	}
-	if zemin.ikinciKanalUrunu, err = kanalKataloguUrunuKur(ctx, koleksiyon.ID, "ikinci"); err != nil {
-		return zemin, err
+	if ground.secondChannelProduct, err = setUpChannelCatalogProduct(ctx, collection.ID, "second"); err != nil {
+		return ground, err
 	}
-	if zemin.atamasizUrun, err = kanalKataloguUrunuKur(ctx, koleksiyon.ID, "atamasiz"); err != nil {
-		return zemin, err
-	}
-
-	if err := kanalBagla(zemin.birinciKanalUrunu.id, testKanalID); err != nil {
-		return zemin, err
-	}
-	if err := kanalBagla(zemin.ikinciKanalUrunu.id, kanal.ID); err != nil {
-		return zemin, err
+	if ground.unassignedProduct, err = setUpChannelCatalogProduct(ctx, collection.ID, "unassigned"); err != nil {
+		return ground, err
 	}
 
-	return zemin, nil
+	if err := bindChannel(ground.firstChannelProduct.id, testChannelID); err != nil {
+		return ground, err
+	}
+	if err := bindChannel(ground.secondChannelProduct.id, channel.ID); err != nil {
+		return ground, err
+	}
+
+	return ground, nil
 }
 
-// kanalKataloguUrunuKur koleksiyona bağlı YAYINDA bir ürün oluşturur.
+// setUpChannelCatalogProduct creates a PUBLISHED product bound to the
+// collection.
 //
-// Durum [productmodels.StatusPublished]'tır: taslak ürün vitrinde zaten
-// görünmez ve o durumda testin ölçtüğü şey kanal süzgeci değil yayın süzgeci
-// olurdu.
-func kanalKataloguUrunuKur(ctx context.Context, koleksiyonID, ad string) (kanalKataloguUrunu, error) {
-	handle := "e2e-kanal-katalogu-" + ad
+// The status is [productmodels.StatusPublished]: a draft product is already
+// invisible in the storefront, and in that case what the test measured would
+// not be the channel filter but the publication filter.
+func setUpChannelCatalogProduct(ctx context.Context, collectionID, name string) (channelCatalogProduct, error) {
+	handle := "e2e-channel-catalog-" + name
 
-	urun, err := urunSvc.CreateProduct(ctx, productsvc.CreateProductInput{
+	product, err := productSvc.CreateProduct(ctx, productsvc.CreateProductInput{
 		Handle:       handle,
-		Title:        "E2E Kanal Kataloğu " + ad,
+		Title:        "E2E Channel Catalog " + name,
 		Status:       productmodels.StatusPublished,
-		CollectionID: &koleksiyonID,
+		CollectionID: &collectionID,
 	})
 	if err != nil {
-		return kanalKataloguUrunu{}, fmt.Errorf("%q ürünü kurulamadı: %w", handle, err)
+		return channelCatalogProduct{}, fmt.Errorf("the %q product could not be set up: %w", handle, err)
 	}
 
-	return kanalKataloguUrunu{id: urun.ID, handle: urun.Handle}, nil
+	return channelCatalogProduct{id: product.ID, handle: product.Handle}, nil
 }
 
-// yonetimGovdeliIstek gizli anahtarla bir yönetim yazma isteği yapar.
+// adminRequestWithBody makes an admin write request with the secret key.
 //
-// [yonetimIstegi]'nden ayrı durur çünkü ikisi farklı yerlerden çağrılır: o
-// yardımcı *testing.T ister, bu ise fikstürün [sync.Once] gövdesinden — yani
-// hiçbir testin içinde olmadığımız bir yerden — çağrılır ve hatayı döndürmek
-// zorundadır.
+// It stands apart from [adminRequest] because the two are called from different
+// places: that helper wants a *testing.T, whereas this one is called from the
+// fixture's [sync.Once] body — that is, from a place where we are inside no
+// test at all — and it has to return the error.
 //
-// govde nil verilirse istek GÖVDESİZ gider ("null" gövdeyle değil): kanal
-// bağını kaldıran uç kimliği YOLDA taşır ve gövdesini hiç okumaz, oraya bir
-// JSON değeri koymak okuyana o gövdenin bir anlamı varmış izlenimi verirdi.
-func yonetimGovdeliIstek(metot, yol string, govde any) (*httptest.ResponseRecorder, error) {
-	icerik := io.Reader(http.NoBody)
-	if govde != nil {
-		ham, err := json.Marshal(govde)
+// If body is given as nil the request goes out WITHOUT A BODY (not with a
+// "null" body): the endpoint that removes the channel bond carries the identity
+// IN THE PATH and never reads its body, so putting a JSON value there would
+// give the reader the impression that the body meant something.
+func adminRequestWithBody(method, path string, body any) (*httptest.ResponseRecorder, error) {
+	content := io.Reader(http.NoBody)
+	if body != nil {
+		raw, err := json.Marshal(body)
 		if err != nil {
-			return nil, fmt.Errorf("istek gövdesi kodlanamadı: %w", err)
+			return nil, fmt.Errorf("the request body could not be encoded: %w", err)
 		}
-		icerik = bytes.NewReader(ham)
+		content = bytes.NewReader(raw)
 	}
 
-	istek := httptest.NewRequest(metot, yol, icerik)
-	istek.Header.Set("Authorization", "Bearer "+gizliAnahtar)
-	istek.Header.Set("Content-Type", "application/json")
+	request := httptest.NewRequest(method, path, content)
+	request.Header.Set("Authorization", "Bearer "+secretKey)
+	request.Header.Set("Content-Type", "application/json")
 
-	kayit := httptest.NewRecorder()
-	testRouter.ServeHTTP(kayit, istek)
+	recorder := httptest.NewRecorder()
+	testRouter.ServeHTTP(recorder, request)
 
-	return kayit, nil
+	return recorder, nil
 }
 
-// kanalBagla ürünü satış kanalına YÖNETİM UCUNDAN bağlar.
+// bindChannel binds the product to the sales channel FROM THE ADMIN ENDPOINT.
 //
-// Ucun döndürdüğü güncel liste burada da denetlenir: yazma isteği 200 dönüp
-// bağı hiç kurmasaydı, arıza fikstürde değil onu kullanan her testte ve yanlış
-// yerde görünürdü.
-func kanalBagla(urunID, kanalID string) error {
-	kayit, err := yonetimGovdeliIstek(http.MethodPost,
-		"/admin/v1/products/"+urunID+"/sales-channels",
-		map[string]string{"sales_channel_id": kanalID})
+// The up-to-date list the endpoint returns is checked here as well: if the
+// write request returned 200 without ever establishing the bond, the fault
+// would show up not in the fixture but in every test that uses it, and in the
+// wrong place.
+func bindChannel(productID, channelID string) error {
+	recorder, err := adminRequestWithBody(http.MethodPost,
+		"/admin/v1/products/"+productID+"/sales-channels",
+		map[string]string{"sales_channel_id": channelID})
 	if err != nil {
 		return err
 	}
-	if kayit.Code != http.StatusOK {
-		return fmt.Errorf("kanal bağı kurulamadı (%d): %s", kayit.Code, kayit.Body.String())
+	if recorder.Code != http.StatusOK {
+		return fmt.Errorf("the channel bond could not be established (%d): %s",
+			recorder.Code, recorder.Body.String())
 	}
 
-	ids, err := kanalListesiniCoz(kayit)
+	ids, err := decodeChannelList(recorder)
 	if err != nil {
 		return err
 	}
-	if !slices.Contains(ids, kanalID) {
-		return fmt.Errorf("yönetim ucu %q bağını bildirmedi; dönen liste: %v", kanalID, ids)
+	if !slices.Contains(ids, channelID) {
+		return fmt.Errorf("the admin endpoint did not report the %q bond; returned list: %v", channelID, ids)
 	}
 
 	return nil
 }
 
-// kanalListesiniCoz satış kanalı yanıtındaki kanal kimliklerini çıkarır.
-func kanalListesiniCoz(kayit *httptest.ResponseRecorder) ([]string, error) {
-	var zarf struct {
+// decodeChannelList extracts the channel identities out of the sales channel
+// response.
+func decodeChannelList(recorder *httptest.ResponseRecorder) ([]string, error) {
+	var envelope struct {
 		Data struct {
 			SalesChannelIDs []string `json:"sales_channel_ids"`
 		} `json:"data"`
 	}
-	if err := json.Unmarshal(kayit.Body.Bytes(), &zarf); err != nil {
-		return nil, fmt.Errorf("satış kanalı yanıtı çözülemedi: %w (gövde: %s)", err, kayit.Body.String())
+	if err := json.Unmarshal(recorder.Body.Bytes(), &envelope); err != nil {
+		return nil, fmt.Errorf("the sales channel response could not be decoded: %w (body: %s)", err, recorder.Body.String())
 	}
 
-	return zarf.Data.SalesChannelIDs, nil
+	return envelope.Data.SalesChannelIDs, nil
 }
 
-// vitrinZarfi mağaza liste yanıtının test tarafındaki karşılığıdır.
+// vitrinZarfi is the test-side counterpart of the store list response.
 //
-// Zarfın "offset" ve "limit" alanları BİLİNÇLİ olarak çözülmez: bu testin
-// iddiası hangi ürünlerin döndüğü ve kaç tane sayıldığıdır, sayfalama
-// parametrelerinin yankılanması değil. Ürünün de yalnızca kimliği ile handle'ı
-// okunur; alanlarının doğruluğu başka testlerin işidir.
+// The envelope's "offset" and "limit" fields are DELIBERATELY not decoded: this
+// test's claim is which products come back and how many are counted, not
+// whether the pagination parameters are echoed. Of the product, only the
+// identity and the handle are read; the correctness of its fields is other
+// tests' business.
 type vitrinZarfi struct {
 	Data []struct {
 		ID     string `json:"id"`
@@ -307,254 +323,264 @@ type vitrinZarfi struct {
 	Count int `json:"count"`
 }
 
-// kimlikler zarftaki ürün kimliklerini döner.
-func (z vitrinZarfi) kimlikler() []string {
-	out := make([]string, 0, len(z.Data))
-	for _, urun := range z.Data {
-		out = append(out, urun.ID)
+// kimlikler returns the product identities in the envelope.
+func (e vitrinZarfi) kimlikler() []string {
+	out := make([]string, 0, len(e.Data))
+	for _, product := range e.Data {
+		out = append(out, product.ID)
 	}
 
 	return out
 }
 
-// vitrinKatalogu verilen publishable anahtarla mağaza listesini çağırır.
-func vitrinKatalogu(t *testing.T, anahtar string, sorgu url.Values) vitrinZarfi {
+// vitrinKatalogu calls the store list with the given publishable key.
+func vitrinKatalogu(t *testing.T, key string, query url.Values) vitrinZarfi {
 	t.Helper()
 
-	kayit := magazaIstegi(t, "/store/v1/products?"+sorgu.Encode(), anahtar)
-	require.Equal(t, http.StatusOK, kayit.Code,
-		"mağaza listesi 200 dönmeli; gövde: %s", kayit.Body.String())
+	recorder := magazaIstegi(t, "/store/v1/products?"+query.Encode(), key)
+	require.Equal(t, http.StatusOK, recorder.Code,
+		"the store list must return 200; body: %s", recorder.Body.String())
 
-	var zarf vitrinZarfi
-	require.NoError(t, json.Unmarshal(kayit.Body.Bytes(), &zarf),
-		"mağaza listesi çözülemedi; gövde: %s", kayit.Body.String())
+	var envelope vitrinZarfi
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &envelope),
+		"the store list could not be decoded; body: %s", recorder.Body.String())
 
-	return zarf
+	return envelope
 }
 
-// koleksiyonSorgusu bir koleksiyona daraltan sorgu dizesini üretir.
-func koleksiyonSorgusu(koleksiyonID string) url.Values {
-	return url.Values{"collection_id": {koleksiyonID}}
+// koleksiyonSorgusu produces the query string that narrows down to a
+// collection.
+func koleksiyonSorgusu(collectionID string) url.Values {
+	return url.Values{"collection_id": {collectionID}}
 }
 
-// TestVitrinKataloguIsteginSatisKanalinaGoreSuzulur iki anahtarın AYNI uçtan
-// iki farklı katalog aldığını doğrular.
+// TestTheStorefrontCatalogIsFilteredByTheRequestsSalesChannel verifies that two
+// keys get two different catalogs FROM THE SAME endpoint.
 //
-// Üç ürünün üçü de yayındadır ve aynı koleksiyondadır; aralarındaki TEK fark
-// kanal atamasıdır. Dolayısıyla listelerin ayrışmasının başka bir açıklaması
-// yoktur.
-func TestVitrinKataloguIsteginSatisKanalinaGoreSuzulur(t *testing.T) {
-	zemin := kanalKataloguFiksturu(t)
-	sorgu := koleksiyonSorgusu(zemin.koleksiyonID)
+// All three products are published and are in the same collection; the ONLY
+// difference between them is the channel assignment. So there is no other
+// explanation for the lists diverging.
+func TestTheStorefrontCatalogIsFilteredByTheRequestsSalesChannel(t *testing.T) {
+	ground := channelCatalogFixture(t)
+	query := koleksiyonSorgusu(ground.koleksiyonID)
 
-	birinci := vitrinKatalogu(t, publishableAnahtar, sorgu).kimlikler()
+	first := vitrinKatalogu(t, publishableKey, query).kimlikler()
 	assert.ElementsMatch(t,
-		[]string{zemin.birinciKanalUrunu.id, zemin.atamasizUrun.id}, birinci,
-		"birinci vitrin kendi ürününü ve ATAMASIZ ürünü görmeli")
-	assert.NotContains(t, birinci, zemin.ikinciKanalUrunu.id,
-		"başka bir kanala atanmış ürün bu vitrinde GÖRÜNMEMELİ; "+
-			"göründüyse süzgeç isteğin kimliğine hiç bakmıyor demektir")
+		[]string{ground.firstChannelProduct.id, ground.unassignedProduct.id}, first,
+		"the first storefront must see its own product and the UNASSIGNED product")
+	assert.NotContains(t, first, ground.secondChannelProduct.id,
+		"a product assigned to another channel MUST NOT be visible in this storefront; "+
+			"if it is, the filter is not looking at the request's identity at all")
 
-	ikinci := vitrinKatalogu(t, zemin.ikinciAnahtar, sorgu).kimlikler()
+	second := vitrinKatalogu(t, ground.ikinciAnahtar, query).kimlikler()
 	assert.ElementsMatch(t,
-		[]string{zemin.ikinciKanalUrunu.id, zemin.atamasizUrun.id}, ikinci,
-		"ikinci vitrin kendi ürününü ve ATAMASIZ ürünü görmeli")
-	assert.NotContains(t, ikinci, zemin.birinciKanalUrunu.id,
-		"birinci kanalın ürünü ikinci vitrinde GÖRÜNMEMELİ")
+		[]string{ground.secondChannelProduct.id, ground.unassignedProduct.id}, second,
+		"the second storefront must see its own product and the UNASSIGNED product")
+	assert.NotContains(t, second, ground.firstChannelProduct.id,
+		"the first channel's product MUST NOT be visible in the second storefront")
 
-	// Aynı ürünün bir vitrinde görünüp diğerinde görünmemesi, gizlemenin
-	// sebebinin kanal olduğunu söyleyen tek gözlemdir: ürün silinmiş ya da
-	// taslak olsaydı İKİSİNDE de görünmezdi.
-	assert.Contains(t, ikinci, zemin.ikinciKanalUrunu.id,
-		"birinci vitrinde gizlenen ürün, ait olduğu vitrinde görünmeli")
+	// The same product being visible in one storefront and not in the other is
+	// the only observation that says the reason for the hiding is the channel:
+	// had the product been deleted or left as a draft it would be invisible in
+	// BOTH.
+	assert.Contains(t, second, ground.secondChannelProduct.id,
+		"the product hidden in the first storefront must be visible in the storefront it belongs to")
 }
 
-// TestVitrinSayaciSuzulmusKumeyiYansitir zarfın "count" alanının sayfalanmamış
-// TOPLAMI değil SÜZÜLMÜŞ toplamı verdiğini doğrular.
+// TestTheStorefrontCounterReflectsTheFilteredSet verifies that the envelope's
+// "count" field gives the FILTERED total rather than the unpaginated TOTAL.
 //
-// Sayaç süzülmemiş kümeyi gösterseydi vitrin istemcisi hiç dolmayan sayfalar
-// ister, "3 sonuç" yazıp 2 ürün gösterirdi. Yönetim listesi aynı koleksiyonda
-// ÜÇ ürün görür ve bu karşılaştırma iddiayı çıpalar: iki vitrinin 2 görmesinin
-// sebebi ürünlerin eksikliği değil, süzgecin ta kendisidir.
-func TestVitrinSayaciSuzulmusKumeyiYansitir(t *testing.T) {
-	zemin := kanalKataloguFiksturu(t)
-	sorgu := koleksiyonSorgusu(zemin.koleksiyonID)
+// Had the counter shown the unfiltered set, the storefront client would ask for
+// pages that never fill up and would print "3 results" while showing 2
+// products. The admin list sees THREE products in the same collection, and that
+// comparison anchors the claim: the reason the two storefronts see 2 is not
+// that products are missing but the filter itself.
+func TestTheStorefrontCounterReflectsTheFilteredSet(t *testing.T) {
+	ground := channelCatalogFixture(t)
+	query := koleksiyonSorgusu(ground.koleksiyonID)
 
-	birinci := vitrinKatalogu(t, publishableAnahtar, sorgu)
-	assert.Equal(t, 2, birinci.Count,
-		"sayaç süzülmüş kümeyi saymalı; gövde sayısı: %d", len(birinci.Data))
-	assert.Len(t, birinci.Data, birinci.Count,
-		"tek sayfaya sığan bir sonuçta sayaç ile satır sayısı ayrışmamalı")
+	first := vitrinKatalogu(t, publishableKey, query)
+	assert.Equal(t, 2, first.Count,
+		"the counter must count the filtered set; number of body rows: %d", len(first.Data))
+	assert.Len(t, first.Data, first.Count,
+		"in a result that fits on a single page the counter and the row count must not diverge")
 
-	ikinci := vitrinKatalogu(t, zemin.ikinciAnahtar, sorgu)
-	assert.Equal(t, 2, ikinci.Count)
-	assert.Len(t, ikinci.Data, ikinci.Count)
+	second := vitrinKatalogu(t, ground.ikinciAnahtar, query)
+	assert.Equal(t, 2, second.Count)
+	assert.Len(t, second.Data, second.Count)
 
-	// Yönetim listesi kanal süzgecine tabi DEĞİLDİR: yönetim kimliğinin bir
-	// satış kanalı yoktur ve kataloğu bütün olarak görmesi gerekir.
-	yonetim := yonetimKatalogu(t, sorgu)
-	assert.Equal(t, 3, yonetim.Count,
-		"yönetim listesi üç ürünü de saymalı; saymıyorsa süzgeç yanlış yere sızmış demektir")
+	// The admin list is NOT subject to the channel filter: the admin identity
+	// has no sales channel and has to see the catalog as a whole.
+	admin := adminCatalog(t, query)
+	assert.Equal(t, 3, admin.Count,
+		"the admin list must count all three products; if it does not, the filter has leaked into the wrong place")
 	assert.ElementsMatch(t,
-		[]string{zemin.birinciKanalUrunu.id, zemin.ikinciKanalUrunu.id, zemin.atamasizUrun.id},
-		yonetim.kimlikler())
+		[]string{ground.firstChannelProduct.id, ground.secondChannelProduct.id, ground.unassignedProduct.id},
+		admin.kimlikler())
 }
 
-// yonetimKatalogu gizli anahtarla yönetim ürün listesini çağırır.
-func yonetimKatalogu(t *testing.T, sorgu url.Values) vitrinZarfi {
+// adminCatalog calls the admin product list with the secret key.
+func adminCatalog(t *testing.T, query url.Values) vitrinZarfi {
 	t.Helper()
 
-	kayit := yonetimIstegi(t, http.MethodGet, "/admin/v1/products?"+sorgu.Encode(),
-		"Bearer "+gizliAnahtar)
-	require.Equal(t, http.StatusOK, kayit.Code,
-		"yönetim listesi 200 dönmeli; gövde: %s", kayit.Body.String())
+	recorder := adminRequest(t, http.MethodGet, "/admin/v1/products?"+query.Encode(),
+		"Bearer "+secretKey)
+	require.Equal(t, http.StatusOK, recorder.Code,
+		"the admin list must return 200; body: %s", recorder.Body.String())
 
-	var zarf vitrinZarfi
-	require.NoError(t, json.Unmarshal(kayit.Body.Bytes(), &zarf),
-		"yönetim listesi çözülemedi; gövde: %s", kayit.Body.String())
+	var envelope vitrinZarfi
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &envelope),
+		"the admin list could not be decoded; body: %s", recorder.Body.String())
 
-	return zarf
+	return envelope
 }
 
-// TestVitrinTekilUcuDaSuzulur listede gizlenen ürünün tekil uçtan da
-// alınamadığını doğrular.
+// TestTheSingleProductStorefrontEndpointIsFilteredToo verifies that a product
+// hidden from the list cannot be fetched from the single-product endpoint
+// either.
 //
-// Uç 404 döner ve bu, uygulamanın seçtiği koddur: servis görünmeyen ürün için
-// yayında olmayan ürünle AYNI hatayı (errors.NotFound) üretir, çekirdek onu
-// 404'e çevirir (bkz. service.Service.GetStoreProduct). Tekil uç süzülmeseydi
-// gizleme tümüyle anlamsız olurdu — vitrin adresleri handle taşıdığı için
-// tahmin edilmesi en kolay uç tam da budur; bu yüzden hem kimlik hem handle
-// denenir.
-func TestVitrinTekilUcuDaSuzulur(t *testing.T) {
-	zemin := kanalKataloguFiksturu(t)
+// The endpoint returns 404, and that is the code the application chose: for an
+// invisible product the service produces the SAME error (errors.NotFound) as
+// for an unpublished one, and the core turns it into a 404 (see
+// service.Service.GetStoreProduct). Had the single-product endpoint not been
+// filtered, the hiding would be entirely pointless — because storefront
+// addresses carry the handle, this is the easiest endpoint of all to guess;
+// that is why both the identity and the handle are tried.
+func TestTheSingleProductStorefrontEndpointIsFilteredToo(t *testing.T) {
+	ground := channelCatalogFixture(t)
 
-	testler := map[string]struct {
-		anahtar  string
-		adres    string
-		beklenen int
+	cases := map[string]struct {
+		key      string
+		address  string
+		expected int
 	}{
-		"yabancı kanalın ürünü kimlikle": {
-			publishableAnahtar, zemin.ikinciKanalUrunu.id, http.StatusNotFound,
+		"a foreign channel's product by identity": {
+			publishableKey, ground.secondChannelProduct.id, http.StatusNotFound,
 		},
-		"yabancı kanalın ürünü handle ile": {
-			publishableAnahtar, zemin.ikinciKanalUrunu.handle, http.StatusNotFound,
+		"a foreign channel's product by handle": {
+			publishableKey, ground.secondChannelProduct.handle, http.StatusNotFound,
 		},
-		"kendi kanalının ürünü": {
-			publishableAnahtar, zemin.birinciKanalUrunu.id, http.StatusOK,
+		"its own channel's product": {
+			publishableKey, ground.firstChannelProduct.id, http.StatusOK,
 		},
-		"atamasız ürün birinci vitrinde": {
-			publishableAnahtar, zemin.atamasizUrun.handle, http.StatusOK,
+		"the unassigned product in the first storefront": {
+			publishableKey, ground.unassignedProduct.handle, http.StatusOK,
 		},
-		"gizlenen ürün kendi vitrininde": {
-			zemin.ikinciAnahtar, zemin.ikinciKanalUrunu.id, http.StatusOK,
+		"the hidden product in its own storefront": {
+			ground.ikinciAnahtar, ground.secondChannelProduct.id, http.StatusOK,
 		},
-		"birinci kanalın ürünü ikinci vitrinde": {
-			zemin.ikinciAnahtar, zemin.birinciKanalUrunu.handle, http.StatusNotFound,
+		"the first channel's product in the second storefront": {
+			ground.ikinciAnahtar, ground.firstChannelProduct.handle, http.StatusNotFound,
 		},
-		"atamasız ürün ikinci vitrinde": {
-			zemin.ikinciAnahtar, zemin.atamasizUrun.id, http.StatusOK,
+		"the unassigned product in the second storefront": {
+			ground.ikinciAnahtar, ground.unassignedProduct.id, http.StatusOK,
 		},
 	}
 
-	for ad, tt := range testler {
-		t.Run(ad, func(t *testing.T) {
-			kayit := magazaIstegi(t, "/store/v1/products/"+tt.adres, tt.anahtar)
+	for name, tt := range cases {
+		t.Run(name, func(t *testing.T) {
+			recorder := magazaIstegi(t, "/store/v1/products/"+tt.address, tt.key)
 
-			assert.Equal(t, tt.beklenen, kayit.Code,
-				"tekil vitrin ucu beklenen kodu dönmeli; gövde: %s", kayit.Body.String())
+			assert.Equal(t, tt.expected, recorder.Code,
+				"the single-product storefront endpoint must return the expected code; body: %s", recorder.Body.String())
 		})
 	}
 }
 
-// TestGizlenenUrunVarliginiHataKoduylaEleVermez gizlenen ürünün 404'ünün, hiç
-// var olmayan bir ürünün 404'ünden ayırt edilemediğini doğrular.
+// TestAHiddenProductDoesNotRevealItselfViaTheErrorCode verifies that the 404 of
+// a hidden product cannot be told apart from the 404 of a product that never
+// existed at all.
 //
-// Fark olsaydı gizleme delinirdi: bir rakip, elindeki publishable anahtarla
-// hangi handle'ların BAŞKA bir kanalda satıldığını tek tek öğrenebilirdi.
+// Had there been a difference the hiding would be pierced: with the publishable
+// key in hand, a competitor could learn one by one which handles are sold in
+// ANOTHER channel.
 //
-// Karşılaştırma yalnızca hata KODU üzerindendir; mesaj istenen adresi
-// yankıladığı için ("ürün bulunamadı: %s") iki istekte zaten farklıdır ve
-// mesajın farklı olması bir sızıntı değildir — sızıntı, istemcinin kararını
-// değiştiren SINIFTIR.
-func TestGizlenenUrunVarliginiHataKoduylaEleVermez(t *testing.T) {
-	zemin := kanalKataloguFiksturu(t)
+// The comparison is over the error CODE only; because the message echoes the
+// requested address ("product not found: %s") it already differs between the
+// two requests, and the message differing is not a leak — the leak is the CLASS
+// that changes the client's decision.
+func TestAHiddenProductDoesNotRevealItselfViaTheErrorCode(t *testing.T) {
+	ground := channelCatalogFixture(t)
 
-	gizlenen := magazaIstegi(t, "/store/v1/products/"+zemin.ikinciKanalUrunu.handle, publishableAnahtar)
-	olmayan := magazaIstegi(t, "/store/v1/products/e2e-hic-boyle-bir-urun-yok", publishableAnahtar)
+	hidden := magazaIstegi(t, "/store/v1/products/"+ground.secondChannelProduct.handle, publishableKey)
+	missing := magazaIstegi(t, "/store/v1/products/e2e-no-such-product-exists", publishableKey)
 
-	require.Equal(t, http.StatusNotFound, gizlenen.Code, "gövde: %s", gizlenen.Body.String())
-	require.Equal(t, http.StatusNotFound, olmayan.Code, "gövde: %s", olmayan.Body.String())
+	require.Equal(t, http.StatusNotFound, hidden.Code, "body: %s", hidden.Body.String())
+	require.Equal(t, http.StatusNotFound, missing.Code, "body: %s", missing.Body.String())
 
-	assert.Equal(t, hataOzu(t, olmayan)[0], hataOzu(t, gizlenen)[0],
-		"gizlenen ürün ile olmayan ürün AYNI hata kodunu dönmeli")
+	assert.Equal(t, errorSummary(t, missing)[0], errorSummary(t, hidden)[0],
+		"the hidden product and the missing product must return the SAME error code")
 }
 
-// TestVitrinKanaliSorguDizesindenAlmaz istemcinin kanalı kendisinin
-// seçemediğini doğrular.
+// TestTheStorefrontDoesNotTakeTheChannelFromTheQueryString verifies that the
+// client cannot pick the channel itself.
 //
-// Handler kanalı sorgu dizesinden okusaydı süzgeç bir yetkilendirme olmaktan
-// çıkıp bir görüntüleme tercihine dönüşürdü: elindeki herhangi bir publishable
-// anahtarla gelen istemci, kanal kimliğini yazarak BAŞKA bir vitrinin
-// kataloğunu okurdu. İddia handler'ın birim testinde de vardır ama orada
-// kimliği testin kendisi koyar; burada onu üretimdeki koruma yığını koyar.
-func TestVitrinKanaliSorguDizesindenAlmaz(t *testing.T) {
-	zemin := kanalKataloguFiksturu(t)
+// Had the handler read the channel from the query string, the filter would stop
+// being an authorization and would turn into a display preference: a client
+// arriving with any publishable key in hand would read ANOTHER storefront's
+// catalog just by writing the channel identity. The claim exists in the
+// handler's unit test too, but there the identity is put in place by the test
+// itself; here it is put there by the protection stack that runs in production.
+func TestTheStorefrontDoesNotTakeTheChannelFromTheQueryString(t *testing.T) {
+	ground := channelCatalogFixture(t)
 
-	sorgu := koleksiyonSorgusu(zemin.koleksiyonID)
-	sorgu.Set("sales_channel_id", zemin.ikinciKanalID)
+	query := koleksiyonSorgusu(ground.koleksiyonID)
+	query.Set("sales_channel_id", ground.secondChannelID)
 
-	katalog := vitrinKatalogu(t, publishableAnahtar, sorgu)
+	catalog := vitrinKatalogu(t, publishableKey, query)
 
-	assert.NotContains(t, katalog.kimlikler(), zemin.ikinciKanalUrunu.id,
-		"sorgu dizesindeki kanal kimliği YOK SAYILMALI; sayılmadıysa anahtar sahibi "+
-			"başka bir vitrinin kataloğunu okuyabiliyor demektir")
+	assert.NotContains(t, catalog.kimlikler(), ground.secondChannelProduct.id,
+		"the channel identity in the query string MUST BE IGNORED; if it is not, the key's "+
+			"owner is able to read another storefront's catalog")
 	assert.ElementsMatch(t,
-		[]string{zemin.birinciKanalUrunu.id, zemin.atamasizUrun.id}, katalog.kimlikler(),
-		"katalog anahtarın KENDİ kanalına göre kalmalı")
-	assert.Equal(t, 2, katalog.Count)
+		[]string{ground.firstChannelProduct.id, ground.unassignedProduct.id}, catalog.kimlikler(),
+		"the catalog must stay bound to the key's OWN channel")
+	assert.Equal(t, 2, catalog.Count)
 }
 
-// TestSonKanalBagiKaldirilincaUrunHerVitrinde bağın kaldırılmasının ürünü
-// gizlemediğini, TÜM vitrinlere açtığını doğrular.
+// TestRemovingTheLastChannelBondShowsTheProductInEveryStorefront verifies that
+// removing the bond does not hide the product but opens it up to ALL
+// storefronts.
 //
-// Kuralın doğrudan sonucudur ("ataması olmayan ürün her yerde görünür") ve
-// şaşırtıcı olduğu için uçtan uca çivilenir: bir yöneticinin ürünü vitrinden
-// KALDIRMAK için son bağı silmesi, tam tersini yapar.
+// It is the direct consequence of the rule ("a product with no assignment is
+// visible everywhere") and it is nailed down end to end because it is
+// surprising: an admin deleting the last bond in order to REMOVE the product
+// from a storefront does the exact opposite.
 //
-// Test kendi koleksiyonunu ve kendi ürününü kurar; paylaşılan fikstürü
-// değiştirseydi, ondan sonra koşan her sayaç iddiası testlerin sırasına bağlı
-// hâle gelirdi.
-func TestSonKanalBagiKaldirilincaUrunHerVitrinde(t *testing.T) {
-	zemin := kanalKataloguFiksturu(t)
+// The test sets up its own collection and its own product; had it changed the
+// shared fixture, every counter claim running after it would have become
+// dependent on the order of the tests.
+func TestRemovingTheLastChannelBondShowsTheProductInEveryStorefront(t *testing.T) {
+	ground := channelCatalogFixture(t)
 	ctx := t.Context()
 
-	koleksiyon, err := urunSvc.CreateCollection(ctx, productsvc.CreateCollectionInput{
-		Title:  "E2E Kanal Bağı Kaldırma",
-		Handle: "e2e-kanal-bagi-kaldirma",
+	collection, err := productSvc.CreateCollection(ctx, productsvc.CreateCollectionInput{
+		Title:  "E2E Channel Bond Removal",
+		Handle: "e2e-channel-bond-removal",
 	})
-	require.NoError(t, err, "yalıtım koleksiyonu kurulamadı")
+	require.NoError(t, err, "the isolation collection could not be set up")
 
-	urun, err := kanalKataloguUrunuKur(ctx, koleksiyon.ID, "kaldirma")
+	product, err := setUpChannelCatalogProduct(ctx, collection.ID, "removal")
 	require.NoError(t, err)
-	require.NoError(t, kanalBagla(urun.id, zemin.ikinciKanalID))
+	require.NoError(t, bindChannel(product.id, ground.secondChannelID))
 
-	sorgu := koleksiyonSorgusu(koleksiyon.ID)
-	require.Empty(t, vitrinKatalogu(t, publishableAnahtar, sorgu).kimlikler(),
-		"ürün önce yalnızca ikinci vitrinde olmalı")
-	require.Equal(t, []string{urun.id}, vitrinKatalogu(t, zemin.ikinciAnahtar, sorgu).kimlikler())
+	query := koleksiyonSorgusu(collection.ID)
+	require.Empty(t, vitrinKatalogu(t, publishableKey, query).kimlikler(),
+		"at first the product must be in the second storefront only")
+	require.Equal(t, []string{product.id}, vitrinKatalogu(t, ground.ikinciAnahtar, query).kimlikler())
 
-	kayit, err := yonetimGovdeliIstek(http.MethodDelete,
-		"/admin/v1/products/"+urun.id+"/sales-channels/"+zemin.ikinciKanalID, nil)
+	recorder, err := adminRequestWithBody(http.MethodDelete,
+		"/admin/v1/products/"+product.id+"/sales-channels/"+ground.secondChannelID, nil)
 	require.NoError(t, err)
-	require.Equal(t, http.StatusOK, kayit.Code,
-		"kanal bağı kaldırılmalı; gövde: %s", kayit.Body.String())
+	require.Equal(t, http.StatusOK, recorder.Code,
+		"the channel bond must be removed; body: %s", recorder.Body.String())
 
-	kalanlar, err := kanalListesiniCoz(kayit)
+	remaining, err := decodeChannelList(recorder)
 	require.NoError(t, err)
-	require.Empty(t, kalanlar, "son bağ kaldırıldıktan sonra kanal listesi boşalmalı")
+	require.Empty(t, remaining, "after the last bond is removed the channel list must become empty")
 
-	assert.Equal(t, []string{urun.id}, vitrinKatalogu(t, publishableAnahtar, sorgu).kimlikler(),
-		"ataması kalmayan ürün BİRİNCİ vitrinde de görünmeli")
-	assert.Equal(t, []string{urun.id}, vitrinKatalogu(t, zemin.ikinciAnahtar, sorgu).kimlikler(),
-		"ataması kalmayan ürün kendi eski vitrininde de görünmeye devam etmeli")
+	assert.Equal(t, []string{product.id}, vitrinKatalogu(t, publishableKey, query).kimlikler(),
+		"a product left with no assignment must be visible in the FIRST storefront too")
+	assert.Equal(t, []string{product.id}, vitrinKatalogu(t, ground.ikinciAnahtar, query).kimlikler(),
+		"a product left with no assignment must keep being visible in its own old storefront too")
 }

@@ -21,14 +21,14 @@ import (
 	pricingsvc "github.com/bdrtr/gobit/internal/modules/pricing/service"
 )
 
-// fiksturSayaci fikstürlerin benzersiz handle ve e-posta üretmesini sağlar.
+// fixtureCounter fikstürlerin benzersiz handle ve e-posta üretmesini sağlar.
 //
 // Testler tek bir veritabanını paylaşır ve ürün handle'ı ile kayıtlı müşteri
 // e-postası BENZERSİZDİR; sabit bir ad kullanmak, testlerin çalışma sırasına
 // göre çakışmasına yol açardı.
-var fiksturSayaci atomic.Int64
+var fixtureCounter atomic.Int64
 
-// yeniVaryant bir ürün ve varyant oluşturur, isteniyorsa fiyat kümesini kurup
+// newVariant bir ürün ve varyant oluşturur, isteniyorsa fiyat kümesini kurup
 // varyanta bağlar ve VARYANT KİMLİĞİNİ döner.
 //
 // fiyatlar nil verilirse varyant hiçbir fiyat kümesine BAĞLANMAZ; bu, "fiyatı
@@ -39,18 +39,18 @@ var fiksturSayaci atomic.Int64
 // Fiyat kümesi bağı "product_variant_price_set" linkiyle kurulur; sepet akışı
 // varyantın fiyatını tam olarak o linkten bulur (bkz. workflows/cart
 // priceSetsFor).
-func yeniVaryant(ctx context.Context, t *testing.T, baslik string, fiyatlar map[string]int64) string {
+func newVariant(ctx context.Context, t *testing.T, baslik string, fiyatlar map[string]int64) string {
 	t.Helper()
 
-	sira := fiksturSayaci.Add(1)
-	urun, err := urunSvc.CreateProduct(ctx, productsvc.CreateProductInput{
+	sira := fixtureCounter.Add(1)
+	urun, err := productSvc.CreateProduct(ctx, productsvc.CreateProductInput{
 		Handle: fmt.Sprintf("e2e-urun-%d", sira),
 		Title:  baslik,
 		Status: productmodels.StatusPublished,
 	})
 	require.NoError(t, err, "fikstür ürünü oluşturulamadı")
 
-	varyant, err := urunSvc.CreateVariant(ctx, urun.ID, productsvc.CreateVariantInput{Title: baslik})
+	varyant, err := productSvc.CreateVariant(ctx, urun.ID, productsvc.CreateVariantInput{Title: baslik})
 	require.NoError(t, err, "fikstür varyantı oluşturulamadı")
 
 	if len(fiyatlar) == 0 {
@@ -66,21 +66,21 @@ func yeniVaryant(ctx context.Context, t *testing.T, baslik string, fiyatlar map[
 		})
 	}
 
-	kume, err := fiyatSvc.CreatePriceSet(ctx, girdiler)
+	kume, err := pricingSvc.CreatePriceSet(ctx, girdiler)
 	require.NoError(t, err, "fikstür fiyat kümesi oluşturulamadı")
-	require.NoError(t, urunSvc.SetVariantPriceSet(ctx, varyant.ID, kume.ID),
+	require.NoError(t, productSvc.SetVariantPriceSet(ctx, varyant.ID, kume.ID),
 		"varyant fiyat kümesine bağlanamadı; bağ olmadan akış fiyatı bulamaz")
 
 	return varyant.ID
 }
 
-// yeniMusteri KAYITLI bir müşteri oluşturur ve kimliğiyle e-postasını döner.
-func yeniMusteri(ctx context.Context, t *testing.T) (musteriID, eposta string) {
+// newCustomer KAYITLI bir müşteri oluşturur ve kimliğiyle e-postasını döner.
+func newCustomer(ctx context.Context, t *testing.T) (musteriID, eposta string) {
 	t.Helper()
 
-	sira := fiksturSayaci.Add(1)
+	sira := fixtureCounter.Add(1)
 	eposta = fmt.Sprintf("e2e-musteri-%d@ornek.test", sira)
-	musteri, err := musteriSvc.CreateCustomer(ctx, customersvc.CustomerInput{
+	musteri, err := customerSvc.CreateCustomer(ctx, customersvc.CustomerInput{
 		Email:     eposta,
 		FirstName: "E2E",
 		LastName:  "Müşteri",
@@ -90,18 +90,18 @@ func yeniMusteri(ctx context.Context, t *testing.T) (musteriID, eposta string) {
 	return musteri.ID, musteri.Email
 }
 
-// yeniStokluVaryant fiyatı VE stoğu olan bir varyant kurar; varyant ile stok
+// newStockedVariant fiyatı VE stoğu olan bir varyant kurar; varyant ile stok
 // kaleminin kimliklerini döner.
 //
 // Kurulum dört parçadır ve dördü de gerçek modüllerdedir: varyant + fiyat
-// (bkz. [yeniVaryant]), stok kalemi, varyant -> kalem bağı ve paylaşılan
+// (bkz. [newVariant]), stok kalemi, varyant -> kalem bağı ve paylaşılan
 // lokasyondaki stok seviyesi. Sipariş tamamlama akışı stok kalemini tam olarak
 // "product_variant_inventory" bağından bulur (bkz. checkoutwf.plan.go); bağ
 // kurulmazsa akış varyantı "stoksuz" sayar ve sepet hiç sipariş olamaz.
 //
 // stok, lokasyondaki FİZİKSEL adettir. Rezerve adet sıfırdan başlar, yani
 // satılabilir adet de başlangıçta stok kadardır.
-func yeniStokluVaryant(
+func newStockedVariant(
 	ctx context.Context,
 	t *testing.T,
 	baslik string,
@@ -110,19 +110,19 @@ func yeniStokluVaryant(
 ) (varyantID, stokKalemID string) {
 	t.Helper()
 
-	varyantID = yeniVaryant(ctx, t, baslik, fiyatlar)
+	varyantID = newVariant(ctx, t, baslik, fiyatlar)
 
-	sira := fiksturSayaci.Add(1)
-	kalem, err := stokSvc.CreateInventoryItem(ctx, inventorysvc.CreateInventoryItemInput{
+	sira := fixtureCounter.Add(1)
+	kalem, err := inventorySvc.CreateInventoryItem(ctx, inventorysvc.CreateInventoryItemInput{
 		SKU:   fmt.Sprintf("E2E-SKU-%d", sira),
 		Title: baslik,
 	})
 	require.NoError(t, err, "fikstür stok kalemi oluşturulamadı")
 
-	require.NoError(t, urunSvc.SetVariantInventoryItem(ctx, varyantID, kalem.ID),
+	require.NoError(t, productSvc.SetVariantInventoryItem(ctx, varyantID, kalem.ID),
 		"varyant stok kalemine bağlanamadı; bağ olmadan akış varyantı stoksuz sayar")
 
-	seviye, err := stokSvc.SetInventoryLevel(ctx, kalem.ID, stokLokasyonID, stok)
+	seviye, err := inventorySvc.SetInventoryLevel(ctx, kalem.ID, stockLocationID, stok)
 	require.NoError(t, err, "fikstür stok seviyesi yazılamadı")
 	require.Equal(t, stok, seviye.Available(),
 		"yeni seviyede satılabilir adet fiziksel adede eşit olmalı; eşit değilse "+
@@ -131,29 +131,29 @@ func yeniStokluVaryant(
 	return varyantID, kalem.ID
 }
 
-// satilabilirAdet stok kaleminin TÜM lokasyonlardaki satılabilir toplamını
+// sellableQuantity stok kaleminin TÜM lokasyonlardaki satılabilir toplamını
 // döner: stocked - reserved.
 //
 // Sayı stok modülünden okunur, akışın döndürdüğü bir değerden değil: sınanan
 // iddia, rezervasyonun stok modülünün DEFTERİNDE gerçekten yer değiştirdiğidir.
-func satilabilirAdet(ctx context.Context, t *testing.T, stokKalemID string) int64 {
+func sellableQuantity(ctx context.Context, t *testing.T, stokKalemID string) int64 {
 	t.Helper()
 
-	adet, err := stokSvc.AvailableQuantity(ctx, stokKalemID)
+	adet, err := inventorySvc.AvailableQuantity(ctx, stokKalemID)
 	require.NoError(t, err, "satılabilir adet okunamadı")
 	return adet
 }
 
-// stokSeviyesi kalemin PAYLAŞILAN lokasyondaki seviyesini döner.
+// stockLevel kalemin PAYLAŞILAN lokasyondaki seviyesini döner.
 //
 // Satılabilir adet tek başına yetmez: rezervasyonun onaylanması (stoktan
 // düşme) ile geri bırakılması, satılabilir adet açısından ayırt edilebilir ama
 // FİZİKSEL adet açısından tam tersidir. İki sayıyı birden görmek, "stok düştü"
 // ile "stok geri geldi" arasındaki farkı kesinleştirir.
-func stokSeviyesi(ctx context.Context, t *testing.T, stokKalemID string) inventorymodels.InventoryLevel {
+func stockLevel(ctx context.Context, t *testing.T, stokKalemID string) inventorymodels.InventoryLevel {
 	t.Helper()
 
-	seviyeler, err := stokSvc.ListInventoryLevels(ctx, stokKalemID)
+	seviyeler, err := inventorySvc.ListInventoryLevels(ctx, stokKalemID)
 	require.NoError(t, err, "stok seviyeleri okunamadı")
 	require.Len(t, seviyeler, 1,
 		"fikstür kalemi TEK lokasyonda seviyelenmiş olmalı; ikinci bir seviye, "+
