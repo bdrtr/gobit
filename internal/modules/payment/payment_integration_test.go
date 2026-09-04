@@ -17,6 +17,7 @@ import (
 	"context"
 	"fmt"
 	"io/fs"
+	"log/slog"
 	"os"
 	"strconv"
 	"strings"
@@ -31,6 +32,7 @@ import (
 	"github.com/bdrtr/gobit/internal/core/container"
 	"github.com/bdrtr/gobit/internal/core/db"
 	"github.com/bdrtr/gobit/internal/core/errors"
+	"github.com/bdrtr/gobit/internal/core/link"
 	coreprovider "github.com/bdrtr/gobit/internal/core/provider"
 	"github.com/bdrtr/gobit/internal/core/query"
 	"github.com/bdrtr/gobit/internal/modules/payment"
@@ -806,6 +808,10 @@ func TestModulContainerdaAdlariKaydeder(t *testing.T) {
 	ctx := context.Background()
 	c := container.New(nil)
 	require.NoError(t, c.Provide("core.db", testPool))
+	// Link servisi de veriliyor ve bu isteğe bağlı değil: modül artık
+	// "order_payment" tanımını açılışta bildiriyor (ADR 0005), yani onsuz
+	// kaydolamaz. Ürün modülü de aynı gereksinimi taşıyor.
+	require.NoError(t, c.Provide("core.link", link.New(testPool, slog.New(slog.DiscardHandler))))
 
 	mod := payment.New()
 	require.NoError(t, mod.Register(ctx, c))

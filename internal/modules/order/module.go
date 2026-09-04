@@ -112,6 +112,9 @@ const ProviderName = service.EntityName + query.ProviderSuffix
 const (
 	svcDB       = "core.db"
 	svcEventBus = "core.eventbus"
+	// svcQuery is the core cross-module read layer's name in the container
+	// (ADR 0004). The order reads its payment through it and only through it.
+	svcQuery = "core.query"
 )
 
 // SpendingPolicyName is the container name of the service that publishes the
@@ -197,6 +200,12 @@ func (m *Module) Register(ctx context.Context, c *container.Container) error {
 	// registration.
 	log := slog.Default().With("module", ModuleName)
 
+	queryLayer, err := container.Resolve[query.Query](c, svcQuery)
+	if err != nil {
+		return errors.Wrap(err, errors.KindOf(err), codeSetupFailed,
+			"the %s module could not resolve the query layer (%q)", ModuleName, svcQuery)
+	}
+
 	svc, err := service.New(service.Options{
 		Repo:   repository.New(pool.Pool()),
 		Events: bus,
@@ -204,7 +213,11 @@ func (m *Module) Register(ctx context.Context, c *container.Container) error {
 		// registered yet at this stage; the resolution is deferred to first use
 		// (see [spendingPolicy] and the module.Module documentation).
 		Spending: &spendingPolicy{c: c, log: log},
-		Logger:   log,
+		// The Query layer is a CORE service, so it can be resolved right here:
+		// the deferral the spending rule needs is about another MODULE not
+		// being registered yet, and that does not apply to core.
+		Catalog: queryLayer,
+		Logger:  log,
 	})
 	if err != nil {
 		return errors.Wrap(err, errors.KindOf(err), codeSetupFailed,

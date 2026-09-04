@@ -553,6 +553,28 @@ type stubLinks struct {
 	rec *recorder
 
 	listManyFn func(ctx context.Context, name string, fromIDs []string) (map[string][]string, error)
+	createFn   func(ctx context.Context, name, fromID, toID string) error
+
+	// created keeps, in order, the bindings that were written.
+	created []linkPair
+}
+
+// linkPair is one binding written through the stub.
+type linkPair struct {
+	name   string
+	fromID string
+	toID   string
+}
+
+// Create records the binding and applies the scripted behavior.
+func (s *stubLinks) Create(ctx context.Context, name, fromID, toID string) error {
+	s.rec.add("link:create:" + name)
+	s.created = append(s.created, linkPair{name: name, fromID: fromID, toID: toID})
+	if s.createFn == nil {
+		return nil
+	}
+
+	return s.createFn(ctx, name, fromID, toID)
 }
 
 // ListMany applies the scripted link read.

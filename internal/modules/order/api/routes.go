@@ -75,6 +75,7 @@ func (h *Handler) Routes(r chi.Router) {
 	// --- Admin API (administration) ---
 	read.Get("/admin/v1/orders", h.adminListOrders)
 	read.Get("/admin/v1/orders/{id}", h.adminGetOrder)
+	read.Get("/admin/v1/orders/{id}/payment", h.adminGetOrderPayment)
 
 	// Status transitions are POSTs and have no bodies (except cancel): a
 	// transition is not a field update, it is an ACTION, and it must not look

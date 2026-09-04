@@ -144,6 +144,10 @@ func TestHappyPathRunsTheFiveStepsInOrder(t *testing.T) {
 		"inventory:reserve:" + testLineB,
 		"order:place",
 		"payment:collection",
+		// The order is bound to the collection BEFORE the session is opened:
+		// nothing has been held on the card yet, so a failure here costs only a
+		// reservation.
+		"link:create:order_payment",
 		"payment:session",
 		"payment:authorize",
 		"payment:capture",
@@ -1853,4 +1857,86 @@ func TestAnUnreadableCollectionIsAlsoOnlyAWarning(t *testing.T) {
 	assert.NotEmpty(t, out.Warnings)
 	assert.Empty(t, h.orders.summaries, "nothing may be written from an unread collection")
 	assert.Empty(t, h.orders.canceled)
+}
+
+// TestTheOrderIsBoundToItsPaymentCollection is the path that did not exist.
+//
+// The collection's Reference carries the CART id, so until this binding was
+// written there was no way from an order to the money collected for it: an
+// operator asking "what was paid on this order" had to already know which cart
+// it came from. Two godocs named the "order_payment" link and nothing declared
+// or wrote it.
+func TestTheOrderIsBoundToItsPaymentCollection(t *testing.T) {
+	h := newHarness(t)
+
+	out, err := h.wf.CompleteCart(context.Background(), h.input())
+	require.NoError(t, err)
+
+	require.Len(t, h.links.created, 1)
+	assert.Equal(t, LinkOrderPayment, h.links.created[0].name)
+	assert.Equal(t, out.OrderID, h.links.created[0].fromID,
+		"the link's left side is the ORDER")
+	assert.Equal(t, out.PaymentCollectionID, h.links.created[0].toID,
+		"the link's right side is the COLLECTION")
+}
+
+// TestTheBindingIsWrittenBEFORETheAuthorization pins where the failure is
+// cheap.
+//
+// Nothing has been held on the customer's card at that point, so a binding that
+// cannot be written costs only a reservation that gets rolled back. Writing it
+// after the authorization would mean choosing between a held card and an
+// unreachable payment.
+func TestTheBindingIsWrittenBEFORETheAuthorization(t *testing.T) {
+	h := newHarness(t)
+
+	_, err := h.wf.CompleteCart(context.Background(), h.input())
+	require.NoError(t, err)
+
+	calls := h.rec.snapshot()
+	linkAt := slices.Index(calls, "link:create:"+LinkOrderPayment)
+	authAt := slices.Index(calls, "payment:authorize")
+	require.NotEqual(t, -1, linkAt)
+	require.NotEqual(t, -1, authAt)
+	assert.Less(t, linkAt, authAt)
+}
+
+// TestAnUnwritableBindingStopsTheSaga is the fail-closed half.
+//
+// Carrying on without the link would produce exactly the state the binding
+// exists to end — a paid order with no way back to its payment — and it would
+// do so silently.
+func TestAnUnwritableBindingStopsTheSaga(t *testing.T) {
+	h := newHarness(t)
+	h.links.createFn = func(_ context.Context, _, _, _ string) error {
+		return errors.New("the link table is unreachable")
+	}
+
+	_, err := h.wf.CompleteCart(context.Background(), h.input())
+
+	require.Error(t, err)
+	// The card was never touched: the failure is before the authorization.
+	assert.Equal(t, 0, h.rec.count("payment:authorize"))
+	// And the reservation was rolled back.
+	assert.Positive(t, h.rec.count("inventory:release:res_"+testLineA))
+}
+
+// TestARolledBackSagaKeepsTheBinding holds the compensation decision.
+//
+// A rolled-back saga cancels the order and leaves the collection standing —
+// "a collection holds no money, it is only a ledger line". The link says which
+// order that line belonged to, and removing it would erase the trace of an
+// attempt that really happened.
+func TestARolledBackSagaKeepsTheBinding(t *testing.T) {
+	h := newHarness(t)
+	h.payments.authorizeFn = func(_ context.Context, _ string) (string, int64, error) {
+		return "", 0, errors.New("the provider declined")
+	}
+
+	_, err := h.wf.CompleteCart(context.Background(), h.input())
+	require.Error(t, err)
+
+	require.Len(t, h.links.created, 1, "the binding was written before the authorization")
+	assert.Equal(t, 0, h.rec.count("link:delete:"+LinkOrderPayment),
+		"the compensation must not erase the trace of an attempt that happened")
 }

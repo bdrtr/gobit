@@ -52,6 +52,12 @@ type fakeOrders struct {
 	// calls records the called methods IN ORDER; it is needed to verify that
 	// the cancel endpoint performs the read as well.
 	calls []string
+	// payment is the live payment view the fake reports.
+	payment service.OrderPayment
+	// paymentBound reports whether a collection is bound at all.
+	paymentBound bool
+	// paymentErr, when set, makes PaymentOf fail.
+	paymentErr error
 }
 
 // That the fake satisfies the surface the handler expects is verified at
@@ -81,6 +87,17 @@ func (f *fakeOrders) CancelOrder(_ context.Context, orderID, reason string) erro
 	f.gotOrderID = orderID
 	f.gotReason = reason
 	return f.err
+}
+
+// PaymentOf returns the scripted live payment view.
+func (f *fakeOrders) PaymentOf(
+	_ context.Context, _ string,
+) (service.OrderPayment, bool, error) {
+	if f.paymentErr != nil {
+		return service.OrderPayment{}, false, f.paymentErr
+	}
+
+	return f.payment, f.paymentBound, nil
 }
 
 // CompleteOrder completes the order.
@@ -762,4 +779,58 @@ func TestStorefrontEndpointRequiresNoScope(t *testing.T) {
 
 	require.Equal(t, http.StatusOK, rec.Code)
 	assert.Equal(t, []string{"GetOrder"}, svc.calls)
+}
+
+// TestTheOrdersLivePaymentIsReadable is the read the "order_payment" link was
+// declared for.
+//
+// Two godocs named that link before it existed — the payment module's query
+// provider ("an order listing sees the order's payment status through this
+// provider and the order_payment link") and the order module's package doc.
+// Nothing declared it, nothing wrote it, and nothing read it. This is the read.
+func TestTheOrdersLivePaymentIsReadable(t *testing.T) {
+	svc := &fakeOrders{
+		paymentBound: true,
+		payment: service.OrderPayment{
+			CollectionID:     "pcol_1",
+			Status:           "captured",
+			Amount:           6100,
+			AuthorizedAmount: 0,
+			CapturedAmount:   6100,
+			RefundedAmount:   0,
+			CurrencyCode:     "TRY",
+		},
+	}
+	r := newRouter(svc)
+
+	rec := doRequest(t, r, http.MethodGet, "/admin/v1/orders/order_1/payment", "")
+
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	payload := decodeResponse(t, rec)
+	data, ok := payload["data"].(map[string]any)
+	require.True(t, ok, rec.Body.String())
+	assert.Equal(t, "pcol_1", data["payment_collection_id"])
+	assert.Equal(t, "captured", data["status"])
+	assert.InDelta(t, 6100, data["captured_amount"], 0.0)
+	assert.Equal(t, "TRY", data["currency_code"])
+}
+
+// TestAnOrderWithNoPaymentIsNotTheSameAsNoOrder keeps the two apart.
+//
+// An order can genuinely have no collection: the saga binds it AFTER the order
+// is written, so a checkout that died in between leaves one. A client that
+// could not tell that from "there is no such order" would treat a half-finished
+// checkout as a missing record.
+func TestAnOrderWithNoPaymentIsNotTheSameAsNoOrder(t *testing.T) {
+	svc := &fakeOrders{paymentBound: false}
+	r := newRouter(svc)
+
+	rec := doRequest(t, r, http.MethodGet, "/admin/v1/orders/order_1/payment", "")
+
+	require.Equal(t, http.StatusNotFound, rec.Code)
+	payload := decodeResponse(t, rec)
+	failure, ok := payload["error"].(map[string]any)
+	require.True(t, ok, rec.Body.String())
+	assert.Equal(t, "order_payment_unbound", failure["code"],
+		"the code has to say WHICH thing is missing")
 }

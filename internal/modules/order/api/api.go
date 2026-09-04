@@ -67,6 +67,14 @@ const maxBodyBytes int64 = 1 << 20 // 1 MiB
 // cannot be parsed.
 const codeInvalidRequest = "order_invalid_request"
 
+// codeOrderPaymentUnbound reports that no payment collection is bound to the
+// order.
+//
+// It is SEPARATE from the order's own not-found code on purpose: a client that
+// cannot tell "there is no such order" from "this order has no payment" would
+// treat a checkout that died mid-flight as a missing order.
+const codeOrderPaymentUnbound = "order_payment_unbound"
+
 // URL parameter names.
 const (
 	// paramOrderID is the URL parameter name of the order id.
@@ -94,6 +102,9 @@ type Orders interface {
 	CancelOrder(ctx context.Context, orderID, reason string) error
 	// CompleteOrder completes the order.
 	CompleteOrder(ctx context.Context, orderID string) (models.Order, error)
+	// PaymentOf returns the LIVE payment collection bound to the order; the
+	// second value reports whether one is bound at all.
+	PaymentOf(ctx context.Context, orderID string) (service.OrderPayment, bool, error)
 	// ArchiveOrder archives a completed order.
 	ArchiveOrder(ctx context.Context, orderID string) (models.Order, error)
 

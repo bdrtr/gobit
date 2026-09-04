@@ -12,6 +12,70 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Eklendi
 
+- **Sipariş ile ödemesi arasında artık bir yol var** (`order_payment` link'i).
+
+  Koleksiyonun `Reference` alanı sepet kimliğini taşıyor, yani bir siparişten
+  onun için tahsil edilen paraya giden hiçbir yol yoktu: "bu siparişe ne
+  ödendi" diye soran operatörün, siparişin hangi sepetten geldiğini önceden
+  bilmesi gerekiyordu. İki godoc `"order_payment"` link'ini adıyla anıyordu —
+  biri ödeme modülünün query sağlayıcısında ("bir sipariş listesi siparişin
+  ödeme durumunu bu sağlayıcı ve order_payment link'i üzerinden görür"), biri
+  sipariş modülünün paket belgesinde — ve **hiçbir şey onu tanımlamıyordu.**
+  Vaadin ne tüketicisi ne üreticisi vardı.
+
+  Tanımı hangi modülün yazacağına depo kendi kuralıyla karar vermiş: sipariş
+  modülünün paket belgesi *"tanım, bağın taşıdığı kaydı YAZAN taraf tarafından
+  bildirilir — payment, fulfillment"* diyor, ve bir tanım ADR 0005 gereği
+  yalnızca BİR KEZ bildirilebilir. Koleksiyon ödeme modülünün kaydı, dolayısıyla
+  tanım orada.
+
+  `Reference` alanını siparişe çevirmek seçilmedi: alanın kendi godoc'u zaten
+  *"Prensip 2.2 — bağ Module Links üzerinden kurulur"* diyor, ve anlamını
+  değiştirmek mevcut her satırdaki sepet anlamını bozar, üstelik ilişkiyi
+  sipariş tarafından sorgulanabilir yapmazdı.
+
+  Bağ saga'da, koleksiyon açıldıktan hemen SONRA ve yetkilendirmeden ÖNCE
+  kuruluyor. Yer seçimi bilinçli: o noktada kartta henüz bloke yok, dolayısıyla
+  yazılamayan bir bağın bedeli yalnızca geri alınan bir rezervasyon —
+  boş-kimlik denetimlerinin kullandığı aynı ucuz kırılma noktası. Sonrasına
+  bırakmak, bloke edilmiş bir kartla ulaşılamayan bir ödeme arasında seçim
+  yapmak olurdu.
+
+  Telafi bağı SİLMİYOR: geri alınan saga siparişi iptal ediyor ama koleksiyon
+  ayakta kalıyor ("koleksiyon para tutmaz, yalnızca 'şu kadar tahsil edilecekti'
+  diyen bir defter satırıdır"). Bağ o satırın hangi siparişe ait olduğunu
+  söyleyen şey; silmek gerçekten olmuş bir denemenin izini silmek olurdu.
+
+  Kardinalite bire bir, bugün doğru olan EN SIKI kısıt: saga sipariş başına tam
+  bir koleksiyon açıyor. Deponun kendi ilkesi bu yönde — bildirilmemiş
+  kardinalite en sıkısına düşer, çünkü fazla sıkı bir kısıt YÜKSEK SESLE
+  patlarken fazla gevşek olanı yanlış satırı sessizce içeri alır. Yeniden
+  açılma koşulu şemada zaten görünür: `difference_due` pozitif olan bir değişim,
+  var olan bir siparişe karşı tahsil edilen paradır.
+
+  **Arch kapısı bu turda bir tasarım hatası yakaladı ve haklıydı.**
+  `TestTheLinkDefinitionsAreTraversed`: bildirilen ve YAZILAN ama hiç OKUNMAYAN
+  bir link veriyi yazar, maliyetini öder ve hiçbir davranış üretmez — "satış
+  kanalı hatası tam olarak buydu". İlk hâlinde üretici vardı, tüketici yoktu;
+  yani bu oturumun peşinde olduğu hata sınıfının ta kendisi, bu sefer benim
+  elimden.
+
+  Okuyucu uydurulmadı, godoc'un zaten verdiği söz yerine getirildi:
+  `GET /admin/v1/orders/{id}/payment` siparişin canlı ödeme koleksiyonunu link
+  üzerinden okuyor. Sipariş detayına alan olarak EKLENMEDİ — her sipariş
+  okumasını, çoğu zaman gerekmeyen bir yolda başka bir modüle uzatırdı.
+
+  İkisinin birden olması çoğaltma değil, amacın kendisi: sipariş kendi kaydında
+  ne ödendiğine İNANDIĞINI taşıyor (ADR 0022), bu uç ödeme modülünün ŞU AN ne
+  dediğini veriyor. Elinde ikisi olan operatör kaydedilmiş ödemeyi gerçek
+  olandan ayırabiliyor — ADR 0020'nin oturum ile sağlayıcı için kurduğu
+  argümanın aynısı. "Sipariş yok" ile "bu siparişin ödemesi yok" da ayrı
+  kodlarla ayrılıyor, çünkü saga koleksiyonu siparişten SONRA bağlıyor ve
+  arada ölen bir ödeme gerçek bir durum.
+
+  Üç mutasyonun üçü de yakalandı. Bu, iade akışının (2/3) önkoşuluydu ve ADR
+  0022'nin açık bıraktığı iade yarısının da yolunu açıyor.
+
 - **İade kaydı artık kımıldayabiliyor ve hangi satırların geldiğini söylüyor**
   (satış sonrası, 1/3).
 

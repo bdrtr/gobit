@@ -70,6 +70,66 @@ func (h *Handler) adminGetOrder(w http.ResponseWriter, r *http.Request) {
 	corehttp.WriteJSON(ctx, w, http.StatusOK, singleEnvelope{Data: toOrderDetailDTO(detail)})
 }
 
+// orderPaymentDTO is the live payment view of an order.
+type orderPaymentDTO struct {
+	CollectionID     string `json:"payment_collection_id"`
+	Status           string `json:"status"`
+	Amount           int64  `json:"amount"`
+	AuthorizedAmount int64  `json:"authorized_amount"`
+	CapturedAmount   int64  `json:"captured_amount"`
+	RefundedAmount   int64  `json:"refunded_amount"`
+	CurrencyCode     string `json:"currency_code"`
+}
+
+// adminGetOrderPayment returns what the PAYMENT MODULE says about the order
+// right now.
+//
+// # Why it is its own endpoint and not a field of the order
+//
+// The order's own record already carries what it BELIEVES was paid on it
+// (order.summary, written by the checkout saga, ADR 0022). This reads the other
+// side of the same fact, live, through the "order_payment" link — and putting
+// it on the detail response would make every order read reach into another
+// module, on a path that mostly does not need it.
+//
+// Having both is the point rather than a duplication: an operator with the two
+// in front of them can tell a RECORDED payment from a real one, which is the
+// same argument ADR 0020 makes about a session and its provider.
+//
+// # A 404 means "no payment is bound", not "no order"
+//
+// The two are distinguished: a missing order returns the service's own
+// NotFound, while an order with no collection returns a payment-specific one.
+// An order can genuinely have none — the saga binds the collection after the
+// order is written — and that is a fact an operator should see, not one to hide
+// the whole order behind.
+func (h *Handler) adminGetOrderPayment(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	payment, bound, err := h.svc.PaymentOf(ctx, orderID(r))
+	if err != nil {
+		corehttp.WriteError(ctx, w, err)
+
+		return
+	}
+	if !bound {
+		corehttp.WriteError(ctx, w, coreerrors.NotFound(codeOrderPaymentUnbound,
+			"no payment collection is bound to this order: %s", orderID(r)))
+
+		return
+	}
+
+	corehttp.WriteJSON(ctx, w, http.StatusOK, singleEnvelope{Data: orderPaymentDTO{
+		CollectionID:     payment.CollectionID,
+		Status:           payment.Status,
+		Amount:           payment.Amount,
+		AuthorizedAmount: payment.AuthorizedAmount,
+		CapturedAmount:   payment.CapturedAmount,
+		RefundedAmount:   payment.RefundedAmount,
+		CurrencyCode:     payment.CurrencyCode,
+	}})
+}
+
 // cancelOrderRequest is the body of POST /admin/v1/orders/{id}/cancel.
 type cancelOrderRequest struct {
 	// Reason is the cancellation reason; it is optional.

@@ -101,6 +101,11 @@ const (
 	// CodeSpendingLimitExceeded reports that the order exceeds the customer's
 	// spending limit within the period.
 	CodeSpendingLimitExceeded = "order_spending_limit_exceeded"
+	// CodeCatalogReadFailed reports that a cross-module read through the Query
+	// layer failed.
+	CodeCatalogReadFailed = "order_catalog_read_failed"
+	// CodeOrderNotFound reports that the order does not exist.
+	CodeOrderNotFound = "order_not_found"
 	// CodeSpendingCurrencyMismatch reports that the currency of the order
 	// differs from the currency of the spending limit; the two amounts cannot
 	// be compared without conversion.
@@ -151,6 +156,7 @@ type Service struct {
 	store    Store
 	events   EventPublisher
 	spending SpendingPolicy
+	catalog  Catalog
 	log      *slog.Logger
 }
 
@@ -169,6 +175,13 @@ type Options struct {
 	// limit", so that is the right default; the side that fills the field is
 	// the module's wiring (see module.go).
 	Spending SpendingPolicy
+	// Catalog is the Query-layer surface; it is OPTIONAL.
+	//
+	// It is only used to read an order's payment through the "order_payment"
+	// link. When nil that read FAILS rather than answering "no payment": "this
+	// order was never paid" and "nobody could ask" must not look the same.
+	// Every other path of the module works without it.
+	Catalog Catalog
 	// Logger discards the logs when it is given as nil.
 	Logger *slog.Logger
 }
@@ -202,6 +215,7 @@ func New(opts Options) (*Service, error) {
 		store:    opts.Repo,
 		events:   opts.Events,
 		spending: opts.Spending,
+		catalog:  opts.Catalog,
 		log:      log,
 	}, nil
 }

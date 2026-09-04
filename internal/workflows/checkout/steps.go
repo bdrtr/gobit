@@ -870,6 +870,10 @@ func (s *authorizePaymentStep) Invoke(ctx context.Context, sc *workflow.StepCont
 	}
 	sc.Shared[sharedCollectionID] = collectionID
 
+	if err := s.linkOrderToCollection(ctx, sc, collectionID); err != nil {
+		return nil, err
+	}
+
 	sessionID, err := s.w.payments.OpenSessionWithData(ctx,
 		collectionID, s.plan.PaymentProviderID, sc.ExecutionID, s.plan.PaymentData)
 	if err != nil {
@@ -938,6 +942,53 @@ func (s *authorizePaymentStep) releaseHold(ctx context.Context, sessionID string
 // was taken is not compensated is the capture step's job (see
 // [capturePaymentStep.Compensate]); having two steps report the same situation
 // would produce nothing but noise.
+
+// linkOrderToCollection binds the order to the collection opened for it.
+//
+// # Why the binding needs a link at all
+//
+// The collection carries a Reference and the saga puts the CART id there. It is
+// free text the payment module never validates, and that module's own godoc
+// says where the association belongs: "Principle 2.2 — the link is established
+// through Module Links". Until this call existed nothing established it, so
+// there was NO path from an order to the money collected for it — an operator
+// asking "what was paid on this order" had to know the cart it came from.
+//
+// # Why a failure fails the STEP
+//
+// This runs before the authorization, so nothing has been held on the
+// customer's card yet and the only cost of failing is a reservation that gets
+// rolled back — the same cheap breaking point the empty-identifier checks use.
+// Carrying on without the link would produce exactly the state this call
+// exists to end: a paid order with no way back to its payment.
+//
+// # Why the compensation does not remove it
+//
+// A rolled-back saga cancels the order and leaves the collection standing —
+// "a collection holds no money, it is only a ledger line". The link says which
+// order that line belonged to, and deleting it would erase the trace of an
+// attempt that really happened.
+func (s *authorizePaymentStep) linkOrderToCollection(
+	ctx context.Context, sc *workflow.StepContext, collectionID string,
+) error {
+	orderID, err := sharedText(sc, sharedOrderID)
+	if err != nil {
+		return err
+	}
+	if orderID == "" {
+		return errors.Internal(CodeEmptyIdentifier,
+			"the order identifier is empty while linking the payment collection: %s", collectionID)
+	}
+
+	if linkErr := s.w.links.Create(ctx, LinkOrderPayment, orderID, collectionID); linkErr != nil {
+		return errors.Wrap(linkErr, errors.KindOf(linkErr), CodeLinkFailed,
+			"the order could not be linked to its payment collection: %s -> %s",
+			orderID, collectionID)
+	}
+
+	return nil
+}
+
 func (s *authorizePaymentStep) Compensate(ctx context.Context, sc *workflow.StepContext) error {
 	skip, err := s.w.skipAfterCapture(ctx, sc, StepAuthorizePayment, s.plan.CartID)
 	if err != nil {

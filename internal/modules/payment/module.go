@@ -53,6 +53,7 @@ import (
 	"github.com/bdrtr/gobit/internal/core/container"
 	"github.com/bdrtr/gobit/internal/core/db"
 	"github.com/bdrtr/gobit/internal/core/errors"
+	"github.com/bdrtr/gobit/internal/core/link"
 	"github.com/bdrtr/gobit/internal/core/module"
 	"github.com/bdrtr/gobit/internal/core/openapi"
 	"github.com/bdrtr/gobit/internal/core/query"
@@ -91,6 +92,12 @@ const ProviderName = service.EntityName + query.ProviderSuffix
 
 // dbServiceName çekirdek veritabanı havuzunun container'daki adıdır.
 const dbServiceName = "core.db"
+
+// linkServiceName Module Links servisinin container'daki adıdır.
+const linkServiceName = "core.link"
+
+// codeLinkDefine link tanımının açılışta bildirilemediğini raporlar.
+const codeLinkDefine = "payment_module_link_define_failed"
 
 // Hata kodları.
 const (
@@ -153,6 +160,24 @@ func (m *Module) Register(ctx context.Context, c *container.Container) error {
 	if err != nil {
 		return errors.Wrap(err, errors.KindOf(err), codeSetupFailed,
 			"%s modülü veritabanı havuzunu çözemedi (%q)", ModuleName, dbServiceName)
+	}
+
+	links, err := container.Resolve[link.LinkService](c, linkServiceName)
+	if err != nil {
+		return errors.Wrap(err, errors.KindOf(err), codeSetupFailed,
+			"%s modülü link servisini çözemedi (%q)", ModuleName, linkServiceName)
+	}
+
+	// Link tanımları BURADA bildirilir: şema tanımın yanında durur ve her
+	// açılışta idempotent olarak doğrulanır (ADR 0005). Bir tanım YALNIZCA BİR
+	// KEZ bildirilebilir, o yüzden order_payment'ı sipariş modülü değil bu
+	// modül bildiriyor — bağın taşıdığı kaydı yazan taraf burası (bkz.
+	// [service.LinkOrderPayment]).
+	for _, def := range service.Definitions() {
+		if err := links.Define(ctx, def); err != nil {
+			return errors.Wrap(err, errors.KindOf(err), codeLinkDefine,
+				"%q link tanımı bildirilemedi", def.Name)
+		}
 	}
 
 	log := slog.Default().With("modul", ModuleName)

@@ -31,6 +31,14 @@ const (
 	// InteropName constant); a guessed name would have shown up only at
 	// resolution time, as a setup error.
 	ServiceFulfillment = "fulfillment.interop"
+	// LinkOrderPayment is the link binding an order to its payment collection.
+	//
+	// The name is REPEATED here rather than imported: this package cannot
+	// import the payment module (ADR 0006), which declares the definition. A
+	// typo does not stay silent — the link service returns NotFound for an
+	// undeclared name.
+	LinkOrderPayment = "order_payment"
+
 	// ServiceLink is the core's Module Links service.
 	ServiceLink = "core.link"
 	// ServiceQuery is the core's cross-module read layer.
@@ -133,6 +141,8 @@ const (
 	// without returning an error; the side effect is out in the world and we hold
 	// no trace of it.
 	CodeEmptyIdentifier = "checkout_workflow_empty_identifier"
+	// CodeLinkFailed reports that a cross-module binding could not be written.
+	CodeLinkFailed = "checkout_workflow_link_failed"
 	// CodeSharedStateInvalid reports that the data carried between steps is
 	// corrupt.
 	CodeSharedStateInvalid = "checkout_workflow_shared_state_invalid"
@@ -416,6 +426,14 @@ type Links interface {
 	// ListMany returns the links of the given source identifiers in a SINGLE
 	// query.
 	ListMany(ctx context.Context, name string, fromIDs []string) (map[string][]string, error)
+
+	// Create binds fromID to toID under the given definition.
+	//
+	// A link that already exists is NOT an error: the definition's cardinality
+	// makes a duplicate impossible, so a repeated call reaches the same state
+	// as the first. That matters here because a saga step can be attempted more
+	// than once.
+	Create(ctx context.Context, name, fromID, toID string) error
 }
 
 // Catalog is the surface of the core's Query layer ("core.query") used by this
