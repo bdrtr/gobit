@@ -132,6 +132,47 @@ Sabitlenme `1.0.0` ile olur.
   ondalık ayracı virgülden noktaya çevrildi (298,9 ms → 298.9 ms) — İngilizce
   metinde virgül binlik ayracı okunur ve ölçüm üç basamak kayardı.
 
+- **On beş modülün KIRICI YÜZEYİ İngilizceye geçti** ve sıralamanın kendisi bir
+  karardır. Borç ~45 bin satırdı; bütçe ortada biterse geriye kalanın yarısının
+  ZARARSIZ olması için önce çatallayan/vendor'layan bir kurulumun DERLENDİĞİ
+  yüzey çevrildi:
+
+      models/{models,filters,ids}.go   Module Links ve interop'tan geçen DTO'lar
+      service/interop.go               yayımlanan dar arayüz
+      service/provider.go              Query sağlayıcı yüzeyi
+      service/service.go               port tanımları
+      api/dto.go                       istek/yanıt tipleri
+
+  Ertelenenler derlemeye HİÇ girmiyor: tüm `*_test.go`, `repository/*.go`,
+  handler gövdeleri, `queries/*.sql`, `migrations/*.sql`, `docs/`.
+
+  Aciliyeti bir tık düşüren şey Go'nun kendi kuralı: `internal/...` başka bir
+  modülden import EDİLEMEZ, yani etkilenen kitle `go get` kullanıcıları değil,
+  çerçeveyi gömen kurulumlardır.
+
+- **`internal/arch` ve `internal/core` ağaçlarında Türkçe kalmadı**, `internal/e2e`
+  yarılandı. Defter 715 dosyadan **559**'a, yol defteri 37'den 29'a indi.
+
+- **Çeviri paralelleştirildi** (ajan başına bir dosya ya da bir modül) ve iki adımın
+  MERKEZÎ kalması gerektiği ölçülerek görüldü. Paylaşılan tanıtıcılar dalgadan
+  ÖNCE tek elden çevrilmezse iki ajan aynı adı iki farklı İngilizceye çevirir;
+  paylaşılan hata METİNLERİ ise dalgadan SONRA çevrilmek zorunda, çünkü on iki
+  modülün `provider.go`'su bayt bayt aynı boilerplate'i taşıyor ve "başkasının
+  dosyasındaki dizeye dokunma" kuralı yüzünden hiçbir ajan kendi başına
+  temizleyemiyor.
+
+- **Toplu yeniden adlandırma dedektörün kendi VERİSİNİ bozabiliyor.** Bu turda
+  bozdu: `denetim` → `auditCtx` yeniden adlandırması `language_test.go`'daki
+  `turkishStems` listesinde duran `"denetim"` girdisini de değiştirdi, yani
+  dedektörden bir kök silindi. Suite yeşil kaldı, çünkü `TestDetectorIsNotBlind`
+  liste BOYUNUN tabanını pinliyor, tek tek girdileri değil. Kök geri kondu; ders
+  ADR 0012'nin kendi cümlesinin tekrarı — dize sabitleri kaynak değil VERİ
+  olabilir.
+
+- Hata KODLARI, entity/link/kayıt ADLARI, süzgeç anahtarları, JSON etiketleri ve
+  ID önekleri bu turların HİÇBİRİNDE değişmedi. v0.8.0'da motor için verilen
+  kararın aynısı: mesaj İngilizceye geçer, sözleşme yerinde kalır.
+
 ## [0.8.0] — 2026-09-04
 
 ### Kırıcı değişiklikler
