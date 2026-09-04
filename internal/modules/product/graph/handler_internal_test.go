@@ -16,26 +16,28 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/product/service"
 )
 
-// Bu dosya paketin İÇİNDEN test eder ve bunun tek bir sebebi vardır:
-// buradaki iddialar handler'ın DIŞINDAN gözlenemez. "Reddedilen belge
-// önbelleğe girmemeli" cümlesinin yanıtta hiçbir izi yoktur — sorgu iki kez
-// gönderilse bile ikinci yanıt aynı görünür — ve yanıt sarmalayıcısının
-// akış hâlindeki davranışı, tek Write yapan bugünkü taşımayla hiç
-// tetiklenmez. Dışarıdan sınanamayan şeyi sınamamak, sınamak için üretimi
-// eğip bükmekten iyidir; ama burada üretim eğilmeden erişilebiliyor.
+// This file tests from INSIDE the package and there is a single reason for
+// that: the claims here cannot be observed from OUTSIDE the handler. The
+// sentence "a rejected document must not enter the cache" leaves no trace in
+// the response — even if the query is sent twice the second response looks the
+// same — and the streaming behavior of the response wrapper is never triggered
+// by today's transport, which does a single Write. Not testing what cannot be
+// tested from outside is better than bending production to test it; but here
+// production is reachable without being bent.
 
-// sessizVitrin hiçbir veri döndürmeyen vitrindir.
+// silentStorefront is the storefront that returns no data at all.
 //
-// Önbellek iddialarının verisi yoktur: ölçülen şey yanıtın içeriği değil,
-// belgenin saklanıp saklanmadığıdır.
-type sessizVitrin struct{}
+// The cache claims have no data: what is measured is not the content of the
+// response but whether the document was stored.
+type silentStorefront struct{}
 
-// ListStoreProducts boş bir liste döner.
+// ListStoreProducts returns an empty list.
 //
-// Sayaç, istenmişse SIFIR olarak doldurulur: şemadaki "count: Int!" nil kabul
-// etmez ve bu dosyanın belgeleri "{ products { count } }" biçimindedir — nil
-// bırakmak, önbellek iddiasını ilgisiz bir alan hatasıyla düşürürdü.
-func (sessizVitrin) ListStoreProducts(
+// The count is filled in as ZERO if it was asked for: the "count: Int!" in the
+// schema does not accept nil and this file's documents are of the form
+// "{ products { count } }" — leaving it nil would fail the cache claim with an
+// unrelated field error.
+func (silentStorefront) ListStoreProducts(
 	_ context.Context,
 	opts service.StoreListOptions,
 ) (service.ListResult[service.StoreProduct], error) {
@@ -43,13 +45,13 @@ func (sessizVitrin) ListStoreProducts(
 		return service.ListResult[service.StoreProduct]{}, nil
 	}
 
-	sifir := 0
+	zero := 0
 
-	return service.ListResult[service.StoreProduct]{Count: &sifir}, nil
+	return service.ListResult[service.StoreProduct]{Count: &zero}, nil
 }
 
-// GetStoreProduct boş bir ürün döner.
-func (sessizVitrin) GetStoreProduct(
+// GetStoreProduct returns an empty product.
+func (silentStorefront) GetStoreProduct(
 	_ context.Context,
 	_ string,
 	_ []string,
@@ -57,14 +59,15 @@ func (sessizVitrin) GetStoreProduct(
 	return service.StoreProduct{}, nil
 }
 
-// sunucuyaGonder belgeyi gqlgen sunucusuna POST eder ve yanıt gövdesini döner.
-func sunucuyaGonder(t *testing.T, srv http.Handler, belge string) string {
+// postToServer POSTs the document to the gqlgen server and returns the response
+// body.
+func postToServer(t *testing.T, srv http.Handler, document string) string {
 	t.Helper()
 
-	govde, err := json.Marshal(map[string]any{"query": belge})
+	body, err := json.Marshal(map[string]any{"query": document})
 	require.NoError(t, err)
 
-	req := httptest.NewRequest(http.MethodPost, Path, bytes.NewReader(govde))
+	req := httptest.NewRequest(http.MethodPost, Path, bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 
 	rec := httptest.NewRecorder()
@@ -73,172 +76,181 @@ func sunucuyaGonder(t *testing.T, srv http.Handler, belge string) string {
 	return rec.Body.String()
 }
 
-// TestGecenBelgeOnbelleklenir önbelleğin GERÇEKTEN çalıştığını doğrular.
+// TestAcceptedDocumentIsCached verifies that the cache REALLY works.
 //
-// Sıra bilinçli olarak önce bu testtedir: aşağıdaki iki test "belge
-// önbellekte olmamalı" der ve hiçbir şeyi saklamayan bozuk bir önbellek de
-// onları geçerdi. Olumlu iddia olmadan olumsuz iddialar hiçbir şey ölçmez.
-func TestGecenBelgeOnbelleklenir(t *testing.T) {
+// The order deliberately puts this test first: the two tests below say "the
+// document must not be in the cache" and a broken cache that stores nothing at
+// all would pass them too. Without the positive claim the negative claims
+// measure nothing.
+func TestAcceptedDocumentIsCached(t *testing.T) {
 	t.Parallel()
 
-	srv, onbellek := yeniSunucu(sessizVitrin{}, Options{})
+	srv, cache := newServer(silentStorefront{}, Options{})
 
-	const belge = `{ products { count } }`
+	const document = `{ products { count } }`
 
-	yanit := sunucuyaGonder(t, srv, belge)
-	require.NotContains(t, yanit, `"errors"`, "meşru belge geçmeli: %s", yanit)
+	response := postToServer(t, srv, document)
+	require.NotContains(t, response, `"errors"`, "a legitimate document must pass: %s", response)
 
-	_, saklandi := onbellek.Get(t.Context(), belge)
-	assert.True(t, saklandi, "sınırlardan geçen belge önbelleğe girmeli")
+	_, stored := cache.Get(t.Context(), document)
+	assert.True(t, stored, "a document that passes the limits must enter the cache")
 }
 
-// TestReddedilenBelgeOnbellegeGirmez sınıra takılan belgenin yer tutmadığını
-// doğrular.
+// TestRejectedDocumentDoesNotEnterTheCache verifies that a document caught by a
+// limit takes up no room.
 //
-// gqlgen belgeyi ayrıştırıp doğruladıktan HEMEN SONRA önbelleğe ekler; sınır
-// eklentileri ise ondan SONRA koşar. Yani düzeltmeden önce, servise hiç
-// ulaşmayan bir belge de önbellekte yer tutuyordu. Ölçüldü: 65 KB'lık 100
-// reddedilmiş belge, runtime.GC sonrası 171,8 MiB kalıcı yığın — 6,5 MB'lık
-// yüklemenin 26 katı.
+// gqlgen adds the document to the cache IMMEDIATELY AFTER parsing and
+// validating it; the limit extensions run AFTER that. That is, before the fix a
+// document that never reached the service was taking up room in the cache too.
+// Measured: 100 rejected documents of 65 KB left 171.8 MiB of permanent heap
+// after runtime.GC — 26 times the 6.5 MB upload.
 //
-// Bedeli yalnızca bellek değildi: LRU dolduğu için vitrinin GERÇEK belgeleri
-// önbellekten atılıyordu, yani saldırgan tek bir kotayla herkesin sorgusunu
-// yeniden ayrıştırtabiliyordu.
-func TestReddedilenBelgeOnbellegeGirmez(t *testing.T) {
+// The cost was not only memory: because the LRU filled up, the storefront's
+// REAL documents were being evicted from the cache, that is, an attacker could
+// have everyone's query reparsed with a single quota.
+func TestRejectedDocumentDoesNotEnterTheCache(t *testing.T) {
 	t.Parallel()
 
-	srv, onbellek := yeniSunucu(sessizVitrin{}, Options{})
+	srv, cache := newServer(silentStorefront{}, Options{})
 
-	belge := `{ products(limit: 100) { items {` + icTekrarliSecim(489, "description") + `} } }`
+	document := `{ products(limit: 100) { items {` + aliasedSelection(489, "description") + `} } }`
 
-	yanit := sunucuyaGonder(t, srv, belge)
-	require.Contains(t, yanit, "FIELD_REPETITION_LIMIT_EXCEEDED", "belge reddedilmeliydi: %s", yanit)
+	response := postToServer(t, srv, document)
+	require.Contains(t, response, "FIELD_REPETITION_LIMIT_EXCEEDED",
+		"the document should have been rejected: %s", response)
 
-	_, saklandi := onbellek.Get(t.Context(), belge)
-	assert.False(t, saklandi, "sınıra takılan belge önbellekte yer tutmamalı")
+	_, stored := cache.Get(t.Context(), document)
+	assert.False(t, stored, "a document caught by a limit must not take up room in the cache")
 }
 
-// TestBuyukBelgeOnbelleklenmez sınırlardan GEÇEN ama fazla büyük olan belgenin
-// saklanmadığını doğrular.
+// TestOversizedDocumentIsNotCached verifies that a document which PASSES the
+// limits but is too large is not stored.
 //
-// İki kural birbirinin yerine geçmez: kabul kapısı "geçti mi" sorar, bayt
-// sınırı "saklamaya değer mi". İkincisi olmasaydı, sınırlardan rahatça geçen
-// 60 KB'lık yüz belge yine önbelleği şişirirdi — hiçbiri reddedilmeden.
+// The two rules do not replace each other: the admission gate asks "did it
+// pass", the byte limit asks "is it worth storing". Without the second one, a
+// hundred documents of 60 KB that pass the limits comfortably would still
+// bloat the cache — without any of them being rejected.
 //
-// Aşağıdaki belge kusursuzdur: tek bir alan, tek bir argüman; büyüklüğü
-// yalnızca argümanın uzunluğundan gelir.
-func TestBuyukBelgeOnbelleklenmez(t *testing.T) {
+// The document below is flawless: a single field, a single argument; its size
+// comes only from the length of the argument.
+func TestOversizedDocumentIsNotCached(t *testing.T) {
 	t.Parallel()
 
-	srv, onbellek := yeniSunucu(sessizVitrin{}, Options{})
+	srv, cache := newServer(silentStorefront{}, Options{})
 
-	belge := `{ product(handle: "` + strings.Repeat("x", maxOnbellekBelgeBayt) + `") { id } }`
-	require.Less(t, len(belge), maxSorguBayt, "belge gövde kapısından geçecek kadar küçük olmalı")
+	document := `{ product(handle: "` + strings.Repeat("x", maxCachedDocumentBytes) + `") { id } }`
+	require.Less(t, len(document), maxQueryBytes,
+		"the document must be small enough to pass the body gate")
 
-	yanit := sunucuyaGonder(t, srv, belge)
-	require.NotContains(t, yanit, `"errors"`, "belge sınırlardan geçmeliydi: %s", yanit)
+	response := postToServer(t, srv, document)
+	require.NotContains(t, response, `"errors"`,
+		"the document should have passed the limits: %s", response)
 
-	_, saklandi := onbellek.Get(t.Context(), belge)
-	assert.False(t, saklandi, "bayt sınırının üstündeki belge saklanmamalı")
+	_, stored := cache.Get(t.Context(), document)
+	assert.False(t, stored, "a document above the byte limit must not be stored")
 }
 
-// icTekrarliSecim aynı alanı n kez takma adla seçen listeyi üretir.
+// aliasedSelection builds the list that selects the same field n times with
+// aliases.
 //
-// limits_test.go'daki eşinin kopyasıdır ve olması gerekir: o dosya paketin
-// DIŞINDAN (graph_test) test eder, buradan görünmez. Alternatif, üretim
-// paketine yalnızca testin kullandığı bir yardımcı koymaktı.
-func icTekrarliSecim(n int, alan string) string {
-	var secimler strings.Builder
+// It is a copy of its twin in limits_test.go and has to be: that file tests
+// from OUTSIDE the package (graph_test) and is invisible from here. The
+// alternative was putting a helper only the test uses into the production
+// package.
+func aliasedSelection(n int, field string) string {
+	var selections strings.Builder
 
 	for i := range n {
-		secimler.WriteString(" a" + strconv.Itoa(i) + ": " + alan)
+		selections.WriteString(" a" + strconv.Itoa(i) + ": " + field)
 	}
 
-	return secimler.String()
+	return selections.String()
 }
 
-// TestYanitSayaciTekParcadaTamZarfYazar hiçbir bayt gitmemişken sınıra
-// çarpıldığında ne olduğunu sınar.
+// TestResponseCounterWritesAFullEnvelopeInOnePiece exercises what happens when
+// the limit is hit while no byte has gone out yet.
 //
-// Bugünkü taşımanın davranışı budur: gqlgen yanıtı önce belleğe kodlar ve tek
-// bir Write ile yazar, yani sarmalayıcı gövdeyi istemciye hiç göndermeden
-// reddedebilir. O hâlde yarım bir belge yerine TAM bir hata zarfı yazılır —
-// istemci kırık bir gövde değil, sebebini söyleyen bir yanıt alır.
-func TestYanitSayaciTekParcadaTamZarfYazar(t *testing.T) {
+// That is today's transport's behavior: gqlgen encodes the response into memory
+// first and writes it with a single Write, that is, the wrapper can reject the
+// body without ever sending it to the client. In that case a COMPLETE error
+// envelope is written instead of a partial document — the client gets a
+// response that states the reason, not a broken body.
+func TestResponseCounterWritesAFullEnvelopeInOnePiece(t *testing.T) {
 	t.Parallel()
 
 	rec := httptest.NewRecorder()
-	sayac := &yanitSayaci{ResponseWriter: rec, sinir: 64, kalan: 64}
+	counter := &responseCounter{ResponseWriter: rec, limit: 64, remaining: 64}
 
-	n, err := sayac.Write(bytes.Repeat([]byte("v"), 4096))
+	n, err := counter.Write(bytes.Repeat([]byte("v"), 4096))
 
-	assert.Zero(t, n, "aşan gövdenin hiçbir baytı yazılmamalı")
-	require.ErrorIs(t, err, errYanitCokBuyuk)
-	assert.False(t, sayac.kesildi, "hiç bayt gitmediyse bağlantı bırakılmamalı")
+	assert.Zero(t, n, "not a single byte of the exceeding body may be written")
+	require.ErrorIs(t, err, errResponseTooLarge)
+	assert.False(t, counter.aborted, "if no byte has gone out the connection must not be dropped")
 
-	govde := rec.Body.String()
-	assert.NotContains(t, govde, "vvv", "kırpılmış gövde sızmamalı")
+	body := rec.Body.String()
+	assert.NotContains(t, body, "vvv", "a truncated body must not leak")
 
-	var zarf struct {
+	var envelope struct {
 		Errors []struct {
 			Message    string         `json:"message"`
 			Extensions map[string]any `json:"extensions"`
 		} `json:"errors"`
 	}
 
-	require.NoError(t, json.Unmarshal([]byte(govde), &zarf), "zarf çözülebilir olmalı: %s", govde)
-	require.NotEmpty(t, zarf.Errors)
-	assert.Equal(t, kodYanitAsimi, zarf.Errors[0].Extensions["code"])
+	require.NoError(t, json.Unmarshal([]byte(body), &envelope),
+		"the envelope must be decodable: %s", body)
+	require.NotEmpty(t, envelope.Errors)
+	assert.Equal(t, codeResponseExceeded, envelope.Errors[0].Extensions["code"])
 }
 
-// TestYanitSayaciYarimGovdedeBaglantiyiBirakir gövdenin bir kısmı çoktan
-// gitmişken sınıra çarpıldığında ne olduğunu sınar.
+// TestResponseCounterAbortsTheConnectionOnAPartialBody exercises what happens
+// when the limit is hit while part of the body has already gone out.
 //
-// Bu dal bugün ULAŞILMAZDIR: tek taşıma (POST) yanıtı tek Write ile yazar.
-// Yine de karar burada verilmiştir ve testi vardır, çünkü
-// http.ResponseWriter sözleşmesi parçalı yazmaya izin verir ve uca bir gün
-// akış yapan bir taşıma (SSE, @defer) eklendiğinde bu satırlar sessizce
-// devreye girecektir.
+// This branch is UNREACHABLE today: the single transport (POST) writes the
+// response with one Write. Even so the decision has been made here and has a
+// test, because the http.ResponseWriter contract allows partial writes and the
+// day a streaming transport (SSE, @defer) is added to the endpoint these lines
+// will silently come into play.
 //
-// Karar: yarım JSON GÖNDERİLMEZ. Kırpılmış bir gövde istemciyi ya ayrıştırma
-// hatasıyla sebebini bilemeyeceği bir yere düşürür, ya da — daha kötüsü —
-// kısa bir sonuç sanılır. Bağlantıyı bırakmak dürüsttür: istemci bir aktarım
-// hatası görür ve olan tam olarak budur. Panik değeri http.ErrAbortHandler'dır
-// çünkü stdlib'in "bu isteği sessizce bırak" sözleşmesi odur; çekirdeğin
-// Recoverer'ı da onu yeniden fırlatır (bkz. corehttp).
-func TestYanitSayaciYarimGovdedeBaglantiyiBirakir(t *testing.T) {
+// The decision: half a JSON IS NOT SENT. A truncated body either drops the
+// client into a parse error whose reason it cannot know, or — worse — is
+// mistaken for a short result. Dropping the connection is honest: the client
+// sees a transport error and that is exactly what happened. The panic value is
+// http.ErrAbortHandler because that is the stdlib's "drop this request
+// silently" contract; the core's Recoverer re-panics it as well (see corehttp).
+func TestResponseCounterAbortsTheConnectionOnAPartialBody(t *testing.T) {
 	t.Parallel()
 
-	akan := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	streaming := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, err := w.Write([]byte(`{"data":`))
-		assert.NoError(t, err, "ilk parça sınırın altında, geçmeli")
+		assert.NoError(t, err, "the first piece is under the limit, it must pass")
 
 		_, err = w.Write(bytes.Repeat([]byte("v"), 4096))
-		assert.ErrorIs(t, err, errYanitCokBuyuk, "aşan parça reddedilmeli")
+		assert.ErrorIs(t, err, errResponseTooLarge, "the exceeding piece must be rejected")
 	})
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, Path, http.NoBody)
 
 	assert.PanicsWithValue(t, http.ErrAbortHandler, func() {
-		yanitSiniri(akan, 64).ServeHTTP(rec, req)
+		responseLimit(streaming, 64).ServeHTTP(rec, req)
 	})
 
 	assert.Equal(t, `{"data":`, rec.Body.String(),
-		"giden parçanın üstüne ne kırpılmış gövde ne de ikinci bir zarf yazılmalı")
+		"neither a truncated body nor a second envelope may be written over the piece that went out")
 }
 
-// TestYanitSayaciSinirinAltindakiniGecirir sarmalayıcının sıradan yanıta
-// dokunmadığını doğrular.
+// TestResponseCounterLetsThroughWhatIsUnderTheLimit verifies that the wrapper
+// does not touch an ordinary response.
 //
-// Her yazmayı reddeden bir sarmalayıcı da yukarıdaki iki testi geçerdi.
-func TestYanitSayaciSinirinAltindakiniGecirir(t *testing.T) {
+// A wrapper that rejects every write would pass the two tests above as well.
+func TestResponseCounterLetsThroughWhatIsUnderTheLimit(t *testing.T) {
 	t.Parallel()
 
 	rec := httptest.NewRecorder()
-	sayac := &yanitSayaci{ResponseWriter: rec, sinir: 64, kalan: 64}
+	counter := &responseCounter{ResponseWriter: rec, limit: 64, remaining: 64}
 
-	n, err := sayac.Write([]byte(`{"data":{"products":{"count":0}}}`))
+	n, err := counter.Write([]byte(`{"data":{"products":{"count":0}}}`))
 
 	require.NoError(t, err)
 	assert.Equal(t, 33, n)

@@ -10,37 +10,40 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/fulfillment/models"
 )
 
-// txMarkerKey sahte deponun "işlem içindeyiz" işaretidir.
+// txMarkerKey is the fake store's "we are inside a transaction" marker.
 type txMarkerKey struct{}
 
-// memStore manual.Store'un bellek içi karşılığıdır.
+// memStore is the in-memory counterpart of manual.Store.
 //
-// Gerçek deponun ÜÇ davranışını taklit eder, çünkü sağlayıcının doğruluğu
-// bunlara dayanır:
+// It imitates THREE behaviors of the real store, because the provider's
+// correctness rests on them:
 //
-//  1. Idempotency anahtarı TEKTİR; benzersiz indeksin karşılığıdır ve
-//     Create'in idempotentliği ona dayanır.
-//  2. Kilit alan metot işlem DIŞINDA çağrılırsa hata döner.
-//  3. İşlem hatayla biterse yazılanlar GERİ ALINIR.
+//  1. The idempotency key is UNIQUE; it is the counterpart of the unique index
+//     and Create's idempotency rests on it.
+//  2. The locking method returns an error if it is called OUTSIDE a
+//     transaction.
+//  3. If the transaction ends with an error, whatever was written is ROLLED
+//     BACK.
 type memStore struct {
 	mu        sync.Mutex
 	shipments map[string]models.ManualShipment
 
-	// writes deftere kaç kez yazıldığını sayar; idempotent dalın deftere
-	// İKİNCİ KEZ dokunmadığı bununla kanıtlanır.
+	// writes counts how many times the ledger was written to; it is what proves
+	// that the idempotent branch does not touch the ledger A SECOND TIME.
 	writes int
 }
 
-// newMemStore boş bir bellek içi defter üretir.
+// newMemStore produces an empty in-memory ledger.
 func newMemStore() *memStore {
 	return &memStore{shipments: map[string]models.ManualShipment{}}
 }
 
-// memStore'un sağlayıcının beklediği yüzeyi karşıladığı derleme zamanında
-// doğrulanır.
+// That memStore satisfies the surface the provider expects is verified at
+// compile time.
 var _ manual.Store = (*memStore)(nil)
 
-// WithTx fn'i "işlem" içinde çalıştırır; hata dönerse durumu geri alır.
+// WithTx runs fn inside a "transaction"; if it returns an error the state is
+// rolled back.
 func (m *memStore) WithTx(ctx context.Context, fn func(ctx context.Context) error) error {
 	if ctx.Value(txMarkerKey{}) != nil {
 		return fn(ctx)
@@ -59,7 +62,7 @@ func (m *memStore) WithTx(ctx context.Context, fn func(ctx context.Context) erro
 	return nil
 }
 
-// InsertManualShipmentIfAbsent gönderiyi yalnızca anahtar boştaysa yazar.
+// InsertManualShipmentIfAbsent writes the shipment only if the key is free.
 func (m *memStore) InsertManualShipmentIfAbsent(
 	_ context.Context,
 	shipment models.ManualShipment,
@@ -67,8 +70,8 @@ func (m *memStore) InsertManualShipmentIfAbsent(
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	// Yalnızca ANAHTARLAR gezilir: değerle gezmek her yinelemede gönderi
-	// yapısının tamamını kopyalardı.
+	// Only the KEYS are walked: walking with the value would copy the whole
+	// shipment struct on every iteration.
 	for id := range m.shipments {
 		if m.shipments[id].IdempotencyKey == shipment.IdempotencyKey {
 			return models.ManualShipment{}, false, nil
@@ -79,7 +82,7 @@ func (m *memStore) InsertManualShipmentIfAbsent(
 	return shipment, true, nil
 }
 
-// ManualShipmentByIdempotencyKey gönderiyi anahtarıyla döner.
+// ManualShipmentByIdempotencyKey returns the shipment by its key.
 func (m *memStore) ManualShipmentByIdempotencyKey(
 	_ context.Context,
 	key string,
@@ -93,10 +96,10 @@ func (m *memStore) ManualShipmentByIdempotencyKey(
 		}
 	}
 	return models.ManualShipment{}, errors.NotFound("mem_shipment_not_found",
-		"bu anahtarla gönderi yok: %s", key)
+		"no shipment under this key: %s", key)
 }
 
-// ManualShipment gönderiyi kimliğiyle döner.
+// ManualShipment returns the shipment by its identifier.
 func (m *memStore) ManualShipment(_ context.Context, id string) (models.ManualShipment, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -104,21 +107,22 @@ func (m *memStore) ManualShipment(_ context.Context, id string) (models.ManualSh
 	shipment, ok := m.shipments[id]
 	if !ok {
 		return models.ManualShipment{}, errors.NotFound("mem_shipment_not_found",
-			"gönderi bulunamadı: %s", id)
+			"shipment not found: %s", id)
 	}
 	return shipment, nil
 }
 
-// LockManualShipment gönderiyi kilitler; işlem dışında çağrılırsa hata döner.
+// LockManualShipment locks the shipment; if it is called outside a transaction
+// it returns an error.
 func (m *memStore) LockManualShipment(ctx context.Context, id string) (models.ManualShipment, error) {
 	if ctx.Value(txMarkerKey{}) == nil {
 		return models.ManualShipment{}, errors.Internal("mem_tx_required",
-			"LockManualShipment işlem dışında çağrıldı")
+			"LockManualShipment was called outside a transaction")
 	}
 	return m.ManualShipment(ctx, id)
 }
 
-// UpdateManualShipmentState durumu ve takip bilgisini yazar.
+// UpdateManualShipmentState writes the status and the tracking details.
 func (m *memStore) UpdateManualShipmentState(
 	_ context.Context,
 	id string,
@@ -131,7 +135,7 @@ func (m *memStore) UpdateManualShipmentState(
 	shipment, ok := m.shipments[id]
 	if !ok {
 		return models.ManualShipment{}, errors.NotFound("mem_shipment_not_found",
-			"gönderi bulunamadı: %s", id)
+			"shipment not found: %s", id)
 	}
 	shipment.Status = status
 	shipment.TrackingNumber = trackingNumber
@@ -141,8 +145,8 @@ func (m *memStore) UpdateManualShipmentState(
 	return shipment, nil
 }
 
-// yazmaSayisi deftere yapılan yazma sayısını döner.
-func (m *memStore) yazmaSayisi() int {
+// writeCount returns the number of writes made to the ledger.
+func (m *memStore) writeCount() int {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.writes

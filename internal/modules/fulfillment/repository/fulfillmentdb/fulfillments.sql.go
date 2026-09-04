@@ -23,8 +23,8 @@ type CountFulfillmentsParams struct {
 	Status    *string
 }
 
-// CountFulfillments ListFulfillments ile AYNI filtreleri uygular; gerekçe için
-// bkz. CountShippingProfiles.
+// CountFulfillments applies the SAME filters as ListFulfillments; for the
+// rationale see CountShippingProfiles.
 func (q *Queries) CountFulfillments(ctx context.Context, arg CountFulfillmentsParams) (int64, error) {
 	row := q.db.QueryRow(ctx, countFulfillments, arg.Reference, arg.Status)
 	var count int64
@@ -113,22 +113,23 @@ type InsertFulfillmentIfAbsentParams struct {
 	Metadata         []byte
 }
 
-// fulfillments sorguları.
+// fulfillments queries.
 //
-// Gönderi satırı, sağlayıcıya GİTMEDEN ÖNCE yazılır: sağlayıcı sözleşmesinin
-// Reference alanı "çağıranın kendi kaydına verdiği kimlik"tir ve mutabakatta
-// iki sistemi eşleştiren şey odur. Önce sağlayıcıya gidilseydi, yanıt
-// kaybolduğunda hangi kaydın karşılığı olduğu bilinemeyen bir kargo etiketi
-// kalırdı.
-// InsertFulfillmentIfAbsent gönderiyi yalnızca o idempotency anahtarı HENÜZ
-// KULLANILMAMIŞSA yazar.
+// The fulfillment row is written BEFORE GOING to the provider: the Reference
+// field of the provider contract is "the id the caller gave to its own record",
+// and it is what matches the two systems up during reconciliation. Had the
+// provider been called first, a lost response would leave behind a shipping
+// label whose corresponding record could not be known.
+// InsertFulfillmentIfAbsent writes the fulfillment only if that idempotency key
+// has NOT BEEN USED YET.
 //
-// Çakışma hâlinde satır DÖNMEZ (pgx.ErrNoRows); çağıran o zaman anahtarla var
-// olan gönderiyi okur. "Önce oku, yoksa yaz" iki adımı arasında araya giren
-// eşzamanlı bir çağrı benzersiz indekse çarpar ve İŞLEMİ İPTAL EDERDİ;
-// ON CONFLICT DO NOTHING bu yarışı tek deyime indirir ve kaybeden taraf
-// kazananın işlemi bitene kadar BEKLER — böylece okuduğu satır sağlayıcı
-// yanıtıyla tamamlanmış olur.
+// On a conflict NO row is returned (pgx.ErrNoRows); the caller then reads the
+// fulfillment that exists under the key. A concurrent call slipping between the
+// two steps of "read first, write if absent" would hit the unique index and
+// WOULD ABORT THE TRANSACTION; ON CONFLICT DO NOTHING reduces that race to a
+// single statement and the losing side WAITS until the winner's transaction
+// finishes — so the row it reads is already completed with the provider's
+// response.
 func (q *Queries) InsertFulfillmentIfAbsent(ctx context.Context, arg InsertFulfillmentIfAbsentParams) (Fulfillment, error) {
 	row := q.db.QueryRow(ctx, insertFulfillmentIfAbsent,
 		arg.ID,
@@ -228,11 +229,13 @@ WHERE id = $1 AND deleted_at IS NULL
 FOR UPDATE
 `
 
-// LockFulfillment gönderiyi işlem boyunca kilitler ve güncel hâlini döner.
+// LockFulfillment locks the fulfillment for the duration of the transaction and
+// returns its current state.
 //
-// Durum geçişleri (iptal, kargoya verme, teslim) yalnızca bu kilit altında
-// yapılır: kilitsiz okunan bir durum yazma anında bayat olabilir ve aynı
-// gönderiyi aynı anda iptal eden iki çağrı sağlayıcıya İKİ KEZ giderdi.
+// State transitions (cancel, ship, deliver) are made only under this lock: a
+// state read without the lock can be stale by the moment of the write, and two
+// calls canceling the same fulfillment at the same time would go to the
+// provider TWICE.
 func (q *Queries) LockFulfillment(ctx context.Context, id string) (Fulfillment, error) {
 	row := q.db.QueryRow(ctx, lockFulfillment, id)
 	var i Fulfillment
@@ -285,11 +288,11 @@ type UpdateFulfillmentProviderResultParams struct {
 	CanceledAt     pgtype.Timestamptz
 }
 
-// UpdateFulfillmentProviderResult sağlayıcının yanıtını satıra yazar.
+// UpdateFulfillmentProviderResult writes the provider's response onto the row.
 //
-// Sağlayıcı kimliği, takip bilgisi ve ham veri MUTLAK değerlerle yazılır:
-// artımlı bir güncelleme, kararı veren kodun gördüğü değer ile yazılan değeri
-// ayrıştırırdı.
+// The provider id, the tracking information and the raw data are written as
+// ABSOLUTE values: an incremental update would pull the value the deciding code
+// saw apart from the value that gets written.
 func (q *Queries) UpdateFulfillmentProviderResult(ctx context.Context, arg UpdateFulfillmentProviderResultParams) (Fulfillment, error) {
 	row := q.db.QueryRow(ctx, updateFulfillmentProviderResult,
 		arg.ID,
@@ -348,10 +351,12 @@ type UpdateFulfillmentStatusParams struct {
 	CanceledAt     pgtype.Timestamptz
 }
 
-// UpdateFulfillmentStatus durumu ve ona eşlik eden zaman damgasını yazar.
+// UpdateFulfillmentStatus writes the status and the timestamp that accompanies
+// it.
 //
-// Damgalar MUTLAK verilir; şemadaki kısıtlar (fulfillments_*_stamp) durumu
-// damgasız bırakan bir yazmayı reddeder.
+// The stamps are given as ABSOLUTE values; the constraints in the schema
+// (fulfillments_*_stamp) reject a write that leaves the status without its
+// stamp.
 func (q *Queries) UpdateFulfillmentStatus(ctx context.Context, arg UpdateFulfillmentStatusParams) (Fulfillment, error) {
 	row := q.db.QueryRow(ctx, updateFulfillmentStatus,
 		arg.ID,

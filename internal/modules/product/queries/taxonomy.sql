@@ -1,7 +1,8 @@
--- Koleksiyon, kategori ve etiket sorguları.
+-- Collection, category and tag queries.
 --
--- Bu üç kavramın API yüzeyi bilinçli olarak sadedir (liste + oluştur, plan
--- Faz 4): katalogun kalbi ürün ve varyanttır, taksonomi onları gruplar.
+-- The API surface of these three concepts is deliberately plain (list + create,
+-- plan Phase 4): the heart of the catalog is the product and the variant, and the
+-- taxonomy groups them.
 
 -- name: CreateCollection :one
 INSERT INTO product_collection (id, title, handle, metadata)

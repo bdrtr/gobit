@@ -7,14 +7,14 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/product/models"
 )
 
-// CreateCollectionInput yeni bir koleksiyonun girdisidir.
+// CreateCollectionInput is the input of a new collection.
 type CreateCollectionInput struct {
 	Title    string
 	Handle   string
 	Metadata map[string]any
 }
 
-// CreateCategoryInput yeni bir kategorinin girdisidir.
+// CreateCategoryInput is the input of a new category.
 type CreateCategoryInput struct {
 	Name        string
 	Handle      string
@@ -25,17 +25,17 @@ type CreateCategoryInput struct {
 	Rank        int32
 }
 
-// ListCategoriesOptions kategori listelemesinin ölçütleridir.
+// ListCategoriesOptions is the criteria of a category listing.
 type ListCategoriesOptions struct {
 	ParentID *string
 	Limit    int
 	Offset   int
 }
 
-// CreateCollection koleksiyon oluşturur.
+// CreateCollection creates a collection.
 //
-// Handle boş bırakılırsa başlıktan üretilir ve benzersizdir; kullanımdaysa
-// errors.Conflict döner.
+// If the handle is left empty it is derived from the title, and it is unique;
+// if it is already in use, errors.Conflict is returned.
 func (s *Service) CreateCollection(ctx context.Context, in CreateCollectionInput) (models.Collection, error) {
 	title, err := requireText("title", in.Title, maxTitleLen)
 	if err != nil {
@@ -54,7 +54,7 @@ func (s *Service) CreateCollection(ctx context.Context, in CreateCollectionInput
 	})
 }
 
-// GetCollection koleksiyonu kimliğe göre döner.
+// GetCollection returns the collection by id.
 func (s *Service) GetCollection(ctx context.Context, id string) (models.Collection, error) {
 	if _, err := requireID("id", id); err != nil {
 		return models.Collection{}, err
@@ -62,7 +62,7 @@ func (s *Service) GetCollection(ctx context.Context, id string) (models.Collecti
 	return s.repo.GetCollection(ctx, id)
 }
 
-// ListCollections koleksiyonları sayfalı döner.
+// ListCollections returns the collections paginated.
 func (s *Service) ListCollections(ctx context.Context, limit, offset int) (ListResult[models.Collection], error) {
 	limit, offset, err := normalizePaging(limit, offset)
 	if err != nil {
@@ -80,11 +80,12 @@ func (s *Service) ListCollections(ctx context.Context, limit, offset int) (ListR
 	return ListResult[models.Collection]{Items: items, Count: &count, Offset: offset, Limit: limit}, nil
 }
 
-// CreateCategory kategori oluşturur.
+// CreateCategory creates a category.
 //
-// ParentID verilirse üst kategorinin VAR OLDUĞU doğrulanır: veritabanı foreign
-// key'i bunu zaten reddederdi, ama oradan dönen hata "ihlal edilen kısıt"tır;
-// buradaki kontrol istemciye hangi kimliğin bulunamadığını söyler.
+// If a ParentID is given, the parent category is verified to EXIST: the foreign
+// key of the database would reject this already, but the error coming from
+// there is "a violated constraint"; the check here tells the client which id
+// could not be found.
 func (s *Service) CreateCategory(ctx context.Context, in CreateCategoryInput) (models.Category, error) {
 	name, err := requireText("name", in.Name, maxTitleLen)
 	if err != nil {
@@ -127,7 +128,7 @@ func (s *Service) CreateCategory(ctx context.Context, in CreateCategoryInput) (m
 	})
 }
 
-// GetCategory kategoriyi kimliğe göre döner.
+// GetCategory returns the category by id.
 func (s *Service) GetCategory(ctx context.Context, id string) (models.Category, error) {
 	if _, err := requireID("id", id); err != nil {
 		return models.Category{}, err
@@ -135,7 +136,7 @@ func (s *Service) GetCategory(ctx context.Context, id string) (models.Category, 
 	return s.repo.GetCategory(ctx, id)
 }
 
-// ListCategories kategorileri sayfalı döner.
+// ListCategories returns the categories paginated.
 func (s *Service) ListCategories(ctx context.Context, opts ListCategoriesOptions) (ListResult[models.Category], error) {
 	limit, offset, err := normalizePaging(opts.Limit, opts.Offset)
 	if err != nil {
@@ -153,11 +154,11 @@ func (s *Service) ListCategories(ctx context.Context, opts ListCategoriesOptions
 	return ListResult[models.Category]{Items: items, Count: &count, Offset: offset, Limit: limit}, nil
 }
 
-// CreateTag etiket oluşturur.
+// CreateTag creates a tag.
 //
-// Etiket değeri benzersizdir; aynı değer ikinci kez eklenmek istenirse
-// errors.Conflict döner ve mesaj MEVCUT etiketin kimliğini taşır — istemci
-// böylece ikinci bir sorgu yapmadan var olanı kullanabilir.
+// The tag value is unique; if the same value is added a second time
+// errors.Conflict is returned and the message carries the id of the EXISTING
+// tag — that way the client can use the existing one without a second query.
 func (s *Service) CreateTag(ctx context.Context, value string) (models.Tag, error) {
 	clean, err := requireText("value", value, maxValueLen)
 	if err != nil {
@@ -168,7 +169,7 @@ func (s *Service) CreateTag(ctx context.Context, value string) (models.Tag, erro
 	switch {
 	case err == nil:
 		return models.Tag{}, errors.Conflict(codeInvalidInput,
-			"etiket zaten var: %q (%s)", clean, existing.ID)
+			"the tag already exists: %q (%s)", clean, existing.ID)
 	case !errors.IsNotFound(err):
 		return models.Tag{}, err
 	}
@@ -176,7 +177,7 @@ func (s *Service) CreateTag(ctx context.Context, value string) (models.Tag, erro
 	return s.repo.CreateTag(ctx, models.Tag{ID: newID(prefixTag), Value: clean})
 }
 
-// ListTags etiketleri sayfalı döner.
+// ListTags returns the tags paginated.
 func (s *Service) ListTags(ctx context.Context, limit, offset int) (ListResult[models.Tag], error) {
 	limit, offset, err := normalizePaging(limit, offset)
 	if err != nil {

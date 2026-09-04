@@ -7,7 +7,7 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/product/repository/productdb"
 )
 
-// CreateCollection yeni bir koleksiyon yazar.
+// CreateCollection writes a new collection.
 func (r *Repo) CreateCollection(ctx context.Context, c models.Collection) (models.Collection, error) {
 	meta, err := fromMetadata(c.Metadata)
 	if err != nil {
@@ -21,28 +21,28 @@ func (r *Repo) CreateCollection(ctx context.Context, c models.Collection) (model
 		Metadata: meta,
 	})
 	if err != nil {
-		return models.Collection{}, wrapDB(err, "koleksiyon oluşturulamadı (%s)", c.Handle)
+		return models.Collection{}, wrapDB(err, "could not create collection (%s)", c.Handle)
 	}
 	return toCollection(row)
 }
 
-// GetCollection kimliğe göre koleksiyonu döner.
+// GetCollection returns the collection by id.
 func (r *Repo) GetCollection(ctx context.Context, id string) (models.Collection, error) {
 	row, err := r.q.GetCollection(ctx, id)
 	if err != nil {
-		return models.Collection{}, wrapDB(err, "koleksiyon bulunamadı: %s", id)
+		return models.Collection{}, wrapDB(err, "collection not found: %s", id)
 	}
 	return toCollection(row)
 }
 
-// ListCollections koleksiyonları sayfalı döner.
+// ListCollections returns the collections paginated.
 func (r *Repo) ListCollections(ctx context.Context, limit, offset int) ([]models.Collection, error) {
 	rows, err := r.q.ListCollections(ctx, productdb.ListCollectionsParams{
 		Lim: toInt32(limit),
 		Off: toInt32(offset),
 	})
 	if err != nil {
-		return nil, wrapDB(err, "koleksiyonlar listelenemedi")
+		return nil, wrapDB(err, "could not list collections")
 	}
 
 	out := make([]models.Collection, 0, len(rows))
@@ -56,16 +56,16 @@ func (r *Repo) ListCollections(ctx context.Context, limit, offset int) ([]models
 	return out, nil
 }
 
-// CountCollections toplam koleksiyon sayısını döner.
+// CountCollections returns the total number of collections.
 func (r *Repo) CountCollections(ctx context.Context) (int, error) {
 	n, err := r.q.CountCollections(ctx)
 	if err != nil {
-		return 0, wrapDB(err, "koleksiyon sayısı okunamadı")
+		return 0, wrapDB(err, "could not read collection count")
 	}
 	return int(n), nil
 }
 
-// CreateCategory yeni bir kategori yazar.
+// CreateCategory writes a new category.
 func (r *Repo) CreateCategory(ctx context.Context, c models.Category) (models.Category, error) {
 	row, err := r.q.CreateCategory(ctx, productdb.CreateCategoryParams{
 		ID:          c.ID,
@@ -78,22 +78,22 @@ func (r *Repo) CreateCategory(ctx context.Context, c models.Category) (models.Ca
 		Rank:        c.Rank,
 	})
 	if err != nil {
-		return models.Category{}, wrapDB(err, "kategori oluşturulamadı (%s)", c.Handle)
+		return models.Category{}, wrapDB(err, "could not create category (%s)", c.Handle)
 	}
 	return toCategory(row), nil
 }
 
-// GetCategory kimliğe göre kategoriyi döner.
+// GetCategory returns the category by id.
 func (r *Repo) GetCategory(ctx context.Context, id string) (models.Category, error) {
 	row, err := r.q.GetCategory(ctx, id)
 	if err != nil {
-		return models.Category{}, wrapDB(err, "kategori bulunamadı: %s", id)
+		return models.Category{}, wrapDB(err, "category not found: %s", id)
 	}
 	return toCategory(row), nil
 }
 
-// ListCategories kategorileri sayfalı döner; parentID verilirse yalnızca o
-// düğümün çocukları listelenir.
+// ListCategories returns the categories paginated; if parentID is given only
+// the children of that node are listed.
 func (r *Repo) ListCategories(ctx context.Context, parentID *string, limit, offset int) ([]models.Category, error) {
 	rows, err := r.q.ListCategories(ctx, productdb.ListCategoriesParams{
 		ParentID: parentID,
@@ -101,7 +101,7 @@ func (r *Repo) ListCategories(ctx context.Context, parentID *string, limit, offs
 		Off:      toInt32(offset),
 	})
 	if err != nil {
-		return nil, wrapDB(err, "kategoriler listelenemedi")
+		return nil, wrapDB(err, "could not list categories")
 	}
 
 	out := make([]models.Category, 0, len(rows))
@@ -111,41 +111,41 @@ func (r *Repo) ListCategories(ctx context.Context, parentID *string, limit, offs
 	return out, nil
 }
 
-// CountCategories toplam kategori sayısını döner.
+// CountCategories returns the total number of categories.
 func (r *Repo) CountCategories(ctx context.Context, parentID *string) (int, error) {
 	n, err := r.q.CountCategories(ctx, parentID)
 	if err != nil {
-		return 0, wrapDB(err, "kategori sayısı okunamadı")
+		return 0, wrapDB(err, "could not read category count")
 	}
 	return int(n), nil
 }
 
-// CreateTag yeni bir etiket yazar.
+// CreateTag writes a new tag.
 func (r *Repo) CreateTag(ctx context.Context, t models.Tag) (models.Tag, error) {
 	row, err := r.q.CreateTag(ctx, productdb.CreateTagParams{ID: t.ID, Value: t.Value})
 	if err != nil {
-		return models.Tag{}, wrapDB(err, "etiket oluşturulamadı (%s)", t.Value)
+		return models.Tag{}, wrapDB(err, "could not create tag (%s)", t.Value)
 	}
 	return toTag(row), nil
 }
 
-// GetTagByValue değere göre etiketi döner.
+// GetTagByValue returns the tag by value.
 func (r *Repo) GetTagByValue(ctx context.Context, value string) (models.Tag, error) {
 	row, err := r.q.GetTagByValue(ctx, value)
 	if err != nil {
-		return models.Tag{}, wrapDB(err, "etiket bulunamadı: %s", value)
+		return models.Tag{}, wrapDB(err, "tag not found: %s", value)
 	}
 	return toTag(row), nil
 }
 
-// ListTags etiketleri sayfalı döner.
+// ListTags returns the tags paginated.
 func (r *Repo) ListTags(ctx context.Context, limit, offset int) ([]models.Tag, error) {
 	rows, err := r.q.ListTags(ctx, productdb.ListTagsParams{
 		Lim: toInt32(limit),
 		Off: toInt32(offset),
 	})
 	if err != nil {
-		return nil, wrapDB(err, "etiketler listelenemedi")
+		return nil, wrapDB(err, "could not list tags")
 	}
 
 	out := make([]models.Tag, 0, len(rows))
@@ -155,36 +155,37 @@ func (r *Repo) ListTags(ctx context.Context, limit, offset int) ([]models.Tag, e
 	return out, nil
 }
 
-// CountTags toplam etiket sayısını döner.
+// CountTags returns the total number of tags.
 func (r *Repo) CountTags(ctx context.Context) (int, error) {
 	n, err := r.q.CountTags(ctx)
 	if err != nil {
-		return 0, wrapDB(err, "etiket sayısı okunamadı")
+		return 0, wrapDB(err, "could not read tag count")
 	}
 	return int(n), nil
 }
 
-// SetProductTags ürünün etiketlerini verilen kümeyle DEĞİŞTİRİR.
+// SetProductTags REPLACES the product's tags with the given set.
 //
-// Önce mevcut bağlar silinir, sonra yenileri yazılır; çağıran bunu bir işlemin
-// (InTx) içinde sarmalıdır, aksi hâlde arada ürün etiketsiz görünebilir.
+// First the existing bindings are deleted, then the new ones are written; the
+// caller must wrap this inside a transaction (InTx), otherwise the product can
+// look untagged in between.
 func (r *Repo) SetProductTags(ctx context.Context, productID string, tagIDs []string) error {
 	if err := r.q.DeleteProductTags(ctx, productID); err != nil {
-		return wrapDB(err, "ürünün etiketleri temizlenemedi: %s", productID)
+		return wrapDB(err, "could not clear the product's tags: %s", productID)
 	}
 	for _, tagID := range tagIDs {
 		err := r.q.AddProductTag(ctx, productdb.AddProductTagParams{ProductID: productID, TagID: tagID})
 		if err != nil {
-			return wrapDB(err, "ürüne etiket bağlanamadı (%s -> %s)", productID, tagID)
+			return wrapDB(err, "could not bind tag to product (%s -> %s)", productID, tagID)
 		}
 	}
 	return nil
 }
 
-// SetProductCategories ürünün kategorilerini verilen kümeyle değiştirir.
+// SetProductCategories replaces the product's categories with the given set.
 func (r *Repo) SetProductCategories(ctx context.Context, productID string, categoryIDs []string) error {
 	if err := r.q.DeleteProductCategories(ctx, productID); err != nil {
-		return wrapDB(err, "ürünün kategorileri temizlenemedi: %s", productID)
+		return wrapDB(err, "could not clear the product's categories: %s", productID)
 	}
 	for _, categoryID := range categoryIDs {
 		err := r.q.AddProductCategory(ctx, productdb.AddProductCategoryParams{
@@ -192,20 +193,21 @@ func (r *Repo) SetProductCategories(ctx context.Context, productID string, categ
 			CategoryID: categoryID,
 		})
 		if err != nil {
-			return wrapDB(err, "ürüne kategori bağlanamadı (%s -> %s)", productID, categoryID)
+			return wrapDB(err, "could not bind category to product (%s -> %s)", productID, categoryID)
 		}
 	}
 	return nil
 }
 
-// ListTagsByProductIDs verilen ürünlerin etiketlerini TEK sorguda döner.
+// ListTagsByProductIDs returns the tags of the given products in a SINGLE
+// query.
 func (r *Repo) ListTagsByProductIDs(ctx context.Context, productIDs []string) (map[string][]models.Tag, error) {
 	if len(productIDs) == 0 {
 		return map[string][]models.Tag{}, nil
 	}
 	rows, err := r.q.ListTagsByProductIDs(ctx, productIDs)
 	if err != nil {
-		return nil, wrapDB(err, "ürünlerin etiketleri okunamadı (%d ürün)", len(productIDs))
+		return nil, wrapDB(err, "could not read the products' tags (%d products)", len(productIDs))
 	}
 
 	out := make(map[string][]models.Tag, len(productIDs))
@@ -215,14 +217,15 @@ func (r *Repo) ListTagsByProductIDs(ctx context.Context, productIDs []string) (m
 	return out, nil
 }
 
-// ListCategoriesByProductIDs verilen ürünlerin kategorilerini TEK sorguda döner.
+// ListCategoriesByProductIDs returns the categories of the given products in a
+// SINGLE query.
 func (r *Repo) ListCategoriesByProductIDs(ctx context.Context, productIDs []string) (map[string][]models.Category, error) {
 	if len(productIDs) == 0 {
 		return map[string][]models.Category{}, nil
 	}
 	rows, err := r.q.ListCategoriesByProductIDs(ctx, productIDs)
 	if err != nil {
-		return nil, wrapDB(err, "ürünlerin kategorileri okunamadı (%d ürün)", len(productIDs))
+		return nil, wrapDB(err, "could not read the products' categories (%d products)", len(productIDs))
 	}
 
 	out := make(map[string][]models.Category, len(productIDs))

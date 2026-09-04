@@ -10,23 +10,24 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/fulfillment/repository/fulfillmentdb"
 )
 
-// Bu dosya depo seçim POLİTİKASININ erişimidir: hangi depo hangi bölgeye
-// hizmet eder ve hangi sırayla tercih edilir.
+// This file is the access to the location selection POLICY: which location
+// serves which region and in which order it is preferred.
 //
-// İki tablo birlikte tek bir kavramı taşır (shipping_locations ve
-// shipping_location_regions) ve bu paketten dışarı TEK model olarak çıkar:
-// çağıranın iki tablo gördüğü bir yüzey, bölge bağlarını ayrı yönetme
-// sorumluluğunu da ona devrederdi.
+// Two tables together carry a single concept (shipping_locations and
+// shipping_location_regions) and they leave this package as a SINGLE model: a
+// surface on which the caller saw two tables would also hand over to it the
+// responsibility of managing the region links separately.
 //
-// Silme burada YUMUŞAK DEĞİLDİR; gerekçesi migration'ın başındadır. Bu yüzden
-// hiçbir sorguda deleted_at süzgeci yoktur.
+// Deletion here IS NOT SOFT; the reasoning is at the top of the migration. That
+// is why no query has a deleted_at filter.
 
-// UpsertShippingLocation deponun ÖNCELİĞİNİ yazar ya da üzerine yazar.
+// UpsertShippingLocation writes, or overwrites, the location's PRIORITY.
 //
-// Bölge bağlarına DOKUNMAZ: onları [Repository.ReplaceShippingLocationRegions]
-// yazar. İkisi birlikte tek bir yazma sayılır ve çağıran onları AYNI işlemde
-// çağırmalıdır (bkz. service katmanı); ayrı çağrılmaları, aradaki bir okumanın
-// depoyu yeni önceliğiyle ama eski bölgeleriyle görmesi demektir.
+// It DOES NOT TOUCH the region links: those are written by
+// [Repository.ReplaceShippingLocationRegions]. The two together count as a
+// single write and the caller must call them in the SAME transaction (see the
+// service layer); calling them separately means that a read in between sees the
+// location with its new priority but with its old regions.
 func (r *Repository) UpsertShippingLocation(
 	ctx context.Context,
 	locationID string,
@@ -37,19 +38,20 @@ func (r *Repository) UpsertShippingLocation(
 		Priority:   priority,
 	})
 	if err != nil {
-		return models.ShippingLocation{}, classify(err, codeQueryFailed, "depo politikası yazılamadı")
+		return models.ShippingLocation{}, classify(err, codeQueryFailed, "could not write location policy")
 	}
 	return toShippingLocation(row), nil
 }
 
-// ReplaceShippingLocationRegions deponun bölge bağlarını TOPTAN yazar.
+// ReplaceShippingLocationRegions writes the location's region links WHOLESALE.
 //
-// Boş dilim geçerli bir girdidir ve "tüm bölgelere hizmet et" demektir; bağlar
-// silinir, yerine hiçbir şey yazılmaz.
+// An empty slice is valid input and means "serve all regions"; the links are
+// deleted and nothing is written in their place.
 //
-// Yalnızca [Repository.WithTx] içinde çağrılmalıdır: iki deyimden oluşur (sil,
-// yaz) ve işlemsiz çağrıldığında aradaki bir okuma depoyu BÖLGESİZ görür —
-// yani onu, kapsamı daralmış sanılan bir anda TÜM bölgelere açık bulur.
+// It must only be called inside [Repository.WithTx]: it consists of two
+// statements (delete, write) and when it is called without a transaction a read
+// in between sees the location WITH NO REGIONS — that is, it finds it open to
+// ALL regions at a moment when its scope was believed to have narrowed.
 func (r *Repository) ReplaceShippingLocationRegions(
 	ctx context.Context,
 	locationID string,
@@ -57,12 +59,12 @@ func (r *Repository) ReplaceShippingLocationRegions(
 ) error {
 	if _, ok := txFromContext(ctx); !ok {
 		return errors.Internal(codeTxRequired,
-			"bölge bağları işlem dışında yazılamaz: %s", locationID)
+			"region links cannot be written outside a transaction: %s", locationID)
 	}
 
 	q := r.queries(ctx)
 	if err := q.DeleteShippingLocationRegions(ctx, locationID); err != nil {
-		return classify(err, codeQueryFailed, "depo bölge bağları silinemedi")
+		return classify(err, codeQueryFailed, "could not delete location region links")
 	}
 	if len(regionIDs) == 0 {
 		return nil
@@ -73,18 +75,20 @@ func (r *Repository) ReplaceShippingLocationRegions(
 		RegionIds:  regionIDs,
 	})
 	if err != nil {
-		return classify(err, codeQueryFailed, "depo bölge bağları yazılamadı")
+		return classify(err, codeQueryFailed, "could not write location region links")
 	}
 	return nil
 }
 
-// GetShippingLocation deponun politikasını bölgeleriyle döner; yoksa NotFound.
+// GetShippingLocation returns the location's policy with its regions; NotFound
+// if there is none.
 //
-// Okuma TEK deyimdir. İki ayrı SELECT (önce satır, sonra bağlar) yırtık bir
-// kayıt üretirdi: işlem dışında yapılan iki okuma iki ayrı anlık görüntüden
-// gelir ve aralarına giren bir yazma, deponun YENİ önceliğiyle ESKİ bölgelerini
-// yan yana gösterirdi. Yazma yolu bu yırtığı işlemle kapatıyor; okuma yolu tek
-// deyimle kapatır.
+// The read is a SINGLE statement. Two separate SELECTs (first the row, then the
+// links) would produce a torn record: two reads made outside a transaction come
+// from two different snapshots and a write landing between them would show the
+// location's NEW priority side by side with its OLD regions. The write path
+// closes this tear with a transaction; the read path closes it with a single
+// statement.
 func (r *Repository) GetShippingLocation(
 	ctx context.Context,
 	locationID string,
@@ -94,7 +98,7 @@ func (r *Repository) GetShippingLocation(
 		if errors.Is(err, pgx.ErrNoRows) {
 			return models.ShippingLocation{}, locationNotFound(locationID)
 		}
-		return models.ShippingLocation{}, classify(err, codeQueryFailed, "depo politikası okunamadı")
+		return models.ShippingLocation{}, classify(err, codeQueryFailed, "could not read location policy")
 	}
 	return models.ShippingLocation{
 		LocationID: row.LocationID,
@@ -105,11 +109,11 @@ func (r *Repository) GetShippingLocation(
 	}, nil
 }
 
-// ListShippingLocations politikaları bağlarıyla birlikte sayfalar; ikinci değer
-// TÜM satırların sayısıdır.
+// ListShippingLocations paginates the policies together with their links; the
+// second value is the count of ALL rows.
 //
-// Bağlar sayfa sorgusunun İÇİNDE toplanır: depo başına ikinci bir sorgu (N+1)
-// yapılmaz ve tekil okumadaki yırtılma kapısı burada da kapalı kalır.
+// The links are collected INSIDE the page query: no second query per location
+// (N+1) is made and the tearing door of the single read stays closed here too.
 func (r *Repository) ListShippingLocations(
 	ctx context.Context,
 	filter models.LocationFilter,
@@ -121,12 +125,12 @@ func (r *Repository) ListShippingLocations(
 		RowOffset: filter.Offset,
 	})
 	if err != nil {
-		return nil, 0, classify(err, codeQueryFailed, "depo politikaları listelenemedi")
+		return nil, 0, classify(err, codeQueryFailed, "could not list location policies")
 	}
 
 	total, err := q.CountShippingLocations(ctx)
 	if err != nil {
-		return nil, 0, classify(err, codeQueryFailed, "depo politikaları sayılamadı")
+		return nil, 0, classify(err, codeQueryFailed, "could not count location policies")
 	}
 
 	out := make([]models.ShippingLocation, 0, len(rows))
@@ -142,16 +146,16 @@ func (r *Repository) ListShippingLocations(
 	return out, total, nil
 }
 
-// DeleteShippingLocation politikayı KALICI olarak siler; bölge bağları
-// birlikte düşer. Kayıt yoksa NotFound.
+// DeleteShippingLocation deletes the policy PERMANENTLY; the region links fall
+// with it. NotFound if there is no such record.
 //
-// Silinen satır sayısı denetlenir çünkü DELETE, olmayan bir satır için de
-// hatasız döner: denetim olmasaydı yanlış bir kimlikle yapılan silme başarılı
-// görünürdü.
+// The number of deleted rows is checked because DELETE returns without an error
+// for a row that does not exist as well: without the check, a deletion made with
+// a wrong identifier would look successful.
 func (r *Repository) DeleteShippingLocation(ctx context.Context, locationID string) error {
 	affected, err := r.queries(ctx).DeleteShippingLocation(ctx, locationID)
 	if err != nil {
-		return classify(err, codeQueryFailed, "depo politikası silinemedi")
+		return classify(err, codeQueryFailed, "could not delete location policy")
 	}
 	if affected == 0 {
 		return locationNotFound(locationID)
@@ -159,19 +163,21 @@ func (r *Repository) DeleteShippingLocation(ctx context.Context, locationID stri
 	return nil
 }
 
-// LocationPolicies aday depoların seçim anında kararı etkileyen olgularını
-// TEK sorguda döner.
+// LocationPolicies returns, in a SINGLE query, the facts about the candidate
+// locations that affect the decision at selection time.
 //
-// Dönen dilim YALNIZCA politikası OLAN adayları içerir ve aday listesinden
-// KISA olabilir. Eksik olan aday bir hata değildir: politikası olmayan depo
-// varsayılan sayılır ve bu ayrımı çağıran yapar.
+// The returned slice contains ONLY the candidates that HAVE a policy and it can
+// be SHORTER than the candidate list. A missing candidate is not an error: a
+// location without a policy counts as the default and the caller makes that
+// distinction.
 //
-// Hedef bölge PARAMETRE DEĞİLDİR: eşleştirmeyi sorgu değil servis katmanındaki
-// saf fonksiyon yapar. Bölge SQL'e verilseydi kural veritabanına taşınır ve
-// gerçek bir Postgres olmadan sınanamaz olurdu; ayrıca elenen adayların hangi
-// bölgelere bağlı olduğu geri dönmez, yani hata mesajı sebebi yazamazdı.
+// The target region IS NOT A PARAMETER: the matching is done not by the query
+// but by the pure function in the service layer. Had the region been given to
+// SQL, the rule would have moved into the database and become untestable without
+// a real Postgres; moreover the regions the eliminated candidates are bound to
+// would not come back, which means the error message could not write its reason.
 //
-// Aday listesi boşsa hiç sorgu yapılmaz.
+// If the candidate list is empty no query is made at all.
 func (r *Repository) LocationPolicies(
 	ctx context.Context,
 	locationIDs []string,
@@ -182,7 +188,7 @@ func (r *Repository) LocationPolicies(
 
 	rows, err := r.queries(ctx).ShippingLocationPolicies(ctx, locationIDs)
 	if err != nil {
-		return nil, classify(err, codeQueryFailed, "depo politikaları okunamadı")
+		return nil, classify(err, codeQueryFailed, "could not read location policies")
 	}
 
 	out := make([]models.LocationPolicy, 0, len(rows))
@@ -196,12 +202,14 @@ func (r *Repository) LocationPolicies(
 	return out, nil
 }
 
-// toShippingLocation öncelik yazımının döndürdüğü satırı modele çevirir.
+// toShippingLocation converts the row returned by the priority write into the
+// model.
 //
-// Bölge alanı BOŞ kalır ve bu, "tüm bölgelere hizmet ediyor" anlamına GELMEZ —
-// bu yoldan dönen kayıt eksiktir. Çağıranın onu doğrudan kullanmaması gerekir:
-// öncelik yazımının tek çağıranı, aynı işlem içinde bağları hemen ardından
-// YAZAN ve sonucu GetShippingLocation ile yeniden OKUYAN servistir.
+// The region field stays EMPTY and this DOES NOT mean "it serves all regions" —
+// the record returned by this path is incomplete. The caller should not use it
+// directly: the only caller of the priority write is the service, which WRITES
+// the links right afterwards within the same transaction and READS the result
+// back with GetShippingLocation.
 func toShippingLocation(row fulfillmentdb.ShippingLocation) models.ShippingLocation {
 	return models.ShippingLocation{
 		LocationID: row.LocationID,

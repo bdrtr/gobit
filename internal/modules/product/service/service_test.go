@@ -13,108 +13,112 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/product/service"
 )
 
-// TestNewRequiresRepo deposuz kurulumun kurulum anında reddedildiğini doğrular.
+// TestNewRequiresRepo verifies that a setup without a repository is rejected at
+// setup time.
 func TestNewRequiresRepo(t *testing.T) {
 	t.Parallel()
 
 	_, err := service.New(service.Options{})
 	require.Error(t, err)
-	assert.True(t, errors.IsInvalid(err), "depo eksikliği doğrulama hatasıdır: %v", err)
+	assert.True(t, errors.IsInvalid(err), "a missing repository is a validation error: %v", err)
 }
 
-// TestCreateProductAssignsPrefixedIDs kimliklerin plan Bölüm 8'deki önekleri
-// taşıdığını ve ürünün alt kayıtlarıyla birlikte döndüğünü doğrular.
+// TestCreateProductAssignsPrefixedIDs verifies that the ids carry the prefixes
+// from Section 8 of the plan and that the product comes back together with its
+// child records.
 func TestCreateProductAssignsPrefixedIDs(t *testing.T) {
 	t.Parallel()
 
 	svc := newService(t, newMemStore(), newFakeLinker(), nil)
 
 	product, err := svc.CreateProduct(context.Background(), service.CreateProductInput{
-		Title:  "Tişört",
+		Title:  "Shirt",
 		Status: models.StatusPublished,
 		Options: []service.CreateOptionInput{
-			{Title: "Beden", Values: []string{"S", "M"}},
+			{Title: "Size", Values: []string{"S", "M"}},
 		},
 		Variants: []service.CreateVariantInput{
-			{Title: "S beden", Options: map[string]string{"Beden": "S"}},
+			{Title: "Size S", Options: map[string]string{"Size": "S"}},
 		},
 		Images: []service.CreateImageInput{{URL: "https://cdn.example/1.png"}},
 	})
 	require.NoError(t, err)
 
-	assert.True(t, strings.HasPrefix(product.ID, "prod_"), "ürün kimliği prod_ ile başlamalı: %s", product.ID)
+	assert.True(t, strings.HasPrefix(product.ID, "prod_"), "the product id should start with prod_: %s", product.ID)
 	require.Len(t, product.Variants, 1)
 	assert.True(t, strings.HasPrefix(product.Variants[0].ID, "variant_"),
-		"varyant kimliği variant_ ile başlamalı: %s", product.Variants[0].ID)
+		"the variant id should start with variant_: %s", product.Variants[0].ID)
 	require.Len(t, product.Options, 1)
 	assert.True(t, strings.HasPrefix(product.Options[0].ID, "popt_"),
-		"seçenek kimliği popt_ ile başlamalı: %s", product.Options[0].ID)
+		"the option id should start with popt_: %s", product.Options[0].ID)
 	require.Len(t, product.Options[0].Values, 2)
 	assert.True(t, strings.HasPrefix(product.Options[0].Values[0].ID, "poptval_"),
-		"seçenek değeri kimliği poptval_ ile başlamalı: %s", product.Options[0].Values[0].ID)
+		"the option value id should start with poptval_: %s", product.Options[0].Values[0].ID)
 	require.Len(t, product.Images, 1)
 	assert.True(t, strings.HasPrefix(product.Images[0].ID, "pimg_"),
-		"görsel kimliği pimg_ ile başlamalı: %s", product.Images[0].ID)
+		"the image id should start with pimg_: %s", product.Images[0].ID)
 }
 
-// TestCreateProductDerivesHandleFromTitle handle verilmediğinde başlıktan
-// üretildiğini doğrular (Türkçe harfler ASCII'ye çevrilir).
+// TestCreateProductDerivesHandleFromTitle verifies that when no handle is given
+// it is derived from the title (Turkish letters are folded to ASCII).
 func TestCreateProductDerivesHandleFromTitle(t *testing.T) {
 	t.Parallel()
 
 	svc := newService(t, newMemStore(), newFakeLinker(), nil)
 
 	product, err := svc.CreateProduct(context.Background(), service.CreateProductInput{
-		Title: "Şık Tişört  Mavi",
+		Title: "\u015e\u0131k Ti\u015f\u00f6rt  Mavi",
 	})
 	require.NoError(t, err)
 	assert.Equal(t, "sik-tisort-mavi", product.Handle)
 }
 
-// TestCreateProductDerivedHandleStaysAddressable uzun bir başlıktan üretilen
-// handle'ın ürünü vitrinde ERİŞİLEBİLİR bıraktığını doğrular.
+// TestCreateProductDerivedHandleStaysAddressable verifies that a handle derived
+// from a long title leaves the product REACHABLE in the storefront.
 //
-// Başlık 255 karaktere kadar olabilir, handle ise 128'e; üretilen slug
-// kırpılmasaydı ürün oluşur ama /store/v1/products/{handle} 422 döner ve kayıt
-// kendi adresinden hiç açılamazdı.
+// A title can be up to 255 characters and a handle up to 128; had the derived
+// slug not been truncated, the product would be created but
+// /store/v1/products/{handle} would return 422 and the record could never be
+// opened at its own address.
 func TestCreateProductDerivedHandleStaysAddressable(t *testing.T) {
 	t.Parallel()
 
 	svc := newService(t, newMemStore(), newFakeLinker(), nil)
 	ctx := context.Background()
 
-	title := strings.Repeat("uzun baslik ", 20) + "son"
-	require.Len(t, title, 243, "başlık sınırın (255) altında ama handle sınırının (128) çok üstünde olmalı")
+	title := strings.Repeat("a lengthy title ", 15) + "end"
+	require.Len(t, title, 243, "the title should be under the limit (255) but well above the handle limit (128)")
 
 	product, err := svc.CreateProduct(ctx, service.CreateProductInput{
 		Title:  title,
 		Status: models.StatusPublished,
 	})
 	require.NoError(t, err)
-	assert.LessOrEqual(t, len(product.Handle), 128, "üretilen handle sınırın içinde kalmalı")
+	assert.LessOrEqual(t, len(product.Handle), 128, "the derived handle should stay within the limit")
 	assert.NotEmpty(t, product.Handle)
-	assert.False(t, strings.HasSuffix(product.Handle, "-"), "kırpma sonda tire bırakmamalı")
+	assert.False(t, strings.HasSuffix(product.Handle, "-"), "the truncation should not leave a trailing dash")
 
-	// Asıl iddia: ürün kendi handle'ıyla vitrinde açılabilmeli.
+	// The real assertion: the product has to be openable in the storefront with
+	// its own handle.
 	fetched, err := svc.GetStoreProduct(ctx, product.Handle, nil)
-	require.NoError(t, err, "üretilen handle ile ürün okunabilmeli")
+	require.NoError(t, err, "the product should be readable with the derived handle")
 	assert.Equal(t, product.ID, fetched.ID)
 }
 
-// TestCreateProductValidations girdinin reddedildiği durumları doğrular.
+// TestCreateProductValidations verifies the cases in which the input is rejected.
 func TestCreateProductValidations(t *testing.T) {
 	t.Parallel()
 
 	cases := map[string]service.CreateProductInput{
-		"başlık boş":          {Title: "   "},
-		"geçersiz durum":      {Title: "Tişört", Status: models.Status("yayinda")},
-		"geçersiz handle":     {Title: "Tişört", Handle: "Büyük Harf"},
-		"boş varyant başlığı": {Title: "Tişört", Variants: []service.CreateVariantInput{{Title: ""}}},
-		"boş seçenek başlığı": {Title: "Tişört", Options: []service.CreateOptionInput{{Title: " "}}},
-		"tekrarlanan seçenek": {Title: "Tişört", Options: []service.CreateOptionInput{{Title: "Beden"}, {Title: "beden"}}},
-		"tekrarlanan değer":   {Title: "Tişört", Options: []service.CreateOptionInput{{Title: "Beden", Values: []string{"S", "s"}}}},
-		"boşluklu etiket kimliği": {
-			Title:  "Tişört",
+		"empty title":         {Title: "   "},
+		"invalid status":      {Title: "Shirt", Status: models.Status("live")},
+		"invalid handle":      {Title: "Shirt", Handle: "Upper Case"},
+		"empty variant title": {Title: "Shirt", Variants: []service.CreateVariantInput{{Title: ""}}},
+		"empty option title":  {Title: "Shirt", Options: []service.CreateOptionInput{{Title: " "}}},
+		"duplicate option":    {Title: "Shirt", Options: []service.CreateOptionInput{{Title: "Size"}, {Title: "size"}}},
+		"duplicate value":     {Title: "Shirt", Options: []service.CreateOptionInput{{Title: "Size", Values: []string{"S", "s"}}}},
+		"tag id with whitespace": {
+			Title:  "Shirt",
 			TagIDs: []string{"ptag_1\n"},
 		},
 	}
@@ -126,33 +130,35 @@ func TestCreateProductValidations(t *testing.T) {
 
 			_, err := svc.CreateProduct(context.Background(), in)
 			require.Error(t, err)
-			assert.True(t, errors.IsInvalid(err), "doğrulama hatası bekleniyordu: %v", err)
+			assert.True(t, errors.IsInvalid(err), "a validation error was expected: %v", err)
 		})
 	}
 }
 
-// TestCreateProductHandleConflict aynı handle'ın ikinci kez kullanılamadığını
-// ve hatanın Conflict sınıfında olduğunu doğrular.
+// TestCreateProductHandleConflict verifies that the same handle cannot be used a
+// second time and that the error is of the Conflict kind.
 func TestCreateProductHandleConflict(t *testing.T) {
 	t.Parallel()
 
 	svc := newService(t, newMemStore(), newFakeLinker(), nil)
 	ctx := context.Background()
 
-	_, err := svc.CreateProduct(ctx, service.CreateProductInput{Handle: "tisort", Title: "Tişört"})
+	_, err := svc.CreateProduct(ctx, service.CreateProductInput{Handle: "shirt", Title: "Shirt"})
 	require.NoError(t, err)
 
-	_, err = svc.CreateProduct(ctx, service.CreateProductInput{Handle: "tisort", Title: "Başka Tişört"})
+	_, err = svc.CreateProduct(ctx, service.CreateProductInput{Handle: "shirt", Title: "Another Shirt"})
 	require.Error(t, err)
-	assert.True(t, errors.IsConflict(err), "çakışma hatası bekleniyordu: %v", err)
+	assert.True(t, errors.IsConflict(err), "a conflict error was expected: %v", err)
 	assert.Equal(t, "product_handle_taken", errors.CodeOf(err))
 }
 
-// TestCreateProductConflictFromStore ön kontrolün ATLANDIĞI durumda bile
-// çakışmanın depodan (veritabanı kısıtının karşılığından) geldiğini doğrular.
+// TestCreateProductConflictFromStore verifies that even when the pre-check is
+// SKIPPED the conflict comes from the repository (the counterpart of the
+// database constraint).
 //
-// Bu, eşzamanlı iki isteğin arasından geçen senaryonun birim testteki
-// karşılığıdır: ön kontrol "boş" der, yazma yine de çakışır.
+// This is the unit-test counterpart of the scenario where two concurrent
+// requests slip past each other: the pre-check says "empty", the write conflicts
+// all the same.
 func TestCreateProductConflictFromStore(t *testing.T) {
 	t.Parallel()
 
@@ -160,19 +166,20 @@ func TestCreateProductConflictFromStore(t *testing.T) {
 	svc := newService(t, store, newFakeLinker(), nil)
 	ctx := context.Background()
 
-	_, err := svc.CreateProduct(ctx, service.CreateProductInput{Handle: "tisort", Title: "Tişört"})
+	_, err := svc.CreateProduct(ctx, service.CreateProductInput{Handle: "shirt", Title: "Shirt"})
 	require.NoError(t, err)
 
-	// Ön kontrol artık "bulunamadı" diyor; tek savunma depo kısıtı.
-	store.fail("GetProductByHandle", errors.NotFound("product_not_found", "yok"))
+	// The pre-check now says "not found"; the only defense is the repository
+	// constraint.
+	store.fail("GetProductByHandle", errors.NotFound("product_not_found", "not found"))
 
-	_, err = svc.CreateProduct(ctx, service.CreateProductInput{Handle: "tisort", Title: "Başka Tişört"})
+	_, err = svc.CreateProduct(ctx, service.CreateProductInput{Handle: "shirt", Title: "Another Shirt"})
 	require.Error(t, err)
-	assert.True(t, errors.IsConflict(err), "depodan gelen çakışma korunmalı: %v", err)
+	assert.True(t, errors.IsConflict(err), "the conflict coming from the repository should be preserved: %v", err)
 }
 
-// TestCreateProductIsSingleTransaction ürün ve alt kayıtlarının TEK işlemde
-// yazıldığını doğrular.
+// TestCreateProductIsSingleTransaction verifies that the product and its child
+// records are written in a SINGLE transaction.
 func TestCreateProductIsSingleTransaction(t *testing.T) {
 	t.Parallel()
 
@@ -180,46 +187,46 @@ func TestCreateProductIsSingleTransaction(t *testing.T) {
 	svc := newService(t, store, newFakeLinker(), nil)
 
 	_, err := svc.CreateProduct(context.Background(), service.CreateProductInput{
-		Title:    "Tişört",
-		Options:  []service.CreateOptionInput{{Title: "Beden", Values: []string{"S", "M"}}},
+		Title:    "Shirt",
+		Options:  []service.CreateOptionInput{{Title: "Size", Values: []string{"S", "M"}}},
 		Variants: []service.CreateVariantInput{{Title: "S"}, {Title: "M"}},
 		Images:   []service.CreateImageInput{{URL: "https://cdn.example/1.png"}},
 	})
 	require.NoError(t, err)
 
 	assert.Equal(t, 1, store.callCount("InTx"),
-		"ürün, seçenekler, varyantlar ve görseller tek işlemde yazılmalı")
+		"the product, the options, the variants and the images should be written in one transaction")
 }
 
-// TestCreateProductRollsBackOnVariantFailure varyant yazımı patladığında
-// hatanın çağırana ulaştığını doğrular.
+// TestCreateProductRollsBackOnVariantFailure verifies that when the variant write
+// blows up the error reaches the caller.
 func TestCreateProductRollsBackOnVariantFailure(t *testing.T) {
 	t.Parallel()
 
 	store := newMemStore()
-	store.fail("CreateVariant", errors.Internal("db", "varyant yazılamadı"))
+	store.fail("CreateVariant", errors.Internal("db", "the variant could not be written"))
 	svc := newService(t, store, newFakeLinker(), nil)
 
 	_, err := svc.CreateProduct(context.Background(), service.CreateProductInput{
-		Title:    "Tişört",
+		Title:    "Shirt",
 		Variants: []service.CreateVariantInput{{Title: "S"}},
 	})
 	require.Error(t, err)
 	assert.Equal(t, "db", errors.CodeOf(err))
 }
 
-// TestCreateVariantBindsOptionValuesByTitle varyantın seçenek değerlerine
-// başlık üzerinden bağlandığını doğrular.
+// TestCreateVariantBindsOptionValuesByTitle verifies that the variant is bound to
+// its option values through the title.
 func TestCreateVariantBindsOptionValuesByTitle(t *testing.T) {
 	t.Parallel()
 
 	svc := newService(t, newMemStore(), newFakeLinker(), nil)
 
 	product, err := svc.CreateProduct(context.Background(), service.CreateProductInput{
-		Title:   "Tişört",
-		Options: []service.CreateOptionInput{{Title: "Beden", Values: []string{"S", "M"}}},
+		Title:   "Shirt",
+		Options: []service.CreateOptionInput{{Title: "Size", Values: []string{"S", "M"}}},
 		Variants: []service.CreateVariantInput{
-			{Title: "S beden", Options: map[string]string{"beden": "s"}},
+			{Title: "Size S", Options: map[string]string{"size": "s"}},
 		},
 	})
 	require.NoError(t, err)
@@ -227,11 +234,11 @@ func TestCreateVariantBindsOptionValuesByTitle(t *testing.T) {
 	require.Len(t, product.Variants, 1)
 	require.Len(t, product.Variants[0].OptionValues, 1)
 	assert.Equal(t, "S", product.Variants[0].OptionValues[0].Value)
-	assert.Equal(t, "Beden", product.Variants[0].OptionValues[0].OptionTitle)
+	assert.Equal(t, "Size", product.Variants[0].OptionValues[0].OptionTitle)
 }
 
-// TestCreateVariantRejectsUnknownOptionValue tanımsız bir seçenek değerinin
-// sessizce atlanmadığını doğrular.
+// TestCreateVariantRejectsUnknownOptionValue verifies that an undefined option
+// value is not skipped silently.
 func TestCreateVariantRejectsUnknownOptionValue(t *testing.T) {
 	t.Parallel()
 
@@ -239,21 +246,21 @@ func TestCreateVariantRejectsUnknownOptionValue(t *testing.T) {
 	ctx := context.Background()
 
 	product, err := svc.CreateProduct(ctx, service.CreateProductInput{
-		Title:   "Tişört",
-		Options: []service.CreateOptionInput{{Title: "Beden", Values: []string{"S"}}},
+		Title:   "Shirt",
+		Options: []service.CreateOptionInput{{Title: "Size", Values: []string{"S"}}},
 	})
 	require.NoError(t, err)
 
 	_, err = svc.CreateVariant(ctx, product.ID, service.CreateVariantInput{
-		Title:   "XL beden",
-		Options: map[string]string{"Beden": "XL"},
+		Title:   "Size XL",
+		Options: map[string]string{"Size": "XL"},
 	})
 	require.Error(t, err)
-	assert.True(t, errors.IsInvalid(err), "tanımsız değer doğrulama hatası vermeli: %v", err)
+	assert.True(t, errors.IsInvalid(err), "an undefined value should give a validation error: %v", err)
 }
 
-// TestCreateVariantRejectsForeignOptionValue başka bir ürünün seçenek
-// değerinin bağlanamadığını doğrular.
+// TestCreateVariantRejectsForeignOptionValue verifies that the option value of
+// another product cannot be bound.
 func TestCreateVariantRejectsForeignOptionValue(t *testing.T) {
 	t.Parallel()
 
@@ -261,83 +268,85 @@ func TestCreateVariantRejectsForeignOptionValue(t *testing.T) {
 	ctx := context.Background()
 
 	foreign, err := svc.CreateProduct(ctx, service.CreateProductInput{
-		Title:   "Pantolon",
-		Options: []service.CreateOptionInput{{Title: "Beden", Values: []string{"42"}}},
+		Title:   "Trousers",
+		Options: []service.CreateOptionInput{{Title: "Size", Values: []string{"42"}}},
 	})
 	require.NoError(t, err)
-	target, err := svc.CreateProduct(ctx, service.CreateProductInput{Title: "Tişört"})
+	target, err := svc.CreateProduct(ctx, service.CreateProductInput{Title: "Shirt"})
 	require.NoError(t, err)
 
 	_, err = svc.CreateVariant(ctx, target.ID, service.CreateVariantInput{
-		Title:          "Yanlış",
+		Title:          "Wrong",
 		OptionValueIDs: []string{foreign.Options[0].Values[0].ID},
 	})
 	require.Error(t, err)
-	assert.True(t, errors.IsInvalid(err), "yabancı değer reddedilmeli: %v", err)
+	assert.True(t, errors.IsInvalid(err), "a foreign value should be rejected: %v", err)
 }
 
-// TestCreateVariantRequiresProduct var olmayan ürüne varyant eklenemediğini
-// doğrular.
+// TestCreateVariantRequiresProduct verifies that no variant can be added to a
+// product that does not exist.
 func TestCreateVariantRequiresProduct(t *testing.T) {
 	t.Parallel()
 
 	svc := newService(t, newMemStore(), newFakeLinker(), nil)
 
-	_, err := svc.CreateVariant(context.Background(), "prod_yok", service.CreateVariantInput{Title: "S"})
+	_, err := svc.CreateVariant(context.Background(), "prod_missing", service.CreateVariantInput{Title: "S"})
 	require.Error(t, err)
-	assert.True(t, errors.IsNotFound(err), "bulunamadı bekleniyordu: %v", err)
+	assert.True(t, errors.IsNotFound(err), "a not found was expected: %v", err)
 }
 
-// TestCreateOptionReturnsStoredRow oluşturulan seçeneğin SAKLANAN satır olarak
-// döndüğünü doğrular.
+// TestCreateOptionReturnsStoredRow verifies that the created option comes back as
+// the STORED row.
 //
-// Zaman damgalarını veritabanı üretir; bellekteki model dönseydi yanıt
-// "created_at":"0001-01-01T00:00:00Z" taşırdı (models.Option'da bu alanlarda
-// omitzero yoktur) ve damgaya güvenen istemci yanlış veri okurdu. Diğer tüm
-// create uçları saklanan satırı döner; bu uç sözleşmeden sapmamalı.
+// The timestamps are produced by the database; had the in-memory model been
+// returned, the response would carry "created_at":"0001-01-01T00:00:00Z" (there
+// is no omitzero on those fields in models.Option) and a client that trusts the
+// stamp would read wrong data. Every other create endpoint returns the stored
+// row; this endpoint should not depart from the contract.
 func TestCreateOptionReturnsStoredRow(t *testing.T) {
 	t.Parallel()
 
 	svc := newService(t, newMemStore(), newFakeLinker(), nil)
 	ctx := context.Background()
-	product := seedProduct(t, svc, "tisort", "Tişört")
+	product := seedProduct(t, svc, "shirt", "Shirt")
 
 	option, err := svc.CreateOption(ctx, product.ID, service.CreateOptionInput{
-		Title:  "Beden",
+		Title:  "Size",
 		Values: []string{"S", "M"},
 	})
 	require.NoError(t, err)
-	assert.False(t, option.CreatedAt.IsZero(), "seçenek saklanan satır olarak dönmeli")
-	assert.False(t, option.UpdatedAt.IsZero(), "seçenek saklanan satır olarak dönmeli")
+	assert.False(t, option.CreatedAt.IsZero(), "the option should come back as the stored row")
+	assert.False(t, option.UpdatedAt.IsZero(), "the option should come back as the stored row")
 
-	require.Len(t, option.Values, 2, "değerler de dönmeli")
+	require.Len(t, option.Values, 2, "the values should come back too")
 	for _, value := range option.Values {
 		assert.False(t, value.CreatedAt.IsZero(),
-			"%q değeri saklanan satır olarak dönmeli", value.Value)
+			"the %q value should come back as the stored row", value.Value)
 	}
 }
 
-// TestAddOptionValueAppendsToEnd sonradan eklenen değerin listenin SONUNA
-// gittiğini doğrular.
+// TestAddOptionValueAppendsToEnd verifies that a value added later goes to the
+// END of the list.
 //
-// Sıra doldurulmasaydı yeni değer 0 alır ve okuma sıraya göre yapıldığı için
-// "S, M, L" tanımlı bir seçeneğe eklenen "XL" başa düşerdi.
+// Had the rank not been filled in, the new value would get 0 and, because reads
+// are ordered by rank, an "XL" added to an option defined as "S, M, L" would fall
+// at the head.
 func TestAddOptionValueAppendsToEnd(t *testing.T) {
 	t.Parallel()
 
 	svc := newService(t, newMemStore(), newFakeLinker(), nil)
 	ctx := context.Background()
-	product := seedProduct(t, svc, "tisort", "Tişört")
+	product := seedProduct(t, svc, "shirt", "Shirt")
 
 	option, err := svc.CreateOption(ctx, product.ID, service.CreateOptionInput{
-		Title:  "Beden",
+		Title:  "Size",
 		Values: []string{"S", "M", "L"},
 	})
 	require.NoError(t, err)
 
 	added, err := svc.AddOptionValue(ctx, option.ID, "XL")
 	require.NoError(t, err)
-	assert.Equal(t, int32(3), added.Rank, "yeni değer en büyük sıranın bir fazlasını almalı")
+	assert.Equal(t, int32(3), added.Rank, "the new value should get one more than the largest rank")
 
 	options, err := svc.ListOptions(ctx, product.ID)
 	require.NoError(t, err)
@@ -348,48 +357,48 @@ func TestAddOptionValueAppendsToEnd(t *testing.T) {
 		values = append(values, value.Value)
 	}
 	assert.Equal(t, []string{"S", "M", "L", "XL"}, values,
-		"sonradan eklenen değer listenin sonunda olmalı")
+		"the value added later should be at the end of the list")
 }
 
-// TestUpdateProductKeepsOwnHandle ürünün kendi handle'ıyla güncellenmesinin
-// çakışma sayılmadığını doğrular.
+// TestUpdateProductKeepsOwnHandle verifies that updating a product with its own
+// handle does not count as a conflict.
 func TestUpdateProductKeepsOwnHandle(t *testing.T) {
 	t.Parallel()
 
 	svc := newService(t, newMemStore(), newFakeLinker(), nil)
 	ctx := context.Background()
 
-	product, err := svc.CreateProduct(ctx, service.CreateProductInput{Handle: "tisort", Title: "Tişört"})
+	product, err := svc.CreateProduct(ctx, service.CreateProductInput{Handle: "shirt", Title: "Shirt"})
 	require.NoError(t, err)
 
 	updated, err := svc.UpdateProduct(ctx, product.ID, service.UpdateProductInput{
-		Handle: ptr("tisort"),
-		Title:  ptr("Tişört v2"),
+		Handle: ptr("shirt"),
+		Title:  ptr("Shirt v2"),
 	})
 	require.NoError(t, err)
-	assert.Equal(t, "Tişört v2", updated.Title)
+	assert.Equal(t, "Shirt v2", updated.Title)
 }
 
-// TestUpdateProductRejectsTakenHandle başka bir ürünün handle'ının
-// alınamadığını doğrular.
+// TestUpdateProductRejectsTakenHandle verifies that another product's handle
+// cannot be taken.
 func TestUpdateProductRejectsTakenHandle(t *testing.T) {
 	t.Parallel()
 
 	svc := newService(t, newMemStore(), newFakeLinker(), nil)
 	ctx := context.Background()
 
-	_, err := svc.CreateProduct(ctx, service.CreateProductInput{Handle: "tisort", Title: "Tişört"})
+	_, err := svc.CreateProduct(ctx, service.CreateProductInput{Handle: "shirt", Title: "Shirt"})
 	require.NoError(t, err)
-	other, err := svc.CreateProduct(ctx, service.CreateProductInput{Handle: "pantolon", Title: "Pantolon"})
+	other, err := svc.CreateProduct(ctx, service.CreateProductInput{Handle: "trousers", Title: "Trousers"})
 	require.NoError(t, err)
 
-	_, err = svc.UpdateProduct(ctx, other.ID, service.UpdateProductInput{Handle: ptr("tisort")})
+	_, err = svc.UpdateProduct(ctx, other.ID, service.UpdateProductInput{Handle: ptr("shirt")})
 	require.Error(t, err)
-	assert.True(t, errors.IsConflict(err), "çakışma bekleniyordu: %v", err)
+	assert.True(t, errors.IsConflict(err), "a conflict was expected: %v", err)
 }
 
-// TestDeleteProductSoftDeletesAndCleansLinks silmenin ürünü okumalardan
-// düşürdüğünü ve varyantın fiyat/stok bağlarını temizlediğini doğrular.
+// TestDeleteProductSoftDeletesAndCleansLinks verifies that the delete drops the
+// product from the reads and cleans up the price/stock links of the variant.
 func TestDeleteProductSoftDeletesAndCleansLinks(t *testing.T) {
 	t.Parallel()
 
@@ -397,7 +406,7 @@ func TestDeleteProductSoftDeletesAndCleansLinks(t *testing.T) {
 	svc := newService(t, newMemStore(), links, nil)
 	ctx := context.Background()
 
-	product := seedProduct(t, svc, "tisort", "Tişört")
+	product := seedProduct(t, svc, "shirt", "Shirt")
 	variantID := product.Variants[0].ID
 	require.NoError(t, svc.SetVariantPriceSet(ctx, variantID, "pset_1"))
 	require.NoError(t, svc.SetVariantInventoryItem(ctx, variantID, "invitem_1"))
@@ -405,27 +414,27 @@ func TestDeleteProductSoftDeletesAndCleansLinks(t *testing.T) {
 	require.NoError(t, svc.DeleteProduct(ctx, product.ID))
 
 	_, err := svc.GetProduct(ctx, product.ID)
-	assert.True(t, errors.IsNotFound(err), "silinen ürün okunamamalı: %v", err)
+	assert.True(t, errors.IsNotFound(err), "a deleted product should not be readable: %v", err)
 	assert.Empty(t, links.linked(service.LinkVariantPriceSet, variantID),
-		"silinen ürünün varyantı fiyat kümesine bağlı kalmamalı")
+		"the variant of a deleted product should not stay linked to a price set")
 	assert.Empty(t, links.linked(service.LinkVariantInventory, variantID),
-		"silinen ürünün varyantı stok kalemine bağlı kalmamalı")
+		"the variant of a deleted product should not stay linked to a stock item")
 }
 
-// TestDeleteProductNotFound var olmayan ürünün silinmesinin sessizce
-// başarılı olmadığını doğrular.
+// TestDeleteProductNotFound verifies that deleting a product that does not exist
+// does not succeed silently.
 func TestDeleteProductNotFound(t *testing.T) {
 	t.Parallel()
 
 	svc := newService(t, newMemStore(), newFakeLinker(), nil)
 
-	err := svc.DeleteProduct(context.Background(), "prod_yok")
+	err := svc.DeleteProduct(context.Background(), "prod_missing")
 	require.Error(t, err)
-	assert.True(t, errors.IsNotFound(err), "bulunamadı bekleniyordu: %v", err)
+	assert.True(t, errors.IsNotFound(err), "a not found was expected: %v", err)
 }
 
-// TestDeleteVariantCleansLinks varyant silindiğinde bağların temizlendiğini
-// doğrular.
+// TestDeleteVariantCleansLinks verifies that the links are cleaned up when a
+// variant is deleted.
 func TestDeleteVariantCleansLinks(t *testing.T) {
 	t.Parallel()
 
@@ -433,56 +442,56 @@ func TestDeleteVariantCleansLinks(t *testing.T) {
 	svc := newService(t, newMemStore(), links, nil)
 	ctx := context.Background()
 
-	product := seedProduct(t, svc, "tisort", "Tişört")
+	product := seedProduct(t, svc, "shirt", "Shirt")
 	variantID := product.Variants[0].ID
 	require.NoError(t, svc.SetVariantPriceSet(ctx, variantID, "pset_1"))
 
 	require.NoError(t, svc.DeleteVariant(ctx, variantID))
 
 	_, err := svc.GetVariant(ctx, variantID)
-	assert.True(t, errors.IsNotFound(err), "silinen varyant okunamamalı: %v", err)
+	assert.True(t, errors.IsNotFound(err), "a deleted variant should not be readable: %v", err)
 	assert.Empty(t, links.linked(service.LinkVariantPriceSet, variantID))
 }
 
-// TestListProductsPaging sayfalama sözleşmesini doğrular: varsayılan limit,
-// üst sınır kırpması ve negatif değerin reddi.
+// TestListProductsPaging verifies the paging contract: the default limit, the
+// ceiling clamp and the rejection of a negative value.
 func TestListProductsPaging(t *testing.T) {
 	t.Parallel()
 
 	svc := newService(t, newMemStore(), newFakeLinker(), nil)
 	ctx := context.Background()
 
-	for _, title := range []string{"Bir", "İki", "Üç"} {
+	for _, title := range []string{"One", "Two", "Three"} {
 		_, err := svc.CreateProduct(ctx, service.CreateProductInput{Title: title})
 		require.NoError(t, err)
 	}
 
 	result, err := svc.ListProducts(ctx, service.ListProductsOptions{})
 	require.NoError(t, err)
-	assert.Equal(t, service.DefaultLimit, result.Limit, "limit verilmezse varsayılan kullanılmalı")
-	assert.Equal(t, 3, sayac(t, result), "count sayfadan bağımsız toplamdır")
+	assert.Equal(t, service.DefaultLimit, result.Limit, "when no limit is given the default should be used")
+	assert.Equal(t, 3, requireCount(t, result), "the count is the total, independent of the page")
 	assert.Len(t, result.Items, 3)
 
 	result, err = svc.ListProducts(ctx, service.ListProductsOptions{Limit: 5000})
 	require.NoError(t, err)
-	assert.Equal(t, service.MaxLimit, result.Limit, "sınırı aşan limit kırpılmalı")
+	assert.Equal(t, service.MaxLimit, result.Limit, "a limit above the ceiling should be clamped")
 
 	result, err = svc.ListProducts(ctx, service.ListProductsOptions{Limit: 2, Offset: 2})
 	require.NoError(t, err)
-	assert.Equal(t, 3, sayac(t, result), "count sayfalamadan etkilenmemeli")
+	assert.Equal(t, 3, requireCount(t, result), "the count should not be affected by the paging")
 	assert.Len(t, result.Items, 1)
 
 	_, err = svc.ListProducts(ctx, service.ListProductsOptions{Limit: -1})
 	require.Error(t, err)
-	assert.True(t, errors.IsInvalid(err), "negatif limit reddedilmeli: %v", err)
+	assert.True(t, errors.IsInvalid(err), "a negative limit should be rejected: %v", err)
 
 	_, err = svc.ListProducts(ctx, service.ListProductsOptions{Offset: -1})
 	require.Error(t, err)
-	assert.True(t, errors.IsInvalid(err), "negatif offset reddedilmeli: %v", err)
+	assert.True(t, errors.IsInvalid(err), "a negative offset should be rejected: %v", err)
 }
 
-// TestListProductsWithRelationsIsBatched ilişkili kayıtların ürün başına DEĞİL
-// toplu okunduğunu doğrular: N+1'in birim testteki kanıtı budur.
+// TestListProductsWithRelationsIsBatched verifies that the related records are
+// read in bulk and NOT per product: this is the unit-test evidence against N+1.
 func TestListProductsWithRelationsIsBatched(t *testing.T) {
 	t.Parallel()
 
@@ -490,10 +499,10 @@ func TestListProductsWithRelationsIsBatched(t *testing.T) {
 	svc := newService(t, store, newFakeLinker(), nil)
 	ctx := context.Background()
 
-	for _, title := range []string{"Bir", "İki", "Üç", "Dört"} {
+	for _, title := range []string{"One", "Two", "Three", "Four"} {
 		_, err := svc.CreateProduct(ctx, service.CreateProductInput{
 			Title:    title,
-			Variants: []service.CreateVariantInput{{Title: "Tek"}, {Title: "Çift"}},
+			Variants: []service.CreateVariantInput{{Title: "Single"}, {Title: "Double"}},
 		})
 		require.NoError(t, err)
 	}
@@ -512,12 +521,12 @@ func TestListProductsWithRelationsIsBatched(t *testing.T) {
 
 	for name, previous := range before {
 		assert.Equal(t, previous+1, store.callCount(name),
-			"%s ürün sayısından bağımsız olarak TEK kez çağrılmalı", name)
+			"%s should be called ONCE, independent of the number of products", name)
 	}
 }
 
-// TestListProductsWithoutRelationsSkipsChildQueries ilişkiler istenmediğinde
-// alt sorguların hiç yapılmadığını doğrular.
+// TestListProductsWithoutRelationsSkipsChildQueries verifies that when the
+// relations are not requested the child queries are not made at all.
 func TestListProductsWithoutRelationsSkipsChildQueries(t *testing.T) {
 	t.Parallel()
 
@@ -526,8 +535,8 @@ func TestListProductsWithoutRelationsSkipsChildQueries(t *testing.T) {
 	ctx := context.Background()
 
 	_, err := svc.CreateProduct(ctx, service.CreateProductInput{
-		Title:    "Tişört",
-		Variants: []service.CreateVariantInput{{Title: "Tek"}},
+		Title:    "Shirt",
+		Variants: []service.CreateVariantInput{{Title: "Single"}},
 	})
 	require.NoError(t, err)
 
@@ -535,49 +544,49 @@ func TestListProductsWithoutRelationsSkipsChildQueries(t *testing.T) {
 	_, err = svc.ListProducts(ctx, service.ListProductsOptions{})
 	require.NoError(t, err)
 	assert.Equal(t, before, store.callCount("ListVariantsByProductIDs"),
-		"ilişki istenmediyse varyantlar okunmamalı")
+		"if no relation was requested the variants should not be read")
 }
 
-// TestGetProductNotFound bilinmeyen kimliğin NotFound döndürdüğünü doğrular.
+// TestGetProductNotFound verifies that an unknown id returns NotFound.
 func TestGetProductNotFound(t *testing.T) {
 	t.Parallel()
 
 	svc := newService(t, newMemStore(), newFakeLinker(), nil)
 
-	_, err := svc.GetProduct(context.Background(), "prod_yok")
+	_, err := svc.GetProduct(context.Background(), "prod_missing")
 	require.Error(t, err)
-	assert.True(t, errors.IsNotFound(err), "bulunamadı bekleniyordu: %v", err)
+	assert.True(t, errors.IsNotFound(err), "a not found was expected: %v", err)
 }
 
-// TestCreateTagRejectsDuplicate aynı etiketin ikinci kez eklenemediğini
-// doğrular.
+// TestCreateTagRejectsDuplicate verifies that the same tag cannot be added a
+// second time.
 func TestCreateTagRejectsDuplicate(t *testing.T) {
 	t.Parallel()
 
 	svc := newService(t, newMemStore(), newFakeLinker(), nil)
 	ctx := context.Background()
 
-	tag, err := svc.CreateTag(ctx, " yaz ")
+	tag, err := svc.CreateTag(ctx, " summer ")
 	require.NoError(t, err)
-	assert.Equal(t, "yaz", tag.Value, "değer kırpılmalı")
+	assert.Equal(t, "summer", tag.Value, "the value should be trimmed")
 	assert.True(t, strings.HasPrefix(tag.ID, "ptag_"))
 
-	_, err = svc.CreateTag(ctx, "yaz")
+	_, err = svc.CreateTag(ctx, "summer")
 	require.Error(t, err)
-	assert.True(t, errors.IsConflict(err), "çakışma bekleniyordu: %v", err)
+	assert.True(t, errors.IsConflict(err), "a conflict was expected: %v", err)
 }
 
-// TestCreateCategoryRequiresExistingParent var olmayan üst kategoriyi
-// reddettiğini doğrular.
+// TestCreateCategoryRequiresExistingParent verifies that a parent category that
+// does not exist is rejected.
 func TestCreateCategoryRequiresExistingParent(t *testing.T) {
 	t.Parallel()
 
 	svc := newService(t, newMemStore(), newFakeLinker(), nil)
 
 	_, err := svc.CreateCategory(context.Background(), service.CreateCategoryInput{
-		Name:     "Alt",
-		ParentID: ptr("pcat_yok"),
+		Name:     "Child",
+		ParentID: ptr("pcat_missing"),
 	})
 	require.Error(t, err)
-	assert.True(t, errors.IsNotFound(err), "bulunamadı bekleniyordu: %v", err)
+	assert.True(t, errors.IsNotFound(err), "a not found was expected: %v", err)
 }

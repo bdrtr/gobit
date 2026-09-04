@@ -1,8 +1,10 @@
--- 000001_product_init'in geri alınması.
+-- Rollback of 000001_product_init.
 --
--- Sıra bağımlılığın TERSİDİR: önce bağımlı tablolar, sonra sahipleri düşer.
--- CASCADE bilinçli olarak kullanılmaz; sıra doğruysa gerek yoktur ve CASCADE
--- bir gün başka bir modülün (yanlışlıkla kurulmuş) nesnesini de düşürebilirdi.
+-- The order is the REVERSE of the dependency: the dependent tables drop first,
+-- then their owners.
+-- CASCADE is deliberately not used; if the order is right it is unnecessary,
+-- and CASCADE could one day drop another module's (mistakenly installed)
+-- object as well.
 DROP TABLE IF EXISTS product_category_map;
 DROP TABLE IF EXISTS product_tag_map;
 DROP TABLE IF EXISTS product_image;

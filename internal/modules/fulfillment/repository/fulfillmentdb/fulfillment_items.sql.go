@@ -23,10 +23,10 @@ type CreateFulfillmentItemParams struct {
 	Quantity      int64
 }
 
-// fulfillment_items sorguları.
+// fulfillment_items queries.
 //
-// Kalem, sipariş satırının kimliğini taşır; o kimlik BAŞKA bir modüle aittir
-// ve burada doğrulanmaz (Prensip 2.2).
+// An item carries the id of an order line item; that id belongs to ANOTHER
+// module and is not validated here (Principle 2.2).
 func (q *Queries) CreateFulfillmentItem(ctx context.Context, arg CreateFulfillmentItemParams) (FulfillmentItem, error) {
 	row := q.db.QueryRow(ctx, createFulfillmentItem,
 		arg.ID,
@@ -85,8 +85,9 @@ WHERE fulfillment_id = ANY ($1::text[])
 ORDER BY fulfillment_id, id
 `
 
-// ListFulfillmentItemsByFulfillments kalemleri BİRDEN ÇOK gönderi için tek
-// turda döner; liste uçları gönderi başına sorgu atmaz (N+1 yok).
+// ListFulfillmentItemsByFulfillments returns the items for MULTIPLE
+// fulfillments in a single round trip; the list endpoints do not issue a query
+// per fulfillment (no N+1).
 func (q *Queries) ListFulfillmentItemsByFulfillments(ctx context.Context, fulfillmentIds []string) ([]FulfillmentItem, error) {
 	rows, err := q.db.Query(ctx, listFulfillmentItemsByFulfillments, fulfillmentIds)
 	if err != nil {

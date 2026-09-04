@@ -2,12 +2,12 @@
 
 package graph
 
-// Vitrinin okuma yüzeyi.
+// The storefront's read surface.
 //
-// Sorguların gördüğü katalog, isteğin publishable anahtarının bağlı olduğu
-// SATIŞ KANALLARIYLA sınırlıdır. Kanal bir sorgu argümanı DEĞİLDİR ve
-// olmayacaktır: argüman olsaydı süzgeç bir yetkilendirme olmaktan çıkıp
-// görüntüleme tercihine dönüşür, elindeki herhangi bir anahtarla gelen istemci
-// başka bir vitrinin katalogunu okuyabilirdi.
+// The catalog the queries see is limited to the SALES CHANNELS the request's
+// publishable key is bound to. The channel IS NOT a query argument and will not
+// be one: had it been an argument, the filter would stop being an authorization
+// and turn into a display preference, and a client arriving with any key it
+// happened to hold could read another storefront's catalog.
 type Query struct {
 }

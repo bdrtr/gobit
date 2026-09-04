@@ -12,534 +12,569 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/product/service"
 )
 
-// GraphQL ucunun REST'ten FARKLI riski ve onu kapatan varsayılan sınırlar.
+// The GraphQL endpoint's risk is DIFFERENT from REST's, and these are the
+// defaults that close it.
 //
-// REST'te bir isteğin maliyetini SUNUCU belirler: yol sabittir, dönen gövde
-// sabittir, bir istek bir sorgudur. GraphQL'de maliyeti İSTEMCİ belirler —
-// sorgunun şeklini o yazar. Hız sınırlayıcı ise her iki yüzeyde de aynı şeyi
-// sayar: BİR istek. Aynı kotayla bin kat iş yaptırmanın yolları ayrı ayrı
-// kapılarla kapatılır:
+// In REST the SERVER decides the cost of a request: the path is fixed, the
+// returned body is fixed, one request is one query. In GraphQL the CLIENT
+// decides the cost — it writes the shape of the query. The rate limiter, on the
+// other hand, counts the same thing on both surfaces: ONE request. The ways of
+// making a thousand times the work with the same quota are closed one by one
+// with separate gates:
 //
-//  1. AÇILIM — fragment'lar açıldıktan sonraki ağacın büyüklüğü
-//     ([DefaultMaxSelections]). Diğer kapılardan ÖNCE koşar ve onları korur.
-//  2. DERİNLİK — iç içe geçen alanlar ([DefaultMaxDepth]).
-//  3. GENİŞLİK/ÇARPAN — sığ ama pahalı sorgu ([DefaultMaxComplexity]).
-//  4. TEKRAR — aynı alanın aynı nesne altında yığılması
+//  1. EXPANSION — the size of the tree after the fragments are expanded
+//     ([DefaultMaxSelections]). It runs BEFORE the other gates and protects
+//     them.
+//  2. DEPTH — nested fields ([DefaultMaxDepth]).
+//  3. WIDTH/MULTIPLIER — the shallow but expensive query
+//     ([DefaultMaxComplexity]).
+//  4. REPETITION — the same field stacked under the same object
 //     ([DefaultMaxFieldRepetition]).
-//  5. İÇ GÖZLEM — 2 ve 3'ün göremediği __schema/__type ağacı
+//  5. INTROSPECTION — the __schema/__type tree that 2 and 3 cannot see
 //     ([DefaultMaxIntrospectionRoots], [DefaultMaxIntrospectionDepth]).
-//  6. AYRIŞTIRMA — belgenin kendisinin boyutu ([maxSorguBayt],
-//     [maxSorguJeton]; handler.go).
-//  7. ÇIKTI — yanıtın GERÇEKLEŞEN baytı ([DefaultMaxResponseBytes];
+//  6. PARSING — the size of the document itself ([maxQueryBytes],
+//     [maxQueryTokens]; handler.go).
+//  7. OUTPUT — the response's ACTUAL bytes ([DefaultMaxResponseBytes];
 //     handler.go).
 //
-// Hepsi ayrı ayrı gereklidir çünkü her biri ötekinin göremediği bir belgeyi
-// yakalar ve bu bir tahmin değil, ÖLÇÜMDÜR:
+// Every one of them is needed separately because each catches a document the
+// others cannot see, and that is not a guess but a MEASUREMENT:
 //
-//   - Derinliği 3 olan bir belge takma adlarla yüzlerce kök sorgu taşıyabilir;
-//     karmaşıklık yakalar.
-//   - Karmaşıklığı düşük bir belge döngüsel bir alanda sonsuza inebilir;
-//     derinlik yakalar.
-//   - İkisi de belge ancak AYRIŞTIRILDIKTAN sonra ölçülebildiği için 10
-//     MiB'lık bir gövdenin ayrıştırma maliyetini geri veremez; gövde ve jeton
-//     sınırları yakalar.
+//   - A document of depth 3 can carry hundreds of root queries with aliases;
+//     complexity catches it.
+//   - A document of low complexity can descend forever into a cyclic field;
+//     depth catches it.
+//   - Neither of them can give back the parsing cost of a 10 MiB body, because
+//     a document can only be measured AFTER it has been PARSED; the body and
+//     token limits catch it.
 //
-// # Neden alan sayısı yetmiyor: BAYT
+// # Why the field count is not enough: BYTES
 //
-// Karmaşıklık modeli çözülecek ALAN SAYISINI fiyatlar, BAYT'ı değil. Bir
-// alanın yanıttaki ağırlığı ise sayısıyla değil İÇERİĞİYLE belirlenir ve
-// takma adlar aynı alanı sınırsız kez seçmeye izin verir:
+// The complexity model prices the NUMBER OF FIELDS to be resolved, not the
+// BYTES. The weight of a field in the response is determined not by its count
+// but by its CONTENT, and aliases allow the same field to be selected an
+// unlimited number of times:
 //
 //	products(limit: 100) { items { a0: description … a488: description } }
 //
-// Bu belgenin ölçülen maliyeti 50.000'dir, yani tavana TAM oturur — aşmadığı
-// için eski kapılardan geçerdi. Ölçüldü: 8.729 baytlık istek 204,9 MiB yanıt
-// üretiyordu (24.620 kat) ve hız sınırlayıcı bunu BİR istek sayıyordu.
-// Varsayılan sayfayla (20 ürün) 1500 takma ad, 27.415 bayttan 125,7 MiB
-// üretiyordu.
+// This document's measured cost is 50,000, that is, it sits EXACTLY on the
+// ceiling — because it does not exceed it, it would pass the old gates.
+// Measured: an 8,729-byte request produced a 204.9 MiB response (24,620 times)
+// and the rate limiter counted it as ONE request. With the default page (20
+// products), 1500 aliases produced 125.7 MiB out of 27,415 bytes.
 //
-// Buradaki asimetri REST'te YOKTUR ve "sınır REST'ten katı değildir" gerekçesi
-// tam olarak burada kopar: REST istemcisi aynı alanı 489 kez isteyemez,
-// GET /store/v1/products?limit=100 yanıtı aynı veriyle ~450 KiB'dır. Yani
-// GraphQL'in eklediği şey daha çok kayıt değil, AYNI kaydın tekrar tekrar
-// serileştirilmesidir; bunu ancak [alanTekrariSiniri] (tahminle, çalıştırmadan
-// önce) ve yanıt bayt sınırı (gerçekleşenle, yazarken) birlikte kapatır.
+// This asymmetry DOES NOT EXIST in REST and the argument "the limit is not
+// stricter than REST's" breaks exactly here: a REST client cannot ask for the
+// same field 489 times, and the response of GET /store/v1/products?limit=100 is
+// ~450 KiB with the same data. So what GraphQL adds is not more records but the
+// repeated SERIALIZATION of the SAME record; that is closed only by
+// [fieldRepetitionLimit] (by estimate, before execution) and the response byte
+// limit (by what actually happens, while writing) working together.
 //
-// # Neden iç gözlemin AYRI kapısı var
+// # Why introspection has its OWN gate
 //
-// İç gözlem ağacı bir zamanlar her iki hesabın da dışındaydı: derinlik sayımı
-// __schema/__type köklerini atlıyordu, gqlgen'in karmaşıklık yürüyüşü de
-// __Schema tipli alanı atlar (complexity/complexity.go). Yani ölçülen derinlik
-// 0, ölçülen karmaşıklık 0'dı ve operatörün elinde kapatacak bir ayar yoktu.
+// The introspection tree was once outside both calculations: the depth count
+// skipped the __schema/__type roots, and gqlgen's complexity walk also skips a
+// field of type __Schema (complexity/complexity.go). That is, the measured
+// depth was 0, the measured complexity was 0, and the operator had no setting
+// to turn it off with.
 //
-// Ölçüldü: 302 takma adlı bir __schema belgesi (45.796 bayt) 5,00 MiB yanıt
-// üretiyor ve Options{MaxDepth: 1, MaxComplexity: 1} ile AYNI belge yine 200 ve
-// yine 5,00 MiB dönüyordu — aynı ayarla "products { count }" sorgusu "depth 2
-// exceeds the limit of 1" ile reddedilirken. En küçük meşru veri sorgusu
-// reddedilirken 5 MiB'lık iç gözlem seli geçiyordu.
+// Measured: a __schema document with 302 aliases (45,796 bytes) produced a 5.00
+// MiB response, and with Options{MaxDepth: 1, MaxComplexity: 1} the SAME
+// document still returned 200 and still 5.00 MiB — while with the same settings
+// the query "products { count }" was rejected with "depth 2 exceeds the limit
+// of 1". The smallest legitimate data query was being rejected while a 5 MiB
+// introspection flood went through.
 //
-// Bugün iç gözlem SAYILIR ama kendi tavanına göre sayılır
-// ([DefaultMaxIntrospectionDepth]) ve kök sayısı ayrıca sınırlanır
-// ([DefaultMaxIntrospectionRoots]). Ayrı tavan şart: standart iç gözlem sorgusu
-// 13 seviye derindir (ofType zinciri), tek bir tavan kullanılsaydı VERİ
-// yüzeyinin sınırını 13'ün üstüne çıkarmak zorunda kalırdık.
+// Today introspection IS COUNTED, but counted against its own ceiling
+// ([DefaultMaxIntrospectionDepth]), and the number of roots is limited
+// separately ([DefaultMaxIntrospectionRoots]). The separate ceiling is
+// essential: the standard introspection query is 13 levels deep (the ofType
+// chain), and had a single ceiling been used we would have had to raise the
+// limit of the DATA surface above 13.
 //
-// Sabitler DIŞA AÇIKTIR ki çekirdeğin yapılandırmasındaki envDefault
-// etiketleriyle uyumları bir testle sabitlenebilsin (bkz. internal/arch):
-// çekirdek modülleri import EDEMEDİĞİ için (Prensip 2.4) config bu sabitlere
-// bağlanamaz, değerlerini elle tekrarlar. Ayrışırlarsa gömülü bir kurulum
-// (product tek başına da dağıtılabilir) belgede yazandan başka bir sınırla
-// çalışırdı. Bugün config yalnızca derinliği, karmaşıklığı ve iç gözlem
-// anahtarını okur; yeni kapıların ortam değişkenleri çekirdek tarafında ayrı
-// bir değişikliktir ve sabitlerin dışa açık olması, o değişikliğin bağlanacağı
-// yeri şimdiden belirler.
+// The constants are EXPORTED so that their agreement with the envDefault tags
+// in the core's configuration can be pinned by a test (see internal/arch):
+// because the core CANNOT import modules (Principle 2.4), config cannot bind to
+// these constants and repeats their values by hand. If they diverged, an
+// embedded deployment (product can also be deployed on its own) would run with
+// a limit other than the one written in the documentation. Today config reads
+// only the depth, the complexity and the introspection switch; environment
+// variables for the new gates are a separate change on the core side, and the
+// constants being exported already marks the place that change will bind to.
 const (
-	// DefaultMaxDepth tek bir belgede iç içe geçebilecek alan sayısının
-	// varsayılan üst sınırıdır.
+	// DefaultMaxDepth is the default upper limit on the number of fields that
+	// may be nested in a single document.
 	//
-	// Şemanın bugünkü en derin MEŞRU yolu 5'tir
-	// (products → items → variants → optionValues → optionTitle), yani 10 iki
-	// kat boşluk bırakır. Daha cömert bir varsayılan seçilmedi: sınırın var
-	// olma sebebi bugünün şeması değil, YARININ şemasıdır — bir alan geri
-	// referans verdiği an (variant → product → variants → …) sorgu şemanın
-	// izin verdiği yere kadar değil, istemcinin yazdığı yere kadar iner ve
-	// her seviye maliyeti çarpar.
+	// The deepest LEGITIMATE path in today's schema is 5
+	// (products -> items -> variants -> optionValues -> optionTitle), so 10
+	// leaves twice as much room. A more generous default was not chosen: the
+	// reason the limit exists is not today's schema but TOMORROW's — the moment
+	// a field refers back (variant -> product -> variants -> …) a query
+	// descends not as far as the schema allows but as far as the client writes,
+	// and every level multiplies the cost.
 	//
-	// Sınır yalnızca VERİ ağacına uygulanır; iç gözlemin kendi tavanı vardır
-	// ([DefaultMaxIntrospectionDepth]).
+	// The limit applies only to the DATA tree; introspection has its own
+	// ceiling ([DefaultMaxIntrospectionDepth]).
 	DefaultMaxDepth = 10
 
-	// DefaultMaxComplexity tek bir belgenin tahmini maliyet tavanıdır.
+	// DefaultMaxComplexity is the estimated cost ceiling of a single document.
 	//
-	// Birim "kaç alan çözülür"dür; liste alanlarında ELEMAN SAYISIYLA çarpılır
-	// ve kök sorgular ayrıca bir veritabanı gidiş-dönüşü sayılır
-	// (bkz. [karmasiklikMaliyetleri], [kokSorguMaliyeti]).
+	// The unit is "how many fields get resolved"; on list fields it is
+	// MULTIPLIED BY THE NUMBER OF ELEMENTS, and root queries additionally count
+	// as one database round trip (see [complexityCosts], [rootQueryCost]).
 	//
-	// Değer TAHMİN EDİLMEDİ, ölçüldü; belgeler ve sayıları
-	// graph/limits_test.go içindeki kalibrasyon tablosunda SABİTLENMİŞTİR
-	// (bkz. kalibrasyonBelgeleri). Bayt sütunu, aynı dosyadaki ölçüm
-	// fikstürüyle (4 KiB açıklamalı ürün) alınmıştır:
+	// The value was NOT GUESSED, it was measured; the documents and their
+	// numbers are PINNED in the calibration table inside graph/limits_test.go
+	// (see calibrationDocuments). The byte column was taken with the
+	// measurement fixture in the same file (a product with a 4 KiB
+	// description):
 	//
-	//	belge                                      istek  karmaşıklık     yanıt
-	//	ürün sayfası (PDP, her şey dâhil)           643 B        2.368   6,8 KiB
-	//	kategori listesi (24 ürün, kart + fiyat)    118 B        2.344  15,1 KiB
-	//	varsayılan sayfada TÜM alanlar (20 ürün)    655 B       28.440   136 KiB
-	//	limit=100 ile TÜM alanlar                   667 B      138.200   680 KiB
-	//	400 takma adlı products { count }          9,7 KiB     408.000   8,5 KiB
-	//	489 takma adlı description (limit=100)     8,5 KiB      50.000 204,9 MiB
-	//	1500 takma adlı description (20 ürün)     26,8 KiB      31.020 125,7 MiB
+	//	document                                       request   complexity   response
+	//	product page (PDP, everything included)          643 B        2,368    6.8 KiB
+	//	category list (24 products, card + price)        118 B        2,344   15.1 KiB
+	//	ALL fields on the default page (20 products)     655 B       28,440    136 KiB
+	//	ALL fields with limit=100                        667 B      138,200    680 KiB
+	//	products { count } with 400 aliases            9.7 KiB      408,000    8.5 KiB
+	//	description with 489 aliases (limit=100)       8.5 KiB       50,000  204.9 MiB
+	//	description with 1500 aliases (20 products)   26.8 KiB       31,020  125.7 MiB
 	//
-	// Son iki satırın yanıt sütunu, kapılar eklenmeden ÖNCE ölçülmüştür;
-	// bugün ikisi de çalıştırılmıyor. Üstlerindeki "limit=100 ile TÜM alanlar"
-	// satırı ise karşılaştırma noktasıdır: aynı sayfayı REST'ten çekmek de
-	// aynı mertebede (680 KiB) bir gövde demektir. Yani 204,9 MiB'ı üreten şey
-	// daha çok KAYIT değil, aynı kaydın tekrar tekrar serileştirilmesidir.
+	// The response column of the last two rows was measured BEFORE the gates
+	// were added; today neither of them is executed. The row above them, "ALL
+	// fields with limit=100", is the comparison point: pulling the same page
+	// from REST also means a body of the same order (680 KiB). So what produced
+	// 204.9 MiB is not more RECORDS but the repeated serialization of the same
+	// record.
 	//
-	// 50.000, en ağır meşru belgeye (28.440) rahat bir pay bırakır: şemaya
-	// alan eklendiğinde o sorgu sınıra dayanmaz. Daha dar bir tavan bugünü
-	// kurtarır, yarın alan ekleyen kişiyi bir ayar değişikliğine zorlardı.
+	// 50,000 leaves comfortable room above the heaviest legitimate document
+	// (28,440): when a field is added to the schema that query does not press
+	// against the limit. A narrower ceiling would save today and force whoever
+	// adds a field tomorrow into a configuration change.
 	//
-	// Tablonun son iki satırı tavanın NE ÖLÇMEDİĞİNİ gösterir ve tam da bu
-	// yüzden eklendi: 489 takma adlı belge 50.000'e TAM oturur (tavan
-	// aşılmadığı için geçerdi) ve 204,9 MiB yanıt üretir. Maliyeti tahmin
-	// eden bir modelin bilemeyeceği tek şey alanın İÇERİĞİDİR; boşluğu
-	// [DefaultMaxFieldRepetition] ve [DefaultMaxResponseBytes] kapatır.
+	// The last two rows of the table show what the ceiling DOES NOT MEASURE and
+	// that is exactly why they were added: the document with 489 aliases sits
+	// EXACTLY on 50,000 (it would pass, because the ceiling is not exceeded)
+	// and produces a 204.9 MiB response. The one thing a model that estimates
+	// cost cannot know is the CONTENT of a field; the gap is closed by
+	// [DefaultMaxFieldRepetition] and [DefaultMaxResponseBytes].
 	DefaultMaxComplexity = 50000
 
-	// DefaultMaxFieldRepetition aynı alanın aynı nesne altında kaç kez
-	// seçilebileceğinin varsayılan üst sınırıdır.
+	// DefaultMaxFieldRepetition is the default upper limit on how many times
+	// the same field may be selected under the same object.
 	//
-	// Sayım KARDEŞ kapsamlıdır: bir seçim kümesindeki (nesne, alan) çiftleri
-	// sayılır, takma adlar YOK SAYILIR. "a0: description a1: description …"
-	// aynı çifti tekrarlar; "ofType { ofType { … } }" ise her seviyede tek bir
-	// seçimdir ve tekrar sayılmaz. Ayrım önemlidir: sayım belge geneli olsaydı
-	// standart iç gözlem sorgusu (TypeRef fragment'ı __Type.ofType'ı onlarca
-	// kez taşır) reddedilirdi — ölçüldü, kardeş kapsamda en yüksek tekrar 1'dir.
+	// The count is SIBLING scoped: the (object, field) pairs in one selection
+	// set are counted and aliases are IGNORED. "a0: description a1: description
+	// …" repeats the same pair; "ofType { ofType { … } }", on the other hand, is
+	// a single selection at each level and does not count as repetition. The
+	// distinction matters: had the count been document-wide, the standard
+	// introspection query (the TypeRef fragment carries __Type.ofType dozens of
+	// times) would be rejected — measured, the highest repetition in sibling
+	// scope is 1.
 	//
-	// 20 bir ölçüm değil, meşru kullanımın ÜSTÜNDEKİ ilk rahat sayıdır: bir
-	// ana sayfa aynı kök sorguyu birkaç vitrin şeridi için takma adla
-	// tekrarlar (öne çıkanlar, yeniler, indirimdekiler…) ve bu bir elin
-	// parmaklarını geçmez. Aynı ürün altında AYNI alanı ikiden fazla istemenin
-	// meşru bir sebebi ise yoktur. Ölçülen saldırılar 489, 1500, 302 ve 448
-	// tekrarlıydı; sınır ile meşru kullanım arasında bir mertebe fark vardır.
+	// 20 is not a measurement but the first comfortable number ABOVE legitimate
+	// usage: a home page repeats the same root query with aliases for a few
+	// storefront strips (featured, new, on sale…) and that does not go past the
+	// fingers of one hand. There is no legitimate reason to ask for the SAME
+	// field more than twice under the same product. The measured attacks had
+	// 489, 1500, 302 and 448 repetitions; there is an order of magnitude
+	// between the limit and legitimate usage.
 	DefaultMaxFieldRepetition = 20
 
-	// DefaultMaxIntrospectionRoots bir belgedeki iç gözlem KÖKÜ sayısının
-	// varsayılan üst sınırıdır.
+	// DefaultMaxIntrospectionRoots is the default upper limit on the number of
+	// introspection ROOTS in a document.
 	//
-	// Kök, belgenin tepesindeki __schema ya da __type alanıdır. 2 seçildi
-	// çünkü hiçbir araç aynı belgede iki kez __schema istemez; isteyen
-	// araçlar (şema tarayıcıları) en fazla bir __schema ile bir __type
-	// gönderir. Ölçülen sel 302 kökle geliyordu.
+	// A root is a __schema or __type field at the top of the document. 2 was
+	// chosen because no tool asks for __schema twice in the same document; the
+	// tools that do ask (schema explorers) send at most one __schema and one
+	// __type. The measured flood arrived with 302 roots.
 	//
-	// Kapı [DefaultMaxFieldRepetition] ile ÖRTÜŞÜR ama gereksiz değildir:
-	// tekrar sınırı 20 köke kadar izin verirdi ve 20 kök, ölçülen 5,00 MiB'ın
-	// on beşte biri kadar yanıt demektir. İç gözlem tek bir istekte yüzeyin
-	// TAMAMINI verdiği için burada daha dar bir sayı doğrudur.
+	// The gate OVERLAPS with [DefaultMaxFieldRepetition] but is not redundant:
+	// the repetition limit would allow up to 20 roots, and 20 roots means about
+	// a fifteenth of the measured 5.00 MiB in response. Because introspection
+	// hands out the WHOLE surface in a single request, a narrower number is
+	// correct here.
 	DefaultMaxIntrospectionRoots = 2
 
-	// DefaultMaxIntrospectionDepth iç gözlem alt ağacının varsayılan derinlik
-	// tavanıdır.
+	// DefaultMaxIntrospectionDepth is the default depth ceiling of the
+	// introspection subtree.
 	//
-	// Veri tavanından ayrıdır ve ondan yüksektir çünkü ölçüldü: istemci
-	// araçlarının gönderdiği standart iç gözlem sorgusu (gqlgen'in
-	// introspection.Query'si) 13 seviye derindir — ofType zinciri tip
-	// sarmalayıcılarını (NonNull, List) açmak için o kadar iner. Tek bir tavan
-	// kullanılsaydı VERİ yüzeyinin sınırını da 13'ün üstüne çıkarmak zorunda
-	// kalırdık ve gevşeme asıl korumak istediğimiz yerde olurdu.
+	// It is separate from the data ceiling and higher than it, because it was
+	// measured: the standard introspection query client tools send (gqlgen's
+	// introspection.Query) is 13 levels deep — the ofType chain descends that
+	// far to unwrap the type wrappers (NonNull, List). Had a single ceiling
+	// been used we would have had to raise the limit of the DATA surface above
+	// 13 as well, and the loosening would have happened in the very place we
+	// want to protect.
 	//
-	// 15, o sorguya iki seviye pay bırakır. Alt ağacın ayrıca bizden bağımsız
-	// bir tavanı daha vardır: gqlparser'ın MaxIntrospectionDepth kuralı iç içe
-	// __Type listelerini (fields, interfaces, possibleTypes, inputFields) üç
-	// seviyede keser.
+	// 15 leaves two levels of room for that query. The subtree also has another
+	// ceiling independent of ours: gqlparser's MaxIntrospectionDepth rule cuts
+	// nested __Type lists (fields, interfaces, possibleTypes, inputFields) at
+	// three levels.
 	DefaultMaxIntrospectionDepth = 15
 
-	// DefaultMaxResponseBytes tek bir yanıtın istemciye yazılabilecek en fazla
-	// bayt sayısıdır.
+	// DefaultMaxResponseBytes is the largest number of bytes a single response
+	// may write to the client.
 	//
-	// Bu kapı ötekilerden farklı bir soru sorar: hepsi belgeye bakıp maliyeti
-	// TAHMİN ederken bu, yazılan baytı SAYAR. Tahmin ne kadar iyi olursa olsun
-	// alanın içeriğini bilemez — açıklaması 40 KiB olan bir katalog ile 400
-	// bayt olanı aynı fiyatlar. Gerçekleşene bakan bir kapı olmadan üst sınır
-	// yoktur.
+	// This gate asks a different question from the others: all of them look at
+	// the document and ESTIMATE the cost, while this one COUNTS the bytes
+	// written. However good an estimate is it cannot know the content of a
+	// field — it prices a catalog with a 40 KiB description the same as one
+	// with 400 bytes. Without a gate that looks at what actually happens there
+	// is no upper bound.
 	//
-	// 4 MiB ölçüme dayanır: bugünkü tavanlardan geçen EN AĞIR meşru yanıt
-	// (varsayılan sayfa × tüm alanlar, açıklaması 4 KiB'lık ürünlerle) 136
-	// KiB'dır, yani sınır yaklaşık 30 kat pay bırakır — uzun açıklamalı,
-	// zengin metadata'lı bir katalog rahatça altında kalır. Ölçülen saldırı ise
-	// 204,9 MiB üretiyordu; sınır onu 50 kattan fazla kısar.
+	// 4 MiB rests on measurement: the HEAVIEST legitimate response that gets
+	// through today's ceilings (the default page x all fields, with products
+	// whose description is 4 KiB) is 136 KiB, that is, the limit leaves roughly
+	// 30 times the room — a catalog with long descriptions and rich metadata
+	// stays comfortably below it. The measured attack, on the other hand, was
+	// producing 204.9 MiB; the limit cuts it by more than 50 times.
 	//
-	// Sınıra çarpıldığında ne olacağı ayrı bir karardır ve gerekçesi
-	// [yanitSayaci]'ndadır: yarım JSON gönderilmez.
+	// What happens when the limit is hit is a separate decision and its
+	// rationale is in [responseCounter]: half a JSON is not sent.
 	DefaultMaxResponseBytes = 4 << 20
 
-	// DefaultMaxSelections belgenin fragment'ları AÇILDIKTAN sonra kaç seçim
-	// taşıyabileceğinin varsayılan üst sınırıdır.
+	// DefaultMaxSelections is the default upper limit on how many selections a
+	// document may carry after its fragments have been EXPANDED.
 	//
-	// Bu kapı ötekilerden önce koşar ve onları KORUR. Sebep ölçüldü: fragment
-	// açılımı ÜSSEL olabilir ve bunu yapan belge küçüktür.
+	// This gate runs before the others and PROTECTS them. The reason was
+	// measured: fragment expansion can be EXPONENTIAL and the document that
+	// does it is small.
 	//
 	//	fragment f0 on Product { id }
 	//	fragment f1 on Product { ...f0 ...f0 }
 	//	fragment f2 on Product { ...f1 ...f1 }
 	//	…
 	//
-	// Belge geçerlidir, döngü YOKTUR (doğrulamanın reddettiği tek şey odur) ve
-	// 26 seviyede 1.127 BAYTTIR — ama açılımı 2²⁶ seçimdir. Ölçüldü: bu belge
-	// ucu on saniyede bitiremiyordu. Ağacı gezen her hesap aynı tuzağa
-	// düşüyordu: derinlik sayımı, alan tekrarı sayımı ve gqlgen'in kendi
-	// karmaşıklık yürüyüşü (complexity/complexity.go da fragment tanımına
-	// belleksiz iner). Yani sorun tek bir yürüyüşü düzeltmekle kapanmaz;
-	// kapanma yolu, HİÇBİR yürüyüşün başlamadan önce ağacın büyüklüğünü
-	// bağlamaktır.
+	// The document is valid, there is NO cycle (that is the only thing
+	// validation rejects) and at 26 levels it is 1,127 BYTES — but its
+	// expansion is 2^26 selections. Measured: this document could not be
+	// finished by the endpoint in ten seconds. Every calculation that walks the
+	// tree was falling into the same trap: the depth count, the field
+	// repetition count and gqlgen's own complexity walk
+	// (complexity/complexity.go also descends into the fragment definition
+	// without memoization). So the problem does not close by fixing a single
+	// walk; the way it closes is to bound the size of the tree before ANY walk
+	// starts.
 	//
-	// Sayım bütçelidir: bütçe bittiği anda gezinme YARIDA kesilir, yani bu
-	// kapının kendi maliyeti de sınırın kendisidir.
+	// The count is budgeted: the moment the budget runs out the traversal is
+	// cut SHORT, that is, this gate's own cost is the limit itself.
 	//
-	// 10.000, jeton sınırının ([maxSorguJeton], 8.192) hemen üstündedir ve bu
-	// bilinçlidir: fragment kullanmayan bir belgenin açılımı zaten jeton
-	// sayısından küçüktür, yani sınır yalnızca AÇILIMI kendi metninden büyük
-	// olan belgelere dokunur. Vitrinin en ağır meşru belgesi 90 küsur seçimdir.
+	// 10,000 is just above the token limit ([maxQueryTokens], 8,192) and that
+	// is deliberate: the expansion of a document that uses no fragments is
+	// already smaller than its token count, that is, the limit only touches
+	// documents whose EXPANSION is larger than their own text. The storefront's
+	// heaviest legitimate document is just over 90 selections.
 	DefaultMaxSelections = 10000
 )
 
-// koleksiyonTahmini adedi ÖNCEDEN BİLİNEMEYEN liste alanlarının maliyet
-// çarpanıdır.
+// collectionEstimate is the cost multiplier of list fields whose size CANNOT BE
+// KNOWN IN ADVANCE.
 //
-// products'ın kaç kayıt döneceği argümanından okunur (bkz. [sayfaBoyutu]) ama
-// bir ürünün kaç varyantı, kaç görseli olduğu ancak sorgu ÇALIŞINCA bellidir;
-// karmaşıklık ise çalıştırmadan önce hesaplanmak zorundadır. Geriye tahmin
-// kalır ve tahminin yönü önemlidir: OLDUĞUNDAN AZ göstermek, tam da pahalı
-// olan sorguyu ucuz gösterir.
+// How many records products will return is read from its argument (see
+// [pageSize]), but how many variants or how many images a product has is only
+// known once the query RUNS; complexity, on the other hand, has to be computed
+// before execution. What is left is an estimate, and the direction of the
+// estimate matters: showing LESS THAN REALITY makes exactly the expensive query
+// look cheap.
 //
-// 10 bir ölçüm değildir, tahminin ucuz olmaktan çıktığı yerdir: 40 varyantlı
-// bir ürün modelin söylediğinden 4 kat pahalıdır, ama liste alanına sabit
-// maliyet (1) verilseydi aynı ürün 40 kat ucuz görünürdü — ve sınır tam da o
-// sorguyu geçirirdi.
+// 10 is not a measurement but the point where the estimate stops being cheap: a
+// product with 40 variants is 4 times more expensive than the model says, but
+// had the list field been given a fixed cost (1) the same product would look 40
+// times cheaper — and the limit would let exactly that query through.
 //
-// Alan başına ayrı çarpanlar (varyant 10, görsel 5, etiket 3…) denenmedi:
-// ikinci bir maliyet modeli, bozulduğunda meşru sorguları SESSİZCE reddeder
-// ve kimse bir alanın çarpanının neden başka olduğunu hatırlamaz.
-const koleksiyonTahmini = 10
+// Per-field multipliers (variant 10, image 5, tag 3…) were not attempted: a
+// second cost model SILENTLY rejects legitimate queries when it breaks, and
+// nobody remembers why one field's multiplier is different.
+const collectionEstimate = 10
 
-// kokSorguMaliyeti bir kök sorgunun (products, product) sabit maliyetidir.
+// rootQueryCost is the fixed cost of a root query (products, product).
 //
-// Modelin geri kalanı ALAN ÇÖZÜMÜ sayar, ama bir kök sorgunun asıl bedeli
-// çözülen alanlar değildir: her biri veritabanına ayrı bir gidiş-dönüş, süzülen
-// katalog üzerinde bir COUNT ve ardından link/batch okumalarıdır. Bu maliyet,
-// istemci sonuçtan daha az alan seçince DÜŞMEZ.
+// The rest of the model counts FIELD RESOLUTIONS, but the real price of a root
+// query is not the fields resolved: each one is a separate round trip to the
+// database, a COUNT over the filtered catalog and then link/batch reads. That
+// cost DOES NOT DROP when the client selects fewer fields from the result.
 //
-// Sabit maliyet olmasaydı sınır tam da GraphQL'e özgü saldırıyı kaçırırdı:
-// "{ a: products { count } b: products { count } … }" biçiminde 400 takma adlı
-// bir belge, alan sayımına göre ucuzdur (her biri tek bir sayı) ama sunucuya
-// 400 katalog sorgusu yaptırır — ve hız sınırlayıcı bunu BİR istek sayar.
-// REST'te aynı yükü bindirmek 400 istek, yani 400 kota harcamak demektir.
+// Without a fixed cost the limit would miss exactly the GraphQL-specific
+// attack: a document with 400 aliases in the form
+// "{ a: products { count } b: products { count } … }" is cheap by field count
+// (each one is a single number) but makes the server run 400 catalog queries —
+// and the rate limiter counts it as ONE request. In REST, loading the same
+// weight means 400 requests, that is, spending 400 units of quota.
 //
-// 1000, gerçekçi bir kategori listesi sorgusunun (~1,3 bin) mertebesindedir:
-// yani 30 kök sorgu taşıyan bir belge, 30 kategori sayfası kadar fiyatlanır —
-// ki tam olarak odur.
-const kokSorguMaliyeti = 1000
+// 1000 is of the same order as a realistic category list query (~1,300): that
+// is, a document carrying 30 root queries is priced like 30 category pages —
+// which is exactly what it is.
+const rootQueryCost = 1000
 
-// Sınır aşımlarının hata kodları.
+// The error codes of the limit overflows.
 //
-// Biçim çekirdeğin snake_case kodlarına değil gqlgen'in BÜYÜK_HARF kodlarına
-// benzer ve bu bilinçlidir: bunlar SERVİS hatası değil, belgenin hiç
-// çalıştırılmadığını bildiren protokol hatalarıdır ve kardeşleri
-// (COMPLEXITY_LIMIT_EXCEEDED) zaten gqlgen'den aynı biçimde gelir. Aynı sınıfı
-// iki farklı biçimde döndürmek, istemciye iki ayrı hata sınıfı olduklarını
-// düşündürürdü.
+// The shape resembles gqlgen's UPPERCASE codes rather than the core's
+// snake_case ones, and that is deliberate: these are not SERVICE errors but
+// protocol errors reporting that the document was never executed, and their
+// siblings (COMPLEXITY_LIMIT_EXCEEDED) already come from gqlgen in the same
+// shape. Returning the same class in two different shapes would make the client
+// think they are two separate error classes.
 //
-// Kodlar errcode.RegisterErrorType ile KAYDEDİLMEZ; o çağrı süreç genelindeki
-// bir haritayı değiştirir ve tek bir modülün, kütüphaneyi kullanan herkesin
-// HTTP durum kodunu değiştirmesi olurdu. Bedeli, yanıtın 200 dönmesidir —
-// GraphQL'de zaten olağan durum budur ve hata gövdedeki errors dizisindedir.
+// The codes are NOT REGISTERED with errcode.RegisterErrorType; that call
+// changes a process-wide map and would mean a single module changing the HTTP
+// status code for everyone who uses the library. The cost is that the response
+// returns 200 — which in GraphQL is the usual state anyway, with the error in
+// the errors array in the body.
 const (
-	// kodDerinlikAsimi derinlik sınırını aşan belgenin hata kodudur.
-	kodDerinlikAsimi = "DEPTH_LIMIT_EXCEEDED"
+	// codeDepthExceeded is the error code of a document that exceeds the depth
+	// limit.
+	codeDepthExceeded = "DEPTH_LIMIT_EXCEEDED"
 
-	// kodAlanTekrariAsimi aynı alanı aynı nesne altında fazlaca tekrarlayan
-	// belgenin hata kodudur.
-	kodAlanTekrariAsimi = "FIELD_REPETITION_LIMIT_EXCEEDED"
+	// codeFieldRepetitionExceeded is the error code of a document that repeats
+	// the same field too many times under the same object.
+	codeFieldRepetitionExceeded = "FIELD_REPETITION_LIMIT_EXCEEDED"
 
-	// kodIcGozlemAsimi iç gözlem kapılarından birini aşan belgenin hata
-	// kodudur.
+	// codeIntrospectionExceeded is the error code of a document that exceeds
+	// one of the introspection gates.
 	//
-	// Derinlik aşımından AYRI bir kod verilir çünkü istemcinin yapacağı şey
-	// farklıdır: veri sorgusunu sadeleştirmek ile iç gözlem sorgusunu bölmek
-	// aynı düzeltme değildir.
-	kodIcGozlemAsimi = "INTROSPECTION_LIMIT_EXCEEDED"
+	// It gets a code SEPARATE from the depth overflow because what the client
+	// has to do differs: simplifying a data query and splitting an
+	// introspection query are not the same fix.
+	codeIntrospectionExceeded = "INTROSPECTION_LIMIT_EXCEEDED"
 
-	// kodIcGozlemKapali iç gözlem kapalıyken __schema/__type isteyen belgenin
-	// hata kodudur.
+	// codeIntrospectionDisabled is the error code of a document that asks for
+	// __schema/__type while introspection is disabled.
 	//
-	// Aşımdan AYRI bir koddur ve ayrım istemci için gerçektir: aşım "daha az
-	// iste" demektir, bu kod "bu kurulumda hiç isteme" demektir.
-	kodIcGozlemKapali = "INTROSPECTION_DISABLED"
+	// It is a code SEPARATE from the overflow and the distinction is real for
+	// the client: the overflow means "ask for less", this code means "do not
+	// ask at all in this deployment".
+	codeIntrospectionDisabled = "INTROSPECTION_DISABLED"
 
-	// kodYanitAsimi yanıt bayt sınırını aşan isteğin hata kodudur.
-	kodYanitAsimi = "RESPONSE_LIMIT_EXCEEDED"
+	// codeResponseExceeded is the error code of a request that exceeds the
+	// response byte limit.
+	codeResponseExceeded = "RESPONSE_LIMIT_EXCEEDED"
 
-	// kodSecimButcesiAsimi fragment açılımı bütçeyi aşan belgenin hata kodudur.
-	kodSecimButcesiAsimi = "SELECTION_BUDGET_EXCEEDED"
+	// codeSelectionBudgetExceeded is the error code of a document whose
+	// fragment expansion exceeds the budget.
+	codeSelectionBudgetExceeded = "SELECTION_BUDGET_EXCEEDED"
 )
 
-// Options GraphQL ucunun sertleştirme ayarlarıdır.
+// Options holds the hardening settings of the GraphQL endpoint.
 //
-// SIFIR DEĞER GEÇERLİDİR ve paket varsayılanlarını verir; alanların sıfırı
-// "sınırsız" DEĞİL, "varsayılanı kullan" demektir. Ayrım bilinçlidir: sıfır
-// "sınırsız" olsaydı, ayarı doldurmayı unutan bir kurulum korumasız bir uç
-// açar ve bunu hiçbir hata vermeden yapardı — sertleştirmenin sessizce
-// kaybolduğu tek yol budur.
+// THE ZERO VALUE IS VALID and yields the package defaults; a zero on a field
+// does NOT mean "unlimited", it means "use the default". The distinction is
+// deliberate: had zero meant "unlimited", a deployment that forgot to fill in
+// the setting would open an unprotected endpoint and would do so without any
+// error at all — that is the only way hardening disappears silently.
 //
-// "Sınırsız" seçeneği HİÇ YOKTUR ve bu da bilinçlidir: sınırsız bir GraphQL
-// ucu, kaynak tüketimini istemciye devretmektir. Sınır YÜKSELTİLEBİLİR,
-// kaldırılamaz.
+// There is NO "unlimited" option at all and that too is deliberate: an
+// unlimited GraphQL endpoint means handing resource consumption over to the
+// client. A limit CAN BE RAISED, it cannot be removed.
 type Options struct {
-	// MaxDepth tek bir belgede iç içe geçebilecek alan sayısının üst sınırıdır;
-	// 0 ise [DefaultMaxDepth].
+	// MaxDepth is the upper limit on the number of fields that may be nested in
+	// a single document; 0 means [DefaultMaxDepth].
 	MaxDepth int
 
-	// MaxComplexity tek bir belgenin tahmini maliyet tavanıdır; 0 ise
+	// MaxComplexity is the estimated cost ceiling of a single document; 0 means
 	// [DefaultMaxComplexity].
 	MaxComplexity int
 
-	// MaxFieldRepetition aynı alanın aynı nesne altında kaç kez
-	// seçilebileceğidir; 0 ise [DefaultMaxFieldRepetition].
+	// MaxFieldRepetition is how many times the same field may be selected under
+	// the same object; 0 means [DefaultMaxFieldRepetition].
 	MaxFieldRepetition int
 
-	// MaxIntrospectionRoots bir belgedeki __schema/__type kökü sayısının üst
-	// sınırıdır; 0 ise [DefaultMaxIntrospectionRoots].
+	// MaxIntrospectionRoots is the upper limit on the number of __schema/__type
+	// roots in a document; 0 means [DefaultMaxIntrospectionRoots].
 	MaxIntrospectionRoots int
 
-	// MaxIntrospectionDepth iç gözlem alt ağacının derinlik tavanıdır; 0 ise
-	// [DefaultMaxIntrospectionDepth].
+	// MaxIntrospectionDepth is the depth ceiling of the introspection subtree;
+	// 0 means [DefaultMaxIntrospectionDepth].
 	MaxIntrospectionDepth int
 
-	// MaxResponseBytes tek bir yanıtın en fazla kaç bayt olabileceğidir; 0 ise
-	// [DefaultMaxResponseBytes].
+	// MaxResponseBytes is the largest number of bytes a single response may be;
+	// 0 means [DefaultMaxResponseBytes].
 	MaxResponseBytes int
 
-	// MaxSelections belgenin fragment'ları açıldıktan sonraki seçim sayısının
-	// üst sınırıdır; 0 ise [DefaultMaxSelections].
+	// MaxSelections is the upper limit on the number of selections in a
+	// document after its fragments have been expanded; 0 means
+	// [DefaultMaxSelections].
 	MaxSelections int
 
-	// IntrospectionDisabled iç gözlemi (introspection) kapatır.
+	// IntrospectionDisabled turns introspection off.
 	//
-	// Alan OLUMSUZ adlandırıldı çünkü sıfır değer paketin varsayılanını
-	// vermelidir ve varsayılan AÇIKTIR: "Introspection bool" olsaydı,
-	// Options{} ile kurulan her handler iç gözlemi sessizce kapatır ve şema
-	// araçları hiçbir gerekçe görünmeden körleşirdi.
+	// The field is named NEGATIVELY because the zero value must give the
+	// package default, and the default is ENABLED: had it been "Introspection
+	// bool", every handler set up with Options{} would silently disable
+	// introspection and schema tools would go blind with no rationale in sight.
 	//
-	// # Varsayılanın gerekçesi
+	// # The rationale for the default
 	//
-	// İç gözlem tüm yüzeyi TEK istekte verir; kapatmak ilk bakışta bedava bir
-	// sertleştirme gibi görünür. Bu vitrin için değildir: şema bu deponun
-	// içinde duran bir DOSYADIR (graph/schema.graphqls) ve her gobit kurulumu
-	// aynısını sunar. Kapatmak, saldırganın "git clone" ile okuyabildiği bir
-	// şeyi yalnızca istemci araçlarından (kod üreteçleri, IDE eklentileri,
-	// şema-diff akışları) saklar. Uç zaten publishable anahtarın ve hız
-	// sınırının arkasındadır, maliyeti de bu dosyadaki sınırlar bağlar.
+	// Introspection hands out the whole surface in a SINGLE request; disabling
+	// it looks at first glance like free hardening. For this storefront it is
+	// not: the schema is a FILE that sits inside this repository
+	// (graph/schema.graphqls) and every gobit deployment serves the same one.
+	// Disabling it hides from client tools (code generators, IDE plugins,
+	// schema-diff flows) something an attacker can read with "git clone". The
+	// endpoint is already behind the publishable key and the rate limit, and
+	// its cost is bound by the limits in this file.
 	//
-	// "Maliyeti sınırlar bağlar" cümlesi bir zamanlar DOĞRU DEĞİLDİ: iç gözlem
-	// hem derinlik hem karmaşıklık hesabının dışındaydı ve anahtarı kapatmak
-	// ucun tek savunmasıydı. Bugün iç gözlemin kendi kapıları var
-	// ([MaxIntrospectionRoots], [MaxIntrospectionDepth]), yani bu anahtar artık
-	// bir acil durum vanası değil, bir yüzey kararıdır.
+	// The sentence "the limits bind the cost" was once NOT TRUE: introspection
+	// was outside both the depth and the complexity calculation, and turning
+	// the switch off was the endpoint's only defense. Today introspection has
+	// its own gates ([MaxIntrospectionRoots], [MaxIntrospectionDepth]), that
+	// is, this switch is no longer an emergency valve but a surface decision.
 	//
-	// Hesap DEĞİŞTİĞİNDE anahtar buradadır: şemasına kendi alanlarını ekleyen
-	// bir çatal (fork) ya da genişlettiği yüzeyi ilan etmek istemeyen bir
-	// kurulum tek satırla kapatır. Anahtarın var olması, "yüzey görünmüyor"
-	// durumunu bir kaza değil bir KARAR hâline getirir.
+	// When the calculus CHANGES, the switch is here: a fork that adds its own
+	// fields to the schema, or a deployment that does not want to announce the
+	// surface it extended, turns it off in one line. The switch existing makes
+	// "the surface is not visible" a DECISION rather than an accident.
 	//
-	// # Anahtar ÖNERİLERİ de kapatır
+	// # The switch also turns off SUGGESTIONS
 	//
-	// İç gözlemi kapatmak bir zamanlar şemayı GİZLEMİYORDU ve anahtar tam da
-	// vaat ettiği şeyi yapmıyordu: doğrulayıcı, __schema kapalıyken bile
-	// şemanın adlarını perakende dağıtıyordu. Ölçüldü (hepsi tek istekte, tek
-	// yanıtta):
+	// Disabling introspection once DID NOT HIDE the schema and the switch was
+	// not doing exactly what it promised: even with __schema closed, the
+	// validator was handing out the schema's names retail. Measured (all of
+	// them in a single request, in a single response):
 	//
-	//	prodcts             → Did you mean "products" or "product"?
-	//	itemz               → Did you mean "items"?
-	//	fragment on Prodct  → Unknown type "Prodct". Did you mean "Product"?
-	//	products(limitt: …) → Unknown argument "limitt"… Did you mean "limit"?
+	//	prodcts             -> Did you mean "products" or "product"?
+	//	itemz               -> Did you mean "items"?
+	//	fragment on Prodct  -> Unknown type "Prodct". Did you mean "Product"?
+	//	products(limitt: …) -> Unknown argument "limitt"… Did you mean "limit"?
 	//
-	// Doğrulayıcı bir belgedeki BÜTÜN hataları tek yanıtta topladığı için bir
-	// istekte onlarca ad denenebilir; hız sınırı buna engel değildir, çünkü o
-	// da bunu bir istek sayar.
+	// Because the validator collects ALL the errors in a document into a single
+	// response, dozens of names can be tried in one request; the rate limit is
+	// no obstacle to that, since it counts this as one request too.
 	//
-	// Bu yüzden anahtar iki yarımdır ve ikisi de [NewHandler]'da kurulur:
-	// gqlgen'in SetDisableSuggestion'ı ulaşabildiği iki kuralın önerisini hiç
-	// HESAPLAMAZ (levenshtein, her bilinmeyen alan için tipin bütün adları
-	// üzerinde koşar), ulaşamadığı kuralların cümlesi ise [protokolHatasi]'nda
-	// kesilir.
+	// That is why the switch has two halves and both are set up in
+	// [NewHandler]: gqlgen's SetDisableSuggestion does not COMPUTE the
+	// suggestion of the two rules it can reach at all (levenshtein runs over
+	// all the names of the type for every unknown field), while the sentence of
+	// the rules it cannot reach is cut in [protocolError].
 	//
-	// Kapanan şey ADLARIN SAYILMASIDIR, adların TAHMİN EDİLMESİ değil: geçersiz
-	// bir alan yine de bir doğrulama hatası üretir, yani tek tek deneme hâlâ
-	// mümkündür. Onu da kapatmanın tek yolu doğrulama mesajlarını tümüyle
-	// silmektir ve o zaman yüzey meşru istemci için de hata ayıklanamaz hâle
-	// gelirdi — kapatılan, saldırganın işini n denemeden bir denemeye indiren
-	// listedir.
+	// What is closed is the ENUMERATION OF NAMES, not the GUESSING of them: an
+	// invalid field still produces a validation error, that is, trying them one
+	// by one is still possible. The only way to close that too would be to
+	// erase validation messages entirely, and then the surface would become
+	// impossible to debug for the legitimate client as well — what is closed is
+	// the list that takes the attacker's work from n attempts down to one.
 	IntrospectionDisabled bool
 }
 
-// maxDepth uygulanacak derinlik sınırını döner.
+// maxDepth returns the depth limit to apply.
 func (o Options) maxDepth() int {
-	return sinir(o.MaxDepth, DefaultMaxDepth)
+	return limitOrDefault(o.MaxDepth, DefaultMaxDepth)
 }
 
-// maxComplexity uygulanacak karmaşıklık sınırını döner.
+// maxComplexity returns the complexity limit to apply.
 func (o Options) maxComplexity() int {
-	return sinir(o.MaxComplexity, DefaultMaxComplexity)
+	return limitOrDefault(o.MaxComplexity, DefaultMaxComplexity)
 }
 
-// maxFieldRepetition uygulanacak alan tekrarı sınırını döner.
+// maxFieldRepetition returns the field repetition limit to apply.
 func (o Options) maxFieldRepetition() int {
-	return sinir(o.MaxFieldRepetition, DefaultMaxFieldRepetition)
+	return limitOrDefault(o.MaxFieldRepetition, DefaultMaxFieldRepetition)
 }
 
-// maxIntrospectionRoots uygulanacak iç gözlem kökü sınırını döner.
+// maxIntrospectionRoots returns the introspection root limit to apply.
 func (o Options) maxIntrospectionRoots() int {
-	return sinir(o.MaxIntrospectionRoots, DefaultMaxIntrospectionRoots)
+	return limitOrDefault(o.MaxIntrospectionRoots, DefaultMaxIntrospectionRoots)
 }
 
-// maxIntrospectionDepth uygulanacak iç gözlem derinliği sınırını döner.
+// maxIntrospectionDepth returns the introspection depth limit to apply.
 func (o Options) maxIntrospectionDepth() int {
-	return sinir(o.MaxIntrospectionDepth, DefaultMaxIntrospectionDepth)
+	return limitOrDefault(o.MaxIntrospectionDepth, DefaultMaxIntrospectionDepth)
 }
 
-// maxResponseBytes uygulanacak yanıt bayt sınırını döner.
+// maxResponseBytes returns the response byte limit to apply.
 func (o Options) maxResponseBytes() int {
-	return sinir(o.MaxResponseBytes, DefaultMaxResponseBytes)
+	return limitOrDefault(o.MaxResponseBytes, DefaultMaxResponseBytes)
 }
 
-// maxSelections uygulanacak seçim bütçesini döner.
+// maxSelections returns the selection budget to apply.
 func (o Options) maxSelections() int {
-	return sinir(o.MaxSelections, DefaultMaxSelections)
+	return limitOrDefault(o.MaxSelections, DefaultMaxSelections)
 }
 
-// sinir verilen ayarı, geçersizse varsayılanı döner.
+// limitOrDefault returns the given setting, or the default if it is invalid.
 //
-// Tek bir yardımcı olmasının sebebi ayarların ÇOĞALMASIDIR: her alan kendi
-// if'ini taşısaydı, yeni bir sınır eklerken "0 varsayılana düşer" kuralını
-// unutmak yalnızca bir satır uzaklıkta olurdu — ve unutulduğu alan sessizce
-// "sınırsız" hâline gelirdi.
-func sinir(deger, varsayilan int) int {
-	if deger <= 0 {
-		return varsayilan
+// The reason there is a single helper is that the settings MULTIPLY: had every
+// field carried its own if, forgetting the "0 falls back to the default" rule
+// while adding a new limit would be only one line away — and the field where it
+// was forgotten would silently become "unlimited".
+func limitOrDefault(value, fallback int) int {
+	if value <= 0 {
+		return fallback
 	}
 
-	return deger
+	return value
 }
 
-// secimButcesi fragment açılımının büyüklüğünü sınırlayan gqlgen eklentisidir.
+// selectionBudget is the gqlgen extension that limits the size of the fragment
+// expansion.
 //
-// Diğer kapılardan ÖNCE koşar ve tek işi onları korumaktır: kendisinden sonraki
-// her hesap belge ağacını gezer ve fragment'lar üssel açılabildiği için o
-// ağacın büyüklüğü belgenin boyutundan bağımsızdır. Gerekçenin ölçümü
-// [DefaultMaxSelections]'dadır.
-type secimButcesi struct{ sinir int }
+// It runs BEFORE the other gates and its only job is to protect them: every
+// calculation after it walks the document tree, and because fragments can
+// expand exponentially the size of that tree is independent of the size of the
+// document. The measurement behind the rationale is in [DefaultMaxSelections].
+type selectionBudget struct{ limit int }
 
 var _ interface {
 	graphql.HandlerExtension
 	graphql.OperationContextMutator
-} = secimButcesi{}
+} = selectionBudget{}
 
-// ExtensionName eklentinin adını döner.
-func (secimButcesi) ExtensionName() string { return "SelectionBudget" }
+// ExtensionName returns the name of the extension.
+func (selectionBudget) ExtensionName() string { return "SelectionBudget" }
 
-// Validate eklentinin geçerli bir sınırla kurulduğunu doğrular.
-func (s secimButcesi) Validate(graphql.ExecutableSchema) error {
-	if s.sinir < 1 {
-		return fmt.Errorf("graph: seçim bütçesi en az 1 olmalı, %d verildi", s.sinir)
+// Validate verifies that the extension was set up with a valid limit.
+func (s selectionBudget) Validate(graphql.ExecutableSchema) error {
+	if s.limit < 1 {
+		return fmt.Errorf("graph: the selection budget must be at least 1, got %d", s.limit)
 	}
 
 	return nil
 }
 
-// MutateOperationContext belgenin açılımını bütçeye karşı ölçer.
-func (s secimButcesi) MutateOperationContext(
+// MutateOperationContext measures the document's expansion against the budget.
+func (s selectionBudget) MutateOperationContext(
 	_ context.Context,
 	opCtx *graphql.OperationContext,
 ) *gqlerror.Error {
-	kalan := s.sinir
-	if secimleriSay(opCtx.Operation.SelectionSet, &kalan) {
+	remaining := s.limit
+	if countSelections(opCtx.Operation.SelectionSet, &remaining) {
 		return nil
 	}
 
-	hata := gqlerror.Errorf(
-		"operation expands to more than %d selections, which exceeds the limit", s.sinir)
-	errcode.Set(hata, kodSecimButcesiAsimi)
+	gqlErr := gqlerror.Errorf(
+		"operation expands to more than %d selections, which exceeds the limit", s.limit)
+	errcode.Set(gqlErr, codeSelectionBudgetExceeded)
 
-	return hata
+	return gqlErr
 }
 
-// secimleriSay açılmış ağacı bütçe tükenene kadar sayar.
+// countSelections counts the expanded tree until the budget runs out.
 //
-// Bütçe SAYAÇ değil KALAN olarak taşınır ve tükendiği anda gezinme yarıda
-// kesilir. Ayrım kapının var olma sebebiyle aynıdır: önce sayıp sonra
-// karşılaştıran bir uygulama, ölçmeye çalıştığı üssel ağacı sonuna kadar
-// gezmek zorunda kalırdı — yani sınırı uygularken tam da sınırın engellediği
-// işi yapardı.
-func secimleriSay(secimler ast.SelectionSet, kalan *int) bool {
-	for _, secim := range secimler {
-		if *kalan <= 0 {
+// The budget travels as what is REMAINING, not as a COUNTER, and the traversal
+// is cut short the moment it runs out. The distinction is the same as the
+// reason the gate exists: an implementation that counts first and compares
+// afterwards would be forced to walk the exponential tree it is trying to
+// measure all the way to the end — that is, while applying the limit it would
+// do exactly the work the limit prevents.
+func countSelections(selections ast.SelectionSet, remaining *int) bool {
+	for _, selection := range selections {
+		if *remaining <= 0 {
 			return false
 		}
 
-		*kalan--
+		*remaining--
 
-		var alt ast.SelectionSet
+		var child ast.SelectionSet
 
-		switch s := secim.(type) {
+		switch s := selection.(type) {
 		case *ast.Field:
-			alt = s.SelectionSet
+			child = s.SelectionSet
 		case *ast.FragmentSpread:
-			alt = s.Definition.SelectionSet
+			child = s.Definition.SelectionSet
 		case *ast.InlineFragment:
-			alt = s.SelectionSet
+			child = s.SelectionSet
 		}
 
-		if !secimleriSay(alt, kalan) {
+		if !countSelections(child, remaining) {
 			return false
 		}
 	}
@@ -547,433 +582,452 @@ func secimleriSay(secimler ast.SelectionSet, kalan *int) bool {
 	return true
 }
 
-// derinlikSiniri belgenin iç içe geçme derinliğini sınırlayan gqlgen
-// eklentisidir.
+// depthLimit is the gqlgen extension that limits the nesting depth of the
+// document.
 //
-// gqlgen'de derinlik sınırı YOKTUR (karmaşıklık sınırı vardır) ve ikisi
-// birbirinin yerine geçmez: karmaşıklık, çözülecek alan SAYISINI ölçer ve
-// döngüsel bir yolda her seviyenin maliyeti aynı kaldığı sürece derinliği
-// cezalandırmaz.
+// gqlgen has NO depth limit (it has a complexity limit) and the two do not
+// replace each other: complexity measures the NUMBER of fields to be resolved
+// and does not punish depth as long as the cost of every level on a cyclic path
+// stays the same.
 //
-// İki tavan taşır çünkü iki ayrı ağaç ölçülür: veri ağacı ve iç gözlem ağacı.
-// Gerekçe [DefaultMaxIntrospectionDepth]'tedir.
-type derinlikSiniri struct {
-	sinir          int
-	icGozlemSiniri int
+// It carries two ceilings because two separate trees are measured: the data
+// tree and the introspection tree. The rationale is in
+// [DefaultMaxIntrospectionDepth].
+type depthLimit struct {
+	limit              int
+	introspectionLimit int
 }
 
-// Eklentinin gqlgen sözleşmesini karşıladığı derleme zamanında sabitlenir:
-// MutateOperationContext'in imzası kayarsa eklenti sessizce hiç çağrılmaz.
+// That the extension satisfies gqlgen's contract is pinned at compile time: if
+// the signature of MutateOperationContext drifts, the extension is silently
+// never called.
 var _ interface {
 	graphql.HandlerExtension
 	graphql.OperationContextMutator
-} = derinlikSiniri{}
+} = depthLimit{}
 
-// ExtensionName eklentinin adını döner.
-func (derinlikSiniri) ExtensionName() string { return "DepthLimit" }
+// ExtensionName returns the name of the extension.
+func (depthLimit) ExtensionName() string { return "DepthLimit" }
 
-// Validate eklentinin geçerli bir sınırla kurulduğunu doğrular.
+// Validate verifies that the extension was set up with a valid limit.
 //
-// gqlgen bu metodu KURULUM anında çağırır ve hatası açılışta patlar; sınır
-// çalışma zamanında denetlenseydi, sıfır sınırla kurulmuş bir uç her belgeyi
-// reddeder ve arıza ancak ilk istekte görünürdü.
-func (d derinlikSiniri) Validate(graphql.ExecutableSchema) error {
-	if d.sinir < 1 {
-		return fmt.Errorf("graph: derinlik sınırı en az 1 olmalı, %d verildi", d.sinir)
+// gqlgen calls this method at SETUP time and its error blows up at startup; had
+// the limit been checked at run time, an endpoint set up with a zero limit
+// would reject every document and the fault would only show up on the first
+// request.
+func (d depthLimit) Validate(graphql.ExecutableSchema) error {
+	if d.limit < 1 {
+		return fmt.Errorf("graph: the depth limit must be at least 1, got %d", d.limit)
 	}
 
-	if d.icGozlemSiniri < 1 {
-		return fmt.Errorf("graph: iç gözlem derinlik sınırı en az 1 olmalı, %d verildi", d.icGozlemSiniri)
+	if d.introspectionLimit < 1 {
+		return fmt.Errorf("graph: the introspection depth limit must be at least 1, got %d", d.introspectionLimit)
 	}
 
 	return nil
 }
 
-// MutateOperationContext belgeyi ÇALIŞTIRMADAN önce derinliğini ölçer.
+// MutateOperationContext measures the document's depth BEFORE EXECUTING it.
 //
-// Adım, ayrıştırma ve doğrulamadan SONRA çalışır (bkz. gqlgen executor):
-// fragment tanımları o noktada çözülmüş, fragment DÖNGÜLERİ ise doğrulama
-// tarafından reddedilmiştir. İkincisi burada hayatidir — döngülü bir belge
-// aşağıdaki özyinelemeyi sonsuza sokar ve Go'da yığın taşması kurtarılamaz:
-// panik değil, sürecin tamamının ölümüdür.
+// The step runs AFTER parsing and validation (see the gqlgen executor): at that
+// point the fragment definitions have been resolved and fragment CYCLES have
+// been rejected by validation. The second one is vital here — a document with a
+// cycle sends the recursion below into infinity, and in Go a stack overflow
+// cannot be recovered from: it is not a panic but the death of the whole
+// process.
 //
-// Döngüsüz ama ÜSSEL açılan fragment'lar doğrulamadan geçer ve aşağıdaki
-// yürüyüşü yine de kilitlerdi; onları [secimButcesi] bağlar ve bu eklentiden
-// ÖNCE koşar. Bütçe kaldırılırsa buradaki özyineleme yeniden sınırsızdır.
-func (d derinlikSiniri) MutateOperationContext(
+// Fragments that are cycle-free but expand EXPONENTIALLY pass validation and
+// would still lock up the walk below; they are bound by [selectionBudget],
+// which runs BEFORE this extension. If the budget is removed, the recursion
+// here is unbounded again.
+func (d depthLimit) MutateOperationContext(
 	_ context.Context,
 	opCtx *graphql.OperationContext,
 ) *gqlerror.Error {
-	veri, icGozlem := derinlikler(opCtx.Operation.SelectionSet)
+	data, introspection := depths(opCtx.Operation.SelectionSet)
 
-	// Mesajlar İNGİLİZCEDİR ve bu bilinçlidir: kardeşi olan karmaşıklık
-	// hatasını gqlgen üretir, metnini biz seçemeyiz. Aynı belgede iki sınırın
-	// iki ayrı dilde konuşması, istemciye iki ayrı hata sınıfı olduklarını
-	// düşündürürdü.
-	if veri > d.sinir {
-		hata := gqlerror.Errorf("operation has depth %d, which exceeds the limit of %d", veri, d.sinir)
-		errcode.Set(hata, kodDerinlikAsimi)
+	// The messages are IN ENGLISH and that is deliberate: their sibling, the
+	// complexity error, is produced by gqlgen and we cannot choose its text.
+	// Two limits speaking two different languages in the same document would
+	// make the client think they are two separate error classes.
+	if data > d.limit {
+		gqlErr := gqlerror.Errorf("operation has depth %d, which exceeds the limit of %d", data, d.limit)
+		errcode.Set(gqlErr, codeDepthExceeded)
 
-		return hata
+		return gqlErr
 	}
 
-	if icGozlem > d.icGozlemSiniri {
-		hata := gqlerror.Errorf(
+	if introspection > d.introspectionLimit {
+		gqlErr := gqlerror.Errorf(
 			"introspection selection has depth %d, which exceeds the limit of %d",
-			icGozlem, d.icGozlemSiniri)
-		errcode.Set(hata, kodIcGozlemAsimi)
+			introspection, d.introspectionLimit)
+		errcode.Set(gqlErr, codeIntrospectionExceeded)
 
-		return hata
+		return gqlErr
 	}
 
 	return nil
 }
 
-// derinlikler belgenin veri ve iç gözlem ağaçlarının derinliklerini AYRI
-// döner.
+// depths returns the depths of the document's data and introspection trees
+// SEPARATELY.
 //
-// Ayrım yalnızca TEPEDE yapılır ve bu yeterlidir: __schema ve __type
-// şemada Query'nin alanlarıdır, başka hiçbir tipte yoktur; yani bir iç gözlem
-// kökü ancak belgenin en üst seçim kümesinde (ya da oraya açılan bir
-// fragment'ta) belirebilir. Daha aşağıda [secimDerinligi] tek bir kuralla
-// sayar.
-func derinlikler(secimler ast.SelectionSet) (veri, icGozlem int) {
-	for _, secim := range secimler {
-		switch s := secim.(type) {
+// The split is made only at the TOP and that is enough: __schema and __type are
+// fields of Query in the schema and exist on no other type; that is, an
+// introspection root can only appear in the document's topmost selection set
+// (or in a fragment expanded into it). Further down, [selectionDepth] counts
+// with a single rule.
+func depths(selections ast.SelectionSet) (data, introspection int) {
+	for _, selection := range selections {
+		switch s := selection.(type) {
 		case *ast.Field:
-			derinlik := 1 + secimDerinligi(s.SelectionSet)
-			if icGozlemAlani(s.Name) {
-				icGozlem = max(icGozlem, derinlik)
+			depth := 1 + selectionDepth(s.SelectionSet)
+			if isIntrospectionField(s.Name) {
+				introspection = max(introspection, depth)
 			} else {
-				veri = max(veri, derinlik)
+				data = max(data, depth)
 			}
 		case *ast.FragmentSpread:
-			altVeri, altIcGozlem := derinlikler(s.Definition.SelectionSet)
-			veri, icGozlem = max(veri, altVeri), max(icGozlem, altIcGozlem)
+			childData, childIntrospection := depths(s.Definition.SelectionSet)
+			data, introspection = max(data, childData), max(introspection, childIntrospection)
 		case *ast.InlineFragment:
-			altVeri, altIcGozlem := derinlikler(s.SelectionSet)
-			veri, icGozlem = max(veri, altVeri), max(icGozlem, altIcGozlem)
+			childData, childIntrospection := depths(s.SelectionSet)
+			data, introspection = max(data, childData), max(introspection, childIntrospection)
 		}
 	}
 
-	return veri, icGozlem
+	return data, introspection
 }
 
-// secimDerinligi seçim kümesindeki en uzun alan zincirinin uzunluğunu döner.
+// selectionDepth returns the length of the longest field chain in the selection
+// set.
 //
-// Sayım kuralları:
+// The counting rules:
 //
-//   - Her alan bir seviyedir; yaprak alanlar da sayılır. "{ products { count } }"
-//     2'dir.
-//   - Fragment (spread ve satır içi) seviye EKLEMEZ: içeriği, spread'in
-//     bulunduğu seviyededir. Aksi hâlde sorgusunu fragment'lara bölen istemci,
-//     aynı ağacı isterken sınıra takılırdı — üstelik bölmemesi için hiçbir
-//     sebep yokken.
+//   - Every field is one level; leaf fields count too. "{ products { count } }"
+//     is 2.
+//   - A fragment (spread and inline) ADDS NO level: its contents are at the
+//     level where the spread sits. Otherwise a client that split its query into
+//     fragments would hit the limit while asking for the same tree — and with
+//     no reason at all not to split it.
 //
-// İSTİSNA YOKTUR: iç gözlem alanları da sayılır. Onların ayrı bir tavana
-// tabi tutulması burada değil, ağaçları tepede ayıran [derinlikler]'dedir.
-func secimDerinligi(secimler ast.SelectionSet) int {
-	enDerin := 0
+// There are NO EXCEPTIONS: introspection fields are counted too. Subjecting
+// them to a separate ceiling happens not here but in [depths], which separates
+// the trees at the top.
+func selectionDepth(selections ast.SelectionSet) int {
+	deepest := 0
 
-	for _, secim := range secimler {
-		var derinlik int
+	for _, selection := range selections {
+		var depth int
 
-		switch s := secim.(type) {
+		switch s := selection.(type) {
 		case *ast.Field:
-			derinlik = 1 + secimDerinligi(s.SelectionSet)
+			depth = 1 + selectionDepth(s.SelectionSet)
 		case *ast.FragmentSpread:
-			derinlik = secimDerinligi(s.Definition.SelectionSet)
+			depth = selectionDepth(s.Definition.SelectionSet)
 		case *ast.InlineFragment:
-			derinlik = secimDerinligi(s.SelectionSet)
+			depth = selectionDepth(s.SelectionSet)
 		}
 
-		if derinlik > enDerin {
-			enDerin = derinlik
+		if depth > deepest {
+			deepest = depth
 		}
 	}
 
-	return enDerin
+	return deepest
 }
 
-// icGozlemAlani alanın bir iç gözlem kökü olduğunu bildirir.
+// isIntrospectionField reports that the field is an introspection root.
 //
-// __typename bilinçli olarak DIŞARIDADIR: o bir kök değil, her tipte bulunan
-// ve tek bir dize döndüren bir yapraktır; iç gözlem kotasından saymak, her
-// normalize eden istemcinin (Apollo, urql — __typename'i kendileri ekler)
-// kotasını boşa harcardı.
-func icGozlemAlani(ad string) bool {
-	return ad == "__schema" || ad == "__type"
+// __typename is deliberately LEFT OUT: it is not a root but a leaf that exists
+// on every type and returns a single string; counting it against the
+// introspection quota would waste the quota of every client that normalizes
+// (Apollo, urql — they add __typename themselves).
+func isIntrospectionField(name string) bool {
+	return name == "__schema" || name == "__type"
 }
 
-// icGozlemKokSiniri belgedeki __schema/__type kökü sayısını sınırlayan gqlgen
-// eklentisidir.
+// introspectionRootLimit is the gqlgen extension that limits the number of
+// __schema/__type roots in a document.
 //
-// Derinlikten AYRI bir eklentidir çünkü ölçtüğü şey ayrıdır: derinlik ağacın
-// ne kadar indiğini, bu kapı aynı ağacın kaç kez istendiğini sorar. 302 kökün
-// her biri sığdır (ölçülen belgede 4 seviye), yani derinlik kapısı onu asla
-// göremezdi.
+// It is an extension SEPARATE from depth because what it measures is separate:
+// depth asks how far down the tree goes, this gate asks how many times the same
+// tree was requested. Each of the 302 roots is shallow (4 levels in the
+// measured document), that is, the depth gate could never see it.
 //
-// İç gözlem KAPALIYKEN aynı kapı belgeyi tümüyle reddeder ve bu, gqlgen'in
-// kendi davranışının önüne geçmek içindir: gqlgen alanı çalıştırma anında
-// düz bir errors.New ile reddeder, o hata da resolver hatalarından ayırt
-// edilemez ve [hataSunucusu] tarafından haklı olarak sunucu hatası sayılırdı —
-// yani her iç gözlem denemesi bir ERROR satırı üretirdi. Burada reddetmek
-// belgeyi hiç çalıştırmaz ve kararı belgenin kendi kapılarının yanına koyar.
-type icGozlemKokSiniri struct {
-	sinir  int
-	kapali bool
+// While introspection is DISABLED the same gate rejects the document
+// altogether, and that is meant to get ahead of gqlgen's own behavior: gqlgen
+// rejects the field at execution time with a plain errors.New, that error
+// cannot be told apart from resolver errors and would rightly be counted as a
+// server error by [errorPresenter] — that is, every introspection attempt would
+// produce an ERROR line. Rejecting it here never executes the document and puts
+// the decision next to the document's own gates.
+type introspectionRootLimit struct {
+	limit    int
+	disabled bool
 }
 
 var _ interface {
 	graphql.HandlerExtension
 	graphql.OperationContextMutator
-} = icGozlemKokSiniri{}
+} = introspectionRootLimit{}
 
-// ExtensionName eklentinin adını döner.
-func (icGozlemKokSiniri) ExtensionName() string { return "IntrospectionRootLimit" }
+// ExtensionName returns the name of the extension.
+func (introspectionRootLimit) ExtensionName() string { return "IntrospectionRootLimit" }
 
-// Validate eklentinin geçerli bir sınırla kurulduğunu doğrular.
-func (i icGozlemKokSiniri) Validate(graphql.ExecutableSchema) error {
-	if i.sinir < 1 {
-		return fmt.Errorf("graph: iç gözlem kökü sınırı en az 1 olmalı, %d verildi", i.sinir)
+// Validate verifies that the extension was set up with a valid limit.
+func (i introspectionRootLimit) Validate(graphql.ExecutableSchema) error {
+	if i.limit < 1 {
+		return fmt.Errorf("graph: the introspection root limit must be at least 1, got %d", i.limit)
 	}
 
 	return nil
 }
 
-// MutateOperationContext belgedeki iç gözlem köklerini sayar.
-func (i icGozlemKokSiniri) MutateOperationContext(
+// MutateOperationContext counts the introspection roots in the document.
+func (i introspectionRootLimit) MutateOperationContext(
 	_ context.Context,
 	opCtx *graphql.OperationContext,
 ) *gqlerror.Error {
-	kok := icGozlemKokSayisi(opCtx.Operation.SelectionSet)
-	if kok == 0 {
+	roots := countIntrospectionRoots(opCtx.Operation.SelectionSet)
+	if roots == 0 {
 		return nil
 	}
 
-	if i.kapali {
-		hata := gqlerror.Errorf("introspection is disabled on this endpoint")
-		errcode.Set(hata, kodIcGozlemKapali)
+	if i.disabled {
+		gqlErr := gqlerror.Errorf("introspection is disabled on this endpoint")
+		errcode.Set(gqlErr, codeIntrospectionDisabled)
 
-		return hata
+		return gqlErr
 	}
 
-	if kok <= i.sinir {
+	if roots <= i.limit {
 		return nil
 	}
 
-	hata := gqlerror.Errorf(
-		"operation selects %d introspection roots, which exceeds the limit of %d", kok, i.sinir)
-	errcode.Set(hata, kodIcGozlemAsimi)
+	gqlErr := gqlerror.Errorf(
+		"operation selects %d introspection roots, which exceeds the limit of %d", roots, i.limit)
+	errcode.Set(gqlErr, codeIntrospectionExceeded)
 
-	return hata
+	return gqlErr
 }
 
-// icGozlemKokSayisi belgenin tepesindeki iç gözlem köklerini sayar.
-func icGozlemKokSayisi(secimler ast.SelectionSet) int {
-	sayi := 0
+// countIntrospectionRoots counts the introspection roots at the top of the
+// document.
+func countIntrospectionRoots(selections ast.SelectionSet) int {
+	count := 0
 
-	for _, secim := range secimler {
-		switch s := secim.(type) {
+	for _, selection := range selections {
+		switch s := selection.(type) {
 		case *ast.Field:
-			if icGozlemAlani(s.Name) {
-				sayi++
+			if isIntrospectionField(s.Name) {
+				count++
 			}
 		case *ast.FragmentSpread:
-			sayi += icGozlemKokSayisi(s.Definition.SelectionSet)
+			count += countIntrospectionRoots(s.Definition.SelectionSet)
 		case *ast.InlineFragment:
-			sayi += icGozlemKokSayisi(s.SelectionSet)
+			count += countIntrospectionRoots(s.SelectionSet)
 		}
 	}
 
-	return sayi
+	return count
 }
 
-// alanTekrariSiniri aynı alanın aynı nesne altında kaç kez seçilebileceğini
-// sınırlayan gqlgen eklentisidir.
+// fieldRepetitionLimit is the gqlgen extension that limits how many times the
+// same field may be selected under the same object.
 //
-// Karmaşıklık kapısının GÖREMEDİĞİ şeyi görür. Karmaşıklık alan sayısını
-// fiyatlar ve "a0: description … a488: description" 489 ucuz alandır; oysa
-// yanıtta 489 kez SERİLEŞTİRİLEN bir metindir. Ölçüldü: sayfa başına 100
-// ürünle bu belgenin maliyeti tam 50.000'dir — tavana oturur, aşmaz, geçerdi —
-// ve 204,9 MiB yanıt üretiyordu.
+// It sees what the complexity gate CANNOT SEE. Complexity prices the number of
+// fields, and "a0: description … a488: description" is 489 cheap fields; yet in
+// the response it is a text SERIALIZED 489 times. Measured: with 100 products
+// per page this document's cost is exactly 50,000 — it sits on the ceiling,
+// does not exceed it, and would pass — and it was producing a 204.9 MiB
+// response.
 //
-// Kapı [DefaultMaxResponseBytes] ile birlikte çalışır ve onun yerine geçmez:
-// bu kapı ÇALIŞTIRMADAN ÖNCE reddeder (sunucu hiç iş yapmaz), öteki ise
-// tahminin kaçırdığını yazarken yakalar.
-type alanTekrariSiniri struct{ sinir int }
+// The gate works together with [DefaultMaxResponseBytes] and does not replace
+// it: this gate rejects BEFORE EXECUTION (the server does no work at all),
+// while the other catches what the estimate missed, while writing.
+type fieldRepetitionLimit struct{ limit int }
 
 var _ interface {
 	graphql.HandlerExtension
 	graphql.OperationContextMutator
-} = alanTekrariSiniri{}
+} = fieldRepetitionLimit{}
 
-// ExtensionName eklentinin adını döner.
-func (alanTekrariSiniri) ExtensionName() string { return "FieldRepetitionLimit" }
+// ExtensionName returns the name of the extension.
+func (fieldRepetitionLimit) ExtensionName() string { return "FieldRepetitionLimit" }
 
-// Validate eklentinin geçerli bir sınırla kurulduğunu doğrular.
-func (a alanTekrariSiniri) Validate(graphql.ExecutableSchema) error {
-	if a.sinir < 1 {
-		return fmt.Errorf("graph: alan tekrarı sınırı en az 1 olmalı, %d verildi", a.sinir)
+// Validate verifies that the extension was set up with a valid limit.
+func (a fieldRepetitionLimit) Validate(graphql.ExecutableSchema) error {
+	if a.limit < 1 {
+		return fmt.Errorf("graph: the field repetition limit must be at least 1, got %d", a.limit)
 	}
 
 	return nil
 }
 
-// MutateOperationContext en çok tekrarlanan alanı bulur ve sınırla karşılaştırır.
-func (a alanTekrariSiniri) MutateOperationContext(
+// MutateOperationContext finds the most repeated field and compares it against
+// the limit.
+func (a fieldRepetitionLimit) MutateOperationContext(
 	_ context.Context,
 	opCtx *graphql.OperationContext,
 ) *gqlerror.Error {
-	alan, tekrar := enCokTekrarlananAlan(opCtx.Operation.SelectionSet)
-	if tekrar <= a.sinir {
+	field, repeats := mostRepeatedField(opCtx.Operation.SelectionSet)
+	if repeats <= a.limit {
 		return nil
 	}
 
-	hata := gqlerror.Errorf(
+	gqlErr := gqlerror.Errorf(
 		"field %s is selected %d times under the same object, which exceeds the limit of %d",
-		alan, tekrar, a.sinir)
-	errcode.Set(hata, kodAlanTekrariAsimi)
+		field, repeats, a.limit)
+	errcode.Set(gqlErr, codeFieldRepetitionExceeded)
 
-	return hata
+	return gqlErr
 }
 
-// enCokTekrarlananAlan en çok tekrarlanan (nesne, alan) çiftini ve tekrar
-// sayısını döner.
+// mostRepeatedField returns the most repeated (object, field) pair and its
+// repetition count.
 //
-// Sayım KARDEŞ kapsamlıdır: her seçim kümesi kendi içinde sayılır, alt
-// seviyeler ayrıca. Belge geneli sayılsaydı ölçüm yanlış şeyi cezalandırırdı —
-// standart iç gözlem sorgusunda __Type.ofType, ayrı zincirlerde onlarca kez
-// geçer ve hiçbiri bir yığma değildir; oysa saldırının şekli tam olarak
-// KARDEŞ yığmadır (aynı seçim kümesinde 489 takma ad).
+// The count is SIBLING scoped: every selection set is counted within itself,
+// and the levels below separately. Had the whole document been counted, the
+// measurement would punish the wrong thing — in the standard introspection
+// query __Type.ofType appears dozens of times in separate chains and none of
+// them is a stack; whereas the shape of the attack is exactly a SIBLING stack
+// (489 aliases in the same selection set).
 //
-// Takma ad anahtara GİRMEZ: saldırının tek aracı takma addır, ona bakan bir
-// sayım hiçbir şey saymazdı.
+// The alias DOES NOT ENTER the key: the attack's only instrument is the alias,
+// and a count that looked at it would count nothing.
 //
-// Yürüyüşün maliyeti belgenin metnine DEĞİL açılımına bağlıdır; üssel açılan
-// fragment'lar onu kilitlerdi ve bu yüzden [secimButcesi] bu eklentiden önce
-// koşar. Fragment döngüleri ise doğrulamada reddedilmiştir; gerekçe
-// [derinlikSiniri.MutateOperationContext]'tedir.
-func enCokTekrarlananAlan(secimler ast.SelectionSet) (cift string, tekrar int) {
-	alanlar := kardesAlanlar(secimler)
+// The cost of the walk depends NOT on the document's text but on its expansion;
+// exponentially expanding fragments would lock it up, and that is why
+// [selectionBudget] runs before this extension. Fragment cycles have been
+// rejected in validation; the rationale is in
+// [depthLimit.MutateOperationContext].
+func mostRepeatedField(selections ast.SelectionSet) (pair string, repeats int) {
+	fields := siblingFields(selections)
 
-	sayac := make(map[string]int, len(alanlar))
-	for _, alan := range alanlar {
-		anahtar := alanAnahtari(alan)
+	counter := make(map[string]int, len(fields))
+	for _, field := range fields {
+		key := fieldKey(field)
 
-		sayac[anahtar]++
-		if sayac[anahtar] > tekrar {
-			cift, tekrar = anahtar, sayac[anahtar]
+		counter[key]++
+		if counter[key] > repeats {
+			pair, repeats = key, counter[key]
 		}
 	}
 
-	for _, alan := range alanlar {
-		altCift, altTekrar := enCokTekrarlananAlan(alan.SelectionSet)
-		if altTekrar > tekrar {
-			cift, tekrar = altCift, altTekrar
+	for _, field := range fields {
+		childPair, childRepeats := mostRepeatedField(field.SelectionSet)
+		if childRepeats > repeats {
+			pair, repeats = childPair, childRepeats
 		}
 	}
 
-	return cift, tekrar
+	return pair, repeats
 }
 
-// kardesAlanlar seçim kümesinin AYNI seviyedeki alanlarını, fragment'ları
-// açarak toplar.
+// siblingFields collects the fields of the selection set that are at the SAME
+// level, expanding the fragments.
 //
-// Fragment'lar seviye eklemez (bkz. [secimDerinligi]) ve burada da eklememeli:
-// yığmasını bir fragment'a taşıyan istemci sayımdan kaçabilseydi kapı süs
-// olurdu.
-func kardesAlanlar(secimler ast.SelectionSet) []*ast.Field {
-	var alanlar []*ast.Field
+// Fragments add no level (see [selectionDepth]) and must add none here either:
+// if a client that moved its stack into a fragment could escape the count, the
+// gate would be decoration.
+func siblingFields(selections ast.SelectionSet) []*ast.Field {
+	var fields []*ast.Field
 
-	for _, secim := range secimler {
-		switch s := secim.(type) {
+	for _, selection := range selections {
+		switch s := selection.(type) {
 		case *ast.Field:
-			alanlar = append(alanlar, s)
+			fields = append(fields, s)
 		case *ast.FragmentSpread:
-			alanlar = append(alanlar, kardesAlanlar(s.Definition.SelectionSet)...)
+			fields = append(fields, siblingFields(s.Definition.SelectionSet)...)
 		case *ast.InlineFragment:
-			alanlar = append(alanlar, kardesAlanlar(s.SelectionSet)...)
+			fields = append(fields, siblingFields(s.SelectionSet)...)
 		}
 	}
 
-	return alanlar
+	return fields
 }
 
-// alanAnahtari alanı "Tip.alan" biçiminde adlandırır.
+// fieldKey names the field in the form "Type.field".
 //
-// Nesne adı anahtara girer çünkü sınır "aynı alan" değil "AYNI NESNE ALTINDA
-// aynı alan" hakkındadır: satır içi fragment'larla farklı tiplerden aynı adlı
-// alanları seçmek meşrudur ve tek bir sayaca düşerse meşru belge reddedilirdi.
+// The object name enters the key because the limit is not about "the same
+// field" but about "the same field UNDER THE SAME OBJECT": selecting fields of
+// the same name from different types with inline fragments is legitimate, and
+// if they fell into a single counter a legitimate document would be rejected.
 //
-// ObjectDefinition doğrulamadan sonra doludur; boş kalması yalnızca şemada
-// olmayan bir alan için mümkündür ve o belge zaten doğrulamada reddedilmiştir.
-// Yine de nil ele alınır: burada panik, geçersiz bir belgeyi 500'e çevirirdi.
-func alanAnahtari(alan *ast.Field) string {
-	if alan.ObjectDefinition == nil {
-		return alan.Name
+// ObjectDefinition is filled in after validation; it can only be empty for a
+// field that is not in the schema, and such a document has already been
+// rejected in validation. Even so nil is handled: a panic here would turn an
+// invalid document into a 500.
+func fieldKey(field *ast.Field) string {
+	if field.ObjectDefinition == nil {
+		return field.Name
 	}
 
-	return alan.ObjectDefinition.Name + "." + alan.Name
+	return field.ObjectDefinition.Name + "." + field.Name
 }
 
-// karmasiklikMaliyetleri liste alanlarının maliyetini ELEMAN SAYISIYLA çarpar.
+// complexityCosts multiplies the cost of list fields BY THE NUMBER OF ELEMENTS.
 //
-// gqlgen'in varsayılan hesabı her alana 1 + alt maliyet verir; yani
-// "products(limit: 100) { items { … } }" ile "products(limit: 1) { items { … } }"
-// AYNI maliyette görünür. Oysa aradaki fark tam olarak yüz kattır ve pahalı
-// sorguyu ucuz gösteren bir maliyet modeli, sınırı süs hâline getirir.
+// gqlgen's default calculation gives every field 1 + the child cost; that is,
+// "products(limit: 100) { items { … } }" and "products(limit: 1) { items { … } }"
+// look like they cost the SAME. Yet the difference between them is exactly a
+// hundredfold, and a cost model that makes the expensive query look cheap turns
+// the limit into decoration.
 //
-// Çarpan iki kaynaktan gelir:
+// The multiplier comes from two sources:
 //
-//   - products'ta ARGÜMANDAN: kaç kayıt döneceğini istemci söylemiştir
-//     (bkz. [sayfaBoyutu]).
-//   - iç içe listelerde TAHMİNDEN: adet çalışma zamanında bellidir, oysa
-//     karmaşıklık çalıştırmadan önce hesaplanır (bkz. [koleksiyonTahmini]).
+//   - On products, FROM THE ARGUMENT: the client has said how many records will
+//     be returned (see [pageSize]).
+//   - On nested lists, FROM AN ESTIMATE: the count is known at run time,
+//     whereas complexity is computed before execution (see
+//     [collectionEstimate]).
 //
-// Çarpan ProductList.items'a DEĞİL Query.products'a konur: ikisine birden
-// konsaydı sayfa boyutu KAREsine çıkardı. products'ın çarpanı zarfın
-// count/offset/limit alanlarını da kapsar — birkaç birimlik bu fazla sayım,
-// tavanı güvenli yönde kaydırdığı için düzeltilmedi.
+// The multiplier is put on Query.products, NOT on ProductList.items: had it
+// been put on both, it would rise to the SQUARE of the page size. The
+// multiplier of products also covers the envelope's count/offset/limit fields —
+// this overcount of a few units was not corrected, because it shifts the
+// ceiling in the safe direction.
 //
-// Kök sorgular ayrıca sabit bir taban taşır ([kokSorguMaliyeti]): çarpım
-// yalnızca ÇÖZÜLEN ALANI fiyatlar, oysa kök sorgunun bedeli veritabanı
-// gidiş-dönüşüdür ve seçilen alan azalınca düşmez.
-func karmasiklikMaliyetleri(maliyet *ComplexityRoot) {
-	maliyet.Query.Products = func(alt int, limit, _ *int, _, _ *string) int {
-		return kokSorguMaliyeti + sayfaBoyutu(limit)*alt
+// Root queries additionally carry a fixed base ([rootQueryCost]): the
+// multiplication prices only the RESOLVED FIELD, whereas the price of a root
+// query is the database round trip and it does not drop when fewer fields are
+// selected.
+func complexityCosts(costs *ComplexityRoot) {
+	costs.Query.Products = func(child int, limit, _ *int, _, _ *string) int {
+		return rootQueryCost + pageSize(limit)*child
 	}
 
-	maliyet.Query.Product = func(alt int, _, _ *string) int {
-		return kokSorguMaliyeti + alt
+	costs.Query.Product = func(child int, _, _ *string) int {
+		return rootQueryCost + child
 	}
 
-	maliyet.Product.Variants = koleksiyon
-	maliyet.Product.Options = koleksiyon
-	maliyet.Product.Images = koleksiyon
-	maliyet.Product.Tags = koleksiyon
-	maliyet.Product.Categories = koleksiyon
-	maliyet.Option.Values = koleksiyon
-	maliyet.Variant.OptionValues = koleksiyon
+	costs.Product.Variants = collectionCost
+	costs.Product.Options = collectionCost
+	costs.Product.Images = collectionCost
+	costs.Product.Tags = collectionCost
+	costs.Product.Categories = collectionCost
+	costs.Option.Values = collectionCost
+	costs.Variant.OptionValues = collectionCost
 }
 
-// koleksiyon adedi bilinmeyen bir liste alanının maliyetini döner.
-func koleksiyon(alt int) int {
-	return koleksiyonTahmini * alt
+// collectionCost returns the cost of a list field whose size is unknown.
+func collectionCost(child int) int {
+	return collectionEstimate * child
 }
 
-// sayfaBoyutu products çağrısının en fazla kaç kayıt döndürebileceğini tahmin
-// eder.
+// pageSize estimates the largest number of records a products call may return.
 //
-// Sayfalama kuralının ikinci bir TANIMI değildir; servisin uygulayacağı
-// sonucun TAHMİNİDİR ve ayrışırlarsa dönen sayfa değil yalnızca maliyet
-// tahmini şaşar. Yine de servisin sabitlerinden okunur ki tavan
-// değiştiğinde tahmin kendiliğinden düzelsin.
+// It is not a second DEFINITION of the paging rule; it is an ESTIMATE of the
+// result the service will apply, and if they diverge it is not the returned
+// page but only the cost estimate that goes wrong. Even so it is read from the
+// service's constants so that the estimate corrects itself when the ceiling
+// changes.
 //
-// Negatif limit de varsayılana düşer: onu servis reddedecektir, burada
-// yapılacak tek şey maliyeti sıfırlamamaktır (sıfır maliyet, sınırı hiç
-// uygulanmamış hâle getirirdi).
-func sayfaBoyutu(limit *int) int {
+// A negative limit also falls back to the default: the service will reject it,
+// and the only thing to do here is not to zero out the cost (a zero cost would
+// leave the limit unapplied).
+func pageSize(limit *int) int {
 	switch {
 	case limit == nil || *limit <= 0:
 		return service.DefaultLimit

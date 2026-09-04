@@ -10,113 +10,126 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/product/repository/productdb"
 )
 
-// Bu dosya ürün listelemesinin SATIŞ KANALI süzgecini ve o süzgeci taşıyan iki
-// sorguyu (liste + sayaç) barındırır.
+// This file holds the SALES CHANNEL filter of the product listing and the two
+// queries that carry that filter (list + count).
 //
-// # Süzgeç neden veritabanında
+// # Why the filter is in the database
 //
-// Kural iki yarımdır: ataması OLMAYAN ürün tüm kanallarda görünür, ataması OLAN
-// ürün yalnızca atandığı kanallarda görünür. İlk yarım, core/link'in sunduğu
-// ListManyByTo yüzeyiyle VERİMLİ çıkarılamaz — "bu kanallara atanmış ürünler"
-// tek sorguda gelir ama "hiç ataması olmayan ürünler" ancak tüm bağları çekip
-// tersini alarak bulunur. Bunun iki bedeli vardır ve ikincisi ölümcüldür:
-// katalog büyüdükçe tüm link tablosu belleğe girer ve — asıl mesele — LIMIT ile
-// OFFSET veritabanında uygulandığı için Go tarafında yapılan bir eleme sayfayı
-// eksik doldurur, toplam sayacı da süzülmemiş kümeyi gösterirdi. Yani listeleme
-// sessizce YANLIŞ sayfalanırdı.
+// The rule has two halves: a product that has NO assignment is visible in all
+// channels, a product that HAS an assignment is visible only in the channels it
+// is assigned to. The first half cannot be derived EFFICIENTLY with the
+// ListManyByTo surface core/link offers — "the products assigned to these
+// channels" arrives in a single query, but "the products with no assignment at
+// all" can only be found by pulling all the bindings and taking the complement.
+// That has two costs and the second one is lethal: as the catalog grows the
+// whole link table enters memory and — the real issue — because LIMIT and
+// OFFSET are applied in the database, a filtering done on the Go side fills the
+// page short, and the total count would show the unfiltered set. That is, the
+// listing would silently be paginated WRONG.
 //
-// Bu yüzden süzgeç ürünün KENDİ sorgusuna, link tablosuna karşı bir
-// EXISTS/NOT EXISTS koşulu olarak girer; sayfalama ve sayaç süzülmüş küme
-// üzerinde çalışır.
+// That is why the filter enters the product's OWN query, as an
+// EXISTS/NOT EXISTS condition against the link table; pagination and the count
+// work over the filtered set.
 //
-// # Bu bir cross-module foreign key DEĞİLDİR
+// # This is NOT a cross-module foreign key
 //
-// Okuyan ilk kişi haklı olarak "başka bir modülün tablosuna dokunuluyor mu"
-// diye sorar. Hayır: [SalesChannelLinkTable] auth'un değil, PRODUCT'IN
-// bildirdiği link'in tablosudur (bkz. service.LinkProductSalesChannel) ve
-// içinde iki serbest kimlik dizgesinden başka bir şey yoktur. Sorgu auth'un
-// hiçbir tablosunu görmez, hiçbir REFERENCES eklenmez ve auth şemasını
-// değiştirse bu koşul etkilenmez — Prensip 2.2'nin yasakladığı bağ tam olarak
-// budur ve burada kurulmaz.
+// The first person reading it rightly asks "is another module's table being
+// touched here". No: [SalesChannelLinkTable] is not auth's but the table of the
+// link PRODUCT declares (see service.LinkProductSalesChannel) and there is
+// nothing inside it beyond two free id strings. The query sees none of auth's
+// tables, no REFERENCES is added, and if auth changed its schema this condition
+// would not be affected — the binding Principle 2.2 forbids is exactly this one
+// and it is not established here.
 //
-// # Sorgular neden elle yazılmış
+// # Why the queries are hand-written
 //
-// sqlc şemayı modülün migration dizininden okur; link tablosunun şemasını ise
-// core/link çalışma anında (link.Define) kurar, dolayısıyla o dizinde YOKTUR ve
-// sqlc üretimi "relation does not exist" ile reddeder. Şemayı sqlc'ye tanıtmak
-// için sahte bir kopya bırakmak, core/link'in şemasını product içinde ikinci
-// kez tanımlamak olurdu; kopya sessizce ayrışabilir. Bu yüzden bu iki sorgu
-// elle yazılır ve — daha önemlisi — sqlc karşılıkları SİLİNMİŞTİR: süzgecin tek
-// bir tanımı vardır ([productFilterSQL]). İki tanım kalsaydı, bir gün eklenen
-// bir süzgeç birine yazılıp diğerine yazılmaz ve vitrin ile yönetim listesi
-// SESSİZCE farklı kümeler dönerdi.
+// sqlc reads the schema from the module's migration directory; the link table's
+// schema, however, is set up by core/link at run time (link.Define), so it IS
+// NOT in that directory and sqlc generation rejects it with "relation does not
+// exist". Leaving a fake copy to introduce the schema to sqlc would mean
+// defining core/link's schema a second time inside product; a copy can silently
+// drift. That is why these two queries are written by hand and — more
+// importantly — the sqlc counterparts HAVE BEEN DELETED: the filter has a
+// single definition ([productFilterSQL]). Had two definitions remained, a
+// filter added one day would be written into one and not into the other, and
+// the storefront and the admin listing would SILENTLY return different sets.
 //
-// # İndeks ve neden TEK alt sorgu
+// # The index, and why a SINGLE subquery
 //
-// Ek indeks GEREKMEZ ve product zaten ekleyemez (şema core/link'indir).
-// core/link ManyToMany bir link için PRIMARY KEY (from_id, to_id) ve to_id
-// üzerinde bir arama indeksi kurar (bkz. core/link registry.go ddl). Alt sorgu
-// from_id ile başlar, yani birincil anahtarın önekini kullanır.
+// No extra index IS NEEDED and product could not add one anyway (the schema is
+// core/link's). For a ManyToMany link core/link sets up PRIMARY KEY (from_id,
+// to_id) and a lookup index on to_id (see core/link registry.go ddl). The
+// subquery starts with from_id, that is, it uses the prefix of the primary key.
 //
-// Kural bir zamanlar İKİ alt sorguyla yazılıydı ("hiç ataması yok VEYA istenen
-// kanalda ataması var") ve buradaki yorum aday satır başına bir indeks
-// yoklaması yapıldığını iddia ediyordu. İDDİA YANLIŞTI ve yanlışlığı ancak
-// gerçek hacimde göründü: planlayıcı iki bağımsız EXISTS'i gördüğünde ikisini
-// de HASH'e çeviriyor, yani ilk satırı dönmeden ÖNCE link tablosunun tamamını
-// iki kez tarıyor. Ölçüldü — 52.000 ürün ve 52.000 kanal ataması, vitrinin
-// LIMIT 20'lik liste sorgusu:
+// The rule was once written with TWO subqueries ("has no assignment at all OR
+// has an assignment in the requested channel") and the comment here claimed
+// that one index probe was done per candidate row. THE CLAIM WAS WRONG and its
+// wrongness only showed at real volume: when the planner sees two independent
+// EXISTS it turns both of them into a HASH, that is, it scans the whole link
+// table twice BEFORE returning the first row. It was measured — 52,000 products
+// and 52,000 channel assignments, the storefront's LIMIT 20 list query:
 //
-//	iki EXISTS (eski)          26,8 ms
-//	tek bool_or (bugünkü)       0,8 ms
+//	two EXISTS (old)           26.8 ms
+//	single bool_or (today's)    0.8 ms
 //
-// Maliyet sayfa boyutuyla değil KATALOG boyutuyla büyüyordu, üstelik vitrinin
-// en sıcak ucunda. Tek korelasyonlu alt sorgu planlayıcıya satır başına indeks
-// yoklaması yaptırır ve LIMIT'te gerçekten durabilir.
+// The cost was growing not with the page size but with the CATALOG size, and on
+// the storefront's hottest endpoint at that. A single correlated subquery makes
+// the planner do an index probe per row and it can really stop at the LIMIT.
 //
-// # IS TRUE bir süs değil
+// # IS TRUE is not decoration
 //
-// bool_or'un içindeki "IS TRUE" olmadan kural DEĞİŞİR: kanal dizisi bir NULL
-// eleman taşıdığında "to_id = ANY(...)" o satır için NULL döner, bool_or NULL'ı
-// yutar ve COALESCE onu "hiç ataması yok" sanıp ürünü GÖRÜNÜR yapar. Yani
-// eksik yazılmış hâli AÇIĞA düşer: bir kanala atanmış ürün, o kanalı istemeyen
-// bir isteme görünür. Sekiz senaryoda ölçüldü; "IS TRUE" ile eski kuralla
-// birebir aynı, onsuz ikisinde ayrışıyor.
+// Without the "IS TRUE" inside bool_or the rule CHANGES: when the channel array
+// carries a NULL element, "to_id = ANY(...)" returns NULL for that row, bool_or
+// swallows the NULL, and COALESCE takes it for "has no assignment at all" and
+// makes the product VISIBLE. That is, the version written short falls OPEN: a
+// product assigned to a channel becomes visible to a request that does not ask
+// for that channel. It was measured over eight scenarios; with "IS TRUE" it is
+// identical to the old rule, without it the two diverge in two of them.
 //
-// Ve HİÇBİR TEST bunu yakalayamaz — bu da ölçüldü. Kanal dizisi buraya Go'dan
-// []string olarak gelir, dolayısıyla bugün NULL eleman ÜRETİLEMEZ; "IS TRUE"
-// silindiğinde entegrasyon paketinin on üç testinin hepsi geçmeye devam eder
-// (silinen öteki her parça — COALESCE'ın varsayılanı, yönetim dalı, bool_or,
-// korelasyon, eşitliğin yönü — en az bir testi düşürür). Yani bu iki sözcük
-// çağıranın BUGÜNKÜ tip seçimine yaslanıyor ve o seçim değişirse kural sessizce
-// gevşer. Yazılmasının sebebi budur; kaldırılmak istenirse önce bu satır
-// okunmalıdır.
+// And NO TEST can catch this — that was measured too. The channel array arrives
+// here from Go as a []string, so a NULL element CANNOT BE PRODUCED today; when
+// "IS TRUE" is deleted, all thirteen tests of the integration package keep
+// passing (every other piece that was deleted — COALESCE's default, the admin
+// branch, bool_or, the correlation, the direction of the equality — drops at
+// least one test). That is, these two words lean on the caller's CURRENT type
+// choice, and if that choice changes the rule silently loosens. That is the
+// reason they are written; if they are to be removed, this line must be read
+// first.
 
-// SalesChannelLinkTable ürün ↔ satış kanalı bağının tutulduğu link tablosudur.
+// SalesChannelLinkTable is the link table where the product ↔ sales channel
+// binding is kept.
 //
-// Ad, core/link'in sözleşmesinden ("link_" + link adı) türer ama BURADA ELLE
-// yazılır: link adı service paketindedir ve repository onu import edemez
-// (service zaten repository'yi import eder). Elle tekrarlanan sabit sessizce
-// ayrışabileceği için service paketinde bir test iki adı birbirine bağlar.
+// The name derives from core/link's contract ("link_" + link name) but IS
+// WRITTEN BY HAND HERE: the link name is in the service package and the
+// repository cannot import it (service already imports the repository). Because
+// a constant repeated by hand can silently drift, a test in the service package
+// binds the two names to each other.
 const SalesChannelLinkTable = "link_product_sales_channel"
 
-// salesChannelVisibleTemplate satış kanalı görünürlük kuralının SQL karşılığıdır.
+// salesChannelVisibleTemplate is the SQL counterpart of the sales channel
+// visibility rule.
 //
-// %[1]s ürünün kimliğini veren ifade (liste sorgusunda "product.id", tekil
-// sorguda "$1"), %[2]s ise kanal kimliklerini taşıyan parametredir. Şablon
-// olması, kuralın TEK yerde durmasını sağlar: aynı metin hem sayfalanan listede
-// hem tekil görünürlük denetiminde kullanılır, dolayısıyla ikisi ayrışamaz.
+// %[1]s is the expression giving the product's id ("product.id" in the list
+// query, "$1" in the single query), and %[2]s is the parameter carrying the
+// channel ids. Being a template makes the rule stand in ONE place: the same
+// text is used both in the paginated list and in the single visibility check,
+// so the two cannot drift apart.
 //
-// Üç dal sırayla şu üç durumu karşılar:
+// The three branches cover these three cases in order:
 //
-//  1. Parametre NULL ise istek bir satış kanalı kimliği taşımıyordur ve süzgeç
-//     hiç uygulanmaz (yönetim listesi bu daldan geçer).
-//  2. Ürünün HİÇ ataması yoksa her kanalda görünür (geriye uyumluluk: mevcut
-//     katalog bir gecede boşalmaz).
-//  3. Ataması varsa yalnızca istenen kanallardan biriyle eşleşiyorsa görünür.
+//  1. If the parameter is NULL the request carries no sales channel id and the
+//     filter is not applied at all (the admin listing goes through this
+//     branch).
+//  2. If the product has NO assignment at all it is visible in every channel
+//     (backward compatibility: the existing catalog does not empty out
+//     overnight).
+//  3. If it does have an assignment it is visible only if it matches one of the
+//     requested channels.
 //
-// Boş ama NULL olmayan bir dizi üçüncü dalı hiçbir zaman doğrulamaz; kanalsız
-// bir istekte yalnızca atamasız ürünler kalır. Bu bilinçlidir: eşleşmenin
-// tanımı değişmez, yalnızca eşleşecek kanal yoktur.
+// An empty but non-NULL array never satisfies the third branch; on a request
+// with no channel only the products without an assignment remain. This is
+// deliberate: the definition of the match does not change, there is simply no
+// channel left to match.
 const salesChannelVisibleTemplate = `(
     %[2]s::text[] IS NULL
     OR COALESCE((
@@ -126,21 +139,22 @@ const salesChannelVisibleTemplate = `(
     ), true)
   )`
 
-// salesChannelVisible görünürlük koşulunu verilen ürün ifadesi ve kanal
-// parametresi için üretir.
+// salesChannelVisible produces the visibility condition for the given product
+// expression and channel parameter.
 //
-// Yalnızca paket içindeki SABİTLERLE çağrılır; çağıranın verdiği hiçbir dizge
-// buraya girmez, kanal kimlikleri SQL'e parametre olarak gider.
+// It is called ONLY with CONSTANTS from inside the package; no string given by
+// the caller enters here, the channel ids go to the SQL as parameters.
 func salesChannelVisible(productExpr, channelsParam string) string {
 	return fmt.Sprintf(salesChannelVisibleTemplate, productExpr, channelsParam)
 }
 
-// productFilterSQL ürün listeleme ve sayma sorgularının ORTAK süzgeç gövdesidir.
+// productFilterSQL is the SHARED filter body of the product listing and
+// counting queries.
 //
-// Parametre sırası: $1 status, $2 collection_id, $3 handle, $4 search,
-// $5 sales_channel_ids. Sayfalama parametreleri ($6, $7) yalnızca liste
-// sorgusunda vardır; bu yüzden sayaç sorgusu aynı gövdeyi hiç değiştirmeden
-// kullanabilir.
+// Parameter order: $1 status, $2 collection_id, $3 handle, $4 search,
+// $5 sales_channel_ids. The pagination parameters ($6, $7) exist only in the
+// list query; that is why the count query can use the same body without
+// changing it at all.
 const productFilterSQL = `WHERE deleted_at IS NULL
   AND ($1::text IS NULL OR status = $1::text)
   AND ($2::text IS NULL OR collection_id = $2::text)
@@ -148,173 +162,183 @@ const productFilterSQL = `WHERE deleted_at IS NULL
   AND ($4::text IS NULL OR title ILIKE '%' || $4::text || '%')
   AND `
 
-// productColumns ürün satırının sütunlarını [productdb.Product] alanlarının
-// SIRASIYLA sayar.
+// productColumns lists the columns of the product row IN THE ORDER of
+// [productdb.Product]'s fields.
 //
-// # Neden "SELECT *" değil
+// # Why not "SELECT *"
 //
-// Satırlar konuma göre çözülür (pgx.RowToStructByPos) ve "SELECT *" sütun
-// sırasını TABLONUN fiziksel düzenine bırakır. O düzen bir gün kayarsa —
-// araya sütun eklemek yeter — eşleme kayar ve kayma SESSİZDİR: bu tabloda
-// handle ile title bitişik ve ikisi de text; subtitle/description/thumbnail
-// üç text; weight/length/height/width dört integer. Aynı tipte komşu iki
-// sütunun yer değiştirmesi hiçbir hata üretmez, yalnızca her ürünün başlığı
-// ile handle'ını takas eder. Sütun SAYISI değişseydi hata alırdık; asıl
-// tehlike sayı değil SIRADIR.
+// Rows are resolved by position (pgx.RowToStructByPos) and "SELECT *" leaves
+// the column order to the TABLE's physical layout. If that layout shifts one
+// day — inserting a column in between is enough — the mapping shifts, and the
+// shift is SILENT: in this table handle and title are adjacent and both are
+// text; subtitle/description/thumbnail are three text; weight/length/height/
+// width are four integer. Two neighboring columns of the same type changing
+// places produces no error at all, it merely swaps every product's title with
+// its handle. Had the NUMBER of columns changed we would get an error; the real
+// danger is not the number but the ORDER.
 //
-// Adlandırılmış liste bu yolu kapatır: araya eklenen sütun buraya girmediği
-// için hiçbir şeyi kaydırmaz, silinen ya da adı değişen sütun ise sorguyu
-// gürültüyle düşürür.
+// The named list closes that road: a column inserted in between does not enter
+// here and therefore shifts nothing, while a column that is deleted or renamed
+// drops the query noisily.
 //
-// Kalan tek risk, sqlc'nin ürettiği alan sırasının bu listeden ayrışmasıdır;
-// onu [TestUrunSutunEslemesiKaymamis] her alana AYIRT EDİLEBİLİR bir değer
-// yazıp geri okuyarak sabitler.
+// The single remaining risk is the field order sqlc generates drifting from
+// this list; the product package's integration test pins that down by writing a
+// DISTINGUISHABLE value into every field and reading it back.
 const productColumns = `id, handle, title, subtitle, description, thumbnail,
 	status, is_giftcard, discountable, weight, length, height, width,
 	material, origin_country, collection_id, metadata,
 	created_at, updated_at, deleted_at`
 
-// listProductsSQL ölçütlere uyan ürünleri sayfalı okur.
+// listProductsSQL reads the products matching the criteria, paginated.
 //
-// Sıra (created_at DESC, id DESC) sabittir; ikinci anahtar, aynı milisaniyede
-// oluşmuş iki kaydın sayfalar arasında yer değiştirmesini engeller.
+// The order (created_at DESC, id DESC) is fixed; the second key prevents two
+// records created in the same millisecond from changing places between pages.
 var listProductsSQL = `SELECT ` + productColumns + ` FROM product
 ` + productFilterSQL + salesChannelVisible("product.id", "$5") + `
 ORDER BY created_at DESC, id DESC
 LIMIT $6::int OFFSET $7::int`
 
-// countProductsSQL ölçütlere uyan TOPLAM ürün sayısını okur.
+// countProductsSQL reads the TOTAL number of products matching the criteria.
 //
-// # Bu sorgu PAHALIDIR ve biçimi DEĞİŞTİRİLMEMELİDİR
+// # This query IS EXPENSIVE and its shape MUST NOT BE CHANGED
 //
-// LIMIT'i olmadığı için planlayıcı erken duramaz: ürün tablosunun tamamını
-// gezer ve satır başına link tablosuna bir indeks yoklaması yapar. gobit_load
-// üzerinde ölçüldü (52.004 ürün, 52.000 kanal ataması):
+// Because it has no LIMIT the planner cannot stop early: it walks the whole
+// product table and does one index probe into the link table per row. It was
+// measured on gobit_load (52,004 products, 52,000 channel assignments):
 //
-//	Aggregate (actual 70,655 ms)
-//	  -> Seq Scan on product (rows=52.004)
+//	Aggregate (actual 70.655 ms)
+//	  -> Seq Scan on product (rows=52,004)
 //	       Filter: ... AND COALESCE((SubPlan 1), true)
-//	       SubPlan 1 -> Index Only Scan ... (loops=52.004)
-//	  Buffers: shared hit=156.743 (bunun 156.013'ü alt sorgunun)
+//	       SubPlan 1 -> Index Only Scan ... (loops=52,004)
+//	  Buffers: shared hit=156,743 (156,013 of that the subquery's)
 //
-// Aynı kümeyi sayan iki alternatif biçim ölçüldü ve İKİSİ DE REDDEDİLDİ:
-// "iki EXISTS" 43-54 ms, "GROUP BY + hash join" 33-45 ms. Süzgeçsiz durumda
-// daha hızlılar ama link tablosunun tamamını hash'lemek sabit bir ~30 ms taban
-// koyuyor; SEÇİCİ bir süzgeçte (tek ürün eşleşen bir "q") bugünkü biçim
-// 13,8 ms, hash biçimi 30,0 ms — yani takas yön değiştiriyor. Üstelik liste
-// sorgusu bu biçme MECBURDUR (yukarıdaki "İndeks ve neden TEK alt sorgu"
-// başlığı) ve şablon ikisi arasında PAYLAŞILIR; biçimi ayırmak, görünürlük
-// kuralının ikinci bir tanımını yaratırdı.
+// Two alternative shapes counting the same set were measured and BOTH WERE
+// REJECTED: "two EXISTS" 43-54 ms, "GROUP BY + hash join" 33-45 ms. They are
+// faster in the unfiltered case, but hashing the whole link table lays down a
+// fixed ~30 ms floor; on a SELECTIVE filter (a "q" that matches a single
+// product) today's shape is 13.8 ms and the hash shape 30.0 ms — that is, the
+// trade changes direction. On top of that the list query IS OBLIGED to take
+// this shape (the "The index, and why a SINGLE subquery" heading above) and the
+// template is SHARED between the two; splitting the shape would create a second
+// definition of the visibility rule.
 //
-// Sayım O(katalog)'dur ve hiçbir SQL biçimi onu sublineer yapmaz. Bu yüzden
-// çözüm burada değil ÇAĞIRANDA arandı: sayaç artık istenmediğinde hiç
-// çalıştırılmıyor (bkz. service.ListProductsOptions.SkipCount).
+// The count is O(catalog) and no SQL shape makes it sublinear. That is why the
+// solution was sought not here but IN THE CALLER: the count is no longer run at
+// all when it is not wanted (see service.ListProductsOptions.SkipCount).
 var countProductsSQL = `SELECT count(*) FROM product
 ` + productFilterSQL + salesChannelVisible("product.id", "$5")
 
-// visibleProductIDsSQL verilen kimliklerden kanallarda GÖRÜNÜR olanları döner.
+// visibleProductIDsSQL returns, out of the given ids, the ones that are VISIBLE
+// in the channels.
 //
-// Toplu sorulmasının sebebi somut: arama bir seferde onlarca kimlik getirir ve
-// görünürlüğü kimlik başına sormak, sonuç sayısı kadar gidiş-dönüş demektir.
-// Bu depo N+1'i yapısal olarak dışarıda tutan bir mimaride yaşıyor
-// (bkz. core/query) ve arama yolunda onu geri getirmek, en sıcak uçta en pahalı
-// erişim desenini kurmak olurdu.
+// The reason it is asked in bulk is concrete: search brings tens of ids at a
+// time, and asking for visibility per id means as many round trips as there are
+// results. This store lives in an architecture that structurally keeps N+1 out
+// (see core/query), and bringing it back on the search path would mean setting
+// up the most expensive access pattern at the hottest endpoint.
 //
-// Kural [salesChannelVisibleTemplate]'ten gelir, yani tekil sorguyla AYNI
-// tanımdır; ikinci bir kopya çıkarılsaydı biri değiştiğinde arama ile vitrin
-// sessizce ayrışırdı.
+// The rule comes from [salesChannelVisibleTemplate], that is, it is the SAME
+// definition as the single query; had a second copy been made, then when one of
+// them changed, search and the storefront would silently drift apart.
 var visibleProductIDsSQL = `SELECT id FROM product
 WHERE id = ANY($1::text[]) AND deleted_at IS NULL AND ` +
 	salesChannelVisible("product.id", "$2")
 
-// visibleVariantIDsSQL verilen VARYANT kimliklerinden kanallarda görünür
-// olanları döner.
+// visibleVariantIDsSQL returns, out of the given VARIANT ids, the ones that are
+// visible in the channels.
 //
-// # Görünürlük varyantın değil ÜRÜNÜN özelliğidir
+// # Visibility is a property not of the variant but of the PRODUCT
 //
-// Kanal ataması ürüne yapılır ([SalesChannelLinkTable] ürün kimliği taşır) ve
-// varyant onu devralır. Bu yüzden şablona ürün ifadesi olarak varyantın
-// product_id sütunu verilir; kural yeniden yazılmaz, aynı
-// [salesChannelVisibleTemplate] ikinci bir ifadeyle örneklenir. Varyanta ayrı
-// bir atama YOKTUR ve olmamalıdır: aynı ürünün bir varyantının bir vitrinde,
-// diğerinin başka bir vitrinde satılması diye bir kavram yok — vitrin ürünü
-// gösterir, varyant onun bir seçeneğidir.
+// The channel assignment is made to the product ([SalesChannelLinkTable]
+// carries a product id) and the variant inherits it. That is why the variant's
+// product_id column is given to the template as the product expression; the
+// rule is not rewritten, the same [salesChannelVisibleTemplate] is instantiated
+// with a second expression. There IS NO separate assignment for a variant and
+// there must not be: there is no such notion as one variant of the same product
+// being sold in one storefront and another in a different one — the storefront
+// shows the product, the variant is one of its options.
 //
-// # Neden var
+// # Why it exists
 //
-// Kanal kapsamı bir zamanlar YALNIZCA okuma yüzeyinde uygulanıyordu: liste,
-// sayaç, tekil uç ve toplu okuma hepsi buradaki şablondan geçiyordu ama sepete
-// satır ekleyen YAZMA yolu varyantı kimlikle, süzgeçsiz okuyordu. Yani B
-// kanalının publishable anahtarıyla gelen istemci, yalnızca A kanalında
-// satılan bir varyantın kimliğini istek gövdesine yazarak onu satın alabilirdi.
-// Bu sorgu o yolun sorusunu ("bu varyant benim kanallarımda görünür mü") aynı
-// tanıma bağlar; kuralı Go tarafında yeniden yazmak — varyantın ürününün
-// bağlarını çekip kesişime bakmak — ikinci bir tanım olurdu ve ayrıştığı gün
-// vitrin bir ürünü gizlerken sepet onu satmaya devam ederdi.
+// The channel scope was once applied ONLY on the read surface: the list, the
+// count, the single endpoint and the bulk read all went through the template
+// here, but the WRITE path that adds a line to the cart read the variant by id,
+// without a filter. That is, a client arriving with channel B's publishable key
+// could buy a variant sold only in channel A simply by writing its id into the
+// request body. This query binds that path's question ("is this variant visible
+// in my channels") to the same definition; rewriting the rule on the Go side —
+// pulling the bindings of the variant's product and looking at the intersection
+// — would be a second definition, and the day it drifted, the storefront would
+// hide a product while the cart kept selling it.
 //
-// # Neden toplu
+// # Why in bulk
 //
-// Gerekçe [visibleProductIDsSQL] ile aynıdır ve tekrarlanmıyor.
+// The rationale is the same as [visibleProductIDsSQL]'s and is not repeated.
 var visibleVariantIDsSQL = `SELECT v.id FROM product_variant v
 WHERE v.id = ANY($1::text[]) AND v.deleted_at IS NULL AND ` +
 	salesChannelVisible("v.product_id", "$2")
 
-// productVisibleSQL tek bir ürünün verilen kanallarda görünür olup olmadığını
-// sorar.
+// productVisibleSQL asks whether a single product is visible in the given
+// channels.
 //
-// Tekil vitrin ucu bu sorguyu kullanır. Kuralı Go tarafında yeniden yazmak
-// mümkündü (ürünün bağlarını okuyup kesişime bakmak) ama o zaman aynı kural iki
-// ayrı yerde ifade edilir ve biri değiştiğinde liste ile tekil uç ayrışırdı —
-// listede gizlenen bir ürünün tekil ucunun onu göstermesi, gizlemeyi tümüyle
-// anlamsız kılar.
+// The single storefront endpoint uses this query. Rewriting the rule on the Go
+// side was possible (reading the product's bindings and looking at the
+// intersection) but then the same rule would be expressed in two separate
+// places, and when one of them changed the list and the single endpoint would
+// drift apart — the single endpoint showing a product the list hides makes the
+// hiding completely meaningless.
 var productVisibleSQL = `SELECT ` + salesChannelVisible("$1", "$2")
 
-// ListProducts ölçütlere uyan ürünleri sayfalı döner.
+// ListProducts returns the products matching the criteria, paginated.
 //
-// Satırlar KONUMA göre çözülür (pgx.RowToStructByPos). Ada göre çözüm burada
-// çalışmazdı: alan adı CollectionID, sütun adı collection_id ve pgx ikisini
-// eşleştirmek için bir etiket ister; sqlc üretimi etiket yazmaz.
-// Konuma göre çözümün bedeli sıraya bağımlılıktır ve o bağımlılık
-// [productColumns] ile açıkça yazılıp testle sabitlenmiştir.
+// Rows are resolved BY POSITION (pgx.RowToStructByPos). Resolving by name would
+// not work here: the field name is CollectionID, the column name is
+// collection_id and pgx wants a tag to match the two; sqlc generation writes no
+// tag. The price of resolving by position is the dependence on the order, and
+// that dependence is written out explicitly in [productColumns] and pinned down
+// by a test.
 func (r *Repo) ListProducts(ctx context.Context, f ProductFilter) ([]models.Product, error) {
 	rows, err := r.db.Query(ctx, listProductsSQL,
 		f.Status, f.CollectionID, f.Handle, f.Search, f.SalesChannelIDs,
 		toInt32(f.Limit), toInt32(f.Offset))
 	if err != nil {
-		return nil, wrapDB(err, "ürünler listelenemedi")
+		return nil, wrapDB(err, "could not list products")
 	}
-	// CollectRows satırları kapatır ve rows.Err()'i de sonuca katar; hiç satır
-	// yoksa boş dilim döner (nil değil), böylece JSON'da "null" değil "[]" olur.
+	// CollectRows closes the rows and folds rows.Err() into the result too; if
+	// there are no rows at all it returns an empty slice (not nil), so that in
+	// JSON it becomes "[]" and not "null".
 	list, err := pgx.CollectRows(rows, pgx.RowToStructByPos[productdb.Product])
 	if err != nil {
-		return nil, wrapDB(err, "ürünler listelenemedi")
+		return nil, wrapDB(err, "could not list products")
 	}
 	return toProducts(list)
 }
 
-// CountProducts ölçütlere uyan TOPLAM ürün sayısını döner.
+// CountProducts returns the TOTAL number of products matching the criteria.
 //
-// Sayı, sayfalama zarfının ("count") kaynağıdır ve limit/offset'ten
-// BAĞIMSIZDIR; istemci kaç sayfa olduğunu ancak böyle bilebilir. Satış kanalı
-// süzgeci burada da uygulanır: sayaç süzülmemiş kümeyi gösterseydi vitrin
-// istemcisi hiç dolmayan sayfalar isterdi.
+// The number is the source of the pagination envelope ("count") and is
+// INDEPENDENT of limit/offset; only this way can the client know how many pages
+// there are. The sales channel filter is applied here as well: had the count
+// shown the unfiltered set, the storefront client would ask for pages that
+// never fill.
 func (r *Repo) CountProducts(ctx context.Context, f ProductFilter) (int, error) {
 	var n int64
 	err := r.db.QueryRow(ctx, countProductsSQL,
 		f.Status, f.CollectionID, f.Handle, f.Search, f.SalesChannelIDs).Scan(&n)
 	if err != nil {
-		return 0, wrapDB(err, "ürün sayısı okunamadı")
+		return 0, wrapDB(err, "could not read product count")
 	}
 	return int(n), nil
 }
 
-// ProductVisibleInSalesChannels ürünün verilen satış kanallarında görünür olup
-// olmadığını bildirir.
+// ProductVisibleInSalesChannels reports whether the product is visible in the
+// given sales channels.
 //
-// salesChannelIDs nil ise sonuç her zaman true'dur (istek kanal kimliği
-// taşımıyordur); sorgu yine de veritabanına gider çünkü kararı kural veren tek
-// yer [salesChannelVisibleTemplate] olmalıdır. Çağıran gereksiz turdan
-// kaçınmak isterse nil durumunu kendisi kısa devre yapar.
+// If salesChannelIDs is nil the result is always true (the request carries no
+// channel id); the query still goes to the database, because the only place
+// that gives the verdict must be [salesChannelVisibleTemplate]. If the caller
+// wants to avoid the needless round trip, it short-circuits the nil case
+// itself.
 func (r *Repo) ProductVisibleInSalesChannels(
 	ctx context.Context,
 	productID string,
@@ -322,53 +346,56 @@ func (r *Repo) ProductVisibleInSalesChannels(
 ) (bool, error) {
 	var visible bool
 	if err := r.db.QueryRow(ctx, productVisibleSQL, productID, salesChannelIDs).Scan(&visible); err != nil {
-		return false, wrapDB(err, "ürünün satış kanalı görünürlüğü okunamadı: %s", productID)
+		return false, wrapDB(err, "could not read the product's sales channel visibility: %s", productID)
 	}
 	return visible, nil
 }
 
-// VisibleProductIDs verilen kimliklerden kanallarda görünür olanları TEK
-// sorguda döner.
+// VisibleProductIDs returns, out of the given ids, the ones visible in the
+// channels in a SINGLE query.
 //
-// Sonuç bir küme olarak döner çünkü çağıranın tek ihtiyacı üyelik sorusudur;
-// dilim dönseydi her çağıran kendi haritasını kurardı ve sıralama, dilimin
-// taşımadığı bir anlam gibi görünürdü — istek sırası çağıranın elindedir.
+// The result is returned as a set because the caller's only need is the
+// membership question; had a slice been returned every caller would build its
+// own map, and the ordering would look like a meaning the slice does not carry
+// — the order of the request is in the caller's hands.
 func (r *Repo) VisibleProductIDs(
 	ctx context.Context,
 	productIDs []string,
 	salesChannelIDs []string,
 ) (map[string]struct{}, error) {
-	return r.visibleIDs(ctx, visibleProductIDsSQL, productIDs, salesChannelIDs, "ürün")
+	return r.visibleIDs(ctx, visibleProductIDsSQL, productIDs, salesChannelIDs, "product")
 }
 
-// VisibleVariantIDs verilen varyant kimliklerinden kanallarda görünür olanları
-// TEK sorguda döner.
+// VisibleVariantIDs returns, out of the given variant ids, the ones visible in
+// the channels in a SINGLE query.
 //
-// Sepete satır ekleyen akış, varyantın kanal kapsamını Query katmanı üzerinden
-// bu yola sorar (bkz. service/provider.go). Kuralın kendisi ve neden varyantın
-// değil ürününün sorulduğu [visibleVariantIDsSQL] belgesindedir.
+// The flow that adds a line to the cart asks this path for the variant's
+// channel scope over the Query layer (see service/provider.go). The rule itself
+// and why the product is asked about rather than the variant are in the
+// documentation of [visibleVariantIDsSQL].
 //
-// Sonucun küme olması ve boş girdinin tur atmaması [VisibleProductIDs] ile
-// aynı gerekçelerdir.
+// The result being a set, and an empty input not making a round trip, are for
+// the same reasons as in [Repo.VisibleProductIDs].
 func (r *Repo) VisibleVariantIDs(
 	ctx context.Context,
 	variantIDs []string,
 	salesChannelIDs []string,
 ) (map[string]struct{}, error) {
-	return r.visibleIDs(ctx, visibleVariantIDsSQL, variantIDs, salesChannelIDs, "varyant")
+	return r.visibleIDs(ctx, visibleVariantIDsSQL, variantIDs, salesChannelIDs, "variant")
 }
 
-// visibleIDs bir toplu görünürlük sorgusunu çalıştırır ve dönen kimlikleri
-// ÜYELİK kümesine çevirir.
+// visibleIDs runs a bulk visibility query and turns the returned ids into a
+// MEMBERSHIP set.
 //
-// İki toplu sorgu ([visibleProductIDsSQL] ve [visibleVariantIDsSQL]) yalnızca
-// hangi tablodan seçtiklerinde ayrılır; gövdeyi paylaşmaları, birinin bir gün
-// rows.Err()'i unutması ya da boş girdide gereksiz tur atması gibi sessiz bir
-// ayrışmayı imkânsız kılar. Kural zaten tek şablondadır; bu, kuralı ÇAĞIRAN
-// yolun da tek olmasını sağlar.
+// The two bulk queries ([visibleProductIDsSQL] and [visibleVariantIDsSQL])
+// differ only in which table they select from; their sharing the body makes a
+// silent drift — one of them forgetting rows.Err() one day, or making a
+// needless round trip on empty input — impossible. The rule is already in a
+// single template; this makes the path that CALLS the rule single as well.
 //
-// kind hata mesajına giren varlık adıdır ("ürün", "varyant"); mesajı sorgudan
-// türetmek, operatörün gördüğü metni SQL'in biçimine bağlardı.
+// kind is the entity name that goes into the error message ("product",
+// "variant"); deriving the message from the query would tie the text the
+// operator sees to the shape of the SQL.
 func (r *Repo) visibleIDs(
 	ctx context.Context,
 	sql string,
@@ -382,18 +409,18 @@ func (r *Repo) visibleIDs(
 
 	rows, err := r.db.Query(ctx, sql, ids, salesChannelIDs)
 	if err != nil {
-		return nil, wrapDB(err, "%s görünürlüğü okunamadı (%d kimlik)", kind, len(ids))
+		return nil, wrapDB(err, "could not read %s visibility (%d ids)", kind, len(ids))
 	}
 
 	found, err := pgx.CollectRows(rows, pgx.RowTo[string])
 	if err != nil {
-		return nil, wrapDB(err, "%s görünürlüğü okunamadı (%d kimlik)", kind, len(ids))
+		return nil, wrapDB(err, "could not read %s visibility (%d ids)", kind, len(ids))
 	}
 
-	gorunur := make(map[string]struct{}, len(found))
+	visible := make(map[string]struct{}, len(found))
 	for _, id := range found {
-		gorunur[id] = struct{}{}
+		visible[id] = struct{}{}
 	}
 
-	return gorunur, nil
+	return visible, nil
 }

@@ -15,23 +15,23 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/product/service"
 )
 
-// Bu dosya vitrinin SATIŞ KANALI süzgecini sınar.
+// This file tests the SALES CHANNEL filter of the storefront.
 //
-// Kural: kanal ataması OLMAYAN ürün tüm kanallarda görünür, ataması OLAN ürün
-// yalnızca atandığı kanallarda görünür. Buradaki testler kuralın SERVİS
-// tarafındaki karşılığını (opsiyonun taşınması, tekil ucun da süzülmesi,
-// sayfalamanın bozulmaması) doğrular; kuralın SQL'de gerçekten uygulandığı
-// entegrasyon testlerinde kanıtlanır — sahte depo kendi yazdığı koşulu
-// doğrulayamaz.
+// The rule: a product with NO channel assignment is visible in all channels, a
+// product that HAS one is visible only in the channels it is assigned to. The
+// tests here verify the SERVICE-side counterpart of the rule (the option being
+// carried through, the single endpoint being filtered too, the paging not
+// breaking); that the rule is really applied in SQL is proven in the integration
+// tests — a fake repository cannot verify the condition it wrote itself.
 
-// channelFixture kanal süzme testlerinin ortak kurulumudur.
+// channelFixture is the shared setup of the channel filtering tests.
 type channelFixture struct {
 	svc   *service.Service
 	links *fakeLinker
 	store *memStore
 }
 
-// newChannelFixture yayında ürünler kurulabilen bir servis üretir.
+// newChannelFixture builds a service on which published products can be set up.
 func newChannelFixture(t *testing.T) channelFixture {
 	t.Helper()
 
@@ -40,17 +40,18 @@ func newChannelFixture(t *testing.T) channelFixture {
 	return channelFixture{svc: newService(t, store, links, nil), links: links, store: store}
 }
 
-// variantProvider fikstürün deposu üzerinde bir varyant sağlayıcısı üretir.
+// variantProvider builds a variant provider over the fixture's repository.
 //
-// Sağlayıcı YAZMA yolunun kapsam sorusunu soran yüzeydir (sepet akışı Query
-// üzerinden buraya iner); vitrin testleriyle aynı fikstürde durması bilinçlidir
-// — iki yüzeyin aynı kurulumda AYNI cevabı vermesi, kuralın tek olduğunu
-// söyleyen şeydir.
+// The provider is the surface that asks the scope question on the WRITE path
+// (the cart flow comes down here through Query); that it sits in the same
+// fixture as the storefront tests is deliberate — the two surfaces giving THE
+// SAME answer in the same setup is what says the rule is one.
 func (f channelFixture) variantProvider() query.Provider {
 	return service.NewVariantProvider(f.store)
 }
 
-// storeHandles vitrin listesinden dönen ürünlerin handle'larını verir.
+// storeHandles gives the handles of the products returned from the storefront
+// list.
 func storeHandles(items []service.StoreProduct) []string {
 	out := make([]string, 0, len(items))
 	for i := range items {
@@ -59,105 +60,112 @@ func storeHandles(items []service.StoreProduct) []string {
 	return out
 }
 
-// TestSalesChannelLinkTableMatchesLinkName deponun elle yazdığı link tablosu
-// adının, servisin bildirdiği link adından TÜREDİĞİNİ doğrular.
+// TestSalesChannelLinkTableMatchesLinkName verifies that the link table name the
+// repository writes by hand IS DERIVED FROM the link name the service declares.
 //
-// İki sabit iki ayrı pakette yaşar ve aralarında derleyici bağı yoktur: depo
-// service'i import edemez (service zaten depoyu import eder), bu yüzden tablo
-// adı elle yazılmıştır. Ayrışırlarsa süzgeç var olmayan bir tabloyu sorar ve
-// vitrin listesi tümüyle düşer — ama bu ancak veritabanına gidildiğinde,
-// yani entegrasyon testinde görülürdü. Bu test bağı hızlı takıma taşır.
+// The two constants live in two separate packages and there is no compiler bond
+// between them: the repository cannot import service (service already imports
+// the repository), which is why the table name is written by hand. If they drift
+// apart the filter asks for a table that does not exist and the storefront list
+// falls over entirely — but that would only be seen once the database is
+// reached, that is, in an integration test. This test moves the bond to the fast
+// suite.
 func TestSalesChannelLinkTableMatchesLinkName(t *testing.T) {
 	t.Parallel()
 
 	table, err := link.TableName(service.LinkProductSalesChannel)
-	require.NoError(t, err, "link adı çekirdeğin tablo adı doğrulamasından geçmeli")
+	require.NoError(t, err, "the link name should pass the core's table name validation")
 	assert.Equal(t, table, repository.SalesChannelLinkTable,
-		"deponun sorguladığı tablo, bildirilen link adından türeyen tablo olmalı")
+		"the table the repository queries should be the table derived from the declared link name")
 }
 
-// TestStoreListingShowsUnassignedProductInEveryChannel kuralın GERİYE UYUMLU
-// yarısını doğrular: hiç kanal ataması olmayan ürün her kanalda görünür.
+// TestStoreListingShowsUnassignedProductInEveryChannel verifies the BACKWARDS
+// COMPATIBLE half of the rule: a product with no channel assignment at all is
+// visible in every channel.
 //
-// Bu, katı alternatifin (atanmamış = gizli) bilinçli olarak seçilmediğinin
-// kanıtıdır; seçilseydi mevcut kataloglar bir gecede boşalırdı.
+// This is the evidence that the strict alternative (unassigned = hidden) was
+// deliberately not chosen; had it been, the existing catalogs would empty out
+// overnight.
 func TestStoreListingShowsUnassignedProductInEveryChannel(t *testing.T) {
 	t.Parallel()
 
 	fx := newChannelFixture(t)
 	ctx := context.Background()
-	seedProduct(t, fx.svc, "tisort", "Tişört")
+	seedProduct(t, fx.svc, "shirt", "Shirt")
 
 	for _, channels := range [][]string{{"sc_a"}, {"sc_b"}, {"sc_a", "sc_b"}} {
 		result, err := fx.svc.ListStoreProducts(ctx, service.StoreListOptions{SalesChannelIDs: channels})
 		require.NoError(t, err)
-		assert.Equal(t, []string{"tisort"}, storeHandles(result.Items),
-			"atamasız ürün %v kanallarında da görünmeli", channels)
-		assert.Equal(t, 1, sayac(t, result), "sayaç da atamasız ürünü saymalı")
+		assert.Equal(t, []string{"shirt"}, storeHandles(result.Items),
+			"an unassigned product should be visible in the %v channels too", channels)
+		assert.Equal(t, 1, requireCount(t, result), "the count should count the unassigned product too")
 	}
 }
 
-// TestStoreListingHidesProductFromForeignChannel kuralın SÜZEN yarısını
-// doğrular: A kanalına atanan ürün A'da görünür, B'de görünmez.
+// TestStoreListingHidesProductFromForeignChannel verifies the FILTERING half of
+// the rule: a product assigned to channel A is visible in A and not in B.
 //
-// Arızanın kendisi buydu — publishable anahtarın kanalları çözülüyor ama hiçbir
-// modül okumuyordu, dolayısıyla her anahtar AYNI kataloğu alıyordu.
+// The fault itself was exactly this — the channels of the publishable key were
+// being resolved but no module was reading them, so every key got THE SAME
+// catalog.
 func TestStoreListingHidesProductFromForeignChannel(t *testing.T) {
 	t.Parallel()
 
 	fx := newChannelFixture(t)
 	ctx := context.Background()
-	product := seedProduct(t, fx.svc, "tisort", "Tişört")
+	product := seedProduct(t, fx.svc, "shirt", "Shirt")
 	require.NoError(t, fx.svc.AddProductSalesChannel(ctx, product.ID, "sc_a"))
 
 	visible, err := fx.svc.ListStoreProducts(ctx, service.StoreListOptions{SalesChannelIDs: []string{"sc_a"}})
 	require.NoError(t, err)
-	assert.Equal(t, []string{"tisort"}, storeHandles(visible.Items), "ürün atandığı kanalda görünmeli")
-	assert.Equal(t, 1, sayac(t, visible))
+	assert.Equal(t, []string{"shirt"}, storeHandles(visible.Items), "the product should be visible in the channel it is assigned to")
+	assert.Equal(t, 1, requireCount(t, visible))
 
 	hidden, err := fx.svc.ListStoreProducts(ctx, service.StoreListOptions{SalesChannelIDs: []string{"sc_b"}})
 	require.NoError(t, err)
-	assert.Empty(t, hidden.Items, "ürün atanmadığı kanalda GÖRÜNMEMELİ")
-	assert.Zero(t, sayac(t, hidden), "sayaç da gizlenen ürünü saymamalı")
+	assert.Empty(t, hidden.Items, "the product SHOULD NOT BE VISIBLE in a channel it is not assigned to")
+	assert.Zero(t, requireCount(t, hidden), "the count should not count the hidden product either")
 }
 
-// TestStoreListingShowsProductInAllAssignedChannels çoktan çoğa bağın gerçekten
-// çoklu olduğunu doğrular.
+// TestStoreListingShowsProductInAllAssignedChannels verifies that the many to
+// many link really is multiple.
 //
-// Kardinalite yanlış bildirilseydi (OneToOne/OneToMany) ikinci atama çakışmayla
-// düşer ve ürün ikinci vitrinde hiç görünmezdi.
+// Had the cardinality been declared wrongly (OneToOne/OneToMany), the second
+// assignment would fall over with a conflict and the product would not be
+// visible in the second storefront at all.
 func TestStoreListingShowsProductInAllAssignedChannels(t *testing.T) {
 	t.Parallel()
 
 	fx := newChannelFixture(t)
 	ctx := context.Background()
-	product := seedProduct(t, fx.svc, "tisort", "Tişört")
+	product := seedProduct(t, fx.svc, "shirt", "Shirt")
 	require.NoError(t, fx.svc.AddProductSalesChannel(ctx, product.ID, "sc_a"))
 	require.NoError(t, fx.svc.AddProductSalesChannel(ctx, product.ID, "sc_b"))
 
 	for _, channel := range []string{"sc_a", "sc_b"} {
 		result, err := fx.svc.ListStoreProducts(ctx, service.StoreListOptions{SalesChannelIDs: []string{channel}})
 		require.NoError(t, err)
-		assert.Equal(t, []string{"tisort"}, storeHandles(result.Items),
-			"iki kanala atanmış ürün %q kanalında da görünmeli", channel)
+		assert.Equal(t, []string{"shirt"}, storeHandles(result.Items),
+			"a product assigned to two channels should be visible in the %q channel too", channel)
 	}
 
 	ids, err := fx.svc.ProductSalesChannelIDs(ctx, product.ID)
 	require.NoError(t, err)
-	assert.ElementsMatch(t, []string{"sc_a", "sc_b"}, ids, "her iki bağ da kalıcı olmalı")
+	assert.ElementsMatch(t, []string{"sc_a", "sc_b"}, ids, "both links should be durable")
 }
 
-// TestRemoveSalesChannelMakesProductGloballyVisible son bağı kaldırmanın ürünü
-// GİZLEMEDİĞİNİ, tersine her kanalda görünür kıldığını doğrular.
+// TestRemoveSalesChannelMakesProductGloballyVisible verifies that removing the
+// last link DOES NOT HIDE the product but, on the contrary, makes it visible in
+// every channel.
 //
-// Kuralın en kolay yanlış anlaşılan sonucu budur; davranış godoc'ta yazılıdır
-// ve burada kilitlenir.
+// This is the most easily misunderstood consequence of the rule; the behavior is
+// written down in the godoc and is pinned here.
 func TestRemoveSalesChannelMakesProductGloballyVisible(t *testing.T) {
 	t.Parallel()
 
 	fx := newChannelFixture(t)
 	ctx := context.Background()
-	product := seedProduct(t, fx.svc, "tisort", "Tişört")
+	product := seedProduct(t, fx.svc, "shirt", "Shirt")
 	require.NoError(t, fx.svc.AddProductSalesChannel(ctx, product.ID, "sc_a"))
 
 	hidden, err := fx.svc.ListStoreProducts(ctx, service.StoreListOptions{SalesChannelIDs: []string{"sc_b"}})
@@ -168,28 +176,30 @@ func TestRemoveSalesChannelMakesProductGloballyVisible(t *testing.T) {
 
 	result, err := fx.svc.ListStoreProducts(ctx, service.StoreListOptions{SalesChannelIDs: []string{"sc_b"}})
 	require.NoError(t, err)
-	assert.Equal(t, []string{"tisort"}, storeHandles(result.Items),
-		"ataması kalmayan ürün yine tüm kanallarda görünür")
+	assert.Equal(t, []string{"shirt"}, storeHandles(result.Items),
+		"a product left with no assignment is visible in all channels again")
 }
 
-// TestStoreListingFilterKeepsPagingConsistent süzgecin SAYFALAMAYI bozmadığını
-// doğrular.
+// TestStoreListingFilterKeepsPagingConsistent verifies that the filter does not
+// break THE PAGING.
 //
-// Süzme Go tarafında yapılsaydı LIMIT/OFFSET süzülmemiş küme üzerinde
-// uygulanır, sayfalar eksik dolar ve toplam sayaç istemcinin hiç ulaşamayacağı
-// sayfaları vaat ederdi. Test iki iddiayı birlikte kilitler: sayaç SÜZÜLMÜŞ
-// kümeyi yansıtır ve sayfalar o sayacın söylediği kadar kayıt taşır.
+// Had the filtering been done on the Go side, LIMIT/OFFSET would be applied over
+// the unfiltered set, the pages would fill up short and the total count would
+// promise pages the client could never reach. The test pins two assertions
+// together: the count reflects the FILTERED set and the pages carry as many
+// records as that count says.
 func TestStoreListingFilterKeepsPagingConsistent(t *testing.T) {
 	t.Parallel()
 
 	fx := newChannelFixture(t)
 	ctx := context.Background()
 
-	// Altı ürünün ikisi yabancı bir kanala atanır; kalan dördü atamasızdır.
+	// Two of the six products are assigned to a foreign channel; the remaining
+	// four are unassigned.
 	var hidden []string
 	for i := range 6 {
-		handle := fmt.Sprintf("urun-%d", i)
-		product := seedProduct(t, fx.svc, handle, "Ürün "+handle)
+		handle := fmt.Sprintf("product-%d", i)
+		product := seedProduct(t, fx.svc, handle, "Product "+handle)
 		if i%3 == 0 {
 			require.NoError(t, fx.svc.AddProductSalesChannel(ctx, product.ID, "sc_b"))
 			hidden = append(hidden, handle)
@@ -206,199 +216,203 @@ func TestStoreListingFilterKeepsPagingConsistent(t *testing.T) {
 			Offset:          offset,
 		})
 		require.NoError(t, err)
-		assert.Equal(t, 4, sayac(t, page),
-			"toplam sayaç SÜZÜLMÜŞ kümeyi yansıtmalı (offset=%d)", offset)
+		assert.Equal(t, 4, requireCount(t, page),
+			"the total count should reflect the FILTERED set (offset=%d)", offset)
 		for _, handle := range storeHandles(page.Items) {
-			assert.NotContains(t, hidden, handle, "yabancı kanalın ürünü hiçbir sayfada görünmemeli")
+			assert.NotContains(t, hidden, handle, "the foreign channel's product should not appear on any page")
 			seen[handle] = true
 		}
 	}
-	assert.Len(t, seen, 4, "sayacın vaat ettiği kadar kayıt sayfalardan toplanmalı")
+	assert.Len(t, seen, 4, "as many records as the count promised should be gathered from the pages")
 }
 
-// TestGetStoreProductIsFilteredToo TEKİL ucun da süzüldüğünü doğrular.
+// TestGetStoreProductIsFilteredToo verifies that the SINGLE endpoint is filtered
+// as well.
 //
-// Listede gizleyip tekil uçta göstermek gizlemeyi anlamsız kılardı: vitrin
-// adresleri handle taşır, yani tahmin edilebilir olan tam da bu uçtur.
-// Yabancı kanalda görünmeyen ürün, yayında olmayan ürünle AYNI hatayı
-// (NotFound) döner; farklı bir sınıf ürünün varlığını ele verirdi.
+// Hiding in the list and showing through the single endpoint would make the
+// hiding pointless: storefront addresses carry the handle, that is, this is
+// exactly the endpoint that is guessable. A product invisible in a foreign
+// channel returns the SAME error (NotFound) as an unpublished one; a different
+// kind would give away the product's existence.
 func TestGetStoreProductIsFilteredToo(t *testing.T) {
 	t.Parallel()
 
 	fx := newChannelFixture(t)
 	ctx := context.Background()
-	product := seedProduct(t, fx.svc, "tisort", "Tişört")
+	product := seedProduct(t, fx.svc, "shirt", "Shirt")
 	require.NoError(t, fx.svc.AddProductSalesChannel(ctx, product.ID, "sc_a"))
 
-	found, err := fx.svc.GetStoreProduct(ctx, "tisort", []string{"sc_a"})
+	found, err := fx.svc.GetStoreProduct(ctx, "shirt", []string{"sc_a"})
 	require.NoError(t, err)
 	assert.Equal(t, product.ID, found.ID)
 
-	_, err = fx.svc.GetStoreProduct(ctx, "tisort", []string{"sc_b"})
+	_, err = fx.svc.GetStoreProduct(ctx, "shirt", []string{"sc_b"})
 	require.Error(t, err)
-	assert.True(t, errors.IsNotFound(err), "yabancı kanalda ürün bulunamamalı: %v", err)
+	assert.True(t, errors.IsNotFound(err), "the product should not be findable in a foreign channel: %v", err)
 
-	// Kimlikle çağrı da aynı süzgece tabidir; handle'ı kapatıp kimliği açık
-	// bırakmak gizlemeyi delerdi.
+	// A call by id is subject to the same filter; closing the handle and leaving
+	// the id open would pierce the hiding.
 	_, err = fx.svc.GetStoreProduct(ctx, product.ID, []string{"sc_b"})
 	require.Error(t, err)
-	assert.True(t, errors.IsNotFound(err), "kimlikle çağrı da süzülmeli: %v", err)
+	assert.True(t, errors.IsNotFound(err), "a call by id should be filtered too: %v", err)
 }
 
-// TestStoreListingWithoutChannelIdentityIsNotFiltered nil kanal listesinin
-// "süzme yok" demek olduğunu doğrular.
+// TestStoreListingWithoutChannelIdentityIsNotFiltered verifies that a nil channel
+// list means "no filtering".
 //
-// Bu, mağaza kimlik doğrulamasının hiç bağlanmadığı kurulumdur (product tek
-// başına dağıtılabilir). Süzgeç uygulansaydı böyle bir kurulumda vitrin
-// sessizce boşalırdı.
+// This is the setup where store authentication is not wired up at all (product
+// is deployable on its own). Had the filter been applied, the storefront would
+// silently empty out in such a setup.
 func TestStoreListingWithoutChannelIdentityIsNotFiltered(t *testing.T) {
 	t.Parallel()
 
 	fx := newChannelFixture(t)
 	ctx := context.Background()
-	product := seedProduct(t, fx.svc, "tisort", "Tişört")
+	product := seedProduct(t, fx.svc, "shirt", "Shirt")
 	require.NoError(t, fx.svc.AddProductSalesChannel(ctx, product.ID, "sc_a"))
 
 	result, err := fx.svc.ListStoreProducts(ctx, service.StoreListOptions{})
 	require.NoError(t, err)
-	assert.Equal(t, []string{"tisort"}, storeHandles(result.Items),
-		"kanal kimliği taşımayan istekte süzgeç uygulanmamalı")
+	assert.Equal(t, []string{"shirt"}, storeHandles(result.Items),
+		"the filter should not be applied on a request that carries no channel identity")
 
-	single, err := fx.svc.GetStoreProduct(ctx, "tisort", nil)
+	single, err := fx.svc.GetStoreProduct(ctx, "shirt", nil)
 	require.NoError(t, err)
 	assert.Equal(t, product.ID, single.ID)
 }
 
-// TestStoreListingWithEmptyChannelSetShowsOnlyUnassigned KANALSIZ bir kimliğin
-// savunmacı davranışını sabitler.
+// TestStoreListingWithEmptyChannelSetShowsOnlyUnassigned pins the defensive
+// behavior of an identity WITH NO CHANNELS.
 //
-// Pratikte bu durum oluşmaz: auth, etkin kanalı kalmamış bir publishable
-// anahtarı zaten reddeder. Yine de bir gün oluşursa boş küme "süzme yok" DEĞİL,
-// "eşleşecek kanal yok" sayılır — tersi, kanalsız bir kimliğe tüm kanalların
-// katalogunu açardı. Atamasız ürünler görünmeye devam eder; kuralın kendisi
-// değişmez, yalnızca eşleşecek kanal yoktur.
+// In practice this case does not occur: auth already rejects a publishable key
+// that has no active channel left. Should it occur one day all the same, an
+// empty set counts NOT as "no filtering" but as "there is no channel to match" —
+// the opposite would open the catalog of all channels to an identity with no
+// channels. Unassigned products keep showing up; the rule itself does not
+// change, there is simply no channel to match.
 func TestStoreListingWithEmptyChannelSetShowsOnlyUnassigned(t *testing.T) {
 	t.Parallel()
 
 	fx := newChannelFixture(t)
 	ctx := context.Background()
-	assigned := seedProduct(t, fx.svc, "atanmis", "Atanmış")
-	seedProduct(t, fx.svc, "atanmamis", "Atanmamış")
+	assigned := seedProduct(t, fx.svc, "assigned", "Assigned")
+	seedProduct(t, fx.svc, "unassigned", "Unassigned")
 	require.NoError(t, fx.svc.AddProductSalesChannel(ctx, assigned.ID, "sc_a"))
 
 	result, err := fx.svc.ListStoreProducts(ctx, service.StoreListOptions{SalesChannelIDs: []string{}})
 	require.NoError(t, err)
-	assert.Equal(t, []string{"atanmamis"}, storeHandles(result.Items),
-		"kanalsız kimlik yalnızca atamasız ürünleri görmeli")
-	assert.Equal(t, 1, sayac(t, result))
+	assert.Equal(t, []string{"unassigned"}, storeHandles(result.Items),
+		"an identity with no channels should see only the unassigned products")
+	assert.Equal(t, 1, requireCount(t, result))
 }
 
-// TestAdminListingIgnoresSalesChannels yönetim listelemesinin süzülmediğini
-// doğrular.
+// TestAdminListingIgnoresSalesChannels verifies that the admin listing is not
+// filtered.
 //
-// Yönetim kimliğinin satış kanalı yoktur ve kataloğu bütün olarak görmesi
-// gerekir; süzülseydi bir ürünü bir kanala atamak onu yönetim listesinden de
-// düşürürdü.
+// The admin identity has no sales channel and has to see the catalog as a whole;
+// were it filtered, assigning a product to a channel would drop it from the
+// admin listing too.
 func TestAdminListingIgnoresSalesChannels(t *testing.T) {
 	t.Parallel()
 
 	fx := newChannelFixture(t)
 	ctx := context.Background()
-	product := seedProduct(t, fx.svc, "tisort", "Tişört")
+	product := seedProduct(t, fx.svc, "shirt", "Shirt")
 	require.NoError(t, fx.svc.AddProductSalesChannel(ctx, product.ID, "sc_a"))
 
 	result, err := fx.svc.ListProducts(ctx, service.ListProductsOptions{})
 	require.NoError(t, err)
 	require.Len(t, result.Items, 1)
-	assert.Equal(t, "tisort", result.Items[0].Handle)
+	assert.Equal(t, "shirt", result.Items[0].Handle)
 }
 
-// TestAddSalesChannelRejectsUnknownProduct var olmayan bir ürüne bağ
-// kurulamadığını doğrular.
+// TestAddSalesChannelRejectsUnknownProduct verifies that no link can be created
+// to a product that does not exist.
 //
-// Link servisi kimlikleri serbest dizge olarak görür; denetim olmasaydı yazım
-// hatası taşıyan bir kimlik sessizce bağlanır ve o bağ hiçbir sorguda
-// görünmezdi.
+// The link service sees the ids as free-form strings; without the check an id
+// carrying a typo would be linked silently and that link would show up in no
+// query.
 func TestAddSalesChannelRejectsUnknownProduct(t *testing.T) {
 	t.Parallel()
 
 	fx := newChannelFixture(t)
 
-	err := fx.svc.AddProductSalesChannel(context.Background(), "prod_yok", "sc_a")
+	err := fx.svc.AddProductSalesChannel(context.Background(), "prod_missing", "sc_a")
 	require.Error(t, err)
-	assert.True(t, errors.IsNotFound(err), "beklenen sınıf not_found: %v", err)
-	assert.Empty(t, fx.links.linked(service.LinkProductSalesChannel, "prod_yok"),
-		"reddedilen istek bağ bırakmamalı")
+	assert.True(t, errors.IsNotFound(err), "the expected kind is not_found: %v", err)
+	assert.Empty(t, fx.links.linked(service.LinkProductSalesChannel, "prod_missing"),
+		"a rejected request should leave no link behind")
 }
 
-// TestAddSalesChannelIsIdempotent aynı bağın ikinci kez kurulmasının hata
-// vermediğini doğrular.
+// TestAddSalesChannelIsIdempotent verifies that creating the same link a second
+// time does not give an error.
 //
-// Yeniden denenen bir yönetim isteği (ya da bir saga adımı) aynı çifti tekrar
-// bağlar; çakışma dönmek onu arıza gibi gösterirdi.
+// A retried admin request (or a saga step) links the same pair again; returning
+// a conflict would make it look like a fault.
 func TestAddSalesChannelIsIdempotent(t *testing.T) {
 	t.Parallel()
 
 	fx := newChannelFixture(t)
 	ctx := context.Background()
-	product := seedProduct(t, fx.svc, "tisort", "Tişört")
+	product := seedProduct(t, fx.svc, "shirt", "Shirt")
 
 	require.NoError(t, fx.svc.AddProductSalesChannel(ctx, product.ID, "sc_a"))
 	require.NoError(t, fx.svc.AddProductSalesChannel(ctx, product.ID, "sc_a"))
 
 	assert.Equal(t, []string{"sc_a"}, fx.links.linked(service.LinkProductSalesChannel, product.ID),
-		"ikinci çağrı ikinci bir satır eklememeli")
+		"the second call should not add a second row")
 }
 
-// TestDeleteProductCleansSalesChannelLinks silinen ürünün kanal bağlarının
-// temizlendiğini doğrular.
+// TestDeleteProductCleansSalesChannelLinks verifies that the channel links of a
+// deleted product are cleaned up.
 //
-// Bağ kalsaydı, auth tarafında ters yönde yapılan bir okuma ("bu kanalda hangi
-// ürünler var") silinmiş bir ürüne çıkardı.
+// Had the link remained, a read in the reverse direction on the auth side
+// ("which products are in this channel") would land on a deleted product.
 func TestDeleteProductCleansSalesChannelLinks(t *testing.T) {
 	t.Parallel()
 
 	fx := newChannelFixture(t)
 	ctx := context.Background()
-	product := seedProduct(t, fx.svc, "tisort", "Tişört")
+	product := seedProduct(t, fx.svc, "shirt", "Shirt")
 	require.NoError(t, fx.svc.AddProductSalesChannel(ctx, product.ID, "sc_a"))
 
 	require.NoError(t, fx.svc.DeleteProduct(ctx, product.ID))
 
 	assert.Empty(t, fx.links.linked(service.LinkProductSalesChannel, product.ID),
-		"silinen ürünün kanal bağı kalmamalı")
+		"no channel link of the deleted product should remain")
 }
 
-// TestSalesChannelLinksRequireLinkService link servisi olmadan kurulmuş bir
-// servisin tipli "hazır değil" hatası döndüğünü doğrular.
+// TestSalesChannelLinksRequireLinkService verifies that a service built without
+// a link service returns a typed "not ready" error.
 func TestSalesChannelLinksRequireLinkService(t *testing.T) {
 	t.Parallel()
 
 	svc := newService(t, newMemStore(), nil, nil)
-	product := seedProduct(t, svc, "tisort", "Tişört")
+	product := seedProduct(t, svc, "shirt", "Shirt")
 	ctx := context.Background()
 
 	err := svc.AddProductSalesChannel(ctx, product.ID, "sc_a")
 	require.Error(t, err)
-	assert.True(t, errors.HasKind(err, errors.KindUnavailable), "beklenen sınıf unavailable: %v", err)
+	assert.True(t, errors.HasKind(err, errors.KindUnavailable), "the expected kind is unavailable: %v", err)
 
 	_, err = svc.ProductSalesChannelIDs(ctx, product.ID)
 	require.Error(t, err)
-	assert.True(t, errors.HasKind(err, errors.KindUnavailable), "beklenen sınıf unavailable: %v", err)
+	assert.True(t, errors.HasKind(err, errors.KindUnavailable), "the expected kind is unavailable: %v", err)
 }
 
-// --- YAZMA yolunun kapsam sorusu -------------------------------------------
+// --- The scope question of the WRITE path -----------------------------------
 //
-// Aşağıdaki testler kuralın vitrinden başka bir yerde de sorulduğunu sınar:
-// sepete satır ekleyen akış varyantı Query katmanından okur ve okumayı isteğin
-// kanallarıyla kapsar. Kuralın kendisi burada YENİDEN yazılmaz — sağlayıcı
-// depoya iner, depo da vitrin listesiyle aynı şablonu kullanır — bu yüzden
-// buradaki iddialar kuralın DOĞRULUĞUNU değil, yazma yolunun aynı kurala
-// BAĞLANDIĞINI kanıtlar. SQL'in gerçekten doğru olduğu entegrasyon
-// testlerindedir.
+// The tests below check that the rule is asked somewhere other than the
+// storefront as well: the flow that adds a line to the cart reads the variant
+// from the Query layer and scopes that read with the request's channels. The
+// rule itself is NOT rewritten here — the provider goes down to the repository
+// and the repository uses the same template as the storefront listing — so the
+// assertions here prove not the CORRECTNESS of the rule but that the write path
+// is BOUND to the same rule. Whether the SQL is really right is in the
+// integration tests.
 
-// varyantKimlikleri sağlayıcı kayıtlarından varyant kimliklerini çıkarır.
-func varyantKimlikleri(records []query.Record) []string {
+// variantIDsOf extracts the variant ids from the provider records.
+func variantIDsOf(records []query.Record) []string {
 	out := make([]string, 0, len(records))
 	for i := range records {
 		id, _ := records[i][query.IDField].(string)
@@ -407,90 +421,93 @@ func varyantKimlikleri(records []query.Record) []string {
 	return out
 }
 
-// TestVariantProviderScopesBySalesChannel varyant okumasının kanal süzgecine
-// uyduğunu doğrular.
+// TestVariantProviderScopesBySalesChannel verifies that the variant read obeys
+// the channel filter.
 //
-// Üç durum da sınanır çünkü üçü de yazma yolunda karşılaşılır: atanmış
-// varyantın kendi kanalında görünmesi, yabancı kanalda görünmemesi ve
-// atamasız varyantın her kanalda görünmesi.
+// All three cases are tested because all three are met on the write path: an
+// assigned variant being visible in its own channel, not being visible in a
+// foreign channel, and an unassigned variant being visible in every channel.
 func TestVariantProviderScopesBySalesChannel(t *testing.T) {
 	t.Parallel()
 
 	fx := newChannelFixture(t)
 	ctx := context.Background()
 
-	atanmis := seedProduct(t, fx.svc, "tisort", "Tişört")
-	require.NoError(t, fx.svc.AddProductSalesChannel(ctx, atanmis.ID, "sc_a"))
-	atamasiz := seedProduct(t, fx.svc, "corap", "Çorap")
+	assigned := seedProduct(t, fx.svc, "shirt", "Shirt")
+	require.NoError(t, fx.svc.AddProductSalesChannel(ctx, assigned.ID, "sc_a"))
+	unassigned := seedProduct(t, fx.svc, "socks", "Socks")
 
-	atanmisVaryant := atanmis.Variants[0].ID
-	atamasizVaryant := atamasiz.Variants[0].ID
+	assignedVariant := assigned.Variants[0].ID
+	unassignedVariant := unassigned.Variants[0].ID
 	provider := fx.variantProvider()
 
-	testler := map[string]struct {
-		kanallar []string
-		beklenen []string
+	cases := map[string]struct {
+		channels []string
+		expected []string
 	}{
-		"kendi kanalı": {
-			kanallar: []string{"sc_a"},
-			beklenen: []string{atanmisVaryant, atamasizVaryant},
+		"its own channel": {
+			channels: []string{"sc_a"},
+			expected: []string{assignedVariant, unassignedVariant},
 		},
-		"yabancı kanal": {
-			kanallar: []string{"sc_b"},
-			beklenen: []string{atamasizVaryant},
+		"a foreign channel": {
+			channels: []string{"sc_b"},
+			expected: []string{unassignedVariant},
 		},
-		"kanalsız kimlik": {
-			// Boş ama nil OLMAYAN dilim: kimlik var, kanalı yok. Yalnızca
-			// atamasız varyant kalır — okuma yüzeyindeki anlamın aynısı.
-			kanallar: []string{},
-			beklenen: []string{atamasizVaryant},
+		"an identity with no channels": {
+			// An empty but NON-nil slice: there is an identity, it has no
+			// channel. Only the unassigned variant remains — the same meaning as
+			// on the read surface.
+			channels: []string{},
+			expected: []string{unassignedVariant},
 		},
 	}
 
-	for ad, tt := range testler {
-		t.Run(ad, func(t *testing.T) {
+	for name, tt := range cases {
+		t.Run(name, func(t *testing.T) {
 			records, err := provider.List(ctx, query.ListOptions{
 				Filters: map[string]any{
-					"ids":                         []string{atanmisVaryant, atamasizVaryant},
-					service.FilterSalesChannelIDs: tt.kanallar,
+					"ids":                         []string{assignedVariant, unassignedVariant},
+					service.FilterSalesChannelIDs: tt.channels,
 				},
 			})
 			require.NoError(t, err)
-			assert.ElementsMatch(t, tt.beklenen, varyantKimlikleri(records))
+			assert.ElementsMatch(t, tt.expected, variantIDsOf(records))
 		})
 	}
 }
 
-// TestVariantProviderWithoutChannelFilterSeesEverything süzgecin SESSİZ bir
-// varsayılanı olmadığını doğrular.
+// TestVariantProviderWithoutChannelFilterSeesEverything verifies that the filter
+// has no SILENT default.
 //
-// Anahtar hiç verilmezse kapsam uygulanmaz: bu yüzeyden okuyan her çağıranın
-// arkasında bir müşteri isteği yoktur ve olmayan bir kimliğe göre süzmek,
-// kimliksiz kurulumlarda sepeti tümüyle çalışmaz kılardı.
+// If the key is not given at all the scope is not applied: not every caller that
+// reads from this surface has a customer request behind it, and filtering by an
+// identity that does not exist would make the cart entirely unusable in setups
+// with no identity.
 func TestVariantProviderWithoutChannelFilterSeesEverything(t *testing.T) {
 	t.Parallel()
 
 	fx := newChannelFixture(t)
 	ctx := context.Background()
 
-	atanmis := seedProduct(t, fx.svc, "tisort", "Tişört")
-	require.NoError(t, fx.svc.AddProductSalesChannel(ctx, atanmis.ID, "sc_a"))
+	assigned := seedProduct(t, fx.svc, "shirt", "Shirt")
+	require.NoError(t, fx.svc.AddProductSalesChannel(ctx, assigned.ID, "sc_a"))
 
 	records, err := fx.variantProvider().List(ctx, query.ListOptions{
-		Filters: map[string]any{"ids": []string{atanmis.Variants[0].ID}},
+		Filters: map[string]any{"ids": []string{assigned.Variants[0].ID}},
 	})
 	require.NoError(t, err)
-	assert.Equal(t, []string{atanmis.Variants[0].ID}, varyantKimlikleri(records),
-		"süzgeç istenmediğinde atanmış varyant da görünmeli")
+	assert.Equal(t, []string{assigned.Variants[0].ID}, variantIDsOf(records),
+		"when no filter is asked for, the assigned variant should be visible too")
 }
 
-// TestVariantProviderRejectsChannelFilterWithoutIDs kanal süzgecinin kimliksiz
-// kullanımının REDDEDİLDİĞİNİ doğrular.
+// TestVariantProviderRejectsChannelFilterWithoutIDs verifies that using the
+// channel filter without ids is REJECTED.
 //
-// Kimliksiz yollar sayfalamayı veritabanında yapar; süzgeç orada bellek içinde
-// uygulansaydı sayfa SESSİZCE eksik dolardı. Sessizce yanlış sayfalayan bir
-// yüzey açmaktansa bileşimi reddetmek yeğdir; gerekçenin tamamı
-// [service.NewVariantProvider]'ın List belgesindedir.
+// The paths without ids do their paging in the database; had the filter been
+// applied there in memory, the page would SILENTLY fill up short. Rejecting the
+// combination is better than opening a surface that pages wrongly in silence;
+// the full rationale is in the List documentation of
+// [service.NewVariantProvider].
 func TestVariantProviderRejectsChannelFilterWithoutIDs(t *testing.T) {
 	t.Parallel()
 
@@ -502,5 +519,5 @@ func TestVariantProviderRejectsChannelFilterWithoutIDs(t *testing.T) {
 
 	require.Error(t, err)
 	assert.True(t, errors.HasKind(err, errors.KindInvalid),
-		"desteklenmeyen bileşim errors.Invalid olmalı (ADR 0004): %v", err)
+		"an unsupported combination should be errors.Invalid (ADR 0004): %v", err)
 }

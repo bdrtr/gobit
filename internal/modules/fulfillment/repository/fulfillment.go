@@ -11,15 +11,15 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/fulfillment/repository/fulfillmentdb"
 )
 
-// Bu dosya GÖNDERİLERİN ve kalemlerinin erişimidir. Kargo kataloğunun erişimi
-// shipping.go'dadır.
+// This file is the access to FULFILLMENTS and their items. The access to the
+// shipping catalog is in shipping.go.
 
-// InsertFulfillmentIfAbsent gönderiyi yalnızca idempotency anahtarı henüz
-// kullanılmamışsa yazar.
+// InsertFulfillmentIfAbsent writes the fulfillment only if the idempotency key
+// has not been used yet.
 //
-// İkinci dönüş değeri satırın yazılıp yazılmadığıdır; çakışma HATA DEĞİLDİR.
-// Kaybeden taraf, kazananın işlemi bitene kadar bekler ve sonra
-// [Repository.FulfillmentByIdempotencyKey] ile tamamlanmış satırı okur.
+// The second return value is whether the row was written; a conflict IS NOT AN
+// ERROR. The losing side waits until the winner's transaction ends and then
+// reads the completed row with [Repository.FulfillmentByIdempotencyKey].
 func (r *Repository) InsertFulfillmentIfAbsent(
 	ctx context.Context,
 	ful models.Fulfillment,
@@ -43,7 +43,7 @@ func (r *Repository) InsertFulfillmentIfAbsent(
 		if errors.Is(err, pgx.ErrNoRows) {
 			return models.Fulfillment{}, false, nil
 		}
-		return models.Fulfillment{}, false, classify(err, codeQueryFailed, "gönderi oluşturulamadı")
+		return models.Fulfillment{}, false, classify(err, codeQueryFailed, "could not create fulfillment")
 	}
 	created, err := toFulfillment(row)
 	if err != nil {
@@ -52,21 +52,22 @@ func (r *Repository) InsertFulfillmentIfAbsent(
 	return created, true, nil
 }
 
-// GetFulfillment gönderiyi kimliğiyle döner; yoksa NotFound.
-// Kalemler DOLDURULMAZ; onlar [Repository.ListFulfillmentItems] ile okunur.
+// GetFulfillment returns the fulfillment by its identifier; NotFound if there is
+// none. Items ARE NOT FILLED IN; they are read with
+// [Repository.ListFulfillmentItems].
 func (r *Repository) GetFulfillment(ctx context.Context, id string) (models.Fulfillment, error) {
 	row, err := r.queries(ctx).GetFulfillment(ctx, id)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return models.Fulfillment{}, fulfillmentNotFound(id)
 		}
-		return models.Fulfillment{}, classify(err, codeQueryFailed, "gönderi okunamadı")
+		return models.Fulfillment{}, classify(err, codeQueryFailed, "could not read fulfillment")
 	}
 	return toFulfillment(row)
 }
 
-// FulfillmentByIdempotencyKey aynı anahtarla oluşturulmuş gönderiyi döner;
-// yoksa NotFound.
+// FulfillmentByIdempotencyKey returns the fulfillment created with the same key;
+// NotFound if there is none.
 func (r *Repository) FulfillmentByIdempotencyKey(
 	ctx context.Context,
 	key string,
@@ -75,15 +76,15 @@ func (r *Repository) FulfillmentByIdempotencyKey(
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return models.Fulfillment{}, errors.NotFound(codeFulfillmentNotFound,
-				"bu idempotency anahtarıyla oluşturulmuş bir gönderi yok: %s", key)
+				"there is no fulfillment created with this idempotency key: %s", key)
 		}
-		return models.Fulfillment{}, classify(err, codeQueryFailed, "gönderi okunamadı")
+		return models.Fulfillment{}, classify(err, codeQueryFailed, "could not read fulfillment")
 	}
 	return toFulfillment(row)
 }
 
-// LockFulfillment gönderiyi işlem boyunca kilitler ve güncel hâlini döner.
-// Durum geçişleri yalnızca bu kilit altında yapılır.
+// LockFulfillment locks the fulfillment for the duration of the transaction and
+// returns its current state. Status transitions are only made under this lock.
 func (r *Repository) LockFulfillment(ctx context.Context, id string) (models.Fulfillment, error) {
 	if err := requireTx(ctx, "LockFulfillment"); err != nil {
 		return models.Fulfillment{}, err
@@ -93,13 +94,13 @@ func (r *Repository) LockFulfillment(ctx context.Context, id string) (models.Ful
 		if errors.Is(err, pgx.ErrNoRows) {
 			return models.Fulfillment{}, fulfillmentNotFound(id)
 		}
-		return models.Fulfillment{}, classify(err, codeQueryFailed, "gönderi kilitlenemedi")
+		return models.Fulfillment{}, classify(err, codeQueryFailed, "could not lock fulfillment")
 	}
 	return toFulfillment(row)
 }
 
-// ListFulfillments gönderileri süzerek ve sayfalayarak döner.
-// İkinci dönüş değeri süzgece uyan TÜM satırların sayısıdır.
+// ListFulfillments returns the fulfillments filtered and paginated.
+// The second return value is the count of ALL rows matching the filter.
 func (r *Repository) ListFulfillments(
 	ctx context.Context,
 	filter models.FulfillmentFilter,
@@ -111,7 +112,7 @@ func (r *Repository) ListFulfillments(
 		RowOffset: filter.Offset,
 	})
 	if err != nil {
-		return nil, 0, classify(err, codeQueryFailed, "gönderiler listelenemedi")
+		return nil, 0, classify(err, codeQueryFailed, "could not list fulfillments")
 	}
 
 	total, err := r.queries(ctx).CountFulfillments(ctx, fulfillmentdb.CountFulfillmentsParams{
@@ -119,7 +120,7 @@ func (r *Repository) ListFulfillments(
 		Status:    filter.Status,
 	})
 	if err != nil {
-		return nil, 0, classify(err, codeQueryFailed, "gönderiler sayılamadı")
+		return nil, 0, classify(err, codeQueryFailed, "could not count fulfillments")
 	}
 
 	out := make([]models.Fulfillment, 0, len(rows))
@@ -133,7 +134,8 @@ func (r *Repository) ListFulfillments(
 	return out, total, nil
 }
 
-// UpdateFulfillmentProviderResult sağlayıcının yanıtını gönderi satırına yazar.
+// UpdateFulfillmentProviderResult writes the provider's response into the
+// fulfillment row.
 func (r *Repository) UpdateFulfillmentProviderResult(
 	ctx context.Context,
 	id, externalID string,
@@ -158,13 +160,13 @@ func (r *Repository) UpdateFulfillmentProviderResult(
 		if errors.Is(err, pgx.ErrNoRows) {
 			return models.Fulfillment{}, fulfillmentNotFound(id)
 		}
-		return models.Fulfillment{}, classify(err, codeQueryFailed, "gönderi güncellenemedi")
+		return models.Fulfillment{}, classify(err, codeQueryFailed, "could not update fulfillment")
 	}
 	return toFulfillment(row)
 }
 
-// UpdateFulfillmentStatus gönderinin durumunu, takip bilgisini ve zaman
-// damgalarını MUTLAK değerlerle yazar.
+// UpdateFulfillmentStatus writes the fulfillment's status, tracking information
+// and timestamps with ABSOLUTE values.
 func (r *Repository) UpdateFulfillmentStatus(
 	ctx context.Context,
 	id string,
@@ -185,14 +187,14 @@ func (r *Repository) UpdateFulfillmentStatus(
 		if errors.Is(err, pgx.ErrNoRows) {
 			return models.Fulfillment{}, fulfillmentNotFound(id)
 		}
-		return models.Fulfillment{}, classify(err, codeQueryFailed, "gönderi durumu güncellenemedi")
+		return models.Fulfillment{}, classify(err, codeQueryFailed, "could not update fulfillment status")
 	}
 	return toFulfillment(row)
 }
 
-// --- gönderi kalemleri -------------------------------------------------------
+// --- fulfillment items -------------------------------------------------------
 
-// CreateFulfillmentItem gönderiye bir kalem ekler.
+// CreateFulfillmentItem adds an item to the fulfillment.
 func (r *Repository) CreateFulfillmentItem(
 	ctx context.Context,
 	item models.FulfillmentItem,
@@ -204,19 +206,19 @@ func (r *Repository) CreateFulfillmentItem(
 		Quantity:      item.Quantity,
 	})
 	if err != nil {
-		return models.FulfillmentItem{}, classify(err, codeQueryFailed, "gönderi kalemi eklenemedi")
+		return models.FulfillmentItem{}, classify(err, codeQueryFailed, "could not add fulfillment item")
 	}
 	return toItem(row), nil
 }
 
-// ListFulfillmentItems bir gönderinin kalemlerini döner.
+// ListFulfillmentItems returns the items of a fulfillment.
 func (r *Repository) ListFulfillmentItems(
 	ctx context.Context,
 	fulfillmentID string,
 ) ([]models.FulfillmentItem, error) {
 	rows, err := r.queries(ctx).ListFulfillmentItems(ctx, fulfillmentID)
 	if err != nil {
-		return nil, classify(err, codeQueryFailed, "gönderi kalemleri listelenemedi")
+		return nil, classify(err, codeQueryFailed, "could not list fulfillment items")
 	}
 	out := make([]models.FulfillmentItem, 0, len(rows))
 	for i := range rows {
@@ -225,8 +227,8 @@ func (r *Repository) ListFulfillmentItems(
 	return out, nil
 }
 
-// FulfillmentItemsByFulfillments kalemleri BİRDEN ÇOK gönderi için TEK sorguda
-// döner (N+1 yok).
+// FulfillmentItemsByFulfillments returns the items for MORE THAN ONE fulfillment
+// in a SINGLE query (no N+1).
 func (r *Repository) FulfillmentItemsByFulfillments(
 	ctx context.Context,
 	fulfillmentIDs []string,
@@ -236,7 +238,7 @@ func (r *Repository) FulfillmentItemsByFulfillments(
 	}
 	rows, err := r.queries(ctx).ListFulfillmentItemsByFulfillments(ctx, fulfillmentIDs)
 	if err != nil {
-		return nil, classify(err, codeQueryFailed, "gönderi kalemleri listelenemedi")
+		return nil, classify(err, codeQueryFailed, "could not list fulfillment items")
 	}
 	out := make([]models.FulfillmentItem, 0, len(rows))
 	for i := range rows {
@@ -245,12 +247,13 @@ func (r *Repository) FulfillmentItemsByFulfillments(
 	return out, nil
 }
 
-// --- manuel sağlayıcının defteri ---------------------------------------------
+// --- the manual provider's ledger --------------------------------------------
 
-// InsertManualShipmentIfAbsent sağlayıcı gönderisini yalnızca idempotency
-// anahtarı henüz kullanılmamışsa yazar.
+// InsertManualShipmentIfAbsent writes the provider shipment only if the
+// idempotency key has not been used yet.
 //
-// İkinci dönüş değeri satırın yazılıp yazılmadığıdır; çakışma HATA DEĞİLDİR.
+// The second return value is whether the row was written; a conflict IS NOT AN
+// ERROR.
 func (r *Repository) InsertManualShipmentIfAbsent(
 	ctx context.Context,
 	shipment models.ManualShipment,
@@ -271,12 +274,13 @@ func (r *Repository) InsertManualShipmentIfAbsent(
 			return models.ManualShipment{}, false, nil
 		}
 		return models.ManualShipment{}, false, classify(err, codeQueryFailed,
-			"manuel sağlayıcı gönderisi oluşturulamadı")
+			"could not create manual provider shipment")
 	}
 	return toManualShipment(row), true, nil
 }
 
-// ManualShipment sağlayıcı gönderisini kimliğiyle döner; yoksa NotFound.
+// ManualShipment returns the provider shipment by its identifier; NotFound if
+// there is none.
 func (r *Repository) ManualShipment(ctx context.Context, id string) (models.ManualShipment, error) {
 	row, err := r.queries(ctx).GetManualShipment(ctx, id)
 	if err != nil {
@@ -284,13 +288,13 @@ func (r *Repository) ManualShipment(ctx context.Context, id string) (models.Manu
 			return models.ManualShipment{}, manualShipmentNotFound(id)
 		}
 		return models.ManualShipment{}, classify(err, codeQueryFailed,
-			"manuel sağlayıcı gönderisi okunamadı")
+			"could not read manual provider shipment")
 	}
 	return toManualShipment(row), nil
 }
 
-// ManualShipmentByIdempotencyKey sağlayıcı gönderisini anahtarıyla döner;
-// yoksa NotFound.
+// ManualShipmentByIdempotencyKey returns the provider shipment by its key;
+// NotFound if there is none.
 func (r *Repository) ManualShipmentByIdempotencyKey(
 	ctx context.Context,
 	key string,
@@ -299,16 +303,16 @@ func (r *Repository) ManualShipmentByIdempotencyKey(
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return models.ManualShipment{}, errors.NotFound(codeManualShipmentNotFound,
-				"bu idempotency anahtarıyla açılmış bir sağlayıcı gönderisi yok: %s", key)
+				"there is no provider shipment opened with this idempotency key: %s", key)
 		}
 		return models.ManualShipment{}, classify(err, codeQueryFailed,
-			"manuel sağlayıcı gönderisi okunamadı")
+			"could not read manual provider shipment")
 	}
 	return toManualShipment(row), nil
 }
 
-// LockManualShipment sağlayıcı gönderisini işlem boyunca kilitler ve güncel
-// hâlini döner.
+// LockManualShipment locks the provider shipment for the duration of the
+// transaction and returns its current state.
 func (r *Repository) LockManualShipment(ctx context.Context, id string) (models.ManualShipment, error) {
 	if err := requireTx(ctx, "LockManualShipment"); err != nil {
 		return models.ManualShipment{}, err
@@ -319,13 +323,13 @@ func (r *Repository) LockManualShipment(ctx context.Context, id string) (models.
 			return models.ManualShipment{}, manualShipmentNotFound(id)
 		}
 		return models.ManualShipment{}, classify(err, codeQueryFailed,
-			"manuel sağlayıcı gönderisi kilitlenemedi")
+			"could not lock manual provider shipment")
 	}
 	return toManualShipment(row), nil
 }
 
-// UpdateManualShipmentState sağlayıcı defterindeki durumu ve takip bilgisini
-// MUTLAK değerlerle yazar.
+// UpdateManualShipmentState writes the status and the tracking information in
+// the provider ledger with ABSOLUTE values.
 func (r *Repository) UpdateManualShipmentState(
 	ctx context.Context,
 	id string,
@@ -344,7 +348,7 @@ func (r *Repository) UpdateManualShipmentState(
 			return models.ManualShipment{}, manualShipmentNotFound(id)
 		}
 		return models.ManualShipment{}, classify(err, codeQueryFailed,
-			"manuel sağlayıcı gönderisi güncellenemedi")
+			"could not update manual provider shipment")
 	}
 	return toManualShipment(row), nil
 }

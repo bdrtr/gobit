@@ -10,25 +10,26 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/product/repository"
 )
 
-// CreateOptionInput bir seçeneğin (ve değerlerinin) girdisidir.
+// CreateOptionInput is the input of an option (and of its values).
 type CreateOptionInput struct {
 	Title  string
 	Values []string
 	Rank   int32
 }
 
-// CreateVariantInput yeni bir varyantın girdisidir.
+// CreateVariantInput is the input of a new variant.
 //
-// Varyantın seçenek değerleri İKİ yoldan verilebilir:
+// The option values of the variant can be given in TWO ways:
 //
-//   - OptionValueIDs: değerlerin kimlikleri bilindiğinde (varyant mevcut bir
-//     ürüne eklenirken).
-//   - Options: seçenek BAŞLIĞI -> DEĞER eşlemesi. Ürün ve seçenekleri aynı
-//     istekte oluşturulurken değerlerin kimlikleri henüz bilinmez; bu yol o
-//     durumda tek pratik çözümdür.
+//   - OptionValueIDs: when the ids of the values are known (while a variant is
+//     being added to an existing product).
+//   - Options: an option TITLE -> VALUE mapping. When the product and its
+//     options are created in the same request the ids of the values are not yet
+//     known; this way is the only practical solution in that case.
 //
-// İkisi birden verilebilir; aynı seçeneğe iki farklı değer düşerse istek
-// reddedilir (sessizce biri seçilseydi hangi varyantın oluştuğu tahmin edilemezdi).
+// Both can be given at once; if two different values fall onto the same option
+// the request is rejected (had one been picked silently, which variant was
+// created would be unpredictable).
 type CreateVariantInput struct {
 	Title           string
 	SKU             *string
@@ -44,7 +45,8 @@ type CreateVariantInput struct {
 	Options         map[string]string
 }
 
-// UpdateVariantInput bir varyantın kısmi güncellemesidir; nil alan değişmez.
+// UpdateVariantInput is the partial update of a variant; a nil field does not
+// change.
 type UpdateVariantInput struct {
 	Title           *string
 	SKU             *string
@@ -56,39 +58,41 @@ type UpdateVariantInput struct {
 	Weight          *int32
 	Rank            *int32
 	Metadata        map[string]any
-	// OptionValueIDs nil ise seçenek değerleri değişmez; verilirse varyantın
-	// TÜM seçenek değerleri bu kümeyle değiştirilir.
+	// OptionValueIDs, when nil, leaves the option values unchanged; when given,
+	// ALL of the variant's option values are replaced with this set.
 	OptionValueIDs []string
 }
 
-// ListVariantsOptions varyant listelemesinin ölçütleridir.
+// ListVariantsOptions is the criteria of a variant listing.
 type ListVariantsOptions struct {
 	ProductID *string
 	Limit     int
 	Offset    int
-	// WithOptionValues true ise varyantların seçenek değerleri TEK sorguyla
-	// doldurulur.
+	// WithOptionValues, when true, fills the option values of the variants with
+	// a SINGLE query.
 	WithOptionValues bool
 }
 
-// binding varyantın bir seçenekteki değerini gösterir.
+// binding shows the variant's value under one option.
 type binding struct {
 	optionID string
 	valueID  string
 }
 
-// CreateVariant ürüne varyant ekler.
+// CreateVariant adds a variant to the product.
 //
-// Ürün yoksa (ya da silinmişse) errors.NotFound döner: varyantın sahibi
-// olmadan yazılması, hiçbir listede görünmeyen bir kayıt üretirdi.
+// If the product does not exist (or has been deleted) errors.NotFound is
+// returned: writing the variant without its owner would produce a record that
+// shows up in no listing.
 //
-// Ürün kontrolü varyantla AYNI İŞLEMDE ve satır kilidiyle yapılır. İşlemin
-// dışında yapılsaydı eşzamanlı bir DeleteProduct kontrol ile INSERT arasına
-// girebilirdi: silme SOFT olduğu için product_variant üzerindeki foreign key
-// boşluğu kapatmaz ve ortaya deleted_at'i NULL olan, sahibi silinmiş bir
-// varyant çıkardı — admin uçlarında ve "variant.query" sağlayıcısında görünen,
-// ama hiçbir ürüne bağlı olmayan bir kayıt. Kilit iki isteği sıraya dizer
-// (bkz. repository.Store.GetProductForUpdate).
+// The product check is done IN THE SAME TRANSACTION as the variant and with a
+// row lock. Had it been done outside the transaction, a concurrent DeleteProduct
+// could slip between the check and the INSERT: because the delete is SOFT, the
+// foreign key on product_variant does not close the gap and out would come a
+// variant whose deleted_at is NULL but whose owner is deleted — a record visible
+// on the admin endpoints and in the "variant.query" provider but bound to no
+// product. The lock lines the two requests up (see
+// repository.Store.GetProductForUpdate).
 func (s *Service) CreateVariant(ctx context.Context, productID string, in CreateVariantInput) (models.Variant, error) {
 	if _, err := requireID("product_id", productID); err != nil {
 		return models.Variant{}, err
@@ -113,7 +117,7 @@ func (s *Service) CreateVariant(ctx context.Context, productID string, in Create
 	return s.GetVariant(ctx, created.ID)
 }
 
-// GetVariant varyantı seçenek değerleriyle birlikte döner.
+// GetVariant returns the variant together with its option values.
 func (s *Service) GetVariant(ctx context.Context, id string) (models.Variant, error) {
 	if _, err := requireID("id", id); err != nil {
 		return models.Variant{}, err
@@ -131,7 +135,7 @@ func (s *Service) GetVariant(ctx context.Context, id string) (models.Variant, er
 	return variants[0], nil
 }
 
-// ListVariants ölçütlere uyan varyantları sayfalı döner.
+// ListVariants returns the variants matching the criteria, paginated.
 func (s *Service) ListVariants(ctx context.Context, opts ListVariantsOptions) (ListResult[models.Variant], error) {
 	limit, offset, err := normalizePaging(opts.Limit, opts.Offset)
 	if err != nil {
@@ -156,7 +160,7 @@ func (s *Service) ListVariants(ctx context.Context, opts ListVariantsOptions) (L
 	return ListResult[models.Variant]{Items: variants, Count: &count, Offset: offset, Limit: limit}, nil
 }
 
-// UpdateVariant varyantı kısmi olarak günceller.
+// UpdateVariant updates the variant partially.
 func (s *Service) UpdateVariant(ctx context.Context, id string, in UpdateVariantInput) (models.Variant, error) {
 	if _, err := requireID("id", id); err != nil {
 		return models.Variant{}, err
@@ -198,7 +202,7 @@ func (s *Service) UpdateVariant(ctx context.Context, id string, in UpdateVariant
 	return s.GetVariant(ctx, id)
 }
 
-// DeleteVariant varyantı SOFT siler ve fiyat/stok bağlarını temizler.
+// DeleteVariant SOFT deletes the variant and cleans up its price/stock links.
 func (s *Service) DeleteVariant(ctx context.Context, id string) error {
 	if _, err := requireID("id", id); err != nil {
 		return err
@@ -211,7 +215,7 @@ func (s *Service) DeleteVariant(ctx context.Context, id string) error {
 	return nil
 }
 
-// SetVariantOptionValues varyantın seçenek değerlerini verilen kümeyle değiştirir.
+// SetVariantOptionValues replaces the variant's option values with the given set.
 func (s *Service) SetVariantOptionValues(ctx context.Context, variantID string, valueIDs []string) error {
 	if _, err := requireID("variant_id", variantID); err != nil {
 		return err
@@ -226,12 +230,13 @@ func (s *Service) SetVariantOptionValues(ctx context.Context, variantID string, 
 	})
 }
 
-// CreateOption ürüne seçenek (ve verilen değerlerini) ekler.
+// CreateOption adds an option (and the values given with it) to the product.
 //
-// Dönen kayıt SAKLANAN satırdır, bellekteki model değil: zaman damgaları
-// yalnızca veritabanında üretilir ve modelin sıfır damgalarını dönmek
-// yanıtta "0001-01-01T00:00:00Z" üretirdi. Diğer tüm create uçları da
-// veritabanının döndürdüğü satırı döner; bu sözleşme ortaktır.
+// The returned record is the STORED row, not the in-memory model: the
+// timestamps are produced only in the database, and returning the model's zero
+// timestamps would produce "0001-01-01T00:00:00Z" in the response. Every other
+// create endpoint returns the row the database gave back too; this contract is
+// shared.
 func (s *Service) CreateOption(ctx context.Context, productID string, in CreateOptionInput) (models.Option, error) {
 	if _, err := requireID("product_id", productID); err != nil {
 		return models.Option{}, err
@@ -243,11 +248,11 @@ func (s *Service) CreateOption(ctx context.Context, productID string, in CreateO
 
 	var created models.Option
 	err = s.repo.InTx(ctx, func(ctx context.Context, tx repository.Store) error {
-		// Ürünün varlığı İŞLEMİN İÇİNDE ve satır kilidiyle doğrulanır.
-		// Dışarıda doğrulanırsa araya giren bir DELETE /admin/v1/products/{id}
-		// sonrası sahibi silinmiş ama deleted_at'i NULL olan bir seçenek kalır;
-		// silme SOFT olduğu için foreign key bu boşluğu kapatmaz
-		// (bkz. CreateVariant'taki aynı desen).
+		// The existence of the product is verified INSIDE THE TRANSACTION and
+		// with a row lock. If it is verified outside, an intervening DELETE
+		// /admin/v1/products/{id} leaves an option whose owner is deleted but
+		// whose deleted_at is NULL; because the delete is SOFT the foreign key
+		// does not close that gap (see the same pattern in CreateVariant).
 		if _, err := tx.GetProductForUpdate(ctx, productID); err != nil {
 			return err
 		}
@@ -265,7 +270,7 @@ func (s *Service) CreateOption(ctx context.Context, productID string, in CreateO
 	return created, nil
 }
 
-// ListOptions ürünün seçeneklerini değerleriyle birlikte döner.
+// ListOptions returns the product's options together with their values.
 func (s *Service) ListOptions(ctx context.Context, productID string) ([]models.Option, error) {
 	if _, err := requireID("product_id", productID); err != nil {
 		return nil, err
@@ -278,12 +283,13 @@ func (s *Service) ListOptions(ctx context.Context, productID string) ([]models.O
 	return s.attachOptionValues(ctx, options)
 }
 
-// AddOptionValue mevcut bir seçeneğe değer ekler.
+// AddOptionValue adds a value to an existing option.
 //
-// Yeni değer listenin SONUNA konur: sırası, seçeneğin mevcut en büyük sırasının
-// bir fazlasıdır. Sıra doldurulmasaydı sıfır değer (0) yazılırdı ve okuma
-// sıraya göre yapıldığı için "S(0), M(1), L(2)" tanımlı bir seçeneğe eklenen
-// "XL" listenin sonuna değil BAŞINA düşerdi: "S, XL, M, L".
+// The new value is put at the END of the list: its rank is one more than the
+// option's current largest rank. Had the rank not been filled in, the zero value
+// (0) would be written, and because reads are ordered by rank an "XL" added to
+// an option defined as "S(0), M(1), L(2)" would fall not at the end of the list
+// but at its HEAD: "S, XL, M, L".
 func (s *Service) AddOptionValue(ctx context.Context, optionID, value string) (models.OptionValue, error) {
 	if _, err := requireID("option_id", optionID); err != nil {
 		return models.OptionValue{}, err
@@ -309,10 +315,11 @@ func (s *Service) AddOptionValue(ctx context.Context, optionID, value string) (m
 	})
 }
 
-// nextRank verilen değerlerin ARDINA eklenecek sırayı üretir.
+// nextRank produces the rank to be appended AFTER the given values.
 //
-// Boş listede 0'dır. Taşma math.MaxInt32'de doyurulur: taşan bir sıra negatife
-// döner ve "sona ekle" isteği değeri listenin başına taşırdı.
+// On an empty list it is 0. Overflow saturates at math.MaxInt32: an overflowing
+// rank would turn negative and an "append to the end" request would move the
+// value to the head of the list.
 func nextRank(values []models.OptionValue) int32 {
 	highest := int32(-1)
 	for i := range values {
@@ -326,7 +333,7 @@ func nextRank(values []models.OptionValue) int32 {
 	return highest + 1
 }
 
-// DeleteOption seçeneği SOFT siler.
+// DeleteOption SOFT deletes the option.
 func (s *Service) DeleteOption(ctx context.Context, id string) error {
 	if _, err := requireID("id", id); err != nil {
 		return err
@@ -334,7 +341,7 @@ func (s *Service) DeleteOption(ctx context.Context, id string) error {
 	return s.repo.SoftDeleteOption(ctx, id)
 }
 
-// buildOptions seçenek girdilerini doğrular ve kimlikli modellere çevirir.
+// buildOptions validates the option inputs and turns them into models with ids.
 func buildOptions(productID string, in []CreateOptionInput) ([]models.Option, error) {
 	out := make([]models.Option, 0, len(in))
 	seenTitles := make(map[string]struct{}, len(in))
@@ -346,7 +353,7 @@ func buildOptions(productID string, in []CreateOptionInput) ([]models.Option, er
 		}
 		key := strings.ToLower(title)
 		if _, dup := seenTitles[key]; dup {
-			return nil, invalid("aynı seçenek başlığı iki kez verildi: %q", title)
+			return nil, invalid("the same option title was given twice: %q", title)
 		}
 		seenTitles[key] = struct{}{}
 
@@ -368,7 +375,7 @@ func buildOptions(productID string, in []CreateOptionInput) ([]models.Option, er
 				return nil, err
 			}
 			if _, dup := seenValues[strings.ToLower(value)]; dup {
-				return nil, invalid("%q seçeneğinde aynı değer iki kez verildi: %q", title, value)
+				return nil, invalid("the same value was given twice for the %q option: %q", title, value)
 			}
 			seenValues[strings.ToLower(value)] = struct{}{}
 
@@ -385,11 +392,11 @@ func buildOptions(productID string, in []CreateOptionInput) ([]models.Option, er
 	return out, nil
 }
 
-// writeOptions seçenekleri ve değerlerini yazar; SAKLANAN satırları döner.
+// writeOptions writes the options and their values; it returns the STORED rows.
 //
-// Dönen satırlar veritabanının RETURNING ile verdikleridir. Zaman damgaları
-// orada üretilir, bellekteki model onları taşımaz; yazılan modeli geri dönmek
-// istemciye sıfır damga göstermek olurdu.
+// The returned rows are the ones the database gave back with RETURNING. The
+// timestamps are produced there, the in-memory model does not carry them;
+// returning the written model would mean showing the client zero timestamps.
 func writeOptions(ctx context.Context, tx repository.Store, options []models.Option) ([]models.Option, error) {
 	stored := make([]models.Option, 0, len(options))
 	for i := range options {
@@ -403,8 +410,8 @@ func writeOptions(ctx context.Context, tx repository.Store, options []models.Opt
 			if err != nil {
 				return nil, err
 			}
-			// OptionTitle bir SÜTUN DEĞİLDİR (bkz. models.OptionValue); RETURNING
-			// onu doldurmaz, bu yüzden yazılan modelden taşınır.
+			// OptionTitle IS NOT A COLUMN (see models.OptionValue); RETURNING
+			// does not fill it in, so it is carried over from the written model.
 			value.OptionTitle = options[i].Values[j].OptionTitle
 			option.Values = append(option.Values, value)
 		}
@@ -413,9 +420,10 @@ func writeOptions(ctx context.Context, tx repository.Store, options []models.Opt
 	return stored, nil
 }
 
-// createVariantTx varyantı ve seçenek bağlarını AÇIK BİR İŞLEMDE yazar.
+// createVariantTx writes the variant and its option bindings IN AN OPEN
+// TRANSACTION.
 //
-// fallbackRank, sıra verilmediğinde kullanılan gönderim sırasıdır.
+// fallbackRank is the submission order used when no rank is given.
 func createVariantTx(
 	ctx context.Context,
 	tx repository.Store,
@@ -488,7 +496,7 @@ func createVariantTx(
 	return variant, nil
 }
 
-// replaceOptionValues varyantın seçenek değerlerini verilen kümeyle değiştirir.
+// replaceOptionValues replaces the variant's option values with the given set.
 func replaceOptionValues(ctx context.Context, tx repository.Store, productID, variantID string, valueIDs []string) error {
 	bindings, err := resolveBindings(ctx, tx, productID, valueIDs, nil)
 	if err != nil {
@@ -505,15 +513,17 @@ func replaceOptionValues(ctx context.Context, tx repository.Store, productID, va
 	return nil
 }
 
-// resolveBindings verilen değer kimliklerini ve başlık->değer eşlemesini
-// varyanta yazılacak bağlara çevirir.
+// resolveBindings turns the given value ids and the title->value mapping into
+// the bindings to be written onto the variant.
 //
-// İki doğrulama zorunludur:
+// Two validations are mandatory:
 //
-//   - Değer GERÇEKTEN var olmalıdır. Var olmayan bir kimlik sessizce atlansaydı
-//     varyant eksik seçeneklerle oluşur ve hata ancak vitrinde görülürdü.
-//   - Değer AYNI ÜRÜNÜN seçeneğinden gelmelidir. Başka bir ürünün değeri
-//     bağlanabilseydi, o ürünün seçeneği silindiğinde bu varyant da bozulurdu.
+//   - The value has to REALLY exist. Had an id that does not exist been skipped
+//     silently, the variant would be created with missing options and the bug
+//     would only be seen in the storefront.
+//   - The value has to come from an option of the SAME PRODUCT. Could another
+//     product's value be bound, this variant would break too when that
+//     product's option was deleted.
 func resolveBindings(
 	ctx context.Context,
 	store repository.Store,
@@ -539,11 +549,11 @@ func resolveBindings(
 		for _, id := range ids {
 			ref, ok := found[id]
 			if !ok {
-				return nil, invalid("seçenek değeri bulunamadı: %s", id)
+				return nil, invalid("the option value was not found: %s", id)
 			}
 			if ref.ProductID != productID {
 				return nil, invalid(
-					"seçenek değeri %s başka bir ürüne ait (%s); varyanta yalnızca kendi ürününün değerleri bağlanabilir",
+					"the option value %s belongs to another product (%s); only the values of its own product can be bound to a variant",
 					id, ref.ProductID)
 			}
 			if err := bind(byOption, ref.OptionID, ref.ID, ref.OptionTitle); err != nil {
@@ -568,32 +578,32 @@ func resolveBindings(
 	for optionID, valueID := range byOption {
 		out = append(out, binding{optionID: optionID, valueID: valueID})
 	}
-	// Sıra belirli olmalıdır: aksi hâlde aynı girdi her çalıştırmada farklı
-	// yazma sırası üretir ve testler kararsızlaşır.
+	// The order has to be deterministic: otherwise the same input produces a
+	// different write order on every run and the tests become flaky.
 	slices.SortFunc(out, func(a, b binding) int { return strings.Compare(a.optionID, b.optionID) })
 	return out, nil
 }
 
-// bind bir seçeneğe değer atar; aynı seçeneğe FARKLI ikinci bir değer gelirse
-// hata döner.
+// bind assigns a value to an option; if a DIFFERENT second value arrives for the
+// same option it returns an error.
 func bind(byOption map[string]string, optionID, valueID, optionTitle string) error {
 	if existing, ok := byOption[optionID]; ok && existing != valueID {
-		return invalid("%q seçeneği için iki farklı değer verildi (%s ve %s)", optionTitle, existing, valueID)
+		return invalid("two different values were given for the %q option (%s and %s)", optionTitle, existing, valueID)
 	}
 	byOption[optionID] = valueID
 	return nil
 }
 
-// titleValue başlıkla çözülmüş bir değerin kimliği ve seçenek başlığıdır.
+// titleValue is the id and the option title of a value resolved by title.
 type titleValue struct {
 	id    string
 	title string
 }
 
-// resolveByTitle "seçenek başlığı -> değer" eşlemesini kimliklere çevirir.
+// resolveByTitle turns an "option title -> value" mapping into ids.
 //
-// Eşleştirme büyük/küçük harf duyarsızdır: istemcinin "Beden" ile "beden"
-// yazması aynı seçeneği göstermelidir.
+// The matching is case-insensitive: the client writing "Size" or "size" has to
+// point at the same option.
 func resolveByTitle(
 	ctx context.Context,
 	store repository.Store,
@@ -605,7 +615,7 @@ func resolveByTitle(
 		return nil, err
 	}
 	if len(options) == 0 {
-		return nil, invalid("ürünün tanımlı seçeneği yok; seçenek değeri verilemez (ürün: %s)", productID)
+		return nil, invalid("the product has no defined option; an option value cannot be given (product: %s)", productID)
 	}
 
 	optionIDs := make([]string, 0, len(options))
@@ -629,11 +639,11 @@ func resolveByTitle(
 	for title, value := range byTitle {
 		option, ok := optionByTitle[strings.ToLower(strings.TrimSpace(title))]
 		if !ok {
-			return nil, invalid("ürünün %q başlıklı bir seçeneği yok", title)
+			return nil, invalid("the product has no option titled %q", title)
 		}
 		match, ok := valueByKey[valueKey(option.ID, strings.TrimSpace(value))]
 		if !ok {
-			return nil, invalid("%q seçeneğinin %q değeri tanımlı değil", option.Title, value)
+			return nil, invalid("the %q option has no value %q defined", option.Title, value)
 		}
 		out[option.ID] = titleValue{id: match.ID, title: option.Title}
 	}

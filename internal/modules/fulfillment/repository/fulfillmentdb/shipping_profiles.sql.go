@@ -14,10 +14,11 @@ SELECT COUNT(*) FROM shipping_options
 WHERE shipping_profile_id = $1 AND deleted_at IS NULL
 `
 
-// CountAliveOptionsByProfile profile bağlı YAŞAYAN seçenekleri sayar.
+// CountAliveOptionsByProfile counts the LIVING options bound to the profile.
 //
-// Silme öncesi kontrol içindir: seçeneği duran bir profili silmek, ürünlerin
-// kargo kuralını sessizce ortadan kaldırırdı.
+// It is for the check before a delete: deleting a profile that still has an
+// option standing would silently do away with the shipping rule of the
+// products.
 func (q *Queries) CountAliveOptionsByProfile(ctx context.Context, shippingProfileID string) (int64, error) {
 	row := q.db.QueryRow(ctx, countAliveOptionsByProfile, shippingProfileID)
 	var count int64
@@ -31,13 +32,14 @@ WHERE deleted_at IS NULL
   AND ($1::text IS NULL OR type = $1::text)
 `
 
-// CountShippingProfiles sayfalama zarfının toplam sayısını verir ve
-// ListShippingProfiles ile AYNI filtreleri uygular; ikisi birlikte
-// değiştirilmelidir.
+// CountShippingProfiles gives the total count of the pagination envelope and
+// applies the SAME filters as ListShippingProfiles; the two have to be changed
+// together.
 //
-// Toplam, satırlarla birlikte dönen bir pencere fonksiyonundan okunamaz:
-// aralık dışı bir sayfada hiç satır dönmez, pencere değerlendirilmez ve toplam
-// 0 görünürdü. Toplam sayfanın değil FİLTRENİN sayısıdır.
+// The total cannot be read from a window function returned along with the rows:
+// on an out-of-range page no rows are returned at all, the window is not
+// evaluated and the total would appear as 0. The total is the count of the
+// FILTER, not of the page.
 func (q *Queries) CountShippingProfiles(ctx context.Context, type_ *string) (int64, error) {
 	row := q.db.QueryRow(ctx, countShippingProfiles, type_)
 	var count int64
@@ -59,10 +61,11 @@ type CreateShippingProfileParams struct {
 	Metadata []byte
 }
 
-// shipping_profiles sorguları.
+// shipping_profiles queries.
 //
-// Profil, kargo seçeneklerinin kabıdır ve hangi ürünlere bağlı olduğunu
-// BİLMEZ: ürün-profil bağı Module Links üzerinden kurulur (Prensip 2.1/2.2).
+// A profile is the container of the shipping options and does NOT KNOW which
+// products it is bound to: the product-profile link is established over Module
+// Links (Principle 2.1/2.2).
 func (q *Queries) CreateShippingProfile(ctx context.Context, arg CreateShippingProfileParams) (ShippingProfile, error) {
 	row := q.db.QueryRow(ctx, createShippingProfile,
 		arg.ID,
@@ -151,14 +154,16 @@ WHERE id = $1 AND deleted_at IS NULL
 FOR UPDATE
 `
 
-// LockShippingProfile profili İŞLEM SONUNA KADAR yazma kilidiyle okur.
+// LockShippingProfile reads the profile with a write lock held UNTIL THE END OF
+// THE TRANSACTION.
 //
-// Yumuşak silme, anahtar OLMAYAN bir sütunu güncellediği için kendiliğinden
-// yalnızca FOR NO KEY UPDATE alır; o kilit, bir seçenek INSERT'ünün foreign key
-// için aldığı FOR KEY SHARE ile ÇAKIŞMAZ. Yani "seçeneği var mı" kontrolüyle
-// silme arasına giren bir CreateShippingOption beklemeden tamamlanır ve geriye
-// silinmiş bir profile bağlı CANLI bir seçenek kalırdı (READ COMMITTED'de tek
-// işlem bunu tek başına engellemez). FOR UPDATE, o çakışmayı kuran kilittir.
+// Because a soft delete updates a NON-key column, on its own it takes only
+// FOR NO KEY UPDATE; that lock does NOT CONFLICT with the FOR KEY SHARE an
+// option INSERT takes for the foreign key. That is, a CreateShippingOption
+// landing between the "does it have an option" check and the delete completes
+// without waiting, and a LIVE option bound to a deleted profile would be left
+// behind (under READ COMMITTED a single transaction does not prevent this on
+// its own). FOR UPDATE is the lock that establishes that conflict.
 func (q *Queries) LockShippingProfile(ctx context.Context, id string) (ShippingProfile, error) {
 	row := q.db.QueryRow(ctx, lockShippingProfile, id)
 	var i ShippingProfile
@@ -180,12 +185,13 @@ WHERE id = $1 AND deleted_at IS NULL
 FOR SHARE
 `
 
-// LockShippingProfileShared profili İŞLEM SONUNA KADAR paylaşımlı kilitle
-// okur.
+// LockShippingProfileShared reads the profile with a shared lock held UNTIL THE
+// END OF THE TRANSACTION.
 //
-// Seçenek oluşturma yolu bunu kullanır: birbirine paralel seçenek eklemeleri
-// BEKLEMEZ (FOR SHARE kendisiyle çakışmaz), ama profili silmeye çalışan
-// LockShippingProfile ile çakışır. İki yol böylece serileşir.
+// The option creation path uses this: option insertions running in parallel
+// with one another do NOT WAIT (FOR SHARE does not conflict with itself), but
+// it does conflict with LockShippingProfile, which is trying to delete the
+// profile. The two paths are serialized this way.
 func (q *Queries) LockShippingProfileShared(ctx context.Context, id string) (ShippingProfile, error) {
 	row := q.db.QueryRow(ctx, lockShippingProfileShared, id)
 	var i ShippingProfile
@@ -209,10 +215,11 @@ WHERE id = $1 AND deleted_at IS NULL
 RETURNING id, name, type, metadata, created_at, updated_at, deleted_at
 `
 
-// SoftDeleteShippingProfile profili YUMUŞAK siler (plan Bölüm 8).
+// SoftDeleteShippingProfile SOFT deletes the profile (plan Section 8).
 //
-// Satır fiziksel olarak kalır: gönderisi olan bir seçeneğin profili
-// silindiğinde geçmiş kayıtların kime ait olduğu okunabilmelidir.
+// The row physically remains: when the profile of an option that has
+// fulfillments is deleted, it must stay possible to read whom the historical
+// records belong to.
 func (q *Queries) SoftDeleteShippingProfile(ctx context.Context, id string) (ShippingProfile, error) {
 	row := q.db.QueryRow(ctx, softDeleteShippingProfile, id)
 	var i ShippingProfile

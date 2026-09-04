@@ -10,13 +10,13 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/fulfillment/repository/fulfillmentdb"
 )
 
-// Bu dosya kargo KATALOĞUNUN (profil, seçenek, kural) erişimidir.
-// Gönderilerin erişimi fulfillment.go'dadır.
+// This file is the access to the shipping CATALOG (profile, option, rule).
+// The access to the fulfillments is in fulfillment.go.
 
-// --- kargo profilleri --------------------------------------------------------
+// --- shipping profiles -------------------------------------------------------
 
-// CreateShippingProfile yeni bir kargo profili kaydeder.
-// Aynı ad yaşayan bir profilde kullanılıyorsa Conflict döner.
+// CreateShippingProfile records a new shipping profile.
+// If the same name is in use by a living profile it returns Conflict.
 func (r *Repository) CreateShippingProfile(
 	ctx context.Context,
 	profile models.ShippingProfile,
@@ -33,44 +33,45 @@ func (r *Repository) CreateShippingProfile(
 		Metadata: meta,
 	})
 	if err != nil {
-		return models.ShippingProfile{}, classify(err, codeQueryFailed, "kargo profili oluşturulamadı")
+		return models.ShippingProfile{}, classify(err, codeQueryFailed, "could not create shipping profile")
 	}
 	return toProfile(row)
 }
 
-// GetShippingProfile profili kimliğiyle döner; yoksa NotFound.
+// GetShippingProfile returns the profile by its identifier; NotFound if there is
+// none.
 func (r *Repository) GetShippingProfile(ctx context.Context, id string) (models.ShippingProfile, error) {
 	row, err := r.queries(ctx).GetShippingProfile(ctx, id)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return models.ShippingProfile{}, profileNotFound(id)
 		}
-		return models.ShippingProfile{}, classify(err, codeQueryFailed, "kargo profili okunamadı")
+		return models.ShippingProfile{}, classify(err, codeQueryFailed, "could not read shipping profile")
 	}
 	return toProfile(row)
 }
 
-// LockShippingProfile profili işlem sonuna kadar YAZMA kilidiyle okur;
-// yoksa NotFound.
+// LockShippingProfile reads the profile with a WRITE lock held until the end of
+// the transaction; NotFound if there is none.
 //
-// Yalnızca [Repository.WithTx] içinde çağrılmalıdır: işlemsiz bir FOR UPDATE
-// kilidi deyim biter bitmez bırakılır ve hiçbir şeyi korumaz.
+// It must only be called inside [Repository.WithTx]: a FOR UPDATE lock without a
+// transaction is released as soon as the statement ends and protects nothing.
 func (r *Repository) LockShippingProfile(ctx context.Context, id string) (models.ShippingProfile, error) {
 	row, err := r.queries(ctx).LockShippingProfile(ctx, id)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return models.ShippingProfile{}, profileNotFound(id)
 		}
-		return models.ShippingProfile{}, classify(err, codeQueryFailed, "kargo profili kilitlenemedi")
+		return models.ShippingProfile{}, classify(err, codeQueryFailed, "could not lock shipping profile")
 	}
 	return toProfile(row)
 }
 
-// LockShippingProfileShared profili işlem sonuna kadar PAYLAŞIMLI kilitle
-// okur; yoksa NotFound.
+// LockShippingProfileShared reads the profile with a SHARED lock held until the
+// end of the transaction; NotFound if there is none.
 //
-// Gerekçe ve kullanım [Repository.LockShippingProfile] ile aynıdır; fark,
-// paralel seçenek eklemelerinin birbirini beklememesidir.
+// The reasoning and the usage are the same as [Repository.LockShippingProfile];
+// the difference is that parallel option insertions do not wait for each other.
 func (r *Repository) LockShippingProfileShared(
 	ctx context.Context,
 	id string,
@@ -80,16 +81,16 @@ func (r *Repository) LockShippingProfileShared(
 		if errors.Is(err, pgx.ErrNoRows) {
 			return models.ShippingProfile{}, profileNotFound(id)
 		}
-		return models.ShippingProfile{}, classify(err, codeQueryFailed, "kargo profili kilitlenemedi")
+		return models.ShippingProfile{}, classify(err, codeQueryFailed, "could not lock shipping profile")
 	}
 	return toProfile(row)
 }
 
-// ListShippingProfiles profilleri süzerek ve sayfalayarak döner.
-// İkinci dönüş değeri süzgece uyan TÜM satırların sayısıdır.
+// ListShippingProfiles returns the profiles filtered and paginated.
+// The second return value is the count of ALL rows matching the filter.
 //
-// Toplam AYRI bir sorgudan gelir ve listeyle aynı süzgeçleri uygular; sayfa
-// aralık dışında olsa ve hiç satır dönmese de doğrudur.
+// The total comes from a SEPARATE query and applies the same filters as the
+// list; it is correct even when the page is out of range and no rows come back.
 func (r *Repository) ListShippingProfiles(
 	ctx context.Context,
 	filter models.ProfileFilter,
@@ -100,12 +101,12 @@ func (r *Repository) ListShippingProfiles(
 		RowOffset: filter.Offset,
 	})
 	if err != nil {
-		return nil, 0, classify(err, codeQueryFailed, "kargo profilleri listelenemedi")
+		return nil, 0, classify(err, codeQueryFailed, "could not list shipping profiles")
 	}
 
 	total, err := r.queries(ctx).CountShippingProfiles(ctx, filter.Type)
 	if err != nil {
-		return nil, 0, classify(err, codeQueryFailed, "kargo profilleri sayılamadı")
+		return nil, 0, classify(err, codeQueryFailed, "could not count shipping profiles")
 	}
 
 	out := make([]models.ShippingProfile, 0, len(rows))
@@ -119,7 +120,7 @@ func (r *Repository) ListShippingProfiles(
 	return out, total, nil
 }
 
-// UpdateShippingProfile profilin alanlarını MUTLAK değerlerle yazar.
+// UpdateShippingProfile writes the profile's fields with ABSOLUTE values.
 func (r *Repository) UpdateShippingProfile(
 	ctx context.Context,
 	profile models.ShippingProfile,
@@ -139,34 +140,34 @@ func (r *Repository) UpdateShippingProfile(
 		if errors.Is(err, pgx.ErrNoRows) {
 			return models.ShippingProfile{}, profileNotFound(profile.ID)
 		}
-		return models.ShippingProfile{}, classify(err, codeQueryFailed, "kargo profili güncellenemedi")
+		return models.ShippingProfile{}, classify(err, codeQueryFailed, "could not update shipping profile")
 	}
 	return toProfile(row)
 }
 
-// SoftDeleteShippingProfile profili yumuşak siler; yoksa NotFound.
+// SoftDeleteShippingProfile soft deletes the profile; NotFound if there is none.
 func (r *Repository) SoftDeleteShippingProfile(ctx context.Context, id string) error {
 	if _, err := r.queries(ctx).SoftDeleteShippingProfile(ctx, id); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return profileNotFound(id)
 		}
-		return classify(err, codeQueryFailed, "kargo profili silinemedi")
+		return classify(err, codeQueryFailed, "could not delete shipping profile")
 	}
 	return nil
 }
 
-// CountAliveOptionsByProfile profile bağlı yaşayan seçenekleri sayar.
+// CountAliveOptionsByProfile counts the living options bound to the profile.
 func (r *Repository) CountAliveOptionsByProfile(ctx context.Context, profileID string) (int64, error) {
 	count, err := r.queries(ctx).CountAliveOptionsByProfile(ctx, profileID)
 	if err != nil {
-		return 0, classify(err, codeQueryFailed, "profile bağlı kargo seçenekleri sayılamadı")
+		return 0, classify(err, codeQueryFailed, "could not count the shipping options bound to the profile")
 	}
 	return count, nil
 }
 
-// --- kargo seçenekleri -------------------------------------------------------
+// --- shipping options --------------------------------------------------------
 
-// CreateShippingOption yeni bir kargo seçeneği kaydeder.
+// CreateShippingOption records a new shipping option.
 func (r *Repository) CreateShippingOption(
 	ctx context.Context,
 	option models.ShippingOption,
@@ -195,26 +196,27 @@ func (r *Repository) CreateShippingOption(
 		Metadata:          meta,
 	})
 	if err != nil {
-		return models.ShippingOption{}, classify(err, codeQueryFailed, "kargo seçeneği oluşturulamadı")
+		return models.ShippingOption{}, classify(err, codeQueryFailed, "could not create shipping option")
 	}
 	return toOption(row)
 }
 
-// GetShippingOption seçeneği kimliğiyle döner; yoksa NotFound.
-// Kurallar DOLDURULMAZ; onlar [Repository.ListShippingOptionRules] ile okunur.
+// GetShippingOption returns the option by its identifier; NotFound if there is
+// none. Rules ARE NOT FILLED IN; they are read with
+// [Repository.ListShippingOptionRules].
 func (r *Repository) GetShippingOption(ctx context.Context, id string) (models.ShippingOption, error) {
 	row, err := r.queries(ctx).GetShippingOption(ctx, id)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return models.ShippingOption{}, optionNotFound(id)
 		}
-		return models.ShippingOption{}, classify(err, codeQueryFailed, "kargo seçeneği okunamadı")
+		return models.ShippingOption{}, classify(err, codeQueryFailed, "could not read shipping option")
 	}
 	return toOption(row)
 }
 
-// ListShippingOptions seçenekleri süzerek ve sayfalayarak döner.
-// İkinci dönüş değeri süzgece uyan TÜM satırların sayısıdır.
+// ListShippingOptions returns the options filtered and paginated.
+// The second return value is the count of ALL rows matching the filter.
 func (r *Repository) ListShippingOptions(
 	ctx context.Context,
 	filter models.OptionFilter,
@@ -228,7 +230,7 @@ func (r *Repository) ListShippingOptions(
 		RowOffset:  filter.Offset,
 	})
 	if err != nil {
-		return nil, 0, classify(err, codeQueryFailed, "kargo seçenekleri listelenemedi")
+		return nil, 0, classify(err, codeQueryFailed, "could not list shipping options")
 	}
 
 	total, err := r.queries(ctx).CountShippingOptions(ctx, fulfillmentdb.CountShippingOptionsParams{
@@ -238,7 +240,7 @@ func (r *Repository) ListShippingOptions(
 		PriceType:  filter.PriceType,
 	})
 	if err != nil {
-		return nil, 0, classify(err, codeQueryFailed, "kargo seçenekleri sayılamadı")
+		return nil, 0, classify(err, codeQueryFailed, "could not count shipping options")
 	}
 
 	out, err := optionsFromRows(rows)
@@ -248,34 +250,36 @@ func (r *Repository) ListShippingOptions(
 	return out, total, nil
 }
 
-// ShippingOptionsByIDs verilen kimliklerin seçeneklerini TEK sorguda döner.
-// Bulunamayan kimlik için satır dönmez; bu bir hata değildir.
+// ShippingOptionsByIDs returns the options of the given identifiers in a SINGLE
+// query. No row is returned for an identifier that is not found; that is not an
+// error.
 func (r *Repository) ShippingOptionsByIDs(ctx context.Context, ids []string) ([]models.ShippingOption, error) {
 	if len(ids) == 0 {
 		return []models.ShippingOption{}, nil
 	}
 	rows, err := r.queries(ctx).GetShippingOptionsByIDs(ctx, ids)
 	if err != nil {
-		return nil, classify(err, codeQueryFailed, "kargo seçenekleri okunamadı")
+		return nil, classify(err, codeQueryFailed, "could not read shipping options")
 	}
 	return optionsFromRows(rows)
 }
 
-// ListEligibleShippingOptions bir sepet bağlamının ADAY seçeneklerini,
-// kurallarıyla birlikte döner.
+// ListEligibleShippingOptions returns the CANDIDATE options of a cart context
+// together with their rules.
 //
-// Kurallar ikinci bir sorgudan TOPLU olarak okunur ve seçeneklere iliştirilir;
-// seçenek başına sorgu (N+1) yapılmaz. Kuralların eşleşmesi burada
-// değerlendirilmez: karar servisteki saf fonksiyona aittir ve veritabanı
-// olmadan sınanabilmelidir.
+// The rules are read in BULK from a second query and attached to the options; no
+// query per option (N+1) is made. Whether the rules match is not evaluated here:
+// the decision belongs to the pure function in the service and must be testable
+// without a database.
 func (r *Repository) ListEligibleShippingOptions(
 	ctx context.Context,
 	filter models.EligibilityFilter,
 ) ([]models.ShippingOption, error) {
 	profileIDs := filter.ProfileIDs
 	if profileIDs == nil {
-		// sqlc üretimi imza []string bekler; nil dilim cardinality() = 0
-		// koşulunu karşılamayabilir, boş dilim ise kesin karşılar.
+		// The sqlc-generated signature expects a []string; a nil slice may not
+		// satisfy the cardinality() = 0 condition, while an empty slice
+		// certainly does.
 		profileIDs = []string{}
 	}
 
@@ -287,7 +291,7 @@ func (r *Repository) ListEligibleShippingOptions(
 		ProfileIds:       profileIDs,
 	})
 	if err != nil {
-		return nil, classify(err, codeQueryFailed, "uygun kargo seçenekleri listelenemedi")
+		return nil, classify(err, codeQueryFailed, "could not list eligible shipping options")
 	}
 
 	options, err := optionsFromRows(rows)
@@ -304,7 +308,7 @@ func (r *Repository) ListEligibleShippingOptions(
 	}
 	ruleRows, err := r.queries(ctx).ListShippingOptionRulesByOptions(ctx, ids)
 	if err != nil {
-		return nil, classify(err, codeQueryFailed, "kargo seçeneği kuralları listelenemedi")
+		return nil, classify(err, codeQueryFailed, "could not list shipping option rules")
 	}
 
 	byOption := make(map[string][]models.ShippingOptionRule, len(options))
@@ -318,12 +322,12 @@ func (r *Repository) ListEligibleShippingOptions(
 	return options, nil
 }
 
-// UpdateShippingOption seçeneğin alanlarını MUTLAK değerlerle yazar.
+// UpdateShippingOption writes the option's fields with ABSOLUTE values.
 //
-// Sağlayıcı ve profil DEĞİŞTİRİLEMEZ: ikisi de seçeneğin kimliğine bağlı
-// kararlardır ve değişmeleri, o seçenekle açılmış gönderilerin hangi
-// sağlayıcıda olduğunu geçmişe dönük yanıltırdı. Değişmesi gerekiyorsa yeni
-// bir seçenek açılır.
+// The provider and the profile CANNOT BE CHANGED: both are decisions bound to
+// the option's identity and changing them would retroactively mislead about
+// which provider the fulfillments opened with that option are on. If a change is
+// needed, a new option is opened.
 func (r *Repository) UpdateShippingOption(
 	ctx context.Context,
 	option models.ShippingOption,
@@ -352,25 +356,25 @@ func (r *Repository) UpdateShippingOption(
 		if errors.Is(err, pgx.ErrNoRows) {
 			return models.ShippingOption{}, optionNotFound(option.ID)
 		}
-		return models.ShippingOption{}, classify(err, codeQueryFailed, "kargo seçeneği güncellenemedi")
+		return models.ShippingOption{}, classify(err, codeQueryFailed, "could not update shipping option")
 	}
 	return toOption(row)
 }
 
-// SoftDeleteShippingOption seçeneği yumuşak siler; yoksa NotFound.
+// SoftDeleteShippingOption soft deletes the option; NotFound if there is none.
 func (r *Repository) SoftDeleteShippingOption(ctx context.Context, id string) error {
 	if _, err := r.queries(ctx).SoftDeleteShippingOption(ctx, id); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return optionNotFound(id)
 		}
-		return classify(err, codeQueryFailed, "kargo seçeneği silinemedi")
+		return classify(err, codeQueryFailed, "could not delete shipping option")
 	}
 	return nil
 }
 
-// --- kargo seçeneği kuralları ------------------------------------------------
+// --- shipping option rules ---------------------------------------------------
 
-// CreateShippingOptionRule yeni bir kural kaydeder.
+// CreateShippingOptionRule records a new rule.
 func (r *Repository) CreateShippingOptionRule(
 	ctx context.Context,
 	rule models.ShippingOptionRule,
@@ -383,12 +387,13 @@ func (r *Repository) CreateShippingOptionRule(
 		RuleValues:       rule.Values,
 	})
 	if err != nil {
-		return models.ShippingOptionRule{}, classify(err, codeQueryFailed, "kargo seçeneği kuralı oluşturulamadı")
+		return models.ShippingOptionRule{}, classify(err, codeQueryFailed, "could not create shipping option rule")
 	}
 	return toRule(row), nil
 }
 
-// GetShippingOptionRule kuralı kimliğiyle döner; yoksa NotFound.
+// GetShippingOptionRule returns the rule by its identifier; NotFound if there is
+// none.
 func (r *Repository) GetShippingOptionRule(
 	ctx context.Context,
 	id string,
@@ -398,19 +403,19 @@ func (r *Repository) GetShippingOptionRule(
 		if errors.Is(err, pgx.ErrNoRows) {
 			return models.ShippingOptionRule{}, ruleNotFound(id)
 		}
-		return models.ShippingOptionRule{}, classify(err, codeQueryFailed, "kargo seçeneği kuralı okunamadı")
+		return models.ShippingOptionRule{}, classify(err, codeQueryFailed, "could not read shipping option rule")
 	}
 	return toRule(row), nil
 }
 
-// ListShippingOptionRules bir seçeneğin kurallarını döner.
+// ListShippingOptionRules returns the rules of an option.
 func (r *Repository) ListShippingOptionRules(
 	ctx context.Context,
 	optionID string,
 ) ([]models.ShippingOptionRule, error) {
 	rows, err := r.queries(ctx).ListShippingOptionRules(ctx, optionID)
 	if err != nil {
-		return nil, classify(err, codeQueryFailed, "kargo seçeneği kuralları listelenemedi")
+		return nil, classify(err, codeQueryFailed, "could not list shipping option rules")
 	}
 	out := make([]models.ShippingOptionRule, 0, len(rows))
 	for i := range rows {
@@ -419,18 +424,18 @@ func (r *Repository) ListShippingOptionRules(
 	return out, nil
 }
 
-// SoftDeleteShippingOptionRule kuralı yumuşak siler; yoksa NotFound.
+// SoftDeleteShippingOptionRule soft deletes the rule; NotFound if there is none.
 func (r *Repository) SoftDeleteShippingOptionRule(ctx context.Context, id string) error {
 	if _, err := r.queries(ctx).SoftDeleteShippingOptionRule(ctx, id); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ruleNotFound(id)
 		}
-		return classify(err, codeQueryFailed, "kargo seçeneği kuralı silinemedi")
+		return classify(err, codeQueryFailed, "could not delete shipping option rule")
 	}
 	return nil
 }
 
-// optionsFromRows satır dilimini domain diliminine çevirir.
+// optionsFromRows converts a row slice into a domain slice.
 func optionsFromRows(rows []fulfillmentdb.ShippingOption) ([]models.ShippingOption, error) {
 	out := make([]models.ShippingOption, 0, len(rows))
 	for i := range rows {

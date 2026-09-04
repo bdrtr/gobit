@@ -9,11 +9,11 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/product/models"
 )
 
-// Query sağlayıcılarının anladığı filtre anahtarları.
+// The filter keys the Query providers understand.
 //
-// Anahtarlar sözleşmedir: sağlayıcı tanımadığı bir filtre görürse
-// errors.Invalid döner (ADR 0004), bu yüzden isimlerin tek bir yerde durması
-// gerekir.
+// The keys are a contract: if a provider sees a filter it does not recognize it
+// returns errors.Invalid (ADR 0004), so the names have to live in a single
+// place.
 const (
 	filterIDs          = "ids"
 	filterID           = "id"
@@ -23,133 +23,145 @@ const (
 	filterHandle       = "handle"
 	filterCollectionID = "collection_id"
 
-	// FilterSalesChannelIDs varyant sağlayıcısının satış kanalı süzgecidir.
+	// FilterSalesChannelIDs is the sales channel filter of the variant provider.
 	//
-	// Kardeşlerinden farklı olarak DIŞA AÇIKTIR ve fark tüketicidendir: bu
-	// modülün DIŞINDAN, sepet akışından geçilir (bkz. service/provider.go,
-	// "Satış kanalı süzgeci"). Akış bu paketi import EDEMEZ (ADR 0006) ve
-	// anahtarı kendi tarafında dize olarak tekrarlar; sabitin dışa açık olması,
-	// iki tarafı bir testin birbirine bağlayabilmesi içindir (bkz. internal/arch).
+	// Unlike its siblings it is EXPORTED, and the difference comes from the
+	// consumer: it is passed from OUTSIDE this module, from the cart flow (see
+	// service/provider.go, "The sales channel filter"). That flow CANNOT import
+	// this package (ADR 0006) and repeats the key on its own side as a string;
+	// the constant being exported is so that a test can bind the two sides
+	// together (see internal/arch).
 	//
-	// Ayrışmanın bedeli açıktır ama GEÇTİR: sağlayıcı tanımadığı filtre için
-	// errors.Invalid döner, yani sepete satır ekleme tümüyle kırılır. Sessiz
-	// değildir — yine de arızanın üretimde değil testte görülmesi yeğdir.
+	// The price of the drift is obvious but ACCEPTABLE: the provider returns
+	// errors.Invalid for a filter it does not recognize, that is, adding a line
+	// to the cart breaks entirely. It is not silent — and it is still better for
+	// the fault to be seen in a test rather than in production.
 	FilterSalesChannelIDs = "sales_channel_ids"
 )
 
-// Store yanıtında fiyat ve stok kayıtlarının yazıldığı anahtarlar.
+// The keys under which the price and stock records are written in the store
+// response.
 const (
 	keyPriceSet  = "price_set"
 	keyInventory = "inventory_item"
 )
 
-// codeProviderNotFound Query katmanının "bu entity'nin sağlayıcısı container'da
-// kayıtlı değil" hata kodudur.
+// codeProviderNotFound is the Query layer's "the provider of this entity is not
+// registered in the container" error code.
 //
-// Kod BURADA TEKRARLANIR çünkü core/query'deki karşılığı unexported'dır ve
-// paketler arası tek taşınabilir bağ hata kodudur (bkz. core/errors: "kod
-// sözleşmenin parçasıdır"). Değeri değişirse bu modül sessizce daha az
-// bağışlayıcı olur — vitrin fiyatsız dönmek yerine hata verir; sessizce daha
-// hoşgörülü olmaktan yeğdir.
+// The code is REPEATED HERE because its counterpart in core/query is unexported
+// and the only portable bond between packages is the error code (see
+// core/errors: "the code is part of the contract"). If its value changes, this
+// module silently becomes less forgiving — the storefront returns an error
+// instead of returning without prices; that is better than silently becoming
+// more permissive.
 const codeProviderNotFound = "query_provider_not_found"
 
-// StoreListOptions vitrin (store) ürün listelemesinin ölçütleridir.
+// StoreListOptions is the criteria of the storefront (store) product listing.
 //
-// Durum filtresi YOKTUR: vitrin yalnızca yayındaki ürünleri gösterir ve bunun
-// istemci tarafından değiştirilebilmesi taslak ürünleri sızdırırdı.
+// There is NO status filter: the storefront shows only published products, and
+// letting the client change that would leak draft products.
 type StoreListOptions struct {
 	CollectionID *string
 	Search       *string
-	// SalesChannelIDs isteğin bağlı olduğu satış kanallarıdır.
+	// SalesChannelIDs are the sales channels the request is bound to.
 	//
-	// Değer isteğin KİMLİĞİNDEN gelir (publishable anahtarın kanalları), sorgu
-	// dizesinden DEĞİL; gerekçe için bkz. api/store.go.
+	// The value comes from the request's IDENTITY (the channels of the
+	// publishable key), NOT from the query string; for the rationale see
+	// api/store.go.
 	//
-	// nil ile BOŞ AMA nil OLMAYAN dilim FARKLI şeyler söyler:
+	// nil and an EMPTY BUT NON-nil slice say DIFFERENT things:
 	//
-	//   - nil: istek hiçbir satış kanalı kimliği taşımıyor (mağaza kimlik
-	//     doğrulaması bu kurulumda bağlı değil). Süzgeç UYGULANMAZ.
-	//   - boş dilim: kimlik var ama hiç kanalı yok. Süzgeç UYGULANIR ve yalnızca
-	//     ataması olmayan ürünler görünür.
+	//   - nil: the request carries no sales channel id at all (store
+	//     authentication is not wired up in this setup). The filter is NOT
+	//     APPLIED.
+	//   - empty slice: there is an identity but it has no channels. The filter
+	//     IS APPLIED and only products with no assignment are visible.
 	//
-	// İkinci durum pratikte oluşmaz — auth kanalsız bir publishable anahtarı
-	// zaten reddeder — ama savunmacı davranış şudur: kanalsız bir kimliği
-	// "süzme yok" saymak, o kimliğe TÜM kanalların katalogunu açardı. Boş kümeyi
-	// kuralın kendisine uygulamak (hiçbir atama eşleşmez, atamasızlar kalır)
-	// ayrı bir kod yolu açmaz ve sızdırma yönünde asla yanılmaz.
+	// The second case does not occur in practice — auth rejects a publishable
+	// key with no channels anyway — but the defensive behavior is this: treating
+	// an identity with no channels as "no filtering" would open the catalog of
+	// ALL channels to that identity. Applying the empty set to the rule itself
+	// (no assignment matches, the unassigned ones remain) opens no separate code
+	// path and never errs in the direction of leaking.
 	SalesChannelIDs []string
 	Limit           int
 	Offset          int
-	// SkipCount true ise toplam sayaç sorgusu hiç çalıştırılmaz ve sonucun
-	// Count alanı nil döner.
+	// SkipCount, when true, means the total count query is never run at all and
+	// the Count field of the result comes back nil.
 	//
-	// Anlamı, gerekçesi ve ölçümü [ListProductsOptions.SkipCount]'tadır;
-	// burada TEKRARLANMAZ. Alanın vitrin ölçütlerinde de bulunmasının sebebi
-	// şudur: kararı VEREN taraf istemcidir (REST'te "with_count" parametresi,
-	// GraphQL'de "count" alanını seçip seçmemesi) ve vitrin servisinin kendisi
-	// bir varsayılan seçemez — seçseydi, aynı kuralın ikinci bir tanımı olurdu.
+	// Its meaning, its rationale and its measurement are in
+	// [ListProductsOptions.SkipCount]; they are NOT REPEATED here. The reason
+	// the field is present in the storefront criteria as well is this: the side
+	// that MAKES the decision is the client (the "with_count" parameter in REST,
+	// selecting or not selecting the "count" field in GraphQL) and the storefront
+	// service itself cannot pick a default — had it picked one, there would be a
+	// second definition of the same rule.
 	SkipCount bool
 }
 
-// StoreProduct vitrin için hazırlanmış üründür.
+// StoreProduct is a product prepared for the storefront.
 type StoreProduct struct {
 	models.Product
-	// Variants gömülü ürünün Variants alanını GÖLGELER: JSON'da yalnızca bu
-	// alan görünür ve varyantlar fiyat/stok bilgisiyle zenginleştirilmiştir.
+	// Variants SHADOWS the Variants field of the embedded product: only this
+	// field shows up in JSON and the variants are enriched with price/stock
+	// information.
 	Variants []StoreVariant `json:"variants"`
 }
 
-// StoreVariant fiyat ve stok bilgisiyle zenginleştirilmiş varyanttır.
+// StoreVariant is a variant enriched with price and stock information.
 //
-// PriceSet ve InventoryItem alanları BAŞKA MODÜLLERİN kayıtlarıdır ve bu modül
-// onların şemasını bilmez: Query katmanından geldikleri gibi (gevşek tipli
-// kayıt olarak) taşınırlar. Tip güvenliğinin burada yeniden kazanılmaması
-// bilinçlidir; alanları yorumlamak, pricing/inventory şemasını bu modüle
-// kopyalamak demek olurdu (ADR 0004'ün kabul edilmiş bedeli).
+// The PriceSet and InventoryItem fields are the records of OTHER MODULES and
+// this module does not know their schema: they are carried exactly as they came
+// from the Query layer (as loosely typed records). Not regaining type safety
+// here is deliberate; interpreting the fields would mean copying the
+// pricing/inventory schema into this module (the accepted price of ADR 0004).
 type StoreVariant struct {
 	models.Variant
 	PriceSet      query.Record `json:"price_set,omitempty"`
 	InventoryItem query.Record `json:"inventory_item,omitempty"`
 }
 
-// enrichment tek bir varyantın başka modüllerden gelen ekleridir.
+// enrichment holds the additions a single variant gets from other modules.
 type enrichment struct {
 	priceSet  query.Record
 	inventory query.Record
 }
 
-// ListStoreProducts yayındaki ürünleri FİYAT ve STOK bilgisiyle listeler.
+// ListStoreProducts lists the published products with PRICE and STOCK
+// information.
 //
-// Fiyat pricing, stok inventory modülünün verisidir; ikisi de import EDİLMEZ.
-// Veri, varyant kimlikleri üzerinden link'lerle çözülür ve Query katmanının
-// toplu (batch) sağlayıcı çağrılarıyla toplanır (ADR 0004).
+// The price is pricing's and the stock is inventory's data; neither module is
+// IMPORTED. The data is resolved through links over the variant ids and
+// gathered with the batch provider calls of the Query layer (ADR 0004).
 //
-// Sorgu sayısı ürün ya da varyant sayısından BAĞIMSIZDIR: katalog için sabit
-// sayıda sorgu, zenginleştirme için genişletme başına bir link çözümü ve bir
-// sağlayıcı çağrısı yapılır. N+1 yoktur.
+// The number of queries is INDEPENDENT of the number of products or variants: a
+// fixed number of queries is made for the catalog, and one link resolution plus
+// one provider call per expansion for the enrichment. There is no N+1.
 //
-// # Satış kanalı süzgeci
+// # The sales channel filter
 //
-// Kural şudur: kanal ataması OLMAYAN ürün TÜM kanallarda görünür, ataması OLAN
-// ürün YALNIZCA atandığı kanallarda görünür. Geriye uyumludur (bugünkü katalog
-// bir gecede boşalmaz) ama süzme gerçekten çalışır: bir ürün A kanalına
-// atandığı an B kanalında görünmez olur.
+// The rule is this: a product with NO channel assignment is visible in ALL
+// channels, a product that HAS one is visible ONLY in the channels it is
+// assigned to. It is backwards compatible (today's catalog does not empty out
+// overnight) but the filtering really works: the moment a product is assigned to
+// channel A it becomes invisible in channel B.
 //
-// Katı alternatif — "atanmamış ürün gizlidir" — bilinçli olarak UYGULANMADI.
-// İleriye dönük bir karardır ve uygulandığı gün var olan her kataloğu tek
-// seferde boşaltır; seçilecekse önce bir geçiş (tüm ürünleri varsayılan kanala
-// atama) gerekir.
+// The strict alternative — "an unassigned product is hidden" — was deliberately
+// NOT IMPLEMENTED. It is a forward-looking decision and the day it is applied it
+// empties every existing catalog in one go; if it is to be chosen, a migration
+// (assigning all products to a default channel) has to come first.
 //
-// Süzgeç [repository.Store] üzerinden VERİTABANINDA uygulanır; sayfalamayı
-// neden Go tarafında yapamayacağımız için bkz. repository/saleschannel.go.
+// The filter is applied IN THE DATABASE through [repository.Store]; for why we
+// cannot do the paging on the Go side see repository/saleschannel.go.
 //
-// # Toplam sayaç isteğe bağlıdır
+// # The total count is optional
 //
-// Aynı süzgeç sayacı da bağlar ve o sayaç, sayfa boyutundan bağımsız olarak
-// kümenin TAMAMINI gezer: ölçüldüğünde vitrin isteğinin SQL'inin %99'udur
-// (bkz. [ListProductsOptions.SkipCount]). [StoreListOptions.SkipCount] ile
-// kapatılabilir; kapalıyken sonucun Count alanı nil döner ve bu "sıfır kayıt"
-// DEĞİL "sayılmadı" demektir.
+// The same filter binds the count too, and that count walks the WHOLE set
+// regardless of the page size: when measured it is 99% of the SQL of a
+// storefront request (see [ListProductsOptions.SkipCount]). It can be turned off
+// with [StoreListOptions.SkipCount]; while it is off the Count field of the
+// result comes back nil and that means "not counted", NOT "zero records".
 func (s *Service) ListStoreProducts(ctx context.Context, opts StoreListOptions) (ListResult[StoreProduct], error) {
 	published := models.StatusPublished
 	result, err := s.ListProducts(ctx, ListProductsOptions{
@@ -178,21 +190,23 @@ func (s *Service) ListStoreProducts(ctx context.Context, opts StoreListOptions) 
 	}, nil
 }
 
-// GetStoreProduct vitrin için tek bir ürünü fiyat ve stok bilgisiyle döner.
+// GetStoreProduct returns a single product for the storefront with price and
+// stock information.
 //
-// Kimlik ya da handle kabul edilir: vitrin adresleri handle taşır, iç çağrılar
-// kimlik. Yayında olmayan ürün BULUNAMADI döner — taslak bir ürünün varlığını
-// "yetkisiz" gibi bir hatayla ele vermek de sızıntıdır.
+// Either an id or a handle is accepted: storefront addresses carry the handle,
+// internal calls the id. A product that is not published returns NOT FOUND —
+// giving away the existence of a draft product with an error like "unauthorized"
+// is a leak as well.
 //
-// salesChannelIDs, listelemedekiyle AYNI anlamı taşır
-// (bkz. [StoreListOptions.SalesChannelIDs]) ve tekil uç da AYNI süzgece
-// tabidir: listede gizlenen bir ürünü tekil uçtan göstermek, gizlemeyi tümüyle
-// anlamsız kılardı — vitrin adresleri handle taşıdığı için tahmin edilebilir
-// olan tam da bu uçtur.
+// salesChannelIDs carries the SAME meaning as in the listing (see
+// [StoreListOptions.SalesChannelIDs]) and the single-record endpoint is subject
+// to the SAME filter: showing a product that is hidden in the list through the
+// single endpoint would make the hiding entirely pointless — because storefront
+// addresses carry the handle, this is exactly the endpoint that is guessable.
 //
-// Görünmeyen ürün, yayında olmayan ürünle AYNI hatayı (NotFound) döner: başka
-// bir kanalda satılan bir ürünün varlığını farklı bir hata sınıfıyla ele
-// vermek, gizlemenin kendisini delerdi.
+// An invisible product returns the SAME error (NotFound) as an unpublished one:
+// giving away the existence of a product sold in another channel with a
+// different error kind would pierce the hiding itself.
 func (s *Service) GetStoreProduct(
 	ctx context.Context,
 	idOrHandle string,
@@ -215,18 +229,18 @@ func (s *Service) GetStoreProduct(
 		return StoreProduct{}, err
 	}
 	if product.Status != models.StatusPublished {
-		return StoreProduct{}, errors.NotFound(codeNotFound, "ürün bulunamadı: %s", idOrHandle)
+		return StoreProduct{}, errors.NotFound(codeNotFound, "the product was not found: %s", idOrHandle)
 	}
 
-	// nil, "istek kanal kimliği taşımıyor" demektir; sorgu o durumda zaten
-	// true dönerdi, tur boşuna atılmaz.
+	// nil means "the request carries no channel id"; in that case the query
+	// would return true anyway, so the round trip is not made for nothing.
 	if salesChannelIDs != nil {
 		visible, err := s.repo.ProductVisibleInSalesChannels(ctx, product.ID, salesChannelIDs)
 		if err != nil {
 			return StoreProduct{}, err
 		}
 		if !visible {
-			return StoreProduct{}, errors.NotFound(codeNotFound, "ürün bulunamadı: %s", idOrHandle)
+			return StoreProduct{}, errors.NotFound(codeNotFound, "the product was not found: %s", idOrHandle)
 		}
 	}
 
@@ -237,43 +251,47 @@ func (s *Service) GetStoreProduct(
 	return items[0], nil
 }
 
-// StoreProductsByIDs vitrin ürünlerini KİMLİĞE göre, İSTENEN SIRAYLA döner.
+// StoreProductsByIDs returns the storefront products BY ID, IN THE REQUESTED
+// ORDER.
 //
-// Arama gibi dış tüketiciler içindir: alaka sırasını dışarıdan onlar verir
-// ("product.interop" yüzeyi bu metoda bakar, bkz. interop.go).
+// It is meant for external consumers such as search: they supply the relevance
+// order from outside (the "product.interop" surface looks at this method, see
+// interop.go).
 //
-// # Görünürlük kuralı listeyle AYNIDIR
+// # The visibility rule is the SAME as the list's
 //
-// Kural burada YENİDEN YAZILMAZ; iki yerde ifade edilen bir görünürlük kuralı,
-// biri değiştiğinde vitrin ile aramanın ayrışması ve aramanın kanal süzmesinin
-// BYPASS'ı hâline gelmesi demektir. Bu yüzden:
+// The rule is NOT REWRITTEN here; a visibility rule expressed in two places
+// means that when one of them changes the storefront and search drift apart and
+// search becomes a BYPASS of the channel filtering. Therefore:
 //
-//   - Yayın durumu tekil vitrin ucuyla aynı şekilde süzülür (yalnızca
-//     "published"; bkz. [Service.GetStoreProduct]).
-//   - Kanal görünürlüğü, tekil ucun kullandığı depo çağrısıyla
-//     (ProductVisibleInSalesChannels) — yani listelemenin SQL'iyle AYNI
-//     şablonla — sorulur (bkz. repository/saleschannel.go).
+//   - The publication status is filtered the same way as in the single
+//     storefront endpoint (only "published"; see [Service.GetStoreProduct]).
+//   - Channel visibility is asked with the repository call the single endpoint
+//     uses (ProductVisibleInSalesChannels) — that is, with the SAME template as
+//     the SQL of the listing (see repository/saleschannel.go).
 //
-// salesChannelIDs'in nil ile boş dilim arasındaki farkı listelemedekiyle aynı
-// anlamı taşır (bkz. [StoreListOptions.SalesChannelIDs]).
+// The difference between nil and an empty slice for salesChannelIDs carries the
+// same meaning as in the listing (see [StoreListOptions.SalesChannelIDs]).
 //
-// Görünürlük TEK bir toplu sorgudur ([repository.Store.VisibleProductIDs]),
-// kimlik sayısı [MaxLimit] ile sınırlıdır ve sorgu link tablosunun birincil
-// anahtar önekini kullanır. Sorgu, kuralın TEK tanımı olan saleschannel.go'daki
-// salesChannelVisibleTemplate'ten üretilir — yani toplu olması kuralı ikinci
-// kez yazmaz.
+// Visibility is a SINGLE batch query ([repository.Store.VisibleProductIDs]), the
+// number of ids is bounded by [MaxLimit] and the query uses the primary key
+// prefix of the link table. The query is generated from salesChannelVisibleTemplate
+// in saleschannel.go, the rule's ONLY definition — that is, being batched does
+// not write the rule a second time.
 //
-// # Sıra ve bulunamayan kimlikler
+// # Order and ids that are not found
 //
-// Yanıt, isteğin kimlik sırasını korur. Bilinmeyen, silinmiş, yayında olmayan
-// ya da isteğin kanallarında görünmeyen kimlik SESSİZCE atlanır — hepsi
-// çağıranın "bu kimlik sende var mı" sorusunun geçerli yanıtlarıdır ve hata
-// dönmek, aramanın bir ürün silindiği için tümüyle düşmesi demek olurdu. Sızma
-// yönünde bir bilgi de vermez: başka kanaldaki ürün ile hiç var olmayan ürün
-// çağıran için AYIRT EDİLEMEZ (tekil vitrin ucunun ikisine de NotFound
-// dönmesiyle aynı gerekçe).
+// The response preserves the id order of the request. An id that is unknown,
+// deleted, unpublished or not visible in the request's channels is SILENTLY
+// skipped — all of them are valid answers to the caller's question "do you have
+// this id", and returning an error would mean search falling over entirely
+// because one product was deleted. It gives away no information in the leaking
+// direction either: a product in another channel and a product that never
+// existed are INDISTINGUISHABLE to the caller (the same rationale as the single
+// storefront endpoint returning NotFound for both).
 //
-// Tekrarlanan kimlik yanıtta BİR KEZ görünür; ilk geçtiği sırayı korur.
+// A repeated id appears ONCE in the response; it keeps the position of its first
+// occurrence.
 func (s *Service) StoreProductsByIDs(ctx context.Context, ids, salesChannelIDs []string) ([]StoreProduct, error) {
 	wanted, err := uniqueIDs("ids", ids)
 	if err != nil {
@@ -282,11 +300,11 @@ func (s *Service) StoreProductsByIDs(ctx context.Context, ids, salesChannelIDs [
 	if len(wanted) == 0 {
 		return []StoreProduct{}, nil
 	}
-	// Sınırı aşan istek KIRPILMAZ, reddedilir: sessiz kırpma arama sonucunu
-	// sessizce eksiltir ve çağıran bunu asla göremez. Açık hata onu sayfalamaya
-	// zorlar.
+	// A request above the limit is NOT TRUNCATED, it is rejected: silent
+	// truncation silently shortens the search result and the caller can never
+	// see it. An explicit error forces it to paginate.
 	if len(wanted) > MaxLimit {
-		return nil, invalid("ids en fazla %d kimlik taşıyabilir (verilen: %d)", MaxLimit, len(wanted))
+		return nil, invalid("ids can carry at most %d ids (given: %d)", MaxLimit, len(wanted))
 	}
 
 	found, err := s.repo.ListProductsByIDs(ctx, wanted)
@@ -298,15 +316,16 @@ func (s *Service) StoreProductsByIDs(ctx context.Context, ids, salesChannelIDs [
 		byID[found[i].ID] = found[i]
 	}
 
-	// Görünürlük TEK sorguda sorulur. Kimlik başına sormak, arama sonucu
-	// sayısı kadar gidiş-dönüş demektir ve N+1'i yapısal olarak dışarıda tutan
-	// bir mimaride (bkz. core/query) onu en sıcak uçta geri getirirdi.
+	// Visibility is asked in a SINGLE query. Asking per id means as many round
+	// trips as there are search results, and in an architecture that structurally
+	// keeps N+1 out (see core/query) it would bring it back at the hottest
+	// endpoint.
 	//
-	// nil, "istek kanal kimliği taşımıyor" demektir; süzgeç uygulanmaz ve
-	// sorgu hiç atılmaz.
-	var gorunur map[string]struct{}
+	// nil means "the request carries no channel id"; the filter is not applied
+	// and the query is not made at all.
+	var visibleIDs map[string]struct{}
 	if salesChannelIDs != nil {
-		gorunur, err = s.repo.VisibleProductIDs(ctx, wanted, salesChannelIDs)
+		visibleIDs, err = s.repo.VisibleProductIDs(ctx, wanted, salesChannelIDs)
 		if err != nil {
 			return nil, err
 		}
@@ -318,8 +337,8 @@ func (s *Service) StoreProductsByIDs(ctx context.Context, ids, salesChannelIDs [
 		if !ok || product.Status != models.StatusPublished {
 			continue
 		}
-		if gorunur != nil {
-			if _, ok := gorunur[id]; !ok {
+		if visibleIDs != nil {
+			if _, ok := visibleIDs[id]; !ok {
 				continue
 			}
 		}
@@ -335,8 +354,8 @@ func (s *Service) StoreProductsByIDs(ctx context.Context, ids, salesChannelIDs [
 	return s.toStoreProducts(ctx, visible)
 }
 
-// toStoreProducts ürünleri vitrin biçimine çevirir ve varyantları
-// zenginleştirir.
+// toStoreProducts converts the products into the storefront shape and enriches
+// the variants.
 func (s *Service) toStoreProducts(ctx context.Context, products []models.Product) ([]StoreProduct, error) {
 	variantIDs := make([]string, 0, len(products))
 	for i := range products {
@@ -364,42 +383,45 @@ func (s *Service) toStoreProducts(ctx context.Context, products []models.Product
 				InventoryItem: extra.inventory,
 			})
 		}
-		// Gömülü ürünün varyant dilimi boşaltılır: aynı veriyi iki yerde
-		// taşımak, birinin güncellenip diğerinin unutulmasına açık kapı bırakır.
+		// The variant slice of the embedded product is emptied: carrying the
+		// same data in two places leaves the door open for one of them to be
+		// updated and the other forgotten.
 		p.Variants = nil
 		out = append(out, StoreProduct{Product: p, Variants: variants})
 	}
 	return out, nil
 }
 
-// enrichVariants varyantların fiyat ve stok kayıtlarını TEK graph çağrısıyla
-// toplar.
+// enrichVariants gathers the price and stock records of the variants with a
+// SINGLE graph call.
 //
-// Query katmanı bunu şöyle çözer: varyant sağlayıcısından kökler (tek sorgu),
-// her genişletme için bir link çözümü ve hedef modülün sağlayıcısına tek bir
-// FetchByIDs. Yani varyant sayısı ne olursa olsun tur sayısı sabittir.
+// The Query layer resolves it like this: the roots from the variant provider
+// (one query), one link resolution per expansion and a single FetchByIDs to the
+// provider of the target module. That is, whatever the number of variants, the
+// number of round trips is constant.
 //
-// # Eksik modüle karşı davranış
+// # Behavior against a missing module
 //
-// pricing ya da inventory bu kurulumda kayıtlı değilse Query "sağlayıcı
-// bulunamadı" (codeProviderNotFound) döner. YALNIZCA bu durumda listeleme HATA
-// VERMEZ: katalog fiyatsız/stoksuz döner ve durum uyarı olarak loglanır.
-// Gerekçe, modülerliğin kendisidir — product modülü tek başına da
-// dağıtılabilmelidir; ayrıca fiyatın eksik olması yanlış fiyat göstermekten
-// iyidir (alan hiç yazılmaz).
+// If pricing or inventory is not registered in this setup, Query returns
+// "provider not found" (codeProviderNotFound). ONLY in that case does the
+// listing NOT FAIL: the catalog comes back without prices/stock and the
+// situation is logged as a warning. The rationale is modularity itself — the
+// product module has to be deployable on its own; besides, a missing price is
+// better than showing a wrong one (the field is not written at all).
 //
-// Düşüş HATA SINIFINA göre değil KODA göre daraltılmıştır. Sınıfa bakmak
-// (KindNotFound) fazla genişti: kayıtlı bir sağlayıcının kendi içinde ürettiği
-// NotFound da (query_provider_failed) o kapıdan geçer ve gerçek bir arıza,
-// fiyatsız ama 200 dönen bir vitrin sayfasına dönüşürdü — Faz 4'ün DoD'si
-// tek bir log satırı dışında hiçbir iz bırakmadan ihlal edilirdi.
+// The fallback is narrowed by the CODE, not by the error KIND. Looking at the
+// kind (KindNotFound) was too broad: a NotFound produced by a registered
+// provider inside itself (query_provider_failed) passes through that gate too,
+// and a genuine fault would turn into a storefront page that returns 200 without
+// prices — the DoD of Phase 4 would be violated without leaving any trace beyond
+// a single log line.
 func (s *Service) enrichVariants(ctx context.Context, variantIDs []string) (map[string]enrichment, error) {
 	out := make(map[string]enrichment, len(variantIDs))
 	if len(variantIDs) == 0 {
 		return out, nil
 	}
 	if s.graph == nil {
-		s.log.DebugContext(ctx, "query katmanı kayıtlı değil; vitrin fiyat/stok olmadan dönüyor")
+		s.log.DebugContext(ctx, "the query layer is not registered; the storefront returns without price/stock")
 		return out, nil
 	}
 
@@ -415,12 +437,12 @@ func (s *Service) enrichVariants(ctx context.Context, variantIDs []string) (map[
 	})
 	if err != nil {
 		if errors.CodeOf(err) == codeProviderNotFound {
-			s.log.WarnContext(ctx, "fiyat/stok sağlayıcısı kayıtlı değil; vitrin bu bilgi olmadan dönüyor",
+			s.log.WarnContext(ctx, "the price/stock provider is not registered; the storefront returns without that information",
 				"error", err)
 			return out, nil
 		}
 		return nil, errors.Wrap(err, errors.KindOf(err), codeQueryFailed,
-			"varyantların fiyat/stok bilgisi okunamadı (%d varyant)", len(variantIDs))
+			"the price/stock information of the variants could not be read (%d variants)", len(variantIDs))
 	}
 
 	for _, rec := range records {
@@ -436,11 +458,12 @@ func (s *Service) enrichVariants(ctx context.Context, variantIDs []string) (map[
 	return out, nil
 }
 
-// asRecord genişletme sonucunu kayda çevirir; eşleşme yoksa nil döner.
+// asRecord converts an expansion result into a record; if there is no match it
+// returns nil.
 //
-// İki tip de kabul edilir: çekirdek query.Record yazar, ama sağlayıcı ya da
-// bir sahte uygulama düz map[string]any döndürebilir ve tip iddiası o durumda
-// sessizce başarısız olup fiyatı yutardı.
+// Both types are accepted: the core writes a query.Record, but a provider or a
+// fake implementation may return a plain map[string]any and the type assertion
+// would fail silently in that case and swallow the price.
 func asRecord(v any) query.Record {
 	switch t := v.(type) {
 	case query.Record:

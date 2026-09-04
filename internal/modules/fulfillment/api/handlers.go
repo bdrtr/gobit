@@ -10,27 +10,27 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/fulfillment/service"
 )
 
-// listProviders kayıtlı kargo sağlayıcılarının kimliklerini döner.
+// listProviders returns the identifiers of the registered shipping providers.
 //
-// YALNIZCA yönetim yüzeyine bağlıdır: hangi kargo firmalarıyla çalışıldığı
-// mağazanın operasyonel bilgisidir ve müşteriye gösterilmez (payment'taki
-// ödeme sağlayıcılarından farkı budur — orada müşteri hangi ödeme yolunu
-// seçeceğini bilmek zorundadır).
+// It is bound ONLY to the admin surface: which carriers the store works with is
+// the store's operational information and is not shown to the customer (this is
+// the difference from the payment providers — there the customer has to know
+// which payment method to choose).
 func (h *Handler) listProviders(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	writeList(ctx, w, h.svc.ProviderIDs(ctx))
 }
 
-// --- kargo profilleri --------------------------------------------------------
+// --- shipping profiles -------------------------------------------------------
 
-// createProfileRequest POST /admin/v1/shipping-profiles gövdesidir.
+// createProfileRequest is the body of POST /admin/v1/shipping-profiles.
 type createProfileRequest struct {
 	Name     string         `json:"name"`
 	Type     string         `json:"type"`
 	Metadata map[string]any `json:"metadata"`
 }
 
-// createProfile yeni bir kargo profili oluşturur.
+// createProfile creates a new shipping profile.
 func (h *Handler) createProfile(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -52,7 +52,7 @@ func (h *Handler) createProfile(w http.ResponseWriter, r *http.Request) {
 	corehttp.WriteJSON(ctx, w, http.StatusCreated, singleEnvelope{Data: toProfileDTO(profile)})
 }
 
-// listProfiles kargo profillerini sayfalayarak döner.
+// listProfiles returns the shipping profiles page by page.
 func (h *Handler) listProfiles(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -85,7 +85,7 @@ func (h *Handler) listProfiles(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// getProfile profili kimliğiyle döner.
+// getProfile returns the profile by its identifier.
 func (h *Handler) getProfile(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -97,17 +97,17 @@ func (h *Handler) getProfile(w http.ResponseWriter, r *http.Request) {
 	corehttp.WriteJSON(ctx, w, http.StatusOK, singleEnvelope{Data: toProfileDTO(profile)})
 }
 
-// updateProfileRequest PATCH /admin/v1/shipping-profiles/{id} gövdesidir.
+// updateProfileRequest is the body of PATCH /admin/v1/shipping-profiles/{id}.
 //
-// Alanlar İŞARETÇİDİR: "gönderilmedi" ile "boş gönderildi" ayrımı korunur;
-// gönderilmeyen alan değişmez.
+// The fields are POINTERS: the distinction between "not sent" and "sent empty"
+// is preserved; a field that is not sent does not change.
 type updateProfileRequest struct {
 	Name     *string        `json:"name"`
 	Type     *string        `json:"type"`
 	Metadata map[string]any `json:"metadata"`
 }
 
-// updateProfile profilin verilen alanlarını günceller.
+// updateProfile updates the given fields of the profile.
 func (h *Handler) updateProfile(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -129,7 +129,7 @@ func (h *Handler) updateProfile(w http.ResponseWriter, r *http.Request) {
 	corehttp.WriteJSON(ctx, w, http.StatusOK, singleEnvelope{Data: toProfileDTO(profile)})
 }
 
-// deleteProfile profili yumuşak siler.
+// deleteProfile soft deletes the profile.
 func (h *Handler) deleteProfile(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -140,15 +140,16 @@ func (h *Handler) deleteProfile(w http.ResponseWriter, r *http.Request) {
 	corehttp.WriteJSON(ctx, w, http.StatusNoContent, nil)
 }
 
-// --- kargo seçenekleri -------------------------------------------------------
+// --- shipping options --------------------------------------------------------
 
-// createOptionRequest POST /admin/v1/shipping-options gövdesidir.
+// createOptionRequest is the body of POST /admin/v1/shipping-options.
 type createOptionRequest struct {
 	Name              string `json:"name"`
 	ProviderID        string `json:"provider_id"`
 	ShippingProfileID string `json:"shipping_profile_id"`
 	PriceType         string `json:"price_type"`
-	// Amount minor unit TAM SAYIDIR ve yalnızca "flat" seçeneklerde anlamlıdır.
+	// Amount is an INTEGER in minor units and is meaningful only on "flat"
+	// options.
 	Amount       int64          `json:"amount"`
 	CurrencyCode string         `json:"currency_code"`
 	RegionID     string         `json:"region_id"`
@@ -158,7 +159,7 @@ type createOptionRequest struct {
 	Metadata     map[string]any `json:"metadata"`
 }
 
-// createOption yeni bir kargo seçeneği oluşturur.
+// createOption creates a new shipping option.
 func (h *Handler) createOption(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -188,7 +189,7 @@ func (h *Handler) createOption(w http.ResponseWriter, r *http.Request) {
 	corehttp.WriteJSON(ctx, w, http.StatusCreated, singleEnvelope{Data: toOptionDTO(option)})
 }
 
-// listOptions kargo seçeneklerini sayfalayarak döner.
+// listOptions returns the shipping options page by page.
 func (h *Handler) listOptions(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -230,7 +231,7 @@ func (h *Handler) listOptions(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// getOption seçeneği kurallarıyla birlikte döner.
+// getOption returns the option together with its rules.
 func (h *Handler) getOption(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -242,10 +243,10 @@ func (h *Handler) getOption(w http.ResponseWriter, r *http.Request) {
 	corehttp.WriteJSON(ctx, w, http.StatusOK, singleEnvelope{Data: toOptionDTO(option)})
 }
 
-// updateOptionRequest PATCH /admin/v1/shipping-options/{id} gövdesidir.
+// updateOptionRequest is the body of PATCH /admin/v1/shipping-options/{id}.
 //
-// provider_id ve shipping_profile_id BURADA YOKTUR; gerekçe
-// [service.UpdateOptionInput] belgesindedir.
+// provider_id and shipping_profile_id are ABSENT HERE; the rationale is in the
+// [service.UpdateOptionInput] documentation.
 type updateOptionRequest struct {
 	Name      *string        `json:"name"`
 	PriceType *string        `json:"price_type"`
@@ -257,7 +258,7 @@ type updateOptionRequest struct {
 	Metadata  map[string]any `json:"metadata"`
 }
 
-// updateOption seçeneğin verilen alanlarını günceller.
+// updateOption updates the given fields of the option.
 func (h *Handler) updateOption(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -284,7 +285,7 @@ func (h *Handler) updateOption(w http.ResponseWriter, r *http.Request) {
 	corehttp.WriteJSON(ctx, w, http.StatusOK, singleEnvelope{Data: toOptionDTO(option)})
 }
 
-// deleteOption seçeneği yumuşak siler.
+// deleteOption soft deletes the option.
 func (h *Handler) deleteOption(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -295,16 +296,17 @@ func (h *Handler) deleteOption(w http.ResponseWriter, r *http.Request) {
 	corehttp.WriteJSON(ctx, w, http.StatusNoContent, nil)
 }
 
-// --- kargo seçeneği kuralları ------------------------------------------------
+// --- shipping option rules ---------------------------------------------------
 
-// createRuleRequest POST /admin/v1/shipping-options/{id}/rules gövdesidir.
+// createRuleRequest is the body of
+// POST /admin/v1/shipping-options/{id}/rules.
 type createRuleRequest struct {
 	Attribute string   `json:"attribute"`
 	Operator  string   `json:"operator"`
 	Values    []string `json:"values"`
 }
 
-// createRule bir seçeneğe kural ekler.
+// createRule adds a rule to an option.
 func (h *Handler) createRule(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -326,7 +328,7 @@ func (h *Handler) createRule(w http.ResponseWriter, r *http.Request) {
 	corehttp.WriteJSON(ctx, w, http.StatusCreated, singleEnvelope{Data: toRuleDTO(rule)})
 }
 
-// listRules bir seçeneğin kurallarını döner.
+// listRules returns the rules of an option.
 func (h *Handler) listRules(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -343,7 +345,7 @@ func (h *Handler) listRules(w http.ResponseWriter, r *http.Request) {
 	writeList(ctx, w, data)
 }
 
-// deleteRule kuralı yumuşak siler.
+// deleteRule soft deletes the rule.
 func (h *Handler) deleteRule(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -354,37 +356,39 @@ func (h *Handler) deleteRule(w http.ResponseWriter, r *http.Request) {
 	corehttp.WriteJSON(ctx, w, http.StatusNoContent, nil)
 }
 
-// --- uygunluk listelemesi ----------------------------------------------------
+// --- eligibility listing -----------------------------------------------------
 
-// listStoreEligibleOptions GET /store/v1/shipping-options ucudur.
+// listStoreEligibleOptions is the GET /store/v1/shipping-options endpoint.
 //
-// admin_only seçenekler ASLA dönmez ve istemci bunu isteyemez: bayrak sorgu
-// parametresinden okunmaz, sabit olarak false verilir. Okunsaydı, vitrinden
-// gelen tek bir parametre yönetime özel seçenekleri açardı.
+// admin_only options are NEVER returned and the client cannot ask for them: the
+// flag is not read from a query parameter, it is passed as a constant false.
+// Had it been read, a single parameter coming from the storefront would open
+// the admin-only options.
 //
-// # Sepet olguları BURADA DOĞRULANAMAZ
+// # Cart facts CANNOT BE VERIFIED HERE
 //
-// subtotal, item_count ve total_weight sorgu parametrelerinden gelir; sepet
-// cart modülünün verisidir ve bu modül onu ne hesaplayabilir ne doğrulayabilir
-// (Prensip 2.1). Yani üçü de İSTEMCİNİN İDDİASIDIR: boş sepetle
-// "?subtotal=50000" göndermek serbesttir.
+// subtotal, item_count and total_weight come from query parameters; the cart is
+// the cart module's data and this module can neither compute nor verify it
+// (Principle 2.1). So all three are the CLIENT'S CLAIM: sending
+// "?subtotal=50000" with an empty cart is allowed.
 //
-// Bu yüzden uç, servise TrustedFacts=false ile gider ve o bayrak, bu üç olguya
-// BAĞLI kuralı olan seçenekleri listeden tümüyle çıkarır (gerekçe:
-// [service.Service.ListShippingOptionsFor]). Uç böylece bir "kural oracle"ı olmaktan
-// çıkar: uydurulmuş bir ara toplam artık kimseye kapalı bir seçeneği açmaz.
+// The endpoint therefore goes to the service with TrustedFacts=false, and that
+// flag removes from the list every option that has a rule DEPENDING on these
+// three facts (rationale: [service.Service.ListShippingOptionsFor]). The
+// endpoint thereby stops being a "rule oracle": a made-up subtotal no longer
+// opens an option that is closed to anyone.
 //
-// Kalan iki sınır AÇIKÇA kabul edilmiştir:
+// The remaining two limits are EXPLICITLY accepted:
 //
-//   - Fiyat GÖSTERİMDİR. "calculated" bir seçeneğin ücreti istemcinin bildirdiği
-//     ağırlıkla hesaplanır; gerçek ücret, sepetin gerçek olgularıyla ödeme
-//     adımında yeniden belirlenmelidir.
-//   - Serbest kural bağlamı ([service.ListOptionsInput.Attributes]) bu uçtan
-//     HİÇ okunmaz. Sonucu: "customer_group_id" gibi bir alana bağlanmış
-//     seçenekler HTTP uygunluk uçlarında (yönetim ucu dâhil) listelenemez.
-//     Okunması, müşterinin kendi grubunu ilan etmesi demek olurdu; gerçek
-//     değerin sahibi bu modül değildir ve bağlamı taşıyan yol
-//     [service.Interop]'tur.
+//   - The price is a PRESENTATION. The rate of a "calculated" option is
+//     computed with the weight the client reported; the real rate has to be
+//     determined again at the payment step with the cart's real facts.
+//   - The free rule context ([service.ListOptionsInput.Attributes]) is NEVER
+//     read from this endpoint. The consequence: options bound to a field such
+//     as "customer_group_id" cannot be listed on the HTTP eligibility endpoints
+//     (the admin endpoint included). Reading it would mean letting the customer
+//     declare their own group; the owner of the real value is not this module
+//     and the path that carries the context is [service.Interop].
 func (h *Handler) listStoreEligibleOptions(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -409,16 +413,17 @@ func (h *Handler) listStoreEligibleOptions(w http.ResponseWriter, r *http.Reques
 	writeList(ctx, w, data)
 }
 
-// listAdminEligibleOptions GET /admin/v1/shipping-options/eligible ucudur.
+// listAdminEligibleOptions is the GET /admin/v1/shipping-options/eligible
+// endpoint.
 //
-// Yönetim yüzeyi admin_only seçenekleri DE görür; ayrım budur.
+// The admin surface sees admin_only options TOO; that is the distinction.
 //
-// Sepet olguları burada GÜVENİLİR sayılır (TrustedFacts=true) ve kurala bağlı
-// seçenekler listelenir. Gerekçe: bu uç yöneticinin "şu bağlamda hangi
-// seçenekler çıkar" diye denediği bir ÖNİZLEME aracıdır; yönetici zaten tüm
-// kataloğu ve kurallarını okuyabildiği için bağlamı uydurması ona yeni bir şey
-// açmaz. Mağaza ucunda aynı varsayım geçerli DEĞİLDİR
-// (bkz. [Handler.listStoreEligibleOptions]).
+// Cart facts are considered TRUSTED here (TrustedFacts=true) and rule-bound
+// options are listed. The rationale: this endpoint is a PREVIEW tool with which
+// the administrator tries out "which options come up in this context"; since
+// the administrator can already read the whole catalog and its rules, making up
+// a context opens nothing new to them. The same assumption does NOT hold on the
+// store endpoint (see [Handler.listStoreEligibleOptions]).
 func (h *Handler) listAdminEligibleOptions(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -443,12 +448,13 @@ func (h *Handler) listAdminEligibleOptions(w http.ResponseWriter, r *http.Reques
 	writeList(ctx, w, data)
 }
 
-// parseEligibilityQuery uygunluk listelemesinin sorgu parametrelerini çözer.
+// parseEligibilityQuery parses the query parameters of the eligibility listing.
 //
-// IncludeAdminOnly ve TrustedFacts BURADA OKUNMAZ: ikisi de GÜVEN kararıdır ve
-// değerleri handler'ın hangi yüzeye ait olduğuna göre sabitlenir
-// (bkz. [Handler.listStoreEligibleOptions]). Sorgudan okunsalardı, vitrinden
-// gelen tek bir parametre iki kapıyı da açardı.
+// IncludeAdminOnly and TrustedFacts are NOT READ HERE: both are a TRUST
+// decision and their values are fixed according to which surface the handler
+// belongs to (see [Handler.listStoreEligibleOptions]). Had they been read from
+// the query, a single parameter coming from the storefront would open both
+// doors.
 func parseEligibilityQuery(r *http.Request) (service.ListOptionsInput, error) {
 	query := r.URL.Query()
 
@@ -473,8 +479,9 @@ func parseEligibilityQuery(r *http.Request) (service.ListOptionsInput, error) {
 		RegionID:     query.Get("region_id"),
 		CurrencyCode: query.Get("currency_code"),
 		CountryCode:  query.Get("country_code"),
-		// Profil kimliği TEKRARLANABİLİR bir parametredir: bir sepette birden
-		// çok profile bağlı ürün bulunabilir ve hepsi aynı anda sorulmalıdır.
+		// The profile identifier is a REPEATABLE parameter: a cart may contain
+		// products bound to several profiles and all of them have to be asked
+		// at once.
 		ShippingProfileIDs: query["shipping_profile_id"],
 		Subtotal:           subtotal,
 		ItemCount:          itemCount,
@@ -483,29 +490,29 @@ func parseEligibilityQuery(r *http.Request) (service.ListOptionsInput, error) {
 	}, nil
 }
 
-// --- gönderiler --------------------------------------------------------------
+// --- fulfillments ------------------------------------------------------------
 
-// createFulfillmentRequest POST /admin/v1/fulfillments gövdesidir.
+// createFulfillmentRequest is the body of POST /admin/v1/fulfillments.
 type createFulfillmentRequest struct {
 	Reference        string `json:"reference"`
 	ShippingOptionID string `json:"shipping_option_id"`
-	// IdempotencyKey zorunludur: aynı anahtarla ikinci istek YENİ gönderi
-	// açmaz, mevcut gönderiyi döner.
+	// IdempotencyKey is required: a second request with the same key does NOT
+	// open a new fulfillment, it returns the existing one.
 	IdempotencyKey string                 `json:"idempotency_key"`
 	Items          []fulfillmentItemInput `json:"items"`
 	Data           map[string]any         `json:"data"`
 	Metadata       map[string]any         `json:"metadata"`
 }
 
-// fulfillmentItemInput gönderi kalemi gövdesidir.
+// fulfillmentItemInput is the body of a fulfillment item.
 type fulfillmentItemInput struct {
 	LineItemID string `json:"line_item_id"`
-	// Quantity işaretçidir: "gönderilmedi" ile "sıfır gönderildi" ayrımı
-	// korunur ve ikisi de reddedilir ama farklı mesajla.
+	// Quantity is a pointer: the distinction between "not sent" and "sent as
+	// zero" is preserved and both are rejected, but with a different message.
 	Quantity *int64 `json:"quantity"`
 }
 
-// createFulfillment sağlayıcıda bir gönderi açar.
+// createFulfillment opens a fulfillment at the provider.
 func (h *Handler) createFulfillment(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -519,7 +526,7 @@ func (h *Handler) createFulfillment(w http.ResponseWriter, r *http.Request) {
 	for i, item := range body.Items {
 		if item.Quantity == nil {
 			corehttp.WriteError(ctx, w, coreerrors.Invalid(codeInvalidRequest,
-				"%d. kalemin quantity alanı zorunludur", i+1))
+				"the quantity field of item %d is required", i+1))
 			return
 		}
 		items = append(items, service.FulfillmentItemInput{
@@ -543,7 +550,7 @@ func (h *Handler) createFulfillment(w http.ResponseWriter, r *http.Request) {
 	corehttp.WriteJSON(ctx, w, http.StatusCreated, singleEnvelope{Data: toFulfillmentDTO(ful)})
 }
 
-// listFulfillments gönderileri sayfalayarak döner.
+// listFulfillments returns the fulfillments page by page.
 func (h *Handler) listFulfillments(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -579,7 +586,7 @@ func (h *Handler) listFulfillments(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// getFulfillment gönderiyi kalemleriyle birlikte döner.
+// getFulfillment returns the fulfillment together with its items.
 func (h *Handler) getFulfillment(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -591,11 +598,11 @@ func (h *Handler) getFulfillment(w http.ResponseWriter, r *http.Request) {
 	corehttp.WriteJSON(ctx, w, http.StatusOK, singleEnvelope{Data: toFulfillmentDTO(ful)})
 }
 
-// cancelFulfillment gönderiyi iptal eder ve GÜNCEL hâlini döner.
+// cancelFulfillment cancels the fulfillment and returns its CURRENT state.
 //
-// İptal İDEMPOTENTTİR: ikinci çağrı da 200 döner. Yanıtın gövdeli olması
-// bilinçlidir — çağıran, iptalin gerçekten yazıldığını durum alanından
-// görebilmelidir.
+// Cancellation is IDEMPOTENT: a second call returns 200 as well. The response
+// having a body is deliberate — the caller has to be able to see from the
+// status field that the cancellation was really written.
 func (h *Handler) cancelFulfillment(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	id := chi.URLParam(r, "id")
@@ -607,16 +614,16 @@ func (h *Handler) cancelFulfillment(w http.ResponseWriter, r *http.Request) {
 	h.writeFulfillment(w, r, id)
 }
 
-// shipRequest POST /admin/v1/fulfillments/{id}/ship gövdesidir.
+// shipRequest is the body of POST /admin/v1/fulfillments/{id}/ship.
 type shipRequest struct {
 	TrackingNumber string `json:"tracking_number"`
 	TrackingURL    string `json:"tracking_url"`
 }
 
-// shipFulfillment gönderiyi kargoya verilmiş olarak işaretler.
+// shipFulfillment marks the fulfillment as handed to the carrier.
 //
-// Gövde İSTEĞE BAĞLIDIR: takip bilgisi olmadan da sevk bildirilebilir (bazı
-// taşıyıcılar numarayı sonradan verir).
+// The body is OPTIONAL: shipping can be reported without tracking information
+// as well (some carriers provide the number later).
 func (h *Handler) shipFulfillment(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -634,7 +641,7 @@ func (h *Handler) shipFulfillment(w http.ResponseWriter, r *http.Request) {
 	corehttp.WriteJSON(ctx, w, http.StatusOK, singleEnvelope{Data: toFulfillmentDTO(ful)})
 }
 
-// deliverFulfillment gönderiyi teslim edilmiş olarak işaretler.
+// deliverFulfillment marks the fulfillment as delivered.
 func (h *Handler) deliverFulfillment(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -646,10 +653,11 @@ func (h *Handler) deliverFulfillment(w http.ResponseWriter, r *http.Request) {
 	corehttp.WriteJSON(ctx, w, http.StatusOK, singleEnvelope{Data: toFulfillmentDTO(ful)})
 }
 
-// writeFulfillment gönderiyi okuyup tekil zarfla yazar.
+// writeFulfillment reads the fulfillment and writes it with the single
+// envelope.
 //
-// Gövdesi olmayan bir işlemden (iptal) sonra güncel kaydı döndürmek için
-// vardır; okuma hata verirse o hata yazılır.
+// It exists to return the current record after an operation that has no body
+// (cancellation); if the read fails, that error is written.
 func (h *Handler) writeFulfillment(w http.ResponseWriter, r *http.Request, id string) {
 	ctx := r.Context()
 
@@ -661,25 +669,28 @@ func (h *Handler) writeFulfillment(w http.ResponseWriter, r *http.Request, id st
 	corehttp.WriteJSON(ctx, w, http.StatusOK, singleEnvelope{Data: toFulfillmentDTO(ful)})
 }
 
-// --- depo kargo politikası ----------------------------------------------------
+// --- location shipping policy ------------------------------------------------
 
-// setLocationRequest PUT /admin/v1/shipping-locations/{location_id} gövdesidir.
+// setLocationRequest is the body of
+// PUT /admin/v1/shipping-locations/{location_id}.
 //
-// Yol PATCH değil PUT'tur ve bu bilinçlidir: gövde bir DÜZELTME değil, deponun
-// politikasının TAMAMIDIR. Eksik verilen bir alan "değiştirme" anlamına gelmez;
-// bölge listesi verilmezse deponun bağları SİLİNİR ve depo tüm bölgelere hizmet
-// eder hâle gelir. PATCH, "gönderdiğimi değiştir, kalanına dokunma" sözü verirdi
-// ve o söz bu gövde için tutulamazdı — boş dilim ile eksik alan JSON'dan geçerken
-// ayırt edilemez.
+// The route is PUT, not PATCH, and that is deliberate: the body is not a
+// CORRECTION but the WHOLE policy of the location. A field left out does not
+// mean "do not change it"; if the region list is not given, the location's
+// bindings are DELETED and the location comes to serve all regions. PATCH would
+// promise "change what I sent, leave the rest alone" and that promise could not
+// be kept for this body — an empty slice and a missing field cannot be told
+// apart as they pass through JSON.
 type setLocationRequest struct {
-	// Priority tercih sırasıdır; küçük olan öne geçer, negatif serbesttir.
+	// Priority is the preference order; a smaller value comes first, negative
+	// values are allowed.
 	Priority int64 `json:"priority"`
-	// RegionIDs deponun hizmet ettiği kargo bölgeleridir. BOŞ ise depo TÜM
-	// bölgelere hizmet eder.
+	// RegionIDs are the shipping regions the location serves. If EMPTY, the
+	// location serves ALL regions.
 	RegionIDs []string `json:"region_ids"`
 }
 
-// setLocation bir deponun kargo politikasını yazar ya da üzerine yazar.
+// setLocation writes or overwrites the shipping policy of a location.
 func (h *Handler) setLocation(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -701,7 +712,7 @@ func (h *Handler) setLocation(w http.ResponseWriter, r *http.Request) {
 	corehttp.WriteJSON(ctx, w, http.StatusOK, singleEnvelope{Data: toLocationDTO(loc)})
 }
 
-// getLocation deponun politikasını döner.
+// getLocation returns the policy of the location.
 func (h *Handler) getLocation(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -713,7 +724,7 @@ func (h *Handler) getLocation(w http.ResponseWriter, r *http.Request) {
 	corehttp.WriteJSON(ctx, w, http.StatusOK, singleEnvelope{Data: toLocationDTO(loc)})
 }
 
-// listLocations yazılmış politikaları öncelik sırasıyla sayfalayarak döner.
+// listLocations returns the written policies in priority order, page by page.
 func (h *Handler) listLocations(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -741,11 +752,12 @@ func (h *Handler) listLocations(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// deleteLocation politikayı siler ve depoyu VARSAYILANA döndürür.
+// deleteLocation deletes the policy and returns the location to the DEFAULT.
 //
-// Silmek depoyu kapatmaz: kaydı olmayan depo sıfır öncelikte ve tüm bölgelere
-// hizmet ediyor sayılır. Bir depoyu adaylıktan çıkarmak kargo modülünün
-// yetkisinde değildir — aday listesini stok olgusu üretir.
+// Deleting does not close the location: a location without a record is
+// considered to be at priority zero and to serve all regions. Removing a
+// location from candidacy is not within the shipping module's authority — the
+// candidate list is produced by an inventory fact.
 func (h *Handler) deleteLocation(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 

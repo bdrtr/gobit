@@ -1,21 +1,23 @@
-// Package api product modülünün HTTP yüzeyidir.
+// Package api is the product module's HTTP surface.
 //
-// Katman İNCEDİR: gövdeyi çözer, sorgu parametrelerini okur, servisi çağırır ve
-// yanıtı zarfa sarar. İş kuralı burada YOKTUR ve HTTP durum kodu ELLE
-// SEÇİLMEZ — kod, servisin döndürdüğü tipli hatanın sınıfından
-// corehttp.WriteError tarafından türetilir (plan Bölüm 8).
+// The layer is THIN: it decodes the body, reads the query parameters, calls the
+// service and wraps the response in an envelope. There is NO business rule here
+// and the HTTP status code is NOT PICKED BY HAND — the code is derived by
+// corehttp.WriteError from the class of the typed error the service returned
+// (plan Section 8).
 //
-// Yanıt zarfı: liste uçları {"data": [...], "count": N, "offset": N, "limit": N},
-// tekil uçlar {"data": {...}} döner.
+// Response envelope: list endpoints return {"data": [...], "count": N,
+// "offset": N, "limit": N}, single endpoints return {"data": {...}}.
 //
-// # Yetki
+// # Scopes
 //
-// /admin/v1 uçları yetki ister ve sözlük ikiye ayrılır: GET uçları [ScopeRead],
-// POST/PUT/PATCH/DELETE uçları [ScopeWrite] (bkz. [Handler.Routes]).
-// corehttp.ScopeAdmin ÜST YETKİDİR ve ikisini de tek başına karşılar.
+// The /admin/v1 endpoints ask for a scope and the dictionary splits in two: GET
+// endpoints [ScopeRead], POST/PUT/PATCH/DELETE endpoints [ScopeWrite] (see
+// [Handler.Routes]). corehttp.ScopeAdmin is the SUPER SCOPE and satisfies both
+// on its own.
 //
-// /store/v1 uçlarına yetki EKLENMEZ: mağaza yüzeyinin kimliği publishable
-// anahtardır ve o anahtar tanımı gereği yetki TAŞIMAZ.
+// NO scope is ADDED to the /store/v1 endpoints: the identity of the store
+// surface is the publishable key and that key by definition CARRIES NO scope.
 package api
 
 import (
@@ -34,92 +36,97 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/product/service"
 )
 
-// maxBodyBytes tek bir istek gövdesinin üst sınırıdır.
+// maxBodyBytes is the upper bound of a single request body.
 //
-// Sınır olmadan tek bir istemci, gövdeyi çözerken sunucunun belleğini
-// tüketebilirdi. 1 MiB, görsel listesi ve varyantlarıyla birlikte gelen bir
-// ürün için fazlasıyla yeterlidir.
+// Without a limit a single client could exhaust the server's memory while the
+// body was being decoded. 1 MiB is more than enough for a product that arrives
+// together with its image list and its variants.
 const maxBodyBytes = 1 << 20
 
-// Hata kodları; istemci errors.CodeOf ile bunlara bakabilir.
+// Error codes; a client can look these up with errors.CodeOf.
 const (
 	codeBadJSON  = "product_bad_json"
 	codeBadParam = "product_bad_query_param"
 )
 
-// Handler modülün HTTP handler'larını taşır.
+// Handler carries the module's HTTP handlers.
 type Handler struct {
 	svc Catalog
-	// graphql vitrinin GraphQL okuma ucudur (bkz. [graph.NewHandler]).
+	// graphql is the storefront's GraphQL read endpoint (see [graph.NewHandler]).
 	//
-	// Handler'ın bir ALANIDIR, istek başına kurulmaz: gqlgen sunucusu şemayı
-	// bir kez ayrıştırır ve ayrıştırılmış sorgu önbelleğini içinde taşır;
-	// her istekte yeniden kurmak ikisini de çöpe atardı.
+	// It is a FIELD of the handler, not built per request: the gqlgen server
+	// parses the schema once and carries the parsed-query cache inside itself;
+	// rebuilding it on every request would throw both away.
 	graphql http.Handler
 }
 
-// New verilen servis ve GraphQL sınırlarıyla handler üretir.
+// New builds a handler with the given service and GraphQL limits.
 //
-// GraphQL ucu BURADA kurulur ki modülün tüm HTTP yüzeyi tek bir yerden
-// (bkz. [Handler.Routes]) bağlansın; yoksa uçların listesi iki dosyaya
-// bölünürdü.
+// The GraphQL endpoint is built HERE so that the module's whole HTTP surface is
+// wired from a single place (see [Handler.Routes]); otherwise the list of
+// endpoints would be split across two files.
 //
-// graphOpts SIFIR DEĞER olabilir ve paket varsayılanlarını verir; "sınırsız"
-// anlamına GELMEZ (bkz. [graph.Options]). Sınırlar api katmanında
-// yorumlanmaz, olduğu gibi geçirilir: burada bir varsayılan seçmek aynı
-// kuralın ikinci bir tanımı olurdu.
+// graphOpts may be the ZERO VALUE and then gives the package defaults; it does
+// NOT mean "unlimited" (see [graph.Options]). The limits are not interpreted in
+// the api layer, they are passed through as they are: picking a default here
+// would be a second definition of the same rule.
 //
-// svc nil olabilir (belge üretimi bunu yapar): gqlgen sunucusu kurulurken
-// servise dokunmaz, yalnızca istek geldiğinde çağırır.
+// svc may be nil (documentation generation does this): the gqlgen server does
+// not touch the service while it is being built, it only calls it once a
+// request arrives.
 func New(svc Catalog, graphOpts graph.Options) *Handler {
 	return &Handler{svc: svc, graphql: graph.NewHandler(svc, graphOpts)}
 }
 
-// Somut servisin api katmanının beklediği yüzeyi karşıladığı derleme zamanında
-// sabitlenir: imza kayması testte değil derlemede görünür.
+// That the concrete service satisfies the surface the api layer expects is
+// pinned at compile time: a signature drift shows up in the build, not in a
+// test.
 var _ Catalog = (*service.Service)(nil)
 
-// listEnvelope liste yanıtlarının zarfıdır (plan Bölüm 8).
+// listEnvelope is the envelope of list responses (plan Section 8).
 type listEnvelope struct {
 	Data any `json:"data"`
-	// Count süzgece uyan TOPLAM kayıt sayısıdır ve SAYILMADIYSA gövdeden
-	// tümüyle DÜŞER (omitempty + işaretçi).
+	// Count is the TOTAL number of records matching the filter and it DROPS
+	// out of the body entirely when it WAS NOT COUNTED (omitempty + pointer).
 	//
-	// Sayımın kapatılabildiği tek uç bugün vitrin listesidir
-	// (bkz. [Handler.storeListProducts]); geri kalan her liste her zaman sayar
-	// ve alan onlarda hep yazılır — yani varsayılan yanıtın baytları
-	// DEĞİŞMEZ.
+	// The only endpoint where counting can be turned off today is the
+	// storefront listing (see [Handler.storeListProducts]); every other list
+	// always counts and the field is always written in those — that is, the
+	// bytes of the default response DO NOT CHANGE.
 	//
-	// # Neden 0 değil, neden null değil, neden YOK
+	// # Why not 0, why not null, why ABSENT
 	//
-	// 0 bir YALANDIR: "eşleşen kayıt yok" cümlesinden ayırt edilemez ve
-	// istemci sayfa sayısını sıfır hesaplar. JSON null ise alanın TİPİNİ
-	// değiştirir (integer → integer|null) ve JavaScript'te sessizce sayıya
-	// çevrilir — `null / 20` sıfırdır, `undefined / 20` NaN'dır; yani eksik
-	// alan yanlış cevabı GÜRÜLTÜLÜ verir, null sessiz verir.
+	// 0 is a LIE: it cannot be told apart from the sentence "no matching
+	// record" and the client computes zero pages. A JSON null changes the TYPE
+	// of the field (integer → integer|null) and in JavaScript it is silently
+	// coerced to a number — `null / 20` is zero, `undefined / 20` is NaN; that
+	// is, the missing field gives the wrong answer LOUDLY, null gives it
+	// silently.
 	//
-	// Asıl gerekçe ise bu değil, SİMETRİDİR: aynı katalogun GraphQL yüzeyinde
-	// "count" istemcinin seçmediği sürece zaten yanıtta yoktur. Alanı düşürmek
-	// yeni bir biçim icat etmez, iki okuma yüzeyini aynı cümleye getirir —
-	// sayaç, İSTENDİĞİ SÜRECE vardır.
+	// The real reason is not that one, it is SYMMETRY: on the GraphQL surface
+	// of the same catalog "count" is already absent from the response unless
+	// the client selects it. Dropping the field does not invent a new shape, it
+	// brings the two read surfaces to the same sentence — the counter is there
+	// AS LONG AS IT IS ASKED FOR.
 	//
-	// Alanın düşebildiği OpenAPI belgesinde de yazılıdır: vitrin listesinin
-	// yanıt şeması "count"u zorunlu alanlar arasına KOYMAZ
-	// (bkz. openapi.Doc.ListOptionalCount).
+	// That the field can drop is written in the OpenAPI document too: the
+	// response schema of the storefront listing DOES NOT PUT "count" among the
+	// required fields (see openapi.Doc.ListOptionalCount).
 	Count  *int `json:"count,omitempty"`
 	Offset int  `json:"offset"`
 	Limit  int  `json:"limit"`
 }
 
-// itemEnvelope tekil yanıtların zarfıdır.
+// itemEnvelope is the envelope of single responses.
 type itemEnvelope struct {
 	Data any `json:"data"`
 }
 
-// writeList sayfalı sonucu zarfa sararak yazar.
+// writeList writes a paginated result wrapped in the envelope.
 //
-// Boş sonuç JSON'da null değil BOŞ DİZİ olur: istemcinin "data" alanını her
-// zaman dizi sayabilmesi, her yanıtta null kontrolü yapmasından iyidir.
+// An empty result becomes an EMPTY ARRAY in JSON, not null: the client being
+// able to treat the "data" field as an array every time is better than it
+// having to check for null in every response.
 func writeList[T any](w http.ResponseWriter, r *http.Request, res service.ListResult[T]) {
 	items := res.Items
 	if items == nil {
@@ -133,21 +140,23 @@ func writeList[T any](w http.ResponseWriter, r *http.Request, res service.ListRe
 	})
 }
 
-// writeItem tekil kaydı zarfa sararak yazar.
+// writeItem writes a single record wrapped in the envelope.
 func writeItem(w http.ResponseWriter, r *http.Request, status int, v any) {
 	corehttp.WriteJSON(r.Context(), w, status, itemEnvelope{Data: v})
 }
 
-// decode istek gövdesini çözer.
+// decode decodes the request body.
 //
-// Bilinmeyen alan REDDEDİLİR: "titel" yazan bir istemci sessizce başlıksız bir
-// ürün oluşturmak yerine ne yaptığını hemen öğrenir. Gövde sınırı aşarsa da
-// tipli bir doğrulama hatası döner; sunucu hatası değildir.
+// An unknown field is REJECTED: a client that writes "titel" learns what it did
+// right away instead of silently creating a product with no title. If the body
+// exceeds the limit a typed validation error is returned as well; it is not a
+// server error.
 func decode[T any](w http.ResponseWriter, r *http.Request) (T, error) {
 	var out T
 
-	// Sınır aşıldığında sunucunun isteği düzgün sonlandırabilmesi için yanıt
-	// yazıcısı verilir; aksi hâlde bağlantı yarım okunmuş gövdeyle kalırdı.
+	// The response writer is handed over so the server can terminate the
+	// request cleanly when the limit is exceeded; otherwise the connection
+	// would be left with a half-read body.
 	body := http.MaxBytesReader(w, r.Body, maxBodyBytes)
 	dec := json.NewDecoder(body)
 	dec.DisallowUnknownFields()
@@ -156,34 +165,35 @@ func decode[T any](w http.ResponseWriter, r *http.Request) (T, error) {
 		var maxErr *http.MaxBytesError
 		if errors.As(err, &maxErr) {
 			return out, coreerrors.Wrap(err, coreerrors.KindInvalid, codeBadJSON,
-				"istek gövdesi çok büyük (en fazla %d bayt)", maxBodyBytes)
+				"request body is too large (at most %d bytes)", maxBodyBytes)
 		}
 		if errors.Is(err, io.EOF) {
-			return out, coreerrors.Invalid(codeBadJSON, "istek gövdesi boş")
+			return out, coreerrors.Invalid(codeBadJSON, "request body is empty")
 		}
 		return out, coreerrors.Wrap(err, coreerrors.KindInvalid, codeBadJSON,
-			"istek gövdesi çözümlenemedi: %v", err)
+			"request body could not be decoded: %v", err)
 	}
 
-	// Tek bir JSON değerinden fazlası gönderilmişse istek belirsizdir; ikinci
-	// gövdenin sessizce yok sayılması, gönderenin hangi kaydın yazıldığını
-	// bilmemesi demektir.
+	// If more than a single JSON value was sent the request is ambiguous; the
+	// second body being silently ignored means the sender does not know which
+	// record was written.
 	if err := dec.Decode(new(json.RawMessage)); !errors.Is(err, io.EOF) {
-		return out, coreerrors.Invalid(codeBadJSON, "istek gövdesi tek bir JSON nesnesi olmalı")
+		return out, coreerrors.Invalid(codeBadJSON, "request body has to be a single JSON object")
 	}
 	return out, nil
 }
 
-// pathParam yol parametresini okur ve boşsa tipli hata döner.
+// pathParam reads a path parameter and returns a typed error when it is empty.
 func pathParam(r *http.Request, name string) (string, error) {
 	value := strings.TrimSpace(chi.URLParam(r, name))
 	if value == "" {
-		return "", coreerrors.Invalid(codeBadParam, "%s yol parametresi zorunludur", name)
+		return "", coreerrors.Invalid(codeBadParam, "the %s path parameter is required", name)
 	}
 	return value, nil
 }
 
-// intParam sorgu parametresini tam sayı olarak okur; yoksa varsayılanı döner.
+// intParam reads a query parameter as an integer; returns the fallback when it
+// is absent.
 func intParam(r *http.Request, name string, fallback int) (int, error) {
 	raw := r.URL.Query().Get(name)
 	if raw == "" {
@@ -192,15 +202,15 @@ func intParam(r *http.Request, name string, fallback int) (int, error) {
 	value, err := strconv.Atoi(raw)
 	if err != nil {
 		return 0, coreerrors.Wrap(err, coreerrors.KindInvalid, codeBadParam,
-			"%s parametresi tam sayı olmalı (verilen: %q)", name, raw)
+			"the %s parameter has to be an integer (given: %q)", name, raw)
 	}
 	return value, nil
 }
 
-// stringParam sorgu parametresini okur; verilmemişse nil döner.
+// stringParam reads a query parameter; returns nil when it was not given.
 //
-// Boş dizge de "verilmedi" sayılır: "?handle=" ile hiçbir ürünü eşleştirmeyen
-// bir filtre kurmak istemcinin niyeti değildir.
+// An empty string counts as "not given" as well: building a filter with
+// "?handle=" that matches no product at all is not what the client intends.
 func stringParam(r *http.Request, name string) *string {
 	value := strings.TrimSpace(r.URL.Query().Get(name))
 	if value == "" {
@@ -209,14 +219,14 @@ func stringParam(r *http.Request, name string) *string {
 	return &value
 }
 
-// boolParam sorgu parametresini mantıksal değer olarak okur; yoksa
-// varsayılanı döner.
+// boolParam reads a query parameter as a boolean value; returns the fallback
+// when it is absent.
 //
-// Varsayılan ÇAĞRIDA yazılır, burada değil — [intParam] ile aynı biçim. Sabit
-// bir false varsayılanı yeterli olmayı bıraktı: "with_count" parametresinin
-// varsayılanı TRUE'dur (bkz. [Handler.storeListProducts]) ve varsayılanı
-// fonksiyonun içine gömmek, çağıranın gördüğü imzada YAZMAYAN bir kural
-// olurdu.
+// The default is written AT THE CALL SITE, not here — the same shape as
+// [intParam]. A constant false default stopped being enough: the default of the
+// "with_count" parameter is TRUE (see [Handler.storeListProducts]) and burying
+// the default inside the function would be a rule that IS NOT WRITTEN in the
+// signature the caller sees.
 func boolParam(r *http.Request, name string, fallback bool) (bool, error) {
 	raw := r.URL.Query().Get(name)
 	if raw == "" {
@@ -225,12 +235,12 @@ func boolParam(r *http.Request, name string, fallback bool) (bool, error) {
 	value, err := strconv.ParseBool(raw)
 	if err != nil {
 		return false, coreerrors.Wrap(err, coreerrors.KindInvalid, codeBadParam,
-			"%s parametresi mantıksal değer olmalı (verilen: %q)", name, raw)
+			"the %s parameter has to be a boolean value (given: %q)", name, raw)
 	}
 	return value, nil
 }
 
-// paging sayfalama parametrelerini okur.
+// paging reads the pagination parameters.
 func paging(r *http.Request) (limit, offset int, err error) {
 	limit, err = intParam(r, "limit", 0)
 	if err != nil {

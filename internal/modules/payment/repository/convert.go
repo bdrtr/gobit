@@ -188,7 +188,7 @@ func checkError(err error, constraint, code, format string, a ...any) error {
 			"tutar pozitif olmalı")
 	case strings.HasSuffix(constraint, constraintCurrencySuffix):
 		return errors.Wrap(err, errors.KindInvalid, codeCurrencyInvalid,
-			"para birimi üç harfli ISO 4217 kodu olmalı")
+			"the currency has to be a three-letter ISO 4217 code")
 	case strings.HasSuffix(constraint, constraintStatusSuffix):
 		return errors.Wrap(err, errors.KindInvalid, codeStatusInvalid,
 			"tanımsız durum değeri")

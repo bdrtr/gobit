@@ -12,33 +12,34 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/product"
 )
 
-// TestModuleContract modülün çekirdek sözleşmesinin sabit parçalarını
-// doğrular.
+// TestModuleContract verifies the fixed parts of the module's contract with
+// the core.
 func TestModuleContract(t *testing.T) {
 	t.Parallel()
 
 	var mod module.Module = product.New(product.Options{})
 	assert.Equal(t, "product", mod.Name())
 	assert.Equal(t, "product.service", product.ServiceName,
-		"servis adı modüller arası sözleşmedir; başka modüller bu adla çözer")
+		"the service name is a cross-module contract; other modules resolve it under this name")
 	assert.Equal(t, "product.interop", product.InteropName,
-		"interop adı modüller arası sözleşmedir; eklentiler katalogu bu adla çözer")
+		"the interop name is a cross-module contract; plugins resolve the catalog under this name")
 }
 
-// TestMigrationsAreEmbeddedInPairs migration dosyalarının gömüldüğünü ve her
-// up dosyasının bir down eşi olduğunu doğrular.
+// TestMigrationsAreEmbeddedInPairs verifies that the migration files are
+// embedded and that every up file has a down counterpart.
 //
-// Eşi olmayan bir migration geri alınamaz; plan Bölüm 8 bunu şart koşar ve
-// eksiklik ancak geri alma denendiğinde (yani en kötü anda) görülürdü.
+// A migration without a counterpart cannot be rolled back; Section 8 of the
+// plan requires this, and the gap would be seen only once a rollback is
+// attempted (that is, at the worst possible moment).
 func TestMigrationsAreEmbeddedInPairs(t *testing.T) {
 	t.Parallel()
 
 	src := product.New(product.Options{}).Migrations()
-	require.NotNil(t, src, "modül migration kaynağı sunmalı")
+	require.NotNil(t, src, "the module must offer a migration source")
 
 	entries, err := fs.ReadDir(src, ".")
 	require.NoError(t, err)
-	require.NotEmpty(t, entries, "migration dosyaları gömülmeli")
+	require.NotEmpty(t, entries, "the migration files must be embedded")
 
 	names := map[string]struct{}{}
 	for _, entry := range entries {
@@ -52,21 +53,22 @@ func TestMigrationsAreEmbeddedInPairs(t *testing.T) {
 		}
 		upCount++
 		down := name[:len(name)-len(".up.sql")] + ".down.sql"
-		assert.Contains(t, names, down, "%s için geri alma dosyası olmalı", name)
+		assert.Contains(t, names, down, "there must be a rollback file for %s", name)
 	}
-	assert.Positive(t, upCount, "en az bir up migration bulunmalı")
+	assert.Positive(t, upCount, "there must be at least one up migration")
 	assert.Contains(t, names, "000001_product_init.up.sql")
 }
 
-// TestRoutesWithoutRegisterIsNoop Register çalışmadan Routes çağrılırsa hiçbir
-// uç bağlanmadığını doğrular.
+// TestRoutesWithoutRegisterIsNoop verifies that if Routes is called without
+// Register having run, no endpoint is mounted.
 //
-// Servisi olmayan bir handler bağlansaydı ilk istekte nil pointer paniği
-// verirdi; ucun hiç var olmaması (404) bundan iyidir.
+// A handler without a service would give a nil pointer panic on the first
+// request if it were mounted; the endpoint not existing at all (404) is
+// better than that.
 func TestRoutesWithoutRegisterIsNoop(t *testing.T) {
 	t.Parallel()
 
 	r := chi.NewRouter()
 	assert.NotPanics(t, func() { product.New(product.Options{}).Routes(r) })
-	assert.Nil(t, product.New(product.Options{}).Service(), "Register çağrılmadan servis kurulmaz")
+	assert.Nil(t, product.New(product.Options{}).Service(), "the service is not set up unless Register is called")
 }

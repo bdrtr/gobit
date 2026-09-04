@@ -8,31 +8,33 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/fulfillment/models"
 )
 
-// Bu dosya kargo KATALOĞUNUN (profil, seçenek, kural) yönetim akışlarıdır.
-// Uygunluk hesabı eligibility.go'da, gönderiler fulfillment.go'dadır.
+// This file holds the admin flows of the shipping CATALOG (profile, option,
+// rule). The eligibility calculation is in eligibility.go, the fulfillments in
+// fulfillment.go.
 
-// CreateProfileInput yeni bir kargo profilinin girdisidir.
+// CreateProfileInput is the input of a new shipping profile.
 type CreateProfileInput struct {
-	// Name profilin görünen adıdır; zorunludur ve yaşayan kayıtlar arasında
-	// tektir.
+	// Name is the profile's display name; it is required and is unique among
+	// the living records.
 	Name string
-	// Type profilin türüdür; boş verilirse "default" uygulanır.
+	// Type is the profile's type; if it is given empty, "default" is applied.
 	Type string
-	// Metadata çağıranın serbest ek verisidir.
+	// Metadata is the caller's free-form extra data.
 	Metadata map[string]any
 }
 
-// CreateShippingProfile yeni bir kargo profili oluşturur.
+// CreateShippingProfile creates a new shipping profile.
 //
-// Aynı adla ikinci bir profil errors.Conflict döner: profil adı yöneticinin
-// kuralı tanıdığı tek işarettir ve iki aynı adlı profil, hangisinin
-// düzenlendiğini belirsiz bırakırdı.
+// A second profile with the same name returns errors.Conflict: the profile name
+// is the only sign by which the administrator recognizes the rule, and two
+// profiles with the same name would leave it ambiguous which one is being
+// edited.
 func (s *Service) CreateShippingProfile(
 	ctx context.Context,
 	in CreateProfileInput,
 ) (models.ShippingProfile, error) {
 	name := strings.TrimSpace(in.Name)
-	if err := requireText("profil adı", name); err != nil {
+	if err := requireText("the profile name", name); err != nil {
 		return models.ShippingProfile{}, err
 	}
 	profileType, err := normalizeProfileType(in.Type)
@@ -48,24 +50,25 @@ func (s *Service) CreateShippingProfile(
 	})
 }
 
-// GetShippingProfile profili kimliğiyle döner; yoksa errors.NotFound.
+// GetShippingProfile returns the profile by its identifier; errors.NotFound if
+// absent.
 func (s *Service) GetShippingProfile(ctx context.Context, id string) (models.ShippingProfile, error) {
-	if err := requireID(id, models.ShippingProfileIDPrefix, "kargo profili kimliği"); err != nil {
+	if err := requireID(id, models.ShippingProfileIDPrefix, "the shipping profile identifier"); err != nil {
 		return models.ShippingProfile{}, err
 	}
 	return s.store.GetShippingProfile(ctx, id)
 }
 
-// ListProfilesInput profil listelemesinin girdisidir.
+// ListProfilesInput is the input of the profile listing.
 type ListProfilesInput struct {
-	// Type verilirse yalnızca o türdeki profiller döner.
+	// Type, if given, restricts the result to profiles of that type.
 	Type *string
-	// Page sayfalama parametreleridir.
+	// Page holds the pagination parameters.
 	Page Page
 }
 
-// ListShippingProfiles profilleri sayfalayarak döner.
-// İkinci dönüş değeri süzgece uyan TÜM kayıtların sayısıdır.
+// ListShippingProfiles returns the profiles with pagination.
+// The second return value is the count of ALL records matching the filter.
 func (s *Service) ListShippingProfiles(
 	ctx context.Context,
 	in ListProfilesInput,
@@ -87,27 +90,27 @@ func (s *Service) ListShippingProfiles(
 	})
 }
 
-// UpdateProfileInput profil güncellemesinin girdisidir.
+// UpdateProfileInput is the input of the profile update.
 //
-// İşaretçi alanlar "verilmedi" ile "boş verildi" ayrımını korur: nil bir Name
-// alanın DEĞİŞMEYECEĞİ, boş dizeye işaret eden bir Name ise geçersiz bir ad
-// verildiği anlamına gelir ve reddedilir.
+// The pointer fields preserve the distinction between "not given" and "given
+// empty": a nil Name means the field WILL NOT CHANGE, while a Name pointing at
+// an empty string means an invalid name was given and is rejected.
 type UpdateProfileInput struct {
-	// Name verilirse profilin adı değiştirilir.
+	// Name, if given, changes the profile's name.
 	Name *string
-	// Type verilirse profilin türü değiştirilir.
+	// Type, if given, changes the profile's type.
 	Type *string
-	// Metadata verilirse üstveri YERİNE KONUR (birleştirilmez).
+	// Metadata, if given, REPLACES the metadata (it is not merged).
 	Metadata map[string]any
 }
 
-// UpdateShippingProfile profilin verilen alanlarını günceller.
+// UpdateShippingProfile updates the given fields of the profile.
 func (s *Service) UpdateShippingProfile(
 	ctx context.Context,
 	id string,
 	in UpdateProfileInput,
 ) (models.ShippingProfile, error) {
-	if err := requireID(id, models.ShippingProfileIDPrefix, "kargo profili kimliği"); err != nil {
+	if err := requireID(id, models.ShippingProfileIDPrefix, "the shipping profile identifier"); err != nil {
 		return models.ShippingProfile{}, err
 	}
 
@@ -119,7 +122,7 @@ func (s *Service) UpdateShippingProfile(
 	next := current
 	if in.Name != nil {
 		name := strings.TrimSpace(*in.Name)
-		if nameErr := requireText("profil adı", name); nameErr != nil {
+		if nameErr := requireText("the profile name", name); nameErr != nil {
 			return models.ShippingProfile{}, nameErr
 		}
 		next.Name = name
@@ -138,23 +141,25 @@ func (s *Service) UpdateShippingProfile(
 	return s.store.UpdateShippingProfile(ctx, next)
 }
 
-// DeleteShippingProfile profili yumuşak siler.
+// DeleteShippingProfile soft-deletes the profile.
 //
-// Seçeneği DURAN bir profil silinemez (errors.Conflict): silme sessizce
-// geçseydi, o profile bağlı ürünlerin kargo kuralı ortadan kalkar ve müşteri
-// hiçbir seçenek göremezdi. Yönetici önce seçenekleri kaldırmalıdır.
+// A profile that STILL HOLDS an option cannot be deleted (errors.Conflict): had
+// the deletion gone through silently, the shipping rule of the products bound to
+// that profile would vanish and the customer would see no option at all. The
+// administrator has to remove the options first.
 //
-// Kontrol ve silme tek işlemde ve profil satırı KİLİTLİYKEN yapılır. Tek
-// işlem tek başına yetmezdi: yumuşak silme anahtar olmayan bir sütunu
-// güncellediği için yalnızca FOR NO KEY UPDATE alır ve o kilit, araya giren bir
-// seçenek INSERT'ünün foreign key için aldığı FOR KEY SHARE ile ÇAKIŞMAZ —
-// READ COMMITTED'de iki işlem birbirini beklemeden tamamlanır ve geriye
-// silinmiş bir profile bağlı CANLI bir seçenek kalırdı (gerçek Postgres'te
-// üretildi). [Store.LockShippingProfile]'ın FOR UPDATE kilidi, seçenek
-// oluşturmanın aldığı paylaşımlı kilitle çakışarak iki yolu serileştirir
-// (bkz. [Service.CreateShippingOption]).
+// The check and the deletion happen in a single transaction and while the
+// profile row is LOCKED. A single transaction alone would not have been enough:
+// because a soft delete updates a non-key column it only takes FOR NO KEY
+// UPDATE, and that lock DOES NOT CONFLICT with the FOR KEY SHARE an interleaving
+// option INSERT takes for its foreign key — under READ COMMITTED the two
+// transactions complete without waiting for each other and a LIVE option bound
+// to a deleted profile would be left behind (reproduced on real Postgres). The
+// FOR UPDATE lock of [Store.LockShippingProfile] conflicts with the shared lock
+// option creation takes and thereby serializes the two paths (see
+// [Service.CreateShippingOption]).
 func (s *Service) DeleteShippingProfile(ctx context.Context, id string) error {
-	if err := requireID(id, models.ShippingProfileIDPrefix, "kargo profili kimliği"); err != nil {
+	if err := requireID(id, models.ShippingProfileIDPrefix, "the shipping profile identifier"); err != nil {
 		return err
 	}
 
@@ -168,54 +173,57 @@ func (s *Service) DeleteShippingProfile(ctx context.Context, id string) error {
 		}
 		if count > 0 {
 			return errors.Conflict(CodeProfileInUse,
-				"kargo profiline bağlı %d seçenek var; önce onlar kaldırılmalı (%s)", count, id)
+				"%d options are bound to the shipping profile; they have to be removed first (%s)", count, id)
 		}
 		return s.store.SoftDeleteShippingProfile(ctx, id)
 	})
 }
 
-// CreateOptionInput yeni bir kargo seçeneğinin girdisidir.
+// CreateOptionInput is the input of a new shipping option.
 type CreateOptionInput struct {
-	// Name seçeneğin görünen adıdır; zorunludur.
+	// Name is the option's display name; it is required.
 	Name string
-	// ProviderID seçeneği yürütecek sağlayıcıdır; zorunludur ve KAYITLI
-	// olmalıdır.
+	// ProviderID is the provider that will execute the option; it is required
+	// and has to be REGISTERED.
 	ProviderID string
-	// ShippingProfileID seçeneğin bağlanacağı profildir; zorunludur.
+	// ShippingProfileID is the profile the option will be bound to; it is
+	// required.
 	ShippingProfileID string
-	// PriceType ücretin nereden geldiğini söyler; boş verilirse "flat".
+	// PriceType says where the fee comes from; if it is given empty, "flat".
 	PriceType string
-	// Amount yalnızca "flat" seçeneklerde anlamlıdır (minor unit).
+	// Amount is meaningful only on "flat" options (minor unit).
 	Amount int64
-	// CurrencyCode ISO 4217 kodudur; zorunludur.
+	// CurrencyCode is the ISO 4217 code; it is required.
 	CurrencyCode string
-	// RegionID seçeneğin geçerli olduğu bölgedir; boş ise her bölge.
+	// RegionID is the region the option is valid in; if empty, every region.
 	RegionID string
-	// IsReturn seçeneğin iade gönderisi için olduğunu bildirir.
+	// IsReturn says the option is for a return shipment.
 	IsReturn bool
-	// AdminOnly seçeneğin mağaza yüzeyine çıkmayacağını bildirir.
+	// AdminOnly says the option will not reach the storefront surface.
 	AdminOnly bool
-	// Data sağlayıcıya iletilecek yapılandırmadır.
+	// Data is the configuration to be handed to the provider.
 	Data map[string]any
-	// Metadata mağazanın serbest ek verisidir.
+	// Metadata is the store's free-form extra data.
 	Metadata map[string]any
 }
 
-// CreateShippingOption yeni bir kargo seçeneği oluşturur.
+// CreateShippingOption creates a new shipping option.
 //
-// Sağlayıcının KAYITLI olması şarttır: kaydedilmemiş bir sağlayıcıya bağlı
-// seçenek, ancak müşteriye gösterileceği ya da gönderi açılacağı anda patlardı
-// ve hata, kurulumdan çok sonra ortaya çıkardı.
+// The provider has to be REGISTERED: an option bound to an unregistered provider
+// would only blow up at the moment it is about to be shown to the customer or a
+// fulfillment is about to be opened, and the error would surface long after the
+// setup.
 //
-// Profilin varlığı da burada doğrulanır. Aynı doğrulamayı foreign key de
-// yapar ama sürücü hatasından üretilen mesaj hangi profilin arandığını
-// söylemez.
+// The existence of the profile is verified here as well. The foreign key does
+// the same check, but the message produced from a driver error does not say
+// which profile was being looked for.
 //
-// Profil okuması PAYLAŞIMLI KİLİT altında ve INSERT ile AYNI İŞLEMDE yapılır.
-// Kilitsiz okunsaydı, aynı anda çalışan bir [Service.DeleteShippingProfile]
-// profili "boş" görüp silebilir ve seçenek, silinmiş bir profile bağlı olarak
-// yazılırdı. Kilidin paylaşımlı olması bilinçlidir: aynı profile paralel
-// seçenek eklemeleri birbirini BEKLEMEZ, yalnızca silme yolu beklerdi.
+// The profile is read UNDER A SHARED LOCK and IN THE SAME TRANSACTION as the
+// INSERT. Had it been read without a lock, a [Service.DeleteShippingProfile]
+// running at the same time could see the profile as "empty" and delete it, and
+// the option would be written bound to a deleted profile. The lock being shared
+// is deliberate: parallel option insertions into the same profile DO NOT WAIT
+// for each other, only the deletion path waits.
 func (s *Service) CreateShippingOption(
 	ctx context.Context,
 	in CreateOptionInput,
@@ -243,26 +251,27 @@ func (s *Service) CreateShippingOption(
 	return out, nil
 }
 
-// validateOptionInput seçenek girdisini doğrular ve kaydedilecek modeli üretir.
+// validateOptionInput validates the option input and produces the model to be
+// recorded.
 //
-// Ayrı bir fonksiyondur çünkü doğrulama SAF'tır: veritabanına dokunmaz ve her
-// dalı tek tek sınanabilir.
+// It is a separate function because the validation is PURE: it does not touch
+// the database and every one of its branches can be exercised one by one.
 func (s *Service) validateOptionInput(in CreateOptionInput) (models.ShippingOption, error) {
 	name := strings.TrimSpace(in.Name)
-	if err := requireText("seçenek adı", name); err != nil {
+	if err := requireText("the option name", name); err != nil {
 		return models.ShippingOption{}, err
 	}
 	providerID := strings.TrimSpace(in.ProviderID)
-	if err := requireText("sağlayıcı kimliği", providerID); err != nil {
+	if err := requireText("the provider identifier", providerID); err != nil {
 		return models.ShippingOption{}, err
 	}
 	if !s.providers.Has(providerID) {
 		return models.ShippingOption{}, errors.NotFound(CodeProviderNotFound,
-			"%q kargo sağlayıcısı kayıtlı değil; kayıtlı olanlar: %s",
+			"the shipping provider %q is not registered; the registered ones are: %s",
 			providerID, strings.Join(s.providers.IDs(), ", "))
 	}
 	if err := requireID(in.ShippingProfileID, models.ShippingProfileIDPrefix,
-		"kargo profili kimliği"); err != nil {
+		"the shipping profile identifier"); err != nil {
 		return models.ShippingOption{}, err
 	}
 	priceType, err := normalizePriceType(in.PriceType)
@@ -278,7 +287,7 @@ func (s *Service) validateOptionInput(in CreateOptionInput) (models.ShippingOpti
 		return models.ShippingOption{}, err
 	}
 	regionID := strings.TrimSpace(in.RegionID)
-	if err := checkTextLen("bölge kimliği", regionID); err != nil {
+	if err := checkTextLen("the region identifier", regionID); err != nil {
 		return models.ShippingOption{}, err
 	}
 
@@ -298,31 +307,31 @@ func (s *Service) validateOptionInput(in CreateOptionInput) (models.ShippingOpti
 	}, nil
 }
 
-// amountFor fiyat türüne göre saklanacak tutarı doğrular.
+// amountFor validates the amount to be stored according to the price type.
 //
-// "calculated" seçenekte tutar SIFIR olmak zorundadır; sıfırdan farklı bir
-// değer sessizce sıfırlanmaz, REDDEDİLİR. Sessiz sıfırlama, yöneticinin
-// girdiği ücretin hiç uygulanmaması ve bunu ancak fatura ile görmesi demek
-// olurdu.
+// On a "calculated" option the amount has to be ZERO; a value other than zero is
+// not silently zeroed out, it is REJECTED. Silent zeroing would mean the fee the
+// administrator entered is never applied and they only find out through the
+// invoice.
 func amountFor(priceType models.PriceType, amount int64) (int64, error) {
 	if priceType == models.PriceCalculated {
 		if amount != 0 {
 			return 0, errors.Invalid(CodeInvalidInput,
-				"hesaplanan kargo seçeneğinin tutarı sıfır olmalı; ücret sağlayıcıdan gelir (verilen: %d)",
+				"the amount of a calculated shipping option has to be zero; the fee comes from the provider (given: %d)",
 				amount)
 		}
 		return 0, nil
 	}
-	if err := requireAmount("kargo tutarı", amount); err != nil {
+	if err := requireAmount("the shipping fee", amount); err != nil {
 		return 0, err
 	}
 	return amount, nil
 }
 
-// GetShippingOption seçeneği KURALLARIYLA birlikte döner; yoksa
-// errors.NotFound.
+// GetShippingOption returns the option together with its RULES; errors.NotFound
+// if absent.
 func (s *Service) GetShippingOption(ctx context.Context, id string) (models.ShippingOption, error) {
-	if err := requireID(id, models.ShippingOptionIDPrefix, "kargo seçeneği kimliği"); err != nil {
+	if err := requireID(id, models.ShippingOptionIDPrefix, "the shipping option identifier"); err != nil {
 		return models.ShippingOption{}, err
 	}
 
@@ -338,25 +347,27 @@ func (s *Service) GetShippingOption(ctx context.Context, id string) (models.Ship
 	return option, nil
 }
 
-// ListOptionsAdminInput yönetim listelemesinin girdisidir.
+// ListOptionsAdminInput is the input of the admin listing.
 type ListOptionsAdminInput struct {
-	// RegionID verilirse yalnızca o bölgeye ait seçenekler döner.
+	// RegionID, if given, restricts the result to the options of that region.
 	RegionID *string
-	// ProfileID verilirse yalnızca o profile bağlı seçenekler döner.
+	// ProfileID, if given, restricts the result to the options bound to that
+	// profile.
 	ProfileID *string
-	// ProviderID verilirse yalnızca o sağlayıcının seçenekleri döner.
+	// ProviderID, if given, restricts the result to that provider's options.
 	ProviderID *string
-	// PriceType verilirse yalnızca o fiyat türündeki seçenekler döner.
+	// PriceType, if given, restricts the result to the options of that price
+	// type.
 	PriceType *string
-	// Page sayfalama parametreleridir.
+	// Page holds the pagination parameters.
 	Page Page
 }
 
-// ListShippingOptions seçenekleri sayfalayarak döner.
+// ListShippingOptions returns the options with pagination.
 //
-// Kurallar DOLDURULMAZ: liste yüzeyinde her seçeneğin kurallarını taşımak,
-// sayfa başına ikinci bir sorgu ve büyüyen bir yanıt demektir. Kurallar
-// [Service.GetShippingOption] ile okunur.
+// The rules ARE NOT FILLED IN: carrying every option's rules on the list surface
+// means a second query per page and a growing response. The rules are read with
+// [Service.GetShippingOption].
 func (s *Service) ListShippingOptions(
 	ctx context.Context,
 	in ListOptionsAdminInput,
@@ -381,8 +392,9 @@ func (s *Service) ListShippingOptions(
 	})
 }
 
-// ListShippingOptionsByIDs verilen kimliklerin seçeneklerini TEK sorguda
-// döner. Bulunamayan kimlik için kayıt dönmez; bu bir hata değildir.
+// ListShippingOptionsByIDs returns the options of the given identifiers in a
+// SINGLE query. No record is returned for an identifier that is not found; that
+// is not an error.
 func (s *Service) ListShippingOptionsByIDs(
 	ctx context.Context,
 	ids []string,
@@ -390,42 +402,43 @@ func (s *Service) ListShippingOptionsByIDs(
 	return s.store.ShippingOptionsByIDs(ctx, ids)
 }
 
-// UpdateOptionInput seçenek güncellemesinin girdisidir.
+// UpdateOptionInput is the input of the option update.
 //
-// ProviderID ve ShippingProfileID BURADA YOKTUR ve bu bilinçlidir: ikisi de
-// seçeneğin kimliğine bağlı kararlardır ve değişmeleri, o seçenekle açılmış
-// gönderilerin hangi sağlayıcıda olduğunu geçmişe dönük yanıltırdı. Değişmesi
-// gerekiyorsa yeni bir seçenek açılır.
+// ProviderID and ShippingProfileID ARE ABSENT HERE and that is deliberate: both
+// are decisions bound to the option's identity, and changing them would
+// retroactively mislead about which provider the fulfillments opened with that
+// option are at. If they need to change, a new option is created.
 type UpdateOptionInput struct {
-	// Name verilirse seçeneğin adı değiştirilir.
+	// Name, if given, changes the option's name.
 	Name *string
-	// PriceType verilirse fiyat türü değiştirilir.
+	// PriceType, if given, changes the price type.
 	PriceType *string
-	// Amount verilirse tutar değiştirilir (minor unit).
+	// Amount, if given, changes the amount (minor unit).
 	Amount *int64
-	// RegionID verilirse bölge değiştirilir.
+	// RegionID, if given, changes the region.
 	RegionID *string
-	// IsReturn verilirse iade işareti değiştirilir.
+	// IsReturn, if given, changes the return flag.
 	IsReturn *bool
-	// AdminOnly verilirse mağaza görünürlüğü değiştirilir.
+	// AdminOnly, if given, changes the storefront visibility.
 	AdminOnly *bool
-	// Data verilirse sağlayıcı yapılandırması YERİNE KONUR.
+	// Data, if given, REPLACES the provider configuration.
 	Data map[string]any
-	// Metadata verilirse üstveri YERİNE KONUR.
+	// Metadata, if given, REPLACES the metadata.
 	Metadata map[string]any
 }
 
-// UpdateShippingOption seçeneğin verilen alanlarını günceller.
+// UpdateShippingOption updates the given fields of the option.
 //
-// Fiyat türü ile tutar BİRLİKTE doğrulanır: yalnızca türü "calculated"a
-// çeviren bir istek, satırda duran eski sabit tutarı da sıfırlamalıdır; aksi
-// hâlde şemadaki kısıt patlar ve istemci sebebini anlamayacağı bir hata alır.
+// The price type and the amount are validated TOGETHER: a request that only
+// switches the type to "calculated" also has to zero out the old fixed amount
+// standing on the row; otherwise the schema constraint blows up and the client
+// gets an error whose cause it cannot make out.
 func (s *Service) UpdateShippingOption(
 	ctx context.Context,
 	id string,
 	in UpdateOptionInput,
 ) (models.ShippingOption, error) {
-	if err := requireID(id, models.ShippingOptionIDPrefix, "kargo seçeneği kimliği"); err != nil {
+	if err := requireID(id, models.ShippingOptionIDPrefix, "the shipping option identifier"); err != nil {
 		return models.ShippingOption{}, err
 	}
 
@@ -437,7 +450,7 @@ func (s *Service) UpdateShippingOption(
 	next := current
 	if in.Name != nil {
 		name := strings.TrimSpace(*in.Name)
-		if nameErr := requireText("seçenek adı", name); nameErr != nil {
+		if nameErr := requireText("the option name", name); nameErr != nil {
 			return models.ShippingOption{}, nameErr
 		}
 		next.Name = name
@@ -452,9 +465,10 @@ func (s *Service) UpdateShippingOption(
 	if in.Amount != nil {
 		next.Amount = *in.Amount
 	} else if next.PriceType == models.PriceCalculated {
-		// Tür "calculated"a çevrildi ama tutar verilmedi: satırdaki eski sabit
-		// tutar artık anlamsızdır ve sıfırlanır. Bu sessiz bir kayıp değildir,
-		// türün TANIMIDIR — hesaplanan seçenekte ücret sağlayıcıdan gelir.
+		// The type was switched to "calculated" but no amount was given: the old
+		// fixed amount on the row is now meaningless and is zeroed out. This is
+		// not a silent loss, it is the DEFINITION of the type — on a calculated
+		// option the fee comes from the provider.
 		next.Amount = 0
 	}
 	amount, err := amountFor(next.PriceType, next.Amount)
@@ -465,7 +479,7 @@ func (s *Service) UpdateShippingOption(
 
 	if in.RegionID != nil {
 		regionID := strings.TrimSpace(*in.RegionID)
-		if regionErr := checkTextLen("bölge kimliği", regionID); regionErr != nil {
+		if regionErr := checkTextLen("the region identifier", regionID); regionErr != nil {
 			return models.ShippingOption{}, regionErr
 		}
 		next.RegionID = regionID
@@ -486,39 +500,42 @@ func (s *Service) UpdateShippingOption(
 	return s.store.UpdateShippingOption(ctx, next)
 }
 
-// DeleteShippingOption seçeneği yumuşak siler.
+// DeleteShippingOption soft-deletes the option.
 //
-// Silme YUMUŞAKTIR ve bu şart: seçeneğe bağlı gönderiler ON DELETE RESTRICT
-// ile korunuyor, yani fiziksel silme geçmişi olan bir seçeneği hiç
-// kaldıramazdı. Yumuşak silme seçeneği kataloğun dışına çıkarır, geçmiş
-// gönderiler ise seçeneği okumaya devam eder.
+// The deletion is SOFT and that is a requirement: the fulfillments bound to the
+// option are protected by ON DELETE RESTRICT, which means a physical delete
+// could never remove an option that has any history. A soft delete takes the
+// option out of the catalog while past fulfillments keep reading it.
 func (s *Service) DeleteShippingOption(ctx context.Context, id string) error {
-	if err := requireID(id, models.ShippingOptionIDPrefix, "kargo seçeneği kimliği"); err != nil {
+	if err := requireID(id, models.ShippingOptionIDPrefix, "the shipping option identifier"); err != nil {
 		return err
 	}
 	return s.store.SoftDeleteShippingOption(ctx, id)
 }
 
-// CreateRuleInput yeni bir kargo seçeneği kuralının girdisidir.
+// CreateRuleInput is the input of a new shipping option rule.
 type CreateRuleInput struct {
-	// Attribute uygunluk bağlamında bakılacak alan adıdır; zorunludur.
+	// Attribute is the name of the field to look at in the eligibility context;
+	// it is required.
 	Attribute string
-	// Operator karşılaştırma işlecidir; zorunludur.
+	// Operator is the comparison operator; it is required.
 	Operator string
-	// Values karşılaştırmanın sağ tarafıdır; en az bir eleman içermelidir.
+	// Values is the right-hand side of the comparison; it has to hold at least
+	// one element.
 	Values []string
 }
 
-// CreateShippingOptionRule bir seçeneğe kural ekler.
+// CreateShippingOptionRule adds a rule to an option.
 //
-// Seçeneğin varlığı burada doğrulanır: foreign key de aynı şeyi yapar ama
-// sürücü hatasından üretilen mesaj hangi seçeneğin arandığını söylemez.
+// The existence of the option is verified here: the foreign key does the same
+// thing, but the message produced from a driver error does not say which option
+// was being looked for.
 func (s *Service) CreateShippingOptionRule(
 	ctx context.Context,
 	optionID string,
 	in CreateRuleInput,
 ) (models.ShippingOptionRule, error) {
-	if err := requireID(optionID, models.ShippingOptionIDPrefix, "kargo seçeneği kimliği"); err != nil {
+	if err := requireID(optionID, models.ShippingOptionIDPrefix, "the shipping option identifier"); err != nil {
 		return models.ShippingOptionRule{}, err
 	}
 	operator, values, err := validateRuleInput(in.Attribute, in.Operator, in.Values)
@@ -539,12 +556,12 @@ func (s *Service) CreateShippingOptionRule(
 	})
 }
 
-// ListShippingOptionRules bir seçeneğin kurallarını döner.
+// ListShippingOptionRules returns an option's rules.
 func (s *Service) ListShippingOptionRules(
 	ctx context.Context,
 	optionID string,
 ) ([]models.ShippingOptionRule, error) {
-	if err := requireID(optionID, models.ShippingOptionIDPrefix, "kargo seçeneği kimliği"); err != nil {
+	if err := requireID(optionID, models.ShippingOptionIDPrefix, "the shipping option identifier"); err != nil {
 		return nil, err
 	}
 	if _, err := s.store.GetShippingOption(ctx, optionID); err != nil {
@@ -553,10 +570,10 @@ func (s *Service) ListShippingOptionRules(
 	return s.store.ListShippingOptionRules(ctx, optionID)
 }
 
-// DeleteShippingOptionRule kuralı yumuşak siler.
+// DeleteShippingOptionRule soft-deletes the rule.
 func (s *Service) DeleteShippingOptionRule(ctx context.Context, ruleID string) error {
 	if err := requireID(ruleID, models.ShippingOptionRuleIDPrefix,
-		"kargo seçeneği kuralı kimliği"); err != nil {
+		"the shipping option rule identifier"); err != nil {
 		return err
 	}
 	return s.store.SoftDeleteShippingOptionRule(ctx, ruleID)

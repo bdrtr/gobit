@@ -9,12 +9,13 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/fulfillment/service"
 )
 
-// fakeFulfillments api.Fulfillments'in sınanabilir karşılığıdır.
+// fakeFulfillments is the testable counterpart of api.Fulfillments.
 //
-// İş kuralı İÇERMEZ: her metot önceden ayarlanmış sonucu döner ve aldığı
-// girdiyi saklar. HTTP katmanının sınanan davranışı budur — gövdeyi doğru
-// çözüyor mu, servise doğru girdiyi veriyor mu, hatayı doğru status koda
-// çeviriyor mu ve mağaza yanıtına neyi YAZMIYOR.
+// It CONTAINS no business rule: every method returns a preset result and stores
+// the input it received. That is the behavior of the HTTP layer under test —
+// does it decode the body correctly, does it give the service the right input,
+// does it translate the error into the right status code, and what does it NOT
+// WRITE into the store response.
 type fakeFulfillments struct {
 	providerIDs []string
 
@@ -33,31 +34,33 @@ type fakeFulfillments struct {
 
 	err error
 
-	// Servise geçirilen son girdiler; handler'ın çeviriyi doğru yaptığı
-	// bunlarla kanıtlanır.
-	sonOptionInput   service.CreateOptionInput
-	sonListeInput    service.ListOptionsInput
-	sonCreateInput   service.CreateFulfillmentInput
-	sonRuleInput     service.CreateRuleInput
-	sonUpdateOption  service.UpdateOptionInput
-	sonUpdateProfile service.UpdateProfileInput
-	sonShipTracking  [2]string
-	sonIptalEdilen   string
-	sonLocationInput service.SetShippingLocationInput
-	// sonOkunanLocation ve sonSilinenLocation, yol parametresinin handler'dan
-	// servise DOĞRU adla geçtiğini kanıtlar. Kaydedilmeselerdi, parametre adı
-	// yanlış yazıldığında chi boş dize döner, servis 422 üretir ve test
-	// "hata bekleniyordu" demediği sürece bunu fark etmezdi.
-	sonOkunanLocation  string
-	sonSilinenLocation string
-	// sonLocationPage listeleme ucundan servise geçen sayfalamadır. Handler
-	// sayfayı çözüp servise VERMEZSE yanıt yine 200 döner ve yalnızca durum
-	// koduna bakan bir test bunu göremezdi.
-	sonLocationPage service.Page
+	// The last inputs handed to the service; they are what proves the handler
+	// did the translation right.
+	lastOptionInput   service.CreateOptionInput
+	lastListInput     service.ListOptionsInput
+	lastCreateInput   service.CreateFulfillmentInput
+	lastRuleInput     service.CreateRuleInput
+	lastUpdateOption  service.UpdateOptionInput
+	lastUpdateProfile service.UpdateProfileInput
+	lastShipTracking  [2]string
+	lastCanceledID    string
+	lastLocationInput service.SetShippingLocationInput
+	// lastReadLocation and lastDeletedLocation prove that the path parameter
+	// gets from the handler to the service under the RIGHT name. Had they not
+	// been recorded, chi would return an empty string when the parameter name
+	// is misspelled, the service would produce a 422, and the test would not
+	// notice unless it said "an error was expected".
+	lastReadLocation    string
+	lastDeletedLocation string
+	// lastLocationPage is the paging that reaches the service from the listing
+	// endpoint. If the handler parses the page but does NOT GIVE it to the
+	// service, the response is still 200 and a test that only looks at the
+	// status code could not see it.
+	lastLocationPage service.Page
 }
 
-// Sahte servisin handler'ların beklediği yüzeyi karşıladığı derleme zamanında
-// doğrulanır.
+// That the fake service satisfies the surface the handlers expect is verified
+// at compile time.
 var _ api.Fulfillments = (*fakeFulfillments)(nil)
 
 func (f *fakeFulfillments) ProviderIDs(_ context.Context) []string { return f.providerIDs }
@@ -88,7 +91,7 @@ func (f *fakeFulfillments) UpdateShippingProfile(
 	_ string,
 	in service.UpdateProfileInput,
 ) (models.ShippingProfile, error) {
-	f.sonUpdateProfile = in
+	f.lastUpdateProfile = in
 	return f.profile, f.err
 }
 
@@ -100,7 +103,7 @@ func (f *fakeFulfillments) CreateShippingOption(
 	_ context.Context,
 	in service.CreateOptionInput,
 ) (models.ShippingOption, error) {
-	f.sonOptionInput = in
+	f.lastOptionInput = in
 	return f.option, f.err
 }
 
@@ -123,7 +126,7 @@ func (f *fakeFulfillments) UpdateShippingOption(
 	_ string,
 	in service.UpdateOptionInput,
 ) (models.ShippingOption, error) {
-	f.sonUpdateOption = in
+	f.lastUpdateOption = in
 	return f.option, f.err
 }
 
@@ -136,7 +139,7 @@ func (f *fakeFulfillments) CreateShippingOptionRule(
 	_ string,
 	in service.CreateRuleInput,
 ) (models.ShippingOptionRule, error) {
-	f.sonRuleInput = in
+	f.lastRuleInput = in
 	return f.rule, f.err
 }
 
@@ -155,7 +158,7 @@ func (f *fakeFulfillments) ListShippingOptionsFor(
 	_ context.Context,
 	in service.ListOptionsInput,
 ) ([]service.QuotedOption, error) {
-	f.sonListeInput = in
+	f.lastListInput = in
 	return f.quoted, f.err
 }
 
@@ -163,7 +166,7 @@ func (f *fakeFulfillments) CreateFulfillment(
 	_ context.Context,
 	in service.CreateFulfillmentInput,
 ) (models.Fulfillment, error) {
-	f.sonCreateInput = in
+	f.lastCreateInput = in
 	return f.fulfillment, f.err
 }
 
@@ -179,7 +182,7 @@ func (f *fakeFulfillments) ListFulfillments(
 }
 
 func (f *fakeFulfillments) CancelFulfillment(_ context.Context, id string) error {
-	f.sonIptalEdilen = id
+	f.lastCanceledID = id
 	return f.err
 }
 
@@ -187,7 +190,7 @@ func (f *fakeFulfillments) MarkShipped(
 	_ context.Context,
 	_, trackingNumber, trackingURL string,
 ) (models.Fulfillment, error) {
-	f.sonShipTracking = [2]string{trackingNumber, trackingURL}
+	f.lastShipTracking = [2]string{trackingNumber, trackingURL}
 	return f.fulfillment, f.err
 }
 
@@ -195,21 +198,21 @@ func (f *fakeFulfillments) MarkDelivered(_ context.Context, _ string) (models.Fu
 	return f.fulfillment, f.err
 }
 
-// notFoundHatasi testlerde kullanılan tipli bir bulunamadı hatasıdır.
-func notFoundHatasi() error {
-	return errors.NotFound("fulfillment_not_found", "gönderi bulunamadı")
+// notFoundError is a typed not-found error used in the tests.
+func notFoundError() error {
+	return errors.NotFound("fulfillment_not_found", "fulfillment not found")
 }
 
-// conflictHatasi testlerde kullanılan tipli bir çakışma hatasıdır.
-func conflictHatasi() error {
-	return errors.Conflict(service.CodeInvalidTransition, "teslim edilmiş gönderi iptal edilemez")
+// conflictError is a typed conflict error used in the tests.
+func conflictError() error {
+	return errors.Conflict(service.CodeInvalidTransition, "a delivered fulfillment cannot be canceled")
 }
 
 func (f *fakeFulfillments) SetShippingLocation(
 	_ context.Context,
 	in service.SetShippingLocationInput,
 ) (models.ShippingLocation, error) {
-	f.sonLocationInput = in
+	f.lastLocationInput = in
 	return f.location, f.err
 }
 
@@ -217,7 +220,7 @@ func (f *fakeFulfillments) GetShippingLocation(
 	_ context.Context,
 	id string,
 ) (models.ShippingLocation, error) {
-	f.sonOkunanLocation = id
+	f.lastReadLocation = id
 	return f.location, f.err
 }
 
@@ -225,11 +228,11 @@ func (f *fakeFulfillments) ListShippingLocations(
 	_ context.Context,
 	page service.Page,
 ) ([]models.ShippingLocation, int64, error) {
-	f.sonLocationPage = page
+	f.lastLocationPage = page
 	return f.locations, f.count, f.err
 }
 
 func (f *fakeFulfillments) DeleteShippingLocation(_ context.Context, id string) error {
-	f.sonSilinenLocation = id
+	f.lastDeletedLocation = id
 	return f.err
 }

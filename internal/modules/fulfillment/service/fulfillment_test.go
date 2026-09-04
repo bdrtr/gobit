@@ -14,231 +14,239 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/fulfillment/service"
 )
 
-// gonderiAc test için bir gönderi oluşturur.
-func (k testKurulum) gonderiAc(t *testing.T, secenekID, anahtar string) models.Fulfillment {
+// createFulfillment creates a fulfillment for the test.
+func (k testSetup) createFulfillment(t *testing.T, optionID, key string) models.Fulfillment {
 	t.Helper()
 	ful, err := k.svc.CreateFulfillment(context.Background(), service.CreateFulfillmentInput{
 		Reference:        "order_1",
-		ShippingOptionID: secenekID,
-		IdempotencyKey:   anahtar,
+		ShippingOptionID: optionID,
+		IdempotencyKey:   key,
 	})
 	require.NoError(t, err)
 	return ful
 }
 
-// hazirSecenek profil ve seçenek açıp seçeneğin kimliğini döner.
-func hazirSecenek(t *testing.T, kurulum testKurulum) string {
+// readyOption opens a profile and an option and returns the option's identifier.
+func readyOption(t *testing.T, setup testSetup) string {
 	t.Helper()
-	profilID := kurulum.profilAc(t, "varsayilan")
-	return kurulum.secenekAc(t, service.CreateOptionInput{
-		Name:              "Standart kargo",
-		ShippingProfileID: profilID,
+	profileID := setup.createProfile(t, "default")
+	return setup.createOption(t, service.CreateOptionInput{
+		Name:              "Standard shipping",
+		ShippingProfileID: profileID,
 		Amount:            2_000,
 	})
 }
 
-// TestGonderiSaglayiciyaKendiKimliginiVerir sağlayıcıya geçilen Reference'ın
-// GÖNDERİNİN kimliği olduğunu kanıtlar.
+// TestTheFulfillmentGivesTheProviderItsOwnID proves that the Reference passed to
+// the provider is THE FULFILLMENT's identifier.
 //
-// Çekirdek sözleşmesi (internal/core/provider) Reference'ı "mutabakatta iki
-// sistemi eşleştiren alan" diye tanımlar. Sipariş kimliği verilseydi, aynı
-// siparişin iki gönderisi sağlayıcı tarafında ayırt edilemezdi.
-func TestGonderiSaglayiciyaKendiKimliginiVerir(t *testing.T) {
+// The core contract (internal/core/provider) defines Reference as "the field
+// that matches the two systems during reconciliation". Had the order identifier
+// been given, two fulfillments of the same order could not be told apart on the
+// provider's side.
+func TestTheFulfillmentGivesTheProviderItsOwnID(t *testing.T) {
 	t.Parallel()
 
-	kurulum := yeniKurulum(t)
-	secenekID := hazirSecenek(t, kurulum)
+	setup := newSetup(t)
+	optionID := readyOption(t, setup)
 
-	ful := kurulum.gonderiAc(t, secenekID, "anahtar-1")
+	ful := setup.createFulfillment(t, optionID, "key-1")
 
-	girdi := kurulum.provider.sonCreateGirdisi()
-	assert.Equal(t, ful.ID, girdi.Reference, "sağlayıcıya gönderinin kendi kimliği verilmeli")
-	assert.NotEqual(t, "order_1", girdi.Reference, "sipariş kimliği verilmemeli")
-	assert.Equal(t, secenekID, girdi.OptionID)
-	assert.Equal(t, "anahtar-1", girdi.IdempotencyKey)
+	input := setup.provider.lastCreateInput()
+	assert.Equal(t, ful.ID, input.Reference, "the fulfillment's own identifier has to be given to the provider")
+	assert.NotEqual(t, "order_1", input.Reference, "the order identifier must not be given")
+	assert.Equal(t, optionID, input.OptionID)
+	assert.Equal(t, "key-1", input.IdempotencyKey)
 
-	assert.Equal(t, "dis_anahtar-1", ful.ExternalID, "sağlayıcının kimliği kayda yazılmalı")
+	assert.Equal(t, "ext_key-1", ful.ExternalID, "the provider's identifier has to be written to the record")
 	assert.Equal(t, models.StatusPending, ful.Status)
-	assert.Equal(t, "TK-anahtar-1", ful.TrackingNumber)
-	assert.Nil(t, ful.ShippedAt, "bekleyen gönderinin sevk damgası olmamalı")
+	assert.Equal(t, "TK-key-1", ful.TrackingNumber)
+	assert.Nil(t, ful.ShippedAt, "a pending fulfillment must not have a dispatch stamp")
 }
 
-// TestSecenegiYapilandirmasiSaglayiciyaGider seçeneğin Data alanının gönderi
-// açılırken de sağlayıcıya iletildiğini kanıtlar.
+// TestTheOptionConfigurationReachesTheProvider proves that the option's Data
+// field is handed to the provider while the fulfillment is being opened as well.
 //
-// İletilmeseydi sağlayıcı hangi hesapla (sözleşme numarası, taşıyıcı ayarı)
-// etiket basacağını bilemezdi; fiyat sorgusunda çalışan yapılandırmanın
-// gönderi açılışında kaybolması sessiz bir tutarsızlık olurdu.
+// Had it not been handed over, the provider could not know which account
+// (contract number, carrier setting) to print the label against; the
+// configuration that works in the price query disappearing while the fulfillment
+// is opened would be a silent inconsistency.
 //
-// Çakışmada İSTEĞİN verisi kazanır: yapılandırma mağazanın sabit ayarıdır,
-// istek ise o gönderiye özgüdür ve daha belirgindir.
-func TestSecenegiYapilandirmasiSaglayiciyaGider(t *testing.T) {
+// On a clash THE REQUEST's data wins: the configuration is the store's fixed
+// setting, while the request is specific to that fulfillment and is more
+// particular.
+func TestTheOptionConfigurationReachesTheProvider(t *testing.T) {
 	t.Parallel()
 
-	kurulum := yeniKurulum(t)
-	profilID := kurulum.profilAc(t, "varsayilan")
-	secenekID := kurulum.secenekAc(t, service.CreateOptionInput{
-		Name:              "Standart kargo",
-		ShippingProfileID: profilID,
+	setup := newSetup(t)
+	profileID := setup.createProfile(t, "default")
+	optionID := setup.createOption(t, service.CreateOptionInput{
+		Name:              "Standard shipping",
+		ShippingProfileID: profileID,
 		Amount:            2_000,
 		Data: map[string]any{
-			"sozlesme_no": "SZ-42",
-			"sube":        "merkez",
+			"contract_no": "SZ-42",
+			"branch":      "central",
 		},
 	})
 
-	_, err := kurulum.svc.CreateFulfillment(context.Background(), service.CreateFulfillmentInput{
+	_, err := setup.svc.CreateFulfillment(context.Background(), service.CreateFulfillmentInput{
 		Reference:        "order_1",
-		ShippingOptionID: secenekID,
-		IdempotencyKey:   "anahtar-1",
-		Data:             map[string]any{"sube": "kadikoy", "adres": "..."},
+		ShippingOptionID: optionID,
+		IdempotencyKey:   "key-1",
+		Data:             map[string]any{"branch": "downtown", "address": "..."},
 	})
 	require.NoError(t, err)
 
-	girdi := kurulum.provider.sonCreateGirdisi()
-	assert.Equal(t, "SZ-42", girdi.Data["sozlesme_no"], "seçeneğin yapılandırması iletilmeli")
-	assert.Equal(t, "...", girdi.Data["adres"], "isteğin verisi iletilmeli")
-	assert.Equal(t, "kadikoy", girdi.Data["sube"], "çakışmada isteğin verisi kazanmalı")
+	input := setup.provider.lastCreateInput()
+	assert.Equal(t, "SZ-42", input.Data["contract_no"], "the option's configuration has to be handed over")
+	assert.Equal(t, "...", input.Data["address"], "the request's data has to be handed over")
+	assert.Equal(t, "downtown", input.Data["branch"], "on a clash the request's data has to win")
 
-	secenek, err := kurulum.svc.GetShippingOption(context.Background(), secenekID)
+	option, err := setup.svc.GetShippingOption(context.Background(), optionID)
 	require.NoError(t, err)
-	assert.Equal(t, "merkez", secenek.Data["sube"],
-		"birleştirme seçeneğin yapılandırmasını DEĞİŞTİRMEMELİ")
+	assert.Equal(t, "central", option.Data["branch"],
+		"the merge MUST NOT MODIFY the option's configuration")
 }
 
-// TestAyniAnahtarIkinciGonderiUretmez idempotency şartını kanıtlar.
+// TestTheSameKeyDoesNotProduceASecondFulfillment proves the idempotency
+// requirement.
 //
-// Çekirdek sözleşmesinin şartı budur: anahtarsız bir tekrar İKİNCİ BİR KARGO
-// ETİKETİ demek olurdu. İkinci çağrının sağlayıcıya HİÇ gitmediği de sınanır.
-func TestAyniAnahtarIkinciGonderiUretmez(t *testing.T) {
+// This is the core contract's requirement: a repeat without a key would mean A
+// SECOND SHIPPING LABEL. That the second call does NOT go to the provider at all
+// is exercised too.
+func TestTheSameKeyDoesNotProduceASecondFulfillment(t *testing.T) {
 	t.Parallel()
 
-	kurulum := yeniKurulum(t)
-	secenekID := hazirSecenek(t, kurulum)
+	setup := newSetup(t)
+	optionID := readyOption(t, setup)
 
-	ilk := kurulum.gonderiAc(t, secenekID, "anahtar-1")
-	ikinci := kurulum.gonderiAc(t, secenekID, "anahtar-1")
+	first := setup.createFulfillment(t, optionID, "key-1")
+	second := setup.createFulfillment(t, optionID, "key-1")
 
-	assert.Equal(t, ilk.ID, ikinci.ID, "aynı anahtar aynı gönderiyi dönmeli")
-	assert.Equal(t, ilk.ExternalID, ikinci.ExternalID)
+	assert.Equal(t, first.ID, second.ID, "the same key has to return the same fulfillment")
+	assert.Equal(t, first.ExternalID, second.ExternalID)
 
-	_, create, _ := kurulum.provider.cagriSayilari()
-	assert.Equal(t, 1, create, "ikinci çağrı sağlayıcıya GİTMEMELİ")
+	_, create, _ := setup.provider.callCounts()
+	assert.Equal(t, 1, create, "the second call MUST NOT go to the provider")
 }
 
-// TestAyniAnahtarFarkliGonderiIcinKullanilamaz idempotency'nin "aynı isteği
-// tekrarlamak" demek olduğunu kanıtlar.
+// TestTheSameKeyCannotBeUsedForADifferentFulfillment proves that idempotency
+// means "repeating the same request".
 //
-// Sessizce kabul edilseydi, çağıranın açtığını sandığı gönderi hiç açılmamış
-// olurdu.
-func TestAyniAnahtarFarkliGonderiIcinKullanilamaz(t *testing.T) {
+// Had it been accepted silently, the fulfillment the caller believed it opened
+// would never have been opened.
+func TestTheSameKeyCannotBeUsedForADifferentFulfillment(t *testing.T) {
 	t.Parallel()
 
-	kurulum := yeniKurulum(t)
-	secenekID := hazirSecenek(t, kurulum)
-	kurulum.gonderiAc(t, secenekID, "anahtar-1")
+	setup := newSetup(t)
+	optionID := readyOption(t, setup)
+	setup.createFulfillment(t, optionID, "key-1")
 
-	_, err := kurulum.svc.CreateFulfillment(context.Background(), service.CreateFulfillmentInput{
+	_, err := setup.svc.CreateFulfillment(context.Background(), service.CreateFulfillmentInput{
 		Reference:        "order_2",
-		ShippingOptionID: secenekID,
-		IdempotencyKey:   "anahtar-1",
+		ShippingOptionID: optionID,
+		IdempotencyKey:   "key-1",
 	})
 	require.Error(t, err)
-	assert.True(t, errors.IsConflict(err), "hata errors.Conflict olmalı: %v", err)
+	assert.True(t, errors.IsConflict(err), "the error has to be errors.Conflict: %v", err)
 	assert.Equal(t, service.CodeIdempotencyMismatch, errors.CodeOf(err))
 }
 
-// TestAyniAnahtarFarkliSecenekIcinKullanilamaz karşılaştırmanın İKİNCİ
-// yarısını sınar: referans aynı, kargo SEÇENEĞİ farklı.
+// TestTheSameKeyCannotBeUsedForADifferentOption exercises the SECOND half of the
+// comparison: same reference, different shipping OPTION.
 //
-// Regresyon: yalnızca referansı değiştiren bir test, koşuldaki seçenek
-// karşılaştırmasını silen bir mutasyonu YAKALAYAMIYORDU; "aynı anahtar farklı
-// seçenekle kullanılamaz" iddiasının hiçbir kanıtı yoktu. Sessizce kabul
-// edilseydi, hızlı kargo isteyen çağıran standart kargoyla açılmış bir gönderi
-// alır ve müşteri yanlış hizmeti öderdi.
-func TestAyniAnahtarFarkliSecenekIcinKullanilamaz(t *testing.T) {
+// Regression: a test that only changed the reference COULD NOT CATCH a mutation
+// that deleted the option comparison from the condition; there was no proof at
+// all of the claim "the same key cannot be used with a different option". Had it
+// been accepted silently, a caller asking for express shipping would get a
+// fulfillment opened with standard shipping and the customer would pay for the
+// wrong service.
+func TestTheSameKeyCannotBeUsedForADifferentOption(t *testing.T) {
 	t.Parallel()
 
-	kurulum := yeniKurulum(t)
-	ilkSecenek := hazirSecenek(t, kurulum)
-	profilID := kurulum.profilAc(t, "hizli")
-	ikinciSecenek := kurulum.secenekAc(t, service.CreateOptionInput{
-		Name:              "Hızlı kargo",
-		ShippingProfileID: profilID,
+	setup := newSetup(t)
+	firstOption := readyOption(t, setup)
+	profileID := setup.createProfile(t, "express")
+	secondOption := setup.createOption(t, service.CreateOptionInput{
+		Name:              "Express shipping",
+		ShippingProfileID: profileID,
 		Amount:            9_000,
 	})
 
-	ilk := kurulum.gonderiAc(t, ilkSecenek, "anahtar-1")
+	first := setup.createFulfillment(t, firstOption, "key-1")
 
-	_, err := kurulum.svc.CreateFulfillment(context.Background(), service.CreateFulfillmentInput{
-		// Referans AYNI; değişen tek şey kargo seçeneğidir.
-		Reference:        ilk.Reference,
-		ShippingOptionID: ikinciSecenek,
-		IdempotencyKey:   "anahtar-1",
+	_, err := setup.svc.CreateFulfillment(context.Background(), service.CreateFulfillmentInput{
+		// The reference is THE SAME; the only thing that changes is the shipping
+		// option.
+		Reference:        first.Reference,
+		ShippingOptionID: secondOption,
+		IdempotencyKey:   "key-1",
 	})
 	require.Error(t, err)
-	assert.True(t, errors.IsConflict(err), "hata errors.Conflict olmalı: %v", err)
+	assert.True(t, errors.IsConflict(err), "the error has to be errors.Conflict: %v", err)
 	assert.Equal(t, service.CodeIdempotencyMismatch, errors.CodeOf(err))
 }
 
-// TestAyniAnahtarFarkliKalemListesiIcinKullanilamaz tekrar dalının KALEM
-// LİSTESİNİ de karşılaştırdığını kanıtlar.
+// TestTheSameKeyCannotBeUsedWithADifferentItemList proves that the repeat branch
+// compares THE ITEM LIST as well.
 //
-// Regresyon: yalnızca referans ve seçenek karşılaştırılıyordu. Farklı bir
-// kalem dökümüyle gelen ikinci istek hata dönmüyor, mevcut gönderiyi KENDİ
-// kalemleriyle döndürüyordu; çağıran (örn. dökümü düzelttiğini sanan bir
-// yönetim isteği) yazıldığını sanıyor, oysa hiçbir şey yazılmamış oluyordu.
-func TestAyniAnahtarFarkliKalemListesiIcinKullanilamaz(t *testing.T) {
+// Regression: only the reference and the option were being compared. A second
+// request arriving with a different item breakdown returned no error and handed
+// back the existing fulfillment WITH ITS OWN items; the caller (e.g. an admin
+// request that believed it had corrected the breakdown) believed the write had
+// happened, while in fact nothing had been written.
+func TestTheSameKeyCannotBeUsedWithADifferentItemList(t *testing.T) {
 	t.Parallel()
 
-	kurulum := yeniKurulum(t)
-	secenekID := hazirSecenek(t, kurulum)
+	setup := newSetup(t)
+	optionID := readyOption(t, setup)
 
-	ilk, err := kurulum.svc.CreateFulfillment(context.Background(), service.CreateFulfillmentInput{
+	first, err := setup.svc.CreateFulfillment(context.Background(), service.CreateFulfillmentInput{
 		Reference:        "order_1",
-		ShippingOptionID: secenekID,
-		IdempotencyKey:   "anahtar-1",
+		ShippingOptionID: optionID,
+		IdempotencyKey:   "key-1",
 		Items: []service.FulfillmentItemInput{
 			{LineItemID: "li_1", Quantity: 1},
 		},
 	})
 	require.NoError(t, err)
-	require.Len(t, ilk.Items, 1)
+	require.Len(t, first.Items, 1)
 
-	_, err = kurulum.svc.CreateFulfillment(context.Background(), service.CreateFulfillmentInput{
+	_, err = setup.svc.CreateFulfillment(context.Background(), service.CreateFulfillmentInput{
 		Reference:        "order_1",
-		ShippingOptionID: secenekID,
-		IdempotencyKey:   "anahtar-1",
+		ShippingOptionID: optionID,
+		IdempotencyKey:   "key-1",
 		Items: []service.FulfillmentItemInput{
 			{LineItemID: "li_9", Quantity: 7},
 		},
 	})
-	require.Error(t, err, "farklı kalem listesi sessizce yutulmamalı")
-	assert.True(t, errors.IsConflict(err), "hata errors.Conflict olmalı: %v", err)
+	require.Error(t, err, "a different item list must not be swallowed silently")
+	assert.True(t, errors.IsConflict(err), "the error has to be errors.Conflict: %v", err)
 	assert.Equal(t, service.CodeIdempotencyMismatch, errors.CodeOf(err))
 
-	// Kayıt DEĞİŞMEMİŞ olmalı: reddedilen istek hiçbir şey yazmaz.
-	guncel, err := kurulum.svc.GetFulfillment(context.Background(), ilk.ID)
+	// The record has to be UNCHANGED: a rejected request writes nothing.
+	current, err := setup.svc.GetFulfillment(context.Background(), first.ID)
 	require.NoError(t, err)
-	require.Len(t, guncel.Items, 1)
-	assert.Equal(t, "li_1", guncel.Items[0].LineItemID)
+	require.Len(t, current.Items, 1)
+	assert.Equal(t, "li_1", current.Items[0].LineItemID)
 }
 
-// TestAyniKalemKumesiFarkliSiradaTekrardir karşılaştırmanın KÜME
-// olduğunu kanıtlar.
+// TestTheSameItemSetInADifferentOrderIsARepeat proves that the comparison is a
+// SET.
 //
-// Sıra farkı bir fark değildir: aynı kalemleri başka sırada gönderen bir
-// tekrar, gerçek bir tekrardır ve Conflict dönmemelidir.
-func TestAyniKalemKumesiFarkliSiradaTekrardir(t *testing.T) {
+// A difference in order is not a difference: a repeat that sends the same items
+// in another order is a real repeat and must not return Conflict.
+func TestTheSameItemSetInADifferentOrderIsARepeat(t *testing.T) {
 	t.Parallel()
 
-	kurulum := yeniKurulum(t)
-	secenekID := hazirSecenek(t, kurulum)
+	setup := newSetup(t)
+	optionID := readyOption(t, setup)
 
-	ilk, err := kurulum.svc.CreateFulfillment(context.Background(), service.CreateFulfillmentInput{
+	first, err := setup.svc.CreateFulfillment(context.Background(), service.CreateFulfillmentInput{
 		Reference:        "order_1",
-		ShippingOptionID: secenekID,
-		IdempotencyKey:   "anahtar-1",
+		ShippingOptionID: optionID,
+		IdempotencyKey:   "key-1",
 		Items: []service.FulfillmentItemInput{
 			{LineItemID: "li_1", Quantity: 2},
 			{LineItemID: "li_2", Quantity: 3},
@@ -246,77 +254,77 @@ func TestAyniKalemKumesiFarkliSiradaTekrardir(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	ikinci, err := kurulum.svc.CreateFulfillment(context.Background(), service.CreateFulfillmentInput{
+	second, err := setup.svc.CreateFulfillment(context.Background(), service.CreateFulfillmentInput{
 		Reference:        "order_1",
-		ShippingOptionID: secenekID,
-		IdempotencyKey:   "anahtar-1",
+		ShippingOptionID: optionID,
+		IdempotencyKey:   "key-1",
 		Items: []service.FulfillmentItemInput{
 			{LineItemID: "li_2", Quantity: 3},
 			{LineItemID: "li_1", Quantity: 2},
 		},
 	})
-	require.NoError(t, err, "aynı kalem kümesi başka sırada da tekrardır")
-	assert.Equal(t, ilk.ID, ikinci.ID)
+	require.NoError(t, err, "the same item set in another order is a repeat too")
+	assert.Equal(t, first.ID, second.ID)
 }
 
-// TestEszamanliIkiCreateTekGonderiUretir yarışın tek noktada çözüldüğünü
-// kanıtlar.
+// TestTwoConcurrentCreatesProduceOneFulfillment proves that the race is resolved
+// at a single point.
 //
-// Sahte depo benzersiz anahtar kısıtını taklit eder; aynı anahtarla koşan
-// goroutine'lerden yalnızca biri satır yazabilmelidir.
-func TestEszamanliIkiCreateTekGonderiUretir(t *testing.T) {
+// The fake store imitates the unique key constraint; of the goroutines running
+// with the same key only one must be able to write the row.
+func TestTwoConcurrentCreatesProduceOneFulfillment(t *testing.T) {
 	t.Parallel()
 
-	kurulum := yeniKurulum(t)
-	secenekID := hazirSecenek(t, kurulum)
+	setup := newSetup(t)
+	optionID := readyOption(t, setup)
 
-	const eszamanli = 8
-	kimlikler := make([]string, eszamanli)
-	hatalar := make([]error, eszamanli)
+	const concurrent = 8
+	ids := make([]string, concurrent)
+	errs := make([]error, concurrent)
 
-	var basla sync.WaitGroup
-	var bitti sync.WaitGroup
-	basla.Add(1)
-	bitti.Add(eszamanli)
+	var start sync.WaitGroup
+	var done sync.WaitGroup
+	start.Add(1)
+	done.Add(concurrent)
 
-	for i := range eszamanli {
+	for i := range concurrent {
 		go func() {
-			defer bitti.Done()
-			basla.Wait()
-			ful, err := kurulum.svc.CreateFulfillment(context.Background(), service.CreateFulfillmentInput{
+			defer done.Done()
+			start.Wait()
+			ful, err := setup.svc.CreateFulfillment(context.Background(), service.CreateFulfillmentInput{
 				Reference:        "order_1",
-				ShippingOptionID: secenekID,
-				IdempotencyKey:   "anahtar-yaris",
+				ShippingOptionID: optionID,
+				IdempotencyKey:   "key-race",
 			})
-			kimlikler[i], hatalar[i] = ful.ID, err
+			ids[i], errs[i] = ful.ID, err
 		}()
 	}
-	basla.Done()
-	bitti.Wait()
+	start.Done()
+	done.Wait()
 
-	for i, err := range hatalar {
-		require.NoErrorf(t, err, "%d. çağrı hata döndü", i)
+	for i, err := range errs {
+		require.NoErrorf(t, err, "call %d returned an error", i)
 	}
-	for i := 1; i < eszamanli; i++ {
-		assert.Equal(t, kimlikler[0], kimlikler[i], "tüm çağrılar aynı gönderiyi dönmeli")
+	for i := 1; i < concurrent; i++ {
+		assert.Equal(t, ids[0], ids[i], "all calls have to return the same fulfillment")
 	}
 
-	_, create, _ := kurulum.provider.cagriSayilari()
-	assert.Equal(t, 1, create, "sağlayıcıya TAM OLARAK bir kez gidilmeli")
+	_, create, _ := setup.provider.callCounts()
+	assert.Equal(t, 1, create, "the provider has to be called EXACTLY once")
 }
 
-// TestGonderiKalemleriYazilir kalemlerin gönderiyle birlikte kaydedildiğini
-// kanıtlar.
-func TestGonderiKalemleriYazilir(t *testing.T) {
+// TestFulfillmentItemsAreWritten proves that the items are recorded together
+// with the fulfillment.
+func TestFulfillmentItemsAreWritten(t *testing.T) {
 	t.Parallel()
 
-	kurulum := yeniKurulum(t)
-	secenekID := hazirSecenek(t, kurulum)
+	setup := newSetup(t)
+	optionID := readyOption(t, setup)
 
-	ful, err := kurulum.svc.CreateFulfillment(context.Background(), service.CreateFulfillmentInput{
+	ful, err := setup.svc.CreateFulfillment(context.Background(), service.CreateFulfillmentInput{
 		Reference:        "order_1",
-		ShippingOptionID: secenekID,
-		IdempotencyKey:   "anahtar-1",
+		ShippingOptionID: optionID,
+		IdempotencyKey:   "key-1",
 		Items: []service.FulfillmentItemInput{
 			{LineItemID: "line_1", Quantity: 2},
 			{LineItemID: "line_2", Quantity: 1},
@@ -325,401 +333,406 @@ func TestGonderiKalemleriYazilir(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, ful.Items, 2)
 
-	okunan, err := kurulum.svc.GetFulfillment(context.Background(), ful.ID)
+	stored, err := setup.svc.GetFulfillment(context.Background(), ful.ID)
 	require.NoError(t, err)
-	require.Len(t, okunan.Items, 2, "kalemler okuma yolunda da dönmeli")
+	require.Len(t, stored.Items, 2, "the items have to be returned on the read path too")
 
-	toplam := int64(0)
-	for _, item := range okunan.Items {
-		toplam += item.Quantity
+	total := int64(0)
+	for _, item := range stored.Items {
+		total += item.Quantity
 	}
-	assert.Equal(t, int64(3), toplam)
+	assert.Equal(t, int64(3), total)
 }
 
-// TestKalemYazmaHatasiGonderiyiGeriAlir işlem sınırının gerçekten atomik
-// olduğunu kanıtlar.
+// TestAnItemWriteFailureRollsBackTheFulfillment proves that the transaction
+// boundary really is atomic.
 //
-// Kalem yazma patladığında gönderi satırının da geri alınması gerekir; aksi
-// hâlde sağlayıcıda etiket basılmış ama kalemleri boş bir gönderi kalırdı.
-func TestKalemYazmaHatasiGonderiyiGeriAlir(t *testing.T) {
+// When the item write blows up, the fulfillment row has to be rolled back as
+// well; otherwise a fulfillment whose label was printed at the provider but whose
+// items are empty would be left behind.
+func TestAnItemWriteFailureRollsBackTheFulfillment(t *testing.T) {
 	t.Parallel()
 
-	kurulum := yeniKurulum(t)
-	secenekID := hazirSecenek(t, kurulum)
-	kurulum.store.failCreateItem = errors.Internal("test_kalem_yazilamadi", "kalem yazılamadı")
+	setup := newSetup(t)
+	optionID := readyOption(t, setup)
+	setup.store.failCreateItem = errors.Internal("test_item_write_failed", "the item could not be written")
 
-	_, err := kurulum.svc.CreateFulfillment(context.Background(), service.CreateFulfillmentInput{
+	_, err := setup.svc.CreateFulfillment(context.Background(), service.CreateFulfillmentInput{
 		Reference:        "order_1",
-		ShippingOptionID: secenekID,
-		IdempotencyKey:   "anahtar-1",
+		ShippingOptionID: optionID,
+		IdempotencyKey:   "key-1",
 		Items:            []service.FulfillmentItemInput{{LineItemID: "line_1", Quantity: 1}},
 	})
 	require.Error(t, err)
 
-	list, count, err := kurulum.svc.ListFulfillments(context.Background(), service.ListFulfillmentsInput{})
+	list, count, err := setup.svc.ListFulfillments(context.Background(), service.ListFulfillmentsInput{})
 	require.NoError(t, err)
-	assert.Zero(t, count, "başarısız işlemden geriye gönderi kalmamalı")
+	assert.Zero(t, count, "no fulfillment must be left behind by a failed transaction")
 	assert.Empty(t, list)
 }
 
-// TestSaglayiciHatasiGonderiBirakmaz sağlayıcı patladığında satırın geri
-// alındığını kanıtlar.
+// TestProviderErrorLeavesNoFulfillment proves that the row is rolled back when
+// the provider blows up.
 //
-// Kalsaydı, sağlayıcıda karşılığı olmayan bir gönderi kaydı kalır ve iptal
-// akışı hiçbir zaman kapatamayacağı bir satırla uğraşırdı.
-func TestSaglayiciHatasiGonderiBirakmaz(t *testing.T) {
+// Had it stayed, a fulfillment record with no counterpart at the provider would
+// be left behind and the cancellation flow would be dealing with a row it could
+// never close.
+func TestProviderErrorLeavesNoFulfillment(t *testing.T) {
 	t.Parallel()
 
-	kurulum := yeniKurulum(t)
-	secenekID := hazirSecenek(t, kurulum)
-	kurulum.provider.createErr = errors.Unavailable("test_saglayici_dustu", "kargo firmasına ulaşılamadı")
+	setup := newSetup(t)
+	optionID := readyOption(t, setup)
+	setup.provider.createErr = errors.Unavailable("test_provider_down", "the carrier is unreachable")
 
-	_, err := kurulum.svc.CreateFulfillment(context.Background(), service.CreateFulfillmentInput{
+	_, err := setup.svc.CreateFulfillment(context.Background(), service.CreateFulfillmentInput{
 		Reference:        "order_1",
-		ShippingOptionID: secenekID,
-		IdempotencyKey:   "anahtar-1",
+		ShippingOptionID: optionID,
+		IdempotencyKey:   "key-1",
 	})
 	require.Error(t, err)
 
-	_, count, err := kurulum.svc.ListFulfillments(context.Background(), service.ListFulfillmentsInput{})
+	_, count, err := setup.svc.ListFulfillments(context.Background(), service.ListFulfillmentsInput{})
 	require.NoError(t, err)
 	assert.Zero(t, count)
 }
 
-// TestSaglayiciBosKimlikDonerseSozlesmeIhlali sağlayıcının kimlik vermemesinin
-// sessizce kabul edilmediğini kanıtlar.
+// TestAnEmptyProviderIDIsAContractViolation proves that the provider failing to
+// give an identifier is not accepted silently.
 //
-// Kabul edilseydi, mutabakatta iki sistemi eşleştirecek alan boş kalırdı.
-func TestSaglayiciBosKimlikDonerseSozlesmeIhlali(t *testing.T) {
+// Had it been accepted, the field that matches the two systems during
+// reconciliation would stay empty.
+func TestAnEmptyProviderIDIsAContractViolation(t *testing.T) {
 	t.Parallel()
 
-	kurulum := yeniKurulum(t)
-	secenekID := hazirSecenek(t, kurulum)
-	kurulum.provider.createErr = nil
-	kurulum.provider.createStatus = coreprovider.FulfillmentPending
+	setup := newSetup(t)
+	optionID := readyOption(t, setup)
+	setup.provider.createErr = nil
+	setup.provider.createStatus = coreprovider.FulfillmentPending
 
-	bosSaglayici := &bosKimlikSaglayici{}
-	kayit := service.NewProviderRegistry()
-	require.NoError(t, kayit.Register(bosSaglayici))
-	svc, err := service.New(service.Options{Store: kurulum.store, Providers: kayit})
+	emptyProvider := &emptyIDProvider{}
+	registry := service.NewProviderRegistry()
+	require.NoError(t, registry.Register(emptyProvider))
+	svc, err := service.New(service.Options{Store: setup.store, Providers: registry})
 	require.NoError(t, err)
 
 	_, err = svc.CreateFulfillment(context.Background(), service.CreateFulfillmentInput{
 		Reference:        "order_1",
-		ShippingOptionID: secenekID,
-		IdempotencyKey:   "anahtar-1",
+		ShippingOptionID: optionID,
+		IdempotencyKey:   "key-1",
 	})
 	require.Error(t, err)
 	assert.Equal(t, service.CodeProviderContract, errors.CodeOf(err))
 }
 
-// bosKimlikSaglayici boş kimlik dönen bir sağlayıcıdır; sözleşme ihlalini
-// sınamak içindir.
-type bosKimlikSaglayici struct{}
+// emptyIDProvider is a provider that returns an empty identifier; it is there to
+// exercise the contract violation.
+type emptyIDProvider struct{}
 
-// ID sahte sağlayıcının kimliğini döner.
-func (p *bosKimlikSaglayici) ID() string { return "sahte" }
+// ID returns the fake provider's identifier.
+func (p *emptyIDProvider) ID() string { return "fake" }
 
-// Quote sıfır ücret döner; bu sağlayıcı yalnızca Create dalını sınar.
-func (p *bosKimlikSaglayici) Quote(
+// Quote returns a zero fee; this provider only exercises the Create branch.
+func (p *emptyIDProvider) Quote(
 	_ context.Context,
 	in coreprovider.QuoteInput,
 ) (coreprovider.ShippingQuote, error) {
 	return coreprovider.ShippingQuote{OptionID: in.OptionID, CurrencyCode: in.CurrencyCode}, nil
 }
 
-// Create BOŞ kimlikli bir gönderi döner.
-func (p *bosKimlikSaglayici) Create(
+// Create returns a fulfillment with an EMPTY identifier.
+func (p *emptyIDProvider) Create(
 	_ context.Context,
 	_ coreprovider.CreateFulfillmentInput,
 ) (coreprovider.Fulfillment, error) {
 	return coreprovider.Fulfillment{Status: coreprovider.FulfillmentPending}, nil
 }
 
-// Cancel hiçbir şey yapmaz.
-func (p *bosKimlikSaglayici) Cancel(_ context.Context, _ string) error { return nil }
+// Cancel does nothing.
+func (p *emptyIDProvider) Cancel(_ context.Context, _ string) error { return nil }
 
-// TestIptalIdempotenttir saga telafisinin şartını kanıtlar.
+// TestCancellationIsIdempotent proves the requirement of the saga compensation.
 //
-// İkinci iptal hata VERMEMELİ, sağlayıcıya İKİNCİ KEZ gitmemeli ve gönderi
-// satırına yeniden YAZMAMALIDIR.
-func TestIptalIdempotenttir(t *testing.T) {
+// A second cancellation MUST NOT fail, MUST NOT go to the provider A SECOND TIME
+// and MUST NOT write to the fulfillment row again.
+func TestCancellationIsIdempotent(t *testing.T) {
 	t.Parallel()
 
-	kurulum := yeniKurulum(t)
-	secenekID := hazirSecenek(t, kurulum)
-	ful := kurulum.gonderiAc(t, secenekID, "anahtar-1")
+	setup := newSetup(t)
+	optionID := readyOption(t, setup)
+	ful := setup.createFulfillment(t, optionID, "key-1")
 
-	require.NoError(t, kurulum.svc.CancelFulfillment(context.Background(), ful.ID))
-	yazmaSayisi := kurulum.store.gonderiYazmaSayisi()
+	require.NoError(t, setup.svc.CancelFulfillment(context.Background(), ful.ID))
+	writeCount := setup.store.fulfillmentWriteCount()
 
-	require.NoError(t, kurulum.svc.CancelFulfillment(context.Background(), ful.ID),
-		"ikinci iptal hata dönmemeli")
+	require.NoError(t, setup.svc.CancelFulfillment(context.Background(), ful.ID),
+		"the second cancellation must not return an error")
 
-	_, _, cancel := kurulum.provider.cagriSayilari()
-	assert.Equal(t, 1, cancel, "sağlayıcıya yalnızca bir kez gidilmeli")
-	assert.Equal(t, yazmaSayisi, kurulum.store.gonderiYazmaSayisi(),
-		"ikinci iptal satıra yazmamalı")
+	_, _, cancel := setup.provider.callCounts()
+	assert.Equal(t, 1, cancel, "the provider has to be called only once")
+	assert.Equal(t, writeCount, setup.store.fulfillmentWriteCount(),
+		"the second cancellation must not write to the row")
 
-	okunan, err := kurulum.svc.GetFulfillment(context.Background(), ful.ID)
+	stored, err := setup.svc.GetFulfillment(context.Background(), ful.ID)
 	require.NoError(t, err)
-	assert.Equal(t, models.StatusCanceled, okunan.Status)
-	require.NotNil(t, okunan.CanceledAt, "iptal anı yazılmalı")
-	assert.Equal(t, testAn, *okunan.CanceledAt)
+	assert.Equal(t, models.StatusCanceled, stored.Status)
+	require.NotNil(t, stored.CanceledAt, "the cancellation moment has to be written")
+	assert.Equal(t, testNow, *stored.CanceledAt)
 }
 
-// TestIptalBilinmeyenKimlikteNotFound idempotentliğin "her şeyi sessizce yut"
-// demek OLMADIĞINI kanıtlar.
+// TestCancelOnAnUnknownIDReturnsNotFound proves that idempotency DOES NOT MEAN
+// "swallow everything silently".
 //
-// İki kez iptal edilen gerçek bir gönderi ile hiç var olmamış bir kimlik
-// farklı durumlardır; ikincisi çağıran tarafta bir hatadır.
-func TestIptalBilinmeyenKimlikteNotFound(t *testing.T) {
+// A real fulfillment canceled twice and an identifier that never existed are
+// different situations; the second is an error on the caller's side.
+func TestCancelOnAnUnknownIDReturnsNotFound(t *testing.T) {
 	t.Parallel()
 
-	kurulum := yeniKurulum(t)
-	err := kurulum.svc.CancelFulfillment(context.Background(), "ful_YOKBOYLEBIRSEY")
+	setup := newSetup(t)
+	err := setup.svc.CancelFulfillment(context.Background(), "ful_NOSUCHTHING")
 	require.Error(t, err)
-	assert.True(t, errors.IsNotFound(err), "hata errors.NotFound olmalı: %v", err)
+	assert.True(t, errors.IsNotFound(err), "the error has to be errors.NotFound: %v", err)
 }
 
-// TestTeslimEdilmisGonderiIptalEdilemez Faz 7'nin açıkça sorduğu kararı
-// kanıtlar.
+// TestADeliveredFulfillmentCannotBeCanceled proves the decision Phase 7 asks for
+// explicitly.
 //
-// Teslim geri alınamayan fiziksel bir olgudur; "iptal" fiziksel dünya hakkında
-// yalan olurdu ve çaresi İADEDİR. Kural, payment'ta tahsil edilmiş bir oturumun
-// iptal edilemeyip iade edilmesiyle aynıdır.
-func TestTeslimEdilmisGonderiIptalEdilemez(t *testing.T) {
+// Delivery is a physical fact that cannot be undone; "cancellation" would be a
+// lie about the physical world and its remedy is a RETURN. The rule is the same
+// as a captured session in payment not being cancelable but refundable.
+func TestADeliveredFulfillmentCannotBeCanceled(t *testing.T) {
 	t.Parallel()
 
-	kurulum := yeniKurulum(t)
-	secenekID := hazirSecenek(t, kurulum)
-	ful := kurulum.gonderiAc(t, secenekID, "anahtar-1")
+	setup := newSetup(t)
+	optionID := readyOption(t, setup)
+	ful := setup.createFulfillment(t, optionID, "key-1")
 
-	_, err := kurulum.svc.MarkShipped(context.Background(), ful.ID, "TK-1", "")
+	_, err := setup.svc.MarkShipped(context.Background(), ful.ID, "TK-1", "")
 	require.NoError(t, err)
-	_, err = kurulum.svc.MarkDelivered(context.Background(), ful.ID)
+	_, err = setup.svc.MarkDelivered(context.Background(), ful.ID)
 	require.NoError(t, err)
 
-	err = kurulum.svc.CancelFulfillment(context.Background(), ful.ID)
+	err = setup.svc.CancelFulfillment(context.Background(), ful.ID)
 	require.Error(t, err)
-	assert.True(t, errors.IsConflict(err), "hata errors.Conflict olmalı: %v", err)
+	assert.True(t, errors.IsConflict(err), "the error has to be errors.Conflict: %v", err)
 	assert.Equal(t, service.CodeInvalidTransition, errors.CodeOf(err))
 
-	_, _, cancel := kurulum.provider.cagriSayilari()
-	assert.Zero(t, cancel, "reddedilen iptal sağlayıcıya gitmemeli")
+	_, _, cancel := setup.provider.callCounts()
+	assert.Zero(t, cancel, "a rejected cancellation must not go to the provider")
 }
 
-// TestKargodakiGonderiIptalEdilebilir kararın diğer yarısını kanıtlar.
+// TestAShippedFulfillmentCanBeCanceled proves the other half of the decision.
 //
-// Yoldaki paket taşıyıcı tarafından geri çağrılabilir; kapatmak operatörü
-// sistemin dışında çalışmaya zorlardı.
-func TestKargodakiGonderiIptalEdilebilir(t *testing.T) {
+// A parcel in transit can be recalled by the carrier; closing that off would
+// force the operator to work outside the system.
+func TestAShippedFulfillmentCanBeCanceled(t *testing.T) {
 	t.Parallel()
 
-	kurulum := yeniKurulum(t)
-	secenekID := hazirSecenek(t, kurulum)
-	ful := kurulum.gonderiAc(t, secenekID, "anahtar-1")
+	setup := newSetup(t)
+	optionID := readyOption(t, setup)
+	ful := setup.createFulfillment(t, optionID, "key-1")
 
-	_, err := kurulum.svc.MarkShipped(context.Background(), ful.ID, "TK-1", "")
+	_, err := setup.svc.MarkShipped(context.Background(), ful.ID, "TK-1", "")
 	require.NoError(t, err)
 
-	require.NoError(t, kurulum.svc.CancelFulfillment(context.Background(), ful.ID))
+	require.NoError(t, setup.svc.CancelFulfillment(context.Background(), ful.ID))
 
-	okunan, err := kurulum.svc.GetFulfillment(context.Background(), ful.ID)
+	stored, err := setup.svc.GetFulfillment(context.Background(), ful.ID)
 	require.NoError(t, err)
-	assert.Equal(t, models.StatusCanceled, okunan.Status)
-	require.NotNil(t, okunan.ShippedAt, "sevk anı KORUNMALI; iptal geçmişi silmez")
+	assert.Equal(t, models.StatusCanceled, stored.Status)
+	require.NotNil(t, stored.ShippedAt, "the dispatch moment HAS TO BE KEPT; cancellation does not erase history")
 }
 
-// TestIptalSaglayiciyaGonderiKimligiyleGider sağlayıcıya modülün kendi
-// kimliğinin DEĞİL, sağlayıcının kimliğinin verildiğini kanıtlar.
+// TestCancelGoesToTheProviderWithTheProvidersID proves that what is given to the
+// provider is NOT the module's own identifier but the provider's.
 //
-// Modülün kimliği verilseydi sağlayıcı hiçbir zaman doğru kaydı bulamazdı.
-func TestIptalSaglayiciyaGonderiKimligiyleGider(t *testing.T) {
+// Had the module's identifier been given, the provider could never find the
+// right record.
+func TestCancelGoesToTheProviderWithTheProvidersID(t *testing.T) {
 	t.Parallel()
 
-	kurulum := yeniKurulum(t)
-	secenekID := hazirSecenek(t, kurulum)
-	ful := kurulum.gonderiAc(t, secenekID, "anahtar-1")
+	setup := newSetup(t)
+	optionID := readyOption(t, setup)
+	ful := setup.createFulfillment(t, optionID, "key-1")
 
-	require.NoError(t, kurulum.svc.CancelFulfillment(context.Background(), ful.ID))
+	require.NoError(t, setup.svc.CancelFulfillment(context.Background(), ful.ID))
 
-	kurulum.provider.mu.Lock()
-	iptalEdilen := append([]string(nil), kurulum.provider.canceledIDs...)
-	kurulum.provider.mu.Unlock()
+	setup.provider.mu.Lock()
+	canceled := append([]string(nil), setup.provider.canceledIDs...)
+	setup.provider.mu.Unlock()
 
-	require.Len(t, iptalEdilen, 1)
-	assert.Equal(t, ful.ExternalID, iptalEdilen[0])
-	assert.NotEqual(t, ful.ID, iptalEdilen[0])
+	require.Len(t, canceled, 1)
+	assert.Equal(t, ful.ExternalID, canceled[0])
+	assert.NotEqual(t, ful.ID, canceled[0])
 }
 
-// TestSaglayiciIptalHatasiKaydiDegistirmez telafinin yarıda kalmadığını
-// kanıtlar.
+// TestAProviderCancelFailureDoesNotChangeTheRecord proves that the compensation
+// does not stop halfway.
 //
-// Sağlayıcı iptal edemezken kaydı "canceled" yazmak, saga'ya geri alındığını
-// söylerken gerçekte etiketi açık bırakmak demek olurdu.
-func TestSaglayiciIptalHatasiKaydiDegistirmez(t *testing.T) {
+// Writing "canceled" into the record while the provider could not cancel would
+// mean telling the saga it was rolled back while in reality the label stays open.
+func TestAProviderCancelFailureDoesNotChangeTheRecord(t *testing.T) {
 	t.Parallel()
 
-	kurulum := yeniKurulum(t)
-	secenekID := hazirSecenek(t, kurulum)
-	ful := kurulum.gonderiAc(t, secenekID, "anahtar-1")
-	kurulum.provider.cancelErr = errors.Unavailable("test_iptal_edilemedi", "kargo firmasına ulaşılamadı")
+	setup := newSetup(t)
+	optionID := readyOption(t, setup)
+	ful := setup.createFulfillment(t, optionID, "key-1")
+	setup.provider.cancelErr = errors.Unavailable("test_cancel_failed", "the carrier is unreachable")
 
-	err := kurulum.svc.CancelFulfillment(context.Background(), ful.ID)
+	err := setup.svc.CancelFulfillment(context.Background(), ful.ID)
 	require.Error(t, err)
 
-	okunan, err := kurulum.svc.GetFulfillment(context.Background(), ful.ID)
+	stored, err := setup.svc.GetFulfillment(context.Background(), ful.ID)
 	require.NoError(t, err)
-	assert.Equal(t, models.StatusPending, okunan.Status, "durum değişmemeli")
-	assert.Nil(t, okunan.CanceledAt)
+	assert.Equal(t, models.StatusPending, stored.Status, "the status must not change")
+	assert.Nil(t, stored.CanceledAt)
 }
 
-// TestDurumGecisleri durum makinesinin servis üzerindeki karşılığını sınar.
-func TestDurumGecisleri(t *testing.T) {
+// TestStateTransitions exercises the state machine's counterpart on the service.
+func TestStateTransitions(t *testing.T) {
 	t.Parallel()
 
-	t.Run("bekleyen gönderi teslim edilemez", func(t *testing.T) {
+	t.Run("a pending fulfillment cannot be delivered", func(t *testing.T) {
 		t.Parallel()
 
-		kurulum := yeniKurulum(t)
-		ful := kurulum.gonderiAc(t, hazirSecenek(t, kurulum), "anahtar-1")
+		setup := newSetup(t)
+		ful := setup.createFulfillment(t, readyOption(t, setup), "key-1")
 
-		_, err := kurulum.svc.MarkDelivered(context.Background(), ful.ID)
+		_, err := setup.svc.MarkDelivered(context.Background(), ful.ID)
 		require.Error(t, err)
-		assert.True(t, errors.IsConflict(err), "hata errors.Conflict olmalı: %v", err)
+		assert.True(t, errors.IsConflict(err), "the error has to be errors.Conflict: %v", err)
 	})
 
-	t.Run("iptal edilmiş gönderi kargoya verilemez", func(t *testing.T) {
+	t.Run("a canceled fulfillment cannot be shipped", func(t *testing.T) {
 		t.Parallel()
 
-		kurulum := yeniKurulum(t)
-		ful := kurulum.gonderiAc(t, hazirSecenek(t, kurulum), "anahtar-1")
-		require.NoError(t, kurulum.svc.CancelFulfillment(context.Background(), ful.ID))
+		setup := newSetup(t)
+		ful := setup.createFulfillment(t, readyOption(t, setup), "key-1")
+		require.NoError(t, setup.svc.CancelFulfillment(context.Background(), ful.ID))
 
-		_, err := kurulum.svc.MarkShipped(context.Background(), ful.ID, "", "")
+		_, err := setup.svc.MarkShipped(context.Background(), ful.ID, "", "")
 		require.Error(t, err)
-		assert.True(t, errors.IsConflict(err), "hata errors.Conflict olmalı: %v", err)
+		assert.True(t, errors.IsConflict(err), "the error has to be errors.Conflict: %v", err)
 	})
 
-	t.Run("teslim edilmiş gönderi kargoya verilemez", func(t *testing.T) {
+	t.Run("a delivered fulfillment cannot be shipped", func(t *testing.T) {
 		t.Parallel()
 
-		kurulum := yeniKurulum(t)
-		ful := kurulum.gonderiAc(t, hazirSecenek(t, kurulum), "anahtar-1")
-		_, err := kurulum.svc.MarkShipped(context.Background(), ful.ID, "TK-1", "")
+		setup := newSetup(t)
+		ful := setup.createFulfillment(t, readyOption(t, setup), "key-1")
+		_, err := setup.svc.MarkShipped(context.Background(), ful.ID, "TK-1", "")
 		require.NoError(t, err)
-		_, err = kurulum.svc.MarkDelivered(context.Background(), ful.ID)
+		_, err = setup.svc.MarkDelivered(context.Background(), ful.ID)
 		require.NoError(t, err)
 
-		_, err = kurulum.svc.MarkShipped(context.Background(), ful.ID, "TK-2", "")
+		_, err = setup.svc.MarkShipped(context.Background(), ful.ID, "TK-2", "")
 		require.Error(t, err)
-		assert.True(t, errors.IsConflict(err), "hata errors.Conflict olmalı: %v", err)
+		assert.True(t, errors.IsConflict(err), "the error has to be errors.Conflict: %v", err)
 	})
 }
 
-// TestKargoyaVermeIdempotenttir aynı takip numarasıyla ikinci çağrının hata
-// vermediğini, FARKLI numarayla çakıştığını kanıtlar.
-func TestKargoyaVermeIdempotenttir(t *testing.T) {
+// TestMarkShippedIsIdempotent proves that a second call with the same tracking
+// number does not fail, while a DIFFERENT number conflicts.
+func TestMarkShippedIsIdempotent(t *testing.T) {
 	t.Parallel()
 
-	kurulum := yeniKurulum(t)
-	ful := kurulum.gonderiAc(t, hazirSecenek(t, kurulum), "anahtar-1")
+	setup := newSetup(t)
+	ful := setup.createFulfillment(t, readyOption(t, setup), "key-1")
 
-	ilk, err := kurulum.svc.MarkShipped(context.Background(), ful.ID, "TK-1", "https://kargo/1")
+	first, err := setup.svc.MarkShipped(context.Background(), ful.ID, "TK-1", "https://shipping/1")
 	require.NoError(t, err)
-	assert.Equal(t, models.StatusShipped, ilk.Status)
-	require.NotNil(t, ilk.ShippedAt)
-	assert.Equal(t, testAn, *ilk.ShippedAt)
+	assert.Equal(t, models.StatusShipped, first.Status)
+	require.NotNil(t, first.ShippedAt)
+	assert.Equal(t, testNow, *first.ShippedAt)
 
-	ikinci, err := kurulum.svc.MarkShipped(context.Background(), ful.ID, "TK-1", "")
-	require.NoError(t, err, "aynı numarayla ikinci çağrı hata vermemeli")
-	assert.Equal(t, ilk.ShippedAt, ikinci.ShippedAt, "sevk anı değişmemeli")
+	second, err := setup.svc.MarkShipped(context.Background(), ful.ID, "TK-1", "")
+	require.NoError(t, err, "a second call with the same number must not fail")
+	assert.Equal(t, first.ShippedAt, second.ShippedAt, "the dispatch moment must not change")
 
-	bos, err := kurulum.svc.MarkShipped(context.Background(), ful.ID, "", "")
-	require.NoError(t, err, "numarasız tekrar da hata vermemeli")
-	assert.Equal(t, "TK-1", bos.TrackingNumber)
+	empty, err := setup.svc.MarkShipped(context.Background(), ful.ID, "", "")
+	require.NoError(t, err, "a repeat without a number must not fail either")
+	assert.Equal(t, "TK-1", empty.TrackingNumber)
 
-	_, err = kurulum.svc.MarkShipped(context.Background(), ful.ID, "TK-2", "")
-	require.Error(t, err, "farklı numara yeni bir istektir")
-	assert.True(t, errors.IsConflict(err), "hata errors.Conflict olmalı: %v", err)
+	_, err = setup.svc.MarkShipped(context.Background(), ful.ID, "TK-2", "")
+	require.Error(t, err, "a different number is a new request")
+	assert.True(t, errors.IsConflict(err), "the error has to be errors.Conflict: %v", err)
 }
 
-// TestTeslimIdempotenttir ikinci teslim bildiriminin hata vermediğini ve
-// teslim anını DEĞİŞTİRMEDİĞİNİ kanıtlar.
-func TestTeslimIdempotenttir(t *testing.T) {
+// TestMarkDeliveredIsIdempotent proves that a second delivery notification does
+// not fail and DOES NOT CHANGE the delivery moment.
+func TestMarkDeliveredIsIdempotent(t *testing.T) {
 	t.Parallel()
 
-	kurulum := yeniKurulum(t)
-	ful := kurulum.gonderiAc(t, hazirSecenek(t, kurulum), "anahtar-1")
-	_, err := kurulum.svc.MarkShipped(context.Background(), ful.ID, "TK-1", "")
+	setup := newSetup(t)
+	ful := setup.createFulfillment(t, readyOption(t, setup), "key-1")
+	_, err := setup.svc.MarkShipped(context.Background(), ful.ID, "TK-1", "")
 	require.NoError(t, err)
 
-	ilk, err := kurulum.svc.MarkDelivered(context.Background(), ful.ID)
+	first, err := setup.svc.MarkDelivered(context.Background(), ful.ID)
 	require.NoError(t, err)
-	require.NotNil(t, ilk.DeliveredAt)
+	require.NotNil(t, first.DeliveredAt)
 
-	yazmaSayisi := kurulum.store.gonderiYazmaSayisi()
-	ikinci, err := kurulum.svc.MarkDelivered(context.Background(), ful.ID)
+	writeCount := setup.store.fulfillmentWriteCount()
+	second, err := setup.svc.MarkDelivered(context.Background(), ful.ID)
 	require.NoError(t, err)
-	assert.Equal(t, ilk.DeliveredAt, ikinci.DeliveredAt)
-	assert.Equal(t, yazmaSayisi, kurulum.store.gonderiYazmaSayisi(),
-		"idempotent dal satıra yazmamalı")
+	assert.Equal(t, first.DeliveredAt, second.DeliveredAt)
+	assert.Equal(t, writeCount, setup.store.fulfillmentWriteCount(),
+		"the idempotent branch must not write to the row")
 }
 
-// TestDurumDegistirenAkislarKilitAlir eşzamanlılık sözleşmesini kanıtlar.
+// TestStateChangingFlowsTakeALock proves the concurrency contract.
 //
-// Kilit alınmasaydı, aynı gönderiyi aynı anda iptal eden iki çağrı sağlayıcıya
-// İKİ KEZ giderdi. Sahte depo kilidi yalnızca işlem içinde verir; kilit
-// alınmadığında test derlenir ama iddia düşer.
-func TestDurumDegistirenAkislarKilitAlir(t *testing.T) {
+// Had the lock not been taken, two calls canceling the same fulfillment at the
+// same time would go to the provider TWICE. The fake store hands out the lock
+// only inside a transaction; when the lock is not taken the test still compiles
+// but the claim fails.
+func TestStateChangingFlowsTakeALock(t *testing.T) {
 	t.Parallel()
 
-	kurulum := yeniKurulum(t)
-	ful := kurulum.gonderiAc(t, hazirSecenek(t, kurulum), "anahtar-1")
-	// Kurulum da kilit alır (seçenek oluşturma profili paylaşımlı kilitler);
-	// sınanan şey aşağıdaki iki akışın kilitleridir.
-	kurulum.store.kilitleriSifirla()
+	setup := newSetup(t)
+	ful := setup.createFulfillment(t, readyOption(t, setup), "key-1")
+	// The setup takes locks as well (creating an option locks the profile in
+	// shared mode); what is under test is the locks of the two flows below.
+	setup.store.resetLocks()
 
-	_, err := kurulum.svc.MarkShipped(context.Background(), ful.ID, "TK-1", "")
+	_, err := setup.svc.MarkShipped(context.Background(), ful.ID, "TK-1", "")
 	require.NoError(t, err)
-	_, err = kurulum.svc.MarkDelivered(context.Background(), ful.ID)
+	_, err = setup.svc.MarkDelivered(context.Background(), ful.ID)
 	require.NoError(t, err)
 
-	assert.Equal(t, []string{"fulfillment", "fulfillment"}, kurulum.store.kilitSirasi(),
-		"durum değiştiren her akış gönderi satırını kilitlemeli")
+	assert.Equal(t, []string{"fulfillment", "fulfillment"}, setup.store.lockOrder(),
+		"every state-changing flow has to lock the fulfillment row")
 }
 
-// TestGonderiGirdisiDogrulanir geçersiz girdinin errors.Invalid ile
-// reddedildiğini kanıtlar.
-func TestGonderiGirdisiDogrulanir(t *testing.T) {
+// TestFulfillmentInputIsValidated proves that an invalid input is rejected with
+// errors.Invalid.
+func TestFulfillmentInputIsValidated(t *testing.T) {
 	t.Parallel()
 
-	kurulum := yeniKurulum(t)
-	secenekID := hazirSecenek(t, kurulum)
+	setup := newSetup(t)
+	optionID := readyOption(t, setup)
 
-	durumlar := []struct {
-		ad    string
-		girdi service.CreateFulfillmentInput
+	cases := []struct {
+		name  string
+		input service.CreateFulfillmentInput
 	}{
-		{"referans yok", service.CreateFulfillmentInput{
-			ShippingOptionID: secenekID, IdempotencyKey: "a",
+		{"no reference", service.CreateFulfillmentInput{
+			ShippingOptionID: optionID, IdempotencyKey: "a",
 		}},
-		{"seçenek yok", service.CreateFulfillmentInput{
+		{"no option", service.CreateFulfillmentInput{
 			Reference: "order_1", IdempotencyKey: "a",
 		}},
-		{"seçenek öneki yanlış", service.CreateFulfillmentInput{
+		{"wrong option prefix", service.CreateFulfillmentInput{
 			Reference: "order_1", ShippingOptionID: "sprof_XYZ", IdempotencyKey: "a",
 		}},
-		{"anahtar yok", service.CreateFulfillmentInput{
-			Reference: "order_1", ShippingOptionID: secenekID,
+		{"no key", service.CreateFulfillmentInput{
+			Reference: "order_1", ShippingOptionID: optionID,
 		}},
-		{"kalem adedi sıfır", service.CreateFulfillmentInput{
-			Reference: "order_1", ShippingOptionID: secenekID, IdempotencyKey: "a",
+		{"zero item quantity", service.CreateFulfillmentInput{
+			Reference: "order_1", ShippingOptionID: optionID, IdempotencyKey: "a",
 			Items: []service.FulfillmentItemInput{{LineItemID: "line_1", Quantity: 0}},
 		}},
-		{"aynı satır iki kez", service.CreateFulfillmentInput{
-			Reference: "order_1", ShippingOptionID: secenekID, IdempotencyKey: "a",
+		{"the same line twice", service.CreateFulfillmentInput{
+			Reference: "order_1", ShippingOptionID: optionID, IdempotencyKey: "a",
 			Items: []service.FulfillmentItemInput{
 				{LineItemID: "line_1", Quantity: 1},
 				{LineItemID: "line_1", Quantity: 2},
@@ -727,42 +740,42 @@ func TestGonderiGirdisiDogrulanir(t *testing.T) {
 		}},
 	}
 
-	for _, durum := range durumlar {
-		t.Run(durum.ad, func(t *testing.T) {
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			_, err := kurulum.svc.CreateFulfillment(context.Background(), durum.girdi)
+			_, err := setup.svc.CreateFulfillment(context.Background(), tc.input)
 			require.Error(t, err)
-			assert.True(t, errors.IsInvalid(err), "hata errors.Invalid olmalı: %v", err)
+			assert.True(t, errors.IsInvalid(err), "the error has to be errors.Invalid: %v", err)
 		})
 	}
 }
 
-// TestGonderiListelemesiKalemleriIliistirir liste yolunun kalemleri toplu
-// getirdiğini kanıtlar.
-func TestGonderiListelemesiKalemleriIliistirir(t *testing.T) {
+// TestFulfillmentListingAttachesTheItems proves that the list path fetches the
+// items in a batch.
+func TestFulfillmentListingAttachesTheItems(t *testing.T) {
 	t.Parallel()
 
-	kurulum := yeniKurulum(t)
-	secenekID := hazirSecenek(t, kurulum)
+	setup := newSetup(t)
+	optionID := readyOption(t, setup)
 
-	for i, anahtar := range []string{"anahtar-1", "anahtar-2"} {
-		_, err := kurulum.svc.CreateFulfillment(context.Background(), service.CreateFulfillmentInput{
+	for i, key := range []string{"key-1", "key-2"} {
+		_, err := setup.svc.CreateFulfillment(context.Background(), service.CreateFulfillmentInput{
 			Reference:        "order_1",
-			ShippingOptionID: secenekID,
-			IdempotencyKey:   anahtar,
+			ShippingOptionID: optionID,
+			IdempotencyKey:   key,
 			Items: []service.FulfillmentItemInput{
-				{LineItemID: "line_" + anahtar, Quantity: int64(i + 1)},
+				{LineItemID: "line_" + key, Quantity: int64(i + 1)},
 			},
 		})
 		require.NoError(t, err)
 	}
 
-	list, count, err := kurulum.svc.ListFulfillments(context.Background(), service.ListFulfillmentsInput{})
+	list, count, err := setup.svc.ListFulfillments(context.Background(), service.ListFulfillmentsInput{})
 	require.NoError(t, err)
 	require.EqualValues(t, 2, count)
 	require.Len(t, list, 2)
 	for _, ful := range list {
-		assert.Len(t, ful.Items, 1, "her gönderinin kalemi iliştirilmeli")
+		assert.Len(t, ful.Items, 1, "every fulfillment's item has to be attached")
 	}
 }

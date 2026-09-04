@@ -79,14 +79,16 @@ type CreateProductParams struct {
 	Metadata      []byte
 }
 
-// Ürün sorguları.
+// Product queries.
 //
-// Ortak kurallar:
-//   - Her okuma "deleted_at IS NULL" filtresi uygular (plan Bölüm 8: soft delete).
-//   - Listeleme sırası (created_at DESC, id DESC) sabittir; ikinci anahtar,
-//     aynı milisaniyede oluşmuş iki kaydın sayfalar arasında yer değiştirmesini
-//     engeller.
-//   - Zaman damgalarını veritabanı üretir (now()); tek saat kaynağı budur.
+// Shared rules:
+//   - Every read applies the "deleted_at IS NULL" filter (plan Section 8: soft
+//     delete).
+//   - The listing order (created_at DESC, id DESC) is fixed; the second key keeps
+//     two records created in the same millisecond from swapping places between
+//     pages.
+//   - The database produces the timestamps (now()); that is the single clock
+//     source.
 func (q *Queries) CreateProduct(ctx context.Context, arg CreateProductParams) (Product, error) {
 	row := q.db.QueryRow(ctx, createProduct,
 		arg.ID,
@@ -215,14 +217,15 @@ WHERE id = $1 AND deleted_at IS NULL
 FOR UPDATE
 `
 
-// GetProductForUpdate ürünü SATIR KİLİDİYLE okur; yalnızca bir işlem içinde
-// anlamlıdır.
+// GetProductForUpdate reads the product WITH A ROW LOCK; it is meaningful only
+// inside a transaction.
 //
-// Varyant yazmadan önce sahibin var olduğunu doğrulamak tek başına yetmez:
-// silme SOFT olduğu için foreign key boşluğu kapatmaz ve eşzamanlı bir silme
-// kontrol ile INSERT arasına girerse sahibi silinmiş bir varyant ortaya çıkar.
-// Kilit, silmeyi bu işlemle SIRAYA DİZER: silme önce gelirse burada satır
-// bulunamaz, sonra gelirse varyant silmenin temizliğine yetişir.
+// Checking that the owner exists before writing a variant is not enough on its
+// own: because deletion is SOFT, the foreign key does not close the gap, and if a
+// concurrent deletion slips in between the check and the INSERT, a variant whose
+// owner has been deleted comes into being. The lock PUTS the deletion IN SEQUENCE
+// with this transaction: if the deletion comes first, no row is found here; if it
+// comes second, the variant is caught by the deletion's cleanup.
 func (q *Queries) GetProductForUpdate(ctx context.Context, id string) (Product, error) {
 	row := q.db.QueryRow(ctx, getProductForUpdate, id)
 	var i Product
@@ -293,15 +296,16 @@ WHERE id = ANY($1::text[]) AND deleted_at IS NULL
 ORDER BY created_at DESC, id DESC
 `
 
-// ListProducts ve CountProducts BURADA DEĞİL, elle yazılmış SQL olarak
-// repository/saleschannel.go içinde durur.
+// ListProducts and CountProducts are NOT HERE; they sit in
+// repository/saleschannel.go as hand-written SQL.
 //
-// Sebebi tek başına bu dosyada anlaşılmaz: iki sorgu satış kanalı süzgeci için
-// link tablosuna (link_product_sales_channel) karşı bir EXISTS/NOT EXISTS
-// koşulu taşır ve o tablo bu modülün migration'larında YOKTUR — şemasını
-// core/link çalışma anında kurar. sqlc şemayı bu dizinden okuduğu için
-// "relation does not exist" ile üretimi reddeder. Gerekçenin tamamı ve
-// süzgecin neden veritabanında uygulandığı için bkz. repository/saleschannel.go.
+// The reason is not visible from this file alone: for the sales channel filter
+// the two queries carry an EXISTS/NOT EXISTS condition against the link table
+// (link_product_sales_channel), and that table is NOT in this module's
+// migrations — core/link creates its schema at run time. Because sqlc reads the
+// schema from this directory, it refuses generation with "relation does not
+// exist". For the full rationale, and for why the filter is applied in the
+// database, see repository/saleschannel.go.
 func (q *Queries) ListProductsByIDs(ctx context.Context, dollar_1 []string) ([]Product, error) {
 	rows, err := q.db.Query(ctx, listProductsByIDs, dollar_1)
 	if err != nil {
@@ -349,8 +353,8 @@ WHERE product_id = $1 AND deleted_at IS NULL
 ORDER BY rank, id
 `
 
-// Ürün silinirken varyantların link'leri (fiyat/stok) temizlenir; bunun için
-// silinmeden ÖNCE kimlikler okunur.
+// When a product is deleted the links of its variants (price/inventory) are
+// cleaned up; for that, the IDs are read BEFORE the deletion.
 func (q *Queries) ListVariantIDsByProduct(ctx context.Context, productID string) ([]string, error) {
 	rows, err := q.db.Query(ctx, listVariantIDsByProduct, productID)
 	if err != nil {
@@ -451,9 +455,10 @@ type UpdateProductParams struct {
 	ID            string
 }
 
-// COALESCE kalıbı: NULL geçilen alan DEĞİŞMEZ. Bunun bilinen sınırı, bir alanı
-// NULL'a çekmenin (örn. subtitle'ı silmenin) bu uçtan yapılamamasıdır; PATCH
-// sözleşmesi "verilmeyen alan korunur" olarak belgelenmiştir.
+// The COALESCE pattern: a field passed as NULL DOES NOT CHANGE. Its known limit
+// is that setting a field back to NULL (clearing the subtitle, say) cannot be
+// done through this endpoint; the PATCH contract is documented as "a field that
+// is not supplied is preserved".
 func (q *Queries) UpdateProduct(ctx context.Context, arg UpdateProductParams) (Product, error) {
 	row := q.db.QueryRow(ctx, updateProduct,
 		arg.Handle,

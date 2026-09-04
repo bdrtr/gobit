@@ -10,94 +10,94 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/fulfillment/service"
 )
 
-// TestSaglayiciKaydiUzerineYazmaz aynı kimliğin ikinci kez kaydedilemediğini
-// kanıtlar.
+// TestProviderRegistrationDoesNotOverwrite proves that the same identifier
+// cannot be registered a second time.
 //
-// Sessizce üzerine yazmak, iki eklentinin aynı kimliği kullandığı bir
-// kurulumda hangi sağlayıcının çalıştığını yükleme sırasına bırakırdı; kargoda
-// bunun bedeli, paketin beklenmedik bir firmaya verilmesidir.
-func TestSaglayiciKaydiUzerineYazmaz(t *testing.T) {
+// Overwriting silently would leave it to the load order which provider runs in a
+// setup where two plugins use the same identifier; in shipping the price of that
+// is the parcel being handed to an unexpected carrier.
+func TestProviderRegistrationDoesNotOverwrite(t *testing.T) {
 	t.Parallel()
 
-	kayit := service.NewProviderRegistry()
-	ilk := newFakeProvider("manual")
-	require.NoError(t, kayit.Register(ilk))
+	registry := service.NewProviderRegistry()
+	first := newFakeProvider("manual")
+	require.NoError(t, registry.Register(first))
 
-	ikinci := newFakeProvider("manual")
-	err := kayit.Register(ikinci)
+	second := newFakeProvider("manual")
+	err := registry.Register(second)
 	require.Error(t, err)
-	assert.True(t, errors.IsConflict(err), "hata errors.Conflict olmalı: %v", err)
+	assert.True(t, errors.IsConflict(err), "the error has to be errors.Conflict: %v", err)
 	assert.Equal(t, service.CodeProviderExists, errors.CodeOf(err))
 
-	cozulen, err := kayit.Get("manual")
+	resolved, err := registry.Get("manual")
 	require.NoError(t, err)
-	assert.Same(t, ilk, cozulen, "mevcut sağlayıcı korunmalı")
+	assert.Same(t, first, resolved, "the existing provider has to be kept")
 }
 
-// TestSaglayiciKaydiBosKimligiReddeder kimliksiz sağlayıcının kaydedilmediğini
-// kanıtlar.
-func TestSaglayiciKaydiBosKimligiReddeder(t *testing.T) {
+// TestProviderRegistrationRejectsAnEmptyID proves that a provider without an
+// identifier is not registered.
+func TestProviderRegistrationRejectsAnEmptyID(t *testing.T) {
 	t.Parallel()
 
-	kayit := service.NewProviderRegistry()
+	registry := service.NewProviderRegistry()
 
-	require.Error(t, kayit.Register(nil))
-	err := kayit.Register(newFakeProvider("   "))
+	require.Error(t, registry.Register(nil))
+	err := registry.Register(newFakeProvider("   "))
 	require.Error(t, err)
-	assert.True(t, errors.IsInvalid(err), "hata errors.Invalid olmalı: %v", err)
+	assert.True(t, errors.IsInvalid(err), "the error has to be errors.Invalid: %v", err)
 }
 
-// TestSaglayiciBulunamadigindaKayitliListelenir hata mesajının teşhis
-// edilebilir olduğunu kanıtlar (ADR 0002).
-func TestSaglayiciBulunamadigindaKayitliListelenir(t *testing.T) {
+// TestProviderNotFoundListsTheRegisteredIDs proves that the error message is
+// diagnosable (ADR 0002).
+func TestProviderNotFoundListsTheRegisteredIDs(t *testing.T) {
 	t.Parallel()
 
-	kayit := service.NewProviderRegistry()
-	require.NoError(t, kayit.Register(newFakeProvider("manual")))
-	require.NoError(t, kayit.Register(newFakeProvider("aras")))
+	registry := service.NewProviderRegistry()
+	require.NoError(t, registry.Register(newFakeProvider("manual")))
+	require.NoError(t, registry.Register(newFakeProvider("aras")))
 
-	_, err := kayit.Get("yurtici")
+	_, err := registry.Get("yurtici")
 	require.Error(t, err)
-	assert.True(t, errors.IsNotFound(err), "hata errors.NotFound olmalı: %v", err)
-	assert.Contains(t, err.Error(), "yurtici", "aranan kimlik yazılmalı")
-	assert.Contains(t, err.Error(), "manual", "kayıtlı kimlikler yazılmalı")
+	assert.True(t, errors.IsNotFound(err), "the error has to be errors.NotFound: %v", err)
+	assert.Contains(t, err.Error(), "yurtici", "the identifier looked for has to be written")
+	assert.Contains(t, err.Error(), "manual", "the registered identifiers have to be written")
 	assert.Contains(t, err.Error(), "aras")
 }
 
-// TestSaglayiciKimlikleriSirali sıranın sabit olduğunu kanıtlar.
+// TestProviderIDsAreSorted proves that the order is fixed.
 //
-// Harita üzerinde dönerek üretilseydi her çağrıda başka bir sırada çıkar,
-// teşhisi ve testi zorlaştırırdı.
-func TestSaglayiciKimlikleriSirali(t *testing.T) {
+// Had it been produced by ranging over the map, it would come out in a different
+// order on every call, making diagnosis and testing harder.
+func TestProviderIDsAreSorted(t *testing.T) {
 	t.Parallel()
 
-	kayit := service.NewProviderRegistry()
+	registry := service.NewProviderRegistry()
 	for _, id := range []string{"ptt", "aras", "manual"} {
-		require.NoError(t, kayit.Register(newFakeProvider(id)))
+		require.NoError(t, registry.Register(newFakeProvider(id)))
 	}
-	assert.Equal(t, []string{"aras", "manual", "ptt"}, kayit.IDs())
+	assert.Equal(t, []string{"aras", "manual", "ptt"}, registry.IDs())
 }
 
-// TestSaglayiciHasKayitliligiBildirir Has'ın kayıt durumunu doğru döndüğünü
-// kanıtlar.
-func TestSaglayiciHasKayitliligiBildirir(t *testing.T) {
+// TestProviderRegistryHasReportsRegistration proves that Has returns the
+// registration state correctly.
+func TestProviderRegistryHasReportsRegistration(t *testing.T) {
 	t.Parallel()
 
-	kayit := service.NewProviderRegistry()
-	require.NoError(t, kayit.Register(newFakeProvider("manual")))
+	registry := service.NewProviderRegistry()
+	require.NoError(t, registry.Register(newFakeProvider("manual")))
 
-	assert.True(t, kayit.Has("manual"))
-	assert.True(t, kayit.Has(" manual "), "boşluklar kırpılmalı")
-	assert.False(t, kayit.Has("aras"))
-	assert.False(t, kayit.Has(""))
+	assert.True(t, registry.Has("manual"))
+	assert.True(t, registry.Has(" manual "), "whitespace has to be trimmed")
+	assert.False(t, registry.Has("aras"))
+	assert.False(t, registry.Has(""))
 }
 
-// TestServisEksikBagimlilikylaKurulamaz kurulum hatasının açıkça döndüğünü
-// kanıtlar.
+// TestServiceCannotBeBuiltWithAMissingDependency proves that the construction
+// error is returned explicitly.
 //
-// nil bir depoyla kurulmuş servis ilk istekte panik üretirdi ve hata,
-// kurulumdan çok sonra ortaya çıkardı.
-func TestServisEksikBagimlilikylaKurulamaz(t *testing.T) {
+// A service built with a nil store would panic on the first request and the
+// error would surface long after construction.
+func TestServiceCannotBeBuiltWithAMissingDependency(t *testing.T) {
 	t.Parallel()
 
 	_, err := service.New(service.Options{Providers: service.NewProviderRegistry()})
@@ -109,11 +109,11 @@ func TestServisEksikBagimlilikylaKurulamaz(t *testing.T) {
 	assert.Equal(t, service.CodeNotReady, errors.CodeOf(err))
 }
 
-// TestProviderIDsServistenOkunur servisin kayıtlı sağlayıcıları yansıttığını
-// kanıtlar.
-func TestProviderIDsServistenOkunur(t *testing.T) {
+// TestProviderIDsAreReadFromTheService proves that the service reflects the
+// registered providers.
+func TestProviderIDsAreReadFromTheService(t *testing.T) {
 	t.Parallel()
 
-	kurulum := yeniKurulum(t)
-	assert.Equal(t, []string{"sahte"}, kurulum.svc.ProviderIDs(t.Context()))
+	setup := newSetup(t)
+	assert.Equal(t, []string{"fake"}, setup.svc.ProviderIDs(t.Context()))
 }

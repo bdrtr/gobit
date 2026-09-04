@@ -1,38 +1,39 @@
-// Package repository fulfillment modülünün veritabanı erişimidir.
+// Package repository is the database access of the fulfillment module.
 //
-// SADECE bu modülün tablolarına dokunur (plan Bölüm 4). sqlc üretimi kod
-// repository/fulfillmentdb altındadır ve elle düzenlenmez; bu paket onun
-// üstüne iki şey ekler:
+// It touches ONLY this module's tables (plan Section 4). The sqlc-generated code
+// lives under repository/fulfillmentdb and is not edited by hand; this package
+// adds two things on top of it:
 //
-//   - Çeviri: pgtype ve üretilmiş satır tipleri BU PAKETİN DIŞINA ÇIKMAZ,
-//     models tiplerine çevrilir.
-//   - Sınıflandırma: sürücü hataları core/errors tipli hatalarına çevrilir;
-//     satır bulunamaması NotFound, benzersizlik ihlali Conflict olur.
+//   - Conversion: pgtype and the generated row types DO NOT LEAVE THIS PACKAGE,
+//     they are converted to models types.
+//   - Classification: driver errors are converted into core/errors typed errors;
+//     a missing row becomes NotFound, a uniqueness violation becomes Conflict.
 //
-// # İşlem (transaction) taşınması
+// # Carrying the transaction
 //
-// [Repository.WithTx] bir işlem açar ve onu CONTEXT'e koyar; işlem boyunca
-// çağrılan tüm repository metodları o context'i aldıkları sürece aynı işlemde
-// çalışır. Bunun alternatifi, işlem tutamağını taşıyan ayrı bir arayüz tipini
-// metot imzalarına koymaktı; o durumda servis kendi paketinde tanımladığı dar
-// arayüzle bu paketi YAPISAL OLARAK eşleştiremezdi — Go'da imzadaki
-// adlandırılmış tipler birebir aynı olmak zorundadır, yani servis repository'yi
-// import etmek zorunda kalırdı. Context ile taşımak imzaları iki tarafın da
-// paylaştığı tiplere (context.Context, models.*) indirger.
+// [Repository.WithTx] opens a transaction and puts it into the CONTEXT; every
+// repository method called during the transaction runs in that same transaction
+// as long as it receives that context. The alternative was to put a separate
+// interface type carrying the transaction handle into the method signatures; in
+// that case the service could not have matched this package STRUCTURALLY with
+// the narrow interface it declares in its own package — in Go the named types in
+// a signature have to be identical one for one, meaning the service would have
+// been forced to import the repository. Carrying it in the context reduces the
+// signatures to the types both sides share (context.Context, models.*).
 //
-// Kilit alan metotlar (Lock...) işlem DIŞINDA çağrılırsa hata döner: FOR UPDATE
-// kilidi işlem bitince serbest kalacağı için, işlemsiz bir kilit sessizce
-// hiçbir şey korumazdı.
+// Locking methods (Lock...) return an error if they are called OUTSIDE a
+// transaction: because a FOR UPDATE lock is released once the transaction ends,
+// a lock without a transaction would silently protect nothing.
 //
-// # İki ayrı defter
+// # Two separate ledgers
 //
-// Bu paket iki farklı sahibin verisine hizmet eder: fulfillment modülünün alan
-// tabloları (shipping_profiles, shipping_options, shipping_option_rules,
-// fulfillments fulfillment_items) ve MANUEL SAĞLAYICININ kendi defteri
-// (fulfillment_manual_shipments). İkincisi modülün alan verisi değildir;
-// taklit edilen dış sistemin durumudur ve ona yalnızca manual paketi dokunur.
-// Ayrım fiziksel olarak da korunur: servisin service.Store arayüzünde manuel
-// defter metotları YOKTUR.
+// This package serves the data of two different owners: the domain tables of the
+// fulfillment module (shipping_profiles, shipping_options, shipping_option_rules,
+// fulfillments fulfillment_items) and the MANUAL PROVIDER's own ledger
+// (fulfillment_manual_shipments). The second is not the module's domain data; it
+// is the state of the imitated external system and only the manual package
+// touches it. The separation is preserved physically as well: the service's
+// service.Store interface has NO manual ledger methods.
 package repository
 
 import (
@@ -46,39 +47,42 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/fulfillment/repository/fulfillmentdb"
 )
 
-// rollbackTimeout iptal edilmiş bir bağlamda geri almaya tanınan süredir.
-// Geri alma, çağıranın ctx'i dolmuş olsa da denenmelidir; aksi hâlde işlem
-// bağlantı havuza dönene kadar açık kalırdı.
+// rollbackTimeout is the time granted to a rollback on a canceled context.
+// The rollback must be attempted even if the caller's ctx has expired;
+// otherwise the transaction would stay open until the connection returned to
+// the pool.
 const rollbackTimeout = 5 * time.Second
 
-// txKeyType context anahtarının tipidir; dışarıdan üretilemesin diye dışa
-// açık değildir.
+// txKeyType is the type of the context key; it is not exported so that it
+// cannot be produced from the outside.
 type txKeyType struct{}
 
-// txKey işlem tutamağının context'teki anahtarıdır.
+// txKey is the key of the transaction handle in the context.
 var txKey = txKeyType{}
 
-// Repository fulfillment tablolarına erişimdir. Eşzamanlı kullanıma
-// güvenlidir.
+// Repository is the access to the fulfillment tables. It is safe for concurrent
+// use.
 type Repository struct {
 	pool *pgxpool.Pool
 }
 
-// New verilen havuz üzerinde çalışan bir Repository üretir.
+// New produces a Repository working on the given pool.
 func New(pool *pgxpool.Pool) *Repository {
 	return &Repository{pool: pool}
 }
 
-// WithTx fn'i tek bir veritabanı işleminde çalıştırır.
+// WithTx runs fn in a single database transaction.
 //
-// fn'e verilen context işlemi taşır; o context ile çağrılan tüm repository
-// metodları aynı işlemde koşar. fn hata dönerse ya da panikler ise işlem geri
-// alınır, hata (panikte panik) yukarı verilir.
+// The context given to fn carries the transaction; every repository method
+// called with that context runs in the same transaction. If fn returns an error
+// or panics, the transaction is rolled back and the error (on a panic, the
+// panic) is passed upwards.
 //
-// Çağrı iç içe gelirse yeni bir işlem AÇILMAZ, var olan kullanılır: iç içe
-// işlem açmak PostgreSQL'de savepoint demektir ve dıştaki işlemin atomikliği
-// konusunda yanıltıcı bir güven verirdi. Manuel sağlayıcı aynı depoyu
-// paylaştığı için çağrıları servisin işlemine bu sayede KATILIR.
+// If the call nests, a new transaction is NOT opened, the existing one is used:
+// opening a nested transaction means a savepoint in PostgreSQL and would give a
+// misleading confidence about the atomicity of the outer transaction. Because
+// the manual provider shares the same store, this is how its calls JOIN the
+// service's transaction.
 func (r *Repository) WithTx(ctx context.Context, fn func(ctx context.Context) error) error {
 	if _, ok := txFromContext(ctx); ok {
 		return fn(ctx)
@@ -86,7 +90,7 @@ func (r *Repository) WithTx(ctx context.Context, fn func(ctx context.Context) er
 
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
-		return classify(err, codeTxBeginFailed, "işlem başlatılamadı")
+		return classify(err, codeTxBeginFailed, "could not begin transaction")
 	}
 
 	committed := false
@@ -94,8 +98,9 @@ func (r *Repository) WithTx(ctx context.Context, fn func(ctx context.Context) er
 		if committed {
 			return
 		}
-		// Bağlamdan bağımsız kısa ömürlü bir context kullanılır: çağıranın
-		// ctx'i iptal edilmişse onunla yapılan geri alma da anında düşerdi.
+		// A short-lived context independent of the caller's is used: if the
+		// caller's ctx has been canceled, a rollback made with it would drop
+		// instantly too.
 		rollbackCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), rollbackTimeout)
 		defer cancel()
 		_ = tx.Rollback(rollbackCtx)
@@ -106,20 +111,20 @@ func (r *Repository) WithTx(ctx context.Context, fn func(ctx context.Context) er
 	}
 
 	if err := tx.Commit(ctx); err != nil {
-		return classify(err, codeTxCommitFailed, "işlem tamamlanamadı")
+		return classify(err, codeTxCommitFailed, "could not commit transaction")
 	}
 	committed = true
 	return nil
 }
 
-// txFromContext context'teki işlem tutamağını döner.
+// txFromContext returns the transaction handle in the context.
 func txFromContext(ctx context.Context) (pgx.Tx, bool) {
 	tx, ok := ctx.Value(txKey).(pgx.Tx)
 	return tx, ok
 }
 
-// queries context'e uygun sorgu kümesini döner: işlem varsa ona, yoksa havuza
-// bağlı olanı.
+// queries returns the query set appropriate for the context: the one bound to
+// the transaction if there is one, otherwise the one bound to the pool.
 func (r *Repository) queries(ctx context.Context) *fulfillmentdb.Queries {
 	if tx, ok := txFromContext(ctx); ok {
 		return fulfillmentdb.New(tx)
@@ -127,11 +132,11 @@ func (r *Repository) queries(ctx context.Context) *fulfillmentdb.Queries {
 	return fulfillmentdb.New(r.pool)
 }
 
-// requireTx kilit alan metotların işlem içinde çağrıldığını doğrular.
+// requireTx verifies that locking methods are called inside a transaction.
 func requireTx(ctx context.Context, op string) error {
 	if _, ok := txFromContext(ctx); !ok {
 		return errors.Internal(codeTxRequired,
-			"%s işlem (transaction) içinde çağrılmalı; işlemsiz bir FOR UPDATE kilidi hiçbir şeyi korumaz", op)
+			"%s must be called inside a transaction; a FOR UPDATE lock without a transaction protects nothing", op)
 	}
 	return nil
 }

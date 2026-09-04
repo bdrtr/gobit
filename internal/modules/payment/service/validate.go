@@ -35,7 +35,7 @@ func normalizeCurrency(code string) (string, error) {
 	normalized := strings.ToUpper(strings.TrimSpace(code))
 	if len(normalized) != currencyCodeLength {
 		return "", errors.Invalid(CodeInvalidInput,
-			"para birimi üç harfli ISO 4217 kodu olmalı: %q", code)
+			"the currency has to be a three-letter ISO 4217 code: %q", code)
 	}
 	for _, r := range normalized {
 		if r < 'A' || r > 'Z' {

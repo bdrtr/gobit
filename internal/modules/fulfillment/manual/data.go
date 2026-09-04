@@ -9,19 +9,19 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/fulfillment/models"
 )
 
-// currencyCodeLength ISO 4217 kodunun harf sayısıdır.
+// currencyCodeLength is the number of letters in an ISO 4217 code.
 const currencyCodeLength = 3
 
-// shipmentData sağlayıcının davranışını yönlendiren Data alanlarıdır.
+// shipmentData holds the Data fields that steer the provider's behavior.
 //
-// Tanınmayan alanlar YOK SAYILIR: Data, çağıranın sağlayıcıya ilettiği serbest
-// veridir (adres, şube, kalem listesi) ve sağlayıcının anlamadığı bir alan
-// hata değildir.
+// Unrecognized fields are IGNORED: Data is the free-form data the caller hands
+// to the provider (address, branch, item list) and a field the provider does
+// not understand is not an error.
 //
-// Tutar alanları İŞARETÇİDİR: sıfır tutarlı bir bileşen ile "alan hiç
-// verilmedi" ayrımı korunmalıdır. Değer tipi kullanılsaydı ikisi ayırt
-// edilemez ve [DataKeyQuoteAmount] ile açıkça sıfır (ücretsiz) fiyat
-// verilemezdi.
+// The amount fields are POINTERS: the distinction between a component with a
+// zero amount and "the field was never given at all" has to be preserved. With
+// a value type the two would be indistinguishable and an explicit zero (free)
+// price could not be given through [DataKeyQuoteAmount].
 type shipmentData struct {
 	Outcome           string `json:"manual_outcome"`
 	QuoteAmount       *int64 `json:"manual_quote_amount"`
@@ -32,11 +32,12 @@ type shipmentData struct {
 	TrackingURL       string `json:"manual_tracking_url"`
 }
 
-// parseData serbest veriden davranış ve fiyat anahtarlarını çözer.
+// parseData resolves the behavior and price keys out of the free-form data.
 //
-// Girdi haritadır (çekirdek sözleşmesindeki Data alanı); JSON'a kodlanıp geri
-// çözülür. Ara adım, aynı çözümlemenin hem haritadan hem defterde saklanan ham
-// gövdeden yapılabilmesini sağlar ve iki yolun ayrışmasını engeller.
+// The input is a map (the Data field of the core contract); it is encoded to
+// JSON and decoded back. The intermediate step lets the same parsing run both
+// from the map and from the raw body stored in the ledger, and keeps the two
+// paths from drifting apart.
 func parseData(data map[string]any) (shipmentData, error) {
 	if len(data) == 0 {
 		return shipmentData{}, nil
@@ -44,12 +45,12 @@ func parseData(data map[string]any) (shipmentData, error) {
 	raw, err := json.Marshal(data)
 	if err != nil {
 		return shipmentData{}, errors.Wrap(err, errors.KindInvalid, CodeDataInvalid,
-			"gönderi verisi kodlanamadı")
+			"shipment data could not be encoded")
 	}
 	return parseRawData(raw)
 }
 
-// parseRawData ham JSON gövdesinden davranış ve fiyat anahtarlarını çözer.
+// parseRawData resolves the behavior and price keys out of a raw JSON body.
 func parseRawData(raw []byte) (shipmentData, error) {
 	var out shipmentData
 	if len(raw) == 0 || string(raw) == "null" {
@@ -57,7 +58,7 @@ func parseRawData(raw []byte) (shipmentData, error) {
 	}
 	if err := json.Unmarshal(raw, &out); err != nil {
 		return shipmentData{}, errors.Wrap(err, errors.KindInvalid, CodeDataInvalid,
-			"gönderi verisi çözümlenemedi")
+			"shipment data could not be parsed")
 	}
 
 	out.Outcome = strings.TrimSpace(out.Outcome)
@@ -65,7 +66,7 @@ func parseRawData(raw []byte) (shipmentData, error) {
 	case "", OutcomeOK, OutcomeError:
 	default:
 		return shipmentData{}, errors.Invalid(CodeInvalidInput,
-			"%q tanınmayan bir %s değeri; %q ya da %q olmalı",
+			"%q is not a recognized %s value; it must be %q or %q",
 			out.Outcome, DataKeyOutcome, OutcomeOK, OutcomeError)
 	}
 
@@ -83,32 +84,36 @@ func parseRawData(raw []byte) (shipmentData, error) {
 		}
 		if *field.value < models.MinAmount || *field.value > models.MaxAmount {
 			return shipmentData{}, errors.Invalid(CodeInvalidInput,
-				"%s %d ile %d arasında olmalı: %d",
+				"%s must be between %d and %d: %d",
 				field.key, models.MinAmount, models.MaxAmount, *field.value)
 		}
 	}
 	return out, nil
 }
 
-// quoteAmount fiyat bileşenlerinden ücreti hesaplar.
+// quoteAmount computes the fee from the price components.
 //
-// SAF fonksiyondur: veritabanına, saate ve loglamaya dokunmaz. Formülün her
-// dalı bu yüzden tek tek sınanabilir (bkz. [Provider.Quote] godoc'u).
+// It is a PURE function: it touches neither the database, nor the clock, nor
+// logging. That is why every branch of the formula can be exercised one by one
+// (see the [Provider.Quote] godoc).
 //
-// Hesap TAM SAYI aritmetiğiyle yapılır ve her adımda TAŞMA denetlenir. Denetim
-// gereklidir: kalem adedi ve ağırlık dışarıdan gelir, ve taşan bir çarpım
-// sessizce NEGATİF bir kargo ücreti üretirdi — yani müşteriye para ödeyen bir
-// sipariş.
+// The computation uses INTEGER arithmetic and every step is checked for
+// OVERFLOW. The check is required: the item count and the weight come from
+// outside, and an overflowing product would silently produce a NEGATIVE
+// shipping fee — that is, an order that pays money to the customer.
 //
-// Denetim ARA ADIMLARI da kapsar: kilograma yuvarlama önce toplama yapılıp
-// sonra bölünseydi (totalWeight + 999) TAŞARDI ve elde edilen NEGATİF kilogram,
-// [mulChecked]'in yalnızca pozitif operanda bakan denetiminden geçip sonucu
-// negatife çevirirdi. Bu yüzden yuvarlama taşmasız yazılır (önce böl, kalan
-// varsa bir artır) ve iki yardımcı negatif operandı AÇIKÇA reddeder.
+// The check also covers the INTERMEDIATE STEPS: had the rounding to kilograms
+// added first and divided afterwards, (totalWeight + 999) would OVERFLOW and
+// the resulting NEGATIVE kilogram count would slip through [mulChecked]'s
+// check, which only looks at the positive operand, and turn the result
+// negative. That is why the rounding is written without an overflow (divide
+// first, add one if there is a remainder) and both helpers reject a negative
+// operand EXPLICITLY.
 //
-// Sonuç [models.MinAmount] ile [models.MaxAmount] arasında değilse hata döner;
-// alt sınır denetimi de gereklidir, çünkü yalnızca üst sınıra bakan bir kontrol
-// negatif bir toplamı sessizce geçirirdi.
+// If the result is not between [models.MinAmount] and [models.MaxAmount] an
+// error is returned; the lower-bound check is required too, because a check
+// that only looked at the upper bound would silently let a negative total
+// through.
 func quoteAmount(config shipmentData, itemCount, totalWeight int64) (int64, error) {
 	if config.QuoteAmount != nil {
 		return *config.QuoteAmount, nil
@@ -130,10 +135,12 @@ func quoteAmount(config shipmentData, itemCount, totalWeight int64) (int64, erro
 
 	perKilogram := valueOrZero(config.PerKilogramAmount)
 	if perKilogram > 0 && totalWeight > 0 {
-		// Başlanan her kilogram ücretlendirilir; yön YUKARIDIR ve gerekçesi
-		// [Provider.Quote] godoc'undadır. Yuvarlama önce BÖLER, kalan varsa
-		// bir artırır: (totalWeight + gramsPerKilogram - 1) biçimi, ağırlık
-		// int64'ün tepesine yakınken TAŞAR ve negatif bir kilogram üretirdi.
+		// Every started kilogram is charged; the direction is UP and the
+		// rationale is in the [Provider.Quote] godoc. The rounding DIVIDES
+		// first and adds one if there is a remainder: the
+		// (totalWeight + gramsPerKilogram - 1) form would OVERFLOW when the
+		// weight is near the top of int64 and would produce a negative
+		// kilogram count.
 		kilograms := totalWeight / gramsPerKilogram
 		if totalWeight%gramsPerKilogram != 0 {
 			kilograms++
@@ -150,13 +157,13 @@ func quoteAmount(config shipmentData, itemCount, totalWeight int64) (int64, erro
 
 	if total < models.MinAmount || total > models.MaxAmount {
 		return 0, errors.Invalid(CodeInvalidInput,
-			"hesaplanan kargo ücreti %d ile %d arasında olmalı: %d",
+			"the computed shipping fee must be between %d and %d: %d",
 			models.MinAmount, models.MaxAmount, total)
 	}
 	return total, nil
 }
 
-// valueOrZero işaretçi bir tutarı değere çevirir; nil sıfırdır.
+// valueOrZero turns a pointer amount into a value; nil is zero.
 func valueOrZero(value *int64) int64 {
 	if value == nil {
 		return 0
@@ -164,35 +171,36 @@ func valueOrZero(value *int64) int64 {
 	return *value
 }
 
-// mulChecked iki NEGATİF OLMAYAN tam sayıyı taşmayı denetleyerek çarpar.
+// mulChecked multiplies two NON-NEGATIVE integers while checking for overflow.
 //
-// Negatif operand AÇIKÇA reddedilir. Denetim yalnızca "b > MaxInt64/a"ya
-// baksaydı negatif bir b onu koşulsuz geçer ve çarpım negatif bir ücret
-// üretirdi; bu, godoc'un "iki pozitif tam sayı" varsayımını kodun kendisinin
-// zorlamaması demekti.
+// A negative operand is rejected EXPLICITLY. Had the check only looked at
+// "b > MaxInt64/a", a negative b would pass it unconditionally and the product
+// would produce a negative fee; that would mean the code itself did not enforce
+// the godoc's "two positive integers" assumption.
 func mulChecked(a, b int64, label string) (int64, error) {
 	if a < 0 || b < 0 {
 		return 0, errors.Invalid(CodeInvalidInput,
-			"%s çarpımının iki tarafı da negatif olamaz: %d × %d", label, a, b)
+			"neither side of the %s product may be negative: %d x %d", label, a, b)
 	}
 	if a != 0 && b > math.MaxInt64/a {
 		return 0, errors.Invalid(CodeInvalidInput,
-			"%s çarpımı taşıyor: %d × %d", label, a, b)
+			"the %s product overflows: %d x %d", label, a, b)
 	}
 	return a * b, nil
 }
 
-// addChecked iki NEGATİF OLMAYAN tam sayıyı taşmayı denetleyerek toplar.
+// addChecked adds two NON-NEGATIVE integers while checking for overflow.
 //
-// Negatif operand AÇIKÇA reddedilir; gerekçe [mulChecked] ile aynıdır.
+// A negative operand is rejected EXPLICITLY; the rationale is the same as for
+// [mulChecked].
 func addChecked(a, b int64) (int64, error) {
 	if a < 0 || b < 0 {
 		return 0, errors.Invalid(CodeInvalidInput,
-			"kargo ücreti toplamının iki tarafı da negatif olamaz: %d + %d", a, b)
+			"neither side of the shipping fee sum may be negative: %d + %d", a, b)
 	}
 	if b > math.MaxInt64-a {
 		return 0, errors.Invalid(CodeInvalidInput,
-			"kargo ücreti toplamı taşıyor: %d + %d", a, b)
+			"the shipping fee sum overflows: %d + %d", a, b)
 	}
 	return a + b, nil
 }

@@ -16,50 +16,54 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/product/service"
 )
 
-// deletionTime sahte deponun soft delete damgasıdır; sabit olması testlerin
-// zamana bağlı kalmamasını sağlar.
+// deletionTime is the soft delete stamp of the fake repository; being fixed
+// keeps the tests independent of time.
 var deletionTime = time.Date(2026, 8, 23, 12, 0, 0, 0, time.UTC)
 
-// creationTime sahte deponun kayıt oluşturma damgasıdır.
+// creationTime is the record creation stamp of the fake repository.
 //
-// Gerçek şemada created_at/updated_at sütunlarının DEFAULT now() değeri vardır
-// ve satır RETURNING ile geri döner: damgayı üreten VERİTABANIDIR, çağıranın
-// gönderdiği model değil. Sahte depo bunu taklit etmeseydi "saklanan satırı dön"
-// kuralı burada hiç sınanamaz, sıfır damga dönen bir uç testten geçerdi.
+// In the real schema the created_at/updated_at columns have a DEFAULT now()
+// value and the row comes back with RETURNING: the stamp is produced by THE
+// DATABASE, not by the model the caller sent. Had the fake repository not
+// imitated this, the "return the stored row" rule could not be tested here at
+// all and an endpoint returning zero stamps would pass the tests.
 var creationTime = time.Date(2026, 8, 23, 10, 0, 0, 0, time.UTC)
 
-// fakeLinker [service.Linker]'ın bellek içi uygulamasıdır.
+// fakeLinker is the in-memory implementation of [service.Linker].
 //
-// Gerçek link servisi çekirdektedir ve veritabanı ister; burada doğrulanan şey
-// SERVİSİN link'leri nasıl kullandığıdır: eski bağı kaldırıp yenisini kurması,
-// varyantın varlığını önce doğrulaması ve silmede temizlik yapması.
+// The real link service lives in the core and wants a database; what is
+// verified here is HOW THE SERVICE USES the links: that it removes the old link
+// and creates the new one, that it verifies the existence of the variant first
+// and that it cleans up on a delete.
 //
-// Sahte, kardinaliteyi [service.Definitions] içindeki BİLDİRİMDEN okuyup zorlar
-// (bkz. [cardinalities]): fiyat/stok bağlarında hem FROM hem TO ucu tektir ve
-// ihlal errors.Conflict döner, satış kanalı bağında ise kısıt yoktur.
-// Kardinalite zorlanmasaydı sahte, gerçek link servisinin reddedeceği bir akışı
-// sessizce kabul eder ve testler var olmayan bir davranışı "kanıtlardı";
-// bildirimden okunmasaydı da tersi olur — çoktan çoğa bir bağ, sahte yüzünden
-// ikinci kanalda çakışma verirdi.
+// The fake reads the cardinality from the DECLARATION in [service.Definitions]
+// and enforces it (see [cardinalities]): on the price/stock links both the FROM
+// and the TO end are singular and a violation returns errors.Conflict, while on
+// the sales channel link there is no constraint. Had the cardinality not been
+// enforced, the fake would silently accept a flow the real link service would
+// reject and the tests would "prove" a behavior that does not exist; had it not
+// been read from the declaration, the opposite would happen — a many-to-many
+// link would produce a conflict on the second channel because of the fake.
 type fakeLinker struct {
 	mu sync.Mutex
-	// links link adı -> fromID -> toID listesi.
+	// links is link name -> fromID -> list of toIDs.
 	links map[string]map[string][]string
-	// cardinality link adı -> bildirilen kardinalite.
+	// cardinality is link name -> the declared cardinality.
 	cardinality map[string]link.Cardinality
-	// createErr doluysa Create bu hatayı döner.
+	// createErr, when set, is the error Create returns.
 	createErr error
-	// listErr doluysa List bu hatayı döner.
+	// listErr, when set, is the error List returns.
 	listErr error
-	// deletes kaldırılan bağların kaydıdır ("ad|from|to").
+	// deletes is the record of the removed links ("name|from|to").
 	deletes []string
 }
 
-// cardinalities link adına göre bildirilen kardinaliteleri döner.
+// cardinalities returns the declared cardinalities by link name.
 //
-// Değerler [service.Definitions] içindeki BİLDİRİMDEN okunur, elle
-// tekrarlanmaz: bir bağın kardinalitesi değiştiğinde sahte de kendiliğinden
-// değişir ve testler gerçekte olmayan bir kısıtı zorlamaya devam etmez.
+// The values are read from the DECLARATION in [service.Definitions], they are
+// not repeated by hand: when the cardinality of a link changes the fake changes
+// with it and the tests do not go on enforcing a constraint that does not
+// really exist.
 func cardinalities() map[string]link.Cardinality {
 	out := map[string]link.Cardinality{}
 	for _, def := range service.Definitions() {
@@ -68,13 +72,13 @@ func cardinalities() map[string]link.Cardinality {
 	return out
 }
 
-// newFakeLinker boş bir sahte link servisi üretir.
+// newFakeLinker builds an empty fake link service.
 func newFakeLinker() *fakeLinker {
 	return &fakeLinker{links: map[string]map[string][]string{}, cardinality: cardinalities()}
 }
 
-// Create bağı kaydeder; aynı çift için no-op, kardinalite ihlalinde
-// errors.Conflict döner (gerçek servisin sözleşmesi).
+// Create records the link; a no-op for the same pair, errors.Conflict on a
+// cardinality violation (the contract of the real service).
 func (f *fakeLinker) Create(_ context.Context, name, fromID, toID string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -91,14 +95,14 @@ func (f *fakeLinker) Create(_ context.Context, name, fromID, toID string) error 
 	}
 
 	cardinality := f.cardinality[name]
-	// FROM ucu yalnızca OneToOne'da benzersizdir: kayıt zaten başka bir hedefe
-	// bağlı.
+	// The FROM end is unique only under OneToOne: the record is already linked
+	// to another target.
 	if cardinality == link.OneToOne && len(f.links[name][fromID]) > 0 {
 		return errors.Conflict("link_cardinality_violation",
-			"%q linkinde %s zaten bağlı", name, fromID)
+			"on the %q link %s is already linked", name, fromID)
 	}
-	// TO ucu OneToOne ve OneToMany'de benzersizdir: hedef zaten başka bir kayda
-	// bağlı. ManyToMany'de kısıt yoktur.
+	// The TO end is unique under OneToOne and OneToMany: the target is already
+	// linked to another record. Under ManyToMany there is no constraint.
 	if cardinality != link.ManyToMany {
 		for otherFrom, targets := range f.links[name] {
 			if otherFrom == fromID {
@@ -107,7 +111,7 @@ func (f *fakeLinker) Create(_ context.Context, name, fromID, toID string) error 
 			for _, existing := range targets {
 				if existing == toID {
 					return errors.Conflict("link_cardinality_violation",
-						"%q linkinde %s zaten %s'e bağlı", name, toID, otherFrom)
+						"on the %q link %s is already linked to %s", name, toID, otherFrom)
 				}
 			}
 		}
@@ -116,7 +120,7 @@ func (f *fakeLinker) Create(_ context.Context, name, fromID, toID string) error 
 	return nil
 }
 
-// Delete bağı kaldırır ve kaydını tutar.
+// Delete removes the link and keeps a record of it.
 func (f *fakeLinker) Delete(_ context.Context, name, fromID, toID string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -134,7 +138,7 @@ func (f *fakeLinker) Delete(_ context.Context, name, fromID, toID string) error 
 	return nil
 }
 
-// List bağlı kimlikleri döner.
+// List returns the linked ids.
 func (f *fakeLinker) List(_ context.Context, name, fromID string) ([]string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -144,17 +148,17 @@ func (f *fakeLinker) List(_ context.Context, name, fromID string) ([]string, err
 	return append([]string(nil), f.links[name][fromID]...), nil
 }
 
-// linked verilen bağın hedeflerini döner (test iddiaları için).
+// linked returns the targets of the given link (for the test assertions).
 func (f *fakeLinker) linked(name, fromID string) []string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return append([]string(nil), f.links[name][fromID]...)
 }
 
-// fakeGraph [service.Grapher]'ın sahte uygulamasıdır.
+// fakeGraph is the fake implementation of [service.Grapher].
 //
-// Kaydettiği spec'ler, store listelemesinin Query katmanını DOĞRU ÇAĞIRDIĞINI
-// (tek çağrı, iki genişletme, doğru link adları) kanıtlar.
+// The specs it records prove that the store listing CALLS the Query layer
+// CORRECTLY (one call, two expansions, the right link names).
 type fakeGraph struct {
 	mu      sync.Mutex
 	specs   []query.GraphSpec
@@ -162,7 +166,7 @@ type fakeGraph struct {
 	err     error
 }
 
-// Graph kaydedilen kayıtları döner ve çağrıyı kaydeder.
+// Graph returns the recorded records and records the call.
 func (f *fakeGraph) Graph(_ context.Context, spec query.GraphSpec) ([]query.Record, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -173,43 +177,44 @@ func (f *fakeGraph) Graph(_ context.Context, spec query.GraphSpec) ([]query.Reco
 	return f.records, nil
 }
 
-// callCount Graph'ın kaç kez çağrıldığını döner.
+// callCount returns how many times Graph was called.
 func (f *fakeGraph) callCount() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return len(f.specs)
 }
 
-// lastSpec son çağrının spec'ini döner.
+// lastSpec returns the spec of the last call.
 func (f *fakeGraph) lastSpec(t *testing.T) query.GraphSpec {
 	t.Helper()
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	require.NotEmpty(t, f.specs, "Graph hiç çağrılmadı")
+	require.NotEmpty(t, f.specs, "Graph was never called")
 	return f.specs[len(f.specs)-1]
 }
 
-// fakeBus [service.EventPublisher]'ın bellek içi karşılığıdır.
+// fakeBus is the in-memory counterpart of [service.EventPublisher].
 //
-// Yayımlanan olayları SIRASIYLA tutar: katalog olaylarının gerçekten
-// yayımlandığı ancak yayımın gözlemlenmesiyle kanıtlanabilir — servisin dönüş
-// değerinde olayın izi yoktur (Publish handler'ları beklemez).
+// It keeps the published events IN ORDER: that the catalog events are really
+// published can only be proven by observing the publish — there is no trace of
+// the event in the service's return value (Publish does not wait for the
+// handlers).
 type fakeBus struct {
 	mu sync.Mutex
-	// published yayımlanan olaylardır.
+	// published holds the published events.
 	published []eventbus.Event
-	// failErr ayarlanırsa Publish bu hatayı döner.
+	// failErr, when set, is the error Publish returns.
 	failErr error
 }
 
-// Sahte veri yolunun servisin beklediği yüzeyi karşıladığı derleme zamanında
-// doğrulanır.
+// That the fake bus satisfies the surface the service expects is verified at
+// compile time.
 var _ service.EventPublisher = (*fakeBus)(nil)
 
-// newFakeBus boş bir sahte veri yolu üretir.
+// newFakeBus builds an empty fake bus.
 func newFakeBus() *fakeBus { return &fakeBus{} }
 
-// Publish olayı kaydeder.
+// Publish records the event.
 func (b *fakeBus) Publish(_ context.Context, e eventbus.Event) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -221,14 +226,14 @@ func (b *fakeBus) Publish(_ context.Context, e eventbus.Event) error {
 	return nil
 }
 
-// events yayımlanan olayların anlık kopyasını döner.
+// events returns a snapshot copy of the published events.
 func (b *fakeBus) events() []eventbus.Event {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return append([]eventbus.Event(nil), b.published...)
 }
 
-// byName verilen adla yayımlanmış olayları döner.
+// byName returns the events published under the given name.
 func (b *fakeBus) byName(name string) []eventbus.Event {
 	out := make([]eventbus.Event, 0, 1)
 	for _, e := range b.events() {
@@ -239,22 +244,23 @@ func (b *fakeBus) byName(name string) []eventbus.Event {
 	return out
 }
 
-// newService test için servis kurar.
+// newService builds a service for the tests.
 //
-// Sahte depo ile sahte link servisi BURADA birbirine bağlanır: satış kanalı
-// bağı gerçekte tek bir tabloda durur ve servis onu link üzerinden yazıp depo
-// sorgusuyla okur. Bağlanmasalardı yazma bir yere, okuma başka bir yere gider
-// ve süzme testleri hiçbir şey kanıtlamazdı (bkz. memStore.links).
+// The fake repository and the fake link service are wired to each other HERE:
+// in reality the sales channel link lives in a single table and the service
+// WRITES it through link while reading it back with a repository query. Had they
+// not been wired, the write would go to one place and the read to another and
+// the filtering tests would prove nothing (see memStore.links).
 //
-// Veri yolu VERİLMEZ: olayları gözleyen testler [newServiceWithBus] kullanır.
-// Ayrımın kendisi de bir iddiadır — veri yolusuz servis her yazma yolunda
-// çalışmaya devam etmelidir (bkz. service.Service.publishProductEvent).
+// No bus is GIVEN: the tests that observe events use [newServiceWithBus]. The
+// distinction is itself an assertion — a service without a bus has to keep
+// working on every write path (see service.Service.publishProductEvent).
 func newService(t *testing.T, store *memStore, links service.Linker, graph service.Grapher) *service.Service {
 	t.Helper()
 	return newServiceWithBus(t, store, links, graph, nil)
 }
 
-// newServiceWithBus olay veri yolu bağlanmış bir servis kurar.
+// newServiceWithBus builds a service with an event bus wired in.
 func newServiceWithBus(
 	t *testing.T,
 	store *memStore,
@@ -271,7 +277,8 @@ func newServiceWithBus(
 	return svc
 }
 
-// seedProduct testlerin ortak kurulumudur: yayında bir ürün ve bir varyant.
+// seedProduct is the shared setup of the tests: one published product with one
+// variant.
 func seedProduct(t *testing.T, svc *service.Service, handle, title string) models.Product {
 	t.Helper()
 	product, err := svc.CreateProduct(context.Background(), service.CreateProductInput{
@@ -279,7 +286,7 @@ func seedProduct(t *testing.T, svc *service.Service, handle, title string) model
 		Title:  title,
 		Status: models.StatusPublished,
 		Variants: []service.CreateVariantInput{
-			{Title: "Tek beden"},
+			{Title: "One size"},
 		},
 	})
 	require.NoError(t, err)
@@ -287,19 +294,21 @@ func seedProduct(t *testing.T, svc *service.Service, handle, title string) model
 	return product
 }
 
-// ptr verilen değerin adresini döner.
+// ptr returns the address of the given value.
 func ptr[T any](v T) *T { return &v }
 
-// sayac sonucun toplam sayacını döner ve SAYILDIĞINI de doğrular.
+// requireCount returns the total count of the result and asserts that it WAS
+// COUNTED.
 //
-// Sayaç işaretçidir ve nil "sayılmadı" demektir (bkz. [service.ListResult]).
-// Testlerin ham "*res.Count" yazması iki iddiayı birbirine karıştırırdı:
-// sayının doğru olduğu ve sayacın HESAPLANDIĞI. İkincisi bir gün sessizce
-// kaybolsa — biri varsayılanı ters çevirse — ham dereference okunabilir bir
-// hata yerine panikle düşerdi.
-func sayac[T any](t *testing.T, res service.ListResult[T]) int {
+// The count is a pointer and nil means "not counted" (see
+// [service.ListResult]). Tests writing a raw "*res.Count" would conflate two
+// assertions: that the number is right and that the count was COMPUTED. Were
+// the second one to disappear silently one day — someone flipping the default —
+// the raw dereference would fall over with a panic instead of a readable
+// failure.
+func requireCount[T any](t *testing.T, res service.ListResult[T]) int {
 	t.Helper()
-	require.NotNil(t, res.Count, "sayaç hesaplanmış olmalıydı")
+	require.NotNil(t, res.Count, "the count should have been computed")
 
 	return *res.Count
 }

@@ -1,16 +1,16 @@
 //go:build integration
 
-// Bu dosyadaki testler gerçek bir PostgreSQL örneği (dolayısıyla Docker)
-// gerektirir; `make test` hızlı kalsın diye `integration` etiketiyle
-// ayrılmıştır. Çalıştırmak için: make test-integration
+// The tests in this file need a real PostgreSQL instance (and therefore
+// Docker); they are separated behind the `integration` tag so that `make test`
+// stays fast. To run them: make test-integration
 //
-// Birim testleri sahte bir depo ile servisin KARARLARINI kanıtlar. Buradaki
-// testler kararların dayandığı ZEMİNİ kanıtlar: migration'ın VERİ VARKEN geri
-// alınabildiğini, kısıtların gerçekten uygulandığını, sağlayıcının durumunun
-// süreç dışında yaşadığını ve idempotency iddiasının veritabanı düzeyinde
-// tuttuğunu. Özellikle "aynı anahtarla iki Create tek gönderi üretir" iddiası
-// yalnızca burada, gerçek goroutine'lerle gerçek benzersiz indeks üzerinde
-// sınanabilir.
+// The unit tests prove the service's DECISIONS against a fake store. The tests
+// here prove the GROUND those decisions rest on: that the migration can be
+// rolled back WITH DATA PRESENT, that the constraints really are enforced, that
+// the provider's state lives outside the process, and that the idempotency
+// claim holds at the database level. In particular, the claim that "two Creates
+// with the same key produce one shipment" can only be exercised here, over real
+// goroutines and a real unique index.
 package fulfillment_test
 
 import (
@@ -41,26 +41,26 @@ import (
 
 const postgresImage = "postgres:16-alpine"
 
-// modulTablolari modülün sahip olduğu tablolardır; migration testleri bu
-// listeyi kullanır.
-var modulTablolari = []string{
+// moduleTables are the tables the module owns; the migration tests use this
+// list.
+var moduleTables = []string{
 	"shipping_profiles", "shipping_options", "shipping_option_rules",
 	"fulfillments", "fulfillment_items", "fulfillment_manual_shipments",
 	"shipping_locations", "shipping_location_regions",
 }
 
-// Test verisinde kullanılan sabitler. Referans BAŞKA bir modüle (siparişe)
-// aittir; bu modül varlığını doğrulamaz (Prensip 2.2).
+// Constants used in the test data. The reference belongs to ANOTHER module (to
+// the order); this module does not verify its existence (Principle 2.2).
 const (
-	testReferans = "order_TEST"
-	testPara     = "TRY"
-	testBolge    = "reg_TEST"
+	testReference = "order_TEST"
+	testCurrency  = "TRY"
+	testRegion    = "reg_TEST"
 )
 
 var (
-	// testPool tüm testlerin paylaştığı havuzdur.
+	// testPool is the pool all the tests share.
 	testPool *db.Pool
-	// testDSN migration çağrıları için bağlantı adresidir.
+	// testDSN is the connection address for the migration calls.
 	testDSN string
 )
 
@@ -68,8 +68,8 @@ func TestMain(m *testing.M) {
 	os.Exit(runWithPostgres(m))
 }
 
-// runWithPostgres tek bir Postgres konteyneri kaldırıp tüm testleri onun
-// üzerinde çalıştırır. os.Exit defer'ları atladığı için ayrı fonksiyondadır.
+// runWithPostgres brings up a single Postgres container and runs all the tests
+// on it. It is a separate function because os.Exit skips defers.
 func runWithPostgres(m *testing.M) int {
 	ctx := context.Background()
 
@@ -81,42 +81,42 @@ func runWithPostgres(m *testing.M) int {
 	)
 	defer func() {
 		if termErr := testcontainers.TerminateContainer(ctr); termErr != nil {
-			fmt.Fprintf(os.Stderr, "postgres konteyneri durdurulamadı: %v\n", termErr)
+			fmt.Fprintf(os.Stderr, "the postgres container could not be stopped: %v\n", termErr)
 		}
 	}()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "postgres konteyneri başlatılamadı: %v\n", err)
+		fmt.Fprintf(os.Stderr, "the postgres container could not be started: %v\n", err)
 		return 1
 	}
 
 	testDSN, err = ctr.ConnectionString(ctx, "sslmode=disable")
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "bağlantı adresi alınamadı: %v\n", err)
+		fmt.Fprintf(os.Stderr, "the connection address could not be obtained: %v\n", err)
 		return 1
 	}
 
 	cfg := db.DefaultConfig(testDSN)
-	// Eşzamanlılık testleri onlarca goroutine'i aynı anda koşturur; her işlem
-	// bir bağlantı tuttuğu için havuz varsayılandan geniş açılır.
+	// The concurrency tests run dozens of goroutines at once; because every
+	// transaction holds a connection, the pool is opened wider than the default.
 	cfg.MaxConns = 24
 	testPool, err = db.New(ctx, cfg, nil)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "bağlantı havuzu açılamadı: %v\n", err)
+		fmt.Fprintf(os.Stderr, "the connection pool could not be opened: %v\n", err)
 		return 1
 	}
 	defer testPool.Close()
 
 	if err := db.Migrate(ctx, testDSN, fulfillment.New().Migrations(), fulfillment.ModuleName); err != nil {
-		fmt.Fprintf(os.Stderr, "migration uygulanamadı: %v\n", err)
+		fmt.Fprintf(os.Stderr, "the migration could not be applied: %v\n", err)
 		return 1
 	}
 
 	return m.Run()
 }
 
-// yeniServis gerçek depo ve GERÇEK manuel sağlayıcı üzerinde çalışan bir
-// servis kurar.
-func yeniServis(t *testing.T) (*service.Service, *manual.Provider) {
+// newService sets up a service running on a real store and on the REAL manual
+// provider.
+func newService(t *testing.T) (*service.Service, *manual.Provider) {
 	t.Helper()
 
 	repo := repository.New(testPool.Pool())
@@ -129,14 +129,14 @@ func yeniServis(t *testing.T) (*service.Service, *manual.Provider) {
 	return svc, prov
 }
 
-// sayanSaglayici gerçek sağlayıcıyı sarar ve ÇAĞRI SAYAR.
+// countingProvider wraps the real provider and COUNTS THE CALLS.
 //
-// "Tek gönderi üretilir" iddiası ancak böyle KESİN olarak sınanabilir: manuel
-// sağlayıcı kendi içinde idempotent olduğu için, ikinci bir çağrının yaptığı
-// işi defterdeki satır sayısına bakarak ayırt etmek yetmez — asıl ölçülmesi
-// gereken sağlayıcıya KAÇ KEZ GİDİLDİĞİDİR. Gerçek bir kargo firmasında her
-// çağrı bir etiket demektir.
-type sayanSaglayici struct {
+// The claim that "one shipment is produced" can only be exercised DEFINITIVELY
+// this way: because the manual provider is idempotent in itself, telling apart
+// the work a second call does by looking at the row count in the ledger is not
+// enough — what really has to be measured is HOW MANY TIMES THE PROVIDER WAS
+// VISITED. At a real carrier every call means a label.
+type countingProvider struct {
 	inner *manual.Provider
 
 	mu     sync.Mutex
@@ -145,14 +145,15 @@ type sayanSaglayici struct {
 	cancel int
 }
 
-// Dekoratörün çekirdek sözleşmesini karşıladığı derleme zamanında doğrulanır.
-var _ coreprovider.FulfillmentProvider = (*sayanSaglayici)(nil)
+// That the decorator satisfies the core's contract is verified at compile time.
+var _ coreprovider.FulfillmentProvider = (*countingProvider)(nil)
 
-// ID sarılan sağlayıcının kimliğini döner; seçenekler aynı adla açılır.
-func (s *sayanSaglayici) ID() string { return s.inner.ID() }
+// ID returns the wrapped provider's id; the options are opened under the same
+// name.
+func (s *countingProvider) ID() string { return s.inner.ID() }
 
-// Quote çağrıyı sayar ve iletir.
-func (s *sayanSaglayici) Quote(
+// Quote counts the call and forwards it.
+func (s *countingProvider) Quote(
 	ctx context.Context,
 	in coreprovider.QuoteInput,
 ) (coreprovider.ShippingQuote, error) {
@@ -162,8 +163,8 @@ func (s *sayanSaglayici) Quote(
 	return s.inner.Quote(ctx, in)
 }
 
-// Create çağrıyı sayar ve iletir.
-func (s *sayanSaglayici) Create(
+// Create counts the call and forwards it.
+func (s *countingProvider) Create(
 	ctx context.Context,
 	in coreprovider.CreateFulfillmentInput,
 ) (coreprovider.Fulfillment, error) {
@@ -173,70 +174,70 @@ func (s *sayanSaglayici) Create(
 	return s.inner.Create(ctx, in)
 }
 
-// Cancel çağrıyı sayar ve iletir.
-func (s *sayanSaglayici) Cancel(ctx context.Context, fulfillmentID string) error {
+// Cancel counts the call and forwards it.
+func (s *countingProvider) Cancel(ctx context.Context, fulfillmentID string) error {
 	s.mu.Lock()
 	s.cancel++
 	s.mu.Unlock()
 	return s.inner.Cancel(ctx, fulfillmentID)
 }
 
-// sayimlar sağlayıcıya yapılan çağrı sayılarını döner.
-func (s *sayanSaglayici) sayimlar() (quote, create, cancel int) {
+// counts returns the number of calls made to the provider.
+func (s *countingProvider) counts() (quote, create, cancel int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.quote, s.create, s.cancel
 }
 
-// yeniSayanServis çağrıları sayan bir sağlayıcı üzerinde servis kurar.
-func yeniSayanServis(t *testing.T) (*service.Service, *sayanSaglayici) {
+// newCountingService sets up a service on a provider that counts the calls.
+func newCountingService(t *testing.T) (*service.Service, *countingProvider) {
 	t.Helper()
 
 	repo := repository.New(testPool.Pool())
-	sayan := &sayanSaglayici{inner: manual.New(repo, nil)}
+	counting := &countingProvider{inner: manual.New(repo, nil)}
 	registry := service.NewProviderRegistry()
-	require.NoError(t, registry.Register(sayan))
+	require.NoError(t, registry.Register(counting))
 
 	svc, err := service.New(service.Options{Store: repo, Providers: registry})
 	require.NoError(t, err)
-	return svc, sayan
+	return svc, counting
 }
 
-// yeniProfil test için benzersiz adlı bir kargo profili açar.
-func yeniProfil(ctx context.Context, t *testing.T, svc *service.Service) models.ShippingProfile {
+// newProfile opens a shipping profile with a unique name for the test.
+func newProfile(ctx context.Context, t *testing.T, svc *service.Service) models.ShippingProfile {
 	t.Helper()
 
 	profile, err := svc.CreateShippingProfile(ctx, service.CreateProfileInput{
-		Name: "profil-" + models.NewShippingProfileID(),
+		Name: "profile-" + models.NewShippingProfileID(),
 	})
 	require.NoError(t, err)
 	return profile
 }
 
-// yeniSecenek test için sabit ücretli bir kargo seçeneği açar.
-func yeniSecenek(
+// newOption opens a flat-rate shipping option for the test.
+func newOption(
 	ctx context.Context,
 	t *testing.T,
 	svc *service.Service,
 	profileID string,
-	tutar int64,
+	amount int64,
 ) models.ShippingOption {
 	t.Helper()
 
 	option, err := svc.CreateShippingOption(ctx, service.CreateOptionInput{
-		Name:              "secenek-" + models.NewShippingOptionID(),
+		Name:              "option-" + models.NewShippingOptionID(),
 		ProviderID:        manual.ID,
 		ShippingProfileID: profileID,
-		Amount:            tutar,
-		CurrencyCode:      testPara,
-		RegionID:          testBolge,
+		Amount:            amount,
+		CurrencyCode:      testCurrency,
+		RegionID:          testRegion,
 	})
 	require.NoError(t, err)
 	return option
 }
 
-// tabloVar tablonun veritabanında olup olmadığını bildirir.
-func tabloVar(ctx context.Context, t *testing.T, table string) bool {
+// tableExists reports whether the table is present in the database.
+func tableExists(ctx context.Context, t *testing.T, table string) bool {
 	t.Helper()
 
 	var exists bool
@@ -250,21 +251,21 @@ func tabloVar(ctx context.Context, t *testing.T, table string) bool {
 	return exists
 }
 
-// TestMigrationVeriVarkenGeriAlinabilir migration'ın DOLU bir şemada
-// uygulanıp geri alınabildiğini doğrular.
+// TestMigrationRollsBackWithDataPresent verifies that the migration can be
+// applied to and rolled back from a FULL schema.
 //
-// internal/arch'taki kapı yalnızca BOŞ bir veritabanında up -> down -> up
-// koşar ve veriye bağlı geri alma hatalarını yakalayamaz. Buradaki test önce
-// profil seçenek, kural, gönderi, kalem ve sağlayıcı defterinden oluşan TAM
-// grafiği yazar; foreign key sırasını yanlış kuran bir down dosyası ancak
-// böyle düşer.
-func TestMigrationVeriVarkenGeriAlinabilir(t *testing.T) {
+// The gate in internal/arch only runs up -> down -> up on an EMPTY database and
+// cannot catch data-dependent rollback failures. The test here first writes the
+// COMPLETE graph made of a profile, an option, a rule, a shipment, an item and
+// the provider's ledger; a down file that gets the foreign key order wrong only
+// falls over that way.
+func TestMigrationRollsBackWithDataPresent(t *testing.T) {
 	ctx := context.Background()
 	src := fulfillment.New().Migrations()
-	svc, _ := yeniServis(t)
+	svc, _ := newService(t)
 
-	profile := yeniProfil(ctx, t, svc)
-	option := yeniSecenek(ctx, t, svc, profile.ID, 2_500)
+	profile := newProfile(ctx, t, svc)
+	option := newOption(ctx, t, svc, profile.ID, 2_500)
 	_, err := svc.CreateShippingOptionRule(ctx, option.ID, service.CreateRuleInput{
 		Attribute: service.AttrSubtotal,
 		Operator:  "gte",
@@ -273,56 +274,56 @@ func TestMigrationVeriVarkenGeriAlinabilir(t *testing.T) {
 	require.NoError(t, err)
 
 	_, err = svc.CreateFulfillment(ctx, service.CreateFulfillmentInput{
-		Reference:        testReferans,
+		Reference:        testReference,
 		ShippingOptionID: option.ID,
 		IdempotencyKey:   "migration-" + option.ID,
 		Items:            []service.FulfillmentItemInput{{LineItemID: "line_1", Quantity: 2}},
 	})
 	require.NoError(t, err)
 
-	// Depo politikası da yazılır ve BÖLGE BAĞIYLA birlikte yazılır: iki tablo
-	// arasında modül içi bir foreign key vardır ve geri almanın onları doğru
-	// SIRADA düşürdüğü ancak dolu tablolarla sınanabilir. Boş tablolarla
-	// yanlış sıralı bir down da geçerdi.
+	// The warehouse policy is written too, and it is written TOGETHER WITH ITS
+	// REGION BINDING: there is an in-module foreign key between the two tables,
+	// and that the rollback drops them in the right ORDER can only be exercised
+	// with full tables. With empty tables a down in the wrong order would pass
+	// as well.
 	_, err = svc.SetShippingLocation(ctx, service.SetShippingLocationInput{
 		LocationID: "sloc_migration",
 		Priority:   -1,
-		RegionIDs:  []string{testBolge},
+		RegionIDs:  []string{testRegion},
 	})
 	require.NoError(t, err)
 
-	for _, table := range modulTablolari {
-		require.True(t, tabloVar(ctx, t, table), "%s başlangıçta var olmalı", table)
+	for _, table := range moduleTables {
+		require.True(t, tableExists(ctx, t, table), "%s must exist at the start", table)
 	}
 
 	require.NoError(t, db.MigrateDown(ctx, testDSN, src, fulfillment.ModuleName, 0),
-		"down başarısız — bu, modülün bir daha migrate EDİLEMEMESİ demektir")
-	for _, table := range modulTablolari {
-		assert.False(t, tabloVar(ctx, t, table), "%s geri alma sonrası kalmamalı", table)
+		"down failed — this means the module can NEVER be migrated again")
+	for _, table := range moduleTables {
+		assert.False(t, tableExists(ctx, t, table), "%s must not remain after the rollback", table)
 	}
 
 	require.NoError(t, db.Migrate(ctx, testDSN, src, fulfillment.ModuleName))
-	for _, table := range modulTablolari {
-		assert.True(t, tabloVar(ctx, t, table), "%s yeniden uygulanmalı", table)
+	for _, table := range moduleTables {
+		assert.True(t, tableExists(ctx, t, table), "%s must be applied again", table)
 	}
 
 	version, dirty, err := db.Version(ctx, testDSN, fulfillment.ModuleName)
 	require.NoError(t, err)
-	assert.False(t, dirty, "yarıda kalmış migration olmamalı")
+	assert.False(t, dirty, "there must be no half-finished migration")
 	assert.Equal(t, uint(2), version,
-		"sürüm modüldeki migration SAYISIDIR; yeni bir dosya eklendiğinde burası da "+
-			"artar. Sabit tutulsaydı, uygulanmayan bir migration sessizce fark "+
-			"edilmezdi")
+		"the version is the NUMBER of migrations in the module; when a new file is added "+
+			"this goes up too. Were it held constant, an unapplied migration would "+
+			"silently go unnoticed")
 }
 
-// TestCrossModuleForeignKeyYok modülün tablolarındaki TÜM foreign key'lerin
-// yine modülün kendi tablolarına gittiğini doğrular (Prensip 2.2).
+// TestNoCrossModuleForeignKeys verifies that ALL the foreign keys in the
+// module's tables go to the module's own tables again (Principle 2.2).
 //
-// Özellikle fulfillments.reference bir sipariş kimliğidir,
-// shipping_options.region_id bir bölge kimliğidir ve
-// fulfillment_items.line_item_id bir sipariş satırı kimliğidir; üçü de
-// foreign key OLAMAZ.
-func TestCrossModuleForeignKeyYok(t *testing.T) {
+// In particular fulfillments.reference is an order id, shipping_options.region_id
+// is a region id and fulfillment_items.line_item_id is an order line id; none of
+// the three CAN be a foreign key.
+func TestNoCrossModuleForeignKeys(t *testing.T) {
 	ctx := context.Background()
 
 	rows, err := testPool.Pool().Query(ctx,
@@ -330,37 +331,37 @@ func TestCrossModuleForeignKeyYok(t *testing.T) {
          FROM pg_constraint c
          JOIN pg_class src ON src.oid = c.conrelid
          JOIN pg_class tgt ON tgt.oid = c.confrelid
-         WHERE c.contype = 'f' AND src.relname = ANY($1)`, modulTablolari)
+         WHERE c.contype = 'f' AND src.relname = ANY($1)`, moduleTables)
 	require.NoError(t, err)
 	defer rows.Close()
 
-	sahipli := make(map[string]struct{}, len(modulTablolari))
-	for _, table := range modulTablolari {
-		sahipli[table] = struct{}{}
+	owned := make(map[string]struct{}, len(moduleTables))
+	for _, table := range moduleTables {
+		owned[table] = struct{}{}
 	}
 
-	var sayi int
+	var count int
 	for rows.Next() {
 		var name, src, tgt string
 		require.NoError(t, rows.Scan(&name, &src, &tgt))
-		assert.Contains(t, sahipli, tgt,
-			"%s kısıtı modül dışına referans veriyor (%s -> %s)", name, src, tgt)
-		sayi++
+		assert.Contains(t, owned, tgt,
+			"the %s constraint references outside the module (%s -> %s)", name, src, tgt)
+		count++
 	}
 	require.NoError(t, rows.Err())
-	assert.Positive(t, sayi, "modül içi foreign key'ler kullanılmalı")
+	assert.Positive(t, count, "in-module foreign keys must be used")
 }
 
-// TestKatalogCRUD profil, seçenek ve kuralın gerçek şema üzerinde uçtan uca
-// yönetilebildiğini doğrular.
-func TestKatalogCRUD(t *testing.T) {
+// TestCatalogCRUD verifies that a profile, an option and a rule can be managed
+// end to end on the real schema.
+func TestCatalogCRUD(t *testing.T) {
 	ctx := context.Background()
-	svc, _ := yeniServis(t)
+	svc, _ := newService(t)
 
-	profile := yeniProfil(ctx, t, svc)
+	profile := newProfile(ctx, t, svc)
 	assert.Equal(t, models.ProfileDefault, profile.Type)
 
-	option := yeniSecenek(ctx, t, svc, profile.ID, 2_500)
+	option := newOption(ctx, t, svc, profile.ID, 2_500)
 	rule, err := svc.CreateShippingOptionRule(ctx, option.ID, service.CreateRuleInput{
 		Attribute: service.AttrSubtotal,
 		Operator:  "gte",
@@ -368,77 +369,78 @@ func TestKatalogCRUD(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	okunan, err := svc.GetShippingOption(ctx, option.ID)
+	loaded, err := svc.GetShippingOption(ctx, option.ID)
 	require.NoError(t, err)
-	require.Len(t, okunan.Rules, 1)
-	assert.Equal(t, rule.ID, okunan.Rules[0].ID)
+	require.Len(t, loaded.Rules, 1)
+	assert.Equal(t, rule.ID, loaded.Rules[0].ID)
 
-	yeniAd := "guncellenmis-" + option.ID
-	yeniTutar := int64(1_750)
-	guncel, err := svc.UpdateShippingOption(ctx, option.ID, service.UpdateOptionInput{
-		Name:   &yeniAd,
-		Amount: &yeniTutar,
+	newName := "updated-" + option.ID
+	newAmount := int64(1_750)
+	updated, err := svc.UpdateShippingOption(ctx, option.ID, service.UpdateOptionInput{
+		Name:   &newName,
+		Amount: &newAmount,
 	})
 	require.NoError(t, err)
-	assert.Equal(t, yeniAd, guncel.Name)
-	assert.Equal(t, yeniTutar, guncel.Amount)
-	assert.Equal(t, manual.ID, guncel.ProviderID, "sağlayıcı değişmemeli")
+	assert.Equal(t, newName, updated.Name)
+	assert.Equal(t, newAmount, updated.Amount)
+	assert.Equal(t, manual.ID, updated.ProviderID, "the provider must not change")
 
-	// Seçeneği duran profil silinemez; kural, sipariş akışının kargo
-	// seçeneksiz kalmamasını sağlar.
+	// A profile with a standing option cannot be deleted; the rule keeps the
+	// order flow from being left without a shipping option.
 	err = svc.DeleteShippingProfile(ctx, profile.ID)
 	require.Error(t, err)
-	assert.True(t, errors.IsConflict(err), "hata errors.Conflict olmalı: %v", err)
+	assert.True(t, errors.IsConflict(err), "the error must be errors.Conflict: %v", err)
 
 	require.NoError(t, svc.DeleteShippingOptionRule(ctx, rule.ID))
 	require.NoError(t, svc.DeleteShippingOption(ctx, option.ID))
 	require.NoError(t, svc.DeleteShippingProfile(ctx, profile.ID))
 
 	_, err = svc.GetShippingOption(ctx, option.ID)
-	assert.True(t, errors.IsNotFound(err), "silinen seçenek okunamaz olmalı: %v", err)
+	assert.True(t, errors.IsNotFound(err), "the deleted option must not be readable: %v", err)
 }
 
-// TestHesaplananSecenegeTutarYazilamaz şemadaki kısıtın SON SAVUNMA olarak
-// çalıştığını doğrular.
+// TestCalculatedOptionRejectsAmount verifies that the constraint in the schema
+// works as the LAST LINE OF DEFENSE.
 //
-// Servis bunu zaten reddeder; buradaki iddia, doğrudan SQL ile yapılan bir
-// müdahalenin de durdurulduğudur.
-func TestHesaplananSecenegeTutarYazilamaz(t *testing.T) {
+// The service already rejects this; the claim here is that an intervention made
+// directly over SQL is stopped as well.
+func TestCalculatedOptionRejectsAmount(t *testing.T) {
 	ctx := context.Background()
-	svc, _ := yeniServis(t)
-	profile := yeniProfil(ctx, t, svc)
+	svc, _ := newService(t)
+	profile := newProfile(ctx, t, svc)
 
 	option, err := svc.CreateShippingOption(ctx, service.CreateOptionInput{
-		Name:              "hesaplanan-" + models.NewShippingOptionID(),
+		Name:              "calculated-" + models.NewShippingOptionID(),
 		ProviderID:        manual.ID,
 		ShippingProfileID: profile.ID,
 		PriceType:         "calculated",
-		CurrencyCode:      testPara,
+		CurrencyCode:      testCurrency,
 	})
 	require.NoError(t, err)
 
 	_, err = testPool.Pool().Exec(ctx,
 		`UPDATE shipping_options SET amount = 500 WHERE id = $1`, option.ID)
-	require.Error(t, err, "hesaplanan seçeneğe tutar yazılamamalı")
+	require.Error(t, err, "an amount must not be writable to a calculated option")
 }
 
-// TestUctanUcaGonderiAkisi Faz 7'nin istediği tam akışı GERÇEK sağlayıcıyla
-// yürütür: uygunluk -> gönderi aç -> kargoya ver -> teslim et.
+// TestEndToEndShipmentFlow runs the full flow Phase 7 asks for with the REAL
+// provider: eligibility -> open shipment -> hand to carrier -> deliver.
 //
-// Her adımda hem modülün kaydı hem SAĞLAYICININ defteri denetlenir; ikisinin
-// ayrıştığı bir hata ancak iki tarafa birden bakılarak görülür.
-func TestUctanUcaGonderiAkisi(t *testing.T) {
+// At every step both the module's record and the PROVIDER'S ledger are
+// inspected; a fault where the two drift apart can only be seen by looking at
+// both sides at once.
+func TestEndToEndShipmentFlow(t *testing.T) {
 	ctx := context.Background()
-	svc, prov := yeniServis(t)
+	svc, prov := newService(t)
 
-	profile := yeniProfil(ctx, t, svc)
+	profile := newProfile(ctx, t, svc)
 	option, err := svc.CreateShippingOption(ctx, service.CreateOptionInput{
-		Name:              "hesaplanan-" + models.NewShippingOptionID(),
+		Name:              "calculated-" + models.NewShippingOptionID(),
 		ProviderID:        manual.ID,
 		ShippingProfileID: profile.ID,
 		PriceType:         "calculated",
-		CurrencyCode:      testPara,
-		RegionID:          testBolge,
+		CurrencyCode:      testCurrency,
+		RegionID:          testRegion,
 		Data: map[string]any{
 			manual.DataKeyBaseAmount:        1_000,
 			manual.DataKeyPerKilogramAmount: 500,
@@ -447,210 +449,211 @@ func TestUctanUcaGonderiAkisi(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	secenekler, err := svc.ListShippingOptionsFor(ctx, service.ListOptionsInput{
-		RegionID:           testBolge,
-		CurrencyCode:       testPara,
+	options, err := svc.ListShippingOptionsFor(ctx, service.ListOptionsInput{
+		RegionID:           testRegion,
+		CurrencyCode:       testCurrency,
 		ShippingProfileIDs: []string{profile.ID},
 		TotalWeight:        1_200,
 	})
 	require.NoError(t, err)
-	require.Len(t, secenekler, 1)
-	// 1000 taban + 500 × ⌈1200/1000⌉ = 1000 + 1000.
-	assert.Equal(t, int64(2_000), secenekler[0].Amount, "ücret sağlayıcının formülünden gelmeli")
+	require.Len(t, options, 1)
+	// 1000 base + 500 x ⌈1200/1000⌉ = 1000 + 1000.
+	assert.Equal(t, int64(2_000), options[0].Amount, "the fee must come from the provider's formula")
 
 	ful, err := svc.CreateFulfillment(ctx, service.CreateFulfillmentInput{
-		Reference:        testReferans,
+		Reference:        testReference,
 		ShippingOptionID: option.ID,
 		IdempotencyKey:   "e2e-" + option.ID,
 		Items:            []service.FulfillmentItemInput{{LineItemID: "line_1", Quantity: 2}},
 	})
 	require.NoError(t, err)
 	assert.Equal(t, models.StatusPending, ful.Status)
-	require.NotEmpty(t, ful.ExternalID, "sağlayıcının kimliği yazılmalı")
+	require.NotEmpty(t, ful.ExternalID, "the provider's id must be written")
 	assert.Equal(t, "TK-E2E", ful.TrackingNumber)
 	require.Len(t, ful.Items, 1)
 
-	saglayiciKaydi, err := prov.GetShipment(ctx, ful.ExternalID)
+	providerRecord, err := prov.GetShipment(ctx, ful.ExternalID)
 	require.NoError(t, err)
-	assert.Equal(t, ful.ID, saglayiciKaydi.Reference,
-		"sağlayıcı, mutabakat için GÖNDERİNİN kimliğini saklamalı")
+	assert.Equal(t, ful.ID, providerRecord.Reference,
+		"the provider must keep the SHIPMENT'S id for reconciliation")
 
-	kargoda, err := svc.MarkShipped(ctx, ful.ID, "TK-E2E", "https://kargo.example/TK-E2E")
+	shipped, err := svc.MarkShipped(ctx, ful.ID, "TK-E2E", "https://carrier.example/TK-E2E")
 	require.NoError(t, err)
-	assert.Equal(t, models.StatusShipped, kargoda.Status)
-	require.NotNil(t, kargoda.ShippedAt)
+	assert.Equal(t, models.StatusShipped, shipped.Status)
+	require.NotNil(t, shipped.ShippedAt)
 
-	teslim, err := svc.MarkDelivered(ctx, ful.ID)
+	delivered, err := svc.MarkDelivered(ctx, ful.ID)
 	require.NoError(t, err)
-	assert.Equal(t, models.StatusDelivered, teslim.Status)
-	require.NotNil(t, teslim.DeliveredAt)
+	assert.Equal(t, models.StatusDelivered, delivered.Status)
+	require.NotNil(t, delivered.DeliveredAt)
 
-	// Teslim edilmiş gönderi iptal EDİLEMEZ; çaresi iadedir.
+	// A delivered shipment CANNOT be canceled; the remedy is a refund.
 	err = svc.CancelFulfillment(ctx, ful.ID)
 	require.Error(t, err)
-	assert.True(t, errors.IsConflict(err), "hata errors.Conflict olmalı: %v", err)
+	assert.True(t, errors.IsConflict(err), "the error must be errors.Conflict: %v", err)
 }
 
-// TestEszamanliIkiCreateTekGonderiUretir idempotency iddiasını GERÇEK
-// benzersiz indeks ve gerçek goroutine'lerle sınar.
+// TestConcurrentCreatesProduceOneShipment exercises the idempotency claim with
+// a REAL unique index and real goroutines.
 //
-// Birim testindeki sahte depo yarışı taklit eder; buradaki test aynı iddiayı
-// ON CONFLICT DO NOTHING ve satır kilidi üzerinde kanıtlar. Ölçülen şey
-// sağlayıcıya KAÇ KEZ gidildiğidir: gerçek bir kargo firmasında her çağrı bir
-// etiket demektir.
-func TestEszamanliIkiCreateTekGonderiUretir(t *testing.T) {
+// The fake store in the unit test imitates the race; the test here proves the
+// same claim over ON CONFLICT DO NOTHING and a row lock. What is measured is HOW
+// MANY TIMES the provider was visited: at a real carrier every call means a
+// label.
+func TestConcurrentCreatesProduceOneShipment(t *testing.T) {
 	ctx := context.Background()
-	svc, sayan := yeniSayanServis(t)
+	svc, counting := newCountingService(t)
 
-	profile := yeniProfil(ctx, t, svc)
-	option := yeniSecenek(ctx, t, svc, profile.ID, 2_500)
-	anahtar := "yaris-" + option.ID
+	profile := newProfile(ctx, t, svc)
+	option := newOption(ctx, t, svc, profile.ID, 2_500)
+	key := "race-" + option.ID
 
-	const eszamanli = 8
-	kimlikler := make([]string, eszamanli)
-	hatalar := make([]error, eszamanli)
+	const concurrency = 8
+	ids := make([]string, concurrency)
+	errs := make([]error, concurrency)
 
-	var basla sync.WaitGroup
-	var bitti sync.WaitGroup
-	basla.Add(1)
-	bitti.Add(eszamanli)
+	var start sync.WaitGroup
+	var done sync.WaitGroup
+	start.Add(1)
+	done.Add(concurrency)
 
-	for i := range eszamanli {
+	for i := range concurrency {
 		go func() {
-			defer bitti.Done()
-			basla.Wait()
+			defer done.Done()
+			start.Wait()
 			ful, err := svc.CreateFulfillment(ctx, service.CreateFulfillmentInput{
-				Reference:        testReferans,
+				Reference:        testReference,
 				ShippingOptionID: option.ID,
-				IdempotencyKey:   anahtar,
+				IdempotencyKey:   key,
 			})
-			kimlikler[i], hatalar[i] = ful.ID, err
+			ids[i], errs[i] = ful.ID, err
 		}()
 	}
-	basla.Done()
-	bitti.Wait()
+	start.Done()
+	done.Wait()
 
-	for i, err := range hatalar {
-		require.NoErrorf(t, err, "%d. çağrı hata döndü", i)
+	for i, err := range errs {
+		require.NoErrorf(t, err, "call %d returned an error", i)
 	}
-	for i := 1; i < eszamanli; i++ {
-		assert.Equal(t, kimlikler[0], kimlikler[i], "tüm çağrılar aynı gönderiyi dönmeli")
+	for i := 1; i < concurrency; i++ {
+		assert.Equal(t, ids[0], ids[i], "all the calls must return the same shipment")
 	}
 
-	_, create, _ := sayan.sayimlar()
-	assert.Equal(t, 1, create, "sağlayıcıya TAM OLARAK bir kez gidilmeli")
+	_, create, _ := counting.counts()
+	assert.Equal(t, 1, create, "the provider must be visited EXACTLY once")
 
-	var satir int64
+	var rowCount int64
 	require.NoError(t, testPool.Pool().QueryRow(ctx,
 		`SELECT COUNT(*) FROM fulfillments WHERE idempotency_key = $1 AND deleted_at IS NULL`,
-		anahtar).Scan(&satir))
-	assert.EqualValues(t, 1, satir, "benzersiz indeks tek satıra izin vermeli")
+		key).Scan(&rowCount))
+	assert.EqualValues(t, 1, rowCount, "the unique index must allow a single row")
 }
 
-// TestIptalIkiKezCagrilabilir saga telafisinin şartını gerçek veritabanı
-// üzerinde doğrular.
-func TestIptalIkiKezCagrilabilir(t *testing.T) {
+// TestCancelCanBeCalledTwice verifies the saga compensation's condition over a
+// real database.
+func TestCancelCanBeCalledTwice(t *testing.T) {
 	ctx := context.Background()
-	svc, sayan := yeniSayanServis(t)
+	svc, counting := newCountingService(t)
 
-	profile := yeniProfil(ctx, t, svc)
-	option := yeniSecenek(ctx, t, svc, profile.ID, 2_500)
+	profile := newProfile(ctx, t, svc)
+	option := newOption(ctx, t, svc, profile.ID, 2_500)
 	ful, err := svc.CreateFulfillment(ctx, service.CreateFulfillmentInput{
-		Reference:        testReferans,
+		Reference:        testReference,
 		ShippingOptionID: option.ID,
-		IdempotencyKey:   "iptal-" + option.ID,
+		IdempotencyKey:   "cancel-" + option.ID,
 	})
 	require.NoError(t, err)
 
 	require.NoError(t, svc.CancelFulfillment(ctx, ful.ID))
-	require.NoError(t, svc.CancelFulfillment(ctx, ful.ID), "ikinci iptal hata dönmemeli")
+	require.NoError(t, svc.CancelFulfillment(ctx, ful.ID), "the second cancel must not return an error")
 
-	_, _, cancel := sayan.sayimlar()
-	assert.Equal(t, 1, cancel, "sağlayıcıya yalnızca bir kez gidilmeli")
+	_, _, cancel := counting.counts()
+	assert.Equal(t, 1, cancel, "the provider must be visited only once")
 
-	okunan, err := svc.GetFulfillment(ctx, ful.ID)
+	loaded, err := svc.GetFulfillment(ctx, ful.ID)
 	require.NoError(t, err)
-	assert.Equal(t, models.StatusCanceled, okunan.Status)
-	require.NotNil(t, okunan.CanceledAt)
+	assert.Equal(t, models.StatusCanceled, loaded.Status)
+	require.NotNil(t, loaded.CanceledAt)
 }
 
-// TestEszamanliIptalTekCagriYapar satır kilidinin gerçekten çalıştığını
-// doğrular.
+// TestConcurrentCancelMakesOneProviderCall verifies that the row lock really
+// works.
 //
-// Kilit olmasaydı, birden çok goroutine gönderiyi "pending" görür ve hepsi
-// sağlayıcıya giderdi.
-func TestEszamanliIptalTekCagriYapar(t *testing.T) {
+// Without the lock, more than one goroutine would see the shipment as "pending"
+// and they would all go to the provider.
+func TestConcurrentCancelMakesOneProviderCall(t *testing.T) {
 	ctx := context.Background()
-	svc, sayan := yeniSayanServis(t)
+	svc, counting := newCountingService(t)
 
-	profile := yeniProfil(ctx, t, svc)
-	option := yeniSecenek(ctx, t, svc, profile.ID, 2_500)
+	profile := newProfile(ctx, t, svc)
+	option := newOption(ctx, t, svc, profile.ID, 2_500)
 	ful, err := svc.CreateFulfillment(ctx, service.CreateFulfillmentInput{
-		Reference:        testReferans,
+		Reference:        testReference,
 		ShippingOptionID: option.ID,
-		IdempotencyKey:   "eszamanli-iptal-" + option.ID,
+		IdempotencyKey:   "concurrent-cancel-" + option.ID,
 	})
 	require.NoError(t, err)
 
-	const eszamanli = 8
-	hatalar := make([]error, eszamanli)
+	const concurrency = 8
+	errs := make([]error, concurrency)
 
-	var basla sync.WaitGroup
-	var bitti sync.WaitGroup
-	basla.Add(1)
-	bitti.Add(eszamanli)
+	var start sync.WaitGroup
+	var done sync.WaitGroup
+	start.Add(1)
+	done.Add(concurrency)
 
-	for i := range eszamanli {
+	for i := range concurrency {
 		go func() {
-			defer bitti.Done()
-			basla.Wait()
-			hatalar[i] = svc.CancelFulfillment(ctx, ful.ID)
+			defer done.Done()
+			start.Wait()
+			errs[i] = svc.CancelFulfillment(ctx, ful.ID)
 		}()
 	}
-	basla.Done()
-	bitti.Wait()
+	start.Done()
+	done.Wait()
 
-	for i, err := range hatalar {
-		require.NoErrorf(t, err, "%d. iptal hata döndü", i)
+	for i, err := range errs {
+		require.NoErrorf(t, err, "cancel %d returned an error", i)
 	}
-	_, _, cancel := sayan.sayimlar()
-	assert.Equal(t, 1, cancel, "sağlayıcıya TAM OLARAK bir iptal gitmeli")
+	_, _, cancel := counting.counts()
+	assert.Equal(t, 1, cancel, "EXACTLY one cancel must reach the provider")
 }
 
-// TestSaglayiciDefteriSurecDisindaYasar manuel sağlayıcının durumunun
-// veritabanında olduğunu doğrular.
+// TestProviderLedgerOutlivesTheProcess verifies that the manual provider's
+// state lives in the database.
 //
-// Bellekte tutulsaydı, YENİ bir sağlayıcı örneği (süreç yeniden başlatmasının
-// karşılığı) gönderiyi bulamaz ve saga telafisi hiçbir zaman çalışamazdı.
-func TestSaglayiciDefteriSurecDisindaYasar(t *testing.T) {
+// Were it held in memory, a NEW provider instance (the equivalent of a process
+// restart) could not find the shipment and the saga compensation could never
+// run.
+func TestProviderLedgerOutlivesTheProcess(t *testing.T) {
 	ctx := context.Background()
-	svc, _ := yeniServis(t)
+	svc, _ := newService(t)
 
-	profile := yeniProfil(ctx, t, svc)
-	option := yeniSecenek(ctx, t, svc, profile.ID, 2_500)
+	profile := newProfile(ctx, t, svc)
+	option := newOption(ctx, t, svc, profile.ID, 2_500)
 	ful, err := svc.CreateFulfillment(ctx, service.CreateFulfillmentInput{
-		Reference:        testReferans,
+		Reference:        testReference,
 		ShippingOptionID: option.ID,
-		IdempotencyKey:   "kalici-" + option.ID,
+		IdempotencyKey:   "durable-" + option.ID,
 	})
 	require.NoError(t, err)
 
-	// Yeni bir sağlayıcı örneği: sürecin yeniden başlamasının karşılığı.
-	yeniProv := manual.New(repository.New(testPool.Pool()), nil)
-	saklanan, err := yeniProv.GetShipment(ctx, ful.ExternalID)
-	require.NoError(t, err, "gönderi yeni bir sağlayıcı örneğinden okunabilmeli")
-	assert.Equal(t, models.StatusPending, saklanan.Status)
+	// A new provider instance: the equivalent of the process restarting.
+	freshProv := manual.New(repository.New(testPool.Pool()), nil)
+	stored, err := freshProv.GetShipment(ctx, ful.ExternalID)
+	require.NoError(t, err, "the shipment must be readable from a new provider instance")
+	assert.Equal(t, models.StatusPending, stored.Status)
 
-	require.NoError(t, yeniProv.Cancel(ctx, ful.ExternalID),
-		"telafi süreç yeniden başladıktan sonra da çalışmalı")
+	require.NoError(t, freshProv.Cancel(ctx, ful.ExternalID),
+		"the compensation must work after the process restarts too")
 }
 
-// TestModulContainerYuzeylerineKaydeder modülün ilan ettiği tüm adların
-// gerçekten çözülebildiğini doğrular.
+// TestModuleRegistersItsContainerSurfaces verifies that every name the module
+// declares really can be resolved.
 //
-// ADR 0001/0006 gereği tüketiciler bu adları KENDİ dar arayüzleriyle çözer;
-// bir adın kaydedilmeyi unutulması ancak çalışma zamanında görülür.
-func TestModulContainerYuzeylerineKaydeder(t *testing.T) {
+// As ADR 0001/0006 requires, consumers resolve these names with THEIR OWN
+// narrow interfaces; forgetting to register a name is only seen at run time.
+func TestModuleRegistersItsContainerSurfaces(t *testing.T) {
 	ctx := context.Background()
 
 	c := container.New(nil)
@@ -677,94 +680,94 @@ func TestModulContainerYuzeylerineKaydeder(t *testing.T) {
 	assert.Equal(t, "shipping_option.query", fulfillment.ProviderName)
 }
 
-// TestInteropYuzeyiUctanUcaCalisir modüller arası ilkel yüzeyin gerçek
-// veritabanı üzerinde çalıştığını doğrular.
+// TestInteropSurfaceWorksEndToEnd verifies that the cross-module primitive
+// surface works over a real database.
 //
-// Saga'nın göreceği yüzey budur; JSON şemasının ve idempotency'nin birlikte
-// tuttuğu ancak burada görülür.
-func TestInteropYuzeyiUctanUcaCalisir(t *testing.T) {
+// This is the surface the saga will see; that the JSON schema and the
+// idempotency hold together is only visible here.
+func TestInteropSurfaceWorksEndToEnd(t *testing.T) {
 	ctx := context.Background()
-	svc, _ := yeniServis(t)
+	svc, _ := newService(t)
 	interop := service.NewInterop(svc)
 
-	profile := yeniProfil(ctx, t, svc)
-	option := yeniSecenek(ctx, t, svc, profile.ID, 2_500)
+	profile := newProfile(ctx, t, svc)
+	option := newOption(ctx, t, svc, profile.ID, 2_500)
 
-	istek := fmt.Sprintf(
+	request := fmt.Sprintf(
 		`{"region_id":%q,"currency_code":%q,"shipping_profile_ids":[%q],"subtotal":50000}`,
-		testBolge, testPara, profile.ID)
-	yanit, err := interop.ListOptionsJSON(ctx, []byte(istek))
+		testRegion, testCurrency, profile.ID)
+	response, err := interop.ListOptionsJSON(ctx, []byte(request))
 	require.NoError(t, err)
-	assert.Contains(t, string(yanit), option.ID)
-	assert.Contains(t, string(yanit), `"amount":2500`)
+	assert.Contains(t, string(response), option.ID)
+	assert.Contains(t, string(response), `"amount":2500`)
 
-	ilk, err := interop.CreateFulfillment(ctx, testReferans, option.ID, "interop-"+option.ID)
+	first, err := interop.CreateFulfillment(ctx, testReference, option.ID, "interop-"+option.ID)
 	require.NoError(t, err)
-	ikinci, err := interop.CreateFulfillment(ctx, testReferans, option.ID, "interop-"+option.ID)
+	second, err := interop.CreateFulfillment(ctx, testReference, option.ID, "interop-"+option.ID)
 	require.NoError(t, err)
-	assert.Equal(t, ilk, ikinci, "aynı anahtar tek gönderi üretmeli")
+	assert.Equal(t, first, second, "the same key must produce a single shipment")
 
-	require.NoError(t, interop.CancelFulfillment(ctx, ilk))
-	require.NoError(t, interop.CancelFulfillment(ctx, ilk), "telafi iki kez çağrılabilmeli")
+	require.NoError(t, interop.CancelFulfillment(ctx, first))
+	require.NoError(t, interop.CancelFulfillment(ctx, first), "the compensation must be callable twice")
 
-	durum, err := interop.FulfillmentStatus(ctx, ilk)
+	status, err := interop.FulfillmentStatus(ctx, first)
 	require.NoError(t, err)
-	assert.Equal(t, "canceled", durum)
+	assert.Equal(t, "canceled", status)
 }
 
-// TestAyniProfilAdiIkinciKezKullanilamaz benzersiz indeksin gerçekten
-// uygulandığını doğrular.
-func TestAyniProfilAdiIkinciKezKullanilamaz(t *testing.T) {
+// TestProfileNameCannotBeReused verifies that the unique index really is
+// enforced.
+func TestProfileNameCannotBeReused(t *testing.T) {
 	ctx := context.Background()
-	svc, _ := yeniServis(t)
+	svc, _ := newService(t)
 
-	ad := "tekil-" + models.NewShippingProfileID()
-	_, err := svc.CreateShippingProfile(ctx, service.CreateProfileInput{Name: ad})
+	name := "unique-" + models.NewShippingProfileID()
+	_, err := svc.CreateShippingProfile(ctx, service.CreateProfileInput{Name: name})
 	require.NoError(t, err)
 
-	_, err = svc.CreateShippingProfile(ctx, service.CreateProfileInput{Name: ad})
+	_, err = svc.CreateShippingProfile(ctx, service.CreateProfileInput{Name: name})
 	require.Error(t, err)
-	assert.True(t, errors.IsConflict(err), "hata errors.Conflict olmalı: %v", err)
+	assert.True(t, errors.IsConflict(err), "the error must be errors.Conflict: %v", err)
 }
 
-// TestQuerySaglayicisiGercekSemaUzerindeCalisir ADR 0004'ün okuma yüzeyini
-// gerçek veriyle doğrular.
-func TestQuerySaglayicisiGercekSemaUzerindeCalisir(t *testing.T) {
+// TestQueryProviderWorksOnTheRealSchema verifies ADR 0004's read surface with
+// real data.
+func TestQueryProviderWorksOnTheRealSchema(t *testing.T) {
 	ctx := context.Background()
-	svc, _ := yeniServis(t)
+	svc, _ := newService(t)
 	provider := service.NewQueryProvider(svc)
 
-	profile := yeniProfil(ctx, t, svc)
-	option := yeniSecenek(ctx, t, svc, profile.ID, 2_500)
+	profile := newProfile(ctx, t, svc)
+	option := newOption(ctx, t, svc, profile.ID, 2_500)
 
-	kayitlar, err := provider.FetchByIDs(ctx, []string{option.ID}, []string{"id", "amount", "provider_id"})
+	records, err := provider.FetchByIDs(ctx, []string{option.ID}, []string{"id", "amount", "provider_id"})
 	require.NoError(t, err)
-	require.Len(t, kayitlar, 1)
-	assert.Equal(t, option.ID, kayitlar[0]["id"])
-	assert.Equal(t, int64(2_500), kayitlar[0]["amount"])
-	assert.Equal(t, manual.ID, kayitlar[0]["provider_id"])
+	require.Len(t, records, 1)
+	assert.Equal(t, option.ID, records[0]["id"])
+	assert.Equal(t, int64(2_500), records[0]["amount"])
+	assert.Equal(t, manual.ID, records[0]["provider_id"])
 
-	suzulmus, err := provider.List(ctx, query.ListOptions{
+	filtered, err := provider.List(ctx, query.ListOptions{
 		Filters: map[string]any{"shipping_profile_id": profile.ID},
 		Fields:  []string{"id"},
 	})
 	require.NoError(t, err)
-	require.Len(t, suzulmus, 1)
-	assert.Equal(t, option.ID, suzulmus[0]["id"])
+	require.Len(t, filtered, 1)
+	assert.Equal(t, option.ID, filtered[0]["id"])
 }
 
-// TestAyniSatirGonderideIkiKezYerAlamaz benzersiz indeksin son savunma olarak
-// çalıştığını doğrular.
-func TestAyniSatirGonderideIkiKezYerAlamaz(t *testing.T) {
+// TestSameLineItemCannotAppearTwiceInAShipment verifies that the unique index
+// works as the last line of defense.
+func TestSameLineItemCannotAppearTwiceInAShipment(t *testing.T) {
 	ctx := context.Background()
-	svc, _ := yeniServis(t)
+	svc, _ := newService(t)
 
-	profile := yeniProfil(ctx, t, svc)
-	option := yeniSecenek(ctx, t, svc, profile.ID, 2_500)
+	profile := newProfile(ctx, t, svc)
+	option := newOption(ctx, t, svc, profile.ID, 2_500)
 	ful, err := svc.CreateFulfillment(ctx, service.CreateFulfillmentInput{
-		Reference:        testReferans,
+		Reference:        testReference,
 		ShippingOptionID: option.ID,
-		IdempotencyKey:   "kalem-" + option.ID,
+		IdempotencyKey:   "item-" + option.ID,
 		Items:            []service.FulfillmentItemInput{{LineItemID: "line_1", Quantity: 1}},
 	})
 	require.NoError(t, err)
@@ -772,36 +775,37 @@ func TestAyniSatirGonderideIkiKezYerAlamaz(t *testing.T) {
 	_, err = testPool.Pool().Exec(ctx,
 		`INSERT INTO fulfillment_items (id, fulfillment_id, line_item_id, quantity)
          VALUES ($1, $2, 'line_1', 1)`, models.NewFulfillmentItemID(), ful.ID)
-	require.Error(t, err, "aynı sipariş satırı iki kez yazılamamalı")
+	require.Error(t, err, "the same order line must not be writable twice")
 }
 
-// TestProfilSilmeAcikSecenekYazmasiniBekler kontrol-sonra-yaz yarışının
-// GERÇEK Postgres'te kapandığını doğrular.
+// TestProfileDeleteWaitsForAnOpenOptionWrite verifies that the check-then-write
+// race is closed on REAL Postgres.
 //
-// Regresyon: DeleteShippingProfile profili KİLİTSİZ okuyup sayıyor, sonra
-// yumuşak siliyordu. Yumuşak silme anahtar olmayan bir sütunu güncellediği için
-// FOR NO KEY UPDATE alır ve bu kilit, bir seçenek INSERT'ünün foreign key için
-// aldığı FOR KEY SHARE ile ÇAKIŞMAZ. Sonuç: açık bir INSERT işlemi varken silme
-// beklemeden tamamlanıyor, geriye silinmiş bir profile bağlı CANLI bir seçenek
-// kalıyordu.
+// Regression: DeleteShippingProfile used to read and count the profile WITHOUT A
+// LOCK and then soft-delete it. Because a soft delete updates a non-key column
+// it takes FOR NO KEY UPDATE, and that lock does NOT conflict with the FOR KEY
+// SHARE an option INSERT takes for the foreign key. The result: while an open
+// INSERT transaction existed the delete completed without waiting, leaving a
+// LIVE option bound to a deleted profile.
 //
-// Test o interleaving'i BİREBİR kurar: açık bir işlemde (henüz commit edilmemiş)
-// seçenek satırı yazılır — yani profil satırında yalnızca FK'nın FOR KEY SHARE
-// kilidi vardır — ve silme çağrılır. Düzeltmeden ÖNCE silme hatasız tamamlanır
-// ve profil NotFound olurdu; düzeltmeyle silme, satırı FOR UPDATE ile almaya
-// çalışıp BEKLER ve context süresi dolar.
-func TestProfilSilmeAcikSecenekYazmasiniBekler(t *testing.T) {
+// The test sets that interleaving up EXACTLY: the option row is written in an
+// open transaction (not committed yet) — that is, the profile row carries only
+// the FK's FOR KEY SHARE lock — and the delete is called. BEFORE the fix the
+// delete completed without error and the profile would be NotFound; with the fix
+// the delete tries to take the row with FOR UPDATE, WAITS, and the context times
+// out.
+func TestProfileDeleteWaitsForAnOpenOptionWrite(t *testing.T) {
 	ctx := context.Background()
-	svc, _ := yeniServis(t)
+	svc, _ := newService(t)
 
-	profile := yeniProfil(ctx, t, svc)
+	profile := newProfile(ctx, t, svc)
 
-	// A: seçenek INSERT'ü açık bir işlemde bekletilir.
+	// A: the option INSERT is held in an open transaction.
 	tx, err := testPool.Pool().Begin(ctx)
 	require.NoError(t, err)
 	defer func() {
 		if rbErr := tx.Rollback(ctx); rbErr != nil && !errors.Is(rbErr, pgx.ErrTxClosed) {
-			t.Logf("işlem geri alınamadı: %v", rbErr)
+			t.Logf("the transaction could not be rolled back: %v", rbErr)
 		}
 	}()
 
@@ -809,84 +813,84 @@ func TestProfilSilmeAcikSecenekYazmasiniBekler(t *testing.T) {
 	_, err = tx.Exec(ctx,
 		`INSERT INTO shipping_options
              (id, name, provider_id, shipping_profile_id, price_type, amount, currency_code, region_id)
-         VALUES ($1, 'yaris', $2, $3, 'flat', 2500, $4, $5)`,
-		optionID, manual.ID, profile.ID, testPara, testBolge)
+         VALUES ($1, 'race', $2, $3, 'flat', 2500, $4, $5)`,
+		optionID, manual.ID, profile.ID, testCurrency, testRegion)
 	require.NoError(t, err)
 
-	// B: aynı anda profili silmeye çalışan yönetici.
-	silmeCtx, iptal := context.WithTimeout(ctx, 2*time.Second)
-	defer iptal()
+	// B: the administrator trying to delete the profile at the same time.
+	deleteCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
 
-	silmeErr := svc.DeleteShippingProfile(silmeCtx, profile.ID)
-	require.Error(t, silmeErr,
-		"açık bir seçenek yazması varken profil silme tamamlanmamalı (kilit bekler)")
+	deleteErr := svc.DeleteShippingProfile(deleteCtx, profile.ID)
+	require.Error(t, deleteErr,
+		"the profile delete must not complete while an option write is open (it waits on the lock)")
 
 	require.NoError(t, tx.Commit(ctx))
 
-	// Asıl iddia: profil HÂLÂ canlıdır. Düzeltmeden önce burası NotFound'du ve
-	// geriye silinmiş bir profile bağlı canlı bir seçenek kalıyordu.
-	okunan, err := svc.GetShippingProfile(ctx, profile.ID)
-	require.NoError(t, err, "profil silinmemiş olmalı")
-	assert.Nil(t, okunan.DeletedAt)
+	// The real claim: the profile is STILL live. Before the fix this was NotFound
+	// and a live option bound to a deleted profile was left behind.
+	loaded, err := svc.GetShippingProfile(ctx, profile.ID)
+	require.NoError(t, err, "the profile must not have been deleted")
+	assert.Nil(t, loaded.DeletedAt)
 
-	// Ve silme artık doğru sebeple reddedilir.
+	// And the delete is now rejected for the right reason.
 	err = svc.DeleteShippingProfile(ctx, profile.ID)
 	require.Error(t, err)
-	assert.True(t, errors.IsConflict(err), "hata errors.Conflict olmalı: %v", err)
+	assert.True(t, errors.IsConflict(err), "the error must be errors.Conflict: %v", err)
 	assert.Equal(t, service.CodeProfileInUse, errors.CodeOf(err))
 }
 
-// TestProfiliSilinmisSecenekVitrindeGorunmez uygunluk sorgusunun ikinci
-// savunmasını doğrular.
+// TestOptionOfDeletedProfileIsHiddenInTheStorefront verifies the eligibility
+// query's second line of defense.
 //
-// Normal akışta böyle bir satır artık oluşamaz (yukarıdaki kilit), ama doğrudan
-// SQL çalıştıran bir bakım betiği üretebilir. Kargo kuralı ortadan kalkmış bir
-// profilin seçeneği vitrinde durmamalıdır.
-func TestProfiliSilinmisSecenekVitrindeGorunmez(t *testing.T) {
+// In the normal flow such a row can no longer come about (the lock above), but a
+// maintenance script running SQL directly can produce one. An option of a profile
+// whose shipping rule has vanished must not stand in the storefront.
+func TestOptionOfDeletedProfileIsHiddenInTheStorefront(t *testing.T) {
 	ctx := context.Background()
-	svc, _ := yeniServis(t)
+	svc, _ := newService(t)
 
-	profile := yeniProfil(ctx, t, svc)
-	option := yeniSecenek(ctx, t, svc, profile.ID, 2_500)
+	profile := newProfile(ctx, t, svc)
+	option := newOption(ctx, t, svc, profile.ID, 2_500)
 
-	oncesi, err := svc.ListShippingOptionsFor(ctx, service.ListOptionsInput{
-		RegionID:           testBolge,
-		CurrencyCode:       testPara,
+	before, err := svc.ListShippingOptionsFor(ctx, service.ListOptionsInput{
+		RegionID:           testRegion,
+		CurrencyCode:       testCurrency,
 		ShippingProfileIDs: []string{profile.ID},
 	})
 	require.NoError(t, err)
-	require.Len(t, oncesi, 1)
-	assert.Equal(t, option.ID, oncesi[0].Option.ID)
+	require.Len(t, before, 1)
+	assert.Equal(t, option.ID, before[0].Option.ID)
 
-	// Servis bu durumu üretmez; doğrudan SQL üretir.
+	// The service does not produce this state; direct SQL does.
 	_, err = testPool.Pool().Exec(ctx,
 		`UPDATE shipping_profiles SET deleted_at = now() WHERE id = $1`, profile.ID)
 	require.NoError(t, err)
 
-	sonrasi, err := svc.ListShippingOptionsFor(ctx, service.ListOptionsInput{
-		RegionID:           testBolge,
-		CurrencyCode:       testPara,
+	after, err := svc.ListShippingOptionsFor(ctx, service.ListOptionsInput{
+		RegionID:           testRegion,
+		CurrencyCode:       testCurrency,
 		ShippingProfileIDs: []string{profile.ID},
 	})
 	require.NoError(t, err)
-	assert.Empty(t, sonrasi, "profili silinmiş seçenek uygunluk listesine girmemeli")
+	assert.Empty(t, after, "an option whose profile is deleted must not enter the eligibility list")
 }
 
-// TestKalemAdediUstSiniriSemadaZorlanir para/adet kuralının UYGULAMA
-// KATMANINDAN bağımsız olarak da tutduğunu doğrular.
+// TestItemQuantityUpperBoundIsEnforcedInTheSchema verifies that the
+// money/quantity rule holds INDEPENDENTLY OF THE APPLICATION LAYER too.
 //
-// Servis aynı sınırı zaten uygular; buradaki kısıt son savunmadır ve doğrudan
-// SQL çalıştıran bir bakım betiğini de durdurur.
-func TestKalemAdediUstSiniriSemadaZorlanir(t *testing.T) {
+// The service already enforces the same bound; the constraint here is the last
+// line of defense and stops a maintenance script running SQL directly as well.
+func TestItemQuantityUpperBoundIsEnforcedInTheSchema(t *testing.T) {
 	ctx := context.Background()
-	svc, _ := yeniServis(t)
+	svc, _ := newService(t)
 
-	profile := yeniProfil(ctx, t, svc)
-	option := yeniSecenek(ctx, t, svc, profile.ID, 2_500)
+	profile := newProfile(ctx, t, svc)
+	option := newOption(ctx, t, svc, profile.ID, 2_500)
 	ful, err := svc.CreateFulfillment(ctx, service.CreateFulfillmentInput{
-		Reference:        testReferans,
+		Reference:        testReference,
 		ShippingOptionID: option.ID,
-		IdempotencyKey:   "adet-" + option.ID,
+		IdempotencyKey:   "quantity-" + option.ID,
 	})
 	require.NoError(t, err)
 
@@ -894,36 +898,36 @@ func TestKalemAdediUstSiniriSemadaZorlanir(t *testing.T) {
 		`INSERT INTO fulfillment_items (id, fulfillment_id, line_item_id, quantity)
          VALUES ($1, $2, 'line_1', $3)`,
 		models.NewFulfillmentItemID(), ful.ID, models.MaxQuantity+1)
-	require.Error(t, err, "üst sınırı aşan adet şemaya yazılamamalı")
+	require.Error(t, err, "a quantity above the upper bound must not be writable to the schema")
 
 	_, err = testPool.Pool().Exec(ctx,
 		`INSERT INTO fulfillment_items (id, fulfillment_id, line_item_id, quantity)
          VALUES ($1, $2, 'line_2', $3)`,
 		models.NewFulfillmentItemID(), ful.ID, models.MaxQuantity)
-	require.NoError(t, err, "sınırdaki adet yazılabilmeli")
+	require.NoError(t, err, "a quantity at the bound must be writable")
 }
 
-// TestGonderisiOlanSecenekFizikselSilinemez yumuşak silmenin neden zorunlu
-// olduğunu doğrular.
+// TestOptionWithShipmentsCannotBeHardDeleted verifies why the soft delete is
+// mandatory.
 //
-// ON DELETE RESTRICT, geçmişi olan bir seçeneğin kaydını korur; servis bu
-// yüzden yalnızca yumuşak silme sunar.
-func TestGonderisiOlanSecenekFizikselSilinemez(t *testing.T) {
+// ON DELETE RESTRICT protects the record of an option that has a history; this
+// is why the service offers only a soft delete.
+func TestOptionWithShipmentsCannotBeHardDeleted(t *testing.T) {
 	ctx := context.Background()
-	svc, _ := yeniServis(t)
+	svc, _ := newService(t)
 
-	profile := yeniProfil(ctx, t, svc)
-	option := yeniSecenek(ctx, t, svc, profile.ID, 2_500)
+	profile := newProfile(ctx, t, svc)
+	option := newOption(ctx, t, svc, profile.ID, 2_500)
 	_, err := svc.CreateFulfillment(ctx, service.CreateFulfillmentInput{
-		Reference:        testReferans,
+		Reference:        testReference,
 		ShippingOptionID: option.ID,
 		IdempotencyKey:   "restrict-" + option.ID,
 	})
 	require.NoError(t, err)
 
 	_, err = testPool.Pool().Exec(ctx, `DELETE FROM shipping_options WHERE id = $1`, option.ID)
-	require.Error(t, err, "gönderisi olan seçenek fiziksel olarak silinememeli")
+	require.Error(t, err, "an option that has shipments must not be hard deleted")
 
 	require.NoError(t, svc.DeleteShippingOption(ctx, option.ID),
-		"yumuşak silme her zaman mümkün olmalı")
+		"the soft delete must always be possible")
 }

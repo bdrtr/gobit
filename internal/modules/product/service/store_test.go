@@ -13,24 +13,25 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/product/service"
 )
 
-// storeFixture vitrin testlerinin ortak kurulumudur: iki yayında ürün, ikisinin
-// de birer varyantı ve varyantlara karşılık gelen sahte fiyat/stok kayıtları.
+// storeFixture is the shared setup of the storefront tests: two published
+// products, each with one variant, and the fake price/stock records that
+// correspond to those variants.
 type storeFixture struct {
 	svc      *service.Service
 	graph    *fakeGraph
 	products []models.Product
 }
 
-// newStoreFixture yayında iki ürün kurar ve Query katmanının döneceği kayıtları
-// varyant kimliklerine göre hazırlar.
+// newStoreFixture sets up two published products and prepares the records the
+// Query layer will return, keyed by variant id.
 func newStoreFixture(t *testing.T) storeFixture {
 	t.Helper()
 
 	graph := &fakeGraph{}
 	svc := newService(t, newMemStore(), newFakeLinker(), graph)
 
-	first := seedProduct(t, svc, "tisort", "Tişört")
-	second := seedProduct(t, svc, "pantolon", "Pantolon")
+	first := seedProduct(t, svc, "shirt", "Shirt")
+	second := seedProduct(t, svc, "trousers", "Trousers")
 
 	graph.records = []query.Record{
 		{
@@ -48,8 +49,9 @@ func newStoreFixture(t *testing.T) storeFixture {
 	return storeFixture{svc: svc, graph: graph, products: []models.Product{first, second}}
 }
 
-// TestListStoreProductsIncludesPriceAndInventory Faz 4 DoD'sinin kalbini
-// doğrular: vitrin listesi ürünleri FİYAT ve STOK bilgisiyle döner.
+// TestListStoreProductsIncludesPriceAndInventory verifies the heart of the
+// Phase 4 DoD: the storefront list returns the products with PRICE and STOCK
+// information.
 func TestListStoreProductsIncludesPriceAndInventory(t *testing.T) {
 	t.Parallel()
 
@@ -64,26 +66,26 @@ func TestListStoreProductsIncludesPriceAndInventory(t *testing.T) {
 		byHandle[result.Items[i].Handle] = result.Items[i]
 	}
 
-	tisort := byHandle["tisort"]
-	require.Len(t, tisort.Variants, 1)
-	require.NotNil(t, tisort.Variants[0].PriceSet, "fiyat kümesi varyanta iliştirilmeli")
-	assert.Equal(t, int64(19900), tisort.Variants[0].PriceSet["amount"],
-		"fiyat tam sayı minor unit olarak taşınmalı")
-	require.NotNil(t, tisort.Variants[0].InventoryItem, "stok kalemi varyanta iliştirilmeli")
-	assert.Equal(t, int64(7), tisort.Variants[0].InventoryItem["stocked_quantity"])
+	shirt := byHandle["shirt"]
+	require.Len(t, shirt.Variants, 1)
+	require.NotNil(t, shirt.Variants[0].PriceSet, "the price set should be attached to the variant")
+	assert.Equal(t, int64(19900), shirt.Variants[0].PriceSet["amount"],
+		"the price should be carried as an integer minor unit")
+	require.NotNil(t, shirt.Variants[0].InventoryItem, "the stock item should be attached to the variant")
+	assert.Equal(t, int64(7), shirt.Variants[0].InventoryItem["stocked_quantity"])
 
-	pantolon := byHandle["pantolon"]
-	require.Len(t, pantolon.Variants, 1)
-	assert.Equal(t, "pset_2", pantolon.Variants[0].PriceSet["id"])
-	assert.Nil(t, pantolon.Variants[0].InventoryItem,
-		"stok bağı olmayan varyantta alan boş kalmalı")
+	trousers := byHandle["trousers"]
+	require.Len(t, trousers.Variants, 1)
+	assert.Equal(t, "pset_2", trousers.Variants[0].PriceSet["id"])
+	assert.Nil(t, trousers.Variants[0].InventoryItem,
+		"the field should stay empty on a variant with no stock link")
 }
 
-// TestListStoreProductsUsesSingleGraphCall zenginleştirmenin TEK bir Query
-// çağrısıyla yapıldığını ve spec'in link sözleşmesine uyduğunu doğrular.
+// TestListStoreProductsUsesSingleGraphCall verifies that the enrichment is done
+// with a SINGLE Query call and that the spec follows the link contract.
 //
-// Bu test N+1'in yokluğunun kanıtıdır: iki ürün ve iki varyant için Query tam
-// olarak bir kez çağrılır.
+// This test is the proof that there is no N+1: for two products and two variants
+// Query is called exactly once.
 func TestListStoreProductsUsesSingleGraphCall(t *testing.T) {
 	t.Parallel()
 
@@ -92,11 +94,11 @@ func TestListStoreProductsUsesSingleGraphCall(t *testing.T) {
 	_, err := fx.svc.ListStoreProducts(context.Background(), service.StoreListOptions{})
 	require.NoError(t, err)
 
-	assert.Equal(t, 1, fx.graph.callCount(), "varyant sayısı ne olursa olsun tek graph çağrısı yapılmalı")
+	assert.Equal(t, 1, fx.graph.callCount(), "whatever the number of variants, a single graph call should be made")
 
 	spec := fx.graph.lastSpec(t)
 	assert.Equal(t, service.EntityVariant, spec.Entity,
-		"genişletmenin kökü varyanttır; link'ler varyant kimliğiyle kurulur")
+		"the root of the expansion is the variant; the links are made with the variant id")
 	require.Len(t, spec.Expand, 2)
 	assert.Equal(t, service.LinkVariantPriceSet, spec.Expand[0].Link)
 	assert.Equal(t, "price_set", spec.Expand[0].As)
@@ -104,12 +106,12 @@ func TestListStoreProductsUsesSingleGraphCall(t *testing.T) {
 	assert.Equal(t, "inventory_item", spec.Expand[1].As)
 
 	ids, ok := spec.Filters["ids"].([]string)
-	require.True(t, ok, "filtre varyant kimliklerini dizge dilimi olarak taşımalı: %#v", spec.Filters)
-	assert.Len(t, ids, 2, "her iki ürünün varyantı da tek çağrıda sorulmalı")
+	require.True(t, ok, "the filter should carry the variant ids as a string slice: %#v", spec.Filters)
+	assert.Len(t, ids, 2, "the variants of both products should be asked for in a single call")
 }
 
-// TestListStoreProductsHidesUnpublished vitrinin yalnızca yayındaki ürünleri
-// gösterdiğini doğrular.
+// TestListStoreProductsHidesUnpublished verifies that the storefront shows only
+// the published products.
 func TestListStoreProductsHidesUnpublished(t *testing.T) {
 	t.Parallel()
 
@@ -118,36 +120,38 @@ func TestListStoreProductsHidesUnpublished(t *testing.T) {
 	ctx := context.Background()
 
 	_, err := svc.CreateProduct(ctx, service.CreateProductInput{
-		Handle: "taslak", Title: "Taslak", Status: models.StatusDraft,
+		Handle: "draft-one", Title: "Draft", Status: models.StatusDraft,
 	})
 	require.NoError(t, err)
 	_, err = svc.CreateProduct(ctx, service.CreateProductInput{
-		Handle: "arsiv", Title: "Arşiv", Status: models.StatusArchived,
+		Handle: "archived-one", Title: "Archived", Status: models.StatusArchived,
 	})
 	require.NoError(t, err)
-	seedProduct(t, svc, "tisort", "Tişört")
+	seedProduct(t, svc, "shirt", "Shirt")
 
 	result, err := svc.ListStoreProducts(ctx, service.StoreListOptions{})
 	require.NoError(t, err)
-	require.Len(t, result.Items, 1, "yalnızca yayındaki ürün listelenmeli")
-	assert.Equal(t, "tisort", result.Items[0].Handle)
-	assert.Equal(t, 1, sayac(t, result), "count da yalnızca yayındakileri saymalı")
+	require.Len(t, result.Items, 1, "only the published product should be listed")
+	assert.Equal(t, "shirt", result.Items[0].Handle)
+	assert.Equal(t, 1, requireCount(t, result), "the count should count only the published ones too")
 }
 
-// TestGetStoreProductByHandle vitrin ucunun handle ile de çalıştığını doğrular.
+// TestGetStoreProductByHandle verifies that the storefront endpoint works with a
+// handle as well.
 func TestGetStoreProductByHandle(t *testing.T) {
 	t.Parallel()
 
 	fx := newStoreFixture(t)
 
-	product, err := fx.svc.GetStoreProduct(context.Background(), "tisort", nil)
+	product, err := fx.svc.GetStoreProduct(context.Background(), "shirt", nil)
 	require.NoError(t, err)
-	assert.Equal(t, "tisort", product.Handle)
+	assert.Equal(t, "shirt", product.Handle)
 	require.Len(t, product.Variants, 1)
 	assert.Equal(t, "pset_1", product.Variants[0].PriceSet["id"])
 }
 
-// TestGetStoreProductByID vitrin ucunun kimlikle de çalıştığını doğrular.
+// TestGetStoreProductByID verifies that the storefront endpoint works with an id
+// as well.
 func TestGetStoreProductByID(t *testing.T) {
 	t.Parallel()
 
@@ -158,8 +162,8 @@ func TestGetStoreProductByID(t *testing.T) {
 	assert.Equal(t, fx.products[0].ID, product.ID)
 }
 
-// TestGetStoreProductHidesDraft yayında olmayan ürünün vitrinde
-// BULUNAMADI döndüğünü doğrular.
+// TestGetStoreProductHidesDraft verifies that a product that is not published
+// returns NOT FOUND in the storefront.
 func TestGetStoreProductHidesDraft(t *testing.T) {
 	t.Parallel()
 
@@ -167,84 +171,86 @@ func TestGetStoreProductHidesDraft(t *testing.T) {
 	ctx := context.Background()
 
 	draft, err := svc.CreateProduct(ctx, service.CreateProductInput{
-		Handle: "taslak", Title: "Taslak", Status: models.StatusDraft,
+		Handle: "draft-one", Title: "Draft", Status: models.StatusDraft,
 	})
 	require.NoError(t, err)
 
 	_, err = svc.GetStoreProduct(ctx, draft.ID, nil)
 	require.Error(t, err)
-	assert.True(t, errors.IsNotFound(err), "taslak ürün vitrinde bulunamamalı: %v", err)
+	assert.True(t, errors.IsNotFound(err), "a draft product should not be findable in the storefront: %v", err)
 }
 
-// TestListStoreProductsDegradesWhenProviderMissing pricing/inventory kayıtlı
-// olmadığında listelemenin HATA VERMEDİĞİNİ, yalnızca fiyat/stok alanlarının
-// boş kaldığını doğrular.
+// TestListStoreProductsDegradesWhenProviderMissing verifies that when
+// pricing/inventory is not registered the listing DOES NOT FAIL and only the
+// price/stock fields stay empty.
 func TestListStoreProductsDegradesWhenProviderMissing(t *testing.T) {
 	t.Parallel()
 
 	graph := &fakeGraph{err: errors.NotFound("query_provider_not_found",
-		"\"pricing\" entity'si için sorgu sağlayıcısı bulunamadı")}
+		"no query provider was found for the \"pricing\" entity")}
 	svc := newService(t, newMemStore(), newFakeLinker(), graph)
 	ctx := context.Background()
-	seedProduct(t, svc, "tisort", "Tişört")
+	seedProduct(t, svc, "shirt", "Shirt")
 
 	result, err := svc.ListStoreProducts(ctx, service.StoreListOptions{})
-	require.NoError(t, err, "eksik modül katalogu düşürmemeli")
+	require.NoError(t, err, "a missing module should not fail the catalog")
 	require.Len(t, result.Items, 1)
 	require.Len(t, result.Items[0].Variants, 1)
-	assert.Nil(t, result.Items[0].Variants[0].PriceSet, "fiyat alanı boş kalmalı")
-	assert.Nil(t, result.Items[0].Variants[0].InventoryItem, "stok alanı boş kalmalı")
+	assert.Nil(t, result.Items[0].Variants[0].PriceSet, "the price field should stay empty")
+	assert.Nil(t, result.Items[0].Variants[0].InventoryItem, "the stock field should stay empty")
 }
 
-// TestListStoreProductsPropagatesProviderNotFound KAYITLI bir sağlayıcının
-// ürettiği NotFound'un yutulmadığını doğrular.
+// TestListStoreProductsPropagatesProviderNotFound verifies that a NotFound
+// produced by a REGISTERED provider is not swallowed.
 //
-// "Sağlayıcı kayıtlı değil" ile "sağlayıcı bulunamadı dedi" aynı SINIFTAN
-// (NotFound) hatalardır ama farklı olaylardır: ilki kurulum gerçeğidir, ikincisi
-// arızadır. Sınıfa bakan bir düşüş ikincisini de yutar ve vitrin, tek bir log
-// satırı dışında hiçbir iz bırakmadan fiyatsız 200 döner.
+// "The provider is not registered" and "the provider said not found" are errors
+// of the same KIND (NotFound) but they are different events: the first is a
+// setup fact, the second is a fault. A fallback that looks at the kind swallows
+// the second one too and the storefront returns 200 without prices, leaving no
+// trace beyond a single log line.
 func TestListStoreProductsPropagatesProviderNotFound(t *testing.T) {
 	t.Parallel()
 
 	graph := &fakeGraph{err: errors.NotFound("query_provider_failed",
-		"\"price_set\" sağlayıcısının FetchByIDs çağrısı başarısız oldu")}
+		"the FetchByIDs call of the \"price_set\" provider failed")}
 	svc := newService(t, newMemStore(), newFakeLinker(), graph)
 	ctx := context.Background()
-	seedProduct(t, svc, "tisort", "Tişört")
+	seedProduct(t, svc, "shirt", "Shirt")
 
 	_, err := svc.ListStoreProducts(ctx, service.StoreListOptions{})
-	require.Error(t, err, "kayıtlı sağlayıcının hatası sessizce yutulmamalı")
+	require.Error(t, err, "the error of a registered provider should not be swallowed silently")
 	assert.Equal(t, "product_query_failed", errors.CodeOf(err))
-	assert.True(t, errors.IsNotFound(err), "hata sınıfı korunmalı: %v", err)
+	assert.True(t, errors.IsNotFound(err), "the error kind should be preserved: %v", err)
 }
 
-// TestListStoreProductsPropagatesQueryFailure geçici bir Query hatasının
-// SESSİZCE YUTULMADIĞINI doğrular.
+// TestListStoreProductsPropagatesQueryFailure verifies that a transient Query
+// failure is NOT SWALLOWED SILENTLY.
 //
-// Ayrım kritiktir: "sağlayıcı kayıtlı değil" bir kurulum gerçeğidir ve katalog
-// onsuz da anlamlıdır; "veritabanı erişilemez" ise geçici bir arızadır ve
-// fiyatsız bir vitrin sayfası doğru sonuç gibi önbelleğe girmemelidir.
+// The distinction is critical: "the provider is not registered" is a setup fact
+// and the catalog is meaningful without it; "the database is unreachable" is a
+// transient fault and a storefront page without prices should not enter the
+// cache as a correct result.
 func TestListStoreProductsPropagatesQueryFailure(t *testing.T) {
 	t.Parallel()
 
-	graph := &fakeGraph{err: errors.Unavailable("query_link_failed", "link tablosu okunamadı")}
+	graph := &fakeGraph{err: errors.Unavailable("query_link_failed", "the link table could not be read")}
 	svc := newService(t, newMemStore(), newFakeLinker(), graph)
 	ctx := context.Background()
-	seedProduct(t, svc, "tisort", "Tişört")
+	seedProduct(t, svc, "shirt", "Shirt")
 
 	_, err := svc.ListStoreProducts(ctx, service.StoreListOptions{})
 	require.Error(t, err)
-	assert.True(t, errors.HasKind(err, errors.KindUnavailable), "hata sınıfı korunmalı: %v", err)
+	assert.True(t, errors.HasKind(err, errors.KindUnavailable), "the error kind should be preserved: %v", err)
 }
 
-// TestListStoreProductsWithoutQueryLayer Query katmanı hiç verilmemişken
-// listelemenin çalıştığını doğrular (modül tek başına dağıtılabilir).
+// TestListStoreProductsWithoutQueryLayer verifies that the listing works while
+// no Query layer was given at all (the module is deployable on its own).
 func TestListStoreProductsWithoutQueryLayer(t *testing.T) {
 	t.Parallel()
 
 	svc := newService(t, newMemStore(), newFakeLinker(), nil)
 	ctx := context.Background()
-	seedProduct(t, svc, "tisort", "Tişört")
+	seedProduct(t, svc, "shirt", "Shirt")
 
 	result, err := svc.ListStoreProducts(ctx, service.StoreListOptions{})
 	require.NoError(t, err)
@@ -252,8 +258,8 @@ func TestListStoreProductsWithoutQueryLayer(t *testing.T) {
 	assert.Nil(t, result.Items[0].Variants[0].PriceSet)
 }
 
-// TestListStoreProductsSkipsGraphWhenNoVariants varyantı olmayan katalogda
-// Query katmanına hiç gidilmediğini doğrular.
+// TestListStoreProductsSkipsGraphWhenNoVariants verifies that on a catalog with
+// no variants the Query layer is not visited at all.
 func TestListStoreProductsSkipsGraphWhenNoVariants(t *testing.T) {
 	t.Parallel()
 
@@ -262,7 +268,7 @@ func TestListStoreProductsSkipsGraphWhenNoVariants(t *testing.T) {
 	ctx := context.Background()
 
 	_, err := svc.CreateProduct(ctx, service.CreateProductInput{
-		Handle: "tisort", Title: "Tişört", Status: models.StatusPublished,
+		Handle: "shirt", Title: "Shirt", Status: models.StatusPublished,
 	})
 	require.NoError(t, err)
 
@@ -270,72 +276,74 @@ func TestListStoreProductsSkipsGraphWhenNoVariants(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, result.Items, 1)
 	assert.Empty(t, result.Items[0].Variants)
-	assert.Zero(t, graph.callCount(), "genişletilecek varyant yoksa Query'ye gidilmemeli")
+	assert.Zero(t, graph.callCount(), "if there is no variant to expand, Query should not be visited")
 }
 
-// TestListStoreProductsSkipCountSorguyuHicCalistirmaz SkipCount'un bir
-// SÜZGEÇ değil, SORGUNUN İPTALİ olduğunu doğrular.
+// TestListStoreProductsSkipCountRunsNoCountQuery verifies that SkipCount is not
+// a FILTER but the CANCELLATION OF THE QUERY.
 //
-// İddia bilinçli olarak sonucun alanına değil DEPOYA bakar. "Count nil geldi"
-// demek yetmezdi: sayacı hesaplayıp sonucu atan bir uygulama da o iddiayı
-// geçer ve tek kazanç olan şeyi — 52.004 ürünlük katalogta 64,07 ms'lik
-// sorguyu hiç sormamayı — sessizce kaybederdi. Ölçülen kazanç sorgunun
-// yokluğundandır, alanın boşluğundan değil.
-func TestListStoreProductsSkipCountSorguyuHicCalistirmaz(t *testing.T) {
+// The assertion deliberately looks not at the field of the result but at THE
+// REPOSITORY. "Count came back nil" would not be enough: an implementation that
+// computes the count and throws the result away passes that assertion too and
+// would silently lose the only gain there is — not asking the 64.07 ms query at
+// all on a catalog of 52,004 products. The measured gain comes from the absence
+// of the query, not from the emptiness of the field.
+func TestListStoreProductsSkipCountRunsNoCountQuery(t *testing.T) {
 	t.Parallel()
 
 	store := newMemStore()
 	svc := newService(t, store, newFakeLinker(), &fakeGraph{})
 	ctx := context.Background()
 
-	seedProduct(t, svc, "tisort", "Tişört")
+	seedProduct(t, svc, "shirt", "Shirt")
 
-	sayan, err := svc.ListStoreProducts(ctx, service.StoreListOptions{})
+	counted, err := svc.ListStoreProducts(ctx, service.StoreListOptions{})
 	require.NoError(t, err)
-	assert.Equal(t, 1, sayac(t, sayan), "varsayılan hâlâ saymalı")
+	assert.Equal(t, 1, requireCount(t, counted), "the default should still count")
 
-	sayarakCagri := store.callCount("CountProducts")
-	require.Positive(t, sayarakCagri, "varsayılan sayaç sorgusunu çalıştırmalı")
+	countingCalls := store.callCount("CountProducts")
+	require.Positive(t, countingCalls, "the default should run the count query")
 
-	saymayan, err := svc.ListStoreProducts(ctx, service.StoreListOptions{SkipCount: true})
+	uncounted, err := svc.ListStoreProducts(ctx, service.StoreListOptions{SkipCount: true})
 	require.NoError(t, err)
 
-	assert.Nil(t, saymayan.Count,
-		"sayılmadıysa alan nil olmalı; 0 \"eşleşme yok\" ile karışırdı")
-	assert.Len(t, saymayan.Items, 1,
-		"sayacı kapatmak LİSTEYİ etkilememeli")
-	assert.Equal(t, sayarakCagri, store.callCount("CountProducts"),
-		"SkipCount ile sayaç sorgusu HİÇ çalıştırılmamalı")
+	assert.Nil(t, uncounted.Count,
+		"if it was not counted the field should be nil; 0 would be confused with \"no match\"")
+	assert.Len(t, uncounted.Items, 1,
+		"turning the count off should not affect THE LIST")
+	assert.Equal(t, countingCalls, store.callCount("CountProducts"),
+		"with SkipCount the count query should NEVER be run")
 }
 
-// TestListStoreProductsSkipCountSayfayiAynenBirakir sayacın kapatılmasının
-// sayfadaki KAYITLARIN TAMAMINI olduğu gibi bıraktığını doğrular.
+// TestListStoreProductsSkipCountLeavesThePageUnchanged verifies that turning the
+// count off leaves ALL OF THE RECORDS on the page exactly as they were.
 //
-// Sayfalama, ilişkiler ve sayaç aynı çağrıdan çıkar; birini kapatmanın
-// ötekilere dokunması sessiz olurdu. Karşılaştırma bilinçli olarak handle
-// listesi değil KAYITLARIN KENDİSİDİR: yalnızca handle'lara bakan bir iddia,
-// sayaçla birlikte varyantları da düşüren bir "iyileştirmeyi" geçirirdi
-// (denendi — handle karşılaştırması hayatta kalıyor, kayıt karşılaştırması
-// düşürüyor). Vitrin ürününün asıl içeriği fiyat ve stok taşıyan
-// varyantlarıdır; onlar boşalırsa sayfa aynı görünür ama işe yaramaz.
-func TestListStoreProductsSkipCountSayfayiAynenBirakir(t *testing.T) {
+// The paging, the relations and the count come out of the same call; one of them
+// touching the others would be silent. The comparison is deliberately not the
+// handle list but THE RECORDS THEMSELVES: an assertion that only looks at the
+// handles would let through an "improvement" that drops the variants along with
+// the count (it was tried — the handle comparison survives it, the record
+// comparison fails it). The real content of a storefront product is its variants
+// carrying price and stock; if they empty out the page looks the same but is
+// useless.
+func TestListStoreProductsSkipCountLeavesThePageUnchanged(t *testing.T) {
 	t.Parallel()
 
 	fx := newStoreFixture(t)
 	ctx := context.Background()
 
-	sayan, err := fx.svc.ListStoreProducts(ctx, service.StoreListOptions{Limit: 1, Offset: 1})
+	counted, err := fx.svc.ListStoreProducts(ctx, service.StoreListOptions{Limit: 1, Offset: 1})
 	require.NoError(t, err)
-	require.Len(t, sayan.Items, 1)
-	require.NotEmpty(t, sayan.Items[0].Variants,
-		"düzenek zenginleştirilmiş varyant döndürmeli; yoksa aşağıdaki iddia boşalır")
+	require.Len(t, counted.Items, 1)
+	require.NotEmpty(t, counted.Items[0].Variants,
+		"the fixture should return an enriched variant; otherwise the assertion below is empty")
 
-	saymayan, err := fx.svc.ListStoreProducts(ctx,
+	uncounted, err := fx.svc.ListStoreProducts(ctx,
 		service.StoreListOptions{Limit: 1, Offset: 1, SkipCount: true})
 	require.NoError(t, err)
 
-	assert.Equal(t, sayan.Items, saymayan.Items,
-		"sayacı kapatmak sayfanın kayıtlarını (varyant, fiyat, stok dâhil) değiştirmemeli")
-	assert.Equal(t, sayan.Limit, saymayan.Limit)
-	assert.Equal(t, sayan.Offset, saymayan.Offset)
+	assert.Equal(t, counted.Items, uncounted.Items,
+		"turning the count off should not change the records of the page (variants, price and stock included)")
+	assert.Equal(t, counted.Limit, uncounted.Limit)
+	assert.Equal(t, counted.Offset, uncounted.Offset)
 }

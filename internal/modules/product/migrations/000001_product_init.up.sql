@@ -1,16 +1,18 @@
--- product modülünün şeması (Faz 4 — Katalog).
+-- Schema of the product module (Phase 4 — Catalog).
 --
--- Konvansiyonlar (plan Bölüm 8):
---   * Kimlikler önekli metindir (prod_, variant_, popt_, poptval_, ...) ve
---     uygulama tarafından üretilir; veritabanı sıra/UUID üretmez.
---   * Zaman UTC'dir: created_at / updated_at / deleted_at. Silme SOFT'tur;
---     tüm okuma sorguları deleted_at IS NULL filtresi uygular.
---   * Benzersizlik KISMİ indeksle kurulur (WHERE deleted_at IS NULL): silinmiş
---     bir kaydın handle'ı yeni kaydın önünü tıkamamalıdır.
---   * Modül İÇİ foreign key serbesttir ve kullanılır. Başka modülün tablosuna
---     REFERENCES VERİLMEZ (Prensip 2.2): varyantın fiyatı ve stoğu link
---     tablolarında yaşar (product_variant_price_set, product_variant_inventory).
---   * Para birimi ya da tutar bu modülde YOKTUR; fiyat pricing modülünündür.
+-- Conventions (plan Section 8):
+--   * Identifiers are prefixed text (prod_, variant_, popt_, poptval_, ...) and
+--     are produced by the application; the database generates no sequence/UUID.
+--   * Time is UTC: created_at / updated_at / deleted_at. Deletion is SOFT; every
+--     read query applies the deleted_at IS NULL filter.
+--   * Uniqueness is established with a PARTIAL index (WHERE deleted_at IS NULL):
+--     a deleted record's handle must not block the way of a new record.
+--   * A foreign key WITHIN the module is free and is used. NO REFERENCES ARE
+--     GIVEN to another module's table (Principle 2.2): a variant's price and
+--     stock live in link tables (product_variant_price_set,
+--     product_variant_inventory).
+--   * There is NO currency or amount in this module; the price belongs to the
+--     pricing module.
 
 CREATE TABLE IF NOT EXISTS product_collection (
     id         text PRIMARY KEY,
@@ -30,7 +32,7 @@ CREATE TABLE IF NOT EXISTS product_category (
     name        text        NOT NULL,
     handle      text        NOT NULL,
     description text,
-    -- Kendine referans: kategori ağacı aynı modülün içindedir.
+    -- Self-reference: the category tree is inside the same module.
     parent_id   text REFERENCES product_category (id) ON DELETE SET NULL,
     is_active   boolean     NOT NULL DEFAULT true,
     is_internal boolean     NOT NULL DEFAULT false,
@@ -67,8 +69,9 @@ CREATE TABLE IF NOT EXISTS product (
         CONSTRAINT product_status_check CHECK (status IN ('draft', 'published', 'archived')),
     is_giftcard    boolean     NOT NULL DEFAULT false,
     discountable   boolean     NOT NULL DEFAULT true,
-    -- Ağırlık gram, ölçüler milimetredir: plan Bölüm 8'in tam sayı kuralı
-    -- yalnızca para için değil, ölçüler için de kayan noktayı dışarıda tutar.
+    -- Weight is in grams, dimensions are in millimeters: the integer rule of
+    -- plan Section 8 keeps floating point out not only for money but for
+    -- dimensions too.
     weight         integer,
     length         integer,
     height         integer,
@@ -88,8 +91,8 @@ CREATE INDEX IF NOT EXISTS product_status_idx
     ON product (status) WHERE deleted_at IS NULL;
 CREATE INDEX IF NOT EXISTS product_collection_idx
     ON product (collection_id) WHERE deleted_at IS NULL;
--- Listeleme sırası (created_at DESC, id DESC) ile aynı indeks: sayfalama
--- kalıcı sıra ister, id ikinci anahtar olarak eşitliği bozar.
+-- The same index as the listing order (created_at DESC, id DESC): pagination
+-- wants a stable order, and id as the second key breaks the tie.
 CREATE INDEX IF NOT EXISTS product_created_at_idx
     ON product (created_at DESC, id DESC) WHERE deleted_at IS NULL;
 
@@ -146,12 +149,13 @@ CREATE INDEX IF NOT EXISTS product_option_value_option_idx
 CREATE UNIQUE INDEX IF NOT EXISTS product_option_value_uniq
     ON product_option_value (option_id, value) WHERE deleted_at IS NULL;
 
--- Varyantın seçenek değerleriyle ilişkisi.
+-- The relation of a variant to its option values.
 --
--- Birincil anahtarın (variant_id, option_id) olması kuralı şemaya yazar: bir
--- varyant aynı seçenekten YALNIZCA BİR değer taşır ("Beden: S" ve "Beden: M"
--- aynı varyantta olamaz). Bu, uygulama katmanında "önce oku sonra yaz" ile
--- korunsaydı eşzamanlı iki istek arasından kaçardı.
+-- Making the primary key (variant_id, option_id) writes the rule into the
+-- schema: a variant carries ONLY ONE value from the same option ("Size: S" and
+-- "Size: M" cannot be on the same variant). Had this been guarded in the
+-- application layer with "read first, then write", it would have escaped
+-- between two concurrent requests.
 CREATE TABLE IF NOT EXISTS product_variant_option_value (
     variant_id text        NOT NULL REFERENCES product_variant (id) ON DELETE CASCADE,
     option_id  text        NOT NULL REFERENCES product_option (id) ON DELETE CASCADE,

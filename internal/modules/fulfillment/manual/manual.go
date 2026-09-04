@@ -1,54 +1,59 @@
-// Package manual gerçek bir ağ çağrısı yapmayan test/manuel kargo
-// sağlayıcısıdır (plan Faz 7).
+// Package manual is the test/manual fulfillment provider that makes no real
+// network call (plan Phase 7).
 //
-// [Provider], internal/core/provider'daki FulfillmentProvider sözleşmesini
-// karşılar ve o sözleşmenin godoc'unda yazılı şartları yerine getirir:
+// [Provider] satisfies the FulfillmentProvider contract in
+// internal/core/provider and meets the conditions written in that contract's
+// godoc:
 //
-//   - [Provider.Quote] YAN ETKİSİZDİR: hiçbir şey yazmaz, defteri okumaz ve
-//     aynı girdi için daima aynı ücreti döner. Sepet toplamı hesaplanırken
-//     defalarca çağrılabilir.
-//   - Aynı IdempotencyKey ile ikinci [Provider.Create] YENİ gönderi açmaz,
-//     mevcut gönderiyi döner.
-//   - [Provider.Cancel] saga telafisidir ve İDEMPOTENTTİR: iki kez iptal
-//     edilen bir gönderi ikinci çağrıda hata vermez.
+//   - [Provider.Quote] HAS NO SIDE EFFECTS: it writes nothing, does not read
+//     the ledger and always returns the same fee for the same input. It may be
+//     called over and over while a cart total is being computed.
+//   - A second [Provider.Create] with the same IdempotencyKey does NOT open a
+//     new shipment, it returns the existing one.
+//   - [Provider.Cancel] is the saga compensation and it is IDEMPOTENT: a
+//     shipment that is canceled twice does not fail on the second call.
 //
-// # Durum neden VERİTABANINDA tutulur
+// # Why the state is kept IN THE DATABASE
 //
-// Karar payment modülündeki manuel sağlayıcıyla AYNIDIR ve aynı gerekçelere
-// dayanır. Bellekte tutulan bir defter, sürecin her yeniden başlatılışında
-// sıfırlanırdı; bedeli üç yerde ödenirdi:
+// The decision is THE SAME as for the manual provider in the payment module and
+// rests on the same grounds. A ledger kept in memory would be reset on every
+// restart of the process; the price would be paid in three places:
 //
-//   - e2e akışları (internal/e2e) ve Faz 9 yük testi, süreç yeniden
-//     başladığında AÇILMIŞ bir gönderiyi bulabilmelidir; aksi hâlde kargo
-//     adımı "gönderi bulunamadı" ile düşer.
-//   - Saga telafisi tam da sürecin düştüğü senaryoda çalışmalıdır. Belleğe
-//     dayanan bir sağlayıcıda Cancel, yeniden başlatma sonrası hiçbir zaman
-//     çalışamaz ve basılmış bir kargo etiketi sonsuza kadar açık kalırdı.
-//   - Birden çok süreç (ya da yatay ölçek) aynı gönderiyi görmezdi; sağlayıcı
-//     yalnızca tek örnekli çalışan bir sunucuda doğru davranırdı.
+//   - The e2e flows (internal/e2e) and the Phase 9 load test have to be able to
+//     find an OPENED shipment after the process restarts; otherwise the
+//     fulfillment step fails with "shipment not found".
+//   - The saga compensation has to run in exactly the scenario where the
+//     process went down. In a memory-backed provider Cancel could never run
+//     after a restart and a shipping label that had been printed would stay
+//     open forever.
+//   - Multiple processes (or horizontal scaling) would not see the same
+//     shipment; the provider would only behave correctly on a server running as
+//     a single instance.
 //
-// Gerçek bir kargo firmasının durumu da kendi sistemindedir ve süreç yeniden
-// başlatmalarından etkilenmez; taklit bu yüzden kalıcı olmalıdır.
+// A real carrier's state also lives in its own system and is unaffected by
+// process restarts; the imitation therefore has to be durable.
 //
-// [Provider.Quote] BU KURALIN DIŞINDADIR ve hiçbir şey saklamaz — saklasaydı
-// yan etkisiz olmazdı. Fiyat, seçeneğin yapılandırmasından ve sepet
-// bağlamından SAF olarak hesaplanır.
+// [Provider.Quote] is OUTSIDE THIS RULE and stores nothing — if it stored
+// anything it would not be free of side effects. The price is computed PURELY
+// from the option's configuration and from the cart context.
 //
-// # Defterin ayrılığı
+// # The separateness of the ledger
 //
-// Sağlayıcının durumu fulfillment_manual_shipments tablosundadır ve
-// fulfillment servisinin tablolarından AYRIDIR. Servis bu tabloya hiç
-// dokunmaz; sağlayıcıya yalnızca FulfillmentProvider arayüzünden ulaşır.
-// Ayrım, modülün kazara sağlayıcının iç durumunu okumasını yapısal olarak
-// engeller — gerçek bir sağlayıcıda da böyle bir okuma mümkün değildir.
+// The provider's state lives in the fulfillment_manual_shipments table and is
+// SEPARATE from the fulfillment service's tables. The service never touches
+// this table; it reaches the provider only through the FulfillmentProvider
+// interface. The separation structurally prevents the module from accidentally
+// reading the provider's internal state — with a real provider such a read is
+// not possible either.
 //
-// # Test için başarısızlık enjeksiyonu
+// # Failure injection for tests
 //
-// Saga testleri kargo adımını PATLATABİLMELİDİR. Davranış, kargo seçeneğinin
-// yapılandırmasından ([coreprovider.QuoteInput.Data]) ve gönderi açılırken
-// verilen Data alanından okunur; gönderi davranışı gönderiyle birlikte kalıcı
-// olarak saklanır, böylece süreç yeniden başlasa da aynı gönderi aynı biçimde
-// davranır. Bkz. [DataKeyOutcome], [DataKeyQuoteAmount] ve fiyat anahtarları.
+// Saga tests MUST BE ABLE TO BLOW UP the fulfillment step. The behavior is read
+// from the shipping option's configuration ([coreprovider.QuoteInput.Data]) and
+// from the Data field given while the shipment is being opened; the shipment
+// behavior is stored durably together with the shipment, so that the same
+// shipment behaves the same way even if the process restarts. See
+// [DataKeyOutcome], [DataKeyQuoteAmount] and the price keys.
 package manual
 
 import (
@@ -62,95 +67,103 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/fulfillment/models"
 )
 
-// ID sağlayıcının kimliğidir; kargo seçenekleri bu adla açılır.
+// ID is the provider's identity; shipping options are opened under this name.
 const ID = "manual"
 
-// Sağlayıcının davranışını yönlendiren Data anahtarları.
+// The Data keys that steer the provider's behavior.
 //
-// Fiyat anahtarları kargo SEÇENEĞİNİN yapılandırmasından
-// (shipping_options.data) gelir ve Quote'a olduğu gibi geçirilir. Davranış
-// anahtarları ([DataKeyOutcome]) hem fiyat sorgusunda hem gönderi açılışında
-// okunur; gönderi açılışındakiler gönderiyle birlikte SAKLANIR, çünkü iptal
-// başka bir istekte (hatta başka bir süreçte) yapılır ve o çağrının elinde
-// yalnızca gönderi kimliği vardır.
+// The price keys come from the shipping OPTION's configuration
+// (shipping_options.data) and are passed to Quote as they are. The behavior
+// keys ([DataKeyOutcome]) are read both in the price query and while a shipment
+// is being opened; the ones given while opening a shipment are STORED together
+// with the shipment, because the cancellation happens in another request (even
+// in another process) and that call holds nothing but the shipment identifier.
 const (
-	// DataKeyOutcome çağrının sonucunu belirler; değerleri [OutcomeOK] ve
-	// [OutcomeError]'dır. Verilmezse [OutcomeOK] varsayılır.
+	// DataKeyOutcome decides the outcome of the call; its values are
+	// [OutcomeOK] and [OutcomeError]. If it is not given, [OutcomeOK] is
+	// assumed.
 	DataKeyOutcome = "manual_outcome"
-	// DataKeyQuoteAmount fiyatı DOĞRUDAN belirler; verilirse aşağıdaki
-	// bileşenler hiç hesaplanmaz.
+	// DataKeyQuoteAmount sets the price DIRECTLY; if it is given, the
+	// components below are never computed.
 	DataKeyQuoteAmount = "manual_quote_amount"
-	// DataKeyBaseAmount gönderi başına sabit ücrettir (minor unit).
+	// DataKeyBaseAmount is the flat fee per shipment (minor unit).
 	DataKeyBaseAmount = "manual_base_amount"
-	// DataKeyPerItemAmount kalem başına ücrettir (minor unit).
+	// DataKeyPerItemAmount is the fee per item (minor unit).
 	DataKeyPerItemAmount = "manual_per_item_amount"
-	// DataKeyPerKilogramAmount başlanan her kilogram için ücrettir
-	// (minor unit); yuvarlama YUKARI doğrudur (bkz. [Provider.Quote]).
+	// DataKeyPerKilogramAmount is the fee for every started kilogram
+	// (minor unit); rounding goes UP (see [Provider.Quote]).
 	DataKeyPerKilogramAmount = "manual_per_kilogram_amount"
-	// DataKeyTrackingNumber gönderiye yazılacak takip numarasıdır.
+	// DataKeyTrackingNumber is the tracking number to be written on the
+	// shipment.
 	DataKeyTrackingNumber = "manual_tracking_number"
-	// DataKeyTrackingURL gönderiye yazılacak takip adresidir.
+	// DataKeyTrackingURL is the tracking address to be written on the shipment.
 	DataKeyTrackingURL = "manual_tracking_url"
 )
 
-// Çağrı sonuçları ([DataKeyOutcome] değerleri).
+// The call outcomes ([DataKeyOutcome] values).
 const (
-	// OutcomeOK çağrının başarılı olmasını sağlar; varsayılan davranıştır.
+	// OutcomeOK makes the call succeed; it is the default behavior.
 	OutcomeOK = "ok"
-	// OutcomeError sağlayıcının ERİŞİLEMEDİĞİNİ taklit eder: metot hata döner
-	// ve defterde hiçbir şey değişmez. Saga'nın "adım patladı" dalını sınamak
-	// içindir ve yeniden denenebilir bir hatadır (errors.Unavailable).
+	// OutcomeError imitates the provider being UNREACHABLE: the method returns
+	// an error and nothing in the ledger changes. It exists to exercise the
+	// saga's "the step blew up" branch and it is a retryable error
+	// (errors.Unavailable).
 	OutcomeError = "error"
 )
 
-// gramsPerKilogram bir kilogramın gram karşılığıdır.
+// gramsPerKilogram is the gram equivalent of one kilogram.
 const gramsPerKilogram int64 = 1000
 
-// Hata kodları. İstemciler bunlara göre dallanabilir; mesajlar değişebilir,
-// kodlar değişmez.
+// Error codes. Clients may branch on these; the messages may change, the codes
+// do not.
 const (
-	// CodeInvalidInput girdinin doğrulamadan geçmediğini bildirir.
+	// CodeInvalidInput reports that the input did not pass validation.
 	CodeInvalidInput = "fulfillment_manual_invalid_input"
-	// CodeInvalidState gönderinin durumunda geçersiz bir geçiş denendiğini
-	// bildirir.
+	// CodeInvalidState reports that an invalid transition was attempted on the
+	// shipment's status.
 	CodeInvalidState = "fulfillment_manual_invalid_state"
-	// CodeIdempotencyMismatch aynı anahtarın FARKLI bir gövdeyle yeniden
-	// kullanıldığını bildirir.
+	// CodeIdempotencyMismatch reports that the same key was reused with a
+	// DIFFERENT body.
 	CodeIdempotencyMismatch = "fulfillment_manual_idempotency_mismatch"
-	// CodeSimulatedFailure test için enjekte edilmiş başarısızlığı bildirir.
+	// CodeSimulatedFailure reports a failure injected for testing.
 	CodeSimulatedFailure = "fulfillment_manual_simulated_failure"
-	// CodeDataInvalid gönderi verisinin çözümlenemediğini bildirir.
+	// CodeDataInvalid reports that the shipment data could not be parsed.
 	CodeDataInvalid = "fulfillment_manual_data_invalid"
 )
 
-// Store sağlayıcının ihtiyaç duyduğu kalıcılık yüzeyidir.
+// Store is the persistence surface the provider needs.
 //
-// Arayüz TÜKETEN tarafta, yani burada tanımlıdır (ADR 0001'in örüntüsü).
-// Sağlayıcı repository paketini import ETMEZ; somut depo bu imzaları yapısal
-// olarak karşılar ve bağlantı module.go'da kurulur. Böylece sağlayıcının
-// idempotency davranışı gerçek bir veritabanı olmadan, birkaç satırlık bir
-// sahte depo ile sınanabilir.
+// The interface is declared on the CONSUMING side, that is, here (the pattern
+// of ADR 0001). The provider does NOT import the repository package; the
+// concrete repository satisfies these signatures structurally and the wiring is
+// done in module.go. That way the provider's idempotency behavior can be
+// exercised without a real database, with a fake store a few lines long.
 //
-// Kilit alan metot ([Store.LockManualShipment]) yalnızca [Store.WithTx] içinde
-// çağrılabilir: işlemsiz bir FOR UPDATE kilidi hiçbir şeyi korumaz.
+// The locking method ([Store.LockManualShipment]) may only be called inside
+// [Store.WithTx]: a FOR UPDATE lock without a transaction protects nothing.
 //
-// Fiyat sorgusunun burada karşılığı YOKTUR ve bu bilinçlidir: Quote yan
-// etkisizdir ve deftere hiç dokunmaz.
+// The price query has NO counterpart here, and that is deliberate: Quote has no
+// side effects and never touches the ledger.
 type Store interface {
-	// WithTx fn'i tek bir işlemde çalıştırır; fn hata dönerse işlem geri alınır.
+	// WithTx runs fn in a single transaction; if fn returns an error the
+	// transaction is rolled back.
 	WithTx(ctx context.Context, fn func(ctx context.Context) error) error
 
-	// InsertManualShipmentIfAbsent gönderiyi yalnızca idempotency anahtarı
-	// henüz kullanılmamışsa yazar. İkinci dönüş değeri satırın yazılıp
-	// yazılmadığıdır; çakışma HATA DEĞİLDİR.
+	// InsertManualShipmentIfAbsent writes the shipment only if the idempotency
+	// key has not been used yet. The second return value says whether the row
+	// was written; a conflict is NOT AN ERROR.
 	InsertManualShipmentIfAbsent(ctx context.Context, shipment models.ManualShipment) (models.ManualShipment, bool, error)
-	// ManualShipmentByIdempotencyKey gönderiyi anahtarıyla döner; yoksa NotFound.
+	// ManualShipmentByIdempotencyKey returns the shipment by its key; NotFound
+	// if there is none.
 	ManualShipmentByIdempotencyKey(ctx context.Context, key string) (models.ManualShipment, error)
-	// ManualShipment gönderiyi kimliğiyle döner; yoksa NotFound.
+	// ManualShipment returns the shipment by its identifier; NotFound if there
+	// is none.
 	ManualShipment(ctx context.Context, id string) (models.ManualShipment, error)
-	// LockManualShipment gönderiyi işlem boyunca kilitler ve güncel hâlini döner.
+	// LockManualShipment locks the shipment for the duration of the transaction
+	// and returns its current state.
 	LockManualShipment(ctx context.Context, id string) (models.ManualShipment, error)
-	// UpdateManualShipmentState durumu ve takip bilgisini MUTLAK değerlerle yazar.
+	// UpdateManualShipmentState writes the status and the tracking details as
+	// ABSOLUTE values.
 	UpdateManualShipmentState(
 		ctx context.Context,
 		id string,
@@ -159,18 +172,19 @@ type Store interface {
 	) (models.ManualShipment, error)
 }
 
-// Provider manuel/test kargo sağlayıcısıdır. Eşzamanlı kullanıma güvenlidir.
+// Provider is the manual/test fulfillment provider. It is safe for concurrent
+// use.
 type Provider struct {
 	store Store
 	log   *slog.Logger
 }
 
-// Provider'ın çekirdek sözleşmesini karşıladığı derleme zamanında doğrulanır;
-// imza kayması çalışma zamanına kalmaz.
+// That Provider satisfies the core contract is verified at compile time; a
+// signature drift does not survive until runtime.
 var _ coreprovider.FulfillmentProvider = (*Provider)(nil)
 
-// New verilen depo üzerinde çalışan bir manuel sağlayıcı üretir.
-// log nil verilirse loglar atılır.
+// New produces a manual provider that works on the given store.
+// If log is nil, the logs are discarded.
 func New(store Store, log *slog.Logger) *Provider {
 	if log == nil {
 		log = slog.New(slog.DiscardHandler)
@@ -178,45 +192,47 @@ func New(store Store, log *slog.Logger) *Provider {
 	return &Provider{store: store, log: log}
 }
 
-// ID sağlayıcının kimliğini döner.
+// ID returns the provider's identity.
 func (p *Provider) ID() string { return ID }
 
-// Quote verilen seçenek için kargo ücretini döner. YAN ETKİSİZDİR.
+// Quote returns the shipping fee for the given option. IT HAS NO SIDE EFFECTS.
 //
-// Hesap SAF'tır: veritabanına dokunmaz, saate bakmaz ve aynı girdi için daima
-// aynı sonucu verir. Sepet toplamı her güncellendiğinde çağrılabileceği için
-// ucuz olması şarttır.
+// The computation is PURE: it does not touch the database, does not look at the
+// clock and always gives the same result for the same input. Because it may be
+// called every time the cart total is updated, it has to be cheap.
 //
-// # Formül
+// # Formula
 //
-//	ücret = taban + (kalem başına × kalem adedi) + (kilogram başına × ⌈gram/1000⌉)
+//	fee = base + (per item x item count) + (per kilogram x ⌈grams/1000⌉)
 //
-// Bileşenler kargo seçeneğinin yapılandırmasından okunur ([DataKeyBaseAmount],
-// [DataKeyPerItemAmount], [DataKeyPerKilogramAmount]); verilmeyen bileşen
-// SIFIRDIR. [DataKeyQuoteAmount] verilirse formül hiç çalışmaz ve o tutar
-// döner.
+// The components are read from the shipping option's configuration
+// ([DataKeyBaseAmount], [DataKeyPerItemAmount], [DataKeyPerKilogramAmount]); a
+// component that is not given is ZERO. If [DataKeyQuoteAmount] is given the
+// formula never runs and that amount is returned.
 //
-// # Yuvarlama YUKARI doğrudur
+// # Rounding goes UP
 //
-// Ağırlık gramdır ve kilogram başına ücret BAŞLANAN her kilogram için alınır:
-// 1200 gram İKİ kilogram sayılır. Yön bilinçlidir ve gerçek taşıyıcıların
-// desi/kilogram kademelerini izler; aşağı yuvarlamak, 1999 gramlık bir paketi
-// bir kilogram ücretine taşımak demek olurdu. Hesap TAM SAYI aritmetiğiyle
-// yapılır; para hiçbir aşamada kayan noktaya uğramaz (plan Bölüm 8).
+// The weight is in grams and the per-kilogram fee is charged for every STARTED
+// kilogram: 1200 grams counts as TWO kilograms. The direction is deliberate and
+// follows the volumetric/kilogram tiers of real carriers; rounding down would
+// mean carrying a 1999 gram parcel for the price of one kilogram. The
+// computation uses INTEGER arithmetic; money never passes through floating
+// point at any stage (plan Section 8).
 //
-// # Taşma bir HATADIR, negatif fiyat değil
+// # Overflow is an ERROR, not a negative price
 //
-// Kalem adedi ve ağırlık ÇAĞIRANDAN gelir ve bu sağlayıcı onların üst sınırını
-// bilmez (sınırı koyan taraf servistir; bkz. [models.MaxItemCount] ve
-// [models.MaxTotalWeight]). Bu yüzden aritmetiğin kendisi savunmalıdır: hem
-// kilograma yuvarlama hem çarpım/toplam taşmasız yazılmıştır ve hesap
-// [models.MaxAmount]'u aşarsa errors.Invalid döner. Sağlayıcı HİÇBİR girdi
-// için negatif bir ücret dönmez — dönseydi, düşürülmesi çağıranın son
-// savunmasına kalırdı.
+// The item count and the weight come FROM THE CALLER and this provider does not
+// know their upper bound (the side that sets the bound is the service; see
+// [models.MaxItemCount] and [models.MaxTotalWeight]). That is why the
+// arithmetic itself has to be defensive: both the rounding to kilograms and the
+// product/sum are written without an overflow, and if the computation exceeds
+// [models.MaxAmount] errors.Invalid is returned. The provider returns a
+// negative fee for NO input — if it did, dropping it would be left to the
+// caller's last line of defense.
 //
-// Yapılandırılmamış bir seçenek SIFIR ücret döner ve bu geçerlidir:
-// "ücretsiz kargo" gerçek bir iş kararıdır ve taklit sağlayıcının fiyat
-// UYDURMASI sınanan davranışı belirsiz hâle getirirdi.
+// An unconfigured option returns a ZERO fee and that is valid: "free shipping"
+// is a real business decision, and having the imitation provider MAKE UP a
+// price would blur the behavior under test.
 func (p *Provider) Quote(
 	_ context.Context,
 	in coreprovider.QuoteInput,
@@ -224,20 +240,20 @@ func (p *Provider) Quote(
 	optionID := strings.TrimSpace(in.OptionID)
 	if optionID == "" {
 		return coreprovider.ShippingQuote{}, errors.Invalid(CodeInvalidInput,
-			"kargo seçeneği kimliği zorunludur")
+			"the shipping option identifier is required")
 	}
 	currency := strings.ToUpper(strings.TrimSpace(in.CurrencyCode))
 	if len(currency) != currencyCodeLength {
 		return coreprovider.ShippingQuote{}, errors.Invalid(CodeInvalidInput,
-			"para birimi üç harfli ISO 4217 kodu olmalı: %q", in.CurrencyCode)
+			"the currency has to be a three-letter ISO 4217 code: %q", in.CurrencyCode)
 	}
 	if in.ItemCount < 0 {
 		return coreprovider.ShippingQuote{}, errors.Invalid(CodeInvalidInput,
-			"kalem adedi negatif olamaz: %d", in.ItemCount)
+			"the item count may not be negative: %d", in.ItemCount)
 	}
 	if in.TotalWeight < 0 {
 		return coreprovider.ShippingQuote{}, errors.Invalid(CodeInvalidInput,
-			"toplam ağırlık negatif olamaz: %d", in.TotalWeight)
+			"the total weight may not be negative: %d", in.TotalWeight)
 	}
 
 	config, err := parseData(in.Data)
@@ -246,7 +262,7 @@ func (p *Provider) Quote(
 	}
 	if config.Outcome == OutcomeError {
 		return coreprovider.ShippingQuote{}, errors.Unavailable(CodeSimulatedFailure,
-			"manuel kargo sağlayıcısına ulaşılamadı (test için enjekte edilmiş hata): %s", optionID)
+			"the manual fulfillment provider is unreachable (failure injected for testing): %s", optionID)
 	}
 
 	amount, err := quoteAmount(config, in.ItemCount, in.TotalWeight)
@@ -261,14 +277,14 @@ func (p *Provider) Quote(
 	}, nil
 }
 
-// Create sağlayıcının defterinde bir gönderi açar.
+// Create opens a shipment in the provider's ledger.
 //
-// Aynı IdempotencyKey ile ikinci çağrı YENİ gönderi açmaz, mevcut gönderiyi
-// döner (çekirdek sözleşmesinin şartı). Anahtar aynı ama referans ya da
-// seçenek FARKLIYSA errors.Conflict döner: idempotency "aynı isteği
-// tekrarlamak" demektir, "farklı bir isteği eski anahtarla göndermek" değil —
-// ikincisini sessizce kabul etmek, çağıranın açtığını sandığı gönderinin hiç
-// açılmaması demek olurdu.
+// A second call with the same IdempotencyKey does NOT open a new shipment, it
+// returns the existing one (the condition of the core contract). If the key is
+// the same but the reference or the option is DIFFERENT, errors.Conflict is
+// returned: idempotency means "repeating the same request", not "sending a
+// different request under an old key" — accepting the second one silently would
+// mean the shipment the caller believed it had opened was never opened at all.
 func (p *Provider) Create(
 	ctx context.Context,
 	in coreprovider.CreateFulfillmentInput,
@@ -276,7 +292,7 @@ func (p *Provider) Create(
 	key := strings.TrimSpace(in.IdempotencyKey)
 	if key == "" {
 		return coreprovider.Fulfillment{}, errors.Invalid(CodeInvalidInput,
-			"idempotency anahtarı zorunludur")
+			"the idempotency key is required")
 	}
 	reference := strings.TrimSpace(in.Reference)
 	if reference == "" {
@@ -285,24 +301,24 @@ func (p *Provider) Create(
 	optionID := strings.TrimSpace(in.OptionID)
 	if optionID == "" {
 		return coreprovider.Fulfillment{}, errors.Invalid(CodeInvalidInput,
-			"kargo seçeneği kimliği zorunludur")
+			"the shipping option identifier is required")
 	}
 
 	raw, err := json.Marshal(in.Data)
 	if err != nil {
 		return coreprovider.Fulfillment{}, errors.Wrap(err, errors.KindInvalid, CodeDataInvalid,
-			"gönderi verisi kodlanamadı")
+			"shipment data could not be encoded")
 	}
-	// Veri erken doğrulanır ve enjekte edilmiş hata BURADA patlar: bozuk bir
-	// davranış anahtarı, gönderi açılırken söylenmelidir; sonraki bir çağrıda
-	// patlaması teşhisi zorlaştırırdı.
+	// The data is validated early and an injected failure blows up HERE: a
+	// broken behavior key has to be reported while the shipment is being
+	// opened; blowing up on a later call would make the diagnosis harder.
 	config, err := parseData(in.Data)
 	if err != nil {
 		return coreprovider.Fulfillment{}, err
 	}
 	if config.Outcome == OutcomeError {
 		return coreprovider.Fulfillment{}, errors.Unavailable(CodeSimulatedFailure,
-			"manuel kargo sağlayıcısına ulaşılamadı (test için enjekte edilmiş hata): %s", reference)
+			"the manual fulfillment provider is unreachable (failure injected for testing): %s", reference)
 	}
 
 	created, inserted, err := p.store.InsertManualShipmentIfAbsent(ctx, models.ManualShipment{
@@ -328,31 +344,32 @@ func (p *Provider) Create(
 	}
 	if existing.Reference != reference || existing.OptionID != optionID {
 		return coreprovider.Fulfillment{}, errors.Conflict(CodeIdempotencyMismatch,
-			"aynı idempotency anahtarı farklı bir gönderi için kullanıldı: mevcut %s/%s, istenen %s/%s",
+			"the same idempotency key was used for a different shipment: existing %s/%s, requested %s/%s",
 			existing.Reference, existing.OptionID, reference, optionID)
 	}
-	p.log.DebugContext(ctx, "manuel sağlayıcı mevcut gönderiyi döndürdü",
+	p.log.DebugContext(ctx, "manual provider returned the existing shipment",
 		"gonderi", existing.ID, "anahtar", key)
 	return toProviderFulfillment(existing), nil
 }
 
-// Cancel gönderiyi iptal eder.
+// Cancel cancels the shipment.
 //
-// SAGA TELAFİSİ BUDUR ve İDEMPOTENTTİR: zaten iptal edilmiş bir gönderi için
-// hata dönmez ve defterde ikinci kez değişiklik yapılmaz. TESLİM EDİLMİŞ bir
-// gönderi iptal EDİLEMEZ (errors.Conflict); paket alıcıdadır ve geri almanın
-// yolu iadedir. Kargoya verilmiş bir gönderi ise iptal EDİLEBİLİR: taşıyıcı
-// yoldaki paketi geri çağırabilir (bkz.
+// THIS IS THE SAGA COMPENSATION and it is IDEMPOTENT: it does not return an
+// error for a shipment that is already canceled and it does not change the
+// ledger a second time. A shipment that has been DELIVERED CANNOT be canceled
+// (errors.Conflict); the parcel is with the recipient and the way to get it
+// back is a return. A shipment that has been handed to the carrier CAN be
+// canceled: the carrier can recall a parcel that is on its way (see
 // [models.FulfillmentStatus.CancelAction]).
 //
-// Bilinmeyen bir kimlik için errors.NotFound döner: idempotentlik "her şeyi
-// sessizce yut" demek değildir. İki kez iptal edilen GERÇEK bir gönderi ile
-// hiç var olmamış bir kimlik farklı durumlardır ve ikincisi çağıran tarafta
-// bir hatadır. Gönderi kaydı silinmediği (yalnızca durumu değiştiği) için ilk
-// durum her zaman ayırt edilebilir.
+// For an unknown identifier errors.NotFound is returned: idempotency does not
+// mean "swallow everything silently". A REAL shipment that is canceled twice
+// and an identifier that never existed are different situations, and the second
+// one is a bug on the caller's side. Because the shipment record is not deleted
+// (only its status changes) the first situation is always distinguishable.
 func (p *Provider) Cancel(ctx context.Context, fulfillmentID string) error {
 	if strings.TrimSpace(fulfillmentID) == "" {
-		return errors.Invalid(CodeInvalidInput, "gönderi kimliği zorunludur")
+		return errors.Invalid(CodeInvalidInput, "the shipment identifier is required")
 	}
 
 	return p.store.WithTx(ctx, func(ctx context.Context) error {
@@ -363,41 +380,42 @@ func (p *Provider) Cancel(ctx context.Context, fulfillmentID string) error {
 
 		switch shipment.Status.CancelAction() {
 		case models.ActionNoop:
-			p.log.DebugContext(ctx, "manuel sağlayıcı gönderisi zaten iptal edilmiş",
+			p.log.DebugContext(ctx, "the manual provider's shipment is already canceled",
 				"gonderi", fulfillmentID)
 			return nil
 		case models.ActionConflict:
 			return errors.Conflict(CodeInvalidState,
-				"%q durumundaki gönderi iptal edilemez; iade kullanın: %s",
+				"a shipment in the %q status cannot be canceled; use a return: %s",
 				shipment.Status, fulfillmentID)
 		case models.ActionProceed:
-			// Aşağıda ele alınır.
+			// Handled below.
 		}
 
-		// Takip bilgisi KORUNUR: iptal edilen bir gönderinin hangi etiketle
-		// açıldığı teşhis için hâlâ okunabilir olmalıdır.
+		// The tracking details are PRESERVED: which label a canceled shipment
+		// was opened with must still be readable for diagnosis.
 		_, err = p.store.UpdateManualShipmentState(ctx, shipment.ID, models.StatusCanceled,
 			shipment.TrackingNumber, shipment.TrackingURL)
 		return err
 	})
 }
 
-// GetShipment sağlayıcının defterindeki gönderiyi döner; yoksa
-// errors.NotFound.
+// GetShipment returns the shipment in the provider's ledger; errors.NotFound if
+// there is none.
 //
-// Çekirdek sözleşmesinde YOKTUR ve fulfillment servisi bunu ÇAĞIRMAZ. Yalnızca
-// entegrasyon testleri ve teşhis içindir: bir gönderinin sağlayıcı tarafındaki
-// durumunu modülün kendi kaydına bakmadan doğrulamak gerekir — iki defterin
-// ayrıştığı bir hata ancak böyle görülebilir.
+// It is NOT part of the core contract and the fulfillment service does NOT call
+// it. It exists only for integration tests and for diagnosis: a shipment's
+// status on the provider's side has to be verifiable without looking at the
+// module's own record — a bug where the two ledgers have drifted apart can only
+// be seen that way.
 func (p *Provider) GetShipment(ctx context.Context, id string) (models.ManualShipment, error) {
 	if strings.TrimSpace(id) == "" {
-		return models.ManualShipment{}, errors.Invalid(CodeInvalidInput, "gönderi kimliği zorunludur")
+		return models.ManualShipment{}, errors.Invalid(CodeInvalidInput, "the shipment identifier is required")
 	}
 	return p.store.ManualShipment(ctx, id)
 }
 
-// toProviderFulfillment defter kaydını çekirdek sözleşmesinin gönderi tipine
-// çevirir.
+// toProviderFulfillment converts a ledger record into the fulfillment type of
+// the core contract.
 func toProviderFulfillment(shipment models.ManualShipment) coreprovider.Fulfillment {
 	return coreprovider.Fulfillment{
 		ID:             shipment.ID,

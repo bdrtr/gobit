@@ -1,31 +1,35 @@
-// Package product katalog modülüdür: ürün, varyant, seçenek, kategori,
-// koleksiyon, etiket ve görsel bu modülün verisidir.
+// Package product is the catalog module: products, variants, options,
+// categories, collections, tags and images are this module's data.
 //
-// # Modülün çekirdekle sözleşmesi
+// # The module's contract with the core
 //
-// [Module] çekirdeğin module.Module arayüzünü karşılar. Register sırasında
-// dört şey yapılır:
+// [Module] satisfies the core's module.Module interface. Register does four
+// things:
 //
-//  1. Servis container'a "product.service" adıyla kaydedilir.
-//  2. Modüller arası İLKEL okuma yüzeyi "product.interop" adıyla kaydedilir
-//     (ADR 0006); eklentiler ve akışlar katalog kaydını buradan okur.
-//  3. Query sağlayıcıları "product.query" ve "variant.query" adlarıyla
-//     kaydedilir (ADR 0004).
-//  4. Fiyat, stok ve satış kanalı link tanımları bildirilir (ADR 0005).
+//  1. The service is registered in the container under the name
+//     "product.service".
+//  2. The PRIMITIVE cross-module read surface is registered under the name
+//     "product.interop" (ADR 0006); plugins and workflows read the catalog
+//     record from there.
+//  3. The Query providers are registered under the names "product.query" and
+//     "variant.query" (ADR 0004).
+//  4. The price, stock and sales channel link definitions are declared
+//     (ADR 0005).
 //
-// # Yayımladığı olaylar
+// # Published events
 //
-// "product.created", "product.updated" ve "product.deleted" — ürün yazıldığında,
-// güncellendiğinde ve silindiğinde. Yükleri ve yayım politikası için bkz.
-// [service.EventProductCreated] ve service/events.go.
+// "product.created", "product.updated" and "product.deleted" — when a product
+// is written, updated and deleted. For their payloads and the publication
+// policy see [service.EventProductCreated] and service/events.go.
 //
-// # Başka modüller
+// # Other modules
 //
-// pricing, inventory ve auth paketleri İMPORT EDİLMEZ (Prensip 2.4, ADR 0001;
-// kural .golangci.yml içindeki depguard ile CI'da zorlanır). Fiyat ve stok
-// verisi yalnızca link adları ve Query katmanı üzerinden görünür; satış kanalı
-// ise yalnızca bir link adı ve isteğin kimliğinden gelen kimlik dizgeleri
-// olarak görünür (bkz. service.LinkProductSalesChannel).
+// The pricing, inventory and auth packages are NOT IMPORTED (Principle 2.4,
+// ADR 0001; the rule is enforced in CI by depguard inside .golangci.yml).
+// Price and stock data is visible only through link names and the Query
+// layer; the sales channel is visible only as a link name and as identity
+// strings coming from the request's principal (see
+// service.LinkProductSalesChannel).
 package product
 
 import (
@@ -49,11 +53,11 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/product/service"
 )
 
-// Name modülün adıdır: container adlarının, migration sürüm defterinin ve log
-// alanlarının öneki budur.
+// Name is the module's name: it is the prefix of the container names, of the
+// migration version ledger and of the log fields.
 const Name = "product"
 
-// Container'da çözülen çekirdek servislerin adları.
+// Names of the core services resolved from the container.
 const (
 	svcDB       = "core.db"
 	svcLink     = "core.link"
@@ -61,30 +65,34 @@ const (
 	svcEventBus = "core.eventbus"
 )
 
-// ServiceName modülün servisinin container'daki adıdır.
+// ServiceName is the name of the module's service in the container.
 //
-// Başka modüller (ADR 0001 gereği bu paketi import ETMEDEN) katalog servisine
-// bu adla ulaşır.
+// Other modules (WITHOUT importing this package, as ADR 0001 requires) reach
+// the catalog service under this name.
 const ServiceName = Name + ".service"
 
-// InteropName modüller arası ilkel yüzeyin container'daki adıdır (ADR 0006).
+// InteropName is the name of the cross-module primitive surface in the
+// container (ADR 0006).
 //
-// Servisin kendisinden AYRI kaydedilir: servis product'ın zengin tipleriyle
-// konuşur, bu yüzey yalnızca ilkel ve stdlib tipleriyle. Eklentiler (plugins/**)
-// hiçbir modülü import edemedikleri için katalogu ANCAK bu adla ve kendi
-// tanımladıkları dar arayüzle okuyabilir.
+// It is registered SEPARATELY from the service itself: the service speaks in
+// product's rich types, this surface only in primitive and stdlib types.
+// Because plugins (plugins/**) cannot import any module, they can read the
+// catalog ONLY under this name and through the narrow interface they define
+// themselves.
 const InteropName = Name + ".interop"
 
-// AdminName modülün YÖNETİM YAZMA yüzeyinin container'daki adıdır (ADR 0013).
+// AdminName is the name of the module's ADMIN WRITE surface in the container
+// (ADR 0013).
 //
-// Interop'tan AYRI bir addır ve ayrım bilinçlidir: interop, başka modüllerin,
-// akışların ve eklentilerin katalogu OKUDUĞU yüzeydir ve godoc'u dar kalmaya
-// söz verir; oraya bir yazma metodu eklemek her eklentiye katalogu yeniden
-// yazma yetkisi verirdi. Bu adın tek kitlesi yönetim panelidir ve BU KISIT
-// belgelenmekle kalmaz, internal/arch'ta denetlenir.
+// It is a name SEPARATE from interop and the separation is deliberate:
+// interop is the surface on which other modules, workflows and plugins READ
+// the catalog, and its godoc promises to stay narrow; adding a write method
+// there would give every plugin the right to rewrite the catalog. The only
+// audience of this name is the admin panel, and THIS CONSTRAINT is not merely
+// documented, it is checked in internal/arch.
 const AdminName = Name + ".admin"
 
-// Hata kodları.
+// Error codes.
 const (
 	codeSetupFailed = "product_module_setup_failed"
 	codeLinkDefine  = "product_link_define_failed"
@@ -93,135 +101,144 @@ const (
 //go:embed migrations/*.sql
 var migrationFiles embed.FS
 
-// migrationsRoot gömülü dosyaların "migrations/" öneki soyulmuş hâlidir:
-// db.Migrate kaynağı kökten okur.
+// migrationsRoot is the embedded files with the "migrations/" prefix
+// stripped: db.Migrate reads the source from the root.
 var migrationsRoot = mustSub(migrationFiles, "migrations")
 
-// Options product modülünün kurulum ayarlarıdır.
+// Options holds the setup settings of the product module.
 //
-// Modül internal/core/config paketini TANIMAZ (Prensip 2.4) ve container'da
-// da config kayıtlı değildir; ayarlar uygulamayı kuran taraftan parametre
-// olarak gelir (auth ve file modüllerindeki kalıbın aynısı).
+// The module does NOT KNOW the internal/core/config package (Principle 2.4)
+// and config is not registered in the container either; the settings come as
+// a parameter from whoever wires the application (the very same pattern as in
+// the auth and file modules).
 type Options struct {
-	// GraphQL vitrinin GraphQL okuma ucunun sertleştirme sınırlarıdır.
+	// GraphQL holds the hardening limits of the storefront's GraphQL read
+	// endpoint.
 	//
-	// Tip modülün kendi tipi DEĞİL, doğrudan [graph.Options]'tır: aradan bir
-	// kopya geçirmek, sınırların ikinci bir tanımı ve her yeni sınırda
-	// güncellenmesi unutulacak bir eşleme kodu demekti.
+	// The type is NOT a type of the module's own but [graph.Options]
+	// directly: passing a copy in between would have meant a second
+	// definition of the limits, plus mapping code that someone forgets to
+	// update at every new limit.
 	//
-	// Sıfır değeri paket varsayılanlarını verir; "sınırsız" ANLAMINA GELMEZ.
+	// Its zero value gives the package defaults; it does NOT MEAN
+	// "unlimited".
 	GraphQL graph.Options
 }
 
-// Module product modülünün çekirdeğe sunduğu uygulamadır.
+// Module is the application the product module offers to the core.
 type Module struct {
 	opts    Options
 	svc     *service.Service
 	handler *api.Handler
 }
 
-// Çekirdek sözleşmesinin karşılandığı derleme zamanında sabitlenir.
+// That the core contract is satisfied is pinned at compile time.
 var _ module.Module = (*Module)(nil)
 
-// Belgeyi anlatabildiği de derleme zamanında sabitlenir.
+// That it can describe itself in the document is pinned at compile time too.
 //
-// [openapi.Describer] OPSİYONEL bir arayüzdür ve kompozisyon kökü onu TİP
-// İDDİASIYLA arar; metot adı ya da imzası kayarsa hiçbir şey derlemede
-// kırılmaz, yalnızca vitrin uçları belgeden sessizce düşerdi. Bu satır o
-// sessizliği kapatır.
+// [openapi.Describer] is an OPTIONAL interface and the composition root looks
+// for it with a TYPE ASSERTION; if the method name or its signature drifted,
+// nothing would break at compile time, only the storefront endpoints would
+// silently fall out of the document. This line closes that silence.
 var _ openapi.Describer = (*Module)(nil)
 
-// New kayıt edilmeye hazır bir modül üretir.
+// New produces a module ready to be registered.
 //
-// Bağımlılıklar burada değil Register sırasında çözülür: container o ana kadar
-// çekirdek servisleri kurmuş olmayabilir.
+// The dependencies are resolved during Register and not here: by that moment
+// the container may not have set up the core services yet.
 //
-// [Options] sıfır değeriyle çağrılabilir; gömülü kullanım ve testler bunu
-// yapar ve GraphQL ucu paket varsayılanı sınırlarla açılır.
+// [Options] may be called with its zero value; embedded use and the tests do
+// exactly that, and the GraphQL endpoint opens with the package default
+// limits.
 func New(opts Options) *Module {
 	return &Module{opts: opts}
 }
 
-// Name modülün benzersiz adını döner.
+// Name returns the module's unique name.
 func (m *Module) Name() string { return Name }
 
-// Migrations modülün migration dosyalarını döner.
+// Migrations returns the module's migration files.
 func (m *Module) Migrations() fs.FS { return migrationsRoot }
 
-// Register servisi, interop yüzeyini ve Query sağlayıcılarını container'a
-// kaydeder, link tanımlarını bildirir.
+// Register registers the service, the interop surface and the Query providers
+// in the container, and declares the link definitions.
 //
-// Yalnızca ÇEKİRDEK servisler çözülür; başka modüllerin servisleri bu aşamada
-// henüz kayıtlı olmayabilir (bkz. module.Module belgesi).
+// Only CORE services are resolved; other modules' services may not be
+// registered yet at this stage (see the module.Module documentation).
 //
-// # Olay veri yolu ZORUNLUDUR ve eksikse açılış durur
+// # The event bus is MANDATORY and startup stops when it is missing
 //
-// core.eventbus da tıpkı core.db, core.link ve core.query gibi modüller ayağa
-// kalkmadan önce main.go'da hazır değer olarak kaydedilir; eksikliği bir
-// dağıtım biçimi değil, bir KURULUM HATASIDIR. Bu yüzden "olaylar sessizce
-// atlansın" seçilmedi: o yol arızayı görünmez kılardı — katalog çalışmaya
-// devam eder, hiçbir hata görünmez, yalnızca arama indeksi güncellenmez ve
-// eksiklik ancak müşteriler yeni ürünleri bulamadığında, yani ÜRETİMDE fark
-// edilirdi. Açılışta düşen bir kurulum ise ilk saniyede görülür.
+// Just like core.db, core.link and core.query, core.eventbus is registered in
+// main.go as a ready value before the modules come up; its absence is not a
+// deployment shape but a SETUP ERROR. That is why "let the events be skipped
+// silently" was not chosen: that road would have made the fault invisible —
+// the catalog keeps working, no error shows up, only the search index is not
+// updated, and the gap would be noticed only when customers cannot find the
+// new products, that is IN PRODUCTION. A setup that falls over at startup, on
+// the other hand, is seen in the first second.
 //
-// Sessiz atlama yine de mümkündür ama YALNIZCA gömülü kullanım ve testler için:
-// [service.Options].Events nil verilebilir (bkz. service.Service.publishProductEvent).
-// Bu yol Register'dan geçmez.
+// Silent skipping is still possible, but ONLY for embedded use and tests:
+// [service.Options].Events may be given as nil (see
+// service.Service.publishProductEvent). That road does not pass through
+// Register.
 func (m *Module) Register(ctx context.Context, c *container.Container) error {
 	pool, err := container.Resolve[*db.Pool](c, svcDB)
 	if err != nil {
 		return errors.Wrap(err, errors.KindOf(err), codeSetupFailed,
-			"%s modülü veritabanı havuzunu çözemedi (%q)", Name, svcDB)
+			"the %s module could not resolve the database pool (%q)", Name, svcDB)
 	}
 	links, err := container.Resolve[link.LinkService](c, svcLink)
 	if err != nil {
 		return errors.Wrap(err, errors.KindOf(err), codeSetupFailed,
-			"%s modülü link servisini çözemedi (%q)", Name, svcLink)
+			"the %s module could not resolve the link service (%q)", Name, svcLink)
 	}
-	sorgu, err := container.Resolve[query.Query](c, svcQuery)
+	queryLayer, err := container.Resolve[query.Query](c, svcQuery)
 	if err != nil {
 		return errors.Wrap(err, errors.KindOf(err), codeSetupFailed,
-			"%s modülü query katmanını çözemedi (%q)", Name, svcQuery)
+			"the %s module could not resolve the query layer (%q)", Name, svcQuery)
 	}
-	// Dar arayüzle çözülür: modül yalnızca YAYIMLAR, abone olmaz ve veri
-	// yolunu kapatmaz (bkz. service.EventPublisher).
+	// Resolved through a narrow interface: the module only PUBLISHES, it does
+	// not subscribe and does not close the bus (see service.EventPublisher).
 	bus, err := container.Resolve[service.EventPublisher](c, svcEventBus)
 	if err != nil {
 		return errors.Wrap(err, errors.KindOf(err), codeSetupFailed,
-			"%s modülü olay veri yolunu çözemedi (%q)", Name, svcEventBus)
+			"the %s module could not resolve the event bus (%q)", Name, svcEventBus)
 	}
 
 	repo := repository.New(pool.Pool())
 	svc, err := service.New(service.Options{
 		Repo:   repo,
 		Links:  links,
-		Query:  sorgu,
+		Query:  queryLayer,
 		Events: bus,
-		// Uygulama açılışta slog.SetDefault ile yapılandırılmış logger'ı kurar;
-		// modül ayrı bir logger kaydı aramaz.
-		Logger: slog.Default().With("modul", Name),
+		// At startup the application installs the configured logger with
+		// slog.SetDefault; the module does not look for a separate logger
+		// registration.
+		Logger: slog.Default().With("module", Name),
 	})
 	if err != nil {
 		return errors.Wrap(err, errors.KindOf(err), codeSetupFailed,
-			"%s servisi kurulamadı", Name)
+			"the %s service could not be set up", Name)
 	}
 
 	if err := c.Provide(ServiceName, svc); err != nil {
 		return err
 	}
-	// Modüller arası yüzey AYRI bir adla kaydedilir: servisin kendisi
-	// product'ın zengin tipleriyle konuşur, bu yüzey ise yalnızca ilkel
-	// tiplerle (ADR 0006).
+	// The cross-module surface is registered under a SEPARATE name: the
+	// service itself speaks in product's rich types, this surface only in
+	// primitive ones (ADR 0006).
 	if err := c.Provide(InteropName, service.NewInterop(svc)); err != nil {
 		return err
 	}
-	// Yönetim yazma yüzeyi de AYRI bir adla kaydedilir; gerekçesi
-	// [AdminName]'de ve ADR 0013'te.
+	// The admin write surface is registered under a SEPARATE name as well;
+	// the rationale is in [AdminName] and in ADR 0013.
 	if err := c.Provide(AdminName, service.NewAdminSurface(svc)); err != nil {
 		return err
 	}
-	// Sağlayıcı adları "<entity>.query" biçimindedir; Query onları bu adla
-	// arar ve Entity() ile adın örtüştüğünü doğrular (ADR 0004).
+	// Provider names have the form "<entity>.query"; Query looks them up
+	// under that name and verifies with Entity() that the name matches
+	// (ADR 0004).
 	if err := c.Provide(service.EntityProduct+query.ProviderSuffix, service.NewProductProvider(repo)); err != nil {
 		return err
 	}
@@ -229,12 +246,13 @@ func (m *Module) Register(ctx context.Context, c *container.Container) error {
 		return err
 	}
 
-	// Link tanımları BURADA bildirilir: şema, tanımın kendisiyle aynı yerde
-	// durur ve her açılışta idempotent olarak doğrulanır (ADR 0005).
+	// The link definitions are declared HERE: the schema stays in the same
+	// place as the definition itself and is verified idempotently at every
+	// startup (ADR 0005).
 	for _, def := range service.Definitions() {
 		if err := links.Define(ctx, def); err != nil {
 			return errors.Wrap(err, errors.KindOf(err), codeLinkDefine,
-				"%q link tanımı bildirilemedi", def.Name)
+				"the %q link definition could not be declared", def.Name)
 		}
 	}
 
@@ -243,14 +261,16 @@ func (m *Module) Register(ctx context.Context, c *container.Container) error {
 	return nil
 }
 
-// Routes modülün store ve admin uçlarını router'a bağlar.
+// Routes mounts the module's store and admin endpoints on the router.
 //
-// Register çalışmadıysa hiçbir uç bağlanmaz: servisi olmayan bir handler'ın
-// ilk istekte panik üretmesindense ucun hiç var olmaması yeğdir.
+// If Register did not run, no endpoint is mounted: rather than have a handler
+// without a service panic on the first request, it is better for the endpoint
+// not to exist at all.
 //
-// Vitrinin GraphQL okuma ucu (POST /store/v1/graphql) da buradan geçer; uçların
-// tamamı [api.Handler.Routes] içinde, tek listede durur. GraphQL yüzeyinin
-// kapsamı ve satış kanalı kuralı için bkz. graph paketi.
+// The storefront's GraphQL read endpoint (POST /store/v1/graphql) goes
+// through here too; all of the endpoints stand in a single list inside
+// [api.Handler.Routes]. For the scope of the GraphQL surface and the sales
+// channel rule see the graph package.
 func (m *Module) Routes(r chi.Router) {
 	if m.handler == nil {
 		return
@@ -258,32 +278,35 @@ func (m *Module) Routes(r chi.Router) {
 	m.handler.Routes(r)
 }
 
-// Describe modülün vitrin ve yönetim uçlarını OpenAPI belgesine işler.
+// Describe writes the module's storefront and admin endpoints into the
+// OpenAPI document.
 //
-// Anlatımın kendisi [api.Describe]'dedir ve iki sebeple oradadır. Sorgu
-// parametreleri handler'ın gerçekten okuduklarıdır ve o okuma api paketindedir;
-// liste burada dursaydı okumadan uzaklaşır ve ikisi sessizce ayrışırdı. Yönetim
-// uçlarının istek gövdeleri ise o paketin DIŞA KAPALI DTO'larıdır; tipleri
-// yalnızca belge uğruna dışa açmak modülün yüzeyini genişletirdi.
+// The description itself lives in [api.Describe] and it lives there for two
+// reasons. The query parameters are the ones the handler actually reads, and
+// that reading is in the api package; if the list stood here it would drift
+// away from the reading and the two would silently diverge. The request
+// bodies of the admin endpoints, in turn, are that package's UNEXPORTED DTOs;
+// exporting those types merely for the sake of the document would widen the
+// module's surface.
 //
-// [Module.Routes]'un tersine Register kontrolü YOKTUR ve gerekmez: şema
-// tiplerden gelir, servisten değil.
+// Unlike [Module.Routes] there is NO Register check, and none is needed: the
+// schema comes from the types, not from the service.
 func (m *Module) Describe(d *openapi.Doc) { api.Describe(d) }
 
-// Service modülün servisini döner; Register çağrılmadıysa nil'dir.
+// Service returns the module's service; it is nil if Register was not called.
 //
-// Testler ve gömülü kullanım içindir; normal akışta servis container'dan
-// [ServiceName] adıyla çözülür.
+// It is meant for tests and embedded use; in the normal flow the service is
+// resolved from the container under the name [ServiceName].
 func (m *Module) Service() *service.Service { return m.svc }
 
-// mustSub alt dizini açar; açılamazsa panikler.
+// mustSub opens the subdirectory; it panics if it cannot be opened.
 //
-// Panik burada güvenlidir: dizin adı derleme zamanında sabittir ve go:embed
-// dosyaların varlığını zaten derleme zamanında doğrulamıştır.
+// The panic is safe here: the directory name is constant at compile time and the
+// embed directive has already verified at compile time that the files exist.
 func mustSub(files embed.FS, dir string) fs.FS {
 	sub, err := fs.Sub(files, dir)
 	if err != nil {
-		panic("product: gömülü migration dizini açılamadı: " + err.Error())
+		panic("product: could not open the embedded migration directory: " + err.Error())
 	}
 	return sub
 }

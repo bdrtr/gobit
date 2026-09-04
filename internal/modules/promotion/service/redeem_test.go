@@ -268,7 +268,7 @@ func TestRedeemPromotionGirdiDogrulamasi(t *testing.T) {
 		{
 			ad:      "referans boş",
 			in:      RedeemInput{PromotionID: "promo_1", Amount: 100, CurrencyCode: "TRY"},
-			gerekce: "idempotency anahtarı zorunludur",
+			gerekce: "the idempotency key is required",
 		},
 		{
 			ad:      "negatif tutar",

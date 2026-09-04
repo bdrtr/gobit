@@ -9,207 +9,225 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/product/service"
 )
 
-// Parametre şemalarında geçen JSON Schema adları.
+// The JSON Schema names that appear in the parameter schemas.
 //
-// Çekirdeğin karşılıkları dışa kapalıdır ve burada tekrarlanmalarının sebebi
-// maliyet değil SESSİZLİK: "strig" yazılmış bir tip adı derlenir, belge
-// üretilir ve yalnızca şemayı okuyan istemci parametreyi yanlış tiple
-// ürettiğinde ortaya çıkar.
+// The core's counterparts are unexported and the reason they are repeated here
+// is not cost but SILENCE: a type name written as "strig" compiles, the
+// document is generated, and it only surfaces once the client reading the
+// schema produces the parameter with the wrong type.
 const (
-	semaTip      = "type"
-	tipDize      = "string"
-	tipTamSayi   = "integer"
-	tipMantiksal = "boolean"
-	tipNesne     = "object"
-	tipDizi      = "array"
+	schemaType  = "type"
+	typeString  = "string"
+	typeInteger = "integer"
+	typeBoolean = "boolean"
+	typeObject  = "object"
+	typeArray   = "array"
 )
 
-// Describe product'ın uçlarını OpenAPI belgesine işler.
+// Describe writes product's endpoints into the OpenAPI document.
 //
-// # Neden bu pakette
+// # Why in this package
 //
-// Sorgu parametreleri handler'ın GERÇEKTEN okuduğu parametrelerdir ve o okuma
-// bu paketteki store.go ile [paging] içindedir. Anlatım başka bir pakette
-// dursaydı, parametre listesi okumadan uzaklaşır ve ikisi sessizce ayrışırdı.
-// Modülün [openapi.Describer] uygulaması bu yüzden buraya delege eder.
+// The query parameters are the ones the handler REALLY reads, and that reading
+// lives in this package's store.go and [paging]. Had the description stood in
+// another package, the parameter list would drift away from the reading and the
+// two would silently diverge. That is why the module's [openapi.Describer]
+// implementation delegates here.
 //
-// # Neden paket düzeyinde bir fonksiyon
+// # Why a package-level function
 //
-// Anlatım hiçbir çalışma zamanı durumuna bakmaz — şema TİPLERDEN gelir. Metodu
-// [Handler]'a bağlamak, belgenin servis kurulmuş olmasına bağlı OLDUĞUNU
-// söylerdi; oysa Register hiç çalışmamışken de belge üretilebilir.
+// The description looks at no runtime state — the schema comes FROM THE TYPES.
+// Binding the method to [Handler] would say the document DEPENDS on a service
+// having been built; yet the document can be generated even when Register has
+// never run.
 //
-// # İki yüzey de anlatılır
+// # Both surfaces are described
 //
-// Vitrin uçları bir mağaza istemcisinin, /admin/v1 uçları yönetim panelinin ve
-// katalog entegrasyonlarının ihtiyacıdır.
+// The storefront endpoints are what a store client needs, the /admin/v1
+// endpoints what the admin panel and the catalog integrations need.
 //
-// # Silme uçları 204 DEĞİL 200 döner
+// # The deletion endpoints return 200, NOT 204
 //
-// Yönetim tarafındaki her DELETE bir GÖVDE yazar ([deleted] kaydını, tekil
-// zarf içinde; bkz. admin.go). Alışkanlıkla "204, gövdesiz" yazmak burada
-// somut bir yalan olurdu: istemci üreteci gövdeyi hiç okumayan bir metot
-// üretir ve silmenin gerçekten olduğunu bildiren "deleted" alanı istemciye
-// hiç ulaşmazdı.
+// Every DELETE on the admin side writes a BODY (the [deleted] record, inside
+// the single envelope; see admin.go). Writing "204, no body" out of habit would
+// be a concrete lie here: a client generator would produce a method that never
+// reads the body, and the "deleted" field that reports the deletion really
+// happened would never reach the client.
 func Describe(d *openapi.Doc) {
 	d.Describe(http.MethodGet, "/store/v1/products", openapi.Operation{
-		Summary: "Yayındaki ürünleri fiyat ve stok bilgisiyle listeler.",
-		// Parametreler handler'ın OKUDUKLARIDIR, isteyebileceklerimiz değil:
-		// [Handler.storeListProducts] yalnızca bu beşini okur.
+		Summary: "Lists the published products with their price and stock information.",
+		// The parameters are the ones the handler READS, not the ones we might
+		// wish for: [Handler.storeListProducts] reads only these five.
 		//
-		// "sales_channel_id" BİLİNÇLİ OLARAK YOKTUR ve eklenmemelidir: kanal
-		// isteğin publishable anahtarından gelir, sorgu dizesinden değil
-		// (bkz. [salesChannelIDs]). Şemaya yazmak, hem okunmayan bir
-		// parametre vaat etmek hem de istemciye kanal süzgecinin
-		// atlatılabileceğini ima etmek olurdu.
+		// "sales_channel_id" is DELIBERATELY ABSENT and must not be added: the
+		// channel comes from the request's publishable key, not from the query
+		// string (see [salesChannelIDs]). Writing it into the schema would both
+		// promise a parameter that is never read and hint to the client that
+		// the channel filter can be bypassed.
 		Parameters: []openapi.Parameter{
-			sorguParametresi("collection_id", tipDize,
-				"Ürünleri tek bir koleksiyonla sınırlar."),
-			sorguParametresi("q", tipDize,
-				"Başlık ve handle üzerinde serbest metin araması."),
-			sorguParametresi("limit", tipTamSayi,
-				"Sayfa boyutu; verilmezse servisin varsayılanı uygulanır."),
-			sorguParametresi("offset", tipTamSayi, "Atlanacak kayıt sayısı."),
-			// Sayacın kapatılabildiğini ve varsayılanının AÇIK olduğunu
-			// istemcinin belgeden görmesi şarttır: hem sessiz bir varsayılan
-			// bırakmamak için, hem de kapatıldığında "count" alanının
-			// gövdeden düştüğünü önceden bilmesi için. Ölçüm de burada
-			// yazılıdır — parametrenin ne kazandırdığını söylemeyen bir
-			// açıklama, kimsenin kullanmayacağı bir parametre bırakır.
-			sorguParametresi("with_count", tipMantiksal,
-				"Toplam sayaç hesaplansın mı? Varsayılan: true (bugünkü davranış). "+
-					"false verilirse sayaç sorgusu hiç çalıştırılmaz ve yanıt zarfında "+
-					"\"count\" alanı BULUNMAZ — 0 dönmez, null dönmez, alan yoktur. "+
-					"Sayaç, sayfa boyutundan bağımsız olarak satış kanalı süzgecinin "+
-					"uygulandığı kümenin tamamını gezer ve maliyeti KATALOG büyüklüğüyle "+
-					"artar: 52.004 ürünlük bir katalogda ölçülen 67,00 ms'lik liste "+
-					"servisinin 64,07 ms'si sayaçtır; sayaçsız aynı çağrı 0,65 ms "+
-					"sürer (ucun kalan zenginleştirme bacakları sayaçtan bağımsızdır "+
-					"ve bu parametreyle atlanmaz). "+
-					"Toplam sayı genelde ilk sayfada bir kez gerekir, sonraki sayfalarda "+
-					"aynı sayı yeniden hesaplanır.",
+			queryParameter("collection_id", typeString,
+				"Restricts the products to a single collection."),
+			queryParameter("q", typeString,
+				"Free-text search over the title and the handle."),
+			queryParameter("limit", typeInteger,
+				"Page size; if not given the service's default applies."),
+			queryParameter("offset", typeInteger, "Number of records to skip."),
+			// It is essential that the client sees from the document that the
+			// counter can be turned off and that its default is ON: both so as
+			// not to leave a silent default, and so that it knows in advance
+			// that the "count" field drops out of the body when it is turned
+			// off. The measurement is written here too — a description that
+			// does not say what the parameter buys leaves a parameter nobody
+			// will use.
+			queryParameter("with_count", typeBoolean,
+				"Should the total counter be computed? Default: true (today's behavior). "+
+					"If false is given the count query is not run at all and the response "+
+					"envelope carries NO \"count\" field — it does not return 0, it does not "+
+					"return null, the field is ABSENT. "+
+					"Independently of the page size, the counter walks the whole set the "+
+					"sales channel filter is applied to and its cost grows WITH THE SIZE OF "+
+					"THE CATALOG: on a 52,004-product catalog, 64.07 ms of the 67.00 ms "+
+					"measured for the list service is the counter; the same call without the "+
+					"counter takes 0.65 ms (the endpoint's remaining enrichment legs are "+
+					"independent of the counter and are not skipped by this parameter). "+
+					"The total number is generally needed once on the first page; on the "+
+					"following pages the same number is computed again.",
 			),
 		},
 		Responses: map[string]any{
-			// Zarf ŞEMASI da sayacın düşebildiğini söylemelidir: "count"
-			// burada zorunlu alan DEĞİLDİR (bkz. [openapi.Doc.ListOptionalCount]).
-			// d.List kullanılsaydı belge, with_count=false yanıtında var
-			// olmayan bir alanı zorunlu ilan ederdi.
-			"200": openapi.Response("Vitrin ürünleri",
+			// The envelope SCHEMA has to say the counter can drop as well:
+			// "count" is NOT a required field here (see
+			// [openapi.Doc.ListOptionalCount]). Had d.List been used, the
+			// document would declare a field required that does not exist in a
+			// with_count=false response.
+			"200": openapi.Response("Storefront products",
 				d.ListOptionalCount(service.StoreProduct{})),
 		},
 	})
 
 	d.Describe(http.MethodGet, "/store/v1/products/{id}", openapi.Operation{
-		Summary: "Tek bir vitrin ürününü kimliğe ya da handle'a göre döner.",
-		// Yol parametresi çekirdek tarafından desenden de türetilir; burada
-		// ELLE yazılmasının tek sebebi açıklamasıdır. Ad "id"dir ama değer
-		// handle da olabilir ("/store/v1/products/tisort") ve bunu yalnızca
-		// handler bilir; türetici desene bakıp söyleyemez.
+		Summary: "Returns a single storefront product by id or by handle.",
+		// The path parameter is derived from the pattern by the core as well;
+		// the only reason it is written BY HAND here is its description. The
+		// name is "id" but the value may also be a handle
+		// ("/store/v1/products/tisort") and only the handler knows this; the
+		// deriver cannot tell it by looking at the pattern.
 		Parameters: []openapi.Parameter{{
 			Name:        "id",
 			In:          "path",
 			Required:    true,
-			Schema:      map[string]any{semaTip: tipDize},
-			Description: "Ürün kimliği (prod_…) ya da vitrin adresindeki handle.",
+			Schema:      map[string]any{schemaType: typeString},
+			Description: "Product id (prod_…) or the handle in the storefront address.",
 		}},
 		Responses: map[string]any{
-			"200": openapi.Response("Vitrin ürünü", d.Item(service.StoreProduct{})),
+			"200": openapi.Response("Storefront product", d.Item(service.StoreProduct{})),
 		},
 	})
 
-	describeVitrinGraphQL(d)
-	describeYonetimUrunler(d)
-	describeYonetimVaryantlar(d)
-	describeYonetimSecenekler(d)
-	describeYonetimBaglar(d)
-	describeYonetimSatisKanallari(d)
-	describeYonetimTaksonomi(d)
+	describeStorefrontGraphQL(d)
+	describeAdminProducts(d)
+	describeAdminVariants(d)
+	describeAdminOptions(d)
+	describeAdminLinks(d)
+	describeAdminSalesChannels(d)
+	describeAdminTaxonomy(d)
 }
 
-// graphqlRequest GraphQL istek gövdesidir.
+// graphqlRequest is the GraphQL request body.
 //
-// Bu tip gövdeyi ÇÖZMEZ; çözen gqlgen'dir (bkz. graph.NewHandler). Yalnızca
-// belge için vardır ve sebebi somuttur: anlatılmamış bir POST ucu belgede
-// gövdesiz görünür, istemci üreteci de parametresiz — yani çağrılamaz — bir
-// metot üretir. Alanlar GraphQL'in HTTP taşımasında sabittir, bu yüzden
-// gqlgen'in iç tipiyle sessizce ayrışma riski taşımazlar.
+// This type DOES NOT decode the body; gqlgen does (see graph.NewHandler). It
+// exists only for the document and the reason is concrete: an undescribed POST
+// endpoint appears in the document with no body, and a client generator
+// produces a method with no parameters — that is, one that cannot be called.
+// The fields are fixed by GraphQL's HTTP transport, so they carry no risk of
+// silently drifting from gqlgen's internal type.
 type graphqlRequest struct {
-	// Query çalıştırılacak GraphQL belgesidir.
+	// Query is the GraphQL document to be executed.
 	Query string `json:"query"`
-	// OperationName belge birden çok işlem taşıyorsa çalıştırılacak olanı seçer.
+	// OperationName picks the operation to run when the document carries more
+	// than one.
 	OperationName string `json:"operationName,omitempty"`
-	// Variables sorgunun değişkenleridir.
+	// Variables are the query's variables.
 	Variables map[string]any `json:"variables,omitempty"`
 }
 
-// describeVitrinGraphQL GraphQL vitrin ucunu anlatır.
+// describeStorefrontGraphQL describes the GraphQL storefront endpoint.
 //
-// # Uç OpenAPI'de NEDEN anlatılıyor
+// # WHY the endpoint is described in OpenAPI
 //
-// Sözleşme burada değil, modülün GraphQL şemasındadır (graph/schema.graphqls)
-// ve OpenAPI onu anlatamaz: tek bir yol, tek bir gövde ve istemcinin SEÇTİĞİ
-// alanlar. Yine de uç router'da vardır ve belge router'dan üretilir
-// (bkz. [openapi.Doc.Build]); anlatılmasaydı belgede özetsiz ve gövdesiz bir
-// POST satırı olarak görünürdü. Anlatım iki şey yapar: gövdenin biçimini
-// verir ve asıl sözleşmenin nerede olduğunu söyler.
+// The contract is not here but in the module's GraphQL schema
+// (graph/schema.graphqls) and OpenAPI cannot describe it: a single path, a
+// single body and the fields the CLIENT CHOOSES. Still, the endpoint exists in
+// the router and the document is generated from the router (see
+// [openapi.Doc.Build]); had it not been described it would appear in the
+// document as a POST line with no summary and no body. The description does two
+// things: it gives the shape of the body and it says where the real contract
+// is.
 //
-// # Yanıt zarfı yazılır, İÇİ yazılmaz
+// # The response envelope is written, its INSIDE is not
 //
-// "data" ve "errors" GraphQL sözleşmesinin sabit parçalarıdır ve yazılırlar.
-// "data"nın İÇİ ise sorguya göre biçim değiştirir; onu tiplemek her sorgu için
-// ayrı bir şema yazmak ya da yalan söylemek olurdu.
+// "data" and "errors" are the fixed parts of the GraphQL contract and they are
+// written. The INSIDE of "data", on the other hand, changes shape with the
+// query; typing it would mean writing a separate schema for every query, or
+// lying.
 //
-// # Idempotency muafiyeti YAZILIR
+// # The idempotency exemption IS WRITTEN
 //
-// Uç /store/v1 altındaki tek POST'tur ki koruma yığınının idempotency
-// halkasından MUAFTIR (bkz. corehttp.GuardOptions.IdempotencyExempt). Bu, her
-// POST ucunun aynı davrandığını sanan istemciden saklanamaz: Idempotency-Key
-// gönderen bir istemci burada Idempotency-Replayed başlığını asla göremez ve
-// bunu belgede okumazsa, ya kaydın çalıştığını sanar ya da eksik bir uygulama
-// olduğunu düşünüp bildirir.
-func describeVitrinGraphQL(d *openapi.Doc) {
+// The endpoint is the only POST under /store/v1 that is EXEMPT from the guard
+// stack's idempotency ring (see corehttp.GuardOptions.IdempotencyExempt). This
+// cannot be hidden from a client that assumes every POST endpoint behaves the
+// same: a client that sends an Idempotency-Key will never see an
+// Idempotency-Replayed header here and, if it does not read this in the
+// document, it will either think the record worked or think it is a missing
+// implementation and report it.
+func describeStorefrontGraphQL(d *openapi.Doc) {
 	d.Describe(http.MethodPost, graph.Path, openapi.Operation{
-		Summary: "Vitrin kataloğunu GraphQL ile okur.",
-		Description: "Sözleşme modülün GraphQL şemasıdır; alan listesi için şemaya " +
-			"(graph/schema.graphqls) ya da uca yapılan iç gözlem sorgusuna bakın. " +
-			"Yüzey yalnızca OKUMADIR: products ve product sorguları vardır, mutation yoktur. " +
-			"Satış kanalı süzgeci isteğin publishable anahtarından gelir; sorgu argümanı YOKTUR. " +
-			"Yalnızca POST kabul edilir (GET 405 döner). " +
-			"GraphQL sözleşmesi gereği çözümlenebilen bir isteğin yanıtı, alan hataları olsa " +
-			"bile 200'dür ve hatalar gövdedeki \"errors\" dizisinde döner; kodları REST " +
-			"yüzeyindekilerle AYNI sözlükten gelir (extensions.code). " +
-			"Belgenin DERİNLİĞİ ve tahmini MALİYETİ sınırlıdır (kurulum başına " +
-			"yapılandırılır): sınırı aşan belge çalıştırılmaz ve 200 içinde " +
-			"DEPTH_LIMIT_EXCEEDED / COMPLEXITY_LIMIT_EXCEEDED koduyla döner. " +
-			"Maliyet, liste alanlarında istenen kayıt sayısıyla çarpılır — yani limit " +
-			"büyüdükçe sorgu pahalılaşır. İstek gövdesi 64 KiB'ı aşarsa belge hiç " +
-			"ayrıştırılmaz ve yanıt, GraphQL zarfı değil çekirdeğin hata zarfıdır (422). " +
-			"Uç, yüzeydeki diğer POST'ların aksine IDEMPOTENCY KAYDI ALMAZ: " +
-			"Idempotency-Key başlığı kabul edilir ama yok sayılır ve yanıt hiçbir zaman " +
-			"Idempotency-Replayed taşımaz. Sebebi iki katlıdır — yüzey yalnızca okumadır, " +
-			"yani kaydın koruyacağı bir yan etki yoktur; ve GraphQL çözümlenen her isteğe " +
-			"200 dediği için kayıt, geçici bir sunucu hatasını da saklar ve arıza " +
-			"giderildikten sonra bile TTL boyunca eski yanıtı geri verirdi.",
+		Summary: "Reads the storefront catalog with GraphQL.",
+		Description: "The contract is the module's GraphQL schema; for the field list see the " +
+			"schema (graph/schema.graphqls) or an introspection query against the endpoint. " +
+			"The surface is READ-ONLY: there are products and product queries, no mutation. " +
+			"The sales channel filter comes from the request's publishable key; there is NO " +
+			"query argument for it. " +
+			"Only POST is accepted (GET returns 405). " +
+			"By the GraphQL contract the response of a request that can be resolved is 200 " +
+			"even if there are field errors, and the errors come back in the \"errors\" array " +
+			"in the body; their codes come from the SAME dictionary as the ones on the REST " +
+			"surface (extensions.code). " +
+			"The DEPTH and the estimated COST of the document are limited (configured per " +
+			"installation): a document that exceeds a limit is not executed and comes back " +
+			"inside a 200 with the code DEPTH_LIMIT_EXCEEDED / COMPLEXITY_LIMIT_EXCEEDED. " +
+			"The cost is multiplied by the number of records asked for in list fields — that " +
+			"is, the query gets more expensive as the limit grows. If the request body " +
+			"exceeds 64 KiB the document is not parsed at all and the response is not the " +
+			"GraphQL envelope but the core's error envelope (422). " +
+			"Unlike the other POSTs on the surface, the endpoint TAKES NO IDEMPOTENCY " +
+			"RECORD: the Idempotency-Key header is accepted but ignored and the response " +
+			"never carries Idempotency-Replayed. The reason is twofold — the surface is " +
+			"read-only, so there is no side effect for a record to protect; and because " +
+			"GraphQL says 200 to every request it resolves, a record would also store a " +
+			"transient server error and would keep giving the old response back for the " +
+			"whole TTL even after the fault was fixed.",
 		RequestBody: d.RequestBody(graphqlRequest{}),
 		Responses: map[string]any{
-			// Zarf REST'inkiyle aynı adı taşır ("data") ama İÇİ tiplenmez:
-			// biçimi istemcinin sorgusu belirler. "errors" ise GraphQL
-			// sözleşmesinin parçasıdır ve 200 yanıtın içinde gelir — bu ucun
-			// diğerlerinden ayrıldığı tek nokta budur, o yüzden yazılıdır.
+			// The envelope carries the same name as REST's ("data") but its
+			// INSIDE is not typed: the client's query decides its shape.
+			// "errors", on the other hand, is part of the GraphQL contract and
+			// comes inside the 200 response — this is the single point where
+			// this endpoint differs from the others, which is why it is
+			// written.
 			"200": openapi.Response(
-				"GraphQL yanıtı: sorgulanan alanları taşıyan \"data\" ve/veya \"errors\".",
+				"GraphQL response: \"data\" carrying the queried fields and/or \"errors\".",
 				map[string]any{
-					semaTip: tipNesne,
+					schemaType: typeObject,
 					"properties": map[string]any{
 						"data": map[string]any{
-							semaTip:       tipNesne,
-							"description": "Sorgulanan alanlar; biçimini sorgu belirler.",
+							schemaType:    typeObject,
+							"description": "The queried fields; the query decides their shape.",
 						},
 						"errors": map[string]any{
-							semaTip:       tipDizi,
-							"description": "Hata listesi; kodlar REST ile aynı sözlükten (extensions.code).",
-							"items":       map[string]any{semaTip: tipNesne},
+							schemaType:    typeArray,
+							"description": "The error list; the codes come from the same dictionary as REST (extensions.code).",
+							"items":       map[string]any{schemaType: typeObject},
 						},
 					},
 				}),
@@ -217,310 +235,318 @@ func describeVitrinGraphQL(d *openapi.Doc) {
 	})
 }
 
-// describeYonetimUrunler /admin/v1 ürün uçlarını anlatır.
+// describeAdminProducts describes the /admin/v1 product endpoints.
 //
-// Yanıt kaydı vitrindeki [service.StoreProduct] DEĞİL [models.Product]'tır:
-// yönetim servisi fiyat ve stok zenginleştirmesi yapmaz (bkz. writeItem
-// çağrıları). Vitrin tipini yazmak, istemciye hiç dolmayacak "price_set" ve
-// "inventory_item" alanları vaat etmek olurdu.
-func describeYonetimUrunler(d *openapi.Doc) {
+// The response record is [models.Product], NOT the storefront's
+// [service.StoreProduct]: the admin service does no price and stock enrichment
+// (see the writeItem calls). Writing the storefront type would be promising the
+// client "price_set" and "inventory_item" fields that never get filled.
+func describeAdminProducts(d *openapi.Doc) {
 	d.Describe(http.MethodPost, "/admin/v1/products", openapi.Operation{
-		Summary:     "Yeni ürünü seçenekleri, varyantları ve görselleriyle oluşturur.",
+		Summary:     "Creates a new product with its options, variants and images.",
 		RequestBody: d.RequestBody(createProductRequest{}),
 		Responses: map[string]any{
-			"201": openapi.Response("Oluşturulan ürün", d.Item(models.Product{})),
+			"201": openapi.Response("The created product", d.Item(models.Product{})),
 		},
 	})
 
 	d.Describe(http.MethodGet, "/admin/v1/products", openapi.Operation{
-		Summary: "Kataloğun tamamını taslaklar dâhil süzerek listeler.",
-		// Parametreler [Handler.adminListProducts]'ın OKUDUKLARIDIR. Vitrin
-		// listesinden farkı iki tanedir ve ikisi de yönetime özgüdür: "status"
-		// taslak/arşiv kayıtlarını görmeyi sağlar (vitrin yalnızca yayındakini
-		// döner), "expand" ise varyant ve seçenekleri yanıta ekler.
+		Summary: "Lists the whole catalog, drafts included, with filters.",
+		// The parameters are the ones [Handler.adminListProducts] READS. There
+		// are two differences from the storefront listing and both are specific
+		// to the admin side: "status" makes draft/archived records visible (the
+		// storefront returns only the published ones), and "expand" adds the
+		// variants and options to the response.
 		Parameters: []openapi.Parameter{
-			sorguParametresi("collection_id", tipDize,
-				"Ürünleri tek bir koleksiyonla sınırlar."),
-			sorguParametresi("handle", tipDize,
-				"Ürünleri tek bir handle ile sınırlar."),
-			sorguParametresi("q", tipDize,
-				"Başlık ve handle üzerinde serbest metin araması."),
-			sorguParametresi("status", tipDize,
-				"Yayın durumu süzgeci: draft | published | archived."),
-			sorguParametresi("expand", tipMantiksal,
-				"true ise varyant, seçenek, görsel ve taksonomi kayıtları da döner."),
-			sorguParametresi("limit", tipTamSayi,
-				"Sayfa boyutu; verilmezse servisin varsayılanı uygulanır."),
-			sorguParametresi("offset", tipTamSayi, "Atlanacak kayıt sayısı."),
+			queryParameter("collection_id", typeString,
+				"Restricts the products to a single collection."),
+			queryParameter("handle", typeString,
+				"Restricts the products to a single handle."),
+			queryParameter("q", typeString,
+				"Free-text search over the title and the handle."),
+			queryParameter("status", typeString,
+				"Publication status filter: draft | published | archived."),
+			queryParameter("expand", typeBoolean,
+				"If true the variant, option, image and taxonomy records are returned too."),
+			queryParameter("limit", typeInteger,
+				"Page size; if not given the service's default applies."),
+			queryParameter("offset", typeInteger, "Number of records to skip."),
 		},
 		Responses: map[string]any{
-			"200": openapi.Response("Ürün sayfası", d.List(models.Product{})),
+			"200": openapi.Response("A page of products", d.List(models.Product{})),
 		},
 	})
 
 	d.Describe(http.MethodGet, "/admin/v1/products/{id}", openapi.Operation{
-		Summary: "Tek bir ürünü kimliğiyle döner.",
+		Summary: "Returns a single product by its id.",
 		Responses: map[string]any{
-			"200": openapi.Response("Ürün", d.Item(models.Product{})),
+			"200": openapi.Response("Product", d.Item(models.Product{})),
 		},
 	})
 
 	d.Describe(http.MethodPatch, "/admin/v1/products/{id}", openapi.Operation{
-		Summary:     "Ürünün yalnızca verilen alanlarını günceller.",
+		Summary:     "Updates only the given fields of the product.",
 		RequestBody: d.RequestBody(updateProductRequest{}),
 		Responses: map[string]any{
-			"200": openapi.Response("Güncellenen ürün", d.Item(models.Product{})),
+			"200": openapi.Response("The updated product", d.Item(models.Product{})),
 		},
 	})
 
 	d.Describe(http.MethodDelete, "/admin/v1/products/{id}", openapi.Operation{
-		Summary: "Ürünü siler.",
+		Summary: "Deletes the product.",
 		Responses: map[string]any{
-			"200": openapi.Response("Silme kaydı", d.Item(deleted{})),
+			"200": openapi.Response("Deletion record", d.Item(deleted{})),
 		},
 	})
 }
 
-// describeYonetimVaryantlar /admin/v1 varyant uçlarını anlatır.
-func describeYonetimVaryantlar(d *openapi.Doc) {
+// describeAdminVariants describes the /admin/v1 variant endpoints.
+func describeAdminVariants(d *openapi.Doc) {
 	d.Describe(http.MethodPost, "/admin/v1/products/{id}/variants", openapi.Operation{
-		Summary:     "Ürüne yeni varyant ekler.",
+		Summary:     "Adds a new variant to the product.",
 		RequestBody: d.RequestBody(createVariantRequest{}),
 		Responses: map[string]any{
-			"201": openapi.Response("Oluşturulan varyant", d.Item(models.Variant{})),
+			"201": openapi.Response("The created variant", d.Item(models.Variant{})),
 		},
 	})
 
 	d.Describe(http.MethodGet, "/admin/v1/products/{id}/variants", openapi.Operation{
-		Summary: "Ürünün varyantlarını seçenek değerleriyle listeler.",
-		// Handler seçenek değerlerini HER ZAMAN yükler (WithOptionValues:true),
-		// yani "expand" gibi bir anahtar okumaz; yalnızca sayfalama okunur.
-		Parameters: sayfalamaParametreleri(),
+		Summary: "Lists the product's variants with their option values.",
+		// The handler ALWAYS loads the option values (WithOptionValues:true),
+		// that is, it reads no key such as "expand"; only the pagination is
+		// read.
+		Parameters: pagingParameters(),
 		Responses: map[string]any{
-			"200": openapi.Response("Varyant sayfası", d.List(models.Variant{})),
+			"200": openapi.Response("A page of variants", d.List(models.Variant{})),
 		},
 	})
 
 	d.Describe(http.MethodGet, "/admin/v1/variants/{id}", openapi.Operation{
-		Summary: "Tek bir varyantı kimliğiyle döner.",
+		Summary: "Returns a single variant by its id.",
 		Responses: map[string]any{
-			"200": openapi.Response("Varyant", d.Item(models.Variant{})),
+			"200": openapi.Response("Variant", d.Item(models.Variant{})),
 		},
 	})
 
 	d.Describe(http.MethodPatch, "/admin/v1/variants/{id}", openapi.Operation{
-		Summary:     "Varyantın yalnızca verilen alanlarını günceller.",
+		Summary:     "Updates only the given fields of the variant.",
 		RequestBody: d.RequestBody(updateVariantRequest{}),
 		Responses: map[string]any{
-			"200": openapi.Response("Güncellenen varyant", d.Item(models.Variant{})),
+			"200": openapi.Response("The updated variant", d.Item(models.Variant{})),
 		},
 	})
 
 	d.Describe(http.MethodDelete, "/admin/v1/variants/{id}", openapi.Operation{
-		Summary: "Varyantı siler.",
+		Summary: "Deletes the variant.",
 		Responses: map[string]any{
-			"200": openapi.Response("Silme kaydı", d.Item(deleted{})),
+			"200": openapi.Response("Deletion record", d.Item(deleted{})),
 		},
 	})
 }
 
-// describeYonetimSecenekler /admin/v1 seçenek ve seçenek değeri uçlarını
-// anlatır.
-func describeYonetimSecenekler(d *openapi.Doc) {
+// describeAdminOptions describes the /admin/v1 option and option value
+// endpoints.
+func describeAdminOptions(d *openapi.Doc) {
 	d.Describe(http.MethodPost, "/admin/v1/products/{id}/options", openapi.Operation{
-		Summary:     "Ürüne yeni bir seçenek ekseni ekler.",
+		Summary:     "Adds a new option axis to the product.",
 		RequestBody: d.RequestBody(createOptionRequest{}),
 		Responses: map[string]any{
-			"201": openapi.Response("Oluşturulan seçenek", d.Item(models.Option{})),
+			"201": openapi.Response("The created option", d.Item(models.Option{})),
 		},
 	})
 
 	d.Describe(http.MethodGet, "/admin/v1/products/{id}/options", openapi.Operation{
-		Summary: "Ürünün seçenek eksenlerini değerleriyle listeler.",
-		// Sayfalama parametresi BİLİNÇLİ olarak yoktur: [Handler.adminListOptions]
-		// sorgu dizesine hiç bakmaz ve sonucun tamamını tek sayfa gibi yazar.
-		// "limit" duyurmak, istemcinin gönderdiği ama sunucunun yok saydığı bir
-		// argüman üretirdi — bir ürünün seçenek sayısı zaten avuç içi kadardır.
+		Summary: "Lists the product's option axes with their values.",
+		// There is DELIBERATELY no pagination parameter:
+		// [Handler.adminListOptions] never looks at the query string and writes
+		// the whole result as if it were a single page. Announcing "limit"
+		// would produce an argument the client sends and the server ignores — a
+		// product's option count fits in the palm of a hand anyway.
 		Responses: map[string]any{
-			"200": openapi.Response("Seçenek listesi", d.List(models.Option{})),
+			"200": openapi.Response("The option list", d.List(models.Option{})),
 		},
 	})
 
 	d.Describe(http.MethodPost, "/admin/v1/product-options/{id}/values", openapi.Operation{
-		Summary:     "Seçeneğe yeni bir değer ekler.",
+		Summary:     "Adds a new value to the option.",
 		RequestBody: d.RequestBody(optionValueRequest{}),
 		Responses: map[string]any{
-			"201": openapi.Response("Eklenen seçenek değeri", d.Item(models.OptionValue{})),
+			"201": openapi.Response("The added option value", d.Item(models.OptionValue{})),
 		},
 	})
 
 	d.Describe(http.MethodDelete, "/admin/v1/product-options/{id}", openapi.Operation{
-		Summary: "Seçeneği değerleriyle birlikte siler.",
+		Summary: "Deletes the option together with its values.",
 		Responses: map[string]any{
-			"200": openapi.Response("Silme kaydı", d.Item(deleted{})),
+			"200": openapi.Response("Deletion record", d.Item(deleted{})),
 		},
 	})
 }
 
-// describeYonetimBaglar varyantın fiyat/stok bağ uçlarını anlatır.
+// describeAdminLinks describes the variant's price/stock link endpoints.
 //
-// # Bilinen sınır: [linkRequest] iki alan taşır, her uç BİRİNİ okur
+// # A known limit: [linkRequest] carries two fields, each endpoint reads ONE
 //
-// Gövde şeması GERÇEK DTO'dan türetilir ve o DTO ikisini birden taşır: fiyat
-// ucu yalnızca "price_set_id"yi, stok ucu yalnızca "inventory_item_id"yi
-// okur (bkz. [Handler.adminSetPriceSet], [Handler.adminSetInventoryItem]).
-// Yani şema, gönderilebilecek ama YOK SAYILACAK bir alan gösteriyor. Sınır
-// bilinçli olarak yazıldı: düzeltmenin doğru yeri şema değil, DTO'yu uç başına
-// ayırmaktır ve bu, anlatım işinin değil api katmanının kararıdır. Alan ADLARI
-// ve TİPLERİ doğrudur; şema uydurma bir alan göstermez.
-func describeYonetimBaglar(d *openapi.Doc) {
+// The body schema is derived from the REAL DTO and that DTO carries both: the
+// price endpoint reads only "price_set_id", the stock endpoint only
+// "inventory_item_id" (see [Handler.adminSetPriceSet],
+// [Handler.adminSetInventoryItem]). That is, the schema shows a field that can
+// be sent but WILL BE IGNORED. The limit was written down deliberately: the
+// right place for the fix is not the schema but splitting the DTO per endpoint,
+// and that is the api layer's decision, not the description's. The field NAMES
+// and TYPES are correct; the schema shows no made-up field.
+func describeAdminLinks(d *openapi.Doc) {
 	d.Describe(http.MethodPut, "/admin/v1/variants/{id}/price-set", openapi.Operation{
-		Summary:     "Varyantı bir fiyat kümesine bağlar.",
+		Summary:     "Links the variant to a price set.",
 		RequestBody: d.RequestBody(linkRequest{}),
 		Responses: map[string]any{
-			// Yanıt bağın kendisi değil varyantın GÜNCEL bağ kümesidir; istemci
-			// ikinci bir GET atmadan sonucu görür (bkz. writeVariantLinks).
-			"200": openapi.Response("Varyantın güncel bağları", d.Item(service.VariantLinks{})),
+			// The response is not the link itself but the variant's CURRENT set
+			// of links; the client sees the result without a second GET (see
+			// writeVariantLinks).
+			"200": openapi.Response("The variant's current links", d.Item(service.VariantLinks{})),
 		},
 	})
 
 	d.Describe(http.MethodDelete, "/admin/v1/variants/{id}/price-set", openapi.Operation{
-		Summary: "Varyantın fiyat kümesi bağını kaldırır.",
+		Summary: "Removes the variant's price set link.",
 		Responses: map[string]any{
-			"200": openapi.Response("Silme kaydı", d.Item(deleted{})),
+			"200": openapi.Response("Deletion record", d.Item(deleted{})),
 		},
 	})
 
 	d.Describe(http.MethodPut, "/admin/v1/variants/{id}/inventory-item", openapi.Operation{
-		Summary:     "Varyantı bir stok kalemine bağlar.",
+		Summary:     "Links the variant to an inventory item.",
 		RequestBody: d.RequestBody(linkRequest{}),
 		Responses: map[string]any{
-			"200": openapi.Response("Varyantın güncel bağları", d.Item(service.VariantLinks{})),
+			"200": openapi.Response("The variant's current links", d.Item(service.VariantLinks{})),
 		},
 	})
 
 	d.Describe(http.MethodDelete, "/admin/v1/variants/{id}/inventory-item", openapi.Operation{
-		Summary: "Varyantın stok kalemi bağını kaldırır.",
+		Summary: "Removes the variant's inventory item link.",
 		Responses: map[string]any{
-			"200": openapi.Response("Silme kaydı", d.Item(deleted{})),
+			"200": openapi.Response("Deletion record", d.Item(deleted{})),
 		},
 	})
 
 	d.Describe(http.MethodGet, "/admin/v1/variants/{id}/links", openapi.Operation{
-		Summary: "Varyantın fiyat kümesi ve stok kalemi bağlarını döner.",
+		Summary: "Returns the variant's price set and inventory item links.",
 		Responses: map[string]any{
-			"200": openapi.Response("Varyantın bağları", d.Item(service.VariantLinks{})),
+			"200": openapi.Response("The variant's links", d.Item(service.VariantLinks{})),
 		},
 	})
 }
 
-// describeYonetimSatisKanallari ürün–satış kanalı bağ uçlarını anlatır.
+// describeAdminSalesChannels describes the product-to-sales-channel link
+// endpoints.
 //
-// Üçü de AYNI kaydı döner ([productSalesChannels]): bağ çoktan çoğa olduğu için
-// istemcinin sorusu "hangi kanallardayım"dır ve cevap her istekten sonra
-// güncel hâliyle verilir.
-func describeYonetimSatisKanallari(d *openapi.Doc) {
+// All three return the SAME record ([productSalesChannels]): because the link is
+// many-to-many, the client's question is "which channels am I in" and the answer
+// is given in its current state after every request.
+func describeAdminSalesChannels(d *openapi.Doc) {
 	d.Describe(http.MethodPost, "/admin/v1/products/{id}/sales-channels", openapi.Operation{
-		Summary:     "Ürünü bir satış kanalına bağlar.",
+		Summary:     "Links the product to a sales channel.",
 		RequestBody: d.RequestBody(linkSalesChannelRequest{}),
 		Responses: map[string]any{
-			// 201 DEĞİL 200: bağlama idempotenttir ve aynı çifti ikinci kez
-			// göndermek yeni bir kayıt yaratmaz (bkz. [Handler.adminAddSalesChannel]).
-			"200": openapi.Response("Ürünün güncel kanal bağları", d.Item(productSalesChannels{})),
+			// 200, NOT 201: linking is idempotent and sending the same pair a
+			// second time creates no new record (see
+			// [Handler.adminAddSalesChannel]).
+			"200": openapi.Response("The product's current channel links", d.Item(productSalesChannels{})),
 		},
 	})
 
 	d.Describe(http.MethodDelete, "/admin/v1/products/{id}/sales-channels/{sales_channel_id}",
 		openapi.Operation{
-			Summary: "Ürünün bir satış kanalı bağını kaldırır.",
+			Summary: "Removes one of the product's sales channel links.",
 			Responses: map[string]any{
-				// Gövdesiz 204 DEĞİL: uç kalan bağların listesini döner.
-				"200": openapi.Response("Ürünün güncel kanal bağları", d.Item(productSalesChannels{})),
+				// NOT a bodiless 204: the endpoint returns the list of the
+				// remaining links.
+				"200": openapi.Response("The product's current channel links", d.Item(productSalesChannels{})),
 			},
 		})
 
 	d.Describe(http.MethodGet, "/admin/v1/products/{id}/sales-channels", openapi.Operation{
-		Summary: "Ürünün bağlı olduğu satış kanallarını döner.",
+		Summary: "Returns the sales channels the product is linked to.",
 		Responses: map[string]any{
-			"200": openapi.Response("Ürünün kanal bağları", d.Item(productSalesChannels{})),
+			"200": openapi.Response("The product's channel links", d.Item(productSalesChannels{})),
 		},
 	})
 }
 
-// describeYonetimTaksonomi koleksiyon, kategori ve etiket uçlarını anlatır.
-func describeYonetimTaksonomi(d *openapi.Doc) {
+// describeAdminTaxonomy describes the collection, category and tag endpoints.
+func describeAdminTaxonomy(d *openapi.Doc) {
 	d.Describe(http.MethodPost, "/admin/v1/product-collections", openapi.Operation{
-		Summary:     "Yeni koleksiyon oluşturur.",
+		Summary:     "Creates a new collection.",
 		RequestBody: d.RequestBody(createCollectionRequest{}),
 		Responses: map[string]any{
-			"201": openapi.Response("Oluşturulan koleksiyon", d.Item(models.Collection{})),
+			"201": openapi.Response("The created collection", d.Item(models.Collection{})),
 		},
 	})
 
 	d.Describe(http.MethodGet, "/admin/v1/product-collections", openapi.Operation{
-		Summary:    "Koleksiyonları sayfalayarak listeler.",
-		Parameters: sayfalamaParametreleri(),
+		Summary:    "Lists the collections with pagination.",
+		Parameters: pagingParameters(),
 		Responses: map[string]any{
-			"200": openapi.Response("Koleksiyon sayfası", d.List(models.Collection{})),
+			"200": openapi.Response("A page of collections", d.List(models.Collection{})),
 		},
 	})
 
 	d.Describe(http.MethodPost, "/admin/v1/product-categories", openapi.Operation{
-		Summary:     "Yeni kategori oluşturur.",
+		Summary:     "Creates a new category.",
 		RequestBody: d.RequestBody(createCategoryRequest{}),
 		Responses: map[string]any{
-			"201": openapi.Response("Oluşturulan kategori", d.Item(models.Category{})),
+			"201": openapi.Response("The created category", d.Item(models.Category{})),
 		},
 	})
 
 	d.Describe(http.MethodGet, "/admin/v1/product-categories", openapi.Operation{
-		Summary: "Kategorileri üst kategoriye göre süzerek listeler.",
-		Parameters: append(sayfalamaParametreleri(),
-			sorguParametresi("parent_id", tipDize,
-				"Yalnızca bu kategorinin ALT kategorilerini döner.")),
+		Summary: "Lists the categories, filtered by parent category.",
+		Parameters: append(pagingParameters(),
+			queryParameter("parent_id", typeString,
+				"Returns only the CHILD categories of this category.")),
 		Responses: map[string]any{
-			"200": openapi.Response("Kategori sayfası", d.List(models.Category{})),
+			"200": openapi.Response("A page of categories", d.List(models.Category{})),
 		},
 	})
 
 	d.Describe(http.MethodPost, "/admin/v1/product-tags", openapi.Operation{
-		Summary:     "Yeni etiket oluşturur.",
+		Summary:     "Creates a new tag.",
 		RequestBody: d.RequestBody(createTagRequest{}),
 		Responses: map[string]any{
-			"201": openapi.Response("Oluşturulan etiket", d.Item(models.Tag{})),
+			"201": openapi.Response("The created tag", d.Item(models.Tag{})),
 		},
 	})
 
 	d.Describe(http.MethodGet, "/admin/v1/product-tags", openapi.Operation{
-		Summary:    "Etiketleri sayfalayarak listeler.",
-		Parameters: sayfalamaParametreleri(),
+		Summary:    "Lists the tags with pagination.",
+		Parameters: pagingParameters(),
 		Responses: map[string]any{
-			"200": openapi.Response("Etiket sayfası", d.List(models.Tag{})),
+			"200": openapi.Response("A page of tags", d.List(models.Tag{})),
 		},
 	})
 }
 
-// sayfalamaParametreleri [paging]'in okuduğu iki parametreyi döner.
+// pagingParameters returns the two parameters [paging] reads.
 //
-// Yeni bir dilim her çağrıda üretilir: paylaşılan bir dilim, çağıranın append
-// ile eklediği parametrenin başka bir ucun listesine sızmasına izin verirdi.
-func sayfalamaParametreleri() []openapi.Parameter {
+// A new slice is produced on every call: a shared slice would let a parameter
+// the caller appended leak into another endpoint's list.
+func pagingParameters() []openapi.Parameter {
 	return []openapi.Parameter{
-		sorguParametresi("limit", tipTamSayi,
-			"Sayfa boyutu; verilmezse servisin varsayılanı uygulanır."),
-		sorguParametresi("offset", tipTamSayi, "Atlanacak kayıt sayısı."),
+		queryParameter("limit", typeInteger,
+			"Page size; if not given the service's default applies."),
+		queryParameter("offset", typeInteger, "Number of records to skip."),
 	}
 }
 
-// sorguParametresi sorgu dizesinden okunan bir parametreyi tanımlar.
+// queryParameter defines a parameter that is read from the query string.
 //
-// Hiçbiri zorunlu DEĞİLDİR: verilmediğinde handler varsayılanla devam eder
-// (bkz. [stringParam], [intParam], [boolParam]).
-func sorguParametresi(ad, tip, aciklama string) openapi.Parameter {
+// None of them is REQUIRED: when it is not given the handler carries on with
+// the default (see [stringParam], [intParam], [boolParam]).
+func queryParameter(name, valueType, description string) openapi.Parameter {
 	return openapi.Parameter{
-		Name:        ad,
+		Name:        name,
 		In:          "query",
-		Schema:      map[string]any{semaTip: tip},
-		Description: aciklama,
+		Schema:      map[string]any{schemaType: valueType},
+		Description: description,
 	}
 }

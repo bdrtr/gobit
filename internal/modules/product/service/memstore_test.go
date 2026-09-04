@@ -12,17 +12,17 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/product/service"
 )
 
-// memStore [repository.Store]'un bellek içi uygulamasıdır.
+// memStore is the in-memory implementation of [repository.Store].
 //
-// Amacı, servisin KURALLARINI veritabanı olmadan doğrulayabilmektir: kimlik
-// üretimi, doğrulama, çakışma kontrolü, işlem sınırı ve toplu okuma sayısı.
-// Veritabanına özgü iddialar (kısmi benzersiz indeksin eşzamanlı iki isteği
-// ayırması, soft delete'in SQL tarafında filtrelenmesi) BURADA DEĞİL,
-// entegrasyon testlerinde kanıtlanır — sahte bir depo kendi yazdığı kuralı
-// doğrulayamaz.
+// Its purpose is to make the RULES of the service verifiable without a
+// database: id generation, validation, the conflict check, the transaction
+// boundary and the number of batch reads. The database-specific claims (a
+// partial unique index separating two concurrent requests, the soft delete
+// being filtered on the SQL side) are proven NOT HERE but in the integration
+// tests — a fake repository cannot verify the rule it wrote itself.
 //
-// Depo çağrıları sayılır (calls): "kayıt başına sorgu yapılmıyor" iddiasının
-// kanıtı budur.
+// The repository calls are counted (calls): that is the evidence for the claim
+// "no query is made per record".
 type memStore struct {
 	mu sync.Mutex
 
@@ -35,34 +35,35 @@ type memStore struct {
 	categories  map[string]models.Category
 	tags        map[string]models.Tag
 
-	// variantValues varyant -> (seçenek -> değer) eşlemesidir.
+	// variantValues is the variant -> (option -> value) mapping.
 	variantValues map[string]map[string]string
 	productTags   map[string][]string
 	productCats   map[string][]string
 
-	// links satış kanalı bağlarının okunduğu sahte link servisidir.
+	// links is the fake link service the sales channel links are read from.
 	//
-	// Gerçekte ürün ↔ kanal bağı TEK bir tabloda durur: servis onu core/link
-	// üzerinden YAZAR, depo ise kendi sorgusunun EXISTS koşuluyla OKUR. Sahte
-	// depo kendi ayrı kopyasını tutsaydı yazma ile okuma ayrışır ve testler
-	// gerçekte var olmayan bir tutarlılığı "kanıtlardı" — bu yüzden okuma da
-	// yazmanın gittiği yere, [fakeLinker]'a bakar.
+	// In reality the product <-> channel link lives in a SINGLE table: the
+	// service WRITES it through core/link, while the repository READS it with
+	// the EXISTS condition of its own query. Had the fake repository kept its
+	// own separate copy, the write and the read would drift apart and the tests
+	// would "prove" a consistency that does not really exist — that is why the
+	// read looks at where the write goes, at [fakeLinker].
 	//
-	// nil ise hiçbir ürünün ataması yoktur; kural gereği hepsi her kanalda
-	// görünür.
+	// If it is nil no product has an assignment; by the rule they are all
+	// visible in every channel.
 	links *fakeLinker
 
-	// calls metot adına göre çağrı sayacıdır.
+	// calls is the call counter by method name.
 	calls map[string]int
-	// failOn dolu bir metot adı için o çağrının döneceği hatadır.
+	// failOn, for a method name that is set, is the error that call returns.
 	failOn map[string]error
-	// inTx işlem içinde olup olmadığımızı gösterir.
+	// inTx shows whether we are inside a transaction.
 	inTx bool
 }
 
 var _ repository.Store = (*memStore)(nil)
 
-// newMemStore boş bir bellek içi depo üretir.
+// newMemStore builds an empty in-memory repository.
 func newMemStore() *memStore {
 	return &memStore{
 		products:      map[string]models.Product{},
@@ -81,20 +82,20 @@ func newMemStore() *memStore {
 	}
 }
 
-// track çağrıyı sayar ve enjekte edilmiş hata varsa döner.
+// track counts the call and returns the injected error if there is one.
 func (m *memStore) track(name string) error {
 	m.calls[name]++
 	return m.failOn[name]
 }
 
-// callCount verilen metodun kaç kez çağrıldığını döner.
+// callCount returns how many times the given method was called.
 func (m *memStore) callCount(name string) int {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.calls[name]
 }
 
-// fail verilen metodun bundan sonra hata dönmesini sağlar.
+// fail makes the given method return an error from now on.
 func (m *memStore) fail(name string, err error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -128,12 +129,12 @@ func (m *memStore) CreateProduct(_ context.Context, p models.Product) (models.Pr
 		return models.Product{}, err
 	}
 	p.CreatedAt, p.UpdatedAt = creationTime, creationTime
-	// Haritalar anahtarla gezilir: kayıt yapıları büyüktür ve değerle
-	// kopyalamak her turda birkaç yüz bayt taşır.
+	// The maps are walked by key: the record structs are large and copying by
+	// value carries a few hundred bytes on every round.
 	for id := range m.products {
 		if existing := m.products[id]; existing.DeletedAt == nil && existing.Handle == p.Handle {
 			return models.Product{}, errors.Conflict("product_handle_taken",
-				"handle zaten kullanımda: %s", p.Handle)
+				"the handle is already in use: %s", p.Handle)
 		}
 	}
 	m.products[p.ID] = p
@@ -148,15 +149,15 @@ func (m *memStore) GetProduct(_ context.Context, id string) (models.Product, err
 	}
 	p, ok := m.products[id]
 	if !ok || p.DeletedAt != nil {
-		return models.Product{}, errors.NotFound("product_not_found", "ürün bulunamadı: %s", id)
+		return models.Product{}, errors.NotFound("product_not_found", "the product was not found: %s", id)
 	}
 	return p, nil
 }
 
-// GetProductForUpdate kilit alamaz; sahte depo tek goroutine'de çalışır ve
-// kilidin gerçek etkisi (eşzamanlı silmeyle sıraya dizilme) yalnızca gerçek
-// veritabanında sınanabilir. Burada sınanan şey, kontrolün İŞLEMİN İÇİNDE
-// yapıldığıdır.
+// GetProductForUpdate cannot take a lock; the fake repository runs in a single
+// goroutine and the real effect of the lock (being lined up against a concurrent
+// delete) can only be tested against a real database. What is tested here is
+// that the check is done INSIDE THE TRANSACTION.
 func (m *memStore) GetProductForUpdate(_ context.Context, id string) (models.Product, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -165,11 +166,11 @@ func (m *memStore) GetProductForUpdate(_ context.Context, id string) (models.Pro
 	}
 	if !m.inTx {
 		return models.Product{}, errors.Internal("product_test_no_tx",
-			"GetProductForUpdate işlem dışında çağrıldı; kilit hiçbir şeyi sıraya dizmez")
+			"GetProductForUpdate was called outside a transaction; the lock lines nothing up")
 	}
 	p, ok := m.products[id]
 	if !ok || p.DeletedAt != nil {
-		return models.Product{}, errors.NotFound("product_not_found", "ürün bulunamadı: %s", id)
+		return models.Product{}, errors.NotFound("product_not_found", "the product was not found: %s", id)
 	}
 	return p, nil
 }
@@ -185,10 +186,10 @@ func (m *memStore) GetProductByHandle(_ context.Context, handle string) (models.
 			return p, nil
 		}
 	}
-	return models.Product{}, errors.NotFound("product_not_found", "ürün bulunamadı: %s", handle)
+	return models.Product{}, errors.NotFound("product_not_found", "the product was not found: %s", handle)
 }
 
-// liveProducts silinmemiş ürünleri kimliğe göre sıralı döner.
+// liveProducts returns the products that are not deleted, ordered by id.
 func (m *memStore) liveProducts() []models.Product {
 	out := make([]models.Product, 0, len(m.products))
 	for id := range m.products {
@@ -200,7 +201,7 @@ func (m *memStore) liveProducts() []models.Product {
 	return out
 }
 
-// matches ürünün filtreye uyup uymadığını bildirir.
+// matches reports whether the product matches the filter.
 func (m *memStore) matches(p *models.Product, f repository.ProductFilter) bool {
 	switch {
 	case f.Status != nil && p.Status.String() != *f.Status:
@@ -216,15 +217,16 @@ func (m *memStore) matches(p *models.Product, f repository.ProductFilter) bool {
 	}
 }
 
-// visibleIn satış kanalı görünürlük kuralının sahte karşılığıdır.
+// visibleIn is the fake counterpart of the sales channel visibility rule.
 //
-// Gerçek kural SQL'dedir (repository/saleschannel.go); burada tekrar edilmesi
-// kaçınılmazdır çünkü sahte deponun veritabanı yoktur. İkisinin ayrışmadığı
-// entegrasyon testleriyle kanıtlanır: aynı senaryolar hem burada hem gerçek
-// PostgreSQL üzerinde koşar.
+// The real rule is in SQL (repository/saleschannel.go); repeating it here is
+// unavoidable because the fake repository has no database. That the two do not
+// drift apart is proven by the integration tests: the same scenarios run both
+// here and against a real PostgreSQL.
 //
-// nil dilim "süzme yok", boş dilim "kimlik var ama kanalı yok" demektir;
-// ayrımın gerekçesi için bkz. repository.ProductFilter.SalesChannelIDs.
+// A nil slice means "no filtering", an empty slice means "there is an identity
+// but it has no channels"; for the rationale of the distinction see
+// repository.ProductFilter.SalesChannelIDs.
 func (m *memStore) visibleIn(productID string, channelIDs []string) bool {
 	if channelIDs == nil {
 		return true
@@ -241,7 +243,8 @@ func (m *memStore) visibleIn(productID string, channelIDs []string) bool {
 	return false
 }
 
-// assignedChannels ürünün bağlı olduğu kanalları sahte link servisinden okur.
+// assignedChannels reads the channels the product is linked to from the fake
+// link service.
 func (m *memStore) assignedChannels(productID string) []string {
 	if m.links == nil {
 		return nil
@@ -249,7 +252,8 @@ func (m *memStore) assignedChannels(productID string) []string {
 	return m.links.linked(service.LinkProductSalesChannel, productID)
 }
 
-// ProductVisibleInSalesChannels tekil vitrin ucunun görünürlük denetimidir.
+// ProductVisibleInSalesChannels is the visibility check of the single storefront
+// endpoint.
 func (m *memStore) ProductVisibleInSalesChannels(
 	_ context.Context,
 	productID string,
@@ -263,10 +267,11 @@ func (m *memStore) ProductVisibleInSalesChannels(
 	return m.visibleIn(productID, salesChannelIDs), nil
 }
 
-// VisibleProductIDs toplu görünürlüğü tekil kuralın ta kendisiyle hesaplar.
+// VisibleProductIDs computes the batch visibility with the singular rule itself.
 //
-// Sahte, iki metodun AYNI cevabı vermesini garanti eder: ayrı bir kural
-// yazsaydı gerçek depoda ayrışan bir davranışı testte gizleyebilirdi.
+// The fake guarantees that the two methods give the SAME answer: had it written
+// a separate rule, it could hide in the tests a behavior that drifts apart in
+// the real repository.
 func (m *memStore) VisibleProductIDs(
 	_ context.Context,
 	productIDs []string,
@@ -279,15 +284,15 @@ func (m *memStore) VisibleProductIDs(
 		return nil, err
 	}
 
-	gorunur := make(map[string]struct{}, len(productIDs))
+	visible := make(map[string]struct{}, len(productIDs))
 
 	for _, id := range productIDs {
 		if m.visibleIn(id, salesChannelIDs) {
-			gorunur[id] = struct{}{}
+			visible[id] = struct{}{}
 		}
 	}
 
-	return gorunur, nil
+	return visible, nil
 }
 
 func (m *memStore) ListProducts(_ context.Context, f repository.ProductFilter) ([]models.Product, error) {
@@ -348,7 +353,7 @@ func (m *memStore) UpdateProduct(_ context.Context, id string, patch repository.
 	}
 	p, ok := m.products[id]
 	if !ok || p.DeletedAt != nil {
-		return models.Product{}, errors.NotFound("product_not_found", "ürün bulunamadı: %s", id)
+		return models.Product{}, errors.NotFound("product_not_found", "the product was not found: %s", id)
 	}
 
 	if patch.Handle != nil {
@@ -378,7 +383,7 @@ func (m *memStore) SoftDeleteProduct(_ context.Context, id string) error {
 	}
 	p, ok := m.products[id]
 	if !ok || p.DeletedAt != nil {
-		return errors.NotFound("product_not_found", "ürün bulunamadı: %s", id)
+		return errors.NotFound("product_not_found", "the product was not found: %s", id)
 	}
 	p.DeletedAt = &deletionTime
 	m.products[id] = p
@@ -442,12 +447,13 @@ func (m *memStore) GetVariant(_ context.Context, id string) (models.Variant, err
 	}
 	v, ok := m.variants[id]
 	if !ok || v.DeletedAt != nil {
-		return models.Variant{}, errors.NotFound("product_not_found", "varyant bulunamadı: %s", id)
+		return models.Variant{}, errors.NotFound("product_not_found", "the variant was not found: %s", id)
 	}
 	return v, nil
 }
 
-// liveVariants silinmemiş varyantları (ürün, sıra, kimlik) düzeninde döner.
+// liveVariants returns the variants that are not deleted, in (product, rank, id)
+// order.
 func (m *memStore) liveVariants() []models.Variant {
 	out := make([]models.Variant, 0, len(m.variants))
 	for id := range m.variants {
@@ -535,16 +541,16 @@ func (m *memStore) ListVariantsByIDs(_ context.Context, ids []string) ([]models.
 	return out, nil
 }
 
-// VisibleVariantIDs varyant görünürlüğünü ÜRÜN kuralının ta kendisiyle
-// hesaplar.
+// VisibleVariantIDs computes the variant visibility with the PRODUCT rule
+// itself.
 //
-// Sahte, gerçek deponun yaptığının aynısını yapar: varyantın kendi kanalı
-// yoktur, bağlı olduğu ürünün kanalı vardır (bkz. repository/saleschannel.go).
-// Ayrı bir kural yazsaydı, gerçek SQL ile ayrışan bir davranışı testte
-// gizleyebilirdi.
+// The fake does exactly what the real repository does: a variant has no channel
+// of its own, the product it belongs to has one (see
+// repository/saleschannel.go). Had it written a separate rule, it could hide in
+// the tests a behavior that drifts apart from the real SQL.
 //
-// Silinmiş varyant görünmez sayılır; [memStore.liveVariants] zaten yalnızca
-// yaşayanları döner.
+// A deleted variant counts as invisible; [memStore.liveVariants] returns only
+// the living ones anyway.
 func (m *memStore) VisibleVariantIDs(
 	_ context.Context,
 	variantIDs []string,
@@ -557,21 +563,21 @@ func (m *memStore) VisibleVariantIDs(
 		return nil, err
 	}
 
-	gorunur := make(map[string]struct{}, len(variantIDs))
+	visible := make(map[string]struct{}, len(variantIDs))
 
-	// Döngü indeksle gezilir: varyant yapısı büyüktür ve değerle kopyalamak
-	// her tur birkaç yüz baytı boşuna taşır.
+	// The loop is walked by index: the variant struct is large and copying by
+	// value carries a few hundred bytes on every round for nothing.
 	all := m.liveVariants()
 	for i := range all {
 		if !slices.Contains(variantIDs, all[i].ID) {
 			continue
 		}
 		if m.visibleIn(all[i].ProductID, salesChannelIDs) {
-			gorunur[all[i].ID] = struct{}{}
+			visible[all[i].ID] = struct{}{}
 		}
 	}
 
-	return gorunur, nil
+	return visible, nil
 }
 
 func (m *memStore) UpdateVariant(_ context.Context, id string, patch repository.VariantPatch) (models.Variant, error) {
@@ -582,7 +588,7 @@ func (m *memStore) UpdateVariant(_ context.Context, id string, patch repository.
 	}
 	v, ok := m.variants[id]
 	if !ok || v.DeletedAt != nil {
-		return models.Variant{}, errors.NotFound("product_not_found", "varyant bulunamadı: %s", id)
+		return models.Variant{}, errors.NotFound("product_not_found", "the variant was not found: %s", id)
 	}
 
 	if patch.Title != nil {
@@ -606,7 +612,7 @@ func (m *memStore) SoftDeleteVariant(_ context.Context, id string) error {
 	}
 	v, ok := m.variants[id]
 	if !ok || v.DeletedAt != nil {
-		return errors.NotFound("product_not_found", "varyant bulunamadı: %s", id)
+		return errors.NotFound("product_not_found", "the variant was not found: %s", id)
 	}
 	v.DeletedAt = &deletionTime
 	m.variants[id] = v
@@ -619,7 +625,7 @@ func (m *memStore) CreateOption(_ context.Context, o models.Option) (models.Opti
 	if err := m.track("CreateOption"); err != nil {
 		return models.Option{}, err
 	}
-	// Seçenek değerleri AYRI satırlardır; RETURNING onları döndürmez.
+	// The option values are SEPARATE rows; RETURNING does not return them.
 	o.Values = nil
 	o.CreatedAt, o.UpdatedAt = creationTime, creationTime
 	m.options[o.ID] = o
@@ -634,7 +640,7 @@ func (m *memStore) GetOption(_ context.Context, id string) (models.Option, error
 	}
 	o, ok := m.options[id]
 	if !ok || o.DeletedAt != nil {
-		return models.Option{}, errors.NotFound("product_not_found", "seçenek bulunamadı: %s", id)
+		return models.Option{}, errors.NotFound("product_not_found", "the option was not found: %s", id)
 	}
 	return o, nil
 }
@@ -669,7 +675,7 @@ func (m *memStore) SoftDeleteOption(_ context.Context, id string) error {
 	}
 	o, ok := m.options[id]
 	if !ok || o.DeletedAt != nil {
-		return errors.NotFound("product_not_found", "seçenek bulunamadı: %s", id)
+		return errors.NotFound("product_not_found", "the option was not found: %s", id)
 	}
 	o.DeletedAt = &deletionTime
 	m.options[id] = o
@@ -682,7 +688,8 @@ func (m *memStore) CreateOptionValue(_ context.Context, v models.OptionValue) (m
 	if err := m.track("CreateOptionValue"); err != nil {
 		return models.OptionValue{}, err
 	}
-	// OptionTitle bir sütun değildir; gerçek depo onu RETURNING'den döndüremez.
+	// OptionTitle is not a column; the real repository cannot return it from
+	// RETURNING.
 	v.OptionTitle = ""
 	v.CreatedAt, v.UpdatedAt = creationTime, creationTime
 	m.values[v.ID] = v
@@ -800,7 +807,7 @@ func (m *memStore) GetCollection(_ context.Context, id string) (models.Collectio
 	}
 	c, ok := m.collections[id]
 	if !ok || c.DeletedAt != nil {
-		return models.Collection{}, errors.NotFound("product_not_found", "koleksiyon bulunamadı: %s", id)
+		return models.Collection{}, errors.NotFound("product_not_found", "the collection was not found: %s", id)
 	}
 	return c, nil
 }
@@ -850,7 +857,7 @@ func (m *memStore) GetCategory(_ context.Context, id string) (models.Category, e
 	}
 	c, ok := m.categories[id]
 	if !ok || c.DeletedAt != nil {
-		return models.Category{}, errors.NotFound("product_not_found", "kategori bulunamadı: %s", id)
+		return models.Category{}, errors.NotFound("product_not_found", "the category was not found: %s", id)
 	}
 	return c, nil
 }
@@ -908,7 +915,7 @@ func (m *memStore) GetTagByValue(_ context.Context, value string) (models.Tag, e
 			return t, nil
 		}
 	}
-	return models.Tag{}, errors.NotFound("product_not_found", "etiket bulunamadı: %s", value)
+	return models.Tag{}, errors.NotFound("product_not_found", "the tag was not found: %s", value)
 }
 
 func (m *memStore) ListTags(_ context.Context, limit, offset int) ([]models.Tag, error) {
@@ -1043,7 +1050,7 @@ func (m *memStore) DeleteImagesByProduct(_ context.Context, productID string) er
 	return nil
 }
 
-// sliceWindow limit/offset penceresini uygular.
+// sliceWindow applies the limit/offset window.
 func sliceWindow[T any](items []T, limit, offset int) []T {
 	if offset >= len(items) {
 		return []T{}

@@ -1,50 +1,56 @@
-// Package api fulfillment modülünün HTTP yüzeyidir.
+// Package api is the HTTP surface of the fulfillment module.
 //
-// İki yüzey vardır ve yetkileri farklıdır:
+// There are two surfaces and their authority differs:
 //
-//   - /admin/v1 — kargo kataloğunu, DEPO SEÇİM POLİTİKASINI ve gönderileri
-//     YÖNETİR: profil, seçenek ve kural CRUD'u, depo politikası yazma/okuma/
-//     silme, gönderi oluşturma, iptal, kargoya verme ve teslim bildirimi.
-//   - /store/v1 — müşterinin gördüğü TEK yüzey: bir sepet bağlamı için uygun
-//     kargo seçenekleri ve ücretleri. Gönderi oluşturmak, iptal etmek ya da
-//     durumunu değiştirmek mağaza tarafından TETİKLENMEZ; onları sipariş
-//     akışları ve yönetim yürütür. Müşterinin kendi tarayıcısından gönderi
-//     açabilmesi, siparişi hiç oluşmamış bir sepet için kargo etiketi
-//     bastırmak demek olurdu.
+//   - /admin/v1 — MANAGES the shipping catalog, the LOCATION SELECTION POLICY
+//     and the fulfillments: profile, option and rule CRUD, writing/reading/
+//     deleting a location policy, opening a fulfillment, canceling it, handing
+//     it to the carrier and reporting delivery.
+//   - /store/v1 — the ONLY surface the customer sees: the eligible shipping
+//     options and their rates for a cart context. Opening a fulfillment,
+//     canceling one or changing its status is NOT TRIGGERED from the store
+//     side; the order workflows and the admin surface do that. Letting the
+//     customer open a fulfillment from their own browser would mean printing a
+//     shipping label for a cart whose order never came into being.
 //
-// # Mağaza yüzeyine NE SIZMAZ
+// # What NEVER LEAKS into the store surface
 //
-// Vitrin yanıtında yalnızca müşterinin görmesi gereken alanlar vardır:
-// kimlik ad, ücret, para birimi ve fiyat türü. Dışarıda bırakılan üç şey
-// bilinçlidir:
+// The storefront response carries only the fields the customer needs to see:
+// identity, name, rate, currency and price type. The three things left out are
+// deliberate:
 //
-//   - admin_only seçenekler HİÇ listelenmez; süzgeç SQL'de durur ve satır
-//     mağaza yolunda hiç okunmaz (bkz. service.ListShippingOptionsFor).
-//   - provider_id ve sağlayıcının ham verisi ("data") YAZILMAZ: hangi kargo
-//     firmasıyla çalışıldığı ve o firmanın iç yanıtı, mağazanın operasyonel
-//     bilgisidir.
-//   - shipping_profile_id ve metadata YAZILMAZ: ikisi de kataloğun iç
-//     yapısıdır ve müşterinin bir seçim yapması için gerekmez.
+//   - admin_only options are NEVER listed; the filter sits in SQL and the row
+//     is never read on the store path (see service.ListShippingOptionsFor).
+//   - provider_id and the provider's raw data ("data") are NOT WRITTEN: which
+//     carrier the store works with, and that carrier's internal response, are
+//     the store's operational information.
+//   - shipping_profile_id and metadata are NOT WRITTEN: both are internal
+//     structure of the catalog and the customer does not need them to make a
+//     choice.
 //
-// Handler'lar status kodu SEÇMEZ: servis core/errors tipli hatasını döner,
-// corehttp.WriteError sınıfına uygun kodu yazar (plan Bölüm 8).
+// Handlers do NOT CHOOSE the status code: the service returns a core/errors
+// typed error and corehttp.WriteError writes the code matching its kind (plan
+// Section 8).
 //
-// # Yetki
+// # Authority
 //
-// Yönetim uçlarının tamamı yetki ister ve sözlük iki girdiden ibarettir:
+// Every admin endpoint demands a scope and the vocabulary consists of two
+// entries:
 //
-//   - [ScopeRead] — /admin/v1 altındaki OKUMA (GET, HEAD) uçlarını açar:
-//     sağlayıcı listesi, profiller, seçenekler, kurallar, uygunluk listelemesi,
-//     depo kargo politikaları ve gönderiler okunabilir.
-//   - [ScopeWrite] — /admin/v1 altındaki YAZMA (POST, PUT, PATCH, DELETE)
-//     uçlarını açar: katalog CRUD'unun yanı sıra depo politikası yazma/silme,
-//     gönderi açma, iptal, kargoya verme ve teslim bildirimi de buraya girer.
+//   - [ScopeRead] — opens the READ (GET, HEAD) endpoints under /admin/v1: the
+//     provider list, profiles, options, rules, the eligibility listing, the
+//     location shipping policies and the fulfillments can be read.
+//   - [ScopeWrite] — opens the WRITE (POST, PUT, PATCH, DELETE) endpoints under
+//     /admin/v1: besides catalog CRUD, writing/deleting a location policy,
+//     opening a fulfillment, canceling it, handing it to the carrier and
+//     reporting delivery also belong here.
 //
-// corehttp.ScopeAdmin ÜST YETKİDİR ve ikisini de karşılar; ayrıca
-// listelenmesine gerek yoktur, corehttp.Principal.HasScope bunu zaten yapar.
+// corehttp.ScopeAdmin is the SUPERIOR SCOPE and satisfies both; it does not
+// need to be listed separately, corehttp.Principal.HasScope already does that.
 //
-// /store/v1 uygun seçenek ucu yetki İSTEMEZ: mağaza yüzeyinin kimliği
-// publishable anahtardır ve o anahtar tanımı gereği yetki TAŞIMAZ.
+// The /store/v1 eligible-option endpoint DEMANDS no scope: the identity of the
+// store surface is the publishable key and that key by definition CARRIES no
+// scope.
 package api
 
 import (
@@ -64,9 +70,10 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/fulfillment/service"
 )
 
-// Route yolları. Modül route'ları TAM YOL ile kaydedilir; "/admin/v1" gibi bir
-// ön ek MOUNT EDİLMEZ, çünkü mount eden ilk modül o alt ağacın tamamını
-// sahiplenir ve aynı ön eki kullanan diğer modüllerle çakışırdı.
+// Route paths. Module routes are registered with their FULL PATH; a prefix such
+// as "/admin/v1" is NOT MOUNTED, because the first module that mounts it owns
+// that whole subtree and would collide with the other modules using the same
+// prefix.
 const (
 	pathAdminProviders = "/admin/v1/fulfillment-providers"
 
@@ -74,18 +81,19 @@ const (
 	pathAdminProfile  = "/admin/v1/shipping-profiles/{id}"
 
 	pathAdminOptions = "/admin/v1/shipping-options"
-	// pathAdminEligible yönetim yüzeyinin uygunluk listelemesidir ve
-	// admin_only seçenekleri DE içerir. Statik parça, "{id}" yolundan önce
-	// eşleşir; chi sabit segmenti parametreye tercih eder.
+	// pathAdminEligible is the admin surface's eligibility listing and it
+	// includes admin_only options TOO. The static segment matches before the
+	// "{id}" path; chi prefers a constant segment over a parameter.
 	pathAdminEligible    = "/admin/v1/shipping-options/eligible"
 	pathAdminOption      = "/admin/v1/shipping-options/{id}"
 	pathAdminOptionRules = "/admin/v1/shipping-options/{id}/rules"
 	pathAdminOptionRule  = "/admin/v1/shipping-options/{id}/rules/{rule_id}"
 
-	// pathAdminLocations depo SEÇİM POLİTİKASIDIR: hangi depo hangi kargo
-	// bölgesine hizmet eder ve hangi sırayla tercih edilir. Depoların kendisi
-	// stok modülünün uçlarındadır (/admin/v1/stock-locations); buradaki kayıt
-	// yalnızca o deponun kargo niteliğidir.
+	// pathAdminLocations is the LOCATION SELECTION POLICY: which location
+	// serves which shipping region and in what order it is preferred. The
+	// locations themselves live on the inventory module's endpoints
+	// (/admin/v1/stock-locations); the record here is only that location's
+	// shipping attribute.
 	pathAdminLocations = "/admin/v1/shipping-locations"
 	pathAdminLocation  = "/admin/v1/shipping-locations/{location_id}"
 
@@ -98,223 +106,230 @@ const (
 	pathStoreOptions = "/store/v1/shipping-options"
 )
 
-// maxBodyBytes istek gövdesi için üst sınırdır. Sınır olmadan tek bir istek
-// sunucunun belleğini tüketebilirdi.
+// maxBodyBytes is the upper limit for the request body. Without a limit a
+// single request could exhaust the server's memory.
 const maxBodyBytes int64 = 1 << 20 // 1 MiB
 
-// codeInvalidRequest gövde/parametre çözümlenemediğinde dönen hata kodudur.
+// codeInvalidRequest is the error code returned when the body or a parameter
+// cannot be parsed.
 const codeInvalidRequest = "fulfillment_invalid_request"
 
-// Fulfillments handler'ların servisten ihtiyaç duyduğu yüzeydir.
+// Fulfillments is the surface the handlers need from the service.
 //
-// Dar tutulması testleri sadeleştirir: HTTP davranışı, gerçek bir veritabanı
-// olmadan birkaç satırlık bir sahte ile doğrulanabilir.
+// Keeping it narrow simplifies the tests: HTTP behavior can be verified with a
+// few lines of fake, without a real database.
 type Fulfillments interface {
-	// ProviderIDs kayıtlı sağlayıcı kimliklerini döner.
+	// ProviderIDs returns the registered provider identifiers.
 	ProviderIDs(ctx context.Context) []string
 
-	// CreateShippingProfile yeni bir kargo profili oluşturur.
+	// CreateShippingProfile creates a new shipping profile.
 	CreateShippingProfile(ctx context.Context, in service.CreateProfileInput) (models.ShippingProfile, error)
-	// GetShippingProfile profili kimliğiyle döner.
+	// GetShippingProfile returns the profile by its identifier.
 	GetShippingProfile(ctx context.Context, id string) (models.ShippingProfile, error)
-	// ListShippingProfiles profilleri sayfalar.
+	// ListShippingProfiles pages through the profiles.
 	ListShippingProfiles(ctx context.Context, in service.ListProfilesInput) ([]models.ShippingProfile, int64, error)
-	// UpdateShippingProfile profilin verilen alanlarını günceller.
+	// UpdateShippingProfile updates the given fields of the profile.
 	UpdateShippingProfile(ctx context.Context, id string, in service.UpdateProfileInput) (models.ShippingProfile, error)
-	// DeleteShippingProfile profili yumuşak siler.
+	// DeleteShippingProfile soft deletes the profile.
 	DeleteShippingProfile(ctx context.Context, id string) error
 
-	// CreateShippingOption yeni bir kargo seçeneği oluşturur.
+	// CreateShippingOption creates a new shipping option.
 	CreateShippingOption(ctx context.Context, in service.CreateOptionInput) (models.ShippingOption, error)
-	// GetShippingOption seçeneği kurallarıyla döner.
+	// GetShippingOption returns the option together with its rules.
 	GetShippingOption(ctx context.Context, id string) (models.ShippingOption, error)
-	// ListShippingOptions seçenekleri sayfalar.
+	// ListShippingOptions pages through the options.
 	ListShippingOptions(ctx context.Context, in service.ListOptionsAdminInput) ([]models.ShippingOption, int64, error)
-	// UpdateShippingOption seçeneğin verilen alanlarını günceller.
+	// UpdateShippingOption updates the given fields of the option.
 	UpdateShippingOption(ctx context.Context, id string, in service.UpdateOptionInput) (models.ShippingOption, error)
-	// DeleteShippingOption seçeneği yumuşak siler.
+	// DeleteShippingOption soft deletes the option.
 	DeleteShippingOption(ctx context.Context, id string) error
 
-	// CreateShippingOptionRule bir seçeneğe kural ekler.
+	// CreateShippingOptionRule adds a rule to an option.
 	CreateShippingOptionRule(ctx context.Context, optionID string, in service.CreateRuleInput) (models.ShippingOptionRule, error)
-	// ListShippingOptionRules bir seçeneğin kurallarını döner.
+	// ListShippingOptionRules returns the rules of an option.
 	ListShippingOptionRules(ctx context.Context, optionID string) ([]models.ShippingOptionRule, error)
-	// DeleteShippingOptionRule kuralı yumuşak siler.
+	// DeleteShippingOptionRule soft deletes the rule.
 	DeleteShippingOptionRule(ctx context.Context, ruleID string) error
 
-	// SetShippingLocation bir deponun kargo politikasını yazar ya da üzerine
-	// yazar.
+	// SetShippingLocation writes or overwrites the shipping policy of a
+	// location.
 	SetShippingLocation(ctx context.Context, in service.SetShippingLocationInput) (models.ShippingLocation, error)
-	// GetShippingLocation deponun politikasını bölgeleriyle döner.
+	// GetShippingLocation returns the location's policy with its regions.
 	GetShippingLocation(ctx context.Context, locationID string) (models.ShippingLocation, error)
-	// ListShippingLocations politikaları öncelik sırasıyla sayfalar.
+	// ListShippingLocations pages through the policies in priority order.
 	ListShippingLocations(ctx context.Context, page service.Page) ([]models.ShippingLocation, int64, error)
-	// DeleteShippingLocation politikayı siler ve depoyu varsayılana döndürür.
+	// DeleteShippingLocation deletes the policy and returns the location to the
+	// default.
 	DeleteShippingLocation(ctx context.Context, locationID string) error
 
-	// ListShippingOptionsFor bir sepet bağlamı için uygun seçenekleri döner.
+	// ListShippingOptionsFor returns the eligible options for a cart context.
 	ListShippingOptionsFor(ctx context.Context, in service.ListOptionsInput) ([]service.QuotedOption, error)
 
-	// CreateFulfillment sağlayıcıda bir gönderi açar.
+	// CreateFulfillment opens a fulfillment at the provider.
 	CreateFulfillment(ctx context.Context, in service.CreateFulfillmentInput) (models.Fulfillment, error)
-	// GetFulfillment gönderiyi kalemleriyle döner.
+	// GetFulfillment returns the fulfillment with its items.
 	GetFulfillment(ctx context.Context, id string) (models.Fulfillment, error)
-	// ListFulfillments gönderileri sayfalar.
+	// ListFulfillments pages through the fulfillments.
 	ListFulfillments(ctx context.Context, in service.ListFulfillmentsInput) ([]models.Fulfillment, int64, error)
-	// CancelFulfillment gönderiyi iptal eder (saga telafisi).
+	// CancelFulfillment cancels the fulfillment (saga compensation).
 	CancelFulfillment(ctx context.Context, id string) error
-	// MarkShipped gönderiyi kargoya verilmiş olarak işaretler.
+	// MarkShipped marks the fulfillment as handed to the carrier.
 	MarkShipped(ctx context.Context, id, trackingNumber, trackingURL string) (models.Fulfillment, error)
-	// MarkDelivered gönderiyi teslim edilmiş olarak işaretler.
+	// MarkDelivered marks the fulfillment as delivered.
 	MarkDelivered(ctx context.Context, id string) (models.Fulfillment, error)
 }
 
-// Handler fulfillment modülünün HTTP handler kümesidir.
+// Handler is the HTTP handler set of the fulfillment module.
 type Handler struct {
 	svc Fulfillments
 }
 
-// New verilen servis üzerinde çalışan handler kümesini üretir.
+// New builds the handler set running on the given service.
 func New(svc Fulfillments) *Handler { return &Handler{svc: svc} }
 
-// Yetki sözlüğü: fulfillment'ın yönetim uçlarının istediği yetkiler.
+// Scope vocabulary: the scopes the fulfillment admin endpoints demand.
 //
-// Sözlük BİLİNÇLİ OLARAK okuma/yazma ayrımından ibarettir. "Kataloğu yazan"
-// ile "gönderiyi yürüten" yetkileri ayırmak akla yatkın görünür ama bugün
-// verilebilecek bir kararı mümkün kılmaz: gönderiyi yürüten kimlik, gönderinin
-// açılacağı seçeneği de belirleyebilmelidir. Ayrım gerçekten gerektiğinde
-// eklenir; şimdiden eklenirse yalnızca yanlış bir kesinlik hissi verir.
+// The vocabulary DELIBERATELY consists of nothing more than a read/write split.
+// Separating "writes the catalog" from "runs the fulfillment" looks plausible
+// but does not enable any decision that could be made today: the identity that
+// runs a fulfillment must also be able to decide which option the fulfillment
+// is opened on. The split gets added when it is genuinely needed; added now it
+// would only give a false sense of precision.
 //
-// # Depo politikası ucunun ETKİ ALANI daha geniştir ve üçüncü bir yetki almadı
+// # The location policy endpoint has a WIDER REACH and still got no third scope
 //
-// [pathAdminLocation]'a yapılan tek bir yazma, sipariş yolunu durdurabilir:
-// bir depoya var olmayan bir bölge kimliği bağlamak, o depoyu her sepette
-// eleyen bir kural yazmaktır ve tek depolu bir kurulumda sonuç, katalog dolu
-// olduğu hâlde her tamamlamanın 409 almasıdır. Modüldeki diğer yazma uçlarının
-// hiçbiri bunu yapamaz.
+// A single write to [pathAdminLocation] can stop the order path: binding a
+// non-existent region identifier to a location is writing a rule that
+// eliminates that location on every cart, and in a single-location setup the
+// result is that every checkout gets a 409 even though the catalog is full.
+// None of the other write endpoints in this module can do that.
 //
-// Buna rağmen üçüncü bir yetki (örn. "fulfillment:policy") eklenmedi ve sebep
-// bu ucun zararsızlığı değil, SÖZLÜĞÜN kendisidir: projedeki yetki dağarcığı
-// tek bir kuraldan türer (<modül>:read / <modül>:write, "admin" üst yetki) ve
-// yüzlerce yönetim ucu bu kuralla denetlenir. Tek bir uca özel bir ad, kuralı
-// öğrenilemez ve denetlenemez kılardı; kazanç ise sınırlı olurdu, çünkü
-// fulfillment:write taşıyan kimlik zaten bir yönetim kimliğidir.
+// Even so, a third scope (e.g. "fulfillment:policy") was not added, and the
+// reason is not that this endpoint is harmless but the VOCABULARY itself: the
+// project's scope vocabulary derives from a single rule (<module>:read /
+// <module>:write, with "admin" as the superior scope) and hundreds of admin
+// endpoints are checked with that rule. A name special to a single endpoint
+// would make the rule unlearnable and unauditable; the gain would be limited,
+// because an identity carrying fulfillment:write is already an admin identity.
 //
-// Kararın bedeli AZALTILDI, kaldırılmadı: eleme yüzünden düşen bir sipariş
-// yanıt gövdesinde kargo modülünün KENDİ hata kodunu taşır
-// (service.CodeNoServiceableLocation), yani operatör bakması gereken yeri
-// KODDAN bulur. Bu, kararın ÖN KOŞULUDUR: sebebi görünmeyen bir arıza için
-// "yönetim ucundan geri alınır" demek boş bir söz olurdu.
+// The cost of the decision was REDUCED, not removed: an order that falls
+// because of elimination carries the shipping module's OWN error code in the
+// response body (service.CodeNoServiceableLocation), so the operator finds the
+// place to look FROM THE CODE. This is the PRECONDITION of the decision: for a
+// fault whose cause is invisible, saying "it can be undone from an admin
+// endpoint" would be an empty promise.
 //
-// Görünürlüğün SINIRI da yazılmalı: gövdedeki MESAJ her üç ayırma arızasında da
-// aynıdır (taşıma katmanı en dıştaki mesajı yazar). Adayların gerçekte hangi
-// bölgelere bağlı olduğunu yazan döküm sunucu logunda ve yürütme kaydındadır,
-// gövdede değil.
+// The LIMIT of that visibility must be written down too: the MESSAGE in the
+// body is the same for all three elimination faults (the transport layer writes
+// the outermost message). The dump that says which regions the candidates are
+// actually bound to lives in the server log and in the workflow record, not in
+// the body.
 const (
-	// ScopeRead fulfillment yönetim yüzeyindeki OKUMA uçlarının istediği
-	// yetkidir.
+	// ScopeRead is the scope the READ endpoints of the fulfillment admin
+	// surface demand.
 	ScopeRead = "fulfillment:read"
-	// ScopeWrite fulfillment yönetim yüzeyindeki YAZMA uçlarının istediği
-	// yetkidir.
+	// ScopeWrite is the scope the WRITE endpoints of the fulfillment admin
+	// surface demand.
 	ScopeWrite = "fulfillment:write"
 )
 
-// Routes modülün admin ve store route'larını router'a bağlar.
+// Routes binds the module's admin and store routes to the router.
 //
-// # KORUMA
+// # PROTECTION
 //
-// İki katman vardır ve ikisi de gereklidir:
+// There are two layers and both are necessary:
 //
-//  1. KİMLİK — corehttp.RequireAdmin ile, router'ı kuran tarafta.
-//  2. YETKİ — BURADA, uç uç corehttp.RequireScope ile: okuma uçları
-//     [ScopeRead], yazma uçları [ScopeWrite] ister.
+//  1. IDENTITY — with corehttp.RequireAdmin, on the side that builds the
+//     router.
+//  2. SCOPE — HERE, endpoint by endpoint with corehttp.RequireScope: read
+//     endpoints demand [ScopeRead], write endpoints demand [ScopeWrite].
 //
-// İkinci katman olmasaydı kimlik doğrulama yetkilendirmenin yerine geçerdi ve
-// yetkileri BOŞALTILMIŞ bir yönetim kullanıcısı gönderi açıp kargo etiketi
-// bastırabilir, açılmış bir gönderiyi iptal edebilir ya da hiç gönderilmemiş
-// bir siparişi "teslim edildi" diye kapatabilirdi. Bunların üçü de dışarıya —
-// kargo firmasına ve müşteriye — yansıyan, geri alınması para maliyetli
-// işlemlerdir.
+// Without the second layer authentication would stand in for authorization, and
+// an admin user whose scopes had been EMPTIED could open a fulfillment and
+// print a shipping label, cancel an opened fulfillment, or close an order that
+// was never shipped as "delivered". All three reach the outside world — the
+// carrier and the customer — and cost money to undo.
 func (h *Handler) Routes(r chi.Router) {
-	okuma := r.With(corehttp.RequireScope(ScopeRead))
-	yazma := r.With(corehttp.RequireScope(ScopeWrite))
+	read := r.With(corehttp.RequireScope(ScopeRead))
+	write := r.With(corehttp.RequireScope(ScopeWrite))
 
-	okuma.Get(pathAdminProviders, h.listProviders)
+	read.Get(pathAdminProviders, h.listProviders)
 
-	yazma.Post(pathAdminProfiles, h.createProfile)
-	okuma.Get(pathAdminProfiles, h.listProfiles)
-	okuma.Get(pathAdminProfile, h.getProfile)
-	yazma.Patch(pathAdminProfile, h.updateProfile)
-	yazma.Delete(pathAdminProfile, h.deleteProfile)
+	write.Post(pathAdminProfiles, h.createProfile)
+	read.Get(pathAdminProfiles, h.listProfiles)
+	read.Get(pathAdminProfile, h.getProfile)
+	write.Patch(pathAdminProfile, h.updateProfile)
+	write.Delete(pathAdminProfile, h.deleteProfile)
 
-	yazma.Post(pathAdminOptions, h.createOption)
-	okuma.Get(pathAdminOptions, h.listOptions)
-	// Uygunluk listelemesi seçenek okumasından ÖNCE bağlanır; okunurluk
-	// içindir, chi sıradan bağımsız olarak sabit segmenti tercih eder.
-	okuma.Get(pathAdminEligible, h.listAdminEligibleOptions)
-	okuma.Get(pathAdminOption, h.getOption)
-	yazma.Patch(pathAdminOption, h.updateOption)
-	yazma.Delete(pathAdminOption, h.deleteOption)
+	write.Post(pathAdminOptions, h.createOption)
+	read.Get(pathAdminOptions, h.listOptions)
+	// The eligibility listing is bound BEFORE the option read; that is for
+	// readability, chi prefers the constant segment regardless of order.
+	read.Get(pathAdminEligible, h.listAdminEligibleOptions)
+	read.Get(pathAdminOption, h.getOption)
+	write.Patch(pathAdminOption, h.updateOption)
+	write.Delete(pathAdminOption, h.deleteOption)
 
-	yazma.Post(pathAdminOptionRules, h.createRule)
-	okuma.Get(pathAdminOptionRules, h.listRules)
-	yazma.Delete(pathAdminOptionRule, h.deleteRule)
+	write.Post(pathAdminOptionRules, h.createRule)
+	read.Get(pathAdminOptionRules, h.listRules)
+	write.Delete(pathAdminOptionRule, h.deleteRule)
 
-	okuma.Get(pathAdminLocations, h.listLocations)
-	okuma.Get(pathAdminLocation, h.getLocation)
-	yazma.Put(pathAdminLocation, h.setLocation)
-	yazma.Delete(pathAdminLocation, h.deleteLocation)
+	read.Get(pathAdminLocations, h.listLocations)
+	read.Get(pathAdminLocation, h.getLocation)
+	write.Put(pathAdminLocation, h.setLocation)
+	write.Delete(pathAdminLocation, h.deleteLocation)
 
-	yazma.Post(pathAdminFulfillments, h.createFulfillment)
-	okuma.Get(pathAdminFulfillments, h.listFulfillments)
-	okuma.Get(pathAdminFulfillment, h.getFulfillment)
-	yazma.Post(pathAdminCancel, h.cancelFulfillment)
-	yazma.Post(pathAdminShip, h.shipFulfillment)
-	yazma.Post(pathAdminDeliver, h.deliverFulfillment)
+	write.Post(pathAdminFulfillments, h.createFulfillment)
+	read.Get(pathAdminFulfillments, h.listFulfillments)
+	read.Get(pathAdminFulfillment, h.getFulfillment)
+	write.Post(pathAdminCancel, h.cancelFulfillment)
+	write.Post(pathAdminShip, h.shipFulfillment)
+	write.Post(pathAdminDeliver, h.deliverFulfillment)
 
-	// Mağaza ucu DEĞİŞMEZ: publishable anahtar yetki taşımaz.
+	// The store endpoint DOES NOT CHANGE: a publishable key carries no scope.
 	r.Get(pathStoreOptions, h.listStoreEligibleOptions)
 }
 
-// --- zarflar ve DTO'lar ------------------------------------------------------
+// --- envelopes and DTOs ------------------------------------------------------
 
-// singleEnvelope tekil yanıtların zarfıdır (plan Bölüm 8).
+// singleEnvelope is the envelope of single responses (plan Section 8).
 type singleEnvelope struct {
-	// Data yanıtın gövdesidir.
+	// Data is the body of the response.
 	Data any `json:"data"`
 }
 
-// listEnvelope liste yanıtlarının zarfıdır (plan Bölüm 8).
+// listEnvelope is the envelope of list responses (plan Section 8).
 type listEnvelope struct {
-	// Data sayfadaki kayıtlardır.
+	// Data is the set of records on the page.
 	Data any `json:"data"`
-	// Count süzgece uyan TÜM kayıtların sayısıdır; sayfadaki satır sayısı değil.
+	// Count is the number of ALL records matching the filter; not the number of
+	// rows on the page.
 	Count int64 `json:"count"`
-	// Offset atlanan kayıt sayısıdır.
+	// Offset is the number of skipped records.
 	Offset int64 `json:"offset"`
-	// Limit istenen sayfa boyutudur.
+	// Limit is the requested page size.
 	Limit int64 `json:"limit"`
 }
 
-// locationDTO bir deponun KARGO POLİTİKASININ gösterimidir.
+// locationDTO is the representation of a location's SHIPPING POLICY.
 //
-// Deponun adı ve adresi YOKTUR ve olmayacaktır: onlar stok modülünün verisidir
-// ve /admin/v1/stock-locations altından okunur. İki listeyi birleştirmek
-// yönetim yüzeyinin işidir; buraya kopyalamak aynı bilgiyi iki modülde iki
-// doğruluk kaynağı hâline getirirdi.
+// The location's name and address are ABSENT and will stay absent: they are the
+// inventory module's data and are read from under /admin/v1/stock-locations.
+// Joining the two lists is the admin surface's job; copying them here would
+// make the same information have two sources of truth in two modules.
 type locationDTO struct {
 	LocationID string `json:"location_id"`
 	Priority   int64  `json:"priority"`
-	// RegionIDs BOŞ ise depo TÜM bölgelere hizmet eder — hiçbirine değil.
-	// Alan omitempty TAŞIMAZ ve bu bilinçlidir: "regions" anahtarının yanıttan
-	// düşmesi, istemciye "bilgi yok" dedirtirdi; boş dizi ise kuralın kendisini
-	// söyler.
+	// RegionIDs being EMPTY means the location serves ALL regions — not none of
+	// them. The field CARRIES no omitempty and that is deliberate: dropping the
+	// "regions" key from the response would make the client read it as "no
+	// information", whereas an empty array states the rule itself.
 	RegionIDs []string  `json:"region_ids"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
-// toLocationDTO politikayı yanıt gösterimine çevirir.
+// toLocationDTO converts the policy into its response representation.
 func toLocationDTO(loc models.ShippingLocation) locationDTO {
 	regions := loc.RegionIDs
 	if regions == nil {
@@ -329,7 +344,7 @@ func toLocationDTO(loc models.ShippingLocation) locationDTO {
 	}
 }
 
-// profileDTO kargo profilinin dış gösterimidir.
+// profileDTO is the external representation of a shipping profile.
 type profileDTO struct {
 	ID        string         `json:"id"`
 	Name      string         `json:"name"`
@@ -339,11 +354,11 @@ type profileDTO struct {
 	UpdatedAt time.Time      `json:"updated_at"`
 }
 
-// optionDTO kargo seçeneğinin YÖNETİM gösterimidir.
+// optionDTO is the ADMIN representation of a shipping option.
 //
-// Sağlayıcı yapılandırması ("data") burada görünür: yöneticinin seçeneği
-// düzenleyebilmesi için gereklidir. Mağaza gösterimi ayrıdır
-// ([storeOptionDTO]) ve bu alanı taşımaz.
+// The provider configuration ("data") is visible here: the administrator needs
+// it to be able to edit the option. The store representation is separate
+// ([storeOptionDTO]) and does not carry this field.
 type optionDTO struct {
 	ID                string         `json:"id"`
 	Name              string         `json:"name"`
@@ -362,7 +377,7 @@ type optionDTO struct {
 	UpdatedAt         time.Time      `json:"updated_at"`
 }
 
-// ruleDTO kargo seçeneği kuralının dış gösterimidir.
+// ruleDTO is the external representation of a shipping option rule.
 type ruleDTO struct {
 	ID               string    `json:"id"`
 	ShippingOptionID string    `json:"shipping_option_id"`
@@ -373,7 +388,7 @@ type ruleDTO struct {
 	UpdatedAt        time.Time `json:"updated_at"`
 }
 
-// quotedOptionDTO YÖNETİM yüzeyinin fiyatlanmış seçenek gösterimidir.
+// quotedOptionDTO is the ADMIN surface's representation of a quoted option.
 type quotedOptionDTO struct {
 	ID                string `json:"id"`
 	Name              string `json:"name"`
@@ -386,12 +401,12 @@ type quotedOptionDTO struct {
 	AdminOnly         bool   `json:"admin_only"`
 }
 
-// storeOptionDTO MAĞAZA yüzeyinin fiyatlanmış seçenek gösterimidir.
+// storeOptionDTO is the STORE surface's representation of a quoted option.
 //
-// Alan listesi bilinçli olarak KISADIR; neyin ve neden dışarıda kaldığı paket
-// belgesinde yazılıdır. Yapının [quotedOptionDTO]'dan ayrı olması, bir alanın
-// yönetim gösterimine eklenirken kazara vitrine sızmasını yapısal olarak
-// engeller.
+// The field list is deliberately SHORT; what is left out and why is written in
+// the package documentation. The struct being separate from [quotedOptionDTO]
+// structurally prevents a field added to the admin representation from
+// accidentally leaking into the storefront.
 type storeOptionDTO struct {
 	ID           string `json:"id"`
 	Name         string `json:"name"`
@@ -400,7 +415,7 @@ type storeOptionDTO struct {
 	PriceType    string `json:"price_type"`
 }
 
-// fulfillmentDTO gönderinin dış gösterimidir.
+// fulfillmentDTO is the external representation of a fulfillment.
 type fulfillmentDTO struct {
 	ID               string               `json:"id"`
 	Reference        string               `json:"reference"`
@@ -420,14 +435,14 @@ type fulfillmentDTO struct {
 	UpdatedAt        time.Time            `json:"updated_at"`
 }
 
-// fulfillmentItemDTO gönderi kaleminin dış gösterimidir.
+// fulfillmentItemDTO is the external representation of a fulfillment item.
 type fulfillmentItemDTO struct {
 	ID         string `json:"id"`
 	LineItemID string `json:"line_item_id"`
 	Quantity   int64  `json:"quantity"`
 }
 
-// toProfileDTO modeli dış gösterime çevirir.
+// toProfileDTO converts the model into its external representation.
 func toProfileDTO(profile models.ShippingProfile) profileDTO {
 	return profileDTO{
 		ID:        profile.ID,
@@ -439,16 +454,16 @@ func toProfileDTO(profile models.ShippingProfile) profileDTO {
 	}
 }
 
-// toOptionDTO modeli yönetim gösterimine çevirir.
+// toOptionDTO converts the model into the admin representation.
 func toOptionDTO(option models.ShippingOption) optionDTO {
 	rules := make([]ruleDTO, 0, len(option.Rules))
 	for i := range option.Rules {
 		rules = append(rules, toRuleDTO(option.Rules[i]))
 	}
 	if len(rules) == 0 {
-		// omitempty'nin çalışması için nil bırakılır: kuralsız bir seçenekte
-		// "rules": [] yazmak, kuralların hiç okunmadığı liste yanıtıyla
-		// karışırdı.
+		// Left nil so that omitempty works: writing "rules": [] on an option
+		// without rules would be confused with the list response in which the
+		// rules were never read at all.
 		rules = nil
 	}
 
@@ -471,7 +486,7 @@ func toOptionDTO(option models.ShippingOption) optionDTO {
 	}
 }
 
-// toRuleDTO modeli dış gösterime çevirir.
+// toRuleDTO converts the model into its external representation.
 func toRuleDTO(rule models.ShippingOptionRule) ruleDTO {
 	return ruleDTO{
 		ID:               rule.ID,
@@ -484,7 +499,7 @@ func toRuleDTO(rule models.ShippingOptionRule) ruleDTO {
 	}
 }
 
-// toQuotedOptionDTO fiyatlanmış seçeneği yönetim gösterimine çevirir.
+// toQuotedOptionDTO converts the quoted option into the admin representation.
 func toQuotedOptionDTO(quoted service.QuotedOption) quotedOptionDTO {
 	return quotedOptionDTO{
 		ID:                quoted.Option.ID,
@@ -499,7 +514,7 @@ func toQuotedOptionDTO(quoted service.QuotedOption) quotedOptionDTO {
 	}
 }
 
-// toStoreOptionDTO fiyatlanmış seçeneği MAĞAZA gösterimine çevirir.
+// toStoreOptionDTO converts the quoted option into the STORE representation.
 func toStoreOptionDTO(quoted service.QuotedOption) storeOptionDTO {
 	return storeOptionDTO{
 		ID:           quoted.Option.ID,
@@ -510,7 +525,7 @@ func toStoreOptionDTO(quoted service.QuotedOption) storeOptionDTO {
 	}
 }
 
-// toFulfillmentDTO modeli dış gösterime çevirir.
+// toFulfillmentDTO converts the model into its external representation.
 func toFulfillmentDTO(ful models.Fulfillment) fulfillmentDTO {
 	items := make([]fulfillmentItemDTO, 0, len(ful.Items))
 	for i := range ful.Items {
@@ -541,12 +556,13 @@ func toFulfillmentDTO(ful models.Fulfillment) fulfillmentDTO {
 	}
 }
 
-// --- yardımcılar -------------------------------------------------------------
+// --- helpers -----------------------------------------------------------------
 
-// decodeBody istek gövdesini çözer.
+// decodeBody decodes the request body.
 //
-// Gövde boyutu sınırlanır ve TANINMAYAN ALANLAR reddedilir: sessizce yutulan
-// bir alan, istemcinin gönderdiğini sandığı ama uygulanmayan bir ayar demektir.
+// The body size is limited and UNKNOWN FIELDS are rejected: a silently
+// swallowed field means a setting the client believes it sent but that is never
+// applied.
 func decodeBody(w http.ResponseWriter, r *http.Request, dst any) error {
 	r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
 
@@ -554,27 +570,29 @@ func decodeBody(w http.ResponseWriter, r *http.Request, dst any) error {
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(dst); err != nil {
 		if errors.Is(err, io.EOF) {
-			return coreerrors.Invalid(codeInvalidRequest, "istek gövdesi boş olamaz")
+			return coreerrors.Invalid(codeInvalidRequest, "request body cannot be empty")
 		}
 		return coreerrors.Wrap(err, coreerrors.KindInvalid, codeInvalidRequest,
-			"istek gövdesi çözümlenemedi")
+			"request body could not be parsed")
 	}
-	// Tek bir JSON değerinden fazlası gönderilmişse bu da bir istemci hatasıdır.
+	// More than a single JSON value having been sent is a client error as well.
 	if err := dec.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
 		return coreerrors.Invalid(codeInvalidRequest,
-			"istek gövdesi tek bir JSON nesnesi olmalı")
+			"request body has to be a single JSON object")
 	}
 	return nil
 }
 
-// decodeOptionalBody gövdeyi çözer ama BOŞ gövdeyi hata saymaz.
+// decodeOptionalBody decodes the body but does NOT treat an EMPTY body as an
+// error.
 //
-// Gövdesi isteğe bağlı olan uçlar içindir (örn. takip bilgisiz sevk bildirimi).
-// Boşluk denetimi Content-Length'e BAKMAZ: chunked kodlamayla gelen bir
-// istekte uzunluk -1'dir ve uzunluğa bakan bir kontrol, gerçekte GÖNDERİLMİŞ
-// bir gövdeyi sessizce yok sayardı — istemci gönderdiğini sandığı takip
-// numarasının hiç yazılmadığını ancak kargo ekranında görürdü. Boşluk, ilk
-// çözümlemenin io.EOF ile dönmesinden anlaşılır.
+// It is for endpoints whose body is optional (e.g. a ship notification without
+// tracking information). The emptiness check does NOT LOOK at Content-Length:
+// on a request arriving with chunked encoding the length is -1, and a check
+// that looked at the length would silently ignore a body that WAS actually
+// SENT — the client would only see on the shipping screen that the tracking
+// number it believed it had sent was never written. Emptiness is recognized
+// from the first decode returning io.EOF.
 func decodeOptionalBody(w http.ResponseWriter, r *http.Request, dst any) error {
 	r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
 
@@ -585,16 +603,16 @@ func decodeOptionalBody(w http.ResponseWriter, r *http.Request, dst any) error {
 			return nil
 		}
 		return coreerrors.Wrap(err, coreerrors.KindInvalid, codeInvalidRequest,
-			"istek gövdesi çözümlenemedi")
+			"request body could not be parsed")
 	}
 	if err := dec.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
 		return coreerrors.Invalid(codeInvalidRequest,
-			"istek gövdesi tek bir JSON nesnesi olmalı")
+			"request body has to be a single JSON object")
 	}
 	return nil
 }
 
-// parsePage limit/offset sorgu parametrelerini çözer.
+// parsePage parses the limit/offset query parameters.
 func parsePage(r *http.Request) (service.Page, error) {
 	limit, err := parseInt64Param(r, "limit")
 	if err != nil {
@@ -606,14 +624,15 @@ func parsePage(r *http.Request) (service.Page, error) {
 	}
 	page := service.Page{Limit: limit, Offset: offset}
 	if page.Limit == 0 {
-		// Yanıttaki limit alanının gerçekten uygulanan sınırı göstermesi için
-		// varsayılan burada da görünür kılınır.
+		// The default is made visible here too, so that the limit field in the
+		// response shows the limit that is actually applied.
 		page.Limit = service.DefaultLimit
 	}
 	return page, nil
 }
 
-// parseInt64Param bir sorgu parametresini tam sayıya çevirir; yoksa 0 döner.
+// parseInt64Param converts a query parameter into an integer; returns 0 if it
+// is absent.
 func parseInt64Param(r *http.Request, name string) (int64, error) {
 	raw := r.URL.Query().Get(name)
 	if raw == "" {
@@ -627,7 +646,8 @@ func parseInt64Param(r *http.Request, name string) (int64, error) {
 	return value, nil
 }
 
-// parseBoolParam bir sorgu parametresini boolean'a çevirir; yoksa false döner.
+// parseBoolParam converts a query parameter into a boolean; returns false if it
+// is absent.
 func parseBoolParam(r *http.Request, name string) (bool, error) {
 	raw := r.URL.Query().Get(name)
 	if raw == "" {
@@ -636,16 +656,16 @@ func parseBoolParam(r *http.Request, name string) (bool, error) {
 	value, err := strconv.ParseBool(raw)
 	if err != nil {
 		return false, coreerrors.Wrap(err, coreerrors.KindInvalid, codeInvalidRequest,
-			"%s mantıksal değer olmalı: %q", name, raw)
+			"%s has to be a boolean: %q", name, raw)
 	}
 	return value, nil
 }
 
-// writeList bir dilimi liste zarfıyla yazar.
+// writeList writes a slice with the list envelope.
 //
-// Sayfalanmayan uçlarda (bir seçeneğin kuralları gibi) count satır sayısıdır
-// ve limit ile aynıdır: zarf her yerde aynı şekle sahiptir, istemci iki farklı
-// yanıt biçimi öğrenmek zorunda kalmaz.
+// On endpoints that are not paged (such as the rules of an option) count is the
+// row count and equals limit: the envelope has the same shape everywhere, so
+// the client does not have to learn two different response formats.
 func writeList[T any](ctx context.Context, w http.ResponseWriter, items []T) {
 	corehttp.WriteJSON(ctx, w, http.StatusOK, listEnvelope{
 		Data:   items,

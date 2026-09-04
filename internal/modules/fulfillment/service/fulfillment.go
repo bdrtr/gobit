@@ -13,97 +13,107 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/fulfillment/models"
 )
 
-// Bu dosya GÖNDERİNİN yaşam döngüsüdür: oluşturma, iptal (saga telafisi),
-// kargoya verme ve teslim bildirimi.
+// This file is THE FULFILLMENT's life cycle: creation, cancellation (saga
+// compensation), dispatch and delivery notification.
 
-// FulfillmentItemInput gönderiye giren tek bir kalemin girdisidir.
+// FulfillmentItemInput is the input of a single item entering the fulfillment.
 type FulfillmentItemInput struct {
-	// LineItemID sipariş satırının kimliğidir; zorunludur ve bu modülde
-	// DOĞRULANMAZ (Prensip 2.2).
+	// LineItemID is the identifier of the order line; it is required and IS NOT
+	// VALIDATED in this module (Principle 2.2).
 	LineItemID string
-	// Quantity gönderiye giren adettir; pozitif olmalıdır.
+	// Quantity is the count entering the fulfillment; it has to be positive.
 	Quantity int64
 }
 
-// CreateFulfillmentInput yeni bir gönderinin girdisidir.
+// CreateFulfillmentInput is the input of a new fulfillment.
 type CreateFulfillmentInput struct {
-	// Reference siparişin kimliğidir; zorunludur ve bu modülde DOĞRULANMAZ.
+	// Reference is the order's identifier; it is required and IS NOT VALIDATED
+	// in this module.
 	Reference string
-	// ShippingOptionID kullanılacak kargo seçeneğidir; zorunludur.
+	// ShippingOptionID is the shipping option to be used; it is required.
 	ShippingOptionID string
-	// IdempotencyKey aynı gönderinin iki kez oluşturulmasını engeller;
-	// zorunludur.
+	// IdempotencyKey prevents the same fulfillment from being created twice; it
+	// is required.
 	IdempotencyKey string
-	// Items gönderiye giren kalemlerdir; boş olabilir (örn. dijital ürünün
-	// kargosuz gönderisi ya da kalem dökümü olmayan toplu sevkiyat).
+	// Items are the items entering the fulfillment; it may be empty (e.g. the
+	// shipping-free fulfillment of a digital product, or a bulk shipment with no
+	// item breakdown).
 	Items []FulfillmentItemInput
-	// Data sağlayıcıya iletilecek serbest veridir (adres, şube vb.).
+	// Data is the free-form data to be handed to the provider (address, branch
+	// and so on).
 	Data map[string]any
-	// Metadata çağıranın serbest ek verisidir.
+	// Metadata is the caller's free-form extra data.
 	Metadata map[string]any
 }
 
-// CreateFulfillment sağlayıcıda bir gönderi açar ve kaydını üretir.
+// CreateFulfillment opens a fulfillment at the provider and produces its record.
 //
-// # Sıra: önce KAYIT, sonra sağlayıcı
+// # Order: the RECORD first, the provider second
 //
-// Gönderi satırı sağlayıcıya GİTMEDEN ÖNCE yazılır ve sağlayıcıya verilen
-// Reference bu satırın kimliğidir. Sebep çekirdek sözleşmesinde yazılıdır
-// (internal/core/provider): Reference, mutabakatta iki sistemi eşleştiren
-// alandır. Önce sağlayıcıya gidilseydi ve yanıt kaybolsaydı, hangi kaydın
-// karşılığı olduğu bilinemeyen bir kargo etiketi kalırdı.
+// The fulfillment row is written BEFORE GOING to the provider, and the Reference
+// handed to the provider is that row's identifier. The reason is written in the
+// core contract (internal/core/provider): Reference is the field that matches
+// the two systems during reconciliation. Had the provider been called first and
+// the response been lost, a shipping label would be left behind whose
+// counterpart record could not be known.
 //
-// # Kalan risk: BELİRSİZ sağlayıcı hatası
+// # Residual risk: an AMBIGUOUS provider error
 //
-// Yukarıdaki sıra, hatanın KESİN olduğu durumda tamdır. Sağlayıcı hata
-// dönerse işlemin tamamı geri alınır ve ortada gönderi kalmaz
-// (TestSaglayiciHatasiGonderiBirakmaz bunu sabitler). Gerçek bir AĞ
-// sağlayıcısında ise hata belirsiz olabilir: etiket basılmış, yanıt zaman
-// aşımına uğramıştır. O durumda satır geri alınır ama sağlayıcının tarafında
-// Reference=ful_X kalır ve ful_X hiç var olmaz; yeniden denemede aynı anahtarla
-// YENİ bir ful_Y satırı açılır ve sağlayıcı eski gönderiyi döner.
+// The order above is complete in the case where the failure is CERTAIN. If the
+// provider returns an error the whole transaction is rolled back and no
+// fulfillment is left behind (TestProviderErrorLeavesNoFulfillment pins this).
+// With a real NETWORK provider, however, the failure can be ambiguous: the label
+// was printed and the response timed out. In that case the row is rolled back
+// but Reference=ful_X remains on the provider's side while ful_X never exists;
+// on a retry a NEW ful_Y row is opened with the same key and the provider
+// returns the old fulfillment.
 //
-// Sonuç açıkça kabul edilmiştir: BELİRSİZ hata sonrası mutabakat Reference
-// üzerinden KURULAMAZ, eşleştirme [models.Fulfillment.ExternalID] üzerinden
-// yapılmalıdır — sağlayıcının kendi kimliği her iki tarafta da aynı kalan tek
-// alandır. Aynı sınıf risk payment modülünün capture pivotunda da belgelidir
-// (internal/workflows/checkout/doc.go). Kutudan çıkan manuel sağlayıcı bu
-// işleme KATILDIĞI için orada böyle bir belirsizlik oluşamaz; risk yalnızca
-// süreç dışı sağlayıcılarda görünür ve testler onu gösteremez.
+// The consequence has been accepted explicitly: after an AMBIGUOUS failure the
+// reconciliation CANNOT BE BUILT on Reference; the matching has to be done over
+// [models.Fulfillment.ExternalID] — the provider's own identifier is the only
+// field that stays the same on both sides. The same class of risk is documented
+// at the payment module's capture pivot as well
+// (internal/workflows/checkout/doc.go). Because the manual provider that ships
+// in the box PARTICIPATES in this transaction, no such ambiguity can arise
+// there; the risk is visible only with out-of-process providers and the tests
+// cannot demonstrate it.
 //
-// # İdempotency
+// # Idempotency
 //
-// Aynı IdempotencyKey ile ikinci çağrı YENİ gönderi açmaz, mevcut gönderiyi
-// döner. Yarış tek bir deyimde çözülür: satır ON CONFLICT DO NOTHING ile
-// yazılır, kaybeden taraf kazananın işlemi bitene kadar BEKLER ve sonra
-// tamamlanmış satırı okur. Anahtar aynı ama referans, seçenek YA DA KALEM
-// LİSTESİ farklıysa errors.Conflict döner — idempotency "aynı isteği
-// tekrarlamak" demektir, "farklı bir isteği eski anahtarla göndermek" değil.
+// A second call with the same IdempotencyKey does not open a NEW fulfillment, it
+// returns the existing one. The race is resolved in a single statement: the row
+// is written with ON CONFLICT DO NOTHING, the losing side WAITS until the
+// winner's transaction finishes and then reads the completed row. If the key is
+// the same but the reference, the option OR THE ITEM LIST differs,
+// errors.Conflict is returned — idempotency means "repeating the same request",
+// not "sending a different request with an old key".
 //
-// Kalem listesinin de karşılaştırılması şarttır: yalnızca iki alana bakılsaydı,
-// düzeltilmiş bir kalem dökümüyle gelen ikinci istek sessizce yutulur, çağıran
-// yazıldığını sanır ve gönderi eski kalemleriyle kalırdı. Karşılaştırma
-// KÜMEDİR: sıra farkı bir fark sayılmaz, çünkü aynı kalem kümesi hangi sırada
-// verilirse verilsin aynı gönderidir.
+// Comparing the item list too is a requirement: had only the two fields been
+// looked at, a second request arriving with a corrected item breakdown would be
+// swallowed silently, the caller would believe it was written and the
+// fulfillment would keep its old items. The comparison is a SET: a difference in
+// order is not counted as a difference, because the same set of items is the
+// same fulfillment no matter which order it is given in.
 //
-// # Sağlayıcı çağrısı işlemin İÇİNDEDİR
+// # The provider call is INSIDE the transaction
 //
-// Gerekçe paket belgesindedir: kilit sağlayıcıdan önce bırakılsaydı ikinci
-// çağıran, henüz sağlayıcı kimliği yazılmamış YARIM bir gönderi okurdu.
+// The rationale is in the package documentation: had the lock been released
+// before the provider, the second caller would read a HALF fulfillment whose
+// provider identifier had not been written yet.
 func (s *Service) CreateFulfillment(
 	ctx context.Context,
 	in CreateFulfillmentInput,
 ) (models.Fulfillment, error) {
 	reference := strings.TrimSpace(in.Reference)
-	if err := requireText("referans", reference); err != nil {
+	if err := requireText("the reference", reference); err != nil {
 		return models.Fulfillment{}, err
 	}
 	if err := requireID(in.ShippingOptionID, models.ShippingOptionIDPrefix,
-		"kargo seçeneği kimliği"); err != nil {
+		"the shipping option identifier"); err != nil {
 		return models.Fulfillment{}, err
 	}
 	key := strings.TrimSpace(in.IdempotencyKey)
-	if err := requireText("idempotency anahtarı", key); err != nil {
+	if err := requireText("the idempotency key", key); err != nil {
 		return models.Fulfillment{}, err
 	}
 	items, err := normalizeItems(in.Items)
@@ -142,7 +152,7 @@ func (s *Service) CreateFulfillment(
 			}
 			if existing.Reference != reference || existing.ShippingOptionID != option.ID {
 				return errors.Conflict(CodeIdempotencyMismatch,
-					"aynı idempotency anahtarı farklı bir gönderi için kullanıldı: mevcut %s/%s, istenen %s/%s",
+					"the same idempotency key was used for a different fulfillment: existing %s/%s, requested %s/%s",
 					existing.Reference, existing.ShippingOptionID, reference, option.ID)
 			}
 			out, err = s.withItems(ctx, existing)
@@ -151,10 +161,10 @@ func (s *Service) CreateFulfillment(
 			}
 			if saved, wanted := savedItemsKey(out.Items), requestedItemsKey(items); saved != wanted {
 				return errors.Conflict(CodeIdempotencyMismatch,
-					"aynı idempotency anahtarı farklı bir kalem listesiyle kullanıldı: mevcut [%s], istenen [%s] (%s)",
+					"the same idempotency key was used with a different item list: existing [%s], requested [%s] (%s)",
 					saved, wanted, existing.ID)
 			}
-			s.log.DebugContext(ctx, "mevcut gönderi döndürüldü", "gonderi", existing.ID, "anahtar", key)
+			s.log.DebugContext(ctx, "the existing fulfillment was returned", "fulfillment", existing.ID, "key", key)
 			return nil
 		}
 
@@ -169,7 +179,7 @@ func (s *Service) CreateFulfillment(
 		}
 		if strings.TrimSpace(result.ID) == "" {
 			return errors.Internal(CodeProviderContract,
-				"sağlayıcı %q boş bir gönderi kimliği döndü (%s)", option.ProviderID, created.ID)
+				"the provider %q returned an empty fulfillment identifier (%s)", option.ProviderID, created.ID)
 		}
 		status, err := providerStatus(result.Status, option.ProviderID)
 		if err != nil {
@@ -211,26 +221,26 @@ func (s *Service) CreateFulfillment(
 	return out, nil
 }
 
-// CancelFulfillment gönderiyi iptal eder.
+// CancelFulfillment cancels the fulfillment.
 //
-// SAGA TELAFİSİ BUDUR ve İDEMPOTENTTİR: zaten iptal edilmiş bir gönderi için
-// hata dönmez, sağlayıcıya İKİNCİ KEZ gidilmez ve kayıtta değişiklik yapılmaz.
-// Telafinin tekrar çalıştırılabilir olması bir tercih değil, saga'nın çalışma
-// şartıdır (plan Bölüm 5.5).
+// THIS IS THE SAGA COMPENSATION and IT IS IDEMPOTENT: no error is returned for
+// an already canceled fulfillment, the provider is NOT called A SECOND TIME and
+// no change is made to the record. The compensation being re-runnable is not a
+// preference but a working requirement of the saga (plan Section 5.5).
 //
-// TESLİM EDİLMİŞ bir gönderi iptal EDİLEMEZ (errors.Conflict). Gerekçe
-// [models.FulfillmentStatus.CancelAction] tablosundadır: teslim geri
-// alınamayan fiziksel bir olgudur ve çaresi iptal değil İADEDİR. Kural,
-// payment modülünde tahsil edilmiş bir oturumun iptal edilemeyip iade
-// edilmesiyle birebir aynıdır.
+// A DELIVERED fulfillment CANNOT be canceled (errors.Conflict). The rationale is
+// in the [models.FulfillmentStatus.CancelAction] table: delivery is a physical
+// fact that cannot be undone, and its remedy is not cancellation but a RETURN.
+// The rule is exactly the same as a captured session in the payment module not
+// being cancelable but refundable.
 //
-// Bilinmeyen bir kimlik için errors.NotFound döner: idempotentlik "her şeyi
-// sessizce yut" demek değildir. İki kez iptal edilen GERÇEK bir gönderi ile
-// hiç var olmamış bir kimlik farklı durumlardır ve ikincisi çağıran tarafta
-// bir hatadır. Kayıt silinmediği (yalnızca durumu değiştiği) için ilk durum
-// her zaman ayırt edilebilir.
+// errors.NotFound is returned for an unknown identifier: idempotency does not
+// mean "swallow everything silently". A REAL fulfillment canceled twice and an
+// identifier that never existed are different situations, and the second is an
+// error on the caller's side. Because the record is not deleted (only its status
+// changes), the first situation can always be told apart.
 func (s *Service) CancelFulfillment(ctx context.Context, id string) error {
-	if err := requireID(id, models.FulfillmentIDPrefix, "gönderi kimliği"); err != nil {
+	if err := requireID(id, models.FulfillmentIDPrefix, "the fulfillment identifier"); err != nil {
 		return err
 	}
 
@@ -242,24 +252,25 @@ func (s *Service) CancelFulfillment(ctx context.Context, id string) error {
 
 		switch ful.Status.CancelAction() {
 		case models.ActionNoop:
-			s.log.DebugContext(ctx, "gönderi zaten iptal edilmiş", "gonderi", id)
+			s.log.DebugContext(ctx, "the fulfillment is already canceled", "fulfillment", id)
 			return nil
 		case models.ActionConflict:
 			return errors.Conflict(CodeInvalidTransition,
-				"%q durumundaki gönderi iptal edilemez; iade akışı kullanılmalı: %s", ful.Status, id)
+				"a fulfillment in the %q state cannot be canceled; the return flow has to be used: %s", ful.Status, id)
 		case models.ActionProceed:
-			// Aşağıda ele alınır.
+			// Handled below.
 		}
 
 		provider, err := s.providers.Get(ful.ProviderID)
 		if err != nil {
 			return err
 		}
-		// Sağlayıcı kimliği boşsa gönderi sağlayıcıya hiç ulaşmamıştır ve
-		// iptal edilecek bir dış kayıt yoktur; yalnızca bizim satırımız
-		// kapatılır. Bu durum, sağlayıcı yanıtı gelmeden düşen bir işlemin
-		// geri alınmasıyla oluşamaz (satır da geri alınır), ama elle yapılan
-		// bir müdahale böyle bir satır bırakabilir.
+		// If the provider identifier is empty the fulfillment never reached the
+		// provider and there is no external record to cancel; only our own row
+		// is closed. This situation cannot arise from the rollback of a
+		// transaction that failed before the provider responded (the row is
+		// rolled back too), but a manual intervention can leave such a row
+		// behind.
 		if strings.TrimSpace(ful.ExternalID) != "" {
 			if err := provider.Cancel(ctx, ful.ExternalID); err != nil {
 				return err
@@ -274,30 +285,30 @@ func (s *Service) CancelFulfillment(ctx context.Context, id string) error {
 	})
 }
 
-// MarkShipped gönderiyi kargoya verilmiş olarak işaretler.
+// MarkShipped marks the fulfillment as shipped.
 //
-// SAĞLAYICIYA GİDİLMEZ: bu metot, kargo firmasının BİLDİRDİĞİ olguyu kaydeder
-// (webhook ya da yönetici işlemi). Sağlayıcıya "bunu gönder" demek gönderiyi
-// oluşturmaktır ve o [Service.CreateFulfillment]'tır; buradan sağlayıcıyı
-// çağırmak, aynı olgunun iki kez tetiklenmesi demek olurdu.
+// THE PROVIDER IS NOT CALLED: this method records the fact the carrier REPORTED
+// (a webhook or an administrator action). Telling the provider "ship this" is
+// creating the fulfillment, and that is [Service.CreateFulfillment]; calling the
+// provider from here would mean triggering the same fact twice.
 //
-// Zaten kargoya verilmiş bir gönderide, AYNI takip numarasıyla (ya da boş
-// numarayla) yapılan ikinci çağrı hata DÖNMEZ; FARKLI bir takip numarası
-// istenirse errors.Conflict döner, çünkü bu artık bir tekrar değil, yeni bir
-// istektir.
+// On an already shipped fulfillment, a second call made with the SAME tracking
+// number (or with an empty one) DOES NOT return an error; if a DIFFERENT
+// tracking number is requested errors.Conflict is returned, because that is no
+// longer a repeat but a new request.
 func (s *Service) MarkShipped(
 	ctx context.Context,
 	id, trackingNumber, trackingURL string,
 ) (models.Fulfillment, error) {
-	if err := requireID(id, models.FulfillmentIDPrefix, "gönderi kimliği"); err != nil {
+	if err := requireID(id, models.FulfillmentIDPrefix, "the fulfillment identifier"); err != nil {
 		return models.Fulfillment{}, err
 	}
 	number := strings.TrimSpace(trackingNumber)
-	if err := checkTextLen("takip numarası", number); err != nil {
+	if err := checkTextLen("the tracking number", number); err != nil {
 		return models.Fulfillment{}, err
 	}
 	url := strings.TrimSpace(trackingURL)
-	if err := checkTextLen("takip adresi", url); err != nil {
+	if err := checkTextLen("the tracking URL", url); err != nil {
 		return models.Fulfillment{}, err
 	}
 
@@ -312,22 +323,23 @@ func (s *Service) MarkShipped(
 		case models.ActionNoop:
 			if number != "" && number != ful.TrackingNumber {
 				return errors.Conflict(CodeInvalidTransition,
-					"gönderi %q takip numarasıyla kargoya verilmiş; %q ile yeniden verilemez (%s)",
+					"the fulfillment was shipped with the tracking number %q; it cannot be shipped again with %q (%s)",
 					ful.TrackingNumber, number, id)
 			}
 			out = ful
-			s.log.DebugContext(ctx, "gönderi zaten kargoya verilmiş", "gonderi", id)
+			s.log.DebugContext(ctx, "the fulfillment has already been shipped", "fulfillment", id)
 			return nil
 		case models.ActionConflict:
 			return errors.Conflict(CodeInvalidTransition,
-				"%q durumundaki gönderi kargoya verilemez: %s", ful.Status, id)
+				"a fulfillment in the %q state cannot be shipped: %s", ful.Status, id)
 		case models.ActionProceed:
-			// Aşağıda ele alınır.
+			// Handled below.
 		}
 
-		// Boş verilen takip bilgisi MEVCUDU SİLMEZ: sağlayıcı gönderiyi
-		// açarken numara vermiş olabilir ve "bilgi vermedim" ile "bilgiyi
-		// kaldır" farklı isteklerdir.
+		// Tracking information given empty DOES NOT ERASE what is there: the
+		// provider may have given a number while opening the fulfillment, and "I
+		// did not give the information" and "remove the information" are
+		// different requests.
 		if number == "" {
 			number = ful.TrackingNumber
 		}
@@ -350,16 +362,17 @@ func (s *Service) MarkShipped(
 	return out, nil
 }
 
-// MarkDelivered gönderiyi teslim edilmiş olarak işaretler.
+// MarkDelivered marks the fulfillment as delivered.
 //
-// SAĞLAYICIYA GİDİLMEZ; gerekçe [Service.MarkShipped] ile aynıdır.
+// THE PROVIDER IS NOT CALLED; the rationale is the same as for
+// [Service.MarkShipped].
 //
-// Yalnızca KARGOYA VERİLMİŞ bir gönderi teslim edilebilir: sırayı atlamak
-// shipped_at'i boş bırakır ve mutabakatta gönderinin ne zaman yola çıktığı
-// cevapsız kalırdı. Zaten teslim edilmiş bir gönderide ikinci çağrı hata
-// dönmez (idempotentlik).
+// Only a SHIPPED fulfillment can be delivered: skipping the order would leave
+// shipped_at empty and, during reconciliation, when the fulfillment set out
+// would stay unanswered. On an already delivered fulfillment a second call
+// returns no error (idempotency).
 func (s *Service) MarkDelivered(ctx context.Context, id string) (models.Fulfillment, error) {
-	if err := requireID(id, models.FulfillmentIDPrefix, "gönderi kimliği"); err != nil {
+	if err := requireID(id, models.FulfillmentIDPrefix, "the fulfillment identifier"); err != nil {
 		return models.Fulfillment{}, err
 	}
 
@@ -373,13 +386,13 @@ func (s *Service) MarkDelivered(ctx context.Context, id string) (models.Fulfillm
 		switch ful.Status.DeliverAction() {
 		case models.ActionNoop:
 			out = ful
-			s.log.DebugContext(ctx, "gönderi zaten teslim edilmiş", "gonderi", id)
+			s.log.DebugContext(ctx, "the fulfillment has already been delivered", "fulfillment", id)
 			return nil
 		case models.ActionConflict:
 			return errors.Conflict(CodeInvalidTransition,
-				"%q durumundaki gönderi teslim edilemez; önce kargoya verilmeli: %s", ful.Status, id)
+				"a fulfillment in the %q state cannot be delivered; it has to be shipped first: %s", ful.Status, id)
 		case models.ActionProceed:
-			// Aşağıda ele alınır.
+			// Handled below.
 		}
 
 		now := s.now()
@@ -397,9 +410,10 @@ func (s *Service) MarkDelivered(ctx context.Context, id string) (models.Fulfillm
 	return out, nil
 }
 
-// GetFulfillment gönderiyi KALEMLERİYLE birlikte döner; yoksa errors.NotFound.
+// GetFulfillment returns the fulfillment together with its ITEMS;
+// errors.NotFound if absent.
 func (s *Service) GetFulfillment(ctx context.Context, id string) (models.Fulfillment, error) {
-	if err := requireID(id, models.FulfillmentIDPrefix, "gönderi kimliği"); err != nil {
+	if err := requireID(id, models.FulfillmentIDPrefix, "the fulfillment identifier"); err != nil {
 		return models.Fulfillment{}, err
 	}
 	ful, err := s.store.GetFulfillment(ctx, id)
@@ -409,21 +423,22 @@ func (s *Service) GetFulfillment(ctx context.Context, id string) (models.Fulfill
 	return s.withItems(ctx, ful)
 }
 
-// ListFulfillmentsInput gönderi listelemesinin girdisidir.
+// ListFulfillmentsInput is the input of the fulfillment listing.
 type ListFulfillmentsInput struct {
-	// Reference verilirse yalnızca o siparişin gönderileri döner.
+	// Reference, if given, restricts the result to that order's fulfillments.
 	Reference *string
-	// Status verilirse yalnızca o durumdaki gönderiler döner.
+	// Status, if given, restricts the result to the fulfillments in that state.
 	Status *string
-	// Page sayfalama parametreleridir.
+	// Page holds the pagination parameters.
 	Page Page
 }
 
-// ListFulfillments gönderileri KALEMLERİYLE birlikte sayfalayarak döner.
-// İkinci dönüş değeri süzgece uyan TÜM kayıtların sayısıdır.
+// ListFulfillments returns the fulfillments together with their ITEMS, with
+// pagination. The second return value is the count of ALL records matching the
+// filter.
 //
-// Kalemler TEK bir toplu sorguyla getirilir; gönderi başına sorgu (N+1)
-// yapılmaz.
+// The items are fetched with a SINGLE batch query; there is no query per
+// fulfillment (N+1).
 func (s *Service) ListFulfillments(
 	ctx context.Context,
 	in ListFulfillmentsInput,
@@ -470,7 +485,7 @@ func (s *Service) ListFulfillments(
 	return list, total, nil
 }
 
-// withItems gönderiye kalemlerini iliştirir.
+// withItems attaches its items to the fulfillment.
 func (s *Service) withItems(ctx context.Context, ful models.Fulfillment) (models.Fulfillment, error) {
 	items, err := s.store.ListFulfillmentItems(ctx, ful.ID)
 	if err != nil {
@@ -480,31 +495,31 @@ func (s *Service) withItems(ctx context.Context, ful models.Fulfillment) (models
 	return ful, nil
 }
 
-// normalizeItems kalem girdilerini doğrular ve tekrarları reddeder.
+// normalizeItems validates the item inputs and rejects duplicates.
 //
-// Aynı sipariş satırının iki kez verilmesi benzersiz indekse takılırdı; burada
-// yakalanması, hatanın hangi satırdan geldiğini söyleyebilmek içindir.
+// Giving the same order line twice would trip the unique index; catching it here
+// is so that the error can say which line it came from.
 func normalizeItems(in []FulfillmentItemInput) ([]FulfillmentItemInput, error) {
 	if len(in) > maxItemsPerFulfillment {
 		return nil, errors.Invalid(CodeInvalidInput,
-			"bir gönderi en fazla %d kalem içerebilir: %d", maxItemsPerFulfillment, len(in))
+			"a fulfillment can contain at most %d items: %d", maxItemsPerFulfillment, len(in))
 	}
 
 	seen := make(map[string]struct{}, len(in))
 	out := make([]FulfillmentItemInput, 0, len(in))
 	for i, item := range in {
 		lineID := strings.TrimSpace(item.LineItemID)
-		if err := requireText("sipariş satırı kimliği", lineID); err != nil {
+		if err := requireText("the order line identifier", lineID); err != nil {
 			return nil, err
 		}
 		if item.Quantity < models.MinQuantity || item.Quantity > models.MaxQuantity {
 			return nil, errors.Invalid(CodeInvalidInput,
-				"%d. kalemin adedi %d ile %d arasında olmalı: %d",
+				"the quantity of item %d has to be between %d and %d: %d",
 				i+1, models.MinQuantity, models.MaxQuantity, item.Quantity)
 		}
 		if _, dup := seen[lineID]; dup {
 			return nil, errors.Invalid(CodeInvalidInput,
-				"aynı sipariş satırı gönderide iki kez yer alamaz: %s", lineID)
+				"the same order line cannot appear twice in a fulfillment: %s", lineID)
 		}
 		seen[lineID] = struct{}{}
 		out = append(out, FulfillmentItemInput{LineItemID: lineID, Quantity: item.Quantity})
@@ -512,13 +527,12 @@ func normalizeItems(in []FulfillmentItemInput) ([]FulfillmentItemInput, error) {
 	return out, nil
 }
 
-// savedItemsKey kaydedilmiş kalemleri karşılaştırılabilir tek bir metne
-// çevirir.
+// savedItemsKey turns the saved items into a single comparable text.
 //
-// Metin SIRALIDIR: kalem kümesi aynıysa, kalemlerin hangi sırada verildiği ya
-// da veritabanından hangi sırada okunduğu bir fark sayılmamalıdır. Sipariş
-// satırı kimliği gönderi içinde tek olduğu için (benzersiz indeks) sıralı metin
-// kümenin kanonik hâlidir.
+// The text is SORTED: if the item set is the same, the order in which the items
+// were given or the order in which they were read from the database must not
+// count as a difference. Because an order line identifier is unique within a
+// fulfillment (unique index), the sorted text is the canonical form of the set.
 func savedItemsKey(items []models.FulfillmentItem) string {
 	parts := make([]string, 0, len(items))
 	for i := range items {
@@ -528,8 +542,9 @@ func savedItemsKey(items []models.FulfillmentItem) string {
 	return strings.Join(parts, " ")
 }
 
-// requestedItemsKey istenen kalemleri [savedItemsKey] ile AYNI biçimde metne
-// çevirir; iki metin ancak aynı biçimde üretilirse karşılaştırılabilir.
+// requestedItemsKey turns the requested items into text in the SAME form as
+// [savedItemsKey]; two texts are comparable only if they are produced the same
+// way.
 func requestedItemsKey(items []FulfillmentItemInput) string {
 	parts := make([]string, 0, len(items))
 	for i := range items {
@@ -539,12 +554,12 @@ func requestedItemsKey(items []FulfillmentItemInput) string {
 	return strings.Join(parts, " ")
 }
 
-// providerStatus çekirdek sözleşmesinin durumunu modülün durumuna çevirir.
+// providerStatus translates the core contract's status into the module's status.
 //
-// Çeviri AÇIKÇA yapılır ve tanınmayan bir değer hata döner: iki tip bugün aynı
-// dizeleri taşıyor ama biri çekirdeğin sözleşmesi, diğeri bu modülün şeması.
-// Doğrudan dönüştürmek, çekirdek yeni bir durum eklediğinde veritabanına
-// tanımsız bir değer yazmayı denemek demek olurdu.
+// The translation is done EXPLICITLY and an unrecognized value returns an error:
+// the two types carry the same strings today, but one is the core's contract and
+// the other this module's schema. Converting directly would mean attempting to
+// write an undefined value into the database the day the core adds a new status.
 func providerStatus(status coreprovider.FulfillmentStatus, providerID string) (models.FulfillmentStatus, error) {
 	switch status {
 	case coreprovider.FulfillmentPending:
@@ -556,31 +571,30 @@ func providerStatus(status coreprovider.FulfillmentStatus, providerID string) (m
 	case coreprovider.FulfillmentCanceled:
 		return models.StatusCanceled, nil
 	case "":
-		// Durum bildirmeyen bir sağlayıcı için en güvenli varsayım
-		// "oluşturuldu, henüz yola çıkmadı"dır: gönderiyi yanlışlıkla
-		// tamamlanmış saymaktansa bekleyen saymak, akışı ilerletilebilir
-		// bırakır.
+		// For a provider that reports no status the safest assumption is
+		// "created, has not set out yet": counting the fulfillment as pending
+		// rather than mistakenly as completed leaves the flow advanceable.
 		return models.StatusPending, nil
 	default:
 		return "", errors.Internal(CodeProviderContract,
-			"sağlayıcı %q tanınmayan bir gönderi durumu döndü: %q", providerID, status)
+			"the provider %q returned an unrecognized fulfillment status: %q", providerID, status)
 	}
 }
 
-// mergeProviderData seçeneğin yapılandırmasıyla isteğin verisini birleştirir.
+// mergeProviderData merges the option's configuration with the request's data.
 //
-// Seçeneğin Data alanı SAĞLAYICI YAPILANDIRMASIDIR (sözleşme numarası, ücret
-// kademeleri) ve fiyat sorgusuna zaten olduğu gibi geçirilir; gönderi
-// açılırken de geçirilmesi şarttır, aksi hâlde sağlayıcı hangi hesapla etiket
-// basacağını bilemezdi.
+// The option's Data field is THE PROVIDER CONFIGURATION (contract number, fee
+// tiers) and is already passed to the price query as it is; passing it while the
+// fulfillment is opened is a requirement too, otherwise the provider could not
+// know which account to print the label against.
 //
-// Çakışmada İSTEĞİN verisi kazanır: yapılandırma mağazanın sabit ayarıdır,
-// istek ise o gönderiye özgüdür (adres, şube, kalem dökümü) ve daha
-// belirgindir.
+// On a clash THE REQUEST's data wins: the configuration is the store's fixed
+// setting, while the request is specific to that fulfillment (address, branch,
+// item breakdown) and is more particular.
 //
-// Dönen harita YENİDİR; seçeneğin Data'sı bu yolda DEĞİŞTİRİLMEZ. Yerinde
-// birleştirme, aynı seçenekle açılan bir sonraki gönderinin öncekinin
-// verisini taşıması demek olurdu.
+// The returned map is NEW; the option's Data IS NOT MODIFIED on this path. An
+// in-place merge would mean the next fulfillment opened with the same option
+// carrying the previous one's data.
 func mergeProviderData(config, request map[string]any) map[string]any {
 	if len(config) == 0 && len(request) == 0 {
 		return nil
@@ -591,10 +605,12 @@ func mergeProviderData(config, request map[string]any) map[string]any {
 	return out
 }
 
-// stampFor durum hedefe eşitse verilen anı, değilse nil döner.
+// stampFor returns the given moment if the status equals the target, otherwise
+// nil.
 //
-// Şemadaki fulfillments_*_stamp kısıtları, yazılan durumun damgasının dolu
-// olmasını ister; bu yardımcı o eşleşmeyi tek yerde kurar.
+// The fulfillments_*_stamp constraints in the schema require the stamp of the
+// written status to be filled in; this helper establishes that pairing in a
+// single place.
 func stampFor(status, target models.FulfillmentStatus, now time.Time) *time.Time {
 	if status != target {
 		return nil

@@ -7,12 +7,12 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/product/service"
 )
 
-// Catalog api katmanının servisten ihtiyaç duyduğu yüzeydir.
+// Catalog is the surface the api layer needs from the service.
 //
-// Somut servis yerine arayüz kullanılmasının sebebi testtir: handler'ların
-// zarf biçimini, parametre çözümlemesini ve hata eşlemesini doğrulamak için
-// veritabanı gerekmemelidir. Arayüz tüketicinin (api) yanında durur; ADR
-// 0001'in örüntüsü modül İÇİNDE de aynı sebeple işe yarar.
+// The reason an interface is used instead of the concrete service is testing:
+// verifying the envelope shape, the parameter parsing and the error mapping of
+// the handlers must not require a database. The interface stands next to its
+// consumer (api); ADR 0001's pattern works INSIDE a module for the same reason.
 type Catalog interface {
 	CreateProduct(ctx context.Context, in service.CreateProductInput) (models.Product, error)
 	GetProduct(ctx context.Context, id string) (models.Product, error)

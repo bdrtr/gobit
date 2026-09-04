@@ -18,20 +18,23 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/product/service"
 )
 
-// Test DAHİLİ pakettedir çünkü yönetim uçlarının GÖVDELERİ dışa kapalıdır
-// ([createProductRequest], [deleted], [productSalesChannels] …). Dışarıdan
-// sınamanın tek yolu tipleri dışa açmak olurdu; belgeyi sınamak uğruna modülün
-// yüzeyini genişletmek, sınanan şeyin kendisini bozardı. Vitrin uçlarının testi
-// dışa açık tiplerle çalıştığı için AYRI dosyada ve api_test paketindedir.
+// The test is in the INTERNAL package because the BODIES of the admin endpoints
+// are unexported ([createProductRequest], [deleted], [productSalesChannels] …).
+// The only way to exercise them from the outside would be to export the types;
+// widening the module's surface for the sake of exercising the document would
+// break the very thing being exercised. The test of the storefront endpoints
+// works with exported types, so it lives in a SEPARATE file and in the api_test
+// package.
 
-// yonetimBelgesi Describe'ın çıktısını GERÇEK route ağacına karşı üretip
-// JSON'dan geri okunmuş hâlini döner.
+// adminDoc produces Describe's output against the REAL route tree and returns it
+// as read back from JSON.
 //
-// Doğrudan [openapi.Doc.Build] çıktısına bakmak yetmezdi: işlemler orada Go
-// struct'ıdır ve incelenen davranış tam olarak alanların JSON'a yazılıp
-// yazılmadığıdır. Router da gerçek olmalıdır — açıklamanın yolu route'unkinden
-// ayrıştığı an test düşsün, üretimde /openapi.json'a bakan biri değil.
-func yonetimBelgesi(t *testing.T) (yollar, bilesenler map[string]any) {
+// Looking at [openapi.Doc.Build]'s output directly would not have been enough:
+// the operations are Go structs there and the behavior under examination is
+// exactly whether the fields get written into JSON. The router has to be real
+// too — the moment the description's path drifts from the route's, let the test
+// fail, not somebody looking at /openapi.json in production.
+func adminDoc(t *testing.T) (paths, components map[string]any) {
 	t.Helper()
 
 	doc := openapi.New("test", "v1")
@@ -40,305 +43,313 @@ func yonetimBelgesi(t *testing.T) (yollar, bilesenler map[string]any) {
 	r := chi.NewRouter()
 	New(nil, graph.Options{}).Routes(r)
 
-	ham, err := doc.Build(r)
+	raw, err := doc.Build(r)
 	require.NoError(t, err,
-		"belge üretilemedi; iki tipin aynı bileşen adını istemesi de bu hatayı verir")
+		"the document could not be produced; two types asking for the same component name gives this error too")
 	require.Empty(t, doc.UnmatchedDescriptions(),
-		"anlatılan her uç bir route ile eşleşmeli; eşleşmeyen kayıt belgeye hiç girmez")
+		"every described endpoint has to match a route; an unmatched record never enters the document")
 
-	kodlanmis, err := json.Marshal(ham)
+	encoded, err := json.Marshal(raw)
 	require.NoError(t, err)
 
-	var cozulmus map[string]any
-	require.NoError(t, json.Unmarshal(kodlanmis, &cozulmus))
+	var decoded map[string]any
+	require.NoError(t, json.Unmarshal(encoded, &decoded))
 
 	var ok bool
 
-	bilesenler, ok = cozulmus["components"].(map[string]any)["schemas"].(map[string]any)
+	components, ok = decoded["components"].(map[string]any)["schemas"].(map[string]any)
 	require.True(t, ok)
 
-	yollar, ok = cozulmus["paths"].(map[string]any)
+	paths, ok = decoded["paths"].(map[string]any)
 	require.True(t, ok)
 
-	return yollar, bilesenler
+	return paths, components
 }
 
-// yonetimIslemi belgeden tek bir yol+metod işlemini döner.
-func yonetimIslemi(t *testing.T, yollar map[string]any, metod, yol string) map[string]any {
+// adminOperation returns a single path+method operation from the document.
+func adminOperation(t *testing.T, paths map[string]any, method, path string) map[string]any {
 	t.Helper()
 
-	yolIslemleri, ok := yollar[yol].(map[string]any)
-	require.True(t, ok, "%s belgede olmalı", yol)
+	pathOperations, ok := paths[path].(map[string]any)
+	require.True(t, ok, "%s has to be in the document", path)
 
-	op, ok := yolIslemleri[strings.ToLower(metod)].(map[string]any)
-	require.True(t, ok, "%s %s belgede olmalı", metod, yol)
+	op, ok := pathOperations[strings.ToLower(method)].(map[string]any)
+	require.True(t, ok, "%s %s has to be in the document", method, path)
 
 	return op
 }
 
-// yonetimSemaCoz "$ref" atıflarını belgedeki bileşene çözer.
-func yonetimSemaCoz(t *testing.T, bilesenler, sema map[string]any) map[string]any {
+// adminResolveSchema resolves "$ref" references to the component in the
+// document.
+func adminResolveSchema(t *testing.T, components, schema map[string]any) map[string]any {
 	t.Helper()
 
-	ref, refli := sema["$ref"].(string)
-	if !refli {
-		return sema
+	ref, isRef := schema["$ref"].(string)
+	if !isRef {
+		return schema
 	}
 
-	hedef, ok := bilesenler[strings.TrimPrefix(ref, "#/components/schemas/")].(map[string]any)
-	require.True(t, ok, "%q bileşeni kayıtlı olmalı", ref)
+	target, ok := components[strings.TrimPrefix(ref, "#/components/schemas/")].(map[string]any)
+	require.True(t, ok, "the %q component has to be registered", ref)
 
-	return hedef
+	return target
 }
 
-// yonetimGovdeSemasi bir istek ya da yanıt tanımından JSON şemasını çıkarır.
-func yonetimGovdeSemasi(t *testing.T, tanim map[string]any) map[string]any {
+// adminBodySchema extracts the JSON schema out of a request or response
+// definition.
+func adminBodySchema(t *testing.T, definition map[string]any) map[string]any {
 	t.Helper()
 
-	icerik, ok := tanim["content"].(map[string]any)
-	require.True(t, ok, "gövde tanımında content olmalı: %#v", tanim)
+	content, ok := definition["content"].(map[string]any)
+	require.True(t, ok, "a body definition has to have content: %#v", definition)
 
-	json_, ok := icerik["application/json"].(map[string]any)
-	require.True(t, ok, "gövde application/json olmalı")
+	json_, ok := content["application/json"].(map[string]any)
+	require.True(t, ok, "the body has to be application/json")
 
-	sema, ok := json_["schema"].(map[string]any)
-	require.True(t, ok, "gövdenin şeması olmalı")
+	schema, ok := json_["schema"].(map[string]any)
+	require.True(t, ok, "the body has to have a schema")
 
-	return sema
+	return schema
 }
 
-// yonetimAlanlari şemanın "properties" anahtarlarını döner.
-func yonetimAlanlari(t *testing.T, bilesenler, sema map[string]any) []string {
+// adminFields returns the "properties" keys of the schema.
+func adminFields(t *testing.T, components, schema map[string]any) []string {
 	t.Helper()
 
-	ozellikler, ok := yonetimSemaCoz(t, bilesenler, sema)["properties"].(map[string]any)
-	require.True(t, ok, "şemada properties olmalı: %#v", sema)
+	properties, ok := adminResolveSchema(t, components, schema)["properties"].(map[string]any)
+	require.True(t, ok, "the schema has to have properties: %#v", schema)
 
-	return yonetimAnahtarlar(ozellikler)
+	return adminKeys(properties)
 }
 
-// yonetimZorunlulari şemanın "required" listesini döner.
-func yonetimZorunlulari(t *testing.T, bilesenler, sema map[string]any) []string {
+// adminRequired returns the "required" list of the schema.
+func adminRequired(t *testing.T, components, schema map[string]any) []string {
 	t.Helper()
 
-	ham, _ := yonetimSemaCoz(t, bilesenler, sema)["required"].([]any)
+	raw, _ := adminResolveSchema(t, components, schema)["required"].([]any)
 
-	adlar := make([]string, 0, len(ham))
-	for _, ad := range ham {
-		metin, ok := ad.(string)
+	names := make([]string, 0, len(raw))
+	for _, name := range raw {
+		text, ok := name.(string)
 		require.True(t, ok)
 
-		adlar = append(adlar, metin)
+		names = append(names, text)
 	}
 
-	return adlar
+	return names
 }
 
-// yonetimAnahtarlar bir haritanın anahtarlarını döner.
-func yonetimAnahtarlar[T any](m map[string]T) []string {
-	adlar := make([]string, 0, len(m))
-	for ad := range m {
-		adlar = append(adlar, ad)
+// adminKeys returns the keys of a map.
+func adminKeys[T any](m map[string]T) []string {
+	names := make([]string, 0, len(m))
+	for name := range m {
+		names = append(names, name)
 	}
 
-	return adlar
+	return names
 }
 
-// yonetimJSONAnahtarlari değeri encoding/json ile kodlayıp anahtarlarını döner.
+// adminJSONKeys encodes the value with encoding/json and returns its keys.
 //
-// Karşılaştırmanın diğer ucu budur: şema, tel üzerinde GERÇEKTEN ne olduğunu
-// anlatmalıdır ve bunu bilen tek şey encoding/json'un kendisidir.
-func yonetimJSONAnahtarlari(t *testing.T, v any) []string {
+// This is the other end of the comparison: the schema has to describe what is
+// REALLY on the wire, and the only thing that knows that is encoding/json
+// itself.
+func adminJSONKeys(t *testing.T, v any) []string {
 	t.Helper()
 
-	ham, err := json.Marshal(v)
+	raw, err := json.Marshal(v)
 	require.NoError(t, err)
 
-	var cozulmus map[string]any
-	require.NoError(t, json.Unmarshal(ham, &cozulmus))
+	var decoded map[string]any
+	require.NoError(t, json.Unmarshal(raw, &decoded))
 
-	return yonetimAnahtarlar(cozulmus)
+	return adminKeys(decoded)
 }
 
-// yonetimSifirDegeri verilen örneğin tipinin sıfır değerini döner.
+// adminZeroValue returns the zero value of the given sample's type.
 //
-// Sıfır değerde JSON'a yazılan anahtarlar tam olarak "her zaman yazılanlar"dır,
-// yani şemanın "required" kümesi. Örneği elle ikinci kez yazmak yerine tipten
-// türetilir: iki örnek arasında bir alan unutulduğunda test yanlış nedenle
-// düşerdi.
-func yonetimSifirDegeri(v any) any {
+// The keys written to JSON at the zero value are exactly "the ones always
+// written", that is, the schema's "required" set. It is derived from the type
+// rather than writing the sample out a second time by hand: had a field been
+// forgotten between the two samples, the test would fail for the wrong reason.
+func adminZeroValue(v any) any {
 	return reflect.New(reflect.TypeOf(v)).Elem().Interface()
 }
 
-// yonetimUcu anlatılan tek bir /admin/v1 ucunun sözleşmesidir.
-type yonetimUcu struct {
-	metod string
-	yol   string
-	// durum başarılı yanıtın GERÇEK status kodudur; handler'ın yazdığı kodla
-	// aynı olmalıdır (bkz. admin.go). Yönetim tarafında 204 HİÇ kullanılmaz:
-	// silme uçları da 200 ile bir [deleted] kaydı yazar.
-	durum string
-	// istek istek gövdesinin tipinden bir örnektir; nil ise uç gövde almaz.
-	istek any
-	// kayit başarılı yanıttaki KAYDIN tüm alanlarını taşıyan örnektir.
-	kayit any
-	// liste yanıtın liste zarfıyla mı (writeList) tekil zarfla mı (writeItem)
-	// döndüğünü bildirir; ikisi farklı şemadır ve karıştırmak istemci
-	// üretecinde yanlış tip üretirdi.
-	liste bool
+// adminEndpoint is the contract of a single described /admin/v1 endpoint.
+type adminEndpoint struct {
+	method string
+	path   string
+	// status is the REAL status code of the successful response; it has to be
+	// the same as the code the handler writes (see admin.go). On the admin side
+	// 204 is NEVER used: the deletion endpoints write a [deleted] record with a
+	// 200 as well.
+	status string
+	// request is a sample of the request body's type; if nil the endpoint takes
+	// no body.
+	request any
+	// record is a sample carrying all the fields of the RECORD in the
+	// successful response.
+	record any
+	// list reports whether the response comes back with the list envelope
+	// (writeList) or with the single envelope (writeItem); the two are different
+	// schemas and mixing them up would produce the wrong type in a client
+	// generator.
+	list bool
 }
 
-// anahtar işlemin "METOD yol" kimliğini döner.
-func (u yonetimUcu) anahtar() string { return u.metod + " " + u.yol }
+// key returns the operation's "METHOD path" identity.
+func (u adminEndpoint) key() string { return u.method + " " + u.path }
 
-// yonetimUclari anlatılan yönetim uçlarının beklentileridir.
+// adminEndpoints are the expectations of the described admin endpoints.
 //
-// Kayıt örnekleri DOLUDUR: omitempty/omitzero taşıyan her alan sıfırdan farklı
-// bir değer alır, çünkü karşılaştırma "şemanın properties kümesi = kodlanan
-// anahtar kümesi" biçimindedir ve boş bir örnek o alanları hiç yazmazdı. İstek
-// gövdeleri için sıfır değer yeterlidir: hiçbir istek DTO'su omitempty
-// taşımaz.
-func yonetimUclari() []yonetimUcu {
-	return []yonetimUcu{
+// The record samples are FILLED IN: every field carrying omitempty/omitzero gets
+// a value different from the zero one, because the comparison has the shape
+// "the schema's properties set = the encoded key set" and an empty sample would
+// never write those fields. For the request bodies the zero value is enough: no
+// request DTO carries omitempty.
+func adminEndpoints() []adminEndpoint {
+	return []adminEndpoint{
 		{
-			metod: http.MethodPost, yol: "/admin/v1/products", durum: "201",
-			istek: createProductRequest{}, kayit: doluYonetimUrunu(),
+			method: http.MethodPost, path: "/admin/v1/products", status: "201",
+			request: createProductRequest{}, record: filledAdminProduct(),
 		},
 		{
-			metod: http.MethodGet, yol: "/admin/v1/products", durum: "200",
-			kayit: doluYonetimUrunu(), liste: true,
+			method: http.MethodGet, path: "/admin/v1/products", status: "200",
+			record: filledAdminProduct(), list: true,
 		},
 		{
-			metod: http.MethodGet, yol: "/admin/v1/products/{id}", durum: "200",
-			kayit: doluYonetimUrunu(),
+			method: http.MethodGet, path: "/admin/v1/products/{id}", status: "200",
+			record: filledAdminProduct(),
 		},
 		{
-			metod: http.MethodPatch, yol: "/admin/v1/products/{id}", durum: "200",
-			istek: updateProductRequest{}, kayit: doluYonetimUrunu(),
+			method: http.MethodPatch, path: "/admin/v1/products/{id}", status: "200",
+			request: updateProductRequest{}, record: filledAdminProduct(),
 		},
 		{
-			metod: http.MethodDelete, yol: "/admin/v1/products/{id}", durum: "200",
-			kayit: deleted{},
+			method: http.MethodDelete, path: "/admin/v1/products/{id}", status: "200",
+			record: deleted{},
 		},
 		{
-			metod: http.MethodPost, yol: "/admin/v1/products/{id}/variants", durum: "201",
-			istek: createVariantRequest{}, kayit: doluYonetimVaryanti(),
+			method: http.MethodPost, path: "/admin/v1/products/{id}/variants", status: "201",
+			request: createVariantRequest{}, record: filledAdminVariant(),
 		},
 		{
-			metod: http.MethodGet, yol: "/admin/v1/products/{id}/variants", durum: "200",
-			kayit: doluYonetimVaryanti(), liste: true,
+			method: http.MethodGet, path: "/admin/v1/products/{id}/variants", status: "200",
+			record: filledAdminVariant(), list: true,
 		},
 		{
-			metod: http.MethodGet, yol: "/admin/v1/variants/{id}", durum: "200",
-			kayit: doluYonetimVaryanti(),
+			method: http.MethodGet, path: "/admin/v1/variants/{id}", status: "200",
+			record: filledAdminVariant(),
 		},
 		{
-			metod: http.MethodPatch, yol: "/admin/v1/variants/{id}", durum: "200",
-			istek: updateVariantRequest{}, kayit: doluYonetimVaryanti(),
+			method: http.MethodPatch, path: "/admin/v1/variants/{id}", status: "200",
+			request: updateVariantRequest{}, record: filledAdminVariant(),
 		},
 		{
-			metod: http.MethodDelete, yol: "/admin/v1/variants/{id}", durum: "200",
-			kayit: deleted{},
+			method: http.MethodDelete, path: "/admin/v1/variants/{id}", status: "200",
+			record: deleted{},
 		},
 		{
-			metod: http.MethodPost, yol: "/admin/v1/products/{id}/options", durum: "201",
-			istek: createOptionRequest{}, kayit: doluYonetimSecenegi(),
+			method: http.MethodPost, path: "/admin/v1/products/{id}/options", status: "201",
+			request: createOptionRequest{}, record: filledAdminOption(),
 		},
 		{
-			metod: http.MethodGet, yol: "/admin/v1/products/{id}/options", durum: "200",
-			kayit: doluYonetimSecenegi(), liste: true,
+			method: http.MethodGet, path: "/admin/v1/products/{id}/options", status: "200",
+			record: filledAdminOption(), list: true,
 		},
 		{
-			metod: http.MethodPost, yol: "/admin/v1/product-options/{id}/values", durum: "201",
-			istek: optionValueRequest{}, kayit: doluSecenekDegeri(),
+			method: http.MethodPost, path: "/admin/v1/product-options/{id}/values", status: "201",
+			request: optionValueRequest{}, record: filledOptionValue(),
 		},
 		{
-			metod: http.MethodDelete, yol: "/admin/v1/product-options/{id}", durum: "200",
-			kayit: deleted{},
+			method: http.MethodDelete, path: "/admin/v1/product-options/{id}", status: "200",
+			record: deleted{},
 		},
 		{
-			metod: http.MethodPut, yol: "/admin/v1/variants/{id}/price-set", durum: "200",
-			istek: linkRequest{}, kayit: doluBaglar(),
+			method: http.MethodPut, path: "/admin/v1/variants/{id}/price-set", status: "200",
+			request: linkRequest{}, record: filledVariantLinks(),
 		},
 		{
-			metod: http.MethodDelete, yol: "/admin/v1/variants/{id}/price-set", durum: "200",
-			kayit: deleted{},
+			method: http.MethodDelete, path: "/admin/v1/variants/{id}/price-set", status: "200",
+			record: deleted{},
 		},
 		{
-			metod: http.MethodPut, yol: "/admin/v1/variants/{id}/inventory-item", durum: "200",
-			istek: linkRequest{}, kayit: doluBaglar(),
+			method: http.MethodPut, path: "/admin/v1/variants/{id}/inventory-item", status: "200",
+			request: linkRequest{}, record: filledVariantLinks(),
 		},
 		{
-			metod: http.MethodDelete, yol: "/admin/v1/variants/{id}/inventory-item", durum: "200",
-			kayit: deleted{},
+			method: http.MethodDelete, path: "/admin/v1/variants/{id}/inventory-item", status: "200",
+			record: deleted{},
 		},
 		{
-			metod: http.MethodGet, yol: "/admin/v1/variants/{id}/links", durum: "200",
-			kayit: doluBaglar(),
+			method: http.MethodGet, path: "/admin/v1/variants/{id}/links", status: "200",
+			record: filledVariantLinks(),
 		},
 		{
-			metod: http.MethodPost, yol: "/admin/v1/products/{id}/sales-channels", durum: "200",
-			istek: linkSalesChannelRequest{}, kayit: productSalesChannels{},
+			method: http.MethodPost, path: "/admin/v1/products/{id}/sales-channels", status: "200",
+			request: linkSalesChannelRequest{}, record: productSalesChannels{},
 		},
 		{
-			metod: http.MethodDelete,
-			yol:   "/admin/v1/products/{id}/sales-channels/{sales_channel_id}",
-			durum: "200", kayit: productSalesChannels{},
+			method: http.MethodDelete,
+			path:   "/admin/v1/products/{id}/sales-channels/{sales_channel_id}",
+			status: "200", record: productSalesChannels{},
 		},
 		{
-			metod: http.MethodGet, yol: "/admin/v1/products/{id}/sales-channels", durum: "200",
-			kayit: productSalesChannels{},
+			method: http.MethodGet, path: "/admin/v1/products/{id}/sales-channels", status: "200",
+			record: productSalesChannels{},
 		},
 		{
-			metod: http.MethodPost, yol: "/admin/v1/product-collections", durum: "201",
-			istek: createCollectionRequest{}, kayit: doluKoleksiyon(),
+			method: http.MethodPost, path: "/admin/v1/product-collections", status: "201",
+			request: createCollectionRequest{}, record: filledCollection(),
 		},
 		{
-			metod: http.MethodGet, yol: "/admin/v1/product-collections", durum: "200",
-			kayit: doluKoleksiyon(), liste: true,
+			method: http.MethodGet, path: "/admin/v1/product-collections", status: "200",
+			record: filledCollection(), list: true,
 		},
 		{
-			metod: http.MethodPost, yol: "/admin/v1/product-categories", durum: "201",
-			istek: createCategoryRequest{}, kayit: doluKategori(),
+			method: http.MethodPost, path: "/admin/v1/product-categories", status: "201",
+			request: createCategoryRequest{}, record: filledCategory(),
 		},
 		{
-			metod: http.MethodGet, yol: "/admin/v1/product-categories", durum: "200",
-			kayit: doluKategori(), liste: true,
+			method: http.MethodGet, path: "/admin/v1/product-categories", status: "200",
+			record: filledCategory(), list: true,
 		},
 		{
-			metod: http.MethodPost, yol: "/admin/v1/product-tags", durum: "201",
-			istek: createTagRequest{}, kayit: doluEtiket(),
+			method: http.MethodPost, path: "/admin/v1/product-tags", status: "201",
+			request: createTagRequest{}, record: filledTag(),
 		},
 		{
-			metod: http.MethodGet, yol: "/admin/v1/product-tags", durum: "200",
-			kayit: doluEtiket(), liste: true,
+			method: http.MethodGet, path: "/admin/v1/product-tags", status: "200",
+			record: filledTag(), list: true,
 		},
 	}
 }
 
-// doluYonetimUrunu omitempty alanları da yazılan bir yönetim ürünü üretir.
+// filledAdminProduct produces an admin product whose omitempty fields are
+// written too.
 //
-// Vitrin ürününün aksine ilişkili kayıtlar GÖLGELENMEZ: yönetim yanıtı
-// [models.Product]'ın kendisidir ve "variants" alanı zenginleştirilmemiş
-// [models.Variant] taşır.
-func doluYonetimUrunu() models.Product {
-	metin := "x"
-	sayi := int32(1)
-	an := time.Now().UTC()
+// Unlike the storefront product, the related records are NOT SHADOWED: the admin
+// response is [models.Product] itself and its "variants" field carries the
+// unenriched [models.Variant].
+func filledAdminProduct() models.Product {
+	text := "x"
+	number := int32(1)
+	now := time.Now().UTC()
 
 	return models.Product{
-		Subtitle:      &metin,
-		Description:   &metin,
-		Thumbnail:     &metin,
-		Weight:        &sayi,
-		Length:        &sayi,
-		Height:        &sayi,
-		Width:         &sayi,
-		Material:      &metin,
-		OriginCountry: &metin,
-		CollectionID:  &metin,
+		Subtitle:      &text,
+		Description:   &text,
+		Thumbnail:     &text,
+		Weight:        &number,
+		Length:        &number,
+		Height:        &number,
+		Width:         &number,
+		Material:      &text,
+		OriginCountry: &text,
+		CollectionID:  &text,
 		Metadata:      map[string]any{"k": "v"},
-		DeletedAt:     &an,
+		DeletedAt:     &now,
 		Variants:      []models.Variant{{}},
 		Options:       []models.Option{{}},
 		Images:        []models.Image{{}},
@@ -347,220 +358,224 @@ func doluYonetimUrunu() models.Product {
 	}
 }
 
-// doluYonetimVaryanti omitempty alanları da yazılan bir varyant üretir.
-func doluYonetimVaryanti() models.Variant {
-	metin := "x"
-	sayi := int32(1)
-	an := time.Now().UTC()
+// filledAdminVariant produces a variant whose omitempty fields are written too.
+func filledAdminVariant() models.Variant {
+	text := "x"
+	number := int32(1)
+	now := time.Now().UTC()
 
 	return models.Variant{
-		SKU:          &metin,
-		Barcode:      &metin,
-		EAN:          &metin,
-		UPC:          &metin,
-		Weight:       &sayi,
+		SKU:          &text,
+		Barcode:      &text,
+		EAN:          &text,
+		UPC:          &text,
+		Weight:       &number,
 		Metadata:     map[string]any{"k": "v"},
-		DeletedAt:    &an,
+		DeletedAt:    &now,
 		OptionValues: []models.OptionValue{{}},
 	}
 }
 
-// doluYonetimSecenegi omitempty alanları da yazılan bir seçenek üretir.
-func doluYonetimSecenegi() models.Option {
-	an := time.Now().UTC()
+// filledAdminOption produces an option whose omitempty fields are written too.
+func filledAdminOption() models.Option {
+	now := time.Now().UTC()
 
-	return models.Option{DeletedAt: &an, Values: []models.OptionValue{{}}}
+	return models.Option{DeletedAt: &now, Values: []models.OptionValue{{}}}
 }
 
-// doluSecenekDegeri omitempty ve omitzero alanları da yazılan bir seçenek
-// değeri üretir.
-func doluSecenekDegeri() models.OptionValue {
-	an := time.Now().UTC()
+// filledOptionValue produces an option value whose omitempty and omitzero fields
+// are written too.
+func filledOptionValue() models.OptionValue {
+	now := time.Now().UTC()
 
 	return models.OptionValue{
-		OptionTitle: "Beden",
-		CreatedAt:   an,
-		UpdatedAt:   an,
-		DeletedAt:   &an,
+		OptionTitle: "Size",
+		CreatedAt:   now,
+		UpdatedAt:   now,
+		DeletedAt:   &now,
 	}
 }
 
-// doluBaglar iki bağı da dolu bir varyant bağ kaydı üretir.
-func doluBaglar() service.VariantLinks {
-	metin := "x"
+// filledVariantLinks produces a variant link record with both links filled in.
+func filledVariantLinks() service.VariantLinks {
+	text := "x"
 
-	return service.VariantLinks{PriceSetID: &metin, InventoryItemID: &metin}
+	return service.VariantLinks{PriceSetID: &text, InventoryItemID: &text}
 }
 
-// doluKoleksiyon omitempty alanları da yazılan bir koleksiyon üretir.
-func doluKoleksiyon() models.Collection {
-	an := time.Now().UTC()
+// filledCollection produces a collection whose omitempty fields are written too.
+func filledCollection() models.Collection {
+	now := time.Now().UTC()
 
-	return models.Collection{Metadata: map[string]any{"k": "v"}, DeletedAt: &an}
+	return models.Collection{Metadata: map[string]any{"k": "v"}, DeletedAt: &now}
 }
 
-// doluKategori omitempty ve omitzero alanları da yazılan bir kategori üretir.
-func doluKategori() models.Category {
-	metin := "x"
-	an := time.Now().UTC()
+// filledCategory produces a category whose omitempty and omitzero fields are
+// written too.
+func filledCategory() models.Category {
+	text := "x"
+	now := time.Now().UTC()
 
 	return models.Category{
-		Description: &metin,
-		ParentID:    &metin,
-		CreatedAt:   an,
-		UpdatedAt:   an,
-		DeletedAt:   &an,
+		Description: &text,
+		ParentID:    &text,
+		CreatedAt:   now,
+		UpdatedAt:   now,
+		DeletedAt:   &now,
 	}
 }
 
-// doluEtiket omitzero alanları da yazılan bir etiket üretir.
-func doluEtiket() models.Tag {
-	an := time.Now().UTC()
+// filledTag produces a tag whose omitzero fields are written too.
+func filledTag() models.Tag {
+	now := time.Now().UTC()
 
-	return models.Tag{CreatedAt: an, UpdatedAt: an, DeletedAt: &an}
+	return models.Tag{CreatedAt: now, UpdatedAt: now, DeletedAt: &now}
 }
 
-// TestYonetimUclariGovdeleriniAnlatir her yönetim ucunun ne ALDIĞINI ve ne
-// DÖNDÜĞÜNÜ söylediğini doğrular.
+// TestAdminEndpointsDescribeTheirBodies verifies that every admin endpoint says
+// what it TAKES and what it RETURNS.
 //
-// Bulgunun tam karşılığı budur: gövdesiz bir şema istemciye "bu uç var ve şöyle
-// başarısız olabilir" der, ne göndereceğini söylemez; istemci üreteci de gövdesi
-// olmayan, dönüş tipi 'void' olan bir metot üretir — yani o istemciyle ürün
-// OLUŞTURULAMAZ.
+// This is the exact counterpart of the finding: a schema with no body tells the
+// client "this endpoint exists and can fail like this", it does not say what to
+// send; and a client generator produces a method with no body whose return type
+// is 'void' — that is, no product CAN BE CREATED with that client.
 //
-// Alan kümeleri DTO'nun encoding/json çıktısıyla karşılaştırılır, elle yazılmış
-// bir listeyle değil: elle yazılmış liste, tipe alan eklendiği gün eksik kalır
-// ve test bunu görmezdi.
-func TestYonetimUclariGovdeleriniAnlatir(t *testing.T) {
+// The field sets are compared against the DTO's encoding/json output, not
+// against a hand-written list: a hand-written list falls short the day a field
+// is added to the type, and the test would not see it.
+func TestAdminEndpointsDescribeTheirBodies(t *testing.T) {
 	t.Parallel()
 
-	yollar, bilesenler := yonetimBelgesi(t)
+	paths, components := adminDoc(t)
 
-	for _, uc := range yonetimUclari() {
-		t.Run(uc.anahtar(), func(t *testing.T) {
+	for _, endpoint := range adminEndpoints() {
+		t.Run(endpoint.key(), func(t *testing.T) {
 			t.Parallel()
 
-			op := yonetimIslemi(t, yollar, uc.metod, uc.yol)
-			assert.NotEmpty(t, op["summary"], "uç tek satırla anlatılmalı")
+			op := adminOperation(t, paths, endpoint.method, endpoint.path)
+			assert.NotEmpty(t, op["summary"], "the endpoint has to be described in one line")
 
-			istekTanimi, govdeVar := op["requestBody"].(map[string]any)
-			require.Equal(t, uc.istek != nil, govdeVar,
-				"gövde alan uçta requestBody olmalı, almayanda olmamalı")
+			requestDefinition, hasBody := op["requestBody"].(map[string]any)
+			require.Equal(t, endpoint.request != nil, hasBody,
+				"an endpoint that takes a body has to have a requestBody, one that does not must not")
 
-			if uc.istek != nil {
-				sema := yonetimGovdeSemasi(t, istekTanimi)
-				assert.ElementsMatch(t, yonetimJSONAnahtarlari(t, uc.istek),
-					yonetimAlanlari(t, bilesenler, sema),
-					"istek gövdesinin alanları GERÇEK DTO ile örtüşmeli")
+			if endpoint.request != nil {
+				schema := adminBodySchema(t, requestDefinition)
+				assert.ElementsMatch(t, adminJSONKeys(t, endpoint.request),
+					adminFields(t, components, schema),
+					"the fields of the request body have to overlap with the REAL DTO")
 			}
 
-			yanitlar, ok := op["responses"].(map[string]any)
+			responses, ok := op["responses"].(map[string]any)
 			require.True(t, ok)
 
-			tanim, ok := yanitlar[uc.durum].(map[string]any)
+			definition, ok := responses[endpoint.status].(map[string]any)
 			require.True(t, ok,
-				"handler'ın GERÇEKTEN yazdığı kod belgelenmeli: %s", uc.durum)
+				"the code the handler REALLY writes has to be documented: %s", endpoint.status)
 
-			kayit := yonetimKaydi(t, bilesenler, yonetimGovdeSemasi(t, tanim), uc.liste)
+			record := adminRecordSchema(t, components, adminBodySchema(t, definition), endpoint.list)
 
-			assert.ElementsMatch(t, yonetimJSONAnahtarlari(t, uc.kayit),
-				yonetimAlanlari(t, bilesenler, kayit),
-				"yanıt kaydının alanları GERÇEK tiple örtüşmeli")
-			assert.ElementsMatch(t, yonetimJSONAnahtarlari(t, yonetimSifirDegeri(uc.kayit)),
-				yonetimZorunlulari(t, bilesenler, kayit),
-				"required, encoding/json'un HER ZAMAN yazdığı anahtarlarla aynı olmalı")
+			assert.ElementsMatch(t, adminJSONKeys(t, endpoint.record),
+				adminFields(t, components, record),
+				"the fields of the response record have to overlap with the REAL type")
+			assert.ElementsMatch(t, adminJSONKeys(t, adminZeroValue(endpoint.record)),
+				adminRequired(t, components, record),
+				"required has to be the same as the keys encoding/json ALWAYS writes")
 		})
 	}
 }
 
-// yonetimKaydi zarfın içindeki KAYIT şemasını döner ve zarf biçimini doğrular.
+// adminRecordSchema returns the RECORD schema inside the envelope and verifies
+// the envelope's shape.
 //
-// Liste ile tekil zarfı ayırmak testin işinin yarısıdır: ikisi de "data"
-// taşır, ama listede o alan bir DİZİDİR. Yanlışını yazmak istemci üretecinde
-// tek kaydı dizi (ya da diziyi tek kayıt) sanan bir metot üretirdi.
-func yonetimKaydi(t *testing.T, bilesenler, zarf map[string]any, liste bool) map[string]any {
+// Telling the list envelope apart from the single one is half of the test's job:
+// both carry "data", but in the list that field is an ARRAY. Writing the wrong
+// one would produce a method in a client generator that takes a single record
+// for an array (or an array for a single record).
+func adminRecordSchema(t *testing.T, components, envelope map[string]any, list bool) map[string]any {
 	t.Helper()
 
-	beklenen := []string{"data"}
-	if liste {
-		beklenen = []string{"data", "count", "offset", "limit"}
+	expected := []string{"data"}
+	if list {
+		expected = []string{"data", "count", "offset", "limit"}
 	}
 
-	assert.ElementsMatch(t, beklenen, yonetimAlanlari(t, bilesenler, zarf),
-		"zarf plan Bölüm 8'deki biçimde olmalı")
+	assert.ElementsMatch(t, expected, adminFields(t, components, envelope),
+		"the envelope has to have the shape from plan Section 8")
 
-	ozellikler, ok := yonetimSemaCoz(t, bilesenler, zarf)["properties"].(map[string]any)
+	properties, ok := adminResolveSchema(t, components, envelope)["properties"].(map[string]any)
 	require.True(t, ok)
 
-	veri, ok := ozellikler["data"].(map[string]any)
+	data, ok := properties["data"].(map[string]any)
 	require.True(t, ok)
 
-	if !liste {
-		return veri
+	if !list {
+		return data
 	}
 
-	assert.Equal(t, "array", veri["type"], "liste zarfının data alanı dizidir")
+	assert.Equal(t, "array", data["type"], "the data field of the list envelope is an array")
 
-	oge, ok := veri["items"].(map[string]any)
-	require.True(t, ok, "liste zarfının öğe şeması olmalı")
+	item, ok := data["items"].(map[string]any)
+	require.True(t, ok, "the list envelope has to have an item schema")
 
-	return oge
+	return item
 }
 
-// TestYonetimUclarininTumuAnlatildi anlatılmamış bir yönetim ucu kalmadığını
-// doğrular.
+// TestEveryAdminEndpointIsDescribed verifies that no admin endpoint has been
+// left undescribed.
 //
-// Yeni bir uç eklenip anlatılmadığında bu test düşer. Arıza aksi hâlde SESSİZ
-// olurdu: uç belgede yolu ve güvenliğiyle görünür, yalnızca ne aldığı ve ne
-// döndüğü bilinmez.
-func TestYonetimUclarininTumuAnlatildi(t *testing.T) {
+// When a new endpoint is added and not described, this test fails. Otherwise the
+// failure would be SILENT: the endpoint appears in the document with its path
+// and its security, only what it takes and what it returns is unknown.
+func TestEveryAdminEndpointIsDescribed(t *testing.T) {
 	t.Parallel()
 
-	yollar, _ := yonetimBelgesi(t)
+	paths, _ := adminDoc(t)
 
-	var bulunan []string
+	var found []string
 
-	for yol, islemler := range yollar {
-		if !strings.HasPrefix(yol, "/admin/v1") {
+	for path, operations := range paths {
+		if !strings.HasPrefix(path, "/admin/v1") {
 			continue
 		}
 
-		islemHaritasi, ok := islemler.(map[string]any)
-		require.True(t, ok, "yol girdisi metot haritası olmalı")
+		operationMap, ok := operations.(map[string]any)
+		require.True(t, ok, "a path entry has to be a method map")
 
-		for metod, ham := range islemHaritasi {
-			op, ok := ham.(map[string]any)
+		for method, raw := range operationMap {
+			op, ok := raw.(map[string]any)
 			require.True(t, ok)
 
-			assert.NotEmpty(t, op["summary"], "%s %s anlatılmalı", metod, yol)
-			bulunan = append(bulunan, strings.ToUpper(metod)+" "+yol)
+			assert.NotEmpty(t, op["summary"], "%s %s has to be described", method, path)
+			found = append(found, strings.ToUpper(method)+" "+path)
 		}
 	}
 
-	beklenen := make([]string, 0, len(yonetimUclari()))
-	for _, uc := range yonetimUclari() {
-		beklenen = append(beklenen, uc.anahtar())
+	expected := make([]string, 0, len(adminEndpoints()))
+	for _, endpoint := range adminEndpoints() {
+		expected = append(expected, endpoint.key())
 	}
 
-	assert.ElementsMatch(t, beklenen, bulunan,
-		"tabloda olmayan bir yönetim ucu sınanmamış demektir")
+	assert.ElementsMatch(t, expected, found,
+		"an admin endpoint that is not in the table means it is not exercised")
 }
 
-// TestYonetimUclariYalnizcaOkunanParametreleriAnlatir sorgu parametrelerinin
-// handler'ın GERÇEKTEN okuduklarıyla aynı olduğunu doğrular.
+// TestAdminEndpointsDescribeOnlyParametersTheyRead verifies that the query
+// parameters are the same as the ones the handler REALLY reads.
 //
-// Okunmayan bir parametreyi şemaya koymak, istemciye ÇALIŞMAYAN bir özellik
-// vaat etmektir: üreteç metoda argüman koyar, çağıran doldurur, sunucu sessizce
-// yok sayar. Ters yön de aynı derecede pahalıdır — okunan ama anlatılmayan bir
-// parametre, istemcinin hiç ulaşamayacağı bir süzgeçtir.
-func TestYonetimUclariYalnizcaOkunanParametreleriAnlatir(t *testing.T) {
+// Putting a parameter that is not read into the schema is promising the client a
+// feature that DOES NOT WORK: the generator puts an argument on the method, the
+// caller fills it in, the server silently ignores it. The reverse direction is
+// just as expensive — a parameter that is read but not described is a filter the
+// client can never reach.
+func TestAdminEndpointsDescribeOnlyParametersTheyRead(t *testing.T) {
 	t.Parallel()
 
-	yollar, _ := yonetimBelgesi(t)
+	paths, _ := adminDoc(t)
 
-	// Beklenen kümeler admin.go'daki okuma çağrılarından gelir; listede olmayan
-	// her yönetim ucu sorgu dizesine hiç bakmaz.
-	beklenen := map[string][]string{
+	// The expected sets come from the reading calls in admin.go; every admin
+	// endpoint that is not in the list never looks at the query string.
+	expected := map[string][]string{
 		"GET /admin/v1/products": {
 			"collection_id", "handle", "q", "status", "expand", "limit", "offset",
 		},
@@ -570,35 +585,36 @@ func TestYonetimUclariYalnizcaOkunanParametreleriAnlatir(t *testing.T) {
 		"GET /admin/v1/product-tags":           {"limit", "offset"},
 	}
 
-	for _, uc := range yonetimUclari() {
-		op := yonetimIslemi(t, yollar, uc.metod, uc.yol)
+	for _, endpoint := range adminEndpoints() {
+		op := adminOperation(t, paths, endpoint.method, endpoint.path)
 
-		assert.ElementsMatch(t, beklenen[uc.anahtar()], yonetimParametreAdlari(t, op, "query"),
-			"%s sorgu parametreleri handler'ın okuduklarıyla aynı olmalı", uc.anahtar())
+		assert.ElementsMatch(t, expected[endpoint.key()], adminParameterNames(t, op, "query"),
+			"the query parameters of %s have to be the same as the ones the handler reads", endpoint.key())
 	}
 }
 
-// yonetimParametreAdlari işlemin verilen yerdeki parametre adlarını döner.
-func yonetimParametreAdlari(t *testing.T, op map[string]any, yer string) []string {
+// adminParameterNames returns the names of the operation's parameters in the
+// given location.
+func adminParameterNames(t *testing.T, op map[string]any, location string) []string {
 	t.Helper()
 
 	params, _ := op["parameters"].([]any)
 
-	adlar := make([]string, 0, len(params))
+	names := make([]string, 0, len(params))
 
-	for _, ham := range params {
-		p, ok := ham.(map[string]any)
+	for _, raw := range params {
+		p, ok := raw.(map[string]any)
 		require.True(t, ok)
 
-		if p["in"] != yer {
+		if p["in"] != location {
 			continue
 		}
 
-		ad, ok := p["name"].(string)
+		name, ok := p["name"].(string)
 		require.True(t, ok)
 
-		adlar = append(adlar, ad)
+		names = append(names, name)
 	}
 
-	return adlar
+	return names
 }

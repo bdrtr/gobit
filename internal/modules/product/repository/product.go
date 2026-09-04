@@ -7,35 +7,37 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/product/repository/productdb"
 )
 
-// ProductFilter ürün listelemesinin ölçütleridir.
+// ProductFilter holds the criteria of the product listing.
 //
-// nil alan "bu ölçütü uygulama" demektir; sıfır değer ile "verilmedi" ayrımı
-// işaretçiyle korunur (boş dizge geçerli bir handle değildir ama arama
-// metninde boş dizge her şeyi eşleştirirdi).
+// A nil field means "do not apply this criterion"; the distinction between the
+// zero value and "not given" is kept with a pointer (an empty string is not a
+// valid handle, but in the search text an empty string would match everything).
 type ProductFilter struct {
 	Status       *string
 	CollectionID *string
 	Handle       *string
 	Search       *string
-	// SalesChannelIDs isteğin bağlı olduğu satış kanallarıdır.
+	// SalesChannelIDs are the sales channels the request is bound to.
 	//
-	// Burada nil ile BOŞ AMA nil OLMAYAN dilim FARKLI şeyler söyler ve ayrım
-	// işaretçiyle değil, dilimin kendisiyle korunur (aynı ayrım ProductPatch'te
-	// de var): nil "istek kanal kimliği taşımıyor, süzme" demektir; boş dilim
-	// "kimlik var ama hiç kanalı yok" demektir ve süzgeç uygulanır. İkisi bir
-	// tutulsaydı kanalsız bir kimlik TÜM kanalların katalogunu okurdu.
+	// Here nil and an EMPTY BUT NON-nil slice say DIFFERENT things, and the
+	// distinction is kept not with a pointer but with the slice itself (the
+	// same distinction exists in ProductPatch too): nil means "the request
+	// carries no channel id, do not filter"; an empty slice means "there is an
+	// identity but it has no channel at all" and the filter is applied. Had
+	// the two been treated as one, an identity with no channel would read the
+	// catalog of ALL channels.
 	//
-	// Kuralın kendisi ve neden veritabanında uygulandığı için bkz.
+	// For the rule itself and for why it is applied in the database see
 	// saleschannel.go.
 	SalesChannelIDs []string
 	Limit           int
 	Offset          int
 }
 
-// ProductPatch bir ürünün kısmi güncellemesidir.
+// ProductPatch is a partial update of a product.
 //
-// nil alan DEĞİŞTİRİLMEZ. Bu, PATCH sözleşmesinin doğrudan karşılığıdır:
-// gövdede bulunmayan alan korunur.
+// A nil field IS NOT CHANGED. This is the direct counterpart of the PATCH
+// contract: a field that is not present in the body is preserved.
 type ProductPatch struct {
 	Handle        *string
 	Title         *string
@@ -54,10 +56,10 @@ type ProductPatch struct {
 	Metadata      map[string]any
 }
 
-// CreateProduct yeni bir ürün satırı yazar ve yazılan hâlini döner.
+// CreateProduct writes a new product row and returns it as it was written.
 //
-// Zaman damgalarını veritabanı üretir; dönen kayıt bu yüzden çağıranın
-// gönderdiği değil, SAKLANAN hâlidir.
+// The timestamps are produced by the database; the returned record is
+// therefore not what the caller sent but what is STORED.
 func (r *Repo) CreateProduct(ctx context.Context, p models.Product) (models.Product, error) {
 	meta, err := fromMetadata(p.Metadata)
 	if err != nil {
@@ -84,63 +86,64 @@ func (r *Repo) CreateProduct(ctx context.Context, p models.Product) (models.Prod
 		Metadata:      meta,
 	})
 	if err != nil {
-		return models.Product{}, wrapDB(err, "ürün oluşturulamadı (%s)", p.Handle)
+		return models.Product{}, wrapDB(err, "could not create product (%s)", p.Handle)
 	}
 	return toProduct(row)
 }
 
-// GetProduct kimliğe göre ürünü döner; silinmiş kayıt bulunamaz sayılır.
+// GetProduct returns the product by id; a deleted record counts as not found.
 func (r *Repo) GetProduct(ctx context.Context, id string) (models.Product, error) {
 	row, err := r.q.GetProduct(ctx, id)
 	if err != nil {
-		return models.Product{}, wrapDB(err, "ürün bulunamadı: %s", id)
+		return models.Product{}, wrapDB(err, "product not found: %s", id)
 	}
 	return toProduct(row)
 }
 
-// GetProductForUpdate ürünü SATIR KİLİDİYLE okur; silinmiş kayıt bulunamaz
-// sayılır.
+// GetProductForUpdate reads the product WITH A ROW LOCK; a deleted record
+// counts as not found.
 //
-// YALNIZCA [Store.InTx] içinde anlamlıdır: kilit işlem sonunda bırakılır ve
-// işlemsiz bir çağrıda satır daha okuma biter bitmez serbest kalır.
+// It is meaningful ONLY inside [Store.InTx]: the lock is released at the end of
+// the transaction, and in a call without a transaction the row is freed as soon
+// as the read finishes.
 //
-// Varlık kontrolünü kilitle yapmanın sebebi soft delete'tir: product_variant
-// üzerindeki foreign key silinmiş bir ürünün satırını hâlâ görür, dolayısıyla
-// kontrol ile INSERT arasına giren bir silme sahibi silinmiş bir varyant
-// bırakırdı. Kilit iki işlemi sıraya dizer.
+// The reason the existence check is done with a lock is soft delete: the
+// foreign key on product_variant still sees the row of a deleted product, so a
+// delete slipping in between the check and the INSERT would leave a variant
+// whose owner is deleted. The lock puts the two operations in order.
 func (r *Repo) GetProductForUpdate(ctx context.Context, id string) (models.Product, error) {
 	row, err := r.q.GetProductForUpdate(ctx, id)
 	if err != nil {
-		return models.Product{}, wrapDB(err, "ürün bulunamadı: %s", id)
+		return models.Product{}, wrapDB(err, "product not found: %s", id)
 	}
 	return toProduct(row)
 }
 
-// GetProductByHandle handle'a göre ürünü döner.
+// GetProductByHandle returns the product by handle.
 func (r *Repo) GetProductByHandle(ctx context.Context, handle string) (models.Product, error) {
 	row, err := r.q.GetProductByHandle(ctx, handle)
 	if err != nil {
-		return models.Product{}, wrapDB(err, "ürün bulunamadı (handle: %s)", handle)
+		return models.Product{}, wrapDB(err, "product not found (handle: %s)", handle)
 	}
 	return toProduct(row)
 }
 
-// ListProductsByIDs verilen kimliklerin ürünlerini TEK sorguda döner.
+// ListProductsByIDs returns the products of the given ids in a SINGLE query.
 //
-// Query sağlayıcısının FetchByIDs'i bunu kullanır; bulunamayan kimlik için
-// kayıt dönmez ve bu bir hata değildir (ADR 0004).
+// The Query provider's FetchByIDs uses this; for an id that is not found no
+// record is returned and that is not an error (ADR 0004).
 func (r *Repo) ListProductsByIDs(ctx context.Context, ids []string) ([]models.Product, error) {
 	if len(ids) == 0 {
 		return []models.Product{}, nil
 	}
 	rows, err := r.q.ListProductsByIDs(ctx, ids)
 	if err != nil {
-		return nil, wrapDB(err, "ürünler kimliğe göre okunamadı (%d kimlik)", len(ids))
+		return nil, wrapDB(err, "could not read products by id (%d ids)", len(ids))
 	}
 	return toProducts(rows)
 }
 
-// UpdateProduct ürünü kısmi olarak günceller ve güncel hâlini döner.
+// UpdateProduct updates the product partially and returns its current state.
 func (r *Repo) UpdateProduct(ctx context.Context, id string, patch ProductPatch) (models.Product, error) {
 	meta, err := patchMetadata(patch.Metadata)
 	if err != nil {
@@ -166,56 +169,58 @@ func (r *Repo) UpdateProduct(ctx context.Context, id string, patch ProductPatch)
 		Metadata:      meta,
 	})
 	if err != nil {
-		return models.Product{}, wrapDB(err, "ürün güncellenemedi: %s", id)
+		return models.Product{}, wrapDB(err, "could not update product: %s", id)
 	}
 	return toProduct(row)
 }
 
-// SoftDeleteProduct ürünü siler (deleted_at damgalar).
+// SoftDeleteProduct deletes the product (stamps deleted_at).
 //
-// Zaten silinmiş ya da hiç var olmamış bir kayıt errors.NotFound döner: silme
-// çağrısının sessizce başarılı görünmesi, istemcinin yanlış kimlikle çalıştığını
-// gizlerdi.
+// A record that is already deleted or that never existed returns
+// errors.NotFound: having the delete call silently look successful would hide
+// that the client is working with the wrong id.
 func (r *Repo) SoftDeleteProduct(ctx context.Context, id string) error {
 	n, err := r.q.SoftDeleteProduct(ctx, id)
 	if err != nil {
-		return wrapDB(err, "ürün silinemedi: %s", id)
+		return wrapDB(err, "could not delete product: %s", id)
 	}
 	if n == 0 {
-		return notFound("ürün", id)
+		return notFound("product", id)
 	}
 	return nil
 }
 
-// SoftDeleteProductChildren ürünün varyantlarını, seçeneklerini ve
-// görsellerini siler.
+// SoftDeleteProductChildren deletes the product's variants, options and
+// images.
 //
-// Silme neden veritabanı CASCADE'ine bırakılmıyor: CASCADE satırı GERÇEKTEN
-// siler, oysa buradaki silme SOFT'tur ve kaydın izini bırakır. Ayrıca sıra
-// önemlidir; bu yüzden çağıran onu tek işlemde (InTx) sarar.
+// Why the delete is not left to the database CASCADE: CASCADE REALLY deletes
+// the row, whereas the delete here is SOFT and leaves a trace of the record.
+// The order matters as well; that is why the caller wraps it in a single
+// transaction (InTx).
 func (r *Repo) SoftDeleteProductChildren(ctx context.Context, productID string) error {
 	if _, err := r.q.SoftDeleteVariantsByProduct(ctx, productID); err != nil {
-		return wrapDB(err, "ürünün varyantları silinemedi: %s", productID)
+		return wrapDB(err, "could not delete the product's variants: %s", productID)
 	}
 	if _, err := r.q.SoftDeleteOptionsByProduct(ctx, productID); err != nil {
-		return wrapDB(err, "ürünün seçenekleri silinemedi: %s", productID)
+		return wrapDB(err, "could not delete the product's options: %s", productID)
 	}
 	if err := r.q.DeleteImagesByProduct(ctx, productID); err != nil {
-		return wrapDB(err, "ürünün görselleri silinemedi: %s", productID)
+		return wrapDB(err, "could not delete the product's images: %s", productID)
 	}
 	return nil
 }
 
-// ListVariantIDsByProduct ürünün silinmemiş varyant kimliklerini döner.
+// ListVariantIDsByProduct returns the product's variant ids that are not
+// deleted.
 func (r *Repo) ListVariantIDsByProduct(ctx context.Context, productID string) ([]string, error) {
 	ids, err := r.q.ListVariantIDsByProduct(ctx, productID)
 	if err != nil {
-		return nil, wrapDB(err, "ürünün varyant kimlikleri okunamadı: %s", productID)
+		return nil, wrapDB(err, "could not read the product's variant ids: %s", productID)
 	}
 	return ids, nil
 }
 
-// CreateImage ürüne görsel ekler.
+// CreateImage adds an image to the product.
 func (r *Repo) CreateImage(ctx context.Context, img models.Image) (models.Image, error) {
 	meta, err := fromMetadata(img.Metadata)
 	if err != nil {
@@ -230,19 +235,20 @@ func (r *Repo) CreateImage(ctx context.Context, img models.Image) (models.Image,
 		Metadata:  meta,
 	})
 	if err != nil {
-		return models.Image{}, wrapDB(err, "ürün görseli eklenemedi: %s", img.ProductID)
+		return models.Image{}, wrapDB(err, "could not add product image: %s", img.ProductID)
 	}
 	return toImage(row)
 }
 
-// ListImagesByProductIDs verilen ürünlerin görsellerini TEK sorguda döner.
+// ListImagesByProductIDs returns the images of the given products in a SINGLE
+// query.
 func (r *Repo) ListImagesByProductIDs(ctx context.Context, productIDs []string) (map[string][]models.Image, error) {
 	if len(productIDs) == 0 {
 		return map[string][]models.Image{}, nil
 	}
 	rows, err := r.q.ListImagesByProductIDs(ctx, productIDs)
 	if err != nil {
-		return nil, wrapDB(err, "ürün görselleri okunamadı (%d ürün)", len(productIDs))
+		return nil, wrapDB(err, "could not read product images (%d products)", len(productIDs))
 	}
 
 	out := make(map[string][]models.Image, len(productIDs))
@@ -256,10 +262,10 @@ func (r *Repo) ListImagesByProductIDs(ctx context.Context, productIDs []string) 
 	return out, nil
 }
 
-// DeleteImagesByProduct ürünün görsellerini siler.
+// DeleteImagesByProduct deletes the product's images.
 func (r *Repo) DeleteImagesByProduct(ctx context.Context, productID string) error {
 	if err := r.q.DeleteImagesByProduct(ctx, productID); err != nil {
-		return wrapDB(err, "ürünün görselleri silinemedi: %s", productID)
+		return wrapDB(err, "could not delete the product's images: %s", productID)
 	}
 	return nil
 }

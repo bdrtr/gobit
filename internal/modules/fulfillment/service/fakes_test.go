@@ -15,27 +15,30 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/fulfillment/service"
 )
 
-// txMarkerKey sahte deponun "işlem içindeyiz" işaretidir.
+// txMarkerKey is the fake store's "we are inside a transaction" marker.
 type txMarkerKey struct{}
 
-// testRegionID seçim testlerinin hedef kargo bölgesidir. Bu modül bölge
-// kimliğini OPAK tutar (foreign key yoktur), bu yüzden değer gerçek bir region
-// kaydına karşılık gelmek zorunda değildir.
+// testRegionID is the destination shipping region of the selection tests. This
+// module keeps the region identifier OPAQUE (there is no foreign key), so the
+// value does not have to correspond to a real region record.
 const testRegionID = "reg_tr"
 
-// fakeStore service.Store'un bellek içi karşılığıdır.
+// fakeStore is the in-memory counterpart of service.Store.
 //
-// Dört davranışı gerçek depodan BİLİNÇLİ olarak taklit eder, çünkü servisin
-// doğruluğu bunlara dayanır:
+// It imitates four behaviors of the real store DELIBERATELY, because the
+// service's correctness rests on them:
 //
-//  1. Kilit alan metot işlem DIŞINDA çağrılırsa hata döner. Servis bir akışta
-//     WithTx'i unutursa birim testi bunu yakalar; gerçek veritabanında bu hata,
-//     kilitsiz okuma yüzünden ancak yarış altında görünürdü.
-//  2. İşlem hatayla biterse yazılanlar GERİ ALINIR. "Hata döndü ve hiçbir şey
-//     yazılmadı" iddiası ancak böyle sınanabilir.
-//  3. Idempotency anahtarı YAŞAYAN gönderiler arasında tektir; benzersiz
-//     indeksin karşılığıdır ve CreateFulfillment'ın idempotentliği ona dayanır.
-//  4. Aynı sipariş satırı bir gönderide iki kez yer alamaz.
+//  1. A method that takes a lock returns an error if it is called OUTSIDE a
+//     transaction. If the service forgets WithTx on some flow, the unit test
+//     catches it; in a real database that fault would, because of the unlocked
+//     read, only show up under a race.
+//  2. If the transaction ends with an error, what was written is ROLLED BACK.
+//     The claim "it returned an error and nothing was written" can only be
+//     exercised this way.
+//  3. The idempotency key is unique among the LIVING fulfillments; it is the
+//     counterpart of the unique index and CreateFulfillment's idempotency rests
+//     on it.
+//  4. The same order line cannot appear twice in one fulfillment.
 type fakeStore struct {
 	mu       sync.Mutex
 	profiles map[string]models.ShippingProfile
@@ -43,22 +46,24 @@ type fakeStore struct {
 	rules    map[string]models.ShippingOptionRule
 	fuls     map[string]models.Fulfillment
 	items    map[string]models.FulfillmentItem
-	// locations depo kargo politikalarıdır; anahtar lokasyon kimliğidir.
+	// locations are the warehouse shipping policies; the key is the location
+	// identifier.
 	locations map[string]models.ShippingLocation
 
-	// kilitler alınan kilitleri sırasıyla kaydeder; kilit alma iddiası
-	// doğrudan okunabilir olmalıdır.
-	kilitler []string
-	// fulWrites gönderi satırına kaç kez yazıldığını sayar; idempotent
-	// dalların satıra İKİNCİ KEZ dokunmadığı bununla kanıtlanır.
+	// locks records the locks taken in order; the claim that a lock is taken has
+	// to be directly readable.
+	locks []string
+	// fulWrites counts how many times the fulfillment row was written to; that
+	// the idempotent branches DO NOT TOUCH the row A SECOND TIME is proven with
+	// it.
 	fulWrites int
 
-	// failCreateItem ayarlanırsa CreateFulfillmentItem bu hatayı döner;
-	// işlem geri alma yolunu sınamak için kullanılır.
+	// failCreateItem, when set, makes CreateFulfillmentItem return this error;
+	// it is used to exercise the transaction rollback path.
 	failCreateItem error
 }
 
-// newFakeStore boş bir sahte depo üretir.
+// newFakeStore produces an empty fake store.
 func newFakeStore() *fakeStore {
 	return &fakeStore{
 		profiles:  map[string]models.ShippingProfile{},
@@ -70,11 +75,12 @@ func newFakeStore() *fakeStore {
 	}
 }
 
-// Sahte deponun servisin beklediği yüzeyi karşıladığı derleme zamanında
-// doğrulanır.
+// That the fake store satisfies the surface the service expects is verified at
+// compile time.
 var _ service.Store = (*fakeStore)(nil)
 
-// WithTx fn'i "işlem" içinde çalıştırır; hata dönerse durumu geri alır.
+// WithTx runs fn inside a "transaction"; if it returns an error the state is
+// rolled back.
 func (f *fakeStore) WithTx(ctx context.Context, fn func(ctx context.Context) error) error {
 	if ctx.Value(txMarkerKey{}) != nil {
 		return fn(ctx)
@@ -109,40 +115,42 @@ func (f *fakeStore) WithTx(ctx context.Context, fn func(ctx context.Context) err
 	return nil
 }
 
-// requireTx kilit alan metotların işlem içinde çağrıldığını doğrular.
+// requireTx verifies that the lock-taking methods were called inside a
+// transaction.
 func requireTx(ctx context.Context, op string) error {
 	if ctx.Value(txMarkerKey{}) == nil {
-		return errors.Internal("fake_tx_required", "%s işlem dışında çağrıldı", op)
+		return errors.Internal("fake_tx_required", "%s was called outside a transaction", op)
 	}
 	return nil
 }
 
-// kilitSirasi kaydedilen kilit sırasını döner.
-func (f *fakeStore) kilitSirasi() []string {
+// lockOrder returns the recorded lock order.
+func (f *fakeStore) lockOrder() []string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return slices.Clone(f.kilitler)
+	return slices.Clone(f.locks)
 }
 
-// kilitleriSifirla kilit defterini boşaltır.
+// resetLocks empties the lock ledger.
 //
-// Testin KURULUM adımları da kilit alır (örn. seçenek oluşturma profili
-// paylaşımlı kilitler); sınanan akışın kilitlerini görebilmek için defter
-// kurulumdan sonra sıfırlanır.
-func (f *fakeStore) kilitleriSifirla() {
+// The SETUP steps of a test take locks as well (e.g. creating an option locks
+// the profile in shared mode); so that the locks of the flow under test can be
+// seen, the ledger is reset after the setup.
+func (f *fakeStore) resetLocks() {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.kilitler = nil
+	f.locks = nil
 }
 
-// gonderiYazmaSayisi gönderi satırına yapılan yazma sayısını döner.
-func (f *fakeStore) gonderiYazmaSayisi() int {
+// fulfillmentWriteCount returns the number of writes made to the fulfillment
+// row.
+func (f *fakeStore) fulfillmentWriteCount() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.fulWrites
 }
 
-// --- kargo profilleri --------------------------------------------------------
+// --- shipping profiles -------------------------------------------------------
 
 func (f *fakeStore) CreateShippingProfile(
 	_ context.Context,
@@ -154,11 +162,11 @@ func (f *fakeStore) CreateShippingProfile(
 	for _, existing := range f.profiles {
 		if existing.DeletedAt == nil && existing.Name == profile.Name {
 			return models.ShippingProfile{}, errors.Conflict("fake_profile_name_exists",
-				"bu adda bir kargo profili zaten var")
+				"a shipping profile with this name already exists")
 		}
 	}
-	profile.CreatedAt = testAn
-	profile.UpdatedAt = testAn
+	profile.CreatedAt = testNow
+	profile.UpdatedAt = testNow
 	f.profiles[profile.ID] = profile
 	return profile, nil
 }
@@ -170,16 +178,16 @@ func (f *fakeStore) GetShippingProfile(_ context.Context, id string) (models.Shi
 	profile, ok := f.profiles[id]
 	if !ok || profile.DeletedAt != nil {
 		return models.ShippingProfile{}, errors.NotFound("fake_profile_not_found",
-			"kargo profili bulunamadı: %s", id)
+			"shipping profile not found: %s", id)
 	}
 	return profile, nil
 }
 
-// LockShippingProfile profili "kilitleyerek" okur.
+// LockShippingProfile reads the profile "with a lock".
 //
-// Gerçek depoda bu FOR UPDATE'tir ve işlem dışında çağrılması hiçbir şeyi
-// korumaz; sahte de işlem dışı çağrıyı REDDEDER ki servis bir akışta WithTx'i
-// unuttuğunda birim testi bunu yakalasın.
+// In the real store this is FOR UPDATE, and calling it outside a transaction
+// protects nothing; the fake REJECTS the out-of-transaction call as well, so
+// that the unit test catches it when the service forgets WithTx on some flow.
 func (f *fakeStore) LockShippingProfile(
 	ctx context.Context,
 	id string,
@@ -189,14 +197,14 @@ func (f *fakeStore) LockShippingProfile(
 	}
 
 	f.mu.Lock()
-	f.kilitler = append(f.kilitler, "profil")
+	f.locks = append(f.locks, "profile")
 	f.mu.Unlock()
 
 	return f.GetShippingProfile(ctx, id)
 }
 
-// LockShippingProfileShared profili paylaşımlı kilitle okur; gerçek depodaki
-// karşılığı FOR SHARE'dir.
+// LockShippingProfileShared reads the profile with a shared lock; its
+// counterpart in the real store is FOR SHARE.
 func (f *fakeStore) LockShippingProfileShared(
 	ctx context.Context,
 	id string,
@@ -206,7 +214,7 @@ func (f *fakeStore) LockShippingProfileShared(
 	}
 
 	f.mu.Lock()
-	f.kilitler = append(f.kilitler, "profil-paylasimli")
+	f.locks = append(f.locks, "profile-shared")
 	f.mu.Unlock()
 
 	return f.GetShippingProfile(ctx, id)
@@ -230,7 +238,7 @@ func (f *fakeStore) ListShippingProfiles(
 		}
 		matched = append(matched, profile)
 	}
-	return sayfala(matched, filter.Limit, filter.Offset), int64(len(matched)), nil
+	return paginate(matched, filter.Limit, filter.Offset), int64(len(matched)), nil
 }
 
 func (f *fakeStore) UpdateShippingProfile(
@@ -243,10 +251,10 @@ func (f *fakeStore) UpdateShippingProfile(
 	current, ok := f.profiles[profile.ID]
 	if !ok || current.DeletedAt != nil {
 		return models.ShippingProfile{}, errors.NotFound("fake_profile_not_found",
-			"kargo profili bulunamadı: %s", profile.ID)
+			"shipping profile not found: %s", profile.ID)
 	}
 	profile.CreatedAt = current.CreatedAt
-	profile.UpdatedAt = testAn
+	profile.UpdatedAt = testNow
 	f.profiles[profile.ID] = profile
 	return profile, nil
 }
@@ -257,10 +265,10 @@ func (f *fakeStore) SoftDeleteShippingProfile(_ context.Context, id string) erro
 
 	profile, ok := f.profiles[id]
 	if !ok || profile.DeletedAt != nil {
-		return errors.NotFound("fake_profile_not_found", "kargo profili bulunamadı: %s", id)
+		return errors.NotFound("fake_profile_not_found", "shipping profile not found: %s", id)
 	}
-	silinme := testAn
-	profile.DeletedAt = &silinme
+	deletedAt := testNow
+	profile.DeletedAt = &deletedAt
 	f.profiles[id] = profile
 	return nil
 }
@@ -270,8 +278,8 @@ func (f *fakeStore) CountAliveOptionsByProfile(_ context.Context, profileID stri
 	defer f.mu.Unlock()
 
 	var count int64
-	// Yalnızca ANAHTARLAR gezilir: değerle gezmek her yinelemede seçenek
-	// yapısının tamamını kopyalardı.
+	// Only the KEYS are walked: walking by value would copy the whole option
+	// struct on every iteration.
 	for id := range f.options {
 		if f.options[id].DeletedAt == nil && f.options[id].ShippingProfileID == profileID {
 			count++
@@ -280,7 +288,7 @@ func (f *fakeStore) CountAliveOptionsByProfile(_ context.Context, profileID stri
 	return count, nil
 }
 
-// --- kargo seçenekleri -------------------------------------------------------
+// --- shipping options --------------------------------------------------------
 
 func (f *fakeStore) CreateShippingOption(
 	_ context.Context,
@@ -289,8 +297,8 @@ func (f *fakeStore) CreateShippingOption(
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
-	option.CreatedAt = testAn
-	option.UpdatedAt = testAn
+	option.CreatedAt = testNow
+	option.UpdatedAt = testNow
 	f.options[option.ID] = option
 	return option, nil
 }
@@ -302,10 +310,10 @@ func (f *fakeStore) GetShippingOption(_ context.Context, id string) (models.Ship
 	option, ok := f.options[id]
 	if !ok || option.DeletedAt != nil {
 		return models.ShippingOption{}, errors.NotFound("fake_option_not_found",
-			"kargo seçeneği bulunamadı: %s", id)
+			"shipping option not found: %s", id)
 	}
-	// Gerçek depo kuralları DOLDURMAZ; sahte de doldurmamalıdır ki servisin
-	// kuralları ayrıca okuduğu görünür kalsın.
+	// The real store DOES NOT FILL IN the rules; the fake must not fill them in
+	// either, so that the service reading the rules separately stays visible.
 	option.Rules = nil
 	return option, nil
 }
@@ -338,7 +346,7 @@ func (f *fakeStore) ListShippingOptions(
 		option.Rules = nil
 		matched = append(matched, option)
 	}
-	return sayfala(matched, filter.Limit, filter.Offset), int64(len(matched)), nil
+	return paginate(matched, filter.Limit, filter.Offset), int64(len(matched)), nil
 }
 
 func (f *fakeStore) ShippingOptionsByIDs(_ context.Context, ids []string) ([]models.ShippingOption, error) {
@@ -370,9 +378,9 @@ func (f *fakeStore) ListEligibleShippingOptions(
 		if option.DeletedAt != nil {
 			continue
 		}
-		// Gerçek sorgu profile JOIN atar ve profili SİLİNMİŞ seçeneği eler;
-		// sahte de elemelidir, aksi hâlde birim testi gerçek davranıştan
-		// ayrışırdı.
+		// The real query JOINs the profile and eliminates an option whose profile
+		// is DELETED; the fake has to eliminate it too, otherwise the unit test
+		// would diverge from the real behavior.
 		if profile, ok := f.profiles[option.ShippingProfileID]; !ok || profile.DeletedAt != nil {
 			continue
 		}
@@ -414,14 +422,15 @@ func (f *fakeStore) UpdateShippingOption(
 	current, ok := f.options[option.ID]
 	if !ok || current.DeletedAt != nil {
 		return models.ShippingOption{}, errors.NotFound("fake_option_not_found",
-			"kargo seçeneği bulunamadı: %s", option.ID)
+			"shipping option not found: %s", option.ID)
 	}
-	// Gerçek sorgu sağlayıcıyı ve profili GÜNCELLEMEZ; sahte de aynı davranır
-	// ki servisin bu alanları değiştirmediği iddiası burada da tutsun.
+	// The real query DOES NOT UPDATE the provider and the profile; the fake
+	// behaves the same way so that the claim that the service does not change
+	// these fields holds here as well.
 	option.ProviderID = current.ProviderID
 	option.ShippingProfileID = current.ShippingProfileID
 	option.CreatedAt = current.CreatedAt
-	option.UpdatedAt = testAn
+	option.UpdatedAt = testNow
 	option.Rules = nil
 	f.options[option.ID] = option
 	return option, nil
@@ -433,15 +442,15 @@ func (f *fakeStore) SoftDeleteShippingOption(_ context.Context, id string) error
 
 	option, ok := f.options[id]
 	if !ok || option.DeletedAt != nil {
-		return errors.NotFound("fake_option_not_found", "kargo seçeneği bulunamadı: %s", id)
+		return errors.NotFound("fake_option_not_found", "shipping option not found: %s", id)
 	}
-	silinme := testAn
-	option.DeletedAt = &silinme
+	deletedAt := testNow
+	option.DeletedAt = &deletedAt
 	f.options[id] = option
 	return nil
 }
 
-// --- kurallar ----------------------------------------------------------------
+// --- rules -------------------------------------------------------------------
 
 func (f *fakeStore) CreateShippingOptionRule(
 	_ context.Context,
@@ -450,8 +459,8 @@ func (f *fakeStore) CreateShippingOptionRule(
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
-	rule.CreatedAt = testAn
-	rule.UpdatedAt = testAn
+	rule.CreatedAt = testNow
+	rule.UpdatedAt = testNow
 	f.rules[rule.ID] = rule
 	return rule, nil
 }
@@ -466,7 +475,7 @@ func (f *fakeStore) GetShippingOptionRule(
 	rule, ok := f.rules[id]
 	if !ok || rule.DeletedAt != nil {
 		return models.ShippingOptionRule{}, errors.NotFound("fake_rule_not_found",
-			"kural bulunamadı: %s", id)
+			"rule not found: %s", id)
 	}
 	return rule, nil
 }
@@ -494,15 +503,15 @@ func (f *fakeStore) SoftDeleteShippingOptionRule(_ context.Context, id string) e
 
 	rule, ok := f.rules[id]
 	if !ok || rule.DeletedAt != nil {
-		return errors.NotFound("fake_rule_not_found", "kural bulunamadı: %s", id)
+		return errors.NotFound("fake_rule_not_found", "rule not found: %s", id)
 	}
-	silinme := testAn
-	rule.DeletedAt = &silinme
+	deletedAt := testNow
+	rule.DeletedAt = &deletedAt
 	f.rules[id] = rule
 	return nil
 }
 
-// --- gönderiler --------------------------------------------------------------
+// --- fulfillments ------------------------------------------------------------
 
 func (f *fakeStore) InsertFulfillmentIfAbsent(
 	_ context.Context,
@@ -516,8 +525,8 @@ func (f *fakeStore) InsertFulfillmentIfAbsent(
 			return models.Fulfillment{}, false, nil
 		}
 	}
-	ful.CreatedAt = testAn
-	ful.UpdatedAt = testAn
+	ful.CreatedAt = testNow
+	ful.UpdatedAt = testNow
 	f.fuls[ful.ID] = ful
 	f.fulWrites++
 	return ful, true, nil
@@ -530,7 +539,7 @@ func (f *fakeStore) GetFulfillment(_ context.Context, id string) (models.Fulfill
 	ful, ok := f.fuls[id]
 	if !ok || ful.DeletedAt != nil {
 		return models.Fulfillment{}, errors.NotFound("fake_fulfillment_not_found",
-			"gönderi bulunamadı: %s", id)
+			"fulfillment not found: %s", id)
 	}
 	ful.Items = nil
 	return ful, nil
@@ -551,7 +560,7 @@ func (f *fakeStore) FulfillmentByIdempotencyKey(
 		}
 	}
 	return models.Fulfillment{}, errors.NotFound("fake_fulfillment_not_found",
-		"bu anahtarla gönderi yok: %s", key)
+		"there is no fulfillment with this key: %s", key)
 }
 
 func (f *fakeStore) LockFulfillment(ctx context.Context, id string) (models.Fulfillment, error) {
@@ -560,7 +569,7 @@ func (f *fakeStore) LockFulfillment(ctx context.Context, id string) (models.Fulf
 	}
 
 	f.mu.Lock()
-	f.kilitler = append(f.kilitler, "fulfillment")
+	f.locks = append(f.locks, "fulfillment")
 	f.mu.Unlock()
 
 	return f.GetFulfillment(ctx, id)
@@ -588,7 +597,7 @@ func (f *fakeStore) ListFulfillments(
 		ful.Items = nil
 		matched = append(matched, ful)
 	}
-	return sayfala(matched, filter.Limit, filter.Offset), int64(len(matched)), nil
+	return paginate(matched, filter.Limit, filter.Offset), int64(len(matched)), nil
 }
 
 func (f *fakeStore) UpdateFulfillmentProviderResult(
@@ -605,7 +614,7 @@ func (f *fakeStore) UpdateFulfillmentProviderResult(
 	ful, ok := f.fuls[id]
 	if !ok || ful.DeletedAt != nil {
 		return models.Fulfillment{}, errors.NotFound("fake_fulfillment_not_found",
-			"gönderi bulunamadı: %s", id)
+			"fulfillment not found: %s", id)
 	}
 	ful.ExternalID = externalID
 	ful.Status = status
@@ -613,7 +622,7 @@ func (f *fakeStore) UpdateFulfillmentProviderResult(
 	ful.TrackingURL = trackingURL
 	ful.Data = json.RawMessage(data)
 	ful.ShippedAt, ful.DeliveredAt, ful.CanceledAt = shippedAt, deliveredAt, canceledAt
-	ful.UpdatedAt = testAn
+	ful.UpdatedAt = testNow
 	f.fuls[id] = ful
 	f.fulWrites++
 	return ful, nil
@@ -632,21 +641,22 @@ func (f *fakeStore) UpdateFulfillmentStatus(
 	ful, ok := f.fuls[id]
 	if !ok || ful.DeletedAt != nil {
 		return models.Fulfillment{}, errors.NotFound("fake_fulfillment_not_found",
-			"gönderi bulunamadı: %s", id)
+			"fulfillment not found: %s", id)
 	}
-	// Şemadaki fulfillments_*_stamp kısıtlarının karşılığı: durumu damgasız
-	// yazmak GERÇEK veritabanında reddedilir, sahtede de reddedilmelidir.
+	// The counterpart of the fulfillments_*_stamp constraints in the schema:
+	// writing a status without its stamp is rejected in the REAL database, and it
+	// has to be rejected in the fake as well.
 	if (status == models.StatusShipped && shippedAt == nil) ||
 		(status == models.StatusDelivered && deliveredAt == nil) ||
 		(status == models.StatusCanceled && canceledAt == nil) {
 		return models.Fulfillment{}, errors.Internal("fake_stamp_missing",
-			"%q durumu zaman damgası olmadan yazılamaz", status)
+			"the %q status cannot be written without a timestamp", status)
 	}
 	ful.Status = status
 	ful.TrackingNumber = trackingNumber
 	ful.TrackingURL = trackingURL
 	ful.ShippedAt, ful.DeliveredAt, ful.CanceledAt = shippedAt, deliveredAt, canceledAt
-	ful.UpdatedAt = testAn
+	ful.UpdatedAt = testNow
 	f.fuls[id] = ful
 	f.fulWrites++
 	return ful, nil
@@ -665,11 +675,11 @@ func (f *fakeStore) CreateFulfillmentItem(
 	for _, existing := range f.items {
 		if existing.FulfillmentID == item.FulfillmentID && existing.LineItemID == item.LineItemID {
 			return models.FulfillmentItem{}, errors.Conflict("fake_item_exists",
-				"aynı sipariş satırı gönderide iki kez yer alamaz")
+				"the same order line cannot appear twice in a fulfillment")
 		}
 	}
-	item.CreatedAt = testAn
-	item.UpdatedAt = testAn
+	item.CreatedAt = testNow
+	item.UpdatedAt = testNow
 	f.items[item.ID] = item
 	return item, nil
 }
@@ -708,8 +718,8 @@ func (f *fakeStore) FulfillmentItemsByFulfillments(
 	return out, nil
 }
 
-// sayfala bellek içi listeye limit/offset uygular.
-func sayfala[T any](items []T, limit, offset int64) []T {
+// paginate applies limit/offset to an in-memory list.
+func paginate[T any](items []T, limit, offset int64) []T {
 	if offset >= int64(len(items)) {
 		return []T{}
 	}
@@ -720,62 +730,61 @@ func sayfala[T any](items []T, limit, offset int64) []T {
 	return slices.Clone(items[offset:end])
 }
 
-// --- sahte sağlayıcı ---------------------------------------------------------
+// --- fake provider -----------------------------------------------------------
 
-// fakeProvider FulfillmentProvider'ın sınanabilir karşılığıdır.
+// fakeProvider is the exercisable counterpart of FulfillmentProvider.
 //
-// Gerçek sağlayıcının aksine hiçbir yere yazmaz; her metodun davranışı test
-// tarafından ayarlanır. Amaç servisin sağlayıcıyla KONUŞMA biçimini sınamaktır:
-// hangi girdiyi verdiği, hatayı nasıl taşıdığı ve idempotent dallarda
-// sağlayıcıya HİÇ gitmediği.
+// Unlike the real provider it writes nowhere; the behavior of every method is
+// set by the test. The purpose is to exercise the way the service TALKS to the
+// provider: which input it gives, how it carries the error, and that on the
+// idempotent branches it does NOT go to the provider at all.
 type fakeProvider struct {
 	mu sync.Mutex
 
 	id string
 
-	// quoteAmount Quote'un döndüğü tutardır.
+	// quoteAmount is the amount Quote returns.
 	quoteAmount int64
-	// quoteCurrency boş değilse Quote bu para birimini döner; sözleşme
-	// ihlalini sınamak içindir.
+	// quoteCurrency, when not empty, makes Quote return this currency; it is
+	// there to exercise the contract violation.
 	quoteCurrency string
-	// quoteErr ayarlanırsa Quote bu hatayı döner.
+	// quoteErr, when set, makes Quote return this error.
 	quoteErr error
-	// quoteCalls Quote'un kaç kez çağrıldığını sayar.
+	// quoteCalls counts how many times Quote was called.
 	quoteCalls int
-	// quoteInputs Quote'a verilen girdileri sırasıyla saklar.
+	// quoteInputs stores the inputs handed to Quote in order.
 	quoteInputs []coreprovider.QuoteInput
 
-	// createErr ayarlanırsa Create bu hatayı döner.
+	// createErr, when set, makes Create return this error.
 	createErr error
-	// createStatus Create'in döndüğü durumdur; boşsa "pending".
+	// createStatus is the status Create returns; if empty, "pending".
 	createStatus coreprovider.FulfillmentStatus
-	// createCalls Create'in kaç kez çağrıldığını sayar.
+	// createCalls counts how many times Create was called.
 	createCalls int
-	// createInputs Create'e verilen girdileri sırasıyla saklar.
+	// createInputs stores the inputs handed to Create in order.
 	createInputs []coreprovider.CreateFulfillmentInput
 
-	// cancelErr ayarlanırsa Cancel bu hatayı döner.
+	// cancelErr, when set, makes Cancel return this error.
 	cancelErr error
-	// cancelCalls Cancel'ın kaç kez çağrıldığını sayar; telafinin sağlayıcıya
-	// İKİNCİ KEZ gitmediği bununla kanıtlanır.
+	// cancelCalls counts how many times Cancel was called; that the compensation
+	// does not go to the provider A SECOND TIME is proven with it.
 	cancelCalls int
-	// canceledIDs iptal edilen sağlayıcı kimliklerini saklar.
+	// canceledIDs stores the canceled provider identifiers.
 	canceledIDs []string
 }
 
-// fakeProvider'ın çekirdek sözleşmesini karşıladığı derleme zamanında
-// doğrulanır.
+// That fakeProvider satisfies the core contract is verified at compile time.
 var _ coreprovider.FulfillmentProvider = (*fakeProvider)(nil)
 
-// newFakeProvider verilen kimlikle bir sahte sağlayıcı üretir.
+// newFakeProvider produces a fake provider with the given identifier.
 func newFakeProvider(id string) *fakeProvider {
 	return &fakeProvider{id: id, quoteAmount: 2_500}
 }
 
-// ID sağlayıcının kimliğini döner.
+// ID returns the provider's identifier.
 func (p *fakeProvider) ID() string { return p.id }
 
-// Quote ayarlanmış tutarı döner ve girdiyi kaydeder.
+// Quote returns the configured amount and records the input.
 func (p *fakeProvider) Quote(
 	_ context.Context,
 	in coreprovider.QuoteInput,
@@ -797,11 +806,11 @@ func (p *fakeProvider) Quote(
 		OptionID:     in.OptionID,
 		Amount:       p.quoteAmount,
 		CurrencyCode: currency,
-		Data:         json.RawMessage(`{"saglayici":"sahte"}`),
+		Data:         json.RawMessage(`{"provider":"fake"}`),
 	}, nil
 }
 
-// Create sahte bir gönderi kimliği döner ve girdiyi kaydeder.
+// Create returns a fake fulfillment identifier and records the input.
 func (p *fakeProvider) Create(
 	_ context.Context,
 	in coreprovider.CreateFulfillmentInput,
@@ -820,15 +829,15 @@ func (p *fakeProvider) Create(
 		status = coreprovider.FulfillmentPending
 	}
 	return coreprovider.Fulfillment{
-		ID:             "dis_" + in.IdempotencyKey,
+		ID:             "ext_" + in.IdempotencyKey,
 		Status:         status,
 		TrackingNumber: "TK-" + in.IdempotencyKey,
-		TrackingURL:    "https://kargo.example/TK-" + in.IdempotencyKey,
-		Data:           json.RawMessage(`{"etiket":"basildi"}`),
+		TrackingURL:    "https://shipping.example/TK-" + in.IdempotencyKey,
+		Data:           json.RawMessage(`{"label":"printed"}`),
 	}, nil
 }
 
-// Cancel iptali kaydeder.
+// Cancel records the cancellation.
 func (p *fakeProvider) Cancel(_ context.Context, fulfillmentID string) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -838,15 +847,15 @@ func (p *fakeProvider) Cancel(_ context.Context, fulfillmentID string) error {
 	return p.cancelErr
 }
 
-// cagriSayilari sağlayıcıya yapılan çağrıları döner.
-func (p *fakeProvider) cagriSayilari() (quote, create, cancel int) {
+// callCounts returns the calls made to the provider.
+func (p *fakeProvider) callCounts() (quote, create, cancel int) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return p.quoteCalls, p.createCalls, p.cancelCalls
 }
 
-// sonQuoteGirdisi Quote'a verilen son girdiyi döner.
-func (p *fakeProvider) sonQuoteGirdisi() coreprovider.QuoteInput {
+// lastQuoteInput returns the last input handed to Quote.
+func (p *fakeProvider) lastQuoteInput() coreprovider.QuoteInput {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if len(p.quoteInputs) == 0 {
@@ -855,8 +864,8 @@ func (p *fakeProvider) sonQuoteGirdisi() coreprovider.QuoteInput {
 	return p.quoteInputs[len(p.quoteInputs)-1]
 }
 
-// sonCreateGirdisi Create'e verilen son girdiyi döner.
-func (p *fakeProvider) sonCreateGirdisi() coreprovider.CreateFulfillmentInput {
+// lastCreateInput returns the last input handed to Create.
+func (p *fakeProvider) lastCreateInput() coreprovider.CreateFulfillmentInput {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if len(p.createInputs) == 0 {
@@ -865,79 +874,81 @@ func (p *fakeProvider) sonCreateGirdisi() coreprovider.CreateFulfillmentInput {
 	return p.createInputs[len(p.createInputs)-1]
 }
 
-// --- ortak kurulum -----------------------------------------------------------
+// --- shared setup ------------------------------------------------------------
 
-// testAn testlerin sabit saatidir; zaman damgası iddiaları kesin olsun diye
-// gerçek saat kullanılmaz.
-var testAn = time.Date(2026, 8, 24, 10, 0, 0, 0, time.UTC)
+// testNow is the fixed clock of the tests; the real clock is not used so that
+// the timestamp claims can be exact.
+var testNow = time.Date(2026, 8, 24, 10, 0, 0, 0, time.UTC)
 
-// testKurulum bir testin kullandığı bileşenleri taşır.
-type testKurulum struct {
+// testSetup carries the components a test uses.
+type testSetup struct {
 	svc      *service.Service
 	store    *fakeStore
 	provider *fakeProvider
 }
 
-// yeniKurulum sahte depo ve sahte sağlayıcı üzerinde çalışan bir servis kurar.
-func yeniKurulum(t interface{ Fatalf(string, ...any) }) testKurulum {
+// newSetup builds a service running on a fake store and a fake provider.
+func newSetup(t interface{ Fatalf(string, ...any) }) testSetup {
 	store := newFakeStore()
-	provider := newFakeProvider("sahte")
+	provider := newFakeProvider("fake")
 
 	registry := service.NewProviderRegistry()
 	if err := registry.Register(provider); err != nil {
-		t.Fatalf("sağlayıcı kaydedilemedi: %v", err)
+		t.Fatalf("the provider could not be registered: %v", err)
 	}
 
 	svc, err := service.New(service.Options{
 		Store:     store,
 		Providers: registry,
-		Clock:     func() time.Time { return testAn },
+		Clock:     func() time.Time { return testNow },
 	})
 	if err != nil {
-		t.Fatalf("servis kurulamadı: %v", err)
+		t.Fatalf("the service could not be built: %v", err)
 	}
-	return testKurulum{svc: svc, store: store, provider: provider}
+	return testSetup{svc: svc, store: store, provider: provider}
 }
 
-// profilAc test için bir kargo profili oluşturur ve kimliğini döner.
-func (k testKurulum) profilAc(t interface {
+// createProfile creates a shipping profile for the test and returns its
+// identifier.
+func (k testSetup) createProfile(t interface {
 	Fatalf(string, ...any)
 	Helper()
-}, ad string) string {
+}, name string) string {
 	t.Helper()
 	profile, err := k.svc.CreateShippingProfile(context.Background(), service.CreateProfileInput{
-		Name: ad,
+		Name: name,
 	})
 	if err != nil {
-		t.Fatalf("kargo profili oluşturulamadı: %v", err)
+		t.Fatalf("the shipping profile could not be created: %v", err)
 	}
 	return profile.ID
 }
 
-// secenekAc test için bir kargo seçeneği oluşturur ve kimliğini döner.
-func (k testKurulum) secenekAc(t interface {
+// createOption creates a shipping option for the test and returns its
+// identifier.
+func (k testSetup) createOption(t interface {
 	Fatalf(string, ...any)
 	Helper()
 }, in service.CreateOptionInput) string {
 	t.Helper()
 	if strings.TrimSpace(in.ProviderID) == "" {
-		in.ProviderID = "sahte"
+		in.ProviderID = "fake"
 	}
 	if strings.TrimSpace(in.CurrencyCode) == "" {
 		in.CurrencyCode = "TRY"
 	}
 	option, err := k.svc.CreateShippingOption(context.Background(), in)
 	if err != nil {
-		t.Fatalf("kargo seçeneği oluşturulamadı: %v", err)
+		t.Fatalf("the shipping option could not be created: %v", err)
 	}
 	return option.ID
 }
 
-// --- depo kargo politikaları -------------------------------------------------
+// --- warehouse shipping policies ---------------------------------------------
 
-// Politika satırları da işlem anlık görüntüsüne girer: geri alma iddiası
-// yalnızca eski tablolar için doğru olsaydı, yeni yazma yolunun atomikliği
-// sınanmamış kalırdı.
+// The policy rows enter the transaction snapshot as well: had the rollback claim
+// only been true for the older tables, the atomicity of the new write path would
+// have stayed unexercised.
 
 func (f *fakeStore) UpsertShippingLocation(
 	_ context.Context,
@@ -958,10 +969,11 @@ func (f *fakeStore) UpsertShippingLocation(
 	return loc, nil
 }
 
-// ReplaceShippingLocationRegions gerçek deponun işlem şartını taklit eder:
-// işlem dışında çağrılırsa hata döner. Şart bir yorum değil, sınanan bir
-// davranıştır — iki deyimli bir yazma işlemsiz kalırsa depo bir an için TÜM
-// bölgelere açık görünür.
+// ReplaceShippingLocationRegions imitates the real store's transaction
+// requirement: it returns an error if it is called outside a transaction. The
+// requirement is not a comment but an exercised behavior — if a two-statement
+// write is left without a transaction, the warehouse looks for a moment as if it
+// were open to ALL regions.
 func (f *fakeStore) ReplaceShippingLocationRegions(
 	ctx context.Context,
 	locationID string,
@@ -976,15 +988,15 @@ func (f *fakeStore) ReplaceShippingLocationRegions(
 
 	loc, exists := f.locations[locationID]
 	if !exists {
-		return errors.NotFound("fake_location_not_found", "politika yok: %s", locationID)
+		return errors.NotFound("fake_location_not_found", "no policy: %s", locationID)
 	}
-	// Gerçek depo bağları KİMLİĞE göre sıralı döner (okuma sorguları
-	// ORDER BY region_id uygular); sahte de sıralar. Sıralamasaydı birim
-	// testleri girdinin sırasını korunmuş sanar ve gerçek depoya karşı koşan
-	// bir iddia sessizce ayrışırdı.
-	sirali := slices.Clone(regionIDs)
-	slices.Sort(sirali)
-	loc.RegionIDs = sirali
+	// The real store returns the links sorted BY IDENTIFIER (the read queries
+	// apply ORDER BY region_id); the fake sorts them too. Had it not sorted, the
+	// unit tests would believe the input's order was preserved and a claim
+	// running against the real store would silently diverge.
+	sorted := slices.Clone(regionIDs)
+	slices.Sort(sorted)
+	loc.RegionIDs = sorted
 	f.locations[locationID] = loc
 	return nil
 }
@@ -999,7 +1011,7 @@ func (f *fakeStore) GetShippingLocation(
 	loc, ok := f.locations[locationID]
 	if !ok {
 		return models.ShippingLocation{}, errors.NotFound(
-			"fulfillment_shipping_location_not_found", "politika yok: %s", locationID)
+			"fulfillment_shipping_location_not_found", "no policy: %s", locationID)
 	}
 	return loc, nil
 }
@@ -1036,15 +1048,15 @@ func (f *fakeStore) DeleteShippingLocation(_ context.Context, locationID string)
 
 	if _, ok := f.locations[locationID]; !ok {
 		return errors.NotFound(
-			"fulfillment_shipping_location_not_found", "politika yok: %s", locationID)
+			"fulfillment_shipping_location_not_found", "no policy: %s", locationID)
 	}
 	delete(f.locations, locationID)
 	return nil
 }
 
-// LocationPolicies gerçek sorgunun ayrımını taklit eder: kaydı OLMAYAN aday
-// dönen dilimde HİÇ yer almaz ve bölge bağları bayrak olarak değil KİMLİK
-// DİZİSİ olarak taşınır.
+// LocationPolicies imitates the distinction the real query makes: a candidate
+// that HAS NO record does not appear in the returned slice AT ALL, and the region
+// links are carried not as a flag but as an ARRAY OF IDENTIFIERS.
 func (f *fakeStore) LocationPolicies(
 	_ context.Context,
 	locationIDs []string,

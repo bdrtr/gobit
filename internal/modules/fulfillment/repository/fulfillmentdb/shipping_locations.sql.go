@@ -15,8 +15,8 @@ const countShippingLocations = `-- name: CountShippingLocations :one
 SELECT COUNT(*) FROM shipping_locations
 `
 
-// CountShippingLocations ListShippingLocations ile AYNI kümeyi sayar; ikisi
-// birlikte değişmek zorundadır.
+// CountShippingLocations counts the SAME set as ListShippingLocations; the two
+// are obliged to change together.
 func (q *Queries) CountShippingLocations(ctx context.Context) (int64, error) {
 	row := q.db.QueryRow(ctx, countShippingLocations)
 	var count int64
@@ -29,12 +29,12 @@ DELETE FROM shipping_locations
 WHERE location_id = $1
 `
 
-// DeleteShippingLocation politikayı KALICI olarak siler; bölge bağları
-// ON DELETE CASCADE ile birlikte düşer.
+// DeleteShippingLocation deletes the policy PERMANENTLY; the region links fall
+// with it through ON DELETE CASCADE.
 //
-// Silmenin anlamı "depoyu kapat" DEĞİL, "depoyu varsayılana döndür"dür:
-// politikası olmayan depo varsayılan öncelikte ve tüm bölgelere hizmet ediyor
-// sayılır.
+// Deleting does NOT mean "close the location", it means "return the location to
+// the default": a location that has no policy counts as being at the default
+// priority and as serving every region.
 func (q *Queries) DeleteShippingLocation(ctx context.Context, locationID string) (int64, error) {
 	result, err := q.db.Exec(ctx, deleteShippingLocation, locationID)
 	if err != nil {
@@ -48,10 +48,11 @@ DELETE FROM shipping_location_regions
 WHERE location_id = $1
 `
 
-// ReplaceShippingLocationRegions bir deponun bölge bağlarını TOPTAN yazar:
-// önce hepsi silinir, sonra verilenler yazılır. Çağıran ikisini AYNI işlemde
-// çağırmalıdır, yoksa arada kalan bir okuma depoyu bölgesiz (yani tüm
-// bölgelere açık) görürdü.
+// ReplaceShippingLocationRegions writes a location's region links WHOLESALE:
+// first all of them are deleted, then the given ones are written. The caller
+// has to call the two in the SAME transaction, otherwise a read landing in
+// between would see the location without regions (that is, open to every
+// region).
 func (q *Queries) DeleteShippingLocationRegions(ctx context.Context, locationID string) error {
 	_, err := q.db.Exec(ctx, deleteShippingLocationRegions, locationID)
 	return err
@@ -81,13 +82,15 @@ type GetShippingLocationRow struct {
 	RegionIds  []string
 }
 
-// GetShippingLocation politikayı BÖLGELERİYLE BİRLİKTE tek deyimde döner.
+// GetShippingLocation returns the policy TOGETHER WITH ITS REGIONS in a single
+// statement.
 //
-// İki ayrı SELECT ile okumak (önce satır, sonra bağlar) yırtık bir kayıt
-// üretirdi: işlem dışında yapılan iki okuma iki ayrı anlık görüntüden gelir ve
-// aralarına giren bir yazma, deponun YENİ önceliğiyle ESKİ bölgelerini yan yana
-// gösterirdi. Yazma yolu bunu işlemle kapatıyor; okuma yolu tek deyimle
-// kapatır. Kalıp ShippingLocationPolicies'in aynısıdır.
+// Reading it with two separate SELECTs (the row first, then the links) would
+// produce a torn record: two reads made outside a transaction come from two
+// different snapshots, and a write landing between them would show the NEW
+// priority of the location next to its OLD regions. The write path closes this
+// with a transaction; the read path closes it with a single statement. The
+// pattern is identical to the one in ShippingLocationPolicies.
 func (q *Queries) GetShippingLocation(ctx context.Context, locationID string) (GetShippingLocationRow, error) {
 	row := q.db.QueryRow(ctx, getShippingLocation, locationID)
 	var i GetShippingLocationRow
@@ -113,11 +116,11 @@ type InsertShippingLocationRegionsParams struct {
 	RegionIds  []string
 }
 
-// InsertShippingLocationRegions bölge bağlarını TEK deyimde yazar; bölge başına
-// INSERT yapılmaz. Yinelenen bir bölge kimliği sessizce yutulur (ON CONFLICT
-// DO NOTHING) çünkü "aynı bölgeyi iki kez bağlamak" ifade edilmek istenen şeyle
-// aynı sonucu verir ve çağıranı bir çakışma hatasıyla karşılamak yanıltıcı
-// olurdu.
+// InsertShippingLocationRegions writes the region links in a SINGLE statement;
+// no INSERT per region is made. A repeated region id is swallowed silently
+// (ON CONFLICT DO NOTHING) because "linking the same region twice" gives the
+// same result as the thing that was meant to be expressed, and meeting the
+// caller with a conflict error would be misleading.
 func (q *Queries) InsertShippingLocationRegions(ctx context.Context, arg InsertShippingLocationRegionsParams) error {
 	_, err := q.db.Exec(ctx, insertShippingLocationRegions, arg.LocationID, arg.RegionIds)
 	return err
@@ -153,10 +156,11 @@ type ListShippingLocationsRow struct {
 	RegionIds  []string
 }
 
-// ListShippingLocations politikaları bağlarıyla birlikte sayfalar.
+// ListShippingLocations paginates the policies together with their links.
 //
-// Bağlar burada da AYNI deyimde toplanır; sayfadaki depo başına ikinci bir
-// sorgu (N+1) yapılmaz ve tekil okumayla aynı yırtılma kapısı kapalı kalır.
+// Here too the links are gathered in the SAME statement; no second query per
+// location on the page (N+1) is made, and the same tearing door the single read
+// closes stays closed.
 func (q *Queries) ListShippingLocations(ctx context.Context, arg ListShippingLocationsParams) ([]ListShippingLocationsRow, error) {
 	rows, err := q.db.Query(ctx, listShippingLocations, arg.RowOffset, arg.RowLimit)
 	if err != nil {
@@ -204,24 +208,28 @@ type ShippingLocationPoliciesRow struct {
 	RegionIds  []string
 }
 
-// ShippingLocationPolicies aday depoların kararı etkileyen olgularını TEK
-// turda döner; aday başına sorgu (N+1) yapılmaz.
+// ShippingLocationPolicies returns the facts about the candidate locations that
+// affect the decision in a SINGLE round trip; no query per candidate (N+1) is
+// made.
 //
-// Dönen satır YALNIZCA politikası olan depolar içindir. Listede olmayan aday
-// "politikasız"dır ve varsayılan sayılır (öncelik 0, tüm bölgelere hizmet
-// eder); bu ayrımı çağıran yapar, sorgu değil.
+// The returned rows are ONLY for the locations that have a policy. A candidate
+// that is not in the list is "without a policy" and counts as the default
+// (priority 0, serves every region); the caller draws that distinction, not the
+// query.
 //
-// Bölge bağları SAYI ya da BAYRAK olarak değil, KİMLİK DİZİSİ olarak döner ve
-// bu bilinçlidir. İki sebebi var: kural ("bağı olmayan tüm bölgelere hizmet
-// eder, olan yalnızca bağlılarına") saf bir fonksiyonda, veritabanı olmadan
-// sınanabilir kalır; ve tüm adaylar elendiğinde hata mesajı depoların GERÇEKTE
-// hangi bölgelere bağlı olduğunu yazabilir. İkincisi bir konfor değil,
-// teşhisin tek yoludur: silinip yeniden açılmış bir bölgenin kimliği hiçbir
-// yerde eşleşmez ve bayrak dönen bir sorguyla operatör yalnızca "hizmet eden
-// depo yok" görürdü.
+// The region links are returned as an ARRAY OF IDS, not as a COUNT or a FLAG,
+// and this is deliberate. There are two reasons for it: the rule ("one with no
+// link serves every region, one that has links serves only the ones it is
+// linked to") stays testable in a pure function, without a database; and when
+// every candidate is eliminated the error message can write down which regions
+// the locations are ACTUALLY linked to. The second is not a convenience but the
+// only route to a diagnosis: the id of a region that was deleted and reopened
+// matches nowhere, and with a query returning a flag the operator would only
+// see "no location serves it".
 //
-// FILTER, bağı olmayan depo için '{}' üretir; onsuz LEFT JOIN tek elemanı NULL
-// olan bir dizi döndürür ve "bağı yok" ile "bağı NULL" ayırt edilemezdi.
+// FILTER produces '{}' for a location that has no link; without it the LEFT
+// JOIN returns an array whose single element is NULL, and "has no link" could
+// not be told apart from "its link is NULL".
 func (q *Queries) ShippingLocationPolicies(ctx context.Context, locationIds []string) ([]ShippingLocationPoliciesRow, error) {
 	rows, err := q.db.Query(ctx, shippingLocationPolicies, locationIds)
 	if err != nil {
@@ -256,26 +264,27 @@ type UpsertShippingLocationParams struct {
 	Priority   int64
 }
 
-// shipping_locations ve shipping_location_regions sorguları.
+// shipping_locations and shipping_location_regions queries.
 //
-// Okuma yolu ikiye ayrılır ve ayrım shipping_options'ınkiyle AYNI gerekçeye
-// dayanır:
+// The read path splits in two, and the split rests on the SAME rationale as the
+// one in shipping_options:
 //
-//   - Yönetim listelemesi (ListShippingLocations) — sayfalanır.
-//   - Seçim okuması (ShippingLocationPolicies) — aday depoların kararı
-//     etkileyen OLGULARINI tek turda döner. Politikanın KENDİSİ burada
-//     çalışmaz; eleme ve sıralama servis katmanındaki saf fonksiyonda yaşar ve
-//     veritabanı olmadan birim testiyle kanıtlanabilir.
+//   - Admin listing (ListShippingLocations) — paginated.
+//   - Selection read (ShippingLocationPolicies) — returns, in a single round
+//     trip, the FACTS about the candidate locations that affect the decision.
+//     The policy ITSELF does not run here; elimination and ordering live in the
+//     pure function in the service layer and can be proven by a unit test
+//     without a database.
 //
-// Silme YUMUŞAK DEĞİLDİR; gerekçesi migration'ın başındadır. Bu yüzden
-// sorguların hiçbirinde deleted_at süzgeci yoktur ve olmaması bir unutma
-// değildir.
-// UpsertShippingLocation politikayı YAZAR ya da ÜZERİNE yazar.
+// Deletion is NOT SOFT; its rationale is at the top of the migration. That is
+// why none of the queries carries a deleted_at filter, and its absence is not
+// an oversight.
+// UpsertShippingLocation WRITES the policy or writes OVER it.
 //
-// Ayrı bir Create/Update çifti yerine tek upsert olmasının sebebi, yüzeyin
-// ifade ettiği şeyin bir VARLIK oluşturmak değil bir depoya ait AYARI
-// belirlemek olmasıdır: çağıran "bu depo şu öncelikte" der ve satırın daha önce
-// var olup olmadığı onun sorunu değildir.
+// The reason there is a single upsert instead of a separate Create/Update pair
+// is that what the surface expresses is not creating an ENTITY but settling the
+// SETTING that belongs to a location: the caller says "this location has this
+// priority" and whether the row existed before is not its problem.
 func (q *Queries) UpsertShippingLocation(ctx context.Context, arg UpsertShippingLocationParams) (ShippingLocation, error) {
 	row := q.db.QueryRow(ctx, upsertShippingLocation, arg.LocationID, arg.Priority)
 	var i ShippingLocation

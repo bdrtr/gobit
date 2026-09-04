@@ -20,59 +20,62 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/product/service"
 )
 
-// sahteVitrin resolver'ların çağırdığı vitrin servisinin sahtesidir.
+// fakeStorefront is the fake of the storefront service the resolvers call.
 //
-// Çağrı ölçütlerini KAYDEDER: bu dosyadaki iddiaların çoğu dönen veriyle değil,
-// servise NE GEÇİLDİĞİYLE ilgilidir (satış kanalı süzgeci gibi).
+// It RECORDS the call options: most of the claims in this file are not about
+// the data returned but about WHAT WAS PASSED to the service (such as the sales
+// channel filter).
 //
-// Kilit gerçek bir ihtiyaçtır: gqlgen kök sorgu alanlarını EŞZAMANLI çözer,
-// yani tek istekte iki takma adlı sorgu iki gorutin demektir.
-type sahteVitrin struct {
+// The lock is a real need: gqlgen resolves root query fields CONCURRENTLY, that
+// is, two aliased queries in one request mean two goroutines.
+type fakeStorefront struct {
 	mu sync.Mutex
 
-	listeOlculeri []service.StoreListOptions
-	tekilSecici   []string
-	tekilKanallar [][]string
+	listOptions     []service.StoreListOptions
+	singleSelectors []string
+	singleChannels  [][]string
 
-	liste service.ListResult[service.StoreProduct]
-	tekil service.StoreProduct
-	hata  error
+	list   service.ListResult[service.StoreProduct]
+	single service.StoreProduct
+	err    error
 }
 
-// ListStoreProducts çağrının ölçütlerini kaydeder ve hazır sonucu döner.
+// ListStoreProducts records the options of the call and returns the prepared
+// result.
 //
-// Sayaç alanında GERÇEK servisin sözleşmesi taklit edilir: SkipCount isteniyorsa
-// nil, istenmiyorsa dolu döner. Sabit bir sonuç döndürmek yetmezdi — şemadaki
-// "count: Int!" nil'i kabul etmez ve sayacı SEÇEN her test, sahte yüzünden
-// "null which the schema does not allow" hatasıyla düşerdi. Yani sahtenin
-// sözleşmeyi taşımaması, sınanan davranışla ilgisiz bir arıza üretirdi.
-func (s *sahteVitrin) ListStoreProducts(
+// On the count field the REAL service's contract is imitated: nil if SkipCount
+// is asked for, filled in if it is not. Returning a fixed result would not have
+// been enough — the "count: Int!" in the schema does not accept nil and every
+// test that SELECTS the count would fail with "null which the schema does not
+// allow" because of the fake. That is, a fake that does not carry the contract
+// would produce a failure unrelated to the behavior under test.
+func (s *fakeStorefront) ListStoreProducts(
 	_ context.Context,
 	opts service.StoreListOptions,
 ) (service.ListResult[service.StoreProduct], error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	s.listeOlculeri = append(s.listeOlculeri, opts)
+	s.listOptions = append(s.listOptions, opts)
 
-	if s.hata != nil {
-		return service.ListResult[service.StoreProduct]{}, s.hata
+	if s.err != nil {
+		return service.ListResult[service.StoreProduct]{}, s.err
 	}
 
-	liste := s.liste
+	list := s.list
 
 	switch {
 	case opts.SkipCount:
-		liste.Count = nil
-	case liste.Count == nil:
-		liste.Count = ptr(len(liste.Items))
+		list.Count = nil
+	case list.Count == nil:
+		list.Count = ptr(len(list.Items))
 	}
 
-	return liste, nil
+	return list, nil
 }
 
-// GetStoreProduct çağrının seçicisini ve kanallarını kaydeder.
-func (s *sahteVitrin) GetStoreProduct(
+// GetStoreProduct records the selector and the channels of the call.
+func (s *fakeStorefront) GetStoreProduct(
 	_ context.Context,
 	idOrHandle string,
 	salesChannelIDs []string,
@@ -80,30 +83,30 @@ func (s *sahteVitrin) GetStoreProduct(
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	s.tekilSecici = append(s.tekilSecici, idOrHandle)
-	s.tekilKanallar = append(s.tekilKanallar, salesChannelIDs)
+	s.singleSelectors = append(s.singleSelectors, idOrHandle)
+	s.singleChannels = append(s.singleChannels, salesChannelIDs)
 
-	if s.hata != nil {
-		return service.StoreProduct{}, s.hata
+	if s.err != nil {
+		return service.StoreProduct{}, s.err
 	}
 
-	return s.tekil, nil
+	return s.single, nil
 }
 
-// sonListe kaydedilen son listeleme ölçütünü döner.
-func (s *sahteVitrin) sonListe(t *testing.T) service.StoreListOptions {
+// lastList returns the last recorded listing options.
+func (s *fakeStorefront) lastList(t *testing.T) service.StoreListOptions {
 	t.Helper()
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	require.Len(t, s.listeOlculeri, 1, "servis TAM OLARAK bir kez çağrılmalıydı")
+	require.Len(t, s.listOptions, 1, "the service should have been called EXACTLY once")
 
-	return s.listeOlculeri[0]
+	return s.listOptions[0]
 }
 
-// graphqlYaniti tek bir GraphQL yanıtının çözülmüş hâlidir.
-type graphqlYaniti struct {
+// graphQLResponse is the decoded form of a single GraphQL response.
+type graphQLResponse struct {
 	Data   map[string]any `json:"data"`
 	Errors []struct {
 		Message    string         `json:"message"`
@@ -111,57 +114,59 @@ type graphqlYaniti struct {
 	} `json:"errors"`
 }
 
-// sorgula belgeyi uca POST eder ve yanıtı çözer.
+// runQuery POSTs the document to the endpoint and decodes the response.
 //
-// İstek GERÇEK handler'dan geçer (taşıma, ayrıştırma, doğrulama, resolver):
-// resolver'ı doğrudan çağırmak, kanalın context'ten okunduğunu değil yalnızca
-// fonksiyonun gövdesini sınardı.
-func sorgula(
+// The request goes through the REAL handler (transport, parsing, validation,
+// resolver): calling the resolver directly would test only the body of the
+// function, not that the channel is read from the context.
+func runQuery(
 	t *testing.T,
 	ctx context.Context,
 	svc graph.Storefront,
-	belge string,
-) (yanit graphqlYaniti, durum int) {
+	document string,
+) (response graphQLResponse, status int) {
 	t.Helper()
 
-	return sorgulaOpts(t, ctx, svc, belge, graph.Options{})
+	return runQueryWithOptions(t, ctx, svc, document, graph.Options{})
 }
 
-// sorgulaOpts belgeyi verilen sınırlarla kurulmuş bir uca POST eder.
-func sorgulaOpts(
+// runQueryWithOptions POSTs the document to an endpoint set up with the given
+// limits.
+func runQueryWithOptions(
 	t *testing.T,
 	ctx context.Context,
 	svc graph.Storefront,
-	belge string,
+	document string,
 	opts graph.Options,
-) (yanit graphqlYaniti, durum int) {
+) (response graphQLResponse, status int) {
 	t.Helper()
 
-	rec := istekYap(t, ctx, svc, belge, opts)
+	rec := doRequest(t, ctx, svc, document, opts)
 
-	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &yanit), "gövde: %s", rec.Body.String())
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &response), "body: %s", rec.Body.String())
 
-	return yanit, rec.Code
+	return response, rec.Code
 }
 
-// istekYap belgeyi uca POST eder ve HAM yanıtı döner.
+// doRequest POSTs the document to the endpoint and returns the RAW response.
 //
-// Ham gövde, çözülmüş yanıtın gizlediği bir soruyu sorabilmek içindir: bir
-// metnin yanıtın HİÇBİR yerinde — mesajda, uzantılarda, yolda — geçmediğini
-// ancak baytlara bakarak iddia edebiliriz (bkz. handler_test.go).
-func istekYap(
+// The raw body is there so a question the decoded response hides can be asked:
+// that a text appears NOWHERE in the response — not in the message, not in the
+// extensions, not in the path — can only be claimed by looking at the bytes
+// (see handler_test.go).
+func doRequest(
 	t *testing.T,
 	ctx context.Context,
 	svc graph.Storefront,
-	belge string,
+	document string,
 	opts graph.Options,
 ) *httptest.ResponseRecorder {
 	t.Helper()
 
-	govde, err := json.Marshal(map[string]any{"query": belge})
+	body, err := json.Marshal(map[string]any{"query": document})
 	require.NoError(t, err)
 
-	req := httptest.NewRequest(http.MethodPost, graph.Path, strings.NewReader(string(govde)))
+	req := httptest.NewRequest(http.MethodPost, graph.Path, strings.NewReader(string(body)))
 	req.Header.Set("Content-Type", "application/json")
 	req = req.WithContext(ctx)
 
@@ -171,205 +176,209 @@ func istekYap(
 	return rec
 }
 
-// kimlikli verilen satış kanallarını taşıyan bir mağaza kimliği kurar.
-func kimlikli(kanallar []string) context.Context {
+// identityWith builds a store identity carrying the given sales channels.
+func identityWith(channels []string) context.Context {
 	return corehttp.WithPrincipal(context.Background(), corehttp.Principal{
 		ID:              "pk_test",
 		Kind:            "api_key",
-		SalesChannelIDs: kanallar,
+		SalesChannelIDs: channels,
 	})
 }
 
-// TestListeKanallariKimliktenAlir süzgecin isteğin KİMLİĞİNDEN geldiğini
-// doğrular.
+// TestListTakesChannelsFromTheIdentity verifies that the filter comes from the
+// request's IDENTITY.
 //
-// Kanal sorgudan alınabilseydi süzgeç bir yetkilendirme olmaktan çıkıp
-// görüntüleme tercihine dönerdi: elindeki herhangi bir publishable anahtarla
-// gelen istemci başka bir vitrinin katalogunu okurdu.
-func TestListeKanallariKimliktenAlir(t *testing.T) {
+// Could the channel be taken from the query, the filter would stop being an
+// authorization and turn into a display preference: a client arriving with any
+// publishable key it happened to hold would read another storefront's catalog.
+func TestListTakesChannelsFromTheIdentity(t *testing.T) {
 	t.Parallel()
 
-	svc := &sahteVitrin{}
-	yanit, kod := sorgula(t, kimlikli([]string{"sc_1", "sc_2"}), svc,
+	svc := &fakeStorefront{}
+	response, status := runQuery(t, identityWith([]string{"sc_1", "sc_2"}), svc,
 		`{ products { count } }`)
 
-	require.Empty(t, yanit.Errors)
-	assert.Equal(t, http.StatusOK, kod)
-	assert.Equal(t, []string{"sc_1", "sc_2"}, svc.sonListe(t).SalesChannelIDs)
+	require.Empty(t, response.Errors)
+	assert.Equal(t, http.StatusOK, status)
+	assert.Equal(t, []string{"sc_1", "sc_2"}, svc.lastList(t).SalesChannelIDs)
 }
 
-// TestKanalsizKimlikBosKumeGecirir kanalsız bir kimliğin "süzme yok" ile AYNI
-// ŞEY OLMADIĞINI doğrular.
+// TestIdentityWithoutChannelsPassesTheEmptySet verifies that an identity
+// without channels IS NOT THE SAME THING as "no filtering".
 //
-// nil, "istek hiç kanal kimliği taşımıyor" demektir ve süzgeci kapatır. Kanalsız
-// bir kimliği nil'e çevirmek, o kimliğe TÜM kanalların katalogunu açardı; boş
-// küme ise kuralı uygular ve yalnızca ataması olmayan ürünler görünür.
-func TestKanalsizKimlikBosKumeGecirir(t *testing.T) {
+// nil means "the request carries no channel identity at all" and turns the
+// filter off. Turning an identity without channels into nil would open the
+// catalog of ALL channels to that identity; the empty set, on the other hand,
+// applies the rule and only products with no assignment become visible.
+func TestIdentityWithoutChannelsPassesTheEmptySet(t *testing.T) {
 	t.Parallel()
 
-	svc := &sahteVitrin{}
-	yanit, _ := sorgula(t, kimlikli(nil), svc, `{ products { count } }`)
+	svc := &fakeStorefront{}
+	response, _ := runQuery(t, identityWith(nil), svc, `{ products { count } }`)
 
-	require.Empty(t, yanit.Errors)
+	require.Empty(t, response.Errors)
 
-	kanallar := svc.sonListe(t).SalesChannelIDs
-	assert.NotNil(t, kanallar, "kanalsız kimlik boş küme geçirmeli, nil değil")
-	assert.Empty(t, kanallar)
+	channels := svc.lastList(t).SalesChannelIDs
+	assert.NotNil(t, channels, "an identity without channels must pass the empty set, not nil")
+	assert.Empty(t, channels)
 }
 
-// TestKimliksizIstekSuzgeciUygulamaz mağaza kimlik doğrulaması bağlanmamış bir
-// kurulumda vitrinin boşalmadığını doğrular.
+// TestRequestWithoutIdentityAppliesNoFilter verifies that the storefront does
+// not empty out in a deployment where store authentication is not wired up.
 //
-// product tek başına da dağıtılabilir; o kurulumda kanal kimliği hiç yoktur ve
-// süzgeç uygulanmamalıdır.
-func TestKimliksizIstekSuzgeciUygulamaz(t *testing.T) {
+// product can also be deployed on its own; in that deployment there is no
+// channel identity at all and the filter must not be applied.
+func TestRequestWithoutIdentityAppliesNoFilter(t *testing.T) {
 	t.Parallel()
 
-	svc := &sahteVitrin{}
-	yanit, _ := sorgula(t, context.Background(), svc, `{ products { count } }`)
+	svc := &fakeStorefront{}
+	response, _ := runQuery(t, context.Background(), svc, `{ products { count } }`)
 
-	require.Empty(t, yanit.Errors)
-	assert.Nil(t, svc.sonListe(t).SalesChannelIDs)
+	require.Empty(t, response.Errors)
+	assert.Nil(t, svc.lastList(t).SalesChannelIDs)
 }
 
-// TestTekilUcKanallariGecirir tekil sorgunun da AYNI süzgece tabi olduğunu
-// doğrular.
+// TestSingleEndpointPassesTheChannels verifies that the single-item query is
+// subject to the SAME filter.
 //
-// Listede gizlenen bir ürünü tekil sorgudan göstermek gizlemeyi tümüyle
-// anlamsız kılardı; vitrin adresleri handle taşıdığı için tahmin edilebilir
-// olan tam da bu sorgudur.
-func TestTekilUcKanallariGecirir(t *testing.T) {
+// Showing a product hidden from the list through the single-item query would
+// make hiding entirely pointless; because storefront addresses carry the handle
+// this is exactly the guessable query.
+func TestSingleEndpointPassesTheChannels(t *testing.T) {
 	t.Parallel()
 
-	svc := &sahteVitrin{tekil: service.StoreProduct{
-		Product: models.Product{ID: "prod_1", Handle: "tisort"},
+	svc := &fakeStorefront{single: service.StoreProduct{
+		Product: models.Product{ID: "prod_1", Handle: "t-shirt"},
 	}}
 
-	yanit, _ := sorgula(t, kimlikli([]string{"sc_1"}), svc,
-		`{ product(handle: "tisort") { id } }`)
+	response, _ := runQuery(t, identityWith([]string{"sc_1"}), svc,
+		`{ product(handle: "t-shirt") { id } }`)
 
-	require.Empty(t, yanit.Errors)
-	assert.Equal(t, []string{"tisort"}, svc.tekilSecici)
-	assert.Equal(t, [][]string{{"sc_1"}}, svc.tekilKanallar)
+	require.Empty(t, response.Errors)
+	assert.Equal(t, []string{"t-shirt"}, svc.singleSelectors)
+	assert.Equal(t, [][]string{{"sc_1"}}, svc.singleChannels)
 }
 
-// TestSorguSatisKanaliIsteyemez şemada olmayan bir argümanın DOĞRULAMADA
-// reddedildiğini ve servise hiç ulaşmadığını doğrular.
+// TestQueryCannotAskForASalesChannel verifies that an argument that is not in
+// the schema is rejected IN VALIDATION and never reaches the service.
 //
-// Şema testi argümanın yokluğunu bildirir; bu test yokluğun ÇALIŞMA ZAMANINDA
-// ne anlama geldiğini gösterir: istek reddedilir, katalog okunmaz.
-func TestSorguSatisKanaliIsteyemez(t *testing.T) {
+// The schema test states the absence of the argument; this test shows what that
+// absence means AT RUN TIME: the request is rejected, the catalog is not read.
+func TestQueryCannotAskForASalesChannel(t *testing.T) {
 	t.Parallel()
 
-	svc := &sahteVitrin{}
-	yanit, _ := sorgula(t, kimlikli([]string{"sc_1"}), svc,
-		`{ products(salesChannelIds: ["sc_baskasi"]) { count } }`)
+	svc := &fakeStorefront{}
+	response, _ := runQuery(t, identityWith([]string{"sc_1"}), svc,
+		`{ products(salesChannelIds: ["sc_other"]) { count } }`)
 
-	require.NotEmpty(t, yanit.Errors, "bilinmeyen argüman reddedilmeli")
-	assert.Contains(t, yanit.Errors[0].Message, "salesChannelIds")
-	assert.Empty(t, svc.listeOlculeri, "reddedilen sorgu servise hiç ulaşmamalı")
+	require.NotEmpty(t, response.Errors, "an unknown argument must be rejected")
+	assert.Contains(t, response.Errors[0].Message, "salesChannelIds")
+	assert.Empty(t, svc.listOptions, "a rejected query must never reach the service")
 }
 
-// TestListeArgumanlariServiseGecer okunan argümanların ölçütlere aynen
-// geçtiğini doğrular.
-func TestListeArgumanlariServiseGecer(t *testing.T) {
+// TestListArgumentsReachTheService verifies that the arguments read are passed
+// into the options as they are.
+func TestListArgumentsReachTheService(t *testing.T) {
 	t.Parallel()
 
-	svc := &sahteVitrin{}
-	yanit, _ := sorgula(t, kimlikli([]string{"sc_1"}), svc,
-		`{ products(limit: 5, offset: 10, q: "tişört", collectionId: "pcol_1") { count } }`)
+	svc := &fakeStorefront{}
+	response, _ := runQuery(t, identityWith([]string{"sc_1"}), svc,
+		`{ products(limit: 5, offset: 10, q: "t-shirt", collectionId: "pcol_1") { count } }`)
 
-	require.Empty(t, yanit.Errors)
+	require.Empty(t, response.Errors)
 
-	opts := svc.sonListe(t)
+	opts := svc.lastList(t)
 	assert.Equal(t, 5, opts.Limit)
 	assert.Equal(t, 10, opts.Offset)
 	require.NotNil(t, opts.Search)
-	assert.Equal(t, "tişört", *opts.Search)
+	assert.Equal(t, "t-shirt", *opts.Search)
 	require.NotNil(t, opts.CollectionID)
 	assert.Equal(t, "pcol_1", *opts.CollectionID)
 }
 
-// TestMetinArgumanlariKirpilarakGecer dolu bir argümanın kırpılmış hâlde
-// geçtiğini doğrular.
+// TestTextArgumentsAreTrimmedOnTheWay verifies that a non-empty argument
+// arrives trimmed.
 //
-// Boş değerin nil'e dönmesi ŞEMAYI gezen bir testte sabitlenir (bkz.
-// schema_test.go, TestBosMetinArgumaniSuzgecKurmaz); burada iddia edilen şey
-// kırpmanın kendisidir: " tişört " ile "tişört" aynı aramadır ve ikisini ayrı
-// sorgu saymak, sonucu istemcinin göremediği bir boşluğa bağlardı.
-func TestMetinArgumanlariKirpilarakGecer(t *testing.T) {
+// That an empty value turns into nil is pinned by a test that walks the SCHEMA
+// (see schema_test.go, TestEmptyTextArgumentBuildsNoFilter); what is claimed
+// here is the trimming itself: " t-shirt " and "t-shirt" are the same search,
+// and counting the two as separate queries would tie the result to a space the
+// client cannot see.
+func TestTextArgumentsAreTrimmedOnTheWay(t *testing.T) {
 	t.Parallel()
 
-	svc := &sahteVitrin{}
-	yanit, _ := sorgula(t, kimlikli([]string{"sc_1"}), svc,
-		`{ products(q: "  tişört  ") { count } }`)
+	svc := &fakeStorefront{}
+	response, _ := runQuery(t, identityWith([]string{"sc_1"}), svc,
+		`{ products(q: "  t-shirt  ") { count } }`)
 
-	require.Empty(t, yanit.Errors)
+	require.Empty(t, response.Errors)
 
-	opts := svc.sonListe(t)
+	opts := svc.lastList(t)
 	require.NotNil(t, opts.Search)
-	assert.Equal(t, "tişört", *opts.Search)
+	assert.Equal(t, "t-shirt", *opts.Search)
 }
 
-// TestSayfalamaVarsayilaniServiseBirakilir verilmeyen limit'in 0 olarak
-// geçtiğini doğrular.
+// TestPagingDefaultIsLeftToTheService verifies that a limit which is not given
+// arrives as 0.
 //
-// 0, servis için "varsayılanı uygula" demektir. Resolver'ın kendi varsayılanını
-// seçmesi, aynı kuralın ikinci bir tanımı olurdu ve iki okuma yüzeyi farklı
-// sayfa boyutları döndürmeye başlardı.
-func TestSayfalamaVarsayilaniServiseBirakilir(t *testing.T) {
+// For the service 0 means "apply the default". The resolver picking its own
+// default would be a second definition of the same rule and the two read
+// surfaces would start returning different page sizes.
+func TestPagingDefaultIsLeftToTheService(t *testing.T) {
 	t.Parallel()
 
-	svc := &sahteVitrin{}
-	yanit, _ := sorgula(t, kimlikli([]string{"sc_1"}), svc, `{ products { count } }`)
+	svc := &fakeStorefront{}
+	response, _ := runQuery(t, identityWith([]string{"sc_1"}), svc, `{ products { count } }`)
 
-	require.Empty(t, yanit.Errors)
+	require.Empty(t, response.Errors)
 
-	opts := svc.sonListe(t)
+	opts := svc.lastList(t)
 	assert.Zero(t, opts.Limit)
 	assert.Zero(t, opts.Offset)
 }
 
-// TestTekilSorguIkiSeciciyiReddeder id ile handle'ın birlikte verilemeyeceğini
-// doğrular.
+// TestSingleQueryRejectsTwoSelectors verifies that id and handle cannot be
+// given together.
 //
-// Birine öncelik vermek, çelişkili bir isteği sessizce yorumlamak olurdu:
-// istemci handle'ı sorduğunu sanırken kimliğin yanıtını alırdı.
-func TestTekilSorguIkiSeciciyiReddeder(t *testing.T) {
+// Giving one of them priority would mean silently interpreting a contradictory
+// request: the client would think it asked for the handle and would get the
+// identity's answer.
+func TestSingleQueryRejectsTwoSelectors(t *testing.T) {
 	t.Parallel()
 
-	svc := &sahteVitrin{}
-	yanit, _ := sorgula(t, kimlikli([]string{"sc_1"}), svc,
-		`{ product(id: "prod_1", handle: "tisort") { id } }`)
+	svc := &fakeStorefront{}
+	response, _ := runQuery(t, identityWith([]string{"sc_1"}), svc,
+		`{ product(id: "prod_1", handle: "t-shirt") { id } }`)
 
-	require.NotEmpty(t, yanit.Errors)
-	assert.Equal(t, "product_graphql_bad_argument", yanit.Errors[0].Extensions["code"])
-	assert.Empty(t, svc.tekilSecici, "geçersiz istek servise ulaşmamalı")
+	require.NotEmpty(t, response.Errors)
+	assert.Equal(t, "product_graphql_bad_argument", response.Errors[0].Extensions["code"])
+	assert.Empty(t, svc.singleSelectors, "an invalid request must not reach the service")
 }
 
-// TestTekilSorguSeciciSizReddeder id de handle da verilmeyen sorgunun
-// reddedildiğini doğrular.
-func TestTekilSorguSeciciSizReddeder(t *testing.T) {
+// TestSingleQueryRejectsAMissingSelector verifies that a query giving neither
+// id nor handle is rejected.
+func TestSingleQueryRejectsAMissingSelector(t *testing.T) {
 	t.Parallel()
 
-	svc := &sahteVitrin{}
-	yanit, _ := sorgula(t, kimlikli([]string{"sc_1"}), svc, `{ product { id } }`)
+	svc := &fakeStorefront{}
+	response, _ := runQuery(t, identityWith([]string{"sc_1"}), svc, `{ product { id } }`)
 
-	require.NotEmpty(t, yanit.Errors)
-	assert.Equal(t, "product_graphql_bad_argument", yanit.Errors[0].Extensions["code"])
-	assert.Empty(t, svc.tekilSecici)
+	require.NotEmpty(t, response.Errors)
+	assert.Equal(t, "product_graphql_bad_argument", response.Errors[0].Extensions["code"])
+	assert.Empty(t, svc.singleSelectors)
 }
 
-// TestFiyatVeStokGevsekTipliDoner başka modüllerin kayıtlarının şemada JSON
-// olarak taşındığını doğrular.
+// TestPriceAndInventoryAreReturnedLooselyTyped verifies that other modules'
+// records are carried in the schema as JSON.
 //
-// Alanları tiplemek pricing/inventory şemasını bu modüle kopyalamak olurdu;
-// kayıt buraya zaten gevşek tipli geliyor (bkz. service.StoreVariant).
-func TestFiyatVeStokGevsekTipliDoner(t *testing.T) {
+// Typing their fields would mean copying the pricing/inventory schema into this
+// module; the record already arrives here loosely typed (see
+// service.StoreVariant).
+func TestPriceAndInventoryAreReturnedLooselyTyped(t *testing.T) {
 	t.Parallel()
 
-	svc := &sahteVitrin{tekil: service.StoreProduct{
-		Product: models.Product{ID: "prod_1", Handle: "tisort"},
+	svc := &fakeStorefront{single: service.StoreProduct{
+		Product: models.Product{ID: "prod_1", Handle: "t-shirt"},
 		Variants: []service.StoreVariant{{
 			Variant:       models.Variant{ID: "var_1", ProductID: "prod_1", Title: "S"},
 			PriceSet:      query.Record{"id": "pset_1", "amount": 1990},
@@ -377,182 +386,190 @@ func TestFiyatVeStokGevsekTipliDoner(t *testing.T) {
 		}},
 	}}
 
-	yanit, _ := sorgula(t, kimlikli([]string{"sc_1"}), svc,
+	response, _ := runQuery(t, identityWith([]string{"sc_1"}), svc,
 		`{ product(id: "prod_1") { variants { id priceSet inventoryItem } } }`)
 
-	require.Empty(t, yanit.Errors)
+	require.Empty(t, response.Errors)
 
-	varyantlar := urunVaryantlari(t, yanit)
-	require.Len(t, varyantlar, 1)
+	variants := productVariants(t, response)
+	require.Len(t, variants, 1)
 
-	varyant, ok := varyantlar[0].(map[string]any)
+	variant, ok := variants[0].(map[string]any)
 	require.True(t, ok)
 
-	fiyat, ok := varyant["priceSet"].(map[string]any)
-	require.True(t, ok, "fiyat seti nesne olarak dönmeli")
-	assert.InDelta(t, float64(1990), fiyat["amount"], 0)
+	price, ok := variant["priceSet"].(map[string]any)
+	require.True(t, ok, "the price set must come back as an object")
+	assert.InDelta(t, float64(1990), price["amount"], 0)
 
-	stok, ok := varyant["inventoryItem"].(map[string]any)
+	inventory, ok := variant["inventoryItem"].(map[string]any)
 	require.True(t, ok)
-	assert.Equal(t, "iitem_1", stok["id"])
+	assert.Equal(t, "iitem_1", inventory["id"])
 }
 
-// TestFiyatSaglayicisiYokkenNullDoner eksik kaydın null döndüğünü doğrular.
+// TestMissingPriceProviderReturnsNull verifies that a missing record comes back
+// as null.
 //
-// pricing bu kurulumda kayıtlı değilse servis alanı hiç doldurmaz. Şemanın
-// alanı null'lanabilir olmasının sebebi budur: tipli ve zorunlu bir alan,
-// "fiyatı sıfır olan ürün" uydurmak zorunda kalırdı — yanlış fiyat
-// göstermektense fiyatı hiç göstermemek yeğdir.
-func TestFiyatSaglayicisiYokkenNullDoner(t *testing.T) {
+// If pricing is not registered in this deployment the service never fills the
+// field in. That is why the schema's field is nullable: a typed and required
+// field would have to invent a "product with a price of zero" — showing no
+// price at all is better than showing a wrong one.
+func TestMissingPriceProviderReturnsNull(t *testing.T) {
 	t.Parallel()
 
-	svc := &sahteVitrin{tekil: service.StoreProduct{
+	svc := &fakeStorefront{single: service.StoreProduct{
 		Product:  models.Product{ID: "prod_1"},
 		Variants: []service.StoreVariant{{Variant: models.Variant{ID: "var_1"}}},
 	}}
 
-	yanit, _ := sorgula(t, kimlikli([]string{"sc_1"}), svc,
+	response, _ := runQuery(t, identityWith([]string{"sc_1"}), svc,
 		`{ product(id: "prod_1") { variants { priceSet } } }`)
 
-	require.Empty(t, yanit.Errors)
+	require.Empty(t, response.Errors)
 
-	varyant, ok := urunVaryantlari(t, yanit)[0].(map[string]any)
+	variant, ok := productVariants(t, response)[0].(map[string]any)
 	require.True(t, ok)
-	assert.Nil(t, varyant["priceSet"])
+	assert.Nil(t, variant["priceSet"])
 }
 
-// TestServisHatasiTipiyleDoner servis hatasının sınıfını ve kodunu koruduğunu
-// doğrular.
-func TestServisHatasiTipiyleDoner(t *testing.T) {
+// TestServiceErrorKeepsItsType verifies that a service error preserves its kind
+// and its code.
+func TestServiceErrorKeepsItsType(t *testing.T) {
 	t.Parallel()
 
-	svc := &sahteVitrin{hata: coreerrors.NotFound("product_not_found", "ürün bulunamadı: prod_yok")}
-	yanit, _ := sorgula(t, kimlikli([]string{"sc_1"}), svc, `{ product(id: "prod_yok") { id } }`)
+	svc := &fakeStorefront{
+		err: coreerrors.NotFound("product_not_found", "product not found: prod_missing"),
+	}
+	response, _ := runQuery(t, identityWith([]string{"sc_1"}), svc,
+		`{ product(id: "prod_missing") { id } }`)
 
-	require.NotEmpty(t, yanit.Errors)
-	assert.Equal(t, "ürün bulunamadı: prod_yok", yanit.Errors[0].Message)
-	assert.Equal(t, "product_not_found", yanit.Errors[0].Extensions["code"])
-	assert.Nil(t, yanit.Data["product"], "bulunamayan ürün null döner")
+	require.NotEmpty(t, response.Errors)
+	assert.Equal(t, "product not found: prod_missing", response.Errors[0].Message)
+	assert.Equal(t, "product_not_found", response.Errors[0].Extensions["code"])
+	assert.Nil(t, response.Data["product"], "a product that is not found comes back as null")
 }
 
-// urunVaryantlari tekil sorgu yanıtındaki varyant dizisini döner.
-func urunVaryantlari(t *testing.T, yanit graphqlYaniti) []any {
+// productVariants returns the variant array in the response of a single-item
+// query.
+func productVariants(t *testing.T, response graphQLResponse) []any {
 	t.Helper()
 
-	urun, ok := yanit.Data["product"].(map[string]any)
-	require.True(t, ok, "yanıtta ürün olmalı: %#v", yanit.Data)
+	product, ok := response.Data["product"].(map[string]any)
+	require.True(t, ok, "the response must carry a product: %#v", response.Data)
 
-	varyantlar, ok := urun["variants"].([]any)
-	require.True(t, ok, "üründe varyant dizisi olmalı: %#v", urun)
+	variants, ok := product["variants"].([]any)
+	require.True(t, ok, "the product must carry a variant array: %#v", product)
 
-	return varyantlar
+	return variants
 }
 
-// ptr verilen değerin adresini döner.
+// ptr returns the address of the given value.
 //
-// Zarftaki sayaç işaretçidir (nil "sayılmadı" demektir, bkz.
-// service.ListResult) ve sahte vitrinin döndürdüğü sabitler bu yüzden
-// adreslenmek zorundadır.
+// The count in the envelope is a pointer (nil means "it was not counted", see
+// service.ListResult) and that is why the constants the fake storefront returns
+// have to be addressable.
 func ptr[T any](v T) *T { return &v }
 
-// TestSecilmeyenSayacHesaplanmaz seçim kümesinin İŞ MİKTARINI belirlediğini
-// doğrular.
+// TestUnselectedCountIsNotComputed verifies that the selection set determines
+// the AMOUNT OF WORK.
 //
-// Kapanan açık şuydu: "count" GraphQL'de bir alandır ve seçilmediğinde yanıtta
-// zaten görünmezdi, ama sorgu yine de koşuyordu. gobit_load'da ölçüldü —
-// 52.004 ürünlük katalogda sayaç 64,07 ms, isteğin geri kalanı 0,65 ms; yani
-// istemcinin HİÇ İSTEMEDİĞİ bir alan isteğin %99'unu yazıyordu.
+// The gap that was closed was this: "count" is a field in GraphQL and when it
+// was not selected it did not show up in the response anyway, but the query was
+// still running. Measured in gobit_load — on a catalog of 52,004 products the
+// count took 64.07 ms and the rest of the request 0.65 ms; that is, a field the
+// client NEVER ASKED FOR was writing 99% of the request.
 //
-// İddia yanıta değil SERVİSE geçirilen ölçüte bakar: yanıtta "count" zaten
-// yoktur (istemci seçmedi) ve ona bakan bir test, sayaç hesaplanmaya devam
-// etse bile geçerdi.
-func TestSecilmeyenSayacHesaplanmaz(t *testing.T) {
+// The claim looks not at the response but at the options passed to the SERVICE:
+// "count" is not in the response anyway (the client did not select it) and a
+// test looking at that would pass even if the count were still being computed.
+func TestUnselectedCountIsNotComputed(t *testing.T) {
 	t.Parallel()
 
-	svc := &sahteVitrin{}
-	yanit, _ := sorgula(t, kimlikli([]string{"sc_1"}), svc,
+	svc := &fakeStorefront{}
+	response, _ := runQuery(t, identityWith([]string{"sc_1"}), svc,
 		`{ products { items { id } } }`)
 
-	require.Empty(t, yanit.Errors)
-	assert.True(t, svc.sonListe(t).SkipCount,
-		"seçilmeyen count için sayaç sorgusu istenmemeli")
+	require.Empty(t, response.Errors)
+	assert.True(t, svc.lastList(t).SkipCount,
+		"no count query may be asked for when count is not selected")
 }
 
-// TestSecilenSayacHesaplanir alanın seçildiği durumda sayacın hâlâ
-// istendiğini ve DOLU döndüğünü doğrular.
+// TestSelectedCountIsComputed verifies that when the field IS selected the
+// count is still asked for and comes back FILLED IN.
 //
-// [TestSecilmeyenSayacHesaplanmaz] tek başına, sayacı hiçbir zaman istemeyen
-// bozuk bir uygulamayla da geçerdi. İki testin birlikte söylediği şey
-// koşulun kendisidir: iş, alan istendiğinde yapılır.
+// [TestUnselectedCountIsNotComputed] on its own would also pass with a broken
+// implementation that never asks for the count. What the two tests say together
+// is the condition itself: the work is done when the field is asked for.
 //
-// Şemadaki "count: Int!" nil kabul etmez, yani bu test aynı zamanda sözleşme
-// ihlalinin kanıtıdır: sayaç seçilip de hesaplanmasaydı yanıt alan hatasıyla
-// dönerdi.
-func TestSecilenSayacHesaplanir(t *testing.T) {
+// The "count: Int!" in the schema does not accept nil, so this test is at the
+// same time the proof of a contract violation: had the count been selected and
+// not computed, the response would come back with a field error.
+func TestSelectedCountIsComputed(t *testing.T) {
 	t.Parallel()
 
-	svc := &sahteVitrin{liste: service.ListResult[service.StoreProduct]{
+	svc := &fakeStorefront{list: service.ListResult[service.StoreProduct]{
 		Items: []service.StoreProduct{{Product: models.Product{ID: "prod_1"}}},
 		Count: ptr(42),
 	}}
 
-	yanit, _ := sorgula(t, kimlikli([]string{"sc_1"}), svc,
+	response, _ := runQuery(t, identityWith([]string{"sc_1"}), svc,
 		`{ products { count items { id } } }`)
 
-	require.Empty(t, yanit.Errors)
-	assert.False(t, svc.sonListe(t).SkipCount, "seçilen count hesaplanmalı")
+	require.Empty(t, response.Errors)
+	assert.False(t, svc.lastList(t).SkipCount, "a selected count must be computed")
 
-	liste, ok := yanit.Data["products"].(map[string]any)
+	list, ok := response.Data["products"].(map[string]any)
 	require.True(t, ok)
-	assert.InDelta(t, float64(42), liste["count"], 0)
+	assert.InDelta(t, float64(42), list["count"], 0)
 }
 
-// TestSkipEdilenSayacHesaplanmaz kararın @skip yönergesini de dinlediğini
-// doğrular.
+// TestSkippedCountIsNotComputed verifies that the decision also listens to the
+// @skip directive.
 //
-// Yönerge sunucu tarafında UYGULANIR: `count @skip(if: true)` yazan istemci o
-// alanı yanıtta göremez, dolayısıyla onun için iş yapmak da yine boşa iştir.
-// Kendi seçim kümesini elle gezen bir uygulama bu durumu kaçırırdı; gqlgen'in
-// FieldRequested'ı kaçırmıyor ve bu test o farkı sabitler.
-func TestSkipEdilenSayacHesaplanmaz(t *testing.T) {
+// The directive is APPLIED on the server side: a client writing
+// `count @skip(if: true)` cannot see that field in the response, so doing work
+// for it is wasted work as well. An implementation that walks its own selection
+// set by hand would miss this case; gqlgen's FieldRequested does not, and this
+// test pins that difference.
+func TestSkippedCountIsNotComputed(t *testing.T) {
 	t.Parallel()
 
-	svc := &sahteVitrin{}
-	yanit, _ := sorgula(t, kimlikli([]string{"sc_1"}), svc,
+	svc := &fakeStorefront{}
+	response, _ := runQuery(t, identityWith([]string{"sc_1"}), svc,
 		`{ products { count @skip(if: true) items { id } } }`)
 
-	require.Empty(t, yanit.Errors)
-	assert.True(t, svc.sonListe(t).SkipCount,
-		"@skip ile atlanan alan için sayaç sorgusu istenmemeli")
+	require.Empty(t, response.Errors)
+	assert.True(t, svc.lastList(t).SkipCount,
+		"no count query may be asked for a field skipped with @skip")
 
-	liste, ok := yanit.Data["products"].(map[string]any)
+	list, ok := response.Data["products"].(map[string]any)
 	require.True(t, ok)
-	assert.NotContains(t, liste, "count", "atlanan alan yanıtta da olmamalı")
+	assert.NotContains(t, list, "count", "a skipped field must not be in the response either")
 }
 
-// TestFragmandakiSayacHesaplanir alanın bir FRAGMAN üzerinden istenmesinin de
-// sayılmasını sağladığını doğrular.
+// TestCountInsideAFragmentIsComputed verifies that asking for the field through
+// a FRAGMENT also makes it count as selected.
 //
-// Üretilmiş istemciler alanları neredeyse her zaman fragman içinde ister.
-// Yalnızca doğrudan seçimlere bakan bir uygulama burada sessizce yanlış cevap
-// verirdi: sayaç hiç hesaplanmaz, şema "Int!" dediği için de yanıt alan
-// hatasıyla düşerdi — yani üretilmiş her istemci kırılırdı.
-func TestFragmandakiSayacHesaplanir(t *testing.T) {
+// Generated clients ask for fields inside a fragment almost every time. An
+// implementation looking only at direct selections would silently give the
+// wrong answer here: the count would never be computed and, because the schema
+// says "Int!", the response would fail with a field error — that is, every
+// generated client would break.
+func TestCountInsideAFragmentIsComputed(t *testing.T) {
 	t.Parallel()
 
-	svc := &sahteVitrin{liste: service.ListResult[service.StoreProduct]{
+	svc := &fakeStorefront{list: service.ListResult[service.StoreProduct]{
 		Items: []service.StoreProduct{{Product: models.Product{ID: "prod_1"}}},
 		Count: ptr(3),
 	}}
 
-	yanit, _ := sorgula(t, kimlikli([]string{"sc_1"}), svc,
-		`{ products { ...sayfa items { id } } } fragment sayfa on ProductList { count }`)
+	response, _ := runQuery(t, identityWith([]string{"sc_1"}), svc,
+		`{ products { ...page items { id } } } fragment page on ProductList { count }`)
 
-	require.Empty(t, yanit.Errors, "%#v", yanit.Errors)
-	assert.False(t, svc.sonListe(t).SkipCount,
-		"fragman içinden istenen alan da SEÇİLMİŞTİR")
+	require.Empty(t, response.Errors, "%#v", response.Errors)
+	assert.False(t, svc.lastList(t).SkipCount,
+		"a field asked for from inside a fragment IS SELECTED too")
 
-	liste, ok := yanit.Data["products"].(map[string]any)
+	list, ok := response.Data["products"].(map[string]any)
 	require.True(t, ok)
-	assert.InDelta(t, float64(3), liste["count"], 0)
+	assert.InDelta(t, float64(3), list["count"], 0)
 }

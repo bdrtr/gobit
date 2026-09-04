@@ -1,90 +1,93 @@
-# gobit vitrin (storefront) GraphQL şeması.
+# The gobit storefront GraphQL schema.
 #
-# Bu dosya SÖZLEŞMEDİR ve elle yazılır; graph/generated.go ondan üretilir
-# (make gen). OpenAPI belgesi gibi İNCELENEBİLİR bir artefakttır: bir alanın
-# eklenmesi ya da çıkarılması diff'te görünür.
+# This file is the CONTRACT and is written by hand; graph/generated.go is
+# produced from it (make gen). Like the OpenAPI document it is an INSPECTABLE
+# artifact: adding or removing a field shows up in the diff.
 #
-# Şemadaki her alanın karşılığı service.StoreProduct ağacında VARDIR ve bu
-# graph/schema_test.go ile denetlenir. Ters yön kasten serbesttir: servisin
-# döndüğü her alanı şemaya koymak zorunda değiliz, ama şemaya koyduğumuz her
-# alan servisten gelmek ZORUNDADIR — aksi hâlde istemciye hiç dolmayacak bir
-# alan vaat edilmiş olur.
+# Every field in the schema HAS a counterpart in the service.StoreProduct tree
+# and that is checked by graph/schema_test.go. The reverse direction is
+# deliberately free: we do not have to put every field the service returns into
+# the schema, but every field we do put into the schema MUST come from the
+# service — otherwise the client is promised a field that will never be filled.
 #
-# YAZMA YOKTUR. Mutation tipi bilinçli olarak tanımlanmadı: bu yüzey Faz
-# 10'da yalnızca OKUMA için açıldı ve yazma akışları (sepet, sipariş, ödeme)
-# idempotency başlığı, hata sınıfı → HTTP kodu eşlemesi ve olay yayımı gibi
-# REST tarafında çözülmüş sözleşmelere dayanır. Boş bir Mutation tipi koymak,
-# yarın birinin oraya yazma ekleyeceğini varsaymak olurdu.
+# THERE IS NO WRITING. The Mutation type was deliberately not defined: this
+# surface was opened for READING only in Phase 10, and the write flows (cart,
+# order, payment) rest on contracts already solved on the REST side, such as the
+# idempotency header, the error class -> HTTP code mapping and event publishing.
+# Putting an empty Mutation type here would mean assuming that someone will add
+# writing to it tomorrow.
 
-"Zaman damgası; RFC 3339 (UTC)."
+"Timestamp; RFC 3339 (UTC)."
 scalar Time
 
 """
-Şeması BU MODÜLE AİT OLMAYAN, gevşek tipli JSON nesnesi.
+A loosely typed JSON object whose schema DOES NOT BELONG TO THIS MODULE.
 
-Yalnızca iki yerde kullanılır ve ikisi de bilinçlidir: modülün kendi serbest
-alanı (metadata) ve BAŞKA modüllerin kayıtları (priceSet, inventoryItem).
-Gerekçe için bkz. Variant.priceSet.
+It is used in only two places and both are deliberate: the module's own free
+area (metadata) and the records of OTHER modules (priceSet, inventoryItem).
+For the rationale see Variant.priceSet.
 """
 scalar JSON
 
 """
-Vitrinin okuma yüzeyi.
+The storefront's read surface.
 
-Sorguların gördüğü katalog, isteğin publishable anahtarının bağlı olduğu
-SATIŞ KANALLARIYLA sınırlıdır. Kanal bir sorgu argümanı DEĞİLDİR ve
-olmayacaktır: argüman olsaydı süzgeç bir yetkilendirme olmaktan çıkıp
-görüntüleme tercihine dönüşür, elindeki herhangi bir anahtarla gelen istemci
-başka bir vitrinin katalogunu okuyabilirdi.
+The catalog the queries see is limited to the SALES CHANNELS the request's
+publishable key is bound to. The channel IS NOT a query argument and will not
+be one: had it been an argument, the filter would stop being an authorization
+and turn into a display preference, and a client arriving with any key it
+happened to hold could read another storefront's catalog.
 """
 type Query {
   """
-  Yayındaki ürünleri fiyat ve stok bilgisiyle listeler.
+  Lists the published products with their price and inventory information.
 
-  Argümanlar service.StoreListOptions ile BİREBİR örtüşür; servisin okumadığı
-  bir argüman burada YOKTUR (bkz. schema_test.go). Sıralama argümanı da bu
-  yüzden yoktur: servis bugün sıralamayı dışarıdan almıyor.
+  The arguments overlap ONE TO ONE with service.StoreListOptions; an argument
+  the service does not read is NOT here (see schema_test.go). That is also why
+  there is no sort argument: the service does not take sorting from outside
+  today.
 
-  limit verilmezse servisin varsayılanı, üst sınırı aşarsa servisin tavanı
-  uygulanır; negatif değer hatadır. Kural servisin kendisindedir ve burada
-  TEKRARLANMAZ.
+  If limit is not given the service's default applies, and if it exceeds the
+  upper bound the service's ceiling applies; a negative value is an error. The
+  rule lives in the service itself and IS NOT REPEATED here.
   """
   products(limit: Int, offset: Int, q: String, collectionId: ID): ProductList!
 
   """
-  Tek bir vitrin ürününü kimliğe ya da handle'a göre döner.
+  Returns a single storefront product by identity or by handle.
 
-  İkisinden TAM OLARAK BİRİ verilmelidir; ikisi birden ya da hiçbiri
-  verilmezse istek doğrulama hatasıyla reddedilir.
+  EXACTLY ONE of the two must be given; if both or neither are given the
+  request is rejected with a validation error.
 
-  Yayında olmayan, silinmiş ya da isteğin kanallarında görünmeyen ürün için
-  sonuç null'dur ve hata "bulunamadı" sınıfındadır: başka bir kanalda satılan
-  bir ürünün VARLIĞINI farklı bir hatayla ele vermek gizlemenin kendisini
-  delerdi.
+  For a product that is not published, is deleted or is not visible in the
+  request's channels the result is null and the error is of the "not found"
+  class: giving away the EXISTENCE of a product sold in another channel with a
+  different error would pierce the hiding itself.
   """
   product(id: ID, handle: String): Product
 }
 
-"Sayfalanmış ürün listesi; REST vitrin listesiyle aynı zarfı taşır."
+"A paginated product list; it carries the same envelope as the REST storefront list."
 type ProductList {
   items: [Product!]!
-  "Süzgece uyan TOPLAM kayıt sayısı (sayfadaki değil)."
+  "The TOTAL number of records matching the filter (not the ones on the page)."
   count: Int!
   offset: Int!
-  "Uygulanan sayfa boyutu; istenen değil (servis varsayılanı/tavanı uygulanmış olabilir)."
+  "The page size applied; not the one requested (the service's default/ceiling may have been applied)."
   limit: Int!
 }
 
 """
-Vitrindeki ürün.
+A product in the storefront.
 
-Yalnızca YAYINDAKİ ürünler döner; bu yüzden "status" ve "deletedAt" alanları
-şemada YOKTUR — biri her zaman "published", öteki her zaman null olurdu ve
-istemciye üzerine karar verilebilecek bir bilgi taşımazdı.
+Only PUBLISHED products are returned; that is why the "status" and "deletedAt"
+fields are NOT in the schema — one of them would always be "published" and the
+other always null, and they would carry no information the client could decide
+anything on.
 """
 type Product {
   id: ID!
-  "Vitrin adresinde geçen okunabilir kimlik."
+  "The readable identity that appears in the storefront address."
   handle: String!
   title: String!
   subtitle: String
@@ -102,7 +105,7 @@ type Product {
   metadata: JSON
   createdAt: Time!
   updatedAt: Time!
-  "Satılabilir birimler. Fiyat ve stok BURADADIR, ürün düzeyinde değil."
+  "Sellable units. The price and the inventory are HERE, not at the product level."
   variants: [Variant!]!
   options: [Option!]!
   images: [Image!]!
@@ -110,7 +113,7 @@ type Product {
   categories: [Category!]!
 }
 
-"Satılabilir birim: sepete giren, stoğu tutulan ve fiyatlanan şey varyanttır."
+"The sellable unit: the thing that enters the cart, is kept in stock and is priced is the variant."
 type Variant {
   id: ID!
   productId: ID!
@@ -126,37 +129,38 @@ type Variant {
   metadata: JSON
   createdAt: Time!
   updatedAt: Time!
-  "Varyantı seçenek uzayında konumlandıran değerler (örn. Beden: S)."
+  "The values that place the variant in the option space (e.g. Size: S)."
   optionValues: [OptionValue!]!
 
   """
-  Varyantın fiyat seti — PRICING modülünün kaydıdır.
+  The variant's price set — it is the PRICING module's record.
 
-  Tipsizdir ve bu VERİLMİŞ bir karardır. Alanları burada tiplemek, pricing'in
-  şemasını product'ın şemasına KOPYALAMAK olurdu: iki şema aynı anda
-  değişmek zorunda kalır, biri unutulduğunda vitrin ya var olmayan bir alanı
-  ister ya da var olanı gizler. Kayıt bu modüle Query katmanından gevşek
-  tipli geldiği için (bkz. service.StoreVariant) buradaki tipleme zaten bir
-  DÖNÜŞTÜRME değil, bir İDDİA olurdu.
+  It is untyped and that is a DECISION THAT WAS MADE. Typing its fields here
+  would mean COPYING pricing's schema into product's schema: the two schemas
+  would have to change at the same time, and when one is forgotten the
+  storefront either asks for a field that does not exist or hides one that
+  does. Because the record arrives in this module loosely typed from the Query
+  layer (see service.StoreVariant), typing it here would not be a CONVERSION
+  but a CLAIM.
 
-  Bedeli açıktır ve kabul edilmiştir: istemci alan adlarını şemadan
-  öğrenemez, pricing'in belgesine bakar. Karşılığında iki şey kazanılır —
-  pricing bir alan eklediğinde vitrin şeması değişmeden istemciye ulaşır ve
-  pricing kurulu DEĞİLSE alan null döner. Tipli bir alan bu durumda "fiyatı
-  sıfır olan ürün" uydurmak zorunda kalırdı; yanlış fiyat göstermektense
-  fiyatı hiç göstermemek yeğdir.
+  The cost is clear and has been accepted: the client cannot learn the field
+  names from the schema, it looks at pricing's documentation. In return two
+  things are gained — when pricing adds a field it reaches the client without
+  the storefront schema changing, and if pricing is NOT installed the field
+  returns null. A typed field would in that case have to invent a "product with
+  a price of zero"; showing no price at all is better than showing a wrong one.
   """
   priceSet: JSON
 
   """
-  Varyantın stok kalemi — INVENTORY modülünün kaydıdır.
+  The variant's inventory item — it is the INVENTORY module's record.
 
-  Tipsizliğin gerekçesi priceSet ile aynıdır.
+  The rationale for it being untyped is the same as for priceSet.
   """
   inventoryItem: JSON
 }
 
-"Ürünün seçenek ekseni (örn. Beden)."
+"The product's option axis (e.g. Size)."
 type Option {
   id: ID!
   productId: ID!
@@ -165,22 +169,23 @@ type Option {
   values: [OptionValue!]!
 }
 
-"Bir seçeneğin tek değeri (örn. S)."
+"A single value of an option (e.g. S)."
 type OptionValue {
   id: ID!
   optionId: ID!
   value: String!
   rank: Int!
   """
-  Değerin ait olduğu seçeneğin başlığı.
+  The title of the option the value belongs to.
 
-  Yalnızca varyantın seçenek değerlerinde doludur ("S" tek başına anlamsızdır,
-  "Beden: S" anlamlıdır); Option.values altında BOŞ DİZEDİR.
+  It is filled in only on a variant's option values ("S" on its own is
+  meaningless, "Size: S" is meaningful); under Option.values it is an EMPTY
+  STRING.
   """
   optionTitle: String!
 }
 
-"Ürün görseli; dosyanın kendisi bu modülde durmaz, yalnızca adresi saklanır."
+"A product image; the file itself does not live in this module, only its address is stored."
 type Image {
   id: ID!
   productId: ID!
@@ -189,13 +194,13 @@ type Image {
   metadata: JSON
 }
 
-"Ürüne iliştirilen serbest etiket."
+"A free-form tag attached to the product."
 type Tag {
   id: ID!
   value: String!
 }
 
-"Ürünleri ağaç biçiminde gruplayan kategori."
+"A category that groups products in a tree shape."
 type Category {
   id: ID!
   name: String!

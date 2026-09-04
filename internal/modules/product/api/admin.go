@@ -8,10 +8,11 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/product/service"
 )
 
-// createProductRequest yeni ürün isteğinin gövdesidir.
+// createProductRequest is the body of a new-product request.
 //
-// Wire biçimi servis girdisinden AYRI tutulur: JSON alan adları dış
-// sözleşmedir ve servisin iç alan adlarıyla birlikte sürüklenmemelidir.
+// The wire shape is kept SEPARATE from the service input: JSON field names are
+// the outer contract and must not be dragged along with the service's internal
+// field names.
 type createProductRequest struct {
 	Handle        string                 `json:"handle"`
 	Title         string                 `json:"title"`
@@ -36,7 +37,7 @@ type createProductRequest struct {
 	CategoryIDs   []string               `json:"category_ids"`
 }
 
-// toInput istek gövdesini servis girdisine çevirir.
+// toInput converts the request body into the service input.
 func (r createProductRequest) toInput() service.CreateProductInput {
 	in := service.CreateProductInput{
 		Handle:        r.Handle,
@@ -74,8 +75,8 @@ func (r createProductRequest) toInput() service.CreateProductInput {
 	return in
 }
 
-// updateProductRequest ürün güncelleme isteğinin gövdesidir; verilmeyen alan
-// değişmez.
+// updateProductRequest is the body of a product update request; a field that
+// is not given does not change.
 type updateProductRequest struct {
 	Handle        *string        `json:"handle"`
 	Title         *string        `json:"title"`
@@ -96,7 +97,7 @@ type updateProductRequest struct {
 	CategoryIDs   []string       `json:"category_ids"`
 }
 
-// toInput istek gövdesini servis girdisine çevirir.
+// toInput converts the request body into the service input.
 func (r updateProductRequest) toInput() service.UpdateProductInput {
 	in := service.UpdateProductInput{
 		Handle:        r.Handle,
@@ -123,7 +124,7 @@ func (r updateProductRequest) toInput() service.UpdateProductInput {
 	return in
 }
 
-// createVariantRequest varyant isteğinin gövdesidir.
+// createVariantRequest is the body of a variant request.
 type createVariantRequest struct {
 	Title           string            `json:"title"`
 	SKU             *string           `json:"sku"`
@@ -139,7 +140,7 @@ type createVariantRequest struct {
 	Options         map[string]string `json:"options"`
 }
 
-// toInput istek gövdesini servis girdisine çevirir.
+// toInput converts the request body into the service input.
 func (r createVariantRequest) toInput() service.CreateVariantInput {
 	return service.CreateVariantInput{
 		Title:           r.Title,
@@ -157,7 +158,7 @@ func (r createVariantRequest) toInput() service.CreateVariantInput {
 	}
 }
 
-// updateVariantRequest varyant güncelleme isteğinin gövdesidir.
+// updateVariantRequest is the body of a variant update request.
 type updateVariantRequest struct {
 	Title           *string        `json:"title"`
 	SKU             *string        `json:"sku"`
@@ -172,7 +173,7 @@ type updateVariantRequest struct {
 	OptionValueIDs  []string       `json:"option_value_ids"`
 }
 
-// toInput istek gövdesini servis girdisine çevirir.
+// toInput converts the request body into the service input.
 func (r updateVariantRequest) toInput() service.UpdateVariantInput {
 	return service.UpdateVariantInput{
 		Title:           r.Title,
@@ -189,72 +190,76 @@ func (r updateVariantRequest) toInput() service.UpdateVariantInput {
 	}
 }
 
-// createOptionRequest seçenek isteğinin gövdesidir.
+// createOptionRequest is the body of an option request.
 type createOptionRequest struct {
 	Title  string   `json:"title"`
 	Values []string `json:"values"`
 	Rank   int32    `json:"rank"`
 }
 
-// toInput istek gövdesini servis girdisine çevirir.
+// toInput converts the request body into the service input.
 func (r createOptionRequest) toInput() service.CreateOptionInput {
 	return service.CreateOptionInput{Title: r.Title, Values: r.Values, Rank: r.Rank}
 }
 
-// createImageRequest görsel isteğinin gövdesidir.
+// createImageRequest is the body of an image request.
 type createImageRequest struct {
 	URL      string         `json:"url"`
 	Rank     int32          `json:"rank"`
 	Metadata map[string]any `json:"metadata"`
 }
 
-// optionValueRequest seçeneğe değer ekleme isteğidir.
+// optionValueRequest is the request that adds a value to an option.
 type optionValueRequest struct {
 	Value string `json:"value"`
 }
 
-// linkRequest bir varyantı başka modüldeki kayda bağlama isteğidir.
+// linkRequest is the request that links a variant to a record in another
+// module.
 type linkRequest struct {
 	PriceSetID      string `json:"price_set_id"`
 	InventoryItemID string `json:"inventory_item_id"`
 }
 
-// linkSalesChannelRequest ürünü bir satış kanalına BAĞLAMA isteğidir.
+// linkSalesChannelRequest is the request that LINKS a product to a sales
+// channel.
 //
-// Adı bilinçli olarak "link" ile başlar: auth modülünde de bir
-// salesChannelRequest vardır ve o, kanalın KENDİSİNİ oluşturur. İki tip iki
-// ayrı şeydir ama Go adları aynı olsaydı yayımlanan şemada da aynı bileşen
-// adını isterlerdi ("SalesChannelRequest") ve belge üretimi çakışma hatasıyla
-// TAMAMEN düşerdi — yalnızca o uç değil, /openapi.json'ın tamamı.
+// Its name deliberately starts with "link": the auth module has a
+// salesChannelRequest as well and that one creates the channel ITSELF. The two
+// types are two separate things, but had the Go names been the same they would
+// ask for the same component name in the published schema too
+// ("SalesChannelRequest") and documentation generation would fall over
+// COMPLETELY with a collision error — not just that endpoint, the whole of
+// /openapi.json.
 //
-// Bileşen adı yayımlanan sözleşmedir; Go adlandırma tesadüfünün onu
-// belirlemesine izin verilmez.
+// The component name is the published contract; a coincidence of Go naming is
+// not allowed to decide it.
 //
-// [linkRequest]'e eklenmez: o bağlar VARYANT düzeyinde ve tekildir, bu bağ ÜRÜN
-// düzeyinde ve çoktan çoğadır. Tek bir gövde tipini paylaşmaları, bir ucun
-// diğerinin alanını sessizce yok saymasına izin verirdi.
+// It is not added to [linkRequest]: those links are at the VARIANT level and
+// singular, this link is at the PRODUCT level and many-to-many. Sharing a
+// single body type would let one endpoint silently ignore the other's field.
 type linkSalesChannelRequest struct {
 	SalesChannelID string `json:"sales_channel_id"`
 }
 
-// productSalesChannels ürünün satış kanalı bağlarının yanıt gövdesidir.
+// productSalesChannels is the response body of a product's sales channel links.
 //
-// Yanıt, tek bir bağı değil GÜNCEL LİSTEYİ döner: bağ çoktan çoğa olduğu için
-// istemcinin asıl merak ettiği şey "hangi kanallardayım" sorusunun cevabıdır ve
-// ikinci bir GET gerektirmemelidir.
+// The response returns not a single link but the CURRENT LIST: because the link
+// is many-to-many, what the client really wonders is the answer to "which
+// channels am I in", and that must not need a second GET.
 type productSalesChannels struct {
 	ProductID       string   `json:"product_id"`
 	SalesChannelIDs []string `json:"sales_channel_ids"`
 }
 
-// createCollectionRequest koleksiyon isteğinin gövdesidir.
+// createCollectionRequest is the body of a collection request.
 type createCollectionRequest struct {
 	Title    string         `json:"title"`
 	Handle   string         `json:"handle"`
 	Metadata map[string]any `json:"metadata"`
 }
 
-// createCategoryRequest kategori isteğinin gövdesidir.
+// createCategoryRequest is the body of a category request.
 type createCategoryRequest struct {
 	Name        string  `json:"name"`
 	Handle      string  `json:"handle"`
@@ -265,15 +270,15 @@ type createCategoryRequest struct {
 	Rank        int32   `json:"rank"`
 }
 
-// createTagRequest etiket isteğinin gövdesidir.
+// createTagRequest is the body of a tag request.
 type createTagRequest struct {
 	Value string `json:"value"`
 }
 
-// deleted silme yanıtının gövdesidir.
+// deleted is the body of a deletion response.
 //
-// Boş bir 204 yerine silinen kaydın kimliğini döndürmek, yeniden denenen bir
-// silme isteğinde istemcinin neyin silindiğini görmesini sağlar.
+// Returning the id of the deleted record instead of an empty 204 lets the
+// client see what was deleted on a retried deletion request.
 type deleted struct {
 	ID      string `json:"id"`
 	Object  string `json:"object"`
@@ -514,14 +519,15 @@ func (h *Handler) adminListOptions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Sayı BURADA doludur: uç sayfalamaz, sonucun tamamını tek sayfa gibi
-	// yazar. Sayacı boş bırakmak, sayfalanmayan bir listede "sayılmadı"
-	// demek olurdu — oysa sayı elimizde.
-	sayi := len(options)
+	// The number is filled in HERE: the endpoint does not paginate, it writes
+	// the whole result as if it were a single page. Leaving the counter empty
+	// would mean "not counted" on a list that is not paginated — while the
+	// number is right there in our hands.
+	count := len(options)
 
 	writeList(w, r, service.ListResult[models.Option]{
 		Items:  options,
-		Count:  &sayi,
+		Count:  &count,
 		Offset: 0,
 		Limit:  len(options),
 	})
@@ -564,9 +570,10 @@ func (h *Handler) adminDeleteOption(w http.ResponseWriter, r *http.Request) {
 
 // adminSetPriceSet PUT /admin/v1/variants/{id}/price-set
 //
-// Bağın KURULDUĞU yer burasıdır: fiyat kümesini pricing modülü üretir, bağı
-// katalog kurar. Uç PUT'tur çünkü işlem idempotenttir — aynı kümeyi ikinci kez
-// bağlamak aynı sonucu verir.
+// This is where the link is ESTABLISHED: the price set is produced by the
+// pricing module, the link is established by the catalog. The endpoint is a PUT
+// because the operation is idempotent — linking the same set a second time
+// gives the same result.
 func (h *Handler) adminSetPriceSet(w http.ResponseWriter, r *http.Request) {
 	id, err := pathParam(r, "id")
 	if err != nil {
@@ -646,14 +653,14 @@ func (h *Handler) adminGetVariantLinks(w http.ResponseWriter, r *http.Request) {
 
 // adminAddSalesChannel POST /admin/v1/products/{id}/sales-channels
 //
-// Uç POST'tur çünkü bağ ÇOKTAN ÇOĞADIR: istek bir kaynağı değiştirmez, bir
-// koleksiyona üye ekler. Fiyat/stok uçlarının PUT'u burada yanlış olurdu — PUT
-// "bu ucun tamamı budur" der ve ürünün diğer kanal bağlarını silmek zorunda
-// kalırdı.
+// The endpoint is a POST because the link is MANY-TO-MANY: the request does not
+// change a resource, it adds a member to a collection. The PUT of the
+// price/stock endpoints would be wrong here — PUT says "this is the whole of
+// this endpoint" and would have to delete the product's other channel links.
 //
-// Yanıt 201 DEĞİL 200'dür: link servisi aynı çifti ikinci kez bağlamayı no-op
-// sayar (idempotent), dolayısıyla her istek yeni bir kayıt yaratmaz ve 201
-// yaratılmamış bir kaynağı bildirirdi.
+// The response is 200, NOT 201: the link service counts linking the same pair a
+// second time as a no-op (idempotent), so not every request creates a new
+// record and a 201 would report a resource that was never created.
 func (h *Handler) adminAddSalesChannel(w http.ResponseWriter, r *http.Request) {
 	productID, err := pathParam(r, "id")
 	if err != nil {
@@ -675,9 +682,10 @@ func (h *Handler) adminAddSalesChannel(w http.ResponseWriter, r *http.Request) {
 
 // adminRemoveSalesChannel DELETE /admin/v1/products/{id}/sales-channels/{sales_channel_id}
 //
-// Kanal kimliği gövdede değil YOLDA taşınır: kaldırılan şey ürün ile kanal
-// arasındaki bağdır ve o bağın adresi budur; DELETE gövdesi ise ara katmanlar
-// tarafından atılabildiği için güvenilir bir taşıyıcı değildir.
+// The channel id is carried IN THE PATH, not in the body: what is removed is
+// the link between the product and the channel and this is that link's address;
+// a DELETE body, on the other hand, is not a reliable carrier because
+// intermediaries may drop it.
 func (h *Handler) adminRemoveSalesChannel(w http.ResponseWriter, r *http.Request) {
 	productID, err := pathParam(r, "id")
 	if err != nil {
@@ -707,7 +715,7 @@ func (h *Handler) adminListSalesChannels(w http.ResponseWriter, r *http.Request)
 	h.writeSalesChannels(w, r, productID)
 }
 
-// writeSalesChannels ürünün güncel satış kanalı bağlarını yanıtlar.
+// writeSalesChannels responds with the product's current sales channel links.
 func (h *Handler) writeSalesChannels(w http.ResponseWriter, r *http.Request, productID string) {
 	ids, err := h.svc.ProductSalesChannelIDs(r.Context(), productID)
 	if err != nil {
@@ -715,14 +723,15 @@ func (h *Handler) writeSalesChannels(w http.ResponseWriter, r *http.Request, pro
 		return
 	}
 	if ids == nil {
-		// JSON'da "null" değil "[]" dönmeli; istemci alanı her zaman dizi
-		// sayabilmelidir (writeList ile aynı gerekçe).
+		// It has to return "[]" in JSON, not "null"; the client must be able to
+		// treat the field as an array every time (the same reasoning as
+		// writeList).
 		ids = []string{}
 	}
 	writeItem(w, r, http.StatusOK, productSalesChannels{ProductID: productID, SalesChannelIDs: ids})
 }
 
-// writeVariantLinks varyantın güncel bağlarını yanıtlar.
+// writeVariantLinks responds with the variant's current links.
 func (h *Handler) writeVariantLinks(w http.ResponseWriter, r *http.Request, variantID string) {
 	links, err := h.svc.VariantLinkIDs(r.Context(), variantID)
 	if err != nil {

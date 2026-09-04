@@ -9,19 +9,19 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/product/models"
 )
 
-// Sayfalama sınırları. Store ve admin API'leri aynı sınırları paylaşır.
+// Paging limits. The store and the admin APIs share the same limits.
 const (
-	// DefaultLimit istemci limit vermediğinde kullanılan sayfa boyutudur.
+	// DefaultLimit is the page size used when the client gives no limit.
 	DefaultLimit = 20
-	// MaxLimit tek istekte dönebilecek en fazla kayıt sayısıdır. Sınır
-	// kırpılarak uygulanır (hata değil): istemcinin daha büyük bir sayfa
-	// istemesi geçerli bir istektir, yalnızca karşılanmaz.
+	// MaxLimit is the largest number of records a single request can return.
+	// The limit is applied by clamping (not as an error): a client asking for a
+	// larger page is a valid request, it is only not granted.
 	MaxLimit = 100
 )
 
-// Alan uzunluğu sınırları. Veritabanı text sütunlarında sınır yoktur; sınırın
-// tek yeri burasıdır ve amacı dev gövdelerin belleğe ve indekslere yayılmasını
-// engellemektir.
+// Field length limits. There is no limit on the database text columns; the only
+// place the limit lives is here, and its purpose is to stop huge bodies from
+// spreading into memory and into the indexes.
 const (
 	maxHandleLen      = 128
 	maxTitleLen       = 255
@@ -30,10 +30,11 @@ const (
 	maxDescriptionLen = 16 * 1024
 )
 
-// int32From bir sıra/indeks değerini int32'ye GÜVENLE daraltır.
+// int32From narrows a rank/index value to an int32 SAFELY.
 //
-// Daraltma sessiz olsaydı 2^31'inci görselin sırası negatife dönerdi; böyle bir
-// listede sıralama gözle görülür biçimde bozulur ama sebebi görünmez.
+// Had the narrowing been silent, the rank of the 2^31-th image would turn
+// negative; the ordering of such a list breaks visibly but its cause stays
+// invisible.
 func int32From(n int) int32 {
 	switch {
 	case n < 0:
@@ -45,7 +46,7 @@ func int32From(n int) int32 {
 	}
 }
 
-// Hata kodları; API tüketicisi errors.CodeOf ile bunlara bakabilir.
+// Error codes; an API consumer can look at them with errors.CodeOf.
 const (
 	codeInvalidInput = "product_invalid_input"
 	codeHandleTaken  = "product_handle_taken"
@@ -55,59 +56,63 @@ const (
 	codeNotReady     = "product_service_not_ready"
 )
 
-// invalid doğrulama hatası üretir.
+// invalid builds a validation error.
 func invalid(format string, a ...any) error {
 	return errors.Invalid(codeInvalidInput, format, a...)
 }
 
-// requireText zorunlu bir metin alanını doğrular ve kırpılmış hâlini döner.
+// requireText validates a mandatory text field and returns its trimmed form.
 //
-// Kırpma bilinçlidir: dışarıdan gelen "  Tişört " ile "Tişört" aynı üründür ve
-// baştaki boşluk yalnızca sıralamayı ve aramayı bozar. Kimlikler (link uçları)
-// için kırpma YAPILMAZ; orada sessiz düzeltme veri kaymasıdır (bkz. core/link).
+// The trimming is deliberate: an incoming "  Shirt " and "Shirt" are the same
+// product, and the leading space only breaks sorting and search. For ids (the
+// ends of a link) NO trimming is done; there a silent correction is a data
+// drift (see core/link).
 func requireText(field, value string, maxLen int) (string, error) {
 	trimmed := strings.TrimSpace(value)
 	if trimmed == "" {
-		return "", invalid("%s zorunludur", field)
+		return "", invalid("%s is required", field)
 	}
 	if len(trimmed) > maxLen {
-		return "", invalid("%s en fazla %d karakter olabilir (verilen: %d)", field, maxLen, len(trimmed))
+		return "", invalid("%s can be at most %d characters (given: %d)", field, maxLen, len(trimmed))
 	}
 	return trimmed, nil
 }
 
-// requireID zorunlu bir kimlik alanını doğrular.
+// requireID validates a mandatory id field.
 //
-// Kimlik KIRPILMAZ: baştaki/sondaki boşluk taşıyan bir kimlik, link tablosunda
-// ve kendi tablosunda farklı satırlara denk gelirdi. Bozukluk sessizce
-// düzeltilmek yerine reddedilir.
+// The id is NOT TRIMMED: an id carrying leading/trailing whitespace would land
+// on different rows in the link table and in its own table. The corruption is
+// rejected instead of being corrected silently.
 func requireID(field, value string) (string, error) {
 	if value == "" {
-		return "", invalid("%s zorunludur", field)
+		return "", invalid("%s is required", field)
 	}
 	if strings.TrimSpace(value) != value {
-		return "", invalid("%s baş/son boşluk içeremez", field)
+		return "", invalid("%s cannot contain leading or trailing whitespace", field)
 	}
 	if len(value) > maxHandleLen {
-		return "", invalid("%s en fazla %d karakter olabilir", field, maxHandleLen)
+		return "", invalid("%s can be at most %d characters", field, maxHandleLen)
 	}
 	return value, nil
 }
 
-// resolveHandle handle'ı doğrular; boş bırakılmışsa başlıktan üretir.
+// resolveHandle validates the handle; if it was left empty it derives it from
+// the title.
 //
-// Üretilen handle da UZUNLUK SINIRINA tabidir. Başlık maxTitleLen'e (255) kadar
-// olabildiği için ondan üretilen slug maxHandleLen'i (128) rahatça aşar; aşan
-// bir handle ürünü vitrinde ERİŞİLEMEZ kılardı, çünkü /store/v1/products/{handle}
-// kimliği aynı 128 sınırıyla doğrular ve 422 döner — kayıt oluşur ama adresi hiç
-// açılmaz.
+// The derived handle is subject to the LENGTH LIMIT as well. Because the title
+// can be up to maxTitleLen (255), the slug derived from it easily exceeds
+// maxHandleLen (128); a handle that exceeds it would make the product
+// UNREACHABLE in the storefront, because /store/v1/products/{handle} validates
+// the identifier with the same limit of 128 and returns 422 — the record is
+// created but its address never opens.
 //
-// Üretilen slug bu yüzden KIRPILIR; istemcinin AÇIKÇA verdiği handle ise
-// kırpılmaz, reddedilir. Ayrım bilinçlidir: üretim zaten bir kolaylıktır ve
-// kısaltılması istemcinin gönderdiği bir değeri değiştirmez, ama verilmiş bir
-// handle'ı sessizce kısaltmak istenen adresle kaydedilen adresi ayırırdı.
-// Kırpma sonucu başka bir ürünle çakışırsa ensureHandleFree açık bir Conflict
-// döner; sessiz bir üzerine yazma olmaz.
+// The derived slug is therefore TRUNCATED; a handle the client gave EXPLICITLY
+// is not truncated, it is rejected. The distinction is deliberate: derivation
+// is a convenience to begin with and shortening it does not change a value the
+// client sent, whereas silently shortening a given handle would separate the
+// intended address from the recorded one. If the result of the truncation
+// collides with another product, ensureHandleFree returns an explicit Conflict;
+// no silent overwrite happens.
 func resolveHandle(handle, title string) (string, error) {
 	h := strings.TrimSpace(handle)
 	if h != "" {
@@ -116,17 +121,17 @@ func resolveHandle(handle, title string) (string, error) {
 
 	generated := truncateHandle(slugify(title))
 	if generated == "" {
-		return "", invalid("handle boş bırakıldı ve başlıktan üretilemedi (%q)", title)
+		return "", invalid("the handle was left empty and could not be derived from the title (%q)", title)
 	}
 	return validateHandle(generated)
 }
 
-// truncateHandle üretilen slug'ı azami handle uzunluğuna kırpar.
+// truncateHandle truncates the derived slug to the maximum handle length.
 //
-// Slug yalnızca ASCII harf, rakam ve tire içerir (bkz. slugify), bu yüzden bayt
-// sınırında kırpmak bir rune'u ikiye bölemez. Kırpmadan artakalan sondaki tire
-// atılır: handle tire ile bitemez ve bitseydi validateHandle üretilmiş bir
-// değeri reddederdi.
+// A slug contains only ASCII letters, digits and dashes (see slugify), so
+// truncating on a byte boundary cannot split a rune in two. A trailing dash
+// left over from the truncation is dropped: a handle cannot end with a dash,
+// and if it did validateHandle would reject a derived value.
 func truncateHandle(slug string) string {
 	if len(slug) <= maxHandleLen {
 		return slug
@@ -134,37 +139,39 @@ func truncateHandle(slug string) string {
 	return strings.TrimRight(slug[:maxHandleLen], "-")
 }
 
-// validateHandle handle biçimini doğrular.
+// validateHandle validates the shape of the handle.
 //
-// Kabul edilen biçim: küçük harf, rakam ve TEK tire ile ayrılmış parçalar.
-// Handle bir URL parçasıdır; büyük harf ve boşluk kabul edilseydi aynı ürün
-// iki farklı adresle görünür, benzersizlik indeksi de bunu yakalayamazdı
-// ("Tisort" ile "tisort" farklı iki satır olurdu).
+// The accepted shape: lowercase letters, digits and parts separated by a SINGLE
+// dash. A handle is a URL segment; if uppercase letters and spaces were
+// accepted, the same product would show up at two different addresses and the
+// uniqueness index would not catch it either ("Shirt" and "shirt" would be two
+// different rows).
 func validateHandle(handle string) (string, error) {
 	if handle == "" {
-		return "", invalid("handle zorunludur")
+		return "", invalid("the handle is required")
 	}
 	if len(handle) > maxHandleLen {
-		return "", invalid("handle en fazla %d karakter olabilir (verilen: %d)", maxHandleLen, len(handle))
+		return "", invalid("the handle can be at most %d characters (given: %d)", maxHandleLen, len(handle))
 	}
 	if handle != slugify(handle) {
 		return "", invalid(
-			"handle yalnızca küçük harf, rakam ve tire içerebilir; tire ile başlayamaz/bitemez (verilen: %q, önerilen: %q)",
+			"the handle may contain only lowercase letters, digits and dashes; it cannot start or end with a dash (given: %q, suggested: %q)",
 			handle, slugify(handle))
 	}
 	return handle, nil
 }
 
-// slugify serbest metinden URL'de kullanılabilir bir handle üretir.
+// slugify derives a URL-usable handle from free text.
 //
-// Türkçe harfler ASCII karşılıklarına çevrilir: "Tişört" -> "tisort". Aksi
-// hâlde handle ya UTF-8 kaçışlarıyla dolu bir URL üretir ya da harfler
-// düşünce anlamsızlaşırdı ("tirt").
+// Turkish letters are folded to their ASCII counterparts: a title written as
+// "Ti\u015f\u00f6rt" becomes "tisort". Otherwise the handle would either
+// produce a URL full of UTF-8 escapes or become meaningless once the letters
+// were dropped ("tirt").
 func slugify(s string) string {
 	var b strings.Builder
 	b.Grow(len(s))
 
-	lastDash := true // baştaki tireleri engeller
+	lastDash := true // prevents leading dashes
 	for _, r := range strings.ToLower(strings.TrimSpace(s)) {
 		switch {
 		case r < unicode.MaxASCII && (unicode.IsLetter(r) || unicode.IsDigit(r)):
@@ -174,9 +181,10 @@ func slugify(s string) string {
 			b.WriteRune(turkishASCII[r])
 			lastDash = false
 		case unicode.Is(unicode.Mn, r):
-			// Birleşen işaret atılır ve AYIRICI ÜRETMEZ: "İ"nin küçük hâli
-			// "i" + birleşen noktadır, ayırıcı sayılsaydı "İstanbul"
-			// "i-stanbul" olurdu.
+			// A combining mark is dropped and PRODUCES NO SEPARATOR: the
+			// lowercase form of the dotted capital I is "i" + a combining dot,
+			// and had it counted as a separator, "\u0130stanbul" would become
+			// "i-stanbul".
 			continue
 		case unicode.IsSpace(r), r == '-', r == '_', r == '.', r == '/':
 			if !lastDash && b.Len() > 0 {
@@ -184,8 +192,8 @@ func slugify(s string) string {
 				lastDash = true
 			}
 		default:
-			// Çevrilemeyen harf (örn. Kiril) atılır; kalan parçalar yine tek
-			// tireyle ayrılır.
+			// An untranslatable letter (Cyrillic, for instance) is dropped; the
+			// remaining parts are still separated by a single dash.
 			if !lastDash && b.Len() > 0 {
 				b.WriteByte('-')
 				lastDash = true
@@ -195,37 +203,49 @@ func slugify(s string) string {
 	return strings.Trim(b.String(), "-")
 }
 
-// turkishASCII Türkçe harflerin ASCII karşılıklarıdır.
+// turkishASCII holds the ASCII counterparts of the Turkish letters.
 //
-// strings.ToLower zaten uygulandığı için yalnızca küçük harfler yeterlidir.
-// "İ" burada yoktur: küçük harfe çevrildiğinde "i" + birleşen nokta olur ve
-// noktayı slugify'ın birleşen işaret dalı düşürür.
+// Because strings.ToLower has already been applied, the lowercase letters alone
+// are enough. The dotted capital I (U+0130) is not here: converted to lowercase
+// it becomes "i" + a combining dot, and the combining-mark branch of slugify
+// drops the dot.
+//
+// The keys are written as escapes so that the file itself stays ASCII; the
+// trailing name of each pair says which letter it is.
 var turkishASCII = map[rune]rune{
-	'ı': 'i', 'ş': 's', 'ğ': 'g', 'ü': 'u', 'ö': 'o', 'ç': 'c',
-	'â': 'a', 'î': 'i', 'û': 'u',
+	'\u0131': 'i', // dotless i
+	'\u015f': 's', // s with cedilla
+	'\u011f': 'g', // g with breve
+	'\u00fc': 'u', // u with diaeresis
+	'\u00f6': 'o', // o with diaeresis
+	'\u00e7': 'c', // c with cedilla
+	'\u00e2': 'a', // a with circumflex
+	'\u00ee': 'i', // i with circumflex
+	'\u00fb': 'u', // u with circumflex
 }
 
-// normalizeStatus ürün durumunu doğrular; boşsa taslak varsayar.
+// normalizeStatus validates the product status; if it is empty it assumes draft.
 func normalizeStatus(status models.Status) (models.Status, error) {
 	if status == "" {
 		return models.StatusDraft, nil
 	}
 	if !status.Valid() {
-		return "", invalid("geçersiz ürün durumu: %q (geçerli değerler: draft, published, archived)", status)
+		return "", invalid("invalid product status: %q (valid values: draft, published, archived)", status)
 	}
 	return status, nil
 }
 
-// normalizePaging sayfalama değerlerini doğrular ve sınırlara çeker.
+// normalizePaging validates the paging values and clamps them to the limits.
 //
-// Negatif değer HATA'dır (istemci hatasıdır ve sessizce düzeltmek yanlış sayfa
-// döndürürdü); limit 0 varsayılana, sınırı aşan limit MaxLimit'e çekilir.
+// A negative value is an ERROR (it is a client mistake and correcting it
+// silently would return the wrong page); a limit of 0 is pulled to the default
+// and a limit above the ceiling to MaxLimit.
 func normalizePaging(limit, offset int) (outLimit, outOffset int, err error) {
 	if limit < 0 {
-		return 0, 0, invalid("limit negatif olamaz (verilen: %d)", limit)
+		return 0, 0, invalid("the limit cannot be negative (given: %d)", limit)
 	}
 	if offset < 0 {
-		return 0, 0, invalid("offset negatif olamaz (verilen: %d)", offset)
+		return 0, 0, invalid("the offset cannot be negative (given: %d)", offset)
 	}
 	switch {
 	case limit == 0:
@@ -236,7 +256,7 @@ func normalizePaging(limit, offset int) (outLimit, outOffset int, err error) {
 	return limit, offset, nil
 }
 
-// trimOptional isteğe bağlı bir metin alanını kırpar; boşaldıysa nil döner.
+// trimOptional trims an optional text field; if it became empty it returns nil.
 func trimOptional(v *string, field string, maxLen int) (*string, error) {
 	if v == nil {
 		return nil, nil
@@ -246,12 +266,12 @@ func trimOptional(v *string, field string, maxLen int) (*string, error) {
 		return nil, nil
 	}
 	if len(trimmed) > maxLen {
-		return nil, invalid("%s en fazla %d karakter olabilir (verilen: %d)", field, maxLen, len(trimmed))
+		return nil, invalid("%s can be at most %d characters (given: %d)", field, maxLen, len(trimmed))
 	}
 	return &trimmed, nil
 }
 
-// uniqueIDs kimlik dilimini doğrular, sırayı koruyarak tekilleştirir.
+// uniqueIDs validates a slice of ids and deduplicates it, preserving the order.
 func uniqueIDs(field string, ids []string) ([]string, error) {
 	out := make([]string, 0, len(ids))
 	seen := make(map[string]struct{}, len(ids))

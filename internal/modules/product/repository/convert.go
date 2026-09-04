@@ -12,19 +12,19 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/product/repository/productdb"
 )
 
-// Bu dosya pgtype <-> domain modeli dönüşümlerinin TEK yeridir.
+// This file is the ONE place for pgtype <-> domain model conversions.
 //
-// Sınırın burada olması bilinçlidir: sürücüye özgü tipler (pgtype.Timestamptz,
-// jsonb için []byte) repository'nin dışına çıkmaz. Servis ve API katmanı
-// time.Time ve map[string]any görür; bir gün sürücü değişirse değişen yer
-// yalnızca burasıdır.
+// The boundary being here is deliberate: driver-specific types
+// (pgtype.Timestamptz, []byte for jsonb) do not leave the repository. The
+// service and the API layer see time.Time and map[string]any; if the driver
+// changes one day, the only place that changes is this one.
 
-// toInt32 sayfalama değerini sorgunun beklediği int32'ye GÜVENLE daraltır.
+// toInt32 narrows a pagination value SAFELY to the int32 the query expects.
 //
-// Negatif değer sıfıra, int32'yi aşan değer üst sınıra çekilir: aksi hâlde
-// daraltma sessizce işaret değiştirir ve "LIMIT -2147483648" gibi bir sorgu
-// üretirdi. Sınır kontrolü çağıranın doğrulamasına bırakılmaz; burası son
-// savunmadır.
+// A negative value is pulled to zero, a value exceeding int32 to the upper
+// bound: otherwise the narrowing silently changes sign and would produce a
+// query such as "LIMIT -2147483648". The bound check is not left to the
+// caller's validation; this is the last line of defense.
 func toInt32(n int) int32 {
 	switch {
 	case n < 0:
@@ -36,10 +36,10 @@ func toInt32(n int) int32 {
 	}
 }
 
-// toTime timestamptz değerini UTC time.Time'a çevirir.
+// toTime converts a timestamptz value into a UTC time.Time.
 //
-// Geçersiz (NULL) değer sıfır zaman döner: NOT NULL sütunlarda bu durum
-// oluşmaz, dolayısıyla sıfır zaman görülmesi veri bozukluğunun işaretidir.
+// An invalid (NULL) value returns the zero time: on NOT NULL columns this case
+// does not arise, so seeing the zero time is a sign of data corruption.
 func toTime(ts pgtype.Timestamptz) time.Time {
 	if !ts.Valid {
 		return time.Time{}
@@ -47,7 +47,7 @@ func toTime(ts pgtype.Timestamptz) time.Time {
 	return ts.Time.UTC()
 }
 
-// toTimePtr nullable timestamptz değerini *time.Time'a çevirir.
+// toTimePtr converts a nullable timestamptz value into a *time.Time.
 func toTimePtr(ts pgtype.Timestamptz) *time.Time {
 	if !ts.Valid {
 		return nil
@@ -56,10 +56,10 @@ func toTimePtr(ts pgtype.Timestamptz) *time.Time {
 	return &t
 }
 
-// toMetadata jsonb sütununu haritaya çevirir.
+// toMetadata converts the jsonb column into a map.
 //
-// Boş ya da JSON null değer nil harita döner; böylece API yanıtında
-// "metadata": null yerine alan hiç görünmez (omitempty).
+// An empty or JSON null value returns a nil map; that way the field does not
+// show up at all in the API response instead of "metadata": null (omitempty).
 func toMetadata(raw []byte) (map[string]any, error) {
 	if len(raw) == 0 || string(raw) == "null" {
 		return nil, nil
@@ -67,7 +67,7 @@ func toMetadata(raw []byte) (map[string]any, error) {
 	var out map[string]any
 	if err := json.Unmarshal(raw, &out); err != nil {
 		return nil, errors.Wrap(err, errors.KindInternal, codeMetadataInvalid,
-			"metadata alanı çözümlenemedi")
+			"could not parse the metadata field")
 	}
 	if len(out) == 0 {
 		return nil, nil
@@ -75,10 +75,12 @@ func toMetadata(raw []byte) (map[string]any, error) {
 	return out, nil
 }
 
-// fromMetadata haritayı jsonb sütununa yazılacak bayta çevirir.
+// fromMetadata converts the map into the bytes to be written to the jsonb
+// column.
 //
-// nil harita boş nesneye ('{}') çevrilir: sütun NOT NULL'dur ve "metadata yok"
-// ile "metadata boş" ayrımı bu modülde bir şey ifade etmez.
+// A nil map is converted into the empty object ('{}'): the column is NOT NULL
+// and the distinction between "no metadata" and "empty metadata" means nothing
+// in this module.
 func fromMetadata(m map[string]any) ([]byte, error) {
 	if len(m) == 0 {
 		return []byte("{}"), nil
@@ -86,15 +88,15 @@ func fromMetadata(m map[string]any) ([]byte, error) {
 	raw, err := json.Marshal(m)
 	if err != nil {
 		return nil, errors.Wrap(err, errors.KindInvalid, codeMetadataInvalid,
-			"metadata alanı JSON'a çevrilemedi")
+			"could not convert the metadata field to JSON")
 	}
 	return raw, nil
 }
 
-// patchMetadata güncelleme için metadata parametresini üretir.
+// patchMetadata produces the metadata parameter for an update.
 //
-// nil harita "değiştirme" demektir ve sorguya NULL gider (COALESCE kalıbı
-// eski değeri korur); dolu harita yeni değeri yazar.
+// A nil map means "do not change" and NULL goes to the query (the COALESCE
+// pattern keeps the old value); a filled map writes the new value.
 func patchMetadata(m map[string]any) ([]byte, error) {
 	if m == nil {
 		return nil, nil
@@ -102,7 +104,7 @@ func patchMetadata(m map[string]any) ([]byte, error) {
 	return fromMetadata(m)
 }
 
-// toProduct veritabanı satırını domain modeline çevirir.
+// toProduct converts a database row into the domain model.
 func toProduct(row productdb.Product) (models.Product, error) {
 	meta, err := toMetadata(row.Metadata)
 	if err != nil {
@@ -132,11 +134,11 @@ func toProduct(row productdb.Product) (models.Product, error) {
 	}, nil
 }
 
-// toProducts satır dilimini domain modeli dilimine çevirir.
+// toProducts converts a row slice into a domain model slice.
 func toProducts(rows []productdb.Product) ([]models.Product, error) {
 	out := make([]models.Product, 0, len(rows))
-	// Döngü indeksle gezilir: satır yapıları büyüktür ve değerle kopyalamak
-	// her tur birkaç yüz baytı boşuna taşır.
+	// The loop is walked by index: row structs are large and copying them by
+	// value carries a few hundred bytes for nothing on every turn.
 	for i := range rows {
 		p, err := toProduct(rows[i])
 		if err != nil {
@@ -147,7 +149,7 @@ func toProducts(rows []productdb.Product) ([]models.Product, error) {
 	return out, nil
 }
 
-// toVariant veritabanı satırını domain modeline çevirir.
+// toVariant converts a database row into the domain model.
 func toVariant(row productdb.ProductVariant) (models.Variant, error) {
 	meta, err := toMetadata(row.Metadata)
 	if err != nil {
@@ -172,7 +174,7 @@ func toVariant(row productdb.ProductVariant) (models.Variant, error) {
 	}, nil
 }
 
-// toVariants satır dilimini domain modeli dilimine çevirir.
+// toVariants converts a row slice into a domain model slice.
 func toVariants(rows []productdb.ProductVariant) ([]models.Variant, error) {
 	out := make([]models.Variant, 0, len(rows))
 	for i := range rows {
@@ -185,7 +187,7 @@ func toVariants(rows []productdb.ProductVariant) ([]models.Variant, error) {
 	return out, nil
 }
 
-// toOption seçenek satırını domain modeline çevirir.
+// toOption converts an option row into the domain model.
 func toOption(row productdb.ProductOption) models.Option {
 	return models.Option{
 		ID:        row.ID,
@@ -198,7 +200,7 @@ func toOption(row productdb.ProductOption) models.Option {
 	}
 }
 
-// toOptionValue seçenek değeri satırını domain modeline çevirir.
+// toOptionValue converts an option value row into the domain model.
 func toOptionValue(row productdb.ProductOptionValue) models.OptionValue {
 	return models.OptionValue{
 		ID:        row.ID,
@@ -211,7 +213,7 @@ func toOptionValue(row productdb.ProductOptionValue) models.OptionValue {
 	}
 }
 
-// toCollection koleksiyon satırını domain modeline çevirir.
+// toCollection converts a collection row into the domain model.
 func toCollection(row productdb.ProductCollection) (models.Collection, error) {
 	meta, err := toMetadata(row.Metadata)
 	if err != nil {
@@ -228,7 +230,7 @@ func toCollection(row productdb.ProductCollection) (models.Collection, error) {
 	}, nil
 }
 
-// toCategory kategori satırını domain modeline çevirir.
+// toCategory converts a category row into the domain model.
 func toCategory(row productdb.ProductCategory) models.Category {
 	return models.Category{
 		ID:          row.ID,
@@ -245,7 +247,7 @@ func toCategory(row productdb.ProductCategory) models.Category {
 	}
 }
 
-// toTag etiket satırını domain modeline çevirir.
+// toTag converts a tag row into the domain model.
 func toTag(row productdb.ProductTag) models.Tag {
 	return models.Tag{
 		ID:        row.ID,
@@ -256,7 +258,7 @@ func toTag(row productdb.ProductTag) models.Tag {
 	}
 }
 
-// toImage görsel satırını domain modeline çevirir.
+// toImage converts an image row into the domain model.
 func toImage(row productdb.ProductImage) (models.Image, error) {
 	meta, err := toMetadata(row.Metadata)
 	if err != nil {

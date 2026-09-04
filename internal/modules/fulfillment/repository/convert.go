@@ -13,15 +13,16 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/fulfillment/repository/fulfillmentdb"
 )
 
-// Bu dosya pgtype <-> domain modeli dönüşümlerinin ve sürücü hatası
-// sınıflandırmasının TEK yeridir.
+// This file is the SINGLE place of the pgtype <-> domain model conversions and
+// of the driver error classification.
 //
-// Sınırın burada olması bilinçlidir: sürücüye özgü tipler (pgtype.Timestamptz,
-// jsonb için []byte, *pgconn.PgError) repository'nin dışına ÇIKMAZ. Servis ve
-// API katmanı time.Time, json.RawMessage ve core/errors tipli hatalarını görür.
+// The boundary being here is deliberate: driver-specific types
+// (pgtype.Timestamptz, []byte for jsonb, *pgconn.PgError) DO NOT LEAVE the
+// repository. The service and the API layer see time.Time, json.RawMessage and
+// core/errors typed errors.
 
-// Hata kodları. Çağıran taraf errors.CodeOf ile bunlara bakabilir; API katmanı
-// da aynı kodları istemciye geçirir.
+// Error codes. The calling side can look at these with errors.CodeOf; the API
+// layer passes the same codes on to the client as well.
 const (
 	codeProfileNotFound        = "fulfillment_shipping_profile_not_found"
 	codeOptionNotFound         = "fulfillment_shipping_option_not_found"
@@ -46,60 +47,63 @@ const (
 	codeConcurrentUpdate       = "fulfillment_concurrent_update"
 )
 
-// Kısıt ve indeks adları; sürücü hatasını anlamlı bir tipli hataya çevirmek
-// için kullanılır. Adlar migration'daki adlarla BİREBİR aynıdır.
+// Constraint and index names; they are used to convert a driver error into a
+// meaningful typed error. The names are IDENTICAL to the names in the migration.
 const (
 	constraintProfileNameUniq     = "shipping_profiles_name_uniq"
 	constraintFulfillmentKeyUniq  = "fulfillments_idempotency_uniq"
 	constraintFulfillmentItemUniq = "fulfillment_items_line_uniq"
-	// constraintStatusSuffix durum değerini denetleyen CHECK kısıtlarının
-	// ortak sonekidir.
+	// constraintStatusSuffix is the common suffix of the CHECK constraints
+	// that validate the status value.
 	constraintStatusSuffix = "_status_valid"
-	// constraintStampSuffix durum ile zaman damgasının birbirini tutmasını
-	// isteyen CHECK kısıtlarının ortak sonekidir.
+	// constraintStampSuffix is the common suffix of the CHECK constraints that
+	// require the status and the timestamp to agree with each other.
 	constraintStampSuffix = "_stamp"
 )
 
-// kisitMesajlari alan düzeyinde doğrulama yapan CHECK kısıtlarının insan
-// tarafından okunabilir karşılıklarıdır.
+// checkConstraintMessages are the human-readable counterparts of the CHECK
+// constraints that validate at the field level.
 //
-// İhlalleri istemcinin düzeltebileceği GEÇERSİZ GİRDİ durumlarıdır; servis
-// bunları zaten reddeder, buradaki eşleme doğrudan SQL ile yapılan bir
-// müdahalenin de anlaşılır bir hata dönmesini sağlar.
-var kisitMesajlari = map[string]string{
-	"shipping_options_calculated_zero":             "hesaplanan kargo seçeneğinin tutarı sıfır olmalı; ücret sağlayıcıdan gelir",
-	"shipping_options_price_type_valid":            "kargo seçeneğinin fiyat türü 'flat' ya da 'calculated' olmalı",
-	"shipping_options_name_check":                  "kargo seçeneğinin adı boş olamaz",
-	"shipping_options_provider_check":              "kargo seçeneğinin sağlayıcısı boş olamaz",
-	"shipping_profiles_name_check":                 "kargo profilinin adı boş olamaz",
-	"shipping_profiles_type_valid":                 "kargo profilinin türü 'default', 'gift_card' ya da 'custom' olmalı",
-	"shipping_option_rules_attribute_check":        "kural alanı boş olamaz",
-	"shipping_option_rules_operator_check":         "tanınmayan kural işleci",
-	"shipping_option_rules_values_check":           "kural en az bir değer içermeli",
-	"fulfillments_reference_check":                 "gönderinin referansı boş olamaz",
-	"fulfillments_provider_check":                  "gönderinin sağlayıcısı boş olamaz",
-	"fulfillments_key_check":                       "idempotency anahtarı boş olamaz",
-	"fulfillment_items_line_check":                 "gönderi kaleminin sipariş satırı boş olamaz",
-	"fulfillment_manual_shipments_key_check":       "idempotency anahtarı boş olamaz",
-	"fulfillment_manual_shipments_reference_check": "gönderinin referansı boş olamaz",
+// Their violations are INVALID INPUT cases the client can correct; the service
+// already rejects them, and the mapping here makes an intervention performed
+// directly through SQL return an understandable error as well.
+var checkConstraintMessages = map[string]string{
+	"shipping_options_calculated_zero":             "the amount of a calculated shipping option must be zero; the fee comes from the provider",
+	"shipping_options_price_type_valid":            "the price type of a shipping option must be 'flat' or 'calculated'",
+	"shipping_options_name_check":                  "the name of a shipping option cannot be empty",
+	"shipping_options_provider_check":              "the provider of a shipping option cannot be empty",
+	"shipping_profiles_name_check":                 "the name of a shipping profile cannot be empty",
+	"shipping_profiles_type_valid":                 "the type of a shipping profile must be 'default', 'gift_card' or 'custom'",
+	"shipping_option_rules_attribute_check":        "the rule attribute cannot be empty",
+	"shipping_option_rules_operator_check":         "unrecognized rule operator",
+	"shipping_option_rules_values_check":           "the rule must contain at least one value",
+	"fulfillments_reference_check":                 "the reference of a fulfillment cannot be empty",
+	"fulfillments_provider_check":                  "the provider of a fulfillment cannot be empty",
+	"fulfillments_key_check":                       "the idempotency key cannot be empty",
+	"fulfillment_items_line_check":                 "the order line of a fulfillment item cannot be empty",
+	"fulfillment_manual_shipments_key_check":       "the idempotency key cannot be empty",
+	"fulfillment_manual_shipments_reference_check": "the reference of a shipment cannot be empty",
 }
 
-// tutarKisitlari kargo tutarının aralığını denetleyen CHECK kısıtlarıdır.
-// Ayrı tutulurlar çünkü kodları [codeAmountOutOfRange]'dir: istemci hangi
-// alanın sınırı aştığını kodun kendisinden ayırt edebilmelidir.
-var tutarKisitlari = map[string]string{
-	"shipping_options_amount_nonneg": "kargo tutarı negatif olamaz",
-	"shipping_options_amount_max":    "kargo tutarı üst sınırı aşıyor",
+// amountConstraints are the CHECK constraints that validate the range of the
+// shipping amount. They are kept apart because their code is
+// [codeAmountOutOfRange]: the client must be able to tell which field exceeded
+// its bound from the code itself.
+var amountConstraints = map[string]string{
+	"shipping_options_amount_nonneg": "the shipping amount cannot be negative",
+	"shipping_options_amount_max":    "the shipping amount exceeds the upper bound",
 }
 
-// jsonNullLiteral jsonb sütununda "değer yok" anlamına gelen JSON gövdesidir.
-// Sürücü NULL bir sütunu boş dilim, JSON null'ı ise bu dize olarak verir.
+// jsonNullLiteral is the JSON body that means "no value" in a jsonb column.
+// The driver gives a NULL column as an empty slice and a JSON null as this
+// string.
 const jsonNullLiteral = "null"
 
-// jsonEmptyObject boş bir JSON nesnesidir; NOT NULL sütunların varsayılanıdır.
+// jsonEmptyObject is an empty JSON object; it is the default of NOT NULL
+// columns.
 const jsonEmptyObject = "{}"
 
-// PostgreSQL SQLSTATE kodları.
+// PostgreSQL SQLSTATE codes.
 const (
 	sqlStateUniqueViolation     = "23505"
 	sqlStateForeignKeyViolation = "23503"
@@ -107,48 +111,50 @@ const (
 	sqlStateDeadlockDetected    = "40P01"
 )
 
-// profileNotFound eksik kargo profili için ortak hatayı üretir.
+// profileNotFound produces the common error for a missing shipping profile.
 func profileNotFound(id string) error {
-	return errors.NotFound(codeProfileNotFound, "kargo profili bulunamadı: %s", id)
+	return errors.NotFound(codeProfileNotFound, "shipping profile not found: %s", id)
 }
 
-// optionNotFound eksik kargo seçeneği için ortak hatayı üretir.
+// optionNotFound produces the common error for a missing shipping option.
 func optionNotFound(id string) error {
-	return errors.NotFound(codeOptionNotFound, "kargo seçeneği bulunamadı: %s", id)
+	return errors.NotFound(codeOptionNotFound, "shipping option not found: %s", id)
 }
 
-// ruleNotFound eksik kural için ortak hatayı üretir.
+// ruleNotFound produces the common error for a missing rule.
 func ruleNotFound(id string) error {
-	return errors.NotFound(codeRuleNotFound, "kargo seçeneği kuralı bulunamadı: %s", id)
+	return errors.NotFound(codeRuleNotFound, "shipping option rule not found: %s", id)
 }
 
-// fulfillmentNotFound eksik gönderi için ortak hatayı üretir.
+// fulfillmentNotFound produces the common error for a missing fulfillment.
 func fulfillmentNotFound(id string) error {
-	return errors.NotFound(codeFulfillmentNotFound, "gönderi bulunamadı: %s", id)
+	return errors.NotFound(codeFulfillmentNotFound, "fulfillment not found: %s", id)
 }
 
-// manualShipmentNotFound eksik sağlayıcı gönderisi için ortak hatayı üretir.
+// manualShipmentNotFound produces the common error for a missing provider
+// shipment.
 func manualShipmentNotFound(id string) error {
 	return errors.NotFound(codeManualShipmentNotFound,
-		"manuel sağlayıcı gönderisi bulunamadı: %s", id)
+		"manual provider shipment not found: %s", id)
 }
 
-// locationNotFound politikası olmayan depo için ortak hatayı üretir.
+// locationNotFound produces the common error for a location that has no policy.
 //
-// "Politikası yok" ile "depo yok" AYNI ŞEY DEĞİLDİR ve mesaj bunu söyler:
-// bu modül bir deponun var olup olmadığını bilmez (o stok modülünün bilgisidir),
-// yalnızca kendi kaydının bulunmadığını bildirir.
+// "Has no policy" and "there is no such location" ARE NOT THE SAME THING and the
+// message says so: this module does not know whether a location exists (that is
+// the inventory module's knowledge), it only reports that its own record is
+// missing.
 func locationNotFound(id string) error {
 	return errors.NotFound(codeLocationNotFound,
-		"depo kargo politikası bulunamadı: %s", id)
+		"shipping policy of the location not found: %s", id)
 }
 
-// classify sürücü hatasını tipli hataya çevirir.
+// classify converts a driver error into a typed error.
 //
-// Benzersizlik foreign key ve CHECK ihlalleri istemcinin düzeltebileceği
-// durumlardır; sınıflandırılmazsa hepsi 500 olarak görünür ve gerçek sebep
-// yalnızca logda kalırdı. Kilitlenme (deadlock) de aynı sebeple ayrı ele
-// alınır: işlemin kendisinde bir yanlışlık yoktur, YENİDEN DENENEBİLİR.
+// Uniqueness, foreign key and CHECK violations are cases the client can correct;
+// if they were not classified they would all appear as 500 and the real reason
+// would remain only in the log. A deadlock is handled separately for the same
+// reason: there is nothing wrong with the transaction itself, it CAN BE RETRIED.
 func classify(err error, code, format string, a ...any) error {
 	var pgErr *pgconn.PgError
 	if !errors.As(err, &pgErr) {
@@ -160,87 +166,90 @@ func classify(err error, code, format string, a ...any) error {
 		switch pgErr.ConstraintName {
 		case constraintProfileNameUniq:
 			return errors.Wrap(err, errors.KindConflict, codeProfileNameExists,
-				"bu adda bir kargo profili zaten var")
+				"a shipping profile with this name already exists")
 		case constraintFulfillmentKeyUniq:
 			return errors.Wrap(err, errors.KindConflict, codeFulfillmentExists,
-				"bu idempotency anahtarıyla oluşturulmuş bir gönderi zaten var")
+				"a fulfillment created with this idempotency key already exists")
 		case constraintFulfillmentItemUniq:
 			return errors.Wrap(err, errors.KindConflict, codeItemExists,
-				"aynı sipariş satırı gönderide iki kez yer alamaz")
+				"the same order line cannot appear twice in a fulfillment")
 		}
 	case sqlStateForeignKeyViolation:
 		return foreignKeyError(err, pgErr.ConstraintName)
 	case sqlStateCheckViolation:
 		return checkError(err, pgErr.ConstraintName, code, format, a...)
 	case sqlStateDeadlockDetected:
-		// Gönderi akışları tek satır kilidi aldığı için normal işleyişte
-		// oluşmaz; burası son savunmadır. İşlem geri alınmıştır, aynı istek
-		// olduğu gibi yeniden denenebilir — bu yüzden Internal (500) değil
-		// Conflict.
+		// Because the fulfillment flows take a single row lock this does not
+		// occur in normal operation; this is the last line of defense. The
+		// transaction has been rolled back, the same request can be retried as
+		// it is — which is why this is Conflict and not Internal (500).
 		return errors.Wrap(err, errors.KindConflict, codeConcurrentUpdate,
-			"eşzamanlı bir işlemle çakışıldı; istek yeniden denenebilir")
+			"conflicted with a concurrent transaction; the request can be retried")
 	}
 	return errors.Wrap(err, errors.KindInternal, code, format, a...)
 }
 
-// foreignKeyError foreign key ihlalini anlamlı bir tipli hataya çevirir.
+// foreignKeyError converts a foreign key violation into a meaningful typed
+// error.
 //
-// Hangi bağın kırıldığını kısıt adı söyler: seçenek profile, gönderi seçeneğe,
-// kalem gönderiye bağlıdır. Gönderisi olan bir seçeneğin SİLİNMESİ ise
-// RESTRICT'e takılır ve bu bir çakışmadır — istemci önce gönderiyi
-// kapatmalıdır.
+// The constraint name says which link was broken: an option is bound to a
+// profile, a fulfillment to an option, an item to a fulfillment. DELETING an
+// option that has fulfillments, on the other hand, hits RESTRICT and that is a
+// conflict — the client must close the fulfillment first.
 func foreignKeyError(err error, constraint string) error {
 	switch {
 	case strings.Contains(constraint, "shipping_profile_id"):
 		return errors.Wrap(err, errors.KindNotFound, codeProfileNotFound,
-			"kargo profili bulunamadı")
+			"shipping profile not found")
 	case strings.Contains(constraint, "shipping_option_id"):
-		// Gönderi tablosundan seçeneğe verilen RESTRICT kısıtı iki yönde de
-		// aynı adı taşır: eksik seçeneğe yazma da, kullanılan seçeneği silme
-		// de buraya düşer. Silme yolu servis tarafında yumuşak silmeye
-		// çevrildiği için burada kalan durum eksik seçenektir.
+		// The RESTRICT constraint given from the fulfillment table to the
+		// option carries the same name in both directions: writing to a missing
+		// option and deleting an option in use both land here. Because the
+		// delete path is turned into a soft delete on the service side, the
+		// case left here is a missing option.
 		return errors.Wrap(err, errors.KindNotFound, codeOptionNotFound,
-			"kargo seçeneği bulunamadı")
+			"shipping option not found")
 	case strings.Contains(constraint, "fulfillment_id"):
 		return errors.Wrap(err, errors.KindNotFound, codeFulfillmentNotFound,
-			"gönderi bulunamadı")
+			"fulfillment not found")
 	default:
 		return errors.Wrap(err, errors.KindNotFound, codeOptionNotFound,
-			"bağlı kayıt bulunamadı")
+			"linked record not found")
 	}
 }
 
-// checkError CHECK kısıtı ihlalini anlamlı bir tipli hataya çevirir.
+// checkError converts a CHECK constraint violation into a meaningful typed
+// error.
 func checkError(err error, constraint, code, format string, a ...any) error {
-	if message, ok := tutarKisitlari[constraint]; ok {
+	if message, ok := amountConstraints[constraint]; ok {
 		return errors.Wrap(err, errors.KindInvalid, codeAmountOutOfRange, "%s", message)
 	}
-	if message, ok := kisitMesajlari[constraint]; ok {
+	if message, ok := checkConstraintMessages[constraint]; ok {
 		return errors.Wrap(err, errors.KindInvalid, codeRuleInvalid, "%s", message)
 	}
 	switch {
 	case constraint == "fulfillment_items_quantity_check":
 		return errors.Wrap(err, errors.KindInvalid, codeQuantityOutOfRange,
-			"gönderi kalemi adedi pozitif olmalı")
+			"the quantity of a fulfillment item must be positive")
 	case strings.HasSuffix(constraint, constraintStampSuffix):
-		// Durum yazıldı ama ona eşlik eden zaman damgası boş bırakıldı.
-		// Servis bunu üretmez; buraya düşen bir hata modülün kendi
-		// tutarsızlığıdır ve teşhis edilmelidir.
+		// The status was written but the timestamp accompanying it was left
+		// empty. The service does not produce this; an error landing here is
+		// the module's own inconsistency and must be diagnosed.
 		return errors.Wrap(err, errors.KindInternal, codeStampMissing,
-			"gönderi durumu, zaman damgası olmadan yazılamaz")
+			"a fulfillment status cannot be written without a timestamp")
 	case strings.HasSuffix(constraint, constraintStatusSuffix):
 		return errors.Wrap(err, errors.KindInvalid, codeStatusInvalid,
-			"tanımsız durum değeri")
+			"undefined status value")
 	case strings.HasSuffix(constraint, "_currency_format"):
 		return errors.Wrap(err, errors.KindInvalid, codeCurrencyInvalid,
-			"para birimi üç harfli ISO 4217 kodu olmalı")
+			"the currency must be a three-letter ISO 4217 code")
 	}
 	return errors.Wrap(err, errors.KindInternal, code, format, a...)
 }
 
-// --- çeviri ------------------------------------------------------------------
+// --- conversion --------------------------------------------------------------
 
-// toTime pgtype damgasını UTC time.Time'a çevirir.
+// toTime converts a pgtype timestamp to a UTC time.Time.
 func toTime(ts pgtype.Timestamptz) time.Time {
 	if !ts.Valid {
 		return time.Time{}
@@ -248,7 +257,7 @@ func toTime(ts pgtype.Timestamptz) time.Time {
 	return ts.Time.UTC()
 }
 
-// toTimePtr nullable damgayı *time.Time'a çevirir.
+// toTimePtr converts a nullable timestamp to a *time.Time.
 func toTimePtr(ts pgtype.Timestamptz) *time.Time {
 	if !ts.Valid {
 		return nil
@@ -257,7 +266,7 @@ func toTimePtr(ts pgtype.Timestamptz) *time.Time {
 	return &t
 }
 
-// fromTimePtr *time.Time'ı pgtype damgasına çevirir; nil SQL NULL olur.
+// fromTimePtr converts a *time.Time to a pgtype timestamp; nil becomes SQL NULL.
 func fromTimePtr(t *time.Time) pgtype.Timestamptz {
 	if t == nil {
 		return pgtype.Timestamptz{}
@@ -265,7 +274,7 @@ func fromTimePtr(t *time.Time) pgtype.Timestamptz {
 	return pgtype.Timestamptz{Time: t.UTC(), Valid: true}
 }
 
-// toJSONRaw jsonb sütununu ham JSON'a çevirir. Boş sütun nil döner.
+// toJSONRaw converts a jsonb column to raw JSON. An empty column returns nil.
 func toJSONRaw(raw []byte) json.RawMessage {
 	if len(raw) == 0 || string(raw) == jsonNullLiteral || string(raw) == jsonEmptyObject {
 		return nil
@@ -275,10 +284,11 @@ func toJSONRaw(raw []byte) json.RawMessage {
 	return out
 }
 
-// fromJSONRaw ham JSON'ı jsonb sütununa yazılacak bayta çevirir.
+// fromJSONRaw converts raw JSON to the bytes to be written into a jsonb column.
 //
-// Sütun NOT NULL'dur ve "veri yok" ile "veri boş" ayrımı bu modülde bir şey
-// ifade etmez; sağlayıcı verisi olmayan bir gönderi boş nesne taşır.
+// The column is NOT NULL and the distinction between "no data" and "empty data"
+// means nothing in this module; a fulfillment without provider data carries an
+// empty object.
 func fromJSONRaw(raw json.RawMessage) []byte {
 	if len(raw) == 0 || string(raw) == jsonNullLiteral {
 		return []byte(jsonEmptyObject)
@@ -286,10 +296,10 @@ func fromJSONRaw(raw json.RawMessage) []byte {
 	return raw
 }
 
-// toJSONMap jsonb sütununu haritaya çevirir.
+// toJSONMap converts a jsonb column to a map.
 //
-// Boş ya da JSON null değer nil harita döner; böylece API yanıtında
-// "metadata": null yerine alan hiç görünmez (omitempty).
+// An empty or JSON null value returns a nil map; that way the field does not
+// appear at all in the API response instead of "metadata": null (omitempty).
 func toJSONMap(raw []byte) (map[string]any, error) {
 	if len(raw) == 0 || string(raw) == jsonNullLiteral {
 		return nil, nil
@@ -297,7 +307,7 @@ func toJSONMap(raw []byte) (map[string]any, error) {
 	var out map[string]any
 	if err := json.Unmarshal(raw, &out); err != nil {
 		return nil, errors.Wrap(err, errors.KindInternal, codeDataInvalid,
-			"JSON alanı çözümlenemedi")
+			"could not decode JSON field")
 	}
 	if len(out) == 0 {
 		return nil, nil
@@ -305,7 +315,7 @@ func toJSONMap(raw []byte) (map[string]any, error) {
 	return out, nil
 }
 
-// fromJSONMap haritayı jsonb sütununa yazılacak bayta çevirir.
+// fromJSONMap converts a map to the bytes to be written into a jsonb column.
 func fromJSONMap(m map[string]any) ([]byte, error) {
 	if len(m) == 0 {
 		return []byte(jsonEmptyObject), nil
@@ -313,12 +323,12 @@ func fromJSONMap(m map[string]any) ([]byte, error) {
 	raw, err := json.Marshal(m)
 	if err != nil {
 		return nil, errors.Wrap(err, errors.KindInvalid, codeDataInvalid,
-			"JSON alanı kodlanamadı")
+			"could not encode JSON field")
 	}
 	return raw, nil
 }
 
-// toProfile veritabanı satırını domain modeline çevirir.
+// toProfile converts a database row to the domain model.
 func toProfile(row fulfillmentdb.ShippingProfile) (models.ShippingProfile, error) {
 	meta, err := toJSONMap(row.Metadata)
 	if err != nil {
@@ -335,10 +345,10 @@ func toProfile(row fulfillmentdb.ShippingProfile) (models.ShippingProfile, error
 	}, nil
 }
 
-// toOption veritabanı satırını domain modeline çevirir.
+// toOption converts a database row to the domain model.
 //
-// Rules DOLDURULMAZ: kurallar ayrı bir sorgudan gelir ve çağıran onları toplu
-// olarak (N+1 yapmadan) iliştirir.
+// Rules ARE NOT FILLED IN: the rules come from a separate query and the caller
+// attaches them in bulk (without doing N+1).
 func toOption(row fulfillmentdb.ShippingOption) (models.ShippingOption, error) {
 	data, err := toJSONMap(row.Data)
 	if err != nil {
@@ -367,7 +377,7 @@ func toOption(row fulfillmentdb.ShippingOption) (models.ShippingOption, error) {
 	}, nil
 }
 
-// toRule veritabanı satırını domain modeline çevirir.
+// toRule converts a database row to the domain model.
 func toRule(row fulfillmentdb.ShippingOptionRule) models.ShippingOptionRule {
 	values := make([]string, len(row.RuleValues))
 	copy(values, row.RuleValues)
@@ -383,10 +393,10 @@ func toRule(row fulfillmentdb.ShippingOptionRule) models.ShippingOptionRule {
 	}
 }
 
-// toFulfillment veritabanı satırını domain modeline çevirir.
+// toFulfillment converts a database row to the domain model.
 //
-// Items DOLDURULMAZ: kalemler ayrı bir sorgudan gelir ve çağıran onları toplu
-// olarak iliştirir.
+// Items ARE NOT FILLED IN: the items come from a separate query and the caller
+// attaches them in bulk.
 func toFulfillment(row fulfillmentdb.Fulfillment) (models.Fulfillment, error) {
 	meta, err := toJSONMap(row.Metadata)
 	if err != nil {
@@ -413,7 +423,7 @@ func toFulfillment(row fulfillmentdb.Fulfillment) (models.Fulfillment, error) {
 	}, nil
 }
 
-// toItem veritabanı satırını domain modeline çevirir.
+// toItem converts a database row to the domain model.
 func toItem(row fulfillmentdb.FulfillmentItem) models.FulfillmentItem {
 	return models.FulfillmentItem{
 		ID:            row.ID,
@@ -425,7 +435,7 @@ func toItem(row fulfillmentdb.FulfillmentItem) models.FulfillmentItem {
 	}
 }
 
-// toManualShipment veritabanı satırını sağlayıcının defter modeline çevirir.
+// toManualShipment converts a database row to the provider's ledger model.
 func toManualShipment(row fulfillmentdb.FulfillmentManualShipment) models.ManualShipment {
 	return models.ManualShipment{
 		ID:             row.ID,

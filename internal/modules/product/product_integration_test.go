@@ -1,14 +1,14 @@
 //go:build integration
 
-// Bu dosyadaki testler gerçek bir PostgreSQL örneği (dolayısıyla Docker)
-// gerektirir; `make test` hızlı kalsın diye `integration` etiketiyle
-// ayrılmıştır. Çalıştırmak için: make test-integration
+// The tests in this file require a real PostgreSQL instance (and therefore
+// Docker); they are separated behind the `integration` tag so that `make test`
+// stays fast. To run them: make test-integration
 //
-// Buradaki iddiaların çoğu YALNIZCA gerçek veritabanında kanıtlanabilir:
-// kısmi benzersiz indeksin eşzamanlı iki isteği ayırması, soft delete'in
-// okuma sorgularından düşmesi, migration'ın geri alınabilmesi ve — Faz 4'ün
-// kalbi — vitrin listelemesinin link'ler üzerinden fiyat ve stoğu gerçek
-// Query katmanıyla toplaması.
+// Most of the claims here can be proven ONLY against a real database: that the
+// partial unique index separates two concurrent requests, that a soft delete
+// falls out of the read queries, that the migration can be rolled back and —
+// the heart of Phase 4 — that the storefront listing gathers price and stock
+// over the links with the real Query layer.
 package product_test
 
 import (
@@ -39,9 +39,9 @@ import (
 const postgresImage = "postgres:16-alpine"
 
 var (
-	// testPool tüm testlerin paylaştığı havuzdur.
+	// testPool is the pool all the tests share.
 	testPool *db.Pool
-	// testDSN paylaşılan veritabanının adresidir.
+	// testDSN is the address of the shared database.
 	testDSN string
 )
 
@@ -49,8 +49,8 @@ func TestMain(m *testing.M) {
 	os.Exit(runWithPostgres(m))
 }
 
-// runWithPostgres tek bir Postgres konteyneri kaldırır, product şemasını
-// uygular ve tüm testleri onun üzerinde çalıştırır.
+// runWithPostgres brings up a single Postgres container, applies the product
+// schema and runs all the tests on top of it.
 func runWithPostgres(m *testing.M) int {
 	ctx := context.Background()
 
@@ -62,53 +62,55 @@ func runWithPostgres(m *testing.M) int {
 	)
 	defer func() {
 		if termErr := testcontainers.TerminateContainer(ctr); termErr != nil {
-			fmt.Fprintf(os.Stderr, "postgres konteyneri durdurulamadı: %v\n", termErr)
+			fmt.Fprintf(os.Stderr, "could not stop the postgres container: %v\n", termErr)
 		}
 	}()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "postgres konteyneri başlatılamadı: %v\n", err)
+		fmt.Fprintf(os.Stderr, "could not start the postgres container: %v\n", err)
 		return 1
 	}
 
 	testDSN, err = ctr.ConnectionString(ctx, "sslmode=disable")
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "bağlantı adresi alınamadı: %v\n", err)
+		fmt.Fprintf(os.Stderr, "could not obtain the connection address: %v\n", err)
 		return 1
 	}
 
 	mod := product.New(product.Options{})
 	if err = db.Migrate(ctx, testDSN, mod.Migrations(), mod.Name()); err != nil {
-		fmt.Fprintf(os.Stderr, "product şeması uygulanamadı: %v\n", err)
+		fmt.Fprintf(os.Stderr, "could not apply the product schema: %v\n", err)
 		return 1
 	}
 
 	testPool, err = db.New(ctx, db.DefaultConfig(testDSN), nil)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "bağlantı havuzu açılamadı: %v\n", err)
+		fmt.Fprintf(os.Stderr, "could not open the connection pool: %v\n", err)
 		return 1
 	}
 	defer testPool.Close()
 
-	// Link tabloları migration'la DEĞİL, modülün bildirimiyle kurulur (ADR
-	// 0005): şemayı core/link, link.Define çağrıldığında yaratır. Üretimde bunu
-	// Module.Register açılışta yapar ve hiçbir istek ondan önce gelemez.
+	// The link tables are created NOT by a migration but by the module's
+	// declaration (ADR 0005): core/link creates the schema when link.Define is
+	// called. In production Module.Register does this at startup and no
+	// request can arrive before it.
 	//
-	// Burada elle yapılmasının sebebi, bu dosyadaki bazı testlerin modülü
-	// Register etmeden doğrudan depo üzerinde servis kurmasıdır. Bildirim
-	// olmasaydı ürün listelemesi tümüyle düşerdi: süzgeç link tablosuna karşı
-	// bir EXISTS koşulu taşır ve PostgreSQL ilişkiyi, koşul kısa devre etse
-	// bile ayrıştırma anında arar. Bu bağımlılık bilinçlidir — eksik link
-	// tablosunun sessizce "hiç atama yok" sayılması, her anahtara tüm kataloğu
-	// açan arızanın ta kendisini geri getirirdi.
+	// The reason it is done by hand here is that some tests in this file set
+	// up a service directly on the repository without Registering the module.
+	// Without the declaration, product listing would fall over entirely: the
+	// filter carries an EXISTS condition against the link table and PostgreSQL
+	// looks the relation up at parse time even when the condition short
+	// circuits. That dependency is deliberate — silently treating a missing
+	// link table as "no assignment at all" would bring back the very fault
+	// that opened the whole catalog to every key.
 	if err = defineLinks(ctx); err != nil {
-		fmt.Fprintf(os.Stderr, "link tanımları bildirilemedi: %v\n", err)
+		fmt.Fprintf(os.Stderr, "could not declare the link definitions: %v\n", err)
 		return 1
 	}
 
 	return m.Run()
 }
 
-// defineLinks product'ın link tanımlarını paylaşılan veritabanına bildirir.
+// defineLinks declares product's link definitions on the shared database.
 func defineLinks(ctx context.Context) error {
 	links := link.New(testPool, nil)
 	for _, def := range service.Definitions() {
@@ -119,14 +121,15 @@ func defineLinks(ctx context.Context) error {
 	return nil
 }
 
-// --- yardımcılar --------------------------------------------------------
+// --- helpers ------------------------------------------------------------
 
-// newService gerçek depo üzerinde çalışan bir servis kurar.
+// newService sets up a service running on the real repository.
 //
-// Olay veri yolu VERİLMEZ: buradaki testler deponun ve kuralların davranışını
-// sınar, olayları değil — veri yolusuz serviste olaylar sessizce atlanır
-// (bkz. service.Service.publishProductEvent). Olayların gerçekten yayımlandığı
-// interop_integration_test.go içinde, modül Register edilerek kanıtlanır.
+// The event bus is NOT GIVEN: the tests here exercise the behavior of the
+// repository and of the rules, not the events — in a service without a bus the
+// events are skipped silently (see service.Service.publishProductEvent). That
+// the events really are published is proven inside
+// interop_integration_test.go, by Registering the module.
 func newService(t *testing.T, links service.Linker, graph service.Grapher) *service.Service {
 	t.Helper()
 
@@ -139,18 +142,20 @@ func newService(t *testing.T, links service.Linker, graph service.Grapher) *serv
 	return svc
 }
 
-// uniqueHandle testler arası çakışmayı önleyen benzersiz bir handle üretir.
+// uniqueHandle produces a unique handle that prevents collisions between
+// tests.
 //
-// Testler tek veritabanını paylaşır; sabit bir handle, ilgisiz bir testin
-// bıraktığı kayıt yüzünden çakışma üretirdi.
+// The tests share a single database; a fixed handle would produce a collision
+// because of a record left behind by an unrelated test.
 func uniqueHandle(prefix string) string {
 	return fmt.Sprintf("%s-%d", prefix, time.Now().UnixNano())
 }
 
-// newDatabase testin kendi veritabanını açar ve sonunda düşürür.
+// newDatabase opens the test's own database and drops it at the end.
 //
-// Migration'ı geri alan test paylaşılan şemayı düşürseydi diğer testler
-// çalışamazdı; bu yüzden yalnızca o test kendi veritabanında yürür.
+// If the test that rolls the migration back dropped the shared schema, the
+// other tests could not run; that is why only that test runs on a database of
+// its own.
 func newDatabase(ctx context.Context, t *testing.T) string {
 	t.Helper()
 
@@ -160,8 +165,9 @@ func newDatabase(ctx context.Context, t *testing.T) string {
 	require.NoError(t, err)
 	defer func() { _ = conn.Close(ctx) }()
 
-	// Veritabanı adı SQL'de parametrelenemez; ad testin ürettiği sabit
-	// biçimdedir (harf, alt çizgi, rakam) ve dışarıdan veri almaz.
+	// A database name cannot be parameterized in SQL; the name has the fixed
+	// shape the test produces (letters, underscore, digits) and takes no data
+	// from the outside.
 	_, err = conn.Exec(ctx, `CREATE DATABASE `+name)
 	require.NoError(t, err)
 
@@ -181,7 +187,7 @@ func newDatabase(ctx context.Context, t *testing.T) string {
 	return u.String()
 }
 
-// tableExists tablonun geçerli şemada bulunup bulunmadığını bildirir.
+// tableExists reports whether the table is present in the current schema.
 func tableExists(ctx context.Context, t *testing.T, dsn, table string) bool {
 	t.Helper()
 
@@ -197,8 +203,8 @@ func tableExists(ctx context.Context, t *testing.T, dsn, table string) bool {
 
 // --- migration ----------------------------------------------------------
 
-// TestMigrationUpDownIsReversible şemanın uygulanabildiğini ve GERİ
-// ALINABİLDİĞİNİ doğrular (plan Bölüm 8).
+// TestMigrationUpDownIsReversible verifies that the schema can be applied and
+// ROLLED BACK (Section 8 of the plan).
 func TestMigrationUpDownIsReversible(t *testing.T) {
 	ctx := context.Background()
 	dsn := newDatabase(ctx, t)
@@ -212,47 +218,47 @@ func TestMigrationUpDownIsReversible(t *testing.T) {
 		"product_tag", "product_image", "product_tag_map", "product_category_map",
 	}
 	for _, table := range tables {
-		assert.True(t, tableExists(ctx, t, dsn, table), "%s tablosu oluşmalı", table)
+		assert.True(t, tableExists(ctx, t, dsn, table), "the %s table must be created", table)
 	}
 
 	version, dirty, err := db.Version(ctx, dsn, mod.Name())
 	require.NoError(t, err)
-	assert.False(t, dirty, "migration yarıda kalmamalı")
+	assert.False(t, dirty, "the migration must not stop halfway")
 	assert.Equal(t, uint(1), version)
 
 	require.NoError(t, db.MigrateDown(ctx, dsn, mod.Migrations(), mod.Name(), 0),
-		"şema geri alınabilmeli")
+		"the schema must be reversible")
 	for _, table := range tables {
-		assert.False(t, tableExists(ctx, t, dsn, table), "%s tablosu düşmeli", table)
+		assert.False(t, tableExists(ctx, t, dsn, table), "the %s table must be dropped", table)
 	}
 
-	// Geri alınan şema yeniden uygulanabilmeli: geri alma, bir sonraki
-	// dağıtımı bloke etmemelidir.
+	// A rolled back schema must be applicable again: a rollback must not block
+	// the next deployment.
 	require.NoError(t, db.Migrate(ctx, dsn, mod.Migrations(), mod.Name()))
 	assert.True(t, tableExists(ctx, t, dsn, "product"))
 }
 
 // --- CRUD ---------------------------------------------------------------
 
-// TestProductLifecycle ürün oluşturma, okuma, güncelleme ve silmenin gerçek
-// veritabanında uçtan uca çalıştığını doğrular.
+// TestProductLifecycle verifies that creating, reading, updating and deleting
+// a product works end to end against the real database.
 func TestProductLifecycle(t *testing.T) {
 	ctx := context.Background()
 	svc := newService(t, nil, nil)
-	handle := uniqueHandle("tisort")
+	handle := uniqueHandle("tshirt")
 
 	created, err := svc.CreateProduct(ctx, service.CreateProductInput{
 		Handle:      handle,
-		Title:       "Tişört",
+		Title:       "T-shirt",
 		Status:      models.StatusPublished,
-		Description: ptrString("Pamuklu"),
-		Metadata:    map[string]any{"koleksiyon": "yaz"},
+		Description: ptrString("Cotton"),
+		Metadata:    map[string]any{"collection": "summer"},
 		Options: []service.CreateOptionInput{
-			{Title: "Beden", Values: []string{"S", "M", "L"}},
+			{Title: "Size", Values: []string{"S", "M", "L"}},
 		},
 		Variants: []service.CreateVariantInput{
-			{Title: "S beden", SKU: ptrString(uniqueHandle("sku-s")), Options: map[string]string{"Beden": "S"}},
-			{Title: "M beden", SKU: ptrString(uniqueHandle("sku-m")), Options: map[string]string{"Beden": "M"}},
+			{Title: "S size", SKU: ptrString(uniqueHandle("sku-s")), Options: map[string]string{"Size": "S"}},
+			{Title: "M size", SKU: ptrString(uniqueHandle("sku-m")), Options: map[string]string{"Size": "M"}},
 		},
 		Images: []service.CreateImageInput{{URL: "https://cdn.example/1.png"}},
 	})
@@ -263,21 +269,21 @@ func TestProductLifecycle(t *testing.T) {
 	require.Len(t, created.Options, 1)
 	require.Len(t, created.Options[0].Values, 3)
 	require.Len(t, created.Images, 1)
-	assert.Equal(t, "yaz", created.Metadata["koleksiyon"], "jsonb alanı gidiş dönüş korunmalı")
-	assert.False(t, created.CreatedAt.IsZero(), "zaman damgası veritabanından gelmeli")
-	assert.Equal(t, time.UTC, created.CreatedAt.Location(), "zaman UTC olmalı")
+	assert.Equal(t, "summer", created.Metadata["collection"], "the jsonb field must survive the round trip")
+	assert.False(t, created.CreatedAt.IsZero(), "the timestamp must come from the database")
+	assert.Equal(t, time.UTC, created.CreatedAt.Location(), "the time must be UTC")
 
-	// Varyantlar seçenek değerlerine gerçekten bağlanmış olmalı.
+	// The variants must really be bound to the option values.
 	var sVariant models.Variant
 	for _, v := range created.Variants {
-		if v.Title == "S beden" {
+		if v.Title == "S size" {
 			sVariant = v
 		}
 	}
 	require.NotEmpty(t, sVariant.ID)
 	require.Len(t, sVariant.OptionValues, 1)
 	assert.Equal(t, "S", sVariant.OptionValues[0].Value)
-	assert.Equal(t, "Beden", sVariant.OptionValues[0].OptionTitle)
+	assert.Equal(t, "Size", sVariant.OptionValues[0].OptionTitle)
 
 	fetched, err := svc.GetProduct(ctx, created.ID)
 	require.NoError(t, err)
@@ -285,33 +291,34 @@ func TestProductLifecycle(t *testing.T) {
 	assert.Len(t, fetched.Variants, 2)
 
 	updated, err := svc.UpdateProduct(ctx, created.ID, service.UpdateProductInput{
-		Title:  ptrString("Tişört v2"),
+		Title:  ptrString("T-shirt v2"),
 		Status: ptrStatus(models.StatusArchived),
 	})
 	require.NoError(t, err)
-	assert.Equal(t, "Tişört v2", updated.Title)
+	assert.Equal(t, "T-shirt v2", updated.Title)
 	assert.Equal(t, models.StatusArchived, updated.Status)
 	assert.True(t, updated.UpdatedAt.After(created.UpdatedAt) || updated.UpdatedAt.Equal(created.UpdatedAt),
-		"güncelleme damgası geri gitmemeli")
+		"the update stamp must not go backwards")
 
 	require.NoError(t, svc.DeleteProduct(ctx, created.ID))
 }
 
-// TestSoftDeleteHidesFromReads silinen kaydın okuma sorgularından düştüğünü ve
-// handle'ının serbest kaldığını doğrular.
+// TestSoftDeleteHidesFromReads verifies that a deleted record falls out of the
+// read queries and that its handle becomes free again.
 //
-// İkincisi kısmi benzersiz indeksin (WHERE deleted_at IS NULL) doğrudan
-// sonucudur: silinmiş bir ürün yeni bir ürünün handle'ını tıkamamalıdır.
+// The second is a direct consequence of the partial unique index (WHERE
+// deleted_at IS NULL): a deleted product must not block a new product's
+// handle.
 func TestSoftDeleteHidesFromReads(t *testing.T) {
 	ctx := context.Background()
 	svc := newService(t, nil, nil)
-	handle := uniqueHandle("silinecek")
+	handle := uniqueHandle("to-be-deleted")
 
 	created, err := svc.CreateProduct(ctx, service.CreateProductInput{
 		Handle:   handle,
-		Title:    "Silinecek",
+		Title:    "To be deleted",
 		Status:   models.StatusPublished,
-		Variants: []service.CreateVariantInput{{Title: "Tek"}},
+		Variants: []service.CreateVariantInput{{Title: "Single"}},
 	})
 	require.NoError(t, err)
 	variantID := created.Variants[0].ID
@@ -319,35 +326,35 @@ func TestSoftDeleteHidesFromReads(t *testing.T) {
 	require.NoError(t, svc.DeleteProduct(ctx, created.ID))
 
 	_, err = svc.GetProduct(ctx, created.ID)
-	assert.True(t, coreerrors.IsNotFound(err), "silinen ürün okunamamalı: %v", err)
+	assert.True(t, coreerrors.IsNotFound(err), "a deleted product must not be readable: %v", err)
 
 	_, err = svc.GetVariant(ctx, variantID)
-	assert.True(t, coreerrors.IsNotFound(err), "silinen ürünün varyantı da düşmeli: %v", err)
+	assert.True(t, coreerrors.IsNotFound(err), "the deleted product's variant must fall out too: %v", err)
 
 	list, err := svc.ListProducts(ctx, service.ListProductsOptions{Handle: &handle})
 	require.NoError(t, err)
-	assert.Empty(t, list.Items, "silinen ürün listelenmemeli")
-	assert.Zero(t, sayac(t, list), "silinen ürün sayıma girmemeli")
+	assert.Empty(t, list.Items, "a deleted product must not be listed")
+	assert.Zero(t, totalCount(t, list), "a deleted product must not enter the count")
 
-	// Handle serbest kalmalı.
+	// The handle must become free again.
 	again, err := svc.CreateProduct(ctx, service.CreateProductInput{
 		Handle: handle,
-		Title:  "Yeniden",
+		Title:  "Again",
 	})
-	require.NoError(t, err, "silinen ürünün handle'ı yeniden kullanılabilmeli")
+	require.NoError(t, err, "the deleted product's handle must be reusable")
 	assert.NotEqual(t, created.ID, again.ID)
 }
 
-// TestHandleConflictIsEnforcedByDatabase eşzamanlı iki isteğin ARASINDAN
-// geçilemediğini doğrular.
+// TestHandleConflictIsEnforcedByDatabase verifies that two concurrent requests
+// cannot slip THROUGH each other.
 //
-// Servisin ön kontrolü iki isteği de "boş" görebilir; benzersizliğin tek gerçek
-// garantisi kısmi benzersiz indekstir. Bu iddia yalnızca gerçek veritabanında
-// kanıtlanabilir.
+// The service's pre-check may see both requests as "empty"; the only real
+// guarantee of uniqueness is the partial unique index. This claim can be
+// proven only against a real database.
 func TestHandleConflictIsEnforcedByDatabase(t *testing.T) {
 	ctx := context.Background()
 	svc := newService(t, nil, nil)
-	handle := uniqueHandle("yaris")
+	handle := uniqueHandle("race")
 
 	const attempts = 6
 	var (
@@ -364,7 +371,7 @@ func TestHandleConflictIsEnforcedByDatabase(t *testing.T) {
 			defer wg.Done()
 			_, err := svc.CreateProduct(ctx, service.CreateProductInput{
 				Handle: handle,
-				Title:  fmt.Sprintf("Yarışan %d", i),
+				Title:  fmt.Sprintf("Racer %d", i),
 			})
 
 			mu.Lock()
@@ -381,55 +388,56 @@ func TestHandleConflictIsEnforcedByDatabase(t *testing.T) {
 	}
 	wg.Wait()
 
-	assert.Empty(t, other, "beklenmeyen hata: %v", other)
-	assert.Equal(t, 1, ok, "aynı handle ile yalnızca BİR ürün oluşabilmeli")
-	assert.Equal(t, attempts-1, conflict, "kalan istekler çakışma almalı")
+	assert.Empty(t, other, "unexpected error: %v", other)
+	assert.Equal(t, 1, ok, "only ONE product may be created with the same handle")
+	assert.Equal(t, attempts-1, conflict, "the remaining requests must get a conflict")
 }
 
-// TestDuplicateSKUIsRejected varyant SKU'sunun benzersiz olduğunu doğrular.
+// TestDuplicateSKUIsRejected verifies that a variant's SKU is unique.
 func TestDuplicateSKUIsRejected(t *testing.T) {
 	ctx := context.Background()
 	svc := newService(t, nil, nil)
 	sku := uniqueHandle("sku")
 
 	first, err := svc.CreateProduct(ctx, service.CreateProductInput{
-		Handle:   uniqueHandle("sku-bir"),
-		Title:    "Bir",
-		Variants: []service.CreateVariantInput{{Title: "Tek", SKU: &sku}},
+		Handle:   uniqueHandle("sku-one"),
+		Title:    "One",
+		Variants: []service.CreateVariantInput{{Title: "Single", SKU: &sku}},
 	})
 	require.NoError(t, err)
 	require.Len(t, first.Variants, 1)
 
 	_, err = svc.CreateProduct(ctx, service.CreateProductInput{
-		Handle:   uniqueHandle("sku-iki"),
-		Title:    "İki",
-		Variants: []service.CreateVariantInput{{Title: "Tek", SKU: &sku}},
+		Handle:   uniqueHandle("sku-two"),
+		Title:    "Two",
+		Variants: []service.CreateVariantInput{{Title: "Single", SKU: &sku}},
 	})
 	require.Error(t, err)
-	assert.True(t, coreerrors.IsConflict(err), "aynı SKU çakışma vermeli: %v", err)
+	assert.True(t, coreerrors.IsConflict(err), "the same SKU must give a conflict: %v", err)
 	assert.Equal(t, "product_sku_taken", coreerrors.CodeOf(err))
 
-	// Çakışan istek yarım kayıt bırakmamalı: ürün de yazılmamış olmalı.
-	list, err := svc.ListProducts(ctx, service.ListProductsOptions{Search: ptrString("İki")})
+	// A conflicting request must not leave a half-written record behind: the
+	// product must not have been written either.
+	list, err := svc.ListProducts(ctx, service.ListProductsOptions{Search: ptrString("Two")})
 	require.NoError(t, err)
-	assert.Empty(t, list.Items, "işlem geri alınmalı; sahipsiz ürün kalmamalı")
+	assert.Empty(t, list.Items, "the transaction must be rolled back; no orphan product may remain")
 }
 
-// TestVariantOptionValueIsUniquePerOption bir varyantın aynı seçenekten tek
-// değer taşıdığını doğrular.
+// TestVariantOptionValueIsUniquePerOption verifies that a variant carries a
+// single value from the same option.
 //
-// Kural şemadadır (birincil anahtar: variant_id, option_id); ikinci yazma yeni
-// satır değil güncelleme üretir.
+// The rule is in the schema (primary key: variant_id, option_id); a second
+// write produces an update, not a new row.
 func TestVariantOptionValueIsUniquePerOption(t *testing.T) {
 	ctx := context.Background()
 	svc := newService(t, nil, nil)
 
 	created, err := svc.CreateProduct(ctx, service.CreateProductInput{
-		Handle:  uniqueHandle("secenek"),
-		Title:   "Seçenekli",
-		Options: []service.CreateOptionInput{{Title: "Beden", Values: []string{"S", "M"}}},
+		Handle:  uniqueHandle("option"),
+		Title:   "With options",
+		Options: []service.CreateOptionInput{{Title: "Size", Values: []string{"S", "M"}}},
 		Variants: []service.CreateVariantInput{
-			{Title: "Değişecek", Options: map[string]string{"Beden": "S"}},
+			{Title: "Will change", Options: map[string]string{"Size": "S"}},
 		},
 	})
 	require.NoError(t, err)
@@ -447,25 +455,25 @@ func TestVariantOptionValueIsUniquePerOption(t *testing.T) {
 
 	variant, err := svc.GetVariant(ctx, variantID)
 	require.NoError(t, err)
-	require.Len(t, variant.OptionValues, 1, "aynı seçenekten iki değer taşınamaz")
+	require.Len(t, variant.OptionValues, 1, "two values from the same option cannot be carried")
 	assert.Equal(t, "M", variant.OptionValues[0].Value)
 }
 
-// TestListProductsPagesConsistently sayfalamanın kararlı sıra ürettiğini
-// doğrular.
+// TestListProductsPagesConsistently verifies that paging produces a stable
+// order.
 func TestListProductsPagesConsistently(t *testing.T) {
 	ctx := context.Background()
 	svc := newService(t, nil, nil)
 	collection, err := svc.CreateCollection(ctx, service.CreateCollectionInput{
-		Title: "Sayfalama " + uniqueHandle("koleksiyon"),
+		Title: "Paging " + uniqueHandle("collection"),
 	})
 	require.NoError(t, err)
 
 	const total = 5
 	for i := range total {
 		_, err := svc.CreateProduct(ctx, service.CreateProductInput{
-			Handle:       uniqueHandle(fmt.Sprintf("sayfa-%d", i)),
-			Title:        fmt.Sprintf("Sayfa %d", i),
+			Handle:       uniqueHandle(fmt.Sprintf("page-%d", i)),
+			Title:        fmt.Sprintf("Page %d", i),
 			CollectionID: &collection.ID,
 		})
 		require.NoError(t, err)
@@ -479,41 +487,44 @@ func TestListProductsPagesConsistently(t *testing.T) {
 			Offset:       offset,
 		})
 		require.NoError(t, err)
-		assert.Equal(t, total, sayac(t, page), "count sayfadan bağımsız olmalı")
+		assert.Equal(t, total, totalCount(t, page), "the count must be independent of the page")
 		for _, item := range page.Items {
 			_, dup := seen[item.ID]
-			assert.False(t, dup, "aynı kayıt iki sayfada görünmemeli: %s", item.ID)
+			assert.False(t, dup, "the same record must not show up on two pages: %s", item.ID)
 			seen[item.ID] = struct{}{}
 		}
 	}
-	assert.Len(t, seen, total, "sayfalar bütün kümeyi kapsamalı")
+	assert.Len(t, seen, total, "the pages must cover the whole set")
 }
 
-// TestCreateVariantLosesRaceWithProductDeletion silinmekte olan bir ürüne
-// varyant eklenemediğini doğrular.
+// TestCreateVariantLosesRaceWithProductDeletion verifies that a variant cannot
+// be added to a product that is being deleted.
 //
-// Yarış GERÇEKTİR ve yalnızca gerçek veritabanında görülür: silme SOFT olduğu
-// için product_variant üzerindeki foreign key silinmiş ürünün satırını hâlâ
-// görür ve boşluğu kapatmaz. Kontrol işlemin DIŞINDA yapılırsa araya giren bir
-// DELETE, deleted_at'i NULL olan ama sahibi silinmiş bir varyant bırakır; bu
-// varyant admin uçlarında ve "variant.query" sağlayıcısında görünmeye devam eder.
+// The race is REAL and is seen only against a real database: because the
+// delete is SOFT, the foreign key on product_variant still sees the deleted
+// product's row and does not close the gap. If the check is done OUTSIDE the
+// transaction, an intervening DELETE leaves behind a variant whose deleted_at
+// is NULL but whose owner is deleted; that variant keeps showing up on the
+// admin endpoints and in the "variant.query" provider.
 //
-// Sıralama uydurulmaz, KİLİTLE zorlanır: test ürünün satırını kendi işleminde
-// (henüz commit etmeden) siler, sonra CreateVariant'ı başlatır. Doğru davranışta
-// CreateVariant satır kilidinde bekler ve commit'ten sonra "bulunamadı" alır;
-// kontrol işlem dışında yapılırsa hiç beklemez, bekleme penceresi içinde
-// varyantı yazar ve yetim kayıt oluşur.
+// The ordering is not made up, it is forced BY THE LOCK: the test deletes the
+// product's row inside its own transaction (without committing yet), then
+// starts CreateVariant. With the correct behavior CreateVariant waits on the
+// row lock and gets "not found" after the commit; if the check is done outside
+// the transaction it never waits, writes the variant inside the waiting window
+// and an orphan record is created.
 func TestCreateVariantLosesRaceWithProductDeletion(t *testing.T) {
 	ctx := context.Background()
 	svc := newService(t, nil, nil)
 
 	created, err := svc.CreateProduct(ctx, service.CreateProductInput{
-		Handle: uniqueHandle("yaris-silme"),
-		Title:  "Silinmekte Olan",
+		Handle: uniqueHandle("race-delete"),
+		Title:  "Being Deleted",
 	})
 	require.NoError(t, err)
 
-	// Silmeyi başlat ama COMMIT ETME: ürün satırının kilidi bizde kalsın.
+	// Start the delete but DO NOT COMMIT: let the product row's lock stay with
+	// us.
 	tx, err := testPool.Pool().Begin(ctx)
 	require.NoError(t, err)
 	defer func() { _ = tx.Rollback(ctx) }()
@@ -528,129 +539,134 @@ func TestCreateVariantLosesRaceWithProductDeletion(t *testing.T) {
 	}
 	done := make(chan result, 1)
 	go func() {
-		variant, cErr := svc.CreateVariant(ctx, created.ID, service.CreateVariantInput{Title: "Yetim"})
+		variant, cErr := svc.CreateVariant(ctx, created.ID, service.CreateVariantInput{Title: "Orphan"})
 		done <- result{variant: variant, err: cErr}
 	}()
 
-	// Pencere, kilitsiz bir uygulamanın kontrolü ve INSERT'i bitirmesine fazlasıyla
-	// yeter; kilitli uygulama burada bekler.
+	// The window is far more than enough for a lock-free implementation to
+	// finish its check and its INSERT; a locking implementation waits here.
 	select {
 	case got := <-done:
-		t.Fatalf("varyant silme commit edilmeden yazıldı (yetim kayıt): %+v, err=%v", got.variant, got.err)
+		t.Fatalf("the variant was written before the delete was committed (orphan record): %+v, err=%v", got.variant, got.err)
 	case <-time.After(time.Second):
 	}
 
 	require.NoError(t, tx.Commit(ctx))
 
 	got := <-done
-	require.Error(t, got.err, "silinmiş ürüne varyant eklenememeli")
-	assert.True(t, coreerrors.IsNotFound(got.err), "bulunamadı bekleniyordu: %v", got.err)
+	require.Error(t, got.err, "a variant must not be addable to a deleted product")
+	assert.True(t, coreerrors.IsNotFound(got.err), "not found was expected: %v", got.err)
 
 	variants, err := svc.ListVariants(ctx, service.ListVariantsOptions{ProductID: &created.ID})
 	require.NoError(t, err)
-	assert.Empty(t, variants.Items, "silinmiş ürünün altında canlı varyant kalmamalı")
+	assert.Empty(t, variants.Items, "no live variant may remain under a deleted product")
 }
 
-// ptrString dizgenin adresini döner.
+// ptrString returns the address of the string.
 func ptrString(v string) *string { return &v }
 
-// ptrInt32 tam sayı işaretçisi üretir.
+// ptrInt32 produces an integer pointer.
 func ptrInt32(v int32) *int32 { return &v }
 
-// ptrBool mantıksal işaretçi üretir.
+// ptrBool produces a boolean pointer.
 func ptrBool(v bool) *bool { return &v }
 
-// ptrStatus durumun adresini döner.
+// ptrStatus returns the address of the status.
 func ptrStatus(v models.Status) *models.Status { return &v }
 
-// sayac sonucun toplam sayacını döner ve SAYILDIĞINI de doğrular.
+// totalCount returns the result's total count and also verifies THAT IT WAS
+// COUNTED.
 //
-// Sayaç işaretçidir ve nil "sayılmadı" demektir (bkz. [service.ListResult]).
-// Ham dereference, sayaç bir gün sessizce kapanırsa okunabilir bir hata yerine
-// panik verirdi.
-func sayac[T any](t *testing.T, res service.ListResult[T]) int {
+// The count is a pointer and nil means "not counted" (see
+// [service.ListResult]). A raw dereference would give a panic instead of a
+// readable error if the count were one day silently turned off.
+func totalCount[T any](t *testing.T, res service.ListResult[T]) int {
 	t.Helper()
-	require.NotNil(t, res.Count, "sayaç hesaplanmış olmalıydı")
+	require.NotNil(t, res.Count, "the count should have been computed")
 
 	return *res.Count
 }
 
-// TestUrunSutunEslemesiKaymamis elle yazılan sütun listesi ile sqlc'nin
-// ürettiği alan sırasının ayrışmadığını doğrular.
+// TestProductColumnMappingHasNotDrifted verifies that the hand-written column
+// list and the field order sqlc produces have not diverged.
 //
-// # Neden ayrı bir test gerekiyor
+// # Why a separate test is needed
 //
-// Vitrin listesi satırları KONUMA göre çözer (pgx.RowToStructByPos), çünkü
-// ada göre çözüm sqlc'nin etiketsiz alanlarıyla çalışmaz. Konum eşlemesi
-// sessizce bozulabilir: bu tabloda handle ile title bitişik ve ikisi de text,
-// subtitle/description/thumbnail üç text, weight/length/height/width dört
-// integer. Aynı tipte iki komşunun yer değiştirmesi HİÇBİR hata üretmez —
-// yalnızca her ürünün başlığıyla handle'ını takas eder.
+// The storefront list resolves the rows BY POSITION (pgx.RowToStructByPos),
+// because resolving by name does not work with sqlc's untagged fields. A
+// positional mapping can break silently: in this table handle and title are
+// adjacent and both are text, subtitle/description/thumbnail are three texts,
+// weight/length/height/width four integers. Two neighbors of the same type
+// swapping places produces NO error at all — it merely swaps every product's
+// title with its handle.
 //
-// Bu yüzden test her alana AYIRT EDİLEBİLİR bir değer yazar: iki alan yer
-// değiştirirse iddia düşer. Yalnızca "alan dolu mu" diye bakan bir test bu
-// takası göremezdi.
-func TestUrunSutunEslemesiKaymamis(t *testing.T) {
+// That is why the test writes a DISTINGUISHABLE value into every field: if two
+// fields swap, the assertion fails. A test that only looked at "is the field
+// filled" could not see that swap.
+func TestProductColumnMappingHasNotDrifted(t *testing.T) {
 	ctx := context.Background()
 	svc := newService(t, nil, nil)
-	handle := uniqueHandle("sutun-eslemesi")
+	handle := uniqueHandle("column-mapping")
 
 	created, err := svc.CreateProduct(ctx, service.CreateProductInput{
 		Handle: handle,
-		Title:  "BASLIK-" + handle,
+		Title:  "TITLE-" + handle,
 		Status: models.StatusPublished,
-		// Aynı tipteki komşu alanların HEPSİ farklı değer taşır.
-		Subtitle:      ptrString("ALTBASLIK-ayirt-edici"),
-		Description:   ptrString("ACIKLAMA-ayirt-edici"),
-		Thumbnail:     ptrString("KAPAK-ayirt-edici"),
-		Material:      ptrString("MALZEME-ayirt-edici"),
+		// ALL of the neighboring fields of the same type carry different
+		// values.
+		Subtitle:      ptrString("SUBTITLE-distinctive"),
+		Description:   ptrString("DESCRIPTION-distinctive"),
+		Thumbnail:     ptrString("THUMBNAIL-distinctive"),
+		Material:      ptrString("MATERIAL-distinctive"),
 		OriginCountry: ptrString("TR"),
 		Weight:        ptrInt32(1001),
 		Length:        ptrInt32(1002),
 		Height:        ptrInt32(1003),
 		Width:         ptrInt32(1004),
 		Discountable:  ptrBool(false),
-		Metadata:      map[string]any{"isaret": "ayirt-edici"},
+		Metadata:      map[string]any{"marker": "distinctive"},
 	})
 	require.NoError(t, err)
 
-	// Vitrin listesi ELLE YAZILAN sorguyu kullanır; eşlemeyi sınayan yol budur.
-	sayfa, err := svc.ListStoreProducts(ctx, service.StoreListOptions{
-		Search: ptrString("BASLIK-" + handle),
+	// The storefront list uses the HAND-WRITTEN query; that is the path which
+	// exercises the mapping.
+	page, err := svc.ListStoreProducts(ctx, service.StoreListOptions{
+		Search: ptrString("TITLE-" + handle),
 		Limit:  10,
 	})
 	require.NoError(t, err)
 
-	var okunan *service.StoreProduct
+	var found *service.StoreProduct
 
-	for i := range sayfa.Items {
-		if sayfa.Items[i].ID == created.ID {
-			okunan = &sayfa.Items[i]
+	for i := range page.Items {
+		if page.Items[i].ID == created.ID {
+			found = &page.Items[i]
 		}
 	}
 
-	require.NotNil(t, okunan, "ürün vitrin listesinde bulunmalı")
+	require.NotNil(t, found, "the product must be found in the storefront list")
 
-	assert.Equal(t, handle, okunan.Handle, "handle ile title yer değiştirmiş olabilir")
-	assert.Equal(t, "BASLIK-"+handle, okunan.Title, "title ile handle yer değiştirmiş olabilir")
-	assert.Equal(t, "ALTBASLIK-ayirt-edici", derefString(okunan.Subtitle))
-	assert.Equal(t, "ACIKLAMA-ayirt-edici", derefString(okunan.Description))
-	assert.Equal(t, "KAPAK-ayirt-edici", derefString(okunan.Thumbnail))
-	assert.Equal(t, "MALZEME-ayirt-edici", derefString(okunan.Material))
-	assert.Equal(t, "TR", derefString(okunan.OriginCountry))
-	assert.Equal(t, int32(1001), derefInt32(okunan.Weight), "weight ile length/height/width karışmış olabilir")
-	assert.Equal(t, int32(1002), derefInt32(okunan.Length))
-	assert.Equal(t, int32(1003), derefInt32(okunan.Height))
-	assert.Equal(t, int32(1004), derefInt32(okunan.Width))
-	assert.Equal(t, models.StatusPublished, okunan.Status)
-	assert.False(t, okunan.Discountable, "discountable ile is_giftcard yer değiştirmiş olabilir")
-	assert.False(t, okunan.IsGiftcard)
-	assert.Equal(t, "ayirt-edici", okunan.Metadata["isaret"])
-	assert.False(t, okunan.CreatedAt.IsZero())
-	assert.False(t, okunan.UpdatedAt.IsZero())
+	assert.Equal(t, handle, found.Handle, "handle and title may have swapped places")
+	assert.Equal(t, "TITLE-"+handle, found.Title, "title and handle may have swapped places")
+	assert.Equal(t, "SUBTITLE-distinctive", derefString(found.Subtitle))
+	assert.Equal(t, "DESCRIPTION-distinctive", derefString(found.Description))
+	assert.Equal(t, "THUMBNAIL-distinctive", derefString(found.Thumbnail))
+	assert.Equal(t, "MATERIAL-distinctive", derefString(found.Material))
+	assert.Equal(t, "TR", derefString(found.OriginCountry))
+	assert.Equal(t, int32(1001), derefInt32(found.Weight), "weight may have been mixed up with length/height/width")
+	assert.Equal(t, int32(1002), derefInt32(found.Length))
+	assert.Equal(t, int32(1003), derefInt32(found.Height))
+	assert.Equal(t, int32(1004), derefInt32(found.Width))
+	assert.Equal(t, models.StatusPublished, found.Status)
+	assert.False(t, found.Discountable, "discountable may have swapped places with is_giftcard")
+	assert.False(t, found.IsGiftcard)
+	assert.Equal(t, "distinctive", found.Metadata["marker"])
+	assert.False(t, found.CreatedAt.IsZero())
+	assert.False(t, found.UpdatedAt.IsZero())
 }
 
-// derefString bir işaretçiyi güvenle çözer; nil ise boş dize döner.
+// derefString safely resolves a pointer; it returns an empty string if it is
+// nil.
 func derefString(p *string) string {
 	if p == nil {
 		return ""
@@ -659,7 +675,7 @@ func derefString(p *string) string {
 	return *p
 }
 
-// derefInt32 bir işaretçiyi güvenle çözer; nil ise sıfır döner.
+// derefInt32 safely resolves a pointer; it returns zero if it is nil.
 func derefInt32(p *int32) int32 {
 	if p == nil {
 		return 0

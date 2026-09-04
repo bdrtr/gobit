@@ -1,20 +1,21 @@
--- fulfillments sorguları.
+-- fulfillments queries.
 --
--- Gönderi satırı, sağlayıcıya GİTMEDEN ÖNCE yazılır: sağlayıcı sözleşmesinin
--- Reference alanı "çağıranın kendi kaydına verdiği kimlik"tir ve mutabakatta
--- iki sistemi eşleştiren şey odur. Önce sağlayıcıya gidilseydi, yanıt
--- kaybolduğunda hangi kaydın karşılığı olduğu bilinemeyen bir kargo etiketi
--- kalırdı.
+-- The fulfillment row is written BEFORE GOING to the provider: the Reference
+-- field of the provider contract is "the id the caller gave to its own record",
+-- and it is what matches the two systems up during reconciliation. Had the
+-- provider been called first, a lost response would leave behind a shipping
+-- label whose corresponding record could not be known.
 
--- InsertFulfillmentIfAbsent gönderiyi yalnızca o idempotency anahtarı HENÜZ
--- KULLANILMAMIŞSA yazar.
+-- InsertFulfillmentIfAbsent writes the fulfillment only if that idempotency key
+-- has NOT BEEN USED YET.
 --
--- Çakışma hâlinde satır DÖNMEZ (pgx.ErrNoRows); çağıran o zaman anahtarla var
--- olan gönderiyi okur. "Önce oku, yoksa yaz" iki adımı arasında araya giren
--- eşzamanlı bir çağrı benzersiz indekse çarpar ve İŞLEMİ İPTAL EDERDİ;
--- ON CONFLICT DO NOTHING bu yarışı tek deyime indirir ve kaybeden taraf
--- kazananın işlemi bitene kadar BEKLER — böylece okuduğu satır sağlayıcı
--- yanıtıyla tamamlanmış olur.
+-- On a conflict NO row is returned (pgx.ErrNoRows); the caller then reads the
+-- fulfillment that exists under the key. A concurrent call slipping between the
+-- two steps of "read first, write if absent" would hit the unique index and
+-- WOULD ABORT THE TRANSACTION; ON CONFLICT DO NOTHING reduces that race to a
+-- single statement and the losing side WAITS until the winner's transaction
+-- finishes — so the row it reads is already completed with the provider's
+-- response.
 -- name: InsertFulfillmentIfAbsent :one
 INSERT INTO fulfillments (
     id, reference, shipping_option_id, provider_id, status, idempotency_key,
@@ -31,11 +32,13 @@ WHERE id = $1 AND deleted_at IS NULL;
 SELECT * FROM fulfillments
 WHERE idempotency_key = $1 AND deleted_at IS NULL;
 
--- LockFulfillment gönderiyi işlem boyunca kilitler ve güncel hâlini döner.
+-- LockFulfillment locks the fulfillment for the duration of the transaction and
+-- returns its current state.
 --
--- Durum geçişleri (iptal, kargoya verme, teslim) yalnızca bu kilit altında
--- yapılır: kilitsiz okunan bir durum yazma anında bayat olabilir ve aynı
--- gönderiyi aynı anda iptal eden iki çağrı sağlayıcıya İKİ KEZ giderdi.
+-- State transitions (cancel, ship, deliver) are made only under this lock: a
+-- state read without the lock can be stale by the moment of the write, and two
+-- calls canceling the same fulfillment at the same time would go to the
+-- provider TWICE.
 -- name: LockFulfillment :one
 SELECT * FROM fulfillments
 WHERE id = $1 AND deleted_at IS NULL
@@ -49,19 +52,19 @@ WHERE deleted_at IS NULL
 ORDER BY created_at DESC, id DESC
 LIMIT sqlc.arg('row_limit')::bigint OFFSET sqlc.arg('row_offset')::bigint;
 
--- CountFulfillments ListFulfillments ile AYNI filtreleri uygular; gerekçe için
--- bkz. CountShippingProfiles.
+-- CountFulfillments applies the SAME filters as ListFulfillments; for the
+-- rationale see CountShippingProfiles.
 -- name: CountFulfillments :one
 SELECT COUNT(*) FROM fulfillments
 WHERE deleted_at IS NULL
   AND (sqlc.narg('reference')::text IS NULL OR reference = sqlc.narg('reference')::text)
   AND (sqlc.narg('status')::text IS NULL OR status = sqlc.narg('status')::text);
 
--- UpdateFulfillmentProviderResult sağlayıcının yanıtını satıra yazar.
+-- UpdateFulfillmentProviderResult writes the provider's response onto the row.
 --
--- Sağlayıcı kimliği, takip bilgisi ve ham veri MUTLAK değerlerle yazılır:
--- artımlı bir güncelleme, kararı veren kodun gördüğü değer ile yazılan değeri
--- ayrıştırırdı.
+-- The provider id, the tracking information and the raw data are written as
+-- ABSOLUTE values: an incremental update would pull the value the deciding code
+-- saw apart from the value that gets written.
 -- name: UpdateFulfillmentProviderResult :one
 UPDATE fulfillments
 SET external_id      = $2,
@@ -76,10 +79,12 @@ SET external_id      = $2,
 WHERE id = $1 AND deleted_at IS NULL
 RETURNING *;
 
--- UpdateFulfillmentStatus durumu ve ona eşlik eden zaman damgasını yazar.
+-- UpdateFulfillmentStatus writes the status and the timestamp that accompanies
+-- it.
 --
--- Damgalar MUTLAK verilir; şemadaki kısıtlar (fulfillments_*_stamp) durumu
--- damgasız bırakan bir yazmayı reddeder.
+-- The stamps are given as ABSOLUTE values; the constraints in the schema
+-- (fulfillments_*_stamp) reject a write that leaves the status without its
+-- stamp.
 -- name: UpdateFulfillmentStatus :one
 UPDATE fulfillments
 SET status          = $2,

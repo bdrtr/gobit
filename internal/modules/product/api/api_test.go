@@ -21,11 +21,11 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/product/service"
 )
 
-// fakeCatalog api katmanının servisten beklediği yüzeyin sahtesidir.
+// fakeCatalog is the fake of the surface the api layer expects from the service.
 //
-// Gömülü arayüz bilinçlidir: testte KULLANILMAYAN bir metot çağrılırsa nil
-// arayüz paniği verir ve handler'ın beklenmedik bir çağrı yaptığı anında
-// görünür. Yalnızca sınanan metotlar geçersiz kılınır.
+// The embedded interface is deliberate: if a method that is NOT USED in the test
+// gets called, the nil interface panics and it becomes visible the moment the
+// handler makes an unexpected call. Only the methods under test are overridden.
 type fakeCatalog struct {
 	api.Catalog
 
@@ -106,22 +106,23 @@ func (f *fakeCatalog) ProductSalesChannelIDs(ctx context.Context, productID stri
 	return f.salesChannelIDs(ctx, productID)
 }
 
-// newRouter sahte servisle bağlanmış bir router üretir.
+// newRouter builds a router wired to the fake service.
 func newRouter(catalog api.Catalog) chi.Router {
 	r := chi.NewRouter()
 	api.New(catalog, graph.Options{}).Routes(r)
 	return r
 }
 
-// do isteği router'a uygular ve yanıtı döner.
+// do applies the request to the router and returns the response.
 //
-// İstek TAM YETKİLİ bir kimlik taşır. Üretimde kimliği corehttp.RequireAdmin
-// context'e koyar; bu testler router'ı doğrudan kurduğu için o middleware
-// devrede değildir ve kimlik elle konur. Gerekçesi, yönetim uçlarına
-// corehttp.RequireScope eklenmesidir: kimliksiz bir istek artık handler'a hiç
-// ulaşmadan 401 alır ve buradaki testler zarf/hata eşlemesi yerine yetki
-// katmanını sınamış olurdu. Yetkinin KENDİSİ ayrı bir dosyada sınanır
-// (yetki_test.go); bu dosyanın iddiaları değişmedi.
+// The request carries a FULLY PRIVILEGED identity. In production the identity is
+// put into the context by corehttp.RequireAdmin; these tests build the router
+// directly, so that middleware is not in play and the identity is set by hand.
+// The reason is that corehttp.RequireScope was added to the admin endpoints: a
+// request with no identity now gets a 401 without ever reaching the handler and
+// the tests here would end up exercising the scope layer instead of the
+// envelope/error mapping. The scope ITSELF is exercised in a separate file
+// (yetki_test.go); the assertions of this file did not change.
 func do(t *testing.T, r chi.Router, method, target, body string) *httptest.ResponseRecorder {
 	t.Helper()
 
@@ -144,24 +145,24 @@ func do(t *testing.T, r chi.Router, method, target, body string) *httptest.Respo
 	return rec
 }
 
-// decodeBody yanıt gövdesini haritaya çözer.
+// decodeBody decodes the response body into a map.
 func decodeBody(t *testing.T, rec *httptest.ResponseRecorder) map[string]any {
 	t.Helper()
 
 	var out map[string]any
-	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &out), "gövde: %s", rec.Body.String())
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &out), "body: %s", rec.Body.String())
 	return out
 }
 
-// TestListEnvelopeShape liste zarfının plan Bölüm 8'deki biçimi taşıdığını
-// doğrular.
+// TestListEnvelopeShape verifies that the list envelope carries the shape from
+// plan Section 8.
 func TestListEnvelopeShape(t *testing.T) {
 	t.Parallel()
 
 	catalog := &fakeCatalog{
 		listProducts: func(_ context.Context, opts service.ListProductsOptions) (service.ListResult[models.Product], error) {
 			return service.ListResult[models.Product]{
-				Items:  []models.Product{{ID: "prod_1", Handle: "tisort", Title: "Tişört"}},
+				Items:  []models.Product{{ID: "prod_1", Handle: "tisort", Title: "T-shirt"}},
 				Count:  ptr(42),
 				Offset: opts.Offset,
 				Limit:  opts.Limit,
@@ -174,12 +175,12 @@ func TestListEnvelopeShape(t *testing.T) {
 	assert.Equal(t, "application/json; charset=utf-8", rec.Header().Get("Content-Type"))
 
 	body := decodeBody(t, rec)
-	assert.Equal(t, float64(42), body["count"], "count toplam kayıt sayısıdır")
+	assert.Equal(t, float64(42), body["count"], "count is the total number of records")
 	assert.Equal(t, float64(10), body["offset"])
 	assert.Equal(t, float64(5), body["limit"])
 
 	data, ok := body["data"].([]any)
-	require.True(t, ok, "data bir dizi olmalı: %#v", body["data"])
+	require.True(t, ok, "data has to be an array: %#v", body["data"])
 	require.Len(t, data, 1)
 	item, ok := data[0].(map[string]any)
 	require.True(t, ok)
@@ -187,8 +188,8 @@ func TestListEnvelopeShape(t *testing.T) {
 	assert.Equal(t, "tisort", item["handle"])
 }
 
-// TestEmptyListReturnsArrayNotNull boş listenin JSON'da null değil boş dizi
-// döndüğünü doğrular.
+// TestEmptyListReturnsArrayNotNull verifies that an empty list comes back in
+// JSON as an empty array, not as null.
 func TestEmptyListReturnsArrayNotNull(t *testing.T) {
 	t.Parallel()
 
@@ -201,11 +202,11 @@ func TestEmptyListReturnsArrayNotNull(t *testing.T) {
 	rec := do(t, newRouter(catalog), http.MethodGet, "/admin/v1/products", "")
 	require.Equal(t, http.StatusOK, rec.Code)
 	assert.Contains(t, rec.Body.String(), `"data":[]`,
-		"boş liste null değil boş dizi olmalı: %s", rec.Body.String())
+		"an empty list has to be an empty array, not null: %s", rec.Body.String())
 }
 
-// TestCreateProductReturns201AndItemEnvelope oluşturma yanıtının zarfını ve
-// durum kodunu doğrular.
+// TestCreateProductReturns201AndItemEnvelope verifies the envelope and the
+// status code of the creation response.
 func TestCreateProductReturns201AndItemEnvelope(t *testing.T) {
 	t.Parallel()
 
@@ -218,30 +219,31 @@ func TestCreateProductReturns201AndItemEnvelope(t *testing.T) {
 	}
 
 	rec := do(t, newRouter(catalog), http.MethodPost, "/admin/v1/products",
-		`{"title":"Tişört","status":"published","options":[{"title":"Beden","values":["S"]}],
-		  "variants":[{"title":"S","options":{"Beden":"S"},"manage_inventory":false}]}`)
-	require.Equal(t, http.StatusCreated, rec.Code, "gövde: %s", rec.Body.String())
+		`{"title":"T-shirt","status":"published","options":[{"title":"Size","values":["S"]}],
+		  "variants":[{"title":"S","options":{"Size":"S"},"manage_inventory":false}]}`)
+	require.Equal(t, http.StatusCreated, rec.Code, "body: %s", rec.Body.String())
 
 	body := decodeBody(t, rec)
 	data, ok := body["data"].(map[string]any)
-	require.True(t, ok, "tekil yanıt data nesnesi taşımalı: %#v", body)
+	require.True(t, ok, "a single response has to carry a data object: %#v", body)
 	assert.Equal(t, "prod_1", data["id"])
-	assert.NotContains(t, body, "count", "tekil yanıtta sayfalama alanları olmaz")
+	assert.NotContains(t, body, "count", "a single response has no pagination fields")
 
-	assert.Equal(t, "Tişört", got.Title, "gövde servis girdisine çevrilmeli")
+	assert.Equal(t, "T-shirt", got.Title, "the body has to be converted into the service input")
 	assert.Equal(t, models.StatusPublished, got.Status)
 	require.Len(t, got.Options, 1)
 	assert.Equal(t, []string{"S"}, got.Options[0].Values)
 	require.Len(t, got.Variants, 1)
 	require.NotNil(t, got.Variants[0].ManageInventory)
 	assert.False(t, *got.Variants[0].ManageInventory,
-		"false değeri işaretçi sayesinde 'verilmedi'den ayrılmalı")
+		"thanks to the pointer, a false value has to be told apart from 'not given'")
 }
 
-// TestErrorKindsMapToStatus servis hatalarının HTTP durum koduna doğru
-// eşlendiğini doğrular.
+// TestErrorKindsMapToStatus verifies that service errors are mapped to the
+// right HTTP status code.
 //
-// Handler durum kodu SEÇMEZ; kod hatanın sınıfından gelir (plan Bölüm 8).
+// The handler DOES NOT PICK the status code; the code comes from the class of
+// the error (plan Section 8).
 func TestErrorKindsMapToStatus(t *testing.T) {
 	t.Parallel()
 
@@ -250,10 +252,10 @@ func TestErrorKindsMapToStatus(t *testing.T) {
 		status int
 		code   string
 	}{
-		"bulunamadı": {coreerrors.NotFound("product_not_found", "ürün yok"), http.StatusNotFound, "product_not_found"},
-		"çakışma":    {coreerrors.Conflict("product_handle_taken", "dolu"), http.StatusConflict, "product_handle_taken"},
-		"doğrulama":  {coreerrors.Invalid("product_invalid_input", "başlık zorunlu"), http.StatusUnprocessableEntity, "product_invalid_input"},
-		"erişilemez": {coreerrors.Unavailable("product_link_failed", "link yok"), http.StatusServiceUnavailable, "product_link_failed"},
+		"not found":   {coreerrors.NotFound("product_not_found", "no such product"), http.StatusNotFound, "product_not_found"},
+		"conflict":    {coreerrors.Conflict("product_handle_taken", "taken"), http.StatusConflict, "product_handle_taken"},
+		"validation":  {coreerrors.Invalid("product_invalid_input", "title is required"), http.StatusUnprocessableEntity, "product_invalid_input"},
+		"unavailable": {coreerrors.Unavailable("product_link_failed", "no link"), http.StatusServiceUnavailable, "product_link_failed"},
 	}
 
 	for name, tc := range cases {
@@ -271,88 +273,88 @@ func TestErrorKindsMapToStatus(t *testing.T) {
 
 			body := decodeBody(t, rec)
 			errBody, ok := body["error"].(map[string]any)
-			require.True(t, ok, "hata zarfı bekleniyordu: %#v", body)
+			require.True(t, ok, "an error envelope was expected: %#v", body)
 			assert.Equal(t, tc.code, errBody["code"])
 		})
 	}
 }
 
-// TestInternalErrorIsMasked sunucu hatasının ayrıntısının istemciye
-// sızmadığını doğrular.
+// TestInternalErrorIsMasked verifies that the detail of a server error does not
+// leak to the client.
 func TestInternalErrorIsMasked(t *testing.T) {
 	t.Parallel()
 
 	catalog := &fakeCatalog{
 		getProduct: func(context.Context, string) (models.Product, error) {
-			return models.Product{}, coreerrors.Internal("db_failed", "dsn=postgres://gizli@host/db")
+			return models.Product{}, coreerrors.Internal("db_failed", "dsn=postgres://secret@host/db")
 		},
 	}
 
 	rec := do(t, newRouter(catalog), http.MethodGet, "/admin/v1/products/prod_1", "")
 	require.Equal(t, http.StatusInternalServerError, rec.Code)
-	assert.NotContains(t, rec.Body.String(), "gizli", "iç hata metni sızmamalı: %s", rec.Body.String())
+	assert.NotContains(t, rec.Body.String(), "secret", "the internal error text must not leak: %s", rec.Body.String())
 }
 
-// TestRejectsUnknownJSONField gövdedeki bilinmeyen alanın sessizce yok
-// sayılmadığını doğrular.
+// TestRejectsUnknownJSONField verifies that an unknown field in the body is not
+// silently ignored.
 func TestRejectsUnknownJSONField(t *testing.T) {
 	t.Parallel()
 
 	catalog := &fakeCatalog{
 		createProduct: func(context.Context, service.CreateProductInput) (models.Product, error) {
-			t.Fatal("bozuk gövde servise hiç gitmemeliydi")
+			t.Fatal("a malformed body should never have reached the service")
 			return models.Product{}, nil
 		},
 	}
 
-	rec := do(t, newRouter(catalog), http.MethodPost, "/admin/v1/products", `{"titel":"Tişört"}`)
+	rec := do(t, newRouter(catalog), http.MethodPost, "/admin/v1/products", `{"titel":"T-shirt"}`)
 	require.Equal(t, http.StatusUnprocessableEntity, rec.Code)
 	errBody, ok := decodeBody(t, rec)["error"].(map[string]any)
-	require.True(t, ok, "hata zarfı bekleniyordu")
+	require.True(t, ok, "an error envelope was expected")
 	assert.Equal(t, "product_bad_json", errBody["code"])
 }
 
-// TestRejectsEmptyAndDoubleBody boş gövdenin ve birden çok JSON nesnesinin
-// reddedildiğini doğrular.
+// TestRejectsEmptyAndDoubleBody verifies that an empty body and more than one
+// JSON object are rejected.
 func TestRejectsEmptyAndDoubleBody(t *testing.T) {
 	t.Parallel()
 
 	catalog := &fakeCatalog{
 		createProduct: func(context.Context, service.CreateProductInput) (models.Product, error) {
-			t.Fatal("bozuk gövde servise hiç gitmemeliydi")
+			t.Fatal("a malformed body should never have reached the service")
 			return models.Product{}, nil
 		},
 	}
 	r := newRouter(catalog)
 
 	rec := do(t, r, http.MethodPost, "/admin/v1/products", "")
-	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code, "boş gövde reddedilmeli")
+	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code, "an empty body has to be rejected")
 
-	rec = do(t, r, http.MethodPost, "/admin/v1/products", `{"title":"Bir"}{"title":"İki"}`)
-	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code, "ikinci gövde sessizce yutulmamalı")
+	rec = do(t, r, http.MethodPost, "/admin/v1/products", `{"title":"One"}{"title":"Two"}`)
+	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code, "the second body must not be silently swallowed")
 }
 
-// TestRejectsBadQueryParams sorgu parametrelerinin doğrulandığını gösterir.
+// TestRejectsBadQueryParams shows that the query parameters are validated.
 func TestRejectsBadQueryParams(t *testing.T) {
 	t.Parallel()
 
 	catalog := &fakeCatalog{
 		listProducts: func(context.Context, service.ListProductsOptions) (service.ListResult[models.Product], error) {
-			t.Fatal("bozuk parametre servise hiç gitmemeliydi")
+			t.Fatal("a malformed parameter should never have reached the service")
 			return service.ListResult[models.Product]{}, nil
 		},
 	}
 	r := newRouter(catalog)
 
-	rec := do(t, r, http.MethodGet, "/admin/v1/products?limit=cok", "")
+	rec := do(t, r, http.MethodGet, "/admin/v1/products?limit=many", "")
 	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code)
 
-	rec = do(t, r, http.MethodGet, "/admin/v1/products?expand=belki", "")
+	rec = do(t, r, http.MethodGet, "/admin/v1/products?expand=maybe", "")
 	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code)
 }
 
-// TestListProductsParsesFilters sorgu parametrelerinin servis seçeneklerine
-// çevrildiğini doğrular.
+// TestListProductsParsesFilters verifies that the query parameters are
+// converted into the service options.
 func TestListProductsParsesFilters(t *testing.T) {
 	t.Parallel()
 
@@ -377,12 +379,13 @@ func TestListProductsParsesFilters(t *testing.T) {
 	assert.True(t, got.WithRelations)
 	assert.Equal(t, 7, got.Limit)
 	assert.Equal(t, 3, got.Offset)
-	// Verilmeyen filtre nil kalmalı; boş dizge filtresi hiçbir şeyi eşleştirmezdi.
+	// A filter that was not given has to stay nil; an empty-string filter would
+	// match nothing at all.
 	assert.Nil(t, got.Handle)
 }
 
-// TestCreateVariantRouteCarriesProductID yol parametresinin servise
-// aktarıldığını doğrular.
+// TestCreateVariantRouteCarriesProductID verifies that the path parameter is
+// passed through to the service.
 func TestCreateVariantRouteCarriesProductID(t *testing.T) {
 	t.Parallel()
 
@@ -395,15 +398,16 @@ func TestCreateVariantRouteCarriesProductID(t *testing.T) {
 	}
 
 	rec := do(t, newRouter(catalog), http.MethodPost, "/admin/v1/products/prod_9/variants",
-		`{"title":"S beden","option_value_ids":["poptval_1"]}`)
-	require.Equal(t, http.StatusCreated, rec.Code, "gövde: %s", rec.Body.String())
+		`{"title":"size S","option_value_ids":["poptval_1"]}`)
+	require.Equal(t, http.StatusCreated, rec.Code, "body: %s", rec.Body.String())
 	assert.Equal(t, "prod_9", gotProductID)
 }
 
-// TestSetPriceSetRouteLinksVariant fiyat kümesi bağlama ucunun gövdedeki
-// kimliği servise geçirdiğini ve güncel bağları döndürdüğünü doğrular.
+// TestSetPriceSetRouteLinksVariant verifies that the price set linking endpoint
+// passes the id from the body to the service and returns the current links.
 //
-// Bu uç Faz 4'ün "bağ admin akışında kurulur" şartının karşılığıdır.
+// This endpoint is the counterpart of Phase 4's "the link is established in the
+// admin flow" requirement.
 func TestSetPriceSetRouteLinksVariant(t *testing.T) {
 	t.Parallel()
 
@@ -421,7 +425,7 @@ func TestSetPriceSetRouteLinksVariant(t *testing.T) {
 
 	rec := do(t, newRouter(catalog), http.MethodPut, "/admin/v1/variants/variant_1/price-set",
 		`{"price_set_id":"pset_1"}`)
-	require.Equal(t, http.StatusOK, rec.Code, "gövde: %s", rec.Body.String())
+	require.Equal(t, http.StatusOK, rec.Code, "body: %s", rec.Body.String())
 	assert.Equal(t, "variant_1", gotVariantID)
 	assert.Equal(t, "pset_1", gotPriceSetID)
 
@@ -430,8 +434,8 @@ func TestSetPriceSetRouteLinksVariant(t *testing.T) {
 	assert.Equal(t, "pset_1", data["price_set_id"])
 }
 
-// TestDeleteProductReturnsDeletionEnvelope silme yanıtının silinen kaydı
-// bildirdiğini doğrular.
+// TestDeleteProductReturnsDeletionEnvelope verifies that the deletion response
+// reports the deleted record.
 func TestDeleteProductReturnsDeletionEnvelope(t *testing.T) {
 	t.Parallel()
 
@@ -447,8 +451,8 @@ func TestDeleteProductReturnsDeletionEnvelope(t *testing.T) {
 	assert.Equal(t, true, data["deleted"])
 }
 
-// TestStoreListIncludesPriceAndInventory vitrin yanıtının fiyat ve stok
-// alanlarını taşıdığını doğrular.
+// TestStoreListIncludesPriceAndInventory verifies that the storefront response
+// carries the price and stock fields.
 func TestStoreListIncludesPriceAndInventory(t *testing.T) {
 	t.Parallel()
 
@@ -456,7 +460,7 @@ func TestStoreListIncludesPriceAndInventory(t *testing.T) {
 		listStoreProducts: func(_ context.Context, opts service.StoreListOptions) (service.ListResult[service.StoreProduct], error) {
 			return service.ListResult[service.StoreProduct]{
 				Items: []service.StoreProduct{{
-					Product: models.Product{ID: "prod_1", Handle: "tisort", Title: "Tişört"},
+					Product: models.Product{ID: "prod_1", Handle: "tisort", Title: "T-shirt"},
 					Variants: []service.StoreVariant{{
 						Variant:       models.Variant{ID: "variant_1", ProductID: "prod_1", Title: "S"},
 						PriceSet:      query.Record{"id": "pset_1", "amount": 19900, "currency_code": "try"},
@@ -475,26 +479,26 @@ func TestStoreListIncludesPriceAndInventory(t *testing.T) {
 
 	body := decodeBody(t, rec)
 	data, ok := body["data"].([]any)
-	require.True(t, ok, "data dizi olmalı: %#v", body["data"])
+	require.True(t, ok, "data has to be an array: %#v", body["data"])
 	require.Len(t, data, 1)
 	product, ok := data[0].(map[string]any)
 	require.True(t, ok)
 	variants, ok := product["variants"].([]any)
-	require.True(t, ok, "vitrin ürünü varyantlarını taşımalı: %#v", product)
+	require.True(t, ok, "a storefront product has to carry its variants: %#v", product)
 	require.Len(t, variants, 1)
 
 	variant, ok := variants[0].(map[string]any)
 	require.True(t, ok)
 	priceSet, ok := variant["price_set"].(map[string]any)
-	require.True(t, ok, "varyant fiyat kümesini taşımalı: %#v", variant)
+	require.True(t, ok, "a variant has to carry its price set: %#v", variant)
 	assert.Equal(t, float64(19900), priceSet["amount"])
 	inventory, ok := variant["inventory_item"].(map[string]any)
-	require.True(t, ok, "varyant stok kalemini taşımalı: %#v", variant)
+	require.True(t, ok, "a variant has to carry its inventory item: %#v", variant)
 	assert.Equal(t, float64(3), inventory["stocked_quantity"])
 }
 
-// TestStoreGetProductAcceptsHandle vitrin tekil ucunun handle ile
-// çağrılabildiğini doğrular.
+// TestStoreGetProductAcceptsHandle verifies that the single storefront endpoint
+// can be called with a handle.
 func TestStoreGetProductAcceptsHandle(t *testing.T) {
 	t.Parallel()
 
@@ -514,12 +518,12 @@ func TestStoreGetProductAcceptsHandle(t *testing.T) {
 	assert.Equal(t, "tisort", got)
 }
 
-// TestStoreProductHidesEmbeddedVariants gömülü ürünün varyant alanının
-// vitrin yanıtını GÖLGELEMEDİĞİNİ doğrular.
+// TestStoreProductHidesEmbeddedVariants verifies that the variants field of the
+// embedded product DOES NOT SHADOW the storefront response.
 //
-// StoreProduct, models.Product'ı gömer ve kendi Variants alanıyla onu gölgeler;
-// JSON'da tek bir "variants" anahtarı olmalıdır, yoksa istemci hangi listeye
-// bakacağını bilemez.
+// StoreProduct embeds models.Product and shadows it with its own Variants field;
+// there has to be a single "variants" key in the JSON, otherwise the client
+// cannot tell which list to look at.
 func TestStoreProductHidesEmbeddedVariants(t *testing.T) {
 	t.Parallel()
 
@@ -528,8 +532,9 @@ func TestStoreProductHidesEmbeddedVariants(t *testing.T) {
 			return service.StoreProduct{
 				Product: models.Product{
 					ID: "prod_1",
-					// Gömülü alan bilinçli olarak dolduruldu: yanıtta GÖRÜNMEMELİ.
-					Variants: []models.Variant{{ID: "variant_gizli"}},
+					// The embedded field is filled in deliberately: it MUST NOT
+					// APPEAR in the response.
+					Variants: []models.Variant{{ID: "variant_hidden"}},
 				},
 				Variants: []service.StoreVariant{{Variant: models.Variant{ID: "variant_1"}}},
 			}, nil
@@ -538,17 +543,18 @@ func TestStoreProductHidesEmbeddedVariants(t *testing.T) {
 
 	rec := do(t, newRouter(catalog), http.MethodGet, "/store/v1/products/prod_1", "")
 	require.Equal(t, http.StatusOK, rec.Code)
-	assert.NotContains(t, rec.Body.String(), "variant_gizli",
-		"gömülü varyant listesi yanıta sızmamalı: %s", rec.Body.String())
+	assert.NotContains(t, rec.Body.String(), "variant_hidden",
+		"the embedded variant list must not leak into the response: %s", rec.Body.String())
 	assert.Contains(t, rec.Body.String(), "variant_1")
 }
 
-// TestRoutesDoNotMountSharedPrefixes route'ların "/admin/v1" ya da "/store/v1"
-// önekini MOUNT ETMEDİĞİNİ doğrular.
+// TestRoutesDoNotMountSharedPrefixes verifies that the routes DO NOT MOUNT the
+// "/admin/v1" or the "/store/v1" prefix.
 //
-// Registry tüm modüllerin Routes'unu aynı router üzerinde çağırır; ortak öneki
-// mount eden ikinci modül chi'de panikle düşerdi. Bu test o sözleşmeyi kilitler:
-// aynı router'a başka bir modülün aynı öneki altındaki ucu eklenebilmelidir.
+// The registry calls the Routes of every module on the same router; the second
+// module to mount the shared prefix would go down with a panic in chi. This test
+// locks that contract: it has to be possible to add another module's endpoint
+// under the same prefix to the same router.
 func TestRoutesDoNotMountSharedPrefixes(t *testing.T) {
 	t.Parallel()
 
@@ -556,27 +562,29 @@ func TestRoutesDoNotMountSharedPrefixes(t *testing.T) {
 	api.New(&fakeCatalog{}, graph.Options{}).Routes(r)
 
 	assert.NotPanics(t, func() {
-		// Başka bir modülün (örn. pricing) aynı sürüm öneki altındaki ucu.
+		// Another module's (say pricing's) endpoint under the same version
+		// prefix.
 		r.Get("/admin/v1/price-sets", func(w http.ResponseWriter, _ *http.Request) {
 			w.WriteHeader(http.StatusOK)
 		})
 		r.Get("/store/v1/prices", func(w http.ResponseWriter, _ *http.Request) {
 			w.WriteHeader(http.StatusOK)
 		})
-	}, "ortak sürüm öneki mount edilmemeli; başka modüller aynı önek altına uç ekleyebilmeli")
+	}, "the shared version prefix must not be mounted; other modules have to be able to add endpoints under the same prefix")
 
 	rec := do(t, r, http.MethodGet, "/admin/v1/price-sets", "")
 	assert.Equal(t, http.StatusOK, rec.Code)
 }
 
-// TestGraphQLUcuVitrinServisiniCagirir GraphQL ucunun router'a BAĞLI olduğunu
-// ve vitrin servisine indiğini doğrular.
+// TestGraphQLEndpointReachesStorefrontService verifies that the GraphQL
+// endpoint is WIRED into the router and that it reaches the storefront service.
 //
-// Yüzeyin kendi davranışı graph paketinde sınanır; buradaki iddia yalnızca
-// bağlantıdır: uç kaydedilmiş mi, isteği alan handler gerçekten GraphQL
-// sunucusu mu. Bağlantı kopsaydı graph paketinin tüm testleri yeşil kalır ama
-// uç 404 dönerdi.
-func TestGraphQLUcuVitrinServisiniCagirir(t *testing.T) {
+// The behavior of the surface itself is exercised in the graph package; the
+// claim here is only about the wiring: is the endpoint registered, and is the
+// handler that takes the request really the GraphQL server. Had the wiring
+// broken, all of the graph package's tests would stay green while the endpoint
+// returned a 404.
+func TestGraphQLEndpointReachesStorefrontService(t *testing.T) {
 	t.Parallel()
 
 	catalog := &fakeCatalog{
@@ -592,25 +600,26 @@ func TestGraphQLUcuVitrinServisiniCagirir(t *testing.T) {
 
 	rec := do(t, newRouter(catalog), http.MethodPost, "/store/v1/graphql",
 		`{"query":"{ products { count items { id } } }"}`)
-	require.Equal(t, http.StatusOK, rec.Code, "gövde: %s", rec.Body.String())
+	require.Equal(t, http.StatusOK, rec.Code, "body: %s", rec.Body.String())
 
-	govde := decodeBody(t, rec)
-	assert.NotContains(t, govde, "errors", "gövde: %s", rec.Body.String())
+	body := decodeBody(t, rec)
+	assert.NotContains(t, body, "errors", "body: %s", rec.Body.String())
 
-	data, ok := govde["data"].(map[string]any)
+	data, ok := body["data"].(map[string]any)
 	require.True(t, ok)
 
-	liste, ok := data["products"].(map[string]any)
+	list, ok := data["products"].(map[string]any)
 	require.True(t, ok)
-	assert.InDelta(t, float64(1), liste["count"], 0)
+	assert.InDelta(t, float64(1), list["count"], 0)
 }
 
-// TestGraphQLUcuGETKabulEtmez ucun yalnızca POST ile kaydedildiğini doğrular.
+// TestGraphQLEndpointRejectsGET verifies that the endpoint is registered with
+// POST only.
 //
-// GET'in neden açılmadığı için bkz. graph.NewHandler. chi, kayıtlı olmayan
-// metoda 405 döner; gqlgen'in "transport not supported" 400'ünden daha
-// dürüsttür çünkü sorun taşımada değil METOTTADIR.
-func TestGraphQLUcuGETKabulEtmez(t *testing.T) {
+// For why GET is not opened see graph.NewHandler. chi returns a 405 for a method
+// that is not registered; that is more honest than gqlgen's "transport not
+// supported" 400 because the problem is not in the transport but IN THE METHOD.
+func TestGraphQLEndpointRejectsGET(t *testing.T) {
 	t.Parallel()
 
 	rec := do(t, newRouter(&fakeCatalog{}), http.MethodGet,
@@ -618,25 +627,27 @@ func TestGraphQLUcuGETKabulEtmez(t *testing.T) {
 	assert.Equal(t, http.StatusMethodNotAllowed, rec.Code)
 }
 
-// ptr verilen değerin adresini döner.
+// ptr returns the address of the given value.
 //
-// Zarftaki sayaç işaretçidir (nil "sayılmadı" demektir, bkz. service.ListResult)
-// ve sahte servislerin döndürdüğü sabitler bu yüzden adreslenmek zorundadır.
+// The counter in the envelope is a pointer (nil means "not counted", see
+// service.ListResult) and the constants the fake services return therefore have
+// to be addressable.
 func ptr[T any](v T) *T { return &v }
 
-// sayacIsteyen sorgu dizesindeki "with_count" kararını KAYDEDEN vitrin
-// kataloğunu ve kaydı okuyan işaretçiyi döner.
+// countAwareCatalog returns a storefront catalog that RECORDS the "with_count"
+// decision from the query string, along with the pointer that reads the record.
 //
-// Sahte, servisin sözleşmesini taklit eder: SkipCount istenmişse sayaç nil,
-// istenmemişse dolu döner. Sabit bir sonuç dönseydi test yalnızca handler'ın
-// zarf yazımını ölçer, kararın SERVİSE ULAŞTIĞINI hiç ölçmezdi.
-func sayacIsteyen() (katalog *fakeCatalog, atlandi *bool) {
-	atlandi = new(bool)
-	katalog = &fakeCatalog{
+// The fake imitates the service's contract: if SkipCount was asked for the
+// counter comes back nil, otherwise filled. Had it returned a fixed result, the
+// test would only measure the handler's envelope writing and would never measure
+// that the decision REACHED THE SERVICE.
+func countAwareCatalog() (catalog *fakeCatalog, skipped *bool) {
+	skipped = new(bool)
+	catalog = &fakeCatalog{
 		listStoreProducts: func(
 			_ context.Context, opts service.StoreListOptions,
 		) (service.ListResult[service.StoreProduct], error) {
-			*atlandi = opts.SkipCount
+			*skipped = opts.SkipCount
 
 			res := service.ListResult[service.StoreProduct]{
 				Items:  []service.StoreProduct{{Product: models.Product{ID: "prod_1"}}},
@@ -651,73 +662,76 @@ func sayacIsteyen() (katalog *fakeCatalog, atlandi *bool) {
 		},
 	}
 
-	return katalog, atlandi
+	return catalog, skipped
 }
 
-// TestVitrinListesiVarsayilanSayar parametresiz isteğin bugünkü yanıtı
-// verdiğini doğrular.
+// TestStoreListCountsByDefault verifies that a request with no parameter gives
+// today's response.
 //
-// Bu testin işi geriye uyumluluktur: yeni bir anahtar eklemenin en sessiz
-// arızası, varsayılanın kaymasıdır. Kayarsa hiçbir istemci hata görmez —
-// yalnızca zarfındaki sayı kaybolur.
-func TestVitrinListesiVarsayilanSayar(t *testing.T) {
+// This test's job is backward compatibility: the quietest failure of adding a
+// new key is the default drifting. If it drifts no client sees an error — only
+// the number in its envelope disappears.
+func TestStoreListCountsByDefault(t *testing.T) {
 	t.Parallel()
 
-	katalog, atlandi := sayacIsteyen()
+	catalog, skipped := countAwareCatalog()
 
-	rec := do(t, newRouter(katalog), http.MethodGet, "/store/v1/products", "")
+	rec := do(t, newRouter(catalog), http.MethodGet, "/store/v1/products", "")
 	require.Equal(t, http.StatusOK, rec.Code)
 
-	assert.False(t, *atlandi, "parametre verilmeyen istek SAYMALI")
+	assert.False(t, *skipped, "a request that gives no parameter HAS TO COUNT")
 
-	govde := decodeBody(t, rec)
-	assert.Equal(t, float64(7), govde["count"], "varsayılan yanıt sayacı taşımalı")
-	assert.Contains(t, govde, "offset")
-	assert.Contains(t, govde, "limit")
+	body := decodeBody(t, rec)
+	assert.Equal(t, float64(7), body["count"], "the default response has to carry the counter")
+	assert.Contains(t, body, "offset")
+	assert.Contains(t, body, "limit")
 }
 
-// TestVitrinListesiWithCountFalseAlaniDusurur sayacın kapatıldığında zarftan
-// TÜMÜYLE düştüğünü doğrular.
+// TestStoreListWithCountFalseDropsTheField verifies that the counter drops out
+// of the envelope ENTIRELY when it is turned off.
 //
-// İki iddia da gereklidir ve ikincisi asıl olandır: alanın 0 dönmediği YETMEZ,
-// alanın BULUNMAMASI gerekir. 0 dönen bir uygulama "eşleşen ürün yok" der ve
-// istemci sıfır sayfa hesaplar; olmayan alan ise hesabı yapılamaz kılar, yani
-// yanlış cevabı GÜRÜLTÜLÜ verir.
-func TestVitrinListesiWithCountFalseAlaniDusurur(t *testing.T) {
+// Both assertions are needed and the second is the real one: it IS NOT ENOUGH
+// that the field does not return 0, the field has to be ABSENT. An
+// implementation that returns 0 says "no matching product" and the client
+// computes zero pages; an absent field, on the other hand, makes the
+// computation impossible — that is, it gives the wrong answer LOUDLY.
+func TestStoreListWithCountFalseDropsTheField(t *testing.T) {
 	t.Parallel()
 
-	katalog, atlandi := sayacIsteyen()
+	catalog, skipped := countAwareCatalog()
 
-	rec := do(t, newRouter(katalog), http.MethodGet, "/store/v1/products?with_count=false", "")
+	rec := do(t, newRouter(catalog), http.MethodGet, "/store/v1/products?with_count=false", "")
 	require.Equal(t, http.StatusOK, rec.Code)
 
-	assert.True(t, *atlandi, "karar servise ULAŞMALI; handler'da yutulmamalı")
+	assert.True(t, *skipped, "the decision HAS TO REACH the service; it must not be swallowed in the handler")
 
-	govde := decodeBody(t, rec)
-	assert.NotContains(t, govde, "count",
-		"sayılmadıysa alan gövdede HİÇ olmamalı: %s", rec.Body.String())
+	body := decodeBody(t, rec)
+	assert.NotContains(t, body, "count",
+		"if it was not counted the field must be ENTIRELY absent from the body: %s", rec.Body.String())
 	assert.NotContains(t, rec.Body.String(), `"count"`,
-		"ham gövdede de bulunmamalı (null yazılmış olabilir)")
+		"it must not be present in the raw body either (a null may have been written)")
 
-	// Zarfın geri kalanı DEĞİŞMEZ: düşen tek şey sayaçtır.
-	assert.Contains(t, govde, "data")
-	assert.Contains(t, govde, "offset")
-	assert.Contains(t, govde, "limit")
+	// The rest of the envelope DOES NOT CHANGE: the only thing that drops is
+	// the counter.
+	assert.Contains(t, body, "data")
+	assert.Contains(t, body, "offset")
+	assert.Contains(t, body, "limit")
 }
 
-// TestVitrinListesiSifirSayaciYAZAR "sayıldı ve sıfır çıktı" durumunun
-// alanı DÜŞÜRMEDİĞİNİ doğrular.
+// TestStoreListWritesAZeroCount verifies that the "counted and it came out
+// zero" case DOES NOT DROP the field.
 //
-// İddia, alanı düşüren mekanizmanın SINIRIDIR. Zarf `*int` + omitempty
-// kullanır: omitempty işaretçilerde yalnızca nil'e bakar, dolayısıyla sıfırı
-// gösteren bir işaretçi yazılır. Alan düz bir `int` + omitempty olsaydı — ki
-// sadeleştirme niyetiyle yapılacak en olası değişiklik budur — "hiç ürün
-// eşleşmedi" yanıtı sessizce SAYAÇSIZ görünürdü ve istemci sayının
-// hesaplanmadığını sanardı. İki durum yanıtta ayırt edilebilir kalmalıdır.
-func TestVitrinListesiSifirSayaciYAZAR(t *testing.T) {
+// The claim is the LIMIT of the mechanism that drops the field. The envelope
+// uses `*int` + omitempty: on pointers omitempty only looks at nil, so a pointer
+// showing zero is written. Had the field been a plain `int` + omitempty — which
+// is the most likely change someone would make in the name of simplification —
+// the "no product matched" response would silently look COUNTERLESS and the
+// client would think the number had not been computed. The two cases have to
+// stay distinguishable in the response.
+func TestStoreListWritesAZeroCount(t *testing.T) {
 	t.Parallel()
 
-	katalog := &fakeCatalog{
+	catalog := &fakeCatalog{
 		listStoreProducts: func(
 			_ context.Context, opts service.StoreListOptions,
 		) (service.ListResult[service.StoreProduct], error) {
@@ -727,60 +741,61 @@ func TestVitrinListesiSifirSayaciYAZAR(t *testing.T) {
 		},
 	}
 
-	rec := do(t, newRouter(katalog), http.MethodGet, "/store/v1/products", "")
+	rec := do(t, newRouter(catalog), http.MethodGet, "/store/v1/products", "")
 	require.Equal(t, http.StatusOK, rec.Code)
 
-	govde := decodeBody(t, rec)
-	require.Contains(t, govde, "count",
-		"sıfır SAYILMIŞ bir sonuçtur; alan gövdede olmalı: %s", rec.Body.String())
-	assert.InDelta(t, float64(0), govde["count"], 0)
+	body := decodeBody(t, rec)
+	require.Contains(t, body, "count",
+		"zero is a COUNTED result; the field has to be in the body: %s", rec.Body.String())
+	assert.InDelta(t, float64(0), body["count"], 0)
 }
 
-// TestVitrinListesiWithCountTrueAcikcaSayar anahtarın açık hâlinin de
-// çalıştığını doğrular.
+// TestStoreListWithCountTrueCountsExplicitly verifies that the explicit form of
+// the key works too.
 //
-// Varsayılanla aynı sonucu vermesi beklenir; testin değeri, "true" değerinin
-// yanlışlıkla "verilmiş ama okunamamış" sayılmadığını göstermesidir.
-func TestVitrinListesiWithCountTrueAcikcaSayar(t *testing.T) {
+// It is expected to give the same result as the default; the value of the test
+// is showing that a "true" value is not mistakenly counted as "given but
+// unreadable".
+func TestStoreListWithCountTrueCountsExplicitly(t *testing.T) {
 	t.Parallel()
 
-	katalog, atlandi := sayacIsteyen()
+	catalog, skipped := countAwareCatalog()
 
-	rec := do(t, newRouter(katalog), http.MethodGet, "/store/v1/products?with_count=true", "")
+	rec := do(t, newRouter(catalog), http.MethodGet, "/store/v1/products?with_count=true", "")
 	require.Equal(t, http.StatusOK, rec.Code)
 
-	assert.False(t, *atlandi)
+	assert.False(t, *skipped)
 	assert.Equal(t, float64(7), decodeBody(t, rec)["count"])
 }
 
-// TestVitrinListesiBozukWithCountReddedilir okunamayan değerin sessizce
-// varsayılana düşmediğini doğrular.
+// TestStoreListRejectsMalformedWithCount verifies that an unreadable value does
+// not silently fall back to the default.
 //
-// Sessiz düşüş, sayacı kapattığını sanan istemcinin maliyeti ödemeye devam
-// etmesi demekti — hem de bunu hiçbir yerde göremeden.
-func TestVitrinListesiBozukWithCountReddedilir(t *testing.T) {
+// A silent fallback meant a client thinking it had turned the counter off while
+// it kept paying the cost — and without being able to see it anywhere.
+func TestStoreListRejectsMalformedWithCount(t *testing.T) {
 	t.Parallel()
 
-	katalog, _ := sayacIsteyen()
+	catalog, _ := countAwareCatalog()
 
-	rec := do(t, newRouter(katalog), http.MethodGet, "/store/v1/products?with_count=belki", "")
-	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code, "gövde: %s", rec.Body.String())
+	rec := do(t, newRouter(catalog), http.MethodGet, "/store/v1/products?with_count=maybe", "")
+	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code, "body: %s", rec.Body.String())
 }
 
-// TestYonetimListesiSayaciDusmez gevşetmenin YALNIZCA vitrin listesine ait
-// olduğunu doğrular.
+// TestAdminListNeverDropsTheCount verifies that the relaxation belongs ONLY to
+// the storefront listing.
 //
-// Zarf tipi bütün uçlarda ortaktır; "count"u işaretçiye çevirmek, her listenin
-// alanı sessizce düşürebilmesi anlamına gelirdi. Yönetim listesi her zaman
-// sayar ve alanı her zaman yazmalıdır.
-func TestYonetimListesiSayaciDusmez(t *testing.T) {
+// The envelope type is shared by every endpoint; turning "count" into a pointer
+// would mean every list could silently drop the field. The admin listing always
+// counts and has to always write the field.
+func TestAdminListNeverDropsTheCount(t *testing.T) {
 	t.Parallel()
 
-	katalog := &fakeCatalog{
+	catalog := &fakeCatalog{
 		listProducts: func(
 			_ context.Context, opts service.ListProductsOptions,
 		) (service.ListResult[models.Product], error) {
-			assert.False(t, opts.SkipCount, "yönetim listesi sayacı kapatmaz")
+			assert.False(t, opts.SkipCount, "the admin listing does not turn the counter off")
 
 			return service.ListResult[models.Product]{
 				Items:  []models.Product{{ID: "prod_1"}},
@@ -791,43 +806,44 @@ func TestYonetimListesiSayaciDusmez(t *testing.T) {
 		},
 	}
 
-	// Vitrindeki anahtar yönetim ucunda OKUNMAZ: gönderilse bile sayaç kalır.
-	rec := do(t, newRouter(katalog), http.MethodGet, "/admin/v1/products?with_count=false", "")
+	// The storefront's key IS NOT READ on the admin endpoint: even if it is
+	// sent, the counter stays.
+	rec := do(t, newRouter(catalog), http.MethodGet, "/admin/v1/products?with_count=false", "")
 	require.Equal(t, http.StatusOK, rec.Code)
 	assert.Equal(t, float64(1), decodeBody(t, rec)["count"])
 }
 
-// TestYonetimListesiExpandVarsayilaniKapali "expand" anahtarının verilmediğinde
-// KAPALI olduğunu doğrular.
+// TestAdminListExpandDefaultsToOff verifies that the "expand" key is OFF when it
+// is not given.
 //
-// Test, [boolParam]'ın varsayılanı çağrıya taşımasının bedelini kapatır:
-// varsayılan artık fonksiyonun gövdesinde değil çağrı satırında duruyor ve
-// oradaki tek bir sözcük ("false" → "true") derlenir, hiçbir şeyi kırmaz ve
-// yönetim listesini sessizce PAHALILAŞTIRIRDI — her istek varyantları,
-// seçenekleri, görselleri ve taksonomiyi de çekmeye başlardı. Kaydırma
-// ölçüldü: hiçbir test düşmüyordu.
-func TestYonetimListesiExpandVarsayilaniKapali(t *testing.T) {
+// The test closes the cost of [boolParam] carrying the default to the call site:
+// the default now sits on the call line rather than in the function body, and a
+// single word there ("false" → "true") compiles, breaks nothing and would
+// silently make the admin listing MORE EXPENSIVE — every request would start
+// pulling the variants, the options, the images and the taxonomy too. The drift
+// was measured: no test was failing.
+func TestAdminListExpandDefaultsToOff(t *testing.T) {
 	t.Parallel()
 
-	var istenen []bool
+	var requested []bool
 
-	katalog := &fakeCatalog{
+	catalog := &fakeCatalog{
 		listProducts: func(
 			_ context.Context, opts service.ListProductsOptions,
 		) (service.ListResult[models.Product], error) {
-			istenen = append(istenen, opts.WithRelations)
+			requested = append(requested, opts.WithRelations)
 
 			return service.ListResult[models.Product]{Count: ptr(0)}, nil
 		},
 	}
 
-	router := newRouter(katalog)
+	router := newRouter(catalog)
 
 	require.Equal(t, http.StatusOK, do(t, router, http.MethodGet, "/admin/v1/products", "").Code)
 	require.Equal(t, http.StatusOK,
 		do(t, router, http.MethodGet, "/admin/v1/products?expand=true", "").Code)
 
-	require.Len(t, istenen, 2)
-	assert.False(t, istenen[0], "expand verilmezse ilişkiler ÇEKİLMEMELİ")
-	assert.True(t, istenen[1], "expand=true ilişkileri çekmeli")
+	require.Len(t, requested, 2)
+	assert.False(t, requested[0], "if expand is not given the relations MUST NOT BE PULLED")
+	assert.True(t, requested[1], "expand=true has to pull the relations")
 }

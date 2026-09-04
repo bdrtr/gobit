@@ -9,117 +9,124 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/product/graph"
 )
 
-// Yetki sözlüğü: product'ın yönetim uçlarının istediği yetkiler.
+// The scope dictionary: the scopes product's admin endpoints ask for.
 //
-// Sözlük tüm modüllerde AYNI biçimdedir ve BİLİNÇLİ olarak iki girdiden
-// ibarettir: okuma ve yazma. Kaynak başına ayrı yetki ("variants:write",
-// "collections:read" …) tanımlamak listeyi büyütür ama bugün verilebilecek
-// hiçbir yeni kararı mümkün kılmaz — yetkiyi dağıtan tek yer auth modülüdür ve
-// dağıtılmayan bir yetki adı, ilk kez verildiği gün ne işe yaradığı kimsenin
-// bilmediği bir addır. Ayrım gerçekten gerektiğinde eklenir.
+// The dictionary has the SAME shape in every module and DELIBERATELY consists
+// of two entries: read and write. Defining a separate scope per resource
+// ("variants:write", "collections:read" …) grows the list but makes no new
+// decision possible today — the only place that hands out scopes is the auth
+// module, and a scope name that is never handed out is a name nobody knows the
+// purpose of on the day it is first granted. The distinction gets added when it
+// is really needed.
 const (
-	// ScopeRead product yönetim yüzeyindeki OKUMA uçlarının istediği yetkidir.
+	// ScopeRead is the scope the READ endpoints of product's admin surface ask
+	// for.
 	//
-	// Kataloğu (ürün, varyant, seçenek, taksonomi ve modüller arası bağlar)
-	// okumaya yeter; hiçbir yazma ucunu açmaz. Tam yetkili kimliklere ayrıca
-	// verilmesi gerekmez: corehttp.ScopeAdmin taşıyan bir çağıran bunu da
-	// karşılar (bkz. corehttp.Principal.HasScope).
+	// It is enough to read the catalog (products, variants, options, taxonomy
+	// and the cross-module links); it opens no write endpoint. It does not have
+	// to be granted separately to fully privileged identities: a caller
+	// carrying corehttp.ScopeAdmin satisfies this too (see
+	// corehttp.Principal.HasScope).
 	ScopeRead = "product:read"
 
-	// ScopeWrite product yönetim yüzeyindeki YAZMA uçlarının istediği
-	// yetkidir.
+	// ScopeWrite is the scope the WRITE endpoints of product's admin surface
+	// ask for.
 	//
-	// Okumadan ayrılması, kataloğu yalnızca RAPORLAYAN bir entegrasyonun
-	// (fiyat karşılaştırma, dışa aktarma, arama indeksi) ürün silebilen bir
-	// kimlikle çalışmak zorunda kalmaması içindir.
+	// It is kept apart from read so that an integration that only REPORTS the
+	// catalog (price comparison, export, a search index) does not have to run
+	// with an identity that can delete products.
 	ScopeWrite = "product:write"
 )
 
-// Routes modülün store ve admin uçlarını router'a bağlar.
+// Routes binds the module's store and admin endpoints to the router.
 //
-// Uçlar TAM YOLLA kaydedilir; "/admin/v1" ya da "/store/v1" için alt router
-// (chi.Route/Mount) AÇILMAZ. Sebep somut: registry tüm modüllerin Routes'unu
-// AYNI router üzerinde çağırır ve chi, aynı desene ikinci kez mount edilmeyi
-// panikle reddeder. İlk modül "/admin/v1"i mount etseydi, ikinci modül
-// (pricing) sunucuyu açılışta düşürürdü.
+// The endpoints are registered with their FULL PATH; NO sub-router
+// (chi.Route/Mount) is OPENED for "/admin/v1" or "/store/v1". The reason is
+// concrete: the registry calls the Routes of every module on the SAME router
+// and chi refuses a second mount of the same pattern with a panic. Had the
+// first module mounted "/admin/v1", the second module (pricing) would take the
+// server down at startup.
 //
-// # KORUMA
+// # THE GUARD
 //
-// İki katman vardır ve ikisi de gereklidir:
+// There are two layers and both are necessary:
 //
-//  1. KİMLİK — /admin/v1 uçları corehttp.RequireAdmin ile korunur. O
-//     middleware bu modülde değil, router'ı kuran tarafta takılır (bkz.
-//     corehttp.APIGuards).
-//  2. YETKİ — uçlar BURADA, uç uç corehttp.RequireScope ile işaretlenir:
-//     GET uçları [ScopeRead], POST/PUT/PATCH/DELETE uçları [ScopeWrite] ister.
+//  1. IDENTITY — the /admin/v1 endpoints are guarded with corehttp.RequireAdmin.
+//     That middleware is attached not in this module but on the side that
+//     builds the router (see corehttp.APIGuards).
+//  2. SCOPE — the endpoints are marked HERE, endpoint by endpoint, with
+//     corehttp.RequireScope: GET endpoints ask for [ScopeRead],
+//     POST/PUT/PATCH/DELETE endpoints for [ScopeWrite].
 //
-// İkinci katman olmasaydı kimlik doğrulama yetkilendirmenin yerine geçerdi.
-// Somut bedeli şudur: yetkileri boşaltılmış bir yönetim kullanıcısı
-// (auth service.CreateUserInput.Scopes = []string{}) giriş yapıp
-// DELETE /admin/v1/products/{id} çağırabilir, yani kataloğu silebilirdi.
+// Without the second layer authentication would stand in for authorization. Its
+// concrete cost is this: an admin user whose scopes were emptied out
+// (auth service.CreateUserInput.Scopes = []string{}) could log in and call
+// DELETE /admin/v1/products/{id}, that is, delete the catalog.
 //
-// Mağaza uçlarına yetki EKLENMEZ: /store/v1'in kimliği publishable anahtardır
-// ve o anahtar tanımı gereği yetki TAŞIMAZ. Oraya bir scope koymak, hiçbir
-// mağaza istemcisinin sağlayamayacağı bir koşul koymak olurdu.
+// NO scope is ADDED to the store endpoints: the identity of /store/v1 is the
+// publishable key and that key by definition CARRIES NO scope. Putting a scope
+// there would be putting a condition no store client could ever satisfy.
 func (h *Handler) Routes(r chi.Router) {
-	okuma := r.With(corehttp.RequireScope(ScopeRead))
-	yazma := r.With(corehttp.RequireScope(ScopeWrite))
+	read := r.With(corehttp.RequireScope(ScopeRead))
+	write := r.With(corehttp.RequireScope(ScopeWrite))
 
-	// --- Store API (müşteri) ---
+	// --- Store API (customer) ---
 	r.Get("/store/v1/products", h.storeListProducts)
 	r.Get("/store/v1/products/{id}", h.storeGetProduct)
 
-	// GraphQL vitrin okuma yüzeyi. YALNIZCA POST kaydedilir; GET'in neden
-	// açılmadığı için bkz. [graph.NewHandler]. Yolun /store/v1 altında olması
-	// koruma yığınını (publishable anahtar + hız sınırı) otomatik getirir ve
-	// satış kanalı kimliklerini Principal'a doldurur.
+	// The GraphQL storefront read surface. ONLY POST is registered; for why GET
+	// is not opened see [graph.NewHandler]. The path sitting under /store/v1
+	// brings the guard stack (publishable key + rate limit) along automatically
+	// and fills the sales channel ids into the Principal.
 	r.Method(http.MethodPost, graph.Path, h.graphql)
 
-	// --- Admin API: ürünler ---
-	yazma.Post("/admin/v1/products", h.adminCreateProduct)
-	okuma.Get("/admin/v1/products", h.adminListProducts)
-	okuma.Get("/admin/v1/products/{id}", h.adminGetProduct)
-	yazma.Patch("/admin/v1/products/{id}", h.adminUpdateProduct)
-	yazma.Delete("/admin/v1/products/{id}", h.adminDeleteProduct)
+	// --- Admin API: products ---
+	write.Post("/admin/v1/products", h.adminCreateProduct)
+	read.Get("/admin/v1/products", h.adminListProducts)
+	read.Get("/admin/v1/products/{id}", h.adminGetProduct)
+	write.Patch("/admin/v1/products/{id}", h.adminUpdateProduct)
+	write.Delete("/admin/v1/products/{id}", h.adminDeleteProduct)
 
-	// --- Admin API: varyantlar ---
-	yazma.Post("/admin/v1/products/{id}/variants", h.adminCreateVariant)
-	okuma.Get("/admin/v1/products/{id}/variants", h.adminListVariants)
-	okuma.Get("/admin/v1/variants/{id}", h.adminGetVariant)
-	yazma.Patch("/admin/v1/variants/{id}", h.adminUpdateVariant)
-	yazma.Delete("/admin/v1/variants/{id}", h.adminDeleteVariant)
+	// --- Admin API: variants ---
+	write.Post("/admin/v1/products/{id}/variants", h.adminCreateVariant)
+	read.Get("/admin/v1/products/{id}/variants", h.adminListVariants)
+	read.Get("/admin/v1/variants/{id}", h.adminGetVariant)
+	write.Patch("/admin/v1/variants/{id}", h.adminUpdateVariant)
+	write.Delete("/admin/v1/variants/{id}", h.adminDeleteVariant)
 
-	// --- Admin API: seçenekler ---
-	yazma.Post("/admin/v1/products/{id}/options", h.adminCreateOption)
-	okuma.Get("/admin/v1/products/{id}/options", h.adminListOptions)
-	yazma.Post("/admin/v1/product-options/{id}/values", h.adminAddOptionValue)
-	yazma.Delete("/admin/v1/product-options/{id}", h.adminDeleteOption)
+	// --- Admin API: options ---
+	write.Post("/admin/v1/products/{id}/options", h.adminCreateOption)
+	read.Get("/admin/v1/products/{id}/options", h.adminListOptions)
+	write.Post("/admin/v1/product-options/{id}/values", h.adminAddOptionValue)
+	write.Delete("/admin/v1/product-options/{id}", h.adminDeleteOption)
 
-	// --- Admin API: modüller arası bağlar ---
-	// Fiyat ve stok kayıtlarını pricing/inventory üretir; bağı katalog kurar.
-	// Bağ kurmak katalog verisini DEĞİŞTİRİR (varyantın hangi fiyat setini ve
-	// hangi stok kalemini göstereceğini belirler), bu yüzden [ScopeWrite]
-	// ister; yalnızca bağı okuyan uç [ScopeRead] ile yetinir.
-	yazma.Put("/admin/v1/variants/{id}/price-set", h.adminSetPriceSet)
-	yazma.Delete("/admin/v1/variants/{id}/price-set", h.adminDeletePriceSet)
-	yazma.Put("/admin/v1/variants/{id}/inventory-item", h.adminSetInventoryItem)
-	yazma.Delete("/admin/v1/variants/{id}/inventory-item", h.adminDeleteInventoryItem)
-	okuma.Get("/admin/v1/variants/{id}/links", h.adminGetVariantLinks)
+	// --- Admin API: cross-module links ---
+	// The price and stock records are produced by pricing/inventory; the link
+	// is established by the catalog. Establishing a link CHANGES catalog data
+	// (it decides which price set and which inventory item the variant will
+	// show), which is why it asks for [ScopeWrite]; the endpoint that only
+	// reads the link makes do with [ScopeRead].
+	write.Put("/admin/v1/variants/{id}/price-set", h.adminSetPriceSet)
+	write.Delete("/admin/v1/variants/{id}/price-set", h.adminDeletePriceSet)
+	write.Put("/admin/v1/variants/{id}/inventory-item", h.adminSetInventoryItem)
+	write.Delete("/admin/v1/variants/{id}/inventory-item", h.adminDeleteInventoryItem)
+	read.Get("/admin/v1/variants/{id}/links", h.adminGetVariantLinks)
 
-	// Satış kanalı bağı ÜRÜN düzeyindedir ve çoktan çoğadır; bu yüzden yol
-	// varyant bağlarının tekil kalıbını değil koleksiyon kalıbını izler
-	// (POST ekler, yoldaki kimlikle DELETE çıkarır). Bağ kurmak ürünün hangi
-	// vitrinlerde GÖRÜNECEĞİNİ belirler, yani katalog verisini değiştirir:
-	// yazma uçları [ScopeWrite], okuma ucu [ScopeRead] ister.
-	yazma.Post("/admin/v1/products/{id}/sales-channels", h.adminAddSalesChannel)
-	yazma.Delete("/admin/v1/products/{id}/sales-channels/{sales_channel_id}", h.adminRemoveSalesChannel)
-	okuma.Get("/admin/v1/products/{id}/sales-channels", h.adminListSalesChannels)
+	// The sales channel link is at the PRODUCT level and is many-to-many; that
+	// is why the path follows the collection pattern rather than the singular
+	// pattern of the variant links (POST adds, DELETE with the id in the path
+	// removes). Establishing a link decides WHICH STOREFRONTS the product WILL
+	// APPEAR IN, that is, it changes catalog data: the write endpoints ask for
+	// [ScopeWrite], the read endpoint for [ScopeRead].
+	write.Post("/admin/v1/products/{id}/sales-channels", h.adminAddSalesChannel)
+	write.Delete("/admin/v1/products/{id}/sales-channels/{sales_channel_id}", h.adminRemoveSalesChannel)
+	read.Get("/admin/v1/products/{id}/sales-channels", h.adminListSalesChannels)
 
-	// --- Admin API: taksonomi (sade yüzey: liste + oluştur) ---
-	yazma.Post("/admin/v1/product-collections", h.adminCreateCollection)
-	okuma.Get("/admin/v1/product-collections", h.adminListCollections)
-	yazma.Post("/admin/v1/product-categories", h.adminCreateCategory)
-	okuma.Get("/admin/v1/product-categories", h.adminListCategories)
-	yazma.Post("/admin/v1/product-tags", h.adminCreateTag)
-	okuma.Get("/admin/v1/product-tags", h.adminListTags)
+	// --- Admin API: taxonomy (a plain surface: list + create) ---
+	write.Post("/admin/v1/product-collections", h.adminCreateCollection)
+	read.Get("/admin/v1/product-collections", h.adminListCollections)
+	write.Post("/admin/v1/product-categories", h.adminCreateCategory)
+	read.Get("/admin/v1/product-categories", h.adminListCategories)
+	write.Post("/admin/v1/product-tags", h.adminCreateTag)
+	read.Get("/admin/v1/product-tags", h.adminListTags)
 }

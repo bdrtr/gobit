@@ -1,8 +1,8 @@
--- Varyant ve seçenek sorguları.
+-- Variant and option queries.
 --
--- Toplu (ByIDs) sorgular tesadüf değildir: hem Query sağlayıcısının
--- FetchByIDs'i hem de ürün listelemesinin varyant/seçenek doldurması TEK
--- sorguyla çalışmak zorundadır; kayıt başına sorgu N+1 üretirdi.
+-- The batch (ByIDs) queries are no coincidence: both the Query provider's
+-- FetchByIDs and the variant/option hydration of the product listing have to work
+-- with a SINGLE query; one query per record would produce N+1.
 
 -- name: CreateVariant :one
 INSERT INTO product_variant (
@@ -93,8 +93,8 @@ WHERE option_id = ANY($1::text[]) AND deleted_at IS NULL
 ORDER BY option_id, rank, id;
 
 -- name: ListOptionValuesByIDs :many
--- Varyanta bağlanacak değerlerin gerçekten AYNI ÜRÜNÜN seçeneklerine ait
--- olduğu bu sorgunun döndürdüğü product_id ile doğrulanır.
+-- That the values to be attached to a variant really belong to options of THE
+-- SAME PRODUCT is verified with the product_id this query returns.
 SELECT ov.id, ov.option_id, ov.value, ov.rank, o.product_id, o.title AS option_title
 FROM product_option_value ov
 JOIN product_option o ON o.id = ov.option_id AND o.deleted_at IS NULL
@@ -102,8 +102,8 @@ WHERE ov.id = ANY($1::text[]) AND ov.deleted_at IS NULL
 ORDER BY o.rank, ov.rank, ov.id;
 
 -- name: SetVariantOptionValue :exec
--- Birincil anahtar (variant_id, option_id) olduğu için aynı seçeneğe ikinci bir
--- değer eklemek yeni satır değil, GÜNCELLEME üretir.
+-- Because the primary key is (variant_id, option_id), adding a second value to
+-- the same option produces an UPDATE rather than a new row.
 INSERT INTO product_variant_option_value (variant_id, option_id, value_id)
 VALUES ($1, $2, $3)
 ON CONFLICT (variant_id, option_id) DO UPDATE SET value_id = EXCLUDED.value_id;

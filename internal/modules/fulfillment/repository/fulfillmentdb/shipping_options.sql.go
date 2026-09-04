@@ -25,8 +25,8 @@ type CountShippingOptionsParams struct {
 	PriceType  *string
 }
 
-// CountShippingOptions ListShippingOptions ile AYNI filtreleri uygular;
-// gerekçe için bkz. CountShippingProfiles.
+// CountShippingOptions applies the SAME filters as ListShippingOptions; for the
+// rationale see CountShippingProfiles.
 func (q *Queries) CountShippingOptions(ctx context.Context, arg CountShippingOptionsParams) (int64, error) {
 	row := q.db.QueryRow(ctx, countShippingOptions,
 		arg.RegionID,
@@ -63,16 +63,17 @@ type CreateShippingOptionParams struct {
 	Metadata          []byte
 }
 
-// shipping_options sorguları.
+// shipping_options queries.
 //
-// Seçenek kataloğunun okuma yolu ikiye ayrılır:
+// The read path of the option catalog splits in two:
 //
-//   - Yönetim listelemesi (ListShippingOptions) — sayfalanır ve süzülür.
-//   - Uygunluk listelemesi (ListEligibleShippingOptions) — bir sepet bağlamı
-//     için ADAYLARI döner. Kural eşleşmesi burada YAPILMAZ; yalnızca sütun
-//     düzeyinde ucuz olan elemeler (bölge, para birimi, profil, iade,
-//     admin_only) SQL'e verilir. Kuralın kendisi servis katmanındaki saf
-//     fonksiyonda yaşar ve veritabanı olmadan birim testiyle kanıtlanabilir.
+//   - Admin listing (ListShippingOptions) — paginated and filtered.
+//   - Eligibility listing (ListEligibleShippingOptions) — returns the
+//     CANDIDATES for a cart context. Rule matching is NOT DONE here; only the
+//     eliminations that are cheap at the column level (region, currency,
+//     profile, return, admin_only) are handed to SQL. The rule itself lives in
+//     the pure function in the service layer and can be proven by a unit test
+//     without a database.
 func (q *Queries) CreateShippingOption(ctx context.Context, arg CreateShippingOptionParams) (ShippingOption, error) {
 	row := q.db.QueryRow(ctx, createShippingOption,
 		arg.ID,
@@ -143,8 +144,8 @@ WHERE id = ANY ($1::text[]) AND deleted_at IS NULL
 ORDER BY id
 `
 
-// GetShippingOptionsByIDs Query katmanının FetchByIDs çağrısını TEK turda
-// karşılar; kimlik başına sorgu (N+1) yapılmaz.
+// GetShippingOptionsByIDs serves the Query layer's FetchByIDs call in a SINGLE
+// round trip; no query per id (N+1) is made.
 func (q *Queries) GetShippingOptionsByIDs(ctx context.Context, ids []string) ([]ShippingOption, error) {
 	rows, err := q.db.Query(ctx, getShippingOptionsByIDs, ids)
 	if err != nil {
@@ -204,26 +205,29 @@ type ListEligibleShippingOptionsParams struct {
 	ProfileIds       []string
 }
 
-// ListEligibleShippingOptions bir sepet bağlamının ADAYLARINI döner.
+// ListEligibleShippingOptions returns the CANDIDATES of a cart context.
 //
-// region_id filtresi İKİ değeri kabul eder: seçeneğin bölgesi ya istenen bölge
-// ya da BOŞ dizedir. Boş, "her bölge" demektir ve bölgesi olmayan bir mağazanın
-// (ya da bölgeden bağımsız bir seçeneğin) listeden düşmesini engeller.
+// The region_id filter accepts TWO values: the option's region is either the
+// requested region or the EMPTY string. Empty means "every region", and it
+// keeps an option of a store that has no region (or an option that is
+// independent of the region) from dropping off the list.
 //
-// profile_ids boş dizi verilirse profil süzgeci UYGULANMAZ: sepetin ürünleri
-// hiçbir profile bağlı değilse tüm profiller aday olur. Aksi hâlde boş bir
-// sepet hiçbir kargo seçeneği göremezdi.
+// If profile_ids is given as an empty array the profile filter is NOT APPLIED:
+// if the cart's products are bound to no profile at all, every profile becomes
+// a candidate. Otherwise an empty cart could see no shipping option at all.
 //
-// include_admin_only false ise admin_only seçenekler ELENİR. Süzgeç SQL'de
-// durur, çünkü mağaza yüzeyine sızmaması gereken tek alan budur ve satırın hiç
-// okunmaması, okunup sonra atılmasından daha güvenlidir.
+// If include_admin_only is false, admin_only options are ELIMINATED. The filter
+// stays in SQL, because this is the only field that must not leak to the store
+// surface, and not reading the row at all is safer than reading it and then
+// throwing it away.
 //
-// PROFİLİ SİLİNMİŞ seçenek de elenir. Normal akışta böyle bir satır oluşamaz
-// (profil silme, bağlı seçenek varsa reddedilir ve profil satırı o sırada
-// kilitlidir), ama doğrudan SQL çalıştıran bir bakım betiği ya da kısmi bir
-// geri yükleme onu üretebilir. Uygunluk sorgusu, okuduğu her satıra dayanıklı
-// olmalıdır: kargo kuralı ortadan kalkmış bir profilin seçeneği vitrinde
-// durmamalıdır.
+// An option WHOSE PROFILE HAS BEEN DELETED is eliminated too. Such a row cannot
+// come about in the normal flow (deleting a profile is refused if it has an
+// option bound to it, and the profile row is locked at that moment), but a
+// maintenance script that runs SQL directly, or a partial restore, can produce
+// one. The eligibility query has to be resilient to every row it reads: an
+// option of a profile whose shipping rule has vanished must not stand in the
+// storefront.
 func (q *Queries) ListEligibleShippingOptions(ctx context.Context, arg ListEligibleShippingOptionsParams) ([]ShippingOption, error) {
 	rows, err := q.db.Query(ctx, listEligibleShippingOptions,
 		arg.RegionID,
@@ -337,11 +341,11 @@ WHERE id = $1 AND deleted_at IS NULL
 RETURNING id, name, provider_id, shipping_profile_id, price_type, amount, currency_code, region_id, is_return, admin_only, data, metadata, created_at, updated_at, deleted_at
 `
 
-// SoftDeleteShippingOption seçeneği YUMUŞAK siler (plan Bölüm 8).
+// SoftDeleteShippingOption SOFT deletes the option (plan Section 8).
 //
-// Fiziksel silme, seçeneğe bağlı gönderilerin (fulfillments.shipping_option_id)
-// ON DELETE RESTRICT kısıtına takılırdı; yumuşak silme geçmişi bozmadan
-// seçeneği kataloğun dışına çıkarır.
+// A physical delete would hit the ON DELETE RESTRICT constraint of the
+// fulfillments bound to the option (fulfillments.shipping_option_id); a soft
+// delete takes the option out of the catalog without breaking history.
 func (q *Queries) SoftDeleteShippingOption(ctx context.Context, id string) (ShippingOption, error) {
 	row := q.db.QueryRow(ctx, softDeleteShippingOption, id)
 	var i ShippingOption

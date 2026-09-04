@@ -115,11 +115,11 @@ type CreateVariantParams struct {
 	Metadata        []byte
 }
 
-// Varyant ve seçenek sorguları.
+// Variant and option queries.
 //
-// Toplu (ByIDs) sorgular tesadüf değildir: hem Query sağlayıcısının
-// FetchByIDs'i hem de ürün listelemesinin varyant/seçenek doldurması TEK
-// sorguyla çalışmak zorundadır; kayıt başına sorgu N+1 üretirdi.
+// The batch (ByIDs) queries are no coincidence: both the Query provider's
+// FetchByIDs and the variant/option hydration of the product listing have to work
+// with a SINGLE query; one query per record would produce N+1.
 func (q *Queries) CreateVariant(ctx context.Context, arg CreateVariantParams) (ProductVariant, error) {
 	row := q.db.QueryRow(ctx, createVariant,
 		arg.ID,
@@ -258,8 +258,8 @@ type ListOptionValuesByIDsRow struct {
 	OptionTitle string
 }
 
-// Varyanta bağlanacak değerlerin gerçekten AYNI ÜRÜNÜN seçeneklerine ait
-// olduğu bu sorgunun döndürdüğü product_id ile doğrulanır.
+// That the values to be attached to a variant really belong to options of THE
+// SAME PRODUCT is verified with the product_id this query returns.
 func (q *Queries) ListOptionValuesByIDs(ctx context.Context, dollar_1 []string) ([]ListOptionValuesByIDsRow, error) {
 	rows, err := q.db.Query(ctx, listOptionValuesByIDs, dollar_1)
 	if err != nil {
@@ -546,8 +546,8 @@ type SetVariantOptionValueParams struct {
 	ValueID   string
 }
 
-// Birincil anahtar (variant_id, option_id) olduğu için aynı seçeneğe ikinci bir
-// değer eklemek yeni satır değil, GÜNCELLEME üretir.
+// Because the primary key is (variant_id, option_id), adding a second value to
+// the same option produces an UPDATE rather than a new row.
 func (q *Queries) SetVariantOptionValue(ctx context.Context, arg SetVariantOptionValueParams) error {
 	_, err := q.db.Exec(ctx, setVariantOptionValue, arg.VariantID, arg.OptionID, arg.ValueID)
 	return err

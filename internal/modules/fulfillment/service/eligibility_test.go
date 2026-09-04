@@ -13,193 +13,196 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/fulfillment/service"
 )
 
-// TestAdminOnlySecenekMagazayaCikmaz Faz 7'nin mağaza şartını sınar.
+// TestAnAdminOnlyOptionDoesNotReachTheStorefront exercises the storefront
+// requirement of Phase 7.
 //
-// admin_only bir seçenek vitrinde HİÇ görünmemelidir; süzgeç yalnızca yanıt
-// üretilirken uygulansaydı, satır okunur ve bir sonraki refactor'da yanlışlıkla
-// sızabilirdi.
-func TestAdminOnlySecenekMagazayaCikmaz(t *testing.T) {
+// An admin_only option must NEVER appear on the storefront; had the filter only
+// been applied while the response was being produced, the row would be read and
+// could leak by accident in a later refactor.
+func TestAnAdminOnlyOptionDoesNotReachTheStorefront(t *testing.T) {
 	t.Parallel()
 
-	kurulum := yeniKurulum(t)
-	profilID := kurulum.profilAc(t, "varsayilan")
+	setup := newSetup(t)
+	profileID := setup.createProfile(t, "default")
 
-	acikID := kurulum.secenekAc(t, service.CreateOptionInput{
-		Name:              "Standart kargo",
-		ShippingProfileID: profilID,
+	openID := setup.createOption(t, service.CreateOptionInput{
+		Name:              "Standard shipping",
+		ShippingProfileID: profileID,
 		Amount:            2_000,
 	})
-	gizliID := kurulum.secenekAc(t, service.CreateOptionInput{
-		Name:              "Elden teslim",
-		ShippingProfileID: profilID,
+	hiddenID := setup.createOption(t, service.CreateOptionInput{
+		Name:              "Hand delivery",
+		ShippingProfileID: profileID,
 		Amount:            0,
 		AdminOnly:         true,
 	})
 
-	magaza, err := kurulum.svc.ListShippingOptionsFor(context.Background(), service.ListOptionsInput{
+	storefront, err := setup.svc.ListShippingOptionsFor(context.Background(), service.ListOptionsInput{
 		CurrencyCode: "TRY",
 	})
 	require.NoError(t, err)
-	require.Len(t, magaza, 1, "mağaza yalnızca açık seçeneği görmeli")
-	assert.Equal(t, acikID, magaza[0].Option.ID)
+	require.Len(t, storefront, 1, "the storefront has to see only the open option")
+	assert.Equal(t, openID, storefront[0].Option.ID)
 
-	yonetim, err := kurulum.svc.ListShippingOptionsFor(context.Background(), service.ListOptionsInput{
+	admin, err := setup.svc.ListShippingOptionsFor(context.Background(), service.ListOptionsInput{
 		CurrencyCode:     "TRY",
 		IncludeAdminOnly: true,
 	})
 	require.NoError(t, err)
-	require.Len(t, yonetim, 2, "yönetim her iki seçeneği de görmeli")
+	require.Len(t, admin, 2, "the admin surface has to see both options")
 
-	kimlikler := []string{yonetim[0].Option.ID, yonetim[1].Option.ID}
-	assert.Contains(t, kimlikler, gizliID, "admin_only seçenek yönetimde görünmeli")
+	ids := []string{admin[0].Option.ID, admin[1].Option.ID}
+	assert.Contains(t, ids, hiddenID, "the admin_only option has to be visible in the admin surface")
 }
 
-// TestFlatSecenekSaglayiciyaGitmez sabit ücretli seçeneğin sağlayıcıya HİÇ
-// sorulmadığını kanıtlar.
+// TestAFlatOptionDoesNotGoToTheProvider proves that a fixed-fee option is NEVER
+// asked of the provider.
 //
-// Gitseydi sepet her güncellendiğinde gereksiz bir ağ çağrısı yapılır ve
-// sağlayıcının erişilemez olduğu bir anda sabit ücretli seçenek de düşerdi.
-func TestFlatSecenekSaglayiciyaGitmez(t *testing.T) {
+// Had it gone, a pointless network call would be made every time the cart is
+// updated, and at a moment when the provider is unreachable the fixed-fee option
+// would drop as well.
+func TestAFlatOptionDoesNotGoToTheProvider(t *testing.T) {
 	t.Parallel()
 
-	kurulum := yeniKurulum(t)
-	profilID := kurulum.profilAc(t, "varsayilan")
-	kurulum.secenekAc(t, service.CreateOptionInput{
-		Name:              "Standart kargo",
-		ShippingProfileID: profilID,
+	setup := newSetup(t)
+	profileID := setup.createProfile(t, "default")
+	setup.createOption(t, service.CreateOptionInput{
+		Name:              "Standard shipping",
+		ShippingProfileID: profileID,
 		Amount:            2_000,
 	})
 
-	secenekler, err := kurulum.svc.ListShippingOptionsFor(context.Background(), service.ListOptionsInput{
+	options, err := setup.svc.ListShippingOptionsFor(context.Background(), service.ListOptionsInput{
 		CurrencyCode: "TRY",
 	})
 	require.NoError(t, err)
-	require.Len(t, secenekler, 1)
-	assert.Equal(t, int64(2_000), secenekler[0].Amount, "sabit ücret satırdan gelmeli")
-	assert.Equal(t, "TRY", secenekler[0].CurrencyCode)
+	require.Len(t, options, 1)
+	assert.Equal(t, int64(2_000), options[0].Amount, "the fixed fee has to come from the row")
+	assert.Equal(t, "TRY", options[0].CurrencyCode)
 
-	quote, _, _ := kurulum.provider.cagriSayilari()
-	assert.Zero(t, quote, "sabit ücretli seçenek için sağlayıcıya gidilmemeli")
+	quote, _, _ := setup.provider.callCounts()
+	assert.Zero(t, quote, "the provider must not be called for a fixed-fee option")
 }
 
-// TestCalculatedSecenekSaglayicidanFiyatAlir hesaplanan seçeneğin ücretinin
-// sağlayıcıdan geldiğini ve seçeneğin yapılandırmasının Quote'a AKTARILDIĞINI
-// kanıtlar.
+// TestACalculatedOptionTakesItsPriceFromTheProvider proves that the fee of a
+// calculated option comes from the provider and that the option's configuration
+// IS PASSED THROUGH to Quote.
 //
-// Yapılandırma aktarılmasaydı sağlayıcı kilogram başına ücreti bilemez ve her
-// gönderiye aynı fiyatı verirdi.
-func TestCalculatedSecenekSaglayicidanFiyatAlir(t *testing.T) {
+// Had the configuration not been passed, the provider could not know the
+// per-kilogram fee and would quote the same price for every shipment.
+func TestACalculatedOptionTakesItsPriceFromTheProvider(t *testing.T) {
 	t.Parallel()
 
-	kurulum := yeniKurulum(t)
-	kurulum.provider.quoteAmount = 7_350
-	profilID := kurulum.profilAc(t, "varsayilan")
-	kurulum.secenekAc(t, service.CreateOptionInput{
-		Name:              "Hesaplanan kargo",
-		ShippingProfileID: profilID,
+	setup := newSetup(t)
+	setup.provider.quoteAmount = 7_350
+	profileID := setup.createProfile(t, "default")
+	setup.createOption(t, service.CreateOptionInput{
+		Name:              "Calculated shipping",
+		ShippingProfileID: profileID,
 		PriceType:         "calculated",
 		Data:              map[string]any{"manual_per_kilogram_amount": 500},
 	})
 
-	secenekler, err := kurulum.svc.ListShippingOptionsFor(context.Background(), service.ListOptionsInput{
+	options, err := setup.svc.ListShippingOptionsFor(context.Background(), service.ListOptionsInput{
 		CurrencyCode: "TRY",
 		CountryCode:  "tr",
 		ItemCount:    3,
 		TotalWeight:  1_200,
 	})
 	require.NoError(t, err)
-	require.Len(t, secenekler, 1)
-	assert.Equal(t, int64(7_350), secenekler[0].Amount, "ücret sağlayıcıdan gelmeli")
-	assert.NotEmpty(t, secenekler[0].ProviderData, "sağlayıcının ham verisi taşınmalı")
+	require.Len(t, options, 1)
+	assert.Equal(t, int64(7_350), options[0].Amount, "the fee has to come from the provider")
+	assert.NotEmpty(t, options[0].ProviderData, "the provider's raw data has to be carried")
 
-	girdi := kurulum.provider.sonQuoteGirdisi()
-	assert.Equal(t, "TRY", girdi.CurrencyCode)
-	assert.Equal(t, "TR", girdi.CountryCode, "ülke kodu büyük harfe çevrilmeli")
-	assert.Equal(t, int64(3), girdi.ItemCount)
-	assert.Equal(t, int64(1_200), girdi.TotalWeight)
-	assert.Equal(t, 500, girdi.Data["manual_per_kilogram_amount"],
-		"seçeneğin yapılandırması sağlayıcıya aktarılmalı")
+	input := setup.provider.lastQuoteInput()
+	assert.Equal(t, "TRY", input.CurrencyCode)
+	assert.Equal(t, "TR", input.CountryCode, "the country code has to be uppercased")
+	assert.Equal(t, int64(3), input.ItemCount)
+	assert.Equal(t, int64(1_200), input.TotalWeight)
+	assert.Equal(t, 500, input.Data["manual_per_kilogram_amount"],
+		"the option's configuration has to be passed to the provider")
 }
 
-// TestSaglayiciHatasiYalnizcaOSecenegiDusurur hesaplanan bir seçeneğin
-// sağlayıcısı patladığında SABİT ücretli seçeneklerin ayakta kaldığını
-// kanıtlar.
+// TestAProviderErrorDropsOnlyThatOption proves that when the provider of a
+// calculated option blows up, the FIXED-fee options stay standing.
 //
-// İddia, tek bir kargo firmasının erişilemez olmasının ödeme adımını
-// kapatmaması gerektiğidir (bkz. ListShippingOptionsFor godoc'u).
-func TestSaglayiciHatasiYalnizcaOSecenegiDusurur(t *testing.T) {
+// The claim is that a single carrier being unreachable must not shut down the
+// payment step (see the ListShippingOptionsFor godoc).
+func TestAProviderErrorDropsOnlyThatOption(t *testing.T) {
 	t.Parallel()
 
-	kurulum := yeniKurulum(t)
-	kurulum.provider.quoteErr = errors.Unavailable("test_saglayici_dustu", "kargo firmasına ulaşılamadı")
-	profilID := kurulum.profilAc(t, "varsayilan")
+	setup := newSetup(t)
+	setup.provider.quoteErr = errors.Unavailable("test_provider_down", "the carrier is unreachable")
+	profileID := setup.createProfile(t, "default")
 
-	sabitID := kurulum.secenekAc(t, service.CreateOptionInput{
-		Name:              "Standart kargo",
-		ShippingProfileID: profilID,
+	flatID := setup.createOption(t, service.CreateOptionInput{
+		Name:              "Standard shipping",
+		ShippingProfileID: profileID,
 		Amount:            2_000,
 	})
-	kurulum.secenekAc(t, service.CreateOptionInput{
-		Name:              "Hesaplanan kargo",
-		ShippingProfileID: profilID,
+	setup.createOption(t, service.CreateOptionInput{
+		Name:              "Calculated shipping",
+		ShippingProfileID: profileID,
 		PriceType:         "calculated",
 	})
 
-	secenekler, err := kurulum.svc.ListShippingOptionsFor(context.Background(), service.ListOptionsInput{
+	options, err := setup.svc.ListShippingOptionsFor(context.Background(), service.ListOptionsInput{
 		CurrencyCode: "TRY",
 	})
-	require.NoError(t, err, "tek bir sağlayıcı hatası tüm isteği düşürmemeli")
-	require.Len(t, secenekler, 1)
-	assert.Equal(t, sabitID, secenekler[0].Option.ID)
+	require.NoError(t, err, "a single provider failure must not drop the whole request")
+	require.Len(t, options, 1)
+	assert.Equal(t, flatID, options[0].Option.ID)
 }
 
-// TestSaglayiciFarkliParaBirimiDonerseSecenekDuser sözleşme ihlalinin
-// yakalandığını kanıtlar.
+// TestAnOptionDropsWhenTheProviderReturnsAnotherCurrency proves that the
+// contract violation is caught.
 //
-// Yakalanmasaydı, dolar cinsinden bir kargo ücreti lira sepetine sessizce
-// eklenir ve fark ancak muhasebede görülürdü.
-func TestSaglayiciFarkliParaBirimiDonerseSecenekDuser(t *testing.T) {
+// Had it not been caught, a shipping fee denominated in dollars would be
+// silently added to a lira cart and the difference would only be seen in
+// accounting.
+func TestAnOptionDropsWhenTheProviderReturnsAnotherCurrency(t *testing.T) {
 	t.Parallel()
 
-	kurulum := yeniKurulum(t)
-	kurulum.provider.quoteCurrency = "USD"
-	profilID := kurulum.profilAc(t, "varsayilan")
-	kurulum.secenekAc(t, service.CreateOptionInput{
-		Name:              "Hesaplanan kargo",
-		ShippingProfileID: profilID,
+	setup := newSetup(t)
+	setup.provider.quoteCurrency = "USD"
+	profileID := setup.createProfile(t, "default")
+	setup.createOption(t, service.CreateOptionInput{
+		Name:              "Calculated shipping",
+		ShippingProfileID: profileID,
 		PriceType:         "calculated",
 	})
 
-	secenekler, err := kurulum.svc.ListShippingOptionsFor(context.Background(), service.ListOptionsInput{
+	options, err := setup.svc.ListShippingOptionsFor(context.Background(), service.ListOptionsInput{
 		CurrencyCode: "TRY",
 	})
 	require.NoError(t, err)
-	assert.Empty(t, secenekler, "farklı para biriminde fiyat veren seçenek listelenmemeli")
+	assert.Empty(t, options, "an option quoted in a different currency must not be listed")
 }
 
-// TestUcretsizKargoKurali plan Faz 7'deki örnek kuralı sınar: "toplam >= 50000
-// ise ücretsiz kargo".
+// TestFreeShippingRule exercises the example rule from Phase 7 of the plan:
+// "free shipping if the total is >= 50000".
 //
-// İki seçenek vardır ve ikisi de aynı profildedir; ayıran tek şey kuraldır.
-// Ara toplam eşiğin altındayken ücretsiz seçenek SUNULMAZ, üstündeyken sunulur
-// ve ucuz olduğu için LİSTENİN BAŞINA geçer.
-func TestUcretsizKargoKurali(t *testing.T) {
+// There are two options and both are on the same profile; the only thing that
+// separates them is the rule. While the subtotal is below the threshold the free
+// option IS NOT OFFERED; above it, it is offered and, because it is cheaper, it
+// moves TO THE HEAD OF THE LIST.
+func TestFreeShippingRule(t *testing.T) {
 	t.Parallel()
 
-	kurulum := yeniKurulum(t)
-	profilID := kurulum.profilAc(t, "varsayilan")
+	setup := newSetup(t)
+	profileID := setup.createProfile(t, "default")
 
-	kurulum.secenekAc(t, service.CreateOptionInput{
-		Name:              "Standart kargo",
-		ShippingProfileID: profilID,
+	setup.createOption(t, service.CreateOptionInput{
+		Name:              "Standard shipping",
+		ShippingProfileID: profileID,
 		Amount:            2_000,
 	})
-	ucretsizID := kurulum.secenekAc(t, service.CreateOptionInput{
-		Name:              "Ücretsiz kargo",
-		ShippingProfileID: profilID,
+	freeID := setup.createOption(t, service.CreateOptionInput{
+		Name:              "Free shipping",
+		ShippingProfileID: profileID,
 		Amount:            0,
 	})
-	_, err := kurulum.svc.CreateShippingOptionRule(context.Background(), ucretsizID,
+	_, err := setup.svc.CreateShippingOptionRule(context.Background(), freeID,
 		service.CreateRuleInput{
 			Attribute: service.AttrSubtotal,
 			Operator:  "gte",
@@ -207,59 +210,60 @@ func TestUcretsizKargoKurali(t *testing.T) {
 		})
 	require.NoError(t, err)
 
-	// Bağlam GÜVENİLİR işaretlenir: kurala bağlı seçenekler yalnızca sepet
-	// olgularını sunucu tarafında üreten çağıranlara listelenir
-	// (bkz. TestGuvenilmeyenBaglamdaKuralaBagliSecenekListelenmez).
-	altinda, err := kurulum.svc.ListShippingOptionsFor(context.Background(), service.ListOptionsInput{
+	// The context is marked TRUSTED: rule-bound options are listed only for
+	// callers that produce the cart facts on the server side
+	// (see TestARuleBoundOptionIsNotListedInAnUntrustedContext).
+	below, err := setup.svc.ListShippingOptionsFor(context.Background(), service.ListOptionsInput{
 		CurrencyCode: "TRY",
 		Subtotal:     49_999,
 		TrustedFacts: true,
 	})
 	require.NoError(t, err)
-	require.Len(t, altinda, 1, "eşiğin altında ücretsiz kargo sunulmamalı")
-	assert.Equal(t, int64(2_000), altinda[0].Amount)
+	require.Len(t, below, 1, "below the threshold free shipping must not be offered")
+	assert.Equal(t, int64(2_000), below[0].Amount)
 
-	ustunde, err := kurulum.svc.ListShippingOptionsFor(context.Background(), service.ListOptionsInput{
+	atThreshold, err := setup.svc.ListShippingOptionsFor(context.Background(), service.ListOptionsInput{
 		CurrencyCode: "TRY",
 		Subtotal:     50_000,
 		TrustedFacts: true,
 	})
 	require.NoError(t, err)
-	require.Len(t, ustunde, 2, "eşikte ücretsiz kargo da sunulmalı")
-	assert.Equal(t, ucretsizID, ustunde[0].Option.ID, "ucuz olan listenin başında olmalı")
-	assert.Equal(t, int64(0), ustunde[0].Amount)
-	assert.Equal(t, int64(2_000), ustunde[1].Amount)
+	require.Len(t, atThreshold, 2, "at the threshold free shipping has to be offered too")
+	assert.Equal(t, freeID, atThreshold[0].Option.ID, "the cheaper one has to be at the head of the list")
+	assert.Equal(t, int64(0), atThreshold[0].Amount)
+	assert.Equal(t, int64(2_000), atThreshold[1].Amount)
 
-	// BASAMAK SAYISI eşikten fazla olan bir ara toplam: karşılaştırma dizgesel
-	// olsaydı "100000" < "50000" çıkar ve eşiğin çok üstündeki bir sepet
-	// ücretsiz kargoyu KAYBEDERDİ. Bu dal, karşılaştırmanın gerçekten sayısal
-	// olduğunu kanıtlar.
-	cokUstunde, err := kurulum.svc.ListShippingOptionsFor(context.Background(), service.ListOptionsInput{
+	// A subtotal with MORE DIGITS than the threshold: had the comparison been
+	// lexical, "100000" < "50000" would come out and a cart far above the
+	// threshold WOULD LOSE free shipping. This branch proves that the comparison
+	// really is numeric.
+	wellAbove, err := setup.svc.ListShippingOptionsFor(context.Background(), service.ListOptionsInput{
 		CurrencyCode: "TRY",
 		Subtotal:     100_000,
 		TrustedFacts: true,
 	})
 	require.NoError(t, err)
-	require.Len(t, cokUstunde, 2, "eşiğin çok üstünde de ücretsiz kargo sunulmalı")
-	assert.Equal(t, ucretsizID, cokUstunde[0].Option.ID)
+	require.Len(t, wellAbove, 2, "far above the threshold free shipping has to be offered as well")
+	assert.Equal(t, freeID, wellAbove[0].Option.ID)
 }
 
-// TestKuralBaglamdaOlmayanAlanaBakarsaEslesmez kuralın baktığı alan bağlamda
-// yoksa seçeneğin ELENDİĞİNİ kanıtlar — olumsuz işleçte bile.
+// TestARuleLookingAtAFieldAbsentFromTheContextDoesNotMatch proves that when the
+// field a rule looks at is absent from the context the option IS ELIMINATED —
+// even on a negative operator.
 //
-// Aksi hâlde bağlamı boş bir istek, tüm olumsuz kuralları sağlayarak kısıtlı
-// seçenekleri herkese açardı.
-func TestKuralBaglamdaOlmayanAlanaBakarsaEslesmez(t *testing.T) {
+// Otherwise a request with an empty context would satisfy every negative rule and
+// open the restricted options to everyone.
+func TestARuleLookingAtAFieldAbsentFromTheContextDoesNotMatch(t *testing.T) {
 	t.Parallel()
 
-	kurulum := yeniKurulum(t)
-	profilID := kurulum.profilAc(t, "varsayilan")
-	secenekID := kurulum.secenekAc(t, service.CreateOptionInput{
-		Name:              "VIP kargo",
-		ShippingProfileID: profilID,
+	setup := newSetup(t)
+	profileID := setup.createProfile(t, "default")
+	optionID := setup.createOption(t, service.CreateOptionInput{
+		Name:              "VIP shipping",
+		ShippingProfileID: profileID,
 		Amount:            1_000,
 	})
-	_, err := kurulum.svc.CreateShippingOptionRule(context.Background(), secenekID,
+	_, err := setup.svc.CreateShippingOptionRule(context.Background(), optionID,
 		service.CreateRuleInput{
 			Attribute: "customer_group_id",
 			Operator:  "ne",
@@ -267,37 +271,37 @@ func TestKuralBaglamdaOlmayanAlanaBakarsaEslesmez(t *testing.T) {
 		})
 	require.NoError(t, err)
 
-	baglamsiz, err := kurulum.svc.ListShippingOptionsFor(context.Background(), service.ListOptionsInput{
+	withoutContext, err := setup.svc.ListShippingOptionsFor(context.Background(), service.ListOptionsInput{
 		CurrencyCode: "TRY",
 	})
 	require.NoError(t, err)
-	assert.Empty(t, baglamsiz, "alanı taşımayan bağlam olumsuz kuralı SAĞLAMAMALI")
+	assert.Empty(t, withoutContext, "a context that does not carry the field MUST NOT satisfy the negative rule")
 
-	baglamli, err := kurulum.svc.ListShippingOptionsFor(context.Background(), service.ListOptionsInput{
+	withContext, err := setup.svc.ListShippingOptionsFor(context.Background(), service.ListOptionsInput{
 		CurrencyCode: "TRY",
 		Attributes:   map[string]string{"customer_group_id": "vip"},
 	})
 	require.NoError(t, err)
-	require.Len(t, baglamli, 1, "alan verildiğinde kural değerlendirilmeli")
-	assert.Equal(t, secenekID, baglamli[0].Option.ID)
+	require.Len(t, withContext, 1, "when the field is given the rule has to be evaluated")
+	assert.Equal(t, optionID, withContext[0].Option.ID)
 }
 
-// TestCagiranSepetOlgusunuEzemez çağıranın gönderdiği serbest alanların
-// sepetin OLGULARININ üzerine yazamayacağını kanıtlar.
+// TestTheCallerCannotOverwriteACartFact proves that the free-form fields the
+// caller sends cannot be written over the cart's FACTS.
 //
-// Ezebilseydi vitrinden gelen tek bir "subtotal" değeri ücretsiz kargo
-// kuralını atlatırdı.
-func TestCagiranSepetOlgusunuEzemez(t *testing.T) {
+// Had they been able to, a single "subtotal" value coming from the storefront
+// would dodge the free-shipping rule.
+func TestTheCallerCannotOverwriteACartFact(t *testing.T) {
 	t.Parallel()
 
-	kurulum := yeniKurulum(t)
-	profilID := kurulum.profilAc(t, "varsayilan")
-	secenekID := kurulum.secenekAc(t, service.CreateOptionInput{
-		Name:              "Ücretsiz kargo",
-		ShippingProfileID: profilID,
+	setup := newSetup(t)
+	profileID := setup.createProfile(t, "default")
+	optionID := setup.createOption(t, service.CreateOptionInput{
+		Name:              "Free shipping",
+		ShippingProfileID: profileID,
 		Amount:            0,
 	})
-	_, err := kurulum.svc.CreateShippingOptionRule(context.Background(), secenekID,
+	_, err := setup.svc.CreateShippingOptionRule(context.Background(), optionID,
 		service.CreateRuleInput{
 			Attribute: service.AttrSubtotal,
 			Operator:  "gte",
@@ -305,110 +309,111 @@ func TestCagiranSepetOlgusunuEzemez(t *testing.T) {
 		})
 	require.NoError(t, err)
 
-	// TrustedFacts=true: sınanan şey, GÜVENİLİR bir bağlamda bile çağıranın
-	// serbest alanının sepetin olgusunu ezemediğidir. Bayrak verilmeseydi
-	// seçenek zaten listelenmezdi ve iddia boşa düşerdi.
-	secenekler, err := kurulum.svc.ListShippingOptionsFor(context.Background(), service.ListOptionsInput{
+	// TrustedFacts=true: what is under test is that even in a TRUSTED context the
+	// caller's free-form field cannot overwrite the cart's fact. Without the flag
+	// the option would not be listed anyway and the claim would be vacuous.
+	options, err := setup.svc.ListShippingOptionsFor(context.Background(), service.ListOptionsInput{
 		CurrencyCode: "TRY",
 		Subtotal:     100,
 		Attributes:   map[string]string{service.AttrSubtotal: "999999"},
 		TrustedFacts: true,
 	})
 	require.NoError(t, err)
-	assert.Empty(t, secenekler, "çağıranın verdiği subtotal, sepetin gerçek ara toplamını ezmemeli")
+	assert.Empty(t, options, "the subtotal the caller gave must not overwrite the cart's real subtotal")
 }
 
-// TestGuvenilmeyenBaglamdaKuralaBagliSecenekListelenmez mağaza yüzeyinin
-// KURAL ORACLE'ı olmadığını kanıtlar.
+// TestARuleBoundOptionIsNotListedInAnUntrustedContext proves that the storefront
+// surface is not a RULE ORACLE.
 //
-// Regresyon: sepet olguları (ara toplam, kalem adedi, ağırlık) mağaza ucunda
-// doğrudan sorgu parametresinden geliyordu ve bu modül onları doğrulayamaz.
-// Boş sepetle "subtotal=50000" gönderen bir müşteri, kendisine KAPALI olan
-// ücretsiz kargo seçeneğini ve ücretini görüyordu. Artık güvenilmeyen bağlamda
-// bu olgulara bağlı kuralı olan seçenek, olgu eşleşse bile listeye girmez.
-func TestGuvenilmeyenBaglamdaKuralaBagliSecenekListelenmez(t *testing.T) {
+// Regression: the cart facts (subtotal, item count, weight) arrived at the
+// storefront end straight from a query parameter, and this module cannot verify
+// them. A customer sending "subtotal=50000" with an empty cart was seeing the free
+// shipping option that was CLOSED to them, and its price. Now, in an untrusted
+// context, an option with a rule bound to those facts does not enter the list
+// even if the fact matches.
+func TestARuleBoundOptionIsNotListedInAnUntrustedContext(t *testing.T) {
 	t.Parallel()
 
-	for _, durum := range []struct {
-		ad    string
-		alan  string
-		deger string
-		girdi service.ListOptionsInput
+	for _, tc := range []struct {
+		name  string
+		field string
+		value string
+		input service.ListOptionsInput
 	}{
-		{"ara toplam", service.AttrSubtotal, "50000", service.ListOptionsInput{
+		{"subtotal", service.AttrSubtotal, "50000", service.ListOptionsInput{
 			CurrencyCode: "TRY", Subtotal: 50_000,
 		}},
-		{"kalem adedi", service.AttrItemCount, "3", service.ListOptionsInput{
+		{"item count", service.AttrItemCount, "3", service.ListOptionsInput{
 			CurrencyCode: "TRY", ItemCount: 3,
 		}},
-		{"toplam ağırlık", service.AttrTotalWeight, "1000", service.ListOptionsInput{
+		{"total weight", service.AttrTotalWeight, "1000", service.ListOptionsInput{
 			CurrencyCode: "TRY", TotalWeight: 1_000,
 		}},
 	} {
-		t.Run(durum.ad, func(t *testing.T) {
+		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			kurulum := yeniKurulum(t)
-			profilID := kurulum.profilAc(t, "varsayilan")
-			acikID := kurulum.secenekAc(t, service.CreateOptionInput{
-				Name:              "Standart kargo",
-				ShippingProfileID: profilID,
+			setup := newSetup(t)
+			profileID := setup.createProfile(t, "default")
+			openID := setup.createOption(t, service.CreateOptionInput{
+				Name:              "Standard shipping",
+				ShippingProfileID: profileID,
 				Amount:            2_000,
 			})
-			kisitliID := kurulum.secenekAc(t, service.CreateOptionInput{
-				Name:              "Kurala bağlı kargo",
-				ShippingProfileID: profilID,
+			restrictedID := setup.createOption(t, service.CreateOptionInput{
+				Name:              "Rule-bound shipping",
+				ShippingProfileID: profileID,
 				Amount:            0,
 			})
-			_, err := kurulum.svc.CreateShippingOptionRule(context.Background(), kisitliID,
+			_, err := setup.svc.CreateShippingOptionRule(context.Background(), restrictedID,
 				service.CreateRuleInput{
-					Attribute: durum.alan,
+					Attribute: tc.field,
 					Operator:  "gte",
-					Values:    []string{durum.deger},
+					Values:    []string{tc.value},
 				})
 			require.NoError(t, err)
 
-			guvenilmeyen, err := kurulum.svc.ListShippingOptionsFor(context.Background(), durum.girdi)
+			untrusted, err := setup.svc.ListShippingOptionsFor(context.Background(), tc.input)
 			require.NoError(t, err)
-			require.Len(t, guvenilmeyen, 1,
-				"uydurulabilir bir olguya bağlı seçenek güvenilmeyen bağlamda listelenmemeli")
-			assert.Equal(t, acikID, guvenilmeyen[0].Option.ID)
+			require.Len(t, untrusted, 1,
+				"an option bound to a fabricable fact must not be listed in an untrusted context")
+			assert.Equal(t, openID, untrusted[0].Option.ID)
 
-			// Aynı bağlam GÜVENİLİR işaretlendiğinde (sepet akışı) seçenek
-			// görünür; süzgeç kuralı devre dışı bırakmaz, yalnızca yüzeye göre
-			// uygular.
-			guvenilir := durum.girdi
-			guvenilir.TrustedFacts = true
-			listelenen, err := kurulum.svc.ListShippingOptionsFor(context.Background(), guvenilir)
+			// When the same context is marked TRUSTED (the cart flow) the option
+			// becomes visible; the filter does not disable the rule, it only
+			// applies it according to the surface.
+			trusted := tc.input
+			trusted.TrustedFacts = true
+			listed, err := setup.svc.ListShippingOptionsFor(context.Background(), trusted)
 			require.NoError(t, err)
-			require.Len(t, listelenen, 2, "güvenilir bağlamda kurala bağlı seçenek listelenmeli")
-			assert.Equal(t, kisitliID, listelenen[0].Option.ID)
+			require.Len(t, listed, 2, "in a trusted context the rule-bound option has to be listed")
+			assert.Equal(t, restrictedID, listed[0].Option.ID)
 		})
 	}
 }
 
-// TestGuvenilmeyenBaglamKuralsizSecenegiDusurmez süzgecin fazla geniş
-// OLMADIĞINI kanıtlar.
+// TestAnUntrustedContextDoesNotDropARulelessOption proves that the filter IS NOT
+// too broad.
 //
-// Kuralsız (koşulsuz) seçenekler ve uydurulamayan alanlara bağlı kurallar
-// güvenilmeyen bağlamda da listelenmelidir; aksi hâlde düzeltme, mağaza
-// vitrinini tümüyle boşaltırdı.
-func TestGuvenilmeyenBaglamKuralsizSecenegiDusurmez(t *testing.T) {
+// Ruleless (unconditional) options and rules bound to fields that cannot be
+// fabricated have to be listed in an untrusted context as well; otherwise the fix
+// would empty out the storefront entirely.
+func TestAnUntrustedContextDoesNotDropARulelessOption(t *testing.T) {
 	t.Parallel()
 
-	kurulum := yeniKurulum(t)
-	profilID := kurulum.profilAc(t, "varsayilan")
-	kuralsizID := kurulum.secenekAc(t, service.CreateOptionInput{
-		Name:              "Standart kargo",
-		ShippingProfileID: profilID,
+	setup := newSetup(t)
+	profileID := setup.createProfile(t, "default")
+	rulelessID := setup.createOption(t, service.CreateOptionInput{
+		Name:              "Standard shipping",
+		ShippingProfileID: profileID,
 		Amount:            2_000,
 	})
-	bolgeliID := kurulum.secenekAc(t, service.CreateOptionInput{
-		Name:              "Bölgesel kargo",
-		ShippingProfileID: profilID,
+	regionalID := setup.createOption(t, service.CreateOptionInput{
+		Name:              "Regional shipping",
+		ShippingProfileID: profileID,
 		Amount:            1_000,
 	})
-	_, err := kurulum.svc.CreateShippingOptionRule(context.Background(), bolgeliID,
+	_, err := setup.svc.CreateShippingOptionRule(context.Background(), regionalID,
 		service.CreateRuleInput{
 			Attribute: service.AttrCountryCode,
 			Operator:  "eq",
@@ -416,311 +421,315 @@ func TestGuvenilmeyenBaglamKuralsizSecenegiDusurmez(t *testing.T) {
 		})
 	require.NoError(t, err)
 
-	secenekler, err := kurulum.svc.ListShippingOptionsFor(context.Background(), service.ListOptionsInput{
+	options, err := setup.svc.ListShippingOptionsFor(context.Background(), service.ListOptionsInput{
 		CurrencyCode: "TRY",
 		CountryCode:  "TR",
 	})
 	require.NoError(t, err)
-	require.Len(t, secenekler, 2, "kuralsız ve kapsam alanına bağlı seçenekler düşmemeli")
-	assert.Equal(t, bolgeliID, secenekler[0].Option.ID)
-	assert.Equal(t, kuralsizID, secenekler[1].Option.ID)
+	require.Len(t, options, 2, "ruleless options and ones bound to a scope field must not drop")
+	assert.Equal(t, regionalID, options[0].Option.ID)
+	assert.Equal(t, rulelessID, options[1].Option.ID)
 }
 
-// TestProfilSuzgeci sepetin ürünlerinin bağlı olmadığı profillerin seçeneğinin
-// sunulmadığını kanıtlar; profil verilmezse süzgeç uygulanmaz.
-func TestProfilSuzgeci(t *testing.T) {
+// TestProfileFilter proves that the options of profiles the cart's products are
+// not bound to are not offered; if no profile is given, no filter is applied.
+func TestProfileFilter(t *testing.T) {
 	t.Parallel()
 
-	kurulum := yeniKurulum(t)
-	varsayilanID := kurulum.profilAc(t, "varsayilan")
-	agirID := kurulum.profilAc(t, "agir-yuk")
+	setup := newSetup(t)
+	defaultID := setup.createProfile(t, "default")
+	heavyID := setup.createProfile(t, "heavy-load")
 
-	standartID := kurulum.secenekAc(t, service.CreateOptionInput{
-		Name:              "Standart kargo",
-		ShippingProfileID: varsayilanID,
+	standardID := setup.createOption(t, service.CreateOptionInput{
+		Name:              "Standard shipping",
+		ShippingProfileID: defaultID,
 		Amount:            2_000,
 	})
-	kurulum.secenekAc(t, service.CreateOptionInput{
-		Name:              "Ağır yük kargosu",
-		ShippingProfileID: agirID,
+	setup.createOption(t, service.CreateOptionInput{
+		Name:              "Heavy freight shipping",
+		ShippingProfileID: heavyID,
 		Amount:            20_000,
 	})
 
-	suzulmus, err := kurulum.svc.ListShippingOptionsFor(context.Background(), service.ListOptionsInput{
+	filtered, err := setup.svc.ListShippingOptionsFor(context.Background(), service.ListOptionsInput{
 		CurrencyCode:       "TRY",
-		ShippingProfileIDs: []string{varsayilanID},
+		ShippingProfileIDs: []string{defaultID},
 	})
 	require.NoError(t, err)
-	require.Len(t, suzulmus, 1)
-	assert.Equal(t, standartID, suzulmus[0].Option.ID)
+	require.Len(t, filtered, 1)
+	assert.Equal(t, standardID, filtered[0].Option.ID)
 
-	suzgecsiz, err := kurulum.svc.ListShippingOptionsFor(context.Background(), service.ListOptionsInput{
+	unfiltered, err := setup.svc.ListShippingOptionsFor(context.Background(), service.ListOptionsInput{
 		CurrencyCode: "TRY",
 	})
 	require.NoError(t, err)
-	assert.Len(t, suzgecsiz, 2, "profil verilmezse süzgeç uygulanmamalı")
+	assert.Len(t, unfiltered, 2, "if no profile is given no filter has to be applied")
 }
 
-// TestBolgeSuzgeci bölgesi boş olan seçeneğin HER bölgede sunulduğunu,
-// bölgesi olanın ise yalnızca kendi bölgesinde sunulduğunu kanıtlar.
-func TestBolgeSuzgeci(t *testing.T) {
+// TestRegionFilter proves that an option with an empty region is offered in
+// EVERY region, while one that has a region is offered only in its own.
+func TestRegionFilter(t *testing.T) {
 	t.Parallel()
 
-	kurulum := yeniKurulum(t)
-	profilID := kurulum.profilAc(t, "varsayilan")
+	setup := newSetup(t)
+	profileID := setup.createProfile(t, "default")
 
-	genelID := kurulum.secenekAc(t, service.CreateOptionInput{
-		Name:              "Genel kargo",
-		ShippingProfileID: profilID,
+	generalID := setup.createOption(t, service.CreateOptionInput{
+		Name:              "General shipping",
+		ShippingProfileID: profileID,
 		Amount:            2_000,
 	})
-	bolgeselID := kurulum.secenekAc(t, service.CreateOptionInput{
-		Name:              "Bölgesel kargo",
-		ShippingProfileID: profilID,
+	regionalID := setup.createOption(t, service.CreateOptionInput{
+		Name:              "Regional shipping",
+		ShippingProfileID: profileID,
 		Amount:            1_000,
 		RegionID:          "reg_tr",
 	})
 
-	trBolgesi, err := kurulum.svc.ListShippingOptionsFor(context.Background(), service.ListOptionsInput{
+	trRegion, err := setup.svc.ListShippingOptionsFor(context.Background(), service.ListOptionsInput{
 		CurrencyCode: "TRY",
 		RegionID:     "reg_tr",
 	})
 	require.NoError(t, err)
-	require.Len(t, trBolgesi, 2)
-	assert.Equal(t, bolgeselID, trBolgesi[0].Option.ID, "ucuz olan başta olmalı")
+	require.Len(t, trRegion, 2)
+	assert.Equal(t, regionalID, trRegion[0].Option.ID, "the cheaper one has to be first")
 
-	deBolgesi, err := kurulum.svc.ListShippingOptionsFor(context.Background(), service.ListOptionsInput{
+	deRegion, err := setup.svc.ListShippingOptionsFor(context.Background(), service.ListOptionsInput{
 		CurrencyCode: "TRY",
 		RegionID:     "reg_de",
 	})
 	require.NoError(t, err)
-	require.Len(t, deBolgesi, 1, "başka bölgede yalnızca bölgesiz seçenek sunulmalı")
-	assert.Equal(t, genelID, deBolgesi[0].Option.ID)
+	require.Len(t, deRegion, 1, "in another region only the region-less option has to be offered")
+	assert.Equal(t, generalID, deRegion[0].Option.ID)
 }
 
-// TestIadeSecenekleriAyriListelenir normal akışta iade seçeneklerinin
-// sunulmadığını kanıtlar.
-func TestIadeSecenekleriAyriListelenir(t *testing.T) {
+// TestReturnOptionsAreListedSeparately proves that return options are not
+// offered in the normal flow.
+func TestReturnOptionsAreListedSeparately(t *testing.T) {
 	t.Parallel()
 
-	kurulum := yeniKurulum(t)
-	profilID := kurulum.profilAc(t, "varsayilan")
+	setup := newSetup(t)
+	profileID := setup.createProfile(t, "default")
 
-	satisID := kurulum.secenekAc(t, service.CreateOptionInput{
-		Name:              "Standart kargo",
-		ShippingProfileID: profilID,
+	saleID := setup.createOption(t, service.CreateOptionInput{
+		Name:              "Standard shipping",
+		ShippingProfileID: profileID,
 		Amount:            2_000,
 	})
-	iadeID := kurulum.secenekAc(t, service.CreateOptionInput{
-		Name:              "İade kargosu",
-		ShippingProfileID: profilID,
+	returnID := setup.createOption(t, service.CreateOptionInput{
+		Name:              "Return shipping",
+		ShippingProfileID: profileID,
 		Amount:            0,
 		IsReturn:          true,
 	})
 
-	satis, err := kurulum.svc.ListShippingOptionsFor(context.Background(), service.ListOptionsInput{
+	sale, err := setup.svc.ListShippingOptionsFor(context.Background(), service.ListOptionsInput{
 		CurrencyCode: "TRY",
 	})
 	require.NoError(t, err)
-	require.Len(t, satis, 1)
-	assert.Equal(t, satisID, satis[0].Option.ID)
+	require.Len(t, sale, 1)
+	assert.Equal(t, saleID, sale[0].Option.ID)
 
-	iade, err := kurulum.svc.ListShippingOptionsFor(context.Background(), service.ListOptionsInput{
+	returns, err := setup.svc.ListShippingOptionsFor(context.Background(), service.ListOptionsInput{
 		CurrencyCode: "TRY",
 		IsReturn:     true,
 	})
 	require.NoError(t, err)
-	require.Len(t, iade, 1)
-	assert.Equal(t, iadeID, iade[0].Option.ID)
+	require.Len(t, returns, 1)
+	assert.Equal(t, returnID, returns[0].Option.ID)
 }
 
-// TestParaBirimiSuzgeci başka para biriminde fiyatlanmış seçeneğin
-// sunulmadığını kanıtlar.
+// TestCurrencyFilter proves that an option priced in another currency is not
+// offered.
 //
-// Sunulsaydı, iki para biriminin tutarları aynı sepette toplanırdı.
-func TestParaBirimiSuzgeci(t *testing.T) {
+// Had it been offered, the amounts of two currencies would be summed in the same
+// cart.
+func TestCurrencyFilter(t *testing.T) {
 	t.Parallel()
 
-	kurulum := yeniKurulum(t)
-	profilID := kurulum.profilAc(t, "varsayilan")
-	kurulum.secenekAc(t, service.CreateOptionInput{
-		Name:              "Dolar kargosu",
-		ShippingProfileID: profilID,
+	setup := newSetup(t)
+	profileID := setup.createProfile(t, "default")
+	setup.createOption(t, service.CreateOptionInput{
+		Name:              "Dollar shipping",
+		ShippingProfileID: profileID,
 		Amount:            500,
 		CurrencyCode:      "USD",
 	})
 
-	secenekler, err := kurulum.svc.ListShippingOptionsFor(context.Background(), service.ListOptionsInput{
+	options, err := setup.svc.ListShippingOptionsFor(context.Background(), service.ListOptionsInput{
 		CurrencyCode: "TRY",
 	})
 	require.NoError(t, err)
-	assert.Empty(t, secenekler)
+	assert.Empty(t, options)
 }
 
-// TestUygunlukSiralamasiBelirlenimcidir aynı ücretteki seçeneklerin KİMLİĞE
-// göre sıralandığını ve sonucun çağrıdan çağrıya değişmediğini kanıtlar.
-func TestUygunlukSiralamasiBelirlenimcidir(t *testing.T) {
+// TestEligibilityOrderingIsDeterministic proves that options with the same fee
+// are ordered BY IDENTIFIER and that the result does not change from call to
+// call.
+func TestEligibilityOrderingIsDeterministic(t *testing.T) {
 	t.Parallel()
 
-	kurulum := yeniKurulum(t)
-	profilID := kurulum.profilAc(t, "varsayilan")
-	for _, ad := range []string{"A kargo", "B kargo", "C kargo"} {
-		kurulum.secenekAc(t, service.CreateOptionInput{
-			Name:              ad,
-			ShippingProfileID: profilID,
+	setup := newSetup(t)
+	profileID := setup.createProfile(t, "default")
+	for _, name := range []string{"A shipping", "B shipping", "C shipping"} {
+		setup.createOption(t, service.CreateOptionInput{
+			Name:              name,
+			ShippingProfileID: profileID,
 			Amount:            2_000,
 		})
 	}
 
-	ilk, err := kurulum.svc.ListShippingOptionsFor(context.Background(), service.ListOptionsInput{
+	first, err := setup.svc.ListShippingOptionsFor(context.Background(), service.ListOptionsInput{
 		CurrencyCode: "TRY",
 	})
 	require.NoError(t, err)
-	require.Len(t, ilk, 3)
+	require.Len(t, first, 3)
 
-	for i := 1; i < len(ilk); i++ {
-		assert.Less(t, ilk[i-1].Option.ID, ilk[i].Option.ID,
-			"eşit ücrette sıralama kimliğe göre artan olmalı")
+	for i := 1; i < len(first); i++ {
+		assert.Less(t, first[i-1].Option.ID, first[i].Option.ID,
+			"at an equal fee the ordering has to be ascending by identifier")
 	}
 
-	ikinci, err := kurulum.svc.ListShippingOptionsFor(context.Background(), service.ListOptionsInput{
+	second, err := setup.svc.ListShippingOptionsFor(context.Background(), service.ListOptionsInput{
 		CurrencyCode: "TRY",
 	})
 	require.NoError(t, err)
-	for i := range ilk {
-		assert.Equal(t, ilk[i].Option.ID, ikinci[i].Option.ID, "sıra çağrıdan çağrıya değişmemeli")
+	for i := range first {
+		assert.Equal(t, first[i].Option.ID, second[i].Option.ID, "the order must not change from call to call")
 	}
 }
 
-// TestUygunlukGirdisiDogrulanir geçersiz girdinin errors.Invalid ile
-// reddedildiğini kanıtlar.
-func TestUygunlukGirdisiDogrulanir(t *testing.T) {
+// TestEligibilityInputIsValidated proves that an invalid input is rejected with
+// errors.Invalid.
+func TestEligibilityInputIsValidated(t *testing.T) {
 	t.Parallel()
 
-	durumlar := []struct {
-		ad    string
-		girdi service.ListOptionsInput
+	cases := []struct {
+		name  string
+		input service.ListOptionsInput
 	}{
-		{"para birimi yok", service.ListOptionsInput{}},
-		{"para birimi bozuk", service.ListOptionsInput{CurrencyCode: "TR"}},
-		{"negatif ara toplam", service.ListOptionsInput{CurrencyCode: "TRY", Subtotal: -1}},
-		{"negatif kalem adedi", service.ListOptionsInput{CurrencyCode: "TRY", ItemCount: -1}},
-		{"negatif ağırlık", service.ListOptionsInput{CurrencyCode: "TRY", TotalWeight: -1}},
-		// ÜST sınırlar: yalnızca negatifliğe bakan bir denetim, tek bir sorgu
-		// parametresiyle sağlayıcının çarpımını taşırmaya izin verirdi.
-		{"ara toplam üst sınırı aşıyor", service.ListOptionsInput{
+		{"no currency", service.ListOptionsInput{}},
+		{"malformed currency", service.ListOptionsInput{CurrencyCode: "TR"}},
+		{"negative subtotal", service.ListOptionsInput{CurrencyCode: "TRY", Subtotal: -1}},
+		{"negative item count", service.ListOptionsInput{CurrencyCode: "TRY", ItemCount: -1}},
+		{"negative weight", service.ListOptionsInput{CurrencyCode: "TRY", TotalWeight: -1}},
+		// The UPPER bounds: a check that only looks at negativity would let a
+		// single query parameter overflow the provider's product.
+		{"subtotal exceeds the upper bound", service.ListOptionsInput{
 			CurrencyCode: "TRY", Subtotal: models.MaxAmount + 1,
 		}},
-		{"kalem adedi üst sınırı aşıyor", service.ListOptionsInput{
+		{"item count exceeds the upper bound", service.ListOptionsInput{
 			CurrencyCode: "TRY", ItemCount: models.MaxItemCount + 1,
 		}},
-		{"ağırlık üst sınırı aşıyor", service.ListOptionsInput{
+		{"weight exceeds the upper bound", service.ListOptionsInput{
 			CurrencyCode: "TRY", TotalWeight: models.MaxTotalWeight + 1,
 		}},
-		{"ağırlık int64 tepesinde", service.ListOptionsInput{
+		{"weight at the top of int64", service.ListOptionsInput{
 			CurrencyCode: "TRY", TotalWeight: math.MaxInt64,
 		}},
 	}
 
-	for _, durum := range durumlar {
-		t.Run(durum.ad, func(t *testing.T) {
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			kurulum := yeniKurulum(t)
-			_, err := kurulum.svc.ListShippingOptionsFor(context.Background(), durum.girdi)
+			setup := newSetup(t)
+			_, err := setup.svc.ListShippingOptionsFor(context.Background(), tc.input)
 			require.Error(t, err)
-			assert.True(t, errors.IsInvalid(err), "hata errors.Invalid olmalı: %v", err)
+			assert.True(t, errors.IsInvalid(err), "the error has to be errors.Invalid: %v", err)
 		})
 	}
 }
 
-// TestKayitliOlmayanSaglayiciSecenegiDuser kaydı sonradan kaybolmuş bir
-// sağlayıcının seçeneğinin listeden düştüğünü ve isteğin düşmediğini kanıtlar.
+// TestAnUnregisteredProvidersOptionDrops proves that the option of a provider
+// whose registration went missing afterwards drops out of the list and that the
+// request does not drop.
 //
-// Seçenek KAYITLI bir sağlayıcıyla açılır, sonra servis o sağlayıcıyı
-// tanımayan yeni bir kayıtla yeniden kurulur; kurulum hatası tam olarak böyle
-// görünür.
-func TestKayitliOlmayanSaglayiciSecenegiDuser(t *testing.T) {
+// The option is opened with a REGISTERED provider, then the service is rebuilt
+// with a new registry that does not know that provider; a setup error looks
+// exactly like this.
+func TestAnUnregisteredProvidersOptionDrops(t *testing.T) {
 	t.Parallel()
 
-	kurulum := yeniKurulum(t)
-	profilID := kurulum.profilAc(t, "varsayilan")
-	sabitID := kurulum.secenekAc(t, service.CreateOptionInput{
-		Name:              "Standart kargo",
-		ShippingProfileID: profilID,
+	setup := newSetup(t)
+	profileID := setup.createProfile(t, "default")
+	flatID := setup.createOption(t, service.CreateOptionInput{
+		Name:              "Standard shipping",
+		ShippingProfileID: profileID,
 		Amount:            2_000,
 	})
-	kurulum.secenekAc(t, service.CreateOptionInput{
-		Name:              "Kayıp sağlayıcı kargosu",
-		ShippingProfileID: profilID,
+	setup.createOption(t, service.CreateOptionInput{
+		Name:              "Missing provider shipping",
+		ShippingProfileID: profileID,
 		PriceType:         "calculated",
 	})
 
-	bosKayit := service.NewProviderRegistry()
-	kayipsiz, err := service.New(service.Options{Store: kurulum.store, Providers: bosKayit})
+	emptyRegistry := service.NewProviderRegistry()
+	svcWithoutProvider, err := service.New(service.Options{Store: setup.store, Providers: emptyRegistry})
 	require.NoError(t, err)
 
-	secenekler, err := kayipsiz.ListShippingOptionsFor(context.Background(), service.ListOptionsInput{
+	options, err := svcWithoutProvider.ListShippingOptionsFor(context.Background(), service.ListOptionsInput{
 		CurrencyCode: "TRY",
 	})
-	require.NoError(t, err, "kayıp sağlayıcı tüm isteği düşürmemeli")
-	require.Len(t, secenekler, 1)
-	assert.Equal(t, sabitID, secenekler[0].Option.ID)
+	require.NoError(t, err, "a missing provider must not drop the whole request")
+	require.Len(t, options, 1)
+	assert.Equal(t, flatID, options[0].Option.ID)
 }
 
-// TestBozukKuralSecenegiHerkeseAcmaz uygunluk hesabının veritabanından okuduğu
-// HER satıra dayanıklı olduğunu kanıtlar.
+// TestABrokenRuleDoesNotOpenTheOptionToEveryone proves that the eligibility
+// calculation is resilient to EVERY row it reads from the database.
 //
-// Servis doğrulaması değersiz ya da tanınmayan işleçli bir kural üretmez; ama
-// doğrudan SQL çalıştıran bir bakım betiği ya da kısmi bir geri yükleme böyle
-// bir satır bırakabilir. Okunamayan bir koşul, kuralı sessizce devre dışı
-// bırakıp seçeneği HERKESE AÇMAMALIDIR — bu yüzden bozuk kural EŞLEŞMEZ.
+// Service validation does not produce a valueless rule or one with an
+// unrecognized operator; but a maintenance script running SQL directly, or a
+// partial restore, can leave such a row behind. A condition that cannot be read
+// MUST NOT quietly disable the rule and OPEN THE OPTION TO EVERYONE — which is
+// why a broken rule DOES NOT MATCH.
 //
-// Kurallar sahte deponun içine doğrudan yazılır; servisin kapısından geçen bir
-// girdi bu satırları hiç üretemez.
-func TestBozukKuralSecenegiHerkeseAcmaz(t *testing.T) {
+// The rules are written straight into the fake store; an input passing through
+// the service's door could never produce these rows.
+func TestABrokenRuleDoesNotOpenTheOptionToEveryone(t *testing.T) {
 	t.Parallel()
 
-	durumlar := []struct {
-		ad    string
-		bozuk models.ShippingOptionRule
+	cases := []struct {
+		name   string
+		broken models.ShippingOptionRule
 	}{
-		{"değersiz kural", models.ShippingOptionRule{
+		{"valueless rule", models.ShippingOptionRule{
 			Attribute: service.AttrSubtotal, Operator: models.OpGte, Values: nil,
 		}},
-		{"tanınmayan işleç", models.ShippingOptionRule{
+		{"unrecognized operator", models.ShippingOptionRule{
 			Attribute: service.AttrSubtotal, Operator: models.RuleOperator("like"),
 			Values: []string{"1"},
 		}},
-		{"sayısal işlece metin değer", models.ShippingOptionRule{
+		{"text value for a numeric operator", models.ShippingOptionRule{
 			Attribute: service.AttrSubtotal, Operator: models.OpGte,
-			Values: []string{"elli bin"},
+			Values: []string{"fifty thousand"},
 		}},
 	}
 
-	for _, durum := range durumlar {
-		t.Run(durum.ad, func(t *testing.T) {
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			kurulum := yeniKurulum(t)
-			profilID := kurulum.profilAc(t, "varsayilan")
-			secenekID := kurulum.secenekAc(t, service.CreateOptionInput{
-				Name:              "Kısıtlı kargo",
-				ShippingProfileID: profilID,
+			setup := newSetup(t)
+			profileID := setup.createProfile(t, "default")
+			optionID := setup.createOption(t, service.CreateOptionInput{
+				Name:              "Restricted shipping",
+				ShippingProfileID: profileID,
 				Amount:            2_000,
 			})
 
-			kural := durum.bozuk
-			kural.ID = models.NewShippingOptionRuleID()
-			kural.ShippingOptionID = secenekID
-			kurulum.store.mu.Lock()
-			kurulum.store.rules[kural.ID] = kural
-			kurulum.store.mu.Unlock()
+			rule := tc.broken
+			rule.ID = models.NewShippingOptionRuleID()
+			rule.ShippingOptionID = optionID
+			setup.store.mu.Lock()
+			setup.store.rules[rule.ID] = rule
+			setup.store.mu.Unlock()
 
-			secenekler, err := kurulum.svc.ListShippingOptionsFor(context.Background(),
+			options, err := setup.svc.ListShippingOptionsFor(context.Background(),
 				service.ListOptionsInput{CurrencyCode: "TRY", Subtotal: 999_999, TrustedFacts: true})
-			require.NoError(t, err, "bozuk kural PANİK ya da hata üretmemeli")
-			assert.Empty(t, secenekler, "okunamayan koşul seçeneği açmamalı")
+			require.NoError(t, err, "a broken rule must not produce a PANIC or an error")
+			assert.Empty(t, options, "a condition that cannot be read must not open the option")
 		})
 	}
 }

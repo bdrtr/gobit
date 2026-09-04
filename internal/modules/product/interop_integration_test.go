@@ -24,26 +24,28 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/product/service"
 )
 
-// Bu dosya modülün dışarıya açtığı iki yüzeyi GERÇEK çekirdekle kanıtlar:
-// "product.interop" okuma yüzeyi ve katalog olayları.
+// This file proves the two surfaces the module opens to the outside against
+// the REAL core: the "product.interop" read surface and the catalog events.
 //
-// İkisi de burada olmak zorundadır. Kanal süzgeci SQL'dedir ve sahte bir depo
-// kendi yazdığı koşulu doğrulayamaz; olayların gerçekten container'daki veri
-// yoluna gitmesi ise ancak modül Register edildiğinde görülür — servisin
-// testleri veri yolunu kendileri bağladığı için o bağlantıyı ıskalar.
+// Both have to be here. The channel filter is in SQL and a fake repository
+// cannot verify a condition it writes itself; and that the events really go
+// to the bus in the container is seen only once the module is Registered —
+// the service's own tests wire the bus themselves, so they miss that wiring.
 
-// storeProductReader "product.interop" yüzeyini TÜKETİCİ gözünden tanımlar.
+// storeProductReader defines the "product.interop" surface from the CONSUMER's
+// point of view.
 //
-// Bir eklenti (plugins/**) product'ı import EDEMEZ; yüzeyi tam olarak böyle,
-// kendi paketinde tanımladığı dar bir arayüzle ve container'daki ADLA çözer.
-// Arayüzün burada tekrar yazılması testin kendisidir: somut tip imzadan
-// saparsa çözüm derleme anında değil ÇALIŞMA ANINDA düşer ve bu test o anı
-// üretimden entegrasyon takımına taşır.
+// A plugin (plugins/**) CANNOT import product; it resolves the surface exactly
+// like this, through a narrow interface it defines in its own package and
+// through the NAME in the container. Writing the interface out again here is
+// the test itself: if the concrete type drifts from the signature, resolution
+// fails not at compile time but AT RUN TIME, and this test moves that moment
+// out of production and into the integration suite.
 type storeProductReader interface {
 	StoreProductsByIDsJSON(ctx context.Context, request json.RawMessage) (json.RawMessage, error)
 }
 
-// interopIDs yüzeyin yanıtındaki ürün kimliklerini SIRASIYLA döner.
+// interopIDs returns the product IDs in the surface's response IN ORDER.
 func interopIDs(t *testing.T, body json.RawMessage) []string {
 	t.Helper()
 
@@ -52,7 +54,7 @@ func interopIDs(t *testing.T, body json.RawMessage) []string {
 			ID string `json:"id"`
 		} `json:"products"`
 	}
-	require.NoError(t, json.Unmarshal(body, &out), "yanıt: %s", string(body))
+	require.NoError(t, json.Unmarshal(body, &out), "response: %s", string(body))
 
 	ids := make([]string, 0, len(out.Products))
 	for _, p := range out.Products {
@@ -61,51 +63,53 @@ func interopIDs(t *testing.T, body json.RawMessage) []string {
 	return ids
 }
 
-// TestInteropKanalSuzmesiGercekSQLdeUygulanir yüzeyin satış kanalı süzgecini
-// GERÇEK sorguyla uyguladığını kanıtlar.
+// TestInteropChannelFilterIsAppliedInRealSQL proves that the surface applies
+// the sales channel filter with the REAL query.
 //
-// İddia şudur: başka bir kanala atanmış ürünün kimliği açıkça istense bile
-// yanıtta DÖNMEZ. Aramanın kanal süzmesinin bypass'ı hâline gelmediğinin tek
-// kanıtı budur ve yalnızca gerçek veritabanında verilebilir — süzgeç, çalışma
-// anında core/link tarafından kurulan link tablosuna karşı bir EXISTS
-// koşuludur.
-func TestInteropKanalSuzmesiGercekSQLdeUygulanir(t *testing.T) {
+// The claim is this: a product assigned to another channel is NOT RETURNED in
+// the response even when its ID is asked for explicitly. That is the only
+// proof that the lookup has not become a bypass of channel filtering, and it
+// can only be given against a real database — the filter is an EXISTS
+// condition against the link table that core/link creates at run time.
+func TestInteropChannelFilterIsAppliedInRealSQL(t *testing.T) {
 	ctx := context.Background()
 	sys := newSystem(t)
 
 	svc, err := container.Resolve[*service.Service](sys.container, product.ServiceName)
 	require.NoError(t, err)
 	reader, err := container.Resolve[storeProductReader](sys.container, product.InteropName)
-	require.NoError(t, err, "yüzey %q adıyla çözülebilmeli", product.InteropName)
+	require.NoError(t, err, "the surface must be resolvable under the name %q", product.InteropName)
 
-	bizim := createStoreProduct(t, svc, "interop-bizim")
-	baskasi := createStoreProduct(t, svc, "interop-baska")
-	atamasiz := createStoreProduct(t, svc, "interop-atamasiz")
+	ours := createStoreProduct(t, svc, "interop-ours")
+	theirs := createStoreProduct(t, svc, "interop-other")
+	unassigned := createStoreProduct(t, svc, "interop-unassigned")
 
-	require.NoError(t, svc.AddProductSalesChannel(ctx, bizim.ID, "sc_interop_bizim"))
-	require.NoError(t, svc.AddProductSalesChannel(ctx, baskasi.ID, "sc_interop_baska"))
+	require.NoError(t, svc.AddProductSalesChannel(ctx, ours.ID, "sc_interop_ours"))
+	require.NoError(t, svc.AddProductSalesChannel(ctx, theirs.ID, "sc_interop_other"))
 
-	istek := fmt.Sprintf(`{"ids": [%q, %q, %q], "sales_channel_ids": ["sc_interop_bizim"]}`,
-		baskasi.ID, bizim.ID, atamasiz.ID)
-	body, err := reader.StoreProductsByIDsJSON(ctx, json.RawMessage(istek))
+	request := fmt.Sprintf(`{"ids": [%q, %q, %q], "sales_channel_ids": ["sc_interop_ours"]}`,
+		theirs.ID, ours.ID, unassigned.ID)
+	body, err := reader.StoreProductsByIDsJSON(ctx, json.RawMessage(request))
 	require.NoError(t, err)
 
-	assert.Equal(t, []string{bizim.ID, atamasiz.ID}, interopIDs(t, body),
-		"başka kanalın ürünü dönmemeli; kalanlar isteğin sırasını korumalı")
+	assert.Equal(t, []string{ours.ID, unassigned.ID}, interopIDs(t, body),
+		"the other channel's product must not be returned; the rest must keep the request's order")
 
-	// Kanalsız istek süzmez: anlam vitrin listelemesindekiyle aynıdır.
-	hepsi := fmt.Sprintf(`{"ids": [%q, %q]}`, baskasi.ID, bizim.ID)
-	body, err = reader.StoreProductsByIDsJSON(ctx, json.RawMessage(hepsi))
+	// A request without channels does not filter: the meaning is the same as
+	// in the storefront listing.
+	all := fmt.Sprintf(`{"ids": [%q, %q]}`, theirs.ID, ours.ID)
+	body, err = reader.StoreProductsByIDsJSON(ctx, json.RawMessage(all))
 	require.NoError(t, err)
-	assert.Equal(t, []string{baskasi.ID, bizim.ID}, interopIDs(t, body))
+	assert.Equal(t, []string{theirs.ID, ours.ID}, interopIDs(t, body))
 }
 
-// TestInteropVitrinUcuylaAyniKarariVerir yüzey ile HTTP vitrin ucunun aynı ürün
-// için aynı kanal kararını verdiğini doğrular.
+// TestInteropMakesTheSameDecisionAsTheStoreEndpoint verifies that the surface
+// and the HTTP storefront endpoint make the same channel decision for the same
+// product.
 //
-// Görünürlük kuralının TEK tanımı olduğunun kanıtı budur: kural bir gün
-// yalnızca bir yolda değişirse bu test düşer.
-func TestInteropVitrinUcuylaAyniKarariVerir(t *testing.T) {
+// This is the proof that the visibility rule has a SINGLE definition: if one
+// day the rule changes on only one of the two paths, this test fails.
+func TestInteropMakesTheSameDecisionAsTheStoreEndpoint(t *testing.T) {
 	ctx := context.Background()
 	sys := newSystem(t)
 
@@ -114,27 +118,30 @@ func TestInteropVitrinUcuylaAyniKarariVerir(t *testing.T) {
 	reader, err := container.Resolve[storeProductReader](sys.container, product.InteropName)
 	require.NoError(t, err)
 
-	gizli := createStoreProduct(t, svc, "interop-gizli")
-	require.NoError(t, svc.AddProductSalesChannel(ctx, gizli.ID, "sc_interop_gizli"))
+	hidden := createStoreProduct(t, svc, "interop-hidden")
+	require.NoError(t, svc.AddProductSalesChannel(ctx, hidden.ID, "sc_interop_hidden"))
 
-	// Vitrin tekil ucu başka bir kanalın kimliğiyle NotFound döner.
-	rec := sys.storeChannelRequest(t, "/store/v1/products/"+gizli.ID, []string{"sc_interop_diger"})
-	require.Equal(t, http.StatusNotFound, rec.Code, "gövde: %s", rec.Body.String())
+	// The storefront single endpoint returns NotFound for another channel's ID.
+	rec := sys.storeChannelRequest(t, "/store/v1/products/"+hidden.ID, []string{"sc_interop_another"})
+	require.Equal(t, http.StatusNotFound, rec.Code, "body: %s", rec.Body.String())
 
-	// Yüzey de aynı kararı verir: kayıt yanıtta hiç yoktur.
-	istek := fmt.Sprintf(`{"ids": [%q], "sales_channel_ids": ["sc_interop_diger"]}`, gizli.ID)
-	body, err := reader.StoreProductsByIDsJSON(ctx, json.RawMessage(istek))
+	// The surface makes the same decision: the record is not in the response
+	// at all.
+	request := fmt.Sprintf(`{"ids": [%q], "sales_channel_ids": ["sc_interop_another"]}`, hidden.ID)
+	body, err := reader.StoreProductsByIDsJSON(ctx, json.RawMessage(request))
 	require.NoError(t, err)
-	assert.Empty(t, interopIDs(t, body), "vitrinde gizlenen ürün yüzeyden de dönmemeli")
+	assert.Empty(t, interopIDs(t, body),
+		"a product hidden in the storefront must not be returned by the surface either")
 }
 
-// TestKatalogOlaylariVeriYolunaGider modül Register edildiğinde katalog
-// olaylarının container'daki GERÇEK veri yoluna gittiğini doğrular.
+// TestCatalogEventsReachTheEventBus verifies that once the module is
+// Registered, the catalog events go to the REAL bus in the container.
 //
-// Servisin kendi testleri veri yolunu elleriyle bağlar; bağlantının Register
-// sırasında kurulduğunu yalnızca bu test görür. Kopması hiçbir hata üretmez —
-// olaylar sessizce hiç yayımlanmaz — ve bu yüzden testle bağlanır.
-func TestKatalogOlaylariVeriYolunaGider(t *testing.T) {
+// The service's own tests wire the bus by hand; only this test sees that the
+// wiring is established during Register. Its breaking produces no error at all
+// — the events are simply never published — and that is why it is pinned by a
+// test.
+func TestCatalogEventsReachTheEventBus(t *testing.T) {
 	ctx := context.Background()
 
 	c := container.New(nil)
@@ -148,16 +155,16 @@ func TestKatalogOlaylariVeriYolunaGider(t *testing.T) {
 	bus := eventbus.NewInMemory(nil)
 	require.NoError(t, c.Provide("core.eventbus", bus))
 
-	// Abonelik modül ayağa kalkmadan ÖNCE kurulur: sonradan bağlanan bir abone
-	// kendisinden önce yayımlanmış olayları göremez (bellek içi backend geçmiş
-	// tutmaz, EN FAZLA BİR KEZ teslim eder).
-	defter := &olayDefteri{}
-	for _, ad := range []string{
+	// The subscription is set up BEFORE the module comes up: a subscriber that
+	// attaches later cannot see the events published before it (the in-memory
+	// backend keeps no history, it delivers AT MOST ONCE).
+	ledger := &eventLedger{}
+	for _, name := range []string{
 		service.EventProductCreated,
 		service.EventProductUpdated,
 		service.EventProductDeleted,
 	} {
-		require.NoError(t, bus.Subscribe(ad, defter.kaydet))
+		require.NoError(t, bus.Subscribe(name, ledger.record))
 	}
 
 	mod := product.New(product.Options{})
@@ -166,39 +173,40 @@ func TestKatalogOlaylariVeriYolunaGider(t *testing.T) {
 	svc, err := container.Resolve[*service.Service](c, product.ServiceName)
 	require.NoError(t, err)
 
-	urun, err := svc.CreateProduct(ctx, service.CreateProductInput{
-		Title:  "Olay ürünü",
-		Handle: uniqueHandle("olay-urunu"),
+	prod, err := svc.CreateProduct(ctx, service.CreateProductInput{
+		Title:  "Event product",
+		Handle: uniqueHandle("event-product"),
 		Status: productmodels.StatusDraft,
 	})
 	require.NoError(t, err)
-	_, err = svc.UpdateProduct(ctx, urun.ID, service.UpdateProductInput{
+	_, err = svc.UpdateProduct(ctx, prod.ID, service.UpdateProductInput{
 		Status: statusPtr(productmodels.StatusPublished),
 	})
 	require.NoError(t, err)
-	require.NoError(t, svc.DeleteProduct(ctx, urun.ID))
+	require.NoError(t, svc.DeleteProduct(ctx, prod.ID))
 
-	olusan := defter.bekle(t, service.EventProductCreated, urun.ID)
-	assert.Equal(t, productmodels.StatusDraft.String(), olusan.Data[service.EventFieldStatus],
-		"olay ürünün YAZILDIĞI ANDAKİ durumunu taşımalı")
+	created := ledger.waitFor(t, service.EventProductCreated, prod.ID)
+	assert.Equal(t, productmodels.StatusDraft.String(), created.Data[service.EventFieldStatus],
+		"the event must carry the status the product had AT THE MOMENT IT WAS WRITTEN")
 
-	guncellenen := defter.bekle(t, service.EventProductUpdated, urun.ID)
-	assert.Equal(t, productmodels.StatusPublished.String(), guncellenen.Data[service.EventFieldStatus])
+	updated := ledger.waitFor(t, service.EventProductUpdated, prod.ID)
+	assert.Equal(t, productmodels.StatusPublished.String(), updated.Data[service.EventFieldStatus])
 
-	silinen := defter.bekle(t, service.EventProductDeleted, urun.ID)
-	assert.NotContains(t, silinen.Data, service.EventFieldStatus,
-		"silme olayında durum taşınmaz")
+	deleted := ledger.waitFor(t, service.EventProductDeleted, prod.ID)
+	assert.NotContains(t, deleted.Data, service.EventFieldStatus,
+		"the delete event does not carry the status")
 }
 
-// TestRegisterOlayVeriYoluOlmadanDuser veri yolu kayıtlı değilken açılışın
-// DURDUĞUNU doğrular.
+// TestRegisterFailsWithoutEventBus verifies that startup STOPS while the event
+// bus is not registered.
 //
-// Karar bilinçlidir: "olaylar sessizce atlansın" seçilseydi katalog çalışmaya
-// devam eder, hiçbir hata görünmez ve eksiklik ancak arama indeksi eskidiğinde
-// — yani üretimde — fark edilirdi. core.eventbus, core.db ve core.link gibi,
-// modüllerden ÖNCE kaydedilen bir çekirdek servistir; yokluğu bir dağıtım
-// biçimi değil, kurulum hatasıdır.
-func TestRegisterOlayVeriYoluOlmadanDuser(t *testing.T) {
+// The decision is deliberate: had "let the events be skipped silently" been
+// chosen, the catalog would keep working, no error would show up and the gap
+// would be noticed only once the search index went stale — that is, in
+// production. Like core.db and core.link, core.eventbus is a core service
+// registered BEFORE the modules; its absence is not a deployment shape but a
+// setup error.
+func TestRegisterFailsWithoutEventBus(t *testing.T) {
 	ctx := context.Background()
 
 	c := container.New(nil)
@@ -208,73 +216,78 @@ func TestRegisterOlayVeriYoluOlmadanDuser(t *testing.T) {
 	require.NoError(t, c.Provide("core.db", testPool))
 	require.NoError(t, c.Provide("core.link", links))
 	require.NoError(t, c.Provide("core.query", query.New(links, c, nil)))
-	// core.eventbus BİLİNÇLİ olarak kaydedilmez.
+	// core.eventbus is DELIBERATELY not registered.
 
 	err := product.New(product.Options{}).Register(ctx, c)
-	require.Error(t, err, "veri yolu olmadan Register başarılı olmamalı")
+	require.Error(t, err, "Register must not succeed without the bus")
 	assert.Equal(t, "product_module_setup_failed", coreerrors.CodeOf(err))
 	assert.Contains(t, err.Error(), "core.eventbus",
-		"hata mesajı eksik servisin ADINI söylemeli; kurulum hatası ilk saniyede anlaşılmalı")
+		"the error message must name the missing service; a setup error must be understood in the first second")
 }
 
-// olayDefteri veri yoluna düşen katalog olaylarının test tarafındaki kaydıdır.
+// eventLedger is the test side's record of the catalog events that land on the
+// bus.
 //
-// Tip eşzamanlı kullanıma güvenlidir: bellek içi backend her handler'ı ayrı bir
-// goroutine'de çalıştırır ve okuma ile yazma aynı kilidi paylaşır.
-type olayDefteri struct {
-	mu       sync.Mutex
-	kayitlar []eventbus.Event
+// The type is safe for concurrent use: the in-memory backend runs every
+// handler in a separate goroutine, and reading and writing share the same
+// lock.
+type eventLedger struct {
+	mu     sync.Mutex
+	events []eventbus.Event
 }
 
-// kaydet olayı deftere yazar.
-func (d *olayDefteri) kaydet(_ context.Context, e eventbus.Event) error {
+// record writes the event into the ledger.
+func (d *eventLedger) record(_ context.Context, e eventbus.Event) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	d.kayitlar = append(d.kayitlar, e)
+	d.events = append(d.events, e)
 	return nil
 }
 
-// bekle verilen ada ve ürüne ait TEK olayı bekler ve döner.
+// waitFor waits for and returns the SINGLE event belonging to the given name
+// and product.
 //
-// Bekleme ZORUNLUDUR: Publish handler'ları BEKLEMEZ, dolayısıyla yazma dönmüş
-// olsa bile olay defterde henüz görünmüyor olabilir. Tekillik ayrıca sınanır —
-// aynı yazma için iki olay, abonelerin işi iki kez yapması demektir.
-func (d *olayDefteri) bekle(t *testing.T, ad, urunID string) eventbus.Event {
+// Waiting is MANDATORY: Publish does NOT WAIT for the handlers, so the event
+// may not be visible in the ledger yet even though the write has returned.
+// Uniqueness is checked as well — two events for one write means the
+// subscribers do the work twice.
+func (d *eventLedger) waitFor(t *testing.T, name, productID string) eventbus.Event {
 	t.Helper()
 
-	var bulunan []eventbus.Event
+	var found []eventbus.Event
 	require.Eventually(t, func() bool {
 		d.mu.Lock()
 		defer d.mu.Unlock()
 
-		bulunan = bulunan[:0]
-		for i := range d.kayitlar {
-			id, _ := d.kayitlar[i].Data[service.EventFieldProductID].(string)
-			if d.kayitlar[i].Name == ad && id == urunID {
-				bulunan = append(bulunan, d.kayitlar[i])
+		found = found[:0]
+		for i := range d.events {
+			id, _ := d.events[i].Data[service.EventFieldProductID].(string)
+			if d.events[i].Name == name && id == productID {
+				found = append(found, d.events[i])
 			}
 		}
-		return len(bulunan) > 0
+		return len(found) > 0
 	}, 5*time.Second, 20*time.Millisecond,
-		"%q olayı %s ürünü için yayımlanmalı; yayımlanmazsa arama indeksi gibi aboneler "+
-			"katalogdan HABERSİZ kalır ve eksiklik hiçbir hata üretmez", ad, urunID)
+		"the %q event must be published for product %s; if it is not, subscribers such as the search "+
+			"index stay UNAWARE of the catalog and the gap produces no error at all", name, productID)
 
-	require.Len(t, bulunan, 1, "%q olayı BİR KEZ yayımlanmalı", ad)
-	return bulunan[0]
+	require.Len(t, found, 1, "the %q event must be published ONCE", name)
+	return found[0]
 }
 
-// createStoreProduct vitrinde görünür (yayında) bir ürün oluşturur.
+// createStoreProduct creates a product that is visible in the storefront
+// (published).
 func createStoreProduct(t *testing.T, svc *service.Service, handle string) productmodels.Product {
 	t.Helper()
 
-	urun, err := svc.CreateProduct(context.Background(), service.CreateProductInput{
+	prod, err := svc.CreateProduct(context.Background(), service.CreateProductInput{
 		Title:  handle,
 		Handle: uniqueHandle(handle),
 		Status: productmodels.StatusPublished,
 	})
 	require.NoError(t, err)
-	return urun
+	return prod
 }
 
-// statusPtr verilen durumun adresini döner.
+// statusPtr returns the address of the given status.
 func statusPtr(s productmodels.Status) *productmodels.Status { return &s }

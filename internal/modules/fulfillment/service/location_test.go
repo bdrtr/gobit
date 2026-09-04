@@ -14,534 +14,546 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/fulfillment/service"
 )
 
-// Bu dosya depo seçim POLİTİKASINI sınar: eleme, sıralama ve eşitlik bozma.
+// This file exercises the warehouse selection POLICY: elimination, ranking and
+// tie breaking.
 //
-// Testler gerçek bir veritabanı İSTEMEZ çünkü kararın kendisi saf bir
-// fonksiyondur; sahte depo yalnızca politika kayıtlarını taşır. Politikanın
-// gerçek Postgres üzerinde ve gerçek saga ile koştuğu kanıt e2e tarafındadır.
+// The tests DO NOT WANT a real database, because the decision itself is a pure
+// function; the fake store only carries the policy records. The proof that the
+// policy runs on real Postgres and with the real saga is on the e2e side.
 
-// politikaYaz test için bir depo politikası kurar.
-func politikaYaz(
+// writePolicy sets up a warehouse policy for the test.
+func writePolicy(
 	t *testing.T,
-	kurulum testKurulum,
+	setup testSetup,
 	locationID string,
 	priority int64,
 	regionIDs ...string,
 ) {
 	t.Helper()
-	_, err := kurulum.svc.SetShippingLocation(context.Background(), service.SetShippingLocationInput{
+	_, err := setup.svc.SetShippingLocation(context.Background(), service.SetShippingLocationInput{
 		LocationID: locationID,
 		Priority:   priority,
 		RegionIDs:  regionIDs,
 	})
 	if err != nil {
-		t.Fatalf("depo politikası yazılamadı (%s): %v", locationID, err)
+		t.Fatalf("the warehouse policy could not be written (%s): %v", locationID, err)
 	}
 }
 
-// TestRankLocationsHedefBolgeyeHizmetEtmeyenAdayElenir kapsam elemesini
-// kanıtlar.
+// TestRankLocationsEliminatesACandidateNotServingTheTargetRegion proves the
+// coverage elimination.
 //
-// Elenen aday, eşitlik bozma kuralının (kimliği en küçük) BAŞA koyacağı
-// adaydır; aksi hâlde test politikayı değil, kimlik sırasını sınamış olurdu.
-// Elenen aday sıradan TAMAMEN düşer, sona atılmaz: geri düşme onu yine
-// denerdi.
-func TestRankLocationsHedefBolgeyeHizmetEtmeyenAdayElenir(t *testing.T) {
+// The eliminated candidate is the one the tie-breaking rule (smallest
+// identifier) would put FIRST; otherwise the test would have exercised the
+// identifier order rather than the policy. An eliminated candidate drops out of
+// the order COMPLETELY, it is not pushed to the end: a fallback would try it
+// again.
+func TestRankLocationsEliminatesACandidateNotServingTheTargetRegion(t *testing.T) {
 	t.Parallel()
 
-	kurulum := yeniKurulum(t)
-	politikaYaz(t, kurulum, "sloc_ankara", 0, "reg_de")
-	politikaYaz(t, kurulum, "sloc_izmir", 0, testRegionID)
+	setup := newSetup(t)
+	writePolicy(t, setup, "sloc_ankara", 0, "reg_de")
+	writePolicy(t, setup, "sloc_izmir", 0, testRegionID)
 
-	sirali, err := kurulum.svc.RankLocations(context.Background(), testRegionID,
+	ranked, err := setup.svc.RankLocations(context.Background(), testRegionID,
 		[]string{"sloc_ankara", "sloc_izmir"})
 	require.NoError(t, err)
-	assert.Equal(t, []string{"sloc_izmir"}, sirali,
-		"hedef bölgeye hizmet etmeyen aday elenmeli, kimliği küçük olsa bile")
+	assert.Equal(t, []string{"sloc_izmir"}, ranked,
+		"a candidate that does not serve the target region has to be eliminated, even with a smaller identifier")
 }
 
-// TestRankLocationsBolgesizDepoTumBolgelereHizmetEder bağı OLMAYAN deponun
-// elenmediğini kanıtlar.
+// TestRankLocationsARegionlessWarehouseServesEveryRegion proves that a warehouse
+// with NO link is not eliminated.
 //
-// Kural satış kanalı kapsamınınkiyle aynıdır ve aynı tuzağı taşır: bir deponun
-// son bölge bağını silmek onu kapatmaz, TÜM bölgelere açar. Test tuzağın
-// bilinçli olduğunu sabitler — kural tersine çevrilseydi bugün politikası
-// olmayan her kurulum sipariş veremez hâle gelirdi.
-func TestRankLocationsBolgesizDepoTumBolgelereHizmetEder(t *testing.T) {
+// The rule is the same as the sales channel scope's and carries the same trap:
+// deleting a warehouse's last region link does not close it, it OPENS it to ALL
+// regions. The test pins that the trap is deliberate — had the rule been
+// inverted, every setup that has no policy today would become unable to take
+// orders.
+func TestRankLocationsARegionlessWarehouseServesEveryRegion(t *testing.T) {
 	t.Parallel()
 
-	kurulum := yeniKurulum(t)
-	politikaYaz(t, kurulum, "sloc_merkez", 0)
+	setup := newSetup(t)
+	writePolicy(t, setup, "sloc_central", 0)
 
-	sirali, err := kurulum.svc.RankLocations(context.Background(), testRegionID,
-		[]string{"sloc_merkez"})
+	ranked, err := setup.svc.RankLocations(context.Background(), testRegionID,
+		[]string{"sloc_central"})
 	require.NoError(t, err)
-	assert.Equal(t, []string{"sloc_merkez"}, sirali)
+	assert.Equal(t, []string{"sloc_central"}, ranked)
 }
 
-// TestRankLocationsOncelikKimlikSirasiniEzer sıralamanın eşitlik bozma
-// kuralının ÖNÜNDE geldiğini kanıtlar.
+// TestRankLocationsPriorityOverridesTheIdentifierOrder proves that the ranking
+// comes BEFORE the tie-breaking rule.
 //
-// İddia bu özelliğin varlık sebebidir: politika olmasaydı kimliği en küçük
-// aday başa geçerdi ve işletmeci tercihini ifade edemezdi. Elenmeyen aday
-// sırada KALIR — öncelik bir eleme değil, bir dizilim kuralıdır.
-func TestRankLocationsOncelikKimlikSirasiniEzer(t *testing.T) {
+// The claim is the reason this feature exists: without the policy the candidate
+// with the smallest identifier would go first and the operator could not express
+// a preference. A candidate that is not eliminated STAYS in the order — priority
+// is not an elimination but a lineup rule.
+func TestRankLocationsPriorityOverridesTheIdentifierOrder(t *testing.T) {
 	t.Parallel()
 
-	kurulum := yeniKurulum(t)
-	politikaYaz(t, kurulum, "sloc_ankara", 10, testRegionID)
-	politikaYaz(t, kurulum, "sloc_izmir", 1, testRegionID)
+	setup := newSetup(t)
+	writePolicy(t, setup, "sloc_ankara", 10, testRegionID)
+	writePolicy(t, setup, "sloc_izmir", 1, testRegionID)
 
-	sirali, err := kurulum.svc.RankLocations(context.Background(), testRegionID,
+	ranked, err := setup.svc.RankLocations(context.Background(), testRegionID,
 		[]string{"sloc_ankara", "sloc_izmir"})
 	require.NoError(t, err)
-	assert.Equal(t, []string{"sloc_izmir", "sloc_ankara"}, sirali,
-		"önceliği küçük olan başa geçmeli, diğeri sırada kalmalı")
+	assert.Equal(t, []string{"sloc_izmir", "sloc_ankara"}, ranked,
+		"the smaller priority has to go first and the other has to stay in the order")
 }
 
-// TestRankLocationsNegatifOncelikPolitikasizDeponunUstunde negatif önceliğin
-// politikası OLMAYAN depoyu geçtiğini kanıtlar.
+// TestRankLocationsNegativePriorityBeatsAPolicylessWarehouse proves that a
+// negative priority overtakes a warehouse that has NO policy.
 //
-// Negatife izin verilmesinin somut sebebi budur: bir depoyu öne almak için tek
-// satır yazmak yeterli olmalı, öne almak İSTENMEYEN depolara satır yazmak
-// gerekmemelidir.
-func TestRankLocationsNegatifOncelikPolitikasizDeponunUstunde(t *testing.T) {
+// That is the concrete reason negatives are allowed: lifting one warehouse to the
+// front has to take a single row, and it must not require writing rows for the
+// warehouses one does NOT want lifted.
+func TestRankLocationsNegativePriorityBeatsAPolicylessWarehouse(t *testing.T) {
 	t.Parallel()
 
-	kurulum := yeniKurulum(t)
-	politikaYaz(t, kurulum, "sloc_zonguldak", -1, testRegionID)
+	setup := newSetup(t)
+	writePolicy(t, setup, "sloc_zonguldak", -1, testRegionID)
 
-	sirali, err := kurulum.svc.RankLocations(context.Background(), testRegionID,
+	ranked, err := setup.svc.RankLocations(context.Background(), testRegionID,
 		[]string{"sloc_ankara", "sloc_zonguldak"})
 	require.NoError(t, err)
-	assert.Equal(t, []string{"sloc_zonguldak", "sloc_ankara"}, sirali,
-		"negatif öncelik, kaydı olmayan deponun (sıfır öncelik) üstünde olmalı")
+	assert.Equal(t, []string{"sloc_zonguldak", "sloc_ankara"}, ranked,
+		"a negative priority has to be above a warehouse with no record (priority zero)")
 }
 
-// TestRankLocationsKaydiOlmayanDepoSifirOncelikliyleEsittir "kayıt yok" ile
-// "önceliği açıkça sıfır" durumlarının AYNI sırada olduğunu kanıtlar.
+// TestRankLocationsAWarehouseWithNoRecordEqualsPriorityZero proves that "no
+// record" and "priority explicitly zero" are at THE SAME rank.
 //
-// İkisi ayrılsaydı, bir depoya öncelik sıfır yazmak onu sessizce ileri ya da
-// geri alırdı; oysa yazılan değer varsayılanın ta kendisidir.
-func TestRankLocationsKaydiOlmayanDepoSifirOncelikliyleEsittir(t *testing.T) {
+// Had the two been separated, writing priority zero for a warehouse would
+// silently move it forward or backward; yet the value written is the default
+// itself.
+func TestRankLocationsAWarehouseWithNoRecordEqualsPriorityZero(t *testing.T) {
 	t.Parallel()
 
-	kurulum := yeniKurulum(t)
-	politikaYaz(t, kurulum, "sloc_izmir", 0, testRegionID)
+	setup := newSetup(t)
+	writePolicy(t, setup, "sloc_izmir", 0, testRegionID)
 
-	sirali, err := kurulum.svc.RankLocations(context.Background(), testRegionID,
+	ranked, err := setup.svc.RankLocations(context.Background(), testRegionID,
 		[]string{"sloc_ankara", "sloc_izmir"})
 	require.NoError(t, err)
-	assert.Equal(t, []string{"sloc_ankara", "sloc_izmir"}, sirali,
-		"eşit öncelikte sıra kimliğe göre kurulmalı; kaydı olmayan depo sıfır önceliktedir")
+	assert.Equal(t, []string{"sloc_ankara", "sloc_izmir"}, ranked,
+		"at equal priority the order has to be built by identifier; a warehouse with no record is at priority zero")
 }
 
-// TestRankLocationsTumAdaylarElenirseConflict elemenin sonucu boş kaldığında
-// hatanın SINIFINI ve KODUNU sabitler.
+// TestRankLocationsAllCandidatesEliminatedIsAConflict pins the KIND and the CODE
+// of the error when the elimination leaves an empty result.
 //
-// Sınıf Conflict olmalıdır ve gerekçesi çağıranın dallanması DEĞİLDİR: sınıf
-// hatanın HTTP karşılığını belirler ve motorun varsayılan yeniden deneme
-// yüklemi KindConflict'i denemez, KindInternal'ı dener. Elenmiş bir aday kümesi
-// tekrar denemekle değişmez; Internal seçilseydi işletmecinin elle düzeltmesi
-// gereken bir yapılandırma hatası geçici arıza sanılırdı.
+// The kind has to be Conflict and the rationale IS NOT the caller's branching:
+// the kind determines the error's HTTP counterpart, and the engine's default
+// retry predicate does not retry KindConflict, it retries KindInternal. An
+// eliminated candidate set does not change by trying again; had Internal been
+// chosen, a configuration error the operator has to fix by hand would be taken
+// for a transient fault.
 //
-// Kod AYRIDIR çünkü işletmecinin yapacağı iş ayrıdır: burada stok vardır,
-// yanlış kurulmuş olan bölge kapsamıdır.
-func TestRankLocationsTumAdaylarElenirseConflict(t *testing.T) {
+// The code is SEPARATE because the work the operator has to do is separate: here
+// there is stock, what is set up wrong is the region coverage.
+func TestRankLocationsAllCandidatesEliminatedIsAConflict(t *testing.T) {
 	t.Parallel()
 
-	kurulum := yeniKurulum(t)
-	politikaYaz(t, kurulum, "sloc_ankara", 0, "reg_de")
-	politikaYaz(t, kurulum, "sloc_izmir", 0, "reg_fr")
+	setup := newSetup(t)
+	writePolicy(t, setup, "sloc_ankara", 0, "reg_de")
+	writePolicy(t, setup, "sloc_izmir", 0, "reg_fr")
 
-	sirali, err := kurulum.svc.RankLocations(context.Background(), testRegionID,
+	ranked, err := setup.svc.RankLocations(context.Background(), testRegionID,
 		[]string{"sloc_ankara", "sloc_izmir"})
 	require.Error(t, err)
-	assert.Empty(t, sirali)
-	assert.True(t, errors.IsConflict(err), "hata errors.Conflict olmalı: %v", err)
+	assert.Empty(t, ranked)
+	assert.True(t, errors.IsConflict(err), "the error has to be errors.Conflict: %v", err)
 	assert.Equal(t, service.CodeNoServiceableLocation, errors.CodeOf(err))
 }
 
-// TestRankLocationsBosBolgeInvalid hedef bölge verilmeden sıralama
-// yapılamayacağını kanıtlar.
+// TestRankLocationsAnEmptyRegionIsInvalid proves that the ranking cannot be done
+// without a target region.
 //
-// Boş bölgede elemeyi ATLAMAK, o bölgeye hizmet etmeyen bir depoyu sessizce
-// seçmek olurdu; hata, sebebinden bir modül uzakta ortaya çıkardı.
-func TestRankLocationsBosBolgeInvalid(t *testing.T) {
+// SKIPPING the elimination on an empty region would mean silently picking a
+// warehouse that does not serve that region; the failure would surface a module
+// away from its cause.
+func TestRankLocationsAnEmptyRegionIsInvalid(t *testing.T) {
 	t.Parallel()
 
-	kurulum := yeniKurulum(t)
+	setup := newSetup(t)
 
-	for _, bolge := range []string{"", "   "} {
-		sirali, err := kurulum.svc.RankLocations(context.Background(), bolge,
+	for _, region := range []string{"", "   "} {
+		ranked, err := setup.svc.RankLocations(context.Background(), region,
 			[]string{"sloc_ankara"})
 		require.Error(t, err)
-		assert.Empty(t, sirali)
-		assert.True(t, errors.IsInvalid(err), "hata errors.Invalid olmalı: %v", err)
+		assert.Empty(t, ranked)
+		assert.True(t, errors.IsInvalid(err), "the error has to be errors.Invalid: %v", err)
 		assert.Equal(t, service.CodeInvalidInput, errors.CodeOf(err))
 	}
 }
 
-// TestRankLocationsAdayDilimiDegismez karar yüzeyinin kendisine verilen
-// veriyi BOZMADIĞINI kanıtlar.
+// TestRankLocationsDoesNotModifyTheCandidateSlice proves that the decision
+// surface DOES NOT CORRUPT the data it is handed.
 //
-// Politika sıralama yapar ama adayları YERİNDE sıralamaz: çağıranın dilimi
-// saga'nın aday defteridir ve bir karar yüzeyi kendisine verilen veriyi
-// değiştiremez.
-func TestRankLocationsAdayDilimiDegismez(t *testing.T) {
+// The policy ranks, but it does not sort the candidates IN PLACE: the caller's
+// slice is the saga's candidate ledger and a decision surface cannot modify the
+// data it is given.
+func TestRankLocationsDoesNotModifyTheCandidateSlice(t *testing.T) {
 	t.Parallel()
 
-	kurulum := yeniKurulum(t)
-	politikaYaz(t, kurulum, "sloc_izmir", -5, testRegionID)
+	setup := newSetup(t)
+	writePolicy(t, setup, "sloc_izmir", -5, testRegionID)
 
-	adaylar := []string{"sloc_ankara", "sloc_izmir", "sloc_bursa"}
-	onceki := slices.Clone(adaylar)
+	candidates := []string{"sloc_ankara", "sloc_izmir", "sloc_bursa"}
+	before := slices.Clone(candidates)
 
-	sirali, err := kurulum.svc.RankLocations(context.Background(), testRegionID, adaylar)
+	ranked, err := setup.svc.RankLocations(context.Background(), testRegionID, candidates)
 	require.NoError(t, err)
-	assert.Equal(t, []string{"sloc_izmir", "sloc_ankara", "sloc_bursa"}, sirali)
-	assert.Equal(t, onceki, adaylar, "aday dilimi değiştirilmemeli")
+	assert.Equal(t, []string{"sloc_izmir", "sloc_ankara", "sloc_bursa"}, ranked)
+	assert.Equal(t, before, candidates, "the candidate slice must not be modified")
 }
 
-// TestSetShippingLocationBolgeleriToptanYazar bölge listesinin MUTLAK
-// olduğunu kanıtlar: eski bağlar kalmaz.
+// TestSetShippingLocationWritesRegionsWholesale proves that the region list is
+// ABSOLUTE: the old links do not survive.
 //
-// Birleştirme (eskiye ekleme) seçilseydi bir bölgeyi kaldırmanın yolu
-// olmazdı ve kapsam yalnızca genişleyebilirdi.
-func TestSetShippingLocationBolgeleriToptanYazar(t *testing.T) {
+// Had merging (adding to the old) been chosen, there would be no way to remove a
+// region and the coverage could only widen.
+func TestSetShippingLocationWritesRegionsWholesale(t *testing.T) {
 	t.Parallel()
 
-	kurulum := yeniKurulum(t)
-	politikaYaz(t, kurulum, "sloc_ankara", 0, "reg_de", testRegionID)
+	setup := newSetup(t)
+	writePolicy(t, setup, "sloc_ankara", 0, "reg_de", testRegionID)
 
-	kayit, err := kurulum.svc.SetShippingLocation(context.Background(), service.SetShippingLocationInput{
+	record, err := setup.svc.SetShippingLocation(context.Background(), service.SetShippingLocationInput{
 		LocationID: "sloc_ankara",
 		RegionIDs:  []string{"reg_de"},
 	})
 	require.NoError(t, err)
-	assert.Equal(t, []string{"reg_de"}, kayit.RegionIDs)
+	assert.Equal(t, []string{"reg_de"}, record.RegionIDs)
 
-	sirali, err := kurulum.svc.RankLocations(context.Background(), testRegionID,
+	ranked, err := setup.svc.RankLocations(context.Background(), testRegionID,
 		[]string{"sloc_ankara"})
-	require.Error(t, err, "kaldırılan bölge bağı sıralamayı da etkilemeli")
-	assert.Empty(t, sirali)
+	require.Error(t, err, "the removed region link has to affect the ranking too")
+	assert.Empty(t, ranked)
 	assert.Equal(t, service.CodeNoServiceableLocation, errors.CodeOf(err))
 }
 
-// TestSetShippingLocationBosBolgeListesiTumBolgeleriAcar bölge listesini
-// boşaltmanın depoyu KAPATMADIĞINI, tüm bölgelere AÇTIĞINI kanıtlar.
+// TestSetShippingLocationAnEmptyRegionListOpensEveryRegion proves that emptying
+// the region list DOES NOT CLOSE the warehouse but OPENS it to every region.
 //
-// Tuzak yazılıdır ve test onu sabitler: kapsamı daraltmak için son bağı silen
-// bir işletmeci, tam tersini elde eder.
-func TestSetShippingLocationBosBolgeListesiTumBolgeleriAcar(t *testing.T) {
+// The trap is written down and the test pins it: an operator who deletes the last
+// link in order to narrow the coverage gets exactly the opposite.
+func TestSetShippingLocationAnEmptyRegionListOpensEveryRegion(t *testing.T) {
 	t.Parallel()
 
-	kurulum := yeniKurulum(t)
-	politikaYaz(t, kurulum, "sloc_ankara", 0, "reg_de")
+	setup := newSetup(t)
+	writePolicy(t, setup, "sloc_ankara", 0, "reg_de")
 
-	_, err := kurulum.svc.SetShippingLocation(context.Background(), service.SetShippingLocationInput{
+	_, err := setup.svc.SetShippingLocation(context.Background(), service.SetShippingLocationInput{
 		LocationID: "sloc_ankara",
 	})
 	require.NoError(t, err)
 
-	sirali, err := kurulum.svc.RankLocations(context.Background(), testRegionID,
+	ranked, err := setup.svc.RankLocations(context.Background(), testRegionID,
 		[]string{"sloc_ankara"})
 	require.NoError(t, err)
-	assert.Equal(t, []string{"sloc_ankara"}, sirali)
+	assert.Equal(t, []string{"sloc_ankara"}, ranked)
 }
 
-// TestSetShippingLocationYinelenenBolgeElenir aynı bölgenin iki kez
-// verilmesinin hata DEĞİL, tek bağ olduğunu kanıtlar.
-func TestSetShippingLocationYinelenenBolgeElenir(t *testing.T) {
+// TestSetShippingLocationDropsARepeatedRegion proves that giving the same region
+// twice is NOT an error but a single link.
+func TestSetShippingLocationDropsARepeatedRegion(t *testing.T) {
 	t.Parallel()
 
-	kurulum := yeniKurulum(t)
+	setup := newSetup(t)
 
-	kayit, err := kurulum.svc.SetShippingLocation(context.Background(), service.SetShippingLocationInput{
+	record, err := setup.svc.SetShippingLocation(context.Background(), service.SetShippingLocationInput{
 		LocationID: "sloc_ankara",
 		RegionIDs:  []string{testRegionID, " " + testRegionID + " ", "reg_de"},
 	})
 	require.NoError(t, err)
-	assert.Equal(t, []string{"reg_de", testRegionID}, kayit.RegionIDs,
-		"yinelenen bölge elenmeli; dönen sıra girdininki DEĞİL, kimliğe göredir — "+
-			"bağlar bir küme kurar, liste değil")
+	assert.Equal(t, []string{"reg_de", testRegionID}, record.RegionIDs,
+		"the repeated region has to be dropped; the returned order is NOT the input's but by identifier — "+
+			"the links form a set, not a list")
 }
 
-// TestSetShippingLocationBosBolgeKimligiInvalid boş bir bölge kimliğinin
-// yazılmadığını kanıtlar.
-func TestSetShippingLocationBosBolgeKimligiInvalid(t *testing.T) {
+// TestSetShippingLocationAnEmptyRegionIdentifierIsInvalid proves that an empty
+// region identifier is not written.
+func TestSetShippingLocationAnEmptyRegionIdentifierIsInvalid(t *testing.T) {
 	t.Parallel()
 
-	kurulum := yeniKurulum(t)
+	setup := newSetup(t)
 
-	_, err := kurulum.svc.SetShippingLocation(context.Background(), service.SetShippingLocationInput{
+	_, err := setup.svc.SetShippingLocation(context.Background(), service.SetShippingLocationInput{
 		LocationID: "sloc_ankara",
 		RegionIDs:  []string{testRegionID, "   "},
 	})
 	require.Error(t, err)
-	assert.True(t, errors.IsInvalid(err), "hata errors.Invalid olmalı: %v", err)
+	assert.True(t, errors.IsInvalid(err), "the error has to be errors.Invalid: %v", err)
 
-	_, getErr := kurulum.svc.GetShippingLocation(context.Background(), "sloc_ankara")
-	require.Error(t, getErr, "doğrulama düşen istek hiçbir satır yazmamalı")
+	_, getErr := setup.svc.GetShippingLocation(context.Background(), "sloc_ankara")
+	require.Error(t, getErr, "a request that fails validation must not write any row")
 	assert.True(t, errors.IsNotFound(getErr))
 }
 
-// TestDeleteShippingLocationVarsayilanaDondurur silmenin depoyu KAPATMADIĞINI,
-// varsayılana döndürdüğünü kanıtlar.
+// TestDeleteShippingLocationReturnsToTheDefault proves that the deletion DOES NOT
+// CLOSE the warehouse but returns it to the default.
 //
-// Ayrım önemlidir: kargo modülü bir depoyu adaylıktan çıkaramaz, aday listesini
-// stok olgusu üretir. Silmek yalnızca "bu depo için özel bir kural yok" demektir.
-func TestDeleteShippingLocationVarsayilanaDondurur(t *testing.T) {
+// The distinction matters: the shipping module cannot take a warehouse out of
+// candidacy, the candidate list is produced by a stock fact. Deleting only means
+// "there is no special rule for this warehouse".
+func TestDeleteShippingLocationReturnsToTheDefault(t *testing.T) {
 	t.Parallel()
 
-	kurulum := yeniKurulum(t)
-	politikaYaz(t, kurulum, "sloc_ankara", 0, "reg_de")
+	setup := newSetup(t)
+	writePolicy(t, setup, "sloc_ankara", 0, "reg_de")
 
-	_, err := kurulum.svc.RankLocations(context.Background(), testRegionID,
+	_, err := setup.svc.RankLocations(context.Background(), testRegionID,
 		[]string{"sloc_ankara"})
-	require.Error(t, err, "kapsam dışı depo silmeden ÖNCE elenmeli")
+	require.Error(t, err, "an out-of-scope warehouse has to be eliminated BEFORE the deletion")
 
-	require.NoError(t, kurulum.svc.DeleteShippingLocation(context.Background(), "sloc_ankara"))
+	require.NoError(t, setup.svc.DeleteShippingLocation(context.Background(), "sloc_ankara"))
 
-	sirali, err := kurulum.svc.RankLocations(context.Background(), testRegionID,
+	ranked, err := setup.svc.RankLocations(context.Background(), testRegionID,
 		[]string{"sloc_ankara"})
-	require.NoError(t, err, "politikası silinen depo varsayılana dönmeli")
-	assert.Equal(t, []string{"sloc_ankara"}, sirali)
+	require.NoError(t, err, "a warehouse whose policy was deleted has to return to the default")
+	assert.Equal(t, []string{"sloc_ankara"}, ranked)
 }
 
-// TestDeleteShippingLocationBilinmeyenNotFound olmayan bir kaydın silinmesinin
-// SESSİZCE başarılı olmadığını kanıtlar.
+// TestDeleteShippingLocationOnAnUnknownRecordReturnsNotFound proves that deleting
+// a record that does not exist does not SILENTLY succeed.
 //
-// DELETE olmayan satır için de hatasız döner; denetim olmasaydı yanlış bir
-// kimlikle yapılan silme başarılı görünürdü ve işletmeci kaldırdığını sandığı
-// kuralla çalışmaya devam ederdi.
-func TestDeleteShippingLocationBilinmeyenNotFound(t *testing.T) {
+// DELETE returns without an error for a row that does not exist either; without
+// the check, a deletion made with a wrong identifier would look successful and
+// the operator would keep working with a rule they believed they had removed.
+func TestDeleteShippingLocationOnAnUnknownRecordReturnsNotFound(t *testing.T) {
 	t.Parallel()
 
-	kurulum := yeniKurulum(t)
+	setup := newSetup(t)
 
-	err := kurulum.svc.DeleteShippingLocation(context.Background(), "sloc_yok")
+	err := setup.svc.DeleteShippingLocation(context.Background(), "sloc_missing")
 	require.Error(t, err)
-	assert.True(t, errors.IsNotFound(err), "hata errors.NotFound olmalı: %v", err)
+	assert.True(t, errors.IsNotFound(err), "the error has to be errors.NotFound: %v", err)
 }
 
-// TestListShippingLocationsOncelikSirasindaDoner listelemenin sırasını
-// sabitler: önce öncelik, sonra kimlik — seçimin uyguladığı sıranın aynısı.
-func TestListShippingLocationsOncelikSirasindaDoner(t *testing.T) {
+// TestListShippingLocationsReturnsInPriorityOrder pins the listing's order:
+// priority first, identifier second — the same order the selection applies.
+func TestListShippingLocationsReturnsInPriorityOrder(t *testing.T) {
 	t.Parallel()
 
-	kurulum := yeniKurulum(t)
-	politikaYaz(t, kurulum, "sloc_ankara", 5, testRegionID)
-	politikaYaz(t, kurulum, "sloc_bursa", -2, testRegionID)
-	politikaYaz(t, kurulum, "sloc_izmir", 5, testRegionID)
+	setup := newSetup(t)
+	writePolicy(t, setup, "sloc_ankara", 5, testRegionID)
+	writePolicy(t, setup, "sloc_bursa", -2, testRegionID)
+	writePolicy(t, setup, "sloc_izmir", 5, testRegionID)
 
-	kayitlar, toplam, err := kurulum.svc.ListShippingLocations(context.Background(), service.Page{})
+	records, total, err := setup.svc.ListShippingLocations(context.Background(), service.Page{})
 	require.NoError(t, err)
-	assert.Equal(t, int64(3), toplam)
+	assert.Equal(t, int64(3), total)
 
-	ids := make([]string, 0, len(kayitlar))
-	for _, kayit := range kayitlar {
-		ids = append(ids, kayit.LocationID)
+	ids := make([]string, 0, len(records))
+	for _, record := range records {
+		ids = append(ids, record.LocationID)
 	}
 	assert.Equal(t, []string{"sloc_bursa", "sloc_ankara", "sloc_izmir"}, ids)
 }
 
-// TestRankLocationsElemeHatasiBaglariAdlandirir elemenin sebebinin mesajda
-// GÖRÜNDÜĞÜNÜ kanıtlar.
+// TestRankLocationsTheEliminationErrorNamesTheLinks proves that the reason for
+// the elimination IS VISIBLE in the message.
 //
-// İddia bir konfor değil: elenmenin en sinsi sebebi ölü bir bölge kimliğidir.
-// İşletmeci bir bölgeyi silip aynı adla yeniden açarsa kimlik değişir, politika
-// satırları eskisini taşımaya devam eder ve mağazadaki HER sipariş elenir.
-// Yalnızca "hizmet eden depo yok" diyen bir mesajla operatör kimliklerin
-// ayrıştığını göremez; mesaj bağları yazdığı için görebilir.
-func TestRankLocationsElemeHatasiBaglariAdlandirir(t *testing.T) {
+// The claim is not a convenience: the sneakiest cause of elimination is a dead
+// region identifier. If the operator deletes a region and reopens it under the
+// same name the identifier changes, the policy rows keep carrying the old one and
+// EVERY order in the store is eliminated. With a message that only said "no
+// warehouse serves it" the operator cannot see that the identifiers have
+// diverged; because the message writes the links, they can.
+func TestRankLocationsTheEliminationErrorNamesTheLinks(t *testing.T) {
 	t.Parallel()
 
-	kurulum := yeniKurulum(t)
-	politikaYaz(t, kurulum, "sloc_ankara", 0, "reg_olu")
-	politikaYaz(t, kurulum, "sloc_izmir", 0, "reg_olu")
+	setup := newSetup(t)
+	writePolicy(t, setup, "sloc_ankara", 0, "reg_dead")
+	writePolicy(t, setup, "sloc_izmir", 0, "reg_dead")
 
-	_, err := kurulum.svc.RankLocations(context.Background(), testRegionID,
+	_, err := setup.svc.RankLocations(context.Background(), testRegionID,
 		[]string{"sloc_ankara", "sloc_izmir"})
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "reg_olu",
-		"mesaj deponun GERÇEKTE bağlı olduğu bölgeyi yazmalı")
+	assert.Contains(t, err.Error(), "reg_dead",
+		"the message has to write the region the warehouse is ACTUALLY bound to")
 	assert.Contains(t, err.Error(), testRegionID,
-		"mesaj hangi bölgenin arandığını yazmalı")
+		"the message has to write which region was being looked for")
 }
 
-// TestRankLocationsCagiraninDizesiAynenDoner dönen elemanların çağıranın
-// verdiği dizelerle BİREBİR aynı olduğunu kanıtlar.
+// TestRankLocationsReturnsTheCallersStringVerbatim proves that the returned
+// elements are EXACTLY the strings the caller gave.
 //
-// Eşleştirme baştaki/sondaki boşluklar atılarak yapılır ama dönüş
-// normalleştirilmiş kopya OLAMAZ: çağıran sonucu kendi aday defterinde arar ve
-// bulamazsa akışı bir iç hata olarak düşürür. Kırpılmış kopya dönseydi
-// " sloc_a " yazan bir çağıran, sözleşmeyi çiğnemediği hâlde 500 alırdı.
-func TestRankLocationsCagiraninDizesiAynenDoner(t *testing.T) {
+// The matching is done with the leading/trailing whitespace stripped, but the
+// return CANNOT BE a normalized copy: the caller looks the result up in its own
+// candidate ledger and, if it cannot find it, drops the flow as an internal
+// error. Had a trimmed copy been returned, a caller that wrote " sloc_a " would
+// get a 500 without having broken the contract.
+func TestRankLocationsReturnsTheCallersStringVerbatim(t *testing.T) {
 	t.Parallel()
 
-	kurulum := yeniKurulum(t)
-	politikaYaz(t, kurulum, "sloc_izmir", -1, testRegionID)
+	setup := newSetup(t)
+	writePolicy(t, setup, "sloc_izmir", -1, testRegionID)
 
-	sirali, err := kurulum.svc.RankLocations(context.Background(), testRegionID,
+	ranked, err := setup.svc.RankLocations(context.Background(), testRegionID,
 		[]string{"  sloc_izmir  ", "sloc_ankara"})
 	require.NoError(t, err)
-	assert.Equal(t, []string{"  sloc_izmir  ", "sloc_ankara"}, sirali,
-		"eşleştirme kırpılmış anahtarla yapılır, dönüş çağıranın dizesidir")
+	assert.Equal(t, []string{"  sloc_izmir  ", "sloc_ankara"}, ranked,
+		"the matching uses the trimmed key, the return is the caller's string")
 }
 
-// TestRankLocationsYinelenenAdayTekKezSiralanir aynı adayın iki kez verilmesinin
-// sırada iki kez GÖRÜNMEDİĞİNİ kanıtlar.
+// TestRankLocationsARepeatedCandidateIsRankedOnce proves that giving the same
+// candidate twice DOES NOT SHOW it twice in the order.
 //
-// Görünseydi çağıran aynı depoya iki kez ayırma denerdi: ilki tükendiği için
-// düşen bir depo, ikinci turda aynı cevabı verir ve geri düşme bir turunu boşa
-// harcardı.
-func TestRankLocationsYinelenenAdayTekKezSiralanir(t *testing.T) {
+// Had it shown up twice, the caller would try to reserve at the same warehouse
+// twice: a warehouse that dropped because it was exhausted the first time gives
+// the same answer on the second round and the fallback would waste one of its
+// rounds.
+func TestRankLocationsARepeatedCandidateIsRankedOnce(t *testing.T) {
 	t.Parallel()
 
-	kurulum := yeniKurulum(t)
+	setup := newSetup(t)
 
-	sirali, err := kurulum.svc.RankLocations(context.Background(), testRegionID,
+	ranked, err := setup.svc.RankLocations(context.Background(), testRegionID,
 		[]string{"sloc_ankara", "sloc_ankara", "sloc_izmir"})
 	require.NoError(t, err)
-	assert.Equal(t, []string{"sloc_ankara", "sloc_izmir"}, sirali)
+	assert.Equal(t, []string{"sloc_ankara", "sloc_izmir"}, ranked)
 }
 
-// TestSetShippingLocationBolgeSayisiSinirlidir sınırın İKİ YANINI da çiviler.
+// TestSetShippingLocationTheRegionCountIsBounded nails BOTH SIDES of the bound.
 //
-// Tek yanlı bir test (yalnızca "101 reddedilir") sınırın `>=`'e çevrilmesini
-// yakalamaz; iki yan birlikte, sınırın hem VAR olduğunu hem de DOĞRU YERDE
-// olduğunu sabitler.
-func TestSetShippingLocationBolgeSayisiSinirlidir(t *testing.T) {
+// A one-sided test (only "101 is rejected") does not catch the bound being turned
+// into `>=`; the two sides together pin that the bound both EXISTS and is IN THE
+// RIGHT PLACE.
+func TestSetShippingLocationTheRegionCountIsBounded(t *testing.T) {
 	t.Parallel()
 
-	kurulum := yeniKurulum(t)
+	setup := newSetup(t)
 
-	tamSinir := make([]string, 0, 100)
+	atLimit := make([]string, 0, 100)
 	for i := range 100 {
-		tamSinir = append(tamSinir, fmt.Sprintf("reg_%03d", i))
+		atLimit = append(atLimit, fmt.Sprintf("reg_%03d", i))
 	}
 
-	kayit, err := kurulum.svc.SetShippingLocation(context.Background(), service.SetShippingLocationInput{
-		LocationID: "sloc_sinir",
-		RegionIDs:  tamSinir,
+	record, err := setup.svc.SetShippingLocation(context.Background(), service.SetShippingLocationInput{
+		LocationID: "sloc_limit",
+		RegionIDs:  atLimit,
 	})
-	require.NoError(t, err, "tam sınırdaki istek KABUL edilmeli")
-	assert.Len(t, kayit.RegionIDs, 100)
+	require.NoError(t, err, "a request exactly at the bound has to be ACCEPTED")
+	assert.Len(t, record.RegionIDs, 100)
 
-	_, err = kurulum.svc.SetShippingLocation(context.Background(), service.SetShippingLocationInput{
-		LocationID: "sloc_sinir_asan",
-		RegionIDs:  append(tamSinir, "reg_fazla"),
+	_, err = setup.svc.SetShippingLocation(context.Background(), service.SetShippingLocationInput{
+		LocationID: "sloc_over_limit",
+		RegionIDs:  append(atLimit, "reg_extra"),
 	})
-	require.Error(t, err, "sınırı bir aşan istek REDDEDİLMELİ")
-	assert.True(t, errors.IsInvalid(err), "hata errors.Invalid olmalı: %v", err)
+	require.Error(t, err, "a request one over the bound has to be REJECTED")
+	assert.True(t, errors.IsInvalid(err), "the error has to be errors.Invalid: %v", err)
 	assert.Equal(t, service.CodeInvalidInput, errors.CodeOf(err))
 }
 
-// TestSetShippingLocationAsiriUzunBolgeReddedilir metin uzunluğu sınırının
-// bölge kimliklerinde de uygulandığını kanıtlar.
+// TestSetShippingLocationRejectsAnOverlongRegion proves that the text length
+// bound is applied to the region identifiers as well.
 //
-// Sınır olmadan tek bir istek veritabanına sınırsız büyüklükte metin yazardı;
-// kardeş denetimler (boş kimlik, sayı sınırı) sınanıyorken bunun sınanmaması,
-// korumanın yalnızca yarısının çivilendiği anlamına gelirdi.
-func TestSetShippingLocationAsiriUzunBolgeReddedilir(t *testing.T) {
+// Without the bound a single request would write text of unbounded size into the
+// database; leaving this unexercised while the sibling checks (empty identifier,
+// count bound) are exercised would mean only half the protection is nailed down.
+func TestSetShippingLocationRejectsAnOverlongRegion(t *testing.T) {
 	t.Parallel()
 
-	kurulum := yeniKurulum(t)
+	setup := newSetup(t)
 
-	_, err := kurulum.svc.SetShippingLocation(context.Background(), service.SetShippingLocationInput{
-		LocationID: "sloc_uzun_bolge",
+	_, err := setup.svc.SetShippingLocation(context.Background(), service.SetShippingLocationInput{
+		LocationID: "sloc_long_region",
 		RegionIDs:  []string{"reg_" + strings.Repeat("x", 1024)},
 	})
 	require.Error(t, err)
-	assert.True(t, errors.IsInvalid(err), "hata errors.Invalid olmalı: %v", err)
+	assert.True(t, errors.IsInvalid(err), "the error has to be errors.Invalid: %v", err)
 	assert.Equal(t, service.CodeInvalidInput, errors.CodeOf(err))
 }
 
-// TestRankLocationsAsiriUzunAdayReddedilir aynı sınırın ADAY kimliklerinde de
-// uygulandığını kanıtlar.
-func TestRankLocationsAsiriUzunAdayReddedilir(t *testing.T) {
+// TestRankLocationsRejectsAnOverlongCandidate proves that the same bound is
+// applied to the CANDIDATE identifiers too.
+func TestRankLocationsRejectsAnOverlongCandidate(t *testing.T) {
 	t.Parallel()
 
-	kurulum := yeniKurulum(t)
+	setup := newSetup(t)
 
-	sirali, err := kurulum.svc.RankLocations(context.Background(), testRegionID,
+	ranked, err := setup.svc.RankLocations(context.Background(), testRegionID,
 		[]string{"sloc_" + strings.Repeat("y", 1024)})
 	require.Error(t, err)
-	assert.Empty(t, sirali)
-	assert.True(t, errors.IsInvalid(err), "hata errors.Invalid olmalı: %v", err)
+	assert.Empty(t, ranked)
+	assert.True(t, errors.IsInvalid(err), "the error has to be errors.Invalid: %v", err)
 	assert.Equal(t, service.CodeInvalidInput, errors.CodeOf(err))
 }
 
-// TestRankLocationsEsitlikBozmaKirpilmisKimligeGoredir sıralamanın KIRPILMIŞ
-// anahtara dayandığını kanıtlar.
+// TestRankLocationsTieBreakingUsesTheTrimmedIdentifier proves that the ranking
+// rests on the TRIMMED key.
 //
-// Ham dizeye dayansaydı sıra, çağıranın kimlikleri nasıl yazdığına bağlı
-// olurdu: "  sloc_z" ham karşılaştırmada "sloc_a"dan ÖNCE gelir (boşluk
-// harflerden küçüktür) ve sonuç, aynı iki depo için farklı yazımlarla farklı
-// çıkardı. Dönüş değeri yine çağıranın dizesidir; eşleştirme ile dönüş ayrı
-// şeylerdir ve bu test ikisini birden çiviler.
-func TestRankLocationsEsitlikBozmaKirpilmisKimligeGoredir(t *testing.T) {
+// Had it rested on the raw string, the order would depend on how the caller wrote
+// the identifiers: "  sloc_z" comes BEFORE "sloc_a" in a raw comparison (a space
+// is smaller than a letter) and the result would come out differently for the
+// same two warehouses under different spellings. The return value is still the
+// caller's string; the matching and the return are different things and this test
+// nails both at once.
+func TestRankLocationsTieBreakingUsesTheTrimmedIdentifier(t *testing.T) {
 	t.Parallel()
 
-	kurulum := yeniKurulum(t)
+	setup := newSetup(t)
 
-	sirali, err := kurulum.svc.RankLocations(context.Background(), testRegionID,
+	ranked, err := setup.svc.RankLocations(context.Background(), testRegionID,
 		[]string{"  sloc_z", "sloc_a"})
 	require.NoError(t, err)
-	assert.Equal(t, []string{"sloc_a", "  sloc_z"}, sirali,
-		"sıra kırpılmış kimliğe göre kurulmalı ama elemanlar çağıranın dizeleri kalmalı")
+	assert.Equal(t, []string{"sloc_a", "  sloc_z"}, ranked,
+		"the order has to be built by the trimmed identifier but the elements have to stay the caller's strings")
 }
 
-// TestRankLocationsDogrulamaSirasiCivilenmistir hangi hatanın kazandığını
-// sabitler.
+// TestRankLocationsValidationOrderIsPinned pins which error wins.
 //
-// Üçüncü satır asıl olandır: her iki girdi de bozukken çağıranın hangi hatayı
-// göreceği bir SEÇİMDİR ve yazılmazsa denetimlerin yeri değiştiğinde sessizce
-// değişir. Boş aday listesi önce gelir, çünkü o bir DÜNYA durumudur (Conflict)
-// ve çağıranın "sipariş verilemez" dalı ona bağlıdır; boş bölge ise bir çağıran
-// kusurudur ve bu paketin tek üretim çağıranında zaten oluşamaz.
-func TestRankLocationsDogrulamaSirasiCivilenmistir(t *testing.T) {
+// The third block is the real one: when both inputs are malformed, which error
+// the caller sees is a CHOICE, and if it is not written down it changes silently
+// the day the checks move. The empty candidate list comes first, because it is a
+// WORLD state (Conflict) and the caller's "the order cannot be placed" branch
+// hangs off it; an empty region, on the other hand, is a caller defect and cannot
+// even arise in this package's single production caller.
+func TestRankLocationsValidationOrderIsPinned(t *testing.T) {
 	t.Parallel()
 
-	kurulum := yeniKurulum(t)
+	setup := newSetup(t)
 	ctx := context.Background()
 
-	_, err := kurulum.svc.RankLocations(ctx, "", []string{"sloc_a"})
+	_, err := setup.svc.RankLocations(ctx, "", []string{"sloc_a"})
 	require.Error(t, err)
-	assert.True(t, errors.IsInvalid(err), "bölge boşken Invalid: %v", err)
+	assert.True(t, errors.IsInvalid(err), "Invalid when the region is empty: %v", err)
 
-	_, err = kurulum.svc.RankLocations(ctx, testRegionID, nil)
+	_, err = setup.svc.RankLocations(ctx, testRegionID, nil)
 	require.Error(t, err)
 	assert.Equal(t, service.CodeNoShippingLocation, errors.CodeOf(err),
-		"aday boşken Conflict/CodeNoShippingLocation: %v", err)
+		"Conflict/CodeNoShippingLocation when the candidates are empty: %v", err)
 
-	_, err = kurulum.svc.RankLocations(ctx, "", nil)
+	_, err = setup.svc.RankLocations(ctx, "", nil)
 	require.Error(t, err)
 	assert.Equal(t, service.CodeNoShippingLocation, errors.CodeOf(err),
-		"İKİSİ DE boşken aday denetimi kazanır; sıra bilinçlidir ve burada çivilenir: %v", err)
+		"when BOTH are empty the candidate check wins; the order is deliberate and is pinned here: %v", err)
 }
 
-// TestDepoPolitikasiOkumaVeSilmeBosKimligiReddeder yalnızca boşluk taşıyan bir
-// lokasyon kimliğinin veritabanına hiç gitmediğini kanıtlar.
+// TestPolicyReadAndDeleteRejectAnEmptyIdentifier proves that a location
+// identifier carrying nothing but whitespace never reaches the database.
 //
-// Denetim olmasaydı boş kimlik depoya iner ve NotFound olarak geri dönerdi:
-// istemci "böyle bir politika yok" görür, oysa gerçek kusur kendi isteğindedir.
-// Kardeş denetim yazma yolunda sınanıyor; okuma ve silme yolları da aynı
-// güvenceyi vermelidir.
-func TestDepoPolitikasiOkumaVeSilmeBosKimligiReddeder(t *testing.T) {
+// Without the check the empty identifier would go down to the store and come back
+// as NotFound: the client would see "there is no such policy", while the real
+// defect is in its own request. The sibling check is exercised on the write path;
+// the read and delete paths have to give the same guarantee.
+func TestPolicyReadAndDeleteRejectAnEmptyIdentifier(t *testing.T) {
 	t.Parallel()
 
-	kurulum := yeniKurulum(t)
+	setup := newSetup(t)
 	ctx := context.Background()
 
-	for _, kimlik := range []string{"", "   "} {
-		_, err := kurulum.svc.GetShippingLocation(ctx, kimlik)
-		require.Error(t, err, "okuma boş kimliği reddetmeli: %q", kimlik)
-		assert.True(t, errors.IsInvalid(err), "okuma hatası Invalid olmalı: %v", err)
+	for _, id := range []string{"", "   "} {
+		_, err := setup.svc.GetShippingLocation(ctx, id)
+		require.Error(t, err, "the read has to reject an empty identifier: %q", id)
+		assert.True(t, errors.IsInvalid(err), "the read error has to be Invalid: %v", err)
 
-		err = kurulum.svc.DeleteShippingLocation(ctx, kimlik)
-		require.Error(t, err, "silme boş kimliği reddetmeli: %q", kimlik)
-		assert.True(t, errors.IsInvalid(err), "silme hatası Invalid olmalı: %v", err)
+		err = setup.svc.DeleteShippingLocation(ctx, id)
+		require.Error(t, err, "the delete has to reject an empty identifier: %q", id)
+		assert.True(t, errors.IsInvalid(err), "the delete error has to be Invalid: %v", err)
 	}
 }

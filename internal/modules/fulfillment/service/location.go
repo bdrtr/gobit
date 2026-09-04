@@ -10,51 +10,55 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/fulfillment/models"
 )
 
-// maxLocationRegions bir depoya bağlanabilecek azami bölge sayısıdır. Sınır,
-// tek bir isteğin sınırsız satır yazmasını engeller.
+// maxLocationRegions is the largest number of regions that can be bound to a
+// single warehouse. The bound prevents a single request from writing unbounded
+// rows.
 const maxLocationRegions = 100
 
-// SetShippingLocationInput bir deponun kargo politikasıdır.
+// SetShippingLocationInput is the shipping policy of a warehouse.
 //
-// Girdi TOPTANDIR: verilen alanların hepsi MUTLAK değerlerdir ve eksik verilen
-// bir alan "değiştirme" anlamına GELMEZ. Bölge listesi boş verilirse deponun
-// tüm bölge bağları SİLİNİR ve depo tüm bölgelere hizmet eder hâle gelir —
-// "bölgeleri olduğu gibi bırak" diye bir ifade yoktur. Alternatifi, boş dilim
-// ile nil dilimi ayırt eden bir yüzeydi; o ayrım JSON'dan geçerken kaybolur ve
-// istemcinin gönderdiğini sandığı şeyle sunucunun yaptığı şey ayrışırdı.
+// The input is WHOLESALE: every field given is an ABSOLUTE value, and a field
+// left out DOES NOT mean "do not change it". If the region list is given empty,
+// all of the warehouse's region links are DELETED and the warehouse comes to
+// serve every region — there is no way to say "leave the regions as they are".
+// The alternative was a surface that told an empty slice apart from a nil slice;
+// that distinction is lost while passing through JSON and what the client
+// believed it sent would diverge from what the server did.
 type SetShippingLocationInput struct {
-	// LocationID politikanın yazılacağı stok lokasyonudur.
+	// LocationID is the stock location the policy will be written for.
 	//
-	// Deponun VAR OLDUĞU doğrulanmaz: bu modül stok modülünü bilmez ve bir
-	// lokasyon kimliğinin geçerliliğini soracağı kimse yoktur. Var olmayan bir
-	// depo için yazılmış politika ZARARSIZDIR — seçim yalnızca stok modülünün
-	// ÜRETTİĞİ adayları eler ve sıralar, kümeye eleman ekleyemez.
+	// It IS NOT verified that the warehouse EXISTS: this module does not know
+	// the stock module and there is nobody it could ask whether a location
+	// identifier is valid. A policy written for a warehouse that does not exist
+	// is HARMLESS — the selection only eliminates and orders the candidates the
+	// stock module PRODUCED; it cannot add an element to the set.
 	LocationID string
-	// Priority tercih sırasıdır; KÜÇÜK OLAN KAZANIR. Sıfır varsayılandır ve
-	// politikası hiç olmayan bir depoyla aynı sıraya denk gelir; bir depoyu
-	// varsayılanların üstüne çıkarmak için NEGATİF değer verilir.
+	// Priority is the preference order; THE SMALLER ONE WINS. Zero is the
+	// default and coincides with the same rank as a warehouse that has no policy
+	// at all; to lift a warehouse above the defaults, a NEGATIVE value is given.
 	Priority int64
-	// RegionIDs deponun hizmet ettiği kargo bölgeleridir. BOŞ verilirse depo
-	// TÜM bölgelere hizmet eder (bkz. [Service.RankLocations]).
+	// RegionIDs are the shipping regions the warehouse serves. If given EMPTY,
+	// the warehouse serves ALL regions (see [Service.RankLocations]).
 	//
-	// SIRASI ANLAMSIZDIR: bağlar bir küme kurar ve okuma yolu onları daima
-	// kimliğe göre sıralı döner. Yinelenen kimlik hata değildir, elenir.
+	// THEIR ORDER IS MEANINGLESS: the links form a set and the read path always
+	// returns them sorted by identifier. A repeated identifier is not an error;
+	// it is dropped.
 	RegionIDs []string
 }
 
-// SetShippingLocation bir deponun kargo politikasını yazar ya da üzerine yazar.
+// SetShippingLocation writes, or overwrites, a warehouse's shipping policy.
 //
-// Öncelik ile bölge bağları AYNI işlemde yazılır. Ayrı yazılsalardı araya giren
-// bir seçim, depoyu yeni önceliğiyle ama eski bölgeleriyle görürdü; daha kötüsü,
-// bağlar silinmişken henüz yazılmamışken görülen depo BÜTÜN bölgelere açık
-// olurdu ve kapsamı daraltmak için yapılan bir düzenleme, bir an için onu
-// genişletirdi.
+// The priority and the region links are written in THE SAME transaction. Had
+// they been written separately, an interleaving selection would see the
+// warehouse with its new priority but its old regions; worse, a warehouse seen
+// while the links were deleted but not yet written would be open to ALL regions,
+// and an edit made to narrow the scope would, for a moment, widen it.
 func (s *Service) SetShippingLocation(
 	ctx context.Context,
 	in SetShippingLocationInput,
 ) (models.ShippingLocation, error) {
 	locationID := strings.TrimSpace(in.LocationID)
-	if err := requireText("lokasyon kimliği", locationID); err != nil {
+	if err := requireText("the location identifier", locationID); err != nil {
 		return models.ShippingLocation{}, err
 	}
 
@@ -82,34 +86,35 @@ func (s *Service) SetShippingLocation(
 		return models.ShippingLocation{}, txErr
 	}
 
-	s.log.InfoContext(ctx, "depo kargo politikası yazıldı",
+	s.log.InfoContext(ctx, "the warehouse shipping policy was written",
 		"location_id", locationID, "priority", in.Priority, "regions", len(regions))
 	return out, nil
 }
 
-// GetShippingLocation deponun politikasını bölgeleriyle döner.
+// GetShippingLocation returns the warehouse's policy with its regions.
 //
-// Politikası olmayan depo için NotFound döner ve bu, "böyle bir depo yok"
-// DEMEK DEĞİLDİR: bu modül depoların varlığını bilmez, yalnızca kendi kaydının
-// bulunmadığını bildirir. Politikasız bir depo seçimde geçerlidir ve
-// varsayılan davranışı görür.
+// NotFound is returned for a warehouse that has no policy, and that DOES NOT
+// MEAN "there is no such warehouse": this module does not know whether
+// warehouses exist, it only reports that it has no record of its own. A
+// warehouse without a policy is valid in the selection and gets the default
+// behavior.
 func (s *Service) GetShippingLocation(
 	ctx context.Context,
 	locationID string,
 ) (models.ShippingLocation, error) {
 	trimmed := strings.TrimSpace(locationID)
-	if err := requireText("lokasyon kimliği", trimmed); err != nil {
+	if err := requireText("the location identifier", trimmed); err != nil {
 		return models.ShippingLocation{}, err
 	}
 	return s.store.GetShippingLocation(ctx, trimmed)
 }
 
-// ListShippingLocations yazılmış politikaları öncelik sırasıyla döner; ikinci
-// değer TÜM satırların sayısıdır.
+// ListShippingLocations returns the written policies in priority order; the
+// second value is the count of ALL rows.
 //
-// Liste yalnızca POLİTİKASI OLAN depoları içerir. Kurulumdaki depoların tam
-// listesi stok modülündedir ve buradan görünmez; iki listeyi birleştirmek
-// yönetim yüzeyinin işidir.
+// The list contains only the warehouses THAT HAVE A POLICY. The full list of the
+// warehouses in the setup lives in the stock module and is not visible from
+// here; combining the two lists is the admin surface's job.
 func (s *Service) ListShippingLocations(
 	ctx context.Context,
 	page Page,
@@ -124,128 +129,145 @@ func (s *Service) ListShippingLocations(
 	})
 }
 
-// DeleteShippingLocation deponun politikasını siler; yoksa NotFound.
+// DeleteShippingLocation deletes the warehouse's policy; NotFound if absent.
 //
-// Silmek depoyu KAPATMAZ, VARSAYILANA DÖNDÜRÜR: kaydı olmayan depo sıfır
-// öncelikte ve tüm bölgelere hizmet ediyor sayılır. Bir depoyu adaylıktan
-// çıkarmak kargo modülünün yetkisinde değildir — aday listesini stok olgusu
-// üretir.
+// Deleting DOES NOT CLOSE the warehouse, it RETURNS IT TO THE DEFAULT: a
+// warehouse with no record is taken to be at priority zero and to serve every
+// region. Removing a warehouse from candidacy is not within the shipping
+// module's authority — the candidate list is produced by a stock fact.
 func (s *Service) DeleteShippingLocation(ctx context.Context, locationID string) error {
 	trimmed := strings.TrimSpace(locationID)
-	if err := requireText("lokasyon kimliği", trimmed); err != nil {
+	if err := requireText("the location identifier", trimmed); err != nil {
 		return err
 	}
 	if err := s.store.DeleteShippingLocation(ctx, trimmed); err != nil {
 		return err
 	}
-	s.log.InfoContext(ctx, "depo kargo politikası silindi", "location_id", trimmed)
+	s.log.InfoContext(ctx, "the warehouse shipping policy was deleted", "location_id", trimmed)
 	return nil
 }
 
-// RankLocations adayları TERCİH SIRASINA dizer: gönderi ilkinden çıkar.
+// RankLocations lines the candidates up in PREFERENCE ORDER: the fulfillment
+// leaves from the first one.
 //
-// # Karar burada durur çünkü bir KARGO kararıdır
+// # The decision stops here because it is a SHIPPING decision
 //
-// Hangi depodan gönderileceği bir kargo kararıdır; kuralları kargo bölgesine ve
-// işletmecinin tercih sırasına bakar. "Hangi lokasyonlarda yeterli stok var" ise
-// bir STOK OLGUSUDUR ve stok modülünün yüzeyinden gelir. İş bölümü bilinçlidir:
-// iki yarıyı tek modülde toplamak, stok sorgusunu kargo politikasına ya da
-// kargo politikasını stok şemasına bağımlı kılardı.
+// Which warehouse to ship from is a shipping decision; its rules look at the
+// shipping region and at the operator's preference order. "Which locations have
+// enough stock", on the other hand, is a STOCK FACT and comes from the stock
+// module's surface. The division of labor is deliberate: gathering the two
+// halves into one module would make the stock query depend on the shipping
+// policy, or the shipping policy depend on the stock schema.
 //
-// Sepet akışı bu yüzden sırayı KENDİ kurmaz: adayları stoktan alır, sırayı
-// buraya sorar.
+// That is why the cart flow does not build the order ITSELF: it takes the
+// candidates from stock and asks here for the order.
 //
-// # Neden tek lokasyon değil SIRA döner
+// # Why an ORDER is returned rather than a single location
 //
-// Çağıran ilk depoda ayırmayı deneyip başarısız olabilir: adaylar kilitsiz
-// okunur ve seçilen depo aradaki pencerede tükenebilir. Tek lokasyon dönseydi
-// çağıranın geri düşecek yeri kalmaz ya da her tükenişte bu yüzey YENİDEN
-// çağrılır, aynı kayıtlar aynı sıra için tekrar tekrar okunurdu. Sıra bir kez
-// hesaplanır; ikinci, üçüncü denemenin bedeli sıfırdır.
+// The caller may try to reserve at the first warehouse and fail: the candidates
+// are read without a lock and the chosen warehouse can run out in the window in
+// between. Had a single location been returned, the caller would have nowhere to
+// fall back to, or this surface would be called AGAIN on every stock-out and the
+// same records would be read over and over for the same order. The order is
+// computed once; the cost of the second and third attempt is zero.
 //
-// # Politika: ELE, SIRALA, EŞİTLİĞİ BOZ
+// # Policy: ELIMINATE, RANK, BREAK THE TIE
 //
-// Sırayla:
+// In order:
 //
-//  1. ELEME — bir depoya en az bir bölge bağlanmışsa ve destinationRegionID
-//     onların arasında DEĞİLSE aday düşer. Hiç bölge bağlanmamış depo TÜM
-//     bölgelere hizmet eder ve elenmez.
-//  2. SIRALAMA — kalanlar [models.LocationPolicy.Priority] küçükten büyüğe
-//     dizilir. Politika kaydı olmayan depo sıfır önceliktedir, yani önceliği
-//     açıkça sıfır yazılmış bir depoyla AYNI sıradadır.
-//  3. EŞİTLİK BOZMA — eşit öncelikte kimliği küçük olan öne geçer.
+//  1. ELIMINATION — if at least one region is bound to a warehouse and
+//     destinationRegionID is NOT among them, the candidate drops. A warehouse
+//     with no region bound to it serves ALL regions and is not eliminated.
+//  2. RANKING — the remaining ones are lined up by
+//     [models.LocationPolicy.Priority] from smallest to largest. A warehouse with
+//     no policy record is at priority zero, that is, at THE SAME rank as a
+//     warehouse whose priority is explicitly written as zero.
+//  3. TIE BREAKING — at equal priority the smaller identifier goes first.
 //
-// Politika kaydı hiç yoksa üç adımın sonucu tek başına üçüncü adımdır: sıranın
-// başı, bu politikanın eklenmesinden ÖNCEKİ seçimin ta kendisidir.
+// If there is no policy record at all, the result of the three steps is the third
+// step alone: the head of the order is exactly the selection that was made
+// BEFORE this policy was added.
 //
-// # Dönen dilim girdinin ALT KÜMESİDİR
+// # The returned slice is a SUBSET of the input
 //
-// Elemanlar candidateLocationIDs'in elemanlarıyla BİREBİR aynı dizelerdir;
-// normalleştirilmiş bir kopya ya da politika satırından okunmuş bir eş DEĞİL.
-// Eşleştirme baştaki ve sondaki boşluklar atılarak yapılır ama dönen değer yine
-// çağıranın verdiği dizedir: çağıran sonucu kendi aday defterinde arar ve
-// bulamazsa akışı bir iç hata olarak düşürür.
+// The elements are EXACTLY the same strings as the elements of
+// candidateLocationIDs; not a normalized copy and not a twin read from the policy
+// row. The matching is done with the leading and trailing whitespace stripped,
+// but the returned value is still the string the caller gave: the caller looks
+// the result up in its own candidate ledger and, if it cannot find it, drops the
+// flow as an internal error.
 //
-// Aynı aday dilimde iki kez geçmez.
+// The same candidate never appears twice in the slice.
 //
-// # Neyi GARANTİ ETMEZ
+// # What it DOES NOT GUARANTEE
 //
-// Üç şey bu yüzeyin dışındadır ve okuyucu onları buradan beklememelidir:
+// Three things are outside this surface and the reader must not expect them from
+// it:
 //
-//   - Stok DAĞILIMI karara girmez. "En çok stoğu olan depoyu öne al" ifade
-//     edilemez. Veri stok modülünde VARDIR — aday listesini üretirken lokasyon
-//     başına satılabilir adedi zaten hesaplar — ama modüller arası İLKEL
-//     yüzeyde yoktur ve oraya eklemek, stok modülünün "mağazaya lokasyon
-//     kırılımı sızmaz" sınırıyla temas eder. İkinci ve daha ağır sebep
-//     determinizmdir: politika işletmecinin AYARIDIR ve değişmesi beklenen bir
-//     sonuçtur, oysa stok hızlı değişen bir olgudur ve aynı savunma orada
-//     çalışmaz.
-//   - MALİYET karara girmez. Depo ile taşıyıcı arasında bir tarife modeli
-//     yoktur; yazılsaydı dayandığı veri uydurma olurdu.
-//   - Sipariş DÜZEYİNDE bir karar verilmez. Sıra SATIR başına sorulur ve bu
-//     yüzey sepetin tamamını görmez; "tüm satırları tek depodan çıkar" ya da
-//     "gönderi sayısını azalt" burada ifade edilemez.
+//   - The stock DISTRIBUTION does not enter the decision. "Put the warehouse
+//     with the most stock first" cannot be expressed. The data DOES EXIST in the
+//     stock module — it already computes the sellable count per location while
+//     producing the candidate list — but it is not on the cross-module PRIMITIVE
+//     surface, and adding it there would touch the stock module's "no location
+//     breakdown leaks to the storefront" boundary. The second and heavier reason
+//     is determinism: the policy is the operator's SETTING and its changing is an
+//     expected consequence, whereas stock is a fast-changing fact and the same
+//     defense does not work there.
+//   - COST does not enter the decision. There is no tariff model between a
+//     warehouse and a carrier; had one been written, the data it rested on would
+//     be made up.
+//   - No decision is made at the ORDER LEVEL. The order is asked for PER LINE and
+//     this surface does not see the whole cart; "take all the lines out of a
+//     single warehouse" or "reduce the number of shipments" cannot be expressed
+//     here.
 //
-// "Yakınlık" bu sistemde coğrafi mesafe DEĞİL, kargo bölgesi kapsamıdır:
-// depoların koordinatı yoktur ve uydurulmadı.
+// In this system "proximity" is NOT geographic distance but shipping region
+// coverage: warehouses have no coordinates and none were made up.
 //
-// # Sıra deterministiktir, ama neye göre
+// # The order is deterministic, but with respect to what
 //
-// Aynı adaylar VE aynı politika kayıtlarıyla ikinci çağrı aynı sırayı döner;
-// sonuç adayların GELİŞ SIRASINDAN bağımsızdır. İşletmeci politikayı iki çağrı
-// arasında değiştirirse sıra da değişir — bu bir ayarın beklenen sonucudur ve
-// determinizm iddiası onu KAPSAMAZ.
+// With the same candidates AND the same policy records, a second call returns
+// the same order; the result is independent of the ARRIVAL ORDER of the
+// candidates. If the operator changes the policy between two calls the order
+// changes too — that is the expected consequence of a setting and the
+// determinism claim DOES NOT COVER it.
 //
-// Aday dilimi sıralanmaz, KOPYALANIR: yerinde sıralamak çağıranın dilimini
-// bozmak olurdu ve bir karar yüzeyi kendisine verilen veriyi değiştiremez.
+// The candidate slice is not sorted, it is COPIED: sorting it in place would be
+// corrupting the caller's slice, and a decision surface cannot modify the data
+// it is handed.
 //
-// # Boş sonuç Conflict'tir
+// # An empty result is a Conflict
 //
-// İki ayrı boşluk vardır ve ikisi de errors.Conflict döner:
+// There are two separate emptinesses and both return errors.Conflict:
 //
-//   - Aday listesi BOŞ gelirse [CodeNoShippingLocation]. Eksik olan dünyanın
-//     durumudur, isteğin biçimi değil; errors.Invalid yanlış olurdu.
-//   - Tüm adaylar ELENİRSE [CodeNoServiceableLocation]. Kod ayrıdır çünkü
-//     işletmecinin yapacağı iş de ayrıdır: birincisinde stok yoktur,
-//     ikincisinde depoların bölge kapsamı yanlış kurulmuştur.
+//   - If the candidate list arrives EMPTY, [CodeNoShippingLocation]. What is
+//     missing is the state of the world, not the shape of the request;
+//     errors.Invalid would have been wrong.
+//   - If ALL the candidates ARE ELIMINATED, [CodeNoServiceableLocation]. The code
+//     is separate because the work the operator has to do is separate too: in the
+//     first there is no stock, in the second the region coverage of the
+//     warehouses is set up wrong.
 //
-// Sınıfın Conflict olması iki şeyi birden belirler ve ikisi de ölçülebilir:
-// hatanın HTTP karşılığı (çağıran hatayı sararken sınıfı korur, 409) ve
-// yeniden denenebilirliği (motorun varsayılan yüklemi KindConflict'i DENEMEZ,
-// KindInternal'ı dener). Elenmiş bir aday kümesi tekrar denemekle değişmez;
-// Internal seçilseydi, telafi yeniden deneme açıldığı gün işletmecinin elle
-// düzeltmesi gereken bir yapılandırma hatası geçici arıza sanılıp tekrarlanırdı.
+// The kind being Conflict determines two things at once and both are measurable:
+// the error's HTTP counterpart (the caller preserves the kind while wrapping the
+// error, 409) and its retryability (the engine's default predicate DOES NOT RETRY
+// KindConflict, it retries KindInternal). An eliminated candidate set does not
+// change by trying again; had Internal been chosen, a configuration error the
+// operator has to fix by hand would be mistaken for a transient fault and
+// repeated the day compensation retries were switched on.
 //
-// Kod ÇAĞIRANA ulaşır: sepet akışı adım hatasını sararken alt hatanın kodunu
-// DEVRALIR, yani vitrin istemcisinin gövdede gördüğü kod buradakidir. Bu bir
-// varsayım değil, sepet akışının yazılı sözleşmesidir ve ölçülmüş bir sebebi
-// vardır — kod ezilseydi dolu raflarla "stok ayrılamadı" raporlanırdı.
+// The code REACHES THE CALLER: while wrapping a step failure the cart flow
+// INHERITS the underlying error's code, which means the code the storefront
+// client sees in the body is the one from here. This is not an assumption but the
+// cart flow's written contract, and it has a measured reason — had the code been
+// overwritten, "stock could not be reserved" would be reported with full shelves.
 //
-// destinationRegionID boşsa errors.Invalid döner. Bu bir SAVUNMADIR: bugünkü
-// tek çağıran sepet akışıdır ve orada bölgesi boş bir plan zaten kurulamaz.
-// Yüzeyin kendini savunmasının sebebi, kapsam değerlendirilemezken elemeyi
-// atlamanın o bölgeye hizmet ETMEYEN bir depoyu sessizce öne almak olmasıdır.
-// Aday listesindeki BOŞ bir kimlik de aynı sebeple reddedilir.
+// If destinationRegionID is empty, errors.Invalid is returned. This is a DEFENSE:
+// today's only caller is the cart flow and a plan with an empty region cannot
+// even be built there. The reason the surface defends itself is that skipping the
+// elimination while the coverage cannot be evaluated would mean silently putting
+// a warehouse that DOES NOT SERVE that region first. An EMPTY identifier in the
+// candidate list is rejected for the same reason.
 func (s *Service) RankLocations(
 	ctx context.Context,
 	destinationRegionID string,
@@ -253,11 +275,11 @@ func (s *Service) RankLocations(
 ) ([]string, error) {
 	if len(candidateLocationIDs) == 0 {
 		return nil, errors.Conflict(CodeNoShippingLocation,
-			"gönderi yapılabilecek lokasyon yok")
+			"there is no location the fulfillment can leave from")
 	}
 
 	regionID := strings.TrimSpace(destinationRegionID)
-	if err := requireText("hedef bölge kimliği", regionID); err != nil {
+	if err := requireText("the destination region identifier", regionID); err != nil {
 		return nil, err
 	}
 
@@ -267,9 +289,9 @@ func (s *Service) RankLocations(
 		key := strings.TrimSpace(candidate)
 		if key == "" {
 			return nil, errors.Invalid(CodeInvalidInput,
-				"aday lokasyon kimliği boş olamaz (%d. aday)", i+1)
+				"a candidate location identifier cannot be empty (candidate %d)", i+1)
 		}
-		if err := checkTextLen("aday lokasyon kimliği", key); err != nil {
+		if err := checkTextLen("the candidate location identifier", key); err != nil {
 			return nil, err
 		}
 		candidates = append(candidates, locationCandidate{original: candidate, key: key})
@@ -289,86 +311,92 @@ func (s *Service) RankLocations(
 	ranked := rankLocations(regionID, candidates, policies)
 	if len(ranked) == 0 {
 		return nil, errors.Conflict(CodeNoServiceableLocation,
-			"%s bölgesine hizmet eden depo yok; elenen adaylar: %s",
-			regionID, elenenlerOzeti(candidates, policies))
+			"no warehouse serves the region %s; the eliminated candidates: %s",
+			regionID, eliminatedSummary(candidates, policies))
 	}
 	return ranked, nil
 }
 
-// elenenlerOzeti hata mesajı için adayların bağlı olduğu bölgeleri yazar.
+// eliminatedSummary writes, for the error message, the regions the candidates
+// are bound to.
 //
-// Özet, elenmenin en sinsi sebebini görünür kılar: ölü bir bölge kimliği.
-// İşletmeci bir bölgeyi silip aynı adla yeniden açarsa kimlik değişir, politika
-// satırları eskisini taşımaya devam eder ve mağazadaki HER sipariş elenir.
-// Yalnızca "hizmet eden depo yok" diyen bir mesajla operatör, kimliklerin
-// ayrıştığını göremezdi.
+// The summary makes the sneakiest cause of elimination visible: a dead region
+// identifier. If the operator deletes a region and reopens it under the same
+// name the identifier changes, the policy rows keep carrying the old one, and
+// EVERY order in the store is eliminated. With a message that only said "no
+// warehouse serves it", the operator could not see that the identifiers had
+// diverged.
 //
-// Özetin NEREDE görüldüğü ayrı bir sorudur ve abartılmamalıdır: vitrin
-// istemcisinin gövdesine yalnızca KOD ulaşır. Bu metin sunucu logunda ve sepet
-// akışının yürütme kaydında durur, yani okuyucusu operatördür.
+// WHERE the summary is seen is a separate question and must not be overstated:
+// only the CODE reaches the storefront client's body. This text stands in the
+// server log and in the cart flow's execution record, which means its reader is
+// the operator.
 //
-// # Çağrıldığında her adayın politikası VARDIR ve bağları DOLUDUR
+// # When it is called, every candidate HAS a policy and its links ARE FILLED IN
 //
-// Fonksiyon yalnızca sıra boş kaldığında çağrılır; sıranın boş kalması her
-// adayın elendiği anlamına gelir ve eleme kuralı yalnızca kaydı OLAN ve bağı
-// DOLU olan adayı düşürür (kaydı olmayan da bağı boş olan da tüm bölgelere
-// hizmet eder). Bu yüzden burada "politikasız" ya da "bağı yok" durumu için dal
-// YOKTUR: yazılsalardı hiçbir zaman koşmayan, dolayısıyla hiçbir zaman
-// sınanamayan iki satır olurlardı.
-func elenenlerOzeti(candidates []locationCandidate, policies map[string]models.LocationPolicy) string {
-	parcalar := make([]string, 0, len(candidates))
+// The function is called only when the order came out empty; the order being
+// empty means every candidate was eliminated, and the elimination rule only drops
+// a candidate that HAS a record and whose links ARE FILLED IN (both a candidate
+// with no record and one with empty links serve every region). That is why there
+// is NO branch here for the "no policy" or "no links" case: had they been
+// written, they would be two lines that never run and therefore can never be
+// exercised.
+func eliminatedSummary(candidates []locationCandidate, policies map[string]models.LocationPolicy) string {
+	parts := make([]string, 0, len(candidates))
 	for _, candidate := range candidates {
 		policy := policies[candidate.key]
-		parcalar = append(parcalar,
+		parts = append(parts,
 			candidate.key+" → ["+strings.Join(policy.RegionIDs, " ")+"]")
 	}
-	return strings.Join(parcalar, ", ")
+	return strings.Join(parts, ", ")
 }
 
-// locationCandidate bir adayın çağırandan gelen HÂLİNİ ve eşleştirmede
-// kullanılan anahtarını birlikte taşır.
+// locationCandidate carries a candidate's FORM as it came from the caller and
+// the key used in the matching together.
 //
-// İkisinin ayrı durması zorunludur: eşleştirme boşluklar atılmış anahtarla
-// yapılır, dönen değer ise çağıranın verdiği dizedir. Tek alan olsaydı
-// " sloc_a " yazan bir çağıran, aday defterinde bulamayacağı "sloc_a" cevabını
-// alırdı.
+// Keeping the two apart is mandatory: the matching is done with the
+// whitespace-stripped key, while the returned value is the string the caller
+// gave. Had there been a single field, a caller that wrote " sloc_a " would get
+// back the answer "sloc_a", which it could not find in its candidate ledger.
 type locationCandidate struct {
 	original string
 	key      string
 }
 
-// rankLocations politikayı adaylara uygular ve tercih sırasını döner.
+// rankLocations applies the policy to the candidates and returns the preference
+// order.
 //
-// Fonksiyon SAFTIR ve veritabanına dokunmaz: kararın kendisi böylece gerçek bir
-// Postgres olmadan, tek tek kurulmuş politika kümeleriyle sınanabilir. Aynı
-// ayrım kargo seçeneği uygunluğunda da yapılır — ucuz eleme SQL'de, kuralın
-// kendisi burada.
+// The function is PURE and does not touch the database: the decision itself can
+// thereby be exercised without a real Postgres, with policy sets built one by
+// one. The same split is made in shipping option eligibility — the cheap
+// elimination in SQL, the rule itself here.
 //
-// policies YALNIZCA kaydı olan adayları taşır; haritada bulunmayan aday
-// varsayılandır (sıfır öncelik, tüm bölgelere hizmet). Ayrım burada yapılır
-// çünkü "kayıt yok" ile "kaydı var ama önceliği sıfır" AYNI sonucu vermelidir
-// ve sorgunun bunu bilmesi gerekmez.
+// policies carries ONLY the candidates that have a record; a candidate absent
+// from the map is at the default (zero priority, serves every region). The
+// distinction is made here because "no record" and "has a record but its priority
+// is zero" have to give THE SAME result, and the query does not need to know
+// that.
 //
-// Sıralama KARARLIDIR ve iki anahtarlıdır (öncelik, sonra anahtar); anahtar
-// adaylar arasında tek olduğu için sonuç, girdinin sırasından bağımsızdır.
+// The sort is STABLE and has two keys (priority, then key); because the key is
+// unique among the candidates, the result is independent of the input's order.
 func rankLocations(
 	regionID string,
 	candidates []locationCandidate,
 	policies map[string]models.LocationPolicy,
 ) []string {
-	type sirali struct {
+	type rankedCandidate struct {
 		original string
 		key      string
 		priority int64
 	}
 
-	kalan := make([]sirali, 0, len(candidates))
-	gorulen := make(map[string]struct{}, len(candidates))
+	remaining := make([]rankedCandidate, 0, len(candidates))
+	seen := make(map[string]struct{}, len(candidates))
 	for _, candidate := range candidates {
-		if _, dup := gorulen[candidate.key]; dup {
+		if _, dup := seen[candidate.key]; dup {
 			continue
 		}
-		gorulen[candidate.key] = struct{}{}
+		seen[candidate.key] = struct{}{}
 
 		policy, configured := policies[candidate.key]
 		if configured && !policy.ServesRegion(regionID) {
@@ -379,41 +407,41 @@ func rankLocations(
 		if configured {
 			priority = policy.Priority
 		}
-		kalan = append(kalan, sirali{
+		remaining = append(remaining, rankedCandidate{
 			original: candidate.original,
 			key:      candidate.key,
 			priority: priority,
 		})
 	}
 
-	slices.SortFunc(kalan, func(a, b sirali) int {
+	slices.SortFunc(remaining, func(a, b rankedCandidate) int {
 		if a.priority != b.priority {
 			return cmp.Compare(a.priority, b.priority)
 		}
 		return strings.Compare(a.key, b.key)
 	})
 
-	out := make([]string, 0, len(kalan))
-	for _, aday := range kalan {
-		out = append(out, aday.original)
+	out := make([]string, 0, len(remaining))
+	for _, candidate := range remaining {
+		out = append(out, candidate.original)
 	}
 	return out
 }
 
-// normalizeRegionIDs bölge kimliklerini doğrular ve YİNELENENLERİ eler.
+// normalizeRegionIDs validates the region identifiers and drops the DUPLICATES.
 //
-// Yinelenen bir kimlik hata değildir: "aynı bölgeyi iki kez bağla" ifadesi tek
-// kez bağlamakla aynı sonucu verir ve çağıranı bir çakışma hatasıyla
-// karşılamak, düzeltilecek bir şey olmadığı hâlde isteği düşürürdü.
+// A repeated identifier is not an error: saying "bind the same region twice"
+// gives the same result as binding it once, and meeting the caller with a
+// conflict error would drop the request even though there is nothing to fix.
 //
-// Girdinin SIRASI ANLAMSIZDIR ve korunmaz: bölge bağları bir küme kurar, bir
-// liste değil. Okuma yolu onları daima KİMLİĞE göre sıralı döner, yani aynı
-// kümeyi farklı sırayla yazan iki istek aynı kaydı üretir. Bu fonksiyonun
-// eleme sırası yalnızca kendi içinde kararlıdır.
+// The ORDER of the input IS MEANINGLESS and is not preserved: region links form a
+// set, not a list. The read path always returns them sorted BY IDENTIFIER, which
+// means two requests writing the same set in different orders produce the same
+// record. This function's elimination order is stable only within itself.
 func normalizeRegionIDs(regionIDs []string) ([]string, error) {
 	if len(regionIDs) > maxLocationRegions {
 		return nil, errors.Invalid(CodeInvalidInput,
-			"bir depoya en fazla %d bölge bağlanabilir: %d", maxLocationRegions, len(regionIDs))
+			"at most %d regions can be bound to a warehouse: %d", maxLocationRegions, len(regionIDs))
 	}
 
 	seen := make(map[string]struct{}, len(regionIDs))
@@ -422,9 +450,9 @@ func normalizeRegionIDs(regionIDs []string) ([]string, error) {
 		trimmed := strings.TrimSpace(regionID)
 		if trimmed == "" {
 			return nil, errors.Invalid(CodeInvalidInput,
-				"bölge kimliği boş olamaz (%d. bölge)", i+1)
+				"a region identifier cannot be empty (region %d)", i+1)
 		}
-		if err := checkTextLen("bölge kimliği", trimmed); err != nil {
+		if err := checkTextLen("the region identifier", trimmed); err != nil {
 			return nil, err
 		}
 		if _, dup := seen[trimmed]; dup {

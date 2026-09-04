@@ -1,14 +1,16 @@
--- 000002_shipping_locations'ın geri alınması.
+-- Rollback of 000002_shipping_locations.
 --
--- Tablolar bağımlılık sırasının TERSİNDE düşürülür: önce referans veren
--- (shipping_location_regions), sonra referans verilen (shipping_locations).
--- İndeksler tabloyla birlikte düşer, ayrıca DROP edilmez.
+-- The tables are dropped in the REVERSE of dependency order: first the one that
+-- references (shipping_location_regions), then the referenced one
+-- (shipping_locations). Indexes drop together with the table and are not
+-- DROPped separately.
 --
--- Geri alma politikanın VERİSİNİ de siler ve bu kaçınılmazdır: veri yalnızca
--- bu iki tabloda durur. Şemayı 000001'deki hâline döndürmek, seçimi de o
--- günkü kuralına ("kimliği en küçük aday") döndürür — kod tarafında geri
--- düşüş zaten aynı yolu izler, çünkü politika satırı olmayan depo varsayılan
--- öncelikte ve tüm bölgelere hizmet ediyor sayılır.
+-- The rollback deletes the policy's DATA as well and that is unavoidable: the
+-- data sits only in these two tables. Returning the schema to its state in
+-- 000001 also returns selection to that day's rule ("the candidate with the
+-- smallest id") — the fallback on the code side already follows the same path,
+-- because a warehouse without a policy row is counted as being at the default
+-- priority and serving all regions.
 
 DROP TABLE IF EXISTS shipping_location_regions;
 DROP TABLE IF EXISTS shipping_locations;

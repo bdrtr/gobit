@@ -14,23 +14,24 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/product/service"
 )
 
-// Bu dosya "product.interop" yüzeyini sınar.
+// This file tests the "product.interop" surface.
 //
-// En önemli iddia KANAL SÜZMESİDİR: bu yüzey aramanın kataloğa açılan kapısıdır
-// ve süzme burada uygulanmazsa arama, vitrinin görünürlük kuralının BYPASS'ı
-// hâline gelir — bir istemci kendi kanalında satılmayan ürünün kaydını arama
-// üzerinden okuyabilirdi.
+// The most important assertion is THE CHANNEL FILTERING: this surface is the
+// door search opens onto the catalog, and if the filtering is not applied here
+// search becomes a BYPASS of the storefront's visibility rule — a client could
+// read the record of a product that is not sold in its own channel through
+// search.
 
-// interopFixture yüzey testlerinin ortak kurulumudur.
+// interopFixture is the shared setup of the surface tests.
 type interopFixture struct {
-	// store depo çağrılarını sayar; "kayıt başına sorgu yapılmıyor" iddiasının
-	// kanıtı budur.
+	// store counts the repository calls; it is the evidence for the claim "no
+	// query is made per record".
 	store   *memStore
 	svc     *service.Service
 	interop *service.Interop
 }
 
-// newInteropFixture yayında ürünler kurulabilen bir yüzey üretir.
+// newInteropFixture builds a surface with published products that can be set up.
 func newInteropFixture(t *testing.T) interopFixture {
 	t.Helper()
 
@@ -40,7 +41,7 @@ func newInteropFixture(t *testing.T) interopFixture {
 	return interopFixture{svc: svc, interop: service.NewInterop(svc), store: store}
 }
 
-// products yüzeyi çağırır ve dönen vitrin kayıtlarını çözer.
+// products calls the surface and decodes the storefront records it returns.
 func (f interopFixture) products(t *testing.T, request string) []map[string]any {
 	t.Helper()
 
@@ -50,11 +51,11 @@ func (f interopFixture) products(t *testing.T, request string) []map[string]any 
 	var out struct {
 		Products []map[string]any `json:"products"`
 	}
-	require.NoError(t, json.Unmarshal(body, &out), "yanıt: %s", string(body))
+	require.NoError(t, json.Unmarshal(body, &out), "response: %s", string(body))
 	return out.Products
 }
 
-// ids dönen kayıtların kimliklerini SIRASIYLA verir.
+// ids gives the ids of the returned records IN ORDER.
 func ids(records []map[string]any) []string {
 	out := make([]string, 0, len(records))
 	for _, rec := range records {
@@ -64,223 +65,228 @@ func ids(records []map[string]any) []string {
 	return out
 }
 
-// TestInteropKanalSuzmesiniUygular yüzeyin satış kanalı süzgecini gerçekten
-// uyguladığını doğrular: BAŞKA bir kanalın ürünü, kimliği açıkça istense bile
-// DÖNMEZ.
+// TestInteropAppliesTheChannelFilter verifies that the surface really applies
+// the sales channel filter: the product of ANOTHER channel is NOT RETURNED even
+// when its id is asked for explicitly.
 //
-// Kural vitrindekiyle aynıdır: ataması olmayan ürün her kanalda görünür,
-// ataması olan yalnızca atandığı kanallarda.
-func TestInteropKanalSuzmesiniUygular(t *testing.T) {
+// The rule is the same as in the storefront: a product with no assignment is
+// visible in every channel, a product that has one only in the channels it is
+// assigned to.
+func TestInteropAppliesTheChannelFilter(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
 	fx := newInteropFixture(t)
 
-	bizim := seedProduct(t, fx.svc, "bizim", "Bizim ürün")
-	baskasi := seedProduct(t, fx.svc, "baskasi", "Başka kanalın ürünü")
-	atamasiz := seedProduct(t, fx.svc, "atamasiz", "Atamasız ürün")
+	ours := seedProduct(t, fx.svc, "ours", "Our product")
+	theirs := seedProduct(t, fx.svc, "theirs", "Another channel's product")
+	unassigned := seedProduct(t, fx.svc, "unassigned", "Unassigned product")
 
-	require.NoError(t, fx.svc.AddProductSalesChannel(ctx, bizim.ID, "sc_bizim"))
-	require.NoError(t, fx.svc.AddProductSalesChannel(ctx, baskasi.ID, "sc_baska"))
+	require.NoError(t, fx.svc.AddProductSalesChannel(ctx, ours.ID, "sc_ours"))
+	require.NoError(t, fx.svc.AddProductSalesChannel(ctx, theirs.ID, "sc_theirs"))
 
-	istek := fmt.Sprintf(`{"ids": [%q, %q, %q], "sales_channel_ids": ["sc_bizim"]}`,
-		bizim.ID, baskasi.ID, atamasiz.ID)
+	request := fmt.Sprintf(`{"ids": [%q, %q, %q], "sales_channel_ids": ["sc_ours"]}`,
+		ours.ID, theirs.ID, unassigned.ID)
 
-	assert.Equal(t, []string{bizim.ID, atamasiz.ID}, ids(fx.products(t, istek)),
-		"başka kanala atanmış ürün kimliği açıkça istense de dönmemeli")
+	assert.Equal(t, []string{ours.ID, unassigned.ID}, ids(fx.products(t, request)),
+		"a product assigned to another channel should not come back even when its id is asked for explicitly")
 }
 
-// TestInteropKanalsizIstekSuzmez kanal alanı hiç verilmediğinde süzgecin
-// uygulanmadığını doğrular.
+// TestInteropDoesNotFilterARequestWithoutChannels verifies that when the channel
+// field is not given at all the filter is not applied.
 //
-// Anlam vitrin listelemesindekiyle AYNIDIR (bkz. service.StoreListOptions):
-// eksik alan "istek kanal kimliği taşımıyor" demektir ve mağaza kimlik
-// doğrulamasının bağlanmadığı kurulumun karşılığıdır. Boş DİZİ ise farklı bir
-// şey söyler: kimlik var ama kanalı yok — o durumda yalnızca atamasız ürünler
-// kalır.
-func TestInteropKanalsizIstekSuzmez(t *testing.T) {
+// The meaning is the SAME as in the storefront listing (see
+// service.StoreListOptions): a missing field means "the request carries no
+// channel id" and it is the counterpart of a setup where store authentication is
+// not wired up. An empty ARRAY says something different: there is an identity
+// but it has no channels — in that case only the unassigned products remain.
+func TestInteropDoesNotFilterARequestWithoutChannels(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
 	fx := newInteropFixture(t)
 
-	atanmis := seedProduct(t, fx.svc, "atanmis", "Atanmış")
-	atamasiz := seedProduct(t, fx.svc, "atamasiz", "Atamasız")
-	require.NoError(t, fx.svc.AddProductSalesChannel(ctx, atanmis.ID, "sc_bir"))
+	assigned := seedProduct(t, fx.svc, "assigned", "Assigned")
+	unassigned := seedProduct(t, fx.svc, "unassigned", "Unassigned")
+	require.NoError(t, fx.svc.AddProductSalesChannel(ctx, assigned.ID, "sc_one"))
 
-	eksik := fmt.Sprintf(`{"ids": [%q, %q]}`, atanmis.ID, atamasiz.ID)
-	assert.Equal(t, []string{atanmis.ID, atamasiz.ID}, ids(fx.products(t, eksik)),
-		"alan eksikken süzgeç uygulanmamalı")
+	missing := fmt.Sprintf(`{"ids": [%q, %q]}`, assigned.ID, unassigned.ID)
+	assert.Equal(t, []string{assigned.ID, unassigned.ID}, ids(fx.products(t, missing)),
+		"while the field is missing the filter should not be applied")
 
-	bos := fmt.Sprintf(`{"ids": [%q, %q], "sales_channel_ids": []}`, atanmis.ID, atamasiz.ID)
-	assert.Equal(t, []string{atamasiz.ID}, ids(fx.products(t, bos)),
-		"boş dizi 'kanalsız kimlik' demektir; yalnızca atamasız ürün kalmalı")
+	empty := fmt.Sprintf(`{"ids": [%q, %q], "sales_channel_ids": []}`, assigned.ID, unassigned.ID)
+	assert.Equal(t, []string{unassigned.ID}, ids(fx.products(t, empty)),
+		"an empty array means 'an identity with no channels'; only the unassigned product should remain")
 }
 
-// TestInteropBilinmeyenKimligiSessizceAtlar bulunamayan, silinmiş ve yayında
-// olmayan kimliklerin hata değil, eksik kayıt ürettiğini doğrular.
+// TestInteropSkipsUnknownIDsSilently verifies that ids which are not found,
+// deleted or unpublished produce not an error but a missing record.
 //
-// Hata dönmek, aramanın tek bir ürün silindiği için tümüyle düşmesi demek
-// olurdu. Ayrıca "başka kanalda" ile "hiç yok" ÇAĞIRAN İÇİN AYIRT EDİLEMEZ
-// kalır; tekil vitrin ucunun ikisine de NotFound dönmesiyle aynı gerekçe.
-func TestInteropBilinmeyenKimligiSessizceAtlar(t *testing.T) {
+// Returning an error would mean search falling over entirely because a single
+// product was deleted. Besides, "in another channel" and "does not exist at all"
+// stay INDISTINGUISHABLE TO THE CALLER; the same rationale as the single
+// storefront endpoint returning NotFound for both.
+func TestInteropSkipsUnknownIDsSilently(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
 	fx := newInteropFixture(t)
 
-	yayinda := seedProduct(t, fx.svc, "yayinda", "Yayında")
-	silinen := seedProduct(t, fx.svc, "silinen", "Silinecek")
-	require.NoError(t, fx.svc.DeleteProduct(ctx, silinen.ID))
+	published := seedProduct(t, fx.svc, "published", "Published")
+	deleted := seedProduct(t, fx.svc, "deleted", "To be deleted")
+	require.NoError(t, fx.svc.DeleteProduct(ctx, deleted.ID))
 
-	taslak, err := fx.svc.CreateProduct(ctx, service.CreateProductInput{
-		Title:  "Taslak",
+	draft, err := fx.svc.CreateProduct(ctx, service.CreateProductInput{
+		Title:  "Draft",
 		Status: models.StatusDraft,
 	})
 	require.NoError(t, err)
 
-	istek := fmt.Sprintf(`{"ids": ["prod_yok", %q, %q, %q]}`, silinen.ID, taslak.ID, yayinda.ID)
-	assert.Equal(t, []string{yayinda.ID}, ids(fx.products(t, istek)))
+	request := fmt.Sprintf(`{"ids": ["prod_missing", %q, %q, %q]}`, deleted.ID, draft.ID, published.ID)
+	assert.Equal(t, []string{published.ID}, ids(fx.products(t, request)))
 
-	// Hiçbiri bulunamazsa yanıt boş listedir, hata değil.
-	assert.Empty(t, fx.products(t, `{"ids": ["prod_yok"]}`))
+	// If none of them is found the response is an empty list, not an error.
+	assert.Empty(t, fx.products(t, `{"ids": ["prod_missing"]}`))
 	assert.Empty(t, fx.products(t, `{"ids": []}`))
 }
 
-// TestInteropKimlikSirasiniKorur yanıtın isteğin kimlik SIRASINI koruduğunu
-// doğrular.
+// TestInteropPreservesTheIDOrder verifies that the response preserves the ID
+// ORDER of the request.
 //
-// Sıra sözleşmenin parçasıdır: alaka sırasını arama dışarıdan verir ve yanıt
-// onu bozarsa çağıran sıralamayı kendi tarafında yeniden kurmak zorunda kalır —
-// yani her tüketici aynı işi tekrar yazar. Deponun kendi sırası (created_at
-// DESC) burada bilinçli olarak GÖRMEZDEN gelinir.
-func TestInteropKimlikSirasiniKorur(t *testing.T) {
+// The order is part of the contract: search supplies the relevance order from
+// outside and if the response breaks it the caller has to rebuild the ordering
+// on its own side — that is, every consumer writes the same work again. The
+// repository's own order (created_at DESC) is deliberately IGNORED here.
+func TestInteropPreservesTheIDOrder(t *testing.T) {
 	t.Parallel()
 
 	fx := newInteropFixture(t)
 
-	birinci := seedProduct(t, fx.svc, "birinci", "Birinci")
-	ikinci := seedProduct(t, fx.svc, "ikinci", "İkinci")
-	ucuncu := seedProduct(t, fx.svc, "ucuncu", "Üçüncü")
+	first := seedProduct(t, fx.svc, "first", "First")
+	second := seedProduct(t, fx.svc, "second", "Second")
+	third := seedProduct(t, fx.svc, "third", "Third")
 
-	istek := fmt.Sprintf(`{"ids": [%q, %q, %q]}`, ucuncu.ID, birinci.ID, ikinci.ID)
-	assert.Equal(t, []string{ucuncu.ID, birinci.ID, ikinci.ID}, ids(fx.products(t, istek)),
-		"yanıt isteğin sırasını korumalı")
+	request := fmt.Sprintf(`{"ids": [%q, %q, %q]}`, third.ID, first.ID, second.ID)
+	assert.Equal(t, []string{third.ID, first.ID, second.ID}, ids(fx.products(t, request)),
+		"the response should preserve the order of the request")
 
-	// Tekrarlanan kimlik BİR KEZ döner ve ilk geçtiği sırayı korur.
-	tekrar := fmt.Sprintf(`{"ids": [%q, %q, %q]}`, ikinci.ID, birinci.ID, ikinci.ID)
-	assert.Equal(t, []string{ikinci.ID, birinci.ID}, ids(fx.products(t, tekrar)))
+	// A repeated id comes back ONCE and keeps the position of its first
+	// occurrence.
+	repeated := fmt.Sprintf(`{"ids": [%q, %q, %q]}`, second.ID, first.ID, second.ID)
+	assert.Equal(t, []string{second.ID, first.ID}, ids(fx.products(t, repeated)))
 }
 
-// TestInteropVitrinGosterimiyleAyniSekliDoner yüzeyin dönüşünün vitrin
-// gösterimiyle AYNI şekilde olduğunu doğrular.
+// TestInteropReturnsTheSameShapeAsTheStorefront verifies that what the surface
+// returns has the SAME shape as the storefront representation.
 //
-// Aynı tip serileştirilir; test bunu alan alan değil, vitrin listesinin dönüşü
-// ile yüzeyin dönüşünü KARŞILAŞTIRARAK sınar. Alanları elle saymak, iki
-// gösterimin ayrışmasını yakalamayan bir kopya olurdu.
-func TestInteropVitrinGosterimiyleAyniSekliDoner(t *testing.T) {
+// The same type is serialized; the test checks this not field by field but by
+// COMPARING the return of the storefront list with the return of the surface.
+// Counting the fields by hand would be a copy that does not catch the two
+// representations drifting apart.
+func TestInteropReturnsTheSameShapeAsTheStorefront(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
 	fx := newInteropFixture(t)
-	urun := seedProduct(t, fx.svc, "tisort", "Tişört")
+	product := seedProduct(t, fx.svc, "shirt", "Shirt")
 
-	vitrin, err := fx.svc.GetStoreProduct(ctx, urun.ID, nil)
+	storefront, err := fx.svc.GetStoreProduct(ctx, product.ID, nil)
 	require.NoError(t, err)
-	beklenenHam, err := json.Marshal(vitrin)
+	expectedRaw, err := json.Marshal(storefront)
 	require.NoError(t, err)
-	var beklenen map[string]any
-	require.NoError(t, json.Unmarshal(beklenenHam, &beklenen))
+	var expected map[string]any
+	require.NoError(t, json.Unmarshal(expectedRaw, &expected))
 
-	kayitlar := fx.products(t, fmt.Sprintf(`{"ids": [%q]}`, urun.ID))
-	require.Len(t, kayitlar, 1)
-	assert.Equal(t, beklenen, kayitlar[0],
-		"yüzey, vitrin ucunun yazdığı kaydın AYNISINI dönmeli")
-	assert.Contains(t, kayitlar[0], "variants", "varyantlar vitrin kaydının parçasıdır")
+	records := fx.products(t, fmt.Sprintf(`{"ids": [%q]}`, product.ID))
+	require.Len(t, records, 1)
+	assert.Equal(t, expected, records[0],
+		"the surface should return THE SAME record the storefront endpoint writes")
+	assert.Contains(t, records[0], "variants", "the variants are part of the storefront record")
 }
 
-// TestInteropGecersizIstegiReddeder çözülemeyen gövdelerin tipli hata
-// döndürdüğünü doğrular.
+// TestInteropRejectsAnInvalidRequest verifies that bodies which cannot be
+// decoded return a typed error.
 //
-// Tanınmayan alanın reddedilmesi bu yüzeyde ayrıca ÖNEMLİDİR: "channel_ids"
-// yazan bir tüketici, süzgeci uyguladığını sanırken yayındaki tüm kataloğu
-// okurdu.
-func TestInteropGecersizIstegiReddeder(t *testing.T) {
+// Rejecting an unrecognized field is ESPECIALLY important on this surface: a
+// consumer writing "channel_ids" would read the whole published catalog while
+// believing it had applied the filter.
+func TestInteropRejectsAnInvalidRequest(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
 	fx := newInteropFixture(t)
 
-	for ad, govde := range map[string]string{
-		"boş gövde":       ``,
-		"null":            `null`,
-		"dizi":            `[]`,
-		"tanınmayan alan": `{"ids": [], "channel_ids": ["sc_1"]}`,
-		"boş kimlik":      `{"ids": [""]}`,
+	for name, body := range map[string]string{
+		"empty body":    ``,
+		"null":          `null`,
+		"array":         `[]`,
+		"unknown field": `{"ids": [], "channel_ids": ["sc_1"]}`,
+		"empty id":      `{"ids": [""]}`,
 	} {
-		t.Run(ad, func(t *testing.T) {
-			_, err := fx.interop.StoreProductsByIDsJSON(ctx, json.RawMessage(govde))
+		t.Run(name, func(t *testing.T) {
+			_, err := fx.interop.StoreProductsByIDsJSON(ctx, json.RawMessage(body))
 			require.Error(t, err)
-			assert.True(t, errors.IsInvalid(err), "hata sınıfı Invalid olmalı: %v", err)
+			assert.True(t, errors.IsInvalid(err), "the error kind should be Invalid: %v", err)
 		})
 	}
 }
 
-// TestInteropSinirUstuIstegiReddeder kimlik sayısının sınırlandığını doğrular.
+// TestInteropRejectsARequestAboveTheLimit verifies that the number of ids is
+// bounded.
 //
-// Sessiz kırpma arama sonucunu sessizce eksiltirdi ve çağıran bunu asla
-// göremezdi; açık hata onu sayfalamaya zorlar.
-func TestInteropSinirUstuIstegiReddeder(t *testing.T) {
+// A silent truncation would silently shorten the search result and the caller
+// could never see it; an explicit error forces it to paginate.
+func TestInteropRejectsARequestAboveTheLimit(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
 	fx := newInteropFixture(t)
 
-	istenen := make([]string, 0, service.MaxLimit+1)
+	wanted := make([]string, 0, service.MaxLimit+1)
 	for i := 0; i <= service.MaxLimit; i++ {
-		istenen = append(istenen, fmt.Sprintf("prod_%03d", i))
+		wanted = append(wanted, fmt.Sprintf("prod_%03d", i))
 	}
-	govde, err := json.Marshal(map[string]any{"ids": istenen})
+	body, err := json.Marshal(map[string]any{"ids": wanted})
 	require.NoError(t, err)
 
-	_, err = fx.interop.StoreProductsByIDsJSON(ctx, govde)
+	_, err = fx.interop.StoreProductsByIDsJSON(ctx, body)
 	require.Error(t, err)
-	assert.True(t, errors.IsInvalid(err), "hata sınıfı Invalid olmalı: %v", err)
+	assert.True(t, errors.IsInvalid(err), "the error kind should be Invalid: %v", err)
 }
 
-// TestInteropGorunurluguTekSorgudaSorar arama yolunun N+1'e düşmediğini
-// doğrular.
+// TestInteropAsksVisibilityInASingleQuery verifies that the search path does not
+// fall into N+1.
 //
-// Görünürlüğü kimlik başına sormak, arama sonucu sayısı kadar gidiş-dönüş
-// demektir. Bu depo, N+1'i yapısal olarak dışarıda tutan bir mimaride yaşıyor
-// (bkz. core/query, "kök çek → link çöz → batch getir") ve deseni en sıcak
-// uçta — aramada — geri getirmek, mimarinin kendi kuralını en çok ihtiyaç
-// duyulan yerde bozmak olurdu.
+// Asking visibility per id means as many round trips as there are search
+// results. This repository lives in an architecture that structurally keeps N+1
+// out (see core/query, "fetch the roots -> resolve the links -> fetch in batch")
+// and bringing the pattern back at the hottest endpoint — in search — would
+// break the architecture's own rule exactly where it is needed most.
 //
-// İddia sayıyla kurulur, gözle değil: kimlik sayısı artınca sorgu sayısı
-// ARTMAMALI.
-func TestInteropGorunurluguTekSorgudaSorar(t *testing.T) {
+// The assertion is made with a number, not by eye: as the number of ids grows
+// the number of queries SHOULD NOT GROW.
+func TestInteropAsksVisibilityInASingleQuery(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
 	fx := newInteropFixture(t)
 
-	kimlikler := make([]string, 0, 8)
+	productIDs := make([]string, 0, 8)
 
 	for i := range 8 {
-		urun := seedProduct(t, fx.svc, fmt.Sprintf("urun-%d", i), fmt.Sprintf("Ürün %d", i))
-		require.NoError(t, fx.svc.AddProductSalesChannel(ctx, urun.ID, "sc_bizim"))
-		kimlikler = append(kimlikler, urun.ID)
+		product := seedProduct(t, fx.svc, fmt.Sprintf("product-%d", i), fmt.Sprintf("Product %d", i))
+		require.NoError(t, fx.svc.AddProductSalesChannel(ctx, product.ID, "sc_ours"))
+		productIDs = append(productIDs, product.ID)
 	}
 
-	kodlanmis, err := json.Marshal(kimlikler)
+	encoded, err := json.Marshal(productIDs)
 	require.NoError(t, err)
 
-	istek := fmt.Sprintf(`{"ids": %s, "sales_channel_ids": ["sc_bizim"]}`, kodlanmis)
-	require.Len(t, fx.products(t, istek), len(kimlikler), "hepsi görünür olmalı")
+	request := fmt.Sprintf(`{"ids": %s, "sales_channel_ids": ["sc_ours"]}`, encoded)
+	require.Len(t, fx.products(t, request), len(productIDs), "all of them should be visible")
 
 	assert.Equal(t, 1, fx.store.callCount("VisibleProductIDs"),
-		"kimlik sayısı ne olursa olsun görünürlük TEK sorguda sorulmalı")
+		"whatever the number of ids, visibility should be asked in a SINGLE query")
 	assert.Zero(t, fx.store.callCount("ProductVisibleInSalesChannels"),
-		"tekil sorgu toplu yolda kullanılmamalı; kullanılırsa N+1 geri gelir")
+		"the singular query should not be used on the batch path; if it is, N+1 comes back")
 }

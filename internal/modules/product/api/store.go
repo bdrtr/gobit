@@ -10,38 +10,41 @@ import (
 
 // storeListProducts GET /store/v1/products
 //
-// Faz 4'ün kalbi budur: vitrin listesi ürünleri FİYAT ve STOK bilgisiyle
-// birlikte döner. İkisi de başka modüllerin verisidir ve buraya link'ler
-// üzerinden Query katmanıyla gelir; product modülü onları import etmez.
+// This is the heart of Phase 4: the storefront listing returns products
+// together with their PRICE and STOCK information. Both are the data of other
+// modules and arrive here through links, over the Query layer; the product
+// module does not import them.
 //
-// Liste ayrıca isteğin SATIŞ KANALINA göre süzülür; kanalların nereden
-// okunduğu için bkz. [salesChannelIDs].
+// The listing is also filtered by the SALES CHANNEL of the request; for where
+// the channels are read from see [salesChannelIDs].
 //
 // # with_count
 //
-// Toplam sayaç isteğe bağlıdır ve VARSAYILANI TRUE'dur: parametre verilmeyen
-// istek bugünkü yanıtın baytını bayta aynısını alır. "with_count=false"
-// diyen istek sayaç sorgusunu HİÇ çalıştırmaz ve zarfında "count" alanı
-// bulunmaz (bkz. [listEnvelope]).
+// The total counter is optional and its DEFAULT IS TRUE: a request that does
+// not give the parameter gets today's response byte for byte. A request that
+// says "with_count=false" DOES NOT run the count query at all and its envelope
+// carries no "count" field (see [listEnvelope]).
 //
-// Neden bir parametre gerekiyor: sayaç, sayfa boyutundan bağımsız olarak satış
-// kanalı süzgecinin uygulandığı kümenin tamamını gezer. gobit_load üzerinde
-// ölçüldü (52.004 ürün, 52.000 kanal ataması, LIMIT 20, ortanca) — ölçülen şey
-// SERVİS ÇAĞRISIDIR (service.ListProducts), ucun tamamı değil:
+// Why a parameter is needed: independently of the page size, the counter walks
+// the whole set the sales channel filter is applied to. Measured on gobit_load
+// (52,004 products, 52,000 channel assignments, LIMIT 20, median) — what is
+// measured is the SERVICE CALL (service.ListProducts), not the whole endpoint:
 //
-//	sayarak (bugünkü varsayılan)  67,00 ms
-//	saymadan (with_count=false)    0,65 ms
+//	counting (today's default)        67.00 ms
+//	not counting (with_count=false)    0.65 ms
 //
-// Ucun geri kalanı — varyantların fiyat ve stok zenginleştirmesi — sayaçtan
-// bağımsızdır ve with_count=false onu ATLAMAZ; ölçüldüğünde iki bacak da
-// indeks üzerinden 0,1-0,2 ms sürüyor, yani sayaçsız uç ~1 ms'dir, 0,65 değil.
-// Oran değişmiyor: büyük katalogta isteğin SQL'inin neredeyse tamamı sayaçtır
-// ve maliyeti KATALOGLA büyür, sayfa boyutuyla değil. Sayı istemcinin ilk sayfada bir kez ihtiyaç
-// duyduğu bir şeydir; sonraki her sayfada aynı sayı yeniden hesaplanır.
+// The rest of the endpoint — the price and stock enrichment of the variants —
+// is independent of the counter and with_count=false DOES NOT SKIP it; when
+// measured, both legs take 0.1-0.2 ms over an index, so the countless endpoint
+// is ~1 ms, not 0.65. The ratio does not change: on a large catalog nearly all
+// of the request's SQL is the counter and its cost grows WITH THE CATALOG, not
+// with the page size. The number is something the client needs once on the first
+// page; on every following page the same number is computed again.
 //
-// Değer OKUNMAZ da yorumlanmaz: "with_count=abc" tipli bir doğrulama hatası
-// döner (bkz. [boolParam]). Sessizce varsayılana düşmek, istemcinin sayacı
-// kapattığını sanıp maliyeti ödemeye devam etmesi olurdu.
+// The value is neither IGNORED nor interpreted: "with_count=abc" returns a
+// typed validation error (see [boolParam]). Silently falling back to the
+// default would be the client thinking it had turned the counter off while it
+// kept paying the cost.
 func (h *Handler) storeListProducts(w http.ResponseWriter, r *http.Request) {
 	limit, offset, err := paging(r)
 	if err != nil {
@@ -72,11 +75,11 @@ func (h *Handler) storeListProducts(w http.ResponseWriter, r *http.Request) {
 
 // storeGetProduct GET /store/v1/products/{id}
 //
-// Yol parçası ürün kimliği ya da handle olabilir: vitrin adresleri handle
-// taşır ("/store/v1/products/tisort"), yönetim akışları kimlik.
+// The path segment may be a product id or a handle: storefront addresses carry
+// a handle ("/store/v1/products/tisort"), admin flows carry an id.
 //
-// Tekil uç da listeyle AYNI satış kanalı süzgecine tabidir; gerekçe için bkz.
-// service.Service.GetStoreProduct.
+// The single endpoint is subject to the SAME sales channel filter as the
+// listing; for the reasoning see service.Service.GetStoreProduct.
 func (h *Handler) storeGetProduct(w http.ResponseWriter, r *http.Request) {
 	id, err := pathParam(r, "id")
 	if err != nil {
@@ -92,23 +95,24 @@ func (h *Handler) storeGetProduct(w http.ResponseWriter, r *http.Request) {
 	writeItem(w, r, http.StatusOK, product)
 }
 
-// salesChannelIDs isteğin bağlı olduğu satış kanallarını DOĞRULANMIŞ KİMLİKTEN
-// okur.
+// salesChannelIDs reads the sales channels the request is bound to FROM THE
+// AUTHENTICATED IDENTITY.
 //
-// Kanal, istemcinin sorgu dizesinde bildirdiği bir değer OLMAMALIDIR ve bu
-// yüzden burada r.URL.Query()'ye hiç bakılmaz: "?sales_channel_id=..." kabul
-// edilseydi elindeki herhangi bir publishable anahtarla gelen bir istemci
-// BAŞKA bir kanalın kataloğunu okuyabilirdi — yani süzgeç bir yetkilendirme
-// olmaktan çıkıp bir görüntüleme tercihine dönüşürdü. Kimliği çekirdeğin
-// corehttp.RequireStore middleware'i koyar; kanal listesi anahtarın kaydından
-// gelir.
+// The channel MUST NOT be a value the client declares in the query string, and
+// that is why r.URL.Query() is never looked at here: had "?sales_channel_id=..."
+// been accepted, a client arriving with any publishable key it happened to hold
+// could read ANOTHER channel's catalog — that is, the filter would stop being
+// an authorization and turn into a display preference. The identity is put in
+// place by the core's corehttp.RequireStore middleware; the channel list comes
+// from the key's record.
 //
-// Kuralın KENDİSİ burada değil [graph.SalesChannelIDsFromContext]'tedir ve
-// bunun sebebi ikinci okuma yüzeyidir: GraphQL resolver'larının elinde
-// *http.Request yoktur, yalnızca context vardır. Kural iki yerde yazılsaydı
-// biri düzeltilip diğeri unutulduğunda yüzeylerden birinde katalog sızıntısı
-// olurdu — dönüşün nil ile BOŞ dilim arasındaki farkı dâhil (anlamı için o
-// belgeye bakın; ikisi farklı şey söyler).
+// The rule ITSELF is not here but in [graph.SalesChannelIDsFromContext], and
+// the reason is the second read surface: the GraphQL resolvers have no
+// *http.Request in hand, only a context. Had the rule been written in two
+// places, the day one was fixed and the other forgotten there would be a
+// catalog leak on one of the surfaces — including the difference between a nil
+// and an EMPTY slice on return (for the meaning see that documentation; the two
+// say different things).
 func salesChannelIDs(r *http.Request) []string {
 	return graph.SalesChannelIDsFromContext(r.Context())
 }

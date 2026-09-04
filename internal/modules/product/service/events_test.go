@@ -13,19 +13,20 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/product/service"
 )
 
-// Bu dosya katalog olaylarının SÖZLEŞMESİNİ sınar: adlar, yükün alanları,
-// değerlerin tipi ve yayım hatasının yazmayı düşürmemesi.
+// This file tests the CONTRACT of the catalog events: the names, the fields of
+// the payload, the type of the values and that a publish failure does not fail
+// the write.
 //
-// Olaylar servisin dönüş değerinde görünmez (Publish handler'ları beklemez),
-// bu yüzden tek kanıt sahte veri yoludur.
+// The events do not show up in the service's return value (Publish does not
+// wait for the handlers), so the only evidence is the fake bus.
 
-// eventFixture olay testlerinin ortak kurulumudur.
+// eventFixture is the shared setup of the event tests.
 type eventFixture struct {
 	svc *service.Service
 	bus *fakeBus
 }
 
-// newEventFixture veri yolu bağlanmış bir servis kurar.
+// newEventFixture builds a service with a bus wired in.
 func newEventFixture(t *testing.T) eventFixture {
 	t.Helper()
 
@@ -33,139 +34,142 @@ func newEventFixture(t *testing.T) eventFixture {
 	return eventFixture{svc: newServiceWithBus(t, newMemStore(), newFakeLinker(), nil, bus), bus: bus}
 }
 
-// TestUrunOlaylariYayimlanir üç katalog olayının da yayımlandığını ve yükünün
-// sözleşmedeki alanları taşıdığını doğrular.
-func TestUrunOlaylariYayimlanir(t *testing.T) {
+// TestProductEventsArePublished verifies that all three catalog events are
+// published and that their payload carries the fields in the contract.
+func TestProductEventsArePublished(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
 	fx := newEventFixture(t)
 
-	urun, err := fx.svc.CreateProduct(ctx, service.CreateProductInput{
-		Title:  "Tişört",
+	product, err := fx.svc.CreateProduct(ctx, service.CreateProductInput{
+		Title:  "Shirt",
 		Status: models.StatusDraft,
 	})
 	require.NoError(t, err)
 
-	olusan := fx.bus.byName(service.EventProductCreated)
-	require.Len(t, olusan, 1, "ürün yazıldığında tam bir olay yayımlanmalı")
-	assert.Equal(t, urun.ID, olusan[0].Data[service.EventFieldProductID])
-	assert.Equal(t, models.StatusDraft.String(), olusan[0].Data[service.EventFieldStatus],
-		"olay ürünün YAZILDIĞI ANDAKİ durumunu taşımalı")
+	created := fx.bus.byName(service.EventProductCreated)
+	require.Len(t, created, 1, "exactly one event should be published when the product is written")
+	assert.Equal(t, product.ID, created[0].Data[service.EventFieldProductID])
+	assert.Equal(t, models.StatusDraft.String(), created[0].Data[service.EventFieldStatus],
+		"the event should carry the status the product had AT THE MOMENT IT WAS WRITTEN")
 
-	// Yük DARDIR: başlık, handle ve varyantlar olayda YOKTUR. Onları koymak,
-	// olayı kaydın ikinci bir kopyası hâline getirirdi.
-	assert.NotContains(t, olusan[0].Data, "title")
-	assert.NotContains(t, olusan[0].Data, "handle")
-	assert.NotContains(t, olusan[0].Data, "variants")
+	// The payload is NARROW: the title, the handle and the variants are NOT in
+	// the event. Putting them there would turn the event into a second copy of
+	// the record.
+	assert.NotContains(t, created[0].Data, "title")
+	assert.NotContains(t, created[0].Data, "handle")
+	assert.NotContains(t, created[0].Data, "variants")
 
-	_, err = fx.svc.UpdateProduct(ctx, urun.ID, service.UpdateProductInput{
+	_, err = fx.svc.UpdateProduct(ctx, product.ID, service.UpdateProductInput{
 		Status: ptr(models.StatusPublished),
 	})
 	require.NoError(t, err)
 
-	guncellenen := fx.bus.byName(service.EventProductUpdated)
-	require.Len(t, guncellenen, 1)
-	assert.Equal(t, urun.ID, guncellenen[0].Data[service.EventFieldProductID])
-	assert.Equal(t, models.StatusPublished.String(), guncellenen[0].Data[service.EventFieldStatus],
-		"güncelleme olayı YENİ durumu taşımalı; indeksleme kararı buna bakar")
+	updated := fx.bus.byName(service.EventProductUpdated)
+	require.Len(t, updated, 1)
+	assert.Equal(t, product.ID, updated[0].Data[service.EventFieldProductID])
+	assert.Equal(t, models.StatusPublished.String(), updated[0].Data[service.EventFieldStatus],
+		"the update event should carry the NEW status; the indexing decision looks at it")
 
-	require.NoError(t, fx.svc.DeleteProduct(ctx, urun.ID))
+	require.NoError(t, fx.svc.DeleteProduct(ctx, product.ID))
 
-	silinen := fx.bus.byName(service.EventProductDeleted)
-	require.Len(t, silinen, 1)
-	assert.Equal(t, urun.ID, silinen[0].Data[service.EventFieldProductID])
-	// Silme olayında durum YOKTUR: soft silinmiş kayıt hiçbir okumadan dönmez,
-	// dolayısıyla abone değeri doğrulayamaz ve "indeksten düşür" eylemi zaten
-	// duruma bakmaz.
-	assert.NotContains(t, silinen[0].Data, service.EventFieldStatus)
+	deleted := fx.bus.byName(service.EventProductDeleted)
+	require.Len(t, deleted, 1)
+	assert.Equal(t, product.ID, deleted[0].Data[service.EventFieldProductID])
+	// The delete event carries NO status: a soft deleted record is returned by
+	// no read, so the subscriber cannot verify the value and the "drop it from
+	// the index" action does not look at the status anyway.
+	assert.NotContains(t, deleted[0].Data, service.EventFieldStatus)
 
-	// Olay adları modüller arası sözleşmedir ve Redis'te stream adıdır.
+	// The event names are a cross-module contract and on Redis they are the
+	// stream names.
 	assert.Equal(t, "product.created", service.EventProductCreated)
 	assert.Equal(t, "product.updated", service.EventProductUpdated)
 	assert.Equal(t, "product.deleted", service.EventProductDeleted)
 }
 
-// TestUrunOlayYukuJSONTuruDegistirmez yükün üretim veri yolundan geçtiğinde
-// TİP değiştirmediğini doğrular.
+// TestProductEventPayloadKeepsItsTypeThroughJSON verifies that the payload does
+// not change TYPE when it goes through the production bus.
 //
-// Üretimdeki Redis Streams backend'i Data'yı json.Marshal ile yazar ve okurken
-// map[string]any içine çözer; JSON'un tek sayı tipi olduğu için int64 konan bir
-// alan aboneye float64 olarak ulaşır. Gerekçenin tamamı
-// internal/modules/order/service/events.go içindedir. Test o dönüşümü taklit
-// eder ve yüke ileride eklenecek sayısal bir alanın (varyant adedi, sürüm)
-// kuralı sessizce delmesini engeller.
-func TestUrunOlayYukuJSONTuruDegistirmez(t *testing.T) {
+// The Redis Streams backend in production writes Data with json.Marshal and
+// decodes it into a map[string]any on read; because JSON has a single number
+// type, a field set as an int64 reaches the subscriber as a float64. The full
+// rationale is in internal/modules/order/service/events.go. The test imitates
+// that conversion and stops a numeric field added to the payload later (variant
+// count, version) from silently breaking the rule.
+func TestProductEventPayloadKeepsItsTypeThroughJSON(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
 	fx := newEventFixture(t)
 
-	urun, err := fx.svc.CreateProduct(ctx, service.CreateProductInput{Title: "Pantolon"})
+	product, err := fx.svc.CreateProduct(ctx, service.CreateProductInput{Title: "Trousers"})
 	require.NoError(t, err)
-	require.NoError(t, fx.svc.DeleteProduct(ctx, urun.ID))
+	require.NoError(t, fx.svc.DeleteProduct(ctx, product.ID))
 
-	olaylar := fx.bus.events()
-	require.NotEmpty(t, olaylar)
+	events := fx.bus.events()
+	require.NotEmpty(t, events)
 
-	for _, olay := range olaylar {
-		ham, err := json.Marshal(olay.Data)
+	for _, event := range events {
+		raw, err := json.Marshal(event.Data)
 		require.NoError(t, err)
-		var teslim map[string]any
-		require.NoError(t, json.Unmarshal(ham, &teslim))
+		var delivered map[string]any
+		require.NoError(t, json.Unmarshal(raw, &delivered))
 
-		require.NotEmpty(t, teslim, "%q olayının yükü boş olmamalı", olay.Name)
-		for anahtar, deger := range teslim {
-			assert.IsType(t, "", deger,
-				"%q olayının %q alanı veri yolundan geçince dize kalmalı", olay.Name, anahtar)
+		require.NotEmpty(t, delivered, "the payload of the %q event should not be empty", event.Name)
+		for key, value := range delivered {
+			assert.IsType(t, "", value,
+				"the %q field of the %q event should stay a string through the bus", key, event.Name)
 		}
 	}
 }
 
-// TestOlayYayimiDusersaUrunYazilmisKalir yayım hatasının katalog yazmasını
-// düşürmediğini doğrular.
+// TestProductStaysWrittenWhenEventPublishFails verifies that a publish failure
+// does not fail the catalog write.
 //
-// Karar bilinçlidir: ürün KAYITTIR, olay ise duyurudur. Hata dönmek çağırana
-// "değişiklik uygulanmadı" demek olurdu — oysa uygulanmıştır ve çağıranın
-// tekrarı ikinci bir ürün ya da handle çakışması üretirdi.
-func TestOlayYayimiDusersaUrunYazilmisKalir(t *testing.T) {
+// The decision is deliberate: the product is the RECORD, the event is the
+// announcement. Returning an error would tell the caller "the change was not
+// applied" — whereas it was, and the caller's retry would produce a second
+// product or a handle conflict.
+func TestProductStaysWrittenWhenEventPublishFails(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
 	fx := newEventFixture(t)
-	fx.bus.failErr = errors.Unavailable("eventbus_publish_failed", "veri yolu erişilemez")
+	fx.bus.failErr = errors.Unavailable("eventbus_publish_failed", "the event bus is unreachable")
 
-	urun, err := fx.svc.CreateProduct(ctx, service.CreateProductInput{Title: "Mont"})
-	require.NoError(t, err, "olay yayımı hatası ürün oluşturmayı düşürmemeli")
+	product, err := fx.svc.CreateProduct(ctx, service.CreateProductInput{Title: "Coat"})
+	require.NoError(t, err, "an event publish failure should not fail the product creation")
 
-	_, err = fx.svc.UpdateProduct(ctx, urun.ID, service.UpdateProductInput{Title: ptr("Kaban")})
-	require.NoError(t, err, "olay yayımı hatası güncellemeyi düşürmemeli")
+	_, err = fx.svc.UpdateProduct(ctx, product.ID, service.UpdateProductInput{Title: ptr("Overcoat")})
+	require.NoError(t, err, "an event publish failure should not fail the update")
 
-	okunan, err := fx.svc.GetProduct(ctx, urun.ID)
-	require.NoError(t, err, "ürün yazılmış olmalı")
-	assert.Equal(t, "Kaban", okunan.Title, "güncelleme uygulanmış olmalı")
+	fetched, err := fx.svc.GetProduct(ctx, product.ID)
+	require.NoError(t, err, "the product should have been written")
+	assert.Equal(t, "Overcoat", fetched.Title, "the update should have been applied")
 
-	require.NoError(t, fx.svc.DeleteProduct(ctx, urun.ID), "olay yayımı hatası silmeyi düşürmemeli")
-	_, err = fx.svc.GetProduct(ctx, urun.ID)
-	assert.True(t, errors.IsNotFound(err), "silme uygulanmış olmalı")
+	require.NoError(t, fx.svc.DeleteProduct(ctx, product.ID), "an event publish failure should not fail the delete")
+	_, err = fx.svc.GetProduct(ctx, product.ID)
+	assert.True(t, errors.IsNotFound(err), "the delete should have been applied")
 }
 
-// TestVeriYoluYokkenYazmalarCalisir veri yolu bağlanmamış bir servisin tüm
-// yazma yollarında çalıştığını doğrular.
+// TestWritesWorkWithoutAnEventBus verifies that a service built without a bus
+// works on all of its write paths.
 //
-// Bu yol YALNIZCA gömülü kullanım ve testler içindir — modülün Register'ı veri
-// yolunu container'dan çözer ve bulamazsa açılışı düşürür. Yine de
-// sınanır: nil bir veri yolunda panikleyen bir yayım, servisi gömülü kullanan
-// her çağrıyı düşürürdü.
-func TestVeriYoluYokkenYazmalarCalisir(t *testing.T) {
+// This path is ONLY for embedded use and for tests — the module's Register
+// resolves the bus from the container and fails startup if it cannot find it.
+// It is tested all the same: a publish that panics on a nil bus would fail every
+// call that uses the service embedded.
+func TestWritesWorkWithoutAnEventBus(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
 	svc := newService(t, newMemStore(), newFakeLinker(), nil)
 
-	urun, err := svc.CreateProduct(ctx, service.CreateProductInput{Title: "Şapka"})
+	product, err := svc.CreateProduct(ctx, service.CreateProductInput{Title: "Hat"})
 	require.NoError(t, err)
-	_, err = svc.UpdateProduct(ctx, urun.ID, service.UpdateProductInput{Title: ptr("Bere")})
+	_, err = svc.UpdateProduct(ctx, product.ID, service.UpdateProductInput{Title: ptr("Beanie")})
 	require.NoError(t, err)
-	require.NoError(t, svc.DeleteProduct(ctx, urun.ID))
+	require.NoError(t, svc.DeleteProduct(ctx, product.ID))
 }

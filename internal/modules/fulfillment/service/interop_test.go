@@ -12,13 +12,13 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/fulfillment/service"
 )
 
-// interopSecenek yanıt şemasının test tarafındaki KOPYASIDIR.
+// interopOptionSchema is the test-side COPY of the response schema.
 //
-// Bilinçli olarak servis paketindeki tipe değil, interop.go'nun godoc'unda
-// BEYAN EDİLEN şemaya bağlıdır: tüketici modül de bu paketi import edemeyeceği
-// için aynı şeyi yapacaktır (ADR 0006). Alan adı değişirse test düşer ve
-// sessiz bir şema kayması yakalanır.
-type interopSecenek struct {
+// It deliberately depends not on the type in the service package but on the
+// schema DECLARED in interop.go's godoc: the consumer module will do the same
+// thing, because it cannot import this package either (ADR 0006). If a field
+// name changes the test fails and a silent schema drift is caught.
+type interopOptionSchema struct {
 	ID                string `json:"id"`
 	Name              string `json:"name"`
 	Amount            int64  `json:"amount"`
@@ -30,30 +30,30 @@ type interopSecenek struct {
 	AdminOnly         bool   `json:"admin_only"`
 }
 
-// interopYanit liste yanıtının test tarafındaki kopyasıdır.
-type interopYanit struct {
-	Options []interopSecenek `json:"options"`
+// interopResponseSchema is the test-side copy of the list response.
+type interopResponseSchema struct {
+	Options []interopOptionSchema `json:"options"`
 }
 
-// TestInteropListOptionsSemasi yayımlanan JSON şemasının belgelendiği gibi
-// olduğunu kanıtlar.
-func TestInteropListOptionsSemasi(t *testing.T) {
+// TestInteropListOptionsSchema proves that the published JSON schema is the one
+// documented.
+func TestInteropListOptionsSchema(t *testing.T) {
 	t.Parallel()
 
-	kurulum := yeniKurulum(t)
-	interop := service.NewInterop(kurulum.svc)
-	profilID := kurulum.profilAc(t, "varsayilan")
-	secenekID := kurulum.secenekAc(t, service.CreateOptionInput{
-		Name:              "Standart kargo",
-		ShippingProfileID: profilID,
+	setup := newSetup(t)
+	interop := service.NewInterop(setup.svc)
+	profileID := setup.createProfile(t, "default")
+	optionID := setup.createOption(t, service.CreateOptionInput{
+		Name:              "Standard shipping",
+		ShippingProfileID: profileID,
 		Amount:            2_500,
 	})
 
-	istek, err := json.Marshal(map[string]any{
+	request, err := json.Marshal(map[string]any{
 		"region_id":            "reg_tr",
 		"currency_code":        "TRY",
 		"country_code":         "TR",
-		"shipping_profile_ids": []string{profilID},
+		"shipping_profile_ids": []string{profileID},
 		"subtotal":             50_000,
 		"item_count":           3,
 		"total_weight":         1_500,
@@ -63,78 +63,77 @@ func TestInteropListOptionsSemasi(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	ham, err := interop.ListOptionsJSON(context.Background(), istek)
+	raw, err := interop.ListOptionsJSON(context.Background(), request)
 	require.NoError(t, err)
 
-	var yanit interopYanit
-	require.NoError(t, json.Unmarshal(ham, &yanit))
-	require.Len(t, yanit.Options, 1)
+	var response interopResponseSchema
+	require.NoError(t, json.Unmarshal(raw, &response))
+	require.Len(t, response.Options, 1)
 
-	secenek := yanit.Options[0]
-	assert.Equal(t, secenekID, secenek.ID)
-	assert.Equal(t, "Standart kargo", secenek.Name)
-	assert.Equal(t, int64(2_500), secenek.Amount)
-	assert.Equal(t, "TRY", secenek.CurrencyCode)
-	assert.Equal(t, "flat", secenek.PriceType)
-	assert.Equal(t, "sahte", secenek.ProviderID)
-	assert.Equal(t, profilID, secenek.ShippingProfileID)
-	assert.False(t, secenek.IsReturn)
-	assert.False(t, secenek.AdminOnly)
+	option := response.Options[0]
+	assert.Equal(t, optionID, option.ID)
+	assert.Equal(t, "Standard shipping", option.Name)
+	assert.Equal(t, int64(2_500), option.Amount)
+	assert.Equal(t, "TRY", option.CurrencyCode)
+	assert.Equal(t, "flat", option.PriceType)
+	assert.Equal(t, "fake", option.ProviderID)
+	assert.Equal(t, profileID, option.ShippingProfileID)
+	assert.False(t, option.IsReturn)
+	assert.False(t, option.AdminOnly)
 
-	assert.NotContains(t, string(ham), "\"data\"",
-		"sağlayıcının ham verisi modüller arası yüzeye çıkmamalı")
+	assert.NotContains(t, string(raw), "\"data\"",
+		"the provider's raw data must not reach the cross-module surface")
 }
 
-// TestInteropAdminOnlyBayragiTasinir yönetim akışlarının admin_only
-// seçenekleri isteyebildiğini, varsayılanın ise mağaza davranışı olduğunu
-// kanıtlar.
-func TestInteropAdminOnlyBayragiTasinir(t *testing.T) {
+// TestInteropCarriesTheAdminOnlyFlag proves that the admin flows can ask for the
+// admin_only options, while the default is the storefront behavior.
+func TestInteropCarriesTheAdminOnlyFlag(t *testing.T) {
 	t.Parallel()
 
-	kurulum := yeniKurulum(t)
-	interop := service.NewInterop(kurulum.svc)
-	profilID := kurulum.profilAc(t, "varsayilan")
-	kurulum.secenekAc(t, service.CreateOptionInput{
-		Name:              "Elden teslim",
-		ShippingProfileID: profilID,
+	setup := newSetup(t)
+	interop := service.NewInterop(setup.svc)
+	profileID := setup.createProfile(t, "default")
+	setup.createOption(t, service.CreateOptionInput{
+		Name:              "Hand delivery",
+		ShippingProfileID: profileID,
 		AdminOnly:         true,
 	})
 
-	varsayilan, err := interop.ListOptionsJSON(context.Background(),
+	defaultBody, err := interop.ListOptionsJSON(context.Background(),
 		json.RawMessage(`{"currency_code":"TRY"}`))
 	require.NoError(t, err)
 
-	var bos interopYanit
-	require.NoError(t, json.Unmarshal(varsayilan, &bos))
-	assert.Empty(t, bos.Options, "varsayılan mağaza davranışı olmalı")
+	var empty interopResponseSchema
+	require.NoError(t, json.Unmarshal(defaultBody, &empty))
+	assert.Empty(t, empty.Options, "the default has to be the storefront behavior")
 
-	yonetim, err := interop.ListOptionsJSON(context.Background(),
+	adminBody, err := interop.ListOptionsJSON(context.Background(),
 		json.RawMessage(`{"currency_code":"TRY","include_admin_only":true}`))
 	require.NoError(t, err)
 
-	var dolu interopYanit
-	require.NoError(t, json.Unmarshal(yonetim, &dolu))
-	require.Len(t, dolu.Options, 1)
-	assert.True(t, dolu.Options[0].AdminOnly)
+	var filled interopResponseSchema
+	require.NoError(t, json.Unmarshal(adminBody, &filled))
+	require.Len(t, filled.Options, 1)
+	assert.True(t, filled.Options[0].AdminOnly)
 }
 
-// TestInteropAraToplamEsigiTamSayiKarsilastirilir kuralın eşiğinde BİR
-// KURUŞUN bile fark yarattığını kanıtlar.
+// TestInteropSubtotalThresholdIsComparedAsAnInteger proves that at the rule's
+// threshold even A SINGLE CENT makes a difference.
 //
-// Karşılaştırma tam sayı üzerindedir: eşiğin bir kuruş altındaki bir sepet
-// ücretsiz kargoyu AÇMAMALI, eşikteki ise açmalıdır. Dizge karşılaştırması ya
-// da yuvarlanmış bir ara toplam bu sınırı kaydırırdı.
-func TestInteropAraToplamEsigiTamSayiKarsilastirilir(t *testing.T) {
+// The comparison is over integers: a cart one cent below the threshold MUST NOT
+// open free shipping, while one at the threshold has to. A string comparison, or
+// a rounded subtotal, would shift this boundary.
+func TestInteropSubtotalThresholdIsComparedAsAnInteger(t *testing.T) {
 	t.Parallel()
 
-	kurulum := yeniKurulum(t)
-	interop := service.NewInterop(kurulum.svc)
-	profilID := kurulum.profilAc(t, "varsayilan")
-	secenekID := kurulum.secenekAc(t, service.CreateOptionInput{
-		Name:              "Ücretsiz kargo",
-		ShippingProfileID: profilID,
+	setup := newSetup(t)
+	interop := service.NewInterop(setup.svc)
+	profileID := setup.createProfile(t, "default")
+	optionID := setup.createOption(t, service.CreateOptionInput{
+		Name:              "Free shipping",
+		ShippingProfileID: profileID,
 	})
-	_, err := kurulum.svc.CreateShippingOptionRule(context.Background(), secenekID,
+	_, err := setup.svc.CreateShippingOptionRule(context.Background(), optionID,
 		service.CreateRuleInput{
 			Attribute: service.AttrSubtotal,
 			Operator:  "gte",
@@ -142,202 +141,204 @@ func TestInteropAraToplamEsigiTamSayiKarsilastirilir(t *testing.T) {
 		})
 	require.NoError(t, err)
 
-	altinda, err := interop.ListOptionsJSON(context.Background(),
+	below, err := interop.ListOptionsJSON(context.Background(),
 		json.RawMessage(`{"currency_code":"TRY","subtotal":49999}`))
 	require.NoError(t, err)
-	var bos interopYanit
-	require.NoError(t, json.Unmarshal(altinda, &bos))
-	assert.Empty(t, bos.Options, "eşiğin bir kuruş altı seçeneği açmamalı")
+	var empty interopResponseSchema
+	require.NoError(t, json.Unmarshal(below, &empty))
+	assert.Empty(t, empty.Options, "one cent below the threshold must not open the option")
 
-	esikte, err := interop.ListOptionsJSON(context.Background(),
+	atThreshold, err := interop.ListOptionsJSON(context.Background(),
 		json.RawMessage(`{"currency_code":"TRY","subtotal":50000}`))
 	require.NoError(t, err)
-	var dolu interopYanit
-	require.NoError(t, json.Unmarshal(esikte, &dolu))
-	require.Len(t, dolu.Options, 1, "eşikte seçenek sunulmalı")
+	var filled interopResponseSchema
+	require.NoError(t, json.Unmarshal(atThreshold, &filled))
+	require.Len(t, filled.Options, 1, "at the threshold the option has to be offered")
 }
 
-// TestInteropTaninmayanAlanReddedilir iki paketteki şemanın ayrışmasının ilk
-// işaretinin yakalandığını kanıtlar.
-func TestInteropTaninmayanAlanReddedilir(t *testing.T) {
+// TestInteropRejectsAnUnrecognizedField proves that the first sign of the schema
+// in the two packages diverging is caught.
+func TestInteropRejectsAnUnrecognizedField(t *testing.T) {
 	t.Parallel()
 
-	kurulum := yeniKurulum(t)
-	interop := service.NewInterop(kurulum.svc)
+	setup := newSetup(t)
+	interop := service.NewInterop(setup.svc)
 
 	_, err := interop.ListOptionsJSON(context.Background(),
 		json.RawMessage(`{"currency_code":"TRY","cart_id":"cart_1"}`))
 	require.Error(t, err)
-	assert.True(t, errors.IsInvalid(err), "hata errors.Invalid olmalı: %v", err)
+	assert.True(t, errors.IsInvalid(err), "the error has to be errors.Invalid: %v", err)
 	assert.Equal(t, service.CodeInteropRequestInvalid, errors.CodeOf(err))
 }
 
-// TestInteropBosIstekReddedilir boş gövdenin sessizce boş liste dönmediğini
-// kanıtlar.
-func TestInteropBosIstekReddedilir(t *testing.T) {
+// TestInteropRejectsAnEmptyRequest proves that an empty body does not silently
+// return an empty list.
+func TestInteropRejectsAnEmptyRequest(t *testing.T) {
 	t.Parallel()
 
-	kurulum := yeniKurulum(t)
-	interop := service.NewInterop(kurulum.svc)
+	setup := newSetup(t)
+	interop := service.NewInterop(setup.svc)
 
-	for _, gövde := range []json.RawMessage{nil, json.RawMessage("null")} {
-		_, err := interop.ListOptionsJSON(context.Background(), gövde)
+	for _, body := range []json.RawMessage{nil, json.RawMessage("null")} {
+		_, err := interop.ListOptionsJSON(context.Background(), body)
 		require.Error(t, err)
-		assert.True(t, errors.IsInvalid(err), "hata errors.Invalid olmalı: %v", err)
+		assert.True(t, errors.IsInvalid(err), "the error has to be errors.Invalid: %v", err)
 	}
 }
 
-// TestInteropOndalikliSayiReddedilir para ve adet alanlarının TAM SAYI
-// olduğunu kanıtlar.
+// TestInteropRejectsAFractionalNumber proves that the money and count fields are
+// INTEGERS.
 //
-// json.Number yerine float64 üzerinden çözen bir uygulama aynı gövdeyi
-// SESSİZCE 100'e kırpar ve ara toplam bir kuruş kaybederdi; bu test o yolun
-// kapalı olduğunu sabitler.
-func TestInteropOndalikliSayiReddedilir(t *testing.T) {
+// An implementation decoding through float64 instead of json.Number would
+// SILENTLY truncate the same body to 100 and the subtotal would lose a cent; this
+// test pins that path shut.
+func TestInteropRejectsAFractionalNumber(t *testing.T) {
 	t.Parallel()
 
-	kurulum := yeniKurulum(t)
-	interop := service.NewInterop(kurulum.svc)
+	setup := newSetup(t)
+	interop := service.NewInterop(setup.svc)
 
 	_, err := interop.ListOptionsJSON(context.Background(),
 		json.RawMessage(`{"currency_code":"TRY","subtotal":100.5}`))
 	require.Error(t, err)
-	assert.True(t, errors.IsInvalid(err), "hata errors.Invalid olmalı: %v", err)
+	assert.True(t, errors.IsInvalid(err), "the error has to be errors.Invalid: %v", err)
 }
 
-// TestInteropGonderiAcVeIptalEt saga yüzeyinin uçtan uca çalıştığını kanıtlar:
-// aynı anahtarla iki çağrı TEK gönderi üretir, iptal İDEMPOTENTTİR ve durum
-// okunabilir.
-func TestInteropGonderiAcVeIptalEt(t *testing.T) {
+// TestInteropCreateAndCancelFulfillment proves that the saga surface works end to
+// end: two calls with the same key produce ONE fulfillment, the cancellation IS
+// IDEMPOTENT and the status is readable.
+func TestInteropCreateAndCancelFulfillment(t *testing.T) {
 	t.Parallel()
 
-	kurulum := yeniKurulum(t)
-	interop := service.NewInterop(kurulum.svc)
-	secenekID := hazirSecenek(t, kurulum)
+	setup := newSetup(t)
+	interop := service.NewInterop(setup.svc)
+	optionID := readyOption(t, setup)
 
-	ilk, err := interop.CreateFulfillment(context.Background(), "order_1", secenekID, "anahtar-1")
+	first, err := interop.CreateFulfillment(context.Background(), "order_1", optionID, "key-1")
 	require.NoError(t, err)
-	require.NotEmpty(t, ilk)
+	require.NotEmpty(t, first)
 
-	ikinci, err := interop.CreateFulfillment(context.Background(), "order_1", secenekID, "anahtar-1")
+	second, err := interop.CreateFulfillment(context.Background(), "order_1", optionID, "key-1")
 	require.NoError(t, err)
-	assert.Equal(t, ilk, ikinci, "aynı anahtar tek gönderi üretmeli")
+	assert.Equal(t, first, second, "the same key has to produce a single fulfillment")
 
-	durum, err := interop.FulfillmentStatus(context.Background(), ilk)
+	status, err := interop.FulfillmentStatus(context.Background(), first)
 	require.NoError(t, err)
-	assert.Equal(t, "pending", durum)
+	assert.Equal(t, "pending", status)
 
-	require.NoError(t, interop.CancelFulfillment(context.Background(), ilk))
-	require.NoError(t, interop.CancelFulfillment(context.Background(), ilk),
-		"telafi iki kez çağrılabilmeli")
+	require.NoError(t, interop.CancelFulfillment(context.Background(), first))
+	require.NoError(t, interop.CancelFulfillment(context.Background(), first),
+		"the compensation has to be callable twice")
 
-	durum, err = interop.FulfillmentStatus(context.Background(), ilk)
+	status, err = interop.FulfillmentStatus(context.Background(), first)
 	require.NoError(t, err)
-	assert.Equal(t, "canceled", durum, "telafinin izi durumdan okunabilmeli")
+	assert.Equal(t, "canceled", status, "the trace of the compensation has to be readable from the status")
 
-	_, create, cancel := kurulum.provider.cagriSayilari()
-	assert.Equal(t, 1, create, "sağlayıcıda tek gönderi açılmalı")
-	assert.Equal(t, 1, cancel, "sağlayıcıya tek iptal gitmeli")
+	_, create, cancel := setup.provider.callCounts()
+	assert.Equal(t, 1, create, "a single fulfillment has to be opened at the provider")
+	assert.Equal(t, 1, cancel, "a single cancellation has to go to the provider")
 }
 
-// TestInteropRankLocationsDeterministik aynı adaylarla yapılan ikinci
-// çağrının aynı sırayı döndüğünü ve sonucun adayların GELİŞ SIRASINDAN
-// bağımsız olduğunu kanıtlar.
+// TestInteropRankLocationsIsDeterministic proves that a second call with the same
+// candidates returns the same order, and that the result is independent of the
+// candidates' ARRIVAL ORDER.
 //
-// İddia çağıran içindir: tükenen adayları listeden düşürerek bu metodu yeniden
-// çağıran döngü, sıraya bağlı bir seçimde her turda başka bir depo gösterir ve
-// ilk turun rezervasyonu yetim kalırdı.
+// The claim is for the caller: a loop that calls this method again after dropping
+// the exhausted candidates from the list would, with an order-dependent
+// selection, be shown a different warehouse on every round and the first round's
+// reservation would be orphaned.
 //
-// Kurulumda HİÇ politika kaydı yoktur; bu yüzden test aynı zamanda geriye
-// uyumluluğun kanıtıdır: eleme ve sıralama boşa düşer, eşitliği bozan kural
-// (kimliği en küçük aday) tek başına kalır ve sonuç politikadan ÖNCEKİ
-// davranışın aynısıdır.
-func TestInteropRankLocationsDeterministik(t *testing.T) {
+// There is NO policy record at all in the setup; that is why the test is at the
+// same time the proof of backward compatibility: the elimination and the ranking
+// fall away, the tie-breaking rule (the candidate with the smallest identifier)
+// stands alone, and the result is identical to the behavior BEFORE the policy.
+func TestInteropRankLocationsIsDeterministic(t *testing.T) {
 	t.Parallel()
 
-	kurulum := yeniKurulum(t)
-	interop := service.NewInterop(kurulum.svc)
+	setup := newSetup(t)
+	interop := service.NewInterop(setup.svc)
 
-	ilk, err := interop.RankLocations(context.Background(), testRegionID,
+	first, err := interop.RankLocations(context.Background(), testRegionID,
 		[]string{"sloc_izmir", "sloc_ankara", "sloc_bursa"})
 	require.NoError(t, err)
 
-	ikinci, err := interop.RankLocations(context.Background(), testRegionID,
+	second, err := interop.RankLocations(context.Background(), testRegionID,
 		[]string{"sloc_izmir", "sloc_ankara", "sloc_bursa"})
 	require.NoError(t, err)
-	assert.Equal(t, ilk, ikinci, "aynı adaylar aynı sırayı vermeli")
+	assert.Equal(t, first, second, "the same candidates have to give the same order")
 
-	karisik, err := interop.RankLocations(context.Background(), testRegionID,
+	shuffled, err := interop.RankLocations(context.Background(), testRegionID,
 		[]string{"sloc_bursa", "sloc_izmir", "sloc_ankara"})
 	require.NoError(t, err)
-	assert.Equal(t, ilk, karisik, "sıra adayların geliş sırasına bağlı olmamalı")
+	assert.Equal(t, first, shuffled, "the order must not depend on the candidates' arrival order")
 
-	assert.Equal(t, []string{"sloc_ankara", "sloc_bursa", "sloc_izmir"}, ilk,
-		"politika kaydı yokken sıra yalnızca kimliğe göre kurulmalı")
+	assert.Equal(t, []string{"sloc_ankara", "sloc_bursa", "sloc_izmir"}, first,
+		"with no policy record the order has to be built by identifier alone")
 }
 
-// TestInteropRankLocationsTekAdayKendisi tek adaylı listede o adayın
-// döndüğünü kanıtlar.
-func TestInteropRankLocationsTekAdayKendisi(t *testing.T) {
+// TestInteropRankLocationsWithASingleCandidate proves that with a single-candidate
+// list that candidate is returned.
+func TestInteropRankLocationsWithASingleCandidate(t *testing.T) {
 	t.Parallel()
 
-	kurulum := yeniKurulum(t)
-	interop := service.NewInterop(kurulum.svc)
+	setup := newSetup(t)
+	interop := service.NewInterop(setup.svc)
 
-	sirali, err := interop.RankLocations(context.Background(), testRegionID, []string{"sloc_tek"})
+	ranked, err := interop.RankLocations(context.Background(), testRegionID, []string{"sloc_single"})
 	require.NoError(t, err)
-	assert.Equal(t, []string{"sloc_tek"}, sirali)
+	assert.Equal(t, []string{"sloc_single"}, ranked)
 }
 
-// TestInteropRankLocationsBosListeConflict boş aday listesinin SESSİZCE boş
-// bir sıra dönmediğini kanıtlar.
+// TestInteropRankLocationsEmptyListIsAConflict proves that an empty candidate
+// list does not SILENTLY return an empty order.
 //
-// Boş sıra dönseydi çağıran hiçbir depo denemeden döngüden çıkar ve satır,
-// sebebi yazılmadan düşerdi. Sınıf Conflict'tir: istekte düzeltilecek bir şey
-// yoktur, hiçbir lokasyonda yeterli stok yoktur.
-func TestInteropRankLocationsBosListeConflict(t *testing.T) {
+// Had an empty order been returned, the caller would leave the loop without
+// trying a single warehouse and the line would drop without its reason being
+// written. The kind is Conflict: there is nothing to fix in the request, there is
+// simply not enough stock in any location.
+func TestInteropRankLocationsEmptyListIsAConflict(t *testing.T) {
 	t.Parallel()
 
-	kurulum := yeniKurulum(t)
-	interop := service.NewInterop(kurulum.svc)
+	setup := newSetup(t)
+	interop := service.NewInterop(setup.svc)
 
-	for _, adaylar := range [][]string{nil, {}} {
-		sirali, err := interop.RankLocations(context.Background(), testRegionID, adaylar)
+	for _, candidates := range [][]string{nil, {}} {
+		ranked, err := interop.RankLocations(context.Background(), testRegionID, candidates)
 		require.Error(t, err)
-		assert.Empty(t, sirali)
-		assert.True(t, errors.IsConflict(err), "hata errors.Conflict olmalı: %v", err)
+		assert.Empty(t, ranked)
+		assert.True(t, errors.IsConflict(err), "the error has to be errors.Conflict: %v", err)
 		assert.Equal(t, service.CodeNoShippingLocation, errors.CodeOf(err))
 	}
 }
 
-// TestInteropRankLocationsBosAdayReddedilir listedeki boş bir kimliğin
-// sıraya girmediğini kanıtlar.
+// TestInteropRankLocationsRejectsAnEmptyCandidate proves that an empty identifier
+// in the list does not enter the order.
 //
-// Eşitliği bozan kural (kimliği en küçük aday) boş dizeyi seçerdi; test o
-// yolun kapalı olduğunu sabitler.
-func TestInteropRankLocationsBosAdayReddedilir(t *testing.T) {
+// The tie-breaking rule (the candidate with the smallest identifier) would pick
+// the empty string; the test pins that path shut.
+func TestInteropRankLocationsRejectsAnEmptyCandidate(t *testing.T) {
 	t.Parallel()
 
-	kurulum := yeniKurulum(t)
-	interop := service.NewInterop(kurulum.svc)
+	setup := newSetup(t)
+	interop := service.NewInterop(setup.svc)
 
-	sirali, err := interop.RankLocations(context.Background(), testRegionID,
+	ranked, err := interop.RankLocations(context.Background(), testRegionID,
 		[]string{"sloc_ankara", "   "})
 	require.Error(t, err)
-	assert.Empty(t, sirali)
-	assert.True(t, errors.IsInvalid(err), "hata errors.Invalid olmalı: %v", err)
+	assert.Empty(t, ranked)
+	assert.True(t, errors.IsInvalid(err), "the error has to be errors.Invalid: %v", err)
 	assert.Equal(t, service.CodeInvalidInput, errors.CodeOf(err))
 }
 
-// TestInteropBilinmeyenGonderiIptaliNotFound telafinin var olmayan bir kaydı
-// sessizce yutmadığını kanıtlar.
-func TestInteropBilinmeyenGonderiIptaliNotFound(t *testing.T) {
+// TestInteropCancelOfAnUnknownFulfillmentReturnsNotFound proves that the
+// compensation does not silently swallow a record that does not exist.
+func TestInteropCancelOfAnUnknownFulfillmentReturnsNotFound(t *testing.T) {
 	t.Parallel()
 
-	kurulum := yeniKurulum(t)
-	interop := service.NewInterop(kurulum.svc)
+	setup := newSetup(t)
+	interop := service.NewInterop(setup.svc)
 
-	err := interop.CancelFulfillment(context.Background(), "ful_YOKBOYLEBIRSEY")
+	err := interop.CancelFulfillment(context.Background(), "ful_NOSUCHTHING")
 	require.Error(t, err)
-	assert.True(t, errors.IsNotFound(err), "hata errors.NotFound olmalı: %v", err)
+	assert.True(t, errors.IsNotFound(err), "the error has to be errors.NotFound: %v", err)
 }

@@ -184,7 +184,7 @@ func (p *Provider) CreateSession(
 	key := strings.TrimSpace(in.IdempotencyKey)
 	if key == "" {
 		return coreprovider.Session{}, errors.Invalid(CodeInvalidInput,
-			"idempotency anahtarı zorunludur")
+			"the idempotency key is required")
 	}
 	reference := strings.TrimSpace(in.Reference)
 	if reference == "" {
@@ -197,7 +197,7 @@ func (p *Provider) CreateSession(
 	currency := strings.ToUpper(strings.TrimSpace(in.CurrencyCode))
 	if len(currency) != 3 {
 		return coreprovider.Session{}, errors.Invalid(CodeInvalidInput,
-			"para birimi üç harfli ISO 4217 kodu olmalı: %q", in.CurrencyCode)
+			"the currency has to be a three-letter ISO 4217 code: %q", in.CurrencyCode)
 	}
 
 	raw, err := json.Marshal(in.Data)

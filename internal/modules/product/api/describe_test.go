@@ -19,14 +19,15 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/product/service"
 )
 
-// vitrinBelgesi Describe'ın çıktısını GERÇEK route ağacına karşı üretip
-// JSON'dan geri okunmuş hâlini döner.
+// storefrontDoc produces Describe's output against the REAL route tree and
+// returns it as read back from JSON.
 //
-// Doğrudan [openapi.Doc.Build] çıktısına bakmak yetmezdi: işlemler orada Go
-// struct'ıdır ve incelenen davranış tam olarak alanların JSON'a yazılıp
-// yazılmadığıdır. Router da gerçek olmalıdır — açıklamanın yolu route'unkinden
-// ayrıştığı an test düşsün, üretimde /openapi.json'a bakan biri değil.
-func vitrinBelgesi(t *testing.T) (yollar, bilesenler map[string]any) {
+// Looking at [openapi.Doc.Build]'s output directly would not have been enough:
+// the operations are Go structs there and the behavior under examination is
+// exactly whether the fields get written into JSON. The router has to be real
+// too — the moment the description's path drifts from the route's, let the test
+// fail, not somebody looking at /openapi.json in production.
+func storefrontDoc(t *testing.T) (paths, components map[string]any) {
 	t.Helper()
 
 	doc := openapi.New("test", "v1")
@@ -35,186 +36,189 @@ func vitrinBelgesi(t *testing.T) (yollar, bilesenler map[string]any) {
 	r := chi.NewRouter()
 	api.New(nil, graph.Options{}).Routes(r)
 
-	ham, err := doc.Build(r)
+	raw, err := doc.Build(r)
 	require.NoError(t, err)
 	require.Empty(t, doc.UnmatchedDescriptions(),
-		"anlatılan her uç bir route ile eşleşmeli; eşleşmeyen kayıt belgeye hiç girmez")
+		"every described endpoint has to match a route; an unmatched record never enters the document")
 
-	kodlanmis, err := json.Marshal(ham)
+	encoded, err := json.Marshal(raw)
 	require.NoError(t, err)
 
-	var cozulmus map[string]any
-	require.NoError(t, json.Unmarshal(kodlanmis, &cozulmus))
+	var decoded map[string]any
+	require.NoError(t, json.Unmarshal(encoded, &decoded))
 
 	var ok bool
 
-	bilesenler, ok = cozulmus["components"].(map[string]any)["schemas"].(map[string]any)
+	components, ok = decoded["components"].(map[string]any)["schemas"].(map[string]any)
 	require.True(t, ok)
 
-	yollar, ok = cozulmus["paths"].(map[string]any)
+	paths, ok = decoded["paths"].(map[string]any)
 	require.True(t, ok)
 
-	return yollar, bilesenler
+	return paths, components
 }
 
-// vitrinIslemi belgeden tek bir yol+metod işlemini döner.
-func vitrinIslemi(t *testing.T, yollar map[string]any, metod, yol string) map[string]any {
+// storefrontOperation returns a single path+method operation from the document.
+func storefrontOperation(t *testing.T, paths map[string]any, method, path string) map[string]any {
 	t.Helper()
 
-	yolIslemleri, ok := yollar[yol].(map[string]any)
-	require.True(t, ok, "%s belgede olmalı", yol)
+	pathOperations, ok := paths[path].(map[string]any)
+	require.True(t, ok, "%s has to be in the document", path)
 
-	op, ok := yolIslemleri[strings.ToLower(metod)].(map[string]any)
-	require.True(t, ok, "%s %s belgede olmalı", metod, yol)
+	op, ok := pathOperations[strings.ToLower(method)].(map[string]any)
+	require.True(t, ok, "%s %s has to be in the document", method, path)
 
 	return op
 }
 
-// semaCoz "$ref" atıflarını belgedeki bileşene çözer.
-func semaCoz(t *testing.T, bilesenler, sema map[string]any) map[string]any {
+// resolveSchema resolves "$ref" references to the component in the document.
+func resolveSchema(t *testing.T, components, schema map[string]any) map[string]any {
 	t.Helper()
 
-	ref, refli := sema["$ref"].(string)
-	if !refli {
-		return sema
+	ref, isRef := schema["$ref"].(string)
+	if !isRef {
+		return schema
 	}
 
-	hedef, ok := bilesenler[strings.TrimPrefix(ref, "#/components/schemas/")].(map[string]any)
-	require.True(t, ok, "%q bileşeni kayıtlı olmalı", ref)
+	target, ok := components[strings.TrimPrefix(ref, "#/components/schemas/")].(map[string]any)
+	require.True(t, ok, "the %q component has to be registered", ref)
 
-	return hedef
+	return target
 }
 
-// yanitSemasi bir yanıt tanımından JSON şemasını çıkarır.
-func yanitSemasi(t *testing.T, tanim map[string]any) map[string]any {
+// responseSchema extracts the JSON schema out of a response definition.
+func responseSchema(t *testing.T, definition map[string]any) map[string]any {
 	t.Helper()
 
-	icerik, ok := tanim["content"].(map[string]any)
-	require.True(t, ok, "yanıt tanımında content olmalı: %#v", tanim)
+	content, ok := definition["content"].(map[string]any)
+	require.True(t, ok, "a response definition has to have content: %#v", definition)
 
-	json_, ok := icerik["application/json"].(map[string]any)
-	require.True(t, ok, "yanıt application/json olmalı")
+	json_, ok := content["application/json"].(map[string]any)
+	require.True(t, ok, "the response has to be application/json")
 
-	sema, ok := json_["schema"].(map[string]any)
-	require.True(t, ok, "yanıtın şeması olmalı")
+	schema, ok := json_["schema"].(map[string]any)
+	require.True(t, ok, "the response has to have a schema")
 
-	return sema
+	return schema
 }
 
-// ozellik şemanın tek bir alanının şemasını döner.
-func ozellik(t *testing.T, bilesenler, sema map[string]any, ad string) map[string]any {
+// property returns the schema of a single field of the schema.
+func property(t *testing.T, components, schema map[string]any, name string) map[string]any {
 	t.Helper()
 
-	ozellikler, ok := semaCoz(t, bilesenler, sema)["properties"].(map[string]any)
-	require.True(t, ok, "şemada properties olmalı: %#v", sema)
+	properties, ok := resolveSchema(t, components, schema)["properties"].(map[string]any)
+	require.True(t, ok, "the schema has to have properties: %#v", schema)
 
-	alan, ok := ozellikler[ad].(map[string]any)
-	require.True(t, ok, "%q alanı şemada olmalı", ad)
+	field, ok := properties[name].(map[string]any)
+	require.True(t, ok, "the %q field has to be in the schema", name)
 
-	return alan
+	return field
 }
 
-// vitrinAlanlari şemanın "properties" anahtarlarını döner.
-func vitrinAlanlari(t *testing.T, bilesenler, sema map[string]any) []string {
+// storefrontFields returns the "properties" keys of the schema.
+func storefrontFields(t *testing.T, components, schema map[string]any) []string {
 	t.Helper()
 
-	ozellikler, ok := semaCoz(t, bilesenler, sema)["properties"].(map[string]any)
-	require.True(t, ok, "şemada properties olmalı: %#v", sema)
+	properties, ok := resolveSchema(t, components, schema)["properties"].(map[string]any)
+	require.True(t, ok, "the schema has to have properties: %#v", schema)
 
-	return vitrinAnahtarlari(ozellikler)
+	return storefrontKeys(properties)
 }
 
-// vitrinZorunlulari şemanın "required" listesini döner.
-func vitrinZorunlulari(t *testing.T, bilesenler, sema map[string]any) []string {
+// storefrontRequired returns the "required" list of the schema.
+func storefrontRequired(t *testing.T, components, schema map[string]any) []string {
 	t.Helper()
 
-	ham, _ := semaCoz(t, bilesenler, sema)["required"].([]any)
+	raw, _ := resolveSchema(t, components, schema)["required"].([]any)
 
-	adlar := make([]string, 0, len(ham))
-	for _, ad := range ham {
-		metin, ok := ad.(string)
+	names := make([]string, 0, len(raw))
+	for _, name := range raw {
+		text, ok := name.(string)
 		require.True(t, ok)
 
-		adlar = append(adlar, metin)
+		names = append(names, text)
 	}
 
-	return adlar
+	return names
 }
 
-// vitrinAnahtarlari bir haritanın anahtarlarını döner.
-func vitrinAnahtarlari[T any](m map[string]T) []string {
-	adlar := make([]string, 0, len(m))
-	for ad := range m {
-		adlar = append(adlar, ad)
+// storefrontKeys returns the keys of a map.
+func storefrontKeys[T any](m map[string]T) []string {
+	names := make([]string, 0, len(m))
+	for name := range m {
+		names = append(names, name)
 	}
 
-	return adlar
+	return names
 }
 
-// vitrinJSONAnahtarlari değeri encoding/json ile kodlayıp anahtarlarını döner.
+// storefrontJSONKeys encodes the value with encoding/json and returns its keys.
 //
-// Karşılaştırmanın diğer ucu budur: şema, tel üzerinde GERÇEKTEN ne olduğunu
-// anlatmalıdır ve bunu bilen tek şey encoding/json'un kendisidir.
-func vitrinJSONAnahtarlari(t *testing.T, v any) []string {
+// This is the other end of the comparison: the schema has to describe what is
+// REALLY on the wire, and the only thing that knows that is encoding/json
+// itself.
+func storefrontJSONKeys(t *testing.T, v any) []string {
 	t.Helper()
 
-	ham, err := json.Marshal(v)
+	raw, err := json.Marshal(v)
 	require.NoError(t, err)
 
-	var cozulmus map[string]any
-	require.NoError(t, json.Unmarshal(ham, &cozulmus))
+	var decoded map[string]any
+	require.NoError(t, json.Unmarshal(raw, &decoded))
 
-	return vitrinAnahtarlari(cozulmus)
+	return storefrontKeys(decoded)
 }
 
-// doluUrun omitempty alanları da yazılan bir vitrin ürünü üretir.
+// filledStoreProduct produces a storefront product whose omitempty fields are
+// written too.
 //
-// Gömülü models.Product'ın Variants alanı BİLİNÇLİ olarak boş bırakılır:
-// gölgelenen alandır ve encoding/json onu hiç yazmaz. Doldurulsaydı test
-// gölgelenmenin bozulduğunu göremezdi.
-func doluUrun() service.StoreProduct {
-	metin := "x"
-	sayi := int32(1)
-	an := time.Now().UTC()
+// The Variants field of the embedded models.Product is DELIBERATELY left empty:
+// it is the shadowed field and encoding/json never writes it. Had it been
+// filled, the test could not have seen the shadowing break.
+func filledStoreProduct() service.StoreProduct {
+	text := "x"
+	number := int32(1)
+	now := time.Now().UTC()
 
 	return service.StoreProduct{
 		Product: models.Product{
-			Subtitle:      &metin,
-			Description:   &metin,
-			Thumbnail:     &metin,
-			Weight:        &sayi,
-			Length:        &sayi,
-			Height:        &sayi,
-			Width:         &sayi,
-			Material:      &metin,
-			OriginCountry: &metin,
-			CollectionID:  &metin,
+			Subtitle:      &text,
+			Description:   &text,
+			Thumbnail:     &text,
+			Weight:        &number,
+			Length:        &number,
+			Height:        &number,
+			Width:         &number,
+			Material:      &text,
+			OriginCountry: &text,
+			CollectionID:  &text,
 			Metadata:      map[string]any{"k": "v"},
-			DeletedAt:     &an,
+			DeletedAt:     &now,
 			Options:       []models.Option{{}},
 			Images:        []models.Image{{}},
 			Tags:          []models.Tag{{}},
 			Categories:    []models.Category{{}},
 		},
-		Variants: []service.StoreVariant{doluVaryant()},
+		Variants: []service.StoreVariant{filledStoreVariant()},
 	}
 }
 
-// doluVaryant omitempty alanları da yazılan bir vitrin varyantı üretir.
-func doluVaryant() service.StoreVariant {
-	metin := "x"
-	sayi := int32(1)
-	an := time.Now().UTC()
+// filledStoreVariant produces a storefront variant whose omitempty fields are
+// written too.
+func filledStoreVariant() service.StoreVariant {
+	text := "x"
+	number := int32(1)
+	now := time.Now().UTC()
 
 	return service.StoreVariant{
 		Variant: models.Variant{
-			SKU:          &metin,
-			Barcode:      &metin,
-			EAN:          &metin,
-			UPC:          &metin,
-			Weight:       &sayi,
+			SKU:          &text,
+			Barcode:      &text,
+			EAN:          &text,
+			UPC:          &text,
+			Weight:       &number,
 			Metadata:     map[string]any{"k": "v"},
-			DeletedAt:    &an,
+			DeletedAt:    &now,
 			OptionValues: []models.OptionValue{{}},
 		},
 		PriceSet:      query.Record{"id": "pset_1"},
@@ -222,279 +226,288 @@ func doluVaryant() service.StoreVariant {
 	}
 }
 
-// TestVitrinListesiGovdesiniAnlatir liste ucunun ne döndüğünü söylediğini
-// doğrular.
+// TestStoreListDescribesItsBody verifies that the listing endpoint says what it
+// returns.
 //
-// Alan kümesi DTO'nun encoding/json çıktısıyla karşılaştırılır, elle yazılmış
-// bir listeyle değil: elle yazılmış liste, tipe alan eklendiği gün eksik kalır
-// ve test bunu görmezdi.
-func TestVitrinListesiGovdesiniAnlatir(t *testing.T) {
+// The field set is compared against the DTO's encoding/json output, not against
+// a hand-written list: a hand-written list falls short the day a field is added
+// to the type, and the test would not see it.
+func TestStoreListDescribesItsBody(t *testing.T) {
 	t.Parallel()
 
-	yollar, bilesenler := vitrinBelgesi(t)
-	op := vitrinIslemi(t, yollar, http.MethodGet, "/store/v1/products")
+	paths, components := storefrontDoc(t)
+	op := storefrontOperation(t, paths, http.MethodGet, "/store/v1/products")
 
 	assert.NotEmpty(t, op["summary"])
-	assert.NotContains(t, op, "requestBody", "GET ucu gövde almaz")
+	assert.NotContains(t, op, "requestBody", "a GET endpoint takes no body")
 
-	yanitlar, ok := op["responses"].(map[string]any)
+	responses, ok := op["responses"].(map[string]any)
 	require.True(t, ok)
 
-	// Liste 200 döner (bkz. writeList); 201 yazmak istemci üretecinde yanlış
-	// dallanma üretirdi.
-	tanim, ok := yanitlar["200"].(map[string]any)
-	require.True(t, ok, "handler'ın GERÇEKTEN yazdığı kod belgelenmeli")
+	// The listing returns a 200 (see writeList); writing 201 would produce the
+	// wrong branch in a client generator.
+	definition, ok := responses["200"].(map[string]any)
+	require.True(t, ok, "the code the handler REALLY writes has to be documented")
 
-	zarf := yanitSemasi(t, tanim)
+	envelope := responseSchema(t, definition)
 	assert.ElementsMatch(t, []string{"data", "count", "offset", "limit"},
-		vitrinAlanlari(t, bilesenler, zarf), "liste zarfı plan Bölüm 8'deki biçimdir")
+		storefrontFields(t, components, envelope), "the list envelope is the shape from plan Section 8")
 
-	oge, ok := ozellik(t, bilesenler, zarf, "data")["items"].(map[string]any)
-	require.True(t, ok, "liste zarfının öğe şeması olmalı")
+	item, ok := property(t, components, envelope, "data")["items"].(map[string]any)
+	require.True(t, ok, "the list envelope has to have an item schema")
 
-	urunSemasiniDogrula(t, bilesenler, oge)
+	assertProductSchema(t, components, item)
 }
 
-// TestVitrinTekilUcuGovdesiniAnlatir tekil ucun ne döndüğünü söylediğini
-// doğrular.
-func TestVitrinTekilUcuGovdesiniAnlatir(t *testing.T) {
+// TestStoreItemEndpointDescribesItsBody verifies that the single endpoint says
+// what it returns.
+func TestStoreItemEndpointDescribesItsBody(t *testing.T) {
 	t.Parallel()
 
-	yollar, bilesenler := vitrinBelgesi(t)
-	op := vitrinIslemi(t, yollar, http.MethodGet, "/store/v1/products/{id}")
+	paths, components := storefrontDoc(t)
+	op := storefrontOperation(t, paths, http.MethodGet, "/store/v1/products/{id}")
 
 	assert.NotEmpty(t, op["summary"])
-	assert.NotContains(t, op, "requestBody", "GET ucu gövde almaz")
+	assert.NotContains(t, op, "requestBody", "a GET endpoint takes no body")
 
-	yanitlar, ok := op["responses"].(map[string]any)
+	responses, ok := op["responses"].(map[string]any)
 	require.True(t, ok)
 
-	tanim, ok := yanitlar["200"].(map[string]any)
-	require.True(t, ok, "handler'ın GERÇEKTEN yazdığı kod belgelenmeli")
+	definition, ok := responses["200"].(map[string]any)
+	require.True(t, ok, "the code the handler REALLY writes has to be documented")
 
-	zarf := yanitSemasi(t, tanim)
-	assert.ElementsMatch(t, []string{"data"}, vitrinAlanlari(t, bilesenler, zarf),
-		"tekil yanıtlar {\"data\": …} zarfıyla döner")
+	envelope := responseSchema(t, definition)
+	assert.ElementsMatch(t, []string{"data"}, storefrontFields(t, components, envelope),
+		"single responses come back with the {\"data\": …} envelope")
 
-	urunSemasiniDogrula(t, bilesenler, ozellik(t, bilesenler, zarf, "data"))
+	assertProductSchema(t, components, property(t, components, envelope, "data"))
 }
 
-// urunSemasiniDogrula ürün şemasının vitrin tipiyle örtüştüğünü doğrular.
-func urunSemasiniDogrula(t *testing.T, bilesenler, sema map[string]any) {
+// assertProductSchema verifies that the product schema overlaps with the
+// storefront type.
+func assertProductSchema(t *testing.T, components, schema map[string]any) {
 	t.Helper()
 
-	assert.ElementsMatch(t, vitrinJSONAnahtarlari(t, doluUrun()),
-		vitrinAlanlari(t, bilesenler, sema), "ürün alanları vitrin tipiyle örtüşmeli")
+	assert.ElementsMatch(t, storefrontJSONKeys(t, filledStoreProduct()),
+		storefrontFields(t, components, schema), "the product fields have to overlap with the storefront type")
 
-	// Sıfır değerde yazılan anahtarlar tam olarak "her zaman yazılanlar"dır.
-	assert.ElementsMatch(t, vitrinJSONAnahtarlari(t, service.StoreProduct{}),
-		vitrinZorunlulari(t, bilesenler, sema),
-		"required, encoding/json'un HER ZAMAN yazdığı anahtarlarla aynı olmalı")
+	// The keys written at the zero value are exactly "the ones always written".
+	assert.ElementsMatch(t, storefrontJSONKeys(t, service.StoreProduct{}),
+		storefrontRequired(t, components, schema),
+		"required has to be the same as the keys encoding/json ALWAYS writes")
 }
 
-// TestVitrinVaryantlariZenginlestirilmisTipiAnlatir gölgelenen alanın şemada
-// DOĞRU tiple göründüğünü doğrular.
+// TestStoreVariantsDescribeEnrichedType verifies that the shadowed field appears
+// in the schema with the RIGHT type.
 //
-// service.StoreProduct gömülü models.Product'ın Variants alanını GÖLGELER ve
-// encoding/json yalnızca gölgeleyeni yazar. Şema gölgelenen models.Variant'ı
-// anlatsaydı istemci üreteci varyantları fiyat ve stok bilgisi OLMAYAN tiple
-// üretir, yani vitrin istemcisi fiyatı hiç göremezdi — üstelik anahtar kümesi
-// bozulmadığı için ("variants" iki tipte de var) bu sessizce olurdu. Ayıran
-// tek şey ÖĞE TİPİDİR ve test tam olarak onu karşılaştırır.
-func TestVitrinVaryantlariZenginlestirilmisTipiAnlatir(t *testing.T) {
+// service.StoreProduct SHADOWS the Variants field of the embedded models.Product
+// and encoding/json writes only the shadowing one. Had the schema described the
+// shadowed models.Variant, a client generator would produce the variants with a
+// type that HAS NO price and stock information, that is, the storefront client
+// could never see the price — and, since the key set is not disturbed
+// ("variants" exists in both types), this would happen silently. The only thing
+// that tells them apart is the ITEM TYPE, and the test compares exactly that.
+func TestStoreVariantsDescribeEnrichedType(t *testing.T) {
 	t.Parallel()
 
-	yollar, bilesenler := vitrinBelgesi(t)
-	op := vitrinIslemi(t, yollar, http.MethodGet, "/store/v1/products/{id}")
+	paths, components := storefrontDoc(t)
+	op := storefrontOperation(t, paths, http.MethodGet, "/store/v1/products/{id}")
 
-	yanitlar, ok := op["responses"].(map[string]any)
+	responses, ok := op["responses"].(map[string]any)
 	require.True(t, ok)
 
-	tanim, ok := yanitlar["200"].(map[string]any)
+	definition, ok := responses["200"].(map[string]any)
 	require.True(t, ok)
 
-	urun := ozellik(t, bilesenler, yanitSemasi(t, tanim), "data")
+	product := property(t, components, responseSchema(t, definition), "data")
 
-	varyantlar := ozellik(t, bilesenler, urun, "variants")
-	assert.Equal(t, "array", varyantlar["type"])
+	variants := property(t, components, product, "variants")
+	assert.Equal(t, "array", variants["type"])
 
-	oge, ok := varyantlar["items"].(map[string]any)
+	item, ok := variants["items"].(map[string]any)
 	require.True(t, ok)
 
-	alanlar := vitrinAlanlari(t, bilesenler, oge)
-	assert.ElementsMatch(t, vitrinJSONAnahtarlari(t, doluVaryant()), alanlar,
-		"varyant şeması zenginleştirilmiş tipten gelmeli")
-	assert.Contains(t, alanlar, "price_set", "gölgelenen models.Variant fiyat taşımaz")
-	assert.Contains(t, alanlar, "inventory_item")
-	// Gömülü models.Variant'ın alanları da DÜZLEŞTİRİLMİŞ olmalı; yalnızca
-	// eklerin görünmesi, temel varyant bilgisinin kaybolduğu anlamına gelirdi.
-	assert.Contains(t, alanlar, "sku")
+	fields := storefrontFields(t, components, item)
+	assert.ElementsMatch(t, storefrontJSONKeys(t, filledStoreVariant()), fields,
+		"the variant schema has to come from the enriched type")
+	assert.Contains(t, fields, "price_set", "the shadowed models.Variant carries no price")
+	assert.Contains(t, fields, "inventory_item")
+	// The fields of the embedded models.Variant have to be FLATTENED as well;
+	// only the additions showing up would mean the base variant information had
+	// been lost.
+	assert.Contains(t, fields, "sku")
 }
 
-// TestVitrinListesiYalnizcaOkunanParametreleriAnlatir sorgu parametrelerinin
-// handler'ın GERÇEKTEN okuduklarıyla aynı olduğunu doğrular.
+// TestStoreListDescribesOnlyParametersItReads verifies that the query
+// parameters are the same as the ones the handler REALLY reads.
 //
-// Okunmayan bir parametreyi şemaya koymak, istemciye ÇALIŞMAYAN bir özellik
-// vaat etmektir: üreteç metoda argüman koyar, çağıran doldurur, sunucu sessizce
-// yok sayar.
+// Putting a parameter that is not read into the schema is promising the client a
+// feature that DOES NOT WORK: the generator puts an argument on the method, the
+// caller fills it in, the server silently ignores it.
 //
-// "sales_channel_id"nin yokluğu ayrıca bir GÜVENLİK ifadesidir: kanal isteğin
-// publishable anahtarından gelir, sorgu dizesinden değil. Şemaya yazmak,
-// elindeki herhangi bir anahtarla gelen bir istemciye başka bir kanalın
-// katalogunu isteyebileceğini ima ederdi.
-func TestVitrinListesiYalnizcaOkunanParametreleriAnlatir(t *testing.T) {
+// The absence of "sales_channel_id" is also a SECURITY statement: the channel
+// comes from the request's publishable key, not from the query string. Writing
+// it into the schema would hint to a client arriving with any key it happened to
+// hold that it could ask for another channel's catalog.
+func TestStoreListDescribesOnlyParametersItReads(t *testing.T) {
 	t.Parallel()
 
-	yollar, _ := vitrinBelgesi(t)
-	op := vitrinIslemi(t, yollar, http.MethodGet, "/store/v1/products")
+	paths, _ := storefrontDoc(t)
+	op := storefrontOperation(t, paths, http.MethodGet, "/store/v1/products")
 
-	adlar := parametreAdlari(t, op, "query")
-	assert.ElementsMatch(t, []string{"collection_id", "q", "limit", "offset", "with_count"}, adlar,
-		"parametreler storeListProducts'ın okuduklarıyla aynı olmalı")
-	assert.NotContains(t, adlar, "sales_channel_id",
-		"kanal kimlikten gelir; sorgu parametresi olarak duyurulmamalı")
+	names := parameterNames(t, op, "query")
+	assert.ElementsMatch(t, []string{"collection_id", "q", "limit", "offset", "with_count"}, names,
+		"the parameters have to be the same as the ones storeListProducts reads")
+	assert.NotContains(t, names, "sales_channel_id",
+		"the channel comes from the identity; it must not be announced as a query parameter")
 }
 
-// TestVitrinListesiSayacParametresininVarsayilaniniYazar "with_count"un
-// VARSAYILANININ belgede okunabildiğini doğrular.
+// TestStoreListDocumentsCountParameterDefault verifies that the DEFAULT of
+// "with_count" can be read in the document.
 //
-// Bir maliyet anahtarının varsayılanını yazmamak, bu deponun "sessiz
-// varsayılan" yasağının tam ihlalidir: parametreyi belgede gören istemci
-// göndermediğinde ne olduğunu bilmez ve iki yönde de yanılabilir — sayacı
-// bedava sanar ya da hiç gelmediğini sanar.
+// Not writing down the default of a cost switch is the exact violation of this
+// repository's "silent default" ban: a client that sees the parameter in the
+// document does not know what happens when it does not send it and can be wrong
+// in both directions — it may think the counter is free, or think it never
+// arrives.
 //
-// Kapatmanın SONUCU da yazılı olmalıdır: yanıt zarfında alan 0'a düşmez, null
-// olmaz, HİÇ BULUNMAZ. Bunu okumayan istemci "count" alanını doğrudan okur ve
-// JavaScript'te undefined ile hesap yapar.
-func TestVitrinListesiSayacParametresininVarsayilaniniYazar(t *testing.T) {
+// The CONSEQUENCE of turning it off has to be written down too: in the response
+// envelope the field does not fall to 0, it does not become null, it IS NOT
+// THERE AT ALL. A client that does not read this reads the "count" field
+// directly and does arithmetic with undefined in JavaScript.
+func TestStoreListDocumentsCountParameterDefault(t *testing.T) {
 	t.Parallel()
 
-	yollar, _ := vitrinBelgesi(t)
-	op := vitrinIslemi(t, yollar, http.MethodGet, "/store/v1/products")
+	paths, _ := storefrontDoc(t)
+	op := storefrontOperation(t, paths, http.MethodGet, "/store/v1/products")
 
-	// Büyük/küçük harf ayrımı düşürülür: metin vurgu için sözcükleri büyük
-	// yazıyor ve iddia vurguyla değil BİLGİYLE ilgili.
-	aciklama := strings.ToLower(parametreAciklamasi(t, op, "with_count"))
+	// The case distinction is dropped: the text writes words in capitals for
+	// emphasis and the claim is not about the emphasis but about the
+	// INFORMATION.
+	description := strings.ToLower(parameterDescription(t, op, "with_count"))
 
-	assert.Contains(t, aciklama, "true", "varsayılanın hangi değer olduğu yazılmalı")
-	assert.Contains(t, aciklama, "bulunmaz",
-		"kapatıldığında alanın gövdeden düştüğü yazılmalı")
-	assert.Contains(t, aciklama, "ms",
-		"parametrenin ne kazandırdığı ÖLÇÜMLE yazılmalı; sayısız bir açıklama "+
-			"okuyanı karar veremez bırakır")
+	assert.Contains(t, description, "true", "which value the default is has to be written down")
+	assert.Contains(t, description, "absent",
+		"that the field drops out of the body when it is turned off has to be written down")
+	assert.Contains(t, description, "ms",
+		"what the parameter buys has to be written down WITH A MEASUREMENT; a description "+
+			"with no numbers leaves the reader unable to decide")
 }
 
-// TestVitrinListesiSayaciZorunluAlan_Saymaz yanıt şemasının "count"u zorunlu
-// ilan ETMEDİĞİNİ doğrular.
+// TestStoreListCountIsNotRequired verifies that the response schema DOES NOT
+// declare "count" required.
 //
-// Zarf şeması bütün modüllerde ortaktır ve orada sayaç zorunludur; vitrin
-// listesi tek istisnadır çünkü tek kapatılabilen odur. Şema zorunlu deseydi
-// belge, "with_count=false" yanıtında var olmayan bir alanı vaat ederdi ve
-// üretilmiş bir istemci onu okurken düşerdi. Öteki uçların şeması bu testte
-// birlikte sınanır: gevşetmenin YALNIZCA bu uca ait olduğu ancak böyle
-// görülür.
-func TestVitrinListesiSayaciZorunluAlan_Saymaz(t *testing.T) {
+// The envelope schema is shared by every module and the counter is required
+// there; the storefront listing is the only exception, because it is the only
+// one that can be turned off. Had the schema said required, the document would
+// promise a field that does not exist in a "with_count=false" response and a
+// generated client would fall over while reading it. The schema of the other
+// endpoints is exercised together with it in this test: only that way can it be
+// seen that the relaxation belongs ONLY to this endpoint.
+func TestStoreListCountIsNotRequired(t *testing.T) {
 	t.Parallel()
 
-	yollar, bilesenler := vitrinBelgesi(t)
+	paths, components := storefrontDoc(t)
 
-	vitrin := listeZarfi(t, bilesenler, vitrinIslemi(t, yollar, http.MethodGet, "/store/v1/products"))
-	assert.NotContains(t, zorunluAlanlar(t, vitrin), "count",
-		"vitrin listesinde sayaç düşebilir; zorunlu ilan edilmemeli")
-	assert.Contains(t, anahtarSirala(vitrin["properties"]), "count",
-		"alan şemadan SİLİNMEMELİ; düşebilir olması yok olması demek değildir")
+	storefront := listEnvelopeSchema(t, components, storefrontOperation(t, paths, http.MethodGet, "/store/v1/products"))
+	assert.NotContains(t, requiredFields(t, storefront), "count",
+		"the counter can drop in the storefront listing; it must not be declared required")
+	assert.Contains(t, objectKeys(storefront["properties"]), "count",
+		"the field MUST NOT BE REMOVED from the schema; being droppable is not the same as being gone")
 
-	yonetim := listeZarfi(t, bilesenler, vitrinIslemi(t, yollar, http.MethodGet, "/admin/v1/products"))
-	assert.Contains(t, zorunluAlanlar(t, yonetim), "count",
-		"yönetim listesi her zaman sayar; onun şeması gevşetilmemeli")
+	admin := listEnvelopeSchema(t, components, storefrontOperation(t, paths, http.MethodGet, "/admin/v1/products"))
+	assert.Contains(t, requiredFields(t, admin), "count",
+		"the admin listing always counts; its schema must not be relaxed")
 }
 
-// listeZarfi bir işlemin 200 yanıtındaki liste zarfı şemasını döner.
-func listeZarfi(t *testing.T, bilesenler, op map[string]any) map[string]any {
+// listEnvelopeSchema returns the list envelope schema in an operation's 200
+// response.
+func listEnvelopeSchema(t *testing.T, components, op map[string]any) map[string]any {
 	t.Helper()
 
-	yanitlar, ok := op["responses"].(map[string]any)
+	responses, ok := op["responses"].(map[string]any)
 	require.True(t, ok)
 
-	tanim, ok := yanitlar["200"].(map[string]any)
+	definition, ok := responses["200"].(map[string]any)
 	require.True(t, ok)
 
-	return semaCoz(t, bilesenler, yanitSemasi(t, tanim))
+	return resolveSchema(t, components, responseSchema(t, definition))
 }
 
-// zorunluAlanlar şemanın "required" listesini döner.
-func zorunluAlanlar(t *testing.T, sema map[string]any) []string {
+// requiredFields returns the "required" list of the schema.
+func requiredFields(t *testing.T, schema map[string]any) []string {
 	t.Helper()
 
-	ham, ok := sema["required"].([]any)
-	require.True(t, ok, "şemada required olmalı: %#v", sema)
+	raw, ok := schema["required"].([]any)
+	require.True(t, ok, "the schema has to have required: %#v", schema)
 
-	adlar := make([]string, 0, len(ham))
+	names := make([]string, 0, len(raw))
 
-	for _, v := range ham {
+	for _, v := range raw {
 		s, ok := v.(string)
 		require.True(t, ok)
 
-		adlar = append(adlar, s)
+		names = append(names, s)
 	}
 
-	return adlar
+	return names
 }
 
-// anahtarSirala bir JSON nesnesinin anahtarlarını döner.
-func anahtarSirala(v any) []string {
+// objectKeys returns the keys of a JSON object.
+func objectKeys(v any) []string {
 	m, ok := v.(map[string]any)
 	if !ok {
 		return nil
 	}
 
-	adlar := make([]string, 0, len(m))
-	for ad := range m {
-		adlar = append(adlar, ad)
+	names := make([]string, 0, len(m))
+	for name := range m {
+		names = append(names, name)
 	}
 
-	return adlar
+	return names
 }
 
-// parametreAciklamasi işlemin verilen sorgu parametresinin açıklamasını döner.
-func parametreAciklamasi(t *testing.T, op map[string]any, ad string) string {
+// parameterDescription returns the description of the operation's given query
+// parameter.
+func parameterDescription(t *testing.T, op map[string]any, name string) string {
 	t.Helper()
 
 	params, ok := op["parameters"].([]any)
 	require.True(t, ok)
 
-	for _, ham := range params {
-		p, ok := ham.(map[string]any)
+	for _, raw := range params {
+		p, ok := raw.(map[string]any)
 		require.True(t, ok)
 
-		if p["name"] != ad {
+		if p["name"] != name {
 			continue
 		}
 
-		aciklama, ok := p["description"].(string)
-		require.True(t, ok, "%q parametresinin açıklaması olmalı", ad)
+		description, ok := p["description"].(string)
+		require.True(t, ok, "the %q parameter has to have a description", name)
 
-		return aciklama
+		return description
 	}
 
-	require.Failf(t, "parametre yok", "%q parametresi belgede bulunamadı", ad)
+	require.Failf(t, "no such parameter", "the %q parameter was not found in the document", name)
 
 	return ""
 }
 
-// TestVitrinTekilUcuYolParametresiniAnlatir yol parametresinin handle'ı da
-// kabul ettiğinin yazılı olduğunu doğrular.
+// TestStoreItemEndpointDescribesPathParameter verifies that it is written down
+// that the path parameter accepts a handle too.
 //
-// Türetici desene bakıp bunu söyleyemez: "{id}" adı yalnızca kimliği ima eder,
-// oysa vitrin adresleri handle taşır.
-func TestVitrinTekilUcuYolParametresiniAnlatir(t *testing.T) {
+// The deriver cannot say this by looking at the pattern: the name "{id}" only
+// implies an id, whereas storefront addresses carry a handle.
+func TestStoreItemEndpointDescribesPathParameter(t *testing.T) {
 	t.Parallel()
 
-	yollar, _ := vitrinBelgesi(t)
-	op := vitrinIslemi(t, yollar, http.MethodGet, "/store/v1/products/{id}")
+	paths, _ := storefrontDoc(t)
+	op := storefrontOperation(t, paths, http.MethodGet, "/store/v1/products/{id}")
 
-	assert.Empty(t, parametreAdlari(t, op, "query"), "tekil uç sorgu dizesini okumaz")
-	assert.Equal(t, []string{"id"}, parametreAdlari(t, op, "path"))
+	assert.Empty(t, parameterNames(t, op, "query"), "the single endpoint does not read the query string")
+	assert.Equal(t, []string{"id"}, parameterNames(t, op, "path"))
 
 	params, ok := op["parameters"].([]any)
 	require.True(t, ok)
@@ -505,110 +518,114 @@ func TestVitrinTekilUcuYolParametresiniAnlatir(t *testing.T) {
 	assert.Contains(t, p["description"], "handle")
 }
 
-// parametreAdlari işlemin verilen yerdeki parametre adlarını döner.
-func parametreAdlari(t *testing.T, op map[string]any, yer string) []string {
+// parameterNames returns the names of the operation's parameters in the given
+// location.
+func parameterNames(t *testing.T, op map[string]any, location string) []string {
 	t.Helper()
 
 	params, _ := op["parameters"].([]any)
 
-	adlar := make([]string, 0, len(params))
+	names := make([]string, 0, len(params))
 
-	for _, ham := range params {
-		p, ok := ham.(map[string]any)
+	for _, raw := range params {
+		p, ok := raw.(map[string]any)
 		require.True(t, ok)
 
-		if p["in"] != yer {
+		if p["in"] != location {
 			continue
 		}
 
-		ad, ok := p["name"].(string)
+		name, ok := p["name"].(string)
 		require.True(t, ok)
 
-		adlar = append(adlar, ad)
+		names = append(names, name)
 	}
 
-	return adlar
+	return names
 }
 
-// TestVitrinUclarininTumuAnlatildi anlatılmamış bir vitrin ucu kalmadığını
-// doğrular.
+// TestEveryStoreEndpointIsDescribed verifies that no storefront endpoint has
+// been left undescribed.
 //
-// Yeni bir uç eklenip anlatılmadığında bu test düşer. Arıza aksi hâlde SESSİZ
-// olurdu: uç belgede yolu ve güvenliğiyle görünür, yalnızca ne döndüğü
-// bilinmez.
-func TestVitrinUclarininTumuAnlatildi(t *testing.T) {
+// When a new endpoint is added and not described, this test fails. Otherwise the
+// failure would be SILENT: the endpoint appears in the document with its path
+// and its security, only what it returns is unknown.
+func TestEveryStoreEndpointIsDescribed(t *testing.T) {
 	t.Parallel()
 
-	yollar, _ := vitrinBelgesi(t)
+	paths, _ := storefrontDoc(t)
 
-	var bulunan []string
+	var found []string
 
-	for yol, islemler := range yollar {
-		if !strings.HasPrefix(yol, "/store/v1") {
+	for path, operations := range paths {
+		if !strings.HasPrefix(path, "/store/v1") {
 			continue
 		}
 
-		islemHaritasi, ok := islemler.(map[string]any)
-		require.True(t, ok, "yol girdisi metot haritası olmalı")
+		operationMap, ok := operations.(map[string]any)
+		require.True(t, ok, "a path entry has to be a method map")
 
-		for metod, ham := range islemHaritasi {
-			op, ok := ham.(map[string]any)
+		for method, raw := range operationMap {
+			op, ok := raw.(map[string]any)
 			require.True(t, ok)
 
-			assert.NotEmpty(t, op["summary"], "%s %s anlatılmalı", metod, yol)
-			bulunan = append(bulunan, strings.ToUpper(metod)+" "+yol)
+			assert.NotEmpty(t, op["summary"], "%s %s has to be described", method, path)
+			found = append(found, strings.ToUpper(method)+" "+path)
 		}
 	}
 
 	assert.ElementsMatch(t, []string{
 		"GET /store/v1/products",
 		"GET /store/v1/products/{id}",
-		// GraphQL ucu da vitrindedir ve anlatılır; OpenAPI onun ŞEMASINI
-		// anlatamaz ama yolunu, gövdesini ve sözleşmenin nerede olduğunu
-		// anlatır (bkz. api.describeVitrinGraphQL).
+		// The GraphQL endpoint is part of the storefront too and it is
+		// described; OpenAPI cannot describe its SCHEMA but it does describe its
+		// path, its body and where the contract is (see
+		// api.describeStorefrontGraphQL).
 		"POST /store/v1/graphql",
-	}, bulunan)
+	}, found)
 }
 
-// TestGraphQLUcuGovdesiniAnlatir GraphQL ucunun istek ve yanıt zarflarını
-// anlattığını doğrular.
+// TestGraphQLEndpointDescribesItsBodies verifies that the GraphQL endpoint
+// describes its request and response envelopes.
 //
-// İddia iki yerden gelir. Birincisi istemci üretecidir: gövdesi anlatılmamış
-// bir POST, çağrılamayan bir metoda dönüşür. İkincisi uçtan uca şema testidir
-// (internal/e2e): anlatılan HER ucun 2xx gövdesinin şekli bilinmelidir ve o
-// test yalnızca Docker'lı koşumda çalışır — burada kırılması, sorunu bir
-// konteyner beklemeden gösterir.
+// The claim comes from two places. The first is the client generator: a POST
+// whose body is not described turns into a method that cannot be called. The
+// second is the end-to-end schema test (internal/e2e): the shape of the 2xx body
+// of EVERY described endpoint has to be known, and that test only runs in a
+// Docker-backed run — breaking here shows the problem without waiting for a
+// container.
 //
-// "data"nın İÇİ kasten anlatılmaz: biçimini istemcinin sorgusu belirler.
-func TestGraphQLUcuGovdesiniAnlatir(t *testing.T) {
+// The INSIDE of "data" is deliberately not described: the client's query decides
+// its shape.
+func TestGraphQLEndpointDescribesItsBodies(t *testing.T) {
 	t.Parallel()
 
-	yollar, bilesenler := vitrinBelgesi(t)
-	op := vitrinIslemi(t, yollar, http.MethodPost, "/store/v1/graphql")
+	paths, components := storefrontDoc(t)
+	op := storefrontOperation(t, paths, http.MethodPost, "/store/v1/graphql")
 
 	assert.NotEmpty(t, op["summary"])
 
-	govde, ok := op["requestBody"].(map[string]any)
-	require.True(t, ok, "GraphQL ucu gövde okur ve bunu söylemelidir")
+	body, ok := op["requestBody"].(map[string]any)
+	require.True(t, ok, "the GraphQL endpoint reads a body and has to say so")
 
-	icerik, ok := govde["content"].(map[string]any)
+	content, ok := body["content"].(map[string]any)
 	require.True(t, ok)
 
-	json_, ok := icerik["application/json"].(map[string]any)
+	json_, ok := content["application/json"].(map[string]any)
 	require.True(t, ok)
 
-	istek, ok := json_["schema"].(map[string]any)
+	request, ok := json_["schema"].(map[string]any)
 	require.True(t, ok)
 	assert.ElementsMatch(t, []string{"query", "operationName", "variables"},
-		vitrinAlanlari(t, bilesenler, istek))
+		storefrontFields(t, components, request))
 
-	yanitlar, ok := op["responses"].(map[string]any)
+	responses, ok := op["responses"].(map[string]any)
 	require.True(t, ok)
 
-	tanim, ok := yanitlar["200"].(map[string]any)
-	require.True(t, ok, "GraphQL, çözümlenen isteğe alan hatalarıyla birlikte 200 döner")
+	definition, ok := responses["200"].(map[string]any)
+	require.True(t, ok, "GraphQL returns a 200 to a resolved request, field errors included")
 
-	zarf := yanitSemasi(t, tanim)
+	envelope := responseSchema(t, definition)
 	assert.ElementsMatch(t, []string{"data", "errors"},
-		vitrinAlanlari(t, bilesenler, zarf), "GraphQL yanıt zarfı bu iki alandır")
+		storefrontFields(t, components, envelope), "the GraphQL response envelope is these two fields")
 }

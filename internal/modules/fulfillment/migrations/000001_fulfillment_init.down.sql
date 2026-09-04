@@ -1,12 +1,12 @@
--- 000001_fulfillment_init'in geri alınması.
+-- Rollback of 000001_fulfillment_init.
 --
--- Tablolar bağımlılık sırasının TERSİNDE düşürülür: önce referans verenler
--- (fulfillment_items -> fulfillments -> shipping_option_rules ->
--- shipping_options), sonra referans verilen (shipping_profiles). İndeksler
--- tabloyla birlikte düşer, ayrıca DROP edilmez.
+-- The tables are dropped in the REVERSE of dependency order: first the ones
+-- that reference (fulfillment_items -> fulfillments -> shipping_option_rules ->
+-- shipping_options), then the referenced one (shipping_profiles). Indexes drop
+-- together with the table and are not DROPped separately.
 --
--- fulfillment_manual_shipments hiçbir tabloya bağlı değildir; sağlayıcının
--- kendi defteridir ve sırası önemsizdir.
+-- fulfillment_manual_shipments is bound to no table; it is the provider's own
+-- ledger and its order does not matter.
 
 DROP TABLE IF EXISTS fulfillment_manual_shipments;
 DROP TABLE IF EXISTS fulfillment_items;

@@ -1,17 +1,18 @@
--- fulfillment_manual_shipments sorguları — MANUEL sağlayıcının kendi defteri.
+-- fulfillment_manual_shipments queries — the MANUAL provider's own ledger.
 --
--- Bu tabloya YALNIZCA manual sağlayıcı dokunur; fulfillment servisi onu hiç
--- görmez ve sağlayıcıya ancak FulfillmentProvider arayüzünden ulaşır. Ayrım
--- bilinçlidir: gerçek bir kargo firmasının durumu da modülün veritabanında
--- değildir.
+-- ONLY the manual provider touches this table; the fulfillment service never
+-- sees it and reaches the provider solely through the FulfillmentProvider
+-- interface. The separation is deliberate: the state of a real shipping carrier
+-- is not in the module's database either.
 
--- InsertManualShipmentIfAbsent gönderiyi yalnızca o idempotency anahtarı HENÜZ
--- KULLANILMAMIŞSA yazar.
+-- InsertManualShipmentIfAbsent writes the shipment only if that idempotency key
+-- has NOT BEEN USED YET.
 --
--- Çakışma hâlinde satır DÖNMEZ (pgx.ErrNoRows); çağıran o zaman anahtarla var
--- olan gönderiyi okur. ON CONFLICT DO NOTHING yarışı tek deyime indirir;
--- "önce oku, yoksa yaz" iki adımı arasında araya giren eşzamanlı bir çağrı
--- benzersiz indekse çarpıp işlemi iptal ederdi.
+-- On a conflict NO row is returned (pgx.ErrNoRows); the caller then reads the
+-- shipment that exists under the key. ON CONFLICT DO NOTHING reduces the race
+-- to a single statement; a concurrent call slipping between the two steps of
+-- "read first, write if absent" would hit the unique index and abort the
+-- transaction.
 -- name: InsertManualShipmentIfAbsent :one
 INSERT INTO fulfillment_manual_shipments (
     id, idempotency_key, reference, option_id, status, tracking_number,
@@ -28,10 +29,11 @@ WHERE id = $1;
 SELECT * FROM fulfillment_manual_shipments
 WHERE idempotency_key = $1;
 
--- LockManualShipment gönderiyi işlem boyunca kilitler; durum geçişleri
--- yalnızca bu kilit altında yapılır. Sağlayıcının idempotency şartı buna
--- dayanır: aynı gönderiyi aynı anda iptal eden iki çağrıdan ikincisi,
--- birincinin yazdığı durumu görür ve defteri İKİNCİ KEZ değiştirmez.
+-- LockManualShipment locks the shipment for the duration of the transaction;
+-- state transitions are made only under this lock. The provider's idempotency
+-- requirement rests on it: of two calls canceling the same shipment at the same
+-- time, the second one sees the state the first wrote and does NOT change the
+-- ledger A SECOND TIME.
 -- name: LockManualShipment :one
 SELECT * FROM fulfillment_manual_shipments
 WHERE id = $1

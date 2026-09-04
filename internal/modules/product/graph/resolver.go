@@ -10,95 +10,99 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/product/service"
 )
 
-// Hata kodları; istemci bunlara errors.CodeOf ile (ya da GraphQL yanıtındaki
-// extensions.code alanından) bakabilir.
+// Error codes; the client can look them up with errors.CodeOf (or from the
+// extensions.code field of the GraphQL response).
 const (
 	codeBadArgument = "product_graphql_bad_argument"
 	codePanic       = "product_graphql_panic"
-	// codeGovdeCokBuyuk, GraphQL zarfında değil çekirdeğin hata zarfında
-	// görünür: belge çalıştırıcıya hiç ulaşmamıştır (bkz. govdeSiniri).
-	codeGovdeCokBuyuk = "product_graphql_body_too_large"
+	// codeBodyTooLarge shows up in the core's error envelope, not in the
+	// GraphQL one: the document never reached the executor (see bodyLimit).
+	codeBodyTooLarge = "product_graphql_body_too_large"
 )
 
-// Resolver GraphQL kökünü vitrin servisine bağlar.
+// Resolver binds the GraphQL root to the storefront service.
 //
-// Resolver'lar SERVİSİ çağırır, depoya inmez ve yeni SQL yazmaz; gerekçe için
-// bkz. paket belgesi.
+// Resolvers call the SERVICE, they do not reach down to the repository and they
+// do not write new SQL; for the rationale see the package documentation.
 type Resolver struct {
 	svc Storefront
 }
 
-// NewResolver verilen vitrin servisiyle kök resolver üretir.
+// NewResolver builds a root resolver with the given storefront service.
 func NewResolver(svc Storefront) *Resolver { return &Resolver{svc: svc} }
 
-// Üretilen sözleşmenin karşılandığı DERLEME zamanında sabitlenir: şemaya bir
-// alan eklendiğinde ya da imzası değiştiğinde hata testte değil derlemede
-// görünür — şema-önce (schema-first) üretimin asıl kazancı budur.
+// That the generated contract is satisfied is pinned at COMPILE time: when a
+// field is added to the schema or its signature changes, the error shows up in
+// the build rather than in a test — that is the real gain of schema-first
+// generation.
 var _ ResolverRoot = (*Resolver)(nil)
 
-// Query üretilen kodun beklediği sorgu resolver'ını döner.
+// Query returns the query resolver the generated code expects.
 func (r *Resolver) Query() QueryResolver { return &queryResolver{r} }
 
-// Variant üretilen kodun beklediği varyant resolver'ını döner.
+// Variant returns the variant resolver the generated code expects.
 func (r *Resolver) Variant() VariantResolver { return &variantResolver{r} }
 
-// queryResolver kök sorguları karşılar.
+// queryResolver serves the root queries.
 type queryResolver struct{ *Resolver }
 
-// variantResolver varyantın alan çözümlerini karşılar.
+// variantResolver serves the field resolutions of the variant.
 type variantResolver struct{ *Resolver }
 
-// Products yayındaki ürünleri listeler.
+// Products lists the published products.
 //
-// # Satış kanalı SORGUDAN GELMEZ
+// # The sales channel DOES NOT COME FROM THE QUERY
 //
-// Kanallar [SalesChannelIDsFromContext] ile isteğin DOĞRULANMIŞ kimliğinden
-// okunur; şemada böyle bir argüman yoktur ve olmayacaktır (bkz. schema_test.go).
-// Argüman olsaydı süzgeç bir yetkilendirme olmaktan çıkıp görüntüleme
-// tercihine dönüşürdü.
+// The channels are read from the request's VERIFIED identity with
+// [SalesChannelIDsFromContext]; there is no such argument in the schema and
+// there will not be one (see schema_test.go). Had it been an argument, the
+// filter would stop being an authorization and turn into a display preference.
 //
-// # Sayfalama varsayılanı BURADA DEĞİL
+// # The paging default is NOT HERE
 //
-// Verilmeyen limit/offset 0 olarak geçirilir; 0'ı varsayılana çevirmek ve üst
-// sınıra kırpmak servisin işidir (bkz. service normalizePaging). Burada bir
-// varsayılan seçmek, aynı kuralın ikinci bir tanımı olurdu ve iki okuma yüzeyi
-// farklı sayfa boyutları döndürmeye başlardı.
+// A limit/offset that is not given is passed on as 0; turning 0 into the
+// default and clamping it to the ceiling is the service's job (see the service
+// normalizePaging). Picking a default here would be a second definition of the
+// same rule and the two read surfaces would start returning different page
+// sizes.
 //
-// # Boş metin argümanı VERİLMEMİŞ sayılır
+// # An empty text argument counts as NOT GIVEN
 //
-// q ve collectionId kırpıldıktan sonra boş kalıyorsa servise nil geçer; kural
-// REST'teki stringParam ile AYNIDIR ve tekil uçtaki [tekilSecici] de aynı
-// ayrımı yapar. Olduğu gibi geçirmek iki yüzeyi ayrıştırırdı: `collectionId:
-// ""` boş bir kimlikle süzer ve hiçbir şey döndürmez, `q: ""` ise her satırı
-// eşleştiren bir ILIKE taramasını sonuca hiç dokunmadan ekler — ikisi de
-// istemcinin niyeti değildir ve ikisi de sessizdir.
+// If q and collectionId are empty after trimming, nil is passed to the service;
+// the rule is the SAME as stringParam in REST and [singleSelector] on the
+// single-item endpoint makes the same distinction. Passing them through as they
+// are would make the two surfaces diverge: `collectionId: ""` filters by an
+// empty identity and returns nothing, while `q: ""` adds an ILIKE scan that
+// matches every row without touching the result at all — neither is the
+// client's intent and both are silent.
 //
-// # Sayaç yalnızca İSTENİRSE hesaplanır
+// # The count is computed ONLY IF IT IS ASKED FOR
 //
-// GraphQL'de "count" bir alandır ve istemci onu seçmediyse yanıtta zaten
-// görünmez. Buna rağmen sorgu ÇALIŞIYORDU: `{ products { items { id } } }`
-// diyen istemci, hiç göremeyeceği bir sayı için sayaç sorgusunun bedelini
-// ödüyordu. Ölçüldü (gobit_load, 52.004 ürün, LIMIT 20, ortanca): sayaçla
-// 67,00 ms, sayaçsız 0,65 ms — yani seçilmeyen tek bir alan isteğin SQL'inin
-// %99'unu yazıyordu.
+// In GraphQL "count" is a field and if the client did not select it, it does
+// not show up in the response anyway. In spite of that the query WAS RUNNING: a
+// client saying `{ products { items { id } } }` was paying the cost of the
+// count query for a number it could never see. Measured (gobit_load, 52,004
+// products, LIMIT 20, median): 67.00 ms with the count, 0.65 ms without it —
+// that is, a single unselected field was writing 99% of the request's SQL.
 //
-// [seciliMi] alanın seçilip seçilmediğini sorar. Bu bir SÖZLEŞME DEĞİŞİKLİĞİ
-// değildir: şemadaki "count: Int!" olduğu gibi durur ve alan seçildiğinde her
-// zaman dolu döner; değişen tek şey, seçilmeyen alanın artık iş de
-// yaptırmamasıdır. REST'in "with_count" parametresi tam olarak bu davranışın
-// sorgu dizesindeki karşılığıdır (bkz. api.Handler.storeListProducts).
+// [isSelected] asks whether the field was selected. This is NOT A CONTRACT
+// CHANGE: the "count: Int!" in the schema stands as it is and always comes back
+// filled when the field is selected; the only thing that changed is that an
+// unselected field no longer causes work either. REST's "with_count" parameter
+// is exactly this behavior's counterpart in the query string (see
+// api.Handler.storeListProducts).
 func (r *queryResolver) Products(
 	ctx context.Context,
 	limit, offset *int,
 	q, collectionID *string,
 ) (*ProductList, error) {
 	result, err := r.svc.ListStoreProducts(ctx, service.StoreListOptions{
-		CollectionID:    kirpilmisIsaretci(collectionID),
-		Search:          kirpilmisIsaretci(q),
+		CollectionID:    trimmedPointer(collectionID),
+		Search:          trimmedPointer(q),
 		SalesChannelIDs: SalesChannelIDsFromContext(ctx),
-		Limit:           intDegeri(limit),
-		Offset:          intDegeri(offset),
-		SkipCount:       !seciliMi(ctx, alanCount),
+		Limit:           intValue(limit),
+		Offset:          intValue(offset),
+		SkipCount:       !isSelected(ctx, fieldCount),
 	})
 	if err != nil {
 		return nil, err
@@ -107,18 +111,19 @@ func (r *queryResolver) Products(
 	return &result, nil
 }
 
-// Product tek bir vitrin ürününü kimliğe ya da handle'a göre döner.
+// Product returns a single storefront product by identity or by handle.
 //
-// Kanal süzgeci listedekiyle AYNIDIR: listede gizlenen bir ürünü tekil uçtan
-// göstermek gizlemeyi tümüyle anlamsız kılardı ve vitrin adresleri handle
-// taşıdığı için tahmin edilebilir olan tam da bu sorgudur.
+// The channel filter is the SAME as the one on the list: showing a product
+// hidden from the list through the single-item endpoint would make hiding
+// entirely pointless, and because storefront addresses carry the handle this is
+// exactly the guessable query.
 func (r *queryResolver) Product(ctx context.Context, id, handle *string) (*service.StoreProduct, error) {
-	secici, err := tekilSecici(id, handle)
+	selector, err := singleSelector(id, handle)
 	if err != nil {
 		return nil, err
 	}
 
-	product, err := r.svc.GetStoreProduct(ctx, secici, SalesChannelIDsFromContext(ctx))
+	product, err := r.svc.GetStoreProduct(ctx, selector, SalesChannelIDsFromContext(ctx))
 	if err != nil {
 		return nil, err
 	}
@@ -126,57 +131,63 @@ func (r *queryResolver) Product(ctx context.Context, id, handle *string) (*servi
 	return &product, nil
 }
 
-// PriceSet varyantın fiyat setini (pricing modülünün kaydı) döner.
+// PriceSet returns the variant's price set (the pricing module's record).
 //
-// Alan neden ELLE çözülüyor: kayıt bu modüle query.Record olarak gelir, JSON
-// skalarının taşıyıcısı ise map[string]any'dir. İkisi Go'da atanabilir ama
-// üreteç için AYNI tip değildir, bu yüzden alan otomatik bağlanamaz.
-// Alternatif, çekirdeğin query.Record'una GraphQL serileştirmesi öğretmekti;
-// o yol bir modülün sunum kaygısını çekirdeğe taşır ve çekirdeği bir GraphQL
-// kütüphanesine bağlardı (Prensip 2.4'ün ruhu). Buradaki dönüşüm bedelsizdir:
-// atama, kopya değil.
+// Why the field is resolved BY HAND: the record arrives in this module as a
+// query.Record, while the carrier of the JSON scalar is map[string]any. The two
+// are assignable in Go but they are not the SAME type for the generator, so the
+// field cannot be bound automatically. The alternative was teaching the core's
+// query.Record about GraphQL serialization; that road carries a module's
+// presentation concern into the core and would bind the core to a GraphQL
+// library (the spirit of Principle 2.4). The conversion here is free: it is an
+// assignment, not a copy.
 func (r *variantResolver) PriceSet(_ context.Context, obj *service.StoreVariant) (map[string]any, error) {
 	return obj.PriceSet, nil
 }
 
-// InventoryItem varyantın stok kalemini (inventory modülünün kaydı) döner.
+// InventoryItem returns the variant's inventory item (the inventory module's
+// record).
 //
-// Gerekçe [variantResolver.PriceSet] ile aynıdır.
+// The rationale is the same as [variantResolver.PriceSet].
 func (r *variantResolver) InventoryItem(_ context.Context, obj *service.StoreVariant) (map[string]any, error) {
 	return obj.InventoryItem, nil
 }
 
-// tekilSecici id/handle argümanlarından servise verilecek seçiciyi üretir.
+// singleSelector builds the selector handed to the service out of the
+// id/handle arguments.
 //
-// Servis ikisini TEK parametrede alır ve öneke bakarak ayırır (prod_… kimlik,
-// gerisi handle); bu yüzden burada yapılan tek şey "tam olarak biri verilmiş
-// mi" sorusudur. İkisini birden kabul edip birine öncelik vermek, çelişkili
-// bir isteği sessizce yorumlamak olurdu: istemci handle'ı yazdığını sanırken
-// kimliğin yanıtını alırdı.
+// The service takes the two in a SINGLE parameter and tells them apart by the
+// prefix (prod_… is an identity, the rest is a handle); that is why the only
+// thing done here is the question "was exactly one of them given". Accepting
+// both and giving one priority would mean silently interpreting a contradictory
+// request: the client would think it wrote the handle and would get the
+// identity's answer.
 //
-// Boş ve yalnızca boşluktan oluşan değer VERİLMEMİŞ sayılır; aksi hâlde
-// istemci `id: ""` göndererek "iki argümandan biri verildi" testini geçer ve
-// hatayı bir katman ötede, çok daha kapalı bir mesajla alırdı.
-func tekilSecici(id, handle *string) (string, error) {
-	kimlik := kirp(id)
-	ad := kirp(handle)
+// An empty value and one made up only of whitespace count as NOT GIVEN;
+// otherwise a client could send `id: ""`, pass the "one of the two arguments
+// was given" test and get the error a layer further on, with a far more opaque
+// message.
+func singleSelector(id, handle *string) (string, error) {
+	identity := trim(id)
+	name := trim(handle)
 
 	switch {
-	case kimlik != "" && ad != "":
+	case identity != "" && name != "":
 		return "", coreerrors.Invalid(codeBadArgument,
-			"id ve handle birlikte verilemez; yalnızca biri verilmelidir")
-	case kimlik != "":
-		return kimlik, nil
-	case ad != "":
-		return ad, nil
+			"id and handle cannot be given together; only one of them must be given")
+	case identity != "":
+		return identity, nil
+	case name != "":
+		return name, nil
 	default:
 		return "", coreerrors.Invalid(codeBadArgument,
-			"id ya da handle argümanlarından biri verilmelidir")
+			"one of the id or handle arguments must be given")
 	}
 }
 
-// kirp isteğe bağlı metin argümanını kırpar; verilmemişse boş dize döner.
-func kirp(v *string) string {
+// trim trims the optional text argument; returns an empty string if it was not
+// given.
+func trim(v *string) string {
 	if v == nil {
 		return ""
 	}
@@ -184,28 +195,30 @@ func kirp(v *string) string {
 	return strings.TrimSpace(*v)
 }
 
-// kirpilmisIsaretci isteğe bağlı metin argümanını kırpar; boş kalıyorsa nil döner.
+// trimmedPointer trims the optional text argument; returns nil if it comes out
+// empty.
 //
-// [kirp] ile aynı kuralı SÜZGEÇ argümanlarına uygular. Ayrı bir fonksiyon
-// olmasının sebebi dönüş tipidir: süzgeçler servise işaretçiyle gider ve
-// "verilmedi" ile "boş verildi" ayrımını taşıyan tek şey nil'dir.
+// It applies the same rule as [trim] to FILTER arguments. The reason it is a
+// separate function is the return type: filters travel to the service as
+// pointers and the only thing that carries the "not given" versus "given empty"
+// distinction is nil.
 //
-// Dönen işaretçi ARGÜMANIN kendisi değil, kırpılmış değerin kopyasıdır;
-// çağıranın verdiği işaretçiyi geçirmek " tişört " gibi bir değeri kırpılmamış
-// hâliyle servise sokardı.
-func kirpilmisIsaretci(v *string) *string {
-	kirpilmis := kirp(v)
-	if kirpilmis == "" {
+// The returned pointer is not the ARGUMENT itself but a copy of the trimmed
+// value; passing the caller's pointer through would push a value like
+// " t-shirt " into the service untrimmed.
+func trimmedPointer(v *string) *string {
+	trimmed := trim(v)
+	if trimmed == "" {
 		return nil
 	}
 
-	return &kirpilmis
+	return &trimmed
 }
 
-// intDegeri isteğe bağlı tam sayı argümanını okur; verilmemişse 0 döner.
+// intValue reads the optional integer argument; returns 0 if it was not given.
 //
-// 0, servis için "varsayılanı uygula" demektir; bkz. [queryResolver.Products].
-func intDegeri(v *int) int {
+// For the service 0 means "apply the default"; see [queryResolver.Products].
+func intValue(v *int) int {
 	if v == nil {
 		return 0
 	}
@@ -213,34 +226,37 @@ func intDegeri(v *int) int {
 	return *v
 }
 
-// alanCount ProductList'in toplam sayaç alanının ŞEMADAKİ adıdır.
+// fieldCount is the SCHEMA name of ProductList's total count field.
 //
-// Dize olarak tekrarlanmasının sebebi, üretilen kodun bu adı bir Go sabiti
-// olarak dışa vermemesidir; şemadan silinse ya da adı değişse burası sessizce
-// eskir. Bağı schema_test.go'daki TestProductsArgumanlariServisinOkuduklari
-// kurar: StoreListOptions.SkipCount'un karşılığı olan alanın ProductList'te
-// gerçekten var olduğunu sorar, yani sessiz eskime testte düşer.
-const alanCount = "count"
+// The reason it is repeated as a string is that the generated code does not
+// export this name as a Go constant; if it were removed from the schema or
+// renamed, this place would silently go stale. The binding is established by
+// TestProductsArgumentsMatchWhatTheServiceReads in schema_test.go: it asks
+// whether the field corresponding to StoreListOptions.SkipCount really exists
+// on ProductList, so silent staleness fails in a test.
+const fieldCount = "count"
 
-// seciliMi çalışmakta olan alanın seçim kümesinde ad'ın istenip istenmediğini
-// bildirir.
+// isSelected reports whether name is asked for in the selection set of the
+// field being executed.
 //
-// gqlgen'in [graphql.FieldRequested]'ı @skip/@include yönergelerine de saygı
-// duyar — yani `count @skip(if: true)` yazan istemci de saymaz.
+// gqlgen's [graphql.FieldRequested] also respects the @skip/@include
+// directives — that is, a client writing `count @skip(if: true)` does not count
+// either.
 //
-// # Alan bağlamı yoksa KORUMA YOKTUR ve olmamalı
+// # Without a field context there is NO GUARD, and there must not be one
 //
-// Burada bir zamanlar nil bağlamı yakalayıp "istendi" diyen bir koruma vardı;
-// gerekçesi "resolver çalıştırıcı olmadan da çağrılabilir" idi ve bu YANLIŞTI.
-// Tek çağıran üretilen koddur ve o kod resolver'a girmeden önce bağlamı
-// dereference ediyor (generated.go: fc := graphql.GetFieldContext(ctx); hemen
-// ardından fc.Args[...]), yani nil bir bağlam zaten daha yukarıda panikler.
-// Hiçbir test de resolver'ı doğrudan çağırmıyor. Dal ulaşılamazdı; mutasyonla
-// doğrulandı, cevabı false'a çevirmek hiçbir testi düşürmüyordu.
+// There once was a guard here that caught a nil context and said "it was
+// requested"; its rationale was "the resolver can be called without an
+// executor" and that was WRONG. The only caller is the generated code and that
+// code dereferences the context before it enters the resolver (generated.go:
+// fc := graphql.GetFieldContext(ctx); immediately followed by fc.Args[...]),
+// so a nil context already panics further up. No test calls the resolver
+// directly either. The branch was unreachable; it was verified by mutation,
+// flipping the answer to false failed no test.
 //
-// Kaldırılması aynı zamanda GÜVENLİ olandır: koruma dururken, alan bağlamını
-// kaybeden bir refactor sessizce "her istekte say"a geri döner; korumasız hâlde
-// aynı refactor gürültüyle panikler.
-func seciliMi(ctx context.Context, ad string) bool {
-	return graphql.FieldRequested(ctx, ad)
+// Removing it is also the SAFE option: with the guard in place, a refactor that
+// loses the field context silently falls back to "count on every request"; with
+// no guard the same refactor panics loudly.
+func isSelected(ctx context.Context, name string) bool {
+	return graphql.FieldRequested(ctx, name)
 }

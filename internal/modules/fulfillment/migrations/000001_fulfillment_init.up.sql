@@ -1,37 +1,38 @@
--- fulfillment modülünün şeması (plan Faz 7).
+-- Schema of the fulfillment module (plan Phase 7).
 --
--- Sahiplik: buradaki altı tablo YALNIZCA fulfillment modülüne aittir. Modül
--- içi foreign key'ler serbesttir ve kullanılır; başka bir modülün tablosuna
--- REFERENCES VERİLMEZ (Prensip 2.2 — cross-module FK yasağı). Bu yüzden
--- shipping_options.region_id (region modülünün kimliği), fulfillments.reference
--- (sipariş kimliği) ve fulfillment_items.line_item_id (sipariş satırı kimliği)
--- FK DEĞİLDİR: ilişki Module Links üzerinden kurulur ve link tablosu
--- çekirdektedir.
+-- Ownership: the six tables here belong ONLY to the fulfillment module.
+-- Intra-module foreign keys are free and are used; NO REFERENCES IS GIVEN to
+-- another module's table (Principle 2.2 — the cross-module FK ban). That is why
+-- shipping_options.region_id (the region module's id), fulfillments.reference
+-- (the order id) and fulfillment_items.line_item_id (the order line id) are NOT
+-- FKs: the relation is established over Module Links and the link table lives
+-- in the core.
 --
--- Para: tüm tutarlar BIGINT ve minor unit'tir (kuruş/cent); para birimi AYRI
--- sütunda durur (plan Bölüm 8). NUMERIC ya da kayan nokta hiçbir yerde
--- kullanılmaz — kargo ücretinin kuruşu, sipariş toplamına birebir girer.
+-- Money: every amount is BIGINT and in minor units (cents); the currency sits
+-- in a SEPARATE column (plan Section 8). NUMERIC or floating point is used
+-- nowhere — the cent of the shipping fee enters the order total exactly.
 --
--- Zaman: tüm damgalar timestamptz (UTC). Silme KURAL OLARAK yumuşaktır
--- (deleted_at) ve o tabloların tüm okuma sorguları deleted_at IS NULL filtresi
--- uygular. İstisnalar sayılıdır ve her birinin gerekçesi kendi tablosunun
--- başındadır:
+-- Time: every stamp is timestamptz (UTC). Deletion is soft AS A RULE
+-- (deleted_at) and every read query on those tables applies the
+-- deleted_at IS NULL filter. The exceptions are countable and each one's
+-- rationale sits at the head of its own table:
 --
---   - fulfillment_items — gönderinin kalemi gönderiden ayrı yaşamaz; gönderi
---     iptal edilince kalem "silinmez", gönderinin durumu değişir.
---   - fulfillment_manual_shipments — modülün alan verisi değil, taklit edilen
---     dış sistemin defteridir.
+--   - fulfillment_items — a shipment's line does not live apart from the
+--     shipment; when the shipment is canceled the line is not "deleted", the
+--     shipment's status changes.
+--   - fulfillment_manual_shipments — not the module's domain data but the
+--     ledger of the imitated external system.
 --
--- 000002 iki istisna daha ekler (shipping_locations ve
--- shipping_location_regions); gerekçeleri o dosyanın başındadır.
+-- 000002 adds two more exceptions (shipping_locations and
+-- shipping_location_regions); their rationales sit at the head of that file.
 
--- shipping_profiles kargo profilidir: hangi ürünlerin hangi kargo kurallarına
--- tabi olduğunu gruplayan kaptır.
+-- shipping_profiles is the shipping profile: the container that groups which
+-- products are subject to which shipping rules.
 --
--- Ürünler profillere Module Links ile bağlanır; profil hangi ürünlere bağlı
--- olduğunu BİLMEZ (Prensip 2.1). "default" profil her mağazada bir tanedir ve
--- ürünlerin varsayılan bağlandığı yerdir; "gift_card" fiziksel gönderi
--- gerektirmeyen ürünler için ayrılmıştır.
+-- Products are bound to profiles with Module Links; the profile DOES NOT KNOW
+-- which products are bound to it (Principle 2.1). There is one "default"
+-- profile in every store and it is where products bind by default; "gift_card"
+-- is reserved for products that require no physical shipment.
 CREATE TABLE IF NOT EXISTS shipping_profiles (
     id         TEXT        PRIMARY KEY,
     name       TEXT        NOT NULL,
@@ -45,24 +46,27 @@ CREATE TABLE IF NOT EXISTS shipping_profiles (
     CONSTRAINT shipping_profiles_type_valid CHECK (type IN ('default', 'gift_card', 'custom'))
 );
 
--- Profil adı YAŞAYAN kayıtlar arasında tektir: aynı adı taşıyan iki profil,
--- yöneticinin hangi kuralı düzenlediğini bilememesi demektir.
+-- A profile name is unique among LIVING records: two profiles carrying the same
+-- name means the administrator cannot tell which rule they are editing.
 CREATE UNIQUE INDEX IF NOT EXISTS shipping_profiles_name_uniq
     ON shipping_profiles (name)
     WHERE deleted_at IS NULL;
 
--- shipping_options bir kargo seçeneğidir: müşteriye sunulan "Standart kargo",
--- "Hızlı kargo", "Mağazadan teslim" gibi satırların kaynağıdır.
+-- shipping_options is a shipping option: the source of the rows offered to the
+-- customer, such as "Standard shipping", "Express shipping", "Pick up in store".
 --
--- price_type iki değer alır:
---   flat       — ücret bu satırdaki amount'tur; sağlayıcıya HİÇ gidilmez.
---   calculated — ücreti sağlayıcının Quote'u belirler; amount kullanılmaz ve
---                sıfır olmak ZORUNDADIR (aşağıdaki kısıt). İki kaynaklı bir
---                fiyat, hangisinin geçerli olduğunu okuyana bırakırdı.
+-- price_type takes two values:
+--   flat       — the fee is the amount on this row; the provider is NEVER
+--                called.
+--   calculated — the fee is determined by the provider's Quote; amount is
+--                unused and MUST be zero (the constraint below). A price with
+--                two sources would leave it to the reader to work out which
+--                one holds.
 --
--- data sağlayıcıya ait YAPILANDIRMADIR (örn. kilogram başına ücret) ve Quote
--- çağrısına olduğu gibi geçirilir; metadata ise mağazanın kendi serbest
--- verisidir. İkisi ayrıdır çünkü data mağaza yüzeyine ÇIKMAZ.
+-- data is the CONFIGURATION belonging to the provider (e.g. the fee per
+-- kilogram) and is passed to the Quote call as is; metadata, in turn, is the
+-- store's own free-form data. The two are separate because data DOES NOT
+-- SURFACE on the storefront.
 CREATE TABLE IF NOT EXISTS shipping_options (
     id                  TEXT        PRIMARY KEY,
     name                TEXT        NOT NULL,
@@ -71,8 +75,8 @@ CREATE TABLE IF NOT EXISTS shipping_options (
     price_type          TEXT        NOT NULL DEFAULT 'flat',
     amount              BIGINT      NOT NULL DEFAULT 0,
     currency_code       TEXT        NOT NULL,
-    -- region_id region modülünün kimliğidir; FK YOKTUR (Prensip 2.2).
-    -- Boş dize "her bölge" demektir.
+    -- region_id is the region module's id; there is NO FK (Principle 2.2).
+    -- The empty string means "every region".
     region_id           TEXT        NOT NULL DEFAULT '',
     is_return           BOOLEAN     NOT NULL DEFAULT FALSE,
     admin_only          BOOLEAN     NOT NULL DEFAULT FALSE,
@@ -85,13 +89,14 @@ CREATE TABLE IF NOT EXISTS shipping_options (
     CONSTRAINT shipping_options_name_check      CHECK (name <> ''),
     CONSTRAINT shipping_options_provider_check  CHECK (provider_id <> ''),
     CONSTRAINT shipping_options_price_type_valid CHECK (price_type IN ('flat', 'calculated')),
-    -- Sıfır tutar geçerlidir ve "ücretsiz kargo" demektir; negatif tutar,
-    -- müşteriye kargodan para ödemek demek olurdu.
+    -- A zero amount is valid and means "free shipping"; a negative amount would
+    -- mean paying the customer money for the shipping.
     CONSTRAINT shipping_options_amount_nonneg   CHECK (amount >= 0),
     CONSTRAINT shipping_options_amount_max      CHECK (amount <= 1000000000000),
-    -- Hesaplanan seçenekte tutar sağlayıcıdan gelir; satırdaki değer BAYAT bir
-    -- ikinci kaynak olurdu. Servis bunu zaten reddeder; buradaki kısıt son
-    -- savunmadır ve doğrudan SQL ile yapılan bir müdahaleyi de durdurur.
+    -- On a calculated option the amount comes from the provider; the value on
+    -- the row would be a STALE second source. The service already rejects this;
+    -- the constraint here is the last defense and stops an intervention made
+    -- directly with SQL as well.
     CONSTRAINT shipping_options_calculated_zero CHECK (price_type <> 'calculated' OR amount = 0),
     CONSTRAINT shipping_options_currency_format CHECK (currency_code ~ '^[A-Z]{3}$')
 );
@@ -108,15 +113,15 @@ CREATE INDEX IF NOT EXISTS shipping_options_alive_idx
     ON shipping_options (created_at DESC, id DESC)
     WHERE deleted_at IS NULL;
 
--- shipping_option_rules bir seçeneğin HANGİ KOŞULDA sunulacağını belirler.
+-- shipping_option_rules determines UNDER WHICH CONDITION an option is offered.
 --
--- Koşul (attribute, operator, rule_values) üçlüsüdür; örn.
--- ("subtotal", "gte", {"50000"}) — "ara toplam 50.000 kuruşu geçerse ücretsiz
--- kargo". Sütun adı "values" DEĞİLDİR: VALUES PostgreSQL'de ayrılmış bir
--- sözcüktür ve tırnaklanmadan kullanılamazdı (pricing modülündeki price_rule
--- ile aynı gerekçe).
+-- The condition is the triple (attribute, operator, rule_values); e.g.
+-- ("subtotal", "gte", {"50000"}) — "free shipping once the subtotal passes
+-- 50,000 cents". The column is NOT named "values": VALUES is a reserved word in
+-- PostgreSQL and could not have been used unquoted (the same rationale as
+-- price_rule in the pricing module).
 --
--- Bir seçeneğin TÜM kuralları eşleşmelidir; kuralsız seçenek koşulsuzdur.
+-- ALL rules of an option must match; an option without rules is unconditional.
 CREATE TABLE IF NOT EXISTS shipping_option_rules (
     id                 TEXT        PRIMARY KEY,
     shipping_option_id TEXT        NOT NULL REFERENCES shipping_options (id) ON DELETE CASCADE,
@@ -130,9 +135,10 @@ CREATE TABLE IF NOT EXISTS shipping_option_rules (
     CONSTRAINT shipping_option_rules_attribute_check CHECK (attribute <> ''),
     CONSTRAINT shipping_option_rules_operator_check
         CHECK (operator IN ('eq', 'ne', 'in', 'nin', 'gt', 'gte', 'lt', 'lte')),
-    -- cardinality boş dizi için 0 döner, NULL değil; array_length ile yazılsaydı
-    -- sonuç NULL olur ve NULL dönen bir CHECK SAĞLANMIŞ sayılırdı — kısıt
-    -- fiilen hiçbir şeyi engellemezdi (bkz. pricing 000002).
+    -- cardinality returns 0 for an empty array, not NULL; had it been written
+    -- with array_length the result would be NULL and a CHECK returning NULL
+    -- would count as SATISFIED — the constraint would in effect have prevented
+    -- nothing (see pricing 000002).
     CONSTRAINT shipping_option_rules_values_check CHECK (cardinality(rule_values) >= 1)
 );
 
@@ -140,14 +146,15 @@ CREATE INDEX IF NOT EXISTS shipping_option_rules_option_idx
     ON shipping_option_rules (shipping_option_id)
     WHERE deleted_at IS NULL;
 
--- fulfillments gerçekleşmiş bir gönderidir.
+-- fulfillments is a shipment that has happened.
 --
--- reference çağıranın kendi kaydının kimliğidir (sipariş). FK YOKTUR
--- (Prensip 2.2); bağ Module Links ile kurulur.
+-- reference is the id of the caller's own record (the order). There is NO FK
+-- (Principle 2.2); the bond is established with Module Links.
 --
--- external_id sağlayıcının kendi gönderi kimliğidir; mutabakatta iki sistemi
--- eşleştiren alan budur. Gönderi satırı sağlayıcıya GİTMEDEN ÖNCE yazıldığı
--- için başlangıçta boştur ve sağlayıcı yanıtından sonra doldurulur.
+-- external_id is the provider's own shipment id; it is the field that matches
+-- the two systems during reconciliation. Because the shipment row is written
+-- BEFORE GOING to the provider it is empty at the start and is filled in after
+-- the provider's response.
 CREATE TABLE IF NOT EXISTS fulfillments (
     id                 TEXT        PRIMARY KEY,
     reference          TEXT        NOT NULL,
@@ -157,9 +164,9 @@ CREATE TABLE IF NOT EXISTS fulfillments (
     status             TEXT        NOT NULL DEFAULT 'pending',
     tracking_number    TEXT        NOT NULL DEFAULT '',
     tracking_url       TEXT        NOT NULL DEFAULT '',
-    -- idempotency_key aynı gönderinin iki kez oluşturulmasını engeller
-    -- (plan Bölüm 2.6). Anahtarsız bir tekrar, İKİNCİ BİR KARGO ETİKETİ demek
-    -- olurdu.
+    -- idempotency_key prevents the same shipment from being created twice
+    -- (plan Section 2.6). A repeat without the key would mean A SECOND SHIPPING
+    -- LABEL.
     idempotency_key    TEXT        NOT NULL,
     shipped_at         TIMESTAMPTZ,
     delivered_at       TIMESTAMPTZ,
@@ -175,18 +182,19 @@ CREATE TABLE IF NOT EXISTS fulfillments (
     CONSTRAINT fulfillments_key_check       CHECK (idempotency_key <> ''),
     CONSTRAINT fulfillments_status_valid
         CHECK (status IN ('pending', 'shipped', 'delivered', 'canceled')),
-    -- Durum ile zaman damgaları birbirini tutmalıdır: "shipped" bir gönderinin
-    -- sevk anı, "delivered" olanın teslim anı, "canceled" olanın iptal anı
-    -- YAZILMIŞ olmalıdır. Damgasız bir durum, mutabakatta "ne zaman?" sorusunu
-    -- cevapsız bırakırdı.
+    -- Status and the timestamps must agree with each other: the dispatch moment
+    -- of a "shipped" shipment, the delivery moment of a "delivered" one and the
+    -- cancellation moment of a "canceled" one must have been WRITTEN. A status
+    -- without a stamp would leave the question "when?" unanswered during
+    -- reconciliation.
     CONSTRAINT fulfillments_shipped_stamp   CHECK (status <> 'shipped'   OR shipped_at   IS NOT NULL),
     CONSTRAINT fulfillments_delivered_stamp CHECK (status <> 'delivered' OR delivered_at IS NOT NULL),
     CONSTRAINT fulfillments_canceled_stamp  CHECK (status <> 'canceled'  OR canceled_at  IS NOT NULL)
 );
 
--- Bir idempotency anahtarı YAŞAYAN gönderiler arasında tektir. Saga bir adımı
--- yeniden denediğinde ikinci Create bu indekse ON CONFLICT DO NOTHING ile
--- çarpar, satır yazmaz ve mevcut gönderiyi okur; indeks yarışın tek noktasıdır.
+-- An idempotency key is unique among LIVING shipments. When the saga retries a
+-- step the second Create hits this index with ON CONFLICT DO NOTHING, writes no
+-- row and reads the existing shipment; the index is the single point of the race.
 CREATE UNIQUE INDEX IF NOT EXISTS fulfillments_idempotency_uniq
     ON fulfillments (idempotency_key)
     WHERE deleted_at IS NULL;
@@ -199,10 +207,10 @@ CREATE INDEX IF NOT EXISTS fulfillments_alive_idx
     ON fulfillments (created_at DESC, id DESC)
     WHERE deleted_at IS NULL;
 
--- fulfillment_items gönderiye giren kalemlerdir.
+-- fulfillment_items are the lines that go into the shipment.
 --
--- line_item_id sipariş satırının kimliğidir; FK YOKTUR (Prensip 2.2) ve bu
--- modülde doğrulanmaz. Adet BIGINT'tir ve pozitiftir.
+-- line_item_id is the id of the order line; there is NO FK (Principle 2.2) and
+-- it is not validated in this module. The quantity is BIGINT and positive.
 CREATE TABLE IF NOT EXISTS fulfillment_items (
     id             TEXT        PRIMARY KEY,
     fulfillment_id TEXT        NOT NULL REFERENCES fulfillments (id) ON DELETE CASCADE,
@@ -212,35 +220,37 @@ CREATE TABLE IF NOT EXISTS fulfillment_items (
     updated_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
 
     CONSTRAINT fulfillment_items_line_check     CHECK (line_item_id <> ''),
-    -- Adedin ÜST sınırı da şemadadır. Servis aynı sınırı zaten uygular
-    -- (models.MaxQuantity), ama uygulama katmanı tek başına son savunma
-    -- değildir: adet ücretle ÇARPILAN bir sayıdır ve sınırsız bir değer,
-    -- çarpımı int64'ten taşırıp negatif bir tutara çevirebilir. Doğrudan SQL
-    -- çalıştıran bir bakım betiği de bu kısıda takılır.
+    -- The UPPER bound of the quantity is in the schema too. The service already
+    -- applies the same bound (models.MaxQuantity), but the application layer is
+    -- not the last defense on its own: the quantity is a number MULTIPLIED by a
+    -- fee and an unbounded value can overflow the product out of int64 and turn
+    -- it into a negative amount. A maintenance script running SQL directly trips
+    -- on this constraint as well.
     CONSTRAINT fulfillment_items_quantity_check CHECK (quantity > 0),
     CONSTRAINT fulfillment_items_quantity_max   CHECK (quantity <= 1000000)
 );
 
--- Aynı sipariş satırı bir gönderide İKİ KEZ yer alamaz; iki satır, adedin
--- hangisinin geçerli olduğunu okuyana bırakırdı.
+-- The same order line cannot appear TWICE in one shipment; two rows would leave
+-- it to the reader to work out which quantity holds.
 CREATE UNIQUE INDEX IF NOT EXISTS fulfillment_items_line_uniq
     ON fulfillment_items (fulfillment_id, line_item_id);
 
--- fulfillment_manual_shipments MANUEL sağlayıcının kendi defteridir.
+-- fulfillment_manual_shipments is the MANUAL provider's own ledger.
 --
--- Neden AYRI bir tablo: manual sağlayıcı gerçek bir kargo firmasını TAKLİT
--- eder. Gerçek sağlayıcının durumu kendi sistemindedir ve modül ona yalnızca
--- FulfillmentProvider arayüzünden ulaşır. Aynı ayrımın burada da korunması,
--- modülün kazara sağlayıcının iç durumunu okumasını yapısal olarak engeller:
--- fulfillment servisi bu tabloya HİÇ dokunmaz.
+-- Why a SEPARATE table: the manual provider IMITATES a real shipping company.
+-- A real provider's state lives in its own system and the module reaches it only
+-- through the FulfillmentProvider interface. Preserving the same separation here
+-- structurally prevents the module from accidentally reading the provider's
+-- internal state: the fulfillment service NEVER touches this table.
 --
--- Neden BELLEKTE DEĞİL: payment modülündeki manuel sağlayıcıyla aynı gerekçe.
--- Süreç yeniden başladığında oluşturulmuş bir gönderi bulunabilmelidir; saga
--- telafisi (Cancel) tam da sürecin düştüğü senaryoda çalışmak zorundadır ve
--- birden çok süreç aynı gönderiyi görmelidir.
+-- Why NOT IN MEMORY: the same rationale as the manual provider in the payment
+-- module. When the process restarts, a shipment that was created must still be
+-- findable; the saga compensation (Cancel) has to run in exactly the scenario
+-- where the process fell over, and more than one process must see the same
+-- shipment.
 --
--- Yumuşak silme YOKTUR: bu tablo modülün alan verisi değil, taklit edilen dış
--- sistemin defteridir; kayıtları hiç silinmez.
+-- There is NO soft deletion: this table is not the module's domain data but the
+-- ledger of the imitated external system; its records are never deleted.
 CREATE TABLE IF NOT EXISTS fulfillment_manual_shipments (
     id              TEXT        PRIMARY KEY,
     idempotency_key TEXT        NOT NULL,
@@ -259,7 +269,8 @@ CREATE TABLE IF NOT EXISTS fulfillment_manual_shipments (
         CHECK (status IN ('pending', 'shipped', 'delivered', 'canceled'))
 );
 
--- Aynı idempotency anahtarı İKİNCİ bir gönderi açamaz. Sağlayıcı sözleşmesinin
--- (internal/core/provider) idempotency şartını nihai olarak zorlayan kısıt budur.
+-- The same idempotency key cannot open a SECOND shipment. This is the constraint
+-- that ultimately enforces the idempotency requirement of the provider contract
+-- (internal/core/provider).
 CREATE UNIQUE INDEX IF NOT EXISTS fulfillment_manual_shipments_idempotency_uniq
     ON fulfillment_manual_shipments (idempotency_key);

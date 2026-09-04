@@ -12,142 +12,142 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/fulfillment/service"
 )
 
-// queryKurulum Query sağlayıcısını ve iki seçenekli bir katalog hazırlar.
-func queryKurulum(t *testing.T) (*service.QueryProvider, testKurulum, string) {
+// querySetup prepares the Query provider and a catalog with two options.
+func querySetup(t *testing.T) (*service.QueryProvider, testSetup, string) {
 	t.Helper()
 
-	kurulum := yeniKurulum(t)
-	profilID := kurulum.profilAc(t, "varsayilan")
-	secenekID := kurulum.secenekAc(t, service.CreateOptionInput{
-		Name:              "Standart kargo",
-		ShippingProfileID: profilID,
+	setup := newSetup(t)
+	profileID := setup.createProfile(t, "default")
+	optionID := setup.createOption(t, service.CreateOptionInput{
+		Name:              "Standard shipping",
+		ShippingProfileID: profileID,
 		Amount:            2_000,
 		RegionID:          "reg_tr",
 	})
-	kurulum.secenekAc(t, service.CreateOptionInput{
-		Name:              "Hesaplanan kargo",
-		ShippingProfileID: profilID,
+	setup.createOption(t, service.CreateOptionInput{
+		Name:              "Calculated shipping",
+		ShippingProfileID: profileID,
 		PriceType:         "calculated",
 	})
-	return service.NewQueryProvider(kurulum.svc), kurulum, secenekID
+	return service.NewQueryProvider(setup.svc), setup, optionID
 }
 
-// TestQuerySaglayicisiEntityAdi ADR 0004'ün ad örtüşmesini kanıtlar.
-func TestQuerySaglayicisiEntityAdi(t *testing.T) {
+// TestQueryProviderEntityName proves the name overlap of ADR 0004.
+func TestQueryProviderEntityName(t *testing.T) {
 	t.Parallel()
 
-	provider, _, _ := queryKurulum(t)
+	provider, _, _ := querySetup(t)
 	assert.Equal(t, "shipping_option", provider.Entity())
 	assert.Equal(t, service.EntityName, provider.Entity())
 }
 
-// TestQueryListSuzgecUygular desteklenen süzgecin çalıştığını kanıtlar.
-func TestQueryListSuzgecUygular(t *testing.T) {
+// TestQueryListAppliesTheFilter proves that the supported filter works.
+func TestQueryListAppliesTheFilter(t *testing.T) {
 	t.Parallel()
 
-	provider, _, secenekID := queryKurulum(t)
+	provider, _, optionID := querySetup(t)
 
-	kayitlar, err := provider.List(context.Background(), query.ListOptions{
+	records, err := provider.List(context.Background(), query.ListOptions{
 		Filters: map[string]any{"region_id": "reg_tr"},
 		Fields:  []string{"id", "name", "amount"},
 	})
 	require.NoError(t, err)
-	require.Len(t, kayitlar, 1)
-	assert.Equal(t, secenekID, kayitlar[0]["id"])
-	assert.Equal(t, int64(2_000), kayitlar[0]["amount"])
-	assert.Len(t, kayitlar[0], 3, "yalnızca istenen alanlar dönmeli")
+	require.Len(t, records, 1)
+	assert.Equal(t, optionID, records[0]["id"])
+	assert.Equal(t, int64(2_000), records[0]["amount"])
+	assert.Len(t, records[0], 3, "only the requested fields have to be returned")
 }
 
-// TestQueryTaninmayanSuzgecReddedilir ADR 0004'ün şartını kanıtlar.
-func TestQueryTaninmayanSuzgecReddedilir(t *testing.T) {
+// TestQueryRejectsAnUnrecognizedFilter proves the requirement of ADR 0004.
+func TestQueryRejectsAnUnrecognizedFilter(t *testing.T) {
 	t.Parallel()
 
-	provider, _, _ := queryKurulum(t)
+	provider, _, _ := querySetup(t)
 
 	_, err := provider.List(context.Background(), query.ListOptions{
 		Filters: map[string]any{"tracking_number": "TK-1"},
 	})
 	require.Error(t, err)
-	assert.True(t, errors.IsInvalid(err), "hata errors.Invalid olmalı: %v", err)
+	assert.True(t, errors.IsInvalid(err), "the error has to be errors.Invalid: %v", err)
 
 	_, err = provider.List(context.Background(), query.ListOptions{
 		Filters: map[string]any{"region_id": 42},
 	})
 	require.Error(t, err)
-	assert.True(t, errors.IsInvalid(err), "metin olmayan süzgeç değeri reddedilmeli: %v", err)
+	assert.True(t, errors.IsInvalid(err), "a non-text filter value has to be rejected: %v", err)
 }
 
-// TestQueryTaninmayanAlanReddedilir sunulmayan bir alanın istenemeyeceğini
-// kanıtlar.
-func TestQueryTaninmayanAlanReddedilir(t *testing.T) {
+// TestQueryRejectsAnUnrecognizedField proves that a field that is not offered
+// cannot be requested.
+func TestQueryRejectsAnUnrecognizedField(t *testing.T) {
 	t.Parallel()
 
-	provider, _, _ := queryKurulum(t)
+	provider, _, _ := querySetup(t)
 
 	_, err := provider.List(context.Background(), query.ListOptions{Fields: []string{"data"}})
 	require.Error(t, err)
-	assert.True(t, errors.IsInvalid(err), "hata errors.Invalid olmalı: %v", err)
+	assert.True(t, errors.IsInvalid(err), "the error has to be errors.Invalid: %v", err)
 
 	_, err = provider.FetchByIDs(context.Background(), []string{"sopt_1"}, []string{"metadata"})
 	require.Error(t, err)
-	assert.True(t, errors.IsInvalid(err), "hata errors.Invalid olmalı: %v", err)
+	assert.True(t, errors.IsInvalid(err), "the error has to be errors.Invalid: %v", err)
 }
 
-// TestQuerySaglayiciIcVerisiniSunmaz "data" ve "metadata" alanlarının okuma
-// yüzeyinde OLMADIĞINI kanıtlar.
+// TestQueryProviderDoesNotOfferInternalData proves that the "data" and
+// "metadata" fields ARE NOT on the read surface.
 //
-// data sağlayıcının iç yapılandırmasıdır; modüller arası okuma yüzeyinde hiç
-// görünmemelidir.
-func TestQuerySaglayiciIcVerisiniSunmaz(t *testing.T) {
+// data is the provider's internal configuration; it must not appear on a
+// cross-module read surface at all.
+func TestQueryProviderDoesNotOfferInternalData(t *testing.T) {
 	t.Parallel()
 
-	provider, _, _ := queryKurulum(t)
+	provider, _, _ := querySetup(t)
 
-	kayitlar, err := provider.List(context.Background(), query.ListOptions{})
+	records, err := provider.List(context.Background(), query.ListOptions{})
 	require.NoError(t, err)
-	require.NotEmpty(t, kayitlar)
-	assert.NotContains(t, kayitlar[0], "data", "sağlayıcı yapılandırması sunulmamalı")
-	assert.NotContains(t, kayitlar[0], "metadata", "şemasız serbest veri sunulmamalı")
-	assert.Contains(t, kayitlar[0], "admin_only", "modüller arası okuma admin_only'yi görmeli")
+	require.NotEmpty(t, records)
+	assert.NotContains(t, records[0], "data", "the provider configuration must not be offered")
+	assert.NotContains(t, records[0], "metadata", "schemaless free-form data must not be offered")
+	assert.Contains(t, records[0], "admin_only", "a cross-module read has to see admin_only")
 }
 
-// TestQueryFetchByIDsBatchDoner N+1 yasağının karşılığını kanıtlar:
-// bulunamayan kimlik hata değildir, yalnızca kayıt dönmez.
-func TestQueryFetchByIDsBatchDoner(t *testing.T) {
+// TestQueryFetchByIDsReturnsABatch proves the counterpart of the N+1 ban: an
+// identifier that is not found is not an error, it simply returns no record.
+func TestQueryFetchByIDsReturnsABatch(t *testing.T) {
 	t.Parallel()
 
-	provider, _, secenekID := queryKurulum(t)
+	provider, _, optionID := querySetup(t)
 
-	kayitlar, err := provider.FetchByIDs(context.Background(),
-		[]string{secenekID, "sopt_YOKBOYLE"}, []string{"id"})
+	records, err := provider.FetchByIDs(context.Background(),
+		[]string{optionID, "sopt_NOSUCH"}, []string{"id"})
 	require.NoError(t, err)
-	require.Len(t, kayitlar, 1)
-	assert.Equal(t, secenekID, kayitlar[0]["id"])
+	require.Len(t, records, 1)
+	assert.Equal(t, optionID, records[0]["id"])
 
-	bos, err := provider.FetchByIDs(context.Background(), nil, nil)
+	empty, err := provider.FetchByIDs(context.Background(), nil, nil)
 	require.NoError(t, err)
-	assert.Empty(t, bos)
+	assert.Empty(t, empty)
 }
 
-// TestQuerySinirsizLimitTavanaKirpilir çekirdeğin "0 = sınırsız" sözleşmesinin
-// bu sağlayıcıda tavana çevrildiğini kanıtlar.
+// TestQueryUnlimitedLimitIsClampedToTheCeiling proves that the core's
+// "0 = unlimited" contract is turned into the ceiling in this provider.
 //
-// Sınırsız bir kök sorgu tüm seçenek tablosunu belleğe alırdı.
-func TestQuerySinirsizLimitTavanaKirpilir(t *testing.T) {
+// An unlimited root query would pull the entire option table into memory.
+func TestQueryUnlimitedLimitIsClampedToTheCeiling(t *testing.T) {
 	t.Parallel()
 
-	kurulum := yeniKurulum(t)
-	profilID := kurulum.profilAc(t, "varsayilan")
+	setup := newSetup(t)
+	profileID := setup.createProfile(t, "default")
 	for i := range int(service.MaxLimit) + 5 {
-		kurulum.secenekAc(t, service.CreateOptionInput{
-			Name:              "Kargo " + string(rune('A'+i%26)) + string(rune('0'+i/26)),
-			ShippingProfileID: profilID,
+		setup.createOption(t, service.CreateOptionInput{
+			Name:              "Shipping " + string(rune('A'+i%26)) + string(rune('0'+i/26)),
+			ShippingProfileID: profileID,
 			Amount:            int64(1_000 + i),
 		})
 	}
-	provider := service.NewQueryProvider(kurulum.svc)
+	provider := service.NewQueryProvider(setup.svc)
 
-	kayitlar, err := provider.List(context.Background(), query.ListOptions{Limit: 0})
+	records, err := provider.List(context.Background(), query.ListOptions{Limit: 0})
 	require.NoError(t, err)
-	assert.Len(t, kayitlar, int(service.MaxLimit), "sınırsız istek tavana kırpılmalı")
+	assert.Len(t, records, int(service.MaxLimit), "an unlimited request has to be clamped to the ceiling")
 }

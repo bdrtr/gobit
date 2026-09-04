@@ -7,123 +7,134 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/product/models"
 )
 
-// Katalog alan olaylarının adları (plan Bölüm 5.4).
+// The names of the catalog domain events (plan Section 5.4).
 //
-// Adlar MODÜLLER ARASI SÖZLEŞMEDİR: aboneler (arama indeksi, vitrin önbelleği,
-// dış katalog aktarımı) tam olarak bu adları dinler ve Redis backend'inde ad
-// aynı zamanda stream adıdır. Bir adın değişmesi, tüm abonelerin sessizce olay
-// almayı bırakması demektir — kimse hata görmez, yalnızca indeks eskir.
+// The names are a CROSS-MODULE CONTRACT: the subscribers (the search index, the
+// storefront cache, an external catalog export) listen for exactly these names,
+// and on the Redis backend the name is also the stream name. A name changing
+// means every subscriber silently stops receiving events — nobody sees an
+// error, only the index goes stale.
 //
-// Kapsam ürünün KENDİ alanlarıdır. Varyant, seçenek ve görsel yazmaları bu üç
-// olayı ÜRETMEZ; gerekirse doğru adım "product.updated"ı oradan da yayımlamak
-// değil, ayrı bir ad eklemektir: aynı adın iki farklı anlamı olması, aboneyi
-// "bu olay neyi değiştirdi" sorusunu yükten yanıtlayamaz duruma sokar.
+// The scope is the product's OWN fields. Variant, option and image writes do
+// NOT produce these three events; if they need to, the right step is to add a
+// separate name, not to publish "product.updated" from there too: one name
+// having two different meanings leaves the subscriber unable to answer "what
+// did this event change" from the payload.
 const (
-	// EventProductCreated yeni bir ürün yazıldığında yayımlanır.
+	// EventProductCreated is published when a new product is written.
 	EventProductCreated = "product.created"
-	// EventProductUpdated ürünün kendi alanları güncellendiğinde yayımlanır.
+	// EventProductUpdated is published when the product's own fields are updated.
 	EventProductUpdated = "product.updated"
-	// EventProductDeleted ürün SOFT silindiğinde yayımlanır.
+	// EventProductDeleted is published when the product is SOFT deleted.
 	EventProductDeleted = "product.deleted"
 )
 
-// Olayların Data alanındaki anahtarlar.
+// The keys in the Data field of the events.
 //
-// Anahtarlar da sözleşmedir ve tüketicilerle birlikte değişmelidir. Yük
-// bilinçli olarak DARDIR: abonenin isteyebileceği her alanı (başlık, handle,
-// koleksiyon, varyantlar) olaya koymak, olayı ürünün ikinci bir kopyası hâline
-// getirir ve iki gösterim ayrışır — olayı işleyen indeks bir gün kayıtta
-// olmayan bir başlığı gösterir. Abonenin elinde product_id vardır ve kaydı
-// okuyabilir; vitrin gösteriminin tamamına toplu erişim için "product.interop"
-// yüzeyi de buradadır (bkz. interop.go).
+// The keys are a contract too and have to change together with the consumers.
+// The payload is deliberately NARROW: putting every field a subscriber might
+// want (title, handle, collection, variants) into the event turns the event
+// into a second copy of the product and the two representations drift apart —
+// an index that processes the event will one day show a title that is not in
+// the record. The subscriber has the product_id and can read the record; for
+// bulk access to the whole storefront representation the "product.interop"
+// surface is here as well (see interop.go).
 //
-// # Her alan DİZEDİR — sayısal olanlar da
+// # Every field is a STRING — the numeric ones too
 //
-// Bugünkü iki alan da doğal olarak metindir; kural yine de BURADA yazılıdır,
-// çünkü yüke eklenecek İLK sayısal alan (varyant adedi, sürüm numarası) onu
-// ihlal etmeye en yatkın yerdir. Gerekçenin tamamı
-// internal/modules/order/service/events.go içinde yazılıdır ve TEKRARLANMAZ:
-// özeti, Redis backend'inin Data'yı JSON'a çevirmesi yüzünden int64 konan bir
-// alanın aboneye float64 olarak ulaşması — yani sözleşmeye göre yazılmış bir
-// abonenin geliştirmede çalışıp ÜRETİMDE düşmesidir.
+// Both of today's fields are naturally text; the rule is written down HERE all
+// the same, because the FIRST numeric field to be added to the payload (variant
+// count, version number) is where it is most likely to be violated. The full
+// rationale is written in internal/modules/order/service/events.go and is NOT
+// REPEATED: in short, because the Redis backend turns Data into JSON, a field
+// set as an int64 reaches the subscriber as a float64 — that is, a subscriber
+// written to the contract works in development and FALLS OVER IN PRODUCTION.
 //
-// # status neden yükte
+// # Why status is in the payload
 //
-// Dar tutma kuralının bilinçli istisnasıdır. Abonenin bu olayla vereceği karar
-// çoğunlukla "indeksle mi, indeksten DÜŞÜR mü"dür ve o karar yalnızca duruma
-// bağlıdır. Alan olmasaydı taslak ürünler üzerinde yapılan toplu bir
-// güncelleme, aboneyi olay başına bir okuma yapıp sonucu ATMAK zorunda
-// bırakırdı; en sık durum en pahalı yol olurdu.
+// It is the deliberate exception to the narrowness rule. The decision the
+// subscriber makes with this event is mostly "index it, or DROP it from the
+// index", and that decision depends only on the status. Without the field, a
+// bulk update over draft products would force the subscriber into one read per
+// event only to THROW the result away; the most frequent case would be the
+// most expensive path.
 //
-// Bedeli, değerin bayatlayabilmesidir: alan olayın ANINDAKİ durumu söyler, ŞU
-// ANKİ durumu değil. Kesin karar veren abone yine kaydı okur — status ona
-// yalnızca okumaya değmeyecek olayları ucuza eleme hakkı verir.
+// The price is that the value can go stale: the field tells the status AT THE
+// MOMENT of the event, not the CURRENT status. A subscriber that makes a final
+// decision still reads the record — status only gives it the right to discard
+// cheaply the events that are not worth a read.
 //
-// # Kalıcı akışa kişisel veri konmaz
+// # No personal data goes onto a durable stream
 //
-// Katalog verisi zaten kişisel değildir; kural yine de yazılıdır çünkü olay
-// kalıcı bir akışa (Redis stream) yazılır ve oraya konan bir alan geri
-// alınamaz. Yüke bir gün "oluşturan kullanıcı" eklemek isteyen kişi bu satırı
-// görmelidir.
+// Catalog data is not personal to begin with; the rule is written down all the
+// same because the event is written onto a durable stream (a Redis stream) and
+// a field put there cannot be taken back. Whoever wants to add "the creating
+// user" to the payload one day should see this line.
 const (
-	// EventFieldProductID ürünün kimliğidir; ÜÇ olayda da bulunur.
+	// EventFieldProductID is the product's id; it is present in all THREE events.
 	EventFieldProductID = "product_id"
-	// EventFieldStatus ürünün olay ANINDAKİ yayın durumudur ("draft",
-	// "published" ya da "archived"); silme olayında BULUNMAZ.
+	// EventFieldStatus is the product's publication status AT THE MOMENT of the
+	// event ("draft", "published" or "archived"); it is ABSENT from the delete
+	// event.
 	EventFieldStatus = "status"
 )
 
-// publishProductEvent katalog olayını yazma işlemi COMMIT EDİLDİKTEN SONRA
-// yayımlar.
+// publishProductEvent publishes the catalog event AFTER the write has been
+// COMMITTED.
 //
-// status boş verilirse olaya yazılmaz; silme olayı bu yoldan geçer. Soft
-// silinmiş kayıt hiçbir okumadan dönmediği için değeri abone tarafından
-// doğrulanamaz ve "indeksten düşür" eylemi zaten duruma bakmaz. Silme olayında
-// handle da yoktur: onu koymak silmeden ÖNCE fazladan bir okuma gerektirirdi
-// ve handle'a göre önbellek tutan bir abone o eşlemeyi zaten daha önce aldığı
-// created/updated olaylarından biliyordur.
+// If status is given empty it is not written into the event; the delete event
+// goes down this path. A soft deleted record is returned by no read, so the
+// value cannot be verified by the subscriber, and the "drop it from the index"
+// action does not look at the status anyway. The delete event carries no handle
+// either: putting it there would require an extra read BEFORE the delete, and a
+// subscriber that caches by handle already knows that mapping from the
+// created/updated events it received earlier.
 //
-// # Neden yazmadan SONRA
+// # Why after the write
 //
-// Olay işlemin içinde yayımlansaydı bir abone olayı commit'ten önce alabilir,
-// veritabanında henüz olmayan ürünü okumaya çalışır ve NotFound görürdü. Yayım
-// commit'ten sonra yapıldığında olayı alan herkes kaydı bulabilir.
+// Were the event published inside the transaction, a subscriber could receive
+// the event before the commit, try to read a product that is not yet in the
+// database and see NotFound. When the publish happens after the commit,
+// everyone who receives the event can find the record.
 //
-// # Yayım hatası yazmayı DÜŞÜRMEZ
+// # A publish failure does NOT FAIL the write
 //
-// Bir ürün güncellemesinin "olay veri yolu erişilemez" diye başarısız olması
-// YANLIŞTIR:
+// A product update failing because "the event bus is unreachable" is WRONG:
 //
-//  1. Ürün KAYITTIR, olay ise olmuş bir olgunun duyurusu. Redis'in bir
-//     saniyelik erişilemezliği yüzünden yönetim arayüzünün katalogu
-//     düzenleyememesi, korumaya çalıştığı şeyden pahalı bir kayıptır.
-//  2. Yayım commit'ten SONRA yapılır; hata dönmek çağırana "değişiklik
-//     uygulanmadı" demek olurdu, oysa uygulanmıştır. Çağıran isteği tekrarlar
-//     ve CreateProduct'ta bu ya ikinci bir ürün ya da handle çakışması (409)
-//     üretir — veri yolunun arızası kullanıcıya katalog hatası gibi görünürdü.
-//  3. Yayımın BAŞARILI dönmesi teslimi zaten garanti etmez: [eventbus.EventBus]
-//     sözleşmesi Publish'in handler'ları beklemediğini ve InMemory backend'inin
-//     EN FAZLA BİR KEZ teslim ettiğini söyler. Yazmayı bu çağrıya bağlamak, var
-//     olmayan bir garanti karşılığında gerçek veriyi riske atmak olurdu.
+//  1. The product is the RECORD, the event is the announcement of something
+//     that happened. The admin interface being unable to edit the catalog
+//     because Redis was unreachable for a second is a more expensive loss than
+//     the thing it tries to protect.
+//  2. The publish happens AFTER the commit; returning an error would tell the
+//     caller "the change was not applied", whereas it was. The caller repeats
+//     the request and in CreateProduct that produces either a second product or
+//     a handle conflict (409) — a fault of the event bus would look to the user
+//     like a catalog error.
+//  3. A SUCCESSFUL publish does not guarantee delivery either: the
+//     [eventbus.EventBus] contract says that Publish does not wait for the
+//     handlers and that the InMemory backend delivers AT MOST ONCE. Tying the
+//     write to this call would risk real data in exchange for a guarantee that
+//     does not exist.
 //
-// Sipariş tarafındaki karar da aynıdır ama gerekçelerinden biri (saga'nın
-// gereksiz telafi çalıştırması) burada YOKTUR: ürün CRUD'ı bir saga içinde
-// değildir. Sonucu değiştiren bu değil, ilk iki maddedir.
+// The decision on the order side is the same, but one of its reasons (the saga
+// running an unnecessary compensation) does NOT apply here: product CRUD is not
+// inside a saga. What settles the outcome is not that one, it is the first two
+// items.
 //
-// Bedel, kaçan olayın kaydın gerisinde kalmasıdır. Bedel GÖRÜNÜR kılınır: hata
-// ERROR seviyesinde, olay adı ve ürün kimliğiyle loglanır; kaçan olay elle ya
-// da bir tarama işiyle yeniden yayımlanabilir.
+// The price is that the missed event falls behind the record. The price is made
+// VISIBLE: the failure is logged at ERROR level with the event name and the
+// product id; a missed event can be republished by hand or by a sweeper job.
 //
-// # Veri yolu kayıtlı değilse olay sessizce atlanır
+// # If the bus is not registered the event is skipped silently
 //
-// [Options.Events] nil olabilir ve bu YALNIZCA gömülü kullanım ile testler
-// içindir: [github.com/bdrtr/gobit/internal/modules/product.Module.Register]
-// veri yolunu container'dan çözer ve bulamazsa açılışı düşürür, dolayısıyla
-// üretimde nil bir veri yolu oluşmaz. Aynı kalıp Query katmanında da vardır
-// (bkz. [Service.enrichVariants]).
+// [Options.Events] may be nil and that is ONLY for embedded use and for tests:
+// [github.com/bdrtr/gobit/internal/modules/product.Module.Register] resolves the
+// bus from the container and fails startup if it cannot find it, so a nil bus
+// does not occur in production. The same pattern exists in the Query layer as
+// well (see [Service.enrichVariants]).
 func (s *Service) publishProductEvent(ctx context.Context, name, productID string, status models.Status) {
 	if s.events == nil {
-		s.log.DebugContext(ctx, "olay veri yolu kayıtlı değil; katalog olayı atlandı",
+		s.log.DebugContext(ctx, "the event bus is not registered; the catalog event was skipped",
 			"event", name, "product_id", productID)
 		return
 	}
@@ -134,7 +145,7 @@ func (s *Service) publishProductEvent(ctx context.Context, name, productID strin
 	}
 
 	if err := s.events.Publish(ctx, eventbus.Event{Name: name, Data: data}); err != nil {
-		s.log.ErrorContext(ctx, "katalog olayı yayımlanamadı; ürün YAZILDI",
+		s.log.ErrorContext(ctx, "the catalog event could not be published; the product WAS WRITTEN",
 			"event", name,
 			"product_id", productID,
 			"error", err)

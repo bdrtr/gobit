@@ -16,15 +16,15 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/product/service"
 )
 
-// Bu dosya vitrin uçlarının satış kanallarını NEREDEN okuduğunu ve ürün ↔ kanal
-// yönetim uçlarının kablolamasını sınar.
+// This file exercises WHERE the storefront endpoints read their sales channels
+// from, and the wiring of the product ↔ channel admin endpoints.
 
-// magazaIstegi verilen kimlikle bir mağaza isteği çalıştırır.
+// storeRequest runs a store request with the given identity.
 //
-// principal nil ise context'e HİÇ kimlik konmaz; bu, mağaza kimlik
-// doğrulamasının bağlanmadığı kurulumu temsil eder. Üretimde kimliği
-// corehttp.RequireStore koyar.
-func magazaIstegi(
+// If principal is nil NO identity is put into the context; that represents the
+// setup where store authentication is not wired up. In production the identity
+// is put in place by corehttp.RequireStore.
+func storeRequest(
 	t *testing.T,
 	r chi.Router,
 	target string,
@@ -41,8 +41,8 @@ func magazaIstegi(
 	return rec
 }
 
-// TestStoreListReadsChannelsFromPrincipal vitrin listesinin satış kanallarını
-// DOĞRULANMIŞ KİMLİKTEN okuduğunu doğrular.
+// TestStoreListReadsChannelsFromPrincipal verifies that the storefront listing
+// reads its sales channels FROM THE AUTHENTICATED IDENTITY.
 func TestStoreListReadsChannelsFromPrincipal(t *testing.T) {
 	t.Parallel()
 
@@ -56,21 +56,21 @@ func TestStoreListReadsChannelsFromPrincipal(t *testing.T) {
 		},
 	}
 
-	rec := magazaIstegi(t, newRouter(catalog), "/store/v1/products", &corehttp.Principal{
+	rec := storeRequest(t, newRouter(catalog), "/store/v1/products", &corehttp.Principal{
 		ID: "apk_1", Kind: "api_key", SalesChannelIDs: []string{"sc_a", "sc_b"},
 	})
-	require.Equal(t, http.StatusOK, rec.Code, "gövde: %s", rec.Body.String())
+	require.Equal(t, http.StatusOK, rec.Code, "body: %s", rec.Body.String())
 	assert.Equal(t, []string{"sc_a", "sc_b"}, got.SalesChannelIDs,
-		"kanallar anahtarın kimliğinden gelmeli")
+		"the channels have to come from the key's identity")
 }
 
-// TestStoreListIgnoresChannelQueryParam kanalın SORGU DİZESİNDEN
-// okunmadığını doğrular.
+// TestStoreListIgnoresChannelQueryParam verifies that the channel is NOT read
+// FROM THE QUERY STRING.
 //
-// Arızanın en tehlikeli biçimi budur: kanal istemcinin bildirdiği bir değer
-// olsaydı, elindeki herhangi bir publishable anahtarla gelen bir istemci BAŞKA
-// bir kanalın kataloğunu okuyabilir ve süzgeç bir yetkilendirme olmaktan çıkıp
-// görüntüleme tercihine dönüşürdü.
+// This is the most dangerous form of the fault: were the channel a value the
+// client declares, a client arriving with any publishable key it happened to
+// hold could read ANOTHER channel's catalog and the filter would stop being an
+// authorization and turn into a display preference.
 func TestStoreListIgnoresChannelQueryParam(t *testing.T) {
 	t.Parallel()
 
@@ -84,20 +84,20 @@ func TestStoreListIgnoresChannelQueryParam(t *testing.T) {
 		},
 	}
 
-	rec := magazaIstegi(t, newRouter(catalog),
-		"/store/v1/products?sales_channel_id=sc_baskasi&sales_channel_ids=sc_baskasi",
+	rec := storeRequest(t, newRouter(catalog),
+		"/store/v1/products?sales_channel_id=sc_other&sales_channel_ids=sc_other",
 		&corehttp.Principal{ID: "apk_1", Kind: "api_key", SalesChannelIDs: []string{"sc_a"}})
-	require.Equal(t, http.StatusOK, rec.Code, "gövde: %s", rec.Body.String())
+	require.Equal(t, http.StatusOK, rec.Code, "body: %s", rec.Body.String())
 	assert.Equal(t, []string{"sc_a"}, got.SalesChannelIDs,
-		"sorgu dizesindeki kanal YOK SAYILMALI; kaynak yalnızca kimliktir")
+		"the channel in the query string HAS TO BE IGNORED; the only source is the identity")
 }
 
-// TestStoreListWithoutPrincipalPassesNil kimliksiz istekte süzgecin hiç
-// uygulanmadığını doğrular.
+// TestStoreListWithoutPrincipalPassesNil verifies that the filter is not applied
+// at all on a request with no identity.
 //
-// nil, servis sözleşmesinde "süzme yok" demektir; mağaza kimlik doğrulaması
-// bağlanmamış bir kurulumda (product tek başına) vitrin böyle çalışmaya devam
-// eder.
+// In the service contract nil means "no filtering"; in a setup where store
+// authentication is not wired up (product on its own) the storefront keeps
+// working this way.
 func TestStoreListWithoutPrincipalPassesNil(t *testing.T) {
 	t.Parallel()
 
@@ -111,17 +111,17 @@ func TestStoreListWithoutPrincipalPassesNil(t *testing.T) {
 		},
 	}
 
-	rec := magazaIstegi(t, newRouter(catalog), "/store/v1/products", nil)
+	rec := storeRequest(t, newRouter(catalog), "/store/v1/products", nil)
 	require.Equal(t, http.StatusOK, rec.Code)
-	assert.Nil(t, got.SalesChannelIDs, "kimlik yoksa süzgeç uygulanmamalı")
+	assert.Nil(t, got.SalesChannelIDs, "if there is no identity the filter must not be applied")
 }
 
-// TestStoreListWithChannellessPrincipalPassesEmptySet kanalsız bir kimliğin
-// nil DEĞİL boş küme ürettiğini doğrular.
+// TestStoreListWithChannellessPrincipalPassesEmptySet verifies that an identity
+// with no channel produces an empty set, NOT nil.
 //
-// İkisi bir tutulsaydı kanalsız bir kimlik "süzme yok" dalından geçer ve TÜM
-// kanalların katalogunu okurdu. Ayrım yalnızca burada, kimliği okuyan yerde
-// korunabilir.
+// Had the two been treated as one, an identity with no channel would go down the
+// "no filtering" branch and read the catalog of ALL channels. The distinction
+// can only be preserved here, in the place that reads the identity.
 func TestStoreListWithChannellessPrincipalPassesEmptySet(t *testing.T) {
 	t.Parallel()
 
@@ -135,15 +135,16 @@ func TestStoreListWithChannellessPrincipalPassesEmptySet(t *testing.T) {
 		},
 	}
 
-	rec := magazaIstegi(t, newRouter(catalog), "/store/v1/products",
+	rec := storeRequest(t, newRouter(catalog), "/store/v1/products",
 		&corehttp.Principal{ID: "apk_1", Kind: "api_key"})
 	require.Equal(t, http.StatusOK, rec.Code)
-	assert.NotNil(t, got.SalesChannelIDs, "kanalsız kimlik nil DEĞİL boş küme üretmeli")
+	assert.NotNil(t, got.SalesChannelIDs, "an identity with no channel has to produce an empty set, NOT nil")
 	assert.Empty(t, got.SalesChannelIDs)
 }
 
-// TestStoreGetProductPassesChannels tekil ucun da kanalları taşıdığını
-// doğrular; listede gizleyip tekil uçta göstermek gizlemeyi anlamsız kılardı.
+// TestStoreGetProductPassesChannels verifies that the single endpoint carries
+// the channels too; hiding them in the listing and showing them on the single
+// endpoint would make the hiding pointless.
 func TestStoreGetProductPassesChannels(t *testing.T) {
 	t.Parallel()
 
@@ -155,14 +156,14 @@ func TestStoreGetProductPassesChannels(t *testing.T) {
 		},
 	}
 
-	rec := magazaIstegi(t, newRouter(catalog), "/store/v1/products/tisort",
+	rec := storeRequest(t, newRouter(catalog), "/store/v1/products/tisort",
 		&corehttp.Principal{ID: "apk_1", Kind: "api_key", SalesChannelIDs: []string{"sc_a"}})
-	require.Equal(t, http.StatusOK, rec.Code, "gövde: %s", rec.Body.String())
+	require.Equal(t, http.StatusOK, rec.Code, "body: %s", rec.Body.String())
 	assert.Equal(t, []string{"sc_a"}, got)
 }
 
-// TestAdminAddSalesChannelReturnsCurrentList bağlama ucunun servise doğru
-// kimlikleri geçirdiğini ve GÜNCEL listeyi döndürdüğünü doğrular.
+// TestAdminAddSalesChannelReturnsCurrentList verifies that the linking endpoint
+// passes the right ids to the service and returns the CURRENT list.
 func TestAdminAddSalesChannelReturnsCurrentList(t *testing.T) {
 	t.Parallel()
 
@@ -179,7 +180,7 @@ func TestAdminAddSalesChannelReturnsCurrentList(t *testing.T) {
 
 	rec := do(t, newRouter(catalog), http.MethodPost, "/admin/v1/products/prod_1/sales-channels",
 		`{"sales_channel_id": "sc_a"}`)
-	require.Equal(t, http.StatusOK, rec.Code, "gövde: %s", rec.Body.String())
+	require.Equal(t, http.StatusOK, rec.Code, "body: %s", rec.Body.String())
 	assert.Equal(t, "prod_1", gotProduct)
 	assert.Equal(t, "sc_a", gotChannel)
 
@@ -189,8 +190,8 @@ func TestAdminAddSalesChannelReturnsCurrentList(t *testing.T) {
 	assert.Equal(t, []any{"sc_a"}, data["sales_channel_ids"])
 }
 
-// TestAdminRemoveSalesChannelReadsChannelFromPath kaldırma ucunun kanal
-// kimliğini YOLDAN okuduğunu doğrular.
+// TestAdminRemoveSalesChannelReadsChannelFromPath verifies that the removal
+// endpoint reads the channel id FROM THE PATH.
 func TestAdminRemoveSalesChannelReadsChannelFromPath(t *testing.T) {
 	t.Parallel()
 
@@ -205,26 +206,26 @@ func TestAdminRemoveSalesChannelReadsChannelFromPath(t *testing.T) {
 
 	rec := do(t, newRouter(catalog), http.MethodDelete,
 		"/admin/v1/products/prod_1/sales-channels/sc_a", "")
-	require.Equal(t, http.StatusOK, rec.Code, "gövde: %s", rec.Body.String())
+	require.Equal(t, http.StatusOK, rec.Code, "body: %s", rec.Body.String())
 	assert.Equal(t, "prod_1", gotProduct)
 	assert.Equal(t, "sc_a", gotChannel)
 
 	assert.Contains(t, rec.Body.String(), `"sales_channel_ids":[]`,
-		"boş liste null değil boş dizi olmalı: %s", rec.Body.String())
+		"an empty list has to be an empty array, not null: %s", rec.Body.String())
 }
 
-// TestAdminSalesChannelErrorKeepsErrorClass servisin tipli hatasının HTTP
-// koduna elle değil SINIFINDAN çevrildiğini doğrular.
+// TestAdminSalesChannelErrorKeepsErrorClass verifies that the service's typed
+// error is turned into an HTTP code FROM ITS CLASS, not by hand.
 func TestAdminSalesChannelErrorKeepsErrorClass(t *testing.T) {
 	t.Parallel()
 
 	catalog := &fakeCatalog{
 		addSalesChannel: func(context.Context, string, string) error {
-			return coreerrors.NotFound("product_not_found", "ürün bulunamadı: prod_yok")
+			return coreerrors.NotFound("product_not_found", "product not found: prod_missing")
 		},
 	}
 
-	rec := do(t, newRouter(catalog), http.MethodPost, "/admin/v1/products/prod_yok/sales-channels",
+	rec := do(t, newRouter(catalog), http.MethodPost, "/admin/v1/products/prod_missing/sales-channels",
 		`{"sales_channel_id": "sc_a"}`)
-	assert.Equal(t, http.StatusNotFound, rec.Code, "gövde: %s", rec.Body.String())
+	assert.Equal(t, http.StatusNotFound, rec.Code, "body: %s", rec.Body.String())
 }

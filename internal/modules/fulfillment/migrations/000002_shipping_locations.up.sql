@@ -1,68 +1,78 @@
--- Depo seçim POLİTİKASININ şeması.
+-- Schema of the warehouse selection POLICY.
 --
--- 000001 şu sınırla kapanmıştı: kargo modülünün bir LOKASYON MODELİ yoktu.
--- Adaylar stok modülünden geliyordu (bir olgu), seçimi kargo modülü yapıyordu
--- (bir karar) ama karar verecek hiçbir veriye sahip değildi ve kural "kimliği
--- en küçük aday" olarak kalmıştı. Buradaki iki tablo o veriyi getirir.
+-- 000001 had closed with this limitation: the shipping module had no LOCATION
+-- MODEL. The candidates came from the inventory module (a fact), the shipping
+-- module made the selection (a decision) but it held no data at all to decide
+-- with and the rule had stayed as "the candidate with the smallest id". The two
+-- tables here bring that data.
 --
--- Sahiplik: iki tablo da YALNIZCA fulfillment modülüne aittir.
--- shipping_locations.location_id stok modülünün lokasyon kimliğidir ve FK
--- DEĞİLDİR (Prensip 2.2 — cross-module FK yasağı). Yabancı bir kimliği opak ve
--- FK'sız tutmak yeni değildir: shipping_options.region_id de öyle yapar. Yeni
--- olan, o kimliğin BİRİNCİL ANAHTAR olmasıdır; gerekçesi tablonun başındadır.
+-- Ownership: both tables belong ONLY to the fulfillment module.
+-- shipping_locations.location_id is the inventory module's location id and is
+-- NOT an FK (Principle 2.2 — the cross-module FK ban). Keeping a foreign id
+-- opaque and FK-less is not new: shipping_options.region_id does the same. What
+-- is new is that this id is the PRIMARY KEY; the rationale sits at the head of
+-- the table.
 --
--- Modül ADRES ya da AD KOPYALAMAZ. Deponun nerede olduğu stok modülünün
--- bilgisidir ve orada kalır; burada duran şey yalnızca deponun KARGO
--- niteliğidir: hangi bölgelere hizmet eder ve hangi sırayla tercih edilir.
--- İkinci bir ad/adres kopyası, iki modülde iki doğruluk kaynağı demek olurdu.
+-- The module DOES NOT COPY the ADDRESS or the NAME. Where the warehouse is, is
+-- the inventory module's knowledge and stays there; what sits here is only the
+-- warehouse's SHIPPING attribute: which regions it serves and in which order it
+-- is preferred. A second name/address copy would mean two sources of truth in
+-- two modules.
 
--- shipping_locations bir stok lokasyonunun kargo politikasıdır.
+-- shipping_locations is the shipping policy of an inventory location.
 --
--- # Satırın YOKLUĞU da bir cevaptır
+-- # The ABSENCE of a row is an answer too
 --
--- Politika satırı olmayan depo geçerli bir depodur: varsayılan öncelikte (0) ve
--- TÜM bölgelere hizmet eder. Bu yüzden tabloda hiç satır yokken seçim, bu
--- migration'dan ÖNCEKİ davranışın tam olarak aynısıdır — eşitliği kimliği en
--- küçük aday bozar. Katı alternatif (politikası olmayan depo aday olamaz)
--- açıldığı gün mevcut kurulumların TÜM siparişlerini durdururdu.
+-- A warehouse without a policy row is a valid warehouse: it is at the default
+-- priority (0) and serves ALL regions. That is why, while the table holds no
+-- rows at all, selection is exactly the same as the behavior BEFORE this
+-- migration — the tie is broken by the candidate with the smallest id. The
+-- strict alternative (a warehouse without a policy cannot be a candidate) would
+-- have stopped ALL orders of existing installations the day it was turned on.
 --
--- # BİRİNCİL ANAHTAR YABANCI BİR KİMLİKTİR
+-- # THE PRIMARY KEY IS A FOREIGN ID
 --
--- Satırın kimliği stok modülünün ürettiği kimliktir ve depoda bunun EMSALİ
--- YOKTUR: shipping_options.region_id de yabancı ve FK'sızdır ama orada satırın
--- kendi kimliği (id) vardır, region_id bir NİTELİKTİR. Ortak olan şey opaklık
--- ve FK'sızlıktır, anahtar olması değil.
+-- The row's id is the id the inventory module produced, and this HAS NO
+-- PRECEDENT in the repository: shipping_options.region_id is foreign and FK-less
+-- too, but there the row has an id of its own (id) and region_id is an
+-- ATTRIBUTE. What the two share is the opacity and the FK-lessness, not being
+-- the key.
 --
--- Yeni kalıp bilinçlidir çünkü buradaki satırın bağımsız bir varlığı yoktur:
--- bir deponun EN FAZLA bir politikası olur ve politika, deposu olmadan hiçbir
--- şey ifade etmez. Ayrı bir id vermek, hiçbir şeyin ihtiyaç duymadığı ikinci
--- bir kimlik üretir ve aynı depo için iki satır yazılmasını mümkün kılardı —
--- engellemek için yine location_id üzerinde bir benzersizlik kısıtı gerekirdi.
+-- The new pattern is deliberate, because the row here has no independent
+-- existence: a warehouse has AT MOST one policy, and a policy means nothing
+-- without its warehouse. Giving it a separate id would produce a second id that
+-- nothing needs and would make it possible to write two rows for the same
+-- warehouse — preventing that would again require a uniqueness constraint on
+-- location_id.
 --
--- Bedeli: yazma yolu var OLMAYAN bir depo için de satır üretebilir; modül stok
--- modülünü bilmediği için kimliği doğrulayamaz. Böyle bir satır ASLA SEÇİLEMEZ
--- (politika yalnızca stok modülünün ürettiği adayları eler ve sıralar, kümeye
--- eleman ekleyemez) ama yönetim listelemesinde GÖRÜNÜR: ad ve adres taşımadığı
--- için ekranda çözülemeyen opak bir kimlik olarak durur.
+-- The price: the write path can produce a row for a warehouse that DOES NOT
+-- exist; the module cannot validate the id because it does not know the
+-- inventory module. Such a row can NEVER BE SELECTED (the policy only filters
+-- and orders the candidates the inventory module produced, it cannot add an
+-- element to the set) but it IS VISIBLE in the admin listing: because it carries
+-- no name and no address, it stands on the screen as an opaque id that cannot be
+-- resolved.
 --
--- # SİLME YUMUŞAK DEĞİLDİR
+-- # DELETION IS NOT SOFT
 --
--- Modülde silme kural olarak yumuşaktır (deleted_at); bu iki tablo, 000001'in
--- başındaki listeye eklenen üçüncü ve dördüncü istisnadır. Gerekçe şudur:
--- buradaki satır OLMUŞ BİR ŞEYİN KAYDI DEĞİL, bir YAPILANDIRMADIR. Yumuşak silinmiş bir
--- politika satırının etkisi, hiç var olmamış bir satırınkiyle BİREBİR AYNIDIR
--- (ikisi de "varsayılan" demektir), yani ayrımın taşıyacağı bir anlam yoktur.
--- Dahası zararlıdır: location_id birincil anahtar olduğu için yumuşak silinmiş
--- bir satır, aynı depo için yeni politika yazılmasını engellerdi ve her yazma
--- yolu "önce dirilt" adımını öğrenmek zorunda kalırdı.
+-- Deletion in the module is soft as a rule (deleted_at); these two tables are
+-- the third and fourth exceptions added to the list at the head of 000001. The
+-- rationale is this: the row here IS NOT THE RECORD OF SOMETHING THAT HAPPENED,
+-- it is a CONFIGURATION. The effect of a soft-deleted policy row is EXACTLY THE
+-- SAME as that of a row that never existed (both mean "default"), so the
+-- distinction would carry no meaning. Worse, it would be harmful: because
+-- location_id is the primary key, a soft-deleted row would prevent a new policy
+-- from being written for the same warehouse and every write path would have to
+-- learn the "resurrect first" step.
 --
--- # priority: KÜÇÜK OLAN KAZANIR, negatif SERBESTTİR
+-- # priority: THE SMALLER ONE WINS, negative IS ALLOWED
 --
--- 0 varsayılandır ve politika satırı OLMAYAN depoyla aynı sıradadır. Negatife
--- izin verilmesinin somut sebebi var: üç depodan birini öne almak isteyen
--- operatör, tek satır yazıp o depoya -1 verebilmelidir. Yalnızca negatif
--- olmayan değerlere izin verilseydi aynı iş, öne almak İSTEMEDİĞİ diğer iki
--- depoya satır yazmayı gerektirirdi.
+-- 0 is the default and is at the same rank as a warehouse that HAS NO policy
+-- row. There is a concrete reason for permitting negatives: an operator who
+-- wants to put one of three warehouses first must be able to write a single row
+-- and give that warehouse -1. Had only non-negative values been permitted, the
+-- same job would have required writing rows for the other two warehouses, which
+-- the operator DOES NOT WANT to promote.
 CREATE TABLE IF NOT EXISTS shipping_locations (
     location_id TEXT        PRIMARY KEY,
     priority    BIGINT      NOT NULL DEFAULT 0,
@@ -75,43 +85,48 @@ CREATE TABLE IF NOT EXISTS shipping_locations (
 CREATE INDEX IF NOT EXISTS shipping_locations_priority_idx
     ON shipping_locations (priority, location_id);
 
--- shipping_location_regions deponun HİZMET ETTİĞİ kargo bölgeleridir.
+-- shipping_location_regions are the shipping regions the warehouse SERVES.
 --
--- region_id region modülünün kimliğidir ve FK DEĞİLDİR (Prensip 2.2), tıpkı
--- shipping_options.region_id gibi. location_id ise MODÜL İÇİ bir FK'dır ve
--- serbesttir; politika satırı silinince bölgeleri de düşer (ON DELETE CASCADE),
--- çünkü sahipsiz bir bölge bağı hiçbir kararı etkileyemez.
+-- region_id is the region module's id and is NOT an FK (Principle 2.2), just
+-- like shipping_options.region_id. location_id, in turn, is an INTRA-MODULE FK
+-- and is free; when the policy row is deleted its regions drop with it
+-- (ON DELETE CASCADE), because an ownerless region bond cannot affect any
+-- decision.
 --
--- # Bağı OLMAYAN depo TÜM bölgelere hizmet eder
+-- # A warehouse with NO bond serves ALL regions
 --
--- Kural, satış kanalı kapsamının kuralıyla aynıdır ("kanal ataması olmayan ürün
--- tüm kanallarda görünür") ve aynı tuzağı taşır: bir deponun SON bölge bağını
--- silmek onu kapatmaz, TÜM bölgelere açar. Kapatmak için depo stok modülünde
--- silinir ya da stoğu sıfırlanır — kargo politikası bir depoyu var/yok yapamaz,
--- yalnızca adaylar arasında eler ve sıralar.
+-- The rule is the same as the rule for sales channel scope ("a product with no
+-- channel assignment is visible in all channels") and it carries the same trap:
+-- deleting a warehouse's LAST region bond does not close it, it opens it to ALL
+-- regions. To close it, the warehouse is deleted in the inventory module or its
+-- stock is zeroed — a shipping policy cannot make a warehouse exist or not
+-- exist, it only filters and orders among the candidates.
 --
--- Tuzağın bilinçli olmasının sebebi tabloya girmeden önceki hâlle aynı:
--- boş kümeyi "hiçbir bölgeye hizmet etmez" saymak, bugün politikası olmayan her
--- kurulumu sipariş veremez hâle getirirdi.
+-- The reason the trap is deliberate is the same as the state before the table
+-- existed: counting the empty set as "serves no region" would render every
+-- installation that has no policy today unable to take orders.
 --
--- # TERS YÖNDEKİ TUZAK DAHA AĞIRDIR
+-- # THE TRAP IN THE REVERSE DIRECTION IS HEAVIER
 --
--- Satış kanalı kuralıyla asimetri buradadır: orada yanlış bir kapsam ürünü
--- GİZLER, burada siparişi DÜŞÜRÜR. Var olmayan bir bölge kimliği bağlamak — ya
--- da bir bölgeyi silip aynı adla yeniden açmak, çünkü yeni kayıt yeni bir kimlik
--- alır — o deponun her sepette elenmesi demektir; tek depolu bir kurulumda
--- sonucu, katalog dolu olduğu hâlde her tamamlamanın reddedilmesidir.
+-- The asymmetry with the sales channel rule is here: there a wrong scope HIDES
+-- the product, here it DROPS the order. Binding a region id that does not exist
+-- — or deleting a region and reopening it under the same name, because the new
+-- record gets a new id — means that warehouse is eliminated in every cart; in a
+-- single-warehouse installation the result is that every checkout is rejected
+-- even though the catalog is full.
 --
--- Bağ bu yüzden bir TERCİH DEĞİL, bir KISITTIR. "İstanbul'u tercih et ama
--- tükenirse Ankara'dan gönder" bölge bağıyla YAZILMAZ, öncelikle yazılır:
--- ikisine de bağ verilmez, İstanbul'a küçük bir priority verilir. Bölge bağı
--- yalnızca "bu depo oraya gönderemez" için doğrudur.
+-- The bond is therefore NOT A PREFERENCE but a CONSTRAINT. "Prefer Istanbul but
+-- ship from Ankara when it runs out" IS NOT WRITTEN with a region bond, it is
+-- written with priority: neither is given a bond, Istanbul is given a small
+-- priority. A region bond is only correct for "this warehouse cannot ship
+-- there".
 --
--- Arıza görünürdür ama görünürlüğün SINIRI vardır: eleme sonucu boş kalınca
--- kargo modülü KENDİ hata kodunu döner ve o kod vitrine kadar ulaşır. Adayların
--- gerçekte hangi bölgelere bağlı olduğunu yazan döküm ise SUNUCU LOGUNDA ve
--- yürütme kaydındadır — ölü bir kimlik ancak oraya bakan operatör tarafından
--- teşhis edilebilir.
+-- The fault is visible, but the visibility HAS A LIMIT: when the filtering
+-- leaves nothing behind, the shipping module returns ITS OWN error code and that
+-- code reaches all the way to the storefront. The dump that writes down which
+-- regions the candidates are actually bound to, however, is in the SERVER LOG
+-- and in the execution record — a dead id can only be diagnosed by an operator
+-- who looks there.
 CREATE TABLE IF NOT EXISTS shipping_location_regions (
     location_id TEXT        NOT NULL REFERENCES shipping_locations (location_id) ON DELETE CASCADE,
     region_id   TEXT        NOT NULL,
@@ -121,8 +136,8 @@ CREATE TABLE IF NOT EXISTS shipping_location_regions (
     CONSTRAINT shipping_location_regions_region_check CHECK (region_id <> '')
 );
 
--- Bölgeden depoya doğru ("bu bölgeye hangi depolar hizmet eder") bir okuma
--- BUGÜN YOKTUR ve o yön İNDEKSLENMEDİ. Birincil anahtar (location_id,
--- region_id) yönünü zaten indeksler ve tüm sorgular o yönden okur; kullanıcısı
--- olmayan bir indeks, her yazmaya bedel bindirir ve okuyucuya var olmayan bir
--- kullanım anlatır. Gerektiğinde eklenir.
+-- A read from region towards warehouse ("which warehouses serve this region")
+-- DOES NOT EXIST TODAY and that direction WAS NOT INDEXED. The primary key
+-- already indexes the (location_id, region_id) direction and every query reads
+-- from that direction; an index with no user loads a cost onto every write and
+-- tells the reader about a use that does not exist. It is added when needed.

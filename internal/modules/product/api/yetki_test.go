@@ -19,276 +19,281 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/product/service"
 )
 
-// Bu dosya product'ın yönetim uçlarındaki YETKİ katmanını sınar.
+// This file exercises the SCOPE layer of product's admin endpoints.
 //
-// Kimlik katmanı (corehttp.RequireAdmin) burada taklit edilir: testin
-// kanıtlamak istediği şey "kimlik doğru çözülüyor mu" değil, "çözülmüş
-// kimliğin YETKİSİ uç bazında zorlanıyor mu" sorusudur. İkisi ayrı
-// sınandığında, kimlik doğrulaması kusursuz çalışırken yetkilendirmenin hiç
-// bağlanmamış olduğu durum — yani düzeltilen arıza — görünür kalır.
+// The identity layer (corehttp.RequireAdmin) is imitated here: what the test
+// wants to prove is not "is the identity resolved correctly" but "is the SCOPE
+// of a resolved identity enforced endpoint by endpoint". When the two are
+// exercised separately, the case where authentication works flawlessly while
+// authorization was never wired up — that is, the fault that was fixed — stays
+// visible.
 
-// yetkiKatalogu her çağrıyı sayan, sıfır değer dönen bir [api.Catalog]'dur.
+// scopeCatalog is an [api.Catalog] that counts every call and returns zero
+// values.
 //
-// api_test.go'daki fakeCatalog burada KULLANILMAZ: o sahte, gömülü nil arayüzü
-// sayesinde geçersiz kılınmamış her metotta panikler ve tabloya yeni bir uç
-// eklendiğinde testi 403 yerine panikle düşürürdü. Yetki testinin tablosu
-// bilinçli olarak TÜM uçları gezer, bu yüzden burada tüm yüzeyi karşılayan
-// sessiz bir sahte gerekir.
-type yetkiKatalogu struct {
-	cagriSayisi int
+// The fakeCatalog in api_test.go is NOT USED here: thanks to its embedded nil
+// interface that fake panics on every method that is not overridden, and it
+// would make the test fail with a panic instead of a 403 the day a new endpoint
+// is added to the table. The scope test's table deliberately walks ALL the
+// endpoints, which is why a quiet fake covering the whole surface is needed
+// here.
+type scopeCatalog struct {
+	callCount int
 }
 
-var _ api.Catalog = (*yetkiKatalogu)(nil)
+var _ api.Catalog = (*scopeCatalog)(nil)
 
-// say bir servis çağrısını kaydeder.
-func (f *yetkiKatalogu) say() { f.cagriSayisi++ }
+// count records a service call.
+func (f *scopeCatalog) count() { f.callCount++ }
 
-// CreateProduct çağrıyı sayar.
-func (f *yetkiKatalogu) CreateProduct(context.Context, service.CreateProductInput) (models.Product, error) {
-	f.say()
+// CreateProduct counts the call.
+func (f *scopeCatalog) CreateProduct(context.Context, service.CreateProductInput) (models.Product, error) {
+	f.count()
 	return models.Product{}, nil
 }
 
-// GetProduct çağrıyı sayar.
-func (f *yetkiKatalogu) GetProduct(context.Context, string) (models.Product, error) {
-	f.say()
+// GetProduct counts the call.
+func (f *scopeCatalog) GetProduct(context.Context, string) (models.Product, error) {
+	f.count()
 	return models.Product{}, nil
 }
 
-// ListProducts çağrıyı sayar.
-func (f *yetkiKatalogu) ListProducts(
+// ListProducts counts the call.
+func (f *scopeCatalog) ListProducts(
 	context.Context, service.ListProductsOptions,
 ) (service.ListResult[models.Product], error) {
-	f.say()
+	f.count()
 	return service.ListResult[models.Product]{}, nil
 }
 
-// UpdateProduct çağrıyı sayar.
-func (f *yetkiKatalogu) UpdateProduct(
+// UpdateProduct counts the call.
+func (f *scopeCatalog) UpdateProduct(
 	context.Context, string, service.UpdateProductInput,
 ) (models.Product, error) {
-	f.say()
+	f.count()
 	return models.Product{}, nil
 }
 
-// DeleteProduct çağrıyı sayar.
-func (f *yetkiKatalogu) DeleteProduct(context.Context, string) error {
-	f.say()
+// DeleteProduct counts the call.
+func (f *scopeCatalog) DeleteProduct(context.Context, string) error {
+	f.count()
 	return nil
 }
 
-// CreateVariant çağrıyı sayar.
-func (f *yetkiKatalogu) CreateVariant(
+// CreateVariant counts the call.
+func (f *scopeCatalog) CreateVariant(
 	context.Context, string, service.CreateVariantInput,
 ) (models.Variant, error) {
-	f.say()
+	f.count()
 	return models.Variant{}, nil
 }
 
-// GetVariant çağrıyı sayar.
-func (f *yetkiKatalogu) GetVariant(context.Context, string) (models.Variant, error) {
-	f.say()
+// GetVariant counts the call.
+func (f *scopeCatalog) GetVariant(context.Context, string) (models.Variant, error) {
+	f.count()
 	return models.Variant{}, nil
 }
 
-// ListVariants çağrıyı sayar.
-func (f *yetkiKatalogu) ListVariants(
+// ListVariants counts the call.
+func (f *scopeCatalog) ListVariants(
 	context.Context, service.ListVariantsOptions,
 ) (service.ListResult[models.Variant], error) {
-	f.say()
+	f.count()
 	return service.ListResult[models.Variant]{}, nil
 }
 
-// UpdateVariant çağrıyı sayar.
-func (f *yetkiKatalogu) UpdateVariant(
+// UpdateVariant counts the call.
+func (f *scopeCatalog) UpdateVariant(
 	context.Context, string, service.UpdateVariantInput,
 ) (models.Variant, error) {
-	f.say()
+	f.count()
 	return models.Variant{}, nil
 }
 
-// DeleteVariant çağrıyı sayar.
-func (f *yetkiKatalogu) DeleteVariant(context.Context, string) error {
-	f.say()
+// DeleteVariant counts the call.
+func (f *scopeCatalog) DeleteVariant(context.Context, string) error {
+	f.count()
 	return nil
 }
 
-// CreateOption çağrıyı sayar.
-func (f *yetkiKatalogu) CreateOption(
+// CreateOption counts the call.
+func (f *scopeCatalog) CreateOption(
 	context.Context, string, service.CreateOptionInput,
 ) (models.Option, error) {
-	f.say()
+	f.count()
 	return models.Option{}, nil
 }
 
-// ListOptions çağrıyı sayar.
-func (f *yetkiKatalogu) ListOptions(context.Context, string) ([]models.Option, error) {
-	f.say()
+// ListOptions counts the call.
+func (f *scopeCatalog) ListOptions(context.Context, string) ([]models.Option, error) {
+	f.count()
 	return nil, nil
 }
 
-// AddOptionValue çağrıyı sayar.
-func (f *yetkiKatalogu) AddOptionValue(context.Context, string, string) (models.OptionValue, error) {
-	f.say()
+// AddOptionValue counts the call.
+func (f *scopeCatalog) AddOptionValue(context.Context, string, string) (models.OptionValue, error) {
+	f.count()
 	return models.OptionValue{}, nil
 }
 
-// DeleteOption çağrıyı sayar.
-func (f *yetkiKatalogu) DeleteOption(context.Context, string) error {
-	f.say()
+// DeleteOption counts the call.
+func (f *scopeCatalog) DeleteOption(context.Context, string) error {
+	f.count()
 	return nil
 }
 
-// SetVariantPriceSet çağrıyı sayar.
-func (f *yetkiKatalogu) SetVariantPriceSet(context.Context, string, string) error {
-	f.say()
+// SetVariantPriceSet counts the call.
+func (f *scopeCatalog) SetVariantPriceSet(context.Context, string, string) error {
+	f.count()
 	return nil
 }
 
-// ClearVariantPriceSet çağrıyı sayar.
-func (f *yetkiKatalogu) ClearVariantPriceSet(context.Context, string) error {
-	f.say()
+// ClearVariantPriceSet counts the call.
+func (f *scopeCatalog) ClearVariantPriceSet(context.Context, string) error {
+	f.count()
 	return nil
 }
 
-// SetVariantInventoryItem çağrıyı sayar.
-func (f *yetkiKatalogu) SetVariantInventoryItem(context.Context, string, string) error {
-	f.say()
+// SetVariantInventoryItem counts the call.
+func (f *scopeCatalog) SetVariantInventoryItem(context.Context, string, string) error {
+	f.count()
 	return nil
 }
 
-// ClearVariantInventoryItem çağrıyı sayar.
-func (f *yetkiKatalogu) ClearVariantInventoryItem(context.Context, string) error {
-	f.say()
+// ClearVariantInventoryItem counts the call.
+func (f *scopeCatalog) ClearVariantInventoryItem(context.Context, string) error {
+	f.count()
 	return nil
 }
 
-// VariantLinkIDs çağrıyı sayar.
-func (f *yetkiKatalogu) VariantLinkIDs(context.Context, string) (service.VariantLinks, error) {
-	f.say()
+// VariantLinkIDs counts the call.
+func (f *scopeCatalog) VariantLinkIDs(context.Context, string) (service.VariantLinks, error) {
+	f.count()
 	return service.VariantLinks{}, nil
 }
 
-// AddProductSalesChannel çağrıyı sayar.
-func (f *yetkiKatalogu) AddProductSalesChannel(context.Context, string, string) error {
-	f.say()
+// AddProductSalesChannel counts the call.
+func (f *scopeCatalog) AddProductSalesChannel(context.Context, string, string) error {
+	f.count()
 	return nil
 }
 
-// RemoveProductSalesChannel çağrıyı sayar.
-func (f *yetkiKatalogu) RemoveProductSalesChannel(context.Context, string, string) error {
-	f.say()
+// RemoveProductSalesChannel counts the call.
+func (f *scopeCatalog) RemoveProductSalesChannel(context.Context, string, string) error {
+	f.count()
 	return nil
 }
 
-// ProductSalesChannelIDs çağrıyı sayar.
-func (f *yetkiKatalogu) ProductSalesChannelIDs(context.Context, string) ([]string, error) {
-	f.say()
+// ProductSalesChannelIDs counts the call.
+func (f *scopeCatalog) ProductSalesChannelIDs(context.Context, string) ([]string, error) {
+	f.count()
 	return nil, nil
 }
 
-// CreateCollection çağrıyı sayar.
-func (f *yetkiKatalogu) CreateCollection(
+// CreateCollection counts the call.
+func (f *scopeCatalog) CreateCollection(
 	context.Context, service.CreateCollectionInput,
 ) (models.Collection, error) {
-	f.say()
+	f.count()
 	return models.Collection{}, nil
 }
 
-// GetCollection çağrıyı sayar.
-func (f *yetkiKatalogu) GetCollection(context.Context, string) (models.Collection, error) {
-	f.say()
+// GetCollection counts the call.
+func (f *scopeCatalog) GetCollection(context.Context, string) (models.Collection, error) {
+	f.count()
 	return models.Collection{}, nil
 }
 
-// ListCollections çağrıyı sayar.
-func (f *yetkiKatalogu) ListCollections(
+// ListCollections counts the call.
+func (f *scopeCatalog) ListCollections(
 	context.Context, int, int,
 ) (service.ListResult[models.Collection], error) {
-	f.say()
+	f.count()
 	return service.ListResult[models.Collection]{}, nil
 }
 
-// CreateCategory çağrıyı sayar.
-func (f *yetkiKatalogu) CreateCategory(
+// CreateCategory counts the call.
+func (f *scopeCatalog) CreateCategory(
 	context.Context, service.CreateCategoryInput,
 ) (models.Category, error) {
-	f.say()
+	f.count()
 	return models.Category{}, nil
 }
 
-// GetCategory çağrıyı sayar.
-func (f *yetkiKatalogu) GetCategory(context.Context, string) (models.Category, error) {
-	f.say()
+// GetCategory counts the call.
+func (f *scopeCatalog) GetCategory(context.Context, string) (models.Category, error) {
+	f.count()
 	return models.Category{}, nil
 }
 
-// ListCategories çağrıyı sayar.
-func (f *yetkiKatalogu) ListCategories(
+// ListCategories counts the call.
+func (f *scopeCatalog) ListCategories(
 	context.Context, service.ListCategoriesOptions,
 ) (service.ListResult[models.Category], error) {
-	f.say()
+	f.count()
 	return service.ListResult[models.Category]{}, nil
 }
 
-// CreateTag çağrıyı sayar.
-func (f *yetkiKatalogu) CreateTag(context.Context, string) (models.Tag, error) {
-	f.say()
+// CreateTag counts the call.
+func (f *scopeCatalog) CreateTag(context.Context, string) (models.Tag, error) {
+	f.count()
 	return models.Tag{}, nil
 }
 
-// ListTags çağrıyı sayar.
-func (f *yetkiKatalogu) ListTags(context.Context, int, int) (service.ListResult[models.Tag], error) {
-	f.say()
+// ListTags counts the call.
+func (f *scopeCatalog) ListTags(context.Context, int, int) (service.ListResult[models.Tag], error) {
+	f.count()
 	return service.ListResult[models.Tag]{}, nil
 }
 
-// ListStoreProducts çağrıyı sayar.
-func (f *yetkiKatalogu) ListStoreProducts(
+// ListStoreProducts counts the call.
+func (f *scopeCatalog) ListStoreProducts(
 	context.Context, service.StoreListOptions,
 ) (service.ListResult[service.StoreProduct], error) {
-	f.say()
+	f.count()
 	return service.ListResult[service.StoreProduct]{}, nil
 }
 
-// GetStoreProduct çağrıyı sayar.
-func (f *yetkiKatalogu) GetStoreProduct(context.Context, string, []string) (service.StoreProduct, error) {
-	f.say()
+// GetStoreProduct counts the call.
+func (f *scopeCatalog) GetStoreProduct(context.Context, string, []string) (service.StoreProduct, error) {
+	f.count()
 	return service.StoreProduct{}, nil
 }
 
-// yetkiliRouter verilen yetkileri taşıyan DOĞRULANMIŞ bir kimlikle router
-// kurar.
+// scopedRouter builds a router with an AUTHENTICATED identity carrying the
+// given scopes.
 //
-// Hiç yetki verilmemesi geçerli bir durumdur ve "kimliği var ama yetkisi yok"
-// çağıranı üretir — arızanın ta kendisi bu kullanıcıydı.
-func yetkiliRouter(t *testing.T, scopes ...string) (chi.Router, *yetkiKatalogu) {
+// Giving no scope at all is a valid case and produces a "has an identity but no
+// scope" caller — this user was the fault itself.
+func scopedRouter(t *testing.T, scopes ...string) (chi.Router, *scopeCatalog) {
 	t.Helper()
 
-	svc := &yetkiKatalogu{}
+	svc := &scopeCatalog{}
 	r := chi.NewRouter()
-	r.Use(kimlikVer(scopes...))
+	r.Use(principalMiddleware(scopes...))
 	api.New(svc, graph.Options{}).Routes(r)
 
 	return r, svc
 }
 
-// kimliksizRouter context'e HİÇ kimlik konmayan bir router kurar.
-func kimliksizRouter(t *testing.T) (chi.Router, *yetkiKatalogu) {
+// anonymousRouter builds a router where NO identity is put into the context.
+func anonymousRouter(t *testing.T) (chi.Router, *scopeCatalog) {
 	t.Helper()
 
-	svc := &yetkiKatalogu{}
+	svc := &scopeCatalog{}
 	r := chi.NewRouter()
 	api.New(svc, graph.Options{}).Routes(r)
 
 	return r, svc
 }
 
-// kimlikVer doğrulanmış bir kimliği context'e koyan middleware döner.
+// principalMiddleware returns a middleware that puts an authenticated identity
+// into the context.
 //
-// Üretimde bunu corehttp.RequireAdmin yapar; testte kimliği elle koymak, yetki
-// katmanını jeton üretimi ve veritabanı olmadan sınamayı sağlar.
-func kimlikVer(scopes ...string) func(http.Handler) http.Handler {
+// In production corehttp.RequireAdmin does this; setting the identity by hand in
+// the test makes it possible to exercise the scope layer without token issuing
+// and without a database.
+func principalMiddleware(scopes ...string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			principal := corehttp.Principal{ID: "usr_test", Kind: "user", Scopes: scopes}
@@ -297,211 +302,213 @@ func kimlikVer(scopes ...string) func(http.Handler) http.Handler {
 	}
 }
 
-// yetkiIstegi bir istek çalıştırır ve yanıt kaydını döner.
+// scopeRequest runs a request and returns the response recorder.
 //
-// api_test.go'daki do'dan ayrı durur çünkü o yardımcı isteğe TAM YETKİLİ bir
-// kimlik ekler; burada kimliği testin kendisi belirler.
-func yetkiIstegi(t *testing.T, r chi.Router, method, yol, govde string) *httptest.ResponseRecorder {
+// It stands apart from the do in api_test.go because that helper adds a FULLY
+// PRIVILEGED identity to the request; here the test itself decides the identity.
+func scopeRequest(t *testing.T, r chi.Router, method, path, body string) *httptest.ResponseRecorder {
 	t.Helper()
 
-	req := httptest.NewRequest(method, yol, strings.NewReader(govde))
+	req := httptest.NewRequest(method, path, strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 
-	kayit := httptest.NewRecorder()
-	r.ServeHTTP(kayit, req)
-	return kayit
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+	return rec
 }
 
-// yetkiHataKodu hata zarfındaki kodu döner.
-func yetkiHataKodu(t *testing.T, kayit *httptest.ResponseRecorder) string {
+// scopeErrorCode returns the code in the error envelope.
+func scopeErrorCode(t *testing.T, rec *httptest.ResponseRecorder) string {
 	t.Helper()
 
-	var zarf struct {
+	var envelope struct {
 		Error struct {
 			Code string `json:"code"`
 		} `json:"error"`
 	}
-	require.NoError(t, json.Unmarshal(kayit.Body.Bytes(), &zarf), "gövde: %s", kayit.Body.String())
-	return zarf.Error.Code
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &envelope), "body: %s", rec.Body.String())
+	return envelope.Error.Code
 }
 
-// yazmaUclari [api.ScopeWrite] isteyen tüm yönetim uçlarıdır.
+// writeEndpoints are all the admin endpoints that ask for [api.ScopeWrite].
 //
-// Liste [api.Handler.Routes] ile birlikte büyümelidir: eklenen ama buraya
-// yazılmayan bir yazma ucu, sessizce yetkisiz kalabilecek tek yerdir.
-var yazmaUclari = map[string]struct {
+// The list has to grow along with [api.Handler.Routes]: a write endpoint that is
+// added but not written here is the only place that could silently end up
+// unguarded.
+var writeEndpoints = map[string]struct {
 	method string
-	yol    string
-	govde  string
+	path   string
+	body   string
 }{
-	"ürün oluşturma":     {http.MethodPost, "/admin/v1/products", `{}`},
-	"ürün güncelleme":    {http.MethodPatch, "/admin/v1/products/prod_1", `{}`},
-	"ürün silme":         {http.MethodDelete, "/admin/v1/products/prod_1", ""},
-	"varyant oluşturma":  {http.MethodPost, "/admin/v1/products/prod_1/variants", `{}`},
-	"varyant güncelleme": {http.MethodPatch, "/admin/v1/variants/var_1", `{}`},
-	"varyant silme":      {http.MethodDelete, "/admin/v1/variants/var_1", ""},
-	"seçenek oluşturma":  {http.MethodPost, "/admin/v1/products/prod_1/options", `{}`},
-	"seçenek değeri":     {http.MethodPost, "/admin/v1/product-options/opt_1/values", `{}`},
-	"seçenek silme":      {http.MethodDelete, "/admin/v1/product-options/opt_1", ""},
-	"fiyat seti bağlama": {http.MethodPut, "/admin/v1/variants/var_1/price-set", `{}`},
-	"fiyat seti kaldırma": {
+	"create product":   {http.MethodPost, "/admin/v1/products", `{}`},
+	"update product":   {http.MethodPatch, "/admin/v1/products/prod_1", `{}`},
+	"delete product":   {http.MethodDelete, "/admin/v1/products/prod_1", ""},
+	"create variant":   {http.MethodPost, "/admin/v1/products/prod_1/variants", `{}`},
+	"update variant":   {http.MethodPatch, "/admin/v1/variants/var_1", `{}`},
+	"delete variant":   {http.MethodDelete, "/admin/v1/variants/var_1", ""},
+	"create option":    {http.MethodPost, "/admin/v1/products/prod_1/options", `{}`},
+	"add option value": {http.MethodPost, "/admin/v1/product-options/opt_1/values", `{}`},
+	"delete option":    {http.MethodDelete, "/admin/v1/product-options/opt_1", ""},
+	"link price set":   {http.MethodPut, "/admin/v1/variants/var_1/price-set", `{}`},
+	"unlink price set": {
 		http.MethodDelete, "/admin/v1/variants/var_1/price-set", "",
 	},
-	"stok kalemi bağlama": {http.MethodPut, "/admin/v1/variants/var_1/inventory-item", `{}`},
-	"stok kalemi kaldırma": {
+	"link inventory item": {http.MethodPut, "/admin/v1/variants/var_1/inventory-item", `{}`},
+	"unlink inventory item": {
 		http.MethodDelete, "/admin/v1/variants/var_1/inventory-item", "",
 	},
-	"satış kanalı bağlama": {
+	"link sales channel": {
 		http.MethodPost, "/admin/v1/products/prod_1/sales-channels", `{}`,
 	},
-	"satış kanalı kaldırma": {
+	"unlink sales channel": {
 		http.MethodDelete, "/admin/v1/products/prod_1/sales-channels/sc_1", "",
 	},
-	"koleksiyon oluşturma": {http.MethodPost, "/admin/v1/product-collections", `{}`},
-	"kategori oluşturma":   {http.MethodPost, "/admin/v1/product-categories", `{}`},
-	"etiket oluşturma":     {http.MethodPost, "/admin/v1/product-tags", `{}`},
+	"create collection": {http.MethodPost, "/admin/v1/product-collections", `{}`},
+	"create category":   {http.MethodPost, "/admin/v1/product-categories", `{}`},
+	"create tag":        {http.MethodPost, "/admin/v1/product-tags", `{}`},
 }
 
-// okumaUclari [api.ScopeRead] isteyen tüm yönetim uçlarıdır.
-var okumaUclari = map[string]string{
-	"ürün listesi":       "/admin/v1/products",
-	"tekil ürün":         "/admin/v1/products/prod_1",
-	"varyant listesi":    "/admin/v1/products/prod_1/variants",
-	"tekil varyant":      "/admin/v1/variants/var_1",
-	"seçenek listesi":    "/admin/v1/products/prod_1/options",
-	"varyant bağları":    "/admin/v1/variants/var_1/links",
-	"satış kanalları":    "/admin/v1/products/prod_1/sales-channels",
-	"koleksiyon listesi": "/admin/v1/product-collections",
-	"kategori listesi":   "/admin/v1/product-categories",
-	"etiket listesi":     "/admin/v1/product-tags",
+// readEndpoints are all the admin endpoints that ask for [api.ScopeRead].
+var readEndpoints = map[string]string{
+	"product list":    "/admin/v1/products",
+	"single product":  "/admin/v1/products/prod_1",
+	"variant list":    "/admin/v1/products/prod_1/variants",
+	"single variant":  "/admin/v1/variants/var_1",
+	"option list":     "/admin/v1/products/prod_1/options",
+	"variant links":   "/admin/v1/variants/var_1/links",
+	"sales channels":  "/admin/v1/products/prod_1/sales-channels",
+	"collection list": "/admin/v1/product-collections",
+	"category list":   "/admin/v1/product-categories",
+	"tag list":        "/admin/v1/product-tags",
 }
 
-// TestYazmaUcuDarYetkiliCagiraniReddeder yazma uçlarının [api.ScopeWrite]
-// istediğini kanıtlar.
+// TestWriteEndpointRejectsReadOnlyCaller proves that the write endpoints ask for
+// [api.ScopeWrite].
 //
-// Çağıran GERÇEK bir kimliktir ve okuma yetkisi vardır; eksik olan tek şey
-// yazma yetkisidir. Arızanın kendisi tam buydu: kimliği doğrulanmış her
-// çağıran, yetkisine bakılmadan kataloğu silebiliyordu.
-func TestYazmaUcuDarYetkiliCagiraniReddeder(t *testing.T) {
-	for ad, tt := range yazmaUclari {
-		t.Run(ad, func(t *testing.T) {
-			r, svc := yetkiliRouter(t, api.ScopeRead)
+// The caller is a REAL identity and it has the read scope; the only thing
+// missing is the write scope. This was exactly the fault: every caller whose
+// identity was authenticated could delete the catalog regardless of its scope.
+func TestWriteEndpointRejectsReadOnlyCaller(t *testing.T) {
+	for name, tt := range writeEndpoints {
+		t.Run(name, func(t *testing.T) {
+			r, svc := scopedRouter(t, api.ScopeRead)
 
-			kayit := yetkiIstegi(t, r, tt.method, tt.yol, tt.govde)
+			rec := scopeRequest(t, r, tt.method, tt.path, tt.body)
 
-			assert.Equal(t, http.StatusForbidden, kayit.Code,
-				"okuma yetkili çağıran yazma ucunda 403 almalı; gövde: %s", kayit.Body.String())
-			assert.Equal(t, corehttp.CodeForbidden, yetkiHataKodu(t, kayit))
-			assert.Zero(t, svc.cagriSayisi,
-				"reddedilen istek servise HİÇ ulaşmamalı; yazma reddedilmeden önce yapılmış olurdu")
+			assert.Equal(t, http.StatusForbidden, rec.Code,
+				"a caller with the read scope has to get a 403 on a write endpoint; body: %s", rec.Body.String())
+			assert.Equal(t, corehttp.CodeForbidden, scopeErrorCode(t, rec))
+			assert.Zero(t, svc.callCount,
+				"a rejected request must NEVER reach the service; the write would have happened before the rejection")
 		})
 	}
 }
 
-// TestOkumaUcuDarYetkiyleCalisir okuma uçlarının aynı dar kimliği GEÇİRDİĞİNİ
-// kanıtlar.
+// TestReadEndpointWorksWithReadScope proves that the read endpoints LET THROUGH
+// the same narrow identity.
 //
-// Ayrı bir test olması bilinçlidir: her isteği reddeden bir middleware
-// yukarıdaki tabloyu kusursuz geçer ama yönetim yüzeyini tümüyle kilitlerdi.
-// [api.ScopeRead] yalnızca yazmayı kapalı tutmak için vardır; okumayı da
-// admin'e bağlamak, kataloğu raporlayan dar yetkili bir entegrasyonun tam
-// yetki istemesine yol açardı.
-func TestOkumaUcuDarYetkiyleCalisir(t *testing.T) {
-	for ad, yol := range okumaUclari {
-		t.Run(ad, func(t *testing.T) {
-			r, svc := yetkiliRouter(t, api.ScopeRead)
+// Being a separate test is deliberate: a middleware that rejects every request
+// would pass the table above flawlessly while locking the admin surface
+// entirely. [api.ScopeRead] exists only to keep writing closed; binding reading
+// to admin as well would force a narrowly scoped integration that reports the
+// catalog to ask for full privileges.
+func TestReadEndpointWorksWithReadScope(t *testing.T) {
+	for name, path := range readEndpoints {
+		t.Run(name, func(t *testing.T) {
+			r, svc := scopedRouter(t, api.ScopeRead)
 
-			kayit := yetkiIstegi(t, r, http.MethodGet, yol, "")
+			rec := scopeRequest(t, r, http.MethodGet, path, "")
 
-			assert.Equal(t, http.StatusOK, kayit.Code,
-				"okuma yetkisi okuma ucuna yetmeli; gövde: %s", kayit.Body.String())
-			assert.Positive(t, svc.cagriSayisi, "istek servise ulaşmalı")
+			assert.Equal(t, http.StatusOK, rec.Code,
+				"the read scope has to be enough for a read endpoint; body: %s", rec.Body.String())
+			assert.Positive(t, svc.callCount, "the request has to reach the service")
 		})
 	}
 }
 
-// TestYazmaUcuAdminCagiraniKabulEder corehttp.ScopeAdmin'in ÜST YETKİ
-// olduğunu, yani "product:write" ayrıca verilmeden de yazmaya yettiğini
-// kanıtlar.
-func TestYazmaUcuAdminCagiraniKabulEder(t *testing.T) {
-	for ad, tt := range yazmaUclari {
-		t.Run(ad, func(t *testing.T) {
-			r, svc := yetkiliRouter(t, corehttp.ScopeAdmin)
+// TestWriteEndpointAcceptsAdminCaller proves that corehttp.ScopeAdmin is the
+// SUPER SCOPE, that is, that it is enough for writing without "product:write"
+// being granted separately.
+func TestWriteEndpointAcceptsAdminCaller(t *testing.T) {
+	for name, tt := range writeEndpoints {
+		t.Run(name, func(t *testing.T) {
+			r, svc := scopedRouter(t, corehttp.ScopeAdmin)
 
-			kayit := yetkiIstegi(t, r, tt.method, tt.yol, tt.govde)
+			rec := scopeRequest(t, r, tt.method, tt.path, tt.body)
 
-			assert.NotEqual(t, http.StatusForbidden, kayit.Code,
-				"admin yazma ucunda 403 ALMAMALI; gövde: %s", kayit.Body.String())
-			assert.Positive(t, svc.cagriSayisi, "istek servise ulaşmalı")
+			assert.NotEqual(t, http.StatusForbidden, rec.Code,
+				"admin MUST NOT get a 403 on a write endpoint; body: %s", rec.Body.String())
+			assert.Positive(t, svc.callCount, "the request has to reach the service")
 		})
 	}
 }
 
-// TestYetkisizKullaniciKatalogaErisemez yetkisi hiç olmayan bir yönetim
-// kullanıcısının hiçbir katalog ucunu çağıramadığını kanıtlar.
+// TestScopelessUserCannotReachCatalog proves that an admin user with no scope at
+// all cannot call any catalog endpoint.
 //
-// auth service.CreateUserInput.Scopes godoc'u boş yetki listesinin "giriş
-// yapabilir ama hiçbir yönetim ucuna erişemez" bir kullanıcı ürettiğini
-// söylüyor; bu test o cümlenin product tarafındaki karşılığıdır.
-func TestYetkisizKullaniciKatalogaErisemez(t *testing.T) {
-	for ad, yol := range okumaUclari {
-		t.Run("okuma/"+ad, func(t *testing.T) {
-			r, svc := yetkiliRouter(t)
+// The godoc of auth service.CreateUserInput.Scopes says an empty scope list
+// produces a user that "can log in but can reach no admin endpoint"; this test
+// is the counterpart of that sentence on the product side.
+func TestScopelessUserCannotReachCatalog(t *testing.T) {
+	for name, path := range readEndpoints {
+		t.Run("read/"+name, func(t *testing.T) {
+			r, svc := scopedRouter(t)
 
-			kayit := yetkiIstegi(t, r, http.MethodGet, yol, "")
+			rec := scopeRequest(t, r, http.MethodGet, path, "")
 
-			assert.Equal(t, http.StatusForbidden, kayit.Code,
-				"yetkisiz kullanıcı okuma ucunda 403 almalı; gövde: %s", kayit.Body.String())
-			assert.Zero(t, svc.cagriSayisi)
+			assert.Equal(t, http.StatusForbidden, rec.Code,
+				"a user with no scope has to get a 403 on a read endpoint; body: %s", rec.Body.String())
+			assert.Zero(t, svc.callCount)
 		})
 	}
 
-	for ad, tt := range yazmaUclari {
-		t.Run("yazma/"+ad, func(t *testing.T) {
-			r, svc := yetkiliRouter(t)
+	for name, tt := range writeEndpoints {
+		t.Run("write/"+name, func(t *testing.T) {
+			r, svc := scopedRouter(t)
 
-			kayit := yetkiIstegi(t, r, tt.method, tt.yol, tt.govde)
+			rec := scopeRequest(t, r, tt.method, tt.path, tt.body)
 
-			assert.Equal(t, http.StatusForbidden, kayit.Code,
-				"yetkisiz kullanıcı yazma ucunda 403 almalı; gövde: %s", kayit.Body.String())
-			assert.Zero(t, svc.cagriSayisi)
+			assert.Equal(t, http.StatusForbidden, rec.Code,
+				"a user with no scope has to get a 403 on a write endpoint; body: %s", rec.Body.String())
+			assert.Zero(t, svc.callCount)
 		})
 	}
 }
 
-// TestMagazaUclariYetkiIstemez /store/v1 uçlarının yetki SORMADIĞINI
-// kanıtlar.
+// TestStoreEndpointsRequireNoScope proves that the /store/v1 endpoints DO NOT
+// ASK for a scope.
 //
-// Mağaza yüzeyinin kimliği publishable anahtardır ve o anahtar tanımı gereği
-// yetki TAŞIMAZ. Store uçlarına bir scope eklenseydi, hiçbir mağaza istemcisi
-// ürün listeleyemezdi — yani vitrin kapanırdı.
-func TestMagazaUclariYetkiIstemez(t *testing.T) {
-	r, svc := kimliksizRouter(t)
+// The identity of the store surface is the publishable key and that key by
+// definition CARRIES NO scope. Had a scope been added to the store endpoints, no
+// store client could list products — that is, the storefront would close.
+func TestStoreEndpointsRequireNoScope(t *testing.T) {
+	r, svc := anonymousRouter(t)
 
-	liste := yetkiIstegi(t, r, http.MethodGet, "/store/v1/products", "")
-	assert.Equal(t, http.StatusOK, liste.Code,
-		"vitrin listesi yetki istememeli; gövde: %s", liste.Body.String())
+	list := scopeRequest(t, r, http.MethodGet, "/store/v1/products", "")
+	assert.Equal(t, http.StatusOK, list.Code,
+		"the storefront listing must not ask for a scope; body: %s", list.Body.String())
 
-	tekil := yetkiIstegi(t, r, http.MethodGet, "/store/v1/products/prod_1", "")
-	assert.Equal(t, http.StatusOK, tekil.Code,
-		"vitrin tekil ucu yetki istememeli; gövde: %s", tekil.Body.String())
+	single := scopeRequest(t, r, http.MethodGet, "/store/v1/products/prod_1", "")
+	assert.Equal(t, http.StatusOK, single.Code,
+		"the single storefront endpoint must not ask for a scope; body: %s", single.Body.String())
 
-	assert.Equal(t, 2, svc.cagriSayisi)
+	assert.Equal(t, 2, svc.callCount)
 }
 
-// TestKimliksizYonetimIstegi401Dondurur kimliğin hiç olmadığı durumda yetki
-// katmanının 403 DEĞİL 401 döndüğünü kanıtlar.
+// TestAdminRequestWithoutPrincipalReturns401 proves that when there is no
+// identity at all the scope layer returns a 401, NOT a 403.
 //
-// Ayrım istemci için anlamlıdır: 401 "kim olduğunu söyle", 403 "kim olduğunu
-// biliyorum ama yetkin yok" demektir. 403 dönseydi, kimlik başlığını unutan
-// bir istemci jetonunu yenilemek yerine yetki istemeye giderdi.
-func TestKimliksizYonetimIstegi401Dondurur(t *testing.T) {
-	r, svc := kimliksizRouter(t)
+// The distinction matters to the client: 401 means "tell me who you are", 403
+// means "I know who you are but you have no scope". Had it returned a 403, a
+// client that forgot the identity header would go asking for a scope instead of
+// refreshing its token.
+func TestAdminRequestWithoutPrincipalReturns401(t *testing.T) {
+	r, svc := anonymousRouter(t)
 
-	kayit := yetkiIstegi(t, r, http.MethodGet, "/admin/v1/products", "")
+	rec := scopeRequest(t, r, http.MethodGet, "/admin/v1/products", "")
 
-	assert.Equal(t, http.StatusUnauthorized, kayit.Code, "gövde: %s", kayit.Body.String())
-	assert.Equal(t, "Bearer", kayit.Header().Get("WWW-Authenticate"),
-		"RFC 9110: 401 hangi şemanın beklendiğini bildirmeli")
-	assert.Zero(t, svc.cagriSayisi)
+	assert.Equal(t, http.StatusUnauthorized, rec.Code, "body: %s", rec.Body.String())
+	assert.Equal(t, "Bearer", rec.Header().Get("WWW-Authenticate"),
+		"RFC 9110: a 401 has to report which scheme is expected")
+	assert.Zero(t, svc.callCount)
 }

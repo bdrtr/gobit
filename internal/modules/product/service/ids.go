@@ -7,12 +7,12 @@ import (
 	"time"
 )
 
-// Kimlik önekleri (plan Bölüm 8: prefix'li kimlikler).
+// Id prefixes (plan Section 8: prefixed ids).
 //
-// Önek kimliğin türünü kendi içinde taşır: bir log satırında ya da bir link
-// tablosunda "variant_01J..." gördüğünüzde hangi tabloya bakacağınızı bilirsiniz.
-// Ayrıca yanlış türden bir kimliğin yanlış uca geçmesi (ürün kimliğinin
-// varyant beklenen yere verilmesi) gözle görülür hâle gelir.
+// The prefix carries the kind of the id within the id itself: when you see
+// "variant_01J..." in a log line or in a link table you know which table to
+// look at. It also makes an id of the wrong kind slipping into the wrong end
+// (a product id handed to a place that expects a variant) visible to the eye.
 const (
 	prefixProduct     = "prod_"
 	prefixVariant     = "variant_"
@@ -24,35 +24,37 @@ const (
 	prefixImage       = "pimg_"
 )
 
-// idEncoding Crockford Base32 alfabesiyle dolgusuz kodlamadır.
+// idEncoding is the unpadded encoding over the Crockford Base32 alphabet.
 //
-// 16 baytlık gövde bu alfabeyle tam 26 karakter eder.
+// A 16-byte body comes to exactly 26 characters in this alphabet.
 //
-// Alfabe ASCII'de artan sırada olduğu için kodlanmış dize, kodlanan baytlarla
-// AYNI sözlüksel sırayı korur; zaman damgası başta olduğundan kimlikler
-// oluşturma sırasına göre sıralanabilir kalır.
+// Because the alphabet is in ascending order in ASCII, the encoded string keeps
+// the SAME lexicographic order as the bytes it encodes; since the timestamp
+// comes first, the ids stay sortable by creation order.
 var idEncoding = base32.NewEncoding("0123456789ABCDEFGHJKMNPQRSTVWXYZ").WithPadding(base32.NoPadding)
 
-// newID verilen önekle zaman sıralı ve tekil bir kimlik üretir.
+// newID produces a time-ordered, unique id with the given prefix.
 //
-// Yapısı ULID ile aynıdır: 48 bit milisaniye zaman damgası + 80 bit
-// kriptografik rastgelelik, Crockford Base32 ile 26 karaktere kodlanır.
-// Zaman damgasının başta olması, kimliğin kendisinin kabaca oluşturma sırasını
-// taşıması demektir; kayıtlar birincil anahtar indeksinde de doğal sırada durur
-// ve rastgele UUID'lerin B-tree'de yarattığı dağınık yazma yükü oluşmaz.
+// Its shape is the same as a ULID: a 48-bit millisecond timestamp + 80 bits of
+// cryptographic randomness, encoded into 26 characters with Crockford Base32.
+// The timestamp coming first means the id itself carries roughly the creation
+// order; the rows also sit in their natural order in the primary key index and
+// none of the scattered write load that random UUIDs create in a B-tree
+// appears.
 //
-// Kimlik ÜRETİMİ modülün kendisindedir (çekirdekteki üretici İMPORT EDİLMEZ):
-// modül izolasyonu, ortak bir yardımcı paket kurma dürtüsüne direnmeyi gerektirir.
+// Id GENERATION lives in the module itself (the generator in the core is NOT
+// IMPORTED): module isolation requires resisting the urge to set up a shared
+// helper package.
 func newID(prefix string) string {
 	return prefix + idEncoding.EncodeToString(idBytes(time.Now()))
 }
 
-// idBytes kimliğin 16 baytlık gövdesini üretir.
+// idBytes produces the 16-byte body of the id.
 func idBytes(t time.Time) []byte {
 	ms := t.UTC().UnixMilli()
 	if ms < 0 {
-		// 1970 öncesi bir zaman damgası katalog için anlamlı değildir; sırayı
-		// bozmamak için tabana çekilir.
+		// A timestamp before 1970 is meaningless for a catalog; it is clamped
+		// to the floor so that it does not break the ordering.
 		ms = 0
 	}
 
@@ -60,12 +62,13 @@ func idBytes(t time.Time) []byte {
 	binary.BigEndian.PutUint64(stamp[:], uint64(ms))
 
 	buf := make([]byte, 16)
-	// UnixMilli 48 bite sığar; ilk iki bayt daima sıfırdır ve atılır.
+	// UnixMilli fits into 48 bits; the first two bytes are always zero and are
+	// dropped.
 	copy(buf[:6], stamp[2:])
 	if _, err := rand.Read(buf[6:]); err != nil {
-		// crypto/rand.Read hata dönmez; yine de bir gün dönerse kimlik
-		// nanosaniye çözünürlüğüne dayanır — tekillik zayıflar ama kayıt
-		// açma başarısız olmaz.
+		// crypto/rand.Read does not return an error; should it ever do so, the
+		// id falls back to nanosecond resolution — uniqueness weakens but
+		// opening a record does not fail.
 		binary.BigEndian.PutUint64(buf[8:], uint64(t.UnixNano()))
 	}
 	return buf

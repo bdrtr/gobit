@@ -14,173 +14,179 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/fulfillment/models"
 )
 
-// Uygunluk bağlamının YERLEŞİK alan adları.
+// The BUILT-IN field names of the eligibility context.
 //
-// Kural yazan yönetici bu adları kullanır; her biri sepetin bir OLGUSUDUR ve
-// çağıranın gönderdiği serbest alanların ÜZERİNE yazılır (bkz.
+// The administrator writing a rule uses these names; each one is a FACT of the
+// cart and is written OVER the free-form fields the caller sent (see
 // [Service.ListShippingOptionsFor]).
 const (
-	// AttrRegionID sepetin bölgesidir.
+	// AttrRegionID is the cart's region.
 	AttrRegionID = "region_id"
-	// AttrCountryCode teslimat ülkesidir (ISO 3166-1 alpha-2, büyük harf).
+	// AttrCountryCode is the delivery country (ISO 3166-1 alpha-2, upper case).
 	AttrCountryCode = "country_code"
-	// AttrCurrencyCode sepetin para birimidir (ISO 4217, büyük harf).
+	// AttrCurrencyCode is the cart's currency (ISO 4217, upper case).
 	AttrCurrencyCode = "currency_code"
-	// AttrSubtotal sepetin ara toplamıdır (minor unit TAM SAYI). "Ücretsiz
-	// kargo" kuralları bu alana bakar.
+	// AttrSubtotal is the cart's subtotal (minor unit INTEGER). "Free shipping"
+	// rules look at this field.
 	AttrSubtotal = "subtotal"
-	// AttrItemCount sepetteki toplam adettir.
+	// AttrItemCount is the total number of items in the cart.
 	AttrItemCount = "item_count"
-	// AttrTotalWeight gönderinin toplam ağırlığıdır (gram).
+	// AttrTotalWeight is the total weight of the shipment (grams).
 	AttrTotalWeight = "total_weight"
-	// AttrIsReturn iade akışında olunup olunmadığıdır ("true"/"false").
+	// AttrIsReturn is whether we are in a return flow ("true"/"false").
 	AttrIsReturn = "is_return"
 )
 
-// clientDeclarableFacts çağıranın SERBESTÇE İDDİA edebildiği sayısal sepet
-// olgularıdır.
+// clientDeclarableFacts are the numeric cart facts the caller can FREELY CLAIM.
 //
-// Bu üç alan bir sepetin GİZLİ durumudur: bu modül onları hesaplayamaz
-// (Prensip 2.1) ve doğrulayamaz. Bir kural onlara bağlandığında, olguyu
-// uyduran bir çağıran kendine kapalı bir seçeneği açabilir. Güvenilmeyen
-// yüzeylerde ([ListOptionsInput.TrustedFacts] false) bu alanlara bağlı
-// kuralı olan seçenekler listeye HİÇ girmez.
+// These three fields are the HIDDEN state of a cart: this module cannot compute
+// them (Principle 2.1) and cannot verify them. Once a rule is bound to them, a
+// caller that makes the fact up can open an option that is closed to them. On
+// untrusted surfaces ([ListOptionsInput.TrustedFacts] false), options that have
+// a rule bound to these fields DO NOT ENTER the list at all.
 //
-// Bölge, ülke ve para birimi listede YOKTUR ve bu bilinçlidir: onlar bir
-// ayrıcalık kapısı değil, isteğin KAPSAMIDIR — başka bir ülkenin seçeneklerini
-// sormak vitrinde normal bir davranıştır ve teslimat adresi zaten ödeme
-// adımında doğrulanır.
+// Region, country and currency are NOT in the list and that is deliberate: they
+// are not a privilege gate but the SCOPE of the request — asking for another
+// country's options is normal behavior on the storefront, and the delivery
+// address is verified at the payment step anyway.
 var clientDeclarableFacts = []string{AttrSubtotal, AttrItemCount, AttrTotalWeight}
 
-// ListOptionsInput bir sepet bağlamı için uygun seçeneklerin sorgulanmasıdır.
+// ListOptionsInput is a query for the options eligible for a cart context.
 //
-// Alanların hepsi ÇAĞIRANIN bildiği olgulardır; bu modül hiçbirini kendi
-// hesaplamaz (Prensip 2.1: sepet cart modülünün verisidir). Sayısal alanların
-// ARALIĞI yine de doğrulanır: değerin doğruluğu bilinemese de, tek bir istek
-// parametresiyle sağlayıcının aritmetiğini taşıracak büyüklükte olmadığı
-// bilinebilir.
+// All of the fields are facts THE CALLER knows; this module computes none of
+// them itself (Principle 2.1: the cart is the cart module's data). The RANGE of
+// the numeric fields is nevertheless validated: even though the truth of a value
+// cannot be known, it can be known that it is not large enough to overflow the
+// provider's arithmetic with a single request parameter.
 type ListOptionsInput struct {
-	// RegionID sepetin bölgesidir. Bölgesi buna eşit olan VE bölgesi boş olan
-	// seçenekler aday olur.
+	// RegionID is the cart's region. Options whose region equals this AND
+	// options whose region is empty become candidates.
 	RegionID string
-	// CurrencyCode sepetin para birimidir (ISO 4217); zorunludur.
+	// CurrencyCode is the cart's currency (ISO 4217); it is required.
 	//
-	// Süzgeç olması şarttır: başka para biriminde fiyatlanmış bir kargo
-	// seçeneğini sepete eklemek, iki para biriminin tutarlarını toplamak
-	// demek olurdu.
+	// Having it as a filter is a requirement: adding a shipping option priced in
+	// another currency to the cart would mean summing amounts of two currencies.
 	CurrencyCode string
-	// CountryCode teslimat ülkesidir; sağlayıcıya iletilir ve kural bağlamına
-	// girer. Boş olabilir.
+	// CountryCode is the delivery country; it is handed to the provider and
+	// enters the rule context. It may be empty.
 	CountryCode string
-	// ShippingProfileIDs sepetin ürünlerinin bağlı olduğu profillerdir.
-	// BOŞ verilirse profil süzgeci uygulanmaz.
+	// ShippingProfileIDs are the profiles the cart's products are bound to.
+	// If given EMPTY, no profile filter is applied.
 	ShippingProfileIDs []string
-	// Subtotal sepetin ara toplamıdır (minor unit TAM SAYI);
-	// 0 ile [models.MaxAmount] arasında olmalıdır.
+	// Subtotal is the cart's subtotal (minor unit INTEGER);
+	// it has to be between 0 and [models.MaxAmount].
 	Subtotal int64
-	// ItemCount sepetteki toplam adettir;
-	// 0 ile [models.MaxItemCount] arasında olmalıdır.
+	// ItemCount is the total number of items in the cart;
+	// it has to be between 0 and [models.MaxItemCount].
 	ItemCount int64
-	// TotalWeight gönderinin toplam ağırlığıdır (gram); bilinmiyorsa sıfır.
-	// 0 ile [models.MaxTotalWeight] arasında olmalıdır.
+	// TotalWeight is the total weight of the shipment (grams); zero if unknown.
+	// It has to be between 0 and [models.MaxTotalWeight].
 	TotalWeight int64
-	// Attributes çağıranın eklediği serbest kural bağlamıdır
-	// (örn. {"customer_group_id": "vip"}).
+	// Attributes is the free-form rule context the caller added
+	// (e.g. {"customer_group_id": "vip"}).
 	Attributes map[string]string
-	// TrustedFacts sayısal sepet olgularının ([ListOptionsInput.Subtotal],
-	// [ListOptionsInput.ItemCount], [ListOptionsInput.TotalWeight]) SUNUCU
-	// tarafında üretildiğini bildirir.
+	// TrustedFacts says that the numeric cart facts
+	// ([ListOptionsInput.Subtotal], [ListOptionsInput.ItemCount],
+	// [ListOptionsInput.TotalWeight]) were produced on the SERVER side.
 	//
-	// Varsayılan false'tur ve bu bilinçlidir: bir yüzey bu bayrağı koymayı
-	// unuttuğunda sonuç GÜVENLİ tarafa düşmelidir. false iken sayılar
-	// doğrulanmamış bir İDDİADIR ve onlara bağlı kuralı olan seçenekler
-	// listeye hiç girmez (bkz. [Service.ListShippingOptionsFor]).
+	// The default is false and that is deliberate: when a surface forgets to set
+	// this flag, the outcome has to fall on the SAFE side. While it is false the
+	// numbers are an unverified CLAIM, and options that have a rule bound to
+	// them do not enter the list at all (see
+	// [Service.ListShippingOptionsFor]).
 	//
-	// true veren tek taraflar: sepet olgularını kendi hesabından getiren
-	// akışlar ([Interop.ListOptionsJSON]) ve yönetim yüzeyi (yönetici zaten
-	// tüm kataloğu görebilir, bağlamı uydurması ona yeni bir şey açmaz).
+	// The only parties that pass true: the flows that fetch the cart facts from
+	// their own record ([Interop.ListOptionsJSON]) and the admin surface (the
+	// administrator can already see the whole catalog, so making the context up
+	// opens nothing new to them).
 	TrustedFacts bool
-	// IncludeAdminOnly yalnızca YÖNETİM yüzeyinde true'dur.
+	// IncludeAdminOnly is true only on the ADMIN surface.
 	IncludeAdminOnly bool
-	// IsReturn iade seçeneklerinin mi normal seçeneklerin mi istendiğini
-	// bildirir.
+	// IsReturn says whether the return options or the normal options are being
+	// asked for.
 	IsReturn bool
 }
 
-// QuotedOption fiyatı belirlenmiş bir kargo seçeneğidir.
+// QuotedOption is a shipping option whose price has been determined.
 type QuotedOption struct {
-	// Option seçeneğin kendisidir.
+	// Option is the option itself.
 	Option models.ShippingOption
-	// Amount seçeneğin bu sepet için ücretidir (minor unit TAM SAYI).
+	// Amount is the option's fee for this cart (minor unit INTEGER).
 	Amount int64
-	// CurrencyCode ücretin para birimidir (ISO 4217).
+	// CurrencyCode is the currency of the fee (ISO 4217).
 	CurrencyCode string
-	// ProviderData sağlayıcının döndürdüğü ham veridir; yalnızca
-	// "calculated" seçeneklerde doludur.
+	// ProviderData is the raw data the provider returned; it is filled in only
+	// on "calculated" options.
 	//
-	// SAĞLAYICININ İÇ VERİSİDİR ve mağaza yüzeyine ÇIKMAZ (bkz. api paketi).
-	// Burada taşınmasının sebebi, gönderi açılırken aynı verinin sağlayıcıya
-	// geri verilebilmesidir.
+	// IT IS THE PROVIDER'S INTERNAL DATA and DOES NOT REACH the storefront
+	// surface (see the api package). The reason it is carried here is so that
+	// the same data can be handed back to the provider while the fulfillment is
+	// being opened.
 	ProviderData json.RawMessage
 }
 
-// ListShippingOptionsFor bir sepet bağlamı için UYGUN kargo seçeneklerini
-// fiyatlarıyla döner.
+// ListShippingOptionsFor returns the shipping options ELIGIBLE for a cart
+// context together with their prices.
 //
-// # Eleme sırası
+// # Elimination order
 //
-//  1. Sütun düzeyinde ucuz elemeler VERİTABANINDA yapılır: bölge, para birimi,
-//     iade işareti, profil kümesi ve admin_only. admin_only süzgecinin SQL'de
-//     durması bilinçlidir — mağaza yüzeyine sızmaması gereken tek alan budur ve
-//     satırın hiç okunmaması, okunup sonra atılmasından güvenlidir.
-//  2. Kalan adayların TÜM kuralları bağlamla eşleşmelidir. Kuralsız seçenek
-//     koşulsuzdur. Kuralın baktığı alan bağlamda yoksa kural eşleşmez ve
-//     seçenek elenir — "ne" gibi olumsuz işleçlerde bile. Aksi hâlde bağlamı
-//     boş bir istek tüm olumsuz kuralları sağlayarak kısıtlı seçenekleri
-//     herkese açardı.
-//  3. Ücret belirlenir: "flat" seçenekler kendi tutarını kullanır, "calculated"
-//     seçenekler sağlayıcının Quote'unu çağırır.
+//  1. The cheap, column-level eliminations are done IN THE DATABASE: region,
+//     currency, return flag, profile set and admin_only. The admin_only filter
+//     standing in SQL is deliberate — it is the only field that must not leak to
+//     the storefront surface, and never reading the row is safer than reading it
+//     and discarding it afterwards.
+//  2. ALL the rules of the remaining candidates have to match the context. An
+//     option with no rules is unconditional. If the field a rule looks at is
+//     absent from the context the rule does not match and the option is
+//     eliminated — even on negative operators such as "ne". Otherwise a request
+//     with an empty context would satisfy every negative rule and open the
+//     restricted options to everyone.
+//  3. The fee is determined: "flat" options use their own amount, "calculated"
+//     options call the provider's Quote.
 //
-// # Bağlam alanları
+// # Context fields
 //
-// Sepetin OLGULARI ([AttrRegionID], [AttrSubtotal], [AttrItemCount], …)
-// çağıranın gönderdiği serbest alanların ÜZERİNE yazılır. Çağıran kendi
-// "subtotal" değerini [ListOptionsInput.Attributes] içine koyup kuralı
-// atlatamaz: olguyu bu metot kurar.
+// The cart's FACTS ([AttrRegionID], [AttrSubtotal], [AttrItemCount], …) are
+// written OVER the free-form fields the caller sent. The caller cannot dodge the
+// rule by putting its own "subtotal" value inside
+// [ListOptionsInput.Attributes]: this method sets the fact.
 //
-// # Güvenilmeyen bağlamda kurala bağlı seçenek LİSTELENMEZ
+// # In an untrusted context a rule-bound option IS NOT LISTED
 //
-// Yukarıdaki ezme kuralı, olgunun DOĞRU olduğunu değil, yalnızca tek bir
-// yerden geldiğini garanti eder. Sayıyı uyduran taraf çağıranın kendisiyse
-// (vitrinden gelen bir sorgu parametresi) kural yine atlatılırdı: boş sepetle
-// "subtotal=50000" gönderen bir müşteri, ücretsiz kargoyu ve fiyatını görürdü.
+// The overwrite rule above guarantees not that the fact is TRUE, only that it
+// comes from a single place. If the party making the number up is the caller
+// itself (a query parameter arriving from the storefront) the rule would be
+// dodged all the same: a customer sending "subtotal=50000" with an empty cart
+// would see free shipping and its price.
 //
-// Bu yüzden [ListOptionsInput.TrustedFacts] false iken [AttrSubtotal],
-// [AttrItemCount] ya da [AttrTotalWeight] alanına bağlı kuralı olan seçenek,
-// bağlam eşleşse bile listeye GİRMEZ. Bedeli açıktır ve kabul edilmiştir:
-// "500 TL üzeri ücretsiz kargo" HTTP mağaza ucunda hiç görünmez; müşteriye
-// sepet akışı üzerinden ([Interop.ListOptionsJSON], sunucu tarafı olgularla)
-// gösterilir. Karar pricing modülüyle aynıdır: orada da kurala bağlı fiyatlar
-// mağaza yüzeyinden hiç çıkmaz.
+// That is why, while [ListOptionsInput.TrustedFacts] is false, an option that
+// has a rule bound to the [AttrSubtotal], [AttrItemCount] or [AttrTotalWeight]
+// field DOES NOT ENTER the list even if the context matches. The price is plain
+// and has been accepted: "free shipping over 500 TRY" never appears on the HTTP
+// storefront end; it is shown to the customer through the cart flow
+// ([Interop.ListOptionsJSON], with server-side facts). The decision is the same
+// as in the pricing module: there too, rule-bound prices never leave the
+// storefront surface.
 //
-// # Sağlayıcı hatası seçeneği DÜŞÜRÜR, isteği düşürmez
+// # A provider error DROPS THE OPTION, not the request
 //
-// Bir "calculated" seçeneğin Quote'u patlarsa yalnızca O SEÇENEK listeden
-// çıkar; istek hata dönmez. Gerekçe: bu metot sepet her güncellendiğinde
-// çağrılır ve tek bir kargo firmasının erişilemez olması, ödeme adımının
-// tamamını kapatmamalıdır — "flat" seçenekler ayakta kalır ve müşteri
-// alışverişi tamamlayabilir.
+// If the Quote of a "calculated" option blows up, only THAT OPTION leaves the
+// list; the request does not return an error. The rationale: this method is
+// called every time the cart is updated, and a single carrier being unreachable
+// must not shut down the entire payment step — the "flat" options stay standing
+// and the customer can complete the purchase.
 //
-// Bedeli açıktır ve kabul edilmiştir: YANLIŞ YAPILANDIRILMIŞ bir sağlayıcı
-// "hiç seçenek yok" gibi görünür. Bu yüzden düşen her seçenek LOGLANIR;
-// sağlayıcının hiç kayıtlı olmaması bir kurulum hatasıdır ve ERROR, geçici bir
-// Quote hatası ise WARN seviyesinde yazılır.
+// The price is plain and has been accepted: a MISCONFIGURED provider looks like
+// "there are no options at all". That is why every dropped option is LOGGED; a
+// provider not being registered at all is a setup error and is written at ERROR
+// level, while a transient Quote failure is written at WARN.
 //
-// # Sıralama
+// # Ordering
 //
-// Sonuç ÖNCE ücrete (ucuz kazanır), eşitlikte kimliğe göre sıralanır. Sıra
-// tamdır: aynı girdi her çağrıda aynı listeyi verir ve vitrindeki seçenek
-// sırası isteğe göre oynamaz.
+// The result is sorted FIRST by fee (the cheaper one wins), and on a tie by
+// identifier. The ordering is total: the same input gives the same list on every
+// call and the option order on the storefront does not shift from request to
+// request.
 func (s *Service) ListShippingOptionsFor(
 	ctx context.Context,
 	in ListOptionsInput,
@@ -189,25 +195,26 @@ func (s *Service) ListShippingOptionsFor(
 	if err != nil {
 		return nil, err
 	}
-	if err := checkTextLen("bölge kimliği", in.RegionID); err != nil {
+	if err := checkTextLen("the region identifier", in.RegionID); err != nil {
 		return nil, err
 	}
-	if err := requireAmount("ara toplam", in.Subtotal); err != nil {
+	if err := requireAmount("the subtotal", in.Subtotal); err != nil {
 		return nil, err
 	}
-	// Adet ve ağırlığın ÜST sınırı da denetlenir. Yalnızca negatifliğe bakan
-	// bir kontrol, tek bir sorgu parametresiyle (total_weight=2^63-1)
-	// sağlayıcının çarpımını taşırır: seçenek sessizce listeden düşer ve
-	// sunucuda istemci girdisiyle tetiklenen ERROR gürültüsü oluşurdu.
-	if err := requireRange("kalem adedi", in.ItemCount, models.MaxItemCount); err != nil {
+	// The UPPER bound of the count and the weight is checked as well. A check
+	// that only looks at negativity lets a single query parameter
+	// (total_weight=2^63-1) overflow the provider's product: the option would
+	// silently drop out of the list and ERROR noise triggered by client input
+	// would build up on the server.
+	if err := requireRange("the item count", in.ItemCount, models.MaxItemCount); err != nil {
 		return nil, err
 	}
-	if err := requireRange("toplam ağırlık", in.TotalWeight, models.MaxTotalWeight); err != nil {
+	if err := requireRange("the total weight", in.TotalWeight, models.MaxTotalWeight); err != nil {
 		return nil, err
 	}
 
 	countryCode := strings.ToUpper(strings.TrimSpace(in.CountryCode))
-	if err := checkTextLen("ülke kodu", countryCode); err != nil {
+	if err := checkTextLen("the country code", countryCode); err != nil {
 		return nil, err
 	}
 
@@ -249,10 +256,11 @@ func (s *Service) ListShippingOptionsFor(
 	return out, nil
 }
 
-// eligibilityAttributes kural bağlamını kurar.
+// eligibilityAttributes builds the rule context.
 //
-// Çağıranın serbest alanları önce konur, sepetin OLGULARI sonra yazılır;
-// çakışmada olgu kazanır (bkz. [Service.ListShippingOptionsFor]).
+// The caller's free-form fields are put in first and the cart's FACTS are
+// written afterwards; on a clash the fact wins (see
+// [Service.ListShippingOptionsFor]).
 func (s *Service) eligibilityAttributes(
 	in ListOptionsInput,
 	currency, countryCode string,
@@ -270,10 +278,11 @@ func (s *Service) eligibilityAttributes(
 	return attributes
 }
 
-// quote tek bir seçeneğin ücretini belirler.
+// quote determines the fee of a single option.
 //
-// İkinci dönüş değeri false ise seçenek listeden DÜŞER; sebep loglanmıştır.
-// Hata dönmemesi bilinçlidir (bkz. [Service.ListShippingOptionsFor]).
+// If the second return value is false the option DROPS OUT of the list; the
+// reason has been logged. Returning no error is deliberate (see
+// [Service.ListShippingOptionsFor]).
 func (s *Service) quote(
 	ctx context.Context,
 	option models.ShippingOption,
@@ -290,11 +299,12 @@ func (s *Service) quote(
 
 	provider, err := s.providers.Get(option.ProviderID)
 	if err != nil {
-		// Kayıtlı olmayan sağlayıcı bir KURULUM hatasıdır: seçenek yaratılırken
-		// kayıt vardı, şimdi yok. Sessizce geçmemeli, ama tek bir seçenek
-		// yüzünden tüm liste de düşmemeli.
-		s.log.ErrorContext(ctx, "kargo seçeneğinin sağlayıcısı kayıtlı değil, seçenek listeden düştü",
-			"secenek", option.ID, "saglayici", option.ProviderID, "error", err)
+		// An unregistered provider is a SETUP error: the registration existed
+		// when the option was created, now it does not. It must not pass
+		// silently, but the whole list must not fall either because of a single
+		// option.
+		s.log.ErrorContext(ctx, "the shipping option's provider is not registered, the option dropped out of the list",
+			"option", option.ID, "provider", option.ProviderID, "error", err)
 		return QuotedOption{}, false
 	}
 
@@ -307,14 +317,14 @@ func (s *Service) quote(
 		Data:         option.Data,
 	})
 	if err != nil {
-		s.log.WarnContext(ctx, "kargo sağlayıcısı fiyat veremedi, seçenek listeden düştü",
-			"secenek", option.ID, "saglayici", option.ProviderID, "error", err)
+		s.log.WarnContext(ctx, "the shipping provider could not quote a price, the option dropped out of the list",
+			"option", option.ID, "provider", option.ProviderID, "error", err)
 		return QuotedOption{}, false
 	}
 
 	if err := validateQuote(quote, currency); err != nil {
-		s.log.ErrorContext(ctx, "kargo sağlayıcısı sözleşme dışı fiyat döndü, seçenek listeden düştü",
-			"secenek", option.ID, "saglayici", option.ProviderID, "error", err)
+		s.log.ErrorContext(ctx, "the shipping provider returned a price outside the contract, the option dropped out of the list",
+			"option", option.ID, "provider", option.ProviderID, "error", err)
 		return QuotedOption{}, false
 	}
 
@@ -326,32 +336,34 @@ func (s *Service) quote(
 	}, true
 }
 
-// validateQuote sağlayıcının döndüğü fiyatı sözleşmeye göre denetler.
+// validateQuote checks the price the provider returned against the contract.
 //
-// İki şart var: para birimi İSTENENLE aynı olmalı ve tutar izin verilen
-// aralıkta kalmalı. Para birimi denetimi ihmal edilirse, dolar cinsinden bir
-// kargo ücreti lira sepetine sessizce eklenir ve fark ancak muhasebede
-// görülürdü.
+// There are two requirements: the currency has to be the same as the one
+// REQUESTED, and the amount has to stay within the allowed range. If the
+// currency check were skipped, a shipping fee denominated in dollars would be
+// silently added to a lira cart and the difference would only be seen in
+// accounting.
 func validateQuote(quote coreprovider.ShippingQuote, currency string) error {
 	quoted := strings.ToUpper(strings.TrimSpace(quote.CurrencyCode))
 	if quoted != currency {
 		return errors.Internal(CodeProviderContract,
-			"sağlayıcı %q para biriminde fiyat döndü, istenen %q", quote.CurrencyCode, currency)
+			"the provider returned a price in the currency %q, %q was requested", quote.CurrencyCode, currency)
 	}
 	if quote.Amount < models.MinAmount || quote.Amount > models.MaxAmount {
 		return errors.Internal(CodeProviderContract,
-			"sağlayıcının döndüğü tutar %d ile %d arasında olmalı: %d",
+			"the amount the provider returned has to be between %d and %d: %d",
 			models.MinAmount, models.MaxAmount, quote.Amount)
 	}
 	return nil
 }
 
-// dependsOnDeclaredFacts seçeneğin kurallarından herhangi birinin, çağıranın
-// serbestçe iddia edebildiği bir sepet olgusuna baktığını bildirir.
+// dependsOnDeclaredFacts reports whether any of the option's rules looks at a
+// cart fact the caller can freely claim.
 //
-// Karar KURALIN ALANINA bakar, bağlamın değerine değil: "bu sepet için eşleşti
-// mi" sorusunun cevabı zaten uydurulmuş bir sayıdan gelirdi. Kuralsız bir
-// seçenek koşulsuzdur ve bu süzgeçten etkilenmez.
+// The decision looks at THE RULE'S FIELD, not at the value in the context: the
+// answer to "did it match for this cart" would already come from a fabricated
+// number. An option with no rules is unconditional and is unaffected by this
+// filter.
 func dependsOnDeclaredFacts(rules []models.ShippingOptionRule) bool {
 	for i := range rules {
 		if slices.Contains(clientDeclarableFacts, rules[i].Attribute) {
@@ -361,8 +373,8 @@ func dependsOnDeclaredFacts(rules []models.ShippingOptionRule) bool {
 	return false
 }
 
-// matchRules seçeneğin TÜM kurallarının bağlamla eşleştiğini bildirir.
-// Kuralsız seçenek koşulsuzdur ve daima eşleşir.
+// matchRules reports whether ALL of the option's rules match the context.
+// An option with no rules is unconditional and always matches.
 func matchRules(rules []models.ShippingOptionRule, attributes map[string]string) bool {
 	for i := range rules {
 		if !matchRule(rules[i], attributes) {
@@ -372,18 +384,20 @@ func matchRules(rules []models.ShippingOptionRule, attributes map[string]string)
 	return true
 }
 
-// matchRule tek bir kuralın bağlamla eşleştiğini bildirir.
+// matchRule reports whether a single rule matches the context.
 //
-// Kuralın baktığı alan bağlamda YOKSA kural eşleşmez — "ne" (eşit değil) gibi
-// olumsuz işleçlerde bile. Aksi hâlde bağlamı boş bir istek, tüm olumsuz
-// kuralları sağlayarak kısıtlı seçenekleri herkese açardı.
+// If the field the rule looks at is ABSENT from the context the rule does not
+// match — even on negative operators such as "ne" (not equal). Otherwise a
+// request with an empty context would satisfy every negative rule and open the
+// restricted options to everyone.
 //
-// DEĞERSİZ kural da eşleşmez ve PANİK ÜRETMEZ. Böyle bir kaydı servis
-// doğrulaması üretmez, ama uygunluk hesabı veritabanından okuduğu her satıra
-// dayanıklı olmalıdır: doğrudan SQL çalıştıran bir bakım betiği ya da kısmi
-// bir geri yükleme değerleri boş bırakabilir. Gerekçe tanınmayan işleçtekiyle
-// aynıdır — okunamayan bir koşul, kuralı sessizce devre dışı bırakıp seçeneği
-// herkese AÇMAMALIDIR.
+// A VALUELESS rule does not match either, and DOES NOT PANIC. Service validation
+// does not produce such a record, but the eligibility calculation has to be
+// resilient to every row it reads from the database: a maintenance script
+// running SQL directly, or a partial restore, can leave the values empty. The
+// rationale is the same as for an unrecognized operator — a condition that
+// cannot be read MUST NOT quietly disable the rule and open the option to
+// everyone.
 func matchRule(rule models.ShippingOptionRule, attributes map[string]string) bool {
 	if len(rule.Values) == 0 {
 		return false
@@ -410,16 +424,18 @@ func matchRule(rule models.ShippingOptionRule, attributes map[string]string) boo
 	}
 }
 
-// matchNumeric sayısal işleçleri TAM SAYI üzerinde değerlendirir.
+// matchNumeric evaluates the numeric operators over INTEGERS.
 //
-// İki taraf da tam sayıya çevrilemiyorsa kural EŞLEŞMEZ, hata dönmez: bağlam
-// dışarıdan gelir ve tek bir bozuk alan tüm kargo listesini düşürmemelidir.
+// If either side cannot be converted to an integer the rule DOES NOT MATCH and
+// no error is returned: the context comes from outside and a single malformed
+// field must not drop the whole shipping list.
 //
-// Karşılaştırma SAYISALDIR, dizgesel değil: "9" ile "50000" dizge olarak
-// karşılaştırılsaydı 9 büyük çıkar ve ücretsiz kargo eşiği tersine dönerdi.
-// Çevirinin TAM SAYIYA yapılması ise ondalıklı bir eşiği (örn. "500.5")
-// sessizce kabul etmek yerine kuralı eşleşmez yapar; para minor unit tam
-// sayıdır ve kuralın eşiği de öyle olmalıdır (plan Bölüm 8).
+// The comparison is NUMERIC, not lexical: had "9" and "50000" been compared as
+// strings, 9 would come out larger and the free-shipping threshold would be
+// inverted. Converting to an INTEGER, in turn, makes the rule not match instead
+// of silently accepting a fractional threshold (e.g. "500.5"); money is a
+// minor-unit integer and the rule's threshold has to be one too (plan
+// Section 8).
 func matchNumeric(operator models.RuleOperator, left, right string) bool {
 	lhs, err := strconv.ParseInt(strings.TrimSpace(left), 10, 64)
 	if err != nil {

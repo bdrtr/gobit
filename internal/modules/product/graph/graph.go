@@ -1,41 +1,43 @@
-// Package graph product modülünün GraphQL vitrin okuma yüzeyidir.
+// Package graph is the GraphQL storefront read surface of the product module.
 //
-// # Neden ikinci bir okuma yüzeyi
+// # Why a second read surface
 //
-// Vitrin istemcisi tek bir ürün sayfası için başlık, varyantlar, fiyat ve
-// stoğu birlikte ister; REST'te bu, sabit bir gövdenin tamamını çekmek
-// demektir. GraphQL istemcinin ne istediğini söylemesine izin verir ve
-// çekirdeğin query katmanı (kök çek → link çöz → toplu getir → birleştir)
-// zaten bu biçimde çalışır.
+// The storefront client wants the title, the variants, the price and the
+// inventory of a single product page together; in REST that means pulling the
+// whole of a fixed body. GraphQL lets the client say what it wants, and the
+// core's query layer (fetch the root -> resolve the link -> batch fetch ->
+// merge) already works in that shape.
 //
-// # Kapsam DARDIR
+// # The scope is NARROW
 //
-// Yalnızca okuma: products ve product. Mutation ve yönetim yüzeyi YOKTUR
-// (gerekçe schema.graphqls'in başında). Dar tutmak, kalıbın doğru oturduğunu
-// önce küçük bir yüzeyde görmek içindir.
+// Read only: products and product. There is NO mutation and no admin surface
+// (the rationale is at the top of schema.graphqls). Keeping it narrow is about
+// seeing the pattern settle correctly on a small surface first.
 //
-// # Servise İNER, depoya İNMEZ
+// # It REACHES the service, NOT the repository
 //
-// Resolver'lar [service.Service]'in vitrin metotlarını çağırır; repository'ye
-// inmek ya da yeni SQL yazmak YASAKTIR. Satış kanalı görünürlük kuralı TEK
-// bir yerde yaşar ve ikinci bir uygulama sessizce ayrışır: bu depodaki
-// hataların tamamı "kural bir yerde tanımlı, başka yerde uygulanmamış"
-// sınıfındaydı — arama eklentisi aynı tuzağı bilinçle atlatmıştı (eklenti
-// yalnızca kimlik indeksler, kayıtları product getirir).
+// The resolvers call the storefront methods of [service.Service]; reaching down
+// to the repository or writing new SQL is FORBIDDEN. The sales channel
+// visibility rule lives in ONE place and a second implementation silently
+// diverges: every bug in this repository belonged to the class "the rule is
+// defined in one place and not applied in another" — the search plugin dodged
+// the same trap deliberately (the plugin only indexes identity, product fetches
+// the records).
 //
-// # Koruma
+// # Protection
 //
-// Uç /store/v1 altındadır ve bu bir yerleşim tercihi değil, koruma
-// tercihidir: publishable anahtar doğrulaması ve hız sınırı o öneke bağlı
-// yığından OTOMATİK gelir (bkz. corehttp.APIGuards) ve satış kanalı
-// kimlikleri Principal'a oradan dolar. Ayrı bir önek açmak, kimlik ve kota
-// kurallarını ikinci kez yazmak olurdu.
+// The endpoint sits under /store/v1 and that is not a placement choice but a
+// protection choice: publishable key verification and the rate limit come
+// AUTOMATICALLY from the stack bound to that prefix (see corehttp.APIGuards)
+// and the sales channel identities are filled into the Principal from there.
+// Opening a separate prefix would mean writing the identity and quota rules a
+// second time.
 //
-// # Üretilen kod
+// # Generated code
 //
-// generated.go ve models_gen.go gqlgen tarafından üretilir (make gen,
-// yapılandırma ../gqlgen.yml) ve DÜZENLENMEZ. Elle yazılan her şey ayrı
-// dosyalardadır: schema.graphqls, graph.go, resolver.go, handler.go.
+// generated.go and models_gen.go are produced by gqlgen (make gen,
+// configuration ../gqlgen.yml) and are NOT EDITED. Everything written by hand
+// lives in separate files: schema.graphqls, graph.go, resolver.go, handler.go.
 package graph
 
 import (
@@ -45,20 +47,22 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/product/service"
 )
 
-// Path GraphQL ucunun tam yoludur.
+// Path is the full path of the GraphQL endpoint.
 //
-// Sabit dışa açıktır çünkü ucu bağlayan (api/routes.go) ile anlatan
-// (api/describe.go) iki ayrı yerdir; yolun dize olarak tekrarlanması, birinin
-// değişip diğerinin unutulması demek olurdu — belge o durumda var olmayan bir
-// ucu anlatır ve OpenAPI testi bunu ancak yol adı ELLE eşleştiğinde yakalar.
+// The constant is exported because the place that binds the endpoint
+// (api/routes.go) and the place that describes it (api/describe.go) are two
+// separate places; repeating the path as a string would mean one of them
+// changing and the other being forgotten — the documentation would then
+// describe an endpoint that does not exist, and the OpenAPI test only catches
+// that when the path name matches BY HAND.
 const Path = "/store/v1/graphql"
 
-// Storefront resolver'ların servisten ihtiyaç duyduğu YÜZEYDİR.
+// Storefront is the SURFACE the resolvers need from the service.
 //
-// Somut servis yerine arayüz kullanılmasının sebebi testtir: kanal süzgecinin
-// gerçekten geçirildiğini doğrulamak için veritabanı gerekmemelidir. Yüzey
-// bilinçli olarak İKİ metottur; genişlemesi, GraphQL'in vitrin servisinin
-// dışına taşması demek olur.
+// The reason an interface is used instead of the concrete service is testing:
+// verifying that the channel filter is really passed through must not require a
+// database. The surface is deliberately TWO methods; growing it would mean
+// GraphQL spilling out of the storefront service.
 type Storefront interface {
 	ListStoreProducts(
 		ctx context.Context,
@@ -72,40 +76,42 @@ type Storefront interface {
 	) (service.StoreProduct, error)
 }
 
-// ProductList vitrin listesinin GraphQL karşılığıdır.
+// ProductList is the GraphQL counterpart of the storefront list.
 //
-// TAKMA ADDIR (alias), yeni bir tip DEĞİL: şema zarfı ile servisin döndürdüğü
-// zarf aynı şeydir ve ikisini iki tip olarak tutmak, aralarında bir
-// dönüştürücü — yani zarfın ikinci bir tanımını — gerektirirdi. Servis
-// [service.ListResult]'a bir alan eklerse şema onu göstermez (şemaya
-// yazılmayan alan görünmez), ama alan adı değişirse üretilen kod DERLENMEZ.
+// It is an ALIAS, NOT a new type: the schema envelope and the envelope the
+// service returns are the same thing, and holding the two as two types would
+// require a converter between them — that is, a second definition of the
+// envelope. If the service adds a field to [service.ListResult] the schema does
+// not show it (a field not written into the schema is invisible), but if a
+// field name changes the generated code DOES NOT COMPILE.
 type ProductList = service.ListResult[service.StoreProduct]
 
-// SalesChannelIDsFromContext isteğin bağlı olduğu satış kanallarını
-// DOĞRULANMIŞ KİMLİKTEN okur.
+// SalesChannelIDsFromContext reads the sales channels the request is bound to
+// from the VERIFIED IDENTITY.
 //
-// Kural burada, iki okuma yüzeyinin de (REST handler'ları ve GraphQL
-// resolver'ları) ulaşabildiği tek yerde yaşar. İkinci bir kopya, tam da bu
-// modülün kaçındığı hata sınıfını üretirdi: kuralın bir yerde düzeltilip
-// diğerinde unutulması, yüzeylerden birinde katalog sızıntısı demektir.
+// The rule lives here, in the single place both read surfaces (the REST
+// handlers and the GraphQL resolvers) can reach. A second copy would produce
+// exactly the class of bug this module avoids: the rule being fixed in one
+// place and forgotten in the other means a catalog leak on one of the surfaces.
 //
-// Kanal, istemcinin bildirdiği bir değer OLAMAZ; bu yüzden girdi yalnızca
-// context'tir. Sorgu argümanı ya da sorgu dizesi kabul edilseydi süzgeç bir
-// yetkilendirme olmaktan çıkıp görüntüleme tercihine dönüşür, elindeki
-// herhangi bir publishable anahtarla gelen istemci BAŞKA bir kanalın
-// katalogunu okuyabilirdi. Kimliği corehttp.RequireStore koyar; kanal listesi
-// anahtarın kaydından gelir.
+// The channel CANNOT be a value the client states; that is why the only input
+// is the context. Had a query argument or a query string been accepted, the
+// filter would stop being an authorization and turn into a display preference,
+// and a client arriving with any publishable key it happened to hold could read
+// ANOTHER channel's catalog. corehttp.RequireStore puts the identity in place;
+// the channel list comes from the key's record.
 //
-// Dönüş değerinin nil olup olmaması ANLAMLIDIR
-// (bkz. [service.StoreListOptions]):
+// Whether the return value is nil or not is MEANINGFUL
+// (see [service.StoreListOptions]):
 //
-//   - Kimlik YOKSA nil dönülür. Bu, mağaza kimlik doğrulamasının bu kurulumda
-//     hiç bağlanmamış olduğu durumdur (product tek başına dağıtılabilir) ve
-//     süzgeç uygulanmaz; aksi hâlde auth'suz bir kurulumda vitrin sessizce
-//     boşalırdı.
-//   - Kimlik VARSA nil ASLA dönülmez: kanalsız bir kimlik BOŞ KÜME demektir,
-//     "süzme yok" demek değildir. Bu iki durumu bir tutmak, kanalsız bir
-//     kimliğe tüm kanalların katalogunu açardı.
+//   - If there is NO identity, nil is returned. That is the case where store
+//     authentication was never wired up in this deployment (product can be
+//     deployed on its own) and the filter is not applied; otherwise the
+//     storefront would silently empty out in a deployment without auth.
+//   - If there IS an identity, nil is NEVER returned: an identity without
+//     channels means the EMPTY SET, it does not mean "no filtering". Treating
+//     those two cases as one would open the catalog of all channels to an
+//     identity that has no channel.
 func SalesChannelIDsFromContext(ctx context.Context) []string {
 	principal, ok := corehttp.PrincipalFromContext(ctx)
 	if !ok {

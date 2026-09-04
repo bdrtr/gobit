@@ -25,726 +25,764 @@ import (
 	corehttp "github.com/bdrtr/gobit/internal/core/http"
 )
 
-// onbellekGirdiSayisi ayrıştırılmış sorgu belgelerinin önbellekteki en fazla
-// girdi sayısıdır.
+// cacheEntryCount is the largest number of entries the cache of parsed query
+// documents may hold.
 //
-// Vitrin istemcileri AYNI belgeyi (yalnızca değişkenleri farklı) tekrar tekrar
-// gönderir; her istekte yeniden ayrıştırıp doğrulamak, aynı işi her seferinde
-// yapmaktır. Sayı, bir vitrinin bakımını yaptığı belge çeşidinden (sayfa
-// başına birkaç sorgu) fazlasıyla büyüktür.
+// Storefront clients send the SAME document (only the variables differ) over
+// and over; parsing and validating it again on every request is doing the same
+// work every single time. The number is far larger than the variety of
+// documents a storefront maintains (a few queries per page).
 //
-// GİRDİ SAYISI TEK BAŞINA BİR SINIR DEĞİLDİR ve bir zamanlar öyle sanılıyordu:
-// 100 girdi, girdi başına bir üst sınır yoksa 100 × belge boyutu kadar yer
-// demektir. Ölçüldü: 65 KB'lık 100 belge — hepsi karmaşıklık sınırında
-// reddedilmiş, servise hiç ulaşmamış — runtime.GC sonrası 171,8 MiB KALICI
-// yığın bırakıyordu, yani 6,5 MB'lık yüklemeden 26 kat fazla. Sayının yanına
-// [maxOnbellekBelgeBayt] bu yüzden eklendi.
-const onbellekGirdiSayisi = 100
+// THE ENTRY COUNT IS NOT A LIMIT ON ITS OWN, and it was once believed to be
+// one: 100 entries, with no per-entry ceiling, means room for 100 x the
+// document size. Measured: 100 documents of 65 KB — all of them rejected at the
+// complexity limit, none of them ever reaching the service — left 171.8 MiB of
+// PERMANENT heap after runtime.GC, that is, 26 times more than the 6.5 MB
+// upload. That is why [maxCachedDocumentBytes] was added beside the number.
+const cacheEntryCount = 100
 
-// maxOnbellekBelgeBayt önbelleğe girebilecek bir belgenin en fazla kaç bayt
-// olabileceğidir.
+// maxCachedDocumentBytes is the largest number of bytes a document may have to
+// be allowed into the cache.
 //
-// Ölçü olarak belgenin METNİ kullanılır çünkü elde ölçülebilir tek şey odur:
-// önbelleğin anahtarı zaten ham sorgu metnidir ve saklanan ağacın gerçek yeri
-// metnin bir katıdır, ama o katsayıyı öğrenmek ağacı gezmek demektir — yani
-// önbelleğin kazandırdığı işi her eklemede geri yapmak.
+// The document's TEXT is used as the measure because it is the only thing that
+// can be measured cheaply: the cache's key is the raw query text anyway, and
+// the real size of the stored tree is a multiple of the text — but learning
+// that factor means walking the tree, that is, redoing on every insertion the
+// very work the cache saves.
 //
-// 8 KiB, vitrinin gerçek belgelerinin KAT KAT üstündedir: ölçülen en ağır
-// meşru sorgu (varsayılan sayfa × şemanın tüm alanları) 655 bayttır, fragment
-// ağırlıklı bir vitrin belgesi 6,3 KB. Gövde sınırının (64 KiB) sekizde biri
-// olması bilinçlidir: gövde sınırı "ayrıştırmaya değer mi" sorusunu, bu sınır
-// "SAKLAMAYA değer mi" sorusunu yanıtlar ve ikincisinin eşiği çok daha
-// düşüktür — saklamanın bedeli isteğin ömrü kadar değil, önbellekten düşene
-// kadar sürer.
+// 8 KiB is FAR above the storefront's real documents: the heaviest legitimate
+// query measured (default page x all fields of the schema) is 655 bytes, and a
+// fragment-heavy storefront document is 6.3 KB. Being one eighth of the body
+// limit (64 KiB) is deliberate: the body limit answers the question "is it
+// worth parsing", this limit answers "is it worth STORING", and the threshold
+// of the second is much lower — the cost of storing lasts not for the lifetime
+// of the request but until it is evicted from the cache.
 //
-// Sınırın altında kalan belge de otomatik saklanmaz; ayrıca sınırlardan
-// GEÇMİŞ olması gerekir (bkz. [sorguOnbellegi]).
-const maxOnbellekBelgeBayt = 8 << 10
+// A document below the limit is not stored automatically either; it must also
+// have PASSED the limits (see [queryCache]).
+const maxCachedDocumentBytes = 8 << 10
 
-// maxSorguBayt tek bir GraphQL istek gövdesinin üst sınırıdır.
+// maxQueryBytes is the upper limit of a single GraphQL request body.
 //
-// Bu sınır, derinlik ve karmaşıklık sınırlarının YAPAMADIĞI işi yapar: ikisi
-// de belge AYRIŞTIRILDIKTAN sonra ölçülebilir, yani onlara ulaşana kadar
-// sunucu 10 MiB'lık bir "{a{a{a…" metnini zaten okumuş ve ayrıştırmıştır.
-// Ayrıştırma maliyetini yalnızca gövde sınırı bağlar.
+// This limit does the work the depth and complexity limits CANNOT do: both of
+// those can only be measured AFTER the document has been PARSED, that is, by
+// the time they are reached the server has already read and parsed a 10 MiB
+// "{a{a{a…" text. The cost of parsing is bounded only by the body limit.
 //
-// Değer REST tarafındakinden (1 MiB) küçüktür ve bu bilinçlidir: oradaki gövde
-// bir KAYIT taşır (varyantları, görselleriyle bir ürün), buradaki gövde ise bir
-// SORGU METNİDİR ve okuma yüzeyinin değişkenleri (kimlik, handle, sayfa) birkaç
-// yüz bayttır. 64 KiB, fragment'lara bölünmüş büyük bir vitrin sorgusunun kat
-// kat üstündedir.
+// The value is smaller than the one on the REST side (1 MiB) and that is
+// deliberate: the body over there carries a RECORD (a product with its
+// variants and images), while the body here is a QUERY TEXT and the read
+// surface's variables (identity, handle, page) are a few hundred bytes. 64 KiB
+// is far above a large storefront query split into fragments.
 //
-// Sınır İKİ ayrı yerde uygulanır ve ikisi de gereklidir; gerekçe
-// [govdeSiniri]'ndedir.
-const maxSorguBayt = 64 << 10
+// The limit is applied in TWO separate places and both are needed; the
+// rationale is in [bodyLimit].
+const maxQueryBytes = 64 << 10
 
-// maxSorguJeton tek bir belgenin ayrıştırılabileceği en fazla jeton sayısıdır.
+// maxQueryTokens is the largest number of tokens a single document may be
+// parsed into.
 //
-// [maxSorguBayt]'ın kardeşidir ve onun bırakmak zorunda kaldığı boşluğu
-// kapatır: bayt sınırı ancak gövde okunurken uygulanabilir, jeton sınırı ise
-// AYRIŞTIRMANIN İÇİNDE çalışır ve sınır aşıldığı anda ayrıştırıcıyı durdurur.
-// Yani en ucuz kapı budur — belgeyi sonuna kadar ayrıştırmadan reddeder.
+// It is the sibling of [maxQueryBytes] and closes the gap that one is forced to
+// leave: the byte limit can only be applied while the body is being read,
+// whereas the token limit works INSIDE THE PARSING and stops the parser the
+// moment the limit is exceeded. So this is the cheapest gate — it rejects the
+// document without parsing it to the end.
 //
-// Değer ölçüldü. 64 KiB'lık bir gövde en ucuz jetonlarla ("a a a …") 32.000
-// jeton taşıyabilir; oysa vitrinin gerçek belgeleri 95 jetondur (varsayılan
-// sayfa × tüm alanlar) ve fragment ağırlıklı, on kök sorgulu bir belge 922.
-// 8.192 hem meşru kullanımın yaklaşık dokuz katı hem de bayt sınırının tek
-// başına izin verdiğinin dörtte biridir.
+// The value was measured. A 64 KiB body can carry 32,000 tokens with the
+// cheapest tokens ("a a a …"); yet the storefront's real documents are 95
+// tokens (default page x all fields) and a fragment-heavy document with ten
+// root queries is 922. 8,192 is both roughly nine times legitimate usage and a
+// quarter of what the byte limit alone would allow.
 //
-// Kapının tek başına yakaladığı ölçülmüş belgeler var: 302 takma adlı __schema
-// 9.364 jeton, 448 takma adlı __type 14.786 jetondur ve ikisi de gövde
-// sınırının (45.796 ve 59.924 bayt) altında kaldığı için oradan geçiyordu.
+// There are measured documents this gate catches on its own: a __schema with
+// 302 aliases is 9,364 tokens and a __type with 448 aliases is 14,786 tokens,
+// and both were getting through the body limit because they stayed under it
+// (45,796 and 59,924 bytes).
 //
-// [maxSorguBayt] gibi SABİTTİR, ayara açılmadı: ikisi de belgenin
-// ayrıştırılmasını bağlar ve bu ailenin gevşetilmesi bir kapasite tercihi
-// değil, ayrıştırıcıyı istemciye açmaktır.
-const maxSorguJeton = 8192
+// Like [maxQueryBytes] it is FIXED, not opened up to configuration: both bind
+// the parsing of the document and loosening this family is not a capacity
+// choice but opening the parser up to the client.
+const maxQueryTokens = 8192
 
-// NewHandler GraphQL vitrin ucunun HTTP handler'ını verilen sınırlarla kurar.
+// NewHandler builds the HTTP handler of the GraphQL storefront endpoint with
+// the given limits.
 //
-// Sınırların gerekçeleri ve sıfır değerin anlamı için bkz. [Options]; bu uçta
-// maliyeti isteği YAZAN belirlediği için sınırlar bir ayar değil, yüzeyin
-// çalışma koşuludur.
+// For the rationale of the limits and the meaning of the zero value see
+// [Options]; on this endpoint the cost is decided by whoever WRITES the
+// request, so the limits are not a setting but the operating condition of the
+// surface.
 //
-// # YALNIZCA POST
+// # POST ONLY
 //
-// GET taşıması BİLİNÇLİ olarak eklenmedi. GET'in tek gerçek getirisi ara
-// önbelleklerdir ve o getiri burada YOKTUR: yanıt isteğin publishable
-// anahtarına, yani satış kanalına göre değişir. Paylaşılan bir önbellek ya
-// anahtar başlığına göre ayrışmak zorunda kalır (yani hemen hemen hiçbir şeyi
-// önbelleklemez) ya da bir vitrinin kataloğunu başkasına servis eder — kanal
-// süzgecinin var olma sebebi tam olarak budur.
+// The GET transport was DELIBERATELY not added. GET's only real gain is
+// intermediate caches and that gain does NOT EXIST here: the response varies
+// with the request's publishable key, that is, with the sales channel. A shared
+// cache would either have to vary by the key header (that is, cache almost
+// nothing) or serve one storefront's catalog to another — which is exactly why
+// the channel filter exists.
 //
-// Karşılığında iki somut bedel ödenirdi: sorgunun tamamı URL'ye girer ve
-// erişim loglarına, proxy loglarına, tarayıcı geçmişine düşer; uzun sorgular
-// da yaygın proxy sınırlarında (~8 KiB) istemcinin teşhis edemeyeceği bir 414
-// ile ölür.
+// In return two concrete costs would be paid: the whole query goes into the URL
+// and lands in access logs, proxy logs and browser history; and long queries
+// die at common proxy limits (~8 KiB) with a 414 the client cannot diagnose.
 //
-// Uç chi'ye yalnızca POST ile kaydedilir (bkz. api/routes.go), böylece GET
-// isteği gqlgen'in "transport not supported" 400'ü yerine dürüst bir 405 alır.
+// The endpoint is registered with chi for POST only (see api/routes.go), so a
+// GET request gets an honest 405 instead of gqlgen's "transport not supported"
+// 400.
 //
-// # Kapıların SIRASI
+// # The ORDER of the gates
 //
-// Eklentiler kayıt sırasıyla işletilir ve sıra bir tercih değil, iki
-// zorunluluğun sonucudur.
+// Extensions are run in registration order and the order is not a preference
+// but the consequence of two obligations.
 //
-// [secimButcesi] EN BAŞTADIR çünkü kendisinden sonraki her kapı belge ağacını
-// gezer ve fragment'lar üssel açılabilir (bkz. [DefaultMaxSelections]); ağacın
-// büyüklüğü bağlanmadan hiçbir yürüyüş güvenli değildir. Onun ardından sıra
-// ucuzdan pahalıya dizilir: derinlik ve iç gözlem kökü ağacı bir kez gezer,
-// alan tekrarı seviye başına bir harita kurar, karmaşıklık ise her alan için
-// şemaya bakar.
+// [selectionBudget] is FIRST because every gate after it walks the document
+// tree and fragments can expand exponentially (see [DefaultMaxSelections]); no
+// walk is safe until the size of the tree is bounded. After it the order goes
+// from cheap to expensive: depth and the introspection root walk the tree once,
+// field repetition builds one map per level, and complexity looks up the schema
+// for every field.
 //
-// [onbellekKapisi] EN SONDADIR ve bu da [sorguOnbellegi]'nin çalışma
-// koşuludur: ondan önce koşan her kapı, reddettiği belgenin önbelleğe
-// girmesini engeller.
+// [cacheAdmission] is LAST and that too is the operating condition of
+// [queryCache]: every gate that runs before it keeps the document it rejects
+// out of the cache.
 //
-// # Koruma
+// # Protection
 //
-// Kimlik doğrulama, hız sınırı ve idempotency BURADA KURULMAZ; /store/v1
-// önekine bağlı koruma yığınından gelir (bkz. corehttp.APIGuards). Yığını
-// burada tekrarlamak, aynı kuralın ikinci bir tanımını yaratırdı.
+// Authentication, the rate limit and idempotency are NOT SET UP HERE; they come
+// from the protection stack bound to the /store/v1 prefix (see
+// corehttp.APIGuards). Repeating the stack here would create a second
+// definition of the same rule.
 func NewHandler(svc Storefront, opts Options) http.Handler {
-	srv, _ := yeniSunucu(svc, opts)
+	srv, _ := newServer(svc, opts)
 
-	return govdeSiniri(yanitSiniri(srv, opts.maxResponseBytes()))
+	return bodyLimit(responseLimit(srv, opts.maxResponseBytes()))
 }
 
-// yeniSunucu gqlgen sunucusunu ve onun sorgu önbelleğini kurar.
+// newServer sets up the gqlgen server and its query cache.
 //
-// Önbellek AYRICA dönülür çünkü içeriği bir DAVRANIŞ iddiasıdır — reddedilen
-// belge saklanmamalıdır (bkz. [sorguOnbellegi]) — ve bu iddia handler'ın
-// dışından gözlenemez. Test için ikinci bir kurulum yazmak, testin gerçek
-// kayıt sırasını değil kendi kopyasını doğrulaması olurdu; kapıların sırası
-// ise düzeltmenin ta kendisidir. Sıranın gerekçesi [NewHandler]'dadır.
-func yeniSunucu(svc Storefront, opts Options) (*handler.Server, *sorguOnbellegi) {
+// The cache is ALSO returned because its contents are a BEHAVIORAL claim — a
+// rejected document must not be stored (see [queryCache]) — and that claim
+// cannot be observed from outside the handler. Writing a second setup for the
+// test would mean the test verifying its own copy rather than the real
+// registration order; and the order of the gates is the fix itself. The
+// rationale for the order is in [NewHandler].
+func newServer(svc Storefront, opts Options) (*handler.Server, *queryCache) {
 	cfg := Config{Resolvers: NewResolver(svc)}
-	karmasiklikMaliyetleri(&cfg.Complexity)
+	complexityCosts(&cfg.Complexity)
 
 	srv := handler.New(NewExecutableSchema(cfg))
 
 	srv.AddTransport(transport.POST{})
-	srv.SetParserTokenLimit(maxSorguJeton)
+	srv.SetParserTokenLimit(maxQueryTokens)
 
-	onbellek := yeniSorguOnbellegi(onbellekGirdiSayisi, maxOnbellekBelgeBayt)
-	srv.SetQueryCache(onbellek)
+	cache := newQueryCache(cacheEntryCount, maxCachedDocumentBytes)
+	srv.SetQueryCache(cache)
 
-	srv.Use(secimButcesi{sinir: opts.maxSelections()})
-	srv.Use(derinlikSiniri{
-		sinir:          opts.maxDepth(),
-		icGozlemSiniri: opts.maxIntrospectionDepth(),
+	srv.Use(selectionBudget{limit: opts.maxSelections()})
+	srv.Use(depthLimit{
+		limit:              opts.maxDepth(),
+		introspectionLimit: opts.maxIntrospectionDepth(),
 	})
-	srv.Use(icGozlemKokSiniri{
-		sinir:  opts.maxIntrospectionRoots(),
-		kapali: opts.IntrospectionDisabled,
+	srv.Use(introspectionRootLimit{
+		limit:    opts.maxIntrospectionRoots(),
+		disabled: opts.IntrospectionDisabled,
 	})
-	srv.Use(alanTekrariSiniri{sinir: opts.maxFieldRepetition()})
+	srv.Use(fieldRepetitionLimit{limit: opts.maxFieldRepetition()})
 	srv.Use(extension.FixedComplexityLimit(opts.maxComplexity()))
 
-	// İç gözlem varsayılan olarak AÇIKTIR ve kurulum kapatabilir; kararın
-	// gerekçesi [Options.IntrospectionDisabled] alanındadır. gqlgen'de iç
-	// gözlem eklentisi KURULMADIĞINDA kapalıdır (OperationContext'in
-	// DisableIntrospection alanı true doğar), bu yüzden kapatmanın yolu
-	// eklentiyi hiç eklememektir. Belgeyi asıl reddeden kapı yukarıdaki
-	// [icGozlemKokSiniri]'dir; buradaki eksiklik onun arkasındaki emniyettir.
+	// Introspection is ENABLED by default and a deployment may disable it; the
+	// rationale for the decision is on the [Options.IntrospectionDisabled]
+	// field. In gqlgen introspection is disabled when the extension is NOT
+	// INSTALLED (the OperationContext's DisableIntrospection field is born
+	// true), so the way to disable it is to never add the extension. The gate
+	// that actually rejects the document is [introspectionRootLimit] above;
+	// the omission here is the safety net behind it.
 	//
-	// Öneriler AYNI anahtara bağlanır ve bu bir tercih değil, anahtarın
-	// vaadinin tamamlanmasıdır: doğrulayıcının "Did you mean …?" cümleleri
-	// şemanın adlarını perakende dağıtır (bkz. [Options.IntrospectionDisabled]).
-	// gqlgen'in anahtarı bu iki kuralın önerisini hiç HESAPLAMAZ; ulaşamadığı
-	// kuralların cümlesi [protokolHatasi]'nda kesilir.
+	// Suggestions are bound to the SAME switch and that is not a preference but
+	// the completion of the switch's promise: the validator's "Did you mean …?"
+	// sentences hand out the schema's names retail (see
+	// [Options.IntrospectionDisabled]). gqlgen's switch does not COMPUTE the
+	// suggestion of the two rules it can reach at all; the sentence of the
+	// rules it cannot reach is cut in [protocolError].
 	if opts.IntrospectionDisabled {
 		srv.SetDisableSuggestion(true)
 	} else {
 		srv.Use(extension.Introspection{})
 	}
 
-	srv.Use(onbellekKapisi{onbellek: onbellek})
+	srv.Use(cacheAdmission{cache: cache})
 
-	srv.SetErrorPresenter(hataSunucusu(opts))
-	srv.SetRecoverFunc(panikYakala)
+	srv.SetErrorPresenter(errorPresenter(opts))
+	srv.SetRecoverFunc(recoverPanic)
 
-	return srv, onbellek
+	return srv, cache
 }
 
-// govdeSiniri handler'ı istek gövdesi sınırıyla sarar.
+// bodyLimit wraps the handler with the request body limit.
 //
-// Sınır gqlgen'in İÇİNDE kurulamaz: sunucu gövdeyi kendi taşımasında okur ve
-// okuyucuyu değiştirmek için bir kanca sunmaz.
+// The limit cannot be set up INSIDE gqlgen: the server reads the body in its
+// own transport and offers no hook for replacing the reader.
 //
-// # İki kapı
+// # Two gates
 //
-// Bildirilen boyut (Content-Length) BURADA reddedilir ve yanıt, çekirdeğin
-// hata zarfıdır — /store/v1 altındaki her uçla aynı biçim, aynı kod, aynı
-// istek kimliği. Kural şudur: GraphQL zarfı (data/errors) yalnızca
-// ÇALIŞTIRICIYA ULAŞMIŞ belgelere aittir; ondan öncesi — yetkisiz istek,
-// desteklenmeyen metot, sığmayan gövde — bu yüzeyde de sıradan bir HTTP
-// hatasıdır. Uç zaten böyle davranıyor: publishable anahtarı olmayan istek
-// 401'i çekirdek zarfıyla, GET isteği chi'den 405 alıyor.
+// The declared size (Content-Length) is rejected HERE and the response is the
+// core's error envelope — the same shape, the same code and the same request
+// identity as every endpoint under /store/v1. The rule is this: the GraphQL
+// envelope (data/errors) belongs only to documents that REACHED THE EXECUTOR;
+// what comes before that — an unauthorized request, an unsupported method, a
+// body that does not fit — is an ordinary HTTP error on this surface too. The
+// endpoint already behaves that way: a request without a publishable key gets
+// its 401 in the core envelope, and a GET request gets a 405 from chi.
 //
-// Ama Content-Length bir İDDİADIR: parçalı (chunked) gövdede hiç yoktur ve
-// yanlış de olabilir. Asıl sınırı bu yüzden [net/http.MaxBytesReader] uygular;
-// o yola düşen istek GraphQL zarfını alır (200 + errors), yani ikinci biçim
-// yalnızca boyutunu SAKLAYAN istemciye görünür. Alternatif, gövdeyi burada
-// tümüyle okuyup saymaktı — tam da kaçınmak istediğimiz şeyi yapmak.
+// But Content-Length is a CLAIM: it does not exist at all on a chunked body and
+// it can be wrong. That is why the real limit is applied by
+// [net/http.MaxBytesReader]; a request that falls down that road gets the
+// GraphQL envelope (200 + errors), so the second shape is visible only to a
+// client that HIDES its size. The alternative was to read and count the whole
+// body here — doing exactly what we want to avoid.
 //
-// Değişen yalnızca ZARFTIR, cümle değil: sınırın kesildiği an [govdeAsimi]'ne
-// kaydedilir ve [tasimaHatasi] aynı sebebi aynı sayıyla söyler. Kayıt olmadan
-// istemci yalnızca gqlgen'in kendi cümlesini görürdü ve o cümle, taşımanın
-// mesajını ayrıştırmadan bizim tarafımızdan tanınamaz.
-func govdeSiniri(next http.Handler) http.Handler {
+// Only the ENVELOPE changes, not the sentence: the moment the limit cuts is
+// recorded in [bodyOverflow] and [transportError] states the same reason with
+// the same number. Without the record the client would only see gqlgen's own
+// sentence, and that sentence cannot be recognized on our side without parsing
+// the transport's message.
+func bodyLimit(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.ContentLength > maxSorguBayt {
-			corehttp.WriteError(r.Context(), w, coreerrors.Invalid(codeGovdeCokBuyuk,
-				"GraphQL belgesi çok büyük (en fazla %d bayt)", maxSorguBayt))
+		if r.ContentLength > maxQueryBytes {
+			corehttp.WriteError(r.Context(), w, coreerrors.Invalid(codeBodyTooLarge,
+				"the GraphQL document is too large (at most %d bytes)", maxQueryBytes))
 
 			return
 		}
 
-		durum := &govdeAsimi{}
-		r = r.WithContext(context.WithValue(r.Context(), govdeAsimiAnahtari{}, durum))
+		state := &bodyOverflow{}
+		r = r.WithContext(context.WithValue(r.Context(), bodyOverflowKey{}, state))
 
-		// Yanıt yazıcısı da verilir: sınır aşıldığında sunucu isteği düzgün
-		// sonlandırabilsin diye. Aksi hâlde bağlantı yarım okunmuş bir gövdeyle
-		// asılı kalırdı. Sayan sarmalayıcı DEĞİL ham yazıcı verilir; stdlib
-		// yazıcıyı kendi iç arayüzüne çevirebildiğinde bağlantıyı işaretler ve
-		// araya giren bir tip o davranışı sessizce kaldırırdı.
-		r.Body = govdeOkuyucu{
-			ReadCloser: http.MaxBytesReader(w, r.Body, maxSorguBayt),
-			durum:      durum,
+		// The response writer is handed over too, so that the server can end
+		// the request cleanly when the limit is exceeded. Otherwise the
+		// connection would hang with a half-read body. The RAW writer is given,
+		// NOT the counting wrapper; when the stdlib can convert the writer to
+		// its own internal interface it marks the connection, and an
+		// intervening type would silently remove that behavior.
+		r.Body = bodyReader{
+			ReadCloser: http.MaxBytesReader(w, r.Body, maxQueryBytes),
+			state:      state,
 		}
 
 		next.ServeHTTP(w, r)
 	})
 }
 
-// govdeAsimiAnahtari gövde aşımı kaydının context içindeki anahtarıdır.
+// bodyOverflowKey is the context key of the body overflow record.
 //
-// Kendi tipi vardır: anahtar olarak dize kullanmak, başka bir paketin aynı
-// dizeyle yazdığı değeri okumaya açık kapı bırakırdı.
-type govdeAsimiAnahtari struct{}
+// It has its own type: using a string as the key would leave the door open to
+// reading a value another package wrote with the same string.
+type bodyOverflowKey struct{}
 
-// govdeAsimi isteğin gövde sınırını aşıp aşmadığını taşır.
+// bodyOverflow carries whether the request exceeded the body limit.
 //
-// Bilgi context'te taşınır çünkü onu ÜRETEN yer ([govdeSiniri]) ile ona
-// İHTİYAÇ DUYAN yer ([tasimaHatasi]) arasında gqlgen'in taşıması durur:
-// taşıma, okuma hatasını kendi cümlesine gömer ("could not read request
-// body: %+v") ve sebebi oradan geri çıkarmak, kütüphanenin metnini ikinci kez
-// tanımlamak olurdu. Kayıt bir metin değil bir ÖLÇÜMDÜR.
+// The information travels in the context because gqlgen's transport stands
+// between the place that PRODUCES it ([bodyLimit]) and the place that NEEDS it
+// ([transportError]): the transport buries the read error in its own sentence
+// ("could not read request body: %+v") and digging the reason back out of it
+// would mean defining the library's text a second time. The record is not a
+// text but a MEASUREMENT.
 //
-// Alan atomiktir çünkü gövdeyi okuyan gorutin ile hatayı sunan gorutinin aynı
-// olacağı hiçbir sözleşmede yazmaz.
-type govdeAsimi struct{ asildi atomic.Bool }
+// The field is atomic because no contract says the goroutine that reads the
+// body and the goroutine that presents the error will be the same one.
+type bodyOverflow struct{ exceeded atomic.Bool }
 
-// govdeOkuyucu sınırın kestiği ANI kaydeden istek gövdesi okuyucusudur.
-type govdeOkuyucu struct {
+// bodyReader is the request body reader that records the MOMENT the limit cuts.
+type bodyReader struct {
 	io.ReadCloser
 
-	durum *govdeAsimi
+	state *bodyOverflow
 }
 
-// Read okumayı geçirir ve sınır aşımını işaretler.
-func (g govdeOkuyucu) Read(p []byte) (int, error) {
+// Read passes the read through and marks the limit overflow.
+func (g bodyReader) Read(p []byte) (int, error) {
 	n, err := g.ReadCloser.Read(p)
 
-	// Tip denetlenir, metin DEĞİL: stdlib aşımı kendi hata tipiyle bildirir ve
-	// cümlesini bir gün değiştirebilir.
-	var asim *http.MaxBytesError
-	if errors.As(err, &asim) {
-		g.durum.asildi.Store(true)
+	// The type is checked, NOT the text: the stdlib reports the overflow with
+	// its own error type and may change its sentence one day.
+	var overflow *http.MaxBytesError
+	if errors.As(err, &overflow) {
+		g.state.exceeded.Store(true)
 	}
 
 	return n, err
 }
 
-// govdeAsildi isteğin gövde sınırını aşıp aşmadığını döner.
+// bodyExceeded reports whether the request exceeded the body limit.
 //
-// Kayıt yoksa false döner: [govdeSiniri] devrede değilse (paket içinden
-// kurulan bir sunucu) aşım da yoktur.
-func govdeAsildi(ctx context.Context) bool {
-	durum, ok := ctx.Value(govdeAsimiAnahtari{}).(*govdeAsimi)
+// It returns false when there is no record: if [bodyLimit] is not in play (a
+// server set up from inside the package) there is no overflow either.
+func bodyExceeded(ctx context.Context) bool {
+	state, ok := ctx.Value(bodyOverflowKey{}).(*bodyOverflow)
 
-	return ok && durum.asildi.Load()
+	return ok && state.exceeded.Load()
 }
 
-// yanitSiniri handler'ı yanıt bayt sınırıyla sarar.
+// responseLimit wraps the handler with the response byte limit.
 //
-// Bu kapı ötekilerden farklı bir soru sorar ve tam olarak bu yüzden gereklidir:
-// derinlik, tekrar ve karmaşıklık belgeye bakıp maliyeti TAHMİN eder; burada
-// sayılan şey GERÇEKLEŞEN bayttır. Tahmin ne kadar iyi olursa olsun bir alanın
-// içeriğini bilemez, bu yüzden son söz ölçüme aittir (bkz.
-// [DefaultMaxResponseBytes]).
+// This gate asks a different question from the others and that is exactly why
+// it is needed: depth, repetition and complexity look at the document and
+// ESTIMATE the cost; what is counted here is the byte that ACTUALLY HAPPENED.
+// However good an estimate is it cannot know the contents of a field, so the
+// last word belongs to measurement (see [DefaultMaxResponseBytes]).
 //
-// Sarmalayıcı gqlgen'in DIŞINDA kurulur çünkü içeride durduramaz: gqlgen'in
-// sunucusu kendi ServeHTTP'sinde her paniği yakalayıp 500 yazar, yani
-// bağlantıyı bırakma kararı orada verilemez. Dışarıda verilir ve
-// corehttp.Recoverer http.ErrAbortHandler'ı yeniden fırlatarak stdlib'e
-// ulaştırır.
-func yanitSiniri(next http.Handler, sinir int) http.Handler {
+// The wrapper is set up OUTSIDE gqlgen because it cannot stop anything inside:
+// gqlgen's server catches every panic in its own ServeHTTP and writes a 500,
+// that is, the decision to drop the connection cannot be made there. It is made
+// outside, and corehttp.Recoverer re-panics http.ErrAbortHandler so it reaches
+// the stdlib.
+func responseLimit(next http.Handler, limit int) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		sayac := &yanitSayaci{ResponseWriter: w, sinir: sinir, kalan: sinir}
+		counter := &responseCounter{ResponseWriter: w, limit: limit, remaining: limit}
 
-		next.ServeHTTP(sayac, r)
+		next.ServeHTTP(counter, r)
 
-		if sayac.kesildi {
+		if counter.aborted {
 			panic(http.ErrAbortHandler)
 		}
 	})
 }
 
-// errYanitCokBuyuk yanıt sınırı aşıldığında yazana dönen hatadır.
+// errResponseTooLarge is the error returned to the writer when the response
+// limit is exceeded.
 //
-// Sıradan bir yazma hatası gibi görünür ve bu doğrudur: çağıran için sonuç
-// aynıdır — gövdenin geri kalanı istemciye gitmeyecektir.
-var errYanitCokBuyuk = errors.New("graph: yanıt sınırı aşıldı")
+// It looks like an ordinary write error and that is correct: for the caller the
+// outcome is the same — the rest of the body will not go to the client.
+var errResponseTooLarge = errors.New("graph: the response limit was exceeded")
 
-// yanitSayaci istemciye yazılan baytları sayan http.ResponseWriter'dır.
+// responseCounter is the http.ResponseWriter that counts the bytes written to
+// the client.
 //
-// # Sınıra çarpınca ne olur
+// # What happens when the limit is hit
 //
-// Yanıt AKIŞ HÂLİNDE yazılır, yani sarmalayıcı sınırı aştığını ancak gövdenin
-// bir kısmı çoktan gitmişken öğrenebilir. İki durum ayrılır ve ikisinde de
-// YARIM JSON GÖNDERİLMEZ:
+// The response is written as a STREAM, that is, the wrapper can only learn that
+// it exceeded the limit when part of the body is already gone. Two cases are
+// separated and in neither of them is HALF A JSON SENT:
 //
-//   - Henüz hiçbir bayt gitmediyse — bugün gqlgen'in POST taşımasında her
-//     zaman böyledir, yanıtı tek seferde kodlayıp tek Write ile yazar — aşan
-//     gövde ATILIR ve yerine tam, geçerli bir hata zarfı yazılır. İstemci
-//     kırık bir belge değil, sebebini söyleyen bir yanıt alır.
-//   - Bir kısmı gitmişse tam bir belge artık imkânsızdır. O hâlde bağlantı
-//     BIRAKILIR ([yanitSiniri] http.ErrAbortHandler ile panikler). Yarım JSON
-//     göndermek istemciyi bozar: ya ayrıştırma hatası alır ve sebebini
-//     bilemez, ya da — daha kötüsü — kırpılmış gövdeyi kısa bir sonuç sanır.
-//     Bağlantıyı düşürmek dürüsttür; istemci bir aktarım hatası görür, ki
-//     olan tam olarak budur.
+//   - If no byte has gone out yet — which is always the case with gqlgen's POST
+//     transport today, it encodes the response in one go and writes it with a
+//     single Write — the exceeding body is DROPPED and a complete, valid error
+//     envelope is written in its place. The client gets a response that states
+//     the reason, not a broken document.
+//   - If part of it has gone out, a complete document is no longer possible. In
+//     that case the connection is DROPPED ([responseLimit] panics with
+//     http.ErrAbortHandler). Sending half a JSON breaks the client: it either
+//     gets a parse error and cannot know why, or — worse — mistakes the
+//     truncated body for a short result. Dropping the connection is honest; the
+//     client sees a transport error, which is exactly what happened.
 //
-// İkinci dal bugün ULAŞILMAZDIR ve bilerek duruyor: http.ResponseWriter
-// sözleşmesi parçalı yazmaya izin verir ve bu uca bir gün akış yapan bir
-// taşıma (SSE, @defer) eklendiğinde karar burada verilmiş olacaktır.
+// The second branch is UNREACHABLE today and stands on purpose: the
+// http.ResponseWriter contract allows partial writes, and the day a streaming
+// transport (SSE, @defer) is added to this endpoint the decision will already
+// have been made here.
 //
-// # Neyi bağlar, neyi bağlamaz
+// # What it binds and what it does not
 //
-// Sarmalayıcı EGZOZU bağlar, BELLEĞİ bağlamaz: gqlgen yanıtı önce belleğe
-// kodlar (json.Marshal), yani 200 MiB'lık bir yanıt buraya gelmeden önce
-// zaten ayrılmıştır. Belleği bağlayan kapı [alanTekrariSiniri]'dir ve
-// çalıştırmadan ÖNCE reddeder. İkisi bu yüzden birbirinin yerine geçmez:
-// biri işin yapılmasını engeller, öteki tahminin kaçırdığını yakalar.
-type yanitSayaci struct {
+// The wrapper binds the EXHAUST, it does not bind MEMORY: gqlgen encodes the
+// response into memory first (json.Marshal), that is, a 200 MiB response is
+// already allocated before it gets here. The gate that binds memory is
+// [fieldRepetitionLimit] and it rejects BEFORE execution. That is why the two
+// do not replace each other: one prevents the work from being done, the other
+// catches what the estimate missed.
+type responseCounter struct {
 	http.ResponseWriter
 
-	sinir   int
-	kalan   int
-	yazildi bool
-	asildi  bool
-	kesildi bool
+	limit     int
+	remaining int
+	written   bool
+	exceeded  bool
+	aborted   bool
 }
 
-// Write sınırı aşmayan baytları geçirir, aşanı reddeder.
-func (y *yanitSayaci) Write(p []byte) (int, error) {
-	if y.asildi {
-		return 0, errYanitCokBuyuk
+// Write passes through the bytes that do not exceed the limit and rejects the
+// ones that do.
+func (y *responseCounter) Write(p []byte) (int, error) {
+	if y.exceeded {
+		return 0, errResponseTooLarge
 	}
 
-	if len(p) <= y.kalan {
+	if len(p) <= y.remaining {
 		n, err := y.ResponseWriter.Write(p)
-		y.kalan -= n
+		y.remaining -= n
 
 		if n > 0 {
-			y.yazildi = true
+			y.written = true
 		}
 
 		return n, err
 	}
 
-	y.asildi = true
+	y.exceeded = true
 
-	if y.yazildi {
-		y.kesildi = true
+	if y.written {
+		y.aborted = true
 
-		return 0, errYanitCokBuyuk
+		return 0, errResponseTooLarge
 	}
 
-	// Hata zarfı SAYILMAZ: sayaç istemcinin istediği gövdeyi sınırlamak
-	// içindir, sınırın kendi hata mesajını değil.
-	if _, err := y.ResponseWriter.Write(asimZarfi(y.sinir)); err != nil {
+	// The error envelope is NOT COUNTED: the counter exists to limit the body
+	// the client asked for, not the limit's own error message.
+	if _, err := y.ResponseWriter.Write(overflowEnvelope(y.limit)); err != nil {
 		return 0, err
 	}
 
-	return 0, errYanitCokBuyuk
+	return 0, errResponseTooLarge
 }
 
-// asimZarfi yanıt sınırı aşımının GraphQL hata zarfını üretir.
+// overflowEnvelope builds the GraphQL error envelope of the response limit
+// overflow.
 //
-// Zarf elle değil graphql.Response üzerinden kodlanır: alan adları ve
-// sıralaması gqlgen'in ürettiğiyle aynı kalsın diye. İkinci bir zarf biçimi,
-// istemciye iki ayrı hata sınıfı olduklarını düşündürürdü.
-func asimZarfi(sinir int) []byte {
-	hata := gqlerror.Errorf("response exceeds the limit of %d bytes", sinir)
-	errcode.Set(hata, kodYanitAsimi)
+// The envelope is encoded through graphql.Response rather than by hand, so that
+// the field names and their order stay the same as the ones gqlgen produces. A
+// second envelope shape would make the client think they are two separate error
+// classes.
+func overflowEnvelope(limit int) []byte {
+	gqlErr := gqlerror.Errorf("response exceeds the limit of %d bytes", limit)
+	errcode.Set(gqlErr, codeResponseExceeded)
 
-	// Kodlama hatası MÜMKÜN DEĞİLDİR: zarf yalnızca dize ve sayı taşır.
-	// Yine de dönen hata yutulmaz, boş gövde yerine sabit bir zarf yazılır —
-	// istemcinin eline hiçbir şey geçmemesindense eksik bir şey geçsin.
-	govde, err := json.Marshal(&graphql.Response{Errors: gqlerror.List{hata}})
+	// An encoding error is IMPOSSIBLE: the envelope carries only strings and
+	// numbers. Even so the returned error is not swallowed; a fixed envelope is
+	// written instead of an empty body — better that the client gets something
+	// incomplete than nothing at all.
+	body, err := json.Marshal(&graphql.Response{Errors: gqlerror.List{gqlErr}})
 	if err != nil {
 		return []byte(`{"errors":[{"message":"response too large"}],"data":null}`)
 	}
 
-	return govde
+	return body
 }
 
-// sorguOnbellegi ayrıştırılmış belgelerin önbelleğidir.
+// queryCache is the cache of parsed documents.
 //
-// gqlgen'in lru.LRU'su doğrudan kullanılmaz çünkü onun sayabildiği tek şey
-// GİRDİ SAYISIDIR ve ölçülen sorun boyuttaydı (bkz. [onbellekGirdiSayisi]).
-// Buraya iki kural eklenir:
+// gqlgen's lru.LRU is not used directly because the only thing it can count is
+// the ENTRY COUNT, and the problem that was measured was about size (see
+// [cacheEntryCount]). Two rules are added here:
 //
-//  1. BOYUT — metni [maxOnbellekBelgeBayt]'tan uzun belge saklanmaz. Girdi
-//     sayısıyla çarpıldığında önbelleğin tavanı artık bilinen bir sayıdır.
-//  2. KABUL — belge önce ADAY olur, önbelleğe ancak tüm sınır kapılarından
-//     geçerse girer.
+//  1. SIZE — a document whose text is longer than [maxCachedDocumentBytes] is
+//     not stored. Multiplied by the entry count, the cache's ceiling is now a
+//     known number.
+//  2. ADMISSION — a document first becomes a CANDIDATE and enters the cache
+//     only if it passes all the limit gates.
 //
-// İkincisinin sebebi gqlgen'in sırasıdır: executor belgeyi ayrıştırıp
-// doğruladıktan HEMEN SONRA önbelleğe ekler, oysa derinlik/tekrar/karmaşıklık
-// eklentileri ONDAN SONRA koşar. Yani reddedilen — servise hiç ulaşmayan —
-// belge de önbellekte yer tutuyordu ve saldırgan, tek bir kotayla vitrinin
-// GERÇEK belgelerini önbellekten atabiliyordu. Ölçüldü: 100 × 65 KB'lık
-// reddedilmiş belge, runtime.GC sonrası 171,8 MiB kalıcı yığın.
+// The reason for the second one is gqlgen's ordering: the executor adds the
+// document to the cache IMMEDIATELY AFTER parsing and validating it, whereas
+// the depth/repetition/complexity extensions run AFTER that. That is, a
+// rejected document — one that never reaches the service — was also taking up
+// room in the cache, and an attacker could evict the storefront's REAL
+// documents from the cache with a single quota. Measured: 100 x 65 KB of
+// rejected documents left 171.8 MiB of permanent heap after runtime.GC.
 //
-// Aday, isteğin kendi OperationContext'inde taşınır: Add'e gelen ctx ile
-// eklentilerin gördüğü opCtx aynı isteğe aittir, yani araya paylaşılan bir
-// durum konmadan bağ kurulabilir.
-type sorguOnbellegi struct {
-	girdiler *lru.LRU[*ast.QueryDocument]
-	maxBayt  int
+// The candidate travels in the request's own OperationContext: the ctx arriving
+// at Add and the opCtx the extensions see belong to the same request, so the
+// link can be made without putting shared state in between.
+type queryCache struct {
+	entries  *lru.LRU[*ast.QueryDocument]
+	maxBytes int
 }
 
-// gqlgen'in önbellek sözleşmesi derleme zamanında sabitlenir: imza kayarsa
-// SetQueryCache'e verilemez ve uç sessizce önbelleksiz kalmaz, derlenmez.
-var _ graphql.Cache[*ast.QueryDocument] = (*sorguOnbellegi)(nil)
+// That gqlgen's cache contract is satisfied is pinned at compile time: if the
+// signature drifts it cannot be handed to SetQueryCache and the endpoint does
+// not silently end up cacheless, it does not compile.
+var _ graphql.Cache[*ast.QueryDocument] = (*queryCache)(nil)
 
-// onbellekAdayAnahtari adayın OperationContext içindeki adıdır.
+// cacheCandidateKey is the candidate's name inside the OperationContext.
 //
-// gqlgen'in Stats.SetExtension haritası paylaşılan bir alandır; ad, başka bir
-// eklentininkiyle çakışmasın diye paket yolunu taşır.
-const onbellekAdayAnahtari = "product/graph.queryCacheCandidate"
+// gqlgen's Stats.SetExtension map is a shared area; the name carries the
+// package path so that it does not collide with another extension's.
+const cacheCandidateKey = "product/graph.queryCacheCandidate"
 
-// onbellekAdayi sınırlardan geçmeyi bekleyen belgedir.
-type onbellekAdayi struct {
-	anahtar string
-	belge   *ast.QueryDocument
+// cacheCandidate is the document waiting to pass the limits.
+type cacheCandidate struct {
+	key      string
+	document *ast.QueryDocument
 }
 
-// yeniSorguOnbellegi verilen girdi ve bayt sınırlarıyla önbellek kurar.
-func yeniSorguOnbellegi(girdi, maxBayt int) *sorguOnbellegi {
-	return &sorguOnbellegi{
-		girdiler: lru.New[*ast.QueryDocument](girdi),
-		maxBayt:  maxBayt,
+// newQueryCache builds a cache with the given entry and byte limits.
+func newQueryCache(entries, maxBytes int) *queryCache {
+	return &queryCache{
+		entries:  lru.New[*ast.QueryDocument](entries),
+		maxBytes: maxBytes,
 	}
 }
 
-// Get belgeyi önbellekten okur.
-func (o *sorguOnbellegi) Get(ctx context.Context, anahtar string) (*ast.QueryDocument, bool) {
-	return o.girdiler.Get(ctx, anahtar)
+// Get reads the document from the cache.
+func (o *queryCache) Get(ctx context.Context, key string) (*ast.QueryDocument, bool) {
+	return o.entries.Get(ctx, key)
 }
 
-// Add belgeyi ADAY olarak alır; önbelleğe yazmaz.
+// Add takes the document as a CANDIDATE; it does not write it into the cache.
 //
-// Yazma [sorguOnbellegi.kabulEt]'e bırakılır. İsteğe ait bir bağlam yoksa
-// (gqlgen'in dışından, örneğin bir testten çağrı) belge doğrudan saklanır:
-// kabul edecek bir kapı olmadığında adayı bekletmek, önbelleği tümüyle
-// kapatmak olurdu.
-func (o *sorguOnbellegi) Add(ctx context.Context, anahtar string, belge *ast.QueryDocument) {
-	if len(anahtar) > o.maxBayt {
+// The write is left to [queryCache.admit]. If there is no context belonging to
+// a request (a call from outside gqlgen, for example from a test) the document
+// is stored directly: holding the candidate back when there is no gate to admit
+// it would mean disabling the cache entirely.
+func (o *queryCache) Add(ctx context.Context, key string, document *ast.QueryDocument) {
+	if len(key) > o.maxBytes {
 		return
 	}
 
 	if !graphql.HasOperationContext(ctx) {
-		o.girdiler.Add(ctx, anahtar, belge)
+		o.entries.Add(ctx, key, document)
 
 		return
 	}
 
-	graphql.GetOperationContext(ctx).Stats.SetExtension(onbellekAdayAnahtari,
-		onbellekAdayi{anahtar: anahtar, belge: belge})
+	graphql.GetOperationContext(ctx).Stats.SetExtension(cacheCandidateKey,
+		cacheCandidate{key: key, document: document})
 }
 
-// kabulEt bekleyen adayı önbelleğe yazar.
-func (o *sorguOnbellegi) kabulEt(ctx context.Context, opCtx *graphql.OperationContext) {
-	aday, ok := opCtx.Stats.GetExtension(onbellekAdayAnahtari).(onbellekAdayi)
+// admit writes the waiting candidate into the cache.
+func (o *queryCache) admit(ctx context.Context, opCtx *graphql.OperationContext) {
+	candidate, ok := opCtx.Stats.GetExtension(cacheCandidateKey).(cacheCandidate)
 	if !ok {
 		return
 	}
 
-	opCtx.Stats.SetExtension(onbellekAdayAnahtari, nil)
-	o.girdiler.Add(ctx, aday.anahtar, aday.belge)
+	opCtx.Stats.SetExtension(cacheCandidateKey, nil)
+	o.entries.Add(ctx, candidate.key, candidate.document)
 }
 
-// onbellekKapisi sınırlardan geçmiş belgeyi önbelleğe alan gqlgen eklentisidir.
+// cacheAdmission is the gqlgen extension that takes a document which passed the
+// limits into the cache.
 //
-// Hiçbir belgeyi REDDETMEZ; yaptığı tek şey, kendisinden önce koşan kapıların
-// hepsinden geçmiş olmayı önbelleğe girmenin koşulu hâline getirmektir. Bu
-// yüzden EN SON kaydedilmelidir (bkz. [NewHandler]) — daha önce kaydedilirse
-// arkasındaki kapıların reddettiği belgeler yine saklanır ve düzeltme sessizce
-// etkisizleşir.
-type onbellekKapisi struct{ onbellek *sorguOnbellegi }
+// It REJECTS no document; the only thing it does is make having passed all the
+// gates that run before it the condition for entering the cache. That is why it
+// must be registered LAST (see [NewHandler]) — if it is registered earlier, the
+// documents rejected by the gates behind it are stored again and the fix
+// silently becomes ineffective.
+type cacheAdmission struct{ cache *queryCache }
 
 var _ interface {
 	graphql.HandlerExtension
 	graphql.OperationContextMutator
-} = onbellekKapisi{}
+} = cacheAdmission{}
 
-// ExtensionName eklentinin adını döner.
-func (onbellekKapisi) ExtensionName() string { return "QueryCacheAdmission" }
+// ExtensionName returns the name of the extension.
+func (cacheAdmission) ExtensionName() string { return "QueryCacheAdmission" }
 
-// Validate eklentinin bir önbellekle kurulduğunu doğrular.
-func (o onbellekKapisi) Validate(graphql.ExecutableSchema) error {
-	if o.onbellek == nil {
-		return errors.New("graph: önbellek kapısı önbelleksiz kurulamaz")
+// Validate verifies that the extension was set up with a cache.
+func (o cacheAdmission) Validate(graphql.ExecutableSchema) error {
+	if o.cache == nil {
+		return errors.New("graph: the cache admission gate cannot be set up without a cache")
 	}
 
 	return nil
 }
 
-// MutateOperationContext belgeyi önbelleğe kabul eder.
-func (o onbellekKapisi) MutateOperationContext(
+// MutateOperationContext admits the document into the cache.
+func (o cacheAdmission) MutateOperationContext(
 	ctx context.Context,
 	opCtx *graphql.OperationContext,
 ) *gqlerror.Error {
-	o.onbellek.kabulEt(ctx, opCtx)
+	o.cache.admit(ctx, opCtx)
 
 	return nil
 }
 
-// Taşımanın ürettiği hataların kodları.
+// The codes of the errors the transport produces.
 //
-// gqlgen ayrıştırmadan itibaren her protokol hatasına bir kod koyar
-// (GRAPHQL_PARSE_FAILED, GRAPHQL_VALIDATION_FAILED) ve bu paketin kapıları da
-// koyar; kodsuz kalan tek sınıf, belge daha OKUNAMADAN başarısız olan
-// taşımadır. Bu iki kod o boşluğu doldurur, böylece istemci "belge hiç
-// okunamadı" durumunu da öteki protokol hataları gibi extensions.code'dan
-// ayırt eder.
+// From parsing onwards gqlgen puts a code on every protocol error
+// (GRAPHQL_PARSE_FAILED, GRAPHQL_VALIDATION_FAILED) and this package's gates do
+// so too; the only class left without a code is the transport, which fails
+// before the document can even be READ. These two codes fill that gap, so that
+// the client tells the "the document could not be read at all" case apart from
+// the other protocol errors through extensions.code as well.
 //
-// Biçim BÜYÜK HARFTİR ve gerekçesi sınır kodlarınınkiyle aynıdır (bkz.
-// limits.go): belge çalıştırıcıya ulaşmamıştır, yani bunlar servis hatası
-// değil protokol hatasıdır.
+// The shape is UPPERCASE and the rationale is the same as for the limit codes
+// (see limits.go): the document did not reach the executor, that is, these are
+// not service errors but protocol errors.
 const (
-	// kodGovdeAsimi gövde sınırını aşan isteğin GraphQL zarfındaki kodudur.
+	// codeRequestBodyTooLarge is the code, in the GraphQL envelope, of a
+	// request that exceeds the body limit.
 	//
-	// AYNI koşul, boyutunu Content-Length ile BİLDİREN istemciye çekirdeğin
-	// zarfıyla ve product_graphql_body_too_large koduyla döner; iki kod tek bir
-	// koşulun iki zarftaki adıdır. Zarfların neden ayrıldığı
-	// [govdeSiniri]'ndedir.
-	kodGovdeAsimi = "REQUEST_BODY_TOO_LARGE"
+	// The SAME condition returns to a client that DECLARES its size with
+	// Content-Length in the core's envelope and with the
+	// product_graphql_body_too_large code; the two codes are one condition's
+	// names in two envelopes. Why the envelopes differ is in [bodyLimit].
+	codeRequestBodyTooLarge = "REQUEST_BODY_TOO_LARGE"
 
-	// kodGovdeCozulemedi JSON olarak çözülemeyen istek gövdesinin kodudur.
-	kodGovdeCozulemedi = "REQUEST_DECODE_FAILED"
+	// codeRequestDecodeFailed is the code of a request body that cannot be
+	// decoded as JSON.
+	codeRequestDecodeFailed = "REQUEST_DECODE_FAILED"
 )
 
-// oneriBaslangici gqlparser'ın öneri cümlesinin başladığı yerdir.
+// suggestionPrefix is where gqlparser's suggestion sentence begins.
 //
-// Doğrulayıcının bütün öneri yardımcıları (SuggestListQuoted,
-// SuggestListUnquoted, Suggestf ve fields_on_correct_type'ın satır içi
-// fragment önerisi) mesajın SONUNA tek bir cümle ekler ve hepsi bu dizeyle
-// başlar. Kesim noktasının tek olmasının sebebi budur: teşhis cümlesi (hangi
-// alan, hangi tip) yerinde kalır, yalnızca ADLARI SAYAN kısım düşer.
-const oneriBaslangici = " Did you mean"
+// All of the validator's suggestion helpers (SuggestListQuoted,
+// SuggestListUnquoted, Suggestf and the inline fragment suggestion of
+// fields_on_correct_type) append a single sentence to the END of the message,
+// and all of them start with this string. That is why there is a single cut
+// point: the diagnostic sentence (which field, which type) stays in place, only
+// the part that ENUMERATES NAMES falls away.
+const suggestionPrefix = " Did you mean"
 
-// hataSunucusu hataları KAYNAĞINA göre iki politikaya ayırır.
+// errorPresenter splits errors into two policies by their SOURCE.
 //
-// Ayrım hatanın TİPİNE değil KAYNAĞINA bakar ve bu bir düzeltmedir: koşul bir
-// zamanlar "*coreerrors.Error mi" idi ve tipsiz her hata — pq'nun bağlantı
-// dizesini, parolayı ve SQL metnini taşıyan hatası dâhil — istemciye OLDUĞU
-// GİBİ gidiyor, üstelik hiç loglanmıyordu. Oysa çekirdeğin kuralı tam
-// tersidir: tipsiz hata KindInternal sayılır, mesajı maskelenir ve gerçek hata
-// kaydedilir. "Tipli olmayanı geçir" satırı, kaçınmak istediği İKİNCİ TANIMIN
-// ta kendisiydi — hem de çekirdekle ters düşen bir tanım.
+// The split looks at the error's SOURCE, not its TYPE, and that is a fix: the
+// condition was once "is it a *coreerrors.Error" and every untyped error —
+// including pq's error carrying the connection string, the password and the SQL
+// text — was going to the client AS IT WAS, and was not being logged at all.
+// Yet the core's rule is exactly the opposite: an untyped error counts as
+// KindInternal, its message is masked and the real error is recorded. The line
+// "pass through whatever is not typed" was itself the SECOND DEFINITION it
+// wanted to avoid — and a definition at odds with the core, at that.
 //
-// # Kaynak, "gqlerror mi" sorusuyla ANLAŞILMAZ
+// # The source is NOT DETERMINED by asking "is it a gqlerror"
 //
-// Buraya gelen hemen her hata zaten bir *gqlerror.Error'dur: gqlgen resolver
-// hatasını presenter'a vermeden önce graphql.ErrorOnPath ile SARAR
-// (graphql.AddError'ın ilk işi budur). Yani tipe bakan bir ayrım, pq'nun
-// hatasını da protokol hatası sayardı — ölçüldü.
+// Almost every error arriving here is already a *gqlerror.Error: gqlgen WRAPS
+// the resolver error with graphql.ErrorOnPath before handing it to the
+// presenter (that is graphql.AddError's first act). So a split that looks at
+// the type would count pq's error as a protocol error too — measured.
 //
-// Ayrım gqlerror'ın NE TAŞIDIĞINA bakar: sarmalayıcı olarak üretilenin içinde
-// yabancı bir hata durur (gqlerror.WrapPath onu Err alanına koyar), belgenin
-// kendi hataları ise gqlerror.Errorf ile SIFIRDAN kurulur ve hiçbir şey
-// sarmaz. "Sardığı bir şey var mı" sorusu bu yüzden tam olarak "bu hatayı
-// GraphQL boru hattı üretti mi, yoksa yalnızca giydirdi mi" sorusudur.
+// The split looks at WHAT the gqlerror CARRIES: inside one produced as a
+// wrapper stands a foreign error (gqlerror.WrapPath puts it in the Err field),
+// while the document's own errors are built FROM SCRATCH with gqlerror.Errorf
+// and wrap nothing. The question "is there something it wraps" is therefore
+// exactly the question "did the GraphQL pipeline produce this error, or did it
+// only dress it up".
 //
-// İki dal:
+// Two branches:
 //
-//   - PROTOKOL — hiçbir şey sarmayan gqlerror'ı ayrıştırma, doğrulama, sınır
-//     kapıları ya da taşıma üretmiştir; hepsi istemcinin YAZDIĞI istekle
-//     ilgilidir ve maskelenirlerse yüzey hata ayıklanamaz hâle gelir. İki
-//     istisnayla olduğu gibi bırakılır (bkz. [protokolHatasi]).
-//   - SERVİS — geri kalan her şey, TİPLİ OLSUN OLMASIN,
-//     corehttp.WriteError'a yazdırılır ve yazdığı zarf geri okunur. Hangi
-//     hatanın istemciye olduğu gibi verilebileceği kuralı burada İKİNCİ KEZ
-//     yazılmaz; ayrıştıkları gün ikinci okuma yüzeyi, birincisinin gizlediği
-//     ayrıntıyı (DSN, sorgu metni, dosya yolu) sızdırırdı.
+//   - PROTOCOL — a gqlerror that wraps nothing was produced by parsing,
+//     validation, the limit gates or the transport; all of them are about the
+//     request the client WROTE and masking them makes the surface impossible to
+//     debug. It is left as it is, with two exceptions (see [protocolError]).
+//   - SERVICE — everything else, TYPED OR NOT, is written through
+//     corehttp.WriteError and the envelope it writes is read back. The rule for
+//     which error may be handed to the client as it is is NOT written a SECOND
+//     time here; the day they diverged, the second read surface would leak the
+//     detail the first one hides (DSN, query text, file path).
 //
-// Yan kazanç: kod, mesaj, ayrıntılar ve istek kimliği iki yüzeyde AYNI olur;
-// istemci hata kodlarını tek bir sözlükten okur.
+// A side gain: the code, the message, the details and the request identity are
+// the SAME on both surfaces; the client reads error codes from a single
+// dictionary.
 //
-// [Options] ALINIR çünkü öneri kesimi iç gözlem anahtarına bağlıdır (bkz.
-// [Options.IntrospectionDisabled]); sunucu kurulurken bağlanır, her istekte
-// yeniden okunmaz.
-func hataSunucusu(opts Options) graphql.ErrorPresenterFunc {
+// [Options] IS TAKEN because the suggestion cut depends on the introspection
+// switch (see [Options.IntrospectionDisabled]); it is bound while the server is
+// being set up, not read again on every request.
+func errorPresenter(opts Options) graphql.ErrorPresenterFunc {
 	return func(ctx context.Context, err error) *gqlerror.Error {
-		// Yol ve konum bilgisi gqlgen'in kendi sunucusundan alınır; hangi alanın
-		// başarısız olduğunu yalnızca o bilir.
-		sunulan := graphql.DefaultErrorPresenter(ctx, err)
+		// The path and location information is taken from gqlgen's own
+		// presenter; only it knows which field failed.
+		presented := graphql.DefaultErrorPresenter(ctx, err)
 
-		var protokol *gqlerror.Error
-		if errors.As(err, &protokol) && protokol.Unwrap() == nil {
-			return protokolHatasi(ctx, sunulan, opts.IntrospectionDisabled)
+		var protocol *gqlerror.Error
+		if errors.As(err, &protocol) && protocol.Unwrap() == nil {
+			return protocolError(ctx, presented, opts.IntrospectionDisabled)
 		}
 
-		return servisHatasi(ctx, sunulan, err)
+		return serviceError(ctx, presented, err)
 	}
 }
 
-// protokolHatasi belgeye ait hatayı istemciye sunar.
+// protocolError presents an error belonging to the document to the client.
 //
-// Bu hatalar MASKELENMEZ: istemcinin yazdığı isteği anlatırlar ve "Cannot
-// query field x" yerine "sunucu hatası" gören istemci sorgusunu düzeltemez.
-// İki istisna vardır ve ikisi de mesajın, istemcinin ZATEN BİLMEDİĞİ bir şeyi
-// taşıdığı yerlerdir:
+// These errors are NOT MASKED: they describe the request the client wrote, and
+// a client that sees "server error" instead of "Cannot query field x" cannot
+// fix its query. There are two exceptions and both are places where the message
+// carries something the client DOES NOT ALREADY KNOW:
 //
-//  1. KODSUZ hata taşımadan gelir ve metnini biz yazmayız. Ölçüldü: bugünkü
-//     POST taşıması JSON'u çözemediğinde HAM GÖVDEYİ mesaja ekliyor
-//     (transport/http_post.go), yani 64 KiB'a kadar saldırgan denetimindeki
-//     metin yanıta ve yanıtı kaydeden ara katmanların loglarına giriyordu.
-//     Metin [tasimaHatasi] ile değiştirilir.
-//  2. İç gözlem KAPALIYSA öneri cümlesi kesilir; gerekçe
-//     [Options.IntrospectionDisabled]'dadır.
-func protokolHatasi(
+//  1. A CODELESS error comes from the transport and we do not write its text.
+//     Measured: when today's POST transport cannot decode the JSON it appends
+//     the RAW BODY to the message (transport/http_post.go), that is, up to
+//     64 KiB of attacker-controlled text was entering the response and the logs
+//     of any middleware that records the response. The text is replaced by
+//     [transportError].
+//  2. If introspection is DISABLED the suggestion sentence is cut; the
+//     rationale is in [Options.IntrospectionDisabled].
+func protocolError(
 	ctx context.Context,
-	sunulan *gqlerror.Error,
-	icGozlemKapali bool,
+	presented *gqlerror.Error,
+	introspectionDisabled bool,
 ) *gqlerror.Error {
-	if kod, _ := sunulan.Extensions["code"].(string); kod == "" {
-		tasimaHatasi(ctx, sunulan)
+	if code, _ := presented.Extensions["code"].(string); code == "" {
+		transportError(ctx, presented)
 
-		return sunulan
+		return presented
 	}
 
-	if icGozlemKapali {
-		sunulan.Message = oneriyiKes(sunulan.Message)
+	if introspectionDisabled {
+		presented.Message = trimSuggestion(presented.Message)
 	}
 
-	return sunulan
+	return presented
 }
 
-// tasimaHatasi taşımanın yazdığı mesajı bizim metnimizle değiştirir.
+// transportError replaces the message the transport wrote with our text.
 //
-// İki sebep AYRILIR çünkü istemcinin yapacağı şey farklıdır: gövdeyi
-// küçültmek ile geçerli JSON göndermek aynı düzeltme değildir. Ayrım bir metin
-// eşleşmesi DEĞİL, [govdeSiniri]'nin kaydettiği ölçümdür.
-func tasimaHatasi(ctx context.Context, sunulan *gqlerror.Error) {
-	if govdeAsildi(ctx) {
-		sunulan.Message = fmt.Sprintf(
-			"request body exceeds the limit of %d bytes", maxSorguBayt)
-		errcode.Set(sunulan, kodGovdeAsimi)
+// The two reasons are SEPARATED because what the client has to do differs:
+// shrinking the body and sending valid JSON are not the same fix. The split is
+// NOT a text match but the measurement [bodyLimit] recorded.
+func transportError(ctx context.Context, presented *gqlerror.Error) {
+	if bodyExceeded(ctx) {
+		presented.Message = fmt.Sprintf(
+			"request body exceeds the limit of %d bytes", maxQueryBytes)
+		errcode.Set(presented, codeRequestBodyTooLarge)
 
 		return
 	}
 
-	sunulan.Message = "request body is not valid JSON"
-	errcode.Set(sunulan, kodGovdeCozulemedi)
+	presented.Message = "request body is not valid JSON"
+	errcode.Set(presented, codeRequestDecodeFailed)
 }
 
-// oneriyiKes doğrulama mesajından ad SAYAN cümleyi atar.
-func oneriyiKes(mesaj string) string {
-	if i := strings.Index(mesaj, oneriBaslangici); i >= 0 {
-		return mesaj[:i]
+// trimSuggestion drops the sentence that ENUMERATES NAMES from a validation
+// message.
+func trimSuggestion(message string) string {
+	if i := strings.Index(message, suggestionPrefix); i >= 0 {
+		return message[:i]
 	}
 
-	return mesaj
+	return message
 }
 
-// servisHatasi hatayı çekirdeğin hata politikasıyla sunar.
+// serviceError presents the error with the core's error policy.
 //
-// Gövde burada YENİDEN KURULMAZ: corehttp.WriteError'a yazdırılır ve yazdığı
-// zarf geri okunur. Maskeleme de loglama da o çağrının içinde olur, yani
-// tipsiz hata bu yüzeyde de KindInternal sayılır ve gerçek metin yalnızca loga
-// gider.
-func servisHatasi(ctx context.Context, sunulan *gqlerror.Error, err error) *gqlerror.Error {
-	yakalayici := &yanitYakalayici{basliklar: http.Header{}}
-	corehttp.WriteError(ctx, yakalayici, err)
+// The body is NOT REBUILT here: it is written through corehttp.WriteError and
+// the envelope it writes is read back. Masking and logging both happen inside
+// that call, that is, an untyped error counts as KindInternal on this surface
+// too and the real text goes only to the log.
+func serviceError(ctx context.Context, presented *gqlerror.Error, err error) *gqlerror.Error {
+	capture := &responseCapture{headers: http.Header{}}
+	corehttp.WriteError(ctx, capture, err)
 
-	var zarf corehttp.ErrorResponse
-	if json.Unmarshal(yakalayici.govde.Bytes(), &zarf) != nil {
-		// Buraya düşmek çekirdeğin kendi zarfını çözemediği anlamına gelir.
-		// Hatayı YUTMAK yerine gqlgen'in sunduğu hâli döneriz; ama mesajı
-		// maskelenmemiş olabileceği için sınıf adına indirilir.
-		sunulan.Message = hataSinifi(err).String()
+	var envelope corehttp.ErrorResponse
+	if json.Unmarshal(capture.body.Bytes(), &envelope) != nil {
+		// Landing here means the core could not decode its own envelope.
+		// Rather than SWALLOWING the error we return the form gqlgen presented;
+		// but because its message may be unmasked it is reduced to the name of
+		// the kind.
+		presented.Message = errorKind(err).String()
 
-		return sunulan
+		return presented
 	}
 
-	sunulan.Message = zarf.Error.Message
-	sunulan.Extensions = map[string]any{"code": zarf.Error.Code}
+	presented.Message = envelope.Error.Message
+	presented.Extensions = map[string]any{"code": envelope.Error.Code}
 
-	if zarf.Error.RequestID != "" {
-		sunulan.Extensions["request_id"] = zarf.Error.RequestID
+	if envelope.Error.RequestID != "" {
+		presented.Extensions["request_id"] = envelope.Error.RequestID
 	}
 
-	if len(zarf.Error.Details) > 0 {
-		sunulan.Extensions["details"] = zarf.Error.Details
+	if len(envelope.Error.Details) > 0 {
+		presented.Extensions["details"] = envelope.Error.Details
 	}
 
-	return sunulan
+	return presented
 }
 
-// hataSinifi hatanın sınıfını çekirdekle AYNI kuralla belirler.
+// errorKind determines the kind of the error with the SAME rule as the core.
 //
-// Tipsiz (ve tipli-nil) hata KindInternal sayılır; corehttp.StatusFor de aynı
-// varsayımla çalışır. Sınıf adı yalnızca zarfın çözülemediği yolda kullanılır,
-// yani istemciye giden metnin son çaresidir — sınıflandırılmamış bir hatanın
-// oradan istemci hatası gibi çıkması, maskelemenin kaçağı olurdu.
-func hataSinifi(err error) coreerrors.Kind {
+// An untyped (and a typed-nil) error counts as KindInternal; corehttp.StatusFor
+// works on the same assumption. The kind's name is used only on the road where
+// the envelope could not be decoded, that is, it is the last resort for the
+// text that goes to the client — an unclassified error coming out of there as a
+// client error would be a leak in the masking.
+func errorKind(err error) coreerrors.Kind {
 	var typed *coreerrors.Error
 	if coreerrors.As(err, &typed) && typed != nil {
 		return typed.Kind
@@ -753,44 +791,46 @@ func hataSinifi(err error) coreerrors.Kind {
 	return coreerrors.KindInternal
 }
 
-// panikYakala resolver paniklerini yapılandırılmış logger'a yazar.
+// recoverPanic writes resolver panics to the structured logger.
 //
-// gqlgen'in varsayılanı yığın izini doğrudan os.Stderr'a basar; bu depoda
-// loglar slog ile yapılandırılmış olduğu için o satır ne istek kimliği taşır
-// ne de toplayıcıya düzgün girer.
+// gqlgen's default prints the stack trace straight to os.Stderr; because logs
+// in this repository are structured with slog, that line carries no request
+// identity and does not enter the collector properly either.
 //
-// Panik İKİ satır üretir ve bu bilinçlidir: buradaki satır yığın izini taşır
-// (başka hiçbir yerde yoktur), [hataSunucusu]'nun çağırdığı
-// corehttp.WriteError'ınki ise istek kimliğini ve istemciye ne döndüğünü.
-func panikYakala(ctx context.Context, panikDegeri any) error {
-	corehttp.LoggerFromContext(ctx).ErrorContext(ctx, "graphql resolver panikledi",
-		"panic", panikDegeri,
+// A panic produces TWO lines and that is deliberate: the line here carries the
+// stack trace (it exists nowhere else), while the one from the
+// corehttp.WriteError that [errorPresenter] calls carries the request identity
+// and what was returned to the client.
+func recoverPanic(ctx context.Context, panicValue any) error {
+	corehttp.LoggerFromContext(ctx).ErrorContext(ctx, "graphql resolver panicked",
+		"panic", panicValue,
 		"stack", string(debug.Stack()),
 		"request_id", corehttp.RequestIDFromContext(ctx),
 	)
 
-	return coreerrors.Internal(codePanic, "graphql isteği işlenemedi")
+	return coreerrors.Internal(codePanic, "the graphql request could not be processed")
 }
 
-// yanitYakalayici corehttp.WriteError'ın yazdığı yanıtı belleğe alır.
+// responseCapture takes the response corehttp.WriteError writes into memory.
 //
-// httptest.ResponseRecorder KULLANILMADI: o paket test ikilisine aittir ve
-// üretim kodunda kullanılması, test yardımcılarını sunucu ikilisine taşırdı.
-// İhtiyaç duyulan yüzey zaten üç metottur.
-type yanitYakalayici struct {
-	basliklar http.Header
-	govde     bytes.Buffer
+// httptest.ResponseRecorder was NOT USED: that package belongs to the test
+// binary and using it in production code would carry test helpers into the
+// server binary. The surface needed is three methods anyway.
+type responseCapture struct {
+	headers http.Header
+	body    bytes.Buffer
 }
 
-// Header yazılacak başlıkları döner.
-func (y *yanitYakalayici) Header() http.Header { return y.basliklar }
+// Header returns the headers to be written.
+func (y *responseCapture) Header() http.Header { return y.headers }
 
-// WriteHeader durum kodunu YOK SAYAR.
+// WriteHeader IGNORES the status code.
 //
-// GraphQL yanıtının HTTP durumu 200'dür; hatanın sınıfı gövdedeki koda
-// bakılarak anlaşılır. Kodu saklayıp extensions'a yazmak, istemciye asla
-// görmeyeceği bir durum kodu bildirmek olurdu.
-func (y *yanitYakalayici) WriteHeader(int) {}
+// The HTTP status of a GraphQL response is 200; the kind of the error is
+// understood by looking at the code in the body. Keeping the code and writing
+// it into extensions would mean reporting to the client a status code it will
+// never see.
+func (y *responseCapture) WriteHeader(int) {}
 
-// Write gövdeyi belleğe alır.
-func (y *yanitYakalayici) Write(p []byte) (int, error) { return y.govde.Write(p) }
+// Write takes the body into memory.
+func (y *responseCapture) Write(p []byte) (int, error) { return y.body.Write(p) }

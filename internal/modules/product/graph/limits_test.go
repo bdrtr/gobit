@@ -17,14 +17,15 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/product/graph"
 )
 
-// tumUrunAlanlari şemanın ÜRÜN ağacındaki her alanını isteyen seçim kümesidir.
+// allProductFields is the selection set that asks for every field in the
+// schema's PRODUCT tree.
 //
-// Maliyet tavanının kalibrasyonu buna dayanır: bir istemcinin meşru olarak
-// isteyebileceği en pahalı şey, alanların tamamıdır (kod üreteçleri "hepsini
-// seç" belgeleri üretir). Şemaya alan eklendiğinde buraya da eklenmelidir;
-// eklenmezse kalibrasyon testi geçmeye devam eder ama artık gerçek en ağır
-// belgeyi ölçmüyor olur.
-const tumUrunAlanlari = `
+// The calibration of the cost ceiling rests on it: the most expensive thing a
+// client can legitimately ask for is all of the fields (code generators produce
+// "select everything" documents). When a field is added to the schema it must
+// be added here too; if it is not, the calibration test keeps passing but is no
+// longer measuring the real heaviest document.
+const allProductFields = `
   id handle title subtitle description thumbnail isGiftcard discountable
   weight length height width material originCountry collectionId metadata
   createdAt updatedAt
@@ -39,286 +40,302 @@ const tumUrunAlanlari = `
   categories { id name handle description parentId isActive isInternal rank }
 `
 
-// enDerinVeriSorgusu şemanın izin verdiği en derin VERİ yoludur (5 seviye).
-const enDerinVeriSorgusu = `{ products { items { variants { optionValues { optionTitle } } } } }`
+// deepestDataQuery is the deepest DATA path the schema allows (5 levels).
+const deepestDataQuery = `{ products { items { variants { optionValues { optionTitle } } } } }`
 
-// takmaAdliYigma aynı kök sorguyu n kez takma adla tekrarlayan belgeyi üretir.
+// aliasedStacking builds the document that repeats the same root query n times
+// with aliases.
 //
-// GraphQL'in REST'te karşılığı olmayan çarpanı budur: aşağıdaki belge TEK bir
-// HTTP isteğidir, yani hız sınırlayıcı için BİR sayaçtır, sunucu için ise n
-// katalog sorgusudur.
-func takmaAdliYigma(n int) string {
-	var belge strings.Builder
+// This is GraphQL's multiplier with no counterpart in REST: the document below
+// is a SINGLE HTTP request, that is, one tick for the rate limiter and n
+// catalog queries for the server.
+func aliasedStacking(n int) string {
+	var document strings.Builder
 
-	belge.WriteString("{")
+	document.WriteString("{")
 
 	for i := range n {
-		belge.WriteString(" a" + strconv.Itoa(i) + ": products { count }")
+		document.WriteString(" a" + strconv.Itoa(i) + ": products { count }")
 	}
 
-	belge.WriteString(" }")
+	document.WriteString(" }")
 
-	return belge.String()
+	return document.String()
 }
 
-// takmaAdliAlan aynı alanı n kez takma adla seçen seçim listesini üretir.
+// aliasedField builds the selection list that selects the same field n times
+// with aliases.
 //
-// Takma ad, GraphQL'in aynı alanı bir seçim kümesinde birden fazla kez
-// istemeye izin veren tek aracıdır; ölçülen saldırıların üçü de bunu
-// kullanıyordu (489 description, 302 __schema, 448 __type).
-func takmaAdliAlan(n int, alan string) string {
-	return takmaAdliAlanOnekli("a", n, alan)
+// The alias is GraphQL's only instrument for asking for the same field more
+// than once in a selection set; all three of the measured attacks were using it
+// (489 description, 302 __schema, 448 __type).
+func aliasedField(n int, field string) string {
+	return aliasedFieldWithPrefix("a", n, field)
 }
 
-// takmaAdliAlanOnekli takma adları verilen önekle üretir.
+// aliasedFieldWithPrefix builds the aliases with the given prefix.
 //
-// Önek gerekiyor çünkü GraphQL doğrulaması AYNI takma adın FARKLI alanlara
-// verilmesini reddeder (OverlappingFieldsCanBeMerged): iki ayrı fragment'ta
-// "a0" kullanan bir belge, sınıra hiç ulaşmadan doğrulamada ölürdü ve test
-// ölçmek istediği şeyi değil, başka bir kuralı ölçerdi.
-func takmaAdliAlanOnekli(onek string, n int, alan string) string {
-	var secimler strings.Builder
+// The prefix is needed because GraphQL validation rejects giving the SAME alias
+// to DIFFERENT fields (OverlappingFieldsCanBeMerged): a document using "a0" in
+// two separate fragments would die in validation without ever reaching the
+// limit, and the test would measure another rule instead of the one it wants.
+func aliasedFieldWithPrefix(prefix string, n int, field string) string {
+	var selections strings.Builder
 
 	for i := range n {
-		secimler.WriteString(" " + onek + strconv.Itoa(i) + ": " + alan)
+		selections.WriteString(" " + prefix + strconv.Itoa(i) + ": " + field)
 	}
 
-	return secimler.String()
+	return selections.String()
 }
 
-// tekrarliAciklama bulgunun ölçtüğü belgeyi üretir: bir sayfa dolusu ürünün
-// AÇIKLAMASINI n kez isteyen sorgu.
+// repeatedDescription builds the document the finding measured: the query that
+// asks for the DESCRIPTION of a page full of products n times.
 //
-// Ölçülen maliyeti 489 tekrar ve 100'lük sayfa için tam 50.000'dir — yani
-// tavana OTURUR, aşmaz ve geçerdi. Yanıtı ise ölçüldüğünde 204,9 MiB'dı:
-// karmaşıklık modelinin alan sayısını fiyatlayıp baytı hiç sormadığı yer tam
-// olarak burasıdır.
-func tekrarliAciklama(tekrar, sayfa int) string {
-	return `{ products(limit: ` + strconv.Itoa(sayfa) + `) { items {` +
-		takmaAdliAlan(tekrar, "description") + `} } }`
+// Its measured cost for 489 repetitions and a page of 100 is exactly 50,000 —
+// that is, it SITS on the ceiling, does not exceed it, and would pass. Its
+// response, when measured, was 204.9 MiB: this is exactly the place where the
+// complexity model prices the field count and never asks about the bytes.
+func repeatedDescription(repeat, page int) string {
+	return `{ products(limit: ` + strconv.Itoa(page) + `) { items {` +
+		aliasedField(repeat, "description") + `} } }`
 }
 
-// TestDerinlikSiniriAsilanBelgeyiReddeder sınırı aşan sorgunun hiç
-// çalıştırılmadığını doğrular.
+// TestDepthLimitRejectsAnExceedingDocument verifies that a query exceeding the
+// limit is never executed.
 //
-// Sınır TEST İÇİN düşürülür (3) çünkü şema bugün DÖNGÜSEL DEĞİLDİR: en derin
-// meşru yol 5 seviyedir ve varsayılan sınırı geçerli bir belgeyle aşmak
-// mümkün değildir. Sınırın var olma sebebi de zaten bugünün şeması değil,
-// bir alanın geri referans verdiği (variant → product → variants → …) gündür;
-// o gün geldiğinde bu testin ölçtüğü mekanizma çoktan yerinde olacak.
-func TestDerinlikSiniriAsilanBelgeyiReddeder(t *testing.T) {
+// The limit is lowered FOR THE TEST (3) because the schema is NOT CYCLIC today:
+// the deepest legitimate path is 5 levels and exceeding the default limit with
+// a valid document is impossible. The reason the limit exists is not today's
+// schema anyway but the day a field refers back (variant -> product -> variants
+// -> …); when that day comes the mechanism this test measures will already be
+// in place.
+func TestDepthLimitRejectsAnExceedingDocument(t *testing.T) {
 	t.Parallel()
 
-	svc := &sahteVitrin{}
-	yanit, _ := sorgulaOpts(t, kimlikli([]string{"sc_1"}), svc,
-		enDerinVeriSorgusu, graph.Options{MaxDepth: 3})
+	svc := &fakeStorefront{}
+	response, _ := runQueryWithOptions(t, identityWith([]string{"sc_1"}), svc,
+		deepestDataQuery, graph.Options{MaxDepth: 3})
 
-	require.NotEmpty(t, yanit.Errors)
-	assert.Contains(t, yanit.Errors[0].Message, "depth")
-	assert.Equal(t, "DEPTH_LIMIT_EXCEEDED", yanit.Errors[0].Extensions["code"])
-	assert.Empty(t, svc.listeOlculeri, "sınırı aşan belge servise HİÇ ulaşmamalı")
+	require.NotEmpty(t, response.Errors)
+	assert.Contains(t, response.Errors[0].Message, "depth")
+	assert.Equal(t, "DEPTH_LIMIT_EXCEEDED", response.Errors[0].Extensions["code"])
+	assert.Empty(t, svc.listOptions, "a document exceeding the limit must NEVER reach the service")
 }
 
-// TestDerinlikSiniriSinirdakiBelgeyiGecirir tam sınıra oturan belgenin
-// geçtiğini doğrular.
+// TestDepthLimitLetsTheDocumentAtTheLimitThrough verifies that a document
+// sitting exactly on the limit passes.
 //
-// "Aşınca reddet" testi tek başına eksiktir: her belgeyi reddeden bir sınır da
-// o testi geçerdi. Sayımın nerede BİTTİĞİ ancak sınırdaki belge geçince
-// belli olur.
-func TestDerinlikSiniriSinirdakiBelgeyiGecirir(t *testing.T) {
+// The "reject when exceeded" test is incomplete on its own: a limit that
+// rejects every document would pass it too. Where the counting ENDS only
+// becomes clear when the document at the limit gets through.
+func TestDepthLimitLetsTheDocumentAtTheLimitThrough(t *testing.T) {
 	t.Parallel()
 
-	svc := &sahteVitrin{}
-	yanit, _ := sorgulaOpts(t, kimlikli([]string{"sc_1"}), svc,
-		enDerinVeriSorgusu, graph.Options{MaxDepth: 5})
+	svc := &fakeStorefront{}
+	response, _ := runQueryWithOptions(t, identityWith([]string{"sc_1"}), svc,
+		deepestDataQuery, graph.Options{MaxDepth: 5})
 
-	require.Empty(t, yanit.Errors)
-	assert.Len(t, svc.listeOlculeri, 1)
+	require.Empty(t, response.Errors)
+	assert.Len(t, svc.listOptions, 1)
 }
 
-// TestVarsayilanDerinlikMesruSorguyuGecirir bugünkü şemanın en derin yolunun
-// varsayılan sınırın altında kaldığını doğrular.
+// TestDefaultDepthLetsTheLegitimateQueryThrough verifies that the deepest path
+// of today's schema stays below the default limit.
 //
-// Varsayılan bir gün düşürülür ya da şema derinleşirse, arıza burada görünür:
-// aksi hâlde vitrinin en derin sorgusu ÜRETİMDE reddedilmeye başlar ve kimse
-// sınırın ne zaman daraldığını hatırlamaz.
-func TestVarsayilanDerinlikMesruSorguyuGecirir(t *testing.T) {
+// If the default is lowered one day or the schema deepens, the fault shows up
+// here: otherwise the storefront's deepest query starts being rejected IN
+// PRODUCTION and nobody remembers when the limit was narrowed.
+func TestDefaultDepthLetsTheLegitimateQueryThrough(t *testing.T) {
 	t.Parallel()
 
-	svc := &sahteVitrin{}
-	yanit, _ := sorgula(t, kimlikli([]string{"sc_1"}), svc, enDerinVeriSorgusu)
+	svc := &fakeStorefront{}
+	response, _ := runQuery(t, identityWith([]string{"sc_1"}), svc, deepestDataQuery)
 
-	require.Empty(t, yanit.Errors)
-	assert.Less(t, 5, graph.DefaultMaxDepth, "şemanın en derin yolu varsayılanın altında kalmalı")
+	require.Empty(t, response.Errors)
+	assert.Less(t, 5, graph.DefaultMaxDepth,
+		"the deepest path of the schema must stay below the default")
 }
 
-// TestDerinlikSiniriFragmentlaAtlatilamaz aynı ağacın fragment'lara
-// bölünerek sınırdan kaçamadığını doğrular.
+// TestDepthLimitCannotBeEvadedWithFragments verifies that the same tree cannot
+// escape the limit by being split into fragments.
 //
-// Kaçış yolu gerçektir: derinlik sayımı fragment tanımlarının içine
-// bakmasaydı, istemci her seviyeyi ayrı bir fragment yapıp sınırı 1'e
-// düşürürdü. Aşağıdaki belge [enDerinVeriSorgusu] ile AYNI ağacı ister,
-// yalnızca yazımı farklıdır.
-func TestDerinlikSiniriFragmentlaAtlatilamaz(t *testing.T) {
+// The escape route is real: if the depth count did not look inside fragment
+// definitions, a client would make every level a separate fragment and drive
+// the limit down to 1. The document below asks for the SAME tree as
+// [deepestDataQuery], only its spelling differs.
+func TestDepthLimitCannotBeEvadedWithFragments(t *testing.T) {
 	t.Parallel()
 
-	belge := `
-	  { products { ...listeAlanlari } }
-	  fragment listeAlanlari on ProductList { items { ...urunAlanlari } }
-	  fragment urunAlanlari on Product { variants { optionValues { optionTitle } } }
+	document := `
+	  { products { ...listFields } }
+	  fragment listFields on ProductList { items { ...productFields } }
+	  fragment productFields on Product { variants { optionValues { optionTitle } } }
 	`
 
-	svc := &sahteVitrin{}
-	yanit, _ := sorgulaOpts(t, kimlikli([]string{"sc_1"}), svc, belge, graph.Options{MaxDepth: 3})
+	svc := &fakeStorefront{}
+	response, _ := runQueryWithOptions(t, identityWith([]string{"sc_1"}), svc, document,
+		graph.Options{MaxDepth: 3})
 
-	require.NotEmpty(t, yanit.Errors)
-	assert.Contains(t, yanit.Errors[0].Message, "depth")
-	assert.Empty(t, svc.listeOlculeri)
+	require.NotEmpty(t, response.Errors)
+	assert.Contains(t, response.Errors[0].Message, "depth")
+	assert.Empty(t, svc.listOptions)
 }
 
-// TestFragmentKendiBasinaSeviyeEklemez fragment'a bölünmüş belgenin sınırı
-// AYNI ağacın düz yazımından daha erken tüketmediğini doğrular.
+// TestAFragmentByItselfAddsNoLevel verifies that a document split into
+// fragments does not consume the limit earlier than the flat spelling of the
+// SAME tree.
 //
-// Bir öncekinin tersidir ve o testin fazla katı bir sayımla da geçebileceğini
-// kapatır: fragment spread'in kendisi bir seviye SAYILSAYDI, sorgusunu
-// okunabilirlik için fragment'lara bölen istemci — bölmemesi için hiçbir
-// sebep yokken — sınıra takılırdı.
-func TestFragmentKendiBasinaSeviyeEklemez(t *testing.T) {
+// It is the reverse of the previous one and closes off that test also passing
+// with an overly strict count: had the fragment spread itself COUNTED as a
+// level, a client that split its query into fragments for readability — with no
+// reason at all not to — would hit the limit.
+func TestAFragmentByItselfAddsNoLevel(t *testing.T) {
 	t.Parallel()
 
-	belge := `
-	  { products { ...listeAlanlari } }
-	  fragment listeAlanlari on ProductList { items { ...urunAlanlari } }
-	  fragment urunAlanlari on Product { variants { optionValues { optionTitle } } }
+	document := `
+	  { products { ...listFields } }
+	  fragment listFields on ProductList { items { ...productFields } }
+	  fragment productFields on Product { variants { optionValues { optionTitle } } }
 	`
 
-	svc := &sahteVitrin{}
-	yanit, _ := sorgulaOpts(t, kimlikli([]string{"sc_1"}), svc, belge, graph.Options{MaxDepth: 5})
+	svc := &fakeStorefront{}
+	response, _ := runQueryWithOptions(t, identityWith([]string{"sc_1"}), svc, document,
+		graph.Options{MaxDepth: 5})
 
-	require.Empty(t, yanit.Errors, "aynı ağaç düz yazımda 5 seviyedir")
-	assert.Len(t, svc.listeOlculeri, 1)
+	require.Empty(t, response.Errors, "the same tree is 5 levels in the flat spelling")
+	assert.Len(t, svc.listOptions, 1)
 }
 
-// TestKarmasiklikListeUzunluguylaCarpilir maliyetin istenen KAYIT SAYISIYLA
-// çarpıldığını doğrular.
+// TestComplexityIsMultipliedByListLength verifies that the cost is multiplied
+// by the NUMBER OF RECORDS asked for.
 //
-// Testin sınadığı şey bir sınır değil, MALİYET MODELİDİR: aşağıdaki iki belge
-// alan alana aynıdır, yalnızca limit'leri farklıdır. Liste alanına sabit
-// maliyet verilseydi ikisi de aynı fiyata görünür — yani tam olarak pahalı
-// olan sorgu ucuz sayılır ve sınır, asıl durdurması gereken şeyi geçirirdi.
-func TestKarmasiklikListeUzunluguylaCarpilir(t *testing.T) {
+// What the test exercises is not a limit but the COST MODEL: the two documents
+// below are field for field the same, only their limits differ. Had the list
+// field been given a fixed cost, both would look like the same price — that is,
+// exactly the expensive query would count as cheap and the limit would let
+// through the very thing it must stop.
+func TestComplexityIsMultipliedByListLength(t *testing.T) {
 	t.Parallel()
 
-	const tavan = 5000
+	const ceiling = 5000
 
-	ucuz := `{ products(limit: 1) { items {` + tumUrunAlanlari + `} } }`
-	pahali := `{ products(limit: 100) { items {` + tumUrunAlanlari + `} } }`
+	cheap := `{ products(limit: 1) { items {` + allProductFields + `} } }`
+	expensive := `{ products(limit: 100) { items {` + allProductFields + `} } }`
 
-	ucuzSvc := &sahteVitrin{}
-	yanit, _ := sorgulaOpts(t, kimlikli([]string{"sc_1"}), ucuzSvc, ucuz,
-		graph.Options{MaxComplexity: tavan})
+	cheapSvc := &fakeStorefront{}
+	response, _ := runQueryWithOptions(t, identityWith([]string{"sc_1"}), cheapSvc, cheap,
+		graph.Options{MaxComplexity: ceiling})
 
-	require.Empty(t, yanit.Errors, "tek kayıt isteyen belge geçmeli")
-	assert.Len(t, ucuzSvc.listeOlculeri, 1)
+	require.Empty(t, response.Errors, "a document asking for a single record must pass")
+	assert.Len(t, cheapSvc.listOptions, 1)
 
-	pahaliSvc := &sahteVitrin{}
-	yanit, _ = sorgulaOpts(t, kimlikli([]string{"sc_1"}), pahaliSvc, pahali,
-		graph.Options{MaxComplexity: tavan})
+	expensiveSvc := &fakeStorefront{}
+	response, _ = runQueryWithOptions(t, identityWith([]string{"sc_1"}), expensiveSvc, expensive,
+		graph.Options{MaxComplexity: ceiling})
 
-	require.NotEmpty(t, yanit.Errors, "yüz kat fazla kayıt isteyen AYNI belge geçmemeli")
-	assert.Contains(t, yanit.Errors[0].Message, "complexity")
-	assert.Empty(t, pahaliSvc.listeOlculeri, "sınırı aşan belge servise HİÇ ulaşmamalı")
+	require.NotEmpty(t, response.Errors,
+		"the SAME document asking for a hundred times more records must not pass")
+	assert.Contains(t, response.Errors[0].Message, "complexity")
+	assert.Empty(t, expensiveSvc.listOptions,
+		"a document exceeding the limit must NEVER reach the service")
 }
 
-// TestKarmasiklikTavaniSayfaTavaniniAsanLimitiKirpar sayfa tavanının üstündeki
-// bir limit'in maliyet tahminini şişirmediğini doğrular.
+// TestComplexityCeilingClampsALimitAboveThePageCeiling verifies that a limit
+// above the page ceiling does not inflate the cost estimate.
 //
-// limit=100000 yazan istemci yüz bin kayıt ALAMAZ; servis sayfayı
-// service.MaxLimit'e çeker. Maliyet tahmini bunu bilmeseydi, meşru bir
-// istemcinin abartılı yazılmış limit'i sorguyu reddettirirdi — hem de sunucu
-// o kadar işi hiç yapmayacakken.
-func TestKarmasiklikTavaniSayfaTavaniniAsanLimitiKirpar(t *testing.T) {
+// A client writing limit=100000 CANNOT get a hundred thousand records; the
+// service pulls the page down to service.MaxLimit. Had the cost estimate not
+// known that, a legitimate client's exaggerated limit would get the query
+// rejected — while the server was never going to do that much work anyway.
+func TestComplexityCeilingClampsALimitAboveThePageCeiling(t *testing.T) {
 	t.Parallel()
 
-	svc := &sahteVitrin{}
-	yanit, _ := sorgulaOpts(t, kimlikli([]string{"sc_1"}), svc,
+	svc := &fakeStorefront{}
+	response, _ := runQueryWithOptions(t, identityWith([]string{"sc_1"}), svc,
 		`{ products(limit: 100000) { items { id handle } } }`,
 		graph.Options{MaxComplexity: 1500})
 
-	require.Empty(t, yanit.Errors)
-	assert.Len(t, svc.listeOlculeri, 1)
+	require.Empty(t, response.Errors)
+	assert.Len(t, svc.listOptions, 1)
 }
 
-// TestKarmasiklikTakmaAdliYigmayiReddeder tek istekte yüzlerce kök sorgunun
-// VARSAYILAN ayarlarla reddedildiğini doğrular.
+// TestComplexityRejectsAliasedStacking verifies that hundreds of root queries
+// in a single request are rejected with the DEFAULT settings.
 //
-// Hız sınırlayıcı bu belgeyi BİR istek sayar, sunucu ise dört yüz katalog
-// sorgusu yapardı: kotayı ödemeden yük bindirmenin yolu tam olarak budur ve
-// REST'te karşılığı yoktur (orada dört yüz yük, dört yüz kota demektir).
+// The rate limiter counts this document as ONE request, while the server would
+// run four hundred catalog queries: this is exactly how load is applied without
+// paying the quota, and it has no counterpart in REST (there, four hundred
+// loads mean four hundred units of quota).
 //
-// Belge bugün ÖNCE alan tekrarı kapısına takılır (400 kez Query.products) ve
-// bu doğrudur: iki kapı da aynı belgeyi reddeder, ucuz olanı öndedir. Ama
-// karmaşıklık tavanının kendi kalibrasyonu yine de ölçülmelidir — tekrar
-// kapısı bir gün gevşetilirse tavanın hâlâ tuttuğunu kimse bilmezdi. İkinci
-// iddia bu yüzden tekrar kapısını YOLDAN ÇEKER ve tavanı yalnız bırakır.
-func TestKarmasiklikTakmaAdliYigmayiReddeder(t *testing.T) {
+// Today the document hits the field repetition gate FIRST (Query.products 400
+// times) and that is correct: both gates reject the same document, the cheaper
+// one is in front. But the complexity ceiling's own calibration must still be
+// measured — if the repetition gate is loosened one day, nobody would know
+// whether the ceiling still holds. That is why the second claim MOVES the
+// repetition gate OUT OF THE WAY and leaves the ceiling on its own.
+func TestComplexityRejectsAliasedStacking(t *testing.T) {
 	t.Parallel()
 
-	svc := &sahteVitrin{}
-	yanit, _ := sorgula(t, kimlikli([]string{"sc_1"}), svc, takmaAdliYigma(400))
+	svc := &fakeStorefront{}
+	response, _ := runQuery(t, identityWith([]string{"sc_1"}), svc, aliasedStacking(400))
 
-	require.NotEmpty(t, yanit.Errors)
-	assert.Empty(t, svc.listeOlculeri, "sınırı aşan belge hiç çalıştırılmamalı")
+	require.NotEmpty(t, response.Errors)
+	assert.Empty(t, svc.listOptions, "a document exceeding the limit must never be executed")
 
-	yalnizTavan := &sahteVitrin{}
-	yanit, _ = sorgulaOpts(t, kimlikli([]string{"sc_1"}), yalnizTavan, takmaAdliYigma(400),
-		graph.Options{MaxFieldRepetition: 500})
+	ceilingOnly := &fakeStorefront{}
+	response, _ = runQueryWithOptions(t, identityWith([]string{"sc_1"}), ceilingOnly,
+		aliasedStacking(400), graph.Options{MaxFieldRepetition: 500})
 
-	require.NotEmpty(t, yanit.Errors)
-	assert.Contains(t, yanit.Errors[0].Message, "complexity",
-		"tekrar kapısı yoldan çekilince karmaşıklık tavanı yakalamalı")
-	assert.Empty(t, yalnizTavan.listeOlculeri)
+	require.NotEmpty(t, response.Errors)
+	assert.Contains(t, response.Errors[0].Message, "complexity",
+		"with the repetition gate out of the way the complexity ceiling must catch it")
+	assert.Empty(t, ceilingOnly.listOptions)
 }
 
-// TestVarsayilanTavanMesruBelgeyiGecirir kalibrasyonun İKİ yanını da
-// sabitler.
+// TestDefaultCeilingLetsTheLegitimateDocumentThrough pins BOTH sides of the
+// calibration.
 //
-// Bir sınırın doğru yerde olduğu ancak iki iddiayla bilinir: en ağır MEŞRU
-// belge geçmeli (yoksa sertleştirme, vitrinin kendi istemcisini kırar) ve
-// bunun katı olan belge geçmemeli (yoksa sınır süstür). Varsayılan tavan
-// değiştirilirse bu test, hangi tarafın feda edildiğini söyler.
-func TestVarsayilanTavanMesruBelgeyiGecirir(t *testing.T) {
+// That a limit is in the right place is known only through two claims: the
+// heaviest LEGITIMATE document must pass (otherwise the hardening breaks the
+// storefront's own client) and a document a multiple of it must not (otherwise
+// the limit is decoration). If the default ceiling is changed, this test says
+// which side was sacrificed.
+func TestDefaultCeilingLetsTheLegitimateDocumentThrough(t *testing.T) {
 	t.Parallel()
 
-	mesru := `{ products { count offset limit items {` + tumUrunAlanlari + `} } }`
+	legitimate := `{ products { count offset limit items {` + allProductFields + `} } }`
 
-	svc := &sahteVitrin{}
-	yanit, _ := sorgula(t, kimlikli([]string{"sc_1"}), svc, mesru)
+	svc := &fakeStorefront{}
+	response, _ := runQuery(t, identityWith([]string{"sc_1"}), svc, legitimate)
 
-	require.Empty(t, yanit.Errors, "varsayılan sayfada tüm alanları isteyen belge geçmeli")
-	assert.Len(t, svc.listeOlculeri, 1)
+	require.Empty(t, response.Errors,
+		"a document asking for all fields on the default page must pass")
+	assert.Len(t, svc.listOptions, 1)
 
-	asiri := `{ products(limit: 100) { count offset limit items {` + tumUrunAlanlari + `} } }`
+	excessive := `{ products(limit: 100) { count offset limit items {` + allProductFields + `} } }`
 
-	asiriSvc := &sahteVitrin{}
-	yanit, _ = sorgula(t, kimlikli([]string{"sc_1"}), asiriSvc, asiri)
+	excessiveSvc := &fakeStorefront{}
+	response, _ = runQuery(t, identityWith([]string{"sc_1"}), excessiveSvc, excessive)
 
-	require.NotEmpty(t, yanit.Errors, "aynı ağacı yüz kayıt için isteyen belge geçmemeli")
-	assert.Empty(t, asiriSvc.listeOlculeri)
+	require.NotEmpty(t, response.Errors,
+		"a document asking for the same tree for a hundred records must not pass")
+	assert.Empty(t, excessiveSvc.listOptions)
 }
 
-// TestGecersizSinirVarsayilanaDuser sıfır ve negatif ayarın "sınırsız"
-// ANLAMINA GELMEDİĞİNİ doğrular.
+// TestInvalidLimitFallsBackToTheDefault verifies that a zero or negative
+// setting DOES NOT MEAN "unlimited".
 //
-// Sertleştirmenin sessizce kaybolabileceği tek yol budur: ayarı doldurmayı
-// unutan (ya da yanlış dolduran) bir kurulum, hiçbir hata görmeden korumasız
-// bir uç açardı. Sıfır "her belgeyi reddet" de olamaz — o da ucu bir başka
-// biçimde kapatırdı; bu yüzden test hem meşru belgenin geçtiğini hem aşırı
-// belgenin reddedildiğini iddia eder.
-func TestGecersizSinirVarsayilanaDuser(t *testing.T) {
+// That is the only way the hardening could disappear silently: a deployment
+// that forgot to fill in the setting (or filled it in wrong) would open an
+// unprotected endpoint without seeing any error. Zero cannot mean "reject every
+// document" either — that would close the endpoint in another way; that is why
+// the test claims both that the legitimate document passes and that the
+// excessive one is rejected.
+func TestInvalidLimitFallsBackToTheDefault(t *testing.T) {
 	t.Parallel()
 
-	bozuk := graph.Options{
+	broken := graph.Options{
 		MaxDepth:              -1,
 		MaxComplexity:         -1,
 		MaxFieldRepetition:    -1,
@@ -327,585 +344,621 @@ func TestGecersizSinirVarsayilanaDuser(t *testing.T) {
 		MaxResponseBytes:      -1,
 	}
 
-	svc := &sahteVitrin{}
-	yanit, _ := sorgulaOpts(t, kimlikli([]string{"sc_1"}), svc, enDerinVeriSorgusu, bozuk)
+	svc := &fakeStorefront{}
+	response, _ := runQueryWithOptions(t, identityWith([]string{"sc_1"}), svc, deepestDataQuery, broken)
 
-	require.Empty(t, yanit.Errors, "geçersiz ayar meşru sorguyu kırmamalı")
-	assert.Len(t, svc.listeOlculeri, 1)
+	require.Empty(t, response.Errors, "an invalid setting must not break a legitimate query")
+	assert.Len(t, svc.listOptions, 1)
 
-	yigmaSvc := &sahteVitrin{}
-	yanit, _ = sorgulaOpts(t, kimlikli([]string{"sc_1"}), yigmaSvc, takmaAdliYigma(400), bozuk)
+	stackingSvc := &fakeStorefront{}
+	response, _ = runQueryWithOptions(t, identityWith([]string{"sc_1"}), stackingSvc,
+		aliasedStacking(400), broken)
 
-	require.NotEmpty(t, yanit.Errors, "geçersiz ayar sınırı KALDIRMAMALI")
-	assert.Empty(t, yigmaSvc.listeOlculeri)
+	require.NotEmpty(t, response.Errors, "an invalid setting must NOT REMOVE the limit")
+	assert.Empty(t, stackingSvc.listOptions)
 }
 
-// devasaBelge sınırı kesin olarak aşan, GEÇERLİ bir GraphQL belgesi döner.
+// hugeDocument returns a VALID GraphQL document that exceeds the limit by a
+// wide margin.
 //
-// Sorgunun kendisi kusursuzdur; reddedilme sebebi şekli değil BOYUTUDUR.
-func devasaBelge() string {
+// The query itself is flawless; the reason it is rejected is not its shape but
+// its SIZE.
+func hugeDocument() string {
 	return `{ product(handle: "` + strings.Repeat("x", 128<<10) + `") { id } }`
 }
 
-// TestBuyukSorguGovdesiReddedilir devasa bir belgenin ayrıştırılmadan
-// reddedildiğini doğrular.
+// TestOversizedQueryBodyIsRejected verifies that a huge document is rejected
+// without being parsed.
 //
-// Bu kapı ötekilerin YAPAMADIĞI işi yapar: derinlik ve karmaşıklık ancak belge
-// ayrıştırıldıktan SONRA ölçülebilir, yani onlara ulaşana kadar sunucu metni
-// zaten okumuş ve ayrıştırmış olurdu.
+// This gate does the work the others CANNOT do: depth and complexity can only
+// be measured AFTER the document has been parsed, that is, by the time they are
+// reached the server would already have read and parsed the text.
 //
-// Yanıt, GraphQL zarfı değil ÇEKİRDEĞİN hata zarfıdır: belge çalıştırıcıya
-// hiç ulaşmadı (gerekçe için bkz. graph.NewHandler'ın sardığı govdeSiniri).
-func TestBuyukSorguGovdesiReddedilir(t *testing.T) {
+// The response is not the GraphQL envelope but the CORE's error envelope: the
+// document never reached the executor (for the rationale see the bodyLimit that
+// graph.NewHandler wraps).
+func TestOversizedQueryBodyIsRejected(t *testing.T) {
 	t.Parallel()
 
-	svc := &sahteVitrin{}
-	rec := istekYap(t, kimlikli([]string{"sc_1"}), svc, devasaBelge(), graph.Options{})
+	svc := &fakeStorefront{}
+	rec := doRequest(t, identityWith([]string{"sc_1"}), svc, hugeDocument(), graph.Options{})
 
 	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code)
 
-	var zarf corehttp.ErrorResponse
-	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &zarf))
-	assert.Equal(t, "product_graphql_body_too_large", zarf.Error.Code)
+	var envelope corehttp.ErrorResponse
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &envelope))
+	assert.Equal(t, "product_graphql_body_too_large", envelope.Error.Code)
 
-	assert.Empty(t, svc.tekilSecici, "sınırı aşan gövde servise HİÇ ulaşmamalı")
+	assert.Empty(t, svc.singleSelectors, "a body exceeding the limit must NEVER reach the service")
 }
 
-// TestBoyutunuGizleyenGovdeDeReddedilir boyutunu BİLDİRMEYEN bir istemcinin
-// sınırı atlayamadığını doğrular.
+// TestBodyHidingItsSizeIsRejectedToo verifies that a client which DOES NOT
+// DECLARE its size cannot slip past the limit.
 //
-// Content-Length istemcinin İDDİASIDIR; parçalı (chunked) gövdede hiç yoktur.
-// İlk kapı yalnızca o iddiaya bakar, bu yüzden tek başına bir sınır değil
-// yalnızca dürüst istemciye verilen düzgün bir hatadır. Asıl sınırı okuyucu
-// uygular ve sınadığımız şey odur.
+// Content-Length is the client's CLAIM; it does not exist at all on a chunked
+// body. The first gate looks only at that claim, so on its own it is not a
+// limit but only a decent error given to an honest client. The real limit is
+// applied by the reader and that is what we exercise.
 //
-// İddia gqlgen'in cümlesine DEĞİL bizim kodumuza bakar ve bu bilinçlidir:
-// istemci burada da sebebi ve SAYIYI öğrenir, yalnızca zarfı farklıdır
-// (bkz. govdeSiniri). Metne bakan bir iddia, kütüphanenin cümlesini bu depoda
-// ikinci kez tanımlardı.
-func TestBoyutunuGizleyenGovdeDeReddedilir(t *testing.T) {
+// The claim looks at OUR code and NOT at gqlgen's sentence, and that is
+// deliberate: here too the client learns the reason and the NUMBER, only the
+// envelope differs (see bodyLimit). A claim looking at the text would define
+// the library's sentence a second time in this repository.
+func TestBodyHidingItsSizeIsRejectedToo(t *testing.T) {
 	t.Parallel()
 
-	govde, err := json.Marshal(map[string]any{"query": devasaBelge()})
+	body, err := json.Marshal(map[string]any{"query": hugeDocument()})
 	require.NoError(t, err)
 
-	req := httptest.NewRequest(http.MethodPost, graph.Path, strings.NewReader(string(govde)))
+	req := httptest.NewRequest(http.MethodPost, graph.Path, strings.NewReader(string(body)))
 	req.Header.Set("Content-Type", "application/json")
-	req = req.WithContext(kimlikli([]string{"sc_1"}))
-	// İstemcinin boyutu saklaması bu satırla taklit edilir.
+	req = req.WithContext(identityWith([]string{"sc_1"}))
+	// The client hiding its size is imitated with this line.
 	req.ContentLength = -1
 
-	svc := &sahteVitrin{}
+	svc := &fakeStorefront{}
 	rec := httptest.NewRecorder()
 	graph.NewHandler(svc, graph.Options{}).ServeHTTP(rec, req)
 
-	assert.Empty(t, svc.tekilSecici, "gövde okunurken kesilmeli, sorgu çalışmamalı")
+	assert.Empty(t, svc.singleSelectors,
+		"it must be cut while the body is read, the query must not run")
 
-	var yanit graphqlYaniti
-	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &yanit), "gövde: %s", rec.Body.String())
+	var response graphQLResponse
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &response), "body: %s", rec.Body.String())
 
-	require.NotEmpty(t, yanit.Errors)
-	assert.Equal(t, "REQUEST_BODY_TOO_LARGE", yanit.Errors[0].Extensions["code"])
-	assert.Contains(t, yanit.Errors[0].Message, strconv.Itoa(64<<10),
-		"istemci sınırı sayıyla öğrenmeli")
+	require.NotEmpty(t, response.Errors)
+	assert.Equal(t, "REQUEST_BODY_TOO_LARGE", response.Errors[0].Extensions["code"])
+	assert.Contains(t, response.Errors[0].Message, strconv.Itoa(64<<10),
+		"the client must learn the limit as a number")
 }
 
-// TestIcGozlemVarsayilanOlarakAcik şemanın istemci araçlarına görünür
-// olduğunu doğrular.
+// TestIntrospectionIsEnabledByDefault verifies that the schema is visible to
+// client tools.
 //
-// Karar ve gerekçesi [graph.Options] alanındadır: şema bu deponun içinde duran
-// bir dosyadır, kapatmak saldırgandan bir şey saklamaz ama kod üreteçlerini
-// körleştirir. Kararın testi yoksa bir gün "sıkılaştırma" diye kapatılır ve
-// kimse neyi kaybettiğini bilmez.
-func TestIcGozlemVarsayilanOlarakAcik(t *testing.T) {
+// The decision and its rationale are on the [graph.Options] field: the schema
+// is a file that sits inside this repository, disabling it hides nothing from
+// an attacker but blinds code generators. If a decision has no test, one day it
+// gets turned off in the name of "hardening" and nobody knows what was lost.
+func TestIntrospectionIsEnabledByDefault(t *testing.T) {
 	t.Parallel()
 
-	yanit, _ := sorgula(t, kimlikli([]string{"sc_1"}), &sahteVitrin{},
+	response, _ := runQuery(t, identityWith([]string{"sc_1"}), &fakeStorefront{},
 		`{ __schema { queryType { name } } }`)
 
-	require.Empty(t, yanit.Errors)
-	assert.NotNil(t, yanit.Data["__schema"])
+	require.Empty(t, response.Errors)
+	assert.NotNil(t, response.Data["__schema"])
 }
 
-// TestIcGozlemKapatilabilir anahtarın GERÇEKTEN kapattığını doğrular.
+// TestIntrospectionCanBeDisabled verifies that the switch REALLY turns it off.
 //
-// Anahtarın varlığı tek başına bir şey ifade etmez; kapatmanın yolu gqlgen'de
-// bir eklentiyi HİÇ EKLEMEMEKTİR ve bu, unutulması kolay bir ayrıntıdır.
-// Veri sorgusunun kapalıyken de çalıştığı ayrıca iddia edilir: iç gözlemi
-// kapatırken yüzeyin tamamını kapatmak da mümkündü.
-func TestIcGozlemKapatilabilir(t *testing.T) {
+// The existence of the switch means nothing on its own; the way to disable it
+// in gqlgen is to NEVER ADD an extension, and that is an easy detail to forget.
+// That the data query still works while it is disabled is claimed separately:
+// it was also possible to close the whole surface while disabling
+// introspection.
+func TestIntrospectionCanBeDisabled(t *testing.T) {
 	t.Parallel()
 
-	kapali := graph.Options{IntrospectionDisabled: true}
+	disabled := graph.Options{IntrospectionDisabled: true}
 
-	yanit, _ := sorgulaOpts(t, kimlikli([]string{"sc_1"}), &sahteVitrin{},
-		`{ __schema { queryType { name } } }`, kapali)
+	response, _ := runQueryWithOptions(t, identityWith([]string{"sc_1"}), &fakeStorefront{},
+		`{ __schema { queryType { name } } }`, disabled)
 
-	require.NotEmpty(t, yanit.Errors, "iç gözlem kapalıyken şema okunamamalı")
+	require.NotEmpty(t, response.Errors,
+		"the schema must not be readable while introspection is disabled")
 
-	svc := &sahteVitrin{}
-	yanit, _ = sorgulaOpts(t, kimlikli([]string{"sc_1"}), svc, `{ products { count } }`, kapali)
+	svc := &fakeStorefront{}
+	response, _ = runQueryWithOptions(t, identityWith([]string{"sc_1"}), svc,
+		`{ products { count } }`, disabled)
 
-	require.Empty(t, yanit.Errors, "iç gözlem kapalıyken veri sorgusu çalışmalı")
-	assert.Len(t, svc.listeOlculeri, 1)
+	require.Empty(t, response.Errors,
+		"the data query must work while introspection is disabled")
+	assert.Len(t, svc.listOptions, 1)
 }
 
-// TestIcGozlemSorgusuVarsayilanlarlaGecer istemci araçlarının gönderdiği
-// STANDART iç gözlem sorgusunun varsayılan ayarlarla çalıştığını doğrular.
+// TestIntrospectionQueryPassesWithTheDefaults verifies that the STANDARD
+// introspection query client tools send works with the default settings.
 //
-// Sorgu ölçüldü: 13 seviye derindir (ofType zinciri, tip sarmalayıcılarını
-// açmak için) ve kardeş kapsamında en çok tekrarlanan alanı 1 kez seçilir.
-// Yani iç gözlemin AYRI tavanı ([graph.DefaultMaxIntrospectionDepth]) bu
-// sorgu için vardır; tek bir tavan kullanılsaydı VERİ yüzeyinin sınırını
-// 13'ün üstüne çıkarmak zorunda kalırdık ve gevşeme asıl korumak istediğimiz
-// yerde olurdu.
+// The query was measured: it is 13 levels deep (the ofType chain, to unwrap the
+// type wrappers) and its most repeated field in sibling scope is selected once.
+// That is, introspection's SEPARATE ceiling
+// ([graph.DefaultMaxIntrospectionDepth]) exists for this query; had a single
+// ceiling been used we would have had to raise the limit of the DATA surface
+// above 13 and the loosening would have happened in the very place we want to
+// protect.
 //
-// İç gözlem ağacının bir sınırı daha vardır ve bizim ayarımızdan bağımsızdır:
-// gqlparser'ın MaxIntrospectionDepth kuralı iç içe __Type listelerini üç
-// seviyede keser.
-func TestIcGozlemSorgusuVarsayilanlarlaGecer(t *testing.T) {
+// The introspection tree has one more limit and it is independent of our
+// setting: gqlparser's MaxIntrospectionDepth rule cuts nested __Type lists at
+// three levels.
+func TestIntrospectionQueryPassesWithTheDefaults(t *testing.T) {
 	t.Parallel()
 
-	yanit, _ := sorgula(t, kimlikli([]string{"sc_1"}), &sahteVitrin{}, introspection.Query)
+	response, _ := runQuery(t, identityWith([]string{"sc_1"}), &fakeStorefront{},
+		introspection.Query)
 
-	require.Empty(t, yanit.Errors)
-	assert.NotNil(t, yanit.Data["__schema"])
+	require.Empty(t, response.Errors)
+	assert.NotNil(t, response.Data["__schema"])
 }
 
-// TestIcGozlemDerinligiVeriTavanindanBagimsiz iki derinlik tavanının gerçekten
-// AYRI çalıştığını doğrular.
+// TestIntrospectionDepthIsIndependentOfTheDataCeiling verifies that the two
+// depth ceilings really work SEPARATELY.
 //
-// İddia çift taraflıdır ve tek taraflısı yanıltıcı olurdu: veri tavanı 3'e
-// indirilmişken 13 seviyelik iç gözlem sorgusu GEÇMELİ (ayrı tavan işini
-// yapıyor), ama 4 seviyelik bir VERİ sorgusu aynı ayarla REDDEDİLMELİ
-// (ayrılık, veri kapısını gevşetmiyor).
-func TestIcGozlemDerinligiVeriTavanindanBagimsiz(t *testing.T) {
+// The claim has two sides and a one-sided version would be misleading: with the
+// data ceiling lowered to 3 the 13-level introspection query MUST PASS (the
+// separate ceiling is doing its job), but a 4-level DATA query MUST BE REJECTED
+// with the same settings (the separation does not loosen the data gate).
+func TestIntrospectionDepthIsIndependentOfTheDataCeiling(t *testing.T) {
 	t.Parallel()
 
-	dar := graph.Options{MaxDepth: 3}
+	narrow := graph.Options{MaxDepth: 3}
 
-	yanit, _ := sorgulaOpts(t, kimlikli([]string{"sc_1"}), &sahteVitrin{}, introspection.Query, dar)
-	require.Empty(t, yanit.Errors, "iç gözlemin kendi tavanı veri tavanından bağımsız olmalı")
+	response, _ := runQueryWithOptions(t, identityWith([]string{"sc_1"}), &fakeStorefront{},
+		introspection.Query, narrow)
+	require.Empty(t, response.Errors,
+		"introspection's own ceiling must be independent of the data ceiling")
 
-	svc := &sahteVitrin{}
-	yanit, _ = sorgulaOpts(t, kimlikli([]string{"sc_1"}), svc, enDerinVeriSorgusu, dar)
+	svc := &fakeStorefront{}
+	response, _ = runQueryWithOptions(t, identityWith([]string{"sc_1"}), svc, deepestDataQuery, narrow)
 
-	require.NotEmpty(t, yanit.Errors, "veri tavanı iç gözlem yüzünden gevşememeli")
-	assert.Equal(t, "DEPTH_LIMIT_EXCEEDED", yanit.Errors[0].Extensions["code"])
-	assert.Empty(t, svc.listeOlculeri)
+	require.NotEmpty(t, response.Errors,
+		"the data ceiling must not loosen because of introspection")
+	assert.Equal(t, "DEPTH_LIMIT_EXCEEDED", response.Errors[0].Extensions["code"])
+	assert.Empty(t, svc.listOptions)
 }
 
-// TestIcGozlemDerinligiKendiTavaniylaKesilir iç gözlem ağacının artık ÖLÇÜLDÜĞÜNÜ
-// doğrular.
+// TestIntrospectionDepthIsCutByItsOwnCeiling verifies that the introspection
+// tree is now MEASURED at all.
 //
-// Eskiden derinlik sayımı __schema/__type köklerini atlıyordu, gqlgen'in
-// karmaşıklık yürüyüşü de __Schema tipli alanı atlar: yani iç gözlemin ölçülen
-// derinliği 0, karmaşıklığı 0'dı ve operatörün elinde onu daraltacak hiçbir
-// ayar yoktu. Bu test o boşluğun kapandığını iddia eder.
-func TestIcGozlemDerinligiKendiTavaniylaKesilir(t *testing.T) {
+// The depth count used to skip the __schema/__type roots, and gqlgen's
+// complexity walk skips a field of type __Schema: that is, introspection's
+// measured depth was 0 and its complexity 0, and the operator had no setting at
+// all to narrow it with. This test claims that the gap has been closed.
+func TestIntrospectionDepthIsCutByItsOwnCeiling(t *testing.T) {
 	t.Parallel()
 
-	sig := graph.Options{MaxIntrospectionDepth: 2}
+	shallow := graph.Options{MaxIntrospectionDepth: 2}
 
-	yanit, _ := sorgulaOpts(t, kimlikli([]string{"sc_1"}), &sahteVitrin{},
-		`{ __schema { queryType { name } } }`, sig)
+	response, _ := runQueryWithOptions(t, identityWith([]string{"sc_1"}), &fakeStorefront{},
+		`{ __schema { queryType { name } } }`, shallow)
 
-	require.NotEmpty(t, yanit.Errors, "üç seviyelik iç gözlem, iki seviyelik tavanı aşmalı")
-	assert.Equal(t, "INTROSPECTION_LIMIT_EXCEEDED", yanit.Errors[0].Extensions["code"])
-	assert.Contains(t, yanit.Errors[0].Message, "introspection")
+	require.NotEmpty(t, response.Errors,
+		"a three-level introspection must exceed a two-level ceiling")
+	assert.Equal(t, "INTROSPECTION_LIMIT_EXCEEDED", response.Errors[0].Extensions["code"])
+	assert.Contains(t, response.Errors[0].Message, "introspection")
 
-	// Ayarın veri yüzeyini kapatmadığı ayrıca iddia edilir: iç gözlemi daraltmak
-	// isterken tüm ucu daraltmak da mümkündü.
-	svc := &sahteVitrin{}
-	yanit, _ = sorgulaOpts(t, kimlikli([]string{"sc_1"}), svc, `{ products { count } }`, sig)
+	// That the setting does not close the data surface is claimed separately:
+	// it was also possible to narrow the whole endpoint while trying to narrow
+	// introspection.
+	svc := &fakeStorefront{}
+	response, _ = runQueryWithOptions(t, identityWith([]string{"sc_1"}), svc,
+		`{ products { count } }`, shallow)
 
-	require.Empty(t, yanit.Errors)
-	assert.Len(t, svc.listeOlculeri, 1)
+	require.Empty(t, response.Errors)
+	assert.Len(t, svc.listOptions, 1)
 }
 
-// TestIcGozlemKokYigmasiReddedilir tek belgede yüzlerce __schema kökünün
-// reddedildiğini doğrular.
+// TestIntrospectionRootStackingIsRejected verifies that hundreds of __schema
+// roots in a single document are rejected.
 //
-// Ölçülen sel buydu: 302 takma adlı __schema kökü, 45.796 baytlık istekten
-// 5,00 MiB yanıt üretiyordu ve iki eski kapı da onu göremiyordu — belge
-// Options{MaxDepth: 1, MaxComplexity: 1} ile bile 200 dönüyor, aynı ayarla
-// "products { count }" ise reddediliyordu. Kökleri sığdır (dört seviye), yani
-// derinlik kapısı bu belgeyi hiçbir ayarla yakalayamazdı; sayılması gereken
-// şey ağacın ne kadar indiği değil, KAÇ KEZ istendiğidir.
-func TestIcGozlemKokYigmasiReddedilir(t *testing.T) {
+// That was the measured flood: 302 aliased __schema roots produced a 5.00 MiB
+// response out of a 45,796-byte request, and neither of the two old gates could
+// see it — the document was returning 200 even with
+// Options{MaxDepth: 1, MaxComplexity: 1}, while "products { count }" was being
+// rejected with the same settings. The roots are shallow (four levels), that
+// is, the depth gate could not have caught this document with any setting; what
+// had to be counted is not how far the tree descends but HOW MANY TIMES it was
+// asked for.
+func TestIntrospectionRootStackingIsRejected(t *testing.T) {
 	t.Parallel()
 
-	belge := "{" + takmaAdliAlan(302, "__schema { queryType { name } }") + "}"
+	document := "{" + aliasedField(302, "__schema { queryType { name } }") + "}"
 
-	yanit, _ := sorgula(t, kimlikli([]string{"sc_1"}), &sahteVitrin{}, belge)
+	response, _ := runQuery(t, identityWith([]string{"sc_1"}), &fakeStorefront{}, document)
 
-	require.NotEmpty(t, yanit.Errors)
-	assert.Equal(t, "INTROSPECTION_LIMIT_EXCEEDED", yanit.Errors[0].Extensions["code"])
-	assert.Contains(t, yanit.Errors[0].Message, "introspection roots")
-	assert.Nil(t, yanit.Data["a0"], "reddedilen belge hiç çalıştırılmamalı")
+	require.NotEmpty(t, response.Errors)
+	assert.Equal(t, "INTROSPECTION_LIMIT_EXCEEDED", response.Errors[0].Extensions["code"])
+	assert.Contains(t, response.Errors[0].Message, "introspection roots")
+	assert.Nil(t, response.Data["a0"], "a rejected document must never be executed")
 }
 
-// TestIcGozlemKokSiniriSinirdakiBelgeyiGecirir varsayılanın araçları
-// kırmadığını doğrular.
+// TestIntrospectionRootLimitLetsTheDocumentAtTheLimitThrough verifies that the
+// default does not break the tools.
 //
-// "Aşınca reddet" testi tek başına eksiktir: her iç gözlem sorgusunu reddeden
-// bir sınır da onu geçerdi. Şema tarayıcıları aynı belgede bir __schema ile
-// bir __type gönderebilir; varsayılanın altına inmek o araçları kırardı.
-func TestIcGozlemKokSiniriSinirdakiBelgeyiGecirir(t *testing.T) {
+// The "reject when exceeded" test is incomplete on its own: a limit that
+// rejects every introspection query would pass it too. Schema explorers may
+// send one __schema and one __type in the same document; going below the
+// default would break those tools.
+func TestIntrospectionRootLimitLetsTheDocumentAtTheLimitThrough(t *testing.T) {
 	t.Parallel()
 
-	belge := `{ __schema { queryType { name } } __type(name: "Product") { name } }`
+	document := `{ __schema { queryType { name } } __type(name: "Product") { name } }`
 
-	yanit, _ := sorgula(t, kimlikli([]string{"sc_1"}), &sahteVitrin{}, belge)
+	response, _ := runQuery(t, identityWith([]string{"sc_1"}), &fakeStorefront{}, document)
 
-	require.Empty(t, yanit.Errors)
-	assert.NotNil(t, yanit.Data["__schema"])
+	require.Empty(t, response.Errors)
+	assert.NotNil(t, response.Data["__schema"])
 	assert.Equal(t, 2, graph.DefaultMaxIntrospectionRoots)
 }
 
-// TestAlanTekrariYanitBoyutuYigmasiniReddeder bulgunun ÖLÇÜLEN belgesini
-// tekrarlar: karmaşıklık tavanının altında kalan ama yanıtı yüz megabaytlara
-// çıkaran sorgu.
+// TestFieldRepetitionRejectsResponseSizeStacking repeats the finding's MEASURED
+// document: the query that stays under the complexity ceiling but pushes the
+// response into hundreds of megabytes.
 //
-// Belge şudur ve kusursuzdur:
+// The document is this, and it is flawless:
 //
 //	products(limit: 100) { items { a0: description … a488: description } }
 //
-// Ölçülen maliyeti tam 50.000'dir: 50.000'lik tavana OTURUR, aşmaz ve
-// dolayısıyla geçerdi. Ölçüldü: 8.729 baytlık istek 204,9 MiB yanıt
-// üretiyordu (24.620 kat) ve hız sınırlayıcı bunu BİR istek sayıyordu.
-// REST'te karşılığı yoktur — orada aynı alan 489 kez istenemez, aynı verinin
-// yanıtı ~450 KiB'dır.
-func TestAlanTekrariYanitBoyutuYigmasiniReddeder(t *testing.T) {
+// Its measured cost is exactly 50,000: it SITS on the ceiling of 50,000, does
+// not exceed it, and would therefore pass. Measured: an 8,729-byte request
+// produced a 204.9 MiB response (24,620 times) and the rate limiter counted it
+// as ONE request. It has no counterpart in REST — there the same field cannot
+// be asked for 489 times, and the response for the same data is ~450 KiB.
+func TestFieldRepetitionRejectsResponseSizeStacking(t *testing.T) {
 	t.Parallel()
 
-	svc := &sahteVitrin{}
-	yanit, _ := sorgula(t, kimlikli([]string{"sc_1"}), svc, tekrarliAciklama(489, 100))
+	svc := &fakeStorefront{}
+	response, _ := runQuery(t, identityWith([]string{"sc_1"}), svc, repeatedDescription(489, 100))
 
-	require.NotEmpty(t, yanit.Errors)
-	assert.Equal(t, "FIELD_REPETITION_LIMIT_EXCEEDED", yanit.Errors[0].Extensions["code"])
-	assert.Contains(t, yanit.Errors[0].Message, "Product.description")
-	assert.Empty(t, svc.listeOlculeri, "sınırı aşan belge servise HİÇ ulaşmamalı")
+	require.NotEmpty(t, response.Errors)
+	assert.Equal(t, "FIELD_REPETITION_LIMIT_EXCEEDED", response.Errors[0].Extensions["code"])
+	assert.Contains(t, response.Errors[0].Message, "Product.description")
+	assert.Empty(t, svc.listOptions, "a document exceeding the limit must NEVER reach the service")
 }
 
-// TestAlanTekrariniKarmasiklikYakalamiyor bir öncekinin neden GEREKTİĞİNİ
-// ölçer.
+// TestComplexityDoesNotCatchFieldRepetition measures why the previous one IS
+// NEEDED.
 //
-// Yeni kapı yoldan çekildiğinde AYNI belge geçer: yani onu durduran şey
-// karmaşıklık tavanı değildi ve olamazdı — model alan SAYISINI fiyatlar,
-// BAYT'ı değil. Bu iddia olmasaydı, tekrar kapısının gereksiz olduğu (zaten
-// karmaşıklığın yakaladığı) bir gün rahatça iddia edilebilirdi.
-func TestAlanTekrariniKarmasiklikYakalamiyor(t *testing.T) {
+// With the new gate moved out of the way the SAME document passes: that is,
+// what stopped it was not the complexity ceiling and could not have been — the
+// model prices the NUMBER of fields, not the BYTES. Without this claim it could
+// comfortably be argued one day that the repetition gate is unnecessary (that
+// complexity catches it anyway).
+func TestComplexityDoesNotCatchFieldRepetition(t *testing.T) {
 	t.Parallel()
 
-	svc := &sahteVitrin{}
-	yanit, _ := sorgulaOpts(t, kimlikli([]string{"sc_1"}), svc, tekrarliAciklama(489, 100),
-		graph.Options{MaxFieldRepetition: 500})
+	svc := &fakeStorefront{}
+	response, _ := runQueryWithOptions(t, identityWith([]string{"sc_1"}), svc,
+		repeatedDescription(489, 100), graph.Options{MaxFieldRepetition: 500})
 
-	require.Empty(t, yanit.Errors, "karmaşıklık tavanı bu belgeyi ASLA görmüyordu")
-	assert.Len(t, svc.listeOlculeri, 1)
+	require.Empty(t, response.Errors, "the complexity ceiling NEVER saw this document")
+	assert.Len(t, svc.listOptions, 1)
 }
 
-// TestAlanTekrariMesruTakmaAdlariGecirir sınırın gerçek istemciyi kırmadığını
-// doğrular.
+// TestFieldRepetitionLetsLegitimateAliasesThrough verifies that the limit does
+// not break a real client.
 //
-// Takma ad meşru bir araçtır: bir ana sayfa aynı kök sorguyu birkaç vitrin
-// şeridi için (öne çıkanlar, yeniler, indirimdekiler) tekrarlar. Sınır o
-// belgeyi reddetseydi sertleştirme, korumak istediği vitrini kırardı.
-func TestAlanTekrariMesruTakmaAdlariGecirir(t *testing.T) {
+// The alias is a legitimate instrument: a home page repeats the same root query
+// for a few storefront strips (featured, new arrivals, on sale). Had the limit
+// rejected that document, the hardening would break the very storefront it
+// wants to protect.
+func TestFieldRepetitionLetsLegitimateAliasesThrough(t *testing.T) {
 	t.Parallel()
 
-	belge := `{
-	  oneCikanlar: products(limit: 4) { items { id title } }
-	  yeniler: products(limit: 4, q: "yeni") { items { id title } }
-	  indirimdekiler: products(limit: 4, q: "indirim") { items { id title } }
+	document := `{
+	  featured: products(limit: 4) { items { id title } }
+	  newArrivals: products(limit: 4, q: "new") { items { id title } }
+	  onSale: products(limit: 4, q: "sale") { items { id title } }
 	}`
 
-	svc := &sahteVitrin{}
-	yanit, _ := sorgula(t, kimlikli([]string{"sc_1"}), svc, belge)
+	svc := &fakeStorefront{}
+	response, _ := runQuery(t, identityWith([]string{"sc_1"}), svc, document)
 
-	require.Empty(t, yanit.Errors)
-	assert.Len(t, svc.listeOlculeri, 3)
+	require.Empty(t, response.Errors)
+	assert.Len(t, svc.listOptions, 3)
 }
 
-// TestAlanTekrariFragmentlaAtlatilamaz yığmanın fragment'lara bölünerek
-// sınırdan kaçamadığını doğrular.
+// TestFieldRepetitionCannotBeEvadedWithFragments verifies that stacking cannot
+// escape the limit by being split into fragments.
 //
-// Kaçış yolu gerçektir ve derinlikteki ile aynıdır: sayım fragment
-// tanımlarının içine bakmasaydı, istemci tekrarlarını fragment'lara dağıtıp
-// sayacı sıfırlardı. Aşağıdaki belge tek bir seçim kümesine 30 tekrar
-// yerleştirir, yalnızca yazımı ikiye bölünmüştür.
-func TestAlanTekrariFragmentlaAtlatilamaz(t *testing.T) {
+// The escape route is real and is the same as the one for depth: if the count
+// did not look inside fragment definitions, a client would spread its
+// repetitions across fragments and reset the counter. The document below places
+// 30 repetitions into a single selection set, only its spelling is split in
+// two.
+func TestFieldRepetitionCannotBeEvadedWithFragments(t *testing.T) {
 	t.Parallel()
 
-	belge := `
-	  { products { items { ...ilk ...ikinci } } }
-	  fragment ilk on Product {` + takmaAdliAlanOnekli("a", 15, "description") + `}
-	  fragment ikinci on Product {` + takmaAdliAlanOnekli("b", 15, "description") + `}
+	document := `
+	  { products { items { ...first ...second } } }
+	  fragment first on Product {` + aliasedFieldWithPrefix("a", 15, "description") + `}
+	  fragment second on Product {` + aliasedFieldWithPrefix("b", 15, "description") + `}
 	`
 
-	svc := &sahteVitrin{}
-	yanit, _ := sorgula(t, kimlikli([]string{"sc_1"}), svc, belge)
+	svc := &fakeStorefront{}
+	response, _ := runQuery(t, identityWith([]string{"sc_1"}), svc, document)
 
-	require.NotEmpty(t, yanit.Errors)
-	assert.Equal(t, "FIELD_REPETITION_LIMIT_EXCEEDED", yanit.Errors[0].Extensions["code"])
-	assert.Empty(t, svc.listeOlculeri)
+	require.NotEmpty(t, response.Errors)
+	assert.Equal(t, "FIELD_REPETITION_LIMIT_EXCEEDED", response.Errors[0].Extensions["code"])
+	assert.Empty(t, svc.listOptions)
 }
 
-// TestAlanTekrariKardesKapsamlidir sayımın belge geneli DEĞİL kardeş kapsamlı
-// olduğunu doğrular.
+// TestFieldRepetitionIsSiblingScoped verifies that the count is sibling scoped
+// and NOT document-wide.
 //
-// Ayrım bir ayrıntı değil, kapının kullanılabilir olmasının koşuludur: belge
-// geneli sayılsaydı standart iç gözlem sorgusu reddedilirdi — TypeRef
-// fragment'ı __Type.ofType'ı ayrı zincirlerde onlarca kez taşır ve hiçbiri bir
-// yığma değildir. Saldırının şekli KARDEŞ yığmadır ve ölçülen belge de öyleydi.
-func TestAlanTekrariKardesKapsamlidir(t *testing.T) {
+// The distinction is not a detail but the condition for the gate being usable:
+// had the whole document been counted, the standard introspection query would
+// be rejected — the TypeRef fragment carries __Type.ofType dozens of times in
+// separate chains and none of them is a stack. The shape of the attack is a
+// SIBLING stack and the measured document was exactly that.
+func TestFieldRepetitionIsSiblingScoped(t *testing.T) {
 	t.Parallel()
 
-	dar := graph.Options{MaxFieldRepetition: 2}
+	narrow := graph.Options{MaxFieldRepetition: 2}
 
-	yanit, _ := sorgulaOpts(t, kimlikli([]string{"sc_1"}), &sahteVitrin{}, introspection.Query, dar)
+	response, _ := runQueryWithOptions(t, identityWith([]string{"sc_1"}), &fakeStorefront{},
+		introspection.Query, narrow)
 
-	require.Empty(t, yanit.Errors,
-		"iç içe zincirler kardeş değildir; sayım onları yığma sanmamalı")
+	require.Empty(t, response.Errors,
+		"nested chains are not siblings; the count must not mistake them for a stack")
 
-	svc := &sahteVitrin{}
-	yanit, _ = sorgulaOpts(t, kimlikli([]string{"sc_1"}), svc,
-		`{ products { items { a: title b: title c: title } } }`, dar)
+	svc := &fakeStorefront{}
+	response, _ = runQueryWithOptions(t, identityWith([]string{"sc_1"}), svc,
+		`{ products { items { a: title b: title c: title } } }`, narrow)
 
-	require.NotEmpty(t, yanit.Errors, "aynı kümedeki üç tekrar sayılmalı")
-	assert.Empty(t, svc.listeOlculeri)
+	require.NotEmpty(t, response.Errors, "three repetitions in the same set must be counted")
+	assert.Empty(t, svc.listOptions)
 }
 
-// TestAlanTekrariFarkliTipleriAyriSayar sayacın "aynı alan" değil "AYNI NESNE
-// ALTINDA aynı alan" saydığını doğrular.
+// TestFieldRepetitionCountsDifferentTypesSeparately verifies that the counter
+// counts not "the same field" but "the same field UNDER THE SAME OBJECT".
 //
-// Şemadaki dört ayrı tip "id" alanı taşır; hepsi tek bir sayaca düşseydi
-// sıradan bir vitrin sorgusu — ürün, varyant, görsel ve kategori kimliklerini
-// birlikte isteyen — sınıra takılırdı.
-func TestAlanTekrariFarkliTipleriAyriSayar(t *testing.T) {
+// Four separate types in the schema carry an "id" field; had they all fallen
+// into a single counter, an ordinary storefront query — one asking for the
+// product, variant, image and category identities together — would hit the
+// limit.
+func TestFieldRepetitionCountsDifferentTypesSeparately(t *testing.T) {
 	t.Parallel()
 
-	belge := `{ products { items { id variants { id } images { id } categories { id } } } }`
+	document := `{ products { items { id variants { id } images { id } categories { id } } } }`
 
-	svc := &sahteVitrin{}
-	yanit, _ := sorgulaOpts(t, kimlikli([]string{"sc_1"}), svc, belge,
+	svc := &fakeStorefront{}
+	response, _ := runQueryWithOptions(t, identityWith([]string{"sc_1"}), svc, document,
 		graph.Options{MaxFieldRepetition: 1})
 
-	require.Empty(t, yanit.Errors, "farklı tiplerin aynı adlı alanları ayrı sayılmalı")
-	assert.Len(t, svc.listeOlculeri, 1)
+	require.Empty(t, response.Errors,
+		"fields of the same name on different types must be counted separately")
+	assert.Len(t, svc.listOptions, 1)
 }
 
-// kalibrasyonBelgeleri sertleştirme tablosunun ÖLÇÜLEN belgeleridir.
+// calibrationDocuments holds the MEASURED documents of the hardening table.
 //
-// Tablo README'de ve [graph.DefaultMaxComplexity] godoc'unda tekrarlanır;
-// burası onun tek KAYNAĞIDIR. Belgelerin metni buraya yazılmazsa tablodaki
-// sayılar bir süre sonra kimsenin doğrulayamadığı folklora dönüşür — nitekim
-// eski tablonun ürün sayfası satırı kök sorgu maliyetini hiç saymıyordu
-// (1,4 bin yazıyordu, ölçüldüğünde 2.368 çıktı).
-var kalibrasyonBelgeleri = map[string]struct {
-	belge       string
-	karmasiklik int
+// The table is repeated in the README and in the [graph.DefaultMaxComplexity]
+// godoc; this is its single SOURCE. If the text of the documents is not written
+// here, the numbers in the table turn after a while into folklore nobody can
+// verify — indeed the product page row of the old table was not counting the
+// root query cost at all (it said 1,400, and when measured it came out 2,368).
+var calibrationDocuments = map[string]struct {
+	document   string
+	complexity int
 }{
-	"ürün sayfası (PDP, her şey dâhil)": {
-		belge:       `{ product(handle: "tisort") {` + tumUrunAlanlari + `} }`,
-		karmasiklik: 2368,
+	"product page (PDP, everything included)": {
+		document:   `{ product(handle: "t-shirt") {` + allProductFields + `} }`,
+		complexity: 2368,
 	},
-	"kategori listesi (24 ürün, kart alanları + fiyat)": {
-		belge: `{ products(limit: 24) { count items { id handle title thumbnail ` +
+	"category list (24 products, card fields + price)": {
+		document: `{ products(limit: 24) { count items { id handle title thumbnail ` +
 			`variants { id title sku priceSet inventoryItem } } } }`,
-		karmasiklik: 2344,
+		complexity: 2344,
 	},
-	"varsayılan sayfada TÜM alanlar (20 ürün × tüm ağaç)": {
-		belge:       `{ products { count offset limit items {` + tumUrunAlanlari + `} } }`,
-		karmasiklik: 28440,
+	"ALL fields on the default page (20 products x whole tree)": {
+		document:   `{ products { count offset limit items {` + allProductFields + `} } }`,
+		complexity: 28440,
 	},
-	"limit=100 ile TÜM alanlar": {
-		belge:       `{ products(limit: 100) { count offset limit items {` + tumUrunAlanlari + `} } }`,
-		karmasiklik: 138200,
+	"ALL fields with limit=100": {
+		document:   `{ products(limit: 100) { count offset limit items {` + allProductFields + `} } }`,
+		complexity: 138200,
 	},
-	"400 takma adlı products { count }": {
-		belge:       takmaAdliYigma(400),
-		karmasiklik: 408000,
+	"products { count } with 400 aliases": {
+		document:   aliasedStacking(400),
+		complexity: 408000,
 	},
-	"489 takma adlı description (limit=100)": {
-		belge:       tekrarliAciklama(489, 100),
-		karmasiklik: 50000,
+	"description with 489 aliases (limit=100)": {
+		document:   repeatedDescription(489, 100),
+		complexity: 50000,
 	},
-	"1500 takma adlı description (varsayılan sayfa)": {
-		belge:       `{ products { items {` + takmaAdliAlan(1500, "description") + `} } }`,
-		karmasiklik: 31020,
+	"description with 1500 aliases (default page)": {
+		document:   `{ products { items {` + aliasedField(1500, "description") + `} } }`,
+		complexity: 31020,
 	},
 }
 
-// olculenKarmasiklik belgenin karmaşıklığını gqlgen'in KENDİ hesabından okur.
+// measuredComplexity reads the document's complexity from gqlgen's OWN
+// calculation.
 //
-// Sayı ikinci bir hesapla üretilmez; tavan 1'e çekilir ve gqlgen reddederken
-// bulduğu değeri mesaja yazar. İkinci bir hesap yazmak, tablonun modeli değil
-// testin modelini ölçmesi olurdu.
+// The number is not produced by a second calculation; the ceiling is pulled
+// down to 1 and gqlgen writes the value it found into the message while
+// rejecting. Writing a second calculation would mean the table measuring not
+// the model but the test's model.
 //
-// Diğer kapılar YOLDAN ÇEKİLİR: ölçülen belgelerin bir kısmı (400 takma ad,
-// 489 tekrar) bugün önce alan tekrarı kapısına takılır ve o hâlde karmaşıklık
-// hiç raporlanmazdı.
-func olculenKarmasiklik(t *testing.T, belge string) int {
+// The other gates are MOVED OUT OF THE WAY: some of the measured documents (400
+// aliases, 489 repetitions) hit the field repetition gate first today, and in
+// that case the complexity would never be reported.
+func measuredComplexity(t *testing.T, document string) int {
 	t.Helper()
 
-	yanit, _ := sorgulaOpts(t, kimlikli([]string{"sc_1"}), &sahteVitrin{}, belge, graph.Options{
-		MaxComplexity:      1,
-		MaxDepth:           1 << 20,
-		MaxFieldRepetition: 1 << 20,
-	})
+	response, _ := runQueryWithOptions(t, identityWith([]string{"sc_1"}), &fakeStorefront{},
+		document, graph.Options{
+			MaxComplexity:      1,
+			MaxDepth:           1 << 20,
+			MaxFieldRepetition: 1 << 20,
+		})
 
-	require.NotEmpty(t, yanit.Errors, "tavan 1 iken her belge reddedilmeli")
+	require.NotEmpty(t, response.Errors, "with a ceiling of 1 every document must be rejected")
 
-	eslesme := karmasiklikDeseni.FindStringSubmatch(yanit.Errors[0].Message)
-	require.Len(t, eslesme, 2, "gqlgen karmaşıklığı mesajda bildirmeli: %s", yanit.Errors[0].Message)
+	match := complexityPattern.FindStringSubmatch(response.Errors[0].Message)
+	require.Len(t, match, 2, "gqlgen must report the complexity in the message: %s",
+		response.Errors[0].Message)
 
-	olculen, err := strconv.Atoi(eslesme[1])
+	measured, err := strconv.Atoi(match[1])
 	require.NoError(t, err)
 
-	return olculen
+	return measured
 }
 
-// karmasiklikDeseni gqlgen'in karmaşıklık hatasından sayıyı çeker.
-var karmasiklikDeseni = regexp.MustCompile(`complexity (\d+)`)
+// complexityPattern pulls the number out of gqlgen's complexity error.
+var complexityPattern = regexp.MustCompile(`complexity (\d+)`)
 
-// TestKarmasiklikKalibrasyonu tablodaki her sayının HÂLÂ doğru olduğunu
-// doğrular.
+// TestComplexityCalibration verifies that every number in the table is STILL
+// correct.
 //
-// Kalibrasyon bir kez ölçülüp belgeye yazılan bir sayı olduğunda, maliyet
-// modelinin her değişikliği tabloyu sessizce yanlışlar: kimse 28,4 binin ne
-// zaman 40 bin olduğunu fark etmez ve "tavan en ağır meşru belgeye iki kat
-// pay bırakıyor" cümlesi bir gün gerçek olmaktan çıkar. Bu test o cümleyi
-// ölçüme bağlar.
-func TestKarmasiklikKalibrasyonu(t *testing.T) {
+// When the calibration is a number measured once and written into the
+// documentation, every change to the cost model silently falsifies the table:
+// nobody notices when 28,400 became 40,000, and the sentence "the ceiling
+// leaves twice the room above the heaviest legitimate document" stops being
+// true one day. This test ties that sentence to a measurement.
+func TestComplexityCalibration(t *testing.T) {
 	t.Parallel()
 
-	for ad, durum := range kalibrasyonBelgeleri {
-		t.Run(ad, func(t *testing.T) {
+	for name, entry := range calibrationDocuments {
+		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 
-			assert.Equal(t, durum.karmasiklik, olculenKarmasiklik(t, durum.belge))
+			assert.Equal(t, entry.complexity, measuredComplexity(t, entry.document))
 		})
 	}
 }
 
-// TestKalibrasyonunIkiYaniAyrilir tablonun "geçer/geçmez" sütununu VARSAYILAN
-// ayarlarla sınar.
+// TestBothSidesOfTheCalibrationAreSeparated exercises the table's
+// "passes/does not pass" column with the DEFAULT settings.
 //
-// Karmaşıklık sayısı tek başına bir karar değildir; tablonun asıl iddiası
-// hangi belgenin geçtiğidir. En ağır meşru belge geçmeli (yoksa sertleştirme
-// vitrinin kendi istemcisini kırar), aşırı olanlar geçmemeli (yoksa sınır
-// süstür).
-func TestKalibrasyonunIkiYaniAyrilir(t *testing.T) {
+// The complexity number is not a decision on its own; the table's real claim is
+// which document passes. The heaviest legitimate document must pass (otherwise
+// the hardening breaks the storefront's own client), the excessive ones must
+// not (otherwise the limit is decoration).
+func TestBothSidesOfTheCalibrationAreSeparated(t *testing.T) {
 	t.Parallel()
 
-	gecer := []string{
-		"ürün sayfası (PDP, her şey dâhil)",
-		"kategori listesi (24 ürün, kart alanları + fiyat)",
-		"varsayılan sayfada TÜM alanlar (20 ürün × tüm ağaç)",
+	passing := []string{
+		"product page (PDP, everything included)",
+		"category list (24 products, card fields + price)",
+		"ALL fields on the default page (20 products x whole tree)",
 	}
 
-	katalog := olcumKatalogu(1)
+	catalog := measurementCatalog(1)
 
-	for _, ad := range gecer {
-		// Fikstür GEREKLİDİR: şemanın zorunlu alanları boş bir üründe null
-		// döner ve test, sınırı değil eksik veriyi ölçmeye başlardı.
-		svc := &sahteVitrin{liste: katalog, tekil: katalog.Items[0]}
-		yanit, _ := sorgula(t, kimlikli([]string{"sc_1"}), svc, kalibrasyonBelgeleri[ad].belge)
+	for _, name := range passing {
+		// The fixture IS NEEDED: the schema's required fields come back null on
+		// an empty product and the test would start measuring the missing data
+		// rather than the limit.
+		svc := &fakeStorefront{list: catalog, single: catalog.Items[0]}
+		response, _ := runQuery(t, identityWith([]string{"sc_1"}), svc,
+			calibrationDocuments[name].document)
 
-		assert.Empty(t, yanit.Errors, "%s geçmeli", ad)
+		assert.Empty(t, response.Errors, "%s must pass", name)
 	}
 
-	gecmez := []string{
-		"limit=100 ile TÜM alanlar",
-		"400 takma adlı products { count }",
-		"489 takma adlı description (limit=100)",
-		"1500 takma adlı description (varsayılan sayfa)",
+	failing := []string{
+		"ALL fields with limit=100",
+		"products { count } with 400 aliases",
+		"description with 489 aliases (limit=100)",
+		"description with 1500 aliases (default page)",
 	}
 
-	for _, ad := range gecmez {
-		svc := &sahteVitrin{}
-		yanit, _ := sorgula(t, kimlikli([]string{"sc_1"}), svc, kalibrasyonBelgeleri[ad].belge)
+	for _, name := range failing {
+		svc := &fakeStorefront{}
+		response, _ := runQuery(t, identityWith([]string{"sc_1"}), svc,
+			calibrationDocuments[name].document)
 
-		require.NotEmpty(t, yanit.Errors, "%s geçmemeli", ad)
-		assert.Empty(t, svc.listeOlculeri, "%s servise ulaşmamalı", ad)
-		assert.Empty(t, svc.tekilSecici, "%s servise ulaşmamalı", ad)
+		require.NotEmpty(t, response.Errors, "%s must not pass", name)
+		assert.Empty(t, svc.listOptions, "%s must not reach the service", name)
+		assert.Empty(t, svc.singleSelectors, "%s must not reach the service", name)
 	}
 }
 
-// katlananFragmentBelgesi her seviyede kendini iki kez açan fragment zinciri
-// üretir.
+// foldingFragmentDocument builds a fragment chain that expands itself twice at
+// every level.
 //
-// Belge GEÇERLİDİR ve döngü İÇERMEZ — doğrulamanın reddettiği tek şey odur.
-// Yine de açılımı 2^seviye seçimdir: 26 seviye 1.127 bayt yazıp 67 milyon
-// seçim açar.
-func katlananFragmentBelgesi(seviye int) string {
-	var belge strings.Builder
+// The document is VALID and contains NO cycle — that is the only thing
+// validation rejects. Even so its expansion is 2^level selections: 26 levels
+// write 1,127 bytes and expand 67 million selections.
+func foldingFragmentDocument(level int) string {
+	var document strings.Builder
 
-	belge.WriteString("{ products { items { ...f" + strconv.Itoa(seviye) + " } } }\n")
-	belge.WriteString("fragment f0 on Product { id }\n")
+	document.WriteString("{ products { items { ...f" + strconv.Itoa(level) + " } } }\n")
+	document.WriteString("fragment f0 on Product { id }\n")
 
-	for i := 1; i <= seviye; i++ {
-		alt := "...f" + strconv.Itoa(i-1)
-		belge.WriteString("fragment f" + strconv.Itoa(i) + " on Product { " + alt + " " + alt + " }\n")
+	for i := 1; i <= level; i++ {
+		child := "...f" + strconv.Itoa(i-1)
+		document.WriteString("fragment f" + strconv.Itoa(i) + " on Product { " + child + " " + child + " }\n")
 	}
 
-	return belge.String()
+	return document.String()
 }
 
-// TestSecimButcesiKatlananFragmentiReddeder üssel açılan fragment zincirinin
-// ucu kilitleyemediğini doğrular.
+// TestSelectionBudgetRejectsAFoldingFragment verifies that an exponentially
+// expanding fragment chain cannot lock the endpoint up.
 //
-// Ölçüldü: bu belge 1.127 BAYTTIR ve düzeltmeden önce istek on saniyede
-// bitmiyordu. Tuzağa düşen tek bir hesap değildi — derinlik sayımı, alan
-// tekrarı sayımı ve gqlgen'in kendi karmaşıklık yürüyüşü, üçü de fragment
-// tanımına belleksiz iniyordu. Bu yüzden düzeltme bir yürüyüşü değil, ağacın
-// BÜYÜKLÜĞÜNÜ bağlar ve diğer bütün kapılardan önce koşar.
+// Measured: this document is 1,127 BYTES and before the fix the request was not
+// finishing in ten seconds. It was not a single calculation that fell into the
+// trap — the depth count, the field repetition count and gqlgen's own
+// complexity walk all three descended into the fragment definition without
+// memoization. That is why the fix binds not a single walk but the SIZE of the
+// tree, and runs before all the other gates.
 //
-// Test bir zaman aşımı iddiası taşımaz; taşısaydı yavaş bir makinede
-// güvenilmez olurdu. Yerine daha güçlü bir şey iddia eder: belge REDDEDİLİR ve
-// servise ulaşmaz. Sınır kalkarsa test yavaşlamaz, ASILIR — ve go test kendi
-// zaman aşımıyla bunu söyler.
-func TestSecimButcesiKatlananFragmentiReddeder(t *testing.T) {
+// The test carries no timeout claim; had it done so it would be unreliable on a
+// slow machine. Instead it claims something stronger: the document IS REJECTED
+// and does not reach the service. If the limit is removed the test does not get
+// slower, it HANGS — and go test says so with its own timeout.
+func TestSelectionBudgetRejectsAFoldingFragment(t *testing.T) {
 	t.Parallel()
 
-	belge := katlananFragmentBelgesi(26)
-	require.Less(t, len(belge), 2<<10, "belgenin küçüklüğü bulgunun ta kendisidir")
+	document := foldingFragmentDocument(26)
+	require.Less(t, len(document), 2<<10, "the smallness of the document is the finding itself")
 
-	svc := &sahteVitrin{}
-	yanit, _ := sorgula(t, kimlikli([]string{"sc_1"}), svc, belge)
+	svc := &fakeStorefront{}
+	response, _ := runQuery(t, identityWith([]string{"sc_1"}), svc, document)
 
-	require.NotEmpty(t, yanit.Errors)
-	assert.Equal(t, "SELECTION_BUDGET_EXCEEDED", yanit.Errors[0].Extensions["code"])
-	assert.Empty(t, svc.listeOlculeri, "reddedilen belge servise ulaşmamalı")
+	require.NotEmpty(t, response.Errors)
+	assert.Equal(t, "SELECTION_BUDGET_EXCEEDED", response.Errors[0].Extensions["code"])
+	assert.Empty(t, svc.listOptions, "a rejected document must not reach the service")
 }
 
-// TestSecimButcesiFragmentliMesruBelgeyiGecirir bütçenin fragment kullanan
-// sıradan istemciyi kırmadığını doğrular.
+// TestSelectionBudgetLetsALegitimateFragmentDocumentThrough verifies that the
+// budget does not break an ordinary client that uses fragments.
 //
-// Fragment, sorgusunu okunabilir tutan istemcinin aracıdır ve aynı fragment'ı
-// birkaç yerde açmak olağandır. Bütçe o belgeye dokunmamalı; dokunsaydı
-// düzeltme, koruduğu vitrini kırardı.
-func TestSecimButcesiFragmentliMesruBelgeyiGecirir(t *testing.T) {
+// The fragment is the instrument of a client that keeps its query readable, and
+// expanding the same fragment in several places is common. The budget must not
+// touch that document; if it did, the fix would break the storefront it
+// protects.
+func TestSelectionBudgetLetsALegitimateFragmentDocumentThrough(t *testing.T) {
 	t.Parallel()
 
-	belge := `
+	document := `
 	  {
-	    oneCikanlar: products(limit: 4) { items { ...kart } }
-	    yeniler: products(limit: 4, q: "yeni") { items { ...kart } }
-	    indirimdekiler: products(limit: 4, q: "indirim") { items { ...kart } }
+	    featured: products(limit: 4) { items { ...card } }
+	    newArrivals: products(limit: 4, q: "new") { items { ...card } }
+	    onSale: products(limit: 4, q: "sale") { items { ...card } }
 	  }
-	  fragment kart on Product {
+	  fragment card on Product {
 	    id handle title thumbnail
-	    variants { ...varyant }
+	    variants { ...variantFields }
 	  }
-	  fragment varyant on Variant { id title sku priceSet inventoryItem }
+	  fragment variantFields on Variant { id title sku priceSet inventoryItem }
 	`
 
-	svc := &sahteVitrin{}
-	yanit, _ := sorgula(t, kimlikli([]string{"sc_1"}), svc, belge)
+	svc := &fakeStorefront{}
+	response, _ := runQuery(t, identityWith([]string{"sc_1"}), svc, document)
 
-	require.Empty(t, yanit.Errors)
-	assert.Len(t, svc.listeOlculeri, 3)
+	require.Empty(t, response.Errors)
+	assert.Len(t, svc.listOptions, 3)
 }

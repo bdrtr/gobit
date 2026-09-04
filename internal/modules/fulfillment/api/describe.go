@@ -6,387 +6,399 @@ import (
 	"github.com/bdrtr/gobit/internal/core/openapi"
 )
 
-// Parametre şemalarında geçen JSON Schema adları.
+// The JSON Schema names used in the parameter schemas.
 //
-// Çekirdeğin karşılıkları dışa kapalıdır ve burada tekrarlanmalarının sebebi
-// maliyet değil SESSİZLİK: "strig" yazılmış bir tip adı derlenir, belge
-// üretilir ve yalnızca şemayı okuyan istemci parametreyi yanlış tiple
-// ürettiğinde ortaya çıkar.
+// The core's counterparts are unexported, and the reason they are repeated here
+// is not cost but SILENCE: a type name written as "strig" compiles, the
+// documentation is generated, and it only surfaces when a client reading the
+// schema produces the parameter with the wrong type.
 const (
-	semaTip      = "type"
-	semaOgeler   = "items"
-	tipDize      = "string"
-	tipTamSayi   = "integer"
-	tipMantiksal = "boolean"
-	tipDizi      = "array"
+	schemaType  = "type"
+	schemaItems = "items"
+	typeString  = "string"
+	typeInteger = "integer"
+	typeBoolean = "boolean"
+	typeArray   = "array"
 )
 
-// Describe fulfillment'ın uçlarını OpenAPI belgesine işler.
+// Describe records the fulfillment endpoints into the OpenAPI document.
 //
-// # Neden bu pakette
+// # Why in this package
 //
-// Anlatılan gövdeler bu paketin DIŞA KAPALI DTO'larıdır (createProfileRequest,
-// fulfillmentDTO …) ve şema onlardan yansımayla türetilir. Tipleri
-// anlatabilmek için dışa açmak, yalnızca belge üretmek uğruna modülün
-// yüzeyini genişletmek olurdu: dışa açık bir tip sözleşmedir ve dışarıdan
-// kurulabilir hâle gelirdi. Sorgu parametreleri de aynı sebeple burada durur —
-// hangi parametrenin GERÇEKTEN okunduğunu bilen kod api.go ve handlers.go
-// içindedir; anlatım başka bir pakete taşınsaydı ikisi sessizce ayrışırdı.
-// Modülün [openapi.Describer] uygulaması bu yüzden buraya delege eder.
+// The bodies being described are this package's UNEXPORTED DTOs
+// (createProfileRequest, fulfillmentDTO …) and the schema is derived from them
+// by reflection. Exporting the types just to be able to describe them would
+// mean widening the module's surface merely to generate documentation: an
+// exported type is a contract and would become constructible from the outside.
+// The query parameters live here for the same reason — the code that knows
+// which parameter is REALLY read is inside api.go and handlers.go; had the
+// description been moved to another package, the two would silently drift
+// apart. That is why the module's [openapi.Describer] implementation delegates
+// here.
 //
-// # Neden paket düzeyinde bir fonksiyon
+// # Why a package-level function
 //
-// Anlatım hiçbir çalışma zamanı durumuna bakmaz — şema TİPLERDEN gelir. Metodu
-// [Handler]'a bağlamak, belgenin servis kurulmuş olmasına bağlı OLDUĞUNU
-// söylerdi; oysa [Handler.Routes] hiç çağrılmamışken de belge üretilebilir ve
-// üretilmelidir.
+// The description looks at no runtime state — the schema comes from the TYPES.
+// Binding the method to [Handler] would say that the documentation DEPENDS on a
+// service having been constructed; yet the documentation can and must be
+// generated even when [Handler.Routes] has never been called.
 //
-// # ANLATILMAYAN uçlar: kargo seçeneği CRUD'u
+// # The endpoints NOT described: shipping option CRUD
 //
-// POST /admin/v1/shipping-options, GET /admin/v1/shipping-options, GET ve
-// PATCH /admin/v1/shipping-options/{id} gövdeleriyle anlatılMAZ. Sebep bu
-// modülde değil BELGENİN AD ALANINDADIR: bileşen adı Go tip adından türetilir
-// (baş harf büyütülür, "DTO" son eki atılır) ve [optionDTO] "Option" adını
-// ister — aynı adı product modülünün models.Option'ı da ister. İki FARKLI tip
-// aynı bileşen adını istediğinde belge üretimi hata döner, yani bu dört ucu
-// anlatmak /openapi.json'un TAMAMINI çökertirdi.
+// POST /admin/v1/shipping-options, GET /admin/v1/shipping-options, GET and
+// PATCH /admin/v1/shipping-options/{id} are NOT described with their bodies.
+// The reason is not in this module but IN THE DOCUMENT'S NAMESPACE: the
+// component name is derived from the Go type name (the first letter is
+// capitalized, the "DTO" suffix is dropped) and [optionDTO] asks for the name
+// "Option" — the same name the product module's models.Option asks for. When
+// two DIFFERENT types ask for the same component name, document generation
+// returns an error, so describing these four endpoints would bring down the
+// WHOLE of /openapi.json.
 //
-// Tipi yeniden adlandırmak bu paketin tek başına alabileceği bir karar
-// DEĞİLDİR: bileşen adı yayımlanan sözleşmedir ve düzeltme hangi tarafta
-// yapılırsa yapılsın öteki modülün üretilmiş istemcilerini kırar. Uçlar bu
-// yüzden anlatılmadan bırakıldı — belgede yolu, metodu ve güvenliğiyle
-// görünürler, yalnızca gövdeleri olmaz.
+// Renaming the type is NOT a decision this package can take on its own: the
+// component name is the published contract and, on whichever side the fix is
+// made, it breaks the other module's generated clients. The endpoints were
+// therefore left undescribed — they appear in the document with their path,
+// method and security, only without their bodies.
 //
-// DELETE /admin/v1/shipping-options/{id} ise anlatılır: 204 döner ve gövdesi
-// olmadığı için [optionDTO]'ya hiç dokunmaz.
+// DELETE /admin/v1/shipping-options/{id} is described though: it returns 204
+// and, having no body, never touches [optionDTO].
 //
-// # Bilinen sınır: istek gövdelerinin "required" kümesi GENİŞTİR
+// # Known limit: the "required" set of the request bodies is TOO WIDE
 //
-// Çekirdek "required"ı encoding/json'un HER ZAMAN yazdığı alanlardan türetir
-// ([openapi.Doc.SchemaOf]) ve bu, YANIT gövdeleri için doğru cevaptır. İstek
-// gövdesinde ise "required" istemcinin GÖNDERMEK ZORUNDA olduğu alan demektir
-// ve bunu tip bilemez: bu paketin istek DTO'ları omitempty taşımadığı için
-// hepsi zorunlu görünür — örneğin POST /admin/v1/shipping-profiles, boş
-// bırakılabilen metadata'yı da ister. Alan ADLARI ve TİPLERİ doğrudur, yani
-// şema yanlış bir alan uydurmaz; yalnızca fazla şey ister. Doğru çözüm
-// ÇEKİRDEKTEDİR (istek gövdeleri için ayrı bir "required" politikası);
-// tag'lere omitempty serpiştirmek zorunluluğu servisin doğrulamasından json
-// etiketine taşır ve ikisi sessizce ayrışırdı.
+// The core derives "required" from the fields encoding/json ALWAYS writes
+// ([openapi.Doc.SchemaOf]) and that is the right answer for RESPONSE bodies. In
+// a request body, however, "required" means a field the client MUST SEND, and
+// the type cannot know that: because this package's request DTOs carry no
+// omitempty, all of them look required — for example POST
+// /admin/v1/shipping-profiles also asks for metadata, which may be left empty.
+// The field NAMES and TYPES are correct, so the schema does not invent a wrong
+// field; it merely asks for too much. The right fix is IN THE CORE (a separate
+// "required" policy for request bodies); sprinkling omitempty over the tags
+// would move the obligation from the service's validation to the json tag, and
+// the two would silently drift apart.
 func Describe(d *openapi.Doc) {
 	d.Describe(http.MethodGet, pathAdminProviders, openapi.Operation{
-		Summary: "Kayıtlı kargo sağlayıcılarının kimliklerini listeler.",
+		Summary: "Lists the identifiers of the registered shipping providers.",
 		Responses: map[string]any{
-			// Kayıt bir DTO değil, düz bir dizedir (bkz.
-			// [Handler.listProviders]); zarf yine de liste zarfıdır.
-			"200": openapi.Response("Sağlayıcı kimlikleri", d.List("")),
+			// The record is not a DTO but a plain string (see
+			// [Handler.listProviders]); the envelope is still the list
+			// envelope.
+			"200": openapi.Response("Provider identifiers", d.List("")),
 		},
 	})
 
-	describeProfiller(d)
-	describeDepoPolitikalari(d)
-	describeSecenekler(d)
-	describeUygunluk(d)
-	describeGonderiler(d)
+	describeProfiles(d)
+	describeLocationPolicies(d)
+	describeOptions(d)
+	describeEligibility(d)
+	describeFulfillments(d)
 }
 
-// describeProfiller kargo profili uçlarını anlatır.
-func describeProfiller(d *openapi.Doc) {
+// describeProfiles describes the shipping profile endpoints.
+func describeProfiles(d *openapi.Doc) {
 	d.Describe(http.MethodPost, pathAdminProfiles, openapi.Operation{
-		Summary:     "Yeni bir kargo profili oluşturur.",
+		Summary:     "Creates a new shipping profile.",
 		RequestBody: d.RequestBody(createProfileRequest{}),
 		Responses: map[string]any{
-			"201": openapi.Response("Oluşturulan profil", d.Item(profileDTO{})),
+			"201": openapi.Response("The created profile", d.Item(profileDTO{})),
 		},
 	})
 
 	d.Describe(http.MethodGet, pathAdminProfiles, openapi.Operation{
-		Summary: "Kargo profillerini sayfalayarak listeler.",
-		Parameters: append(sayfaParametreleri(),
-			sorguParametresi("type", tipDize,
-				"Listeyi tek bir profil türüyle sınırlar.")),
+		Summary: "Lists the shipping profiles page by page.",
+		Parameters: append(pageParameters(),
+			queryParameter("type", typeString,
+				"Restricts the list to a single profile type.")),
 		Responses: map[string]any{
-			"200": openapi.Response("Kargo profilleri", d.List(profileDTO{})),
+			"200": openapi.Response("Shipping profiles", d.List(profileDTO{})),
 		},
 	})
 
 	d.Describe(http.MethodGet, pathAdminProfile, openapi.Operation{
-		Summary: "Kargo profilini kimliğiyle döner.",
+		Summary: "Returns the shipping profile by its identifier.",
 		Responses: map[string]any{
-			"200": openapi.Response("Kargo profili", d.Item(profileDTO{})),
+			"200": openapi.Response("The shipping profile", d.Item(profileDTO{})),
 		},
 	})
 
 	d.Describe(http.MethodPatch, pathAdminProfile, openapi.Operation{
-		Summary:     "Kargo profilinin verilen alanlarını günceller.",
+		Summary:     "Updates the given fields of the shipping profile.",
 		RequestBody: d.RequestBody(updateProfileRequest{}),
 		Responses: map[string]any{
-			"200": openapi.Response("Güncellenen profil", d.Item(profileDTO{})),
+			"200": openapi.Response("The updated profile", d.Item(profileDTO{})),
 		},
 	})
 
 	d.Describe(http.MethodDelete, pathAdminProfile, openapi.Operation{
-		Summary: "Kargo profilini yumuşak siler.",
+		Summary: "Soft deletes the shipping profile.",
 		Responses: map[string]any{
-			"204": bosYanit("Profil silindi"),
+			"204": emptyResponse("The profile was deleted"),
 		},
 	})
 }
 
-// describeDepoPolitikalari depo seçim politikası uçlarını anlatır.
-func describeDepoPolitikalari(d *openapi.Doc) {
+// describeLocationPolicies describes the location selection policy endpoints.
+func describeLocationPolicies(d *openapi.Doc) {
 	d.Describe(http.MethodGet, pathAdminLocations, openapi.Operation{
-		Summary:    "Depo kargo politikalarını öncelik sırasıyla listeler.",
-		Parameters: sayfaParametreleri(),
+		Summary:    "Lists the location shipping policies in priority order.",
+		Parameters: pageParameters(),
 		Responses: map[string]any{
-			"200": openapi.Response("Depo kargo politikaları", d.List(locationDTO{})),
+			"200": openapi.Response("Location shipping policies", d.List(locationDTO{})),
 		},
 	})
 
 	d.Describe(http.MethodGet, pathAdminLocation, openapi.Operation{
-		Summary: "Bir deponun kargo politikasını döner.",
+		Summary: "Returns the shipping policy of a location.",
 		Responses: map[string]any{
-			"200": openapi.Response("Depo kargo politikası", d.Item(locationDTO{})),
+			"200": openapi.Response("The location shipping policy", d.Item(locationDTO{})),
 		},
 	})
 
 	d.Describe(http.MethodPut, pathAdminLocation, openapi.Operation{
-		Summary:     "Bir deponun kargo politikasını yazar ya da üzerine yazar.",
+		Summary:     "Writes or overwrites the shipping policy of a location.",
 		RequestBody: d.RequestBody(setLocationRequest{}),
 		Responses: map[string]any{
-			"200": openapi.Response("Yazılan politika", d.Item(locationDTO{})),
+			"200": openapi.Response("The written policy", d.Item(locationDTO{})),
 		},
 	})
 
 	d.Describe(http.MethodDelete, pathAdminLocation, openapi.Operation{
-		Summary: "Bir deponun kargo politikasını siler ve depoyu varsayılana döndürür.",
+		Summary: "Deletes the shipping policy of a location and returns the location to the default.",
 		Responses: map[string]any{
-			"204": bosYanit("Politika silindi"),
+			"204": emptyResponse("The policy was deleted"),
 		},
 	})
 }
 
-// describeSecenekler kargo seçeneği uçlarından anlatılabilenleri anlatır.
+// describeOptions describes those shipping option endpoints that can be
+// described.
 //
-// Seçeneğin KENDİ gövdesini taşıyan dört uç bilinçli olarak dışarıdadır;
-// gerekçe [Describe] godoc'undadır. Burada kalanlar seçenek kaydına hiç
-// dokunmayanlardır: silme (gövdesiz) ve kurallar (kendi DTO'suyla).
-func describeSecenekler(d *openapi.Doc) {
+// The four endpoints carrying the option's OWN body are deliberately left out;
+// the rationale is in the [Describe] godoc. What remains here are the ones that
+// never touch the option record: deletion (which has no body) and the rules
+// (which have their own DTO).
+func describeOptions(d *openapi.Doc) {
 	d.Describe(http.MethodDelete, pathAdminOption, openapi.Operation{
-		Summary: "Kargo seçeneğini yumuşak siler.",
+		Summary: "Soft deletes the shipping option.",
 		Responses: map[string]any{
-			"204": bosYanit("Seçenek silindi"),
+			"204": emptyResponse("The option was deleted"),
 		},
 	})
 
 	d.Describe(http.MethodPost, pathAdminOptionRules, openapi.Operation{
-		Summary:     "Kargo seçeneğine uygunluk kuralı ekler.",
+		Summary:     "Adds an eligibility rule to the shipping option.",
 		RequestBody: d.RequestBody(createRuleRequest{}),
 		Responses: map[string]any{
-			"201": openapi.Response("Eklenen kural", d.Item(ruleDTO{})),
+			"201": openapi.Response("The added rule", d.Item(ruleDTO{})),
 		},
 	})
 
 	d.Describe(http.MethodGet, pathAdminOptionRules, openapi.Operation{
-		Summary: "Kargo seçeneğinin uygunluk kurallarını listeler.",
-		// Sayfalama parametresi YOKTUR: liste [writeList] ile yazılır ve
-		// handler sorgu dizesini hiç okumaz. Yazmak, istemciye çalışmayan bir
-		// sayfalama vaat etmek olurdu.
+		Summary: "Lists the eligibility rules of the shipping option.",
+		// There is NO paging parameter: the list is written with [writeList]
+		// and the handler never reads the query string. Writing one would be
+		// promising the client a paging that does not work.
 		Responses: map[string]any{
-			"200": openapi.Response("Seçeneğin kuralları", d.List(ruleDTO{})),
+			"200": openapi.Response("The rules of the option", d.List(ruleDTO{})),
 		},
 	})
 
 	d.Describe(http.MethodDelete, pathAdminOptionRule, openapi.Operation{
-		Summary: "Uygunluk kuralını yumuşak siler.",
+		Summary: "Soft deletes the eligibility rule.",
 		Responses: map[string]any{
-			"204": bosYanit("Kural silindi"),
+			"204": emptyResponse("The rule was deleted"),
 		},
 	})
 }
 
-// describeUygunluk iki uygunluk listelemesini anlatır.
+// describeEligibility describes the two eligibility listings.
 //
-// İkisi AYNI kaydı anlatır ama farklı tiplerle ([quotedOptionDTO] ve
-// [storeOptionDTO]); ayrımın ne olduğu her ikisinin açıklamasında yazılıdır.
-func describeUygunluk(d *openapi.Doc) {
+// The two describe the SAME record but with different types ([quotedOptionDTO]
+// and [storeOptionDTO]); what the distinction is is written in the description
+// of both.
+func describeEligibility(d *openapi.Doc) {
 	d.Describe(http.MethodGet, pathAdminEligible, openapi.Operation{
-		Summary: "Verilen sepet bağlamı için uygun kargo seçeneklerini yönetim " +
-			"gösterimiyle listeler.",
-		Description: "Yönetim gösterimi admin_only işaretli seçenekleri DE içerir " +
-			"ve her kayıtta provider_id, shipping_profile_id, is_return ve " +
-			"admin_only alanlarını taşır. AYNI seçenek vitrin ucunda " +
-			"(GET /store/v1/shipping-options) ya hiç görünmez ya da bu alanlar " +
-			"olmadan görünür: iki uç aynı kataloğu okur, gösterimleri farklıdır. " +
-			"Sepet olguları burada GÜVENİLİR sayılır, dolayısıyla subtotal, " +
-			"item_count ve total_weight'e bağlı kuralı olan seçenekler de listelenir.",
-		Parameters: uygunlukParametreleri(),
+		Summary: "Lists the shipping options eligible for the given cart context " +
+			"in the admin representation.",
+		Description: "The admin representation includes options flagged admin_only TOO " +
+			"and carries the provider_id, shipping_profile_id, is_return and " +
+			"admin_only fields on every record. The SAME option either does not " +
+			"appear at all on the storefront endpoint " +
+			"(GET /store/v1/shipping-options) or appears without these fields: the " +
+			"two endpoints read the same catalog, their representations differ. " +
+			"Cart facts are considered TRUSTED here, so options with a rule " +
+			"depending on subtotal, item_count and total_weight are listed as well.",
+		Parameters: eligibilityParameters(),
 		Responses: map[string]any{
-			"200": openapi.Response("Uygun seçenekler (yönetim gösterimi)",
+			"200": openapi.Response("Eligible options (admin representation)",
 				d.List(quotedOptionDTO{})),
 		},
 	})
 
 	d.Describe(http.MethodGet, pathStoreOptions, openapi.Operation{
-		Summary: "Verilen sepet bağlamı için uygun kargo seçeneklerini vitrin " +
-			"gösterimiyle listeler.",
-		Description: "Vitrin gösterimi yönetim gösteriminden DARDIR ve aynı kayıt " +
-			"iki uçta farklı görünür: admin_only işaretli seçenekler burada HİÇ " +
-			"listelenmez, listelenenlerde de provider_id, shipping_profile_id, " +
-			"is_return ve admin_only alanları yazılmaz " +
-			"(bkz. GET /admin/v1/shipping-options/eligible). Sepet olguları " +
-			"(subtotal, item_count, total_weight) istemcinin İDDİASIDIR: bu üç " +
-			"olguya bağlı kuralı olan seçenekler listeden tümüyle çıkarılır ve " +
-			"\"calculated\" seçeneklerin ücreti yalnızca GÖSTERİMDİR — gerçek ücret " +
-			"ödeme adımında sepetin gerçek olgularıyla belirlenir.",
-		Parameters: uygunlukParametreleri(),
+		Summary: "Lists the shipping options eligible for the given cart context " +
+			"in the storefront representation.",
+		Description: "The storefront representation is NARROWER than the admin one and " +
+			"the same record looks different on the two endpoints: options flagged " +
+			"admin_only are NEVER listed here, and on the ones that are listed the " +
+			"provider_id, shipping_profile_id, is_return and admin_only fields are " +
+			"not written (see GET /admin/v1/shipping-options/eligible). The cart " +
+			"facts (subtotal, item_count, total_weight) are the client's CLAIM: " +
+			"options with a rule depending on these three facts are removed from " +
+			"the list entirely, and the rate of \"calculated\" options is only a " +
+			"PRESENTATION — the real rate is determined at the payment step with " +
+			"the cart's real facts.",
+		Parameters: eligibilityParameters(),
 		Responses: map[string]any{
-			"200": openapi.Response("Uygun seçenekler (vitrin gösterimi)",
+			"200": openapi.Response("Eligible options (storefront representation)",
 				d.List(storeOptionDTO{})),
 		},
 	})
 }
 
-// describeGonderiler gönderi uçlarını anlatır.
-func describeGonderiler(d *openapi.Doc) {
+// describeFulfillments describes the fulfillment endpoints.
+func describeFulfillments(d *openapi.Doc) {
 	d.Describe(http.MethodPost, pathAdminFulfillments, openapi.Operation{
-		Summary:     "Sağlayıcıda yeni bir gönderi açar.",
+		Summary:     "Opens a new fulfillment at the provider.",
 		RequestBody: d.RequestBody(createFulfillmentRequest{}),
 		Responses: map[string]any{
-			"201": openapi.Response("Açılan gönderi", d.Item(fulfillmentDTO{})),
+			"201": openapi.Response("The opened fulfillment", d.Item(fulfillmentDTO{})),
 		},
 	})
 
 	d.Describe(http.MethodGet, pathAdminFulfillments, openapi.Operation{
-		Summary: "Gönderileri sayfalayarak listeler.",
-		Parameters: append(sayfaParametreleri(),
-			sorguParametresi("reference", tipDize,
-				"Listeyi tek bir iş kaydı referansıyla sınırlar."),
-			sorguParametresi("status", tipDize,
-				"Listeyi tek bir gönderi durumuyla sınırlar.")),
+		Summary: "Lists the fulfillments page by page.",
+		Parameters: append(pageParameters(),
+			queryParameter("reference", typeString,
+				"Restricts the list to a single business record reference."),
+			queryParameter("status", typeString,
+				"Restricts the list to a single fulfillment status.")),
 		Responses: map[string]any{
-			"200": openapi.Response("Gönderiler", d.List(fulfillmentDTO{})),
+			"200": openapi.Response("Fulfillments", d.List(fulfillmentDTO{})),
 		},
 	})
 
 	d.Describe(http.MethodGet, pathAdminFulfillment, openapi.Operation{
-		Summary: "Gönderiyi kalemleriyle birlikte döner.",
+		Summary: "Returns the fulfillment together with its items.",
 		Responses: map[string]any{
-			"200": openapi.Response("Gönderi", d.Item(fulfillmentDTO{})),
+			"200": openapi.Response("The fulfillment", d.Item(fulfillmentDTO{})),
 		},
 	})
 
 	d.Describe(http.MethodPost, pathAdminCancel, openapi.Operation{
-		Summary: "Gönderiyi iptal eder ve güncel hâlini döner.",
-		Description: "İDEMPOTENTTİR: ikinci çağrı da 200 ve aynı kaydı döner. " +
-			"Gövde ALMAZ; iptal edilecek gönderi yoldan seçilir.",
+		Summary: "Cancels the fulfillment and returns its current state.",
+		Description: "It is IDEMPOTENT: a second call also returns 200 and the same " +
+			"record. It TAKES no body; the fulfillment to cancel is chosen from the path.",
 		Responses: map[string]any{
-			"200": openapi.Response("İptal edilmiş gönderi", d.Item(fulfillmentDTO{})),
+			"200": openapi.Response("The canceled fulfillment", d.Item(fulfillmentDTO{})),
 		},
 	})
 
 	d.Describe(http.MethodPost, pathAdminShip, openapi.Operation{
-		Summary: "Gönderiyi kargoya verilmiş olarak işaretler.",
-		// Gövde İSTEĞE BAĞLIDIR: bazı taşıyıcılar takip numarasını sonradan
-		// verir ve handler boş gövdeyi hata saymaz (bkz.
-		// [decodeOptionalBody]). Zorunlu göstermek, istemci üretecinin
-		// gövdesiz çağrıyı hiç mümkün kılmaması demekti.
-		RequestBody: istegeBagliGovde(d, shipRequest{}),
+		Summary: "Marks the fulfillment as handed to the carrier.",
+		// The body is OPTIONAL: some carriers provide the tracking number later
+		// and the handler does not treat an empty body as an error (see
+		// [decodeOptionalBody]). Marking it required would mean the client
+		// generator never makes a call without a body possible.
+		RequestBody: optionalBody(d, shipRequest{}),
 		Responses: map[string]any{
-			"200": openapi.Response("Kargoya verilmiş gönderi", d.Item(fulfillmentDTO{})),
+			"200": openapi.Response("The shipped fulfillment", d.Item(fulfillmentDTO{})),
 		},
 	})
 
 	d.Describe(http.MethodPost, pathAdminDeliver, openapi.Operation{
-		Summary: "Gönderiyi teslim edilmiş olarak işaretler.",
+		Summary: "Marks the fulfillment as delivered.",
 		Responses: map[string]any{
-			"200": openapi.Response("Teslim edilmiş gönderi", d.Item(fulfillmentDTO{})),
+			"200": openapi.Response("The delivered fulfillment", d.Item(fulfillmentDTO{})),
 		},
 	})
 }
 
-// uygunlukParametreleri uygunluk listelemesinin sorgu parametreleridir.
+// eligibilityParameters are the query parameters of the eligibility listing.
 //
-// Liste [parseEligibilityQuery]'nin OKUDUKLARIDIR ve iki yüzeyde de aynıdır.
-// "include_admin_only" ve "trusted_facts" BİLİNÇLİ OLARAK YOKTUR: ikisi de bir
-// GÜVEN kararıdır ve değeri handler'ın hangi yüzeye ait olduğuna göre
-// sabitlenir. Şemaya yazmak, vitrinden gelen bir istemciye tek bir parametreyle
-// yönetime özel seçenekleri açabileceğini ima etmek olurdu.
+// The list is what [parseEligibilityQuery] READS and it is the same on both
+// surfaces. "include_admin_only" and "trusted_facts" are DELIBERATELY ABSENT:
+// both are a TRUST decision and their value is fixed according to which surface
+// the handler belongs to. Writing them into the schema would imply to a client
+// coming from the storefront that a single parameter could open the admin-only
+// options.
 //
-// Serbest kural bağlamı ([service.ListOptionsInput.Attributes]) da yoktur;
-// HTTP uçlarının hiçbiri onu okumaz.
-func uygunlukParametreleri() []openapi.Parameter {
+// The free rule context ([service.ListOptionsInput.Attributes]) is absent as
+// well; none of the HTTP endpoints reads it.
+func eligibilityParameters() []openapi.Parameter {
 	return []openapi.Parameter{
-		sorguParametresi("region_id", tipDize,
-			"Seçenekleri sepetin bölgesiyle sınırlar."),
-		sorguParametresi("currency_code", tipDize,
-			"Ücretin hesaplanacağı para birimi."),
-		sorguParametresi("country_code", tipDize,
-			"Teslimat ülkesi; ülkeye bağlı kurallar bununla değerlendirilir."),
+		queryParameter("region_id", typeString,
+			"Restricts the options to the cart's region."),
+		queryParameter("currency_code", typeString,
+			"The currency the rate will be computed in."),
+		queryParameter("country_code", typeString,
+			"The delivery country; country-bound rules are evaluated with it."),
 		{
 			Name: "shipping_profile_id",
 			In:   "query",
-			// TEKRARLANABİLİR: bir sepette birden çok profile bağlı ürün
-			// bulunabilir ve hepsi aynı anda sorulur (bkz. query["…"] okuması).
+			// REPEATABLE: a cart may contain products bound to several profiles
+			// and all of them are asked at once (see the query["…"] read).
 			Schema: map[string]any{
-				semaTip:    tipDizi,
-				semaOgeler: map[string]any{semaTip: tipDize},
+				schemaType:  typeArray,
+				schemaItems: map[string]any{schemaType: typeString},
 			},
-			Description: "Sepetteki ürünlerin kargo profilleri; birden çok kez verilebilir.",
+			Description: "The shipping profiles of the products in the cart; may be given more than once.",
 		},
-		sorguParametresi("subtotal", tipTamSayi,
-			"Sepetin ara toplamı (minor unit)."),
-		sorguParametresi("item_count", tipTamSayi, "Sepetteki kalem adedi."),
-		sorguParametresi("total_weight", tipTamSayi, "Sepetin toplam ağırlığı."),
-		sorguParametresi("is_return", tipMantiksal,
-			"true ise iade seçenekleri listelenir."),
+		queryParameter("subtotal", typeInteger,
+			"The subtotal of the cart (minor unit)."),
+		queryParameter("item_count", typeInteger, "The number of items in the cart."),
+		queryParameter("total_weight", typeInteger, "The total weight of the cart."),
+		queryParameter("is_return", typeBoolean,
+			"If true, return options are listed."),
 	}
 }
 
-// sayfaParametreleri limit/offset sorgu parametrelerini üretir.
+// pageParameters produces the limit/offset query parameters.
 //
-// Yalnızca [parsePage] çağıran uçlarda kullanılır; sayfalanmayan listeler
-// ([writeList] ile yazılanlar) sorgu dizesini hiç okumaz.
-func sayfaParametreleri() []openapi.Parameter {
+// It is used only on the endpoints that call [parsePage]; lists that are not
+// paged (the ones written with [writeList]) never read the query string.
+func pageParameters() []openapi.Parameter {
 	return []openapi.Parameter{
-		sorguParametresi("limit", tipTamSayi,
-			"Sayfa boyutu; verilmezse servisin varsayılanı uygulanır."),
-		sorguParametresi("offset", tipTamSayi, "Atlanacak kayıt sayısı."),
+		queryParameter("limit", typeInteger,
+			"The page size; if not given, the service's default is applied."),
+		queryParameter("offset", typeInteger, "The number of records to skip."),
 	}
 }
 
-// sorguParametresi sorgu dizesinden okunan bir parametreyi tanımlar.
+// queryParameter defines a parameter read from the query string.
 //
-// Hiçbiri zorunlu DEĞİLDİR: verilmediklerinde handler varsayılanla devam eder
-// (bkz. [parseInt64Param], [parseBoolParam]).
-func sorguParametresi(ad, tip, aciklama string) openapi.Parameter {
+// None of them is required: when they are not given the handler continues with
+// the default (see [parseInt64Param], [parseBoolParam]).
+func queryParameter(name, typ, description string) openapi.Parameter {
 	return openapi.Parameter{
-		Name:        ad,
+		Name:        name,
 		In:          "query",
-		Schema:      map[string]any{semaTip: tip},
-		Description: aciklama,
+		Schema:      map[string]any{schemaType: typ},
+		Description: description,
 	}
 }
 
-// istegeBagliGovde gövdesi ZORUNLU OLMAYAN bir istek tanımı üretir.
+// optionalBody produces a request definition whose body is NOT REQUIRED.
 //
-// [openapi.Doc.RequestBody] gövdeyi her zaman zorunlu işaretler ve bu, yazma
-// uçlarının neredeyse tamamı için doğrudur. Sevk bildiriminde ise değildir:
-// handler boş gövdeyi kabul eder ve takip bilgisi olmadan da sevk yazılır.
-// Zorunlu göstermek, istemci üretecinin gövdesiz çağrıyı hiç üretmemesi
-// demekti.
-func istegeBagliGovde(d *openapi.Doc, v any) map[string]any {
-	govde := d.RequestBody(v)
-	govde["required"] = false
+// [openapi.Doc.RequestBody] always marks the body required and that is right
+// for almost every write endpoint. On the ship notification it is not: the
+// handler accepts an empty body and shipping is written without tracking
+// information as well. Marking it required would mean the client generator
+// never produces a call without a body.
+func optionalBody(d *openapi.Doc, v any) map[string]any {
+	body := d.RequestBody(v)
+	body["required"] = false
 
-	return govde
+	return body
 }
 
-// bosYanit GÖVDESİZ bir yanıt tanımı üretir.
+// emptyResponse produces a response definition with NO BODY.
 //
-// [openapi.Response] her zaman bir gövde şeması yazar; 204'ün gövdesi ise
-// YOKTUR (bkz. corehttp.WriteJSON'a nil verilen çağrılar). Boş bir şema
-// yazmak "bir şey dönüyor ama şekli bilinmiyor" demek olurdu ve istemci
-// üreteci okunacak bir gövde bekleyen bir metot üretirdi.
-func bosYanit(aciklama string) map[string]any {
-	return map[string]any{"description": aciklama}
+// [openapi.Response] always writes a body schema; a 204 however HAS no body
+// (see the calls that pass nil to corehttp.WriteJSON). Writing an empty schema
+// would mean "something is returned but its shape is unknown", and the client
+// generator would produce a method expecting a body to read.
+func emptyResponse(description string) map[string]any {
+	return map[string]any{"description": description}
 }

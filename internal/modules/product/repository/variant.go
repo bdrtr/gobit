@@ -7,14 +7,14 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/product/repository/productdb"
 )
 
-// VariantFilter varyant listelemesinin ölçütleridir.
+// VariantFilter holds the criteria of the variant listing.
 type VariantFilter struct {
 	ProductID *string
 	Limit     int
 	Offset    int
 }
 
-// VariantPatch bir varyantın kısmi güncellemesidir; nil alan değişmez.
+// VariantPatch is a partial update of a variant; a nil field does not change.
 type VariantPatch struct {
 	Title           *string
 	SKU             *string
@@ -28,7 +28,7 @@ type VariantPatch struct {
 	Metadata        map[string]any
 }
 
-// CreateVariant yeni bir varyant yazar ve saklanan hâlini döner.
+// CreateVariant writes a new variant and returns it as it is stored.
 func (r *Repo) CreateVariant(ctx context.Context, v models.Variant) (models.Variant, error) {
 	meta, err := fromMetadata(v.Metadata)
 	if err != nil {
@@ -50,21 +50,21 @@ func (r *Repo) CreateVariant(ctx context.Context, v models.Variant) (models.Vari
 		Metadata:        meta,
 	})
 	if err != nil {
-		return models.Variant{}, wrapDB(err, "varyant oluşturulamadı (ürün: %s)", v.ProductID)
+		return models.Variant{}, wrapDB(err, "could not create variant (product: %s)", v.ProductID)
 	}
 	return toVariant(row)
 }
 
-// GetVariant kimliğe göre varyantı döner.
+// GetVariant returns the variant by id.
 func (r *Repo) GetVariant(ctx context.Context, id string) (models.Variant, error) {
 	row, err := r.q.GetVariant(ctx, id)
 	if err != nil {
-		return models.Variant{}, wrapDB(err, "varyant bulunamadı: %s", id)
+		return models.Variant{}, wrapDB(err, "variant not found: %s", id)
 	}
 	return toVariant(row)
 }
 
-// ListVariants ölçütlere uyan varyantları sayfalı döner.
+// ListVariants returns the variants matching the criteria, paginated.
 func (r *Repo) ListVariants(ctx context.Context, f VariantFilter) ([]models.Variant, error) {
 	rows, err := r.q.ListVariants(ctx, productdb.ListVariantsParams{
 		ProductID: f.ProductID,
@@ -72,48 +72,49 @@ func (r *Repo) ListVariants(ctx context.Context, f VariantFilter) ([]models.Vari
 		Off:       toInt32(f.Offset),
 	})
 	if err != nil {
-		return nil, wrapDB(err, "varyantlar listelenemedi")
+		return nil, wrapDB(err, "could not list variants")
 	}
 	return toVariants(rows)
 }
 
-// CountVariants ölçütlere uyan toplam varyant sayısını döner.
+// CountVariants returns the total number of variants matching the criteria.
 func (r *Repo) CountVariants(ctx context.Context, f VariantFilter) (int, error) {
 	n, err := r.q.CountVariants(ctx, f.ProductID)
 	if err != nil {
-		return 0, wrapDB(err, "varyant sayısı okunamadı")
+		return 0, wrapDB(err, "could not read variant count")
 	}
 	return int(n), nil
 }
 
-// ListVariantsByProductIDs verilen ürünlerin varyantlarını TEK sorguda döner.
+// ListVariantsByProductIDs returns the variants of the given products in a
+// SINGLE query.
 //
-// Ürün listelemesinin varyantları doldurması bunun üzerinden yapılır; ürün
-// başına sorgu N+1 demek olurdu.
+// The product listing fills in its variants over this; a query per product
+// would mean N+1.
 func (r *Repo) ListVariantsByProductIDs(ctx context.Context, productIDs []string) ([]models.Variant, error) {
 	if len(productIDs) == 0 {
 		return []models.Variant{}, nil
 	}
 	rows, err := r.q.ListVariantsByProductIDs(ctx, productIDs)
 	if err != nil {
-		return nil, wrapDB(err, "ürünlerin varyantları okunamadı (%d ürün)", len(productIDs))
+		return nil, wrapDB(err, "could not read the products' variants (%d products)", len(productIDs))
 	}
 	return toVariants(rows)
 }
 
-// ListVariantsByIDs verilen kimliklerin varyantlarını TEK sorguda döner.
+// ListVariantsByIDs returns the variants of the given ids in a SINGLE query.
 func (r *Repo) ListVariantsByIDs(ctx context.Context, ids []string) ([]models.Variant, error) {
 	if len(ids) == 0 {
 		return []models.Variant{}, nil
 	}
 	rows, err := r.q.ListVariantsByIDs(ctx, ids)
 	if err != nil {
-		return nil, wrapDB(err, "varyantlar kimliğe göre okunamadı (%d kimlik)", len(ids))
+		return nil, wrapDB(err, "could not read variants by id (%d ids)", len(ids))
 	}
 	return toVariants(rows)
 }
 
-// UpdateVariant varyantı kısmi olarak günceller.
+// UpdateVariant updates the variant partially.
 func (r *Repo) UpdateVariant(ctx context.Context, id string, patch VariantPatch) (models.Variant, error) {
 	meta, err := patchMetadata(patch.Metadata)
 	if err != nil {
@@ -134,24 +135,25 @@ func (r *Repo) UpdateVariant(ctx context.Context, id string, patch VariantPatch)
 		Metadata:        meta,
 	})
 	if err != nil {
-		return models.Variant{}, wrapDB(err, "varyant güncellenemedi: %s", id)
+		return models.Variant{}, wrapDB(err, "could not update variant: %s", id)
 	}
 	return toVariant(row)
 }
 
-// SoftDeleteVariant varyantı siler; kayıt yoksa errors.NotFound döner.
+// SoftDeleteVariant deletes the variant; if there is no record it returns
+// errors.NotFound.
 func (r *Repo) SoftDeleteVariant(ctx context.Context, id string) error {
 	n, err := r.q.SoftDeleteVariant(ctx, id)
 	if err != nil {
-		return wrapDB(err, "varyant silinemedi: %s", id)
+		return wrapDB(err, "could not delete variant: %s", id)
 	}
 	if n == 0 {
-		return notFound("varyant", id)
+		return notFound("variant", id)
 	}
 	return nil
 }
 
-// CreateOption ürüne seçenek ekler.
+// CreateOption adds an option to the product.
 func (r *Repo) CreateOption(ctx context.Context, o models.Option) (models.Option, error) {
 	row, err := r.q.CreateOption(ctx, productdb.CreateOptionParams{
 		ID:        o.ID,
@@ -160,28 +162,29 @@ func (r *Repo) CreateOption(ctx context.Context, o models.Option) (models.Option
 		Rank:      o.Rank,
 	})
 	if err != nil {
-		return models.Option{}, wrapDB(err, "seçenek oluşturulamadı (ürün: %s)", o.ProductID)
+		return models.Option{}, wrapDB(err, "could not create option (product: %s)", o.ProductID)
 	}
 	return toOption(row), nil
 }
 
-// GetOption kimliğe göre seçeneği döner.
+// GetOption returns the option by id.
 func (r *Repo) GetOption(ctx context.Context, id string) (models.Option, error) {
 	row, err := r.q.GetOption(ctx, id)
 	if err != nil {
-		return models.Option{}, wrapDB(err, "seçenek bulunamadı: %s", id)
+		return models.Option{}, wrapDB(err, "option not found: %s", id)
 	}
 	return toOption(row), nil
 }
 
-// ListOptionsByProductIDs verilen ürünlerin seçeneklerini TEK sorguda döner.
+// ListOptionsByProductIDs returns the options of the given products in a SINGLE
+// query.
 func (r *Repo) ListOptionsByProductIDs(ctx context.Context, productIDs []string) ([]models.Option, error) {
 	if len(productIDs) == 0 {
 		return []models.Option{}, nil
 	}
 	rows, err := r.q.ListOptionsByProductIDs(ctx, productIDs)
 	if err != nil {
-		return nil, wrapDB(err, "ürünlerin seçenekleri okunamadı (%d ürün)", len(productIDs))
+		return nil, wrapDB(err, "could not read the products' options (%d products)", len(productIDs))
 	}
 
 	out := make([]models.Option, 0, len(rows))
@@ -191,19 +194,20 @@ func (r *Repo) ListOptionsByProductIDs(ctx context.Context, productIDs []string)
 	return out, nil
 }
 
-// SoftDeleteOption seçeneği siler; kayıt yoksa errors.NotFound döner.
+// SoftDeleteOption deletes the option; if there is no record it returns
+// errors.NotFound.
 func (r *Repo) SoftDeleteOption(ctx context.Context, id string) error {
 	n, err := r.q.SoftDeleteOption(ctx, id)
 	if err != nil {
-		return wrapDB(err, "seçenek silinemedi: %s", id)
+		return wrapDB(err, "could not delete option: %s", id)
 	}
 	if n == 0 {
-		return notFound("seçenek", id)
+		return notFound("option", id)
 	}
 	return nil
 }
 
-// CreateOptionValue seçeneğe değer ekler.
+// CreateOptionValue adds a value to the option.
 func (r *Repo) CreateOptionValue(ctx context.Context, v models.OptionValue) (models.OptionValue, error) {
 	row, err := r.q.CreateOptionValue(ctx, productdb.CreateOptionValueParams{
 		ID:       v.ID,
@@ -212,19 +216,20 @@ func (r *Repo) CreateOptionValue(ctx context.Context, v models.OptionValue) (mod
 		Rank:     v.Rank,
 	})
 	if err != nil {
-		return models.OptionValue{}, wrapDB(err, "seçenek değeri oluşturulamadı (seçenek: %s)", v.OptionID)
+		return models.OptionValue{}, wrapDB(err, "could not create option value (option: %s)", v.OptionID)
 	}
 	return toOptionValue(row), nil
 }
 
-// ListOptionValuesByOptionIDs verilen seçeneklerin değerlerini TEK sorguda döner.
+// ListOptionValuesByOptionIDs returns the values of the given options in a
+// SINGLE query.
 func (r *Repo) ListOptionValuesByOptionIDs(ctx context.Context, optionIDs []string) ([]models.OptionValue, error) {
 	if len(optionIDs) == 0 {
 		return []models.OptionValue{}, nil
 	}
 	rows, err := r.q.ListOptionValuesByOptionIDs(ctx, optionIDs)
 	if err != nil {
-		return nil, wrapDB(err, "seçenek değerleri okunamadı (%d seçenek)", len(optionIDs))
+		return nil, wrapDB(err, "could not read option values (%d options)", len(optionIDs))
 	}
 
 	out := make([]models.OptionValue, 0, len(rows))
@@ -234,17 +239,18 @@ func (r *Repo) ListOptionValuesByOptionIDs(ctx context.Context, optionIDs []stri
 	return out, nil
 }
 
-// ListOptionValuesByIDs verilen değerleri, ait oldukları ÜRÜN kimliğiyle döner.
+// ListOptionValuesByIDs returns the given values together with the PRODUCT id
+// they belong to.
 //
-// Ürün kimliği doğrulama içindir: bir varyanta yalnızca kendi ürününün
-// seçenek değerleri bağlanabilir.
+// The product id is there for validation: only its own product's option values
+// can be bound to a variant.
 func (r *Repo) ListOptionValuesByIDs(ctx context.Context, ids []string) ([]models.OptionValueRef, error) {
 	if len(ids) == 0 {
 		return []models.OptionValueRef{}, nil
 	}
 	rows, err := r.q.ListOptionValuesByIDs(ctx, ids)
 	if err != nil {
-		return nil, wrapDB(err, "seçenek değerleri okunamadı (%d kimlik)", len(ids))
+		return nil, wrapDB(err, "could not read option values (%d ids)", len(ids))
 	}
 
 	out := make([]models.OptionValueRef, 0, len(rows))
@@ -263,10 +269,10 @@ func (r *Repo) ListOptionValuesByIDs(ctx context.Context, ids []string) ([]model
 	return out, nil
 }
 
-// SetVariantOptionValue varyantın bir seçenekteki değerini yazar.
+// SetVariantOptionValue writes the variant's value on one option.
 //
-// Aynı seçenek için ikinci çağrı yeni satır değil GÜNCELLEME üretir; kural
-// birincil anahtarla (variant_id, option_id) şemada durur.
+// A second call for the same option produces not a new row but an UPDATE; the
+// rule stands in the schema as the primary key (variant_id, option_id).
 func (r *Repo) SetVariantOptionValue(ctx context.Context, variantID, optionID, valueID string) error {
 	err := r.q.SetVariantOptionValue(ctx, productdb.SetVariantOptionValueParams{
 		VariantID: variantID,
@@ -274,31 +280,31 @@ func (r *Repo) SetVariantOptionValue(ctx context.Context, variantID, optionID, v
 		ValueID:   valueID,
 	})
 	if err != nil {
-		return wrapDB(err, "varyantın seçenek değeri yazılamadı (varyant: %s)", variantID)
+		return wrapDB(err, "could not write the variant's option value (variant: %s)", variantID)
 	}
 	return nil
 }
 
-// DeleteVariantOptionValues varyantın tüm seçenek değerlerini kaldırır.
+// DeleteVariantOptionValues removes all of the variant's option values.
 //
-// Bu bağ satırlarının soft delete'i yoktur: satırın kendisi bir ilişkidir,
-// tarihçesi değil.
+// These binding rows have no soft delete: the row itself is a relation, not its
+// history.
 func (r *Repo) DeleteVariantOptionValues(ctx context.Context, variantID string) error {
 	if err := r.q.DeleteVariantOptionValues(ctx, variantID); err != nil {
-		return wrapDB(err, "varyantın seçenek değerleri kaldırılamadı: %s", variantID)
+		return wrapDB(err, "could not remove the variant's option values: %s", variantID)
 	}
 	return nil
 }
 
-// ListVariantOptionValues verilen varyantların seçenek değerlerini TEK sorguda
-// döner; sonuç varyant kimliğine göre gruplanmıştır.
+// ListVariantOptionValues returns the option values of the given variants in a
+// SINGLE query; the result is grouped by variant id.
 func (r *Repo) ListVariantOptionValues(ctx context.Context, variantIDs []string) (map[string][]models.OptionValue, error) {
 	if len(variantIDs) == 0 {
 		return map[string][]models.OptionValue{}, nil
 	}
 	rows, err := r.q.ListVariantOptionValuesByVariantIDs(ctx, variantIDs)
 	if err != nil {
-		return nil, wrapDB(err, "varyantların seçenek değerleri okunamadı (%d varyant)", len(variantIDs))
+		return nil, wrapDB(err, "could not read the variants' option values (%d variants)", len(variantIDs))
 	}
 
 	out := make(map[string][]models.OptionValue, len(variantIDs))
