@@ -677,7 +677,7 @@ func (r *Repository) LockCustomerSpending(ctx context.Context, customerID string
 	return nil
 }
 
-// spendingLockKey müşteri kimliğini danışma kilidi anahtarına çevirir.
+// spendingLockKey customer idni danışma kilidi anahtarına çevirir.
 //
 // Özet FNV-1a'dır: kriptografik olması gerekmez, yalnızca aynı kimlik için
 // aynı sayıyı üretmesi gerekir. uint32'den int64'e genişletme kayıpsızdır,

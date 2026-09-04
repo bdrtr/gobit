@@ -114,15 +114,15 @@ func validateTaxRate(rate int32) error {
 // doğrular.
 //
 // Önek kontrolü bilinçlidir: önekli kimliklerin varlık sebebi, yanlış türde bir
-// kimliğin (örn. bir müşteri kimliğinin bölge yerine geçmesi) "bulunamadı"
+// kimliğin (örn. bir customer idnin bölge yerine geçmesi) "bulunamadı"
 // olarak değil, ne olduğu belli bir doğrulama hatası olarak dönmesidir.
 func requireRegionID(id string) error {
 	const label = "bölge kimliği"
 	if id == "" {
-		return errors.Invalid(CodeInvalidInput, "%s boş olamaz", label)
+		return errors.Invalid(CodeInvalidInput, "%s cannot be empty", label)
 	}
 	if strings.TrimSpace(id) != id {
-		return errors.Invalid(CodeInvalidInput, "%s baş/son boşluk içeremez: %q", label, id)
+		return errors.Invalid(CodeInvalidInput, "%s cannot contain leading/trailing whitespace: %q", label, id)
 	}
 	if len(id) > maxIDLen {
 		return errors.Invalid(CodeInvalidInput,

@@ -175,7 +175,7 @@ func (m *memRepo) CreateEmployee(
 		return models.CompanyEmployee{}, errors.Internal(repository.CodeQueryFailed,
 			"çalışan oluşturulamadı (test)")
 	}
-	// Depo müşteri kimliğini SAKLAMAZ: sütunu yoktur.
+	// Depo customer idni SAKLAMAZ: sütunu yoktur.
 	e.CustomerID = ""
 	e.UpdatedAt = e.CreatedAt
 	m.employees[e.ID] = e

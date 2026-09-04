@@ -413,11 +413,11 @@ func multiplyAmount(unitPrice, quantity int64) (int64, error) {
 	}
 	if quantity < 0 || unitPrice < 0 {
 		return 0, errors.Invalid(CodeInvalidInput,
-			"birim fiyat ve adet negatif olamaz: %d × %d", unitPrice, quantity)
+			"the unit price and the quantity cannot be negative: %d x %d", unitPrice, quantity)
 	}
 	if quantity > models.MaxTotal/unitPrice {
 		return 0, errors.Invalid(CodeInvalidInput,
-			"satır ara toplamı sınırı aşıyor: %d × %d > %d", unitPrice, quantity, models.MaxTotal)
+			"the line subtotal exceeds the limit: %d x %d > %d", unitPrice, quantity, models.MaxTotal)
 	}
 	return unitPrice * quantity, nil
 }

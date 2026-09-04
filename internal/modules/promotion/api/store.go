@@ -19,7 +19,7 @@ import (
 //
 // # Ne DÖNMEZ
 //
-// Promosyonun DURUMU, kullanım sayacı, kampanya kimliği ve bütçesi, üstverisi
+// Promosyonun DURUMU, kullanım sayacı, campaign id ve bütçesi, üstverisi
 // ve KURAL KOŞULLARI. Bir kuralın sağ tarafı (örn. bir müşteri grubunun
 // kimliği ya da bir segment listesi) iş bilgisidir.
 //

@@ -108,7 +108,7 @@ func (h *Handler) storeSetDefaultBilling(w http.ResponseWriter, r *http.Request)
 // --- iki ad alanının paylaştığı adresle ilgili gövdeler --------------------------------
 //
 // Adresle ilgili uçlar admin ve store tarafında AYNI işi yapar; farkları yalnızca
-// müşteri kimliğinin nereden geldiğidir. Gövdeler bu yüzden tek yerde durur:
+// customer idnin nereden geldiğidir. Gövdeler bu yüzden tek yerde durur:
 // iki kopya, yalnızca birinde düzeltilen bir doğrulama hatası demek olurdu.
 
 // listAddresses verilen müşterinin adreslerini yazar.

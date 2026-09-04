@@ -230,7 +230,7 @@ func (s *Service) GetCustomer(ctx context.Context, id string) (models.Customer, 
 	if err := s.ready(); err != nil {
 		return models.Customer{}, err
 	}
-	if err := requireID(id, models.CustomerIDPrefix, "müşteri kimliği"); err != nil {
+	if err := requireID(id, models.CustomerIDPrefix, "customer id"); err != nil {
 		return models.Customer{}, err
 	}
 	return s.repo.GetCustomer(ctx, id)
@@ -288,7 +288,7 @@ func (s *Service) ListCustomers(ctx context.Context, in ListCustomersInput) (Pag
 		filter.Email = &normalized
 	}
 	if in.GroupID != nil {
-		if idErr := requireID(*in.GroupID, models.CustomerGroupIDPrefix, "grup kimliği"); idErr != nil {
+		if idErr := requireID(*in.GroupID, models.CustomerGroupIDPrefix, "group id"); idErr != nil {
 			return Page[models.Customer]{}, idErr
 		}
 		filter.GroupID = in.GroupID
@@ -326,7 +326,7 @@ func (s *Service) UpdateCustomer(ctx context.Context, id string, in UpdateCustom
 	if err := s.ready(); err != nil {
 		return models.Customer{}, err
 	}
-	if err := requireID(id, models.CustomerIDPrefix, "müşteri kimliği"); err != nil {
+	if err := requireID(id, models.CustomerIDPrefix, "customer id"); err != nil {
 		return models.Customer{}, err
 	}
 
@@ -355,7 +355,7 @@ func (s *Service) DeleteCustomer(ctx context.Context, id string) error {
 	if err := s.ready(); err != nil {
 		return err
 	}
-	if err := requireID(id, models.CustomerIDPrefix, "müşteri kimliği"); err != nil {
+	if err := requireID(id, models.CustomerIDPrefix, "customer id"); err != nil {
 		return err
 	}
 	return s.repo.DeleteCustomer(ctx, id, s.clock())
@@ -375,7 +375,7 @@ func (s *Service) ConvertGuestToAccount(ctx context.Context, customerID string) 
 	if err := s.ready(); err != nil {
 		return err
 	}
-	if err := requireID(customerID, models.CustomerIDPrefix, "müşteri kimliği"); err != nil {
+	if err := requireID(customerID, models.CustomerIDPrefix, "customer id"); err != nil {
 		return err
 	}
 

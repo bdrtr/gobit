@@ -8,55 +8,59 @@ import (
 	"github.com/bdrtr/gobit/internal/core/errors"
 )
 
-// Bu dosya fulfillment modülünün MODÜLLER ARASI yüzeyidir (ADR 0001, ADR 0006).
+// This file is the fulfillment module's CROSS-MODULE surface (ADR 0001,
+// ADR 0006).
 //
-// internal/workflows altındaki sepet ve sipariş akışları bu modülü import
-// EDEMEZ. Çözüm region/cart/payment/order/inventory modüllerindeki interop.go
-// ile aynıdır: yalnızca İLKEL ve stdlib tipleri kullanan bir yüzey yayımlamak.
-// Tüketici kendi dar arayüzünü tanımlar, bu tip onu YAPISAL olarak karşılar ve
-// container'dan "fulfillment.interop" adıyla çözülür.
+// The cart and order flows under internal/workflows CANNOT import this module.
+// The solution is the same as the interop.go in the region/cart/payment/order/
+// inventory modules: publish a surface that uses only PRIMITIVE and stdlib
+// types. The consumer defines its own narrow interface, this type satisfies it
+// STRUCTURALLY, and it is resolved from the container under the name
+// "fulfillment.interop".
 //
-// Sebep Go'nun yapısal uyum kuralıdır: tüketici fulfillment'ı import edemediği
-// için imzasında models.Fulfillment gibi bir tipi adlandıramaz; adlandırdığı
-// an o, kendi paketinde tanımlı BAŞKA bir tip olur ve somut servis tüketicinin
-// arayüzünü karşılamaz.
+// The reason is Go's structural conformance rule: because the consumer cannot
+// import fulfillment, it cannot name a type such as models.Fulfillment in its
+// signature; the moment it names one, that becomes ANOTHER type defined in its
+// own package and the concrete service no longer satisfies the consumer's
+// interface.
 //
-// Yüzey BİLİNÇLİ OLARAK dardır ve akışların ihtiyacına göre seçilmiştir:
-// sepete uygun kargo seçeneklerini fiyatlarıyla sor, aday depoları tercih
-// sırasına dizdir, gönderi aç, gönderiyi iptal et (telafi) ve durumunu oku.
-// Buraya eklenen her metot, fulfillment'ı ayrı bir servise çıkarmanın
-// maliyetini artırır.
+// The surface is DELIBERATELY narrow and was chosen from what the flows need:
+// ask for the shipping options a cart is eligible for along with their prices,
+// order the candidate warehouses by preference, open a fulfillment, cancel a
+// fulfillment (compensation) and read its status. Every method added here
+// raises the cost of extracting fulfillment into a separate service.
 //
-// # Bileşik veri JSON taşır ve şeması BURADA beyan edilir
+// # Composite data travels as JSON and its schema is declared HERE
 //
-// Kargo seçeneği listesi ilkel tiplere sığmaz; JSON olarak taşınır. Alan
-// adları tüketici tarafındaki şemayla BİREBİR aynı olmak ZORUNDADIR ve uyum
-// ancak entegrasyon testiyle kanıtlanabilir — bu modül workflow paketini
-// import edemediği için derleyici uyumu denetleyemez.
+// The shipping option list does not fit into primitive types; it travels as
+// JSON. The field names MUST BE IDENTICAL to the schema on the consumer side,
+// and conformance can only be proven by an integration test — because this
+// module cannot import the workflow package, the compiler cannot check it.
 
-// CodeInteropRequestInvalid çözülemeyen bir istek gövdesi geldiğini bildirir.
+// CodeInteropRequestInvalid reports that an undecodable request body arrived.
 const CodeInteropRequestInvalid = "fulfillment_interop_request_invalid"
 
-// interopListRequest [Interop.ListOptionsJSON] isteğinin JSON şemasıdır.
+// interopListRequest is the JSON schema of the [Interop.ListOptionsJSON]
+// request.
 //
 //	{
-//	  "region_id":             "reg_...",   // sepetin bölgesi; boş olabilir
-//	  "currency_code":         "TRY",       // ZORUNLU, ISO 4217
-//	  "country_code":          "TR",        // teslimat ülkesi; boş olabilir
-//	  "shipping_profile_ids":  ["sprof_..."], // boş ise profil süzgeci yok
-//	  "subtotal":              50000,       // minor unit TAM SAYI
+//	  "region_id":             "reg_...",   // the cart's region; may be empty
+//	  "currency_code":         "TRY",       // REQUIRED, ISO 4217
+//	  "country_code":          "TR",        // delivery country; may be empty
+//	  "shipping_profile_ids":  ["sprof_..."], // if empty, no profile filter
+//	  "subtotal":              50000,       // minor unit INTEGER
 //	  "item_count":            3,
-//	  "total_weight":          1500,        // gram
+//	  "total_weight":          1500,        // grams
 //	  "attributes":            {"customer_group_id": "vip"},
-//	  "include_admin_only":    false,       // YALNIZCA yönetim akışları true verir
+//	  "include_admin_only":    false,       // ONLY admin flows pass true
 //	  "is_return":             false
 //	}
 //
-// Sayısal alanlar TAM SAYIDIR ve ondalıklı bir değer REDDEDİLİR. Çözümleme
-// bu yüzden json.Number ile yapılır: değer önce metin olarak alınır, sonra
-// int64'e çevrilir. float64 üzerinden geçen bir çözümleme "100.5" gibi bir
-// ara toplamı sessizce 100'e kırpar ve para bir kuruş kaybeder (plan Bölüm 8);
-// json.Number aynı değerde AÇIK bir hata döner.
+// The numeric fields are INTEGERS and a fractional value is REJECTED. Decoding
+// is therefore done with json.Number: the value is first taken as text, then
+// converted to int64. A decoding that goes through float64 silently truncates a
+// subtotal such as "100.5" to 100 and the money loses a cent (plan Section 8);
+// json.Number returns an EXPLICIT error on the same value.
 type interopListRequest struct {
 	RegionID           string            `json:"region_id"`
 	CurrencyCode       string            `json:"currency_code"`
@@ -70,14 +74,15 @@ type interopListRequest struct {
 	IsReturn           bool              `json:"is_return"`
 }
 
-// interopListResponse [Interop.ListOptionsJSON] yanıtının JSON şemasıdır.
+// interopListResponse is the JSON schema of the [Interop.ListOptionsJSON]
+// response.
 //
 //	{
 //	  "options": [
 //	    {
 //	      "id":                  "sopt_...",
-//	      "name":                "Standart kargo",
-//	      "amount":              2500,        // minor unit TAM SAYI
+//	      "name":                "Standard shipping",
+//	      "amount":              2500,        // minor unit INTEGER
 //	      "currency_code":       "TRY",
 //	      "price_type":          "flat",      // "flat" | "calculated"
 //	      "provider_id":         "manual",
@@ -88,14 +93,14 @@ type interopListRequest struct {
 //	  ]
 //	}
 //
-// Liste ÖNCE ücrete (ucuz kazanır), eşitlikte kimliğe göre sıralıdır.
-// Sağlayıcının ham verisi ("data") BURADA TAŞINMAZ: iç veridir ve bir akışın
-// karar vermesi için gerekli değildir.
+// The list is ordered FIRST by fee (the cheaper one wins) and, on a tie, by
+// identifier. The provider's raw data ("data") is NOT CARRIED HERE: it is
+// internal data and is not needed for a flow to make a decision.
 type interopListResponse struct {
 	Options []interopOption `json:"options"`
 }
 
-// interopOption tek bir fiyatlanmış kargo seçeneğinin JSON şemasıdır.
+// interopOption is the JSON schema of a single priced shipping option.
 type interopOption struct {
 	ID                string `json:"id"`
 	Name              string `json:"name"`
@@ -108,43 +113,45 @@ type interopOption struct {
 	AdminOnly         bool   `json:"admin_only"`
 }
 
-// Interop fulfillment servisini modüller arası İLKEL yüzeye çevirir.
+// Interop translates the fulfillment service into a PRIMITIVE cross-module
+// surface.
 //
-// Hiçbir karar vermez: yalnızca imzayı ve JSON şemasını çevirir. Tüm iş
-// kuralları [Service] üzerinde kalır; buraya kural eklemek, aynı kuralın iki
-// yerde ayrışması demek olurdu.
+// It makes no decision at all: it only translates the signature and the JSON
+// schema. All business rules stay on [Service]; adding a rule here would mean
+// the same rule diverging in two places.
 //
-// Container'a "fulfillment.interop" adıyla kaydedilir.
+// It is registered with the container under the name "fulfillment.interop".
 type Interop struct {
 	svc *Service
 }
 
-// NewInterop verilen servis için modüller arası yüzeyi kurar.
+// NewInterop builds the cross-module surface for the given service.
 func NewInterop(svc *Service) *Interop { return &Interop{svc: svc} }
 
-// ListOptionsJSON bir sepet bağlamı için uygun kargo seçeneklerini
-// fiyatlarıyla döner.
+// ListOptionsJSON returns the shipping options eligible for a cart context
+// along with their prices.
 //
-// İstek ve yanıt şemaları [interopListRequest] ve [interopListResponse]
-// belgelerinde AÇIKÇA yazılıdır.
+// The request and response schemas are written out EXPLICITLY in the
+// [interopListRequest] and [interopListResponse] documentation.
 //
-// "calculated" seçenekler için sağlayıcının fiyatı sorulur; bir sağlayıcı
-// erişilemezse YALNIZCA o seçenek listeden düşer ve çağrı hata dönmez
-// (gerekçe: [Service.ListShippingOptionsFor]).
+// For "calculated" options the provider is asked for the price; if a provider
+// is unreachable, ONLY that option drops out of the list and the call does not
+// return an error (rationale: [Service.ListShippingOptionsFor]).
 //
-// # Sepet olguları GÜVENİLİR sayılır
+// # Cart facts are considered TRUSTED
 //
-// Bu yüzey SÜREÇ İÇİNDEDİR ve yalnızca sepet/sipariş akışları çözer; ara
-// toplam, kalem adedi ve ağırlık oraya sepetin kendi kaydından gelir, dış
-// istekten değil. Bu yüzden çağrı TrustedFacts=true ile yapılır ve kurala
-// bağlı seçenekler (örn. "500 TL üzeri ücretsiz kargo") burada listelenir —
-// müşteriye onları gösterebilen tek yol budur; HTTP mağaza ucu, olguları
-// doğrulayamadığı için onları hiç göstermez.
+// This surface is IN-PROCESS and is only resolved by the cart/order flows; the
+// subtotal, item count and weight reach them from the cart's own record, not
+// from an external request. The call is therefore made with TrustedFacts=true
+// and rule-bound options (e.g. "free shipping over 500 TRY") are listed here —
+// this is the only way they can be shown to the customer; the HTTP storefront
+// endpoint never shows them because it cannot verify the facts.
 //
-// Bayrak şemada BİLİNÇLİ OLARAK yoktur: çağıranın kendi bağlamına "bu veriye
-// güven" diyebilmesi, doğrulamayı yeniden çağırana devretmek olurdu.
+// The flag is DELIBERATELY absent from the schema: letting a caller say "trust
+// this data" about its own context would be handing validation back to the
+// caller.
 //
-// Tüketici tarafındaki karşılığı:
+// The counterpart on the consumer side:
 //
 //	type ShippingOptionLister interface {
 //	    ListOptionsJSON(ctx context.Context, request json.RawMessage) (json.RawMessage, error)
@@ -186,8 +193,8 @@ func (i *Interop) ListOptionsJSON(ctx context.Context, request json.RawMessage) 
 	}
 
 	out := interopListResponse{Options: make([]interopOption, 0, len(quoted))}
-	// Dilim İNDEKSLE gezilir: değerle gezmek her yinelemede seçeneğin tamamını
-	// kopyalardı ve bu yol sepet her güncellendiğinde çalışır.
+	// The slice is walked BY INDEX: walking by value would copy the whole option
+	// on every iteration, and this path runs every time the cart is updated.
 	for idx := range quoted {
 		out.Options = append(out.Options, interopOption{
 			ID:                quoted[idx].Option.ID,
@@ -205,32 +212,35 @@ func (i *Interop) ListOptionsJSON(ctx context.Context, request json.RawMessage) 
 	body, err := json.Marshal(out)
 	if err != nil {
 		return nil, errors.Wrap(err, errors.KindInternal, CodeInteropRequestInvalid,
-			"kargo seçeneği listesi kodlanamadı")
+			"the shipping option list could not be encoded")
 	}
 	return body, nil
 }
 
-// RankLocations adayları TERCİH SIRASINA dizer: gönderi ilkinden çıkar.
+// RankLocations orders the candidates by PREFERENCE: the fulfillment leaves
+// from the first one.
 //
-// Adaylar, stok modülünün "şu kalemden şu adet için yeterli stoğu olan
-// lokasyonlar" yanıtıdır; hangisinden gönderileceği ise bir KARGO kararıdır ve
-// bu yüzden buradadır. Kural ve gerekçeleri (eleme, sıralama, determinizmin
-// neyi kapsadığı ve politikanın NEYİ garanti etmediği) [Service.RankLocations]
-// belgesindedir.
+// The candidates are the inventory module's answer to "the locations that have
+// enough stock for this item in this quantity"; which one it ships from is a
+// SHIPPING decision, and that is why it is here. The rule and its rationale
+// (elimination, ordering, what determinism covers and what the policy does NOT
+// guarantee) are in the [Service.RankLocations] documentation.
 //
-// destinationRegionID gönderinin gideceği kargo bölgesidir ve ZORUNLUDUR:
-// deponun o bölgeye hizmet edip etmediği elemenin girdisidir. Boş verilirse
-// errors.Invalid döner.
+// destinationRegionID is the shipping region the fulfillment is going to and is
+// REQUIRED: whether the warehouse serves that region is an input to the
+// elimination. If it is empty, errors.Invalid is returned.
 //
-// Dönen dilim verilen adayların bir ALT KÜMESİDİR ve elemanları BİREBİR aynı
-// dizelerdir; çağıran sonucu kendi aday defterinde arayabilir.
+// The returned slice is a SUBSET of the given candidates and its elements are
+// EXACTLY the same strings; the caller can look the result up in its own
+// candidate ledger.
 //
-// Boş aday listesi errors.Conflict döner ve çağıran bunu yetersiz stokla AYNI
-// dalda karşılamalıdır; adayların TAMAMI elenirse yine Conflict döner (ayrı
-// kod: [CodeNoServiceableLocation]). Boş bir kimlik taşıyan aday listesi
-// errors.Invalid'dir.
+// An empty candidate list returns errors.Conflict and the caller must handle it
+// in the SAME branch as insufficient stock; if ALL candidates are eliminated,
+// Conflict is likewise returned (with a separate code:
+// [CodeNoServiceableLocation]). A candidate list carrying an empty identifier is
+// errors.Invalid.
 //
-// Tüketici tarafındaki karşılığı:
+// The counterpart on the consumer side:
 //
 //	type LocationRanker interface {
 //	    RankLocations(ctx context.Context, destinationRegionID string, candidateLocationIDs []string) ([]string, error)
@@ -243,22 +253,22 @@ func (i *Interop) RankLocations(
 	return i.svc.RankLocations(ctx, destinationRegionID, candidateLocationIDs)
 }
 
-// CreateFulfillment bir sipariş için gönderi açar ve gönderinin KİMLİĞİNİ
-// döner.
+// CreateFulfillment opens a fulfillment for an order and returns the
+// fulfillment's IDENTIFIER.
 //
-// reference siparişin kimliğidir; bu modül onu doğrulamaz (Prensip 2.2 — bağ
-// Module Links ile kurulur).
+// reference is the order's identifier; this module does not validate it
+// (Principle 2.2 — the link is established through Module Links).
 //
-// Aynı idempotencyKey ile ikinci çağrı YENİ gönderi açmaz, mevcut gönderinin
-// kimliğini döner; saga bir adımı yeniden denediğinde İKİNCİ BİR KARGO
-// ETİKETİ basılmamasını sağlayan şey budur. Anahtar aynı ama referans ya da
-// seçenek farklıysa errors.Conflict döner.
+// A second call with the same idempotencyKey does not open a NEW fulfillment,
+// it returns the existing fulfillment's identifier; that is what keeps a SECOND
+// SHIPPING LABEL from being printed when a saga retries a step. If the key is
+// the same but the reference or the option differs, errors.Conflict is returned.
 //
-// Kalem dökümü BU YÜZEYDEN verilmez: saga'nın ihtiyacı siparişin tamamı için
-// tek bir gönderi açmaktır ve kalem bazlı kısmi sevkiyat, yönetim API'sinin
-// konusudur.
+// The item breakdown is NOT given through this surface: what the saga needs is
+// to open a single fulfillment for the whole order, and per-item partial
+// shipment is the admin API's subject.
 //
-// Tüketici tarafındaki karşılığı:
+// The counterpart on the consumer side:
 //
 //	type FulfillmentCreator interface {
 //	    CreateFulfillment(ctx context.Context, reference, optionID, idempotencyKey string) (string, error)
@@ -278,14 +288,16 @@ func (i *Interop) CreateFulfillment(
 	return ful.ID, nil
 }
 
-// CancelFulfillment gönderiyi iptal eder; SAGA TELAFİSİ budur ve İDEMPOTENTTİR.
+// CancelFulfillment cancels the fulfillment; this IS THE SAGA COMPENSATION and
+// it is IDEMPOTENT.
 //
-// İki kez çağrılırsa ikinci çağrı hata VERMEZ. Bilinmeyen bir gönderi kimliği
-// ise errors.NotFound döner; telafi, var olmayan bir kaydı sessizce yutmaz.
-// TESLİM EDİLMİŞ bir gönderi iptal edilemez ve errors.Conflict döner
-// (gerekçe: [Service.CancelFulfillment]).
+// If it is called twice the second call does NOT return an error. An unknown
+// fulfillment identifier, however, returns errors.NotFound; compensation does
+// not silently swallow a record that does not exist. A DELIVERED fulfillment
+// cannot be canceled and errors.Conflict is returned (rationale:
+// [Service.CancelFulfillment]).
 //
-// Tüketici tarafındaki karşılığı:
+// The counterpart on the consumer side:
 //
 //	type FulfillmentCanceler interface {
 //	    CancelFulfillment(ctx context.Context, fulfillmentID string) error
@@ -294,14 +306,13 @@ func (i *Interop) CancelFulfillment(ctx context.Context, fulfillmentID string) e
 	return i.svc.CancelFulfillment(ctx, fulfillmentID)
 }
 
-// FulfillmentStatus gönderinin güncel durumunu döner ("pending", "shipped",
-// "delivered" ya da "canceled").
+// FulfillmentStatus returns the fulfillment's current status ("pending",
+// "shipped", "delivered" or "canceled").
 //
-// Telafinin gerçekten çalıştığını doğrulayan testler buna bakar: iptal edilmiş
-// bir gönderi "canceled" döner ve saga'nın geri alma zinciri gözle görülür
-// olur.
+// The tests that verify the compensation really runs look at this: a canceled
+// fulfillment returns "canceled" and the saga's rollback chain becomes visible.
 //
-// Tüketici tarafındaki karşılığı:
+// The counterpart on the consumer side:
 //
 //	type FulfillmentStatusReader interface {
 //	    FulfillmentStatus(ctx context.Context, fulfillmentID string) (string, error)
@@ -314,34 +325,34 @@ func (i *Interop) FulfillmentStatus(ctx context.Context, fulfillmentID string) (
 	return ful.Status.String(), nil
 }
 
-// decodeListRequest ham istek gövdesini çözer.
+// decodeListRequest decodes the raw request body.
 //
-// Sayılar json.Number olarak çözülür: değer önce metin olarak alınır ve
-// [interopInt] onu int64'e çevirirken ondalıklı bir gövdeyi AÇIK bir hatayla
-// reddeder. float64 üzerinden geçen bir çözümleme aynı gövdeyi sessizce
-// kırpardı ve ara toplam bir PARA değeridir (plan Bölüm 8).
+// Numbers are decoded as json.Number: the value is first taken as text and,
+// while [interopInt] converts it to int64, it rejects a fractional body with an
+// EXPLICIT error. A decoding that goes through float64 would silently truncate
+// the same body, and the subtotal is a MONEY value (plan Section 8).
 func decodeListRequest(raw json.RawMessage) (interopListRequest, error) {
 	if len(raw) == 0 || string(raw) == "null" {
 		return interopListRequest{}, errors.Invalid(CodeInteropRequestInvalid,
-			"kargo seçeneği isteği boş olamaz")
+			"the shipping option request cannot be empty")
 	}
 
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.UseNumber()
-	// Tanınmayan alan REDDEDİLİR: sessizce yutulan bir alan, çağıranın
-	// gönderdiğini sandığı ama uygulanmayan bir koşul demektir ve iki
-	// paketteki şemanın ayrıştığının ilk işaretidir.
+	// An unrecognized field is REJECTED: a silently swallowed field means a
+	// condition the caller believes it sent but which is not applied, and it is
+	// the first sign that the schema in the two packages has diverged.
 	dec.DisallowUnknownFields()
 
 	var out interopListRequest
 	if err := dec.Decode(&out); err != nil {
 		return interopListRequest{}, errors.Wrap(err, errors.KindInvalid, CodeInteropRequestInvalid,
-			"kargo seçeneği isteği çözümlenemedi; JSON nesnesi olmalı")
+			"the shipping option request could not be decoded; it must be a JSON object")
 	}
 	return out, nil
 }
 
-// interopInt json.Number'ı int64'e çevirir; boş değer sıfır döner.
+// interopInt converts a json.Number to int64; an empty value returns zero.
 func interopInt(value json.Number, field string) (int64, error) {
 	if value == "" {
 		return 0, nil
@@ -349,7 +360,7 @@ func interopInt(value json.Number, field string) (int64, error) {
 	parsed, err := value.Int64()
 	if err != nil {
 		return 0, errors.Wrap(err, errors.KindInvalid, CodeInteropRequestInvalid,
-			"%s tam sayı olmalı: %q", field, value.String())
+			"%s has to be an integer: %q", field, value.String())
 	}
 	return parsed, nil
 }

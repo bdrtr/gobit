@@ -7,60 +7,62 @@ import (
 	"time"
 )
 
-// Kimlik önekleri (plan Bölüm 8). Önek, bir kimliğin hangi varlığa ait
-// olduğunu tabloya bakmadan okunabilir kılar: logda görülen "payses_..." için
-// şemayı açmak gerekmez.
+// Identifier prefixes (plan Section 8). The prefix makes it readable which
+// entity an identifier belongs to without looking at the table: the
+// "payses_..." seen in a log does not require opening the schema.
 const (
-	// PaymentCollectionIDPrefix ödeme koleksiyonu kimliklerinin önekidir.
+	// PaymentCollectionIDPrefix is the prefix of payment collection identifiers.
 	PaymentCollectionIDPrefix = "paycol_"
-	// PaymentSessionIDPrefix ödeme oturumu kimliklerinin önekidir.
+	// PaymentSessionIDPrefix is the prefix of payment session identifiers.
 	PaymentSessionIDPrefix = "payses_"
-	// PaymentIDPrefix tahsilat kimliklerinin önekidir.
+	// PaymentIDPrefix is the prefix of capture identifiers.
 	PaymentIDPrefix = "pay_"
-	// RefundIDPrefix iade kimliklerinin önekidir.
+	// RefundIDPrefix is the prefix of refund identifiers.
 	RefundIDPrefix = "refund_"
-	// ManualSessionIDPrefix manuel sağlayıcının kendi oturum kimliklerinin
-	// önekidir. Bu kimlik SAĞLAYICIYA aittir ve modülün oturum kaydında
-	// external_id olarak durur.
+	// ManualSessionIDPrefix is the prefix of the manual provider's own session
+	// identifiers. This identifier belongs to the PROVIDER and sits on the
+	// module's session record as external_id.
 	ManualSessionIDPrefix = "manses_"
 )
 
-// idEncoding Crockford Base32 alfabesiyle dolgusuz kodlamadır. 16 baytlık
-// gövde bu kodlamayla tam 26 karaktere iner. Alfabe ASCII'de artan sırada
-// olduğundan kodlanmış dize, kodlanan baytlarla aynı sözlüksel sırayı korur;
-// kimlikler bu sayede zamana göre sıralanabilir kalır.
+// idEncoding is padding-free encoding over the Crockford Base32 alphabet. A
+// 16-byte body comes down to exactly 26 characters under this encoding. Since
+// the alphabet is in ascending order in ASCII, the encoded string keeps the
+// same lexicographic order as the bytes it encodes; identifiers stay sortable
+// by time thanks to that.
 var idEncoding = base32.NewEncoding("0123456789ABCDEFGHJKMNPQRSTVWXYZ").WithPadding(base32.NoPadding)
 
-// NewPaymentCollectionID yeni bir ödeme koleksiyonu kimliği üretir.
+// NewPaymentCollectionID produces a new payment collection identifier.
 func NewPaymentCollectionID() string { return newID(PaymentCollectionIDPrefix, time.Now()) }
 
-// NewPaymentSessionID yeni bir ödeme oturumu kimliği üretir.
+// NewPaymentSessionID produces a new payment session identifier.
 func NewPaymentSessionID() string { return newID(PaymentSessionIDPrefix, time.Now()) }
 
-// NewPaymentID yeni bir tahsilat kimliği üretir.
+// NewPaymentID produces a new capture identifier.
 func NewPaymentID() string { return newID(PaymentIDPrefix, time.Now()) }
 
-// NewRefundID yeni bir iade kimliği üretir.
+// NewRefundID produces a new refund identifier.
 func NewRefundID() string { return newID(RefundIDPrefix, time.Now()) }
 
-// NewManualSessionID manuel sağlayıcı için yeni bir oturum kimliği üretir.
+// NewManualSessionID produces a new session identifier for the manual provider.
 func NewManualSessionID() string { return newID(ManualSessionIDPrefix, time.Now()) }
 
-// newID önekli, zaman sıralı ve tekil bir kimlik üretir.
+// newID produces a prefixed, time-ordered and unique identifier.
 //
-// Yapısı ULID ile aynıdır: 48 bit milisaniye zaman damgası + 80 bit
-// kriptografik rastgelelik, Crockford Base32 ile 26 karaktere kodlanır.
-// Zaman damgasının başta olması, kimliğin kendisinin kabaca oluşturma sırasını
-// taşıması demektir; kayıtlar birincil anahtar taramasında da doğal sırada
-// durur ve B-tree eklemeleri sona yapılır.
+// Its structure is the same as ULID's: a 48-bit millisecond timestamp + 80
+// bits of cryptographic randomness, encoded into 26 characters with Crockford
+// Base32. The timestamp coming first means the identifier itself carries
+// roughly the creation order; the records also sit in their natural order
+// under a primary key scan and B-tree insertions happen at the end.
 //
-// Diğer modüllerdeki üretici ile aynı yapıdadır; o paketler İMPORT EDİLMEZ
-// (Prensip 2.4), yapı burada modülün kendi kodu olarak tekrarlanır.
+// It has the same structure as the generator in the other modules; those
+// packages are NOT IMPORTED (Principle 2.4), the structure is repeated here as
+// the module's own code.
 func newID(prefix string, t time.Time) string {
 	ms := t.UTC().UnixMilli()
 	if ms < 0 {
-		// 1970 öncesi bir zaman damgası kayıt için anlamlı değildir;
-		// sıralamayı bozmamak için tabana çekilir.
+		// A timestamp from before 1970 is not meaningful for a record; it is
+		// pulled down to the floor so that the ordering is not broken.
 		ms = 0
 	}
 
@@ -68,12 +70,13 @@ func newID(prefix string, t time.Time) string {
 	binary.BigEndian.PutUint64(stamp[:], uint64(ms))
 
 	var buf [16]byte
-	// UnixMilli 48 bite sığar; ilk iki bayt daima sıfırdır ve atılır.
+	// UnixMilli fits into 48 bits; the first two bytes are always zero and are
+	// thrown away.
 	copy(buf[:6], stamp[2:])
 	if _, err := rand.Read(buf[6:]); err != nil {
-		// crypto/rand.Read hata dönmez; yine de bir gün dönerse kimlik
-		// yalnızca nanosaniye çözünürlüğüne dayanır — tekillik zayıflar ama
-		// kayıt açma başarısız olmaz.
+		// crypto/rand.Read does not return an error; should it ever do so one
+		// day, the identifier rests on nanosecond resolution alone —
+		// uniqueness weakens, but opening the record does not fail.
 		binary.BigEndian.PutUint64(buf[8:], uint64(t.UnixNano()))
 	}
 

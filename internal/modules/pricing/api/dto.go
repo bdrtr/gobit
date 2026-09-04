@@ -7,171 +7,174 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/pricing/service"
 )
 
-// DTO'lar domain modellerinden AYRI tutulur: JSON alan adları dış sözleşmedir
-// ve modelde yapılan bir yeniden adlandırma istemciyi kırmamalıdır.
+// The DTOs are kept SEPARATE from the domain models: JSON field names are the
+// outside contract and a rename made in the model must not break the client.
 
-// priceSetDTO bir price set'in yanıt gövdesidir.
+// priceSetDTO is the response body of a price set.
 type priceSetDTO struct {
-	// ID kabın kimliğidir.
+	// ID is the container's id.
 	ID string `json:"id"`
-	// Prices kabın fiyatlarıdır; istenmediyse nil (JSON'da yok).
+	// Prices are the container's prices; nil when not requested (absent in JSON).
 	Prices []priceDTO `json:"prices,omitempty"`
-	// CreatedAt oluşturulma anıdır (RFC3339, UTC).
+	// CreatedAt is the moment of creation (RFC3339, UTC).
 	CreatedAt time.Time `json:"created_at"`
-	// UpdatedAt son güncellenme anıdır (RFC3339, UTC).
+	// UpdatedAt is the moment of the last update (RFC3339, UTC).
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
-// priceDTO bir fiyatın yanıt gövdesidir.
+// priceDTO is the response body of a price.
 type priceDTO struct {
-	// ID fiyatın kimliğidir.
+	// ID is the price's id.
 	ID string `json:"id"`
-	// PriceSetID fiyatın ait olduğu kaptır.
+	// PriceSetID is the container the price belongs to.
 	PriceSetID string `json:"price_set_id"`
-	// PriceListID fiyatın bağlı olduğu listedir; taban fiyatta null.
+	// PriceListID is the list the price is bound to; null for a base price.
 	PriceListID *string `json:"price_list_id"`
-	// CurrencyCode ISO 4217 kodudur (BÜYÜK harf).
+	// CurrencyCode is the ISO 4217 code (UPPERCASE).
 	CurrencyCode string `json:"currency_code"`
-	// Amount minor unit cinsinden tutardır.
+	// Amount is the amount in minor units.
 	Amount int64 `json:"amount"`
-	// MinQuantity alt adet sınırıdır.
+	// MinQuantity is the lower quantity bound.
 	MinQuantity int32 `json:"min_quantity"`
-	// MaxQuantity üst adet sınırıdır; sınırsızsa null.
+	// MaxQuantity is the upper quantity bound; null when unbounded.
 	MaxQuantity *int32 `json:"max_quantity"`
-	// Rules fiyatın geçerlilik koşullarıdır.
+	// Rules are the price's validity conditions.
 	Rules []priceRuleDTO `json:"rules"`
-	// CreatedAt oluşturulma anıdır.
+	// CreatedAt is the moment of creation.
 	CreatedAt time.Time `json:"created_at"`
-	// UpdatedAt son güncellenme anıdır.
+	// UpdatedAt is the moment of the last update.
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
-// priceRuleDTO bir fiyat kuralının yanıt gövdesidir.
+// priceRuleDTO is the response body of a price rule.
 type priceRuleDTO struct {
-	// ID kuralın kimliğidir.
+	// ID is the rule's id.
 	ID string `json:"id"`
-	// PriceID kuralın bağlı olduğu fiyattır.
+	// PriceID is the price the rule is bound to.
 	PriceID string `json:"price_id"`
-	// Attribute hesaplama bağlamında bakılan alan adıdır.
+	// Attribute is the name of the field looked at in the calculation context.
 	Attribute string `json:"attribute"`
-	// Operator karşılaştırma işlecidir.
+	// Operator is the comparison operator.
 	Operator string `json:"operator"`
-	// Values karşılaştırmanın sağ tarafıdır.
+	// Values is the right-hand side of the comparison.
 	Values []string `json:"values"`
-	// CreatedAt oluşturulma anıdır.
+	// CreatedAt is the moment of creation.
 	CreatedAt time.Time `json:"created_at"`
-	// UpdatedAt son güncellenme anıdır.
+	// UpdatedAt is the moment of the last update.
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
-// priceListDTO bir fiyat listesinin yanıt gövdesidir.
+// priceListDTO is the response body of a price list.
 type priceListDTO struct {
-	// ID listenin kimliğidir.
+	// ID is the list's id.
 	ID string `json:"id"`
-	// Title listenin görünen adıdır.
+	// Title is the list's display name.
 	Title string `json:"title"`
-	// Description açıklamadır.
+	// Description is the description.
 	Description string `json:"description"`
-	// Type listenin türüdür (sale | override).
+	// Type is the list's type (sale | override).
 	Type string `json:"type"`
-	// Status listenin durumudur (draft | active | expired).
+	// Status is the list's status (draft | active | expired).
 	Status string `json:"status"`
-	// StartsAt geçerlilik penceresinin başıdır; yoksa null.
+	// StartsAt is the start of the validity window; null when absent.
 	StartsAt *time.Time `json:"starts_at"`
-	// EndsAt geçerlilik penceresinin sonudur; yoksa null.
+	// EndsAt is the end of the validity window; null when absent.
 	EndsAt *time.Time `json:"ends_at"`
-	// CreatedAt oluşturulma anıdır.
+	// CreatedAt is the moment of creation.
 	CreatedAt time.Time `json:"created_at"`
-	// UpdatedAt son güncellenme anıdır.
+	// UpdatedAt is the moment of the last update.
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
-// calculatedPriceDTO bir hesaplama sonucunun yanıt gövdesidir.
+// calculatedPriceDTO is the response body of a calculation result.
 type calculatedPriceDTO struct {
-	// PriceID seçilen fiyatın kimliğidir.
+	// PriceID is the id of the selected price.
 	PriceID string `json:"price_id"`
-	// PriceSetID kabın kimliğidir.
+	// PriceSetID is the container's id.
 	PriceSetID string `json:"price_set_id"`
-	// CurrencyCode seçilen fiyatın para birimidir.
+	// CurrencyCode is the currency of the selected price.
 	CurrencyCode string `json:"currency_code"`
-	// Amount birim başına minor unit tutardır.
+	// Amount is the minor unit amount per unit.
 	Amount int64 `json:"amount"`
-	// Quantity hesaplamanın yapıldığı adettir.
+	// Quantity is the quantity the calculation was made for.
 	Quantity int32 `json:"quantity"`
-	// Total tutar × adet çarpımıdır.
+	// Total is the amount × quantity product.
 	Total int64 `json:"total"`
-	// MinQuantity seçilen fiyatın alt adet sınırıdır.
+	// MinQuantity is the lower quantity bound of the selected price.
 	MinQuantity int32 `json:"min_quantity"`
-	// MaxQuantity seçilen fiyatın üst adet sınırıdır; sınırsızsa null.
+	// MaxQuantity is the upper quantity bound of the selected price; null when
+	// unbounded.
 	MaxQuantity *int32 `json:"max_quantity"`
-	// PriceListID fiyat bir listeden geliyorsa listenin kimliğidir.
+	// PriceListID is the list's id if the price comes from a list.
 	PriceListID *string `json:"price_list_id"`
-	// PriceListType fiyat bir listeden geliyorsa listenin türüdür.
+	// PriceListType is the list's type if the price comes from a list.
 	PriceListType *string `json:"price_list_type"`
-	// MatchedRules seçilen fiyatın eşleşen kural sayısıdır; seçimin NEDEN o
-	// fiyata düştüğünü açıklar.
+	// MatchedRules is the number of matched rules of the selected price; it
+	// explains WHY the selection fell to that price.
 	MatchedRules int `json:"matched_rules"`
 }
 
-// priceRequest tek bir fiyatın istek gövdesidir.
+// priceRequest is the request body of a single price.
 type priceRequest struct {
-	// CurrencyCode ISO 4217 kodudur; büyük/küçük harf serbesttir.
+	// CurrencyCode is the ISO 4217 code; the case is free.
 	CurrencyCode string `json:"currency_code"`
-	// Amount minor unit cinsinden tutardır.
+	// Amount is the amount in minor units.
 	Amount int64 `json:"amount"`
-	// MinQuantity alt adet sınırıdır; 0 verilirse 1 kabul edilir.
+	// MinQuantity is the lower quantity bound; if 0 is given it is taken as 1.
 	MinQuantity int32 `json:"min_quantity"`
-	// MaxQuantity üst adet sınırıdır; null ise sınırsız.
+	// MaxQuantity is the upper quantity bound; if null it is unbounded.
 	MaxQuantity *int32 `json:"max_quantity"`
-	// PriceListID fiyatı bir listeye bağlar; null ise taban fiyat.
+	// PriceListID binds the price to a list; if null it is a base price.
 	PriceListID *string `json:"price_list_id"`
-	// Rules fiyatın geçerlilik koşullarıdır.
+	// Rules are the price's validity conditions.
 	Rules []ruleRequest `json:"rules"`
 }
 
-// ruleRequest tek bir fiyat kuralının istek gövdesidir.
+// ruleRequest is the request body of a single price rule.
 type ruleRequest struct {
-	// Attribute hesaplama bağlamında bakılacak alan adıdır.
+	// Attribute is the name of the field to look at in the calculation context.
 	Attribute string `json:"attribute"`
-	// Operator karşılaştırma işlecidir (eq|ne|in|nin|gt|gte|lt|lte).
+	// Operator is the comparison operator (eq|ne|in|nin|gt|gte|lt|lte).
 	Operator string `json:"operator"`
-	// Values karşılaştırmanın sağ tarafıdır.
+	// Values is the right-hand side of the comparison.
 	Values []string `json:"values"`
 }
 
-// createPriceSetRequest price set oluşturma isteğidir.
+// createPriceSetRequest is the price set creation request.
 type createPriceSetRequest struct {
-	// Prices kapla birlikte yazılacak fiyatlardır; boş bırakılabilir.
+	// Prices are the prices to be written along with the container; it may be left
+	// empty.
 	Prices []priceRequest `json:"prices"`
 }
 
-// setPricesRequest bir kabın fiyatlarını topluca yazma isteğidir.
+// setPricesRequest is the request to write a container's prices in bulk.
 type setPricesRequest struct {
-	// Prices kabın YENİ fiyat kümesidir; verilmeyenler silinir.
+	// Prices is the container's NEW price set; the ones not given are deleted.
 	Prices []priceRequest `json:"prices"`
 }
 
-// priceListRequest fiyat listesi oluşturma/güncelleme isteğidir.
+// priceListRequest is the price list creation/update request.
 type priceListRequest struct {
-	// Title listenin görünen adıdır; zorunludur.
+	// Title is the list's display name; it is required.
 	Title string `json:"title"`
-	// Description açıklamadır.
+	// Description is the description.
 	Description string `json:"description"`
-	// Type listenin türüdür (sale | override); zorunludur.
+	// Type is the list's type (sale | override); it is required.
 	Type string `json:"type"`
-	// Status listenin durumudur; boşsa draft.
+	// Status is the list's status; draft when empty.
 	Status string `json:"status"`
-	// StartsAt geçerlilik penceresinin başıdır.
+	// StartsAt is the start of the validity window.
 	StartsAt *time.Time `json:"starts_at"`
-	// EndsAt geçerlilik penceresinin sonudur.
+	// EndsAt is the end of the validity window.
 	EndsAt *time.Time `json:"ends_at"`
 }
 
-// Hesaplama isteğinin gövde karşılığı YOKTUR: uç bir GET'tir ve bağlamını
-// sorgu dizesinden okur (bkz. [API.calculatePrice], [calculateQuery]).
+// The calculation request has NO body counterpart: the endpoint is a GET and
+// reads its context from the query string (see [API.calculatePrice],
+// [calculateQuery]).
 
-// toPriceSetDTO price set modelini yanıt gövdesine çevirir.
-// prices nil verilirse fiyat alanı yanıta yazılmaz.
+// toPriceSetDTO converts the price set model into the response body.
+// If prices is given as nil the price field is not written into the response.
 func toPriceSetDTO(set models.PriceSet, prices []models.Price) priceSetDTO {
 	dto := priceSetDTO{
 		ID:        set.ID,
@@ -184,13 +187,13 @@ func toPriceSetDTO(set models.PriceSet, prices []models.Price) priceSetDTO {
 	return dto
 }
 
-// toPriceSetSummaryDTO fiyatsız bir price set gövdesi üretir; liste yanıtları
-// için kullanılır.
+// toPriceSetSummaryDTO produces a price set body without prices; it is used for
+// list responses.
 func toPriceSetSummaryDTO(set models.PriceSet) priceSetDTO {
 	return toPriceSetDTO(set, nil)
 }
 
-// toPriceDTOs fiyat dilimini yanıt gövdelerine çevirir.
+// toPriceDTOs converts the price slice into response bodies.
 func toPriceDTOs(prices []models.Price) []priceDTO {
 	out := make([]priceDTO, 0, len(prices))
 	for i := range prices {
@@ -199,7 +202,7 @@ func toPriceDTOs(prices []models.Price) []priceDTO {
 	return out
 }
 
-// toPriceDTO fiyat modelini yanıt gövdesine çevirir.
+// toPriceDTO converts the price model into the response body.
 func toPriceDTO(price models.Price) priceDTO {
 	return priceDTO{
 		ID:           price.ID,
@@ -215,7 +218,7 @@ func toPriceDTO(price models.Price) priceDTO {
 	}
 }
 
-// toPriceRuleDTOs kural dilimini yanıt gövdelerine çevirir.
+// toPriceRuleDTOs converts the rule slice into response bodies.
 func toPriceRuleDTOs(rules []models.PriceRule) []priceRuleDTO {
 	out := make([]priceRuleDTO, 0, len(rules))
 	for i := range rules {
@@ -224,7 +227,7 @@ func toPriceRuleDTOs(rules []models.PriceRule) []priceRuleDTO {
 	return out
 }
 
-// toPriceRuleDTO kural modelini yanıt gövdesine çevirir.
+// toPriceRuleDTO converts the rule model into the response body.
 func toPriceRuleDTO(rule models.PriceRule) priceRuleDTO {
 	values := rule.Values
 	if values == nil {
@@ -241,7 +244,7 @@ func toPriceRuleDTO(rule models.PriceRule) priceRuleDTO {
 	}
 }
 
-// toPriceListDTO fiyat listesi modelini yanıt gövdesine çevirir.
+// toPriceListDTO converts the price list model into the response body.
 func toPriceListDTO(list models.PriceList) priceListDTO {
 	return priceListDTO{
 		ID:          list.ID,
@@ -256,7 +259,7 @@ func toPriceListDTO(list models.PriceList) priceListDTO {
 	}
 }
 
-// toCalculatedPriceDTO hesaplama sonucunu yanıt gövdesine çevirir.
+// toCalculatedPriceDTO converts the calculation result into the response body.
 func toCalculatedPriceDTO(calculated models.CalculatedPrice) calculatedPriceDTO {
 	return calculatedPriceDTO{
 		PriceID:       calculated.PriceID,
@@ -273,11 +276,11 @@ func toCalculatedPriceDTO(calculated models.CalculatedPrice) calculatedPriceDTO 
 	}
 }
 
-// toPriceInputs istek gövdelerini servis girdilerine çevirir.
+// toPriceInputs converts request bodies into service inputs.
 //
-// Doğrulama YAPILMAZ: geçerliliğe servis karar verir ve tek bir doğrulama
-// yerinin olması, HTTP ile modüller arası çağrının aynı kuralları görmesini
-// sağlar.
+// NO validation is done: the service decides on validity, and having a single
+// validation site makes sure that HTTP and the cross-module call see the same
+// rules.
 func toPriceInputs(requests []priceRequest) []service.PriceInput {
 	out := make([]service.PriceInput, 0, len(requests))
 	for _, req := range requests {
@@ -293,7 +296,7 @@ func toPriceInputs(requests []priceRequest) []service.PriceInput {
 	return out
 }
 
-// toRuleInputs kural isteklerini servis girdilerine çevirir.
+// toRuleInputs converts rule requests into service inputs.
 func toRuleInputs(requests []ruleRequest) []service.RuleInput {
 	out := make([]service.RuleInput, 0, len(requests))
 	for _, req := range requests {
@@ -306,7 +309,7 @@ func toRuleInputs(requests []ruleRequest) []service.RuleInput {
 	return out
 }
 
-// toPriceListInput istek gövdesini servis girdisine çevirir.
+// toPriceListInput converts the request body into the service input.
 func toPriceListInput(req priceListRequest) service.PriceListInput {
 	return service.PriceListInput{
 		Title:       req.Title,

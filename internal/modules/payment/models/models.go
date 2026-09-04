@@ -1,18 +1,19 @@
-// Package models payment modülünün alan (domain) modellerini içerir.
+// Package models holds the domain models of the payment module.
 //
-// Buradaki tipler veritabanı sürücüsünden bağımsızdır: pgtype ve sqlc üretimi
-// tipler buraya SIZMAZ. Çeviri repository katmanında yapılır; servis, API ve
-// testler yalnızca bu tipleri görür.
+// The types here are independent of the database driver: pgtype and the types
+// sqlc generates DO NOT LEAK in here. The translation is done in the
+// repository layer; the service, the API and the tests see only these types.
 //
-// Para her yerde TAM SAYI minor unit'tir (kuruş/cent) ve para birimi ayrı
-// alanda durur (plan Bölüm 8); kayan nokta hiçbir alanda kullanılmaz. Zamanlar
-// UTC'dir.
+// Money is everywhere an INTEGER minor unit (cents) and the currency stands in
+// a separate field (plan Section 8); floating point is used in no field. Times
+// are UTC.
 //
-// # Neyi bilmez
+// # What it does not know
 //
-// Bu modül bir ödemenin HANGİ sepete ya da siparişe ait olduğunu bilmez.
-// [PaymentCollection.Reference] serbest bir metindir, foreign key DEĞİLDİR
-// (Prensip 2.2) ve varlığı burada doğrulanmaz; bağ Module Links ile kurulur.
+// This module does not know WHICH cart or order a payment belongs to.
+// [PaymentCollection.Reference] is free text, IT IS NOT a foreign key
+// (Principle 2.2) and its existence is not validated here; the link is
+// established through Module Links.
 package models
 
 import (
@@ -20,70 +21,76 @@ import (
 	"time"
 )
 
-// Tutar sınırları.
+// Amount limits.
 //
-// Sınırlar keyfi değildir: koleksiyonun tutarı, yetkilendirilen, tahsil edilen
-// ve iade edilen tutarların hepsi aynı tavana tabidir ve toplamları int64'e
-// SIĞMALIDIR. 4 × 10^12 < 9.22 × 10^18 olduğu için taşma yapısal olarak
-// imkânsızdır. Aynı tavan cart ve pricing modüllerindekiyle bilinçli olarak
-// aynıdır; modüller birbirini import etmediği için değer burada tekrarlanır
-// (ADR 0001'in kabul edilen bedeli).
+// The limits are not arbitrary: the collection's amount and the authorized,
+// captured and refunded amounts are all subject to the same ceiling, and their
+// sum MUST FIT into an int64. Because 4 × 10^12 < 9.22 × 10^18, an overflow is
+// structurally impossible. The same ceiling is deliberately identical to the
+// one in the cart and pricing modules; since the modules do not import one
+// another, the value is repeated here (the accepted price of ADR 0001).
 const (
-	// MinAmount izin verilen en küçük tutardır.
+	// MinAmount is the smallest permitted amount.
 	//
-	// SIFIR DEĞİLDİR: tutarı sıfır olan bir sipariş için ödeme toplanmaz ve
-	// açılan böyle bir koleksiyon hiçbir zaman "captured" olamaz — sonsuza
-	// kadar ödeme bekleyen ölü bir kayıt olurdu.
+	// IT IS NOT ZERO: no payment is collected for an order whose amount is
+	// zero, and a collection opened like that could never become "captured" —
+	// it would be a dead record waiting for payment forever.
 	MinAmount int64 = 1
-	// MaxAmount izin verilen en büyük tutardır (minor unit).
+	// MaxAmount is the largest permitted amount (minor unit).
 	MaxAmount int64 = 1_000_000_000_000
 )
 
-// PaymentCollection bir sepet ya da sipariş için toplanan ödemelerin kabıdır.
+// PaymentCollection is the container of the payments collected for a cart or
+// an order.
 //
-// # Tutarlar
+// # Amounts
 //
-// AuthorizedAmount, CapturedAmount ve RefundedAmount alt kayıtların
-// toplamlarıdır ve koleksiyonun satır kilidi altında güncellenir. Status bu
-// tutarlardan ve oturum sayımlarından TÜRETİLİR (bkz. [CollectionStatusFor]);
-// sütun yalnızca sorgulanabilirlik içindir.
+// AuthorizedAmount, CapturedAmount and RefundedAmount are the sums of the
+// child records and are updated under the collection's row lock. Status is
+// DERIVED from those amounts and from the session counts (see
+// [CollectionStatusFor]); the column exists only for queryability.
 //
-// Yeni bir oturumun kapabileceği KALAN tutar bu satırdan tek başına
-// hesaplanamaz: henüz yetkilendirilmemiş açık oturumlar da tutar rezerve eder
-// ve hiçbiri AuthorizedAmount'a girmez. Hesap, oturumları da gören servis
-// katmanında ve koleksiyon kilidi altında yapılır.
+// The REMAINING amount a new session can cover cannot be computed from this
+// row on its own: open sessions that have not been authorized yet also reserve
+// an amount, and none of it enters AuthorizedAmount. The computation is done
+// in the service layer, which also sees the sessions, and under the collection
+// lock.
 type PaymentCollection struct {
-	// ID "paycol_" önekli, zamana göre sıralanabilir kimliktir.
+	// ID is the "paycol_" prefixed, time-sortable identifier.
 	ID string
-	// Reference çağıranın kendi kaydının kimliğidir (sepet ya da sipariş).
-	// FOREIGN KEY DEĞİLDİR (Prensip 2.2) ve bu modülde doğrulanmaz.
+	// Reference is the identifier of the caller's own record (a cart or an
+	// order). IT IS NOT A FOREIGN KEY (Principle 2.2) and is not validated in
+	// this module.
 	Reference string
-	// Amount toplanması gereken toplam tutardır (minor unit).
+	// Amount is the total amount that must be collected (minor unit).
 	Amount int64
-	// CurrencyCode ISO 4217 kodudur ve daima BÜYÜK harf saklanır.
+	// CurrencyCode is the ISO 4217 code and is always stored in UPPER case.
 	CurrencyCode string
-	// Status türetilmiş durumdur; bkz. [CollectionStatusFor].
+	// Status is the derived status; see [CollectionStatusFor].
 	Status CollectionStatus
-	// AuthorizedAmount HÂLÂ bloke olan toplam tutardır (minor unit).
+	// AuthorizedAmount is the total amount that is STILL on hold (minor unit).
 	//
-	// Kümülatif değildir: iptal edilen ya da tahsil edilen bir oturumun blokajı
-	// buradan düşülür. Aksi hâlde aynı para hem bloke hem tahsil edilmiş
-	// sayılır ve koleksiyon müşterinin üzerinde olmayan bir tutarı gösterirdi.
+	// It is not cumulative: the hold of a canceled or captured session is
+	// subtracted from it. Otherwise the same money would count as both held
+	// and captured, and the collection would show an amount that is not on the
+	// customer.
 	AuthorizedAmount int64
-	// CapturedAmount tahsil edilmiş toplam tutardır (minor unit).
+	// CapturedAmount is the total captured amount (minor unit).
 	CapturedAmount int64
-	// RefundedAmount iade edilmiş toplam tutardır (minor unit).
+	// RefundedAmount is the total refunded amount (minor unit).
 	RefundedAmount int64
-	// Metadata çağıranın serbest ek verisidir.
+	// Metadata is the caller's free-form extra data.
 	Metadata map[string]any
-	// CreatedAt ve UpdatedAt UTC'dir.
+	// CreatedAt and UpdatedAt are UTC.
 	CreatedAt time.Time
 	UpdatedAt time.Time
-	// DeletedAt yumuşak silme anıdır; nil ise koleksiyon canlıdır.
+	// DeletedAt is the moment of the soft delete; if nil, the collection is
+	// alive.
 	DeletedAt *time.Time
 }
 
-// RefundableAmount koleksiyondan geri ödenebilecek tutarı döner.
+// RefundableAmount returns the amount that can be paid back out of the
+// collection.
 func (c PaymentCollection) RefundableAmount() int64 {
 	if c.RefundedAmount >= c.CapturedAmount {
 		return 0
@@ -91,67 +98,70 @@ func (c PaymentCollection) RefundableAmount() int64 {
 	return c.CapturedAmount - c.RefundedAmount
 }
 
-// PaymentSession bir SAĞLAYICIDA açılmış ödeme oturumudur.
+// PaymentSession is a payment session opened AT A PROVIDER.
 type PaymentSession struct {
-	// ID "payses_" önekli modül kimliğidir.
+	// ID is the "payses_" prefixed module identifier.
 	ID string
-	// PaymentCollectionID oturumun bağlı olduğu koleksiyondur (modül içi FK).
+	// PaymentCollectionID is the collection the session is attached to (an
+	// in-module FK).
 	PaymentCollectionID string
-	// ProviderID oturumu açan sağlayıcının kimliğidir (örn. "manual").
+	// ProviderID is the identifier of the provider that opened the session
+	// (e.g. "manual").
 	ProviderID string
-	// ExternalID sağlayıcı tarafındaki oturum kimliğidir; mutabakatta iki
-	// sistemi eşleştiren alan budur.
+	// ExternalID is the session identifier on the provider side; this is the
+	// field that matches up the two systems during reconciliation.
 	ExternalID string
-	// Status oturumun güncel durumudur.
+	// Status is the current status of the session.
 	Status SessionStatus
-	// Amount oturumun tutarıdır (minor unit).
+	// Amount is the amount of the session (minor unit).
 	Amount int64
-	// AuthorizedAmount bloke edilen tutardır; kısmi yetkilendirmede Amount'tan
-	// küçük olabilir.
+	// AuthorizedAmount is the amount put on hold; under a partial
+	// authorization it can be smaller than Amount.
 	AuthorizedAmount int64
-	// CurrencyCode ISO 4217 kodudur ve daima BÜYÜK harf saklanır.
+	// CurrencyCode is the ISO 4217 code and is always stored in UPPER case.
 	CurrencyCode string
-	// Data sağlayıcının ham verisidir; olduğu gibi saklanır, yorumlanmaz.
+	// Data is the provider's raw data; it is stored as is and not interpreted.
 	Data json.RawMessage
-	// IdempotencyKey aynı oturumun iki kez açılmasını engeller.
+	// IdempotencyKey prevents the same session from being opened twice.
 	IdempotencyKey string
-	// DeclineReason yalnızca Status [SessionFailed] iken doludur. Teşhis
-	// içindir, müşteriye gösterilmek üzere DEĞİLDİR.
+	// DeclineReason is filled only while Status is [SessionFailed]. It is for
+	// diagnosis, IT IS NOT meant to be shown to the customer.
 	DeclineReason string
-	// CreatedAt ve UpdatedAt UTC'dir.
+	// CreatedAt and UpdatedAt are UTC.
 	CreatedAt time.Time
 	UpdatedAt time.Time
-	// DeletedAt yumuşak silme anıdır; nil ise oturum canlıdır.
+	// DeletedAt is the moment of the soft delete; if nil, the session is alive.
 	DeletedAt *time.Time
 }
 
-// Payment gerçekleşmiş bir tahsilattır.
+// Payment is a capture that has actually happened.
 //
-// Bir oturumdan EN FAZLA BİR tahsilat doğar; kısmi tahsilat oturumu kapatır.
-// Capture'ın idempotentliği buna dayanır.
+// AT MOST ONE capture is born from a session; a partial capture closes the
+// session. The idempotency of Capture rests on that.
 type Payment struct {
-	// ID "pay_" önekli kimliktir.
+	// ID is the "pay_" prefixed identifier.
 	ID string
-	// PaymentSessionID tahsilatın çıktığı oturumdur.
+	// PaymentSessionID is the session the capture came out of.
 	PaymentSessionID string
-	// PaymentCollectionID tahsilatın ait olduğu koleksiyondur.
+	// PaymentCollectionID is the collection the capture belongs to.
 	PaymentCollectionID string
-	// Amount tahsil edilen tutardır (minor unit).
+	// Amount is the captured amount (minor unit).
 	Amount int64
-	// CurrencyCode ISO 4217 kodudur.
+	// CurrencyCode is the ISO 4217 code.
 	CurrencyCode string
-	// RefundedAmount bu tahsilattan iade edilmiş toplam tutardır.
+	// RefundedAmount is the total amount refunded out of this capture.
 	RefundedAmount int64
-	// CapturedAt tahsilatın gerçekleştiği andır (UTC).
+	// CapturedAt is the moment the capture happened (UTC).
 	CapturedAt time.Time
-	// CreatedAt ve UpdatedAt UTC'dir.
+	// CreatedAt and UpdatedAt are UTC.
 	CreatedAt time.Time
 	UpdatedAt time.Time
-	// DeletedAt yumuşak silme anıdır; nil ise tahsilat canlıdır.
+	// DeletedAt is the moment of the soft delete; if nil, the capture is alive.
 	DeletedAt *time.Time
 }
 
-// RefundableAmount tahsilattan geri ödenebilecek kalan tutarı döner.
+// RefundableAmount returns the remaining amount that can be paid back out of
+// the capture.
 func (p Payment) RefundableAmount() int64 {
 	if p.RefundedAmount >= p.Amount {
 		return 0
@@ -159,59 +169,64 @@ func (p Payment) RefundableAmount() int64 {
 	return p.Amount - p.RefundedAmount
 }
 
-// Refund bir tahsilatın geri ödenmesidir. Kısmi iade birden çok kayıt üretir.
+// Refund is the paying back of a capture. A partial refund produces more than
+// one record.
 type Refund struct {
-	// ID "refund_" önekli kimliktir.
+	// ID is the "refund_" prefixed identifier.
 	ID string
-	// PaymentID iadenin yapıldığı tahsilattır.
+	// PaymentID is the capture the refund was made against.
 	PaymentID string
-	// Amount iade edilen tutardır (minor unit); daima pozitiftir.
+	// Amount is the refunded amount (minor unit); it is always positive.
 	Amount int64
-	// Reason iadenin serbest metin sebebidir; isteğe bağlıdır.
+	// Reason is the free-text reason of the refund; it is optional.
 	Reason string
-	// CreatedAt ve UpdatedAt UTC'dir.
+	// CreatedAt and UpdatedAt are UTC.
 	CreatedAt time.Time
 	UpdatedAt time.Time
-	// DeletedAt yumuşak silme anıdır; nil ise iade canlıdır.
+	// DeletedAt is the moment of the soft delete; if nil, the refund is alive.
 	DeletedAt *time.Time
 }
 
-// ManualSession manuel sağlayıcının KENDİ defterindeki oturumdur.
+// ManualSession is the session in the manual provider's OWN ledger.
 //
-// Bu kayıt modülün alan verisi değildir; taklit edilen dış sistemin durumudur.
-// payment servisi ona hiç dokunmaz, yalnızca manual sağlayıcı okur ve yazar
-// (bkz. internal/modules/payment/manual).
+// This record is not the module's domain data; it is the state of the
+// simulated external system. The payment service never touches it, only the
+// manual provider reads and writes it
+// (see internal/modules/payment/manual).
 type ManualSession struct {
-	// ID "manses_" önekli SAĞLAYICI kimliğidir; modülün oturum kaydında
-	// ExternalID olarak durur.
+	// ID is the "manses_" prefixed PROVIDER identifier; it sits on the
+	// module's session record as ExternalID.
 	ID string
-	// IdempotencyKey aynı oturumun iki kez açılmasını engeller; sağlayıcının
-	// defterinde TEKTİR.
+	// IdempotencyKey prevents the same session from being opened twice; it is
+	// UNIQUE in the provider's ledger.
 	IdempotencyKey string
-	// Reference çağıranın kendi kaydının kimliğidir (koleksiyon kimliği).
+	// Reference is the identifier of the caller's own record (the collection
+	// identifier).
 	Reference string
-	// Amount oturumun tutarıdır (minor unit).
+	// Amount is the amount of the session (minor unit).
 	Amount int64
-	// CurrencyCode ISO 4217 kodudur.
+	// CurrencyCode is the ISO 4217 code.
 	CurrencyCode string
-	// Status oturumun sağlayıcı tarafındaki durumudur.
+	// Status is the status of the session on the provider side.
 	Status SessionStatus
-	// AuthorizedAmount, CapturedAmount ve RefundedAmount sağlayıcının
-	// defterindeki tutarlardır (minor unit).
+	// AuthorizedAmount, CapturedAmount and RefundedAmount are the amounts in
+	// the provider's ledger (minor unit).
 	AuthorizedAmount int64
 	CapturedAmount   int64
 	RefundedAmount   int64
-	// Data oturum açılırken verilen serbest veridir. Manuel sağlayıcının
-	// davranışını yönlendiren anahtarlar buradadır (bkz. manual paketi).
+	// Data is the free-form data given while the session was being opened. The
+	// keys that steer the manual provider's behavior are in there (see the
+	// manual package).
 	Data json.RawMessage
-	// DeclineReason yalnızca Status [SessionFailed] iken doludur.
+	// DeclineReason is filled only while Status is [SessionFailed].
 	DeclineReason string
-	// CreatedAt ve UpdatedAt UTC'dir.
+	// CreatedAt and UpdatedAt are UTC.
 	CreatedAt time.Time
 	UpdatedAt time.Time
 }
 
-// RefundableAmount sağlayıcı defterinde geri ödenebilecek kalan tutarı döner.
+// RefundableAmount returns the remaining amount that can be paid back in the
+// provider's ledger.
 func (m ManualSession) RefundableAmount() int64 {
 	if m.RefundedAmount >= m.CapturedAmount {
 		return 0

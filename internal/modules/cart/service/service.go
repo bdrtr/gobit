@@ -1,49 +1,54 @@
-// Package service cart modülünün iş mantığıdır.
+// Package service is the business logic of the cart module.
 //
-// Modülün sorumluluğu tek cümleyle: bir sepetin NEYE sahip olduğunu bilmek —
-// hangi bölgede, kimin adına, hangi satırlarla, hangi adresi ve kargo
-// yöntemiyle. Sepetin NE KADAR TUTTUĞU bu modülün işi DEĞİLDİR.
+// The module's responsibility in a single sentence: to know WHAT a cart has —
+// in which region, on whose behalf, with which lines, with which address and
+// shipping method. HOW MUCH the cart COMES TO IS NOT this module's job.
 //
-// # Toplamlar neden burada hesaplanmaz
+// # Why the totals are not computed here
 //
-// Ara toplam fiyatı pricing'den, vergi ise region/tax'tan gelir; ikisini bir
-// araya getiren akış birden çok modüle dokunur ve plan Bölüm 2.5 gereği
-// WORKFLOW'a aittir (calculate_totals). ADR 0006 bu erişimin biçimini de
-// belirler: workflow modülleri import etmez, dar arayüzü kendi paketinde
-// tanımlar ve servisi container'dan adla çözer. Bu yüzden cart servisi hiçbir
-// fiyat ya da vergi kaynağını ÇAĞIRMAZ; yalnızca [Service.SetTotals] ile
-// gelen sonucu SAKLAR ve DOĞRULAR.
+// The subtotal's price comes from pricing, the tax from region/tax; the flow
+// that brings the two together touches more than one module and, as plan
+// Section 2.5 requires, belongs to a WORKFLOW (calculate_totals). ADR 0006 also
+// determines the form of that access: the workflow does not import the modules,
+// it defines the narrow interface in its own package and resolves the service
+// from the container by name. That is why the cart service DOES NOT CALL any
+// price or tax source; it only STORES and VALIDATES the result arriving through
+// [Service.SetTotals].
 //
-// Doğrulama, workflow'daki bir hesap hatasının sessizce veritabanına yazılmasını
-// engellemek içindir ve üç kattır: servis (okunabilir hata), veritabanı CHECK
-// kısıtı (son savunma) ve [models.Cart.TotalsStale] (bayatlığın görünürlüğü).
+// The validation is there to prevent a calculation error in the workflow from
+// being written to the database silently, and it is threefold: the service (a
+// readable error), the database CHECK constraint (the last defense) and
+// [models.Cart.TotalsStale] (the visibility of staleness).
 //
-// # Eşzamanlılık
+// # Concurrency
 //
-// Sepeti değiştiren HER akış tek bir veritabanı işleminde koşar ve işine
-// sepetin satır kilidini alarak (SELECT ... FOR UPDATE) başlar. Bu, "önce oku
-// sonra yaz" yarışını yapısal olarak imkânsız kılar: aynı sepete aynı anda iki
-// satır eklemeye çalışan iki çağrıdan ikincisi, birincinin işlemi bitene kadar
-// bekler ve READ COMMITTED altında sepetin GÜNCEL hâlini okur. Aynı varyant
-// için yarışan iki ekleme bu yüzden iki satır üretmez; ikincisi birincinin
-// açtığı satırı görüp adedini artırır.
+// EVERY flow that changes the cart runs in a single database transaction and
+// starts its work by taking the cart's row lock (SELECT ... FOR UPDATE). This
+// makes the "read first, write later" race structurally impossible: of two calls
+// trying to add a line to the same cart at the same time, the second one waits
+// until the first one's transaction is done and, under READ COMMITTED, reads the
+// CURRENT state of the cart. Two additions racing for the same variant therefore
+// do not produce two lines; the second one sees the line the first one opened
+// and increments its quantity.
 //
-// Kilit sırası tektir ve her akışta aynıdır: önce SEPET, sonra çocuk satırlar.
-// Sıra akışa göre değişseydi iki akış aynı iki satırı ters sırada isteyip
-// birbirini kilitler ve veritabanı işlemlerden birini öldürürdü.
+// The lock order is single and the same in every flow: first the CART, then the
+// child lines. Had the order changed from flow to flow, two flows would ask for
+// the same two rows in opposite orders and lock each other out, and the database
+// would kill one of the transactions.
 //
-// # Değişmezlik
+// # Immutability
 //
-// [models.Cart.CompletedAt] dolu bir sepet DEĞİŞTİRİLEMEZ: sipariş geçmişinin
-// dayandığı kayıt odur. Yazan her metot kilit altında bunu kontrol eder ve
-// errors.Conflict döner.
+// A cart whose [models.Cart.CompletedAt] is set IS IMMUTABLE: it is the record
+// the order history rests on. Every writing method checks this under the lock
+// and returns errors.Conflict.
 //
-// # Modül izolasyonu
+// # Module isolation
 //
-// Bu modül başka hiçbir modülü tanımaz (Prensip 2.1/2.4, ADR 0001). RegionID,
-// CustomerID ve VariantID başka modüllerin kimlikleridir; serbest metin olarak
-// saklanır, foreign key verilmez (Prensip 2.2) ve varlıkları bu modülde
-// doğrulanmaz — doğrulama, o modülleri tanıyan workflow'un işidir.
+// This module knows no other module (Principle 2.1/2.4, ADR 0001). RegionID,
+// CustomerID and VariantID are other modules' identifiers; they are stored as
+// free text, no foreign key is given (Principle 2.2) and their existence is not
+// validated in this module — the validation is the job of the workflow that
+// knows those modules.
 package service
 
 import (
@@ -55,75 +60,80 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/cart/models"
 )
 
-// EntityName modülün Query katmanına sunduğu entity adıdır. Sağlayıcı
-// container'a "<EntityName>.query" adıyla kaydedilir (ADR 0004).
+// EntityName is the entity name the module offers to the Query layer. The
+// provider is registered in the container under the name "<EntityName>.query"
+// (ADR 0004).
 const EntityName = "cart"
 
-// Hata kodları. İstemciler bunlara göre dallanabilir; mesajlar değişebilir,
-// kodlar değişmez.
+// Error codes. Clients may branch on these; the messages may change, the codes
+// do not.
 const (
-	// CodeInvalidInput girdinin doğrulamadan geçmediğini bildirir.
+	// CodeInvalidInput reports that the input did not pass validation.
 	CodeInvalidInput = "cart_invalid_input"
-	// CodeCompleted tamamlanmış bir sepetin değiştirilmek istendiğini bildirir.
+	// CodeCompleted reports that a completed cart was asked to be changed.
 	CodeCompleted = "cart_completed"
-	// CodeTotalsInconsistent yazılmak istenen toplamların kimliği sağlamadığını
-	// bildirir (total = subtotal - discount + tax + shipping).
+	// CodeTotalsInconsistent reports that the totals to be written do not
+	// satisfy the identity (total = subtotal - discount + tax + shipping).
 	CodeTotalsInconsistent = "cart_totals_inconsistent"
-	// CodeTotalsStale toplamların sepetin güncel şekline ait olmadığını bildirir.
+	// CodeTotalsStale reports that the totals do not belong to the current shape
+	// of the cart.
 	CodeTotalsStale = "cart_totals_stale"
-	// CodeCartEmpty satırsız bir sepetin tamamlanmak istendiğini bildirir.
+	// CodeCartEmpty reports that a cart without lines was asked to be completed.
 	CodeCartEmpty = "cart_empty"
-	// CodeCustomerMismatch sepetin başka bir müşteriye devredilmek istendiğini
-	// bildirir.
+	// CodeCustomerMismatch reports that the cart was asked to be handed over to
+	// another customer.
 	CodeCustomerMismatch = "cart_customer_mismatch"
-	// CodeLineItemNotFound sepette olmayan bir satıra atıf yapıldığını bildirir.
+	// CodeLineItemNotFound reports that a line that is not in the cart was
+	// referred to.
 	CodeLineItemNotFound = "cart_line_item_not_found"
-	// CodeNotReady servisin eksik bağımlılıkla kurulduğunu bildirir.
+	// CodeNotReady reports that the service was built with a missing dependency.
 	CodeNotReady = "cart_service_not_ready"
 )
 
-// Sayfalama sınırları (plan Bölüm 8: limit/offset).
+// Pagination limits (plan Section 8: limit/offset).
 const (
-	// DefaultLimit limit verilmediğinde uygulanan sayfa boyutudur.
+	// DefaultLimit is the page size applied when no limit is given.
 	DefaultLimit int64 = 50
-	// MaxLimit tek istekte istenebilecek en büyük sayfa boyutudur.
+	// MaxLimit is the largest page size that can be asked for in one request.
 	MaxLimit int64 = 100
 )
 
-// maxTextLen serbest metin alanları için üst sınırdır. Sınır, tek bir isteğin
-// veritabanına sınırsız büyüklükte metin yazmasını engeller.
+// maxTextLen is the upper bound for free-text fields. The bound prevents a
+// single request from writing text of unbounded size to the database.
 const maxTextLen = 512
 
-// maxIDLen dışarıdan gelen kimlikler için üst sınırdır.
+// maxIDLen is the upper bound for the identifiers arriving from the outside.
 //
-// Bu kimlikler (region_id, customer_id, variant_id) carts_region_idx ve
-// carts_customer_idx indekslerine girer. Sınırsız bir dize indeksi sepet
-// başına keyfi büyüklükte şişirir ve süzme maliyetini tek bir isteğin
-// belirlemesine izin verirdi.
+// These identifiers (region_id, customer_id, variant_id) go into the
+// carts_region_idx and carts_customer_idx indexes. An unbounded string would
+// inflate the index by an arbitrary amount per cart and would let a single
+// request determine the cost of filtering.
 const maxIDLen = 255
 
-// Service cart modülünün dışa açık servisidir. Eşzamanlı kullanıma güvenlidir.
+// Service is the cart module's outward-facing service. It is safe for
+// concurrent use.
 type Service struct {
 	store Store
 	log   *slog.Logger
 }
 
-// Options servisin bağımlılıklarıdır.
+// Options are the service's dependencies.
 type Options struct {
-	// Repo kalıcılık yüzeyidir; zorunludur.
+	// Repo is the persistence surface; it is required.
 	Repo Store
-	// Logger nil verilirse loglar atılır.
+	// Logger, when nil is given, makes the logs be discarded.
 	Logger *slog.Logger
 }
 
-// New verilen bağımlılıklarla bir servis üretir.
+// New produces a service with the given dependencies.
 //
-// Eksik bir bağımlılık KURULUM anında hata döner; çalışma zamanında nil
-// kontrolü yapılmaz. Deposuz bir servis her çağrıda panik üretirdi ve bunun
-// açılışta değil ilk istekte görünmesi için hiçbir sebep yoktur.
+// A missing dependency returns an error at BUILD time; no nil check is done at
+// runtime. A service without a store would produce a panic on every call, and
+// there is no reason at all for that to show up on the first request rather
+// than at startup.
 func New(opts Options) (*Service, error) {
 	if opts.Repo == nil {
-		return nil, errors.Internal(CodeNotReady, "cart servisi depo olmadan kurulamaz")
+		return nil, errors.Internal(CodeNotReady, "the cart service cannot be built without a store")
 	}
 	log := opts.Logger
 	if log == nil {
@@ -132,25 +142,26 @@ func New(opts Options) (*Service, error) {
 	return &Service{store: opts.Repo, log: log}, nil
 }
 
-// Page liste isteklerinin sayfalama parametreleridir.
+// Page holds the pagination parameters of the list requests.
 type Page struct {
-	// Limit döndürülecek azami satır sayısıdır; 0 ise [DefaultLimit] uygulanır.
+	// Limit is the maximum number of rows to return; if it is 0, [DefaultLimit]
+	// is applied.
 	Limit int64
-	// Offset atlanacak satır sayısıdır.
+	// Offset is the number of rows to skip.
 	Offset int64
 }
 
-// normalize sayfalama parametrelerini doğrular ve varsayılanları uygular.
+// normalize validates the pagination parameters and applies the defaults.
 func (p Page) normalize() (Page, error) {
 	if p.Limit < 0 {
-		return Page{}, errors.Invalid(CodeInvalidInput, "limit negatif olamaz: %d", p.Limit)
+		return Page{}, errors.Invalid(CodeInvalidInput, "limit cannot be negative: %d", p.Limit)
 	}
 	if p.Offset < 0 {
-		return Page{}, errors.Invalid(CodeInvalidInput, "offset negatif olamaz: %d", p.Offset)
+		return Page{}, errors.Invalid(CodeInvalidInput, "offset cannot be negative: %d", p.Offset)
 	}
 	if p.Limit > MaxLimit {
 		return Page{}, errors.Invalid(CodeInvalidInput,
-			"limit en fazla %d olabilir: %d", MaxLimit, p.Limit)
+			"limit can be at most %d: %d", MaxLimit, p.Limit)
 	}
 	if p.Limit == 0 {
 		p.Limit = DefaultLimit
@@ -158,18 +169,21 @@ func (p Page) normalize() (Page, error) {
 	return p, nil
 }
 
-// mutate sepeti değiştiren akışların ORTAK ÇERÇEVESİDİR.
+// mutate IS THE COMMON FRAME of the flows that change the cart.
 //
-// Sırayla: tek işlem aç -> sepeti KİLİTLE -> tamamlanmışsa reddet -> işi yap ->
-// sepetin şekil sayacını artır. Çerçevenin tek yerde olması iki şeyi garanti
-// eder: (a) hiçbir yazma yolu kilidi ya da değişmezlik kontrolünü atlayamaz,
-// (b) toplamların bayatladığı hiçbir yapısal değişiklikte damgalanmadan kalmaz.
+// In order: open a single transaction -> LOCK the cart -> reject it if it is
+// completed -> do the work -> increment the cart's shape counter. The frame
+// being in a single place guarantees two things: (a) no write path can skip the
+// lock or the immutability check, (b) no structural change that makes the totals
+// stale is left unstamped.
 //
-// fn'e verilen ctx İŞLEMİ TAŞIR; içerideki her çağrı bu ctx ile yapılmalıdır,
-// aksi hâlde o çağrı işlemin dışında kalır ve atomiklik sessizce kaybolur.
+// The ctx given to fn CARRIES THE TRANSACTION; every call inside must be made
+// with this ctx, otherwise that call falls outside the transaction and the
+// atomicity is silently lost.
 //
-// Dönen sepet, sayaç artırıldıktan SONRAKİ hâldir: fn'e verilen kopya artık
-// bayattır ve onu döndürmek çağırana bir eksik revision göstermek olurdu.
+// The returned cart is the state AFTER the counter was incremented: the copy
+// given to fn is stale by then and returning it would be showing the caller one
+// revision short.
 func (s *Service) mutate(ctx context.Context, cartID string, fn func(ctx context.Context, cart models.Cart) error) (models.Cart, error) {
 	if err := requireID("cart_id", cartID); err != nil {
 		return models.Cart{}, err
@@ -196,90 +210,92 @@ func (s *Service) mutate(ctx context.Context, cartID string, fn func(ctx context
 	return updated, nil
 }
 
-// completedError tamamlanmış sepete yazma denemesinin tipli hatasıdır.
+// completedError is the typed error of an attempt to write to a completed cart.
 func completedError(cartID string) error {
 	return errors.Conflict(CodeCompleted,
-		"sepet tamamlanmış ve değiştirilemez: %s", cartID)
+		"the cart is completed and cannot be changed: %s", cartID)
 }
 
-// requireID dışarıdan gelen bir kimliğin kullanılabilir olduğunu doğrular.
+// requireID validates that an identifier arriving from the outside is usable.
 //
-// Kimlik KIRPILMAZ, reddedilir: kırpma çağıranın gönderdiği kimlikle saklanan
-// kimliği ayırır ve fark ancak veri bozulduktan sonra görünür. Aynı gerekçe
-// core/link'in kimlik sözleşmesinde de geçerlidir.
+// The identifier IS NOT TRIMMED, it is rejected: trimming pulls the identifier
+// the caller sent apart from the identifier that is stored, and the difference
+// only becomes visible after the data is corrupted. The same rationale holds in
+// core/link's identifier contract as well.
 func requireID(label, value string) error {
 	if value == "" {
-		return errors.Invalid(CodeInvalidInput, "%s boş olamaz", label)
+		return errors.Invalid(CodeInvalidInput, "%s cannot be empty", label)
 	}
 	if strings.TrimSpace(value) != value {
-		return errors.Invalid(CodeInvalidInput, "%s baş/son boşluk içeremez: %q", label, value)
+		return errors.Invalid(CodeInvalidInput, "%s cannot contain leading/trailing whitespace: %q", label, value)
 	}
 	if len(value) > maxIDLen {
 		return errors.Invalid(CodeInvalidInput,
-			"%s en fazla %d bayt olabilir: %d", label, maxIDLen, len(value))
+			"%s can be at most %d bytes: %d", label, maxIDLen, len(value))
 	}
 	return nil
 }
 
-// requireText zorunlu bir metin alanını doğrular.
+// requireText validates a required text field.
 func requireText(label, value string) error {
 	if value == "" {
-		return errors.Invalid(CodeInvalidInput, "%s boş olamaz", label)
+		return errors.Invalid(CodeInvalidInput, "%s cannot be empty", label)
 	}
 	return checkTextLen(label, value)
 }
 
-// checkTextLen metin alanının uzunluk sınırını doğrular.
+// checkTextLen validates the length bound of a text field.
 func checkTextLen(label, value string) error {
 	if len(value) > maxTextLen {
 		return errors.Invalid(CodeInvalidInput,
-			"%s en fazla %d bayt olabilir: %d", label, maxTextLen, len(value))
+			"%s can be at most %d bytes: %d", label, maxTextLen, len(value))
 	}
 	return nil
 }
 
-// checkAmount bir tutarın izin verilen aralıkta olduğunu doğrular.
+// checkAmount validates that an amount is within the allowed range.
 //
-// Üst sınır keyfi değildir: taşmayı yapısal olarak imkânsız kılar
-// (bkz. [models.MaxAmount] ve [models.MaxTotal]).
+// The upper bound is not arbitrary: it makes overflow structurally impossible
+// (see [models.MaxAmount] and [models.MaxTotal]).
 func checkAmount(label string, value, upper int64) error {
 	if value < models.MinAmount {
 		return errors.Invalid(CodeInvalidInput,
-			"%s negatif olamaz: %d", label, value)
+			"%s cannot be negative: %d", label, value)
 	}
 	if value > upper {
 		return errors.Invalid(CodeInvalidInput,
-			"%s en fazla %d olabilir: %d", label, upper, value)
+			"%s can be at most %d: %d", label, upper, value)
 	}
 	return nil
 }
 
-// checkQuantity bir adedin izin verilen aralıkta olduğunu doğrular.
+// checkQuantity validates that a quantity is within the allowed range.
 func checkQuantity(quantity int64) error {
 	if quantity < models.MinQuantity {
 		return errors.Invalid(CodeInvalidInput,
-			"adet en az %d olmalı: %d", models.MinQuantity, quantity)
+			"the quantity must be at least %d: %d", models.MinQuantity, quantity)
 	}
 	if quantity > models.MaxQuantity {
 		return errors.Invalid(CodeInvalidInput,
-			"adet en fazla %d olabilir: %d", models.MaxQuantity, quantity)
+			"the quantity can be at most %d: %d", models.MaxQuantity, quantity)
 	}
 	return nil
 }
 
-// normalizeCurrency para birimi kodunu doğrular ve BÜYÜK harfe çevirir.
+// normalizeCurrency validates the currency code and converts it to UPPERCASE.
 //
-// Kod saklanmadan önce tekleştirilir: "try" ile "TRY" aynı para birimidir ve
-// iki ayrı dize olarak saklanırsa toplamların karşılaştırılması sessizce
-// yanlış sonuç verirdi.
+// The code is unified before it is stored: "try" and "TRY" are the same
+// currency, and if they were stored as two separate strings, comparing the
+// totals would silently give a wrong result.
 func normalizeCurrency(code string) (string, error) {
 	if strings.TrimSpace(code) == "" {
-		return "", errors.Invalid(CodeInvalidInput, "currency_code boş olamaz")
+		return "", errors.Invalid(CodeInvalidInput, "currency_code cannot be empty")
 	}
 	return alphaCode("currency_code", "ISO 4217", code, 3)
 }
 
-// normalizeCountry ülke kodunu doğrular ve BÜYÜK harfe çevirir; boş kabul edilir.
+// normalizeCountry validates the country code and converts it to UPPERCASE; an
+// empty one is accepted.
 func normalizeCountry(code string) (string, error) {
 	if strings.TrimSpace(code) == "" {
 		return "", nil
@@ -287,43 +303,48 @@ func normalizeCountry(code string) (string, error) {
 	return alphaCode("country_code", "ISO 3166-1 alpha-2", code, 2)
 }
 
-// alphaCode sabit uzunluklu bir harf kodunu doğrular ve BÜYÜK harfe çevirir.
+// alphaCode validates a fixed-length letter code and converts it to UPPERCASE.
 //
-// Para birimi ile ülke kodu AYNI kuralı paylaşır ve ortak yardımcının sebebi
-// tam olarak budur: kural iki yerde ayrı yazıldığında biri eksik kaldı —
-// ülke kodunda yalnızca uzunluk sınanıyor, harf olup olmadığı sorulmuyordu ve
-// "12" ya da "T1" gibi bir kod sepetin adresine girebiliyordu. Ülke kodu Faz
-// 7'de vergi bölgesi ve kargo seçeneği eşlemesinin ANAHTARI olacağı için,
-// biçimsiz bir kodun hatası sepetten çok sonra, eşleme aşamasında patlardı.
+// The currency code and the country code SHARE THE SAME rule, and that is
+// exactly the reason for the common helper: when the rule was written separately
+// in two places, one of them stayed incomplete — on the country code only the
+// length was being checked, whether it was letters was not being asked, and a
+// code like "12" or "T1" could get into the cart's address. Because in Phase 7
+// the country code will be the KEY of the tax region and shipping option
+// mapping, the error of a malformed code would blow up long after the cart, at
+// the mapping stage.
 //
-// Baş ve sondaki boşluk KIRPILIR, kod BÜYÜK harfe çevrilir. Harf dışı karakter
-// ise düşürülmez, REDDEDİLİR: boşluk ve harf büyüklüğü aynı kodun yazım
-// varyantlarıdır, ama "T1" gibi bir girdiyi "T"ye indirgeyip saklamak farkı
-// ancak veri bozulduktan sonra görünür kılardı.
+// The leading and trailing whitespace IS TRIMMED, the code is converted to
+// UPPERCASE. A non-letter character, however, is not dropped, it is REJECTED:
+// whitespace and letter case are spelling variants of the same code, but
+// reducing an input like "T1" to "T" and storing it would make the difference
+// visible only after the data was corrupted.
 //
-// [requireID] daha katıdır ve boşluklu kimliği de reddeder; kimlik dışarıdan
-// gelen bir referanstır, kod ise kullanıcı girdisidir.
+// [requireID] is stricter and rejects an identifier with whitespace too; an
+// identifier is a reference arriving from the outside, whereas a code is user
+// input.
 func alphaCode(label, standard, code string, length int) (string, error) {
 	normalized := strings.ToUpper(strings.TrimSpace(code))
 	if len(normalized) != length {
 		return "", errors.Invalid(CodeInvalidInput,
-			"%s %d harfli %s kodu olmalı: %q", label, length, standard, code)
+			"%s must be a %d-letter %s code: %q", label, length, standard, code)
 	}
 	for _, r := range normalized {
 		if r < 'A' || r > 'Z' {
 			return "", errors.Invalid(CodeInvalidInput,
-				"%s yalnızca harf içerebilir: %q", label, code)
+				"%s can contain letters only: %q", label, code)
 		}
 	}
 	return normalized, nil
 }
 
-// normalizeEmail e-postayı doğrular ve küçük harfe çevirir; boş kabul edilir.
+// normalizeEmail validates the email and converts it to lowercase; an empty one
+// is accepted.
 //
-// Doğrulama BİLİNÇLİ OLARAK yüzeyseldir: tam RFC 5322 doğrulaması geçerli
-// adresleri reddetmesiyle ünlüdür ve adresin gerçekten teslim edilebilir olup
-// olmadığını yalnızca gönderim söyleyebilir. Burada aranan tek şey, alanın
-// e-posta olarak KULLANILABİLİR biçimde olmasıdır.
+// The validation is DELIBERATELY shallow: full RFC 5322 validation is famous for
+// rejecting valid addresses, and whether the address is really deliverable can
+// only be told by a send. The only thing sought here is that the field be in a
+// USABLE shape as an email.
 func normalizeEmail(email string) (string, error) {
 	normalized := strings.ToLower(strings.TrimSpace(email))
 	if normalized == "" {
@@ -334,10 +355,10 @@ func normalizeEmail(email string) (string, error) {
 	}
 	at := strings.IndexByte(normalized, '@')
 	if at <= 0 || at == len(normalized)-1 || strings.ContainsAny(normalized, " \t\n") {
-		return "", errors.Invalid(CodeInvalidInput, "email geçerli görünmüyor: %q", email)
+		return "", errors.Invalid(CodeInvalidInput, "the email does not look valid: %q", email)
 	}
 	if strings.Count(normalized, "@") != 1 {
-		return "", errors.Invalid(CodeInvalidInput, "email geçerli görünmüyor: %q", email)
+		return "", errors.Invalid(CodeInvalidInput, "the email does not look valid: %q", email)
 	}
 	return normalized, nil
 }

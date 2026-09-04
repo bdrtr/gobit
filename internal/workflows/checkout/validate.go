@@ -50,14 +50,14 @@ const MaxCartIDLen = workflow.MaxIdempotencyKeyLen - len(IdempotencyKeyPrefix)
 // core/link, cart ve order modüllerinde de geçerlidir.
 func requireID(label, value string, upper int) error {
 	if value == "" {
-		return errors.Invalid(CodeInvalidInput, "%s boş olamaz", label)
+		return errors.Invalid(CodeInvalidInput, "%s cannot be empty", label)
 	}
 	if strings.TrimSpace(value) != value {
-		return errors.Invalid(CodeInvalidInput, "%s baş/son boşluk içeremez: %q", label, value)
+		return errors.Invalid(CodeInvalidInput, "%s cannot contain leading/trailing whitespace: %q", label, value)
 	}
 	if len(value) > upper {
 		return errors.Invalid(CodeInvalidInput,
-			"%s en fazla %d bayt olabilir: %d", label, upper, len(value))
+			"%s can be at most %d bytes: %d", label, upper, len(value))
 	}
 	return nil
 }
@@ -69,7 +69,7 @@ func checkAmount(label string, value, upper int64) error {
 	}
 	if value > upper {
 		return errors.Internal(CodeAmountInvalid,
-			"%s en fazla %d olabilir: %d", label, upper, value)
+			"%s can be at most %d: %d", label, upper, value)
 	}
 	return nil
 }
@@ -80,14 +80,14 @@ func checkAmount(label string, value, upper int64) error {
 func mulAmount(unitPrice, quantity int64) (int64, error) {
 	if unitPrice < 0 || quantity < 0 {
 		return 0, errors.Internal(CodeAmountInvalid,
-			"birim fiyat ve adet negatif olamaz: %d × %d", unitPrice, quantity)
+			"the unit price and the quantity cannot be negative: %d x %d", unitPrice, quantity)
 	}
 	if unitPrice == 0 || quantity == 0 {
 		return 0, nil
 	}
 	if quantity > MaxTotal/unitPrice {
 		return 0, errors.Internal(CodeAmountInvalid,
-			"satır ara toplamı sınırı aşıyor: %d × %d > %d", unitPrice, quantity, MaxTotal)
+			"the line subtotal exceeds the limit: %d x %d > %d", unitPrice, quantity, MaxTotal)
 	}
 	return unitPrice * quantity, nil
 }

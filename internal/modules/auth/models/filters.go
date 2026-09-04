@@ -1,62 +1,64 @@
 package models
 
-// Bu dosyadaki tiplerin ortak kuralı şudur: alanların hepsi işaretçidir, nil
-// "dokunma / süzme" demektir, dolu bir işaretçi ise değeri sıfır (boş dize,
-// false) olsa bile GERÇEK bir istektir. İki durumu ayırmayan bir tasarımda
-// "avatarı temizle" isteği sessizce "avatara dokunma"ya dönerdi.
+// The shared rule of the types in this file is this: every field is a pointer,
+// nil means "do not touch / do not filter", and a non-nil pointer is a REAL
+// request even when the value it carries is the zero value (empty string,
+// false). In a design that does not separate the two cases, a "clear the
+// avatar" request would silently turn into "do not touch the avatar".
 
-// UserFilter kullanıcı listelemesine uygulanan süzgeçtir.
+// UserFilter is the filter applied to a user listing.
 type UserFilter struct {
-	// Email verilirse yalnızca bu e-postaya sahip kullanıcı döner.
-	// Değer çağıran tarafından normalize edilmiş olmalıdır.
+	// Email, when given, returns only the user holding that email address.
+	// The value must already have been normalized by the caller.
 	Email *string
-	// Scope verilirse yalnızca bu yetkiye sahip kullanıcılar döner.
+	// Scope, when given, returns only the users holding that scope.
 	Scope *string
 }
 
-// UserPatch bir kullanıcının kısmi güncellemesidir.
+// UserPatch is the partial update of a user.
 //
-// Metadata ve Scopes için nil aynı anlamı taşır: dilim/harita verilirse
-// sütunun TAMAMI değiştirilir, birleştirme yapılmaz.
+// For Metadata and Scopes nil carries the same meaning: when a slice/map is
+// given the WHOLE column is replaced, no merging is done.
 type UserPatch struct {
-	// Email yeni e-postadır; çağıran tarafından normalize edilmiş olmalıdır.
+	// Email is the new email address; it must already have been normalized by
+	// the caller.
 	Email *string
-	// FirstName yeni addır.
+	// FirstName is the new first name.
 	FirstName *string
-	// LastName yeni soyaddır.
+	// LastName is the new last name.
 	LastName *string
-	// AvatarURL yeni avatar adresidir.
+	// AvatarURL is the new avatar address.
 	AvatarURL *string
-	// Scopes yeni yetki listesidir; sütunun tamamını değiştirir.
+	// Scopes is the new scope list; it replaces the whole column.
 	Scopes []string
-	// Metadata yeni metadata haritasıdır; sütunun tamamını değiştirir.
+	// Metadata is the new metadata map; it replaces the whole column.
 	Metadata map[string]any
 }
 
-// APIKeyFilter API anahtarı listelemesine uygulanan süzgeçtir.
+// APIKeyFilter is the filter applied to an API key listing.
 type APIKeyFilter struct {
-	// Type verilirse yalnızca bu türdeki anahtarlar döner.
+	// Type, when given, returns only the keys of that type.
 	Type *APIKeyType
-	// Revoked verilirse iptal edilmiş/edilmemiş ayrımına göre süzer.
+	// Revoked, when given, filters by the revoked/not-revoked distinction.
 	Revoked *bool
 }
 
-// SalesChannelFilter satış kanalı listelemesine uygulanan süzgeçtir.
+// SalesChannelFilter is the filter applied to a sales channel listing.
 type SalesChannelFilter struct {
-	// Name verilirse yalnızca bu ada sahip kanal döner.
+	// Name, when given, returns only the channel holding that name.
 	Name *string
-	// IsDisabled verilirse devre dışı/etkin ayrımına göre süzer.
+	// IsDisabled, when given, filters by the disabled/enabled distinction.
 	IsDisabled *bool
 }
 
-// SalesChannelPatch bir satış kanalının kısmi güncellemesidir.
+// SalesChannelPatch is the partial update of a sales channel.
 type SalesChannelPatch struct {
-	// Name kanalın yeni adıdır; canlı kanallar arasında benzersizdir.
+	// Name is the channel's new name; it is unique among live channels.
 	Name *string
-	// Description kanalın yeni açıklamasıdır.
+	// Description is the channel's new description.
 	Description *string
-	// IsDisabled kanalın yeni etkinlik durumudur.
+	// IsDisabled is the channel's new enablement state.
 	IsDisabled *bool
-	// Metadata yeni metadata haritasıdır; sütunun tamamını değiştirir.
+	// Metadata is the new metadata map; it replaces the whole column.
 	Metadata map[string]any
 }

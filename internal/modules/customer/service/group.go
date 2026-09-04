@@ -62,7 +62,7 @@ func (s *Service) UpdateGroup(ctx context.Context, id string, in UpdateGroupInpu
 	if err := s.ready(); err != nil {
 		return models.CustomerGroup{}, err
 	}
-	if err := requireID(id, models.CustomerGroupIDPrefix, "grup kimliği"); err != nil {
+	if err := requireID(id, models.CustomerGroupIDPrefix, "group id"); err != nil {
 		return models.CustomerGroup{}, err
 	}
 
@@ -95,7 +95,7 @@ func (s *Service) DeleteGroup(ctx context.Context, id string) error {
 	if err := s.ready(); err != nil {
 		return err
 	}
-	if err := requireID(id, models.CustomerGroupIDPrefix, "grup kimliği"); err != nil {
+	if err := requireID(id, models.CustomerGroupIDPrefix, "group id"); err != nil {
 		return err
 	}
 
@@ -114,7 +114,7 @@ func (s *Service) GetGroup(ctx context.Context, id string) (models.CustomerGroup
 	if err := s.ready(); err != nil {
 		return models.CustomerGroup{}, err
 	}
-	if err := requireID(id, models.CustomerGroupIDPrefix, "grup kimliği"); err != nil {
+	if err := requireID(id, models.CustomerGroupIDPrefix, "group id"); err != nil {
 		return models.CustomerGroup{}, err
 	}
 	return s.repo.GetGroup(ctx, id)
@@ -147,10 +147,10 @@ func (s *Service) AddToGroup(ctx context.Context, customerID, groupID string) er
 	if err := s.ready(); err != nil {
 		return err
 	}
-	if err := requireID(customerID, models.CustomerIDPrefix, "müşteri kimliği"); err != nil {
+	if err := requireID(customerID, models.CustomerIDPrefix, "customer id"); err != nil {
 		return err
 	}
-	if err := requireID(groupID, models.CustomerGroupIDPrefix, "grup kimliği"); err != nil {
+	if err := requireID(groupID, models.CustomerGroupIDPrefix, "group id"); err != nil {
 		return err
 	}
 
@@ -174,10 +174,10 @@ func (s *Service) RemoveFromGroup(ctx context.Context, customerID, groupID strin
 	if err := s.ready(); err != nil {
 		return err
 	}
-	if err := requireID(customerID, models.CustomerIDPrefix, "müşteri kimliği"); err != nil {
+	if err := requireID(customerID, models.CustomerIDPrefix, "customer id"); err != nil {
 		return err
 	}
-	if err := requireID(groupID, models.CustomerGroupIDPrefix, "grup kimliği"); err != nil {
+	if err := requireID(groupID, models.CustomerGroupIDPrefix, "group id"); err != nil {
 		return err
 	}
 	return s.repo.RemoveFromGroup(ctx, customerID, groupID)
@@ -191,7 +191,7 @@ func (s *Service) ListGroupsOf(ctx context.Context, customerID string) ([]models
 	if err := s.ready(); err != nil {
 		return nil, err
 	}
-	if err := requireID(customerID, models.CustomerIDPrefix, "müşteri kimliği"); err != nil {
+	if err := requireID(customerID, models.CustomerIDPrefix, "customer id"); err != nil {
 		return nil, err
 	}
 	if _, err := s.repo.GetCustomer(ctx, customerID); err != nil {

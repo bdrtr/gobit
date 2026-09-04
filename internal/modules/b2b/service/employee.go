@@ -41,7 +41,7 @@ func (s *Service) CreateEmployee(ctx context.Context, in EmployeeInput) (models.
 	if err := requireID(in.CompanyID, models.CompanyIDPrefix, "şirket kimliği"); err != nil {
 		return models.CompanyEmployee{}, err
 	}
-	if err := requireID(in.CustomerID, models.CustomerIDPrefix, "müşteri kimliği"); err != nil {
+	if err := requireID(in.CustomerID, models.CustomerIDPrefix, "customer id"); err != nil {
 		return models.CompanyEmployee{}, err
 	}
 	if err := validateSpendingLimit(in.SpendingLimit); err != nil {
@@ -266,7 +266,7 @@ type Membership struct {
 // deleted_at IS NULL süzer. Bu yüzden geride kalmış (temizlenememiş) bir bağ
 // bile silinmiş bir kaydı geri getiremez.
 func (s *Service) MembershipOfCustomer(ctx context.Context, customerID string) (Membership, error) {
-	if err := requireID(customerID, models.CustomerIDPrefix, "müşteri kimliği"); err != nil {
+	if err := requireID(customerID, models.CustomerIDPrefix, "customer id"); err != nil {
 		return Membership{}, err
 	}
 

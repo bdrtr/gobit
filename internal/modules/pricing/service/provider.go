@@ -10,11 +10,12 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/pricing/models"
 )
 
-// Entity pricing'in Query katmanına açtığı entity adıdır.
-// Sağlayıcı container'a "price_set" + query.ProviderSuffix adıyla kaydedilir.
+// Entity is the entity name pricing exposes to the Query layer.
+// The provider is registered in the container under the name "price_set" +
+// query.ProviderSuffix.
 const Entity = "price_set"
 
-// Sağlayıcının sunduğu alan adları.
+// The field names the provider offers.
 const (
 	fieldID        = "id"
 	fieldCreatedAt = "created_at"
@@ -22,7 +23,7 @@ const (
 	fieldPrices    = "prices"
 )
 
-// Fiyat alt kayıtlarının alan adları.
+// The field names of the price sub-records.
 const (
 	fieldCurrencyCode = "currency_code"
 	fieldAmount       = "amount"
@@ -31,51 +32,55 @@ const (
 	fieldPriceListID  = "price_list_id"
 )
 
-// supportedFields sağlayıcının tanıdığı alanlardır; başka bir alan istenirse
-// errors.Invalid dönülür (ADR 0004: alan doğrulaması sağlayıcıya aittir).
+// supportedFields are the fields the provider recognizes; if another field is
+// requested errors.Invalid is returned (ADR 0004: field validation belongs to
+// the provider).
 var supportedFields = []string{fieldID, fieldCreatedAt, fieldUpdatedAt, fieldPrices}
 
-// QueryProvider price set'leri Query katmanına açar (ADR 0004).
+// QueryProvider exposes price sets to the Query layer (ADR 0004).
 //
-// Kayıtlar fiyatlarıyla BİRLİKTE döner. Bu bilinçlidir: sağlayıcının tek
-// tüketicisi product'ın store listelemesidir ve fiyatsız bir price set kaydı
-// orada hiçbir işe yaramaz — ikinci bir tur gerekirdi ki Query'nin N+1 yasağı
-// tam da bunu engellemek içindir. Fiyatlar istenmiyorsa Fields ile
-// dışarıda bırakılabilir.
+// Records are returned TOGETHER WITH their prices. This is deliberate: the
+// provider's only consumer is product's store listing, and a price set record
+// without prices is of no use there — a second round would be needed, and
+// Query's no-N+1 rule exists precisely to prevent that. If the prices are not
+// wanted they can be left out with Fields.
 //
-// # Hangi fiyatlar döner
+// # Which prices are returned
 //
-// YALNIZCA "şu an, herkes için" geçerli olan fiyatlar (bkz. [listablePrices]).
-// Sağlayıcı bir okuma yüzeyidir ve hesaplama bağlamı (para birimi, adet, kural
-// bağlamı) taşımaz; taşımadığı bir bağlama koşullu fiyatı dönerse tüketici
-// onları eleyemez ve vitrin, pricing'in kendisinin GEÇERSİZ saydığı bir fiyatı
-// gösterirdi. Bağlama bağlı fiyat isteyen çağıran [Service.CalculateAmount]
-// kullanır; seçim kuralı orada, tek yerdedir.
+// ONLY the prices valid "right now, for everyone" (see [listablePrices]). The
+// provider is a read surface and carries no calculation context (currency,
+// quantity, rule context); if it returned a price conditional on a context it
+// does not carry, the consumer could not eliminate them and the storefront would
+// show a price that pricing itself considers INVALID. A caller wanting a
+// context-dependent price uses [Service.CalculateAmount]; the selection rule
+// lives there, in a single place.
 //
-// Arayüz internal/core/query'de tanımlıdır; bu tip yalnızca imzayı karşılar ve
-// çekirdeğe hiçbir şey bildirmez (ADR 0001'in sağlayıcı tarafı).
+// The interface is defined in internal/core/query; this type merely satisfies
+// the signature and declares nothing to the core (the provider side of ADR
+// 0001).
 type QueryProvider struct {
 	svc *Service
 }
 
 var _ query.Provider = (*QueryProvider)(nil)
 
-// NewQueryProvider verilen servis üzerinde çalışan bir sağlayıcı üretir.
+// NewQueryProvider produces a provider working on the given service.
 func NewQueryProvider(svc *Service) *QueryProvider {
 	return &QueryProvider{svc: svc}
 }
 
-// Entity sağlayıcının sunduğu entity adını döner.
+// Entity returns the entity name the provider offers.
 func (p *QueryProvider) Entity() string { return Entity }
 
-// List kök price set kayıtlarını döner.
+// List returns the root price set records.
 //
-// Desteklenen tek filtre "id"dir; değeri tek bir dize ya da dize dilimi
-// olabilir. Başka bir filtre errors.Invalid döner.
+// The only supported filter is "id"; its value may be a single string or a
+// string slice. Any other filter returns errors.Invalid.
 //
-// Limit sıfır verilirse Query sözleşmesindeki "sınırsız" YERİNE modülün
-// varsayılan sayfa boyu uygulanır ve [MaxLimit] aşılamaz: sınırsız bir kök
-// listesi tek istekte tüm tabloyu belleğe alırdı.
+// If limit is given as zero, the module's default page size is applied INSTEAD
+// OF the "unlimited" of the Query contract, and [MaxLimit] cannot be exceeded: an
+// unlimited root listing would pull the whole table into memory in a single
+// request.
 func (p *QueryProvider) List(ctx context.Context, opts query.ListOptions) ([]query.Record, error) {
 	if err := p.svc.ready(); err != nil {
 		return nil, err
@@ -90,8 +95,8 @@ func (p *QueryProvider) List(ctx context.Context, opts query.ListOptions) ([]que
 	}
 
 	if ids != nil {
-		// Kimlik filtresi varsa sayfalama uygulanmaz: çağıran zaten kesin bir
-		// kümeyi adlandırmıştır.
+		// If there is an id filter, paging is not applied: the caller has
+		// already named an exact set.
 		return p.fetch(ctx, ids, fields)
 	}
 
@@ -107,9 +112,11 @@ func (p *QueryProvider) List(ctx context.Context, opts query.ListOptions) ([]que
 	return p.records(ctx, sets, fields)
 }
 
-// FetchByIDs verilen kimliklere karşılık gelen kayıtları TEK turda döner.
+// FetchByIDs returns the records corresponding to the given ids in a SINGLE
+// round.
 //
-// Bulunamayan kimlik için kayıt dönmez; bu bir hata değildir (ADR 0004).
+// No record is returned for an id that is not found; that is not an error
+// (ADR 0004).
 func (p *QueryProvider) FetchByIDs(ctx context.Context, ids, fields []string) ([]query.Record, error) {
 	if err := p.svc.ready(); err != nil {
 		return nil, err
@@ -121,7 +128,7 @@ func (p *QueryProvider) FetchByIDs(ctx context.Context, ids, fields []string) ([
 	return p.fetch(ctx, ids, normalized)
 }
 
-// fetch kimlik kümesini okuyup kayıtlara çevirir.
+// fetch reads the id set and converts it into records.
 func (p *QueryProvider) fetch(ctx context.Context, ids, fields []string) ([]query.Record, error) {
 	if len(ids) == 0 {
 		return []query.Record{}, nil
@@ -134,8 +141,8 @@ func (p *QueryProvider) fetch(ctx context.Context, ids, fields []string) ([]quer
 	return p.records(ctx, sets, fields)
 }
 
-// records price set'leri Query kayıtlarına çevirir; gerekiyorsa fiyatları TEK
-// sorguyla toplu getirir.
+// records converts price sets into Query records; when needed it fetches the
+// prices in bulk with a SINGLE query.
 func (p *QueryProvider) records(
 	ctx context.Context,
 	sets []models.PriceSet,
@@ -183,18 +190,20 @@ func (p *QueryProvider) records(
 	return records, nil
 }
 
-// listablePrices adaylardan yalnızca KOŞULSUZ ve o anda geçerli olanları süzer.
+// listablePrices filters out of the candidates only those that are
+// UNCONDITIONAL and valid at that moment.
 //
-// İki koşul da hesaplamadaki eleme kuralının aynısıdır (bkz. eligible):
+// Both conditions are the very same as the elimination rule in the calculation
+// (see eligible):
 //
-//   - Fiyat bir listeye bağlıysa liste kullanılabilir olmalıdır. Taslak,
-//     sonlandırılmış, tarih penceresi dışındaki ya da SİLİNMİŞ bir listenin
-//     fiyatı hesapta elenirken okumada görünseydi, vitrin yayınlanmamış bir
-//     kampanyayı gösterirdi.
-//   - Fiyatın kuralı OLMAMALIDIR. Kural bir bağlama (bölge, müşteri grubu …)
-//     bakar; sağlayıcı o bağlamı taşımaz ve kuralı burada değerlendiremez.
-//     Değerlendirilemeyen bir koşulu görmezden gelmek, segment fiyatını herkese
-//     açardı — matchRule'daki gerekçenin aynısı.
+//   - If a price is bound to a list, the list must be usable. If the price of a
+//     draft, ended, out-of-window or DELETED list were eliminated in the
+//     calculation but visible in the read, the storefront would be showing an
+//     unpublished campaign.
+//   - The price MUST HAVE NO RULE. A rule looks at a context (region, customer
+//     group …); the provider does not carry that context and cannot evaluate the
+//     rule here. Ignoring a condition that cannot be evaluated would open the
+//     segment price to everyone — the very same rationale as in matchRule.
 func listablePrices(candidates []models.PriceCandidate, at time.Time) []models.Price {
 	prices := make([]models.Price, 0, len(candidates))
 	for i := range candidates {
@@ -207,10 +216,10 @@ func listablePrices(candidates []models.PriceCandidate, at time.Time) []models.P
 	return prices
 }
 
-// priceRecords fiyatları alt kayıtlara çevirir.
+// priceRecords converts prices into sub-records.
 //
-// Kimliği olmayan bir kap için boş (nil olmayan) dilim döner; JSON'da null
-// yerine [] görünmesi tüketici için tek biçimli bir yüzeydir.
+// For a container with no id an empty (non-nil) slice is returned; seeing []
+// instead of null in JSON is a uniform surface for the consumer.
 func priceRecords(prices []models.Price) []map[string]any {
 	out := make([]map[string]any, 0, len(prices))
 	for i := range prices {
@@ -228,11 +237,12 @@ func priceRecords(prices []models.Price) []map[string]any {
 	return out
 }
 
-// normalizeFields istenen alanları doğrular; boş liste TÜM alanlar demektir.
+// normalizeFields validates the requested fields; an empty list means ALL
+// fields.
 //
-// Kimlik alanı, istenmese bile listeye EKLENİR: Query kayıtları [query.IDField]
-// üzerinden birleştirir ve kimliksiz bir kayıt errors.KindInternal ile
-// sonuçlanırdı.
+// The id field is ADDED to the list even when it was not requested: Query joins
+// records through [query.IDField] and a record without an id would end in
+// errors.KindInternal.
 func normalizeFields(fields []string) ([]string, error) {
 	if len(fields) == 0 {
 		return slices.Clone(supportedFields), nil
@@ -242,7 +252,7 @@ func normalizeFields(fields []string) ([]string, error) {
 	for _, field := range fields {
 		if !slices.Contains(supportedFields, field) {
 			return nil, errors.Invalid(CodeInvalidInput,
-				"%q alanı %s sağlayıcısında yok (desteklenen: %v)", field, Entity, supportedFields)
+				"field %q does not exist in the %s provider (supported: %v)", field, Entity, supportedFields)
 		}
 		if !slices.Contains(out, field) {
 			out = append(out, field)
@@ -254,11 +264,12 @@ func normalizeFields(fields []string) ([]string, error) {
 	return out, nil
 }
 
-// idFilter filtrelerden kimlik kümesini çıkarır.
+// idFilter extracts the id set out of the filters.
 //
-// Filtre yoksa nil döner (kimlik süzgeci uygulanmaz); "id" dışında bir filtre
-// varsa errors.Invalid döner. Boş bir dilim, nil'den AYRI bir anlam taşır:
-// "hiçbir kimlik" demektir ve boş sonuç döner.
+// If there is no filter it returns nil (no id filter is applied); if there is a
+// filter other than "id" it returns errors.Invalid. An empty slice carries a
+// meaning DISTINCT from nil: it means "no ids at all" and an empty result is
+// returned.
 func idFilter(filters map[string]any) ([]string, error) {
 	if len(filters) == 0 {
 		return nil, nil
@@ -268,7 +279,7 @@ func idFilter(filters map[string]any) ([]string, error) {
 	for name, value := range filters {
 		if name != fieldID {
 			return nil, errors.Invalid(CodeInvalidInput,
-				"%q filtresi %s sağlayıcısında desteklenmiyor (desteklenen: %q)", name, Entity, fieldID)
+				"filter %q is not supported by the %s provider (supported: %q)", name, Entity, fieldID)
 		}
 		switch typed := value.(type) {
 		case string:
@@ -280,7 +291,7 @@ func idFilter(filters map[string]any) ([]string, error) {
 			}
 		default:
 			return nil, errors.Invalid(CodeInvalidInput,
-				"%q filtresi dize ya da dize dilimi olmalı, %T verildi", fieldID, value)
+				"filter %q has to be a string or a string slice, %T given", fieldID, value)
 		}
 	}
 	return ids, nil

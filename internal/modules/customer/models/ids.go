@@ -62,7 +62,7 @@ func NewID(prefix string, t time.Time) string {
 	return prefix + idEncoding.EncodeToString(buf[:])
 }
 
-// NewCustomerID yeni bir müşteri kimliği üretir.
+// NewCustomerID yeni bir customer id üretir.
 func NewCustomerID(t time.Time) string { return NewID(CustomerIDPrefix, t) }
 
 // NewCustomerGroupID yeni bir müşteri grubu kimliği üretir.

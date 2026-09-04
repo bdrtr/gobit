@@ -147,7 +147,7 @@ func TestKuralCalisanOlmayanMusteride(t *testing.T) {
 	assert.False(t, kural.Limited)
 }
 
-// TestKuralTaninmayanKimlikteLimitsizDoner müşteri kimliği bile olmayan bir
+// TestKuralTaninmayanKimlikteLimitsizDoner customer id bile olmayan bir
 // dizede hata dönmediğini doğrular.
 //
 // Böyle bir kimlik çalışan olarak BAĞLANAMAZ (CreateEmployee önek denetimi

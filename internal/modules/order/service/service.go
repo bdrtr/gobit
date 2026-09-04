@@ -1,48 +1,53 @@
-// Package service order modülünün iş mantığıdır.
+// Package service is the business logic of the order module.
 //
-// Modülün sorumluluğu tek cümleyle: bir siparişin NE olduğunu kalıcı olarak
-// bilmek — hangi numarayla, hangi bölgede, kimin adına, hangi satırlarla ve
-// hangi tutarla verildiği. Sipariş yazıldıktan sonra tutarları ve satırları
-// DEĞİŞMEZ; değişen tek şey durumu ve ona bağlı damgalardır.
+// The module's responsibility in a single sentence: knowing permanently WHAT an
+// order is — with which number, in which region, on whose behalf, with which
+// lines and at which amount it was placed. After an order is written its
+// amounts and its lines DO NOT CHANGE; the only things that change are its
+// status and the stamps tied to it.
 //
-// # Neyi bilmez
+// # What it does not know
 //
-// Sipariş sepeti BİLMEZ ve cart modülünü import ETMEZ (Prensip 2.1/2.4,
-// ADR 0001). [Service.CreateOrder]'a verilen girdi sepetin ANLIK
-// GÖRÜNTÜSÜDÜR: satırlar ve toplamlar çağıran tarafından, hesaplanmış hâlde
-// getirilir. Sepeti okuyup burada bırakan taraf complete_cart WORKFLOW'udur
-// (plan Bölüm 2.5, ADR 0006).
+// The order DOES NOT KNOW the cart and DOES NOT IMPORT the cart module
+// (Principle 2.1/2.4, ADR 0001). The input given to [Service.CreateOrder] is
+// the SNAPSHOT of the cart: the lines and the totals are brought by the caller,
+// already computed. The side that reads the cart and leaves it here is the
+// complete_cart WORKFLOW (plan Section 2.5, ADR 0006).
 //
-// Ödemeyi de bilmez: tahsil edilen ve iade edilen tutar [models.OrderSummary]
-// üzerinden, ödeme sonucunu bilen akış tarafından yazılır.
+// It does not know the payment either: the collected and the refunded amount
+// are written through [models.OrderSummary] by the flow that knows the payment
+// result.
 //
-// # Toplamlar neden burada da doğrulanır
+// # Why the totals are validated here too
 //
-// Toplamı hesaplayan taraf başkası olsa da, YANLIŞ bir hesabın sessizce
-// siparişe yazılması bu modülün sorunudur: sipariş, tutarın kalıcı kaydıdır ve
-// yanlış yazılmış bir tutar sonradan düzeltilemez (kayıt değişmez). Bu yüzden
-// doğrulama üç kattır: servis (okunabilir hata), veritabanı CHECK kısıtı (son
-// savunma) ve satır/sipariş ara toplamının birbirini tutması.
+// Even though the side that computes the total is somebody else, a WRONG
+// calculation being written onto the order silently is this module's problem:
+// the order is the permanent record of the amount and an amount written wrongly
+// cannot be corrected afterwards (the record does not change). That is why the
+// validation is three layers deep: the service (a readable error), the database
+// CHECK constraint (the last defense) and the line/order subtotals matching
+// each other.
 //
-// # Eşzamanlılık
+// # Concurrency
 //
-// Siparişin DURUMUNU değiştiren her akış tek bir veritabanı işleminde koşar ve
-// işine siparişin satır kilidini alarak (SELECT ... FOR UPDATE) başlar. Bu,
-// "önce oku sonra yaz" yarışını yapısal olarak imkânsız kılar: aynı siparişi
-// aynı anda iptal etmeye ve tamamlamaya çalışan iki çağrıdan ikincisi,
-// birincinin işlemi bitene kadar bekler ve siparişin GÜNCEL durumunu okur.
+// Every flow that changes the STATUS of the order runs in a single database
+// transaction and starts its work by taking the order's row lock
+// (SELECT ... FOR UPDATE). That makes the "read first, then write" race
+// structurally impossible: of two calls trying to cancel and to complete the
+// same order at the same time, the second one waits until the first one's
+// transaction ends and reads the CURRENT status of the order.
 //
-// Sipariş NUMARASI (display_id) ise kilitle değil, veritabanının IDENTITY
-// sütunuyla üretilir: yeni açılan iki sipariş için kilitlenecek ORTAK bir satır
-// yoktur ve uygulama katmanındaki her "en büyüğü oku, bir ekle" çözümü
-// yarışırdı (bkz. migration yorumu).
+// The order NUMBER (display_id), on the other hand, is produced not with a lock
+// but with the database's IDENTITY column: for two newly opened orders there is
+// no COMMON row to lock, and every "read the largest, add one" solution in the
+// application layer would race (see the migration comment).
 //
-// # Modül izolasyonu
+// # Module isolation
 //
-// Bu modül başka hiçbir modülü tanımaz. RegionID, CustomerID, CartID ve
-// VariantID başka modüllerin kimlikleridir; serbest metin olarak saklanır,
-// foreign key verilmez (Prensip 2.2) ve varlıkları burada doğrulanmaz —
-// doğrulama, o modülleri tanıyan workflow'un işidir.
+// This module knows no other module. RegionID, CustomerID, CartID and VariantID
+// are the identifiers of other modules; they are stored as free text, no
+// foreign key is given (Principle 2.2) and their existence is not validated
+// here — validating is the job of the workflow that knows those modules.
 package service
 
 import (
@@ -53,82 +58,86 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/order/models"
 )
 
-// EntityName modülün Query katmanına sunduğu entity adıdır. Sağlayıcı
-// container'a "<EntityName>.query" adıyla kaydedilir (ADR 0004).
+// EntityName is the entity name the module offers to the Query layer. The
+// provider is registered in the container under the name "<EntityName>.query"
+// (ADR 0004).
 const EntityName = "order"
 
-// Hata kodları. İstemciler bunlara göre dallanabilir; mesajlar değişebilir,
-// kodlar değişmez.
+// Error codes. Clients may branch on these; the messages may change, the codes
+// do not.
 const (
-	// CodeInvalidInput girdinin doğrulamadan geçmediğini bildirir.
+	// CodeInvalidInput reports that the input did not pass the validation.
 	CodeInvalidInput = "order_invalid_input"
-	// CodeTotalsInconsistent yazılmak istenen toplamların kimliği sağlamadığını
-	// bildirir (total = subtotal - discount + tax + shipping).
+	// CodeTotalsInconsistent reports that the totals that are to be written do
+	// not satisfy the identity (total = subtotal - discount + tax + shipping).
 	CodeTotalsInconsistent = "order_totals_inconsistent"
-	// CodeOrderEmpty satırsız bir siparişin açılmak istendiğini bildirir.
+	// CodeOrderEmpty reports that an order without lines was to be opened.
 	CodeOrderEmpty = "order_empty"
-	// CodeNotPending bekleyen durumda OLMAYAN bir siparişte durum geçişi
-	// istendiğini bildirir.
+	// CodeNotPending reports that a status transition was requested on an order
+	// that is NOT in the pending status.
 	CodeNotPending = "order_not_pending"
-	// CodeNotCompleted tamamlanmamış bir siparişin arşivlenmek istendiğini
-	// bildirir.
+	// CodeNotCompleted reports that an order that is not completed was to be
+	// archived.
 	CodeNotCompleted = "order_not_completed"
-	// CodeDisplayIDInvalid siparişin kullanılabilir bir numara almadığını
-	// bildirir.
+	// CodeDisplayIDInvalid reports that the order did not receive a usable
+	// number.
 	CodeDisplayIDInvalid = "order_display_id_invalid"
-	// CodeInconsistentState kaydın tanımsız bir durumda olduğunu bildirir.
+	// CodeInconsistentState reports that the record is in an undefined state.
 	CodeInconsistentState = "order_inconsistent_state"
-	// CodeSummaryInvalid özet tutarlarının kabul edilemez olduğunu bildirir.
+	// CodeSummaryInvalid reports that the summary amounts are unacceptable.
 	CodeSummaryInvalid = "order_summary_invalid"
-	// CodeRefundExceedsOrder iade/hasar kaydının tutarının siparişin toplamını
-	// aştığını bildirir.
+	// CodeRefundExceedsOrder reports that the amount of the return/claim record
+	// exceeds the total of the order.
 	CodeRefundExceedsOrder = "order_refund_exceeds_total"
-	// CodeSpendingLimitExceeded siparişin, müşterinin dönem içindeki harcama
-	// limitini aştığını bildirir.
+	// CodeSpendingLimitExceeded reports that the order exceeds the customer's
+	// spending limit within the period.
 	CodeSpendingLimitExceeded = "order_spending_limit_exceeded"
-	// CodeSpendingCurrencyMismatch siparişin para biriminin harcama limitinin
-	// para biriminden farklı olduğunu bildirir; iki tutar çevrilmeden
-	// karşılaştırılamaz.
+	// CodeSpendingCurrencyMismatch reports that the currency of the order
+	// differs from the currency of the spending limit; the two amounts cannot
+	// be compared without conversion.
 	CodeSpendingCurrencyMismatch = "order_spending_currency_mismatch"
-	// CodeSpendingPolicyUnavailable harcama kuralının OKUNAMADIĞINI bildirir.
-	// "Kural yok" ile "kuralı öğrenemedik" farklı durumlardır; ikincisinde
-	// sipariş açılmaz.
+	// CodeSpendingPolicyUnavailable reports that the spending rule COULD NOT BE
+	// READ. "There is no rule" and "we could not learn the rule" are different
+	// situations; in the second one the order is not opened.
 	CodeSpendingPolicyUnavailable = "order_spending_policy_unavailable"
-	// CodeSpendingPolicyInvalid harcama kuralı gövdesinin sözleşmeye
-	// uymadığını bildirir.
+	// CodeSpendingPolicyInvalid reports that the body of the spending rule does
+	// not conform to the contract.
 	CodeSpendingPolicyInvalid = "order_spending_policy_invalid"
-	// CodeNotReady servisin eksik bağımlılıkla kurulduğunu bildirir.
+	// CodeNotReady reports that the service was constructed with a missing
+	// dependency.
 	CodeNotReady = "order_service_not_ready"
 )
 
-// Sayfalama sınırları (plan Bölüm 8: limit/offset).
+// Pagination limits (plan Section 8: limit/offset).
 const (
-	// DefaultLimit limit verilmediğinde uygulanan sayfa boyutudur.
+	// DefaultLimit is the page size applied when no limit is given.
 	DefaultLimit int64 = 50
-	// MaxLimit tek istekte istenebilecek en büyük sayfa boyutudur.
+	// MaxLimit is the largest page size that can be requested in one call.
 	MaxLimit int64 = 100
 )
 
-// maxTextLen serbest metin alanları için üst sınırdır. Sınır, tek bir isteğin
-// veritabanına sınırsız büyüklükte metin yazmasını engeller.
+// maxTextLen is the upper bound for free text fields. The bound prevents a
+// single request from writing text of unbounded size into the database.
 const maxTextLen = 512
 
-// maxIDLen dışarıdan gelen kimlikler için üst sınırdır.
+// maxIDLen is the upper bound for identifiers coming from outside.
 //
-// Bu kimlikler (region_id, customer_id, cart_id, variant_id) orders_region_idx
-// ve orders_customer_idx indekslerine girer. Sınırsız bir dize indeksi sipariş
-// başına keyfi büyüklükte şişirir ve süzme maliyetini tek bir isteğin
-// belirlemesine izin verirdi.
+// These identifiers (region_id, customer_id, cart_id, variant_id) go into the
+// orders_region_idx and orders_customer_idx indexes. An unbounded string would
+// inflate the index by an arbitrary amount per order and would let a single
+// request decide the cost of filtering.
 const maxIDLen = 255
 
-// maxOrderItems tek bir siparişin taşıyabileceği azami satır sayısıdır.
+// maxOrderItems is the maximum number of lines a single order can carry.
 //
-// Sınır, tek bir isteğin tek işlemde binlerce INSERT açmasını engeller: satırlar
-// aynı işlemde yazıldığı için sınırsız bir liste, işlemi ve onun tuttuğu
-// bağlantıyı keyfi süre boyunca meşgul ederdi.
+// The bound prevents a single request from opening thousands of INSERTs in one
+// transaction: because the lines are written in the same transaction, an
+// unbounded list would occupy the transaction and the connection it holds for
+// an arbitrary length of time.
 const maxOrderItems = 500
 
-// Service order modülünün dışa açık servisidir. Eşzamanlı kullanıma güvenlidir.
+// Service is the public service of the order module. It is safe for concurrent
+// use.
 type Service struct {
 	store    Store
 	events   EventPublisher
@@ -136,43 +145,45 @@ type Service struct {
 	log      *slog.Logger
 }
 
-// Options servisin bağımlılıklarıdır.
+// Options are the dependencies of the service.
 type Options struct {
-	// Repo kalıcılık yüzeyidir; zorunludur.
+	// Repo is the persistence surface; it is required.
 	Repo Store
-	// Events olay veri yoludur; zorunludur. "order.placed" olayı buradan
-	// yayımlanır (plan Faz 6 DoD).
+	// Events is the event bus; it is required. The "order.placed" event is
+	// published from here (plan Phase 6 DoD).
 	Events EventPublisher
-	// Spending harcama limiti kuralının kaynağıdır; OPSİYONELDİR.
+	// Spending is the source of the spending limit rule; it is OPTIONAL.
 	//
-	// nil ise hiçbir limit uygulanmaz ve sipariş açma yolu bu alan hiç
-	// eklenmemiş gibi davranır: ne ek bir okuma ne de bir kilit vardır. Saf
-	// B2C bir kurulumda "harcama limiti" diye bir kavram olmadığı için doğru
-	// varsayılan budur; alanı dolduran taraf modülün kablolamasıdır
-	// (bkz. module.go).
+	// When nil no limit at all is applied and the order opening path behaves as
+	// if this field had never been added: there is neither an extra read nor a
+	// lock. In a pure B2C installation there is no such concept as a "spending
+	// limit", so that is the right default; the side that fills the field is
+	// the module's wiring (see module.go).
 	Spending SpendingPolicy
-	// Logger nil verilirse loglar atılır.
+	// Logger discards the logs when it is given as nil.
 	Logger *slog.Logger
 }
 
-// New verilen bağımlılıklarla bir servis üretir.
+// New produces a service with the given dependencies.
 //
-// Eksik bir bağımlılık KURULUM anında hata döner; çalışma zamanında nil
-// kontrolü yapılmaz. Olay veri yolunun da zorunlu olması bilinçlidir: opsiyonel
-// olsaydı, veri yolu kaydı unutulmuş bir kurulumda sipariş sessizce yazılır ama
-// "order.placed" hiç yayımlanmazdı ve eksiklik ancak abonelerin çalışmadığı
-// fark edildiğinde — yani üretimde — görünürdü.
+// A missing dependency returns an error at CONSTRUCTION time; no nil check is
+// done at run time. The event bus being required as well is deliberate: had it
+// been optional, in an installation where registering the bus was forgotten the
+// order would be written silently but "order.placed" would never be published,
+// and the omission would only become visible once it was noticed that the
+// subscribers were not working — that is, in production.
 //
-// [Options.Spending] bu kuralın TEK istisnasıdır ve olmak zorundadır: harcama
-// limiti B2B'ye özgü bir kavramdır, saf B2C bir kurulumda kuralın kaynağı diye
-// bir şey yoktur ve onu zorunlu kılmak, b2b modülü olmayan her kurulumu
-// açılışta düşürürdü.
+// [Options.Spending] is the ONLY exception to this rule and it has to be: the
+// spending limit is a concept specific to B2B, in a pure B2C installation there
+// is no such thing as the source of the rule, and making it mandatory would
+// bring down every installation without the b2b module at startup.
 func New(opts Options) (*Service, error) {
 	if opts.Repo == nil {
-		return nil, errors.Internal(CodeNotReady, "order servisi depo olmadan kurulamaz")
+		return nil, errors.Internal(CodeNotReady, "order service cannot be built without a store")
 	}
 	if opts.Events == nil {
-		return nil, errors.Internal(CodeNotReady, "order servisi olay veri yolu olmadan kurulamaz")
+		return nil, errors.Internal(CodeNotReady,
+			"order service cannot be built without an event bus")
 	}
 	log := opts.Logger
 	if log == nil {
@@ -186,15 +197,16 @@ func New(opts Options) (*Service, error) {
 	}, nil
 }
 
-// Page liste isteklerinin sayfalama parametreleridir.
+// Page holds the pagination parameters of list requests.
 type Page struct {
-	// Limit döndürülecek azami satır sayısıdır; 0 ise [DefaultLimit] uygulanır.
+	// Limit is the maximum number of rows to return; when 0 [DefaultLimit] is
+	// applied.
 	Limit int64
-	// Offset atlanacak satır sayısıdır.
+	// Offset is the number of rows to skip.
 	Offset int64
 }
 
-// normalize sayfalama parametrelerini doğrular ve varsayılanları uygular.
+// normalize validates the pagination parameters and applies the defaults.
 func (p Page) normalize() (Page, error) {
 	if p.Limit < 0 {
 		return Page{}, errors.Invalid(CodeInvalidInput, "limit negatif olamaz: %d", p.Limit)
@@ -204,7 +216,7 @@ func (p Page) normalize() (Page, error) {
 	}
 	if p.Limit > MaxLimit {
 		return Page{}, errors.Invalid(CodeInvalidInput,
-			"limit en fazla %d olabilir: %d", MaxLimit, p.Limit)
+			"the limit can be at most %d: %d", MaxLimit, p.Limit)
 	}
 	if p.Limit == 0 {
 		p.Limit = DefaultLimit
@@ -212,26 +224,27 @@ func (p Page) normalize() (Page, error) {
 	return p, nil
 }
 
-// requireID dışarıdan gelen bir kimliğin kullanılabilir olduğunu doğrular.
+// requireID validates that an identifier coming from outside is usable.
 //
-// Kimlik KIRPILMAZ, reddedilir: kırpma çağıranın gönderdiği kimlikle saklanan
-// kimliği ayırır ve fark ancak veri bozulduktan sonra görünür. Aynı gerekçe
-// core/link'in kimlik sözleşmesinde de geçerlidir.
+// The identifier IS NOT TRIMMED, it is rejected: trimming separates the
+// identifier the caller sent from the identifier that is stored, and the
+// difference only becomes visible after the data is corrupted. The same
+// rationale holds in core/link's identifier contract as well.
 func requireID(label, value string) error {
 	if value == "" {
-		return errors.Invalid(CodeInvalidInput, "%s boş olamaz", label)
+		return errors.Invalid(CodeInvalidInput, "%s cannot be empty", label)
 	}
 	if strings.TrimSpace(value) != value {
-		return errors.Invalid(CodeInvalidInput, "%s baş/son boşluk içeremez: %q", label, value)
+		return errors.Invalid(CodeInvalidInput, "%s cannot contain leading/trailing whitespace: %q", label, value)
 	}
 	if len(value) > maxIDLen {
 		return errors.Invalid(CodeInvalidInput,
-			"%s en fazla %d bayt olabilir: %d", label, maxIDLen, len(value))
+			"%s can be at most %d bytes: %d", label, maxIDLen, len(value))
 	}
 	return nil
 }
 
-// optionalID boş bırakılabilen bir kimliği doğrular.
+// optionalID validates an identifier that may be left empty.
 func optionalID(label, value string) error {
 	if value == "" {
 		return nil
@@ -239,27 +252,27 @@ func optionalID(label, value string) error {
 	return requireID(label, value)
 }
 
-// requireText zorunlu bir metin alanını doğrular.
+// requireText validates a required text field.
 func requireText(label, value string) error {
 	if value == "" {
-		return errors.Invalid(CodeInvalidInput, "%s boş olamaz", label)
+		return errors.Invalid(CodeInvalidInput, "%s cannot be empty", label)
 	}
 	return checkTextLen(label, value)
 }
 
-// checkTextLen metin alanının uzunluk sınırını doğrular.
+// checkTextLen validates the length limit of a text field.
 func checkTextLen(label, value string) error {
 	if len(value) > maxTextLen {
 		return errors.Invalid(CodeInvalidInput,
-			"%s en fazla %d bayt olabilir: %d", label, maxTextLen, len(value))
+			"%s can be at most %d bytes: %d", label, maxTextLen, len(value))
 	}
 	return nil
 }
 
-// checkAmount bir tutarın izin verilen aralıkta olduğunu doğrular.
+// checkAmount validates that an amount is within the permitted range.
 //
-// Üst sınır keyfi değildir: taşmayı yapısal olarak imkânsız kılar
-// (bkz. [models.MaxAmount] ve [models.MaxTotal]).
+// The upper bound is not arbitrary: it makes overflow structurally impossible
+// (see [models.MaxAmount] and [models.MaxTotal]).
 func checkAmount(label string, value, upper int64) error {
 	if value < models.MinAmount {
 		return errors.Invalid(CodeInvalidInput,
@@ -267,50 +280,51 @@ func checkAmount(label string, value, upper int64) error {
 	}
 	if value > upper {
 		return errors.Invalid(CodeInvalidInput,
-			"%s en fazla %d olabilir: %d", label, upper, value)
+			"%s can be at most %d: %d", label, upper, value)
 	}
 	return nil
 }
 
-// checkQuantity bir adedin izin verilen aralıkta olduğunu doğrular.
+// checkQuantity validates that a quantity is within the permitted range.
 func checkQuantity(quantity int64) error {
 	if quantity < models.MinQuantity {
 		return errors.Invalid(CodeInvalidInput,
-			"adet en az %d olmalı: %d", models.MinQuantity, quantity)
+			"the quantity has to be at least %d: %d", models.MinQuantity, quantity)
 	}
 	if quantity > models.MaxQuantity {
 		return errors.Invalid(CodeInvalidInput,
-			"adet en fazla %d olabilir: %d", models.MaxQuantity, quantity)
+			"the quantity can be at most %d: %d", models.MaxQuantity, quantity)
 	}
 	return nil
 }
 
-// normalizeCurrency para birimi kodunu doğrular ve BÜYÜK harfe çevirir.
+// normalizeCurrency validates the currency code and converts it to UPPER case.
 //
-// Kod saklanmadan önce tekleştirilir: "try" ile "TRY" aynı para birimidir ve
-// iki ayrı dize olarak saklanırsa toplamların karşılaştırılması sessizce
-// yanlış sonuç verirdi.
+// The code is made unique before it is stored: "try" and "TRY" are the same
+// currency, and if they were stored as two separate strings, comparing the
+// totals would silently give a wrong result.
 func normalizeCurrency(code string) (string, error) {
 	normalized := strings.ToUpper(strings.TrimSpace(code))
 	if len(normalized) != 3 {
 		return "", errors.Invalid(CodeInvalidInput,
-			"currency_code 3 harfli ISO 4217 kodu olmalı: %q", code)
+			"currency_code must be a 3-letter ISO 4217 code: %q", code)
 	}
 	for _, r := range normalized {
 		if r < 'A' || r > 'Z' {
 			return "", errors.Invalid(CodeInvalidInput,
-				"currency_code yalnızca harf içerebilir: %q", code)
+				"currency_code may contain letters only: %q", code)
 		}
 	}
 	return normalized, nil
 }
 
-// normalizeEmail e-postayı doğrular ve küçük harfe çevirir; boş kabul edilir.
+// normalizeEmail validates the e-mail and converts it to lower case; empty is
+// accepted.
 //
-// Doğrulama BİLİNÇLİ OLARAK yüzeyseldir: tam RFC 5322 doğrulaması geçerli
-// adresleri reddetmesiyle ünlüdür ve adresin gerçekten teslim edilebilir olup
-// olmadığını yalnızca gönderim söyleyebilir. Burada aranan tek şey, alanın
-// e-posta olarak KULLANILABİLİR biçimde olmasıdır.
+// The validation is DELIBERATELY shallow: full RFC 5322 validation is famous
+// for rejecting valid addresses, and whether the address is really deliverable
+// can only be told by sending. The only thing sought here is that the field is
+// in a form that is USABLE as an e-mail.
 func normalizeEmail(email string) (string, error) {
 	normalized := strings.ToLower(strings.TrimSpace(email))
 	if normalized == "" {
@@ -321,43 +335,43 @@ func normalizeEmail(email string) (string, error) {
 	}
 	at := strings.IndexByte(normalized, '@')
 	if at <= 0 || at == len(normalized)-1 || strings.ContainsAny(normalized, " \t\n") {
-		return "", errors.Invalid(CodeInvalidInput, "email geçerli görünmüyor: %q", email)
+		return "", errors.Invalid(CodeInvalidInput, "the email does not look valid: %q", email)
 	}
 	if strings.Count(normalized, "@") != 1 {
-		return "", errors.Invalid(CodeInvalidInput, "email geçerli görünmüyor: %q", email)
+		return "", errors.Invalid(CodeInvalidInput, "the email does not look valid: %q", email)
 	}
 	return normalized, nil
 }
 
-// multiplyAmount birim fiyat ile adedi TAŞMADAN çarpar.
+// multiplyAmount multiplies the unit price by the quantity WITHOUT OVERFLOW.
 //
-// Çarpanlar servis doğrulamasından geçtiğinde sonuç zaten [models.MaxTotal]
-// altındadır; kontrol, anormal bir adet ya da fiyatla gelen bir çağrıya karşı
-// son savunmadır. Taşan bir çarpım sessizce negatif bir ara toplam üretir ve
-// tutarlılık kontrolünü YANLIŞLIKLA geçebilirdi.
+// When the factors have passed the service validation the result is already
+// below [models.MaxTotal]; the check is the last defense against a call that
+// arrives with an abnormal quantity or price. An overflowing product silently
+// produces a negative subtotal and could pass the consistency check BY MISTAKE.
 func multiplyAmount(unitPrice, quantity int64) (int64, error) {
 	if unitPrice == 0 || quantity == 0 {
 		return 0, nil
 	}
 	if quantity < 0 || unitPrice < 0 {
 		return 0, errors.Invalid(CodeInvalidInput,
-			"birim fiyat ve adet negatif olamaz: %d × %d", unitPrice, quantity)
+			"the unit price and the quantity cannot be negative: %d x %d", unitPrice, quantity)
 	}
 	if quantity > models.MaxTotal/unitPrice {
 		return 0, errors.Invalid(CodeInvalidInput,
-			"satır ara toplamı sınırı aşıyor: %d × %d > %d", unitPrice, quantity, models.MaxTotal)
+			"the line subtotal exceeds the limit: %d x %d > %d", unitPrice, quantity, models.MaxTotal)
 	}
 	return unitPrice * quantity, nil
 }
 
-// addAmount iki tutarı TAŞMADAN toplar.
+// addAmount adds two amounts WITHOUT OVERFLOW.
 func addAmount(sum, value int64) (int64, error) {
 	if value < 0 {
-		return 0, errors.Invalid(CodeTotalsInconsistent, "tutar negatif olamaz: %d", value)
+		return 0, errors.Invalid(CodeTotalsInconsistent, "amount cannot be negative: %d", value)
 	}
 	if sum > models.MaxTotal-value {
 		return 0, errors.Invalid(CodeTotalsInconsistent,
-			"tutarların toplamı sınırı aşıyor (%d)", models.MaxTotal)
+			"the sum of the amounts exceeds the limit (%d)", models.MaxTotal)
 	}
 	return sum + value, nil
 }

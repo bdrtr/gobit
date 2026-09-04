@@ -1,16 +1,18 @@
-// Package models auth modülünün domain modellerini tanımlar.
+// Package models defines the domain models of the auth module.
 //
-// Buradaki tipler veritabanı tiplerinden ARINDIRILMIŞTIR: pgtype bu pakete
-// girmez, dönüşüm repository sarmalayıcısında yapılır. Böylece servis ve API
-// katmanları depolama ayrıntısına bağlanmaz. Zamanlar UTC'dir; silme SOFT'tur.
+// The types here are STRIPPED of database types: pgtype does not enter this
+// package, the conversion is done in the repository wrapper. This way the
+// service and API layers are not bound to a storage detail. Times are UTC;
+// deletion is SOFT.
 //
-// # Sırlar
+// # Secrets
 //
-// Bu pakette iki sır alanı vardır ve ikisi de yalnızca HASH taşır:
-// [AuthIdentity.PasswordHash] (bcrypt) ve [APIKey.TokenHash] (SHA-256).
-// Düz parola hiçbir tipte alan olarak BULUNMAZ — bulunsaydı bir yapının
-// "%+v" ile loglanması parolayı diske yazardı. Anahtarın düz metni yalnızca
-// oluşturma çağrısının DÖNÜŞ DEĞERİ olarak, hiçbir yapıya konmadan taşınır.
+// There are two secret fields in this package and both of them carry only a
+// HASH: [AuthIdentity.PasswordHash] (bcrypt) and [APIKey.TokenHash]
+// (SHA-256). A plaintext password EXISTS as a field on no type — had it
+// existed, logging a struct with "%+v" would have written the password to
+// disk. The plaintext of a key travels only as the RETURN VALUE of the
+// creation call, placed in no struct at all.
 package models
 
 import (
@@ -18,76 +20,81 @@ import (
 	"time"
 )
 
-// Alan uzunluk sınırları.
+// Field length limits.
 //
-// Sınırlar keyfi değildir: e-posta için 320 karakter RFC 5321'in yerel bölüm
-// (64) + "@" + alan adı (255) üst sınırıdır. Diğerleri, tek bir isteğin
-// veritabanına sınırsız metin yazmasını engelleyen makul tavanlardır ve
-// migration'daki CHECK kısıtlarıyla ikinci kez zorlanır.
+// The limits are not arbitrary: 320 characters for email is the upper bound of
+// RFC 5321's local part (64) + "@" + domain name (255). The others are
+// reasonable ceilings that keep a single request from writing unbounded text
+// into the database, and they are enforced a second time by the CHECK
+// constraints in the migration.
 const (
-	// MaxEmailLen bir e-posta adresinin azami uzunluğudur.
+	// MaxEmailLen is the maximum length of an email address.
 	MaxEmailLen = 320
-	// MaxNameLen ad/soyad/başlık gibi kısa metin alanlarının azami uzunluğudur.
+	// MaxNameLen is the maximum length of short text fields such as first
+	// name, last name and title.
 	MaxNameLen = 255
-	// MaxURLLen avatar adresi gibi URL alanlarının azami uzunluğudur.
+	// MaxURLLen is the maximum length of URL fields such as the avatar
+	// address.
 	MaxURLLen = 2048
-	// MaxDescriptionLen açıklama alanlarının azami uzunluğudur.
+	// MaxDescriptionLen is the maximum length of description fields.
 	MaxDescriptionLen = 1024
-	// MaxScopeLen tek bir yetki adının azami uzunluğudur.
+	// MaxScopeLen is the maximum length of a single scope name.
 	MaxScopeLen = 64
-	// MaxScopeCount bir kimliğe verilebilecek azami yetki sayısıdır.
+	// MaxScopeCount is the maximum number of scopes that can be granted to one
+	// identity.
 	MaxScopeCount = 64
 )
 
-// ProviderEmailPass e-posta + parola ile giriş sağlayıcısının adıdır.
+// ProviderEmailPass is the name of the email + password login provider.
 //
-// Şimdilik tek sağlayıcı budur. İleride "google", "github" gibi OAuth
-// sağlayıcıları eklendiğinde AYNI kullanıcıya ikinci bir [AuthIdentity]
-// bağlanır; kullanıcı kaydına dokunulmaz.
+// For now this is the only provider. When OAuth providers such as "google" or
+// "github" are added later, a second [AuthIdentity] is attached to the SAME
+// user; the user record is not touched.
 const ProviderEmailPass = "emailpass"
 
-// User bir YÖNETİM kullanıcısıdır (admin yüzeyine giren kişi).
+// User is an ADMIN user (the person who enters the admin surface).
 //
-// Mağazadan alışveriş yapan kişiyle karıştırılmamalıdır: o, customer modülünün
-// verisidir. İki kavramın ayrı modüllerde durması bilinçlidir — bir müşterinin
-// yönetim yetkisi kazanması diye bir yol yoktur.
+// It must not be confused with the person shopping in the store: that one is
+// the customer module's data. The two concepts living in separate modules is
+// deliberate — there is no path by which a customer gains admin scope.
 //
-// Parola BURADA DEĞİLDİR: kimlik doğrulama yöntemi [AuthIdentity] kaydındadır
-// (gerekçe orada yazılıdır).
+// The password IS NOT HERE: the authentication method lives in the
+// [AuthIdentity] record (the reasoning is written there).
 type User struct {
-	// ID "user_" önekli, zaman sıralı kimliktir.
+	// ID is the "user_" prefixed, time-ordered identifier.
 	ID string
-	// Email kullanıcının e-posta adresidir; daima KÜÇÜK harfe normalize
-	// edilmiş hâlde saklanır (bkz. [NormalizeEmail]) ve canlı kullanıcılar
-	// arasında benzersizdir.
+	// Email is the user's email address; it is always stored normalized to
+	// LOWER case (see [NormalizeEmail]) and is unique among live users.
 	Email string
-	// FirstName kullanıcının adıdır; boş olabilir.
+	// FirstName is the user's first name; it may be empty.
 	FirstName string
-	// LastName kullanıcının soyadıdır; boş olabilir.
+	// LastName is the user's last name; it may be empty.
 	LastName string
-	// AvatarURL profil görselinin adresidir; boş olabilir.
+	// AvatarURL is the address of the profile image; it may be empty.
 	AvatarURL string
-	// Scopes kullanıcının yetkileridir. Varsayılan tek yetki [ScopeAdmin]'dir;
-	// daha ince taneli roller bu dilime yeni ad eklenerek tanımlanır.
+	// Scopes are the user's scopes. The default single scope is [ScopeAdmin];
+	// finer-grained roles are defined by adding new names to this slice.
 	Scopes []string
-	// Metadata çağıranın serbestçe yazdığı yapısal bağlamdır; boş olabilir.
+	// Metadata is structured context the caller writes freely; it may be
+	// empty.
 	Metadata map[string]any
-	// CreatedAt kaydın oluşturulma anıdır (UTC).
+	// CreatedAt is the moment the record was created (UTC).
 	CreatedAt time.Time
-	// UpdatedAt kaydın son güncellenme anıdır (UTC).
+	// UpdatedAt is the moment the record was last updated (UTC).
 	UpdatedAt time.Time
-	// DeletedAt soft delete anıdır; nil ise kayıt canlıdır.
+	// DeletedAt is the soft delete moment; if nil the record is live.
 	DeletedAt *time.Time
 }
 
-// ScopeAdmin tüm yetkileri kapsayan üst yetkidir.
+// ScopeAdmin is the superior scope that covers all scopes.
 //
-// Değer çekirdekteki corehttp.ScopeAdmin ile AYNI olmalıdır. Sabit burada
-// tekrar edilir çünkü models paketi HTTP katmanını tanımaz; eşitliği
-// service paketindeki bir test kanıtlar.
+// The value must be the SAME as corehttp.ScopeAdmin in the core. The constant
+// is repeated here because the models package does not know the HTTP layer; a
+// test in the service package proves the equality.
 const ScopeAdmin = "admin"
 
-// FullName kullanıcının görünen adını döner; ad ve soyad boşsa e-postaya düşer.
+// FullName returns the user's display name; if the first and last name are
+// empty it falls back to the email.
 func (u User) FullName() string {
 	name := strings.TrimSpace(u.FirstName + " " + u.LastName)
 	if name == "" {
@@ -96,187 +103,197 @@ func (u User) FullName() string {
 	return name
 }
 
-// AuthIdentity bir kullanıcının TEK bir kimlik doğrulama yöntemidir.
+// AuthIdentity is ONE authentication method of a user.
 //
-// # Neden User'dan ayrı
+// # Why separate from User
 //
-// Bir kullanıcının birden çok giriş yolu olabilir. Bugün yalnızca
-// [ProviderEmailPass] vardır; yarın OAuth eklendiğinde aynı kullanıcıya ikinci
-// bir kimlik satırı bağlanır ve kullanıcı kaydına hiç dokunulmaz. Parola alanı
-// [User] üzerinde olsaydı, parolasız (yalnızca OAuth ile giren) bir kullanıcı
-// ya ifade edilemez ya da boş parola ile temsil edilirdi; ikincisi, boş
-// parolayla giriş denemesini bir kod hatası uzaklığına indirirdi.
+// A user may have more than one login path. Today there is only
+// [ProviderEmailPass]; tomorrow, when OAuth is added, a second identity row is
+// attached to the same user and the user record is not touched at all. Had the
+// password field been on [User], a user without a password (one who logs in
+// only through OAuth) would either be inexpressible or would be represented
+// with an empty password; the latter would have brought a login attempt with
+// an empty password to within one coding mistake.
 //
 // # PasswordHash
 //
-// Alan bcrypt çıktısıdır; düz parola ne saklanır ne loglanır ne de hata
-// mesajlarında geçer. bcrypt maliyeti hash'in İÇİNDE kodludur, bu yüzden
-// maliyet ileride artırıldığında eski hash'ler kendi maliyetleriyle
-// doğrulanmaya devam eder.
+// The field is bcrypt output; the plaintext password is neither stored nor
+// logged, nor does it appear in error messages. The bcrypt cost is encoded
+// INSIDE the hash, which is why old hashes continue to be verified with their
+// own cost when the cost is raised later.
 type AuthIdentity struct {
-	// ID "authid_" önekli kimliktir.
+	// ID is the "authid_" prefixed identifier.
 	ID string
-	// UserID kimliğin bağlı olduğu kullanıcıdır.
+	// UserID is the user the identity is attached to.
 	UserID string
-	// Provider kimlik doğrulama sağlayıcısıdır (örn. [ProviderEmailPass]).
+	// Provider is the authentication provider (e.g. [ProviderEmailPass]).
 	Provider string
-	// ProviderIdentity sağlayıcı nezdindeki kimliktir; emailpass için
-	// kullanıcının normalize edilmiş e-postasıdır.
+	// ProviderIdentity is the identity as the provider knows it; for emailpass
+	// it is the user's normalized email.
 	ProviderIdentity string
-	// PasswordHash bcrypt hash'idir; parola atanmamışsa boştur ve giriş
-	// REDDEDİLİR.
+	// PasswordHash is the bcrypt hash; it is empty when no password has been
+	// assigned and login is then REJECTED.
 	PasswordHash string
-	// FailedAttempts art arda başarısız giriş sayısıdır; başarılı girişte
-	// sıfırlanır.
+	// FailedAttempts is the number of consecutive failed logins; it is reset
+	// on a successful login.
 	FailedAttempts int
-	// LockedUntil geçici kilidin bitiş anıdır; nil ise kilit yoktur.
+	// LockedUntil is the moment the temporary lock ends; if nil there is no
+	// lock.
 	LockedUntil *time.Time
-	// LastLoginAt son BAŞARILI girişin anıdır; nil ise hiç giriş yapılmamıştır.
+	// LastLoginAt is the moment of the last SUCCESSFUL login; if nil no login
+	// has ever happened.
 	LastLoginAt *time.Time
-	// Metadata çağıranın serbestçe yazdığı yapısal bağlamdır; boş olabilir.
+	// Metadata is structured context the caller writes freely; it may be
+	// empty.
 	Metadata map[string]any
-	// CreatedAt kaydın oluşturulma anıdır (UTC).
+	// CreatedAt is the moment the record was created (UTC).
 	CreatedAt time.Time
-	// UpdatedAt kaydın son güncellenme anıdır (UTC).
+	// UpdatedAt is the moment the record was last updated (UTC).
 	UpdatedAt time.Time
-	// DeletedAt soft delete anıdır; nil ise kayıt canlıdır.
+	// DeletedAt is the soft delete moment; if nil the record is live.
 	DeletedAt *time.Time
 }
 
-// IsLocked kimliğin verilen anda geçici kilitli olup olmadığını bildirir.
+// IsLocked reports whether the identity is temporarily locked at the given
+// moment.
 func (i AuthIdentity) IsLocked(at time.Time) bool {
 	return i.LockedUntil != nil && at.Before(*i.LockedUntil)
 }
 
-// APIKeyType bir API anahtarının türüdür.
+// APIKeyType is the type of an API key.
 type APIKeyType string
 
-// API anahtarı türleri. İkisi AYNI ŞEY DEĞİLDİR ve birbirinin yerine
-// KULLANILAMAZ; ayrımın uygulanması [APIKey] godoc'unda anlatılır.
+// API key types. The two are NOT THE SAME THING and CANNOT be used in place of
+// one another; how the distinction is enforced is explained in the [APIKey]
+// godoc.
 const (
-	// APIKeyPublishable mağaza yüzeyinde kullanılan, SIR OLMAYAN anahtardır.
+	// APIKeyPublishable is the NON-SECRET key used on the store surface.
 	APIKeyPublishable APIKeyType = "publishable"
-	// APIKeySecret yönetim yüzeyine erişen SIRDIR.
+	// APIKeySecret is the SECRET that reaches the admin surface.
 	APIKeySecret APIKeyType = "secret"
 )
 
-// Valid türün tanımlı olup olmadığını bildirir.
+// Valid reports whether the type is one of the defined ones.
 //
-// Tip dışa açıktır ve çağıran enum dışında bir değer kurabilir; doğrulanmayan
-// bir değer veritabanındaki CHECK kısıtına takılırdı ve istemci anlamsız bir
-// kısıt hatası görürdü.
+// The type is exported and a caller can construct a value outside the enum; an
+// unvalidated value would trip the CHECK constraint in the database and the
+// client would see a meaningless constraint error.
 func (t APIKeyType) Valid() bool {
 	return t == APIKeyPublishable || t == APIKeySecret
 }
 
-// String türün metin karşılığını döner.
+// String returns the textual form of the type.
 func (t APIKeyType) String() string { return string(t) }
 
-// APIKey bir makine kimliğidir.
+// APIKey is a machine identity.
 //
-// # İki tür, iki farklı güven modeli
+// # Two types, two different trust models
 //
-// [APIKeySecret] bir SIRDIR: yönetim yüzeyine erişir, sunucuda saklanır,
-// tarayıcıya asla verilmez ve sızması admin erişimi demektir.
+// [APIKeySecret] is a SECRET: it reaches the admin surface, is kept on the
+// server, is never handed to the browser, and its leaking means admin access.
 //
-// [APIKeyPublishable] bir SIR DEĞİLDİR: tarayıcıda, storefront paketinin
-// içinde, hatta sayfa kaynağında görünür. Tek işi isteği bir satış kanalına
-// BAĞLAMAKTIR; hiçbir yetki taşımaz ve tek başına hiçbir veriyi açmaz. Bu
-// yüzden "sızması" diye bir olayı yoktur — yanlış kullanımı, birinin başka bir
-// mağazanın kanal kimliğiyle o mağazanın vitrin kataloğunu okumasıdır ve o
-// katalog zaten herkese açıktır.
+// [APIKeyPublishable] IS NOT A SECRET: it is visible in the browser, inside
+// the storefront bundle, even in the page source. Its only job is to BIND the
+// request to a sales channel; it carries no scope and on its own opens no
+// data. There is therefore no such event as it "leaking" — its misuse is
+// somebody reading another store's storefront catalog with that store's
+// channel identity, and that catalog is already open to everyone.
 //
-// Ayrım iki bağımsız kapıyla uygulanır: düz metnin ÖNEKİ ("sk_" / "pk_") ve
-// bu kayıttaki [APIKey.Type] alanı. Yönetim yüzeyi yalnızca secret, mağaza
-// yüzeyi yalnızca publishable kabul eder; birini diğerinin yerine sunmak her
-// iki kapıda da reddedilir.
+// The distinction is enforced by two independent gates: the PREFIX of the
+// plaintext ("sk_" / "pk_") and the [APIKey.Type] field on this record. The
+// admin surface accepts only secret, the store surface only publishable;
+// presenting one in place of the other is rejected at both gates.
 //
-// # Düz metin
+// # Plaintext
 //
-// Anahtarın kendisi SAKLANMAZ; yalnızca [APIKey.TokenHash] (SHA-256) tutulur.
-// Düz metin YALNIZCA oluşturma çağrısının dönüş değeri olarak bir kez verilir
-// ve bir daha hiçbir yerden okunamaz. Kaybedilen anahtar geri getirilemez;
-// yapılacak şey iptal edip yenisini üretmektir.
+// The key itself IS NOT STORED; only [APIKey.TokenHash] (SHA-256) is kept. The
+// plaintext is handed out ONLY once, as the return value of the creation call,
+// and can never again be read from anywhere. A lost key cannot be brought
+// back; the thing to do is to revoke it and produce a new one.
 //
-// Karar publishable anahtarlar için de aynıdır — sır olmadıkları hâlde onların
-// da yalnızca hash'i saklanır. Tek biçimli saklama bir hata sınıfını topyekûn
-// kaldırır: "düz metni dönen" bir kod yolu, tür alanındaki bir hata yüzünden
-// yanlışlıkla gizli bir anahtarı gösteremez, çünkü döndürecek düz metin
-// hiçbir satırda yoktur.
+// The decision is the same for publishable keys as well — even though they are
+// not secrets, only their hash is stored too. Uniform storage removes a whole
+// class of mistake outright: a code path that "returns the plaintext" cannot
+// accidentally show a secret key because of a mistake in the type field, since
+// there is no plaintext to return on any row.
 type APIKey struct {
-	// ID "apikey_" önekli kimliktir.
+	// ID is the "apikey_" prefixed identifier.
 	ID string
-	// Type anahtarın türüdür: [APIKeyPublishable] ya da [APIKeySecret].
+	// Type is the key's type: [APIKeyPublishable] or [APIKeySecret].
 	Type APIKeyType
-	// Title anahtarın insan tarafından okunan adıdır (örn. "Web storefront").
+	// Title is the human-readable name of the key (e.g. "Web storefront").
 	Title string
-	// TokenHash düz metnin SHA-256 hash'idir (küçük harf hex, 64 karakter).
+	// TokenHash is the SHA-256 hash of the plaintext (lower case hex, 64
+	// characters).
 	TokenHash string
-	// Redacted gösterim için maskelenmiş hâldir (örn. "pk_…a1b2"); düz metnin
-	// yerine geçmez ve onunla doğrulama YAPILAMAZ.
+	// Redacted is the masked form for display (e.g. "pk_…a1b2"); it does not
+	// stand in for the plaintext and CANNOT be used to verify.
 	Redacted string
-	// Scopes anahtarın yetkileridir. Publishable anahtarlarda daima BOŞTUR.
+	// Scopes are the key's scopes. On publishable keys it is always EMPTY.
 	Scopes []string
-	// CreatedBy anahtarı üretenin kimliğidir; bir kullanıcı ya da başka bir
-	// gizli anahtar olabilir, bu yüzden foreign key taşımaz.
+	// CreatedBy is the identity of whoever produced the key; it may be a user
+	// or another secret key, which is why it carries no foreign key.
 	CreatedBy string
-	// LastUsedAt anahtarın son kullanım anıdır; nil ise hiç kullanılmamıştır.
-	// Değer YAKLAŞIKTIR (bkz. service, usageThrottle).
+	// LastUsedAt is the moment the key was last used; if nil it has never been
+	// used. The value is APPROXIMATE (see service, usageThrottle).
 	LastUsedAt *time.Time
-	// RevokedAt iptal anıdır; nil değilse anahtar artık kabul edilmez.
+	// RevokedAt is the revocation moment; if non-nil the key is no longer
+	// accepted.
 	RevokedAt *time.Time
-	// RevokedBy iptali yapanın kimliğidir; boş olabilir.
+	// RevokedBy is the identity of whoever performed the revocation; it may be
+	// empty.
 	RevokedBy string
-	// CreatedAt kaydın oluşturulma anıdır (UTC).
+	// CreatedAt is the moment the record was created (UTC).
 	CreatedAt time.Time
-	// UpdatedAt kaydın son güncellenme anıdır (UTC).
+	// UpdatedAt is the moment the record was last updated (UTC).
 	UpdatedAt time.Time
-	// DeletedAt soft delete anıdır; nil ise kayıt canlıdır.
+	// DeletedAt is the soft delete moment; if nil the record is live.
 	DeletedAt *time.Time
 }
 
-// IsRevoked anahtarın iptal edilip edilmediğini bildirir.
+// IsRevoked reports whether the key has been revoked.
 func (k APIKey) IsRevoked() bool { return k.RevokedAt != nil }
 
-// SalesChannel bir satış kanalıdır (örn. "Web", "Mobil uygulama", "Bayi").
+// SalesChannel is a sales channel (e.g. "Web", "Mobile app", "Dealer").
 //
-// Publishable anahtarlar kanallara bağlanır; mağaza isteği hangi kanaldan
-// geldiğini bu bağdan öğrenir. Hangi ürünün hangi kanalda göründüğü ise
-// product ↔ sales_channel linkiyle kurulur ve auth o linki hiç görmez
-// (Prensip 2.2).
+// Publishable keys are attached to channels; a store request learns which
+// channel it came from through that attachment. Which product appears in which
+// channel is established by the product ↔ sales_channel link, and auth never
+// sees that link (Principle 2.2).
 type SalesChannel struct {
-	// ID "sc_" önekli kimliktir.
+	// ID is the "sc_" prefixed identifier.
 	ID string
-	// Name kanalın görünen adıdır; canlı kanallar arasında benzersizdir.
+	// Name is the channel's display name; it is unique among live channels.
 	Name string
-	// Description kanalın açıklamasıdır; boş olabilir.
+	// Description is the channel's description; it may be empty.
 	Description string
-	// IsDisabled kanalın devre dışı olduğunu bildirir. Devre dışı bir kanal
-	// mağaza kimlik doğrulamasında YOK SAYILIR.
+	// IsDisabled reports that the channel is disabled. A disabled channel is
+	// IGNORED in store authentication.
 	IsDisabled bool
-	// Metadata çağıranın serbestçe yazdığı yapısal bağlamdır; boş olabilir.
+	// Metadata is structured context the caller writes freely; it may be
+	// empty.
 	Metadata map[string]any
-	// CreatedAt kaydın oluşturulma anıdır (UTC).
+	// CreatedAt is the moment the record was created (UTC).
 	CreatedAt time.Time
-	// UpdatedAt kaydın son güncellenme anıdır (UTC).
+	// UpdatedAt is the moment the record was last updated (UTC).
 	UpdatedAt time.Time
-	// DeletedAt soft delete anıdır; nil ise kayıt canlıdır.
+	// DeletedAt is the soft delete moment; if nil the record is live.
 	DeletedAt *time.Time
 }
 
-// NormalizeEmail e-postayı saklama biçimine çevirir: kırpılır ve KÜÇÜK harfe
-// indirilir.
+// NormalizeEmail converts the email into its storage form: it is trimmed and
+// lowered to LOWER case.
 //
-// Normalizasyon SAKLAMADA yapılır, okumada değil. Benzersizlik indeksi ham
-// sütun üzerindedir; "Ali@X.com" ile "ali@x.com" aynı kullanıcıyı
-// göstermeliyse ikisinin de aynı baytlara inmesi gerekir. Okuma anında
-// normalize etmek, tabloya iki farklı yazımın girmesini engellemezdi.
+// Normalization is done on STORAGE, not on reading. The uniqueness index is on
+// the raw column; if "Ali@X.com" and "ali@x.com" are to point at the same
+// user, both have to land on the same bytes. Normalizing at read time would
+// not have prevented two different spellings from entering the table.
 //
-// Küçük harfe indirme yerel bölüm (@ öncesi) için teknik olarak RFC'ye aykırı
-// sayılabilir — RFC 5321 yerel bölümü büyük/küçük harfe duyarlı bırakır — ama
-// pratikte hiçbir sağlayıcı bu ayrımı kullanmaz ve duyarlı bırakmak aynı kişiye
-// iki yönetim hesabı açtırırdı. Girişin tek bir satırla eşleşmesi bu
-// eşitlemeye bağlıdır.
+// Lowercasing the local part (before the @) can technically be considered
+// contrary to the RFC — RFC 5321 leaves the local part case sensitive — but in
+// practice no provider uses that distinction, and leaving it sensitive would
+// have let the same person open two admin accounts. A login matching a single
+// row depends on this equalization.
 func NormalizeEmail(email string) string {
 	return strings.ToLower(strings.TrimSpace(email))
 }

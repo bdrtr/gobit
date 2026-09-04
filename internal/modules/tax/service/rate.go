@@ -42,7 +42,7 @@ func (s *Service) CreateTaxRate(ctx context.Context, in CreateTaxRateInput) (mod
 	if err := s.ready(); err != nil {
 		return models.TaxRate{}, err
 	}
-	if err := requireID(in.TaxRegionID, models.TaxRegionIDPrefix, "vergi bölgesi kimliği"); err != nil {
+	if err := requireID(in.TaxRegionID, models.TaxRegionIDPrefix, "tax region id"); err != nil {
 		return models.TaxRate{}, err
 	}
 
@@ -117,7 +117,7 @@ func (s *Service) ListTaxRates(ctx context.Context, regionID string) ([]models.T
 	if err := s.ready(); err != nil {
 		return nil, err
 	}
-	if err := requireID(regionID, models.TaxRegionIDPrefix, "vergi bölgesi kimliği"); err != nil {
+	if err := requireID(regionID, models.TaxRegionIDPrefix, "tax region id"); err != nil {
 		return nil, err
 	}
 	if _, err := s.repo.GetTaxRegion(ctx, regionID); err != nil {

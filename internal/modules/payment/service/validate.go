@@ -13,7 +13,7 @@ const currencyCodeLength = 3
 // requireText zorunlu bir metin alanını doğrular.
 func requireText(label, value string) error {
 	if strings.TrimSpace(value) == "" {
-		return errors.Invalid(CodeInvalidInput, "%s boş olamaz", label)
+		return errors.Invalid(CodeInvalidInput, "%s cannot be empty", label)
 	}
 	return checkTextLen(label, value)
 }
@@ -22,7 +22,7 @@ func requireText(label, value string) error {
 func checkTextLen(label, value string) error {
 	if len(value) > maxTextLen {
 		return errors.Invalid(CodeInvalidInput,
-			"%s en fazla %d bayt olabilir: %d", label, maxTextLen, len(value))
+			"%s can be at most %d bytes: %d", label, maxTextLen, len(value))
 	}
 	return nil
 }

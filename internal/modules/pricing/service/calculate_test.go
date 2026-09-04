@@ -781,20 +781,20 @@ func TestCalculateAmountsJSONRejectsBadRequest(t *testing.T) {
 		},
 		"kap kimliği boş": {
 			request: calculateAmountsRequest{CurrencyCode: "TRY", Items: []calculateAmountsItem{{Quantity: 1}}},
-			message: "0. kalemi",
+			message: "item 0 of the batch price request",
 		},
 		"kap kimliği yanlış önekli": {
 			request: calculateAmountsRequest{CurrencyCode: "TRY", Items: []calculateAmountsItem{
 				{PriceSetID: "pset_base", Quantity: 1},
 				{PriceSetID: "price_1", Quantity: 1},
 			}},
-			message: "1. kalemi",
+			message: "item 1 of the batch price request",
 		},
 		"adet negatif": {
 			request: calculateAmountsRequest{CurrencyCode: "TRY", Items: []calculateAmountsItem{
 				{PriceSetID: "pset_base", Quantity: -1},
 			}},
-			message: "0. kalemi",
+			message: "item 0 of the batch price request",
 		},
 		"kalem sayısı tavanı aşıyor": {
 			request: calculateAmountsRequest{CurrencyCode: "TRY", Items: oversized},

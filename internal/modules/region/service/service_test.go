@@ -116,7 +116,7 @@ func TestCreateRegionNormalizesAndValidates(t *testing.T) {
 // TestGetRegionRejectsForeignID yanlış türde bir kimliğin "bulunamadı" değil,
 // doğrulama hatası döndüğünü kanıtlar.
 //
-// Önekli kimliklerin varlık sebebi budur: bir müşteri kimliğinin bölge yerine
+// Önekli kimliklerin varlık sebebi budur: bir customer idnin bölge yerine
 // geçmesi, sessiz bir 404 değil ne olduğu belli bir 422 olmalıdır.
 func TestGetRegionRejectsForeignID(t *testing.T) {
 	svc, repo := newTestService(t)

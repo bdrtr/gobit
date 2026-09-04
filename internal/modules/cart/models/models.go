@@ -1,289 +1,303 @@
-// Package models cart modülünün alan (domain) modellerini içerir.
+// Package models holds the domain models of the cart module.
 //
-// Buradaki tipler veritabanı sürücüsünden bağımsızdır: pgtype ve sqlc üretimi
-// tipler buraya SIZMAZ. Çeviri repository katmanında yapılır; servis, API ve
-// testler yalnızca bu tipleri görür.
+// The types here are independent of the database driver: pgtype and the sqlc
+// generated types DO NOT LEAK in here. The translation is done in the
+// repository layer; the service, the API and the tests see only these types.
 //
-// Para her yerde TAM SAYI minor unit'tir (kuruş/cent) ve para birimi ayrı
-// alanda durur (plan Bölüm 8); kayan nokta hiçbir alanda kullanılmaz. Zamanlar
-// UTC'dir.
+// Money is an INTEGER minor unit (cents) everywhere and the currency sits in a
+// separate field (plan Section 8); floating point is used in no field. Times
+// are UTC.
 package models
 
 import "time"
 
-// Tutar ve adet sınırları.
+// Amount and quantity limits.
 //
-// Sınırlar keyfi değildir: satır ara toplamı birim fiyat × adet olarak
-// hesaplanır ve bu çarpım int64'e SIĞMALIDIR. MaxAmount × MaxQuantity =
-// 10^12 × 10^6 = 10^18 < 9.22×10^18 olduğu için taşma yapısal olarak
-// imkânsızdır. Aynı sınırlar pricing modülündeki sınırlarla bilinçli olarak
-// aynıdır; iki modül birbirini import etmediği için değer burada tekrarlanır
-// (ADR 0001'in kabul edilen bedeli).
+// The limits are not arbitrary: a line's subtotal is computed as unit price ×
+// quantity and that product MUST FIT in an int64. Because MaxAmount ×
+// MaxQuantity = 10^12 × 10^6 = 10^18 < 9.22×10^18, overflow is structurally
+// impossible. The same limits are deliberately identical to the limits in the
+// pricing module; because the two modules do not import each other, the value
+// is repeated here (the accepted price of ADR 0001).
 const (
-	// MinAmount izin verilen en küçük tutardır. Negatif tutar bir indirim
-	// değildir; indirim ayrı bir alanda (discount_total) taşınır.
+	// MinAmount is the smallest allowed amount. A negative amount is not a
+	// discount; a discount is carried in a separate field (discount_total).
 	MinAmount int64 = 0
-	// MaxAmount izin verilen en büyük tutardır (minor unit).
+	// MaxAmount is the largest allowed amount (minor unit).
 	MaxAmount int64 = 1_000_000_000_000
-	// MinQuantity bir satırın en küçük adedidir; sıfır adet satır demek,
-	// satırın hiç olmaması demektir.
+	// MinQuantity is the smallest quantity of a line; a line with zero quantity
+	// means the line not being there at all.
 	MinQuantity int64 = 1
-	// MaxQuantity bir satırın en büyük adedidir.
+	// MaxQuantity is the largest quantity of a line.
 	MaxQuantity int64 = 1_000_000
-	// MaxTotal bir TOPLAM alanının en büyük değeridir (minor unit).
+	// MaxTotal is the largest value of a TOTAL field (minor unit).
 	//
-	// Değer MaxAmount × MaxQuantity'dir: tek bir satırın ara toplamı en fazla
-	// bu kadar olabilir, dolayısıyla sepet toplamları için de doğal tavandır.
-	// Kimlik doğrulaması (subtotal + tax_total + shipping_total) en fazla
-	// 3 × 10^18 üretir ve int64'e (9.22 × 10^18) sığar; taşma yapısal olarak
-	// imkânsızdır.
+	// The value is MaxAmount × MaxQuantity: a single line's subtotal can be at
+	// most this much, so it is also the natural ceiling for the cart totals.
+	// The identity check (subtotal + tax_total + shipping_total) produces at
+	// most 3 × 10^18 and fits in an int64 (9.22 × 10^18); overflow is
+	// structurally impossible.
 	MaxTotal int64 = MaxAmount * MaxQuantity
 )
 
-// Cart bir alışveriş sepetidir.
+// Cart is a shopping cart.
 //
-// # Toplam alanları kime aittir
+// # Whom the totals fields belong to
 //
-// Subtotal, DiscountTotal, TaxTotal, ShippingTotal ve Total bu modül tarafından
-// HESAPLANMAZ. Fiyat pricing'in, vergi tax/region'ın verisidir ve ikisini bir
-// araya getiren akış calculate_totals WORKFLOW'udur (plan Bölüm 2.5, ADR 0006).
-// Cart servisi bu alanları yalnızca SAKLAR ve tutarlılığını DOĞRULAR
-// (bkz. [Cart.TotalsConsistent]).
+// Subtotal, DiscountTotal, TaxTotal, ShippingTotal and Total are NOT COMPUTED
+// by this module. The price is pricing's data, the tax is tax/region's, and the
+// flow that brings the two together is the calculate_totals WORKFLOW (plan
+// Section 2.5, ADR 0006). The cart service only STORES these fields and
+// VALIDATES their consistency (see [Cart.TotalsConsistent]).
 //
-// # Bayat toplam
+// # Stale totals
 //
-// Sepetin şeklini değiştiren her işlem [Cart.Revision] sayacını artırır;
-// toplamları yazan taraf o anki sayacı [Cart.TotalsRevision] olarak damgalar.
-// İkisi ayrıştığında toplamlar sepetin GÜNCEL şekline ait değildir; bunu
-// [Cart.TotalsStale] bildirir. Bayatlık ne gizlenir ne uydurulur: bayat toplamı
-// sessizce saklamak müşteriye yanlış tutar göstermek, toplamları sıfırlamak ise
-// "bedava" demek olurdu.
+// Every operation that changes the shape of the cart increments the
+// [Cart.Revision] counter; the side that writes the totals stamps the counter
+// of that moment as [Cart.TotalsRevision]. When the two diverge, the totals do
+// not belong to the CURRENT shape of the cart; [Cart.TotalsStale] reports this.
+// Staleness is neither hidden nor made up: storing a stale total silently would
+// be showing the customer a wrong amount, and zeroing the totals would be
+// saying "free".
 type Cart struct {
-	// ID "cart_" önekli, zamana göre sıralanabilir kimliktir.
+	// ID is the "cart_" prefixed, time-sortable identifier.
 	ID string
-	// RegionID sepetin bölgesidir; region modülüne aittir ve FOREIGN KEY
-	// DEĞİLDİR (Prensip 2.2). Zorunludur.
+	// RegionID is the cart's region; it belongs to the region module and IS NOT
+	// A FOREIGN KEY (Principle 2.2). It is required.
 	RegionID string
-	// CustomerID sepetin sahibi müşteridir; customer modülüne aittir ve
-	// FOREIGN KEY DEĞİLDİR. Boş ise sepet MİSAFİRE aittir.
+	// CustomerID is the customer who owns the cart; it belongs to the customer
+	// module and IS NOT A FOREIGN KEY. If empty, the cart belongs to a GUEST.
 	CustomerID string
-	// Email sepetin iletişim adresidir; misafir sepetinde tek takip yoludur.
+	// Email is the cart's contact address; on a guest cart it is the only way
+	// to follow it.
 	Email string
-	// CurrencyCode ISO 4217 kodudur ve daima BÜYÜK harf saklanır. Değer
-	// region'dan kopyalanır; kopyalayan taraf workflow'dur, cart modülü region
-	// modülünü çağırmaz (ADR 0001/0006).
+	// CurrencyCode is the ISO 4217 code and is always stored in UPPERCASE. The
+	// value is copied from the region; the side that copies it is the workflow,
+	// the cart module does not call the region module (ADR 0001/0006).
 	CurrencyCode string
-	// Subtotal satır ara toplamlarının toplamıdır (minor unit).
+	// Subtotal is the sum of the line subtotals (minor unit).
 	Subtotal int64
-	// DiscountTotal toplam indirimdir (minor unit); pozitif saklanır ve
-	// toplamdan DÜŞÜLÜR.
+	// DiscountTotal is the total discount (minor unit); it is stored positive
+	// and is SUBTRACTED from the total.
 	DiscountTotal int64
-	// TaxTotal toplam vergidir (minor unit).
+	// TaxTotal is the total tax (minor unit).
 	TaxTotal int64
-	// ShippingTotal toplam kargo tutarıdır (minor unit).
+	// ShippingTotal is the total shipping amount (minor unit).
 	ShippingTotal int64
-	// Total ödenecek tutardır (minor unit):
+	// Total is the amount payable (minor unit):
 	// Subtotal - DiscountTotal + TaxTotal + ShippingTotal.
 	Total int64
-	// Revision sepetin şekil sayacıdır; toplamları etkileyen her yapısal
-	// değişiklikte bir artar.
+	// Revision is the cart's shape counter; it goes up by one on every
+	// structural change that affects the totals.
 	Revision int64
-	// TotalsRevision toplamların hangi şekil için hesaplandığını damgalar.
+	// TotalsRevision stamps which shape the totals were computed for.
 	TotalsRevision int64
-	// Metadata çağıranın serbest ek verisidir.
+	// Metadata is the caller's free-form extra data.
 	Metadata map[string]any
-	// CompletedAt sepetin tamamlandığı andır; dolu ise sepet DEĞİŞTİRİLEMEZ.
+	// CompletedAt is the moment the cart was completed; if it is set, the cart
+	// IS IMMUTABLE.
 	CompletedAt *time.Time
-	// CreatedAt ve UpdatedAt UTC'dir.
+	// CreatedAt and UpdatedAt are UTC.
 	CreatedAt time.Time
 	UpdatedAt time.Time
-	// DeletedAt yumuşak silme anıdır; nil ise sepet canlıdır.
+	// DeletedAt is the moment of the soft delete; if nil, the cart is alive.
 	DeletedAt *time.Time
 }
 
-// Completed sepetin tamamlanmış olup olmadığını bildirir.
+// Completed reports whether the cart is completed.
 func (c Cart) Completed() bool {
 	return c.CompletedAt != nil
 }
 
-// Guest sepetin misafire ait olup olmadığını bildirir.
+// Guest reports whether the cart belongs to a guest.
 func (c Cart) Guest() bool {
 	return c.CustomerID == ""
 }
 
-// TotalsStale toplamların sepetin güncel şekline ait OLMADIĞINI bildirir.
+// TotalsStale reports that the totals DO NOT belong to the current shape of the
+// cart.
 //
-// Ölçüt "hiç hesaplanmadı"yı AYIRT EDEMEZ: hiç dokunulmamış bir sepette
-// [Cart.Revision] ve [Cart.TotalsRevision] ikisi de sıfırdır. Ayırt edilmesi
-// de gerekmez — sayaç azalmaz ve satır eklemek onu mutlaka artırır, dolayısıyla
-// ölçütün sessiz kaldığı tek hesapsız sepet SATIRSIZ olandır ve satırsız sepeti
-// tamamlamayı ayrı bir kapı reddeder (bkz. servisteki MarkCompleted).
+// The criterion CANNOT TELL APART "never computed": on a cart nobody has
+// touched, [Cart.Revision] and [Cart.TotalsRevision] are both zero. Nor does it
+// need to be told apart — the counter does not go down and adding a line
+// necessarily increments it, so the only uncomputed cart the criterion stays
+// silent about is the one WITHOUT LINES, and a separate gate refuses to
+// complete a cart without lines (see MarkCompleted in the service).
 func (c Cart) TotalsStale() bool {
 	return c.TotalsRevision != c.Revision
 }
 
-// TotalsConsistent toplam kimliğinin sağlandığını bildirir:
+// TotalsConsistent reports that the totals identity holds:
 // Total = Subtotal - DiscountTotal + TaxTotal + ShippingTotal.
 //
-// Kontrol hem servis girişinde hem veritabanı kısıtında vardır; ikisi de aynı
-// kimliği zorlar ve workflow'daki bir hesap hatasının sessizce kalıcılaşmasını
-// engeller.
+// The check exists both at the service entrance and in a database constraint;
+// both of them enforce the same identity and prevent a calculation error in the
+// workflow from silently becoming permanent.
 func (c Cart) TotalsConsistent() bool {
 	return c.Total == c.Subtotal-c.DiscountTotal+c.TaxTotal+c.ShippingTotal
 }
 
-// CartDetail sepetin çocuklarıyla birlikte tam hâlidir.
+// CartDetail is the cart in its full form, together with its children.
 //
-// Tip ayrı olması bilinçlidir: [Cart] tek satırdır ve listeleme yollarında
-// çocuk sorgusu YAPILMAZ (N+1 yasağı). Çocukların yüklü olduğu tek yer bu
-// tiptir, dolayısıyla "bu sepette satırlar var mı yoksa yüklenmedi mi?"
-// belirsizliği hiç doğmaz.
+// The type being separate is deliberate: [Cart] is a single row and the listing
+// paths DO NOT run a child query (the N+1 ban). This type is the only place
+// where the children are loaded, so the ambiguity "does this cart have lines,
+// or were they simply not loaded?" never arises.
 type CartDetail struct {
-	// Cart sepetin kendisidir.
+	// Cart is the cart itself.
 	Cart
-	// Items sepetin satırlarıdır; oluşturulma sırasındadır.
+	// Items are the cart's lines; they are in creation order.
 	Items []LineItem
-	// ShippingAddress sepetin kargo adresidir; yoksa nil.
+	// ShippingAddress is the cart's shipping address; nil if there is none.
 	ShippingAddress *CartAddress
-	// BillingAddress sepetin fatura adresidir; yoksa nil.
+	// BillingAddress is the cart's billing address; nil if there is none.
 	BillingAddress *CartAddress
-	// ShippingMethods sepete seçilmiş kargo yöntemleridir.
+	// ShippingMethods are the shipping methods selected for the cart.
 	ShippingMethods []ShippingMethod
 }
 
-// LineItem sepetteki bir satırdır.
+// LineItem is a line in the cart.
 //
-// Title ve UnitPrice varyanttan KOPYALANIR: katalog sonradan değişse (ya da
-// varyant silinse) bile sepette görülen ad ve tutar değişmez. VariantID başka
-// bir modülün (product) kimliğidir ve FOREIGN KEY DEĞİLDİR (Prensip 2.2).
+// Title and UnitPrice are COPIED from the variant: even if the catalog changes
+// later (or the variant is deleted), the name and the amount seen on the cart do
+// not change. VariantID is another module's (product) identifier and IS NOT A
+// FOREIGN KEY (Principle 2.2).
 type LineItem struct {
-	// ID "li_" önekli kimliktir.
+	// ID is the "li_" prefixed identifier.
 	ID string
-	// CartID satırın ait olduğu sepettir.
+	// CartID is the cart the line belongs to.
 	CartID string
-	// VariantID satırın gösterdiği ürün varyantıdır; product modülüne aittir.
+	// VariantID is the product variant the line points at; it belongs to the
+	// product module.
 	VariantID string
-	// Title satırın görünen adıdır.
+	// Title is the line's displayed name.
 	Title string
-	// Quantity satırdaki adettir; her zaman pozitiftir.
+	// Quantity is the quantity on the line; it is always positive.
 	Quantity int64
-	// UnitPrice birim fiyattır (minor unit); pricing'den gelir ve workflow yazar.
+	// UnitPrice is the unit price (minor unit); it comes from pricing and the
+	// workflow writes it.
 	UnitPrice int64
-	// Subtotal satırın ara toplamıdır (minor unit): UnitPrice × Quantity.
+	// Subtotal is the line's subtotal (minor unit): UnitPrice × Quantity.
 	Subtotal int64
-	// DiscountTotal satıra düşen indirimdir (minor unit); pozitif saklanır.
+	// DiscountTotal is the discount falling on the line (minor unit); it is
+	// stored positive.
 	DiscountTotal int64
-	// TaxTotal satıra düşen vergidir (minor unit).
+	// TaxTotal is the tax falling on the line (minor unit).
 	TaxTotal int64
-	// Total satırın toplamıdır (minor unit):
+	// Total is the line's total (minor unit):
 	// Subtotal - DiscountTotal + TaxTotal.
 	Total int64
-	// Metadata çağıranın serbest ek verisidir.
+	// Metadata is the caller's free-form extra data.
 	Metadata map[string]any
-	// CreatedAt ve UpdatedAt UTC'dir.
+	// CreatedAt and UpdatedAt are UTC.
 	CreatedAt time.Time
 	UpdatedAt time.Time
 }
 
-// TotalsConsistent satır toplam kimliğinin sağlandığını bildirir:
+// TotalsConsistent reports that the line totals identity holds:
 // Total = Subtotal - DiscountTotal + TaxTotal.
 //
-// Kargo satır düzeyinde yoktur; kargo sepetin tamamına aittir.
+// There is no shipping at the line level; shipping belongs to the whole cart.
 func (l LineItem) TotalsConsistent() bool {
 	return l.Total == l.Subtotal-l.DiscountTotal+l.TaxTotal
 }
 
-// CartTotals bir sepetin toplam alanlarının yazılabilir kümesidir.
+// CartTotals is the writable set of a cart's totals fields.
 //
-// Tip, servis ile depo arasındaki sınırda kullanılır: altı ayrı int64
-// parametresi yerine adlandırılmış alanlar, çağrı yerinde iki tutarın yanlışlıkla
-// yer değiştirmesini imkânsız kılar (derleyici sıra hatasını yakalayamazdı,
-// çünkü hepsi aynı tiptedir).
+// The type is used at the boundary between the service and the store: instead
+// of six separate int64 parameters, named fields make it impossible for two
+// amounts to swap places by accident at the call site (the compiler could not
+// have caught an ordering mistake, because they are all of the same type).
 type CartTotals struct {
-	// Subtotal satır ara toplamlarının toplamıdır (minor unit).
+	// Subtotal is the sum of the line subtotals (minor unit).
 	Subtotal int64
-	// DiscountTotal toplam indirimdir (minor unit); pozitif verilir.
+	// DiscountTotal is the total discount (minor unit); it is given positive.
 	DiscountTotal int64
-	// TaxTotal toplam vergidir (minor unit).
+	// TaxTotal is the total tax (minor unit).
 	TaxTotal int64
-	// ShippingTotal toplam kargo tutarıdır (minor unit).
+	// ShippingTotal is the total shipping amount (minor unit).
 	ShippingTotal int64
-	// Total ödenecek tutardır (minor unit).
+	// Total is the amount payable (minor unit).
 	Total int64
-	// Revision toplamların hangi sepet şekli için hesaplandığıdır; kayda
-	// totals_revision olarak damgalanır.
+	// Revision is which cart shape the totals were computed for; it is stamped
+	// onto the record as totals_revision.
 	Revision int64
 }
 
-// Consistent toplam kimliğinin sağlandığını bildirir:
+// Consistent reports that the totals identity holds:
 // Total = Subtotal - DiscountTotal + TaxTotal + ShippingTotal.
 func (t CartTotals) Consistent() bool {
 	return t.Total == t.Subtotal-t.DiscountTotal+t.TaxTotal+t.ShippingTotal
 }
 
-// CartContact bir sepetin iletişim ve sahiplik alanlarının yazılabilir
-// kümesidir.
+// CartContact is the writable set of a cart's contact and ownership fields.
 //
-// İkisi tek tipte taşınır çünkü tek bir niyetin iki yüzüdür: sepetin KİME ait
-// olduğu. Ayrı ayrı iki dize parametresi olsalardı çağrı yerinde yer
-// değiştirebilirlerdi ve derleyici bunu yakalayamazdı — her ikisi de string.
+// The two are carried in a single type because they are two faces of one single
+// intent: WHOM the cart belongs to. Had they been two separate string
+// parameters, they could have swapped places at the call site and the compiler
+// could not have caught it — both of them are string.
 type CartContact struct {
-	// Email sepetin iletişim adresidir; boş dize saklanan değeri TEMİZLER.
+	// Email is the cart's contact address; an empty string CLEARS the stored
+	// value.
 	Email string
-	// CustomerID sepetin sahibidir; boş dize sepeti misafir bırakır.
+	// CustomerID is the cart's owner; an empty string leaves the cart a guest
+	// cart.
 	CustomerID string
 }
 
-// LineTotals bir sepet satırının para alanlarının yazılabilir kümesidir.
+// LineTotals is the writable set of a cart line's money fields.
 //
-// Adet BURADA YOKTUR: adet sepet servisinin, tutarlar workflow'un verisidir.
-// Ayrılık bilinçlidir — bir hesaplama turu adedi sessizce değiştiremez.
+// The quantity IS NOT HERE: the quantity is the cart service's data, the
+// amounts are the workflow's. The separation is deliberate — a calculation
+// round cannot change the quantity silently.
 type LineTotals struct {
-	// UnitPrice birim fiyattır (minor unit).
+	// UnitPrice is the unit price (minor unit).
 	UnitPrice int64
-	// Subtotal satırın ara toplamıdır (minor unit).
+	// Subtotal is the line's subtotal (minor unit).
 	Subtotal int64
-	// DiscountTotal satıra düşen indirimdir (minor unit); pozitif verilir.
+	// DiscountTotal is the discount falling on the line (minor unit); it is
+	// given positive.
 	DiscountTotal int64
-	// TaxTotal satıra düşen vergidir (minor unit).
+	// TaxTotal is the tax falling on the line (minor unit).
 	TaxTotal int64
-	// Total satırın toplamıdır (minor unit).
+	// Total is the line's total (minor unit).
 	Total int64
 }
 
-// Consistent satır toplam kimliğinin sağlandığını bildirir:
+// Consistent reports that the line totals identity holds:
 // Total = Subtotal - DiscountTotal + TaxTotal.
 func (t LineTotals) Consistent() bool {
 	return t.Total == t.Subtotal-t.DiscountTotal+t.TaxTotal
 }
 
-// LineItemTotals bir satırın KİMLİĞİNİ tutarlarıyla BİRLİKTE taşır.
+// LineItemTotals carries a line's IDENTITY TOGETHER WITH its amounts.
 //
-// Kimlik ile tutarların aynı değerde durması bilinçlidir: bir hesap turunun
-// tamamı tek deyimle yazılır ve depo bu dilimden altı paralel dizi kurar
-// (bkz. cart_line_items.sql, SetLineItemTotals). Kimlikleri ve tutarları ayrı
-// dilimler olarak taşımak, çağıranın onları farklı sıralarda vermesini mümkün
-// kılardı: yanlış satıra yanlış tutar yazmak müşteriye yanlış tutar tahsil
-// etmektir ve aşağı akışta hiçbir kapı bunu görmez.
+// The identity and the amounts standing in the same value is deliberate: a whole
+// calculation round is written with a single statement and the store builds six
+// parallel arrays out of this slice (see cart_line_items.sql,
+// SetLineItemTotals). Carrying the identifiers and the amounts as separate
+// slices would make it possible for the caller to give them in different orders:
+// writing the wrong amount to the wrong line is charging the customer the wrong
+// amount, and no gate downstream sees it.
 type LineItemTotals struct {
-	// LineItemID tutarların yazılacağı satırdır.
+	// LineItemID is the line the amounts will be written to.
 	LineItemID string
-	// Totals satırın para alanlarıdır (minor unit).
+	// Totals are the line's money fields (minor unit).
 	Totals LineTotals
 }
 
-// AddressType bir sepet adresinin türüdür.
+// AddressType is the type of a cart address.
 type AddressType string
 
-// Sepet adresinin türleri.
+// The types of a cart address.
 const (
-	// AddressShipping kargo adresidir.
+	// AddressShipping is the shipping address.
 	AddressShipping AddressType = "shipping"
-	// AddressBilling fatura adresidir.
+	// AddressBilling is the billing address.
 	AddressBilling AddressType = "billing"
 )
 
-// Valid türün tanımlı bir değer olup olmadığını bildirir.
+// Valid reports whether the type is a defined value.
 func (t AddressType) Valid() bool {
 	switch t {
 	case AddressShipping, AddressBilling:
@@ -293,34 +307,36 @@ func (t AddressType) Valid() bool {
 	}
 }
 
-// String türün metin gösterimini döner.
+// String returns the textual representation of the type.
 func (t AddressType) String() string {
 	return string(t)
 }
 
-// CartAddress sepete ait kargo ya da fatura adresidir.
+// CartAddress is a shipping or billing address belonging to a cart.
 //
-// # Neden kopya
+// # Why a copy
 //
-// Sepetin adresi, customer modülündeki defterden KOPYALANIR; sepet kendi
-// kopyasını tutar. Müşteri defterindeki kaydını sonradan değiştirdiğinde ya da
-// sildiğinde geçmiş sepet (ve ondan doğan sipariş) bozulmaz: sepette "kargonun
-// gönderildiği yer" yazılıdır, "müşterinin bugünkü adresi" değil.
-// Referansla tutulsaydı, taşınan bir müşterinin eski siparişi yeni adresine
-// gönderilmiş gibi görünürdü.
+// The cart's address is COPIED from the address book in the customer module; the
+// cart keeps its own copy. When the customer later changes or deletes their
+// record in the book, the past cart (and the order born out of it) is not
+// broken: what is written on the cart is "the place the shipment was sent to",
+// not "the customer's address today". Had it been kept by reference, a customer
+// who moved would make their old order look as if it had been sent to their new
+// address.
 //
-// [CartAddress.SourceAddressID] yalnızca KÖKENİ belgeler; okuma için
-// kullanılmaz ve FOREIGN KEY DEĞİLDİR (Prensip 2.2).
+// [CartAddress.SourceAddressID] only documents the ORIGIN; it is not used for
+// reading and IS NOT A FOREIGN KEY (Principle 2.2).
 type CartAddress struct {
-	// ID "addr_" önekli kimliktir.
+	// ID is the "addr_" prefixed identifier.
 	ID string
-	// CartID adresin ait olduğu sepettir.
+	// CartID is the cart the address belongs to.
 	CartID string
-	// Type adresin türüdür (kargo/fatura).
+	// Type is the type of the address (shipping/billing).
 	Type AddressType
-	// SourceAddressID kopyalandığı customer adresinin kimliğidir; boş olabilir.
+	// SourceAddressID is the identifier of the customer address it was copied
+	// from; it may be empty.
 	SourceAddressID string
-	// Ad, unvan ve konum alanları; hepsi isteğe bağlıdır.
+	// The name, title and location fields; all of them are optional.
 	FirstName  string
 	LastName   string
 	Company    string
@@ -329,36 +345,39 @@ type CartAddress struct {
 	City       string
 	Province   string
 	PostalCode string
-	// CountryCode ISO 3166-1 alpha-2 ülke kodudur (örn. "TR"); BÜYÜK harf.
+	// CountryCode is the ISO 3166-1 alpha-2 country code (e.g. "TR");
+	// UPPERCASE.
 	CountryCode string
 	Phone       string
-	// Metadata çağıranın serbest ek verisidir.
+	// Metadata is the caller's free-form extra data.
 	Metadata map[string]any
-	// CreatedAt ve UpdatedAt UTC'dir.
+	// CreatedAt and UpdatedAt are UTC.
 	CreatedAt time.Time
 	UpdatedAt time.Time
 }
 
-// ShippingMethod sepete seçilmiş kargo yöntemidir.
+// ShippingMethod is a shipping method selected for the cart.
 //
-// ShippingOptionID fulfillment modülünün kimliğidir (Faz 7'de gelecek) ve
-// FOREIGN KEY DEĞİLDİR; Faz 5'te seçenek kataloğu henüz yok olduğu için boş
-// olabilir.
+// ShippingOptionID is the fulfillment module's identifier (it will arrive in
+// Phase 7) and IS NOT A FOREIGN KEY; it may be empty, because in Phase 5 there
+// is no option catalog yet.
 type ShippingMethod struct {
-	// ID "csm_" önekli kimliktir.
+	// ID is the "csm_" prefixed identifier.
 	ID string
-	// CartID yöntemin ait olduğu sepettir.
+	// CartID is the cart the method belongs to.
 	CartID string
-	// Name yöntemin görünen adıdır.
+	// Name is the method's displayed name.
 	Name string
-	// ShippingOptionID fulfillment modülündeki seçeneğin kimliğidir; boş olabilir.
+	// ShippingOptionID is the identifier of the option in the fulfillment
+	// module; it may be empty.
 	ShippingOptionID string
-	// Amount kargo tutarıdır (minor unit). Sepetin ShippingTotal'ına workflow
-	// tarafından toplanır; bu kayıt toplamı kendi yazmaz.
+	// Amount is the shipping amount (minor unit). It is summed into the cart's
+	// ShippingTotal by the workflow; this record does not write the total
+	// itself.
 	Amount int64
-	// Data sağlayıcıya özgü serbest veridir (örn. seçilen şube).
+	// Data is provider-specific free-form data (e.g. the selected branch).
 	Data map[string]any
-	// CreatedAt ve UpdatedAt UTC'dir.
+	// CreatedAt and UpdatedAt are UTC.
 	CreatedAt time.Time
 	UpdatedAt time.Time
 }

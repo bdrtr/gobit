@@ -9,19 +9,20 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/auth/models"
 )
 
-// Entity auth'un Query katmanına açtığı entity adıdır.
+// Entity is the entity name auth opens to the Query layer.
 //
-// Modülün adı "auth" olduğu hâlde entity "sales_channel"dır: Query, bir
-// genişletmenin hedefini ENTITY adından bulur ve link tanımlarının ucunda
-// yazacak ad budur (örn. product ↔ sales_channel). Sağlayıcı container'a
-// "sales_channel" + query.ProviderSuffix adıyla kaydedilir.
+// Even though the module's name is "auth", the entity is "sales_channel":
+// Query finds the target of an extension FROM the ENTITY name, and this is the
+// name that will stand at the end of link definitions (e.g. product ↔
+// sales_channel). The provider is registered in the container under the name
+// "sales_channel" + query.ProviderSuffix.
 //
-// Kullanıcılar ve API anahtarları Query'ye AÇILMAZ: ikisi de kimlik verisidir
-// ve cross-module bir okuma yüzeyine konması, bir gün bir genişletmenin
-// yönetici listesini vitrin yanıtına eklemesi demek olurdu.
+// Users and API keys ARE NOT OPENED to Query: both of them are identity data,
+// and putting them on a cross-module read surface would have meant that one
+// day an extension adds the admin list to a storefront response.
 const Entity = "sales_channel"
 
-// Sağlayıcının sunduğu alan adları.
+// The field names the provider offers.
 const (
 	fieldID          = "id"
 	fieldName        = "name"
@@ -32,50 +33,52 @@ const (
 	fieldUpdatedAt   = "updated_at"
 )
 
-// Sağlayıcının tanıdığı filtre adları.
+// The filter names the provider recognizes.
 const (
 	filterID         = "id"
 	filterName       = "name"
 	filterIsDisabled = "is_disabled"
 )
 
-// supportedFields sağlayıcının tanıdığı alanlardır; başka bir alan istenirse
-// errors.Invalid dönülür (ADR 0004: alan doğrulaması sağlayıcıya aittir).
+// supportedFields are the fields the provider recognizes; if another field is
+// requested errors.Invalid is returned (ADR 0004: field validation belongs to
+// the provider).
 var supportedFields = []string{
 	fieldID, fieldName, fieldDescription, fieldIsDisabled,
 	fieldMetadata, fieldCreatedAt, fieldUpdatedAt,
 }
 
-// supportedFilters sağlayıcının tanıdığı filtrelerdir.
+// supportedFilters are the filters the provider recognizes.
 var supportedFilters = []string{filterID, filterName, filterIsDisabled}
 
-// QueryProvider satış kanallarını Query katmanına açar (ADR 0004).
+// QueryProvider opens sales channels to the Query layer (ADR 0004).
 //
-// Arayüz internal/core/query'de tanımlıdır; bu tip yalnızca imzayı karşılar ve
-// çekirdeğe hiçbir şey bildirmez (ADR 0001'in sağlayıcı tarafı).
+// The interface is defined in internal/core/query; this type only satisfies
+// the signature and tells the core nothing (the provider side of ADR 0001).
 type QueryProvider struct {
 	svc *Service
 }
 
 var _ query.Provider = (*QueryProvider)(nil)
 
-// NewQueryProvider verilen servis üzerinde çalışan bir sağlayıcı üretir.
+// NewQueryProvider produces a provider that runs on the given service.
 func NewQueryProvider(svc *Service) *QueryProvider {
 	return &QueryProvider{svc: svc}
 }
 
-// Entity sağlayıcının sunduğu entity adını döner.
+// Entity returns the entity name the provider offers.
 func (p *QueryProvider) Entity() string { return Entity }
 
-// List kök satış kanalı kayıtlarını döner.
+// List returns the root sales channel records.
 //
-// Desteklenen filtreler: "id" (dize ya da dize dilimi), "name", "is_disabled".
-// "id" filtresi DİĞERLERİYLE BİRLEŞTİRİLEMEZ — kesin bir kimlik kümesi zaten
-// adlandırılmışken ikinci bir süzgeç, çağıranın istediği kaydın sessizce
-// elenmesi demek olurdu ve sonuç boş dönerdi.
+// Supported filters: "id" (a string or a string slice), "name", "is_disabled".
+// The "id" filter CANNOT BE COMBINED WITH THE OTHERS — when an exact set of
+// identifiers has already been named, a second filter would have meant the
+// record the caller asked for being silently eliminated, and the result would
+// have come back empty.
 //
-// Limit sıfır verilirse Query sözleşmesindeki "sınırsız" YERİNE modülün
-// varsayılan sayfa boyu uygulanır.
+// If a limit of zero is given, the module's default page size is applied
+// INSTEAD OF the "unlimited" of the Query contract.
 func (p *QueryProvider) List(ctx context.Context, opts query.ListOptions) ([]query.Record, error) {
 	if err := p.svc.ready(); err != nil {
 		return nil, err
@@ -90,8 +93,8 @@ func (p *QueryProvider) List(ctx context.Context, opts query.ListOptions) ([]que
 	}
 
 	if ids != nil {
-		// Kimlik filtresi varsa sayfalama uygulanmaz: çağıran zaten kesin bir
-		// kümeyi adlandırmıştır.
+		// If there is an identifier filter no paging is applied: the caller
+		// has already named an exact set.
 		return p.fetch(ctx, ids, fields)
 	}
 
@@ -107,9 +110,11 @@ func (p *QueryProvider) List(ctx context.Context, opts query.ListOptions) ([]que
 	return records(channels, fields), nil
 }
 
-// FetchByIDs verilen kimliklere karşılık gelen kayıtları TEK turda döner.
+// FetchByIDs returns the records corresponding to the given identifiers in a
+// SINGLE round trip.
 //
-// Bulunamayan kimlik için kayıt dönmez; bu bir hata değildir (ADR 0004).
+// No record is returned for an identifier that is not found; this is not an
+// error (ADR 0004).
 func (p *QueryProvider) FetchByIDs(ctx context.Context, ids, fields []string) ([]query.Record, error) {
 	if err := p.svc.ready(); err != nil {
 		return nil, err
@@ -121,7 +126,7 @@ func (p *QueryProvider) FetchByIDs(ctx context.Context, ids, fields []string) ([
 	return p.fetch(ctx, ids, normalized)
 }
 
-// fetch kimlik kümesini okuyup kayıtlara çevirir.
+// fetch reads the set of identifiers and converts it into records.
 func (p *QueryProvider) fetch(ctx context.Context, ids, fields []string) ([]query.Record, error) {
 	if len(ids) == 0 {
 		return []query.Record{}, nil
@@ -134,7 +139,7 @@ func (p *QueryProvider) fetch(ctx context.Context, ids, fields []string) ([]quer
 	return records(channels, fields), nil
 }
 
-// records satış kanallarını Query kayıtlarına çevirir.
+// records converts sales channels into Query records.
 func records(channels []models.SalesChannel, fields []string) []query.Record {
 	out := make([]query.Record, 0, len(channels))
 	for i := range channels {
@@ -163,11 +168,12 @@ func records(channels []models.SalesChannel, fields []string) []query.Record {
 	return out
 }
 
-// normalizeFields istenen alanları doğrular; boş liste TÜM alanlar demektir.
+// normalizeFields validates the requested fields; an empty list means ALL
+// fields.
 //
-// Kimlik alanı, istenmese bile listeye EKLENİR: Query kayıtları [query.IDField]
-// üzerinden birleştirir ve kimliksiz bir kayıt errors.KindInternal ile
-// sonuçlanırdı.
+// The identifier field is ADDED to the list even when it was not requested:
+// Query merges the records over [query.IDField] and a record without an
+// identifier would have ended in errors.KindInternal.
 func normalizeFields(fields []string) ([]string, error) {
 	if len(fields) == 0 {
 		return slices.Clone(supportedFields), nil
@@ -177,7 +183,7 @@ func normalizeFields(fields []string) ([]string, error) {
 	for _, field := range fields {
 		if !slices.Contains(supportedFields, field) {
 			return nil, errors.Invalid(CodeInvalidInput,
-				"%q alanı %s sağlayıcısında yok (desteklenen: %v)", field, Entity, supportedFields)
+				"field %q does not exist in the %s provider (supported: %v)", field, Entity, supportedFields)
 		}
 		if !slices.Contains(out, field) {
 			out = append(out, field)
@@ -189,10 +195,11 @@ func normalizeFields(fields []string) ([]string, error) {
 	return out, nil
 }
 
-// splitFilters filtreleri kimlik kümesine ve süzgece ayırır.
+// splitFilters separates the filters into a set of identifiers and a filter.
 //
-// Kimlik filtresi yoksa nil kimlik dilimi döner. Boş bir dilim, nil'den AYRI
-// bir anlam taşır: "hiçbir kimlik" demektir ve boş sonuç döner.
+// If there is no identifier filter a nil identifier slice is returned. An empty
+// slice carries a meaning SEPARATE from nil: it means "no identifiers" and an
+// empty result is returned.
 func splitFilters(filters map[string]any) ([]string, models.SalesChannelFilter, error) {
 	var (
 		ids    []string
@@ -220,24 +227,24 @@ func splitFilters(filters map[string]any) ([]string, models.SalesChannelFilter, 
 			flag, ok := value.(bool)
 			if !ok {
 				return nil, filter, errors.Invalid(CodeInvalidInput,
-					"%q filtresi mantıksal (bool) olmalı, %T verildi", name, value)
+					"filter %q has to be a boolean, %T given", name, value)
 			}
 			filter.IsDisabled = &flag
 		default:
 			return nil, filter, errors.Invalid(CodeInvalidInput,
-				"%q filtresi %s sağlayıcısında desteklenmiyor (desteklenen: %v)",
+				"filter %q is not supported by the %s provider (supported: %v)",
 				name, Entity, supportedFilters)
 		}
 	}
 
 	if ids != nil && len(filters) > 1 {
 		return nil, filter, errors.Invalid(CodeInvalidInput,
-			"%q filtresi başka filtrelerle birlikte kullanılamaz", filterID)
+			"filter %q cannot be used together with other filters", filterID)
 	}
 	return ids, filter, nil
 }
 
-// stringSet bir filtre değerini kimlik kümesine çevirir.
+// stringSet converts a filter value into a set of identifiers.
 func stringSet(name string, value any) ([]string, error) {
 	switch typed := value.(type) {
 	case string:
@@ -250,16 +257,16 @@ func stringSet(name string, value any) ([]string, error) {
 		return out, nil
 	default:
 		return nil, errors.Invalid(CodeInvalidInput,
-			"%q filtresi dize ya da dize dilimi olmalı, %T verildi", name, value)
+			"filter %q has to be a string or a string slice, %T given", name, value)
 	}
 }
 
-// stringValue bir filtre değerini tek dizeye çevirir.
+// stringValue converts a filter value into a single string.
 func stringValue(name string, value any) (string, error) {
 	typed, ok := value.(string)
 	if !ok {
 		return "", errors.Invalid(CodeInvalidInput,
-			"%q filtresi dize olmalı, %T verildi", name, value)
+			"filter %q has to be a string, %T given", name, value)
 	}
 	return typed, nil
 }

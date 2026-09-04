@@ -9,11 +9,12 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/tax/models"
 )
 
-// Entity tax'ın Query katmanına açtığı entity adıdır.
-// Sağlayıcı container'a "tax_region" + query.ProviderSuffix adıyla kaydedilir.
+// Entity is the entity name tax opens to the Query layer.
+// The provider is registered in the container under the name "tax_region" +
+// query.ProviderSuffix.
 const Entity = "tax_region"
 
-// Sağlayıcının sunduğu alan adları.
+// The field names the provider offers.
 const (
 	fieldID           = "id"
 	fieldCountryCode  = "country_code"
@@ -26,7 +27,7 @@ const (
 	fieldUpdatedAt    = "updated_at"
 )
 
-// Alt kayıtların (oran) alan adları.
+// The field names of the sub-records (the rates).
 const (
 	fieldName      = "name"
 	fieldCode      = "code"
@@ -34,53 +35,55 @@ const (
 	fieldIsDefault = "is_default"
 )
 
-// supportedFields sağlayıcının tanıdığı alanlardır; başka bir alan istenirse
-// errors.Invalid dönülür (ADR 0004: alan doğrulaması sağlayıcıya aittir).
+// supportedFields are the fields the provider recognizes; when any other field
+// is requested errors.Invalid is returned (ADR 0004: field validation belongs
+// to the provider).
 var supportedFields = []string{
 	fieldID, fieldCountryCode, fieldProvinceCode, fieldParentID, fieldProviderID,
 	fieldMetadata, fieldRates, fieldCreatedAt, fieldUpdatedAt,
 }
 
-// QueryProvider vergi bölgelerini Query katmanına açar (ADR 0004).
+// QueryProvider opens tax regions to the Query layer (ADR 0004).
 //
-// Kayıtlar istenirse ORANLARIYLA birlikte döner. Ayrı dönselerdi, bölge başına
-// ikinci bir tur gerekirdi ki Query'nin N+1 yasağı tam da bunu engellemek
-// içindir. İstenmiyorsa Fields ile dışarıda bırakılır; o durumda oran sorgusu
-// HİÇ yapılmaz.
+// When asked for, the records come back WITH THEIR RATES. Had they come back
+// separately, a second round trip per region would be needed, and Query's
+// no-N+1 rule exists precisely to prevent that. When they are not wanted they
+// are left out via Fields; in that case the rate query is NOT MADE at all.
 //
-// # Neden vergi bölgesi sorgulanabilir olmalı
+// # Why a tax region must be queryable
 //
-// Bir yönetim ekranı "hangi ülkelerde vergi yapılandırılmış" sorusunu, bir
-// rapor da "bu siparişin bölgesi neydi" sorusunu bu katmandan sorar. Vergi
-// HESABI ise buradan geçmez: hesap [Service.CalculateTax]'tır ve Query'nin
-// gevşek tipli kayıt yüzeyi para aritmetiği için uygun değildir.
+// An admin screen asks "in which countries is tax configured" and a report asks
+// "what was this order's region" of this layer. Tax CALCULATION, however, does
+// not go through here: the calculation is [Service.CalculateTax] and Query's
+// loosely typed record surface is not suitable for money arithmetic.
 //
-// Arayüz internal/core/query'de tanımlıdır; bu tip yalnızca imzayı karşılar ve
-// çekirdeğe hiçbir şey bildirmez (ADR 0001'in sağlayıcı tarafı).
+// The interface is defined in internal/core/query; this type only satisfies the
+// signature and tells the core nothing (the provider side of ADR 0001).
 type QueryProvider struct {
 	svc *Service
 }
 
 var _ query.Provider = (*QueryProvider)(nil)
 
-// NewQueryProvider verilen servis üzerinde çalışan bir sağlayıcı üretir.
+// NewQueryProvider produces a provider that works on the given service.
 func NewQueryProvider(svc *Service) *QueryProvider {
 	return &QueryProvider{svc: svc}
 }
 
-// Entity sağlayıcının sunduğu entity adını döner.
+// Entity returns the entity name the provider offers.
 func (p *QueryProvider) Entity() string { return Entity }
 
-// List kök vergi bölgesi kayıtlarını döner.
+// List returns the root tax region records.
 //
-// Desteklenen filtreler "id" ve "country_code"tur; "id" değeri tek bir dize ya
-// da dize dilimi olabilir. Başka bir filtre errors.Invalid döner. "id" filtresi
-// YALNIZ BAŞINA kullanılır: yanına konan bir daraltma sessizce düşürülmez,
-// birleşim reddedilir (bkz. splitFilters).
+// The supported filters are "id" and "country_code"; the "id" value may be a
+// single string or a string slice. Any other filter returns errors.Invalid. The
+// "id" filter is used ON ITS OWN: a narrowing placed beside it is not dropped
+// in silence, the combination is rejected (see splitFilters).
 //
-// Limit sıfır verilirse Query sözleşmesindeki "sınırsız" YERİNE modülün
-// varsayılan sayfa boyu uygulanır ve [MaxLimit] aşılamaz: sınırsız bir kök
-// listesi tek istekte tüm tabloyu belleğe alırdı.
+// When a limit of zero is given, the module's default page size applies INSTEAD
+// OF the "unlimited" of the Query contract, and [MaxLimit] cannot be exceeded:
+// an unlimited root listing would take the whole table into memory in a single
+// request.
 func (p *QueryProvider) List(ctx context.Context, opts query.ListOptions) ([]query.Record, error) {
 	if err := p.svc.ready(); err != nil {
 		return nil, err
@@ -95,8 +98,8 @@ func (p *QueryProvider) List(ctx context.Context, opts query.ListOptions) ([]que
 	}
 
 	if ids != nil {
-		// Kimlik filtresi varsa sayfalama uygulanmaz: çağıran zaten kesin bir
-		// kümeyi adlandırmıştır.
+		// When there is an id filter no paging is applied: the caller has
+		// already named an exact set.
 		return p.fetch(ctx, ids, fields)
 	}
 
@@ -107,9 +110,11 @@ func (p *QueryProvider) List(ctx context.Context, opts query.ListOptions) ([]que
 	return p.records(ctx, page.Items, fields)
 }
 
-// FetchByIDs verilen kimliklere karşılık gelen kayıtları TEK turda döner.
+// FetchByIDs returns the records corresponding to the given ids in a SINGLE
+// round trip.
 //
-// Bulunamayan kimlik için kayıt dönmez; bu bir hata değildir (ADR 0004).
+// No record is returned for an id that is not found; this is not an error
+// (ADR 0004).
 func (p *QueryProvider) FetchByIDs(ctx context.Context, ids, fields []string) ([]query.Record, error) {
 	if err := p.svc.ready(); err != nil {
 		return nil, err
@@ -121,7 +126,7 @@ func (p *QueryProvider) FetchByIDs(ctx context.Context, ids, fields []string) ([
 	return p.fetch(ctx, ids, normalized)
 }
 
-// fetch kimlik kümesini okuyup kayıtlara çevirir.
+// fetch reads the id set and converts it into records.
 func (p *QueryProvider) fetch(ctx context.Context, ids, fields []string) ([]query.Record, error) {
 	if len(ids) == 0 {
 		return []query.Record{}, nil
@@ -134,12 +139,12 @@ func (p *QueryProvider) fetch(ctx context.Context, ids, fields []string) ([]quer
 	return p.records(ctx, regions, fields)
 }
 
-// records bölgeleri Query kayıtlarına çevirir; oranları gerekiyorsa TEK
-// sorguyla toplu getirir.
+// records converts the regions into Query records; when the rates are needed it
+// fetches them in bulk with a SINGLE query.
 //
-// Toplu getirme, kaç bölge dönerse dönsün genişletme başına SABİT sayıda tur
-// üretir. Bölge başına sorgu yapmak, Query'nin yapısal olarak engellediği
-// N+1'i sağlayıcı içine geri sokmak olurdu.
+// Bulk fetching produces a CONSTANT number of round trips per expansion, no
+// matter how many regions come back. Querying per region would be putting the
+// N+1 that Query structurally prevents back inside the provider.
 func (p *QueryProvider) records(
 	ctx context.Context,
 	regions []models.TaxRegion,
@@ -196,13 +201,13 @@ func (p *QueryProvider) records(
 	return records, nil
 }
 
-// rateRecords oranları alt kayıtlara çevirir.
+// rateRecords converts the rates into sub-records.
 //
-// Oranı olmayan bir bölge için boş (nil olmayan) dilim döner; JSON'da null
-// yerine [] görünmesi tüketici için tek biçimli bir yüzeydir.
+// For a region that has no rates an empty (non-nil) slice is returned; seeing []
+// instead of null in JSON is a uniform surface for the consumer.
 //
-// Oran BAZ PUAN olarak, alan adında birimiyle birlikte yazılır: "rate": 20
-// değerinin %20 mi 0,2 mi olduğu belirsiz kalırdı.
+// The rate is written as BASIS POINTS, with its unit in the field name: whether
+// the value "rate": 20 is 20% or 0.2 would stay ambiguous.
 func rateRecords(rates []models.TaxRate) []map[string]any {
 	out := make([]map[string]any, 0, len(rates))
 	for i := range rates {
@@ -217,11 +222,12 @@ func rateRecords(rates []models.TaxRate) []map[string]any {
 	return out
 }
 
-// normalizeFields istenen alanları doğrular; boş liste TÜM alanlar demektir.
+// normalizeFields validates the requested fields; an empty list means ALL
+// fields.
 //
-// Kimlik alanı, istenmese bile listeye EKLENİR: Query kayıtları [query.IDField]
-// üzerinden birleştirir ve kimliksiz bir kayıt errors.KindInternal ile
-// sonuçlanırdı.
+// The id field is ADDED to the list even when it was not requested: Query joins
+// records over [query.IDField] and a record without an id would end in
+// errors.KindInternal.
 func normalizeFields(fields []string) ([]string, error) {
 	if len(fields) == 0 {
 		return slices.Clone(supportedFields), nil
@@ -231,7 +237,7 @@ func normalizeFields(fields []string) ([]string, error) {
 	for _, field := range fields {
 		if !slices.Contains(supportedFields, field) {
 			return nil, errors.Invalid(CodeInvalidInput,
-				"%q alanı %s sağlayıcısında yok (desteklenen: %v)", field, Entity, supportedFields)
+				"field %q does not exist in the %s provider (supported: %v)", field, Entity, supportedFields)
 		}
 		if !slices.Contains(out, field) {
 			out = append(out, field)
@@ -243,18 +249,20 @@ func normalizeFields(fields []string) ([]string, error) {
 	return out, nil
 }
 
-// splitFilters filtrelerden kimlik kümesini ve ülke süzgecini çıkarır.
+// splitFilters extracts the id set and the country filter out of the filters.
 //
-// Kimlik filtresi yoksa nil döner (kimlik süzgeci uygulanmaz). Boş bir dilim,
-// nil'den AYRI bir anlam taşır: "hiçbir kimlik" demektir ve boş sonuç döner.
+// When there is no id filter it returns nil (no id filtering is applied). An
+// empty slice carries a meaning SEPARATE from nil: it means "no ids at all" and
+// an empty result comes back.
 //
-// Kimlik filtresi BAŞKA bir filtreyle birlikte verilirse errors.Invalid döner.
-// Kimlik yolu kesin bir kümeyi adlandırır ve sayfalamayı da atlar; yanına konan
-// daraltmayı uygulamak yerine SESSİZCE düşürmek, çağıranın istediğinden geniş
-// bir kümeyi eline alması demek olurdu. Reddetmek depodaki yerleşik
-// konvansiyondur (customer/service/provider.go, aynı kombinasyon) ve bu
-// sağlayıcının kendi ilkesiyle de tutarlıdır: desteklenmeyen bir filtre zaten
-// reddediliyorken DESTEKLENEN bir filtreyi yok saymak çelişki olurdu.
+// When the id filter is given TOGETHER WITH another filter, errors.Invalid is
+// returned. The id path names an exact set and also skips paging; dropping the
+// narrowing placed beside it IN SILENCE instead of applying it would mean the
+// caller taking hold of a wider set than it asked for. Rejecting is the
+// established convention in the repository (customer/service/provider.go, the
+// same combination) and it is consistent with this provider's own principle
+// too: while an unsupported filter is already being rejected, ignoring a
+// SUPPORTED filter would be a contradiction.
 func splitFilters(filters map[string]any) (ids []string, countryCode string, err error) {
 	if len(filters) == 0 {
 		return nil, "", nil
@@ -271,24 +279,24 @@ func splitFilters(filters map[string]any) (ids []string, countryCode string, err
 			code, ok := value.(string)
 			if !ok {
 				return nil, "", errors.Invalid(CodeInvalidInput,
-					"%q filtresi dize olmalı, %T verildi", fieldCountryCode, value)
+					"filter %q has to be a string, %T given", fieldCountryCode, value)
 			}
 			countryCode = code
 		default:
 			return nil, "", errors.Invalid(CodeInvalidInput,
-				"%q filtresi %s sağlayıcısında desteklenmiyor (desteklenen: %q, %q)",
+				"the %q filter is not supported by the %s provider (supported: %q, %q)",
 				name, Entity, fieldID, fieldCountryCode)
 		}
 	}
 
 	if ids != nil && len(filters) > 1 {
 		return nil, "", errors.Invalid(CodeInvalidInput,
-			"%q filtresi başka filtrelerle birlikte kullanılamaz", fieldID)
+			"filter %q cannot be used together with other filters", fieldID)
 	}
 	return ids, countryCode, nil
 }
 
-// stringOrSlice tek bir dizeyi ya da dize dilimini kimlik kümesine çevirir.
+// stringOrSlice converts a single string or a string slice into an id set.
 func stringOrSlice(field string, value any) ([]string, error) {
 	switch typed := value.(type) {
 	case string:
@@ -301,6 +309,6 @@ func stringOrSlice(field string, value any) ([]string, error) {
 		return out, nil
 	default:
 		return nil, errors.Invalid(CodeInvalidInput,
-			"%q filtresi dize ya da dize dilimi olmalı, %T verildi", field, value)
+			"filter %q has to be a string or a string slice, %T given", field, value)
 	}
 }

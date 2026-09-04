@@ -85,7 +85,7 @@ func TestKimlikTekildir(t *testing.T) {
 	for range adet {
 		id := models.NewInventoryItemID()
 		_, tekrar := gorulen[id]
-		require.False(t, tekrar, "kimlik tekrarlandı: %s", id)
+		require.False(t, tekrar, "the id repeated: %s", id)
 		gorulen[id] = struct{}{}
 	}
 }

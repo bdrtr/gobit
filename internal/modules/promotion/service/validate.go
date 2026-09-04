@@ -146,7 +146,7 @@ func validateUsageLimit(limit *int64) error {
 func validateText(label, value string, minLen, maxLen int) error {
 	trimmed := strings.TrimSpace(value)
 	if len(trimmed) < minLen {
-		return errors.Invalid(CodeInvalidInput, "%s boş olamaz", label)
+		return errors.Invalid(CodeInvalidInput, "%s cannot be empty", label)
 	}
 	if len(trimmed) > maxLen {
 		return errors.Invalid(CodeInvalidInput,
@@ -230,14 +230,14 @@ func normalizeMetadata(md map[string]string) (map[string]string, error) {
 // requireID bir kimliğin kullanılabilir ve DOĞRU TÜRDE olduğunu doğrular.
 //
 // Önek kontrolü bilinçlidir: önekli kimliklerin varlık sebebi, yanlış türde bir
-// kimliğin (örn. kampanya kimliğinin promosyon yerine geçmesi) "bulunamadı"
+// kimliğin (örn. campaign idnin promosyon yerine geçmesi) "bulunamadı"
 // olarak değil, ne olduğu belli bir doğrulama hatası olarak dönmesidir.
 func requireID(id, prefix, label string) error {
 	if id == "" {
-		return errors.Invalid(CodeInvalidInput, "%s boş olamaz", label)
+		return errors.Invalid(CodeInvalidInput, "%s cannot be empty", label)
 	}
 	if strings.TrimSpace(id) != id {
-		return errors.Invalid(CodeInvalidInput, "%s baş/son boşluk içeremez: %q", label, id)
+		return errors.Invalid(CodeInvalidInput, "%s cannot contain leading/trailing whitespace: %q", label, id)
 	}
 	if len(id) > maxIDLen {
 		return errors.Invalid(CodeInvalidInput,

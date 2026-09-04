@@ -1,24 +1,24 @@
 package models
 
-// CartFilter sepet listelemesinin ölçütleridir.
+// CartFilter is the set of criteria for listing carts.
 //
-// Filtre alanları işaretçidir: nil "bu ölçütü uygulama" demektir. Böylece
-// "completed = false" (yalnızca tamamlanmamış sepetler) ile "completed
-// filtresi yok" (hepsi) birbirinden ayrılır; bool'un sıfır değeri sessizce
-// filtreye dönüşmez.
+// The filter fields are pointers: nil means "do not apply this criterion". That
+// is how "completed = false" (only the carts that are not completed) is told
+// apart from "no completed filter at all" (all of them); a bool's zero value
+// never turns silently into a filter.
 //
-// Tip repository'nin değil models'ın içindedir: hem servis hem repository
-// models'ı zaten import eder, dolayısıyla servisin depo arayüzü repository
-// paketine bağlanmadan bu ölçütleri taşıyabilir (ADR 0001).
+// The type lives in models and not in repository: both the service and the
+// repository already import models, so the service's store interface can carry
+// these criteria without binding itself to the repository package (ADR 0001).
 type CartFilter struct {
-	// CustomerID verilirse yalnızca o müşterinin sepetleri döner.
+	// CustomerID, when given, returns only that customer's carts.
 	CustomerID *string
-	// RegionID verilirse yalnızca o bölgenin sepetleri döner.
+	// RegionID, when given, returns only that region's carts.
 	RegionID *string
-	// Completed verilirse sepetler tamamlanmış olup olmamasına göre süzülür.
+	// Completed, when given, filters the carts by whether they are completed.
 	Completed *bool
-	// Limit döndürülecek azami satır sayısıdır.
+	// Limit is the maximum number of rows to return.
 	Limit int64
-	// Offset atlanacak satır sayısıdır.
+	// Offset is the number of rows to skip.
 	Offset int64
 }

@@ -10,47 +10,51 @@ import (
 	"strings"
 )
 
-// API anahtarı düz metninin önekleri.
+// Prefixes of the API key plaintext.
 //
-// Önek bir SÜS DEĞİLDİR: yönetim ve mağaza yüzeyleri gelen kimlik bilgisini
-// veritabanına hiç gitmeden ayırt eder ve yanlış türdeki anahtarı daha ilk
-// adımda reddeder. İkinci kapı [APIKey.Type] alanıdır; iki kapı birbirinden
-// bağımsızdır ve ikisi de geçilmeden kimlik kurulmaz.
+// The prefix IS NOT DECORATION: the admin and store surfaces tell the incoming
+// credential apart without going to the database at all and reject a key of
+// the wrong type at the very first step. The second gate is the [APIKey.Type]
+// field; the two gates are independent of each other and no identity is
+// established without passing both.
 //
-// Önekler ayrıca sızıntı taramalarının işine yarar: "sk_" ile başlayan bir
-// dize bir depoya ya da log'a düştüğünde desen eşleşmesiyle bulunabilir.
+// The prefixes are also useful to leak scanners: when a string starting with
+// "sk_" lands in a repository or in a log, it can be found by pattern
+// matching.
 const (
-	// SecretKeyPrefix gizli anahtarların önekidir.
+	// SecretKeyPrefix is the prefix of secret keys.
 	SecretKeyPrefix = "sk_"
-	// PublishableKeyPrefix publishable anahtarların önekidir.
+	// PublishableKeyPrefix is the prefix of publishable keys.
 	PublishableKeyPrefix = "pk_"
 )
 
-// tokenEntropyBytes bir anahtarın rastgele gövdesinin bayt sayısıdır.
+// tokenEntropyBytes is the byte count of a key's random body.
 //
-// 32 bayt = 256 bit. Bu, saklanan SHA-256 özetinin genişliğiyle eşittir ve
-// tahmin edilmesi hesaplama olarak imkânsızdır; anahtarın parola gibi yavaş
-// bir hash'e ihtiyaç duymamasının nedeni de budur (bkz. [HashToken]).
+// 32 bytes = 256 bits. This equals the width of the stored SHA-256 digest and
+// is computationally impossible to guess; it is also the reason the key does
+// not need a slow hash the way a password does (see [HashToken]).
 const tokenEntropyBytes = 32
 
-// redactedTailLen maskelenmiş gösterimde açıkta bırakılan son karakter
-// sayısıdır.
+// redactedTailLen is the number of trailing characters left visible in the
+// masked display.
 //
-// Dört karakter, iki anahtarı listede birbirinden ayırmaya yeter ve 256 bitlik
-// bir gövdeden 24 bitlik bir ipucu verir — kalan arama uzayı hâlâ 2^232'dir,
-// yani ipucunun pratik bir değeri yoktur.
+// Four characters are enough to tell two keys apart in a list and give a
+// 24-bit hint out of a 256-bit body — the remaining search space is still
+// 2^232, which means the hint has no practical value.
 const redactedTailLen = 4
 
-// redactedMask maskelenmiş gösterimde gizlenen kısmın yerine konan işarettir.
+// redactedMask is the marker put in place of the hidden part in the masked
+// display.
 const redactedMask = "..."
 
-// ErrUnknownKeyType tanınmayan bir anahtar türü verildiğini bildirir.
+// ErrUnknownKeyType reports that an unrecognized key type was given.
 //
-// Paket errors'ın tipli hatalarını kullanmaz: models katmanı HTTP durum
-// kodlarını tanımaz ve bu hata çağıran servis tarafından sınıflandırılır.
-var ErrUnknownKeyType = errors.New("auth: tanınmayan api anahtarı türü")
+// It does not use the typed errors of the errors package: the models layer
+// does not know HTTP status codes and this error is classified by the calling
+// service.
+var ErrUnknownKeyType = errors.New("auth: unknown api key type")
 
-// TokenPrefix verilen türün düz metin önekini döner.
+// TokenPrefix returns the plaintext prefix of the given type.
 func TokenPrefix(t APIKeyType) (string, error) {
 	switch t {
 	case APIKeySecret:
@@ -62,10 +66,11 @@ func TokenPrefix(t APIKeyType) (string, error) {
 	}
 }
 
-// TypeForToken düz metnin önekinden anahtar türünü çıkarır.
+// TypeForToken derives the key type from the prefix of the plaintext.
 //
-// Bu, kimlik doğrulamanın İLK kapısıdır: mağaza yüzeyine gelen "sk_" önekli
-// bir dize, hiçbir veritabanı okuması yapılmadan reddedilir.
+// This is the FIRST gate of authentication: a string with an "sk_" prefix
+// arriving at the store surface is rejected without any database read being
+// made.
 func TypeForToken(plaintext string) (APIKeyType, error) {
 	switch {
 	case strings.HasPrefix(plaintext, SecretKeyPrefix):
@@ -77,15 +82,16 @@ func TypeForToken(plaintext string) (APIKeyType, error) {
 	}
 }
 
-// NewToken verilen tür için yeni bir düz metin API anahtarı üretir.
+// NewToken produces a new plaintext API key for the given type.
 //
-// Gövde 32 bayt kriptografik rastgeleliktir ve dolgusuz base64url ile
-// kodlanır; sonuç URL'de, başlıkta ve ortam değişkeninde kaçışsız taşınabilir.
-// [NewID]'nin aksine zaman damgası TAŞIMAZ: sıralanabilirlik bir kimlik
-// özelliğidir, bir sırra eklendiğinde arama uzayını daraltırdı.
+// The body is 32 bytes of cryptographic randomness and is encoded with
+// unpadded base64url; the result can travel unescaped in a URL, in a header
+// and in an environment variable. Unlike [NewID] it CARRIES no timestamp:
+// sortability is an identifier property, and added to a secret it would have
+// narrowed the search space.
 //
-// Dönen değer çağıranın elindeki TEK kopyadır; hiçbir yapıya konmaz ve
-// saklanmaz (bkz. [APIKey]).
+// The returned value is the ONLY copy in the caller's hands; it is put in no
+// struct and is not stored (see [APIKey]).
 func NewToken(t APIKeyType) (string, error) {
 	prefix, err := TokenPrefix(t)
 	if err != nil {
@@ -94,52 +100,55 @@ func NewToken(t APIKeyType) (string, error) {
 
 	buf := make([]byte, tokenEntropyBytes)
 	if _, err := rand.Read(buf); err != nil {
-		// crypto/rand.Read hata dönmezse de dönen hâli sessizce geçilemez:
-		// zayıf rastgelelikle üretilmiş bir anahtar tahmin edilebilir olurdu.
+		// Even though crypto/rand.Read does not return an error, the case
+		// where it does cannot be passed over silently: a key produced with
+		// weak randomness would be guessable.
 		return "", err
 	}
 	return prefix + base64.RawURLEncoding.EncodeToString(buf), nil
 }
 
-// HashToken düz metnin saklanan özetini üretir: SHA-256, küçük harf hex.
+// HashToken produces the stored digest of the plaintext: SHA-256, lower case
+// hex.
 //
-// # Neden bcrypt değil
+// # Why not bcrypt
 //
-// Parola hash'leri KASTEN yavaştır; koruduğu şey, insan tarafından seçilmiş ve
-// düşük entropili bir sırra karşı çevrimdışı sözlük saldırısıdır. API anahtarı
-// öyle bir sır değildir: [NewToken] onu 256 bit rastgelelikle ÜRETİR, yani
-// veritabanı tümüyle sızsa bile kaba kuvvet hesaplama olarak imkânsızdır ve
-// yavaş hash'in eklediği koruma sıfırdır.
+// Password hashes are DELIBERATELY slow; what they protect against is an
+// offline dictionary attack on a human-chosen, low-entropy secret. An API key
+// is not that kind of secret: [NewToken] PRODUCES it with 256 bits of
+// randomness, which means that even if the database leaks in full, brute force
+// is computationally impossible and the protection a slow hash adds is zero.
 //
-// Buna karşılık maliyeti sıfır değildir: bu özet HER İSTEKTE hesaplanır.
-// bcrypt her yönetim isteğine ~250 ms eklerdi ve kimlik doğrulamanın kendisi
-// bir hizmet dışı bırakma yüzeyine dönüşürdü. Dahası bcrypt'in satır başına
-// tuzu, gelen anahtarın hangi satıra ait olduğunu bulmak için TÜM tabloyu
-// taramayı ve her satırda bir bcrypt çalıştırmayı gerektirirdi; SHA-256 tek ve
-// indekslenebilir bir aramadır.
+// Against that, its cost is not zero: this digest is computed on EVERY
+// REQUEST. bcrypt would add ~250 ms to every admin request and authentication
+// itself would turn into a denial-of-service surface. What is more, bcrypt's
+// per-row salt would require scanning the WHOLE table to find which row the
+// incoming key belongs to and running a bcrypt on every row; SHA-256 is a
+// single and indexable lookup.
 //
-// Karşılaştırma [TokenHashesEqual] ile SABİT ZAMANDA yapılır.
+// The comparison is done in CONSTANT TIME with [TokenHashesEqual].
 func HashToken(plaintext string) string {
 	sum := sha256.Sum256([]byte(plaintext))
 	return hex.EncodeToString(sum[:])
 }
 
-// TokenHashesEqual iki anahtar özetini SABİT ZAMANDA karşılaştırır.
+// TokenHashesEqual compares two key digests in CONSTANT TIME.
 //
-// Aramanın kendisi indeks üzerinden yapıldığı hâlde bu karşılaştırma yine de
-// gereklidir: eşitliği yalnızca veritabanına bırakmak, sorgunun bir gün önek
-// eşleşmesine ya da büyük/küçük harf duyarsız bir karşılaştırmaya dönüşmesi
-// riskini taşır. Buradaki kontrol, saklanan özetin gelen özetle BAYT BAYT aynı
-// olduğunu uygulama tarafında da doğrular ve bunu erken çıkışsız yapar.
+// Even though the lookup itself is made over an index, this comparison is
+// still necessary: leaving equality to the database alone carries the risk
+// that the query one day turns into a prefix match or into a case-insensitive
+// comparison. The check here verifies on the application side as well that the
+// stored digest is BYTE FOR BYTE the same as the incoming digest, and it does
+// so without an early exit.
 func TokenHashesEqual(a, b string) bool {
 	return subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1
 }
 
-// RedactToken düz metnin gösterim için maskelenmiş hâlini üretir
-// (örn. "pk_...a1b2").
+// RedactToken produces the masked form of the plaintext for display
+// (e.g. "pk_...a1b2").
 //
-// Maskelenmiş değer bir anahtar DEĞİLDİR ve onunla kimlik doğrulanamaz; tek
-// işi bir listede iki anahtarı birbirinden ayırt etmektir.
+// The masked value IS NOT a key and cannot be used to authenticate; its only
+// job is to tell two keys apart in a list.
 func RedactToken(plaintext string) string {
 	prefix := ""
 	body := plaintext
@@ -149,8 +158,9 @@ func RedactToken(plaintext string) string {
 	}
 
 	if len(body) <= redactedTailLen {
-		// Beklenen uzunlukta bir anahtarda bu dala düşülmez; düşülüyorsa
-		// gövdenin tamamını göstermektense hiçbirini göstermemek doğrudur.
+		// This branch is not reached for a key of the expected length; if it
+		// is reached, showing none of the body is the right thing rather than
+		// showing all of it.
 		return prefix + redactedMask
 	}
 	return prefix + redactedMask + body[len(body)-redactedTailLen:]

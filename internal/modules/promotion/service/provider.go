@@ -9,11 +9,12 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/promotion/models"
 )
 
-// Entity promotion'ın Query katmanına açtığı entity adıdır.
-// Sağlayıcı container'a "promotion" + query.ProviderSuffix adıyla kaydedilir.
+// Entity is the entity name promotion exposes to the Query layer.
+// The provider is registered in the container under the name "promotion" +
+// query.ProviderSuffix.
 const Entity = "promotion"
 
-// Sağlayıcının sunduğu alan adları.
+// The field names the provider offers.
 const (
 	fieldID          = "id"
 	fieldCode        = "code"
@@ -25,65 +26,68 @@ const (
 	fieldUpdatedAt   = "updated_at"
 )
 
-// supportedFields sağlayıcının tanıdığı alanlardır; başka bir alan istenirse
-// errors.Invalid dönülür (ADR 0004: alan doğrulaması sağlayıcıya aittir).
+// supportedFields are the fields the provider recognizes; if any other field is
+// requested errors.Invalid is returned (ADR 0004: field validation belongs to the
+// provider).
 //
-// # Listede OLMAYANLAR ve nedenleri
+// # What is NOT on the list, and why
 //
-//   - Kurallar (promotion_rule): bir kuralın sağ tarafı iş bilgisidir (örn.
-//     bir müşteri grubunun kimliği) ve Query'nin müşteri mi yönetim mi
-//     okuduğunu ayırt etme imkânı yoktur. Kural görmek isteyen yönetim
-//     yüzeyi /admin/v1/promotions/{id}/rules kullanır.
-//   - Uygulama yöntemi: indirimin tutarı/oranı da aynı sınıftadır ve müşteriye
-//     ancak kupon doğrulama ucundan, kupon kodu BİLİNEREK verilir.
-//   - Kullanım sayacı ve kampanya bütçesi: bir kuponun kaç kez kullanıldığı
-//     rekabete açık bir sayıdır ve okuma yüzeyinden sızmamalıdır.
-//   - Üstveri (metadata): serbest metindir ve içine ne konduğu bilinemez.
+//   - Rules (promotion_rule): the right-hand side of a rule is business information
+//     (e.g. the identifier of a customer group) and the Query layer has no way of
+//     telling whether a storefront or an admin surface is reading. An admin surface
+//     that wants to see rules uses /admin/v1/promotions/{id}/rules.
+//   - The application method: the amount/rate of the discount is in the same class
+//     and is handed to a customer only through the coupon validation endpoint, with
+//     the coupon code KNOWN.
+//   - The usage counter and the campaign budget: how many times a coupon has been
+//     used is a competitively sensitive number and must not leak from the read
+//     surface.
+//   - Metadata: it is free text and there is no knowing what has been put inside it.
 var supportedFields = []string{
 	fieldID, fieldCode, fieldIsAutomatic, fieldType,
 	fieldStatus, fieldCampaignID, fieldCreatedAt, fieldUpdatedAt,
 }
 
-// QueryProvider promosyonları Query katmanına açar (ADR 0004).
+// QueryProvider exposes promotions to the Query layer (ADR 0004).
 //
-// # Yalnızca AKTİF promosyonlar döner
+// # Only ACTIVE promotions are returned
 //
-// Hem [QueryProvider.List] hem [QueryProvider.FetchByIDs] aynı süzgeci uygular:
-// taslak ve pasif promosyonlar hiç dönmez. Kural tek olmalıdır, çünkü Query
-// katmanının müşteri mi yönetim mi okuduğunu ayırt etme imkânı yoktur ve
-// taslak bir kuponun KODUNUN listelenebilmesi, yayınlanmamış bir kampanyayı
-// ele verirdi.
+// Both [QueryProvider.List] and [QueryProvider.FetchByIDs] apply the same filter:
+// draft and inactive promotions are never returned. The rule has to be a single one,
+// because the Query layer has no way of telling whether a storefront or an admin
+// surface is reading, and being able to list the CODE of a draft coupon would give
+// away an unpublished campaign.
 //
-// FetchByIDs için de aynı süzgecin geçerli olması bilinçli bir bedeldir: bir
-// sipariş, sonradan pasifleştirilmiş bir promosyona bağlıysa bu yüzeyden kayıt
-// GELMEZ. Doğru kaynak zaten sipariş tarafındaki anlık görüntüdür — bir
-// siparişin hangi indirimi aldığı, promosyonun BUGÜNKÜ hâline değil, o günkü
-// hesabına bağlıdır.
+// The same filter holding for FetchByIDs as well is a deliberate cost: if an order is
+// bound to a promotion that was deactivated afterwards, NO record COMES BACK from
+// this surface. The right source is the snapshot on the order side anyway — which
+// discount an order received depends not on the promotion's state TODAY, but on that
+// day's computation.
 //
-// Arayüz internal/core/query'de tanımlıdır; bu tip yalnızca imzayı karşılar ve
-// çekirdeğe hiçbir şey bildirmez (ADR 0001'in sağlayıcı tarafı).
+// The interface is defined in internal/core/query; this type only satisfies the
+// signature and tells the core nothing (the provider side of ADR 0001).
 type QueryProvider struct {
 	svc *Service
 }
 
 var _ query.Provider = (*QueryProvider)(nil)
 
-// NewQueryProvider verilen servis üzerinde çalışan bir sağlayıcı üretir.
+// NewQueryProvider produces a provider running on the given service.
 func NewQueryProvider(svc *Service) *QueryProvider {
 	return &QueryProvider{svc: svc}
 }
 
-// Entity sağlayıcının sunduğu entity adını döner.
+// Entity returns the entity name the provider offers.
 func (p *QueryProvider) Entity() string { return Entity }
 
-// List kök promosyon kayıtlarını döner.
+// List returns the root promotion records.
 //
-// Desteklenen tek filtre "id"dir; değeri tek bir dize ya da dize dilimi
-// olabilir. Başka bir filtre errors.Invalid döner.
+// The only supported filter is "id"; its value can be a single string or a string
+// slice. Any other filter returns errors.Invalid.
 //
-// Limit sıfır verilirse Query sözleşmesindeki "sınırsız" YERİNE modülün
-// varsayılan sayfa boyu uygulanır ve [MaxLimit] aşılamaz: sınırsız bir kök
-// listesi tek istekte tüm tabloyu belleğe alırdı.
+// If a limit of zero is given, the module's default page size is applied INSTEAD of
+// the "unbounded" of the Query contract, and [MaxLimit] cannot be exceeded: an
+// unbounded root listing would pull the whole table into memory in a single request.
 func (p *QueryProvider) List(ctx context.Context, opts query.ListOptions) ([]query.Record, error) {
 	if err := p.svc.ready(); err != nil {
 		return nil, err
@@ -98,8 +102,8 @@ func (p *QueryProvider) List(ctx context.Context, opts query.ListOptions) ([]que
 	}
 
 	if ids != nil {
-		// Kimlik filtresi varsa sayfalama uygulanmaz: çağıran zaten kesin bir
-		// kümeyi adlandırmıştır.
+		// If there is an identifier filter no paging is applied: the caller has
+		// already named an exact set.
 		return p.fetch(ctx, ids, fields)
 	}
 
@@ -116,10 +120,10 @@ func (p *QueryProvider) List(ctx context.Context, opts query.ListOptions) ([]que
 	return records(promotions, fields), nil
 }
 
-// FetchByIDs verilen kimliklere karşılık gelen kayıtları TEK turda döner.
+// FetchByIDs returns the records matching the given identifiers in a SINGLE round.
 //
-// Bulunamayan (ya da aktif olmayan) kimlik için kayıt dönmez; bu bir hata
-// değildir (ADR 0004).
+// No record is returned for an identifier that is not found (or is not active); this
+// is not an error (ADR 0004).
 func (p *QueryProvider) FetchByIDs(ctx context.Context, ids, fields []string) ([]query.Record, error) {
 	if err := p.svc.ready(); err != nil {
 		return nil, err
@@ -131,7 +135,8 @@ func (p *QueryProvider) FetchByIDs(ctx context.Context, ids, fields []string) ([
 	return p.fetch(ctx, ids, normalized)
 }
 
-// fetch kimlik kümesini okuyup kayıtlara çevirir; aktif olmayanları eler.
+// fetch reads the identifier set and turns it into records; it eliminates the ones
+// that are not active.
 func (p *QueryProvider) fetch(ctx context.Context, ids, fields []string) ([]query.Record, error) {
 	if len(ids) == 0 {
 		return []query.Record{}, nil
@@ -151,7 +156,7 @@ func (p *QueryProvider) fetch(ctx context.Context, ids, fields []string) ([]quer
 	return records(active, fields), nil
 }
 
-// records promosyonları Query kayıtlarına çevirir.
+// records turns promotions into Query records.
 func records(promotions []models.Promotion, fields []string) []query.Record {
 	out := make([]query.Record, 0, len(promotions))
 	for i := range promotions {
@@ -182,11 +187,11 @@ func records(promotions []models.Promotion, fields []string) []query.Record {
 	return out
 }
 
-// normalizeFields istenen alanları doğrular; boş liste TÜM alanlar demektir.
+// normalizeFields validates the requested fields; an empty list means ALL fields.
 //
-// Kimlik alanı, istenmese bile listeye EKLENİR: Query kayıtları [query.IDField]
-// üzerinden birleştirir ve kimliksiz bir kayıt errors.KindInternal ile
-// sonuçlanırdı.
+// The identifier field is ADDED to the list even when it was not requested: Query
+// joins records through [query.IDField] and a record without an identifier would end
+// in errors.KindInternal.
 func normalizeFields(fields []string) ([]string, error) {
 	if len(fields) == 0 {
 		return slices.Clone(supportedFields), nil
@@ -196,7 +201,7 @@ func normalizeFields(fields []string) ([]string, error) {
 	for _, field := range fields {
 		if !slices.Contains(supportedFields, field) {
 			return nil, errors.Invalid(CodeInvalidInput,
-				"%q alanı %s sağlayıcısında yok (desteklenen: %v)", field, Entity, supportedFields)
+				"field %q does not exist in the %s provider (supported: %v)", field, Entity, supportedFields)
 		}
 		if !slices.Contains(out, field) {
 			out = append(out, field)
@@ -208,11 +213,11 @@ func normalizeFields(fields []string) ([]string, error) {
 	return out, nil
 }
 
-// idFilter filtrelerden kimlik kümesini çıkarır.
+// idFilter extracts the identifier set out of the filters.
 //
-// Filtre yoksa nil döner (kimlik süzgeci uygulanmaz); "id" dışında bir filtre
-// varsa errors.Invalid döner. Boş bir dilim, nil'den AYRI bir anlam taşır:
-// "hiçbir kimlik" demektir ve boş sonuç döner.
+// If there is no filter it returns nil (no identifier filter is applied); if there is
+// a filter other than "id" it returns errors.Invalid. An empty slice carries a
+// meaning DISTINCT from nil: it means "no identifiers" and returns an empty result.
 func idFilter(filters map[string]any) ([]string, error) {
 	if len(filters) == 0 {
 		return nil, nil
@@ -222,7 +227,7 @@ func idFilter(filters map[string]any) ([]string, error) {
 	for name, value := range filters {
 		if name != fieldID {
 			return nil, errors.Invalid(CodeInvalidInput,
-				"%q filtresi %s sağlayıcısında desteklenmiyor (desteklenen: %q)", name, Entity, fieldID)
+				"filter %q is not supported by the %s provider (supported: %q)", name, Entity, fieldID)
 		}
 		switch typed := value.(type) {
 		case string:
@@ -234,7 +239,7 @@ func idFilter(filters map[string]any) ([]string, error) {
 			}
 		default:
 			return nil, errors.Invalid(CodeInvalidInput,
-				"%q filtresi dize ya da dize dilimi olmalı, %T verildi", fieldID, value)
+				"filter %q has to be a string or a string slice, %T given", fieldID, value)
 		}
 	}
 	return ids, nil

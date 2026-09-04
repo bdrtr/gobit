@@ -105,7 +105,7 @@ func checkTaxableAmount(label string, value int64) error {
 	}
 	if value > MaxTaxableAmount {
 		return errors.Invalid(CodeAmountOverflow,
-			"%s en fazla %d olabilir: %d", label, MaxTaxableAmount, value)
+			"%s can be at most %d: %d", label, MaxTaxableAmount, value)
 	}
 	return nil
 }

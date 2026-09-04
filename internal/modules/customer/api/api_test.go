@@ -380,7 +380,7 @@ func TestBosListeNullDegilDizidir(t *testing.T) {
 	assert.Contains(t, rec.Body.String(), `"data":[]`, "boş liste null değil [] olmalı")
 }
 
-// TestVitrinAdresUclari vitrin uçlarının müşteri kimliğini yoldan aldığını
+// TestVitrinAdresUclari vitrin uçlarının customer idni yoldan aldığını
 // kanıtlar.
 //
 // FAZ 8 NOTU: kimlik şimdilik istemcinin bildirdiği değerdir ve doğrulanmaz;
@@ -443,7 +443,7 @@ func TestYonetimVarsayilanAdresUclari(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	data, _ := govde(t, rec)["data"].(map[string]any)
 	assert.Equal(t, true, data["is_default_shipping"])
-	assert.Equal(t, "cust_1", svc.sonCustomerID, "müşteri kimliği yol parametresinden gelmeli")
+	assert.Equal(t, "cust_1", svc.sonCustomerID, "customer id yol parametresinden gelmeli")
 	assert.Equal(t, "addr_1", svc.sonAddressID)
 
 	rec = istek(t, r, http.MethodPost,

@@ -92,7 +92,7 @@ func TestCreateCartParaBirimiDogrulanirVeTeklesir(t *testing.T) {
 	}
 }
 
-// TestCreateCartMisafirSepetiMusterisizAcilir müşteri kimliği verilmeyen
+// TestCreateCartMisafirSepetiMusterisizAcilir customer id verilmeyen
 // sepetin MİSAFİR olarak açıldığını doğrular.
 //
 // Boş kimlik saklanmaz, YOKLUK olarak saklanır: "müşterisi olmayan" ile

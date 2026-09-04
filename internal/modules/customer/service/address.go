@@ -40,7 +40,7 @@ func (s *Service) CreateAddress(ctx context.Context, customerID string, in Addre
 	if err := s.ready(); err != nil {
 		return models.CustomerAddress{}, err
 	}
-	if err := requireID(customerID, models.CustomerIDPrefix, "müşteri kimliği"); err != nil {
+	if err := requireID(customerID, models.CustomerIDPrefix, "customer id"); err != nil {
 		return models.CustomerAddress{}, err
 	}
 
@@ -93,7 +93,7 @@ func (s *Service) ListAddresses(ctx context.Context, customerID string) ([]model
 	if err := s.ready(); err != nil {
 		return nil, err
 	}
-	if err := requireID(customerID, models.CustomerIDPrefix, "müşteri kimliği"); err != nil {
+	if err := requireID(customerID, models.CustomerIDPrefix, "customer id"); err != nil {
 		return nil, err
 	}
 	if _, err := s.repo.GetCustomer(ctx, customerID); err != nil {
@@ -222,7 +222,7 @@ func (s *Service) setDefault(
 
 // requireAddressIDs müşteri ve adresin kimliklerini birlikte doğrular.
 func requireAddressIDs(customerID, addressID string) error {
-	if err := requireID(customerID, models.CustomerIDPrefix, "müşteri kimliği"); err != nil {
+	if err := requireID(customerID, models.CustomerIDPrefix, "customer id"); err != nil {
 		return err
 	}
 	return requireID(addressID, models.AddressIDPrefix, "adresin kimliği")

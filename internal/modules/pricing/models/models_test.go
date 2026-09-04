@@ -12,8 +12,8 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/pricing/models"
 )
 
-// TestIDsArePrefixedAndFixedLength kimliklerin önekli ve sabit uzunlukta
-// olduğunu kanıtlar (plan Bölüm 8).
+// TestIDsArePrefixedAndFixedLength proves that ids are prefixed and of fixed
+// length (plan Section 8).
 func TestIDsArePrefixedAndFixedLength(t *testing.T) {
 	now := time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC)
 
@@ -27,14 +27,14 @@ func TestIDsArePrefixedAndFixedLength(t *testing.T) {
 		"price rule": {models.NewPriceRuleID(now), models.PriceRuleIDPrefix},
 	} {
 		t.Run(name, func(t *testing.T) {
-			assert.True(t, strings.HasPrefix(tc.id, tc.prefix), "kimlik %q önekiyle başlamalı", tc.prefix)
+			assert.True(t, strings.HasPrefix(tc.id, tc.prefix), "id must start with the %q prefix", tc.prefix)
 			assert.Len(t, strings.TrimPrefix(tc.id, tc.prefix), models.IDBodyLength())
 		})
 	}
 }
 
-// TestIDsAreUnique aynı milisaniyede üretilen kimliklerin çakışmadığını
-// kanıtlar.
+// TestIDsAreUnique proves that ids produced within the same millisecond do not
+// collide.
 func TestIDsAreUnique(t *testing.T) {
 	now := time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC)
 
@@ -42,13 +42,13 @@ func TestIDsAreUnique(t *testing.T) {
 	for range 1000 {
 		id := models.NewPriceID(now)
 		_, dup := seen[id]
-		require.False(t, dup, "aynı anda üretilen kimlikler benzersiz olmalı: %s", id)
+		require.False(t, dup, "ids produced at the same moment must be unique: %s", id)
 		seen[id] = struct{}{}
 	}
 }
 
-// TestIDsSortByTime kimliklerin SÖZLÜKSEL sırasının zaman sırasını koruduğunu
-// kanıtlar; "ORDER BY id" bu sayede oluşturma sırasını verir.
+// TestIDsSortByTime proves that the LEXICOGRAPHIC order of ids preserves time
+// order; "ORDER BY id" yields creation order because of this.
 func TestIDsSortByTime(t *testing.T) {
 	base := time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC)
 
@@ -63,8 +63,8 @@ func TestIDsSortByTime(t *testing.T) {
 	assert.Equal(t, want, ids)
 }
 
-// TestIDHandlesPreEpochTime 1970 öncesi bir zaman damgasının sıralamayı
-// bozmadığını kanıtlar.
+// TestIDHandlesPreEpochTime proves that a timestamp before 1970 does not break
+// ordering.
 func TestIDHandlesPreEpochTime(t *testing.T) {
 	old := models.NewPriceID(time.Date(1900, 1, 1, 0, 0, 0, 0, time.UTC))
 	epoch := models.NewPriceID(time.Unix(0, 0).UTC())
@@ -73,19 +73,19 @@ func TestIDHandlesPreEpochTime(t *testing.T) {
 	assert.Equal(t,
 		strings.TrimPrefix(old, models.PriceIDPrefix)[:6],
 		strings.TrimPrefix(epoch, models.PriceIDPrefix)[:6],
-		"epoch öncesi zaman damgası tabana çekilmeli")
+		"a pre-epoch timestamp must be clamped to the floor")
 }
 
-// TestPriceListTypePriority öncelik sıralamasını kanıtlar; seçim kuralının ilk
-// ölçütü buna dayanır.
+// TestPriceListTypePriority proves the priority ordering; the selection rule's
+// first criterion rests on it.
 func TestPriceListTypePriority(t *testing.T) {
 	assert.Greater(t, models.PriceListOverride.Priority(), models.PriceListSale.Priority())
 	assert.Greater(t, models.PriceListSale.Priority(), models.PriceListType("").Priority())
 	assert.Equal(t, 0, models.PriceListType("bogus").Priority(),
-		"tanımsız tür taban fiyatın önüne geçemez")
+		"an undefined type cannot get ahead of the base price")
 }
 
-// TestPriceListInfoUsable kullanılabilirlik denetiminin her dalını kanıtlar.
+// TestPriceListInfoUsable proves every branch of the usability check.
 func TestPriceListInfoUsable(t *testing.T) {
 	now := time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC)
 	before := now.Add(-time.Hour)
@@ -96,19 +96,19 @@ func TestPriceListInfoUsable(t *testing.T) {
 		info models.PriceListInfo
 		want bool
 	}{
-		{"aktif ve penceresiz", models.PriceListInfo{Status: models.PriceListActive}, true},
-		{"taslak", models.PriceListInfo{Status: models.PriceListDraft}, false},
-		{"sonlandırılmış", models.PriceListInfo{Status: models.PriceListExpired}, false},
-		{"durum tanımsız", models.PriceListInfo{Status: models.PriceListStatus("bogus")}, false},
-		{"pencere içinde", models.PriceListInfo{
+		{"active and windowless", models.PriceListInfo{Status: models.PriceListActive}, true},
+		{"draft", models.PriceListInfo{Status: models.PriceListDraft}, false},
+		{"expired", models.PriceListInfo{Status: models.PriceListExpired}, false},
+		{"status undefined", models.PriceListInfo{Status: models.PriceListStatus("bogus")}, false},
+		{"inside the window", models.PriceListInfo{
 			Status: models.PriceListActive, StartsAt: &before, EndsAt: &after}, true},
-		{"başlangıçtan önce", models.PriceListInfo{
+		{"before the start", models.PriceListInfo{
 			Status: models.PriceListActive, StartsAt: &after}, false},
-		{"bitişten sonra", models.PriceListInfo{
+		{"after the end", models.PriceListInfo{
 			Status: models.PriceListActive, EndsAt: &before}, false},
-		{"yalnızca alt sınır, sağlanır", models.PriceListInfo{
+		{"lower bound only, satisfied", models.PriceListInfo{
 			Status: models.PriceListActive, StartsAt: &before}, true},
-		{"yalnızca üst sınır, sağlanır", models.PriceListInfo{
+		{"upper bound only, satisfied", models.PriceListInfo{
 			Status: models.PriceListActive, EndsAt: &after}, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -117,21 +117,21 @@ func TestPriceListInfoUsable(t *testing.T) {
 	}
 }
 
-// TestRuleOperatorClassification işleç sınıflandırmasını kanıtlar; doğrulama ve
-// eşleştirme bu üç yükleme dayanır.
+// TestRuleOperatorClassification proves the operator classification; validation
+// and matching rest on these three predicates.
 func TestRuleOperatorClassification(t *testing.T) {
 	for _, op := range []models.RuleOperator{
 		models.OpEq, models.OpNe, models.OpIn, models.OpNin,
 		models.OpGt, models.OpGte, models.OpLt, models.OpLte,
 	} {
-		assert.True(t, op.Valid(), "%s tanımlı olmalı", op)
+		assert.True(t, op.Valid(), "%s must be defined", op)
 	}
 	assert.False(t, models.RuleOperator("regex").Valid())
 	assert.False(t, models.RuleOperator("").Valid())
 
 	for _, op := range []models.RuleOperator{models.OpGt, models.OpGte, models.OpLt, models.OpLte} {
-		assert.True(t, op.Numeric(), "%s sayısal olmalı", op)
-		assert.False(t, op.MultiValue(), "%s tek değer almalı", op)
+		assert.True(t, op.Numeric(), "%s must be numeric", op)
+		assert.False(t, op.MultiValue(), "%s must take a single value", op)
 	}
 	for _, op := range []models.RuleOperator{models.OpEq, models.OpNe} {
 		assert.False(t, op.Numeric())
@@ -139,12 +139,12 @@ func TestRuleOperatorClassification(t *testing.T) {
 	}
 	for _, op := range []models.RuleOperator{models.OpIn, models.OpNin} {
 		assert.False(t, op.Numeric())
-		assert.True(t, op.MultiValue(), "%s çok değer almalı", op)
+		assert.True(t, op.MultiValue(), "%s must take multiple values", op)
 	}
 	assert.False(t, models.RuleOperator("regex").Numeric())
 }
 
-// TestPriceListStatusValid durum doğrulamasını kanıtlar.
+// TestPriceListStatusValid proves the status validation.
 func TestPriceListStatusValid(t *testing.T) {
 	assert.True(t, models.PriceListDraft.Valid())
 	assert.True(t, models.PriceListActive.Valid())
@@ -153,7 +153,7 @@ func TestPriceListStatusValid(t *testing.T) {
 	assert.False(t, models.PriceListStatus("").Valid())
 }
 
-// TestPriceListTypeValid tür doğrulamasını kanıtlar.
+// TestPriceListTypeValid proves the type validation.
 func TestPriceListTypeValid(t *testing.T) {
 	assert.True(t, models.PriceListSale.Valid())
 	assert.True(t, models.PriceListOverride.Valid())

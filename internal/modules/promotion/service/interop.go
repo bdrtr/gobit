@@ -9,49 +9,52 @@ import (
 	"github.com/bdrtr/gobit/internal/core/errors"
 )
 
-// Bu dosya promotion modülünün MODÜLLER ARASI yüzeyidir (ADR 0001, ADR 0006).
+// This file is the CROSS-MODULE surface of the promotion module (ADR 0001, ADR 0006).
 //
-// internal/workflows altındaki sepet akışı ve sipariş tamamlama saga'sı bu
-// modülü import EDEMEZ. Çözüm region/cart/payment/order/inventory
-// modüllerindeki interop.go ile aynıdır: yalnızca İLKEL ve stdlib tipleri
-// kullanan bir yüzey yayımlamak. Tüketici kendi dar arayüzünü tanımlar, bu tip
-// onu YAPISAL olarak karşılar ve container'dan "promotion.interop" adıyla
-// çözülür.
+// The cart flow and the order completion saga under internal/workflows CANNOT import
+// this module. The solution is the same as the interop.go of the
+// region/cart/payment/order/inventory modules: publish a surface that uses only
+// PRIMITIVE and stdlib types. The consumer defines its own narrow interface, this
+// type satisfies it STRUCTURALLY, and it is resolved from the container under the
+// name "promotion.interop".
 //
-// Sebep Go'nun yapısal uyum kuralıdır: tüketici promotion'ı import edemediği
-// için imzasında [ComputeInput] gibi bir tipi adlandıramaz; adlandırdığı an o,
-// kendi paketinde tanımlı BAŞKA bir tip olur ve somut servis tüketicinin
-// arayüzünü karşılamaz.
+// The reason is Go's structural conformance rule: because the consumer cannot import
+// promotion, it cannot name a type such as [ComputeInput] in its signature; the
+// moment it names one, that becomes ANOTHER type defined in its own package and the
+// concrete service does not satisfy the consumer's interface.
 //
-// Bileşik veri (sepet bağlamı ve hesaplanan indirimler) JSON olarak taşınır ve
-// şema aşağıda AÇIKÇA beyan edilir. Tüketici tarafındaki şema ile birebir aynı
-// olmak ZORUNDADIR ve uyum ancak entegrasyon testiyle kanıtlanabilir: bu modül
-// workflow paketini import edemediği için derleyici uyumu denetleyemez.
+// Composite data (the cart context and the computed discounts) travels as JSON and
+// the schema is declared EXPLICITLY below. It MUST be exactly the same as the schema
+// on the consumer side, and conformance can only be proven by an integration test:
+// because this module cannot import the workflow package, the compiler cannot check
+// the match.
 
-// Interop hata kodları.
+// Interop error codes.
 const (
-	// CodeInteropRequestInvalid çözülemeyen bir istek gövdesi geldiğini bildirir.
+	// CodeInteropRequestInvalid reports that a request body arrived that cannot be
+	// parsed.
 	CodeInteropRequestInvalid = "promotion_interop_request_invalid"
-	// CodeInteropResponseInvalid sonucun JSON'a çevrilemediğini bildirir.
+	// CodeInteropResponseInvalid reports that the result could not be converted to
+	// JSON.
 	CodeInteropResponseInvalid = "promotion_interop_response_invalid"
 )
 
-// Interop promotion servisini modüller arası İLKEL yüzeye çevirir.
+// Interop turns the promotion service into a PRIMITIVE cross-module surface.
 //
-// Hiçbir karar vermez: yalnızca imzayı ve JSON şemasını çevirir. Tüm iş
-// kuralları [Service] üzerinde kalır; buraya kural eklemek, aynı kuralın iki
-// yerde ayrışması demek olurdu.
+// It makes no decisions: it only translates the signature and the JSON schema. All
+// business rules stay on [Service]; adding a rule here would mean the same rule
+// drifting apart in two places.
 type Interop struct {
 	svc *Service
 }
 
-// NewInterop verilen servis için modüller arası yüzeyi kurar.
+// NewInterop sets up the cross-module surface for the given service.
 func NewInterop(svc *Service) *Interop { return &Interop{svc: svc} }
 
-// interopRequest [Interop.ComputeDiscountsJSON] isteğinin JSON şemasıdır.
+// interopRequest is the JSON schema of the [Interop.ComputeDiscountsJSON] request.
 //
-// Alan adları tüketici tarafındaki şemayla BİREBİR aynı olmak zorundadır.
-// Tüm tutarlar TAM SAYI minor unit'tir (plan Bölüm 8).
+// The field names must be exactly the same as the schema on the consumer side. All
+// amounts are INTEGER minor units (plan Section 8).
 //
 //	{
 //	  "currency_code": "TRY",
@@ -61,12 +64,12 @@ func NewInterop(svc *Service) *Interop { return &Interop{svc: svc} }
 //	     "attributes": {"product_category_id": "cat_1"}}
 //	  ],
 //	  "shipping_methods": [{"id": "sm_1", "amount": 4990, "attributes": {}}],
-//	  "codes": ["YAZ20"],
+//	  "codes": ["SUMMER20"],
 //	  "at": "2026-08-24T10:00:00Z"
 //	}
 //
-// "context", "attributes" ve "codes" boş bırakılabilir. "at" boş bırakılırsa
-// "şimdi" kullanılır; RFC 3339 biçiminde beklenir.
+// "context", "attributes" and "codes" may be left empty. If "at" is left empty, "now"
+// is used; it is expected in RFC 3339 format.
 type interopRequest struct {
 	CurrencyCode    string                   `json:"currency_code"`
 	Context         map[string]string        `json:"context"`
@@ -76,7 +79,7 @@ type interopRequest struct {
 	At              string                   `json:"at"`
 }
 
-// interopRequestItem istekteki tek bir sepet kaleminin şemasıdır.
+// interopRequestItem is the schema of a single cart line in the request.
 type interopRequestItem struct {
 	ID         string            `json:"id"`
 	Amount     int64             `json:"amount"`
@@ -84,14 +87,14 @@ type interopRequestItem struct {
 	Attributes map[string]string `json:"attributes"`
 }
 
-// interopRequestShipping istekteki tek bir kargo yönteminin şemasıdır.
+// interopRequestShipping is the schema of a single shipping method in the request.
 type interopRequestShipping struct {
 	ID         string            `json:"id"`
 	Amount     int64             `json:"amount"`
 	Attributes map[string]string `json:"attributes"`
 }
 
-// interopResponse [Interop.ComputeDiscountsJSON] yanıtının JSON şemasıdır.
+// interopResponse is the JSON schema of the [Interop.ComputeDiscountsJSON] response.
 //
 //	{
 //	  "currency_code": "TRY",
@@ -101,17 +104,18 @@ type interopRequestShipping struct {
 //	  "shipping_discount_total": 0,
 //	  "discount_total": 5000,
 //	  "applied": [
-//	    {"promotion_id": "promo_…", "code": "YAZ20",
+//	    {"promotion_id": "promo_…", "code": "SUMMER20",
 //	     "is_automatic": false, "amount": 5000}
 //	  ],
 //	  "unmatched_codes": []
 //	}
 //
-// Değişmezler (tüketici bunlara güvenebilir):
+// Invariants (the consumer may rely on these):
 //
-//   - "items" ve "shipping_methods" istekteki HER satır için bir kayıt taşır ve
-//     istekle AYNI sıradadır; indirimi sıfır olanlar da bulunur.
-//   - Her satırın indirimi, o satırın tutarını AŞMAZ.
+//   - "items" and "shipping_methods" carry one record for EVERY line in the request
+//     and are in the SAME order as the request; the ones whose discount is zero are
+//     present too.
+//   - The discount of each line DOES NOT EXCEED that line's amount.
 //   - discount_total = items_discount_total + shipping_discount_total
 //     = Σ items[i].amount + Σ shipping_methods[i].amount
 //     = Σ applied[i].amount
@@ -126,13 +130,13 @@ type interopResponse struct {
 	UnmatchedCodes        []string              `json:"unmatched_codes"`
 }
 
-// interopLineDiscount yanıttaki tek bir satır indiriminin şemasıdır.
+// interopLineDiscount is the schema of a single line discount in the response.
 type interopLineDiscount struct {
 	ID     string `json:"id"`
 	Amount int64  `json:"amount"`
 }
 
-// interopApplied yanıttaki tek bir uygulanmış promosyonun şemasıdır.
+// interopApplied is the schema of a single applied promotion in the response.
 type interopApplied struct {
 	PromotionID string `json:"promotion_id"`
 	Code        string `json:"code"`
@@ -140,20 +144,20 @@ type interopApplied struct {
 	Amount      int64  `json:"amount"`
 }
 
-// ComputeDiscountsJSON sepet bağlamı için indirimleri hesaplar; HİÇBİR ŞEY
-// YAZMAZ.
+// ComputeDiscountsJSON computes the discounts for a cart context; it WRITES NOTHING.
 //
-// Şema [interopRequest] ve [interopResponse] godoc'larında tanımlıdır. Hesabın
-// kuralları (eleme, sıra, bileşik olmama, üst sınırlar, yuvarlama, bütçe)
-// [Service.ComputeDiscounts] godoc'undadır ve bu yüzey onları DEĞİŞTİRMEZ.
+// The schema is defined in the [interopRequest] and [interopResponse] godocs. The
+// rules of the computation (elimination, order, non-compounding, upper bounds,
+// rounding, budget) are in the [Service.ComputeDiscounts] godoc and this surface does
+// NOT change them.
 //
-// Sayılar json.Number ile değil doğrudan int64 alanlara çözülür: şema tüm
-// tutarları tam sayı olarak beyan eder ve float64'e uğrayan bir tutar kuruş
-// düzeyinde sessizce bozulurdu (plan Bölüm 8). Bilinmeyen alanlar REDDEDİLİR
-// — sessizce yok sayılan bir alan, tüketicinin gönderdiğini sandığı bir kalemin
-// hesaba hiç girmemesi demektir.
+// Numbers are decoded straight into int64 fields rather than through json.Number: the
+// schema declares every amount as an integer, and an amount that went through a
+// float64 would be silently corrupted at the cent level (plan Section 8). Unknown
+// fields are REJECTED — a field that is silently ignored means that a line the
+// consumer believed it had sent never entered the computation at all.
 //
-// Tüketici tarafındaki karşılığı:
+// The counterpart on the consumer side:
 //
 //	type DiscountCalculator interface {
 //	    ComputeDiscountsJSON(ctx context.Context, request json.RawMessage) (json.RawMessage, error)
@@ -203,27 +207,28 @@ func (i *Interop) ComputeDiscountsJSON(ctx context.Context, request json.RawMess
 	payload, err := json.Marshal(response)
 	if err != nil {
 		return nil, errors.Wrap(err, errors.KindInternal, CodeInteropResponseInvalid,
-			"indirim sonucu JSON'a çevrilemedi")
+			"the discount result could not be converted to JSON")
 	}
 	return payload, nil
 }
 
-// RedeemPromotion kuponu bir referans için kullanır ve kullanım kaydının
-// kimliğini döner.
+// RedeemPromotion uses the coupon for a reference and returns the identifier of the
+// redemption record.
 //
-// İDEMPOTENTTİR: aynı referansla ikinci çağrı yeni kayıt yazmaz ve sayaçları
-// artırmaz, var olan kaydın kimliğini döner (bkz.
-// [Service.RedeemPromotion]).
+// It is IDEMPOTENT: a second call with the same reference writes no new record and
+// does not increment the counters, it returns the identifier of the existing record
+// (see [Service.RedeemPromotion]).
 //
-// promotionID ya da code'dan en az biri dolu olmalıdır; ikisi de doluysa aynı
-// promosyonu göstermelidir.
+// At least one of promotionID or code must be set; if both are set they must point at
+// the same promotion.
 //
-// Promosyon YAYINDA değilse, kampanyasının penceresi kullanım anını kapsamıyorsa
-// ya da bir sayaç sınırı aşılacaksa errors.Conflict döner ve hiçbir şey
-// yazılmaz; sebeplerin tamamı [Service.RedeemPromotion] godoc'undadır. Çağıranın
-// durum denetimi yapması BEKLENMEZ — hakem bu çağrıdır.
+// If the promotion is not PUBLISHED, if its campaign's window does not contain the
+// moment of use, or if a counter bound would be exceeded, it returns errors.Conflict
+// and nothing is written; the full list of reasons is in the
+// [Service.RedeemPromotion] godoc. The caller is NOT EXPECTED to do a status check —
+// this call is the referee.
 //
-// Tüketici tarafındaki karşılığı:
+// The counterpart on the consumer side:
 //
 //	type PromotionRedeemer interface {
 //	    RedeemPromotion(ctx context.Context, promotionID, code, reference, currencyCode string, amount int64) (string, error)
@@ -246,17 +251,17 @@ func (i *Interop) RedeemPromotion(
 	return redemption.ID, nil
 }
 
-// ReleasePromotion bir kullanımı serbest bırakır; SAGA TELAFİSİ budur ve
-// İDEMPOTENTTİR.
+// ReleasePromotion releases a use; this is the SAGA COMPENSATION and it is
+// IDEMPOTENT.
 //
-// İki kez çağrılırsa ikinci çağrı hata VERMEZ ve sayaçlar ikinci kez düşmez.
-// Hiç kullanım yazılmamışsa da hata dönmez. Dönen bool, BU ÇAĞRIDA bir şeyin
-// geri alınıp alınmadığını bildirir.
+// If it is called twice the second call DOES NOT error and the counters are not
+// decremented a second time. If no use was ever written it does not error either. The
+// returned bool reports whether anything was reversed BY THIS CALL.
 //
-// Bilinmeyen bir promosyon kimliği/kodu errors.NotFound döner; telafi, var
-// olmayan bir kaydı sessizce yutmaz.
+// An unknown promotion identifier/code returns errors.NotFound; the compensation does
+// not silently swallow a record that does not exist.
 //
-// Tüketici tarafındaki karşılığı:
+// The counterpart on the consumer side:
 //
 //	type PromotionReleaser interface {
 //	    ReleasePromotion(ctx context.Context, promotionID, code, reference string) (bool, error)
@@ -269,11 +274,11 @@ func (i *Interop) ReleasePromotion(ctx context.Context, promotionID, code, refer
 	})
 }
 
-// decodeInteropRequest ham JSON gövdesini hesap girdisine çevirir.
+// decodeInteropRequest turns the raw JSON body into the computation input.
 func decodeInteropRequest(raw json.RawMessage) (ComputeInput, error) {
 	if len(raw) == 0 {
 		return ComputeInput{}, errors.Invalid(CodeInteropRequestInvalid,
-			"indirim isteği boş olamaz")
+			"the discount request cannot be empty")
 	}
 
 	dec := json.NewDecoder(bytes.NewReader(raw))
@@ -282,7 +287,7 @@ func decodeInteropRequest(raw json.RawMessage) (ComputeInput, error) {
 	var req interopRequest
 	if err := dec.Decode(&req); err != nil {
 		return ComputeInput{}, errors.Wrap(err, errors.KindInvalid, CodeInteropRequestInvalid,
-			"indirim isteği çözümlenemedi")
+			"the discount request could not be parsed")
 	}
 
 	at, err := parseInteropTime(req.At)
@@ -318,12 +323,13 @@ func decodeInteropRequest(raw json.RawMessage) (ComputeInput, error) {
 	}, nil
 }
 
-// parseInteropTime RFC 3339 biçimli bir anı çözer; boş dize sıfır zaman döner.
+// parseInteropTime parses an RFC 3339 formatted moment; an empty string returns the
+// zero time.
 //
-// Sıfır zaman "şimdi" demektir ve [Service.ComputeDiscounts] onu kendi saatiyle
-// doldurur. Çözülemeyen bir damga sessizce "şimdi"ye düşmez: tüketici geçmişe
-// dönük bir hesap istediyse ve damga bozuksa, bugünün kampanyalarıyla yapılmış
-// bir hesap yanlış cevaptır.
+// The zero time means "now" and [Service.ComputeDiscounts] fills it in from its own
+// clock. A stamp that cannot be parsed does not silently fall back to "now": if the
+// consumer asked for a backdated computation and the stamp is broken, a computation
+// made with today's campaigns is the wrong answer.
 func parseInteropTime(raw string) (time.Time, error) {
 	if raw == "" {
 		return time.Time{}, nil
@@ -331,7 +337,7 @@ func parseInteropTime(raw string) (time.Time, error) {
 	parsed, err := time.Parse(time.RFC3339, raw)
 	if err != nil {
 		return time.Time{}, errors.Wrap(err, errors.KindInvalid, CodeInteropRequestInvalid,
-			"hesap anı RFC 3339 biçiminde olmalı, %q verildi", raw)
+			"the computation moment must be in RFC 3339 format, %q was given", raw)
 	}
 	return parsed.UTC(), nil
 }

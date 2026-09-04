@@ -94,14 +94,14 @@ func (p *QueryProvider) List(ctx context.Context, opts query.ListOptions) ([]que
 			sku, ok := value.(string)
 			if !ok {
 				return nil, errors.Invalid(CodeInvalidInput,
-					"%q filtresi metin olmalı, %T verildi", name, value)
+					"filter %q has to be text, %T given", name, value)
 			}
 			in.SKU = &sku
 		case FieldRequiresShipping:
 			flag, ok := value.(bool)
 			if !ok {
 				return nil, errors.Invalid(CodeInvalidInput,
-					"%q filtresi mantıksal (bool) olmalı, %T verildi", name, value)
+					"filter %q has to be a boolean, %T given", name, value)
 			}
 			in.RequiresShipping = &flag
 		default:
@@ -194,7 +194,7 @@ func validateFields(fields []string) error {
 	for _, name := range fields {
 		if _, ok := itemFieldGetters[name]; !ok {
 			return errors.Invalid(CodeInvalidInput,
-				"%q entity'si %q alanını sunmuyor", EntityName, name)
+				"entity %q does not offer the field %q", EntityName, name)
 		}
 	}
 	return nil

@@ -10,7 +10,7 @@ import (
 // döner. İkisi de aynı servis çağrısına (MembershipOfCustomer) dayanır: müşteri
 // bir şirketin çalışanı değilse ikisi de 404 verir.
 //
-// Şirket kimliğiyle çağrılan bir uç YOKTUR; gerekçesi ve müşteri kimliğinin
+// Şirket kimliğiyle çağrılan bir uç YOKTUR; gerekçesi ve customer idnin
 // hangi anlamda doğrulanmadığı paket belgesindedir.
 
 // storeGetCompany müşterinin kendi şirketini döner

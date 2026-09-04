@@ -182,7 +182,7 @@ func (p Page) normalize() (Page, error) {
 	}
 	if p.Limit > MaxLimit {
 		return Page{}, errors.Invalid(CodeInvalidInput,
-			"limit en fazla %d olabilir: %d", MaxLimit, p.Limit)
+			"the limit can be at most %d: %d", MaxLimit, p.Limit)
 	}
 	if p.Limit == 0 {
 		p.Limit = DefaultLimit

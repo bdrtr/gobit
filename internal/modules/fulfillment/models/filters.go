@@ -1,80 +1,82 @@
 package models
 
-// Bu dosyadaki süzgeçlerde işaretçi alanlar "verilmedi" ile "boş verildi"
-// ayrımını korur: nil bir RegionID süzgeç uygulanmadığı, boş dizeye işaret
-// eden bir RegionID ise bölgesi BOŞ (yani her bölgede geçerli) seçeneklerin
-// istendiği anlamına gelir. Değer tipi kullanılsaydı ikisi ayırt edilemezdi.
+// The pointer fields in this file's filters preserve the distinction between
+// "not supplied" and "supplied empty": a nil RegionID means the filter is not
+// applied, while a RegionID pointing at the empty string means the options
+// whose region is EMPTY (that is, valid in every region) are the ones asked
+// for. A value type could not tell the two apart.
 
-// ProfileFilter kargo profili listelemesinin süzgeç ve sayfalama
-// parametreleridir.
+// ProfileFilter holds the filter and pagination parameters of a shipping
+// profile listing.
 type ProfileFilter struct {
-	// Type verilirse yalnızca o türdeki profiller döner.
+	// Type, when supplied, returns only the profiles of that type.
 	Type *string
-	// Limit döndürülecek azami satır sayısıdır.
+	// Limit is the maximum number of rows to return.
 	Limit int64
-	// Offset atlanacak satır sayısıdır.
+	// Offset is the number of rows to skip.
 	Offset int64
 }
 
-// OptionFilter kargo seçeneği listelemesinin süzgeç ve sayfalama
-// parametreleridir.
+// OptionFilter holds the filter and pagination parameters of a shipping option
+// listing.
 type OptionFilter struct {
-	// RegionID verilirse yalnızca o bölgeye ait seçenekler döner.
+	// RegionID, when supplied, returns only the options of that region.
 	RegionID *string
-	// ProfileID verilirse yalnızca o profile bağlı seçenekler döner.
+	// ProfileID, when supplied, returns only the options bound to that profile.
 	ProfileID *string
-	// ProviderID verilirse yalnızca o sağlayıcının seçenekleri döner.
+	// ProviderID, when supplied, returns only that provider's options.
 	ProviderID *string
-	// PriceType verilirse yalnızca o fiyat türündeki seçenekler döner.
+	// PriceType, when supplied, returns only the options of that price type.
 	PriceType *string
-	// Limit döndürülecek azami satır sayısıdır.
+	// Limit is the maximum number of rows to return.
 	Limit int64
-	// Offset atlanacak satır sayısıdır.
+	// Offset is the number of rows to skip.
 	Offset int64
 }
 
-// EligibilityFilter bir sepet bağlamı için ADAY seçeneklerin sorgulanmasıdır.
+// EligibilityFilter is the query for the CANDIDATE options of a cart context.
 //
-// Yalnızca sütun düzeyinde ucuz olan elemeler burada durur; kural eşleşmesi
-// servis katmanındaki saf fonksiyonda yapılır.
+// Only the eliminations that are cheap at the column level stop here; rule
+// matching is done by the pure function in the service layer.
 type EligibilityFilter struct {
-	// RegionID sepetin bölgesidir. Bölgesi bu değere eşit olan VE bölgesi boş
-	// olan seçenekler aday olur.
+	// RegionID is the cart's region. Options whose region equals this value AND
+	// options whose region is empty become candidates.
 	RegionID string
-	// CurrencyCode sepetin para birimidir (ISO 4217, büyük harf).
+	// CurrencyCode is the cart's currency (ISO 4217, uppercase).
 	CurrencyCode string
-	// ProfileIDs sepetin ürünlerinin bağlı olduğu profillerdir. BOŞ verilirse
-	// profil süzgeci uygulanmaz.
+	// ProfileIDs are the profiles the cart's products are bound to. When left
+	// EMPTY no profile filter is applied.
 	ProfileIDs []string
-	// IsReturn iade seçeneklerinin mi normal seçeneklerin mi istendiğini
-	// bildirir.
+	// IsReturn reports whether return options or normal options are being asked
+	// for.
 	IsReturn bool
-	// IncludeAdminOnly yalnızca yönetim yüzeyinde true'dur.
+	// IncludeAdminOnly is true only on the admin surface.
 	IncludeAdminOnly bool
 }
 
-// FulfillmentFilter gönderi listelemesinin süzgeç ve sayfalama
-// parametreleridir.
+// FulfillmentFilter holds the filter and pagination parameters of a fulfillment
+// listing.
 type FulfillmentFilter struct {
-	// Reference verilirse yalnızca o referansa ait gönderiler döner.
+	// Reference, when supplied, returns only the fulfillments of that reference.
 	Reference *string
-	// Status verilirse yalnızca o durumdaki gönderiler döner.
+	// Status, when supplied, returns only the fulfillments in that status.
 	Status *string
-	// Limit döndürülecek azami satır sayısıdır.
+	// Limit is the maximum number of rows to return.
 	Limit int64
-	// Offset atlanacak satır sayısıdır.
+	// Offset is the number of rows to skip.
 	Offset int64
 }
 
-// LocationFilter depo seçim politikalarının listelenmesidir.
+// LocationFilter is the listing of warehouse selection policies.
 //
-// Süzgeç alanı YOKTUR ve bu bilinçlidir: tablo kurulumdaki depo sayısı kadar
-// satır taşır (onlarca, milyonlarca değil) ve bir bölgeye göre süzmek isteyen
-// yönetim yüzeyi, dönen kayıtların bölge listesine zaten bakabilir. Süzgeç
-// eklendiği gün listeleme ile SAYMA sorgusunun aynı koşulu taşıması gerekir.
+// There is NO filter field and that is deliberate: the table carries as many
+// rows as the installation has warehouses (dozens, not millions), and an admin
+// surface that wants to filter by a region can already look at the region list
+// of the returned records. The day a filter is added, the listing and the
+// COUNT query have to carry the same condition.
 type LocationFilter struct {
-	// Limit döndürülecek azami satır sayısıdır.
+	// Limit is the maximum number of rows to return.
 	Limit int64
-	// Offset atlanacak satır sayısıdır.
+	// Offset is the number of rows to skip.
 	Offset int64
 }

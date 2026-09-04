@@ -168,7 +168,7 @@ func (s *Service) GetRedemption(ctx context.Context, promotionID, reference stri
 	if err := s.ready(); err != nil {
 		return models.Redemption{}, err
 	}
-	if err := requireID(promotionID, models.PromotionIDPrefix, "promosyon kimliği"); err != nil {
+	if err := requireID(promotionID, models.PromotionIDPrefix, "promotion id"); err != nil {
 		return models.Redemption{}, err
 	}
 	if err := validateText("kullanım referansı", reference, 1, MaxReferenceLen); err != nil {
@@ -189,7 +189,7 @@ func (s *Service) ListRedemptions(
 	if err := s.ready(); err != nil {
 		return Page[models.Redemption]{}, err
 	}
-	if err := requireID(promotionID, models.PromotionIDPrefix, "promosyon kimliği"); err != nil {
+	if err := requireID(promotionID, models.PromotionIDPrefix, "promotion id"); err != nil {
 		return Page[models.Redemption]{}, err
 	}
 	limit, offset, err := normalizePaging(limit, offset)
@@ -216,7 +216,7 @@ func (s *Service) ListRedemptions(
 func (s *Service) resolvePromotion(ctx context.Context, id, code string) (models.Promotion, error) {
 	switch {
 	case id != "":
-		if err := requireID(id, models.PromotionIDPrefix, "promosyon kimliği"); err != nil {
+		if err := requireID(id, models.PromotionIDPrefix, "promotion id"); err != nil {
 			return models.Promotion{}, err
 		}
 		promo, err := s.repo.GetPromotion(ctx, id)
@@ -230,7 +230,7 @@ func (s *Service) resolvePromotion(ctx context.Context, id, code string) (models
 			}
 			if normalized != promo.Code {
 				return models.Promotion{}, errors.Invalid(CodeInvalidInput,
-					"promosyon kimliği ile kupon kodu farklı promosyonları gösteriyor: %s / %s",
+					"promotion id ile kupon kodu farklı promosyonları gösteriyor: %s / %s",
 					id, normalized)
 			}
 		}
@@ -243,6 +243,6 @@ func (s *Service) resolvePromotion(ctx context.Context, id, code string) (models
 		return s.repo.GetPromotionByCode(ctx, normalized)
 	default:
 		return models.Promotion{}, errors.Invalid(CodeInvalidInput,
-			"promosyon kimliği ya da kupon kodu verilmeli")
+			"promotion id ya da kupon kodu verilmeli")
 	}
 }

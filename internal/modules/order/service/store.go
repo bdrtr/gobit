@@ -77,7 +77,7 @@ type Store interface {
 	// LockCustomerSpending müşterinin harcama TOPLAMINI işlem sonuna kadar
 	// kilitler ve yalnızca [Store.WithTx] içinde çağrılabilir.
 	//
-	// Kilit bir satıra değil, müşteri kimliğine bağlanır: korunan şey henüz
+	// Kilit bir satıra değil, customer idne bağlanır: korunan şey henüz
 	// yazılmamış bir siparişi de kapsayan bir TOPLAMDIR ve var olan satırları
 	// kilitleyen FOR UPDATE onu koruyamaz (bkz. repository paketi).
 	LockCustomerSpending(ctx context.Context, customerID string) error

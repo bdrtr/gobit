@@ -193,7 +193,7 @@ func (p Page) normalize() (Page, error) {
 		return Page{}, errors.Invalid(CodeInvalidInput, "offset negatif olamaz: %d", p.Offset)
 	case p.Limit > MaxLimit:
 		return Page{}, errors.Invalid(CodeInvalidInput,
-			"limit en fazla %d olabilir: %d", MaxLimit, p.Limit)
+			"the limit can be at most %d: %d", MaxLimit, p.Limit)
 	case p.Limit == 0:
 		p.Limit = DefaultLimit
 	}
@@ -215,7 +215,7 @@ func (s *Service) ListUploads(ctx context.Context, page Page) ([]models.Upload, 
 // GetUpload tek bir yükleme kaydını döner; yoksa errors.NotFound.
 func (s *Service) GetUpload(ctx context.Context, id string) (models.Upload, error) {
 	if id == "" {
-		return models.Upload{}, errors.Invalid(CodeInvalidInput, "yükleme kimliği boş olamaz")
+		return models.Upload{}, errors.Invalid(CodeInvalidInput, "the upload id cannot be empty")
 	}
 
 	return s.store.GetUpload(ctx, id)
@@ -242,7 +242,7 @@ func (s *Service) GetUpload(ctx context.Context, id string) (models.Upload, erro
 // başarısız olmuşsa o dosya sonsuza kadar erişilemez çöp olurdu.
 func (s *Service) DeleteUpload(ctx context.Context, id string) error {
 	if id == "" {
-		return errors.Invalid(CodeInvalidInput, "yükleme kimliği boş olamaz")
+		return errors.Invalid(CodeInvalidInput, "the upload id cannot be empty")
 	}
 
 	kayit, err := s.store.GetUpload(ctx, id)

@@ -22,12 +22,12 @@
 // Bu depoda vitrin isteklerinin kimliği publishable API anahtarıdır ve o anahtar
 // bir SATIŞ KANALINI temsil eder, bir müşteriyi değil (bkz. corehttp.RequireStore).
 // Yani "giriş yapmış müşteri" diye okunabilecek bir oturum kimliği çekirdekte
-// HENÜZ YOKTUR. Uçlar bu yüzden müşteri kimliğini yoldan alır — tıpkı
+// HENÜZ YOKTUR. Uçlar bu yüzden customer idni yoldan alır — tıpkı
 // /store/v1/customers/{id} gibi — ve kimliğin doğruluğu DOĞRULANMAZ.
 //
 // Sonuç açıkça yazılmalıdır: başka bir müşterinin kimliğini BİLEN bir çağıran,
 // o müşterinin şirketini okuyabilir. Kapatılan şey, şirketin adıyla
-// istenebilmesidir; kapatılmayan şey, müşteri kimliğinin taklit edilmesidir.
+// istenebilmesidir; kapatılmayan şey, customer idnin taklit edilmesidir.
 // Müşteri oturumu geldiğinde yapılacak iş tek bir yerdedir: [storeCustomerID]
 // kimliği yol parametresi yerine oturumdan okumalı ve uyuşmazlıkta
 // errors.Forbidden dönmelidir.

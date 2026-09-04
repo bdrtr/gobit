@@ -11,157 +11,160 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/order/models"
 )
 
-// crockford kimlik gövdesinde izin verilen alfabedir (Crockford Base32).
+// crockford is the alphabet permitted in an identifier body (Crockford Base32).
 const crockford = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
 
-// TestKimlikBicimi üretilen kimliklerin önek + 26 karakterlik gövde biçimini
-// koruduğunu doğrular.
+// TestKimlikBicimi verifies that the produced identifiers keep the prefix +
+// 26-character body format.
 //
-// Biçim bir SÖZLEŞMEDİR: sipariş kimliği logda, destek kaydında ve saga'nın
-// anlık görüntüsünde taşınır; önekin kaybolması ya da gövdenin kısalması
-// (tekilliğin zayıflaması) sessizce geçmemelidir.
+// The format is a CONTRACT: an order identifier travels in the log, in the
+// support record and in the saga's snapshot; the prefix disappearing or the
+// body shortening (uniqueness weakening) must not pass silently.
 func TestKimlikBicimi(t *testing.T) {
-	testler := map[string]struct {
-		uret func() string
-		onek string
+	cases := map[string]struct {
+		gen    func() string
+		prefix string
 	}{
-		"sipariş": {uret: models.NewOrderID, onek: models.OrderIDPrefix},
-		"satır":   {uret: models.NewLineItemID, onek: models.LineItemIDPrefix},
-		"özet":    {uret: models.NewSummaryID, onek: models.SummaryIDPrefix},
-		"iade":    {uret: models.NewReturnID, onek: models.ReturnIDPrefix},
-		"değişim": {uret: models.NewExchangeID, onek: models.ExchangeIDPrefix},
-		"hasar":   {uret: models.NewClaimID, onek: models.ClaimIDPrefix},
+		"order":    {gen: models.NewOrderID, prefix: models.OrderIDPrefix},
+		"line":     {gen: models.NewLineItemID, prefix: models.LineItemIDPrefix},
+		"summary":  {gen: models.NewSummaryID, prefix: models.SummaryIDPrefix},
+		"return":   {gen: models.NewReturnID, prefix: models.ReturnIDPrefix},
+		"exchange": {gen: models.NewExchangeID, prefix: models.ExchangeIDPrefix},
+		"claim":    {gen: models.NewClaimID, prefix: models.ClaimIDPrefix},
 	}
 
-	for ad, tc := range testler {
-		t.Run(ad, func(t *testing.T) {
-			id := tc.uret()
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			id := tc.gen()
 
-			govde, ok := strings.CutPrefix(id, tc.onek)
-			require.True(t, ok, "%q kimliği %q önekiyle başlamalı", id, tc.onek)
-			assert.Len(t, govde, models.IDBodyLen,
-				"gövde %d karakter olmalı: %q", models.IDBodyLen, id)
-			for _, r := range govde {
+			body, ok := strings.CutPrefix(id, tc.prefix)
+			require.True(t, ok, "identifier %q must start with the prefix %q", id, tc.prefix)
+			assert.Len(t, body, models.IDBodyLen,
+				"the body must be %d characters: %q", models.IDBodyLen, id)
+			for _, r := range body {
 				assert.Contains(t, crockford, string(r),
-					"gövde yalnızca Crockford Base32 alfabesini içermeli: %q", id)
+					"the body must contain only the Crockford Base32 alphabet: %q", id)
 			}
 		})
 	}
 }
 
-// TestKimliklerZamanaGoreSiralanir kimliğin kendisinin oluşturma sırasını
-// taşıdığını doğrular.
+// TestKimliklerZamanaGoreSiralanir verifies that the identifier itself carries
+// the creation order.
 //
-// Sıralanabilirlik boş bir süs değildir: birincil anahtar taramasında kayıtlar
-// doğal sırada durur ve B-tree eklemeleri sona yapılır. Kimlik tamamen
-// rastgele olsaydı her ekleme indeksin ortasına düşerdi.
+// Sortability is not idle decoration: under a primary key scan the records
+// stand in natural order and B-tree insertions happen at the end. Had the
+// identifier been completely random, every insertion would fall into the middle
+// of the index.
 //
-// Çözünürlük MİLİSANİYEDİR: aynı milisaniyede üretilen iki kimliğin sırası
-// rastgele gövdeye kalır ve garanti edilmez. Test bu yüzden turlar arasında
-// bekler; iddia "her kimlik bir öncekinden büyüktür" değil, "farklı
-// milisaniyelerde üretilen kimlikler zaman sırasını korur"dur.
+// The resolution is MILLISECONDS: the order of two identifiers produced in the
+// same millisecond is left to the random body and is not guaranteed. That is
+// why the test waits between rounds; the assertion is not "every identifier is
+// greater than the previous one" but "identifiers produced in different
+// milliseconds keep the time order".
 func TestKimliklerZamanaGoreSiralanir(t *testing.T) {
 	const (
-		tur     = 12
-		bekleme = 2 * time.Millisecond
+		rounds = 12
+		wait   = 2 * time.Millisecond
 	)
 
-	onceki := models.NewOrderID()
-	for range tur {
-		time.Sleep(bekleme)
-		sonraki := models.NewOrderID()
-		assert.Less(t, onceki, sonraki,
-			"sonraki milisaniyede üretilen kimlik sözlüksel olarak büyük olmalı")
-		onceki = sonraki
+	previous := models.NewOrderID()
+	for range rounds {
+		time.Sleep(wait)
+		next := models.NewOrderID()
+		assert.Less(t, previous, next,
+			"an identifier produced one millisecond later must sort greater")
+		previous = next
 	}
 }
 
-// TestKimliklerTekildir aynı milisaniyede üretilen kimliklerin çakışmadığını
-// doğrular.
+// TestKimliklerTekildir verifies that identifiers produced in the same
+// millisecond do not collide.
 func TestKimliklerTekildir(t *testing.T) {
-	const adet = 1000
+	const count = 1000
 
-	gorulen := make(map[string]struct{}, adet)
-	for range adet {
+	seen := make(map[string]struct{}, count)
+	for range count {
 		id := models.NewOrderID()
-		_, tekrar := gorulen[id]
-		require.False(t, tekrar, "kimlik tekrarlandı: %s", id)
-		gorulen[id] = struct{}{}
+		_, duplicate := seen[id]
+		require.False(t, duplicate, "the id repeated: %s", id)
+		seen[id] = struct{}{}
 	}
 }
 
-// TestValidDisplayID sipariş numarasının geçerlilik eşiğini doğrular.
+// TestValidDisplayID verifies the validity threshold of the order number.
 //
-// Sıfır ya da negatif numara "numarası olmayan sipariş" demektir; müşteri onu
-// hiçbir yerde bulamaz. Servis bu ölçütü sipariş yazıldıktan SONRA uygular ve
-// sağlamayan siparişi geri alır.
+// A zero or negative number means "an order with no number"; the customer finds
+// it nowhere. The service applies this criterion AFTER the order is written and
+// rolls back an order that does not satisfy it.
 func TestValidDisplayID(t *testing.T) {
-	assert.False(t, models.ValidDisplayID(0), "sıfır numara geçersiz olmalı")
-	assert.False(t, models.ValidDisplayID(-1), "negatif numara geçersiz olmalı")
+	assert.False(t, models.ValidDisplayID(0), "a zero number has to be invalid")
+	assert.False(t, models.ValidDisplayID(-1), "a negative number must be invalid")
 	assert.True(t, models.ValidDisplayID(models.MinDisplayID))
 	assert.True(t, models.ValidDisplayID(1042))
 }
 
-// TestOrderToplamKimligi sipariş toplam kimliğinin ve indirim sınırının
-// modelden okunabildiğini doğrular.
-func TestOrderToplamKimligi(t *testing.T) {
-	tutarli := models.Order{Subtotal: 3000, DiscountTotal: 500, TaxTotal: 600, ShippingTotal: 2500, Total: 5600}
-	assert.True(t, tutarli.TotalsConsistent())
-	assert.True(t, tutarli.DiscountWithinSubtotal())
+// TestOrderTotalsIdentity verifies that the order totals identity and the
+// discount bound can be read from the model.
+func TestOrderTotalsIdentity(t *testing.T) {
+	consistent := models.Order{Subtotal: 3000, DiscountTotal: 500, TaxTotal: 600, ShippingTotal: 2500, Total: 5600}
+	assert.True(t, consistent.TotalsConsistent())
+	assert.True(t, consistent.DiscountWithinSubtotal())
 
-	tutarsiz := tutarli
-	tutarsiz.Total = 5599
-	assert.False(t, tutarsiz.TotalsConsistent())
+	inconsistent := consistent
+	inconsistent.Total = 5599
+	assert.False(t, inconsistent.TotalsConsistent())
 
-	// Kimlik SAĞLANIR ama indirim ara toplamı aşar: iki kontrolün ayrı olması
-	// tam olarak bu durum içindir.
-	asiriIndirim := models.Order{Subtotal: 1000, DiscountTotal: 3000, ShippingTotal: 2500, Total: 500}
-	assert.True(t, asiriIndirim.TotalsConsistent(), "kimlik bu durumda sağlanır")
-	assert.False(t, asiriIndirim.DiscountWithinSubtotal(), "indirim sınırı ihlal edilmeli")
+	// The identity HOLDS but the discount exceeds the subtotal: the two checks
+	// being separate is for exactly this case.
+	excessDiscount := models.Order{Subtotal: 1000, DiscountTotal: 3000, ShippingTotal: 2500, Total: 500}
+	assert.True(t, excessDiscount.TotalsConsistent(), "the identity holds in this case")
+	assert.False(t, excessDiscount.DiscountWithinSubtotal(), "the discount bound must be violated")
 }
 
-// TestOrderDurumYardimcilari durum tabanlı yardımcıların doğru yanıt verdiğini
-// doğrular.
+// TestOrderDurumYardimcilari verifies that the status-based helpers answer
+// correctly.
 func TestOrderDurumYardimcilari(t *testing.T) {
 	assert.True(t, models.Order{Status: models.OrderCanceled}.Canceled())
 	assert.False(t, models.Order{Status: models.OrderPending}.Canceled())
 
 	assert.True(t, models.Order{Status: models.OrderCompleted}.Completed())
 	assert.True(t, models.Order{Status: models.OrderArchived}.Completed(),
-		"arşivlenmiş sipariş de tamamlanmıştır")
+		"an archived order is completed too")
 	assert.False(t, models.Order{Status: models.OrderPending}.Completed())
 
 	assert.True(t, models.Order{}.Guest())
 	assert.False(t, models.Order{CustomerID: "cus_1"}.Guest())
 }
 
-// TestOrderStatusValid tanımsız durumların reddedildiğini doğrular.
+// TestOrderStatusValid verifies that undefined statuses are rejected.
 func TestOrderStatusValid(t *testing.T) {
-	for _, durum := range []models.OrderStatus{
+	for _, status := range []models.OrderStatus{
 		models.OrderPending, models.OrderCompleted, models.OrderArchived, models.OrderCanceled,
 	} {
-		assert.True(t, durum.Valid(), "%q tanımlı olmalı", durum)
+		assert.True(t, status.Valid(), "%q must be defined", status)
 	}
 	assert.False(t, models.OrderStatus("shipped").Valid())
 	assert.False(t, models.OrderStatus("").Valid())
 }
 
-// TestOrderSummaryOutstanding kalan tutarın hesabını doğrular.
+// TestOrderSummaryOutstanding verifies the computation of the outstanding
+// amount.
 //
-// Değerin NEGATİF olabilmesi bilinçlidir: fazla tahsilat gerçek bir olgudur ve
-// sıfıra kırpmak onu görünmez kılardı.
+// The value being able to be NEGATIVE is deliberate: overcollection is a real
+// phenomenon and clamping it to zero would make it invisible.
 func TestOrderSummaryOutstanding(t *testing.T) {
-	const siparisToplami int64 = 6100
+	const orderTotal int64 = 6100
 
-	assert.Equal(t, siparisToplami,
-		models.OrderSummary{}.Outstanding(siparisToplami),
-		"hiç ödeme yokken tüm tutar kalır")
+	assert.Equal(t, orderTotal,
+		models.OrderSummary{}.Outstanding(orderTotal),
+		"with no payment at all the whole amount stays outstanding")
 	assert.Equal(t, int64(0),
-		models.OrderSummary{PaidTotal: 6100}.Outstanding(siparisToplami))
+		models.OrderSummary{PaidTotal: 6100}.Outstanding(orderTotal))
 	assert.Equal(t, int64(1000),
-		models.OrderSummary{PaidTotal: 6100, RefundedTotal: 1000}.Outstanding(siparisToplami),
-		"iade edilen tutar yeniden borç hâline gelir")
+		models.OrderSummary{PaidTotal: 6100, RefundedTotal: 1000}.Outstanding(orderTotal),
+		"a refunded amount becomes a debt again")
 	assert.Equal(t, int64(-400),
-		models.OrderSummary{PaidTotal: 6500}.Outstanding(siparisToplami),
-		"fazla tahsilat negatif kalan olarak görünmeli")
+		models.OrderSummary{PaidTotal: 6500}.Outstanding(orderTotal),
+		"overcollection must show as a negative outstanding amount")
 }

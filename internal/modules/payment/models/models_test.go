@@ -8,20 +8,21 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/payment/models"
 )
 
-// TestSessionGecisTablosuTumDallariylaDogru oturum durum makinesinin HER
-// hücresini doğrular.
+// TestSessionTransitionTableInAllItsBranches verifies EVERY cell of the
+// session state machine.
 //
-// Tablo, üç işlem × beş durum = 15 hücrenin tamamını kapsar. Tek tek yazılması
-// bilinçlidir: bir dalı "diğerleri gibi" varsayan bir test, o dalın sessizce
-// değiştirilmesini yakalayamaz. Özellikle iki hücre kritiktir ve ayrı ayrı
-// gerekçelendirilmiştir:
+// The table covers the whole of three operations × five statuses = 15 cells.
+// Writing them out one by one is deliberate: a test that assumes one branch is
+// "like the others" cannot catch that branch being changed silently. Two cells
+// in particular are critical and are justified separately:
 //
-//   - captured + Cancel = conflict — para çekilmiş bir oturumu iptal etmek,
-//     müşteriden alınan tutarı kayıtta yokmuş gibi göstermek olurdu.
-//   - canceled + Cancel = noop — saga telafisinin idempotent olabilmesi tam
-//     olarak bu hücreye bağlıdır.
-func TestSessionGecisTablosuTumDallariylaDogru(t *testing.T) {
-	durumlar := []models.SessionStatus{
+//   - captured + Cancel = conflict — canceling a session whose money has been
+//     drawn would mean showing the amount taken from the customer as if it
+//     were not in the record.
+//   - canceled + Cancel = noop — the saga compensation being able to be
+//     idempotent depends on exactly this cell.
+func TestSessionTransitionTableInAllItsBranches(t *testing.T) {
+	statuses := []models.SessionStatus{
 		models.SessionPending,
 		models.SessionAuthorized,
 		models.SessionCaptured,
@@ -29,7 +30,7 @@ func TestSessionGecisTablosuTumDallariylaDogru(t *testing.T) {
 		models.SessionFailed,
 	}
 
-	beklenen := map[models.SessionStatus]struct {
+	wantByStatus := map[models.SessionStatus]struct {
 		authorize, capture, cancel models.SessionAction
 	}{
 		models.SessionPending: {
@@ -59,167 +60,168 @@ func TestSessionGecisTablosuTumDallariylaDogru(t *testing.T) {
 		},
 	}
 
-	for _, durum := range durumlar {
-		t.Run(durum.String(), func(t *testing.T) {
-			want := beklenen[durum]
-			assert.Equal(t, want.authorize, durum.AuthorizeAction(), "AuthorizeAction")
-			assert.Equal(t, want.capture, durum.CaptureAction(), "CaptureAction")
-			assert.Equal(t, want.cancel, durum.CancelAction(), "CancelAction")
+	for _, status := range statuses {
+		t.Run(status.String(), func(t *testing.T) {
+			want := wantByStatus[status]
+			assert.Equal(t, want.authorize, status.AuthorizeAction(), "AuthorizeAction")
+			assert.Equal(t, want.capture, status.CaptureAction(), "CaptureAction")
+			assert.Equal(t, want.cancel, status.CancelAction(), "CancelAction")
 		})
 	}
 }
 
-// TestTanimsizDurumHerIsleminiReddeder tanımsız bir durumun üç işlemde de
-// çakışma ürettiğini doğrular.
+// TestUndefinedStatusRejectsEveryOperation verifies that an undefined status
+// produces a conflict in all three operations.
 //
-// Sıfır değerin güvenli olması sözleşmedir: veritabanından okunan bozuk bir
-// durum değeri "devam et" olarak yorumlanırsa, kaydın gerçek durumu bilinmeden
-// para hareketi yapılırdı.
-func TestTanimsizDurumHerIsleminiReddeder(t *testing.T) {
-	bozuk := models.SessionStatus("bilinmeyen")
+// The zero value being safe is a contract: if a corrupt status value read out
+// of the database were interpreted as "proceed", money would move without the
+// record's real status being known.
+func TestUndefinedStatusRejectsEveryOperation(t *testing.T) {
+	corrupt := models.SessionStatus("unknown")
 
-	assert.False(t, bozuk.Valid())
-	assert.Equal(t, models.ActionConflict, bozuk.AuthorizeAction())
-	assert.Equal(t, models.ActionConflict, bozuk.CaptureAction())
-	assert.Equal(t, models.ActionConflict, bozuk.CancelAction())
+	assert.False(t, corrupt.Valid())
+	assert.Equal(t, models.ActionConflict, corrupt.AuthorizeAction())
+	assert.Equal(t, models.ActionConflict, corrupt.CaptureAction())
+	assert.Equal(t, models.ActionConflict, corrupt.CancelAction())
 }
 
-// TestTerminalDurumlar sonlanmış oturumların hangileri olduğunu sabitler.
+// TestTerminalStatuses pins down which sessions have come to an end.
 //
-// Ayrım idempotency'nin sınırıdır: aynı anahtarla yapılan bir tekrar,
-// tahsil edilmiş bir oturumdan mevcut tahsilatı okuyabilir ama iptal edilmiş
-// ya da reddedilmiş bir oturumla ilerleyemez.
-func TestTerminalDurumlar(t *testing.T) {
+// The distinction is the boundary of idempotency: a repeat made with the same
+// key can read the existing capture out of a captured session, but cannot move
+// ahead with a canceled or declined one.
+func TestTerminalStatuses(t *testing.T) {
 	assert.False(t, models.SessionPending.Terminal())
 	assert.False(t, models.SessionAuthorized.Terminal())
 	assert.False(t, models.SessionCaptured.Terminal(),
-		"tahsil edilmiş oturum akışın BAŞARILI sonucudur, çıkmaz değil")
+		"a captured session is the SUCCESSFUL outcome of the flow, not a dead end")
 	assert.True(t, models.SessionCanceled.Terminal())
 	assert.True(t, models.SessionFailed.Terminal())
 }
 
-// TestCollectionStatusForTumDallar koleksiyon durumu türetiminin her dalını
-// doğrular.
+// TestCollectionStatusForAllBranches verifies every branch of the collection
+// status derivation.
 //
-// Tahsilat dalı ayrıca EKSİK ödemeyi ayırt eder: koleksiyonun tutarını
-// karşılamayan bir tahsilat "captured" değil "partially_captured"tır. Aksi
-// hâlde 50.000'lik bir koleksiyondan çekilen 1 birim, saga'ya ödeme tamammış
-// gibi görünürdü.
+// The capture branch additionally tells a SHORT payment apart: a capture that
+// does not cover the collection's amount is not "captured" but
+// "partially_captured". Otherwise 1 unit drawn out of a collection of 50,000
+// would look to the saga as if the payment were complete.
 //
-// Fikstürler bilinçli olarak "yanlış sıra" tuzağını kurar: tahsilatı olan bir
-// koleksiyonun canlı oturumu da vardır, ve doğru sonuç "awaiting" değil
-// "captured"tır. Para her zaman sayımı yener; sırayı ters çeviren bir uygulama
-// bu satırlarda düşer.
-func TestCollectionStatusForTumDallar(t *testing.T) {
+// The fixtures deliberately set up the "wrong order" trap: a collection that
+// has a capture also has a live session, and the right answer is not
+// "awaiting" but "captured". The money always beats the counts; an
+// implementation that reverses the order falls over on these lines.
+func TestCollectionStatusForAllBranches(t *testing.T) {
 	tests := []struct {
-		ad       string
-		col      models.PaymentCollection
-		counts   models.SessionCounts
-		beklenen models.CollectionStatus
+		name   string
+		col    models.PaymentCollection
+		counts models.SessionCounts
+		want   models.CollectionStatus
 	}{
 		{
-			ad:       "oturumsuz koleksiyon not_paid",
-			col:      models.PaymentCollection{Amount: 1000},
-			counts:   models.SessionCounts{},
-			beklenen: models.CollectionNotPaid,
+			name:   "collection with no session is not_paid",
+			col:    models.PaymentCollection{Amount: 1000},
+			counts: models.SessionCounts{},
+			want:   models.CollectionNotPaid,
 		},
 		{
-			ad:       "acik oturum awaiting",
-			col:      models.PaymentCollection{Amount: 1000},
-			counts:   models.SessionCounts{Live: 1, Total: 1},
-			beklenen: models.CollectionAwaiting,
+			name:   "open session is awaiting",
+			col:    models.PaymentCollection{Amount: 1000},
+			counts: models.SessionCounts{Live: 1, Total: 1},
+			want:   models.CollectionAwaiting,
 		},
 		{
-			ad:       "tam bloke authorized",
-			col:      models.PaymentCollection{Amount: 1000, AuthorizedAmount: 1000},
-			counts:   models.SessionCounts{Live: 1, Total: 1},
-			beklenen: models.CollectionAuthorized,
+			name:   "full hold is authorized",
+			col:    models.PaymentCollection{Amount: 1000, AuthorizedAmount: 1000},
+			counts: models.SessionCounts{Live: 1, Total: 1},
+			want:   models.CollectionAuthorized,
 		},
 		{
-			ad:       "kismi bloke hala awaiting",
-			col:      models.PaymentCollection{Amount: 1000, AuthorizedAmount: 400},
-			counts:   models.SessionCounts{Live: 1, Total: 1},
-			beklenen: models.CollectionAwaiting,
+			name:   "partial hold is still awaiting",
+			col:    models.PaymentCollection{Amount: 1000, AuthorizedAmount: 400},
+			counts: models.SessionCounts{Live: 1, Total: 1},
+			want:   models.CollectionAwaiting,
 		},
 		{
-			ad:       "tahsilat canli oturumu yener",
-			col:      models.PaymentCollection{Amount: 1000, AuthorizedAmount: 1000, CapturedAmount: 1000},
-			counts:   models.SessionCounts{Live: 1, Total: 1},
-			beklenen: models.CollectionCaptured,
+			name:   "capture beats a live session",
+			col:    models.PaymentCollection{Amount: 1000, AuthorizedAmount: 1000, CapturedAmount: 1000},
+			counts: models.SessionCounts{Live: 1, Total: 1},
+			want:   models.CollectionCaptured,
 		},
 		{
-			ad:       "eksik tahsilat partially_captured",
-			col:      models.PaymentCollection{Amount: 1000, CapturedAmount: 1},
-			counts:   models.SessionCounts{Total: 1},
-			beklenen: models.CollectionPartiallyCaptured,
+			name:   "short capture is partially_captured",
+			col:    models.PaymentCollection{Amount: 1000, CapturedAmount: 1},
+			counts: models.SessionCounts{Total: 1},
+			want:   models.CollectionPartiallyCaptured,
 		},
 		{
-			ad:       "bir eksik tahsilat da partially_captured",
-			col:      models.PaymentCollection{Amount: 1000, CapturedAmount: 999},
-			counts:   models.SessionCounts{Total: 1},
-			beklenen: models.CollectionPartiallyCaptured,
+			name:   "a capture short by one is partially_captured too",
+			col:    models.PaymentCollection{Amount: 1000, CapturedAmount: 999},
+			counts: models.SessionCounts{Total: 1},
+			want:   models.CollectionPartiallyCaptured,
 		},
 		{
-			ad:       "tam tahsilat captured",
-			col:      models.PaymentCollection{Amount: 1000, CapturedAmount: 1000},
-			counts:   models.SessionCounts{Total: 1},
-			beklenen: models.CollectionCaptured,
+			name:   "full capture is captured",
+			col:    models.PaymentCollection{Amount: 1000, CapturedAmount: 1000},
+			counts: models.SessionCounts{Total: 1},
+			want:   models.CollectionCaptured,
 		},
 		{
-			ad: "kismi iade partially_refunded",
+			name: "partial refund is partially_refunded",
 			col: models.PaymentCollection{
 				Amount: 1000, AuthorizedAmount: 1000, CapturedAmount: 1000, RefundedAmount: 400,
 			},
-			counts:   models.SessionCounts{Total: 1},
-			beklenen: models.CollectionPartiallyRefunded,
+			counts: models.SessionCounts{Total: 1},
+			want:   models.CollectionPartiallyRefunded,
 		},
 		{
-			ad: "tam iade refunded",
+			name: "full refund is refunded",
 			col: models.PaymentCollection{
 				Amount: 1000, AuthorizedAmount: 1000, CapturedAmount: 1000, RefundedAmount: 1000,
 			},
-			counts:   models.SessionCounts{Total: 1},
-			beklenen: models.CollectionRefunded,
+			counts: models.SessionCounts{Total: 1},
+			want:   models.CollectionRefunded,
 		},
 		{
-			ad:       "iptal edilmis oturum canceled",
-			col:      models.PaymentCollection{Amount: 1000},
-			counts:   models.SessionCounts{Canceled: 1, Total: 1},
-			beklenen: models.CollectionCanceled,
+			name:   "canceled session is canceled",
+			col:    models.PaymentCollection{Amount: 1000},
+			counts: models.SessionCounts{Canceled: 1, Total: 1},
+			want:   models.CollectionCanceled,
 		},
 		{
-			ad:       "yalnizca reddedilmis oturum not_paid kalir",
-			col:      models.PaymentCollection{Amount: 1000},
-			counts:   models.SessionCounts{Failed: 2, Total: 2},
-			beklenen: models.CollectionNotPaid,
+			name:   "only declined sessions stay not_paid",
+			col:    models.PaymentCollection{Amount: 1000},
+			counts: models.SessionCounts{Failed: 2, Total: 2},
+			want:   models.CollectionNotPaid,
 		},
 		{
-			ad:       "iptal ve reddin birlikte oldugu durumda canceled",
-			col:      models.PaymentCollection{Amount: 1000},
-			counts:   models.SessionCounts{Canceled: 1, Failed: 1, Total: 2},
-			beklenen: models.CollectionCanceled,
+			name:   "cancel and decline together give canceled",
+			col:    models.PaymentCollection{Amount: 1000},
+			counts: models.SessionCounts{Canceled: 1, Failed: 1, Total: 2},
+			want:   models.CollectionCanceled,
 		},
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.ad, func(t *testing.T) {
-			assert.Equal(t, tt.beklenen, models.CollectionStatusFor(tt.col, tt.counts))
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, models.CollectionStatusFor(tt.col, tt.counts))
 		})
 	}
 }
 
-// TestKalanTutarHesaplari kalan tutar yardımcılarının negatife düşmediğini
-// doğrular.
+// TestRemainingAmountComputations verifies that the remaining-amount helpers
+// do not fall below zero.
 //
-// Aşırı iade ya da aşırı bloke veritabanı kısıtıyla zaten engellenir; bu test
-// yardımcıların BOZUK bir kayıt karşısında da negatif dönmediğini kanıtlar.
-// Negatif bir "kalan", çağıranda ters yönlü bir para hareketine dönüşürdü.
-func TestKalanTutarHesaplari(t *testing.T) {
+// An over-refund or an over-hold is already prevented by a database
+// constraint; this test proves that the helpers do not return a negative in
+// the face of a CORRUPT record either. A negative "remaining" would turn into
+// a money movement in the opposite direction at the caller.
+func TestRemainingAmountComputations(t *testing.T) {
 	col := models.PaymentCollection{Amount: 1000, AuthorizedAmount: 1200, CapturedAmount: 500, RefundedAmount: 800}
 	assert.Equal(t, int64(0), col.RefundableAmount())
 
-	kismi := models.PaymentCollection{Amount: 1000, AuthorizedAmount: 400, CapturedAmount: 400, RefundedAmount: 100}
-	assert.Equal(t, int64(300), kismi.RefundableAmount())
+	partial := models.PaymentCollection{Amount: 1000, AuthorizedAmount: 400, CapturedAmount: 400, RefundedAmount: 100}
+	assert.Equal(t, int64(300), partial.RefundableAmount())
 
 	pay := models.Payment{Amount: 500, RefundedAmount: 700}
 	assert.Equal(t, int64(0), pay.RefundableAmount())
@@ -230,10 +232,10 @@ func TestKalanTutarHesaplari(t *testing.T) {
 	assert.Equal(t, int64(150), models.ManualSession{CapturedAmount: 200, RefundedAmount: 50}.RefundableAmount())
 }
 
-// TestKimlikOnekleriVeSirasi kimliklerin önekli, tekil ve zamana göre
-// sıralanabilir olduğunu doğrular.
-func TestKimlikOnekleriVeSirasi(t *testing.T) {
-	uretilenler := map[string]func() string{
+// TestIdentifierPrefixesAndOrdering verifies that the identifiers are
+// prefixed, unique and sortable by time.
+func TestIdentifierPrefixesAndOrdering(t *testing.T) {
+	generators := map[string]func() string{
 		models.PaymentCollectionIDPrefix: models.NewPaymentCollectionID,
 		models.PaymentSessionIDPrefix:    models.NewPaymentSessionID,
 		models.PaymentIDPrefix:           models.NewPaymentID,
@@ -241,36 +243,36 @@ func TestKimlikOnekleriVeSirasi(t *testing.T) {
 		models.ManualSessionIDPrefix:     models.NewManualSessionID,
 	}
 
-	for prefix, uret := range uretilenler {
+	for prefix, generate := range generators {
 		t.Run(prefix, func(t *testing.T) {
-			ilk, ikinci := uret(), uret()
+			first, second := generate(), generate()
 
-			assert.True(t, len(ilk) == len(prefix)+26, "gövde 26 karakter olmalı: %s", ilk)
-			assert.Equal(t, prefix, ilk[:len(prefix)])
-			assert.NotEqual(t, ilk, ikinci, "iki kimlik aynı olmamalı")
+			assert.True(t, len(first) == len(prefix)+26, "the body must be 26 characters: %s", first)
+			assert.Equal(t, prefix, first[:len(prefix)])
+			assert.NotEqual(t, first, second, "two identifiers must not be the same")
 		})
 	}
 }
 
-// TestCollectionStatusGecerlilik tanımlı ve tanımsız durumları ayırır.
-func TestCollectionStatusGecerlilik(t *testing.T) {
-	gecerli := []models.CollectionStatus{
+// TestCollectionStatusValidity tells defined and undefined statuses apart.
+func TestCollectionStatusValidity(t *testing.T) {
+	valid := []models.CollectionStatus{
 		models.CollectionNotPaid, models.CollectionAwaiting, models.CollectionAuthorized,
 		models.CollectionCaptured, models.CollectionPartiallyRefunded,
 		models.CollectionRefunded, models.CollectionCanceled,
 	}
-	for _, durum := range gecerli {
-		assert.True(t, durum.Valid(), "%q geçerli olmalı", durum)
+	for _, status := range valid {
+		assert.True(t, status.Valid(), "%q must be valid", status)
 	}
 	assert.False(t, models.CollectionStatus("").Valid())
 	assert.False(t, models.CollectionStatus("paid").Valid())
 }
 
-// TestSessionActionString sonuçların okunabilir adını doğrular.
+// TestSessionActionString verifies the readable name of the outcomes.
 //
-// Ad yalnızca teşhis içindir ama hata mesajlarında görünür; tanımsız bir
-// değerin "conflict" olarak okunması, sıfır değerin güvenli olmasıyla aynı
-// gerekçeye dayanır.
+// The name is only for diagnosis, but it shows up in error messages; an
+// undefined value being read as "conflict" rests on the same rationale as the
+// zero value being safe.
 func TestSessionActionString(t *testing.T) {
 	assert.Equal(t, "proceed", models.ActionProceed.String())
 	assert.Equal(t, "noop", models.ActionNoop.String())

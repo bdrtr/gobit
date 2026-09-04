@@ -260,7 +260,7 @@ func (s *Service) CalculateTax(ctx context.Context, in CalculateTaxInput) (Calcu
 func (s *Service) providerFor(chain []models.TaxRegion) (TaxProvider, error) {
 	if s.providers == nil {
 		return nil, errors.Internal(CodeProviderMisconfigured,
-			"tax sağlayıcı kaydı kurulmamış")
+			"the tax provider registry is not configured")
 	}
 
 	regionID, providerID := "", LocalProviderID

@@ -9,48 +9,53 @@ import (
 	"github.com/bdrtr/gobit/internal/core/errors"
 )
 
-// Bu dosya tax modülünün MODÜLLER ARASI yüzeyidir (ADR 0001, ADR 0006).
+// This file is the tax module's CROSS-MODULE surface (ADR 0001, ADR 0006).
 //
-// internal/workflows/cart sepet toplamını hesaplarken vergiye ihtiyaç duyar,
-// ama ne o paket bu modülü ne bu modül o paketi import edebilir. Çözüm
-// region/cart/payment/order/inventory modüllerindeki interop.go ile aynıdır:
-// yalnızca İLKEL ve stdlib tipleri kullanan bir yüzey yayımlamak. Tüketici
-// kendi dar arayüzünü tanımlar, bu tip onu YAPISAL olarak karşılar ve
-// container'dan "tax.interop" adıyla çözülür.
+// internal/workflows/cart needs tax while computing the cart total, but neither
+// can that package import this module nor this module that package. The
+// solution is the same as the interop.go in the region/cart/payment/order/
+// inventory modules: publish a surface that uses ONLY PRIMITIVE and stdlib
+// types. The consumer defines its own narrow interface, this type satisfies it
+// STRUCTURALLY, and it is resolved from the container under the name
+// "tax.interop".
 //
-// Sebep Go'nun yapısal uyum kuralıdır: tüketici tax'ı import edemediği için
-// imzasında service.CalculateTaxInput gibi bir tipi adlandıramaz; adlandırdığı
-// an o, kendi paketinde tanımlı BAŞKA bir tip olur ve somut servis tüketicinin
-// arayüzünü karşılamaz.
+// The reason is Go's structural conformance rule: because the consumer cannot
+// import tax, it cannot name a type such as service.CalculateTaxInput in its
+// signature; the moment it names one, that becomes a DIFFERENT type defined in
+// its own package and the concrete service does not satisfy the consumer's
+// interface.
 //
-// Bileşik veri (kalem listesi ve kalem başına vergi) JSON olarak taşınır ve
-// şema AŞAĞIDA AÇIKÇA beyan edilir. Tüketici tarafındaki şema ile birebir aynı
-// olmak ZORUNDADIR; bu modül workflow paketini import edemediği için derleyici
-// uyumu denetleyemez ve uyum ancak entegrasyon testiyle kanıtlanabilir.
+// Composite data (the item list and the per-item tax) travels as JSON and the
+// schema is declared EXPLICITLY BELOW. It MUST be exactly the same as the
+// schema on the consumer side; because this module cannot import the workflow
+// package the compiler cannot check the conformance, and the conformance can
+// only be proven by an integration test.
 //
-// # Yüzey neden iki metot
+// # Why the surface has two methods
 //
-// [Interop.CalculateTaxJSON] tam hesaptır: eyalet, kural, kargo ve kalem
-// başına oran. [Interop.RateForCountry] ise SADE yoldur ve region modülünün
-// GEÇİCİ RegionTax metodunun doğrudan karşılığıdır — elinde yalnızca bir ülke
-// kodu olan ve tek bir oran isteyen çağıran içindir. İkisinin ayrı durması
-// bilinçlidir: sade yolun JSON kodlama/çözme maliyeti ödemesi gereksizdir ve
-// tam hesabın imzasını "isteğe bağlı alanlarla" sadeleştirmek, iki farklı
-// sözleşmeyi tek imzada gizlemek olurdu.
+// [Interop.CalculateTaxJSON] is the full calculation: province, rule, shipping
+// and the per-item rate. [Interop.RateForCountry] is the PLAIN path and is the
+// direct counterpart of the region module's TEMPORARY RegionTax method — it is
+// for the caller that holds nothing but a country code and wants a single rate.
+// Keeping the two apart is deliberate: it is needless for the plain path to pay
+// the cost of JSON encoding/decoding, and simplifying the full calculation's
+// signature "with optional fields" would be hiding two different contracts in
+// one signature.
 
-// Kod sabitleri; interop yüzeyine özgüdür.
+// Code constants; specific to the interop surface.
 const (
-	// CodeInteropRequestInvalid gelen JSON isteğinin çözümlenemediğini
-	// bildirir.
+	// CodeInteropRequestInvalid reports that the incoming JSON request could
+	// not be decoded.
 	CodeInteropRequestInvalid = "tax_interop_request_invalid"
-	// CodeInteropResponseInvalid yanıtın kodlanamadığını bildirir; iç
-	// tutarsızlık göstergesidir ve normal akışta oluşmaz.
+	// CodeInteropResponseInvalid reports that the response could not be
+	// encoded; it indicates an internal inconsistency and does not arise in the
+	// normal flow.
 	CodeInteropResponseInvalid = "tax_interop_response_invalid"
 )
 
-// interopRequest [Interop.CalculateTaxJSON] isteğinin JSON şemasıdır.
+// interopRequest is the JSON schema of the [Interop.CalculateTaxJSON] request.
 //
-// Örnek:
+// Example:
 //
 //	{
 //	  "country_code": "TR",
@@ -61,44 +66,45 @@ const (
 //	  "shipping": {"option_id": "sopt_1", "amount": 2500, "taxable": false}
 //	}
 type interopRequest struct {
-	// CountryCode ISO 3166-1 alpha-2 kodudur; zorunludur.
+	// CountryCode is the ISO 3166-1 alpha-2 code; it is required.
 	CountryCode string `json:"country_code"`
-	// ProvinceCode eyalet/il kodudur; isteğe bağlıdır.
+	// ProvinceCode is the province/state code; it is optional.
 	ProvinceCode string `json:"province_code"`
-	// Items vergilendirilecek kalemlerdir.
+	// Items are the items to be taxed.
 	Items []interopItem `json:"items"`
-	// Shipping kargo satırıdır.
+	// Shipping is the shipping line.
 	Shipping interopShipping `json:"shipping"`
 }
 
-// interopItem bir vergilendirilebilir kalemin JSON şemasıdır.
+// interopItem is the JSON schema of one taxable item.
 type interopItem struct {
-	// ID kalemin ÇAĞIRAN tarafındaki kimliğidir (örn. sepet satırı) ve
-	// yanıtta aynen döner.
+	// ID is the item's id ON THE CALLER's side (e.g. a cart line) and comes
+	// back unchanged in the response.
 	ID string `json:"id"`
-	// ProductID kural eşleşmesi için ürün kimliğidir; boş bırakılabilir.
+	// ProductID is the product id for rule matching; it may be left empty.
 	ProductID string `json:"product_id"`
-	// ProductTypeID kural eşleşmesi için ürün tipidir; boş bırakılabilir.
+	// ProductTypeID is the product type for rule matching; it may be left empty.
 	ProductTypeID string `json:"product_type_id"`
-	// Amount vergilendirilebilir tabandır: minor unit TAM SAYI ve İNDİRİM
-	// SONRASI. Bu modül indirimi görmez.
+	// Amount is the taxable base: a minor unit INTEGER and AFTER DISCOUNT. This
+	// module does not see the discount.
 	Amount int64 `json:"amount"`
 }
 
-// interopShipping kargo satırının JSON şemasıdır.
+// interopShipping is the JSON schema of the shipping line.
 type interopShipping struct {
-	// OptionID kargo seçeneğinin kimliğidir; kural eşleşmesi içindir.
+	// OptionID is the shipping option's id; it is there for rule matching.
 	OptionID string `json:"option_id"`
-	// Amount kargo tutarıdır (minor unit).
+	// Amount is the shipping amount (minor unit).
 	Amount int64 `json:"amount"`
-	// Taxable kargonun vergilendirilip vergilendirilmeyeceğidir; VARSAYILAN
-	// false'tur ve alan gönderilmezse kargo tabana girmez.
+	// Taxable is whether shipping is taxed or not; it DEFAULTS to false and
+	// when the field is not sent shipping does not enter the base.
 	Taxable bool `json:"taxable"`
 }
 
-// interopResponse [Interop.CalculateTaxJSON] yanıtının JSON şemasıdır.
+// interopResponse is the JSON schema of the [Interop.CalculateTaxJSON]
+// response.
 //
-// Örnek:
+// Example:
 //
 //	{
 //	  "region_id": "taxreg_01J…",
@@ -113,75 +119,79 @@ type interopShipping struct {
 //	               "taxable_amount": 0, "tax_amount": 0}
 //	}
 //
-// Kimlik daima sağlanır: tax_total = Σ(items[i].tax_amount) +
+// The identity always holds: tax_total = Σ(items[i].tax_amount) +
 // shipping.tax_amount.
 type interopResponse struct {
-	// RegionID hesabın dayandığı EN ÖZEL bölgedir; bölge yoksa boş.
+	// RegionID is the MOST SPECIFIC region the calculation rests on; empty when
+	// there is no region.
 	RegionID string `json:"region_id"`
-	// RegionFound ülkeye ait bir vergi bölgesi bulunup bulunmadığıdır.
+	// RegionFound is whether a tax region belonging to the country was found.
 	//
-	// false ise vergi sıfırdır ÇÜNKÜ YAPILANDIRMA YOKTUR; oranın gerçekten
-	// sıfır olmasından ayırt edilebilmesi için alan zorunludur.
+	// When false the tax is zero BECAUSE THERE IS NO CONFIGURATION; the field
+	// is required so that this can be told apart from the rate genuinely being
+	// zero.
 	RegionFound bool `json:"region_found"`
-	// ProviderID hesabı yapan sağlayıcının kimliğidir; bölge yoksa boş.
+	// ProviderID is the id of the provider that did the calculation; empty when
+	// there is no region.
 	ProviderID string `json:"provider_id"`
-	// TaxTotal toplam vergidir (minor unit).
+	// TaxTotal is the total tax (minor unit).
 	TaxTotal int64 `json:"tax_total"`
-	// Items kalem başına vergidir; İSTEKTEKİ SIRAYLA döner.
+	// Items is the per-item tax; it comes back IN THE REQUEST's ORDER.
 	Items []interopItemTax `json:"items"`
-	// Shipping kargo satırının vergisidir.
+	// Shipping is the shipping line's tax.
 	Shipping interopItemTax `json:"shipping"`
 }
 
-// interopItemTax bir satırın hesaplanan vergisinin JSON şemasıdır.
+// interopItemTax is the JSON schema of one line's calculated tax.
 type interopItemTax struct {
-	// ID satırın kimliğidir; kargo satırında [ShippingLineID].
+	// ID is the line's id; on the shipping line it is [ShippingLineID].
 	ID string `json:"id"`
-	// RateID uygulanan oranın kimliğidir; oran bulunamadıysa boş.
+	// RateID is the id of the applied rate; empty when no rate was found.
 	RateID string `json:"rate_id"`
-	// RateBps uygulanan orandır (BAZ PUAN; 2000 = %20). Baz puan olması
-	// bilinçlidir: "rate": 20 değerinin %20 mi 0,2 mi olduğu belirsiz kalır ve
-	// istemci tarafında yüz kat hata üretirdi.
+	// RateBps is the applied rate (BASIS POINTS; 2000 = 20%). Being basis
+	// points is deliberate: whether the value "rate": 20 is 20% or 0.2 would
+	// stay ambiguous and would produce a hundredfold error on the client side.
 	RateBps int32 `json:"rate_bps"`
-	// TaxableAmount verginin hesaplandığı tabandır (minor unit).
+	// TaxableAmount is the base the tax was calculated on (minor unit).
 	TaxableAmount int64 `json:"taxable_amount"`
-	// TaxAmount hesaplanan vergidir (minor unit).
+	// TaxAmount is the calculated tax (minor unit).
 	TaxAmount int64 `json:"tax_amount"`
 }
 
-// Interop tax servisini modüller arası İLKEL yüzeye çevirir.
+// Interop turns the tax service into a PRIMITIVE cross-module surface.
 //
-// Hiçbir karar vermez: yalnızca imzayı ve JSON şemasını çevirir. Tüm iş
-// kuralları [Service] üzerinde kalır; buraya kural eklemek, aynı kuralın iki
-// yerde ayrışması demek olurdu.
+// It makes no decisions: it only translates the signature and the JSON schema.
+// All the business rules stay on [Service]; adding a rule here would mean the
+// same rule diverging in two places.
 type Interop struct {
 	svc *Service
 }
 
-// NewInterop verilen servis için modüller arası yüzeyi kurar.
+// NewInterop sets up the cross-module surface for the given service.
 func NewInterop(svc *Service) *Interop { return &Interop{svc: svc} }
 
-// CalculateTaxJSON verilen isteği çözüp vergiyi hesaplar ve sonucu JSON
-// olarak döner.
+// CalculateTaxJSON decodes the given request, calculates the tax and returns
+// the result as JSON.
 //
-// İstek şeması [interopRequest], yanıt şeması [interopResponse] tiplerinde ve
-// TEK YERDE tanımlıdır; ikisinin de godoc'unda örnek gövde vardır.
+// The request schema is on the [interopRequest] type and the response schema on
+// [interopResponse], each defined IN ONE PLACE; both godocs carry an example
+// body.
 //
-// # Bilinmeyen alanlar reddedilir
+// # Unknown fields are rejected
 //
-// Sessizce yok sayılan bir alan, çağıranın gönderdiğini sandığı bir tabanın
-// hiç hesaba girmemesi demektir. İki taraf birbirini import edemediği için
-// derleyici bu uyumsuzluğu göremez; katı çözümleme, uyumsuzluğun ilk çağrıda
-// açık bir hata olarak çıkmasını sağlar.
+// A field ignored in silence means a base the caller thought it had sent never
+// entering the calculation. Because the two sides cannot import each other the
+// compiler cannot see this mismatch; strict decoding makes the mismatch surface
+// as an explicit error on the first call.
 //
-// # Sayılar
+// # Numbers
 //
-// Tutarlar TAM SAYIDIR ve öyle çözülür; şemadaki alanlar int64'tür. Kayan
-// noktalı bir taban (örn. 30.5) çözümleme hatası verir — sessizce yuvarlanmaz
-// (plan Bölüm 8).
+// Amounts are INTEGERS and are decoded as such; the schema's fields are int64.
+// A floating point base (e.g. 30.5) gives a decoding error — it is not silently
+// rounded (plan Section 8).
 func (i *Interop) CalculateTaxJSON(ctx context.Context, request json.RawMessage) (json.RawMessage, error) {
 	if i == nil || i.svc == nil {
-		return nil, errors.Unavailable(CodeUnconfigured, "tax servisi kurulmamış")
+		return nil, errors.Unavailable(CodeUnconfigured, "the tax service is not configured")
 	}
 
 	req, err := decodeInteropRequest(request)
@@ -228,44 +238,45 @@ func (i *Interop) CalculateTaxJSON(ctx context.Context, request json.RawMessage)
 	payload, err := json.Marshal(resp)
 	if err != nil {
 		return nil, errors.Wrap(err, errors.KindInternal, CodeInteropResponseInvalid,
-			"vergi sonucu JSON'a çevrilemedi")
+			"the tax result could not be converted to JSON")
 	}
 	return payload, nil
 }
 
-// RateForCountry bir ülkenin VARSAYILAN vergi oranını baz puan olarak döner.
+// RateForCountry returns a country's DEFAULT tax rate in basis points.
 //
-// region modülünün GEÇİCİ RegionTax metodunun doğrudan karşılığıdır ve sepet
-// akışının en sade yolu için vardır: elinde yalnızca ülke kodu olan bir çağıran
-// tek bir oran ister.
+// It is the direct counterpart of the region module's TEMPORARY RegionTax
+// method and exists for the plainest path of the cart flow: a caller holding
+// nothing but a country code wants a single rate.
 //
-// Dönen oran ülke KÖKÜNÜN varsayılan oranıdır. Eyalet bölgeleri, kurallar ve
-// kargo bu yolda DEĞERLENDİRİLMEZ; bunlara ihtiyaç duyan çağıran
-// [Interop.CalculateTaxJSON] kullanmalıdır. Hesap yerel tablodan yapılır ve
-// bölgenin sağlayıcısı ÇAĞRILMAZ — dış bir vergi servisine yalnızca bir oran
-// sormak için gidilmesi, sepetin her turunda ağ çağrısı demek olurdu.
+// The rate returned is the DEFAULT rate of the country ROOT. Province regions,
+// rules and shipping are NOT EVALUATED on this path; a caller that needs them
+// must use [Interop.CalculateTaxJSON]. The calculation is made from the local
+// table and the region's provider is NOT CALLED — going out to an external tax
+// service merely to ask for one rate would mean a network call on every round
+// of the cart.
 //
-// found ikinci dönüş değeridir ve iki durumu ayırır: ülkenin vergi bölgesi
-// yoktur (ya da varsayılan oranı yoktur) ile oran gerçekten sıfırdır. found
-// false iken oran daima sıfırdır.
+// found is the second return value and separates two cases: the country has no
+// tax region (or has no default rate), versus the rate genuinely being zero.
+// While found is false the rate is always zero.
 //
-// Tüketici tarafındaki karşılığı:
+// Its counterpart on the consumer side:
 //
 //	type TaxRateReader interface {
 //	    RateForCountry(ctx context.Context, countryCode string) (int32, bool, error)
 //	}
 func (i *Interop) RateForCountry(ctx context.Context, countryCode string) (rateBps int32, found bool, err error) {
 	if i == nil || i.svc == nil {
-		return 0, false, errors.Unavailable(CodeUnconfigured, "tax servisi kurulmamış")
+		return 0, false, errors.Unavailable(CodeUnconfigured, "the tax service is not configured")
 	}
 	return i.svc.DefaultRateForCountry(ctx, countryCode)
 }
 
-// decodeInteropRequest istek gövdesini şemaya çözer.
+// decodeInteropRequest decodes the request body into the schema.
 func decodeInteropRequest(request json.RawMessage) (interopRequest, error) {
 	if len(request) == 0 {
 		return interopRequest{}, errors.Invalid(CodeInteropRequestInvalid,
-			"vergi hesabı isteği boş olamaz")
+			"the tax calculation request cannot be empty")
 	}
 
 	var req interopRequest
@@ -273,26 +284,27 @@ func decodeInteropRequest(request json.RawMessage) (interopRequest, error) {
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&req); err != nil {
 		return interopRequest{}, errors.Wrap(err, errors.KindInvalid, CodeInteropRequestInvalid,
-			"vergi hesabı isteği çözümlenemedi")
+			"the tax calculation request could not be decoded")
 	}
 
-	// Tek bir JSON belgesi beklenir; arkasından gelen ikinci belge sessizce
-	// yok sayılırsa çağıran gönderdiğinin işlendiğini sanırdı.
+	// A single JSON document is expected; were a second document following it
+	// ignored in silence, the caller would think what it sent had been
+	// processed.
 	if err := dec.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
 		return interopRequest{}, errors.Invalid(CodeInteropRequestInvalid,
-			"vergi hesabı isteği tek bir JSON belgesi olmalı")
+			"the tax calculation request must be a single JSON document")
 	}
 	return req, nil
 }
 
-// toInteropItemTax sonuç satırını JSON şemasına çevirir.
+// toInteropItemTax converts a result line into the JSON schema.
 //
-// Çevrim, iki tipin alanları BİREBİR aynı olduğu için doğrudan tip
-// dönüşümüdür (Go, yalnızca etiketleri farklı struct'lar arasında dönüşüme
-// izin verir). Bu bilinçli bir seçimdir: [ItemTax] bir alan kazandığı ya da
-// kaybettiği an dönüşüm DERLENMEZ ve JSON şemasının ne olacağına açıkça karar
-// verilmek zorunda kalınır. Alan alan yazılmış bir eşleme ise yeni alanı
-// sessizce dışarıda bırakırdı.
+// The conversion is a direct type conversion because the fields of the two
+// types are EXACTLY the same (Go permits conversion between structs that differ
+// only in their tags). This is a deliberate choice: the moment [ItemTax] gains
+// or loses a field the conversion DOES NOT COMPILE and a decision about what
+// the JSON schema is to be has to be made explicitly. A mapping written field
+// by field would instead leave the new field out in silence.
 func toInteropItemTax(item ItemTax) interopItemTax {
 	return interopItemTax(item)
 }

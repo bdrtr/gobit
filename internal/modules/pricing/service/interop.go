@@ -11,25 +11,26 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/pricing/models"
 )
 
-// Bu dosya pricing'in MODÜLLER ARASI yüzeyidir (ADR 0001).
+// This file is pricing's CROSS-MODULE surface (ADR 0001).
 //
-// Buradaki imzalar YALNIZCA ilkel ve stdlib tipleri kullanır. Sebebi Go'nun
-// yapısal uyum kuralıdır: tüketici modül pricing'i import edemediği için
-// imzasında [models.PriceSet] gibi bir tipi adlandıramaz; adlandırdığı an o,
-// kendi paketinde tanımlı BAŞKA bir tip olur ve somut servis tüketicinin
-// arayüzünü karşılamaz. İlkel tiplerle yazılmış bir imza ise tüketicinin kendi
-// paketinde birebir tekrarlanabilir ve container'dan adla çözülür.
+// The signatures here use ONLY primitive and stdlib types. The reason is Go's
+// structural conformance rule: since the consuming module cannot import
+// pricing, it cannot name a type such as [models.PriceSet] in its signature; the
+// moment it names one, that becomes ANOTHER type defined in its own package and
+// the concrete service does not satisfy the consumer's interface. A signature
+// written with primitive types, on the other hand, can be repeated verbatim in
+// the consumer's own package and resolved from the container by name.
 //
-// Modül içi zengin yüzey (models tipleriyle) service.go ve calculate.go'dadır;
-// onu yalnızca pricing'in kendi API katmanı ve query sağlayıcısı çağırır.
+// The rich in-module surface (with the models types) is in service.go and
+// calculate.go; only pricing's own API layer and query provider call it.
 
-// CreateEmptyPriceSet fiyatsız bir price set oluşturur ve KİMLİĞİNİ döner.
+// CreateEmptyPriceSet creates a price set with no prices and returns ITS ID.
 //
-// product modülü bir varyant yaratırken bunu çağırır ve dönen kimliği
-// "product_variant_price_set" linkine yazar; pricing o linki hiç görmez ve
-// varyantın varlığından haberdar olmaz (Prensip 2.1/2.3).
+// The product module calls this while creating a variant and writes the returned
+// id into the "product_variant_price_set" link; pricing never sees that link and
+// is unaware that the variant exists (Principle 2.1/2.3).
 //
-// Tüketici tarafındaki karşılığı:
+// The counterpart on the consumer side:
 //
 //	type PriceSetCreator interface {
 //	    CreateEmptyPriceSet(ctx context.Context) (string, error)
@@ -42,18 +43,19 @@ func (s *Service) CreateEmptyPriceSet(ctx context.Context) (string, error) {
 	return set.ID, nil
 }
 
-// SetBasePrices bir kabın TABAN fiyatlarını para birimi -> tutar eşlemesiyle
-// topluca yazar.
+// SetBasePrices writes the BASE prices of a container in bulk from a currency ->
+// amount mapping.
 //
-// "Taban" demek listesiz ve kuralsız demektir; kampanya ve segment fiyatları bu
-// yüzeyden yazılamaz (onlar pricing'in kendi admin API'sinin işidir). Yazma
-// [Service.SetPrices] gibi YERİNE KOYMADIR: eşlemede olmayan para birimlerinin
-// fiyatları silinir.
+// "Base" means without a list and without rules; campaign and segment prices
+// cannot be written through this surface (those are the job of pricing's own
+// admin API). The write is a REPLACE like [Service.SetPrices]: the prices of
+// currencies absent from the mapping are deleted.
 //
-// Eşlemenin dolaşım sırası rastgele olduğu için para birimleri SIRALANIR; aynı
-// girdi her çağrıda aynı sırada yazılır ve hata mesajındaki indeks anlamlı olur.
+// Because a map's iteration order is random, the currencies are SORTED; the same
+// input is written in the same order on every call and the index in an error
+// message becomes meaningful.
 //
-// Tüketici tarafındaki karşılığı:
+// The counterpart on the consumer side:
 //
 //	type BasePriceWriter interface {
 //	    SetBasePrices(ctx context.Context, priceSetID string, amountsByCurrency map[string]int64) error
@@ -72,17 +74,17 @@ func (s *Service) SetBasePrices(ctx context.Context, priceSetID string, amountsB
 	return err
 }
 
-// CalculateAmount seçilen fiyatın BİRİM tutarını minor unit olarak döner.
+// CalculateAmount returns the UNIT amount of the selected price in minor units.
 //
-// Seçim kuralı [Service.CalculatePrice] ile birebir aynıdır; bu yalnızca
-// modüller arası geçebilen dar bir imzadır. Hesaplama anı "şimdi"dir: tüketici
-// modülün geçmişe dönük fiyat sorması bir rapor ihtiyacıdır ve pricing'in kendi
-// API'sinden yapılır.
+// The selection rule is exactly the same as [Service.CalculatePrice]; this is
+// merely a narrow signature that can cross module boundaries. The moment of
+// calculation is "now": a consuming module asking for a price in the past is a
+// reporting need and is served from pricing's own API.
 //
-// quantity 0 verilirse 1 kabul edilir. attributes nil olabilir; o durumda
-// kurallı fiyatlar elenir ve taban fiyat seçilir.
+// If quantity is given as 0 it is taken as 1. attributes may be nil; in that case
+// ruled prices are eliminated and the base price is selected.
 //
-// Tüketici tarafındaki karşılığı (Faz 5'te cart bunu tanımlayacaktır):
+// The counterpart on the consumer side (cart will define it in Phase 5):
 //
 //	type PriceCalculator interface {
 //	    CalculateAmount(ctx context.Context, priceSetID, currencyCode string,
@@ -105,129 +107,140 @@ func (s *Service) CalculateAmount(
 	return calculated.Amount, nil
 }
 
-// MaxCalculateItems tek bir toplu fiyat isteğinin taşıyabileceği kalem
-// sayısıdır; aşılırsa istek errors.Invalid ile REDDEDİLİR ve hiçbir kalem
-// fiyatlanmaz.
+// MaxCalculateItems is the number of items a single bulk price request may
+// carry; if it is exceeded the request is REJECTED with errors.Invalid and no
+// item is priced.
 //
-// Sınır SESSİZ DEĞİLDİR: kırpma yoktur, hata mesajı hem sınırı hem gelen kalem
-// sayısını yazar. Kırpmak, çağıranın sepetinin bir kısmını fiyatlanmamış
-// bırakıp sonucu "başarılı" göstermek olurdu.
+// The limit is NOT SILENT: there is no truncation, the error message writes both
+// the limit and the number of items that arrived. Truncating would mean leaving
+// part of the caller's cart unpriced and presenting the result as "successful".
 //
-// Değer, tek tüketicisi olan sepet hesabının kendi tavanının (workflows/cart
-// içindeki MaxLineItems, bugün 100) ON KATIDIR. İkisinin eşit olmaması
-// bilinçlidir: sepet tavanı KONMADAN ÖNCE açılmış ve o tavanın üstünde satır
-// taşıyan bir sepetin hesabı yine de yapılabilmelidir — hesabın reddedilmesi,
-// müşterinin var olan sepetini ödenemez hâle getirirdi. Aradaki boşluk o eski
-// sepetleri kapsar; 1000 satırın da üstü, tek istekte 1000 kabın fiyat
-// adayını belleğe alan bir okumadır ve orada durmak gerekir.
+// The value is TEN TIMES the ceiling of the cart total calculation, its only
+// consumer (MaxLineItems in workflows/cart, 100 today). The two not being equal
+// is deliberate: a cart opened BEFORE that ceiling was put in place, and carrying
+// more lines than it, must still be calculable — rejecting the calculation would
+// render the customer's existing cart unpayable. The gap covers those old carts;
+// above 1000 lines too, a single request is a read that pulls the price
+// candidates of 1000 containers into memory, and one has to stop there.
 //
-// # Tavan ile planın DÖNDÜĞÜ nokta aynı yer değildir
+// # The ceiling and the point where the plan TURNS are not the same place
 //
-// 1000 yasal üst sınırdır, UCUZ olanın sınırı değildir: kimlik dizisi
-// büyüdükçe planlayıcı bir yerde kısmi indeksi bırakır ve price tablosunu
-// baştan tarar. Ölçüldü (gobit_load, 58.000 fiyat satırı, aynı sorgu, ısınmış,
-// beşin en iyisi):
+// 1000 is the legal upper bound, not the bound of what is CHEAP: as the id array
+// grows the planner at some point abandons the partial index and scans the price
+// table from the start. Measured (gobit_load, 58,000 price rows, same query,
+// warmed up, best of five):
 //
-//	kimlik sayısı   plan                 süre
-//	          280   Bitmap Index Scan   0,73 ms
-//	          300   Seq Scan on price   4,69 ms
-//	        1 000   Seq Scan on price   5,30 ms
+//	id count   plan                time
+//	     280   Bitmap Index Scan   0.73 ms
+//	     300   Seq Scan on price   4.69 ms
+//	   1,000   Seq Scan on price   5.30 ms
 //
-// Dönüş 280 ile 300 arasındadır, yani tavanın ÜÇ KAT altında. Bugün erişilemez
-// (satır açan tek yol sepetin kendi 100'lük tavanına tabidir) ve düzeltilecek
-// bir şey de değildir: taramaya düşen tek sorgu, aynı kapları tek tek sormanın
-// (300 × ~0,1 ms) yine çok altındadır. Buraya yazılmasının sebebi tavanı
-// büyütecek olanın BEKLENTİSİDİR — 1000'e kadar maliyet doğrusal değildir ve
-// tavanı büyütmek bu sıçramayı görmeden yapılmamalıdır.
+// The turn lies between 280 and 300, that is THREE TIMES below the ceiling.
+// Today it is unreachable (the only path that opens a line is subject to the
+// cart's own ceiling of 100) and it is not something to be fixed either: the
+// single query that falls to a scan is still far below asking for the same
+// containers one by one (300 × ~0.1 ms). The reason it is written here is the
+// EXPECTATION of whoever raises the ceiling — the cost is not linear up to 1000,
+// and the ceiling must not be raised without seeing this jump.
 const MaxCalculateItems = 1_000
 
-// calculateAmountsRequest toplu fiyat isteğinin gövdesidir.
+// calculateAmountsRequest is the body of the bulk price request.
 //
-// Para birimi ve kural bağlamı kalem BAŞINA değil istek başına taşınır: bir
-// sepetin tüm satırları aynı para biriminde ve aynı bölgededir, alanı kalem
-// başına tekrarlamak iki satırın farklı bağlamla fiyatlanabildiği izlenimi
-// verirdi.
+// The currency and the rule context are carried PER REQUEST rather than PER
+// ITEM: all the lines of one cart are in the same currency and the same region,
+// and repeating the field per item would give the impression that two lines
+// could be priced with different contexts.
 type calculateAmountsRequest struct {
-	// CurrencyCode istenen para birimidir (ISO 4217); zorunludur.
+	// CurrencyCode is the requested currency (ISO 4217); it is required.
 	CurrencyCode string `json:"currency_code"`
-	// Attributes kural bağlamıdır (örn. {"region_id": "reg_1"}); boş olabilir.
+	// Attributes is the rule context (e.g. {"region_id": "reg_1"}); it may be empty.
 	Attributes map[string]string `json:"attributes"`
-	// Items fiyatlanacak kalemlerdir; SIRA korunur ve yanıt aynı sıradadır.
+	// Items are the items to be priced; the ORDER is preserved and the response is
+	// in the same order.
 	Items []calculateAmountsItem `json:"items"`
 }
 
-// calculateAmountsItem toplu istekteki tek bir kalemdir.
+// calculateAmountsItem is a single item in the bulk request.
 type calculateAmountsItem struct {
-	// PriceSetID fiyatı sorulan kaptır.
+	// PriceSetID is the container whose price is asked for.
 	PriceSetID string `json:"price_set_id"`
-	// Quantity satın alınmak istenen adettir; 0 verilirse 1 kabul edilir.
+	// Quantity is the quantity to be purchased; if 0 is given it is taken as 1.
 	Quantity int32 `json:"quantity"`
 }
 
-// calculateAmountsResponse toplu fiyat yanıtının gövdesidir.
+// calculateAmountsResponse is the body of the bulk price response.
 type calculateAmountsResponse struct {
-	// Items istekteki kalemlerle AYNI SIRADA ve AYNI UZUNLUKTA sonuçlardır.
+	// Items are the results, IN THE SAME ORDER and OF THE SAME LENGTH as the items
+	// in the request.
 	Items []calculatedAmount `json:"items"`
 }
 
-// calculatedAmount tek bir kalemin sonucudur.
+// calculatedAmount is the result of a single item.
 type calculatedAmount struct {
-	// Amount seçilen fiyatın birim tutarıdır (minor unit); Priced false ise
-	// anlamsızdır ve sıfırdır.
+	// Amount is the unit amount of the selected price (minor unit); if Priced is
+	// false it is meaningless and zero.
 	Amount int64 `json:"amount"`
-	// Priced kalem için geçerli bir fiyat BULUNUP bulunmadığını bildirir.
+	// Priced reports whether a valid price WAS FOUND for the item.
 	//
-	// Ayrı bir bayrak ŞARTTIR: sıfır GEÇERLİ bir fiyattır (price tablosunun
-	// kısıtı amount >= 0'dır ve bedava kalem gerçek bir senaryodur), dolayısıyla
-	// "tutar 0" ile "fiyat yok" tutarın kendisinden ayırt edilemez. Bayrak
-	// olmasaydı fiyatı olmayan bir varyant sepete BEDAVA girerdi.
+	// A separate flag is A MUST: zero is a VALID price (the price table's
+	// constraint is amount >= 0 and a free item is a real scenario), and therefore
+	// "amount 0" cannot be told apart from "no price" by the amount itself. Without
+	// the flag a variant with no price would enter the cart FOR FREE.
 	Priced bool `json:"priced"`
 }
 
-// CalculateAmountsJSON birden çok kabın birim tutarını TEK turda döner.
+// CalculateAmountsJSON returns the unit amounts of several containers in a
+// SINGLE round.
 //
-// [Service.CalculateAmount] tek kap içindir ve kap başına iki sorgu açar (fiyat
-// adayları + kuralları). Bu metot aynı işi kap sayısından BAĞIMSIZ olarak iki
-// sorguda yapar; toplu okumanın kendisi zaten vardı ([Repository] üzerindeki
-// ListPriceCandidatesBySets) ve buraya kadar taşınmamıştı.
+// [Service.CalculateAmount] is for a single container and opens two queries per
+// container (price candidates + their rules). This method does the same work in
+// two queries INDEPENDENTLY of the number of containers; the bulk read itself
+// already existed (ListPriceCandidatesBySets on [Repository]) and had not been
+// carried this far.
 //
-// Ölçüm (gobit_load, 54.000 kap, localhost TCP, yedi turun en iyisi): 50 kap
-// için kap başına yol 4,93 ms, toplu yol 0,25 ms (20 kat); 100 kap için
-// 9,88 ms ve 0,33 ms (30 kat). Tek kapta toplu yolun bir üstünlüğü YOKTUR —
-// aday sorgusunun kendisi 500 turun medyanıyla 66 µs'ye karşı 77 µs'dir — bu
-// yüzden tekil metot kalır ve tek fiyat soran çağıran onu kullanır. Fark plan
-// farkı değildir; EXPLAIN, tek kimlikli dizide de aynı kısmi indeksin
-// (price_set_id_idx) tarandığını gösterir, dizili sorgu üstüne bir sıralama
-// adımı ekler. Elli kimlikte plan bitmap taramaya geçer ve sunucu tarafı
-// tek sorgu için 0,35 ms ölçülür; aynı elli kabın tek tek sorulması sunucuda
-// 50 × 0,17 ms eder.
+// Measurement (gobit_load, 54,000 containers, localhost TCP, best of seven
+// rounds): for 50 containers the per-container path is 4.93 ms, the bulk path
+// 0.25 ms (20 times); for 100 containers 9.88 ms and 0.33 ms (30 times). For a
+// single container the bulk path has NO advantage — the candidate query itself
+// is 66 µs against 77 µs on the median of 500 rounds — which is why the singular
+// method stays and a caller asking for a single price uses it. The difference is
+// not a plan difference; EXPLAIN shows that the same partial index
+// (price_set_id_idx) is scanned for a single-id array as well, the array query
+// adds one sort step on top. At fifty ids the plan switches to a bitmap scan and
+// the server side is measured at 0.35 ms for the single query; asking the same
+// fifty containers one by one costs 50 × 0.17 ms on the server.
 //
-// # Seçim kuralı AYNIDIR
+// # The selection rule is THE SAME
 //
-// Kazanan fiyatı yine [selectPrice] seçer — aynı saf fonksiyon, aynı eleme ve
-// sıralama ölçütleri. İki yolun gördüğü aday satırları da aynıdır: iki SQL
-// sorgusu aynı sütunları, aynı LEFT JOIN'i ve aynı deleted_at koşulunu taşır,
-// toplu olan yalnızca kap kimliğini ANY(...) ile arar. Kap içi sıra da aynıdır
-// (p.id) ama sonuç zaten sıradan bağımsızdır: [better] son ölçüt olarak fiyat
-// KİMLİĞİNE bakar ve kimlik birincil anahtardır, yani sıralama tamdır.
+// The winning price is again chosen by [selectPrice] — the same pure function,
+// the same elimination and ordering criteria. The candidate rows the two paths
+// see are the same too: the two SQL queries carry the same columns, the same
+// LEFT JOIN and the same deleted_at condition, the bulk one merely looks the
+// container id up with ANY(...). The order within a container is the same as
+// well (p.id), but the result is independent of order anyway: [better] looks at
+// the price ID as its last criterion and the id is the primary key, that is, the
+// ordering is total.
 //
-// Tek fark saatin KAÇ KEZ okunduğudur: kap başına yolda her çağrı kendi anını
-// alır, burada tüm kalemler TEK an ile değerlendirilir. Fark toplu yolun
-// LEHİNEDİR — tam o sırada biten bir kampanya, aynı sepetin iki satırını farklı
-// dünyalardan fiyatlayamaz.
+// The only difference is HOW MANY TIMES the clock is read: on the per-container
+// path every call takes its own moment, here all the items are evaluated with a
+// SINGLE moment. The difference is IN FAVOR of the bulk path — a campaign ending
+// at exactly that instant cannot price two lines of the same cart from different
+// worlds.
 //
-// # Fiyatı olmayan kalem HATA DEĞİLDİR
+// # An item with no price is NOT AN ERROR
 //
-// Kap için geçerli fiyat yoksa o kalem Priced=false ile döner ve istek başarılı
-// sayılır. Tekil metot bu durumda errors.NotFound döner; ayrım bilinçlidir,
-// çünkü tek bir fiyatsız satır yüzünden tüm sepetin fiyatını atmak, çağıranın
-// hangi satırın sorunlu olduğunu öğrenmek için kalem başına yola dönmesi
-// demek olurdu. Hangi satırın reddedileceğine çağıran karar verir.
+// If there is no valid price for the container, that item is returned with
+// Priced=false and the request counts as successful. The singular method returns
+// errors.NotFound in this situation; the distinction is deliberate, because
+// throwing away the price of the whole cart over a single priceless line would
+// mean the caller going back to the per-item path in order to learn which line
+// was the problem. The caller decides which line to reject.
 //
-// Bu yüzden kabın HİÇ OLMADIĞI durum da ayrıca sorulmaz (tekil yol boş aday
-// görünce [Repository] üzerinden GetPriceSet ile "kap yok" ile "kap boş"u
-// ayırır): iki durum da "bu kalemin fiyatı yok"tur ve ikisi de aynı bayrağa
-// düşer.
+// This is also why the case where the container DOES NOT EXIST AT ALL is not
+// asked separately (the singular path, on seeing empty candidates, tells "no
+// container" apart from "empty container" with GetPriceSet through
+// [Repository]): both situations are "this item has no price" and both fall to
+// the same flag.
 func (s *Service) CalculateAmountsJSON(ctx context.Context, request json.RawMessage) (json.RawMessage, error) {
 	if err := s.ready(); err != nil {
 		return nil, err
@@ -252,11 +265,11 @@ func (s *Service) CalculateAmountsJSON(ctx context.Context, request json.RawMess
 		}
 		quantity, err := normalizeQuantity(item.Quantity)
 		if err != nil {
-			// Sınıf ve KOD korunur; eklenen tek şey hangi kalemin
-			// reddedildiğidir. Kodu yeniden yazmak, çağıranın adet
-			// doğrulamasına göre dallanmasını bozardı.
+			// The kind and the CODE are preserved; the only thing added is
+			// which item was rejected. Rewriting the code would break the
+			// caller's branching on quantity validation.
 			return nil, errors.Wrap(err, errors.KindOf(err), errors.CodeOf(err),
-				"%s reddedildi", itemLabel(i))
+				"%s was rejected", itemLabel(i))
 		}
 		quantities[i] = quantity
 
@@ -271,8 +284,8 @@ func (s *Service) CalculateAmountsJSON(ctx context.Context, request json.RawMess
 		return nil, err
 	}
 
-	// Saat BİR KEZ okunur; gerekçe godoc'taki "Seçim kuralı AYNIDIR"
-	// başlığındadır.
+	// The clock is read ONCE; the rationale is under the "The selection rule is
+	// THE SAME" heading in the godoc.
 	at := s.clock()
 
 	out := calculateAmountsResponse{Items: make([]calculatedAmount, 0, len(req.Items))}
@@ -289,35 +302,36 @@ func (s *Service) CalculateAmountsJSON(ctx context.Context, request json.RawMess
 	payload, err := json.Marshal(out)
 	if err != nil {
 		return nil, errors.Wrap(err, errors.KindInternal, CodeInvalidInput,
-			"toplu fiyat yanıtı JSON'a çevrilemedi")
+			"the bulk price response could not be converted to JSON")
 	}
 	return payload, nil
 }
 
-// decodeCalculateAmounts toplu istek gövdesini çözer ve BOYUNU denetler.
+// decodeCalculateAmounts decodes the bulk request body and checks ITS SIZE.
 func decodeCalculateAmounts(request json.RawMessage) (calculateAmountsRequest, error) {
 	if len(request) == 0 {
 		return calculateAmountsRequest{}, errors.Invalid(CodeInvalidInput,
-			"toplu fiyat isteği boş olamaz")
+			"the bulk price request cannot be empty")
 	}
 
 	var req calculateAmountsRequest
 	if err := json.Unmarshal(request, &req); err != nil {
 		return calculateAmountsRequest{}, errors.Wrap(err, errors.KindInvalid, CodeInvalidInput,
-			"toplu fiyat isteği çözülemedi")
+			"the bulk price request could not be decoded")
 	}
 	if len(req.Items) > MaxCalculateItems {
 		return calculateAmountsRequest{}, errors.Invalid(CodeInvalidInput,
-			"toplu fiyat isteği en fazla %d kalem taşıyabilir, %d verildi",
+			"a bulk price request can carry at most %d items, %d given",
 			MaxCalculateItems, len(req.Items))
 	}
 	return req, nil
 }
 
-// itemLabel toplu istekteki bir kalemin hata mesajlarındaki adıdır.
+// itemLabel is the name of an item in the bulk request as it appears in error
+// messages.
 //
-// İndeks yazılır çünkü toplu istekte kalemi ayırt eden başka bir şey yoktur:
-// aynı kap iki kez, farklı adetlerle sorulabilir.
+// The index is written because nothing else tells items apart in a bulk request:
+// the same container may be asked for twice, with different quantities.
 func itemLabel(index int) string {
-	return "toplu fiyat isteğinin " + strconv.Itoa(index) + ". kalemi"
+	return "item " + strconv.Itoa(index) + " of the batch price request"
 }

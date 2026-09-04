@@ -1,19 +1,20 @@
 package models
 
-// CollectionFilter ödeme koleksiyonu listelemesinin süzgeç ve sayfalama
-// parametreleridir.
+// CollectionFilter holds the filter and pagination parameters of a payment
+// collection listing.
 //
-// İşaretçi alanlar "verilmedi" ile "boş verildi" ayrımını korur: nil bir
-// Reference süzgeç uygulanmadığı, boş dizeye işaret eden bir Reference ise
-// referansı boş olan kayıtların istendiği anlamına gelir. Değer tipi
-// kullanılsaydı ikisi ayırt edilemezdi.
+// The pointer fields preserve the distinction between "not given" and "given
+// empty": a nil Reference means the filter is not applied, while a Reference
+// pointing at the empty string means the records whose reference is empty are
+// the ones being asked for. With a value type the two could not be told apart.
 type CollectionFilter struct {
-	// Reference verilirse yalnızca o referansa sahip koleksiyonlar döner.
+	// Reference, when given, returns only the collections carrying that
+	// reference.
 	Reference *string
-	// Status verilirse yalnızca o durumdaki koleksiyonlar döner.
+	// Status, when given, returns only the collections in that status.
 	Status *string
-	// Limit döndürülecek azami satır sayısıdır.
+	// Limit is the maximum number of rows to return.
 	Limit int64
-	// Offset atlanacak satır sayısıdır.
+	// Offset is the number of rows to skip.
 	Offset int64
 }

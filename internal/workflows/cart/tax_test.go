@@ -270,7 +270,7 @@ func TestCalculateTotalsBozukVergiSonucuReddedilir(t *testing.T) {
 // Internal'a çevrilmediğini doğrular.
 func TestCalculateTotalsVergiHatasiSinifiKorunur(t *testing.T) {
 	h := newModulHarness(t)
-	h.taxes.err = errors.Unavailable("tax_unconfigured", "tax servisi kurulmamış")
+	h.taxes.err = errors.Unavailable("tax_unconfigured", "the tax service is not configured")
 	serveSnapshot(h.carts, ikiSatirliSepet(1))
 
 	_, err := h.wf.CalculateTotals(context.Background(), testCartID)

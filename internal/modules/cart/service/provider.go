@@ -10,47 +10,50 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/cart/models"
 )
 
-// Query sağlayıcısının sunduğu alan adları.
+// The field names offered by the Query provider.
 const (
-	// FieldID kaydın kimliğidir; Query birleştirmeyi bu alan üzerinden yapar.
+	// FieldID is the record's identifier; Query does the joining over this
+	// field.
 	FieldID = query.IDField
-	// FieldRegionID sepetin bölgesidir.
+	// FieldRegionID is the cart's region.
 	FieldRegionID = "region_id"
-	// FieldCustomerID sepetin müşterisidir; misafir sepetinde boştur.
+	// FieldCustomerID is the cart's customer; it is empty on a guest cart.
 	FieldCustomerID = "customer_id"
-	// FieldEmail sepetin iletişim adresidir.
+	// FieldEmail is the cart's contact address.
 	FieldEmail = "email"
-	// FieldCurrencyCode sepetin para birimidir.
+	// FieldCurrencyCode is the cart's currency.
 	FieldCurrencyCode = "currency_code"
-	// FieldSubtotal satır ara toplamlarının toplamıdır (minor unit).
+	// FieldSubtotal is the sum of the line subtotals (minor unit).
 	FieldSubtotal = "subtotal"
-	// FieldDiscountTotal toplam indirimdir (minor unit).
+	// FieldDiscountTotal is the total discount (minor unit).
 	FieldDiscountTotal = "discount_total"
-	// FieldTaxTotal toplam vergidir (minor unit).
+	// FieldTaxTotal is the total tax (minor unit).
 	FieldTaxTotal = "tax_total"
-	// FieldShippingTotal toplam kargo tutarıdır (minor unit).
+	// FieldShippingTotal is the total shipping amount (minor unit).
 	FieldShippingTotal = "shipping_total"
-	// FieldTotal ödenecek tutardır (minor unit).
+	// FieldTotal is the amount payable (minor unit).
 	FieldTotal = "total"
-	// FieldTotalsStale toplamların sepetin güncel şekline ait OLMADIĞINI
-	// bildirir. Alan türetilmiştir; sepetin bayat bir tutarı doğru sanılmasın
-	// diye toplamlarla BİRLİKTE sunulur.
+	// FieldTotalsStale reports that the totals DO NOT belong to the current
+	// shape of the cart. The field is derived; it is offered TOGETHER WITH the
+	// totals so that a stale amount on the cart is not taken for a correct one.
 	FieldTotalsStale = "totals_stale"
-	// FieldCompleted sepetin tamamlanmış olup olmadığını bildirir.
+	// FieldCompleted reports whether the cart is completed.
 	FieldCompleted = "completed"
-	// FieldCompletedAt sepetin tamamlandığı andır; tamamlanmamışsa nil.
+	// FieldCompletedAt is the moment the cart was completed; nil if it is not
+	// completed.
 	FieldCompletedAt = "completed_at"
-	// FieldCreatedAt oluşturulma zamanıdır.
+	// FieldCreatedAt is the creation time.
 	FieldCreatedAt = "created_at"
-	// FieldUpdatedAt son güncellenme zamanıdır.
+	// FieldUpdatedAt is the time of the last update.
 	FieldUpdatedAt = "updated_at"
 )
 
-// cartFieldGetters sunulan alanların çıkarıcılarıdır.
+// cartFieldGetters are the extractors of the offered fields.
 //
-// Alan kümesinin tek bir yerde tanımlı olması, doğrulama ile üretimin
-// ayrışmasını imkânsız kılar: burada olmayan bir alan istenirse errors.Invalid
-// döner (ADR 0004), burada olan her alan da üretilebilir.
+// The field set being defined in a single place makes it impossible for the
+// validation and the production to diverge: if a field that is not here is
+// requested, errors.Invalid is returned (ADR 0004), and every field that is here
+// can also be produced.
 var cartFieldGetters = map[string]func(cart models.Cart) any{
 	FieldID:            func(c models.Cart) any { return c.ID },
 	FieldRegionID:      func(c models.Cart) any { return c.RegionID },
@@ -74,38 +77,38 @@ var cartFieldGetters = map[string]func(cart models.Cart) any{
 	FieldUpdatedAt: func(c models.Cart) any { return c.UpdatedAt },
 }
 
-// QueryProvider cart modülünün Query katmanına açtığı okuma yüzeyidir.
+// QueryProvider is the read surface the cart module opens to the Query layer.
 //
-// Container'a "cart.query" adıyla kaydedilir; Query onu ADLA çözer (ADR 0004).
-// Sağlayıcı SATIRLARI SUNMAZ: bir sepetin satırları sayfalanmayan, sepet başına
-// değişken uzunlukta bir kümedir ve Record içine gömülmeleri Query'nin
-// birleştirme anahtarı sözleşmesine (tek "id" alanı) uymazdı. Satırlar
-// [Service.GetCart] ile okunur.
+// It is registered in the container under the name "cart.query"; Query resolves
+// it BY NAME (ADR 0004). The provider DOES NOT OFFER THE LINES: a cart's lines
+// are an unpaginated set of variable length per cart, and embedding them into a
+// Record would not obey Query's join key contract (a single "id" field). The
+// lines are read with [Service.GetCart].
 type QueryProvider struct {
 	svc *Service
 }
 
-// QueryProvider'ın çekirdek sözleşmesini karşıladığı derleme zamanında
-// doğrulanır; imza kayması çalışma zamanına kalmaz.
+// That QueryProvider satisfies the core contract is verified at compile time;
+// a signature drift does not survive to runtime.
 var _ query.Provider = (*QueryProvider)(nil)
 
-// NewQueryProvider verilen servis üzerinde çalışan bir sağlayıcı üretir.
+// NewQueryProvider produces a provider that works over the given service.
 func NewQueryProvider(svc *Service) *QueryProvider {
 	return &QueryProvider{svc: svc}
 }
 
-// Entity sağlayıcının sunduğu entity adını döner.
+// Entity returns the entity name the provider offers.
 func (p *QueryProvider) Entity() string {
 	return EntityName
 }
 
-// List kök kayıtları döner.
+// List returns the root records.
 //
-// Desteklenen filtreler: "customer_id" (string), "region_id" (string) ve
-// "completed" (bool). Başka bir filtre ya da tanınmayan bir alan
-// errors.Invalid ile reddedilir (ADR 0004).
+// The supported filters: "customer_id" (string), "region_id" (string) and
+// "completed" (bool). Any other filter or an unrecognized field is rejected with
+// errors.Invalid (ADR 0004).
 //
-// Limit [MaxLimit]'e KIRPILIR; bkz. [providerLimit].
+// The limit is CLAMPED to [MaxLimit]; see [providerLimit].
 func (p *QueryProvider) List(ctx context.Context, opts query.ListOptions) ([]query.Record, error) {
 	if err := validateFields(opts.Fields); err != nil {
 		return nil, err
@@ -114,8 +117,9 @@ func (p *QueryProvider) List(ctx context.Context, opts query.ListOptions) ([]que
 	in := ListCartsInput{
 		Page: Page{Limit: providerLimit(opts.Limit), Offset: int64(opts.Offset)},
 	}
-	// Filtreler ADA GÖRE SIRALI gezilir: harita sırası rastgeledir ve birden
-	// çok filtre birden geçersizse hangi hatanın döneceği rastgele olurdu.
+	// The filters are walked SORTED BY NAME: map order is random, and if more
+	// than one filter were invalid at once, which error would be returned would
+	// be random too.
 	for _, name := range slices.Sorted(maps.Keys(opts.Filters)) {
 		value := opts.Filters[name]
 		switch name {
@@ -123,26 +127,26 @@ func (p *QueryProvider) List(ctx context.Context, opts query.ListOptions) ([]que
 			id, ok := value.(string)
 			if !ok {
 				return nil, errors.Invalid(CodeInvalidInput,
-					"%q filtresi metin olmalı, %T verildi", name, value)
+					"the %q filter must be text, %T given", name, value)
 			}
 			in.CustomerID = &id
 		case FieldRegionID:
 			id, ok := value.(string)
 			if !ok {
 				return nil, errors.Invalid(CodeInvalidInput,
-					"%q filtresi metin olmalı, %T verildi", name, value)
+					"the %q filter must be text, %T given", name, value)
 			}
 			in.RegionID = &id
 		case FieldCompleted:
 			flag, ok := value.(bool)
 			if !ok {
 				return nil, errors.Invalid(CodeInvalidInput,
-					"%q filtresi mantıksal (bool) olmalı, %T verildi", name, value)
+					"the %q filter must be boolean (bool), %T given", name, value)
 			}
 			in.Completed = &flag
 		default:
 			return nil, errors.Invalid(CodeInvalidInput,
-				"%q entity'si %q filtresini desteklemiyor", EntityName, name)
+				"the %q entity does not support the %q filter", EntityName, name)
 		}
 	}
 
@@ -153,8 +157,9 @@ func (p *QueryProvider) List(ctx context.Context, opts query.ListOptions) ([]que
 	return records(carts, opts.Fields), nil
 }
 
-// FetchByIDs verilen kimliklerin kayıtlarını BATCH olarak döner.
-// Bulunamayan kimlik için kayıt dönmez; bu bir hata değildir.
+// FetchByIDs returns the records of the given identifiers as a BATCH.
+// No record is returned for an identifier that is not found; that is not an
+// error.
 func (p *QueryProvider) FetchByIDs(ctx context.Context, ids, fields []string) ([]query.Record, error) {
 	if err := validateFields(fields); err != nil {
 		return nil, err
@@ -170,7 +175,7 @@ func (p *QueryProvider) FetchByIDs(ctx context.Context, ids, fields []string) ([
 	return records(carts, fields), nil
 }
 
-// records sepetleri istenen alanlarla kayda çevirir.
+// records converts the carts into records with the requested fields.
 func records(carts []models.Cart, fields []string) []query.Record {
 	selected := fields
 	if len(selected) == 0 {
@@ -178,8 +183,8 @@ func records(carts []models.Cart, fields []string) []query.Record {
 	}
 
 	out := make([]query.Record, 0, len(carts))
-	// Döngü indeksle gezilir: sepet yapısı büyüktür ve değerle kopyalamak her
-	// tur birkaç yüz baytı boşuna taşır.
+	// The loop is walked by index: the cart struct is large and copying it by
+	// value would carry a few hundred bytes for nothing on every turn.
 	for i := range carts {
 		record := make(query.Record, len(selected))
 		for _, name := range selected {
@@ -190,15 +195,16 @@ func records(carts []models.Cart, fields []string) []query.Record {
 	return out
 }
 
-// providerLimit çekirdeğin limit değerini sağlayıcının sayfa tavanına kırpar.
+// providerLimit clamps the core's limit value to the provider's page ceiling.
 //
-// Çekirdek sözleşmesinde ([query.ListOptions]) 0 "SINIRSIZ" demektir; bu
-// sağlayıcı sınırsız listeleme sunmaz, çünkü sınırsız bir kök sorgu tüm sepet
-// tablosunu belleğe alırdı. Sınırsız istek bu yüzden [MaxLimit]'e çevrilir —
-// [DefaultLimit]'e DEĞİL: çağıran açıkça "hepsini istiyorum" demiştir,
-// alabileceğinin en fazlasını almalıdır. Anlamsız bir negatif değer de aynı
-// kefeye konur: bu yolda limit bir istemci girdisi değil, başka bir modülün
-// sorgu tanımından gelen bir sayıdır ve reddedilmesi tüm okumayı düşürürdü.
+// In the core contract ([query.ListOptions]) 0 means UNLIMITED; this provider
+// does not offer unlimited listing, because an unlimited root query would pull
+// the whole cart table into memory. An unlimited request is therefore turned
+// into [MaxLimit] — NOT into [DefaultLimit]: the caller has explicitly said "I
+// want all of them" and should get the most it can get. A meaningless negative
+// value is put in the same basket: on this path the limit is not a client input
+// but a number coming from another module's query definition, and rejecting it
+// would bring the whole read down.
 func providerLimit(limit int) int64 {
 	if limit <= 0 || int64(limit) > MaxLimit {
 		return MaxLimit
@@ -206,12 +212,12 @@ func providerLimit(limit int) int64 {
 	return int64(limit)
 }
 
-// validateFields istenen alanların hepsinin sunulduğunu doğrular.
+// validateFields verifies that all of the requested fields are offered.
 func validateFields(fields []string) error {
 	for _, name := range fields {
 		if _, ok := cartFieldGetters[name]; !ok {
 			return errors.Invalid(CodeInvalidInput,
-				"%q entity'si %q alanını sunmuyor", EntityName, name)
+				"the %q entity does not offer the %q field", EntityName, name)
 		}
 	}
 	return nil

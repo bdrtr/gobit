@@ -55,7 +55,7 @@ func (s *Service) GetCampaign(ctx context.Context, id string) (models.Campaign, 
 	if err := s.ready(); err != nil {
 		return models.Campaign{}, err
 	}
-	if err := requireID(id, models.CampaignIDPrefix, "kampanya kimliği"); err != nil {
+	if err := requireID(id, models.CampaignIDPrefix, "campaign id"); err != nil {
 		return models.Campaign{}, err
 	}
 	return s.repo.GetCampaign(ctx, id)
@@ -109,7 +109,7 @@ func (s *Service) UpdateCampaign(ctx context.Context, id string, in CampaignInpu
 	if err := s.ready(); err != nil {
 		return models.Campaign{}, err
 	}
-	if err := requireID(id, models.CampaignIDPrefix, "kampanya kimliği"); err != nil {
+	if err := requireID(id, models.CampaignIDPrefix, "campaign id"); err != nil {
 		return models.Campaign{}, err
 	}
 
@@ -130,7 +130,7 @@ func (s *Service) DeleteCampaign(ctx context.Context, id string) error {
 	if err := s.ready(); err != nil {
 		return err
 	}
-	if err := requireID(id, models.CampaignIDPrefix, "kampanya kimliği"); err != nil {
+	if err := requireID(id, models.CampaignIDPrefix, "campaign id"); err != nil {
 		return err
 	}
 	return s.repo.DeleteCampaign(ctx, id, s.clock())

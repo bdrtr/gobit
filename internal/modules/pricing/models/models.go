@@ -1,104 +1,109 @@
-// Package models pricing modülünün domain modellerini tanımlar.
+// Package models defines the domain models of the pricing module.
 //
-// Buradaki tipler veritabanı tiplerinden ARINDIRILMIŞTIR: pgtype bu pakete girmez,
-// dönüşüm repository sarmalayıcısında yapılır. Böylece servis ve API katmanları
-// depolama ayrıntısına bağlanmaz.
+// The types here are STRIPPED of database types: pgtype does not enter this
+// package, the conversion is done in the repository wrapper. The service and API
+// layers are therefore not bound to a storage detail.
 //
-// Para daima TAM SAYI minor unit'tir (kuruş/cent) ve para birimi ayrı alanda
-// durur (plan Bölüm 8); float hiçbir yerde kullanılmaz. Zamanlar UTC'dir.
+// Money is ALWAYS an INTEGER minor unit (cents) and the currency lives in a
+// separate field (plan Section 8); float is used nowhere. Times are UTC.
 package models
 
 import "time"
 
-// Tutar ve adet sınırları.
+// Amount and quantity limits.
 //
-// Sınırlar keyfi değildir: sepet toplamı Faz 5'te tutar × adet olarak
-// hesaplanacaktır ve bu çarpım int64'e SIĞMALIDIR. MaxAmount × MaxQuantity =
-// 10^12 × 10^6 = 10^18 < 9.22×10^18 olduğu için taşma yapısal olarak
-// imkânsızdır. Aynı sınırlar migration'daki CHECK kısıtlarında da tekrarlanır;
-// servis doğrulaması atlansa bile veritabanı ikinci kapıdır.
+// The limits are not arbitrary: in Phase 5 the cart total will be computed as
+// amount × quantity and that product MUST FIT in an int64. Because MaxAmount ×
+// MaxQuantity = 10^12 × 10^6 = 10^18 < 9.22×10^18, overflow is structurally
+// impossible. The same limits are repeated in the migration's CHECK constraints
+// as well; even if service validation is skipped, the database is the second
+// gate.
 const (
-	// MinAmount izin verilen en küçük tutardır. Negatif fiyat bir indirim
-	// değildir; indirim promotion modülünün işidir.
+	// MinAmount is the smallest permitted amount. A negative price is not a
+	// discount; discounts are the promotion module's job.
 	MinAmount int64 = 0
-	// MaxAmount izin verilen en büyük tutardır (minor unit).
+	// MaxAmount is the largest permitted amount (minor unit).
 	MaxAmount int64 = 1_000_000_000_000
-	// MinQuantity bir fiyat aralığının alt sınırının en küçük değeridir.
+	// MinQuantity is the smallest value the lower bound of a price range may take.
 	MinQuantity int32 = 1
-	// MaxQuantity bir fiyat aralığının üst sınırının en büyük değeridir.
+	// MaxQuantity is the largest value the upper bound of a price range may take.
 	MaxQuantity int32 = 1_000_000
 )
 
-// PriceSet bir varyantın fiyatlarının kabıdır.
+// PriceSet is the container of a variant's prices.
 //
-// Kap hangi varyanta ait olduğunu BİLMEZ: bağ, product modülünün bildirdiği
-// "product_variant_price_set" linkiyle kurulur ve pricing o linki hiç görmez
-// (Prensip 2.1/2.4). pricing yalnızca kabı üretir ve kimliğini döner.
+// The container does NOT KNOW which variant it belongs to: the bond is
+// established through the "product_variant_price_set" link the product module
+// declares, and pricing never sees that link (Principle 2.1/2.4). pricing only
+// produces the container and returns its id.
 type PriceSet struct {
-	// ID "pset_" önekli, zaman sıralı kimliktir.
+	// ID is the "pset_" prefixed, time-ordered id.
 	ID string
-	// CreatedAt kaydın oluşturulma anıdır (UTC).
+	// CreatedAt is the moment the record was created (UTC).
 	CreatedAt time.Time
-	// UpdatedAt kaydın son güncellenme anıdır (UTC).
+	// UpdatedAt is the moment the record was last updated (UTC).
 	UpdatedAt time.Time
-	// DeletedAt soft delete anıdır; nil ise kayıt canlıdır.
+	// DeletedAt is the soft delete moment; if nil the record is live.
 	DeletedAt *time.Time
 }
 
-// Price tek bir para birimi ve adet aralığı için geçerli tutardır.
+// Price is the amount valid for a single currency and quantity range.
 type Price struct {
-	// ID "price_" önekli kimliktir.
+	// ID is the "price_" prefixed id.
 	ID string
-	// PriceSetID fiyatın ait olduğu kabın kimliğidir.
+	// PriceSetID is the id of the container the price belongs to.
 	PriceSetID string
-	// PriceListID fiyatı bir kampanya/segment listesine bağlar; nil ise bu bir
-	// TABAN fiyattır.
+	// PriceListID binds the price to a campaign/segment list; if nil this is a
+	// BASE price.
 	PriceListID *string
-	// CurrencyCode ISO 4217 para birimi kodudur; daima BÜYÜK harf saklanır.
+	// CurrencyCode is the ISO 4217 currency code; it is always stored UPPERCASE.
 	CurrencyCode string
-	// Amount minor unit cinsinden tutardır (kuruş/cent).
+	// Amount is the amount in minor units (cents).
 	Amount int64
-	// MinQuantity fiyatın geçerli olduğu en küçük adettir (en az 1).
+	// MinQuantity is the smallest quantity the price is valid for (at least 1).
 	MinQuantity int32
-	// MaxQuantity fiyatın geçerli olduğu en büyük adettir; nil ise üst sınır yoktur.
+	// MaxQuantity is the largest quantity the price is valid for; if nil there is
+	// no upper bound.
 	MaxQuantity *int32
-	// Rules fiyatın geçerlilik koşullarıdır; boşsa fiyat koşulsuzdur.
+	// Rules are the price's validity conditions; if empty the price is
+	// unconditional.
 	Rules []PriceRule
-	// CreatedAt kaydın oluşturulma anıdır (UTC).
+	// CreatedAt is the moment the record was created (UTC).
 	CreatedAt time.Time
-	// UpdatedAt kaydın son güncellenme anıdır (UTC).
+	// UpdatedAt is the moment the record was last updated (UTC).
 	UpdatedAt time.Time
 }
 
-// RuleOperator bir fiyat kuralının karşılaştırma işlecidir.
+// RuleOperator is the comparison operator of a price rule.
 type RuleOperator string
 
-// Desteklenen işleçler.
+// Supported operators.
 //
-// eq/ne/in/nin DİZGE karşılaştırmasıdır; gt/gte/lt/lte ise iki tarafı da tam
-// sayıya çevirip SAYISAL karşılaştırır (örn. "customer_age" > "18"). Sayıya
-// çevrilemeyen bir bağlam değeri kuralı EŞLEŞMEZ yapar, hata üretmez: bağlam
-// dışarıdan gelir ve tek bir bozuk alan tüm fiyat hesabını düşürmemelidir.
+// eq/ne/in/nin are STRING comparisons; gt/gte/lt/lte convert both sides to
+// integers and compare NUMERICALLY (e.g. "customer_age" > "18"). A context value
+// that cannot be converted to a number makes the rule NOT MATCH, it does not
+// produce an error: the context comes from outside and a single broken field
+// must not bring down the whole price calculation.
 const (
-	// OpEq değerin kuralın tek değerine eşit olmasını ister.
+	// OpEq requires the value to equal the rule's single value.
 	OpEq RuleOperator = "eq"
-	// OpNe değerin kuralın tek değerinden farklı olmasını ister.
+	// OpNe requires the value to differ from the rule's single value.
 	OpNe RuleOperator = "ne"
-	// OpIn değerin kural kümesinde bulunmasını ister.
+	// OpIn requires the value to be present in the rule's set.
 	OpIn RuleOperator = "in"
-	// OpNin değerin kural kümesinde BULUNMAMASINI ister.
+	// OpNin requires the value to be ABSENT from the rule's set.
 	OpNin RuleOperator = "nin"
-	// OpGt sayısal olarak büyüklük ister.
+	// OpGt requires numeric greater-than.
 	OpGt RuleOperator = "gt"
-	// OpGte sayısal olarak büyük veya eşitlik ister.
+	// OpGte requires numeric greater-than-or-equal.
 	OpGte RuleOperator = "gte"
-	// OpLt sayısal olarak küçüklük ister.
+	// OpLt requires numeric less-than.
 	OpLt RuleOperator = "lt"
-	// OpLte sayısal olarak küçük veya eşitlik ister.
+	// OpLte requires numeric less-than-or-equal.
 	OpLte RuleOperator = "lte"
 )
 
-// Valid işlecin tanımlı olup olmadığını bildirir.
+// Valid reports whether the operator is defined.
 func (o RuleOperator) Valid() bool {
 	switch o {
 	case OpEq, OpNe, OpIn, OpNin, OpGt, OpGte, OpLt, OpLte:
@@ -108,7 +113,7 @@ func (o RuleOperator) Valid() bool {
 	}
 }
 
-// Numeric işlecin sayısal karşılaştırma yapıp yapmadığını bildirir.
+// Numeric reports whether the operator performs a numeric comparison.
 func (o RuleOperator) Numeric() bool {
 	switch o {
 	case OpGt, OpGte, OpLt, OpLte:
@@ -120,53 +125,54 @@ func (o RuleOperator) Numeric() bool {
 	}
 }
 
-// MultiValue işlecin birden çok değer alıp alamayacağını bildirir.
-// Diğer tüm işleçler TEK değer ister.
+// MultiValue reports whether the operator can take more than one value.
+// Every other operator requires a SINGLE value.
 func (o RuleOperator) MultiValue() bool {
 	return o == OpIn || o == OpNin
 }
 
-// PriceRule bir fiyatın hangi koşulda geçerli olduğunu belirten kuraldır.
+// PriceRule is the rule stating under which condition a price is valid.
 //
-// Örnek: {Attribute: "region_id", Operator: OpEq, Values: []string{"reg_1"}}.
+// Example: {Attribute: "region_id", Operator: OpEq, Values: []string{"reg_1"}}.
 type PriceRule struct {
-	// ID "prule_" önekli kimliktir.
+	// ID is the "prule_" prefixed id.
 	ID string
-	// PriceID kuralın bağlı olduğu fiyattır.
+	// PriceID is the price the rule is attached to.
 	PriceID string
-	// Attribute hesaplama bağlamında bakılacak alan adıdır.
+	// Attribute is the name of the field to look at in the calculation context.
 	Attribute string
-	// Operator karşılaştırma işlecidir.
+	// Operator is the comparison operator.
 	Operator RuleOperator
-	// Values karşılaştırmanın sağ tarafıdır; en az bir eleman içerir.
+	// Values is the right-hand side of the comparison; it holds at least one
+	// element.
 	Values []string
-	// CreatedAt kaydın oluşturulma anıdır (UTC).
+	// CreatedAt is the moment the record was created (UTC).
 	CreatedAt time.Time
-	// UpdatedAt kaydın son güncellenme anıdır (UTC).
+	// UpdatedAt is the moment the record was last updated (UTC).
 	UpdatedAt time.Time
 }
 
-// PriceListType bir fiyat listesinin türüdür.
+// PriceListType is the type of a price list.
 type PriceListType string
 
-// Fiyat listesi türleri.
+// Price list types.
 const (
-	// PriceListSale kampanya (indirim) listesidir.
+	// PriceListSale is the campaign (discount) list.
 	PriceListSale PriceListType = "sale"
-	// PriceListOverride taban fiyatın yerine geçen listedir; sözleşmeli/B2B
-	// fiyatlandırma bu türdendir ve kampanyayı da ezer.
+	// PriceListOverride is the list that takes the place of the base price;
+	// contractual/B2B pricing is of this type and it overrides the campaign too.
 	PriceListOverride PriceListType = "override"
 )
 
-// Valid türün tanımlı olup olmadığını bildirir.
+// Valid reports whether the type is defined.
 func (t PriceListType) Valid() bool {
 	return t == PriceListSale || t == PriceListOverride
 }
 
-// Priority türün seçim önceliğidir; büyük değer önce gelir.
+// Priority is the selection priority of the type; the larger value comes first.
 //
-// Taban fiyatın (listesiz) önceliği 0'dır; bu yüzden sıfır değer TABAN anlamına
-// gelir ve tanımsız bir tür kazara kampanyanın önüne geçemez.
+// The base price (with no list) has priority 0; the zero value therefore means
+// BASE and an undefined type cannot accidentally get ahead of a campaign.
 func (t PriceListType) Priority() int {
 	switch t {
 	case PriceListOverride:
@@ -178,68 +184,74 @@ func (t PriceListType) Priority() int {
 	}
 }
 
-// PriceListStatus bir fiyat listesinin durumudur.
+// PriceListStatus is the status of a price list.
 type PriceListStatus string
 
-// Fiyat listesi durumları.
+// Price list statuses.
 const (
-	// PriceListDraft henüz yayına alınmamış listedir; fiyatları hesaba KATILMAZ.
+	// PriceListDraft is a list not yet published; its prices are NOT INCLUDED in
+	// the calculation.
 	PriceListDraft PriceListStatus = "draft"
-	// PriceListActive yayındaki listedir.
+	// PriceListActive is the published list.
 	PriceListActive PriceListStatus = "active"
-	// PriceListExpired elle sonlandırılmış listedir; fiyatları hesaba KATILMAZ.
+	// PriceListExpired is a list ended by hand; its prices are NOT INCLUDED in
+	// the calculation.
 	PriceListExpired PriceListStatus = "expired"
 )
 
-// Valid durumun tanımlı olup olmadığını bildirir.
+// Valid reports whether the status is defined.
 func (s PriceListStatus) Valid() bool {
 	return s == PriceListDraft || s == PriceListActive || s == PriceListExpired
 }
 
-// PriceList kampanya/segment fiyat listesidir.
+// PriceList is the campaign/segment price list.
 type PriceList struct {
-	// ID "plist_" önekli kimliktir.
+	// ID is the "plist_" prefixed id.
 	ID string
-	// Title listenin görünen adıdır; boş olamaz.
+	// Title is the list's display name; it cannot be empty.
 	Title string
-	// Description isteğe bağlı açıklamadır.
+	// Description is the optional description.
 	Description string
-	// Type listenin türüdür (sale | override).
+	// Type is the list's type (sale | override).
 	Type PriceListType
-	// Status listenin durumudur (draft | active | expired).
+	// Status is the list's status (draft | active | expired).
 	Status PriceListStatus
-	// StartsAt geçerlilik penceresinin başıdır; nil ise alt sınır yoktur.
+	// StartsAt is the start of the validity window; if nil there is no lower
+	// bound.
 	StartsAt *time.Time
-	// EndsAt geçerlilik penceresinin sonudur; nil ise üst sınır yoktur.
+	// EndsAt is the end of the validity window; if nil there is no upper bound.
 	EndsAt *time.Time
-	// CreatedAt kaydın oluşturulma anıdır (UTC).
+	// CreatedAt is the moment the record was created (UTC).
 	CreatedAt time.Time
-	// UpdatedAt kaydın son güncellenme anıdır (UTC).
+	// UpdatedAt is the moment the record was last updated (UTC).
 	UpdatedAt time.Time
 }
 
-// PriceListInfo bir fiyata bağlı listenin hesaplamada kullanılan üstverisidir.
+// PriceListInfo is the metadata of the list bound to a price, as used in the
+// calculation.
 //
-// Tam [PriceList] yerine bu dar görünüm taşınır: hesaplama başlık ve açıklamayı
-// kullanmaz, taşımak da onları hesabın girdisi gibi gösterirdi.
+// This narrow view is carried instead of the full [PriceList]: the calculation
+// does not use the title and the description, and carrying them would make them
+// look like inputs of the calculation.
 type PriceListInfo struct {
-	// ID listenin kimliğidir.
+	// ID is the list's id.
 	ID string
-	// Type listenin türüdür.
+	// Type is the list's type.
 	Type PriceListType
-	// Status listenin durumudur.
+	// Status is the list's status.
 	Status PriceListStatus
-	// StartsAt geçerlilik penceresinin başıdır; nil ise alt sınır yoktur.
+	// StartsAt is the start of the validity window; if nil there is no lower
+	// bound.
 	StartsAt *time.Time
-	// EndsAt geçerlilik penceresinin sonudur; nil ise üst sınır yoktur.
+	// EndsAt is the end of the validity window; if nil there is no upper bound.
 	EndsAt *time.Time
 }
 
-// Usable listenin verilen anda fiyat sunmaya uygun olup olmadığını bildirir.
+// Usable reports whether the list is fit to offer a price at the given moment.
 //
-// Uygunluk iki koşulun BİRLİKTE sağlanmasıdır: durum active olmalı ve an,
-// [StartsAt, EndsAt] penceresinde bulunmalıdır. Pencere uçları kapsayıcıdır
-// (nil uç = sınırsız).
+// Fitness means two conditions holding TOGETHER: the status must be active and
+// the moment must fall inside the [StartsAt, EndsAt] window. The window's ends
+// are inclusive (a nil end = unbounded).
 func (l PriceListInfo) Usable(at time.Time) bool {
 	if l.Status != PriceListActive {
 		return false
@@ -253,42 +265,46 @@ func (l PriceListInfo) Usable(at time.Time) bool {
 	return true
 }
 
-// PriceCandidate hesaplamaya giren tek bir fiyat ve (varsa) listesidir.
+// PriceCandidate is a single price entering the calculation together with its
+// list (if any).
 type PriceCandidate struct {
-	// Price fiyatın kendisidir (kuralları dâhil).
+	// Price is the price itself (its rules included).
 	Price Price
-	// List fiyatın bağlı olduğu listenin üstverisidir; nil ise taban fiyattır.
+	// List is the metadata of the list the price is bound to; if nil this is a
+	// base price.
 	//
-	// PriceListID dolu ama List nil ise fiyatın listesi SİLİNMİŞTİR ve fiyat
-	// hesaba katılmaz (bkz. servis katmanındaki seçim kuralı).
+	// If PriceListID is set but List is nil, the price's list has been DELETED
+	// and the price is not included in the calculation (see the selection rule in
+	// the service layer).
 	List *PriceListInfo
 }
 
-// CalculatedPrice bir hesaplamanın sonucudur.
+// CalculatedPrice is the result of a calculation.
 type CalculatedPrice struct {
-	// PriceID seçilen fiyatın kimliğidir.
+	// PriceID is the id of the selected price.
 	PriceID string
-	// PriceSetID fiyatın ait olduğu kabın kimliğidir.
+	// PriceSetID is the id of the container the price belongs to.
 	PriceSetID string
-	// CurrencyCode seçilen fiyatın para birimidir (BÜYÜK harf).
+	// CurrencyCode is the currency of the selected price (UPPERCASE).
 	CurrencyCode string
-	// Amount birim başına minor unit tutardır.
+	// Amount is the minor unit amount per unit.
 	Amount int64
-	// Quantity hesaplamanın yapıldığı adettir.
+	// Quantity is the quantity the calculation was made for.
 	Quantity int32
-	// Total = Amount × Quantity; taşmaması [MaxAmount]/[MaxQuantity] ile
-	// güvence altındadır.
+	// Total = Amount × Quantity; it is guaranteed not to overflow by
+	// [MaxAmount]/[MaxQuantity].
 	Total int64
-	// MinQuantity seçilen fiyatın alt adet sınırıdır.
+	// MinQuantity is the lower quantity bound of the selected price.
 	MinQuantity int32
-	// MaxQuantity seçilen fiyatın üst adet sınırıdır; nil ise sınırsız.
+	// MaxQuantity is the upper quantity bound of the selected price; if nil it is
+	// unbounded.
 	MaxQuantity *int32
-	// PriceListID fiyat bir listeden geliyorsa listenin kimliğidir.
+	// PriceListID is the id of the list, if the price comes from a list.
 	PriceListID *string
-	// PriceListType fiyat bir listeden geliyorsa listenin türüdür; taban
-	// fiyatta boştur.
+	// PriceListType is the type of the list, if the price comes from a list; it
+	// is empty for a base price.
 	PriceListType PriceListType
-	// MatchedRules seçilen fiyatın eşleşen kural sayısıdır; 0 ise fiyat
-	// koşulsuzdur. Seçimin NEDEN o fiyata düştüğünü açıklar.
+	// MatchedRules is the number of matched rules of the selected price; if 0 the
+	// price is unconditional. It explains WHY the selection fell to that price.
 	MatchedRules int
 }

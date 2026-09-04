@@ -10,39 +10,42 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/payment/models"
 )
 
-// Query sağlayıcısının sunduğu alan adları.
+// The field names the Query provider offers.
 const (
-	// FieldID kaydın kimliğidir; Query birleştirmeyi bu alan üzerinden yapar.
+	// FieldID is the record's identifier; Query does the joining over this
+	// field.
 	FieldID = query.IDField
-	// FieldReference koleksiyonun bağlı olduğu sepet/sipariş kimliğidir.
+	// FieldReference is the cart/order identifier the collection is attached
+	// to.
 	FieldReference = "reference"
-	// FieldAmount toplanması gereken toplam tutardır (minor unit).
+	// FieldAmount is the total amount that must be collected (minor unit).
 	FieldAmount = "amount"
-	// FieldCurrencyCode ISO 4217 para birimi kodudur.
+	// FieldCurrencyCode is the ISO 4217 currency code.
 	FieldCurrencyCode = "currency_code"
-	// FieldStatus koleksiyonun türetilmiş durumudur.
+	// FieldStatus is the collection's derived status.
 	FieldStatus = "status"
-	// FieldAuthorizedAmount bloke edilmiş toplam tutardır.
+	// FieldAuthorizedAmount is the total amount put on hold.
 	FieldAuthorizedAmount = "authorized_amount"
-	// FieldCapturedAmount tahsil edilmiş toplam tutardır.
+	// FieldCapturedAmount is the total captured amount.
 	FieldCapturedAmount = "captured_amount"
-	// FieldRefundedAmount iade edilmiş toplam tutardır.
+	// FieldRefundedAmount is the total refunded amount.
 	FieldRefundedAmount = "refunded_amount"
-	// FieldCreatedAt oluşturulma zamanıdır.
+	// FieldCreatedAt is the creation time.
 	FieldCreatedAt = "created_at"
-	// FieldUpdatedAt son güncellenme zamanıdır.
+	// FieldUpdatedAt is the last update time.
 	FieldUpdatedAt = "updated_at"
 )
 
-// collectionFieldGetters sunulan alanların çıkarıcılarıdır.
+// collectionFieldGetters are the extractors of the offered fields.
 //
-// Alan kümesinin tek bir yerde tanımlı olması, doğrulama ile üretimin
-// ayrışmasını imkânsız kılar: burada olmayan bir alan istenirse errors.Invalid
-// döner (ADR 0004), burada olan her alan da üretilebilir.
+// The field set being defined in a single place makes it impossible for
+// validation and production to drift apart: if a field that is not here is
+// asked for, errors.Invalid is returned (ADR 0004), and every field that is
+// here can also be produced.
 //
-// Metadata BİLİNÇLİ OLARAK sunulmaz: çağıranın koyduğu serbest veridir ve
-// modüller arası okuma yüzeyinde şeması olmayan bir alanı taşımak, Query'nin
-// birleştirdiği kayıtları öngörülemez hâle getirirdi.
+// Metadata is DELIBERATELY not offered: it is free-form data put there by the
+// caller, and carrying a field that has no schema on a cross-module read
+// surface would make the records Query joins unpredictable.
 var collectionFieldGetters = map[string]func(col models.PaymentCollection) any{
 	FieldID:               func(col models.PaymentCollection) any { return col.ID },
 	FieldReference:        func(col models.PaymentCollection) any { return col.Reference },
@@ -56,36 +59,38 @@ var collectionFieldGetters = map[string]func(col models.PaymentCollection) any{
 	FieldUpdatedAt:        func(col models.PaymentCollection) any { return col.UpdatedAt },
 }
 
-// QueryProvider payment modülünün Query katmanına açtığı okuma yüzeyidir.
+// QueryProvider is the read surface the payment module opens to the Query
+// layer.
 //
-// Container'a "payment_collection.query" adıyla kaydedilir; Query onu ADLA
-// çözer (ADR 0004). Sipariş listelemesi, siparişin ödeme durumunu bu sağlayıcı
-// üzerinden ve "order_payment" link'iyle görür.
+// It is registered in the container under the name "payment_collection.query";
+// Query resolves it BY NAME (ADR 0004). An order listing sees the order's
+// payment status through this provider and through the "order_payment" link.
 type QueryProvider struct {
 	svc *Service
 }
 
-// QueryProvider'ın çekirdek sözleşmesini karşıladığı derleme zamanında
-// doğrulanır; imza kayması çalışma zamanına kalmaz.
+// QueryProvider satisfying the core contract is verified at compile time; a
+// signature drift does not get left to run time.
 var _ query.Provider = (*QueryProvider)(nil)
 
-// NewQueryProvider verilen servis üzerinde çalışan bir sağlayıcı üretir.
+// NewQueryProvider produces a provider that works over the given service.
 func NewQueryProvider(svc *Service) *QueryProvider {
 	return &QueryProvider{svc: svc}
 }
 
-// Entity sağlayıcının sunduğu entity adını döner.
+// Entity returns the entity name the provider offers.
 func (p *QueryProvider) Entity() string { return EntityName }
 
-// List kök kayıtları döner.
+// List returns the root records.
 //
-// Desteklenen süzgeçler: "reference" ve "status" (ikisi de metin). Başka bir
-// süzgeç ya da tanınmayan bir alan errors.Invalid ile reddedilir (ADR 0004).
+// The supported filters: "reference" and "status" (both text). Any other
+// filter or an unrecognized field is rejected with errors.Invalid (ADR 0004).
 //
-// Limit [MaxLimit]'e KIRPILIR; bkz. [providerLimit]. Kırpma sessizdir ve hata
-// dönmez, ama sonuç sayfa boyutunun aşılamayacağı anlamına gelir: çağıran tüm
-// kayıtları aldığını varsaymamalı, [MaxLimit] kadar kayıt dönen bir yanıtı
-// "devamı olabilir" diye okumalıdır.
+// The limit is CLAMPED to [MaxLimit]; see [providerLimit]. The clamping is
+// silent and returns no error, but the result means that the page size cannot
+// be exceeded: the caller must not assume it got all of the records, and
+// should read a response that returns [MaxLimit] records as "there may be
+// more".
 func (p *QueryProvider) List(ctx context.Context, opts query.ListOptions) ([]query.Record, error) {
 	if err := validateFields(opts.Fields); err != nil {
 		return nil, err
@@ -94,14 +99,14 @@ func (p *QueryProvider) List(ctx context.Context, opts query.ListOptions) ([]que
 	in := ListCollectionsInput{
 		Page: Page{Limit: providerLimit(opts.Limit), Offset: int64(opts.Offset)},
 	}
-	// Süzgeçler sıralı gezilir: harita üzerinde dönmek, birden çok süzgeç
-	// birden geçersizken hangi hatanın döneceğini rastgele bırakırdı.
+	// The filters are walked sorted: going over the map would leave it random
+	// which error is returned when more than one filter is invalid at once.
 	for _, name := range slices.Sorted(maps.Keys(opts.Filters)) {
 		value := opts.Filters[name]
 		text, ok := value.(string)
 		if !ok {
 			return nil, errors.Invalid(CodeInvalidInput,
-				"%q süzgeci metin olmalı, %T verildi", name, value)
+				"the %q filter must be text, %T given", name, value)
 		}
 		switch name {
 		case FieldReference:
@@ -110,7 +115,7 @@ func (p *QueryProvider) List(ctx context.Context, opts query.ListOptions) ([]que
 			in.Status = &text
 		default:
 			return nil, errors.Invalid(CodeInvalidInput,
-				"%q entity'si %q süzgecini desteklemiyor", EntityName, name)
+				"the %q entity does not support the %q filter", EntityName, name)
 		}
 	}
 
@@ -121,8 +126,9 @@ func (p *QueryProvider) List(ctx context.Context, opts query.ListOptions) ([]que
 	return records(collections, opts.Fields), nil
 }
 
-// FetchByIDs verilen kimliklerin kayıtlarını BATCH olarak döner.
-// Bulunamayan kimlik için kayıt dönmez; bu bir hata değildir.
+// FetchByIDs returns the records of the given identifiers as a BATCH.
+// No record is returned for an identifier that is not found; this is not an
+// error.
 func (p *QueryProvider) FetchByIDs(ctx context.Context, ids, fields []string) ([]query.Record, error) {
 	if err := validateFields(fields); err != nil {
 		return nil, err
@@ -138,8 +144,8 @@ func (p *QueryProvider) FetchByIDs(ctx context.Context, ids, fields []string) ([
 	return records(collections, fields), nil
 }
 
-// records koleksiyonları istenen alanlarla kayda çevirir.
-// fields boşsa sunulan TÜM alanlar döner.
+// records turns the collections into records with the requested fields.
+// If fields is empty, ALL of the offered fields are returned.
 func records(collections []models.PaymentCollection, fields []string) []query.Record {
 	selected := fields
 	if len(selected) == 0 {
@@ -147,8 +153,9 @@ func records(collections []models.PaymentCollection, fields []string) []query.Re
 	}
 
 	out := make([]query.Record, 0, len(collections))
-	// Dilim İNDEKSLE gezilir: değerle gezmek her yinelemede koleksiyon
-	// yapısının tamamını kopyalardı ve kayıt sayısı arttıkça bedeli büyürdü.
+	// The slice is walked BY INDEX: walking it by value would copy the whole
+	// collection struct on every iteration and the price would grow as the
+	// record count rises.
 	for i := range collections {
 		record := make(query.Record, len(selected))
 		for _, name := range selected {
@@ -159,16 +166,16 @@ func records(collections []models.PaymentCollection, fields []string) []query.Re
 	return out
 }
 
-// providerLimit çekirdeğin limit değerini sağlayıcının sayfa tavanına kırpar.
+// providerLimit clamps the core's limit value to the provider's page ceiling.
 //
-// Çekirdek sözleşmesinde ([query.ListOptions]) 0 "SINIRSIZ" demektir; bu
-// sağlayıcı sınırsız listeleme sunmaz, çünkü sınırsız bir kök sorgu tüm
-// koleksiyon tablosunu belleğe alırdı. Sınırsız istek bu yüzden [MaxLimit]'e
-// çevrilir — [DefaultLimit]'e DEĞİL: çağıran açıkça "hepsini istiyorum"
-// demiştir, alabileceğinin en fazlasını almalıdır. Anlamsız bir negatif değer
-// de aynı kefeye konur: bu yolda limit bir istemci girdisi değil, başka bir
-// modülün sorgu tanımından gelen bir sayıdır ve reddedilmesi tüm okumayı
-// düşürürdü.
+// In the core contract ([query.ListOptions]) 0 means "UNLIMITED"; this
+// provider does not offer unlimited listing, because an unlimited root query
+// would pull the whole collection table into memory. An unlimited request is
+// therefore turned into [MaxLimit] — NOT into [DefaultLimit]: the caller has
+// explicitly said "I want all of them" and should get the most it can get. A
+// meaningless negative value is put in the same basket: on this path the limit
+// is not a client input but a number coming from another module's query
+// definition, and rejecting it would bring the whole read down.
 func providerLimit(limit int) int64 {
 	if limit <= 0 || int64(limit) > MaxLimit {
 		return MaxLimit
@@ -176,12 +183,12 @@ func providerLimit(limit int) int64 {
 	return int64(limit)
 }
 
-// validateFields istenen alanların hepsinin sunulduğunu doğrular.
+// validateFields verifies that all of the requested fields are offered.
 func validateFields(fields []string) error {
 	for _, name := range fields {
 		if _, ok := collectionFieldGetters[name]; !ok {
 			return errors.Invalid(CodeInvalidInput,
-				"%q entity'si %q alanını sunmuyor", EntityName, name)
+				"the %q entity does not offer the %q field", EntityName, name)
 		}
 	}
 	return nil

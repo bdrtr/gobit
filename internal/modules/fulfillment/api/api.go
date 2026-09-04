@@ -622,7 +622,7 @@ func parseInt64Param(r *http.Request, name string) (int64, error) {
 	value, err := strconv.ParseInt(raw, 10, 64)
 	if err != nil {
 		return 0, coreerrors.Wrap(err, coreerrors.KindInvalid, codeInvalidRequest,
-			"%s tam sayı olmalı: %q", name, raw)
+			"%s has to be an integer: %q", name, raw)
 	}
 	return value, nil
 }

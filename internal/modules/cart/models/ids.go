@@ -7,58 +7,61 @@ import (
 	"time"
 )
 
-// Kimlik önekleri (plan Bölüm 8). Önek, bir kimliğin hangi varlığa ait
-// olduğunu tabloya bakmadan okunabilir kılar: logda görülen "li_..." için
-// hangi tabloya bakılacağı bellidir.
+// Identifier prefixes (plan Section 8). The prefix makes it readable which
+// entity an identifier belongs to without looking at a table: for an "li_..."
+// seen in a log it is obvious which table to look at.
 const (
-	// CartIDPrefix sepet kimliklerinin önekidir.
+	// CartIDPrefix is the prefix of cart identifiers.
 	CartIDPrefix = "cart_"
-	// LineItemIDPrefix sepet satırı kimliklerinin önekidir.
+	// LineItemIDPrefix is the prefix of cart line item identifiers.
 	LineItemIDPrefix = "li_"
-	// AddressIDPrefix sepet adresi kimliklerinin önekidir.
+	// AddressIDPrefix is the prefix of cart address identifiers.
 	AddressIDPrefix = "addr_"
-	// ShippingMethodIDPrefix kargo yöntemi kimliklerinin önekidir.
+	// ShippingMethodIDPrefix is the prefix of shipping method identifiers.
 	//
-	// Plan Bölüm 8 bu varlık için bir önek saymaz; "csm_" (cart shipping
-	// method) burada seçilmiştir. "sm_" tercih edilmedi, çünkü Faz 7'de
-	// fulfillment modülü kendi ShippingOption/ShippingProfile kayıtlarını
-	// üretecek ve iki modülün önekleri logda birbirine karışırdı.
+	// Plan Section 8 does not count a prefix for this entity; "csm_" (cart
+	// shipping method) was chosen here. "sm_" was not preferred, because in
+	// Phase 7 the fulfillment module will produce its own
+	// ShippingOption/ShippingProfile records and the two modules' prefixes
+	// would get mixed up with each other in the log.
 	ShippingMethodIDPrefix = "csm_"
 )
 
-// idEncoding Crockford Base32 alfabesiyle dolgusuz kodlamadır. 16 baytlık gövde
-// bu kodlamayla tam 26 karaktere iner. Alfabe ASCII'de artan sırada olduğundan
-// kodlanmış dize, kodlanan baytlarla aynı sözlüksel sırayı korur; kimlikler bu
-// sayede zamana göre sıralanabilir kalır.
+// idEncoding is the unpadded encoding over the Crockford Base32 alphabet. A
+// 16-byte body comes down to exactly 26 characters with this encoding. Because
+// the alphabet is in ascending order in ASCII, the encoded string keeps the same
+// lexicographic order as the bytes it encodes; identifiers stay sortable by time
+// thanks to this.
 var idEncoding = base32.NewEncoding("0123456789ABCDEFGHJKMNPQRSTVWXYZ").WithPadding(base32.NoPadding)
 
-// NewCartID yeni bir sepet kimliği üretir.
+// NewCartID produces a new cart identifier.
 func NewCartID() string { return newID(CartIDPrefix, time.Now()) }
 
-// NewLineItemID yeni bir sepet satırı kimliği üretir.
+// NewLineItemID produces a new cart line item identifier.
 func NewLineItemID() string { return newID(LineItemIDPrefix, time.Now()) }
 
-// NewAddressID yeni bir sepet adresi kimliği üretir.
+// NewAddressID produces a new cart address identifier.
 func NewAddressID() string { return newID(AddressIDPrefix, time.Now()) }
 
-// NewShippingMethodID yeni bir kargo yöntemi kimliği üretir.
+// NewShippingMethodID produces a new shipping method identifier.
 func NewShippingMethodID() string { return newID(ShippingMethodIDPrefix, time.Now()) }
 
-// newID önekli, zaman sıralı ve tekil bir kimlik üretir.
+// newID produces a prefixed, time-ordered and unique identifier.
 //
-// Yapısı ULID ile aynıdır: 48 bit milisaniye zaman damgası + 80 bit
-// kriptografik rastgelelik, Crockford Base32 ile 26 karaktere kodlanır. Zaman
-// damgasının başta olması, kimliğin kendisinin kabaca oluşturma sırasını
-// taşıması demektir; kayıtlar birincil anahtar taramasında da doğal sırada
-// durur ve B-tree eklemeleri sona yapılır.
+// Its structure is the same as ULID's: a 48-bit millisecond timestamp + 80 bits
+// of cryptographic randomness, encoded into 26 characters with Crockford
+// Base32. The timestamp being at the front means the identifier itself carries
+// roughly the creation order; the records also sit in their natural order in a
+// primary key scan and B-tree insertions happen at the end.
 //
-// Diğer modüllerdeki üretici ile aynı yapıdadır; o paketler İMPORT EDİLMEZ
-// (ADR 0001), yapı burada modülün kendi kodu olarak tekrarlanır.
+// It has the same structure as the generator in the other modules; those
+// packages ARE NOT IMPORTED (ADR 0001), the structure is repeated here as the
+// module's own code.
 func newID(prefix string, t time.Time) string {
 	ms := t.UTC().UnixMilli()
 	if ms < 0 {
-		// 1970 öncesi bir zaman damgası kayıt için anlamlı değildir;
-		// sıralamayı bozmamak için tabana çekilir.
+		// A timestamp before 1970 is not meaningful for a record; it is pulled
+		// down to the floor so that the ordering is not broken.
 		ms = 0
 	}
 
@@ -66,12 +69,13 @@ func newID(prefix string, t time.Time) string {
 	binary.BigEndian.PutUint64(stamp[:], uint64(ms))
 
 	var buf [16]byte
-	// UnixMilli 48 bite sığar; ilk iki bayt daima sıfırdır ve atılır.
+	// UnixMilli fits in 48 bits; the first two bytes are always zero and are
+	// dropped.
 	copy(buf[:6], stamp[2:])
 	if _, err := rand.Read(buf[6:]); err != nil {
-		// crypto/rand.Read hata dönmez; yine de bir gün dönerse kimlik
-		// yalnızca nanosaniye çözünürlüğüne dayanır — tekillik zayıflar ama
-		// kayıt açma başarısız olmaz.
+		// crypto/rand.Read does not return an error; should it return one some
+		// day anyway, the identifier rests on nanosecond resolution alone —
+		// uniqueness weakens but opening a record does not fail.
 		binary.BigEndian.PutUint64(buf[8:], uint64(t.UnixNano()))
 	}
 

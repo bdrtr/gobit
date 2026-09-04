@@ -1,34 +1,35 @@
-// Package service auth modülünün iş mantığını barındırır.
+// Package service holds the business logic of the auth module.
 //
-// # Modüller arası yüzey (ADR 0001)
+// # The cross-module surface (ADR 0001)
 //
-// auth hiçbir modülü import ETMEZ. Ters yön vardır: çekirdeğin HTTP katmanı
-// kimlik doğrulamak ister, product katalog süzmek için satış kanallarını
-// bilmek ister. Bu yüzden auth'un yüzeyi ÜÇE ayrılmıştır:
+// auth imports NO module. The reverse direction exists: the core's HTTP layer
+// wants to authenticate, product wants to know the sales channels in order to
+// filter the catalog. This is why auth's surface is split in THREE:
 //
-//   - Modül içi zengin yüzey — [models] tiplerini kullanır ([Service.CreateUser],
-//     [Service.CreateAPIKey] …). Bu metotları yalnızca auth'un kendi API
-//     katmanı çağırır.
-//   - Modüller arası yüzey — YALNIZCA ilkel ve stdlib tipleri kullanır
-//     (bkz. interop.go).
-//   - Kimlik doğrulama yüzeyi — çekirdeğin corehttp.Authenticator arayüzünü
-//     YAPISAL olarak karşılayan [Interop] tipi (bkz. interop.go). corehttp
-//     ÇEKİRDEKTİR ve import edilebilir; Principal tipi burada yeniden
-//     TANIMLANMAZ, çekirdeğinki kullanılır.
+//   - The rich in-module surface — it uses [models] types
+//     ([Service.CreateUser], [Service.CreateAPIKey] …). Only auth's own API
+//     layer calls these methods.
+//   - The cross-module surface — it uses ONLY primitive and stdlib types
+//     (see interop.go).
+//   - The authentication surface — the [Interop] type that satisfies the
+//     core's corehttp.Authenticator interface STRUCTURALLY (see interop.go).
+//     corehttp IS THE CORE and can be imported; the Principal type is NOT
+//     REDEFINED here, the core's own is used.
 //
-// # Güvenlik kararları
+// # Security decisions
 //
-// Modülün güvenlik kararları ve gerekçeleri tek tek belgelenmiştir:
+// The module's security decisions and their reasoning are documented one by
+// one:
 //
-//   - Parola saklama ve zamanlama eşitliği — password.go
-//   - Oturumun düşürülmesi (çıkış ve parola değişimi) — session.go
-//   - JWT üretimi ve doğrulaması — token.go
-//   - API anahtarı üretimi, saklanması ve tür ayrımı — apikey.go ve
+//   - Password storage and timing equality — password.go
+//   - Dropping the session (logout and password change) — session.go
+//   - JWT production and verification — token.go
+//   - API key production, storage and type distinction — apikey.go and
 //     [models.APIKey]
-//   - Giriş kilidi (art arda başarısız denemeler) — password.go, [Options]
+//   - The login lock (consecutive failed attempts) — password.go, [Options]
 //
-// Ortak kural: düz parola ve düz API anahtarı ASLA saklanmaz, ASLA loglanmaz
-// ve hiçbir hata mesajında geçmez.
+// The common rule: a plaintext password and a plaintext API key are NEVER
+// stored, are NEVER logged and appear in no error message.
 package service
 
 import (
@@ -42,97 +43,104 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/auth/models"
 )
 
-// Hata kodları; çağıran taraf errors.CodeOf ile bunlara bakabilir.
+// Error codes; the calling side can look at these with errors.CodeOf.
 const (
-	// CodeInvalidInput girdinin doğrulamadan geçmediğini bildirir.
+	// CodeInvalidInput reports that the input did not pass validation.
 	CodeInvalidInput = "auth_invalid_input"
-	// CodeInvalidCredentials giriş bilgilerinin kabul edilmediğini bildirir.
+	// CodeInvalidCredentials reports that the login credentials were not
+	// accepted.
 	//
-	// TEK bir kod bilinçlidir: "kullanıcı yok", "parola yanlış", "hesap
-	// kilitli" ve "parola atanmamış" durumlarının HEPSİ bu kodla döner
-	// (bkz. [Service.Login]).
-	CodeInvalidCredentials = "auth_invalid_credentials" //nolint:gosec // G101: kimlik bilgisi değil, istemciye dönen sabit hata KODU
-	// CodeWeakPassword parolanın politikayı karşılamadığını bildirir.
-	CodeWeakPassword = "auth_weak_password" //nolint:gosec // G101: kimlik bilgisi değil, istemciye dönen sabit hata KODU
-	// CodeAPIKeyRevoked anahtarın iptal edilmiş olduğunu bildirir.
-	CodeAPIKeyRevoked = "auth_api_key_revoked" //nolint:gosec // G101: kimlik bilgisi değil, istemciye dönen sabit hata KODU
-	// CodeAPIKeyTypeMismatch anahtarın yanlış yüzeyde sunulduğunu bildirir.
-	CodeAPIKeyTypeMismatch = "auth_api_key_type_mismatch" //nolint:gosec // G101: kimlik bilgisi değil, istemciye dönen sabit hata KODU
-	// CodeNoSalesChannel publishable anahtarın etkin bir kanala bağlı
-	// olmadığını bildirir.
+	// A SINGLE code is deliberate: the cases "no such user", "wrong password",
+	// "account locked" and "no password assigned" ALL return with this code
+	// (see [Service.Login]).
+	CodeInvalidCredentials = "auth_invalid_credentials" //nolint:gosec // G101: not a credential, a constant error CODE returned to the client
+	// CodeWeakPassword reports that the password does not meet the policy.
+	CodeWeakPassword = "auth_weak_password" //nolint:gosec // G101: not a credential, a constant error CODE returned to the client
+	// CodeAPIKeyRevoked reports that the key has been revoked.
+	CodeAPIKeyRevoked = "auth_api_key_revoked" //nolint:gosec // G101: not a credential, a constant error CODE returned to the client
+	// CodeAPIKeyTypeMismatch reports that the key was presented on the wrong
+	// surface.
+	CodeAPIKeyTypeMismatch = "auth_api_key_type_mismatch" //nolint:gosec // G101: not a credential, a constant error CODE returned to the client
+	// CodeNoSalesChannel reports that the publishable key is not attached to
+	// an enabled channel.
 	CodeNoSalesChannel = "auth_no_sales_channel"
-	// CodeTokenInvalid oturum jetonunun kabul edilmediğini bildirir.
-	CodeTokenInvalid = "auth_token_invalid" //nolint:gosec // G101: kimlik bilgisi değil, istemciye dönen sabit hata KODU
-	// CodeNoSession çağıranın kapatılabilecek bir oturumu olmadığını bildirir.
+	// CodeTokenInvalid reports that the session token was not accepted.
+	CodeTokenInvalid = "auth_token_invalid" //nolint:gosec // G101: not a credential, a constant error CODE returned to the client
+	// CodeNoSession reports that the caller has no session that could be
+	// closed.
 	//
-	// Bugünkü tek kaynağı, çıkış ucunu çağıran bir API anahtarıdır: anahtar
-	// jetonla değil kalıcı bir sırla gelir ve o sırrın "kapatılması" diye bir
-	// işlem yoktur (bkz. [Service.Logout]).
+	// Its only source today is an API key calling the logout endpoint: the key
+	// arrives not with a token but with a permanent secret, and there is no
+	// such operation as "closing" that secret (see [Service.Logout]).
 	CodeNoSession = "auth_no_session"
-	// CodeUnconfigured servisin kurulmadığını bildirir.
+	// CodeUnconfigured reports that the service has not been configured.
 	CodeUnconfigured = "auth_service_unconfigured"
-	// CodeSecretMissing imza sırrının verilmediğini bildirir.
-	CodeSecretMissing = "auth_jwt_secret_missing" //nolint:gosec // G101: kimlik bilgisi değil, istemciye dönen sabit hata KODU
+	// CodeSecretMissing reports that the signing secret was not given.
+	CodeSecretMissing = "auth_jwt_secret_missing" //nolint:gosec // G101: not a credential, a constant error CODE returned to the client
 )
 
-// Sayfalama sınırları. Limit verilmezse varsayılan uygulanır; aşırı büyük bir
-// limit reddedilir, böylece istemci tek istekle veritabanını tarayamaz.
+// Paging limits. If no limit is given the default is applied; an excessively
+// large limit is rejected, so that a client cannot scan the database with a
+// single request.
 const (
-	// DefaultLimit limit verilmediğinde uygulanan sayfa boyutudur.
+	// DefaultLimit is the page size applied when no limit is given.
 	DefaultLimit int64 = 50
-	// MaxLimit tek istekte istenebilecek en büyük sayfa boyutudur.
+	// MaxLimit is the largest page size that can be requested in a single
+	// request.
 	MaxLimit int64 = 100
 )
 
-// Varsayılan kurulum değerleri.
+// Default setup values.
 const (
-	// DefaultBcryptCost varsayılan bcrypt maliyet parametresidir.
+	// DefaultBcryptCost is the default bcrypt cost parameter.
 	//
-	// bcrypt.DefaultCost (10) 2011'in donanımına göre seçilmiştir; 12, bugünün
-	// sunucusunda parola başına ~250 ms demektir ve çevrimdışı deneme hızını
-	// buna göre düşürür. Değer SABİT DEĞİLDİR ([Options.BcryptCost]) çünkü
-	// donanım hızlanır ve maliyet onunla birlikte artırılmalıdır; maliyet
-	// bcrypt hash'inin İÇİNDE saklandığı için artırma eski parolaları
-	// geçersiz kılmaz — eski hash'ler kendi maliyetleriyle doğrulanmaya devam
-	// eder.
+	// bcrypt.DefaultCost (10) was chosen for the hardware of 2011; 12 means
+	// ~250 ms per password on today's server and lowers the offline attempt
+	// rate accordingly. The value IS NOT FIXED ([Options.BcryptCost]) because
+	// hardware gets faster and the cost has to be raised along with it; since
+	// the cost is stored INSIDE the bcrypt hash, raising it does not
+	// invalidate old passwords — old hashes continue to be verified with their
+	// own cost.
 	DefaultBcryptCost = 12
-	// DefaultJWTTTL oturum jetonunun varsayılan ömrüdür.
+	// DefaultJWTTTL is the default lifetime of the session token.
 	DefaultJWTTTL = 12 * time.Hour
-	// DefaultIssuer oturum jetonunun varsayılan "iss" iddiasıdır.
+	// DefaultIssuer is the default "iss" claim of the session token.
 	DefaultIssuer = "gobit"
-	// DefaultLoginFailureThreshold kilidi tetikleyen art arda başarısız
-	// deneme sayısıdır.
+	// DefaultLoginFailureThreshold is the number of consecutive failed
+	// attempts that triggers the lock.
 	DefaultLoginFailureThreshold = 5
-	// DefaultLoginLockDuration kilidin varsayılan süresidir.
+	// DefaultLoginLockDuration is the default duration of the lock.
 	DefaultLoginLockDuration = 15 * time.Minute
-	// DefaultUsageThrottle api_key.last_used_at sütununun en fazla ne sıklıkta
-	// yazılacağıdır.
+	// DefaultUsageThrottle is how often at most the api_key.last_used_at
+	// column will be written.
 	DefaultUsageThrottle = time.Minute
 )
 
-// Page sayfalanmış bir liste sonucudur.
+// Page is a paginated list result.
 //
-// Limit ve Offset, isteğin ham değerleri değil UYGULANAN değerlerdir; API zarfı
-// bu alanları olduğu gibi yazar, böylece istemci varsayılana düşen bir limitten
-// haberdar olur.
+// Limit and Offset are not the request's raw values but the APPLIED ones; the
+// API envelope writes these fields as they are, so that the client learns
+// about a limit that fell back to the default.
 type Page[T any] struct {
-	// Items geçerli sayfadaki kayıtlardır.
+	// Items are the records on the current page.
 	Items []T
-	// Count filtreye uyan TOPLAM kayıt sayısıdır (sayfa boyu değil).
+	// Count is the TOTAL number of records matching the filter (not the page
+	// size).
 	Count int64
-	// Limit uygulanan sayfa boyudur.
+	// Limit is the applied page size.
 	Limit int64
-	// Offset uygulanan atlama sayısıdır.
+	// Offset is the applied skip count.
 	Offset int64
 }
 
-// Repository servisin ihtiyaç duyduğu veri erişim yüzeyidir.
+// Repository is the data access surface the service needs.
 //
-// Arayüz TÜKETEN tarafta (burada) tanımlıdır; somut uygulama
-// internal/modules/auth/repository paketindedir. Bu, ADR 0001'in örüntüsünün
-// modül İÇİNDEKİ karşılığıdır ve servisin veritabanı olmadan test edilmesini
-// sağlar — parola zamanlaması, jeton doğrulaması ve anahtar tür ayrımı gibi
-// kararların hepsi sahte bir depo ile sınanabilir.
+// The interface is defined on the CONSUMING side (here); the concrete
+// implementation is in the internal/modules/auth/repository package. This is
+// the IN-MODULE counterpart of ADR 0001's pattern and it lets the service be
+// tested without a database — decisions such as password timing, token
+// verification and key type distinction can all be exercised with a fake
+// repository.
 type Repository interface {
 	CreateUser(ctx context.Context, u models.User, identity *models.AuthIdentity) (models.User, error)
 	GetUser(ctx context.Context, id string) (models.User, error)
@@ -169,49 +177,53 @@ type Repository interface {
 	DeleteSalesChannel(ctx context.Context, id string, now time.Time) error
 }
 
-// Options servisin kurulum ayarlarıdır.
+// Options are the service's setup settings.
 //
-// JWTSecret dışındaki her alanın makul bir varsayılanı vardır; sır ise
-// varsayılan KABUL ETMEZ (bkz. [Options.JWTSecret]).
+// Every field other than JWTSecret has a reasonable default; the secret
+// ACCEPTS no default (see [Options.JWTSecret]).
 type Options struct {
-	// Logger yapısal log hedefidir; nil ise loglar atılır.
+	// Logger is the structured log target; if nil, logs are dropped.
 	Logger *slog.Logger
-	// Now zaman kaynağıdır; nil ise time.Now kullanılır. Testler burayı sabit
-	// bir saatle doldurarak zamana bağlı dalları (jeton süresi, kilit süresi)
-	// belirlenimci hâle getirir.
+	// Now is the time source; if nil, time.Now is used. Tests fill this in
+	// with a fixed clock to make the time-dependent branches (token lifetime,
+	// lock duration) deterministic.
 	Now func() time.Time
 
-	// JWTSecret oturum jetonlarının HS256 ile imzalandığı sırdır.
+	// JWTSecret is the secret session tokens are signed with using HS256.
 	//
-	// VARSAYILANI YOKTUR ve olmamalıdır: tahmin edilebilir bir imza sırrı,
-	// herkesin kendine admin jetonu üretebilmesi demektir. Boş bırakılırsa
-	// [New] servisi kurar ama jeton üretimi ve doğrulaması errors.Unavailable
-	// döner — sessizce imzasız çalışmaktansa açıkça durmak yeğdir.
+	// IT HAS NO DEFAULT and must not have one: a guessable signing secret
+	// means everybody being able to produce an admin token for themselves. If
+	// it is left empty, [New] sets the service up but token production and
+	// verification return errors.Unavailable — stopping openly is preferable
+	// to running unsigned in silence.
 	//
-	// Değer çekirdek yapılandırmasından (cfg.JWTSecret) PARAMETRE olarak
-	// gelir; auth modülü config paketini tanımaz. ASLA loglanmaz.
+	// The value arrives as a PARAMETER from the core configuration
+	// (cfg.JWTSecret); the auth module does not know the config package. It is
+	// NEVER logged.
 	JWTSecret string
-	// JWTTTL jetonun geçerlilik süresidir; 0 ise [DefaultJWTTTL].
+	// JWTTTL is the token's validity duration; [DefaultJWTTTL] if 0.
 	JWTTTL time.Duration
-	// JWTIssuer jetonun "iss" iddiasıdır; boş ise [DefaultIssuer].
+	// JWTIssuer is the token's "iss" claim; [DefaultIssuer] if empty.
 	JWTIssuer string
 
-	// BcryptCost parola hash'inin maliyet parametresidir; 0 ise
-	// [DefaultBcryptCost]. Aralık dışı bir değer varsayılana çekilir ve
-	// uyarı loglanır (bkz. [DefaultBcryptCost]).
+	// BcryptCost is the cost parameter of the password hash;
+	// [DefaultBcryptCost] if 0. A value out of range is pulled back to the
+	// default and a warning is logged (see [DefaultBcryptCost]).
 	BcryptCost int
 
-	// LoginFailureThreshold kilidi tetikleyen art arda başarısız deneme
-	// sayısıdır; 0 ise [DefaultLoginFailureThreshold].
+	// LoginFailureThreshold is the number of consecutive failed attempts that
+	// triggers the lock; [DefaultLoginFailureThreshold] if 0.
 	LoginFailureThreshold int
-	// LoginLockDuration kilidin süresidir; 0 ise [DefaultLoginLockDuration].
+	// LoginLockDuration is the duration of the lock;
+	// [DefaultLoginLockDuration] if 0.
 	LoginLockDuration time.Duration
-	// UsageThrottle api_key.last_used_at yazma sıklığı sınırıdır; 0 ise
-	// [DefaultUsageThrottle].
+	// UsageThrottle is the write frequency limit of api_key.last_used_at;
+	// [DefaultUsageThrottle] if 0.
 	UsageThrottle time.Duration
 }
 
-// Service auth modülünün public servisidir. Eşzamanlı kullanıma güvenlidir.
+// Service is the public service of the auth module. It is safe for concurrent
+// use.
 type Service struct {
 	repo Repository
 	log  *slog.Logger
@@ -225,15 +237,15 @@ type Service struct {
 	lockFor   time.Duration
 	throttle  time.Duration
 
-	// dummyHash zamanlama eşitliği için kullanılan kukla bcrypt hash'idir;
-	// ilk ihtiyaçta bir kez üretilir (bkz. password.go).
+	// dummyHash is the dummy bcrypt hash used for timing equality; it is
+	// produced once on first need (see password.go).
 	dummyHash func() []byte
 }
 
-// New verilen depo üzerinde çalışan bir servis üretir.
+// New produces a service that runs on the given repository.
 //
-// repo nil ise bu, kurulumda değil ilk çağrıda tipli bir hata olarak bildirilir;
-// kurulum yolu panik üretmez.
+// If repo is nil, this is reported as a typed error not at setup time but on
+// the first call; the setup path produces no panic.
 func New(repo Repository, opts Options) *Service {
 	log := opts.Logger
 	if log == nil {
@@ -249,10 +261,10 @@ func New(repo Repository, opts Options) *Service {
 		cost = DefaultBcryptCost
 	}
 	if cost < bcrypt.MinCost || cost > bcrypt.MaxCost {
-		// Aralık dışı maliyet sessizce kabul edilseydi bcrypt her çağrıda
-		// hata döndürür ve hiçbir parola doğrulanamazdı.
-		log.Warn("auth: geçersiz bcrypt maliyeti, varsayılana düşülüyor",
-			slog.Int("verilen", cost), slog.Int("varsayilan", DefaultBcryptCost))
+		// Had an out-of-range cost been accepted silently, bcrypt would return
+		// an error on every call and no password could be verified.
+		log.Warn("auth: invalid bcrypt cost, falling back to the default",
+			slog.Int("given", cost), slog.Int("default", DefaultBcryptCost))
 		cost = DefaultBcryptCost
 	}
 
@@ -272,20 +284,20 @@ func New(repo Repository, opts Options) *Service {
 	return svc
 }
 
-// ready deponun kurulu olduğunu doğrular.
+// ready verifies that the repository is configured.
 func (s *Service) ready() error {
 	if s == nil || s.repo == nil {
-		return errors.Unavailable(CodeUnconfigured, "auth servisi kurulmamış")
+		return errors.Unavailable(CodeUnconfigured, "auth service is not configured")
 	}
 	return nil
 }
 
-// clock geçerli anı UTC olarak döner.
+// clock returns the current moment as UTC.
 func (s *Service) clock() time.Time {
 	return s.now().UTC()
 }
 
-// orDuration sıfır süreyi varsayılanla değiştirir.
+// orDuration replaces a zero duration with the default.
 func orDuration(value, fallback time.Duration) time.Duration {
 	if value <= 0 {
 		return fallback
@@ -293,7 +305,7 @@ func orDuration(value, fallback time.Duration) time.Duration {
 	return value
 }
 
-// orInt sıfır ya da negatif sayıyı varsayılanla değiştirir.
+// orInt replaces a zero or negative number with the default.
 func orInt(value, fallback int) int {
 	if value <= 0 {
 		return fallback
@@ -301,7 +313,7 @@ func orInt(value, fallback int) int {
 	return value
 }
 
-// orString boş dizeyi varsayılanla değiştirir.
+// orString replaces an empty string with the default.
 func orString(value, fallback string) string {
 	if value == "" {
 		return fallback

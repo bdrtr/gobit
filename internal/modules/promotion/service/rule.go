@@ -52,7 +52,7 @@ func (s *Service) AddPromotionRule(
 	if err := s.ready(); err != nil {
 		return models.PromotionRule{}, err
 	}
-	if err := requireID(promotionID, models.PromotionIDPrefix, "promosyon kimliği"); err != nil {
+	if err := requireID(promotionID, models.PromotionIDPrefix, "promotion id"); err != nil {
 		return models.PromotionRule{}, err
 	}
 	if err := validateRuleInput(in); err != nil {
@@ -95,7 +95,7 @@ func (s *Service) ListPromotionRules(ctx context.Context, promotionID string) ([
 	if err := s.ready(); err != nil {
 		return nil, err
 	}
-	if err := requireID(promotionID, models.PromotionIDPrefix, "promosyon kimliği"); err != nil {
+	if err := requireID(promotionID, models.PromotionIDPrefix, "promotion id"); err != nil {
 		return nil, err
 	}
 	// Promosyonun varlığı doğrulanır: olmayan bir promosyonun kuralları boş
@@ -126,7 +126,7 @@ func (s *Service) SetApplicationMethod(
 	if err := s.ready(); err != nil {
 		return models.ApplicationMethod{}, err
 	}
-	if err := requireID(promotionID, models.PromotionIDPrefix, "promosyon kimliği"); err != nil {
+	if err := requireID(promotionID, models.PromotionIDPrefix, "promotion id"); err != nil {
 		return models.ApplicationMethod{}, err
 	}
 	if _, err := s.repo.GetPromotion(ctx, promotionID); err != nil {
@@ -147,7 +147,7 @@ func (s *Service) GetApplicationMethod(ctx context.Context, promotionID string) 
 	if err := s.ready(); err != nil {
 		return models.ApplicationMethod{}, err
 	}
-	if err := requireID(promotionID, models.PromotionIDPrefix, "promosyon kimliği"); err != nil {
+	if err := requireID(promotionID, models.PromotionIDPrefix, "promotion id"); err != nil {
 		return models.ApplicationMethod{}, err
 	}
 	return s.repo.GetApplicationMethod(ctx, promotionID)
@@ -161,7 +161,7 @@ func (s *Service) DeleteApplicationMethod(ctx context.Context, promotionID strin
 	if err := s.ready(); err != nil {
 		return err
 	}
-	if err := requireID(promotionID, models.PromotionIDPrefix, "promosyon kimliği"); err != nil {
+	if err := requireID(promotionID, models.PromotionIDPrefix, "promotion id"); err != nil {
 		return err
 	}
 	return s.repo.DeleteApplicationMethod(ctx, promotionID, s.clock())

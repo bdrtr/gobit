@@ -238,7 +238,7 @@ func TestCreateOrderZorunluAlanlariDogrular(t *testing.T) {
 			in.Items[0].Total = 0
 			in.Subtotal, in.TaxTotal, in.Total = 0, 0, 2500
 		},
-		"müşteri kimliği boşluklu": func(in *service.CreateOrderInput) { in.CustomerID = " cus_1" },
+		"customer id boşluklu": func(in *service.CreateOrderInput) { in.CustomerID = " cus_1" },
 	}
 
 	for ad, boz := range testler {
@@ -273,7 +273,7 @@ func TestCreateOrderBolgeVeMusteriyiSutunaYazar(t *testing.T) {
 	assert.Equal(t, testCustomerID, siparis.CustomerID)
 }
 
-// TestCreateOrderMisafirSiparisiMusterisizAcilir müşteri kimliği verilmeyen
+// TestCreateOrderMisafirSiparisiMusterisizAcilir customer id verilmeyen
 // siparişin MİSAFİR olarak açıldığını doğrular.
 func TestCreateOrderMisafirSiparisiMusterisizAcilir(t *testing.T) {
 	ctx := context.Background()
@@ -655,7 +655,7 @@ func TestGetOrderByDisplayIDNumarayaGoreOkur(t *testing.T) {
 	require.Len(t, detay.Items, 1)
 
 	_, err = o.svc.GetOrderByDisplayID(ctx, 0)
-	require.Error(t, err, "sıfır numara geçersiz olmalı")
+	require.Error(t, err, "a zero number has to be invalid")
 	assert.Equal(t, errors.KindInvalid, errors.KindOf(err))
 
 	_, err = o.svc.GetOrderByDisplayID(ctx, 9999)

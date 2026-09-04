@@ -427,7 +427,7 @@ func TestSilinenMusteriHicbirOkumadaGorunmez(t *testing.T) {
 	// GetCustomer.
 	_, err = svc.GetCustomer(ctx, musteri.ID)
 	assert.Equal(t, errors.KindNotFound, errors.KindOf(err),
-		"silinen müşteri kimliğiyle okunmamalı")
+		"silinen customer idyle okunmamalı")
 
 	// GetAccountByEmail.
 	_, err = svc.GetCustomerByEmail(ctx, eposta)
@@ -623,7 +623,7 @@ func TestAdresYasamDongusu(t *testing.T) {
 // customer_id eşitliğidir (bkz. queries/customer_address.sql). Koşul düşerse
 // adresin kimliğini bilen HERKES başkasının adresini okuyabilir, güncelleyebilir,
 // silebilir ve varsayılan yapabilir; store uçları Faz 8'e kadar korumasız
-// olduğu ve müşteri kimliği yol parametresinden geldiği için bu koşul şu an
+// olduğu ve customer id yol parametresinden geldiği için bu koşul şu an
 // TEK bariyerdir (bkz. api paket belgesi).
 //
 // Birim testi bu iddiayı kanıtlayamaz: sahte depo sahipliği kendisi süzer ve

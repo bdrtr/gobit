@@ -1,35 +1,36 @@
-// Package service pricing modülünün iş mantığını barındırır.
+// Package service holds the business logic of the pricing module.
 //
-// # Modüller arası yüzey (ADR 0001)
+// # The cross-module surface (ADR 0001)
 //
-// pricing hiçbir modülü import ETMEZ ve hiçbir modülden veri OKUMAZ; bu yüzden
-// bu pakette tüketici tarafı bir arayüz yoktur. Ters yön vardır: product ve
-// (Faz 5'te) cart pricing'e ihtiyaç duyar. O tarafın kendi paketinde dar bir
-// arayüz tanımlayabilmesi için pricing'in yüzeyi İKİYE ayrılmıştır:
+// pricing IMPORTS no module and READS data from no module; there is therefore no
+// consumer-side interface in this package. The reverse direction does exist:
+// product and (in Phase 5) cart need pricing. So that side can define a narrow
+// interface in its own package, pricing's surface is SPLIT IN TWO:
 //
-//   - Modül içi zengin yüzey — [models] tiplerini kullanır ([Service.CreatePriceSet],
-//     [Service.SetPrices], [Service.CalculatePrice] …). Bu metotları yalnızca
-//     pricing'in kendi API katmanı ve query sağlayıcısı çağırır.
-//   - Modüller arası yüzey — YALNIZCA ilkel ve stdlib tipleri kullanır
+//   - The rich in-module surface — it uses the [models] types
+//     ([Service.CreatePriceSet], [Service.SetPrices], [Service.CalculatePrice] …).
+//     Only pricing's own API layer and query provider call these methods.
+//   - The cross-module surface — it uses ONLY primitive and stdlib types
 //     ([Service.CreateEmptyPriceSet], [Service.SetBasePrices],
 //     [Service.CalculateAmount]).
 //
-// Ayrım zorunludur: Go'da yapısal uyum imza EŞİTLİĞİ ister. Tüketici modül
-// pricing'i import edemediği için [models.PriceSet] gibi bir tipi imzasında
-// adlandıramaz; adlandırdığı an kendi paketindeki farklı bir tip olur ve somut
-// servis arayüzü karşılamaz. İlkel tiplerle yazılmış imzalar ise tüketicinin
-// kendi paketinde birebir tekrarlanabilir:
+// The split is mandatory: structural conformance in Go demands signature
+// EQUALITY. Because the consuming module cannot import pricing, it cannot name a
+// type such as [models.PriceSet] in its signature; the moment it names one it
+// becomes a different type in its own package and the concrete service does not
+// satisfy the interface. Signatures written with primitive types, on the other
+// hand, can be repeated verbatim in the consumer's own package:
 //
-//	// product modülünde, pricing import EDİLMEDEN:
+//	// in the product module, WITHOUT importing pricing:
 //	type PriceSetCreator interface {
 //	    CreateEmptyPriceSet(ctx context.Context) (string, error)
 //	}
 //	creator, err := container.Resolve[PriceSetCreator](c, "pricing.service")
 //
-// # Para
+// # Money
 //
-// Tutarlar TAM SAYI minor unit'tir ve para birimi ayrı alandır (plan Bölüm 8).
-// Servis hiçbir yerde float kullanmaz, yuvarlama yapmaz.
+// Amounts are INTEGER minor units and the currency is a separate field (plan
+// Section 8). The service uses float nowhere and does no rounding.
 package service
 
 import (
@@ -41,47 +42,48 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/pricing/models"
 )
 
-// Hata kodları; çağıran taraf errors.CodeOf ile bunlara bakabilir.
+// Error codes; the calling side can look at these with errors.CodeOf.
 const (
-	// CodeInvalidInput girdinin doğrulamadan geçmediğini bildirir.
+	// CodeInvalidInput reports that the input did not pass validation.
 	CodeInvalidInput = "pricing_invalid_input"
-	// CodeNotCalculable verilen bağlamda geçerli fiyat bulunmadığını bildirir.
+	// CodeNotCalculable reports that no valid price was found in the given context.
 	CodeNotCalculable = "price_not_calculable"
-	// CodePriceSetNotFound istenen price set'in bulunamadığını bildirir.
+	// CodePriceSetNotFound reports that the requested price set was not found.
 	CodePriceSetNotFound = "price_set_not_found"
 )
 
-// Sayfalama sınırları. Limit verilmezse varsayılan, aşırı büyük verilirse
-// azami değer uygulanır; istemci tek istekle veritabanını tarayamaz.
+// Paging limits. If no limit is given the default is applied, if an excessively
+// large one is given the maximum is applied; a client cannot scan the database
+// with a single request.
 const (
-	// DefaultLimit limit verilmediğinde uygulanan sayfa boyutudur.
+	// DefaultLimit is the page size applied when no limit is given.
 	DefaultLimit int32 = 50
-	// MaxLimit tek istekte dönebilecek azami kayıt sayısıdır.
+	// MaxLimit is the maximum number of records a single request may return.
 	MaxLimit int32 = 100
 )
 
-// Page sayfalanmış bir liste sonucudur.
+// Page is a paged list result.
 //
-// Limit ve Offset, isteğin ham değerleri değil UYGULANAN değerlerdir; API zarfı
-// bu alanları olduğu gibi yazar, böylece istemci kırpılan bir limitten haberdar
-// olur.
+// Limit and Offset are not the request's raw values but the APPLIED ones; the
+// API envelope writes these fields as they are, so the client learns about a
+// limit that was clamped.
 type Page[T any] struct {
-	// Items geçerli sayfadaki kayıtlardır.
+	// Items are the records on the current page.
 	Items []T
-	// Count filtreye uyan TOPLAM kayıt sayısıdır (sayfa boyu değil).
+	// Count is the TOTAL number of records matching the filter (not the page size).
 	Count int64
-	// Limit uygulanan sayfa boyudur.
+	// Limit is the applied page size.
 	Limit int32
-	// Offset uygulanan atlama sayısıdır.
+	// Offset is the applied number of skipped records.
 	Offset int32
 }
 
-// Repository servisin ihtiyaç duyduğu veri erişim yüzeyidir.
+// Repository is the data access surface the service needs.
 //
-// Arayüz TÜKETEN tarafta (burada) tanımlıdır; somut uygulama
-// internal/modules/pricing/repository paketindedir. Bu, ADR 0001'in örüntüsünün
-// modül İÇİNDEKİ karşılığıdır ve servisin veritabanı olmadan test edilmesini
-// sağlar.
+// The interface is defined on the CONSUMING side (here); the concrete
+// implementation is in the internal/modules/pricing/repository package. This is
+// the IN-MODULE counterpart of ADR 0001's pattern and it lets the service be
+// tested without a database.
 type Repository interface {
 	CreatePriceSet(ctx context.Context, id string, prices []models.Price, now time.Time) (models.PriceSet, error)
 	GetPriceSet(ctx context.Context, id string) (models.PriceSet, error)
@@ -107,27 +109,28 @@ type Repository interface {
 	DeletePriceList(ctx context.Context, id string, now time.Time) error
 }
 
-// Options servisin kurulum ayarlarıdır.
+// Options are the service's setup settings.
 type Options struct {
-	// Logger yapısal log hedefidir; nil ise loglar atılır.
+	// Logger is the structured log target; if nil the logs are discarded.
 	Logger *slog.Logger
-	// Now zaman kaynağıdır; nil ise time.Now kullanılır. Testler burayı sabit
-	// bir saatle doldurarak zamana bağlı dalları (fiyat listesi penceresi)
-	// belirlenimci hâle getirir.
+	// Now is the time source; if nil time.Now is used. Tests fill this in with a
+	// fixed clock to make the time-dependent branches (the price list window)
+	// deterministic.
 	Now func() time.Time
 }
 
-// Service pricing modülünün public servisidir. Eşzamanlı kullanıma güvenlidir.
+// Service is the public service of the pricing module. It is safe for concurrent
+// use.
 type Service struct {
 	repo Repository
 	log  *slog.Logger
 	now  func() time.Time
 }
 
-// New verilen depo üzerinde çalışan bir servis üretir.
+// New produces a service working on the given repository.
 //
-// repo nil ise bu, kurulumda değil ilk çağrıda tipli bir hata olarak bildirilir;
-// kurulum yolu panik üretmez.
+// If repo is nil, this is reported as a typed error on the first call rather
+// than at setup; the setup path produces no panic.
 func New(repo Repository, opts Options) *Service {
 	log := opts.Logger
 	if log == nil {
@@ -140,61 +143,63 @@ func New(repo Repository, opts Options) *Service {
 	return &Service{repo: repo, log: log, now: now}
 }
 
-// ready deponun kurulu olduğunu doğrular.
+// ready verifies that the repository is configured.
 func (s *Service) ready() error {
 	if s == nil || s.repo == nil {
-		return errors.Unavailable("pricing_service_unconfigured", "pricing servisi kurulmamış")
+		return errors.Unavailable("pricing_service_unconfigured", "the pricing service is not configured")
 	}
 	return nil
 }
 
-// clock geçerli anı UTC olarak döner.
+// clock returns the current moment in UTC.
 func (s *Service) clock() time.Time {
 	return s.now().UTC()
 }
 
-// PriceInput tek bir fiyatın yazma girdisidir.
+// PriceInput is the write input of a single price.
 type PriceInput struct {
-	// CurrencyCode ISO 4217 kodudur; büyük/küçük harf serbesttir, BÜYÜK
-	// harfe normalleştirilerek saklanır.
+	// CurrencyCode is the ISO 4217 code; the case is free, it is normalized to
+	// UPPERCASE and stored that way.
 	CurrencyCode string
-	// Amount minor unit cinsinden tutardır.
+	// Amount is the amount in minor units.
 	Amount int64
-	// MinQuantity alt adet sınırıdır; 0 verilirse 1 kabul edilir.
+	// MinQuantity is the lower quantity bound; if 0 is given it is taken as 1.
 	MinQuantity int32
-	// MaxQuantity üst adet sınırıdır; nil ise sınırsız.
+	// MaxQuantity is the upper quantity bound; if nil it is unbounded.
 	MaxQuantity *int32
-	// PriceListID fiyatı bir kampanya/segment listesine bağlar; nil ise taban fiyat.
+	// PriceListID binds the price to a campaign/segment list; if nil it is a base price.
 	PriceListID *string
-	// Rules fiyatın geçerlilik koşullarıdır.
+	// Rules are the price's validity conditions.
 	Rules []RuleInput
 }
 
-// RuleInput tek bir fiyat kuralının yazma girdisidir.
+// RuleInput is the write input of a single price rule.
 type RuleInput struct {
-	// Attribute hesaplama bağlamında bakılacak alan adıdır.
+	// Attribute is the name of the field to look at in the calculation context.
 	Attribute string
-	// Operator karşılaştırma işlecidir.
+	// Operator is the comparison operator.
 	Operator models.RuleOperator
-	// Values karşılaştırmanın sağ tarafıdır; en az bir eleman içermelidir.
+	// Values is the right-hand side of the comparison; it must hold at least one
+	// element.
 	Values []string
 }
 
-// CreatePriceSet yeni bir price set oluşturur ve verilen fiyatları yazar.
+// CreatePriceSet creates a new price set and writes the given prices.
 //
-// prices boş bırakılabilir: bir varyant önce fiyatsız yaratılıp fiyatları
-// sonra yazılabilir. Fiyatlardan biri geçersizse HİÇBİRİ yazılmaz ve price set
-// de oluşturulmaz — bu, girdiyi servis doğrulaması eleyince de, veritabanı
-// reddedince de (örn. var olmayan bir fiyat listesine bağlı fiyat) geçerlidir:
-// kap ve fiyatları TEK işlemde yazılır.
+// prices may be left empty: a variant can first be created without prices and
+// have its prices written later. If one of the prices is invalid NONE of them is
+// written and the price set is not created either — this holds both when service
+// validation eliminates the input and when the database rejects it (e.g. a price
+// bound to a price list that does not exist): the container and its prices are
+// written in a SINGLE transaction.
 func (s *Service) CreatePriceSet(ctx context.Context, prices []PriceInput) (models.PriceSet, error) {
 	if err := s.ready(); err != nil {
 		return models.PriceSet{}, err
 	}
 
 	now := s.clock()
-	// Doğrulama YAZMADAN ÖNCE yapılır; geçersiz bir fiyat için veritabanına hiç
-	// gidilmez.
+	// Validation is done BEFORE THE WRITE; for an invalid price the database is
+	// not visited at all.
 	toWrite, err := s.buildPrices("", prices, now)
 	if err != nil {
 		return models.PriceSet{}, err
@@ -203,18 +208,18 @@ func (s *Service) CreatePriceSet(ctx context.Context, prices []PriceInput) (mode
 	return s.repo.CreatePriceSet(ctx, models.NewPriceSetID(now), toWrite, now)
 }
 
-// GetPriceSet kimliğe göre price set döner; yoksa errors.NotFound.
+// GetPriceSet returns the price set by id; errors.NotFound if there is none.
 func (s *Service) GetPriceSet(ctx context.Context, id string) (models.PriceSet, error) {
 	if err := s.ready(); err != nil {
 		return models.PriceSet{}, err
 	}
-	if err := requireID(id, models.PriceSetIDPrefix, "price set kimliği"); err != nil {
+	if err := requireID(id, models.PriceSetIDPrefix, "price set id"); err != nil {
 		return models.PriceSet{}, err
 	}
 	return s.repo.GetPriceSet(ctx, id)
 }
 
-// ListPriceSets sayfalanmış price set listesini döner.
+// ListPriceSets returns the paged price set list.
 func (s *Service) ListPriceSets(ctx context.Context, limit, offset int32) (Page[models.PriceSet], error) {
 	if err := s.ready(); err != nil {
 		return Page[models.PriceSet]{}, err
@@ -231,29 +236,29 @@ func (s *Service) ListPriceSets(ctx context.Context, limit, offset int32) (Page[
 	return Page[models.PriceSet]{Items: sets, Count: total, Limit: limit, Offset: offset}, nil
 }
 
-// DeletePriceSet price set'i ve fiyatlarını soft delete ile siler.
+// DeletePriceSet deletes the price set and its prices with a soft delete.
 func (s *Service) DeletePriceSet(ctx context.Context, id string) error {
 	if err := s.ready(); err != nil {
 		return err
 	}
-	if err := requireID(id, models.PriceSetIDPrefix, "price set kimliği"); err != nil {
+	if err := requireID(id, models.PriceSetIDPrefix, "price set id"); err != nil {
 		return err
 	}
 	return s.repo.DeletePriceSet(ctx, id, s.clock())
 }
 
-// SetPrices bir price set'in fiyatlarını TOPLUCA değiştirir.
+// SetPrices changes a price set's prices IN BULK.
 //
-// İşlem yerine koymadır (replace), ekleme değil: verilmeyen fiyatlar silinir.
-// Yazma atomiktir — girdilerden biri veritabanınca reddedilirse hiçbiri
-// yazılmaz ve kap eski fiyatlarıyla kalır.
+// The operation is a replace, not an append: prices that were not given are
+// deleted. The write is atomic — if one of the inputs is rejected by the
+// database none of them is written and the container keeps its old prices.
 //
-// Boş dilim geçerli bir istektir ve kabın tüm fiyatlarını kaldırır.
+// An empty slice is a valid request and removes all of the container's prices.
 func (s *Service) SetPrices(ctx context.Context, priceSetID string, prices []PriceInput) ([]models.Price, error) {
 	if err := s.ready(); err != nil {
 		return nil, err
 	}
-	if err := requireID(priceSetID, models.PriceSetIDPrefix, "price set kimliği"); err != nil {
+	if err := requireID(priceSetID, models.PriceSetIDPrefix, "price set id"); err != nil {
 		return nil, err
 	}
 
@@ -268,34 +273,35 @@ func (s *Service) SetPrices(ctx context.Context, priceSetID string, prices []Pri
 		return nil, err
 	}
 
-	// Yerine koyma yıkıcı bir işlemdir: kaç fiyatın silinip kaç fiyatın
-	// yazıldığı, yanlış bir toplu çağrının izini sürmenin tek yoludur.
-	// Tutarlar loglanmaz; kimlik ve sayı yeter (plan Bölüm 8).
-	s.log.DebugContext(ctx, "price set fiyatları yenilendi",
+	// A replace is a destructive operation: how many prices were deleted and
+	// how many were written is the only way to trace a wrong bulk call.
+	// Amounts are not logged; the id and the count suffice (plan Section 8).
+	s.log.DebugContext(ctx, "price set prices replaced",
 		slog.String("price_set_id", priceSetID),
-		slog.Int("fiyat_sayisi", len(written)),
+		slog.Int("price_count", len(written)),
 	)
 	return written, nil
 }
 
-// ListStorePrices kabın MÜŞTERİYE gösterilebilir fiyatlarını döner.
+// ListStorePrices returns the container's prices that may be shown TO THE
+// CUSTOMER.
 //
-// [Service.ListPrices]'tan farkı süzgeçtir: yalnızca yayınlanmış ve süresi
-// geçmemiş listelere ait ya da taban fiyatlar döner, kurala bağlı fiyatlar
-// hiç dönmez. Kurala bağlı bir fiyatın müşteriye gösterilmesi iki yönden
-// yanlıştır — fiyat o müşteri için geçerli olmayabilir, ve kuralın kendisi
-// (ör. bir müşteri grubunun kimliği) iş bilgisidir.
+// What differs from [Service.ListPrices] is the filter: only prices belonging to
+// published and unexpired lists, or base prices, are returned; rule-bound prices
+// are never returned. Showing a rule-bound price to the customer is wrong in two
+// ways — the price may not be valid for that customer, and the rule itself (e.g.
+// the id of a customer group) is business information.
 //
-// Dönen fiyatların Rules alanı BOŞALTILIR: seçim zaten burada yapıldığı için
-// koşulların dışarı çıkmasına gerek yoktur.
+// The Rules field of the returned prices is EMPTIED: since the selection has
+// already been made here, there is no need for the conditions to leave.
 //
-// Yönetim yüzeyi ListPrices kullanmaya devam eder; operatör taslak kampanyaları
-// ve kural koşullarını GÖRMELİDİR.
+// The admin surface keeps using ListPrices; the operator MUST SEE draft
+// campaigns and rule conditions.
 func (s *Service) ListStorePrices(ctx context.Context, priceSetID string) ([]models.Price, error) {
 	if err := s.ready(); err != nil {
 		return nil, err
 	}
-	if err := requireID(priceSetID, models.PriceSetIDPrefix, "price set kimliği"); err != nil {
+	if err := requireID(priceSetID, models.PriceSetIDPrefix, "price set id"); err != nil {
 		return nil, err
 	}
 	if _, err := s.repo.GetPriceSet(ctx, priceSetID); err != nil {
@@ -307,8 +313,9 @@ func (s *Service) ListStorePrices(ctx context.Context, priceSetID string) ([]mod
 		return nil, err
 	}
 
-	// Query sağlayıcısıyla AYNI süzgeç kullanılır; iki müşteri yüzeyinin
-	// ayrışması, birinde sızan bir fiyatın diğerinde görünmemesi demek olurdu.
+	// The SAME filter as the Query provider's is used; the two customer surfaces
+	// drifting apart would mean a price that leaks in one is not visible in the
+	// other.
 	prices := listablePrices(candidates, s.clock())
 	for i := range prices {
 		prices[i].Rules = nil
@@ -316,34 +323,36 @@ func (s *Service) ListStorePrices(ctx context.Context, priceSetID string) ([]mod
 	return prices, nil
 }
 
-// ListPrices bir price set'in fiyatlarını kurallarıyla döner.
+// ListPrices returns a price set's prices together with their rules.
 //
-// YÖNETİM yüzeyi içindir ve HİÇBİR süzgeç uygulamaz: taslak kampanya fiyatları
-// ve kurala bağlı fiyatlar da döner. Müşteriye giden yüzey için
-// [Service.ListStorePrices] kullanılmalıdır.
+// It is for the ADMIN surface and applies NO filter: draft campaign prices and
+// rule-bound prices are returned too. For the surface that goes to the customer
+// [Service.ListStorePrices] must be used.
 func (s *Service) ListPrices(ctx context.Context, priceSetID string) ([]models.Price, error) {
 	if err := s.ready(); err != nil {
 		return nil, err
 	}
-	if err := requireID(priceSetID, models.PriceSetIDPrefix, "price set kimliği"); err != nil {
+	if err := requireID(priceSetID, models.PriceSetIDPrefix, "price set id"); err != nil {
 		return nil, err
 	}
-	// Kabın varlığı doğrulanır: olmayan bir kabın fiyatları boş dilim olarak
-	// dönerse istemci 404 yerine "fiyatı yok" sanırdı.
+	// The container's existence is verified: if the prices of a container that
+	// does not exist came back as an empty slice, the client would think "it has
+	// no price" instead of a 404.
 	if _, err := s.repo.GetPriceSet(ctx, priceSetID); err != nil {
 		return nil, err
 	}
 	return s.repo.ListPrices(ctx, priceSetID)
 }
 
-// buildPrices girdileri doğrular ve yazılacak domain modellerine çevirir.
+// buildPrices validates the inputs and converts them into the domain models to
+// be written.
 //
-// priceSetID boş verilebilir (kap henüz oluşturulmamışsa); kimlik yazma anında
-// depo tarafından atanır.
+// priceSetID may be given empty (when the container has not been created yet);
+// the id is assigned by the repository at write time.
 //
-// Hata, kaçıncı fiyatın reddedildiğini [detailIndex] anahtarıyla taşır; kural
-// düzeyindeki hatalarda [detailRuleIndex] de doludur ve iki seviye birbirini
-// EZMEZ.
+// The error carries which price was rejected under the [detailIndex] key; for
+// rule-level errors [detailRuleIndex] is filled in as well and the two levels do
+// NOT OVERWRITE each other.
 func (s *Service) buildPrices(priceSetID string, inputs []PriceInput, now time.Time) ([]models.Price, error) {
 	out := make([]models.Price, 0, len(inputs))
 	for i, in := range inputs {
@@ -356,7 +365,7 @@ func (s *Service) buildPrices(priceSetID string, inputs []PriceInput, now time.T
 	return out, nil
 }
 
-// buildPrice tek bir girdiyi doğrular ve modele çevirir.
+// buildPrice validates a single input and converts it into the model.
 func buildPrice(priceSetID string, in PriceInput, now time.Time) (models.Price, error) {
 	currency, err := normalizeCurrency(in.CurrencyCode)
 	if err != nil {
@@ -397,7 +406,7 @@ func buildPrice(priceSetID string, in PriceInput, now time.Time) (models.Price, 
 	}, nil
 }
 
-// buildRule tek bir kural girdisini doğrular ve modele çevirir.
+// buildRule validates a single rule input and converts it into the model.
 func buildRule(priceID string, in RuleInput, now time.Time) (models.PriceRule, error) {
 	if err := validateRule(in); err != nil {
 		return models.PriceRule{}, err

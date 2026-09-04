@@ -142,7 +142,7 @@ func New(repo Repository, opts Options) *Service {
 // ready deponun kurulu olduğunu doğrular.
 func (s *Service) ready() error {
 	if s == nil || s.repo == nil {
-		return errors.Unavailable("region_service_unconfigured", "region servisi kurulmamış")
+		return errors.Unavailable("region_service_unconfigured", "the region service is not configured")
 	}
 	return nil
 }

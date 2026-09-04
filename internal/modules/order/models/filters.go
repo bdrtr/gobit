@@ -1,36 +1,37 @@
 package models
 
-// OrderFilter sipariş listelemesinin ölçütleridir.
+// OrderFilter is the set of criteria for listing orders.
 //
-// Filtre alanları işaretçidir: nil "bu ölçütü uygulama" demektir. Böylece
-// "status = pending" ile "durum filtresi yok" birbirinden ayrılır; bir tipin
-// sıfır değeri sessizce filtreye dönüşmez.
+// The filter fields are pointers: nil means "do not apply this criterion". That
+// keeps "status = pending" apart from "no status filter"; the zero value of a
+// type never turns into a filter silently.
 //
-// Tip repository'nin değil models'ın içindedir: hem servis hem repository
-// models'ı zaten import eder, dolayısıyla servisin depo arayüzü repository
-// paketine bağlanmadan bu ölçütleri taşıyabilir (ADR 0001).
+// The type lives in models and not in repository: both the service and the
+// repository already import models, so the service's store interface can carry
+// these criteria without binding itself to the repository package (ADR 0001).
 type OrderFilter struct {
-	// CustomerID verilirse yalnızca o müşterinin siparişleri döner.
+	// CustomerID, when given, returns only that customer's orders.
 	CustomerID *string
-	// RegionID verilirse yalnızca o bölgenin siparişleri döner.
+	// RegionID, when given, returns only that region's orders.
 	RegionID *string
-	// Status verilirse siparişler duruma göre süzülür.
+	// Status, when given, filters the orders by status.
 	Status *OrderStatus
-	// Limit döndürülecek azami satır sayısıdır.
+	// Limit is the maximum number of rows to return.
 	Limit int64
-	// Offset atlanacak satır sayısıdır.
+	// Offset is the number of rows to skip.
 	Offset int64
 }
 
-// ChildFilter siparişin iade/değişim/hasar kayıtlarının listeleme ölçütüdür.
+// ChildFilter is the listing criterion for the return/exchange/claim records of
+// an order.
 //
-// Üçü aynı şekli paylaşır (bir sipariş + sayfalama) ve tek tip olması
-// çağrı yerinde parametrelerin yer değiştirmesini imkânsız kılar.
+// The three share the same shape (one order + pagination) and having a single
+// type makes swapping the parameters at the call site impossible.
 type ChildFilter struct {
-	// OrderID kayıtların ait olduğu siparişdir; zorunludur.
+	// OrderID is the order the records belong to; it is required.
 	OrderID string
-	// Limit döndürülecek azami satır sayısıdır.
+	// Limit is the maximum number of rows to return.
 	Limit int64
-	// Offset atlanacak satır sayısıdır.
+	// Offset is the number of rows to skip.
 	Offset int64
 }

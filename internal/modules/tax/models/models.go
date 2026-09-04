@@ -1,72 +1,76 @@
-// Package models tax modülünün domain modellerini tanımlar.
+// Package models defines the tax module's domain models.
 //
-// Buradaki tipler veritabanı tiplerinden ARINDIRILMIŞTIR: pgtype bu pakete
-// girmez, dönüşüm repository sarmalayıcısında yapılır. Böylece servis ve API
-// katmanları depolama ayrıntısına bağlanmaz.
+// The types here are FREE OF database types: pgtype does not enter this
+// package, the conversion is done in the repository wrapper. The service and
+// API layers are therefore not bound to a storage detail.
 //
-// # Oran neden tam sayı
+// # Why the rate is an integer
 //
-// Vergi oranı BAZ PUANDIR (basis point): 1 baz puan = %0,01, dolayısıyla
-// 10000 = %100 ve 2000 = %20. Plan Bölüm 8 para ve türevlerinde float yasaklar;
-// %20'nin float karşılığı (0.2) bir tutarla çarpıldığında kuruş düzeyinde
-// sessiz yuvarlama üretirdi. Bu pakette hiçbir yerde kayan nokta kullanılmaz.
+// A tax rate is a BASIS POINT: 1 basis point = 0.01%, so 10000 = 100% and
+// 2000 = 20%. Plan Section 8 forbids floats in money and its derivatives; the
+// float equivalent of 20% (0.2), multiplied by an amount, would produce silent
+// rounding at the cent level. Floating point is used nowhere in this package.
 //
-// Zamanlar UTC'dir ve silme YUMUŞAKTIR (DeletedAt).
+// Times are UTC and deletion is SOFT (DeletedAt).
 package models
 
 import "time"
 
-// Vergi oranı sınırları (baz puan).
+// Tax rate bounds (basis points).
 const (
-	// MinRateBps izin verilen en küçük vergi oranıdır.
+	// MinRateBps is the smallest permitted tax rate.
 	MinRateBps int32 = 0
-	// MaxRateBps izin verilen en büyük vergi oranıdır: %100.
+	// MaxRateBps is the largest permitted tax rate: 100%.
 	//
-	// Üst sınır bilinçlidir: %100'den büyük bir oran veri giriş hatasıdır ve
-	// sepet toplamını sessizce ikiye katlardı.
+	// The upper bound is deliberate: a rate greater than 100% is a data entry
+	// error and would silently double the cart total.
 	MaxRateBps int32 = 10_000
-	// BpsPerPercent bir YÜZDEDEKİ baz puan sayısıdır: 100 baz puan = %1.
+	// BpsPerPercent is the number of basis points in ONE PERCENT: 100 basis
+	// points = 1%.
 	//
-	// Baz puan ÖLÇEĞİ (10000 = %100) DEĞİLDİR; yalnızca oranı yüzdeye çevirmek
-	// için bölen olarak kullanılır (bkz. [TaxRate.RatePercent]). Ad ölçekten
-	// bilinçli olarak ayrılmıştır: aynı modülde farklı değerlerde iki
-	// "BpsScale" bulunması, vergiyi bu sabitle hesaplayan bir çağrının 100 KAT
-	// fazla vergi üretmesi ve derleyicinin bunu yakalamaması demekti. Baz puan
-	// ölçeği tek bir yerde, service.BpsScale adıyla durur.
+	// It is NOT the basis point SCALE (10000 = 100%); it is used only as the
+	// divisor that converts a rate into a percentage (see
+	// [TaxRate.RatePercent]). The name is deliberately kept apart from the
+	// scale: having two "BpsScale" constants with different values in the same
+	// module meant that a call computing tax with this constant would produce
+	// 100 TIMES too much tax and the compiler would not catch it. The basis
+	// point scale stands in a single place, under the name service.BpsScale.
 	BpsPerPercent int32 = 100
 )
 
-// CountryCodeLength ISO 3166-1 alpha-2 kodunun harf sayısıdır.
+// CountryCodeLength is the letter count of an ISO 3166-1 alpha-2 code.
 const CountryCodeLength = 2
 
-// MaxProvinceCodeLength eyalet/il kodunun azami karakter sayısıdır.
+// MaxProvinceCodeLength is the maximum character count of a province/state
+// code.
 //
-// Sınır, veritabanındaki CHECK ile aynıdır. ISO 3166-2'nin ülke içi bölümü en
-// fazla üç karakterdir; on karakter, standart dışı ama yerleşik kullanımlara
-// (örn. Türkiye'de plaka kodu) yer bırakacak kadar cömert, serbest metne
-// dönüşmeyecek kadar dardır.
+// The bound is the same as the CHECK in the database. The in-country part of
+// ISO 3166-2 is at most three characters; ten characters is generous enough to
+// leave room for non-standard but established usages (e.g. the license plate
+// code in Turkey) and narrow enough not to turn into free text.
 const MaxProvinceCodeLength = 10
 
-// RuleReference bir vergi kuralının HANGİ TÜR kaleme baktığını söyler.
+// RuleReference says WHICH KIND of item a tax rule looks at.
 //
-// Değerler veritabanındaki CHECK kısıtıyla birebir aynıdır; buradaki bir
-// yazım hatası kayıt anında kısıt ihlali olarak döner.
+// The values are exactly the same as the CHECK constraint in the database; a
+// typo here comes back as a constraint violation at write time.
 type RuleReference string
 
-// Kural referans türleri.
+// Rule reference kinds.
 const (
-	// ReferenceProduct kuralın tek bir ürüne baktığını bildirir.
+	// ReferenceProduct declares that the rule looks at a single product.
 	ReferenceProduct RuleReference = "product"
-	// ReferenceProductType kuralın bir ürün TİPİNE baktığını bildirir.
+	// ReferenceProductType declares that the rule looks at a product TYPE.
 	ReferenceProductType RuleReference = "product_type"
-	// ReferenceShippingOption kuralın bir kargo seçeneğine baktığını bildirir.
+	// ReferenceShippingOption declares that the rule looks at a shipping
+	// option.
 	ReferenceShippingOption RuleReference = "shipping_option"
 )
 
-// String referansın metin karşılığını döner.
+// String returns the textual form of the reference.
 func (r RuleReference) String() string { return string(r) }
 
-// Valid referansın tanımlı bir tür olup olmadığını bildirir.
+// Valid reports whether the reference is a defined kind.
 func (r RuleReference) Valid() bool {
 	switch r {
 	case ReferenceProduct, ReferenceProductType, ReferenceShippingOption:
@@ -76,16 +80,18 @@ func (r RuleReference) Valid() bool {
 	}
 }
 
-// Specificity referansın BELİRGİNLİK derecesini döner; büyük olan daha özeldir.
+// Specificity returns the reference's degree of SPECIFICITY; the greater one is
+// the more specific.
 //
-// Aynı kaleme birden çok kural eşleştiğinde kazananı bu sıra belirler: tek bir
-// ürüne yazılmış kural, o ürünün tipine yazılmış kuralı yener. Sıra olmasaydı
-// hangi oranın uygulandığı harita dolaşım sırasına kalırdı ve aynı sepet iki
-// çağrıda iki farklı vergi üretebilirdi.
+// When more than one rule matches the same item, this order decides the winner:
+// a rule written for a single product beats a rule written for that product's
+// type. Without the order, which rate got applied would be left to map
+// iteration order and the same cart could produce two different taxes in two
+// calls.
 //
-// Kargo seçeneği kuralları KALEMLERLE yarışmaz — kargo satırı ayrı hesaplanır —
-// bu yüzden derecesi ürün tipiyle aynı kabul edilir; ikisi asla aynı kalemde
-// karşılaşmaz.
+// Shipping option rules do not compete WITH ITEMS — the shipping line is
+// calculated separately — so their degree is taken to be the same as a product
+// type's; the two never meet on the same item.
 func (r RuleReference) Specificity() int {
 	switch r {
 	case ReferenceProduct:
@@ -97,44 +103,46 @@ func (r RuleReference) Specificity() int {
 	}
 }
 
-// TaxRegion bir vergi bölgesidir: ülke kökü ya da o kökün altındaki eyalet.
+// TaxRegion is a tax region: a country root or a province under that root.
 //
-// Kök bölgede ParentID ve ProvinceCode nil'dir; eyalet bölgesinde İKİSİ DE
-// doludur. Ara bir durum yoktur ve veritabanı kısıtı bunu zorlar
-// (tax_region_hierarchy_check): ebeveynsiz bir eyalet hiç bulunamayacak,
-// eyalet kodu taşıyan bir kök ise ülkenin tamamı yerine tek bir ile oran
-// uygulayacak bir kayıt olurdu.
+// On a root region ParentID and ProvinceCode are nil; on a province region BOTH
+// are filled. There is no state in between and a database constraint enforces
+// this (tax_region_hierarchy_check): a province without a parent would never be
+// found, while a root carrying a province code would be a record applying a
+// rate to a single province instead of to the whole country.
 type TaxRegion struct {
-	// ID "taxreg_" önekli, zaman sıralı kimliktir.
+	// ID is the "taxreg_" prefixed, time-ordered id.
 	ID string
-	// CountryCode ISO 3166-1 alpha-2 kodudur; daima BÜYÜK harf saklanır.
+	// CountryCode is the ISO 3166-1 alpha-2 code; always stored in UPPER case.
 	CountryCode string
-	// ProvinceCode eyalet/il kodudur; kök bölgede nil.
+	// ProvinceCode is the province/state code; nil on a root region.
 	ProvinceCode *string
-	// ParentID kök bölgenin kimliğidir; kök bölgede nil.
+	// ParentID is the id of the root region; nil on a root region.
 	ParentID *string
-	// ProviderID vergi sağlayıcısının kimliğidir. Boş ise ülke kökünün
-	// sağlayıcısı DEVRALINIR; kökünki de boşsa yerel hesaplama uygulanır.
-	// Bkz. tax/service paket yorumu, "Sağlayıcı soyutlaması".
+	// ProviderID is the tax provider's id. When empty, the country root's
+	// provider is INHERITED; when the root's is empty too, local calculation
+	// applies. See the tax/service package comment, "The provider
+	// abstraction".
 	ProviderID string
-	// Metadata serbest üstveridir; bu modül içeriğini yorumlamaz.
+	// Metadata is free-form metadata; this module does not interpret its
+	// content.
 	Metadata map[string]any
-	// CreatedAt kaydın oluşturulma anıdır (UTC).
+	// CreatedAt is the instant the record was created (UTC).
 	CreatedAt time.Time
-	// UpdatedAt kaydın son güncellenme anıdır (UTC).
+	// UpdatedAt is the instant the record was last updated (UTC).
 	UpdatedAt time.Time
-	// DeletedAt soft delete anıdır; nil ise kayıt canlıdır.
+	// DeletedAt is the soft delete instant; when nil the record is live.
 	DeletedAt *time.Time
 }
 
-// IsRoot bölgenin ülke kökü olup olmadığını bildirir.
+// IsRoot reports whether the region is a country root.
 func (r TaxRegion) IsRoot() bool { return r.ParentID == nil }
 
-// Province eyalet kodunu döner; kök bölgede boş dize.
+// Province returns the province code; the empty string on a root region.
 //
-// İşaretçiyi dışarı sızdırmamak bilinçlidir: çağıranların çoğu yalnızca
-// karşılaştırma yapar ve her çağrı yerinde nil denetimi tekrarlamak, unutulan
-// tek bir denetimde panik demektir.
+// Not leaking the pointer outward is deliberate: most callers only compare, and
+// repeating a nil check at every call site means a panic at the single check
+// that gets forgotten.
 func (r TaxRegion) Province() string {
 	if r.ProvinceCode == nil {
 		return ""
@@ -142,7 +150,7 @@ func (r TaxRegion) Province() string {
 	return *r.ProvinceCode
 }
 
-// Parent kök bölgenin kimliğini döner; kök bölgede boş dize.
+// Parent returns the id of the root region; the empty string on a root region.
 func (r TaxRegion) Parent() string {
 	if r.ParentID == nil {
 		return ""
@@ -150,35 +158,36 @@ func (r TaxRegion) Parent() string {
 	return *r.ParentID
 }
 
-// TaxRate bir vergi bölgesindeki orandır.
+// TaxRate is a rate in a tax region.
 //
-// IsDefault bölgenin VARSAYILAN oranıdır ve bir bölgede en fazla bir tane
-// olabilir (kısmi benzersiz indeks). Varsayılan oranın kuralı olmaz; kurallı
-// bir oran yalnızca kuralıyla eşleşen kaleme uygulanır.
+// IsDefault marks the region's DEFAULT rate and there can be at most one per
+// region (partial unique index). A default rate has no rule; a rate that has a
+// rule is applied only to the item its rule matches.
 type TaxRate struct {
-	// ID "taxrate_" önekli, zaman sıralı kimliktir.
+	// ID is the "taxrate_" prefixed, time-ordered id.
 	ID string
-	// TaxRegionID oranın ait olduğu bölgedir.
+	// TaxRegionID is the region the rate belongs to.
 	TaxRegionID string
-	// Name oranın görünen adıdır (örn. "KDV"); boş olamaz.
+	// Name is the rate's display name (e.g. "VAT"); it cannot be empty.
 	Name string
-	// Code dış sistemlerle mutabakat kodudur; verilmediyse nil.
+	// Code is the reconciliation code for external systems; nil when not given.
 	Code *string
-	// RateBps orandır (baz puan; 2000 = %20).
+	// RateBps is the rate (basis points; 2000 = 20%).
 	RateBps int32
-	// IsDefault bölgenin varsayılan oranı olup olmadığıdır.
+	// IsDefault is whether this is the region's default rate.
 	IsDefault bool
-	// Metadata serbest üstveridir; bu modül içeriğini yorumlamaz.
+	// Metadata is free-form metadata; this module does not interpret its
+	// content.
 	Metadata map[string]any
-	// CreatedAt kaydın oluşturulma anıdır (UTC).
+	// CreatedAt is the instant the record was created (UTC).
 	CreatedAt time.Time
-	// UpdatedAt kaydın son güncellenme anıdır (UTC).
+	// UpdatedAt is the instant the record was last updated (UTC).
 	UpdatedAt time.Time
-	// DeletedAt soft delete anıdır; nil ise kayıt canlıdır.
+	// DeletedAt is the soft delete instant; when nil the record is live.
 	DeletedAt *time.Time
 }
 
-// RateCode mutabakat kodunu döner; verilmediyse boş dize.
+// RateCode returns the reconciliation code; the empty string when not given.
 func (r TaxRate) RateCode() string {
 	if r.Code == nil {
 		return ""
@@ -186,52 +195,58 @@ func (r TaxRate) RateCode() string {
 	return *r.Code
 }
 
-// RatePercent oranın tam yüzde kısmını ve kalan baz puanı döner.
+// RatePercent returns the whole percent part of the rate and the remaining
+// basis points.
 //
-// Yüzde float olarak DÖNMEZ: 2050 baz puan "%20 ve 50 baz puan" olarak, yani
-// iki tam sayı hâlinde döner. Sunum katmanı bunu istediği biçimde birleştirir;
-// bu paket hiçbir yerde kayan nokta üretmez (plan Bölüm 8).
+// The percentage is NOT RETURNED as a float: 2050 basis points comes back as
+// "20% and 50 basis points", that is, as two integers. The presentation layer
+// combines them however it likes; this package produces floating point nowhere
+// (plan Section 8).
 //
-// Bölen [BpsPerPercent]'tir (100), baz puan ölçeği (10000) DEĞİLDİR: burada
-// aranan "oranın kaç yüzde ettiği"dir, tutarla çarpılacak bir ölçek değil.
+// The divisor is [BpsPerPercent] (100), NOT the basis point scale (10000):
+// what is wanted here is "how many percent the rate makes", not a scale to be
+// multiplied by an amount.
 func (r TaxRate) RatePercent() (percent, remainder int32) {
 	return r.RateBps / BpsPerPercent, r.RateBps % BpsPerPercent
 }
 
-// TaxRatePatch bir oranın KISMİ güncellemesidir.
+// TaxRatePatch is a PARTIAL update of a rate.
 //
-// nil alan "dokunma" demektir; dolu alan yeni değerdir. Tam gövde istenseydi,
-// gövdesinde rate_bps göndermeyi unutan bir istemci oranı sessizce sıfırlardı.
+// A nil field means "do not touch"; a filled field is the new value. Had a full
+// body been required, a client that forgot to send rate_bps in its body would
+// silently zero the rate.
 type TaxRatePatch struct {
-	// Name yeni addır; nil ise ad değişmez.
+	// Name is the new name; when nil the name does not change.
 	Name *string
-	// Code yeni mutabakat kodudur; nil ise kod değişmez.
+	// Code is the new reconciliation code; when nil the code does not change.
 	//
-	// Kodu KALDIRMAK için işaretçi dolu, işaret ettiği değer boş dize olmalıdır;
-	// servis boş dizeyi SQL NULL'a çevirir. İki seviyeli işaretçi kullanmamak
-	// bilinçlidir: JSON'da "code": null ile alanın hiç gönderilmemesi arasındaki
-	// farkı taşıyabilen tek yapı odur ve bedeli, her çağrı yerinde iki kat nil
-	// denetimidir.
+	// To REMOVE the code the pointer must be filled and the value it points to
+	// must be the empty string; the service turns the empty string into SQL
+	// NULL. Not using a two-level pointer is deliberate: that is the only shape
+	// able to carry the difference between "code": null in JSON and the field
+	// not being sent at all, and its price is a doubled nil check at every call
+	// site.
 	Code *string
-	// RateBps yeni orandır (baz puan); nil ise oran değişmez.
+	// RateBps is the new rate (basis points); when nil the rate does not change.
 	RateBps *int32
-	// IsDefault varsayılanlık bayrağıdır; nil ise değişmez.
+	// IsDefault is the default flag; when nil it does not change.
 	IsDefault *bool
-	// Metadata yeni üstveridir; nil ise üstveri değişmez.
+	// Metadata is the new metadata; when nil the metadata does not change.
 	Metadata map[string]any
 }
 
-// Empty yamanın hiçbir alan taşımadığını bildirir.
+// Empty reports that the patch carries no field at all.
 func (p TaxRatePatch) Empty() bool {
 	return p.Name == nil && p.Code == nil && p.RateBps == nil &&
 		p.IsDefault == nil && p.Metadata == nil
 }
 
-// Patched yamanın uygulandığı YENİ bir oran döner; alıcı değiştirilmez.
+// Patched returns a NEW rate with the patch applied; the receiver is not
+// modified.
 //
-// Değer alıp değer döndürmesi bilinçlidir: güncelleme, kilit altında okunan
-// satırın üstüne uygulanır ve saf bir dönüşüm olması onu veritabanı olmadan
-// sınanabilir kılar.
+// Taking a value and returning a value is deliberate: the update is applied on
+// top of the row read under lock, and being a pure transformation makes it
+// testable without a database.
 func (r TaxRate) Patched(p TaxRatePatch) TaxRate {
 	if p.Name != nil {
 		r.Name = *p.Name
@@ -256,23 +271,24 @@ func (r TaxRate) Patched(p TaxRatePatch) TaxRate {
 	return r
 }
 
-// TaxRateRule bir oranın HANGİ kaleme uygulanacağını söyler.
+// TaxRateRule says WHICH item a rate is applied to.
 //
-// ReferenceID başka modüllere (product, fulfillment) ait bir kimliktir ve bu
-// modülde foreign key DEĞİLDİR (Prensip 2.2); varlığı burada doğrulanmaz.
+// ReferenceID is an id belonging to other modules (product, fulfillment) and is
+// NOT a foreign key in this module (Principle 2.2); its existence is not
+// verified here.
 type TaxRateRule struct {
-	// ID "taxrule_" önekli, zaman sıralı kimliktir.
+	// ID is the "taxrule_" prefixed, time-ordered id.
 	ID string
-	// TaxRateID kuralın bağlı olduğu orandır.
+	// TaxRateID is the rate the rule is attached to.
 	TaxRateID string
-	// Reference kalemin türüdür.
+	// Reference is the kind of the item.
 	Reference RuleReference
-	// ReferenceID o türdeki kimliktir; boş olamaz.
+	// ReferenceID is the id within that kind; it cannot be empty.
 	ReferenceID string
-	// CreatedAt kaydın oluşturulma anıdır (UTC).
+	// CreatedAt is the instant the record was created (UTC).
 	CreatedAt time.Time
-	// UpdatedAt kaydın son güncellenme anıdır (UTC).
+	// UpdatedAt is the instant the record was last updated (UTC).
 	UpdatedAt time.Time
-	// DeletedAt soft delete anıdır; nil ise kayıt canlıdır.
+	// DeletedAt is the soft delete instant; when nil the record is live.
 	DeletedAt *time.Time
 }

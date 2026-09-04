@@ -1,20 +1,20 @@
-// Package models fulfillment modülünün alan (domain) modellerini içerir.
+// Package models holds the domain models of the fulfillment module.
 //
-// Buradaki tipler veritabanı sürücüsünden bağımsızdır: pgtype ve sqlc üretimi
-// tipler buraya SIZMAZ. Çeviri repository katmanında yapılır; servis, API ve
-// testler yalnızca bu tipleri görür.
+// The types here are independent of the database driver: pgtype and
+// sqlc-generated types do NOT LEAK in here. The translation is done in the
+// repository layer; the service, the API and the tests see only these types.
 //
-// Para her yerde TAM SAYI minor unit'tir (kuruş/cent) ve para birimi ayrı
-// alanda durur (plan Bölüm 8); kayan nokta hiçbir alanda kullanılmaz. Zamanlar
-// UTC'dir.
+// Money is an INTEGER minor unit everywhere (cents) and the currency sits in a
+// separate field (plan Section 8); floating point is used in no field. Times
+// are UTC.
 //
-// # Neyi bilmez
+// # What it does not know
 //
-// Bu modül bir gönderinin HANGİ siparişe ait olduğunu bilmez.
-// [Fulfillment.Reference] serbest bir metindir, foreign key DEĞİLDİR
-// (Prensip 2.2) ve varlığı burada doğrulanmaz; bağ Module Links ile kurulur.
-// Aynı şey [ShippingOption.RegionID] (region modülünün kimliği) ve
-// [FulfillmentItem.LineItemID] (sipariş satırının kimliği) için de geçerlidir.
+// This module does not know WHICH order a fulfillment belongs to.
+// [Fulfillment.Reference] is free text, NOT a foreign key (Principle 2.2), and
+// its existence is not validated here; the link is established through Module
+// Links. The same holds for [ShippingOption.RegionID] (the region module's
+// identifier) and [FulfillmentItem.LineItemID] (the order line's identifier).
 package models
 
 import (
@@ -23,71 +23,74 @@ import (
 	"time"
 )
 
-// Tutar sınırları.
+// Amount bounds.
 //
-// Üst sınır keyfi değildir: kargo ücreti sipariş toplamına eklenir ve toplamın
-// int64'e SIĞMASI gerekir. 10^12 tavanı, aynı tavanı kullanan cart, pricing ve
-// payment modülleriyle bilinçli olarak aynıdır; modüller birbirini import
-// etmediği için değer burada tekrarlanır (ADR 0001'in kabul edilen bedeli).
+// The upper bound is not arbitrary: the shipping fee is added to the order
+// total and the total MUST FIT in an int64. The ceiling of 10^12 is
+// deliberately the same as the ceiling used by the cart, pricing and payment
+// modules; because the modules do not import each other, the value is repeated
+// here (the accepted cost of ADR 0001).
 const (
-	// MinAmount izin verilen en küçük kargo tutarıdır.
+	// MinAmount is the smallest permitted shipping amount.
 	//
-	// SIFIRDIR ve bu bilinçlidir: ücretsiz kargo gerçek bir iş kararıdır
-	// (payment'taki koleksiyon tutarının aksine, sıfır burada ölü kayıt
-	// üretmez). Negatif tutar ise müşteriye kargodan para ödemek demek olurdu.
+	// It is ZERO and that is deliberate: free shipping is a real business
+	// decision (unlike the collection amount in payment, zero produces no dead
+	// record here). A negative amount, on the other hand, would mean paying the
+	// customer for shipping.
 	MinAmount int64 = 0
-	// MaxAmount izin verilen en büyük kargo tutarıdır (minor unit).
+	// MaxAmount is the largest permitted shipping amount (minor unit).
 	MaxAmount int64 = 1_000_000_000_000
 )
 
-// Kalem adedi sınırları.
+// Item quantity bounds.
 const (
-	// MinQuantity bir gönderi kaleminin en küçük adedidir.
+	// MinQuantity is the smallest quantity of a fulfillment item.
 	MinQuantity int64 = 1
-	// MaxQuantity bir gönderi kaleminin en büyük adedidir.
+	// MaxQuantity is the largest quantity of a fulfillment item.
 	MaxQuantity int64 = 1_000_000
 )
 
-// Uygunluk bağlamının sayısal sınırları.
+// The numeric bounds of the eligibility context.
 //
-// Sınırlar keyfi değildir: kargo ücreti bu iki sayıyla ÇARPILARAK hesaplanır
-// (bkz. internal/modules/fulfillment/manual). Üst sınırsız bir adet ya da
-// ağırlık, tek bir istek parametresiyle çarpımı int64'ten taşırabilir; taşan
-// bir çarpım NEGATİF bir kargo ücreti demektir — yani müşteriye para ödeyen
-// bir sipariş.
+// The bounds are not arbitrary: the shipping fee is computed by MULTIPLYING
+// with these two numbers (see internal/modules/fulfillment/manual). An
+// unbounded quantity or weight could overflow the product out of an int64 with
+// a single request parameter; an overflowed product means a NEGATIVE shipping
+// fee — that is, an order that pays the customer.
 //
-// Değerler [MaxAmount] ile birlikte seçilmiştir: en büyük birim ücret bu iki
-// tavanın herhangi biriyle çarpıldığında sonuç 10^18'dir ve int64'ün
-// (~9,22×10^18) içinde kalır, yani sağlayıcı taşmadan ÖNCE "üst sınır aşıldı"
-// diyebilir.
+// The values were chosen together with [MaxAmount]: when the largest unit fee
+// is multiplied by either of these two ceilings the result is 10^18 and stays
+// within an int64 (~9.22×10^18), which means the provider can say "upper bound
+// exceeded" BEFORE the overflow.
 const (
-	// MaxItemCount bir uygunluk sorgusunda bildirilebilecek en büyük toplam
-	// kalem adedidir.
+	// MaxItemCount is the largest total item quantity that may be declared in
+	// an eligibility query.
 	MaxItemCount int64 = 1_000_000
-	// MaxTotalWeight bir uygunluk sorgusunda bildirilebilecek en büyük toplam
-	// ağırlıktır (GRAM); 10^9 gram = 1.000 tondur ve tek bir gönderi için
-	// fazlasıyla geniştir.
+	// MaxTotalWeight is the largest total weight that may be declared in an
+	// eligibility query (GRAMS); 10^9 grams = 1,000 tons and is more than wide
+	// enough for a single fulfillment.
 	MaxTotalWeight int64 = 1_000_000_000
 )
 
-// ProfileType bir kargo profilinin türüdür.
+// ProfileType is the type of a shipping profile.
 type ProfileType string
 
-// Kargo profili türleri.
+// Shipping profile types.
 const (
-	// ProfileDefault mağazanın varsayılan profilidir; başka bir profile
-	// bağlanmamış ürünler buraya düşer.
+	// ProfileDefault is the store's default profile; products not bound to any
+	// other profile fall in here.
 	ProfileDefault ProfileType = "default"
-	// ProfileGiftCard fiziksel gönderi gerektirmeyen ürünler içindir.
+	// ProfileGiftCard is for products that require no physical shipment.
 	ProfileGiftCard ProfileType = "gift_card"
-	// ProfileCustom mağazanın kendi tanımladığı profildir (örn. "ağır yük").
+	// ProfileCustom is a profile the store defines itself (e.g. "heavy
+	// freight").
 	ProfileCustom ProfileType = "custom"
 )
 
-// String türün metin karşılığını döner.
+// String returns the textual form of the type.
 func (p ProfileType) String() string { return string(p) }
 
-// Valid türün tanımlı bir değer olup olmadığını bildirir.
+// Valid reports whether the type is a defined value.
 func (p ProfileType) Valid() bool {
 	switch p {
 	case ProfileDefault, ProfileGiftCard, ProfileCustom:
@@ -97,23 +100,23 @@ func (p ProfileType) Valid() bool {
 	}
 }
 
-// PriceType bir kargo seçeneğinin ücretinin NEREDEN geldiğini söyler.
+// PriceType says WHERE the fee of a shipping option comes from.
 type PriceType string
 
-// Kargo seçeneği fiyat türleri.
+// Shipping option price types.
 const (
-	// PriceFlat ücretin seçeneğin kendi Amount alanında sabit durduğunu
-	// bildirir; sağlayıcıya HİÇ gidilmez.
+	// PriceFlat says the fee sits fixed in the option's own Amount field; the
+	// provider is NOT contacted at all.
 	PriceFlat PriceType = "flat"
-	// PriceCalculated ücreti sağlayıcının Quote'unun belirlediğini bildirir;
-	// seçeneğin Amount alanı kullanılmaz ve sıfır olmak zorundadır.
+	// PriceCalculated says the provider's Quote determines the fee; the option's
+	// Amount field is unused and must be zero.
 	PriceCalculated PriceType = "calculated"
 )
 
-// String türün metin karşılığını döner.
+// String returns the textual form of the type.
 func (p PriceType) String() string { return string(p) }
 
-// Valid türün tanımlı bir değer olup olmadığını bildirir.
+// Valid reports whether the type is a defined value.
 func (p PriceType) Valid() bool {
 	switch p {
 	case PriceFlat, PriceCalculated:
@@ -123,45 +126,47 @@ func (p PriceType) Valid() bool {
 	}
 }
 
-// RuleOperator bir kargo seçeneği kuralının karşılaştırma işlecidir.
+// RuleOperator is the comparison operator of a shipping option rule.
 //
-// İşleç kümesi pricing modülündeki fiyat kurallarıyla bilinçli olarak aynıdır;
-// yönetici iki yerde farklı bir dil öğrenmek zorunda kalmamalıdır. Paket
-// import EDİLMEZ (Prensip 2.4), tanım burada tekrarlanır.
+// The operator set is deliberately the same as the one for price rules in the
+// pricing module; an administrator should not have to learn two different
+// languages in two places. The package is NOT imported (Principle 2.4), the
+// definition is repeated here.
 type RuleOperator string
 
-// Desteklenen işleçler.
+// The supported operators.
 //
-// eq/ne/in/nin DİZGE karşılaştırmasıdır; gt/gte/lt/lte ise iki tarafı da tam
-// sayıya çevirip SAYISAL karşılaştırır (örn. "subtotal" >= "50000"). Sayıya
-// çevrilemeyen bir bağlam değeri kuralı EŞLEŞMEZ yapar, hata üretmez: bağlam
-// dışarıdan gelir ve tek bir bozuk alan tüm kargo listesini düşürmemelidir.
+// eq/ne/in/nin are STRING comparisons; gt/gte/lt/lte convert both sides to
+// integers and compare NUMERICALLY (e.g. "subtotal" >= "50000"). A context
+// value that cannot be converted to a number makes the rule NOT MATCH rather
+// than producing an error: the context comes from outside and a single broken
+// field must not bring down the whole shipping list.
 //
-// Sayısal karşılaştırma TAM SAYI üzerindendir; ara toplam gibi para alanları
-// minor unit olduğu için kayan noktaya hiç uğramaz (plan Bölüm 8).
+// The numeric comparison is over INTEGERS; money fields such as the subtotal
+// are minor units, so they never pass through floating point (plan Section 8).
 const (
-	// OpEq değerin kuralın tek değerine eşit olmasını ister.
+	// OpEq requires the value to equal the rule's single value.
 	OpEq RuleOperator = "eq"
-	// OpNe değerin kuralın tek değerinden farklı olmasını ister.
+	// OpNe requires the value to differ from the rule's single value.
 	OpNe RuleOperator = "ne"
-	// OpIn değerin kural kümesinde bulunmasını ister.
+	// OpIn requires the value to be present in the rule's set.
 	OpIn RuleOperator = "in"
-	// OpNin değerin kural kümesinde BULUNMAMASINI ister.
+	// OpNin requires the value to be ABSENT from the rule's set.
 	OpNin RuleOperator = "nin"
-	// OpGt sayısal olarak büyüklük ister.
+	// OpGt requires numeric greater-than.
 	OpGt RuleOperator = "gt"
-	// OpGte sayısal olarak büyük veya eşitlik ister.
+	// OpGte requires numeric greater-than-or-equal.
 	OpGte RuleOperator = "gte"
-	// OpLt sayısal olarak küçüklük ister.
+	// OpLt requires numeric less-than.
 	OpLt RuleOperator = "lt"
-	// OpLte sayısal olarak küçük veya eşitlik ister.
+	// OpLte requires numeric less-than-or-equal.
 	OpLte RuleOperator = "lte"
 )
 
-// String işlecin metin karşılığını döner.
+// String returns the textual form of the operator.
 func (o RuleOperator) String() string { return string(o) }
 
-// Valid işlecin tanımlı olup olmadığını bildirir.
+// Valid reports whether the operator is defined.
 func (o RuleOperator) Valid() bool {
 	switch o {
 	case OpEq, OpNe, OpIn, OpNin, OpGt, OpGte, OpLt, OpLte:
@@ -171,7 +176,7 @@ func (o RuleOperator) Valid() bool {
 	}
 }
 
-// Numeric işlecin sayısal karşılaştırma yapıp yapmadığını bildirir.
+// Numeric reports whether the operator performs a numeric comparison.
 func (o RuleOperator) Numeric() bool {
 	switch o {
 	case OpGt, OpGte, OpLt, OpLte:
@@ -183,246 +188,266 @@ func (o RuleOperator) Numeric() bool {
 	}
 }
 
-// MultiValue işlecin birden çok değer alıp alamayacağını bildirir.
-// Diğer tüm işleçler TEK değer ister.
+// MultiValue reports whether the operator can take more than one value.
+// Every other operator requires a SINGLE value.
 func (o RuleOperator) MultiValue() bool {
 	return o == OpIn || o == OpNin
 }
 
-// ShippingProfile kargo seçeneklerinin kabıdır.
+// ShippingProfile is the container of shipping options.
 //
-// Ürünler profillere Module Links ile bağlanır; profil hangi ürünlere bağlı
-// olduğunu BİLMEZ (Prensip 2.1). Bir sepetin hangi seçenekleri görebileceği,
-// sepetteki ürünlerin bağlı olduğu profillerden türetilir ve o türetme
-// fulfillment'ın değil, çağıranın işidir.
+// Products are bound to profiles through Module Links; a profile does NOT KNOW
+// which products are bound to it (Principle 2.1). Which options a cart may see
+// is derived from the profiles the cart's products are bound to, and that
+// derivation is the caller's job, not fulfillment's.
 type ShippingProfile struct {
-	// ID "sprof_" önekli kimliktir.
+	// ID is the identifier prefixed with "sprof_".
 	ID string
-	// Name profilin görünen adıdır; yaşayan kayıtlar arasında TEKTİR.
+	// Name is the profile's display name; it is UNIQUE among living records.
 	Name string
-	// Type profilin türüdür.
+	// Type is the profile's type.
 	Type ProfileType
-	// Metadata çağıranın serbest ek verisidir.
+	// Metadata is the caller's free-form extra data.
 	Metadata map[string]any
-	// CreatedAt ve UpdatedAt UTC'dir.
+	// CreatedAt and UpdatedAt are UTC.
 	CreatedAt time.Time
 	UpdatedAt time.Time
-	// DeletedAt yumuşak silme anıdır; nil ise profil canlıdır.
+	// DeletedAt is the moment of the soft delete; if nil the profile is alive.
 	DeletedAt *time.Time
 }
 
-// ShippingOption müşteriye sunulan bir kargo seçeneğidir.
+// ShippingOption is a shipping option offered to the customer.
 type ShippingOption struct {
-	// ID "sopt_" önekli kimliktir.
+	// ID is the identifier prefixed with "sopt_".
 	ID string
-	// Name seçeneğin görünen adıdır (örn. "Standart kargo").
+	// Name is the option's display name (e.g. "Standard shipping").
 	Name string
-	// ProviderID seçeneği yürütecek kargo sağlayıcısının kimliğidir.
+	// ProviderID is the identifier of the carrier that will execute the option.
 	ProviderID string
-	// ShippingProfileID seçeneğin bağlı olduğu profildir (modül içi FK).
+	// ShippingProfileID is the profile the option is bound to (intra-module FK).
 	ShippingProfileID string
-	// PriceType ücretin nereden geldiğini söyler.
+	// PriceType says where the fee comes from.
 	PriceType PriceType
-	// Amount [PriceFlat] seçeneklerde ücrettir (minor unit).
-	// [PriceCalculated] seçeneklerde SIFIRDIR ve kullanılmaz; ücret
-	// sağlayıcıdan gelir.
+	// Amount is the fee on [PriceFlat] options (minor unit). On
+	// [PriceCalculated] options it is ZERO and unused; the fee comes from the
+	// provider.
 	Amount int64
-	// CurrencyCode ISO 4217 kodudur ve daima BÜYÜK harf saklanır.
+	// CurrencyCode is the ISO 4217 code and is always stored in UPPERCASE.
 	CurrencyCode string
-	// RegionID seçeneğin geçerli olduğu bölgedir; BOŞ ise her bölgede
-	// geçerlidir. region modülünün kimliğidir ve FOREIGN KEY DEĞİLDİR
-	// (Prensip 2.2).
+	// RegionID is the region the option is valid in; if EMPTY it is valid in
+	// every region. It is the region module's identifier and is NOT A FOREIGN
+	// KEY (Principle 2.2).
 	RegionID string
-	// IsReturn seçeneğin İADE gönderisi için olduğunu bildirir. İade
-	// seçenekleri normal satın alma akışında listelenmez.
+	// IsReturn says the option is for a RETURN shipment. Return options are not
+	// listed in the normal purchase flow.
 	IsReturn bool
-	// AdminOnly seçeneğin yalnızca yönetim yüzeyinde görüneceğini bildirir
-	// (örn. "elden teslim"). Mağaza yüzeyine ÇIKMAZ.
+	// AdminOnly says the option appears only on the admin surface (e.g. "hand
+	// delivery"). It does NOT REACH the storefront surface.
 	AdminOnly bool
-	// Data sağlayıcıya ait yapılandırmadır ve Quote çağrısına olduğu gibi
-	// geçirilir. Mağaza yüzeyine ÇIKMAZ: sağlayıcının iç verisidir.
+	// Data is configuration belonging to the provider and is passed to the
+	// Quote call as is. It does NOT REACH the storefront surface: it is the
+	// provider's internal data.
 	Data map[string]any
-	// Metadata mağazanın serbest ek verisidir.
+	// Metadata is the store's free-form extra data.
 	Metadata map[string]any
-	// Rules seçeneğin koşullarıdır; TAMAMI eşleşmezse seçenek sunulmaz.
-	// Yalnızca uygunluk listelemesi ve kural okuma yollarında doldurulur.
+	// Rules are the option's conditions; unless ALL of them match, the option is
+	// not offered. They are populated only on the eligibility listing and rule
+	// reading paths.
 	Rules []ShippingOptionRule
-	// CreatedAt ve UpdatedAt UTC'dir.
+	// CreatedAt and UpdatedAt are UTC.
 	CreatedAt time.Time
 	UpdatedAt time.Time
-	// DeletedAt yumuşak silme anıdır; nil ise seçenek canlıdır.
+	// DeletedAt is the moment of the soft delete; if nil the option is alive.
 	DeletedAt *time.Time
 }
 
-// ShippingOptionRule bir seçeneğin hangi koşulda sunulacağını belirten kuraldır.
+// ShippingOptionRule is the rule stating under which condition an option is
+// offered.
 //
-// Örnek: {Attribute: "subtotal", Operator: OpGte, Values: []string{"50000"}} —
-// "ara toplam 50.000 kuruşu geçerse bu seçenek sunulur".
+// Example: {Attribute: "subtotal", Operator: OpGte, Values: []string{"50000"}} —
+// "if the subtotal exceeds 50,000 minor units this option is offered".
 type ShippingOptionRule struct {
-	// ID "sorule_" önekli kimliktir.
+	// ID is the identifier prefixed with "sorule_".
 	ID string
-	// ShippingOptionID kuralın bağlı olduğu seçenektir.
+	// ShippingOptionID is the option the rule is bound to.
 	ShippingOptionID string
-	// Attribute uygunluk bağlamında bakılacak alan adıdır.
+	// Attribute is the name of the field to look at in the eligibility context.
 	Attribute string
-	// Operator karşılaştırma işlecidir.
+	// Operator is the comparison operator.
 	Operator RuleOperator
-	// Values karşılaştırmanın sağ tarafıdır; en az bir eleman içerir.
+	// Values is the right-hand side of the comparison; it holds at least one
+	// element.
 	Values []string
-	// CreatedAt ve UpdatedAt UTC'dir.
+	// CreatedAt and UpdatedAt are UTC.
 	CreatedAt time.Time
 	UpdatedAt time.Time
-	// DeletedAt yumuşak silme anıdır; nil ise kural canlıdır.
+	// DeletedAt is the moment of the soft delete; if nil the rule is alive.
 	DeletedAt *time.Time
 }
 
-// Fulfillment gerçekleşmiş bir gönderidir.
+// Fulfillment is a shipment that has happened.
 type Fulfillment struct {
-	// ID "ful_" önekli kimliktir.
+	// ID is the identifier prefixed with "ful_".
 	ID string
-	// Reference çağıranın kendi kaydının kimliğidir (sipariş).
-	// FOREIGN KEY DEĞİLDİR (Prensip 2.2) ve bu modülde doğrulanmaz.
+	// Reference is the identifier of the caller's own record (the order).
+	// It is NOT A FOREIGN KEY (Principle 2.2) and is not validated in this
+	// module.
 	Reference string
-	// ShippingOptionID gönderinin kullandığı kargo seçeneğidir (modül içi FK).
+	// ShippingOptionID is the shipping option the fulfillment uses
+	// (intra-module FK).
 	ShippingOptionID string
-	// ProviderID gönderiyi oluşturan sağlayıcının kimliğidir.
+	// ProviderID is the identifier of the provider that created the
+	// fulfillment.
 	ProviderID string
-	// ExternalID sağlayıcı tarafındaki gönderi kimliğidir; mutabakatta iki
-	// sistemi eşleştiren alan budur. Sağlayıcı yanıtı gelene kadar boştur.
+	// ExternalID is the shipment identifier on the provider's side; this is the
+	// field that matches the two systems up during reconciliation. It is empty
+	// until the provider's response arrives.
 	ExternalID string
-	// Status gönderinin güncel durumudur.
+	// Status is the fulfillment's current status.
 	Status FulfillmentStatus
-	// TrackingNumber ve TrackingURL takip bilgisidir; sağlayıcı vermiyorsa boş.
+	// TrackingNumber and TrackingURL are the tracking information; empty if the
+	// provider does not supply it.
 	TrackingNumber string
 	TrackingURL    string
-	// IdempotencyKey aynı gönderinin iki kez oluşturulmasını engeller.
+	// IdempotencyKey prevents the same fulfillment from being created twice.
 	IdempotencyKey string
-	// ShippedAt, DeliveredAt ve CanceledAt ilgili geçişin anıdır (UTC);
-	// geçiş yaşanmadıysa nil'dir.
+	// ShippedAt, DeliveredAt and CanceledAt are the moments of the respective
+	// transition (UTC); nil if the transition has not happened.
 	ShippedAt   *time.Time
 	DeliveredAt *time.Time
 	CanceledAt  *time.Time
-	// Data sağlayıcının ham verisidir; olduğu gibi saklanır, yorumlanmaz.
+	// Data is the provider's raw data; it is stored as is and not interpreted.
 	Data json.RawMessage
-	// Metadata çağıranın serbest ek verisidir.
+	// Metadata is the caller's free-form extra data.
 	Metadata map[string]any
-	// Items gönderiye giren kalemlerdir.
+	// Items are the items that go into the fulfillment.
 	Items []FulfillmentItem
-	// CreatedAt ve UpdatedAt UTC'dir.
+	// CreatedAt and UpdatedAt are UTC.
 	CreatedAt time.Time
 	UpdatedAt time.Time
-	// DeletedAt yumuşak silme anıdır; nil ise gönderi canlıdır.
+	// DeletedAt is the moment of the soft delete; if nil the fulfillment is
+	// alive.
 	DeletedAt *time.Time
 }
 
-// FulfillmentItem gönderiye giren tek bir kalemdir.
+// FulfillmentItem is a single item that goes into a fulfillment.
 type FulfillmentItem struct {
-	// ID "fulitem_" önekli kimliktir.
+	// ID is the identifier prefixed with "fulitem_".
 	ID string
-	// FulfillmentID kalemin ait olduğu gönderidir (modül içi FK).
+	// FulfillmentID is the fulfillment the item belongs to (intra-module FK).
 	FulfillmentID string
-	// LineItemID sipariş satırının kimliğidir. FOREIGN KEY DEĞİLDİR
-	// (Prensip 2.2) ve bu modülde doğrulanmaz.
+	// LineItemID is the identifier of the order line. It is NOT A FOREIGN KEY
+	// (Principle 2.2) and is not validated in this module.
 	LineItemID string
-	// Quantity gönderiye giren adettir; daima pozitiftir.
+	// Quantity is the quantity that goes into the fulfillment; it is always
+	// positive.
 	Quantity int64
-	// CreatedAt ve UpdatedAt UTC'dir.
+	// CreatedAt and UpdatedAt are UTC.
 	CreatedAt time.Time
 	UpdatedAt time.Time
 }
 
-// ManualShipment manuel sağlayıcının KENDİ defterindeki gönderidir.
+// ManualShipment is the shipment in the manual provider's OWN ledger.
 //
-// Bu kayıt modülün alan verisi değildir; taklit edilen dış sistemin
-// durumudur. fulfillment servisi ona hiç dokunmaz, yalnızca manual sağlayıcı
-// okur ve yazar (bkz. internal/modules/fulfillment/manual).
+// This record is not the module's domain data; it is the state of the imitated
+// external system. The fulfillment service never touches it, only the manual
+// provider reads and writes it (see internal/modules/fulfillment/manual).
 type ManualShipment struct {
-	// ID "manful_" önekli SAĞLAYICI kimliğidir; modülün gönderi kaydında
-	// ExternalID olarak durur.
+	// ID is the PROVIDER identifier prefixed with "manful_"; it sits in the
+	// module's fulfillment record as ExternalID.
 	ID string
-	// IdempotencyKey aynı gönderinin iki kez oluşturulmasını engeller;
-	// sağlayıcının defterinde TEKTİR.
+	// IdempotencyKey prevents the same shipment from being created twice; it is
+	// UNIQUE in the provider's ledger.
 	IdempotencyKey string
-	// Reference çağıranın kendi kaydının kimliğidir (gönderi kimliği).
+	// Reference is the identifier of the caller's own record (the fulfillment
+	// identifier).
 	Reference string
-	// OptionID gönderinin açıldığı kargo seçeneğidir.
+	// OptionID is the shipping option the shipment was opened under.
 	OptionID string
-	// Status gönderinin sağlayıcı tarafındaki durumudur.
+	// Status is the shipment's status on the provider's side.
 	Status FulfillmentStatus
-	// TrackingNumber ve TrackingURL sağlayıcının ürettiği takip bilgisidir.
+	// TrackingNumber and TrackingURL are the tracking information the provider
+	// produced.
 	TrackingNumber string
 	TrackingURL    string
-	// Data gönderi açılırken verilen serbest veridir. Manuel sağlayıcının
-	// davranışını yönlendiren anahtarlar buradadır (bkz. manual paketi).
+	// Data is the free-form data supplied when the shipment was opened. The
+	// keys that steer the manual provider's behavior live here (see the manual
+	// package).
 	Data json.RawMessage
-	// CreatedAt ve UpdatedAt UTC'dir.
+	// CreatedAt and UpdatedAt are UTC.
 	CreatedAt time.Time
 	UpdatedAt time.Time
 }
 
-// ShippingLocation bir stok lokasyonunun KARGO politikasıdır.
+// ShippingLocation is the SHIPPING policy of a stock location.
 //
-// Modül deponun nerede olduğunu ya da adının ne olduğunu BİLMEZ: bunlar stok
-// modülünün verisidir ve orada kalır. Burada duran şey yalnızca deponun kargo
-// niteliğidir — hangi bölgelere hizmet eder ve hangi sırayla tercih edilir.
-// [ShippingLocation.LocationID] stok modülünün kimliğidir ve FOREIGN KEY
-// DEĞİLDİR (Prensip 2.2), tıpkı [ShippingOption.RegionID] gibi.
+// The module does NOT KNOW where the warehouse is or what it is called: those
+// are the inventory module's data and they stay there. What sits here is only
+// the warehouse's shipping quality — which regions it serves and in which order
+// it is preferred. [ShippingLocation.LocationID] is the inventory module's
+// identifier and is NOT A FOREIGN KEY (Principle 2.2), just like
+// [ShippingOption.RegionID].
 //
-// # Politikası OLMAYAN depo da geçerli bir depodur
+// # A warehouse with NO policy is a valid warehouse too
 //
-// Bir depo için hiç kayıt yoksa varsayılan geçerlidir: öncelik SIFIR ve TÜM
-// bölgelere hizmet eder. Bu yüzden hiç kayıt bulunmayan bir kurulumda seçim,
-// politika eklenmeden önceki davranışın aynısıdır.
+// If there is no record at all for a warehouse the default applies: priority
+// ZERO and it serves ALL regions. That is why, in an installation with no
+// records at all, selection behaves exactly as it did before policies were
+// added.
 type ShippingLocation struct {
-	// LocationID stok modülünün lokasyon kimliğidir ve birincil anahtardır:
-	// bir deponun EN FAZLA bir politikası olur.
+	// LocationID is the inventory module's location identifier and is the
+	// primary key: a warehouse has AT MOST one policy.
 	LocationID string
-	// Priority tercih sırasıdır ve KÜÇÜK OLAN KAZANIR. Sıfır varsayılandır;
-	// bir depoyu varsayılanların üstüne çıkarmak için NEGATİF değer verilir.
+	// Priority is the preference order and the SMALLER ONE WINS. Zero is the
+	// default; to lift a warehouse above the defaults, give it a NEGATIVE value.
 	Priority int64
-	// RegionIDs deponun hizmet ettiği kargo bölgeleridir ve KİMLİĞE göre
-	// sıralıdır: bağlar bir küme kurar, yazma sırası korunmaz.
+	// RegionIDs are the shipping regions the warehouse serves and are ordered by
+	// IDENTIFIER: the links form a set, the write order is not preserved.
 	//
-	// BOŞ ise depo TÜM bölgelere hizmet eder — "hiçbirine" değil
-	// (bkz. [LocationPolicy]). region modülünün kimlikleridir ve foreign key
-	// DEĞİLDİR.
+	// If EMPTY the warehouse serves ALL regions — not "none of them"
+	// (see [LocationPolicy]). They are the region module's identifiers and are
+	// NOT foreign keys.
 	RegionIDs []string
-	// CreatedAt ve UpdatedAt UTC'dir.
+	// CreatedAt and UpdatedAt are UTC.
 	CreatedAt time.Time
 	UpdatedAt time.Time
 }
 
-// LocationPolicy seçim ANINDA bir adayın kararı etkileyen olgularıdır.
+// LocationPolicy holds the facts about a candidate that affect the decision AT
+// THE MOMENT of selection.
 //
-// [ShippingLocation]'dan ayrı bir tiptir çünkü aynı veriyi farklı bir soru için
-// taşır: yönetim yüzeyi "bu deponun ayarı nedir" diye sorar, seçim yolu ise
-// "bu depo BU bölgeye hizmet ediyor mu ve kaçıncı sırada" diye. İkisi bugün
-// aynı alanları taşıyor olabilir ama tek tip yapmak, yönetim yüzeyine eklenen
-// her alanı sipariş yolunun okumasına da sokardı.
+// It is a separate type from [ShippingLocation] because it carries the same
+// data for a different question: the admin surface asks "what is this
+// warehouse's setting", while the selection path asks "does this warehouse
+// serve THIS region and in which position". The two may carry the same fields
+// today, but making them one type would also put every field added to the admin
+// surface into what the order path reads.
 type LocationPolicy struct {
-	// LocationID politikanın ait olduğu depodur.
+	// LocationID is the warehouse the policy belongs to.
 	LocationID string
-	// Priority tercih sırasıdır; küçük olan öne geçer.
+	// Priority is the preference order; the smaller one comes first.
 	Priority int64
-	// RegionIDs deponun bağlı olduğu kargo bölgeleridir ve KİMLİĞE göre
-	// sıralıdır.
+	// RegionIDs are the shipping regions the warehouse is bound to and are
+	// ordered by IDENTIFIER.
 	//
-	// BOŞ olması "hiçbir bölgeye hizmet etmiyor" DEĞİL, "TÜM bölgelere hizmet
-	// ediyor" demektir. Ayrım tek bir bayrakla ifade edilemezdi: bağı olmayan
-	// depo ile bağı olup istenen bölgeyi taşımayan depo aynı kefeye düşerdi ve
-	// politikasız kurulumların tüm siparişleri elenirdi.
+	// Being EMPTY does NOT mean "it serves no region", it means "it serves ALL
+	// regions". The distinction could not be expressed with a single flag: a
+	// warehouse with no links and a warehouse that has links but not the
+	// requested region would fall into the same bucket, and every order in a
+	// policy-less installation would be eliminated.
 	//
-	// Kimlikler SAYI ya da BAYRAK olarak değil olduğu gibi taşınır: tüm adaylar
-	// elendiğinde hata mesajı depoların gerçekte hangi bölgelere bağlı olduğunu
-	// yazar. Silinip yeniden açılmış bir bölgenin kimliği hiçbir yerde
-	// eşleşmez ve bu, teşhisin tek yoludur.
+	// The identifiers are carried as they are rather than as a COUNT or a FLAG:
+	// when all candidates are eliminated, the error message writes out which
+	// regions the warehouses are actually bound to. The identifier of a region
+	// that was deleted and reopened matches nowhere, and this is the only way to
+	// diagnose that.
 	RegionIDs []string
 }
 
-// ServesRegion deponun verilen bölgeye hizmet edip etmediğini söyler.
+// ServesRegion says whether the warehouse serves the given region.
 //
-// Bağı olmayan depo TÜM bölgelere hizmet eder; kural
-// [ShippingLocation.RegionIDs] ile aynıdır ve tek yerde durur.
+// A warehouse with no links serves ALL regions; the rule is the same as
+// [ShippingLocation.RegionIDs] and lives in a single place.
 func (p LocationPolicy) ServesRegion(regionID string) bool {
 	return len(p.RegionIDs) == 0 || slices.Contains(p.RegionIDs, regionID)
 }

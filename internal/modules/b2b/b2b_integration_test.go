@@ -49,7 +49,7 @@ var (
 	testDSN string
 	// testLinks gerçek link servisidir; tanım bir kez bildirilir.
 	testLinks link.LinkService
-	// musteriSayaci testler arasında benzersiz müşteri kimliği üretir.
+	// musteriSayaci testler arasında benzersiz customer id üretir.
 	musteriSayaci atomic.Int64
 )
 
@@ -122,7 +122,7 @@ func yeniServis(t *testing.T) *service.Service {
 	return svc
 }
 
-// yeniMusteriID testler arasında çakışmayan bir müşteri kimliği üretir.
+// yeniMusteriID testler arasında çakışmayan bir customer id üretir.
 //
 // Kimlik customer modülünün önekini taşır ama o modülden GELMEZ: b2b müşterinin
 // var olduğunu doğrulamaz (ADR 0001) ve bağ, serbest bir kimlik dizgesidir.
@@ -232,7 +232,7 @@ func TestUctanUcaSirketVeCalisanAkisi(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, musteri, employee.CustomerID)
 
-	// Okuma yolu müşteri kimliğini link'ten DOLDURMALI: sütunu yoktur.
+	// Okuma yolu customer idni link'ten DOLDURMALI: sütunu yoktur.
 	okunan, err := svc.GetEmployee(ctx, employee.ID)
 	require.NoError(t, err)
 	assert.Equal(t, musteri, okunan.CustomerID)

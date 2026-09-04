@@ -9,100 +9,107 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/auth/models"
 )
 
-// Bu dosya auth'un DIŞARIYA açtığı iki yüzeyi taşır.
+// This file carries the two surfaces auth opens to the OUTSIDE.
 //
-// # 1. Kimlik doğrulama yüzeyi
+// # 1. The authentication surface
 //
-// [Interop], çekirdeğin corehttp.Authenticator arayüzünü YAPISAL olarak
-// karşılar ve container'a "auth.interop" adıyla kaydedilir. Çekirdek onu ADLA
-// çözer; auth modülünü import ETMEZ (Prensip 2.4, ADR 0001).
+// [Interop] satisfies the core's corehttp.Authenticator interface
+// STRUCTURALLY and is registered in the container under the name
+// "auth.interop". The core resolves it BY NAME; it does NOT import the auth
+// module (Principle 2.4, ADR 0001).
 //
-// corehttp bir MODÜL DEĞİL ÇEKİRDEKTİR, bu yüzden buradan import edilebilir.
-// corehttp.Principal tipi bu pakette YENİDEN TANIMLANMAZ: aynı adı taşıyan
-// ikinci bir tip, yapısal uyumu kırar ve çekirdek arayüzü karşılanamazdı.
+// corehttp IS NOT A MODULE, IT IS THE CORE, which is why it can be imported
+// from here. The corehttp.Principal type is NOT REDEFINED in this package: a
+// second type carrying the same name breaks structural compatibility and the
+// core interface could not be satisfied.
 //
-// # 2. Modüller arası ilkel yüzey
+// # 2. The cross-module primitive surface
 //
-// Diğer modüller (örn. product'ın satış kanalına göre katalog süzmesi) auth'u
-// import EDEMEZ; bu yüzden onlara açılan metotlar YALNIZCA ilkel ve stdlib
-// tipleri kullanır ve tüketici kendi paketinde aynı imzayı tekrar tanımlar:
+// Other modules (e.g. product's catalog filtering by sales channel) CANNOT
+// import auth; this is why the methods opened to them use ONLY primitive and
+// stdlib types, and the consumer redefines the same signature in its own
+// package:
 //
-//	// product modülünde, auth import EDİLMEDEN:
+//	// in the product module, WITHOUT importing auth:
 //	type SalesChannelReader interface {
 //	    ActiveSalesChannelIDs(ctx context.Context) ([]string, error)
 //	}
 //	channels, err := container.Resolve[SalesChannelReader](c, "auth.service")
 //
-// Yüzey bilinçli olarak DARDIR: buraya eklenen her metot auth'un bir daha
-// değiştiremeyeceği bir sözleşmedir. Bir kanalın tüm alanları gerekiyorsa
-// doğru yol yeni bir ilkel metot değil, Query katmanıdır (bkz. provider.go).
+// The surface is deliberately NARROW: every method added here is a contract
+// auth can never change again. If all the fields of a channel are needed, the
+// right path is not a new primitive method but the Query layer (see
+// provider.go).
 
-// Principal.Kind değerleri; çekirdeğin beklediği sözlük budur.
+// Principal.Kind values; this is the vocabulary the core expects.
 const (
-	// PrincipalKindUser kimliğin bir yönetim kullanıcısı olduğunu bildirir.
+	// PrincipalKindUser reports that the identity is an admin user.
 	PrincipalKindUser = "user"
-	// PrincipalKindAPIKey kimliğin bir API anahtarı olduğunu bildirir.
+	// PrincipalKindAPIKey reports that the identity is an API key.
 	PrincipalKindAPIKey = "api_key"
 )
 
-// schemeBearer yönetim yüzeyinin kabul ettiği tek Authorization şemasıdır.
+// schemeBearer is the only Authorization scheme the admin surface accepts.
 const schemeBearer = "bearer"
 
-// jwtSegmentCount bir JWT'nin nokta ile ayrılmış bölüm sayısıdır.
+// jwtSegmentCount is the number of dot-separated segments of a JWT.
 const jwtSegmentCount = 3
 
-// Interop auth'un çekirdeğe açtığı kimlik doğrulama yüzeyidir.
+// Interop is the authentication surface auth opens to the core.
 //
-// Çekirdekteki corehttp.Authenticator arayüzünü yapısal olarak karşılar;
-// arayüz TÜKETİCİ tarafında (çekirdekte) tanımlıdır, bu tip yalnızca imzayı
-// taşır (ADR 0001).
+// It satisfies the core's corehttp.Authenticator interface structurally; the
+// interface is defined on the CONSUMER side (in the core), this type only
+// carries the signature (ADR 0001).
 type Interop struct {
 	svc *Service
 }
 
 var _ corehttp.Authenticator = (*Interop)(nil)
 
-// NewInterop verilen servis üzerinde çalışan kimlik doğrulayıcıyı üretir.
+// NewInterop produces the authenticator that runs on the given service.
 func NewInterop(svc *Service) *Interop {
 	return &Interop{svc: svc}
 }
 
-// AuthenticateAdmin yönetim yüzeyinin kimliğini çözer.
+// AuthenticateAdmin resolves the identity of the admin surface.
 //
-// # Kabul edilen kimlikler ve SIRA
+// # Accepted credentials and their ORDER
 //
-// Şema yalnızca "Bearer" olabilir. Kimlik bilgisi iki biçimden biridir ve
-// sırayla denenir:
+// The scheme can only be "Bearer". The credential is one of two shapes and
+// they are tried in order:
 //
-//  1. OTURUM JETONU (JWT) — normal, insan yolu: yönetici giriş yapar, jeton
-//     alır, jetonla gezer. Önce denenir çünkü yaygın olan budur. Jetonun
-//     kendisi bir ARAMA gerektirmez; imzası doğrulandıktan sonra iki indeksli
-//     okuma yapılır (sahibi hâlâ var mı, oturumu jetondan sonra düşürüldü mü —
-//     bkz. [Service.principalFromToken]).
-//  2. GİZLİ API ANAHTARI — makineden makineye yol: betikler ve entegrasyonlar.
+//  1. SESSION TOKEN (JWT) — the normal, human path: the admin logs in, gets a
+//     token, and travels with the token. It is tried first because this is the
+//     common one. The token itself does not require a LOOKUP; once its
+//     signature is verified, two indexed reads are made (does the owner still
+//     exist, was the session dropped after the token — see
+//     [Service.principalFromToken]).
+//  2. SECRET API KEY — the machine-to-machine path: scripts and integrations.
 //
-// Sıra bir DENEME-YANILMA DEĞİLDİR. İki biçim sözdizimsel olarak ayrıktır:
-// JWT tam iki nokta içerir, API anahtarı "sk_" ile başlar ve nokta içermez.
-// Bu yüzden dallanma kesindir; ikisini de sırayla çalıştırıp ilk başarılıyı
-// almak, her yanlış kimlikte gereksiz bir veritabanı araması yapmak ve
-// publishable bir anahtarın yönetim yüzeyinde yoklanmasına izin vermek olurdu.
+// The order IS NOT TRIAL AND ERROR. The two shapes are syntactically disjoint:
+// a JWT contains exactly two dots, an API key starts with "sk_" and contains
+// no dots. The branching is therefore definite; running both of them in order
+// and taking the first success would mean making an unnecessary database
+// lookup on every wrong credential and letting a publishable key be probed on
+// the admin surface.
 //
-// Publishable anahtar BURADA KABUL EDİLMEZ: "pk_" öneki ne JWT'ye benzer ne de
-// "sk_" ile başlar, dolayısıyla daha ilk adımda elenir. Elenmese bile
-// [Service.authenticateKey] içindeki tür denetimi ikinci kapı olarak durur.
+// A publishable key IS NOT ACCEPTED HERE: the "pk_" prefix neither resembles a
+// JWT nor starts with "sk_", so it is eliminated at the very first step. Even
+// if it were not eliminated, the type check inside [Service.authenticateKey]
+// stands as the second gate.
 //
-// Her başarısızlık errors.Unauthorized döner; gerekçe çekirdeğin middleware'i
-// tarafından loglanır ve istemciye SIZDIRILMAZ.
+// Every failure returns errors.Unauthorized; the reason is logged by the
+// core's middleware and IS NOT LEAKED to the client.
 func (i *Interop) AuthenticateAdmin(
 	ctx context.Context,
 	scheme, credential string,
 ) (corehttp.Principal, error) {
 	if i == nil || i.svc == nil {
-		return corehttp.Principal{}, errors.Unavailable(CodeUnconfigured, "auth servisi kurulmamış")
+		return corehttp.Principal{}, errors.Unavailable(CodeUnconfigured, "auth service is not configured")
 	}
 	if !strings.EqualFold(scheme, schemeBearer) {
 		return corehttp.Principal{}, errors.Unauthorized(CodeInvalidCredentials,
-			"%q şeması desteklenmiyor; \"Bearer\" bekleniyor", scheme)
+			"the %q scheme is not supported; \"Bearer\" expected", scheme)
 	}
 
 	credential = strings.TrimSpace(credential)
@@ -113,25 +120,27 @@ func (i *Interop) AuthenticateAdmin(
 		return i.svc.principalFromSecretKey(ctx, credential)
 	default:
 		return corehttp.Principal{}, errors.Unauthorized(CodeInvalidCredentials,
-			"kimlik bilgisi ne oturum jetonu ne de gizli api anahtarı biçiminde")
+			"the credential is in neither session token nor secret api key form")
 	}
 }
 
-// AuthenticateStore mağaza yüzeyinin kimliğini çözer.
+// AuthenticateStore resolves the identity of the store surface.
 //
-// Yalnızca PUBLISHABLE anahtar kabul edilir. Gizli bir anahtar burada
-// REDDEDİLİR ve bu iki bağımsız kapıyla sağlanır: "sk_" öneki beklenen "pk_"
-// önekiyle eşleşmez ve kayıttaki tür alanı da tutmaz.
+// Only a PUBLISHABLE key is accepted. A secret key is REJECTED here, and this
+// is ensured by two independent gates: the "sk_" prefix does not match the
+// expected "pk_" prefix, and the type field on the record does not hold
+// either.
 //
-// Publishable anahtar bir SIR DEĞİLDİR; tek işi isteği bir satış kanalına
-// bağlamaktır. Bu yüzden dönen kimliğe HİÇBİR YETKİ konmaz: mağaza yüzeyinden
-// gelen bir istek, anahtar kaydında yetki yazsa bile yönetim ucuna geçemez.
+// A publishable key IS NOT A SECRET; its only job is to bind the request to a
+// sales channel. This is why NO SCOPE is put on the returned identity: a
+// request arriving from the store surface cannot cross to an admin endpoint
+// even if scopes are written on the key record.
 //
-// İptal edilmiş anahtar ve etkin kanalı kalmamış anahtar reddedilir
-// (bkz. [Service.authenticatePublishable]).
+// A revoked key and a key left with no enabled channel are rejected (see
+// [Service.authenticatePublishable]).
 func (i *Interop) AuthenticateStore(ctx context.Context, key string) (corehttp.Principal, error) {
 	if i == nil || i.svc == nil {
-		return corehttp.Principal{}, errors.Unavailable(CodeUnconfigured, "auth servisi kurulmamış")
+		return corehttp.Principal{}, errors.Unavailable(CodeUnconfigured, "auth service is not configured")
 	}
 
 	apiKey, channelIDs, err := i.svc.authenticatePublishable(ctx, strings.TrimSpace(key))
@@ -142,74 +151,83 @@ func (i *Interop) AuthenticateStore(ctx context.Context, key string) (corehttp.P
 	return corehttp.Principal{
 		ID:   apiKey.ID,
 		Kind: PrincipalKindAPIKey,
-		// Yetki listesi BİLEREK boştur; kayıttaki değer okunmaz bile. Bu,
-		// publishable anahtarın yetki taşımadığı kuralının ÜÇÜNCÜ kapısıdır
-		// (ilk ikisi: oluşturmada reddetme, tür denetimi).
+		// The scope list is DELIBERATELY empty; the value on the record is not
+		// even read. This is the THIRD gate of the rule that a publishable key
+		// carries no scope (the first two: rejection at creation, the type
+		// check).
 		Scopes:          nil,
 		SalesChannelIDs: channelIDs,
 	}, nil
 }
 
-// principalFromToken oturum jetonundan kimlik kurar.
+// principalFromToken builds an identity from a session token.
 //
-// # Yetkiler jetondan DEĞİL veritabanından okunur
+// # Scopes are read from the database, NOT from the token
 //
-// Jeton "scopes" iddiasını taşır ama yetki kararı ona bakılarak VERİLMEZ:
-// kullanıcının kaydındaki güncel yetkiler okunur. Aksi hâlde bir yöneticinin
-// yetkisi geri alındıktan sonra elindeki jeton, süresi dolana kadar (varsayılan
-// 12 saat) eski yetkiyle çalışmaya devam ederdi. Jetondaki liste yalnızca
-// istemcinin arayüzü çizmesine yarayan bir kopyadır.
+// The token carries a "scopes" claim, but the scope decision IS NOT MADE by
+// looking at it: the current scopes on the user's record are read. Otherwise,
+// after an admin's scope had been taken back, the token in their hands would
+// keep working with the old scope until it expired (12 hours by default). The
+// list in the token is only a copy that serves the client in drawing its
+// interface.
 //
-// # Kullanıcının hâlâ var olduğu sorulur
+// # Whether the user still exists is asked
 //
-// İmzası geçerli bir jeton, sahibi SİLİNMİŞSE kabul edilmez. Sorgu birincil
-// anahtar üzerinden tek okumadır; bedeli, silinen bir yöneticinin 12 saat
-// boyunca içeride kalabilmesinin bedelinin yanında hiçtir.
+// A token with a valid signature is not accepted if its owner HAS BEEN
+// DELETED. The query is a single read over the primary key; its cost is
+// nothing next to the cost of a deleted admin being able to stay inside for 12
+// hours.
 //
-// # Çıkış ve parola değişimi jetonu DÜŞÜRÜR
+// # Logout and password change DROP the token
 //
-// Jeton, sahibinin oturum çapası jetonun üretiminden SONRA ilerlediyse
-// reddedilir. Çapayı iki iş ilerletir: çıkış ([Service.Logout]) ve parola
-// değişimi ([Service.SetPassword]). Bu denetim olmadan sızmış bir yönetici
-// jetonu, ikisi de yapılsa bile [DefaultJWTTTL] boyunca (varsayılan 12 saat)
-// tam yetkili kimlik üretmeye devam ederdi — yani ne "çıkış yaptım" ne de
-// "parolamı değiştirdim" hiçbir şeyi geri alırdı.
+// A token is rejected if its owner's session anchor moved forward AFTER the
+// token was produced. Two operations move the anchor forward: logout
+// ([Service.Logout]) and password change ([Service.SetPassword]). Without this
+// check a leaked admin token would keep producing a fully privileged identity
+// for [DefaultJWTTTL] (12 hours by default) even if both of them were done —
+// that is, neither "I logged out" nor "I changed my password" would take
+// anything back.
 //
-// Karşılaştırma jetonun "iat" iddiası ile kimliğin [sessionAnchor] değeri
-// arasındadır; saniye çözünürlüğünün getirdiği sınır durumu ve orada yapılan
-// tercih [parsedToken.issuedBefore] godoc'unda açıktır.
+// The comparison is between the token's "iat" claim and the identity's
+// [sessionAnchor] value; the edge case brought by second resolution and the
+// choice made there are spelled out in the [parsedToken.issuedBefore] godoc.
 //
-// # Çapa SAĞLAYICIYA GÖRE seçilmez
+// # The anchor is NOT chosen PER PROVIDER
 //
-// Okunan değer kullanıcının EN YENİ çapasıdır, tek bir sağlayıcınınki değil
-// (Repository.SessionAnchor). Seçim yapılamaz çünkü jeton hangi sağlayıcıdan
-// alındığını söyleyen bir iddia TAŞIMAZ; sabit bir sağlayıcıya bakmak ise
-// çıkışla tutarsız olurdu — çıkış bütün satırları ilerletir
-// ([Service.Logout]) ve doğrulama tek satıra bakarsa OAuth eklendiği gün o
-// sağlayıcının jetonları çıkıştan sonra da kabul edilmeye devam ederdi.
+// The value read is the user's NEWEST anchor, not that of a single provider
+// (Repository.SessionAnchor). No selection can be made because the token
+// CARRIES no claim saying which provider it was obtained from; and looking at
+// a fixed provider would be inconsistent with logout — logout moves all rows
+// forward ([Service.Logout]), and if verification looked at a single row, then
+// on the day OAuth is added that provider's tokens would continue to be
+// accepted after a logout as well.
 //
-// Belirsizlik GÜVENLİK lehine çözülür: bir sağlayıcıdaki iptal ötekinin
-// jetonlarını da düşürür. Ters tercih (en eski çapa) hiç ilerlemeyen tek bir
-// satırın iptalin tamamını etkisiz bırakması demek olurdu. Sağlayıcı başına
-// kesinlik gerçekten gerekirse yol, jetona bir sağlayıcı iddiası eklemektir.
+// The ambiguity is resolved in favor of SECURITY: a revocation at one provider
+// drops the other's tokens as well. The opposite choice (the oldest anchor)
+// would mean a single row that never moves forward rendering the whole
+// revocation ineffective. If per-provider precision is genuinely needed, the
+// path is to add a provider claim to the token.
 //
-// Bugün tek sağlayıcı olduğu için okunan değer eskisiyle AYNIDIR; kazanılan
-// şey ikinci satırın eklendiği günkü tutarlılıktır.
+// Because there is a single provider today, the value read is the SAME as the
+// old one; what is gained is the consistency on the day the second row is
+// added.
 //
-// Giriş kimliği HİÇ YOKSA jeton reddedilir. Bu yol normalde imkânsızdır —
-// jeton yalnızca [Service.Login] tarafından, yani kimliği olan bir kullanıcı
-// için üretilir — ama kimlik silinmişse jetonun ne zaman geçersizleştiğini
-// söyleyecek bir değer de kalmaz; böyle bir durumda kabul etmek, denetimi
-// kimliği silerek atlatmaya açık kapı bırakmak olurdu.
+// If there is NO login identity at all, the token is rejected. This path is
+// normally impossible — a token is produced only by [Service.Login], that is,
+// for a user who has an identity — but if the identity has been deleted, no
+// value remains to say when the token became invalid either; accepting in such
+// a case would be leaving the door open to bypassing the check by deleting the
+// identity.
 //
-// # Maliyet
+// # Cost
 //
-// Çapa okuması EK BİR TUR DEĞİLDİR: bu yol zaten istek başına bir veritabanı
-// okuması yapıyordu (yetkiler jetondan değil kayıttan okunuyor, yukarıya
-// bakınız). İkinci okuma indekslidir (auth_identity_user_provider_uniq,
-// user_id önekiyle) ve sağlayıcı sayısı elle ölçüldüğü için sıralama bir avuç
-// satır üzerindedir; isteğin bütçesinde ölçülebilir bir yer tutmaz.
-// Karşılığında iptal ANINDA etkili olur.
+// The anchor read IS NOT AN EXTRA ROUND TRIP: this path was already making one
+// database read per request (scopes are read from the record, not from the
+// token, see above). The second read is indexed
+// (auth_identity_user_provider_uniq, with the user_id prefix) and, because the
+// number of providers is countable by hand, the ordering is over a handful of
+// rows; it takes no measurable place in the request's budget. In return,
+// revocation takes effect IMMEDIATELY.
 func (s *Service) principalFromToken(ctx context.Context, raw string) (corehttp.Principal, error) {
 	if err := s.ready(); err != nil {
 		return corehttp.Principal{}, err
@@ -224,7 +242,7 @@ func (s *Service) principalFromToken(ctx context.Context, raw string) (corehttp.
 	if err != nil {
 		if errors.IsNotFound(err) {
 			return corehttp.Principal{}, errors.Unauthorized(CodeTokenInvalid,
-				"jetondaki kullanıcı artık yok: %s", parsed.Subject)
+				"the user in the token no longer exists: %s", parsed.Subject)
 		}
 		return corehttp.Principal{}, err
 	}
@@ -233,13 +251,13 @@ func (s *Service) principalFromToken(ctx context.Context, raw string) (corehttp.
 	if err != nil {
 		if errors.IsNotFound(err) {
 			return corehttp.Principal{}, errors.Unauthorized(CodeTokenInvalid,
-				"jetonun dayandığı giriş kimliği artık yok: %s", user.ID)
+				"the login identity the token rests on no longer exists: %s", user.ID)
 		}
 		return corehttp.Principal{}, err
 	}
 	if parsed.issuedBefore(anchor) {
 		return corehttp.Principal{}, errors.Unauthorized(CodeTokenInvalid,
-			"jeton, çıkış ya da parola değişiminden önce üretilmiş: %s", user.ID)
+			"the token was produced before a logout or a password change: %s", user.ID)
 	}
 
 	return corehttp.Principal{
@@ -249,7 +267,7 @@ func (s *Service) principalFromToken(ctx context.Context, raw string) (corehttp.
 	}, nil
 }
 
-// principalFromSecretKey gizli API anahtarından kimlik kurar.
+// principalFromSecretKey builds an identity from a secret API key.
 func (s *Service) principalFromSecretKey(ctx context.Context, credential string) (corehttp.Principal, error) {
 	key, err := s.authenticateKey(ctx, credential, models.APIKeySecret)
 	if err != nil {
@@ -263,14 +281,15 @@ func (s *Service) principalFromSecretKey(ctx context.Context, credential string)
 	}, nil
 }
 
-// looksLikeJWT kimlik bilgisinin JWT biçiminde olup olmadığını bildirir.
+// looksLikeJWT reports whether the credential is in JWT shape.
 //
-// Denetim BİÇİMSELDİR, doğrulama değil: yalnızca dallanmaya karar verir.
-// İmza bölümünün BOŞ olmasına izin verilir ve bu bilinçlidir — "alg: none"
-// saldırısının jetonu tam olarak bu şekildedir ("başlık.gövde.") ve
-// doğrulayıcıya ULAŞMASI gerekir ki orada AÇIKÇA reddedilsin. Burada elenseydi
-// istek yine 401 alırdı ama reddin gerekçesi "biçim tanınmadı" olur ve
-// algoritma denetiminin çalıştığı hiçbir testle kanıtlanamazdı.
+// The check is a SHAPE check, not verification: it only decides the branching.
+// The signature segment is allowed to be EMPTY and this is deliberate — the
+// token of the "alg: none" attack is exactly of this shape ("header.body.")
+// and it MUST REACH the verifier so that it is EXPLICITLY rejected there. Had
+// it been eliminated here the request would still have got a 401, but the
+// reason for the rejection would be "the shape was not recognized" and there
+// would be no test proving that the algorithm check runs.
 func looksLikeJWT(credential string) bool {
 	if strings.HasPrefix(credential, models.SecretKeyPrefix) ||
 		strings.HasPrefix(credential, models.PublishableKeyPrefix) {
@@ -283,14 +302,15 @@ func looksLikeJWT(credential string) bool {
 	return parts[0] != "" && parts[1] != ""
 }
 
-// ActiveSalesChannelIDs etkin satış kanallarının kimliklerini döner.
+// ActiveSalesChannelIDs returns the identifiers of the enabled sales channels.
 //
-// Modüller arası ilkel yüzeydir: tüketici (örn. katalog süzmesi yapan bir
-// modül) bu imzayı kendi paketinde tekrar tanımlar ve somut servisi
-// container'dan "auth.service" adıyla çözer (ADR 0001).
+// It is a cross-module primitive surface: the consumer (e.g. a module doing
+// catalog filtering) redefines this signature in its own package and resolves
+// the concrete service from the container under the name "auth.service"
+// (ADR 0001).
 //
-// Devre dışı ve silinmiş kanallar DÖNMEZ. Hiç kanal yoksa boş (nil olmayan)
-// dilim döner.
+// Disabled and deleted channels ARE NOT RETURNED. If there is no channel at
+// all, an empty (non-nil) slice is returned.
 func (s *Service) ActiveSalesChannelIDs(ctx context.Context) ([]string, error) {
 	if err := s.ready(); err != nil {
 		return nil, err
@@ -307,8 +327,9 @@ func (s *Service) ActiveSalesChannelIDs(ctx context.Context) ([]string, error) {
 		for i := range channels {
 			ids = append(ids, channels[i].ID)
 		}
-		// Sayfa boş dönerse ya da toplam sayıya ulaşıldıysa durulur; ikinci
-		// koşul olmadan son sayfadan sonra bir tur daha atılırdı.
+		// It stops if the page comes back empty or the total count has been
+		// reached; without the second condition one more round would be made
+		// after the last page.
 		if len(channels) == 0 || int64(len(ids)) >= total {
 			break
 		}
@@ -316,10 +337,12 @@ func (s *Service) ActiveSalesChannelIDs(ctx context.Context) ([]string, error) {
 	return ids, nil
 }
 
-// SalesChannelName kanalın adını döner; kanal yoksa errors.NotFound.
+// SalesChannelName returns the channel's name; errors.NotFound if there is no
+// such channel.
 //
-// Modüller arası ilkel yüzeydir. Kanalın tüm alanları gerekiyorsa doğru yol
-// Query katmanıdır ("sales_channel" sağlayıcısı, bkz. provider.go).
+// It is a cross-module primitive surface. If all the fields of the channel are
+// needed, the right path is the Query layer (the "sales_channel" provider, see
+// provider.go).
 func (s *Service) SalesChannelName(ctx context.Context, channelID string) (string, error) {
 	channel, err := s.GetSalesChannel(ctx, channelID)
 	if err != nil {

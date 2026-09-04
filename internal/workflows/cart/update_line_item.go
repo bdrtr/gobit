@@ -90,7 +90,7 @@ func (w *Workflows) UpdateLineItem(ctx context.Context, in UpdateLineItemInput) 
 	}
 	if in.Quantity > MaxQuantity {
 		return UpdateLineItemResult{}, errors.Invalid(CodeInvalidInput,
-			"adet en fazla %d olabilir: %d", MaxQuantity, in.Quantity)
+			"the quantity can be at most %d: %d", MaxQuantity, in.Quantity)
 	}
 
 	removed := in.Quantity == 0

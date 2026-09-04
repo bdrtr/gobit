@@ -287,7 +287,7 @@ func TestKayitliMusteriSepeti(t *testing.T) {
 	detay, err := cartSvc.GetCart(ctx, sepet.CartID)
 	require.NoError(t, err, "sepet modülünden okunabilmeli")
 	require.Equal(t, musteriID, detay.CustomerID,
-		"sepetin sütunundaki müşteri kimliği de doğru olmalı; sütun kaynak, link ise "+
+		"sepetin sütunundaki customer id de doğru olmalı; sütun kaynak, link ise "+
 			"onun aynasıdır ve ikisi ayrışmamalıdır")
 	require.Equal(t, guncel.Totals.Total, detay.Total,
 		"okunan genel total akışın döndürdüğüyle birebir aynı olmalı")

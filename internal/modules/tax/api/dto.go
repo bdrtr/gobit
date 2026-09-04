@@ -7,141 +7,147 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/tax/service"
 )
 
-// DTO'lar domain modellerinden AYRI tutulur: JSON alan adları dış sözleşmedir
-// ve modelde yapılan bir yeniden adlandırma istemciyi kırmamalıdır.
+// The DTOs are kept SEPARATE from the domain models: JSON field names are an
+// external contract and a rename done in the model must not break the client.
 
-// taxRegionDTO bir vergi bölgesinin yanıt gövdesidir.
+// taxRegionDTO is the response body of a tax region.
 type taxRegionDTO struct {
-	// ID bölgenin kimliğidir.
+	// ID is the region's id.
 	ID string `json:"id"`
-	// CountryCode ISO 3166-1 alpha-2 kodudur (BÜYÜK harf).
+	// CountryCode is the ISO 3166-1 alpha-2 code (UPPER case).
 	CountryCode string `json:"country_code"`
-	// ProvinceCode eyalet/il kodudur; kök bölgede null.
+	// ProvinceCode is the province/state code; null on a root region.
 	ProvinceCode *string `json:"province_code"`
-	// ParentID kök bölgenin kimliğidir; kök bölgede null.
+	// ParentID is the id of the root region; null on a root region.
 	ParentID *string `json:"parent_id"`
-	// ProviderID vergi sağlayıcısının kimliğidir. Boş ise eyalet bölgesinde
-	// ülkenin sağlayıcısı devralınır, kök bölgede yerel hesaplama uygulanır.
+	// ProviderID is the tax provider's id. When empty, a province region
+	// inherits the country's provider and a root region applies local
+	// calculation.
 	ProviderID string `json:"provider_id"`
-	// Metadata serbest üstveridir; boşsa alan hiç görünmez.
+	// Metadata is free-form metadata; when empty the field does not appear.
 	Metadata map[string]any `json:"metadata,omitempty"`
-	// CreatedAt oluşturulma anıdır (RFC3339, UTC).
+	// CreatedAt is the creation instant (RFC3339, UTC).
 	CreatedAt time.Time `json:"created_at"`
-	// UpdatedAt son güncellenme anıdır (RFC3339, UTC).
+	// UpdatedAt is the last update instant (RFC3339, UTC).
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
-// taxRateDTO bir vergi oranının yanıt gövdesidir.
+// taxRateDTO is the response body of a tax rate.
 type taxRateDTO struct {
-	// ID oranın kimliğidir.
+	// ID is the rate's id.
 	ID string `json:"id"`
-	// TaxRegionID oranın ait olduğu bölgedir.
+	// TaxRegionID is the region the rate belongs to.
 	TaxRegionID string `json:"tax_region_id"`
-	// Name oranın görünen adıdır.
+	// Name is the rate's display name.
 	Name string `json:"name"`
-	// Code mutabakat kodudur; verilmediyse null.
+	// Code is the reconciliation code; null when not given.
 	Code *string `json:"code"`
-	// RateBps orandır; BAZ PUAN cinsindendir (2000 = %20).
+	// RateBps is the rate; it is in BASIS POINTS (2000 = 20%).
 	//
-	// Alan adının sonundaki birim bilinçlidir: "rate": 20 gövdesi %20 mi
-	// yoksa 0,2 mi olduğu belirsiz kalırdı ve istemci tarafında yüz kat hata
-	// üretirdi. Baz puan tam sayıdır, float değildir (plan Bölüm 8).
+	// The unit at the end of the field name is deliberate: whether a "rate": 20
+	// body were 20% or 0.2 would stay ambiguous and would produce a hundredfold
+	// error on the client side. A basis point is an integer, not a float (plan
+	// Section 8).
 	RateBps int32 `json:"rate_bps"`
-	// IsDefault bölgenin varsayılan oranı olup olmadığıdır.
+	// IsDefault is whether this is the region's default rate.
 	IsDefault bool `json:"is_default"`
-	// Metadata serbest üstveridir; boşsa alan hiç görünmez.
+	// Metadata is free-form metadata; when empty the field does not appear.
 	Metadata map[string]any `json:"metadata,omitempty"`
-	// CreatedAt oluşturulma anıdır (RFC3339, UTC).
+	// CreatedAt is the creation instant (RFC3339, UTC).
 	CreatedAt time.Time `json:"created_at"`
-	// UpdatedAt son güncellenme anıdır (RFC3339, UTC).
+	// UpdatedAt is the last update instant (RFC3339, UTC).
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
-// taxRateRuleDTO bir vergi kuralının yanıt gövdesidir.
+// taxRateRuleDTO is the response body of a tax rule.
 type taxRateRuleDTO struct {
-	// ID kuralın kimliğidir.
+	// ID is the rule's id.
 	ID string `json:"id"`
-	// TaxRateID kuralın bağlı olduğu orandır.
+	// TaxRateID is the rate the rule is attached to.
 	TaxRateID string `json:"tax_rate_id"`
-	// Reference kalemin türüdür: "product", "product_type" ya da
+	// Reference is the kind of the item: "product", "product_type" or
 	// "shipping_option".
 	Reference string `json:"reference"`
-	// ReferenceID o türdeki kimliktir; BAŞKA bir modüle aittir ve bu modül
-	// varlığını doğrulamaz.
+	// ReferenceID is the id within that kind; it belongs to ANOTHER module and
+	// this module does not verify its existence.
 	ReferenceID string `json:"reference_id"`
-	// CreatedAt oluşturulma anıdır (RFC3339, UTC).
+	// CreatedAt is the creation instant (RFC3339, UTC).
 	CreatedAt time.Time `json:"created_at"`
 }
 
-// createTaxRegionRequest vergi bölgesi oluşturma isteğidir.
+// createTaxRegionRequest is the tax region creation request.
 type createTaxRegionRequest struct {
-	// CountryCode ISO 3166-1 alpha-2 kodudur; büyük/küçük harf serbesttir.
-	// Zorunludur.
+	// CountryCode is the ISO 3166-1 alpha-2 code; case is free. It is
+	// required.
 	CountryCode string `json:"country_code"`
-	// ProvinceCode eyalet/il kodudur. Boş bırakılırsa ÜLKE KÖKÜ oluşturulur;
-	// dolu verilirse parent_id de zorunludur.
+	// ProvinceCode is the province/state code. Left empty, a COUNTRY ROOT is
+	// created; given a value, parent_id is required too.
 	ProvinceCode string `json:"province_code"`
-	// ParentID eyalet bölgesinin bağlanacağı ülke köküdür.
+	// ParentID is the country root the province region will be attached to.
 	ParentID string `json:"parent_id"`
-	// ProviderID vergi sağlayıcısının kimliğidir ve KAYITLI olmalıdır;
-	// kayıtlı olmayan bir kimlik 422 ile reddedilir. Boş bırakılırsa eyalet
-	// bölgesi ülkenin sağlayıcısını devralır, kök bölge yerel hesaplama
-	// kullanır.
+	// ProviderID is the tax provider's id and it must be REGISTERED; an id that
+	// is not registered is rejected with a 422. Left empty, a province region
+	// inherits the country's provider and a root region uses local
+	// calculation.
 	ProviderID string `json:"provider_id"`
-	// Metadata serbest üstveridir.
+	// Metadata is free-form metadata.
 	Metadata map[string]any `json:"metadata"`
 }
 
-// createTaxRateRequest vergi oranı oluşturma isteğidir.
+// createTaxRateRequest is the tax rate creation request.
 type createTaxRateRequest struct {
-	// TaxRegionID oranın ekleneceği bölgedir; zorunludur.
+	// TaxRegionID is the region the rate will be added to; it is required.
 	//
-	// Gövdede taşınması bilinçlidir: /admin/v1/tax-rates altına POST edilen bir
-	// oran, hangi bölgeye ait olduğunu kendi gövdesinde söyler ve aynı gövde
-	// bölgenin alt kaynağına (…/tax-regions/{id}/tax-rates) taşınırsa yol ile
-	// gövde çelişebilirdi. Bu modülde oran yalnızca /admin/v1/tax-rates
-	// üzerinden YAZILIR; bölge altındaki uç yalnızca OKUMADIR.
+	// Carrying it in the body is deliberate: a rate POSTed under
+	// /admin/v1/tax-rates says in its own body which region it belongs to, and
+	// were the same body moved to the region's sub-resource
+	// (…/tax-regions/{id}/tax-rates) the path and the body could contradict
+	// each other. In this module a rate is WRITTEN only over
+	// /admin/v1/tax-rates; the endpoint under the region is READ-ONLY.
 	TaxRegionID string `json:"tax_region_id"`
-	// Name oranın görünen adıdır; zorunludur.
+	// Name is the rate's display name; it is required.
 	Name string `json:"name"`
-	// Code mutabakat kodudur; boş bırakılabilir.
+	// Code is the reconciliation code; it may be left empty.
 	Code string `json:"code"`
-	// RateBps orandır (baz puan; 2000 = %20).
+	// RateBps is the rate (basis points; 2000 = 20%).
 	RateBps int32 `json:"rate_bps"`
-	// IsDefault bölgenin varsayılan oranı olup olmadığıdır.
+	// IsDefault is whether this is the region's default rate.
 	IsDefault bool `json:"is_default"`
-	// Metadata serbest üstveridir.
+	// Metadata is free-form metadata.
 	Metadata map[string]any `json:"metadata"`
 }
 
-// updateTaxRateRequest vergi oranı güncelleme isteğidir.
+// updateTaxRateRequest is the tax rate update request.
 //
-// Tüm alanlar işaretçidir: verilmeyen alan DEĞİŞMEZ. Tam gövde istenseydi,
-// gövdesinde rate_bps göndermeyi unutan bir istemci oranı sessizce sıfırlardı.
+// Every field is a pointer: a field that is not given DOES NOT CHANGE. Had a
+// full body been required, a client that forgot to send rate_bps in its body
+// would silently zero the rate.
 type updateTaxRateRequest struct {
-	// Name yeni addır; null/eksikse ad değişmez.
+	// Name is the new name; when null/absent the name does not change.
 	Name *string `json:"name"`
-	// Code yeni mutabakat kodudur; null/eksikse değişmez. Kodu KALDIRMAK için
-	// boş dize gönderilir.
+	// Code is the new reconciliation code; when null/absent it does not change.
+	// To REMOVE the code an empty string is sent.
 	Code *string `json:"code"`
-	// RateBps yeni orandır (baz puan); null/eksikse oran değişmez.
+	// RateBps is the new rate (basis points); when null/absent the rate does
+	// not change.
 	RateBps *int32 `json:"rate_bps"`
-	// IsDefault varsayılanlık bayrağıdır; null/eksikse değişmez.
+	// IsDefault is the default flag; when null/absent it does not change.
 	IsDefault *bool `json:"is_default"`
-	// Metadata yeni üstveridir; null/eksikse üstveri değişmez.
+	// Metadata is the new metadata; when null/absent the metadata does not
+	// change.
 	Metadata map[string]any `json:"metadata"`
 }
 
-// createTaxRateRuleRequest vergi kuralı oluşturma isteğidir.
+// createTaxRateRuleRequest is the tax rule creation request.
 type createTaxRateRuleRequest struct {
-	// Reference kalemin türüdür: "product", "product_type" ya da
+	// Reference is the kind of the item: "product", "product_type" or
 	// "shipping_option".
 	Reference string `json:"reference"`
-	// ReferenceID o türdeki kimliktir; zorunludur.
+	// ReferenceID is the id within that kind; it is required.
 	ReferenceID string `json:"reference_id"`
 }
 
-// toTaxRegionDTO bölge modelini yanıt gövdesine çevirir.
+// toTaxRegionDTO converts the region model into the response body.
 func toTaxRegionDTO(region models.TaxRegion) taxRegionDTO {
 	return taxRegionDTO{
 		ID:           region.ID,
@@ -155,7 +161,7 @@ func toTaxRegionDTO(region models.TaxRegion) taxRegionDTO {
 	}
 }
 
-// toTaxRateDTO oran modelini yanıt gövdesine çevirir.
+// toTaxRateDTO converts the rate model into the response body.
 func toTaxRateDTO(rate models.TaxRate) taxRateDTO {
 	return taxRateDTO{
 		ID:          rate.ID,
@@ -170,7 +176,7 @@ func toTaxRateDTO(rate models.TaxRate) taxRateDTO {
 	}
 }
 
-// toTaxRateRuleDTO kural modelini yanıt gövdesine çevirir.
+// toTaxRateRuleDTO converts the rule model into the response body.
 func toTaxRateRuleDTO(rule models.TaxRateRule) taxRateRuleDTO {
 	return taxRateRuleDTO{
 		ID:          rule.ID,
@@ -181,11 +187,10 @@ func toTaxRateRuleDTO(rule models.TaxRateRule) taxRateRuleDTO {
 	}
 }
 
-// toCreateTaxRegionInput istek gövdesini servis girdisine çevirir.
+// toCreateTaxRegionInput converts the request body into the service input.
 //
-// Doğrulama YAPILMAZ: geçerliliğe servis karar verir ve tek bir doğrulama
-// yerinin olması, HTTP ile modüller arası çağrının aynı kuralları görmesini
-// sağlar.
+// NO validation is done: the service decides on validity, and having a single
+// validation site makes HTTP and the cross-module call see the same rules.
 func toCreateTaxRegionInput(req createTaxRegionRequest) service.CreateTaxRegionInput {
 	return service.CreateTaxRegionInput{
 		CountryCode:  req.CountryCode,
@@ -196,7 +201,7 @@ func toCreateTaxRegionInput(req createTaxRegionRequest) service.CreateTaxRegionI
 	}
 }
 
-// toCreateTaxRateInput istek gövdesini servis girdisine çevirir.
+// toCreateTaxRateInput converts the request body into the service input.
 func toCreateTaxRateInput(req createTaxRateRequest) service.CreateTaxRateInput {
 	return service.CreateTaxRateInput{
 		TaxRegionID: req.TaxRegionID,
@@ -208,7 +213,7 @@ func toCreateTaxRateInput(req createTaxRateRequest) service.CreateTaxRateInput {
 	}
 }
 
-// toUpdateTaxRateInput istek gövdesini servis girdisine çevirir.
+// toUpdateTaxRateInput converts the request body into the service input.
 func toUpdateTaxRateInput(req updateTaxRateRequest) service.UpdateTaxRateInput {
 	return service.UpdateTaxRateInput{
 		Name:      req.Name,

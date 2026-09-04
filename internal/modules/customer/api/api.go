@@ -12,7 +12,7 @@
 //
 // Bu bilinçli bir ara durumdur, gözden kaçmış bir açık değil: uçlar Faz 5'in
 // sepet akışı için şimdi yazılır, koruma Faz 8'de auth middleware ile eklenir.
-// Faz 8'de yapılacak iş: müşteri kimliğini yol parametresinden DEĞİL, oturum
+// Faz 8'de yapılacak iş: customer idni yol parametresinden DEĞİL, oturum
 // belirtecinden almak ve [storeCustomerID] yardımcısını o kaynağa bağlamak.
 // Üretime bu hâliyle çıkılmamalıdır.
 //

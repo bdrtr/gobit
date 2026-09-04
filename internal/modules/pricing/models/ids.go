@@ -7,44 +7,46 @@ import (
 	"time"
 )
 
-// Kimlik önekleri (plan Bölüm 8: önekli, sıralanabilir kimlikler).
-// Önek, bir kimliğe bakıldığında hangi kayda ait olduğunu tek bakışta söyler ve
-// yanlış kimlikle yapılan bir çağrıyı log'da görünür kılar.
+// ID prefixes (plan Section 8: prefixed, sortable identifiers).
+// The prefix tells at a single glance which record an id belongs to when you
+// look at it, and it makes a call made with the wrong id visible in the log.
 const (
-	// PriceSetIDPrefix price set kimliklerinin önekidir.
+	// PriceSetIDPrefix is the prefix of price set ids.
 	PriceSetIDPrefix = "pset_"
-	// PriceIDPrefix fiyat kimliklerinin önekidir.
+	// PriceIDPrefix is the prefix of price ids.
 	PriceIDPrefix = "price_"
-	// PriceListIDPrefix fiyat listesi kimliklerinin önekidir.
+	// PriceListIDPrefix is the prefix of price list ids.
 	PriceListIDPrefix = "plist_"
-	// PriceRuleIDPrefix fiyat kuralı kimliklerinin önekidir.
+	// PriceRuleIDPrefix is the prefix of price rule ids.
 	PriceRuleIDPrefix = "prule_"
 )
 
-// idBodyLen önek dışındaki gövdenin karakter sayısıdır: 16 bayt Crockford
-// Base32 ile dolgusuz kodlandığında tam 26 karakter eder.
+// idBodyLen is the number of characters in the body excluding the prefix: 16
+// bytes encoded as Crockford Base32 without padding come to exactly 26
+// characters.
 const idBodyLen = 26
 
-// idEncoding Crockford Base32 alfabesiyle dolgusuz kodlamadır. Alfabe ASCII'de
-// artan sırada olduğundan kodlanmış dize, kodlanan baytlarla aynı sözlüksel
-// sırayı korur; kimlikler bu sayede zamana göre sıralanabilir kalır ve
-// "ORDER BY id" doğal olarak oluşturma sırasını verir.
+// idEncoding is padding-free encoding over the Crockford Base32 alphabet. Since
+// the alphabet is in ascending ASCII order, the encoded string keeps the same
+// lexicographic order as the bytes it encodes; ids stay sortable by time
+// because of this, and "ORDER BY id" naturally yields creation order.
 var idEncoding = base32.NewEncoding("0123456789ABCDEFGHJKMNPQRSTVWXYZ").WithPadding(base32.NoPadding)
 
-// NewID verilen önekle zaman sıralı ve tekil bir kimlik üretir.
+// NewID produces a time-ordered, unique id with the given prefix.
 //
-// Yapısı ULID ile aynıdır: 48 bit milisaniye zaman damgası + 80 bit
-// kriptografik rastgelelik, Crockford Base32 ile 26 karaktere kodlanır.
-// Zaman damgasının başta olması, kimliğin kendisinin kabaca oluşturma sırasını
-// taşıması demektir.
+// Its structure is the same as ULID: a 48-bit millisecond timestamp + 80 bits
+// of cryptographic randomness, encoded into 26 characters with Crockford
+// Base32. The timestamp coming first means the id itself carries roughly the
+// creation order.
 //
-// internal/core/workflow/pgstore'daki üretici aynı yapıdadır; modül izolasyonu
-// gereği o paket import EDİLMEZ (Prensip 2.4), üretici burada tekrar edilir.
+// The generator in internal/core/workflow/pgstore has the same structure; for
+// the sake of module isolation that package is NOT imported (Principle 2.4),
+// the generator is repeated here.
 func NewID(prefix string, t time.Time) string {
 	ms := t.UTC().UnixMilli()
 	if ms < 0 {
-		// 1970 öncesi bir zaman damgası kayıt için anlamlı değildir;
-		// sıralamayı bozmamak için tabana çekilir.
+		// A timestamp before 1970 is not meaningful for a record; it is
+		// clamped to the floor so ordering is not broken.
 		ms = 0
 	}
 
@@ -52,30 +54,31 @@ func NewID(prefix string, t time.Time) string {
 	binary.BigEndian.PutUint64(stamp[:], uint64(ms))
 
 	var buf [16]byte
-	// UnixMilli 48 bite sığar; ilk iki bayt daima sıfırdır ve atılır.
+	// UnixMilli fits in 48 bits; the first two bytes are always zero and are
+	// dropped.
 	copy(buf[:6], stamp[2:])
 	if _, err := rand.Read(buf[6:]); err != nil {
-		// crypto/rand.Read hata dönmez; yine de bir gün dönerse kimlik
-		// yalnızca nanosaniye çözünürlüğüne dayanır — tekillik zayıflar ama
-		// kayıt açma başarısız olmaz.
+		// crypto/rand.Read does not return an error; should it one day do so,
+		// the id rests on nanosecond resolution alone — uniqueness weakens but
+		// opening a record does not fail.
 		binary.BigEndian.PutUint64(buf[8:], uint64(t.UnixNano()))
 	}
 
 	return prefix + idEncoding.EncodeToString(buf[:])
 }
 
-// NewPriceSetID yeni bir price set kimliği üretir.
+// NewPriceSetID produces a new price set id.
 func NewPriceSetID(t time.Time) string { return NewID(PriceSetIDPrefix, t) }
 
-// NewPriceID yeni bir fiyat kimliği üretir.
+// NewPriceID produces a new price id.
 func NewPriceID(t time.Time) string { return NewID(PriceIDPrefix, t) }
 
-// NewPriceListID yeni bir fiyat listesi kimliği üretir.
+// NewPriceListID produces a new price list id.
 func NewPriceListID(t time.Time) string { return NewID(PriceListIDPrefix, t) }
 
-// NewPriceRuleID yeni bir fiyat kuralı kimliği üretir.
+// NewPriceRuleID produces a new price rule id.
 func NewPriceRuleID(t time.Time) string { return NewID(PriceRuleIDPrefix, t) }
 
-// IDBodyLength önek dışındaki gövde uzunluğunu döner; testler ve doğrulama
-// için tek doğruluk kaynağıdır.
+// IDBodyLength returns the length of the body excluding the prefix; it is the
+// single source of truth for tests and for validation.
 func IDBodyLength() int { return idBodyLen }

@@ -162,10 +162,10 @@ func validateRateBps(rateBps int32) error {
 // değil, ne olduğu belli bir doğrulama hatası olarak dönmesidir.
 func requireID(id, prefix, label string) error {
 	if id == "" {
-		return errors.Invalid(CodeInvalidInput, "%s boş olamaz", label)
+		return errors.Invalid(CodeInvalidInput, "%s cannot be empty", label)
 	}
 	if strings.TrimSpace(id) != id {
-		return errors.Invalid(CodeInvalidInput, "%s baş/son boşluk içeremez: %q", label, id)
+		return errors.Invalid(CodeInvalidInput, "%s cannot contain leading/trailing whitespace: %q", label, id)
 	}
 	if len(id) > maxIDLen {
 		return errors.Invalid(CodeInvalidInput,

@@ -7,66 +7,66 @@ import (
 	"time"
 )
 
-// Kimlik önekleri (plan Bölüm 8: önekli, sıralanabilir kimlikler).
-// Önek, bir kimliğe bakıldığında hangi kayda ait olduğunu tek bakışta söyler ve
-// yanlış kimlikle yapılan bir çağrıyı log'da görünür kılar.
+// Identifier prefixes (plan Section 8: prefixed, sortable identifiers).
+// The prefix tells at a single glance which record an identifier belongs to, and
+// makes a call issued with the wrong identifier visible in the log.
 //
-// # "prule_" öneki pricing ile ORTAKTIR
+// # The "prule_" prefix is SHARED with pricing
 //
-// pricing modülünün PriceRule kayıtları da "prule_" önekini kullanır. Çakışma
-// bilinçlidir: plan Bölüm 8 promosyon kuralı için bu öneki adlandırır ve iki
-// modül birbirinin kimliğini hiçbir zaman görmez (Prensip 2.1 — modüller
-// birbirinin verisine erişemez). Önek bu yüzden modüller arası bir ayraç değil,
-// modül İÇİNDE tür ayracıdır: bir fiyat kuralı kimliği promosyon modülüne
-// verilirse doğrulamayı geçer ama okuma errors.NotFound döner.
+// The PriceRule records of the pricing module also use the "prule_" prefix. The
+// collision is deliberate: plan Section 8 names this prefix for the promotion rule,
+// and the two modules never see each other's identifiers (Principle 2.1 — modules
+// cannot reach each other's data). The prefix is therefore not a separator BETWEEN
+// modules but a type separator INSIDE a module: a price rule identifier handed to
+// the promotion module passes validation, but the read returns errors.NotFound.
 const (
-	// CampaignIDPrefix kampanya kimliklerinin önekidir.
+	// CampaignIDPrefix is the prefix of campaign identifiers.
 	CampaignIDPrefix = "camp_"
-	// PromotionIDPrefix promosyon kimliklerinin önekidir.
+	// PromotionIDPrefix is the prefix of promotion identifiers.
 	PromotionIDPrefix = "promo_"
-	// PromotionRuleIDPrefix promosyon kuralı kimliklerinin önekidir.
+	// PromotionRuleIDPrefix is the prefix of promotion rule identifiers.
 	PromotionRuleIDPrefix = "prule_"
-	// ApplicationMethodIDPrefix uygulama yöntemi kimliklerinin önekidir.
+	// ApplicationMethodIDPrefix is the prefix of application method identifiers.
 	//
-	// Plan Bölüm 8 bu kayıt için bir önek adlandırmaz; "appm_" burada seçilmiştir
-	// ve depodaki hiçbir önekle çakışmaz.
+	// Plan Section 8 names no prefix for this record; "appm_" was chosen here and it
+	// collides with no prefix in the repository.
 	ApplicationMethodIDPrefix = "appm_"
-	// RedemptionIDPrefix kupon kullanım kaydının önekidir.
+	// RedemptionIDPrefix is the prefix of the coupon redemption record.
 	//
-	// Plan Bölüm 8 bu kayıt için de bir önek adlandırmaz; kullanım sayacının
-	// defteri bu fazda ortaya çıkmıştır (bkz. [Redemption]).
+	// Plan Section 8 names no prefix for this record either; the ledger of the usage
+	// counter emerged in this phase (see [Redemption]).
 	RedemptionIDPrefix = "predeem_"
 )
 
-// idBodyLen önek dışındaki gövdenin karakter sayısıdır: 16 bayt Crockford
-// Base32 ile dolgusuz kodlandığında tam 26 karakter eder.
+// idBodyLen is the number of characters in the body beyond the prefix: 16 bytes
+// encoded as Crockford Base32 without padding come to exactly 26 characters.
 const idBodyLen = 26
 
-// idEncoding Crockford Base32 alfabesiyle dolgusuz kodlamadır. Alfabe ASCII'de
-// artan sırada olduğundan kodlanmış dize, kodlanan baytlarla aynı sözlüksel
-// sırayı korur; kimlikler bu sayede zamana göre sıralanabilir kalır ve
-// "ORDER BY id" doğal olarak oluşturma sırasını verir.
+// idEncoding is the unpadded encoding over the Crockford Base32 alphabet. Because
+// the alphabet is in ascending order in ASCII, the encoded string preserves the same
+// lexicographic order as the bytes it encodes; identifiers therefore stay sortable
+// by time and "ORDER BY id" naturally yields creation order.
 //
-// Sıralanabilirlik bu modülde bir SÜSLEME DEĞİLDİR:
-// [github.com/bdrtr/gobit/internal/modules/promotion/service.ComputeResult]
-// içindeki uygulama sırası kimliğe göre belirlenir (bkz. service paketindeki
-// sıralama kuralı) ve "önce yazılan promosyon önce uygulanır" iddiası ancak
-// kimliğin zaman sırasını taşımasıyla anlamlıdır.
+// Sortability is NOT DECORATION in this module: the application order inside
+// [github.com/bdrtr/gobit/internal/modules/promotion/service.ComputeResult] is
+// determined by identifier (see the ordering rule in the service package), and the
+// claim "the promotion written first is applied first" is only meaningful if the
+// identifier carries the order of time.
 var idEncoding = base32.NewEncoding("0123456789ABCDEFGHJKMNPQRSTVWXYZ").WithPadding(base32.NoPadding)
 
-// NewID verilen önekle zaman sıralı ve tekil bir kimlik üretir.
+// NewID produces a time-ordered, unique identifier with the given prefix.
 //
-// Yapısı ULID ile aynıdır: 48 bit milisaniye zaman damgası + 80 bit
-// kriptografik rastgelelik, Crockford Base32 ile 26 karaktere kodlanır.
+// Its structure is the same as a ULID: a 48-bit millisecond timestamp + 80 bits of
+// cryptographic randomness, encoded into 26 characters with Crockford Base32.
 //
-// internal/core/workflow/pgstore'daki ve diğer modüllerdeki üreticiler aynı
-// yapıdadır; modül izolasyonu gereği o paketler import EDİLMEZ (Prensip 2.4),
-// üretici burada tekrar edilir.
+// The generators in internal/core/workflow/pgstore and in the other modules have the
+// same structure; module isolation forbids importing those packages
+// (Principle 2.4), so the generator is repeated here.
 func NewID(prefix string, t time.Time) string {
 	ms := t.UTC().UnixMilli()
 	if ms < 0 {
-		// 1970 öncesi bir zaman damgası kayıt için anlamlı değildir;
-		// sıralamayı bozmamak için tabana çekilir.
+		// A timestamp before 1970 is not meaningful for a record; it is clamped to
+		// the floor so that ordering is not broken.
 		ms = 0
 	}
 
@@ -74,33 +74,33 @@ func NewID(prefix string, t time.Time) string {
 	binary.BigEndian.PutUint64(stamp[:], uint64(ms))
 
 	var buf [16]byte
-	// UnixMilli 48 bite sığar; ilk iki bayt daima sıfırdır ve atılır.
+	// UnixMilli fits in 48 bits; the first two bytes are always zero and are dropped.
 	copy(buf[:6], stamp[2:])
 	if _, err := rand.Read(buf[6:]); err != nil {
-		// crypto/rand.Read hata dönmez; yine de bir gün dönerse kimlik
-		// yalnızca nanosaniye çözünürlüğüne dayanır — tekillik zayıflar ama
-		// kayıt açma başarısız olmaz.
+		// crypto/rand.Read does not return an error; should it ever do so one day,
+		// the identifier rests on nanosecond resolution alone — uniqueness weakens,
+		// but opening a record does not fail.
 		binary.BigEndian.PutUint64(buf[8:], uint64(t.UnixNano()))
 	}
 
 	return prefix + idEncoding.EncodeToString(buf[:])
 }
 
-// NewCampaignID yeni bir kampanya kimliği üretir.
+// NewCampaignID produces a new campaign identifier.
 func NewCampaignID(t time.Time) string { return NewID(CampaignIDPrefix, t) }
 
-// NewPromotionID yeni bir promosyon kimliği üretir.
+// NewPromotionID produces a new promotion identifier.
 func NewPromotionID(t time.Time) string { return NewID(PromotionIDPrefix, t) }
 
-// NewPromotionRuleID yeni bir promosyon kuralı kimliği üretir.
+// NewPromotionRuleID produces a new promotion rule identifier.
 func NewPromotionRuleID(t time.Time) string { return NewID(PromotionRuleIDPrefix, t) }
 
-// NewApplicationMethodID yeni bir uygulama yöntemi kimliği üretir.
+// NewApplicationMethodID produces a new application method identifier.
 func NewApplicationMethodID(t time.Time) string { return NewID(ApplicationMethodIDPrefix, t) }
 
-// NewRedemptionID yeni bir kullanım kaydı kimliği üretir.
+// NewRedemptionID produces a new redemption record identifier.
 func NewRedemptionID(t time.Time) string { return NewID(RedemptionIDPrefix, t) }
 
-// IDBodyLength önek dışındaki gövde uzunluğunu döner; testler ve doğrulama
-// için tek doğruluk kaynağıdır.
+// IDBodyLength returns the length of the body beyond the prefix; it is the single
+// source of truth for tests and validation.
 func IDBodyLength() int { return idBodyLen }

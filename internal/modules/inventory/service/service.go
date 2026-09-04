@@ -108,7 +108,7 @@ func (p Page) normalize() (Page, error) {
 	}
 	if p.Limit > MaxLimit {
 		return Page{}, errors.Invalid(CodeInvalidInput,
-			"limit en fazla %d olabilir: %d", MaxLimit, p.Limit)
+			"the limit can be at most %d: %d", MaxLimit, p.Limit)
 	}
 	if p.Limit == 0 {
 		p.Limit = DefaultLimit
@@ -310,7 +310,7 @@ func (s *Service) DeleteInventoryItem(ctx context.Context, id string) error {
 // requireText zorunlu bir metin alanını doğrular.
 func requireText(label, value string) error {
 	if value == "" {
-		return errors.Invalid(CodeInvalidInput, "%s boş olamaz", label)
+		return errors.Invalid(CodeInvalidInput, "%s cannot be empty", label)
 	}
 	return checkTextLen(label, value)
 }
@@ -319,7 +319,7 @@ func requireText(label, value string) error {
 func checkTextLen(label, value string) error {
 	if len(value) > maxTextLen {
 		return errors.Invalid(CodeInvalidInput,
-			"%s en fazla %d bayt olabilir: %d", label, maxTextLen, len(value))
+			"%s can be at most %d bytes: %d", label, maxTextLen, len(value))
 	}
 	return nil
 }

@@ -114,7 +114,7 @@ func (s *Service) unlinkCustomers(ctx context.Context, employeeIDs []string) {
 // Kimlikler sütunda değil link tablosunda durur; kayıt başına ayrı bir sorgu
 // N+1 olurdu (ADR 0004'ün yapısal olarak yasakladığı şey). Bağı olmayan bir
 // çalışanın alanı BOŞ kalır ve bu görünür bir arızadır: bağ kurulamamış ya da
-// elle bozulmuş bir kayıt, boş bir müşteri kimliğiyle kendini gösterir.
+// elle bozulmuş bir kayıt, boş bir customer idyle kendini gösterir.
 func (s *Service) attachCustomerIDs(ctx context.Context, employees []models.CompanyEmployee) error {
 	if len(employees) == 0 {
 		return nil

@@ -11,68 +11,71 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/fulfillment/models"
 )
 
-// TestDurumGecisTablosu durum makinesinin TAMAMINI tek tabloda sınar.
+// TestStatusTransitionTable exercises the ENTIRE state machine in a single
+// table.
 //
-// Tablo godoc'lardaki geçiş tablolarının birebir karşılığıdır: bir dal
-// değişirse hem belge hem test aynı anda güncellenmek zorunda kalır.
-func TestDurumGecisTablosu(t *testing.T) {
+// The table is the exact counterpart of the transition tables in the godocs: if
+// a branch changes, both the documentation and the test have to be updated at
+// the same time.
+func TestStatusTransitionTable(t *testing.T) {
 	t.Parallel()
 
-	durumlar := []struct {
-		durum   models.FulfillmentStatus
-		iptal   models.Action
-		kargo   models.Action
-		teslim  models.Action
-		gecerli bool
+	statuses := []struct {
+		status  models.FulfillmentStatus
+		cancel  models.Action
+		ship    models.Action
+		deliver models.Action
+		valid   bool
 	}{
 		{models.StatusPending, models.ActionProceed, models.ActionProceed, models.ActionConflict, true},
 		{models.StatusShipped, models.ActionProceed, models.ActionNoop, models.ActionProceed, true},
 		{models.StatusDelivered, models.ActionConflict, models.ActionConflict, models.ActionNoop, true},
 		{models.StatusCanceled, models.ActionNoop, models.ActionConflict, models.ActionConflict, true},
-		{models.FulfillmentStatus("bilinmeyen"), models.ActionConflict, models.ActionConflict, models.ActionConflict, false},
+		{models.FulfillmentStatus("unknown"), models.ActionConflict, models.ActionConflict, models.ActionConflict, false},
 	}
 
-	for _, satir := range durumlar {
-		t.Run(satir.durum.String(), func(t *testing.T) {
+	for _, row := range statuses {
+		t.Run(row.status.String(), func(t *testing.T) {
 			t.Parallel()
 
-			assert.Equal(t, satir.iptal, satir.durum.CancelAction(), "iptal dalı")
-			assert.Equal(t, satir.kargo, satir.durum.ShipAction(), "kargoya verme dalı")
-			assert.Equal(t, satir.teslim, satir.durum.DeliverAction(), "teslim dalı")
-			assert.Equal(t, satir.gecerli, satir.durum.Valid(), "geçerlilik")
+			assert.Equal(t, row.cancel, row.status.CancelAction(), "cancel branch")
+			assert.Equal(t, row.ship, row.status.ShipAction(), "ship branch")
+			assert.Equal(t, row.deliver, row.status.DeliverAction(), "deliver branch")
+			assert.Equal(t, row.valid, row.status.Valid(), "validity")
 		})
 	}
 }
 
-// TestTeslimEdilmisIptalEdilemez Faz 7'nin açıkça sorduğu kararı, durum
-// makinesi düzeyinde sabitler.
+// TestDeliveredCannotBeCanceled pins down, at the level of the state machine,
+// the decision Phase 7 asks about explicitly.
 //
-// Teslim geri alınamayan fiziksel bir olgudur; çaresi iptal değil iadedir.
-// Kargodaki bir gönderi ise geri çağrılabilir ve iptali AÇIKTIR.
-func TestTeslimEdilmisIptalEdilemez(t *testing.T) {
+// Delivery is a physical fact that cannot be undone; the remedy is not a
+// cancellation but a return. A fulfillment in transit, on the other hand, can be
+// recalled and its cancellation is OPEN.
+func TestDeliveredCannotBeCanceled(t *testing.T) {
 	t.Parallel()
 
 	assert.Equal(t, models.ActionConflict, models.StatusDelivered.CancelAction(),
-		"teslim edilmiş gönderi iptal edilemez")
+		"a delivered fulfillment cannot be canceled")
 	assert.Equal(t, models.ActionProceed, models.StatusShipped.CancelAction(),
-		"yoldaki gönderi geri çağrılabilir")
+		"a fulfillment in transit can be recalled")
 	assert.Equal(t, models.ActionNoop, models.StatusCanceled.CancelAction(),
-		"idempotentlik noop dalından gelir")
+		"idempotency comes from the noop branch")
 }
 
-// TestActionSifirDegeriConflict tanımsız bir durumun kazara "devam et"
-// olarak yorumlanmadığını kanıtlar.
-func TestActionSifirDegeriConflict(t *testing.T) {
+// TestActionZeroValueIsConflict proves that an undefined status is not
+// accidentally read as "go ahead".
+func TestActionZeroValueIsConflict(t *testing.T) {
 	t.Parallel()
 
-	var sifir models.Action
-	assert.Equal(t, models.ActionConflict, sifir)
-	assert.Equal(t, "conflict", sifir.String())
-	assert.Equal(t, "conflict", models.Action(200).String(), "tanımsız değer de conflict yazmalı")
+	var zero models.Action
+	assert.Equal(t, models.ActionConflict, zero)
+	assert.Equal(t, "conflict", zero.String())
+	assert.Equal(t, "conflict", models.Action(200).String(), "an undefined value must also print conflict")
 }
 
-// TestFiyatTuruDogrulamasi tanımlı fiyat türlerini sabitler.
-func TestFiyatTuruDogrulamasi(t *testing.T) {
+// TestPriceTypeValidation pins down the defined price types.
+func TestPriceTypeValidation(t *testing.T) {
 	t.Parallel()
 
 	assert.True(t, models.PriceFlat.Valid())
@@ -80,8 +83,8 @@ func TestFiyatTuruDogrulamasi(t *testing.T) {
 	assert.False(t, models.PriceType("dynamic").Valid())
 }
 
-// TestProfilTuruDogrulamasi tanımlı profil türlerini sabitler.
-func TestProfilTuruDogrulamasi(t *testing.T) {
+// TestProfileTypeValidation pins down the defined profile types.
+func TestProfileTypeValidation(t *testing.T) {
 	t.Parallel()
 
 	assert.True(t, models.ProfileDefault.Valid())
@@ -90,42 +93,42 @@ func TestProfilTuruDogrulamasi(t *testing.T) {
 	assert.False(t, models.ProfileType("digital").Valid())
 }
 
-// TestKuralIsleci işleç sınıflandırmasını sabitler.
+// TestRuleOperator pins down the classification of the operators.
 //
-// Sayısal işleçlerin ayrı tanınması şarttır: ara toplam gibi para alanları
-// dizge olarak karşılaştırılsaydı "9" > "50000" çıkardı.
-func TestKuralIsleci(t *testing.T) {
+// Recognizing the numeric operators separately is essential: if money fields
+// such as the subtotal were compared as strings, "9" > "50000" would come out.
+func TestRuleOperator(t *testing.T) {
 	t.Parallel()
 
-	sayisal := []models.RuleOperator{models.OpGt, models.OpGte, models.OpLt, models.OpLte}
-	for _, op := range sayisal {
-		assert.True(t, op.Valid(), "%s tanımlı olmalı", op)
-		assert.True(t, op.Numeric(), "%s sayısal olmalı", op)
-		assert.False(t, op.MultiValue(), "%s tek değer almalı", op)
+	numeric := []models.RuleOperator{models.OpGt, models.OpGte, models.OpLt, models.OpLte}
+	for _, op := range numeric {
+		assert.True(t, op.Valid(), "%s must be defined", op)
+		assert.True(t, op.Numeric(), "%s must be numeric", op)
+		assert.False(t, op.MultiValue(), "%s must take a single value", op)
 	}
 
-	dizge := []models.RuleOperator{models.OpEq, models.OpNe}
-	for _, op := range dizge {
+	text := []models.RuleOperator{models.OpEq, models.OpNe}
+	for _, op := range text {
 		assert.True(t, op.Valid())
 		assert.False(t, op.Numeric())
 		assert.False(t, op.MultiValue())
 	}
 
-	cokDegerli := []models.RuleOperator{models.OpIn, models.OpNin}
-	for _, op := range cokDegerli {
+	multiValued := []models.RuleOperator{models.OpIn, models.OpNin}
+	for _, op := range multiValued {
 		assert.True(t, op.Valid())
 		assert.False(t, op.Numeric())
-		assert.True(t, op.MultiValue(), "%s birden çok değer almalı", op)
+		assert.True(t, op.MultiValue(), "%s must take more than one value", op)
 	}
 
 	assert.False(t, models.RuleOperator("like").Valid())
 }
 
-// TestKimlikOnekleri plan Bölüm 8'in önek konvansiyonunu sabitler.
-func TestKimlikOnekleri(t *testing.T) {
+// TestIDPrefixes pins down the prefix convention of plan Section 8.
+func TestIDPrefixes(t *testing.T) {
 	t.Parallel()
 
-	uretilenler := map[string]string{
+	generated := map[string]string{
 		models.FulfillmentIDPrefix:        models.NewFulfillmentID(),
 		models.ShippingOptionIDPrefix:     models.NewShippingOptionID(),
 		models.ShippingProfileIDPrefix:    models.NewShippingProfileID(),
@@ -134,49 +137,48 @@ func TestKimlikOnekleri(t *testing.T) {
 		models.ManualShipmentIDPrefix:     models.NewManualShipmentID(),
 	}
 
-	for onek, kimlik := range uretilenler {
-		assert.True(t, strings.HasPrefix(kimlik, onek), "%q, %q önekiyle başlamalı", kimlik, onek)
-		assert.Len(t, kimlik, len(onek)+26, "gövde 26 karakter olmalı")
+	for prefix, id := range generated {
+		assert.True(t, strings.HasPrefix(id, prefix), "%q must start with the prefix %q", id, prefix)
+		assert.Len(t, id, len(prefix)+26, "the body must be 26 characters")
 	}
 }
 
-// TestKimlikTekilVeZamanSirali kimliklerin çakışmadığını ve zamana göre
-// sıralanabilir kaldığını kanıtlar.
+// TestIDsAreUniqueAndTimeOrdered proves that identifiers do not collide and
+// remain sortable by time.
 //
-// Sıra iddiası önemlidir: liste sorguları "created_at DESC, id DESC" ile
-// sayfalanır ve rastgele bir kimlik, aynı milisaniyedeki kayıtların sırasını
-// belirsiz bırakırdı.
-func TestKimlikTekilVeZamanSirali(t *testing.T) {
+// The ordering claim matters: list queries are paginated with "created_at DESC,
+// id DESC", and a random identifier would leave the order of records within the
+// same millisecond undefined.
+func TestIDsAreUniqueAndTimeOrdered(t *testing.T) {
 	t.Parallel()
 
-	const adet = 500
-	gorulen := make(map[string]struct{}, adet)
-	oncekiler := make([]string, 0, adet)
+	const count = 500
+	seen := make(map[string]struct{}, count)
+	previous := make([]string, 0, count)
 
-	for range adet {
-		kimlik := models.NewFulfillmentID()
-		_, cakisma := gorulen[kimlik]
-		require.False(t, cakisma, "kimlik çakıştı: %s", kimlik)
-		gorulen[kimlik] = struct{}{}
-		oncekiler = append(oncekiler, kimlik)
+	for range count {
+		id := models.NewFulfillmentID()
+		_, collision := seen[id]
+		require.False(t, collision, "identifier collided: %s", id)
+		seen[id] = struct{}{}
+		previous = append(previous, id)
 	}
 
-	// Aynı milisaniyede üretilen kimlikler rastgele bölümde ayrışır; sıra
-	// iddiası ancak zaman ilerlediğinde tutar.
+	// Identifiers produced within the same millisecond diverge in the random
+	// part; the ordering claim only holds once time has moved on.
 	time.Sleep(2 * time.Millisecond)
-	sonraki := models.NewFulfillmentID()
-	assert.Less(t, oncekiler[0], sonraki, "sonra üretilen kimlik sözlüksel olarak büyük olmalı")
+	next := models.NewFulfillmentID()
+	assert.Less(t, previous[0], next, "an identifier produced later must be lexicographically greater")
 }
 
-// TestTutarSinirlari para sınırlarının belgelenen değerlerde olduğunu
-// sabitler.
+// TestAmountBounds pins down that the money bounds hold the documented values.
 //
-// Alt sınırın SIFIR olması bilinçlidir: ücretsiz kargo gerçek bir iş
-// kararıdır.
-func TestTutarSinirlari(t *testing.T) {
+// The lower bound being ZERO is deliberate: free shipping is a real business
+// decision.
+func TestAmountBounds(t *testing.T) {
 	t.Parallel()
 
-	assert.Equal(t, int64(0), models.MinAmount, "ücretsiz kargo geçerli olmalı")
+	assert.Equal(t, int64(0), models.MinAmount, "free shipping must be valid")
 	assert.Equal(t, int64(1_000_000_000_000), models.MaxAmount)
 	assert.Equal(t, int64(1), models.MinQuantity)
 }

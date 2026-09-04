@@ -266,7 +266,7 @@ func normalizeFields(fields []string) ([]string, error) {
 	for _, field := range fields {
 		if !slices.Contains(supportedFields, field) {
 			return nil, errors.Invalid(CodeInvalidInput,
-				"%q alanı %s sağlayıcısında yok (desteklenen: %v)", field, Entity, supportedFields)
+				"field %q does not exist in the %s provider (supported: %v)", field, Entity, supportedFields)
 		}
 		if !slices.Contains(out, field) {
 			out = append(out, field)
@@ -292,7 +292,7 @@ func idFilter(filters map[string]any) ([]string, error) {
 	for name, value := range filters {
 		if name != fieldID {
 			return nil, errors.Invalid(CodeInvalidInput,
-				"%q filtresi %s sağlayıcısında desteklenmiyor (desteklenen: %q)", name, Entity, fieldID)
+				"filter %q is not supported by the %s provider (supported: %q)", name, Entity, fieldID)
 		}
 		switch typed := value.(type) {
 		case string:
@@ -304,7 +304,7 @@ func idFilter(filters map[string]any) ([]string, error) {
 			}
 		default:
 			return nil, errors.Invalid(CodeInvalidInput,
-				"%q filtresi dize ya da dize dilimi olmalı, %T verildi", fieldID, value)
+				"filter %q has to be a string or a string slice, %T given", fieldID, value)
 		}
 	}
 	return ids, nil

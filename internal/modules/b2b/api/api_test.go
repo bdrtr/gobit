@@ -157,7 +157,7 @@ func TestVitrinYuzeyindeSirketKimligiYok(t *testing.T) {
 	for _, desen := range vitrin {
 		for _, eslesme := range yolParametreRe.FindAllStringSubmatch(desen, -1) {
 			assert.Equal(t, "customer_id", eslesme[1],
-				"vitrin ucu %q, müşteri kimliği DIŞINDA bir parametre alıyor; "+
+				"vitrin ucu %q, customer id DIŞINDA bir parametre alıyor; "+
 					"şirket ya da çalışan kimliğiyle adreslenen bir uç, başkasının "+
 					"şirketini okumayı mümkün kılardı", desen)
 		}

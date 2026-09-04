@@ -159,7 +159,7 @@ func TestNewIDIsUnique(t *testing.T) {
 	for range count {
 		id := newID(prefixVariant)
 		_, dup := seen[id]
-		require.False(t, dup, "kimlik tekrarlandı: %s", id)
+		require.False(t, dup, "the id repeated: %s", id)
 		seen[id] = struct{}{}
 	}
 }

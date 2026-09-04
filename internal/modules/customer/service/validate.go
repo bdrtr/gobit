@@ -77,15 +77,15 @@ func normalizeCountryCode(code string) (string, error) {
 
 // requireID kimliğin boş olmadığını, önekini ve uzunluğunu doğrular.
 //
-// Önek denetimi ucuz bir tip güvenliğidir: bir grup kimliğinin müşteri
+// Önek denetimi ucuz bir tip güvenliğidir: bir group idnin müşteri
 // kimliği yerine geçirilmesi veritabanına hiç gitmeden yakalanır ve hata,
 // "bulunamadı" yerine ne beklendiğini söyler.
 func requireID(id, prefix, label string) error {
 	if id == "" {
-		return errors.Invalid(CodeInvalidInput, "%s boş olamaz", label)
+		return errors.Invalid(CodeInvalidInput, "%s cannot be empty", label)
 	}
 	if strings.TrimSpace(id) != id {
-		return errors.Invalid(CodeInvalidInput, "%s baş/son boşluk içeremez: %q", label, id)
+		return errors.Invalid(CodeInvalidInput, "%s cannot contain leading/trailing whitespace: %q", label, id)
 	}
 	if len(id) > maxIDLen {
 		return errors.Invalid(CodeInvalidInput,
@@ -133,7 +133,7 @@ func checkLen(label, value string, limit int) error {
 // requireText bir metin alanının dolu olduğunu doğrular.
 func requireText(label, value string) error {
 	if strings.TrimSpace(value) == "" {
-		return errors.Invalid(CodeInvalidInput, "%s boş olamaz", label)
+		return errors.Invalid(CodeInvalidInput, "%s cannot be empty", label)
 	}
 	return nil
 }

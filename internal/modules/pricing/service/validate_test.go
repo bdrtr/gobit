@@ -175,7 +175,7 @@ func TestRequireID(t *testing.T) {
 		{"son boşluk reddedilir", "pset_ABC ", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			err := requireID(tc.id, models.PriceSetIDPrefix, "price set kimliği")
+			err := requireID(tc.id, models.PriceSetIDPrefix, "price set id")
 			if tc.ok {
 				assert.NoError(t, err)
 				return
@@ -190,7 +190,7 @@ func TestRequireID(t *testing.T) {
 		for len(long) <= maxIDLen {
 			long += "A"
 		}
-		err := requireID(long, models.PriceSetIDPrefix, "price set kimliği")
+		err := requireID(long, models.PriceSetIDPrefix, "price set id")
 		require.Error(t, err)
 		assert.Equal(t, errors.KindInvalid, errors.KindOf(err))
 	})

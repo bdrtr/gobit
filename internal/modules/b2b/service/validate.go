@@ -141,10 +141,10 @@ func normalizeResetPeriod(period string) (models.SpendingResetPeriod, error) {
 // "bulunamadı" yerine ne beklendiğini söyler.
 func requireID(id, prefix, label string) error {
 	if id == "" {
-		return errors.Invalid(CodeInvalidInput, "%s boş olamaz", label)
+		return errors.Invalid(CodeInvalidInput, "%s cannot be empty", label)
 	}
 	if strings.TrimSpace(id) != id {
-		return errors.Invalid(CodeInvalidInput, "%s baş/son boşluk içeremez: %q", label, id)
+		return errors.Invalid(CodeInvalidInput, "%s cannot contain leading/trailing whitespace: %q", label, id)
 	}
 	if len(id) > maxIDLen {
 		return errors.Invalid(CodeInvalidInput,
@@ -191,7 +191,7 @@ func checkLen(label, value string, limit int) error {
 // requireText bir metin alanının dolu olduğunu doğrular.
 func requireText(label, value string) error {
 	if strings.TrimSpace(value) == "" {
-		return errors.Invalid(CodeInvalidInput, "%s boş olamaz", label)
+		return errors.Invalid(CodeInvalidInput, "%s cannot be empty", label)
 	}
 	return nil
 }

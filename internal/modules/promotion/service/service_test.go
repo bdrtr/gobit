@@ -94,7 +94,7 @@ func TestPromotionGirdiDogrulamasi(t *testing.T) {
 			gerekce: "tanımsız durum reddedilir",
 		},
 		{
-			ad:      "yanlış önekli kampanya kimliği",
+			ad:      "yanlış önekli campaign id",
 			in:      PromotionInput{Code: "YAZ20", CampaignID: ptr("promo_yanlis")},
 			gerekce: "önek kontrolü yanlış türde kimliği yakalar",
 		},

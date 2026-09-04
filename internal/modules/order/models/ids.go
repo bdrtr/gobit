@@ -7,74 +7,76 @@ import (
 	"time"
 )
 
-// Kimlik önekleri (plan Bölüm 8). Önek, bir kimliğin hangi varlığa ait
-// olduğunu tabloya bakmadan okunabilir kılar: logda görülen "oli_..." için
-// hangi tabloya bakılacağı bellidir.
+// Identifier prefixes (plan Section 8). A prefix makes which entity an
+// identifier belongs to readable without looking at a table: for the "oli_..."
+// seen in a log it is clear which table to look at.
 const (
-	// OrderIDPrefix sipariş kimliklerinin önekidir.
+	// OrderIDPrefix is the prefix of order identifiers.
 	OrderIDPrefix = "order_"
-	// LineItemIDPrefix sipariş satırı kimliklerinin önekidir.
+	// LineItemIDPrefix is the prefix of order line identifiers.
 	LineItemIDPrefix = "oli_"
-	// SummaryIDPrefix sipariş özeti kimliklerinin önekidir.
+	// SummaryIDPrefix is the prefix of order summary identifiers.
 	//
-	// Plan Bölüm 8 bu varlık için bir önek saymaz; "osum_" (order summary)
-	// burada seçilmiştir. "sum_" tercih edilmedi, çünkü önek yalnız başına
-	// hangi modülün kaydı olduğunu söylemezdi.
+	// Plan Section 8 does not count a prefix for this entity; "osum_" (order
+	// summary) was chosen here. "sum_" was not preferred, because on its own
+	// the prefix would not say which module's record it is.
 	SummaryIDPrefix = "osum_"
-	// ReturnIDPrefix iade kimliklerinin önekidir.
+	// ReturnIDPrefix is the prefix of return identifiers.
 	ReturnIDPrefix = "ret_"
-	// ExchangeIDPrefix değişim kimliklerinin önekidir.
+	// ExchangeIDPrefix is the prefix of exchange identifiers.
 	ExchangeIDPrefix = "exch_"
-	// ClaimIDPrefix hasar kaydı kimliklerinin önekidir.
+	// ClaimIDPrefix is the prefix of claim record identifiers.
 	ClaimIDPrefix = "claim_"
 )
 
-// idEncoding Crockford Base32 alfabesiyle dolgusuz kodlamadır. 16 baytlık gövde
-// bu kodlamayla tam 26 karaktere iner. Alfabe ASCII'de artan sırada olduğundan
-// kodlanmış dize, kodlanan baytlarla aynı sözlüksel sırayı korur; kimlikler bu
-// sayede zamana göre sıralanabilir kalır.
+// idEncoding is the unpadded encoding over the Crockford Base32 alphabet. A
+// 16-byte body comes down to exactly 26 characters under this encoding. Because
+// the alphabet is in ascending order in ASCII, the encoded string keeps the same
+// lexicographic order as the bytes it encodes; that is what keeps identifiers
+// sortable by time.
 var idEncoding = base32.NewEncoding("0123456789ABCDEFGHJKMNPQRSTVWXYZ").WithPadding(base32.NoPadding)
 
-// IDBodyLen önekten sonraki gövdenin karakter sayısıdır.
+// IDBodyLen is the number of characters of the body that follows the prefix.
 //
-// Dışa açıktır çünkü kimliğin BİÇİMİ bir sözleşmedir: sipariş kimliği logda,
-// destek kaydında ve saga'nın anlık görüntüsünde taşınır. Testler biçimi bu
-// sabitle doğrular.
+// It is exported because the FORMAT of an identifier is a contract: an order
+// identifier travels in the log, in the support record and in the saga's
+// snapshot. The tests verify the format against this constant.
 const IDBodyLen = 26
 
-// NewOrderID yeni bir sipariş kimliği üretir.
+// NewOrderID produces a new order identifier.
 func NewOrderID() string { return newID(OrderIDPrefix, time.Now()) }
 
-// NewLineItemID yeni bir sipariş satırı kimliği üretir.
+// NewLineItemID produces a new order line identifier.
 func NewLineItemID() string { return newID(LineItemIDPrefix, time.Now()) }
 
-// NewSummaryID yeni bir sipariş özeti kimliği üretir.
+// NewSummaryID produces a new order summary identifier.
 func NewSummaryID() string { return newID(SummaryIDPrefix, time.Now()) }
 
-// NewReturnID yeni bir iade kimliği üretir.
+// NewReturnID produces a new return identifier.
 func NewReturnID() string { return newID(ReturnIDPrefix, time.Now()) }
 
-// NewExchangeID yeni bir değişim kimliği üretir.
+// NewExchangeID produces a new exchange identifier.
 func NewExchangeID() string { return newID(ExchangeIDPrefix, time.Now()) }
 
-// NewClaimID yeni bir hasar kaydı kimliği üretir.
+// NewClaimID produces a new claim record identifier.
 func NewClaimID() string { return newID(ClaimIDPrefix, time.Now()) }
 
-// newID önekli, zaman sıralı ve tekil bir kimlik üretir.
+// newID produces a prefixed, time-ordered and unique identifier.
 //
-// Yapısı ULID ile aynıdır: 48 bit milisaniye zaman damgası + 80 bit
-// kriptografik rastgelelik, Crockford Base32 ile 26 karaktere kodlanır. Zaman
-// damgasının başta olması, kimliğin kendisinin kabaca oluşturma sırasını
-// taşıması demektir; kayıtlar birincil anahtar taramasında da doğal sırada
-// durur ve B-tree eklemeleri sona yapılır.
+// Its structure is the same as ULID's: a 48-bit millisecond timestamp + 80 bits
+// of cryptographic randomness, encoded into 26 characters with Crockford
+// Base32. The timestamp being at the front means that the identifier itself
+// carries roughly the creation order; the records also stand in natural order
+// under a primary key scan and B-tree insertions happen at the end.
 //
-// Diğer modüllerdeki üretici ile aynı yapıdadır; o paketler İMPORT EDİLMEZ
-// (ADR 0001), yapı burada modülün kendi kodu olarak tekrarlanır.
+// It has the same structure as the generator in the other modules; those
+// packages are NOT IMPORTED (ADR 0001), the structure is repeated here as the
+// module's own code.
 func newID(prefix string, t time.Time) string {
 	ms := t.UTC().UnixMilli()
 	if ms < 0 {
-		// 1970 öncesi bir zaman damgası kayıt için anlamlı değildir;
-		// sıralamayı bozmamak için tabana çekilir.
+		// A timestamp before 1970 is not meaningful for a record; it is
+		// clamped to the floor so that the ordering is not broken.
 		ms = 0
 	}
 
@@ -82,12 +84,13 @@ func newID(prefix string, t time.Time) string {
 	binary.BigEndian.PutUint64(stamp[:], uint64(ms))
 
 	var buf [16]byte
-	// UnixMilli 48 bite sığar; ilk iki bayt daima sıfırdır ve atılır.
+	// UnixMilli fits into 48 bits; the first two bytes are always zero and are
+	// dropped.
 	copy(buf[:6], stamp[2:])
 	if _, err := rand.Read(buf[6:]); err != nil {
-		// crypto/rand.Read hata dönmez; yine de bir gün dönerse kimlik
-		// yalnızca nanosaniye çözünürlüğüne dayanır — tekillik zayıflar ama
-		// kayıt açma başarısız olmaz.
+		// crypto/rand.Read does not return an error; should it ever do so, the
+		// identifier rests on nanosecond resolution alone — uniqueness weakens
+		// but opening the record does not fail.
 		binary.BigEndian.PutUint64(buf[8:], uint64(t.UnixNano()))
 	}
 

@@ -12,13 +12,13 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/tax/models"
 )
 
-// TestNewIDBicimVeSira kimliklerin biçimini ve ZAMAN SIRALI olduğunu
-// doğrular.
+// TestNewIDFormatAndOrder verifies the format of the ids and that they are
+// TIME-ORDERED.
 //
-// Sıralanabilirlik bir süs değildir: vergi hesabındaki eşitlik bozma kuralı
-// ("kimliği küçük oran kazanır") tam olarak bu sıraya dayanır ve kimlikler
-// sıralanabilir olmasaydı kural "rastgele biri kazanır" demek olurdu.
-func TestNewIDBicimVeSira(t *testing.T) {
+// Sortability is not decoration: the tie-breaking rule in the tax calculation
+// ("the rate with the smaller id wins") rests on exactly that order, and were
+// the ids not sortable the rule would mean "a random one wins".
+func TestNewIDFormatAndOrder(t *testing.T) {
 	base := time.Date(2026, 8, 24, 10, 0, 0, 0, time.UTC)
 
 	var ids []string
@@ -27,70 +27,70 @@ func TestNewIDBicimVeSira(t *testing.T) {
 	}
 
 	for _, id := range ids {
-		assert.True(t, strings.HasPrefix(id, models.TaxRateIDPrefix), "önek: %s", id)
+		assert.True(t, strings.HasPrefix(id, models.TaxRateIDPrefix), "prefix: %s", id)
 		assert.Len(t, id, len(models.TaxRateIDPrefix)+models.IDBodyLength())
 	}
 
 	assert.True(t, sort.StringsAreSorted(ids),
-		"artan zamanla üretilen kimlikler sözlüksel olarak da artmalı")
+		"ids produced with increasing time must increase lexicographically too")
 
-	tekil := map[string]bool{}
+	seen := map[string]bool{}
 	for _, id := range ids {
-		require.False(t, tekil[id], "kimlik tekrar etti: %s", id)
-		tekil[id] = true
+		require.False(t, seen[id], "the id repeated: %s", id)
+		seen[id] = true
 	}
 }
 
-// TestNewIDOneklerFarkli her kaydın kendi önekini taşıdığını doğrular.
-func TestNewIDOneklerFarkli(t *testing.T) {
+// TestNewIDPrefixesDiffer verifies that every record carries its own prefix.
+func TestNewIDPrefixesDiffer(t *testing.T) {
 	now := time.Now()
 
 	assert.True(t, strings.HasPrefix(models.NewTaxRegionID(now), "taxreg_"))
 	assert.True(t, strings.HasPrefix(models.NewTaxRateID(now), "taxrate_"))
 	assert.True(t, strings.HasPrefix(models.NewTaxRateRuleID(now), "taxrule_"))
 
-	// Oran ile bölge önekleri birbirinin ÖN EKİ OLMAMALIDIR; olsaydı önek
-	// denetimi yanlış türde bir kimliği kabul ederdi.
+	// The rate and region prefixes MUST NOT BE A PREFIX of one another; were
+	// they, the prefix check would accept an id of the wrong kind.
 	assert.False(t, strings.HasPrefix(models.TaxRateIDPrefix, models.TaxRegionIDPrefix))
 	assert.False(t, strings.HasPrefix(models.TaxRegionIDPrefix, models.TaxRateIDPrefix))
 	assert.False(t, strings.HasPrefix(models.TaxRateRuleIDPrefix, models.TaxRateIDPrefix))
 }
 
-// TestNewID1970OncesiTabanaCekilir negatif zaman damgasının sıralamayı
-// bozmadığını doğrular.
-func TestNewID1970OncesiTabanaCekilir(t *testing.T) {
-	eski := models.NewTaxRateID(time.Date(1900, 1, 1, 0, 0, 0, 0, time.UTC))
-	yeni := models.NewTaxRateID(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+// TestNewIDBefore1970IsClampedToTheFloor verifies that a negative timestamp
+// does not break the ordering.
+func TestNewIDBefore1970IsClampedToTheFloor(t *testing.T) {
+	older := models.NewTaxRateID(time.Date(1900, 1, 1, 0, 0, 0, 0, time.UTC))
+	newer := models.NewTaxRateID(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 
-	assert.Less(t, eski, yeni, "tabana çekilen eski damga yine de küçük kalmalı")
+	assert.Less(t, older, newer, "the clamped old stamp must still stay smaller")
 }
 
-// TestRuleReferenceGecerlilik tanımlı referans türlerini doğrular.
-func TestRuleReferenceGecerlilik(t *testing.T) {
+// TestRuleReferenceValidity verifies the defined reference kinds.
+func TestRuleReferenceValidity(t *testing.T) {
 	for _, ref := range []models.RuleReference{
 		models.ReferenceProduct, models.ReferenceProductType, models.ReferenceShippingOption,
 	} {
-		assert.True(t, ref.Valid(), "referans: %s", ref)
+		assert.True(t, ref.Valid(), "reference: %s", ref)
 		assert.Positive(t, ref.Specificity())
 	}
 
 	for _, ref := range []models.RuleReference{"", "variant", "PRODUCT"} {
-		assert.False(t, ref.Valid(), "referans: %q", ref)
+		assert.False(t, ref.Valid(), "reference: %q", ref)
 		assert.Zero(t, ref.Specificity())
 	}
 }
 
-// TestRuleReferenceBelirginlikSirasi ürün kuralının ürün tipini yendiğini
-// doğrular.
-func TestRuleReferenceBelirginlikSirasi(t *testing.T) {
+// TestRuleReferenceSpecificityOrder verifies that the product rule beats the
+// product type.
+func TestRuleReferenceSpecificityOrder(t *testing.T) {
 	assert.Greater(t, models.ReferenceProduct.Specificity(), models.ReferenceProductType.Specificity(),
-		"tek bir ürüne yazılmış kural, tipe yazılmış kuraldan DAHA ÖZELDİR")
+		"a rule written for a single product is MORE SPECIFIC than one written for the type")
 	assert.Equal(t, models.ReferenceProductType.Specificity(), models.ReferenceShippingOption.Specificity(),
-		"kargo kuralı kalemlerle yarışmaz; derecesi ürün tipiyle aynı kabul edilir")
+		"a shipping rule does not compete with items; its degree is taken to be the product type's")
 }
 
-// TestTaxRegionHiyerarsiYardimcilari kök ve eyalet ayrımını doğrular.
-func TestTaxRegionHiyerarsiYardimcilari(t *testing.T) {
+// TestTaxRegionHierarchyHelpers verifies the root and province distinction.
+func TestTaxRegionHierarchyHelpers(t *testing.T) {
 	root := models.TaxRegion{ID: "taxreg_1", CountryCode: "TR"}
 	assert.True(t, root.IsRoot())
 	assert.Empty(t, root.Province())
@@ -104,9 +104,9 @@ func TestTaxRegionHiyerarsiYardimcilari(t *testing.T) {
 	assert.Equal(t, "taxreg_1", child.Parent())
 }
 
-// TestTaxRatePercentFloatUretmez yüzde gösteriminin iki TAM SAYI olarak
-// döndüğünü doğrular.
-func TestTaxRatePercentFloatUretmez(t *testing.T) {
+// TestTaxRatePercentProducesNoFloat verifies that the percentage representation
+// comes back as two INTEGERS.
+func TestTaxRatePercentProducesNoFloat(t *testing.T) {
 	tests := map[int32][2]int32{
 		0:      {0, 0},
 		100:    {1, 0},
@@ -122,39 +122,39 @@ func TestTaxRatePercentFloatUretmez(t *testing.T) {
 	}
 }
 
-// TestTaxRatePatchDokunulmayanAlaniKorur kısmi güncellemenin saf bir dönüşüm
-// olduğunu doğrular.
-func TestTaxRatePatchDokunulmayanAlaniKorur(t *testing.T) {
-	code := "KDV20"
+// TestTaxRatePatchKeepsUntouchedFields verifies that the partial update is a
+// pure transformation.
+func TestTaxRatePatchKeepsUntouchedFields(t *testing.T) {
+	code := "VAT20"
 	original := models.TaxRate{
-		ID: "taxrate_1", Name: "KDV", Code: &code, RateBps: 2000, IsDefault: true,
+		ID: "taxrate_1", Name: "VAT", Code: &code, RateBps: 2000, IsDefault: true,
 		Metadata: map[string]any{"a": "b"},
 	}
 
-	yeniAd := "KDV Yeni"
-	patched := original.Patched(models.TaxRatePatch{Name: &yeniAd})
+	newName := "VAT Updated"
+	patched := original.Patched(models.TaxRatePatch{Name: &newName})
 
-	assert.Equal(t, "KDV Yeni", patched.Name)
-	assert.Equal(t, "KDV20", patched.RateCode())
+	assert.Equal(t, "VAT Updated", patched.Name)
+	assert.Equal(t, "VAT20", patched.RateCode())
 	assert.Equal(t, int32(2000), patched.RateBps)
 	assert.True(t, patched.IsDefault)
-	assert.Equal(t, "KDV", original.Name, "alıcı DEĞİŞMEMELİ")
+	assert.Equal(t, "VAT", original.Name, "the receiver MUST NOT CHANGE")
 }
 
-// TestTaxRatePatchKodKaldirma boş dizenin kodu sildiğini doğrular.
-func TestTaxRatePatchKodKaldirma(t *testing.T) {
-	code := "KDV20"
+// TestTaxRatePatchCodeRemoval verifies that the empty string deletes the code.
+func TestTaxRatePatchCodeRemoval(t *testing.T) {
+	code := "VAT20"
 	original := models.TaxRate{Code: &code}
 
-	bos := ""
-	assert.Nil(t, original.Patched(models.TaxRatePatch{Code: &bos}).Code)
+	empty := ""
+	assert.Nil(t, original.Patched(models.TaxRatePatch{Code: &empty}).Code)
 
-	yeni := "KDV18"
-	assert.Equal(t, "KDV18", original.Patched(models.TaxRatePatch{Code: &yeni}).RateCode())
-	assert.Equal(t, "KDV20", original.RateCode(), "alıcı DEĞİŞMEMELİ")
+	updated := "VAT18"
+	assert.Equal(t, "VAT18", original.Patched(models.TaxRatePatch{Code: &updated}).RateCode())
+	assert.Equal(t, "VAT20", original.RateCode(), "the receiver MUST NOT CHANGE")
 }
 
-// TestTaxRatePatchEmpty boş yamanın tanınmasını doğrular.
+// TestTaxRatePatchEmpty verifies that an empty patch is recognized.
 func TestTaxRatePatchEmpty(t *testing.T) {
 	assert.True(t, models.TaxRatePatch{}.Empty())
 
@@ -163,17 +163,19 @@ func TestTaxRatePatchEmpty(t *testing.T) {
 	assert.False(t, models.TaxRatePatch{Metadata: map[string]any{}}.Empty())
 }
 
-// TestOranSinirlariMigrationlaUyumlu sabitlerin veritabanı CHECK'iyle aynı
-// olduğunu doğrular.
+// TestRateBoundsMatchTheMigration verifies that the constants are the same as
+// the database CHECK.
 //
-// İkisi ayrışırsa servis kabul ettiği bir değeri yazamaz ve hata, doğrulamadan
-// GEÇTİKTEN sonra kısıt ihlali olarak çıkardı.
-func TestOranSinirlariMigrationlaUyumlu(t *testing.T) {
+// Were the two to diverge, the service could not write a value it had accepted
+// and the error would surface as a constraint violation AFTER validation had
+// passed.
+func TestRateBoundsMatchTheMigration(t *testing.T) {
 	assert.Equal(t, int32(0), models.MinRateBps)
 	assert.Equal(t, int32(10_000), models.MaxRateBps, "migration: rate_bps <= 10000")
-	// Sabit baz puan ÖLÇEĞİ değil, bir yüzdedeki baz puan sayısıdır; ölçek
-	// (10000) service.BpsScale'dir ve ikisi ayrı adlarla durur.
+	// The constant is not the basis point SCALE but the number of basis points
+	// in one percent; the scale (10000) is service.BpsScale and the two stand
+	// under separate names.
 	assert.Equal(t, int32(100), models.BpsPerPercent)
 	assert.Equal(t, 2, models.CountryCodeLength)
-	assert.Equal(t, 10, models.MaxProvinceCodeLength, "migration: province_code en fazla 10 karakter")
+	assert.Equal(t, 10, models.MaxProvinceCodeLength, "migration: province_code at most 10 characters")
 }

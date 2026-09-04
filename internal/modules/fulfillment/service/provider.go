@@ -10,48 +10,52 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/fulfillment/models"
 )
 
-// Query sağlayıcısının sunduğu alan adları.
+// The field names offered by the Query provider.
 const (
-	// FieldID kaydın kimliğidir; Query birleştirmeyi bu alan üzerinden yapar.
+	// FieldID is the record's identifier; Query joins on this field.
 	FieldID = query.IDField
-	// FieldName seçeneğin görünen adıdır.
+	// FieldName is the option's display name.
 	FieldName = "name"
-	// FieldProviderID seçeneği yürütecek sağlayıcının kimliğidir.
+	// FieldProviderID is the identifier of the provider that will execute the
+	// option.
 	FieldProviderID = "provider_id"
-	// FieldProfileID seçeneğin bağlı olduğu kargo profilidir.
+	// FieldProfileID is the shipping profile the option is bound to.
 	FieldProfileID = "shipping_profile_id"
-	// FieldPriceType ücretin nereden geldiğini söyler ("flat"/"calculated").
+	// FieldPriceType says where the fee comes from ("flat"/"calculated").
 	FieldPriceType = "price_type"
-	// FieldAmount "flat" seçeneklerin sabit ücretidir (minor unit).
+	// FieldAmount is the fixed fee of "flat" options (minor unit).
 	FieldAmount = "amount"
-	// FieldCurrencyCode ISO 4217 para birimi kodudur.
+	// FieldCurrencyCode is the ISO 4217 currency code.
 	FieldCurrencyCode = "currency_code"
-	// FieldRegionID seçeneğin geçerli olduğu bölgedir; boş ise her bölge.
+	// FieldRegionID is the region the option is valid in; if empty, every
+	// region.
 	FieldRegionID = "region_id"
-	// FieldIsReturn seçeneğin iade gönderisi için olduğunu bildirir.
+	// FieldIsReturn says the option is for a return shipment.
 	FieldIsReturn = "is_return"
-	// FieldAdminOnly seçeneğin mağaza yüzeyine çıkmadığını bildirir.
+	// FieldAdminOnly says the option does not reach the storefront surface.
 	FieldAdminOnly = "admin_only"
-	// FieldCreatedAt oluşturulma zamanıdır.
+	// FieldCreatedAt is the creation time.
 	FieldCreatedAt = "created_at"
-	// FieldUpdatedAt son güncellenme zamanıdır.
+	// FieldUpdatedAt is the last update time.
 	FieldUpdatedAt = "updated_at"
 )
 
-// optionFieldGetters sunulan alanların çıkarıcılarıdır.
+// optionFieldGetters are the extractors of the offered fields.
 //
-// Alan kümesinin tek bir yerde tanımlı olması, doğrulama ile üretimin
-// ayrışmasını imkânsız kılar: burada olmayan bir alan istenirse errors.Invalid
-// döner (ADR 0004), burada olan her alan da üretilebilir.
+// Having the field set defined in a single place makes it impossible for
+// validation and production to diverge: if a field that is not here is
+// requested, errors.Invalid is returned (ADR 0004), and every field that is
+// here can also be produced.
 //
-// Data ve Metadata BİLİNÇLİ OLARAK sunulmaz. Data sağlayıcının iç
-// yapılandırmasıdır ve modüller arası okuma yüzeyinde hiç görünmemelidir;
-// Metadata ise çağıranın koyduğu serbest veridir ve şeması olmayan bir alanı
-// taşımak, Query'nin birleştirdiği kayıtları öngörülemez hâle getirirdi.
+// Data and Metadata are DELIBERATELY not offered. Data is the provider's
+// internal configuration and must never appear on a cross-module read surface;
+// Metadata is free-form data the caller put there, and carrying a field with no
+// schema would make the records Query joins unpredictable.
 //
-// [FieldAdminOnly] ise SUNULUR: bu yüzey modüller arası bir OKUMA yüzeyidir,
-// mağaza yanıtı değildir. Tüketicinin bir seçeneğin vitrine çıkıp çıkmadığını
-// bilmesi gerekir; mağaza yüzeyindeki gizleme api paketinde yapılır.
+// [FieldAdminOnly], on the other hand, IS OFFERED: this surface is a
+// cross-module READ surface, not a storefront response. The consumer needs to
+// know whether an option reaches the storefront; the hiding on the storefront
+// surface is done in the api package.
 var optionFieldGetters = map[string]func(option models.ShippingOption) any{
 	FieldID:           func(option models.ShippingOption) any { return option.ID },
 	FieldName:         func(option models.ShippingOption) any { return option.Name },
@@ -67,37 +71,38 @@ var optionFieldGetters = map[string]func(option models.ShippingOption) any{
 	FieldUpdatedAt:    func(option models.ShippingOption) any { return option.UpdatedAt },
 }
 
-// QueryProvider fulfillment modülünün Query katmanına açtığı okuma yüzeyidir.
+// QueryProvider is the read surface the fulfillment module opens to the Query
+// layer.
 //
-// Container'a "shipping_option.query" adıyla kaydedilir; Query onu ADLA çözer
-// (ADR 0004). Sipariş listelemesi, siparişin hangi kargo seçeneğiyle
-// gönderildiğini bu sağlayıcı ve bir link üzerinden görür.
+// It is registered with the container under the name "shipping_option.query";
+// Query resolves it BY NAME (ADR 0004). An order listing sees which shipping
+// option an order was sent with through this provider and a link.
 type QueryProvider struct {
 	svc *Service
 }
 
-// QueryProvider'ın çekirdek sözleşmesini karşıladığı derleme zamanında
-// doğrulanır; imza kayması çalışma zamanına kalmaz.
+// That QueryProvider satisfies the core contract is verified at compile time;
+// a signature drift does not survive until runtime.
 var _ query.Provider = (*QueryProvider)(nil)
 
-// NewQueryProvider verilen servis üzerinde çalışan bir sağlayıcı üretir.
+// NewQueryProvider produces a provider running on the given service.
 func NewQueryProvider(svc *Service) *QueryProvider {
 	return &QueryProvider{svc: svc}
 }
 
-// Entity sağlayıcının sunduğu entity adını döner.
+// Entity returns the entity name the provider offers.
 func (p *QueryProvider) Entity() string { return EntityName }
 
-// List kök kayıtları döner.
+// List returns the root records.
 //
-// Desteklenen süzgeçler: "region_id", "shipping_profile_id", "provider_id" ve
-// "price_type" (hepsi metin). Başka bir süzgeç ya da tanınmayan bir alan
-// errors.Invalid ile reddedilir (ADR 0004).
+// Supported filters: "region_id", "shipping_profile_id", "provider_id" and
+// "price_type" (all text). Any other filter or an unrecognized field is
+// rejected with errors.Invalid (ADR 0004).
 //
-// Limit [MaxLimit]'e KIRPILIR; bkz. [providerLimit]. Kırpma sessizdir ve hata
-// dönmez, ama sonuç sayfa boyutunun aşılamayacağı anlamına gelir: çağıran tüm
-// kayıtları aldığını varsaymamalı, [MaxLimit] kadar kayıt dönen bir yanıtı
-// "devamı olabilir" diye okumalıdır.
+// The limit is CLAMPED to [MaxLimit]; see [providerLimit]. The clamping is
+// silent and returns no error, but it does mean the page size cannot be
+// exceeded: the caller must not assume it received all the records, and must
+// read a response that returns [MaxLimit] records as "there may be more".
 func (p *QueryProvider) List(ctx context.Context, opts query.ListOptions) ([]query.Record, error) {
 	if err := validateFields(opts.Fields); err != nil {
 		return nil, err
@@ -106,14 +111,14 @@ func (p *QueryProvider) List(ctx context.Context, opts query.ListOptions) ([]que
 	in := ListOptionsAdminInput{
 		Page: Page{Limit: providerLimit(opts.Limit), Offset: int64(opts.Offset)},
 	}
-	// Süzgeçler sıralı gezilir: harita üzerinde dönmek, birden çok süzgeç
-	// birden geçersizken hangi hatanın döneceğini rastgele bırakırdı.
+	// The filters are walked in order: iterating over the map would leave it
+	// random which error is returned when several filters are invalid at once.
 	for _, name := range slices.Sorted(maps.Keys(opts.Filters)) {
 		value := opts.Filters[name]
 		text, ok := value.(string)
 		if !ok {
 			return nil, errors.Invalid(CodeInvalidInput,
-				"%q süzgeci metin olmalı, %T verildi", name, value)
+				"filter %q has to be text, %T given", name, value)
 		}
 		switch name {
 		case FieldRegionID:
@@ -126,7 +131,7 @@ func (p *QueryProvider) List(ctx context.Context, opts query.ListOptions) ([]que
 			in.PriceType = &text
 		default:
 			return nil, errors.Invalid(CodeInvalidInput,
-				"%q entity'si %q süzgecini desteklemiyor", EntityName, name)
+				"entity %q does not support the filter %q", EntityName, name)
 		}
 	}
 
@@ -137,8 +142,9 @@ func (p *QueryProvider) List(ctx context.Context, opts query.ListOptions) ([]que
 	return records(options, opts.Fields), nil
 }
 
-// FetchByIDs verilen kimliklerin kayıtlarını BATCH olarak döner.
-// Bulunamayan kimlik için kayıt dönmez; bu bir hata değildir.
+// FetchByIDs returns the records of the given identifiers as a BATCH.
+// No record is returned for an identifier that is not found; that is not an
+// error.
 func (p *QueryProvider) FetchByIDs(ctx context.Context, ids, fields []string) ([]query.Record, error) {
 	if err := validateFields(fields); err != nil {
 		return nil, err
@@ -154,8 +160,8 @@ func (p *QueryProvider) FetchByIDs(ctx context.Context, ids, fields []string) ([
 	return records(options, fields), nil
 }
 
-// records seçenekleri istenen alanlarla kayda çevirir.
-// fields boşsa sunulan TÜM alanlar döner.
+// records turns the options into records with the requested fields.
+// If fields is empty, ALL offered fields are returned.
 func records(options []models.ShippingOption, fields []string) []query.Record {
 	selected := fields
 	if len(selected) == 0 {
@@ -163,8 +169,8 @@ func records(options []models.ShippingOption, fields []string) []query.Record {
 	}
 
 	out := make([]query.Record, 0, len(options))
-	// Dilim İNDEKSLE gezilir: değerle gezmek her yinelemede seçenek yapısının
-	// tamamını kopyalardı ve kayıt sayısı arttıkça bedeli büyürdü.
+	// The slice is walked BY INDEX: walking by value would copy the whole option
+	// struct on every iteration and the cost would grow with the record count.
 	for i := range options {
 		record := make(query.Record, len(selected))
 		for _, name := range selected {
@@ -175,16 +181,16 @@ func records(options []models.ShippingOption, fields []string) []query.Record {
 	return out
 }
 
-// providerLimit çekirdeğin limit değerini sağlayıcının sayfa tavanına kırpar.
+// providerLimit clamps the core's limit value to the provider's page ceiling.
 //
-// Çekirdek sözleşmesinde ([query.ListOptions]) 0 "SINIRSIZ" demektir; bu
-// sağlayıcı sınırsız listeleme sunmaz, çünkü sınırsız bir kök sorgu tüm
-// seçenek tablosunu belleğe alırdı. Sınırsız istek bu yüzden [MaxLimit]'e
-// çevrilir — [DefaultLimit]'e DEĞİL: çağıran açıkça "hepsini istiyorum"
-// demiştir, alabileceğinin en fazlasını almalıdır. Anlamsız bir negatif değer
-// de aynı kefeye konur: bu yolda limit bir istemci girdisi değil, başka bir
-// modülün sorgu tanımından gelen bir sayıdır ve reddedilmesi tüm okumayı
-// düşürürdü.
+// In the core contract ([query.ListOptions]) 0 means "UNLIMITED"; this provider
+// does not offer unlimited listing, because an unlimited root query would pull
+// the entire option table into memory. An unlimited request is therefore turned
+// into [MaxLimit] — NOT into [DefaultLimit]: the caller explicitly said "I want
+// them all" and should get the most it can. A nonsensical negative value is put
+// in the same bucket: on this path the limit is not a client input but a number
+// coming from another module's query definition, and rejecting it would bring
+// down the whole read.
 func providerLimit(limit int) int64 {
 	if limit <= 0 || int64(limit) > MaxLimit {
 		return MaxLimit
@@ -192,12 +198,12 @@ func providerLimit(limit int) int64 {
 	return int64(limit)
 }
 
-// validateFields istenen alanların hepsinin sunulduğunu doğrular.
+// validateFields verifies that all the requested fields are offered.
 func validateFields(fields []string) error {
 	for _, name := range fields {
 		if _, ok := optionFieldGetters[name]; !ok {
 			return errors.Invalid(CodeInvalidInput,
-				"%q entity'si %q alanını sunmuyor", EntityName, name)
+				"entity %q does not offer the field %q", EntityName, name)
 		}
 	}
 	return nil

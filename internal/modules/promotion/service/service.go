@@ -1,31 +1,31 @@
-// Package service promotion modülünün iş mantığını barındırır.
+// Package service holds the business logic of the promotion module.
 //
-// # Modüller arası yüzey (ADR 0001)
+// # Cross-module surface (ADR 0001)
 //
-// promotion hiçbir modülü import ETMEZ ve hiçbir modülden veri OKUMAZ; bu
-// yüzden bu pakette tüketici tarafı bir arayüz yoktur. Ters yön vardır: sepet
-// akışı (internal/workflows/cart) ve sipariş tamamlama saga'sı promotion'a
-// ihtiyaç duyar. O tarafın kendi paketinde dar bir arayüz tanımlayabilmesi için
-// promotion'ın yüzeyi İKİYE ayrılmıştır:
+// promotion IMPORTS no module and READS data from no module; there is therefore no
+// consumer-side interface in this package. The reverse direction exists: the cart
+// flow (internal/workflows/cart) and the order completion saga need promotion. So
+// that side can define a narrow interface in its own package, promotion's surface is
+// split IN TWO:
 //
-//   - Modül içi zengin yüzey — [models] tiplerini kullanır
-//     ([Service.CreatePromotion], [Service.ComputeDiscounts] …). Bu metotları
-//     yalnızca promotion'ın kendi API katmanı, query sağlayıcısı ve interop
-//     yüzeyi çağırır.
-//   - Modüller arası yüzey — YALNIZCA ilkel ve stdlib tipleri kullanır;
-//     interop.go dosyasındadır ve container'a "promotion.interop" adıyla
-//     kaydedilir.
+//   - The rich in-module surface — it uses the [models] types
+//     ([Service.CreatePromotion], [Service.ComputeDiscounts] …). These methods are
+//     called only by promotion's own API layer, its query provider and its interop
+//     surface.
+//   - The cross-module surface — it uses ONLY primitive and stdlib types; it lives in
+//     the interop.go file and is registered in the container under the name
+//     "promotion.interop".
 //
-// Ayrım zorunludur: Go'da yapısal uyum imza EŞİTLİĞİ ister. Tüketici modül
-// promotion'ı import edemediği için [models.Promotion] gibi bir tipi imzasında
-// adlandıramaz; adlandırdığı an kendi paketindeki farklı bir tip olur ve somut
-// servis arayüzü karşılamaz.
+// The split is mandatory: structural conformance in Go demands signature EQUALITY.
+// Because the consuming module cannot import promotion, it cannot name a type such as
+// [models.Promotion] in its signature; the moment it names one it becomes a different
+// type in its own package and the concrete service does not satisfy the interface.
 //
-// # Para ve oran
+// # Money and rates
 //
-// Tutarlar TAM SAYI minor unit'tir ve para birimi ayrı alandır (plan Bölüm 8).
-// Oranlar BAZ PUANDIR (2000 = %20). Servis hiçbir yerde float kullanmaz;
-// yuvarlama yönü [models.BasisPointDenominator] yanında belgelidir.
+// Amounts are INTEGER minor units and the currency is a separate field (plan
+// Section 8). Rates are BASIS POINTS (2000 = 20%). The service uses float nowhere;
+// the rounding direction is documented next to [models.BasisPointDenominator].
 package service
 
 import (
@@ -37,51 +37,52 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/promotion/models"
 )
 
-// Hata kodları; çağıran taraf errors.CodeOf ile bunlara bakabilir.
+// Error codes; the calling side can look at these with errors.CodeOf.
 const (
-	// CodeInvalidInput girdinin doğrulamadan geçmediğini bildirir.
+	// CodeInvalidInput reports that the input did not pass validation.
 	CodeInvalidInput = "promotion_invalid_input"
-	// CodeBuyGetNotActivatable buyget promosyonunun bu fazda etkinleştirilemediğini
-	// bildirir (bkz. [models.PromotionBuyGet]).
+	// CodeBuyGetNotActivatable reports that the buyget promotion cannot be activated
+	// in this phase (see [models.PromotionBuyGet]).
 	CodeBuyGetNotActivatable = "promotion_buyget_not_activatable"
-	// CodePromotionNotUsable promosyonun MÜŞTERİYE sunulabilir durumda olmadığını
-	// bildirir; store yüzeyi bunu "yok" olarak gösterir.
+	// CodePromotionNotUsable reports that the promotion is not in a state that can be
+	// offered TO THE CUSTOMER; the store surface presents this as "not there".
 	CodePromotionNotUsable = "promotion_not_usable"
-	// CodeUnconfigured servisin kurulmadığını bildirir.
+	// CodeUnconfigured reports that the service has not been set up.
 	CodeUnconfigured = "promotion_service_unconfigured"
 )
 
-// Sayfalama sınırları. Limit verilmezse varsayılan, aşırı büyük verilirse
-// azami değer uygulanır; istemci tek istekle veritabanını tarayamaz.
+// Paging bounds. If no limit is given the default is applied, if an excessively large
+// one is given the maximum value is applied; a client cannot scan the database in a
+// single request.
 const (
-	// DefaultLimit limit verilmediğinde uygulanan sayfa boyudur.
+	// DefaultLimit is the page size applied when no limit is given.
 	DefaultLimit int32 = 50
-	// MaxLimit tek istekte dönebilecek azami kayıt sayısıdır.
+	// MaxLimit is the maximum number of records a single request can return.
 	MaxLimit int32 = 100
 )
 
-// Page sayfalanmış bir liste sonucudur.
+// Page is a paginated list result.
 //
-// Limit ve Offset, isteğin ham değerleri değil UYGULANAN değerlerdir; API zarfı
-// bu alanları olduğu gibi yazar, böylece istemci kırpılan bir limitten haberdar
-// olur.
+// Limit and Offset are not the raw values of the request but the APPLIED values; the
+// API envelope writes these fields as they are, so the client learns about a clamped
+// limit.
 type Page[T any] struct {
-	// Items geçerli sayfadaki kayıtlardır.
+	// Items are the records on the current page.
 	Items []T
-	// Count filtreye uyan TOPLAM kayıt sayısıdır (sayfa boyu değil).
+	// Count is the TOTAL number of records matching the filter (not the page size).
 	Count int64
-	// Limit uygulanan sayfa boyudur.
+	// Limit is the applied page size.
 	Limit int32
-	// Offset uygulanan atlama sayısıdır.
+	// Offset is the applied number of skipped records.
 	Offset int32
 }
 
-// Repository servisin ihtiyaç duyduğu veri erişim yüzeyidir.
+// Repository is the data access surface the service needs.
 //
-// Arayüz TÜKETEN tarafta (burada) tanımlıdır; somut uygulama
-// internal/modules/promotion/repository paketindedir. Bu, ADR 0001'in
-// örüntüsünün modül İÇİNDEKİ karşılığıdır ve servisin veritabanı olmadan test
-// edilmesini sağlar.
+// The interface is defined on the CONSUMING side (here); the concrete implementation
+// is in the internal/modules/promotion/repository package. This is the in-module
+// counterpart of the pattern of ADR 0001, and it lets the service be tested without a
+// database.
 type Repository interface {
 	CreateCampaign(ctx context.Context, c models.Campaign, now time.Time) (models.Campaign, error)
 	GetCampaign(ctx context.Context, id string) (models.Campaign, error)
@@ -115,27 +116,28 @@ type Repository interface {
 	ListRedemptions(ctx context.Context, promotionID string, limit, offset int32) ([]models.Redemption, int64, error)
 }
 
-// Options servisin kurulum ayarlarıdır.
+// Options are the setup settings of the service.
 type Options struct {
-	// Logger yapısal log hedefidir; nil ise loglar atılır.
+	// Logger is the structured log target; if nil the logs are discarded.
 	Logger *slog.Logger
-	// Now zaman kaynağıdır; nil ise time.Now kullanılır. Testler burayı sabit
-	// bir saatle doldurarak zamana bağlı dalları (kampanya penceresi)
-	// belirlenimci hâle getirir.
+	// Now is the time source; if nil time.Now is used. Tests fill this in with a
+	// fixed clock to make the time-dependent branches (the campaign window)
+	// deterministic.
 	Now func() time.Time
 }
 
-// Service promotion modülünün public servisidir. Eşzamanlı kullanıma güvenlidir.
+// Service is the public service of the promotion module. It is safe for concurrent
+// use.
 type Service struct {
 	repo Repository
 	log  *slog.Logger
 	now  func() time.Time
 }
 
-// New verilen depo üzerinde çalışan bir servis üretir.
+// New produces a service running on the given repository.
 //
-// repo nil ise bu, kurulumda değil ilk çağrıda tipli bir hata olarak bildirilir;
-// kurulum yolu panik üretmez.
+// If repo is nil this is reported as a typed error not at setup time but on the first
+// call; the setup path produces no panic.
 func New(repo Repository, opts Options) *Service {
 	log := opts.Logger
 	if log == nil {
@@ -148,46 +150,48 @@ func New(repo Repository, opts Options) *Service {
 	return &Service{repo: repo, log: log, now: now}
 }
 
-// ready deponun kurulu olduğunu doğrular.
+// ready verifies that the repository has been set up.
 func (s *Service) ready() error {
 	if s == nil || s.repo == nil {
-		return errors.Unavailable(CodeUnconfigured, "promotion servisi kurulmamış")
+		return errors.Unavailable(CodeUnconfigured, "the promotion service has not been set up")
 	}
 	return nil
 }
 
-// clock geçerli anı UTC olarak döner.
+// clock returns the current moment in UTC.
 func (s *Service) clock() time.Time {
 	return s.now().UTC()
 }
 
-// PromotionInput bir promosyonun yazma girdisidir.
+// PromotionInput is the write input of a promotion.
 type PromotionInput struct {
-	// Code kupon kodudur; büyük/küçük harf serbesttir, BÜYÜK harfe
-	// normalleştirilerek saklanır.
+	// Code is the coupon code; upper/lower case is free, it is normalized to
+	// UPPERCASE for storage.
 	Code string
-	// IsAutomatic promosyonun kod girilmeden uygulanıp uygulanmayacağıdır.
+	// IsAutomatic is whether the promotion will be applied without a code being
+	// entered.
 	IsAutomatic bool
-	// Type promosyonun mekaniğidir; boş verilirse "standard" kabul edilir.
+	// Type is the mechanic of the promotion; if left empty "standard" is assumed.
 	Type models.PromotionType
-	// CampaignID promosyonu bir kampanyaya bağlar; nil ise kampanyasızdır.
+	// CampaignID binds the promotion to a campaign; if nil it has no campaign.
 	CampaignID *string
-	// Status yayın durumudur; boş verilirse "draft" kabul edilir.
+	// Status is the publication status; if left empty "draft" is assumed.
 	//
-	// Varsayılanın taslak olması bilinçlidir: eksik doldurulmuş bir istek
-	// kazara yayına giren bir indirim üretmemelidir.
+	// The default being draft is deliberate: an incompletely filled request must not
+	// produce a discount that goes live by accident.
 	Status models.PromotionStatus
-	// UsageLimit kullanım sınırıdır; nil ise sınırsız.
+	// UsageLimit is the usage bound; if nil it is unbounded.
 	UsageLimit *int64
-	// Metadata operatörün serbest notudur; iş kuralına girmez.
+	// Metadata is the operator's free note; it does not enter business rules.
 	Metadata map[string]string
 }
 
-// CreatePromotion yeni bir promosyon oluşturur.
+// CreatePromotion creates a new promotion.
 //
-// Kod BENZERSİZDİR; aynı kod ikinci kez alınamaz ve deneme errors.Conflict
-// döner (benzersizliği veritabanı kısmi indeksi zorlar, servis değil — iki
-// eşzamanlı istek arasında yalnızca veritabanı hakem olabilir).
+// The code is UNIQUE; the same code cannot be taken a second time and the attempt
+// returns errors.Conflict (uniqueness is enforced by a partial database index, not by
+// the service — between two concurrent requests only the database can be the
+// referee).
 func (s *Service) CreatePromotion(ctx context.Context, in PromotionInput) (models.Promotion, error) {
 	if err := s.ready(); err != nil {
 		return models.Promotion{}, err
@@ -201,22 +205,24 @@ func (s *Service) CreatePromotion(ctx context.Context, in PromotionInput) (model
 	return s.repo.CreatePromotion(ctx, promo, now)
 }
 
-// GetPromotion kimliğe göre promosyonu döner; yoksa errors.NotFound.
+// GetPromotion returns the promotion by identifier; if there is none,
+// errors.NotFound.
 func (s *Service) GetPromotion(ctx context.Context, id string) (models.Promotion, error) {
 	if err := s.ready(); err != nil {
 		return models.Promotion{}, err
 	}
-	if err := requireID(id, models.PromotionIDPrefix, "promosyon kimliği"); err != nil {
+	if err := requireID(id, models.PromotionIDPrefix, "promotion id"); err != nil {
 		return models.Promotion{}, err
 	}
 	return s.repo.GetPromotion(ctx, id)
 }
 
-// GetPromotionByCode kupon koduna göre promosyonu döner; yoksa errors.NotFound.
+// GetPromotionByCode returns the promotion by coupon code; if there is none,
+// errors.NotFound.
 //
-// YÖNETİM yüzeyi içindir ve HİÇBİR süzgeç uygulamaz: taslak ve pasif
-// promosyonlar da döner. Müşteriye giden yüzey için [Service.LookupStoreCoupon]
-// kullanılmalıdır.
+// It is meant for the ADMIN surface and applies NO filter: draft and inactive
+// promotions are returned too. For the surface that goes to the customer,
+// [Service.LookupStoreCoupon] must be used.
 func (s *Service) GetPromotionByCode(ctx context.Context, code string) (models.Promotion, error) {
 	if err := s.ready(); err != nil {
 		return models.Promotion{}, err
@@ -228,20 +234,20 @@ func (s *Service) GetPromotionByCode(ctx context.Context, code string) (models.P
 	return s.repo.GetPromotionByCode(ctx, normalized)
 }
 
-// ListPromotionsInput promosyon listelemesinin isteğe bağlı süzgeçleridir.
+// ListPromotionsInput holds the optional filters of the promotion listing.
 type ListPromotionsInput struct {
-	// Status yalnızca bu durumdaki promosyonları döndürür; nil ise süzülmez.
+	// Status returns only the promotions in this status; if nil no filtering is done.
 	Status *models.PromotionStatus
-	// CampaignID yalnızca bu kampanyaya bağlı promosyonları döndürür; nil ise
-	// süzülmez.
+	// CampaignID returns only the promotions bound to this campaign; if nil no
+	// filtering is done.
 	CampaignID *string
-	// Limit sayfa boyudur; 0 ise [DefaultLimit] uygulanır.
+	// Limit is the page size; if 0 then [DefaultLimit] is applied.
 	Limit int32
-	// Offset atlanacak kayıt sayısıdır.
+	// Offset is the number of records to skip.
 	Offset int32
 }
 
-// ListPromotions sayfalanmış promosyon listesini döner.
+// ListPromotions returns the paginated promotion list.
 func (s *Service) ListPromotions(ctx context.Context, in ListPromotionsInput) (Page[models.Promotion], error) {
 	if err := s.ready(); err != nil {
 		return Page[models.Promotion]{}, err
@@ -255,13 +261,13 @@ func (s *Service) ListPromotions(ctx context.Context, in ListPromotionsInput) (P
 	if in.Status != nil {
 		if !in.Status.Valid() {
 			return Page[models.Promotion]{}, errors.Invalid(CodeInvalidInput,
-				"promosyon durumu tanımsız: %q", string(*in.Status))
+				"promotion status is undefined: %q", string(*in.Status))
 		}
 		value := string(*in.Status)
 		status = &value
 	}
 	if in.CampaignID != nil {
-		if err := requireID(*in.CampaignID, models.CampaignIDPrefix, "kampanya kimliği"); err != nil {
+		if err := requireID(*in.CampaignID, models.CampaignIDPrefix, "campaign id"); err != nil {
 			return Page[models.Promotion]{}, err
 		}
 	}
@@ -273,19 +279,19 @@ func (s *Service) ListPromotions(ctx context.Context, in ListPromotionsInput) (P
 	return Page[models.Promotion]{Items: items, Count: total, Limit: limit, Offset: offset}, nil
 }
 
-// UpdatePromotion promosyonun tanımını YERİNE KOYAR.
+// UpdatePromotion REPLACES the definition of the promotion.
 //
-// Kısmi güncelleme değildir: verilmeyen alanlar sıfırlanır. Sebep, kısmi
-// güncellemenin "alan gönderilmedi" ile "alan boşaltılmak isteniyor" ayrımını
-// istemciye bırakmasıdır; bir promosyonun kampanyasını kaldırmak da bir istek
-// olabilir ve sessizce yok sayılmamalıdır.
+// It is not a partial update: the fields that are not given are reset. The reason is
+// that a partial update leaves the distinction between "the field was not sent" and
+// "the field is meant to be emptied" up to the client; removing a promotion's
+// campaign can also be a request and must not be silently ignored.
 //
-// Kullanım sayacı bu yoldan DEĞİŞMEZ.
+// The usage counter DOES NOT CHANGE through this path.
 func (s *Service) UpdatePromotion(ctx context.Context, id string, in PromotionInput) (models.Promotion, error) {
 	if err := s.ready(); err != nil {
 		return models.Promotion{}, err
 	}
-	if err := requireID(id, models.PromotionIDPrefix, "promosyon kimliği"); err != nil {
+	if err := requireID(id, models.PromotionIDPrefix, "promotion id"); err != nil {
 		return models.Promotion{}, err
 	}
 
@@ -297,18 +303,19 @@ func (s *Service) UpdatePromotion(ctx context.Context, id string, in PromotionIn
 	return s.repo.UpdatePromotion(ctx, promo, now)
 }
 
-// DeletePromotion promosyonu soft delete ile siler.
+// DeletePromotion deletes the promotion with a soft delete.
 func (s *Service) DeletePromotion(ctx context.Context, id string) error {
 	if err := s.ready(); err != nil {
 		return err
 	}
-	if err := requireID(id, models.PromotionIDPrefix, "promosyon kimliği"); err != nil {
+	if err := requireID(id, models.PromotionIDPrefix, "promotion id"); err != nil {
 		return err
 	}
 	return s.repo.DeletePromotion(ctx, id, s.clock())
 }
 
-// buildPromotion girdiyi doğrular ve yazılacak domain modeline çevirir.
+// buildPromotion validates the input and turns it into the domain model to be
+// written.
 func buildPromotion(id string, in PromotionInput, now time.Time) (models.Promotion, error) {
 	code, err := normalizeCode(in.Code)
 	if err != nil {
@@ -321,7 +328,7 @@ func buildPromotion(id string, in PromotionInput, now time.Time) (models.Promoti
 	}
 	if !promoType.Valid() {
 		return models.Promotion{}, errors.Invalid(CodeInvalidInput,
-			"promosyon türü tanımsız: %q", string(in.Type))
+			"promotion type is undefined: %q", string(in.Type))
 	}
 
 	status := in.Status
@@ -330,19 +337,20 @@ func buildPromotion(id string, in PromotionInput, now time.Time) (models.Promoti
 	}
 	if !status.Valid() {
 		return models.Promotion{}, errors.Invalid(CodeInvalidInput,
-			"promosyon durumu tanımsız: %q", string(in.Status))
+			"promotion status is undefined: %q", string(in.Status))
 	}
 
-	// buyget mekaniği bu fazda YOKTUR ve eksiği sessiz bırakmamak için tür
-	// yapısal olarak kapatılmıştır (bkz. [models.PromotionBuyGet]). Taslak ya da
-	// pasif olarak hazırlanabilir; yayına ancak mekanik geldiğinde alınır.
+	// The buyget mechanic DOES NOT EXIST in this phase and, so as not to leave the gap
+	// silent, the type is closed structurally (see [models.PromotionBuyGet]). It can
+	// be prepared as draft or as inactive; it goes live only when the mechanic
+	// arrives.
 	if promoType == models.PromotionBuyGet && status == models.PromotionActive {
 		return models.Promotion{}, errors.Invalid(CodeBuyGetNotActivatable,
-			"buyget promosyonu bu sürümde etkinleştirilemez; mekanik henüz uygulanmadı (kod: %s)", code)
+			"the buyget promotion cannot be activated in this release; the mechanic is not implemented yet (code: %s)", code)
 	}
 
 	if in.CampaignID != nil {
-		if err := requireID(*in.CampaignID, models.CampaignIDPrefix, "kampanya kimliği"); err != nil {
+		if err := requireID(*in.CampaignID, models.CampaignIDPrefix, "campaign id"); err != nil {
 			return models.Promotion{}, err
 		}
 	}
@@ -368,10 +376,11 @@ func buildPromotion(id string, in PromotionInput, now time.Time) (models.Promoti
 	}, nil
 }
 
-// copyString bir dize işaretçisini KOPYALAYARAK döner.
+// copyString returns a string pointer BY COPYING it.
 //
-// Kopya şarttır: çağıranın işaretçisi doğrudan modele konsaydı, istek nesnesini
-// sonradan değiştiren bir çağıran yazılmış kaydı da değiştirmiş olurdu.
+// The copy is essential: had the caller's pointer been placed directly into the
+// model, a caller that modified the request object afterwards would have modified the
+// written record as well.
 func copyString(v *string) *string {
 	if v == nil {
 		return nil
@@ -380,8 +389,8 @@ func copyString(v *string) *string {
 	return &out
 }
 
-// copyInt64 bir tam sayı işaretçisini KOPYALAYARAK döner; gerekçe copyString'teki
-// ile aynıdır.
+// copyInt64 returns an integer pointer BY COPYING it; the rationale is the same as in
+// copyString.
 func copyInt64(v *int64) *int64 {
 	if v == nil {
 		return nil

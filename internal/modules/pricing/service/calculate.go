@@ -68,7 +68,7 @@ func (s *Service) CalculatePrice(
 	if err := s.ready(); err != nil {
 		return models.CalculatedPrice{}, err
 	}
-	if err := requireID(priceSetID, models.PriceSetIDPrefix, "price set kimliği"); err != nil {
+	if err := requireID(priceSetID, models.PriceSetIDPrefix, "price set id"); err != nil {
 		return models.CalculatedPrice{}, err
 	}
 

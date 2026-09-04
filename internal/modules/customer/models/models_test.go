@@ -78,7 +78,7 @@ func TestKimlikTekildir(t *testing.T) {
 	for range 1000 {
 		id := models.NewCustomerID(an)
 		_, dup := gorulen[id]
-		require.False(t, dup, "kimlik tekrarlandı: %s", id)
+		require.False(t, dup, "the id repeated: %s", id)
 		gorulen[id] = struct{}{}
 	}
 }

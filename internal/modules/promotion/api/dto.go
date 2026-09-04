@@ -7,201 +7,202 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/promotion/service"
 )
 
-// DTO'lar domain modellerinden AYRI tutulur: JSON alan adları dış sözleşmedir
-// ve modelde yapılan bir yeniden adlandırma istemciyi kırmamalıdır.
+// The DTOs are kept SEPARATE from the domain models: JSON field names are the outer
+// contract and a rename made in the model must not break the client.
 //
-// Ayrım burada ikinci bir işe daha yarar: MÜŞTERİ yüzeyinin gövdesi
-// ([storeCouponDTO]) yönetim yüzeyininkinden (bkz. [promotionDTO]) ayrı bir
-// tiptir ve bu ayrım, bir alan eklendiğinde onun kazara müşteriye sızmasını
-// engeller.
+// The split serves a second purpose here: the body of the CUSTOMER surface
+// ([storeCouponDTO]) is a type distinct from the admin surface's one (see
+// [promotionDTO]), and that distinction prevents a newly added field from leaking to
+// the customer by accident.
 
-// campaignDTO bir kampanyanın yanıt gövdesidir.
+// campaignDTO is the response body of a campaign.
 type campaignDTO struct {
-	// ID kampanyanın kimliğidir.
+	// ID is the identifier of the campaign.
 	ID string `json:"id"`
-	// Name kampanyanın görünen adıdır.
+	// Name is the display name of the campaign.
 	Name string `json:"name"`
-	// CampaignIdentifier operatörün verdiği benzersiz iş kimliğidir.
+	// CampaignIdentifier is the unique business identifier given by the operator.
 	CampaignIdentifier string `json:"campaign_identifier"`
-	// Description açıklamadır.
+	// Description is the description.
 	Description string `json:"description"`
-	// StartsAt geçerlilik penceresinin başıdır; yoksa null.
+	// StartsAt is the start of the validity window; null if there is none.
 	StartsAt *time.Time `json:"starts_at"`
-	// EndsAt geçerlilik penceresinin sonudur; yoksa null.
+	// EndsAt is the end of the validity window; null if there is none.
 	EndsAt *time.Time `json:"ends_at"`
-	// BudgetType bütçenin ölçü birimidir (none | spend | usage).
+	// BudgetType is the unit of measure of the budget (none | spend | usage).
 	BudgetType string `json:"budget_type"`
-	// BudgetLimit bütçenin üst sınırıdır; sınırsızsa null.
+	// BudgetLimit is the upper bound of the budget; null if unbounded.
 	BudgetLimit *int64 `json:"budget_limit"`
-	// BudgetUsed bütçenin tüketilen kısmıdır.
+	// BudgetUsed is the consumed part of the budget.
 	BudgetUsed int64 `json:"budget_used"`
-	// BudgetCurrencyCode "spend" bütçesinin para birimidir; yoksa null.
+	// BudgetCurrencyCode is the currency of a "spend" budget; null if there is none.
 	BudgetCurrencyCode *string `json:"budget_currency_code"`
-	// CreatedAt oluşturulma anıdır (RFC3339, UTC).
+	// CreatedAt is the moment of creation (RFC3339, UTC).
 	CreatedAt time.Time `json:"created_at"`
-	// UpdatedAt son güncellenme anıdır (RFC3339, UTC).
+	// UpdatedAt is the moment of the last update (RFC3339, UTC).
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
-// promotionDTO bir promosyonun YÖNETİM yanıt gövdesidir.
+// promotionDTO is the ADMIN response body of a promotion.
 type promotionDTO struct {
-	// ID promosyonun kimliğidir.
+	// ID is the identifier of the promotion.
 	ID string `json:"id"`
-	// Code kupon kodudur (BÜYÜK harf).
+	// Code is the coupon code (UPPERCASE).
 	Code string `json:"code"`
-	// IsAutomatic promosyonun kodsuz uygulanıp uygulanmadığıdır.
+	// IsAutomatic is whether the promotion is applied without a code.
 	IsAutomatic bool `json:"is_automatic"`
-	// Type promosyonun mekaniğidir (standard | buyget).
+	// Type is the mechanic of the promotion (standard | buyget).
 	Type string `json:"type"`
-	// CampaignID promosyonun kampanyasıdır; kampanyasızsa null.
+	// CampaignID is the promotion's campaign; null if it has no campaign.
 	CampaignID *string `json:"campaign_id"`
-	// Status yayın durumudur (draft | active | inactive).
+	// Status is the publication status (draft | active | inactive).
 	Status string `json:"status"`
-	// UsageLimit kullanım sınırıdır; sınırsızsa null.
+	// UsageLimit is the usage bound; null if unbounded.
 	UsageLimit *int64 `json:"usage_limit"`
-	// UsageCount kullanılmış sayıdır.
+	// UsageCount is the number of times it has been used.
 	UsageCount int64 `json:"usage_count"`
-	// Metadata operatörün serbest notudur.
+	// Metadata is the operator's free note.
 	Metadata map[string]string `json:"metadata"`
-	// CreatedAt oluşturulma anıdır.
+	// CreatedAt is the moment of creation.
 	CreatedAt time.Time `json:"created_at"`
-	// UpdatedAt son güncellenme anıdır.
+	// UpdatedAt is the moment of the last update.
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
-// applicationMethodDTO bir uygulama yönteminin yanıt gövdesidir.
+// applicationMethodDTO is the response body of an application method.
 type applicationMethodDTO struct {
-	// ID yöntemin kimliğidir.
+	// ID is the identifier of the method.
 	ID string `json:"id"`
-	// PromotionID yöntemin bağlı olduğu promosyondur.
+	// PromotionID is the promotion the method is bound to.
 	PromotionID string `json:"promotion_id"`
-	// Type indirimin ölçüsüdür (fixed | percentage).
+	// Type is the measure of the discount (fixed | percentage).
 	Type string `json:"type"`
-	// TargetType indirimin hedefidir (items | shipping_methods | order).
+	// TargetType is the target of the discount (items | shipping_methods | order).
 	TargetType string `json:"target_type"`
-	// Allocation dağıtım biçimidir (each | across).
+	// Allocation is the distribution form (each | across).
 	Allocation string `json:"allocation"`
-	// Value sabit tutar (minor unit) ya da baz puandır.
+	// Value is the fixed amount (minor unit) or the basis points.
 	Value int64 `json:"value"`
-	// MaxQuantity sabit tutarın uygulanacağı azami adettir; sınırsızsa null.
+	// MaxQuantity is the maximum quantity the fixed amount will be applied to; null if
+	// unbounded.
 	MaxQuantity *int64 `json:"max_quantity"`
-	// CurrencyCode sabit tutarlı indirimin para birimidir; yüzdede null.
+	// CurrencyCode is the currency of a fixed-amount discount; null on a percentage.
 	CurrencyCode *string `json:"currency_code"`
-	// CreatedAt oluşturulma anıdır.
+	// CreatedAt is the moment of creation.
 	CreatedAt time.Time `json:"created_at"`
-	// UpdatedAt son güncellenme anıdır.
+	// UpdatedAt is the moment of the last update.
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
-// promotionRuleDTO bir promosyon kuralının YÖNETİM yanıt gövdesidir.
+// promotionRuleDTO is the ADMIN response body of a promotion rule.
 //
-// Bu tipin store yüzeyinde bir karşılığı YOKTUR: bir kuralın sağ tarafı iş
-// bilgisidir ve müşteriye hiçbir uç noktadan gitmez.
+// This type has NO counterpart on the store surface: the right-hand side of a rule is
+// business information and it goes to the customer from no endpoint.
 type promotionRuleDTO struct {
-	// ID kuralın kimliğidir.
+	// ID is the identifier of the rule.
 	ID string `json:"id"`
-	// PromotionID kuralın bağlı olduğu promosyondur.
+	// PromotionID is the promotion the rule is bound to.
 	PromotionID string `json:"promotion_id"`
-	// RuleType kuralın neye baktığıdır (context | target).
+	// RuleType is what the rule looks at (context | target).
 	RuleType string `json:"rule_type"`
-	// Attribute bakılan alan adıdır.
+	// Attribute is the name of the field being looked at.
 	Attribute string `json:"attribute"`
-	// Operator karşılaştırma işlecidir.
+	// Operator is the comparison operator.
 	Operator string `json:"operator"`
-	// Values karşılaştırmanın sağ tarafıdır.
+	// Values is the right-hand side of the comparison.
 	Values []string `json:"values"`
-	// CreatedAt oluşturulma anıdır.
+	// CreatedAt is the moment of creation.
 	CreatedAt time.Time `json:"created_at"`
-	// UpdatedAt son güncellenme anıdır.
+	// UpdatedAt is the moment of the last update.
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
-// redemptionDTO bir kullanım kaydının yanıt gövdesidir.
+// redemptionDTO is the response body of a redemption record.
 type redemptionDTO struct {
-	// ID kullanımın kimliğidir.
+	// ID is the identifier of the use.
 	ID string `json:"id"`
-	// PromotionID kullanılan promosyondur.
+	// PromotionID is the promotion that was used.
 	PromotionID string `json:"promotion_id"`
-	// CampaignID kullanım anındaki kampanyadır; yoksa null.
+	// CampaignID is the campaign at the moment of use; null if there is none.
 	CampaignID *string `json:"campaign_id"`
-	// Reference kullanımın iş kaydı referansıdır.
+	// Reference is the business record reference of the use.
 	Reference string `json:"reference"`
-	// Amount uygulanan indirim tutarıdır (minor unit).
+	// Amount is the applied discount amount (minor unit).
 	Amount int64 `json:"amount"`
-	// CurrencyCode indirimin para birimidir.
+	// CurrencyCode is the currency of the discount.
 	CurrencyCode string `json:"currency_code"`
-	// BudgetDelta kampanya bütçesine eklenen değerdir.
+	// BudgetDelta is the value added to the campaign budget.
 	BudgetDelta int64 `json:"budget_delta"`
-	// CreatedAt oluşturulma anıdır.
+	// CreatedAt is the moment of creation.
 	CreatedAt time.Time `json:"created_at"`
-	// ReleasedAt serbest bırakılma anıdır; hâlâ geçerliyse null.
+	// ReleasedAt is the moment of release; null if it is still in force.
 	ReleasedAt *time.Time `json:"released_at"`
 }
 
-// computeResultDTO bir indirim hesabının yanıt gövdesidir.
+// computeResultDTO is the response body of a discount computation.
 //
-// Alan adları interop şemasıyla (service.Interop) BİREBİR aynıdır: iki yüzeyin
-// aynı hesabı farklı adlarla anlatması, istemcinin hangisine bakacağını
-// bilememesi demek olurdu.
+// The field names are EXACTLY the same as the interop schema (service.Interop): the
+// two surfaces describing the same computation under different names would mean the
+// client not knowing which one to look at.
 type computeResultDTO struct {
-	// CurrencyCode hesabın para birimidir.
+	// CurrencyCode is the currency of the computation.
 	CurrencyCode string `json:"currency_code"`
-	// Items kalem başına indirimlerdir.
+	// Items are the discounts per line.
 	Items []lineDiscountDTO `json:"items"`
-	// ShippingMethods kargo yöntemi başına indirimlerdir.
+	// ShippingMethods are the discounts per shipping method.
 	ShippingMethods []lineDiscountDTO `json:"shipping_methods"`
-	// ItemsDiscountTotal kalemlere düşen toplam indirimdir.
+	// ItemsDiscountTotal is the total discount falling on the lines.
 	ItemsDiscountTotal int64 `json:"items_discount_total"`
-	// ShippingDiscountTotal kargoya düşen toplam indirimdir.
+	// ShippingDiscountTotal is the total discount falling on shipping.
 	ShippingDiscountTotal int64 `json:"shipping_discount_total"`
-	// DiscountTotal toplam indirimdir.
+	// DiscountTotal is the total discount.
 	DiscountTotal int64 `json:"discount_total"`
-	// Applied fiilen indirim üreten promosyonlardır.
+	// Applied are the promotions that actually produced a discount.
 	Applied []appliedPromotionDTO `json:"applied"`
-	// UnmatchedCodes bağlanamayan kupon kodlarıdır.
+	// UnmatchedCodes are the coupon codes that could not be bound.
 	UnmatchedCodes []string `json:"unmatched_codes"`
 }
 
-// lineDiscountDTO tek bir satır indiriminin yanıt gövdesidir.
+// lineDiscountDTO is the response body of a single line discount.
 type lineDiscountDTO struct {
-	// ID satırın kimliğidir.
+	// ID is the identifier of the line.
 	ID string `json:"id"`
-	// Amount satıra düşen indirimdir (minor unit).
+	// Amount is the discount falling on the line (minor unit).
 	Amount int64 `json:"amount"`
 }
 
-// appliedPromotionDTO uygulanmış bir promosyonun yanıt gövdesidir.
+// appliedPromotionDTO is the response body of an applied promotion.
 type appliedPromotionDTO struct {
-	// PromotionID promosyonun kimliğidir.
+	// PromotionID is the identifier of the promotion.
 	PromotionID string `json:"promotion_id"`
-	// Code promosyonun kupon kodudur.
+	// Code is the coupon code of the promotion.
 	Code string `json:"code"`
-	// IsAutomatic promosyonun kodsuz uygulanıp uygulanmadığıdır.
+	// IsAutomatic is whether the promotion is applied without a code.
 	IsAutomatic bool `json:"is_automatic"`
-	// Amount promosyonun fiilen uyguladığı toplam indirimdir.
+	// Amount is the total discount the promotion actually applied.
 	Amount int64 `json:"amount"`
 }
 
-// storeCouponDTO MÜŞTERİYE giden kupon gövdesidir.
+// storeCouponDTO is the coupon body that goes TO THE CUSTOMER.
 //
-// Bilinçli olarak DARDIR ve yönetim gövdesinden AYRI bir tiptir: durum,
-// kullanım sayacı, kampanya bütçesi, üstveri ve kural koşulları BURADA YOKTUR.
-// Ayrı tip olması, yönetim gövdesine eklenen bir alanın buraya kazara
-// sızmasını yapısal olarak engeller.
+// It is deliberately NARROW and is a type separate from the admin body: the status,
+// the usage counter, the campaign budget, the metadata and the rule conditions ARE
+// NOT HERE. Being a separate type structurally prevents a field added to the admin
+// body from leaking in here by accident.
 type storeCouponDTO struct {
-	// Code kupon kodudur (BÜYÜK harf).
+	// Code is the coupon code (UPPERCASE).
 	Code string `json:"code"`
-	// Type indirimin ölçüsüdür (fixed | percentage).
+	// Type is the measure of the discount (fixed | percentage).
 	Type string `json:"type"`
-	// TargetType indirimin hedefidir (items | shipping_methods | order).
+	// TargetType is the target of the discount (items | shipping_methods | order).
 	TargetType string `json:"target_type"`
-	// Value sabit tutar (minor unit) ya da baz puandır.
+	// Value is the fixed amount (minor unit) or the basis points.
 	Value int64 `json:"value"`
-	// CurrencyCode sabit tutarlı indirimin para birimidir; yüzdede null.
+	// CurrencyCode is the currency of a fixed-amount discount; null on a percentage.
 	CurrencyCode *string `json:"currency_code"`
 }
 
-// toCampaignDTO kampanyayı yanıt gövdesine çevirir.
+// toCampaignDTO turns the campaign into the response body.
 func toCampaignDTO(c models.Campaign) campaignDTO {
 	return campaignDTO{
 		ID:                 c.ID,
@@ -219,7 +220,7 @@ func toCampaignDTO(c models.Campaign) campaignDTO {
 	}
 }
 
-// toPromotionDTO promosyonu yönetim yanıt gövdesine çevirir.
+// toPromotionDTO turns the promotion into the admin response body.
 func toPromotionDTO(p models.Promotion) promotionDTO {
 	metadata := p.Metadata
 	if metadata == nil {
@@ -240,7 +241,7 @@ func toPromotionDTO(p models.Promotion) promotionDTO {
 	}
 }
 
-// toApplicationMethodDTO uygulama yöntemini yanıt gövdesine çevirir.
+// toApplicationMethodDTO turns the application method into the response body.
 func toApplicationMethodDTO(m models.ApplicationMethod) applicationMethodDTO {
 	return applicationMethodDTO{
 		ID:           m.ID,
@@ -256,7 +257,7 @@ func toApplicationMethodDTO(m models.ApplicationMethod) applicationMethodDTO {
 	}
 }
 
-// toPromotionRuleDTO kuralı yanıt gövdesine çevirir.
+// toPromotionRuleDTO turns the rule into the response body.
 func toPromotionRuleDTO(rule models.PromotionRule) promotionRuleDTO {
 	values := rule.Values
 	if values == nil {
@@ -274,7 +275,7 @@ func toPromotionRuleDTO(rule models.PromotionRule) promotionRuleDTO {
 	}
 }
 
-// toPromotionRuleDTOs kural listesini yanıt gövdelerine çevirir.
+// toPromotionRuleDTOs turns the rule list into response bodies.
 func toPromotionRuleDTOs(rules []models.PromotionRule) []promotionRuleDTO {
 	out := make([]promotionRuleDTO, 0, len(rules))
 	for i := range rules {
@@ -283,7 +284,7 @@ func toPromotionRuleDTOs(rules []models.PromotionRule) []promotionRuleDTO {
 	return out
 }
 
-// toRedemptionDTO kullanım kaydını yanıt gövdesine çevirir.
+// toRedemptionDTO turns the redemption record into the response body.
 func toRedemptionDTO(r models.Redemption) redemptionDTO {
 	return redemptionDTO{
 		ID:           r.ID,
@@ -298,7 +299,7 @@ func toRedemptionDTO(r models.Redemption) redemptionDTO {
 	}
 }
 
-// toComputeResultDTO hesap sonucunu yanıt gövdesine çevirir.
+// toComputeResultDTO turns the computation result into the response body.
 func toComputeResultDTO(result service.ComputeResult) computeResultDTO {
 	out := computeResultDTO{
 		CurrencyCode:          result.CurrencyCode,
@@ -336,7 +337,7 @@ func toComputeResultDTO(result service.ComputeResult) computeResultDTO {
 	return out
 }
 
-// toStoreCouponDTO kuponu MÜŞTERİ gövdesine çevirir.
+// toStoreCouponDTO turns the coupon into the CUSTOMER body.
 func toStoreCouponDTO(c service.StoreCoupon) storeCouponDTO {
 	return storeCouponDTO{
 		Code:         c.Code,
@@ -347,10 +348,11 @@ func toStoreCouponDTO(c service.StoreCoupon) storeCouponDTO {
 	}
 }
 
-// stringOrNil boş dizeyi JSON null'a çevirir.
+// stringOrNil turns the empty string into a JSON null.
 //
-// Ayrım anlamlıdır: yüzde indirimde para birimi YOKTUR ve boş dize yerine null
-// görünmesi, "para birimi yok" ile "para birimi boş" karışıklığını önler.
+// The distinction is meaningful: on a percentage discount there IS NO currency, and
+// null appearing instead of an empty string prevents the confusion between "there is
+// no currency" and "the currency is empty".
 func stringOrNil(value string) *string {
 	if value == "" {
 		return nil

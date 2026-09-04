@@ -229,7 +229,7 @@ func TestB2BUctanUcaGercekSurecte(t *testing.T) {
 
 		assert.Equal(t, calisanID, calisan.ID, "vitrin aynı çalışan kaydını dönmeli")
 		assert.Equal(t, musteriID, calisan.CustomerID,
-			"müşteri kimliği link katmanından dolmalı; boş görünmesi bağın hiç "+
+			"customer id link katmanından dolmalı; boş görünmesi bağın hiç "+
 				"kurulmadığı anlamına gelir")
 		require.NotNil(t, calisan.SpendingLimit, "harcama limiti dolu olmalı")
 		assert.Equal(t, b2bHarcamaLimiti, *calisan.SpendingLimit,

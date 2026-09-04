@@ -7,74 +7,79 @@ import (
 	"time"
 )
 
-// Kimlik önekleri (plan Bölüm 8). Önek, bir kimliğin hangi varlığa ait
-// olduğunu tabloya bakmadan okunabilir kılar: logda görülen "sopt_..." için
-// şemayı açmak gerekmez.
+// Identifier prefixes (plan Section 8). A prefix makes it readable which entity
+// an identifier belongs to without looking at the table: a "sopt_..." seen in a
+// log needs no schema lookup.
 const (
-	// FulfillmentIDPrefix gönderi kimliklerinin önekidir.
+	// FulfillmentIDPrefix is the prefix of fulfillment identifiers.
 	FulfillmentIDPrefix = "ful_"
-	// ShippingOptionIDPrefix kargo seçeneği kimliklerinin önekidir.
+	// ShippingOptionIDPrefix is the prefix of shipping option identifiers.
 	ShippingOptionIDPrefix = "sopt_"
-	// ShippingProfileIDPrefix kargo profili kimliklerinin önekidir.
+	// ShippingProfileIDPrefix is the prefix of shipping profile identifiers.
 	ShippingProfileIDPrefix = "sprof_"
-	// ShippingOptionRuleIDPrefix kargo seçeneği kuralı kimliklerinin önekidir.
+	// ShippingOptionRuleIDPrefix is the prefix of shipping option rule
+	// identifiers.
 	//
-	// Plan Bölüm 8 bu varlık için bir önek saymaz. "prule_" ALINAMAZ: onu
-	// pricing modülü fiyat kuralları için kullanıyor ve aynı öneki iki farklı
-	// varlığa vermek, logdaki bir kimliğin hangi tabloya ait olduğunu belirsiz
-	// bırakırdı. "sorule_" (shipping option rule) seçildi.
+	// Plan Section 8 does not list a prefix for this entity. "prule_" CANNOT be
+	// taken: the pricing module uses it for price rules, and giving the same
+	// prefix to two different entities would leave it ambiguous which table an
+	// identifier in a log belongs to. "sorule_" (shipping option rule) was
+	// chosen.
 	ShippingOptionRuleIDPrefix = "sorule_"
-	// FulfillmentItemIDPrefix gönderi kalemi kimliklerinin önekidir.
+	// FulfillmentItemIDPrefix is the prefix of fulfillment item identifiers.
 	//
-	// Plan Bölüm 8 bu varlık için de bir önek saymaz; "fulitem_" seçildi ve
-	// gönderi kimliğinin ("ful_") önekiyle karışmaması için tam sözcük
-	// kullanıldı.
+	// Plan Section 8 does not list a prefix for this entity either; "fulitem_"
+	// was chosen, and the full word is used so that it is not confused with the
+	// fulfillment identifier's prefix ("ful_").
 	FulfillmentItemIDPrefix = "fulitem_"
-	// ManualShipmentIDPrefix manuel sağlayıcının kendi gönderi kimliklerinin
-	// önekidir. Bu kimlik SAĞLAYICIYA aittir ve modülün gönderi kaydında
-	// external_id olarak durur.
+	// ManualShipmentIDPrefix is the prefix of the manual provider's own shipment
+	// identifiers. This identifier belongs to the PROVIDER and sits in the
+	// module's fulfillment record as external_id.
 	ManualShipmentIDPrefix = "manful_"
 )
 
-// idEncoding Crockford Base32 alfabesiyle dolgusuz kodlamadır. 16 baytlık
-// gövde bu kodlamayla tam 26 karaktere iner. Alfabe ASCII'de artan sırada
-// olduğundan kodlanmış dize, kodlanan baytlarla aynı sözlüksel sırayı korur;
-// kimlikler bu sayede zamana göre sıralanabilir kalır.
+// idEncoding is the unpadded encoding over the Crockford Base32 alphabet. A
+// 16-byte body comes down to exactly 26 characters under this encoding. Because
+// the alphabet is in ascending order in ASCII, the encoded string preserves the
+// same lexicographic order as the bytes it encodes; that is what keeps
+// identifiers sortable by time.
 var idEncoding = base32.NewEncoding("0123456789ABCDEFGHJKMNPQRSTVWXYZ").WithPadding(base32.NoPadding)
 
-// NewFulfillmentID yeni bir gönderi kimliği üretir.
+// NewFulfillmentID produces a new fulfillment identifier.
 func NewFulfillmentID() string { return newID(FulfillmentIDPrefix, time.Now()) }
 
-// NewShippingOptionID yeni bir kargo seçeneği kimliği üretir.
+// NewShippingOptionID produces a new shipping option identifier.
 func NewShippingOptionID() string { return newID(ShippingOptionIDPrefix, time.Now()) }
 
-// NewShippingProfileID yeni bir kargo profili kimliği üretir.
+// NewShippingProfileID produces a new shipping profile identifier.
 func NewShippingProfileID() string { return newID(ShippingProfileIDPrefix, time.Now()) }
 
-// NewShippingOptionRuleID yeni bir kargo seçeneği kuralı kimliği üretir.
+// NewShippingOptionRuleID produces a new shipping option rule identifier.
 func NewShippingOptionRuleID() string { return newID(ShippingOptionRuleIDPrefix, time.Now()) }
 
-// NewFulfillmentItemID yeni bir gönderi kalemi kimliği üretir.
+// NewFulfillmentItemID produces a new fulfillment item identifier.
 func NewFulfillmentItemID() string { return newID(FulfillmentItemIDPrefix, time.Now()) }
 
-// NewManualShipmentID manuel sağlayıcı için yeni bir gönderi kimliği üretir.
+// NewManualShipmentID produces a new shipment identifier for the manual
+// provider.
 func NewManualShipmentID() string { return newID(ManualShipmentIDPrefix, time.Now()) }
 
-// newID önekli, zaman sıralı ve tekil bir kimlik üretir.
+// newID produces a prefixed, time-ordered and unique identifier.
 //
-// Yapısı ULID ile aynıdır: 48 bit milisaniye zaman damgası + 80 bit
-// kriptografik rastgelelik, Crockford Base32 ile 26 karaktere kodlanır.
-// Zaman damgasının başta olması, kimliğin kendisinin kabaca oluşturma sırasını
-// taşıması demektir; kayıtlar birincil anahtar taramasında da doğal sırada
-// durur ve B-tree eklemeleri sona yapılır.
+// Its structure is the same as a ULID's: a 48-bit millisecond timestamp + 80
+// bits of cryptographic randomness, encoded to 26 characters with Crockford
+// Base32. Having the timestamp up front means the identifier itself carries
+// roughly the creation order; records also sit in their natural order on a
+// primary key scan and B-tree insertions happen at the end.
 //
-// Diğer modüllerdeki üretici ile aynı yapıdadır; o paketler İMPORT EDİLMEZ
-// (Prensip 2.4), yapı burada modülün kendi kodu olarak tekrarlanır.
+// It has the same structure as the generator in the other modules; those
+// packages are NOT IMPORTED (Principle 2.4), the structure is repeated here as
+// the module's own code.
 func newID(prefix string, t time.Time) string {
 	ms := t.UTC().UnixMilli()
 	if ms < 0 {
-		// 1970 öncesi bir zaman damgası kayıt için anlamlı değildir;
-		// sıralamayı bozmamak için tabana çekilir.
+		// A timestamp before 1970 is not meaningful for a record; it is pulled
+		// down to the floor so that ordering is not broken.
 		ms = 0
 	}
 
@@ -82,12 +87,13 @@ func newID(prefix string, t time.Time) string {
 	binary.BigEndian.PutUint64(stamp[:], uint64(ms))
 
 	var buf [16]byte
-	// UnixMilli 48 bite sığar; ilk iki bayt daima sıfırdır ve atılır.
+	// UnixMilli fits in 48 bits; the first two bytes are always zero and are
+	// dropped.
 	copy(buf[:6], stamp[2:])
 	if _, err := rand.Read(buf[6:]); err != nil {
-		// crypto/rand.Read hata dönmez; yine de bir gün dönerse kimlik
-		// yalnızca nanosaniye çözünürlüğüne dayanır — tekillik zayıflar ama
-		// kayıt açma başarısız olmaz.
+		// crypto/rand.Read does not return an error; should it ever do so, the
+		// identifier rests on nanosecond resolution alone — uniqueness weakens
+		// but opening a record does not fail.
 		binary.BigEndian.PutUint64(buf[8:], uint64(t.UnixNano()))
 	}
 

@@ -228,7 +228,7 @@ func normalizeFields(fields []string) ([]string, error) {
 	for _, field := range fields {
 		if !slices.Contains(supportedFields, field) {
 			return nil, errors.Invalid(CodeInvalidInput,
-				"%q alanı %s sağlayıcısında yok (desteklenen: %v)", field, Entity, supportedFields)
+				"field %q does not exist in the %s provider (supported: %v)", field, Entity, supportedFields)
 		}
 		if !slices.Contains(out, field) {
 			out = append(out, field)
@@ -275,7 +275,7 @@ func splitFilters(filters map[string]any) ([]string, models.CustomerFilter, erro
 			flag, ok := value.(bool)
 			if !ok {
 				return nil, filter, errors.Invalid(CodeInvalidInput,
-					"%q filtresi mantıksal (bool) olmalı, %T verildi", name, value)
+					"filter %q has to be a boolean, %T given", name, value)
 			}
 			filter.HasAccount = &flag
 		case filterGroupID:
@@ -283,20 +283,20 @@ func splitFilters(filters map[string]any) ([]string, models.CustomerFilter, erro
 			if err != nil {
 				return nil, filter, err
 			}
-			if err := requireID(raw, models.CustomerGroupIDPrefix, "grup kimliği"); err != nil {
+			if err := requireID(raw, models.CustomerGroupIDPrefix, "group id"); err != nil {
 				return nil, filter, err
 			}
 			filter.GroupID = &raw
 		default:
 			return nil, filter, errors.Invalid(CodeInvalidInput,
-				"%q filtresi %s sağlayıcısında desteklenmiyor (desteklenen: %v)",
+				"filter %q is not supported by the %s provider (supported: %v)",
 				name, Entity, supportedFilters)
 		}
 	}
 
 	if ids != nil && len(filters) > 1 {
 		return nil, filter, errors.Invalid(CodeInvalidInput,
-			"%q filtresi başka filtrelerle birlikte kullanılamaz", filterID)
+			"filter %q cannot be used together with other filters", filterID)
 	}
 	return ids, filter, nil
 }
@@ -314,7 +314,7 @@ func stringSet(name string, value any) ([]string, error) {
 		return out, nil
 	default:
 		return nil, errors.Invalid(CodeInvalidInput,
-			"%q filtresi dize ya da dize dilimi olmalı, %T verildi", name, value)
+			"filter %q has to be a string or a string slice, %T given", name, value)
 	}
 }
 
@@ -323,7 +323,7 @@ func stringValue(name string, value any) (string, error) {
 	typed, ok := value.(string)
 	if !ok {
 		return "", errors.Invalid(CodeInvalidInput,
-			"%q filtresi dize olmalı, %T verildi", name, value)
+			"filter %q has to be a string, %T given", name, value)
 	}
 	return typed, nil
 }

@@ -8,80 +8,86 @@ import (
 	"github.com/bdrtr/gobit/internal/core/errors"
 )
 
-// Bu dosya order modülünün MODÜLLER ARASI yüzeyidir (ADR 0001, ADR 0006).
+// This file is the CROSS-MODULE surface of the order module (ADR 0001,
+// ADR 0006).
 //
-// internal/workflows altındaki complete_cart saga'sı siparişi bu modül
-// üzerinden açar ve telafide iptal eder, ama ne o paket bu modülü ne bu modül o
-// paketi import edebilir. Çözüm cart/region/pricing modüllerindeki interop.go
-// ile aynıdır: yalnızca İLKEL ve stdlib tipleri kullanan bir yüzey yayımlamak.
-// Tüketici kendi dar arayüzünü tanımlar, bu tip onu YAPISAL olarak karşılar ve
-// container'dan "order.interop" adıyla çözülür.
+// The complete_cart saga under internal/workflows opens the order through this
+// module and cancels it in compensation, but neither can that package import
+// this module nor this module that package. The solution is the same as the
+// interop.go in the cart/region/pricing modules: publishing a surface that uses
+// only PRIMITIVE and stdlib types. The consumer defines its own narrow
+// interface, this type satisfies it STRUCTURALLY, and it is resolved from the
+// container under the name "order.interop".
 //
-// Tüketici tarafındaki karşılığı şudur (workflow kendi paketinde tanımlar):
+// The counterpart on the consumer side is this (the workflow defines it in its
+// own package):
 //
 //	type OrderPlacer interface {
 //	    PlaceOrderJSON(ctx context.Context, snapshot json.RawMessage) (string, error)
 //	    CancelOrder(ctx context.Context, orderID, reason string) error
 //	}
 //
-// [Interop.CompleteOrder] o arayüzde BİLİNÇLİ OLARAK yoktur: tamamlanmış bir
-// sipariş iptal edilemez, yani saga onu çağırdığı anda kendi telafisini
-// imkânsız kılardı (gerekçe tüketici tarafında da yazılıdır).
+// [Interop.CompleteOrder] is DELIBERATELY absent from that interface: a
+// completed order cannot be canceled, so the moment the saga called it, it
+// would make its own compensation impossible (the rationale is written on the
+// consumer side too).
 //
-// Yüzeyin İKİNCİ tüketicisi "order.placed" olayına abone olan BİLDİRİM
-// tarafıdır ve o yalnızca OKUR. Olayın yükü bilinçli olarak dardır ve kişisel
-// veri TAŞIMAZ (gerekçe: [EventFieldTotal] üzerindeki blok); abone gönderim
-// için gereken e-postayı olaydan alamaz, elindeki order_id ile siparişi
-// okuması gerekir. O da kendi dar arayüzünü kendi paketinde tanımlar:
+// The SECOND consumer of the surface is the NOTIFICATION side that subscribes
+// to the "order.placed" event, and it only READS. The payload of the event is
+// deliberately narrow and CARRIES NO personal data (rationale: the block on
+// [EventFieldTotal]); the subscriber cannot get the e-mail it needs for
+// delivery out of the event, it has to read the order with the order_id it
+// holds. It too defines its own narrow interface in its own package:
 //
 //	type OrderContactReader interface {
 //	    OrderContactJSON(ctx context.Context, orderID string) (json.RawMessage, error)
 //	}
 //
-// Bileşik veri (sepetin anlık görüntüsü) JSON olarak taşınır. Alan adları
-// aşağıda AÇIKÇA beyan edilir; tüketici tarafındaki şema ile birebir aynı olmak
-// ZORUNDADIR ve uyum ancak entegrasyon testiyle kanıtlanabilir — bu modül
-// workflow paketini import edemediği için derleyici uyumu denetleyemez.
+// Composite data (the cart's snapshot) travels as JSON. The field names are
+// declared EXPLICITLY below; they MUST be exactly the same as the schema on the
+// consumer side and the match can only be proven by an integration test — the
+// compiler cannot check the match because this module cannot import the
+// workflow package.
 
-// CodeInteropSnapshotInvalid çözülemeyen bir anlık görüntü gövdesi geldiğini
-// bildirir.
+// CodeInteropSnapshotInvalid reports that an unparseable snapshot body arrived.
 const CodeInteropSnapshotInvalid = "order_interop_snapshot_invalid"
 
-// Interop order servisini modüller arası İLKEL yüzeye çevirir.
+// Interop turns the order service into the cross-module PRIMITIVE surface.
 //
-// Hiçbir karar vermez: yalnızca imzayı ve JSON şemasını çevirir. Tüm iş
-// kuralları [Service] üzerinde kalır; buraya kural eklemek, aynı kuralın iki
-// yerde ayrışması demek olurdu.
+// It makes no decision: it only translates the signature and the JSON schema.
+// All the business rules stay on [Service]; adding a rule here would mean the
+// same rule diverging in two places.
 //
-// Container'a "order.interop" adıyla kaydedilir.
+// It is registered in the container under the name "order.interop".
 type Interop struct {
 	svc *Service
 }
 
-// NewInterop verilen servis için modüller arası yüzeyi kurar.
+// NewInterop sets up the cross-module surface for the given service.
 func NewInterop(svc *Service) *Interop { return &Interop{svc: svc} }
 
-// interopSnapshot siparişe dönüşecek sepet görüntüsünün JSON şemasıdır.
+// interopSnapshot is the JSON schema of the cart snapshot that will turn into
+// an order.
 //
-// # Şema
+// # Schema
 //
 //	{
-//	  "cart_id":         "cart_01H…",   // opsiyonel; yalnızca kökeni belgeler
-//	  "region_id":       "reg_01H…",    // ZORUNLU
-//	  "customer_id":     "cus_01H…",    // opsiyonel; boşsa sipariş misafirindir
-//	  "email":           "a@b.com",     // opsiyonel
-//	  "currency_code":   "TRY",         // ZORUNLU, ISO 4217
-//	  "idempotency_key": "wf_01H…",     // opsiyonel; saga'da DOLDURULMALIDIR
-//	  "subtotal":        3000,          // minor unit TAM SAYI
+//	  "cart_id":         "cart_01H…",   // optional; documents the origin only
+//	  "region_id":       "reg_01H…",    // REQUIRED
+//	  "customer_id":     "cus_01H…",    // optional; empty means a guest order
+//	  "email":           "a@b.com",     // optional
+//	  "currency_code":   "TRY",         // REQUIRED, ISO 4217
+//	  "idempotency_key": "wf_01H…",     // optional; MUST BE FILLED in the saga
+//	  "subtotal":        3000,          // minor unit INTEGER
 //	  "discount_total":  0,
 //	  "tax_total":       600,
 //	  "shipping_total":  2500,
 //	  "total":           6100,
-//	  "metadata":        {"kanal": "web"},
-//	  "items": [                        // EN AZ BİR satır
+//	  "metadata":        {"channel": "web"},
+//	  "items": [                        // AT LEAST ONE line
 //	    {
 //	      "variant_id":     "variant_01H…",
-//	      "title":          "Kırmızı Tişört",
+//	      "title":          "Red T-Shirt",
 //	      "quantity":       3,
 //	      "unit_price":     1000,
 //	      "subtotal":       3000,
@@ -93,22 +99,24 @@ func NewInterop(svc *Service) *Interop { return &Interop{svc: svc} }
 //	  ]
 //	}
 //
-// # Görüntüyü kim kurar
+// # Who builds the snapshot
 //
-// complete_cart workflow'u. Sepetin kendi anlık görüntüsü (cart modülünün
-// "cart.interop" yüzeyi) satır KİMLİKLERİNİ ve adetleri taşır, hesaplanan
-// tutarları ise calculate_totals'ın çıktısı taşır; ikisini birleştirip bu şemayı
-// üreten taraf workflow'dur. order modülü ne sepeti ne fiyatlamayı bilir.
+// The complete_cart workflow. The cart's own snapshot (the "cart.interop"
+// surface of the cart module) carries the line IDENTIFIERS and the quantities,
+// while the computed amounts are carried by the output of calculate_totals; the
+// side that merges the two and produces this schema is the workflow. The order
+// module knows neither the cart nor the pricing.
 //
-// # Bilinmeyen alanlar YOK SAYILIR
+// # Unknown fields ARE IGNORED
 //
-// Çözümleme DisallowUnknownFields KULLANMAZ. Sebep bilinçlidir: tüketici,
-// elindeki daha geniş bir görüntüyü (örn. sepetin revision'ı, kargo yöntemleri)
-// olduğu gibi geçirebilmelidir ve o alanlar siparişin işine yaramaz. Katı
-// çözümleme, tüketici tarafına yeni bir alan eklendiğinde bu modülü de
-// değiştirmeyi zorunlu kılar ve iki paketi derleme zamanı bağımlılığı olmadan
-// birbirine kilitlerdi. EKSİK alanlar ise yok sayılmaz: zorunlu alanların
-// eksikliği [Service.CreateOrder]'ın doğrulamasında errors.Invalid ile döner.
+// The parsing DOES NOT USE DisallowUnknownFields. The reason is deliberate: the
+// consumer must be able to pass through a wider snapshot it holds (e.g. the
+// cart's revision, the shipping methods) as it is, and those fields are of no
+// use to the order. Strict parsing would make changing this module mandatory
+// whenever a new field is added on the consumer side and would lock the two
+// packages to each other without a compile-time dependency. MISSING fields, on
+// the other hand, are not ignored: the absence of the required fields returns
+// errors.Invalid from the validation of [Service.CreateOrder].
 type interopSnapshot struct {
 	CartID         string             `json:"cart_id"`
 	RegionID       string             `json:"region_id"`
@@ -125,7 +133,7 @@ type interopSnapshot struct {
 	Items          []interopOrderItem `json:"items"`
 }
 
-// interopOrderItem bir sipariş satırının JSON şemasıdır.
+// interopOrderItem is the JSON schema of one order line.
 type interopOrderItem struct {
 	VariantID     string         `json:"variant_id"`
 	Title         string         `json:"title"`
@@ -138,49 +146,50 @@ type interopOrderItem struct {
 	Metadata      map[string]any `json:"metadata"`
 }
 
-// PlaceOrderJSON sepetin anlık görüntüsünden sipariş açar ve kimliğini döner.
+// PlaceOrderJSON opens an order from the cart snapshot and returns its
+// identifier.
 //
-// Şema [interopSnapshot] belgesinde tanımlıdır. Görüntüdeki
-// "idempotency_key" doluysa çağrı İDEMPOTENTTİR: aynı anahtarla ikinci çağrı
-// yeni sipariş açmaz, mevcut siparişin kimliğini döner. Saga bir adımı yeniden
-// deneyebildiği için (plan Bölüm 2.6) bu alanın doldurulması complete_cart'ın
-// sorumluluğundadır.
+// The schema is defined in the [interopSnapshot] documentation. When the
+// "idempotency_key" in the snapshot is filled the call is IDEMPOTENT: a second
+// call with the same key does not open a new order, it returns the identifier
+// of the existing one. Because the saga may retry a step (plan Section 2.6),
+// filling this field is complete_cart's responsibility.
 func (i *Interop) PlaceOrderJSON(ctx context.Context, snapshot json.RawMessage) (string, error) {
-	var gelen interopSnapshot
-	if err := json.Unmarshal(snapshot, &gelen); err != nil {
+	var incoming interopSnapshot
+	if err := json.Unmarshal(snapshot, &incoming); err != nil {
 		return "", errors.Wrap(err, errors.KindInvalid, CodeInteropSnapshotInvalid,
-			"sipariş anlık görüntüsü çözülemedi")
+			"order snapshot could not be parsed")
 	}
 
-	items := make([]CreateOrderItemInput, 0, len(gelen.Items))
-	for k := range gelen.Items {
+	items := make([]CreateOrderItemInput, 0, len(incoming.Items))
+	for k := range incoming.Items {
 		items = append(items, CreateOrderItemInput{
-			VariantID:     gelen.Items[k].VariantID,
-			Title:         gelen.Items[k].Title,
-			Quantity:      gelen.Items[k].Quantity,
-			UnitPrice:     gelen.Items[k].UnitPrice,
-			Subtotal:      gelen.Items[k].Subtotal,
-			DiscountTotal: gelen.Items[k].DiscountTotal,
-			TaxTotal:      gelen.Items[k].TaxTotal,
-			Total:         gelen.Items[k].Total,
-			Metadata:      gelen.Items[k].Metadata,
+			VariantID:     incoming.Items[k].VariantID,
+			Title:         incoming.Items[k].Title,
+			Quantity:      incoming.Items[k].Quantity,
+			UnitPrice:     incoming.Items[k].UnitPrice,
+			Subtotal:      incoming.Items[k].Subtotal,
+			DiscountTotal: incoming.Items[k].DiscountTotal,
+			TaxTotal:      incoming.Items[k].TaxTotal,
+			Total:         incoming.Items[k].Total,
+			Metadata:      incoming.Items[k].Metadata,
 		})
 	}
 
 	order, err := i.svc.CreateOrder(ctx, CreateOrderInput{
-		RegionID:       gelen.RegionID,
-		CustomerID:     gelen.CustomerID,
-		Email:          gelen.Email,
-		CurrencyCode:   gelen.CurrencyCode,
-		CartID:         gelen.CartID,
-		IdempotencyKey: gelen.IdempotencyKey,
-		Subtotal:       gelen.Subtotal,
-		DiscountTotal:  gelen.DiscountTotal,
-		TaxTotal:       gelen.TaxTotal,
-		ShippingTotal:  gelen.ShippingTotal,
-		Total:          gelen.Total,
+		RegionID:       incoming.RegionID,
+		CustomerID:     incoming.CustomerID,
+		Email:          incoming.Email,
+		CurrencyCode:   incoming.CurrencyCode,
+		CartID:         incoming.CartID,
+		IdempotencyKey: incoming.IdempotencyKey,
+		Subtotal:       incoming.Subtotal,
+		DiscountTotal:  incoming.DiscountTotal,
+		TaxTotal:       incoming.TaxTotal,
+		ShippingTotal:  incoming.ShippingTotal,
+		Total:          incoming.Total,
 		Items:          items,
-		Metadata:       gelen.Metadata,
+		Metadata:       incoming.Metadata,
 	})
 	if err != nil {
 		return "", err
@@ -188,56 +197,59 @@ func (i *Interop) PlaceOrderJSON(ctx context.Context, snapshot json.RawMessage) 
 	return order.ID, nil
 }
 
-// CancelOrder siparişi iptal eder; SAGA TELAFİSİDİR ve İDEMPOTENTTİR.
+// CancelOrder cancels the order; it IS THE SAGA COMPENSATION and it IS
+// IDEMPOTENT.
 //
-// Zaten iptal edilmiş bir sipariş ikinci çağrıda hata VERMEZ. Tamamlanmış bir
-// siparişin iptali ise errors.Conflict döner; gerekçe için bkz.
-// [Service.CancelOrder].
+// An already canceled order DOES NOT return an error on the second call.
+// Canceling a completed order, on the other hand, returns errors.Conflict; for
+// the rationale see [Service.CancelOrder].
 func (i *Interop) CancelOrder(ctx context.Context, orderID, reason string) error {
 	return i.svc.CancelOrder(ctx, orderID, reason)
 }
 
-// CompleteOrder siparişi tamamlanmış olarak damgalar.
+// CompleteOrder stamps the order as completed.
 //
-// İdempotent DEĞİLDİR: ikinci çağrı errors.Conflict döner (gerekçe için bkz.
-// [Service.CompleteOrder]). İleri yönlü bir adım olduğu için saga'nın
-// idempotency-key'i tekrarı zaten engeller.
+// It is NOT idempotent: a second call returns errors.Conflict (for the
+// rationale see [Service.CompleteOrder]). Because it is a forward step, the
+// saga's idempotency key already prevents the repetition.
 func (i *Interop) CompleteOrder(ctx context.Context, orderID string) error {
 	_, err := i.svc.CompleteOrder(ctx, orderID)
 	return err
 }
 
-// interopContact bildirim gönderecek abonenin siparişten okuduğu alanların
-// JSON şemasıdır.
+// interopContact is the JSON schema of the fields that the subscriber which
+// will send the notification reads from the order.
 //
-// # Şema
+// # Schema
 //
 //	{
 //	  "order_id":      "order_01H…",
-//	  "display_id":    "1042",       // ondalıksız DİZE
-//	  "email":         "a@b.com",    // BOŞ olabilir
+//	  "display_id":    "1042",       // STRING without decimals
+//	  "email":         "a@b.com",    // may be EMPTY
 //	  "currency_code": "TRY",
-//	  "total":         "6100",       // minor unit, ondalıksız DİZE
-//	  "item_count":    "2"           // ondalıksız DİZE
+//	  "total":         "6100",       // minor unit, STRING without decimals
+//	  "item_count":    "2"           // STRING without decimals
 //	}
 //
-// # Neden TÜM değerler dize
+// # Why ALL values are strings
 //
-// Alan adları ve tipleri "order.placed" olayının yüküyle BİREBİR aynıdır
-// (bkz. [EventFieldOrderID] ve devamı). Abone iki kaynağı yan yana kullanır:
-// olaydan order_id'yi alır, gerisini buradan okur. İkisi farklı tip
-// kullansaydı — olayda dize, burada tam sayı — abone aynı alanı iki ayrı
-// biçimde çözmek zorunda kalır ve tutar bir tarafta float64'e uğrardı
-// (plan Bölüm 8: float ASLA). Tek biçim, aboneyi tek bir okuma kuralına
-// bağlar.
+// The field names and the types are EXACTLY the same as the payload of the
+// "order.placed" event (see [EventFieldOrderID] and what follows). The
+// subscriber uses the two sources side by side: it takes order_id from the
+// event and reads the rest from here. Had the two used different types — a
+// string in the event, an integer here — the subscriber would have to parse the
+// same field in two separate forms and the amount would pass through float64 on
+// one side (plan Section 8: NEVER float). A single form binds the subscriber to
+// a single reading rule.
 //
-// # Neden yalnızca bu alanlar
+// # Why only these fields
 //
-// Şablonun doldurabilmesi için gereken en küçük küme budur: kime (email),
-// hangi sipariş (order_id, display_id) ve ne kadar (total, currency_code,
-// item_count). Siparişin tamamını — satırları, adresi, özeti — dönmek yüzeyi
-// bir daha daraltılamayacak geniş bir sözleşmeye çevirirdi: sözleşmeye giren
-// alan, tüketicisi olmasa bile bir daha çıkarılamaz.
+// This is the smallest set needed for the template to be fillable: to whom
+// (email), which order (order_id, display_id) and how much (total,
+// currency_code, item_count). Returning the whole order — the lines, the
+// address, the summary — would turn the surface into a wide contract that could
+// never be narrowed again: a field that enters a contract can never be taken
+// out again, even if it has no consumer.
 type interopContact struct {
 	OrderID      string `json:"order_id"`
 	DisplayID    string `json:"display_id"`
@@ -247,42 +259,43 @@ type interopContact struct {
 	ItemCount    string `json:"item_count"`
 }
 
-// OrderContactJSON siparişin bildirim için gereken alanlarını döner.
+// OrderContactJSON returns the fields of the order needed for the notification.
 //
-// Şema [interopContact] belgesinde tanımlıdır ve TÜM değerleri dizedir.
-// Sipariş yoksa (ya da yumuşak silinmişse) errors.NotFound döner; kimlik boşsa
-// errors.Invalid.
+// The schema is defined in the [interopContact] documentation and ALL of its
+// values are strings. When the order does not exist (or has been soft deleted)
+// errors.NotFound is returned; when the identifier is empty, errors.Invalid.
 //
-// # E-postası olmayan sipariş HATA DEĞİLDİR
+// # An order without an e-mail IS NOT AN ERROR
 //
-// Email opsiyoneldir (bkz. [CreateOrderInput.Email]): yönetim tarafından
-// açılan bir sipariş adressiz olabilir. Böyle bir siparişte alan BOŞ DİZE
-// olarak döner, çağrı BAŞARILIDIR ve "email" anahtarı yine gövdededir.
+// Email is optional (see [CreateOrderInput.Email]): an order opened by
+// administration may have no address. On such an order the field is returned as
+// an EMPTY STRING, the call SUCCEEDS and the "email" key is still in the body.
 //
-// Alternatif — adressiz siparişte hata dönmek — iki yerde yanlış olurdu.
-// Birincisi bu yüzey bir OKUMADIR: kaydın ne olduğunu bildirir, kaydın ne
-// olması gerektiğine karar vermez; adressiz sipariş geçerli bir kayıttır.
-// İkincisi ve asıl olanı, tüketicinin hatayı nasıl karşılayacağıdır: abone
-// için "gönderilecek adres yok" KALICI bir durumdur ve atlanmalıdır, oysa
-// hata dönmek onu yeniden denenecek bir arızadan ayırt edilemez hâle
-// getirirdi — abone ya adressiz her siparişi sonsuza dek yeniden dener ya da
-// gerçek arızaları da sessizce yutardı. Boş dize, tek bir kontrolle
-// ayrılabilen kesin bir cevaptır.
+// The alternative — returning an error on an addressless order — would be wrong
+// in two places. First, this surface is a READ: it reports what the record is,
+// it does not decide what the record should be; an addressless order is a valid
+// record. Second, and the real one, is how the consumer would handle the error:
+// for the subscriber "there is no address to send to" is a PERMANENT condition
+// and must be skipped, whereas returning an error would make it
+// indistinguishable from a fault that is to be retried — the subscriber would
+// either retry every addressless order forever or silently swallow the real
+// faults too. An empty string is a definite answer that can be told apart with
+// a single check.
 //
-// Okuma [Service.GetOrder] ile yapılır: satır sayısı ve sipariş başlığı AYNI
-// anlık görüntüden gelir, dolayısıyla item_count her zaman dönen tutarın ait
-// olduğu siparişin satır sayısıdır.
+// The read is done with [Service.GetOrder]: the line count and the order header
+// come from the SAME snapshot, so item_count is always the line count of the
+// order the returned amount belongs to.
 func (i *Interop) OrderContactJSON(ctx context.Context, orderID string) (json.RawMessage, error) {
-	detay, err := i.svc.GetOrder(ctx, orderID)
+	detail, err := i.svc.GetOrder(ctx, orderID)
 	if err != nil {
 		return nil, err
 	}
 	return json.Marshal(interopContact{
-		OrderID:      detay.ID,
-		DisplayID:    strconv.FormatInt(detay.DisplayID, 10),
-		Email:        detay.Email,
-		CurrencyCode: detay.CurrencyCode,
-		Total:        strconv.FormatInt(detay.Total, 10),
-		ItemCount:    strconv.Itoa(len(detay.Items)),
+		OrderID:      detail.ID,
+		DisplayID:    strconv.FormatInt(detail.DisplayID, 10),
+		Email:        detail.Email,
+		CurrencyCode: detail.CurrencyCode,
+		Total:        strconv.FormatInt(detail.Total, 10),
+		ItemCount:    strconv.Itoa(len(detail.Items)),
 	})
 }

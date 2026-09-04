@@ -1,37 +1,41 @@
 package models
 
-// Bu dosya fulfillment modülünün DURUM MAKİNESİDİR.
+// This file is the fulfillment module's STATE MACHINE.
 //
-// Geçişler burada, saf ve veritabanısız fonksiyonlar olarak durur; servis
-// yalnızca sonucu tipli hataya çevirir. Ayrım bilinçlidir: bir geçişin geçerli
-// olup olmadığı bir iş kuralıdır ve tablo hâlinde okunabilmeli, üç ayrı servis
-// metodunun içine dağılmış if'lerden çıkarılmak zorunda kalınmamalıdır
-// (payment modülündeki ayrımın aynısı).
+// The transitions live here, as pure and database-free functions; the service
+// only turns the result into a typed error. The separation is deliberate:
+// whether a transition is legal is a business rule and must be readable as a
+// table, rather than having to be extracted from ifs scattered across three
+// separate service methods (the same separation as in the payment module).
 
-// FulfillmentStatus bir gönderinin durumudur.
+// FulfillmentStatus is the status of a fulfillment.
 //
-// Değerler internal/core/provider'daki provider.FulfillmentStatus ile BİREBİR
-// aynıdır ama o paket burada yeniden kullanılmaz: sütun değeri modülün kendi
-// şemasına aittir ve çekirdek sözleşmesi değiştiğinde veritabanındaki değerler
-// sessizce değişmemelidir. Çeviri repository/servis sınırında yapılır.
+// The values are IDENTICAL to provider.FulfillmentStatus in
+// internal/core/provider, but that package is not reused here: the column value
+// belongs to the module's own schema, and the values in the database must not
+// change silently when the core contract changes. The translation is done at
+// the repository/service boundary.
 type FulfillmentStatus string
 
-// Gönderi durumları.
+// Fulfillment statuses.
 const (
-	// StatusPending gönderi oluşturuldu, kargo firması henüz teslim almadı.
+	// StatusPending means the fulfillment was created and the carrier has not
+	// picked it up yet.
 	StatusPending FulfillmentStatus = "pending"
-	// StatusShipped kargo firması gönderiyi teslim aldı; yoldadır.
+	// StatusShipped means the carrier picked the fulfillment up; it is on its
+	// way.
 	StatusShipped FulfillmentStatus = "shipped"
-	// StatusDelivered gönderi alıcıya ulaştı. GERİ DÖNÜŞSÜZDÜR.
+	// StatusDelivered means the fulfillment reached the recipient. IT IS
+	// IRREVERSIBLE.
 	StatusDelivered FulfillmentStatus = "delivered"
-	// StatusCanceled gönderi iptal edildi.
+	// StatusCanceled means the fulfillment was canceled.
 	StatusCanceled FulfillmentStatus = "canceled"
 )
 
-// String durumun metin karşılığını döner.
+// String returns the textual form of the status.
 func (s FulfillmentStatus) String() string { return string(s) }
 
-// Valid durumun tanımlı bir değer olup olmadığını bildirir.
+// Valid reports whether the status is a defined value.
 func (s FulfillmentStatus) Valid() bool {
 	switch s {
 	case StatusPending, StatusShipped, StatusDelivered, StatusCanceled:
@@ -41,24 +45,27 @@ func (s FulfillmentStatus) Valid() bool {
 	}
 }
 
-// Action bir gönderi işleminin durum makinesindeki sonucudur.
+// Action is the outcome of a fulfillment operation in the state machine.
 //
-// Sıfır değeri [ActionConflict]'tir; tanımsız bir durum kazara "devam et"
-// olarak yorumlanmaz.
+// Its zero value is [ActionConflict]; an undefined status is never accidentally
+// read as "go ahead".
 type Action uint8
 
-// Gönderi işlemlerinin olası sonuçları.
+// The possible outcomes of fulfillment operations.
 const (
-	// ActionConflict geçiş GEÇERSİZDİR; servis errors.Conflict döner.
+	// ActionConflict means the transition is ILLEGAL; the service returns
+	// errors.Conflict.
 	ActionConflict Action = iota
-	// ActionProceed geçiş geçerlidir; işlem yapılır ve durum yazılır.
+	// ActionProceed means the transition is legal; the operation is performed
+	// and the status is written.
 	ActionProceed
-	// ActionNoop gönderi ZATEN hedef durumdadır; sağlayıcıya GİDİLMEZ ve hata
-	// dönmez. İdempotentliği sağlayan daldır.
+	// ActionNoop means the fulfillment is ALREADY in the target status; the
+	// provider is NOT contacted and no error is returned. This is the branch
+	// that provides idempotency.
 	ActionNoop
 )
 
-// String sonucun metin karşılığını döner.
+// String returns the textual form of the outcome.
 func (a Action) String() string {
 	switch a {
 	case ActionProceed:
@@ -72,25 +79,28 @@ func (a Action) String() string {
 	}
 }
 
-// CancelAction iptal isteğinin bu durumdaki sonucunu döner.
+// CancelAction returns the outcome of a cancel request in this status.
 //
-// İptal SAGA TELAFİSİDİR ve çekirdek sözleşmesi (internal/core/provider) gereği
-// İDEMPOTENT olmak ZORUNDADIR; tablodaki tek conflict dalı geri alınamaz olandır.
+// Cancellation IS THE SAGA COMPENSATION and, per the core contract
+// (internal/core/provider), it MUST be IDEMPOTENT; the only conflict branch in
+// the table is the irreversible one.
 //
-// Geçiş tablosu:
+// Transition table:
 //
-//	pending   -> proceed   (etiket iptal edilir)
-//	shipped   -> proceed   (kargo firması yoldaki gönderiyi GERİ ÇAĞIRABİLİR;
-//	                        yapabilip yapamayacağının mercii sağlayıcıdır ve
-//	                        yapamıyorsa Cancel hata döner. Burada kapatmak,
-//	                        operatörü sistemin dışında çalışmaya zorlardı.)
-//	delivered -> conflict  (teslim GERÇEKLEŞMİŞTİR; paket müşterinin elindedir
-//	                        ve "iptal" fiziksel dünya hakkında yalan olurdu.
-//	                        Çaresi İADEDİR: is_return işaretli bir kargo
-//	                        seçeneğiyle yeni bir gönderi açılır. Kural,
-//	                        payment'ta tahsil edilmiş bir oturumun iptal
-//	                        edilemeyip iade edilmesiyle aynıdır.)
-//	canceled  -> noop      (idempotentlik burada sağlanır)
+//	pending   -> proceed   (the label is canceled)
+//	shipped   -> proceed   (the carrier CAN RECALL a fulfillment in transit;
+//	                        the authority on whether it can is the provider,
+//	                        and if it cannot, Cancel returns an error. Closing
+//	                        this off here would force the operator to work
+//	                        outside the system.)
+//	delivered -> conflict  (delivery HAS HAPPENED; the parcel is in the
+//	                        customer's hands and "cancel" would be a lie about
+//	                        the physical world. The remedy is a RETURN: a new
+//	                        fulfillment is opened with a shipping option marked
+//	                        is_return. The rule is the same as a captured
+//	                        session in payment not being cancelable but
+//	                        refundable.)
+//	canceled  -> noop      (idempotency is provided here)
 func (s FulfillmentStatus) CancelAction() Action {
 	switch s {
 	case StatusPending, StatusShipped:
@@ -104,14 +114,15 @@ func (s FulfillmentStatus) CancelAction() Action {
 	}
 }
 
-// ShipAction kargoya verme isteğinin bu durumdaki sonucunu döner.
+// ShipAction returns the outcome of a ship request in this status.
 //
-// Geçiş tablosu:
+// Transition table:
 //
-//	pending   -> proceed   (kargo firması teslim aldı; shipped_at yazılır)
-//	shipped   -> noop      (aynı gönderi İKİ KEZ yola çıkmaz)
-//	delivered -> conflict  (teslim edilmiş gönderi geriye, "yolda"ya dönmez)
-//	canceled  -> conflict  (iptal edilmiş gönderi yola çıkmaz)
+//	pending   -> proceed   (the carrier picked it up; shipped_at is written)
+//	shipped   -> noop      (the same fulfillment does not set out TWICE)
+//	delivered -> conflict  (a delivered fulfillment does not go back to "in
+//	                        transit")
+//	canceled  -> conflict  (a canceled fulfillment does not set out)
 func (s FulfillmentStatus) ShipAction() Action {
 	switch s {
 	case StatusPending:
@@ -125,17 +136,17 @@ func (s FulfillmentStatus) ShipAction() Action {
 	}
 }
 
-// DeliverAction teslim bildiriminin bu durumdaki sonucunu döner.
+// DeliverAction returns the outcome of a delivery notification in this status.
 //
-// Geçiş tablosu:
+// Transition table:
 //
-//	pending   -> conflict  (teslim alınmamış bir gönderi teslim EDİLEMEZ;
-//	                        sırayı atlamak, shipped_at'i boş bırakır ve
-//	                        mutabakatta gönderinin ne zaman yola çıktığı
-//	                        cevapsız kalırdı)
-//	shipped   -> proceed   (delivered_at yazılır)
-//	delivered -> noop      (idempotentlik burada sağlanır)
-//	canceled  -> conflict  (iptal edilmiş gönderi teslim edilmez)
+//	pending   -> conflict  (a fulfillment that was never picked up CANNOT be
+//	                        delivered; skipping the step would leave shipped_at
+//	                        empty and reconciliation would have no answer for
+//	                        when the fulfillment set out)
+//	shipped   -> proceed   (delivered_at is written)
+//	delivered -> noop      (idempotency is provided here)
+//	canceled  -> conflict  (a canceled fulfillment is not delivered)
 func (s FulfillmentStatus) DeliverAction() Action {
 	switch s {
 	case StatusShipped:

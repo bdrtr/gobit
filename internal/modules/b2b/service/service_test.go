@@ -146,7 +146,7 @@ func TestCalisanEklemeKimlikOneklerinizDenetler(t *testing.T) {
 
 	_, err := svc.CreateEmployee(t.Context(), EmployeeInput{
 		CompanyID: company.ID,
-		// Şirket kimliği müşteri kimliği yerine verilmiş.
+		// Şirket kimliği customer id yerine verilmiş.
 		CustomerID: company.ID,
 	})
 	assert.True(t, errors.IsInvalid(err), "beklenen sınıf Invalid, gelen: %v", err)
@@ -448,7 +448,7 @@ func TestCalisanListesiMusteriKimliklerinizTekSorguylaDoldurur(t *testing.T) {
 	assert.Equal(t, int64(3), sayfa.Count)
 	assert.Equal(t, 1, links.calls["ListMany"], "kayıt sayısından bağımsız TEK bağ sorgusu olmalı")
 	for _, e := range sayfa.Items {
-		assert.NotEmpty(t, e.CustomerID, "her kaydın müşteri kimliği dolmalı")
+		assert.NotEmpty(t, e.CustomerID, "her kaydın customer id dolmalı")
 	}
 }
 

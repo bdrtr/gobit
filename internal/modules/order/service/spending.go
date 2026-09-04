@@ -102,7 +102,7 @@ type spendingRule struct {
 // doğrulayamaz. Kimliğin kaynağı vitrin sepetinin gövdesindeki "customer_id"
 // alanıdır; mağaza yüzeyinin tek kimliği publishable API anahtarıdır ve o bir
 // SATIŞ KANALINI temsil eder, bir müşteriyi değil (bkz. corehttp.Principal —
-// alanları arasında müşteri kimliği YOKTUR). Yani sunucunun "isteği gerçekten
+// alanları arasında customer id YOKTUR). Yani sunucunun "isteği gerçekten
 // bu müşteri yaptı" diyebileceği bir kanıt hiçbir katmanda üretilmiyor.
 //
 // Sonucu tek cümleyle: harcama limiti, MÜŞTERİYİ BEYAN EDEN alışverişlere

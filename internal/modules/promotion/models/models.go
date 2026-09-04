@@ -1,115 +1,117 @@
-// Package models promotion modülünün domain modellerini tanımlar.
+// Package models defines the domain models of the promotion module.
 //
-// Buradaki tipler veritabanı tiplerinden ARINDIRILMIŞTIR: pgtype bu pakete
-// girmez, dönüşüm repository sarmalayıcısında yapılır. Böylece servis ve API
-// katmanları depolama ayrıntısına bağlanmaz.
+// The types here are STRIPPED of database types: pgtype does not enter this package,
+// the conversion is done in the repository wrapper. The service and API layers are
+// thereby not bound to a storage detail.
 //
-// Para daima TAM SAYI minor unit'tir (kuruş/cent) ve para birimi ayrı alanda
-// durur (plan Bölüm 8); float hiçbir yerde kullanılmaz. ORANLAR baz puandır
-// (2000 = %20) ve yuvarlama yönü [BasisPointDenominator] yanında belgelidir.
-// Zamanlar UTC'dir.
+// Money is always an INTEGER minor unit (cents) and the currency lives in a separate
+// field (plan Section 8); float is used nowhere. RATES are basis points (2000 = 20%)
+// and the rounding direction is documented next to [BasisPointDenominator]. Times
+// are UTC.
 package models
 
 import "time"
 
-// Tutar, oran ve adet sınırları.
+// Amount, rate and quantity limits.
 //
-// Sınırlar keyfi değildir, TAŞMA korumasıdır. En büyük ara çarpım
-// MaxAmount × BasisPointDenominator = 10^12 × 10^4 = 10^16'dır ve int64'ün
-// üst sınırı olan 9.22×10^18'in çok altındadır; yüzde hesabı bu yüzden
-// yapısal olarak taşamaz. Aynı sınırlar migration'daki CHECK kısıtlarında da
-// tekrarlanır: servis doğrulaması atlansa bile veritabanı ikinci kapıdır.
+// The limits are not arbitrary, they are OVERFLOW protection. The largest
+// intermediate product is MaxAmount × BasisPointDenominator = 10^12 × 10^4 = 10^16,
+// which is far below int64's upper bound of 9.22×10^18; a percentage calculation
+// therefore cannot overflow structurally. The same limits are repeated in the CHECK
+// constraints of the migration: even if the service validation is skipped, the
+// database is the second gate.
 const (
-	// MinAmount izin verilen en küçük tutardır.
+	// MinAmount is the smallest permitted amount.
 	MinAmount int64 = 0
-	// MaxAmount izin verilen en büyük tutardır (minor unit). Hem tek bir
-	// kalemin tutarı hem de bir hesabın ara toplamı bu sınırla bağlıdır.
+	// MaxAmount is the largest permitted amount (minor unit). Both the amount of a
+	// single line and the subtotal of a computation are bound by this limit.
 	MaxAmount int64 = 1_000_000_000_000
-	// MinQuantity bir kalemin en küçük adedidir.
+	// MinQuantity is the smallest quantity of a line.
 	MinQuantity int64 = 1
-	// MaxQuantity bir kalemin en büyük adedidir.
+	// MaxQuantity is the largest quantity of a line.
 	MaxQuantity int64 = 1_000_000
-	// BasisPointDenominator baz puan paydasıdır: 10000 baz puan = %100.
+	// BasisPointDenominator is the basis point denominator: 10000 basis points = 100%.
 	//
-	// # Yuvarlama yönü
+	// # Rounding direction
 	//
-	// Yüzde indirim `tutar * bps / BasisPointDenominator` biçiminde TAM SAYI
-	// aritmetiğiyle hesaplanır ve Go'nun tam sayı bölmesi sıfıra doğru kırptığı
-	// için sonuç AŞAĞI yuvarlanır. Yön bilinçlidir:
+	// A percentage discount is computed as `amount * bps / BasisPointDenominator`
+	// with INTEGER arithmetic, and because Go's integer division truncates toward
+	// zero the result is rounded DOWN. The direction is deliberate:
 	//
-	//   - İndirim, vaat edilen yüzdeyi hiçbir zaman AŞMAZ. Yukarı yuvarlama,
-	//     "%20 indirim" yazan bir kampanyanın kuruş düzeyinde %20'den fazlasını
-	//     vermesi demek olurdu ve kampanya bütçesi tam olarak vaat edilenle
-	//     sınırlı kalmazdı.
-	//   - Hata satır başına en fazla BİR minor unit'tir.
-	//   - "across" tahsisinde toplam BİR KEZ yuvarlanır ve kuruş artığı
-	//     kalemlere dağıtılır (bkz. service paketindeki tahsis kuralı), yani
-	//     sepet düzeyinde kayıp yine en fazla bir minor unit'tir.
+	//   - The discount never EXCEEDS the promised percentage. Rounding up would mean
+	//     that a campaign advertising "20% off" gives more than 20% at the cent
+	//     level, and the campaign budget would not stay bounded by exactly what was
+	//     promised.
+	//   - The error is at most ONE minor unit per line.
+	//   - In an "across" allocation the total is rounded ONCE and the cent remainder
+	//     is distributed over the lines (see the allocation rule in the service
+	//     package), so the loss at cart level is again at most one minor unit.
 	BasisPointDenominator int64 = 10_000
 )
 
-// CampaignBudgetType bir kampanya bütçesinin ölçü birimidir.
+// CampaignBudgetType is the unit of measure of a campaign budget.
 type CampaignBudgetType string
 
-// Kampanya bütçe türleri.
+// Campaign budget types.
 const (
-	// BudgetNone bütçesiz kampanyadır; kullanım sınırsızdır.
+	// BudgetNone is a campaign without a budget; usage is unlimited.
 	BudgetNone CampaignBudgetType = "none"
-	// BudgetSpend bütçeyi PARA olarak ölçer; her kullanım, kullanılan indirim
-	// tutarı kadar bütçe tüketir ve bütçenin para birimi zorunludur.
+	// BudgetSpend measures the budget as MONEY; every redemption consumes as much
+	// budget as the discount amount it used, and the budget currency is mandatory.
 	BudgetSpend CampaignBudgetType = "spend"
-	// BudgetUsage bütçeyi ADET olarak ölçer; her kullanım bütçeyi bir tüketir.
+	// BudgetUsage measures the budget as a COUNT; every redemption consumes one.
 	BudgetUsage CampaignBudgetType = "usage"
 )
 
-// Valid türün tanımlı olup olmadığını bildirir.
+// Valid reports whether the type is defined.
 func (t CampaignBudgetType) Valid() bool {
 	return t == BudgetNone || t == BudgetSpend || t == BudgetUsage
 }
 
-// Campaign promosyonların kabıdır: ortak bir tarih penceresi ve ortak bir bütçe
-// taşır.
+// Campaign is the container of promotions: it carries a shared date window and a
+// shared budget.
 //
-// Kap, bir promosyonun kendi durumunun YERİNE geçmez: bir promosyon hem kendi
-// durumu hem kampanyasının penceresi/bütçesi uygunken uygulanır.
+// The container does not stand IN PLACE OF a promotion's own status: a promotion is
+// applied when both its own status and its campaign's window/budget are eligible.
 type Campaign struct {
-	// ID "camp_" önekli, zaman sıralı kimliktir.
+	// ID is the "camp_" prefixed, time-ordered identifier.
 	ID string
-	// Name kampanyanın görünen adıdır; boş olamaz.
+	// Name is the display name of the campaign; it cannot be empty.
 	Name string
-	// CampaignIdentifier operatörün verdiği BENZERSİZ iş kimliğidir (örn.
-	// "BLACKFRIDAY-2026"). Kimlikten ayrıdır: dış sistemler kampanyayı bu adla
-	// tanır ve ad, kimliğin aksine okunabilir olmalıdır.
+	// CampaignIdentifier is the UNIQUE business identifier given by the operator
+	// (e.g. "BLACKFRIDAY-2026"). It is separate from the ID: outside systems know the
+	// campaign by this name, and the name, unlike the ID, has to be readable.
 	CampaignIdentifier string
-	// Description isteğe bağlı açıklamadır.
+	// Description is the optional description.
 	Description string
-	// StartsAt geçerlilik penceresinin başıdır; nil ise alt sınır yoktur.
+	// StartsAt is the start of the validity window; if nil there is no lower bound.
 	StartsAt *time.Time
-	// EndsAt geçerlilik penceresinin sonudur; nil ise üst sınır yoktur.
+	// EndsAt is the end of the validity window; if nil there is no upper bound.
 	EndsAt *time.Time
-	// BudgetType bütçenin ölçü birimidir.
+	// BudgetType is the unit of measure of the budget.
 	BudgetType CampaignBudgetType
-	// BudgetLimit bütçenin üst sınırıdır; nil ise sınır yoktur. Birimi
-	// [BudgetType]'a göre minor unit ya da adettir.
+	// BudgetLimit is the upper bound of the budget; if nil there is no bound. Its
+	// unit is the minor unit or a count, according to [BudgetType].
 	BudgetLimit *int64
-	// BudgetUsed bütçenin TÜKETİLEN kısmıdır; [BudgetLimit] ile aynı birimdedir.
+	// BudgetUsed is the CONSUMED part of the budget; it is in the same unit as
+	// [BudgetLimit].
 	BudgetUsed int64
-	// BudgetCurrencyCode "spend" bütçesinin para birimidir (ISO 4217, BÜYÜK
-	// harf); diğer türlerde boştur.
+	// BudgetCurrencyCode is the currency of a "spend" budget (ISO 4217, UPPERCASE);
+	// on the other types it is empty.
 	BudgetCurrencyCode string
-	// CreatedAt kaydın oluşturulma anıdır (UTC).
+	// CreatedAt is the moment the record was created (UTC).
 	CreatedAt time.Time
-	// UpdatedAt kaydın son güncellenme anıdır (UTC).
+	// UpdatedAt is the moment the record was last updated (UTC).
 	UpdatedAt time.Time
-	// DeletedAt soft delete anıdır; nil ise kayıt canlıdır.
+	// DeletedAt is the moment of the soft delete; if nil the record is live.
 	DeletedAt *time.Time
 }
 
-// WindowContains verilen anın kampanyanın penceresinde olup olmadığını bildirir.
+// WindowContains reports whether the given moment falls inside the campaign's window.
 //
-// Pencere uçları KAPSAYICIDIR (nil uç = sınırsız): bir kampanyanın bitiş anında
-// hâlâ geçerli olması, saniye hassasiyetinde bir sınırın müşteriye "kampanya
-// bitti" demesinden yeğdir.
+// The ends of the window are INCLUSIVE (a nil end = unbounded): a campaign still
+// being valid at its ending moment is preferable to a second-precision boundary
+// telling the customer "the campaign is over".
 func (c Campaign) WindowContains(at time.Time) bool {
 	if c.StartsAt != nil && at.Before(*c.StartsAt) {
 		return false
@@ -120,11 +122,11 @@ func (c Campaign) WindowContains(at time.Time) bool {
 	return true
 }
 
-// BudgetExhausted bütçenin TÜKENMİŞ olup olmadığını bildirir.
+// BudgetExhausted reports whether the budget is EXHAUSTED.
 //
-// Sınırsız bütçe (limit nil ya da tür "none") asla tükenmez. Sınır varsa
-// tükenme koşulu `kullanılan >= sınır`dır: sınıra TAM oturmuş bir bütçede
-// yeni bir kullanım sınırı aşardı.
+// An unbounded budget (nil limit, or type "none") is never exhausted. If there is a
+// bound, the exhaustion condition is `used >= limit`: on a budget that sits EXACTLY
+// on the bound, a new redemption would exceed it.
 func (c Campaign) BudgetExhausted() bool {
 	if c.BudgetType == BudgetNone || c.BudgetLimit == nil {
 		return false
@@ -132,15 +134,15 @@ func (c Campaign) BudgetExhausted() bool {
 	return c.BudgetUsed >= *c.BudgetLimit
 }
 
-// BudgetDeltaFor bir kullanımın bütçeden ne kadar tüketeceğini bildirir.
+// BudgetDeltaFor reports how much a redemption will consume from the budget.
 //
-// Birim [BudgetType]'a bağlıdır: "spend" bütçesi PARA tüketir (uygulanan
-// indirim tutarı kadar), "usage" bütçesi ADET tüketir (kullanım başına bir),
-// bütçesiz kampanya hiçbir şey tüketmez.
+// The unit depends on [BudgetType]: a "spend" budget consumes MONEY (as much as the
+// applied discount amount), a "usage" budget consumes a COUNT (one per redemption),
+// a campaign without a budget consumes nothing.
 //
-// Kural burada, domain'de durur; kullanım akışı onu yalnızca ÇAĞIRIR. Repo
-// katmanında kopyalansaydı, bütçe türü eklendiğinde iki yerin ayrışması
-// sessiz bir muhasebe hatası olurdu.
+// The rule lives here, in the domain; the redemption flow only CALLS it. Had it been
+// copied into the repository layer, the two places drifting apart when a budget type
+// is added would be a silent accounting error.
 func (c Campaign) BudgetDeltaFor(amount int64) int64 {
 	switch c.BudgetType {
 	case BudgetSpend:
@@ -150,101 +152,107 @@ func (c Campaign) BudgetDeltaFor(amount int64) int64 {
 	case BudgetNone:
 		return 0
 	default:
-		// Tanınmayan bir tür bütçe TÜKETMEZ. Alternatif (tutarı düşmek) bilinmeyen
-		// birimde bir sayacı bozardı; tüketmemek, bütçenin fazla harcanmasına
-		// değil yalnızca eksik sayılmasına yol açar ve durum yönetim yüzeyinde
-		// görünür kalır.
+		// An unrecognized type CONSUMES NO budget. The alternative (deducting the
+		// amount) would corrupt a counter in an unknown unit; not consuming leads not
+		// to the budget being overspent but only to it being undercounted, and the
+		// situation stays visible on the admin surface.
 		return 0
 	}
 }
 
-// PromotionType bir promosyonun mekaniğidir.
+// PromotionType is the mechanic of a promotion.
 type PromotionType string
 
-// Promosyon türleri.
+// Promotion types.
 const (
-	// PromotionStandard doğrudan indirim uygulayan promosyondur.
+	// PromotionStandard is the promotion that applies a discount directly.
 	PromotionStandard PromotionType = "standard"
-	// PromotionBuyGet "N al M öde" mekaniğidir.
+	// PromotionBuyGet is the "buy N pay M" mechanic.
 	//
-	// # Bu fazda ETKİNLEŞTİRİLEMEZ
+	// # It CANNOT BE ACTIVATED in this phase
 	//
-	// Mekanik, "hangi kalemler ALIŞ koşulunu sağlıyor" ve "indirim hangi
-	// kalemlerin kaç ADEDİNE uygulanacak" sorularını gerektirir; ikincisi
-	// kalemin BİRİM fiyatını ister ve servisin hesap girdisinin
+	// The mechanic requires answering "which lines satisfy the BUY condition" and "on
+	// how many UNITS of which lines will the discount be applied"; the second one
+	// asks for the line's UNIT price, and the line amount (unit × quantity) carried
+	// by the service's computation input
 	// ([github.com/bdrtr/gobit/internal/modules/promotion/service.ComputeInput])
-	// taşıdığı satır tutarı (birim × adet) bölünmeden birim fiyata çevrilemez —
-	// bölme, adede tam bölünmeyen bir satırda sessiz bir yuvarlama hatası
-	// üretirdi.
+	// cannot be turned into a unit price without dividing — and the division would
+	// produce a silent rounding error on a line that does not divide evenly by the
+	// quantity.
 	//
-	// Eksiği SESSİZ bırakmamak için tür YAPISAL olarak kapatılmıştır: buyget
-	// bir promosyon oluşturulabilir ama "active" duruma alınamaz (bkz. servis
-	// doğrulaması) ve hesaplama da güvenlik ağı olarak onu atlar. Böylece
-	// "kurulmuş ama hiçbir şey yapmayan aktif promosyon" durumu oluşamaz.
+	// So as not to leave the gap SILENT, the type is closed STRUCTURALLY: a buyget
+	// promotion can be created but cannot be moved into the "active" status (see the
+	// service validation), and the computation skips it as a safety net as well. That
+	// way the state "an active promotion that is set up but does nothing" cannot
+	// arise.
 	PromotionBuyGet PromotionType = "buyget"
 )
 
-// Valid türün tanımlı olup olmadığını bildirir.
+// Valid reports whether the type is defined.
 func (t PromotionType) Valid() bool {
 	return t == PromotionStandard || t == PromotionBuyGet
 }
 
-// PromotionStatus bir promosyonun yayın durumudur.
+// PromotionStatus is the publication status of a promotion.
 type PromotionStatus string
 
-// Promosyon durumları.
+// Promotion statuses.
 const (
-	// PromotionDraft henüz yayına alınmamış promosyondur; hesaba KATILMAZ ve
-	// müşteri yüzeyinde GÖRÜNMEZ.
+	// PromotionDraft is a promotion not yet published; it DOES NOT take part in the
+	// computation and is NOT VISIBLE on the customer surface.
 	PromotionDraft PromotionStatus = "draft"
-	// PromotionActive yayındaki promosyondur.
+	// PromotionActive is a published promotion.
 	PromotionActive PromotionStatus = "active"
-	// PromotionInactive elle durdurulmuş promosyondur; hesaba KATILMAZ.
+	// PromotionInactive is a promotion stopped by hand; it DOES NOT take part in the
+	// computation.
 	PromotionInactive PromotionStatus = "inactive"
 )
 
-// Valid durumun tanımlı olup olmadığını bildirir.
+// Valid reports whether the status is defined.
 func (s PromotionStatus) Valid() bool {
 	return s == PromotionDraft || s == PromotionActive || s == PromotionInactive
 }
 
-// Promotion tek bir indirim tanımıdır.
+// Promotion is a single discount definition.
 //
-// Kupon kodu ([Code]) ile ya da kodsuz ([IsAutomatic]) uygulanır. İkisi birden
-// olabilir: otomatik bir promosyonun da kodu vardır, çünkü kod aynı zamanda
-// operatörün promosyonu andığı addır ve benzersizdir.
+// It is applied either with a coupon code ([Code]) or without one ([IsAutomatic]).
+// Both can hold at once: an automatic promotion has a code too, because the code is
+// at the same time the name by which the operator refers to the promotion, and it is
+// unique.
 type Promotion struct {
-	// ID "promo_" önekli kimliktir.
+	// ID is the "promo_" prefixed identifier.
 	ID string
-	// Code kupon kodudur; BENZERSİZDİR ve daima BÜYÜK harf saklanır.
+	// Code is the coupon code; it is UNIQUE and is always stored in UPPERCASE.
 	Code string
-	// IsAutomatic promosyonun kod girilmeden uygulanıp uygulanmadığını bildirir.
+	// IsAutomatic reports whether the promotion is applied without a code being
+	// entered.
 	IsAutomatic bool
-	// Type promosyonun mekaniğidir.
+	// Type is the mechanic of the promotion.
 	Type PromotionType
-	// CampaignID promosyonu bir kampanyaya bağlar; nil ise promosyon
-	// kampanyasızdır ve yalnızca kendi kurallarıyla sınırlıdır.
+	// CampaignID binds the promotion to a campaign; if nil the promotion has no
+	// campaign and is bounded only by its own rules.
 	CampaignID *string
-	// Status promosyonun yayın durumudur.
+	// Status is the publication status of the promotion.
 	Status PromotionStatus
-	// UsageLimit promosyonun kaç kez kullanılabileceğidir; nil ise sınırsız.
+	// UsageLimit is how many times the promotion can be used; if nil it is unbounded.
 	UsageLimit *int64
-	// UsageCount promosyonun KULLANILMIŞ sayısıdır (bkz. [Redemption]).
+	// UsageCount is how many times the promotion HAS BEEN USED (see [Redemption]).
 	UsageCount int64
-	// Metadata operatörün serbest anahtar/değer notudur; iş kuralına girmez.
+	// Metadata is the operator's free key/value note; it does not enter business
+	// rules.
 	Metadata map[string]string
-	// CreatedAt kaydın oluşturulma anıdır (UTC).
+	// CreatedAt is the moment the record was created (UTC).
 	CreatedAt time.Time
-	// UpdatedAt kaydın son güncellenme anıdır (UTC).
+	// UpdatedAt is the moment the record was last updated (UTC).
 	UpdatedAt time.Time
-	// DeletedAt soft delete anıdır; nil ise kayıt canlıdır.
+	// DeletedAt is the moment of the soft delete; if nil the record is live.
 	DeletedAt *time.Time
 }
 
-// UsageExhausted kullanım sınırının dolup dolmadığını bildirir.
+// UsageExhausted reports whether the usage limit is used up.
 //
-// Sınırsız promosyon asla tükenmez. Sınır varsa tükenme koşulu
-// `kullanılan >= sınır`dır.
+// An unbounded promotion is never exhausted. If there is a bound, the exhaustion
+// condition is `used >= limit`.
 func (p Promotion) UsageExhausted() bool {
 	if p.UsageLimit == nil {
 		return false
@@ -252,130 +260,134 @@ func (p Promotion) UsageExhausted() bool {
 	return p.UsageCount >= *p.UsageLimit
 }
 
-// ApplicationMethodType indirimin nasıl ölçüldüğünü bildirir.
+// ApplicationMethodType reports how the discount is measured.
 type ApplicationMethodType string
 
-// Uygulama yöntemi türleri.
+// Application method types.
 const (
-	// MethodFixed SABİT TUTAR indirimidir; değeri minor unit'tir ve para birimi
-	// ZORUNLUDUR.
+	// MethodFixed is a FIXED AMOUNT discount; its value is a minor unit and the
+	// currency is MANDATORY.
 	MethodFixed ApplicationMethodType = "fixed"
-	// MethodPercentage YÜZDE indirimidir; değeri BAZ PUANDIR (2000 = %20) ve
-	// para birimi taşımaz.
+	// MethodPercentage is a PERCENTAGE discount; its value is in BASIS POINTS
+	// (2000 = 20%) and it carries no currency.
 	MethodPercentage ApplicationMethodType = "percentage"
 )
 
-// Valid türün tanımlı olup olmadığını bildirir.
+// Valid reports whether the type is defined.
 func (t ApplicationMethodType) Valid() bool {
 	return t == MethodFixed || t == MethodPercentage
 }
 
-// ApplicationTargetType indirimin NEYE uygulanacağını bildirir.
+// ApplicationTargetType reports WHAT the discount will be applied to.
 type ApplicationTargetType string
 
-// Uygulama hedefleri.
+// Application targets.
 const (
-	// TargetItems indirimi sepet KALEMLERİNE uygular.
+	// TargetItems applies the discount to the cart LINES.
 	TargetItems ApplicationTargetType = "items"
-	// TargetShippingMethods indirimi KARGO yöntemlerine uygular.
+	// TargetShippingMethods applies the discount to the SHIPPING methods.
 	TargetShippingMethods ApplicationTargetType = "shipping_methods"
-	// TargetOrder indirimi SİPARİŞİN tamamına uygular; sonuç yine kalemlere
-	// tahsis edilir (bkz. service paketindeki tahsis kuralı), çünkü sepet
-	// toplamı satır başına indirim bekler.
+	// TargetOrder applies the discount to the whole ORDER; the result is again
+	// allocated to the lines (see the allocation rule in the service package),
+	// because the cart total expects a discount per line.
 	TargetOrder ApplicationTargetType = "order"
 )
 
-// Valid hedefin tanımlı olup olmadığını bildirir.
+// Valid reports whether the target is defined.
 func (t ApplicationTargetType) Valid() bool {
 	return t == TargetItems || t == TargetShippingMethods || t == TargetOrder
 }
 
-// Allocation indirimin hedef satırlar arasında nasıl dağıtılacağını bildirir.
+// Allocation reports how the discount will be distributed among the target lines.
 type Allocation string
 
-// Tahsis biçimleri.
+// Allocation forms.
 const (
-	// AllocationEach indirimi HER hedef satıra AYRI AYRI uygular: yüzde her
-	// satırın kendi tutarına, sabit tutar her satırın her adedine işler.
+	// AllocationEach applies the discount to EVERY target line SEPARATELY: a
+	// percentage works on each line's own amount, a fixed amount works on every unit
+	// of every line.
 	AllocationEach Allocation = "each"
-	// AllocationAcross indirimi TEK bir tutar olarak hesaplayıp hedef satırlara
-	// tutarlarıyla ORANTILI dağıtır.
+	// AllocationAcross computes the discount as a SINGLE amount and distributes it
+	// over the target lines PROPORTIONALLY to their amounts.
 	AllocationAcross Allocation = "across"
 )
 
-// Valid tahsis biçiminin tanımlı olup olmadığını bildirir.
+// Valid reports whether the allocation form is defined.
 func (a Allocation) Valid() bool {
 	return a == AllocationEach || a == AllocationAcross
 }
 
-// ApplicationMethod bir promosyonun indirimi NASIL uygulayacağıdır.
+// ApplicationMethod is HOW a promotion will apply its discount.
 //
-// Bir promosyonun EN FAZLA BİR uygulama yöntemi vardır; yöntemsiz bir promosyon
-// hiçbir indirim üretmez ve hesapta atlanır.
+// A promotion has AT MOST ONE application method; a promotion without a method
+// produces no discount and is skipped in the computation.
 type ApplicationMethod struct {
-	// ID "appm_" önekli kimliktir.
+	// ID is the "appm_" prefixed identifier.
 	ID string
-	// PromotionID yöntemin bağlı olduğu promosyondur.
+	// PromotionID is the promotion the method is bound to.
 	PromotionID string
-	// Type indirimin ölçüsüdür (fixed | percentage).
+	// Type is the measure of the discount (fixed | percentage).
 	Type ApplicationMethodType
-	// TargetType indirimin hedefidir (items | shipping_methods | order).
+	// TargetType is the target of the discount (items | shipping_methods | order).
 	TargetType ApplicationTargetType
-	// Allocation dağıtım biçimidir (each | across).
+	// Allocation is the distribution form (each | across).
 	Allocation Allocation
-	// Value sabit tutar (minor unit) ya da baz puandır ([Type]'a göre).
+	// Value is the fixed amount (minor unit) or the basis points (according to
+	// [Type]).
 	Value int64
-	// MaxQuantity sabit tutarın uygulanacağı azami ADETTİR ve YALNIZCA
-	// "fixed" + "each" bileşiminde anlamlıdır; nil ise sınır yoktur.
+	// MaxQuantity is the maximum QUANTITY the fixed amount will be applied to, and it
+	// is meaningful ONLY in the "fixed" + "each" combination; if nil there is no
+	// bound.
 	//
-	// Diğer bileşimlerde YOK SAYILIR. Sebep: yüzde indirim satırın TUTARINA
-	// işler ve adedi sınırlamak, satır tutarını birim fiyata bölmeyi
-	// gerektirirdi — adede tam bölünmeyen bir satırda bu sessiz bir yuvarlama
-	// hatası olurdu. "across"ta ise dağıtılan tek bir toplam vardır ve adet
-	// kavramı zaten devre dışıdır.
+	// In the other combinations it is IGNORED. The reason: a percentage discount
+	// works on the line's AMOUNT, and bounding the quantity would require dividing
+	// the line amount by the unit price — on a line that does not divide evenly by
+	// the quantity that would be a silent rounding error. In "across" there is a
+	// single distributed total anyway and the notion of quantity is already out of
+	// play.
 	MaxQuantity *int64
-	// CurrencyCode "fixed" indirimin para birimidir (ISO 4217, BÜYÜK harf);
-	// "percentage"ta boştur.
+	// CurrencyCode is the currency of a "fixed" discount (ISO 4217, UPPERCASE); on
+	// "percentage" it is empty.
 	CurrencyCode string
-	// CreatedAt kaydın oluşturulma anıdır (UTC).
+	// CreatedAt is the moment the record was created (UTC).
 	CreatedAt time.Time
-	// UpdatedAt kaydın son güncellenme anıdır (UTC).
+	// UpdatedAt is the moment the record was last updated (UTC).
 	UpdatedAt time.Time
 }
 
-// RuleOperator bir promosyon kuralının karşılaştırma işlecidir.
+// RuleOperator is the comparison operator of a promotion rule.
 type RuleOperator string
 
-// Desteklenen işleçler.
+// Supported operators.
 //
-// eq/ne/in/nin DİZGE karşılaştırmasıdır; gt/gte/lt/lte ise iki tarafı da tam
-// sayıya çevirip SAYISAL karşılaştırır. Sayıya çevrilemeyen bir bağlam değeri
-// kuralı EŞLEŞMEZ yapar, hata üretmez: bağlam dışarıdan gelir ve tek bir bozuk
-// alan tüm indirim hesabını düşürmemelidir.
+// eq/ne/in/nin are STRING comparisons; gt/gte/lt/lte convert both sides to integers
+// and compare NUMERICALLY. A context value that cannot be converted to a number makes
+// the rule NOT MATCH, it does not produce an error: the context comes from outside
+// and a single broken field must not bring down the whole discount computation.
 //
-// pricing modülündeki PriceRule ile AYNI kavramdır. O paket import EDİLEMEZ
-// (Prensip 2.4 / ADR 0001) ve tip burada yeniden tanımlanır; bu, izolasyonun
-// ADR 0001'de açıkça kabul edilmiş bedelidir.
+// It is the SAME concept as PriceRule in the pricing module. That package CANNOT be
+// imported (Principle 2.4 / ADR 0001) and the type is redefined here; this is the
+// price of isolation, explicitly accepted in ADR 0001.
 const (
-	// OpEq değerin kuralın tek değerine eşit olmasını ister.
+	// OpEq wants the value to equal the rule's single value.
 	OpEq RuleOperator = "eq"
-	// OpNe değerin kuralın tek değerinden farklı olmasını ister.
+	// OpNe wants the value to differ from the rule's single value.
 	OpNe RuleOperator = "ne"
-	// OpIn değerin kural kümesinde bulunmasını ister.
+	// OpIn wants the value to be present in the rule's set.
 	OpIn RuleOperator = "in"
-	// OpNin değerin kural kümesinde BULUNMAMASINI ister.
+	// OpNin wants the value to be ABSENT from the rule's set.
 	OpNin RuleOperator = "nin"
-	// OpGt sayısal olarak büyüklük ister.
+	// OpGt wants numerical greater-than.
 	OpGt RuleOperator = "gt"
-	// OpGte sayısal olarak büyük veya eşitlik ister.
+	// OpGte wants numerical greater-than-or-equal.
 	OpGte RuleOperator = "gte"
-	// OpLt sayısal olarak küçüklük ister.
+	// OpLt wants numerical less-than.
 	OpLt RuleOperator = "lt"
-	// OpLte sayısal olarak küçük veya eşitlik ister.
+	// OpLte wants numerical less-than-or-equal.
 	OpLte RuleOperator = "lte"
 )
 
-// Valid işlecin tanımlı olup olmadığını bildirir.
+// Valid reports whether the operator is defined.
 func (o RuleOperator) Valid() bool {
 	switch o {
 	case OpEq, OpNe, OpIn, OpNin, OpGt, OpGte, OpLt, OpLte:
@@ -385,7 +397,7 @@ func (o RuleOperator) Valid() bool {
 	}
 }
 
-// Numeric işlecin sayısal karşılaştırma yapıp yapmadığını bildirir.
+// Numeric reports whether the operator performs a numerical comparison.
 func (o RuleOperator) Numeric() bool {
 	switch o {
 	case OpGt, OpGte, OpLt, OpLte:
@@ -397,124 +409,130 @@ func (o RuleOperator) Numeric() bool {
 	}
 }
 
-// MultiValue işlecin birden çok değer alıp alamayacağını bildirir.
-// Diğer tüm işleçler TEK değer ister.
+// MultiValue reports whether the operator can take more than one value.
+// Every other operator wants a SINGLE value.
 func (o RuleOperator) MultiValue() bool {
 	return o == OpIn || o == OpNin
 }
 
-// RuleType bir kuralın NEYE bakacağını bildirir.
+// RuleType reports WHAT a rule will look at.
 type RuleType string
 
-// Kural türleri.
+// Rule types.
 const (
-	// RuleContext SEPET BAĞLAMINA bakar (para birimi, bölge, müşteri grubu …).
-	// Bağlam kuralı sağlanmazsa promosyonun tamamı uygulanmaz.
+	// RuleContext looks at the CART CONTEXT (currency, region, customer group …).
+	// If a context rule is not satisfied, the whole promotion is not applied.
 	RuleContext RuleType = "context"
-	// RuleTarget KALEM özniteliklerine bakar ve indirimin hangi kalemlere
-	// ineceğini süzer. Hedefi "items" ya da "order" olan promosyonlarda
-	// anlamlıdır; kargo hedefinde kargo yönteminin öznitelikleri süzülür.
+	// RuleTarget looks at LINE attributes and filters which lines the discount will
+	// land on. It is meaningful on promotions whose target is "items" or "order"; on
+	// a shipping target the attributes of the shipping method are filtered.
 	RuleTarget RuleType = "target"
 )
 
-// Valid kural türünün tanımlı olup olmadığını bildirir.
+// Valid reports whether the rule type is defined.
 func (t RuleType) Valid() bool {
 	return t == RuleContext || t == RuleTarget
 }
 
-// PromotionRule bir promosyonun uygulanma koşuludur.
+// PromotionRule is a condition for a promotion to be applied.
 //
-// Örnek: {RuleType: RuleContext, Attribute: "customer_group_id",
+// Example: {RuleType: RuleContext, Attribute: "customer_group_id",
 // Operator: OpIn, Values: []string{"vip", "b2b"}}.
 type PromotionRule struct {
-	// ID "prule_" önekli kimliktir.
+	// ID is the "prule_" prefixed identifier.
 	ID string
-	// PromotionID kuralın bağlı olduğu promosyondur.
+	// PromotionID is the promotion the rule is bound to.
 	PromotionID string
-	// RuleType kuralın neye baktığıdır.
+	// RuleType is what the rule looks at.
 	RuleType RuleType
-	// Attribute bağlamda ya da kalemde bakılacak alan adıdır.
+	// Attribute is the name of the field to look at, in the context or on the line.
 	Attribute string
-	// Operator karşılaştırma işlecidir.
+	// Operator is the comparison operator.
 	Operator RuleOperator
-	// Values karşılaştırmanın sağ tarafıdır; en az bir eleman içerir.
+	// Values is the right-hand side of the comparison; it holds at least one element.
 	Values []string
-	// CreatedAt kaydın oluşturulma anıdır (UTC).
+	// CreatedAt is the moment the record was created (UTC).
 	CreatedAt time.Time
-	// UpdatedAt kaydın son güncellenme anıdır (UTC).
+	// UpdatedAt is the moment the record was last updated (UTC).
 	UpdatedAt time.Time
 }
 
-// Redemption bir promosyonun TEK bir referans için kullanıldığının kaydıdır.
+// Redemption is the record that a promotion was used for ONE single reference.
 //
-// Sayacın kendisi [Promotion.UsageCount] ve [Campaign.BudgetUsed] sütunlarıdır;
-// bu kayıt onların DEFTERİDİR ve iki şeyi mümkün kılar:
+// The counter itself is the [Promotion.UsageCount] and [Campaign.BudgetUsed] columns;
+// this record is their LEDGER and it makes two things possible:
 //
-//   - İdempotency: aynı referans için ikinci kullanım sayacı ikinci kez
-//     artırmaz (bkz. servis katmanındaki RedeemPromotion).
-//   - Geri alma: serbest bırakma, sayaca ne kadar eklendiğini TAHMİN ETMEZ;
-//     eklenen değer [BudgetDelta] alanında saklıdır ve aynen düşülür. Kampanya
-//     bütçesinin türü arada değişse bile defter tutarlı kalır.
+//   - Idempotency: a second redemption for the same reference does not increment the
+//     counter a second time (see RedeemPromotion in the service layer).
+//   - Reversal: the release does not GUESS how much was added to the counter; the
+//     added value is kept in the [BudgetDelta] field and is deducted verbatim. The
+//     ledger stays consistent even if the type of the campaign budget changed in the
+//     meantime.
 type Redemption struct {
-	// ID "predeem_" önekli kimliktir.
+	// ID is the "predeem_" prefixed identifier.
 	ID string
-	// PromotionID kullanılan promosyondur.
+	// PromotionID is the promotion that was used.
 	PromotionID string
-	// CampaignID kullanım anında promosyonun bağlı olduğu kampanyadır; nil ise
-	// promosyon kampanyasızdı.
+	// CampaignID is the campaign the promotion was bound to at the moment of use; if
+	// nil the promotion had no campaign.
 	CampaignID *string
-	// Reference kullanımın hangi iş kaydına ait olduğudur (örn. sipariş
-	// kimliği). SERBEST metindir ve foreign key DEĞİLDİR (Prensip 2.2).
+	// Reference is the business record the use belongs to (e.g. an order id). It is
+	// FREE text and is NOT a foreign key (Principle 2.2).
 	Reference string
-	// Amount kullanımda fiilen uygulanan indirim tutarıdır (minor unit).
+	// Amount is the discount amount actually applied in the use (minor unit).
 	Amount int64
-	// CurrencyCode indirimin para birimidir (ISO 4217, BÜYÜK harf).
+	// CurrencyCode is the currency of the discount (ISO 4217, UPPERCASE).
 	CurrencyCode string
-	// BudgetDelta kampanya bütçesine EKLENEN değerdir; serbest bırakmada aynen
-	// düşülür. Kampanyasız ya da bütçesiz promosyonda sıfırdır.
+	// BudgetDelta is the value ADDED to the campaign budget; on release it is
+	// deducted verbatim. On a promotion without a campaign or without a budget it is
+	// zero.
 	BudgetDelta int64
-	// CreatedAt kaydın oluşturulma anıdır (UTC).
+	// CreatedAt is the moment the record was created (UTC).
 	CreatedAt time.Time
-	// UpdatedAt kaydın son güncellenme anıdır (UTC).
+	// UpdatedAt is the moment the record was last updated (UTC).
 	UpdatedAt time.Time
-	// ReleasedAt serbest bırakılma anıdır; nil ise kullanım hâlâ geçerlidir.
+	// ReleasedAt is the moment of release; if nil the use is still in force.
 	ReleasedAt *time.Time
 }
 
-// Released kullanımın serbest bırakılmış olup olmadığını bildirir.
+// Released reports whether the use has been released.
 func (r Redemption) Released() bool { return r.ReleasedAt != nil }
 
-// PromotionCandidate hesaplamaya giren tek bir promosyon ve bağlamıdır.
+// PromotionCandidate is a single promotion entering the computation, together with
+// its context.
 //
-// Promosyonun kendisi tek başına yetmez: indirimin ölçüsü [ApplicationMethod]'da,
-// uygulanma koşulları [PromotionRule]'da, tarih penceresi ve bütçe ise
-// [Campaign]'dedir. Dördü BİRLİKTE taşınır ki hesaplama, aday başına ek sorgu
-// yapmak zorunda kalmasın (N+1 yoktur).
+// The promotion by itself is not enough: the measure of the discount is in
+// [ApplicationMethod], the conditions for applying it are in [PromotionRule], and the
+// date window and the budget are in [Campaign]. All four are carried TOGETHER so that
+// the computation does not have to issue an extra query per candidate (there is no
+// N+1).
 type PromotionCandidate struct {
-	// Promotion promosyonun kendisidir.
+	// Promotion is the promotion itself.
 	Promotion Promotion
-	// Campaign promosyonun kampanyasıdır; nil ise promosyon kampanyasızdır.
+	// Campaign is the promotion's campaign; if nil the promotion has no campaign.
 	//
-	// Promotion.CampaignID dolu ama bu alan nil ise kampanya SİLİNMİŞTİR ve
-	// promosyon hesaba katılmaz (bkz. servis katmanındaki eleme kuralı).
+	// If Promotion.CampaignID is set but this field is nil, the campaign has been
+	// DELETED and the promotion does not enter the computation (see the elimination
+	// rule in the service layer).
 	Campaign *Campaign
-	// Method indirimin uygulama yöntemidir; nil ise promosyon indirim üretmez.
+	// Method is the application method of the discount; if nil the promotion produces
+	// no discount.
 	Method *ApplicationMethod
-	// Rules promosyonun TÜM kurallarıdır (bağlam ve hedef birlikte).
+	// Rules are ALL the rules of the promotion (context and target together).
 	Rules []PromotionRule
 }
 
-// ContextRules adayın BAĞLAM kurallarını döner.
+// ContextRules returns the CONTEXT rules of the candidate.
 func (c PromotionCandidate) ContextRules() []PromotionRule {
 	return c.rulesOfType(RuleContext)
 }
 
-// TargetRules adayın HEDEF kurallarını döner.
+// TargetRules returns the TARGET rules of the candidate.
 func (c PromotionCandidate) TargetRules() []PromotionRule {
 	return c.rulesOfType(RuleTarget)
 }
 
-// rulesOfType verilen türdeki kuralları süzer.
+// rulesOfType filters the rules of the given type.
 func (c PromotionCandidate) rulesOfType(t RuleType) []PromotionRule {
 	out := make([]PromotionRule, 0, len(c.Rules))
 	for i := range c.Rules {

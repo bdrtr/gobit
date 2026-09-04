@@ -201,7 +201,7 @@ func (r *Repo) ListGroupsOf(ctx context.Context, customerID string) ([]models.Cu
 // GroupIDsOfCustomers birden çok müşterinin grup kimliklerini TEK sorguda
 // döner.
 //
-// Sonuç, müşteri kimliğinden grup kimliklerine bir haritadır. Hiç grubu olmayan
+// Sonuç, customer idnden grup kimliklerine bir haritadır. Hiç grubu olmayan
 // müşteri için ANAHTAR BULUNMAZ; çağıran nil dilimi boş dilim gibi
 // kullanabilir. Query sağlayıcısı bunu batch olarak çağırır ve müşteri başına
 // ayrı sorgu yapmaz (ADR 0004'ün N+1 yasağı).

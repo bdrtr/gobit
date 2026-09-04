@@ -8,48 +8,53 @@ import (
 	"github.com/bdrtr/gobit/internal/core/errors"
 )
 
-// Bu dosya payment modülünün MODÜLLER ARASI yüzeyidir (ADR 0001, ADR 0006).
+// This file is the CROSS-MODULE surface of the payment module (ADR 0001,
+// ADR 0006).
 //
-// Faz 6'nın complete_cart saga'sı (internal/workflows) bu modülü import
-// EDEMEZ. Çözüm region/cart modüllerindeki interop.go ile aynıdır: yalnızca
-// İLKEL ve stdlib tipleri kullanan bir yüzey yayımlamak. Tüketici kendi dar
-// arayüzünü tanımlar, bu tip onu YAPISAL olarak karşılar ve container'dan
-// "payment.interop" adıyla çözülür.
+// Phase 6's complete_cart saga (internal/workflows) CANNOT import this module.
+// The solution is the same as the interop.go in the region/cart modules:
+// publishing a surface that uses only PRIMITIVE and stdlib types. The consumer
+// defines its own narrow interface, this type satisfies it STRUCTURALLY, and
+// it is resolved from the container under the name "payment.interop".
 //
-// Sebep Go'nun yapısal uyum kuralıdır: tüketici payment'ı import edemediği için
-// imzasında models.PaymentSession gibi bir tipi adlandıramaz; adlandırdığı an
-// o, kendi paketinde tanımlı BAŞKA bir tip olur ve somut servis tüketicinin
-// arayüzünü karşılamaz.
+// The reason is Go's structural conformance rule: since the consumer cannot
+// import payment, it cannot name a type such as models.PaymentSession in its
+// signature; the moment it names one, that becomes ANOTHER type defined in its
+// own package and the concrete service does not satisfy the consumer's
+// interface.
 //
-// Yüzey BİLİNÇLİ OLARAK dardır ve saga'nın ihtiyacına göre seçilmiştir:
-// koleksiyon aç, oturum aç, yetkilendir, tahsil et, iptal et (telafi), iade et
-// ve durumu oku. Buraya eklenen her metot, payment'ı ayrı bir servise
-// çıkarmanın maliyetini artırır.
+// The surface is DELIBERATELY narrow and was picked according to the saga's
+// need: open a collection, open a session, authorize, capture, cancel
+// (compensate), refund and read the status. Every method added here raises the
+// cost of pulling payment out into a separate service.
 //
-// # Yüzey TUTAR taşır
+// # The surface carries the AMOUNT
 //
-// Okuma metotları yalnızca durum dizesi değil, TUTAR da döner
-// ([Interop.Collection], [Interop.Authorize]). Saga'nın ödemenin tam olduğunu
-// kendi doğrulaması şarttır: durum dizesi türetilmiş bir özettir ve eksik bir
-// ödemeyi tam gösterecek biçimde değişebilir. Sayı dönmek, doğrulamayı bu
-// modülün durum türetiminden bağımsız kılar.
+// The read methods return not only the status string but the AMOUNT as well
+// ([Interop.Collection], [Interop.Authorize]). It is essential that the saga
+// verify for itself that the payment is complete: the status string is a
+// derived summary and it can change in a way that shows a short payment as a
+// complete one. Returning a number makes the verification independent of this
+// module's status derivation.
 
-// Interop payment servisini modüller arası İLKEL yüzeye çevirir.
+// Interop turns the payment service into the cross-module PRIMITIVE surface.
 //
-// Hiçbir karar vermez: yalnızca imzayı çevirir. Tüm iş kuralları [Service]
-// üzerinde kalır; buraya kural eklemek, aynı kuralın iki yerde ayrışması demek
-// olurdu.
+// It makes no decisions: it only translates the signature. All of the business
+// rules stay on [Service]; adding a rule here would mean the same rule
+// drifting apart in two places.
 type Interop struct {
 	svc *Service
 }
 
-// NewInterop verilen servis için modüller arası yüzeyi kurar.
+// NewInterop sets up the cross-module surface for the given service.
 func NewInterop(svc *Service) *Interop { return &Interop{svc: svc} }
 
-// CreateCollection bir referans için ödeme koleksiyonu açar ve kimliğini döner.
+// CreateCollection opens a payment collection for a reference and returns its
+// identifier.
 //
-// reference sepetin ya da siparişin kimliğidir; bu modül onu doğrulamaz
-// (Prensip 2.2 — bağ Module Links ile kurulur).
+// reference is the identifier of the cart or of the order; this module does
+// not validate it (Principle 2.2 — the link is established through Module
+// Links).
 func (i *Interop) CreateCollection(
 	ctx context.Context,
 	reference, currencyCode string,
@@ -66,16 +71,17 @@ func (i *Interop) CreateCollection(
 	return col.ID, nil
 }
 
-// OpenSession koleksiyon için bir sağlayıcıda ödeme oturumu açar ve oturumun
-// kimliğini döner.
+// OpenSession opens a payment session at a provider for the collection and
+// returns the session's identifier.
 //
-// Tutar verilmez: koleksiyonun HENÜZ BLOKE EDİLMEMİŞ tutarının tamamı için
-// oturum açılır. Saga'nın ihtiyacı budur ve kısmi ödeme akışları (birden çok
-// oturumla bölünmüş tahsilat) bu yüzeyin değil, admin API'sinin konusudur.
+// No amount is given: the session is opened for the whole of the collection's
+// NOT YET HELD amount. That is what the saga needs, and partial payment flows
+// (a capture split across more than one session) are the business of the admin
+// API, not of this surface.
 //
-// Aynı idempotencyKey ile ikinci çağrı YENİ oturum açmaz, mevcut oturumun
-// kimliğini döner; saga bir adımı yeniden denediğinde müşteriden ikinci kez
-// tahsilat denenmemesini sağlayan şey budur.
+// A second call with the same idempotencyKey DOES NOT open a NEW session, it
+// returns the existing session's identifier; that is what makes sure a second
+// capture is not attempted on the customer when the saga retries a step.
 func (i *Interop) OpenSession(
 	ctx context.Context,
 	collectionID, providerID, idempotencyKey string,
@@ -83,16 +89,19 @@ func (i *Interop) OpenSession(
 	return i.OpenSessionWithData(ctx, collectionID, providerID, idempotencyKey, nil)
 }
 
-// OpenSessionWithData oturumu, sağlayıcıya iletilecek serbest veriyle açar.
+// OpenSessionWithData opens the session with free-form data to be passed on to
+// the provider.
 //
-// data ham JSON nesnesidir (örn. kart tokenı) ve sağlayıcıya olduğu gibi
-// geçirilir. Boş ya da JSON null verilirse veri yok sayılır.
+// data is a raw JSON object (e.g. a card token) and it is handed to the
+// provider as is. If it is given as empty or as JSON null, the data is
+// ignored.
 //
-// Sayılar json.Number olarak çözülür; harita üzerinden geçen bir tam sayının
-// float64'e dönüp yeniden kodlanırken üstel gösterime kayması ("1e+15") ya da
-// büyük değerlerde duyarlık kaybetmesi böyle engellenir. Sağlayıcıya iletilen
-// veride TUTAR bulunabilir (bkz. manual paketindeki davranış anahtarları) ve
-// para hiçbir aşamada kayan noktaya uğramamalıdır (plan Bölüm 8).
+// Numbers are decoded as json.Number; this is how an integer passing through
+// the map is kept from turning into a float64 and drifting into exponential
+// notation ("1e+15") while being re-encoded, or from losing precision at large
+// values. The data passed on to the provider CAN CONTAIN AN AMOUNT (see the
+// behavior keys in the manual package) and money must not go through floating
+// point at any stage (plan Section 8).
 func (i *Interop) OpenSessionWithData(
 	ctx context.Context,
 	collectionID, providerID, idempotencyKey string,
@@ -113,17 +122,19 @@ func (i *Interop) OpenSessionWithData(
 	return ses.ID, nil
 }
 
-// Authorize oturumu yetkilendirir; oturumun YENİ durumunu ve fiilen BLOKE
-// EDİLEN tutarı döner.
+// Authorize authorizes the session; it returns the session's NEW status and
+// the amount that was actually PUT ON HOLD.
 //
-// Sağlayıcı reddederse hata döner (errors.Conflict, kod
-// [CodeAuthorizationDeclined]) ve oturum "failed" olarak kalıcı yazılır. Saga
-// adımı bu hatayla patlar ve telafi zinciri devreye girer; ret sessizce
-// yutulsaydı ödenmemiş bir sipariş onaylanırdı.
+// If the provider declines, an error is returned (errors.Conflict, code
+// [CodeAuthorizationDeclined]) and the session is durably written as "failed".
+// The saga step blows up with that error and the compensation chain kicks in;
+// had the decline been swallowed silently, an unpaid order would have been
+// confirmed.
 //
-// Bloke tutarın dönmesi zorunludur: sağlayıcı KISMİ yetkilendirebilir ve o
-// hâlde durum yine "authorized" olur. Yalnızca duruma bakan bir saga, istenenin
-// altında bloke edilmiş bir ödemeyi tam sanardı.
+// Returning the amount put on hold is mandatory: the provider can authorize
+// PARTIALLY, and in that case the status still becomes "authorized". A saga
+// that looked only at the status would take a payment put on hold below what
+// was asked for as a complete one.
 func (i *Interop) Authorize(ctx context.Context, sessionID string) (status string, authorized int64, err error) {
 	ses, err := i.svc.AuthorizePayment(ctx, sessionID)
 	if err != nil {
@@ -132,8 +143,9 @@ func (i *Interop) Authorize(ctx context.Context, sessionID string) (status strin
 	return ses.Status.String(), ses.AuthorizedAmount, nil
 }
 
-// Capture bloke edilmiş tutarı tahsil eder ve oluşan tahsilatın kimliğini
-// döner. amount sıfırsa bloke tutarın tamamı çekilir.
+// Capture captures the amount that was put on hold and returns the identifier
+// of the capture that came about. If amount is zero, the whole of the amount
+// on hold is drawn.
 func (i *Interop) Capture(ctx context.Context, sessionID string, amount int64) (string, error) {
 	payment, err := i.svc.CapturePayment(ctx, sessionID, amount)
 	if err != nil {
@@ -142,16 +154,19 @@ func (i *Interop) Capture(ctx context.Context, sessionID string, amount int64) (
 	return payment.ID, nil
 }
 
-// Cancel oturumu iptal eder; SAGA TELAFİSİ budur ve İDEMPOTENTTİR.
+// Cancel cancels the session; THIS IS THE SAGA COMPENSATION and IT IS
+// IDEMPOTENT.
 //
-// İki kez çağrılırsa ikinci çağrı hata VERMEZ. Bilinmeyen bir oturum kimliği
-// ise errors.NotFound döner; telafi, var olmayan bir kaydı sessizce yutmaz.
+// If it is called twice, the second call DOES NOT return an error. If the
+// session identifier is unknown, errors.NotFound is returned; the compensation
+// does not silently swallow a record that does not exist.
 func (i *Interop) Cancel(ctx context.Context, sessionID string) error {
 	return i.svc.CancelPayment(ctx, sessionID)
 }
 
-// Refund tahsilatı iade eder ve oluşan iade kaydının kimliğini döner.
-// amount sıfırsa kalan tutarın tamamı iade edilir.
+// Refund refunds the capture and returns the identifier of the refund record
+// that came about. If amount is zero, the whole of the remaining amount is
+// refunded.
 func (i *Interop) Refund(ctx context.Context, paymentID string, amount int64, reason string) (string, error) {
 	refund, err := i.svc.RefundPayment(ctx, paymentID, amount, reason)
 	if err != nil {
@@ -160,23 +175,27 @@ func (i *Interop) Refund(ctx context.Context, paymentID string, amount int64, re
 	return refund.ID, nil
 }
 
-// Collection koleksiyonun güncel durumunu ve TUTARLARINI döner.
+// Collection returns the collection's current status and its AMOUNTS.
 //
-// Saga ödemenin TAM olduğunu kendi doğrulamak zorundadır ve tek penceresi bu
-// yüzeydir; durum dizesi tek başına yetmez. Durum, tutarlardan türetilen bir
-// ÖZETTİR (bkz. [models.CollectionStatusFor]) ve her yeni ayrım için yeni bir
-// değer eklemek, tüketicinin dizeleri ezberlemesi demek olurdu. Tutarlar
-// döndüğünde saga'nın kuralı tek satırdır: captured >= amount.
+// The saga is obliged to verify for itself that the payment is COMPLETE and
+// its only window is this surface; the status string is not enough on its own.
+// The status is a SUMMARY derived from the amounts (see
+// [models.CollectionStatusFor]), and adding a new value for every new
+// distinction would have meant the consumer having to memorize strings. When
+// the amounts are returned, the saga's rule is a single line:
+// captured >= amount.
 //
-// Dönen değerler sırasıyla koleksiyonun durumu, toplanması gereken tutar,
-// bloke edilen, tahsil edilen ve iade edilen tutardır (hepsi minor unit).
+// The returned values are, in order, the collection's status, the amount that
+// must be collected, and the amounts put on hold, captured and refunded (all
+// of them minor unit).
 //
-// İmza uzundur ve bu bilinçlidir: tüketici bu paketi import EDEMEDİĞİ için
-// ortak bir yapı tipi adlandıramaz (ADR 0006) ve tutarlar ancak ayrı ilkel
-// değerler olarak taşınabilir. Hepsinin TEK okumadan dönmesi ayrıca saga'nın,
-// iki çağrı arasında değişen bir koleksiyonu tutarsız görmesini engeller.
+// The signature is long and this is deliberate: since the consumer CANNOT
+// import this package it cannot name a shared struct type (ADR 0006), and the
+// amounts can only be carried as separate primitive values. All of them being
+// returned FROM A SINGLE read additionally keeps the saga from seeing a
+// collection inconsistently when it changes between two calls.
 //
-//nolint:gocritic // Sonuç sayısı ADR 0006'nın ilkel-tip kısıtından gelir; gerekçe yukarıda.
+//nolint:gocritic // The result count comes from ADR 0006's primitive-type constraint; the rationale is above.
 func (i *Interop) Collection(ctx context.Context, collectionID string) (
 	status string,
 	amount, authorized, captured, refunded int64,
@@ -189,10 +208,11 @@ func (i *Interop) Collection(ctx context.Context, collectionID string) (
 	return col.Status.String(), col.Amount, col.AuthorizedAmount, col.CapturedAmount, col.RefundedAmount, nil
 }
 
-// SessionStatus oturumun güncel durumunu döner.
+// SessionStatus returns the session's current status.
 //
-// Telafinin gerçekten çalıştığını doğrulayan testler buna bakar: iptal edilmiş
-// bir oturum "canceled" döner ve saga'nın geri alma zinciri gözle görülür olur.
+// The tests that verify the compensation really runs look at this: a canceled
+// session returns "canceled" and the saga's undo chain becomes visible to the
+// eye.
 func (i *Interop) SessionStatus(ctx context.Context, sessionID string) (string, error) {
 	ses, err := i.svc.GetPaymentSession(ctx, sessionID)
 	if err != nil {
@@ -201,9 +221,10 @@ func (i *Interop) SessionStatus(ctx context.Context, sessionID string) (string, 
 	return ses.Status.String(), nil
 }
 
-// decodeInteropData ham JSON gövdesini sağlayıcıya verilecek haritaya çevirir.
+// decodeInteropData turns the raw JSON body into the map that is given to the
+// provider.
 //
-// Sayılar json.Number olarak bırakılır; gerekçe için bkz.
+// Numbers are left as json.Number; for the rationale see
 // [Interop.OpenSessionWithData].
 func decodeInteropData(raw json.RawMessage) (map[string]any, error) {
 	if len(raw) == 0 || string(raw) == "null" {
@@ -216,7 +237,7 @@ func decodeInteropData(raw json.RawMessage) (map[string]any, error) {
 	var out map[string]any
 	if err := dec.Decode(&out); err != nil {
 		return nil, errors.Wrap(err, errors.KindInvalid, CodeInvalidInput,
-			"oturum verisi çözümlenemedi; JSON nesnesi olmalı")
+			"the session data could not be decoded; it must be a JSON object")
 	}
 	return out, nil
 }

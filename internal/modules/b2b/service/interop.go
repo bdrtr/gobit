@@ -107,7 +107,7 @@ type interopSpendingRule struct {
 //   - Müşteri hiçbir şirketin çalışanı değil (B2C alışverişi; kurulumun
 //     çoğunluğu budur).
 //   - Müşteri çalışan ama harcama limiti nil, yani SINIRSIZ.
-//   - Verilen kimlik bir müşteri kimliği bile değil (önek tutmuyor). Böyle bir
+//   - Verilen kimlik bir customer id bile değil (önek tutmuyor). Böyle bir
 //     kimlik çalışan olarak BAĞLANAMAZ (bkz. [Service.CreateEmployee]), yani
 //     "bu müşterinin limiti yok" cevabı tahmin değil, kanıtlanabilir bir
 //     olgudur.
