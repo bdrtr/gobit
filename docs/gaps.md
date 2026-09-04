@@ -372,6 +372,12 @@ the next reader sees a decision instead of a wait.
    NOT fixed. It needs either payment events (the module publishes none) or an
    admin flow that writes both sides.
 
+   One prerequisite for that flow landed on 2026-09-05: there was no path from
+   an order to its payment at all, because the collection's `Reference` carries
+   the CART id and the `order_payment` link both godocs named was never
+   declared. The payment module now declares it, the checkout saga writes it,
+   and `GET /admin/v1/orders/{id}/payment` reads it.
+
    The original finding: `SetOrderSummaryTotals`
    (`order/service/summary.go`) has a service method, a repository method and
    a generated query — and NO production caller. The checkout saga never calls
@@ -385,7 +391,17 @@ the next reader sees a decision instead of a wait.
    the B2B spending window subtracts `order_summaries.refunded_total`, so a
    refunded B2B order never returns the employee's budget.
 
-3. **Returns, exchanges and claims cannot move.** Zero `UPDATE` statements
+3. ~~**Returns, exchanges and claims cannot move.**~~ **PARTLY CLOSED
+   2026-09-05.** All three record types now have transition tables
+   (`order/models/aftersales_status.go`) and returns carry the lines coming back
+   (`order_return_items`), with the across-returns quantity rule enforced under
+   the order's lock.
+
+   Still open, and it is the larger half: nothing ACTS. Restocking and
+   refunding reach across modules and belong to a flow that is not built. There
+   is also still no customer-facing request surface.
+
+   The original finding: Zero `UPDATE` statements
    across `order_returns.sql`, `order_exchanges.sql` and `order_claims.sql` —
    verified by count. A record is born `requested` and stays there forever;
    `received_at`, `completed_at` and `canceled_at` can only ever be NULL. There
