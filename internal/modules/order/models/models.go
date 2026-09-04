@@ -345,9 +345,10 @@ func (s ReturnStatus) String() string {
 
 // Return is a return record (plan Section 6).
 //
-// In Phase 6 it is a SKELETON: the record is kept and listed, but the return
-// workflow (line-based return, taking the stock back, refunding the payment)
-// belongs to later phases. That is why there is no line-based child record yet.
+// It carries WHICH lines are coming back ([ReturnItem]) and moves through the
+// transitions in aftersales_status.go. What it still does NOT do is act: taking
+// the stock back and refunding the payment reach across modules and belong to a
+// flow, not to this module.
 type Return struct {
 	// ID is the identifier with the "ret_" prefix.
 	ID string
@@ -369,6 +370,41 @@ type Return struct {
 	// CanceledAt is the moment the request was canceled; nil when it was not
 	// canceled.
 	CanceledAt *time.Time
+	// CreatedAt and UpdatedAt are UTC.
+	CreatedAt time.Time
+	UpdatedAt time.Time
+	// Items are the lines coming back.
+	//
+	// It is EMPTY on a listing and filled on a single read: a listing that
+	// carried every record's lines would be an N+1 in the one place an operator
+	// scrolls.
+	Items []ReturnItem
+}
+
+// ReturnItem is one line of the order coming back, and how many of it.
+//
+// # Why it carries no variant
+//
+// The order line it points at already does, and the order line is immutable
+// once written. A copy here could only agree with it or be wrong.
+//
+// # Why the refund is per line
+//
+// A partial refund has to be able to say WHICH line it belongs to; the
+// return's own RefundAmount stays the total. The two are not checked against
+// each other in the database — a CHECK cannot see the parent row — so keeping
+// them consistent is the service's job.
+type ReturnItem struct {
+	// ID is the identifier with the "retitem_" prefix.
+	ID string
+	// ReturnID is the return the line belongs to.
+	ReturnID string
+	// OrderLineItemID is the order line coming back.
+	OrderLineItemID string
+	// Quantity is how many units of that line are coming back; it is positive.
+	Quantity int64
+	// RefundAmount is the part of the refund falling on this line (minor unit).
+	RefundAmount int64
 	// CreatedAt and UpdatedAt are UTC.
 	CreatedAt time.Time
 	UpdatedAt time.Time

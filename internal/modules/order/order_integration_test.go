@@ -16,8 +16,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -49,7 +51,7 @@ const (
 // list.
 var moduleTables = []string{
 	"orders", "order_line_items", "order_summaries",
-	"order_returns", "order_exchanges", "order_claims",
+	"order_returns", "order_return_items", "order_exchanges", "order_claims",
 }
 
 // Constants used in the test data. The region, customer and variant ids belong
@@ -211,7 +213,43 @@ func TestMigrationIsReversible(t *testing.T) {
 	version, dirty, err := db.Version(ctx, testDSN, order.ModuleName)
 	require.NoError(t, err)
 	assert.False(t, dirty, "there must be no half-finished migration")
-	assert.Equal(t, uint(1), version)
+	assert.Equal(t, highestMigrationVersion(t, src), version,
+		"re-applying has to run EVERY migration, not only the last one")
+}
+
+// highestMigrationVersion returns the largest version number in the embedded
+// migration set.
+//
+// The number is NOT written out: a literal breaks this test every time a
+// migration is added to the module, and what breaks it is not a fault but the
+// test's own stale expectation. Read from the set, the assertion also becomes
+// the right one — "after the rollback EVERYTHING was applied again" rather than
+// "the number is one".
+func highestMigrationVersion(t *testing.T, src fs.FS) uint {
+	t.Helper()
+
+	entries, err := fs.ReadDir(src, ".")
+	require.NoError(t, err)
+
+	var highest uint
+	for _, entry := range entries {
+		name := entry.Name()
+		if !strings.HasSuffix(name, ".up.sql") {
+			continue
+		}
+
+		digits := name[:strings.IndexByte(name, '_')]
+		n, convErr := strconv.ParseUint(digits, 10, 32)
+		require.NoError(t, convErr, "%s does not start with a version number", name)
+
+		if uint(n) > highest {
+			highest = uint(n)
+		}
+	}
+
+	require.Positive(t, highest, "the embedded migration set looks empty")
+
+	return highest
 }
 
 // TestNoCrossModuleForeignKeys verifies that ALL the foreign keys in the

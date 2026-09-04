@@ -32,6 +32,7 @@ type fakeSnapshot struct {
 	items     map[string]models.OrderLineItem
 	summaries map[string]models.OrderSummary
 	returns   map[string]models.Return
+	retItems  map[string]models.ReturnItem
 	exchanges map[string]models.Exchange
 	claims    map[string]models.Claim
 }
@@ -71,6 +72,7 @@ type fakeStore struct {
 	items     map[string]models.OrderLineItem
 	summaries map[string]models.OrderSummary
 	returns   map[string]models.Return
+	retItems  map[string]models.ReturnItem
 	exchanges map[string]models.Exchange
 	claims    map[string]models.Claim
 
@@ -87,6 +89,8 @@ type fakeStore struct {
 	// is a concurrency contract and in a real database its violation only shows
 	// up under a race; here it can be read directly.
 	lockedOrders []string
+	// lockedReturns records the return rows that were locked, in order.
+	lockedReturns []string
 
 	// spendingLocks records the customers whose spending lock was taken IN
 	// ORDER.
@@ -118,6 +122,7 @@ func newFakeStore() *fakeStore {
 		items:     map[string]models.OrderLineItem{},
 		summaries: map[string]models.OrderSummary{},
 		returns:   map[string]models.Return{},
+		retItems:  map[string]models.ReturnItem{},
 		exchanges: map[string]models.Exchange{},
 		claims:    map[string]models.Claim{},
 	}
@@ -143,6 +148,7 @@ func (f *fakeStore) snapshot() fakeSnapshot {
 		items:     maps.Clone(f.items),
 		summaries: maps.Clone(f.summaries),
 		returns:   maps.Clone(f.returns),
+		retItems:  maps.Clone(f.retItems),
 		exchanges: maps.Clone(f.exchanges),
 		claims:    maps.Clone(f.claims),
 	}
@@ -535,6 +541,129 @@ func (f *fakeStore) CreateReturn(ctx context.Context, ret models.Return) (models
 	f.recordUndo(ctx, undoEntry(f.returns, ret.ID))
 	f.returns[ret.ID] = ret
 	return ret, nil
+}
+
+// LockReturn locks the return row and returns its current form.
+func (f *fakeStore) LockReturn(ctx context.Context, id string) (models.Return, error) {
+	if err := requireTx(ctx, "LockReturn"); err != nil {
+		return models.Return{}, err
+	}
+
+	// The row is read DIRECTLY rather than through view(): a locking read sees
+	// the live row, not the transaction's snapshot, which is what makes it a
+	// lock. Going through view() here would also deadlock — it takes the same
+	// mutex this method already holds.
+	f.mu.Lock()
+	f.lockedReturns = append(f.lockedReturns, id)
+	ret, ok := f.returns[id]
+	f.mu.Unlock()
+
+	if !ok {
+		return models.Return{}, errors.NotFound("order_return_not_found",
+			"the return record was not found: %s", id)
+	}
+
+	return ret, nil
+}
+
+// ReceiveReturn stamps the return as received.
+func (f *fakeStore) ReceiveReturn(ctx context.Context, id string) (models.Return, error) {
+	return f.stampReturn(ctx, id, models.ReturnReceived)
+}
+
+// CancelReturn withdraws the return request.
+func (f *fakeStore) CancelReturn(ctx context.Context, id string) (models.Return, error) {
+	return f.stampReturn(ctx, id, models.ReturnCanceled)
+}
+
+// stampReturn writes the new status and the matching timestamp.
+func (f *fakeStore) stampReturn(
+	ctx context.Context, id string, status models.ReturnStatus,
+) (models.Return, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	ret, ok := f.returns[id]
+	if !ok {
+		return models.Return{}, errors.NotFound("order_return_not_found",
+			"the return record was not found: %s", id)
+	}
+
+	stamp := f.nextStamp()
+	ret.Status = status
+	ret.UpdatedAt = stamp
+	switch status {
+	case models.ReturnReceived:
+		ret.ReceivedAt = &stamp
+	case models.ReturnCanceled:
+		ret.CanceledAt = &stamp
+	case models.ReturnRequested:
+	}
+
+	f.recordUndo(ctx, undoEntry(f.returns, id))
+	f.returns[id] = ret
+
+	return ret, nil
+}
+
+// CreateReturnItem writes one line of a return.
+func (f *fakeStore) CreateReturnItem(
+	ctx context.Context, item models.ReturnItem,
+) (models.ReturnItem, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	stamp := f.nextStamp()
+	item.CreatedAt = stamp
+	item.UpdatedAt = stamp
+	f.recordUndo(ctx, undoEntry(f.retItems, item.ID))
+	f.retItems[item.ID] = item
+
+	return item, nil
+}
+
+// ListReturnItems returns a return's lines.
+func (f *fakeStore) ListReturnItems(ctx context.Context, returnID string) ([]models.ReturnItem, error) {
+	view := f.view(ctx)
+
+	out := []models.ReturnItem{}
+	for _, id := range slices.Sorted(maps.Keys(view.retItems)) {
+		if view.retItems[id].ReturnID == returnID {
+			out = append(out, view.retItems[id])
+		}
+	}
+
+	return out, nil
+}
+
+// ReturnedQuantities sums the units already asked back per order line.
+//
+// It applies the SAME exclusion the real query does — a canceled return
+// releases its units — because that rule is the whole point of the sum, and a
+// fake that skipped it would let the service's check pass on data the database
+// would never produce.
+func (f *fakeStore) ReturnedQuantities(
+	ctx context.Context, lineItemIDs []string,
+) (map[string]int64, error) {
+	view := f.view(ctx)
+	wanted := make(map[string]bool, len(lineItemIDs))
+	for _, id := range lineItemIDs {
+		wanted[id] = true
+	}
+
+	out := map[string]int64{}
+	for _, id := range slices.Sorted(maps.Keys(view.retItems)) {
+		item := view.retItems[id]
+		if !wanted[item.OrderLineItemID] {
+			continue
+		}
+		if ret, ok := view.returns[item.ReturnID]; !ok || ret.Status == models.ReturnCanceled {
+			continue
+		}
+		out[item.OrderLineItemID] += item.Quantity
+	}
+
+	return out, nil
 }
 
 // GetReturn returns the return record.

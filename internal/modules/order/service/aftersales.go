@@ -55,6 +55,24 @@ type CreateReturnInput struct {
 	Note string
 	// Metadata is the caller's free extra data.
 	Metadata map[string]any
+	// Lines are the order lines coming back.
+	//
+	// It may be empty, and that is not the same as "the whole order": an empty
+	// return says WHICH lines are unknown, which is the state every return
+	// record was in before lines existed. A flow cannot restock from it.
+	Lines []ReturnLineInput
+}
+
+// ReturnLineInput is one line of the order coming back.
+type ReturnLineInput struct {
+	// OrderLineItemID is the line; it has to belong to the order.
+	OrderLineItemID string
+	// Quantity is how many units come back; it has to be positive and, added
+	// to what earlier live returns already asked for, may not exceed what was
+	// bought.
+	Quantity int64
+	// RefundAmount is the part of the refund falling on this line.
+	RefundAmount int64
 }
 
 // CreateReturn opens a return record on the order.
@@ -75,6 +93,9 @@ func (s *Service) CreateReturn(ctx context.Context, in CreateReturnInput) (model
 	if err := checkTextLen("note", in.Note); err != nil {
 		return models.Return{}, err
 	}
+	if err := checkReturnLines(in.Lines); err != nil {
+		return models.Return{}, err
+	}
 
 	var created models.Return
 	err := s.store.WithTx(ctx, func(ctx context.Context) error {
@@ -85,6 +106,24 @@ func (s *Service) CreateReturn(ctx context.Context, in CreateReturnInput) (model
 		if err := checkRefundWithinOrder(order, in.RefundAmount); err != nil {
 			return err
 		}
+		lines, err := s.store.ListLineItems(ctx, in.OrderID)
+		if err != nil {
+			return err
+		}
+
+		// The rule is checked BEFORE the record is written, under the order's
+		// lock taken by requireLiveOrder. Writing first and validating after
+		// would leave a rejected return in the table for the length of the
+		// transaction, and the sum the NEXT request reads is exactly that
+		// table.
+		returned, err := s.store.ReturnedQuantities(ctx, lineIDsOf(in.Lines))
+		if err != nil {
+			return err
+		}
+		if err := checkReturnQuantities(lines, returned, in.Lines); err != nil {
+			return err
+		}
+
 		created, err = s.store.CreateReturn(ctx, models.Return{
 			ID:           models.NewReturnID(),
 			OrderID:      in.OrderID,
@@ -94,7 +133,26 @@ func (s *Service) CreateReturn(ctx context.Context, in CreateReturnInput) (model
 			Note:         in.Note,
 			Metadata:     in.Metadata,
 		})
-		return err
+		if err != nil {
+			return err
+		}
+
+		created.Items = make([]models.ReturnItem, 0, len(in.Lines))
+		for i := range in.Lines {
+			item, itemErr := s.store.CreateReturnItem(ctx, models.ReturnItem{
+				ID:              models.NewReturnItemID(),
+				ReturnID:        created.ID,
+				OrderLineItemID: in.Lines[i].OrderLineItemID,
+				Quantity:        in.Lines[i].Quantity,
+				RefundAmount:    in.Lines[i].RefundAmount,
+			})
+			if itemErr != nil {
+				return itemErr
+			}
+			created.Items = append(created.Items, item)
+		}
+
+		return nil
 	})
 	if err != nil {
 		return models.Return{}, err

@@ -12,6 +12,44 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Eklendi
 
+- **İade kaydı artık kımıldayabiliyor ve hangi satırların geldiğini söylüyor**
+  (satış sonrası, 1/3).
+
+  Üç kayıt tipi de — iade, değişim, talep — `requested` doğuyor ve orada
+  kalıyordu: üç sorgu dosyasında SIFIR `UPDATE` vardı ve iskelet bunu açıkça
+  yazmıştı, geçişleri "sonraki fazlara" erteleyerek. Yol haritası kapandı, faz
+  gelmedi.
+
+  Bu tur o üçünün de geçiş tablosunu yazıyor
+  (`models/aftersales_status.go`), ödeme modülünün oturum durum makinesiyle
+  aynı desende: saf, veritabanısız fonksiyonlar, ve servis yalnızca sonucu
+  tipli hataya çeviriyor. Üç yanıt var — `proceed`, `noop`, `conflict` — ve
+  `noop`'un ayrı olması işin özü: ikinci kez "teslim alındı" demek yeniden
+  yazmak DEĞİL, çünkü `received_at` malın geldiği andır ve yeniden damgalamak
+  kaydı "biri ikinci kez tıkladığında geldi" der hâle getirirdi.
+
+  Tablodaki ağırlıklı satır: **teslim alınmış iade geri çekilemez.** Mal fizikî
+  olarak depoda ve kayıt onun nereden geldiğini söyleyen tek şey; talebi geri
+  çekmek malı geri göndermez.
+
+  **Satır kaydı geldi** (`order_return_items`). 000001 bunu bilerek dışarıda
+  bırakmıştı — "akış yazılmadan tasarlanan çocuk şema, akış gelince değişir" —
+  ve o gerekçe artık tükendi: akış sıradaki adım, şema da onun yapacağı iki
+  işten türetildi. Stoğu geri koymak SATIR ve ADET ister, parayı geri ödemek
+  TUTAR ister; başka bir şey yok, o yüzden başka sütun da yok. Varyant sütunu
+  yok: işaret ettiği sipariş satırı onu zaten taşıyor ve sipariş satırı
+  yazıldıktan sonra değişmez.
+
+  Satırlar arası kural servise kondu ve sebebi yapısal: **bir CHECK kendi
+  satırından başkasını göremez.** "Alınandan fazlası iade edilemez" kuralı aynı
+  satırın DİĞER canlı iadelerine bağlı, o yüzden toplam siparişin kilidi altında
+  okunuyor. Geri çekilmiş iade birimlerini serbest bırakıyor; teslim alınmış ve
+  hâlâ istenen iadeler saymaya devam ediyor — iki açık talep yoksa her biri
+  satırın tamamını isteyip birlikte alınandan fazlasını iade ettirebilirdi.
+
+  Dört mutasyonun dördü de yakalandı. Sıradaki adım iade akışı: stoğu geri
+  ekleme ve parayı iade etme, saga olarak.
+
 - **Parası alınmış sipariş artık iptal edilemiyor** — ediliyordu, ve iptal
   hiçbir şeyi geri almıyordu.
 

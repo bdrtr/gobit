@@ -89,6 +89,15 @@ const (
 	// CodeRefundExceedsOrder reports that the amount of the return/claim record
 	// exceeds the total of the order.
 	CodeRefundExceedsOrder = "order_refund_exceeds_total"
+	// CodeAfterSalesTransition reports that a transition was requested on an
+	// after-sales record from a status that does not allow it.
+	CodeAfterSalesTransition = "order_after_sales_invalid_transition"
+	// CodeReturnQuantityExceeded reports that more units of a line were asked
+	// back than were bought.
+	CodeReturnQuantityExceeded = "order_return_quantity_exceeded"
+	// CodeReturnLineUnknown reports that a return line points at a line that is
+	// not on the order.
+	CodeReturnLineUnknown = "order_return_line_unknown"
 	// CodeSpendingLimitExceeded reports that the order exceeds the customer's
 	// spending limit within the period.
 	CodeSpendingLimitExceeded = "order_spending_limit_exceeded"

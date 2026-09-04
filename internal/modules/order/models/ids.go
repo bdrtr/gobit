@@ -23,6 +23,8 @@ const (
 	SummaryIDPrefix = "osum_"
 	// ReturnIDPrefix is the prefix of return identifiers.
 	ReturnIDPrefix = "ret_"
+	// ReturnItemIDPrefix is the prefix of a return line identifier.
+	ReturnItemIDPrefix = "retitem_"
 	// ExchangeIDPrefix is the prefix of exchange identifiers.
 	ExchangeIDPrefix = "exch_"
 	// ClaimIDPrefix is the prefix of claim record identifiers.
@@ -51,6 +53,9 @@ func NewLineItemID() string { return newID(LineItemIDPrefix, time.Now()) }
 
 // NewSummaryID produces a new order summary identifier.
 func NewSummaryID() string { return newID(SummaryIDPrefix, time.Now()) }
+
+// NewReturnItemID produces a new return line identifier.
+func NewReturnItemID() string { return newID(ReturnItemIDPrefix, time.Now()) }
 
 // NewReturnID produces a new return identifier.
 func NewReturnID() string { return newID(ReturnIDPrefix, time.Now()) }

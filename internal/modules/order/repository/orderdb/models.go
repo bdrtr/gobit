@@ -95,6 +95,17 @@ type OrderReturn struct {
 	DeletedAt    pgtype.Timestamptz
 }
 
+type OrderReturnItem struct {
+	ID              string
+	OrderReturnID   string
+	OrderLineItemID string
+	Quantity        int64
+	RefundAmount    int64
+	CreatedAt       pgtype.Timestamptz
+	UpdatedAt       pgtype.Timestamptz
+	DeletedAt       pgtype.Timestamptz
+}
+
 type OrderSummary struct {
 	ID            string
 	OrderID       string

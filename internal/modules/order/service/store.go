@@ -123,6 +123,22 @@ type Store interface {
 	GetReturn(ctx context.Context, id string) (models.Return, error)
 	// ListReturns pages the return records of the order.
 	ListReturns(ctx context.Context, filter models.ChildFilter) ([]models.Return, int64, error)
+	// LockReturn locks the return row and returns its current form; it may only
+	// be called inside [Store.WithTx].
+	LockReturn(ctx context.Context, id string) (models.Return, error)
+	// ReceiveReturn stamps the return as received.
+	ReceiveReturn(ctx context.Context, id string) (models.Return, error)
+	// CancelReturn withdraws the return request.
+	CancelReturn(ctx context.Context, id string) (models.Return, error)
+
+	// CreateReturnItem writes one line of a return.
+	CreateReturnItem(ctx context.Context, item models.ReturnItem) (models.ReturnItem, error)
+	// ListReturnItems returns a return's lines in the order they were written.
+	ListReturnItems(ctx context.Context, returnID string) ([]models.ReturnItem, error)
+	// ReturnedQuantities reports how many units of each given order line have
+	// already been asked back across the order's LIVE returns; a line that was
+	// never returned is absent from the map.
+	ReturnedQuantities(ctx context.Context, lineItemIDs []string) (map[string]int64, error)
 
 	// CreateExchange opens a new exchange record.
 	CreateExchange(ctx context.Context, exchange models.Exchange) (models.Exchange, error)
