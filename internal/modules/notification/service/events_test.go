@@ -14,24 +14,25 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/notification/service"
 )
 
-// testSiparisGovdesi "order.interop" yüzeyinin döndüğü gövdedir.
+// testOrderBody is the body the "order.interop" surface returns.
 //
-// TÜM değerler dizedir; yüzeyin sözleşmesi budur ve gövdeyi burada elle yazmak
-// bilinçlidir (bkz. [fakeContacts]).
-const testSiparisGovdesi = `{
+// ALL the values are strings; that is the contract of the surface, and writing
+// the body out by hand here is deliberate (see [fakeContacts]).
+const testOrderBody = `{
 	"order_id":      "order_01H",
 	"display_id":    "1042",
-	"email":         "musteri@example.com",
+	"email":         "customer@example.com",
 	"currency_code": "TRY",
 	"total":         "6100",
 	"item_count":    "2"
 }`
 
-// olaySiparisi "order.placed" olayının yükünü üretir.
+// orderPlacedEvent produces the payload of the "order.placed" event.
 //
-// Yükte E-POSTA YOKTUR ve bu testin dayanağıdır: abone adresi olaydan değil
-// kayıttan okumak ZORUNDADIR.
-func olaySiparisi(orderID string) eventbus.Event {
+// There is NO E-MAIL in the payload and that is what this test rests on: the
+// subscriber IS OBLIGED to read the address from the record and not from the
+// event.
+func orderPlacedEvent(orderID string) eventbus.Event {
 	return eventbus.Event{
 		Name: service.EventOrderPlaced,
 		Data: map[string]any{
@@ -45,8 +46,8 @@ func olaySiparisi(orderID string) eventbus.Event {
 	}
 }
 
-// olayKurulumu sahte iletişim yüzeyiyle bir servis üretir.
-func olayKurulumu(t *testing.T, contacts *fakeContacts) (*service.Service, *fakeStore, *fakeProvider) {
+// setupWithContacts produces a service with a fake contact surface.
+func setupWithContacts(t *testing.T, contacts *fakeContacts) (*service.Service, *fakeStore, *fakeProvider) {
 	t.Helper()
 
 	store := newFakeStore()
@@ -54,177 +55,182 @@ func olayKurulumu(t *testing.T, contacts *fakeContacts) (*service.Service, *fake
 	registry := service.NewProviderRegistry()
 	require.NoError(t, registry.Register(prov))
 
-	svc, err := yeniServis(store, registry, prov.ID(), contacts)
+	svc, err := newService(store, registry, prov.ID(), contacts)
 	require.NoError(t, err)
 
 	return svc, store, prov
 }
 
-// TestOrderPlacedEpostayiOLAYDANDEGILKAYITTANOkur abonenin adresi siparişten
-// okuduğunu doğrular.
+// TestOrderPlacedReadsTheEmailFromTheRECORDNotTheEVENT verifies that the
+// subscriber reads the address from the order.
 //
-// Olay yükü kişisel veri TAŞIMAZ (olaylar Redis'e yazılır ve orada kalıcıdır);
-// abone bu yüzden olaydan yalnızca sipariş kimliğini alır ve gerisini
-// "order.interop" üzerinden okur. Test bunu iki yönden sabitler: okuma
-// GERÇEKTEN yapılır ve sağlayıcıya giden adres o okumadan gelir.
-func TestOrderPlacedEpostayiOLAYDANDEGILKAYITTANOkur(t *testing.T) {
-	contacts := &fakeContacts{govde: testSiparisGovdesi}
-	svc, store, prov := olayKurulumu(t, contacts)
+// The event payload CARRIES no personal data (events are written to Redis and
+// are durable there); that is why the subscriber takes only the order
+// identifier from the event and reads the rest over "order.interop". The test
+// pins this from two sides: the reading REALLY happens, and the address that
+// goes to the provider comes from that reading.
+func TestOrderPlacedReadsTheEmailFromTheRECORDNotTheEVENT(t *testing.T) {
+	contacts := &fakeContacts{body: testOrderBody}
+	svc, store, prov := setupWithContacts(t, contacts)
 
-	require.NoError(t, svc.OrderPlaced(context.Background(), olaySiparisi("order_01H")))
+	require.NoError(t, svc.OrderPlaced(context.Background(), orderPlacedEvent("order_01H")))
 
-	require.Equal(t, 1, contacts.cagri, "sipariş kaydı okunmalı")
-	assert.Equal(t, "order_01H", contacts.istenen, "okuma, olaydaki kimlikle yapılmalı")
+	require.Equal(t, 1, contacts.calls, "the order record has to be read")
+	assert.Equal(t, "order_01H", contacts.requested,
+		"the reading has to be done with the identifier from the event")
 
-	require.Equal(t, 1, prov.cagriSayisi())
-	gonderilen := prov.sonBildirim()
-	assert.Equal(t, "musteri@example.com", gonderilen.To, "adres KAYITTAN gelmeli")
-	assert.Equal(t, coreprovider.ChannelEmail, gonderilen.Channel)
-	assert.Equal(t, service.TemplateOrderPlaced, gonderilen.Template)
+	require.Equal(t, 1, prov.callCount())
+	sent := prov.lastNotification()
+	assert.Equal(t, "customer@example.com", sent.To, "the address has to come FROM THE RECORD")
+	assert.Equal(t, coreprovider.ChannelEmail, sent.Channel)
+	assert.Equal(t, service.TemplateOrderPlaced, sent.Template)
 	assert.Equal(t, map[string]string{
 		"order_id":      "order_01H",
 		"display_id":    "1042",
 		"currency_code": "TRY",
 		"total":         "6100",
 		"item_count":    "2",
-	}, gonderilen.Data, "şablon verisi siparişten gelmeli ve TÜM değerleri dize olmalı")
+	}, sent.Data, "the template data has to come from the order and ALL its values have to be strings")
 
-	kayitlar := store.tumKayitlar()
-	require.Len(t, kayitlar, 1)
-	assert.Equal(t, "order_01H", kayitlar[0].Reference)
-	assert.Equal(t, service.TemplateOrderPlaced, kayitlar[0].Template)
+	records := store.allRecords()
+	require.Len(t, records, 1)
+	assert.Equal(t, "order_01H", records[0].Reference)
+	assert.Equal(t, service.TemplateOrderPlaced, records[0].Template)
 }
 
-// TestOrderPlacedSablonAdiOlayAdiylaAynidir şablon ile olay adının
-// ayrışmadığını doğrular.
+// TestOrderPlacedTemplateNameIsTheSameAsTheEventName verifies that the template
+// and the event name do not diverge.
 //
-// İkisi ayrışırsa "hangi olay hangi şablonu tetikliyor" sorusu ancak koda
-// bakılarak yanıtlanır; üstelik şablon adı idempotency anahtarının yarısıdır ve
-// değişmesi, TÜM siparişler için bildirimin ikinci kez gönderilebilir olması
-// demektir.
-func TestOrderPlacedSablonAdiOlayAdiylaAynidir(t *testing.T) {
+// If the two diverge, the question "which event triggers which template" can
+// only be answered by reading the code; on top of that the template name is
+// half of the idempotency key and its changing means the notification becoming
+// sendable a second time for ALL orders.
+func TestOrderPlacedTemplateNameIsTheSameAsTheEventName(t *testing.T) {
 	assert.Equal(t, service.EventOrderPlaced, service.TemplateOrderPlaced)
 	assert.Equal(t, "order.placed", service.EventOrderPlaced,
-		"olay adı order modülünün yayımladığı adla aynı olmalı")
+		"the event name has to be the same as the name the order module publishes")
 }
 
-// TestOrderPlacedAyniOlayIkiKezIslenirseTekBildirimGonderilir olay veri
-// yolunun sıra ve tekillik garantisi VERMEDİĞİ gerçeğine karşı korumayı
-// doğrular.
+// TestOrderPlacedProcessingTheSameEventTwiceSendsOneNotification verifies the
+// protection against the fact that the event bus GIVES NO ordering and
+// uniqueness guarantee.
 //
-// İşleyici idempotent olmak zorundadır ve tekillik koda değil, teslim
-// günlüğündeki (şablon, referans) benzersizliğine dayanır.
-func TestOrderPlacedAyniOlayIkiKezIslenirseTekBildirimGonderilir(t *testing.T) {
-	contacts := &fakeContacts{govde: testSiparisGovdesi}
-	svc, store, prov := olayKurulumu(t, contacts)
+// The handler is obliged to be idempotent, and the uniqueness rests not on the
+// code but on the (template, reference) uniqueness in the delivery log.
+func TestOrderPlacedProcessingTheSameEventTwiceSendsOneNotification(t *testing.T) {
+	contacts := &fakeContacts{body: testOrderBody}
+	svc, store, prov := setupWithContacts(t, contacts)
 	ctx := context.Background()
-	olay := olaySiparisi("order_01H")
+	event := orderPlacedEvent("order_01H")
 
-	require.NoError(t, svc.OrderPlaced(ctx, olay))
-	require.NoError(t, svc.OrderPlaced(ctx, olay))
+	require.NoError(t, svc.OrderPlaced(ctx, event))
+	require.NoError(t, svc.OrderPlaced(ctx, event))
 
-	assert.Equal(t, 1, prov.cagriSayisi(), "müşteri ikinci bir onay e-postası ALMAMALI")
-	assert.Len(t, store.tumKayitlar(), 1)
+	assert.Equal(t, 1, prov.callCount(), "the customer MUST NOT get a second confirmation e-mail")
+	assert.Len(t, store.allRecords(), 1)
 }
 
-// TestOrderPlacedEpostasizSiparisiAtlar adressiz siparişin hata değil,
-// atlanmış bir kayıt ürettiğini doğrular.
-func TestOrderPlacedEpostasizSiparisiAtlar(t *testing.T) {
-	contacts := &fakeContacts{govde: `{"order_id":"order_01H","display_id":"7","email":"",` +
+// TestOrderPlacedSkipsAnOrderWithoutAnEmail verifies that an order without an
+// address produces not an error but a skipped record.
+func TestOrderPlacedSkipsAnOrderWithoutAnEmail(t *testing.T) {
+	contacts := &fakeContacts{body: `{"order_id":"order_01H","display_id":"7","email":"",` +
 		`"currency_code":"TRY","total":"100","item_count":"1"}`}
-	svc, store, prov := olayKurulumu(t, contacts)
+	svc, store, prov := setupWithContacts(t, contacts)
 
-	require.NoError(t, svc.OrderPlaced(context.Background(), olaySiparisi("order_01H")))
+	require.NoError(t, svc.OrderPlaced(context.Background(), orderPlacedEvent("order_01H")))
 
-	assert.Equal(t, 0, prov.cagriSayisi())
-	kayitlar := store.tumKayitlar()
-	require.Len(t, kayitlar, 1)
-	assert.Equal(t, models.DeliverySkipped, kayitlar[0].Status)
+	assert.Equal(t, 0, prov.callCount())
+	records := store.allRecords()
+	require.Len(t, records, 1)
+	assert.Equal(t, models.DeliverySkipped, records[0].Status)
 }
 
-// TestOrderPlacedBozukOlayYukunuReddeder olay sözleşmesinin ihlalinin sessiz
-// kalmadığını doğrular.
+// TestOrderPlacedRejectsABrokenEventPayload verifies that a violation of the
+// event contract does not stay silent.
 //
-// Sayısal bir order_id, Redis backend'inde float64 olarak gelirdi; sessizce
-// devam etmek, hiç var olmayan bir sipariş için bildirim denemesi üretirdi.
-func TestOrderPlacedBozukOlayYukunuReddeder(t *testing.T) {
+// A numeric order_id would arrive as a float64 on the Redis backend; carrying
+// on silently would produce a notification attempt for an order that never
+// existed.
+func TestOrderPlacedRejectsABrokenEventPayload(t *testing.T) {
 	tests := map[string]map[string]any{
-		"alan yok":     {"display_id": "1042"},
-		"dize değil":   {"order_id": 42},
-		"boş kimlik":   {"order_id": "   "},
-		"nil değerli":  {"order_id": nil},
-		"yanlış tipli": {"order_id": []string{"order_01H"}},
+		"no field":         {"display_id": "1042"},
+		"not a string":     {"order_id": 42},
+		"empty identifier": {"order_id": "   "},
+		"nil valued":       {"order_id": nil},
+		"wrong type":       {"order_id": []string{"order_01H"}},
 	}
 
-	for ad, veri := range tests {
-		t.Run(ad, func(t *testing.T) {
-			contacts := &fakeContacts{govde: testSiparisGovdesi}
-			svc, store, prov := olayKurulumu(t, contacts)
+	for name, data := range tests {
+		t.Run(name, func(t *testing.T) {
+			contacts := &fakeContacts{body: testOrderBody}
+			svc, store, prov := setupWithContacts(t, contacts)
 
 			err := svc.OrderPlaced(context.Background(),
-				eventbus.Event{Name: service.EventOrderPlaced, Data: veri})
+				eventbus.Event{Name: service.EventOrderPlaced, Data: data})
 
 			require.Error(t, err)
 			assert.Equal(t, service.CodeEventInvalid, errors.CodeOf(err))
-			assert.Equal(t, 0, contacts.cagri, "bozuk yükle sipariş okunmamalı")
-			assert.Equal(t, 0, prov.cagriSayisi())
-			assert.Empty(t, store.tumKayitlar())
+			assert.Equal(t, 0, contacts.calls, "the order must not be read with a broken payload")
+			assert.Equal(t, 0, prov.callCount())
+			assert.Empty(t, store.allRecords())
 		})
 	}
 }
 
-// TestOrderPlacedSiparisOkunamazsaHataDoner okuma hatasının yutulmadığını
-// doğrular.
+// TestOrderPlacedReturnsAnErrorWhenTheOrderCannotBeRead verifies that a read
+// failure is not swallowed.
 //
-// Hata dönmek yeniden teslim İSTEMEK değildir (bkz. events.go dosya belgesi);
-// veri yolu onu ERROR seviyesinde loglar ve bildirimin gitmediği görünür olur.
-func TestOrderPlacedSiparisOkunamazsaHataDoner(t *testing.T) {
-	contacts := &fakeContacts{err: errors.NotFound("order_not_found", "sipariş yok")}
-	svc, store, prov := olayKurulumu(t, contacts)
+// Returning an error is not ASKING for a redelivery (see the events.go file
+// documentation); the bus logs it at the ERROR level and the notification not
+// going out becomes visible.
+func TestOrderPlacedReturnsAnErrorWhenTheOrderCannotBeRead(t *testing.T) {
+	contacts := &fakeContacts{err: errors.NotFound("order_not_found", "there is no such order")}
+	svc, store, prov := setupWithContacts(t, contacts)
 
-	err := svc.OrderPlaced(context.Background(), olaySiparisi("order_YOK"))
+	err := svc.OrderPlaced(context.Background(), orderPlacedEvent("order_MISSING"))
 
 	require.Error(t, err)
 	assert.Equal(t, service.CodeContactUnavailable, errors.CodeOf(err))
-	assert.True(t, errors.IsNotFound(err), "hata SINIFI korunmalı: %v", err)
-	assert.Equal(t, 0, prov.cagriSayisi())
-	assert.Empty(t, store.tumKayitlar(), "okunamayan sipariş idempotency anahtarını tüketmemeli")
+	assert.True(t, errors.IsNotFound(err), "the KIND of the error has to be preserved: %v", err)
+	assert.Equal(t, 0, prov.callCount())
+	assert.Empty(t, store.allRecords(),
+		"an order that could not be read must not consume the idempotency key")
 }
 
-// TestOrderPlacedBozukYanitiReddeder yüzeyin şeması değiştiğinde sessizce boş
-// bir şablon gönderilmediğini doğrular.
-func TestOrderPlacedBozukYanitiReddeder(t *testing.T) {
+// TestOrderPlacedRejectsABrokenResponse verifies that when the schema of the
+// surface changes an empty template is not silently sent.
+func TestOrderPlacedRejectsABrokenResponse(t *testing.T) {
 	tests := map[string]string{
-		"JSON değil":      `{bozuk`,
-		"kimliksiz gövde": `{"email":"a@b.com"}`,
+		"not JSON":                   `{broken`,
+		"body without an identifier": `{"email":"a@b.com"}`,
 	}
 
-	for ad, govde := range tests {
-		t.Run(ad, func(t *testing.T) {
-			contacts := &fakeContacts{govde: govde}
-			svc, _, prov := olayKurulumu(t, contacts)
+	for name, body := range tests {
+		t.Run(name, func(t *testing.T) {
+			contacts := &fakeContacts{body: body}
+			svc, _, prov := setupWithContacts(t, contacts)
 
-			err := svc.OrderPlaced(context.Background(), olaySiparisi("order_01H"))
+			err := svc.OrderPlaced(context.Background(), orderPlacedEvent("order_01H"))
 
 			require.Error(t, err)
 			assert.Equal(t, service.CodeContactInvalid, errors.CodeOf(err))
-			assert.Equal(t, 0, prov.cagriSayisi(), "eksik gövdeyle şablon gönderilmemeli")
+			assert.Equal(t, 0, prov.callCount(), "a template must not be sent with an incomplete body")
 		})
 	}
 }
 
-// TestOrderPlacedTaninmayanAlanlariYokSayar yüzeye eklenen yeni bir alanın
-// bildirimi düşürmediğini doğrular.
+// TestOrderPlacedIgnoresUnrecognizedFields verifies that a new field added to
+// the surface does not drop the notification.
 //
-// Katı çözümleme, order'a eklenen her alanın TÜM sipariş bildirimlerini
-// kırması demekti.
-func TestOrderPlacedTaninmayanAlanlariYokSayar(t *testing.T) {
-	contacts := &fakeContacts{govde: `{"order_id":"order_01H","display_id":"7",` +
+// Strict decoding would have meant every field added to order breaking ALL
+// order notifications.
+func TestOrderPlacedIgnoresUnrecognizedFields(t *testing.T) {
+	contacts := &fakeContacts{body: `{"order_id":"order_01H","display_id":"7",` +
 		`"email":"a@b.com","currency_code":"TRY","total":"100","item_count":"1",` +
-		`"yeni_alan":"gelecekte eklendi"}`}
-	svc, _, prov := olayKurulumu(t, contacts)
+		`"new_field":"added in the future"}`}
+	svc, _, prov := setupWithContacts(t, contacts)
 
-	require.NoError(t, svc.OrderPlaced(context.Background(), olaySiparisi("order_01H")))
+	require.NoError(t, svc.OrderPlaced(context.Background(), orderPlacedEvent("order_01H")))
 
-	assert.Equal(t, 1, prov.cagriSayisi())
+	assert.Equal(t, 1, prov.callCount())
 }

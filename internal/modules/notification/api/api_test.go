@@ -20,36 +20,36 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/notification/service"
 )
 
-// fakeDeliveries api.Deliveries'in senaryolanabilir karşılığıdır.
+// fakeDeliveries is the scriptable counterpart of api.Deliveries.
 //
-// HTTP davranışının gerçek bir veritabanı olmadan sınanabilmesi için vardır:
-// handler'ın işi status kodu SEÇMEK değil, servisin tipli hatasını
-// corehttp.WriteError'a vermektir ve bu ancak servis yerine bir sahte konarak
-// doğrulanabilir.
+// It exists so that the HTTP behavior can be tested without a real database:
+// the handler's job is not to CHOOSE the status code but to give the service's
+// typed error to corehttp.WriteError, and that can only be verified by putting
+// a fake in place of the service.
 type fakeDeliveries struct {
-	kayitlar []models.Delivery
-	toplam   int64
-	err      error
+	records []models.Delivery
+	total   int64
+	err     error
 
-	// sonGirdi son çağrının girdisidir; sorgu parametrelerinin servise
-	// BOZULMADAN ulaştığı bununla kanıtlanır.
-	sonGirdi service.ListDeliveriesInput
+	// lastInput is the input of the last call; it is what proves that the query
+	// parameters reach the service UNCORRUPTED.
+	lastInput service.ListDeliveriesInput
 }
 
 func (f *fakeDeliveries) ListDeliveries(
 	_ context.Context,
 	in service.ListDeliveriesInput,
 ) ([]models.Delivery, int64, error) {
-	f.sonGirdi = in
+	f.lastInput = in
 	if f.err != nil {
 		return nil, 0, f.err
 	}
-	return f.kayitlar, f.toplam, nil
+	return f.records, f.total, nil
 }
 
-// testKayit tipik bir teslim günlüğü kaydıdır.
-func testKayit() models.Delivery {
-	an := time.Date(2026, 8, 31, 10, 0, 0, 0, time.UTC)
+// sampleDelivery is a typical delivery log record.
+func sampleDelivery() models.Delivery {
+	moment := time.Date(2026, 8, 31, 10, 0, 0, 0, time.UTC)
 
 	return models.Delivery{
 		ID:         "notif_01H",
@@ -58,43 +58,45 @@ func testKayit() models.Delivery {
 		Reference:  "order_01H",
 		ProviderID: "log",
 		Status:     models.DeliverySent,
-		CreatedAt:  an,
-		UpdatedAt:  an,
+		CreatedAt:  moment,
+		UpdatedAt:  moment,
 	}
 }
 
-// yeniRouter sahte servis üzerinde çalışan bir router kurar.
-func yeniRouter(svc *fakeDeliveries) chi.Router {
+// newRouter sets up a router that works over the fake service.
+func newRouter(svc *fakeDeliveries) chi.Router {
 	r := chi.NewRouter()
 	api.New(svc).Routes(r)
 
 	return r
 }
 
-// yonetici testlerin varsayılan kimliğidir: tam yetkili bir yönetim
-// kullanıcısı.
+// adminPrincipal is the tests' default identity: a fully scoped administration
+// user.
 //
-// Router burada DOĞRUDAN kuruluyor, yani corehttp.RequireAdmin zincirde yok ve
-// context'e kimliği koyan kimse yok; uç corehttp.RequireScope ile korunduğu
-// için kimliksiz istek 401 döner ve testin asıl doğruladığı davranışa sıra
-// gelmezdi.
-func yonetici() corehttp.Principal {
+// The router is built DIRECTLY here, that is, corehttp.RequireAdmin is not in
+// the chain and there is nobody to put the identity into the context; because
+// the endpoint is protected with corehttp.RequireScope, a request without an
+// identity returns 401 and the behavior the test really verifies would never
+// get its turn.
+func adminPrincipal() corehttp.Principal {
 	return corehttp.Principal{ID: "user_test", Kind: "user", Scopes: []string{corehttp.ScopeAdmin}}
 }
 
-// istek verilen isteği tam yetkili bir kimlikle router'a uygular.
-func istek(t *testing.T, r chi.Router, path string) *httptest.ResponseRecorder {
+// doRequest applies the given request to the router with a fully scoped
+// identity.
+func doRequest(t *testing.T, r chi.Router, path string) *httptest.ResponseRecorder {
 	t.Helper()
 
-	return kimlikliIstek(t, r, path, yonetici())
+	return doRequestAs(t, r, path, adminPrincipal())
 }
 
-// kimlikliIstek verilen isteği belirtilen kimlikle uygular.
-func kimlikliIstek(t *testing.T, r chi.Router, path string, kimlik corehttp.Principal) *httptest.ResponseRecorder {
+// doRequestAs applies the given request with the stated identity.
+func doRequestAs(t *testing.T, r chi.Router, path string, principal corehttp.Principal) *httptest.ResponseRecorder {
 	t.Helper()
 
 	req := httptest.NewRequest(http.MethodGet, path, strings.NewReader(""))
-	req = req.WithContext(corehttp.WithPrincipal(req.Context(), kimlik))
+	req = req.WithContext(corehttp.WithPrincipal(req.Context(), principal))
 
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
@@ -102,130 +104,131 @@ func kimlikliIstek(t *testing.T, r chi.Router, path string, kimlik corehttp.Prin
 	return rec
 }
 
-// TestListeKayitlariZarfIcindeDoner yanıt zarfını ve gövde alanlarını
-// doğrular.
+// TestListReturnsRecordsInsideTheEnvelope verifies the response envelope and
+// the body fields.
 //
-// Alıcı adresinin gövdede OLMADIĞI ayrıca sınanır: kayıtta da yoktur ve
-// uydurulacak tek kaynak siparişin kendisi olurdu — bu uç, kişisel veriyi
-// ikinci bir yerden servis eden bir kapıya dönüşmemelidir.
-func TestListeKayitlariZarfIcindeDoner(t *testing.T) {
-	svc := &fakeDeliveries{kayitlar: []models.Delivery{testKayit()}, toplam: 1}
+// That the recipient address IS NOT in the body is tested separately: it is not
+// in the record either and the only source to invent it from would be the order
+// itself — this endpoint must not turn into a door that serves personal data
+// out of a second place.
+func TestListReturnsRecordsInsideTheEnvelope(t *testing.T) {
+	svc := &fakeDeliveries{records: []models.Delivery{sampleDelivery()}, total: 1}
 
-	rec := istek(t, yeniRouter(svc), "/admin/v1/notifications")
+	rec := doRequest(t, newRouter(svc), "/admin/v1/notifications")
 
 	require.Equal(t, http.StatusOK, rec.Code)
 
-	var govde struct {
+	var body struct {
 		Data   []map[string]any `json:"data"`
 		Count  int64            `json:"count"`
 		Offset int64            `json:"offset"`
 		Limit  int64            `json:"limit"`
 	}
-	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &govde))
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
 
-	assert.Equal(t, int64(1), govde.Count)
-	assert.Equal(t, service.DefaultLimit, govde.Limit, "zarf UYGULANAN limiti bildirmeli")
-	require.Len(t, govde.Data, 1)
+	assert.Equal(t, int64(1), body.Count)
+	assert.Equal(t, service.DefaultLimit, body.Limit, "the envelope must report the APPLIED limit")
+	require.Len(t, body.Data, 1)
 
-	kayit := govde.Data[0]
-	assert.Equal(t, "notif_01H", kayit["id"])
-	assert.Equal(t, "order.placed", kayit["template"])
-	assert.Equal(t, "order_01H", kayit["reference"])
-	assert.Equal(t, "sent", kayit["status"])
-	assert.Equal(t, "log", kayit["provider_id"])
-	assert.NotContains(t, kayit, "to", "gövde alıcı adresi TAŞIMAMALI")
-	assert.NotContains(t, kayit, "email")
-	assert.NotContains(t, kayit, "error", "boş hata alanı gövdeye yazılmamalı")
+	record := body.Data[0]
+	assert.Equal(t, "notif_01H", record["id"])
+	assert.Equal(t, "order.placed", record["template"])
+	assert.Equal(t, "order_01H", record["reference"])
+	assert.Equal(t, "sent", record["status"])
+	assert.Equal(t, "log", record["provider_id"])
+	assert.NotContains(t, record, "to", "the body MUST NOT carry the recipient address")
+	assert.NotContains(t, record, "email")
+	assert.NotContains(t, record, "error", "an empty error field must not be written into the body")
 }
 
-// TestListeSuzgecleriServiseGecer sorgu parametrelerinin bozulmadan servise
-// ulaştığını doğrular.
-func TestListeSuzgecleriServiseGecer(t *testing.T) {
+// TestListFiltersReachTheService verifies that the query parameters reach the
+// service uncorrupted.
+func TestListFiltersReachTheService(t *testing.T) {
 	svc := &fakeDeliveries{}
 
-	rec := istek(t, yeniRouter(svc),
+	rec := doRequest(t, newRouter(svc),
 		"/admin/v1/notifications?reference=order_01H&status=failed&limit=10&offset=20")
 
 	require.Equal(t, http.StatusOK, rec.Code)
-	require.NotNil(t, svc.sonGirdi.Reference)
-	assert.Equal(t, "order_01H", *svc.sonGirdi.Reference)
-	require.NotNil(t, svc.sonGirdi.Status)
-	assert.Equal(t, "failed", *svc.sonGirdi.Status)
-	assert.Equal(t, int64(10), svc.sonGirdi.Page.Limit)
-	assert.Equal(t, int64(20), svc.sonGirdi.Page.Offset)
+	require.NotNil(t, svc.lastInput.Reference)
+	assert.Equal(t, "order_01H", *svc.lastInput.Reference)
+	require.NotNil(t, svc.lastInput.Status)
+	assert.Equal(t, "failed", *svc.lastInput.Status)
+	assert.Equal(t, int64(10), svc.lastInput.Page.Limit)
+	assert.Equal(t, int64(20), svc.lastInput.Page.Offset)
 }
 
-// TestVerilmeyenSuzgecNILGecer "verilmedi" ile "boş verildi" ayrımının
-// korunduğunu doğrular.
+// TestFilterThatIsNotGivenPassesAsNIL verifies that the distinction between
+// "was not given" and "was given empty" is preserved.
 //
-// Ayrım kaybolsaydı "?reference=" yazan bir istemciye sessizce TÜM günlük
-// dönerdi.
-func TestVerilmeyenSuzgecNILGecer(t *testing.T) {
+// Had the distinction been lost, a client that wrote "?reference=" would
+// silently have got the WHOLE log.
+func TestFilterThatIsNotGivenPassesAsNIL(t *testing.T) {
 	svc := &fakeDeliveries{}
 
-	require.Equal(t, http.StatusOK, istek(t, yeniRouter(svc), "/admin/v1/notifications").Code)
-	assert.Nil(t, svc.sonGirdi.Reference)
-	assert.Nil(t, svc.sonGirdi.Status)
+	require.Equal(t, http.StatusOK, doRequest(t, newRouter(svc), "/admin/v1/notifications").Code)
+	assert.Nil(t, svc.lastInput.Reference)
+	assert.Nil(t, svc.lastInput.Status)
 
-	require.Equal(t, http.StatusOK, istek(t, yeniRouter(svc), "/admin/v1/notifications?reference=").Code)
-	require.NotNil(t, svc.sonGirdi.Reference)
-	assert.Empty(t, *svc.sonGirdi.Reference)
+	require.Equal(t, http.StatusOK, doRequest(t, newRouter(svc), "/admin/v1/notifications?reference=").Code)
+	require.NotNil(t, svc.lastInput.Reference)
+	assert.Empty(t, *svc.lastInput.Reference)
 }
 
-// TestSayiOlmayanSayfalamaParametresiReddedilir sessizce ilk sayfaya
-// düşülmediğini doğrular.
-func TestSayiOlmayanSayfalamaParametresiReddedilir(t *testing.T) {
-	rec := istek(t, yeniRouter(&fakeDeliveries{}), "/admin/v1/notifications?limit=abc")
+// TestNonNumericPagingParameterIsRejected verifies that there is no silent fall
+// back to the first page.
+func TestNonNumericPagingParameterIsRejected(t *testing.T) {
+	rec := doRequest(t, newRouter(&fakeDeliveries{}), "/admin/v1/notifications?limit=abc")
 
 	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code)
 }
 
-// TestServisHatasiStatusKoduSecmez handler'ın status kodunu SEÇMEDİĞİNİ,
-// hata sınıfının çevirdiğini doğrular (plan Bölüm 2.7).
-func TestServisHatasiStatusKoduSecmez(t *testing.T) {
+// TestServiceErrorDoesNotChooseTheStatusCode verifies that the handler DOES NOT
+// CHOOSE the status code, the error kind translates it (plan Section 2.7).
+func TestServiceErrorDoesNotChooseTheStatusCode(t *testing.T) {
 	tests := map[string]struct {
-		err  error
-		kod  int
-		kodu string
+		err    error
+		status int
+		code   string
 	}{
-		"geçersiz süzgeç": {
-			err: errors.Invalid("notification_invalid_input", "tanınmayan durum"),
-			kod: http.StatusUnprocessableEntity,
+		"invalid filter": {
+			err:    errors.Invalid("notification_invalid_input", "unrecognized status"),
+			status: http.StatusUnprocessableEntity,
 		},
-		"veritabanı yok": {
-			err: errors.Unavailable("notification_query_failed", "havuz yok"),
-			kod: http.StatusServiceUnavailable,
+		"no database": {
+			err:    errors.Unavailable("notification_query_failed", "no pool"),
+			status: http.StatusServiceUnavailable,
 		},
 	}
 
-	for ad, tt := range tests {
-		t.Run(ad, func(t *testing.T) {
-			rec := istek(t, yeniRouter(&fakeDeliveries{err: tt.err}), "/admin/v1/notifications")
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			rec := doRequest(t, newRouter(&fakeDeliveries{err: tt.err}), "/admin/v1/notifications")
 
-			assert.Equal(t, tt.kod, rec.Code)
+			assert.Equal(t, tt.status, rec.Code)
 		})
 	}
 }
 
-// TestYetkisizKimlikReddedilir okuma yetkisi olmayan bir yönetim kimliğinin
-// günlüğü göremediğini doğrular.
+// TestPrincipalWithoutTheScopeIsRejected verifies that an administration
+// identity without the read scope cannot see the log.
 //
-// Kimlik doğrulama yetkilendirmenin yerine geçseydi, yetkileri boşaltılmış bir
-// kullanıcı da sipariş akışının zaman çizelgesini okuyabilirdi.
-func TestYetkisizKimlikReddedilir(t *testing.T) {
-	dar := corehttp.Principal{ID: "user_dar", Kind: "user", Scopes: []string{"product:read"}}
+// Had authentication stood in for authorization, a user whose scopes had been
+// emptied could have read the timeline of the order flow too.
+func TestPrincipalWithoutTheScopeIsRejected(t *testing.T) {
+	narrow := corehttp.Principal{ID: "user_narrow", Kind: "user", Scopes: []string{"product:read"}}
 
-	rec := kimlikliIstek(t, yeniRouter(&fakeDeliveries{}), "/admin/v1/notifications", dar)
+	rec := doRequestAs(t, newRouter(&fakeDeliveries{}), "/admin/v1/notifications", narrow)
 
 	assert.Equal(t, http.StatusForbidden, rec.Code)
 }
 
-// TestOkumaYetkisiYeter modülün kendi yetkisiyle erişilebildiğini doğrular;
-// admin üst yetkisi ZORUNLU değildir.
-func TestOkumaYetkisiYeter(t *testing.T) {
-	dar := corehttp.Principal{ID: "user_okur", Kind: "user", Scopes: []string{api.ScopeRead}}
+// TestReadScopeIsEnough verifies that the module can be reached with its own
+// scope; the admin superior scope is NOT REQUIRED.
+func TestReadScopeIsEnough(t *testing.T) {
+	narrow := corehttp.Principal{ID: "user_reader", Kind: "user", Scopes: []string{api.ScopeRead}}
 
-	rec := kimlikliIstek(t, yeniRouter(&fakeDeliveries{}), "/admin/v1/notifications", dar)
+	rec := doRequestAs(t, newRouter(&fakeDeliveries{}), "/admin/v1/notifications", narrow)
 
 	assert.Equal(t, http.StatusOK, rec.Code)
 }

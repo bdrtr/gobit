@@ -1,37 +1,40 @@
-// Package local dosyaları YEREL DİSKTE, yapılandırılan bir kök dizinde
-// saklayan varsayılan dosya sağlayıcısıdır (plan Bölüm 5.6).
+// Package local is the default file provider, the one that keeps files ON THE
+// LOCAL DISK, in a configured root directory (plan Section 5.6).
 //
-// [Provider], internal/core/provider'daki FileProvider sözleşmesini karşılar ve
-// kutudan çıkan tek sağlayıcıdır: gobit bir çerçevedir ve hangi nesne
-// deposunun kullanılacağını bilemez, ama yükleme yolunun ayakta olduğunu
-// göstermek zorundadır.
+// [Provider] satisfies the FileProvider contract in internal/core/provider and
+// is the only provider that comes out of the box: gobit is a framework and
+// cannot know which object store will be used, but it is obliged to show that
+// the upload path is standing.
 //
-// # Depo anahtarını SAĞLAYICI üretir
+// # The storage key is produced by the PROVIDER
 //
-// [Provider.Upload]'ın girdisinde dosya adı YOKTUR (çekirdek sözleşmesinin
-// kararı). Anahtar burada üretilir: zaman sıralı bir kimlik + tespit edilen
-// içerik tipinden türeyen uzantı. İstemciden gelen hiçbir dize bir yol
-// bileşenine dönüşmediği için "../" ile kök dışına yazmak YAPISAL olarak
-// imkânsızdır — bir "temizleme" adımının doğru çalışmasına bağlı değildir.
+// [Provider.Upload]'s input carries NO file name (the core contract's
+// decision). The key is produced here: a time-ordered identifier + the
+// extension derived from the detected content type. Because no string coming
+// from the client turns into a path component, writing outside the root with
+// "../" is STRUCTURALLY impossible — it does not hang on a "sanitizing" step
+// working correctly.
 //
-// Anahtar tek düzlemdedir (alt dizin yoktur) ve bu, sunum yolundaki iddiayı
-// da basitleştirir: geçerli bir anahtarda yol ayıracı HİÇ bulunmaz, yani
-// anahtar ile kökün birleşimi kökün altından çıkamaz. Bilinen sınırı da
-// yazalım: tek dizinde milyonlarca girdi, dosya sisteminin dizin taramasını
-// yavaşlatır. O noktada doğru cevap alt dizinlere bölmek değil, yerel diski
-// bırakıp bir nesne deposuna geçmektir.
+// The key is on a single plane (there are no subdirectories) and this
+// simplifies the claim on the serving path too: a valid key holds NO path
+// separator at all, that is, the join of the key and the root cannot come out
+// from under the root. Let the known limit be written down as well: millions of
+// entries in a single directory slow the file system's directory scan down. At
+// that point the right answer is not splitting into subdirectories, it is
+// leaving the local disk and moving to an object store.
 //
-// # Yazma ATOMİKTİR
+// # The write is ATOMIC
 //
-// Dosya önce aynı dizinde geçici bir ada yazılır, fsync edilir ve ancak sonra
-// nihai adına taşınır ([os.Rename]). Doğrudan nihai ada yazmak, yarım yazılmış
-// bir dosyanın o an sunulabilmesi demekti: tarayıcı bozuk bir görsel gösterir
-// ve dosya "var" olduğu için hiçbir yeniden deneme onu düzeltmez.
+// The file is first written under a temporary name in the same directory, it is
+// fsynced, and only then moved to its final name ([os.Rename]). Writing
+// straight to the final name would have meant that a half-written file could be
+// served at that moment: the browser shows a corrupt image and, because the file
+// "exists", no retry fixes it.
 //
-// Geçici dosyanın AYNI DİZİNDE açılması zorunludur: [os.Rename] yalnızca aynı
-// dosya sistemi içinde atomiktir. Geçici dosya /tmp'de açılsaydı taşıma
-// çoğu kurulumda EXDEV ile başarısız olur, olduğu yerde ise atomiklik
-// kaybolurdu.
+// Opening the temporary file IN THE SAME DIRECTORY is mandatory: [os.Rename] is
+// atomic only within the same file system. Had the temporary file been opened in
+// /tmp, the move would fail with EXDEV in most installations, and where it did
+// not, atomicity would be lost.
 package local
 
 import (
@@ -48,105 +51,113 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/file/models"
 )
 
-// ID sağlayıcının kimliğidir; FILE_PROVIDER varsayılanı budur.
+// ID is the provider's identifier; this is the FILE_PROVIDER default.
 const ID = "local"
 
-// DefaultURLPrefix üretilen adreslerin varsayılan yol önekidir.
+// DefaultURLPrefix is the default path prefix of the produced addresses.
 //
-// Önek /admin/v1 ya da /store/v1 ALTINDA DEĞİLDİR ve olamaz; gerekçesi
-// internal/modules/file/api paketinin sunum bölümündedir (özet: vitrindeki
-// <img> etiketi başlık gönderemez).
+// The prefix IS NOT and cannot be UNDER /admin/v1 or /store/v1; the reasoning is
+// in the serving section of the internal/modules/file/api package (in short: the
+// <img> tag in the storefront cannot send headers).
 const DefaultURLPrefix = "/files"
 
-// Hata kodları.
+// Error codes.
 const (
-	// CodeNotReady sağlayıcının kök dizin olmadan kurulduğunu bildirir.
+	// CodeNotReady reports that the provider was built without a root
+	// directory.
 	CodeNotReady = "file_local_not_ready"
-	// CodeRootUnusable kök dizinin açılamadığını ya da yazılamadığını bildirir.
+	// CodeRootUnusable reports that the root directory could not be opened or
+	// written to.
 	CodeRootUnusable = "file_local_root_unusable"
-	// CodeWriteFailed dosyanın diske yazılamadığını bildirir.
+	// CodeWriteFailed reports that the file could not be written to disk.
 	CodeWriteFailed = "file_local_write_failed"
-	// CodeInvalidKey depo anahtarının bu sağlayıcının ürettiği biçimde
-	// olmadığını bildirir.
+	// CodeInvalidKey reports that the storage key is not in the form this
+	// provider produces.
 	CodeInvalidKey = "file_local_invalid_key"
-	// CodeReadFailed dosyanın okunamadığını bildirir.
+	// CodeReadFailed reports that the file could not be read.
 	CodeReadFailed = "file_local_read_failed"
 )
 
-// gecicOnek yarım yazılan dosyaların geçici ad önekidir.
+// tempPrefix is the temporary name prefix of half-written files.
 //
-// Nokta ile başlar ve geçerli bir anahtarda nokta ile başlayan bir gövde
-// BULUNAMAZ ([anahtarGecerli]); yani bir çökme sonrası ortada kalan geçici
-// dosya hiçbir zaman sunulabilir bir anahtarla eşleşmez.
-const gecicOnek = ".yukleniyor-"
+// It starts with a dot, and a valid key CAN NOT have a body that starts with a
+// dot ([keyValid]); that is, a temporary file left behind after a crash never
+// matches a servable key.
+const tempPrefix = ".uploading-"
 
-// dizinIzni kök dizin yaratılırken kullanılan izindir.
-const dizinIzni os.FileMode = 0o750
+// dirPerm is the permission used while the root directory is created.
+const dirPerm os.FileMode = 0o750
 
-// uzantilar tespit edilen içerik tipinden dosya uzantısına eşlemedir.
+// extensions is the mapping from the detected content type to the file
+// extension.
 //
-// Uzantı yalnızca İNSAN ve ARAÇ kolaylığıdır: kök dizini elle inceleyen ya da
-// yedekleyen kişi dosyanın ne olduğunu ondan anlar. Sunum kararı ona
-// BAKMAZ — Content-Type kayıttaki tespit edilmiş tipten yazılır. Bu yüzden
-// tanınmayan bir tip için uzantının ".bin" olması da zararsızdır.
-var uzantilar = map[string]string{
+// The extension is only a HUMAN and TOOL convenience: whoever inspects or backs
+// up the root directory by hand understands from it what the file is. The
+// serving decision DOES NOT LOOK at it — the Content-Type is written from the
+// detected type in the record. That is why the extension being ".bin" for an
+// unrecognized type is harmless too.
+var extensions = map[string]string{
 	coreprovider.ContentTypeJPEG: ".jpg",
 	coreprovider.ContentTypePNG:  ".png",
 	coreprovider.ContentTypeGIF:  ".gif",
 	coreprovider.ContentTypeWebP: ".webp",
 }
 
-// varsayilanUzanti eşlemede bulunmayan tipler için kullanılır.
-const varsayilanUzanti = ".bin"
+// defaultExtension is used for the types that are not in the mapping.
+const defaultExtension = ".bin"
 
-// Options sağlayıcının kurulum ayarlarıdır.
+// Options are the setup settings of the provider.
 type Options struct {
-	// Root dosyaların yazılacağı kök dizindir; zorunludur.
+	// Root is the root directory the files will be written into; it is
+	// required.
 	Root string
-	// URLPrefix üretilen adreslerin yol önekidir; boşsa [DefaultURLPrefix].
+	// URLPrefix is the path prefix of the produced addresses; if empty,
+	// [DefaultURLPrefix].
 	URLPrefix string
-	// Logger temizlik uyarılarının yazıldığı hedeftir; nil ise loglar atılır.
+	// Logger is the target the cleanup warnings are written to; if nil, the logs
+	// are discarded.
 	//
-	// Yalnızca ELDE KALAN geçici dosyayı bildirmek için vardır: o dosyanın
-	// hiçbir veritabanı kaydı yoktur, dolayısıyla loglanmazsa varlığı hiçbir
-	// yerden anlaşılamaz ve disk sessizce dolar.
+	// It exists only to report the temporary file LEFT BEHIND: that file has no
+	// database record whatsoever, so if it is not logged its existence cannot be
+	// noticed from anywhere and the disk silently fills up.
 	Logger *slog.Logger
 }
 
-// Provider dosyaları yerel diske yazan sağlayıcıdır.
-// Eşzamanlı kullanıma güvenlidir: durumu yalnızca değişmeyen ayarlardır.
+// Provider is the provider that writes the files to the local disk.
+// It is safe for concurrent use: its state is nothing but unchanging settings.
 type Provider struct {
 	root      string
 	urlPrefix string
 	log       *slog.Logger
 }
 
-// Provider'ın çekirdek sözleşmesini karşıladığı derleme zamanında doğrulanır;
-// imza kayması çalışma zamanına kalmaz.
+// That Provider satisfies the core contract is verified at compile time; a
+// signature drift does not get left to run time.
 var _ coreprovider.FileProvider = (*Provider)(nil)
 
-// New verilen kök dizin üzerinde çalışan bir sağlayıcı üretir.
+// New produces a provider working on the given root directory.
 //
-// Dizin BURADA yaratılır ve yaratılamazsa hata döner. Kurulum anında
-// denenmesi bilinçlidir: yazılamayan bir kök, ilk yüklemeye kadar
-// beklerse arıza müşteri karşısında ortaya çıkar — oysa yanlış yazılmış bir
-// yol ya da eksik bir bağlama noktası, açılışta düzeltilebilecek bir
-// yapılandırma hatasıdır.
+// The directory is created HERE and, if it cannot be created, an error is
+// returned. Trying it at setup time is deliberate: a root that cannot be written
+// to, if it waits until the first upload, surfaces as a fault in front of the
+// customer — whereas a misspelled path or a missing mount point is a
+// configuration error that can be corrected at startup.
 //
-// Boş kök REDDEDİLİR ve GEÇİCİ DİZİNE düşülmez. Geçici dizin cazip olurdu
-// ("hiçbir şey yapılandırmadan çalışsın") ama yeniden başlatmada görselleri
-// sessizce kaybettirirdi: adres ürün kaydında kalıcı olarak durur, dosya ise
-// gitmiştir ve hiçbir hata görünmez. Sessiz veri kaybı, açılışta patlayan bir
-// yapılandırma hatasından her zaman pahalıdır.
+// An empty root is REJECTED and the TEMPORARY DIRECTORY is not fallen back to.
+// The temporary directory would be tempting ("let it work without configuring
+// anything") but it would silently lose the images on a restart: the address
+// stays permanently in the product record while the file is gone, and no error
+// is visible. Silent data loss is always more expensive than a configuration
+// error that blows up at startup.
 func New(opts Options) (*Provider, error) {
 	if opts.Root == "" {
 		return nil, coreerrors.Internal(CodeNotReady,
-			"%q dosya sağlayıcısı kök dizin olmadan kurulamaz", ID)
+			"the %q file provider cannot be built without a root directory", ID)
 	}
 
-	if err := os.MkdirAll(opts.Root, dizinIzni); err != nil {
+	if err := os.MkdirAll(opts.Root, dirPerm); err != nil {
 		return nil, coreerrors.Wrap(err, coreerrors.KindUnavailable, CodeRootUnusable,
-			"dosya kök dizini hazırlanamadı: %s", opts.Root)
+			"the file root directory could not be prepared: %s", opts.Root)
 	}
 
 	prefix := opts.URLPrefix
@@ -162,227 +173,235 @@ func New(opts Options) (*Provider, error) {
 	return &Provider{root: opts.Root, urlPrefix: prefix, log: log}, nil
 }
 
-// ID sağlayıcının kimliğini döner.
+// ID returns the provider's identifier.
 func (p *Provider) ID() string { return ID }
 
-// Root sağlayıcının kök dizinini döner; loglama ve teşhis içindir.
+// Root returns the provider's root directory; it is for logging and diagnosis.
 func (p *Provider) Root() string { return p.root }
 
-// Upload gövdeyi diske yazar ve erişilebilir adresi döner.
+// Upload writes the body to disk and returns the reachable address.
 //
-// Anahtar burada üretilir; girdide dosya adı yoktur (bkz. paket belgesi).
+// The key is produced here; there is no file name in the input (see the package
+// documentation).
 //
-// Okuma yarıda hata verirse — boyut sınırını aşan bir gövde tam da böyle
-// kesilir — geçici dosya SİLİNİR ve hata döner. Temizlik çekirdek
-// sözleşmesinin şartıdır: yarım nesne, hiçbir kaydın işaret etmediği ve
-// hiçbir silme yolunun anahtarını bilmediği bir dosyadır, yani sınırı aşan
-// istekler diski yine de doldurabilirdi.
+// If the read fails halfway — a body exceeding the size bound is cut off in
+// exactly this way — the temporary file is DELETED and the error is returned.
+// The cleanup is a requirement of the core contract: a half object is a file
+// that no record points at and whose key no delete path knows, that is, requests
+// exceeding the bound could fill the disk up anyway.
 func (p *Provider) Upload(ctx context.Context, in coreprovider.UploadInput) (coreprovider.File, error) {
 	if in.Body == nil {
 		return coreprovider.File{}, coreerrors.Internal(CodeWriteFailed,
-			"yükleme gövdesi nil olamaz")
+			"the upload body cannot be nil")
 	}
-	// Bağlam iptal edilmişse tek bayt yazmadan dönülür. io.Copy ctx'i
-	// GÖRMEZ; dosya sistemi çağrıları bloklamaz ama istemci çoktan gitmişken
-	// diske yazmanın da bir karşılığı yoktur.
+	// If the context has been canceled it returns without writing a single byte.
+	// io.Copy DOES NOT SEE the ctx; the file system calls do not block, but
+	// writing to disk while the client is long gone has no return either.
 	if err := ctx.Err(); err != nil {
 		return coreprovider.File{}, coreerrors.Wrap(err, coreerrors.KindUnavailable, CodeWriteFailed,
-			"yükleme başlamadan iptal edildi")
+			"the upload was canceled before it started")
 	}
 
-	key := yeniAnahtar(in.ContentType, time.Now())
+	key := newKey(in.ContentType, time.Now())
 
-	gecici, err := os.CreateTemp(p.root, gecicOnek+"*")
+	temp, err := os.CreateTemp(p.root, tempPrefix+"*")
 	if err != nil {
 		return coreprovider.File{}, coreerrors.Wrap(err, coreerrors.KindUnavailable, CodeRootUnusable,
-			"geçici dosya açılamadı: %s", p.root)
+			"the temporary file could not be opened: %s", p.root)
 	}
-	gecicYol := gecici.Name()
+	tempPath := temp.Name()
 
-	// Temizlik DEFER EDİLİR, hata dallarına serpiştirilmez.
+	// The cleanup IS DEFERRED, it is not sprinkled over the error branches.
 	//
-	// Bugünkü dallar tamdır ama iki durum onların dışında kalır: aradaki bir
-	// PANİK (Recoverer onu 500'e çevirir ve istek biter) ve ileride eklenecek
-	// herhangi bir erken return. İkisinde de geride yarım bir ".yukleniyor"
-	// dosyası kalır; disk sessizce dolar ve kimse fark etmez çünkü o dosyanın
-	// hiçbir kaydı yoktur. Defer, temizliği yeni bir dalın hatırlanmasına
-	// bağlı olmaktan çıkarır.
+	// Today's branches are complete, but two situations stay outside them: a
+	// PANIC in between (the Recoverer turns it into a 500 and the request ends)
+	// and any early return that gets added later. In both, a half ".uploading"
+	// file is left behind; the disk silently fills up and nobody notices,
+	// because that file has no record at all. The defer takes the cleanup out of
+	// depending on a new branch being remembered.
 	//
-	// Temizlik hatası YUTULMAZ ama asıl hatayı da DEĞİŞTİRMEZ: loglanır.
-	// Değiştirseydi, okuma hatasının teşhisi silinirdi.
-	tasindi := false
+	// A cleanup error IS NOT SWALLOWED, but it DOES NOT REPLACE the real error
+	// either: it is logged. Had it replaced it, the diagnosis of the read error
+	// would have been erased.
+	moved := false
 
 	defer func() {
-		if tasindi {
+		if moved {
 			return
 		}
 
-		if err := os.Remove(gecicYol); err != nil && !errors.Is(err, os.ErrNotExist) {
-			p.log.Warn("geçici yükleme dosyası silinemedi, elle temizlenmeli",
-				"yol", gecicYol, "error", err)
+		if err := os.Remove(tempPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+			p.log.Warn("the temporary upload file could not be deleted, it has to be cleaned up by hand",
+				"path", tempPath, "error", err)
 		}
 	}()
 
-	yazilan, err := yazVeKapat(gecici, in.Body)
+	written, err := writeAndClose(temp, in.Body)
 	if err != nil {
 		return coreprovider.File{}, err
 	}
 
-	if err := os.Rename(gecicYol, filepath.Join(p.root, key)); err != nil {
+	if err := os.Rename(tempPath, filepath.Join(p.root, key)); err != nil {
 		return coreprovider.File{}, coreerrors.Wrap(err, coreerrors.KindUnavailable, CodeWriteFailed,
-			"dosya nihai adına taşınamadı: %s", key)
+			"the file could not be moved to its final name: %s", key)
 	}
 
-	tasindi = true
+	moved = true
 
 	return coreprovider.File{
 		Key:         key,
 		URL:         p.urlPrefix + "/" + key,
 		ContentType: in.ContentType,
-		Size:        yazilan,
+		Size:        written,
 	}, nil
 }
 
-// Delete dosyayı diskten siler. İDEMPOTENTTİR: olmayan bir anahtar hata
-// değildir.
+// Delete deletes the file from disk. It IS IDEMPOTENT: a key that does not exist
+// is not an error.
 //
-// GEÇERSİZ bir anahtar da hata değildir ve bu bilinçlidir: böyle bir anahtarla
-// yazılmış bir dosya hiç var olamaz, dolayısıyla "silinmiş olma" son durumu
-// zaten sağlanmıştır. Hata dönmek, silme akışını düzeltilemeyecek bir şey
-// yüzünden sonsuza kadar tekrar ettirirdi.
+// An INVALID key is not an error either and this is deliberate: a file written
+// with such a key can never exist, so the "having been deleted" end state
+// already holds. Returning an error would make the delete flow repeat forever
+// over something that cannot be corrected.
 func (p *Provider) Delete(_ context.Context, key string) error {
-	if !anahtarGecerli(key) {
+	if !keyValid(key) {
 		return nil
 	}
 
 	if err := os.Remove(filepath.Join(p.root, key)); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return coreerrors.Wrap(err, coreerrors.KindUnavailable, CodeWriteFailed,
-			"dosya silinemedi: %s", key)
+			"the file could not be deleted: %s", key)
 	}
 
 	return nil
 }
 
-// Open dosyayı okumak üzere açar ve son değişiklik zamanını döner.
+// Open opens the file for reading and returns the moment it last changed.
 //
-// Çekirdek sözleşmesinde ([coreprovider.FileProvider]) yoktur ve olmamalıdır:
-// dosyayı sunmak sağlayıcının işi değildir ve bir nesne deposu sunumu CDN'e
-// bırakır. Yerel diskte ise sunacak başka kimse yoktur, bu yüzden bu sağlayıcı
-// sözleşmenin ÜSTÜNE bir metot ekler; HTTP katmanı onu kendi tanımladığı dar
-// arayüzle arar (ADR 0001'in tüketici tarafı örüntüsü).
+// It is not in the core contract ([coreprovider.FileProvider]) and it must not
+// be: serving the file is not the provider's job and an object store leaves the
+// serving to the CDN. On the local disk, on the other hand, there is nobody else
+// to serve it, so this provider adds a method ON TOP OF the contract; the HTTP
+// layer looks for it through the narrow interface it defines itself (the
+// consuming-side pattern of ADR 0001).
 //
-// # Anahtar biçimi DOĞRULANIR
+// # The key form IS VALIDATED
 //
-// Değer normal akışta veritabanındaki kayıttan gelir, yani zaten bu
-// sağlayıcının ürettiği bir anahtardır. Doğrulama yine de yapılır ve bir
-// "temizleme" DEĞİLDİR: bozuk bir anahtar düzeltilmez, REDDEDİLİR. Böylece
-// çağıranı ne olursa olsun — bugünkü kayıt yolu ya da yarın yazılacak başka
-// bir yol — kök dizinin dışına çıkan bir yol ifadesi hiç kurulamaz.
+// In the normal flow the value comes from the record in the database, that is,
+// it is already a key this provider produced. The validation is done all the
+// same and it IS NOT a "sanitizing": a broken key is not corrected, it is
+// REJECTED. That way, whoever the caller is — today's record path or another
+// path to be written tomorrow — a path expression leading outside the root can
+// never be constructed.
 func (p *Provider) Open(_ context.Context, key string) (io.ReadSeekCloser, time.Time, error) {
-	if !anahtarGecerli(key) {
+	if !keyValid(key) {
 		return nil, time.Time{}, coreerrors.Invalid(CodeInvalidKey,
-			"geçersiz depo anahtarı: %q", key)
+			"invalid storage key: %q", key)
 	}
 
-	// G304 bastırması bilinçlidir ve tam olarak yukarıdaki denetime dayanır:
-	// key, [anahtarGecerli]'den geçmiştir ve kabul edilen alfabede yol
-	// ayıracı, nokta-nokta ve NUL YOKTUR — yani birleşim kökün altından
-	// çıkamaz. Denetimi kaldıran biri bu satırı da gözden geçirmek
-	// zorundadır; bu yorum o bağın kendisidir.
-	f, err := os.Open(filepath.Join(p.root, key)) //nolint:gosec // G304: anahtar biçimi doğrulandı, kök dışına çıkamaz
+	// The G304 suppression is deliberate and rests exactly on the check above:
+	// key has passed through [keyValid] and the accepted alphabet holds NO path
+	// separator, dot-dot or NUL — that is, the join cannot come out from under
+	// the root. Whoever removes the check is obliged to review this line too;
+	// this comment is that link itself.
+	f, err := os.Open(filepath.Join(p.root, key)) //nolint:gosec // G304: the key form is validated, it cannot leave the root
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return nil, time.Time{}, coreerrors.NotFound(CodeReadFailed,
-				"dosya depoda bulunamadı: %s", key)
+				"the file could not be found in the store: %s", key)
 		}
 
 		return nil, time.Time{}, coreerrors.Wrap(err, coreerrors.KindUnavailable, CodeReadFailed,
-			"dosya açılamadı: %s", key)
+			"the file could not be opened: %s", key)
 	}
 
-	bilgi, err := f.Stat()
+	info, err := f.Stat()
 	if err != nil {
 		_ = f.Close()
 
 		return nil, time.Time{}, coreerrors.Wrap(err, coreerrors.KindUnavailable, CodeReadFailed,
-			"dosya bilgisi okunamadı: %s", key)
+			"the file info could not be read: %s", key)
 	}
 
-	return f, bilgi.ModTime(), nil
+	return f, info.ModTime(), nil
 }
 
-// yazVeKapat gövdeyi geçici dosyaya yazar, diske işler ve kapatır.
+// writeAndClose writes the body into the temporary file, commits it to disk and
+// closes it.
 //
-// [os.File.Sync] çağrısı bilinçlidir: taşıma (rename) dosya adını atomik
-// yapar ama İÇERİĞİN diske ulaştığını garanti etmez. Sync olmadan, taşımadan
-// hemen sonra düşen bir makinede nihai adla duran ama içi boş bir dosya
-// kalabilirdi — yani tam olarak kaçınmak istediğimiz "bozuk görsel".
-func yazVeKapat(f *os.File, body io.Reader) (int64, error) {
-	yazilan, copyErr := io.Copy(f, body)
+// The [os.File.Sync] call is deliberate: the move (rename) makes the file NAME
+// atomic but does not guarantee that the CONTENT reached the disk. Without the
+// Sync, a machine going down right after the move could be left with a file
+// standing under the final name but empty inside — that is, exactly the "corrupt
+// image" we want to avoid.
+func writeAndClose(f *os.File, body io.Reader) (int64, error) {
+	written, copyErr := io.Copy(f, body)
 
 	if copyErr == nil {
 		copyErr = f.Sync()
 	}
 
-	// Kapatma her durumda denenir; açık bir dosya tanıtıcısı sızdırmak, hata
-	// yolunda da kabul edilemez.
+	// The close is attempted in every case; leaking an open file descriptor is
+	// unacceptable on the error path too.
 	if closeErr := f.Close(); copyErr == nil {
 		copyErr = closeErr
 	}
 
 	if copyErr != nil {
-		// Sarmalama zinciri KORUR: çağıran (servis) boyut sınırı hatasını
-		// errors.Is ile bu zincirin içinde arar ve onu istemci hatasına
-		// çevirir. Burada sınıflandırmak, sağlayıcının bilmediği bir kararı
-		// vermek olurdu.
+		// The wrapping PRESERVES the chain: the caller (the service) looks for
+		// the size bound error inside this chain with errors.Is and turns it
+		// into a client error. Classifying it here would be making a decision
+		// the provider does not know.
 		return 0, coreerrors.Wrap(copyErr, coreerrors.KindInternal, CodeWriteFailed,
-			"dosya diske yazılamadı")
+			"the file could not be written to disk")
 	}
 
-	return yazilan, nil
+	return written, nil
 }
 
-// yeniAnahtar tespit edilen içerik tipinden bir depo anahtarı üretir.
-func yeniAnahtar(contentType string, t time.Time) string {
-	uzanti, bilinen := uzantilar[contentType]
-	if !bilinen {
-		uzanti = varsayilanUzanti
+// newKey produces a storage key from the detected content type.
+func newKey(contentType string, t time.Time) string {
+	ext, known := extensions[contentType]
+	if !known {
+		ext = defaultExtension
 	}
 
-	// Önek BOŞ verilir: anahtar bir kayıt kimliği değildir ve "upl_" öneki
-	// taşısaydı, iki farklı şey (kayıt kimliği ve depo anahtarı) logda ve
-	// adres çubuğunda birbirine karışırdı.
-	return models.NewID("", t) + uzanti
+	// The prefix is given EMPTY: the key is not a record identifier, and had it
+	// carried the "upl_" prefix, two different things (the record identifier and
+	// the storage key) would get mixed up with each other in the log and in the
+	// address bar.
+	return models.NewID("", t) + ext
 }
 
-// anahtarGecerli değerin bu sağlayıcının ürettiği biçimde olduğunu bildirir.
+// keyValid reports that the value is in the form this provider produces.
 //
-// Biçim: 26 karakterlik Crockford Base32 gövde + nokta + küçük harf/rakam
-// uzantı. Kabul edilen alfabede yol ayıracı, nokta-nokta ve NUL YOKTUR; yani
-// geçerli sayılan bir anahtar kök dizinin dışını gösteremez.
+// The form: a 26-character Crockford Base32 body + a dot + a lowercase/digit
+// extension. The accepted alphabet holds NO path separator, dot-dot or NUL; that
+// is, a key counted as valid cannot point outside the root directory.
 //
-// Denetim ALFABE üzerinden yapılır, "yasak dizi arama" ile değil: "../" aramak,
-// her yeni kodlama numarası (%2e%2e, ters bölü, gömülü NUL, Unicode
-// normalizasyon) için listeye bir satır daha eklemek demekti ve doğruluğu,
-// listeyi yazanın o gün kaç numara hatırladığına bağlı olurdu. İzin verilen
-// alfabenin dışındaki her şeyi reddetmenin böyle bir borcu yoktur.
-func anahtarGecerli(key string) bool {
-	govde, uzanti, bulundu := kes(key)
-	if !bulundu || len(govde) != models.IDBodyLength() || uzanti == "" {
+// The check is done over the ALPHABET, not by "searching for forbidden
+// sequences": searching for "../" would have meant adding one more line to the
+// list for every new encoding trick (%2e%2e, backslash, embedded NUL, Unicode
+// normalization), and its correctness would depend on how many tricks whoever
+// wrote the list remembered that day. Rejecting everything outside the permitted
+// alphabet carries no such debt.
+func keyValid(key string) bool {
+	body, ext, found := split(key)
+	if !found || len(body) != models.IDBodyLength() || ext == "" {
 		return false
 	}
 
-	for _, r := range govde {
-		// Crockford Base32 alfabesi: 0-9 ve I, L, O, U dışındaki büyük
-		// harfler. Alfabenin tamamını burada tekrar etmek yerine sınıf
-		// denetimi yapılır; amaç anahtarı çözmek değil, yol üretebilecek
-		// hiçbir karakterin geçmediğini garanti etmektir.
+	for _, r := range body {
+		// The Crockford Base32 alphabet: 0-9 and the capital letters other than
+		// I, L, O, U. Instead of repeating the whole alphabet here, a class check
+		// is done; the aim is not to decode the key but to guarantee that no
+		// character able to produce a path got through.
 		if (r < '0' || r > '9') && (r < 'A' || r > 'Z') {
 			return false
 		}
 	}
 
-	for _, r := range uzanti {
+	for _, r := range ext {
 		if (r < 'a' || r > 'z') && (r < '0' || r > '9') {
 			return false
 		}
@@ -391,26 +410,27 @@ func anahtarGecerli(key string) bool {
 	return true
 }
 
-// kes anahtarı gövde ve uzantı olarak ayırır; nokta yoksa bulundu false olur.
+// split separates the key into body and extension; if there is no dot, found is
+// false.
 //
-// Ayrım SONDAKİ noktaya göre değil, TEK noktaya göre yapılır: birden çok nokta
-// taşıyan bir değer bu sağlayıcının ürettiği bir anahtar değildir ve
-// ayrıştırmaya çalışmak yerine reddedilmelidir.
-func kes(key string) (govde, uzanti string, bulundu bool) {
-	nokta := -1
+// The separation is done by the SINGLE dot, not by the LAST one: a value
+// carrying more than one dot is not a key this provider produced and it should
+// be rejected rather than parsed.
+func split(key string) (body, ext string, found bool) {
+	dot := -1
 	for i, r := range key {
 		if r != '.' {
 			continue
 		}
-		if nokta >= 0 {
+		if dot >= 0 {
 			return "", "", false
 		}
-		nokta = i
+		dot = i
 	}
 
-	if nokta < 0 {
+	if dot < 0 {
 		return "", "", false
 	}
 
-	return key[:nokta], key[nokta+1:], true
+	return key[:dot], key[dot+1:], true
 }

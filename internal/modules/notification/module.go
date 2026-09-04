@@ -1,51 +1,54 @@
-// Package notification bildirim modülüdür (plan Bölüm 5.6).
+// Package notification is the notification module (plan Section 5.6).
 //
-// Sorumluluğu tek cümleyle: bir olay müşteriye bildirilmeliyse bunu SEÇİLİ
-// sağlayıcıya yaptırmak ve denemeyi kalıcı bir günlüğe yazmak. Modül
-// notification_deliveries verisinin TEK yazma yetkilisidir (Prensip 2.3).
+// Its responsibility in one sentence: when an event has to be told to the
+// customer, having the SELECTED provider do it and writing the attempt into a
+// permanent log. The module is the SOLE writer of notification_deliveries data
+// (Principle 2.3).
 //
-// # Sağlayıcı soyutlaması
+// # The provider abstraction
 //
-// E-posta/SMS servisiyle konuşan taraf modül değil, internal/core/provider'daki
-// NotificationProvider sözleşmesini karşılayan bir SAĞLAYICIDIR. Modül
-// sağlayıcıları kimlikleriyle bir kayıtta tutar ([service.ProviderRegistry]) ve
-// gönderim anında ADLA çözer. Kutudan çıkan tek sağlayıcı, hiçbir yere
-// göndermeyen ve bunu adıyla söyleyen "log" sağlayıcısıdır
-// (internal/modules/notification/logonly); eklenti sistemi, çekirdeğe ve bu
-// modüle dokunmadan container'daki kayda kendi sağlayıcısını ekleyebilir
-// (coreplugin.Host.RegisterNotificationProvider).
+// The side that talks to the e-mail/SMS service is not the module but a
+// PROVIDER that satisfies the NotificationProvider contract in
+// internal/core/provider. The module holds the providers by their ids in a
+// registry ([service.ProviderRegistry]) and resolves them BY NAME at send time.
+// The only provider that comes out of the box is the "log" provider, which
+// sends nowhere and says so in its name
+// (internal/modules/notification/logonly); the plugin system can add its own
+// provider to the registry in the container without touching the core or this
+// module (coreplugin.Host.RegisterNotificationProvider).
 //
-// Hangi sağlayıcının kullanılacağını NOTIFICATION_PROVIDER seçer. Adın
-// GERÇEKTEN kayıtlı olup olmadığı burada doğrulanamaz — eklenti sağlayıcıları
-// modüller ayağa kalktıktan SONRA kaydedilir — ve denetim bu yüzden kompozisyon
-// kökündedir (cmd/server): bilinmeyen bir ad açılışı DURDURUR.
+// Which provider will be used is chosen by NOTIFICATION_PROVIDER. Whether the
+// name is REALLY registered cannot be verified here — plugin providers are
+// registered AFTER the modules come up — and the check is therefore at the
+// composition root (cmd/server): an unknown name STOPS the startup.
 //
-// # "order.placed" abonesi
+// # The "order.placed" subscriber
 //
-// Modülün tek yazma tetikleyicisi bir olaydır. Abonelik Register sırasında
-// kurulur ve işleyici [service.Service.OrderPlaced]'dir. E-posta OLAYDAN
-// GELMEZ: olay yükü kişisel veri taşımaz ve adres, "order.interop" yüzeyinden
-// siparişin kendisinden okunur (bkz. service/orders.go).
+// The module's only write trigger is an event. The subscription is set up
+// during Register and the handler is [service.Service.OrderPlaced]. The e-mail
+// DOES NOT COME FROM THE EVENT: the event payload carries no personal data and
+// the address is read from the order itself over the "order.interop" surface
+// (see service/orders.go).
 //
-// # Neyi bilmez
+// # What it does not know
 //
-// Modül hiçbir modülü import etmez ve siparişin ne olduğunu bilmez;
-// notification_deliveries.reference serbest bir metindir, foreign key
-// DEĞİLDİR (Prensip 2.2). Şablonun METNİNİ de bilmez: bildirimin nasıl
-// göründüğüne sağlayıcı karar verir.
+// The module imports no module and does not know what an order is;
+// notification_deliveries.reference is free text, it IS NOT a foreign key
+// (Principle 2.2). It does not know the TEXT of the template either: how the
+// notification looks is decided by the provider.
 //
-// # Dışarıya açtığı yüzeyler
+// # The surfaces it exposes
 //
-//   - "notification.service" — modül içi zengin yüzey (domain tipleriyle).
-//   - "notification.providers" — sağlayıcı kaydı; eklentiler buraya sağlayıcı
-//     ekler.
-//   - GET /admin/v1/notifications — teslim günlüğünün okuma ucu.
+//   - "notification.service" — the rich in-module surface (with domain types).
+//   - "notification.providers" — the provider registry; plugins add their
+//     provider here.
+//   - GET /admin/v1/notifications — the read endpoint of the delivery log.
 //
-// Modüller arası bir "interop" yüzeyi ve Query sağlayıcısı BİLİNÇLİ OLARAK
-// YOKTUR: teslim günlüğünü okuyan başka bir modül yoktur ve günlük,
-// birleştirilebilir bir varlık değil bir defterdir. İkisini şimdiden açmak,
-// tüketicisi olmayan iki sözleşme üretirdi — sözleşmeye giren alan bir daha
-// çıkarılamaz.
+// A cross-module "interop" surface and a Query provider are DELIBERATELY
+// ABSENT: there is no other module that reads the delivery log, and the log is
+// not a joinable entity but a ledger. Opening the two already would have
+// produced two contracts without a consumer — a field that enters a contract
+// can never be taken out again.
 package notification
 
 import (
@@ -67,34 +70,35 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/notification/service"
 )
 
-// ModuleName modülün adıdır; container adlarının ve migration sürüm defterinin
-// önekidir.
+// ModuleName is the name of the module; it is the prefix of the container names
+// and of the migration version ledger.
 const ModuleName = "notification"
 
-// ServiceName modül servisinin container'daki adıdır.
+// ServiceName is the name of the module's service in the container.
 const ServiceName = ModuleName + ".service"
 
-// ProvidersName sağlayıcı kaydının container'daki adıdır.
+// ProvidersName is the name of the provider registry in the container.
 //
-// Eklenti sistemi kendi NotificationProvider'ını bu kaydı çözüp ekler; modülün
-// kodunu değiştirmesi gerekmez. Değer coreplugin.NotificationProvidersName ile
-// AYNI olmalıdır ve uyum internal/arch testiyle sabitlenmiştir.
+// The plugin system resolves this registry and adds its own NotificationProvider
+// to it; it does not need to change the module's code. The value has to be the
+// SAME as coreplugin.NotificationProvidersName and the agreement is pinned down
+// by an internal/arch test.
 const ProvidersName = ModuleName + ".providers"
 
-// DefaultProviderID sağlayıcı seçilmediğinde kullanılan kimliktir.
+// DefaultProviderID is the id used when no provider is selected.
 //
-// Değer logonly paketinden gelir: config'in varsayılanı ("log") ile sağlayıcının
-// kimliği ayrışırsa kurulum, hiçbir sağlayıcı bulamayan bir bildirim yoluyla
-// açılırdı.
+// The value comes from the logonly package: if the config's default ("log") and
+// the provider's id drifted apart, the installation would come up with a
+// notification path that finds no provider at all.
 const DefaultProviderID = logonly.ID
 
-// Container'da çözülen çekirdek servislerin adları.
+// The names of the core services resolved from the container.
 const (
 	svcDB       = "core.db"
 	svcEventBus = "core.eventbus"
 )
 
-// Hata kodları.
+// Error codes.
 const (
 	codeSetupFailed      = "notification_module_setup_failed"
 	codeProviderRegister = "notification_module_provider_register_failed"
@@ -104,20 +108,21 @@ const (
 //go:embed migrations/*.sql
 var migrationFiles embed.FS
 
-// migrationsRoot gömülü dosyaların "migrations/" öneki soyulmuş hâlidir:
-// db.Migrate kaynağı kökten okur.
+// migrationsRoot is the embedded files with the "migrations/" prefix stripped:
+// db.Migrate reads the source from the root.
 var migrationsRoot = mustSub(migrationFiles, "migrations")
 
-// Options modülün kurulum ayarlarıdır.
+// Options are the module's setup settings.
 type Options struct {
-	// ProviderID gönderimde kullanılacak sağlayıcının kimliğidir
-	// (NOTIFICATION_PROVIDER). Boş verilirse [DefaultProviderID] uygulanır.
+	// ProviderID is the id of the provider to be used when sending
+	// (NOTIFICATION_PROVIDER). When it is given empty, [DefaultProviderID]
+	// applies.
 	ProviderID string
-	// Logger nil verilirse slog.Default kullanılır.
+	// Logger falls back to slog.Default when it is given as nil.
 	Logger *slog.Logger
 }
 
-// Module notification modülünün çekirdeğe sunduğu uygulamadır.
+// Module is the implementation the notification module offers to the core.
 type Module struct {
 	opts      Options
 	svc       *service.Service
@@ -125,20 +130,21 @@ type Module struct {
 	handler   *api.Handler
 }
 
-// Çekirdek sözleşmesinin karşılandığı derleme zamanında sabitlenir.
+// That the core's contract is satisfied is pinned down at compile time.
 var _ module.Module = (*Module)(nil)
 
-// Belgeyi anlatabildiği de derleme zamanında sabitlenir.
+// That it can describe the document is pinned down at compile time as well.
 //
-// [openapi.Describer] OPSİYONEL bir arayüzdür ve kompozisyon kökü onu TİP
-// İDDİASIYLA arar; metot adı ya da imzası kayarsa hiçbir şey derlemede
-// kırılmaz, yalnızca bu modülün ucu belgeden sessizce düşerdi.
+// [openapi.Describer] is an OPTIONAL interface and the composition root looks
+// for it with a TYPE ASSERTION; if the method name or its signature slips,
+// nothing breaks at compile time — only this module's endpoint would silently
+// drop out of the document.
 var _ openapi.Describer = (*Module)(nil)
 
-// New kaydedilmeye hazır bir notification modülü üretir.
+// New produces a notification module that is ready to be registered.
 //
-// Bağımlılıklar burada değil Register sırasında çözülür: container o ana kadar
-// çekirdek servisleri kurmuş olmayabilir.
+// The dependencies are resolved not here but during Register: until that moment
+// the container may not have set up the core services yet.
 func New(opts Options) *Module {
 	if opts.ProviderID == "" {
 		opts.ProviderID = DefaultProviderID
@@ -149,49 +155,50 @@ func New(opts Options) *Module {
 	return &Module{opts: opts}
 }
 
-// Name modülün benzersiz adını döner.
+// Name returns the module's unique name.
 func (m *Module) Name() string { return ModuleName }
 
-// Migrations modülün migration dosyalarını döner.
+// Migrations returns the module's migration files.
 func (m *Module) Migrations() fs.FS { return migrationsRoot }
 
-// Register servisi ve sağlayıcı kaydını container'a kaydeder, "order.placed"
-// aboneliğini kurar.
+// Register registers the service and the provider registry into the container
+// and sets up the "order.placed" subscription.
 //
-// Yalnızca ÇEKİRDEK servisler çözülür; başka modüllerin servisleri bu aşamada
-// henüz kayıtlı olmayabilir (bkz. module.Module belgesi). core.db ve
-// core.eventbus modüller ayağa kalkmadan önce main.go'da hazır değer olarak
-// kaydedildiği için burada çözülmeleri güvenlidir ve eksiklikleri modülün hiç
-// çalışamayacağı bir kurulum hatasıdır — sessizce ertelenmez.
+// Only the CORE services are resolved; other modules' services may not be
+// registered yet at this stage (see the module.Module documentation). Because
+// core.db and core.eventbus are registered in main.go as ready values before
+// the modules come up, resolving them here is safe and their absence is a setup
+// error with which the module could not work at all — it is not deferred
+// silently.
 //
-// SİPARİŞ YÜZEYİ burada çözülmez: "order.interop" bu anda container'da
-// olmayabilir ve çözmeye çalışmak, hiçbir şeyin gerçekten eksik olmadığı bir
-// hatayla açılışı düşürürdü. Çözüm ilk olaya ertelenir (bkz.
-// [service.NewOrderContacts]).
+// THE ORDER SURFACE is not resolved here: "order.interop" may not be in the
+// container at this moment, and trying to resolve it would bring the startup
+// down with an error where nothing is really missing. The resolution is
+// deferred to the first event (see [service.NewOrderContacts]).
 //
-// Varsayılan sağlayıcı ([logonly.Provider]) da burada kaydedilir; seçili
-// sağlayıcı o değilse bile kayıtlı kalır, çünkü kayıt bir listedir, seçim
-// değil.
+// The default provider ([logonly.Provider]) is registered here too; even when
+// it is not the selected provider it stays registered, because the registry is
+// a list, not a choice.
 func (m *Module) Register(ctx context.Context, c *container.Container) error {
 	pool, err := container.Resolve[*db.Pool](c, svcDB)
 	if err != nil {
 		return errors.Wrap(err, errors.KindOf(err), codeSetupFailed,
-			"%s modülü veritabanı havuzunu çözemedi (%q)", ModuleName, svcDB)
+			"the %s module could not resolve the database pool (%q)", ModuleName, svcDB)
 	}
-	// Dar arayüzle çözülür: modül yalnızca ABONE OLUR, yayımlamaz ve veri
-	// yolunu kapatmaz (bkz. service.EventSubscriber).
+	// It is resolved through a narrow interface: the module only SUBSCRIBES, it
+	// does not publish and does not close the bus (see service.EventSubscriber).
 	bus, err := container.Resolve[service.EventSubscriber](c, svcEventBus)
 	if err != nil {
 		return errors.Wrap(err, errors.KindOf(err), codeSetupFailed,
-			"%s modülü olay veri yolunu çözemedi (%q)", ModuleName, svcEventBus)
+			"the %s module could not resolve the event bus (%q)", ModuleName, svcEventBus)
 	}
 
-	log := m.opts.Logger.With("modul", ModuleName)
+	log := m.opts.Logger.With("module", ModuleName)
 
 	providers := service.NewProviderRegistry()
 	if err := providers.Register(logonly.New(log)); err != nil {
 		return errors.Wrap(err, errors.KindOf(err), codeProviderRegister,
-			"%s modülü varsayılan sağlayıcıyı kaydedemedi", ModuleName)
+			"the %s module could not register the default provider", ModuleName)
 	}
 
 	svc, err := service.New(service.Options{
@@ -203,7 +210,7 @@ func (m *Module) Register(ctx context.Context, c *container.Container) error {
 	})
 	if err != nil {
 		return errors.Wrap(err, errors.KindOf(err), codeSetupFailed,
-			"%s servisi kurulamadı", ModuleName)
+			"the %s service could not be set up", ModuleName)
 	}
 
 	if err := c.Provide(ServiceName, svc); err != nil {
@@ -213,68 +220,71 @@ func (m *Module) Register(ctx context.Context, c *container.Container) error {
 		return err
 	}
 
-	// Abonelik Register'da kurulur (module.Module sözleşmesinin öngördüğü yer).
-	// Kurulamaması AÇILIŞI DURDURUR: hiçbir olay almayan bir bildirim modülü,
-	// sessizce hiç e-posta göndermez ve bu ancak müşteriler onay beklerken
-	// fark edilir.
+	// The subscription is set up in Register (the place the module.Module
+	// contract prescribes). Failing to set it up STOPS THE STARTUP: a
+	// notification module that receives no event silently sends no e-mail at
+	// all, and that is only noticed while customers are waiting for their
+	// confirmation.
 	if err := bus.Subscribe(service.EventOrderPlaced, svc.OrderPlaced); err != nil {
 		return errors.Wrap(err, errors.KindOf(err), codeSubscribeFailed,
-			"%s modülü %q olayına abone olamadı", ModuleName, service.EventOrderPlaced)
+			"the %s module could not subscribe to the %q event", ModuleName, service.EventOrderPlaced)
 	}
 
 	m.svc = svc
 	m.providers = providers
 	m.handler = api.New(svc)
 
-	log.DebugContext(ctx, "notification modülü kaydedildi",
-		"servis", ServiceName,
-		"saglayicilar", providers.IDs(),
-		"secili_saglayici", m.opts.ProviderID,
-		"olay", service.EventOrderPlaced,
+	log.DebugContext(ctx, "notification module registered",
+		"service", ServiceName,
+		"providers", providers.IDs(),
+		"selected_provider", m.opts.ProviderID,
+		"event", service.EventOrderPlaced,
 	)
 	return nil
 }
 
-// Routes modülün admin ucunu router'a bağlar.
+// Routes mounts the module's admin endpoint on the router.
 //
-// Register çalışmadıysa hiçbir uç bağlanmaz: servisi olmayan bir handler'ın
-// ilk istekte panik üretmesindense ucun hiç var olmaması yeğdir.
+// If Register did not run, no endpoint is mounted: rather than a handler
+// without a service panicking on the first request, it is better for the
+// endpoint not to exist at all.
 func (m *Module) Routes(r chi.Router) {
 	if m.handler == nil {
-		slog.Default().Warn("notification modülü Register edilmeden Routes çağrıldı, route bağlanmadı")
+		slog.Default().Warn("Routes was called on the notification module without Register, no route was mounted")
 		return
 	}
 	m.handler.Routes(r)
 }
 
-// Describe modülün yönetim ucunu OpenAPI belgesine işler.
+// Describe writes the module's admin endpoint into the OpenAPI document.
 //
-// [Module.Routes]'un tersine Register kontrolü YOKTUR ve gerekmez: şema
-// tiplerden gelir, servisten değil.
+// Unlike [Module.Routes] there is NO Register check and none is needed: the
+// schema comes from the types, not from the service.
 func (m *Module) Describe(d *openapi.Doc) { api.Describe(d) }
 
-// Service modülün servisini döner; Register çağrılmadıysa nil'dir.
+// Service returns the module's service; it is nil if Register was not called.
 //
-// Testler ve gömülü kullanım içindir; normal akışta servis container'dan
-// [ServiceName] adıyla çözülür.
+// It is meant for tests and for embedded use; in the normal flow the service is
+// resolved from the container under the name [ServiceName].
 func (m *Module) Service() *service.Service { return m.svc }
 
-// Providers modülün sağlayıcı kaydını döner; Register çağrılmadıysa nil'dir.
+// Providers returns the module's provider registry; it is nil if Register was
+// not called.
 //
-// Gömen uygulama kendi sağlayıcısını buraya ekleyebilir; normal akışta kayıt
-// container'dan [ProvidersName] adıyla çözülür.
+// The embedding application can add its own provider here; in the normal flow
+// the registry is resolved from the container under the name [ProvidersName].
 func (m *Module) Providers() *service.ProviderRegistry { return m.providers }
 
-// mustSub alt dizini açar; açılamazsa panikler.
+// mustSub opens the subdirectory; it panics if it cannot be opened.
 //
-// Panik burada güvenlidir: dizin adı derleme zamanında sabittir ve go:embed
-// dosyaların varlığını zaten derleme zamanında doğrulamıştır. Yine de sessizce
-// nil dönmek, modülün migration'sız (yani tablosuz) ayağa kalkması demek
-// olurdu; kurulum hatası açıkça patlamalıdır.
+// The panic is safe here: the directory name is fixed at compile time and
+// The go:embed directive has already verified at compile time that the files exist. Returning
+// nil silently would nevertheless have meant the module coming up without
+// migrations (that is, without tables); a setup error has to blow up openly.
 func mustSub(files embed.FS, dir string) fs.FS {
 	sub, err := fs.Sub(files, dir)
 	if err != nil {
-		panic("notification: gömülü migration dizini açılamadı: " + err.Error())
+		panic("notification: the embedded migration directory could not be opened: " + err.Error())
 	}
 	return sub
 }

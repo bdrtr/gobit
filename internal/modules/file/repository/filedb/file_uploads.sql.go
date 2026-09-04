@@ -13,11 +13,11 @@ const countFileUploads = `-- name: CountFileUploads :one
 SELECT COUNT(*) FROM file_uploads
 `
 
-// CountFileUploads sayfalama zarfının toplam sayısını verir.
+// CountFileUploads gives the total count of the pagination envelope.
 //
-// Toplam, satırlarla birlikte dönen bir pencere fonksiyonundan okunamaz:
-// aralık dışı bir sayfada hiç satır dönmez, pencere değerlendirilmez ve toplam
-// 0 görünürdü.
+// The total cannot be read from a window function returned together with the
+// rows: on an out-of-range page no row comes back at all, the window is not
+// evaluated and the total would look like 0.
 func (q *Queries) CountFileUploads(ctx context.Context) (int64, error) {
 	row := q.db.QueryRow(ctx, countFileUploads)
 	var count int64
@@ -46,13 +46,14 @@ type CreateFileUploadParams struct {
 	UploadedBy   string
 }
 
-// file_uploads sorguları — YÜKLEME DEFTERİ.
+// file_uploads queries — THE UPLOAD LEDGER.
 //
-// Defter, dosyanın kendisinden SONRA yazılır: önce sağlayıcıya yazılır, sonra
-// kayıt açılır. Ters sıra — önce kayıt, sonra yazma — kaydın işaret ettiği
-// dosyanın hiç var olmadığı bir pencere bırakırdı ve o pencerede sunulan her
-// adres 404 dönerdi. Bu sırayla oluşan tek tutarsızlık ise DOSYASI olan ama
-// kaydı olmayan bir nesnedir: erişilemez, ama hiçbir şeyi bozmaz.
+// The ledger is written AFTER the file itself: first it is written to the
+// provider, then the record is opened. The reverse order — the record first,
+// the write afterwards — would leave a window in which the file the record
+// points at does not exist at all, and every address served in that window
+// would return 404. The only inconsistency this order can produce is an object
+// that HAS ITS FILE but no record: unreachable, but it breaks nothing.
 func (q *Queries) CreateFileUpload(ctx context.Context, arg CreateFileUploadParams) (FileUpload, error) {
 	row := q.db.QueryRow(ctx, createFileUpload,
 		arg.ID,
@@ -87,11 +88,12 @@ DELETE FROM file_uploads
 WHERE id = $1
 `
 
-// DeleteFileUpload kaydı KALICI olarak siler ve kaç satır sildiğini bildirir.
+// DeleteFileUpload deletes the record PERMANENTLY and reports how many rows it
+// deleted.
 //
-// Sıfır satır bir hata DEĞİLDİR ve çağıran da onu hata saymaz: silme bir SON
-// DURUM iddiasıdır ("bu yükleme artık yok") ve yeniden denenen bir temizlik
-// akışının ikinci turunda satır zaten gitmiş olur.
+// Zero rows is NOT an error, and the caller does not treat it as one either:
+// deleting is a claim about an END STATE ("this upload no longer exists") and
+// on the second round of a retried cleanup flow the row is already gone.
 func (q *Queries) DeleteFileUpload(ctx context.Context, id string) (int64, error) {
 	result, err := q.db.Exec(ctx, deleteFileUpload, id)
 	if err != nil {
@@ -129,12 +131,12 @@ SELECT id, storage_key, provider_id, content_type, size, checksum, original_name
 WHERE storage_key = $1
 `
 
-// GetFileUploadByKey SUNUM yolunun tek sorgusudur.
+// GetFileUploadByKey is the SERVING path's only query.
 //
-// Adres çubuğundan gelen anahtar önce BURAYA sorulur; satır yoksa dosya
-// sistemine hiç dokunulmaz. Böylece diske ulaşabilen tek anahtar, bu modülün
-// kendi ürettiği ve deftere yazdığı anahtardır — sunulan şeyin yalnızca
-// yüklenmiş dosyalar olduğunu garanti eden şey budur.
+// The key coming from the address bar is asked HERE first; if there is no row
+// the file system is not touched at all. That way the only key that can reach
+// the disk is the one this module produced itself and wrote into the ledger —
+// that is what guarantees that the only things served are uploaded files.
 func (q *Queries) GetFileUploadByKey(ctx context.Context, storageKey string) (FileUpload, error) {
 	row := q.db.QueryRow(ctx, getFileUploadByKey, storageKey)
 	var i FileUpload

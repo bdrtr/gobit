@@ -9,87 +9,91 @@ import (
 	corehttp "github.com/bdrtr/gobit/internal/core/http"
 )
 
-// onbellekDenetimi sunulan dosyaların Cache-Control değeridir.
+// cacheControl is the Cache-Control value of the served files.
 //
-// # Neden "immutable" DEĞİL
+// # Why NOT "immutable"
 //
-// Anahtar tekrar kullanılmaz (80 bit rastgelelik), yani bir adresin içeriği
-// DEĞİŞMEZ — buraya kadar "immutable" doğru görünür. Ama içerik değişmese de
-// SİLİNEBİLİR ve fark tam orada ortaya çıkar: bu uç kimliksizdir, dolayısıyla
-// PAYLAŞILAN önbellekler (CDN, ters vekil) yanıtı meşru biçimde saklar.
-// "immutable" onlara "yeniden doğrulama" demeyi bırakmalarını söyler; sonuç,
-// DELETE /admin/v1/uploads/{id} çağrıldıktan sonra da aynı adresin bir YIL
-// boyunca sunulmaya devam etmesidir. Silme, orijinde çalışır ama erişimi geri
-// almaz.
+// The key is never reused (80 bits of randomness), so the content of an address
+// DOES NOT CHANGE — up to here "immutable" looks right. But even though the
+// content does not change it CAN BE DELETED, and that is exactly where the
+// difference shows up: this endpoint is identity-less, therefore SHARED caches
+// (a CDN, a reverse proxy) legitimately store the response. "immutable" tells
+// them to stop revalidating; the result is that the same address keeps being
+// served for a YEAR after DELETE /admin/v1/uploads/{id} was called. The delete
+// works at the origin but does not take the access back.
 //
-// Bir saat, iki isteği dengeler: görsel trafiği hâlâ önbellekten karşılanır ve
-// bir silme kararı en geç bir saatte her yere ulaşır. Daha uzun bir süre isteyen
-// kurulum, silmeyi önbellek temizlemeyle (purge) birlikte yapmalıdır — o zaman
-// süreyi uzatmak da güvenlidir.
-const onbellekDenetimi = "public, max-age=3600"
+// One hour balances the two demands: image traffic is still served from the
+// cache and a delete decision reaches everywhere within an hour at the latest.
+// An installation that wants a longer period has to pair the delete with a
+// cache purge — then extending the period is safe too.
+const cacheControl = "public, max-age=3600"
 
-// serveFile GET /files/{key} handler'ıdır.
+// serveFile is the GET /files/{key} handler.
 //
-// # İki kural her yanıtta geçerlidir
+// # Two rules hold on every response
 //
-//  1. Content-Type SAKLANAN tipten yazılır — istemcinin yükleme sırasında
-//     bildirdiği tipten DEĞİL. Saklanan tip, yükleme anında dosyanın
-//     İÇERİĞİNDEN tespit edilmiştir; istemcinin iddiası hiçbir yerde
-//     saklanmaz ki buraya sızabilsin.
-//  2. X-Content-Type-Options: nosniff HER yanıtta bulunur — hata yanıtları
-//     dâhil, bu yüzden başlık daha ilk satırda yazılır. Bu başlık olmadan
-//     tarayıcı, gönderdiğimiz tipe rağmen içeriğe bakıp kendi tahminini yapar:
-//     "image/png" olarak saklanmış ama HTML'e benzeyen bir dosya HTML gibi
-//     çalıştırılabilirdi. Yani tespit ve izin listesi doğru çalışsa bile
-//     sunum aşaması onları geçersiz kılardı.
+//  1. The Content-Type is written from the STORED type — NOT from the type the
+//     client declared during the upload. The stored type was detected from the
+//     CONTENT of the file at upload time; the client's claim is stored nowhere,
+//     so that it cannot leak in here.
+//  2. X-Content-Type-Options: nosniff is present on EVERY response — the error
+//     responses included, which is why the header is written on the very first
+//     line. Without this header the browser looks at the content in spite of
+//     the type we sent and makes its own guess: a file stored as "image/png"
+//     that looks like HTML could be executed as HTML. That is, even if the
+//     detection and the allow list work correctly, the serving stage would
+//     void them.
 //
-// # Content-Disposition YAZILMAZ
+// # Content-Disposition IS NOT WRITTEN
 //
-// İstemcinin bildirdiği dosya adı kayıtta durur ama BAŞLIĞA konmaz: içeriğine
-// güvenilmeyen bir dizeyi başlık dilbilgisinin içine koymak, ayrı bir sınıf
-// açık üretir. Ad, JSON gövdesinde döner ve orada kodlaması güvenlidir.
+// The file name the client declared stands in the record but is NOT PUT INTO A
+// HEADER: putting a string whose content is not trusted inside the header
+// grammar opens a separate class of hole. The name comes back in the JSON body
+// and its encoding is safe there.
 //
-// # Yanıtın gövdesini net/http yazar
+// # The body of the response is written by net/http
 //
-// [net/http.ServeContent] koşullu istekleri (If-Modified-Since) ve aralık
-// (Range) isteklerini karşılar. Elle io.Copy yazmak, her ikisini de kaybetmek
-// olurdu — büyük bir görselin yeniden yüklenmesi ya da kısmi indirilmesi
-// sıradan bir tarayıcı davranışıdır. Dosya adı BOŞ geçilir: ServeContent, adı
-// yalnızca Content-Type'ı TAHMİN ETMEK için kullanır ve biz onu zaten
-// kayıttan yazdık; ad verilseydi tahmin yolu açık kalırdı.
+// [net/http.ServeContent] serves conditional requests (If-Modified-Since) and
+// range (Range) requests. Writing io.Copy by hand would be losing both of them
+// — reloading a large image or downloading it partially is ordinary browser
+// behavior. The file name is passed EMPTY: ServeContent uses the name only to
+// GUESS the Content-Type and we have already written it from the record; had
+// the name been given, the guessing path would have stayed open.
 func (h *Handler) serveFile(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
 	w.Header().Set(headerContentTypeOptions, nosniff)
 
-	acilan, err := h.svc.OpenByKey(ctx, chi.URLParam(r, paramKey))
+	opened, err := h.svc.OpenByKey(ctx, chi.URLParam(r, paramKey))
 	if err != nil {
 		corehttp.WriteError(ctx, w, err)
 
 		return
 	}
-	defer func() { _ = acilan.Content.Close() }()
+	defer func() { _ = opened.Content.Close() }()
 
-	w.Header().Set("Content-Type", acilan.Upload.ContentType)
-	w.Header().Set("Cache-Control", onbellekDenetimi)
+	w.Header().Set("Content-Type", opened.Upload.ContentType)
+	w.Header().Set("Cache-Control", cacheControl)
 
-	// ÇOK ARALIKLI Range reddedilir; başlık silinerek tam gövdeye düşülür.
+	// A MULTI-RANGE Range is refused; the header is deleted and we fall back to
+	// the full body.
 	//
-	// [net/http.ServeContent] çok aralıklı isteği multipart/byteranges ile
-	// karşılar ve yalnızca aralıkların TOPLAM BAYTININ dosya boyutunu aşmasını
-	// engeller — aralık SAYISINI sınırlamaz. Her aralık kendi sınır dizesini
-	// ve başlık bloğunu taşıdığı için, tek baytlık yüzlerce aralık isteyen bir
-	// istemci gövdeden kat kat büyük bir yanıt ürettirir. Bu uç KİMLİKSİZDİR
-	// (vitrindeki <img> başlık gönderemez), yani büyütme doğrudan bant genişliği
-	// saldırısına dönüşür.
+	// [net/http.ServeContent] serves a multi-range request with
+	// multipart/byteranges and only prevents the TOTAL BYTES of the ranges from
+	// exceeding the file size — it does not bound the NUMBER of ranges. Since
+	// every range carries its own boundary string and header block, a client
+	// asking for hundreds of one-byte ranges makes the response many times
+	// larger than the body. This endpoint is IDENTITY-LESS (the <img> on the
+	// storefront cannot send a header), so the amplification turns directly
+	// into a bandwidth attack.
 	//
-	// Tek aralıklı Range KORUNUR: tarayıcıların ve video oynatıcıların
-	// gerçekten kullandığı biçim odur. 416 dönmek yerine başlığı silmek
-	// bilinçlidir — istemci hatasız ve tam içerikle devam eder, yalnızca
-	// aralık optimizasyonunu kaybeder.
+	// A single-range Range IS PRESERVED: that is the form browsers and video
+	// players really use. Deleting the header instead of returning 416 is
+	// deliberate — the client continues without an error and with the full
+	// content, it only loses the range optimisation.
 	if strings.Contains(r.Header.Get("Range"), ",") {
 		r.Header.Del("Range")
 	}
 
-	http.ServeContent(w, r, "", acilan.ModTime, acilan.Content)
+	http.ServeContent(w, r, "", opened.ModTime, opened.Content)
 }

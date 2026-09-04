@@ -1,70 +1,79 @@
--- file modülünün şeması (plan Bölüm 5.6 — FileProvider soyutlaması).
+-- Schema of the file module (plan Section 5.6 — the FileProvider abstraction).
 --
--- Sahiplik: bu tablo YALNIZCA file modülüne aittir. uploaded_by bir kullanıcı
--- ya da API anahtarı kimliğidir ama FOREIGN KEY DEĞİLDİR (Prensip 2.2 —
--- cross-module FK yasağı): kimliği auth modülü sahiplenir.
+-- Ownership: this table belongs ONLY to the file module. uploaded_by is a user
+-- or an API key id but it is NOT A FOREIGN KEY (Principle 2.2 — the
+-- cross-module FK ban): the identity is owned by the auth module.
 --
--- Zaman: tüm damgalar timestamptz (UTC).
+-- Time: every stamp is timestamptz (UTC).
 
--- file_uploads YÜKLENEN DOSYALARIN DEFTERİDİR: dosyanın depoda nerede
--- durduğunu, İÇERİĞİNDEN tespit edilmiş tipini, boyutunu, özetini ve kimin
--- yüklediğini tutar.
+-- file_uploads IS THE LEDGER OF THE UPLOADED FILES: it holds where the file
+-- sits in the store, its type as detected FROM ITS CONTENT, its size, its
+-- digest and who uploaded it.
 --
--- # storage_key İSTEMCİDEN GELMEZ
+-- # storage_key DOES NOT COME FROM THE CLIENT
 --
--- Anahtarı sağlayıcı ÜRETİR (kimlik + tespit edilen tipten türeyen uzantı).
--- İstemcinin bildirdiği dosya adı ayrı bir sütunda (original_name) ve yalnızca
--- GÖSTERİM için durur; hiçbir yol ifadesine girmez. Yol geçişi ("../" ve her
--- kodlaması) böylece "temizlenerek" değil, YAPISAL olarak imkânsız kılınır:
--- temizlemek, her yeni kodlama numarasında kararı yeniden vermek demekti.
+-- The key is PRODUCED by the provider (the id plus the extension derived from
+-- the detected type). The file name the client reports sits in a separate
+-- column (original_name) and only for DISPLAY; it enters no path expression.
+-- Path traversal ("../" and every encoding of it) is thereby made impossible
+-- STRUCTURALLY, not by being "sanitized": sanitizing would have meant taking
+-- the decision again at every new encoding trick.
 --
--- # storage_key BENZERSİZDİR
+-- # storage_key IS UNIQUE
 --
--- İki kayıt aynı dosyayı gösteremez. Kısıt iki şeyi birden korur: silme
--- (kaydı kaldırıp dosyayı silen akış) başka bir kaydın dosyasını götüremez ve
--- SUNUM yolu anahtardan kayda tek bir satırla ulaşabilir — sunulan
--- Content-Type o satırdan yazılır, dolayısıyla "hangi satır" sorusunun tek bir
--- cevabı olmalıdır.
+-- Two records cannot point at the same file. The constraint protects two
+-- things at once: deletion (the flow that removes the record and deletes the
+-- file) cannot carry off another record's file, and the SERVING path can reach
+-- the record from the key with a single row — the served Content-Type is
+-- written from that row, so the question "which row" must have exactly one
+-- answer.
 --
--- # content_type İÇERİKTEN gelir
+-- # content_type COMES FROM THE CONTENT
 --
--- Sütun, istemcinin Content-Type başlığını DEĞİL net/http.DetectContentType'ın
--- ilk 512 bayttan tespit ettiği tipi taşır. İstemcinin bildirdiği tip bir
--- İDDİADIR: "image/png" diye gönderilen bir HTML dosyası, ona güvenen bir izin
--- listesinden geçer ve sunulduğunda tarayıcıda çalışır.
+-- The column carries NOT the client's Content-Type header but the type
+-- net/http.DetectContentType detected from the first 512 bytes. The type the
+-- client reports is a CLAIM: an HTML file sent as "image/png" passes an allow
+-- list that trusts it and, once served, runs in the browser.
 --
--- İzin listesi CHECK kısıtı olarak YAZILMAZ: kabul edilen tipler
--- yapılandırmadan gelir (FILE_ALLOWED_TYPES) ve kuruluma göre değişir; listeyi
--- şemaya sabitlemek, her ayar değişikliği için migration yazmayı zorunlu
--- kılardı. Deftere yazılan şey DENETLENMİŞ bir yüklemedir — denetimi yapan
--- servis katmanıdır.
+-- The allow list IS NOT WRITTEN as a CHECK constraint: the accepted types come
+-- from the configuration (FILE_ALLOWED_TYPES) and vary from installation to
+-- installation; pinning the list into the schema would have made writing a
+-- migration mandatory for every settings change. What is written into the
+-- ledger is a VALIDATED upload — the one doing the validating is the service
+-- layer.
 --
--- # YUMUŞAK SİLME YOKTUR
+-- # THERE IS NO SOFT DELETE
 --
--- Diğer modüllerin aksine deleted_at sütunu yoktur ve gerekçesi silmenin
--- kendisindedir: bir yükleme silindiğinde DOSYA da depodan silinir. Yumuşak
--- silinmiş bir satır, dosyası çoktan gitmiş bir kaydı listede tutar ("var ama
--- açılmıyor") ve benzersiz anahtarı İŞGAL etmeye devam ederdi.
+-- Unlike in the other modules there is no deleted_at column, and the reason
+-- lies in the deletion itself: when an upload is deleted THE FILE is deleted
+-- from the store too. A soft-deleted row would keep a record whose file is
+-- long gone in the list ("it is there but it does not open") and would go on
+-- OCCUPYING the unique key.
 CREATE TABLE IF NOT EXISTS file_uploads (
     id            TEXT        PRIMARY KEY,
-    -- storage_key sağlayıcının ürettiği depo anahtarıdır; istemciden GELMEZ.
+    -- storage_key is the storage key produced by the provider; it DOES NOT
+    -- COME from the client.
     storage_key   TEXT        NOT NULL,
-    -- provider_id dosyayı yazan sağlayıcının kimliğidir. Saklanır çünkü
-    -- kurulum sağlayıcı değiştirebilir ve eski kayıtları ancak onları yazan
-    -- sağlayıcı okuyabilir.
+    -- provider_id is the id of the provider that wrote the file. It is stored
+    -- because an installation can change its provider and the old records can
+    -- only be read by the provider that wrote them.
     provider_id   TEXT        NOT NULL,
-    -- content_type İÇERİKTEN tespit edilmiş tiptir; sunumda Content-Type
-    -- başlığı bu sütundan yazılır.
+    -- content_type is the type detected FROM THE CONTENT; when serving, the
+    -- Content-Type header is written from this column.
     content_type  TEXT        NOT NULL,
     size          BIGINT      NOT NULL,
-    -- checksum içeriğin SHA-256 özetidir (küçük harf onaltılık); teşhis için.
+    -- checksum is the SHA-256 digest of the content (lowercase hexadecimal);
+    -- it is for diagnostics.
     checksum      TEXT        NOT NULL,
-    -- original_name istemcinin bildirdiği addır ve YALNIZCA gösterim içindir.
-    -- Boş olabilir: bazı istemciler ad göndermez ve bu bir hata değildir.
+    -- original_name is the name the client reported and it is ONLY for
+    -- display. It may be empty: some clients send no name and that is not an
+    -- error.
     original_name TEXT        NOT NULL DEFAULT '',
-    -- url dosyanın erişilebilir adresidir; yerel sağlayıcıda köke görelidir.
+    -- url is the file's reachable address; on the local provider it is
+    -- relative to the root.
     url           TEXT        NOT NULL,
-    -- uploaded_by yükleyen çağıranın kimliğidir. FK YOKTUR (Prensip 2.2).
+    -- uploaded_by is the id of the uploading caller. THERE IS NO FK
+    -- (Principle 2.2).
     uploaded_by   TEXT        NOT NULL DEFAULT '',
     created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -73,16 +82,17 @@ CREATE TABLE IF NOT EXISTS file_uploads (
     CONSTRAINT file_uploads_provider_id_not_empty  CHECK (provider_id <> ''),
     CONSTRAINT file_uploads_content_type_not_empty CHECK (content_type <> ''),
     CONSTRAINT file_uploads_url_not_empty          CHECK (url <> ''),
-    -- Sıfır baytlık bir yükleme her zaman bir arızadır: içerikten tip tespiti
-    -- de yapılamaz, sunulacak bir şey de yoktur.
+    -- A zero-byte upload is always a failure: the type cannot be detected from
+    -- the content either, and there is nothing to serve.
     CONSTRAINT file_uploads_size_positive          CHECK (size > 0)
 );
 
--- İki kayıt aynı depo anahtarını gösteremez; sunum yolunun anahtardan kayda
--- tek satırla ulaşmasını sağlayan kısıt budur.
+-- Two records cannot point at the same storage key; this is the constraint
+-- that lets the serving path reach the record from the key with a single row.
 CREATE UNIQUE INDEX IF NOT EXISTS file_uploads_storage_key_uniq
     ON file_uploads (storage_key);
 
--- Yönetim listesi en yeniden eskiye sayfalanır; indeks o sıralamayı karşılar.
+-- The admin list is paginated from the newest to the oldest; the index serves
+-- that ordering.
 CREATE INDEX IF NOT EXISTS file_uploads_recent_idx
     ON file_uploads (created_at DESC, id DESC);

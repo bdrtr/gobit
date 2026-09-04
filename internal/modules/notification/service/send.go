@@ -10,55 +10,60 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/notification/models"
 )
 
-// sendTimeout tek bir sağlayıcı çağrısına tanınan süredir.
+// sendTimeout is the time granted to a single provider call.
 //
-// Sınır ZORUNLUDUR ve çağırandan devralınamaz: bu servisin tek çağıranı bir
-// olay işleyicisidir ve [eventbus.Handler] sözleşmesine göre işleyicinin ctx'i
-// isteğin iptalini DEVRALMAZ, yani süresizdir. Sınırsız bir SMTP/HTTP çağrısı,
-// Redis backend'inde aynı stream'in tüm olaylarını arkasında kuyruklar
-// (searchpg/events.go'daki aynı gerekçe) ve InMemory backend'inde goroutine
-// biriktirir. On beş saniye, yavaş bir e-posta ağ geçidine yetecek kadar uzun,
-// bir olay akışını kilitlemeyecek kadar kısadır.
+// The bound is MANDATORY and cannot be inherited from the caller: the only
+// caller of this service is an event handler, and according to the
+// [eventbus.Handler] contract the handler's ctx DOES NOT INHERIT the
+// cancellation of the request, that is, it has no deadline. An unbounded
+// SMTP/HTTP call queues all the events of the same stream behind it on the
+// Redis backend (the same reasoning as in searchpg/events.go) and piles up
+// goroutines on the InMemory backend. Fifteen seconds is long enough for a slow
+// e-mail gateway, short enough not to lock up an event stream.
 const sendTimeout = 15 * time.Second
 
-// maxErrorLen günlüğe yazılan hata metninin üst sınırıdır.
+// maxErrorLen is the upper bound of the error text written into the log.
 //
-// Sağlayıcının döndüğü hata dıştan gelen bir metindir ve uzunluğu bu modülün
-// denetiminde değildir; sınırsız yazmak, tek bir arızanın tabloyu şişirmesi
-// demekti.
+// The error the provider returns is a text coming from the outside and its
+// length is not under the control of this module; writing it unbounded would
+// have meant a single fault bloating the table.
 const maxErrorLen = 512
 
-// mesajAdresYok adressiz atlanan kayda yazılan açıklamadır.
+// messageNoAddress is the explanation written into a record skipped for having
+// no address.
 //
-// Error sütunu yalnızca "failed" durumunda hata taşır; burada bir hata
-// DEĞİLDİR ama kaydı okuyan kişi "neden atlandı" sorusunu tek satırdan
-// yanıtlayabilmelidir. Metin ALICI ADRESİ İÇERMEZ — zaten yoktur.
-const mesajAdresYok = "gönderilecek adres yok; sağlayıcıya gidilmedi"
+// The Error column carries an error only in the "failed" status; here this is
+// NOT an error, but the person reading the record has to be able to answer the
+// question "why was it skipped" from a single line. The text DOES NOT CONTAIN
+// THE RECIPIENT ADDRESS — there is none anyway.
+const messageNoAddress = "there is no address to send to; the provider was not reached"
 
-// NotifyInput tek bir bildirim gönderiminin girdisidir.
+// NotifyInput is the input of a single notification send.
 //
-// TÜM alanlar İLKELDİR ve Data'nın değerleri de dizedir; gerekçe çekirdekteki
-// [coreprovider.Notification] belgesindedir (özet: yükün kaynağı bir olaydır,
-// olay üretimde JSON'a çevrilir ve JSON'un tek sayı tipi vardır — any taşınsa
-// para float üzerinden geçerdi).
+// ALL the fields are PRIMITIVE and the values of Data are strings too; the
+// reasoning is in the [coreprovider.Notification] documentation in the core
+// (the summary: the source of the payload is an event, the event is turned into
+// JSON in production and JSON has a single number type — had any been carried,
+// money would travel over a float).
 type NotifyInput struct {
-	// Template kullanılacak şablonun adıdır (örn. "order.placed").
-	// İdempotency anahtarının ilk yarısıdır.
+	// Template is the name of the template to use (e.g. "order.placed").
+	// It is the first half of the idempotency key.
 	Template string
-	// Channel gönderim kanalıdır ([coreprovider.ChannelEmail] ya da
+	// Channel is the send channel ([coreprovider.ChannelEmail] or
 	// [coreprovider.ChannelSMS]).
 	Channel string
-	// Reference bildirimin bağlı olduğu kaydın kimliğidir (sipariş).
-	// İdempotency anahtarının ikinci yarısıdır.
+	// Reference is the identifier of the record the notification is tied to
+	// (the order). It is the second half of the idempotency key.
 	Reference string
-	// To alıcı adresidir. GÜNLÜĞE YAZILMAZ ve loglanmaz; yalnızca sağlayıcıya
-	// geçirilir. Boş olabilir; bkz. [Service.Notify].
+	// To is the recipient address. It IS NOT WRITTEN INTO THE LOG and is not
+	// logged; it is only passed on to the provider. It may be empty; see
+	// [Service.Notify].
 	To string
-	// Data şablona geçilecek değerlerdir.
+	// Data holds the values to be passed to the template.
 	Data map[string]string
 }
 
-// normalize girdiyi doğrular ve boşlukları temizler.
+// normalize validates the input and trims the whitespace.
 func (in NotifyInput) normalize() (NotifyInput, error) {
 	in.Template = strings.TrimSpace(in.Template)
 	in.Channel = strings.TrimSpace(in.Channel)
@@ -66,68 +71,74 @@ func (in NotifyInput) normalize() (NotifyInput, error) {
 	in.To = strings.TrimSpace(in.To)
 
 	if in.Template == "" {
-		return NotifyInput{}, errors.Invalid(CodeInvalidInput, "şablon adı zorunludur")
+		return NotifyInput{}, errors.Invalid(CodeInvalidInput, "the template name is required")
 	}
 	if in.Channel == "" {
-		return NotifyInput{}, errors.Invalid(CodeInvalidInput, "kanal zorunludur")
+		return NotifyInput{}, errors.Invalid(CodeInvalidInput, "the channel is required")
 	}
 	if in.Reference == "" {
-		return NotifyInput{}, errors.Invalid(CodeInvalidInput, "referans zorunludur")
+		return NotifyInput{}, errors.Invalid(CodeInvalidInput, "the reference is required")
 	}
 	return in, nil
 }
 
-// Notify bildirimi seçili sağlayıcıya gönderir ve denemeyi günlüğe yazar.
+// Notify sends the notification to the selected provider and writes the attempt
+// into the log.
 //
-// # Sıra: önce KAYIT, sonra gönderim
+// # The order: first the RECORD, then the send
 //
-// Kayıt (şablon, referans) çifti üzerinde benzersizdir ve sağlayıcıya
-// gidilmeden ÖNCE açılır. Ters sıra — önce gönder, sonra kaydet — mükerrer
-// bildirimi hiç engellemezdi: eşzamanlı iki işleyici de sağlayıcıya gider,
-// benzersizlik ihlali ancak İKİ e-posta gittikten sonra görünürdü.
+// The record is unique over the (template, reference) pair and it is opened
+// BEFORE the provider is reached. The reverse order — send first, record
+// afterwards — would not prevent a duplicate notification at all: two
+// concurrent handlers would both go to the provider, and the uniqueness
+// violation would only become visible after TWO e-mails had gone out.
 //
-// # Kayıt zaten varsa gönderim ATLANIR; durumu ne olursa olsun
+// # If the record already exists the send is SKIPPED; whatever its status
 //
-// İkinci çağrı hata DÖNMEZ, sessizce atlar ve bunu bilgi seviyesinde loglar.
-// Atlama BAŞARISIZ bir kayıt için de geçerlidir ve bu bilinçlidir: çekirdek
-// sözleşmesi (bkz. [coreprovider.NotificationProvider.Send]) hata dönmenin
-// bildirimin gitmediği ANLAMINA GELMEDİĞİNİ söyler — zaman aşımına uğrayan bir
-// istek karşı tarafta işlenmiş olabilir. "Başarısızsa yeniden dene" kuralı bu
-// yüzden mükerrer e-posta üretebilir ve gerçek bir yeniden deneme politikası
-// (deneme sayacı, geri çekilme, ölü mektup kuyruğu) ister; o politika bu
-// modülün kapsamında değildir. Yeniden gönderim, günlüğe bakan bir insanın
-// KASITLI kararı olmalıdır.
+// The second call DOES NOT return an error, it skips silently and logs that at
+// the info level. The skipping holds for a FAILED record too and this is
+// deliberate: the core contract (see
+// [coreprovider.NotificationProvider.Send]) says that returning an error DOES
+// NOT MEAN the notification did not go out — a request that timed out may have
+// been processed on the other side. That is why the rule "retry if it failed"
+// can produce a duplicate e-mail and asks for a real retry policy (an attempt
+// counter, backoff, a dead letter queue); that policy is not within the scope
+// of this module. Resending has to be the DELIBERATE decision of a human being
+// looking at the log.
 //
-// # Adressiz bildirim HATA DEĞİLDİR
+// # A notification without an address IS NOT AN ERROR
 //
-// To boşsa sağlayıcıya HİÇ gidilmez, kayıt [models.DeliverySkipped] olarak
-// kapatılır ve nil dönülür. Hata dönmek yanlış olurdu: çağıran bir olay
-// işleyicisidir ve onun için "adres yok" KALICI bir durumdur — yeniden
-// denenecek bir arızadan ayırt edilemezse ya sonsuza dek denenir ya da gerçek
-// arızalar da yutulur (aynı gerekçe order modülünün OrderContactJSON
-// belgesinde de yazılıdır).
+// When To is empty the provider is NOT reached AT ALL, the record is closed as
+// [models.DeliverySkipped] and nil is returned. Returning an error would be
+// wrong: the caller is an event handler and for it "there is no address" is a
+// PERMANENT state — if it cannot be told apart from a fault that will be
+// retried, either it is retried forever or the real faults get swallowed too
+// (the same reasoning is written in the order module's OrderContactJSON
+// documentation as well).
 //
-// # Dönen hata
+// # The returned error
 //
-// Sağlayıcının hatası ÇAĞIRANA GERİ VERİLİR (kayda yazıldıktan sonra): olay
-// işleyicisi onu veri yoluna döndürür ve veri yolu hatayı olay adı, olay
-// kimliği ve hata zinciriyle ERROR seviyesinde loglar. Yutulsaydı, bildirimin
-// gitmediği yalnızca tabloya bakan birine görünürdü.
+// The provider's error IS HANDED BACK TO THE CALLER (after it has been written
+// into the record): the event handler returns it to the bus and the bus logs
+// the error at the ERROR level with the event name, the event identifier and
+// the error chain. Had it been swallowed, the notification not going out would
+// only be visible to somebody looking at the table.
 func (s *Service) Notify(ctx context.Context, in NotifyInput) error {
 	in, err := in.normalize()
 	if err != nil {
 		return err
 	}
 
-	// Sağlayıcı kayıttan ÖNCE çözülür: bilinmeyen bir sağlayıcı adıyla açılan
-	// kayıt, hiç gönderilmemiş bir bildirimin idempotency anahtarını tüketir
-	// ve yapılandırma düzeltildikten sonra bildirim bir daha hiç gönderilemezdi.
+	// The provider is resolved BEFORE the record: a record opened with an
+	// unknown provider name consumes the idempotency key of a notification that
+	// was never sent, and after the configuration was fixed that notification
+	// could never be sent again.
 	provider, err := s.providers.Get(s.providerID)
 	if err != nil {
 		return err
 	}
 
-	kayit, yeni, err := s.store.ClaimDelivery(ctx, models.Delivery{
+	record, isNew, err := s.store.ClaimDelivery(ctx, models.Delivery{
 		ID:         models.NewDeliveryID(time.Now()),
 		Template:   in.Template,
 		Channel:    in.Channel,
@@ -138,48 +149,49 @@ func (s *Service) Notify(ctx context.Context, in NotifyInput) error {
 	if err != nil {
 		return err
 	}
-	if !yeni {
-		s.log.InfoContext(ctx, "bildirim zaten gönderilmiş; atlandı",
-			"sablon", in.Template, "referans", in.Reference)
+	if !isNew {
+		s.log.InfoContext(ctx, "the notification has already been sent; skipped",
+			"template", in.Template, "reference", in.Reference)
 		return nil
 	}
 
 	if in.To == "" {
-		s.finish(ctx, kayit, models.DeliverySkipped, mesajAdresYok)
-		s.log.InfoContext(ctx, "bildirim atlandı: adres yok",
-			"kayit", kayit.ID, "sablon", in.Template, "referans", in.Reference)
+		s.finish(ctx, record, models.DeliverySkipped, messageNoAddress)
+		s.log.InfoContext(ctx, "the notification was skipped: there is no address",
+			"delivery_id", record.ID, "template", in.Template, "reference", in.Reference)
 		return nil
 	}
 
 	sendErr := s.send(ctx, provider, in)
 
-	durum, mesaj := models.DeliverySent, ""
+	status, message := models.DeliverySent, ""
 	if sendErr != nil {
-		durum, mesaj = models.DeliveryFailed, kisalt(sendErr.Error(), maxErrorLen)
+		status, message = models.DeliveryFailed, truncate(sendErr.Error(), maxErrorLen)
 	}
-	s.finish(ctx, kayit, durum, mesaj)
+	s.finish(ctx, record, status, message)
 
 	if sendErr != nil {
 		return errors.Wrap(sendErr, errors.KindOf(sendErr), CodeSendFailed,
-			"%q bildirimi gönderilemedi (%s, referans %s)",
+			"the %q notification could not be sent (%s, reference %s)",
 			in.Template, provider.ID(), in.Reference)
 	}
 
-	s.log.InfoContext(ctx, "bildirim gönderildi",
-		"kayit", kayit.ID,
-		"sablon", in.Template,
-		"kanal", in.Channel,
-		"referans", in.Reference,
-		"saglayici", provider.ID())
+	s.log.InfoContext(ctx, "the notification was sent",
+		"delivery_id", record.ID,
+		"template", in.Template,
+		"channel", in.Channel,
+		"reference", in.Reference,
+		"provider_id", provider.ID())
 	return nil
 }
 
-// send sağlayıcıyı SÜRE SINIRLI bir bağlamla çağırır.
+// send calls the provider with a TIME-BOUNDED context.
 //
-// Ayrı bir metot olmasının sebebi, süre sınırının tek bir yerde ve gönderim
-// dışındaki hiçbir adımı kapsamadan kurulmasıdır: kayıt yazma da aynı sınırın
-// altında kalsaydı, yavaş bir sağlayıcıdan sonra SONUCU yazacak çağrı da
-// süresi dolmuş bir bağlamla yapılır ve kayıt "pending" kalırdı.
+// The reason it is a separate method is that the time bound is established in a
+// single place and without covering any step other than the send: had the
+// writing of the record stayed under the same bound too, the call that writes
+// the RESULT after a slow provider would also be made with an expired context
+// and the record would stay "pending".
 func (s *Service) send(
 	ctx context.Context,
 	provider coreprovider.NotificationProvider,
@@ -196,43 +208,47 @@ func (s *Service) send(
 	})
 }
 
-// finish denemenin sonucunu günlüğe yazar; yazamazsa ERROR loglar.
+// finish writes the outcome of the attempt into the log; when it cannot write,
+// it logs at ERROR.
 //
-// Yazma hatası ÇAĞIRANA DÖNMEZ ve bu bilinçlidir: bu noktada sağlayıcıya çoktan
-// gidilmiştir, yani asıl olay olmuştur. Hata dönmek, gönderilmiş bir bildirimi
-// "başarısız" gibi göstermek olurdu; oysa gerçek durum "gönderildi ama sonucu
-// yazılamadı"dır ve kaydın "pending" kalması tam olarak bunu anlatır
-// (bkz. [models.DeliveryPending]).
+// A write failure IS NOT RETURNED TO THE CALLER and this is deliberate: at this
+// point the provider has already been reached, that is, the actual event has
+// happened. Returning an error would be showing a notification that was sent as
+// if it were "failed"; whereas the real state is "it was sent but its outcome
+// could not be written" and the record staying "pending" says exactly that (see
+// [models.DeliveryPending]).
 //
-// Bağlam İPTALDEN ARINDIRILIR: gönderim süresi dolduğunda ya da olay işleme
-// bağlamı iptal edildiğinde sonucun yazılamaması, kaydı kalıcı olarak
-// "pending" bırakırdı — yani en çok bilgiye ihtiyaç duyulan durumda günlük en
-// sessiz hâlini alırdı.
+// The context is STRIPPED OF CANCELLATION: the outcome not being writable when
+// the send times out or when the event handling context is canceled would
+// leave the record permanently "pending" — that is, the log would go into its
+// most silent state in exactly the situation where the most information is
+// needed.
 func (s *Service) finish(
 	ctx context.Context,
-	kayit models.Delivery,
-	durum models.DeliveryStatus,
-	mesaj string,
+	record models.Delivery,
+	status models.DeliveryStatus,
+	message string,
 ) {
 	writeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), sendTimeout)
 	defer cancel()
 
-	if _, err := s.store.FinishDelivery(writeCtx, kayit.ID, durum, mesaj); err != nil {
-		s.log.ErrorContext(ctx, "bildirim sonucu günlüğe yazılamadı; kayıt 'pending' kaldı",
-			"kayit", kayit.ID,
-			"sablon", kayit.Template,
-			"referans", kayit.Reference,
-			"sonuc", durum.String(),
+	if _, err := s.store.FinishDelivery(writeCtx, record.ID, status, message); err != nil {
+		s.log.ErrorContext(ctx,
+			"the notification outcome could not be written into the log; the record stayed 'pending'",
+			"delivery_id", record.ID,
+			"template", record.Template,
+			"reference", record.Reference,
+			"status", status.String(),
 			"error", err)
 	}
 }
 
-// kisalt metni verilen uzunluğa kırpar.
+// truncate clips the text to the given length.
 //
-// Kırpma RUNE sınırında yapılır: bayt sınırında kesmek, çok baytlı bir
-// karakterin ortasında bölerek geçersiz UTF-8 üretir ve o metin JSON'a
-// kodlanırken sessizce bozulurdu.
-func kisalt(text string, limit int) string {
+// The clipping is done on a RUNE boundary: cutting on a byte boundary splits a
+// multi-byte character down the middle, producing invalid UTF-8, and that text
+// would be silently corrupted while being encoded into JSON.
+func truncate(text string, limit int) string {
 	if len(text) <= limit {
 		return text
 	}

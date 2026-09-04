@@ -12,16 +12,18 @@ import (
 	"github.com/bdrtr/gobit/internal/core/openapi"
 )
 
-// Test DAHİLİ pakettedir çünkü anlatılan gövde ([deliveryDTO]) dışa kapalıdır.
-// Dışarıdan sınamanın tek yolu tipi dışa açmak olurdu; belgeyi sınamak uğruna
-// modülün yüzeyini genişletmek, sınanan şeyin kendisini bozardı.
+// The test is in the INTERNAL package because the body being described
+// ([deliveryDTO]) is unexported. The only way to test from outside would be to
+// export the type; widening the module's surface for the sake of testing the
+// document would break the very thing that is being tested.
 
-// belge Describe'ın çıktısını GERÇEK route ağacına karşı üretip JSON'dan geri
-// okunmuş hâlini döner.
+// documentPaths produces Describe's output against the REAL route tree and
+// returns the paths of the document as read back from JSON.
 //
-// Router da gerçek olmalıdır: açıklama ile route'un yolu ayrışırsa hata BURADA
-// görünsün, üretimde /openapi.json'a bakan birinde değil.
-func belge(t *testing.T) map[string]any {
+// The router has to be real as well: if the description and the route's path
+// drift apart, let the failure show up HERE, not on somebody looking at
+// /openapi.json in production.
+func documentPaths(t *testing.T) map[string]any {
 	t.Helper()
 
 	doc := openapi.New("test", "v1")
@@ -30,109 +32,111 @@ func belge(t *testing.T) map[string]any {
 	r := chi.NewRouter()
 	New(nil).Routes(r)
 
-	ham, err := doc.Build(r)
+	raw, err := doc.Build(r)
 	require.NoError(t, err)
 	require.Empty(t, doc.UnmatchedDescriptions(),
-		"anlatılan her uç bir route ile eşleşmeli; eşleşmeyen kayıt belgeye hiç girmez")
+		"every described endpoint must match a route; a record that does not match never enters the document")
 
-	kodlanmis, err := json.Marshal(ham)
+	encoded, err := json.Marshal(raw)
 	require.NoError(t, err)
 
-	var cozulmus map[string]any
-	require.NoError(t, json.Unmarshal(kodlanmis, &cozulmus))
+	var decoded map[string]any
+	require.NoError(t, json.Unmarshal(encoded, &decoded))
 
-	yollar, ok := cozulmus["paths"].(map[string]any)
-	require.True(t, ok, "belgede paths olmalı")
+	paths, ok := decoded["paths"].(map[string]any)
+	require.True(t, ok, "the document must have paths")
 
-	return yollar
+	return paths
 }
 
-// islem verilen yolun GET işlemini döner.
-func islem(t *testing.T, yollar map[string]any, yol string) map[string]any {
+// operation returns the GET operation of the given path.
+func operation(t *testing.T, paths map[string]any, path string) map[string]any {
 	t.Helper()
 
-	kayit, ok := yollar[yol].(map[string]any)
-	require.True(t, ok, "%q belgede olmalı", yol)
+	entry, ok := paths[path].(map[string]any)
+	require.True(t, ok, "%q must be in the document", path)
 
-	get, ok := kayit["get"].(map[string]any)
-	require.True(t, ok, "%q için GET anlatılmalı", yol)
+	get, ok := entry["get"].(map[string]any)
+	require.True(t, ok, "GET must be described for %q", path)
 
 	return get
 }
 
-// TestDescribeTeslimGunluguUcunuAnlatir ucun belgede göründüğünü doğrular.
+// TestDescribeDescribesTheDeliveryLogEndpoint verifies that the endpoint shows
+// up in the document.
 //
-// Anlatılmayan bir uç istemci üretecinde HİÇ görünmez: şema router'dan
-// üretildiği için yol ve metot yine yazılır, ama gövdesi olmayan bir işlem
-// istemciye "yanıtın şekli bilinmiyor" der.
-func TestDescribeTeslimGunluguUcunuAnlatir(t *testing.T) {
-	get := islem(t, belge(t), pathAdminDeliveries)
+// An endpoint that is not described does NOT show up in the client generator at
+// all: because the schema is produced from the router the path and the method
+// are still written, but an operation without a body tells the client "the
+// shape of the response is unknown".
+func TestDescribeDescribesTheDeliveryLogEndpoint(t *testing.T) {
+	get := operation(t, documentPaths(t), pathAdminDeliveries)
 
 	assert.NotEmpty(t, get["summary"])
-	yanitlar, ok := get["responses"].(map[string]any)
+	responses, ok := get["responses"].(map[string]any)
 	require.True(t, ok)
-	assert.Contains(t, yanitlar, "200")
+	assert.Contains(t, responses, "200")
 }
 
-// TestDescribeOkunanTumParametreleriAnlatir belgedeki parametre kümesinin
-// handler'ın GERÇEKTEN okuduğu kümeyle aynı olduğunu doğrular.
+// TestDescribeDescribesEveryParameterThatIsRead verifies that the set of
+// parameters in the document is the same as the set the handler REALLY reads.
 //
-// İki taraf ayrıştığında iki ayrı sessiz arıza doğar: anlatılmayan bir süzgeç
-// istemci üretecinde hiç görünmez (kimse kullanamaz), anlatılan ama okunmayan
-// bir parametre ise çalışmayan bir vaattir — istemci onu gönderir ve süzgeçsiz
-// bir liste alır.
-func TestDescribeOkunanTumParametreleriAnlatir(t *testing.T) {
-	get := islem(t, belge(t), pathAdminDeliveries)
+// When the two sides drift apart two separate silent failures are born: a
+// filter that is not described does not show up in the client generator at all
+// (nobody can use it), while a parameter that is described but not read is a
+// promise that does not work — the client sends it and gets an unfiltered list.
+func TestDescribeDescribesEveryParameterThatIsRead(t *testing.T) {
+	get := operation(t, documentPaths(t), pathAdminDeliveries)
 
-	ham, ok := get["parameters"].([]any)
-	require.True(t, ok, "uç sorgu parametresi anlatmalı")
+	raw, ok := get["parameters"].([]any)
+	require.True(t, ok, "the endpoint must describe its query parameters")
 
-	adlar := make([]string, 0, len(ham))
-	for _, p := range ham {
+	names := make([]string, 0, len(raw))
+	for _, p := range raw {
 		param, castOK := p.(map[string]any)
 		require.True(t, castOK)
 
-		ad, adOK := param["name"].(string)
-		require.True(t, adOK, "parametre adı dize olmalı: %#v", param)
-		adlar = append(adlar, ad)
+		name, nameOK := param["name"].(string)
+		require.True(t, nameOK, "the parameter name must be a string: %#v", param)
+		names = append(names, name)
 	}
 
 	assert.ElementsMatch(t,
-		[]string{queryReference, queryStatus, queryLimit, queryOffset}, adlar,
-		"belgedeki parametreler handler'ın okuduklarıyla birebir aynı olmalı")
+		[]string{queryReference, queryStatus, queryLimit, queryOffset}, names,
+		"the parameters in the document must be exactly the ones the handler reads")
 }
 
-// TestDescribeGovdeAliciAdresiAnlatmaz şemanın, kayıtta bulunmayan bir alanı
-// vaat etmediğini doğrular.
-func TestDescribeGovdeAliciAdresiAnlatmaz(t *testing.T) {
+// TestDescribeDoesNotDescribeARecipientAddressInTheBody verifies that the
+// schema does not promise a field that is not in the record.
+func TestDescribeDoesNotDescribeARecipientAddressInTheBody(t *testing.T) {
 	doc := openapi.New("test", "v1")
-	sema := doc.SchemaOf(deliveryDTO{})
+	schema := doc.SchemaOf(deliveryDTO{})
 
-	kodlanmis, err := json.Marshal(doc.Schemas())
+	encoded, err := json.Marshal(doc.Schemas())
 	require.NoError(t, err)
-	require.NotEmpty(t, sema)
+	require.NotEmpty(t, schema)
 
-	metin := string(kodlanmis)
-	assert.NotContains(t, metin, `"to"`, "şema alıcı adresi vaat etmemeli")
-	assert.Contains(t, metin, `"reference"`, "kaydı siparişe bağlayan alan anlatılmalı")
+	text := string(encoded)
+	assert.NotContains(t, text, `"to"`, "the schema must not promise a recipient address")
+	assert.Contains(t, text, `"reference"`, "the field that binds the record to the order must be described")
 }
 
-// TestRouteYolununMetoduYalnizcaOKUMADIR modülün yazma ucu açmadığını
-// doğrular.
+// TestTheRouteMethodIsREADONLY verifies that the module opens no write
+// endpoint.
 //
-// Bir "bildirim gönder" ucu, aynı işi ikinci bir yoldan yapılır kılar ve
-// idempotency anahtarını dışarıdan seçilebilir hâle getirirdi.
-func TestRouteYolununMetoduYalnizcaOKUMADIR(t *testing.T) {
+// A "send a notification" endpoint would make the same job doable over a second
+// path and would make the idempotency key selectable from outside.
+func TestTheRouteMethodIsREADONLY(t *testing.T) {
 	r := chi.NewRouter()
 	New(nil).Routes(r)
 
-	metotlar := map[string]bool{}
+	methods := map[string]bool{}
 	err := chi.Walk(r, func(method, route string, _ http.Handler, _ ...func(http.Handler) http.Handler) error {
-		metotlar[method+" "+route] = true
+		methods[method+" "+route] = true
 
 		return nil
 	})
 	require.NoError(t, err)
 
-	assert.Equal(t, map[string]bool{http.MethodGet + " " + pathAdminDeliveries: true}, metotlar)
+	assert.Equal(t, map[string]bool{http.MethodGet + " " + pathAdminDeliveries: true}, methods)
 }

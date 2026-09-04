@@ -7,88 +7,90 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/notification/models"
 )
 
-// Parametre şemalarında geçen JSON Schema adları.
+// The JSON Schema names that appear in the parameter schemas.
 //
-// Çekirdeğin karşılıkları dışa kapalıdır ve burada tekrarlanmalarının sebebi
-// maliyet değil SESSİZLİK: "strig" yazılmış bir tip adı derlenir, belge
-// üretilir ve yalnızca şemayı okuyan istemci parametreyi yanlış tiple
-// ürettiğinde ortaya çıkar.
+// The core's counterparts are unexported, and the reason they are repeated here
+// is not cost but SILENCE: a type name written as "strig" compiles, the
+// document is produced, and it only surfaces when the client that reads the
+// schema produces the parameter with the wrong type.
 const (
-	semaTip    = "type"
-	tipDize    = "string"
-	tipTamSayi = "integer"
+	schemaType  = "type"
+	typeString  = "string"
+	typeInteger = "integer"
 )
 
-// Describe notification'ın ucunu OpenAPI belgesine işler.
+// Describe records notification's endpoint into the OpenAPI document.
 //
-// # Neden bu pakette
+// # Why in this package
 //
-// Anlatılan gövde bu paketin DIŞA KAPALI DTO'sudur ([deliveryDTO]) ve şema
-// ondan yansımayla türetilir. Tipi anlatabilmek için dışa açmak, yalnızca belge
-// üretmek uğruna modülün yüzeyini genişletmek olurdu. Sorgu parametreleri de
-// aynı sebeple burada durur — hangi parametrenin GERÇEKTEN okunduğunu bilen kod
-// api.go içindedir; anlatım başka bir pakete taşınsaydı ikisi sessizce
-// ayrışırdı.
+// The body being described is this package's UNEXPORTED DTO ([deliveryDTO])
+// and the schema is derived from it by reflection. Exporting the type so that
+// it could be described would mean widening the module's surface merely for the
+// sake of producing a document. The query parameters sit here for the same
+// reason — the code that knows which parameter is REALLY read is inside api.go;
+// had the description been moved to another package, the two would have drifted
+// apart silently.
 //
-// # Neden paket düzeyinde bir fonksiyon
+// # Why a package-level function
 //
-// Anlatım hiçbir çalışma zamanı durumuna bakmaz — şema TİPLERDEN gelir. Metodu
-// [Handler]'a bağlamak, belgenin servis kurulmuş olmasına bağlı OLDUĞUNU
-// söylerdi; oysa [Handler.Routes] hiç çağrılmamışken de belge üretilebilir ve
-// üretilmelidir.
+// The description looks at no runtime state — the schema comes from the TYPES.
+// Attaching the method to [Handler] would have said that the document DEPENDS
+// on the service having been constructed; yet the document can be produced, and
+// has to be producible, even when [Handler.Routes] has never been called.
 func Describe(d *openapi.Doc) {
 	d.Describe(http.MethodGet, pathAdminDeliveries, openapi.Operation{
-		Summary: "Bildirim teslim günlüğünü sayfalayarak listeler.",
-		Description: "Kayıtlar ALICI ADRESİ TAŞIMAZ: günlük \"kime gitti\"yi değil " +
-			"\"gitti mi\"yi yanıtlar. Bir siparişin bildirimlerini görmek için " +
-			"reference süzgecine sipariş kimliği verilir.",
+		Summary: "Lists the notification delivery log with paging.",
+		Description: "The records DO NOT CARRY A RECIPIENT ADDRESS: the log answers not " +
+			"\"who did it go to\" but \"did it go\". To see an order's notifications " +
+			"the order id is given to the reference filter.",
 		Parameters: []openapi.Parameter{
-			sorguParametresi(queryReference, tipDize,
-				"Listeyi tek bir siparişin kayıtlarıyla sınırlar."),
-			sorguParametresi(queryStatus, tipDize,
-				"Teslim durumu süzgeci: "+durumlarMetni()+". Tanınmayan bir değer 422 döner."),
-			sorguParametresi(queryLimit, tipTamSayi,
-				"Sayfa boyutu; verilmezse servisin varsayılanı uygulanır."),
-			sorguParametresi(queryOffset, tipTamSayi, "Atlanacak kayıt sayısı."),
+			queryParameter(queryReference, typeString,
+				"Limits the list to the records of a single order."),
+			queryParameter(queryStatus, typeString,
+				"Delivery status filter: "+statusesText()+". An unrecognized value returns 422."),
+			queryParameter(queryLimit, typeInteger,
+				"Page size; when it is not given the service's default applies."),
+			queryParameter(queryOffset, typeInteger, "Number of records to skip."),
 		},
 		Responses: map[string]any{
-			"200": openapi.Response("Teslim günlüğü kayıtları", d.List(deliveryDTO{})),
+			"200": openapi.Response("The delivery log records", d.List(deliveryDTO{})),
 		},
 	})
 }
 
-// durumlarMetni geçerli teslim durumlarını belge metnine yazar.
+// statusesText writes the valid delivery statuses into the document text.
 //
-// Liste elle yazılmaz: durum kümesi models paketindedir ve oraya eklenen bir
-// durum belgeye de girmelidir. Elle yazılan bir liste, eklenen durumun
-// belgeden sessizce düşmesi demekti.
-func durumlarMetni() string {
-	durumlar := []models.DeliveryStatus{
+// The list is not written by hand: the status set lives in the models package
+// and a status added there has to enter the document as well. A hand-written
+// list meant the added status silently dropping out of the document.
+func statusesText() string {
+	statuses := []models.DeliveryStatus{
 		models.DeliveryPending, models.DeliverySent,
 		models.DeliveryFailed, models.DeliverySkipped,
 	}
 
 	out := ""
-	for i, durum := range durumlar {
+	for i, status := range statuses {
 		if i > 0 {
 			out += ", "
 		}
-		out += durum.String()
+		out += status.String()
 	}
 	return out
 }
 
-// sorguParametresi sorgu dizesinden okunan bir parametreyi tanımlar.
+// queryParameter defines a parameter that is read from the query string.
 //
-// "zorunlu" bayrağı YOKTUR çünkü bu modülde zorunlu sorgu parametresi de
-// yoktur: süzgeçsiz bir liste anlamlıdır ("son bildirimler"). Bayrağı yine de
-// taşımak, hiç kullanılmayan bir dalı belge üretimine sokardı.
-func sorguParametresi(ad, tip, aciklama string) openapi.Parameter {
+// There is NO "required" flag because there is no required query parameter in
+// this module either: a list without a filter is meaningful ("the latest
+// notifications"). Carrying the flag anyway would have put a branch that is
+// never used into the document generation.
+func queryParameter(name, valueType, description string) openapi.Parameter {
 	return openapi.Parameter{
-		Name:        ad,
+		Name:        name,
 		In:          "query",
 		Required:    false,
-		Schema:      map[string]any{semaTip: tip},
-		Description: aciklama,
+		Schema:      map[string]any{schemaType: valueType},
+		Description: description,
 	}
 }

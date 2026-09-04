@@ -12,13 +12,14 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/notification/service"
 )
 
-// TestNewEksikBagimlilikliKurulumuReddeder eksik bağımlılığın kurulumda
-// söylendiğini doğrular.
+// TestNewRefusesAConstructionWithAMissingDependency verifies that a missing
+// dependency is said at construction time.
 //
-// nil bir depoyla kurulmuş servis ilk OLAYDA panik üretirdi ve hata,
-// kurulumdan çok sonra — ilk siparişin verildiği anda — ortaya çıkardı.
-func TestNewEksikBagimlilikliKurulumuReddeder(t *testing.T) {
-	tam := service.Options{
+// A service constructed with a nil store would produce a panic on the first
+// EVENT and the fault would surface long after the construction — at the moment
+// the first order is placed.
+func TestNewRefusesAConstructionWithAMissingDependency(t *testing.T) {
+	complete := service.Options{
 		Store:      newFakeStore(),
 		Providers:  service.NewProviderRegistry(),
 		ProviderID: "log",
@@ -26,16 +27,16 @@ func TestNewEksikBagimlilikliKurulumuReddeder(t *testing.T) {
 	}
 
 	tests := map[string]func(o *service.Options){
-		"deposuz":      func(o *service.Options) { o.Store = nil },
-		"kayıtsız":     func(o *service.Options) { o.Providers = nil },
-		"sağlayıcısız": func(o *service.Options) { o.ProviderID = "" },
-		"okuyucusuz":   func(o *service.Options) { o.Contacts = nil },
+		"without a store":    func(o *service.Options) { o.Store = nil },
+		"without a registry": func(o *service.Options) { o.Providers = nil },
+		"without a provider": func(o *service.Options) { o.ProviderID = "" },
+		"without a reader":   func(o *service.Options) { o.Contacts = nil },
 	}
 
-	for ad, boz := range tests {
-		t.Run(ad, func(t *testing.T) {
-			opts := tam
-			boz(&opts)
+	for name, breakIt := range tests {
+		t.Run(name, func(t *testing.T) {
+			opts := complete
+			breakIt(&opts)
 
 			_, err := service.New(opts)
 
@@ -44,84 +45,84 @@ func TestNewEksikBagimlilikliKurulumuReddeder(t *testing.T) {
 		})
 	}
 
-	svc, err := service.New(tam)
+	svc, err := service.New(complete)
 	require.NoError(t, err)
 	assert.Equal(t, "log", svc.ProviderID())
 }
 
-// TestListDeliveriesTaninmayanDurumuReddeder yanlış yazılmış bir durum
-// süzgecinin sessizce boş liste döndürmediğini doğrular.
+// TestListDeliveriesRefusesAnUnrecognizedStatus verifies that a misspelled
+// status filter does not silently return an empty list.
 //
-// Sessiz boş liste, "hiç başarısız bildirim yok" ile "durum adını yanlış
-// yazdım"ı ayırt edilemez hâle getirirdi — ilki rahatlatıcı, ikincisi
-// yanıltıcıdır.
-func TestListDeliveriesTaninmayanDurumuReddeder(t *testing.T) {
-	svc, _, _ := kurulum(t)
-	durum := "gonderildi"
+// A silent empty list would make "there are no failed notifications at all"
+// indistinguishable from "I typed the status name wrong" — the first is
+// reassuring, the second is misleading.
+func TestListDeliveriesRefusesAnUnrecognizedStatus(t *testing.T) {
+	svc, _, _ := setup(t)
+	status := "delivered"
 
 	_, _, err := svc.ListDeliveries(context.Background(),
-		service.ListDeliveriesInput{Status: &durum})
+		service.ListDeliveriesInput{Status: &status})
 
 	require.Error(t, err)
-	assert.True(t, errors.IsInvalid(err), "hata: %v", err)
-	assert.Contains(t, err.Error(), "gonderildi")
+	assert.True(t, errors.IsInvalid(err), "error: %v", err)
+	assert.Contains(t, err.Error(), "delivered")
 }
 
-// TestListDeliveriesSayfalamaSinirlariniZorlar limit/offset doğrulamasını ve
-// varsayılanı doğrular.
-func TestListDeliveriesSayfalamaSinirlariniZorlar(t *testing.T) {
-	svc, _, _ := kurulum(t)
+// TestListDeliveriesEnforcesThePaginationBounds verifies the limit/offset
+// validation and the default.
+func TestListDeliveriesEnforcesThePaginationBounds(t *testing.T) {
+	svc, _, _ := setup(t)
 	ctx := context.Background()
 
 	_, _, err := svc.ListDeliveries(ctx, service.ListDeliveriesInput{
 		Page: service.Page{Limit: service.MaxLimit + 1},
 	})
-	require.Error(t, err, "tavanı aşan limit reddedilmeli")
+	require.Error(t, err, "a limit above the ceiling has to be refused")
 
 	_, _, err = svc.ListDeliveries(ctx, service.ListDeliveriesInput{
 		Page: service.Page{Offset: -1},
 	})
-	require.Error(t, err, "negatif offset reddedilmeli")
+	require.Error(t, err, "a negative offset has to be refused")
 
-	require.NoError(t, svc.Notify(ctx, testGirdi()))
+	require.NoError(t, svc.Notify(ctx, testInput()))
 
-	kayitlar, toplam, err := svc.ListDeliveries(ctx, service.ListDeliveriesInput{})
+	records, total, err := svc.ListDeliveries(ctx, service.ListDeliveriesInput{})
 	require.NoError(t, err)
-	assert.Len(t, kayitlar, 1)
-	assert.Equal(t, int64(1), toplam)
+	assert.Len(t, records, 1)
+	assert.Equal(t, int64(1), total)
 }
 
-// TestListDeliveriesReferansaGoreSuzer bir siparişin bildirimlerini bulma
-// yolunu doğrular; günlüğün en sık sorusu budur.
-func TestListDeliveriesReferansaGoreSuzer(t *testing.T) {
-	svc, _, _ := kurulum(t)
+// TestListDeliveriesFiltersByReference verifies the way of finding the
+// notifications of an order; that is the log's most frequent question.
+func TestListDeliveriesFiltersByReference(t *testing.T) {
+	svc, _, _ := setup(t)
 	ctx := context.Background()
 
-	ilk := testGirdi()
-	ikinci := testGirdi()
-	ikinci.Reference = "order_DIGER"
+	first := testInput()
+	second := testInput()
+	second.Reference = "order_OTHER"
 
-	require.NoError(t, svc.Notify(ctx, ilk))
-	require.NoError(t, svc.Notify(ctx, ikinci))
+	require.NoError(t, svc.Notify(ctx, first))
+	require.NoError(t, svc.Notify(ctx, second))
 
-	referans := "order_DIGER"
-	kayitlar, toplam, err := svc.ListDeliveries(ctx,
-		service.ListDeliveriesInput{Reference: &referans})
+	reference := "order_OTHER"
+	records, total, err := svc.ListDeliveries(ctx,
+		service.ListDeliveriesInput{Reference: &reference})
 
 	require.NoError(t, err)
-	require.Len(t, kayitlar, 1)
-	assert.Equal(t, int64(1), toplam)
-	assert.Equal(t, "order_DIGER", kayitlar[0].Reference)
-	assert.Equal(t, models.DeliverySent, kayitlar[0].Status)
+	require.Len(t, records, 1)
+	assert.Equal(t, int64(1), total)
+	assert.Equal(t, "order_OTHER", records[0].Reference)
+	assert.Equal(t, models.DeliverySent, records[0].Status)
 }
 
-// TestGetDeliveryBosKimligiReddeder boş kimliğin depoya hiç gitmediğini
-// doğrular.
-func TestGetDeliveryBosKimligiReddeder(t *testing.T) {
-	svc, _, _ := kurulum(t)
+// TestGetDeliveryRefusesAnEmptyIdentifier verifies that an empty identifier
+// never reaches the store.
+func TestGetDeliveryRefusesAnEmptyIdentifier(t *testing.T) {
+	svc, _, _ := setup(t)
 
 	_, err := svc.GetDelivery(context.Background(), "")
 
 	require.Error(t, err)
-	assert.True(t, errors.IsInvalid(err), "hata: %v", err)
+	assert.True(t, errors.IsInvalid(err), "error: %v", err)
 }

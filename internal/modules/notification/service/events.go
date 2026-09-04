@@ -10,57 +10,61 @@ import (
 	coreprovider "github.com/bdrtr/gobit/internal/core/provider"
 )
 
-// Bu dosya bildirimleri TETİKLEYEN abonelerdir.
+// This file holds the subscribers that TRIGGER the notifications.
 //
-// # Hata politikası: hata DÖNÜLÜR, ama bu bir "yeniden dene" isteği DEĞİLDİR
+// # Error policy: an error IS RETURNED, but that is NOT a "retry" request
 //
-// Karar ve gerekçesi plugins/searchpg/events.go dosya belgesindedir; burada
-// tekrarlanmaz. Özeti: [eventbus.EventBus] hata dönen bir işleyiciyi yeniden
-// TESLİM ETMEZ, olayı işlenmiş sayar ve hatayı ERROR seviyesinde loglar —
-// dolayısıyla hatayı dönmek yeniden deneme istemek değil, arızayı GÖRÜNÜR
-// kılmaktır.
+// The decision and its reasoning are in the file documentation of
+// plugins/searchpg/events.go; they are not repeated here. The summary:
+// [eventbus.EventBus] DOES NOT REDELIVER a handler that returns an error, it
+// counts the event as processed and logs the error at the ERROR level —
+// therefore returning the error is not asking for a retry, it is making the
+// fault VISIBLE.
 //
-// İşleyicinin kendi içinde yeniden denemesi de yapılmaz ve burada bunun ikinci
-// bir sebebi vardır: aynı bildirimi tekrar denemek, sağlayıcının ilk denemeyi
-// işlemiş olma ihtimali yüzünden İKİNCİ bir e-posta üretebilir (bkz.
-// [Service.Notify] belgesi).
+// The handler does not retry inside itself either, and there is a second reason
+// for that here: trying the same notification again can produce a SECOND e-mail
+// because of the chance that the provider processed the first attempt (see the
+// [Service.Notify] documentation).
 //
-// # İşleyici İDEMPOTENTTİR
+// # The handler is IDEMPOTENT
 //
-// Sözleşme sırayı garanti etmez ve InMemory backend'i aynı işleyiciyi eşzamanlı
-// çağırabilir. Tekillik burada koda değil, teslim günlüğündeki (şablon,
-// referans) benzersizliğine dayanır: aynı olayın iki kez işlenmesi ile bir kez
-// işlenmesi AYNI sayıda bildirim üretir.
+// The contract does not guarantee ordering and the InMemory backend can call
+// the same handler concurrently. The uniqueness here does not rest on the code
+// but on the (template, reference) uniqueness in the delivery log: processing
+// the same event twice and processing it once produce the SAME number of
+// notifications.
 
-// EventOrderPlaced dinlenen sipariş olayının adıdır (order service'in
-// EventOrderPlaced sabitiyle AYNI değer).
+// EventOrderPlaced is the name of the order event that is listened for (the
+// SAME value as the EventOrderPlaced constant of the order service).
 //
-// Ad MODÜLLER ARASI SÖZLEŞMEDİR ve elle tekrarlanmıştır; modüller birbirini
-// import edemez (Prensip 2.4). Ayrışmanın bedeli sessizdir: ad değişirse bu
-// abone hiçbir olay almaz ve hiçbir hata da üretmez — kimse bir şey almadığını
-// fark etmez. Uyum entegrasyon testiyle kanıtlanır.
+// The name is a CROSS-MODULE CONTRACT and it is repeated by hand; modules
+// cannot import each other (Principle 2.4). The price of divergence is silent:
+// if the name changes this subscriber receives no event and produces no error
+// either — nobody notices that they are not receiving anything. The agreement
+// is proven by the integration test.
 const EventOrderPlaced = "order.placed"
 
-// TemplateOrderPlaced sipariş onayı şablonunun adıdır.
+// TemplateOrderPlaced is the name of the order confirmation template.
 //
-// Olay adıyla AYNI seçilmesi bilinçlidir (bkz. çekirdekteki
-// [coreprovider.Notification] belgesi): iki ayrı ad, "hangi olay hangi şablonu
-// tetikliyor" sorusunu ancak koda bakarak yanıtlanır hâle getirirdi. Ad aynı
-// zamanda idempotency anahtarının yarısıdır — değişmesi, tüm siparişler için
-// bildirimin İKİNCİ KEZ gönderilebilir olması demektir.
+// Choosing it the SAME as the event name is deliberate (see the
+// [coreprovider.Notification] documentation in the core): two separate names
+// would make the question "which event triggers which template" answerable only
+// by reading the code. The name is at the same time half of the idempotency
+// key — its changing means the notification becoming sendable A SECOND TIME for
+// all orders.
 const TemplateOrderPlaced = EventOrderPlaced
 
-// eventFieldOrderID olay yükünde okunan TEK alandır.
+// eventFieldOrderID is the ONLY field read from the event payload.
 //
-// Şablonun ihtiyaç duyduğu geri kalan her şey kimliğin işaret ettiği KAYITTAN
-// okunur (bkz. [Service.OrderPlaced]).
+// Everything else the template needs is read from the RECORD the identifier
+// points at (see [Service.OrderPlaced]).
 const eventFieldOrderID = "order_id"
 
-// Şablona geçilen veri anahtarları.
+// The data keys passed to the template.
 //
-// Adlar sipariş yüzeyinin alan adlarıyla birebir aynıdır; çevirmek, aynı verinin
-// iki adla dolaşması ve şablon yazarının hangisinin doğru olduğunu bilmemesi
-// demekti.
+// The names are exactly the same as the field names of the order surface;
+// translating them would have meant the same data traveling under two names
+// and the template author not knowing which one is the right one.
 const (
 	dataKeyOrderID      = "order_id"
 	dataKeyDisplayID    = "display_id"
@@ -69,43 +73,47 @@ const (
 	dataKeyItemCount    = "item_count"
 )
 
-// EventSubscriber modülün olay veri yolundan istediği DAR yüzeydir.
+// EventSubscriber is the NARROW surface the module wants from the event bus.
 //
-// Modül yalnızca ABONE OLUR: yayımlamaz ve veri yolunu kapatmaz.
-// [eventbus.EventBus]'ın tamamına bağlanmak, kapatma yetkisini de modüle
-// vermek olurdu; veri yolunun ömrünü kompozisyon kökü yönetir.
+// The module only SUBSCRIBES: it does not publish and does not close the bus.
+// Depending on the whole of [eventbus.EventBus] would have meant giving the
+// module the authority to close it too; the lifetime of the bus is managed by
+// the composition root.
 type EventSubscriber interface {
 	Subscribe(eventName string, h eventbus.Handler) error
 }
 
-// OrderPlaced "order.placed" olayını işler: siparişin iletişim bilgisini
-// okur ve sipariş onayı bildirimini gönderir.
+// OrderPlaced handles the "order.placed" event: it reads the contact
+// information of the order and sends the order confirmation notification.
 //
-// # E-posta OLAYDAN değil KAYITTAN okunur
+// # The e-mail is read from the RECORD, not from the EVENT
 //
-// Olayın yükünde e-posta BİLİNÇLİ OLARAK yoktur: olaylar Redis'e yazılır ve
-// orada kalıcıdır; kişisel veriyi kalıcı bir akışa koymak, siparişin kendisinde
-// zaten duran bir bilgi için gereksiz bir yayılımdır (order modülünün olay
-// belgesi). Bu işleyici bu yüzden olaydan YALNIZCA sipariş kimliğini alır ve
-// gerisini "order.interop" üzerinden okur.
+// The e-mail is DELIBERATELY absent from the event payload: events are written
+// to Redis and are durable there; putting personal data into a durable stream
+// is an unnecessary spread for information that already sits on the order
+// itself (the order module's event documentation). That is why this handler
+// takes ONLY the order identifier from the event and reads the rest over
+// "order.interop".
 //
-// Okumanın ikinci bir faydası da vardır: olay yükü BAYAT olabilir (veri yolu
-// sıra garantisi vermez), kayıt ise o anki gerçeği verir.
+// The reading has a second benefit as well: the event payload can be STALE (the
+// bus gives no ordering guarantee), whereas the record gives the truth at that
+// moment.
 func (s *Service) OrderPlaced(ctx context.Context, e eventbus.Event) error {
-	orderID, err := olayOrderID(e)
+	orderID, err := eventOrderID(e)
 	if err != nil {
 		return err
 	}
 
-	ham, err := s.contacts.OrderContactJSON(ctx, orderID)
+	raw, err := s.contacts.OrderContactJSON(ctx, orderID)
 	if err != nil {
-		// Sınıf KORUNUR: sipariş bulunamadıysa NotFound, yüzey yoksa
-		// Unavailable gelir ve ikisi farklı arızalardır.
+		// The KIND is PRESERVED: when the order cannot be found NotFound comes,
+		// when the surface is absent Unavailable comes, and the two are
+		// different faults.
 		return errors.Wrap(err, errors.KindOf(err), CodeContactUnavailable,
-			"%q olayı için sipariş iletişim bilgisi okunamadı: %s", e.Name, orderID)
+			"the order contact information for the %q event could not be read: %s", e.Name, orderID)
 	}
 
-	kisi, err := cozContact(ham, orderID)
+	contact, err := decodeContact(raw, orderID)
 	if err != nil {
 		return err
 	}
@@ -114,63 +122,66 @@ func (s *Service) OrderPlaced(ctx context.Context, e eventbus.Event) error {
 		Template:  TemplateOrderPlaced,
 		Channel:   coreprovider.ChannelEmail,
 		Reference: orderID,
-		To:        kisi.Email,
+		To:        contact.Email,
 		Data: map[string]string{
-			dataKeyOrderID:      kisi.OrderID,
-			dataKeyDisplayID:    kisi.DisplayID,
-			dataKeyCurrencyCode: kisi.CurrencyCode,
-			dataKeyTotal:        kisi.Total,
-			dataKeyItemCount:    kisi.ItemCount,
+			dataKeyOrderID:      contact.OrderID,
+			dataKeyDisplayID:    contact.DisplayID,
+			dataKeyCurrencyCode: contact.CurrencyCode,
+			dataKeyTotal:        contact.Total,
+			dataKeyItemCount:    contact.ItemCount,
 		},
 	})
 }
 
-// olayOrderID olay yükünden sipariş kimliğini okur.
+// eventOrderID reads the order identifier from the event payload.
 //
-// Değerin DİZE olması sözleşmedir (bkz. order service/events.go): Redis
-// backend'i yükü JSON'a çevirdiği için sayısal bir alan aboneye float64 olarak
-// ulaşır ve "her değer dizedir" kuralı tam da bunu önlemek için vardır. Tip
-// uymuyorsa sessizce boş kimlikle devam etmek, hiç var olmayan bir sipariş için
-// bildirim denemesi üretirdi; hata dönmek sözleşmenin bozulduğunu logda görünür
-// kılar.
-func olayOrderID(e eventbus.Event) (string, error) {
-	ham, ok := e.Data[eventFieldOrderID]
+// The value being a STRING is the contract (see order service/events.go):
+// because the Redis backend turns the payload into JSON a numeric field reaches
+// the subscriber as a float64, and the "every value is a string" rule exists
+// precisely to prevent that. If the type does not match, silently carrying on
+// with an empty identifier would produce a notification attempt for an order
+// that never existed; returning an error makes the breaking of the contract
+// visible in the log.
+func eventOrderID(e eventbus.Event) (string, error) {
+	raw, ok := e.Data[eventFieldOrderID]
 	if !ok {
 		return "", errors.Invalid(CodeEventInvalid,
-			"%q olayının yükünde %q alanı yok", e.Name, eventFieldOrderID)
+			"the payload of the %q event has no %q field", e.Name, eventFieldOrderID)
 	}
 
-	id, ok := ham.(string)
+	id, ok := raw.(string)
 	if !ok {
 		return "", errors.Invalid(CodeEventInvalid,
-			"%q olayındaki %q alanı dize olmalı (gelen tip: %T)", e.Name, eventFieldOrderID, ham)
+			"the %q field in the %q event has to be a string (incoming type: %T)",
+			e.Name, eventFieldOrderID, raw)
 	}
 
 	id = strings.TrimSpace(id)
 	if id == "" {
 		return "", errors.Invalid(CodeEventInvalid,
-			"%q olayındaki %q alanı boş", e.Name, eventFieldOrderID)
+			"the %q field in the %q event is empty", e.Name, eventFieldOrderID)
 	}
 	return id, nil
 }
 
-// cozContact sipariş yüzeyinin yanıtını çözer.
+// decodeContact decodes the response of the order surface.
 //
-// Boş bir order_id, yüzeyin şemasının değiştiğinin işaretidir ve HATA verir:
-// kimliksiz bir gövdeyle devam etmek, şablonu boş alanlarla doldurup müşteriye
-// göndermek olurdu. E-postanın boş olması ise hata DEĞİLDİR; kararı
-// [Service.Notify] verir.
-func cozContact(ham json.RawMessage, orderID string) (orderContact, error) {
-	var kisi orderContact
-	if err := json.Unmarshal(ham, &kisi); err != nil {
+// An empty order_id is the sign that the schema of the surface has changed and
+// it produces an ERROR: carrying on with a body that has no identifier would
+// have meant filling the template with empty fields and sending it to the
+// customer. The e-mail being empty, on the other hand, is NOT an error; that
+// decision is made by [Service.Notify].
+func decodeContact(raw json.RawMessage, orderID string) (orderContact, error) {
+	var contact orderContact
+	if err := json.Unmarshal(raw, &contact); err != nil {
 		return orderContact{}, errors.Wrap(err, errors.KindInternal, CodeContactInvalid,
-			"sipariş iletişim yanıtı çözümlenemedi (%s); %q yüzeyinin şeması değişmiş olabilir",
+			"the order contact response could not be decoded (%s); the schema of the %q surface may have changed",
 			orderID, OrderInteropName)
 	}
-	if strings.TrimSpace(kisi.OrderID) == "" {
+	if strings.TrimSpace(contact.OrderID) == "" {
 		return orderContact{}, errors.Internal(CodeContactInvalid,
-			"sipariş iletişim yanıtında %q alanı yok (%s); %q yüzeyinin şeması değişmiş olabilir",
+			"the order contact response has no %q field (%s); the schema of the %q surface may have changed",
 			"order_id", orderID, OrderInteropName)
 	}
-	return kisi, nil
+	return contact, nil
 }

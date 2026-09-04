@@ -27,20 +27,22 @@ type ClaimNotificationDeliveryParams struct {
 	Status     string
 }
 
-// notification_deliveries sorguları — TESLİM GÜNLÜĞÜ.
+// notification_deliveries queries — THE DELIVERY LOG.
 //
-// Günlük iki adımda yazılır: gönderimden ÖNCE kayıt açılır (Claim), gönderimden
-// SONRA sonucu yazılır (Finish). Tek adımda yazmak — yani önce gönderip sonra
-// kaydetmek — mükerrer bildirime kapı açardı: iki eşzamanlı işleyici de
-// sağlayıcıya gider, benzersizlik ihlali ancak İKİ e-posta gittikten sonra
-// görünürdü.
-// ClaimNotificationDelivery kaydı yalnızca o (şablon, referans) çifti HENÜZ
-// KULLANILMAMIŞSA yazar.
+// The log is written in two steps: the record is opened BEFORE the send
+// (Claim), its outcome is written AFTER the send (Finish). Writing it in a
+// single step — that is, sending first and recording afterwards — would have
+// opened the door to a duplicate notification: both concurrent handlers go to
+// the provider, and the uniqueness violation would only become visible after
+// TWO emails had gone out.
+// ClaimNotificationDelivery writes the record only if that (template,
+// reference) pair has NOT BEEN USED YET.
 //
-// Çakışma hâlinde satır DÖNMEZ (pgx.ErrNoRows) ve bu bir hata değildir:
-// çağıran o zaman gönderimi ATLAR. "Önce oku, yoksa yaz" iki adımı arasına
-// giren eşzamanlı bir çağrı benzersiz indekse çarpardı; ON CONFLICT DO NOTHING
-// yarışı tek deyime indirir ve kazananı veritabanı seçer.
+// In case of a conflict NO ROW is returned (pgx.ErrNoRows) and this is not an
+// error: the caller then SKIPS the send. A concurrent call stepping between the
+// two steps of "read first, write if absent" would have hit the unique index;
+// ON CONFLICT DO NOTHING reduces the race to a single statement and lets the
+// database pick the winner.
 func (q *Queries) ClaimNotificationDelivery(ctx context.Context, arg ClaimNotificationDeliveryParams) (NotificationDelivery, error) {
 	row := q.db.QueryRow(ctx, claimNotificationDelivery,
 		arg.ID,
@@ -76,13 +78,14 @@ type CountNotificationDeliveriesParams struct {
 	Status    *string
 }
 
-// CountNotificationDeliveries sayfalama zarfının toplam sayısını verir ve
-// ListNotificationDeliveries ile AYNI süzgeçleri uygular; ikisi birlikte
-// değiştirilmelidir.
+// CountNotificationDeliveries gives the total count of the pagination envelope
+// and applies THE SAME filters as ListNotificationDeliveries; the two have to
+// be changed together.
 //
-// Toplam, satırlarla birlikte dönen bir pencere fonksiyonundan okunamaz:
-// aralık dışı bir sayfada hiç satır dönmez, pencere değerlendirilmez ve toplam
-// 0 görünürdü. Toplam sayfanın değil SÜZGECİN sayısıdır.
+// The total cannot be read from a window function returned together with the
+// rows: on an out-of-range page no row is returned, the window is not
+// evaluated and the total would appear as 0. The total is the count not of the
+// page but of the FILTER.
 func (q *Queries) CountNotificationDeliveries(ctx context.Context, arg CountNotificationDeliveriesParams) (int64, error) {
 	row := q.db.QueryRow(ctx, countNotificationDeliveries, arg.Reference, arg.Status)
 	var count int64
@@ -105,10 +108,11 @@ type FinishNotificationDeliveryParams struct {
 	Error  string
 }
 
-// FinishNotificationDelivery gönderim denemesinin sonucunu yazar.
+// FinishNotificationDelivery writes the outcome of the send attempt.
 //
-// Durum MUTLAK değerle yazılır, artımlı bir geçişle değil: yazan kod sonucu
-// elinde tutar ve okuduğu satıra göre karar vermez.
+// The status is written with an ABSOLUTE value, not with an incremental
+// transition: the writing code holds the outcome in hand and does not decide
+// according to the row it read.
 func (q *Queries) FinishNotificationDelivery(ctx context.Context, arg FinishNotificationDeliveryParams) (NotificationDelivery, error) {
 	row := q.db.QueryRow(ctx, finishNotificationDelivery, arg.ID, arg.Status, arg.Error)
 	var i NotificationDelivery

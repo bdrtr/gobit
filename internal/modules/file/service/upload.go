@@ -15,56 +15,62 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/file/models"
 )
 
-// ErrTooLarge gövdenin azami boyutu aştığını bildiren nöbetçi hatadır.
+// ErrTooLarge is the sentinel error reporting that the body exceeded the
+// maximum size.
 //
-// Sağlayıcının okuma zincirinden geçip geri döneceği için nöbetçi olması
-// gerekir: hata, sağlayıcının kendi sarmalayıcısının İÇİNDE gelir ve tek
-// tanınma yolu errors.Is'tir. Dize karşılaştırmasıyla tanımak, mesaj her
-// düzenlendiğinde sessizce bozulan bir bağ olurdu.
-var ErrTooLarge = errors.Invalid(CodeTooLarge, "yükleme boyut sınırını aştı")
+// It has to be a sentinel because it passes through the provider's read chain
+// and comes back: the error arrives INSIDE the provider's own wrapper and the
+// only way to recognize it is errors.Is. Recognizing it by string comparison
+// would be a link that silently breaks every time the message is edited.
+var ErrTooLarge = errors.Invalid(CodeTooLarge, "the upload exceeded the size bound")
 
-// UploadInput yeni bir yüklemenin girdisidir.
+// UploadInput is the input of a new upload.
 //
-// # DOSYA ADI BURADA DA YOL DEĞİLDİR
+// # THE FILE NAME IS NOT A PATH HERE EITHER
 //
-// [UploadInput.OriginalName] yalnızca deftere yazılır ve yanıtta gösterilir;
-// depo anahtarını sağlayıcı üretir ve ad hiçbir yol ifadesine girmez. Alanın
-// varlığı bu yüzden bir risk değildir — riski yaratan şey adın YOL OLARAK
-// KULLANILMASI olurdu ve o yol hiç yoktur.
+// [UploadInput.OriginalName] is only written into the ledger and shown in the
+// response; the storage key is produced by the provider and the name does not
+// enter any path expression. The existence of the field is therefore not a
+// risk — what would create the risk is the name BEING USED AS A PATH, and that
+// path does not exist at all.
 type UploadInput struct {
-	// ContentType dosyanın İÇERİĞİNDEN tespit edilmiş tipidir
-	// ([net/http.DetectContentType]); istemcinin Content-Type başlığı ASLA
-	// buraya yazılmaz.
+	// ContentType is the type detected FROM THE CONTENT of the file
+	// ([net/http.DetectContentType]); the client's Content-Type header is NEVER
+	// written here.
 	//
-	// Tespitin ÇAĞIRANDA yapılmasının sebebi, tipi bilebilen tek yerin ilk
-	// baytları okuyan katman olmasıdır (bkz. api paketi). Servis tespiti
-	// tekrarlamaz, DENETLER.
+	// The reason the detection is done IN THE CALLER is that the only place able
+	// to know the type is the layer that reads the first bytes (see the api
+	// package). The service does not repeat the detection, it CHECKS it.
 	ContentType string
-	// Body dosyanın gövdesidir ve AKIŞ olarak okunur; çağıran kapatmakla
-	// yükümlüdür.
+	// Body is the body of the file and it is read as a STREAM; the caller is
+	// obliged to close it.
 	Body io.Reader
-	// OriginalName istemcinin bildirdiği dosya adıdır; boş olabilir.
+	// OriginalName is the file name the client reported; it may be empty.
 	OriginalName string
-	// UploadedBy yüklemeyi yapan çağıranın kimliğidir; boş olabilir.
+	// UploadedBy is the identifier of the caller doing the upload; it may be
+	// empty.
 	UploadedBy string
 }
 
-// Upload gövdeyi denetleyip depoya yazdırır ve deftere kaydeder.
+// Upload checks the body, has it written into the store and records it in the
+// ledger.
 //
-// # Adımların SIRASI
+// # The ORDER of the steps
 //
-//  1. İzin listesi — depoya TEK BAYT yazılmadan önce. Reddedilen bir dosyanın
-//     temizlenmesi gerekmez; temizlik gerektiren her tasarımda o temizliğin
-//     başarısız olduğu bir dal da vardır.
-//  2. Sağlayıcıya yazma — gövde akış olarak geçer, belleğe alınmaz.
-//  3. Deftere kayıt — dosya YAZILDIKTAN sonra. Ters sıra, kaydın işaret ettiği
-//     dosyanın henüz var olmadığı bir pencere bırakırdı.
+//  1. The allow list — before A SINGLE BYTE is written into the store. A
+//     rejected file does not have to be cleaned up; every design that requires
+//     that cleanup also has a branch in which the cleanup failed.
+//  2. Writing to the provider — the body passes as a stream, it is not taken
+//     into memory.
+//  3. Recording in the ledger — AFTER the file has been written. The reverse
+//     order would leave a window in which the file the record points at does not
+//     exist yet.
 //
-// Üçüncü adım patlarsa depoda kaydı olmayan bir dosya kalır ve o dosya
-// TEMİZLENİR: erişilemez bir nesne, kimsenin anahtarını bilmediği için
-// sonsuza kadar yer kaplardı.
+// If the third step blows up, a file with no record is left in the store and
+// that file IS CLEANED UP: an unreachable object would take up space forever,
+// because nobody knows its key.
 func (s *Service) Upload(ctx context.Context, in UploadInput) (models.Upload, error) {
-	if err := s.dogrula(in); err != nil {
+	if err := s.validate(in); err != nil {
 		return models.Upload{}, err
 	}
 
@@ -73,133 +79,138 @@ func (s *Service) Upload(ctx context.Context, in UploadInput) (models.Upload, er
 		return models.Upload{}, err
 	}
 
-	// Zincir DIŞTAN İÇE: sınır önce uygulanır (sınırı aşan bayt özete bile
-	// girmemelidir), özet sonra alınır, en dışta sağlayıcı okur.
-	ozet := sha256.New()
-	govde := io.TeeReader(&sinirliOkuyucu{r: in.Body, kalan: s.maxBytes + 1}, ozet)
+	// The chain runs OUTSIDE IN: the bound is applied first (a byte exceeding
+	// the bound must not even enter the digest), the digest is taken second, and
+	// the provider reads at the outermost layer.
+	digest := sha256.New()
+	body := io.TeeReader(&boundedReader{r: in.Body, remaining: s.maxBytes + 1}, digest)
 
-	dosya, err := prov.Upload(ctx, coreprovider.UploadInput{
+	file, err := prov.Upload(ctx, coreprovider.UploadInput{
 		ContentType: in.ContentType,
-		Body:        govde,
+		Body:        body,
 	})
 	if err != nil {
-		// Sınır hatası sağlayıcının sarmalayıcısının içinde gelir; sınıfı
-		// BURADA verilir çünkü sınırı bilen taraf burasıdır.
+		// The bound error arrives inside the provider's wrapper; its class is
+		// given HERE, because the side that knows the bound is this one.
 		if errors.Is(err, ErrTooLarge) {
 			return models.Upload{}, errors.Invalid(CodeTooLarge,
-				"dosya en fazla %d bayt olabilir", s.maxBytes)
+				"the file can be at most %d bytes", s.maxBytes)
 		}
 
 		return models.Upload{}, errors.Wrap(err, errors.KindOf(err), CodeUploadFailed,
-			"dosya depoya yazılamadı")
+			"the file could not be written into the store")
 	}
 
-	kayit, err := s.store.CreateUpload(ctx, models.Upload{
+	record, err := s.store.CreateUpload(ctx, models.Upload{
 		ID:           models.NewUploadID(time.Now()),
-		StorageKey:   dosya.Key,
+		StorageKey:   file.Key,
 		ProviderID:   prov.ID(),
-		ContentType:  dosya.ContentType,
-		Size:         dosya.Size,
-		Checksum:     hex.EncodeToString(ozet.Sum(nil)),
+		ContentType:  file.ContentType,
+		Size:         file.Size,
+		Checksum:     hex.EncodeToString(digest.Sum(nil)),
 		OriginalName: in.OriginalName,
-		URL:          dosya.URL,
+		URL:          file.URL,
 		UploadedBy:   in.UploadedBy,
 	})
 	if err != nil {
-		s.yaziliDosyayiTemizle(ctx, prov, dosya.Key)
+		s.cleanUpWrittenFile(ctx, prov, file.Key)
 
 		return models.Upload{}, err
 	}
 
-	s.log.DebugContext(ctx, "dosya yüklendi",
-		"upload_id", kayit.ID,
-		"saglayici", kayit.ProviderID,
-		"icerik_tipi", kayit.ContentType,
-		"boyut", kayit.Size)
+	s.log.DebugContext(ctx, "file uploaded",
+		"upload_id", record.ID,
+		"provider", record.ProviderID,
+		"content_type", record.ContentType,
+		"size", record.Size)
 
-	return kayit, nil
+	return record, nil
 }
 
-// dogrula girdinin depoya gitmeden önce geçmesi gereken denetimleri uygular.
-func (s *Service) dogrula(in UploadInput) error {
+// validate applies the checks the input has to pass before going to the store.
+func (s *Service) validate(in UploadInput) error {
 	if in.Body == nil {
-		return errors.Invalid(CodeInvalidInput, "yükleme gövdesi boş olamaz")
+		return errors.Invalid(CodeInvalidInput, "the upload body cannot be empty")
 	}
 
-	tip := strings.TrimSpace(in.ContentType)
-	if tip == "" {
-		return errors.Invalid(CodeInvalidInput, "içerik tipi tespit edilemedi")
+	contentType := strings.TrimSpace(in.ContentType)
+	if contentType == "" {
+		return errors.Invalid(CodeInvalidInput, "the content type could not be detected")
 	}
-	if !slices.Contains(s.allowedTypes, tip) {
-		// Reddedilen tip mesaja YAZILIR: yükleyen kişinin düzeltebileceği tek
-		// şey odur ve "kabul edilmedi" demek, hangi dosyayı seçeceğini
-		// söylemez. Değer istemciden gelmez, İÇERİKTEN tespit edilmiştir;
-		// yani yanıta konan şey saldırganın seçtiği bir dize değildir.
+	if !slices.Contains(s.allowedTypes, contentType) {
+		// The rejected type is WRITTEN into the message: it is the only thing
+		// the person uploading can correct, and saying "it was not accepted"
+		// does not tell them which file to pick. The value does not come from
+		// the client, it was detected FROM THE CONTENT; that is, what is put
+		// into the response is not a string of the attacker's choosing.
 		return errors.Invalid(CodeTypeNotAllowed,
-			"%q içerik tipi kabul edilmiyor; kabul edilenler: %s",
-			tip, strings.Join(s.allowedTypes, ", "))
+			"the %q content type is not accepted; the accepted ones are: %s",
+			contentType, strings.Join(s.allowedTypes, ", "))
 	}
 
-	// Ad UZUNLUĞU denetlenir ama İÇERİĞİ temizlenmez: ad hiçbir yol ifadesine
-	// ve hiçbir HTTP başlığına girmez, yalnızca JSON gövdesinde döner.
-	// Uzunluk sınırının sebebi de güvenlik değil, defterdir — megabaytlık bir
-	// "dosya adı" satırı şişirirdi.
+	// The LENGTH of the name is checked but its CONTENT is not sanitized: the
+	// name enters no path expression and no HTTP header, it is only returned in
+	// the JSON body. The reason for the length bound is not security either, it
+	// is the ledger — a megabyte-long "file name" would bloat the row.
 	if utf8.RuneCountInString(in.OriginalName) > models.MaxOriginalNameLen {
 		return errors.Invalid(CodeInvalidInput,
-			"dosya adı en fazla %d karakter olabilir", models.MaxOriginalNameLen)
+			"the file name can be at most %d characters", models.MaxOriginalNameLen)
 	}
 
 	return nil
 }
 
-// yaziliDosyayiTemizle kaydı açılamamış bir dosyayı depodan siler.
+// cleanUpWrittenFile deletes from the store a file whose record could not be
+// opened.
 //
-// Hata YUTULMAZ, LOGLANIR: çağırana dönecek olan asıl hata kayıt hatasıdır ve
-// onu temizlik hatasıyla değiştirmek, arızanın sebebini gizlemek olurdu. Ama
-// sessiz de kalınmaz — geride kalan dosyanın anahtarını bilen tek yer bu
-// satırdır.
-func (s *Service) yaziliDosyayiTemizle(ctx context.Context, prov coreprovider.FileProvider, key string) {
-	// Bağlam iptal edilmiş olabilir (istemci bağlantıyı kapattı); temizlik
-	// yine de denenmelidir, aksi hâlde iptal edilen her istek bir çöp dosya
-	// bırakırdı.
-	temizlikCtx := context.WithoutCancel(ctx)
+// The error IS NOT SWALLOWED, it is LOGGED: the real error going back to the
+// caller is the record error, and replacing it with the cleanup error would be
+// hiding the cause of the fault. But it is not passed over in silence either —
+// this line is the only place that knows the key of the file left behind.
+func (s *Service) cleanUpWrittenFile(ctx context.Context, prov coreprovider.FileProvider, key string) {
+	// The context may have been canceled (the client closed the connection);
+	// the cleanup has to be attempted anyway, otherwise every canceled request
+	// would leave a garbage file behind.
+	cleanupCtx := context.WithoutCancel(ctx)
 
-	if err := prov.Delete(temizlikCtx, key); err != nil {
-		s.log.ErrorContext(ctx, "kaydı açılamayan dosya depodan silinemedi",
+	if err := prov.Delete(cleanupCtx, key); err != nil {
+		s.log.ErrorContext(ctx, "the file whose record could not be opened could not be deleted from the store",
 			"error", err,
-			"saglayici", prov.ID(),
-			"depo_anahtari", key,
-			"anlami", "depoda hiçbir kaydın işaret etmediği bir dosya kaldı; elle temizlenmeli")
+			"provider", prov.ID(),
+			"storage_key", key,
+			"meaning", "a file that no record points at is left in the store; it has to be cleaned up by hand")
 	}
 }
 
-// sinirliOkuyucu okunan bayt sayısı sınırı AŞTIĞINDA [ErrTooLarge] döner.
+// boundedReader returns [ErrTooLarge] WHEN the number of bytes read exceeds the
+// bound.
 //
-// [io.LimitReader] burada YANLIŞ olurdu: o, sınıra gelince io.EOF döner, yani
-// gövdeyi sessizce KESER. Sağlayıcı bunu "dosya bitti" diye okur ve yarım bir
-// görsel başarıyla kaydedilir — sınırı aşan istek reddedilmek yerine bozuk
-// veri üretirdi.
+// [io.LimitReader] would be WRONG here: it returns io.EOF once it reaches the
+// bound, that is, it silently TRUNCATES the body. The provider reads that as
+// "the file has ended" and a half image gets recorded successfully — a request
+// exceeding the bound would produce corrupt data instead of being rejected.
 //
-// kalan, sınırdan BİR FAZLA başlatılır: tam sınır kadar bayt taşıyan bir gövde
-// geçmeli, bir bayt fazlası reddedilmelidir. Sınır kadar başlatılsaydı, tam
-// sınırdaki dosya için ek bir okuma denemesi hata üretirdi.
-type sinirliOkuyucu struct {
-	r     io.Reader
-	kalan int64
+// remaining is started ONE MORE than the bound: a body carrying exactly the
+// bound in bytes has to pass, one byte more has to be rejected. Had it been
+// started at the bound, an extra read attempt would produce an error for a file
+// sitting exactly at the bound.
+type boundedReader struct {
+	r         io.Reader
+	remaining int64
 }
 
-// Read io.Reader'ı karşılar.
-func (s *sinirliOkuyucu) Read(p []byte) (int, error) {
-	if s.kalan <= 0 {
+// Read satisfies io.Reader.
+func (s *boundedReader) Read(p []byte) (int, error) {
+	if s.remaining <= 0 {
 		return 0, ErrTooLarge
 	}
 
-	if int64(len(p)) > s.kalan {
-		p = p[:s.kalan]
+	if int64(len(p)) > s.remaining {
+		p = p[:s.remaining]
 	}
 
 	n, err := s.r.Read(p)
-	s.kalan -= int64(n)
+	s.remaining -= int64(n)
 
 	return n, err
 }

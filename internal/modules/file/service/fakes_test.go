@@ -13,140 +13,139 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/file/service"
 )
 
-// Sahteler, servisin KARARLARINI gerçek bir disk ve gerçek bir veritabanı
-// olmadan sınamak içindir. Sınanan şey servisin ne yaptığı değil, NEYE KARAR
-// VERDİĞİDİR: hangi sırayla çağırdığı, neyi reddettiği, neyi temizlediği.
+// The fakes are here so that the service's DECISIONS can be tested without a
+// real disk and a real database. What is tested is not what the service does but
+// WHAT IT DECIDES: in which order it calls, what it rejects, what it cleans up.
 
-// sahteSaglayici yüklenenleri kaydeden bir dosya sağlayıcısıdır.
-type sahteSaglayici struct {
+// fakeProvider is a file provider that records what was uploaded.
+type fakeProvider struct {
 	mu sync.Mutex
 
-	// id sağlayıcının kimliğidir.
+	// id is the provider's identifier.
 	id string
-	// yuklenen okunmuş gövdelerdir.
-	yuklenen []string
-	// silinen Delete çağrılarının anahtarlarıdır; SIRA korunur.
-	silinen []string
-	// yuklemeHatasi verilirse Upload bu hatayı döner.
-	yuklemeHatasi error
-	// silmeHatasi verilirse Delete bu hatayı döner.
-	silmeHatasi error
+	// uploaded are the bodies that were read.
+	uploaded []string
+	// deleted are the keys of the Delete calls; the ORDER is preserved.
+	deleted []string
+	// uploadErr, when given, is the error Upload returns.
+	uploadErr error
+	// deleteErr, when given, is the error Delete returns.
+	deleteErr error
 }
 
-// sahteSaglayici'nın çekirdek sözleşmesini karşıladığı derleme zamanında
-// sabitlenir.
-var _ coreprovider.FileProvider = (*sahteSaglayici)(nil)
+// That fakeProvider satisfies the core contract is pinned at compile time.
+var _ coreprovider.FileProvider = (*fakeProvider)(nil)
 
-// ID sağlayıcının kimliğini döner.
-func (p *sahteSaglayici) ID() string {
+// ID returns the provider's identifier.
+func (p *fakeProvider) ID() string {
 	if p.id == "" {
-		return "sahte"
+		return "fake"
 	}
 
 	return p.id
 }
 
-// Upload gövdeyi belleğe okur ve sahte bir dosya kaydı döner.
+// Upload reads the body into memory and returns a fake file record.
 //
-// Gövde GERÇEKTEN okunur: servisin özet ve boyut sınırı zincirleri ancak
-// baytlar akarsa çalışır ve okumayan bir sahte, o zincirleri sınanamaz
-// kılardı.
-func (p *sahteSaglayici) Upload(_ context.Context, in coreprovider.UploadInput) (coreprovider.File, error) {
-	if p.yuklemeHatasi != nil {
-		return coreprovider.File{}, p.yuklemeHatasi
+// The body is REALLY read: the service's digest and size bound chains only work
+// if the bytes flow, and a fake that did not read would make those chains
+// untestable.
+func (p *fakeProvider) Upload(_ context.Context, in coreprovider.UploadInput) (coreprovider.File, error) {
+	if p.uploadErr != nil {
+		return coreprovider.File{}, p.uploadErr
 	}
 
-	ham, err := io.ReadAll(in.Body)
+	raw, err := io.ReadAll(in.Body)
 	if err != nil {
-		return coreprovider.File{}, coreerrors.Wrap(err, coreerrors.KindInternal, "sahte_yazma",
-			"sahte sağlayıcı gövdeyi okuyamadı")
+		return coreprovider.File{}, coreerrors.Wrap(err, coreerrors.KindInternal, "fake_write",
+			"the fake provider could not read the body")
 	}
 
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	p.yuklenen = append(p.yuklenen, string(ham))
+	p.uploaded = append(p.uploaded, string(raw))
 
 	return coreprovider.File{
-		Key:         "ANAHTAR" + string(rune('0'+len(p.yuklenen))) + ".png",
-		URL:         "/files/ANAHTAR" + string(rune('0'+len(p.yuklenen))) + ".png",
+		Key:         "KEY" + string(rune('0'+len(p.uploaded))) + ".png",
+		URL:         "/files/KEY" + string(rune('0'+len(p.uploaded))) + ".png",
 		ContentType: in.ContentType,
-		Size:        int64(len(ham)),
+		Size:        int64(len(raw)),
 	}, nil
 }
 
-// Delete silinen anahtarı kaydeder.
-func (p *sahteSaglayici) Delete(_ context.Context, key string) error {
+// Delete records the deleted key.
+func (p *fakeProvider) Delete(_ context.Context, key string) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	p.silinen = append(p.silinen, key)
+	p.deleted = append(p.deleted, key)
 
-	return p.silmeHatasi
+	return p.deleteErr
 }
 
-// silinenler kaydedilen silme anahtarlarını döner.
-func (p *sahteSaglayici) silinenler() []string {
+// deletedKeys returns the recorded delete keys.
+func (p *fakeProvider) deletedKeys() []string {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	return append([]string(nil), p.silinen...)
+	return append([]string(nil), p.deleted...)
 }
 
-// sahteAcilabilirSaglayici okuma yüzeyini de karşılayan sahtedir.
+// fakeOpenableProvider is the fake that satisfies the read surface too.
 //
-// AYRI bir tip olması bilinçlidir: servis, sağlayıcının okumayı destekleyip
-// desteklemediğini TİP İDDİASIYLA anlar ve iki ayrı sahte olmadan o dalın iki
-// yönü de sınanamazdı.
-type sahteAcilabilirSaglayici struct {
-	*sahteSaglayici
+// Its being a SEPARATE type is deliberate: the service understands whether the
+// provider supports reading or not BY A TYPE ASSERTION, and without two separate
+// fakes the two directions of that branch could not be tested.
+type fakeOpenableProvider struct {
+	*fakeProvider
 
-	// icerik Open'ın döndüreceği gövdedir.
-	icerik string
+	// content is the body Open will return.
+	content string
 }
 
-// Open dosyayı okumak üzere açar.
-func (p *sahteAcilabilirSaglayici) Open(
+// Open opens the file for reading.
+func (p *fakeOpenableProvider) Open(
 	_ context.Context, _ string,
 ) (io.ReadSeekCloser, time.Time, error) {
-	return nopKapatici{strings.NewReader(p.icerik)}, time.Unix(0, 0).UTC(), nil
+	return nopCloser{strings.NewReader(p.content)}, time.Unix(0, 0).UTC(), nil
 }
 
-// nopKapatici bir okuyucuya boş bir Close ekler.
-type nopKapatici struct {
+// nopCloser adds an empty Close to a reader.
+type nopCloser struct {
 	*strings.Reader
 }
 
-// Close io.Closer'ı karşılar ve hiçbir şey yapmaz.
-func (nopKapatici) Close() error { return nil }
+// Close satisfies io.Closer and does nothing.
+func (nopCloser) Close() error { return nil }
 
-// sahteDepo yükleme defterinin bellek içi karşılığıdır.
-type sahteDepo struct {
+// fakeStore is the in-memory counterpart of the upload ledger.
+type fakeStore struct {
 	mu sync.Mutex
 
-	// kayitlar kimliğe göre yüklemelerdir.
-	kayitlar map[string]models.Upload
-	// sira eklenme sırasıdır; listeleme bunu kullanır.
-	sira []string
-	// yazmaHatasi verilirse CreateUpload bu hatayı döner.
-	yazmaHatasi error
-	// silmeHatasi verilirse DeleteUpload bu hatayı döner.
-	silmeHatasi error
+	// records are the uploads by identifier.
+	records map[string]models.Upload
+	// order is the insertion order; listing uses this.
+	order []string
+	// writeErr, when given, is the error CreateUpload returns.
+	writeErr error
+	// deleteErr, when given, is the error DeleteUpload returns.
+	deleteErr error
 }
 
-// sahteDepo'nun servisin beklediği yüzeyi karşıladığı derleme zamanında
-// sabitlenir.
-var _ service.Store = (*sahteDepo)(nil)
+// That fakeStore satisfies the surface the service expects is pinned at compile
+// time.
+var _ service.Store = (*fakeStore)(nil)
 
-// yeniSahteDepo boş bir sahte depo üretir.
-func yeniSahteDepo() *sahteDepo {
-	return &sahteDepo{kayitlar: make(map[string]models.Upload)}
+// newFakeStore produces an empty fake store.
+func newFakeStore() *fakeStore {
+	return &fakeStore{records: make(map[string]models.Upload)}
 }
 
-// CreateUpload kaydı belleğe yazar.
-func (s *sahteDepo) CreateUpload(_ context.Context, u models.Upload) (models.Upload, error) {
-	if s.yazmaHatasi != nil {
-		return models.Upload{}, s.yazmaHatasi
+// CreateUpload writes the record into memory.
+func (s *fakeStore) CreateUpload(_ context.Context, u models.Upload) (models.Upload, error) {
+	if s.writeErr != nil {
+		return models.Upload{}, s.writeErr
 	}
 
 	s.mu.Lock()
@@ -154,91 +153,92 @@ func (s *sahteDepo) CreateUpload(_ context.Context, u models.Upload) (models.Upl
 
 	u.CreatedAt = time.Unix(0, 0).UTC()
 	u.UpdatedAt = u.CreatedAt
-	s.kayitlar[u.ID] = u
-	s.sira = append(s.sira, u.ID)
+	s.records[u.ID] = u
+	s.order = append(s.order, u.ID)
 
 	return u, nil
 }
 
-// GetUpload kaydı kimliğiyle döner.
-func (s *sahteDepo) GetUpload(_ context.Context, id string) (models.Upload, error) {
+// GetUpload returns the record by its identifier.
+func (s *fakeStore) GetUpload(_ context.Context, id string) (models.Upload, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	u, ok := s.kayitlar[id]
+	u, ok := s.records[id]
 	if !ok {
 		return models.Upload{}, coreerrors.NotFound("file_upload_not_found",
-			"yükleme bulunamadı (kimlik: %s)", id)
+			"the upload could not be found (id: %s)", id)
 	}
 
 	return u, nil
 }
 
-// GetUploadByKey kaydı depo anahtarıyla döner.
-func (s *sahteDepo) GetUploadByKey(_ context.Context, key string) (models.Upload, error) {
+// GetUploadByKey returns the record by its storage key.
+func (s *fakeStore) GetUploadByKey(_ context.Context, key string) (models.Upload, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	for _, id := range s.sira {
-		if s.kayitlar[id].StorageKey == key {
-			return s.kayitlar[id], nil
+	for _, id := range s.order {
+		if s.records[id].StorageKey == key {
+			return s.records[id], nil
 		}
 	}
 
 	return models.Upload{}, coreerrors.NotFound("file_upload_not_found",
-		"yükleme bulunamadı (anahtar: %s)", key)
+		"the upload could not be found (key: %s)", key)
 }
 
-// ListUploads kayıtları sayfalar.
-func (s *sahteDepo) ListUploads(
+// ListUploads paginates the records.
+func (s *fakeStore) ListUploads(
 	_ context.Context, filter models.UploadFilter,
 ) ([]models.Upload, int64, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	out := make([]models.Upload, 0, len(s.sira))
-	for i, id := range s.sira {
+	out := make([]models.Upload, 0, len(s.order))
+	for i, id := range s.order {
 		if int64(i) < filter.Offset || int64(len(out)) >= filter.Limit {
 			continue
 		}
-		out = append(out, s.kayitlar[id])
+		out = append(out, s.records[id])
 	}
 
-	return out, int64(len(s.sira)), nil
+	return out, int64(len(s.order)), nil
 }
 
-// DeleteUpload kaydı siler; olmayan kimlik hata değildir.
-func (s *sahteDepo) DeleteUpload(_ context.Context, id string) (bool, error) {
-	if s.silmeHatasi != nil {
-		return false, s.silmeHatasi
+// DeleteUpload deletes the record; an identifier that does not exist is not an
+// error.
+func (s *fakeStore) DeleteUpload(_ context.Context, id string) (bool, error) {
+	if s.deleteErr != nil {
+		return false, s.deleteErr
 	}
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if _, ok := s.kayitlar[id]; !ok {
+	if _, ok := s.records[id]; !ok {
 		return false, nil
 	}
 
-	delete(s.kayitlar, id)
-	s.sira = slicesSil(s.sira, id)
+	delete(s.records, id)
+	s.order = removeFromSlice(s.order, id)
 
 	return true, nil
 }
 
-// sayi defterdeki kayıt sayısını döner.
-func (s *sahteDepo) sayi() int {
+// count returns the number of records in the ledger.
+func (s *fakeStore) count() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	return len(s.kayitlar)
+	return len(s.records)
 }
 
-// slicesSil dilimden bir değeri çıkarır.
-func slicesSil(dilim []string, deger string) []string {
-	out := dilim[:0]
-	for _, v := range dilim {
-		if v != deger {
+// removeFromSlice takes a value out of the slice.
+func removeFromSlice(slice []string, value string) []string {
+	out := slice[:0]
+	for _, v := range slice {
+		if v != value {
 			out = append(out, v)
 		}
 	}
@@ -246,18 +246,20 @@ func slicesSil(dilim []string, deger string) []string {
 	return out
 }
 
-// yeniModelKaydi belirli bir sağlayıcıya ait sahte bir yükleme kaydı üretir.
+// newStoredRecord produces a fake upload record belonging to a particular
+// provider.
 //
-// Doğrudan depoya yazılır: amaç, servisin YÜKLEMEDİĞİ (yani başka bir
-// yapılandırmada oluşmuş) bir kaydın nasıl ele alındığını sınamaktır.
-func yeniModelKaydi(saglayici string) models.Upload {
+// It is written straight into the store: the aim is to test how a record the
+// service DID NOT UPLOAD (that is, one formed under another configuration) is
+// handled.
+func newStoredRecord(provider string) models.Upload {
 	return models.Upload{
-		ID:          "upl_ESKI",
-		StorageKey:  "ESKI_ANAHTAR.png",
-		ProviderID:  saglayici,
+		ID:          "upl_OLD",
+		StorageKey:  "OLD_KEY.png",
+		ProviderID:  provider,
 		ContentType: coreprovider.ContentTypePNG,
 		Size:        5,
 		Checksum:    "abc",
-		URL:         "/files/ESKI_ANAHTAR.png",
+		URL:         "/files/OLD_KEY.png",
 	}
 }

@@ -1,11 +1,12 @@
--- 000001_file_init'in geri alınması.
+-- Rollback of 000001_file_init.
 --
--- Tek tablo vardır ve hiçbir tabloya bağlı değildir; indeksler tabloyla
--- birlikte düşer, ayrıca DROP edilmez.
+-- There is a single table and it is bound to no table; the indexes fall
+-- together with the table, they are not DROPped separately.
 --
--- DİKKAT: Bu, DEPODAKİ DOSYALARI silmez. Migration veritabanını geri alır;
--- yüklenen baytlar kök dizinde (ya da nesne deposunda) kalır. Kasıtlıdır —
--- bir şema geri alması, geri alınamayacak bir veri silmeyi tetiklememelidir.
--- Dosyaların temizliği, kayıtları hâlâ okunabilirken yapılmalıdır.
+-- CAUTION: This DOES NOT delete THE FILES IN THE STORE. The migration rolls the
+-- database back; the uploaded bytes stay in the root directory (or in the
+-- object store). That is deliberate — a schema rollback must not trigger a
+-- data deletion that cannot be rolled back. The files must be cleaned up while
+-- their records are still readable.
 
 DROP TABLE IF EXISTS file_uploads;

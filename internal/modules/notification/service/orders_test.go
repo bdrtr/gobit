@@ -13,67 +13,70 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/notification/service"
 )
 
-// TestOrderContactsCozumuTEMBELDIR yüzeyin Register anında değil İLK
-// KULLANIMDA çözüldüğünü doğrular.
+// TestOrderContactsResolutionIsLAZY verifies that the surface is resolved not
+// at the moment of Register but ON FIRST USE.
 //
-// Modüllerin Register sırası garanti edilmez: notification, order'dan önce
-// kaydedilebilir ve o anda "order.interop" container'da olmaz. Erken çözüm,
-// hiçbir şeyin gerçekten eksik olmadığı bir hatayla açılışı düşürürdü.
-func TestOrderContactsCozumuTEMBELDIR(t *testing.T) {
+// The Register order of the modules is not guaranteed: notification can be
+// registered before order, and at that moment "order.interop" is not in the
+// container. An early resolution would bring the startup down with an error
+// where nothing is really missing.
+func TestOrderContactsResolutionIsLAZY(t *testing.T) {
 	c := container.New(nil)
 
-	// Yüzey HENÜZ kayıtlı değilken kurulur; kurulum hata vermemelidir.
-	okuyucu := service.NewOrderContacts(c)
-	require.NotNil(t, okuyucu)
+	// It is constructed while the surface is NOT YET registered; the
+	// construction must not return an error.
+	reader := service.NewOrderContacts(c)
+	require.NotNil(t, reader)
 
-	require.NoError(t, c.Provide(service.OrderInteropName, &fakeContacts{govde: testSiparisGovdesi}))
+	require.NoError(t, c.Provide(service.OrderInteropName, &fakeContacts{body: testOrderBody}))
 
-	ham, err := okuyucu.OrderContactJSON(context.Background(), "order_01H")
+	raw, err := reader.OrderContactJSON(context.Background(), "order_01H")
 
 	require.NoError(t, err)
-	var govde map[string]string
-	require.NoError(t, json.Unmarshal(ham, &govde))
-	assert.Equal(t, "musteri@example.com", govde["email"])
+	var body map[string]string
+	require.NoError(t, json.Unmarshal(raw, &body))
+	assert.Equal(t, "customer@example.com", body["email"])
 }
 
-// TestOrderContactsYuzeyYoksaTeshisEdilebilirHataVerir order modülü kurulu
-// değilken alınan hatanın ne olduğunu söylediğini doğrular.
-func TestOrderContactsYuzeyYoksaTeshisEdilebilirHataVerir(t *testing.T) {
-	okuyucu := service.NewOrderContacts(container.New(nil))
+// TestOrderContactsGivesADiagnosableErrorWhenTheSurfaceIsAbsent verifies that
+// the error received while the order module is not installed says what it is.
+func TestOrderContactsGivesADiagnosableErrorWhenTheSurfaceIsAbsent(t *testing.T) {
+	reader := service.NewOrderContacts(container.New(nil))
 
-	_, err := okuyucu.OrderContactJSON(context.Background(), "order_01H")
+	_, err := reader.OrderContactJSON(context.Background(), "order_01H")
 
 	require.Error(t, err)
 	assert.Equal(t, service.CodeContactUnavailable, errors.CodeOf(err))
 	assert.Contains(t, err.Error(), service.OrderInteropName,
-		"hata hangi kaydın bulunamadığını söylemeli")
+		"the error has to say which registration could not be found")
 }
 
-// TestOrderContactsBasarisizCozumKALICIDEGILDIR ilk çözümün düşmesinin süreç
-// ömrü boyunca bildirimleri ölü bırakmadığını doğrular.
+// TestOrderContactsAFailedResolutionIsNOTPERMANENT verifies that the first
+// resolution falling over does not leave the notifications dead for the
+// lifetime of the process.
 //
-// sync.Once kullanılsaydı ilk çağrının SONUCU kalıcı olurdu: order henüz
-// kayıtlı değilken gelen tek bir olay, sonraki tüm siparişlerin bildirimini de
-// imkânsız kılardı.
-func TestOrderContactsBasarisizCozumKALICIDEGILDIR(t *testing.T) {
+// Had sync.Once been used, the RESULT of the first call would be permanent: a
+// single event arriving while order was not yet registered would make the
+// notification of all subsequent orders impossible as well.
+func TestOrderContactsAFailedResolutionIsNOTPERMANENT(t *testing.T) {
 	c := container.New(nil)
-	okuyucu := service.NewOrderContacts(c)
+	reader := service.NewOrderContacts(c)
 	ctx := context.Background()
 
-	_, err := okuyucu.OrderContactJSON(ctx, "order_01H")
+	_, err := reader.OrderContactJSON(ctx, "order_01H")
 	require.Error(t, err)
 
-	require.NoError(t, c.Provide(service.OrderInteropName, &fakeContacts{govde: testSiparisGovdesi}))
+	require.NoError(t, c.Provide(service.OrderInteropName, &fakeContacts{body: testOrderBody}))
 
-	_, err = okuyucu.OrderContactJSON(ctx, "order_01H")
-	assert.NoError(t, err, "kayıt sonradan geldiğinde çözüm yeniden denenmeli")
+	_, err = reader.OrderContactJSON(ctx, "order_01H")
+	assert.NoError(t, err, "when the registration arrives later the resolution has to be retried")
 }
 
-// TestOrderInteropAdiSozlesmeyleAynidir container adının elle tekrarlanan
-// değerden kaymadığını doğrular.
+// TestOrderInteropNameIsTheSameAsTheContract verifies that the container name
+// has not drifted from the value repeated by hand.
 //
-// Ad ayrışırsa modül hiçbir siparişi okuyamaz; derleyici bunu yakalayamaz
-// çünkü iki paket birbirini import edemez (Prensip 2.4).
-func TestOrderInteropAdiSozlesmeyleAynidir(t *testing.T) {
+// If the name diverges the module can read no order at all; the compiler cannot
+// catch this because the two packages cannot import each other (Principle 2.4).
+func TestOrderInteropNameIsTheSameAsTheContract(t *testing.T) {
 	assert.Equal(t, "order.interop", service.OrderInteropName)
 }

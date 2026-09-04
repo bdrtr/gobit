@@ -14,172 +14,179 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/file/service"
 )
 
-// yuklenmisKayit tek bir dosya yükleyip kaydını döner.
-func yuklenmisKayit(t *testing.T, svc *service.Service) string {
+// uploadedRecord uploads a single file and returns its record.
+func uploadedRecord(t *testing.T, svc *service.Service) string {
 	t.Helper()
 
-	kayit, err := svc.Upload(context.Background(), service.UploadInput{
+	record, err := svc.Upload(context.Background(), service.UploadInput{
 		ContentType: coreprovider.ContentTypePNG,
-		Body:        strings.NewReader("gövde"),
+		Body:        strings.NewReader("body"),
 	})
 	require.NoError(t, err)
 
-	return kayit.ID
+	return record.ID
 }
 
-// TestSilmeIDEMPOTENTTIR ikinci silmenin hata vermediğini doğrular.
+// TestDeleteIsIDEMPOTENT verifies that a second delete does not give an error.
 //
-// Silme bir SON DURUM iddiasıdır ("bu yükleme artık yok"). İkinci çağrının
-// 404 dönmesi, istenen son durum SAĞLANMIŞKEN yeniden denenen bir temizlik
-// akışını hata sayardı — yani temizlemesi gereken şeyi temizlenemez kılardı.
-func TestSilmeIDEMPOTENTTIR(t *testing.T) {
+// A delete is an END STATE claim ("this upload no longer exists"). The second
+// call returning 404 would count as an error a cleanup flow that is retried
+// WHILE the wanted end state HOLDS — that is, it would make the very thing it
+// has to clean up impossible to clean up.
+func TestDeleteIsIDEMPOTENT(t *testing.T) {
 	t.Parallel()
 
-	depo := yeniSahteDepo()
-	prov := &sahteSaglayici{}
-	svc := yeniServis(t, depo, prov)
-	id := yuklenmisKayit(t, svc)
+	store := newFakeStore()
+	prov := &fakeProvider{}
+	svc := newService(t, store, prov)
+	id := uploadedRecord(t, svc)
 	ctx := context.Background()
 
-	require.NoError(t, svc.DeleteUpload(ctx, id), "ilk silme")
-	require.NoError(t, svc.DeleteUpload(ctx, id), "İKİNCİ silme de hata vermemeli")
-	require.NoError(t, svc.DeleteUpload(ctx, "upl_HICVAROLMADI"), "hiç var olmamış kimlik")
+	require.NoError(t, svc.DeleteUpload(ctx, id), "the first delete")
+	require.NoError(t, svc.DeleteUpload(ctx, id), "the SECOND delete must not give an error either")
+	require.NoError(t, svc.DeleteUpload(ctx, "upl_NEVEREXISTED"), "an identifier that never existed")
 
-	assert.Zero(t, depo.sayi())
-	assert.Len(t, prov.silinenler(), 1,
-		"ikinci turda silinecek dosya kalmadığı için sağlayıcıya gidilmemeli")
+	assert.Zero(t, store.count())
+	assert.Len(t, prov.deletedKeys(), 1,
+		"since no file is left to delete on the second round, the provider must not be gone to")
 }
 
-// TestSilmeONCEDOSYASONRAKAYIT sıranın yakınsayan taraf olduğunu doğrular.
+// TestDeleteTakesTheFILEFirstAndTheRECORDSecond verifies that the order is the
+// converging side.
 //
-// İki taraf ayrı sistemlerdedir ve tek bir işleme alınamaz; geriye yalnızca
-// sıra kalır. Depo silmesi patlarsa KAYIT DA SİLİNMEMELİDİR: kayıt gittikten
-// sonra dosyanın anahtarını bilen kimse kalmaz ve o dosya erişilemez çöp
-// olurdu. Bu sırada ise yeniden deneme her şeyi kapatır.
-func TestSilmeONCEDOSYASONRAKAYIT(t *testing.T) {
+// The two sides are in separate systems and cannot be taken into a single
+// transaction; all that is left is the order. If the store delete blows up THE
+// RECORD MUST NOT BE DELETED EITHER: once the record is gone nobody is left who
+// knows the file's key and that file would be unreachable garbage. In this
+// order, on the other hand, a retry closes everything.
+func TestDeleteTakesTheFILEFirstAndTheRECORDSecond(t *testing.T) {
 	t.Parallel()
 
-	depo := yeniSahteDepo()
-	prov := &sahteSaglayici{silmeHatasi: coreerrors.Unavailable("disk_down", "diske ulaşılamadı")}
-	svc := yeniServis(t, depo, prov)
-	id := yuklenmisKayit(t, svc)
+	store := newFakeStore()
+	prov := &fakeProvider{deleteErr: coreerrors.Unavailable("disk_down", "the disk could not be reached")}
+	svc := newService(t, store, prov)
+	id := uploadedRecord(t, svc)
 
 	err := svc.DeleteUpload(context.Background(), id)
 
 	require.Error(t, err)
-	assert.Equal(t, 1, depo.sayi(),
-		"dosya silinemediyse kayıt DA silinmemeli; aksi hâlde dosya erişilemez çöp olurdu")
+	assert.Equal(t, 1, store.count(),
+		"if the file could not be deleted the record must NOT be deleted either; otherwise the file would be unreachable garbage")
 
-	// Depo düzelince aynı çağrı işi bitirir: yakınsama iddiası budur.
-	prov.silmeHatasi = nil
+	// Once the store recovers, the same call finishes the job: that is the
+	// convergence claim.
+	prov.deleteErr = nil
 	require.NoError(t, svc.DeleteUpload(context.Background(), id))
-	assert.Zero(t, depo.sayi())
+	assert.Zero(t, store.count())
 }
 
-// TestSilmeKAYDINSaglayicisiniKullanir yapılandırma değişse bile eski
-// dosyaların silinebildiğini doğrular.
+// TestDeleteUsesTheRECORDSProvider verifies that the old files can be deleted
+// even if the configuration changes.
 //
-// Kurulum bir gün nesne deposuna geçtiğinde eski kayıtlar hâlâ yerel diskte
-// durur. O an yapılandırılmış sağlayıcıya sorulsaydı, silme çağrısı yanlış
-// depoda var olmayan bir anahtarı siler ve gerçek dosya sonsuza kadar kalırdı
-// — üstelik idempotent silme yüzünden hiç hata da vermeden.
-func TestSilmeKAYDINSaglayicisiniKullanir(t *testing.T) {
+// The day the installation moves to an object store, the old records still sit
+// on the local disk. Had the provider configured at that moment been asked, the
+// delete call would delete a key that does not exist in the wrong store and the
+// real file would stay forever — and, because of the idempotent delete, without
+// giving an error at all.
+func TestDeleteUsesTheRECORDSProvider(t *testing.T) {
 	t.Parallel()
 
-	depo := yeniSahteDepo()
-	eski := &sahteSaglayici{id: "eski"}
-	yeni := &sahteSaglayici{id: "yeni"}
+	store := newFakeStore()
+	older := &fakeProvider{id: "old"}
+	newer := &fakeProvider{id: "new"}
 
-	kayit := service.NewProviderRegistry()
-	require.NoError(t, kayit.Register(eski))
-	require.NoError(t, kayit.Register(yeni))
+	registry := service.NewProviderRegistry()
+	require.NoError(t, registry.Register(older))
+	require.NoError(t, registry.Register(newer))
 
-	// Servis "yeni" ile yükler ama defterde "eski" ile yazılmış bir kayıt
-	// vardır; silme onu bulmalıdır.
+	// The service uploads with "new", but in the ledger there is a record
+	// written with "old"; the delete has to find it.
 	svc, err := service.New(service.Options{
-		Store:          depo,
-		Providers:      kayit,
-		ProviderID:     yeni.ID(),
-		MaxUploadBytes: testAzamiBoyut,
+		Store:          store,
+		Providers:      registry,
+		ProviderID:     newer.ID(),
+		MaxUploadBytes: testMaxBytes,
 		AllowedTypes:   []string{coreprovider.ContentTypePNG},
 	})
 	require.NoError(t, err)
 
-	eskiKayit, err := depo.CreateUpload(context.Background(), yeniModelKaydi("eski"))
+	oldRecord, err := store.CreateUpload(context.Background(), newStoredRecord("old"))
 	require.NoError(t, err)
 
-	require.NoError(t, svc.DeleteUpload(context.Background(), eskiKayit.ID))
+	require.NoError(t, svc.DeleteUpload(context.Background(), oldRecord.ID))
 
-	assert.Equal(t, []string{"ESKI_ANAHTAR.png"}, eski.silinenler(),
-		"dosya, onu YAZAN sağlayıcıdan silinmeli")
-	assert.Empty(t, yeni.silinenler(), "yapılandırılmış sağlayıcıya hiç gidilmemeli")
+	assert.Equal(t, []string{"OLD_KEY.png"}, older.deletedKeys(),
+		"the file must be deleted from the provider that WROTE it")
+	assert.Empty(t, newer.deletedKeys(), "the configured provider must not be gone to at all")
 }
 
-// TestSunumSAKLANANTipiVerir sunum yolunun kayıttan okuduğunu doğrular.
+// TestServingGivesTheSTOREDType verifies that the serving path reads from the
+// record.
 //
-// İstemcinin yükleme sırasında bildirdiği tip hiçbir yerde saklanmaz; sunulan
-// tip her zaman yükleme anında İÇERİKTEN tespit edilmiş olandır.
-func TestSunumSAKLANANTipiVerir(t *testing.T) {
+// The type the client reported while uploading is stored nowhere; the type
+// served is always the one detected FROM THE CONTENT at upload time.
+func TestServingGivesTheSTOREDType(t *testing.T) {
 	t.Parallel()
 
-	depo := yeniSahteDepo()
-	prov := &sahteAcilabilirSaglayici{
-		sahteSaglayici: &sahteSaglayici{id: "acilabilir"},
-		icerik:         "ham baytlar",
+	store := newFakeStore()
+	prov := &fakeOpenableProvider{
+		fakeProvider: &fakeProvider{id: "openable"},
+		content:      "raw bytes",
 	}
 
-	kayit := service.NewProviderRegistry()
-	require.NoError(t, kayit.Register(prov))
+	registry := service.NewProviderRegistry()
+	require.NoError(t, registry.Register(prov))
 
 	svc, err := service.New(service.Options{
-		Store:          depo,
-		Providers:      kayit,
+		Store:          store,
+		Providers:      registry,
 		ProviderID:     prov.ID(),
-		MaxUploadBytes: testAzamiBoyut,
+		MaxUploadBytes: testMaxBytes,
 		AllowedTypes:   []string{coreprovider.ContentTypePNG},
 	})
 	require.NoError(t, err)
 
-	yuklendi, err := svc.Upload(context.Background(), service.UploadInput{
+	uploaded, err := svc.Upload(context.Background(), service.UploadInput{
 		ContentType: coreprovider.ContentTypePNG,
-		Body:        strings.NewReader("gövde"),
+		Body:        strings.NewReader("body"),
 	})
 	require.NoError(t, err)
 
-	acilan, err := svc.OpenByKey(context.Background(), yuklendi.StorageKey)
+	opened, err := svc.OpenByKey(context.Background(), uploaded.StorageKey)
 	require.NoError(t, err)
-	defer func() { _ = acilan.Content.Close() }()
+	defer func() { _ = opened.Content.Close() }()
 
-	assert.Equal(t, coreprovider.ContentTypePNG, acilan.Upload.ContentType)
+	assert.Equal(t, coreprovider.ContentTypePNG, opened.Upload.ContentType)
 
-	okunan, err := io.ReadAll(acilan.Content)
+	got, err := io.ReadAll(opened.Content)
 	require.NoError(t, err)
-	assert.Equal(t, "ham baytlar", string(okunan))
+	assert.Equal(t, "raw bytes", string(got))
 }
 
-// TestSunumONCEDEFTEREBakar kaydı olmayan bir anahtar için depoya hiç
-// gidilmediğini doğrular.
+// TestServingLooksAtTheLEDGERFirst verifies that the store is not gone to at all
+// for a key that has no record.
 //
-// "Sunulan tek şey yüklenmiş dosyalardır" iddiasını taşıyan yapı budur: uç bir
-// "dosya oku" ucu değil, "bu kaydı sun" ucudur ve deftere yazılmamış bir
-// anahtar depoya ulaşamaz.
-func TestSunumONCEDEFTEREBakar(t *testing.T) {
+// This is the structure carrying the "the only things served are uploaded files"
+// claim: the endpoint is not a "read a file" endpoint, it is a "serve this
+// record" endpoint, and a key not written into the ledger cannot reach the
+// store.
+func TestServingLooksAtTheLEDGERFirst(t *testing.T) {
 	t.Parallel()
 
-	depo := yeniSahteDepo()
-	prov := &sahteAcilabilirSaglayici{
-		sahteSaglayici: &sahteSaglayici{id: "acilabilir"},
-		icerik:         "gizli",
+	store := newFakeStore()
+	prov := &fakeOpenableProvider{
+		fakeProvider: &fakeProvider{id: "openable"},
+		content:      "secret",
 	}
 
-	kayit := service.NewProviderRegistry()
-	require.NoError(t, kayit.Register(prov))
+	registry := service.NewProviderRegistry()
+	require.NoError(t, registry.Register(prov))
 
 	svc, err := service.New(service.Options{
-		Store:          depo,
-		Providers:      kayit,
+		Store:          store,
+		Providers:      registry,
 		ProviderID:     prov.ID(),
-		MaxUploadBytes: testAzamiBoyut,
+		MaxUploadBytes: testMaxBytes,
 		AllowedTypes:   []string{coreprovider.ContentTypePNG},
 	})
 	require.NoError(t, err)
@@ -187,96 +194,98 @@ func TestSunumONCEDEFTEREBakar(t *testing.T) {
 	_, err = svc.OpenByKey(context.Background(), "../../etc/passwd")
 
 	require.Error(t, err)
-	assert.True(t, coreerrors.IsNotFound(err), "hata: %v", err)
+	assert.True(t, coreerrors.IsNotFound(err), "error: %v", err)
 }
 
-// TestSunulamayanSaglayiciBULUNAMADIDoner nesne deposuna yazan bir kurulumda
-// sunum yolunun ne dediğini sabitler.
+// TestAnUnservableProviderReturnsNOTFOUND pins what the serving path says in an
+// installation that writes into an object store.
 //
-// "Uygulanmadı" (500) demek yanlış olurdu: istemci açısından o adreste
-// gerçekten bir şey yoktur — dosyanın gerçek adresi CDN'dedir.
-func TestSunulamayanSaglayiciBULUNAMADIDoner(t *testing.T) {
+// Saying "not implemented" (500) would be wrong: from the client's point of view
+// there really is nothing at that address — the file's real address is on the
+// CDN.
+func TestAnUnservableProviderReturnsNOTFOUND(t *testing.T) {
 	t.Parallel()
 
-	depo := yeniSahteDepo()
-	svc := yeniServis(t, depo, &sahteSaglayici{id: "sahte"})
+	store := newFakeStore()
+	svc := newService(t, store, &fakeProvider{id: "fake"})
 
-	yuklendi, err := svc.Upload(context.Background(), service.UploadInput{
+	uploaded, err := svc.Upload(context.Background(), service.UploadInput{
 		ContentType: coreprovider.ContentTypePNG,
-		Body:        strings.NewReader("gövde"),
+		Body:        strings.NewReader("body"),
 	})
 	require.NoError(t, err)
 
-	_, err = svc.OpenByKey(context.Background(), yuklendi.StorageKey)
+	_, err = svc.OpenByKey(context.Background(), uploaded.StorageKey)
 
 	require.Error(t, err)
-	assert.True(t, coreerrors.IsNotFound(err), "hata: %v", err)
+	assert.True(t, coreerrors.IsNotFound(err), "error: %v", err)
 	assert.Equal(t, service.CodeNotServable, coreerrors.CodeOf(err))
 }
 
-// TestListeSayfalamaSinirlariZorlanir sayfalama doğrulamasını sabitler.
-func TestListeSayfalamaSinirlariZorlanir(t *testing.T) {
+// TestListPaginationBoundsAreEnforced pins the pagination validation.
+func TestListPaginationBoundsAreEnforced(t *testing.T) {
 	t.Parallel()
 
-	svc := yeniServis(t, yeniSahteDepo(), &sahteSaglayici{})
+	svc := newService(t, newFakeStore(), &fakeProvider{})
 	ctx := context.Background()
 
 	tests := map[string]service.Page{
-		"negatif limit":  {Limit: -1},
-		"negatif offset": {Offset: -1},
-		"aşırı limit":    {Limit: service.MaxLimit + 1},
+		"negative limit":  {Limit: -1},
+		"negative offset": {Offset: -1},
+		"excessive limit": {Limit: service.MaxLimit + 1},
 	}
 
-	for ad, sayfa := range tests {
-		t.Run(ad, func(t *testing.T) {
-			_, _, err := svc.ListUploads(ctx, sayfa)
+	for name, page := range tests {
+		t.Run(name, func(t *testing.T) {
+			_, _, err := svc.ListUploads(ctx, page)
 
 			require.Error(t, err)
-			assert.True(t, coreerrors.IsInvalid(err), "hata: %v", err)
+			assert.True(t, coreerrors.IsInvalid(err), "error: %v", err)
 		})
 	}
 
 	_, _, err := svc.ListUploads(ctx, service.Page{})
-	require.NoError(t, err, "boş sayfa varsayılana düşmeli")
+	require.NoError(t, err, "an empty page must fall back to the default")
 }
 
-// TestRegistryAyniKimlikleIkinciKayitCakisirVeMevcutuKorur sessizce üzerine
-// yazmanın reddedildiğini doğrular.
+// TestRegistryASecondRegistrationWithTheSameIDConflictsAndKeepsTheExisting
+// verifies that overwriting silently is refused.
 //
-// Dosyada bunun bedeli somuttur: sağlayıcı kimliği KAYITLARA yazılır ve bir
-// dosyayı okuyabilecek tek şey onu yazan sağlayıcıdır. Kayıt sırası
-// değişebilseydi, dün yazılan dosyalar bugün okunamaz hâle gelirdi.
-func TestRegistryAyniKimlikleIkinciKayitCakisirVeMevcutuKorur(t *testing.T) {
+// In the file module the price of that is concrete: the provider identifier is
+// written INTO THE RECORDS and the only thing able to read a file is the
+// provider that wrote it. Had the registration order been able to change, the
+// files written yesterday would become unreadable today.
+func TestRegistryASecondRegistrationWithTheSameIDConflictsAndKeepsTheExisting(t *testing.T) {
 	t.Parallel()
 
-	kayit := service.NewProviderRegistry()
-	ilk := &sahteSaglayici{id: "local"}
-	ikinci := &sahteSaglayici{id: "local"}
+	registry := service.NewProviderRegistry()
+	first := &fakeProvider{id: "local"}
+	second := &fakeProvider{id: "local"}
 
-	require.NoError(t, kayit.Register(ilk))
-	err := kayit.Register(ikinci)
+	require.NoError(t, registry.Register(first))
+	err := registry.Register(second)
 
 	require.Error(t, err)
-	assert.True(t, coreerrors.IsConflict(err), "hata: %v", err)
+	assert.True(t, coreerrors.IsConflict(err), "error: %v", err)
 	assert.Equal(t, service.CodeProviderExists, coreerrors.CodeOf(err))
 
-	cozulen, getErr := kayit.Get("local")
+	resolved, getErr := registry.Get("local")
 	require.NoError(t, getErr)
-	assert.Same(t, ilk, cozulen, "mevcut sağlayıcı KORUNMALI")
+	assert.Same(t, first, resolved, "the existing provider MUST BE PRESERVED")
 }
 
-// TestRegistryBilinmeyenKimlikTeshisEdilebilirHataVerir kurulum hatasının
-// okunabilir olduğunu doğrular (ADR 0002).
-func TestRegistryBilinmeyenKimlikTeshisEdilebilirHataVerir(t *testing.T) {
+// TestRegistryAnUnknownIDGivesADiagnosableError verifies that the setup fault is
+// readable (ADR 0002).
+func TestRegistryAnUnknownIDGivesADiagnosableError(t *testing.T) {
 	t.Parallel()
 
-	kayit := service.NewProviderRegistry()
-	require.NoError(t, kayit.Register(&sahteSaglayici{id: "local"}))
+	registry := service.NewProviderRegistry()
+	require.NoError(t, registry.Register(&fakeProvider{id: "local"}))
 
-	_, err := kayit.Get("s3")
+	_, err := registry.Get("s3")
 
 	require.Error(t, err)
-	assert.True(t, coreerrors.IsNotFound(err), "hata: %v", err)
-	assert.Contains(t, err.Error(), "s3", "aranan kimlik yazılmalı")
-	assert.Contains(t, err.Error(), "local", "kayıtlı kimlikler yazılmalı")
+	assert.True(t, coreerrors.IsNotFound(err), "error: %v", err)
+	assert.Contains(t, err.Error(), "s3", "the sought identifier must be written")
+	assert.Contains(t, err.Error(), "local", "the registered identifiers must be written")
 }

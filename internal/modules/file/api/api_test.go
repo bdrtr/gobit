@@ -16,44 +16,46 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/file/service"
 )
 
-// pngIcerik geçerli bir PNG imzası taşıyan test içeriğidir.
+// pngContent is the test content carrying a valid PNG signature.
 //
-// İmzanın gerçek olması ŞART: tespit içerikten yapılır ve uydurma bir dize,
-// tespit iddiasını sınanamaz kılardı.
-const pngIcerik = "\x89PNG\r\n\x1a\n" + "gövde baytları"
+// The signature being real is A MUST: the detection is done from the content
+// and a made-up string would make the detection claim untestable.
+const pngContent = "\x89PNG\r\n\x1a\n" + "body bytes"
 
-// jsonCoz gövdeyi hedefe çözer.
-func jsonCoz(ham []byte, hedef any) error { return json.Unmarshal(ham, hedef) }
+// decodeJSON decodes the body into the target.
+func decodeJSON(raw []byte, target any) error { return json.Unmarshal(raw, target) }
 
-// TestYuklemeIstemciDosyaAdiniYOLOLARAKKULLANMAZ görevin ilk güvenlik
-// iddiasıdır.
+// TestUploadDoesNotUseTheClientFileNameASAPATH is the task's first security
+// claim.
 //
-// İstemci "../../etc/passwd" adını gönderir. Ad deftere GÖSTERİM verisi olarak
-// girer ama depo anahtarı ve adres onunla hiç ilgilenmez: anahtarı sağlayıcı
-// üretir. Yani yol geçişi "temizlenerek" değil, adın hiçbir yol ifadesine
-// girmemesiyle — YAPISAL olarak — engellenir.
+// The client sends the name "../../etc/passwd". The name enters the ledger as
+// DISPLAY data but the storage key and the address take no interest in it at
+// all: the key is produced by the provider. That is, path traversal is
+// prevented not by "sanitizing" but — STRUCTURALLY — by the name never entering
+// any path expression.
 //
-// # Kaydedilen ad neden "passwd"
+// # Why the recorded name is "passwd"
 //
-// [mime/multipart.Part.FileName] adı RFC 7578 §4.2 gereği filepath.Base'den
-// geçirir; dizin bileşenleri daha bize ulaşmadan düşer. Test bunu OLDUĞU GİBİ
-// kaydeder ama iddiasını buna DAYANDIRMAZ: asıl iddialar anahtarın ve adresin
-// istemci adından türemediğidir. Stdlib'in bu davranışına yaslanan bir
-// tasarım, adı başka bir kanaldan (örn. bir JSON alanından) alan ilk
-// değişiklikte sessizce çökerdi.
-func TestYuklemeIstemciDosyaAdiniYOLOLARAKKULLANMAZ(t *testing.T) {
+// [mime/multipart.Part.FileName] runs the name through filepath.Base as RFC
+// 7578 §4.2 requires; the directory components fall away before they even reach
+// us. The test records that AS IT IS but DOES NOT REST its claim on it: the
+// real claims are that the key and the address do not derive from the client's
+// name. A design that leans on this behavior of the stdlib would collapse
+// silently on the first change that takes the name from another channel (e.g.
+// from a JSON field).
+func TestUploadDoesNotUseTheClientFileNameASAPATH(t *testing.T) {
 	t.Parallel()
 
-	const kotuAd = "../../etc/passwd"
+	const badName = "../../etc/passwd"
 
-	svc := &sahteYuklemeler{}
-	govde, tip := multipartGovde(t, "file", kotuAd, coreprovider.ContentTypePNG, pngIcerik)
+	svc := &fakeUploads{}
+	body, contentType := multipartBody(t, "file", badName, coreprovider.ContentTypePNG, pngContent)
 
-	rec := yukle(t, yeniRouter(svc), govde, tip)
+	rec := upload(t, newRouter(svc), body, contentType)
 
-	require.Equal(t, http.StatusCreated, rec.Code, "gövde: %s", rec.Body.String())
+	require.Equal(t, http.StatusCreated, rec.Code, "body: %s", rec.Body.String())
 
-	var yanit struct {
+	var response struct {
 		Data struct {
 			URL          string `json:"url"`
 			OriginalName string `json:"original_name"`
@@ -62,259 +64,268 @@ func TestYuklemeIstemciDosyaAdiniYOLOLARAKKULLANMAZ(t *testing.T) {
 			ID           string `json:"id"`
 		} `json:"data"`
 	}
-	require.NoError(t, jsonCoz(rec.Body.Bytes(), &yanit))
+	require.NoError(t, decodeJSON(rec.Body.Bytes(), &response))
 
-	assert.Equal(t, "passwd", yanit.Data.OriginalName,
-		"ad GÖSTERİM için saklanır; sakınılan şey adın saklanması değil, YOL OLARAK kullanılmasıdır")
-	assert.NotContains(t, yanit.Data.OriginalName, "..",
-		"multipart katmanı dizin bileşenlerini zaten düşürür (RFC 7578)")
-	assert.NotContains(t, yanit.Data.URL, "..", "adres istemci adından türemez")
-	assert.NotContains(t, yanit.Data.URL, "passwd")
-	assert.Equal(t, "/files/URETILENANAHTAR0123456789.png", yanit.Data.URL)
+	assert.Equal(t, "passwd", response.Data.OriginalName,
+		"the name is stored for DISPLAY; what is avoided is not storing the name but USING IT AS A PATH")
+	assert.NotContains(t, response.Data.OriginalName, "..",
+		"the multipart layer already drops the directory components (RFC 7578)")
+	assert.NotContains(t, response.Data.URL, "..", "the address does not derive from the client's name")
+	assert.NotContains(t, response.Data.URL, "passwd")
+	assert.Equal(t, "/files/GENERATEDKEY0123456789.png", response.Data.URL)
 
-	// Görevin istediği yanıt alanları eksiksiz olmalı.
-	assert.NotEmpty(t, yanit.Data.ID)
-	assert.Equal(t, coreprovider.ContentTypePNG, yanit.Data.ContentType)
-	assert.Equal(t, int64(len(pngIcerik)), yanit.Data.Size)
+	// The response fields the task asks for have to be complete.
+	assert.NotEmpty(t, response.Data.ID)
+	assert.Equal(t, coreprovider.ContentTypePNG, response.Data.ContentType)
+	assert.Equal(t, int64(len(pngContent)), response.Data.Size)
 
-	assert.Equal(t, []string{"passwd"}, svc.adlar(),
-		"ad servise VERİ olarak geçer; sağlayıcının sözleşmesinde ad alanı zaten yoktur")
-	assert.Contains(t, kotuAd, "..", "test gerçekten yol geçişi denemesi göndermeli")
+	assert.Equal(t, []string{"passwd"}, svc.names(),
+		"the name passes to the service as DATA; the provider's contract has no name field anyway")
+	assert.Contains(t, badName, "..", "the test really has to send a path traversal attempt")
 }
 
-// TestIcerikTipiISTEMCIYESORULMAZ ikinci güvenlik iddiasıdır.
+// TestTheContentTypeIsNotASKEDOFTheClient is the second security claim.
 //
-// İstemci "image/png" diye YALAN söyleyen bir metin dosyası gönderir. Tespit
-// içerikten yapıldığı için servise giden tip "text/plain"dir ve izin listesi
-// onu reddeder. İstemcinin başlığına güvenen bir liste hiçbir şey elemezdi:
-// aynı numarayla bir HTML dosyası depoya girer ve sunulduğunda tarayıcıda
-// çalışırdı.
-func TestIcerikTipiISTEMCIYESORULMAZ(t *testing.T) {
+// The client sends a text file that LIES by saying "image/png". Because the
+// detection is done from the content, the type that reaches the service is
+// "text/plain" and the allow list rejects it. A list that trusted the client's
+// header would filter out nothing: with the same trick an HTML file would enter
+// the storage and would run in the browser when it was served.
+func TestTheContentTypeIsNotASKEDOFTheClient(t *testing.T) {
 	t.Parallel()
 
-	svc := &sahteYuklemeler{
-		yuklemeHatasi: coreerrors.Invalid(service.CodeTypeNotAllowed,
-			"%q içerik tipi kabul edilmiyor", "text/plain"),
+	svc := &fakeUploads{
+		uploadErr: coreerrors.Invalid(service.CodeTypeNotAllowed,
+			"the %q content type is not accepted", "text/plain"),
 	}
-	govde, tip := multipartGovde(t, "file", "sahte.png", coreprovider.ContentTypePNG,
+	body, contentType := multipartBody(t, "file", "fake.png", coreprovider.ContentTypePNG,
 		"<html><script>alert(1)</script></html>")
 
-	rec := yukle(t, yeniRouter(svc), govde, tip)
+	rec := upload(t, newRouter(svc), body, contentType)
 
-	require.Equal(t, http.StatusUnprocessableEntity, rec.Code, "gövde: %s", rec.Body.String())
-	assert.Equal(t, service.CodeTypeNotAllowed, hataKodu(t, rec))
+	require.Equal(t, http.StatusUnprocessableEntity, rec.Code, "body: %s", rec.Body.String())
+	assert.Equal(t, service.CodeTypeNotAllowed, errorCode(t, rec))
 
-	require.Len(t, svc.tipler(), 1)
-	assert.NotEqual(t, coreprovider.ContentTypePNG, svc.tipler()[0],
-		"istemcinin başlığı bir İDDİADIR; servise geçen tip içerikten gelmeli")
-	assert.True(t, strings.HasPrefix(svc.tipler()[0], "text/"),
-		"tespit edilen tip: %s", svc.tipler()[0])
+	require.Len(t, svc.types(), 1)
+	assert.NotEqual(t, coreprovider.ContentTypePNG, svc.types()[0],
+		"the client's header is a CLAIM; the type passed to the service has to come from the content")
+	assert.True(t, strings.HasPrefix(svc.types()[0], "text/"),
+		"detected type: %s", svc.types()[0])
 }
 
-// TestSVGReddedilir SVG'nin izin listesinden geçemediğini uçtan uca gösterir.
+// TestSVGIsRejected shows end to end that SVG cannot pass the allow list.
 //
-// İki katman birden sınanır: tespit, SVG için hiçbir zaman "image/svg+xml"
-// dönmez (DetectContentType onu XML ya da düz metin görür) ve izin listesi de
-// o tipleri tanımaz. SVG bir görsel gibi görünür ama BELGEDİR: <script>
-// taşıyabilir ve aynı kökenden sunulduğunda depolanmış XSS olur.
-func TestSVGReddedilir(t *testing.T) {
+// Two layers are exercised at once: the detection never returns
+// "image/svg+xml" for an SVG (DetectContentType sees it as XML or as plain
+// text) and the allow list does not know those types either. An SVG looks like
+// an image but it is a DOCUMENT: it can carry <script> and, when it is served
+// from the same origin, it becomes stored XSS.
+func TestSVGIsRejected(t *testing.T) {
 	t.Parallel()
 
 	const svg = `<?xml version="1.0"?><svg xmlns="http://www.w3.org/2000/svg">` +
 		`<script>alert(document.cookie)</script></svg>`
 
-	svc := &sahteYuklemeler{
-		yuklemeHatasi: coreerrors.Invalid(service.CodeTypeNotAllowed,
-			"içerik tipi kabul edilmiyor"),
+	svc := &fakeUploads{
+		uploadErr: coreerrors.Invalid(service.CodeTypeNotAllowed,
+			"the content type is not accepted"),
 	}
-	govde, tip := multipartGovde(t, "file", "logo.svg", "image/svg+xml", svg)
+	body, contentType := multipartBody(t, "file", "logo.svg", "image/svg+xml", svg)
 
-	rec := yukle(t, yeniRouter(svc), govde, tip)
+	rec := upload(t, newRouter(svc), body, contentType)
 
-	require.Equal(t, http.StatusUnprocessableEntity, rec.Code, "gövde: %s", rec.Body.String())
-	assert.Equal(t, service.CodeTypeNotAllowed, hataKodu(t, rec))
+	require.Equal(t, http.StatusUnprocessableEntity, rec.Code, "body: %s", rec.Body.String())
+	assert.Equal(t, service.CodeTypeNotAllowed, errorCode(t, rec))
 
-	require.Len(t, svc.tipler(), 1)
-	assert.NotEqual(t, "image/svg+xml", svc.tipler()[0],
-		"DetectContentType SVG için image/svg+xml DÖNMEZ; istemcinin adı taşınmamalı")
+	require.Len(t, svc.types(), 1)
+	assert.NotEqual(t, "image/svg+xml", svc.types()[0],
+		"DetectContentType DOES NOT RETURN image/svg+xml for an SVG; the client's name must not be carried over")
 }
 
-// TestBoyutSinirinAsanGovdeReddedilir sınırın HTTP katmanında da zorlandığını
-// doğrular.
+// TestABodyExceedingTheSizeLimitIsRejected verifies that the limit is enforced
+// in the HTTP layer as well.
 //
-// Gövdeyi saran MaxBytesReader okuma zincirini ortadan keser ve hata,
-// multipart ayrıştırıcısının ya da servisin içinden sarmalanmış olarak döner;
-// handler onu TİPİYLE tanır.
+// The MaxBytesReader wrapping the body cuts the read chain in the middle and
+// the error comes back wrapped from inside the multipart parser or from inside
+// the service; the handler recognizes it BY ITS TYPE.
 //
-// Yanıt 422'dir, 413 değil: status kodunu handler seçmez (plan Bölüm 2.7),
-// hatanın sınıfından türer ve çekirdeğin sınıf kümesinde 413'ün karşılığı
-// yoktur. İstemcinin dallanacağı şey zaten makine kodudur.
-func TestBoyutSinirinAsanGovdeReddedilir(t *testing.T) {
+// The response is 422, not 413: the handler does not choose the status code
+// (plan Section 2.7), it derives from the class of the error and the core's set
+// of classes has no counterpart for 413. What the client is going to branch on
+// is the machine code anyway.
+func TestABodyExceedingTheSizeLimitIsRejected(t *testing.T) {
 	t.Parallel()
 
-	svc := &sahteYuklemeler{}
-	// Gövde, MaxBytesReader'ın sınırını (dosya sınırı + zarf payı) AŞMALIDIR;
-	// aşmasaydı sınanan şey handler değil, sahte servisin davranışı olurdu.
-	buyuk := pngIcerik + strings.Repeat("A", 16<<10)
-	govde, tip := multipartGovde(t, "file", "buyuk.png", coreprovider.ContentTypePNG, buyuk)
+	svc := &fakeUploads{}
+	// The body HAS TO EXCEED the MaxBytesReader limit (the file limit plus the
+	// envelope allowance); had it not exceeded it, what was being exercised
+	// would be the fake service's behavior and not the handler.
+	large := pngContent + strings.Repeat("A", 16<<10)
+	body, contentType := multipartBody(t, "file", "large.png", coreprovider.ContentTypePNG, large)
 
-	rec := yukle(t, yeniRouter(svc), govde, tip)
+	rec := upload(t, newRouter(svc), body, contentType)
 
-	require.Equal(t, http.StatusUnprocessableEntity, rec.Code, "gövde: %s", rec.Body.String())
-	assert.Equal(t, service.CodeTooLarge, hataKodu(t, rec))
+	require.Equal(t, http.StatusUnprocessableEntity, rec.Code, "body: %s", rec.Body.String())
+	assert.Equal(t, service.CodeTooLarge, errorCode(t, rec))
 }
 
-// TestIlk512BaytAkisaGERIKONUR tespit için okunan baytların kaybolmadığını
-// doğrular.
+// TestTheFirst512BytesArePUTBACKIntoTheStream verifies that the bytes read for
+// the detection are not lost.
 //
-// Handler içerik tipini bulmak için gövdenin başını okur. io.MultiReader ile
-// geri konmasaydı, 512 bayttan büyük her dosya BAŞI EKSİK kaydedilirdi — ve
-// bu, dosya "başarıyla yüklendi" dendikten sonra ancak görsel açılmayınca
-// fark edilirdi.
-func TestIlk512BaytAkisaGERIKONUR(t *testing.T) {
+// The handler reads the head of the body to find the content type. Had they not
+// been put back with io.MultiReader, every file larger than 512 bytes would be
+// recorded WITH ITS HEAD MISSING — and that would only be noticed once the
+// image failed to open, after the file had been declared "uploaded
+// successfully".
+func TestTheFirst512BytesArePUTBACKIntoTheStream(t *testing.T) {
 	t.Parallel()
 
-	svc := &sahteYuklemeler{}
-	// 512'den UZUN bir gövde şart: sniff sınırının altında kalan bir dosyada
-	// "geri koyma" adımının hiç çalışmadığı da fark edilmezdi.
-	icerik := pngIcerik + strings.Repeat("B", 600)
-	govde, tip := multipartGovde(t, "file", "uzun.png", coreprovider.ContentTypePNG, icerik)
+	svc := &fakeUploads{}
+	// A body LONGER than 512 is a must: on a file that stays below the sniff
+	// limit it would not even be noticed that the "put back" step never ran.
+	content := pngContent + strings.Repeat("B", 600)
+	body, contentType := multipartBody(t, "file", "long.png", coreprovider.ContentTypePNG, content)
 
-	rec := yukle(t, yeniRouter(svc), govde, tip)
+	rec := upload(t, newRouter(svc), body, contentType)
 
-	require.Equal(t, http.StatusCreated, rec.Code, "gövde: %s", rec.Body.String())
-	require.Len(t, svc.govdeler(), 1)
-	assert.Equal(t, icerik, svc.govdeler()[0],
-		"servise akan baytlar, gönderilenle BİREBİR aynı olmalı")
-	assert.Equal(t, coreprovider.ContentTypePNG, svc.tipler()[0],
-		"tespit, geri konan baytların önündeki imzadan yapılmalı")
+	require.Equal(t, http.StatusCreated, rec.Code, "body: %s", rec.Body.String())
+	require.Len(t, svc.bodies(), 1)
+	assert.Equal(t, content, svc.bodies()[0],
+		"the bytes flowing to the service have to be EXACTLY the ones that were sent")
+	assert.Equal(t, coreprovider.ContentTypePNG, svc.types()[0],
+		"the detection has to be made from the signature in front of the bytes that were put back")
 }
 
-// TestBeklenmeyenAlanReddedilir tek dosya sözleşmesinin zorlandığını doğrular.
-func TestBeklenmeyenAlanReddedilir(t *testing.T) {
+// TestAnUnexpectedFieldIsRejected verifies that the single-file contract is
+// enforced.
+func TestAnUnexpectedFieldIsRejected(t *testing.T) {
 	t.Parallel()
 
-	svc := &sahteYuklemeler{}
-	govde, tip := multipartGovde(t, "belge", "a.png", coreprovider.ContentTypePNG, pngIcerik)
+	svc := &fakeUploads{}
+	body, contentType := multipartBody(t, "document", "a.png", coreprovider.ContentTypePNG, pngContent)
 
-	rec := yukle(t, yeniRouter(svc), govde, tip)
+	rec := upload(t, newRouter(svc), body, contentType)
 
 	require.Equal(t, http.StatusUnprocessableEntity, rec.Code)
-	assert.Empty(t, svc.tipler(), "servise hiç gidilmemeli")
+	assert.Empty(t, svc.types(), "the service must not be reached at all")
 }
 
-// TestJSONGovdeReddedilir ucun multipart beklediğini doğrular.
+// TestAJSONBodyIsRejected verifies that the endpoint expects multipart.
 //
-// Şemada da "application/json" YAZILMAZ (bkz. describe.go): yazılsaydı,
-// üretilen istemci dosyayı JSON gövdesinde göndermeye çalışır ve her istek
-// buradaki hataya düşerdi.
-func TestJSONGovdeReddedilir(t *testing.T) {
+// "application/json" IS NOT WRITTEN in the schema either (see describe.go): had
+// it been, the generated client would try to send the file in a JSON body and
+// every request would fall into the error here.
+func TestAJSONBodyIsRejected(t *testing.T) {
 	t.Parallel()
 
-	rec := yukle(t, yeniRouter(&sahteYuklemeler{}),
-		strings.NewReader(`{"url":"https://ornek/a.png"}`), "application/json")
+	rec := upload(t, newRouter(&fakeUploads{}),
+		strings.NewReader(`{"url":"https://example/a.png"}`), "application/json")
 
 	require.Equal(t, http.StatusUnprocessableEntity, rec.Code)
 }
 
-// TestBosDosyaReddedilir sıfır baytlık yüklemenin kabul edilmediğini doğrular.
-func TestBosDosyaReddedilir(t *testing.T) {
+// TestAnEmptyFileIsRejected verifies that a zero-byte upload is not accepted.
+func TestAnEmptyFileIsRejected(t *testing.T) {
 	t.Parallel()
 
-	svc := &sahteYuklemeler{}
-	govde, tip := multipartGovde(t, "file", "bos.png", coreprovider.ContentTypePNG, "")
+	svc := &fakeUploads{}
+	body, contentType := multipartBody(t, "file", "empty.png", coreprovider.ContentTypePNG, "")
 
-	rec := yukle(t, yeniRouter(svc), govde, tip)
+	rec := upload(t, newRouter(svc), body, contentType)
 
 	require.Equal(t, http.StatusUnprocessableEntity, rec.Code)
-	assert.Empty(t, svc.tipler(), "servise hiç gidilmemeli")
+	assert.Empty(t, svc.types(), "the service must not be reached at all")
 }
 
-// TestSunumNOSNIFFVeSAKLANANTipiYazar görevin sunum iddiasıdır.
+// TestServingWritesNOSNIFFAndTheSTOREDType is the task's serving claim.
 //
-// İki başlık birlikte sınanır çünkü biri olmadan diğeri yetmez: Content-Type
-// saklanan tipten yazılır, ama nosniff olmadan tarayıcı içeriğe bakıp kendi
-// tahminini yapar ve "image/png" olarak saklanmış ama HTML'e benzeyen bir
-// dosya HTML gibi çalıştırılabilirdi. İçeriğin bilerek HTML seçilmesinin
-// sebebi budur.
-func TestSunumNOSNIFFVeSAKLANANTipiYazar(t *testing.T) {
+// The two headers are exercised together because without one the other is not
+// enough: the Content-Type is written from the stored type, but without nosniff
+// the browser looks at the content and makes its own guess, and a file stored
+// as "image/png" that looks like HTML could be executed as HTML. That is why
+// the content is deliberately chosen to be HTML.
+func TestServingWritesNOSNIFFAndTheSTOREDType(t *testing.T) {
 	t.Parallel()
 
-	const htmlBenzeri = "<html><body><script>alert(1)</script></body></html>"
+	const htmlLike = "<html><body><script>alert(1)</script></body></html>"
 
-	svc := &sahteYuklemeler{acilan: acilanDosya(coreprovider.ContentTypePNG, htmlBenzeri)}
+	svc := &fakeUploads{opened: openedFile(coreprovider.ContentTypePNG, htmlLike)}
 
-	rec := istek(t, yeniRouter(svc), http.MethodGet, "/files/URETILENANAHTAR0123456789.png")
+	rec := request(t, newRouter(svc), http.MethodGet, "/files/GENERATEDKEY0123456789.png")
 
 	require.Equal(t, http.StatusOK, rec.Code)
 	assert.Equal(t, coreprovider.ContentTypePNG, rec.Header().Get("Content-Type"),
-		"Content-Type SAKLANAN tipten yazılmalı")
+		"the Content-Type has to be written from the STORED type")
 	assert.Equal(t, "nosniff", rec.Header().Get("X-Content-Type-Options"))
-	assert.Equal(t, htmlBenzeri, rec.Body.String())
+	assert.Equal(t, htmlLike, rec.Body.String())
 	assert.Empty(t, rec.Header().Get("Content-Disposition"),
-		"istemcinin dosya adı hiçbir BAŞLIĞA yazılmamalı")
+		"the client's file name must not be written into ANY HEADER")
 }
 
-// TestSunumHataYanitindaDaNOSNIFFTasir başlığın HER yanıtta olduğunu doğrular.
+// TestServingCarriesNOSNIFFOnErrorResponsesToo verifies that the header is on
+// EVERY response.
 //
-// "Her yanıtta" kuralı yalnızca başarılı yanıtta uygulansaydı, 404 gövdesi
-// (JSON hata zarfı) tarayıcı tahminine açık kalırdı. Ucuz ve mutlak olan bir
-// kuralın istisnası olmamalıdır.
-func TestSunumHataYanitindaDaNOSNIFFTasir(t *testing.T) {
+// Had the "on every response" rule been applied only to the successful
+// response, the 404 body (the JSON error envelope) would stay open to the
+// browser's guessing. A rule that is cheap and absolute must have no exception.
+func TestServingCarriesNOSNIFFOnErrorResponsesToo(t *testing.T) {
 	t.Parallel()
 
-	svc := &sahteYuklemeler{acmaHatasi: bulunamadi()}
+	svc := &fakeUploads{openErr: notFound()}
 
-	rec := istek(t, yeniRouter(svc), http.MethodGet, "/files/YOKYOKYOKYOKYOKYOKYOKYOK00.png")
+	rec := request(t, newRouter(svc), http.MethodGet, "/files/MISSINGMISSINGMISSING00000.png")
 
 	require.Equal(t, http.StatusNotFound, rec.Code)
 	assert.Equal(t, "nosniff", rec.Header().Get("X-Content-Type-Options"))
 }
 
-// TestSunumUcuYETKIISTEMEZ korumasız önekin bilinçli olduğunu sabitler.
+// TestTheServingEndpointASKSFORNoScope pins that the unprotected prefix is
+// deliberate.
 //
-// Vitrindeki <img> etiketi ne Authorization ne publishable anahtar
-// gönderebilir; uç korumalı bir önek altına konsaydı yüklenen her görsel
-// vitrinde 401 dönerdi. Test, kimliksiz bir isteğin GERÇEKTEN geçtiğini
-// doğrular — bu, karar bir gün sessizce değiştirilirse patlar.
-func TestSunumUcuYETKIISTEMEZ(t *testing.T) {
+// The <img> tag on the storefront can send neither an Authorization header nor
+// a publishable key; had the endpoint been put under a protected prefix, every
+// uploaded image would return 401 on the storefront. The test verifies that an
+// identity-less request REALLY passes — this blows up if the decision is ever
+// changed silently.
+func TestTheServingEndpointASKSFORNoScope(t *testing.T) {
 	t.Parallel()
 
-	svc := &sahteYuklemeler{acilan: acilanDosya(coreprovider.ContentTypePNG, "baytlar")}
-	r := yeniRouter(svc)
+	svc := &fakeUploads{opened: openedFile(coreprovider.ContentTypePNG, "bytes")}
+	r := newRouter(svc)
 
-	// Kimlik context'e KONMAZ: tarayıcının bir <img> isteğinde yaptığı tam
-	// olarak budur.
-	req := httptest.NewRequest(http.MethodGet, "/files/URETILENANAHTAR0123456789.png", http.NoBody)
+	// The identity IS NOT PUT into the context: that is exactly what the
+	// browser does on an <img> request.
+	req := httptest.NewRequest(http.MethodGet, "/files/GENERATEDKEY0123456789.png", http.NoBody)
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 
 	require.Equal(t, http.StatusOK, rec.Code,
-		"sunum ucu kimlik istemez; istese vitrin görselleri 401 dönerdi")
+		"the serving endpoint asks for no identity; if it did, the storefront images would return 401")
 	assert.Equal(t, "nosniff", rec.Header().Get("X-Content-Type-Options"))
 }
 
-// TestYonetimUclariYETKIISTER korumanın gerçekten takılı olduğunu doğrular.
+// TestTheAdminEndpointsREQUIREAScope verifies that the protection is really
+// plugged in.
 //
-// Kimlik doğrulama (corehttp.RequireAdmin) router'ı kuran tarafta takılır;
-// buradaki iddia YETKİ katmanıdır: yetkileri boşaltılmış bir yönetim
-// kullanıcısı da geçerli bir kimliktir ve bu katman olmasaydı dosya
-// yükleyebilir ve silebilirdi.
-func TestYonetimUclariYETKIISTER(t *testing.T) {
+// The authentication (corehttp.RequireAdmin) is plugged in on the side that
+// builds the router; the claim here is the SCOPE layer: an admin user whose
+// scopes have been emptied is a valid identity too, and without this layer it
+// could upload and delete files.
+func TestTheAdminEndpointsREQUIREAScope(t *testing.T) {
 	t.Parallel()
 
-	r := yeniRouter(&sahteYuklemeler{})
-	yetkisiz := corehttp.Principal{ID: "user_x", Kind: "user", Scopes: []string{}}
+	r := newRouter(&fakeUploads{})
+	unscoped := corehttp.Principal{ID: "user_x", Kind: "user", Scopes: []string{}}
 
-	uclar := map[string]struct{ metot, yol string }{
-		"listeleme": {http.MethodGet, "/admin/v1/uploads"},
-		"silme":     {http.MethodDelete, "/admin/v1/uploads/upl_1"},
+	endpoints := map[string]struct{ method, path string }{
+		"listing":  {http.MethodGet, "/admin/v1/uploads"},
+		"deleting": {http.MethodDelete, "/admin/v1/uploads/upl_1"},
 	}
 
-	for ad, uc := range uclar {
-		t.Run(ad, func(t *testing.T) {
-			req := httptest.NewRequest(uc.metot, uc.yol, http.NoBody)
-			req = req.WithContext(corehttp.WithPrincipal(req.Context(), yetkisiz))
+	for name, endpoint := range endpoints {
+		t.Run(name, func(t *testing.T) {
+			req := httptest.NewRequest(endpoint.method, endpoint.path, http.NoBody)
+			req = req.WithContext(corehttp.WithPrincipal(req.Context(), unscoped))
 
 			rec := httptest.NewRecorder()
 			r.ServeHTTP(rec, req)
@@ -324,54 +335,54 @@ func TestYonetimUclariYETKIISTER(t *testing.T) {
 	}
 }
 
-// TestSilmeIDEMPOTENTTIR ikinci silmenin de 204 döndüğünü doğrular.
+// TestDeleteISIDEMPOTENT verifies that a second delete also returns 204.
 //
-// Servis idempotenttir ve handler onu olduğu gibi yansıtır: silme bir SON
-// DURUM iddiasıdır ve yeniden denenen bir temizlik akışı ikinci turunda hata
-// almamalıdır.
-func TestSilmeIDEMPOTENTTIR(t *testing.T) {
+// The service is idempotent and the handler reflects that as it is: a delete is
+// a claim about an END STATE and a retried cleanup flow must not get an error on
+// its second round.
+func TestDeleteISIDEMPOTENT(t *testing.T) {
 	t.Parallel()
 
-	svc := &sahteYuklemeler{}
-	r := yeniRouter(svc)
+	svc := &fakeUploads{}
+	r := newRouter(svc)
 
-	ilk := istek(t, r, http.MethodDelete, "/admin/v1/uploads/upl_TEST")
-	ikinci := istek(t, r, http.MethodDelete, "/admin/v1/uploads/upl_TEST")
+	first := request(t, r, http.MethodDelete, "/admin/v1/uploads/upl_TEST")
+	second := request(t, r, http.MethodDelete, "/admin/v1/uploads/upl_TEST")
 
-	assert.Equal(t, http.StatusNoContent, ilk.Code)
-	assert.Equal(t, http.StatusNoContent, ikinci.Code, "İKİNCİ silme de 204 dönmeli")
-	assert.Empty(t, ilk.Body.String(), "204 gövdesizdir")
-	assert.Equal(t, []string{"upl_TEST", "upl_TEST"}, svc.silinenler)
+	assert.Equal(t, http.StatusNoContent, first.Code)
+	assert.Equal(t, http.StatusNoContent, second.Code, "the SECOND delete has to return 204 as well")
+	assert.Empty(t, first.Body.String(), "a 204 has no body")
+	assert.Equal(t, []string{"upl_TEST", "upl_TEST"}, svc.deleted)
 }
 
-// TestListeZarfIcindeDoner liste yanıtının biçimini sabitler.
-func TestListeZarfIcindeDoner(t *testing.T) {
+// TestTheListComesBackInAnEnvelope pins the shape of the list response.
+func TestTheListComesBackInAnEnvelope(t *testing.T) {
 	t.Parallel()
 
-	svc := &sahteYuklemeler{}
-	yuklendi, err := svc.Upload(t.Context(), service.UploadInput{
+	svc := &fakeUploads{}
+	uploaded, err := svc.Upload(t.Context(), service.UploadInput{
 		ContentType: coreprovider.ContentTypePNG,
-		Body:        strings.NewReader(pngIcerik),
+		Body:        strings.NewReader(pngContent),
 	})
 	require.NoError(t, err)
-	svc.kayitlar = append(svc.kayitlar, yuklendi)
+	svc.records = append(svc.records, uploaded)
 
-	rec := istek(t, yeniRouter(svc), http.MethodGet, "/admin/v1/uploads")
+	rec := request(t, newRouter(svc), http.MethodGet, "/admin/v1/uploads")
 
 	require.Equal(t, http.StatusOK, rec.Code)
 
-	var govde struct {
+	var body struct {
 		Data  []map[string]any `json:"data"`
 		Count int64            `json:"count"`
 		Limit int64            `json:"limit"`
 	}
-	require.NoError(t, jsonCoz(rec.Body.Bytes(), &govde))
+	require.NoError(t, decodeJSON(rec.Body.Bytes(), &body))
 
-	require.Len(t, govde.Data, 1)
-	assert.Equal(t, int64(1), govde.Count)
-	assert.Equal(t, service.DefaultLimit, govde.Limit,
-		"zarf, servisin UYGULADIĞI limiti bildirmeli")
-	assert.NotContains(t, govde.Data[0], "storage_key",
-		"depo anahtarı yayımlanmaz; istemcinin ihtiyacı olan tek şey adrestir")
-	assert.Contains(t, govde.Data[0], "url")
+	require.Len(t, body.Data, 1)
+	assert.Equal(t, int64(1), body.Count)
+	assert.Equal(t, service.DefaultLimit, body.Limit,
+		"the envelope has to report the limit the service APPLIED")
+	assert.NotContains(t, body.Data[0], "storage_key",
+		"the storage key is not published; the only thing the client needs is the address")
+	assert.Contains(t, body.Data[0], "url")
 }

@@ -9,41 +9,43 @@ import (
 	coreprovider "github.com/bdrtr/gobit/internal/core/provider"
 )
 
-// ProviderRegistry bildirim sağlayıcılarını kimlikleriyle tutar.
+// ProviderRegistry holds the notification providers under their identifiers.
 //
-// Modül kendi varsayılan sağlayıcısını
+// The module puts its own default provider
 // ([github.com/bdrtr/gobit/internal/modules/notification/logonly.Provider])
-// Register sırasında buraya koyar ve kaydı container'a
-// "notification.providers" adıyla verir. Eklenti sistemi
-// (coreplugin.Host.RegisterNotificationProvider), çekirdeğe ve bu modüle
-// DOKUNMADAN kaydı çözüp kendi sağlayıcısını ekler; sözleşme
-// internal/core/provider'daki NotificationProvider arayüzüdür.
+// in here during Register and hands the registry to the container under the
+// name "notification.providers". The plugin system
+// (coreplugin.Host.RegisterNotificationProvider) resolves that registry and
+// adds its own provider WITHOUT TOUCHING the core or this module; the contract
+// is the NotificationProvider interface in internal/core/provider.
 //
-// Eşzamanlı kullanıma güvenlidir: kayıt açılışta, okuma her bildirimde yapılır.
+// It is safe for concurrent use: registration happens at startup, reading on
+// every notification.
 type ProviderRegistry struct {
 	mu        sync.RWMutex
 	providers map[string]coreprovider.NotificationProvider
 }
 
-// NewProviderRegistry boş bir sağlayıcı kaydı üretir.
+// NewProviderRegistry produces an empty provider registry.
 func NewProviderRegistry() *ProviderRegistry {
 	return &ProviderRegistry{providers: make(map[string]coreprovider.NotificationProvider)}
 }
 
-// Register sağlayıcıyı kendi kimliğiyle kaydeder.
+// Register records the provider under its own identifier.
 //
-// Aynı kimlikle ikinci bir kayıt errors.Conflict döner ve mevcut sağlayıcı
-// KORUNUR. Sessizce üzerine yazmak, iki eklentinin aynı kimliği kullandığı bir
-// kurulumda hangi sağlayıcının çalıştığını yükleme sırasına bırakırdı — burada
-// bunun bedeli, müşteriye gittiği sanılan sipariş onayının hiç gönderilmemesi
-// ya da yanlış bir hesaptan gönderilmesidir.
+// A second registration with the same identifier returns errors.Conflict and
+// the existing provider is KEPT. Overwriting it silently would, in a setup
+// where two plugins use the same identifier, leave which provider runs up to
+// the load order — and the price of that here is an order confirmation that is
+// believed to have gone to the customer never being sent at all, or being sent
+// from the wrong account.
 func (r *ProviderRegistry) Register(p coreprovider.NotificationProvider) error {
 	if p == nil {
-		return errors.Invalid(CodeInvalidInput, "sağlayıcı nil olamaz")
+		return errors.Invalid(CodeInvalidInput, "the provider cannot be nil")
 	}
 	id := strings.TrimSpace(p.ID())
 	if id == "" {
-		return errors.Invalid(CodeInvalidInput, "sağlayıcı kimliği boş olamaz")
+		return errors.Invalid(CodeInvalidInput, "the provider identifier cannot be empty")
 	}
 
 	r.mu.Lock()
@@ -51,22 +53,23 @@ func (r *ProviderRegistry) Register(p coreprovider.NotificationProvider) error {
 
 	if _, exists := r.providers[id]; exists {
 		return errors.Conflict(CodeProviderExists,
-			"%q kimlikli bir bildirim sağlayıcısı zaten kayıtlı", id)
+			"a notification provider with the identifier %q is already registered", id)
 	}
 	r.providers[id] = p
 	return nil
 }
 
-// Get sağlayıcıyı kimliğiyle döner; kayıtlı değilse errors.NotFound.
+// Get returns the provider by its identifier; errors.NotFound when it is not
+// registered.
 //
-// Hata mesajı ARANAN kimliği ve KAYITLI kimlikleri birlikte yazar: bir
-// sağlayıcının kaydedilmeyi unutulması (ya da NOTIFICATION_PROVIDER'ın yanlış
-// yazılması) çalışma zamanında ortaya çıkan bir kurulum hatasıdır ve teşhis
-// edilebilir olmalıdır (bkz. ADR 0002).
+// The error message writes the identifier that was LOOKED FOR and the
+// REGISTERED identifiers together: a provider being forgotten during
+// registration (or NOTIFICATION_PROVIDER being misspelled) is a setup fault
+// that surfaces at run time and it has to be diagnosable (see ADR 0002).
 func (r *ProviderRegistry) Get(id string) (coreprovider.NotificationProvider, error) {
 	wanted := strings.TrimSpace(id)
 	if wanted == "" {
-		return nil, errors.Invalid(CodeInvalidInput, "sağlayıcı kimliği boş olamaz")
+		return nil, errors.Invalid(CodeInvalidInput, "the provider identifier cannot be empty")
 	}
 
 	r.mu.RLock()
@@ -75,23 +78,25 @@ func (r *ProviderRegistry) Get(id string) (coreprovider.NotificationProvider, er
 	p, ok := r.providers[wanted]
 	if !ok {
 		return nil, errors.NotFound(CodeProviderNotFound,
-			"%q bildirim sağlayıcısı kayıtlı değil; kayıtlı olanlar: %s",
+			"the notification provider %q is not registered; the registered ones are: %s",
 			wanted, strings.Join(r.sortedIDs(), ", "))
 	}
 	return p, nil
 }
 
-// IDs kayıtlı sağlayıcı kimliklerini sıralı olarak döner.
+// IDs returns the registered provider identifiers in sorted order.
 func (r *ProviderRegistry) IDs() []string {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	return r.sortedIDs()
 }
 
-// sortedIDs kayıtlı kimlikleri sıralı döner; çağıran kilidi tutuyor olmalıdır.
+// sortedIDs returns the registered identifiers sorted; the caller has to be
+// holding the lock.
 //
-// Sıra sabittir: hata mesajları map üzerinde dönerek üretilseydi her çağrıda
-// başka bir sırada çıkar, teşhisi ve testi zorlaştırırdı.
+// The order is STABLE: had the error messages been produced by ranging over the
+// map, they would come out in a different order on every call and that would
+// make diagnosis and testing harder.
 func (r *ProviderRegistry) sortedIDs() []string {
 	out := make([]string, 0, len(r.providers))
 	for id := range r.providers {

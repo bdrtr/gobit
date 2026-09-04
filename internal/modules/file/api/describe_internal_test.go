@@ -11,16 +11,18 @@ import (
 	"github.com/bdrtr/gobit/internal/core/openapi"
 )
 
-// Test DAHİLİ pakettedir çünkü anlatılan gövde ([uploadDTO]) dışa kapalıdır.
-// Dışarıdan sınamanın tek yolu tipi dışa açmak olurdu; belgeyi sınamak uğruna
-// modülün yüzeyini genişletmek, sınanan şeyin kendisini bozardı.
+// The test is in the INTERNAL package because the body being described
+// ([uploadDTO]) is unexported. The only way to exercise it from the outside
+// would be to export the type; widening the module's surface for the sake of
+// exercising the document would break the very thing being exercised.
 
-// belge Describe'ın çıktısını GERÇEK route ağacına karşı üretip JSON'dan geri
-// okunmuş hâlini döner.
+// docPaths produces the output of Describe against the REAL route tree and
+// returns it as read back from JSON.
 //
-// Router da gerçek olmalıdır: açıklama ile route'un yolu ayrışırsa hata BURADA
-// görünsün, üretimde /openapi.json'a bakan birinde değil.
-func belge(t *testing.T) map[string]any {
+// The router has to be real too: if the description and the route's path drift
+// apart, let the error show up HERE and not on somebody looking at
+// /openapi.json in production.
+func docPaths(t *testing.T) map[string]any {
 	t.Helper()
 
 	doc := openapi.New("test", "v1")
@@ -29,172 +31,176 @@ func belge(t *testing.T) map[string]any {
 	r := chi.NewRouter()
 	New(nil).Routes(r)
 
-	ham, err := doc.Build(r)
+	raw, err := doc.Build(r)
 	require.NoError(t, err)
 	require.Empty(t, doc.UnmatchedDescriptions(),
-		"anlatılan her uç bir route ile eşleşmeli; eşleşmeyen kayıt belgeye hiç girmez")
+		"every described endpoint has to match a route; a record that does not match never enters the document")
 
-	kodlanmis, err := json.Marshal(ham)
+	encoded, err := json.Marshal(raw)
 	require.NoError(t, err)
 
-	var cozulmus map[string]any
-	require.NoError(t, json.Unmarshal(kodlanmis, &cozulmus))
+	var decoded map[string]any
+	require.NoError(t, json.Unmarshal(encoded, &decoded))
 
-	yollar, ok := cozulmus["paths"].(map[string]any)
-	require.True(t, ok, "belgede paths olmalı")
+	paths, ok := decoded["paths"].(map[string]any)
+	require.True(t, ok, "the document has to have paths")
 
-	return yollar
+	return paths
 }
 
-// islem verilen yolun belirtilen metodunu döner.
-func islem(t *testing.T, yollar map[string]any, yol, metot string) map[string]any {
+// operation returns the given method of the given path.
+func operation(t *testing.T, paths map[string]any, path, method string) map[string]any {
 	t.Helper()
 
-	kayit, ok := yollar[yol].(map[string]any)
-	require.True(t, ok, "%q belgede olmalı", yol)
+	entry, ok := paths[path].(map[string]any)
+	require.True(t, ok, "%q has to be in the document", path)
 
-	op, ok := kayit[metot].(map[string]any)
-	require.True(t, ok, "%q için %s anlatılmalı", yol, metot)
+	op, ok := entry[method].(map[string]any)
+	require.True(t, ok, "%s has to be described for %q", method, path)
 
 	return op
 }
 
-// TestYuklemeUcuMULTIPARTAnlatir şemanın en kritik iddiasıdır.
+// TestTheUploadEndpointDescribesMULTIPART is the most critical claim about the
+// schema.
 //
-// Gövde "application/json" yazılsaydı, üretilen istemci dosyayı JSON gövdesinde
-// göndermeye çalışır ve HER istek reddedilirdi — üstelik şemaya bakan
-// geliştirici, hatanın kendi kodunda olduğunu sanardı. Yanlış bir şema burada
-// eksik bir şemadan kötüdür.
-func TestYuklemeUcuMULTIPARTAnlatir(t *testing.T) {
+// Had the body been written as "application/json", the generated client would
+// try to send the file in a JSON body and EVERY request would be rejected — and
+// on top of that the developer reading the schema would think the fault was in
+// their own code. A wrong schema is worse than a missing schema here.
+func TestTheUploadEndpointDescribesMULTIPART(t *testing.T) {
 	t.Parallel()
 
-	post := islem(t, belge(t), pathAdminUploads, "post")
+	post := operation(t, docPaths(t), pathAdminUploads, "post")
 
-	govde, ok := post["requestBody"].(map[string]any)
-	require.True(t, ok, "yükleme ucu istek gövdesi anlatmalı")
+	body, ok := post["requestBody"].(map[string]any)
+	require.True(t, ok, "the upload endpoint has to describe a request body")
 
-	icerik, ok := govde["content"].(map[string]any)
+	content, ok := body["content"].(map[string]any)
 	require.True(t, ok)
 
-	assert.Contains(t, icerik, icerikMultipart)
-	assert.NotContains(t, icerik, "application/json",
-		"bu uç JSON OKUMAZ; şemada JSON yazmak doğrudan yalan olurdu")
+	assert.Contains(t, content, contentMultipart)
+	assert.NotContains(t, content, "application/json",
+		"this endpoint READS NO JSON; writing JSON in the schema would be an outright lie")
 
-	sema, ok := icerik[icerikMultipart].(map[string]any)
+	media, ok := content[contentMultipart].(map[string]any)
 	require.True(t, ok)
 
-	alanlar, ok := sema["schema"].(map[string]any)
+	fields, ok := media["schema"].(map[string]any)
 	require.True(t, ok)
 
-	ozellikler, ok := alanlar[semaOzellikler].(map[string]any)
+	properties, ok := fields[schemaProperties].(map[string]any)
 	require.True(t, ok)
-	require.Contains(t, ozellikler, fieldFile, "handler'ın okuduğu alan anlatılmalı")
+	require.Contains(t, properties, fieldFile, "the field the handler reads has to be described")
 
-	alan, ok := ozellikler[fieldFile].(map[string]any)
+	field, ok := properties[fieldFile].(map[string]any)
 	require.True(t, ok)
-	assert.Equal(t, bicimIkili, alan[semaBicim],
-		"ikili içerik format: binary ile anlatılır; aksi hâlde üreteç metin gönderir")
+	assert.Equal(t, formatBinary, field[schemaFormat],
+		"binary content is described with format: binary; otherwise the generator sends text")
 }
 
-// TestYuklemeUcu201veGovdeAnlatir başarı yanıtının şeklini sabitler.
-func TestYuklemeUcu201veGovdeAnlatir(t *testing.T) {
+// TestTheUploadEndpointDescribes201AndItsBody pins the shape of the success
+// response.
+func TestTheUploadEndpointDescribes201AndItsBody(t *testing.T) {
 	t.Parallel()
 
-	post := islem(t, belge(t), pathAdminUploads, "post")
+	post := operation(t, docPaths(t), pathAdminUploads, "post")
 
-	yanitlar, ok := post["responses"].(map[string]any)
+	responses, ok := post["responses"].(map[string]any)
 	require.True(t, ok)
-	require.Contains(t, yanitlar, "201")
+	require.Contains(t, responses, "201")
 
-	yanit, ok := yanitlar["201"].(map[string]any)
+	response, ok := responses["201"].(map[string]any)
 	require.True(t, ok)
-	assert.Contains(t, yanit, "content", "201 bir gövde döner ve gövdesi anlatılmalı")
+	assert.Contains(t, response, "content", "a 201 returns a body and its body has to be described")
 }
 
-// TestSilmeUcu204UGovdesizAnlatir 204'ün gövdesiz olduğunu sabitler.
+// TestTheDeleteEndpointDescribes204AsBodiless pins that the 204 has no body.
 //
-// İçerik şeması yazılsaydı istemci üreteci okunacak bir gövde vaat eder ve
-// üretilen metot boş yanıtı çözmeye çalışırdı.
-func TestSilmeUcu204UGovdesizAnlatir(t *testing.T) {
+// Had a content schema been written, the client generator would promise a body
+// to read and the generated method would try to decode an empty response.
+func TestTheDeleteEndpointDescribes204AsBodiless(t *testing.T) {
 	t.Parallel()
 
-	del := islem(t, belge(t), pathAdminUpload, "delete")
+	del := operation(t, docPaths(t), pathAdminUpload, "delete")
 
-	yanitlar, ok := del["responses"].(map[string]any)
+	responses, ok := del["responses"].(map[string]any)
 	require.True(t, ok)
-	require.Contains(t, yanitlar, "204")
+	require.Contains(t, responses, "204")
 
-	yanit, ok := yanitlar["204"].(map[string]any)
+	response, ok := responses["204"].(map[string]any)
 	require.True(t, ok)
-	assert.NotContains(t, yanit, "content", "204 gövdesizdir")
-	assert.NotEmpty(t, yanit[semaAciklama])
+	assert.NotContains(t, response, "content", "a 204 has no body")
+	assert.NotEmpty(t, response[schemaDescription])
 }
 
-// TestListeUcuOkunanTumParametreleriAnlatir belgedeki parametre kümesinin
-// handler'ın GERÇEKTEN okuduğu kümeyle aynı olduğunu doğrular.
+// TestTheListEndpointDescribesEveryParameterItReads verifies that the set of
+// parameters in the document is the same as the set the handler REALLY reads.
 //
-// İki taraf ayrıştığında iki ayrı sessiz arıza doğar: anlatılmayan bir
-// parametre istemci üretecinde hiç görünmez, anlatılan ama okunmayan bir
-// parametre ise çalışmayan bir vaattir.
-func TestListeUcuOkunanTumParametreleriAnlatir(t *testing.T) {
+// When the two sides drift apart two separate silent failures are born: a
+// parameter that is not described never appears in the client generator, and a
+// parameter that is described but not read is a promise that does not work.
+func TestTheListEndpointDescribesEveryParameterItReads(t *testing.T) {
 	t.Parallel()
 
-	get := islem(t, belge(t), pathAdminUploads, "get")
+	get := operation(t, docPaths(t), pathAdminUploads, "get")
 
-	ham, ok := get["parameters"].([]any)
-	require.True(t, ok, "uç sorgu parametresi anlatmalı")
+	raw, ok := get["parameters"].([]any)
+	require.True(t, ok, "the endpoint has to describe its query parameters")
 
-	adlar := make([]string, 0, len(ham))
-	for _, p := range ham {
+	names := make([]string, 0, len(raw))
+	for _, p := range raw {
 		param, castOK := p.(map[string]any)
 		require.True(t, castOK)
 
-		ad, adOK := param["name"].(string)
-		require.True(t, adOK, "parametre adı dize olmalı: %#v", param)
-		adlar = append(adlar, ad)
+		name, nameOK := param["name"].(string)
+		require.True(t, nameOK, "the parameter name has to be a string: %#v", param)
+		names = append(names, name)
 	}
 
-	assert.ElementsMatch(t, []string{queryLimit, queryOffset}, adlar,
-		"belgedeki parametreler handler'ın okuduklarıyla birebir aynı olmalı")
+	assert.ElementsMatch(t, []string{queryLimit, queryOffset}, names,
+		"the parameters in the document have to match the ones the handler reads exactly")
 }
 
-// TestSunumUcuBelgeyeGIRMEZ kapsam sınırının bilinçli olduğunu sabitler.
+// TestTheServingEndpointIsNotINTheDocument pins that the scope limit is
+// deliberate.
 //
-// Çekirdek belgeye yalnızca /admin/v1 ve /store/v1 öneklerini alır; /files bir
-// API çağrısı değil, bir <img> etiketinin hedefidir. Eksikliğin test edilmesi,
-// bir gün "unutulmuş" diye eklenmesini engeller — eklenseydi, istemci üreteci
-// kimliksiz çağrılan bir metot üretir ve o metot şemadaki güvenlik
-// varsayılanını miras alarak yanlış anlatılırdı.
-func TestSunumUcuBelgeyeGIRMEZ(t *testing.T) {
+// The core takes only the /admin/v1 and /store/v1 prefixes into the document;
+// /files is not an API call but the target of an <img> tag. Testing the
+// omission prevents it from being added one day because it was "forgotten" —
+// had it been added, the client generator would produce a method that is called
+// without an identity and that method would inherit the security default of the
+// schema and so be described wrongly.
+func TestTheServingEndpointIsNotINTheDocument(t *testing.T) {
 	t.Parallel()
 
-	yollar := belge(t)
+	paths := docPaths(t)
 
-	for yol := range yollar {
-		assert.NotContains(t, yol, "/files/",
-			"sunum ucu belgeye girmemeli; çekirdek zaten yalnızca API öneklerini alır")
+	for path := range paths {
+		assert.NotContains(t, path, "/files/",
+			"the serving endpoint must not enter the document; the core already takes only the API prefixes")
 	}
 }
 
-// TestDescribeGovdeDEPOANAHTARIAnlatmaz şemanın, yayımlanmayan bir alanı vaat
-// etmediğini doğrular.
+// TestDescribeDoesNotDescribeTheSTORAGEKEY verifies that the schema does not
+// promise a field that is not published.
 //
-// Anahtar ile adres AYRI şeylerdir: bugün adres anahtardan türüyor ama bir
-// nesne deposunda adres imzalıdır ve anahtarla ilgisi yoktur. İkisini birden
-// yayımlayan bir şema o gün sessizce yalan söylemeye başlardı.
-func TestDescribeGovdeDEPOANAHTARIAnlatmaz(t *testing.T) {
+// The key and the address are SEPARATE things: today the address derives from
+// the key, but in an object store the address is signed and has nothing to do
+// with the key. A schema publishing both would quietly start lying on that day.
+func TestDescribeDoesNotDescribeTheSTORAGEKEY(t *testing.T) {
 	t.Parallel()
 
 	doc := openapi.New("test", "v1")
-	sema := doc.SchemaOf(uploadDTO{})
-	require.NotEmpty(t, sema)
+	schema := doc.SchemaOf(uploadDTO{})
+	require.NotEmpty(t, schema)
 
-	kodlanmis, err := json.Marshal(doc.Schemas())
+	encoded, err := json.Marshal(doc.Schemas())
 	require.NoError(t, err)
 
-	metin := string(kodlanmis)
-	assert.NotContains(t, metin, `"storage_key"`, "depo anahtarı yayımlanmaz")
-	assert.Contains(t, metin, `"url"`, "istemcinin ihtiyacı olan alan adrestir")
-	assert.Contains(t, metin, `"content_type"`)
-	assert.Contains(t, metin, `"size"`)
+	text := string(encoded)
+	assert.NotContains(t, text, `"storage_key"`, "the storage key is not published")
+	assert.Contains(t, text, `"url"`, "the field the client needs is the address")
+	assert.Contains(t, text, `"content_type"`)
+	assert.Contains(t, text, `"size"`)
 }

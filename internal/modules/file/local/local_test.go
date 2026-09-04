@@ -17,350 +17,355 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/file/local"
 )
 
-// pngIcerik geçerli bir PNG imzası taşıyan test içeriğidir.
+// pngContent is test content carrying a valid PNG signature.
 //
-// Gerçek bir imza kullanılır çünkü sağlayıcı anahtarın uzantısını içerik
-// tipinden türetir; uydurma bir dize testin uzantı iddiasını anlamsız
-// kılardı.
-var pngIcerik = append([]byte("\x89PNG\r\n\x1a\n"), []byte("gövde")...)
+// A real signature is used because the provider derives the key's extension from
+// the content type; a made-up string would make the test's extension claim
+// meaningless.
+var pngContent = append([]byte("\x89PNG\r\n\x1a\n"), []byte("body")...)
 
-// yeniSaglayici geçici bir kök dizin üzerinde çalışan sağlayıcı üretir.
+// newProvider produces a provider working over a temporary root directory.
 //
-// [testing.T.TempDir] her test için ayrı bir dizin verir ve testten sonra
-// siler; testler birbirinin dosyalarını görmez.
-func yeniSaglayici(t *testing.T) (prov *local.Provider, kok string) {
+// [testing.T.TempDir] gives a separate directory for every test and deletes it
+// afterwards; the tests do not see each other's files.
+func newProvider(t *testing.T) (prov *local.Provider, root string) {
 	t.Helper()
 
-	kok = t.TempDir()
+	root = t.TempDir()
 
-	prov, err := local.New(local.Options{Root: kok})
+	prov, err := local.New(local.Options{Root: root})
 	require.NoError(t, err)
 
-	return prov, kok
+	return prov, root
 }
 
-// kokIcerigi kök dizindeki dosya adlarını döner.
-func kokIcerigi(t *testing.T, kok string) []string {
+// rootEntries returns the file names in the root directory.
+func rootEntries(t *testing.T, root string) []string {
 	t.Helper()
 
-	girdiler, err := os.ReadDir(kok)
+	entries, err := os.ReadDir(root)
 	require.NoError(t, err)
 
-	adlar := make([]string, 0, len(girdiler))
-	for _, g := range girdiler {
-		adlar = append(adlar, g.Name())
+	names := make([]string, 0, len(entries))
+	for _, e := range entries {
+		names = append(names, e.Name())
 	}
 
-	return adlar
+	return names
 }
 
-// TestBosKokReddedilirVeGeciciDizineDUSULMEZ kurulumun sessizce geçici dizine
-// kaymadığını doğrular.
+// TestAnEmptyRootIsRejectedAndTheTEMPDIRIsNOTFallenBackTo verifies that the
+// setup does not silently slide into the temporary directory.
 //
-// Geçici dizin, "hiçbir şey yapılandırmadan çalışsın" isteğinin en cazip
-// cevabıdır ve tam da bu yüzden test edilir: yazılsaydı, yeniden başlatmada
-// tüm görseller kaybolur, ürün kayıtlarındaki adresler yerinde kalır ve
-// hiçbir hata görünmezdi.
-func TestBosKokReddedilirVeGeciciDizineDUSULMEZ(t *testing.T) {
+// The temporary directory is the most tempting answer to the "let it work
+// without configuring anything" wish, and that is exactly why it is tested: had
+// it been written, all the images would be lost on a restart, the addresses in
+// the product records would stay in place and no error would be visible.
+func TestAnEmptyRootIsRejectedAndTheTEMPDIRIsNOTFallenBackTo(t *testing.T) {
 	t.Parallel()
 
 	prov, err := local.New(local.Options{})
 
-	require.Error(t, err, "kök dizin olmadan sağlayıcı kurulamamalı")
+	require.Error(t, err, "the provider must not be buildable without a root directory")
 	assert.Nil(t, prov)
 	assert.Equal(t, local.CodeNotReady, coreerrors.CodeOf(err))
 	assert.NotContains(t, err.Error(), os.TempDir(),
-		"geçici dizin bir alternatif olarak bile önerilmemeli")
+		"the temporary directory must not even be suggested as an alternative")
 }
 
-// TestKokDizinAcilistaYaratilir yazılabilir bir kökün kurulum anında
-// hazırlandığını doğrular.
+// TestTheRootDirectoryIsCreatedAtStartup verifies that a writable root is
+// prepared at setup time.
 //
-// İlk yüklemeye ertelenseydi, yanlış yazılmış bir yol ancak müşteri bir
-// dosya yüklemeye çalıştığında ortaya çıkardı — oysa o an düzeltilebilecek
-// tek şey açılış yapılandırmasıdır.
-func TestKokDizinAcilistaYaratilir(t *testing.T) {
+// Had it been deferred to the first upload, a misspelled path would surface only
+// when a customer tried to upload a file — whereas the only thing that can be
+// corrected at that moment is the startup configuration.
+func TestTheRootDirectoryIsCreatedAtStartup(t *testing.T) {
 	t.Parallel()
 
-	kok := filepath.Join(t.TempDir(), "henuz", "yok")
+	root := filepath.Join(t.TempDir(), "not", "yet")
 
-	prov, err := local.New(local.Options{Root: kok})
+	prov, err := local.New(local.Options{Root: root})
 
 	require.NoError(t, err)
-	assert.Equal(t, kok, prov.Root())
+	assert.Equal(t, root, prov.Root())
 
-	bilgi, statErr := os.Stat(kok)
-	require.NoError(t, statErr, "kök dizin kurulumda yaratılmalı")
-	assert.True(t, bilgi.IsDir())
+	info, statErr := os.Stat(root)
+	require.NoError(t, statErr, "the root directory must be created during setup")
+	assert.True(t, info.IsDir())
 }
 
-// TestUretilenAnahtarYOLICERMEZ depo anahtarının tek bir dosya adı olduğunu
-// doğrular.
+// TestTheProducedKeyCONTAINSNOPATH verifies that the storage key is a single
+// file name.
 //
-// İddia, yol geçişine karşı YAPISAL korumanın kendisidir: anahtar tek
-// düzlemde bir addır, yol ayıracı taşımaz ve kökle birleştiğinde kökün
-// altından çıkamaz. Girdide istemci dosya adı diye bir alan zaten yoktur —
-// yani "temizlenmesi" gereken bir değer de yoktur.
-func TestUretilenAnahtarYOLICERMEZ(t *testing.T) {
+// The claim is the STRUCTURAL protection against path traversal itself: the key
+// is a name on a single plane, it carries no path separator and, joined with the
+// root, it cannot come out from under the root. In the input there is anyway no
+// such thing as a client file name field — that is, there is no value that would
+// need "sanitizing" either.
+func TestTheProducedKeyCONTAINSNOPATH(t *testing.T) {
 	t.Parallel()
 
-	prov, kok := yeniSaglayici(t)
+	prov, root := newProvider(t)
 
-	dosya, err := prov.Upload(context.Background(), coreprovider.UploadInput{
+	file, err := prov.Upload(context.Background(), coreprovider.UploadInput{
 		ContentType: coreprovider.ContentTypePNG,
-		Body:        strings.NewReader(string(pngIcerik)),
+		Body:        strings.NewReader(string(pngContent)),
 	})
 
 	require.NoError(t, err)
-	assert.Equal(t, filepath.Base(dosya.Key), dosya.Key, "anahtar bir YOL değil, tek bir addır")
-	assert.NotContains(t, dosya.Key, "/")
-	assert.NotContains(t, dosya.Key, "..")
-	assert.True(t, strings.HasSuffix(dosya.Key, ".png"),
-		"uzantı tespit edilen tipten türemeli: %s", dosya.Key)
-	assert.Equal(t, local.DefaultURLPrefix+"/"+dosya.Key, dosya.URL)
-	assert.Equal(t, int64(len(pngIcerik)), dosya.Size)
+	assert.Equal(t, filepath.Base(file.Key), file.Key, "the key is not a PATH, it is a single name")
+	assert.NotContains(t, file.Key, "/")
+	assert.NotContains(t, file.Key, "..")
+	assert.True(t, strings.HasSuffix(file.Key, ".png"),
+		"the extension must derive from the detected type: %s", file.Key)
+	assert.Equal(t, local.DefaultURLPrefix+"/"+file.Key, file.URL)
+	assert.Equal(t, int64(len(pngContent)), file.Size)
 
-	yazilan, readErr := os.ReadFile(filepath.Join(kok, dosya.Key))
+	written, readErr := os.ReadFile(filepath.Join(root, file.Key))
 	require.NoError(t, readErr)
-	assert.Equal(t, pngIcerik, yazilan)
+	assert.Equal(t, pngContent, written)
 }
 
-// TestIkiYuklemeAyriAnahtarAlir anahtarların tekrar kullanılmadığını doğrular.
+// TestTwoUploadsGetSeparateKeys verifies that keys are not reused.
 //
-// Tekrar kullanılan bir anahtar iki şeyi birden bozardı: defterdeki benzersizlik
-// kısıtı ihlal edilir ve — çok daha kötüsü — yayımlanmış bir adres bir gün
-// BAŞKA bir görseli göstermeye başlardı. Sunum yolundaki "immutable" önbellek
-// başlığı da tam olarak bu iddiaya dayanır.
-func TestIkiYuklemeAyriAnahtarAlir(t *testing.T) {
+// A reused key would break two things at once: the uniqueness constraint in the
+// ledger would be violated and — far worse — a published address would one day
+// start showing ANOTHER image. The "immutable" cache header on the serving path
+// rests on exactly this claim too.
+func TestTwoUploadsGetSeparateKeys(t *testing.T) {
 	t.Parallel()
 
-	prov, _ := yeniSaglayici(t)
+	prov, _ := newProvider(t)
 	ctx := context.Background()
 
-	ilk, err := prov.Upload(ctx, coreprovider.UploadInput{
+	first, err := prov.Upload(ctx, coreprovider.UploadInput{
 		ContentType: coreprovider.ContentTypePNG,
-		Body:        strings.NewReader(string(pngIcerik)),
+		Body:        strings.NewReader(string(pngContent)),
 	})
 	require.NoError(t, err)
 
-	ikinci, err := prov.Upload(ctx, coreprovider.UploadInput{
+	second, err := prov.Upload(ctx, coreprovider.UploadInput{
 		ContentType: coreprovider.ContentTypePNG,
-		Body:        strings.NewReader(string(pngIcerik)),
+		Body:        strings.NewReader(string(pngContent)),
 	})
 	require.NoError(t, err)
 
-	assert.NotEqual(t, ilk.Key, ikinci.Key)
+	assert.NotEqual(t, first.Key, second.Key)
 }
 
-// kesikOkuyucu birkaç bayt verdikten SONRA hata döndüren okuyucudur.
+// cutOffReader is a reader that returns an error AFTER giving a few bytes.
 //
-// Boyut sınırının aşıldığı an tam olarak böyle görünür: gövde okunmaya
-// başlanmıştır ve okuma ortada kesilir.
-type kesikOkuyucu struct {
-	veri  []byte
-	hata  error
-	okudu bool
+// The moment the size bound is exceeded looks exactly like this: the body has
+// started being read and the read is cut off in the middle.
+type cutOffReader struct {
+	data []byte
+	err  error
+	read bool
 }
 
-// Read io.Reader'ı karşılar.
-func (k *kesikOkuyucu) Read(p []byte) (int, error) {
-	if k.okudu {
-		return 0, k.hata
+// Read satisfies io.Reader.
+func (c *cutOffReader) Read(p []byte) (int, error) {
+	if c.read {
+		return 0, c.err
 	}
-	k.okudu = true
+	c.read = true
 
-	n := copy(p, k.veri)
+	n := copy(p, c.data)
 
 	return n, nil
 }
 
-// TestOkumaYarideKesilirseYARIMDOSYAKALMAZ sınırı aşan bir gövdenin diskte iz
-// bırakmadığını doğrular.
+// TestNoHALFFILEIsLeftWhenTheReadIsCutOffHalfway verifies that a body exceeding
+// the bound leaves no trace on the disk.
 //
-// Çekirdek sözleşmesinin şartıdır ve gerekçesi somuttur: yarım nesne, hiçbir
-// kaydın işaret etmediği ve hiçbir silme yolunun anahtarını bilmediği bir
-// dosyadır. Temizlenmeseydi, boyut sınırını aşan istekler REDDEDİLDİKLERİ
-// hâlde diski doldurabilirdi.
-func TestOkumaYarideKesilirseYARIMDOSYAKALMAZ(t *testing.T) {
+// It is a requirement of the core contract and its reasoning is concrete: a half
+// object is a file that no record points at and whose key no delete path knows.
+// Had it not been cleaned up, requests exceeding the size bound could fill the
+// disk up even though they ARE REJECTED.
+func TestNoHALFFILEIsLeftWhenTheReadIsCutOffHalfway(t *testing.T) {
 	t.Parallel()
 
-	prov, kok := yeniSaglayici(t)
-	sinirHatasi := errors.New("boyut sınırı aşıldı")
+	prov, root := newProvider(t)
+	boundErr := errors.New("the size bound was exceeded")
 
 	_, err := prov.Upload(context.Background(), coreprovider.UploadInput{
 		ContentType: coreprovider.ContentTypePNG,
-		Body:        &kesikOkuyucu{veri: pngIcerik, hata: sinirHatasi},
+		Body:        &cutOffReader{data: pngContent, err: boundErr},
 	})
 
 	require.Error(t, err)
-	assert.ErrorIs(t, err, sinirHatasi,
-		"asıl hata KORUNMALI; çağıran onu errors.Is ile tanıyıp sınıflandırır")
-	assert.Empty(t, kokIcerigi(t, kok),
-		"ne yarım dosya ne de geçici dosya kalmalı")
+	assert.ErrorIs(t, err, boundErr,
+		"the real error MUST BE PRESERVED; the caller recognizes it with errors.Is and classifies it")
+	assert.Empty(t, rootEntries(t, root),
+		"neither a half file nor a temporary file must be left")
 }
 
-// TestYarimYazilmisDosyaSUNULAMAZ atomik yazmanın gözlemlenebilir sonucunu
-// sabitler.
+// TestAHalfWrittenFileIsNOTSERVABLE pins the observable consequence of the
+// atomic write.
 //
-// Yazma sırasında kök dizinde bir dosya belirip sonra tamamlansaydı, o aralıkta
-// gelen bir sunum isteği bozuk bir görsel döndürürdü. Geçici adın nokta ile
-// başlaması ve anahtar biçiminin nokta ile başlayan bir gövdeyi reddetmesi bu
-// aralığı yapısal olarak kapatır — test, geçici adın gerçekten sunulamaz
-// olduğunu doğrular.
-func TestYarimYazilmisDosyaSUNULAMAZ(t *testing.T) {
+// Had a file appeared in the root directory during the write and been completed
+// afterwards, a serve request arriving in that interval would return a corrupt
+// image. The temporary name starting with a dot, and the key form rejecting a
+// body that starts with a dot, closes that interval structurally — the test
+// verifies that the temporary name really is not servable.
+func TestAHalfWrittenFileIsNOTSERVABLE(t *testing.T) {
 	t.Parallel()
 
-	prov, kok := yeniSaglayici(t)
+	prov, root := newProvider(t)
 
-	gecici, err := os.CreateTemp(kok, ".yukleniyor-*")
+	temp, err := os.CreateTemp(root, ".uploading-*")
 	require.NoError(t, err)
-	require.NoError(t, gecici.Close())
+	require.NoError(t, temp.Close())
 
-	_, _, err = prov.Open(context.Background(), filepath.Base(gecici.Name()))
+	_, _, err = prov.Open(context.Background(), filepath.Base(temp.Name()))
 
-	require.Error(t, err, "geçici ad sunulabilir bir anahtar OLMAMALI")
-	assert.True(t, coreerrors.IsInvalid(err), "hata: %v", err)
+	require.Error(t, err, "the temporary name MUST NOT BE a servable key")
+	assert.True(t, coreerrors.IsInvalid(err), "error: %v", err)
 	assert.Equal(t, local.CodeInvalidKey, coreerrors.CodeOf(err))
 }
 
-// TestSilmeIDEMPOTENTTIR olmayan bir anahtarın hata vermediğini doğrular.
+// TestDeleteIsIDEMPOTENT verifies that a key that does not exist does not give
+// an error.
 //
-// Silme, kaydı kaldıran akışın temizlik adımıdır ve o akış yeniden
-// denenebilir. İkinci çağrının patlaması, kaydı çoktan silinmiş bir dosyayı
-// temizlenemez hâle getirirdi — yani tam olarak temizlemesi gereken çöpü
-// kalıcı kılardı.
-func TestSilmeIDEMPOTENTTIR(t *testing.T) {
+// The delete is the cleanup step of the flow that removes the record, and that
+// flow can be retried. The second call blowing up would make a file whose record
+// is already deleted impossible to clean up — that is, it would make permanent
+// exactly the garbage it has to clean.
+func TestDeleteIsIDEMPOTENT(t *testing.T) {
 	t.Parallel()
 
-	prov, kok := yeniSaglayici(t)
+	prov, root := newProvider(t)
 	ctx := context.Background()
 
-	dosya, err := prov.Upload(ctx, coreprovider.UploadInput{
+	file, err := prov.Upload(ctx, coreprovider.UploadInput{
 		ContentType: coreprovider.ContentTypePNG,
-		Body:        strings.NewReader(string(pngIcerik)),
+		Body:        strings.NewReader(string(pngContent)),
 	})
 	require.NoError(t, err)
 
-	require.NoError(t, prov.Delete(ctx, dosya.Key), "ilk silme")
-	require.NoError(t, prov.Delete(ctx, dosya.Key), "İKİNCİ silme de hata vermemeli")
-	assert.Empty(t, kokIcerigi(t, kok))
+	require.NoError(t, prov.Delete(ctx, file.Key), "the first delete")
+	require.NoError(t, prov.Delete(ctx, file.Key), "the SECOND delete must not give an error either")
+	assert.Empty(t, rootEntries(t, root))
 }
 
-// TestGecersizAnahtarinSilinmesiHataDegildir biçimi bozuk bir anahtarın da
-// idempotent davrandığını doğrular.
+// TestDeletingAnInvalidKeyIsNotAnError verifies that a key with a broken form
+// behaves idempotently too.
 //
-// Böyle bir anahtarla yazılmış dosya hiç var olamaz, dolayısıyla "silinmiş
-// olma" son durumu zaten sağlanmıştır. Hata dönmek, silme akışını
-// düzeltilemeyecek bir şey yüzünden sonsuza kadar tekrar ettirirdi.
-func TestGecersizAnahtarinSilinmesiHataDegildir(t *testing.T) {
+// A file written with such a key can never exist, so the "having been deleted"
+// end state already holds. Returning an error would make the delete flow repeat
+// forever over something that cannot be corrected.
+func TestDeletingAnInvalidKeyIsNotAnError(t *testing.T) {
 	t.Parallel()
 
-	prov, _ := yeniSaglayici(t)
+	prov, _ := newProvider(t)
 
 	assert.NoError(t, prov.Delete(context.Background(), "../../etc/passwd"))
 }
 
-// TestAcmaYolGecisiniREDDEDER anahtar denetiminin sunum yolunu koruduğunu
-// doğrular.
+// TestOpenREJECTSPathTraversal verifies that the key check protects the serving
+// path.
 //
-// Normal akışta anahtar veritabanındaki kayıttan gelir, yani zaten bu
-// sağlayıcının ürettiği bir değerdir. Denetim yine de vardır ve bir
-// "temizleme" DEĞİLDİR: bozuk anahtar düzeltilmez, reddedilir. Böylece
-// çağıranı ne olursa olsun kök dizinin dışına çıkan bir yol ifadesi hiç
-// kurulamaz.
-func TestAcmaYolGecisiniREDDEDER(t *testing.T) {
+// In the normal flow the key comes from the record in the database, that is, it
+// is already a value this provider produced. The check exists all the same and it
+// IS NOT a "sanitizing": a broken key is not corrected, it is rejected. That way,
+// whoever the caller is, a path expression leading outside the root directory can
+// never be constructed.
+func TestOpenREJECTSPathTraversal(t *testing.T) {
 	t.Parallel()
 
-	prov, kok := yeniSaglayici(t)
+	prov, root := newProvider(t)
 
-	// Kökün DIŞINDA, gerçekten var olan bir dosya: reddin "dosya yok"tan
-	// değil, anahtarın biçiminden geldiğini ancak böyle kanıtlayabiliriz.
-	disari := filepath.Join(filepath.Dir(kok), "sir.txt")
-	require.NoError(t, os.WriteFile(disari, []byte("gizli"), 0o600))
+	// A file OUTSIDE the root that really exists: only this way can we prove that
+	// the rejection comes from the key's form and not from "the file does not
+	// exist".
+	outside := filepath.Join(filepath.Dir(root), "secret.txt")
+	require.NoError(t, os.WriteFile(outside, []byte("secret"), 0o600))
 
-	anahtarlar := map[string]string{
-		"üst dizine çıkış":    "../" + filepath.Base(disari),
-		"iki üst dizin":       "../../etc/passwd",
-		"mutlak yol":          "/etc/passwd",
-		"gömülü ayıraç":       "ABC/../../etc/passwd",
-		"uzantısız":           strings.Repeat("A", 26),
-		"iki nokta":           strings.Repeat("A", 26) + ".png.png",
-		"küçük harfli gövde":  strings.Repeat("a", 26) + ".png",
-		"kısa gövde":          "ABC.png",
-		"büyük harfli uzantı": strings.Repeat("A", 26) + ".PNG",
+	keys := map[string]string{
+		"up one directory":    "../" + filepath.Base(outside),
+		"two directories up":  "../../etc/passwd",
+		"absolute path":       "/etc/passwd",
+		"embedded separator":  "ABC/../../etc/passwd",
+		"without extension":   strings.Repeat("A", 26),
+		"two dots":            strings.Repeat("A", 26) + ".png.png",
+		"lowercase body":      strings.Repeat("a", 26) + ".png",
+		"short body":          "ABC.png",
+		"uppercase extension": strings.Repeat("A", 26) + ".PNG",
 	}
 
-	for ad, anahtar := range anahtarlar {
-		t.Run(ad, func(t *testing.T) {
-			_, _, err := prov.Open(context.Background(), anahtar)
+	for name, key := range keys {
+		t.Run(name, func(t *testing.T) {
+			_, _, err := prov.Open(context.Background(), key)
 
-			require.Error(t, err, "anahtar %q kabul edilmemeli", anahtar)
+			require.Error(t, err, "the key %q must not be accepted", key)
 			assert.Equal(t, local.CodeInvalidKey, coreerrors.CodeOf(err),
-				"ret, dosyanın yokluğundan değil anahtarın BİÇİMİNDEN gelmeli")
+				"the rejection must come from the key's FORM, not from the file's absence")
 		})
 	}
 }
 
-// TestAcmaYazilaniAynenDoner sunum yolunun okuduğu içeriği doğrular.
-func TestAcmaYazilaniAynenDoner(t *testing.T) {
+// TestOpenReturnsExactlyWhatWasWritten verifies the content the serving path
+// reads.
+func TestOpenReturnsExactlyWhatWasWritten(t *testing.T) {
 	t.Parallel()
 
-	prov, _ := yeniSaglayici(t)
+	prov, _ := newProvider(t)
 	ctx := context.Background()
 
-	dosya, err := prov.Upload(ctx, coreprovider.UploadInput{
+	file, err := prov.Upload(ctx, coreprovider.UploadInput{
 		ContentType: coreprovider.ContentTypePNG,
-		Body:        strings.NewReader(string(pngIcerik)),
+		Body:        strings.NewReader(string(pngContent)),
 	})
 	require.NoError(t, err)
 
-	icerik, modTime, err := prov.Open(ctx, dosya.Key)
+	content, modTime, err := prov.Open(ctx, file.Key)
 	require.NoError(t, err)
-	defer func() { _ = icerik.Close() }()
+	defer func() { _ = content.Close() }()
 
-	okunan, err := io.ReadAll(icerik)
+	got, err := io.ReadAll(content)
 	require.NoError(t, err)
-	assert.Equal(t, pngIcerik, okunan)
-	assert.False(t, modTime.IsZero(), "koşullu istekler için değişim zamanı gerekir")
+	assert.Equal(t, pngContent, got)
+	assert.False(t, modTime.IsZero(), "conditional requests need the change time")
 }
 
-// TestSilinmisDosyaninAcilmasiBulunamadiDoner silmenin sunumu gerçekten
-// kapattığını doğrular.
-func TestSilinmisDosyaninAcilmasiBulunamadiDoner(t *testing.T) {
+// TestOpeningADeletedFileReturnsNotFound verifies that the delete really closes
+// the serving.
+func TestOpeningADeletedFileReturnsNotFound(t *testing.T) {
 	t.Parallel()
 
-	prov, _ := yeniSaglayici(t)
+	prov, _ := newProvider(t)
 	ctx := context.Background()
 
-	dosya, err := prov.Upload(ctx, coreprovider.UploadInput{
+	file, err := prov.Upload(ctx, coreprovider.UploadInput{
 		ContentType: coreprovider.ContentTypePNG,
-		Body:        strings.NewReader(string(pngIcerik)),
+		Body:        strings.NewReader(string(pngContent)),
 	})
 	require.NoError(t, err)
-	require.NoError(t, prov.Delete(ctx, dosya.Key))
+	require.NoError(t, prov.Delete(ctx, file.Key))
 
-	_, _, err = prov.Open(ctx, dosya.Key)
+	_, _, err = prov.Open(ctx, file.Key)
 
 	require.Error(t, err)
-	assert.True(t, coreerrors.IsNotFound(err), "hata: %v", err)
+	assert.True(t, coreerrors.IsNotFound(err), "error: %v", err)
 }
 
-// TestTaninmayanTipVarsayilanUzantiAlir eşlemede olmayan bir tipin yüklemeyi
-// engellemediğini doğrular.
+// TestAnUnrecognizedTypeGetsTheDefaultExtension verifies that a type that is not
+// in the mapping does not block the upload.
 //
-// Uzantı yalnızca insan kolaylığıdır; sunum kararı ona bakmaz, Content-Type
-// kayıttaki tespit edilmiş tipten yazılır. İzin listesi de burada değil servis
-// katmanında uygulanır — sağlayıcı, kendisine verilen tipi sorgulamaz.
-func TestTaninmayanTipVarsayilanUzantiAlir(t *testing.T) {
+// The extension is only a human convenience; the serving decision does not look
+// at it, the Content-Type is written from the detected type in the record. The
+// allow list, in turn, is applied not here but in the service layer — the
+// provider does not question the type it is given.
+func TestAnUnrecognizedTypeGetsTheDefaultExtension(t *testing.T) {
 	t.Parallel()
 
-	prov, _ := yeniSaglayici(t)
+	prov, _ := newProvider(t)
 
-	dosya, err := prov.Upload(context.Background(), coreprovider.UploadInput{
+	file, err := prov.Upload(context.Background(), coreprovider.UploadInput{
 		ContentType: "application/octet-stream",
-		Body:        strings.NewReader("ham"),
+		Body:        strings.NewReader("raw"),
 	})
 
 	require.NoError(t, err)
-	assert.True(t, strings.HasSuffix(dosya.Key, ".bin"), "anahtar: %s", dosya.Key)
+	assert.True(t, strings.HasSuffix(file.Key, ".bin"), "the key: %s", file.Key)
 }

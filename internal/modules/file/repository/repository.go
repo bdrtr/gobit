@@ -1,23 +1,25 @@
-// Package repository file modülünün veritabanı erişimidir.
+// Package repository is the database access of the file module.
 //
-// SADECE bu modülün tablosuna dokunur (plan Bölüm 4). sqlc üretimi kod
-// repository/filedb altındadır ve elle düzenlenmez; bu paket onun üstüne iki
-// şey ekler:
+// It touches ONLY this module's table (plan Section 4). The sqlc generated
+// code is under repository/filedb and is not edited by hand; this package adds
+// two things on top of it:
 //
-//   - Çeviri: pgtype ve üretilmiş satır tipleri BU PAKETİN DIŞINA ÇIKMAZ,
-//     models tiplerine çevrilir.
-//   - Sınıflandırma: sürücü hataları core/errors tipli hatalarına çevrilir;
-//     satır bulunamaması NotFound, benzersizlik ihlali Conflict olur
-//     (plan Bölüm 2.7 — status kodunu handler seçmez).
+//   - Conversion: pgtype and the generated row types DO NOT LEAVE THIS
+//     PACKAGE, they are converted into models types.
+//   - Classification: driver errors are converted into errors typed by
+//     core/errors; a missing row becomes NotFound, a uniqueness violation
+//     Conflict (plan Section 2.7 — the handler does not choose the status
+//     code).
 //
-// # İŞLEM (transaction) YOKTUR ve gerekmez
+// # THERE IS NO TRANSACTION, and none is needed
 //
-// Diğer modüllerin deposu WithTx taşır; burada yoktur. Bir yüklemenin iki
-// tarafı vardır — DEPODAKİ dosya ve DEFTERDEKİ satır — ve ikisi ayrı
-// sistemlerde durur; veritabanı işlemi dosyayı geri alamaz. Tutarlılık bu
-// yüzden işlemle değil SIRAYLA sağlanır: yazarken önce dosya sonra satır,
-// silerken önce dosya sonra satır. Sıranın gerekçesi ilgili çağrıların
-// yanındadır (bkz. service paketi).
+// The repositories of the other modules carry WithTx; here there is none. An
+// upload has two sides — the file IN THE STORE and the row IN THE LEDGER — and
+// the two sit in separate systems; a database transaction cannot take the file
+// back. Consistency is therefore established not with a transaction but with
+// the ORDER: when writing, the file first and then the row; when deleting, the
+// file first and then the row. The reason for the order sits next to the
+// relevant calls (see the service package).
 package repository
 
 import (
@@ -35,24 +37,25 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/file/repository/filedb"
 )
 
-// Hata kodları; çağıran taraf errors.CodeOf ile bunlara bakabilir.
+// Error codes; the calling side can look at these with errors.CodeOf.
 const (
-	// CodeUploadNotFound istenen yükleme kaydının bulunamadığını bildirir.
+	// CodeUploadNotFound reports that the requested upload record could not be
+	// found.
 	CodeUploadNotFound = "file_upload_not_found"
-	// CodeUploadExists aynı depo anahtarıyla ikinci bir kayıt açılmak
-	// istendiğini bildirir.
+	// CodeUploadExists reports that a second record was to be opened with the
+	// same storage key.
 	CodeUploadExists = "file_upload_already_exists"
-	// CodeConstraintViolation veritabanı kısıtının ihlal edildiğini bildirir.
+	// CodeConstraintViolation reports that a database constraint was violated.
 	CodeConstraintViolation = "file_constraint_violation"
-	// CodeQueryFailed beklenmeyen bir veritabanı hatasını bildirir.
+	// CodeQueryFailed reports an unexpected database error.
 	CodeQueryFailed = "file_query_failed"
-	// CodeCanceled bağlam iptalini bildirir.
+	// CodeCanceled reports a context cancellation.
 	CodeCanceled = "file_canceled"
-	// CodeNotReady deponun havuz olmadan kurulduğunu bildirir.
+	// CodeNotReady reports that the repository was constructed without a pool.
 	CodeNotReady = "file_repository_not_ready"
 )
 
-// PostgreSQL SQLSTATE kodları (ihtiyaç duyulanlar).
+// PostgreSQL SQLSTATE codes (the ones that are needed).
 const (
 	sqlstateUniqueViolation      = "23505"
 	sqlstateCheckViolation       = "23514"
@@ -60,19 +63,19 @@ const (
 	sqlstateStringDataRightTrunc = "22001"
 )
 
-// constraintStorageKeyUniq depo anahtarını benzersiz kılan indeksin adıdır;
-// migration'daki adla BİREBİR aynıdır.
+// constraintStorageKeyUniq is the name of the index that makes the storage key
+// unique; it is EXACTLY the same as the name in the migration.
 const constraintStorageKeyUniq = "file_uploads_storage_key_uniq"
 
-// Repo yükleme defterine erişimi sağlar. Eşzamanlı kullanıma güvenlidir.
+// Repo provides access to the upload ledger. It is safe for concurrent use.
 type Repo struct {
 	q *filedb.Queries
 }
 
-// New verilen havuz üzerinde çalışan bir depo üretir.
+// New produces a repository working on the given pool.
 //
-// pool nil ise bu, kurulumda değil ilk çağrıda tipli bir hata olarak
-// bildirilir; kurulum yolu panik üretmez.
+// If pool is nil, that is reported not at setup time but on the first call, as
+// a typed error; the setup path produces no panic.
 func New(pool *pgxpool.Pool) *Repo {
 	if pool == nil {
 		return &Repo{}
@@ -81,21 +84,22 @@ func New(pool *pgxpool.Pool) *Repo {
 	return &Repo{q: filedb.New(pool)}
 }
 
-// ready havuzun kullanılabilir olduğunu doğrular.
+// ready verifies that the pool is usable.
 func (r *Repo) ready() error {
 	if r == nil || r.q == nil {
-		return errors.Unavailable(CodeNotReady, "file veritabanı havuzu kurulmamış")
+		return errors.Unavailable(CodeNotReady, "the file database pool has not been set up")
 	}
 
 	return nil
 }
 
-// CreateUpload yükleme kaydını yazar.
+// CreateUpload writes the upload record.
 //
-// Aynı depo anahtarıyla ikinci bir kayıt errors.Conflict döner. Normal akışta
-// oluşamaz — anahtarı sağlayıcı üretir ve rastgeleliği ULID'inkiyle aynıdır —
-// ama eşlenmesi gerekir: eşlenmeseydi, anahtar üretimi bir gün bozulduğunda
-// arıza "sunucu hatası" olarak görünür ve sebebi kaybolurdu.
+// A second record with the same storage key returns errors.Conflict. It cannot
+// occur in the normal flow — the key is produced by the provider and its
+// randomness is the same as a ULID's — but it has to be mapped: had it not
+// been mapped, on the day key generation broke the failure would look like a
+// "server error" and its cause would be lost.
 func (r *Repo) CreateUpload(ctx context.Context, u models.Upload) (models.Upload, error) {
 	if err := r.ready(); err != nil {
 		return models.Upload{}, err
@@ -113,13 +117,13 @@ func (r *Repo) CreateUpload(ctx context.Context, u models.Upload) (models.Upload
 		UploadedBy:   u.UploadedBy,
 	})
 	if err != nil {
-		return models.Upload{}, classify(err, "yükleme kaydı yazılamadı: %s", u.StorageKey)
+		return models.Upload{}, classify(err, "the upload record could not be written: %s", u.StorageKey)
 	}
 
 	return toUpload(row), nil
 }
 
-// GetUpload kaydı kimliğiyle döner; yoksa NotFound.
+// GetUpload returns the record by its id; NotFound if there is none.
 func (r *Repo) GetUpload(ctx context.Context, id string) (models.Upload, error) {
 	if err := r.ready(); err != nil {
 		return models.Upload{}, err
@@ -128,19 +132,21 @@ func (r *Repo) GetUpload(ctx context.Context, id string) (models.Upload, error) 
 	row, err := r.q.GetFileUpload(ctx, id)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return models.Upload{}, uploadNotFound("kimlik", id)
+			return models.Upload{}, uploadNotFound("id", id)
 		}
 
-		return models.Upload{}, classify(err, "yükleme kaydı okunamadı: %s", id)
+		return models.Upload{}, classify(err, "the upload record could not be read: %s", id)
 	}
 
 	return toUpload(row), nil
 }
 
-// GetUploadByKey kaydı DEPO ANAHTARIYLA döner; yoksa NotFound.
+// GetUploadByKey returns the record BY ITS STORAGE KEY; NotFound if there is
+// none.
 //
-// Sunum yolunun tek sorgusudur: adres çubuğundan gelen anahtar önce buraya
-// sorulur ve satır yoksa dosya sistemine hiç dokunulmaz.
+// It is the serving path's only query: the key coming from the address bar is
+// asked here first, and if there is no row the file system is not touched at
+// all.
 func (r *Repo) GetUploadByKey(ctx context.Context, key string) (models.Upload, error) {
 	if err := r.ready(); err != nil {
 		return models.Upload{}, err
@@ -149,17 +155,17 @@ func (r *Repo) GetUploadByKey(ctx context.Context, key string) (models.Upload, e
 	row, err := r.q.GetFileUploadByKey(ctx, key)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return models.Upload{}, uploadNotFound("anahtar", key)
+			return models.Upload{}, uploadNotFound("key", key)
 		}
 
-		return models.Upload{}, classify(err, "yükleme kaydı okunamadı")
+		return models.Upload{}, classify(err, "the upload record could not be read")
 	}
 
 	return toUpload(row), nil
 }
 
-// ListUploads kayıtları sayfalayarak döner.
-// İkinci dönüş değeri TÜM satırların sayısıdır.
+// ListUploads returns the records with pagination.
+// The second return value is the count of ALL rows.
 func (r *Repo) ListUploads(ctx context.Context, filter models.UploadFilter) ([]models.Upload, int64, error) {
 	if err := r.ready(); err != nil {
 		return nil, 0, err
@@ -170,17 +176,17 @@ func (r *Repo) ListUploads(ctx context.Context, filter models.UploadFilter) ([]m
 		RowOffset: filter.Offset,
 	})
 	if err != nil {
-		return nil, 0, classify(err, "yükleme listesi alınamadı")
+		return nil, 0, classify(err, "the upload list could not be fetched")
 	}
 
 	total, err := r.q.CountFileUploads(ctx)
 	if err != nil {
-		return nil, 0, classify(err, "yüklemeler sayılamadı")
+		return nil, 0, classify(err, "the uploads could not be counted")
 	}
 
 	out := make([]models.Upload, 0, len(rows))
-	// Dilim İNDEKSLE gezilir: değerle gezmek her yinelemede satır yapısının
-	// tamamını kopyalardı.
+	// The slice is walked BY INDEX: walking it by value would copy the whole
+	// row struct on every iteration.
 	for i := range rows {
 		out = append(out, toUpload(rows[i]))
 	}
@@ -188,26 +194,26 @@ func (r *Repo) ListUploads(ctx context.Context, filter models.UploadFilter) ([]m
 	return out, total, nil
 }
 
-// DeleteUpload kaydı siler. İkinci dönüş değeri satırın GERÇEKTEN silinip
-// silinmediğidir.
+// DeleteUpload deletes the record. The second return value is whether the row
+// was REALLY deleted.
 //
-// Olmayan bir kimlik hata DEĞİLDİR: silme bir son durum iddiasıdır ve çağıran
-// "zaten yoktu" ile "şimdi sildim"i ayırt edebilmelidir — ama ikisi de
-// başarıdır.
+// An id that does not exist is NOT an error: deleting is a claim about an end
+// state and the caller must be able to tell "it was not there anyway" from "I
+// have just deleted it" — but both of them are success.
 func (r *Repo) DeleteUpload(ctx context.Context, id string) (bool, error) {
 	if err := r.ready(); err != nil {
 		return false, err
 	}
 
-	silinen, err := r.q.DeleteFileUpload(ctx, id)
+	deleted, err := r.q.DeleteFileUpload(ctx, id)
 	if err != nil {
-		return false, classify(err, "yükleme kaydı silinemedi: %s", id)
+		return false, classify(err, "the upload record could not be deleted: %s", id)
 	}
 
-	return silinen > 0, nil
+	return deleted > 0, nil
 }
 
-// toUpload üretilen satırı domain modeline çevirir.
+// toUpload converts the generated row into the domain model.
 func toUpload(row filedb.FileUpload) models.Upload {
 	return models.Upload{
 		ID:           row.ID,
@@ -224,11 +230,11 @@ func toUpload(row filedb.FileUpload) models.Upload {
 	}
 }
 
-// toTime NOT NULL bir zaman damgasını UTC time.Time'a çevirir.
+// toTime converts a NOT NULL timestamp into a UTC time.Time.
 //
-// Geçersiz (NULL) damga sıfır zaman döner: NOT NULL sütunlarda bu durum
-// oluşamaz, oluşursa da sıfır zaman panik üretmeyen ve testte göze batan bir
-// değerdir.
+// An invalid (NULL) stamp returns the zero time: on NOT NULL columns this
+// situation cannot arise, and if it did the zero time is a value that produces
+// no panic and that catches the eye in a test.
 func toTime(ts pgtype.Timestamptz) time.Time {
 	if !ts.Valid {
 		return time.Time{}
@@ -237,18 +243,20 @@ func toTime(ts pgtype.Timestamptz) time.Time {
 	return ts.Time.UTC()
 }
 
-// uploadNotFound bulunamayan kayıt için tipli hata üretir.
+// uploadNotFound produces the typed error for a record that was not found.
 //
-// Aranan ALANIN adı mesaja girer: aynı hata hem kimlikle hem depo anahtarıyla
-// yapılan aramadan gelebilir ve ikisinin düzeltmesi farklıdır.
-func uploadNotFound(alan, deger string) error {
-	return errors.NotFound(CodeUploadNotFound, "yükleme bulunamadı (%s: %s)", alan, deger)
+// The name of the FIELD that was searched goes into the message: the same
+// error can come from a lookup by id and from a lookup by storage key, and the
+// fix for the two is different.
+func uploadNotFound(field, value string) error {
+	return errors.NotFound(CodeUploadNotFound, "the upload was not found (%s: %s)", field, value)
 }
 
-// sprintf hata mesajını bir kez biçimlendirir.
+// sprintf formats the error message once.
 //
-// Argümansız çağrılarda format DEĞİŞTİRİLMEDEN döner; aksi hâlde mesajdaki bir
-// yüzde işareti (örn. "%!d(MISSING)") teşhis metnini bozardı.
+// On calls without arguments the format is returned UNCHANGED; otherwise a
+// percent sign in the message (e.g. "%!d(MISSING)") would corrupt the
+// diagnostic text.
 func sprintf(format string, a ...any) string {
 	if len(a) == 0 {
 		return format
@@ -257,12 +265,12 @@ func sprintf(format string, a ...any) string {
 	return fmt.Sprintf(format, a...)
 }
 
-// classify ham bir veritabanı hatasını tipli hataya çevirir.
+// classify converts a raw database error into a typed error.
 //
-// Sınıflandırma bilinçlidir: benzersizlik ihlali ÇAKIŞMADIR (409), kısıt
-// ihlali istemci hatasıdır (422), iptal geçici erişilemezliktir (503); geri
-// kalan her şey sunucu hatasıdır ve mesajı istemciye SIZDIRILMAZ (bkz.
-// core/http).
+// The classification is deliberate: a uniqueness violation is a CONFLICT
+// (409), a constraint violation is a client error (422), a cancellation is
+// temporary unavailability (503); everything else is a server error and its
+// message IS NOT LEAKED to the client (see core/http).
 func classify(err error, format string, a ...any) error {
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return errors.Wrap(err, errors.KindUnavailable, CodeCanceled, format, a...)
@@ -274,11 +282,11 @@ func classify(err error, format string, a ...any) error {
 		case sqlstateUniqueViolation:
 			if pgErr.ConstraintName == constraintStorageKeyUniq {
 				return errors.Wrap(err, errors.KindConflict, CodeUploadExists,
-					"bu depo anahtarı için zaten bir yükleme kaydı var")
+					"an upload record already exists for this storage key")
 			}
 		case sqlstateCheckViolation, sqlstateNotNullViolation, sqlstateStringDataRightTrunc:
 			return errors.Wrap(err, errors.KindInvalid, CodeConstraintViolation,
-				"%s (kısıt: %s)", sprintf(format, a...), pgErr.ConstraintName)
+				"%s (constraint: %s)", sprintf(format, a...), pgErr.ConstraintName)
 		}
 	}
 

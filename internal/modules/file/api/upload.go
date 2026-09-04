@@ -14,236 +14,247 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/file/service"
 )
 
-// sniffBoyutu içerik tipi tespiti için okunan bayt sayısıdır.
+// sniffSize is the number of bytes read for the content type detection.
 //
-// 512, [net/http.DetectContentType]'ın baktığı azami uzunluktur; daha fazlası
-// hiçbir şey eklemez, daha azı bazı imzaları kaçırırdı.
-const sniffBoyutu = 512
+// 512 is the maximum length [net/http.DetectContentType] looks at; more adds
+// nothing, less would miss some signatures.
+const sniffSize = 512
 
-// zarfPayi multipart zarfının (sınırlayıcılar ve parça başlıkları) gövdeye
-// eklediği paydır.
+// envelopeAllowance is the share the multipart envelope (the boundaries and the
+// part headers) adds on top of the body.
 //
-// Boyut sınırı DOSYAYA konur ama [net/http.MaxBytesReader] isteğin TAMAMINI
-// sayar. Pay bırakılmasaydı tam sınırdaki bir dosya, sırf zarfı yüzünden
-// reddedilir ve hata "dosyan çok büyük" derdi — oysa dosya sınırın tam
-// kendisiydi. Payın kendisi de sınırsız değildir: dosyanın gerçek boyutunu
-// servisteki sayaç ayrıca ve TAM olarak zorlar (bkz. service.sinirliOkuyucu),
-// yani buradaki gevşeklik yalnızca zarfa tanınır.
-const zarfPayi int64 = 8 << 10 // 8 KiB
+// The size limit is put on the FILE but [net/http.MaxBytesReader] counts the
+// WHOLE request. Had no allowance been left, a file exactly at the limit would
+// be rejected purely because of its envelope and the error would say "your file
+// is too large" — while the file was exactly the limit itself. The allowance is
+// not unbounded either: the real size of the file is separately and EXACTLY
+// enforced by the counter in the service (see the size-limited reader there),
+// so the slack here is granted to the envelope only.
+const envelopeAllowance int64 = 8 << 10 // 8 KiB
 
-// createUpload POST /admin/v1/uploads handler'ıdır.
+// createUpload is the POST /admin/v1/uploads handler.
 //
-// # Gövde JSON DEĞİL multipart/form-data'dır
+// # The body is NOT JSON but multipart/form-data
 //
-// Bu, depoda istemciden RASTGELE BAYT kabul edilen tek yoldur ve akışın her
-// adımı bu yüzden açıkça yazılmıştır:
+// This is the only path in the repository where ARBITRARY BYTES are accepted
+// from the client, and that is why every step of the flow is written down
+// explicitly:
 //
-//  1. Gövde [net/http.MaxBytesReader] ile SARILIR. Sınırsız bir gövde, tek
-//     istekle diski (ve belleği) doldurmanın en ucuz yoludur.
-//  2. Ayrıştırma AKIŞLA yapılır ([net/http.Request.MultipartReader]), form
-//     ayrıştırıcısıyla değil. r.ParseMultipartForm bellekte tutamadığı
-//     parçaları GEÇİCİ DOSYALARA yazar — yani henüz hiçbir denetimden
-//     geçmemiş baytları diske indirir. Kaçınmaya çalıştığımız şeyin ta
-//     kendisi.
-//  3. İlk 512 bayt okunur ve içerik tipi İÇERİKTEN tespit edilir. İstemcinin
-//     Content-Type başlığı bir İDDİADIR, olgu değil: "image/png" diye
-//     gönderilen bir HTML dosyası, ona güvenen bir izin listesinden geçer ve
-//     sunulduğunda tarayıcıda çalışır.
-//  4. Okunan baştaki baytlar [io.MultiReader] ile akışın önüne geri konur;
-//     yoksa dosyanın ilk 512 baytı kaybolurdu.
-//  5. İzin listesi servis katmanında, depoya TEK BAYT yazılmadan uygulanır.
+//  1. The body is WRAPPED with [net/http.MaxBytesReader]. An unbounded body is
+//     the cheapest way to fill the disk (and the memory) with a single request.
+//  2. The parsing is done by STREAMING ([net/http.Request.MultipartReader]),
+//     not with the form parser. r.ParseMultipartForm writes the parts it cannot
+//     hold in memory into TEMPORARY FILES — that is, it lands bytes that have
+//     passed no validation yet onto the disk. Exactly the thing we are trying
+//     to avoid.
+//  3. The first 512 bytes are read and the content type is detected FROM THE
+//     CONTENT. The client's Content-Type header is a CLAIM, not a fact: an HTML
+//     file sent as "image/png" passes an allow list that trusts it and runs in
+//     the browser when it is served.
+//  4. The leading bytes that were read are put back in front of the stream with
+//     [io.MultiReader]; otherwise the first 512 bytes of the file would be lost.
+//  5. The allow list is applied in the service layer, before A SINGLE BYTE is
+//     written to the storage.
 func (h *Handler) createUpload(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
-	// Sınır, servisin sınırıyla AYNI kaynaktan okunur; iki yerde ayrı ayrı
-	// yazmak ikisinin sessizce ayrışması demek olurdu.
-	r.Body = http.MaxBytesReader(w, r.Body, h.svc.MaxUploadBytes()+zarfPayi)
+	// The limit is read from the SAME source as the service's limit; writing it
+	// separately in two places would mean the two silently drifting apart.
+	r.Body = http.MaxBytesReader(w, r.Body, h.svc.MaxUploadBytes()+envelopeAllowance)
 
-	parcalar, err := r.MultipartReader()
+	parts, err := r.MultipartReader()
 	if err != nil {
 		corehttp.WriteError(ctx, w, coreerrors.Wrap(err, coreerrors.KindInvalid, codeInvalidRequest,
-			"istek gövdesi multipart/form-data olmalı ve %q alanını taşımalıdır", fieldFile))
+			"the request body has to be multipart/form-data and has to carry the %q field", fieldFile))
 
 		return
 	}
 
-	dosya, err := dosyaParcasi(parcalar)
+	file, err := readFilePart(parts)
 	if err != nil {
-		corehttp.WriteError(ctx, w, boyutHatasi(err))
+		corehttp.WriteError(ctx, w, sizeError(err))
 
 		return
 	}
 
-	bas, err := basiOku(dosya)
+	head, err := readHead(file)
 	if err != nil {
-		corehttp.WriteError(ctx, w, boyutHatasi(err))
+		corehttp.WriteError(ctx, w, sizeError(err))
 
 		return
 	}
 
-	kayit, err := h.svc.Upload(ctx, service.UploadInput{
-		ContentType: icerikTipi(bas),
-		Body:        io.MultiReader(bytes.NewReader(bas), dosya),
-		// [mime/multipart.Part.FileName] adı RFC 7578 §4.2 gereği zaten
-		// [path/filepath.Base]'den geçirir, yani "../../etc/passwd" buraya
-		// "passwd" olarak ulaşır. Bu KORUMAMIZ DEĞİLDİR ve ona
-		// güvenilmiyor: korumamız, adın hiçbir yol ifadesine hiç girmemesi.
-		// Ayrım önemlidir — stdlib'in davranışına dayanan bir tasarım,
-		// istemci adını başka bir yoldan (örn. bir JSON alanından) alan ilk
-		// değişiklikte sessizce çöker.
-		OriginalName: dosya.FileName(),
-		UploadedBy:   cagiranKimligi(r),
+	record, err := h.svc.Upload(ctx, service.UploadInput{
+		ContentType: contentTypeOf(head),
+		Body:        io.MultiReader(bytes.NewReader(head), file),
+		// [mime/multipart.Part.FileName] already runs the name through
+		// [path/filepath.Base] as RFC 7578 §4.2 requires, so
+		// "../../etc/passwd" arrives here as "passwd". That IS NOT OUR
+		// PROTECTION and it is not relied upon: our protection is that the
+		// name never enters any path expression at all. The distinction
+		// matters — a design that rests on the stdlib's behavior collapses
+		// silently on the first change that takes the client's name from
+		// somewhere else (e.g. from a JSON field).
+		OriginalName: file.FileName(),
+		UploadedBy:   callerID(r),
 	})
 	if err != nil {
-		corehttp.WriteError(ctx, w, boyutHatasi(err))
+		corehttp.WriteError(ctx, w, sizeError(err))
 
 		return
 	}
 
-	// Fazladan parça, yüklenen dosyayı GERİ ALIR.
+	// An extra part ROLLS BACK the uploaded file.
 	//
-	// Sessizce yok saymak, istemcinin gönderdiğini sandığı ikinci dosyanın
-	// hiçbir yere gitmemesi demek olurdu ve bu ancak "ikinci görselim nerede"
-	// diye aranınca fark edilirdi. Denetim yüklemeden SONRA yapılır çünkü
-	// multipart akışında bir sonraki parçanın varlığı ancak öncekinin tamamı
-	// okunduktan sonra bilinir.
-	if err := h.fazlaParcayiReddet(r, parcalar, kayit.ID); err != nil {
+	// Ignoring it silently would mean that the second file the client thinks it
+	// sent went nowhere, and that would only be noticed when somebody went
+	// looking for "where is my second image". The check is done AFTER the
+	// upload because in a multipart stream the existence of the next part is
+	// only known once the previous one has been read in full.
+	if err := h.rejectExtraPart(r, parts, record.ID); err != nil {
 		corehttp.WriteError(ctx, w, err)
 
 		return
 	}
 
-	writeItem(w, r, http.StatusCreated, toUploadDTO(kayit))
+	writeItem(w, r, http.StatusCreated, toUploadDTO(record))
 }
 
-// dosyaParcasi multipart akışından dosya parçasını bulur.
+// readFilePart finds the file part in the multipart stream.
 //
-// Beklenmeyen bir alan adı REDDEDİLİR, atlanmaz. Sessizce atlamak, adını
-// yanlış yazmış bir istemciye "dosya alanı yok" yerine daha da kafa
-// karıştırıcı bir hata verirdi; üstelik bu modülün okuduğu tek alan zaten
-// budur ve okunmayan bir alanı kabul etmek, çalışmayan bir vaat olurdu.
-func dosyaParcasi(parcalar *multipart.Reader) (*multipart.Part, error) {
-	parca, err := parcalar.NextPart()
+// An unexpected field name is REJECTED, not skipped. Skipping it silently would
+// give a client that misspelled the name an even more confusing error than
+// "there is no file field"; on top of that this is the only field this module
+// reads anyway, and accepting a field that is not read would be a promise that
+// does not work.
+func readFilePart(parts *multipart.Reader) (*multipart.Part, error) {
+	part, err := parts.NextPart()
 	if err != nil {
 		if errors.Is(err, io.EOF) {
 			return nil, coreerrors.Invalid(codeInvalidRequest,
-				"istek gövdesinde %q alanı yok", fieldFile)
+				"the request body has no %q field", fieldFile)
 		}
 
 		return nil, coreerrors.Wrap(err, coreerrors.KindInvalid, codeInvalidRequest,
-			"multipart gövdesi çözümlenemedi")
+			"the multipart body could not be parsed")
 	}
 
-	if parca.FormName() != fieldFile {
+	if part.FormName() != fieldFile {
 		return nil, coreerrors.Invalid(codeInvalidRequest,
-			"beklenmeyen alan %q; yalnızca %q alanı okunur", parca.FormName(), fieldFile)
+			"unexpected field %q; only the %q field is read", part.FormName(), fieldFile)
 	}
 
-	return parca, nil
+	return part, nil
 }
 
-// fazlaParcayiReddet dosya parçasından sonra başka parça olmadığını doğrular;
-// varsa yüklenen kaydı siler ve hata döner.
-func (h *Handler) fazlaParcayiReddet(r *http.Request, parcalar *multipart.Reader, uploadID string) error {
-	_, err := parcalar.NextPart()
+// rejectExtraPart verifies that there is no further part after the file part;
+// if there is, it deletes the uploaded record and returns an error.
+func (h *Handler) rejectExtraPart(r *http.Request, parts *multipart.Reader, uploadID string) error {
+	_, err := parts.NextPart()
 	if errors.Is(err, io.EOF) {
 		return nil
 	}
 
-	// Geri alma, isteğin bağlamı iptal edilmiş olsa bile denenmelidir; aksi
-	// hâlde reddedilen her istek depoda bir dosya bırakırdı.
+	// The rollback has to be attempted even when the request's context has been
+	// canceled; otherwise every rejected request would leave a file behind in
+	// the storage.
 	if delErr := h.svc.DeleteUpload(context.WithoutCancel(r.Context()), uploadID); delErr != nil {
 		corehttp.LoggerFromContext(r.Context()).ErrorContext(r.Context(),
-			"reddedilen yükleme geri alınamadı",
+			"the rejected upload could not be rolled back",
 			"error", delErr,
 			"upload_id", uploadID,
-			"anlami", "depoda kaydı silinmemiş bir dosya kaldı; elle temizlenmeli")
+			"consequence", "a file whose record was not deleted stayed in the storage; it has to be cleaned up by hand")
 	}
 
 	if err != nil {
-		return boyutHatasi(coreerrors.Wrap(err, coreerrors.KindInvalid, codeInvalidRequest,
-			"multipart gövdesi çözümlenemedi"))
+		return sizeError(coreerrors.Wrap(err, coreerrors.KindInvalid, codeInvalidRequest,
+			"the multipart body could not be parsed"))
 	}
 
 	return coreerrors.Invalid(codeInvalidRequest,
-		"istek gövdesi tek bir %q alanı taşımalıdır", fieldFile)
+		"the request body has to carry a single %q field", fieldFile)
 }
 
-// basiOku içerik tipi tespiti için gövdenin başını okur.
+// readHead reads the head of the body for the content type detection.
 //
-// Dosya 512 bayttan küçükse eksik okuma bir HATA DEĞİLDİR; tespit elde olan
-// baytlarla yapılır. Hiç bayt okunamaması ise hatadır: sıfır baytlık bir
-// yüklemenin ne tipi tespit edilebilir ne de sunulacak bir içeriği vardır.
-func basiOku(r io.Reader) ([]byte, error) {
-	bas := make([]byte, sniffBoyutu)
+// If the file is smaller than 512 bytes a short read IS NOT AN ERROR; the
+// detection is done with the bytes at hand. Reading no bytes at all is an error
+// though: a zero-byte upload has neither a detectable type nor any content to
+// serve.
+func readHead(r io.Reader) ([]byte, error) {
+	head := make([]byte, sniffSize)
 
-	n, err := io.ReadFull(r, bas)
+	n, err := io.ReadFull(r, head)
 	if err != nil && !errors.Is(err, io.EOF) && !errors.Is(err, io.ErrUnexpectedEOF) {
 		return nil, coreerrors.Wrap(err, coreerrors.KindInvalid, codeInvalidRequest,
-			"dosya okunamadı")
+			"the file could not be read")
 	}
 
 	if n == 0 {
-		return nil, coreerrors.Invalid(codeInvalidRequest, "dosya boş olamaz")
+		return nil, coreerrors.Invalid(codeInvalidRequest, "the file cannot be empty")
 	}
 
-	return bas[:n], nil
+	return head[:n], nil
 }
 
-// icerikTipi baştaki baytlardan içerik tipini tespit eder.
+// contentTypeOf detects the content type from the leading bytes.
 //
-// Parametreler (örn. "; charset=utf-8") ATILIR: [net/http.DetectContentType]
-// metin tiplerine karakter kümesi ekler ve ham dize izin listesindeki
-// "image/png" gibi çıplak tiplerle hiçbir zaman eşleşmezdi. Ayrıştırma
-// başarısız olursa ham değer olduğu gibi döner ve izin listesinden geçemez —
-// tanınmayan bir tipin doğru cevabı zaten reddedilmektir.
-func icerikTipi(bas []byte) string {
-	ham := http.DetectContentType(bas)
+// The parameters (e.g. "; charset=utf-8") are DROPPED:
+// [net/http.DetectContentType] appends a character set to the text types and
+// the raw string would never match the bare types in the allow list such as
+// "image/png". If the parsing fails the raw value is returned as it is and it
+// cannot pass the allow list — the right answer for an unrecognized type is to
+// reject it anyway.
+func contentTypeOf(head []byte) string {
+	raw := http.DetectContentType(head)
 
-	tip, _, err := mime.ParseMediaType(ham)
+	mediaType, _, err := mime.ParseMediaType(raw)
 	if err != nil {
-		return ham
+		return raw
 	}
 
-	return tip
+	return mediaType
 }
 
-// boyutHatasi gövde sınırının aşıldığı hatalarını tipli bir istemci hatasına
-// çevirir.
+// sizeError turns the errors of an exceeded body limit into a typed client
+// error.
 //
-// [net/http.MaxBytesReader]'ın hatası zincirin herhangi bir yerinde olabilir:
-// multipart ayrıştırıcısı ya da sağlayıcı onu sarmalayarak döndürür. Tipiyle
-// aranmasının sebebi budur.
+// The error of [net/http.MaxBytesReader] can be anywhere in the chain: the
+// multipart parser or the provider returns it wrapped. That is why it is looked
+// for by its type.
 //
-// # Neden 413 değil 422
+// # Why 422 and not 413
 //
-// Status kodunu handler SEÇMEZ (plan Bölüm 2.7): kod, hatanın sınıfından
-// türetilir ve çekirdeğin sınıf kümesinde 413'ün karşılığı yoktur. Tek bir uç
-// için o kuralı delmek, hata sınıflandırmasının tek yerde durması ilkesini
-// bozardı — ve istemcinin gerçekten dallanacağı şey status değil,
-// makine tarafından okunabilen koddur ([service.CodeTooLarge]).
-func boyutHatasi(err error) error {
-	var buyuk *http.MaxBytesError
-	if errors.As(err, &buyuk) {
+// The handler DOES NOT CHOOSE the status code (plan Section 2.7): the code is
+// derived from the class of the error, and the core's set of classes has no
+// counterpart for 413. Breaking that rule for a single endpoint would break the
+// principle that the error classification stands in one place — and what the
+// client is really going to branch on is not the status but the
+// machine-readable code ([service.CodeTooLarge]).
+func sizeError(err error) error {
+	var tooLarge *http.MaxBytesError
+	if errors.As(err, &tooLarge) {
 		return coreerrors.Wrap(err, coreerrors.KindInvalid, service.CodeTooLarge,
-			"istek gövdesi en fazla %d bayt olabilir", buyuk.Limit)
+			"the request body can be at most %d bytes", tooLarge.Limit)
 	}
 
 	return err
 }
 
-// cagiranKimligi isteği yapan çağıranın kimliğini döner; yoksa boş dize.
+// callerID returns the identity of the caller making the request; the empty
+// string when there is none.
 //
-// Kimlik defterde SERBEST METİNDİR, foreign key değildir (Prensip 2.2): auth
-// modülünün tablosuna bağlanmak modül izolasyonunu kırardı. Boş kalması da
-// mümkündür — bu uç korumalı olduğu için normal akışta olmaz, ama gömülü
-// kullanımda handler doğrudan çağrılabilir ve o durumda "kim yükledi"
-// bilinmiyor demek, uydurmaktan iyidir.
-func cagiranKimligi(r *http.Request) string {
-	kimlik, ok := corehttp.PrincipalFromContext(r.Context())
+// The identity is FREE TEXT in the ledger, not a foreign key (Principle 2.2):
+// binding to the auth module's table would break the module isolation. It can
+// also stay empty — since this endpoint is protected that does not happen in
+// the normal flow, but in an embedded use the handler can be called directly
+// and in that case saying "who uploaded it is unknown" is better than making
+// something up.
+func callerID(r *http.Request) string {
+	principal, ok := corehttp.PrincipalFromContext(r.Context())
 	if !ok {
 		return ""
 	}
 
-	return kimlik.ID
+	return principal.ID
 }

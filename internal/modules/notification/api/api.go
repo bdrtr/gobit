@@ -1,29 +1,33 @@
-// Package api notification modülünün HTTP yüzeyidir.
+// Package api is the HTTP surface of the notification module.
 //
-// # Neden yalnızca OKUMA ve yalnızca /admin/v1
+// # Why READ ONLY and /admin/v1 only
 //
-// Modülün tek yazma yolu bir OLAY ABONESİDİR: bildirim, sipariş verildiğinde
-// tetiklenir. Bir "bildirim gönder" ucu açmak, aynı işi iki yoldan yapılır
-// kılardı ve ikinci yol idempotency anahtarını dışarıdan seçilebilir hâle
-// getirirdi — yani mükerrer bildirimi engelleyen tek koruma, çağıranın
-// dikkatine bırakılırdı.
+// The module's single write path is an EVENT SUBSCRIBER: the notification is
+// triggered when an order is placed. Opening a "send a notification" endpoint
+// would make the same job doable over two paths, and the second path would
+// make the idempotency key selectable from outside — that is, the only
+// protection that prevents a duplicate notification would be left to the
+// caller's attention.
 //
-// Müşteriye açılan bir uç da yoktur: teslim günlüğü mağazanın iç kaydıdır ve
-// müşterinin ondan öğrenebileceği hiçbir şey, siparişin kendisinden zaten
-// öğrenemeyeceği bir şey değildir.
+// There is no endpoint opened to the customer either: the delivery log is the
+// store's internal record, and there is nothing the customer could learn from
+// it that they could not already learn from the order itself.
 //
-// Handler'lar status kodu SEÇMEZ: servis tipli hata döner, corehttp.WriteError
-// onu status koduna çevirir (plan Bölüm 2.7).
+// The handlers DO NOT CHOOSE the status code: the service returns a typed
+// error and corehttp.WriteError translates it into a status code (plan Section
+// 2.7).
 //
-// # Yetki
+// # Authorization
 //
-// Tek uç [ScopeRead] ister. Yazma yetkisi TANIMLANMAMIŞTIR: verilebileceği bir
-// uç yoktur ve şimdiden tanımlamak, kimsenin karşılığını göremediği bir yetkiyi
-// yetki sözlüğüne sokmak olurdu.
+// The single endpoint requires [ScopeRead]. A write scope IS NOT DEFINED:
+// there is no endpoint it could be given to, and defining it already would
+// mean putting a scope nobody can see the counterpart of into the scope
+// dictionary.
 //
-// Yetki kontrolü KİMLİKTEN SONRA gelir: kimlik yoksa 401, kimlik var ama yetki
-// yetmiyorsa 403 döner. Kimliği kuran corehttp.RequireAdmin bu modülde değil,
-// router'ı kuran tarafta (corehttp.APIGuards) takılır.
+// The scope check comes AFTER THE IDENTITY: with no identity it returns 401,
+// with an identity whose scope is not enough it returns 403.
+// corehttp.RequireAdmin, which establishes the identity, is not mounted in this
+// module but on the side that builds the router (corehttp.APIGuards).
 package api
 
 import (
@@ -39,17 +43,18 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/notification/service"
 )
 
-// pathAdminDeliveries teslim günlüğü listesinin yoludur.
+// pathAdminDeliveries is the path of the delivery log listing.
 //
-// Route TAM YOL ile kaydedilir; "/admin/v1" gibi bir ön ek MOUNT EDİLMEZ,
-// çünkü mount eden ilk modül o alt ağacın tamamını sahiplenir ve aynı ön eki
-// kullanan diğer modüllerle çakışırdı.
+// The route is registered with its FULL PATH; a prefix such as "/admin/v1" IS
+// NOT MOUNTED, because the first module that mounts it owns that whole subtree
+// and would collide with the other modules that use the same prefix.
 const pathAdminDeliveries = "/admin/v1/notifications"
 
-// codeInvalidQuery sorgu parametresi çözümlenemediğinde dönen hata kodudur.
+// codeInvalidQuery is the error code returned when a query parameter could not
+// be parsed.
 const codeInvalidQuery = "notification_invalid_query"
 
-// Sorgu parametreleri.
+// Query parameters.
 const (
 	queryReference = "reference"
 	queryStatus    = "status"
@@ -57,48 +62,50 @@ const (
 	queryOffset    = "offset"
 )
 
-// Yetki sözlüğü TEK GİRDİDEN ibarettir; yazma yetkisi yoktur (bkz. paket
-// belgesi).
+// The scope dictionary consists of a SINGLE ENTRY; there is no write scope (see
+// the package documentation).
 
-// ScopeRead teslim günlüğünü okuma yetkisidir.
+// ScopeRead is the scope for reading the delivery log.
 //
-// corehttp.ScopeAdmin ÜST YETKİDİR ve bunu da karşılar; ayrıca listelenmesine
-// gerek yoktur, corehttp.Principal.HasScope bunu zaten yapar.
+// corehttp.ScopeAdmin is a SUPERIOR SCOPE and satisfies this one too; it does
+// not need to be listed as well, corehttp.Principal.HasScope already does that.
 const ScopeRead = "notification:read"
 
-// Deliveries handler'ın servisten istediği DAR yüzeydir.
+// Deliveries is the NARROW surface the handler asks of the service.
 //
-// Somut *service.Service yerine tek metotluk bir arayüz kullanılır: HTTP
-// katmanı servisin tamamına değil yalnızca burada sayılan çağrıya bağlanır ve
-// handler davranışı (zarf, status eşlemesi, parametre çözümü) gerçek bir
-// veritabanı olmadan sahte bir uygulamayla sınanabilir.
+// A single-method interface is used instead of the concrete *service.Service:
+// the HTTP layer binds not to the whole of the service but only to the call
+// listed here, and the handler behavior (the envelope, the status mapping, the
+// parameter parsing) can be tested with a fake implementation, without a real
+// database.
 type Deliveries interface {
 	ListDeliveries(ctx context.Context, in service.ListDeliveriesInput) ([]models.Delivery, int64, error)
 }
 
-// Handler notification'ın HTTP handler'larını barındırır.
+// Handler holds notification's HTTP handlers.
 type Handler struct {
 	svc Deliveries
 }
 
-// New verilen servis üzerinde çalışan bir handler üretir.
+// New produces a handler that works over the given service.
 func New(svc Deliveries) *Handler { return &Handler{svc: svc} }
 
-// Routes notification'ın admin route'larını router'a bağlar.
+// Routes mounts notification's admin routes on the router.
 //
-// İki koruma katmanı vardır ve ikisi de gereklidir: KİMLİK (corehttp.RequireAdmin,
-// router'ı kuran tarafta) ve YETKİ (burada, [ScopeRead]). İkincisi olmasaydı
-// yetkileri boşaltılmış bir yönetim kullanıcısı da teslim günlüğünü okuyabilirdi;
-// günlük kişisel veri taşımaz ama hangi siparişe ne zaman bildirim gittiğini
-// gösterir, yani sipariş akışının zaman çizelgesidir.
+// There are two layers of protection and both of them are needed: the IDENTITY
+// (corehttp.RequireAdmin, on the side that builds the router) and the SCOPE
+// (here, [ScopeRead]). Without the second one an administration user whose
+// scopes had been emptied could read the delivery log too; the log carries no
+// personal data but it shows which order a notification went out for and when —
+// that is, it is the timeline of the order flow.
 func (h *Handler) Routes(r chi.Router) {
 	r.With(corehttp.RequireScope(ScopeRead)).Get(pathAdminDeliveries, h.listDeliveries)
 }
 
-// listDeliveries GET /admin/v1/notifications handler'ıdır.
+// listDeliveries is the GET /admin/v1/notifications handler.
 //
-// Süzgeçler: "reference" (sipariş kimliği) ve "status". İkisi de opsiyoneldir;
-// verilmezse tüm günlük, en yeniden eskiye sayfalanır.
+// Filters: "reference" (the order id) and "status". Both are optional; when
+// they are not given the whole log is paged, newest to oldest.
 func (h *Handler) listDeliveries(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -108,16 +115,16 @@ func (h *Handler) listDeliveries(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	kayitlar, toplam, err := h.svc.ListDeliveries(ctx, in)
+	records, total, err := h.svc.ListDeliveries(ctx, in)
 	if err != nil {
 		corehttp.WriteError(ctx, w, err)
 		return
 	}
 
-	writePage(w, r, kayitlar, toplam, in.Page)
+	writePage(w, r, records, total, in.Page)
 }
 
-// listInput sorgu dizesinden liste girdisini kurar.
+// listInput builds the list input out of the query string.
 func listInput(r *http.Request) (service.ListDeliveriesInput, error) {
 	limit, err := intParam(r, queryLimit)
 	if err != nil {
@@ -135,12 +142,13 @@ func listInput(r *http.Request) (service.ListDeliveriesInput, error) {
 	}, nil
 }
 
-// optionalParam verilmemiş bir süzgeci nil, verilmişi işaretçi olarak döner.
+// optionalParam returns a filter that was not given as nil, and one that was
+// given as a pointer.
 //
-// Ayrım servise kadar taşınır: nil "süzme" demektir, boş dizeye işaret eden bir
-// değer ise "referansı boş olan kayıtları getir". İkisini değer tipiyle
-// taşımak, "?reference=" yazan bir istemciye sessizce TÜM günlüğü döndürmek
-// olurdu.
+// The distinction is carried all the way to the service: nil means "do not
+// filter", while a value pointing at the empty string means "bring the records
+// whose reference is empty". Carrying the two in a value type would have meant
+// silently returning the WHOLE log to a client that wrote "?reference=".
 func optionalParam(r *http.Request, name string) *string {
 	values := r.URL.Query()
 	if !values.Has(name) {
@@ -150,10 +158,12 @@ func optionalParam(r *http.Request, name string) *string {
 	return &value
 }
 
-// intParam tek bir sayısal sorgu parametresini okur; yoksa sıfır döner.
+// intParam reads a single numeric query parameter; when it is absent it returns
+// zero.
 //
-// SAYIYA ÇEVRİLEMEYEN bir değer hata döner; sessizce sıfıra düşmek, istemcinin
-// istediği sayfa yerine ilk sayfayı almasına yol açardı.
+// A value that CANNOT BE CONVERTED TO A NUMBER returns an error; falling back
+// to zero silently would have led the client to get the first page instead of
+// the page it asked for.
 func intParam(r *http.Request, name string) (int64, error) {
 	raw := r.URL.Query().Get(name)
 	if raw == "" {
@@ -162,42 +172,43 @@ func intParam(r *http.Request, name string) (int64, error) {
 	value, err := strconv.ParseInt(raw, 10, 64)
 	if err != nil {
 		return 0, coreerrors.Invalid(codeInvalidQuery,
-			"%q parametresi tam sayı olmalı, %q verildi", name, raw)
+			"the %q parameter has to be an integer, %q was given", name, raw)
 	}
 	return value, nil
 }
 
-// listEnvelope liste yanıtlarının zarfıdır (plan Bölüm 8).
+// listEnvelope is the envelope of list responses (plan Section 8).
 type listEnvelope struct {
-	// Data geçerli sayfadaki kayıtlardır.
+	// Data is the records on the current page.
 	Data any `json:"data"`
-	// Count süzgece uyan TOPLAM kayıt sayısıdır.
+	// Count is the TOTAL number of records matching the filter.
 	Count int64 `json:"count"`
-	// Offset uygulanan atlama sayısıdır.
+	// Offset is the applied number of skipped records.
 	Offset int64 `json:"offset"`
-	// Limit uygulanan sayfa boyudur.
+	// Limit is the applied page size.
 	Limit int64 `json:"limit"`
 }
 
-// writePage kayıtları liste zarfıyla yazar.
+// writePage writes the records inside the list envelope.
 //
-// Zarftaki Limit, isteğin ham değeri DEĞİL servisin uyguladığı değerdir:
-// limit verilmemişse servis varsayılanı uygular ve zarfın onu bildirmesi,
-// istemcinin bir sonraki sayfayı doğru hesaplayabilmesi için gerekir.
-func writePage(w http.ResponseWriter, r *http.Request, kayitlar []models.Delivery, toplam int64, page service.Page) {
+// The Limit in the envelope is NOT the request's raw value but the value the
+// service applied: when no limit is given the service applies its default, and
+// the envelope reporting it is what the client needs in order to compute the
+// next page correctly.
+func writePage(w http.ResponseWriter, r *http.Request, records []models.Delivery, total int64, page service.Page) {
 	limit := page.Limit
 	if limit == 0 {
 		limit = service.DefaultLimit
 	}
 
-	items := make([]deliveryDTO, 0, len(kayitlar))
-	for i := range kayitlar {
-		items = append(items, toDeliveryDTO(kayitlar[i]))
+	items := make([]deliveryDTO, 0, len(records))
+	for i := range records {
+		items = append(items, toDeliveryDTO(records[i]))
 	}
 
 	corehttp.WriteJSON(r.Context(), w, http.StatusOK, listEnvelope{
 		Data:   items,
-		Count:  toplam,
+		Count:  total,
 		Offset: page.Offset,
 		Limit:  limit,
 	})

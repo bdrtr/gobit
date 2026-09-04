@@ -1,34 +1,36 @@
-// Package logonly bildirimi YALNIZCA loglayan, hiçbir yere GÖNDERMEYEN
-// varsayılan bildirim sağlayıcısıdır (plan Bölüm 5.6).
+// Package logonly is the default notification provider that ONLY LOGS the
+// notification and SENDS IT NOWHERE (plan Section 5.6).
 //
-// [Provider], internal/core/provider'daki NotificationProvider sözleşmesini
-// karşılar ve kutudan çıkan tek sağlayıcıdır: gobit bir çerçevedir ve hangi
-// e-posta/SMS servisinin kullanılacağını bilemez, ama bildirim yolunun ayakta
-// olduğunu göstermek zorundadır.
+// [Provider] satisfies the NotificationProvider contract in
+// internal/core/provider and is the only provider that comes in the box: gobit
+// is a framework and cannot know which email/SMS service will be used, yet it
+// has to show that the notification path is standing.
 //
-// # Adı NEDEN "log"
+// # WHY it is named "log"
 //
-// payment modülünün "manual" sağlayıcısı da gerçek bir kuruluşa gitmez, ama
-// oradaki taklit ZARARSIZDIR: manuel ödeme gerçek bir iş modelidir ve
-// sağlayıcı kendi defterinde tutarlı bir durum tutar. Burada öyle bir durum
-// yoktur — gönderilmemiş bir e-posta hiçbir yerde "bekliyor" olarak durmaz.
-// Bu yüzden ad, davranışı SÖYLER: "log", gönderim değil kayıt yapıldığını
-// açıkça bildirir. "smtp", "default" ya da "noop" gibi bir ad seçilseydi
-// kurulumun sahibi bildirimin gittiğini sanabilirdi ve o yanılgının bedeli
-// somuttur: sipariş onayı almadığı için müşterinin siparişinin geçmediğini
-// sanması — üstelik sistemde hiçbir hata görünmeden.
+// The payment module's "manual" provider does not reach a real institution
+// either, but the pretense there is HARMLESS: manual payment is a real business
+// model and the provider keeps a consistent state in its own ledger. Here there
+// is no such state — an email that was not sent does not sit anywhere as
+// "waiting". That is why the name TELLS the behavior: "log" states plainly that
+// a record was made, not a send. Had a name like "smtp", "default" or "noop"
+// been chosen, the owner of the installation could have believed the
+// notification went out, and the price of that illusion is concrete: the
+// customer, having received no order confirmation, believes their order did not
+// go through — and no error shows up in the system at all.
 //
-// Aynı sebeple gönderim BAŞARISIZ sayılmaz: hata dönmek, teslim günlüğünü
-// gerçek bir arıza varmış gibi kırmızıya boyar ve yapılandırma hatası ile
-// sağlayıcı arızasını ayırt edilemez hâle getirirdi. Sağlayıcı "isteği
-// aldım" der; alınan isteğin nereye gitmediğini adı ve bu belge söyler.
+// For the same reason the send is not counted as FAILED: returning an error
+// would paint the delivery log red as if there were a real fault, and would
+// make a configuration mistake indistinguishable from a provider outage. The
+// provider says "I took the request"; where the request it took did not go is
+// said by its name and by this document.
 //
-// # ALICI ADRESİ LOGLANMAZ
+// # THE RECIPIENT ADDRESS IS NOT LOGGED
 //
-// Log satırı ne e-posta ne telefon taşır (plan Bölüm 8: hassas veri
-// loglanmaz). Log toplayıcısı, yönetim yüzeyinden çok daha geniş bir kitleye
-// açıktır; bir adresin oraya düşmesi, teslim günlüğünde bilinçli olarak
-// tutulmayan veriyi arka kapıdan kalıcı hâle getirirdi.
+// The log line carries neither an email nor a phone number (plan Section 8:
+// sensitive data is not logged). The log collector is open to a far wider
+// audience than the admin surface; an address landing there would make data
+// deliberately not kept in the delivery log permanent through the back door.
 package logonly
 
 import (
@@ -40,20 +42,20 @@ import (
 	coreprovider "github.com/bdrtr/gobit/internal/core/provider"
 )
 
-// ID sağlayıcının kimliğidir; NOTIFICATION_PROVIDER varsayılanı budur.
+// ID is the identity of the provider; it is the NOTIFICATION_PROVIDER default.
 const ID = "log"
 
-// Provider bildirimi yalnızca loglayan sağlayıcıdır.
-// Eşzamanlı kullanıma güvenlidir.
+// Provider is the provider that only logs the notification.
+// It is safe for concurrent use.
 type Provider struct {
 	log *slog.Logger
 }
 
-// Provider'ın çekirdek sözleşmesini karşıladığı derleme zamanında doğrulanır;
-// imza kayması çalışma zamanına kalmaz.
+// That Provider satisfies the core contract is verified at compile time; a
+// signature drift does not survive until run time.
 var _ coreprovider.NotificationProvider = (*Provider)(nil)
 
-// New bir log sağlayıcısı üretir. log nil verilirse loglar atılır.
+// New produces a log provider. When log is given as nil the logs are dropped.
 func New(log *slog.Logger) *Provider {
 	if log == nil {
 		log = slog.New(slog.DiscardHandler)
@@ -61,26 +63,27 @@ func New(log *slog.Logger) *Provider {
 	return &Provider{log: log}
 }
 
-// ID sağlayıcının kimliğini döner.
+// ID returns the identity of the provider.
 func (p *Provider) ID() string { return ID }
 
-// Send bildirimi loglar ve HİÇBİR YERE GÖNDERMEZ.
+// Send logs the notification and SENDS IT NOWHERE.
 //
-// Log seviyesi WARN'dır, INFO değil: bu satır normal bir işleyişin kaydı
-// değil, "kurulum gerçek bir sağlayıcı seçmemiş" uyarısıdır. Üretimde her
-// siparişte bir uyarı görmek istenmeyen bir gürültüdür ve tam olarak bu
-// yüzden doğrudur — susturmanın yolu NOTIFICATION_PROVIDER'ı bir eklenti
-// sağlayıcısına çevirmektir.
+// The log level is WARN, not INFO: this line is not the record of a normal
+// operation but the warning that "the installation has not picked a real
+// provider". Seeing a warning on every order in production is unwanted noise,
+// and that is exactly why it is right — the way to silence it is to turn
+// NOTIFICATION_PROVIDER towards a plugin provider.
 //
-// Yükün DEĞERLERİ loglanmaz, yalnızca ANAHTARLARI yazılır. Bugünkü tek şablon
-// ("order.placed") kişisel veri taşımaz, ama şablon verisi tanımı gereği
-// serbesttir ve yarın bir müşteri adı taşıyabilir; anahtar listesi "şablon
-// dolduruldu mu" sorusunu, değerleri sızdırmadan yanıtlar.
+// The VALUES of the payload are not logged, only its KEYS are written. Today's
+// single template ("order.placed") carries no personal data, but template data
+// is free by definition and tomorrow it may carry a customer name; the list of
+// keys answers the question "was the template filled in?" without leaking the
+// values.
 func (p *Provider) Send(ctx context.Context, n coreprovider.Notification) error {
-	p.log.WarnContext(ctx, "bildirim GÖNDERİLMEDİ: 'log' sağlayıcısı yalnızca kaydeder",
-		"saglayici", ID,
-		"sablon", n.Template,
-		"kanal", n.Channel,
-		"veri_anahtarlari", slices.Sorted(maps.Keys(n.Data)))
+	p.log.WarnContext(ctx, "notification NOT SENT: the 'log' provider only records",
+		"provider", ID,
+		"template", n.Template,
+		"channel", n.Channel,
+		"data_keys", slices.Sorted(maps.Keys(n.Data)))
 	return nil
 }

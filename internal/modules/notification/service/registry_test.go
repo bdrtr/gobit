@@ -10,33 +10,34 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/notification/service"
 )
 
-// TestRegistryAyniKimlikleIkinciKayitCakisirVeMevcutuKorur sessizce üzerine
-// yazmanın reddedildiğini doğrular.
+// TestRegistrySecondRegistrationWithTheSameIDConflictsAndKeepsTheExisting
+// verifies that overwriting silently is refused.
 //
-// İki eklentinin aynı kimliği kullandığı bir kurulumda üzerine yazmak, hangi
-// sağlayıcının çalıştığını YÜKLEME SIRASINA bırakırdı; bildirimde bunun bedeli,
-// sipariş onaylarının yanlış hesaptan gitmesi ya da hiç gitmemesidir.
-func TestRegistryAyniKimlikleIkinciKayitCakisirVeMevcutuKorur(t *testing.T) {
+// In a setup where two plugins use the same identifier, overwriting would leave
+// which provider runs up to the LOAD ORDER; in notification the price of that
+// is order confirmations going out from the wrong account or not going out at
+// all.
+func TestRegistrySecondRegistrationWithTheSameIDConflictsAndKeepsTheExisting(t *testing.T) {
 	registry := service.NewProviderRegistry()
-	ilk := newFakeProvider("log")
-	ikinci := newFakeProvider("log")
+	first := newFakeProvider("log")
+	second := newFakeProvider("log")
 
-	require.NoError(t, registry.Register(ilk))
-	err := registry.Register(ikinci)
+	require.NoError(t, registry.Register(first))
+	err := registry.Register(second)
 
 	require.Error(t, err)
-	assert.True(t, errors.IsConflict(err), "hata: %v", err)
+	assert.True(t, errors.IsConflict(err), "error: %v", err)
 	assert.Equal(t, service.CodeProviderExists, errors.CodeOf(err))
 
-	cozulen, getErr := registry.Get("log")
+	resolved, getErr := registry.Get("log")
 	require.NoError(t, getErr)
-	assert.Same(t, ilk, cozulen, "mevcut sağlayıcı KORUNMALI")
+	assert.Same(t, first, resolved, "the existing provider HAS TO BE KEPT")
 }
 
-// TestRegistryBilinmeyenKimlikTeshisEdilebilirHataVerir sağlayıcının
-// kaydedilmeyi unutulmasının (ya da adın yanlış yazılmasının) okunabilir bir
-// hata verdiğini doğrular (ADR 0002).
-func TestRegistryBilinmeyenKimlikTeshisEdilebilirHataVerir(t *testing.T) {
+// TestRegistryUnknownIDGivesADiagnosableError verifies that a provider being
+// forgotten during registration (or the name being misspelled) gives a readable
+// error (ADR 0002).
+func TestRegistryUnknownIDGivesADiagnosableError(t *testing.T) {
 	registry := service.NewProviderRegistry()
 	require.NoError(t, registry.Register(newFakeProvider("log")))
 	require.NoError(t, registry.Register(newFakeProvider("sendgrid")))
@@ -44,33 +45,35 @@ func TestRegistryBilinmeyenKimlikTeshisEdilebilirHataVerir(t *testing.T) {
 	_, err := registry.Get("mailgun")
 
 	require.Error(t, err)
-	assert.True(t, errors.IsNotFound(err), "hata: %v", err)
-	assert.Contains(t, err.Error(), "mailgun", "aranan kimlik yazılmalı")
-	assert.Contains(t, err.Error(), "log", "kayıtlı kimlikler yazılmalı")
+	assert.True(t, errors.IsNotFound(err), "error: %v", err)
+	assert.Contains(t, err.Error(), "mailgun", "the identifier looked for has to be written")
+	assert.Contains(t, err.Error(), "log", "the registered identifiers have to be written")
 	assert.Contains(t, err.Error(), "sendgrid")
 }
 
-// TestRegistryGecersizKayitlarReddedilir nil ve kimliksiz sağlayıcıların
-// kaydedilemeyeceğini doğrular.
+// TestRegistryInvalidRegistrationsAreRefused verifies that nil providers and
+// providers without an identifier cannot be registered.
 //
-// Kimliksiz bir sağlayıcı kaydedilebilseydi, hiçbir yapılandırma onu
-// seçemeyecek ama kayıt "dolu" görünecekti.
-func TestRegistryGecersizKayitlarReddedilir(t *testing.T) {
+// Had a provider without an identifier been registrable, no configuration could
+// ever select it but the registry would look "full".
+func TestRegistryInvalidRegistrationsAreRefused(t *testing.T) {
 	registry := service.NewProviderRegistry()
 
 	require.Error(t, registry.Register(nil))
 
 	err := registry.Register(newFakeProvider("   "))
 	require.Error(t, err)
-	assert.True(t, errors.IsInvalid(err), "hata: %v", err)
+	assert.True(t, errors.IsInvalid(err), "error: %v", err)
 	assert.Empty(t, registry.IDs())
 }
 
-// TestRegistryIDsSiraliDoner kimliklerin kararlı sırada döndüğünü doğrular.
+// TestRegistryIDsAreReturnedSorted verifies that the identifiers come back in a
+// stable order.
 //
-// Sıra map üzerinden gelseydi hata mesajları ve açılış logu her çalıştırmada
-// başka bir sırada çıkar, teşhisi zorlaştırırdı.
-func TestRegistryIDsSiraliDoner(t *testing.T) {
+// Had the order come from the map, the error messages and the startup log would
+// come out in a different order on every run and that would make diagnosis
+// harder.
+func TestRegistryIDsAreReturnedSorted(t *testing.T) {
 	registry := service.NewProviderRegistry()
 	require.NoError(t, registry.Register(newFakeProvider("sendgrid")))
 	require.NoError(t, registry.Register(newFakeProvider("log")))

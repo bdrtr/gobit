@@ -1,24 +1,26 @@
-// Package repository notification modülünün veritabanı erişimidir.
+// Package repository is the database access of the notification module.
 //
-// SADECE bu modülün tablosuna dokunur (plan Bölüm 4). sqlc üretimi kod
-// repository/notificationdb altındadır ve elle düzenlenmez; bu paket onun
-// üstüne iki şey ekler:
+// It touches ONLY the table of this module (plan Section 4). The sqlc generated
+// code is under repository/notificationdb and is not edited by hand; this
+// package adds two things on top of it:
 //
-//   - Çeviri: pgtype ve üretilmiş satır tipleri BU PAKETİN DIŞINA ÇIKMAZ,
-//     models tiplerine çevrilir.
-//   - Sınıflandırma: sürücü hataları core/errors tipli hatalarına çevrilir;
-//     satır bulunamaması NotFound, benzersizlik ihlali Conflict olur
-//     (plan Bölüm 2.7 — status kodunu handler seçmez).
+//   - Conversion: pgtype and the generated row types DO NOT LEAVE THIS
+//     PACKAGE, they are converted to models types.
+//   - Classification: driver errors are converted into errors typed by
+//     core/errors; a missing row becomes NotFound, a uniqueness violation
+//     Conflict (plan Section 2.7 — the handler does not pick the status code).
 //
-// # İŞLEM (transaction) YOKTUR ve gerekmez
+// # THERE IS NO TRANSACTION and none is needed
 //
-// Diğer modüllerin deposu WithTx taşır; burada yoktur. Günlük yazma iki tek
-// deyimden oluşur (kayıt aç, sonucu yaz) ve ikisinin ARASINDA sağlayıcıya
-// gidilir — yani ikisini tek işleme almak, bir ağ çağrısı boyunca açık
-// işlem tutmak demekti. İşlem açık kalırken sürecin ölmesi hâlinde kayıt hiç
-// yazılmaz ve mükerrer gönderimi durduran benzersizlik anahtarı da hiç
-// oluşmazdı; ayrı deyimler bunun tersini garanti eder: kayıt HER ZAMAN
-// gönderimden önce kalıcıdır.
+// The repositories of the other modules carry WithTx; here there is none.
+// Writing the log consists of two single statements (open the record, write the
+// outcome) and the provider is reached BETWEEN the two — that is, taking the
+// two into a single transaction would have meant holding a transaction open for
+// the duration of a network call. Had the process died while the transaction
+// was open, the record would never have been written and the uniqueness key
+// that stops a duplicate send would never have come into being either;
+// separate statements guarantee the opposite: the record is ALWAYS durable
+// before the send.
 package repository
 
 import (
@@ -36,24 +38,24 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/notification/repository/notificationdb"
 )
 
-// Hata kodları; çağıran taraf errors.CodeOf ile bunlara bakabilir.
+// Error codes; the calling side can look at these with errors.CodeOf.
 const (
-	// CodeDeliveryNotFound istenen günlük kaydının bulunamadığını bildirir.
+	// CodeDeliveryNotFound reports that the requested log record was not found.
 	CodeDeliveryNotFound = "notification_delivery_not_found"
-	// CodeDeliveryExists aynı (şablon, referans) için ikinci bir kayıt
-	// açılmak istendiğini bildirir.
+	// CodeDeliveryExists reports that a second record was to be opened for the
+	// same (template, reference).
 	CodeDeliveryExists = "notification_delivery_already_exists"
-	// CodeConstraintViolation veritabanı kısıtının ihlal edildiğini bildirir.
+	// CodeConstraintViolation reports that a database constraint was violated.
 	CodeConstraintViolation = "notification_constraint_violation"
-	// CodeQueryFailed beklenmeyen bir veritabanı hatasını bildirir.
+	// CodeQueryFailed reports an unexpected database error.
 	CodeQueryFailed = "notification_query_failed"
-	// CodeCanceled bağlam iptalini bildirir.
+	// CodeCanceled reports a context cancellation.
 	CodeCanceled = "notification_canceled"
-	// CodeNotReady deponun havuz olmadan kurulduğunu bildirir.
+	// CodeNotReady reports that the repository was constructed without a pool.
 	CodeNotReady = "notification_repository_not_ready"
 )
 
-// PostgreSQL SQLSTATE kodları (ihtiyaç duyulanlar).
+// PostgreSQL SQLSTATE codes (the ones that are needed).
 const (
 	sqlstateUniqueViolation      = "23505"
 	sqlstateCheckViolation       = "23514"
@@ -61,19 +63,19 @@ const (
 	sqlstateStringDataRightTrunc = "22001"
 )
 
-// constraintTemplateReferenceUniq idempotency anahtarını zorlayan indeksin
-// adıdır; migration'daki adla BİREBİR aynıdır.
+// constraintTemplateReferenceUniq is the name of the index that enforces the
+// idempotency key; it is EXACTLY the name in the migration.
 const constraintTemplateReferenceUniq = "notification_deliveries_template_reference_uniq"
 
-// Repo teslim günlüğüne erişimi sağlar. Eşzamanlı kullanıma güvenlidir.
+// Repo provides the access to the delivery log. It is safe for concurrent use.
 type Repo struct {
 	q *notificationdb.Queries
 }
 
-// New verilen havuz üzerinde çalışan bir depo üretir.
+// New produces a repository working on the given pool.
 //
-// pool nil ise bu, kurulumda değil ilk çağrıda tipli bir hata olarak
-// bildirilir; kurulum yolu panik üretmez.
+// When pool is nil this is reported as a typed error on the first call, not at
+// construction; the construction path produces no panic.
 func New(pool *pgxpool.Pool) *Repo {
 	if pool == nil {
 		return &Repo{}
@@ -81,20 +83,22 @@ func New(pool *pgxpool.Pool) *Repo {
 	return &Repo{q: notificationdb.New(pool)}
 }
 
-// ready havuzun kullanılabilir olduğunu doğrular.
+// ready verifies that the pool is usable.
 func (r *Repo) ready() error {
 	if r == nil || r.q == nil {
-		return errors.Unavailable(CodeNotReady, "notification veritabanı havuzu kurulmamış")
+		return errors.Unavailable(CodeNotReady, "the notification database pool is not set up")
 	}
 	return nil
 }
 
-// ClaimDelivery günlük kaydını yalnızca o (şablon, referans) çifti HENÜZ
-// KULLANILMAMIŞSA yazar. İkinci dönüş değeri satırın YAZILIP yazılmadığıdır.
+// ClaimDelivery writes the log record only if that (template, reference) pair
+// has NOT BEEN USED YET. The second return value is whether the row WAS
+// written.
 //
-// Çakışma bir hata DEĞİLDİR: aynı bildirimin ikinci kez tetiklenmesi beklenen
-// bir durumdur (yeniden yayımlanan bir olay, elle tetikleme) ve doğru cevap
-// hata değil ATLAMAKTIR. Çağıran, false gördüğünde sağlayıcıya HİÇ gitmez.
+// A conflict IS NOT an error: the same notification being triggered a second
+// time is an expected situation (a republished event, a manual trigger) and the
+// right answer is not an error but SKIPPING. When the caller sees false it does
+// NOT go to the provider at all.
 func (r *Repo) ClaimDelivery(ctx context.Context, d models.Delivery) (models.Delivery, bool, error) {
 	if err := r.ready(); err != nil {
 		return models.Delivery{}, false, err
@@ -112,13 +116,14 @@ func (r *Repo) ClaimDelivery(ctx context.Context, d models.Delivery) (models.Del
 		if errors.Is(err, pgx.ErrNoRows) {
 			return models.Delivery{}, false, nil
 		}
-		return models.Delivery{}, false, classify(err, "bildirim günlüğü kaydı açılamadı: %s/%s",
+		return models.Delivery{}, false, classify(err, "could not open the notification log record: %s/%s",
 			d.Template, d.Reference)
 	}
 	return toDelivery(row), true, nil
 }
 
-// FinishDelivery gönderim denemesinin sonucunu yazar; kayıt yoksa NotFound.
+// FinishDelivery writes the outcome of the send attempt; NotFound when there is
+// no record.
 func (r *Repo) FinishDelivery(
 	ctx context.Context,
 	id string,
@@ -138,15 +143,17 @@ func (r *Repo) FinishDelivery(
 		if errors.Is(err, pgx.ErrNoRows) {
 			return models.Delivery{}, deliveryNotFound(id)
 		}
-		return models.Delivery{}, classify(err, "bildirim günlüğü kaydı güncellenemedi: %s", id)
+		return models.Delivery{}, classify(err, "could not update the notification log record: %s", id)
 	}
 	return toDelivery(row), nil
 }
 
-// GetDelivery kaydı kimliğiyle döner; yoksa NotFound.
+// GetDelivery returns the record by its identifier; NotFound when there is
+// none.
 //
-// Yönetim listesinin yanında ayrıca durmasının sebebi teşhistir: bir teslim
-// kaydının son hâlini, listenin süzgeçlerinden geçmeden okumak gerekir.
+// The reason it stands apart from the admin listing is diagnosis: the last
+// state of a delivery record has to be read without passing through the filters
+// of the listing.
 func (r *Repo) GetDelivery(ctx context.Context, id string) (models.Delivery, error) {
 	if err := r.ready(); err != nil {
 		return models.Delivery{}, err
@@ -157,16 +164,17 @@ func (r *Repo) GetDelivery(ctx context.Context, id string) (models.Delivery, err
 		if errors.Is(err, pgx.ErrNoRows) {
 			return models.Delivery{}, deliveryNotFound(id)
 		}
-		return models.Delivery{}, classify(err, "bildirim günlüğü kaydı okunamadı: %s", id)
+		return models.Delivery{}, classify(err, "could not read the notification log record: %s", id)
 	}
 	return toDelivery(row), nil
 }
 
-// ListDeliveries kayıtları süzerek ve sayfalayarak döner.
-// İkinci dönüş değeri süzgece uyan TÜM satırların sayısıdır.
+// ListDeliveries returns the records filtered and paged.
+// The second return value is the count of ALL the rows matching the filter.
 //
-// Toplam AYRI bir sorgudan gelir ve listeyle aynı süzgeçleri uygular; sayfa
-// aralık dışında olsa ve hiç satır dönmese de doğrudur.
+// The total comes from a SEPARATE query and applies the same filters as the
+// listing; it is correct even when the page is out of range and no row is
+// returned.
 func (r *Repo) ListDeliveries(
 	ctx context.Context,
 	filter models.DeliveryFilter,
@@ -182,7 +190,7 @@ func (r *Repo) ListDeliveries(
 		RowOffset: filter.Offset,
 	})
 	if err != nil {
-		return nil, 0, classify(err, "bildirim günlüğü listelenemedi")
+		return nil, 0, classify(err, "could not list the notification log")
 	}
 
 	total, err := r.q.CountNotificationDeliveries(ctx, notificationdb.CountNotificationDeliveriesParams{
@@ -190,19 +198,19 @@ func (r *Repo) ListDeliveries(
 		Status:    filter.Status,
 	})
 	if err != nil {
-		return nil, 0, classify(err, "bildirim günlüğü sayılamadı")
+		return nil, 0, classify(err, "could not count the notification log")
 	}
 
 	out := make([]models.Delivery, 0, len(rows))
-	// Dilim İNDEKSLE gezilir: değerle gezmek her yinelemede satır yapısının
-	// tamamını kopyalardı.
+	// The slice is walked BY INDEX: walking it by value would have copied the
+	// whole row struct on every iteration.
 	for i := range rows {
 		out = append(out, toDelivery(rows[i]))
 	}
 	return out, total, nil
 }
 
-// toDelivery üretilen satırı domain modeline çevirir.
+// toDelivery converts the generated row into the domain model.
 func toDelivery(row notificationdb.NotificationDelivery) models.Delivery {
 	return models.Delivery{
 		ID:         row.ID,
@@ -217,11 +225,11 @@ func toDelivery(row notificationdb.NotificationDelivery) models.Delivery {
 	}
 }
 
-// toTime NOT NULL bir zaman damgasını UTC time.Time'a çevirir.
+// toTime converts a NOT NULL timestamp into a UTC time.Time.
 //
-// Geçersiz (NULL) damga sıfır zaman döner: NOT NULL sütunlarda bu durum
-// oluşamaz, oluşursa da sıfır zaman panik üretmeyen ve testte göze batan bir
-// değerdir.
+// An invalid (NULL) stamp returns the zero time: on NOT NULL columns this case
+// cannot arise, and if it does the zero time is a value that produces no panic
+// and stands out in a test.
 func toTime(ts pgtype.Timestamptz) time.Time {
 	if !ts.Valid {
 		return time.Time{}
@@ -229,10 +237,11 @@ func toTime(ts pgtype.Timestamptz) time.Time {
 	return ts.Time.UTC()
 }
 
-// sprintf hata mesajını bir kez biçimlendirir.
+// sprintf formats the error message exactly once.
 //
-// Argümansız çağrılarda format DEĞİŞTİRİLMEDEN döner; aksi hâlde mesajdaki bir
-// yüzde işareti (örn. "%!d(MISSING)") teşhis metnini bozardı.
+// On calls without arguments the format is returned UNCHANGED; otherwise a
+// percent sign in the message (e.g. "%!d(MISSING)") would corrupt the
+// diagnostic text.
 func sprintf(format string, a ...any) string {
 	if len(a) == 0 {
 		return format
@@ -240,22 +249,24 @@ func sprintf(format string, a ...any) string {
 	return fmt.Sprintf(format, a...)
 }
 
-// deliveryNotFound bulunamayan kayıt için tipli hata üretir.
+// deliveryNotFound produces the typed error for a record that was not found.
 func deliveryNotFound(id string) error {
-	return errors.NotFound(CodeDeliveryNotFound, "bildirim günlüğü kaydı bulunamadı: %s", id)
+	return errors.NotFound(CodeDeliveryNotFound, "notification log record not found: %s", id)
 }
 
-// classify ham bir veritabanı hatasını tipli hataya çevirir.
+// classify converts a raw database error into a typed error.
 //
-// Sınıflandırma bilinçlidir: benzersizlik ihlali ÇAKIŞMADIR (409) ve
-// idempotency anahtarının çiğnendiğini söyler; kısıt ihlali istemci hatasıdır
-// (422); iptal geçici erişilemezliktir (503); geri kalan her şey sunucu
-// hatasıdır ve mesajı istemciye SIZDIRILMAZ (bkz. core/http).
+// The classification is deliberate: a uniqueness violation is a CONFLICT (409)
+// and says the idempotency key was breached; a constraint violation is a client
+// error (422); a cancellation is a temporary unavailability (503); everything
+// else is a server error and its message IS NOT LEAKED to the client (see
+// core/http).
 //
-// Benzersizlik ihlali normal akışta BURAYA DÜŞMEZ — kayıt açma ON CONFLICT DO
-// NOTHING kullanır ve çakışmayı satırsız dönüşle bildirir. Yine de eşlenir:
-// eşlenmeseydi, indeksin elle ya da başka bir yoldan çiğnendiği bir durum
-// "sunucu hatası" olarak görünür ve teşhisi zorlaşırdı.
+// A uniqueness violation DOES NOT LAND HERE in the normal flow — opening the
+// record uses ON CONFLICT DO NOTHING and reports the conflict by returning no
+// row. It is mapped nonetheless: had it not been mapped, a case where the index
+// was breached by hand or by some other path would have shown up as a "server
+// error" and been harder to diagnose.
 func classify(err error, format string, a ...any) error {
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return errors.Wrap(err, errors.KindUnavailable, CodeCanceled, format, a...)
@@ -267,11 +278,11 @@ func classify(err error, format string, a ...any) error {
 		case sqlstateUniqueViolation:
 			if pgErr.ConstraintName == constraintTemplateReferenceUniq {
 				return errors.Wrap(err, errors.KindConflict, CodeDeliveryExists,
-					"bu şablon ve referans için zaten bir bildirim kaydı var")
+					"a notification record already exists for this template and reference")
 			}
 		case sqlstateCheckViolation, sqlstateNotNullViolation, sqlstateStringDataRightTrunc:
 			return errors.Wrap(err, errors.KindInvalid, CodeConstraintViolation,
-				"%s (kısıt: %s)", sprintf(format, a...), pgErr.ConstraintName)
+				"%s (constraint: %s)", sprintf(format, a...), pgErr.ConstraintName)
 		}
 	}
 

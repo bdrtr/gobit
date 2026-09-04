@@ -12,66 +12,68 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/notification/service"
 )
 
-// fakeStore service.Store'un bellek içi karşılığıdır.
+// fakeStore is the in-memory counterpart of service.Store.
 //
-// Gerçek depodan taklit edilen TEK davranış idempotency anahtarıdır: aynı
-// (şablon, referans) çifti için ikinci bir kayıt AÇILMAZ. Servisin
-// "mükerrer bildirim göndermez" iddiası tamamen buna dayanır ve gerçek
-// veritabanında bunu sağlayan şey benzersiz indekstir; sahte depo aynı kuralı
-// haritayla uygular, böylece iddia Docker olmadan da sınanabilir. Kısıtın
-// gerçekten kurulu olduğu entegrasyon testinde ayrıca doğrulanır.
+// The ONLY behavior imitated from the real store is the idempotency key: a
+// second record IS NOT OPENED for the same (template, reference) pair. The
+// service's claim that it "does not send duplicate notifications" rests
+// entirely on this, and in the real database the thing that provides it is the
+// unique index; the fake store applies the same rule with a map, so that the
+// claim can be tested without Docker as well. That the constraint really is in
+// place is verified separately in the integration test.
 type fakeStore struct {
 	mu sync.Mutex
-	// kayitlar kimliğe göre günlük kayıtlarıdır.
-	kayitlar map[string]models.Delivery
-	// anahtarlar "<şablon>\x00<referans>" -> kayıt kimliği eşlemesidir;
-	// benzersiz indeksin karşılığıdır.
-	anahtarlar map[string]string
-	// claimSayisi ClaimDelivery'nin kaç kez ÇAĞRILDIĞINI sayar.
-	claimSayisi int
+	// records holds the log records by identifier.
+	records map[string]models.Delivery
+	// keys is the "<template>\x00<reference>" -> record identifier mapping; it
+	// is the counterpart of the unique index.
+	keys map[string]string
+	// claimCount counts HOW MANY TIMES ClaimDelivery WAS CALLED.
+	claimCount int
 
-	// claimErr ayarlanırsa ClaimDelivery bu hatayı döner.
+	// claimErr, when set, makes ClaimDelivery return this error.
 	claimErr error
-	// finishErr ayarlanırsa FinishDelivery bu hatayı döner; sonucun
-	// yazılamadığı yol bununla sınanır.
+	// finishErr, when set, makes FinishDelivery return this error; the path
+	// where the outcome cannot be written is tested with it.
 	finishErr error
-	// listErr ayarlanırsa ListDeliveries bu hatayı döner.
+	// listErr, when set, makes ListDeliveries return this error.
 	listErr error
 }
 
-// newFakeStore boş bir sahte depo üretir.
+// newFakeStore produces an empty fake store.
 func newFakeStore() *fakeStore {
 	return &fakeStore{
-		kayitlar:   map[string]models.Delivery{},
-		anahtarlar: map[string]string{},
+		records: map[string]models.Delivery{},
+		keys:    map[string]string{},
 	}
 }
 
-// anahtar idempotency anahtarını üretir.
+// deliveryKey produces the idempotency key.
 //
-// Ayırıcı olarak NUL kullanılır: "a.b"+"c" ile "a"+"b.c" gibi iki farklı çiftin
-// aynı anahtara düşmesi, sahte deponun gerçek indeksten daha katı davranması
-// demekti ve test, olmayan bir çakışmayı doğrulardı.
-func anahtar(template, reference string) string { return template + "\x00" + reference }
+// NUL is used as the separator: two different pairs such as "a.b"+"c" and
+// "a"+"b.c" falling onto the same key would have meant the fake store behaving
+// more strictly than the real index, and the test verifying a collision that
+// does not exist.
+func deliveryKey(template, reference string) string { return template + "\x00" + reference }
 
 func (s *fakeStore) ClaimDelivery(_ context.Context, d models.Delivery) (models.Delivery, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	s.claimSayisi++
+	s.claimCount++
 	if s.claimErr != nil {
 		return models.Delivery{}, false, s.claimErr
 	}
 
-	key := anahtar(d.Template, d.Reference)
-	if _, varsa := s.anahtarlar[key]; varsa {
+	key := deliveryKey(d.Template, d.Reference)
+	if _, exists := s.keys[key]; exists {
 		return models.Delivery{}, false, nil
 	}
 
 	d.CreatedAt = time.Now().UTC()
 	d.UpdatedAt = d.CreatedAt
-	s.kayitlar[d.ID] = d
-	s.anahtarlar[key] = d.ID
+	s.records[d.ID] = d
+	s.keys[key] = d.ID
 
 	return d, true, nil
 }
@@ -89,28 +91,28 @@ func (s *fakeStore) FinishDelivery(
 		return models.Delivery{}, s.finishErr
 	}
 
-	kayit, ok := s.kayitlar[id]
+	record, ok := s.records[id]
 	if !ok {
-		return models.Delivery{}, errors.NotFound("test_not_found", "kayıt yok: %s", id)
+		return models.Delivery{}, errors.NotFound("test_not_found", "there is no record: %s", id)
 	}
 
-	kayit.Status = status
-	kayit.Error = failure
-	kayit.UpdatedAt = time.Now().UTC()
-	s.kayitlar[id] = kayit
+	record.Status = status
+	record.Error = failure
+	record.UpdatedAt = time.Now().UTC()
+	s.records[id] = record
 
-	return kayit, nil
+	return record, nil
 }
 
 func (s *fakeStore) GetDelivery(_ context.Context, id string) (models.Delivery, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	kayit, ok := s.kayitlar[id]
+	record, ok := s.records[id]
 	if !ok {
-		return models.Delivery{}, errors.NotFound("test_not_found", "kayıt yok: %s", id)
+		return models.Delivery{}, errors.NotFound("test_not_found", "there is no record: %s", id)
 	}
-	return kayit, nil
+	return record, nil
 }
 
 func (s *fakeStore) ListDeliveries(
@@ -124,39 +126,39 @@ func (s *fakeStore) ListDeliveries(
 		return nil, 0, s.listErr
 	}
 
-	out := make([]models.Delivery, 0, len(s.kayitlar))
-	for id := range s.kayitlar {
-		kayit := s.kayitlar[id]
-		if filter.Reference != nil && kayit.Reference != *filter.Reference {
+	out := make([]models.Delivery, 0, len(s.records))
+	for id := range s.records {
+		record := s.records[id]
+		if filter.Reference != nil && record.Reference != *filter.Reference {
 			continue
 		}
-		if filter.Status != nil && kayit.Status.String() != *filter.Status {
+		if filter.Status != nil && record.Status.String() != *filter.Status {
 			continue
 		}
-		out = append(out, kayit)
+		out = append(out, record)
 	}
 	return out, int64(len(out)), nil
 }
 
-// tumKayitlar deponun tüm kayıtlarını döner (test iddiaları için).
-func (s *fakeStore) tumKayitlar() []models.Delivery {
-	kayitlar, _, _ := s.ListDeliveries(context.Background(), models.DeliveryFilter{})
-	return kayitlar
+// allRecords returns all the records of the store (for the test assertions).
+func (s *fakeStore) allRecords() []models.Delivery {
+	records, _, _ := s.ListDeliveries(context.Background(), models.DeliveryFilter{})
+	return records
 }
 
-// fakeProvider coreprovider.NotificationProvider'ın senaryolanabilir
-// karşılığıdır.
+// fakeProvider is the scriptable counterpart of
+// coreprovider.NotificationProvider.
 type fakeProvider struct {
 	mu sync.Mutex
 	id string
-	// gonderilen sağlayıcıya ulaşan bildirimlerdir; SAYISI, "ikinci kez
-	// gönderilmedi" iddiasının tek kanıtıdır.
-	gonderilen []coreprovider.Notification
-	// err ayarlanırsa Send bu hatayı döner.
+	// sent holds the notifications that reached the provider; its COUNT is the
+	// only proof of the claim "it was not sent a second time".
+	sent []coreprovider.Notification
+	// err, when set, makes Send return this error.
 	err error
 }
 
-// newFakeProvider verilen kimlikle bir sahte sağlayıcı üretir.
+// newFakeProvider produces a fake provider with the given identifier.
 func newFakeProvider(id string) *fakeProvider { return &fakeProvider{id: id} }
 
 func (p *fakeProvider) ID() string { return p.id }
@@ -165,65 +167,65 @@ func (p *fakeProvider) Send(_ context.Context, n coreprovider.Notification) erro
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	// Çağrı, sonucu ne olursa olsun KAYDEDİLİR: sayaç "kaç bildirim başarıyla
-	// gitti"yi değil "sağlayıcıya kaç kez gidildi"yi ölçmelidir. Başarısız
-	// denemeyi saymayan bir sayaç, "başarısızdan sonra yeniden denenmiyor"
-	// iddiasını sınayamazdı.
-	p.gonderilen = append(p.gonderilen, n)
+	// The call IS RECORDED whatever its outcome: the counter has to measure not
+	// "how many notifications went out successfully" but "how many times the
+	// provider was reached". A counter that did not count the failed attempt
+	// could not test the claim "there is no retry after a failure".
+	p.sent = append(p.sent, n)
 
 	return p.err
 }
 
-// cagriSayisi sağlayıcıya kaç kez gidildiğini döner.
-func (p *fakeProvider) cagriSayisi() int {
+// callCount returns how many times the provider was reached.
+func (p *fakeProvider) callCount() int {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	return len(p.gonderilen)
+	return len(p.sent)
 }
 
-// sonBildirim sağlayıcıya ulaşan son bildirimi döner.
-func (p *fakeProvider) sonBildirim() coreprovider.Notification {
+// lastNotification returns the last notification that reached the provider.
+func (p *fakeProvider) lastNotification() coreprovider.Notification {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	if len(p.gonderilen) == 0 {
+	if len(p.sent) == 0 {
 		return coreprovider.Notification{}
 	}
-	return p.gonderilen[len(p.gonderilen)-1]
+	return p.sent[len(p.sent)-1]
 }
 
-// fakeContacts service.OrderContactReader'ın senaryolanabilir karşılığıdır.
+// fakeContacts is the scriptable counterpart of service.OrderContactReader.
 //
-// Gerçek yüzeyin (order.interop) gövdesini DİZE olarak üretir: tipli bir
-// yapıdan kodlamak, iki tarafın aynı Go tipini paylaştığı yanılsamasını
-// verirdi — oysa paylaşılan tek şey JSON ŞEMASIDIR ve ayrışma tam da orada
-// olur.
+// It produces the body of the real surface (order.interop) as a STRING:
+// encoding it from a typed struct would give the illusion that the two sides
+// share the same Go type — whereas the only thing shared is the JSON SCHEMA and
+// the divergence happens precisely there.
 type fakeContacts struct {
 	mu sync.Mutex
-	// govde okunacak ham yanıttır.
-	govde string
-	// err ayarlanırsa okuma bu hatayı döner.
+	// body is the raw response to be read.
+	body string
+	// err, when set, makes the reading return this error.
 	err error
-	// istenen son çağrının sipariş kimliğidir.
-	istenen string
-	// cagri okuma sayısıdır.
-	cagri int
+	// requested is the order identifier of the last call.
+	requested string
+	// calls is the number of reads.
+	calls int
 }
 
 func (c *fakeContacts) OrderContactJSON(_ context.Context, orderID string) (json.RawMessage, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	c.cagri++
-	c.istenen = orderID
+	c.calls++
+	c.requested = orderID
 	if c.err != nil {
 		return nil, c.err
 	}
-	return json.RawMessage(c.govde), nil
+	return json.RawMessage(c.body), nil
 }
 
-// yeniServis sahte bağımlılıklarla bir servis kurar.
-func yeniServis(store service.Store, providers *service.ProviderRegistry, id string, contacts service.OrderContactReader) (*service.Service, error) {
+// newService builds a service with fake dependencies.
+func newService(store service.Store, providers *service.ProviderRegistry, id string, contacts service.OrderContactReader) (*service.Service, error) {
 	return service.New(service.Options{
 		Store:      store,
 		Providers:  providers,

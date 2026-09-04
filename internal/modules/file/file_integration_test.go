@@ -1,15 +1,15 @@
 //go:build integration
 
-// Bu dosyadaki testler gerçek bir PostgreSQL örneği (dolayısıyla Docker)
-// gerektirir; `make test` hızlı kalsın diye `integration` etiketiyle
-// ayrılmıştır. Çalıştırmak için: make test-integration
+// The tests in this file require a real PostgreSQL instance (and therefore
+// Docker); they are separated behind the `integration` tag so that `make test`
+// stays fast. To run them: make test-integration
 //
-// Birim testleri servisin ve handler'ın KARARLARINI sahtelerle kanıtlar.
-// Buradaki testler kararların dayandığı ZEMİNİ kanıtlar: dosyanın GERÇEKTEN
-// diske yazıldığını, adresin GERÇEKTEN çalıştığını, sunulan Content-Type'ın
-// veritabanındaki satırdan geldiğini, silmenin hem satırı hem dosyayı
-// götürdüğünü ve depo anahtarının benzersizliğinin sahte bir haritada değil
-// gerçek bir indekste durduğunu.
+// The unit tests prove the DECISIONS of the service and of the handler with
+// fakes. The tests here prove the GROUND those decisions stand on: that the
+// file is REALLY written to disk, that the address REALLY works, that the
+// served Content-Type comes from the row in the database, that deleting
+// carries off both the row and the file, and that the uniqueness of the
+// storage key sits in a real index and not in a fake map.
 package file_test
 
 import (
@@ -45,19 +45,19 @@ import (
 
 const postgresImage = "postgres:16-alpine"
 
-// testAzamiBoyut entegrasyon testlerinde kullanılan boyut sınırıdır.
-const testAzamiBoyut int64 = 1 << 20
+// testMaxBytes is the size limit used in the integration tests.
+const testMaxBytes int64 = 1 << 20
 
-// pngIcerik geçerli bir PNG imzası taşıyan test içeriğidir.
+// pngContent is test content carrying a valid PNG signature.
 //
-// İmza GERÇEK olmalıdır: tespit içerikten yapılır ve uydurma bir dize,
-// yüklemenin izin listesinden geçmesini engellerdi.
-const pngIcerik = "\x89PNG\r\n\x1a\n" + "gerçek olmayan ama imzalı gövde"
+// The signature must be REAL: the detection is done from the content and a
+// made-up string would keep the upload from passing the allow list.
+const pngContent = "\x89PNG\r\n\x1a\n" + "a body that is not real but is signed"
 
 var (
-	// testPool tüm testlerin paylaştığı havuzdur.
+	// testPool is the pool all the tests share.
 	testPool *db.Pool
-	// testDSN migration çağrıları için bağlantı adresidir.
+	// testDSN is the connection address for the migration calls.
 	testDSN string
 )
 
@@ -65,8 +65,8 @@ func TestMain(m *testing.M) {
 	os.Exit(runWithPostgres(m))
 }
 
-// runWithPostgres tek bir Postgres konteyneri kaldırıp tüm testleri onun
-// üzerinde çalıştırır. os.Exit defer'ları atladığı için ayrı fonksiyondadır.
+// runWithPostgres brings up a single Postgres container and runs all the tests
+// on it. It is a separate function because os.Exit skips defers.
 func runWithPostgres(m *testing.M) int {
 	ctx := context.Background()
 
@@ -78,25 +78,25 @@ func runWithPostgres(m *testing.M) int {
 	)
 	defer func() {
 		if termErr := testcontainers.TerminateContainer(ctr); termErr != nil {
-			fmt.Fprintf(os.Stderr, "postgres konteyneri durdurulamadı: %v\n", termErr)
+			fmt.Fprintf(os.Stderr, "the postgres container could not be stopped: %v\n", termErr)
 		}
 	}()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "postgres konteyneri başlatılamadı: %v\n", err)
+		fmt.Fprintf(os.Stderr, "the postgres container could not be started: %v\n", err)
 
 		return 1
 	}
 
 	testDSN, err = ctr.ConnectionString(ctx, "sslmode=disable")
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "bağlantı adresi alınamadı: %v\n", err)
+		fmt.Fprintf(os.Stderr, "the connection address could not be obtained: %v\n", err)
 
 		return 1
 	}
 
 	testPool, err = db.New(ctx, db.DefaultConfig(testDSN), nil)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "bağlantı havuzu açılamadı: %v\n", err)
+		fmt.Fprintf(os.Stderr, "the connection pool could not be opened: %v\n", err)
 
 		return 1
 	}
@@ -104,7 +104,7 @@ func runWithPostgres(m *testing.M) int {
 
 	if err := db.Migrate(ctx, testDSN,
 		file.New(file.Options{}).Migrations(), file.ModuleName); err != nil {
-		fmt.Fprintf(os.Stderr, "migration uygulanamadı: %v\n", err)
+		fmt.Fprintf(os.Stderr, "the migration could not be applied: %v\n", err)
 
 		return 1
 	}
@@ -112,23 +112,23 @@ func runWithPostgres(m *testing.M) int {
 	return m.Run()
 }
 
-// kurulanModul GERÇEK veritabanı ve GERÇEK bir kök dizin üzerinde çalışan bir
-// modül kurar; router'ı da bağlar.
+// setUpModule sets up a module running on the REAL database and on a REAL root
+// directory; it mounts the router too.
 //
-// Modülün kendi Register'ı kullanılır: kurulum yolunun (sağlayıcı kaydı, kök
-// dizinin yaratılması, container'a yazma) gerçekten çalıştığını ancak bu
-// gösterir.
-func kurulanModul(t *testing.T) (*file.Module, chi.Router, string) {
+// The module's own Register is used: only that shows that the setup path (the
+// provider registration, the creation of the root directory, the writing into
+// the container) really works.
+func setUpModule(t *testing.T) (*file.Module, chi.Router, string) {
 	t.Helper()
 
-	kok := t.TempDir()
+	root := t.TempDir()
 
 	c := container.New(nil)
 	require.NoError(t, c.Provide("core.db", testPool))
 
 	mod := file.New(file.Options{
-		Root:           kok,
-		MaxUploadBytes: testAzamiBoyut,
+		Root:           root,
+		MaxUploadBytes: testMaxBytes,
 		AllowedTypes: []string{
 			coreprovider.ContentTypeJPEG,
 			coreprovider.ContentTypePNG,
@@ -141,35 +141,35 @@ func kurulanModul(t *testing.T) (*file.Module, chi.Router, string) {
 	r := chi.NewRouter()
 	mod.Routes(r)
 
-	return mod, r, kok
+	return mod, r, root
 }
 
-// yonetici testlerin varsayılan kimliğidir: tam yetkili bir yönetim
-// kullanıcısı.
-func yonetici() corehttp.Principal {
-	return corehttp.Principal{ID: "user_entegrasyon", Kind: "user", Scopes: []string{corehttp.ScopeAdmin}}
+// adminPrincipal is the tests' default principal: a fully authorized admin
+// user.
+func adminPrincipal() corehttp.Principal {
+	return corehttp.Principal{ID: "user_integration", Kind: "user", Scopes: []string{corehttp.ScopeAdmin}}
 }
 
-// yukle multipart bir yükleme isteği yapar.
-func yukle(t *testing.T, r chi.Router, dosyaAdi, bildirilenTip, icerik string) *httptest.ResponseRecorder {
+// upload makes a multipart upload request.
+func upload(t *testing.T, r chi.Router, fileName, declaredType, content string) *httptest.ResponseRecorder {
 	t.Helper()
 
 	var buf bytes.Buffer
-	yazici := multipart.NewWriter(&buf)
+	writer := multipart.NewWriter(&buf)
 
-	basliklar := make(textproto.MIMEHeader)
-	basliklar.Set("Content-Disposition", `form-data; name="file"; filename="`+dosyaAdi+`"`)
-	basliklar.Set("Content-Type", bildirilenTip)
+	headers := make(textproto.MIMEHeader)
+	headers.Set("Content-Disposition", `form-data; name="file"; filename="`+fileName+`"`)
+	headers.Set("Content-Type", declaredType)
 
-	parca, err := yazici.CreatePart(basliklar)
+	part, err := writer.CreatePart(headers)
 	require.NoError(t, err)
-	_, err = parca.Write([]byte(icerik))
+	_, err = part.Write([]byte(content))
 	require.NoError(t, err)
-	require.NoError(t, yazici.Close())
+	require.NoError(t, writer.Close())
 
 	req := httptest.NewRequest(http.MethodPost, "/admin/v1/uploads", &buf)
-	req.Header.Set("Content-Type", yazici.FormDataContentType())
-	req = req.WithContext(corehttp.WithPrincipal(req.Context(), yonetici()))
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	req = req.WithContext(corehttp.WithPrincipal(req.Context(), adminPrincipal()))
 
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
@@ -177,8 +177,8 @@ func yukle(t *testing.T, r chi.Router, dosyaAdi, bildirilenTip, icerik string) *
 	return rec
 }
 
-// yuklemeYaniti başarılı bir yükleme yanıtının alanlarıdır.
-type yuklemeYaniti struct {
+// uploadResponse holds the fields of a successful upload response.
+type uploadResponse struct {
 	Data struct {
 		ID          string `json:"id"`
 		URL         string `json:"url"`
@@ -189,155 +189,158 @@ type yuklemeYaniti struct {
 	} `json:"data"`
 }
 
-// yuklemeyiCoz yanıt gövdesini çözer.
-func yuklemeyiCoz(t *testing.T, rec *httptest.ResponseRecorder) yuklemeYaniti {
+// decodeUpload decodes the response body.
+func decodeUpload(t *testing.T, rec *httptest.ResponseRecorder) uploadResponse {
 	t.Helper()
 
-	var yanit yuklemeYaniti
-	require.NoError(t, jsonCoz(rec.Body.Bytes(), &yanit), "gövde: %s", rec.Body.String())
+	var resp uploadResponse
+	require.NoError(t, decodeJSON(rec.Body.Bytes(), &resp), "body: %s", rec.Body.String())
 
-	return yanit
+	return resp
 }
 
-// TestYuklemeSunmaSilmeUCTANUCA gerçek bir tüketici yolunu baştan sona
-// yürütür.
+// TestUploadServeDeleteEndToEnd walks a real consumer path from beginning to
+// end.
 //
-// Zincir tam olarak ürün görselinin izleyeceği yoldur: yükle → dönen adresi
-// bir <img> gibi çağır → sil. Her adım GERÇEK bileşenlerle çalışır; sahte
-// hiçbir şey yoktur.
-func TestYuklemeSunmaSilmeUCTANUCA(t *testing.T) {
-	_, r, kok := kurulanModul(t)
+// The chain is exactly the path the product image will follow: upload → call
+// the returned address the way an <img> would → delete. Every step runs with
+// REAL components; there is nothing fake.
+func TestUploadServeDeleteEndToEnd(t *testing.T) {
+	_, r, root := setUpModule(t)
 
-	// 1) Yükleme.
-	rec := yukle(t, r, "urun-onden.png", coreprovider.ContentTypePNG, pngIcerik)
-	require.Equal(t, http.StatusCreated, rec.Code, "gövde: %s", rec.Body.String())
+	// 1) Upload.
+	rec := upload(t, r, "product-front.png", coreprovider.ContentTypePNG, pngContent)
+	require.Equal(t, http.StatusCreated, rec.Code, "body: %s", rec.Body.String())
 
-	yanit := yuklemeyiCoz(t, rec)
-	assert.Equal(t, coreprovider.ContentTypePNG, yanit.Data.ContentType)
-	assert.Equal(t, int64(len(pngIcerik)), yanit.Data.Size)
-	assert.Equal(t, local.ID, yanit.Data.ProviderID)
-	assert.NotEmpty(t, yanit.Data.Checksum)
+	resp := decodeUpload(t, rec)
+	assert.Equal(t, coreprovider.ContentTypePNG, resp.Data.ContentType)
+	assert.Equal(t, int64(len(pngContent)), resp.Data.Size)
+	assert.Equal(t, local.ID, resp.Data.ProviderID)
+	assert.NotEmpty(t, resp.Data.Checksum)
 
-	// Dosya GERÇEKTEN diskte ve kök dizinin İÇİNDE olmalı.
-	anahtar := filepath.Base(yanit.Data.URL)
-	diskYolu := filepath.Join(kok, anahtar)
-	diskteki, err := os.ReadFile(diskYolu)
-	require.NoError(t, err, "yüklenen dosya kök dizinde olmalı")
-	assert.Equal(t, pngIcerik, string(diskteki))
+	// The file must REALLY be on the disk and INSIDE the root directory.
+	key := filepath.Base(resp.Data.URL)
+	diskPath := filepath.Join(root, key)
+	onDisk, err := os.ReadFile(diskPath)
+	require.NoError(t, err, "the uploaded file must be in the root directory")
+	assert.Equal(t, pngContent, string(onDisk))
 
-	// 2) Sunma — adres GERÇEKTEN çalışmalı ve kimlik İSTEMEMELİ.
-	sunum := httptest.NewRecorder()
-	r.ServeHTTP(sunum, httptest.NewRequest(http.MethodGet, yanit.Data.URL, http.NoBody))
+	// 2) Serving — the address must REALLY work and must NOT ASK for a
+	// principal.
+	served := httptest.NewRecorder()
+	r.ServeHTTP(served, httptest.NewRequest(http.MethodGet, resp.Data.URL, http.NoBody))
 
-	require.Equal(t, http.StatusOK, sunum.Code, "yüklemenin ürettiği adres çalışmalı")
-	assert.Equal(t, coreprovider.ContentTypePNG, sunum.Header().Get("Content-Type"),
-		"Content-Type SAKLANAN tipten yazılmalı")
-	assert.Equal(t, "nosniff", sunum.Header().Get("X-Content-Type-Options"))
-	assert.Equal(t, pngIcerik, sunum.Body.String())
+	require.Equal(t, http.StatusOK, served.Code, "the address the upload produced must work")
+	assert.Equal(t, coreprovider.ContentTypePNG, served.Header().Get("Content-Type"),
+		"the Content-Type must be written from the STORED type")
+	assert.Equal(t, "nosniff", served.Header().Get("X-Content-Type-Options"))
+	assert.Equal(t, pngContent, served.Body.String())
 
-	// 3) Silme — hem satır hem dosya gitmeli.
-	sil := silIstegi(t, r, yanit.Data.ID)
-	require.Equal(t, http.StatusNoContent, sil.Code)
+	// 3) Deleting — both the row and the file must go.
+	del := deleteRequest(t, r, resp.Data.ID)
+	require.Equal(t, http.StatusNoContent, del.Code)
 
-	_, err = os.Stat(diskYolu)
-	assert.True(t, os.IsNotExist(err), "silme dosyayı da götürmeli: %v", err)
+	_, err = os.Stat(diskPath)
+	assert.True(t, os.IsNotExist(err), "deleting must carry off the file too: %v", err)
 
-	sonrasi := httptest.NewRecorder()
-	r.ServeHTTP(sonrasi, httptest.NewRequest(http.MethodGet, yanit.Data.URL, http.NoBody))
-	assert.Equal(t, http.StatusNotFound, sonrasi.Code, "silinmiş dosya artık sunulmamalı")
-	assert.Equal(t, "nosniff", sonrasi.Header().Get("X-Content-Type-Options"),
-		"nosniff HER yanıtta, hata yanıtında da bulunmalı")
+	after := httptest.NewRecorder()
+	r.ServeHTTP(after, httptest.NewRequest(http.MethodGet, resp.Data.URL, http.NoBody))
+	assert.Equal(t, http.StatusNotFound, after.Code, "a deleted file must no longer be served")
+	assert.Equal(t, "nosniff", after.Header().Get("X-Content-Type-Options"),
+		"nosniff must be on EVERY response, on the error response too")
 }
 
-// TestSilmeIDEMPOTENTTIR ikinci silmenin gerçek veritabanında da 204
-// döndüğünü doğrular.
-func TestSilmeIDEMPOTENTTIR(t *testing.T) {
-	_, r, _ := kurulanModul(t)
+// TestDeleteIsIdempotent verifies that a second delete returns 204 on the real
+// database as well.
+func TestDeleteIsIdempotent(t *testing.T) {
+	_, r, _ := setUpModule(t)
 
-	rec := yukle(t, r, "a.png", coreprovider.ContentTypePNG, pngIcerik)
+	rec := upload(t, r, "a.png", coreprovider.ContentTypePNG, pngContent)
 	require.Equal(t, http.StatusCreated, rec.Code)
-	id := yuklemeyiCoz(t, rec).Data.ID
+	id := decodeUpload(t, rec).Data.ID
 
-	assert.Equal(t, http.StatusNoContent, silIstegi(t, r, id).Code, "ilk silme")
-	assert.Equal(t, http.StatusNoContent, silIstegi(t, r, id).Code, "İKİNCİ silme")
-	assert.Equal(t, http.StatusNoContent, silIstegi(t, r, "upl_HICVAROLMADI").Code,
-		"hiç var olmamış kimlik de son durumu sağlar")
+	assert.Equal(t, http.StatusNoContent, deleteRequest(t, r, id).Code, "the first delete")
+	assert.Equal(t, http.StatusNoContent, deleteRequest(t, r, id).Code, "the SECOND delete")
+	assert.Equal(t, http.StatusNoContent, deleteRequest(t, r, "upl_NEVEREXISTED").Code,
+		"an id that never existed satisfies the end state too")
 }
 
-// TestYalanIcerikTipiREDDEDILIRveDiskeYAZILMAZ istemcinin iddiasının
-// denetlenmediği bir kurulumun neye benzeyeceğini gösterir.
+// TestLyingContentTypeIsRejectedAndNotWrittenToDisk shows what an installation
+// that does not validate the client's claim would look like.
 //
-// Gönderilen şey "image/png" başlıklı bir HTML dosyasıdır. Ret, GERÇEK disk
-// üzerinde sınanır: kök dizin BOŞ kalmalıdır — yani denetim yazmadan önce
-// yapılmalıdır. Sonra yapılsaydı, reddedilen her dosya için bir silme çağrısı
-// gerekir ve o silme başarısız olduğunda dosya depoda kalırdı.
-func TestYalanIcerikTipiREDDEDILIRveDiskeYAZILMAZ(t *testing.T) {
-	_, r, kok := kurulanModul(t)
+// What is sent is an HTML file with an "image/png" header. The rejection is
+// exercised on a REAL disk: the root directory must stay EMPTY — that is, the
+// validation must happen before the write. Had it happened afterwards, every
+// rejected file would need a delete call, and when that delete failed the file
+// would stay in the store.
+func TestLyingContentTypeIsRejectedAndNotWrittenToDisk(t *testing.T) {
+	_, r, root := setUpModule(t)
 
-	rec := yukle(t, r, "sahte.png", coreprovider.ContentTypePNG,
+	rec := upload(t, r, "fake.png", coreprovider.ContentTypePNG,
 		"<html><body><script>alert(document.cookie)</script></body></html>")
 
-	require.Equal(t, http.StatusUnprocessableEntity, rec.Code, "gövde: %s", rec.Body.String())
-	assert.Empty(t, kokIcerigi(t, kok), "reddedilen dosya diske HİÇ yazılmamalı")
+	require.Equal(t, http.StatusUnprocessableEntity, rec.Code, "body: %s", rec.Body.String())
+	assert.Empty(t, rootContents(t, root), "a rejected file must NOT be written to disk at all")
 }
 
-// TestSVGREDDEDILIRveDiskeYAZILMAZ SVG'nin gerçek akışta da geçemediğini
-// doğrular.
+// TestSVGIsRejectedAndNotWrittenToDisk verifies that SVG does not get through
+// in the real flow either.
 //
-// SVG bir görsel gibi görünür ama BELGEDİR: <script> taşıyabilir ve aynı
-// kökenden sunulduğunda depolanmış XSS olur — yükleyen kullanıcı, görseli
-// açan herkesin oturumunda kod çalıştırır.
-func TestSVGREDDEDILIRveDiskeYAZILMAZ(t *testing.T) {
-	_, r, kok := kurulanModul(t)
+// An SVG looks like an image but it is a DOCUMENT: it can carry <script> and,
+// when served from the same origin, it becomes stored XSS — the uploading user
+// runs code in the session of everyone who opens the image.
+func TestSVGIsRejectedAndNotWrittenToDisk(t *testing.T) {
+	_, r, root := setUpModule(t)
 
 	const svg = `<?xml version="1.0"?><svg xmlns="http://www.w3.org/2000/svg">` +
 		`<script>alert(document.cookie)</script></svg>`
 
-	rec := yukle(t, r, "logo.svg", "image/svg+xml", svg)
+	rec := upload(t, r, "logo.svg", "image/svg+xml", svg)
 
-	require.Equal(t, http.StatusUnprocessableEntity, rec.Code, "gövde: %s", rec.Body.String())
-	assert.Empty(t, kokIcerigi(t, kok))
+	require.Equal(t, http.StatusUnprocessableEntity, rec.Code, "body: %s", rec.Body.String())
+	assert.Empty(t, rootContents(t, root))
 }
 
-// TestYolGecisiDENEMESIKOKDISINAYAZMAZ istemci dosya adının hiçbir aşamada yol
-// olmadığını GERÇEK dosya sistemi üzerinde doğrular.
+// TestPathTraversalAttemptDoesNotWriteOutsideTheRoot verifies on a REAL file
+// system that the client's file name is a path at no stage.
 //
-// İddia iki yönlüdür: kök dizinin dışında hiçbir şey oluşmaz VE kök dizinde
-// oluşan tek şey üretilmiş anahtarlı bir dosyadır.
-func TestYolGecisiDENEMESIKOKDISINAYAZMAZ(t *testing.T) {
-	_, r, kok := kurulanModul(t)
+// The claim has two directions: nothing comes into being outside the root
+// directory AND the only thing that comes into being inside the root directory
+// is a file with a generated key.
+func TestPathTraversalAttemptDoesNotWriteOutsideTheRoot(t *testing.T) {
+	_, r, root := setUpModule(t)
 
-	ust := filepath.Dir(kok)
-	oncekiUst := dizinIcerigi(t, ust)
+	parent := filepath.Dir(root)
+	parentBefore := dirContents(t, parent)
 
-	rec := yukle(t, r, "../../etc/passwd", coreprovider.ContentTypePNG, pngIcerik)
-	require.Equal(t, http.StatusCreated, rec.Code, "gövde: %s", rec.Body.String())
+	rec := upload(t, r, "../../etc/passwd", coreprovider.ContentTypePNG, pngContent)
+	require.Equal(t, http.StatusCreated, rec.Code, "body: %s", rec.Body.String())
 
-	icerik := kokIcerigi(t, kok)
-	require.Len(t, icerik, 1, "kök dizinde tam olarak bir dosya olmalı")
-	assert.NotContains(t, icerik[0], "passwd", "anahtar istemci adından türemez")
-	assert.Equal(t, filepath.Base(icerik[0]), icerik[0], "anahtar bir YOL değil")
+	contents := rootContents(t, root)
+	require.Len(t, contents, 1, "there must be exactly one file in the root directory")
+	assert.NotContains(t, contents[0], "passwd", "the key does not derive from the client's name")
+	assert.Equal(t, filepath.Base(contents[0]), contents[0], "the key is not a PATH")
 
-	assert.ElementsMatch(t, oncekiUst, dizinIcerigi(t, ust),
-		"kök dizinin DIŞINDA hiçbir şey oluşmamalı")
+	assert.ElementsMatch(t, parentBefore, dirContents(t, parent),
+		"nothing must come into being OUTSIDE the root directory")
 }
 
-// TestBoyutSinirinAsanGovdeReddedilir sınırın gerçek akışta zorlandığını ve
-// diske iz bırakmadığını doğrular.
+// TestBodyExceedingTheSizeLimitIsRejected verifies that the limit is enforced
+// in the real flow and that it leaves no trace on the disk.
 //
-// Yarım nesne bırakılsaydı, sınırı aşan istekler REDDEDİLDİKLERİ hâlde diski
-// doldurabilirdi: o dosyaya hiçbir kayıt işaret etmez ve hiçbir silme yolu
-// anahtarını bilmez.
-func TestBoyutSinirinAsanGovdeReddedilir(t *testing.T) {
-	kok := t.TempDir()
+// Had a half object been left behind, requests that exceed the limit could
+// fill the disk EVEN THOUGH they are REJECTED: no record points at that file
+// and no deletion path knows its key.
+func TestBodyExceedingTheSizeLimitIsRejected(t *testing.T) {
+	root := t.TempDir()
 
 	c := container.New(nil)
 	require.NoError(t, c.Provide("core.db", testPool))
 
-	// Sınır bilerek küçük tutulur; 1 MiB'lık bir gövde üretmek testi
-	// yavaşlatırdı.
+	// The limit is kept small on purpose; producing a 1 MiB body would slow
+	// the test down.
 	mod := file.New(file.Options{
-		Root:           kok,
+		Root:           root,
 		MaxUploadBytes: 64,
 		AllowedTypes:   []string{coreprovider.ContentTypePNG},
 	})
@@ -346,112 +349,115 @@ func TestBoyutSinirinAsanGovdeReddedilir(t *testing.T) {
 	r := chi.NewRouter()
 	mod.Routes(r)
 
-	buyuk := pngIcerik + string(bytes.Repeat([]byte("A"), 256))
-	rec := yukle(t, r, "buyuk.png", coreprovider.ContentTypePNG, buyuk)
+	oversized := pngContent + string(bytes.Repeat([]byte("A"), 256))
+	rec := upload(t, r, "large.png", coreprovider.ContentTypePNG, oversized)
 
-	require.Equal(t, http.StatusUnprocessableEntity, rec.Code, "gövde: %s", rec.Body.String())
-	assert.Equal(t, service.CodeTooLarge, hataKodu(t, rec))
-	assert.Empty(t, kokIcerigi(t, kok),
-		"sınırı aşan gövde ne yarım dosya ne geçici dosya bırakmalı")
+	require.Equal(t, http.StatusUnprocessableEntity, rec.Code, "body: %s", rec.Body.String())
+	assert.Equal(t, service.CodeTooLarge, errorCode(t, rec))
+	assert.Empty(t, rootContents(t, root),
+		"a body exceeding the limit must leave neither a half file nor a temporary file")
 }
 
-// TestDepoAnahtariBENZERSIZ kısıtın sahte bir haritada değil GERÇEK indekste
-// durduğunu doğrular.
+// TestStorageKeyIsUnique verifies that the constraint sits in a REAL index and
+// not in a fake map.
 //
-// Benzersizlik iki şeyi birden korur: silme başka bir kaydın dosyasını
-// götüremez ve sunum yolu anahtardan kayda TEK bir satırla ulaşır — sunulan
-// Content-Type o satırdan yazıldığı için "hangi satır" sorusunun tek bir
-// cevabı olmalıdır.
-func TestDepoAnahtariBENZERSIZ(t *testing.T) {
-	_, r, _ := kurulanModul(t)
+// The uniqueness protects two things at once: deleting cannot carry off
+// another record's file, and the serving path reaches the record from the key
+// with a SINGLE row — since the served Content-Type is written from that row,
+// the question "which row" must have exactly one answer.
+func TestStorageKeyIsUnique(t *testing.T) {
+	_, r, _ := setUpModule(t)
 
-	rec := yukle(t, r, "a.png", coreprovider.ContentTypePNG, pngIcerik)
+	rec := upload(t, r, "a.png", coreprovider.ContentTypePNG, pngContent)
 	require.Equal(t, http.StatusCreated, rec.Code)
-	anahtar := filepath.Base(yuklemeyiCoz(t, rec).Data.URL)
+	key := filepath.Base(decodeUpload(t, rec).Data.URL)
 
-	// Aynı anahtarla ikinci bir kayıt açmak, servisi atlayıp doğrudan depoya
-	// yazmayı gerektirir: anahtarı sağlayıcı ürettiği için normal akışta
-	// çakışma oluşamaz. Sınanan şey de zaten SON SAVUNMA hattıdır.
+	// Opening a second record with the same key requires bypassing the service
+	// and writing directly to the store: because the key is produced by the
+	// provider, no collision can arise in the normal flow. And what is being
+	// exercised here is the LAST LINE OF DEFENCE anyway.
 	_, err := testPool.Pool().Exec(context.Background(),
 		`INSERT INTO file_uploads (id, storage_key, provider_id, content_type, size, checksum, url)
 		 VALUES ($1, $2, 'local', 'image/png', 1, 'x', '/files/x')`,
-		models.NewUploadID(time.Now()), anahtar)
+		models.NewUploadID(time.Now()), key)
 
-	require.Error(t, err, "aynı depo anahtarıyla ikinci kayıt açılamamalı")
+	require.Error(t, err, "a second record with the same storage key must not be possible")
 }
 
-// TestModulVarsayilanSaglayiciylaKaydolur kutudan çıkan kurulumun eksiksiz
-// olduğunu doğrular: hiçbir eklenti yokken de bir sağlayıcı vardır ve seçili
-// kimlik onu bulur.
-func TestModulVarsayilanSaglayiciylaKaydolur(t *testing.T) {
-	mod, _, kok := kurulanModul(t)
+// TestModuleRegistersWithTheDefaultProvider verifies that the out-of-the-box
+// setup is complete: there is a provider even when there is no plugin at all,
+// and the selected id finds it.
+func TestModuleRegistersWithTheDefaultProvider(t *testing.T) {
+	mod, _, root := setUpModule(t)
 
 	assert.Equal(t, []string{local.ID}, mod.Providers().IDs())
 	assert.Equal(t, file.DefaultProviderID, mod.Service().ProviderID())
 
-	bilgi, err := os.Stat(kok)
-	require.NoError(t, err, "kök dizin Register sırasında hazırlanmalı")
-	assert.True(t, bilgi.IsDir())
+	info, err := os.Stat(root)
+	require.NoError(t, err, "the root directory must be prepared during Register")
+	assert.True(t, info.IsDir())
 }
 
-// TestKOKVERILMEZSEYerelSaglayiciKAYDEDILMEZ kök dizini olmayan bir kurulumun
-// GEÇİCİ DİZİNE düşmediğini doğrular.
+// TestLocalProviderIsNotRegisteredWhenNoRootIsGiven verifies that a setup
+// without a root directory does not FALL BACK to a TEMPORARY DIRECTORY.
 //
-// Düşseydi kurulum "çalışıyor" görünür, ilk yeniden başlatmada tüm görseller
-// kaybolur ve ürün kayıtlarındaki adresler yerinde kalırdı. Bunun yerine
-// sağlayıcı hiç kaydedilmez; seçili sağlayıcı oysa açılış kompozisyon
-// kökünde durur (bkz. cmd/server verifyFileProvider).
-func TestKOKVERILMEZSEYerelSaglayiciKAYDEDILMEZ(t *testing.T) {
+// Had it fallen back, the installation would look like it "works", on the
+// first restart every image would be lost and the addresses in the product
+// records would stay where they are. Instead the provider is not registered at
+// all; if it is the selected provider the startup stops at the composition
+// root (see cmd/server verifyFileProvider).
+func TestLocalProviderIsNotRegisteredWhenNoRootIsGiven(t *testing.T) {
 	c := container.New(nil)
 	require.NoError(t, c.Provide("core.db", testPool))
 
 	mod := file.New(file.Options{
-		MaxUploadBytes: testAzamiBoyut,
+		MaxUploadBytes: testMaxBytes,
 		AllowedTypes:   []string{coreprovider.ContentTypePNG},
 	})
 	require.NoError(t, mod.Register(context.Background(), c),
-		"kök verilmemesi kurulum HATASI değildir; dosya yüklemeyen kurulum meşrudur")
+		"not giving a root is not a setup ERROR; an installation that uploads no files is legitimate")
 
-	assert.Empty(t, mod.Providers().IDs(), "geçici dizinle bir sağlayıcı UYDURULMAMALI")
+	assert.Empty(t, mod.Providers().IDs(), "a provider must NOT BE INVENTED with a temporary directory")
 
 	_, err := mod.Providers().Get(local.ID)
 	require.Error(t, err)
-	assert.True(t, coreerrors.IsNotFound(err), "hata: %v", err)
+	assert.True(t, coreerrors.IsNotFound(err), "error: %v", err)
 }
 
-// TestListeYuklemeleriDoner defterin yönetim listesinde göründüğünü doğrular.
-func TestListeYuklemeleriDoner(t *testing.T) {
-	_, r, _ := kurulanModul(t)
+// TestListReturnsTheUploads verifies that the ledger shows up in the admin
+// list.
+func TestListReturnsTheUploads(t *testing.T) {
+	_, r, _ := setUpModule(t)
 
 	require.Equal(t, http.StatusCreated,
-		yukle(t, r, "a.png", coreprovider.ContentTypePNG, pngIcerik).Code)
+		upload(t, r, "a.png", coreprovider.ContentTypePNG, pngContent).Code)
 
 	req := httptest.NewRequest(http.MethodGet, "/admin/v1/uploads", http.NoBody)
-	req = req.WithContext(corehttp.WithPrincipal(req.Context(), yonetici()))
+	req = req.WithContext(corehttp.WithPrincipal(req.Context(), adminPrincipal()))
 
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 
 	require.Equal(t, http.StatusOK, rec.Code)
 
-	var govde struct {
+	var body struct {
 		Data  []map[string]any `json:"data"`
 		Count int64            `json:"count"`
 	}
-	require.NoError(t, jsonCoz(rec.Body.Bytes(), &govde))
+	require.NoError(t, decodeJSON(rec.Body.Bytes(), &body))
 
-	assert.GreaterOrEqual(t, govde.Count, int64(1))
-	require.NotEmpty(t, govde.Data)
-	assert.Equal(t, "user_entegrasyon", govde.Data[0]["uploaded_by"],
-		"yükleyenin kimliği kayda yazılmalı")
+	assert.GreaterOrEqual(t, body.Count, int64(1))
+	require.NotEmpty(t, body.Data)
+	assert.Equal(t, "user_integration", body.Data[0]["uploaded_by"],
+		"the uploader's id must be written into the record")
 }
 
-// silIstegi kimlikli bir silme isteği yapar.
-func silIstegi(t *testing.T, r chi.Router, id string) *httptest.ResponseRecorder {
+// deleteRequest makes a delete request with a principal.
+func deleteRequest(t *testing.T, r chi.Router, id string) *httptest.ResponseRecorder {
 	t.Helper()
 
 	req := httptest.NewRequest(http.MethodDelete, "/admin/v1/uploads/"+id, http.NoBody)
-	req = req.WithContext(corehttp.WithPrincipal(req.Context(), yonetici()))
+	req = req.WithContext(corehttp.WithPrincipal(req.Context(), adminPrincipal()))
 
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
@@ -459,41 +465,41 @@ func silIstegi(t *testing.T, r chi.Router, id string) *httptest.ResponseRecorder
 	return rec
 }
 
-// kokIcerigi kök dizindeki dosya adlarını döner.
-func kokIcerigi(t *testing.T, kok string) []string {
+// rootContents returns the file names in the root directory.
+func rootContents(t *testing.T, root string) []string {
 	t.Helper()
 
-	return dizinIcerigi(t, kok)
+	return dirContents(t, root)
 }
 
-// dizinIcerigi verilen dizindeki girdi adlarını döner.
-func dizinIcerigi(t *testing.T, dizin string) []string {
+// dirContents returns the entry names in the given directory.
+func dirContents(t *testing.T, dir string) []string {
 	t.Helper()
 
-	girdiler, err := os.ReadDir(dizin)
+	entries, err := os.ReadDir(dir)
 	require.NoError(t, err)
 
-	adlar := make([]string, 0, len(girdiler))
-	for _, g := range girdiler {
-		adlar = append(adlar, g.Name())
+	names := make([]string, 0, len(entries))
+	for _, e := range entries {
+		names = append(names, e.Name())
 	}
 
-	return adlar
+	return names
 }
 
-// jsonCoz gövdeyi hedefe çözer.
-func jsonCoz(ham []byte, hedef any) error { return json.Unmarshal(ham, hedef) }
+// decodeJSON decodes the body into the target.
+func decodeJSON(raw []byte, target any) error { return json.Unmarshal(raw, target) }
 
-// hataKodu yanıt gövdesindeki makine kodunu döner.
-func hataKodu(t *testing.T, rec *httptest.ResponseRecorder) string {
+// errorCode returns the machine code in the response body.
+func errorCode(t *testing.T, rec *httptest.ResponseRecorder) string {
 	t.Helper()
 
-	var govde struct {
+	var body struct {
 		Error struct {
 			Code string `json:"code"`
 		} `json:"error"`
 	}
-	require.NoError(t, jsonCoz(rec.Body.Bytes(), &govde), "gövde: %s", rec.Body.String())
+	require.NoError(t, decodeJSON(rec.Body.Bytes(), &body), "body: %s", rec.Body.String())
 
-	return govde.Error.Code
+	return body.Error.Code
 }

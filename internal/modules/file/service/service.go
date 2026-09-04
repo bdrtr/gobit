@@ -287,7 +287,7 @@ func (s *Service) DeleteUpload(ctx context.Context, id string) error {
 	}
 
 	s.log.DebugContext(ctx, "upload deleted",
-		"upload_id", id, "saglayici", record.ProviderID)
+		"upload_id", id, "provider", record.ProviderID)
 
 	return nil
 }

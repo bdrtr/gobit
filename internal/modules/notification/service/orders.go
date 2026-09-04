@@ -9,55 +9,62 @@ import (
 	"github.com/bdrtr/gobit/internal/core/errors"
 )
 
-// Bu dosya modülün SİPARİŞE bakan tek yüzüdür (ADR 0001, ADR 0006).
+// This file is the module's ONLY face turned towards the ORDER (ADR 0001,
+// ADR 0006).
 //
-// Modül order'ı import edemez, dolayısıyla onun tiplerini adlandıramaz. Erişim
-// üç parçadan oluşur ve üçü de burada durur:
+// The module cannot import order and therefore cannot name its types. The
+// access consists of three parts and all three of them sit here:
 //
-//  1. İhtiyaç duyulan DAR arayüz bu pakette tanımlanır ([OrderContactReader]).
-//  2. Somut yüzey container'dan ADLA çözülür ("order.interop").
-//  3. Taşınan veri JSON'dur; şema [orderContact] belgesinde AÇIKÇA yazılıdır.
+//  1. The NARROW interface that is needed is defined in this package
+//     ([OrderContactReader]).
+//  2. The concrete surface is resolved from the container BY NAME
+//     ("order.interop").
+//  3. The data carried is JSON; the schema is written out EXPLICITLY in the
+//     [orderContact] documentation.
 
-// OrderInteropName sipariş modülünün İLKEL okuma yüzeyinin container'daki
-// adıdır (order.InteropName ile AYNI değer).
+// OrderInteropName is the name, in the container, of the order module's
+// PRIMITIVE reading surface (the SAME value as order.InteropName).
 //
-// Değer elle tekrarlanmıştır çünkü modüller birbirini import edemez
-// (Prensip 2.4); tıpkı çekirdeğin coreplugin.NotificationProvidersName'i elle
-// tekrarlaması gibi. Ayrışmanın bedeli somuttur: ad değişirse bu modül hiçbir
-// siparişin iletişim bilgisini okuyamaz ve her sipariş bildirimi hata
-// dönerdi — derleyici bunu yakalayamaz, ancak entegrasyon testi yakalar.
+// The value is repeated by hand because modules cannot import each other
+// (Principle 2.4); just as the core repeats coreplugin.NotificationProvidersName
+// by hand. The price of divergence is concrete: if the name changes, this
+// module cannot read the contact information of any order and every order
+// notification would return an error — the compiler cannot catch this, but the
+// integration test can.
 const OrderInteropName = "order.interop"
 
-// OrderContactReader modülün siparişten istediği DAR yüzeydir.
+// OrderContactReader is the NARROW surface the module wants from the order.
 //
-// Tüketici tarafında tanımlanır ve order'ın "order.interop" kaydı onu YAPISAL
-// olarak karşılar; iki taraf arasında derleme zamanı bağı YOKTUR ve olamaz
-// (Prensip 2.4). İmzanın ilkel ve stdlib tipleriyle konuşması bu yüzden
-// zorunludur: order'ın bir tipi adlandırılsaydı, o tip burada tanımlanmış
-// BAŞKA bir tip olur ve somut yüzey bu arayüzü karşılamazdı.
+// It is defined on the consuming side and order's "order.interop" registration
+// satisfies it STRUCTURALLY; there is NO compile-time tie between the two sides
+// and there cannot be one (Principle 2.4). That is why the signature has to
+// speak in primitive and stdlib types: had a type of order's been named here,
+// that type would be ANOTHER type defined in this package and the concrete
+// surface would not satisfy this interface.
 type OrderContactReader interface {
 	OrderContactJSON(ctx context.Context, orderID string) (json.RawMessage, error)
 }
 
-// orderContact "order.interop" yanıtının JSON şemasıdır.
+// orderContact is the JSON schema of the "order.interop" response.
 //
 //	{
 //	  "order_id":      "order_01H…",
-//	  "display_id":    "1042",       // ondalıksız DİZE
-//	  "email":         "a@b.com",    // BOŞ olabilir
+//	  "display_id":    "1042",       // a STRING without a fraction
+//	  "email":         "a@b.com",    // may be EMPTY
 //	  "currency_code": "TRY",
-//	  "total":         "6100",       // minor unit, ondalıksız DİZE
-//	  "item_count":    "2"           // ondalıksız DİZE
+//	  "total":         "6100",       // minor unit, a STRING without a fraction
+//	  "item_count":    "2"           // a STRING without a fraction
 //	}
 //
-// TÜM değerler dizedir ve alan adları "order.placed" olayının yüküyle birebir
-// aynıdır; gerekçe order modülünün yüzey belgesindedir. Burada tekrarlanan tek
-// şey ŞEMADIR, kural değil.
+// ALL the values are strings and the field names are exactly the same as the
+// payload of the "order.placed" event; the reasoning is in the order module's
+// surface documentation. The only thing repeated here is the SCHEMA, not the
+// rule.
 //
-// Bilinmeyen alanlar YOK SAYILIR (json.Unmarshal'ın varsayılanı): gövdeyi
-// üreten taraf çağıran değil siparişin kendisidir, yani tanınmayan bir alan bir
-// yazım hatası değil, yüzeye eklenmiş yeni bir alandır. Onu hata saymak,
-// order'a eklenen her alanın tüm sipariş bildirimlerini düşürmesi demekti.
+// Unknown fields are IGNORED (json.Unmarshal's default): the side producing the
+// body is not the caller but the order itself, that is, an unrecognized field
+// is not a typo but a new field added to the surface. Counting it as an error
+// would have meant every field added to order dropping all order notifications.
 type orderContact struct {
 	OrderID      string `json:"order_id"`
 	DisplayID    string `json:"display_id"`
@@ -67,70 +74,74 @@ type orderContact struct {
 	ItemCount    string `json:"item_count"`
 }
 
-// NewOrderContacts container üzerinde TEMBEL çalışan bir sipariş okuyucusu
-// üretir.
+// NewOrderContacts produces an order reader that works LAZILY over the
+// container.
 //
-// Tembellik zorunludur: modüllerin Register sırası garanti edilmez ve bu modül
-// Register olurken "order.interop" henüz container'da olmayabilir (bkz.
-// module.Module belgesi). Çözüm ilk kullanıma, yani ilk "order.placed"
-// olayına ertelenir.
+// The laziness is mandatory: the Register order of the modules is not
+// guaranteed and while this module is being registered "order.interop" may not
+// be in the container yet (see the module.Module documentation). The resolution
+// is deferred to the first use, that is, to the first "order.placed" event.
 //
-// Dönüş tipi ARAYÜZDÜR: çağıranın (module.go) somut tipe ihtiyacı yoktur ve
-// servis zaten bu arayüzü ister; testlerde yerine birkaç satırlık bir sahte
-// konur.
+// The return type is an INTERFACE: the caller (module.go) has no need for the
+// concrete type and the service asks for this interface anyway; in the tests a
+// fake a few lines long is put in its place.
 func NewOrderContacts(c *container.Container) OrderContactReader {
 	return &lazyOrderContacts{c: c}
 }
 
-// lazyOrderContacts "order.interop" yüzeyine tembel erişimdir.
+// lazyOrderContacts is lazy access to the "order.interop" surface.
 type lazyOrderContacts struct {
-	// c kaydın aranacağı container'dır; nil olabilir (gömülü kullanım/test).
+	// c is the container the registration will be looked up in; it may be nil
+	// (embedded use/test).
 	c *container.Container
 
-	// mu okuyucunun tek kez çözülmesini sağlar.
+	// mu makes sure the reader is resolved only once.
 	//
-	// sync.Once BİLİNÇLİ olarak kullanılmadı: Once, ilk çağrının SONUCUNU da
-	// kalıcı kılar ve order henüz kayıtlı değilken düşen tek bir çözüm, süreç
-	// ömrü boyunca tüm bildirimleri ölü bırakırdı. Kilit yalnızca BAŞARILI
-	// sonucu saklar; hata bir sonraki olayda yeniden denenir.
-	mu      sync.Mutex
-	okuyucu OrderContactReader
+	// sync.Once was DELIBERATELY not used: Once makes the RESULT of the first
+	// call permanent too, and a single resolution that fell over while order
+	// was not yet registered would leave all notifications dead for the
+	// lifetime of the process. The lock only stores the SUCCESSFUL result; an
+	// error is retried on the next event.
+	mu     sync.Mutex
+	reader OrderContactReader
 }
 
-// OrderContactJSON siparişin iletişim bilgisini ham JSON olarak döner.
+// OrderContactJSON returns the contact information of the order as raw JSON.
 func (l *lazyOrderContacts) OrderContactJSON(
 	ctx context.Context,
 	orderID string,
 ) (json.RawMessage, error) {
-	okuyucu, err := l.coz()
+	reader, err := l.resolve()
 	if err != nil {
 		return nil, err
 	}
-	return okuyucu.OrderContactJSON(ctx, orderID)
+	return reader.OrderContactJSON(ctx, orderID)
 }
 
-// coz sipariş yüzeyini container'dan çözer ve sonucu saklar.
-func (l *lazyOrderContacts) coz() (OrderContactReader, error) {
+// resolve resolves the order surface from the container and stores the result.
+func (l *lazyOrderContacts) resolve() (OrderContactReader, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
-	if l.okuyucu != nil {
-		return l.okuyucu, nil
+	if l.reader != nil {
+		return l.reader, nil
 	}
 	if l.c == nil {
 		return nil, errors.Unavailable(CodeContactUnavailable,
-			"container yok; %q yüzeyi çözülemez", OrderInteropName)
+			"there is no container; the %q surface cannot be resolved", OrderInteropName)
 	}
 
-	okuyucu, err := container.Resolve[OrderContactReader](l.c, OrderInteropName)
+	reader, err := container.Resolve[OrderContactReader](l.c, OrderInteropName)
 	if err != nil {
-		// Sınıf KORUNUR: kayıt yoksa NotFound, tip uymuyorsa Internal gelir ve
-		// ikisi farklı arızalardır — biri "order kurulu değil", öteki
-		// "yüzeyin imzası değişmiş".
+		// The KIND is PRESERVED: when there is no registration NotFound comes,
+		// when the type does not match Internal comes, and the two are
+		// different faults — one is "order is not installed", the other is
+		// "the signature of the surface has changed".
 		return nil, errors.Wrap(err, errors.KindOf(err), CodeContactUnavailable,
-			"sipariş okuma yüzeyi %q çözülemedi; order modülü kurulu mu?", OrderInteropName)
+			"the order reading surface %q could not be resolved; is the order module installed?",
+			OrderInteropName)
 	}
 
-	l.okuyucu = okuyucu
-	return okuyucu, nil
+	l.reader = reader
+	return reader, nil
 }

@@ -1,65 +1,72 @@
-// Package file dosya modülüdür (plan Bölüm 5.6 — FileProvider soyutlaması).
+// Package file is the file module (plan Section 5.6 — the FileProvider
+// abstraction).
 //
-// Sorumluluğu tek cümleyle: istemciden gelen RASTGELE BAYTLARI denetleyip bir
-// depoya yazdırmak, yazılanı kalıcı bir deftere geçirmek ve gerektiğinde geri
-// sunmak. Modül file_uploads verisinin TEK yazma yetkilisidir (Prensip 2.3).
+// Its responsibility in a single sentence: to validate the ARBITRARY BYTES
+// coming from the client, have them written to a store, record what was
+// written in a permanent ledger and serve it back when needed. The module is
+// the ONLY writer of the file_uploads data (Principle 2.3).
 //
-// # Neden var
+// # Why it exists
 //
-// Ürün görseli bugüne kadar yalnızca URL alıyordu; bir dosyayı sisteme
-// vermenin hiçbir yolu yoktu. Bu modülün ürettiği adres, mevcut ürün görseli
-// akışına DOĞRUDAN takılır — yani product modülüne hiç dokunmadan gerçek bir
-// tüketici yolu doğar.
+// Until now the product image only accepted a URL; there was no way at all to
+// hand a file to the system. The address this module produces plugs DIRECTLY
+// into the existing product image flow — that is, a real consumer path is born
+// without touching the product module at all.
 //
-// # Sağlayıcı soyutlaması
+// # The provider abstraction
 //
-// Baytları saklayan taraf modül değil, internal/core/provider'daki FileProvider
-// sözleşmesini karşılayan bir SAĞLAYICIDIR. Modül sağlayıcıları kimlikleriyle
-// bir kayıtta tutar ([service.ProviderRegistry]) ve yükleme anında ADLA çözer.
-// Kutudan çıkan tek sağlayıcı, dosyaları yerel diske yazan "local"dır
-// (internal/modules/file/local); eklenti sistemi, çekirdeğe ve bu modüle
-// dokunmadan container'daki kayda kendi sağlayıcısını ekleyebilir
-// (coreplugin.Host.RegisterFileProvider).
+// The side that stores the bytes is not the module but a PROVIDER that
+// satisfies the FileProvider contract in internal/core/provider. The module
+// keeps the providers in a registry keyed by their ids
+// ([service.ProviderRegistry]) and resolves BY NAME at upload time. The only
+// provider that comes out of the box is "local", which writes the files to the
+// local disk (internal/modules/file/local); the plugin system can add its own
+// provider to the registry in the container without touching the core or this
+// module (coreplugin.Host.RegisterFileProvider).
 //
-// Hangi sağlayıcının kullanılacağını FILE_PROVIDER seçer. Adın GERÇEKTEN
-// kayıtlı olup olmadığı burada doğrulanamaz — eklenti sağlayıcıları modüller
-// ayağa kalktıktan SONRA kaydedilir — ve denetim bu yüzden kompozisyon
-// kökündedir (cmd/server): bilinmeyen bir ad açılışı DURDURUR.
+// Which provider is used is chosen by FILE_PROVIDER. Whether the name is
+// REALLY registered cannot be verified here — plugin providers are registered
+// AFTER the modules have come up — and that is why the check sits at the
+// composition root (cmd/server): an unknown name STOPS the startup.
 //
-// # Güvenlik kararları
+// # Security decisions
 //
-// Bu, depoda istemciden rastgele bayt kabul edilen İLK yerdir. Kararlar tek tek
-// gerekçeleriyle ilgili dosyalarda yazılıdır; özeti:
+// This is the FIRST place in the repository where arbitrary bytes are accepted
+// from the client. The decisions are written one by one, with their reasons,
+// in the relevant files; in summary:
 //
-//   - İstemcinin dosya adı ASLA yol olmaz; depo anahtarını sağlayıcı üretir
-//     (local paketi). Yol geçişi "temizlenerek" değil, YAPISAL olarak
-//     imkânsızdır.
-//   - İçerik tipi istemciye SORULMAZ, içerikten tespit edilir (api paketi).
-//   - İzin listesi (yasak listesi değil) yapılandırmadan gelir ve depoya tek
-//     bayt yazılmadan uygulanır (service paketi). Varsayılanda SVG YOKTUR.
-//   - Boyut sınırı hem gövdeye hem dosyaya ayrı ayrı zorlanır ve
-//     yapılandırılabilirdir.
-//   - Sunumda Content-Type SAKLANAN tipten yazılır ve her yanıt
-//     X-Content-Type-Options: nosniff taşır (api paketi).
+//   - The client's file name NEVER becomes a path; the storage key is produced
+//     by the provider (the local package). Path traversal is impossible
+//     STRUCTURALLY, not by being "sanitized".
+//   - The content type is NOT ASKED of the client, it is detected from the
+//     content (the api package).
+//   - The allow list (not a deny list) comes from the configuration and is
+//     applied before a single byte is written to the store (the service
+//     package). SVG IS NOT in the default.
+//   - The size limit is enforced on the body and on the file separately, and
+//     it is configurable.
+//   - When serving, the Content-Type is written from the STORED type and every
+//     response carries X-Content-Type-Options: nosniff (the api package).
 //
-// # Neyi bilmez
+// # What it does not know
 //
-// Modül hiçbir modülü import etmez ve dosyanın NEYE ait olduğunu bilmez:
-// yükleme kaydı bir ürüne, bir varyanta ya da hiçbir şeye bağlı olabilir.
-// uploaded_by serbest bir metindir, foreign key DEĞİLDİR (Prensip 2.2).
+// The module imports no module and does not know WHAT the file belongs to: the
+// upload record may be bound to a product, to a variant or to nothing at all.
+// uploaded_by is free text, it is NOT a foreign key (Principle 2.2).
 //
-// # Dışarıya açtığı yüzeyler
+// # The surfaces it opens outwards
 //
-//   - "file.service" — modül içi zengin yüzey (domain tipleriyle).
-//   - "file.providers" — sağlayıcı kaydı; eklentiler buraya sağlayıcı ekler.
-//   - POST/GET /admin/v1/uploads ve DELETE /admin/v1/uploads/{id} — yönetim.
-//   - GET /files/{key} — KORUMASIZ sunum ucu; gerekçesi api paketindedir.
+//   - "file.service" — the rich in-module surface (with the domain types).
+//   - "file.providers" — the provider registry; plugins add their provider here.
+//   - POST/GET /admin/v1/uploads and DELETE /admin/v1/uploads/{id} — admin.
+//   - GET /files/{key} — the UNPROTECTED serving endpoint; its reason is in the
+//     api package.
 //
-// Modüller arası bir "interop" yüzeyi ve Query sağlayıcısı BİLİNÇLİ OLARAK
-// YOKTUR: yüklemeyi okuyan başka bir modül yoktur ve okumak isteseydi
-// ihtiyacı olan tek şey ADRESTİR — o da ürün görseli kaydında zaten duruyor.
-// Tüketicisi olmayan bir sözleşme açmak, bir daha kapatılamayacak bir alan
-// üretirdi.
+// A cross-module "interop" surface and a Query provider are DELIBERATELY
+// ABSENT: there is no other module that reads the upload, and if one wanted to
+// read it the only thing it would need is the ADDRESS — and that already sits
+// in the product image record. Opening a contract that has no consumer would
+// produce a surface that could never be closed again.
 package file
 
 import (
@@ -81,31 +88,32 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/file/service"
 )
 
-// ModuleName modülün adıdır; container adlarının ve migration sürüm defterinin
-// önekidir.
+// ModuleName is the module's name; it is the prefix of the container names and
+// of the migration version ledger.
 const ModuleName = "file"
 
-// ServiceName modül servisinin container'daki adıdır.
+// ServiceName is the name of the module's service in the container.
 const ServiceName = ModuleName + ".service"
 
-// ProvidersName sağlayıcı kaydının container'daki adıdır.
+// ProvidersName is the name of the provider registry in the container.
 //
-// Eklenti sistemi kendi FileProvider'ını bu kaydı çözüp ekler; modülün kodunu
-// değiştirmesi gerekmez. Değer coreplugin.FileProvidersName ile AYNI olmalıdır
-// ve uyum internal/arch testiyle sabitlenmiştir.
+// The plugin system adds its own FileProvider by resolving this registry; it
+// does not need to change the module's code. The value MUST BE THE SAME as
+// coreplugin.FileProvidersName and the agreement is pinned down by an
+// internal/arch test.
 const ProvidersName = ModuleName + ".providers"
 
-// DefaultProviderID sağlayıcı seçilmediğinde kullanılan kimliktir.
+// DefaultProviderID is the id used when no provider has been chosen.
 //
-// Değer local paketinden gelir: config'in varsayılanı ("local") ile
-// sağlayıcının kimliği ayrışırsa kurulum, hiçbir sağlayıcı bulamayan bir
-// yükleme yoluyla açılırdı.
+// The value comes from the local package: if the config's default ("local")
+// and the provider's id drifted apart, the installation would come up with an
+// upload path that finds no provider at all.
 const DefaultProviderID = local.ID
 
-// svcDB çekirdek veritabanı havuzunun container'daki adıdır.
+// svcDB is the name of the core database pool in the container.
 const svcDB = "core.db"
 
-// Hata kodları.
+// Error codes.
 const (
 	codeSetupFailed      = "file_module_setup_failed"
 	codeProviderRegister = "file_module_provider_register_failed"
@@ -114,34 +122,35 @@ const (
 //go:embed migrations/*.sql
 var migrationFiles embed.FS
 
-// migrationsRoot gömülü dosyaların "migrations/" öneki soyulmuş hâlidir:
-// db.Migrate kaynağı kökten okur.
+// migrationsRoot is the embedded files with their "migrations/" prefix
+// stripped: db.Migrate reads the source from the root.
 var migrationsRoot = mustSub(migrationFiles, "migrations")
 
-// Options modülün kurulum ayarlarıdır.
+// Options are the module's setup settings.
 type Options struct {
-	// ProviderID yüklemede kullanılacak sağlayıcının kimliğidir
-	// (FILE_PROVIDER). Boş verilirse [DefaultProviderID] uygulanır.
+	// ProviderID is the id of the provider to be used at upload time
+	// (FILE_PROVIDER). If it is given empty, [DefaultProviderID] is applied.
 	ProviderID string
-	// Root "local" sağlayıcısının kök dizinidir (FILE_ROOT).
+	// Root is the root directory of the "local" provider (FILE_ROOT).
 	//
-	// BOŞ verilirse yerel sağlayıcı KAYDEDİLMEZ ve bunun bir uyarı olarak
-	// loglanması dışında hiçbir şey olmaz; geçici bir dizine DÜŞÜLMEZ.
-	// Gerekçe [local.New] godoc'undadır (özet: geçici dizin, yeniden
-	// başlatmada sessiz veri kaybıdır). Kaydedilmemiş sağlayıcı seçiliyse
-	// açılış zaten kompozisyon kökünde durur.
+	// If it is given EMPTY the local provider IS NOT REGISTERED and nothing
+	// happens beyond that being logged as a warning; there is NO FALLING BACK
+	// to a temporary directory. The reason is in the [local.New] godoc (in
+	// short: a temporary directory is silent data loss on restart). If the
+	// unregistered provider is the selected one, the startup already stops at
+	// the composition root.
 	Root string
-	// MaxUploadBytes tek bir yüklemenin azami boyutudur
-	// (FILE_MAX_UPLOAD_BYTES); zorunludur.
+	// MaxUploadBytes is the maximum size of a single upload
+	// (FILE_MAX_UPLOAD_BYTES); it is mandatory.
 	MaxUploadBytes int64
-	// AllowedTypes kabul edilen İÇERİK tipleridir (FILE_ALLOWED_TYPES);
-	// en az bir tip zorunludur.
+	// AllowedTypes are the accepted CONTENT types (FILE_ALLOWED_TYPES); at
+	// least one type is mandatory.
 	AllowedTypes []string
-	// Logger nil verilirse slog.Default kullanılır.
+	// Logger falls back to slog.Default if nil is given.
 	Logger *slog.Logger
 }
 
-// Module file modülünün çekirdeğe sunduğu uygulamadır.
+// Module is the implementation the file module offers to the core.
 type Module struct {
 	opts      Options
 	svc       *service.Service
@@ -149,20 +158,21 @@ type Module struct {
 	handler   *api.Handler
 }
 
-// Çekirdek sözleşmesinin karşılandığı derleme zamanında sabitlenir.
+// That the core contract is satisfied is pinned down at compile time.
 var _ module.Module = (*Module)(nil)
 
-// Belgeyi anlatabildiği de derleme zamanında sabitlenir.
+// That it can describe the document is pinned down at compile time too.
 //
-// [openapi.Describer] OPSİYONEL bir arayüzdür ve kompozisyon kökü onu TİP
-// İDDİASIYLA arar; metot adı ya da imzası kayarsa hiçbir şey derlemede
-// kırılmaz, yalnızca bu modülün ucu belgeden sessizce düşerdi.
+// [openapi.Describer] is an OPTIONAL interface and the composition root looks
+// for it with a TYPE ASSERTION; if the method name or its signature drifted,
+// nothing would break at compile time — this module's endpoint would only drop
+// out of the document silently.
 var _ openapi.Describer = (*Module)(nil)
 
-// New kaydedilmeye hazır bir file modülü üretir.
+// New produces a file module ready to be registered.
 //
-// Bağımlılıklar burada değil Register sırasında çözülür: container o ana kadar
-// çekirdek servisleri kurmuş olmayabilir.
+// The dependencies are resolved not here but during Register: until that
+// moment the container may not have set up the core services yet.
 func New(opts Options) *Module {
 	if opts.ProviderID == "" {
 		opts.ProviderID = DefaultProviderID
@@ -174,35 +184,36 @@ func New(opts Options) *Module {
 	return &Module{opts: opts}
 }
 
-// Name modülün benzersiz adını döner.
+// Name returns the module's unique name.
 func (m *Module) Name() string { return ModuleName }
 
-// Migrations modülün migration dosyalarını döner.
+// Migrations returns the module's migration files.
 func (m *Module) Migrations() fs.FS { return migrationsRoot }
 
-// Register servisi ve sağlayıcı kaydını container'a kaydeder.
+// Register registers the service and the provider registry into the container.
 //
-// Yalnızca ÇEKİRDEK servisler çözülür; başka modüllerin servisleri bu aşamada
-// henüz kayıtlı olmayabilir (bkz. module.Module belgesi).
+// Only the CORE services are resolved; the services of other modules may not
+// be registered yet at this stage (see the module.Module documentation).
 //
-// Varsayılan sağlayıcı ([local.Provider]) da burada kurulur ve kök dizini
-// AÇILIŞTA yaratılır: yazılamayan bir kök, ilk yüklemeye kadar beklerse arıza
-// müşteri karşısında ortaya çıkar — oysa yanlış yazılmış bir yol, açılışta
-// düzeltilebilecek bir yapılandırma hatasıdır. Seçili sağlayıcı "local"
-// olmasa bile kaydedilir, çünkü kayıt bir listedir, seçim değil: kurulum
-// nesne deposuna geçtiğinde ESKİ kayıtlar hâlâ yerel diskte durur ve onları
-// okuyup silebilecek tek şey bu sağlayıcıdır.
+// The default provider ([local.Provider]) is set up here as well and its root
+// directory is created AT STARTUP: if a root that cannot be written to waits
+// until the first upload, the failure shows up in front of the customer —
+// whereas a mistyped path is a configuration error that can be corrected at
+// startup. It is registered even when the selected provider is not "local",
+// because the registry is a list, not a choice: when the installation moves to
+// an object store the OLD records still sit on the local disk and this
+// provider is the only thing that can read and delete them.
 func (m *Module) Register(ctx context.Context, c *container.Container) error {
 	pool, err := container.Resolve[*db.Pool](c, svcDB)
 	if err != nil {
 		return errors.Wrap(err, errors.KindOf(err), codeSetupFailed,
-			"%s modülü veritabanı havuzunu çözemedi (%q)", ModuleName, svcDB)
+			"the %s module could not resolve the database pool (%q)", ModuleName, svcDB)
 	}
 
-	log := m.opts.Logger.With("modul", ModuleName)
+	log := m.opts.Logger.With("module", ModuleName)
 
 	providers := service.NewProviderRegistry()
-	if err := m.yerelSaglayiciyiKaydet(ctx, providers, log); err != nil {
+	if err := m.registerLocalProvider(ctx, providers, log); err != nil {
 		return err
 	}
 
@@ -216,7 +227,7 @@ func (m *Module) Register(ctx context.Context, c *container.Container) error {
 	})
 	if err != nil {
 		return errors.Wrap(err, errors.KindOf(err), codeSetupFailed,
-			"%s servisi kurulamadı", ModuleName)
+			"the %s service could not be set up", ModuleName)
 	}
 
 	if err := c.Provide(ServiceName, svc); err != nil {
@@ -230,34 +241,37 @@ func (m *Module) Register(ctx context.Context, c *container.Container) error {
 	m.providers = providers
 	m.handler = api.New(svc)
 
-	log.DebugContext(ctx, "file modülü kaydedildi",
-		"servis", ServiceName,
-		"saglayicilar", providers.IDs(),
-		"secili_saglayici", m.opts.ProviderID,
-		"azami_boyut", m.opts.MaxUploadBytes,
-		"izinli_tipler", m.opts.AllowedTypes,
+	log.DebugContext(ctx, "file module registered",
+		"service", ServiceName,
+		"providers", providers.IDs(),
+		"selected_provider", m.opts.ProviderID,
+		"max_upload_bytes", m.opts.MaxUploadBytes,
+		"allowed_types", m.opts.AllowedTypes,
 	)
 
 	return nil
 }
 
-// yerelSaglayiciyiKaydet kök dizin verilmişse "local" sağlayıcısını kurar.
+// registerLocalProvider sets up the "local" provider if a root directory was
+// given.
 //
-// Kök BOŞSA sağlayıcı kaydedilmez ve GEÇİCİ DİZİNE düşülmez; uyarı loglanır.
-// Uyarının hata olmamasının sebebi, kurulumun meşru olabilmesidir: nesne
-// deposuna yazan (ya da hiç dosya yüklemeyen) bir kurulumda yerel kök gereksiz
-// bir ayardır ve onu istemek, karşılığı olmayan bir zorunluluk olurdu. Seçili
-// sağlayıcı buysa açılış zaten durur — ama kompozisyon kökünde ve "hangi
-// sağlayıcı kayıtlı" listesiyle birlikte.
-func (m *Module) yerelSaglayiciyiKaydet(
+// If the root is EMPTY the provider is not registered and there is NO FALLING
+// BACK to a TEMPORARY DIRECTORY; a warning is logged. The reason the warning
+// is not an error is that the installation may be a legitimate one: in an
+// installation that writes to an object store (or that uploads no files at
+// all) the local root is a pointless setting, and demanding it would be a
+// requirement with nothing behind it. If this is the selected provider the
+// startup stops anyway — but at the composition root, and together with the
+// list of "which provider is registered".
+func (m *Module) registerLocalProvider(
 	ctx context.Context,
 	providers *service.ProviderRegistry,
 	log *slog.Logger,
 ) error {
 	if m.opts.Root == "" {
-		log.WarnContext(ctx, "yerel dosya sağlayıcısı kaydedilmedi: kök dizin verilmemiş",
-			"cozum", "FILE_ROOT ayarlayın",
-			"uyari", "geçici dizine DÜŞÜLMEZ; yeniden başlatmada sessiz veri kaybı olurdu")
+		log.WarnContext(ctx, "the local file provider was not registered: no root directory was given",
+			"fix", "set FILE_ROOT",
+			"warning", "there is NO FALLING BACK to a temporary directory; it would be silent data loss on restart")
 
 		return nil
 	}
@@ -265,24 +279,25 @@ func (m *Module) yerelSaglayiciyiKaydet(
 	prov, err := local.New(local.Options{Root: m.opts.Root})
 	if err != nil {
 		return errors.Wrap(err, errors.KindOf(err), codeProviderRegister,
-			"%s modülü yerel dosya sağlayıcısını kuramadı (%s)", ModuleName, m.opts.Root)
+			"the %s module could not set up the local file provider (%s)", ModuleName, m.opts.Root)
 	}
 
 	if err := providers.Register(prov); err != nil {
 		return errors.Wrap(err, errors.KindOf(err), codeProviderRegister,
-			"%s modülü varsayılan sağlayıcıyı kaydedemedi", ModuleName)
+			"the %s module could not register the default provider", ModuleName)
 	}
 
 	return nil
 }
 
-// Routes modülün route'larını router'a bağlar.
+// Routes mounts the module's routes on the router.
 //
-// Register çalışmadıysa hiçbir uç bağlanmaz: servisi olmayan bir handler'ın
-// ilk istekte panik üretmesindense ucun hiç var olmaması yeğdir.
+// If Register did not run, no endpoint is mounted: rather than a handler
+// without a service panicking on the first request, it is better for the
+// endpoint not to exist at all.
 func (m *Module) Routes(r chi.Router) {
 	if m.handler == nil {
-		slog.Default().Warn("file modülü Register edilmeden Routes çağrıldı, route bağlanmadı")
+		slog.Default().Warn("Routes was called on the file module without Register, no route was mounted")
 
 		return
 	}
@@ -290,34 +305,35 @@ func (m *Module) Routes(r chi.Router) {
 	m.handler.Routes(r)
 }
 
-// Describe modülün yönetim uçlarını OpenAPI belgesine işler.
+// Describe writes the module's admin endpoints into the OpenAPI document.
 //
-// [Module.Routes]'un tersine Register kontrolü YOKTUR ve gerekmez: şema
-// tiplerden gelir, servisten değil.
+// Unlike [Module.Routes] there is NO Register check, and none is needed: the
+// schema comes from the types, not from the service.
 func (m *Module) Describe(d *openapi.Doc) { api.Describe(d) }
 
-// Service modülün servisini döner; Register çağrılmadıysa nil'dir.
+// Service returns the module's service; it is nil if Register was not called.
 //
-// Testler ve gömülü kullanım içindir; normal akışta servis container'dan
-// [ServiceName] adıyla çözülür.
+// It is meant for tests and for embedded use; in the normal flow the service
+// is resolved from the container under the name [ServiceName].
 func (m *Module) Service() *service.Service { return m.svc }
 
-// Providers modülün sağlayıcı kaydını döner; Register çağrılmadıysa nil'dir.
+// Providers returns the module's provider registry; it is nil if Register was
+// not called.
 //
-// Gömen uygulama kendi sağlayıcısını buraya ekleyebilir; normal akışta kayıt
-// container'dan [ProvidersName] adıyla çözülür.
+// The embedding application can add its own provider here; in the normal flow
+// the registry is resolved from the container under the name [ProvidersName].
 func (m *Module) Providers() *service.ProviderRegistry { return m.providers }
 
-// mustSub alt dizini açar; açılamazsa panikler.
+// mustSub opens the subdirectory; it panics if it cannot be opened.
 //
-// Panik burada güvenlidir: dizin adı derleme zamanında sabittir ve go:embed
-// dosyaların varlığını zaten derleme zamanında doğrulamıştır. Yine de sessizce
-// nil dönmek, modülün migration'sız (yani tablosuz) ayağa kalkması demek
-// olurdu; kurulum hatası açıkça patlamalıdır.
+// The panic is safe here: the directory name is constant at compile time and
+// The go:embed directive has already verified at compile time that the files exist. Even so,
+// returning nil silently would mean the module coming up without migrations
+// (that is, without its table); a setup error must blow up openly.
 func mustSub(files embed.FS, dir string) fs.FS {
 	sub, err := fs.Sub(files, dir)
 	if err != nil {
-		panic("file: gömülü migration dizini açılamadı: " + err.Error())
+		panic("file: the embedded migrations directory could not be opened: " + err.Error())
 	}
 
 	return sub
