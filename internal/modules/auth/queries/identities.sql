@@ -143,25 +143,25 @@ LIMIT 1;
 -- updated_at IS NOT TOUCHED: a failed attempt must not drop the victim's open
 -- sessions (the "security anchor" note at the top of this file).
 -- name: RegisterLoginFailure :one
-WITH sonraki AS (
+WITH next_state AS (
     SELECT
-        k.id AS kimlik,
+        k.id AS identity_id,
         CASE
             WHEN k.locked_until IS NOT NULL AND k.locked_until <= sqlc.arg('now')::timestamptz THEN 1
             ELSE k.failed_attempts + 1
-        END AS deneme
+        END AS attempts
     FROM auth_identity k
     WHERE k.id = sqlc.arg('id') AND k.deleted_at IS NULL
     FOR UPDATE
 )
 UPDATE auth_identity AS i SET
-    failed_attempts = sonraki.deneme,
+    failed_attempts = next_state.attempts,
     locked_until    = CASE
-        WHEN sonraki.deneme >= sqlc.arg('threshold')::int THEN sqlc.arg('locked_until')::timestamptz
+        WHEN next_state.attempts >= sqlc.arg('threshold')::int THEN sqlc.arg('locked_until')::timestamptz
         ELSE NULL::timestamptz
     END
-FROM sonraki
-WHERE i.id = sonraki.kimlik
+FROM next_state
+WHERE i.id = next_state.identity_id
 RETURNING i.*;
 
 -- RegisterLoginSuccess clears the counters on a successful login.

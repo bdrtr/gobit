@@ -150,25 +150,25 @@ func (q *Queries) InsertIdentity(ctx context.Context, arg InsertIdentityParams) 
 }
 
 const registerLoginFailure = `-- name: RegisterLoginFailure :one
-WITH sonraki AS (
+WITH next_state AS (
     SELECT
-        k.id AS kimlik,
+        k.id AS identity_id,
         CASE
             WHEN k.locked_until IS NOT NULL AND k.locked_until <= $3::timestamptz THEN 1
             ELSE k.failed_attempts + 1
-        END AS deneme
+        END AS attempts
     FROM auth_identity k
     WHERE k.id = $4 AND k.deleted_at IS NULL
     FOR UPDATE
 )
 UPDATE auth_identity AS i SET
-    failed_attempts = sonraki.deneme,
+    failed_attempts = next_state.attempts,
     locked_until    = CASE
-        WHEN sonraki.deneme >= $1::int THEN $2::timestamptz
+        WHEN next_state.attempts >= $1::int THEN $2::timestamptz
         ELSE NULL::timestamptz
     END
-FROM sonraki
-WHERE i.id = sonraki.kimlik
+FROM next_state
+WHERE i.id = next_state.identity_id
 RETURNING i.id, i.user_id, i.provider, i.provider_identity, i.password_hash, i.failed_attempts, i.locked_until, i.last_login_at, i.metadata, i.created_at, i.updated_at, i.deleted_at
 `
 
