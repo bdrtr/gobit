@@ -262,7 +262,7 @@ ama bedava değildir: biri disk ve veritabanı okur, öteki route ağacını gez
 Sağlık uçları ise ikisinin de dışındadır; onları çağıran orkestratördür ve
 kotaya takılan bir sağlık ucu, sağlıklı bir örneği trafikten çektirir — yani
 sınırın kendisi arızayı üretir. Kapsam `internal/smoke`'ta gerçek süreçte
-sabitlenmiştir (`TestKotaKapsamiGercekSurecte`), çünkü eksik bir önek hiçbir
+sabitlenmiştir (`TestQuotaCoverageInRealProcess`), çünkü eksik bir önek hiçbir
 şeyi düşürmez: uç çalışmaya devam eder, yalnızca kotasız çalışır.
 
 **Tek korumasız yönetim ucu** `POST /admin/v1/auth/login`'dir: kimliği
@@ -415,8 +415,8 @@ hiçbir isteği bağlayamaz. Anahtar sonradan da bağlanabilir:
 `POST /admin/v1/api-keys/{id}/sales-channels`.
 
 Bu paragrafın üç cümlesi de gerçek ikilide çividir:
-`internal/smoke/anahtar_test.go` içindeki
-`TestKanalsizPublishableAnahtarVitrindeReddedilir` kanalsız anahtarı üretir
+`internal/smoke/keys_test.go` içindeki
+`TestPublishableKeyWithoutChannelIsRejectedByStorefront` kanalsız anahtarı üretir
 (201), mağaza yüzeyinde **401** alır, teşhis kodunu sunucunun **logunda**
 arar ve kanalı sonradan bağlayıp **aynı** anahtarla girer.
 

@@ -14,20 +14,24 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/b2b"
 )
 
-// b2bHarcamaLimiti senaryonun çalışana verdiği ilk harcama limitidir
-// (minor unit). Değerin kendisi önemsizdir; önemli olan, vitrinden AYNI sayının
-// geri okunabilmesidir.
-const b2bHarcamaLimiti int64 = 500_000
+// b2bSpendingLimit is the initial spending limit the scenario gives the
+// employee (minor unit). The value itself does not matter; what matters is that
+// the SAME number can be read back from the storefront.
+const b2bSpendingLimit int64 = 500_000
 
-// b2bYeniLimit yönetim ucundan yapılan güncellemenin yazdığı limittir.
+// b2bNewLimit is the limit written by the update made through the admin
+// endpoint.
 //
-// İlkinden FARKLI olması senaryonun koşuludur: aynı sayı yazılsaydı, vitrinin
-// güncellenmiş kaydı mı yoksa eski kaydı mı okuduğu ayırt edilemezdi.
-const b2bYeniLimit int64 = 250_000
+// Being DIFFERENT from the first one is a precondition of the scenario: had the
+// same number been written, there would be no way to tell whether the
+// storefront read the updated record or the old one.
+const b2bNewLimit int64 = 250_000
 
-// b2bStoreEmployee vitrindeki çalışan kaydının senaryonun okuduğu alanlarıdır.
+// b2bStoreEmployee holds the fields of the storefront's employee record that
+// the scenario reads.
 //
-// Modülün DTO tipi import EDİLMEZ; gerekçe [zarfVerisi] belgesindedir.
+// The module's DTO type is NOT imported; the rationale is in the [zarfVerisi]
+// doc comment.
 type b2bStoreEmployee struct {
 	ID                       string     `json:"id"`
 	CompanyID                string     `json:"company_id"`
@@ -38,264 +42,276 @@ type b2bStoreEmployee struct {
 	IsCompanyAdmin           bool       `json:"is_company_admin"`
 }
 
-// b2bMusteriAc yönetim ucundan bir müşteri açar ve kimliğini döner.
+// b2bOpenCustomer opens a customer through the admin endpoint and returns its
+// id.
 //
-// Müşteri b2b'nin DEĞİL customer modülünün kaydıdır ve çalışan bağı ancak
-// gerçek bir "cust_" kimliğiyle kurulabilir (bkz. b2b service requireID).
-// Uydurulmuş bir kimlikle çalışılsaydı senaryo, iki modülü birbirine bağlayan
-// link katmanını hiç sürmemiş olurdu.
-func b2bMusteriAc(t *testing.T, s *surec, jeton, eposta string) string {
+// The customer is NOT b2b's record but the customer module's, and the employee
+// bond can only be formed with a real "cust_" id (see b2b service requireID).
+// Had a made-up id been used, the scenario would never have exercised the link
+// layer that ties the two modules together.
+func b2bOpenCustomer(t *testing.T, s *proc, token, email string) string {
 	t.Helper()
 
-	kod, govde := s.yonetimIste(http.MethodPost, "/admin/v1/customers", jeton,
-		map[string]any{"email": eposta, "first_name": "Smoke", "last_name": "B2B"})
-	require.Equal(t, http.StatusCreated, kod, "müşteri açılamadı; gövde: %s", govde)
+	code, body := s.adminRequest(http.MethodPost, "/admin/v1/customers", token,
+		map[string]any{"email": email, "first_name": "Smoke", "last_name": "B2B"})
+	require.Equal(t, http.StatusCreated, code, "could not open the customer; body: %s", body)
 
-	musteri := zarfVerisi[struct {
+	customer := zarfVerisi[struct {
 		ID string `json:"id"`
-	}](t, govde)
-	require.NotEmpty(t, musteri.ID, "müşteri kimlik dönmeli; gövde: %s", govde)
+	}](t, body)
+	require.NotEmpty(t, customer.ID, "the customer must return an id; body: %s", body)
 
-	return musteri.ID
+	return customer.ID
 }
 
-// b2bSirketAc yönetim ucundan bir şirket açar ve kimliğini döner.
-func b2bSirketAc(t *testing.T, s *surec, jeton, ad, eposta, periyot string) string {
+// b2bOpenCompany opens a company through the admin endpoint and returns its id.
+func b2bOpenCompany(t *testing.T, s *proc, token, name, email, period string) string {
 	t.Helper()
 
-	kod, govde := s.yonetimIste(http.MethodPost, "/admin/v1/b2b/companies", jeton, map[string]any{
-		"name":                        ad,
-		"email":                       eposta,
+	code, body := s.adminRequest(http.MethodPost, "/admin/v1/b2b/companies", token, map[string]any{
+		"name":                        name,
+		"email":                       email,
 		"currency_code":               "TRY",
-		"spending_limit_reset_period": periyot,
+		"spending_limit_reset_period": period,
 	})
-	require.Equal(t, http.StatusCreated, kod, "şirket açılamadı; gövde: %s", govde)
+	require.Equal(t, http.StatusCreated, code, "could not open the company; body: %s", body)
 
-	sirket := zarfVerisi[struct {
+	company := zarfVerisi[struct {
 		ID string `json:"id"`
-	}](t, govde)
-	require.NotEmpty(t, sirket.ID, "şirket kimlik dönmeli; gövde: %s", govde)
+	}](t, body)
+	require.NotEmpty(t, company.ID, "the company must return an id; body: %s", body)
 
-	return sirket.ID
+	return company.ID
 }
 
-// b2bVitrinCalisani vitrin ucundan müşterinin KENDİ çalışan kaydını okur.
-func b2bVitrinCalisani(t *testing.T, s *surec, anahtar, musteriID string) b2bStoreEmployee {
+// b2bReadStorefrontEmployee reads the customer's OWN employee record from the
+// storefront endpoint.
+func b2bReadStorefrontEmployee(t *testing.T, s *proc, key, customerID string) b2bStoreEmployee {
 	t.Helper()
 
-	kod, govde := s.vitrinIste(http.MethodGet,
-		"/store/v1/b2b/customers/"+musteriID+"/employee", anahtar, nil)
-	require.Equal(t, http.StatusOK, kod, "vitrin çalışan kaydı okunamadı; gövde: %s", govde)
+	code, body := s.storefrontRequest(http.MethodGet,
+		"/store/v1/b2b/customers/"+customerID+"/employee", key, nil)
+	require.Equal(t, http.StatusOK, code,
+		"could not read the storefront employee record; body: %s", body)
 
-	return zarfVerisi[b2bStoreEmployee](t, govde)
+	return zarfVerisi[b2bStoreEmployee](t, body)
 }
 
-// b2bSemasiniDogrula b2b tablolarının soğuk açılışta kurulduğunu doğrular.
+// b2bVerifySchema verifies that the b2b tables are created on a cold start.
 //
-// Sorgu tabloların KENDİSİNE bakar, bir uca değil: bir modülün migration'ı
-// açılışa bağlanmayı unutsa da uçları mount edilebilir ve ilk istek "relation
-// does not exist" ile ölürdü — yani okuma yüzeyi üzerinden bakan bir test,
-// arızayı ancak o uca gidildiğinde ve anlaşılmaz bir hatayla görürdü.
+// The query looks at the tables THEMSELVES, not at an endpoint: even if a
+// module's migration forgot to be wired into startup, its endpoints could still
+// be mounted and the first request would die with "relation does not exist" —
+// that is, a test looking through the read surface would only see the fault
+// once that endpoint was hit, and then with an incomprehensible error.
 //
-// Versiyon defteri de denetlenir çünkü tablonun VARLIĞI tek başına yetmez:
-// yarım kalmış bir migration da tablo bırakabilir. "dirty" bayrağı, o durumun
-// tek görünür izidir.
-func b2bSemasiniDogrula(t *testing.T, dsn string) {
+// The version ledger is inspected as well, because the EXISTENCE of the table
+// is not enough on its own: a half-finished migration can also leave a table
+// behind. The "dirty" flag is the only visible trace of that state.
+func b2bVerifySchema(t *testing.T, dsn string) {
 	t.Helper()
 
-	havuz, err := db.New(t.Context(), db.DefaultConfig(dsn), nil)
-	require.NoError(t, err, "senaryo veritabanına bağlanılamadı")
-	defer havuz.Close()
+	pool, err := db.New(t.Context(), db.DefaultConfig(dsn), nil)
+	require.NoError(t, err, "could not connect to the scenario database")
+	defer pool.Close()
 
-	defter, err := db.MigrationsTable(b2b.ModuleName)
-	require.NoError(t, err, "b2b versiyon tablosunun adı üretilemedi")
+	ledger, err := db.MigrationsTable(b2b.ModuleName)
+	require.NoError(t, err, "could not derive the name of the b2b version table")
 
-	for _, tablo := range []string{"b2b_company", "b2b_company_employee", defter} {
-		var varMi bool
+	for _, table := range []string{"b2b_company", "b2b_company_employee", ledger} {
+		var exists bool
 		require.NoError(t,
-			havuz.Pool().QueryRow(t.Context(), "SELECT to_regclass($1) IS NOT NULL", tablo).Scan(&varMi),
-			"%s tablosu sorgulanamadı", tablo)
-		assert.True(t, varMi,
-			"soğuk açılış %q tablosunu kurmalı: b2b YENİ bir modüldür ve "+
-				"migration'ı açılışa bağlanmamışsa tablo hiç yaratılmaz", tablo)
+			pool.Pool().QueryRow(t.Context(), "SELECT to_regclass($1) IS NOT NULL", table).Scan(&exists),
+			"could not query the %s table", table)
+		assert.True(t, exists,
+			"a cold start must create the %q table: b2b is a NEW module and if its "+
+				"migration is not wired into startup the table is never created", table)
 	}
 
 	var (
-		versiyon int64
-		kirli    bool
+		version int64
+		dirty   bool
 	)
 	require.NoError(t,
-		havuz.Pool().QueryRow(t.Context(), "SELECT version, dirty FROM "+defter).Scan(&versiyon, &kirli),
-		"b2b versiyon defteri okunamadı")
+		pool.Pool().QueryRow(t.Context(), "SELECT version, dirty FROM "+ledger).Scan(&version, &dirty),
+		"could not read the b2b version ledger")
 
-	assert.Positive(t, versiyon, "b2b migration'ı uygulanmış olmalı")
-	assert.False(t, kirli, "b2b migration'ı yarım kalmamalı (dirty)")
+	assert.Positive(t, version, "the b2b migration must have been applied")
+	assert.False(t, dirty, "the b2b migration must not be left half-finished (dirty)")
 }
 
-// TestB2BUctanUcaGercekSurecte F senaryosudur: B2B modülü gerçek binary
-// üzerinde, gerçek açılış sırasıyla çalışır.
+// TestB2BEndToEndInARealProcess is scenario F: the B2B module runs on the real
+// binary, with the real startup sequence.
 //
-// # Neden gerçek süreç
+// # Why a real process
 //
-// b2b Bölüm 10'da eklendi ve GERÇEK BINARY ÜZERİNDE hiç koşmadı. internal/e2e
-// modülün akışını kanıtlar ama servisleri KENDİ kurar: bileşim kökündeki
-// registry.Add satırını, açılıştaki migration sırasını, koruma yığınını ve
-// gerçek ağı atlar. cmd/server'ın kendi belgesi bu boşluğun bedelini yazıyor:
-// "buraya EKLENMEYEN bir modül hiçbir kurulumda YOKTUR" — ve b2b'nin harcama
-// limiti tam olarak böyle bir kez kaybolmuştu.
+// b2b was added in Phase 10 and has never run ON THE REAL BINARY. internal/e2e
+// proves the module's flow but builds the services ITSELF: it skips the
+// registry.Add line in the composition root, the migration order at startup,
+// the guard stack and the real network. cmd/server's own doc comment states the
+// price of that gap: "a module NOT ADDED here does not EXIST in any
+// installation" — and b2b's spending limit disappeared in exactly this way once.
 //
-// Senaryo TEK süreç açar ve şu zinciri sürer: soğuk açılış → migration →
-// yönetim kimliği → satış kanalı → publishable anahtar → müşteri → şirket →
-// çalışan → vitrinden geri okuma.
+// The scenario opens ONE process and drives this chain: cold start → migration
+// → admin credentials → sales channel → publishable key → customer → company →
+// employee → reading back from the storefront.
 //
-// # Bu senaryo limitin KURALINI sınar, UYGULANMASINI değil
+// # This scenario tests the limit's RULE, not its ENFORCEMENT
 //
-// Limitin kural tarafı (limit kaç, hangi pencerede, hangi para biriminde)
-// vitrinden geri okunarak burada kanıtlanır. Limitin uygulanması ise sipariş
-// açılırken olur (order service CreateOrder) ve oraya ancak sepeti siparişe
-// çeviren yoldan gidilir.
+// The rule side of the limit (how large the limit is, in which window, in which
+// currency) is proven here by reading it back from the storefront. Enforcing
+// the limit, on the other hand, happens while the order is being opened (order
+// service CreateOrder), and the only way there is the path that turns a cart
+// into an order.
 //
-// Bu godoc bir zamanlar "o yol çalışan binary'de YOK" diyordu ve haklıydı:
-// cmd/server yalnızca saga MOTORUNU container'a bırakıyor, cart ile checkout
-// akışlarının yapıcısını çağıran tek yer internal/e2e oluyordu. Arıza o günden
-// beri kapandı — akışlar bileşim kökünde kuruluyor ve vitrin yolunun gerçek
-// süreçte AÇIK olduğu bu pakette sabitlendi
-// (bkz. [TestVitrinSepettenSipariseGercekSurecte]).
+// This doc comment once said "that path does NOT exist in the running binary",
+// and it was right: cmd/server was leaving only the saga ENGINE in the
+// container, and the only place calling the constructor of the cart and
+// checkout flows was internal/e2e. That fault has been closed since — the flows
+// are built in the composition root, and the fact that the storefront path is
+// OPEN in a real process was pinned down in this package
+// (see [TestStorefrontFromCartToOrderInARealProcess]).
 //
-// Yani limit artık bu süreçte de tetiklenebilir; tetiklenmiyor olması bir
-// imkânsızlık değil, bilinçli bir KAPSAM kararıdır: senaryoyu oraya taşımak
-// katalog fikstürünün (ürün, fiyat, stok, lokasyon) tamamını ikinci kez
-// kurmayı ve ikinci bir sunucu süreci açmayı gerektirirdi. Kuralın
-// UYGULANDIĞI, aynı adımlarla e2e'de kanıtlanır
-// (internal/e2e/b2b_test.go): limiti aşan alışveriş siparişe dönmez, para
-// çekilmez, stok hareketsiz kalır. Reddin GÖVDEYE kadar geldiği — yani
-// vitrinin "limitiniz yetmedi" ile "tekrar deneyin"i ayırt edebildiği — orada
-// HTTP uçlarından ayrıca sınanır (TestVitrinB2BLimitReddiSebebiniBildirir).
-func TestB2BUctanUcaGercekSurecte(t *testing.T) {
-	dsn := senaryoVeritabani(t)
+// So the limit can now be triggered in this process too; that it is not
+// triggered is not an impossibility but a deliberate SCOPE decision: moving the
+// scenario there would require setting up the whole catalog fixture (product,
+// price, stock, location) a second time and opening a second server process.
+// That the rule IS ENFORCED is proven with the same steps in e2e
+// (internal/e2e/b2b_test.go): a purchase exceeding the limit does not become an
+// order, no money is captured, stock stays untouched. That the rejection
+// reaches all the way INTO THE BODY — that is, that the storefront can tell
+// "your limit was not enough" apart from "try again" — is tested there
+// separately from the HTTP endpoints (TestStorefrontB2BLimitRejectionReportsReason).
+func TestB2BEndToEndInARealProcess(t *testing.T) {
+	dsn := scenarioDatabase(t)
 
-	ayar := temelAyarlar(dsn, bosPort(t))
-	ayar["ADMIN_BOOTSTRAP_EMAIL"] = tohumEposta
-	ayar["ADMIN_BOOTSTRAP_PASSWORD"] = tohumParola
+	cfg := baseSettings(dsn, freePort(t))
+	cfg["ADMIN_BOOTSTRAP_EMAIL"] = seedEmail
+	cfg["ADMIN_BOOTSTRAP_PASSWORD"] = seedPassword
 
-	s := sunucuBaslat(t, ayar)
-	s.hazirBekle(acilisSuresi)
+	s := startServer(t, cfg)
+	s.waitForReady(startupTimeout)
 
-	t.Run("soğuk açılış b2b şemasını kurar", func(t *testing.T) {
-		b2bSemasiniDogrula(t, dsn)
+	t.Run("cold start creates the b2b schema", func(t *testing.T) {
+		b2bVerifySchema(t, dsn)
 	})
 
-	jeton, _, vitrinAnahtari := yonetimZeminiKur(t, s, "Smoke B2B Kanalı")
+	token, _, storefrontKey := setUpAdminHarness(t, s, "Smoke B2B Channel")
 
-	musteriID := b2bMusteriAc(t, s, jeton, "smoke-b2b@ornek.test")
-	sirketID := b2bSirketAc(t, s, jeton, "Smoke B2B A.Ş.", "smoke-b2b-sirket@ornek.test", "monthly")
+	customerID := b2bOpenCustomer(t, s, token, "smoke-b2b@example.test")
+	companyID := b2bOpenCompany(t, s, token,
+		"Smoke B2B Inc.", "smoke-b2b-company@example.test", "monthly")
 
-	limit := b2bHarcamaLimiti
-	kod, govde := s.yonetimIste(http.MethodPost, "/admin/v1/b2b/employees", jeton, map[string]any{
-		"company_id":       sirketID,
-		"customer_id":      musteriID,
+	limit := b2bSpendingLimit
+	code, body := s.adminRequest(http.MethodPost, "/admin/v1/b2b/employees", token, map[string]any{
+		"company_id":       companyID,
+		"customer_id":      customerID,
 		"spending_limit":   limit,
 		"is_company_admin": true,
 	})
-	require.Equal(t, http.StatusCreated, kod, "çalışan eklenemedi; gövde: %s", govde)
+	require.Equal(t, http.StatusCreated, code, "could not add the employee; body: %s", body)
 
-	calisanID := zarfVerisi[struct {
+	employeeID := zarfVerisi[struct {
 		ID string `json:"id"`
-	}](t, govde).ID
-	require.NotEmpty(t, calisanID, "çalışan kimlik dönmeli; gövde: %s", govde)
+	}](t, body).ID
+	require.NotEmpty(t, employeeID, "the employee must return an id; body: %s", body)
 
-	t.Run("vitrin müşterinin kendi şirketini döner", func(t *testing.T) {
-		kod, govde := s.vitrinIste(http.MethodGet,
-			"/store/v1/b2b/customers/"+musteriID+"/company", vitrinAnahtari, nil)
-		require.Equal(t, http.StatusOK, kod, "vitrin şirket ucu 200 dönmeli; gövde: %s", govde)
+	t.Run("storefront returns the customer's own company", func(t *testing.T) {
+		code, body := s.storefrontRequest(http.MethodGet,
+			"/store/v1/b2b/customers/"+customerID+"/company", storefrontKey, nil)
+		require.Equal(t, http.StatusOK, code,
+			"the storefront company endpoint must return 200; body: %s", body)
 
-		sirket := zarfVerisi[struct {
+		company := zarfVerisi[struct {
 			ID                       string `json:"id"`
 			Name                     string `json:"name"`
 			CurrencyCode             string `json:"currency_code"`
 			SpendingLimitResetPeriod string `json:"spending_limit_reset_period"`
-		}](t, govde)
+		}](t, body)
 
-		assert.Equal(t, sirketID, sirket.ID,
-			"vitrin, çalışan kaydından ÇÖZÜLEN şirketi dönmeli; gövde: %s", govde)
-		assert.Equal(t, "TRY", sirket.CurrencyCode,
-			"para birimi normalize edilerek saklanmalı; gövde: %s", govde)
-		assert.Equal(t, "monthly", sirket.SpendingLimitResetPeriod,
-			"sıfırlama periyodu yönetimden yazıldığı gibi okunmalı; gövde: %s", govde)
+		assert.Equal(t, companyID, company.ID,
+			"the storefront must return the company RESOLVED from the employee record; body: %s", body)
+		assert.Equal(t, "TRY", company.CurrencyCode,
+			"the currency code must be stored normalized; body: %s", body)
+		assert.Equal(t, "monthly", company.SpendingLimitResetPeriod,
+			"the reset period must be read back as it was written from the admin side; body: %s", body)
 	})
 
-	t.Run("vitrin harcama kuralını geri okur", func(t *testing.T) {
-		calisan := b2bVitrinCalisani(t, s, vitrinAnahtari, musteriID)
+	t.Run("storefront reads the spending rule back", func(t *testing.T) {
+		employee := b2bReadStorefrontEmployee(t, s, storefrontKey, customerID)
 
-		assert.Equal(t, calisanID, calisan.ID, "vitrin aynı çalışan kaydını dönmeli")
-		assert.Equal(t, musteriID, calisan.CustomerID,
-			"customer id link katmanından dolmalı; boş görünmesi bağın hiç "+
-				"kurulmadığı anlamına gelir")
-		require.NotNil(t, calisan.SpendingLimit, "harcama limiti dolu olmalı")
-		assert.Equal(t, b2bHarcamaLimiti, *calisan.SpendingLimit,
-			"vitrin, yönetimden yazılan limitin AYNISINI dönmeli")
-		assert.Equal(t, "monthly", calisan.SpendingLimitResetPeriod,
-			"periyot çalışanın kendi kaydından değil ŞİRKETTEN türetilir")
+		assert.Equal(t, employeeID, employee.ID, "the storefront must return the same employee record")
+		assert.Equal(t, customerID, employee.CustomerID,
+			"the customer id must be filled in by the link layer; seeing it empty means "+
+				"the bond was never formed")
+		require.NotNil(t, employee.SpendingLimit, "the spending limit must be set")
+		assert.Equal(t, b2bSpendingLimit, *employee.SpendingLimit,
+			"the storefront must return exactly the SAME limit written from the admin side")
+		assert.Equal(t, "monthly", employee.SpendingLimitResetPeriod,
+			"the period is derived from the COMPANY, not from the employee's own record")
 
-		// Pencere TAKVİMDEN gelir (bkz. models.SpendingResetPeriod.WindowStart):
-		// aylık limit ayın 1'inde, UTC gece yarısında başlar. İddia bugünün
-		// tarihine değil pencerenin KENDİ tarihine bakar; aksi hâlde ay
-		// devrinde koşan bir test kendi kendine düşerdi.
-		require.NotNil(t, calisan.SpendingWindowStart,
-			"aylık periyotta pencere başlangıcı dolu olmalı")
+		// The window comes from the CALENDAR (see
+		// models.SpendingResetPeriod.WindowStart): a monthly limit starts on the
+		// 1st of the month, at midnight UTC. The assertion looks not at today's
+		// date but at the window's OWN date; otherwise a test running at the turn
+		// of the month would fail all by itself.
+		require.NotNil(t, employee.SpendingWindowStart,
+			"with a monthly period the window start must be set")
 
-		pencere := calisan.SpendingWindowStart.UTC()
+		window := employee.SpendingWindowStart.UTC()
 		assert.Equal(t,
-			time.Date(pencere.Year(), pencere.Month(), 1, 0, 0, 0, 0, time.UTC), pencere,
-			"aylık pencere, ayın ilk anında (UTC) başlamalı")
-		assert.False(t, pencere.After(time.Now().UTC()),
-			"pencere gelecekte başlayamaz")
+			time.Date(window.Year(), window.Month(), 1, 0, 0, 0, 0, time.UTC), window,
+			"the monthly window must start at the first instant of the month (UTC)")
+		assert.False(t, window.After(time.Now().UTC()),
+			"the window cannot start in the future")
 	})
 
-	t.Run("limitin güncellenmesi vitrine yansır", func(t *testing.T) {
-		// Kuralın CANLI okunduğunun kanıtı budur: vitrin, çalışan kaydını
-		// açılışta bir kez okuyup önbelleğe alsaydı bu alt test düşerdi ve
-		// operatörün yükselttiği bir limit hiçbir zaman uygulanmazdı.
-		yeni := b2bYeniLimit
-		kod, govde := s.yonetimIste(http.MethodPut, "/admin/v1/b2b/employees/"+calisanID, jeton,
-			map[string]any{"spending_limit": yeni})
-		require.Equal(t, http.StatusOK, kod, "çalışan güncellenemedi; gövde: %s", govde)
+	t.Run("updating the limit is reflected in the storefront", func(t *testing.T) {
+		// This is the proof that the rule is read LIVE: had the storefront read
+		// the employee record once at startup and cached it, this subtest would
+		// fail and a limit the operator raised would never be enforced.
+		updated := b2bNewLimit
+		code, body := s.adminRequest(http.MethodPut, "/admin/v1/b2b/employees/"+employeeID, token,
+			map[string]any{"spending_limit": updated})
+		require.Equal(t, http.StatusOK, code, "could not update the employee; body: %s", body)
 
-		calisan := b2bVitrinCalisani(t, s, vitrinAnahtari, musteriID)
-		require.NotNil(t, calisan.SpendingLimit, "güncellenmiş limit dolu olmalı")
-		assert.Equal(t, b2bYeniLimit, *calisan.SpendingLimit,
-			"vitrin GÜNCEL limiti dönmeli")
+		employee := b2bReadStorefrontEmployee(t, s, storefrontKey, customerID)
+		require.NotNil(t, employee.SpendingLimit, "the updated limit must be set")
+		assert.Equal(t, b2bNewLimit, *employee.SpendingLimit,
+			"the storefront must return the CURRENT limit")
 	})
 
-	t.Run("bir müşteri ikinci şirkete çalışan olarak eklenemez", func(t *testing.T) {
-		// Kural uygulamada değil VERİTABANINDA durur (link tablosunun benzersiz
-		// indeksi, bkz. b2b service Definitions). Bu alt test onu gerçek
-		// şemaya karşı sürer: indeks soğuk açılışta kurulmamış olsaydı istek
-		// 201 döner ve müşterinin hangi şirketin limitine tabi olduğu
-		// belirsizleşirdi — belirsizlik, kuralın hiç uygulanmaması demektir.
-		digerSirket := b2bSirketAc(t, s, jeton,
-			"Smoke B2B İkinci A.Ş.", "smoke-b2b-ikinci@ornek.test", "never")
+	t.Run("a customer cannot be added as an employee to a second company", func(t *testing.T) {
+		// The rule lives not in the application but in the DATABASE (the unique
+		// index of the link table, see b2b service Definitions). This subtest
+		// drives it against the real schema: had the index not been created on a
+		// cold start, the request would return 201 and which company's limit the
+		// customer is subject to would become ambiguous — and ambiguity means the
+		// rule is not enforced at all.
+		otherCompany := b2bOpenCompany(t, s, token,
+			"Smoke B2B Second Inc.", "smoke-b2b-second@example.test", "never")
 
-		kod, govde := s.yonetimIste(http.MethodPost, "/admin/v1/b2b/employees", jeton,
-			map[string]any{"company_id": digerSirket, "customer_id": musteriID})
+		code, body := s.adminRequest(http.MethodPost, "/admin/v1/b2b/employees", token,
+			map[string]any{"company_id": otherCompany, "customer_id": customerID})
 
-		assert.Equal(t, http.StatusConflict, kod,
-			"aynı müşteri ikinci şirkete bağlanamamalı; gövde: %s", govde)
+		assert.Equal(t, http.StatusConflict, code,
+			"the same customer must not be bound to a second company; body: %s", body)
 	})
 
-	t.Run("anahtarsız vitrin isteği 401 döner", func(t *testing.T) {
-		kod, govde := s.vitrinIste(http.MethodGet,
-			"/store/v1/b2b/customers/"+musteriID+"/employee", "", nil)
+	t.Run("a storefront request without a key returns 401", func(t *testing.T) {
+		code, body := s.storefrontRequest(http.MethodGet,
+			"/store/v1/b2b/customers/"+customerID+"/employee", "", nil)
 
-		assert.Equal(t, http.StatusUnauthorized, kod,
-			"publishable anahtarsız vitrin isteği reddedilmeli; gövde: %s", govde)
+		assert.Equal(t, http.StatusUnauthorized, code,
+			"a storefront request without a publishable key must be rejected; body: %s", body)
 	})
 
-	t.Run("kimliksiz yönetim isteği 401 döner", func(t *testing.T) {
-		// Yolun VARLIĞI da sızmamalı: koruma, route çözümünden önce çalışır.
-		kod, govde := s.iste(http.MethodGet, "/admin/v1/b2b/companies", "")
+	t.Run("an admin request without credentials returns 401", func(t *testing.T) {
+		// The EXISTENCE of the path must not leak either: the guard runs before
+		// route resolution.
+		code, body := s.request(http.MethodGet, "/admin/v1/b2b/companies", "")
 
-		assert.Equal(t, http.StatusUnauthorized, kod,
-			"kimliksiz b2b yönetim isteği reddedilmeli; gövde: %s", govde)
+		assert.Equal(t, http.StatusUnauthorized, code,
+			"a b2b admin request without credentials must be rejected; body: %s", body)
 	})
 }

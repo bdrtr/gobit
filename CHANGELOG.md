@@ -1478,8 +1478,8 @@ adımını YAZANLARI ilgilendiriyor.
   değerlendirildi ve reddedildi; gerekçe ADR'de.
 
 - **Kurulum tuzağı artık gerçek süreçte çivili:**
-  `internal/smoke/anahtar_test.go` içindeki
-  `TestKanalsizPublishableAnahtarVitrindeReddedilir`, README'nin publishable
+  `internal/smoke/keys_test.go` içindeki
+  `TestPublishableKeyWithoutChannelIsRejectedByStorefront`, README'nin publishable
   anahtar paragrafını uçtan uca yürür — kanalsız anahtar üretilir (`201`),
   mağaza yüzeyinde `401` alır, teşhis kodu (`auth_no_sales_channel`) yanıtta
   değil sunucunun LOGUNDA aranır ve kanal sonradan bağlanınca AYNI anahtar

@@ -14,44 +14,48 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/product/graph"
 )
 
-// GraphQL sertleştirme sınırlarının senaryodaki DÜŞÜK değerleri.
+// The LOW values of the GraphQL hardening limits used in this scenario.
 //
-// Değerler varsayılanların (10.000/20/2/15/4 MiB) çok altındadır ve bu,
-// senaryonun tek çalışma koşuludur: varsayılanla koşan bir süreçte hiçbir
-// belge sınıra çarpmaz, yani "ayar bağlı mı" sorusu CEVAPSIZ kalır. Ortam
-// değişkenini düşürüp reddi görmek, bağın gerçekten tuttuğunun tek kanıtıdır.
+// The values sit far below the defaults (10,000/20/2/15/4 MiB), and that is the
+// single operating condition of the scenario: in a process running with the
+// defaults no document ever hits a limit, so the question "is the setting wired?"
+// stays UNANSWERED. Lowering the environment variable and seeing the rejection is
+// the only proof that the wiring really holds.
 //
-// Beş değer TEK süreçte birlikte verilir ve birbirini gölgelemeyecek biçimde
-// kalibre edilmiştir; hangi belgenin hangi kapıya çarptığı alt testlerin
-// yorumlarındadır. Ayrı süreçler de aynı şeyi kanıtlardı ama beş kez açılış +
-// beş kez migration bedeliyle.
+// All five values are given together in ONE process and are calibrated so that
+// they do not shadow one another; which document hits which gate is written in the
+// comments of the subtests. Separate processes would prove the same thing, but at
+// the cost of five startups plus five migration runs.
 const (
-	// grafikSecimSiniri fragment'lar açıldıktan sonraki seçim sayısı tavanıdır.
-	// Senaryonun en büyük MEŞRU belgesi 6 seçimdir; 8, ona pay bırakır.
-	grafikSecimSiniri = 8
-	// grafikAlanTekrariSiniri aynı alanın aynı nesne altındaki tekrar tavanıdır.
-	grafikAlanTekrariSiniri = 2
-	// grafikIcGozlemKokSiniri bir belgedeki __schema/__type kökü tavanıdır.
-	grafikIcGozlemKokSiniri = 1
-	// grafikIcGozlemDerinlikSiniri iç gözlem alt ağacının derinlik tavanıdır.
-	// Üçtür: "__schema { types { name } }" tam olarak 3 derindir ve GEÇMELİDİR;
-	// yanıt baytı senaryosu tam da o belgeyi çalıştırır.
-	grafikIcGozlemDerinlikSiniri = 3
-	// grafikYanitBaytSiniri tek bir yanıtın bayt tavanıdır.
+	// graphSelectionLimit is the ceiling on the selection count after fragments are
+	// expanded. The largest LEGITIMATE document of the scenario is 6 selections; 8
+	// leaves it room.
+	graphSelectionLimit = 8
+	// graphFieldRepetitionLimit is the ceiling on repeating the same field under the
+	// same object.
+	graphFieldRepetitionLimit = 2
+	// graphIntrospectionRootLimit is the ceiling on __schema/__type roots in a single
+	// document.
+	graphIntrospectionRootLimit = 1
+	// graphIntrospectionDepthLimit is the depth ceiling of the introspection subtree.
+	// It is three: "__schema { types { name } }" is exactly 3 deep and MUST PASS; the
+	// response-byte scenario runs precisely that document.
+	graphIntrospectionDepthLimit = 3
+	// graphResponseByteLimit is the byte ceiling of a single response.
 	//
-	// 2 KiB, senaryonun tüm meşru yanıtlarının (tek ürünlük liste ~150 bayt) ve
-	// tüm hata zarflarının (~200 bayt) üstünde, şemanın açıklamalı iç gözlem
-	// dökümünün ise çok altındadır — yani yalnızca sınanmak istenen belgeyi
-	// keser.
-	grafikYanitBaytSiniri = 2048
+	// 2 KiB is above every legitimate response of the scenario (a single-product list
+	// is ~150 bytes) and above every error envelope (~200 bytes), and far below the
+	// annotated introspection dump of the schema — so it cuts only the document that
+	// is meant to be tested.
+	graphResponseByteLimit = 2048
 )
 
-// grafikYanit GraphQL yanıt zarfının senaryoların okuduğu kadarıdır.
+// graphResponse is as much of the GraphQL response envelope as the scenarios read.
 //
-// data HAM bırakılır: her alt test kendi belgesinin şeklini bekler ve tek bir
-// Go tipine bağlamak, iki farklı sorgunun aynı yapıyı döndürmesini zorunlu
-// kılardı.
-type grafikYanit struct {
+// data is left RAW: every subtest expects the shape of its own document, and
+// binding it to a single Go type would force two different queries to return the
+// same structure.
+type graphResponse struct {
 	Data   json.RawMessage `json:"data"`
 	Errors []struct {
 		Message    string         `json:"message"`
@@ -59,163 +63,169 @@ type grafikYanit struct {
 	} `json:"errors"`
 }
 
-// grafikIste GraphQL ucuna bir belge gönderir.
+// graphRequest sends a document to the GraphQL endpoint.
 //
-// Yol [graph.Path] sabitinden okunur: ucu bağlayan ve anlatan yerler de aynı
-// sabiti paylaşır. Elle yazılsaydı, yol değiştiğinde senaryo var olmayan bir
-// uca 404 alır ve bunu "koruma çalışıyor" sanabilirdi.
-func (s *surec) grafikIste(anahtar, belge string) (kod int, yanit string) {
+// The path is read from the [graph.Path] constant: the places that mount the
+// endpoint and the places that describe it share that same constant. Written out
+// by hand, the scenario would get a 404 from an endpoint that does not exist once
+// the path changed, and could mistake that for "the protection works".
+func (s *proc) graphRequest(key, document string) (status int, body string) {
 	s.t.Helper()
 
-	return s.vitrinIste(http.MethodPost, graph.Path, anahtar, map[string]string{"query": belge})
+	return s.storefrontRequest(http.MethodPost, graph.Path, key, map[string]string{"query": document})
 }
 
-// grafikCoz yanıt gövdesini GraphQL zarfına çözer.
-func grafikCoz(t *testing.T, govde string) grafikYanit {
+// decodeGraphResponse decodes the response body into the GraphQL envelope.
+func decodeGraphResponse(t *testing.T, body string) graphResponse {
 	t.Helper()
 
-	var yanit grafikYanit
-	require.NoError(t, json.Unmarshal([]byte(govde), &yanit),
-		"GraphQL yanıtı çözülemedi; gövde: %s", govde)
+	var resp graphResponse
+	require.NoError(t, json.Unmarshal([]byte(body), &resp),
+		"the GraphQL response could not be decoded; body: %s", body)
 
-	return yanit
+	return resp
 }
 
-// grafikHatasi belgenin TEK bir hatayla reddedildiğini doğrular ve o hatayı
-// döner.
+// graphError verifies that the document was rejected with exactly ONE error and
+// returns that error.
 //
-// Durum kodu 200 BEKLENİR ve bu bir gevşeklik değil, ucun sözleşmesidir: sınır
-// kodları errcode.RegisterErrorType ile kaydedilmez (gerekçe graph/limits.go),
-// yani protokol hatası gövdedeki errors dizisindedir. 200 dışında bir kod,
-// isteğin sınıra değil BAŞKA bir şeye — koruma yığınına, yönlendirmeye —
-// takıldığını gösterirdi ve senaryo sınamak istediği şeyi hiç sınamamış olurdu.
-func grafikHatasi(t *testing.T, kod int, govde string) (mesaj, hataKodu string) {
+// Status code 200 is EXPECTED, and that is not slack but the contract of the
+// endpoint: the limit codes are not registered with errcode.RegisterErrorType (the
+// rationale is in graph/limits.go), so the protocol error lives in the errors array
+// of the body. A code other than 200 would show that the request was caught by
+// SOMETHING ELSE than the limit — by the protection stack, by the routing — and the
+// scenario would not have tested the thing it means to test at all.
+func graphError(t *testing.T, status int, body string) (message, errorCode string) {
 	t.Helper()
 
-	require.Equal(t, http.StatusOK, kod,
-		"sınır aşımı GraphQL zarfıyla bildirilmeli (200 + errors); gövde: %s", govde)
+	require.Equal(t, http.StatusOK, status,
+		"a limit overrun has to be reported through the GraphQL envelope (200 + errors); body: %s", body)
 
-	yanit := grafikCoz(t, govde)
-	require.Len(t, yanit.Errors, 1, "tek bir sınır hatası beklenir; gövde: %s", govde)
+	resp := decodeGraphResponse(t, body)
+	require.Len(t, resp.Errors, 1, "exactly one limit error is expected; body: %s", body)
 
-	kodDegeri, _ := yanit.Errors[0].Extensions["code"].(string)
+	codeValue, _ := resp.Errors[0].Extensions["code"].(string)
 
-	return yanit.Errors[0].Message, kodDegeri
+	return resp.Errors[0].Message, codeValue
 }
 
-// grafikAyarlari GraphQL senaryosunun süreç ortamını kurar.
+// graphSettings builds the process environment of the GraphQL scenario.
 //
-// Sınırlar ORTAM DEĞİŞKENİYLE verilir, kodla değil: sınanan şey tam olarak
-// "operatörün yazdığı değer graph.Options'a ulaşıyor mu" sorusudur ve o zincir
-// (config etiketi → cmd/server kablolaması → modül seçeneği) yalnızca gerçek
-// süreçte tamdır.
-func grafikAyarlari(dsn string, port int) ayarlar {
-	ayar := temelAyarlar(dsn, port)
-	ayar["ADMIN_BOOTSTRAP_EMAIL"] = tohumEposta
-	ayar["ADMIN_BOOTSTRAP_PASSWORD"] = tohumParola
+// The limits are given through ENVIRONMENT VARIABLES, not in code: what is under
+// test is exactly the question "does the value the operator wrote reach
+// graph.Options?", and that chain (config tag → cmd/server wiring → module option)
+// is complete only in a real process.
+func graphSettings(dsn string, port int) settings {
+	cfg := baseSettings(dsn, port)
+	cfg["ADMIN_BOOTSTRAP_EMAIL"] = seedEmail
+	cfg["ADMIN_BOOTSTRAP_PASSWORD"] = seedPassword
 
-	ayar["GRAPHQL_MAX_SELECTIONS"] = strconv.Itoa(grafikSecimSiniri)
-	ayar["GRAPHQL_MAX_FIELD_REPETITION"] = strconv.Itoa(grafikAlanTekrariSiniri)
-	ayar["GRAPHQL_MAX_INTROSPECTION_ROOTS"] = strconv.Itoa(grafikIcGozlemKokSiniri)
-	ayar["GRAPHQL_MAX_INTROSPECTION_DEPTH"] = strconv.Itoa(grafikIcGozlemDerinlikSiniri)
-	ayar["GRAPHQL_MAX_RESPONSE_BYTES"] = strconv.Itoa(grafikYanitBaytSiniri)
+	cfg["GRAPHQL_MAX_SELECTIONS"] = strconv.Itoa(graphSelectionLimit)
+	cfg["GRAPHQL_MAX_FIELD_REPETITION"] = strconv.Itoa(graphFieldRepetitionLimit)
+	cfg["GRAPHQL_MAX_INTROSPECTION_ROOTS"] = strconv.Itoa(graphIntrospectionRootLimit)
+	cfg["GRAPHQL_MAX_INTROSPECTION_DEPTH"] = strconv.Itoa(graphIntrospectionDepthLimit)
+	cfg["GRAPHQL_MAX_RESPONSE_BYTES"] = strconv.Itoa(graphResponseByteLimit)
 
-	return ayar
+	return cfg
 }
 
-// vitrinUrunuYayinla yayında bir ürün açar ve satış kanalına bağlar.
+// publishStorefrontProduct opens a published product and attaches it to the sales
+// channel.
 //
-// İKİ adım da zorunludur: vitrin yalnızca "published" ürünleri, yalnızca
-// isteğin kanalında görünenleri döner. Biri atlanırsa GraphQL sorgusu boş bir
-// liste döner ve senaryo, hiçbir şey kanıtlamadan yeşil kalırdı.
-func vitrinUrunuYayinla(t *testing.T, s *surec, jeton, kanalID, baslik, handle string) {
+// BOTH steps are mandatory: the storefront returns only "published" products, and
+// only the ones visible in the channel of the request. If either one is skipped the
+// GraphQL query returns an empty list and the scenario would stay green without
+// proving anything.
+func publishStorefrontProduct(t *testing.T, s *proc, token, channelID, title, handle string) {
 	t.Helper()
 
-	kod, govde := s.yonetimIste(http.MethodPost, "/admin/v1/products", jeton, map[string]any{
+	status, body := s.adminRequest(http.MethodPost, "/admin/v1/products", token, map[string]any{
 		"handle": handle,
-		"title":  baslik,
+		"title":  title,
 		"status": "published",
 	})
-	require.Equal(t, http.StatusCreated, kod, "ürün açılamadı; gövde: %s", govde)
+	require.Equal(t, http.StatusCreated, status, "the product could not be opened; body: %s", body)
 
-	urun := zarfVerisi[struct {
+	product := zarfVerisi[struct {
 		ID string `json:"id"`
-	}](t, govde)
-	require.NotEmpty(t, urun.ID, "ürün kimlik dönmeli; gövde: %s", govde)
+	}](t, body)
+	require.NotEmpty(t, product.ID, "the product has to return an id; body: %s", body)
 
-	kod, govde = s.yonetimIste(http.MethodPost, "/admin/v1/products/"+urun.ID+"/sales-channels",
-		jeton, map[string]any{"sales_channel_id": kanalID})
-	require.Equal(t, http.StatusOK, kod, "ürün satış kanalına bağlanamadı; gövde: %s", govde)
+	status, body = s.adminRequest(http.MethodPost, "/admin/v1/products/"+product.ID+"/sales-channels",
+		token, map[string]any{"sales_channel_id": channelID})
+	require.Equal(t, http.StatusOK, status,
+		"the product could not be attached to the sales channel; body: %s", body)
 }
 
-// TestGraphQLVitrinYuzeyiGercekSurecte E senaryosudur: GraphQL okuma yüzeyi
-// gerçek binary üzerinde, gerçek koruma yığınının arkasında çalışır ve beş YENİ
-// sertleştirme ayarı gerçekten graph.Options'a ulaşır.
+// TestGraphQLStorefrontSurfaceInRealProcess is scenario E: the GraphQL read surface
+// works on the real binary, behind the real protection stack, and the five NEW
+// hardening settings really do reach graph.Options.
 //
-// # Neden gerçek süreç
+// # Why a real process
 //
-// internal/e2e bu ucu httptest ile sürer ve yeşil bulur, ama router'ı KENDİ
-// kurar: bileşim kökündeki kablolamayı (cmd/server'ın product.Options'ı),
-// config ayrıştırmasını, açılıştaki migration'ları, eklenti yüklemesini ve
-// gerçek ağı atlar. Yani "depoyu klonlayıp çalıştıran birinin vitrini GraphQL'e
-// cevap veriyor mu" sorusunu cevaplayamaz.
+// internal/e2e drives this endpoint with httptest and finds it green, but it builds
+// the router ITSELF: it skips the wiring in the composition root (cmd/server's
+// product.Options), the config parsing, the migrations at startup, the plugin
+// loading and the real network. So it cannot answer the question "does the
+// storefront of somebody who clones the repository and runs it answer GraphQL?".
 //
-// Sertleştirme tarafında boşluk daha da somuttur: beş ayar config'ten
-// graph.Options'a YENİ bağlandı ve bağın tuttuğu HİÇ sınanmadı. Birim testleri
-// kapıların davranışını kanıtlar, ama ayarın oraya ULAŞTIĞINI kanıtlayamaz —
-// cmd/server'daki satır silinse hepsi yeşil kalır ve kurulum, belgede yazandan
-// başka bir sınırla çalışır.
+// On the hardening side the gap is even more concrete: the five settings were NEWLY
+// wired from the config through to graph.Options and that the wiring holds was
+// tested NOWHERE. The unit tests prove the behavior of the gates, but they cannot
+// prove that the setting ARRIVES there — delete the line in cmd/server and all of
+// them stay green, while the installation runs with a limit other than the one
+// written in the documentation.
 //
-// # TEK süreç
+// # ONE process
 //
-// Alt testlerin tamamı aynı süreci sürer. Sertleştirme değerleri süreç ömrü
-// boyunca sabit olduğu için her ayara bir süreç açmak beş açılış + beş
-// migration demekti; değerler bunun yerine birbirini gölgelemeyecek biçimde
-// kalibre edildi (bkz. [grafikSecimSiniri] ve kardeşleri). Kapı sırası
-// (seçim bütçesi → derinlik → iç gözlem kökü → alan tekrarı → karmaşıklık →
-// yanıt baytı) graph.NewHandler'da yazılıdır ve belgeler o sıraya göre
-// seçilmiştir.
-func TestGraphQLVitrinYuzeyiGercekSurecte(t *testing.T) {
-	s := sunucuBaslat(t, grafikAyarlari(senaryoVeritabani(t), bosPort(t)))
-	s.hazirBekle(acilisSuresi)
+// All of the subtests drive the same process. Because the hardening values are
+// fixed for the lifetime of the process, opening one process per setting would have
+// meant five startups plus five migration runs; the values were instead calibrated
+// so that they do not shadow one another (see [graphSelectionLimit] and its
+// siblings). The gate order (selection budget → depth → introspection root → field
+// repetition → complexity → response byte) is written in graph.NewHandler, and the
+// documents were picked to match that order.
+func TestGraphQLStorefrontSurfaceInRealProcess(t *testing.T) {
+	s := startServer(t, graphSettings(scenarioDatabase(t), freePort(t)))
+	s.waitForReady(startupTimeout)
 
-	jeton, kanalID, vitrinAnahtari := yonetimZeminiKur(t, s, "Smoke GraphQL Kanalı")
+	token, channelID, storefrontKey := setUpAdminHarness(t, s, "Smoke GraphQL Channel")
 
-	const urunBasligi = "Smoke GraphQL Ürünü"
-	vitrinUrunuYayinla(t, s, jeton, kanalID, urunBasligi, "smoke-graphql-urunu")
+	const productTitle = "Smoke GraphQL Product"
+	publishStorefrontProduct(t, s, token, channelID, productTitle, "smoke-graphql-product")
 
-	t.Run("anahtarsız istek 401 döner", func(t *testing.T) {
-		kod, govde := s.grafikIste("", "{ products(limit: 1) { count } }")
+	t.Run("a request without a key returns 401", func(t *testing.T) {
+		status, body := s.graphRequest("", "{ products(limit: 1) { count } }")
 
-		assert.Equal(t, http.StatusUnauthorized, kod,
-			"publishable anahtarsız GraphQL isteği reddedilmeli; gövde: %s", govde)
-		// Yanıt GraphQL zarfı DEĞİL, çekirdeğin hata zarfı olmalıdır: koruma
-		// çalıştırıcıya ULAŞMADAN keser ve /store/v1 altındaki her uçla aynı
-		// biçimi döndürür. Gövdede "data" görmek, isteğin korumayı geçip
-		// gqlgen'e ulaştığı anlamına gelirdi.
-		assert.NotContains(t, govde, `"data"`,
-			"kimliksiz istek çalıştırıcıya ulaşmamalı; gövde: %s", govde)
+		assert.Equal(t, http.StatusUnauthorized, status,
+			"a GraphQL request without a publishable key has to be rejected; body: %s", body)
+		// The response must NOT be the GraphQL envelope but the error envelope of the
+		// core: the protection cuts the request BEFORE it REACHES the executor and
+		// returns the same shape as every endpoint under /store/v1. Seeing "data" in
+		// the body would mean the request got past the protection and reached gqlgen.
+		assert.NotContains(t, body, `"data"`,
+			"an unauthenticated request must not reach the executor; body: %s", body)
 	})
 
-	t.Run("GET kabul edilmez", func(t *testing.T) {
-		// Uç chi'ye yalnızca POST ile kaydedilir (bkz. graph.NewHandler): GET
-		// isteği gqlgen'in "transport not supported" 400'ü yerine dürüst bir
-		// 405 almalıdır. İddia ancak gerçek router'da sınanabilir.
-		kod, govde := s.vitrinIste(http.MethodGet, graph.Path, vitrinAnahtari, nil)
+	t.Run("GET is not accepted", func(t *testing.T) {
+		// The endpoint is registered with chi for POST only (see graph.NewHandler): a
+		// GET request has to get an honest 405 instead of gqlgen's "transport not
+		// supported" 400. The assertion can only be tested on the real router.
+		status, body := s.storefrontRequest(http.MethodGet, graph.Path, storefrontKey, nil)
 
-		assert.Equal(t, http.StatusMethodNotAllowed, kod,
-			"GraphQL ucu yalnızca POST kabul etmeli; gövde: %s", govde)
+		assert.Equal(t, http.StatusMethodNotAllowed, status,
+			"the GraphQL endpoint has to accept POST only; body: %s", body)
 	})
 
-	t.Run("products sorgusu kanalın katalogunu döner", func(t *testing.T) {
-		kod, govde := s.grafikIste(vitrinAnahtari,
+	t.Run("the products query returns the catalog of the channel", func(t *testing.T) {
+		status, body := s.graphRequest(storefrontKey,
 			"{ products(limit: 5) { count items { id title handle } } }")
-		require.Equal(t, http.StatusOK, kod, "products sorgusu 200 dönmeli; gövde: %s", govde)
+		require.Equal(t, http.StatusOK, status, "the products query has to return 200; body: %s", body)
 
-		yanit := grafikCoz(t, govde)
-		require.Empty(t, yanit.Errors, "meşru sorgu hatasız çalışmalı; gövde: %s", govde)
+		resp := decodeGraphResponse(t, body)
+		require.Empty(t, resp.Errors, "a legitimate query has to run without errors; body: %s", body)
 
-		var veri struct {
+		var data struct {
 			Products struct {
 				Count int `json:"count"`
 				Items []struct {
@@ -225,151 +235,156 @@ func TestGraphQLVitrinYuzeyiGercekSurecte(t *testing.T) {
 				} `json:"items"`
 			} `json:"products"`
 		}
-		require.NoError(t, json.Unmarshal(yanit.Data, &veri),
-			"products verisi çözülemedi; gövde: %s", govde)
+		require.NoError(t, json.Unmarshal(resp.Data, &data),
+			"the products data could not be decoded; body: %s", body)
 
-		require.Equal(t, 1, veri.Products.Count,
-			"kanala bağlanan tek ürün sayılmalı; gövde: %s", govde)
-		require.Len(t, veri.Products.Items, 1, "sayfa tek ürün taşımalı; gövde: %s", govde)
-		assert.Equal(t, urunBasligi, veri.Products.Items[0].Title,
-			"dönen ürün yönetim ucundan açılan ürün olmalı; gövde: %s", govde)
+		require.Equal(t, 1, data.Products.Count,
+			"only the product attached to the channel has to be counted; body: %s", body)
+		require.Len(t, data.Products.Items, 1, "the page has to carry a single product; body: %s", body)
+		assert.Equal(t, productTitle, data.Products.Items[0].Title,
+			"the returned product has to be the one opened through the admin endpoint; body: %s", body)
 	})
 
-	// Aşağıdaki alt testlerin her biri YALNIZCA sınadığı kapıya çarpan bir
-	// belge gönderir. Kapıların DAVRANIŞI graph paketinin birim testlerinde çok
-	// daha ucuza sınanmıştır ve burada tekrarlanmaz; burada sınanan tek şey
-	// BAĞDIR — ortam değişkeni → config alanı → cmd/server → graph.Options.
-	t.Run("GRAPHQL_MAX_SELECTIONS süreçte bağlı", func(t *testing.T) {
-		// On seçim; bütçe sekiz. Kapı hepsinden ÖNCE koştuğu için belgenin
-		// başka bir sınıra çarpması mümkün değildir.
-		kod, govde := s.grafikIste(vitrinAnahtari,
+	// Each of the subtests below sends a document that hits ONLY the gate it tests.
+	// The BEHAVIOR of the gates is tested far more cheaply in the unit tests of the
+	// graph package and is not repeated here; the only thing tested here is the
+	// WIRING — environment variable → config field → cmd/server → graph.Options.
+	t.Run("GRAPHQL_MAX_SELECTIONS is wired in the process", func(t *testing.T) {
+		// Ten selections; the budget is eight. Because the gate runs BEFORE all the
+		// others, the document cannot possibly hit another limit.
+		status, body := s.graphRequest(storefrontKey,
 			"{ products { count offset limit items { id handle title createdAt updatedAt } } }")
 
-		mesaj, hataKodu := grafikHatasi(t, kod, govde)
-		assert.Equal(t, "SELECTION_BUDGET_EXCEEDED", hataKodu,
-			"seçim bütçesi ortam değişkeninden bağlanmalı; gövde: %s", govde)
-		assert.Contains(t, mesaj, strconv.Itoa(grafikSecimSiniri),
-			"mesaj UYGULANAN sınırı söylemeli; varsayılan (10000) görünürse ortam "+
-				"değişkeni graph.Options'a hiç ulaşmamış demektir; gövde: %s", govde)
+		message, errorCode := graphError(t, status, body)
+		assert.Equal(t, "SELECTION_BUDGET_EXCEEDED", errorCode,
+			"the selection budget has to be wired from the env variable; body: %s", body)
+		assert.Contains(t, message, strconv.Itoa(graphSelectionLimit),
+			"the message has to state the ENFORCED limit; if the default (10000) shows up, the "+
+				"env variable never reached graph.Options at all; body: %s", body)
 	})
 
-	t.Run("GRAPHQL_MAX_FIELD_REPETITION süreçte bağlı", func(t *testing.T) {
-		// Dört seçim (bütçenin altında), aynı nesne altında üç kez "count";
-		// tavan iki. Takma adlar sayımda yok sayılır, yani üçü de aynı çifttir.
-		kod, govde := s.grafikIste(vitrinAnahtari,
+	t.Run("GRAPHQL_MAX_FIELD_REPETITION is wired in the process", func(t *testing.T) {
+		// Four selections (under the budget), "count" three times under the same
+		// object; the ceiling is two. Aliases are ignored in the count, so all three
+		// are the same pair.
+		status, body := s.graphRequest(storefrontKey,
 			"{ products(limit: 1) { count a: count b: count } }")
 
-		mesaj, hataKodu := grafikHatasi(t, kod, govde)
-		assert.Equal(t, "FIELD_REPETITION_LIMIT_EXCEEDED", hataKodu,
-			"alan tekrarı sınırı ortam değişkeninden bağlanmalı; gövde: %s", govde)
-		assert.Contains(t, mesaj, strconv.Itoa(grafikAlanTekrariSiniri),
-			"mesaj UYGULANAN sınırı söylemeli; varsayılan (20) görünürse ortam "+
-				"değişkeni graph.Options'a hiç ulaşmamış demektir; gövde: %s", govde)
+		message, errorCode := graphError(t, status, body)
+		assert.Equal(t, "FIELD_REPETITION_LIMIT_EXCEEDED", errorCode,
+			"the field repetition limit has to be wired from the env variable; body: %s", body)
+		assert.Contains(t, message, strconv.Itoa(graphFieldRepetitionLimit),
+			"the message has to state the ENFORCED limit; if the default (20) shows up, the "+
+				"env variable never reached graph.Options at all; body: %s", body)
 	})
 
-	t.Run("GRAPHQL_MAX_INTROSPECTION_DEPTH süreçte bağlı", func(t *testing.T) {
-		// Dört seviye derin TEK bir iç gözlem kökü: kök sayısı sınırın (1)
-		// altındadır, yani belgeyi reddeden şey yalnızca DERİNLİK olabilir. İki
-		// kapı aynı hata kodunu paylaştığı için ayrımı mesaj yapar.
-		kod, govde := s.grafikIste(vitrinAnahtari, "{ __schema { queryType { fields { name } } } }")
+	t.Run("GRAPHQL_MAX_INTROSPECTION_DEPTH is wired in the process", func(t *testing.T) {
+		// A SINGLE introspection root four levels deep: the root count stays under the
+		// limit (1), so the only thing that can reject the document is the DEPTH. Since
+		// the two gates share the same error code, the message is what tells them apart.
+		status, body := s.graphRequest(storefrontKey, "{ __schema { queryType { fields { name } } } }")
 
-		mesaj, hataKodu := grafikHatasi(t, kod, govde)
-		assert.Equal(t, "INTROSPECTION_LIMIT_EXCEEDED", hataKodu,
-			"iç gözlem derinliği ortam değişkeninden bağlanmalı; gövde: %s", govde)
-		assert.Contains(t, mesaj, "depth",
-			"reddin sebebi DERİNLİK olmalı; kök sayısı mesajı görünürse belge "+
-				"sınanmak istenen kapıya hiç çarpmamış demektir; gövde: %s", govde)
-		assert.Contains(t, mesaj, strconv.Itoa(grafikIcGozlemDerinlikSiniri),
-			"mesaj UYGULANAN sınırı söylemeli; varsayılan (15) görünürse ortam "+
-				"değişkeni graph.Options'a hiç ulaşmamış demektir; gövde: %s", govde)
+		message, errorCode := graphError(t, status, body)
+		assert.Equal(t, "INTROSPECTION_LIMIT_EXCEEDED", errorCode,
+			"the introspection depth has to be wired from the env variable; body: %s", body)
+		assert.Contains(t, message, "depth",
+			"the reason for the rejection has to be the DEPTH; if the root count message shows "+
+				"up, the document never hit the gate that was meant to be tested; body: %s", body)
+		assert.Contains(t, message, strconv.Itoa(graphIntrospectionDepthLimit),
+			"the message has to state the ENFORCED limit; if the default (15) shows up, the "+
+				"env variable never reached graph.Options at all; body: %s", body)
 	})
 
-	t.Run("GRAPHQL_MAX_INTROSPECTION_ROOTS süreçte bağlı", func(t *testing.T) {
-		// İki kök, ikisi de derinlik tavanının altında: reddin sebebi yalnızca
-		// KÖK SAYISI olabilir.
-		kod, govde := s.grafikIste(vitrinAnahtari,
+	t.Run("GRAPHQL_MAX_INTROSPECTION_ROOTS is wired in the process", func(t *testing.T) {
+		// Two roots, both of them under the depth ceiling: the only possible reason for
+		// the rejection is the ROOT COUNT.
+		status, body := s.graphRequest(storefrontKey,
 			`{ __schema { queryType { name } } t: __type(name: "Product") { name } }`)
 
-		mesaj, hataKodu := grafikHatasi(t, kod, govde)
-		assert.Equal(t, "INTROSPECTION_LIMIT_EXCEEDED", hataKodu,
-			"iç gözlem kökü sınırı ortam değişkeninden bağlanmalı; gövde: %s", govde)
-		assert.Contains(t, mesaj, "introspection roots",
-			"reddin sebebi KÖK SAYISI olmalı; derinlik mesajı görünürse belge "+
-				"sınanmak istenen kapıya hiç çarpmamış demektir; gövde: %s", govde)
-		assert.Contains(t, mesaj, strconv.Itoa(grafikIcGozlemKokSiniri),
-			"mesaj UYGULANAN sınırı söylemeli; varsayılan (2) görünürse ortam "+
-				"değişkeni graph.Options'a hiç ulaşmamış demektir; gövde: %s", govde)
+		message, errorCode := graphError(t, status, body)
+		assert.Equal(t, "INTROSPECTION_LIMIT_EXCEEDED", errorCode,
+			"the introspection root limit has to be wired from the env variable; body: %s", body)
+		assert.Contains(t, message, "introspection roots",
+			"the reason for the rejection has to be the ROOT COUNT; if the depth message shows "+
+				"up, the document never hit the gate that was meant to be tested; body: %s", body)
+		assert.Contains(t, message, strconv.Itoa(graphIntrospectionRootLimit),
+			"the message has to state the ENFORCED limit; if the default (2) shows up, the "+
+				"env variable never reached graph.Options at all; body: %s", body)
 	})
 
-	t.Run("GRAPHQL_MAX_RESPONSE_BYTES süreçte bağlı", func(t *testing.T) {
-		// Belge tüm ÖN kapılardan geçer (4 seçim, 3 derinlik, 1 kök, tekrarsız)
-		// ve ÇALIŞIR; onu kesen tek şey gerçekleşen bayttır. Şemanın tip
-		// açıklamaları tek başına 2 KiB'ın kat kat üstündedir.
-		kod, govde := s.grafikIste(vitrinAnahtari, "{ __schema { types { name description } } }")
+	t.Run("GRAPHQL_MAX_RESPONSE_BYTES is wired in the process", func(t *testing.T) {
+		// The document passes all the EARLIER gates (4 selections, 3 depth, 1 root, no
+		// repetition) and it EXECUTES; the only thing that cuts it is the byte count it
+		// actually produces. The type descriptions of the schema alone are many times
+		// over 2 KiB.
+		status, body := s.graphRequest(storefrontKey, "{ __schema { types { name description } } }")
 
-		mesaj, hataKodu := grafikHatasi(t, kod, govde)
-		assert.Equal(t, "RESPONSE_LIMIT_EXCEEDED", hataKodu,
-			"yanıt bayt sınırı ortam değişkeninden bağlanmalı; gövde: %s", govde)
-		assert.Contains(t, mesaj, strconv.Itoa(grafikYanitBaytSiniri),
-			"mesaj UYGULANAN sınırı söylemeli; varsayılan (4194304) görünürse ortam "+
-				"değişkeni graph.Options'a hiç ulaşmamış demektir; gövde: %s", govde)
+		message, errorCode := graphError(t, status, body)
+		assert.Equal(t, "RESPONSE_LIMIT_EXCEEDED", errorCode,
+			"the response byte limit has to be wired from the env variable; body: %s", body)
+		assert.Contains(t, message, strconv.Itoa(graphResponseByteLimit),
+			"the message has to state the ENFORCED limit; if the default (4194304) shows up, the "+
+				"env variable never reached graph.Options at all; body: %s", body)
 
-		// Yarım JSON GÖNDERİLMEZ: aşan gövde atılır, yerine tam ve geçerli bir
-		// hata zarfı yazılır. grafikHatasi'nın gövdeyi çözebilmiş olması bunun
-		// kanıtıdır; buradaki iddia sürecin de ayakta kaldığını söyler.
-		assert.False(t, s.oldu(), "yanıt sınırı süreci düşürmemeli\n%s", s.gunluk())
+		// Half a JSON document is NEVER SENT: the overflowing body is thrown away and a
+		// complete, valid error envelope is written in its place. That graphError was
+		// able to decode the body is the proof of that; the assertion here says the
+		// process is still standing as well.
+		assert.False(t, s.happened(), "the response limit must not bring the process down\n%s", s.logBuf())
 	})
 }
 
-// TestGraphQLSinirlariSifirVeNegatifDegerdeAcilisiDurdurur sertleştirmenin
-// SESSİZCE kapanamayacağını kanıtlar.
+// TestGraphQLLimitsStopStartupOnZeroAndNegativeValues proves that the hardening
+// cannot be switched off SILENTLY.
 //
-// # Neden ayrı bir iddia
+// # Why a separate assertion
 //
-// "0 = sınırsız" okuması bu ayarların hiçbirinde YOKTUR ve olmaması bilinçli
-// bir karardır (bkz. config.Config.GraphQLMaxDepth): sınır yükseltilebilir,
-// kaldırılamaz. Ama karar bir kod satırıdır ve o satır silinirse hiçbir birim
-// testi düşmez — olan şey, kurulumun korumasız bir uçla açılıp bunu hiç
-// söylememesidir. Senaryo tam olarak o sessizliği kapatır.
+// The "0 = unlimited" reading exists in NONE of these settings, and its absence is
+// a deliberate decision (see config.Config.GraphQLMaxDepth): a limit can be raised,
+// it cannot be removed. But the decision is one line of code, and if that line is
+// deleted no unit test fails — what happens is that the installation comes up with
+// an unprotected endpoint and never says so. The scenario closes exactly that
+// silence.
 //
-// # Neden beş süreç ve neden ucuz
+// # Why five processes and why they are cheap
 //
-// config.Load ilk hatada döner, yani tek bir süreçte tek bir ayar sınanabilir.
-// Bedeli düşüktür: kapı veritabanına HİÇ dokunmadan önce kapanır ve süreç
-// milisaniyeler içinde ölür; beşinin toplamı tek bir normal açılışın çok
-// altındadır.
+// config.Load returns on the first error, so a single setting can be tested in a
+// single process. The cost is low: the gate closes before the database is touched
+// AT ALL and the process dies within milliseconds; the total of the five stays far
+// below a single normal startup.
 //
-// Her alt test yine de KENDİ veritabanını alır. Sebep, kapının bir gün
-// kalkması ihtimalidir: yönetim veritabanı paylaşılsaydı, açılmayı başaran bir
-// süreç oraya migration uygular ve arızayı komşu senaryolara taşırdı.
-func TestGraphQLSinirlariSifirVeNegatifDegerdeAcilisiDurdurur(t *testing.T) {
-	// Sıfır ve negatif değerler değişkenler arasında PAYLAŞTIRILDI: ikisini de
-	// her değişkende sınamak süreç sayısını ikiye katlar ve aynı kod dalını
-	// (deger < 1) onuncu kez ölçerdi.
-	durumlar := map[string]struct {
-		degisken string
-		deger    string
+// Every subtest still gets its OWN database. The reason is the possibility that the
+// gate is lifted one day: if the admin database were shared, a process that managed
+// to come up would apply its migrations there and carry the fault over to the
+// neighboring scenarios.
+func TestGraphQLLimitsStopStartupOnZeroAndNegativeValues(t *testing.T) {
+	// The zero and the negative values were SPREAD ACROSS the variables: testing both
+	// of them on every variable would double the process count and would measure the
+	// same code branch (value < 1) for the tenth time.
+	cases := map[string]struct {
+		variable string
+		value    string
 	}{
-		"seçim bütçesi sıfır":         {"GRAPHQL_MAX_SELECTIONS", "0"},
-		"alan tekrarı negatif":        {"GRAPHQL_MAX_FIELD_REPETITION", "-1"},
-		"iç gözlem kökü sıfır":        {"GRAPHQL_MAX_INTROSPECTION_ROOTS", "0"},
-		"iç gözlem derinliği negatif": {"GRAPHQL_MAX_INTROSPECTION_DEPTH", "-5"},
-		"yanıt baytı sıfır":           {"GRAPHQL_MAX_RESPONSE_BYTES", "0"},
+		"selection budget zero":        {"GRAPHQL_MAX_SELECTIONS", "0"},
+		"field repetition negative":    {"GRAPHQL_MAX_FIELD_REPETITION", "-1"},
+		"introspection root zero":      {"GRAPHQL_MAX_INTROSPECTION_ROOTS", "0"},
+		"introspection depth negative": {"GRAPHQL_MAX_INTROSPECTION_DEPTH", "-5"},
+		"response byte zero":           {"GRAPHQL_MAX_RESPONSE_BYTES", "0"},
 	}
 
-	for ad, durum := range durumlar {
-		t.Run(ad, func(t *testing.T) {
-			ayar := temelAyarlar(senaryoVeritabani(t), bosPort(t))
-			ayar[durum.degisken] = durum.deger
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			cfg := baseSettings(scenarioDatabase(t), freePort(t))
+			cfg[tc.variable] = tc.value
 
-			kod, stderr := acilistaDurmali(t, ayar, acilisSuresi)
+			code, stderr := mustStopAtStartup(t, cfg, startupTimeout)
 
-			assert.NotZero(t, kod,
-				"geçersiz sınır sıfırdan farklı çıkış kodu vermeli; stderr:\n%s", stderr)
-			assert.Contains(t, stderr, durum.degisken,
-				"stderr operatöre HANGİ ayarı düzelteceğini söylemeli; stderr:\n%s", stderr)
+			assert.NotZero(t, code,
+				"an invalid limit has to give a non-zero exit code; stderr:\n%s", stderr)
+			assert.Contains(t, stderr, tc.variable,
+				"stderr has to tell the operator WHICH setting to fix; stderr:\n%s", stderr)
 			assert.Contains(t, stderr, "has to be at least 1",
-				"mesaj sınırın kaldırılamayacağını söylemeli; stderr:\n%s", stderr)
+				"the message has to say that the limit cannot be removed; stderr:\n%s", stderr)
 		})
 	}
 }

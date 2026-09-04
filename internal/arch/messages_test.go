@@ -27,7 +27,7 @@ const smokeDir = "internal/smoke"
 // check below goes silent for it — which [TestSmokeLogAssertionsAreNotBlind]
 // catches by requiring the assertion count to stay positive, and which the
 // helper count pins from the other side.
-var logAssertionHelpers = []string{"gunlukIceriyorMu", "gunlukBekle"}
+var logAssertionHelpers = []string{"logContains", "waitForLog"}
 
 // TestSmokeLogAssertionsMatchProduction proves every log message a smoke test
 // waits for is still WRITTEN somewhere in production.
@@ -99,7 +99,7 @@ func TestSmokeLogAssertionsAreNotBlind(t *testing.T) {
 
 	planted := `package p
 
-func f(s any) { s.(interface{ gunlukIceriyorMu(string) bool }).gunlukIceriyorMu("a planted message") }
+func f(s any) { s.(interface{ logContains(string) bool }).logContains("a planted message") }
 `
 	fset := token.NewFileSet()
 	file, err := parser.ParseFile(fset, "planted.go", planted, parser.SkipObjectResolution)

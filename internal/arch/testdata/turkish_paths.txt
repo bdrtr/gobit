@@ -20,5 +20,3 @@ internal/modules/inventory/api/yetki_test.go
 internal/modules/pricing/api/yetki_test.go
 internal/modules/product/api/describe_yonetim_internal_test.go
 internal/modules/product/api/yetki_test.go
-internal/smoke/istemci_test.go
-internal/smoke/yapilandirma_test.go

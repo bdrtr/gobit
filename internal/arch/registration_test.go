@@ -517,7 +517,7 @@ func TestEveryRegisteredModuleIsSetUpInTheE2EHarness(t *testing.T) {
 // # The missing half: RUNTIME PROOF
 //
 // That question is answered only by a run that REALLY USES the path, and the
-// answer is in internal/smoke: TestVitrinSepettenSipariseGercekSurecte brings up
+// answer is in internal/smoke: TestStorefrontFromCartToOrderInARealProcess brings up
 // the real binary, fills the cart with a line priced from the catalog and turns
 // the cart into an order. A flag, a condition or a variable — EVERY mutation
 // that closes the path fails there, because that test uses the path.

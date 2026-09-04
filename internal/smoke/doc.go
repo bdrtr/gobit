@@ -1,20 +1,21 @@
-// Package smoke uygulamayı GERÇEK bir süreç olarak açıp davranışını sınar.
+// Package smoke boots the application as a REAL process and exercises its behavior.
 //
-// Paketteki testlerin TAMAMI `//go:build smoke` etiketlidir: ikiliyi derler,
-// testcontainers ile Postgres ve Redis kaldırır ve gerçek süreçler başlatır.
-// Çalıştırmak için: make smoke
+// EVERY test in the package is tagged `//go:build smoke`: it compiles the binary,
+// brings up Postgres and Redis with testcontainers and starts real processes.
+// To run them: make smoke
 //
-// Bu dosya bilinçli olarak ETİKETSİZDİR ve üretim kodu içermez. Sebebi
-// tekniktir: paketteki her dosya etiketli olsaydı, etiket verilmeden
-// derlenebilir tek bir dosya kalmaz ve `go vet ./...`, `go test ./...`,
-// `golangci-lint run ./...` gibi depo geneli komutlar bu paket için
-// "build constraints exclude all Go files" hatası verirdi. Aynı çözüm
-// internal/e2e/doc.go dosyasındadır.
+// This file is deliberately UNTAGGED and holds no production code. The reason is
+// technical: if every file in the package were tagged, not a single file would be
+// left that compiles without the tag, and repository-wide commands such as
+// `go vet ./...`, `go test ./...` and `golangci-lint run ./...` would fail for this
+// package with "build constraints exclude all Go files". The same remedy lives in
+// internal/e2e/doc.go.
 //
-// # Neden entegrasyon etiketine karıştırılmadı
+// # Why it was not folded into the integration tag
 //
-// Buradaki her senaryo `go build` ile derlenmiş bir ikiliyi çalıştırır ve
-// açılışın tamamını (migration'lar dahil) bekler. Entegrasyon etiketine
-// eklemek, süreç başlatmayan yüzlerce testin de bu maliyeti her koşumda
-// ödemesi demekti; ayrı etiket, ayrı Makefile hedefi ve ayrı CI işi bu yüzden.
+// Every scenario here runs a binary compiled with `go build` and waits for the
+// whole startup (migrations included). Folding it into the integration tag would
+// have meant that the hundreds of tests which never start a process pay that cost
+// on every run as well; hence the separate tag, the separate Makefile target and
+// the separate CI job.
 package smoke
