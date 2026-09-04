@@ -12,6 +12,47 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Eklendi
 
+- **Bildirimler artık GERÇEKTEN gidiyor** (`notification-smtp` eklentisi).
+  Kutudan çıkan tek bildirim sağlayıcısı `logonly`'ydi ve adı ne yaptığını
+  dürüstçe söylüyordu: bir log satırı yazar, hiçbir yere göndermez. Yani
+  bildirim yuvası bugüne dek çerçevenin tutmadığı bir sözdü — sağlayıcı
+  soyutlaması vardı, çalışan uygulaması yoktu.
+
+  **Yeni bağımlılık YOK.** `net/smtp`, `crypto/tls`, `mime` ve `text/template`
+  standart kütüphanededir; bu, ADR 0014'te OTLP gövdesi ve Sentry zarfı için
+  verilen kararın aynısıdır.
+
+  **E-posta METNİ çerçeveden gelmiyor.** Şablonlar kurulumun sahip olduğu bir
+  dizinden (`SMTP_TEMPLATE_DIR`) okunur ve dizin verilmezse eklenti AÇILMAZ.
+  Hazır İngilizce metin gömmek reddedildi: müşterisine yanlış dilde yazan bir
+  mağaza üretirdi ve fark edildiği gün müşterinin şikâyet ettiği gün olurdu.
+  Şablonlar AÇILIŞTA ayrıştırılır — bozuk bir şablon açılışı durdurur, gece
+  yarısı bir olay tüketicisinin içinde sessizce gitmemiş bir bildirime dönüşmez.
+
+  **En önemli iş başlık enjeksiyonunda.** Konu satırı ŞABLON VERİSİNDEN
+  üretiliyor, o veri de olay yükünden geliyor — müşteri adı, ürün başlığı;
+  bu sürecin yazmadığı dizeler. İçlerindeki bir `\r\n`, Subject başlığını
+  bitirip ardındakini yeni bir başlık olarak okutur: mesajı başka yere
+  kopyalayan bir `Bcc`, göndereni taklit eden ikinci bir `From`. Kontrol bu
+  yüzden RENDER'DAN SONRA yapılıyor ve değer TEMİZLENMİYOR, REDDEDİLİYOR —
+  temizlemek, çağıranın yazmadığı bir mesajı sessizce göndermek olurdu.
+
+  Mutasyonla kanıtlandı: kontrol kaldırıldığında
+  `TestSendRefusesASubjectRenderedWithALineBreak` `smtp_header_injection`
+  yerine `smtp_send_failed` görüyor — yani enjekte edilmiş mesaj sunucuya
+  kadar gidiyor.
+
+  Diğer üç ret de sessiz bir arızanın yerini alıyor: hizmet etmediği kanal,
+  bilinmeyen şablon (jenerik bir gövdeye düşmek, hiçbir şey söylemeyen bir
+  e-posta ve teslim günlüğünde bir BAŞARI kaydı üretirdi) ve — kurulum açıkça
+  vazgeçmedikçe — şifresiz bağlantı. Sonuncusu `net/smtp`'nin parolayı
+  şifresiz göndermeyi zaten reddetmesine RAĞMEN var: kimlik doğrulaması
+  istemeyen bir aktarıcıda her sipariş onayı açık metin olarak ağdan geçerdi.
+
+  Konu RFC 2047 ile kodlanıyor, gövde base64: ikisi de aynı olgudan çıkıyor —
+  bu deponun dili ASCII değil. Base64 tercihi estetik değil; RFC 5321 satırı
+  1000 sekizliyle sınırlıyor ve uzun bir URL üreten şablon bunu aşıyor.
+
 - **İKİNCİ bir hata raporlayıcı yazıldı ve ADR 0014'ün sınavı böylece koşuldu**
   (`error-otlp`). ADR "sözleşmenin doğru ŞEKİLDE mi olduğunu yoksa yalnızca
   Sentry'nin istediği şekil mi olduğunu ancak ikinci bir uygulama gösterir"
