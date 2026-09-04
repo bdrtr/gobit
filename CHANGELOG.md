@@ -12,6 +12,51 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Eklendi
 
+- **Yüklemeler artık nesne deposuna gidebiliyor** (`file-s3` eklentisi).
+  Kutudan çıkan `local` sağlayıcısı TEK süreç için doğrudur ve İKİ süreç için
+  yanlıştır: dosya, yüklemeyi karşılayan örneğin diskine düşer ve başka örneğe
+  yönlenen her istek 404 alır — hiçbir hata görünmeden, çünkü o örnek
+  açısından anahtar gerçekten yoktur. AWS S3, MinIO ve R2 ile çalışır.
+
+  **AWS SDK KULLANILMADI.** SigV4 elle yazıldı; ADR 0014'ün eklenti bağımlılığı
+  kararının aynısı. Sağlayıcı yalnızca iki çağrı yapıyor (PUT, DELETE) ve
+  onların istediği imzalama sabit bir tarif.
+
+  **Gövde neden tamponlanıyor, ve neden DİSKE.** Sözleşme akış istiyor ve
+  gerekçesi bellek: 50 MB'lık bir yükleme `[]byte` olarak 50 MB süreç
+  belleğidir. Bu gerekçeye uyuldu — tampon geçici bir DOSYA, dilim değil.
+  Tamponlamanın kendisi HTTP ve SigV4 tarafından zorunlu kılınıyor: PUT ya
+  Content-Length ya chunked ister, S3 chunked'ı kendi akış imzası olmadan kabul
+  etmez, `io.Reader` ise ne uzunluğunu ne özetini bilir.
+
+  Bunun beklenmedik bir kazancı var: sözleşmenin "yarıda kesilen okuma yarım
+  nesne bırakmamalı" şartı **gereksiz** hâle geliyor, karşılanmış olmuyor.
+  Okuma isteğin kurulmasından ÖNCE düşüyor, yani hiç nesne yaratılmıyor —
+  temizlenecek bir şey de, kendisi arızalanabilecek bir temizlik yolu da yok.
+
+  **Adres İMZASIZ ve kalıcı.** `File.URL` ürün görseli kaydına yazılıp orada
+  kalıyor; imzalı bir adres süresi dolduğunda sessizce çürürdü. Bu yüzden CDN
+  önekini türetilen değer yanlış olduğunda `S3_PUBLIC_BASE_URL` veriyor ve
+  türetilen değer AÇILIŞTA loglanıyor — ilk log satırında görülebilsin diye.
+
+  **İmzanın DOĞRULUĞU gerçek bir S3'e karşı kanıtlandı.** Birim testleri
+  imzanın şeklini ve DUYARLILIĞINI kanıtlıyor (kapsanması gereken her girdi
+  çıktıyı değiştiriyor mu), ama doğruluğunu kanıtlayamaz: elde edebilecekleri
+  tek beklenen değer, aynı kodu okuyarak üretilmiş olurdu. Bu yüzden
+  `s3_integration_test.go` testcontainers ile gerçek bir MinIO kaldırıyor.
+  Kanonik biçim tek bir satırsonu kadar yanlış olsa, S3'ün yol kodlama istisnası
+  atlansa ya da imzalanan bir başlık bildirilmese, her test 403
+  SignatureDoesNotMatch ile düşer.
+
+  Testlerden biri kasten kötü bir sırla imzalıyor: sunucunun gerçekten
+  doğruladığını kanıtlamasaydı, diğer testlerin hepsi değersiz olurdu.
+
+  Ölçülen bir ayrıntı yazıldı: MinIO'nun `/health/live` ucu süreç ayakta demek,
+  S3 API'si hazır demek değil — arada 503 `XMinioServerNotInitialized` penceresi
+  var. Yoklama `/health/cluster`'a alındı ve yalnızca 503 için sınırlı bir
+  tekrar kondu; 403 anında dönüyor, çünkü bir imza arızası tekrar döngüsünün
+  arkasında saklanıp sonunda zaman aşımı olarak raporlanmamalı.
+
 - **Bildirimler artık GERÇEKTEN gidiyor** (`notification-smtp` eklentisi).
   Kutudan çıkan tek bildirim sağlayıcısı `logonly`'ydi ve adı ne yaptığını
   dürüstçe söylüyordu: bir log satırı yazar, hiçbir yere göndermez. Yani

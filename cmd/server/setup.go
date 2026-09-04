@@ -45,6 +45,7 @@ import (
 	checkoutwf "github.com/bdrtr/gobit/internal/workflows/checkout"
 	"github.com/bdrtr/gobit/plugins/errorotlp"
 	"github.com/bdrtr/gobit/plugins/errorsentry"
+	"github.com/bdrtr/gobit/plugins/files3"
 	"github.com/bdrtr/gobit/plugins/notificationsmtp"
 	"github.com/bdrtr/gobit/plugins/paymentstripe"
 	"github.com/bdrtr/gobit/plugins/searchpg"
@@ -98,9 +99,9 @@ const temporarySecretBytes = 32
 // 9 DoD). Which ones are installed is chosen by the PLUGINS environment
 // variable.
 //
-// The catalog shows three different ways of extending. paymentstripe and
-// notificationsmtp register a PROVIDER into a module's registry (the payment
-// and notification modules' extension points); searchpg brings ITS OWN MODULE —
+// The catalog shows three different ways of extending. paymentstripe,
+// notificationsmtp and files3 register a PROVIDER into a module's registry (the
+// payment, notification and file modules' extension points); searchpg brings ITS OWN MODULE —
 // with its own table, its own migration and its own routes — and opens a new
 // endpoint (GET /store/v1/search) without being named anywhere except the line
 // below; errorsentry and errorotlp fill a slot the CORE owns, so they need no
@@ -120,6 +121,7 @@ const temporarySecretBytes = 32
 var pluginCatalog = map[string]func() coreplugin.Plugin{
 	errorotlp.Name:        func() coreplugin.Plugin { return errorotlp.New() },
 	errorsentry.Name:      func() coreplugin.Plugin { return errorsentry.New() },
+	files3.Name:           func() coreplugin.Plugin { return files3.New() },
 	notificationsmtp.Name: func() coreplugin.Plugin { return notificationsmtp.New() },
 	paymentstripe.Name:    func() coreplugin.Plugin { return paymentstripe.New() },
 	searchpg.Name:         func() coreplugin.Plugin { return searchpg.New() },
