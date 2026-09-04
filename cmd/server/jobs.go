@@ -14,12 +14,28 @@ import (
 	"github.com/bdrtr/gobit/internal/core/config"
 	"github.com/bdrtr/gobit/internal/core/container"
 	"github.com/bdrtr/gobit/internal/core/db"
+	"github.com/bdrtr/gobit/internal/core/errorreport"
 	coreerrors "github.com/bdrtr/gobit/internal/core/errors"
 	"github.com/bdrtr/gobit/internal/core/job"
 	"github.com/bdrtr/gobit/internal/core/job/jobpg"
 	"github.com/bdrtr/gobit/internal/core/workflow/pgstore"
+	"github.com/bdrtr/gobit/internal/jobs/paymentrecon"
 	"github.com/bdrtr/gobit/internal/jobs/sagawatch"
+	"github.com/bdrtr/gobit/internal/modules/payment"
+	paymentsvc "github.com/bdrtr/gobit/internal/modules/payment/service"
 )
+
+// paymentReconciler is the payment service as the reconciliation job needs it.
+//
+// The service is taken through a NARROW interface rather than by its concrete
+// type, the same way seedAdmin takes the auth service: the composition root
+// states what a dependency is FOR, and a root that resolved whole services
+// would make every job look like it could do anything the module can.
+type paymentReconciler interface {
+	Reconcile(
+		ctx context.Context, unchangedFor time.Duration, limit int,
+	) (paymentsvc.ReconciliationReport, error)
+}
 
 // jobsCommand is the subcommand that prints the job listing.
 const jobsCommand = "jobs"
@@ -31,10 +47,16 @@ const jobsCommand = "jobs"
 // with nothing to extend it is the error class ADR 0009 names, and it can be
 // added on the day a plugin actually brings a job.
 //
-// There is exactly ONE job, and it was pre-authorized rather than invented:
-// ADR 0016 built the operator's read surface for half-finished sagas and left
-// the alerting half explicitly unclaimed ("It is a snapshot, not an alert.
-// Nobody is told a cart is stuck"). See internal/jobs/sagawatch.
+// Both jobs were pre-authorized rather than invented. ADR 0016 built the
+// operator's read surface for half-finished sagas and left the alerting half
+// explicitly unclaimed ("It is a snapshot, not an alert. Nobody is told a cart
+// is stuck") — that gap is internal/jobs/sagawatch. ADR 0019 recorded payment
+// reconciliation as the repository's one unkept periodic promise, named by
+// internal/workflows/checkout/doc.go as the only correct way to close a known
+// hole — that is internal/jobs/paymentrecon.
+//
+// Neither job writes anything. That is not a coincidence about these two; it
+// is ADR 0017's line, which the scheduler does not get to cross.
 func registerJobs(c *container.Container, log *slog.Logger) (*job.Registry, error) {
 	registry := job.NewRegistry()
 
@@ -45,6 +67,21 @@ func registerJobs(c *container.Container, log *slog.Logger) (*job.Registry, erro
 	}
 
 	if err := registry.Add(sagawatch.Definition(pgstore.NewReader(pool), log)); err != nil {
+		return nil, err
+	}
+
+	// The payment service is resolved from the container, so this fails loudly
+	// if the module is not registered. A job silently left out of the registry
+	// would be worse than a boot failure: `gobit jobs` would show a listing
+	// with nothing missing from it, and an operator would read "no
+	// reconciliation has run" as "there was nothing to reconcile".
+	recon, err := container.Resolve[paymentReconciler](c, payment.ServiceName)
+	if err != nil {
+		return nil, coreerrors.Wrap(err, coreerrors.KindOf(err), job.CodeInvalidDefinition,
+			"the job runner could not resolve the payment service (%q)", payment.ServiceName)
+	}
+
+	if err := registry.Add(paymentrecon.Definition(recon, log)); err != nil {
 		return nil, err
 	}
 
@@ -131,18 +168,27 @@ func runJobs(args []string, out io.Writer) error {
 	// grep. This is the same split runStuck makes, for the same reason.
 	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
 
-	pool, err := db.New(ctx, dbConfig(cfg), log)
+	// The WHOLE application is opened, not just a pool, and the reason is that
+	// [registerJobs] is the same function the runner calls. A job whose
+	// dependency is a module can only be built from a container that has the
+	// modules in it, and a listing built from a thinner container than the
+	// runner's would quietly describe a different set of jobs than the one that
+	// actually runs — which is the one thing this command exists not to do.
+	//
+	// Nothing is started here: opening builds and bootstraps, and the runner
+	// lives in serve (see [startJobs]).
+	app, closeApp, err := openApplication(ctx, cfg, log, errorreport.NewSink())
 	if err != nil {
 		return err
 	}
-	defer pool.Close()
+	defer closeApp()
 
-	c := container.New(log)
-	if err := c.Provide(svcDB, pool); err != nil {
+	registry, err := registerJobs(app.container, log)
+	if err != nil {
 		return err
 	}
 
-	registry, err := registerJobs(c, log)
+	pool, err := container.Resolve[*db.Pool](app.container, svcDB)
 	if err != nil {
 		return err
 	}

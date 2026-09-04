@@ -311,6 +311,42 @@ func (f *fakeStore) ListPaymentSessionsByCollection(
 	return out, nil
 }
 
+// ListSessionsForReconciliation mutabakat için şüpheli kümeyi döner.
+//
+// Gerçek sorgunun ÜÇ koşulunu da uygular — yetkilendirilmiş, verilen andan
+// önce güncellenmiş, silinmemiş — ve sonucu updated_at'e göre sıralar. Sahte
+// depo bunları taklit etmeseydi, servisin kümeyi daraltma iddiası hiçbir
+// testte yanlışlanamazdı.
+func (f *fakeStore) ListSessionsForReconciliation(
+	_ context.Context,
+	unchangedSince time.Time,
+	limit int32,
+) ([]models.PaymentSession, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	out := []models.PaymentSession{}
+	for _, id := range slices.Sorted(maps.Keys(f.sessions)) {
+		ses := f.sessions[id]
+		if ses.Status != models.SessionAuthorized || ses.DeletedAt != nil {
+			continue
+		}
+		if !ses.UpdatedAt.Before(unchangedSince) {
+			continue
+		}
+		out = append(out, ses)
+	}
+
+	slices.SortStableFunc(out, func(a, b models.PaymentSession) int {
+		return a.UpdatedAt.Compare(b.UpdatedAt)
+	})
+
+	if int32(len(out)) > limit {
+		out = out[:limit]
+	}
+	return out, nil
+}
+
 // SessionCounts koleksiyonun oturumlarını duruma göre sayar.
 func (f *fakeStore) SessionCounts(_ context.Context, collectionID string) (models.SessionCounts, error) {
 	f.mu.Lock()

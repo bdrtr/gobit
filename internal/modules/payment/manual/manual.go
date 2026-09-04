@@ -166,6 +166,14 @@ func New(store Store, log *slog.Logger) *Provider {
 	return &Provider{store: store, log: log}
 }
 
+// Sağlayıcının, çekirdeğin İSTEĞE BAĞLI mutabakat yeteneğini de karşıladığı
+// derleme zamanında sabitlenir.
+//
+// [coreprovider.SessionInspector] bir tip iddiasıyla aranır: imza kaysaydı
+// hiçbir şey kırılmaz, mutabakat işi yalnızca "bu sağlayıcı sorulamıyor" der
+// ve para farkı görünmez kalırdı. Bu satır o sessizliği kapatır.
+var _ coreprovider.SessionInspector = (*Provider)(nil)
+
 // ID sağlayıcının kimliğini döner.
 func (p *Provider) ID() string { return ID }
 
@@ -549,4 +557,33 @@ func toProviderSession(ses models.ManualSession) coreprovider.Session {
 		CurrencyCode: ses.CurrencyCode,
 		Data:         ses.Data,
 	}
+}
+
+// InspectSession sağlayıcının kendi defterindeki oturumu ÇEKİRDEĞİN nötr
+// biçiminde döner.
+//
+// [GetSession]'dan farkı tipi: o, modülün kendi ManualSession'ını verir ve
+// yalnızca bu modülün testlerine yarar; bu ise
+// [coreprovider.SessionInspector]'ı karşılar, yani mutabakat işi sağlayıcının
+// hangisi olduğunu bilmeden sorabilir.
+//
+// Manuel sağlayıcının defteri AYRI bir tablodur ve payment servisinin [Store]
+// arayüzünde o tabloya erişecek metot yoktur — yani modül, sağlayıcının
+// defterini tip düzeyinde göremez. Mutabakatın karşılaştırdığı iki defterin
+// gerçekten ayrı olmasının sebebi budur; aynı satırı iki kez okusaydı hiçbir
+// ayrışma göremezdi.
+func (p *Provider) InspectSession(
+	ctx context.Context, sessionID string,
+) (coreprovider.SessionInspection, error) {
+	ses, err := p.GetSession(ctx, sessionID)
+	if err != nil {
+		return coreprovider.SessionInspection{}, err
+	}
+
+	return coreprovider.SessionInspection{
+		Status:           coreprovider.SessionStatus(ses.Status),
+		AuthorizedAmount: ses.AuthorizedAmount,
+		CapturedAmount:   ses.CapturedAmount,
+		RefundedAmount:   ses.RefundedAmount,
+	}, nil
 }

@@ -213,10 +213,16 @@
 // record.
 //
 // The only correct way to close (2) is to ASK the provider — that is,
-// reconciliation: a periodic comparison against the provider's own ledger. The
-// plan does not put that in this phase; it is Phase 7+ work. Until it arrives,
-// this class of failure has to be caught operationally (from the provider's
-// dashboard).
+// reconciliation: a periodic comparison against the provider's own ledger.
+//
+// THAT IS NOW BUILT: internal/jobs/paymentrecon runs hourly, lists the sessions
+// this installation still holds as authorized, asks each provider what it did
+// with them, and reports every disagreement with both sides and the external
+// id (ADR 0020). It does NOT close the hole — the money is still gone and the
+// saga has still rolled the order back — it makes the hole VISIBLE within the
+// hour instead of at the next audit. And it closes only this half: a session
+// whose row was never committed at all leaves nothing to list, so it is still
+// caught operationally, from the provider's dashboard.
 //
 // A secondary improvement is to move the provider call OUTSIDE the module's
 // transaction and to write it in two phases with a "capturing" intermediate
@@ -235,8 +241,9 @@
 //     capture as successful and closing the cart) looks tempting, but we do not
 //     have a capture id: saying "successful" without a trace to write to the
 //     order and to accounting would mean presenting an unverifiable payment as
-//     verified. Reconciling a lost response is a separate workflow (plan
-//     Phase 7+).
+//     verified. Reconciling a lost response is separate work, and it landed as
+//     a REPORT rather than a workflow: see internal/jobs/paymentrecon and ADR
+//     0020 for why nothing about it writes.
 //
 // The decision is asymmetric because the costs are asymmetric: the cost of
 // rolling back by mistake is a refund, accounting work and customer contact;

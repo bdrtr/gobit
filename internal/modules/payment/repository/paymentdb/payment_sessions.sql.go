@@ -7,6 +7,8 @@ package paymentdb
 
 import (
 	"context"
+
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const countPaymentSessionStates = `-- name: CountPaymentSessionStates :one
@@ -173,6 +175,74 @@ ORDER BY created_at DESC, id DESC
 
 func (q *Queries) ListPaymentSessionsByCollection(ctx context.Context, paymentCollectionID string) ([]PaymentSession, error) {
 	rows, err := q.db.Query(ctx, listPaymentSessionsByCollection, paymentCollectionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []PaymentSession{}
+	for rows.Next() {
+		var i PaymentSession
+		if err := rows.Scan(
+			&i.ID,
+			&i.PaymentCollectionID,
+			&i.ProviderID,
+			&i.ExternalID,
+			&i.Status,
+			&i.Amount,
+			&i.AuthorizedAmount,
+			&i.CurrencyCode,
+			&i.Data,
+			&i.IdempotencyKey,
+			&i.DeclineReason,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.DeletedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listSessionsForReconciliation = `-- name: ListSessionsForReconciliation :many
+SELECT id, payment_collection_id, provider_id, external_id, status, amount, authorized_amount, currency_code, data, idempotency_key, decline_reason, created_at, updated_at, deleted_at FROM payment_sessions
+WHERE status = 'authorized'
+  AND updated_at < $1
+  AND deleted_at IS NULL
+ORDER BY updated_at
+LIMIT $2
+`
+
+type ListSessionsForReconciliationParams struct {
+	UpdatedAt pgtype.Timestamptz
+	Limit     int32
+}
+
+// ListSessionsForReconciliation, sağlayıcıya SORULMASI gereken oturumları
+// döner: yetkilendirilmiş ama tahsil edilmemiş görünen, ve bir süredir öyle
+// duranlar.
+//
+// # Neden tam olarak bu küme
+//
+// Modül sağlayıcı çağrısını KENDİ işleminin içinde yapar. Para alındıktan sonra
+// işlem geri alınırsa oturum yerelde 'authorized' kalır, sağlayıcıda ise
+// 'captured'tır — ve bu fark başka hiçbir yerden görülemez (bkz.
+// internal/workflows/checkout/doc.go, "kalan risk").
+//
+// 'pending' DIŞARIDA BIRAKILIR ve bu bilinçlidir: bir oturum yetkilendirilmeden
+// önce para hareket etmemiştir, dolayısıyla ayrışacak bir tutar da yoktur.
+// Kapsamı oraya genişletmek, her açılıp terk edilmiş sepeti sağlayıcıya
+// sordurmak olurdu — yani gürültüyü, bakılması gereken satırın önüne koymak.
+//
+// $2 bir BEKLEME SÜRESİDİR, isteğe bağlı bir eşik değil: uçuştaki bir tahsilat
+// saniyeler boyunca tam olarak bu durumda durur ve onu ayrışma saymak, her
+// normal ödemeyi rapora düşürürdü.
+func (q *Queries) ListSessionsForReconciliation(ctx context.Context, arg ListSessionsForReconciliationParams) ([]PaymentSession, error) {
+	rows, err := q.db.Query(ctx, listSessionsForReconciliation, arg.UpdatedAt, arg.Limit)
 	if err != nil {
 		return nil, err
 	}

@@ -114,3 +114,63 @@ type PaymentProvider interface {
 	// IDEMPOTENT.
 	Cancel(ctx context.Context, sessionID string) error
 }
+
+// SessionInspection is what a provider says about a session in ITS OWN ledger.
+//
+// It is deliberately a SNAPSHOT of amounts rather than a history: what
+// reconciliation compares is "how much does each side think was taken", and a
+// history would invite a second, richer definition of the same question living
+// in a background job.
+type SessionInspection struct {
+	// Status is the provider's own view of the session.
+	Status SessionStatus
+	// AuthorizedAmount, CapturedAmount and RefundedAmount are minor-unit
+	// integers as the PROVIDER holds them.
+	AuthorizedAmount int64
+	CapturedAmount   int64
+	RefundedAmount   int64
+}
+
+// SessionInspector is an OPTIONAL capability: a provider that can be asked what
+// its own ledger says about a session.
+//
+// # Why this exists
+//
+// The payment module makes the provider call inside its own database
+// transaction. If that transaction blows up AFTER the provider took the money,
+// the rollback leaves the money gone and NO trace of it locally — the saga then
+// reads the local collection, sees no capture and rolls the order back. The
+// checkout workflow's documentation names this as the one risk it narrows but
+// cannot close, and names the only correct closure: ask the provider.
+//
+// # Why OPTIONAL rather than a method on PaymentProvider
+//
+// Adding a method to [PaymentProvider] would make every provider change in
+// order for one of them to gain a capability, which is the inversion this
+// package's own documentation exists to prevent. It would also force a provider
+// that genuinely CANNOT answer to implement something that lies.
+//
+// A provider that does not implement this is not broken; it is simply
+// unreconcilable, and whatever asks must SAY SO rather than treat silence as
+// agreement. That distinction is the whole value of making it optional: "the
+// two ledgers agree" and "nobody asked" must never look the same.
+//
+// # It is a READ
+//
+// An inspector must not move money, must not change the provider's state and
+// must be safe to call repeatedly. What is done with a divergence it reveals is
+// a decision for a human, not for the caller.
+type SessionInspector interface {
+	PaymentProvider
+
+	// InspectSession returns the provider's own view of a session, addressed by
+	// the identifier the provider gave it ([Session.ID], stored locally as the
+	// session's external id).
+	//
+	// A session the provider has never heard of returns a NotFound error rather
+	// than a zero inspection: "the provider has no such session" and "the
+	// provider says nothing was taken" are different facts, and treating the
+	// first as the second would hide a session opened against the wrong
+	// account.
+	InspectSession(ctx context.Context, sessionID string) (SessionInspection, error)
+}

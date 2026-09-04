@@ -12,6 +12,58 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Eklendi
 
+- **Ödeme mutabakatı** (`internal/jobs/paymentrecon`) — deponun adı konmuş tek
+  tutulmamış periyodik sözü, ve para hakkında.
+
+  Ödeme modülü sağlayıcı çağrısını KENDİ işleminin içinde yapar; bu bilinçli
+  bir takas ve "tek yetkilendirme" garantisini satın alır. Bedeli şu: para
+  alındıktan SONRA commit patlarsa geri alma, paranın tek yerel izini de
+  götürür. Oturum burada `authorized` kalır, sağlayıcıda `captured`'dır — ve
+  **bunu hiçbir yerel sorgu göremez**, çünkü farkı gösterecek her kayıt geri
+  alınmış olan kayıttır. Sonuç soyut değil: saga koleksiyonu okur, tahsilat
+  görmez ve ödenmiş bir siparişi telafi eder.
+
+  `checkout/doc.go` bunu Faz 7'den beri hem sonucuyla hem çaresiyle yazmıştı:
+  *"(2)'yi kapatmanın tek doğru yolu sağlayıcıya SORMAKTIR."* ADR 0019
+  zamanlayıcıyı kurarken bu maddeyi tutulmamış söz olarak kaydetti. Bu, o söz.
+
+  **Sorar, RAPOR eder, hiçbir şey yazmaz.** Bir karşılaştırmadan yola çıkıp
+  tahsilat kaydetmek, modülün tek başına ve izlenmeden "para hareket etti"
+  demesi olurdu; ADR 0017 aynı akıl yürütmeyi telafiler için — yani daha ucuz
+  bir şey için — dört yerde reddediyor. Onarım, iki defter önünde açık bir
+  insanın işi kalır; değişen tek şey insanın bakılacak bir şey olduğunu
+  öğrenmesi.
+
+  **`SessionInspector` İSTEĞE BAĞLI bir arayüzdür ve mesele tam olarak budur.**
+  `PaymentProvider`'a metot eklemek her sağlayıcıyı bir sağlayıcının yeteneği
+  için değiştirirdi — ve daha kötüsü, hepsini bir şey yanıtlamaya zorlardı. En
+  ucuz yanıt sıfırdır, sıfır da "hiçbir şey tahsil edilmedi"den ayırt edilemez.
+  Bu kararın dayandığı tek garanti şudur: *"iki defter uyuşuyor"* ile *"kimseye
+  sorulamadı"* asla aynı görünmez. Sorulamayan sağlayıcı kendi alanında SAYILIR
+  ve her turda yüksek sesle söylenir.
+
+  Sorgu kümesi dar tutuldu — burada yetkilendirilmiş, bir yerleşme penceresini
+  aşmış oturumlar — çünkü uçuştaki bir tahsilat tam olarak o durumda durur ve
+  pencere olmasa her olağan ödeme "ayrışma" diye raporlanırdı. Bulgu üç sınıfa
+  ayrıldı: **ayrışma** (muhasebeye), **ulaşılamayan sağlayıcı** (entegrasyon
+  sahibine), **sağlayıcının tanımadığı oturum** (yanlış hesaba açılmış bir
+  yetkilendirmenin buradan görünüşü). Tek satıra katlamak üçünü de ilk okuyana
+  yollardı.
+
+  **Kısmi indeks ölçüldü, varsayılmadı.** 200.000 oturumluk düzenekte listeleme
+  indeks taramasıyla 0,56 ms / 52 tampon; indeks düşürülünce aynı sorgu paralel
+  sıralı taramayla 12,0 ms / 3.618 tampon — ve o taraf, kurulumun aldığı her
+  ödemeyle büyür. Bir entegrasyon testi PLANI okur, çünkü bu depo daha önce
+  "indeks kullanılır" diyen ama plancının katılmadığı bir godoc yayımladı.
+
+  **`gobit jobs` artık tüm uygulamayı açıyor.** Bağımlılığı bir modül olan iş
+  ancak modülleri olan bir container'dan kurulabilir, ve listeleme koşucunun
+  çağırdığı AYNI `registerJobs`'u çağırır. Daha ince bir container'dan üretilen
+  listeleme, koşandan başka bir iş kümesini anlatırdı — o komutun var olma
+  sebebi tam olarak bunu yapmamak.
+
+  ADR 0020, `docs/adr/0020-reconciliation-asks-the-provider-and-reports.md`.
+
 - **Zamanlanmış iş geldi** (`internal/core/job`) — ama planladığımın onda biri
   kadarıyla, ve asıl değeri kodda değil ÖLÇÜMDE.
 
@@ -68,8 +120,11 @@ Sabitlenme `1.0.0` ile olur.
   ölenden ayıramaz ve bunu SÖYLER ("unfinished (running now, or the process
   died)") — tahmin etmez; ayıran şey kilittir.
 
-  Karar ADR 0019'da, reddedilen altı seçenekle birlikte. `Host.RegisterJob`
-  ertelendi: kaydedilecek eklenti işi sıfırken o da aynı hata sınıfı.
+  Karar ADR 0019'da, reddedilen altı seçenekle birlikte. Eklentiler için bir
+  iş kaydı metodu ertelendi — reddedilmedi: kaydedilecek eklenti işi sıfırken
+  o da aynı hata sınıfı. ADR'nin REDDEDİLENLER bölümünde duruyor, çünkü
+  inşa edilmemiş bir şeyin adını gövdede anmak okuru var olmayan bir üyeyi
+  aramaya yollar.
 
 - **PayTR ile ödeme geldi** (`payment-paytr` eklentisi) — ve web push'la
   **aynı bulguya** çıktı, ters yönden.

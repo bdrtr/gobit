@@ -60,6 +60,7 @@ package service
 import (
 	"context"
 	"log/slog"
+	"time"
 
 	"github.com/bdrtr/gobit/internal/core/errors"
 	"github.com/bdrtr/gobit/internal/modules/payment/models"
@@ -109,6 +110,9 @@ const (
 	// CodeNotReady reports that the service was constructed with a missing
 	// dependency.
 	CodeNotReady = "payment_service_not_ready"
+	// CodeReconcileFailed reports that the comparison against the providers'
+	// own ledgers could not be made.
+	CodeReconcileFailed = "payment_reconcile_failed"
 )
 
 // Pagination limits (plan Section 8: limit/offset).
@@ -189,6 +193,13 @@ type Store interface {
 	PaymentSessionByIdempotencyKey(ctx context.Context, providerID, key string) (models.PaymentSession, error)
 	// ListPaymentSessionsByCollection returns the collection's sessions.
 	ListPaymentSessionsByCollection(ctx context.Context, collectionID string) ([]models.PaymentSession, error)
+	// ListSessionsForReconciliation returns the sessions that are authorized
+	// but not captured here and have been in that state since before
+	// unchangedSince — the only set where this module and a provider can
+	// silently disagree about money.
+	ListSessionsForReconciliation(
+		ctx context.Context, unchangedSince time.Time, limit int32,
+	) ([]models.PaymentSession, error)
 	// SessionCounts counts the collection's sessions by status in a SINGLE
 	// query.
 	SessionCounts(ctx context.Context, collectionID string) (models.SessionCounts, error)

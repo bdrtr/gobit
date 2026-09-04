@@ -80,3 +80,30 @@ SET status            = $2,
     updated_at        = now()
 WHERE id = $1 AND deleted_at IS NULL
 RETURNING *;
+
+-- ListSessionsForReconciliation, sağlayıcıya SORULMASI gereken oturumları
+-- döner: yetkilendirilmiş ama tahsil edilmemiş görünen, ve bir süredir öyle
+-- duranlar.
+--
+-- # Neden tam olarak bu küme
+--
+-- Modül sağlayıcı çağrısını KENDİ işleminin içinde yapar. Para alındıktan sonra
+-- işlem geri alınırsa oturum yerelde 'authorized' kalır, sağlayıcıda ise
+-- 'captured'tır — ve bu fark başka hiçbir yerden görülemez (bkz.
+-- internal/workflows/checkout/doc.go, "kalan risk").
+--
+-- 'pending' DIŞARIDA BIRAKILIR ve bu bilinçlidir: bir oturum yetkilendirilmeden
+-- önce para hareket etmemiştir, dolayısıyla ayrışacak bir tutar da yoktur.
+-- Kapsamı oraya genişletmek, her açılıp terk edilmiş sepeti sağlayıcıya
+-- sordurmak olurdu — yani gürültüyü, bakılması gereken satırın önüne koymak.
+--
+-- $2 bir BEKLEME SÜRESİDİR, isteğe bağlı bir eşik değil: uçuştaki bir tahsilat
+-- saniyeler boyunca tam olarak bu durumda durur ve onu ayrışma saymak, her
+-- normal ödemeyi rapora düşürürdü.
+-- name: ListSessionsForReconciliation :many
+SELECT * FROM payment_sessions
+WHERE status = 'authorized'
+  AND updated_at < $1
+  AND deleted_at IS NULL
+ORDER BY updated_at
+LIMIT $2;

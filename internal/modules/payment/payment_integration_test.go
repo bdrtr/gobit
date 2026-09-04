@@ -16,7 +16,10 @@ package payment_test
 import (
 	"context"
 	"fmt"
+	"io/fs"
 	"os"
+	"strconv"
+	"strings"
 	"sync"
 	"testing"
 
@@ -278,7 +281,40 @@ func TestMigrationVeriVarkenGeriAlinabilir(t *testing.T) {
 	version, dirty, err := db.Version(ctx, testDSN, payment.ModuleName)
 	require.NoError(t, err)
 	assert.False(t, dirty, "yarıda kalmış migration olmamalı")
-	assert.Equal(t, uint(1), version)
+	assert.Equal(t, enYuksekSurum(t, src), version,
+		"yeniden uygulama TÜM migration'ları koşturmalı, en son olanı değil")
+}
+
+// enYuksekSurum gömülü migration kümesindeki en büyük sürüm numarasını döner.
+//
+// Sayı SABİT YAZILMAZ: sabit yazıldığında test, modüle her migration
+// eklendiğinde kırılır ve kıran şey bir hata değil, testin kendi eskimiş
+// beklentisidir. Kümeden okununca sınanan şey de doğrusu oluyor — "geri
+// alındıktan sonra HEPSİ yeniden uygulandı" — yalnızca "sayı bir".
+func enYuksekSurum(t *testing.T, src fs.FS) uint {
+	t.Helper()
+
+	entries, err := fs.ReadDir(src, ".")
+	require.NoError(t, err)
+
+	var en uint
+	for _, entry := range entries {
+		name := entry.Name()
+		if !strings.HasSuffix(name, ".up.sql") {
+			continue
+		}
+
+		digits := name[:strings.IndexByte(name, '_')]
+		n, convErr := strconv.ParseUint(digits, 10, 32)
+		require.NoError(t, convErr, "%s bir sürüm numarasıyla başlamıyor", name)
+
+		if uint(n) > en {
+			en = uint(n)
+		}
+	}
+
+	require.Positive(t, en, "gömülü migration kümesi boş görünüyor")
+	return en
 }
 
 // TestCrossModuleForeignKeyYok modülün tablolarındaki TÜM foreign key'lerin

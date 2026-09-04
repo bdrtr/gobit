@@ -87,6 +87,14 @@ type provider struct {
 // The core contract is satisfied at compile time.
 var _ coreprovider.PaymentProvider = (*provider)(nil)
 
+// The OPTIONAL reconciliation capability is pinned at compile time too.
+//
+// [coreprovider.SessionInspector] is found by a TYPE ASSERTION, so a drifted
+// signature would break nothing: the reconciler would simply report that this
+// provider cannot be asked, and a payment difference would stay invisible. This
+// line closes that silence.
+var _ coreprovider.SessionInspector = (*provider)(nil)
+
 // ID returns the provider's id.
 func (p *provider) ID() string { return ProviderID }
 
@@ -512,4 +520,50 @@ func payTRCurrency(code string) string {
 	}
 
 	return strings.ToUpper(code)
+}
+
+// InspectSession returns what PayTR's callback recorded, in the core's neutral
+// shape.
+//
+// # This is the one provider where the two ledgers are genuinely independent
+//
+// For most gateways an inspection is an API call. Here it reads this plugin's
+// own table — and that is not a shortcut, it is the honest answer: PayTR
+// reports the outcome ONCE, by posting back, and that report is the only
+// statement PayTR ever makes about the payment. The row is not a cache of
+// PayTR's ledger; it IS what PayTR said.
+//
+// The divergence reconciliation looks for is therefore between the PAYMENT
+// MODULE's collection and this row, and those two really are written by
+// different transactions at different moments: the callback lands whenever
+// PayTR chooses, and the module's capture happens inside a transaction that can
+// roll back after the money moved.
+func (p *provider) InspectSession(
+	ctx context.Context, sessionID string,
+) (coreprovider.SessionInspection, error) {
+	rec, err := p.store.get(ctx, sessionID)
+	if err != nil {
+		return coreprovider.SessionInspection{}, err
+	}
+
+	inspection := coreprovider.SessionInspection{
+		RefundedAmount: rec.RefundedAmount,
+	}
+
+	switch rec.Status {
+	case statusSuccess:
+		// PayTR takes the money at the moment it authorizes; there is no
+		// separate hold, so a successful payment is both authorized AND
+		// captured. Reporting only one of the two would make the reconciler
+		// read every PayTR payment as a divergence.
+		inspection.Status = coreprovider.SessionCaptured
+		inspection.AuthorizedAmount = rec.PaidAmount
+		inspection.CapturedAmount = rec.PaidAmount
+	case statusFailed:
+		inspection.Status = coreprovider.SessionFailed
+	default:
+		inspection.Status = coreprovider.SessionPending
+	}
+
+	return inspection, nil
 }

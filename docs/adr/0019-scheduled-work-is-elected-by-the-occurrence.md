@@ -175,3 +175,6 @@ put a time zone into `Every` but to decide, in a new ADR, who owns the calendar.
   refused. Nothing here acts.
 - ADR 0018 — the previous decision that turned on measuring a contract against a
   real consumer rather than assuming one.
+- ADR 0020 — payment reconciliation, the consumer this decision named and left
+  unbuilt. It is the second job, and it reports without acting for the same
+  reason the first one does.
