@@ -1,285 +1,316 @@
-// Package checkout sepeti siparişe çeviren complete_cart saga'sıdır
-// (plan Faz 6).
+// Package checkout is the complete_cart saga that turns a cart into an order
+// (plan Phase 6).
 //
-// Tek bir akış sunar: [Workflows.CompleteCart]. Akış beş adımdan oluşur ve
-// core/workflow'un saga motoruyla yürütülür:
+// It offers a single workflow: [Workflows.CompleteCart]. The workflow consists
+// of five steps and is executed by core/workflow's saga engine:
 //
 //	reserve_inventory -> create_order -> authorize_payment -> capture_payment -> clear_cart
 //
-// Bir adım patlarsa motor, o ana kadar BAŞARILI olmuş adımların
-// Compensate'lerini TERS SIRADA çağırır: ödeme iptal edilir, sipariş iptal
-// edilir, rezervasyonlar geri bırakılır. Faz 6'nın DoD'si budur.
+// If a step blows up, the engine calls the Compensate of the steps that had
+// SUCCEEDED up to that moment in REVERSE ORDER: the payment is canceled, the
+// order is canceled, the reservations are released. That is Phase 6's DoD.
 //
-// # Neden GERÇEK bir saga
+// # Why this is a REAL saga
 //
-// Faz 5'in sepet akışları çok modülden OKUR ama tek modüle YAZARDI ve bu
-// yüzden saga değildi (bkz. internal/workflows/cart paket yorumu). Bu akış
-// ondan yapısal olarak farklıdır: inventory, order ve payment modüllerinin
-// ÜÇÜNDE de geri alınması gereken yan etki bırakır. Üç modül ayrı tablolara
-// (ileride ayrı servislere) sahip olduğu için tek bir veritabanı işlemiyle
-// sarılamazlar; dağıtık işlemin yerini tutan şey telafi zinciridir.
+// Phase 5's cart workflows READ from many modules but WROTE to a single one,
+// and were therefore not sagas (see the internal/workflows/cart package
+// comment). This workflow is structurally different from them: it leaves behind
+// side effects that must be undone in ALL THREE of the inventory, order and
+// payment modules. Because the three modules own separate tables (separate
+// services, later on), they cannot be wrapped in a single database transaction;
+// what stands in for the distributed transaction is the compensation chain.
 //
-// # Modüllere erişim
+// # Reaching the modules
 //
-// Bu paket internal/modules altındaki HİÇBİR paketi import etmez (ADR 0006).
-// İhtiyaç duyduğu her yüzey burada DAR bir arayüz olarak tanımlıdır ([Carts],
-// [Inventory], [Fulfillment], [Orders], [Payments], [Links], [Catalog]) ve
-// somut servis container'dan ADLA çözülür (bkz. [FromContainer]). Kural
-// internal/arch'taki TestWorkflowsDoNotImportModules ile denetlenir.
+// This package imports NO package under internal/modules (ADR 0006). Every
+// surface it needs is defined here as a NARROW interface ([Carts],
+// [Inventory], [Fulfillment], [Orders], [Payments], [Links], [Catalog]) and the
+// concrete service is resolved from the container BY NAME (see
+// [FromContainer]). The rule is enforced by TestWorkflowsDoNotImportModules in
+// internal/arch.
 //
-// Arayüzlerin imzaları yalnızca ilkel ve stdlib tipleri kullanır; sebebi Go'nun
-// yapısal uyum kuralıdır (ADR 0001). Bileşik veri (sepetin anlık şekli,
-// siparişin görüntüsü) sınırı JSON olarak geçer.
+// The interface signatures use only primitive and stdlib types; the reason is
+// Go's structural conformance rule (ADR 0001). Composite data (the cart's
+// momentary shape, the order's view) crosses the boundary as JSON.
 //
-// Arayüzler BİLİNÇLİ OLARAK dardır: modül yüzeyinde var olan ama bu akışın
-// kullanmadığı metotlar (inventory.AvailableQuantity, payment.Refund,
-// order.CompleteOrder, fulfillment.CreateFulfillment …) buraya YAZILMAZ.
-// Gerekçeler ilgili arayüzlerin godoc'undadır.
+// The interfaces are DELIBERATELY narrow: methods that exist on the module
+// surface but that this workflow does not use (inventory.AvailableQuantity,
+// payment.Refund, order.CompleteOrder, fulfillment.CreateFulfillment …) are NOT
+// written here. The rationales live in the godoc of the interfaces concerned.
 //
-// # internal/workflows/cart bağımlılığı
+// # The internal/workflows/cart dependency
 //
-// Bu paket internal/workflows/cart'ı import EDER ve bu, ADR 0006'nın yasağının
-// dışındadır: yasak internal/modules içindir, kardeş bir orkestrasyon paketi
-// için değil. Bağımlılık kaçınılmazdır ve iki sebebi vardır:
+// This package DOES import internal/workflows/cart, and that falls outside
+// ADR 0006's prohibition: the prohibition is about internal/modules, not about
+// a sibling orchestration package. The dependency is unavoidable and it has two
+// reasons:
 //
-//  1. Siparişin SATIR BAŞINA tutara ihtiyacı vardır (birim fiyat, ara toplam,
-//     vergi) ve cart modülünün ilkel yüzeyi ("cart.interop") satırların yalnızca
-//     kimliğini, varyantını ve adedini yayımlar — tutarları yayımlamaz. Satır
-//     tutarlarını üreten TEK yer calculate_totals akışıdır; order modülünün
-//     interop belgesi de bu birleştirmeyi açıkça workflow'a verir.
-//  2. cart modülünün MarkCompleted'ı BAYAT toplamlı sepeti reddeder
-//     (totals_revision ≠ revision). Hesap checkout'un başında yenilenmezse
-//     saga'nın SON adımı, para çekildikten sonra düşerdi.
+//  1. The order needs PER-LINE amounts (unit price, subtotal, tax) and the cart
+//     module's primitive surface ("cart.interop") publishes only the id, the
+//     variant and the quantity of the lines — it does not publish the amounts.
+//     The ONLY place that produces line amounts is the calculate_totals
+//     workflow; the order module's interop document also hands this joining
+//     explicitly to the workflow.
+//  2. The cart module's MarkCompleted rejects a cart with STALE totals
+//     (totals_revision ≠ revision). If the calculation is not refreshed at the
+//     start of checkout, the saga's LAST step would fall over after the money
+//     had already been taken.
 //
-// # Hesap saga'dan ÖNCE yapılır
+// # The calculation happens BEFORE the saga
 //
-// [Workflows.CompleteCart] önce hazırlık yapar (hesap, anlık görüntü, başlık,
-// stok kalemi çözümü), sonra saga'yı başlatır. Hazırlığın adım OLMAMASI
-// bilinçlidir: hiçbiri geri alınacak yan etki bırakmaz (toplam yazmak
-// idempotenttir ve bayatlık zaten görünür bir durumdur), oysa saga adımı olmak
-// her birine gereksiz bir telafi ve yürütme kaydı maliyeti yüklerdi. Ayrıca
-// hazırlıkta bulunan bir hata (fiyatsız varyant, stok kalemi olmayan ürün)
-// HİÇBİR yan etki uygulanmadan döner.
+// [Workflows.CompleteCart] first does the preparation (calculation, snapshot,
+// title, inventory item resolution), then starts the saga. That the preparation
+// is NOT a step is deliberate: none of it leaves behind a side effect to be
+// undone (writing totals is idempotent and staleness is a visible state
+// anyway), whereas being a saga step would load each of them with a pointless
+// compensation and execution-record cost. Besides, an error found during the
+// preparation (a variant without a price, a product without an inventory item)
+// returns without ANY side effect having been applied.
 //
-// # Adım adım kararlar
+// # Step-by-step decisions
 //
-// reserve_inventory — sepetin her satırı için önce lokasyon belirlenir, sonra
-// stok ayrılır; telafisi ReleaseReservation'dır ve İDEMPOTENTTİR. Adım kendi
-// içinde bileşiktir: bir satır patlarsa o ana kadar alınmış rezervasyonları
-// KENDİ bırakır, çünkü motor tek denemede patlayan bir adımı telafi etmez
-// (bkz. core/workflow paket yorumu). Kendi temizliği de patlarsa hata
-// [workflow.ErrUncompensated] ile sarılır ve yürütme compensation_failed
-// yazılır. Lokasyonun nasıl belirlendiği için bkz. "Lokasyon".
+// reserve_inventory — for every line of the cart the location is determined
+// first, then the stock is reserved; its compensation is ReleaseReservation and
+// it is IDEMPOTENT. The step is composite in itself: if one line blows up it
+// releases the reservations taken up to that moment ITSELF, because the engine
+// does not compensate a step that blew up on its single attempt (see the
+// core/workflow package comment). If its own cleanup blows up too, the error is
+// wrapped with [workflow.ErrUncompensated] and the execution is written
+// compensation_failed. For how the location is determined see "Location".
 //
-// create_order — sipariş, hazırlıkta kurulan görüntüden açılır; telafisi
-// CancelOrder'dır ve İDEMPOTENTTİR. Görüntüye yürütme kimliği idempotency
-// anahtarı olarak konur, böylece aynı yürütmede ikinci bir çağrı yeni sipariş
-// açmaz.
+// create_order — the order is opened from the view built during the
+// preparation; its compensation is CancelOrder and it is IDEMPOTENT. The
+// execution id is placed on the view as the idempotency key, so that a second
+// call within the same execution does not open a new order.
 //
-// authorize_payment — koleksiyon açılır, oturum açılır ve yetkilendirilir;
-// telafisi Cancel'dır ve blokajı serbest bırakır.
+// authorize_payment — the collection is opened, the session is opened and
+// authorized; its compensation is Cancel and it releases the hold.
 //
-// capture_payment — tahsilat yapılır ve tutar Collection ile DOĞRULANIR.
-// Telafisi YOKTUR (bkz. "Dönüşü olmayan nokta"). Çağrının hata dönmesi "para
-// gitmedi" demek değildir; hata yolu soruşturulur (bkz. "Belirsiz tahsilat").
+// capture_payment — the capture is performed and the amount is VERIFIED against
+// Collection. It has NO compensation (see "The point of no return"). The call
+// returning an error does not mean "the money did not move"; the error path is
+// investigated (see "Ambiguous capture").
 //
-// clear_cart — sepet tamamlanmış işaretlenir ve rezervasyonlar kesinleştirilir.
-// Telafisi yoktur; hem son adımdır hem de ConfirmReservation geri alınamaz.
+// clear_cart — the cart is marked completed and the reservations are confirmed.
+// It has no compensation; it is both the last step and ConfirmReservation
+// cannot be undone.
 //
-// # Lokasyon: stok OLGUSU ile kargo KARARI ayrı yerlerde durur
+// # Location: the stock FACT and the fulfillment DECISION live in separate places
 //
-// [CompleteCartInput.LocationID] OPSİYONELDİR. Doluysa akış hiçbir seçim yapmaz
-// ve sepetin tüm satırları o lokasyondan ayrılır — bildirilen lokasyon bir
-// tercih değil talimattır. Boşsa lokasyon SATIR BAŞINA belirlenir ve soru ikiye
-// bölünür:
+// [CompleteCartInput.LocationID] is OPTIONAL. If it is set the workflow makes
+// no choice at all and every line of the cart is reserved from that location —
+// a declared location is not a preference but an instruction. If it is empty
+// the location is determined PER LINE and the question splits in two:
 //
-//  1. "Bu kalemden bu adet hangi depolarda ayrılabilir" bir STOK OLGUSUDUR;
-//     cevabı [Inventory.LocationsWithStock] verir ve bir tercih sırası taşımaz.
-//  2. "Bu adaylar hangi sırayla denensin" bir KARGO KARARIDIR; cevabı
-//     [Fulfillment.RankLocations] verir. Kargo modülü hedef bölgeye hizmet
-//     etmeyen depoları eler ve kalanları işletmecinin öncelik sırasına dizer;
-//     buradan geçen tek bağlam siparişin bölgesidir. Sıra satır başına BİR KEZ
-//     sorulur, tükenen her adaydan sonra değil.
+//  1. "In which warehouses can this quantity of this item be reserved" is a
+//     STOCK FACT; [Inventory.LocationsWithStock] gives the answer and it
+//     carries no order of preference.
+//  2. "In which order should these candidates be tried" is a FULFILLMENT
+//     DECISION; [Fulfillment.RankLocations] gives the answer. The fulfillment
+//     module drops the warehouses that do not serve the destination region and
+//     lines the rest up in the operator's priority order; the only context
+//     passing through here is the order's region. The order is asked ONCE per
+//     line, not after every exhausted candidate.
 //
-// İkisini tek modülde toplamak, stok sorgusunu kargo politikasına ya da kargo
-// politikasını stok şemasına bağımlı kılardı. Seçimi bu paketin yapması ise
-// ADR 0006'yı çiğnemeden mümkün olurdu ama yine yanlış olurdu: sepet akışının
-// depo politikası hakkında söyleyecek bir sözü yoktur.
+// Gathering the two into a single module would have made the stock query depend
+// on fulfillment policy, or fulfillment policy depend on the stock schema.
+// Having this package make the choice would have been possible without breaking
+// ADR 0006, but it would still have been wrong: a cart workflow has nothing to
+// say about warehouse policy.
 //
-// Sonucu şudur: bir siparişin satırları FARKLI depolardan ayrılabilir. Telafi
-// bundan etkilenmez, çünkü rezervasyonlar KİMLİK başına bırakılır ve hangi
-// depodan alındıkları bırakmayı değiştirmez. Hiçbir lokasyonda yeterli stok
-// bulunamayan bir satır ise ayırmanın patladığı durumla AYNI yoldan raporlanır
-// (errors.Conflict, [CodeReservationFailed]) ve o ana kadar alınmış
-// rezervasyonlar adımın KENDİ temizliğiyle geri bırakılır — çok depolu bir
-// sepette bu, tek depoluya göre daha kolay oluşan bir durumdur.
+// The consequence is this: the lines of one order may be reserved from
+// DIFFERENT warehouses. Compensation is not affected by that, because
+// reservations are released PER ID and which warehouse they were taken from
+// does not change the release. A line for which no location holds enough stock
+// is reported through the SAME path as the case where the reservation blows up
+// (errors.Conflict, [CodeReservationFailed]) and the reservations taken up to
+// that moment are released by the step's OWN cleanup — in a multi-warehouse
+// cart this is a situation that arises more easily than in a single-warehouse
+// one.
 //
-// # TAM ÖDEME KURALI
+// # THE FULL PAYMENT RULE
 //
-// Yetkilendirmenin BLOKE ETTİĞİ tutar koleksiyonun tutarını karşılamıyorsa
-// (authorized < amount) authorize_payment BAŞARISIZ sayılır ve saga geri
-// alınır. Kural tek satırdır ve [Payments.Authorize]'ın döndürdüğü SAYIYA
-// bakar, sağlayıcının durum dizesine değil: sağlayıcı KISMİ yetkilendirdiğinde
-// durum yine "authorized" olur ve yalnızca duruma bakan bir saga ödenmemiş bir
-// siparişi onaylardı. Aynı ölçü tahsilattan sonra da uygulanır: koleksiyon
-// yeniden okunur ve captured >= amount doğrulanır.
+// If the amount the authorization HELD does not cover the collection's amount
+// (authorized < amount), authorize_payment counts as FAILED and the saga is
+// rolled back. The rule is a single line and it looks at the NUMBER
+// [Payments.Authorize] returns, not at the provider's status string: when the
+// provider authorizes PARTIALLY the status is still "authorized", and a saga
+// that looks only at the status would confirm an unpaid order. The same measure
+// is applied after the capture as well: the collection is re-read and
+// captured >= amount is verified.
 //
-// # Dönüşü olmayan nokta (pivot)
+// # The point of no return (the pivot)
 //
-// capture_payment saga'nın PIVOT adımıdır: para çekildikten sonra otomatik
-// geri dönüş YOKTUR. İade, tahsilatın telafisi değil AYRI bir akıştır (plan
-// Faz 7+) ve müşteriye, siparişe, muhasebeye ayrı ayrı dokunur; onu sessizce
-// bir telafi adımına gizlemek, saga'nın "geri alındı" dediği yerde gerçekte
-// para hareketi yaratması demek olurdu.
+// capture_payment is the saga's PIVOT step: once the money has been taken there
+// is NO automatic way back. A refund is not the compensation of the capture but
+// a SEPARATE workflow (plan Phase 7+) and it touches the customer, the order
+// and accounting separately; hiding it silently inside a compensation step
+// would mean that where the saga says "rolled back" it actually creates a
+// movement of money.
 //
-// Bunun üç sonucu vardır ve üçü de bilinçlidir:
+// This has three consequences and all three are deliberate:
 //
-//   - capture_payment'ın Compensate'i tahsilat GERÇEKLEŞMİŞSE hata döner
-//     (errors.Conflict). Motor yürütmeyi compensation_failed yazar ve bu
-//     ELLE MÜDAHALE sinyalidir. nil dönmek "geri alındı" demek olurdu ve o
-//     kayıt yalan olurdu.
-//   - Tahsilattan ÖNCEKİ adımların telafileri, tahsilat yapılmışsa ÇALIŞMAZ:
-//     sipariş iptal edilmez, stok geri bırakılmaz, blokaj serbest bırakılmaz
-//     (bkz. Workflows.skipAfterCapture). Parası çekilmiş bir siparişi geri
-//     almak müşteriyi hem parasından hem siparişinden ederdi; stoğu bırakmak
-//     ise ayakta duran bir siparişin malını ikinci kez satmak olurdu. Blokajın
-//     iptali zaten anlamsızdır: tahsilat blokajı kapatır (bkz. payment
-//     modülünde CapturePayment). Her atlama ERROR olarak loglanır ve yürütme
-//     yine compensation_failed yazılır.
-//   - Pivot koruması tahsilatın BAŞARISINA değil, DENENMİŞ olmasına bakar
-//     (bkz. Workflows.skipAfterCapture). Başarıya bakan bir koruma, korumanın
-//     en çok gerektiği yerde kapanırdı — bkz. "Belirsiz tahsilat".
-//   - clear_cart pivot'tan SONRA çalıştığı için modül arızalarını hata olarak
-//     DÖNDÜRMEZ.
-//     Sepet damgası ya da rezervasyon onayı düşerse olay ERROR olarak loglanır,
-//     [CompleteCartResult.Warnings] alanına yazılır ve akış BAŞARILI biter.
-//     Alternatifi, ödemesi alınmış bir siparişi iptal edip stoğu serbest
-//     bırakmaktı. Kalan tutarsızlık (açık kalmış sepet, "active" kalmış
-//     rezervasyon) görünür ve elle onarılabilir; iade edilmemiş bir tahsilat
-//     değildir.
+//   - capture_payment's Compensate returns an error if the capture ACTUALLY
+//     HAPPENED (errors.Conflict). The engine writes the execution
+//     compensation_failed and that is a MANUAL INTERVENTION signal. Returning
+//     nil would mean "rolled back" and that record would be a lie.
+//   - The compensations of the steps BEFORE the capture DO NOT RUN if the
+//     capture happened: the order is not canceled, the stock is not released,
+//     the hold is not released (see Workflows.skipAfterCapture). Rolling back an
+//     order whose money has been taken would cost the customer both their money
+//     and their order; releasing the stock would mean selling the goods of a
+//     standing order a second time. Canceling the hold is meaningless anyway:
+//     the capture closes the hold (see CapturePayment in the payment module).
+//     Every skip is logged as ERROR and the execution is still written
+//     compensation_failed.
+//   - The pivot guard looks not at the SUCCESS of the capture but at whether it
+//     was ATTEMPTED (see Workflows.skipAfterCapture). A guard that looked at
+//     success would switch itself off exactly where the guard is needed most —
+//     see "Ambiguous capture".
+//   - Because clear_cart runs AFTER the pivot it DOES NOT RETURN module
+//     failures as errors.
+//     If the cart stamp or the reservation confirmation falls over, the event is
+//     logged as ERROR, written into the [CompleteCartResult.Warnings] field and
+//     the workflow ends SUCCESSFULLY. The alternative was to cancel an order
+//     that has been paid for and release the stock. The remaining inconsistency
+//     (a cart left open, a reservation left "active") is visible and can be
+//     repaired by hand; it is not an unrefunded capture.
 //
-// # Belirsiz tahsilat: hata "para gitmedi" DEMEK DEĞİLDİR
+// # Ambiguous capture: an error DOES NOT MEAN "the money did not move"
 //
-// Klasik dağıtık işlem sorunu buradadır: sağlayıcı parayı çeker ve yanıt
-// kaybolur (ağ zaman aşımı). Capture hata döner, geriye hiçbir tahsilat kimliği
-// kalmaz ve KİMLİĞE bakan bir pivot koruması kapanırdı — saga siparişi iptal
-// eder, stoğu bırakır ve müşteri hem parasından hem siparişinden olurdu.
+// The classic distributed-transaction problem lives here: the provider takes
+// the money and the response is lost (a network timeout). Capture returns an
+// error, no capture id is left behind, and a pivot guard that looked at the ID
+// would switch itself off — the saga would cancel the order, release the stock,
+// and the customer would lose both their money and their order.
 //
-// Bu yüzden hata yolu SORUŞTURULUR: koleksiyon yeniden okunur ve saga yalnızca
-// koleksiyon hiçbir tahsilat GÖRMEDİĞİNDE geri alınır. Aksi hâlde (okuma da
-// patladıysa ya da tahsilat görünüyorsa) geri alma YAPILMAZ; hata
-// [workflow.ErrUncompensated] taşır, yürütme compensation_failed yazılır ve
-// düzeltme elle yapılır.
+// That is why the error path is INVESTIGATED: the collection is re-read and the
+// saga is rolled back only when the collection SEES no capture at all.
+// Otherwise (if the read blew up too, or if a capture is visible) NO rollback is
+// performed; the error carries [workflow.ErrUncompensated], the execution is
+// written compensation_failed and the correction is made by hand.
 //
-// # KALAN RİSK: koleksiyon YEREL defterdir, sağlayıcının kendisi değil
+// # REMAINING RISK: the collection is the LOCAL ledger, not the provider itself
 //
-// Yukarıdaki soruşturma riski DARALTIR, ORTADAN KALDIRMAZ ve bu sınır burada
-// açıkça yazılmalıdır.
+// The investigation above NARROWS the risk, it does not ELIMINATE it, and that
+// limit has to be written down here explicitly.
 //
-// Ödeme modülü sağlayıcı çağrısını KENDİ veritabanı işleminin İÇİNDE yapar
-// (internal/modules/payment/service/capture.go). Sağlayıcı parayı çektikten
-// SONRA modülün bir yazması ya da commit'i patlarsa işlem geri sarılır: para
-// gitmiştir ama koleksiyonda hiçbir iz YOKTUR. Saga o koleksiyonu okur,
-// "tahsilat görünmüyor" der ve TAM GERİ ALMA yapar — yani tam olarak bu
-// bölümün önlemeye çalıştığı arıza, bir katman aşağıda hâlâ mümkündür.
+// The payment module makes the provider call INSIDE its OWN database
+// transaction (internal/modules/payment/service/capture.go). If a write or the
+// commit of the module blows up AFTER the provider has taken the money, the
+// transaction is rolled back: the money is gone but there is NO trace of it in
+// the collection. The saga reads that collection, says "no capture visible" and
+// performs a FULL ROLLBACK — that is, exactly the failure this section tries to
+// prevent is still possible one layer below.
 //
-// Yanıtın kaybolabileceği İKİ yer vardır ve soruşturma yalnızca birincisini
-// kapatır:
+// There are TWO places where the response can be lost and the investigation
+// closes only the first:
 //
-//	sağlayıcı  <--(1)-->  ödeme modülü  <--(2)-->  ödeme modülünün commit'i
+//	provider  <--(1)-->  payment module  <--(2)-->  the payment module's commit
 //
-// (1) kapalıdır: modülün KAYDETTİĞİ bir tahsilat saga tarafından görülür.
-// (2) AÇIKTIR: modül kaydedemediği bir tahsilatı saga'ya bildiremez.
+// (1) is closed: a capture the module HAS RECORDED is seen by the saga.
+// (2) is OPEN: the module cannot report to the saga a capture it could not
+// record.
 //
-// (2)'yi kapatmanın tek doğru yolu sağlayıcıya SORMAKTIR — yani mutabakat
-// (reconciliation): sağlayıcının kendi defteriyle periyodik karşılaştırma.
-// Plan bunu bu faza koymuyor; Faz 7+ işidir. O gelene kadar bu sınıf arıza
-// operasyonel olarak (sağlayıcı panelinden) yakalanmalıdır.
+// The only correct way to close (2) is to ASK the provider — that is,
+// reconciliation: a periodic comparison against the provider's own ledger. The
+// plan does not put that in this phase; it is Phase 7+ work. Until it arrives,
+// this class of failure has to be caught operationally (from the provider's
+// dashboard).
 //
-// İkincil bir iyileştirme, sağlayıcı çağrısını modülün işleminin DIŞINA almak
-// ve "capturing" ara durumuyla iki fazlı yazmaktır; bu pencereyi daraltır ama
-// yine kapatmaz (bu sefer ara durumu yazan işlem patlayabilir).
+// A secondary improvement is to move the provider call OUTSIDE the module's
+// transaction and to write it in two phases with a "capturing" intermediate
+// state; that narrows the window but still does not close it (this time the
+// transaction that writes the intermediate state can blow up).
 //
-// Seçenekler tartıldı ve karar bilinçlidir:
+// The options were weighed and the decision is deliberate:
 //
-//   - Her hatayı "tahsil edilmedi" saymak (eski davranış) EN UCUZ koddur ama en
-//     pahalı arızayı üretir: ödenmiş bir siparişin yok edilmesi. Reddedildi.
-//   - Hata yolunda oturumu/koleksiyonu SORGULAMAK bir ağ çağrısı ekler ve
-//     yalnızca hata yolunda ödenir; mutlu yol değişmez. SEÇİLDİ.
-//   - Tahsilat kanıtlandığında akışı İLERİ taşımak (tahsilatı başarılı sayıp
-//     sepeti kapatmak) cazip görünür ama elimizde tahsilat kimliği yoktur:
-//     siparişe ve muhasebeye yazılacak iz olmadan "başarılı" demek,
-//     doğrulanamayan bir ödemeyi doğrulanmış göstermek olurdu. Kaybolmuş yanıtın
-//     mutabakatı ayrı bir akıştır (plan Faz 7+).
+//   - Counting every error as "not captured" (the old behavior) is the CHEAPEST
+//     code but produces the most expensive failure: the destruction of an order
+//     that has been paid for. Rejected.
+//   - QUERYING the session/collection on the error path adds one network call
+//     and is paid only on the error path; the happy path does not change.
+//     CHOSEN.
+//   - Carrying the workflow FORWARD when the capture is proven (counting the
+//     capture as successful and closing the cart) looks tempting, but we do not
+//     have a capture id: saying "successful" without a trace to write to the
+//     order and to accounting would mean presenting an unverifiable payment as
+//     verified. Reconciling a lost response is a separate workflow (plan
+//     Phase 7+).
 //
-// Karar asimetriktir çünkü bedeller asimetriktir: yanlışlıkla geri almanın
-// bedeli iade, muhasebe ve müşteri temasıdır; yanlışlıkla geri ALMAMANIN bedeli
-// bekleyen bir sipariş, ayrılmış stok ve kartta kalan bir blokajdır — hepsi
-// görünür ve onarılabilir.
+// The decision is asymmetric because the costs are asymmetric: the cost of
+// rolling back by mistake is a refund, accounting work and customer contact;
+// the cost of NOT rolling back by mistake is a pending order, reserved stock and
+// a hold left on the card — all of them visible and repairable.
 //
-// # Saga çağıranın İPTALİNDEN ayrılır
+// # The saga detaches from the caller's CANCELLATION
 //
-// Hazırlık çağıranın bağlamıyla koşar; saga ise ondan ayrılıp kendi süre
-// bütçesine bağlanır ([SagaTimeout]). Sebep yine pivot'tadır: motor her adımdan
-// önce bağlamı denetler ve tahsilat sırasında gelen bir iptal, clear_cart'ı
-// tümüyle atlatırdı — para çekilmiş, sipariş "pending", sepet kilitli, stok
-// "active" kalır ve idempotency anahtarı yandığı için o sepet bir daha
-// denenemezdi. Yarım bırakılan iş, tamamlananın maliyetinden pahalıdır.
+// The preparation runs with the caller's context; the saga, though, detaches
+// from it and binds itself to its own time budget ([SagaTimeout]). The reason
+// is once again in the pivot: the engine checks the context before every step,
+// and a cancellation arriving during the capture would skip clear_cart entirely
+// — the money has been taken, the order stays "pending", the cart stays locked,
+// the stock stays "active", and because the idempotency key is burned that cart
+// could never be tried again. Work left half done is more expensive than the
+// cost of finishing it.
 //
 // # Idempotency
 //
-// Yürütme, sepet kimliğinden türetilen bir anahtara bağlanır
-// ([IdempotencyKeyPrefix] + cart_id). Aynı sepet için yapılan ikinci çağrı
-// adımları TEKRAR ÇALIŞTIRMAZ: sürüyorsa ya da başarısız olmuşsa
-// errors.Conflict döner (bkz. [workflow.Executor]).
+// The execution is bound to a key derived from the cart id
+// ([IdempotencyKeyPrefix] + cart_id). A second call made for the same cart DOES
+// NOT RE-RUN the steps: if one is in flight or has failed it returns
+// errors.Conflict (see [workflow.Executor]).
 //
-// Motorun "tamamlanmış yürütmenin çıktısını dön" yolu (replay) bu akışta
-// pratikte ERİŞİLEMEZDİR: hazırlık motorun denetiminden ÖNCE çalışır ve ilk iş
-// olarak hesabı yeniler, oysa başarılı bir yürütme sepeti tamamlanmış damgalar
-// ve tamamlanmış sepette hesap yapılamaz. Gerçek kurulumda ikinci çağrının
-// cevabı bu yüzden "aynı sonuç" değil, [CodeCartCompleted]'dır; replay yolu
-// yalnızca sepetin damgalanamadığı (clear_cart uyarısı bıraktığı) durumda
-// görülebilir. Zararsız yönde bir sapmadır — iki koruma da aynı şeyi engeller:
-// aynı sepetten ikinci bir sipariş doğmaz.
+// The engine's "return the output of the completed execution" path (replay) is
+// in practice UNREACHABLE in this workflow: the preparation runs BEFORE the
+// engine's check and its first act is to refresh the calculation, whereas a
+// successful execution stamps the cart completed and no calculation can be made
+// on a completed cart. In a real setup the answer to a second call is therefore
+// not "the same result" but [CodeCartCompleted]; the replay path can only be
+// seen in the case where the cart could not be stamped (where clear_cart left a
+// warning). It is a deviation in the harmless direction — both guards prevent
+// the same thing: no second order is born from the same cart.
 //
-// Başarısız bir denemeden sonra AYNI sepetin yeniden denenemeyeceği kabul
-// edilen bedeldir: motor anahtarı "bir denemenin sonucu" olarak tanımlar,
-// sonsuz bir tekrar hakkı olarak değil. Reddedilen bir ödemeden sonra yeni bir
-// deneme başlatmak (yeni anahtar üretmek) bu akışın değil, onu çağıran uç
-// noktanın kararıdır ve plan Faz 7+'ya aittir.
+// That the SAME cart cannot be retried after a failed attempt is the accepted
+// cost: the engine defines the key as "the result of one attempt", not as a
+// right to endless repetition. Starting a fresh attempt after a declined
+// payment (producing a new key) is not this workflow's decision but that of the
+// endpoint calling it, and it belongs to plan Phase 7+.
 //
-// Koruma tek katlı da değildir: başarılı bir yürütme sepeti tamamlanmış
-// damgalar, tamamlanmış sepette hesap yapılamaz ve MarkCompleted ikinci kez
-// başarılı olmaz. Yani anahtar kaybolsa bile aynı sepetten ikinci bir sipariş
-// doğmaz.
+// The protection is not single-layered either: a successful execution stamps
+// the cart completed, no calculation can be made on a completed cart, and
+// MarkCompleted does not succeed a second time. So even if the key were lost,
+// no second order would be born from the same cart.
 //
-// # order.placed olayını bu paket YAYIMLAMAZ
+// # This package DOES NOT publish the order.placed event
 //
-// Olayı order modülü KENDİ yayımlar: servisinin CreateOrder metodu siparişi
-// yazdıktan sonra "order.placed" olayını veri yoluna koyar (bkz. order
-// modülünde events.go, EventOrderPlaced). Ayrıca yayımlamak ÇİFT OLAY üretirdi
-// ve aboneler (bildirim, muhasebe, arama indeksi) aynı siparişi iki kez
-// işlerdi. Bu yüzden bu paket "core.eventbus" adını hiç çözmez ve hiçbir olay
-// yayımlamaz.
+// The order module publishes the event ITSELF: after its service's CreateOrder
+// method writes the order it puts the "order.placed" event on the bus (see
+// events.go in the order module, EventOrderPlaced). Publishing it here as well
+// would produce a DUPLICATE EVENT and the subscribers (notification,
+// accounting, search index) would process the same order twice. That is why
+// this package never resolves the name "core.eventbus" and publishes no event
+// at all.
 //
-// Aynı sebeple telafi de olay yayımlamaz: siparişin iptali order modülünün
-// kendi kararıdır ve duyurusu da oraya aittir.
+// For the same reason the compensation publishes no event either: canceling the
+// order is the order module's own decision and announcing it belongs there too.
 //
-// order modülünün olayı GERÇEKTEN yayımladığı, ancak gerçek modüllerle koşan
-// bir entegrasyon testiyle kanıtlanabilir — bu paket o modülü import edemediği
-// için derleyici de birim testi de o bağı göremez (ADR 0006'nın kabul edilen
-// bedeli).
+// That the order module REALLY does publish the event can only be proven by an
+// integration test running with the real modules — because this package cannot
+// import that module, neither the compiler nor a unit test can see that link
+// (ADR 0006's accepted cost).
 //
-// # Yeniden deneme politikası
+// # Retry policy
 //
-// Adımlar YENİDEN DENENMEZ (motorun varsayılanı). Sebep adımların
-// idempotentliğidir: inventory.Reserve iki kez çağrılırsa İKİ rezervasyon
-// üretir ve payment.Capture'ın tekrarı gerçek bir ödeme sağlayıcısında tekrar
-// para hareketi denemesidir. Motor bir adımı kendi kararıyla tekrarlarsa onu
-// en iyi çaba ile telafi eder, ama en iyi çaba burada yeterli değildir.
+// The steps are NOT RETRIED (the engine's default). The reason is the
+// idempotency of the steps: if inventory.Reserve is called twice it produces TWO
+// reservations, and repeating payment.Capture is, against a real payment
+// provider, another attempt at moving money. If the engine repeats a step on its
+// own decision it compensates it on a best-effort basis, but best effort is not
+// enough here.
 //
-// TELAFİ ise yeniden denenir (bkz. [workflow.WithCompensationRetry]): başarısız
-// bir Invoke'un bedeli yürütmenin geri alınmasıdır, başarısız bir Compensate'in
-// bedeli elle müdahaledir. Geçici bir arızada telafide ısrar etmek bu yüzden
-// karşılığını verir.
+// COMPENSATION, on the other hand, is retried (see
+// [workflow.WithCompensationRetry]): the cost of a failed Invoke is the rollback
+// of the execution, the cost of a failed Compensate is manual intervention.
+// Insisting on the compensation through a transient failure therefore pays off.
 package checkout

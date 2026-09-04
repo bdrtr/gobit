@@ -209,7 +209,7 @@ func TestFromContainerSepetHesabiniKuramazsaBildirir(t *testing.T) {
 	_, err := FromContainer(c)
 	require.Error(t, err)
 	assert.Equal(t, CodeDependencyMissing, errors.CodeOf(err))
-	assert.Contains(t, err.Error(), "sepet hesabını kuramadı")
+	assert.Contains(t, err.Error(), "could not build the cart totals")
 }
 
 // TestFromContainerContainersizReddedilir nil container'ın panik değil hata

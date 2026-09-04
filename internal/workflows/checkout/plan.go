@@ -9,50 +9,51 @@ import (
 	cartwf "github.com/bdrtr/gobit/internal/workflows/cart"
 )
 
-// Snapshot siparişe dönüşecek sepet şeklidir.
+// Snapshot is the shape of the cart that becomes an order.
 //
-// Tip, [Carts.CartSnapshotJSON] gövdesinin şemasıdır: sepet modülü bu alanları
-// üretir, bu paket okur. Şema BİLİNÇLİ OLARAK dardır — siparişe giren ne varsa
-// odur ve fazlası yoktur. Tanınmayan alanlar (kargo yöntemleri gibi) sessizce
-// atlanır ki sepet modülü şemayı büyüttüğünde bu paketin güncellenmesi
-// gerekmesin.
+// The type is the schema of the [Carts.CartSnapshotJSON] body: the cart module
+// produces these fields, this package reads them. The schema is DELIBERATELY
+// narrow — it is whatever enters the order and nothing more. Unrecognized
+// fields (shipping methods, for one) are silently skipped so that this package
+// need not be updated when the cart module grows the schema.
 //
-// Satırların TUTARLARI burada yoktur ve olmamalıdır; onları hesap üretir
-// (bkz. [CartTotals]). İki kaynağın aynı ana ait olduğu [Snapshot.Revision]
-// ile kanıtlanır.
+// The AMOUNTS of the lines are not here and must not be; the totals produce
+// them (see [CartTotals]). That the two sources belong to the same instant is
+// proven by [Snapshot.Revision].
 type Snapshot struct {
-	// ID sepetin kimliğidir.
+	// ID is the identity of the cart.
 	ID string `json:"id"`
-	// RegionID sepetin bölgesidir; sipariş de aynı bölgeye yazılır.
+	// RegionID is the region of the cart; the order is written to the same region.
 	RegionID string `json:"region_id"`
-	// CustomerID sepetin sahibidir; boşsa sipariş misafirindir.
+	// CustomerID is the owner of the cart; when empty the order is a guest's.
 	CustomerID string `json:"customer_id"`
-	// CurrencyCode sepetin para birimidir (ISO 4217).
+	// CurrencyCode is the currency of the cart (ISO 4217).
 	CurrencyCode string `json:"currency_code"`
-	// Revision sepetin şekil sayacıdır; hesabın damgası budur.
+	// Revision is the shape counter of the cart; it is the stamp of the totals.
 	Revision int64 `json:"revision"`
-	// Completed sepetin tamamlanmış olup olmadığını bildirir.
+	// Completed reports whether the cart has been completed.
 	Completed bool `json:"completed"`
-	// Items sepetin satırlarıdır.
+	// Items are the lines of the cart.
 	Items []SnapshotItem `json:"items"`
 }
 
-// SnapshotItem bir sepet satırının siparişe giren alanlarıdır.
+// SnapshotItem is the set of fields of a cart line that enter the order.
 type SnapshotItem struct {
-	// ID satırın kimliğidir; rezervasyon bu kimliğe bağlanır.
+	// ID is the identity of the line; the reservation is bound to this identity.
 	ID string `json:"id"`
-	// VariantID satırın gösterdiği ürün varyantıdır.
+	// VariantID is the product variant the line points at.
 	VariantID string `json:"variant_id"`
-	// Quantity satırdaki adettir.
+	// Quantity is the count on the line.
 	Quantity int64 `json:"quantity"`
 }
 
-// VariantIDs satırların varyant kimliklerini TEKRARSIZ ve satır sırasında
-// döner.
+// VariantIDs returns the variant identities of the lines WITHOUT DUPLICATES and
+// in line order.
 //
-// Sıra korunur ki toplu link ve katalog sorgularının girdisi (dolayısıyla
-// üretilen hata mesajları) yeniden üretilebilir olsun; tekrarsızlık ise aynı
-// varyanttan iki satır bulunan bir sepette sorguyu gereksiz büyütmemek içindir.
+// The order is preserved so that the input of the bulk link and catalog queries
+// (and therefore the error messages they produce) stays reproducible; the
+// deduplication is there so that a cart holding two lines of the same variant
+// does not grow the query needlessly.
 func (s Snapshot) VariantIDs() []string {
 	seen := make(map[string]struct{}, len(s.Items))
 	out := make([]string, 0, len(s.Items))
@@ -67,99 +68,104 @@ func (s Snapshot) VariantIDs() []string {
 	return out
 }
 
-// checkoutPlan saga'nın DEĞİŞMEZ girdisidir: hazırlık aşamasında çözülmüş her
-// şey burada durur.
+// checkoutPlan is the IMMUTABLE input of the saga: everything resolved during
+// the preparation phase sits here.
 //
-// Plan motora girdi olarak verilir ve yürütme kaydına JSON olarak yazılır;
-// elle müdahale gerektiren bir yürütmede operatörün "ne yapılmak isteniyordu"
-// sorusunun cevabı odur. Adımlar plana İŞARETÇİ ile erişir ve onu DEĞİŞTİRMEZ;
-// adımlar arası akan tek şey [workflow.StepContext].Shared'dır.
+// The plan is handed to the engine as input and written to the execution record
+// as JSON; in an execution that needs manual intervention it is the answer to
+// the operator's question "what was this trying to do". Steps reach the plan
+// through a POINTER and do NOT modify it; the only thing that flows between
+// steps is [workflow.StepContext].Shared.
 type checkoutPlan struct {
-	// CartID siparişin doğduğu sepettir.
+	// CartID is the cart the order was born from.
 	CartID string `json:"cart_id"`
-	// RegionID siparişin bölgesidir.
+	// RegionID is the region of the order.
 	RegionID string `json:"region_id"`
-	// CustomerID siparişin sahibidir; misafir siparişinde boştur.
+	// CustomerID is the owner of the order; empty on a guest order.
 	CustomerID string `json:"customer_id"`
-	// Email siparişin iletişim adresidir; boş olabilir.
+	// Email is the contact address of the order; it may be empty.
 	Email string `json:"email"`
-	// CurrencyCode siparişin para birimidir (ISO 4217).
+	// CurrencyCode is the currency of the order (ISO 4217).
 	CurrencyCode string `json:"currency_code"`
-	// Revision hesabın ve anlık görüntünün ORTAK şekil sayacıdır.
+	// Revision is the SHARED shape counter of the totals and the snapshot.
 	Revision int64 `json:"revision"`
-	// LocationID çağıranın BİLDİRDİĞİ stok lokasyonudur; boş olabilir.
+	// LocationID is the stock location the caller DECLARED; it may be empty.
 	//
-	// Boşsa lokasyon satır başına ve saga sırasında seçilir
-	// (bkz. [reserveInventoryStep.locationFor]). Seçimin sonucu buraya
-	// YAZILMAZ: plan saga'nın değişmez girdisidir ve adımlar onu değiştirmez;
-	// hangi satırın hangi depodan ayrıldığı rezervasyon izine yazılır
-	// (bkz. [reservationRef]).
+	// When empty the location is chosen per line and during the saga
+	// (see [reserveInventoryStep.locationFor]). The result of that choice is
+	// NOT written back here: the plan is the immutable input of the saga and
+	// steps do not modify it; which line was taken from which warehouse is
+	// written to the reservation trail (see [reservationRef]).
 	LocationID string `json:"location_id"`
-	// PaymentProviderID ödemenin açılacağı sağlayıcıdır.
+	// PaymentProviderID is the provider the payment is opened at.
 	PaymentProviderID string `json:"payment_provider_id"`
-	// Amount tahsil edilecek toplam tutardır (minor unit).
+	// Amount is the total to be collected (minor unit).
 	Amount int64 `json:"amount"`
-	// Subtotal satır ara toplamlarının toplamıdır.
+	// Subtotal is the sum of the line subtotals.
 	Subtotal int64 `json:"subtotal"`
-	// DiscountTotal toplam indirimdir; pozitif taşınır ve toplamdan düşülür.
+	// DiscountTotal is the total discount; carried positive and subtracted.
 	DiscountTotal int64 `json:"discount_total"`
-	// TaxTotal toplam vergidir.
+	// TaxTotal is the total tax.
 	TaxTotal int64 `json:"tax_total"`
-	// ShippingTotal toplam kargo tutarıdır.
+	// ShippingTotal is the total shipping amount.
 	ShippingTotal int64 `json:"shipping_total"`
-	// Lines siparişe ve rezervasyona girecek satırlardır.
+	// Lines are the lines that will enter the order and the reservation.
 	Lines []planLine `json:"lines"`
 
-	// PaymentData sağlayıcıya iletilecek serbest veridir ve KAYDA YAZILMAZ.
+	// PaymentData is the free-form data passed to the provider and it is NOT
+	// WRITTEN TO THE RECORD.
 	//
-	// Alan kart tokenı gibi hassas veri taşıyabilir; yürütme kaydı ise kalıcı
-	// bir defterdir ve elle müdahale sırasında okunur. Plan Bölüm 8 hassas
-	// verinin taşınmamasını ister, bu yüzden alan JSON'dan DIŞLANIR ve yalnızca
-	// bellekte, adımın çağrısına kadar yaşar.
+	// The field may carry sensitive data such as a card token; the execution
+	// record, on the other hand, is a durable ledger and is read during manual
+	// intervention. Section 8 of the plan asks that sensitive data not be
+	// carried along, which is why the field is EXCLUDED from JSON and lives
+	// only in memory, up to the step's call.
 	PaymentData json.RawMessage `json:"-"`
 }
 
-// planLine bir sepet satırının siparişe ve rezervasyona giren hâlidir.
+// planLine is the form of a cart line that enters the order and the reservation.
 type planLine struct {
-	// LineItemID sepet satırının kimliğidir; rezervasyon buna bağlanır.
+	// LineItemID is the identity of the cart line; the reservation binds to it.
 	LineItemID string `json:"line_item_id"`
-	// VariantID satırın gösterdiği ürün varyantıdır.
+	// VariantID is the product variant the line points at.
 	VariantID string `json:"variant_id"`
-	// InventoryItemID varyantın bağlı olduğu stok kalemidir.
+	// InventoryItemID is the inventory item the variant is linked to.
 	InventoryItemID string `json:"inventory_item_id"`
-	// Title satırın görünen adıdır; katalogdan KOPYALANIR.
+	// Title is the displayed name of the line; it is COPIED from the catalog.
 	Title string `json:"title"`
-	// Quantity satırdaki adettir.
+	// Quantity is the count on the line.
 	Quantity int64 `json:"quantity"`
-	// UnitPrice birim fiyattır (minor unit).
+	// UnitPrice is the unit price (minor unit).
 	UnitPrice int64 `json:"unit_price"`
-	// Subtotal satırın ara toplamıdır: UnitPrice × Quantity.
+	// Subtotal is the subtotal of the line: UnitPrice x Quantity.
 	Subtotal int64 `json:"subtotal"`
-	// DiscountTotal satıra düşen indirimdir; pozitif taşınır.
+	// DiscountTotal is the discount falling on the line; carried positive.
 	DiscountTotal int64 `json:"discount_total"`
-	// TaxTotal satıra düşen vergidir.
+	// TaxTotal is the tax falling on the line.
 	TaxTotal int64 `json:"tax_total"`
-	// Total satırın toplamıdır: Subtotal - DiscountTotal + TaxTotal.
+	// Total is the total of the line: Subtotal - DiscountTotal + TaxTotal.
 	Total int64 `json:"total"`
 }
 
-// prepare saga'nın girdisini kurar ve HİÇBİR geri alınabilir yan etki bırakmaz.
+// prepare builds the input of the saga and leaves NO reversible side effect.
 //
-// Sıra bilinçlidir:
+// The order is deliberate:
 //
-//  1. Hesap YENİLENİR. İki şey için zorunludur: siparişin satır başına tutara
-//     ihtiyacı vardır ve sepet modülü BAYAT toplamlı bir sepeti tamamlamayı
-//     reddeder. Hesap saga'nın son adımında yenilenseydi, para çekildikten
-//     sonra düşen bir MarkCompleted ile karşılaşırdık.
-//  2. Anlık görüntü hesaptan SONRA okunur ve iki tarafın şekil sayacı
-//     karşılaştırılır. Eşit değilse sepet ikisinin arasında değişmiştir ve
-//     hesap artık o sepete ait değildir; çağrı errors.Conflict ile durur.
-//  3. Başlıklar ve stok kalemleri TOPLU okunur (N+1 yoktur).
+//  1. The totals are REFRESHED. This is mandatory for two things: the order
+//     needs a per-line amount, and the cart module refuses to complete a cart
+//     whose totals are STALE. Had the totals been refreshed in the last step of
+//     the saga, we would be facing a MarkCompleted that fails after the money
+//     has already been taken.
+//  2. The snapshot is read AFTER the totals and the shape counters of the two
+//     sides are compared. If they are not equal the cart changed in between and
+//     the totals no longer belong to that cart; the call stops with
+//     errors.Conflict.
+//  3. Titles and inventory items are read IN BULK (there is no N+1).
 //
-// Yazma sayılabilecek tek işlem hesabın sepete yazılmasıdır ve o telafi
-// GEREKTİRMEZ: toplam yazmak idempotenttir, bayatlık zaten görünür bir
-// durumdur ve müşterinin sepetini geçici bir arıza yüzünden eski tutara
-// döndürmek hiçbir şeyi düzeltmezdi.
+// The only operation that could count as a write is writing the totals to the
+// cart, and that one needs NO compensation: writing totals is idempotent,
+// staleness is an already visible state, and returning the customer's cart to
+// an old amount because of a transient fault would fix nothing.
 func (w *Workflows) prepare(ctx context.Context, in CompleteCartInput) (*checkoutPlan, error) {
 	totals, err := w.totals.CalculateTotals(ctx, in.CartID)
 	if err != nil {
@@ -172,15 +178,15 @@ func (w *Workflows) prepare(ctx context.Context, in CompleteCartInput) (*checkou
 	}
 	if snap.Completed {
 		return nil, errors.Conflict(CodeCartCompleted,
-			"tamamlanmış sepetten sipariş oluşturulamaz: %s", in.CartID)
+			"cannot create an order from a completed cart: %s", in.CartID)
 	}
 	if len(snap.Items) == 0 {
 		return nil, errors.Conflict(CodeCartEmpty,
-			"satırsız sepetten sipariş oluşturulamaz: %s", in.CartID)
+			"cannot create an order from a cart with no lines: %s", in.CartID)
 	}
 	if snap.Revision != totals.Revision {
 		return nil, errors.Conflict(CodeCartChanged,
-			"sepet hesap ile okuma arasında değişti: %s (hesap %d, sepet %d); istek yeniden gönderilmeli",
+			"cart changed between the totals and the read: %s (totals %d, cart %d); the request must be resent",
 			in.CartID, totals.Revision, snap.Revision)
 	}
 
@@ -211,13 +217,13 @@ func (w *Workflows) prepare(ctx context.Context, in CompleteCartInput) (*checkou
 	}
 	if in.ExpectedTotal > 0 && in.ExpectedTotal != plan.Amount {
 		return nil, errors.Conflict(CodeTotalMismatch,
-			"sepetin tutarı onaylanan tutardan farklı: onaylanan %d, hesaplanan %d (%s)",
+			"cart amount differs from the approved amount: approved %d, calculated %d (%s)",
 			in.ExpectedTotal, plan.Amount, plan.CartID)
 	}
 	return plan, nil
 }
 
-// snapshot sepetin anlık görüntüsünü okur ve çözer.
+// snapshot reads and decodes the snapshot of the cart.
 func (w *Workflows) snapshot(ctx context.Context, cartID string) (Snapshot, error) {
 	payload, err := w.carts.CartSnapshotJSON(ctx, cartID)
 	if err != nil {
@@ -226,53 +232,55 @@ func (w *Workflows) snapshot(ctx context.Context, cartID string) (Snapshot, erro
 	return decodeSnapshot(cartID, payload)
 }
 
-// decodeSnapshot sepet modülünden gelen gövdeyi çözer ve DOĞRULAR.
+// decodeSnapshot decodes and VALIDATES the body coming from the cart module.
 //
-// Doğrulama, gövdenin sepet modülünden gelmesine rağmen yapılır: bu sınır
-// derleyicinin denetleyemediği tek sınırdır (ADR 0006'nın kabul edilen bedeli)
-// ve bozuk bir alan sessizce siparişin içine girerse hata, müşterinin
-// faturasında görünürdü. Bozuk gövde errors.Internal'dır — çağıranın
-// düzeltebileceği bir şey yoktur, sağlayıcı sözleşmeyi çiğnemiştir.
+// The validation is done even though the body comes from the cart module: this
+// boundary is the one boundary the compiler cannot check (the accepted price of
+// ADR 0006), and if a corrupt field silently made its way into the order, the
+// mistake would show up on the customer's invoice. A corrupt body is
+// errors.Internal — there is nothing the caller could fix, the provider has
+// broken the contract.
 func decodeSnapshot(cartID string, payload json.RawMessage) (Snapshot, error) {
 	var snap Snapshot
 	if len(payload) == 0 {
 		return Snapshot{}, errors.Internal(CodeSnapshotInvalid,
-			"sepet anlık görüntüsü boş geldi: %s", cartID)
+			"cart snapshot came back empty: %s", cartID)
 	}
 	if err := json.Unmarshal(payload, &snap); err != nil {
 		return Snapshot{}, errors.Wrap(err, errors.KindInternal, CodeSnapshotInvalid,
-			"sepet anlık görüntüsü çözülemedi: %s", cartID)
+			"cart snapshot could not be decoded: %s", cartID)
 	}
 	if snap.ID != cartID {
 		return Snapshot{}, errors.Internal(CodeSnapshotInvalid,
-			"anlık görüntü başka bir sepete ait: istenen %s, gelen %q", cartID, snap.ID)
+			"snapshot belongs to another cart: requested %s, received %q", cartID, snap.ID)
 	}
 	if snap.RegionID == "" {
-		return Snapshot{}, errors.Internal(CodeSnapshotInvalid, "sepetin bölgesi boş: %s", cartID)
+		return Snapshot{}, errors.Internal(CodeSnapshotInvalid, "cart region is empty: %s", cartID)
 	}
 	if snap.CurrencyCode == "" {
-		return Snapshot{}, errors.Internal(CodeSnapshotInvalid, "sepetin para birimi boş: %s", cartID)
+		return Snapshot{}, errors.Internal(CodeSnapshotInvalid, "cart currency is empty: %s", cartID)
 	}
 
 	for i := range snap.Items {
 		if snap.Items[i].ID == "" {
 			return Snapshot{}, errors.Internal(CodeSnapshotInvalid,
-				"sepette kimliksiz satır var: %s", cartID)
+				"cart has a line without an identity: %s", cartID)
 		}
 		if snap.Items[i].VariantID == "" {
 			return Snapshot{}, errors.Internal(CodeSnapshotInvalid,
-				"satırın varyantı boş: %s (%q)", cartID, snap.Items[i].ID)
+				"line variant is empty: %s (%q)", cartID, snap.Items[i].ID)
 		}
 	}
 	return snap, nil
 }
 
-// planLines anlık görüntü ile hesabı BİRLEŞTİRİR.
+// planLines JOINS the snapshot with the totals.
 //
-// Birleştirme satır kimliği üzerinden yapılır; hesabın satır sırasına
-// güvenilmez. Sepette olup hesapta bulunmayan bir satır errors.Internal'dır:
-// hesap sepetin TÜM satırlarını kapsamak zorundadır (bkz. cart modülünde
-// SetTotals) ve eksik bir satır, müşterinin ödemediği bir mal demektir.
+// The join is done over the line identity; the line order of the totals is not
+// trusted. A line present in the cart but absent from the totals is
+// errors.Internal: the totals are obliged to cover ALL lines of the cart (see
+// SetTotals in the cart module) and a missing line means goods the customer did
+// not pay for.
 func (w *Workflows) planLines(ctx context.Context, snap Snapshot, totals cartwf.Totals) ([]planLine, error) {
 	byLine := make(map[string]cartwf.LineTotals, len(totals.Lines))
 	for i := range totals.Lines {
@@ -280,7 +288,7 @@ func (w *Workflows) planLines(ctx context.Context, snap Snapshot, totals cartwf.
 	}
 	if len(byLine) != len(snap.Items) {
 		return nil, errors.Internal(CodeTotalsInvalid,
-			"hesap sepetin satırlarını kapsamıyor: %s (sepet %d satır, hesap %d satır)",
+			"the totals do not cover the lines of the cart: %s (cart %d lines, totals %d lines)",
 			snap.ID, len(snap.Items), len(byLine))
 	}
 
@@ -300,7 +308,7 @@ func (w *Workflows) planLines(ctx context.Context, snap Snapshot, totals cartwf.
 		amounts, ok := byLine[item.ID]
 		if !ok {
 			return nil, errors.Internal(CodeTotalsInvalid,
-				"satırın hesabı yok: %s (%q)", snap.ID, item.ID)
+				"the line has no totals: %s (%q)", snap.ID, item.ID)
 		}
 
 		lines = append(lines, planLine{
@@ -319,18 +327,19 @@ func (w *Workflows) planLines(ctx context.Context, snap Snapshot, totals cartwf.
 	return lines, nil
 }
 
-// variantTitles varyantların katalogdaki başlıklarını TEK sorguda okur.
+// variantTitles reads the catalog titles of the variants in a SINGLE query.
 //
-// # Neden başlık katalogdan okunuyor
+// # Why the title is read from the catalog
 //
-// Sipariş satırının başlığı ZORUNLUDUR ve varyanttan KOPYALANIR: katalog
-// sonradan değişse bile siparişte görülen ad değişmez. Sepet modülü başlığı
-// kendi satırında saklar ama modüller arası yüzeyinde yayımlamaz, order modülü
-// ise product'ı tanımaz; kopyalayabilecek tek taraf bu akıştır.
+// The title of an order line is MANDATORY and is COPIED from the variant: even
+// if the catalog changes afterwards, the name seen on the order does not
+// change. The cart module keeps the title on its own line but does not publish
+// it on its cross-module surface, and the order module does not know product;
+// the only party that could copy it is this flow.
 //
-// Okuma Query üzerinden yapılır çünkü product servisinin okuma imzaları kendi
-// model tipleriyle konuşur ve modüller arası çağrıya kapalıdır; Query tam bu
-// boşluk için vardır (ADR 0004).
+// The read goes through Query because the read signatures of the product
+// service speak in its own model types and are closed to cross-module calls;
+// Query exists for exactly this gap (ADR 0004).
 func (w *Workflows) variantTitles(ctx context.Context, variantIDs []string) (map[string]string, error) {
 	if len(variantIDs) == 0 {
 		return map[string]string{}, nil
@@ -343,11 +352,12 @@ func (w *Workflows) variantTitles(ctx context.Context, variantIDs []string) (map
 		Limit:   len(variantIDs),
 	})
 	if err != nil {
-		// Altyapı arızası İŞ durumu gibi raporlanmaz: "varyant katalogda yok"
-		// kalıcı bir durumdur ve istemci ona göre dallanır, geçici bir okuma
-		// arızası ise yeniden denenebilir. Alttaki hatanın sınıfı KORUNUR.
+		// An infrastructure fault is not reported as a BUSINESS state: "the
+		// variant is not in the catalog" is a permanent state and the client
+		// branches on it, whereas a transient read fault can be retried. The
+		// kind of the underlying error is PRESERVED.
 		return nil, errors.Wrap(err, errors.KindOf(err), CodeCatalogReadFailed,
-			"varyantlar katalogdan okunamadı (%d varyant)", len(variantIDs))
+			"the variants could not be read from the catalog (%d variants)", len(variantIDs))
 	}
 
 	titles := make(map[string]string, len(records))
@@ -356,7 +366,7 @@ func (w *Workflows) variantTitles(ctx context.Context, variantIDs []string) (map
 		title, titleOK := records[i][FieldTitle].(string)
 		if !idOK || !titleOK || title == "" {
 			return nil, errors.Internal(CodeVariantUnknown,
-				"katalog kaydı okunamadı: %v", records[i])
+				"the catalog record could not be read: %v", records[i])
 		}
 		titles[id] = title
 	}
@@ -364,27 +374,30 @@ func (w *Workflows) variantTitles(ctx context.Context, variantIDs []string) (map
 	for _, variantID := range variantIDs {
 		if titles[variantID] == "" {
 			return nil, errors.NotFound(CodeVariantUnknown,
-				"%s varyantı katalogda yok; sipariş satırı başlıksız yazılamaz", variantID)
+				"variant %s is not in the catalog; an order line cannot be written without a title", variantID)
 		}
 	}
 	return titles, nil
 }
 
-// inventoryItems varyantların stok kalemlerini TEK link sorgusuyla çözer.
+// inventoryItems resolves the inventory items of the variants with a SINGLE
+// link query.
 //
-// # Stok kalemi olmayan varyant REDDEDİLİR
+// # A variant with no inventory item is REJECTED
 //
-// Karar errors.Invalid'dir. Stok kalemi olmayan bir varyant için rezervasyon
-// açılamaz; onu sessizce ATLAMAK, stoğu hiç ayrılmamış bir malın satılması
-// demek olurdu. Hata NotFound değildir çünkü varyant VARDIR; eksik olan, stok
-// takibine bağlanmış olmasıdır ve çağıran isteği düzeltebilir.
+// The decision is errors.Invalid. No reservation can be opened for a variant
+// that has no inventory item; SKIPPING it silently would mean selling goods
+// whose stock was never set aside. The error is not NotFound because the
+// variant DOES exist; what is missing is its being linked to inventory
+// tracking, and the caller can fix the request.
 //
-// # Birden çok kalem
+// # More than one item
 //
-// "product_variant_inventory" tanımı tekildir. Yine de birden çok kalem
-// görülürse hangisinden stok ayrılacağı belirsizdir; sessizce ilkini seçmek
-// satılan malı sıralama tesadüfüne bağlardı. Bu yüzden durum errors.Internal
-// ile bildirilir: veri, kısıtın arkasından bozulmuştur.
+// The "product_variant_inventory" definition is singular. If more than one item
+// is seen nonetheless, which one the stock is taken from is undefined; silently
+// picking the first would tie the goods sold to an ordering accident. That is
+// why the situation is reported with errors.Internal: the data has gone corrupt
+// behind the constraint.
 func (w *Workflows) inventoryItems(ctx context.Context, variantIDs []string) (map[string]string, error) {
 	if len(variantIDs) == 0 {
 		return map[string]string{}, nil
@@ -393,7 +406,7 @@ func (w *Workflows) inventoryItems(ctx context.Context, variantIDs []string) (ma
 	linked, err := w.links.ListMany(ctx, LinkVariantInventory, variantIDs)
 	if err != nil {
 		return nil, errors.Wrap(err, errors.KindOf(err), CodeLinkReadFailed,
-			"%q bağı okunamadı (%d varyant)", LinkVariantInventory, len(variantIDs))
+			"the %q link could not be read (%d variants)", LinkVariantInventory, len(variantIDs))
 	}
 
 	out := make(map[string]string, len(variantIDs))
@@ -402,46 +415,49 @@ func (w *Workflows) inventoryItems(ctx context.Context, variantIDs []string) (ma
 		switch len(items) {
 		case 0:
 			return nil, errors.Invalid(CodeVariantNotStocked,
-				"%s varyantı hiçbir stok kalemine bağlı değil; stoğu ayrılamayan ürün sipariş edilemez",
+				"variant %s is not linked to any inventory item; a product whose stock cannot be reserved cannot be ordered",
 				variantID)
 		case 1:
 			out[variantID] = items[0]
 		default:
 			return nil, errors.Internal(CodeVariantInventoryAmbiguous,
-				"%s varyantı %d stok kalemine bağlı görünüyor; %q tanımı tekil olmalı",
+				"variant %s appears to be linked to %d inventory items; the %q definition must be singular",
 				variantID, len(items), LinkVariantInventory)
 		}
 	}
 	return out, nil
 }
 
-// validate planın aritmetiğini ve sınırlarını doğrular.
+// validate verifies the arithmetic and the bounds of the plan.
 //
-// Doğrulama order modülünde de yapılır ve tekrar BİLİNÇLİDİR: oradaki denetim
-// stok ayrıldıktan sonra çalışır, buradaki ise HİÇBİR yan etki uygulanmadan.
-// Bozuk bir hesabın bedeli, ayrılıp geri bırakılan stok ve boşuna açılmış bir
-// yürütme kaydı olmamalıdır.
+// The validation is done in the order module as well and the repetition is
+// DELIBERATE: the check over there runs after the stock has been reserved, the
+// one here runs with NO side effect applied. The price of corrupt totals must
+// not be stock that is reserved and released again plus an execution record
+// opened for nothing.
 //
-// Denetlenen kimlikler şunlardır: satır ara toplamı = birim fiyat × adet,
-// satır toplamı = ara toplam - indirim + vergi, sepetin ara toplamı satırların
-// ara toplamlarının toplamı ve tahsil edilecek tutar = ara toplam - indirim +
-// vergi + kargo.
+// The identities checked are these: line subtotal = unit price x quantity, line
+// total = subtotal - discount + tax, the cart subtotal is the sum of the line
+// subtotals, and the amount to be collected = subtotal - discount + tax +
+// shipping.
 //
-// # Kimlik sınanmadan ÖNCE her terim aralığa sokulur
+// # Every term is clamped to its range BEFORE the identity is tested
 //
-// Sepet düzeyindeki indirim ve vergi de satır düzeyindekiler gibi
-// [checkAmount]'tan geçer ve bu ZORUNLUDUR: kimlik ham int64 aritmetiğiyle
-// sınanır, yani denetlenmemiş terimlerle kendi kendini doğrulayan bir hesap
-// üretilebilir. İki somut kaçak vardı — negatif bir sepet indirimi kimliği
-// bozmadan tahsil edilecek tutarı ŞİŞİRİYOR (2500 - (-100000) + … müşteriden
-// fazla çekiliyor), taşan bir vergi ile taşan bir indirim ise birbirini
-// götürüp kimliği "sağlıyor" ve sipariş MaxInt64 vergiyle açılıyordu.
-// Her terim [0, MaxTotal] aralığına sokulduğunda dört terimin toplamı en fazla
-// 3 × 10^18 olur ve int64'e sığar; taşma yapısal olarak imkânsızlaşır.
+// The cart-level discount and tax go through [checkAmount] just like the
+// line-level ones, and this is MANDATORY: the identity is tested with raw int64
+// arithmetic, meaning that a self-validating set of totals can be produced out
+// of unchecked terms. There were two concrete leaks — a negative cart discount
+// INFLATES the amount to be collected without breaking the identity
+// (2500 - (-100000) + … overcharges the customer), while an overflowing tax and
+// an overflowing discount cancel each other out, "satisfy" the identity and the
+// order was opened with MaxInt64 tax.
+// Once every term is clamped into the [0, MaxTotal] range, the sum of the four
+// terms is at most 3 x 10^18 and fits in int64; overflow becomes structurally
+// impossible.
 func (p *checkoutPlan) validate() error {
 	if len(p.Lines) == 0 {
 		return errors.Conflict(CodeCartEmpty,
-			"satırsız sepetten sipariş oluşturulamaz: %s", p.CartID)
+			"cannot create an order from a cart with no lines: %s", p.CartID)
 	}
 
 	var subtotal int64
@@ -449,7 +465,7 @@ func (p *checkoutPlan) validate() error {
 		line := p.Lines[i]
 		if line.Quantity < MinQuantity || line.Quantity > MaxQuantity {
 			return errors.Internal(CodeAmountInvalid,
-				"satır adedi [%d, %d] aralığında olmalı: %s -> %d",
+				"the line quantity must be within [%d, %d]: %s -> %d",
 				MinQuantity, MaxQuantity, line.LineItemID, line.Quantity)
 		}
 		if err := checkAmount("unit_price", line.UnitPrice, MaxAmount); err != nil {
@@ -468,12 +484,12 @@ func (p *checkoutPlan) validate() error {
 		}
 		if expected != line.Subtotal {
 			return errors.Internal(CodeAmountInvalid,
-				"satır ara toplamı birim fiyat × adet değil: %s (%d × %d ≠ %d)",
+				"the line subtotal is not unit price x quantity: %s (%d x %d ≠ %d)",
 				line.LineItemID, line.UnitPrice, line.Quantity, line.Subtotal)
 		}
 		if line.Total != line.Subtotal-line.DiscountTotal+line.TaxTotal {
 			return errors.Internal(CodeAmountInvalid,
-				"satır toplamı kimliği sağlamıyor: %s (%d ≠ %d - %d + %d)",
+				"the line total does not satisfy the identity: %s (%d ≠ %d - %d + %d)",
 				line.LineItemID, line.Total, line.Subtotal, line.DiscountTotal, line.TaxTotal)
 		}
 
@@ -485,7 +501,7 @@ func (p *checkoutPlan) validate() error {
 
 	if subtotal != p.Subtotal {
 		return errors.Internal(CodeAmountInvalid,
-			"sepetin ara toplamı satırların ara toplamı değil: %s (%d ≠ %d)",
+			"the cart subtotal is not the sum of the line subtotals: %s (%d ≠ %d)",
 			p.CartID, p.Subtotal, subtotal)
 	}
 	if err := checkAmount("discount_total", p.DiscountTotal, MaxTotal); err != nil {
@@ -499,26 +515,26 @@ func (p *checkoutPlan) validate() error {
 	}
 	if p.Amount != p.Subtotal-p.DiscountTotal+p.TaxTotal+p.ShippingTotal {
 		return errors.Internal(CodeAmountInvalid,
-			"sepetin toplam kimliği sağlamıyor: %s (%d ≠ %d - %d + %d + %d)",
+			"the cart total does not satisfy the identity: %s (%d ≠ %d - %d + %d + %d)",
 			p.CartID, p.Amount, p.Subtotal, p.DiscountTotal, p.TaxTotal, p.ShippingTotal)
 	}
 	if p.Amount <= 0 {
-		// payment modülü sıfır tutarlı koleksiyonu reddeder ve haklıdır: hiçbir
-		// zaman "captured" olamayacak bir koleksiyon, sonsuza kadar ödeme
-		// bekleyen ölü bir kayıttır. Bedelsiz sipariş (tamamı indirimli sepet)
-		// ödeme adımı OLMAYAN ayrı bir akıştır ve plan Faz 7+'ya aittir.
+		// The payment module rejects a zero-amount collection and it is right: a
+		// collection that can never become "captured" is a dead record waiting
+		// for payment forever. A free order (a fully discounted cart) is a
+		// separate flow with NO payment step and its plan belongs to Phase 7+.
 		return errors.Invalid(CodeAmountInvalid,
-			"tahsil edilecek tutar pozitif olmalı: %s -> %d", p.CartID, p.Amount)
+			"the amount to be collected must be positive: %s -> %d", p.CartID, p.Amount)
 	}
 	return checkAmount("amount", p.Amount, MaxTotal)
 }
 
-// orderSnapshot siparişe dönüşecek görüntünün JSON şemasıdır.
+// orderSnapshot is the JSON schema of the snapshot that becomes an order.
 //
-// Alan adları order modülünün beklediği şemayla BİREBİR aynı olmak
-// ZORUNDADIR; bu paket o modülü import edemediği için derleyici uyumu
-// denetleyemez ve uyum ancak entegrasyon testiyle kanıtlanabilir (ADR 0006'nın
-// kabul edilen bedeli).
+// The field names MUST be EXACTLY the same as the schema the order module
+// expects; because this package cannot import that module the compiler cannot
+// check the match, and the match can only be proven with an integration test
+// (the accepted price of ADR 0006).
 type orderSnapshot struct {
 	CartID         string              `json:"cart_id"`
 	RegionID       string              `json:"region_id"`
@@ -534,7 +550,7 @@ type orderSnapshot struct {
 	Items          []orderSnapshotItem `json:"items"`
 }
 
-// orderSnapshotItem bir sipariş satırının JSON şemasıdır.
+// orderSnapshotItem is the JSON schema of an order line.
 type orderSnapshotItem struct {
 	VariantID     string `json:"variant_id"`
 	Title         string `json:"title"`
@@ -546,12 +562,12 @@ type orderSnapshotItem struct {
 	Total         int64  `json:"total"`
 }
 
-// orderSnapshotJSON planı siparişin beklediği gövdeye çevirir.
+// orderSnapshotJSON converts the plan into the body the order expects.
 //
-// idempotencyKey yürütmenin kimliğidir: aynı yürütmede tekrarlanan bir çağrı
-// yeni sipariş açmaz, mevcut siparişin kimliğini döner. Yeni bir yürütme yeni
-// bir kimlik alır, yani telafi edilmiş bir denemeden sonra başlatılan akış
-// yeni bir sipariş açabilir.
+// idempotencyKey is the identity of the execution: a call repeated within the
+// same execution does not open a new order, it returns the identity of the
+// existing order. A new execution gets a new identity, which means a flow
+// started after a compensated attempt may open a new order.
 func (p *checkoutPlan) orderSnapshotJSON(idempotencyKey string) (json.RawMessage, error) {
 	items := make([]orderSnapshotItem, 0, len(p.Lines))
 	for i := range p.Lines {
@@ -583,7 +599,7 @@ func (p *checkoutPlan) orderSnapshotJSON(idempotencyKey string) (json.RawMessage
 	})
 	if err != nil {
 		return nil, errors.Wrap(err, errors.KindInternal, CodeSnapshotInvalid,
-			"sipariş görüntüsü JSON'a çevrilemedi: %s", p.CartID)
+			"the order snapshot could not be converted to JSON: %s", p.CartID)
 	}
 	return payload, nil
 }

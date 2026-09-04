@@ -1,161 +1,171 @@
-// Package cart sepet akışlarının modüller arası orkestrasyonudur (plan Faz 5).
+// Package cart is the cross-module orchestration of the cart flows (plan Phase 5).
 //
-// Dört akış sunar: [Workflows.CreateCart], [Workflows.AddLineItem],
-// [Workflows.UpdateLineItem] ve [Workflows.CalculateTotals]. Dördü de birden
-// çok modüle dokunur ve plan Bölüm 2.5 gereği modül servisinde değil BURADA
-// yaşar: sepetin şekli cart'ın, fiyat pricing'in, para birimi region'ın,
-// indirim promotion'ın ve vergi tax'ın verisidir; hiçbiri tek başına bir
-// sepetin ne tuttuğunu bilemez.
+// It offers four flows: [Workflows.CreateCart], [Workflows.AddLineItem],
+// [Workflows.UpdateLineItem] and [Workflows.CalculateTotals]. All four touch more
+// than one module and, per plan Section 2.5, live HERE and not in a module service:
+// the shape of the cart is cart's data, the price is pricing's, the currency is
+// region's, the discount is promotion's and the tax is tax's; none of them can know
+// on its own what a cart holds.
 //
-// # Modüllere erişim
+// # Access to the modules
 //
-// Bu paket internal/modules altındaki HİÇBİR paketi import etmez (ADR 0006).
-// İhtiyaç duyduğu her yüzey burada DAR bir arayüz olarak tanımlıdır ([Carts],
-// [Prices], [Regions], [Customers], [Discounts], [Taxes], [Links], [Catalog])
-// ve somut servis container'dan ADLA çözülür (bkz. [FromContainer]). Kural
-// internal/arch'taki TestWorkflowsDoNotImportModules ile denetlenir.
+// This package imports NO package under internal/modules (ADR 0006). Every surface
+// it needs is defined here as a NARROW interface ([Carts], [Prices], [Regions],
+// [Customers], [Discounts], [Taxes], [Links], [Catalog]) and the concrete service is
+// resolved from the container BY NAME (see [FromContainer]). The rule is audited by
+// TestWorkflowsDoNotImportModules in internal/arch.
 //
-// Sekiz yüzeyin altısı ZORUNLUDUR; [Discounts] ve [Taxes] opsiyoneldir ve
-// kayıtlı olmadıklarında hesap degrade bir yolda sürer (bkz. "İndirim" ve
-// "Vergi sözleşmesi").
+// Six of the eight surfaces are MANDATORY; [Discounts] and [Taxes] are optional and
+// when they are not registered the calculation runs down a degraded path (see
+// "Discount" and "Tax contract").
 //
-// Arayüzlerin imzaları yalnızca ilkel ve stdlib tipleri kullanır. Sebep Go'nun
-// yapısal uyum kuralıdır: bir modülün tipini adlandıramayan tüketici, o tipi
-// kendi paketinde yeniden tanımladığı anda BAŞKA bir tip elde eder ve somut
-// servis arayüzü karşılamaz. Aynı sebeple yapısal veri (sepetin anlık şekli ve
-// hesaplanan toplamlar) sınırı JSON olarak geçer; bkz. [Carts].
+// The signatures of the interfaces use only primitive and stdlib types. The reason
+// is Go's structural conformance rule: a consumer that cannot name a module's type
+// gets a DIFFERENT type the moment it redefines that type in its own package, and
+// then the concrete service no longer satisfies the interface. For the same reason
+// structural data (the current shape of the cart and the computed totals) crosses
+// the boundary as JSON; see [Carts].
 //
-// # Neden hiçbir akış saga değil
+// # Why none of the flows is a saga
 //
-// Saga, bir akış BİRDEN ÇOK modülde geri alınması gereken yan etki bıraktığında
-// kazanır: telafi zinciri, tek bir veritabanı işlemiyle sarılamayan yazmaları
-// birlikte geri alır (bkz. internal/core/workflow paket yorumu). Bu dört akışın
-// hiçbiri öyle değildir — hepsi ÇOK modülden OKUR ama yalnızca TEK modüle
-// (cart) YAZAR:
+// A saga wins when a flow leaves side effects in MORE THAN ONE module that have to
+// be undone: the compensation chain rolls back together the writes that cannot be
+// wrapped in a single database transaction (see the internal/core/workflow package
+// comment). None of these four flows is like that — they all READ from MANY modules
+// but WRITE to only ONE module (cart):
 //
-//   - CreateCart: region ve customer'dan okur, cart'a bir kez yazar.
-//   - AddLineItem / UpdateLineItem: catalog, link ve pricing'den okur, cart'a yazar.
-//   - CalculateTotals: cart, link, pricing, promotion, tax ve region'dan okur,
-//     cart'a yazar.
+//   - CreateCart: reads from region and customer, writes to cart once.
+//   - AddLineItem / UpdateLineItem: read from catalog, link and pricing, write to
+//     cart.
+//   - CalculateTotals: reads from cart, link, pricing, promotion, tax and region,
+//     writes to cart.
 //
-// Tek yazma patlarsa geri alınacak bir şey yoktur; adım hiç olmamıştır. İki
-// yazma yapan tek yol satır ekleme/güncellemedir (önce satır, sonra toplamlar)
-// ve ikinci yazmanın patlaması TELAFİ GEREKTİRMEZ: geriye kalan durum, cart
-// modelinin açıkça tanıdığı BAYAT TOPLAM durumudur ve o sepetin sipariş olması
-// zaten reddedilir (bkz. cart modülünde MarkCompleted). Satırı geri almak,
-// geçici bir pricing arızası yüzünden müşterinin isteğini SİLMEK olurdu.
+// If the single write fails there is nothing to roll back; the step never happened.
+// The only path that does two writes is adding/updating a line (first the line, then
+// the totals) and a failure of the second write NEEDS NO COMPENSATION: the state
+// that remains is the STALE TOTALS state that the cart model explicitly recognizes,
+// and such a cart is already refused from becoming an order (see MarkCompleted in
+// the cart module). Rolling the line back would mean DELETING the customer's intent
+// because of a transient pricing failure.
 //
-// Bu yüzden core/workflow Executor'ı bu turda KULLANILMAZ ve "core.workflow"
-// adı çözülmez. Telafisi olmayan tek adımlı bir işi motora sarmak, yürütme
-// kaydı ve telafi mekaniğinin bedelini öder ama karşılığında hiçbir güvence
-// almaz; motorun sunduğu tek şey olan "ters sırada geri alma" burada boş
-// kümedir.
+// This is why the core/workflow Executor is NOT USED in this round and the
+// "core.workflow" name is not resolved. Wrapping a single-step job that has no
+// compensation into the engine pays the cost of the execution record and the
+// compensation machinery but buys no guarantee in return; the only thing the engine
+// offers, "undo in reverse order", is the empty set here.
 //
-// Faz 6'daki complete_cart GERÇEK bir saga olacaktır: rezervasyon (inventory),
-// sipariş (order) ve ödeme (payment) ÜÇ AYRI modülde yan etki bırakır ve
-// ödeme patladığında ilk ikisi geri alınmalıdır. Bu paket ona şu zemini
-// bırakır: [Deps] ve [FromContainer] olduğu gibi genişletilir,
-// [Workflows.CalculateTotals] ise saga'nın ilk adımının gövdesi olur —
-// o adımın Compensate'i boş kalabilir, çünkü toplam yazmak idempotenttir ve
-// bayatlık zaten görünür bir durumdur.
+// The complete_cart of Phase 6 WILL be a REAL saga: the reservation (inventory), the
+// order (order) and the payment (payment) leave side effects in THREE SEPARATE
+// modules and when the payment fails the first two must be rolled back. This package
+// leaves it the following ground: [Deps] and [FromContainer] are extended just as
+// they are, and [Workflows.CalculateTotals] becomes the body of the saga's first
+// step — the Compensate of that step may stay empty, because writing totals is
+// idempotent and staleness is already a visible state.
 //
-// # Vergi sözleşmesi
+// # Tax contract
 //
-// Vergiyi tax modülü hesaplar ([Taxes.CalculateTaxJSON]); Faz 5'te bu iş
-// geçici olarak region'daydı ve region'ın godoc'u devralmayı zaten
-// işaretlemişti. Sözleşmenin üç kararı devralmadan ETKİLENMEZ:
+// Tax is computed by the tax module ([Taxes.CalculateTaxJSON]); in Phase 5 this job
+// temporarily lived in region, and region's godoc had already flagged the handover.
+// The three decisions of the contract are UNAFFECTED by the handover:
 //
-//  1. TABAN: vergi, İNDİRİM SONRASI satır ara toplamı üzerinden hesaplanır ve
-//     KARGO tabana girmez. Vergi fiilen ödenen bedeli izler; indirim öncesi
-//     tutarı vergilemek, müşteriden hiç alınmayan bir paranın vergisini almak
-//     olurdu. Kargo dışarıda bırakılır çünkü kargonun vergilenip
-//     vergilenmediği yargı bölgesine göre değişir; tax modülü bunu
-//     ShippingInput.Taxable ile opsiyonel kılar ve bu akış o seçeneği AÇMAZ.
-//     Olmayan bir kuralı "malla aynıdır" diye varsaymak sessiz bir tahmindir.
-//  2. SATIR BAŞINA: vergi her satır için ayrı hesaplanır, sepetin vergisi de
-//     satır vergilerinin TOPLAMIDIR. Sepet tabanını tek seferde vergilemek
-//     yuvarlama yüzünden birkaç minor unit farklı sonuç verirdi; satır başına
-//     hesaplamak seçilmiştir çünkü (a) faturada her satırın vergisi tek tek
-//     açıklanabilir olmalıdır, (b) tax modülü ürün sınıfına göre satır başına
-//     FARKLI oranlar uygulayabilir ve o gün tabanın tanımı değişmemelidir.
-//  3. YUVARLAMA: baz puan aritmetiği TAM SAYIDIR ve bölme AŞAĞI yuvarlar
-//     (taban × oran / 10000). Kabul edilir: hata satır başına bir minor
-//     unit'ten küçüktür ve daima müşteri LEHİNEDİR. Yakına yuvarlama
-//     (round-half-up) seçilmedi, çünkü müşteriden fazla tahsil eder ve
-//     "fazlası nereden geldi" sorusunu mutabakata bırakır; kayan noktalı oran
-//     ise plan Bölüm 8 gereği hiç düşünülmez.
+//  1. BASE: tax is computed over the POST-DISCOUNT line subtotal and SHIPPING does
+//     not enter the base. Tax follows the amount actually paid; taxing the
+//     pre-discount amount would mean taxing money that was never collected from the
+//     customer. Shipping is left out because whether shipping is taxed or not varies
+//     by jurisdiction; the tax module makes this optional with ShippingInput.Taxable
+//     and this flow does NOT turn that option on. Assuming a rule that does not
+//     exist, "it is the same as goods", is a silent guess.
+//  2. PER LINE: tax is computed separately for each line, and the cart's tax is the
+//     SUM of the line taxes. Taxing the cart base in one go would give a result a few
+//     minor units different because of rounding; per-line computation was chosen
+//     because (a) on an invoice the tax of every line must be explainable one by one,
+//     and (b) the tax module may apply DIFFERENT per-line rates by product class and
+//     on that day the definition of the base must not change.
+//  3. ROUNDING: basis point arithmetic is INTEGER and division rounds DOWN
+//     (base x rate / 10000). This is acceptable: the error is smaller than one minor
+//     unit per line and is always IN THE CUSTOMER'S FAVOR. Round-half-up was not
+//     chosen, because it overcharges the customer and leaves the question "where did
+//     the excess come from" to reconciliation; a floating point rate is, per plan
+//     Section 8, never even considered.
 //
-// # Vergi ÜLKESİ nereden geliyor
+// # Where the tax COUNTRY comes from
 //
-// tax modülü ülke ister, sepet ise BÖLGE tutar. Ülke, bölgenin Query
-// katmanındaki kaydından okunur ve bölge TEK bir ülkeye bağlıysa kullanılır.
-// Reddedilen alternatif (sepetin kargo adresi) ve çok ülkeli bölgenin neden
-// "çözülemedi" sayıldığı [Workflows.countryForRegion] godoc'undadır.
+// The tax module wants a country, while the cart holds a REGION. The country is read
+// from the region's record in the Query layer and is used if the region is bound to
+// a SINGLE country. The rejected alternative (the cart's shipping address) and why a
+// multi-country region counts as "unresolved" are in the
+// [Workflows.countryForRegion] godoc.
 //
-// # Vergi KAYNAĞI sonuçta görünür
+// # The tax SOURCE is visible in the result
 //
-// Vergiyi kimin hesapladığı [Totals.TaxSource] alanında bildirilir ve üç değer
-// alır: [TaxSourceTax], [TaxSourceTaxUnconfigured], [TaxSourceRegion]. tax
-// yüzeyi kayıtlı değilse ya da ülke çözülemiyorsa hesap region'ın oranına
-// (Faz 5 yoluna) DÜŞER — sıfıra değil. Ladder'ın tamamı ve "neden sıfır değil"
-// gerekçesi [Workflows.applyTaxes] godoc'undadır. Kısaca: eksik vergi
-// satıcının cebinden sessizce çıkar, eksik indirim ise müşterinin gördüğü bir
-// fazlalıktır; iki yönün riski simetrik değildir.
+// Who computed the tax is reported in the [Totals.TaxSource] field and it takes three
+// values: [TaxSourceTax], [TaxSourceTaxUnconfigured], [TaxSourceRegion]. If the tax
+// surface is not registered, or the country cannot be resolved, the calculation FALLS
+// BACK to region's rate (the Phase 5 path) — not to zero. The whole ladder and the
+// "why not zero" rationale are in the [Workflows.applyTaxes] godoc. In short: missing
+// tax comes silently out of the merchant's own pocket, whereas a missing discount is
+// an excess the customer sees; the risks of the two directions are not symmetric.
 //
-// # İndirim
+// # Discount
 //
-// İndirimi promotion modülü hesaplar ([Discounts.ComputeDiscountsJSON]) ve
-// sonuç KALEM BAŞINA gelir: satır indirimleri [LineTotals.DiscountTotal],
-// toplamları [Totals.DiscountTotal] alanına yazılır. Hesap YAN ETKİSİZDİR —
-// kuponu fiilen harcayan çağrı promotion'ın RedeemPromotion metodudur ve o,
-// siparişin işidir; bu yüzden [Discounts] yüzeyi onu hiç tanımaz.
+// The discount is computed by the promotion module
+// ([Discounts.ComputeDiscountsJSON]) and the result arrives PER LINE ITEM: line
+// discounts are written to [LineTotals.DiscountTotal] and their sum to the
+// [Totals.DiscountTotal] field. The computation is SIDE-EFFECT FREE — the call that
+// actually spends the coupon is promotion's RedeemPromotion method and that is the
+// order's job; this is why the [Discounts] surface does not know it at all.
 //
-// promotion yüzeyi kayıtlı DEĞİLSE indirim sıfır kalır ve vitrin çalışmaya
-// devam eder; gerekçe [Workflows.applyDiscounts] godoc'undadır.
+// If the promotion surface is NOT registered the discount stays zero and the
+// storefront keeps working; the rationale is in the [Workflows.applyDiscounts]
+// godoc.
 //
-// # Kupon kodları: YALNIZCA otomatik promosyonlar
+// # Coupon codes: AUTOMATIC promotions ONLY
 //
-// Sepette kupon alanı YOKTUR ve [Workflows.CalculateTotals] kupon kodu ALMAZ;
-// hesaba yalnızca OTOMATİK promosyonlar girer.
+// There is NO coupon field on the cart and [Workflows.CalculateTotals] takes NO
+// coupon code; only AUTOMATIC promotions enter the calculation.
 //
-// Reddedilen alternatif, kodları CalculateTotals'a opsiyonel bir parametre
-// olarak vermekti. İki sebeple reddedildi:
+// The rejected alternative was to give the codes to CalculateTotals as an optional
+// parameter. It was rejected for two reasons:
 //
-//   - Toplam hesabı sepetin KENDİ durumundan yeniden üretilebilir olmalıdır.
-//     Akış üç yerden çağrılır (doğrudan, satır ekleme ve satır güncelleme
-//     sonrası) ve kod yalnızca birine geçseydi sepete YAZILAN indirim, en son
-//     hangi uçtan geçildiğine göre görünüp kaybolurdu. Müşteri adedi bir
-//     artırdığında kuponun sessizce düşmesi, o tasarımın kaçınılmaz sonucudur.
-//   - Kod KALICI DEĞİLDİR. Sepet onu saklayamadığı için sipariş, sepette
-//     görülen indirimden farklı bir toplamla oluşabilirdi; Faz 6'nın saga'sı
-//     sepetin YAZILI toplamını kullanır.
+//   - The totals calculation must be reproducible from the cart's OWN state. The
+//     flow is called from three places (directly, after adding a line and after
+//     updating a line) and if the code were passed to only one of them, the discount
+//     WRITTEN to the cart would appear and disappear depending on which entry point
+//     was used last. The coupon silently dropping when the customer increases a
+//     quantity by one is the unavoidable consequence of that design.
+//   - The code is NOT PERSISTENT. Because the cart cannot store it, the order could
+//     be created with a total different from the discount seen on the cart; the saga
+//     of Phase 6 uses the cart's WRITTEN total.
 //
-// Kupon alanı sepet modülüne eklendiğinde bağlanacağı yer bellidir ve üç
-// noktadır: [Snapshot] şemasına kodları taşıyan bir alan eklenir, o alan
-// [Workflows.discountRequestFor] içinde isteğin "codes" dizisine geçirilir ve
-// sipariş anında promotion'ın RedeemPromotion'ı çağrılır. Bu turda ilk iki
-// nokta boş, üçüncüsü ise bu paketin dışındadır.
+// When a coupon field is added to the cart module the place it will be wired into is
+// clear and it is three points: a field carrying the codes is added to the [Snapshot]
+// schema, that field is passed into the request's "codes" array inside
+// [Workflows.discountRequestFor], and at order time promotion's RedeemPromotion is
+// called. In this round the first two points are empty and the third is outside this
+// package.
 //
-// # Müşteri segmenti fiyatları
+// # Customer segment prices
 //
-// Fiyat bağlamına ("region_id" dışında) müşteri grubu KONMAZ. pricing'in kural
-// bağlamı öznitelik başına TEK değer taşır; birden çok gruba üye bir müşteri
-// için hangi grubun yazılacağı belirsizdir ve sessizce birini seçmek fiyatı
-// harita dolaşım sırasına bağlardı. Seçim kuralı ("müşterinin hakkı olan en
-// iyi fiyat") pricing'in kararıdır. Aynı boşluk indirim bağlamında da vardır
-// ve aynı sebeple doldurulmaz (bkz. [Workflows.discountRequestFor]).
+// The customer group is NOT put into the price context (beyond "region_id").
+// pricing's rule context carries a SINGLE value per attribute; for a customer who is
+// a member of more than one group it is ambiguous which group would be written, and
+// silently picking one would tie the price to map iteration order. The selection rule
+// ("the best price the customer is entitled to") is pricing's decision. The same gap
+// exists in the discount context as well and is left unfilled for the same reason
+// (see [Workflows.discountRequestFor]).
 //
-// # [Carts] yüzeyini kim karşılıyor
+// # Who satisfies the [Carts] surface
 //
-// Bu yüzey cart modülünün SERVİSİYLE değil, onun modüller arası interop
-// tipiyle karşılanır ve container'da [ServiceCart] adıyla kayıtlıdır. Ayrım
-// zorunludur: servisin imzaları cart'ın kendi models ve service tiplerini
-// kullanır, bu paket ise o tipleri adlandıramaz (ADR 0006) — yapısal uyum
-// ancak ilkel imzalı bir yüzeyle kurulabilir. Aynı örüntü region, pricing,
-// customer, promotion ve tax modüllerinde de vardır.
+// This surface is satisfied not by the cart module's SERVICE but by its cross-module
+// interop type, and it is registered in the container under the name [ServiceCart].
+// The distinction is mandatory: the signatures of the service use cart's own models
+// and service types, and this package cannot name those types (ADR 0006) —
+// structural conformance can only be established through a surface with primitive
+// signatures. The same pattern exists in the region, pricing, customer, promotion and
+// tax modules too.
 //
-// Uyumu derleyici DENETLEMEZ; yanlış kaydedilmiş bir tip [FromContainer]
-// çağrısında tipli bir uyumsuzluk hatası verir ve hata hangi metodun eksik
-// olduğunu yazar (ADR 0001, ADR 0002). Alan adlarının uyumu ise ancak
-// entegrasyon testiyle kanıtlanabilir (bkz. internal/e2e).
+// The conformance is NOT CHECKED by the compiler; a wrongly registered type gives a
+// typed mismatch error on the [FromContainer] call and the error writes which method
+// is missing (ADR 0001, ADR 0002). The conformance of the field names, on the other
+// hand, can only be proven by an integration test (see internal/e2e).
 package cart

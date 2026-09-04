@@ -18,24 +18,26 @@ import (
 	cartwf "github.com/bdrtr/gobit/internal/workflows/cart"
 )
 
-// indexOf bir çağrının kayıttaki sırasını döner; yoksa -1.
+// indexOf returns the position of a call in the record; -1 when it is absent.
 func indexOf(calls []string, call string) int {
 	return slices.Index(calls, call)
 }
 
-// TestKurtarmaTanimiKayittakiAdimlariTasir kurtarmanın dayandığı adım adlarını
-// ve SIRASINI sabitler.
+// TestRecoveryDefinitionCarriesTheRecordedSteps pins the step names recovery
+// relies on, and their ORDER.
 //
-// Kurtarma, motorun kayıttaki adım ADINI tanımdakiyle karşılaştırmasına dayanır
-// (bkz. workflow.Recoverer): ad tutmazsa yarım kalmış saga HİÇ kurtarılamaz ve
-// operatörün elinde yalnızca "elle müdahale" kalır. Yani bu dizi bir kolaylık
-// değil, kurtarmanın ön koşulu.
+// Recovery rests on the engine comparing the step NAME in the record with the
+// one in the definition (see workflow.Recoverer): if the name does not match, a
+// half-finished saga can NEVER be recovered and all the operator is left with
+// is "manual intervention". So this sequence is not a convenience, it is the
+// precondition of recovery.
 //
-// Adımlar tek bir yerden kuruluyor (sagaSteps) ama sıra yine de burada
-// çivileniyor: sırayı değiştiren bir düzenleme, ÇALIŞAN kurulumların yarım
-// kalmış kayıtlarını kurtarılamaz yapar — kod derlenir, testler yeşil kalır ve
-// bedel yalnızca üretimde, tam da en kötü anda ortaya çıkar.
-func TestKurtarmaTanimiKayittakiAdimlariTasir(t *testing.T) {
+// The steps are built in a single place (sagaSteps) but the order is still
+// nailed down here: an edit that changes the order makes the half-finished
+// records of RUNNING installations unrecoverable — the code compiles, the tests
+// stay green, and the bill only arrives in production, at exactly the worst
+// moment.
+func TestRecoveryDefinitionCarriesTheRecordedSteps(t *testing.T) {
 	h := newHarness(t)
 
 	plan, err := json.Marshal(checkoutPlan{CartID: testCartID, CurrencyCode: testCurrency})
@@ -46,9 +48,9 @@ func TestKurtarmaTanimiKayittakiAdimlariTasir(t *testing.T) {
 
 	assert.Equal(t, WorkflowName, wf.Name)
 
-	adlar := make([]string, 0, len(wf.Steps))
-	for _, adim := range wf.Steps {
-		adlar = append(adlar, adim.Name())
+	names := make([]string, 0, len(wf.Steps))
+	for _, step := range wf.Steps {
+		names = append(names, step.Name())
 	}
 	assert.Equal(t, []string{
 		StepReserveInventory,
@@ -56,38 +58,40 @@ func TestKurtarmaTanimiKayittakiAdimlariTasir(t *testing.T) {
 		StepAuthorizePayment,
 		StepCapturePayment,
 		StepClearCart,
-	}, adlar, "kurtarma tanımı, kayıttaki adımların adını ve SIRASINI taşımalı")
+	}, names, "the recovery definition must carry the name and the ORDER of the recorded steps")
 }
 
-// TestKurtarmaTanimiCozulemeyenPlaniReddeder kaydın girdisi okunamıyorsa
-// kurtarmanın hiç başlamamasını sabitler.
-func TestKurtarmaTanimiCozulemeyenPlaniReddeder(t *testing.T) {
+// TestRecoveryDefinitionRejectsAnUndecodablePlan pins that recovery never even
+// starts when the input of the record cannot be read.
+func TestRecoveryDefinitionRejectsAnUndecodablePlan(t *testing.T) {
 	h := newHarness(t)
 
-	_, err := h.wf.RecoveryWorkflow(json.RawMessage(`{bozuk`))
+	_, err := h.wf.RecoveryWorkflow(json.RawMessage(`{broken`))
 
 	require.Error(t, err)
-	assert.True(t, hasCode(err, CodeInvalidInput), "hata: %v", err)
+	assert.True(t, hasCode(err, CodeInvalidInput), "error: %v", err)
 }
 
-// TestKurtarmaTanimiBosPlaniReddeder JSON'un çözülmesinin YETMEDİĞİNİ sabitler.
+// TestRecoveryDefinitionRejectsAnEmptyPlan pins that decoding the JSON is NOT
+// ENOUGH.
 //
-// `{}` de çözülür ve sepet kimliği olmayan bir planla kurulan zincir,
-// telafilerini kimliksiz çağırır: "bir şey bırakmadım" diyen ama hiçbir
-// rezervasyonu bırakmayan bir kurtarma, operatöre yarım işi TEMİZLENMİŞ gibi
-// gösterir.
-func TestKurtarmaTanimiBosPlaniReddeder(t *testing.T) {
+// `{}` decodes too, and a chain built from a plan that has no cart identifier
+// calls its compensations without one: a recovery that says "I left nothing
+// behind" while releasing no reservation at all shows the operator half-done
+// work as if it had been CLEANED UP.
+func TestRecoveryDefinitionRejectsAnEmptyPlan(t *testing.T) {
 	h := newHarness(t)
 
 	_, err := h.wf.RecoveryWorkflow(json.RawMessage(`{}`))
 
 	require.Error(t, err)
-	assert.True(t, hasCode(err, CodeInvalidInput), "hata: %v", err)
+	assert.True(t, hasCode(err, CodeInvalidInput), "error: %v", err)
 }
 
-// TestKurtarmaTanimiPlaniGeriKurar planın alanlarının kayıttan geri geldiğini
-// doğrular: telafiler sepet kimliğini ORADAN okur.
-func TestKurtarmaTanimiPlaniGeriKurar(t *testing.T) {
+// TestRecoveryDefinitionRestoresThePlan verifies that the fields of the plan
+// come back from the record: the compensations read the cart identifier FROM
+// THERE.
+func TestRecoveryDefinitionRestoresThePlan(t *testing.T) {
 	h := newHarness(t)
 
 	plan, err := json.Marshal(checkoutPlan{
@@ -101,19 +105,19 @@ func TestKurtarmaTanimiPlaniGeriKurar(t *testing.T) {
 	wf, err := h.wf.RecoveryWorkflow(plan)
 	require.NoError(t, err)
 
-	rezerve, ok := wf.Steps[0].(*reserveInventoryStep)
-	require.True(t, ok, "ilk adım stok adımı olmalı")
-	assert.Equal(t, testCartID, rezerve.plan.CartID, "sepet kimliği kayıttan geri gelmeli")
-	assert.Equal(t, testAmount, rezerve.plan.Amount)
-	require.Len(t, rezerve.plan.Lines, 1)
-	assert.Equal(t, "li_1", rezerve.plan.Lines[0].LineItemID)
-	assert.Empty(t, rezerve.plan.PaymentData,
-		"ödeme verisi kayda YAZILMAZ; geri kurulan planda da bulunmamalı")
+	reserve, ok := wf.Steps[0].(*reserveInventoryStep)
+	require.True(t, ok, "the first step must be the inventory step")
+	assert.Equal(t, testCartID, reserve.plan.CartID, "the cart identifier must come back from the record")
+	assert.Equal(t, testAmount, reserve.plan.Amount)
+	require.Len(t, reserve.plan.Lines, 1)
+	assert.Equal(t, "li_1", reserve.plan.Lines[0].LineItemID)
+	assert.Empty(t, reserve.plan.PaymentData,
+		"payment data is NOT WRITTEN to the record; it must not be in the restored plan either")
 }
 
-// TestMutluYolBesAdimiSirayaCalistirir tüm adımların çalıştığını ve sonucun
-// siparişi, tahsilatı ve kesinleşen stoğu bildirdiğini doğrular.
-func TestMutluYolBesAdimiSirayaCalistirir(t *testing.T) {
+// TestHappyPathRunsTheFiveStepsInOrder verifies that every step runs and that
+// the result reports the order, the capture and the confirmed inventory.
+func TestHappyPathRunsTheFiveStepsInOrder(t *testing.T) {
 	h := newHarness(t)
 
 	out, err := h.wf.CompleteCart(context.Background(), h.input())
@@ -150,12 +154,13 @@ func TestMutluYolBesAdimiSirayaCalistirir(t *testing.T) {
 	}, h.rec.snapshot())
 }
 
-// TestSiparisGoruntusuHesapVeKatalogdanKurulur siparişe giden gövdenin
-// sepetten, hesaptan ve katalogdan doğru birleştirildiğini doğrular.
+// TestOrderSnapshotIsBuiltFromTotalsAndCatalog verifies that the body sent to
+// the order is assembled correctly from the cart, the totals and the catalog.
 //
-// Şema order modülünün beklediğiyle birebir aynı olmak zorundadır ve derleyici
-// bunu göremez (ADR 0006); bu yüzden alanlar tek tek sınanır.
-func TestSiparisGoruntusuHesapVeKatalogdanKurulur(t *testing.T) {
+// The schema has to be exactly the one the order module expects and the
+// compiler cannot see that (ADR 0006); this is why the fields are checked one
+// by one.
+func TestOrderSnapshotIsBuiltFromTotalsAndCatalog(t *testing.T) {
 	h := newHarness(t)
 
 	_, err := h.wf.CompleteCart(context.Background(), h.input())
@@ -166,9 +171,9 @@ func TestSiparisGoruntusuHesapVeKatalogdanKurulur(t *testing.T) {
 	assert.Equal(t, testCartID, placed.CartID)
 	assert.Equal(t, testRegionID, placed.RegionID)
 	assert.Equal(t, testCustomerID, placed.CustomerID)
-	assert.Equal(t, "musteri@example.com", placed.Email)
+	assert.Equal(t, "customer@example.com", placed.Email)
 	assert.Equal(t, testCurrency, placed.CurrencyCode)
-	assert.NotEmpty(t, placed.IdempotencyKey, "sipariş idempotency anahtarı DOLDURULMALI")
+	assert.NotEmpty(t, placed.IdempotencyKey, "the order idempotency key MUST BE FILLED IN")
 	assert.Equal(t, int64(2500), placed.Subtotal)
 	assert.Equal(t, int64(500), placed.TaxTotal)
 	assert.Equal(t, testAmount, placed.Total)
@@ -183,80 +188,83 @@ func TestSiparisGoruntusuHesapVeKatalogdanKurulur(t *testing.T) {
 		UnitPrice: 500, Subtotal: 500, TaxTotal: 100, Total: 600,
 	}, placed.Items[1])
 
-	// Tahsilat AÇIK tutarla yapılır; sıfır "bloke olanın tamamı" demek olurdu.
+	// The capture is made with an EXPLICIT amount; zero would have meant "all of
+	// what is held".
 	assert.Equal(t, []int64{testAmount}, h.payments.captureAmounts)
 }
 
-// TestOdemePatlayincaSiparisVeStokGeriAlinir Faz 6'nın DoD testidir.
+// TestPaymentFailureRollsBackOrderAndInventory is the DoD test of Phase 6.
 //
-// Ödeme adımı patladığında sipariş İPTAL EDİLMELİ, stok rezervasyonu GERİ
-// BIRAKILMALI ve telafiler TERS SIRADA çalışmalıdır.
-func TestOdemePatlayincaSiparisVeStokGeriAlinir(t *testing.T) {
+// When the payment step blows up the order MUST BE CANCELED, the inventory
+// reservation MUST BE RELEASED and the compensations must run in REVERSE ORDER.
+func TestPaymentFailureRollsBackOrderAndInventory(t *testing.T) {
 	h := newHarness(t)
 	h.payments.authorizeFn = func(context.Context, string) (string, int64, error) {
-		return "", 0, errors.Conflict("payment_authorization_declined", "kart reddedildi")
+		return "", 0, errors.Conflict("payment_authorization_declined", "the card was declined")
 	}
 
 	_, err := h.wf.CompleteCart(context.Background(), h.input())
 	require.Error(t, err)
-	assert.True(t, errors.IsConflict(err), "ret bir çakışmadır, sunucu arızası değil")
+	assert.True(t, errors.IsConflict(err), "a decline is a conflict, not a server fault")
 
 	calls := h.rec.snapshot()
 
-	// İLERİ yön: önce stok, sonra sipariş, sonra ödeme.
+	// FORWARD direction: inventory first, then the order, then the payment.
 	assert.Less(t, indexOf(calls, "inventory:reserve:"+testLineA), indexOf(calls, "order:place"))
 	assert.Less(t, indexOf(calls, "order:place"), indexOf(calls, "payment:authorize"))
 
-	// Telafi GERÇEKTEN çalıştı.
+	// The compensation REALLY ran.
 	assert.Equal(t, []string{testOrderID}, h.orders.canceled)
 	assert.Equal(t, 1, h.rec.count("inventory:release:res_"+testLineA))
 	assert.Equal(t, 1, h.rec.count("inventory:release:res_"+testLineB))
 
-	// TERS sıra: sipariş iptali stok iadesinden ÖNCE gelir.
+	// REVERSE order: the order cancellation comes BEFORE the inventory release.
 	assert.Less(t, indexOf(calls, "order:cancel"), indexOf(calls, "inventory:release:res_"+testLineA),
-		"telafi ters sırada çalışmalı: create_order, reserve_inventory'den ÖNCE geri alınır")
+		"compensation must run in reverse order: create_order is undone BEFORE reserve_inventory")
 
-	// Ödeme oturumu da kapatıldı; tahsilat hiç denenmedi.
+	// The payment session was closed too; the capture was never attempted.
 	assert.Equal(t, 1, h.rec.count("payment:cancel"))
 	assert.Equal(t, 0, h.rec.count("payment:capture"))
 	assert.Equal(t, 0, h.rec.count("cart:complete"))
 }
 
-// TestYetersizStokSiparisOlusturmaz ilk satırda ayırma patladığında hiçbir
-// yan etki uygulanmadığını doğrular: telafi edilecek bir şey yoktur.
-func TestYetersizStokSiparisOlusturmaz(t *testing.T) {
+// TestInsufficientStockCreatesNoOrder verifies that when the reservation of the
+// first line blows up no side effect has been applied: there is nothing to
+// compensate.
+func TestInsufficientStockCreatesNoOrder(t *testing.T) {
 	h := newHarness(t)
 	h.inventory.reserveFn = func(context.Context, string, string, int64, string) (string, error) {
-		return "", errors.Conflict("inventory_insufficient_stock", "yetersiz stok")
+		return "", errors.Conflict("inventory_insufficient_stock", "insufficient stock")
 	}
 
 	_, err := h.wf.CompleteCart(context.Background(), h.input())
 	require.Error(t, err)
 	assert.True(t, errors.IsConflict(err))
 	assert.Equal(t, "inventory_insufficient_stock", errors.CodeOf(err),
-		"stok modülünün kodu istemciye ULAŞMALI; adım kodu yalnızca kodsuz hata "+
-			"için yedektir — %v", err)
+		"the inventory module's code MUST REACH the client; the step code is only a "+
+			"fallback for a codeless error — %v", err)
 	assert.False(t, hasCode(err, CodeReservationFailed),
-		"adım kodu zincirde HİÇ bulunmamalı; bulunması, sarmalamanın kodu ezip "+
-			"sonra alt hatayı taşıdığı anlamına gelirdi")
+		"the step code must NOT be anywhere in the chain; finding it would mean the "+
+			"wrapping overwrote the code and then carried the underlying error")
 
 	assert.Equal(t, 0, h.rec.count("order:place"))
 	assert.Equal(t, 0, h.rec.count("payment:collection"))
 	assert.Empty(t, h.orders.canceled)
 	for _, call := range h.rec.snapshot() {
-		assert.NotContains(t, call, "inventory:release", "hiç rezervasyon alınmadıysa bırakılacak da yoktur")
+		assert.NotContains(t, call, "inventory:release", "if no reservation was taken there is nothing to release")
 	}
 }
 
-// TestIkinciSatirdaYetersizStokIlkiniBirakir yarıda kalan adımın KENDİ
-// temizliğini yaptığını doğrular.
+// TestInsufficientStockOnTheSecondLineReleasesTheFirst verifies that a step
+// which stops halfway does its OWN cleanup.
 //
-// Motor tek denemede patlayan adımı telafi ETMEZ; temizlik borcu adımındır.
-func TestIkinciSatirdaYetersizStokIlkiniBirakir(t *testing.T) {
+// The engine does NOT compensate a step that blows up on a single attempt; the
+// cleanup debt belongs to the step.
+func TestInsufficientStockOnTheSecondLineReleasesTheFirst(t *testing.T) {
 	h := newHarness(t)
 	h.inventory.reserveFn = func(_ context.Context, _, _ string, _ int64, lineItemID string) (string, error) {
 		if lineItemID == testLineB {
-			return "", errors.Conflict("inventory_insufficient_stock", "yetersiz stok")
+			return "", errors.Conflict("inventory_insufficient_stock", "insufficient stock")
 		}
 		return "res_" + lineItemID, nil
 	}
@@ -266,19 +274,20 @@ func TestIkinciSatirdaYetersizStokIlkiniBirakir(t *testing.T) {
 	assert.True(t, errors.IsConflict(err))
 
 	assert.Equal(t, 1, h.rec.count("inventory:release:res_"+testLineA),
-		"ilk satırın rezervasyonu adımın kendi temizliğiyle bırakılmalı")
+		"the reservation of the first line must be released by the step's own cleanup")
 	assert.Equal(t, 0, h.rec.count("order:place"))
 }
 
-// TestLokasyonDoluysaEskiDavranisKorunur çağıranın bildirdiği lokasyonun bir
-// TALİMAT olduğunu doğrular: seçim yapılmaz, hiçbir modüle sorulmaz ve sepetin
-// TÜM satırları o depodan ayrılır.
+// TestOldBehaviorIsKeptWhenTheLocationIsGiven verifies that a location declared
+// by the caller is an INSTRUCTION: no selection is made, no module is asked and
+// ALL the lines of the cart are reserved from that warehouse.
 //
-// Geriye uyumluluğun testi budur. Alan opsiyonel hâle geldi ama dolu geldiğinde
-// davranış zerre değişmemelidir; aksi hâlde tek depolu bir kurulumun ya da
-// belirli bir depodan çıkacak bir yönetim siparişinin kararı sessizce
-// çiğnenirdi.
-func TestLokasyonDoluysaEskiDavranisKorunur(t *testing.T) {
+// This is the test of backward compatibility. The field became optional, but
+// when it arrives filled in the behavior must not change in the slightest;
+// otherwise the decision of a single-warehouse installation, or of an
+// administrative order that has to ship from one specific warehouse, would be
+// silently overridden.
+func TestOldBehaviorIsKeptWhenTheLocationIsGiven(t *testing.T) {
 	h := newHarness(t)
 
 	out, err := h.wf.CompleteCart(context.Background(), h.input())
@@ -289,24 +298,25 @@ func TestLokasyonDoluysaEskiDavranisKorunur(t *testing.T) {
 	assert.Equal(t, testLocationID, h.inventory.reserved[0].LocationID)
 	assert.Equal(t, testLocationID, h.inventory.reserved[1].LocationID)
 
-	// Sahteler betiklenmemiştir, yani çağrılsalardı akış zaten patlardı; iz
-	// yine de sınanır çünkü "hata dönmedi" ile "hiç çağrılmadı" aynı şey
-	// değildir.
+	// The fakes are not scripted, so the flow would already have blown up had
+	// they been called; the trail is checked anyway, because "returned no error"
+	// and "was never called" are not the same thing.
 	for _, call := range h.rec.snapshot() {
 		assert.NotContains(t, call, "inventory:locations")
 		assert.NotContains(t, call, "fulfillment:rank_locations")
 	}
 }
 
-// TestLokasyonBossaSatirBasinaSecilir tek lokasyon varsayımının kalktığını
-// doğrular.
+// TestLocationIsChosenPerLineWhenLeftEmpty verifies that the single-location
+// assumption is gone.
 //
-// Üç iddia birlikte sınanır: adayları STOK modülü verir, sırayı KARGO modülü
-// kurar ve bir siparişin satırları FARKLI depolardan ayrılabilir. Sahtenin
-// politikası gerçek modülünkinin tersidir (bkz. [rankByGreatestID]) ve seçilen
-// aday listede ne ilk ne son sıradadır: listeden kendi seçen bir checkout
-// burada düşer.
-func TestLokasyonBossaSatirBasinaSecilir(t *testing.T) {
+// Three claims are checked together: the candidates come from the INVENTORY
+// module, the ranking is built by the FULFILLMENT module, and the lines of one
+// order may be reserved from DIFFERENT warehouses. The fake's policy is the
+// inverse of the real module's (see [rankByGreatestID]) and the chosen
+// candidate is neither first nor last in the list: a checkout that picks from
+// the list itself fails here.
+func TestLocationIsChosenPerLineWhenLeftEmpty(t *testing.T) {
 	h := newHarness(t)
 	h.inventory.locationsFn = func(_ context.Context, itemID string, _ int64) ([]string, error) {
 		if itemID == testItemA {
@@ -320,34 +330,36 @@ func TestLokasyonBossaSatirBasinaSecilir(t *testing.T) {
 	in.LocationID = ""
 
 	out, err := h.wf.CompleteCart(context.Background(), in)
-	require.NoError(t, err, "lokasyonsuz istek artık geçerlidir")
+	require.NoError(t, err, "a request without a location is valid from now on")
 	assert.Equal(t, testOrderID, out.OrderID)
 
 	require.Len(t, h.inventory.reserved, 2)
 	assert.Equal(t, testLocationWest, h.inventory.reserved[0].LocationID,
-		"lokasyonu kargo modülü seçer; checkout adaylardan kendi seçemez")
+		"the fulfillment module chooses the location; checkout cannot pick from the candidates itself")
 	assert.Equal(t, testLocationEast, h.inventory.reserved[1].LocationID)
 	assert.NotEqual(t, h.inventory.reserved[0].LocationID, h.inventory.reserved[1].LocationID,
-		"bir siparişin satırları farklı depolardan ayrılabilmeli")
+		"the lines of one order must be reservable from different warehouses")
 
-	// Adaylar stok modülünden GELDİĞİ gibi geçer: checkout onları süzse ya da
-	// sıralasa, tercih sırasını fiilen kendisi belirlemiş olurdu.
+	// The candidates pass through exactly AS THEY CAME from the inventory
+	// module: were checkout to filter or sort them, it would in effect be
+	// deciding the preference order itself.
 	assert.Equal(t, [][]string{
 		{testLocationEast, testLocationWest, testLocationNorth},
 		{testLocationEast},
 	}, h.fulfillment.offered)
 
-	// Politikanın girdisi PLANDAN gelir. Bölge geçirilmeseydi gerçek kargo
-	// modülü isteği düşürürdü ama sahtesi düşürmez; iddia bu yüzden burada,
-	// açıkça yazılıdır.
+	// The input of the policy comes FROM THE PLAN. Had the region not been
+	// passed, the real fulfillment module would drop the request but the fake
+	// does not; this is why the claim is written here, explicitly.
 	assert.Equal(t, []string{testRegionID, testRegionID}, h.fulfillment.offeredRegions,
-		"her seçim çağrısı siparişin bölgesini taşımalı")
+		"every selection call must carry the region of the order")
 
-	// Sıra: her satır için önce OLGU sorulur, sonra KARAR alınır, sonra ayrılır.
-	var stokVeKargo []string
+	// Order: for every line the FACT is asked first, then the DECISION is taken,
+	// then the reservation is made.
+	var inventoryAndFulfillment []string
 	for _, call := range h.rec.snapshot() {
 		if strings.HasPrefix(call, "inventory:") || strings.HasPrefix(call, "fulfillment:") {
-			stokVeKargo = append(stokVeKargo, call)
+			inventoryAndFulfillment = append(inventoryAndFulfillment, call)
 		}
 	}
 	assert.Equal(t, []string{
@@ -359,18 +371,20 @@ func TestLokasyonBossaSatirBasinaSecilir(t *testing.T) {
 		"inventory:reserve:" + testLineB,
 		"inventory:confirm:res_" + testLineA,
 		"inventory:confirm:res_" + testLineB,
-	}, stokVeKargo)
+	}, inventoryAndFulfillment)
 }
 
-// TestIkinciSatirinDeposuYoksaIlkininRezervasyonuBirakilir çok depolu ayırmanın
-// telafisini kanıtlar.
+// TestReservationOfTheFirstLineIsReleasedWhenTheSecondHasNoWarehouse proves the
+// compensation of a multi-warehouse reservation.
 //
-// Durum tek depolu akışta zor, çok depoluda kolaydır: ilk satır bir depodan
-// ayrılır, ikinci satır hiçbir depoda bulunamaz. Motor tek denemede patlayan
-// adımı telafi etmediği için borç adımındadır ve ilk satırın rezervasyonu
-// BIRAKILMALIDIR. Raporlama da yeni bir sınıf uydurmaz: stok yetersizken ne
-// dönüyorsa (errors.Conflict) o döner.
-func TestIkinciSatirinDeposuYoksaIlkininRezervasyonuBirakilir(t *testing.T) {
+// The situation is hard to reach in a single-warehouse flow and easy in a
+// multi-warehouse one: the first line is reserved from a warehouse, the second
+// line is found in no warehouse at all. Because the engine does not compensate a
+// step that blows up on a single attempt, the debt belongs to the step and the
+// reservation of the first line MUST BE RELEASED. The reporting invents no new
+// class either: whatever is returned when stock is insufficient
+// (errors.Conflict) is what is returned here.
+func TestReservationOfTheFirstLineIsReleasedWhenTheSecondHasNoWarehouse(t *testing.T) {
 	h := newHarness(t)
 	h.inventory.locationsFn = func(_ context.Context, itemID string, _ int64) ([]string, error) {
 		if itemID == testItemA {
@@ -386,27 +400,27 @@ func TestIkinciSatirinDeposuYoksaIlkininRezervasyonuBirakilir(t *testing.T) {
 	_, err := h.wf.CompleteCart(context.Background(), in)
 	require.Error(t, err)
 	assert.True(t, errors.IsConflict(err),
-		"hiçbir depoda yeterli stok yoksa sonuç 'sipariş verilemez'dir: %v", err)
+		"when no warehouse has enough stock the result is 'the order cannot be placed': %v", err)
 	assert.True(t, hasCode(err, CodeReservationFailed),
-		"aday YOKKEN sonucu bu paket çıkarır; korunacak bir alt kod yoktur — %v", err)
+		"when there is NO candidate this package produces the result; there is no underlying code to preserve — %v", err)
 	assert.Contains(t, err.Error(), testItemB,
-		"mesaj hangi kalemin yerleşemediğini söylemeli")
+		"the message must say which item could not be placed")
 
 	assert.Equal(t, 1, h.rec.count("inventory:release:res_"+testLineA),
-		"ilk satırın rezervasyonu adımın KENDİ temizliğiyle bırakılmalı")
+		"the reservation of the first line must be released by the step's OWN cleanup")
 	assert.Equal(t, 1, h.rec.count("fulfillment:rank_locations"),
-		"aday yokken seçim SORULMAZ: eksik olan gönderilecek depo değil, stoktur")
+		"with no candidate the selection is NOT asked for: what is missing is stock, not a warehouse to ship from")
 	assert.Equal(t, 0, h.rec.count("order:place"))
 	assert.Empty(t, h.orders.canceled)
 }
 
-// TestKargoLokasyonSiralayamazsaStokYetersizGibiRaporlanir kargo modülünün
-// adayları eleyip hiçbirini seçememesinin de AYNI dalda karşılandığını
-// doğrular.
+// TestFulfillmentFailingToRankLocationsIsReportedLikeInsufficientStock verifies
+// that the fulfillment module eliminating the candidates and being unable to
+// choose any of them is met in the SAME branch.
 //
-// Sınıf yine errors.Conflict'tir: eksik olan istekte düzeltilebilecek bir şey
-// değil, dünyanın durumudur.
-func TestKargoLokasyonSiralayamazsaStokYetersizGibiRaporlanir(t *testing.T) {
+// The class is errors.Conflict again: what is missing is not something the
+// request can fix, it is the state of the world.
+func TestFulfillmentFailingToRankLocationsIsReportedLikeInsufficientStock(t *testing.T) {
 	h := newHarness(t)
 	h.inventory.locationsFn = func(_ context.Context, itemID string, _ int64) ([]string, error) {
 		if itemID == testItemA {
@@ -417,7 +431,7 @@ func TestKargoLokasyonSiralayamazsaStokYetersizGibiRaporlanir(t *testing.T) {
 	h.fulfillment.rankFn = func(_ context.Context, _ string, candidates []string) ([]string, error) {
 		if slices.Contains(candidates, testLocationNorth) {
 			return nil, errors.Conflict("fulfillment_no_serviceable_location",
-				"hedef bölgeye hizmet eden depo yok")
+				"no warehouse serves the target region")
 		}
 		return rankByGreatestID(context.Background(), "", candidates)
 	}
@@ -427,27 +441,29 @@ func TestKargoLokasyonSiralayamazsaStokYetersizGibiRaporlanir(t *testing.T) {
 
 	_, err := h.wf.CompleteCart(context.Background(), in)
 	require.Error(t, err)
-	assert.True(t, errors.IsConflict(err), "hata: %v", err)
-	// errors.CodeOf zincirin EN DIŞTAKİ kodunu okur ve taşıma katmanının gövdeye
-	// yazdığı alan odur. hasCode ile sınamak yetmezdi: o zinciri gezer ve
-	// kodu ezen bir sarmalamada da alt hatayı bulup yeşil kalırdı.
+	assert.True(t, errors.IsConflict(err), "error: %v", err)
+	// errors.CodeOf reads the OUTERMOST code of the chain and that is the field
+	// the transport layer writes into the body. Checking with hasCode would not
+	// have been enough: it walks the chain and would find the underlying error —
+	// and stay green — even in a wrapping that overwrote the code.
 	assert.Equal(t, "fulfillment_no_serviceable_location", errors.CodeOf(err),
-		"kargo modülünün kodu istemciye ULAŞMALI: eleme bir stok sorunu değildir "+
-			"ve düzeltmesi başka yerdedir — %v", err)
-	assert.Contains(t, err.Error(), "seçilemedi",
-		"lokasyon seçilemeden patlayan çağrı mesajda bir depo adı uyduramaz")
+		"the fulfillment module's code MUST REACH the client: elimination is not an "+
+			"inventory problem and its fix lies elsewhere — %v", err)
+	assert.Contains(t, err.Error(), "unselected",
+		"a call that blows up before a location is chosen cannot invent a warehouse name in the message")
 
 	assert.Equal(t, 1, h.rec.count("inventory:release:res_"+testLineA))
 	assert.Equal(t, 0, h.rec.count("inventory:reserve:"+testLineB))
 	assert.Equal(t, 0, h.rec.count("order:place"))
 }
 
-// TestBosLokasyonSirasiKabulEdilmez kargo modülünün hata dönmeden BOŞ bir sıra
-// döndürmesinin başarı sayılmadığını doğrular.
+// TestAnEmptyLocationRankingIsNotAccepted verifies that the fulfillment module
+// returning an EMPTY ranking without an error does not count as success.
 //
-// Kabul edilseydi satır hiçbir depo denenmeden, sebebi yazılmadan düşerdi:
-// döngü ilk turunda biter ve geriye biriken bir hata da kalmaz.
-func TestBosLokasyonSirasiKabulEdilmez(t *testing.T) {
+// Had it been accepted, the line would fail without a single warehouse being
+// tried and without a reason being written down: the loop ends on its first turn
+// and no accumulated error is left behind either.
+func TestAnEmptyLocationRankingIsNotAccepted(t *testing.T) {
 	h := newHarness(t)
 	h.inventory.locationsFn = func(_ context.Context, itemID string, _ int64) ([]string, error) {
 		if itemID == testItemA {
@@ -468,22 +484,23 @@ func TestBosLokasyonSirasiKabulEdilmez(t *testing.T) {
 	_, err := h.wf.CompleteCart(context.Background(), in)
 	require.Error(t, err)
 	assert.Equal(t, errors.KindInternal, errors.KindOf(err),
-		"sözleşmeyi çiğneyen bir sağlayıcı çağıranın düzeltebileceği bir durum değildir")
-	assert.True(t, hasCode(err, CodeReservationFailed), "hata: %v", err)
+		"a provider that violates the contract is not a situation the caller can fix")
+	assert.True(t, hasCode(err, CodeReservationFailed), "error: %v", err)
 
 	assert.Equal(t, 0, h.rec.count("inventory:reserve:"+testLineB),
-		"boş sırayla ayırma DENENMEZ")
+		"reservation is NOT ATTEMPTED with an empty ranking")
 	assert.Equal(t, 1, h.rec.count("inventory:release:res_"+testLineA))
 }
 
-// TestRezervasyonIziSecilenLokasyonuTasir yürütme kaydına yazılan izin, satır
-// başına seçilen depoyu taşıdığını doğrular.
+// TestReservationTrailCarriesTheChosenLocation verifies that the trail written
+// into the execution record carries the warehouse chosen for each line.
 //
-// Kayıt, elle müdahale eden operatörün tek bilgi kaynağıdır; satırlar farklı
-// depolardan ayrılabildiğinde "hangi depo" sorusunun cevabı orada olmalıdır.
-// Adım DOĞRUDAN çağrılır çünkü sorulan şey saga'nın sonucu değil, adımın
-// yürütme kaydına yazdığı çıktıdır.
-func TestRezervasyonIziSecilenLokasyonuTasir(t *testing.T) {
+// The record is the only source of information for an operator intervening by
+// hand; when lines can be reserved from different warehouses, the answer to
+// "which warehouse" must be there. The step is called DIRECTLY because what is
+// being asked is not the result of the saga but the output the step writes into
+// the execution record.
+func TestReservationTrailCarriesTheChosenLocation(t *testing.T) {
 	h := newHarness(t)
 	h.inventory.locationsFn = func(_ context.Context, itemID string, _ int64) ([]string, error) {
 		if itemID == testItemA {
@@ -506,7 +523,7 @@ func TestRezervasyonIziSecilenLokasyonuTasir(t *testing.T) {
 	require.NoError(t, err)
 
 	out, ok := raw.(reserveOutput)
-	require.True(t, ok, "adımın çıktısı reserveOutput olmalı: %T", raw)
+	require.True(t, ok, "the output of the step must be reserveOutput: %T", raw)
 	assert.Equal(t, []reservationRef{
 		{LineItemID: testLineA, ReservationID: "res_" + testLineA, LocationID: testLocationWest},
 		{LineItemID: testLineB, ReservationID: "res_" + testLineB, LocationID: testLocationEast},
@@ -515,15 +532,15 @@ func TestRezervasyonIziSecilenLokasyonuTasir(t *testing.T) {
 	payload, err := json.Marshal(out)
 	require.NoError(t, err)
 	assert.Contains(t, string(payload), `"location_id":"`+testLocationWest+`"`,
-		"seçilen depo kayda YAZILMALI")
+		"the chosen warehouse MUST BE WRITTEN into the record")
 }
 
-// TestSiparisPatlayincaRezervasyonGeriBirakilir sipariş adımının hatasının
-// stoğu geri bıraktığını ve ödemeye hiç geçilmediğini doğrular.
-func TestSiparisPatlayincaRezervasyonGeriBirakilir(t *testing.T) {
+// TestOrderFailureReleasesTheReservations verifies that a failure of the order
+// step releases the inventory and that the payment is never reached.
+func TestOrderFailureReleasesTheReservations(t *testing.T) {
 	h := newHarness(t)
 	h.orders.placeFn = func(context.Context, json.RawMessage) (string, error) {
-		return "", errors.Internal("order_store_unavailable", "sipariş yazılamadı")
+		return "", errors.Internal("order_store_unavailable", "the order could not be written")
 	}
 
 	_, err := h.wf.CompleteCart(context.Background(), h.input())
@@ -531,15 +548,16 @@ func TestSiparisPatlayincaRezervasyonGeriBirakilir(t *testing.T) {
 
 	assert.Equal(t, 1, h.rec.count("inventory:release:res_"+testLineA))
 	assert.Equal(t, 1, h.rec.count("inventory:release:res_"+testLineB))
-	assert.Empty(t, h.orders.canceled, "hiç sipariş açılmadıysa iptal edilecek de yoktur")
+	assert.Empty(t, h.orders.canceled, "if no order was opened there is nothing to cancel")
 	assert.Equal(t, 0, h.rec.count("payment:collection"))
 }
 
-// TestKismiYetkilendirmeAdimiDusurur TAM ÖDEME KURALINI doğrular.
+// TestPartialAuthorizationFailsTheStep verifies the FULL PAYMENT RULE.
 //
-// Sağlayıcı istenenden AZINI bloke ettiğinde durum yine "authorized" olur;
-// yalnızca duruma bakan bir saga ödenmemiş bir siparişi onaylardı.
-func TestKismiYetkilendirmeAdimiDusurur(t *testing.T) {
+// When the provider holds LESS than was asked for, the status is still
+// "authorized"; a saga that only looks at the status would confirm an unpaid
+// order.
+func TestPartialAuthorizationFailsTheStep(t *testing.T) {
 	h := newHarness(t)
 	h.payments.authorizeFn = func(context.Context, string) (string, int64, error) {
 		return "authorized", testAmount - 1, nil
@@ -547,21 +565,22 @@ func TestKismiYetkilendirmeAdimiDusurur(t *testing.T) {
 
 	_, err := h.wf.CompleteCart(context.Background(), h.input())
 	require.Error(t, err)
-	assert.True(t, hasCode(err, CodePaymentUnderauthorized), "hata: %v", err)
+	assert.True(t, hasCode(err, CodePaymentUnderauthorized), "error: %v", err)
 	assert.True(t, errors.IsConflict(err))
 
-	assert.Equal(t, 0, h.rec.count("payment:capture"), "eksik blokajla tahsilat DENENMEZ")
-	assert.Equal(t, 1, h.rec.count("payment:cancel"), "kısmi blokaj serbest bırakılmalı")
+	assert.Equal(t, 0, h.rec.count("payment:capture"), "capture is NOT ATTEMPTED with a short hold")
+	assert.Equal(t, 1, h.rec.count("payment:cancel"), "a partial hold must be released")
 	assert.Equal(t, []string{testOrderID}, h.orders.canceled)
 	assert.Equal(t, 1, h.rec.count("inventory:release:res_"+testLineA))
 }
 
-// TestTahsilatEksikKalirsaTelafiEdilmemisIsBildirilir tahsilattan SONRA
-// doğrulamanın patladığı durumu sınar.
+// TestUncompensatedWorkIsReportedWhenTheCaptureFallsShort exercises the case
+// where the verification blows up AFTER the capture.
 //
-// Para çekilmiştir: sipariş iptal EDİLMEZ, stok geri BIRAKILMAZ ve yürütme
-// "geri alındı" değil, elle müdahale isteyen bir hata ile biter.
-func TestTahsilatEksikKalirsaTelafiEdilmemisIsBildirilir(t *testing.T) {
+// The money has been taken: the order is NOT canceled, the inventory is NOT
+// released and the execution ends not as "rolled back" but with an error that
+// asks for manual intervention.
+func TestUncompensatedWorkIsReportedWhenTheCaptureFallsShort(t *testing.T) {
 	h := newHarness(t)
 	h.payments.collectionFn = func(context.Context, string) (string, int64, int64, int64, int64, error) {
 		return "partially_captured", testAmount, 0, testAmount - 1, 0, nil
@@ -571,43 +590,44 @@ func TestTahsilatEksikKalirsaTelafiEdilmemisIsBildirilir(t *testing.T) {
 	require.Error(t, err)
 	assert.Equal(t, workflow.CodeCompensationFailed, errors.CodeOf(err))
 	assert.True(t, errors.Is(err, workflow.ErrUncompensated),
-		"tahsil edilmiş tutar asılı yan etkidir")
+		"a captured amount is a dangling side effect")
 
-	assert.Empty(t, h.orders.canceled, "ödenmiş sipariş iptal edilmez")
-	assert.Equal(t, 0, h.rec.count("inventory:release:res_"+testLineA), "ödenmiş siparişin stoğu bırakılmaz")
-	assert.Equal(t, 0, h.rec.count("payment:cancel"), "tahsilat blokajı zaten kapatmıştır")
+	assert.Empty(t, h.orders.canceled, "a paid order is not canceled")
+	assert.Equal(t, 0, h.rec.count("inventory:release:res_"+testLineA), "the inventory of a paid order is not released")
+	assert.Equal(t, 0, h.rec.count("payment:cancel"), "the capture has already closed the hold")
 }
 
-// TestTelafiPatlarsaKalanTelafilerYineCalisir bir Compensate'in hatasının
-// zinciri DURDURMADIĞINI doğrular.
-func TestTelafiPatlarsaKalanTelafilerYineCalisir(t *testing.T) {
+// TestRemainingCompensationsStillRunWhenOneFails verifies that an error from one
+// Compensate does NOT STOP the chain.
+func TestRemainingCompensationsStillRunWhenOneFails(t *testing.T) {
 	h := newHarness(t)
 	h.payments.authorizeFn = func(context.Context, string) (string, int64, error) {
-		return "", 0, errors.Conflict("payment_authorization_declined", "kart reddedildi")
+		return "", 0, errors.Conflict("payment_authorization_declined", "the card was declined")
 	}
 	h.orders.cancelFn = func(context.Context, string, string) error {
-		return errors.Internal("order_store_unavailable", "sipariş iptal edilemedi")
+		return errors.Internal("order_store_unavailable", "the order could not be canceled")
 	}
 
 	_, err := h.wf.CompleteCart(context.Background(), h.input())
 	require.Error(t, err)
 	assert.Equal(t, workflow.CodeCompensationFailed, errors.CodeOf(err))
 	assert.True(t, errors.HasKind(err, errors.KindInternal),
-		"telafi tamamlanamadıysa sınıf Internal'a yükseltilir")
+		"if the compensation could not be completed the class is raised to Internal")
 
 	assert.Equal(t, 1, h.rec.count("inventory:release:res_"+testLineA),
-		"sipariş iptali patlasa bile stok geri bırakılmalı")
+		"the inventory must be released even if the order cancellation blows up")
 	assert.Equal(t, 1, h.rec.count("inventory:release:res_"+testLineB))
 }
 
-// TestAyniAnahtarlaIkinciCagriAdimlariTekrarCalistirmaz idempotency anahtarının
-// yürütmeyi tekilleştirdiğini doğrular.
+// TestASecondCallWithTheSameKeyDoesNotRerunTheSteps verifies that the
+// idempotency key deduplicates the execution.
 //
-// Sahte sepet tamamlanmayı KAYDETMEDİĞİ için hazırlık ikinci kez de geçer;
-// gerçek kurulumda sepet zaten tamamlanmış olur ve akış daha erken durur
-// (bkz. [TestTamamlanmisSepetReddedilir]). Burada sınanan tek şey, adımların
-// motor tarafından tekrar ÇALIŞTIRILMAMASIDIR.
-func TestAyniAnahtarlaIkinciCagriAdimlariTekrarCalistirmaz(t *testing.T) {
+// Because the fake cart does NOT RECORD the completion, the preparation passes a
+// second time as well; in a real installation the cart would already be
+// completed and the flow would stop earlier (see
+// [TestACompletedCartIsRejected]). The only thing checked here is that the steps
+// are NOT RUN again by the engine.
+func TestASecondCallWithTheSameKeyDoesNotRerunTheSteps(t *testing.T) {
 	h := newHarness(t)
 
 	first, err := h.wf.CompleteCart(context.Background(), h.input())
@@ -616,7 +636,7 @@ func TestAyniAnahtarlaIkinciCagriAdimlariTekrarCalistirmaz(t *testing.T) {
 	second, err := h.wf.CompleteCart(context.Background(), h.input())
 	require.NoError(t, err)
 
-	assert.Equal(t, first, second, "ikinci çağrı ilk yürütmenin ÇIKTISINI döner")
+	assert.Equal(t, first, second, "the second call returns the OUTPUT of the first execution")
 
 	assert.Equal(t, 1, h.rec.count("inventory:reserve:"+testLineA))
 	assert.Equal(t, 1, h.rec.count("order:place"))
@@ -625,22 +645,22 @@ func TestAyniAnahtarlaIkinciCagriAdimlariTekrarCalistirmaz(t *testing.T) {
 	assert.Equal(t, 1, h.rec.count("cart:complete"))
 }
 
-// TestClearCartArizasiSiparisiDusurmez pivot'tan sonraki adımın hata
-// DÖNDÜRMEDİĞİNİ, arızayı uyarı olarak bildirdiğini doğrular.
-func TestClearCartArizasiSiparisiDusurmez(t *testing.T) {
+// TestClearCartFailureDoesNotFailTheOrder verifies that the step after the pivot
+// DOES NOT RETURN an error and reports the fault as a warning instead.
+func TestClearCartFailureDoesNotFailTheOrder(t *testing.T) {
 	h := newHarness(t)
 	h.carts.markCompletedFn = func(context.Context, string) error {
-		return errors.Conflict("cart_totals_stale", "toplamlar güncel değil")
+		return errors.Conflict("cart_totals_stale", "the totals are not up to date")
 	}
 	h.inventory.confirmFn = func(_ context.Context, reservationID string) error {
 		if reservationID == "res_"+testLineB {
-			return errors.Internal("inventory_unavailable", "kesinleştirilemedi")
+			return errors.Internal("inventory_unavailable", "could not be confirmed")
 		}
 		return nil
 	}
 
 	out, err := h.wf.CompleteCart(context.Background(), h.input())
-	require.NoError(t, err, "ödemesi alınmış sipariş bir sepet damgası yüzünden düşmez")
+	require.NoError(t, err, "a paid order is not dropped over a cart stamp")
 
 	assert.Equal(t, testOrderID, out.OrderID)
 	assert.False(t, out.CartCompleted)
@@ -651,9 +671,9 @@ func TestClearCartArizasiSiparisiDusurmez(t *testing.T) {
 	assert.Equal(t, 0, h.rec.count("inventory:release:res_"+testLineA))
 }
 
-// TestTamamlanmisSepetReddedilir tamamlanmış bir sepetin hiçbir yan etki
-// uygulanmadan reddedildiğini doğrular.
-func TestTamamlanmisSepetReddedilir(t *testing.T) {
+// TestACompletedCartIsRejected verifies that a completed cart is rejected
+// without any side effect being applied.
+func TestACompletedCartIsRejected(t *testing.T) {
 	h := newHarness(t)
 	h.carts.snapshotFn = func(_ context.Context, cartID string) (json.RawMessage, error) {
 		return json.Marshal(Snapshot{
@@ -669,9 +689,9 @@ func TestTamamlanmisSepetReddedilir(t *testing.T) {
 	assert.Equal(t, 0, h.rec.count("inventory:reserve:"+testLineA))
 }
 
-// TestSepetHesaptanSonraDegisirseReddedilir hesabın ve anlık görüntünün AYNI
-// şekle ait olması gerektiğini doğrular.
-func TestSepetHesaptanSonraDegisirseReddedilir(t *testing.T) {
+// TestACartChangedAfterTheTotalsIsRejected verifies that the totals and the
+// snapshot have to belong to the SAME shape of the cart.
+func TestACartChangedAfterTheTotalsIsRejected(t *testing.T) {
 	h := newHarness(t)
 	h.totals.calculateFn = func(ctx context.Context, cartID string) (cartwf.Totals, error) {
 		totals, err := defaultTotals(ctx, cartID)
@@ -686,9 +706,9 @@ func TestSepetHesaptanSonraDegisirseReddedilir(t *testing.T) {
 	assert.Equal(t, 0, h.rec.count("inventory:reserve:"+testLineA))
 }
 
-// TestOnaylananTutarDegistiyseReddedilir müşterinin onayladığı tutarla
-// hesaplanan tutarın ayrışmasının sessiz kalmadığını doğrular.
-func TestOnaylananTutarDegistiyseReddedilir(t *testing.T) {
+// TestAChangedApprovedTotalIsRejected verifies that a divergence between the
+// amount the customer approved and the calculated amount does not stay silent.
+func TestAChangedApprovedTotalIsRejected(t *testing.T) {
 	h := newHarness(t)
 
 	in := h.input()
@@ -701,9 +721,9 @@ func TestOnaylananTutarDegistiyseReddedilir(t *testing.T) {
 	assert.Equal(t, 0, h.rec.count("inventory:reserve:"+testLineA))
 }
 
-// TestStokKalemsizVaryantReddedilir stok kalemine bağlı olmayan bir varyantın
-// SESSİZCE ATLANMADIĞINI doğrular.
-func TestStokKalemsizVaryantReddedilir(t *testing.T) {
+// TestAVariantWithoutAnInventoryItemIsRejected verifies that a variant not
+// linked to an inventory item is NOT SILENTLY SKIPPED.
+func TestAVariantWithoutAnInventoryItemIsRejected(t *testing.T) {
 	h := newHarness(t)
 	h.links.listManyFn = func(context.Context, string, []string) (map[string][]string, error) {
 		return map[string][]string{testVariantA: {testItemA}}, nil
@@ -716,9 +736,9 @@ func TestStokKalemsizVaryantReddedilir(t *testing.T) {
 	assert.Equal(t, 0, h.rec.count("inventory:reserve:"+testLineA))
 }
 
-// TestBirdenCokStokKalemiReddedilir tekil olması gereken bağın çoğullanmasının
-// sıralama tesadüfüne bırakılmadığını doğrular.
-func TestBirdenCokStokKalemiReddedilir(t *testing.T) {
+// TestMultipleInventoryItemsAreRejected verifies that a link which ought to be
+// singular turning up plural is not left to the accident of ordering.
+func TestMultipleInventoryItemsAreRejected(t *testing.T) {
 	h := newHarness(t)
 	h.links.listManyFn = func(context.Context, string, []string) (map[string][]string, error) {
 		return map[string][]string{
@@ -732,9 +752,9 @@ func TestBirdenCokStokKalemiReddedilir(t *testing.T) {
 	assert.Equal(t, CodeVariantInventoryAmbiguous, errors.CodeOf(err))
 }
 
-// TestKatalogdaOlmayanVaryantReddedilir başlıksız bir sipariş satırının
-// yazılmadığını doğrular.
-func TestKatalogdaOlmayanVaryantReddedilir(t *testing.T) {
+// TestAVariantMissingFromTheCatalogIsRejected verifies that an order line
+// without a title is not written.
+func TestAVariantMissingFromTheCatalogIsRejected(t *testing.T) {
 	h := newHarness(t)
 	h.catalog.graphFn = func(context.Context, query.GraphSpec) ([]query.Record, error) {
 		return []query.Record{{query.IDField: testVariantA, FieldTitle: testTitleA}}, nil
@@ -746,67 +766,69 @@ func TestKatalogdaOlmayanVaryantReddedilir(t *testing.T) {
 	assert.True(t, errors.IsNotFound(err))
 }
 
-// TestKatalogArizasiVaryantYokSayilmaz altyapı hatasının iş durumu gibi
-// raporlanmadığını doğrular.
-func TestKatalogArizasiVaryantYokSayilmaz(t *testing.T) {
+// TestACatalogOutageIsNotTreatedAsAMissingVariant verifies that an
+// infrastructure error is not reported as a business state.
+func TestACatalogOutageIsNotTreatedAsAMissingVariant(t *testing.T) {
 	h := newHarness(t)
 	h.catalog.graphFn = func(context.Context, query.GraphSpec) ([]query.Record, error) {
-		return nil, errors.Unavailable("query_unavailable", "okuma katmanı erişilemiyor")
+		return nil, errors.Unavailable("query_unavailable", "the read layer is unreachable")
 	}
 
 	_, err := h.wf.CompleteCart(context.Background(), h.input())
 	require.Error(t, err)
 	assert.Equal(t, CodeCatalogReadFailed, errors.CodeOf(err))
-	assert.True(t, errors.HasKind(err, errors.KindUnavailable), "geçici arıza kalıcı sayılmaz")
+	assert.True(t, errors.HasKind(err, errors.KindUnavailable), "a transient outage does not count as permanent")
 }
 
-// TestBozukHesapYanEtkiOncesindeYakalanir hesabın aritmetiğinin sepet
-// modülünden geldiği için sorgusuz kabul EDİLMEDİĞİNİ doğrular.
-func TestBozukHesapYanEtkiOncesindeYakalanir(t *testing.T) {
+// TestBrokenTotalsAreCaughtBeforeAnySideEffect verifies that the arithmetic of
+// the totals is NOT ACCEPTED unquestioned just because it comes from the cart
+// module.
+func TestBrokenTotalsAreCaughtBeforeAnySideEffect(t *testing.T) {
 	tests := map[string]func(*cartwf.Totals){
-		"satır ara toplamı birim fiyat × adet değil": func(totals *cartwf.Totals) {
+		"line subtotal is not unit price x quantity": func(totals *cartwf.Totals) {
 			totals.Lines[0].Subtotal = 1999
 		},
-		"satır toplamı kimliği bozuk": func(totals *cartwf.Totals) {
+		"line total identity is broken": func(totals *cartwf.Totals) {
 			totals.Lines[0].Total = 2399
 		},
-		"sepetin ara toplamı satırların toplamı değil": func(totals *cartwf.Totals) {
+		"cart subtotal is not the sum of the lines": func(totals *cartwf.Totals) {
 			totals.Subtotal = 2400
 		},
-		"sepetin toplam kimliği bozuk": func(totals *cartwf.Totals) {
+		"cart total identity is broken": func(totals *cartwf.Totals) {
 			totals.Total = 2999
 		},
-		// Aşağıdaki üç satır sepet DÜZEYİNDEKİ indirim ve verginin aralık
-		// denetimine girmediği boşluğu kapatır. Üçünde de toplam kimliği
-		// SAĞLANIR — hesap kendi içinde tutarlıdır — ama sayılar anlamsızdır.
-		"sepet indirimi negatif": func(totals *cartwf.Totals) {
-			// Negatif indirim tahsil edilecek tutarı ŞİŞİRİR: müşteriden
-			// satırların toplamından fazlası çekilirdi.
+		// The three cases below close the gap where the discount and the tax at
+		// CART LEVEL do not go through the range check. In all three the total
+		// identity HOLDS — the totals are internally consistent — but the
+		// numbers are meaningless.
+		"cart discount is negative": func(totals *cartwf.Totals) {
+			// A negative discount INFLATES the amount to be captured: the
+			// customer would be charged more than the sum of the lines.
 			totals.DiscountTotal = -500
 			totals.Total = 3500
 		},
-		"sepet vergisi negatif": func(totals *cartwf.Totals) {
-			// Negatif vergi tersini yapar: müşteriden satırların toplamının
-			// altında bir tutar çekilirdi.
+		"cart tax is negative": func(totals *cartwf.Totals) {
+			// A negative tax does the opposite: the customer would be charged an
+			// amount below the sum of the lines.
 			totals.TaxTotal = -2000
 			totals.Total = 500
 		},
-		"sepet vergisi ve indirimi int64'ü taşırıyor": func(totals *cartwf.Totals) {
-			// İki uç değer birbirini götürür ve kimlik ham int64 aritmetiğinde
-			// "sağlanır"; denetimsiz bırakılırsa sipariş MaxInt64 vergiyle
-			// açılırdı.
+		"cart tax and discount overflow int64": func(totals *cartwf.Totals) {
+			// The two extreme values cancel each other out and the identity
+			// "holds" in raw int64 arithmetic; left unchecked, the order would be
+			// opened with MaxInt64 worth of tax.
 			totals.TaxTotal = math.MaxInt64
 			totals.DiscountTotal = math.MaxInt64 - 500
 			totals.Total = testAmount
 		},
 	}
 
-	for name, bozguncu := range tests {
+	for name, corrupt := range tests {
 		t.Run(name, func(t *testing.T) {
 			h := newHarness(t)
 			h.totals.calculateFn = func(ctx context.Context, cartID string) (cartwf.Totals, error) {
 				totals, err := defaultTotals(ctx, cartID)
-				bozguncu(&totals)
+				corrupt(&totals)
 				return totals, err
 			}
 
@@ -814,14 +836,14 @@ func TestBozukHesapYanEtkiOncesindeYakalanir(t *testing.T) {
 			require.Error(t, err)
 			assert.Equal(t, CodeAmountInvalid, errors.CodeOf(err))
 			assert.Equal(t, 0, h.rec.count("inventory:reserve:"+testLineA),
-				"bozuk hesabın bedeli ayrılıp geri bırakılan stok olmamalı")
+				"the price of broken totals must not be inventory reserved and then released")
 		})
 	}
 }
 
-// TestEksikHesapSatiriReddedilir hesabın sepetin TÜM satırlarını kapsamasının
-// zorunlu olduğunu doğrular.
-func TestEksikHesapSatiriReddedilir(t *testing.T) {
+// TestAMissingTotalsLineIsRejected verifies that the totals are required to
+// cover ALL the lines of the cart.
+func TestAMissingTotalsLineIsRejected(t *testing.T) {
 	h := newHarness(t)
 	h.totals.calculateFn = func(ctx context.Context, cartID string) (cartwf.Totals, error) {
 		totals, err := defaultTotals(ctx, cartID)
@@ -837,37 +859,38 @@ func TestEksikHesapSatiriReddedilir(t *testing.T) {
 	assert.Equal(t, CodeTotalsInvalid, errors.CodeOf(err))
 }
 
-// TestGirdiDogrulamasi zorunlu alanların hiçbir yan etki uygulanmadan
-// denetlendiğini doğrular.
-func TestGirdiDogrulamasi(t *testing.T) {
+// TestInputValidation verifies that the required fields are checked without any
+// side effect being applied.
+func TestInputValidation(t *testing.T) {
 	tests := map[string]func(*CompleteCartInput){
-		"cart_id boş":             func(in *CompleteCartInput) { in.CartID = "" },
-		"payment_provider_id boş": func(in *CompleteCartInput) { in.PaymentProviderID = "" },
-		"cart_id boşluklu":        func(in *CompleteCartInput) { in.CartID = " cart_1" },
-		// Lokasyon OPSİYONELDİR ama VERİLDİĞİNDE denetlenir: boş girdi artık
-		// "sen seç" demek olduğu için buradan çıkarıldı, boşluklu kimlik ise
-		// hâlâ reddedilmelidir (bkz. TestLokasyonBossaSatirBasinaSecilir).
-		"location_id boşluklu":   func(in *CompleteCartInput) { in.LocationID = " sloc_1" },
-		"expected_total negatif": func(in *CompleteCartInput) { in.ExpectedTotal = -1 },
+		"cart_id empty":             func(in *CompleteCartInput) { in.CartID = "" },
+		"payment_provider_id empty": func(in *CompleteCartInput) { in.PaymentProviderID = "" },
+		"cart_id with whitespace":   func(in *CompleteCartInput) { in.CartID = " cart_1" },
+		// The location is OPTIONAL but it is checked WHEN IT IS GIVEN: empty
+		// input now means "you choose", so it was taken out of here, while an
+		// identifier with whitespace must still be rejected (see
+		// TestLocationIsChosenPerLineWhenLeftEmpty).
+		"location_id with whitespace": func(in *CompleteCartInput) { in.LocationID = " sloc_1" },
+		"expected_total negative":     func(in *CompleteCartInput) { in.ExpectedTotal = -1 },
 	}
 
-	for name, boz := range tests {
+	for name, corrupt := range tests {
 		t.Run(name, func(t *testing.T) {
 			h := newHarness(t)
 			in := h.input()
-			boz(&in)
+			corrupt(&in)
 
 			_, err := h.wf.CompleteCart(context.Background(), in)
 			require.Error(t, err)
 			assert.Equal(t, CodeInvalidInput, errors.CodeOf(err))
-			assert.Empty(t, h.rec.snapshot(), "geçersiz girdi hiçbir modüle dokunmaz")
+			assert.Empty(t, h.rec.snapshot(), "invalid input touches no module")
 		})
 	}
 }
 
-// TestUzunSepetKimligiReddedilir idempotency anahtarının bütçesinin girdi
-// doğrulamasında uygulandığını doğrular.
-func TestUzunSepetKimligiReddedilir(t *testing.T) {
+// TestAnOverlongCartIDIsRejected verifies that the budget of the idempotency key
+// is enforced in the input validation.
+func TestAnOverlongCartIDIsRejected(t *testing.T) {
 	h := newHarness(t)
 	in := h.input()
 	in.CartID = strings.Repeat("c", MaxCartIDLen+1)
@@ -878,12 +901,12 @@ func TestUzunSepetKimligiReddedilir(t *testing.T) {
 	assert.Contains(t, err.Error(), "cart_id")
 }
 
-// TestOdemeVerisiSaglayiciyaGecer sağlayıcıya iletilecek serbest verinin
-// oturuma taşındığını doğrular.
+// TestPaymentDataReachesTheProvider verifies that the free-form data destined
+// for the provider is carried into the session.
 //
-// Entegrasyon testinin ödeme adımını patlatabilmesi buna bağlıdır: manuel
-// sağlayıcının davranışı oturum verisinden okunur.
-func TestOdemeVerisiSaglayiciyaGecer(t *testing.T) {
+// The integration test's ability to blow up the payment step depends on this:
+// the behavior of the manual provider is read from the session data.
+func TestPaymentDataReachesTheProvider(t *testing.T) {
 	h := newHarness(t)
 	in := h.input()
 	in.PaymentData = json.RawMessage(`{"manual_outcome":"authorize"}`)
@@ -893,66 +916,71 @@ func TestOdemeVerisiSaglayiciyaGecer(t *testing.T) {
 	assert.Equal(t, []string{`{"manual_outcome":"authorize"}`}, h.payments.sessionData)
 }
 
-// TestOdemeVerisiYurutmeKaydinaYazilmaz hassas verinin kalıcı deftere
-// düşmediğini doğrular (plan Bölüm 8).
-func TestOdemeVerisiYurutmeKaydinaYazilmaz(t *testing.T) {
+// TestPaymentDataIsNotWrittenToTheExecutionRecord verifies that sensitive data
+// does not land in the durable ledger (plan Section 8).
+func TestPaymentDataIsNotWrittenToTheExecutionRecord(t *testing.T) {
 	plan := &checkoutPlan{
 		CartID:      testCartID,
-		PaymentData: json.RawMessage(`{"card_token":"tok_gizli"}`),
+		PaymentData: json.RawMessage(`{"card_token":"tok_secret"}`),
 	}
 
 	payload, err := json.Marshal(plan)
 	require.NoError(t, err)
-	assert.NotContains(t, string(payload), "tok_gizli")
+	assert.NotContains(t, string(payload), "tok_secret")
 	assert.NotContains(t, string(payload), "card_token")
 }
 
-// TestTahsilatDogrulamasiYerelTutaraDemirli tahsilat sonrası doğrulamanın
-// ödeme modülünün KENDİ bildirdiği tutara değil, saga'nın YEREL olarak bildiği
-// tutara demirlendiğini kanıtlar.
+// TestCaptureVerificationIsAnchoredToTheLocalAmount proves that the post-capture
+// verification is anchored not to the amount the payment module reports ITSELF
+// but to the amount the saga knows LOCALLY.
 //
-// Regresyon: doğrulama "captured < amount" idi ve her iki değer de aynı
-// Collection çağrısından geliyordu. Soru böylece "koleksiyon kendi içinde
-// tutarlı mı"ya iniyordu; koleksiyon "0 toplanacaktı, 0 toplandı" dediğinde
-// 3000 birimlik sipariş SIFIR tahsilatla başarılı yazılıyordu. Yetkilendirme
-// kuralı (authorized < plan.Amount) zaten yerel tutara demirliydi; bu onun
-// ikizidir.
-func TestTahsilatDogrulamasiYerelTutaraDemirli(t *testing.T) {
+// Regression: the verification used to be "captured < amount" and both values
+// came from the same Collection call. The question therefore shrank to "is the
+// collection internally consistent"; when the collection said "0 was to be
+// collected, 0 was collected", an order of 3000 units was written as successful
+// with a ZERO capture. The authorization rule (authorized < plan.Amount) was
+// already anchored to the local amount; this is its twin.
+func TestCaptureVerificationIsAnchoredToTheLocalAmount(t *testing.T) {
 	h := newHarness(t)
-	// Koleksiyon kendi içinde TUTARLI ama saga'nın beklediği tutarla ilgisiz.
+	// The collection is internally CONSISTENT but unrelated to the amount the
+	// saga expects.
 	h.payments.collectionFn = func(context.Context, string) (string, int64, int64, int64, int64, error) {
 		return "captured", 0, 0, 0, 0, nil
 	}
 
 	_, err := h.wf.CompleteCart(context.Background(), h.input())
 	require.Error(t, err,
-		"koleksiyon sıfır tahsilat bildirirken akış BAŞARILI sayılamaz")
+		"the flow cannot count as SUCCESSFUL while the collection reports a zero capture")
 	assert.True(t, hasCode(err, CodePaymentUndercaptured),
-		"hata eksik tahsilatı bildirmeli: %v", err)
+		"the error must report the short capture: %v", err)
 
-	// Tahsilat yapılmıştı: bu bir ASILI yan etkidir, telafi ile kapanmaz.
+	// The capture had been performed: this is a DANGLING side effect, it is not
+	// closed by compensation.
 	assert.Equal(t, 1, h.rec.count("payment:capture"))
 	assert.Equal(t, 0, h.rec.count("cart:complete"),
-		"doğrulama düşerken sepet tamamlanmış işaretlenmemeli")
+		"the cart must not be marked completed while the verification fails")
 }
 
-// TestTahsilatPatlayincaTamGeriAlmaTersSiradaCalisir tahsilat adımının
-// KENDİSİ patladığında tüm telafi zincirinin ters sırada çalıştığını doğrular.
+// TestACaptureFailureRollsEverythingBackInReverseOrder verifies that when the
+// capture step ITSELF blows up the whole compensation chain runs in reverse
+// order.
 //
-// Kapsam boşluğuydu: hiçbir test tahsilatı patlatmıyordu, dolayısıyla
-// authorizePaymentStep.Compensate hiç çalışmıyordu. Testlerin saydığı
-// "payment:cancel" izi Invoke içindeki blokaj bırakmadan geliyordu — yani
-// müşterinin kartındaki blokajı serbest bırakan TELAFİ yolu sıfır kapsamdaydı.
+// It was a coverage gap: no test blew up the capture, so
+// authorizePaymentStep.Compensate never ran at all. The "payment:cancel" trail
+// the tests counted came from the hold release inside Invoke — that is, the
+// COMPENSATION path that releases the hold on the customer's card had zero
+// coverage.
 //
-// Geri almanın ÖNKOŞULU koleksiyonun hiçbir tahsilat bildirmemesidir: tahsilat
-// çağrısının hata dönmesi tek başına "para gitmedi" demek değildir ve saga
-// artık kanıt olmadan geri almaz (bkz.
-// [TestBelirsizTahsilatOdenmisSiparisiGeriAlmaz]). Sahne bu yüzden açıkça
-// kurulur — sağlayıcıya hiç ulaşılamamıştır, koleksiyonda hareket yoktur.
-func TestTahsilatPatlayincaTamGeriAlmaTersSiradaCalisir(t *testing.T) {
+// The PRECONDITION of the rollback is that the collection reports no capture at
+// all: the capture call returning an error does not by itself mean "the money
+// did not move", and the saga no longer rolls back without evidence (see
+// [TestAnAmbiguousCaptureDoesNotRollBackAPaidOrder]). This is why the scene is
+// set up explicitly — the provider was never reached at all, and there is no
+// movement in the collection.
+func TestACaptureFailureRollsEverythingBackInReverseOrder(t *testing.T) {
 	h := newHarness(t)
 	h.payments.captureFn = func(context.Context, string, int64) (string, error) {
-		return "", errors.Unavailable("psp_down", "sağlayıcı erişilemez")
+		return "", errors.Unavailable("psp_down", "the provider is unreachable")
 	}
 	h.payments.collectionFn = func(context.Context, string) (string, int64, int64, int64, int64, error) {
 		return "authorized", testAmount, testAmount, 0, 0, nil
@@ -963,44 +991,49 @@ func TestTahsilatPatlayincaTamGeriAlmaTersSiradaCalisir(t *testing.T) {
 
 	calls := h.rec.snapshot()
 
-	// Geri alma KANITA dayanır: koleksiyon okunmadan zincir yürümez.
+	// The rollback rests on EVIDENCE: the chain does not move without the
+	// collection being read.
 	assert.Equal(t, 1, h.rec.count("payment:read_collection"),
-		"tahsilat hatasından sonra koleksiyon SORULMALI")
+		"after a capture error the collection MUST BE QUERIED")
 
-	// Yetkilendirme BAŞARILI olmuştu; blokaj telafi ile serbest bırakılmalı.
+	// The authorization had SUCCEEDED; the hold must be released by the
+	// compensation.
 	assert.Equal(t, 1, h.rec.count("payment:authorize"))
 	assert.Equal(t, 1, h.rec.count("payment:cancel"),
-		"yetkilendirilmiş blokaj serbest bırakılmalı; aksi hâlde müşterinin kartında asılı kalır")
+		"an authorized hold must be released; otherwise it stays dangling on the customer's card")
 
-	// Sipariş ve stok da geri alındı.
+	// The order and the inventory were rolled back too.
 	assert.Equal(t, []string{testOrderID}, h.orders.canceled)
 	assert.Equal(t, 1, h.rec.count("inventory:release:res_"+testLineA))
 	assert.Equal(t, 1, h.rec.count("inventory:release:res_"+testLineB))
 
-	// TERS sıra: ödeme -> sipariş -> stok.
+	// REVERSE order: payment -> order -> inventory.
 	assert.Less(t, indexOf(calls, "payment:cancel"), indexOf(calls, "order:cancel"),
-		"telafi ters sırada: authorize_payment, create_order'dan ÖNCE geri alınır")
+		"compensation in reverse order: authorize_payment is undone BEFORE create_order")
 	assert.Less(t, indexOf(calls, "order:cancel"), indexOf(calls, "inventory:release:res_"+testLineA),
-		"telafi ters sırada: create_order, reserve_inventory'den ÖNCE geri alınır")
+		"compensation in reverse order: create_order is undone BEFORE reserve_inventory")
 
 	assert.Equal(t, 0, h.rec.count("cart:complete"))
 }
 
-// TestBelirsizTahsilatOdenmisSiparisiGeriAlmaz saga'nın en pahalı arızasını
-// kilitler: sağlayıcı parayı çeker, yanıt kaybolur ve Capture hata döner.
+// TestAnAmbiguousCaptureDoesNotRollBackAPaidOrder locks down the most expensive
+// failure of the saga: the provider takes the money, the response is lost and
+// Capture returns an error.
 //
-// Regresyon: pivot koruması TAHSİLAT KİMLİĞİNE bağlıydı ve bu yolda kimlik hiç
-// yazılmadığı için koruma kapanıyordu. Ölçülen sonuç, paket yorumunun "asla
-// olmamalı" dediği durumdu — çağrı izi
+// Regression: the pivot guard was tied to the CAPTURE IDENTIFIER and because
+// that identifier is never written on this path, the guard was switched off. The
+// measured result was exactly the case the package comment calls "must never
+// happen" — the call trail was
 // "payment:capture -> payment:cancel -> order:cancel -> inventory:release x2",
-// yani müşteri hem parasından hem siparişinden oluyor, malı da serbest
-// bırakılıyordu. Artık hata yolu SORUŞTURULUYOR: koleksiyon tahsilat
-// gördüğünde saga ileri tarafta kalır ve elle mutabakat istenir.
-func TestBelirsizTahsilatOdenmisSiparisiGeriAlmaz(t *testing.T) {
+// meaning the customer lost both the money and the order, and the goods were
+// released as well. The error path is now INVESTIGATED: when the collection sees
+// a capture, the saga stays on the forward side and manual reconciliation is
+// requested.
+func TestAnAmbiguousCaptureDoesNotRollBackAPaidOrder(t *testing.T) {
 	h := newHarness(t)
-	// Sağlayıcı parayı ÇEKTİ, sonra yanıt zaman aşımına uğradı.
+	// The provider TOOK the money, then the response timed out.
 	h.payments.captureFn = func(context.Context, string, int64) (string, error) {
-		return "", errors.Unavailable("psp_timeout", "sağlayıcı yanıtı zaman aşımına uğradı")
+		return "", errors.Unavailable("psp_timeout", "the provider response timed out")
 	}
 	h.payments.collectionFn = func(context.Context, string) (string, int64, int64, int64, int64, error) {
 		return "captured", testAmount, testAmount, testAmount, 0, nil
@@ -1011,35 +1044,36 @@ func TestBelirsizTahsilatOdenmisSiparisiGeriAlmaz(t *testing.T) {
 
 	assert.Equal(t, workflow.CodeCompensationFailed, errors.CodeOf(err))
 	assert.True(t, errors.Is(err, workflow.ErrUncompensated),
-		"sonucu bilinmeyen tahsilat asılı yan etkidir")
-	assert.True(t, hasCode(err, CodeCaptureAmbiguous), "hata: %v", err)
+		"a capture whose outcome is unknown is a dangling side effect")
+	assert.True(t, hasCode(err, CodeCaptureAmbiguous), "error: %v", err)
 
-	// Soruşturma GERÇEKTEN yapıldı.
+	// The investigation REALLY happened.
 	assert.Equal(t, 1, h.rec.count("payment:read_collection"),
-		"tahsilat hatasından sonra koleksiyon SORULMALI")
+		"after a capture error the collection MUST BE QUERIED")
 
-	// Ödenmiş sipariş ayakta kalır: hiçbir telafi çalışmaz.
-	assert.Empty(t, h.orders.canceled, "ödenmiş sipariş iptal edilmez")
+	// The paid order stands: no compensation runs.
+	assert.Empty(t, h.orders.canceled, "a paid order is not canceled")
 	assert.Equal(t, 0, h.rec.count("inventory:release:res_"+testLineA),
-		"ödenmiş siparişin stoğu bırakılmaz; aksi hâlde aynı mal ikinci kez satılır")
+		"the inventory of a paid order is not released; otherwise the same goods are sold a second time")
 	assert.Equal(t, 0, h.rec.count("inventory:release:res_"+testLineB))
 	assert.Equal(t, 0, h.rec.count("payment:cancel"))
 }
 
-// TestKoleksiyonOkunamayincaGeriAlmaYapilmaz kanıt bulunamadığında saga'nın
-// geri ALMADIĞINI doğrular.
+// TestNoRollbackHappensWhenTheCollectionCannotBeRead verifies that the saga does
+// NOT roll back when no evidence can be found.
 //
-// Belirsizliğin en tipik sebebi ödeme sağlayıcısına ulaşılamamasıdır; o hâlde
-// koleksiyon okuması da patlar. Kanıtsız geri alma, ödenmiş bir siparişi yok
-// etme riskidir ve bu akış şüphe hâlinde UCUZ olan hatayı seçer: bekleyen bir
-// sipariş ve ayrılmış stok görünürdür, iade edilmemiş bir tahsilat değildir.
-func TestKoleksiyonOkunamayincaGeriAlmaYapilmaz(t *testing.T) {
+// The most typical cause of the ambiguity is that the payment provider cannot be
+// reached; in that case the collection read blows up too. Rolling back without
+// evidence risks destroying a paid order, and in doubt this flow picks the CHEAP
+// mistake: a pending order and reserved inventory are visible, an unrefunded
+// capture is not.
+func TestNoRollbackHappensWhenTheCollectionCannotBeRead(t *testing.T) {
 	h := newHarness(t)
 	h.payments.captureFn = func(context.Context, string, int64) (string, error) {
-		return "", errors.Unavailable("psp_timeout", "sağlayıcı yanıtı zaman aşımına uğradı")
+		return "", errors.Unavailable("psp_timeout", "the provider response timed out")
 	}
 	h.payments.collectionFn = func(context.Context, string) (string, int64, int64, int64, int64, error) {
-		return "", 0, 0, 0, 0, errors.Unavailable("psp_down", "koleksiyon okunamadı")
+		return "", 0, 0, 0, 0, errors.Unavailable("psp_down", "the collection could not be read")
 	}
 
 	_, err := h.wf.CompleteCart(context.Background(), h.input())
@@ -1047,7 +1081,7 @@ func TestKoleksiyonOkunamayincaGeriAlmaYapilmaz(t *testing.T) {
 
 	assert.Equal(t, workflow.CodeCompensationFailed, errors.CodeOf(err))
 	assert.True(t, errors.Is(err, workflow.ErrUncompensated))
-	assert.True(t, hasCode(err, CodeCaptureAmbiguous), "hata: %v", err)
+	assert.True(t, hasCode(err, CodeCaptureAmbiguous), "error: %v", err)
 
 	assert.Empty(t, h.orders.canceled)
 	assert.Equal(t, 0, h.rec.count("inventory:release:res_"+testLineA))
@@ -1055,91 +1089,92 @@ func TestKoleksiyonOkunamayincaGeriAlmaYapilmaz(t *testing.T) {
 	assert.Equal(t, 0, h.rec.count("payment:cancel"))
 }
 
-// TestBelirsizTahsilatinTelafisiGeriAlindiDemez sonucu bilinmeyen bir
-// tahsilatın telafisinin nil DÖNMEDİĞİNİ doğrular.
+// TestCompensatingAnAmbiguousCaptureDoesNotClaimRollback verifies that the
+// compensation of a capture whose outcome is unknown DOES NOT RETURN nil.
 //
-// Telafi doğrudan çağrılır: motor tek denemede patlayan adımı telafi etmez,
-// dolayısıyla bu yol akış üzerinden erişilemez. Yine de sözleşmenin kendisi
-// sınanır — nil dönmek, yürütmeyi "iş yapıldı ve GERİ ALINDI" diye kaydeden
-// bir yalan olurdu ve adımın yeniden denenebilir hâle getirildiği gün o yalan
-// sessizce üretime çıkardı.
-func TestBelirsizTahsilatinTelafisiGeriAlindiDemez(t *testing.T) {
+// The compensation is called directly: the engine does not compensate a step
+// that blows up on a single attempt, so this path is unreachable through the
+// flow. The contract itself is checked anyway — returning nil would be a lie
+// that records the execution as "the work was done and ROLLED BACK", and the day
+// the step is made retryable that lie would quietly reach production.
+func TestCompensatingAnAmbiguousCaptureDoesNotClaimRollback(t *testing.T) {
 	h := newHarness(t)
 	step := &capturePaymentStep{w: h.wf, plan: &checkoutPlan{
 		CartID: testCartID, Amount: testAmount, CurrencyCode: testCurrency,
 	}}
 
-	t.Run("tahsilat denenmedi: no-op", func(t *testing.T) {
+	t.Run("capture not attempted: no-op", func(t *testing.T) {
 		sc := &workflow.StepContext{Shared: map[string]any{}}
 		require.NoError(t, step.Compensate(context.Background(), sc))
 	})
 
-	t.Run("tahsilat denendi, sonucu bilinmiyor", func(t *testing.T) {
+	t.Run("capture attempted, outcome unknown", func(t *testing.T) {
 		sc := &workflow.StepContext{Shared: map[string]any{sharedCaptureAttempted: true}}
 		err := step.Compensate(context.Background(), sc)
 		require.Error(t, err)
-		assert.True(t, hasCode(err, CodeCaptureAmbiguous), "hata: %v", err)
-		assert.True(t, errors.IsConflict(err), "kalıcı durum yeniden denenmez")
+		assert.True(t, hasCode(err, CodeCaptureAmbiguous), "error: %v", err)
+		assert.True(t, errors.IsConflict(err), "a permanent state is not retried")
 	})
 
-	t.Run("tahsilat yapıldı", func(t *testing.T) {
+	t.Run("capture performed", func(t *testing.T) {
 		sc := &workflow.StepContext{Shared: map[string]any{
 			sharedCaptureAttempted: true,
 			sharedPaymentID:        testPaymentID,
 		}}
 		err := step.Compensate(context.Background(), sc)
 		require.Error(t, err)
-		assert.True(t, hasCode(err, CodeCaptureIrreversible), "hata: %v", err)
+		assert.True(t, hasCode(err, CodeCaptureIrreversible), "error: %v", err)
 	})
 }
 
-// TestTahsilattanSonraPatlayanAdimPivotuKorur pivot kararını kilitler:
-// tahsilat BAŞARILI olduktan sonra bir adım düşerse hiçbir şey geri alınmaz.
+// TestAStepFailingAfterCaptureKeepsThePivot locks down the pivot decision: once
+// the capture has SUCCEEDED, nothing is rolled back if a later step fails.
 //
-// Kapsam boşluğuydu: capturePaymentStep.Compensate'in gövdesi "return nil" ile
-// değiştirildiğinde tek bir test bile düşmüyordu, çünkü hiçbir test BAŞARILI
-// bir tahsilattan SONRA bir adımı patlatmıyordu. Sahne, sepet modülünün
-// paniklemesiyle kurulur — motor paniği adım hatasına çevirir ve telafi zinciri
-// başlar; asıl sınanan, o zincirin pivot'ta DURMASIDIR.
-func TestTahsilattanSonraPatlayanAdimPivotuKorur(t *testing.T) {
+// It was a coverage gap: when the body of capturePaymentStep.Compensate was
+// replaced with "return nil" not a single test failed, because no test blew up a
+// step AFTER a SUCCESSFUL capture. The scene is set up by making the cart module
+// panic — the engine turns the panic into a step error and the compensation
+// chain starts; what is really under test is that the chain STOPS at the pivot.
+func TestAStepFailingAfterCaptureKeepsThePivot(t *testing.T) {
 	h := newHarness(t)
 	h.carts.markCompletedFn = func(context.Context, string) error {
-		panic("cart modülü çöktü")
+		panic("the cart module crashed")
 	}
 
 	_, err := h.wf.CompleteCart(context.Background(), h.input())
 	require.Error(t, err)
 
 	assert.Equal(t, workflow.CodeCompensationFailed, errors.CodeOf(err),
-		"tahsilatın telafisi hata döndüğü için yürütme compensation_failed olmalı")
+		"because the capture compensation returns an error the execution must be compensation_failed")
 	assert.True(t, hasCode(err, CodeCaptureIrreversible),
-		"telafi, çekilmiş paranın geri alınamadığını BİLDİRMELİ: %v", err)
+		"the compensation MUST REPORT that the money taken could not be given back: %v", err)
 
-	// Tahsilat gerçekleşmişti: ödenmiş sipariş ayakta kalır.
+	// The capture had happened: the paid order stands.
 	assert.Equal(t, 1, h.rec.count("payment:capture"))
-	assert.Empty(t, h.orders.canceled, "ödenmiş sipariş iptal edilmez")
+	assert.Empty(t, h.orders.canceled, "a paid order is not canceled")
 	assert.Equal(t, 0, h.rec.count("inventory:release:res_"+testLineA),
-		"ödenmiş siparişin stoğu bırakılmaz")
+		"the inventory of a paid order is not released")
 	assert.Equal(t, 0, h.rec.count("inventory:release:res_"+testLineB))
 	assert.Equal(t, 0, h.rec.count("payment:cancel"),
-		"tahsilat blokajı zaten kapatmıştır")
+		"the capture has already closed the hold")
 }
 
-// TestTahsilattanSonraGelenIptalSepetiKilitlemez saga'nın çağıranın
-// iptalinden AYRILDIĞINI doğrular.
+// TestACancellationAfterCaptureDoesNotLockTheCart verifies that the saga is
+// DETACHED from the caller's cancellation.
 //
-// Regresyon: saga çağıranın bağlamıyla koşuyordu ve motor her adımdan ÖNCE
-// bağlamı denetlediği için, tahsilat sırasında düşen bir istemci clear_cart'ı
-// tümüyle atlatıyordu. Ölçülen sonuç: cart:complete=0, inventory:confirm=0,
-// yürütme compensation_failed — yani para çekilmiş, sipariş "pending", sepet
-// kilitli ve stok "active" kalıyordu; idempotency anahtarı da yandığı için
-// aynı sepet bir daha hiç denenemiyordu.
-func TestTahsilattanSonraGelenIptalSepetiKilitlemez(t *testing.T) {
+// Regression: the saga ran with the caller's context and, because the engine
+// checks the context BEFORE every step, a client that dropped during the capture
+// skipped clear_cart entirely. The measured result: cart:complete=0,
+// inventory:confirm=0, execution compensation_failed — meaning the money was
+// taken, the order stayed "pending", the cart stayed locked and the inventory
+// stayed "active"; and because the idempotency key was burned as well, the same
+// cart could never be attempted again.
+func TestACancellationAfterCaptureDoesNotLockTheCart(t *testing.T) {
 	h := newHarness(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// İstemci tam tahsilat sırasında düşüyor.
+	// The client drops right in the middle of the capture.
 	h.payments.captureFn = func(context.Context, string, int64) (string, error) {
 		cancel()
 		return testPaymentID, nil
@@ -1147,9 +1182,9 @@ func TestTahsilattanSonraGelenIptalSepetiKilitlemez(t *testing.T) {
 
 	out, err := h.wf.CompleteCart(ctx, h.input())
 	require.NoError(t, err,
-		"tahsilat yapılmışken akış istemcinin gitmesi yüzünden yarıda kalamaz")
+		"once the capture is done the flow cannot stop halfway because the client went away")
 
-	assert.True(t, out.CartCompleted, "sepet damgalanmalı; aksi hâlde kalıcı olarak kilitlenir")
+	assert.True(t, out.CartCompleted, "the cart must be stamped; otherwise it stays locked forever")
 	assert.True(t, out.ReservationsConfirmed)
 	assert.Empty(t, out.Warnings)
 
@@ -1159,48 +1194,50 @@ func TestTahsilattanSonraGelenIptalSepetiKilitlemez(t *testing.T) {
 	assert.Empty(t, h.orders.canceled)
 }
 
-// TestSagaBaglamiCagirandanAyrilir [sagaContext]'in iptali TAŞIMADIĞINI ve
-// kendi bütçesini kurduğunu doğrular.
-func TestSagaBaglamiCagirandanAyrilir(t *testing.T) {
+// TestTheSagaContextIsDetachedFromTheCaller verifies that [sagaContext] DOES NOT
+// CARRY the cancellation and sets up its own budget.
+func TestTheSagaContextIsDetachedFromTheCaller(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
 	sctx, stop := sagaContext(ctx)
 	defer stop()
 
-	require.NoError(t, sctx.Err(), "çağıranın iptali saga'yı ölü doğurmamalı")
+	require.NoError(t, sctx.Err(), "the caller's cancellation must not make the saga stillborn")
 
 	deadline, ok := sctx.Deadline()
-	require.True(t, ok, "ayrılmış bağlamın kendi süre bütçesi OLMALI")
+	require.True(t, ok, "the detached context MUST HAVE its own time budget")
 	assert.WithinDuration(t, time.Now().Add(SagaTimeout), deadline, time.Minute)
 }
 
-// TestTemizlikBaglamiIptaldenEtkilenmez [cleanupContext]'in iptal edilmiş bir
-// bağlamdan bile canlı bir bağlam ürettiğini doğrular.
+// TestTheCleanupContextIsUnaffectedByCancellation verifies that [cleanupContext]
+// produces a live context even out of a canceled one.
 //
-// Temizliğin en çok gerektiği anlardan biri tam da bağlamın ölmesidir: yarıda
-// kalan bir ayırmayı ölü bir bağlamla geri bırakmaya çalışmak, her denemenin
-// anında düşmesi demektir.
-func TestTemizlikBaglamiIptaldenEtkilenmez(t *testing.T) {
+// One of the moments cleanup is needed most is exactly when the context dies:
+// trying to release a half-finished reservation with a dead context means every
+// attempt fails instantly.
+func TestTheCleanupContextIsUnaffectedByCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
 	cctx, stop := cleanupContext(ctx)
 	defer stop()
 
-	require.NoError(t, cctx.Err(), "temizlik bağlamı ölü doğmamalı")
+	require.NoError(t, cctx.Err(), "the cleanup context must not be stillborn")
 
 	deadline, ok := cctx.Deadline()
-	require.True(t, ok, "temizliğin kendi süre bütçesi OLMALI")
+	require.True(t, ok, "the cleanup MUST HAVE its own time budget")
 	assert.WithinDuration(t, time.Now().Add(CompensationTimeout), deadline, time.Minute)
 }
 
-// TestBosRezervasyonKimligiBasariSayilmaz stok modülünün hata dönmeden BOŞ
-// kimlik döndürmesinin başarı SAYILMADIĞINI doğrular.
+// TestAnEmptyReservationIDIsNotTreatedAsSuccess verifies that the inventory
+// module returning an EMPTY identifier without an error IS NOT COUNTED as
+// success.
 //
-// Boş kimlik "ayırma yapılmadı" demek değildir; "yapıldı ama izi yok" demektir.
-// Sessizce kabul edilirse ne bu adım ne telafi onu geri bırakabilir.
-func TestBosRezervasyonKimligiBasariSayilmaz(t *testing.T) {
+// An empty identifier does not mean "no reservation was made"; it means "one was
+// made but there is no trail of it". If it is silently accepted, neither this
+// step nor the compensation can release it.
+func TestAnEmptyReservationIDIsNotTreatedAsSuccess(t *testing.T) {
 	h := newHarness(t)
 	h.inventory.reserveFn = func(_ context.Context, _, _ string, _ int64, lineItemID string) (string, error) {
 		if lineItemID == testLineB {
@@ -1212,23 +1249,25 @@ func TestBosRezervasyonKimligiBasariSayilmaz(t *testing.T) {
 	_, err := h.wf.CompleteCart(context.Background(), h.input())
 	require.Error(t, err)
 
-	assert.True(t, hasCode(err, CodeEmptyIdentifier), "hata: %v", err)
+	assert.True(t, hasCode(err, CodeEmptyIdentifier), "error: %v", err)
 	assert.True(t, errors.Is(err, workflow.ErrUncompensated),
-		"izi olmayan rezervasyon asılı yan etkidir")
+		"a reservation without a trail is a dangling side effect")
 	assert.Equal(t, workflow.CodeCompensationFailed, errors.CodeOf(err))
 
-	// İzi OLAN rezervasyon yine de geri bırakılır.
+	// The reservation that DOES have a trail is released all the same.
 	assert.Equal(t, 1, h.rec.count("inventory:release:res_"+testLineA))
-	assert.Equal(t, 0, h.rec.count("order:place"), "kimliksiz ayırmayla sipariş açılmaz")
+	assert.Equal(t, 0, h.rec.count("order:place"), "no order is opened with an identifier-less reservation")
 }
 
-// TestBosSiparisKimligiBasariSayilmaz sipariş modülünün hata dönmeden BOŞ
-// kimlik döndürmesinin YETİM sipariş üretmediğini doğrular.
+// TestAnEmptyOrderIDIsNotTreatedAsSuccess verifies that the order module
+// returning an EMPTY identifier without an error does not produce an ORPHAN
+// order.
 //
-// Regresyon: boş kimlik paylaşılan haritaya yazılıyor, telafi "sipariş hiç
-// açılmadı" sanıp no-op yapıyordu; ölçülen sonuç order:place=1 iken
-// order:cancel=0 idi — order modülünde açık bir sipariş kalıyordu.
-func TestBosSiparisKimligiBasariSayilmaz(t *testing.T) {
+// Regression: the empty identifier was written into the shared map and the
+// compensation, thinking "no order was ever opened", did a no-op; the measured
+// result was order:place=1 while order:cancel=0 — an open order was left behind
+// in the order module.
+func TestAnEmptyOrderIDIsNotTreatedAsSuccess(t *testing.T) {
 	h := newHarness(t)
 	h.orders.placeFn = func(context.Context, json.RawMessage) (string, error) {
 		return "", nil
@@ -1237,23 +1276,24 @@ func TestBosSiparisKimligiBasariSayilmaz(t *testing.T) {
 	_, err := h.wf.CompleteCart(context.Background(), h.input())
 	require.Error(t, err)
 
-	assert.True(t, hasCode(err, CodeEmptyIdentifier), "hata: %v", err)
+	assert.True(t, hasCode(err, CodeEmptyIdentifier), "error: %v", err)
 	assert.True(t, errors.Is(err, workflow.ErrUncompensated),
-		"izi olmayan sipariş asılı yan etkidir; yürütme 'geri alındı' diyemez")
+		"an order without a trail is a dangling side effect; the execution cannot say 'rolled back'")
 	assert.Equal(t, workflow.CodeCompensationFailed, errors.CodeOf(err))
 
-	assert.Equal(t, 0, h.rec.count("payment:collection"), "kimliksiz siparişle ödeme açılmaz")
-	assert.Equal(t, 1, h.rec.count("inventory:release:res_"+testLineA), "stok yine de geri bırakılır")
+	assert.Equal(t, 0, h.rec.count("payment:collection"), "no payment is opened with an identifier-less order")
+	assert.Equal(t, 1, h.rec.count("inventory:release:res_"+testLineA), "the inventory is released all the same")
 	assert.Equal(t, 1, h.rec.count("inventory:release:res_"+testLineB))
 }
 
-// TestBosTahsilatKimligiPivotuKapatmaz ödeme modülünün hata dönmeden BOŞ
-// tahsilat kimliği döndürmesinin pivot korumasını DÜŞÜRMEDİĞİNİ doğrular.
+// TestAnEmptyPaymentIDDoesNotDisableThePivot verifies that the payment module
+// returning an EMPTY capture identifier without an error DOES NOT BRING DOWN the
+// pivot guard.
 //
-// Regresyon: koruma bir dizgenin boşluğuna bağlıydı. Boş kimlikte
-// skipAfterCapture false dönüyor ve tahsilat yapılmışken order:cancel ile iki
-// inventory:release çalışıyordu.
-func TestBosTahsilatKimligiPivotuKapatmaz(t *testing.T) {
+// Regression: the guard was tied to the emptiness of a string. On an empty
+// identifier skipAfterCapture returned false and, with the capture already done,
+// order:cancel and two inventory:release calls ran.
+func TestAnEmptyPaymentIDDoesNotDisableThePivot(t *testing.T) {
 	h := newHarness(t)
 	h.payments.captureFn = func(context.Context, string, int64) (string, error) {
 		return "", nil
@@ -1262,46 +1302,46 @@ func TestBosTahsilatKimligiPivotuKapatmaz(t *testing.T) {
 	_, err := h.wf.CompleteCart(context.Background(), h.input())
 	require.Error(t, err)
 
-	assert.True(t, hasCode(err, CodeEmptyIdentifier), "hata: %v", err)
+	assert.True(t, hasCode(err, CodeEmptyIdentifier), "error: %v", err)
 	assert.True(t, errors.Is(err, workflow.ErrUncompensated))
 	assert.Equal(t, workflow.CodeCompensationFailed, errors.CodeOf(err))
 
-	assert.Empty(t, h.orders.canceled, "para çekilmişken sipariş iptal edilmez")
+	assert.Empty(t, h.orders.canceled, "the order is not canceled once the money has been taken")
 	assert.Equal(t, 0, h.rec.count("inventory:release:res_"+testLineA))
 	assert.Equal(t, 0, h.rec.count("inventory:release:res_"+testLineB))
 	assert.Equal(t, 0, h.rec.count("payment:cancel"))
 }
 
-// TestBosOdemeKimlikleriYetkilendirmedeDurdurulur boş koleksiyon ve oturum
-// kimliklerinin EN UCUZ noktada reddedildiğini doğrular.
+// TestEmptyPaymentIdentifiersAreStoppedAtAuthorization verifies that empty
+// collection and session identifiers are rejected at the CHEAPEST point.
 //
-// Bu noktada müşterinin kartında bloke bir tutar yoktur; tek bedel geri alınan
-// bir rezervasyondur.
-func TestBosOdemeKimlikleriYetkilendirmedeDurdurulur(t *testing.T) {
+// At this point there is no amount held on the customer's card; the only price
+// is a reservation that gets rolled back.
+func TestEmptyPaymentIdentifiersAreStoppedAtAuthorization(t *testing.T) {
 	tests := map[string]func(*harness){
-		"koleksiyon kimliği boş": func(h *harness) {
+		"collection identifier empty": func(h *harness) {
 			h.payments.createCollectionFn = func(context.Context, string, string, int64) (string, error) {
 				return "", nil
 			}
 		},
-		"oturum kimliği boş": func(h *harness) {
+		"session identifier empty": func(h *harness) {
 			h.payments.openSessionFn = func(context.Context, string, string, string, json.RawMessage) (string, error) {
 				return "", nil
 			}
 		},
 	}
 
-	for name, boz := range tests {
+	for name, corrupt := range tests {
 		t.Run(name, func(t *testing.T) {
 			h := newHarness(t)
-			boz(h)
+			corrupt(h)
 
 			_, err := h.wf.CompleteCart(context.Background(), h.input())
 			require.Error(t, err)
 
-			assert.True(t, hasCode(err, CodeEmptyIdentifier), "hata: %v", err)
+			assert.True(t, hasCode(err, CodeEmptyIdentifier), "error: %v", err)
 			assert.False(t, errors.Is(err, workflow.ErrUncompensated),
-				"yetkilendirme öncesinde asılı kalan bir yan etki yoktur")
+				"before the authorization there is no side effect left dangling")
 
 			assert.Equal(t, 0, h.rec.count("payment:authorize"))
 			assert.Equal(t, 0, h.rec.count("payment:capture"))
@@ -1312,27 +1352,27 @@ func TestBosOdemeKimlikleriYetkilendirmedeDurdurulur(t *testing.T) {
 	}
 }
 
-// TestStokTelafisiPatlarsaSizanRezervasyonBildirilir stok telafisinin hata
-// BİLDİRME yolunu ve releaseAll'un "zincir ilk hatada DURMAZ" sözünü birlikte
-// kilitler.
+// TestALeakedReservationIsReportedWhenInventoryCompensationFails locks down
+// together the error REPORTING path of the inventory compensation and
+// releaseAll's promise that "the chain does NOT STOP at the first error".
 //
-// İki kapsam boşluğuydu: (1) Compensate'in hatayı yutup nil dönmesi tek bir
-// testi bile düşürmüyordu — oysa nil dönmek, motorun yürütmeyi "iş yapıldı ve
-// GERİ ALINDI" yazması demektir ve gerçekte ayrılmış stok asılı kalır;
-// (2) releaseAll'daki "continue" yerine "break" konduğunda ikinci
-// rezervasyonun sessizce asılı kalması fark edilmiyordu.
+// It was two coverage gaps: (1) Compensate swallowing the error and returning
+// nil did not fail a single test — yet returning nil means the engine writes the
+// execution as "the work was done and ROLLED BACK" while in reality reserved
+// inventory stays dangling; (2) when the "continue" in releaseAll was replaced
+// with "break", the second reservation quietly dangling went unnoticed.
 //
-// Kalan listenin BUDANDIĞI da burada görünür: telafi yeniden denendiğinde
-// yalnızca bırakılamayan rezervasyon denenir (res_li_a üç kez, res_li_b bir
-// kez).
-func TestStokTelafisiPatlarsaSizanRezervasyonBildirilir(t *testing.T) {
+// That the remaining list is PRUNED is visible here too: when the compensation
+// is retried, only the reservation that could not be released is attempted
+// (res_li_a three times, res_li_b once).
+func TestALeakedReservationIsReportedWhenInventoryCompensationFails(t *testing.T) {
 	h := newHarness(t)
 	h.payments.authorizeFn = func(context.Context, string) (string, int64, error) {
-		return "", 0, errors.Conflict("payment_authorization_declined", "kart reddedildi")
+		return "", 0, errors.Conflict("payment_authorization_declined", "the card was declined")
 	}
 	h.inventory.releaseFn = func(_ context.Context, reservationID string) error {
 		if reservationID == "res_"+testLineA {
-			return errors.Internal("inventory_unavailable", "rezervasyon bırakılamadı")
+			return errors.Internal("inventory_unavailable", "the reservation could not be released")
 		}
 		return nil
 	}
@@ -1342,25 +1382,25 @@ func TestStokTelafisiPatlarsaSizanRezervasyonBildirilir(t *testing.T) {
 
 	assert.Equal(t, workflow.CodeCompensationFailed, errors.CodeOf(err))
 	assert.True(t, hasCode(err, CodeReservationLeaked),
-		"asılı kalan rezervasyon BİLDİRİLMELİ: %v", err)
+		"a dangling reservation MUST BE REPORTED: %v", err)
 
 	assert.Equal(t, 1, h.rec.count("inventory:release:res_"+testLineB),
-		"bir rezervasyonun bırakılamaması diğerinin asılı kalması için gerekçe değildir")
+		"one reservation failing to be released is no reason for the other one to dangle")
 	assert.Equal(t, compensationRetry().MaxAttempts, h.rec.count("inventory:release:res_"+testLineA),
-		"telafi yeniden denenir ve her denemede YALNIZCA kalan rezervasyon denenir")
+		"the compensation is retried and on every attempt ONLY the remaining reservation is attempted")
 }
 
-// TestYaridaKalanTemizlikTelafiPolitikasiylaYenidenDenenir adımın KENDİ
-// temizliğinin motorun telafisiyle aynı ısrarı gösterdiğini doğrular.
+// TestInlineCleanupIsRetriedWithTheCompensationPolicy verifies that a step's OWN
+// cleanup shows the same persistence as the engine's compensation.
 //
-// Geçici bir arıza, yalnızca hangi yolda yakalandığına göre elle müdahale
-// üretmemelidir: adım içi temizlik tek denemeye sahipken motorun telafisi üç
-// kez deneniyordu.
-func TestYaridaKalanTemizlikTelafiPolitikasiylaYenidenDenenir(t *testing.T) {
+// A transient outage must not produce manual intervention merely depending on
+// which path caught it: the in-step cleanup had a single attempt while the
+// engine's compensation was retried three times.
+func TestInlineCleanupIsRetriedWithTheCompensationPolicy(t *testing.T) {
 	h := newHarness(t)
 	h.inventory.reserveFn = func(_ context.Context, _, _ string, _ int64, lineItemID string) (string, error) {
 		if lineItemID == testLineB {
-			return "", errors.Conflict("inventory_insufficient_stock", "yetersiz stok")
+			return "", errors.Conflict("inventory_insufficient_stock", "insufficient stock")
 		}
 		return "res_" + lineItemID, nil
 	}
@@ -1369,7 +1409,7 @@ func TestYaridaKalanTemizlikTelafiPolitikasiylaYenidenDenenir(t *testing.T) {
 	h.inventory.releaseFn = func(context.Context, string) error {
 		releases++
 		if releases < compensationRetry().MaxAttempts {
-			return errors.Unavailable("inventory_unavailable", "stok servisi geçici olarak erişilemez")
+			return errors.Unavailable("inventory_unavailable", "the inventory service is temporarily unreachable")
 		}
 		return nil
 	}
@@ -1378,20 +1418,21 @@ func TestYaridaKalanTemizlikTelafiPolitikasiylaYenidenDenenir(t *testing.T) {
 	require.Error(t, err)
 
 	assert.Equal(t, compensationRetry().MaxAttempts, h.rec.count("inventory:release:res_"+testLineA),
-		"geçici arızada temizlik ısrar etmeli")
+		"on a transient outage the cleanup must insist")
 	assert.False(t, errors.Is(err, workflow.ErrUncompensated),
-		"temizlik sonunda başarılı olduysa asılı iş YOKTUR")
-	assert.True(t, hasCode(err, "inventory_insufficient_stock"), "hata: %v", err)
+		"if the cleanup eventually succeeded there is NO dangling work")
+	assert.True(t, hasCode(err, "inventory_insufficient_stock"), "error: %v", err)
 }
 
-// TestTamamlanmisSepetIkinciCagridaHazirliktaDurur idempotency godoc'unun
-// GERÇEK kurulumdaki karşılığını kilitler.
+// TestACompletedCartStopsInPrepareOnTheSecondCall locks down what the
+// idempotency godoc amounts to in a REAL installation.
 //
-// Motorun "tamamlanmış yürütmenin çıktısını dön" yolu bu akışta erişilemezdir:
-// hazırlık motorun denetiminden ÖNCE çalışır ve başarılı bir yürütme sepeti
-// tamamlanmış damgalar. İkinci çağrının cevabı bu yüzden "aynı sonuç" değil,
-// CodeCartCompleted'dır — ve önemli olan, ikinci bir siparişin DOĞMAMASIDIR.
-func TestTamamlanmisSepetIkinciCagridaHazirliktaDurur(t *testing.T) {
+// The engine's "return the output of a completed execution" path is unreachable
+// in this flow: the preparation runs BEFORE the engine's check and a successful
+// execution stamps the cart as completed. The answer to the second call is
+// therefore not "the same result" but CodeCartCompleted — and what matters is
+// that a second order IS NOT BORN.
+func TestACompletedCartStopsInPrepareOnTheSecondCall(t *testing.T) {
 	h := newHarness(t)
 
 	var completed bool
@@ -1417,31 +1458,32 @@ func TestTamamlanmisSepetIkinciCagridaHazirliktaDurur(t *testing.T) {
 	require.NoError(t, err)
 
 	_, err = h.wf.CompleteCart(context.Background(), h.input())
-	require.Error(t, err, "tamamlanmış sepet ikinci kez sipariş edilemez")
+	require.Error(t, err, "a completed cart cannot be ordered a second time")
 	assert.Equal(t, CodeCartCompleted, errors.CodeOf(err))
 	assert.True(t, errors.IsConflict(err))
 
-	assert.Equal(t, 1, h.rec.count("order:place"), "aynı sepetten ikinci sipariş DOĞMAZ")
+	assert.Equal(t, 1, h.rec.count("order:place"), "a second order IS NOT BORN from the same cart")
 	assert.Equal(t, 1, h.rec.count("payment:capture"))
 }
 
-// TestBlokajBirakmasiTelafiPolitikasiylaYenidenDenenir yarıda kalan
-// yetkilendirmenin blokajını bırakmanın da motorun telafisiyle aynı ısrarı
-// gösterdiğini doğrular.
+// TestReleasingTheHoldIsRetriedWithTheCompensationPolicy verifies that releasing
+// the hold of a half-finished authorization also shows the same persistence as
+// the engine's compensation.
 //
-// Müşterinin kartındaki blokajı geçici bir arıza yüzünden asılı bırakmak,
-// aynı arıza telafi zincirinde yakalansaydı olmayacak bir sonuçtur.
-func TestBlokajBirakmasiTelafiPolitikasiylaYenidenDenenir(t *testing.T) {
+// Leaving the hold on the customer's card dangling because of a transient outage
+// is an outcome that would not have happened had the same outage been caught in
+// the compensation chain.
+func TestReleasingTheHoldIsRetriedWithTheCompensationPolicy(t *testing.T) {
 	h := newHarness(t)
 	h.payments.authorizeFn = func(context.Context, string) (string, int64, error) {
-		return "", 0, errors.Conflict("payment_authorization_declined", "kart reddedildi")
+		return "", 0, errors.Conflict("payment_authorization_declined", "the card was declined")
 	}
 
 	var cancels int
 	h.payments.cancelFn = func(context.Context, string) error {
 		cancels++
 		if cancels < compensationRetry().MaxAttempts {
-			return errors.Unavailable("psp_down", "sağlayıcı geçici olarak erişilemez")
+			return errors.Unavailable("psp_down", "the provider is temporarily unreachable")
 		}
 		return nil
 	}
@@ -1450,85 +1492,90 @@ func TestBlokajBirakmasiTelafiPolitikasiylaYenidenDenenir(t *testing.T) {
 	require.Error(t, err)
 
 	assert.Equal(t, compensationRetry().MaxAttempts, h.rec.count("payment:cancel"),
-		"geçici arızada blokajın serbest bırakılmasında ısrar edilmeli")
+		"on a transient outage releasing the hold must be insisted on")
 	assert.False(t, errors.Is(err, workflow.ErrUncompensated),
-		"blokaj sonunda bırakıldıysa asılı iş YOKTUR")
-	assert.True(t, errors.IsConflict(err), "temizlik başarılıysa hata KART REDDİ olarak kalır")
+		"if the hold was eventually released there is NO dangling work")
+	assert.True(t, errors.IsConflict(err), "if the cleanup succeeds the error stays a CARD DECLINE")
 }
 
-// TestTahsilatPanigindePivotKorumasiCalisir tahsilat işaretinin Capture
-// çağrısından ÖNCE konmasını kilitler.
+// TestThePivotGuardHoldsWhenTheCapturePanics locks down that the capture flag is
+// set BEFORE the Capture call.
 //
-// Regresyon: işaret çağrıdan SONRA konsaydı, çağrı sırasında oluşan bir panik
-// (sağlayıcı adaptörünün hatası) pivot korumasını hiç devreye sokmadan telafi
-// zincirini çalıştırırdı — ÖDENMİŞ OLABİLECEK bir sipariş iptal edilir, stok
-// bırakılırdı. Panik motor tarafından adım hatasına çevrildiği için bu senaryo
-// gerçekten erişilebilirdir.
+// Regression: had the flag been set AFTER the call, a panic raised during the
+// call (a fault in the provider adapter) would have run the compensation chain
+// without ever engaging the pivot guard — an order that MIGHT HAVE BEEN PAID
+// would be canceled and the inventory released. Because the engine turns a panic
+// into a step error, this scenario is genuinely reachable.
 //
-// İşaret çağrıdan önce konduğunda, o noktadan sonraki HER arıza (hata, panik,
-// süre aşımı) "para gitmiş olabilir" sayılır ve geri alma YAPILMAZ.
-func TestTahsilatPanigindePivotKorumasiCalisir(t *testing.T) {
+// With the flag set before the call, EVERY fault after that point (error, panic,
+// timeout) counts as "the money may have gone" and NO rollback is done.
+func TestThePivotGuardHoldsWhenTheCapturePanics(t *testing.T) {
 	h := newHarness(t)
 	h.payments.captureFn = func(context.Context, string, int64) (string, error) {
-		panic("sağlayıcı adaptörü çöktü")
+		panic("the provider adapter crashed")
 	}
 
 	_, err := h.wf.CompleteCart(context.Background(), h.input())
 	require.Error(t, err)
 
-	// Pivot korunmalı: para gitmiş OLABİLİR, geri alma yapılamaz.
+	// The pivot must hold: the money MAY have gone, no rollback can be done.
 	assert.Equal(t, 0, h.rec.count("order:cancel"),
-		"tahsilat denenmişken sipariş iptal edilemez; müşteri hem parasından hem siparişinden olurdu")
+		"the order cannot be canceled once the capture was attempted; the customer would lose both the money and the order")
 	assert.Empty(t, h.orders.canceled)
 	assert.Equal(t, 0, h.rec.count("inventory:release:res_"+testLineA),
-		"tahsilat denenmişken stok bırakılamaz; ayakta duran siparişin malı ikinci kez satılırdı")
+		"the inventory cannot be released once the capture was attempted; the goods of a standing order would be sold a second time")
 	assert.Equal(t, 0, h.rec.count("payment:cancel"),
-		"blokaj zaten tahsilatla kapanmış olabilir")
+		"the hold may already have been closed by the capture")
 }
 
-// TestKoleksiyonTutariPlanlaAyrisirsaAdimDuser ödeme koleksiyonunun saga'nın
-// açtığından FARKLI bir tutarla açılmış olmasının yakalandığını doğrular.
+// TestTheStepFailsWhenTheCollectionAmountDivergesFromThePlan verifies that a
+// payment collection having been opened with an amount DIFFERENT from the one
+// the saga opened is caught.
 //
-// Tahsilat doğrulaması yerel tutara (plan.Amount) demirlidir; koleksiyonun
-// kendi tutarı ise ayrı bir tutarlılık iddiasıdır. Ayrışma, ödeme koleksiyonunun
-// beklenenden başka bir tutarla açıldığı anlamına gelir ve sessizce geçilmemeli.
-func TestKoleksiyonTutariPlanlaAyrisirsaAdimDuser(t *testing.T) {
+// The capture verification is anchored to the local amount (plan.Amount); the
+// collection's own amount is a separate consistency claim. A divergence means the
+// payment collection was opened with some amount other than the expected one, and
+// it must not be passed over silently.
+func TestTheStepFailsWhenTheCollectionAmountDivergesFromThePlan(t *testing.T) {
 	h := newHarness(t)
-	// Tahsilat planı KARŞILIYOR ama koleksiyonun tutarı bambaşka.
+	// The capture MEETS the plan but the amount of the collection is something
+	// else entirely.
 	h.payments.collectionFn = func(context.Context, string) (string, int64, int64, int64, int64, error) {
 		return "captured", testAmount * 2, testAmount, testAmount, 0, nil
 	}
 
 	_, err := h.wf.CompleteCart(context.Background(), h.input())
-	require.Error(t, err, "koleksiyon tutarı planla ayrışmışsa adım düşmeli")
-	assert.True(t, hasCode(err, CodePaymentUndercaptured), "hata: %v", err)
+	require.Error(t, err, "if the collection amount diverges from the plan the step must fail")
+	assert.True(t, hasCode(err, CodePaymentUndercaptured), "error: %v", err)
 	assert.Equal(t, 0, h.rec.count("cart:complete"))
 }
 
-// TestTukenenDepoYerineSonrakiAdayDenenir aday listesi ile ayırma arasındaki
-// YARIŞIN siparişi düşürmediğini doğrular.
+// TestTheNextCandidateIsTriedWhenAWarehouseIsExhausted verifies that the RACE
+// between the candidate list and the reservation does not drop the order.
 //
-// Adaylar kilitsiz okunur, ayırma kilit altında yapılır: aradaki pencerede
-// seçilen depo tükenmiş olabilir. Tek adayla yetinen bir uygulama siparişin
-// TAMAMINI düşürürdü — üstelik başka bir depoda yeterli stok dururken.
+// The candidates are read without a lock, the reservation is made under a lock:
+// in the window between the two the chosen warehouse may have run out. An
+// implementation that settled for a single candidate would drop the WHOLE order
+// — and that while another warehouse still had enough stock.
 //
-// Senaryo teorik değildir: sıra deterministiktir, yani eşzamanlı gelen her
-// sipariş AYNI depoyu dener ve hepsi aynı satırda çarpışır. Deterministik sıra
-// çakışmayı azaltmaz, yoğunlaştırır.
-func TestTukenenDepoYerineSonrakiAdayDenenir(t *testing.T) {
+// The scenario is not theoretical: the ranking is deterministic, meaning every
+// concurrently arriving order tries the SAME warehouse and they all collide on
+// the same line. A deterministic ranking does not reduce the contention, it
+// concentrates it.
+func TestTheNextCandidateIsTriedWhenAWarehouseIsExhausted(t *testing.T) {
 	h := newHarness(t)
 	h.inventory.locationsFn = func(_ context.Context, _ string, _ int64) ([]string, error) {
 		return []string{testLocationEast, testLocationWest}, nil
 	}
 	h.fulfillment.rankFn = rankByGreatestID
 
-	// rankByGreatestID west'i başa koyar; o depo tam bu arada tükenmiştir.
+	// rankByGreatestID puts west first; that warehouse ran out just in between.
 	h.inventory.reserveFn = func(
 		_ context.Context, _, locationID string, _ int64, lineItemID string,
 	) (string, error) {
 		if locationID == testLocationWest {
 			return "", errors.Conflict("inventory_insufficient_stock",
-				"%s deposunda yeterli stok yok", locationID)
+				"not enough stock in warehouse %s", locationID)
 		}
 		return "res_" + lineItemID, nil
 	}
@@ -1537,35 +1584,36 @@ func TestTukenenDepoYerineSonrakiAdayDenenir(t *testing.T) {
 	in.LocationID = ""
 
 	out, err := h.wf.CompleteCart(context.Background(), in)
-	require.NoError(t, err, "başka depoda stok varken sipariş düşmemeli: %v", err)
+	require.NoError(t, err, "the order must not be dropped while another warehouse has stock: %v", err)
 	assert.Equal(t, testOrderID, out.OrderID)
 
-	require.Len(t, h.inventory.reserved, 4, "her satır için tükenen depo + geçerli depo denenmeli")
+	require.Len(t, h.inventory.reserved, 4, "for every line the exhausted warehouse + the valid warehouse must be tried")
 	assert.Equal(t, testLocationWest, h.inventory.reserved[0].LocationID)
 	assert.Equal(t, testLocationEast, h.inventory.reserved[1].LocationID,
-		"tükenen depodan sonra sıradaki adaya geçilmeli")
+		"after the exhausted warehouse the next candidate must be taken")
 
-	// Kargo modülüne SATIR BAŞINA TEK KEZ sorulur: geri düşme, alınmış sırada
-	// bir sonrakine geçmektir. Tükenen her adaydan sonra yeniden sormak aynı
-	// cevabı üretirdi (sıra deterministiktir) ama politika kayıtlarını her
-	// defasında yeniden okurdu ve her okuma, adayların kilitsiz okunmasıyla
-	// ayırmanın kilitli yapılması arasındaki yarış penceresini uzatırdı.
+	// The fulfillment module is asked ONCE PER LINE: falling back means moving to
+	// the next entry in the ranking already obtained. Asking again after every
+	// exhausted candidate would produce the same answer (the ranking is
+	// deterministic) but would read the policy records anew each time, and every
+	// read would lengthen the race window between the lock-free reading of the
+	// candidates and the locked reservation.
 	assert.Equal(t, [][]string{
 		{testLocationEast, testLocationWest},
 		{testLocationEast, testLocationWest},
 	}, h.fulfillment.offered)
 	assert.Equal(t, 2, h.rec.count("fulfillment:rank_locations"),
-		"iki satır, iki çağrı: sıralama aday başına değil satır başınadır")
+		"two lines, two calls: the ranking is per line, not per candidate")
 }
 
-// TestGeriDusmeYALNIZCACakismadaOlur ısrarın hangi hatada doğru, hangisinde
-// yanlış olduğunu ayırır.
+// TestFallbackHappensONLYOnAConflict separates the errors where insisting is
+// right from those where it is wrong.
 //
-// errors.Conflict "bu depoda yeterli stok yok" demektir ve başka bir depoda
-// cevabı farklı olabilir. Erişilemeyen bir veritabanı ise HER depoda aynı
-// cevabı verir; orada ısrar etmek arızayı gizleyip gecikmeyi aday sayısıyla
-// çarpardı.
-func TestGeriDusmeYALNIZCACakismadaOlur(t *testing.T) {
+// errors.Conflict means "there is not enough stock in this warehouse" and the
+// answer may be different in another warehouse. An unreachable database, on the
+// other hand, gives the same answer in EVERY warehouse; insisting there would
+// hide the outage and multiply the latency by the number of candidates.
+func TestFallbackHappensONLYOnAConflict(t *testing.T) {
 	h := newHarness(t)
 	h.inventory.locationsFn = func(_ context.Context, _ string, _ int64) ([]string, error) {
 		return []string{testLocationEast, testLocationWest, testLocationNorth}, nil
@@ -1574,7 +1622,7 @@ func TestGeriDusmeYALNIZCACakismadaOlur(t *testing.T) {
 	h.inventory.reserveFn = func(
 		_ context.Context, _, _ string, _ int64, _ string,
 	) (string, error) {
-		return "", errors.Unavailable("db_down", "veritabanına ulaşılamadı")
+		return "", errors.Unavailable("db_down", "the database could not be reached")
 	}
 
 	in := h.input()
@@ -1583,15 +1631,15 @@ func TestGeriDusmeYALNIZCACakismadaOlur(t *testing.T) {
 	_, err := h.wf.CompleteCart(context.Background(), in)
 	require.Error(t, err)
 	assert.Equal(t, errors.KindUnavailable, errors.KindOf(err),
-		"sınıf korunmalı, çakışmaya çevrilmemeli: %v", err)
+		"the class must be preserved, not turned into a conflict: %v", err)
 
 	assert.Len(t, h.inventory.reserved, 1,
-		"çakışma olmayan hatada sonraki adaylar DENENMEMELİ")
+		"on an error that is not a conflict the next candidates must NOT be tried")
 }
 
-// TestTumAdaylarTukenirseSiparisDuser geri düşmenin sınırsız olmadığını ve
-// tükendiğinde davranışın değişmediğini doğrular.
-func TestTumAdaylarTukenirseSiparisDuser(t *testing.T) {
+// TestTheOrderFailsWhenEveryCandidateIsExhausted verifies that the fallback is
+// not unbounded and that the behavior does not change once it is exhausted.
+func TestTheOrderFailsWhenEveryCandidateIsExhausted(t *testing.T) {
 	h := newHarness(t)
 	h.inventory.locationsFn = func(_ context.Context, _ string, _ int64) ([]string, error) {
 		return []string{testLocationEast, testLocationWest}, nil
@@ -1601,7 +1649,7 @@ func TestTumAdaylarTukenirseSiparisDuser(t *testing.T) {
 		_ context.Context, _, locationID string, _ int64, _ string,
 	) (string, error) {
 		return "", errors.Conflict("inventory_insufficient_stock",
-			"%s deposunda yeterli stok yok", locationID)
+			"not enough stock in warehouse %s", locationID)
 	}
 
 	in := h.input()
@@ -1609,52 +1657,55 @@ func TestTumAdaylarTukenirseSiparisDuser(t *testing.T) {
 
 	_, err := h.wf.CompleteCart(context.Background(), in)
 	require.Error(t, err)
-	assert.True(t, errors.IsConflict(err), "hata: %v", err)
-	assert.True(t, hasCode(err, "inventory_insufficient_stock"), "hata: %v", err)
+	assert.True(t, errors.IsConflict(err), "error: %v", err)
+	assert.True(t, hasCode(err, "inventory_insufficient_stock"), "error: %v", err)
 
-	assert.Len(t, h.inventory.reserved, 2, "her aday bir kez denenmeli, fazlası değil")
+	assert.Len(t, h.inventory.reserved, 2, "every candidate must be tried once, no more")
 	assert.Equal(t, 0, h.rec.count("order:place"))
 }
 
-// TestBildirilenLokasyonTukenirseGeriDusulmez talimatın tercih olmadığını
-// doğrular.
+// TestNoFallbackWhenTheDeclaredLocationIsExhausted verifies that the instruction
+// is not a preference.
 //
-// Çağıran bir lokasyon bildirdiyse başka bir depoya kaymak, onun kararını
-// sessizce değiştirmek olurdu — malın hangi depodan çıkacağı çağıranın
-// bildiği ve başka kararlar (kargo sözleşmesi, gümrük) verdiği bir bilgidir.
-func TestBildirilenLokasyonTukenirseGeriDusulmez(t *testing.T) {
+// If the caller declared a location, moving to another warehouse would be
+// silently changing their decision — which warehouse the goods ship from is
+// something the caller knows and has made other decisions on (shipping contract,
+// customs).
+func TestNoFallbackWhenTheDeclaredLocationIsExhausted(t *testing.T) {
 	h := newHarness(t)
 	h.inventory.reserveFn = func(
 		_ context.Context, _, locationID string, _ int64, _ string,
 	) (string, error) {
 		return "", errors.Conflict("inventory_insufficient_stock",
-			"%s deposunda yeterli stok yok", locationID)
+			"not enough stock in warehouse %s", locationID)
 	}
 
-	// LocationID h.input() içinde DOLUDUR; aday listesi hiç sorulmamalı.
+	// LocationID is FILLED IN inside h.input(); the candidate list must never be
+	// asked for.
 	_, err := h.wf.CompleteCart(context.Background(), h.input())
 	require.Error(t, err)
-	assert.True(t, errors.IsConflict(err), "hata: %v", err)
+	assert.True(t, errors.IsConflict(err), "error: %v", err)
 
-	assert.Len(t, h.inventory.reserved, 1, "bildirilen lokasyon tek denemedir")
+	assert.Len(t, h.inventory.reserved, 1, "a declared location is a single attempt")
 	assert.Equal(t, 0, h.rec.count("fulfillment:rank_locations"),
-		"lokasyon bildirildiyse kargo modülüne hiç sorulmaz")
+		"if a location was declared the fulfillment module is never asked")
 }
 
-// TestAdayOlmayanLokasyonSirasiKabulEdilmez kargo modülünün aday kümesinin
-// DIŞINA çıkamayacağını doğrular.
+// TestALocationRankingOutsideTheCandidatesIsNotAccepted verifies that the
+// fulfillment module cannot step OUTSIDE the candidate set.
 //
-// Denetim olmasaydı listede hiç olmayan bir depoya ayırma denenir ve hata,
-// sebebinden bir modül uzakta — stok modülünün "böyle bir lokasyon yok"
-// yanıtında — patlardı. Sınıf Internal'dır: sözleşmeyi çiğneyen bir sağlayıcı,
-// çağıranın düzeltebileceği bir durum değildir.
-func TestAdayOlmayanLokasyonSirasiKabulEdilmez(t *testing.T) {
+// Without the check, a reservation would be attempted against a warehouse that
+// was never in the list and the error would blow up one module away from its
+// cause — in the inventory module's "no such location" answer. The class is
+// Internal: a provider that violates the contract is not a situation the caller
+// can fix.
+func TestALocationRankingOutsideTheCandidatesIsNotAccepted(t *testing.T) {
 	h := newHarness(t)
 	h.inventory.locationsFn = func(_ context.Context, _ string, _ int64) ([]string, error) {
 		return []string{testLocationEast}, nil
 	}
 	h.fulfillment.rankFn = func(_ context.Context, _ string, _ []string) ([]string, error) {
-		return []string{"sloc_hic_aday_degil"}, nil
+		return []string{"sloc_not_a_candidate"}, nil
 	}
 
 	in := h.input()
@@ -1663,22 +1714,22 @@ func TestAdayOlmayanLokasyonSirasiKabulEdilmez(t *testing.T) {
 	_, err := h.wf.CompleteCart(context.Background(), in)
 	require.Error(t, err)
 	assert.Equal(t, errors.KindInternal, errors.KindOf(err),
-		"sözleşmeyi çiğneyen bir sağlayıcı çağıranın düzeltebileceği bir durum değildir")
+		"a provider that violates the contract is not a situation the caller can fix")
 	assert.Equal(t, CodeReservationFailed, errors.CodeOf(err),
-		"hata bu paketin kendi ürettiğidir; korunacak bir alt kod yoktur — %v", err)
+		"the error is produced by this package itself; there is no underlying code to preserve — %v", err)
 
 	assert.Zero(t, h.rec.count("inventory:reserve:"+testLineA),
-		"aday olmayan lokasyonla ayırma DENENMEZ")
+		"reservation is NOT ATTEMPTED against a location that is not a candidate")
 }
 
-// TestYinelenenLokasyonSirasiKabulEdilmez kargo modülünün aynı adayı iki kez
-// sıralayamayacağını doğrular.
+// TestADuplicateLocationRankingIsNotAccepted verifies that the fulfillment
+// module cannot rank the same candidate twice.
 //
-// Yinelenen bir aday, tükenmiş bir depoya İKİNCİ KEZ gidilmesi demektir: geri
-// düşmenin bir turu boşa harcanır ve stok modülüne aynı cevabı verecek bir
-// çağrı daha yapılır. Sessizce kabul edilseydi arıza görünmez, yalnızca
-// yavaşlık olarak hissedilirdi.
-func TestYinelenenLokasyonSirasiKabulEdilmez(t *testing.T) {
+// A duplicated candidate means going to an exhausted warehouse a SECOND TIME:
+// one round of the fallback is wasted and one more call is made to the inventory
+// module that will give the same answer. Had it been silently accepted the fault
+// would be invisible and only felt as slowness.
+func TestADuplicateLocationRankingIsNotAccepted(t *testing.T) {
 	h := newHarness(t)
 	h.inventory.locationsFn = func(_ context.Context, _ string, _ int64) ([]string, error) {
 		return []string{testLocationEast, testLocationWest}, nil
@@ -1692,9 +1743,9 @@ func TestYinelenenLokasyonSirasiKabulEdilmez(t *testing.T) {
 
 	_, err := h.wf.CompleteCart(context.Background(), in)
 	require.Error(t, err)
-	assert.Equal(t, errors.KindInternal, errors.KindOf(err), "hata: %v", err)
-	assert.Equal(t, CodeReservationFailed, errors.CodeOf(err), "hata: %v", err)
+	assert.Equal(t, errors.KindInternal, errors.KindOf(err), "error: %v", err)
+	assert.Equal(t, CodeReservationFailed, errors.CodeOf(err), "error: %v", err)
 
 	assert.Zero(t, h.rec.count("inventory:reserve:"+testLineA),
-		"yinelenen sıra HİÇ denenmez; denetim ayırmadan ÖNCE çalışır")
+		"a duplicated ranking is NEVER tried; the check runs BEFORE the reservation")
 }

@@ -155,9 +155,9 @@ func TestNewLoggersizKurulabilir(t *testing.T) {
 // hatasız kurulur ve sepet sessizce degrade yolda koşardı. İddia bu yüzden
 // sonuçtaki vergi kaynağına dayanır.
 func TestFromContainerOpsiyonelYuzeyleriCozer(t *testing.T) {
-	h := newModulHarness(t)
+	h := newModuleHarness(t)
 	h.taxes.rateBps = 1000
-	serveSnapshot(h.carts, ikiSatirliSepet(1))
+	serveSnapshot(h.carts, twoLineCart(1))
 
 	c := container.New(nil)
 	provideAll(t, c, h)
@@ -180,7 +180,7 @@ func TestFromContainerOpsiyonelYuzeyleriCozer(t *testing.T) {
 // çalışmazdı; modülerlik tam olarak bunun mümkün olması demektir.
 func TestFromContainerOpsiyonelYuzeySizKurulur(t *testing.T) {
 	h := newHarness(t)
-	serveSnapshot(h.carts, ikiSatirliSepet(1))
+	serveSnapshot(h.carts, twoLineCart(1))
 
 	c := container.New(nil)
 	provideAll(t, c, h)

@@ -9,112 +9,125 @@ import (
 	"github.com/bdrtr/gobit/internal/core/errors"
 )
 
-// MaxTotalsAttempts bir hesap turunun kaç kez tekrarlanabileceğidir.
+// MaxTotalsAttempts is how many times a calculation round may be repeated.
 //
-// Hesap sepetin KİLİDİ DIŞINDA yapılır: önce sepet okunur, sonra pricing ve
-// region çağrılır, en sonunda sonuç yazılır. Arada sepet değişirse yazma
-// errors.Conflict döner ve hesabın baştan yapılması gerekir
-// (bkz. [Workflows.CalculateTotals]).
+// The calculation is done OUTSIDE the cart's lock: first the cart is read, then
+// pricing and region are called, and only at the very end is the result written.
+// If the cart changes in between, the write returns errors.Conflict and the
+// calculation has to be done from the start
+// (see [Workflows.CalculateTotals]).
 //
-// Üç deneme, gerçek yarışın boyuna göre seçilmiştir: çakışma ancak müşteri
-// hesap uçarken sepetine dokunduğunda olur ve bir insanın peş peşe iki kez
-// araya girmesi zaten olağan dışıdır. Sınırın var olması şarttır — sınırsız
-// bir döngü, sürekli değişen bir sepette (bozuk bir istemci ya da takılmış bir
-// yeniden deneme çevrimi) pricing'i sonsuza kadar meşgul ederdi. Sınır
-// aşılırsa çağıran errors.Conflict alır ve KENDİ temposunda yeniden dener;
-// bekleyen istek sayısını sunucu değil çağıran belirlemelidir.
+// Three attempts were chosen to fit the size of the real race: a conflict only
+// happens when the customer touches their cart while the calculation is in
+// flight, and a human getting in the way twice in a row is already out of the
+// ordinary. The limit MUST exist — an unbounded loop would keep pricing busy
+// forever on a cart that keeps changing (a broken client or a stuck retry loop).
+// If the limit is exceeded the caller gets errors.Conflict and retries at ITS
+// OWN pace; the number of requests in flight must be decided by the caller, not
+// by the server.
 const MaxTotalsAttempts = 3
 
-// Totals bir hesap turunun sonucudur ve sepete JSON olarak yazılır.
+// Totals is the result of a calculation round and is written to the cart as
+// JSON.
 //
-// Tüm alanlar TAM SAYI minor unit'tir (plan Bölüm 8). Kimlik her zaman
-// sağlanır: Total = Subtotal - DiscountTotal + TaxTotal + ShippingTotal.
+// All the fields are WHOLE NUMBER minor units (plan Section 8). The identity
+// always holds: Total = Subtotal - DiscountTotal + TaxTotal + ShippingTotal.
 type Totals struct {
-	// Revision hesabın DAYANDIĞI sepet şeklidir; yazma anında sepetin şekliyle
-	// eşleşmezse hesap reddedilir.
+	// Revision is the cart shape the calculation IS BASED ON; if it does not
+	// match the cart's shape at the moment of the write, the calculation is
+	// rejected.
 	Revision int64 `json:"revision"`
-	// Subtotal satır ara toplamlarının toplamıdır.
+	// Subtotal is the sum of the line subtotals.
 	Subtotal int64 `json:"subtotal"`
-	// DiscountTotal toplam indirimdir; pozitif taşınır ve toplamdan düşülür.
-	// Satır indirimlerinin TOPLAMIDIR (bkz. paket yorumu, "İndirim").
+	// DiscountTotal is the total discount; it is carried positive and is
+	// subtracted from the total. It is the SUM of the line discounts (see the
+	// package comment, "Discount").
 	DiscountTotal int64 `json:"discount_total"`
-	// TaxTotal toplam vergidir; satır vergilerinin toplamıdır.
+	// TaxTotal is the total tax; it is the sum of the line taxes.
 	TaxTotal int64 `json:"tax_total"`
-	// ShippingTotal sepetin kargo yöntemlerinin toplamıdır.
+	// ShippingTotal is the sum of the cart's shipping methods.
 	ShippingTotal int64 `json:"shipping_total"`
-	// Total ödenecek tutardır.
+	// Total is the amount to be paid.
 	Total int64 `json:"total"`
-	// TaxSource verginin HANGİ kaynaktan geldiğidir; değerleri
-	// [TaxSourceTax], [TaxSourceTaxUnconfigured] ve [TaxSourceRegion].
+	// TaxSource is WHICH source the tax came from; its values are
+	// [TaxSourceTax], [TaxSourceTaxUnconfigured] and [TaxSourceRegion].
 	//
-	// Alan PARA DEĞİLDİR ve sepete yazılan gövdede cart modülünce yok sayılır
-	// (sepetin toplam şeması onu tanımaz). Yine de gövdenin parçasıdır ve
-	// çağırana döner: bir tutarın hangi otoriteye dayandığı, tutarın kendisi
-	// kadar önemlidir. Vergisi 0 çıkan bir sepette "oran sıfırdı" ile
-	// "yapılandırma yoktu" ancak burada ayrılır.
+	// The field IS NOT MONEY and, in the body written to the cart, it is ignored
+	// by the cart module (the cart's totals schema does not know it). It is
+	// still part of the body and it returns to the caller: which authority an
+	// amount rests on is as important as the amount itself. On a cart whose tax
+	// comes out 0, "the rate was zero" and "there was no configuration" are told
+	// apart only here.
 	TaxSource string `json:"tax_source"`
-	// Lines satır başına hesaplanan tutarlardır ve sepetin TÜM satırlarını
-	// kapsar.
+	// Lines are the amounts calculated per line and they cover ALL the lines of
+	// the cart.
 	Lines []LineTotals `json:"lines"`
 }
 
-// LineTotals tek bir sepet satırının hesaplanan tutarlarıdır.
+// LineTotals are the calculated amounts of a single cart line.
 //
-// Adet BURADA YOKTUR: adet sepetin verisidir ve bir hesap turu onu
-// değiştiremez. Satırın ara toplamı adede DAYANIR ama adedi YAZMAZ.
+// The quantity IS NOT HERE: the quantity is the cart's data and a calculation
+// round cannot change it. The line's subtotal IS BASED ON the quantity but it
+// does not WRITE it.
 type LineTotals struct {
-	// LineItemID tutarların ait olduğu satırdır.
+	// LineItemID is the line the amounts belong to.
 	LineItemID string `json:"line_item_id"`
-	// UnitPrice pricing'in seçtiği birim fiyattır.
+	// UnitPrice is the unit price pricing selected.
 	UnitPrice int64 `json:"unit_price"`
-	// Subtotal satırın ara toplamıdır: UnitPrice × Quantity.
+	// Subtotal is the line's subtotal: UnitPrice x Quantity.
 	Subtotal int64 `json:"subtotal"`
-	// DiscountTotal satıra düşen indirimdir; satırın ara toplamını ASLA aşmaz.
+	// DiscountTotal is the discount falling on the line; it NEVER exceeds the
+	// line's subtotal.
 	DiscountTotal int64 `json:"discount_total"`
-	// TaxTotal satıra düşen vergidir.
+	// TaxTotal is the tax falling on the line.
 	TaxTotal int64 `json:"tax_total"`
-	// Total satırın toplamıdır: Subtotal - DiscountTotal + TaxTotal.
+	// Total is the line's total: Subtotal - DiscountTotal + TaxTotal.
 	Total int64 `json:"total"`
 }
 
-// CalculateTotals sepetin toplamlarını baştan hesaplar ve sepete yazar.
+// CalculateTotals recalculates the cart's totals from scratch and writes them to
+// the cart.
 //
-// Bu, Faz 5'in kalbidir ve tek bir turu şu adımlardan oluşur:
+// This is the heart of Phase 5, and a single round consists of these steps:
 //
-//  1. Sepetin anlık görüntüsü TEK okumada alınır; şekil sayacı (revision)
-//     not edilir.
-//  2. Satırların varyantları TEK link sorgusuyla fiyat kümelerine çevrilir
-//     (N+1 yoktur).
-//  3. Her satırın birim fiyatı pricing'den YENİDEN alınır; saklı tutara asla
-//     güvenilmez.
-//  4. İndirim promotion modülünden KALEM BAŞINA alınır ve satırlara yazılır
-//     (bkz. [Workflows.applyDiscounts]).
-//  5. Vergi, İNDİRİM SONRASI taban üzerinden satır başına hesaplanır; hesabı
-//     tax modülü yapar, yapamıyorsa region'ın oranı kullanılır ve kullanılan
-//     kaynak [Totals.TaxSource] alanında bildirilir
-//     (bkz. [Workflows.applyTaxes]).
-//  6. Kargo, sepetin kargo yöntemlerinin toplamıdır ve vergi tabanına GİRMEZ.
-//  7. Sonuç, 1. adımda not edilen şekille damgalanarak yazılır.
+//  1. The cart's snapshot is taken in a SINGLE read; the shape counter
+//     (revision) is noted.
+//  2. The variants of the lines are turned into price sets with a SINGLE link
+//     query (there is no N+1).
+//  3. Every line's unit price is fetched from pricing AGAIN; a stored amount is
+//     never trusted.
+//  4. The discount is taken PER ITEM from the promotion module and written onto
+//     the lines (see [Workflows.applyDiscounts]).
+//  5. The tax is calculated per line over the AFTER-DISCOUNT base; the tax
+//     module does the calculation, and when it cannot, the region's rate is
+//     used and the source that was used is reported in the [Totals.TaxSource]
+//     field (see [Workflows.applyTaxes]).
+//  6. Shipping is the sum of the cart's shipping methods and DOES NOT ENTER the
+//     tax base.
+//  7. The result is written stamped with the shape noted in step 1.
 //
-// # Çakışma
+// # Conflict
 //
-// Hesap sepetin kilidi dışında yapılır. Yazma anında sepetin şekli değişmişse
-// sepet modülü errors.Conflict döner; o durumda tur BAŞTAN yapılır, en fazla
-// [MaxTotalsAttempts] kez. Sınır aşılırsa hata errors.Conflict olarak çağırana
-// geçer: bayat bir hesabı yazmak, müşteriye sepetindeki maldan azını ödetmek
-// olurdu.
+// The calculation is done outside the cart's lock. If the cart's shape has
+// changed at the moment of the write, the cart module returns errors.Conflict;
+// in that case the round is done FROM THE START, at most [MaxTotalsAttempts]
+// times. If the limit is exceeded the error passes to the caller as
+// errors.Conflict: writing a stale calculation would mean charging the customer
+// for less than the goods in their cart.
 //
-// # Tamamlanmış sepet
+// # Completed cart
 //
-// Tamamlanmış sepette hesap yapılmaz ve errors.Conflict döner. Sepet modülü
-// yazmayı zaten reddederdi; burada erken dönmenin sebebi, sonucu baştan belli
-// bir tur için pricing'i boşuna çağırmamaktır.
+// No calculation is done on a completed cart and errors.Conflict is returned.
+// The cart module would reject the write anyway; the reason for returning early
+// here is not to call pricing for nothing on a round whose outcome is known in
+// advance.
 //
-// # Satırsız sepet
+// # Cart with no lines
 //
-// Geçerlidir: ara toplam ve vergi sıfır, toplam yalnızca kargodur. Hata
-// dönmez — sepete satır eklenmeden kargo seçilmesi mümkün bir durumdur ve
-// satırsız sepetin SİPARİŞ olmasını cart modülü ayrıca reddeder.
+// It is valid: the subtotal and the tax are zero, the total is shipping alone.
+// No error is returned — selecting shipping before a line is added to the cart
+// is a possible state, and the cart module separately rejects a cart with no
+// lines becoming an ORDER.
 func (w *Workflows) CalculateTotals(ctx context.Context, cartID string) (Totals, error) {
 	if err := requireID("cart_id", cartID); err != nil {
 		return Totals{}, err
@@ -131,22 +144,22 @@ func (w *Workflows) CalculateTotals(ctx context.Context, cartID string) (Totals,
 		}
 
 		lastErr = err
-		w.log.DebugContext(ctx, "sepet hesabı çakıştı, tur yenileniyor",
+		w.log.DebugContext(ctx, "the cart calculation conflicted, the round is being redone",
 			"cart_id", cartID, "attempt", attempt, "max_attempts", MaxTotalsAttempts)
 	}
 
 	return Totals{}, errors.Wrap(lastErr, errors.KindConflict, CodeTotalsConflict,
-		"sepet %s hesap yazılamayacak kadar sık değişti (%d deneme); istek yeniden gönderilmeli",
+		"cart %s changed too often for the calculation to be written (%d attempts); the request has to be sent again",
 		cartID, MaxTotalsAttempts)
 }
 
-// totalsRound tek bir hesap turudur.
+// totalsRound is a single calculation round.
 //
-// İkinci dönüş değeri, hatanın YENİDEN DENEMEYE değer bir şekil çakışması olup
-// olmadığını söyler. Ayrımın burada yapılması bilinçlidir: çağıran döngü,
-// sepet modülünün hata KODLARINI tanımak zorunda kalmaz — tanısaydı, bu paket
-// import edemediği bir modülün kod dizgelerini kopyalar ve o kodlar sessizce
-// ayrışabilirdi.
+// The second return value tells whether the error is a shape conflict WORTH
+// RETRYING. Making the distinction here is deliberate: the calling loop is not
+// forced to recognize the cart module's error CODES — if it did, this package
+// would copy the code strings of a module it cannot import and those codes
+// could silently drift apart.
 func (w *Workflows) totalsRound(ctx context.Context, cartID string) (out Totals, stale bool, err error) {
 	snap, err := w.snapshot(ctx, cartID)
 	if err != nil {
@@ -154,7 +167,7 @@ func (w *Workflows) totalsRound(ctx context.Context, cartID string) (out Totals,
 	}
 	if snap.Completed {
 		return Totals{}, false, errors.Conflict(CodeCartCompleted,
-			"tamamlanmış sepette hesap yapılamaz: %s", cartID)
+			"no calculation can be done on a completed cart: %s", cartID)
 	}
 
 	totals, err := w.computeTotals(ctx, snap)
@@ -165,28 +178,30 @@ func (w *Workflows) totalsRound(ctx context.Context, cartID string) (out Totals,
 	payload, err := json.Marshal(totals)
 	if err != nil {
 		return Totals{}, false, errors.Wrap(err, errors.KindInternal, CodeSnapshotInvalid,
-			"sepet toplamları JSON'a çevrilemedi: %s", cartID)
+			"the cart totals could not be encoded to JSON: %s", cartID)
 	}
 	if err := w.carts.SetCartTotalsJSON(ctx, cartID, payload); err != nil {
-		// Çakışma, okuma ile yazma arasında sepetin değiştiği anlamına gelir:
-		// tur baştan yapılabilir. Tamamlanma da Conflict'tir ve o durumda
-		// yeni turun anlık görüntüsü sepeti kapalı görüp erken döner.
+		// A conflict means the cart changed between the read and the write: the
+		// round can be done from the start. Completion is a Conflict too, and in
+		// that case the new round's snapshot sees the cart closed and returns
+		// early.
 		return Totals{}, errors.IsConflict(err), err
 	}
 	return totals, false, nil
 }
 
-// computeTotals anlık görüntüden toplamları üretir; HİÇBİR ŞEY YAZMAZ.
+// computeTotals produces the totals from the snapshot; it WRITES NOTHING.
 //
-// Ayrılık bilinçlidir: hesabın tamamı yan etkisizdir ve tek başına
-// sınanabilir. Yazma yalnızca [Workflows.totalsRound] içindedir.
+// The separation is deliberate: the whole calculation is free of side effects
+// and can be tested on its own. The write lives only inside
+// [Workflows.totalsRound].
 //
-// # Adımların SIRASI sözleşmedir
+// # The ORDER of the steps is a contract
 //
-// Ara toplam -> indirim -> vergi. İndirim vergiden önce gelmek ZORUNDADIR
-// çünkü vergi tabanı indirim sonrasıdır (bkz. paket yorumu, "Vergi
-// sözleşmesi"); sıra bozulursa hiçbir denetim patlamaz, yalnızca müşteri
-// ödemediği paranın vergisini öder.
+// Subtotal -> discount -> tax. The discount MUST come before the tax because the
+// tax base is the after-discount one (see the package comment, "Tax contract");
+// if the order is broken no check blows up, the customer merely pays the tax on
+// money they never paid.
 func (w *Workflows) computeTotals(ctx context.Context, snap Snapshot) (Totals, error) {
 	lines, err := w.lineSubtotals(ctx, snap)
 	if err != nil {
@@ -206,12 +221,13 @@ func (w *Workflows) computeTotals(ctx context.Context, snap Snapshot) (Totals, e
 	return assembleTotals(snap, lines, shippingTotal, taxSource)
 }
 
-// lineSubtotals her satırın birim fiyatını ve ara toplamını hesaplar.
+// lineSubtotals calculates every line's unit price and subtotal.
 //
-// İndirim ve vergi alanları SIFIR bırakılır; onları [Workflows.applyDiscounts]
-// ve [Workflows.applyTaxes] doldurur. Dönen dilim, anlık görüntüdeki satırlarla
-// AYNI SIRADA ve AYNI UZUNLUKTADIR; iki modüle giden istekler ile dönen
-// yanıtların eşleşmesi bu değişmeze dayanır.
+// The discount and tax fields are left ZERO; [Workflows.applyDiscounts] and
+// [Workflows.applyTaxes] fill them in. The returned slice is in the SAME ORDER
+// and of the SAME LENGTH as the lines in the snapshot; matching the requests
+// going to the two modules with the responses coming back rests on this
+// invariant.
 func (w *Workflows) lineSubtotals(ctx context.Context, snap Snapshot) ([]LineTotals, error) {
 	priceSets, err := w.priceSetsFor(ctx, snap.VariantIDs())
 	if err != nil {
@@ -241,7 +257,7 @@ func (w *Workflows) lineSubtotals(ctx context.Context, snap Snapshot) ([]LineTot
 	return lines, nil
 }
 
-// shippingTotalOf kargo yöntemlerinin toplamını TAŞMADAN hesaplar.
+// shippingTotalOf calculates the sum of the shipping methods WITHOUT OVERFLOW.
 func shippingTotalOf(snap Snapshot) (int64, error) {
 	var total int64
 	for i := range snap.ShippingMethods {
@@ -254,29 +270,30 @@ func shippingTotalOf(snap Snapshot) (int64, error) {
 	return total, nil
 }
 
-// assembleTotals doldurulmuş satırlardan sepet toplamlarını üretir ve satır
-// toplamlarını yazar.
+// assembleTotals produces the cart totals from the filled-in lines and writes
+// the line totals.
 //
-// # Σ kimlikleri BURADA doğar
+// # The Σ identities ARE BORN here
 //
-// Sepetin indirimi ve vergisi, satır değerlerinin TOPLANMASIYLA üretilir;
-// promotion ve tax'ın bildirdiği toplamlar yeniden kullanılmaz (onlar kendi
-// yerlerinde satır değerleriyle karşılaştırılmıştır). Böylece
-// Σ(satır indirimi) = sepet indirimi ve Σ(satır vergisi) = sepet vergisi
-// kimlikleri hesap yapısı gereği sağlanır, bir denetimin hatırlanmasına bağlı
-// kalmaz.
+// The cart's discount and tax are produced by SUMMING the line values; the
+// totals reported by promotion and tax are not reused (they were compared
+// against the line values in their own places). This way the identities
+// Σ(line discount) = cart discount and Σ(line tax) = cart tax hold by the
+// structure of the calculation, and do not depend on some check being
+// remembered.
 //
-// # Kuruş artığı NEREDE kalır
+// # WHERE the cent remainder stays
 //
-// Bu işlev hiçbir bölme yapmaz, dolayısıyla hiçbir artık ÜRETMEZ. Artık
-// yalnızca oran hesaplarında doğar ve doğduğu SATIRDA düşer: indirim yüzdesi
-// ve vergi oranı satır başına AŞAĞI yuvarlanır, kalan kesir başka bir satıra
-// TAŞINMAZ ve sepet düzeyinde yeniden dağıtılmaz. Yönleri terstir ve ikisi de
-// satır başına bir minor unit'ten küçüktür: aşağı yuvarlanan vergi müşteri
-// LEHİNE (daha az vergi), aşağı yuvarlanan indirim satıcı lehinedir (daha az
-// indirim). Taşımanın reddedilme sebebi de aynıdır — artığı bir satıra
-// eklemek, o satırın vergisini ya da indirimini kendi oranının söylediğinden
-// farklı yapar ve fatura satır satır açıklanamaz hâle gelirdi.
+// This function does no division at all, so it PRODUCES no remainder. A
+// remainder is only born in rate calculations and falls on the LINE where it was
+// born: the discount percentage and the tax rate are rounded DOWN per line, and
+// the leftover fraction is NOT CARRIED to another line and is not redistributed
+// at the cart level. Their directions are opposite and both are smaller than one
+// minor unit per line: a tax rounded down is IN FAVOR of the customer (less
+// tax), a discount rounded down is in favor of the seller (less discount). The
+// reason carrying is rejected is the same one — adding the remainder to a line
+// would make that line's tax or discount different from what its own rate says,
+// and the invoice would no longer be explainable line by line.
 func assembleTotals(snap Snapshot, lines []LineTotals, shippingTotal int64, taxSource string) (Totals, error) {
 	totals := Totals{
 		Revision:      snap.Revision,
@@ -314,120 +331,132 @@ func assembleTotals(snap Snapshot, lines []LineTotals, shippingTotal int64, taxS
 	return totals, nil
 }
 
-// priceRequest pricing modülüne giden TOPLU fiyat isteğinin JSON şemasıdır.
+// priceRequest is the JSON schema of the BULK price request going to the pricing
+// module.
 //
-// Alan adları pricing'in interop şemasıyla BİREBİR aynı olmak ZORUNDADIR: iki
-// paket birbirini import edemediği için derleyici uyumu göremez (ADR 0006'nın
-// kabul edilen bedeli) ve uyum ancak entegrasyon testiyle kanıtlanabilir
-// (bkz. internal/e2e/sepet_toplam_test.go).
+// The field names MUST be EXACTLY the same as pricing's interop schema: because
+// the two packages cannot import each other the compiler cannot see the match
+// (the accepted cost of ADR 0006) and the match can only be proven by an
+// integration test (see internal/e2e/sepet_toplam_test.go).
 //
-// Para birimi ve bağlam KALEM BAŞINA taşınmaz: bir sepetin tüm satırları aynı
-// para biriminde ve aynı bölgededir, alanı kalem başına tekrarlamak iki satırın
-// farklı bağlamla fiyatlanabildiği izlenimi verirdi.
+// The currency and the context are not carried PER ITEM: all the lines of a cart
+// are in the same currency and in the same region, and repeating the field per
+// item would give the impression that two lines can be priced with different
+// contexts.
 type priceRequest struct {
-	// CurrencyCode sepetin para birimidir (ISO 4217).
+	// CurrencyCode is the cart's currency (ISO 4217).
 	CurrencyCode string `json:"currency_code"`
-	// Attributes fiyat kurallarının bakacağı bağlamdır; bugün yalnızca bölge
-	// konur ve müşteri segmentinin neden dışarıda kaldığı paket yorumundadır.
+	// Attributes is the context the price rules will look at; today only the
+	// region is put in it, and why the customer segment stayed out is in the
+	// package comment.
 	Attributes map[string]string `json:"attributes"`
-	// Items fiyatlanacak kalemlerdir ve sepetteki satır SIRASIYLA gider.
+	// Items are the items to be priced and they go in the cart's line ORDER.
 	Items []priceRequestItem `json:"items"`
 }
 
-// priceRequestItem toplu fiyat isteğindeki tek bir kalemin şemasıdır.
+// priceRequestItem is the schema of a single item in the bulk price request.
 type priceRequestItem struct {
-	// PriceSetID satırın varyantının bağlı olduğu fiyat kabıdır.
+	// PriceSetID is the price container the line's variant is attached to.
 	PriceSetID string `json:"price_set_id"`
-	// Quantity satırın GÜNCEL adedidir; fiyat kademesi buna göre seçilir.
+	// Quantity is the line's CURRENT quantity; the price tier is selected by it.
 	Quantity int32 `json:"quantity"`
 }
 
-// priceResponse pricing modülünden dönen toplu fiyat sonucunun JSON şemasıdır.
+// priceResponse is the JSON schema of the bulk price result returned by the
+// pricing module.
 //
-// Bilinmeyen alanlar SESSİZCE ATLANIR (isteğin tersine): pricing şemasını
-// büyüttüğünde bu paketin aynı turda güncellenmesi gerekmemelidir. Sessizlik
-// yalnızca TANINMAYAN alanlar içindir; tanınanların taşıdığı değişmezler
-// [Workflows.unitPrices] içinde tek tek doğrulanır.
+// Unknown fields are SILENTLY SKIPPED (unlike the request): when pricing grows
+// its schema, this package should not have to be updated in the same round. The
+// silence is only for UNRECOGNIZED fields; the invariants the recognized ones
+// carry are verified one by one inside [Workflows.unitPrices].
 type priceResponse struct {
-	// Items istekteki kalemlerle AYNI SIRADA ve AYNI UZUNLUKTA sonuçlardır.
+	// Items are the results, in the SAME ORDER and of the SAME LENGTH as the
+	// items in the request.
 	Items []priceResponseItem `json:"items"`
 }
 
-// priceResponseItem toplu fiyat yanıtındaki tek bir kalemin şemasıdır.
+// priceResponseItem is the schema of a single item in the bulk price response.
 type priceResponseItem struct {
-	// Amount seçilen birim fiyattır (minor unit); Priced false ise anlamsızdır.
+	// Amount is the selected unit price (minor unit); it is meaningless if
+	// Priced is false.
 	Amount int64 `json:"amount"`
-	// Priced kalem için geçerli bir fiyat BULUNUP bulunmadığını bildirir.
+	// Priced reports whether a valid price WAS FOUND for the item.
 	//
-	// Ayrı bir bayrak ŞARTTIR: sıfır GEÇERLİ bir fiyattır (bedava kalem gerçek
-	// bir senaryodur), dolayısıyla "tutar 0" ile "fiyat yok" tutarın kendisinden
-	// ayırt edilemez. Bayrak olmasaydı fiyatı olmayan bir varyant sepete BEDAVA
-	// girerdi.
+	// A separate flag is a MUST: zero is a VALID price (a free item is a real
+	// scenario), so "amount 0" and "no price" cannot be told apart from the
+	// amount itself. Without the flag a variant that has no price would enter
+	// the cart FOR FREE.
 	Priced bool `json:"priced"`
 }
 
-// unitPrices sepetin TÜM satırlarının birim fiyatını TEK turda alır.
+// unitPrices fetches the unit price of ALL the cart's lines in a SINGLE round.
 //
-// Dönen dilim anlık görüntüdeki satırlarla AYNI SIRADA ve AYNI UZUNLUKTADIR;
-// [Workflows.lineSubtotals] indeksle eşler.
+// The returned slice is in the SAME ORDER and of the SAME LENGTH as the lines in
+// the snapshot; [Workflows.lineSubtotals] matches them by index.
 //
-// # Neden toplu
+// # Why bulk
 //
-// Hesap turu satır başına iki sorgu açıyordu (fiyat adayları + kuralları) ve
-// her satır ekleme kendinden önceki TÜM satırları yeniden fiyatlıyordu, yani
-// bir sepeti kurmanın maliyeti satır sayısıyla KARESEL büyüyordu. Ölçüldü
-// (bu paketin sahteleriyle, çağrılar sayılarak): 100 satırlık bir sepeti
-// kurmak 5150 fiyat çağrısı — 10.300 sorgu — ediyordu; toplu yolla aynı sepet
-// 200 çağrı ve 400 sorgudur.
+// A calculation round used to open two queries per line (price candidates +
+// rules) and every line addition repriced ALL the lines before it, meaning the
+// cost of building a cart grew QUADRATICALLY with the number of lines. Measured
+// (with this package's fakes, by counting the calls): building a 100-line cart
+// cost 5150 price calls — 10,300 queries; on the bulk path the same cart is 200
+// calls and 400 queries.
 //
-// Sorgunun kendisi de ölçüldü (gobit_load, 54.000 kap, localhost TCP, yedi
-// turun en iyisi): 50 kap için kap başına yol 4,9 ms, toplu yol 0,25 ms;
-// 100 kap için 9,9 ms ve 0,33 ms. TEK kapta toplu yolun bir üstünlüğü yoktur
-// (aday sorgusu 500 turun medyanıyla 66 µs'ye karşı 77 µs; iki plan da aynı
-// kısmi indeksi tarar, dizi parametreli olan üstüne bir sıralama adımı ekler),
-// bu yüzden satır AÇILIRKEN sorulan tek fiyat hâlâ tekil metotla sorulur
-// (bkz. [Workflows.AddLineItem]).
+// The query itself was measured too (gobit_load, 54,000 containers, localhost
+// TCP, best of seven rounds): for 50 containers the per-container path takes
+// 4.9 ms and the bulk path 0.25 ms; for 100 containers 9.9 ms and 0.33 ms. On a
+// SINGLE container the bulk path has no advantage (the candidate query is 66 µs
+// against 77 µs by the median of 500 rounds; both plans scan the same partial
+// index, and the one with the array parameter adds a sort step on top), which is
+// why the single price asked WHILE a line is being opened is still asked with
+// the singular method (see [Workflows.AddLineItem]).
 //
-// # Seçilen tutar DEĞİŞMEZ
+// # The selected amount IS THE SAME
 //
-// İki yol pricing'in AYNI saf seçim fonksiyonunu çalıştırır ve aynı aday
-// satırlarını görür; tek fark, toplu yolun saati bir kez okumasıdır ve bu fark
-// toplu yolun lehinedir — tam o sırada biten bir kampanya, aynı sepetin iki
-// satırını farklı dünyalardan fiyatlayamaz. Eşitlik iddiası pricing'in kendi
-// testinde kanıtlanır (TestCalculateAmountsJSONMatchesCalculateAmount).
+// The two paths run pricing's SAME pure selection function and see the same
+// candidate rows; the only difference is that the bulk path reads the clock
+// once, and that difference is in the bulk path's favor — a campaign ending at
+// exactly that moment cannot price two lines of the same cart from different
+// worlds. The equality claim is proven in pricing's own test
+// (TestCalculateAmountsJSONMatchesCalculateAmount).
 //
-// # Fiyatı olmayan satır
+// # A line with no price
 //
-// pricing toplu yolda hata değil bayrak döner; hata sınıflandırması BURADA
-// yapılır ve tekil yoldakiyle birebir aynıdır (errors.Invalid,
-// [CodePriceUnavailable]): satır sepette DURUYOR, eksik olan onun bu para
-// birimindeki fiyatıdır. NotFound olarak geçseydi istemci "sepet/satır yok"
-// (404) okur ve gerçekte düzeltilebilir olan durumu kayıp sanardı.
+// On the bulk path pricing returns a flag rather than an error; the error
+// classification is done HERE and is exactly the same as on the singular path
+// (errors.Invalid, [CodePriceUnavailable]): the line IS STILL in the cart, what
+// is missing is its price in this currency. Had it passed as NotFound the client
+// would read "no cart/line" (404) and would take a genuinely fixable state for a
+// lost one.
 //
-// Bayrağın kazandırdığı şey burada harcanır: fiyatsız satırların HEPSİ tek
-// hatada sayılır (bkz. [priceUnavailable]), ilk fiyatsız satırda dönülmez.
+// What the flag buys is spent here: ALL the lines with no price are counted in a
+// single error (see [priceUnavailable]); it does not return on the first line
+// that has none.
 //
-// # Yanıt DOĞRULANIR
+// # The response IS VERIFIED
 //
-// Uzunluk ve tutar aralığı denetlenir. Sınırın öteki tarafını derleyici
-// denetlemez; hizasını kaybetmiş bir yanıt sessizce geçseydi sepetin her satırı
-// BAŞKA bir varyantın fiyatıyla yazılırdı ve hiçbir kapı bunu görmezdi.
+// The length and the amount range are checked. The compiler does not check the
+// other side of the boundary; if a response that had lost its alignment passed
+// silently, every line of the cart would be written with ANOTHER variant's price
+// and no gate would see it.
 //
-// # İstek BÖLÜNMEZ ve bunun bir sınırı vardır
+// # The request IS NOT SPLIT, and that has a limit
 //
-// Sepetin tüm satırları tek istekte gider. pricing'in kendi kalem tavanı
-// (MaxCalculateItems, bugün 1000) aşılırsa istek reddedilir ve o sepetin
-// toplamı HİÇ hesaplanamaz. Bugün ulaşılamaz bir durumdur: satır açan tek yol
-// [MaxLineItems] (100) tavanına tabidir ve 1000'in üstüne çıkmanın tek yolu o
-// sabiti büyütmektir — büyütülürse pricing'in tavanı da onunla birlikte
-// büyütülmelidir. Büyütmeden önce MaxCalculateItems godoc'undaki plan tablosuna
-// bakılmalı: pricing'in toplu okuması 280 ile 300 kimlik arasında indeksi
-// bırakıp tabloyu taramaya geçiyor, yani maliyet 1000'e kadar doğrusal değil.
+// All the cart's lines go in a single request. If pricing's own item ceiling
+// (MaxCalculateItems, 1000 today) is exceeded the request is rejected and that
+// cart's total CANNOT be calculated at all. Today it is an unreachable state:
+// the only path that opens a line is subject to the [MaxLineItems] (100) ceiling
+// and the only way to go above 1000 is to grow that constant — if it is grown,
+// pricing's ceiling has to be grown along with it. Before growing it, the plan
+// table in the MaxCalculateItems godoc must be looked at: pricing's bulk read
+// abandons the index and turns to scanning the table somewhere between 280 and
+// 300 ids, meaning the cost is not linear up to 1000.
 //
-// İstek kalem tavanına göre BÖLÜNMEZ, çünkü bölmek yukarıdaki "tek an"
-// güvencesini geri alırdı: her parça saati yeniden okur ve tam o sırada biten
-// bir kampanya sepetin ilk parçasını başka, ikinci parçasını başka bir dünyadan
-// fiyatlardı.
+// The request IS NOT SPLIT by the item ceiling, because splitting would take
+// back the "single moment" guarantee above: every part reads the clock again and
+// a campaign ending at exactly that moment would price the cart's first part
+// from one world and its second part from another.
 func (w *Workflows) unitPrices(ctx context.Context, snap Snapshot, priceSets map[string]string) ([]int64, error) {
 	if len(snap.Items) == 0 {
 		return nil, nil
@@ -452,24 +481,26 @@ func (w *Workflows) unitPrices(ctx context.Context, snap Snapshot, priceSets map
 	payload, err := json.Marshal(req)
 	if err != nil {
 		return nil, errors.Wrap(err, errors.KindInternal, CodePriceResponseInvalid,
-			"toplu fiyat isteği JSON'a çevrilemedi: %s", snap.ID)
+			"the bulk price request could not be encoded to JSON: %s", snap.ID)
 	}
 
 	raw, err := w.prices.CalculateAmountsJSON(ctx, payload)
 	if err != nil {
-		// Sınıf ve kod KORUNUR: pricing'in hatası tekil yolda da olduğu gibi
-		// geçer, sarmalanırsa "fiyat yok" ile "fiyat sorulamadı" ayrımı kaybolur.
+		// The kind and the code are PRESERVED: pricing's error passes through as
+		// it does on the singular path, and wrapping it would lose the
+		// distinction between "there is no price" and "the price could not be
+		// asked for".
 		return nil, err
 	}
 
 	var resp priceResponse
 	if err := json.Unmarshal(raw, &resp); err != nil {
 		return nil, errors.Wrap(err, errors.KindInternal, CodePriceResponseInvalid,
-			"toplu fiyat sonucu çözülemedi: %s", snap.ID)
+			"the bulk price result could not be decoded: %s", snap.ID)
 	}
 	if len(resp.Items) != len(snap.Items) {
 		return nil, errors.Internal(CodePriceResponseInvalid,
-			"toplu fiyat sonucu %d satır için %d kayıt döndürdü (%s)",
+			"for %d lines the bulk price result returned %d records (%s)",
 			len(snap.Items), len(resp.Items), snap.ID)
 	}
 
@@ -493,39 +524,41 @@ func (w *Workflows) unitPrices(ctx context.Context, snap Snapshot, priceSets map
 	return out, nil
 }
 
-// priceUnavailable fiyatı olmayan satırların HEPSİNİ tek hatada bildirir.
+// priceUnavailable reports ALL the lines with no price in a single error.
 //
-// İlk fiyatsız satırda durup dönmek, elde olan bilgiyi ATMAK olurdu: toplu
-// yanıt satırların hepsini birden taşır, dolayısıyla iki ölü varyantı olan bir
-// sepetin sahibi ikisini de bu istekte öğrenebilir — tek tek dönseydi her
-// düzeltmeden sonra bir sonrakini keşfeder, sepetini istek istek onarırdı.
-// Toplu yolun kalem başına BAYRAK dönmesinin (hata değil) burada karşılığı
-// budur; bayrak bir tur atlatmak için değil, bu cümleyi kurabilmek içindir.
+// Stopping and returning on the first line with no price would mean THROWING
+// AWAY the information already at hand: the bulk response carries all the lines
+// at once, so the owner of a cart with two dead variants can learn about both of
+// them in this one request — had they been returned one by one, they would
+// discover the next one after every fix and would repair their cart request by
+// request. This is what the bulk path returning a FLAG per item (rather than an
+// error) buys here; the flag is not there to save a round trip, it is there so
+// that this sentence can be written.
 //
-// Sınıf ve kod tekil yoldakiyle aynı kalır (errors.Invalid,
-// [CodePriceUnavailable]): satır sepette DURUYOR, eksik olan onun bu para
-// birimindeki fiyatıdır. Tek satırlık mesaj da aynen korunur — çoğul biçim
-// yalnızca gerçekten birden çok satır fiyatsızken kurulur.
+// The kind and the code stay the same as on the singular path (errors.Invalid,
+// [CodePriceUnavailable]): the line IS STILL in the cart, what is missing is its
+// price in this currency. The single-line message is kept exactly as it is too —
+// the plural form is only built when more than one line really has no price.
 func priceUnavailable(snap Snapshot, unpriced []int) error {
 	if len(unpriced) == 1 {
 		item := snap.Items[unpriced[0]]
 		return errors.Invalid(CodePriceUnavailable,
-			"%s varyantının %s para biriminde ve %d adette fiyatı yok (satır: %s)",
+			"variant %s has no price in currency %s at quantity %d (line: %s)",
 			item.VariantID, snap.CurrencyCode, item.Quantity, item.ID)
 	}
 
 	parts := make([]string, 0, len(unpriced))
 	for _, i := range unpriced {
 		item := snap.Items[i]
-		parts = append(parts, fmt.Sprintf("%s (satır: %s, adet: %d)",
+		parts = append(parts, fmt.Sprintf("%s (line: %s, quantity: %d)",
 			item.VariantID, item.ID, item.Quantity))
 	}
 	return errors.Invalid(CodePriceUnavailable,
-		"%d satırın %s para biriminde fiyatı yok: %s",
+		"%d lines have no price in currency %s: %s",
 		len(unpriced), snap.CurrencyCode, strings.Join(parts, ", "))
 }
 
-// snapshot sepetin anlık görüntüsünü okur ve çözer.
+// snapshot reads and decodes the cart's snapshot.
 func (w *Workflows) snapshot(ctx context.Context, cartID string) (Snapshot, error) {
 	payload, err := w.carts.CartSnapshotJSON(ctx, cartID)
 	if err != nil {

@@ -14,9 +14,9 @@ import (
 // TestCalculateTotalsVergiTaxModulundenGelir tax yüzeyi kayıtlıyken verginin
 // oradan hesaplandığını ve kaynağın sonuçta bildirildiğini doğrular.
 func TestCalculateTotalsVergiTaxModulundenGelir(t *testing.T) {
-	h := newModulHarness(t)
+	h := newModuleHarness(t)
 	h.taxes.rateBps = 1000 // %10; region sahtesi %20 taşır ve karışması ayırt edilebilir.
-	serveSnapshot(h.carts, ikiSatirliSepet(1))
+	serveSnapshot(h.carts, twoLineCart(1))
 
 	totals, err := h.wf.CalculateTotals(context.Background(), testCartID)
 	require.NoError(t, err)
@@ -31,7 +31,7 @@ func TestCalculateTotalsVergiTaxModulundenGelir(t *testing.T) {
 // TestCalculateTotalsVergiIstegininSekli tax'a giden gövdenin sözleşmeye
 // uyduğunu doğrular.
 func TestCalculateTotalsVergiIstegininSekli(t *testing.T) {
-	h := newModulHarness(t)
+	h := newModuleHarness(t)
 	serveSnapshot(h.carts, snapshotOf(1,
 		[]SnapshotItem{{ID: testLineA, VariantID: testVariantA, Quantity: 2}},
 		[]SnapshotShippingMethod{{ID: "csm_1", Amount: 3000}, {ID: "csm_2", Amount: 1990}}))
@@ -52,7 +52,7 @@ func TestCalculateTotalsVergiIstegininSekli(t *testing.T) {
 // TestCalculateTotalsKargoModulYolundaDaVergilenmez kargonun tax modülü
 // yolunda da vergi tabanına girmediğini doğrular.
 func TestCalculateTotalsKargoModulYolundaDaVergilenmez(t *testing.T) {
-	h := newModulHarness(t)
+	h := newModuleHarness(t)
 	serveSnapshot(h.carts, snapshotOf(1,
 		[]SnapshotItem{{ID: testLineA, VariantID: testVariantA, Quantity: 1}},
 		[]SnapshotShippingMethod{{ID: "csm_1", Amount: 5000}}))
@@ -73,7 +73,7 @@ func TestCalculateTotalsKargoModulYolundaDaVergilenmez(t *testing.T) {
 // sessizce çıkar; region, Faz 5'in hâlâ geçerli yetkilisidir.
 func TestCalculateTotalsTaxKayitsizsaRegionaDuser(t *testing.T) {
 	h := newHarnessWith(t, &stubDiscounts{perLine: map[string]int64{}}, nil)
-	serveSnapshot(h.carts, ikiSatirliSepet(1))
+	serveSnapshot(h.carts, twoLineCart(1))
 
 	totals, err := h.wf.CalculateTotals(context.Background(), testCartID)
 	require.NoError(t, err)
@@ -109,9 +109,9 @@ func TestCalculateTotalsUlkeCozulemezseRegionaDuser(t *testing.T) {
 
 	for name, setup := range tests {
 		t.Run(name, func(t *testing.T) {
-			h := newModulHarness(t)
+			h := newModuleHarness(t)
 			setup(h)
-			serveSnapshot(h.carts, ikiSatirliSepet(1))
+			serveSnapshot(h.carts, twoLineCart(1))
 
 			totals, err := h.wf.CalculateTotals(context.Background(), testCartID)
 			require.NoError(t, err)
@@ -131,9 +131,9 @@ func TestCalculateTotalsUlkeCozulemezseRegionaDuser(t *testing.T) {
 // geçseydi, bir kesinti boyunca tüm sepetler sessizce region oranıyla
 // vergilenir ve kimse fark etmezdi.
 func TestCalculateTotalsBolgeOkunamazsaHataDoner(t *testing.T) {
-	h := newModulHarness(t)
+	h := newModuleHarness(t)
 	h.catalog.regionErr = errors.Unavailable("query_provider_failed", "veritabanı erişilemez")
-	serveSnapshot(h.carts, ikiSatirliSepet(1))
+	serveSnapshot(h.carts, twoLineCart(1))
 
 	_, err := h.wf.CalculateTotals(context.Background(), testCartID)
 	require.Error(t, err)
@@ -150,9 +150,9 @@ func TestCalculateTotalsBolgeOkunamazsaHataDoner(t *testing.T) {
 // [TaxSourceTax] arasındaki fark, "oran sıfırdı" ile "yapılandırma yoktu"
 // arasındaki farktır.
 func TestCalculateTotalsVergiBolgesiYapilandirilmamis(t *testing.T) {
-	h := newModulHarness(t)
+	h := newModuleHarness(t)
 	h.taxes.regionFound = false
-	serveSnapshot(h.carts, ikiSatirliSepet(1))
+	serveSnapshot(h.carts, twoLineCart(1))
 
 	totals, err := h.wf.CalculateTotals(context.Background(), testCartID)
 	require.NoError(t, err)
@@ -171,7 +171,7 @@ func TestCalculateTotalsVergiBolgesiYapilandirilmamis(t *testing.T) {
 // tabanı (1749) tek seferde vergilenseydi 323 çıkardı. Aradaki 1 minor unit,
 // doğduğu satırlarda düşen artıktır ve müşteri lehinedir.
 func TestCalculateTotalsVergiKurusArtigiSatirdaKalir(t *testing.T) {
-	h := newModulHarness(t)
+	h := newModuleHarness(t)
 	h.taxes.rateBps = 1850
 	h.discounts.perLine = map[string]int64{testLineA: 1}
 	serveSnapshot(h.carts, snapshotOf(1, []SnapshotItem{
@@ -254,9 +254,9 @@ func TestCalculateTotalsBozukVergiSonucuReddedilir(t *testing.T) {
 
 	for name, script := range tests {
 		t.Run(name, func(t *testing.T) {
-			h := newModulHarness(t)
+			h := newModuleHarness(t)
 			h.taxes.fn = script
-			serveSnapshot(h.carts, ikiSatirliSepet(1))
+			serveSnapshot(h.carts, twoLineCart(1))
 
 			_, err := h.wf.CalculateTotals(context.Background(), testCartID)
 			require.Error(t, err)
@@ -269,9 +269,9 @@ func TestCalculateTotalsBozukVergiSonucuReddedilir(t *testing.T) {
 // TestCalculateTotalsVergiHatasiSinifiKorunur tax'ın hata SINIFININ yolda
 // Internal'a çevrilmediğini doğrular.
 func TestCalculateTotalsVergiHatasiSinifiKorunur(t *testing.T) {
-	h := newModulHarness(t)
+	h := newModuleHarness(t)
 	h.taxes.err = errors.Unavailable("tax_unconfigured", "the tax service is not configured")
-	serveSnapshot(h.carts, ikiSatirliSepet(1))
+	serveSnapshot(h.carts, twoLineCart(1))
 
 	_, err := h.wf.CalculateTotals(context.Background(), testCartID)
 	require.Error(t, err)
@@ -324,8 +324,8 @@ func TestCountryCodes(t *testing.T) {
 // Alan seçimi yapılmasaydı sağlayıcı bölgenin tüm alanlarını (ve para birimi
 // alt kaydını) toplamak için fazladan sorgu koştururdu; hesap her tur çalışır.
 func TestCalculateTotalsBolgeSorgusuTekVeDar(t *testing.T) {
-	h := newModulHarness(t)
-	serveSnapshot(h.carts, ikiSatirliSepet(1))
+	h := newModuleHarness(t)
+	serveSnapshot(h.carts, twoLineCart(1))
 
 	_, err := h.wf.CalculateTotals(context.Background(), testCartID)
 	require.NoError(t, err)

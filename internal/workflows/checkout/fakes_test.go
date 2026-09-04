@@ -567,7 +567,7 @@ func (h *harness) input() CompleteCartInput {
 		CartID:            testCartID,
 		LocationID:        testLocationID,
 		PaymentProviderID: testProviderID,
-		Email:             "musteri@example.com",
+		Email:             "customer@example.com",
 	}
 }
 

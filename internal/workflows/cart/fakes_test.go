@@ -392,14 +392,14 @@ type harness struct {
 // Varsayılanın degrade yol olması bilinçlidir: Faz 5'te yazılmış testlerin
 // tamamı bu düzenekle koşar ve hiçbiri değişmez, yani devralmanın var olan
 // davranışı bozmadığı her koşuda yeniden kanıtlanır. İki modüllü düzenek için
-// bkz. [newModulHarness].
+// bkz. [newModuleHarness].
 func newHarness(t *testing.T) *harness {
 	t.Helper()
 	return newHarnessWith(t, nil, nil)
 }
 
-// newModulHarness promotion ve tax yüzeyleri KAYITLI bir düzenek kurar.
-func newModulHarness(t *testing.T) *harness {
+// newModuleHarness promotion ve tax yüzeyleri KAYITLI bir düzenek kurar.
+func newModuleHarness(t *testing.T) *harness {
 	t.Helper()
 	return newHarnessWith(t, &stubDiscounts{perLine: map[string]int64{}}, newStubTaxes())
 }

@@ -10,10 +10,10 @@ import (
 	"github.com/bdrtr/gobit/internal/core/errors"
 )
 
-// ikiSatirliSepet iki satırlı bir anlık görüntü üretir (A: 2 adet, B: 3 adet).
+// twoLineCart iki satırlı bir anlık görüntü üretir (A: 2 adet, B: 3 adet).
 //
 // Ara toplamlar 2000 ve 750'dir; testlerin çoğu bu iki sayı üzerinden konuşur.
-func ikiSatirliSepet(revision int64) Snapshot {
+func twoLineCart(revision int64) Snapshot {
 	return snapshotOf(revision, []SnapshotItem{
 		{ID: testLineA, VariantID: testVariantA, Quantity: 2},
 		{ID: testLineB, VariantID: testVariantB, Quantity: 3},
@@ -23,9 +23,9 @@ func ikiSatirliSepet(revision int64) Snapshot {
 // TestCalculateTotalsIndirimSatirlaraVeSepeteYazilir promotion'ın kalem başına
 // verdiği indirimin hem satırlara hem sepete işlendiğini doğrular.
 func TestCalculateTotalsIndirimSatirlaraVeSepeteYazilir(t *testing.T) {
-	h := newModulHarness(t)
+	h := newModuleHarness(t)
 	h.discounts.perLine = map[string]int64{testLineA: 500, testLineB: 100}
-	serveSnapshot(h.carts, ikiSatirliSepet(1))
+	serveSnapshot(h.carts, twoLineCart(1))
 
 	totals, err := h.wf.CalculateTotals(context.Background(), testCartID)
 	require.NoError(t, err)
@@ -51,7 +51,7 @@ func TestCalculateTotalsIndirimSatirlaraVeSepeteYazilir(t *testing.T) {
 // 300'dür. İki sayının farkı, sözleşmenin hangi dalının uygulandığını tek
 // başına gösterir.
 func TestCalculateTotalsVergiTabaniIndirimSonrasidir(t *testing.T) {
-	h := newModulHarness(t)
+	h := newModuleHarness(t)
 	h.discounts.perLine = map[string]int64{testLineA: 500}
 	serveSnapshot(h.carts, snapshotOf(1,
 		[]SnapshotItem{{ID: testLineA, VariantID: testVariantA, Quantity: 2}}, nil))
@@ -73,7 +73,7 @@ func TestCalculateTotalsVergiTabaniIndirimSonrasidir(t *testing.T) {
 // kayıtlı değilken hesabın DÜŞMEDİĞİNİ ve indirimin sıfır kaldığını doğrular.
 func TestCalculateTotalsPromotionKayitsizsaIndirimSifir(t *testing.T) {
 	h := newHarnessWith(t, nil, newStubTaxes())
-	serveSnapshot(h.carts, ikiSatirliSepet(1))
+	serveSnapshot(h.carts, twoLineCart(1))
 
 	totals, err := h.wf.CalculateTotals(context.Background(), testCartID)
 	require.NoError(t, err)
@@ -95,8 +95,8 @@ func TestCalculateTotalsPromotionKayitsizsaIndirimSifir(t *testing.T) {
 // eksik alanı ise sessizce sıfır sayar ve sessiz olan hâl testsiz kalırsa
 // üretimde indirimsiz bir sepet olarak görünür.
 func TestCalculateTotalsIndirimIstegininSekli(t *testing.T) {
-	h := newModulHarness(t)
-	serveSnapshot(h.carts, ikiSatirliSepet(1))
+	h := newModuleHarness(t)
+	serveSnapshot(h.carts, twoLineCart(1))
 
 	_, err := h.wf.CalculateTotals(context.Background(), testCartID)
 	require.NoError(t, err)
@@ -122,8 +122,8 @@ func TestCalculateTotalsIndirimIstegininSekli(t *testing.T) {
 // promosyonlar uygulanır. Test o kararın bekçisidir — biri CalculateTotals'a
 // kod parametresi eklerse burası düşer ve kararın yeniden verilmesi gerekir.
 func TestCalculateTotalsKuponKoduGonderilmez(t *testing.T) {
-	h := newModulHarness(t)
-	serveSnapshot(h.carts, ikiSatirliSepet(1))
+	h := newModuleHarness(t)
+	serveSnapshot(h.carts, twoLineCart(1))
 
 	_, err := h.wf.CalculateTotals(context.Background(), testCartID)
 	require.NoError(t, err)
@@ -140,7 +140,7 @@ func TestCalculateTotalsKuponKoduGonderilmez(t *testing.T) {
 // indirimini taşıyamaz ve sepet indirimine katmak cart'ın "indirim ara toplamı
 // aşamaz" kuralını ihlal edebilirdi.
 func TestCalculateTotalsKargoIndirimeGonderilmez(t *testing.T) {
-	h := newModulHarness(t)
+	h := newModuleHarness(t)
 	serveSnapshot(h.carts, snapshotOf(1,
 		[]SnapshotItem{{ID: testLineA, VariantID: testVariantA, Quantity: 1}},
 		[]SnapshotShippingMethod{{ID: "csm_1", Amount: 4990}}))
@@ -161,7 +161,7 @@ func TestCalculateTotalsKargoIndirimeGonderilmez(t *testing.T) {
 // düştüğünü sabitler. Kabul edilseydi satırın toplamı negatife düşer ve cart
 // modülünün tutarlılık kontrolü ancak yazma anında devreye girerdi.
 func TestCalculateTotalsIndirimAraToplamiAsamaz(t *testing.T) {
-	h := newModulHarness(t)
+	h := newModuleHarness(t)
 	h.discounts.fn = func(req discountRequest) (discountResponse, error) {
 		asiri := req.Items[0].Amount + 1
 		return discountResponse{
@@ -224,9 +224,9 @@ func TestCalculateTotalsBozukIndirimSonucuReddedilir(t *testing.T) {
 
 	for name, script := range tests {
 		t.Run(name, func(t *testing.T) {
-			h := newModulHarness(t)
+			h := newModuleHarness(t)
 			h.discounts.fn = script
-			serveSnapshot(h.carts, ikiSatirliSepet(1))
+			serveSnapshot(h.carts, twoLineCart(1))
 
 			_, err := h.wf.CalculateTotals(context.Background(), testCartID)
 			require.Error(t, err)
@@ -242,9 +242,9 @@ func TestCalculateTotalsBozukIndirimSonucuReddedilir(t *testing.T) {
 // Sınıf korunmazsa düzeltilebilir bir kablolama hatası (örn. sözleşme dışı
 // istek) istemciye sunucu arızası olarak ulaşır ve kimse düzeltmeye kalkmaz.
 func TestCalculateTotalsIndirimHatasiSinifiKorunur(t *testing.T) {
-	h := newModulHarness(t)
+	h := newModuleHarness(t)
 	h.discounts.err = errors.Invalid("promotion_interop_request_invalid", "istek çözümlenemedi")
-	serveSnapshot(h.carts, ikiSatirliSepet(1))
+	serveSnapshot(h.carts, twoLineCart(1))
 
 	_, err := h.wf.CalculateTotals(context.Background(), testCartID)
 	require.Error(t, err)
@@ -260,9 +260,9 @@ func TestCalculateTotalsIndirimHatasiSinifiKorunur(t *testing.T) {
 // Faz 5'te iki alan da sıfırdı ve kimlikler kendiliğinden sağlanıyordu; bu
 // test onların ilk kez GERÇEKTEN sınandığı yerdir.
 func TestCalculateTotalsIndirimliSepetteSigmaTutar(t *testing.T) {
-	h := newModulHarness(t)
+	h := newModuleHarness(t)
 	h.discounts.perLine = map[string]int64{testLineA: 333, testLineB: 77}
-	serveSnapshot(h.carts, ikiSatirliSepet(9))
+	serveSnapshot(h.carts, twoLineCart(9))
 
 	totals, err := h.wf.CalculateTotals(context.Background(), testCartID)
 	require.NoError(t, err)
@@ -290,7 +290,7 @@ func TestCalculateTotalsIndirimliSepetteSigmaTutar(t *testing.T) {
 // ayrıca şunu sağlar: sözleşme dışı büyüklükteki bir sepet tax modülüne hiç
 // gönderilmez ve oradaki taban denetimine boşuna çarpmaz.
 func TestCalculateTotalsIndirimTasmayiYakalar(t *testing.T) {
-	h := newModulHarness(t)
+	h := newModuleHarness(t)
 	h.prices.amounts[testPriceSetA] = MaxAmount
 	h.prices.amounts[testPriceSetB] = MaxAmount
 	h.discounts.fn = func(req discountRequest) (discountResponse, error) {
