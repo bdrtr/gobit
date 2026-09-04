@@ -368,7 +368,7 @@ func TestGraphQLSinirlariSifirVeNegatifDegerdeAcilisiDurdurur(t *testing.T) {
 				"geçersiz sınır sıfırdan farklı çıkış kodu vermeli; stderr:\n%s", stderr)
 			assert.Contains(t, stderr, durum.degisken,
 				"stderr operatöre HANGİ ayarı düzelteceğini söylemeli; stderr:\n%s", stderr)
-			assert.Contains(t, stderr, "en az 1 olmalı",
+			assert.Contains(t, stderr, "has to be at least 1",
 				"mesaj sınırın kaldırılamayacağını söylemeli; stderr:\n%s", stderr)
 		})
 	}

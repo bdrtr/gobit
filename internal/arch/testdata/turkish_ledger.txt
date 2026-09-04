@@ -33,8 +33,6 @@ internal/arch/openapi_sema_test.go
 internal/arch/sabitler_test.go
 internal/arch/tuketici_test.go
 internal/arch/yapilandirma_test.go
-internal/core/config/config.go
-internal/core/config/config_test.go
 internal/e2e/arama_test.go
 internal/e2e/b2b_test.go
 internal/e2e/bildirim_test.go

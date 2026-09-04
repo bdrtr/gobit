@@ -17,7 +17,7 @@ import (
 	"github.com/bdrtr/gobit/internal/core/config"
 )
 
-// envKeys Config'in okuduğu tüm ortam değişkenleridir.
+// envKeys are all the environment variables Config reads.
 
 var envKeys = []string{
 	"APP_ENV", "APP_PORT", "DATABASE_URL", "REDIS_URL",
@@ -36,11 +36,11 @@ var envKeys = []string{
 	"DB_MAX_CONNS", "DB_MIN_CONNS",
 }
 
-// uretimJWTSirri üretim senaryolarında kullanılan 32 karakterlik imza sırrıdır.
-const uretimJWTSirri = "0123456789abcdef0123456789abcdef"
+// productionJWTSecret is the 32-character signing secret used in production scenarios.
+const productionJWTSecret = "0123456789abcdef0123456789abcdef"
 
-// clearEnv testin çalıştığı kabukta tanımlı olabilecek değişkenleri
-// geçici olarak siler; böylece varsayılan davranış izole biçimde sınanır.
+// clearEnv temporarily deletes the variables that may be defined in the shell the
+// test runs in; that way the default behavior is exercised in isolation.
 func clearEnv(t *testing.T) {
 	t.Helper()
 	for _, k := range envKeys {
@@ -56,32 +56,32 @@ func clearEnv(t *testing.T) {
 func TestLoadDefaults(t *testing.T) {
 	clearEnv(t)
 
-	// Ortam boşken varsayılanlar docker-compose ile uyumlu olmalı.
+	// With an empty environment the defaults have to agree with docker-compose.
 	cfg, err := config.Load()
 	if err != nil {
-		t.Fatalf("Load() beklenmedik hata: %v", err)
+		t.Fatalf("Load() beklenmedik wantErr: %v", err)
 	}
 
 	if cfg.AppEnv != "development" {
-		t.Errorf("AppEnv = %q, beklenen %q", cfg.AppEnv, "development")
+		t.Errorf("AppEnv = %q, expected %q", cfg.AppEnv, "development")
 	}
 	if cfg.AppPort != 9000 {
-		t.Errorf("AppPort = %d, beklenen 9000", cfg.AppPort)
+		t.Errorf("AppPort = %d, expected 9000", cfg.AppPort)
 	}
 	if cfg.LogLevel != "info" {
-		t.Errorf("LogLevel = %q, beklenen %q", cfg.LogLevel, "info")
+		t.Errorf("LogLevel = %q, expected %q", cfg.LogLevel, "info")
 	}
 	if cfg.LogFormat != "json" {
-		t.Errorf("LogFormat = %q, beklenen %q", cfg.LogFormat, "json")
+		t.Errorf("LogFormat = %q, expected %q", cfg.LogFormat, "json")
 	}
 	if !strings.HasPrefix(cfg.DatabaseURL, "postgres://") {
-		t.Errorf("DatabaseURL = %q, postgres:// ile başlamalı", cfg.DatabaseURL)
+		t.Errorf("DatabaseURL = %q, it has to start with postgres://", cfg.DatabaseURL)
 	}
 	if !strings.HasPrefix(cfg.RedisURL, "redis://") {
-		t.Errorf("RedisURL = %q, redis:// ile başlamalı", cfg.RedisURL)
+		t.Errorf("RedisURL = %q, it has to start with redis://", cfg.RedisURL)
 	}
 	if cfg.ShutdownTimeout != 15*time.Second {
-		t.Errorf("ShutdownTimeout = %s, beklenen 15s", cfg.ShutdownTimeout)
+		t.Errorf("ShutdownTimeout = %s, expected 15s", cfg.ShutdownTimeout)
 	}
 }
 
@@ -95,24 +95,24 @@ func TestLoadFromEnv(t *testing.T) {
 	t.Setenv("DATABASE_URL", "postgres://u:p@db:5432/x")
 	t.Setenv("REDIS_URL", "redis://cache:6379/1")
 	t.Setenv("SHUTDOWN_TIMEOUT", "30s")
-	t.Setenv("JWT_SECRET", uretimJWTSirri)
+	t.Setenv("JWT_SECRET", productionJWTSecret)
 
 	cfg, err := config.Load()
 	if err != nil {
-		t.Fatalf("Load() beklenmedik hata: %v", err)
+		t.Fatalf("Load() beklenmedik wantErr: %v", err)
 	}
 
 	if !cfg.IsProduction() {
-		t.Error("IsProduction() = false, beklenen true")
+		t.Error("IsProduction() = false, expected true")
 	}
 	if got, want := cfg.Addr(), ":8080"; got != want {
-		t.Errorf("Addr() = %q, beklenen %q", got, want)
+		t.Errorf("Addr() = %q, expected %q", got, want)
 	}
 	if got, want := cfg.SlogLevel(), slog.LevelDebug; got != want {
-		t.Errorf("SlogLevel() = %v, beklenen %v", got, want)
+		t.Errorf("SlogLevel() = %v, expected %v", got, want)
 	}
 	if cfg.ShutdownTimeout != 30*time.Second {
-		t.Errorf("ShutdownTimeout = %s, beklenen 30s", cfg.ShutdownTimeout)
+		t.Errorf("ShutdownTimeout = %s, expected 30s", cfg.ShutdownTimeout)
 	}
 }
 
@@ -122,22 +122,22 @@ func TestLoadInvalidEnv(t *testing.T) {
 	tests := map[string]struct {
 		key, value string
 	}{
-		"bilinmeyen ortam":    {"APP_ENV", "staging-2"},
-		"port sıfır":          {"APP_PORT", "0"},
-		"port aralık dışı":    {"APP_PORT", "70000"},
-		"bilinmeyen seviye":   {"LOG_LEVEL", "trace"},
-		"bilinmeyen biçim":    {"LOG_FORMAT", "logfmt"},
-		"bilinmeyen bus":      {"EVENT_BUS", "kafka"},
-		"negatif timeout":     {"SHUTDOWN_TIMEOUT", "-1s"},
-		"sıfır probe bütçesi": {"READINESS_DEGRADED_TIMEOUT", "0s"},
-		"sayı olmayan port":   {"APP_PORT", "abc"},
+		"bilinmeyen environment": {"APP_ENV", "staging-2"},
+		"a zero port":            {"APP_PORT", "0"},
+		"a port out of range":    {"APP_PORT", "70000"},
+		"bilinmeyen seviye":      {"LOG_LEVEL", "trace"},
+		"an unknown format":      {"LOG_FORMAT", "logfmt"},
+		"bilinmeyen bus":         {"EVENT_BUS", "kafka"},
+		"negatif timeout":        {"SHUTDOWN_TIMEOUT", "-1s"},
+		"a zero probe budget":    {"READINESS_DEGRADED_TIMEOUT", "0s"},
+		"a non-numeric port":     {"APP_PORT", "abc"},
 	}
 
 	for name, tt := range tests {
 		t.Run(name, func(t *testing.T) {
 			t.Setenv(tt.key, tt.value)
 			if _, err := config.Load(); err == nil {
-				t.Fatalf("Load() hata dönmeliydi (%s=%s)", tt.key, tt.value)
+				t.Fatalf("Load() should have returned an error (%s=%s)", tt.key, tt.value)
 			}
 		})
 	}
@@ -155,41 +155,41 @@ func TestSlogLevel(t *testing.T) {
 		t.Run(level, func(t *testing.T) {
 			cfg := config.Config{LogLevel: level}
 			if got := cfg.SlogLevel(); got != want {
-				t.Errorf("SlogLevel() = %v, beklenen %v", got, want)
+				t.Errorf("SlogLevel() = %v, expected %v", got, want)
 			}
 		})
 	}
 }
 
 func TestValidateRejectsEmptyURLs(t *testing.T) {
-	// Taban, elle kurulmuş bir literal DEĞİL, varsayılanlardan yüklenmiş
-	// geçerli bir config'tir. Literal olsaydı Config'e eklenen her zorunlu
-	// alan bu testi kırardı ve testin ilgilendiği şeyle (boş URL reddi)
-	// hiç ilgisi olmayan bir bakım yükü doğardı.
-	base := gecerliConfig(t)
+	// The base is NOT a hand-built literal but a valid config loaded from the
+	// defaults. Were it a literal, every mandatory field added to Config would break
+	// this test and produce a maintenance burden with nothing to do with what the
+	// test cares about (rejecting an empty URL).
+	base := validConfig(t)
 	if err := base.Validate(); err != nil {
-		t.Fatalf("geçerli config reddedildi: %v", err)
+		t.Fatalf("a valid config was rejected: %v", err)
 	}
 
 	noDB := base
 	noDB.DatabaseURL = ""
 	if err := noDB.Validate(); err == nil {
-		t.Error("boş DATABASE_URL kabul edildi")
+		t.Error("an empty DATABASE_URL was accepted")
 	}
 
 	noRedis := base
 	noRedis.RedisURL = ""
 	if err := noRedis.Validate(); err == nil {
-		t.Error("boş REDIS_URL kabul edildi")
+		t.Error("an empty REDIS_URL was accepted")
 	}
 }
 
-// TestProductionRejectsLocalDefaults üretimde yerel geliştirme
-// varsayılanlarına sessizce düşülmediğini doğrular.
+// TestProductionRejectsLocalDefaults verifies that production does not quietly
+// fall back to the local development defaults.
 //
-// Regresyon: envDefault dolu olduğu için Validate'in `== ""` kontrolü Load
-// yolundan asla tetiklenmiyordu. Eksik (ya da boş) secret enjeksiyonu
-// sabit-kodlu gobit:gobit kimlik bilgisi ve sslmode=disable ile üretime çıkardı.
+// The regression: because envDefault was filled, Validate's `== ""` check was never
+// triggered from the Load path. A missing (or empty) secret injection would go to
+// production with the hard-coded gobit:gobit credential and sslmode=disable.
 func TestProductionRejectsLocalDefaults(t *testing.T) {
 	tests := map[string]func(t *testing.T){
 		"env hic set edilmemis": func(t *testing.T) {},
@@ -211,10 +211,10 @@ func TestProductionRejectsLocalDefaults(t *testing.T) {
 
 			cfg, err := config.Load()
 			if err == nil {
-				t.Fatalf("Load() hata dönmeliydi; DatabaseURL=%q", cfg.DatabaseURL)
+				t.Fatalf("Load() should have returned an error; DatabaseURL=%q", cfg.DatabaseURL)
 			}
 			if !strings.Contains(err.Error(), "production") {
-				t.Errorf("hata mesajı üretim koşulunu anlatmalı: %v", err)
+				t.Errorf("the error message has to explain the production condition: %v", err)
 			}
 		})
 	}
@@ -225,29 +225,29 @@ func TestProductionAcceptsOverriddenURLs(t *testing.T) {
 	t.Setenv("APP_ENV", "production")
 	t.Setenv("DATABASE_URL", "postgres://u:p@db.internal:5432/gobit?sslmode=require")
 	t.Setenv("REDIS_URL", "rediss://:s3cret@cache.internal:6380/0")
-	t.Setenv("JWT_SECRET", uretimJWTSirri)
+	t.Setenv("JWT_SECRET", productionJWTSecret)
 
 	if _, err := config.Load(); err != nil {
-		t.Fatalf("ezilmiş URL'lerle Load() hata verdi: %v", err)
+		t.Fatalf("Load() failed with overridden URLs: %v", err)
 	}
 }
 
 func TestDevelopmentAllowsLocalDefaults(t *testing.T) {
-	// Yerel geliştirme "make up && make run" ile ek ayar gerektirmemeli.
+	// Local development must not need extra settings with "make up && make run".
 	clearEnv(t)
 	cfg, err := config.Load()
 	if err != nil {
-		t.Fatalf("Load() hata verdi: %v", err)
+		t.Fatalf("Load() wantErr verdi: %v", err)
 	}
 	if cfg.DatabaseURL != config.DefaultDatabaseURL {
-		t.Errorf("DatabaseURL = %q, beklenen varsayılan", cfg.DatabaseURL)
+		t.Errorf("DatabaseURL = %q, the default was expected", cfg.DatabaseURL)
 	}
 }
 
-// TestDefaultTagsMatchConstants envDefault etiketleri ile sabitlerin
-// birbirinden kaymadığını denetler. Go struct etiketleri sabit referansı kabul
-// etmediği için değer iki yerde tekrarlanmak zorunda; kayma olursa üretim
-// koruması sessizce devre dışı kalırdı.
+// TestDefaultTagsMatchConstants checks that the envDefault tags and the constants
+// have not drifted apart. Because Go struct tags do not accept a constant
+// reference the value has to be repeated in two places; on a drift the production
+// guard would quietly go out of service.
 func TestDefaultTagsMatchConstants(t *testing.T) {
 	want := map[string]string{
 		"DatabaseURL":          config.DefaultDatabaseURL,
@@ -269,10 +269,10 @@ func TestDefaultTagsMatchConstants(t *testing.T) {
 	for field, expected := range want {
 		f, ok := typ.FieldByName(field)
 		if !ok {
-			t.Fatalf("Config.%s alanı yok", field)
+			t.Fatalf("Config.%s: no such field", field)
 		}
 		if got := f.Tag.Get("envDefault"); got != expected {
-			t.Errorf("Config.%s envDefault etiketi %q, sabit %q — kaymış", field, got, expected)
+			t.Errorf("Config.%s envDefault tag is %q, the constant is %q — drifted", field, got, expected)
 		}
 	}
 }
@@ -293,23 +293,23 @@ func TestTimeoutValidation(t *testing.T) {
 			}
 			t.Setenv(tt.key, tt.value)
 			if _, err := config.Load(); err == nil {
-				t.Fatalf("Load() hata dönmeliydi (%s=%s)", tt.key, tt.value)
+				t.Fatalf("Load() should have returned an error (%s=%s)", tt.key, tt.value)
 			}
 		})
 	}
 }
 
-// TestProductionRequiresStrongJWTSecret üretimde zayıf ya da boş bir imza
-// sırrının REDDEDİLDİĞİNİ doğrular.
+// TestProductionRequiresStrongJWTSecret verifies that a weak or empty signing
+// secret is REJECTED in production.
 //
-// Tahmin edilebilir bir imza sırrı, herkesin kendine admin jetonu
-// üretebilmesi demektir. Uygulamanın sessizce açılması, açığın ancak
-// istismar edildiğinde fark edilmesi olurdu.
+// A predictable signing secret means anybody can mint themselves an admin token.
+// The application coming up quietly would mean the hole is noticed only once it
+// is exploited.
 func TestProductionRequiresStrongJWTSecret(t *testing.T) {
 	tests := map[string]string{
-		"sır hiç verilmemiş": "",
-		"sır çok kısa":       "kisa",
-		"31 karakter":        "0123456789abcdef0123456789abcde",
+		"no secret given at all": "",
+		"far too short a secret": "short",
+		"31 karakter":            "0123456789abcdef0123456789abcde",
 	}
 
 	for name, secret := range tests {
@@ -323,60 +323,60 @@ func TestProductionRequiresStrongJWTSecret(t *testing.T) {
 			}
 
 			_, err := config.Load()
-			require.Error(t, err, "zayıf imza sırrı üretimde kabul edilemez")
+			require.Error(t, err, "a weak signing secret cannot be accepted in production")
 			assert.Contains(t, err.Error(), "JWT_SECRET")
 		})
 	}
 }
 
-// TestDevelopmentAllowsEmptyJWTSecret geliştirmede imza sırrının zorunlu
-// OLMADIĞINI doğrular; auth modülü kayıtlı değilken de sunucu açılabilmeli.
+// TestDevelopmentAllowsEmptyJWTSecret verifies that the signing secret is NOT
+// mandatory in development; the server has to come up while auth is unregistered too.
 func TestDevelopmentAllowsEmptyJWTSecret(t *testing.T) {
 	clearEnv(t)
 
 	cfg, err := config.Load()
-	require.NoError(t, err, "geliştirmede imza sırrı zorunlu olmamalı")
+	require.NoError(t, err, "the signing secret must not be mandatory in development")
 	assert.Empty(t, cfg.JWTSecret)
-	assert.Positive(t, cfg.JWTTTL, "jeton ömrü varsayılanı dolu olmalı")
+	assert.Positive(t, cfg.JWTTTL, "the token lifetime default has to be filled")
 }
 
-// gecerliConfig varsayılanlardan yüklenmiş, doğrulamayı geçen bir config döner.
-func gecerliConfig(t *testing.T) config.Config {
+// validConfig returns a config loaded from the defaults that passes validation.
+func validConfig(t *testing.T) config.Config {
 	t.Helper()
 
 	clearEnv(t)
 
 	cfg, err := config.Load()
 	if err != nil {
-		t.Fatalf("varsayılan config yüklenemedi: %v", err)
+		t.Fatalf("the default config could not be loaded: %v", err)
 	}
 
 	return cfg
 }
 
-// TestValidateYeniAyarlariDogrular Faz 9 ile gelen ayarların sınırlarının
-// gerçekten zorlandığını doğrular.
-func TestValidateYeniAyarlariDogrular(t *testing.T) {
-	base := gecerliConfig(t)
+// TestValidateChecksTheNewSettings verifies that the bounds of the settings that
+// arrived with Phase 9 really are enforced.
+func TestValidateChecksTheNewSettings(t *testing.T) {
+	base := validConfig(t)
 
 	tests := map[string]func(c *config.Config){
-		"örnekleme oranı negatif":      func(c *config.Config) { c.TraceSampleRatio = -0.1 },
-		"örnekleme oranı birden büyük": func(c *config.Config) { c.TraceSampleRatio = 1.1 },
-		"metrik aralığı sıfır":         func(c *config.Config) { c.MetricInterval = 0 },
-		"metrik aralığı negatif":       func(c *config.Config) { c.MetricInterval = -time.Second },
-		"servis adı boş":               func(c *config.Config) { c.ServiceName = "" },
-		"proxy atlaması negatif":       func(c *config.Config) { c.TrustedProxyHops = -1 },
-		"idempotency TTL sıfır":        func(c *config.Config) { c.IdempotencyTTL = 0 },
-		"idempotency bütçesi sıfır": func(c *config.Config) {
+		"a negative sample ratio":    func(c *config.Config) { c.TraceSampleRatio = -0.1 },
+		"a sample ratio above one":   func(c *config.Config) { c.TraceSampleRatio = 1.1 },
+		"a zero metric interval":     func(c *config.Config) { c.MetricInterval = 0 },
+		"a negative metric interval": func(c *config.Config) { c.MetricInterval = -time.Second },
+		"an empty service name":      func(c *config.Config) { c.ServiceName = "" },
+		"a negative proxy hop count": func(c *config.Config) { c.TrustedProxyHops = -1 },
+		"a zero idempotency TTL":     func(c *config.Config) { c.IdempotencyTTL = 0 },
+		"a zero idempotency budget": func(c *config.Config) {
 			c.IdempotencyMaxMemoryBytes = 0
 		},
-		"idempotency bütçesi negatif": func(c *config.Config) {
+		"a negative idempotency budget": func(c *config.Config) {
 			c.IdempotencyMaxMemoryBytes = -1
 		},
-		// Tek bir azami boy kaydı taşıyamayan bütçe, koruma açık görünürken
-		// büyük yanıtlar için sessizce kapalı olması demektir; sayı geçerli
-		// göründüğü için en sinsi değer budur.
-		"idempotency bütçesi tabanın altında": func(c *config.Config) {
+		// A budget that cannot carry a single maximum-size record means the guard is
+		// quietly closed for large responses while looking open; because the number
+		// looks valid, this is the sneakiest value.
+		"an idempotency budget below the floor": func(c *config.Config) {
 			c.IdempotencyMaxMemoryBytes = config.MinIdempotencyMemoryBytes - 1
 		},
 	}
@@ -387,18 +387,18 @@ func TestValidateYeniAyarlariDogrular(t *testing.T) {
 			boz(&cfg)
 
 			if err := cfg.Validate(); err == nil {
-				t.Error("geçersiz değer kabul edildi")
+				t.Error("an invalid value was accepted")
 			}
 		})
 	}
 
-	// Sınır değerler KABUL edilmeli.
+	// The boundary values have to be ACCEPTED.
 	for name, ayarla := range map[string]func(c *config.Config){
-		"örnekleme oranı sıfır": func(c *config.Config) { c.TraceSampleRatio = 0 },
-		"örnekleme oranı bir":   func(c *config.Config) { c.TraceSampleRatio = 1 },
-		"proxy atlaması sıfır":  func(c *config.Config) { c.TrustedProxyHops = 0 },
-		"hız sınırı sıfır":      func(c *config.Config) { c.RateLimitPerMinute = 0 },
-		"idempotency bütçesi tam tabanda": func(c *config.Config) {
+		"a zero sample ratio":    func(c *config.Config) { c.TraceSampleRatio = 0 },
+		"a sample ratio of one":  func(c *config.Config) { c.TraceSampleRatio = 1 },
+		"a zero proxy hop count": func(c *config.Config) { c.TrustedProxyHops = 0 },
+		"a zero rate limit":      func(c *config.Config) { c.RateLimitPerMinute = 0 },
+		"an idempotency budget exactly at the floor": func(c *config.Config) {
 			c.IdempotencyMaxMemoryBytes = config.MinIdempotencyMemoryBytes
 		},
 	} {
@@ -407,350 +407,354 @@ func TestValidateYeniAyarlariDogrular(t *testing.T) {
 			ayarla(&cfg)
 
 			if err := cfg.Validate(); err != nil {
-				t.Errorf("geçerli sınır değeri reddedildi: %v", err)
+				t.Errorf("a valid boundary value was rejected: %v", err)
 			}
 		})
 	}
 }
 
-// TestUretimdeSifresizTraceReddedilir üretimde TLS'siz OTLP bağlantısının
-// kabul edilmediğini doğrular.
+// TestProductionRejectsUnencryptedTracing verifies that a TLS-less OTLP
+// connection is not accepted in production.
 //
-// Trace'ler istek yollarını, kimlikleri ve hata mesajlarını taşır; şifresiz
-// göndermek onları ağda dinlenebilir kılar.
-func TestUretimdeSifresizTraceReddedilir(t *testing.T) {
+// Traces carry request paths, identities and error messages; sending them
+// unencrypted makes them listenable on the network.
+func TestProductionRejectsUnencryptedTracing(t *testing.T) {
 	clearEnv(t)
 	t.Setenv("APP_ENV", "production")
 	t.Setenv("DATABASE_URL", "postgres://u:p@db.internal:5432/gobit?sslmode=require")
 	t.Setenv("REDIS_URL", "rediss://:s3cret@cache.internal:6380/0")
-	t.Setenv("JWT_SECRET", uretimJWTSirri)
+	t.Setenv("JWT_SECRET", productionJWTSecret)
 	t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "collector.internal:4317")
 	t.Setenv("OTEL_EXPORTER_OTLP_INSECURE", "true")
 
 	if _, err := config.Load(); err == nil {
-		t.Error("üretimde şifresiz OTLP kabul edildi")
+		t.Error("unencrypted OTLP was accepted in production")
 	}
 
-	// Toplayıcı hiç yapılandırılmamışsa insecure bayrağının bir anlamı yoktur
-	// ve kurulumu engellememelidir.
+	// If no collector is configured at all the insecure flag is meaningless and must
+	// not block the installation.
 	t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "")
 
 	if _, err := config.Load(); err != nil {
-		t.Errorf("toplayıcısız kurulum reddedildi: %v", err)
+		t.Errorf("an installation without a collector was rejected: %v", err)
 	}
 }
 
-// paylasilanOrtamKur verilen ortamı, varsayılan OLMAYAN bağlantı adresleriyle
-// hazırlar.
+// setUpSharedEnvironment prepares the given environment with connection addresses
+// that are NOT the defaults.
 //
-// URL'lerin ezilmesi testin konusu değildir; ezilmemiş bırakılsaydı üretim
-// senaryosunda Validate JWT/OTLP kapısına hiç gelmeden URL hatası dönerdi ve
-// test sınamak istediği şeyi sınamamış olurdu.
-func paylasilanOrtamKur(t *testing.T, ortam string) {
+// Overriding the URLs is not the subject of the test; had they been left
+// unoverridden, Validate would return a URL error in the production scenario
+// without ever reaching the JWT/OTLP gate and the test would not have exercised
+// what it means to.
+func setUpSharedEnvironment(t *testing.T, environment string) {
 	t.Helper()
 
 	clearEnv(t)
-	t.Setenv("APP_ENV", ortam)
+	t.Setenv("APP_ENV", environment)
 	t.Setenv("DATABASE_URL", "postgres://u:p@db.internal:5432/gobit?sslmode=require")
 	t.Setenv("REDIS_URL", "rediss://:s3cret@cache.internal:6380/0")
 }
 
-// TestPaylasilanOrtamlardaImzaSirriZorunlu imza sırrı kapısının yerel
-// geliştirme DIŞINDAKİ her ortamda işlediğini doğrular.
+// TestSharedEnvironmentsRequireASigningSecret verifies that the signing secret
+// gate works in every environment OTHER THAN local development.
 //
-// Regresyon: kapı yalnızca APP_ENV=production içindeydi. staging çoğu zaman
-// çok örneklidir; sır boş bırakıldığında her örnek açılışta kendi rastgele
-// sırrını üretir (bkz. cmd/server jwtSecret) ve bir örnekten alınan jeton
-// diğerinde 401 döner. Yük dengeleyicinin dağıtımına bağlı olduğu için arıza
-// aralıklıdır ve teşhisi zordur.
-func TestPaylasilanOrtamlardaImzaSirriZorunlu(t *testing.T) {
+// The regression: the gate was only inside APP_ENV=production. staging is usually
+// multi-instance; when the secret is left empty every instance produces its own
+// random secret at startup (see cmd/server's jwtSecret) and a token taken from one
+// instance returns a 401 on another. Because it depends on the load balancer's
+// distribution the fault is intermittent and hard to diagnose.
+func TestSharedEnvironmentsRequireASigningSecret(t *testing.T) {
 	tests := map[string]struct {
-		ortam     string
-		sir       string
-		reddedili bool
+		environment string
+		secret      string
+		rejected    bool
 	}{
-		"staging sır hiç verilmemiş": {ortam: "staging", sir: "", reddedili: true},
-		"staging sır çok kısa":       {ortam: "staging", sir: "kisa", reddedili: true},
-		"staging 31 karakter":        {ortam: "staging", sir: "0123456789abcdef0123456789abcde", reddedili: true},
-		"staging güçlü sır":          {ortam: "staging", sir: uretimJWTSirri},
-		// Üretim satırları mevcut korumanın regresyon kalkanıdır: kapı
-		// genişletilirken production'ın gevşetilmediğini de sınıyoruz.
-		"production sır hiç verilmemiş": {ortam: "production", sir: "", reddedili: true},
-		"production güçlü sır":          {ortam: "production", sir: uretimJWTSirri},
-		// Yerel geliştirmede kolaylık: tek örnek çalışır, jetonun yeniden
-		// başlatmada düşmesinin bedeli yok denecek kadar azdır.
-		"development sır hiç verilmemiş": {ortam: "development", sir: ""},
+		"staging, no secret given at all": {environment: "staging", secret: "", rejected: true},
+		"staging, far too short a secret": {environment: "staging", secret: "short", rejected: true},
+		"staging 31 karakter":             {environment: "staging", secret: "0123456789abcdef0123456789abcde", rejected: true},
+		"staging, a strong secret":        {environment: "staging", secret: productionJWTSecret},
+		// The production rows are the regression shield of the existing guard: while
+		// the gate is widened we also check that production was not loosened.
+		"production, no secret given at all": {environment: "production", secret: "", rejected: true},
+		"production, a strong secret":        {environment: "production", secret: productionJWTSecret},
+		// A convenience in local development: a single instance runs and the price of
+		// the token dropping on a restart is next to nothing.
+		"development, no secret given at all": {environment: "development", secret: ""},
 	}
 
-	for ad, tt := range tests {
-		t.Run(ad, func(t *testing.T) {
-			paylasilanOrtamKur(t, tt.ortam)
-			if tt.sir != "" {
-				t.Setenv("JWT_SECRET", tt.sir)
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			setUpSharedEnvironment(t, tt.environment)
+			if tt.secret != "" {
+				t.Setenv("JWT_SECRET", tt.secret)
 			}
 
 			_, err := config.Load()
-			if !tt.reddedili {
-				require.NoError(t, err, "geçerli yapılandırma reddedildi")
+			if !tt.rejected {
+				require.NoError(t, err, "a valid configuration was rejected")
 
 				return
 			}
 
-			require.Error(t, err, "zayıf imza sırrı paylaşılan ortamda kabul edilemez")
+			require.Error(t, err, "a weak signing secret cannot be accepted in a shared environment")
 			assert.Contains(t, err.Error(), "JWT_SECRET")
-			assert.Contains(t, err.Error(), tt.ortam, "hata mesajı hangi ortamın zorladığını söylemeli")
+			assert.Contains(t, err.Error(), tt.environment, "the error message has to say which environment is enforcing it")
 		})
 	}
 }
 
-// TestPaylasilanOrtamlardaSifresizTraceReddedilir TLS'siz OTLP yasağının yerel
-// geliştirme DIŞINDAKİ her ortamda işlediğini doğrular.
+// TestSharedEnvironmentsRejectUnencryptedTracing verifies that the TLS-less OTLP
+// ban works in every environment OTHER THAN local development.
 //
-// Trace'ler istek yollarını, kimlikleri ve hata mesajlarını taşır; staging'in
-// trafiği "gerçek değil" sayılsa bile ağı ve jetonları gerçektir.
-func TestPaylasilanOrtamlardaSifresizTraceReddedilir(t *testing.T) {
+// Traces carry request paths, identities and error messages; even if staging's
+// traffic is counted as "not real", its network and its tokens are real.
+func TestSharedEnvironmentsRejectUnencryptedTracing(t *testing.T) {
 	tests := map[string]struct {
-		ortam     string
-		endpoint  string
-		insecure  string
-		reddedili bool
+		environment string
+		endpoint    string
+		insecure    string
+		rejected    bool
 	}{
-		"staging şifresiz toplayıcı": {
-			ortam: "staging", endpoint: "collector.internal:4317", insecure: "true", reddedili: true,
+		"staging, an unencrypted collector": {
+			environment: "staging", endpoint: "collector.internal:4317", insecure: "true", rejected: true,
 		},
-		"staging TLS'li toplayıcı": {
-			ortam: "staging", endpoint: "collector.internal:4317", insecure: "false",
+		"staging, a TLS collector": {
+			environment: "staging", endpoint: "collector.internal:4317", insecure: "false",
 		},
-		// Toplayıcı hiç yapılandırılmamışsa bayrağın bir anlamı yoktur ve
-		// kurulumu engellememelidir.
-		"staging toplayıcı yok": {
-			ortam: "staging", endpoint: "", insecure: "true",
+		// If no collector is configured at all the flag is meaningless and must not
+		// block the installation.
+		"staging, no collector": {
+			environment: "staging", endpoint: "", insecure: "true",
 		},
-		"production şifresiz toplayıcı": {
-			ortam: "production", endpoint: "collector.internal:4317", insecure: "true", reddedili: true,
+		"production, an unencrypted collector": {
+			environment: "production", endpoint: "collector.internal:4317", insecure: "true", rejected: true,
 		},
-		// Yerelde toplayıcı çoğu zaman sertifikasız bir docker konteyneridir.
-		"development şifresiz toplayıcı": {
-			ortam: "development", endpoint: "localhost:4317", insecure: "true",
+		// Locally the collector is most often a docker container without a certificate.
+		"development, an unencrypted collector": {
+			environment: "development", endpoint: "localhost:4317", insecure: "true",
 		},
 	}
 
-	for ad, tt := range tests {
-		t.Run(ad, func(t *testing.T) {
-			paylasilanOrtamKur(t, tt.ortam)
-			t.Setenv("JWT_SECRET", uretimJWTSirri)
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			setUpSharedEnvironment(t, tt.environment)
+			t.Setenv("JWT_SECRET", productionJWTSecret)
 			t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", tt.endpoint)
 			t.Setenv("OTEL_EXPORTER_OTLP_INSECURE", tt.insecure)
 
 			_, err := config.Load()
-			if !tt.reddedili {
-				require.NoError(t, err, "geçerli yapılandırma reddedildi")
+			if !tt.rejected {
+				require.NoError(t, err, "a valid configuration was rejected")
 
 				return
 			}
 
-			require.Error(t, err, "şifresiz OTLP paylaşılan ortamda kabul edilemez")
+			require.Error(t, err, "unencrypted OTLP cannot be accepted in a shared environment")
 			assert.Contains(t, err.Error(), "OTEL_EXPORTER_OTLP_INSECURE")
-			assert.Contains(t, err.Error(), tt.ortam, "hata mesajı hangi ortamın zorladığını söylemeli")
+			assert.Contains(t, err.Error(), tt.environment, "the error message has to say which environment is enforcing it")
 		})
 	}
 }
 
-// TestIsSharedYalnizcaGelistirmeyiDisardaTutar kapının hangi ortamları
-// kapsadığını tek bakışta belgeler.
-func TestIsSharedYalnizcaGelistirmeyiDisardaTutar(t *testing.T) {
+// TestIsSharedLeavesOutDevelopmentOnly documents at a glance which environments
+// the gate covers.
+func TestIsSharedLeavesOutDevelopmentOnly(t *testing.T) {
 	tests := map[string]bool{
 		"development": false,
 		"staging":     true,
 		"production":  true,
 	}
 
-	for ortam, beklenen := range tests {
-		t.Run(ortam, func(t *testing.T) {
-			cfg := config.Config{AppEnv: ortam}
-			assert.Equal(t, beklenen, cfg.IsShared())
+	for environment, expected := range tests {
+		t.Run(environment, func(t *testing.T) {
+			cfg := config.Config{AppEnv: environment}
+			assert.Equal(t, expected, cfg.IsShared())
 		})
 	}
 }
 
-// tohumEPostasi ilk yönetici senaryolarında kullanılan e-postadır.
-const tohumEPostasi = "ilk.yonetici@ornek.com"
+// seedEmail is the e-mail used in the first administrator scenarios.
+const seedEmail = "first.admin@example.com"
 
-// TestIlkYoneticiTohumuIkisiniBirlikteIster yarım yapılandırmanın SESSİZCE
-// atlanmadığını doğrular.
+// TestTheFirstAdminSeedWantsBothTogether verifies that a half configuration is
+// not SILENTLY skipped.
 //
-// İki değişkenden birini yazıp diğerini unutan operatör, sessiz atlamada
-// tohumun çalıştığını sanır; eksikliği ancak ilk giriş denemesinde, çoğu zaman
-// kurulumdan günler sonra keşfeder. Açılışta durmak arızayı yapılandırmanın
-// hâlâ elde olduğu ana taşır.
-func TestIlkYoneticiTohumuIkisiniBirlikteIster(t *testing.T) {
+// An operator writing one of the two variables and forgetting the other believes,
+// under a silent skip, that the seed ran; they discover what is missing only at
+// the first login attempt, often days after the installation. Stopping at startup
+// moves the fault to the moment the configuration is still at hand.
+func TestTheFirstAdminSeedWantsBothTogether(t *testing.T) {
 	tests := map[string]struct {
-		eposta    string
-		parola    string
-		reddedili bool
+		email    string
+		password string
+		rejected bool
 	}{
-		// Tohum yapılandırması ZORUNLU değildir: kurulmuş bir sistemin
-		// ortamında bu değişkenlerin durması gerekmez.
-		"ikisi de verilmemiş": {},
-		"ikisi de verilmiş":   {eposta: tohumEPostasi, parola: "gelistirme-parolasi"},
-		"yalnızca e-posta":    {eposta: tohumEPostasi, reddedili: true},
-		"yalnızca parola":     {parola: "gelistirme-parolasi", reddedili: true},
+		// The seed configuration is NOT mandatory: the environment of an installed
+		// system does not have to carry these variables.
+		"neither given":     {},
+		"both given":        {email: seedEmail, password: "development-password"},
+		"only the e-mail":   {email: seedEmail, rejected: true},
+		"only the password": {password: "development-password", rejected: true},
 	}
 
-	for ad, tt := range tests {
-		t.Run(ad, func(t *testing.T) {
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
 			clearEnv(t)
-			if tt.eposta != "" {
-				t.Setenv("ADMIN_BOOTSTRAP_EMAIL", tt.eposta)
+			if tt.email != "" {
+				t.Setenv("ADMIN_BOOTSTRAP_EMAIL", tt.email)
 			}
-			if tt.parola != "" {
-				t.Setenv("ADMIN_BOOTSTRAP_PASSWORD", tt.parola)
+			if tt.password != "" {
+				t.Setenv("ADMIN_BOOTSTRAP_PASSWORD", tt.password)
 			}
 
 			cfg, err := config.Load()
-			if !tt.reddedili {
-				require.NoError(t, err, "geçerli tohum yapılandırması reddedildi")
-				assert.Equal(t, tt.eposta, cfg.AdminBootstrapEmail)
-				assert.Equal(t, tt.parola, cfg.AdminBootstrapPassword)
+			if !tt.rejected {
+				require.NoError(t, err, "a valid seed configuration was rejected")
+				assert.Equal(t, tt.email, cfg.AdminBootstrapEmail)
+				assert.Equal(t, tt.password, cfg.AdminBootstrapPassword)
 
 				return
 			}
 
-			require.Error(t, err, "yarım tohum yapılandırması sessizce atlanmamalı")
+			require.Error(t, err, "a half seed configuration must not be skipped quietly")
 			assert.Contains(t, err.Error(), "ADMIN_BOOTSTRAP_EMAIL")
 			assert.Contains(t, err.Error(), "ADMIN_BOOTSTRAP_PASSWORD",
-				"hata mesajı eksik olanın hangisi olabileceğini görünür kılmalı")
+				"the error message has to make visible which of the two may be missing")
 		})
 	}
 }
 
-// TestPaylasilanOrtamdaTohumParolasiUzunlukIster asgari uzunluk kapısının
-// yalnızca paylaşılan ortamlarda işlediğini doğrular.
+// TestASharedEnvironmentWantsASeedPasswordLength verifies that the minimum
+// length gate works only in shared environments.
 //
-// İlk yönetici parolası bir kullanıcı parolası değil, dağıtım sırrıdır: ortam
-// dosyasında durur ve kimsenin ezberlemesi gerekmez, yani uzunluğun maliyeti
-// yoktur. Yerelde ise kolaylık kazanır — "make up && make run" ile denemek
-// isteyen geliştirici kısa bir parola yazabilmelidir.
-func TestPaylasilanOrtamdaTohumParolasiUzunlukIster(t *testing.T) {
+// The first administrator password is not a user password but a deployment secret:
+// it sits in an environment file and nobody has to memorize it, that is, the length
+// costs nothing. Locally, on the other hand, convenience wins — a developer wanting
+// to try things with "make up && make run" has to be able to type a short password.
+func TestASharedEnvironmentWantsASeedPasswordLength(t *testing.T) {
 	tests := map[string]struct {
-		ortam     string
-		parola    string
-		reddedili bool
+		environment string
+		password    string
+		rejected    bool
 	}{
-		"staging 15 karakter":     {ortam: "staging", parola: "onbes-karakter1", reddedili: true},
-		"staging 16 karakter":     {ortam: "staging", parola: "onalti-karakter1"},
-		"production kısa parola":  {ortam: "production", parola: "kisa", reddedili: true},
-		"production uzun parola":  {ortam: "production", parola: "yeterince-uzun-bir-parola"},
-		"development kısa parola": {ortam: "development", parola: "kisa"},
+		"staging 15 karakter":           {environment: "staging", password: "onbes-karakter1", rejected: true},
+		"staging 16 karakter":           {environment: "staging", password: "onalti-karakter1"},
+		"production, a short password":  {environment: "production", password: "short", rejected: true},
+		"production, a long password":   {environment: "production", password: "a-sufficiently-long-password"},
+		"development, a short password": {environment: "development", password: "short"},
 	}
 
-	for ad, tt := range tests {
-		t.Run(ad, func(t *testing.T) {
-			paylasilanOrtamKur(t, tt.ortam)
-			t.Setenv("JWT_SECRET", uretimJWTSirri)
-			t.Setenv("ADMIN_BOOTSTRAP_EMAIL", tohumEPostasi)
-			t.Setenv("ADMIN_BOOTSTRAP_PASSWORD", tt.parola)
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			setUpSharedEnvironment(t, tt.environment)
+			t.Setenv("JWT_SECRET", productionJWTSecret)
+			t.Setenv("ADMIN_BOOTSTRAP_EMAIL", seedEmail)
+			t.Setenv("ADMIN_BOOTSTRAP_PASSWORD", tt.password)
 
 			_, err := config.Load()
-			if !tt.reddedili {
-				require.NoError(t, err, "geçerli tohum yapılandırması reddedildi")
+			if !tt.rejected {
+				require.NoError(t, err, "a valid seed configuration was rejected")
 
 				return
 			}
 
-			require.Error(t, err, "kısa tohum parolası paylaşılan ortamda kabul edilemez")
+			require.Error(t, err, "a short seed password cannot be accepted in a shared environment")
 			assert.Contains(t, err.Error(), "ADMIN_BOOTSTRAP_PASSWORD")
-			assert.Contains(t, err.Error(), tt.ortam, "hata mesajı hangi ortamın zorladığını söylemeli")
-			assert.NotContains(t, err.Error(), tt.parola,
-				"parola hata mesajında GEÇMEMELİ; mesaj stderr'den log toplayıcısına düşer")
+			assert.Contains(t, err.Error(), tt.environment, "the error message has to say which environment is enforcing it")
+			assert.NotContains(t, err.Error(), tt.password,
+				"the password MUST NOT appear in the error message; the message goes from stderr to the log collector")
 		})
 	}
 }
 
-// TestVarsayilanRedisAnahtarOnegiGeriyeUyumlu önek yapılandırılabilir olurken
-// bugünkü davranışın korunduğunu doğrular.
+// TestTheDefaultRedisKeyPrefixIsBackwardCompatible verifies that today's
+// behavior is preserved while the prefix becomes configurable.
 //
-// Beklenen değer sabitten okunmaz, ELLE yazılır: sabit değişirse test düşer ve
-// değişikliğin bedeli görünür olur. O bedel somut — yükseltilen bir kurulumun
-// tüm hız sınırı sayaçları ve işlemdeki idempotency kayıtları bir anda başka
-// bir ad alanına taşınır, yani o an uçan her tekrar isteği ikinci kez işlenir.
-func TestVarsayilanRedisAnahtarOnegiGeriyeUyumlu(t *testing.T) {
+// The expected value is not read from the constant but written BY HAND: if the
+// constant changes the test fails and the price of the change becomes visible.
+// That price is concrete — all the rate limit counters and in-flight idempotency
+// records of an upgraded installation move to another namespace at once, that is,
+// every retry in the air at that moment is processed a second time.
+func TestTheDefaultRedisKeyPrefixIsBackwardCompatible(t *testing.T) {
 	clearEnv(t)
 
 	cfg, err := config.Load()
-	require.NoError(t, err, "önek yapılandırılmadan da açılabilmeli")
+	require.NoError(t, err, "it has to come up without the prefix being configured too")
 	assert.Equal(t, "gobit", cfg.RedisKeyPrefix,
-		"varsayılan önek, redisguard'a gömülü olan eski önekle aynı kalmalı")
+		"the default prefix has to stay the same as the old prefix baked into redisguard")
 }
 
-// TestRedisAnahtarOnegiBicimDogrular ayırıcı içeren ya da görünmez karakterli
-// bir önekin SESSİZCE kabul edilmediğini doğrular.
+// TestTheRedisKeyPrefixFormIsValidated verifies that a prefix containing a
+// separator or an invisible character is not accepted SILENTLY.
 //
-// Önek, aynı Redis'i paylaşan iki kurulumu ayıran tek şeydir. Kabul edilen
-// bozuk bir önek iki ayrı arıza üretir: ':' iki kurulumun anahtarlarını
-// çakıştırabilir, sondaki bir boşluk ise kurulumu kimsenin fark etmeyeceği
-// biçimde BAŞKA bir ad alanına taşır — sayaçlar sıfırlanır, işlemdeki
-// idempotency kayıtları yok sayılır.
-func TestRedisAnahtarOnegiBicimDogrular(t *testing.T) {
+// The prefix is the only thing separating two installations sharing the same
+// Redis. An accepted malformed prefix produces two separate faults: ':' can make
+// the keys of two installations collide, while a trailing space moves the
+// installation into ANOTHER namespace in a way nobody will notice — the counters
+// reset, the in-flight idempotency records are ignored.
+func TestTheRedisKeyPrefixFormIsValidated(t *testing.T) {
 	tests := map[string]struct {
-		onek      string
-		reddedili bool
+		prefix   string
+		rejected bool
 	}{
-		"sade ad":           {onek: "gobit"},
-		"tireli ad":         {onek: "gobit-staging"},
-		"alt çizgili ad":    {onek: "gobit_prod"},
-		"noktalı ad":        {onek: "magaza.42"},
-		"ayırıcı içeren":    {onek: "gobit:staging", reddedili: true},
-		"ayırıcıyla biten":  {onek: "gobit:", reddedili: true},
-		"sondan boşluklu":   {onek: "gobit ", reddedili: true},
-		"glob imi içeren":   {onek: "gobit*", reddedili: true},
-		"eğik çizgi içeren": {onek: "gobit/prod", reddedili: true},
-		"latin dışı harfli": {onek: "mağaza", reddedili: true},
+		"sade name":                 {prefix: "gobit"},
+		"tireli name":               {prefix: "gobit-staging"},
+		"a name with an underscore": {prefix: "gobit_prod"},
+		"a name with a dot":         {prefix: "magaza.42"},
+		"containing a separator":    {prefix: "gobit:staging", rejected: true},
+		"ending with a separator":   {prefix: "gobit:", rejected: true},
+		"with a trailing space":     {prefix: "gobit ", rejected: true},
+		"containing a glob mark":    {prefix: "gobit*", rejected: true},
+		"containing a slash":        {prefix: "gobit/prod", rejected: true},
+		"with a non-latin letter":   {prefix: "ma\u011faza", rejected: true},
 	}
 
-	for ad, tt := range tests {
-		t.Run(ad, func(t *testing.T) {
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
 			clearEnv(t)
-			t.Setenv("REDIS_KEY_PREFIX", tt.onek)
+			t.Setenv("REDIS_KEY_PREFIX", tt.prefix)
 
 			cfg, err := config.Load()
-			if !tt.reddedili {
-				require.NoError(t, err, "geçerli önek reddedildi")
-				assert.Equal(t, tt.onek, cfg.RedisKeyPrefix)
+			if !tt.rejected {
+				require.NoError(t, err, "a valid prefix was rejected")
+				assert.Equal(t, tt.prefix, cfg.RedisKeyPrefix)
 
 				return
 			}
 
-			require.Error(t, err, "bozuk önek sessizce kabul edilmemeli")
+			require.Error(t, err, "a malformed prefix must not be accepted quietly")
 			assert.Contains(t, err.Error(), "REDIS_KEY_PREFIX",
-				"hata mesajı hangi değişkenin yanlış olduğunu söylemeli")
+				"the error message has to say which variable is wrong")
 		})
 	}
 }
 
-// TestBosRedisAnahtarOnegiReddedilir elle kurulmuş bir Config'in ad alanı
-// önekini boş bırakamayacağını doğrular.
+// TestAnEmptyRedisKeyPrefixIsRejected verifies that a hand-built Config cannot
+// leave the namespace prefix empty.
 //
-// Ortam değişkeni yolundan boş değer zaten varsayılana düşer; bu kapı,
-// Load'dan geçmeden Validate çağıran (örn. gömen ya da test eden) çağıranlar
-// içindir. Boş önek anahtarları ":idem:..." yapar; ad alanı yok demektir ve
-// önek yapılandırılabilir olmasının tek sebebi ad alanıdır.
-func TestBosRedisAnahtarOnegiReddedilir(t *testing.T) {
-	cfg := gecerliConfig(t)
+// From the environment variable path an empty value already falls back to the
+// default; this gate is for the callers calling Validate without going through
+// Load (an embedding or a testing one, say). An empty prefix makes the keys
+// ":idem:...", which means no namespace at all — and the namespace is the only
+// reason the prefix is configurable.
+func TestAnEmptyRedisKeyPrefixIsRejected(t *testing.T) {
+	cfg := validConfig(t)
 	cfg.RedisKeyPrefix = ""
 
 	err := cfg.Validate()
 
-	require.Error(t, err, "boş önek kabul edilmemeli")
+	require.Error(t, err, "an empty prefix must not be accepted")
 	assert.Contains(t, err.Error(), "REDIS_KEY_PREFIX")
 }
 
-// TestBildirimSaglayicisiVarsayilaniGondermeyendir varsayılan sağlayıcının
-// GERÇEKTEN göndermeyen "log" olduğunu doğrular.
+// TestTheNotificationProviderDefaultIsTheOneThatDoesNotSend verifies that the
+// default provider REALLY is the "log" one that does not send.
 //
-// Varsayılanın kayması sessiz bir arıza olurdu: kurulum açılır, uçlar çalışır
-// ve yalnızca müşteriler sipariş onayı beklerken fark edilirdi.
-func TestBildirimSaglayicisiVarsayilaniGondermeyendir(t *testing.T) {
+// A drift of the default would be a silent fault: the installation comes up, the
+// endpoints work, and it would only be noticed while customers wait for their
+// order confirmation.
+func TestTheNotificationProviderDefaultIsTheOneThatDoesNotSend(t *testing.T) {
 	clearEnv(t)
 
 	cfg, err := config.Load()
@@ -758,71 +762,72 @@ func TestBildirimSaglayicisiVarsayilaniGondermeyendir(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, config.DefaultNotificationProvider, cfg.NotificationProvider)
 	assert.Equal(t, "log", cfg.NotificationProvider,
-		"varsayılan sağlayıcının adı gönderim YAPMADIĞINI söylemeli")
+		"the name of the default provider has to say that it DOES NOT send")
 }
 
-// TestBildirimSaglayicisiBicimDogrular adın biçim denetimini doğrular.
+// TestTheNotificationProviderFormIsValidated verifies the form check of the name.
 //
-// Config, adın KAYITLI olup olmadığını bilemez (sağlayıcılar eklentilerden
-// gelir); burada sınanan yalnızca biçimdir. Tanınmayan bir adın açılışı
-// durdurduğu cmd/server tarafında sınanır.
-func TestBildirimSaglayicisiBicimDogrular(t *testing.T) {
+// Config cannot know whether the name is REGISTERED (providers come from plugins);
+// what is exercised here is only the form. That an unrecognized name stops startup
+// is exercised on the cmd/server side.
+func TestTheNotificationProviderFormIsValidated(t *testing.T) {
 	tests := map[string]struct {
-		deger     string
-		reddedili bool
+		value    string
+		rejected bool
 	}{
-		"eklenti adı":       {deger: "sendgrid"},
-		"varsayılan":        {deger: "log"},
-		"baştaki boşluk":    {deger: " log", reddedili: true},
-		"sondaki boşluk":    {deger: "log ", reddedili: true},
-		"yalnızca boşlukla": {deger: "   ", reddedili: true},
+		"a plugin name":    {value: "sendgrid"},
+		"the default":      {value: "log"},
+		"a leading space":  {value: " log", rejected: true},
+		"a trailing space": {value: "log ", rejected: true},
+		"whitespace only":  {value: "   ", rejected: true},
 	}
 
-	for ad, tt := range tests {
-		t.Run(ad, func(t *testing.T) {
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
 			clearEnv(t)
-			t.Setenv("NOTIFICATION_PROVIDER", tt.deger)
+			t.Setenv("NOTIFICATION_PROVIDER", tt.value)
 
 			cfg, err := config.Load()
-			if !tt.reddedili {
-				require.NoError(t, err, "geçerli sağlayıcı adı reddedildi")
-				assert.Equal(t, tt.deger, cfg.NotificationProvider)
+			if !tt.rejected {
+				require.NoError(t, err, "a valid provider name was rejected")
+				assert.Equal(t, tt.value, cfg.NotificationProvider)
 
 				return
 			}
 
-			require.Error(t, err, "bozuk sağlayıcı adı sessizce kabul edilmemeli")
+			require.Error(t, err, "a malformed provider name must not be accepted quietly")
 			assert.Contains(t, err.Error(), "NOTIFICATION_PROVIDER",
-				"hata mesajı hangi değişkenin yanlış olduğunu söylemeli")
+				"the error message has to say which variable is wrong")
 		})
 	}
 }
 
-// TestBosBildirimSaglayicisiReddedilir elle kurulmuş bir Config'in sağlayıcı
-// adını boş bırakamayacağını doğrular.
+// TestAnEmptyNotificationProviderIsRejected verifies that a hand-built Config
+// cannot leave the provider name empty.
 //
-// Ortam değişkeni yolundan boş değer zaten varsayılana düşer; bu kapı,
-// Load'dan geçmeden Validate çağıran (örn. gömen ya da test eden) çağıranlar
-// içindir. Boş ad, sağlayıcı kaydında boş kimlik aramak demektir ve hiçbir
-// sağlayıcı boş kimlikle kaydedilemeyeceği için her bildirim hata dönerdi.
-func TestBosBildirimSaglayicisiReddedilir(t *testing.T) {
-	cfg := gecerliConfig(t)
+// From the environment variable path an empty value already falls back to the
+// default; this gate is for the callers calling Validate without going through
+// Load (an embedding or a testing one, say). An empty name means looking for an
+// empty identity in the provider registry, and because no provider can be
+// registered under an empty identity every notification would return an error.
+func TestAnEmptyNotificationProviderIsRejected(t *testing.T) {
+	cfg := validConfig(t)
 	cfg.NotificationProvider = ""
 
 	err := cfg.Validate()
 
-	require.Error(t, err, "boş sağlayıcı adı kabul edilmemeli")
+	require.Error(t, err, "an empty provider name must not be accepted")
 	assert.Contains(t, err.Error(), "NOTIFICATION_PROVIDER")
 }
 
-// TestDosyaAyarlariVarsayilaniKaliciDizindir kutudan çıkan yüklemenin GEÇİCİ
-// dizine yazmadığını doğrular.
+// TestTheFileSettingsDefaultToADurableDirectory verifies that the
+// out-of-the-box upload does not write into a TEMPORARY directory.
 //
-// Geçici dizin cazip olurdu ("hiçbir şey yapılandırmadan çalışsın") ama
-// yeniden başlatmada görselleri sessizce kaybettirirdi: adres ürün kaydında
-// kalıcı olarak durur, dosya ise gitmiştir. İddia bu yüzden yalnızca "varsayılan
-// nedir"i değil, "ne DEĞİLDİR"i de sabitler.
-func TestDosyaAyarlariVarsayilaniKaliciDizindir(t *testing.T) {
+// A temporary directory would be tempting ("let it work without configuring
+// anything") but would quietly lose the images on a restart: the address stays in
+// the product record permanently while the file is gone. That is why the assertion
+// pins not only "what the default is" but also "what it is NOT".
+func TestTheFileSettingsDefaultToADurableDirectory(t *testing.T) {
 	clearEnv(t)
 
 	cfg, err := config.Load()
@@ -831,176 +836,176 @@ func TestDosyaAyarlariVarsayilaniKaliciDizindir(t *testing.T) {
 	assert.Equal(t, config.DefaultFileProvider, cfg.FileProvider)
 	assert.Equal(t, config.DefaultFileRoot, cfg.FileRoot)
 	assert.NotContains(t, cfg.FileRoot, os.TempDir(),
-		"varsayılan kök GEÇİCİ dizin olamaz; yeniden başlatmada sessiz veri kaybı demektir")
+		"the default root cannot be a TEMPORARY directory; that means silent data loss on a restart")
 	assert.Equal(t, config.DefaultFileMaxUploadBytes, cfg.FileMaxUploadBytes)
 	assert.Equal(t,
 		[]string{"image/jpeg", "image/png", "image/gif", "image/webp"}, cfg.FileAllowedTypes)
 	assert.NotContains(t, cfg.FileAllowedTypes, "image/svg+xml",
-		"SVG bir belgedir ve script taşır; varsayılan izin listesinde OLMAMALI")
+		"an SVG is a document and carries script; it MUST NOT be on the default allow list")
 }
 
-// TestDosyaAyarlariBicimDogrular geçersiz dosya ayarlarının açılışı
-// durdurduğunu doğrular.
+// TestTheFileSettingsFormIsValidated verifies that invalid file settings stop startup.
 //
-// İzin listesindeki biçim iddiaları özellikle önemlidir: parametreli ya da
-// büyük harfli bir tip, İÇERİKTEN tespit edilen tiple hiçbir zaman eşleşmez.
-// Sessizce kabul edilseydi listede duran ama hiçbir dosyayı geçirmeyen bir
-// satır kalırdı — operatör tipi "açtığını" sanardı.
-func TestDosyaAyarlariBicimDogrular(t *testing.T) {
-	base := gecerliConfig(t)
+// The form assertions on the allow list matter in particular: a type with
+// parameters or in upper case never matches the type detected FROM THE CONTENT.
+// Were it accepted quietly, a line would stay in the list and let no file through
+// — the operator would believe they had "opened" the type.
+func TestTheFileSettingsFormIsValidated(t *testing.T) {
+	base := validConfig(t)
 
 	tests := map[string]struct {
 		boz      func(c *config.Config)
 		degisken string
 	}{
-		"sağlayıcı boş":        {func(c *config.Config) { c.FileProvider = "" }, "FILE_PROVIDER"},
-		"sağlayıcı boşluklu":   {func(c *config.Config) { c.FileProvider = " local" }, "FILE_PROVIDER"},
-		"kök boş":              {func(c *config.Config) { c.FileRoot = "" }, "FILE_ROOT"},
-		"kök boşluklu":         {func(c *config.Config) { c.FileRoot = "/veri/yuklemeler " }, "FILE_ROOT"},
-		"azami boyut sıfır":    {func(c *config.Config) { c.FileMaxUploadBytes = 0 }, "FILE_MAX_UPLOAD_BYTES"},
-		"azami boyut negatif":  {func(c *config.Config) { c.FileMaxUploadBytes = -1 }, "FILE_MAX_UPLOAD_BYTES"},
-		"izin listesi boş":     {func(c *config.Config) { c.FileAllowedTypes = nil }, "FILE_ALLOWED_TYPES"},
-		"tip boş":              {func(c *config.Config) { c.FileAllowedTypes = []string{"image/png", ""} }, "FILE_ALLOWED_TYPES"},
-		"tip parametreli":      {func(c *config.Config) { c.FileAllowedTypes = []string{"text/plain; charset=utf-8"} }, "FILE_ALLOWED_TYPES"},
-		"tip büyük harfli":     {func(c *config.Config) { c.FileAllowedTypes = []string{"Image/PNG"} }, "FILE_ALLOWED_TYPES"},
-		"tip bölü işareti yok": {func(c *config.Config) { c.FileAllowedTypes = []string{"png"} }, "FILE_ALLOWED_TYPES"},
-		"tip iki kez":          {func(c *config.Config) { c.FileAllowedTypes = []string{"image/png", "image/png"} }, "FILE_ALLOWED_TYPES"},
+		"an empty provider":          {func(c *config.Config) { c.FileProvider = "" }, "FILE_PROVIDER"},
+		"a provider with whitespace": {func(c *config.Config) { c.FileProvider = " local" }, "FILE_PROVIDER"},
+		"an empty root":              {func(c *config.Config) { c.FileRoot = "" }, "FILE_ROOT"},
+		"a root with whitespace":     {func(c *config.Config) { c.FileRoot = "/data/uploads " }, "FILE_ROOT"},
+		"a zero maximum size":        {func(c *config.Config) { c.FileMaxUploadBytes = 0 }, "FILE_MAX_UPLOAD_BYTES"},
+		"azami boyut negatif":        {func(c *config.Config) { c.FileMaxUploadBytes = -1 }, "FILE_MAX_UPLOAD_BYTES"},
+		"an empty allow list":        {func(c *config.Config) { c.FileAllowedTypes = nil }, "FILE_ALLOWED_TYPES"},
+		"an empty type":              {func(c *config.Config) { c.FileAllowedTypes = []string{"image/png", ""} }, "FILE_ALLOWED_TYPES"},
+		"tip parametreli":            {func(c *config.Config) { c.FileAllowedTypes = []string{"text/plain; charset=utf-8"} }, "FILE_ALLOWED_TYPES"},
+		"a type in upper case":       {func(c *config.Config) { c.FileAllowedTypes = []string{"Image/PNG"} }, "FILE_ALLOWED_TYPES"},
+		"a type without a slash":     {func(c *config.Config) { c.FileAllowedTypes = []string{"png"} }, "FILE_ALLOWED_TYPES"},
+		"tip iki kez":                {func(c *config.Config) { c.FileAllowedTypes = []string{"image/png", "image/png"} }, "FILE_ALLOWED_TYPES"},
 	}
 
-	for ad, tt := range tests {
-		t.Run(ad, func(t *testing.T) {
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
 			cfg := base
 			tt.boz(&cfg)
 
 			err := cfg.Validate()
 
-			require.Error(t, err, "bozuk dosya ayarı sessizce kabul edilmemeli")
+			require.Error(t, err, "a malformed file setting must not be accepted quietly")
 			assert.Contains(t, err.Error(), tt.degisken,
-				"hata mesajı hangi değişkenin yanlış olduğunu söylemeli")
+				"the error message has to say which variable is wrong")
 		})
 	}
 }
 
-// TestKaliciOlmayanDosyaKokuUyariKapisiniAcar uyarı kapısının hangi
-// kurulumlarda açıldığını sabitler.
+// TestANonDurableFileRootOpensTheWarningGate pins which installations the warning
+// gate opens on.
 //
-// Kural AÇILIŞI DURDURMAZ (gerekçe config.LocalFileRootIsDurable godoc'unda),
-// bu yüzden tek koruması bu testtir: kapı sessizce kapanırsa uyarı hiç
-// yazılmaz ve kalıcı olmayan bir kökle çıkılan üretim dağıtımı hiçbir iz
-// bırakmaz.
+// The rule DOES NOT STOP STARTUP (the reasoning is in the
+// config.LocalFileRootIsDurable godoc), so this test is its only guard: if the gate
+// closes quietly the warning is never written and a production deployment going
+// out with a non-durable root leaves no trace at all.
 //
-// GEÇİCİ kök vakaları burada ayrıca sayılıyor çünkü ölçüt bir kez yalnızca
-// filepath.IsAbs'e bakıyordu: "/tmp/gobit-uploads" mutlaktır, o ölçütü geçer
-// ve yine de kap her yeniden başladığında boşalır — yani config'in kendi
-// varsayılan gerekçesinde REDDETTİĞİ sessiz veri kaybı, uyarı hiç yazılmadan
-// geri gelirdi.
-func TestKaliciOlmayanDosyaKokuUyariKapisiniAcar(t *testing.T) {
-	base := gecerliConfig(t)
+// The TEMPORARY root cases are counted separately here because the criterion once
+// looked only at filepath.IsAbs: "/tmp/gobit-uploads" is absolute, passes that
+// criterion, and still empties every time the container restarts — that is, the
+// silent data loss config REJECTS in its own default reasoning would come back
+// without the warning ever being written.
+func TestANonDurableFileRootOpensTheWarningGate(t *testing.T) {
+	base := validConfig(t)
 
 	tests := map[string]struct {
-		ortam     string
-		saglayici string
-		kok       string
-		kalici    bool
+		environment string
+		saglayici   string
+		root        string
+		kalici      bool
 	}{
-		"geliştirme göreli kök":     {"development", "local", "./data/uploads", false},
-		"üretim göreli kök":         {"production", "local", "./data/uploads", false},
-		"üretim mutlak kök":         {"production", "local", "/var/lib/gobit/uploads", true},
-		"staging göreli kök":        {"staging", "local", "data/uploads", false},
-		"üretim eklenti deposu":     {"production", "s3", "./data/uploads", true},
-		"üretim geçici kök":         {"production", "local", "/tmp/gobit-uploads", false},
-		"üretim geçici kökün kendi": {"production", "local", "/tmp", false},
-		"üretim var/tmp":            {"production", "local", "/var/tmp/gobit", false},
-		"üretim dev/shm":            {"production", "local", "/dev/shm/gobit", false},
-		// Önek benzerliği yetmez: "/tmpfoo" geçici dizinin ALTINDA değildir ve
-		// sade bir strings.HasPrefix karşılaştırması onu haksız yere kalıcı
-		// olmayan sayardı.
-		"üretim benzer adlı kök": {"production", "local", "/tmpfoo/uploads", true},
-		// Eklenti deposu seçiliyken kök hiç kullanılmaz; geçici bir yol bile
-		// uyarı üretmemeli, yoksa uyarı hiçbir şey korumadan her açılışta basar.
-		"üretim eklenti deposu geçici kök": {"production", "s3", "/tmp/gobit", true},
+		"development, a relative root":          {"development", "local", "./data/uploads", false},
+		"production, a relative root":           {"production", "local", "./data/uploads", false},
+		"production, an absolute root":          {"production", "local", "/var/lib/gobit/uploads", true},
+		"staging, a relative root":              {"staging", "local", "data/uploads", false},
+		"production, a plugin store":            {"production", "s3", "./data/uploads", true},
+		"production, a temporary root":          {"production", "local", "/tmp/gobit-uploads", false},
+		"production, the temporary root itself": {"production", "local", "/tmp", false},
+		"production, var/tmp":                   {"production", "local", "/var/tmp/gobit", false},
+		"production, dev/shm":                   {"production", "local", "/dev/shm/gobit", false},
+		// Prefix similarity is not enough: "/tmpfoo" is NOT UNDER the temporary
+		// directory and a plain strings.HasPrefix comparison would count it as
+		// non-durable unfairly.
+		"production, a similarly named root": {"production", "local", "/tmpfoo/uploads", true},
+		// While a plugin store is selected the root is never used; even a temporary
+		// path must not produce a warning, or the warning fires at every startup while
+		// guarding nothing.
+		"production, a plugin store with a temporary root": {"production", "s3", "/tmp/gobit", true},
 	}
 
-	for ad, tt := range tests {
-		t.Run(ad, func(t *testing.T) {
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
 			cfg := base
-			cfg.AppEnv = tt.ortam
+			cfg.AppEnv = tt.environment
 			cfg.FileProvider = tt.saglayici
-			cfg.FileRoot = tt.kok
+			cfg.FileRoot = tt.root
 
 			assert.Equal(t, tt.kalici, cfg.LocalFileRootIsDurable())
 		})
 	}
 }
 
-// TestHizSiniriAnahtariProxyArkasindaIstemciyeDusmez uyarı kapısının hangi
-// kurulumlarda açıldığını sabitler.
+// TestTheRateLimitKeyDoesNotFallToTheClientBehindAProxy pins which installations
+// the warning gate opens on.
 //
-// TRUSTED_PROXY_HOPS=0 iken X-Forwarded-For hiç okunmaz ve hız sınırı anahtarı
-// bağlantının adresine düşer; ters proxy arkasında o adres HER İSTEKTE
-// proxy'nindir, yani kota müşteri başına değil tüm mağaza için tek bir kova
-// olur. Açılış DURMAZ (gerekçe config.RateLimitKeyIsPerClient godoc'unda), bu
-// yüzden kapının tek koruması bu testtir.
-func TestHizSiniriAnahtariProxyArkasindaIstemciyeDusmez(t *testing.T) {
-	base := gecerliConfig(t)
+// While TRUSTED_PROXY_HOPS=0, X-Forwarded-For is never read and the rate limit key
+// falls back to the connection's address; behind a reverse proxy that address is
+// the proxy's ON EVERY REQUEST, that is, the quota becomes a single bucket for the
+// whole store rather than per customer. Startup does NOT STOP (the reasoning is in
+// the config.RateLimitKeyIsPerClient godoc), so this test is the gate's only guard.
+func TestTheRateLimitKeyDoesNotFallToTheClientBehindAProxy(t *testing.T) {
+	base := validConfig(t)
 
 	tests := map[string]struct {
-		limit         int
-		atlama        int
-		istemciBasina bool
+		limit     int
+		atlama    int
+		perClient bool
 	}{
-		"sınır açık, atlama yok":      {600, 0, false},
-		"sınır açık, tek atlama":      {600, 1, true},
-		"sınır açık, iki atlama":      {600, 2, true},
-		"sınır kapalı, atlama yok":    {0, 0, true},
-		"sınır negatif, atlama yok":   {-1, 0, true},
-		"sınır kapalı, atlama verili": {0, 2, true},
+		"limit on, no hops":       {600, 0, false},
+		"limit on, a single hop":  {600, 1, true},
+		"limit on, two hops":      {600, 2, true},
+		"limit off, no hops":      {0, 0, true},
+		"limit negative, no hops": {-1, 0, true},
+		"limit off, hops given":   {0, 2, true},
 	}
 
-	for ad, tt := range tests {
-		t.Run(ad, func(t *testing.T) {
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
 			cfg := base
 			cfg.RateLimitPerMinute = tt.limit
 			cfg.TrustedProxyHops = tt.atlama
 
-			assert.Equal(t, tt.istemciBasina, cfg.RateLimitKeyIsPerClient())
+			assert.Equal(t, tt.perClient, cfg.RateLimitKeyIsPerClient())
 		})
 	}
 }
 
-// TestOlayVeriYoluTuketiciAdiBicimDogrular tüketici adının biçim kapısını
-// sabitler.
+// TestTheEventBusConsumerNameFormIsValidated pins the form gate of the consumer name.
 //
-// Boş değer GEÇERLİDİR ve "adı sen üret" demektir; baştaki/sondaki boşluk ise
-// reddedilir. Redis " gobit-1" gibi bir adı sorunsuz kabul eder, yani yazım
-// hatası hiçbir hata üretmez — yalnızca süreç bir sonraki açılışta kendi
-// bekleyen listesini bulamaz ve o mesajlar kimseye teslim edilmez.
-func TestOlayVeriYoluTuketiciAdiBicimDogrular(t *testing.T) {
-	base := gecerliConfig(t)
+// The empty value is VALID and means "produce the name yourself"; leading/trailing
+// whitespace, on the other hand, is rejected. Redis accepts a name like " gobit-1"
+// without complaint, that is, the typo produces no error at all — only, at the next
+// startup, the process cannot find its own pending list and those messages are
+// delivered to nobody.
+func TestTheEventBusConsumerNameFormIsValidated(t *testing.T) {
+	base := validConfig(t)
 
 	tests := map[string]struct {
-		ad        string
-		reddedili bool
+		name     string
+		rejected bool
 	}{
-		"boş (otomatik ad)": {ad: ""},
-		"pod adı":           {ad: "gobit-0"},
-		"nokta içeren ad":   {ad: "gobit.eu.0"},
-		"baştaki boşluk":    {ad: " gobit-0", reddedili: true},
-		"sondaki boşluk":    {ad: "gobit-0 ", reddedili: true},
-		"sondaki satır":     {ad: "gobit-0\n", reddedili: true},
+		"empty (an automatic name)": {name: ""},
+		"a pod name":                {name: "gobit-0"},
+		"a name with a dot":         {name: "gobit.eu.0"},
+		"a leading space":           {name: " gobit-0", rejected: true},
+		"a trailing space":          {name: "gobit-0 ", rejected: true},
+		"a trailing newline":        {name: "gobit-0\n", rejected: true},
 	}
 
-	for ad, tt := range tests {
-		t.Run(ad, func(t *testing.T) {
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
 			cfg := base
-			cfg.EventBusConsumer = tt.ad
+			cfg.EventBusConsumer = tt.name
 
 			err := cfg.Validate()
 
-			if tt.reddedili {
-				require.Error(t, err, "bozuk tüketici adı sessizce kabul edilmemeli")
+			if tt.rejected {
+				require.Error(t, err, "a malformed consumer name must not be accepted quietly")
 				assert.Contains(t, err.Error(), "EVENT_BUS_CONSUMER",
-					"hata mesajı hangi değişkenin yanlış olduğunu söylemeli")
+					"the error message has to say which variable is wrong")
 
 				return
 			}
@@ -1010,65 +1015,64 @@ func TestOlayVeriYoluTuketiciAdiBicimDogrular(t *testing.T) {
 	}
 }
 
-// TestOlayVeriYoluTuketiciAdiVarsayilaniBostur ayarın varsayılanının BOŞ
-// olduğunu sabitler.
+// TestTheEventBusConsumerNameDefaultsToEmpty pins that the setting's default is EMPTY.
 //
-// Boş, "adı süreç başına sen üret" demektir ve tek doğru varsayılan budur:
-// sabit bir varsayılan (örn. "gobit") aynı gruptaki tüm süreçlere AYNI adı
-// verir, yani her açılışta birbirlerinin işlemekte olduğu mesajları da alırlar
-// ve aynı olay iki kez işlenir.
-func TestOlayVeriYoluTuketiciAdiVarsayilaniBostur(t *testing.T) {
+// Empty means "produce the name yourself, per process", and that is the only right
+// default: a fixed default ("gobit", say) gives THE SAME name to every process in
+// the group, that is, at every startup they also take the messages the others are
+// processing and the same event is processed twice.
+func TestTheEventBusConsumerNameDefaultsToEmpty(t *testing.T) {
 	clearEnv(t)
 
 	cfg, err := config.Load()
 
 	require.NoError(t, err)
 	assert.Empty(t, cfg.EventBusConsumer,
-		"varsayılan bir tüketici adı, tüm örneklere aynı adı vermek demektir")
+		"a default consumer name would mean giving every instance the same name")
 }
 
-// TestGraphQLSinirlariVarsayilanDolu ayar verilmemiş bir kurulumun GraphQL
-// ucunu SINIRSIZ açmadığını doğrular.
+// TestTheGraphQLLimitsHaveFilledDefaults verifies that an installation with no
+// settings given does not open the GraphQL endpoint UNBOUNDED.
 //
-// Bu, sertleştirmenin sessizce kaybolabileceği tek yoldur: ortam değişkeni
-// yoksa alanlar Go'nun sıfır değerinde kalır ve sıfır, uygulayan tarafta
-// "sınır uygulama" diye okunsaydı hiçbir hata görünmeden korumasız bir uç
-// açılırdı.
-func TestGraphQLSinirlariVarsayilanDolu(t *testing.T) {
-	cfg := gecerliConfig(t)
+// This is the only way the hardening could quietly disappear: without an
+// environment variable the fields stay at Go's zero value, and had zero been read
+// as "apply no limit" on the enforcing side, an unguarded endpoint would open
+// without any error being visible.
+func TestTheGraphQLLimitsHaveFilledDefaults(t *testing.T) {
+	cfg := validConfig(t)
 
 	assert.Equal(t, config.DefaultGraphQLMaxDepth, cfg.GraphQLMaxDepth)
 	assert.Equal(t, config.DefaultGraphQLMaxComplexity, cfg.GraphQLMaxComplexity)
 	assert.Equal(t, config.DefaultGraphQLIntrospection, cfg.GraphQLIntrospection,
-		"iç gözlemin varsayılanı bir karardır; sessizce değişmemeli")
+		"the introspection default is a decision; it must not change quietly")
 	assert.Positive(t, cfg.GraphQLMaxDepth)
 	assert.Positive(t, cfg.GraphQLMaxComplexity)
 }
 
-// TestGraphQLSinirlariAcilistaDogrulanir anlamsız bir sınırın uygulamayı
-// AÇILIŞTA durdurduğunu doğrular.
+// TestTheGraphQLLimitsAreValidatedAtStartup verifies that a meaningless limit
+// stops the application AT STARTUP.
 //
-// Sıfır ve negatif değerler bilinçli olarak reddedilir: sınır YÜKSELTİLEBİLİR,
-// KALDIRILAMAZ. RATE_LIMIT_PER_MINUTE'ta sıfırın "kapat" demesiyle
-// karıştırılmamalı — hız sınırını kapatmak bir kapasite tercihidir, derinlik
-// sınırını kapatmak tek bir sorgunun sunucuyu tüketmesine izin vermektir.
+// Zero and negative values are deliberately rejected: a limit CAN BE RAISED, NOT
+// REMOVED. It must not be confused with zero meaning "off" in
+// RATE_LIMIT_PER_MINUTE — turning the rate limit off is a capacity choice, while
+// turning the depth limit off is letting a single query consume the server.
 //
-// Sayı olmayan değerler zaten ayrıştırmada düşer; onlar da burada sınanır ki
-// "geçersiz değer sessizce varsayılana düşsün" davranışı bir gün eklenmesin:
-// o davranış, operatöre verdiği değerin uygulandığını sandırırdı.
-func TestGraphQLSinirlariAcilistaDogrulanir(t *testing.T) {
-	// beklenen, hatanın operatöre HANGİ ayarın yanlış olduğunu söylediğini
-	// sınar. Ayrıştırma hataları kütüphaneden gelir ve ortam değişkeninin adını
-	// değil alan adını taşır; ikisi de kullanıcıyı doğru yere götürdüğü için
-	// beklenen metin durum başına yazılır.
-	tests := map[string]struct{ key, value, beklenen string }{
-		"derinlik sıfır":            {"GRAPHQL_MAX_DEPTH", "0", "GRAPHQL_MAX_DEPTH"},
-		"derinlik negatif":          {"GRAPHQL_MAX_DEPTH", "-1", "GRAPHQL_MAX_DEPTH"},
-		"derinlik sayı değil":       {"GRAPHQL_MAX_DEPTH", "derin", "GraphQLMaxDepth"},
-		"karmaşıklık sıfır":         {"GRAPHQL_MAX_COMPLEXITY", "0", "GRAPHQL_MAX_COMPLEXITY"},
-		"karmaşıklık negatif":       {"GRAPHQL_MAX_COMPLEXITY", "-100", "GRAPHQL_MAX_COMPLEXITY"},
-		"karmaşıklık sayı değil":    {"GRAPHQL_MAX_COMPLEXITY", "çok", "GraphQLMaxComplexity"},
-		"iç gözlem mantıksal değil": {"GRAPHQL_INTROSPECTION", "belki", "GraphQLIntrospection"},
+// Non-numeric values already fail at parsing; they are exercised here too so that
+// an "let an invalid value fall back to the default quietly" behavior is never
+// added: that behavior would make the operator believe the value they gave is in force.
+func TestTheGraphQLLimitsAreValidatedAtStartup(t *testing.T) {
+	// expected checks that the error tells the operator WHICH setting is wrong.
+	// Parsing errors come from the library and carry the field name rather than the
+	// name of the environment variable; because both take the user to the right place,
+	// the expected text is written per case.
+	tests := map[string]struct{ key, value, expected string }{
+		"a zero depth":                {"GRAPHQL_MAX_DEPTH", "0", "GRAPHQL_MAX_DEPTH"},
+		"derinlik negatif":            {"GRAPHQL_MAX_DEPTH", "-1", "GRAPHQL_MAX_DEPTH"},
+		"a non-numeric depth":         {"GRAPHQL_MAX_DEPTH", "deep", "GraphQLMaxDepth"},
+		"a zero complexity":           {"GRAPHQL_MAX_COMPLEXITY", "0", "GRAPHQL_MAX_COMPLEXITY"},
+		"a negative complexity":       {"GRAPHQL_MAX_COMPLEXITY", "-100", "GRAPHQL_MAX_COMPLEXITY"},
+		"a non-numeric complexity":    {"GRAPHQL_MAX_COMPLEXITY", "lots", "GraphQLMaxComplexity"},
+		"a non-boolean introspection": {"GRAPHQL_INTROSPECTION", "maybe", "GraphQLIntrospection"},
 	}
 
 	for name, tt := range tests {
@@ -1077,18 +1081,18 @@ func TestGraphQLSinirlariAcilistaDogrulanir(t *testing.T) {
 			t.Setenv(tt.key, tt.value)
 
 			_, err := config.Load()
-			require.Error(t, err, "geçersiz değer açılışı durdurmalı (%s=%s)", tt.key, tt.value)
-			assert.Contains(t, err.Error(), tt.beklenen)
+			require.Error(t, err, "an invalid value has to stop startup (%s=%s)", tt.key, tt.value)
+			assert.Contains(t, err.Error(), tt.expected)
 		})
 	}
 }
 
-// TestGraphQLSinirlariYukseltilebilir ayarın gerçekten okunduğunu doğrular.
+// TestTheGraphQLLimitsCanBeRaised verifies that the setting really is read.
 //
-// Doğrulama testleri tek başına eksiktir: her değeri reddeden bir kapı da
-// onları geçerdi. Sınırın YÜKSELTİLEBİLİR olması, kapının kabul ettiği tarafın
-// da sınanmasını gerektirir.
-func TestGraphQLSinirlariYukseltilebilir(t *testing.T) {
+// The validation tests alone are incomplete: a gate rejecting every value would
+// pass them too. That a limit CAN BE RAISED requires the accepting side of the gate
+// to be exercised as well.
+func TestTheGraphQLLimitsCanBeRaised(t *testing.T) {
 	clearEnv(t)
 
 	t.Setenv("GRAPHQL_MAX_DEPTH", "25")
@@ -1103,70 +1107,71 @@ func TestGraphQLSinirlariYukseltilebilir(t *testing.T) {
 	assert.False(t, cfg.GraphQLIntrospection)
 }
 
-// TestHavuzSinirlariVarsayilanDolu ortam değişkeni verilmeyen bir kurulumun
-// havuzu DEĞİŞMEDEN açtığını doğrular.
+// TestThePoolLimitsHaveFilledDefaults verifies that an installation given no
+// environment variable opens the pool UNCHANGED.
 //
-// Düğme geriye dönük olmalıdır: bu iki değişken var olmadan önce süreç 10/2 ile
-// açılıyordu ve yükseltme, .env'ini hiç açmayan kurulumun havuzunu sessizce
-// büyütmemeli. Değerin db paketininkiyle aynı kaldığını internal/arch'taki
-// TestHavuzVarsayilanlariDbIleUyusuyor ayrıca bağlar.
-func TestHavuzSinirlariVarsayilanDolu(t *testing.T) {
-	cfg := gecerliConfig(t)
+// The knob has to be backward compatible: before these two variables existed the
+// process came up with 10/2, and the upgrade must not quietly grow the pool of an
+// installation that never opens its .env. That the value stays the same as the db
+// package's is bound separately by TestHavuzVarsayilanlariDbIleUyusuyor in internal/arch.
+func TestThePoolLimitsHaveFilledDefaults(t *testing.T) {
+	cfg := validConfig(t)
 
 	assert.Equal(t, config.DefaultDBMaxConns, cfg.DBMaxConns)
 	assert.Equal(t, config.DefaultDBMinConns, cfg.DBMinConns)
 	assert.Equal(t, int32(10), cfg.DBMaxConns,
-		"varsayılan bir karardır (bkz. DBMaxConns godoc'undaki ölçüm); sessizce değişmemeli")
+		"the default is a decision (see the measurement in the DBMaxConns godoc); it must not change quietly")
 	assert.Equal(t, int32(2), cfg.DBMinConns)
 }
 
-// TestHavuzSinirlariAcilistaDogrulanir anlamsız bir havuz boyutunun uygulamayı
-// AÇILIŞTA durdurduğunu doğrular.
+// TestThePoolLimitsAreValidatedAtStartup verifies that a meaningless pool size
+// stops the application AT STARTUP.
 //
-// Sıfır bağlantılık bir havuz "sınırsız" değil, HİÇBİR sorgunun çalışamaması
-// demektir; alt sınırın üst sınırı aşması ise pgxpool'un kendi doğrulamasına
-// takılır. İkisi de açılışta durur — ama hangi ortam değişkeninin yanlış
-// olduğunu yalnızca buradaki kapı söyleyebilir: db paketinin hatası "MinConns"
-// der ve operatörün elinde o adda bir kol yoktur.
+// A pool of zero connections does not mean "unlimited" but that NO query can run;
+// the lower bound exceeding the upper one, in turn, hits pgxpool's own validation.
+// Both stop at startup — but which environment variable is wrong can only be said
+// by the gate here: the db package's error says "MinConns" and the operator has no
+// lever by that name.
 //
-// Aralık dışı bir sayı da sınanır: 2^31 AYRIŞTIRMADA düşer, yani havuz hiç
-// açılmaz. Bu vaka alanın TİPİNE bağlı değildir ve öyle olduğu ölçüldü — env
-// kütüphanesi int'i de 32 bitle sınırlıyor, dolayısıyla tip int'e çevrildiğinde
-// bu satır yeşil kalır. Kalması yine de doğrudur; iddiası "tip int32'dir"
-// değil, "anlamsız büyüklükte bir sayı sessizce kabul edilmez"dir.
+// A number out of range is exercised too: 2^31 fails AT PARSING, that is, the pool
+// never opens at all. This case does not depend on the field's TYPE, and that it
+// does not was measured — the env library bounds int at 32 bits as well, so this
+// line stays green when the type is turned into int. Keeping it is still right; its
+// claim is not "the type is int32" but "a number of meaningless size is not
+// accepted quietly".
 //
-// # Neden yalnızca ortam değişkeninin ADI beklenmiyor
+// # Why only the NAME of the environment variable is not expected
 //
-// İlk yazımında bu tablo hatanın içinde "DB_MAX_CONNS" geçmesini arıyordu ve o
-// hâliyle bir mutasyonu KAÇIRDI: taban denetimi "< 1" yerine "< 0" yapıldığında
-// DB_MAX_CONNS=0 bu kez üçüncü kurala takılıyor ve onun mesajı da her iki adı
-// birden taşıdığı için test yeşil kalıyordu. Yani ad, kuralları birbirinden
-// AYIRT ETMİYOR. Beklenen metin bu yüzden kuralın kendi cümlesidir ve iki vaka
-// DB_MIN_CONNS=0 ile kurulur: üçüncü kural devre dışı kalsın da taban denetimi
-// tek başına sınansın.
-func TestHavuzSinirlariAcilistaDogrulanir(t *testing.T) {
+// In its first writing this table looked for "DB_MAX_CONNS" to appear inside the
+// error, and in that form it MISSED a mutation: when the floor check was made "< 0"
+// instead of "< 1", DB_MAX_CONNS=0 hits the third rule instead and, because that
+// message carries both names at once, the test stayed green. That is, the name does
+// NOT TELL the rules apart. The expected text is therefore the rule's own sentence,
+// and two cases are set up with DB_MIN_CONNS=0: so the third rule is out of the way
+// and the floor check is exercised on its own.
+func TestThePoolLimitsAreValidatedAtStartup(t *testing.T) {
 	tests := map[string]struct {
 		env      map[string]string
-		beklenen string
+		expected string
 	}{
-		"azami sıfır": {
+		"a zero maximum": {
 			map[string]string{"DB_MAX_CONNS": "0", "DB_MIN_CONNS": "0"},
-			"DB_MAX_CONNS en az 1 olmalı",
+			"DB_MAX_CONNS has to be at least 1",
 		},
 		"azami negatif": {
 			map[string]string{"DB_MAX_CONNS": "-1", "DB_MIN_CONNS": "0"},
-			"DB_MAX_CONNS en az 1 olmalı",
+			"DB_MAX_CONNS has to be at least 1",
 		},
 		"asgari negatif": {
 			map[string]string{"DB_MIN_CONNS": "-1"},
 			"DB_MIN_CONNS negatif olamaz",
 		},
-		"asgari azamiden büyük": {
+		"the minimum greater than the maximum": {
 			map[string]string{"DB_MAX_CONNS": "4", "DB_MIN_CONNS": "5"},
-			"DB_MIN_CONNS (5), DB_MAX_CONNS'tan (4) büyük olamaz",
+			"DB_MIN_CONNS (5) cannot be greater than DB_MAX_CONNS (4)",
 		},
-		"azami sayı değil":  {map[string]string{"DB_MAX_CONNS": "çok"}, "DBMaxConns"},
-		"azami aralık dışı": {map[string]string{"DB_MAX_CONNS": "2147483648"}, "DBMaxConns"},
+		"a non-numeric maximum":  {map[string]string{"DB_MAX_CONNS": "lots"}, "DBMaxConns"},
+		"a maximum out of range": {map[string]string{"DB_MAX_CONNS": "2147483648"}, "DBMaxConns"},
 	}
 
 	for name, tt := range tests {
@@ -1177,22 +1182,23 @@ func TestHavuzSinirlariAcilistaDogrulanir(t *testing.T) {
 			}
 
 			_, err := config.Load()
-			require.Error(t, err, "geçersiz havuz boyutu açılışı durdurmalı (%v)", tt.env)
-			assert.Contains(t, err.Error(), tt.beklenen)
+			require.Error(t, err, "an invalid pool size has to stop startup (%v)", tt.env)
+			assert.Contains(t, err.Error(), tt.expected)
 		})
 	}
 }
 
-// TestHavuzSinirlariIkiYoneDeAyarlanabilir düğmenin gerçekten okunduğunu ve HER
-// İKİ yöne de çevrildiğini doğrular.
+// TestThePoolLimitsCanBeTunedInBothDirections verifies that the knob really is
+// read and that it turns in BOTH directions.
 //
-// Yalnızca reddeden bir kapı, her değeri reddeden bir kapıyla aynı testi
-// geçerdi; kabul eden taraf da sınanmalı. Küçültme yönü ayrıca sınanır çünkü
-// asıl kırılgan olan odur: paylaşılan bir kümeye çok sayıda örnekle bağlanan
-// kurulumun ihtiyacı havuzu DARALTMAKTIR ve alt sınır ezilemeseydi
-// DB_MAX_CONNS=1 yalnızca açılışı kıran bir değer olurdu.
-func TestHavuzSinirlariIkiYoneDeAyarlanabilir(t *testing.T) {
-	t.Run("yukarı", func(t *testing.T) {
+// A gate that only rejects would pass the same test as a gate rejecting every
+// value; the accepting side has to be exercised too. The shrinking direction is
+// exercised separately because that is the genuinely fragile one: what an
+// installation connecting to a shared cluster with many instances needs is to
+// NARROW the pool, and if the lower bound could not be overridden DB_MAX_CONNS=1
+// would only be a value that breaks startup.
+func TestThePoolLimitsCanBeTunedInBothDirections(t *testing.T) {
+	t.Run("up", func(t *testing.T) {
 		clearEnv(t)
 		t.Setenv("DB_MAX_CONNS", "40")
 		t.Setenv("DB_MIN_CONNS", "8")
@@ -1204,7 +1210,7 @@ func TestHavuzSinirlariIkiYoneDeAyarlanabilir(t *testing.T) {
 		assert.Equal(t, int32(8), cfg.DBMinConns)
 	})
 
-	t.Run("aşağı", func(t *testing.T) {
+	t.Run("down", func(t *testing.T) {
 		clearEnv(t)
 		t.Setenv("DB_MAX_CONNS", "1")
 		t.Setenv("DB_MIN_CONNS", "1")
